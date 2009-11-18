@@ -722,9 +722,10 @@ static unsigned int azx_rirb_get_response(struct hda_bus *bus,
 		   chip->last_cmd[addr]);
 	chip->single_cmd = 1;
 	bus->response_reset = 0;
-	/* re-initialize CORB/RIRB */
+	/* release CORB/RIRB */
 	azx_free_cmd_io(chip);
-	azx_init_cmd_io(chip);
+	/* disable unsolicited responses */
+	azx_writel(chip, GCTL, azx_readl(chip, GCTL) & ~ICH6_GCTL_UNSOL);
 	return -1;
 }
 
@@ -865,7 +866,9 @@ static int azx_reset(struct azx *chip)
 	}
 
 	/* Accept unsolicited responses */
-	azx_writel(chip, GCTL, azx_readl(chip, GCTL) | ICH6_GCTL_UNSOL);
+	if (!chip->single_cmd)
+		azx_writel(chip, GCTL, azx_readl(chip, GCTL) |
+			   ICH6_GCTL_UNSOL);
 
 	/* detect codecs */
 	if (!chip->codec_mask) {
@@ -980,7 +983,8 @@ static void azx_init_chip(struct azx *chip)
 	azx_int_enable(chip);
 
 	/* initialize the codec command I/O */
-	azx_init_cmd_io(chip);
+	if (!chip->single_cmd)
+		azx_init_cmd_io(chip);
 
 	/* program the position buffer */
 	azx_writel(chip, DPLBASE, (u32)chip->posbuf.addr);
@@ -2150,6 +2154,7 @@ static int azx_resume(struct pci_dev *pci)
 static int azx_halt(struct notifier_block *nb, unsigned long event, void *buf)
 {
 	struct azx *chip = container_of(nb, struct azx, reboot_notifier);
+	snd_hda_bus_reboot_notify(chip->bus);
 	azx_stop_chip(chip);
 	return NOTIFY_OK;
 }
