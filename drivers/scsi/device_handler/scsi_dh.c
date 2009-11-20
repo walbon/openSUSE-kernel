@@ -231,7 +231,7 @@ store_dh_state(struct device *dev, struct device_attribute *attr,
 			 * Activate a device handler
 			 */
 			if (scsi_dh->activate)
-				err = scsi_dh->activate(sdev);
+				err = scsi_dh->activate(sdev, NULL, NULL);
 			else
 				err = 0;
 		}
@@ -309,18 +309,15 @@ static int scsi_dh_notifier(struct notifier_block *nb,
 	sdev = to_scsi_device(dev);
 
 	if (action == BUS_NOTIFY_ADD_DEVICE) {
+		err = device_create_file(dev, &scsi_dh_state_attr);
+		/* don't care about err */
 		devinfo = device_handler_match(NULL, sdev);
-		if (!devinfo)
-			goto out;
-
-		err = scsi_dh_handler_attach(sdev, devinfo);
-		if (!err)
-			err = device_create_file(dev, &scsi_dh_state_attr);
+		if (devinfo)
+			err = scsi_dh_handler_attach(sdev, devinfo);
 	} else if (action == BUS_NOTIFY_DEL_DEVICE) {
 		device_remove_file(dev, &scsi_dh_state_attr);
 		scsi_dh_handler_detach(sdev, NULL);
 	}
-out:
 	return err;
 }
 
@@ -428,10 +425,17 @@ EXPORT_SYMBOL_GPL(scsi_unregister_device_handler);
 /*
  * scsi_dh_activate - activate the path associated with the scsi_device
  *      corresponding to the given request queue.
- * @q - Request queue that is associated with the scsi_device to be
- *      activated.
+ *     Returns immediately without waiting for activation to be completed.
+ * @q    - Request queue that is associated with the scsi_device to be
+ *         activated.
+ * @fn   - Function to be called upon completion of the activation.
+ *         Function fn is called with data (below) and the error code.
+ *         Function fn may be called from the same calling context. So,
+ *         do not hold the lock in the caller which may be needed in fn.
+ * @data - data passed to the function fn upon completion.
+ *
  */
-int scsi_dh_activate(struct request_queue *q)
+int scsi_dh_activate(struct request_queue *q, activate_complete fn, void *data)
 {
 	int err = 0;
 	unsigned long flags;
@@ -439,7 +443,7 @@ int scsi_dh_activate(struct request_queue *q)
 	struct scsi_device_handler *scsi_dh = NULL;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	sdev = q->queuedata;
+	sdev = scsi_device_from_queue(q);
 	if (sdev && sdev->scsi_dh_data)
 		scsi_dh = sdev->scsi_dh_data->scsi_dh;
 	if (!scsi_dh || !get_device(&sdev->sdev_gendev))
@@ -450,7 +454,7 @@ int scsi_dh_activate(struct request_queue *q)
 		return err;
 
 	if (scsi_dh->activate)
-		err = scsi_dh->activate(sdev);
+		err = scsi_dh->activate(sdev, fn, data);
 	put_device(&sdev->sdev_gendev);
 	return err;
 }
@@ -501,7 +505,7 @@ int scsi_dh_handler_exist(const char *name)
 EXPORT_SYMBOL_GPL(scsi_dh_handler_exist);
 
 /*
- * scsi_dh_handler_attach - Attach device handler
+ * scsi_dh_attach - Attach device handler
  * @sdev - sdev the handler should be attached to
  * @name - name of the handler to attach
  */
@@ -517,7 +521,7 @@ int scsi_dh_attach(struct request_queue *q, const char *name)
 		return -EINVAL;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	sdev = q->queuedata;
+	sdev = scsi_device_from_queue(q);
 	if (!sdev || !get_device(&sdev->sdev_gendev))
 		err = -ENODEV;
 	spin_unlock_irqrestore(q->queue_lock, flags);
@@ -531,7 +535,7 @@ int scsi_dh_attach(struct request_queue *q, const char *name)
 EXPORT_SYMBOL_GPL(scsi_dh_attach);
 
 /*
- * scsi_dh_handler_detach - Detach device handler
+ * scsi_dh_detach - Detach device handler
  * @sdev - sdev the handler should be detached from
  *
  * This function will detach the device handler only
@@ -545,7 +549,7 @@ void scsi_dh_detach(struct request_queue *q)
 	struct scsi_device_handler *scsi_dh = NULL;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	sdev = q->queuedata;
+	sdev = scsi_device_from_queue(q);
 	if (!sdev || !get_device(&sdev->sdev_gendev))
 		sdev = NULL;
 	spin_unlock_irqrestore(q->queue_lock, flags);

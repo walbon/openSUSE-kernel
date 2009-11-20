@@ -722,23 +722,19 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 			sense_deferred = scsi_sense_is_deferred(&sshdr);
 	}
 
-	if (blk_pc_request(req)) { /* SG_IO ioctl from block level */
-		req->errors = result;
-		if (result) {
-			if (sense_valid && req->sense) {
-				/*
-				 * SG_IO wants current and deferred errors
-				 */
-				int len = 8 + cmd->sense_buffer[7];
+	req->errors = result;
+	if (sense_valid && req->sense) {
+		int len = 8 + cmd->sense_buffer[7];
 
-				if (len > SCSI_SENSE_BUFFERSIZE)
-					len = SCSI_SENSE_BUFFERSIZE;
-				memcpy(req->sense, cmd->sense_buffer,  len);
-				req->sense_len = len;
-			}
-			if (!sense_deferred)
-				error = -EIO;
-		}
+		if (len > SCSI_SENSE_BUFFERSIZE)
+			len = SCSI_SENSE_BUFFERSIZE;
+		memcpy(req->sense, cmd->sense_buffer,  len);
+		req->sense_len = len;
+	}
+
+	if (blk_pc_request(req)) { /* SG_IO ioctl from block level */
+		if ((result) && (!sense_deferred))
+			error = -EIO;
 
 		req->resid_len = scsi_get_resid(cmd);
 
@@ -1584,6 +1580,17 @@ static void scsi_request_fn(struct request_queue *q)
 	put_device(&sdev->sdev_gendev);
 	spin_lock_irq(q->queue_lock);
 }
+
+struct scsi_device *scsi_device_from_queue(struct request_queue *q)
+{
+	struct scsi_device *sdev = NULL;
+
+	if (q->request_fn == scsi_request_fn)
+		sdev = q->queuedata;
+
+	return sdev;
+}
+EXPORT_SYMBOL_GPL(scsi_device_from_queue);
 
 u64 scsi_calculate_bounce_limit(struct Scsi_Host *shost)
 {

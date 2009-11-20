@@ -81,11 +81,14 @@ struct scsi_device {
 	struct list_head starved_entry;
 	struct scsi_cmnd *current_cmnd;	/* currently active command */
 	unsigned short queue_depth;	/* How deep of a queue we want */
+	unsigned short max_queue_depth;	/* max queue depth */
 	unsigned short last_queue_full_depth; /* These two are used by */
 	unsigned short last_queue_full_count; /* scsi_track_queue_full() */
-	unsigned long last_queue_full_time;/* don't let QUEUE_FULLs on the same
-					   jiffie count on our counter, they
-					   could all be from the same event. */
+	unsigned long last_queue_full_time;	/* last queue full time */
+	unsigned long queue_ramp_up_period;	/* ramp up period in jiffies */
+#define SCSI_DEFAULT_RAMP_UP_PERIOD	(120 * HZ)
+
+	unsigned long last_queue_ramp_up;	/* last queue ramp up time */
 
 	unsigned int id, lun, channel;
 
@@ -176,6 +179,7 @@ struct scsi_dh_devlist {
 	char tgps;
 };
 
+typedef void (*activate_complete)(void *, int);
 struct scsi_device_handler {
 	/* Used by the infrastructure */
 	struct list_head list; /* list of scsi_device_handlers */
@@ -187,7 +191,7 @@ struct scsi_device_handler {
 	int (*check_sense)(struct scsi_device *, struct scsi_sense_hdr *);
 	int (*attach)(struct scsi_device *);
 	void (*detach)(struct scsi_device *);
-	int (*activate)(struct scsi_device *);
+	int (*activate)(struct scsi_device *, activate_complete, void *);
 	int (*prep_fn)(struct scsi_device *, struct request *);
 	int (*set_params)(struct scsi_device *, const char *);
 };
@@ -294,6 +298,7 @@ extern void starget_for_each_device(struct scsi_target *, void *,
 extern void __starget_for_each_device(struct scsi_target *, void *,
 				      void (*fn)(struct scsi_device *,
 						 void *));
+extern struct scsi_device *scsi_device_from_queue(struct request_queue *);
 
 /* only exposed to implement shost_for_each_device */
 extern struct scsi_device *__scsi_iterate_devices(struct Scsi_Host *,

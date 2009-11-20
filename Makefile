@@ -1,7 +1,7 @@
 VERSION = 2
 PATCHLEVEL = 6
 SUBLEVEL = 32
-EXTRAVERSION = -rc7
+EXTRAVERSION = -rc8
 NAME = Man-Eating Seals of Antiquity
 
 # *DOCUMENTATION*
@@ -57,6 +57,20 @@ ifeq ("$(origin C)", "command line")
 endif
 ifndef KBUILD_CHECKSRC
   KBUILD_CHECKSRC = 0
+endif
+
+# Call message checker as part of the C compilation
+#
+# Use 'make D=1' to enable checking
+# Use 'make D=2' to create the message catalog
+
+ifdef D
+  ifeq ("$(origin D)", "command line")
+    KBUILD_KMSG_CHECK = $(D)
+  endif
+endif
+ifndef KBUILD_KMSG_CHECK
+  KBUILD_KMSG_CHECK = 0
 endif
 
 # Use make M=dir to specify directory of external module to build
@@ -221,7 +235,7 @@ CONFIG_SHELL := $(shell if [ -x "$$BASH" ]; then echo $$BASH; \
 
 HOSTCC       = gcc
 HOSTCXX      = g++
-HOSTCFLAGS   = -Wall -Wstrict-prototypes -O2 -fomit-frame-pointer
+HOSTCFLAGS   = -Wall -Wmissing-prototypes -Wstrict-prototypes -O2 -fomit-frame-pointer
 HOSTCXXFLAGS = -O2
 
 # Decide whether to build built-in, modular, or both.
@@ -323,6 +337,7 @@ CHECK		= sparse
 
 CHECKFLAGS     := -D__linux__ -Dlinux -D__STDC__ -Dunix -D__unix__ \
 		  -Wbitwise -Wno-return-void $(CF)
+KMSG_CHECK	= $(srctree)/scripts/kmsg-doc
 MODFLAGS	= -DMODULE
 CFLAGS_MODULE   = $(MODFLAGS)
 AFLAGS_MODULE   = $(MODFLAGS)
@@ -366,6 +381,7 @@ export HOSTCXX HOSTCXXFLAGS LDFLAGS_MODULE CHECK CHECKFLAGS
 export KBUILD_CPPFLAGS NOSTDINC_FLAGS LINUXINCLUDE OBJCOPYFLAGS LDFLAGS
 export KBUILD_CFLAGS CFLAGS_KERNEL CFLAGS_MODULE CFLAGS_GCOV
 export KBUILD_AFLAGS AFLAGS_KERNEL AFLAGS_MODULE
+export KBUILD_KMSG_CHECK KMSG_CHECK
 
 # When compiling out-of-tree modules, put MODVERDIR in the module
 # tree rather than in the kernel tree. The kernel tree might
@@ -656,6 +672,7 @@ export mod_strip_cmd
 ifeq ($(KBUILD_EXTMOD),)
 core-y		+= kernel/ mm/ fs/ ipc/ security/ crypto/ block/
 core-$(CONFIG_KDB) += kdb/
+core-$(CONFIG_PERFMON) += perfmon/
 
 vmlinux-dirs	:= $(patsubst %/,%,$(filter %/, $(init-y) $(init-m) \
 		     $(core-y) $(core-m) $(drivers-y) $(drivers-m) \

@@ -43,6 +43,12 @@ struct blk_queue_tags;
 #define DISABLE_CLUSTERING 0
 #define ENABLE_CLUSTERING 1
 
+enum {
+	SCSI_QDEPTH_DEFAULT,	/* default requested change, e.g. from sysfs */
+	SCSI_QDEPTH_QFULL,	/* scsi-ml requested due to queue full */
+	SCSI_QDEPTH_RAMP_UP,	/* scsi-ml requested due to threshhold event */
+};
+
 struct scsi_host_template {
 	struct module *module;
 	const char *name;
@@ -294,7 +300,7 @@ struct scsi_host_template {
 	 *
 	 * Status: OPTIONAL
 	 */
-	int (* change_queue_depth)(struct scsi_device *, int);
+	int (* change_queue_depth)(struct scsi_device *, int, int);
 
 	/*
 	 * Fill in this function to allow the changing of tag types
@@ -821,30 +827,23 @@ static inline unsigned int scsi_host_get_prot(struct Scsi_Host *shost)
 
 static inline unsigned int scsi_host_dif_capable(struct Scsi_Host *shost, unsigned int target_type)
 {
-	switch (target_type) {
-	case 1:
-		if (shost->prot_capabilities & SHOST_DIF_TYPE1_PROTECTION)
-			return target_type;
-	case 2:
-		if (shost->prot_capabilities & SHOST_DIF_TYPE2_PROTECTION)
-			return target_type;
-	case 3:
-		if (shost->prot_capabilities & SHOST_DIF_TYPE3_PROTECTION)
-			return target_type;
-	}
+	static unsigned char cap[] = { 0,
+				       SHOST_DIF_TYPE1_PROTECTION,
+				       SHOST_DIF_TYPE2_PROTECTION,
+				       SHOST_DIF_TYPE3_PROTECTION };
 
-	return 0;
+	return shost->prot_capabilities & cap[target_type] ? target_type : 0;
 }
 
 static inline unsigned int scsi_host_dix_capable(struct Scsi_Host *shost, unsigned int target_type)
 {
 #if defined(CONFIG_BLK_DEV_INTEGRITY)
-	switch (target_type) {
-	case 0: return shost->prot_capabilities & SHOST_DIX_TYPE0_PROTECTION;
-	case 1: return shost->prot_capabilities & SHOST_DIX_TYPE1_PROTECTION;
-	case 2: return shost->prot_capabilities & SHOST_DIX_TYPE2_PROTECTION;
-	case 3: return shost->prot_capabilities & SHOST_DIX_TYPE3_PROTECTION;
-	}
+	static unsigned char cap[] = { SHOST_DIX_TYPE0_PROTECTION,
+				       SHOST_DIX_TYPE1_PROTECTION,
+				       SHOST_DIX_TYPE2_PROTECTION,
+				       SHOST_DIX_TYPE3_PROTECTION };
+
+	return shost->prot_capabilities & cap[target_type];
 #endif
 	return 0;
 }

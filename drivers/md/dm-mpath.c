@@ -19,6 +19,7 @@
 #include <linux/time.h>
 #include <linux/workqueue.h>
 #include <scsi/scsi_dh.h>
+#include <scsi/scsi_eh.h>
 #include <asm/atomic.h>
 
 #define DM_MSG_PREFIX "multipath"
@@ -101,6 +102,7 @@ struct multipath {
 struct dm_mpath_io {
 	struct pgpath *pgpath;
 	size_t nr_bytes;
+	char sense[SCSI_SENSE_BUFFERSIZE];
 };
 
 typedef int (*action_fn) (struct pgpath *pgpath);
@@ -143,7 +145,8 @@ static void deactivate_path(struct work_struct *work)
 	struct pgpath *pgpath =
 		container_of(work, struct pgpath, deactivate_path);
 
-	blk_abort_queue(pgpath->path.dev->bdev->bd_disk->queue);
+	if (pgpath->path.dev)
+		blk_abort_queue(pgpath->path.dev->bdev->bd_disk->queue);
 }
 
 static struct priority_group *alloc_priority_group(void)
@@ -254,6 +257,11 @@ static int __choose_path_in_pg(struct multipath *m, struct priority_group *pg,
 		return -ENXIO;
 
 	m->current_pgpath = path_to_pgpath(path);
+
+	if (!m->current_pgpath->path.dev) {
+		m->current_pgpath = NULL;
+		return -ENODEV;
+	}
 
 	if (m->current_pg != pg)
 		__switch_pg(m, m->current_pgpath);
@@ -578,6 +586,7 @@ static struct pgpath *parse_path(struct arg_set *as, struct path_selector *ps,
 {
 	int r;
 	struct pgpath *p;
+	char *path;
 	struct multipath *m = ti->private;
 
 	/* we need at least a path arg */
@@ -590,30 +599,57 @@ static struct pgpath *parse_path(struct arg_set *as, struct path_selector *ps,
 	if (!p)
 		return ERR_PTR(-ENOMEM);
 
-	r = dm_get_device(ti, shift(as), ti->begin, ti->len,
+	path = shift(as);
+	r = dm_get_device(ti, path, ti->begin, ti->len,
 			  dm_table_get_mode(ti->table), &p->path.dev);
 	if (r) {
-		ti->error = "error getting device";
-		goto bad;
+		unsigned major, minor;
+
+		/* Try to add a failed device */
+		if (r == -ENXIO && sscanf(path, "%u:%u", &major, &minor) == 2) {
+			dev_t dev;
+
+			/* Extract the major/minor numbers */
+			dev = MKDEV(major, minor);
+			if (MAJOR(dev) != major || MINOR(dev) != minor) {
+				/* Nice try, didn't work */
+				DMWARN("Invalid device path %s", path);
+				ti->error = "error converting devnum";
+				goto bad;
+			}
+			DMWARN("adding disabled device %d:%d", major, minor);
+			p->path.dev = NULL;
+			format_dev_t(p->path.pdev, dev);
+			p->is_active = 0;
+		} else {
+			ti->error = "error getting device";
+			goto bad;
+		}
+	} else {
+		memcpy(p->path.pdev, p->path.dev->name, 16);
 	}
 
-	if (m->hw_handler_name) {
+	if (p->path.dev) {
 		struct request_queue *q = bdev_get_queue(p->path.dev->bdev);
 
-		r = scsi_dh_attach(q, m->hw_handler_name);
-		if (r == -EBUSY) {
-			/*
-			 * Already attached to different hw_handler,
-			 * try to reattach with correct one.
-			 */
-			scsi_dh_detach(q);
+		if (m->hw_handler_name) {
 			r = scsi_dh_attach(q, m->hw_handler_name);
-		}
-
-		if (r < 0) {
-			ti->error = "error attaching hardware handler";
-			dm_put_device(ti, p->path.dev);
-			goto bad;
+			if (r == -EBUSY) {
+				/*
+				 * Already attached to different hw_handler,
+				 * try to reattach with correct one.
+				 */
+				scsi_dh_detach(q);
+				r = scsi_dh_attach(q, m->hw_handler_name);
+			}
+			if (r < 0) {
+				ti->error = "error attaching hardware handler";
+				dm_put_device(ti, p->path.dev);
+				goto bad;
+			}
+		} else {
+			/* Play safe and detach hardware handler */
+			scsi_dh_detach(q);
 		}
 
 		if (m->hw_handler_params) {
@@ -634,6 +670,11 @@ static struct pgpath *parse_path(struct arg_set *as, struct path_selector *ps,
 		goto bad;
 	}
 
+	if (!p->is_active) {
+		ps->type->fail_path(ps, &p->path);
+		p->fail_count++;
+		m->nr_valid_paths--;
+	}
 	return p;
 
  bad:
@@ -911,6 +952,9 @@ static int multipath_map(struct dm_target *ti, struct request *clone,
 
 	map_context->ptr = mpio;
 	clone->cmd_flags |= REQ_FAILFAST_TRANSPORT;
+	/* Always attach a sense buffer */
+	if (!clone->sense)
+		clone->sense = mpio->sense;
 	r = map_io(m, clone, mpio, 0);
 	if (r < 0 || r == DM_MAPIO_REQUEUE)
 		mempool_free(mpio, m->mpio_pool);
@@ -931,7 +975,7 @@ static int fail_path(struct pgpath *pgpath)
 	if (!pgpath->is_active)
 		goto out;
 
-	DMWARN("Failing path %s.", pgpath->path.dev->name);
+	DMWARN("Failing path %s.", pgpath->path.pdev);
 
 	pgpath->pg->ps.type->fail_path(&pgpath->pg->ps, &pgpath->path);
 	pgpath->is_active = 0;
@@ -943,7 +987,7 @@ static int fail_path(struct pgpath *pgpath)
 		m->current_pgpath = NULL;
 
 	dm_path_uevent(DM_UEVENT_PATH_FAILED, m->ti,
-		      pgpath->path.dev->name, m->nr_valid_paths);
+		       pgpath->path.pdev, m->nr_valid_paths);
 
 	schedule_work(&m->trigger_event);
 	queue_work(kmultipathd, &pgpath->deactivate_path);
@@ -968,6 +1012,12 @@ static int reinstate_path(struct pgpath *pgpath)
 	if (pgpath->is_active)
 		goto out;
 
+	if (!pgpath->path.dev) {
+		DMWARN("Cannot reinstate disabled path %s", pgpath->path.pdev);
+		r = -ENODEV;
+		goto out;
+	}
+
 	if (!pgpath->pg->ps.type->reinstate_path) {
 		DMWARN("Reinstate path not supported by path selector %s",
 		       pgpath->pg->ps.type->name);
@@ -990,7 +1040,7 @@ static int reinstate_path(struct pgpath *pgpath)
 	}
 
 	dm_path_uevent(DM_UEVENT_PATH_REINSTATED, m->ti,
-		      pgpath->path.dev->name, m->nr_valid_paths);
+		       pgpath->path.pdev, m->nr_valid_paths);
 
 	schedule_work(&m->trigger_event);
 
@@ -1009,6 +1059,9 @@ static int action_dev(struct multipath *m, struct dm_dev *dev,
 	int r = 0;
 	struct pgpath *pgpath;
 	struct priority_group *pg;
+
+	if (!dev)
+		return 0;
 
 	list_for_each_entry(pg, &m->priority_groups, list) {
 		list_for_each_entry(pgpath, &pg->pgpaths, list) {
@@ -1114,8 +1167,9 @@ static int pg_init_limit_reached(struct multipath *m, struct pgpath *pgpath)
 	return limit_reached;
 }
 
-static void pg_init_done(struct dm_path *path, int errors)
+static void pg_init_done(void *data, int errors)
 {
+	struct dm_path *path = data;
 	struct pgpath *pgpath = path_to_pgpath(path);
 	struct priority_group *pg = pgpath->pg;
 	struct multipath *m = pg->m;
@@ -1181,12 +1235,50 @@ static void pg_init_done(struct dm_path *path, int errors)
 
 static void activate_path(struct work_struct *work)
 {
-	int ret;
 	struct pgpath *pgpath =
 		container_of(work, struct pgpath, activate_path);
 
-	ret = scsi_dh_activate(bdev_get_queue(pgpath->path.dev->bdev));
-	pg_init_done(&pgpath->path, ret);
+	if (pgpath->path.dev)
+		scsi_dh_activate(bdev_get_queue(pgpath->path.dev->bdev),
+				 pg_init_done, &pgpath->path);
+}
+
+/*
+ * Evaluate scsi return code
+ */
+static int eval_scsi_error(int result, char *sense, int sense_len)
+{
+	struct scsi_sense_hdr sshdr;
+	int r = DM_ENDIO_REQUEUE;
+
+	if (host_byte(result) != DID_OK)
+		return r;
+
+	if (msg_byte(result) != COMMAND_COMPLETE)
+		return r;
+
+	if (status_byte(result) == RESERVATION_CONFLICT)
+		/* Do not retry here, possible data corruption */
+		return -EIO;
+
+#if defined(CONFIG_SCSI) || defined(CONFIG_SCSI_MODULE)
+	if (status_byte(result) == CHECK_CONDITION &&
+	    !scsi_normalize_sense(sense, sense_len, &sshdr)) {
+
+		switch (sshdr.sense_key) {
+		case MEDIUM_ERROR:
+		case DATA_PROTECT:
+		case BLANK_CHECK:
+		case COPY_ABORTED:
+		case VOLUME_OVERFLOW:
+		case MISCOMPARE:
+			r = -EIO;
+			break;
+		}
+	}
+#endif
+
+	return r;
 }
 
 /*
@@ -1215,6 +1307,10 @@ static int do_end_io(struct multipath *m, struct request *clone,
 	if (error == -EOPNOTSUPP)
 		return error;
 
+	r = eval_scsi_error(clone->errors, clone->sense, clone->sense_len);
+	if (r != DM_ENDIO_REQUEUE)
+		return r;
+
 	if (mpio->pgpath)
 		fail_path(mpio->pgpath);
 
@@ -1240,6 +1336,10 @@ static int multipath_end_io(struct dm_target *ti, struct request *clone,
 		ps = &pgpath->pg->ps;
 		if (ps->type->end_io)
 			ps->type->end_io(ps, &pgpath->path, mpio->nr_bytes);
+	}
+	if (clone->sense == mpio->sense) {
+		clone->sense = NULL;
+		clone->sense_len = 0;
 	}
 	mempool_free(mpio, m->mpio_pool);
 
@@ -1352,7 +1452,7 @@ static int multipath_status(struct dm_target *ti, status_type_t type,
 			       pg->ps.type->info_args);
 
 			list_for_each_entry(p, &pg->pgpaths, list) {
-				DMEMIT("%s %s %u ", p->path.dev->name,
+				DMEMIT("%s %s %u ", p->path.pdev,
 				       p->is_active ? "A" : "F",
 				       p->fail_count);
 				if (pg->ps.type->status)
@@ -1378,7 +1478,7 @@ static int multipath_status(struct dm_target *ti, status_type_t type,
 			       pg->ps.type->table_args);
 
 			list_for_each_entry(p, &pg->pgpaths, list) {
-				DMEMIT("%s ", p->path.dev->name);
+				DMEMIT("%s ", p->path.pdev);
 				if (pg->ps.type->status)
 					sz += pg->ps.type->status(&pg->ps,
 					      &p->path, type, result + sz,
@@ -1456,7 +1556,7 @@ static int multipath_ioctl(struct dm_target *ti, unsigned int cmd,
 	if (!m->current_pgpath)
 		__choose_pgpath(m, 0);
 
-	if (m->current_pgpath) {
+	if (m->current_pgpath && m->current_pgpath->path.dev) {
 		bdev = m->current_pgpath->path.dev->bdev;
 		mode = m->current_pgpath->path.dev->mode;
 	}

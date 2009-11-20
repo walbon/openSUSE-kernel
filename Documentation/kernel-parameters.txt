@@ -217,6 +217,10 @@ and is between 256 and 4096 characters. It is defined in the file
 
 	acpi_no_auto_ssdt	[HW,ACPI] Disable automatic loading of SSDT
 
+	acpi_no_initrd_override		[KNL,ACPI]
+	acpi_no_initramfs_override	[KNL,ACPI]
+			Disable loading custom ACPI tables from the initramfs
+
 	acpi_os_name=	[HW,ACPI] Tell ACPI BIOS the name of the OS
 			Format: To spoof as Windows 98: ="Microsoft Windows"
 
@@ -2018,6 +2022,9 @@ and is between 256 and 4096 characters. It is defined in the file
 			See comments in mm/percpu.c for details on each
 			allocator.  This parameter is primarily	for debugging
 			and performance comparison.
+
+	perfmon_debug	[PERFMON] Enables Perfmon debug messages. Needed
+			to see traces of the early startup startup phase.
 
 	pf.		[PARIDE]
 			See Documentation/blockdev/paride.txt.
