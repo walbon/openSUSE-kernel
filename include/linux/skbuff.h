@@ -390,7 +390,7 @@ struct sk_buff {
 #endif
 	kmemcheck_bitfield_end(flags2);
 
-	/* 0/14 bit hole */
+	/* 0/9...15 bit hole */
 
 #ifdef CONFIG_NET_DMA
 	dma_cookie_t		dma_cookie;
@@ -1512,6 +1512,16 @@ static inline struct sk_buff *netdev_alloc_skb(struct net_device *dev,
 		unsigned int length)
 {
 	return __netdev_alloc_skb(dev, length, GFP_ATOMIC);
+}
+
+static inline struct sk_buff *netdev_alloc_skb_ip_align(struct net_device *dev,
+		unsigned int length)
+{
+	struct sk_buff *skb = netdev_alloc_skb(dev, length + NET_IP_ALIGN);
+
+	if (NET_IP_ALIGN && skb)
+		skb_reserve(skb, NET_IP_ALIGN);
+	return skb;
 }
 
 extern struct page *__netdev_alloc_page(struct net_device *dev, gfp_t gfp_mask);

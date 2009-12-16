@@ -815,6 +815,7 @@ const_debug unsigned int sysctl_sched_nr_migrate = 32;
  * default: 0.25ms
  */
 unsigned int sysctl_sched_shares_ratelimit = 250000;
+unsigned int normalized_sysctl_sched_shares_ratelimit = 250000;
 
 /*
  * Inject some fuzzyness into changing the per-cpu group shares
@@ -1811,6 +1812,8 @@ static void cfs_rq_set_shares(struct cfs_rq *cfs_rq, unsigned long shares)
 #endif
 
 static void calc_load_account_active(struct rq *this_rq);
+static void update_sysctl(void);
+static int get_update_sysctl_factor(void);
 
 #include "sched_stats.h"
 #include "sched_idletask.c"
@@ -7004,22 +7007,43 @@ cpumask_var_t nohz_cpu_mask;
  *
  * This idea comes from the SD scheduler of Con Kolivas:
  */
+static int get_update_sysctl_factor(void)
+{
+	unsigned int cpus = min_t(int, num_online_cpus(), 8);
+	unsigned int factor;
+
+	switch (sysctl_sched_tunable_scaling) {
+	case SCHED_TUNABLESCALING_NONE:
+		factor = 1;
+		break;
+	case SCHED_TUNABLESCALING_LINEAR:
+		factor = cpus;
+		break;
+	case SCHED_TUNABLESCALING_LOG:
+	default:
+		factor = 1 + ilog2(cpus);
+		break;
+	}
+
+	return factor;
+}
+
+static void update_sysctl(void)
+{
+	unsigned int factor = get_update_sysctl_factor();
+
+#define SET_SYSCTL(name) \
+	(sysctl_##name = (factor) * normalized_sysctl_##name)
+	SET_SYSCTL(sched_min_granularity);
+	SET_SYSCTL(sched_latency);
+	SET_SYSCTL(sched_wakeup_granularity);
+	SET_SYSCTL(sched_shares_ratelimit);
+#undef SET_SYSCTL
+}
+
 static inline void sched_init_granularity(void)
 {
-	unsigned int factor = 1 + ilog2(num_online_cpus());
-	const unsigned long limit = 200000000;
-
-	sysctl_sched_min_granularity *= factor;
-	if (sysctl_sched_min_granularity > limit)
-		sysctl_sched_min_granularity = limit;
-
-	sysctl_sched_latency *= factor;
-	if (sysctl_sched_latency > limit)
-		sysctl_sched_latency = limit;
-
-	sysctl_sched_wakeup_granularity *= factor;
-
-	sysctl_sched_shares_ratelimit *= factor;
+	update_sysctl();
 }
 
 #ifdef CONFIG_SMP
@@ -8046,6 +8070,7 @@ static cpumask_var_t cpu_isolated_map;
 /* Setup the mask of cpus configured for isolated domains */
 static int __init isolated_cpu_setup(char *str)
 {
+	alloc_bootmem_cpumask_var(&cpu_isolated_map);
 	cpulist_parse(str, cpu_isolated_map);
 	return 1;
 }
@@ -9572,7 +9597,9 @@ void __init sched_init(void)
 	zalloc_cpumask_var(&nohz.cpu_mask, GFP_NOWAIT);
 	alloc_cpumask_var(&nohz.ilb_grp_nohz_mask, GFP_NOWAIT);
 #endif
-	zalloc_cpumask_var(&cpu_isolated_map, GFP_NOWAIT);
+	/* May be allocated at isolcpus cmdline parse time */
+	if (cpu_isolated_map == NULL)
+		zalloc_cpumask_var(&cpu_isolated_map, GFP_NOWAIT);
 #endif /* SMP */
 
 	perf_event_init();
@@ -10801,97 +10828,6 @@ struct cgroup_subsys cpuacct_subsys = {
 };
 #endif	/* CONFIG_CGROUP_CPUACCT */
 
-#ifdef	CONFIG_KDB
-
-#include <linux/kdb.h>
-
-static void
-kdb_prio(char *name, struct rt_prio_array *array, kdb_printf_t xxx_printf,
-	unsigned int cpu)
-{
-	int pri, printed_header = 0;
-	struct task_struct *p;
-
-	xxx_printf("  %s rt bitmap: 0x%lx 0x%lx 0x%lx\n",
-		name,
-		array->bitmap[0], array->bitmap[1], array->bitmap[2]);
-
-	pri = sched_find_first_bit(array->bitmap);
-	if (pri < MAX_RT_PRIO) {
-		xxx_printf("   rt bitmap priorities:");
-		while (pri < MAX_RT_PRIO) {
-			xxx_printf(" %d", pri);
-			pri++;
-			pri = find_next_bit(array->bitmap, MAX_RT_PRIO, pri);
-		}
-		xxx_printf("\n");
-	}
-
-	for (pri = 0; pri < MAX_RT_PRIO; pri++) {
-		int printed_hdr = 0;
-		struct list_head *head, *curr;
-
-		head = array->queue + pri;
-		curr = head->next;
-		while(curr != head) {
-			struct task_struct *task;
-			if (!printed_hdr) {
-				xxx_printf("   queue at priority=%d\n", pri);
-				printed_hdr = 1;
-			}
-			task = list_entry(curr, struct task_struct, rt.run_list);
-			if (task)
-				xxx_printf("    0x%p %d %s  time_slice:%d\n",
-				   task, task->pid, task->comm,
-				   task->rt.time_slice);
-			curr = curr->next;
-		}
-	}
-	for_each_process(p) {
-		if (p->se.on_rq && (task_cpu(p) == cpu) &&
-		   (p->policy == SCHED_NORMAL)) {
-			if (!printed_header) {
-				xxx_printf("  sched_normal queue:\n");
-				printed_header = 1;
-			}
-			xxx_printf("    0x%p %d %s pri:%d spri:%d npri:%d\n",
-				p, p->pid, p->comm, p->prio,
-				p->static_prio, p->normal_prio);
-		}
-	}
-}
-
-/* This code must be in sched.c because struct rq is only defined in this
- * source.  To allow most of kdb to be modular, this code cannot call any kdb
- * functions directly, any external functions that it needs must be passed in
- * as parameters.
- */
-
-void
-kdb_runqueue(unsigned long cpu, kdb_printf_t xxx_printf)
-{
-	struct rq *rq;
-
-	rq = cpu_rq(cpu);
-
-	xxx_printf("CPU%ld lock:%s curr:0x%p(%d)(%s)",
-		   cpu, (spin_is_locked(&rq->lock))?"LOCKED":"free",
-		   rq->curr, rq->curr->pid, rq->curr->comm);
-	if (rq->curr == rq->idle)
-		xxx_printf(" is idle");
-	xxx_printf("\n ");
-#ifdef CONFIG_SMP
-	xxx_printf(" cpu_load:%lu %lu %lu",
-			rq->cpu_load[0], rq->cpu_load[1], rq->cpu_load[2]);
-#endif
-	xxx_printf(" nr_running:%lu nr_switches:%llu\n",
-		   rq->nr_running, (long long)rq->nr_switches);
-	kdb_prio("active", &rq->rt.active, xxx_printf, (unsigned int)cpu);
-}
-EXPORT_SYMBOL(kdb_runqueue);
-
-#endif	/* CONFIG_KDB */
-
 #ifndef CONFIG_SMP
 
 int rcu_expedited_torture_stats(char *page)
@@ -11001,3 +10937,110 @@ void synchronize_sched_expedited(void)
 EXPORT_SYMBOL_GPL(synchronize_sched_expedited);
 
 #endif /* #else #ifndef CONFIG_SMP */
+
+
+#ifdef	CONFIG_KDB
+#include <linux/kdb.h>
+
+static void
+kdb_prio(char *name, struct rt_prio_array *array, kdb_printf_t xxx_printf,
+	unsigned int cpu)
+{
+	int pri, printed_header = 0;
+	struct task_struct *p;
+
+	xxx_printf(" %s rt bitmap: 0x%lx 0x%lx 0x%lx\n",
+		name,
+		array->bitmap[0], array->bitmap[1], array->bitmap[2]);
+
+	pri = sched_find_first_bit(array->bitmap);
+	if (pri < MAX_RT_PRIO) {
+		xxx_printf("   rt bitmap priorities:");
+		while (pri < MAX_RT_PRIO) {
+			xxx_printf(" %d", pri);
+			pri++;
+			pri = find_next_bit(array->bitmap, MAX_RT_PRIO, pri);
+		}
+		xxx_printf("\n");
+	}
+
+	for (pri = 0; pri < MAX_RT_PRIO; pri++) {
+		int printed_hdr = 0;
+		struct list_head *head, *curr;
+
+		head = array->queue + pri;
+		curr = head->next;
+		while(curr != head) {
+			struct task_struct *task;
+			if (!printed_hdr) {
+				xxx_printf("   queue at priority=%d\n", pri);
+				printed_hdr = 1;
+			}
+			task = list_entry(curr, struct task_struct, rt.run_list);
+			if (task)
+				xxx_printf("    0x%p %d %s  time_slice:%d\n",
+				   task, task->pid, task->comm,
+				   task->rt.time_slice);
+			curr = curr->next;
+		}
+	}
+	for_each_process(p) {
+		if (p->se.on_rq && (task_cpu(p) == cpu) &&
+		   (p->policy == SCHED_NORMAL)) {
+			if (!printed_header) {
+				xxx_printf("  sched_normal queue:\n");
+				printed_header = 1;
+			}
+			xxx_printf("    0x%p %d %s pri:%d spri:%d npri:%d\n",
+				p, p->pid, p->comm, p->prio,
+				p->static_prio, p->normal_prio);
+		}
+	}
+}
+
+/* This code must be in sched.c because struct rq is only defined in this
+ * source.  To allow most of kdb to be modular, this code cannot call any kdb
+ * functions directly, any external functions that it needs must be passed in
+ * as parameters.
+ */
+
+void
+kdb_runqueue(unsigned long cpu, kdb_printf_t xxx_printf)
+{
+	int i;
+	struct rq *rq;
+
+	rq = cpu_rq(cpu);
+
+	xxx_printf("CPU%ld lock:%s curr:0x%p(%d)(%s)",
+		   cpu, (spin_is_locked(&rq->lock))?"LOCKED":"free",
+		   rq->curr, rq->curr->pid, rq->curr->comm);
+	if (rq->curr == rq->idle)
+		xxx_printf(" is idle");
+	xxx_printf("\n");
+
+	xxx_printf(" nr_running:%ld ", rq->nr_running);
+	xxx_printf(" nr_uninterruptible:%ld ", rq->nr_uninterruptible);
+
+	xxx_printf(" nr_switches:%llu ", (long long)rq->nr_switches);
+	xxx_printf(" nr_iowait:%u ", atomic_read(&rq->nr_iowait));
+	xxx_printf(" next_balance:%lu\n", rq->next_balance);
+
+#ifdef CONFIG_SMP
+	xxx_printf(" active_balance:%u ", rq->active_balance);
+	xxx_printf(" idle_at_tick:%u\n", rq->idle_at_tick);
+
+	xxx_printf(" push_cpu:%u ", rq->push_cpu);
+	xxx_printf(" cpu:%u ", rq->cpu);
+	xxx_printf(" online:%u\n", rq->online);
+#endif
+
+	xxx_printf(" cpu_load:");
+	for (i=0; i<CPU_LOAD_IDX_MAX; i++)
+		xxx_printf(" %lu", rq->cpu_load[i]);
+	xxx_printf("\n");
+	kdb_prio("active", &rq->rt.active, xxx_printf, (unsigned int)cpu);
+}
+EXPORT_SYMBOL(kdb_runqueue);
+
+#endif	/* CONFIG_KDB */
