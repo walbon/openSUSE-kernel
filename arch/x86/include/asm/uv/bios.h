@@ -36,11 +36,7 @@ enum uv_bios_cmd {
 	UV_BIOS_WATCHLIST_ALLOC,
 	UV_BIOS_WATCHLIST_FREE,
 	UV_BIOS_MEMPROTECT,
-	UV_BIOS_GET_PARTITION_ADDR,
-	UV_BIOS_HWPERF,
-	UV_BIOS_GET_PCI_TOPOLOGY,
-	UV_BIOS_GET_PCIBUS_INFO,
-	UV_BIOS_GET_GEOINFO
+	UV_BIOS_GET_PARTITION_ADDR
 };
 
 /*
@@ -80,15 +76,6 @@ union partition_info_u {
 	};
 };
 
-union uv_watchlist_u {
-	u64	val;
-	struct {
-		u64	blade	: 16,
-			size	: 32,
-			filler	: 16;
-	};
-};
-
 enum uv_memprotect {
 	UV_MEMPROT_RESTRICT_ACCESS,
 	UV_MEMPROT_ALLOW_AMO,
@@ -104,15 +91,11 @@ extern s64 uv_bios_call_reentrant(enum uv_bios_cmd, u64, u64, u64, u64, u64);
 
 extern s64 uv_bios_get_sn_info(int, int *, long *, long *, long *, long *);
 extern s64 uv_bios_freq_base(u64, u64 *);
-extern int uv_bios_mq_watchlist_alloc(int, unsigned long, unsigned int,
+extern int uv_bios_mq_watchlist_alloc(unsigned long, unsigned int,
 					unsigned long *);
 extern int uv_bios_mq_watchlist_free(int, int);
 extern s64 uv_bios_change_memprotect(u64, u64, enum uv_memprotect);
 extern s64 uv_bios_reserved_page_pa(u64, u64 *, u64 *, u64 *);
-extern s64 uv_bios_hwperf(u64, u64 , u64 , u64, u64 *, int *);
-extern s64 uv_bios_get_pci_topology(u64, u64);
-extern s64 uv_bios_get_hubdev_info(u64, u64);
-extern s64 uv_bios_get_geoinfo(u64, u64, u64);
 
 extern void uv_bios_init(void);
 

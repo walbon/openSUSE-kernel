@@ -42,7 +42,7 @@ s64 uv_bios_call(enum uv_bios_cmd which, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5)
 			a1, a2, a3, a4, a5);
 	return ret;
 }
-EXPORT_SYMBOL(uv_bios_call);
+EXPORT_SYMBOL_GPL(uv_bios_call);
 
 s64 uv_bios_call_irqsave(enum uv_bios_cmd which, u64 a1, u64 a2, u64 a3,
 					u64 a4, u64 a5)
@@ -110,21 +110,17 @@ s64 uv_bios_get_sn_info(int fc, int *uvtype, long *partid, long *coher,
 EXPORT_SYMBOL_GPL(uv_bios_get_sn_info);
 
 int
-uv_bios_mq_watchlist_alloc(int blade, unsigned long addr, unsigned int mq_size,
+uv_bios_mq_watchlist_alloc(unsigned long addr, unsigned int mq_size,
 			   unsigned long *intr_mmr_offset)
 {
-	union uv_watchlist_u size_blade;
 	u64 watchlist;
 	s64 ret;
-
-	size_blade.size = mq_size;
-	size_blade.blade = blade;
 
 	/*
 	 * bios returns watchlist number or negative error number.
 	 */
 	ret = (int)uv_bios_call_irqsave(UV_BIOS_WATCHLIST_ALLOC, addr,
-			size_blade.val, (u64)intr_mmr_offset,
+			mq_size, (u64)intr_mmr_offset,
 			(u64)&watchlist, 0);
 	if (ret < BIOS_STATUS_SUCCESS)
 		return ret;
@@ -167,47 +163,6 @@ s64 uv_bios_freq_base(u64 clock_type, u64 *ticks_per_second)
 }
 EXPORT_SYMBOL_GPL(uv_bios_freq_base);
 
-s64 uv_bios_hwperf(u64 nasid, u64 opcode, u64 arg0, u64 arg1,
-		   u64 *ptdata, int *v0)
-{
-	s64 ret;
-
-	ret = uv_bios_call(UV_BIOS_HWPERF, nasid, opcode,
-			   arg0, arg1, (u64)ptdata);
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(uv_bios_hwperf);
-
-s64 uv_bios_get_pci_topology(u64 buf, u64 len)
-{
-	s64 ret;
-
-	ret = uv_bios_call(UV_BIOS_GET_PCI_TOPOLOGY, buf, len, 0, 0, 0);
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(uv_bios_get_pci_topology);
-
-s64 uv_bios_get_geoinfo(u64 nasid, u64 buf, u64 len)
-{
-	s64 ret;
-
-	ret = uv_bios_call(UV_BIOS_GET_GEOINFO, nasid, buf, len, 0, 0);
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(uv_bios_get_geoinfo);
-
-s64 uv_bios_get_hubdev_info(u64 nasid, u64 buf)
-{
-	s64 ret;
-
-	ret = uv_bios_call(UV_BIOS_GET_PCIBUS_INFO, nasid, buf, 0, 0, 0);
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(uv_bios_get_hubdev_info);
 
 #ifdef CONFIG_EFI
 void uv_bios_init(void)

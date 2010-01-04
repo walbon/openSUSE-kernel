@@ -347,6 +347,7 @@ struct azx_dev {
 					 */
 	unsigned char stream_tag;	/* assigned stream */
 	unsigned char index;		/* stream index */
+	int device;			/* last device number assigned to */
 
 	unsigned int opened :1;
 	unsigned int running :1;
@@ -677,6 +678,14 @@ static unsigned int azx_rirb_get_response(struct hda_bus *bus,
 		}
 	}
 
+	if (!chip->polling_mode) {
+		snd_printk(KERN_WARNING SFX "azx_get_response timeout, "
+			   "switching to polling mode: last cmd=0x%08x\n",
+			   chip->last_cmd[addr]);
+		chip->polling_mode = 1;
+		goto again;
+	}
+
 	if (chip->msi) {
 		snd_printk(KERN_WARNING SFX "No response from codec, "
 			   "disabling MSI: last cmd=0x%08x\n",
@@ -689,14 +698,6 @@ static unsigned int azx_rirb_get_response(struct hda_bus *bus,
 			bus->rirb_error = 1;
 			return -1;
 		}
-		goto again;
-	}
-
-	if (!chip->polling_mode) {
-		snd_printk(KERN_WARNING SFX "azx_get_response timeout, "
-			   "switching to polling mode: last cmd=0x%08x\n",
-			   chip->last_cmd[addr]);
-		chip->polling_mode = 1;
 		goto again;
 	}
 
@@ -1430,10 +1431,13 @@ static int __devinit azx_codec_configure(struct azx *chip)
  */
 
 /* assign a stream for the PCM */
-static inline struct azx_dev *azx_assign_device(struct azx *chip, int stream)
+static inline struct azx_dev *
+azx_assign_device(struct azx *chip, struct snd_pcm_substream *substream)
 {
 	int dev, i, nums;
-	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
+	struct azx_dev *res = NULL;
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		dev = chip->playback_index_offset;
 		nums = chip->playback_streams;
 	} else {
@@ -1442,10 +1446,15 @@ static inline struct azx_dev *azx_assign_device(struct azx *chip, int stream)
 	}
 	for (i = 0; i < nums; i++, dev++)
 		if (!chip->azx_dev[dev].opened) {
-			chip->azx_dev[dev].opened = 1;
-			return &chip->azx_dev[dev];
+			res = &chip->azx_dev[dev];
+			if (res->device == substream->pcm->device)
+				break;
 		}
-	return NULL;
+	if (res) {
+		res->opened = 1;
+		res->device = substream->pcm->device;
+	}
+	return res;
 }
 
 /* release the assigned stream */
@@ -1494,7 +1503,7 @@ static int azx_pcm_open(struct snd_pcm_substream *substream)
 	int err;
 
 	mutex_lock(&chip->open_mutex);
-	azx_dev = azx_assign_device(chip, substream->stream);
+	azx_dev = azx_assign_device(chip, substream);
 	if (azx_dev == NULL) {
 		mutex_unlock(&chip->open_mutex);
 		return -EBUSY;
@@ -2071,7 +2080,8 @@ static void azx_power_notify(struct hda_bus *bus)
 	}
 	if (power_on)
 		azx_init_chip(chip);
-	else if (chip->running && power_save_controller)
+	else if (chip->running && power_save_controller &&
+		 !bus->power_keep_link_on)
 		azx_stop_chip(chip);
 }
 #endif /* CONFIG_SND_HDA_POWER_SAVE */
@@ -2439,6 +2449,11 @@ static int __devinit azx_create(struct snd_card *card, struct pci_dev *pci,
 			pci_dev_put(p_smbus);
 		}
 	}
+
+	/* disable 64bit DMA address for Teradici */
+	/* it does not work with device 6549:1200 subsys e4a2:040b */
+	if (chip->driver_type == AZX_DRIVER_TERA)
+		gcap &= ~ICH6_GCAP_64OK;
 
 	/* allow 64bit DMA address if supported by H/W */
 	if ((gcap & ICH6_GCAP_64OK) && !pci_set_dma_mask(pci, DMA_BIT_MASK(64)))
