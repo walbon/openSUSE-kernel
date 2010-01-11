@@ -170,6 +170,8 @@ struct drm_i915_display_funcs {
 	/* clock gating init */
 };
 
+struct intel_overlay;
+
 typedef struct drm_i915_private {
 	struct drm_device *dev;
 
@@ -239,6 +241,9 @@ typedef struct drm_i915_private {
 	int irq_enabled;
 
 	struct intel_opregion opregion;
+
+	/* overlay */
+	struct intel_overlay *overlay;
 
 	/* LVDS info */
 	int backlight_duty_cycle;  /* restore backlight to this value */
@@ -738,6 +743,8 @@ i915_enable_pipestat(drm_i915_private_t *dev_priv, int pipe, u32 mask);
 void
 i915_disable_pipestat(drm_i915_private_t *dev_priv, int pipe, u32 mask);
 
+void intel_enable_asle (struct drm_device *dev);
+
 
 /* i915_mem.c */
 extern int i915_mem_alloc(struct drm_device *dev, void *data,
@@ -813,6 +820,10 @@ void i915_gem_cleanup_ringbuffer(struct drm_device *dev);
 int i915_gem_do_init(struct drm_device *dev, unsigned long start,
 		     unsigned long end);
 int i915_gem_idle(struct drm_device *dev);
+uint32_t i915_add_request(struct drm_device *dev, struct drm_file *file_priv,
+			  uint32_t flush_domains);
+int i915_do_wait_request(struct drm_device *dev, uint32_t seqno, int interruptible);
+int i915_lp_ring_sync(struct drm_device *dev);
 #ifdef CONFIG_XEN
 int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma);
 #else
@@ -868,11 +879,13 @@ extern int i915_restore_state(struct drm_device *dev);
 extern int intel_opregion_init(struct drm_device *dev, int resume);
 extern void intel_opregion_free(struct drm_device *dev, int suspend);
 extern void opregion_asle_intr(struct drm_device *dev);
+extern void ironlake_opregion_gse_intr(struct drm_device *dev);
 extern void opregion_enable_asle(struct drm_device *dev);
 #else
 static inline int intel_opregion_init(struct drm_device *dev, int resume) { return 0; }
 static inline void intel_opregion_free(struct drm_device *dev, int suspend) { return; }
 static inline void opregion_asle_intr(struct drm_device *dev) { return; }
+static inline void ironlake_opregion_gse_intr(struct drm_device *dev) { return; }
 static inline void opregion_enable_asle(struct drm_device *dev) { return; }
 #endif
 
