@@ -33,8 +33,6 @@ MODULE_LICENSE("GPL v2");
 #define UCODE_EQUIV_CPU_TABLE_TYPE 0x00000000
 #define UCODE_UCODE_TYPE           0x00000001
 
-const struct firmware *firmware;
-
 struct equiv_cpu_entry {
 	u32	installed_cpu;
 	u32	fixed_errata_mask;
@@ -310,10 +308,14 @@ generic_load_microcode(int cpu, const u8 *data, size_t size)
 
 static enum ucode_state request_microcode_fw(int cpu, struct device *device)
 {
+	const char *fw_name = "amd-ucode/microcode_amd.bin";
+	const struct firmware *firmware;
 	enum ucode_state ret;
 
-	if (firmware == NULL)
+	if (request_firmware(&firmware, fw_name, device)) {
+		printk(KERN_ERR "microcode: failed to load file %s\n", fw_name);
 		return UCODE_NFOUND;
+	}
 
 	if (*(u32 *)firmware->data != UCODE_MAGIC) {
 		printk(KERN_ERR "microcode: invalid UCODE_MAGIC (0x%08x)\n",
@@ -322,6 +324,8 @@ static enum ucode_state request_microcode_fw(int cpu, struct device *device)
 	}
 
 	ret = generic_load_microcode(cpu, firmware->data, firmware->size);
+
+	release_firmware(firmware);
 
 	return ret;
 }
@@ -342,21 +346,7 @@ static void microcode_fini_cpu_amd(int cpu)
 	uci->mc = NULL;
 }
 
-void init_microcode_amd(struct device *device)
-{
-	const char *fw_name = "amd-ucode/microcode_amd.bin";
-	if (request_firmware(&firmware, fw_name, device))
-		printk(KERN_ERR "microcode: failed to load file %s\n", fw_name);
-}
-
-void fini_microcode_amd(void)
-{
-	release_firmware(firmware);
-}
-
 static struct microcode_ops microcode_amd_ops = {
-	.init				  = init_microcode_amd,
-	.fini				  = fini_microcode_amd,
 	.request_microcode_user           = request_microcode_user,
 	.request_microcode_fw             = request_microcode_fw,
 	.collect_cpu_info                 = collect_cpu_info_amd,
