@@ -41,7 +41,7 @@ __setup("no_file_caps", file_caps_disable);
 
 static int __init file_caps_enable(char *str)
 {
-	file_caps_enabled = 1;
+	file_caps_enabled = str[0] == '\0' || (str[0] == '=' && str[1] == '1');
 	return 1;
 }
 __setup("file_caps", file_caps_enable);
