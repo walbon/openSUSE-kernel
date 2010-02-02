@@ -223,6 +223,16 @@ static void memtype_rb_insert(struct rb_root *root, struct memtype *data)
 	rb_insert_color(&data->rb, root);
 }
 
+static int pat_pagerange_is_ram(resource_size_t start, resource_size_t end);
+static inline u8 _mtrr_type_lookup(u64 start, u64 end)
+{
+	if (is_initial_xendomain())
+		return mtrr_type_lookup(start, end);
+	return pat_pagerange_is_ram(start, end) > 0
+	       ? MTRR_TYPE_WRCOMB : MTRR_TYPE_UNCACHABLE;
+}
+#define mtrr_type_lookup _mtrr_type_lookup
+
 /*
  * Does intersection of PAT memory type and MTRR memory type and returns
  * the resulting memory type as PAT understands it.
@@ -276,7 +286,7 @@ chk_conflict(struct memtype *new, struct memtype *entry, unsigned long *type)
 	return -EBUSY;
 }
 
-static int pat_pagerange_is_ram(unsigned long start, unsigned long end)
+static int pat_pagerange_is_ram(resource_size_t start, resource_size_t end)
 {
 	int ram_page = 0, not_rampage = 0;
 	unsigned long page_nr;

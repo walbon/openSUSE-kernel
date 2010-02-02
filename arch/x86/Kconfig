@@ -318,7 +318,6 @@ config X86_XEN
 	select X86_PAE
 	select X86_UP_APIC if !SMP && XEN_PRIVILEGED_GUEST
 	select X86_UP_IOAPIC if !SMP && XEN_PRIVILEGED_GUEST
-	select SWIOTLB
 	help
 	  Choose this option if you plan to run this kernel on top of the
 	  Xen Hypervisor.
@@ -356,7 +355,6 @@ config X86_64_XEN
 	bool "Enable Xen compatible kernel"
 	depends on X86_64
 	select XEN
-	select SWIOTLB
 	help
 	  This option will compile a kernel compatible with Xen hypervisor
 
@@ -780,7 +778,8 @@ config AMD_IOMMU_STATS
 
 # need this always selected by IOMMU for the VIA workaround
 config SWIOTLB
-	def_bool y if X86_64
+	def_bool y if X86_64 || XEN
+	prompt "Software I/O TLB" if XEN_UNPRIVILEGED_GUEST && !XEN_PCIDEV_FRONTEND
 	---help---
 	  Support for software bounce buffers used on x86-64 systems
 	  which don't have a hardware IOMMU (e.g. the current generation
@@ -1508,7 +1507,7 @@ config MTRR_SANITIZER_SPARE_REG_NR_DEFAULT
 config X86_PAT
 	bool
 	prompt "x86 PAT support"
-	depends on MTRR
+	depends on MTRR || (XEN_UNPRIVILEGED_GUEST && XEN_PCIDEV_FRONTEND)
 	---help---
 	  Use PAT attributes to setup page level cache control.
 

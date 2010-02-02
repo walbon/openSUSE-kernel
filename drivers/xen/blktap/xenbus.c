@@ -51,7 +51,6 @@ struct backend_info
 	int group_added;
 };
 
-
 static void connect(struct backend_info *);
 static int connect_ring(struct backend_info *);
 static int blktap_remove(struct xenbus_device *dev);
@@ -123,10 +122,17 @@ static int blktap_name(blkif_t *blkif, char *buf)
 				   struct device_attribute *attr,	\
 				   char *buf)				\
 	{								\
-		struct xenbus_device *dev = to_xenbus_device(_dev);	\
-		struct backend_info *be = dev_get_drvdata(&dev->dev);	\
+		ssize_t ret = -ENODEV;					\
+		struct xenbus_device *dev;				\
+		struct backend_info *be;				\
 									\
-		return sprintf(buf, format, ##args);			\
+		if (!get_device(_dev))					\
+			return ret;					\
+		dev = to_xenbus_device(_dev);				\
+		if ((be = dev_get_drvdata(&dev->dev)) != NULL)		\
+			ret = sprintf(buf, format, ##args);		\
+		put_device(_dev);					\
+		return ret;						\
 	}								\
 	static DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
 

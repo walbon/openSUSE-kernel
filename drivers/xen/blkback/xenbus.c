@@ -77,6 +77,13 @@ static void update_blkif_status(blkif_t *blkif)
 		return;
 	}
 
+	err = filemap_write_and_wait(blkif->vbd.bdev->bd_inode->i_mapping);
+	if (err) {
+		xenbus_dev_error(blkif->be->dev, err, "block flush");
+		return;
+	}
+	invalidate_inode_pages2(blkif->vbd.bdev->bd_inode->i_mapping);
+
 	blkif->xenblkd = kthread_run(blkif_schedule, blkif, name);
 	if (IS_ERR(blkif->xenblkd)) {
 		err = PTR_ERR(blkif->xenblkd);
@@ -95,10 +102,17 @@ static void update_blkif_status(blkif_t *blkif)
 				   struct device_attribute *attr,	\
 				   char *buf)				\
 	{								\
-		struct xenbus_device *dev = to_xenbus_device(_dev);	\
-		struct backend_info *be = dev_get_drvdata(&dev->dev);	\
+		ssize_t ret = -ENODEV;					\
+		struct xenbus_device *dev;				\
+		struct backend_info *be;				\
 									\
-		return sprintf(buf, format, ##args);			\
+		if (!get_device(_dev))					\
+			return ret;					\
+		dev = to_xenbus_device(_dev);				\
+		if ((be = dev_get_drvdata(&dev->dev)) != NULL)		\
+			ret = sprintf(buf, format, ##args);		\
+		put_device(_dev);					\
+		return ret;						\
 	}								\
 	static DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
 

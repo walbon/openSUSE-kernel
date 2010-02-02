@@ -457,7 +457,7 @@ int acpi_gsi_to_irq(u32 gsi, unsigned int *irq)
 {
 	*irq = gsi;
 
-#ifdef CONFIG_X86_IO_APIC
+#if defined(CONFIG_X86_IO_APIC) && !defined(CONFIG_XEN)
 	if (acpi_irq_model == ACPI_IRQ_MODEL_IOAPIC)
 		setup_IO_APIC_irq_extra(gsi);
 #endif
@@ -499,6 +499,7 @@ int acpi_register_gsi(struct device *dev, u32 gsi, int trigger, int polarity)
  */
 #ifdef CONFIG_ACPI_HOTPLUG_CPU
 
+#ifndef CONFIG_XEN
 static int __cpuinit _acpi_map_lsapic(acpi_handle handle, int *pcpu)
 {
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
@@ -568,6 +569,9 @@ free_tmp_map:
 out:
 	return retval;
 }
+#else
+#define _acpi_map_lsapic(h, p) (-EINVAL)
+#endif
 
 /* wrapper to silence section mismatch warning */
 int __ref acpi_map_lsapic(acpi_handle handle, int *pcpu)
@@ -578,9 +582,11 @@ EXPORT_SYMBOL(acpi_map_lsapic);
 
 int acpi_unmap_lsapic(int cpu)
 {
+#ifndef CONFIG_XEN
 	per_cpu(x86_cpu_to_apicid, cpu) = -1;
 	set_cpu_present(cpu, false);
 	num_processors--;
+#endif
 
 	return (0);
 }

@@ -24,6 +24,11 @@ typedef union {
 # define TICKET_SHIFT 16
 		u16 cur, seq;
 #endif
+#if CONFIG_NR_CPUS <= 256
+		u8 owner;
+#else
+		u16 owner;
+#endif
 #else
 /*
  * This differs from the pre-2.6.24 spinlock by always using xchgb
@@ -38,11 +43,6 @@ typedef union {
 #else
 # error NR_CPUS >= 256 not implemented
 #endif
-#endif
-#if CONFIG_NR_CPUS <= 256
-		u8 owner;
-#else
-		u16 owner;
 #endif
 	};
 } raw_spinlock_t;
