@@ -3924,6 +3924,16 @@ static int qlge_close(struct net_device *ndev)
 {
 	struct ql_adapter *qdev = netdev_priv(ndev);
 
+	/* If we hit pci_channel_io_perm_failure
+	 * failure condition, then we already
+	 * brought the adapter down.
+	 */
+	if (test_bit(QL_EEH_FATAL, &qdev->flags)) {
+		QPRINTK(qdev, DRV, ERR, "EEH fatal did unload.\n");
+		clear_bit(QL_EEH_FATAL, &qdev->flags);
+		return 0;
+	}
+
 	/*
 	 * Wait for device to recover from a reset.
 	 * (Rarely happens, but possible.)
@@ -4563,6 +4573,20 @@ static const struct net_device_ops qlge_netdev_ops = {
 	.ndo_vlan_rx_kill_vid	= qlge_vlan_rx_kill_vid,
 };
 
+static void ql_timer(unsigned long data)
+{
+	struct ql_adapter *qdev = (struct ql_adapter *)data;
+	u32 var = 0;
+
+	var = ql_read32(qdev, STS);
+	if (pci_channel_offline(qdev->pdev)) {
+		QPRINTK(qdev, IFUP, ERR, "EEH STS = 0x%.08x.\n", var);
+		return;
+	}
+
+	mod_timer(&qdev->timer, jiffies + HZ);
+}
+
 static int __devinit qlge_probe(struct pci_dev *pdev,
 				const struct pci_device_id *pci_entry)
 {
@@ -4614,6 +4638,13 @@ static int __devinit qlge_probe(struct pci_dev *pdev,
 		pci_disable_device(pdev);
 		return err;
 	}
+	/* Start up the timer to trigger EEH if
+	 * the bus goes dead
+	 */
+	init_timer(&qdev->timer);
+	qdev->timer.data = (unsigned long)qdev;
+	qdev->timer.function = ql_timer;
+	mod_timer(&qdev->timer, jiffies + HZ);
 	ql_link_off(qdev);
 	ql_display_dev_info(ndev);
 	atomic_set(&qdev->lb_count, 0);
@@ -4634,6 +4665,8 @@ int ql_clean_lb_rx_ring(struct rx_ring *rx_ring, int budget)
 static void __devexit qlge_remove(struct pci_dev *pdev)
 {
 	struct net_device *ndev = pci_get_drvdata(pdev);
+	struct ql_adapter *qdev = netdev_priv(ndev);
+	del_timer_sync(&qdev->timer);
 	unregister_netdev(ndev);
 	ql_release_all(pdev);
 	pci_disable_device(pdev);
@@ -4676,6 +4709,7 @@ static pci_ers_result_t qlge_io_error_detected(struct pci_dev *pdev,
 					       enum pci_channel_state state)
 {
 	struct net_device *ndev = pci_get_drvdata(pdev);
+	struct ql_adapter *qdev = netdev_priv(ndev);
 
 	switch (state) {
 	case pci_channel_io_normal:
@@ -4689,6 +4723,8 @@ static pci_ers_result_t qlge_io_error_detected(struct pci_dev *pdev,
 	case pci_channel_io_perm_failure:
 		dev_err(&pdev->dev,
 			"%s: pci_channel_io_perm_failure.\n", __func__);
+		ql_eeh_close(ndev);
+		set_bit(QL_EEH_FATAL, &qdev->flags);
 		return PCI_ERS_RESULT_DISCONNECT;
 	}
 
@@ -4716,6 +4752,13 @@ static pci_ers_result_t qlge_io_slot_reset(struct pci_dev *pdev)
 		return PCI_ERS_RESULT_DISCONNECT;
 	}
 	pci_set_master(pdev);
+
+	if (ql_adapter_reset(qdev)) {
+		QPRINTK(qdev, DRV, ERR, "reset FAILED!\n");
+		set_bit(QL_EEH_FATAL, &qdev->flags);
+		return PCI_ERS_RESULT_DISCONNECT;
+	}
+
 	return PCI_ERS_RESULT_RECOVERED;
 }
 
@@ -4725,8 +4768,6 @@ static void qlge_io_resume(struct pci_dev *pdev)
 	struct ql_adapter *qdev = netdev_priv(ndev);
 	int err = 0;
 
-	if (ql_adapter_reset(qdev))
-		QPRINTK(qdev, DRV, ERR, "reset FAILED!\n");
 	if (netif_running(ndev)) {
 		err = qlge_open(ndev);
 		if (err) {
@@ -4738,6 +4779,7 @@ static void qlge_io_resume(struct pci_dev *pdev)
 		QPRINTK(qdev, IFUP, ERR,
 			"Device was not running prior to EEH.\n");
 	}
+	mod_timer(&qdev->timer, jiffies + HZ);
 	netif_device_attach(ndev);
 }
 
@@ -4754,6 +4796,7 @@ static int qlge_suspend(struct pci_dev *pdev, pm_message_t state)
 	int err;
 
 	netif_device_detach(ndev);
+	del_timer_sync(&qdev->timer);
 
 	if (netif_running(ndev)) {
 		err = ql_adapter_down(qdev);
@@ -4798,6 +4841,7 @@ static int qlge_resume(struct pci_dev *pdev)
 			return err;
 	}
 
+	mod_timer(&qdev->timer, jiffies + HZ);
 	netif_device_attach(ndev);
 
 	return 0;
