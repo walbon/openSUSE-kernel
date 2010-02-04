@@ -1895,6 +1895,8 @@ enum {
 	QL_CAM_RT_SET = 8,
 	QL_SELFTEST = 9,
 	QL_LB_LINK_UP = 10,
+	QL_EEH_FATAL = 12,
+
 };
 
 /* link_status bit definitions */
@@ -2034,6 +2036,7 @@ struct ql_adapter {
 	struct completion ide_completion;
 	struct nic_operations *nic_ops;
 	u16 device_id;
+	struct timer_list timer;
 	atomic_t lb_count;
 };
 
