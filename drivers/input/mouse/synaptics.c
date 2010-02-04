@@ -334,6 +334,10 @@ static void synaptics_pt_create(struct psmouse *psmouse)
 #define CLICKPAD_RIGHT_BTN_X \
 	((XMAX_NOMINAL - XMIN_NOMINAL) * 3 / 5 + XMIN_NOMINAL)
 
+/* additional clickpad area in percent */
+static int clickpad_area = 20;
+module_param(clickpad_area, int, 0644);
+
 /* handle clickpad events */
 static void clickpad_process_packet(struct synaptics_data *priv,
 				    struct synaptics_hw_state *hw)
@@ -341,7 +345,7 @@ static void clickpad_process_packet(struct synaptics_data *priv,
 	/* clickpad mode reports Y range from 0 to YMAX_NOMINAL,
 	 * where the area Y < YMIN_NOMINAL is used as click buttons
 	 */
-	if (hw->y < YMIN_NOMINAL) {
+	if (hw->y < YMIN_NOMINAL + (YMAX_NOMINAL - YMIN_NOMINAL) * clickpad_area / 100) {
 		/* button area */
 		hw->z = 0; /* don't move pointer */
 		/* clickpad reports only the middle button, and we need
