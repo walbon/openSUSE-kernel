@@ -333,6 +333,7 @@ static void synaptics_pt_create(struct psmouse *psmouse)
 	((XMAX_NOMINAL - XMIN_NOMINAL) * 2 / 5 + XMIN_NOMINAL)
 #define CLICKPAD_RIGHT_BTN_X \
 	((XMAX_NOMINAL - XMIN_NOMINAL) * 3 / 5 + XMIN_NOMINAL)
+#define X_VSCROLL (XMAX_NOMINAL - (XMAX_NOMINAL - XMIN_NOMINAL) / 15)
 
 /* additional clickpad area in percent */
 static int clickpad_area = 20;
@@ -347,7 +348,9 @@ static void clickpad_process_packet(struct synaptics_data *priv,
 	 */
 	if (hw->y < YMIN_NOMINAL + (YMAX_NOMINAL - YMIN_NOMINAL) * clickpad_area / 100) {
 		/* button area */
-		hw->z = 0; /* don't move pointer */
+		/* allow position change for the v-scroll area exceptionally */
+		if (hw->x < X_VSCROLL || hw->middle)
+			hw->z = 0; /* don't move pointer */
 		/* clickpad reports only the middle button, and we need
 		 * to fake left/right buttons depending on the touch position
 		 */
