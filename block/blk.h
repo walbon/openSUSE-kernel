@@ -30,6 +30,7 @@ void __generic_unplug_device(struct request_queue *);
  */
 enum rq_atomic_flags {
 	REQ_ATOM_COMPLETE = 0,
+	REQ_ATOM_ABORT = 1,
 };
 
 /*
@@ -44,6 +45,19 @@ static inline int blk_mark_rq_complete(struct request *rq)
 static inline void blk_clear_rq_complete(struct request *rq)
 {
 	clear_bit(REQ_ATOM_COMPLETE, &rq->atomic_flags);
+}
+
+/*
+ * Mark and test a request for aborted.
+ */
+static inline int blk_mark_rq_aborted(struct request *rq)
+{
+	return test_and_set_bit(REQ_ATOM_ABORT, &rq->atomic_flags);
+}
+
+static inline int blk_test_rq_aborted(struct request *rq)
+{
+	return test_bit(REQ_ATOM_ABORT, &rq->atomic_flags);
 }
 
 /*

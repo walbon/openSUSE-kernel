@@ -804,10 +804,22 @@ int elv_may_queue(struct request_queue *q, int rw)
 
 void elv_abort_queue(struct request_queue *q)
 {
-	struct request *rq;
+	struct request *rq, *tmp;
+	LIST_HEAD(list);
 
-	while (!list_empty(&q->queue_head)) {
-		rq = list_entry_rq(q->queue_head.next);
+	/*
+	 * Splice entries to local list, in case the list contains some
+	 * requests marked REQ_DONTPREP.
+	 */
+	list_splice_init(&q->queue_head, &list);
+
+	list_for_each_entry_safe(rq, tmp, &list, queuelist) {
+		if (rq->cmd_flags & REQ_DONTPREP) {
+			if (q->unprep_rq_fn)
+				q->unprep_rq_fn(q, rq);
+			else
+				continue;
+		}
 		rq->cmd_flags |= REQ_QUIET;
 		trace_block_rq_abort(q, rq);
 		/*
@@ -817,6 +829,13 @@ void elv_abort_queue(struct request_queue *q)
 		blk_start_request(rq);
 		__blk_end_request_all(rq, -EIO);
 	}
+
+	/*
+	 * In case requests with REQ_DONTPREP where skipped splice the
+	 * local list back.
+	 */
+	list_splice(&list, &q->queue_head);
+
 }
 EXPORT_SYMBOL(elv_abort_queue);
 

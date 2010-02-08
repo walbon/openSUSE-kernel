@@ -155,6 +155,12 @@ void blk_abort_request(struct request *req)
 }
 EXPORT_SYMBOL_GPL(blk_abort_request);
 
+int blk_request_aborted(struct request *req)
+{
+	return blk_test_rq_aborted(req);
+}
+EXPORT_SYMBOL_GPL(blk_request_aborted);
+
 /**
  * blk_add_timer - Start timeout timer for a single request
  * @req:	request that is about to start running.
@@ -223,8 +229,11 @@ void blk_abort_queue(struct request_queue *q)
 	 */
 	list_splice_init(&q->timeout_list, &list);
 
-	list_for_each_entry_safe(rq, tmp, &list, timeout_list)
-		blk_abort_request(rq);
+	list_for_each_entry_safe(rq, tmp, &list, timeout_list) {
+		if (!blk_queue_stopped(q))
+			blk_abort_request(rq);
+		blk_mark_rq_aborted(rq);
+	}
 
 	/*
 	 * Occasionally, blk_abort_request() will return without
