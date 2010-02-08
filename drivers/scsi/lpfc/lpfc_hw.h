@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2004-2009 Emulex.  All rights reserved.           *
+ * Copyright (C) 2004-2010 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.emulex.com                                                  *
  *                                                                 *
@@ -353,8 +353,7 @@ struct csp {
 
 	uint16_t huntgroup:1;	/* FC Word 1, bit 23 */
 	uint16_t simplex:1;	/* FC Word 1, bit 22 */
-	uint16_t security:1;    /* FC Word 1, bit 21 */
-	uint16_t word1Reserved1:2;	/* FC Word 1, bit 20:19 */
+	uint16_t word1Reserved1:3;	/* FC Word 1, bit 21:19 */
 	uint16_t dhd:1;		/* FC Word 1, bit 18 */
 	uint16_t contIncSeqCnt:1;	/* FC Word 1, bit 17 */
 	uint16_t payloadlength:1;	/* FC Word 1, bit 16 */
@@ -371,8 +370,7 @@ struct csp {
 	uint16_t payloadlength:1;	/* FC Word 1, bit 16 */
 	uint16_t contIncSeqCnt:1;	/* FC Word 1, bit 17 */
 	uint16_t dhd:1;		/* FC Word 1, bit 18 */
-	uint16_t word1Reserved1:2;	/* FC Word 1, bit 20:19 */
-	 uint16_t security:1;    /* FC Word 1, bit 21 */
+	uint16_t word1Reserved1:3;	/* FC Word 1, bit 21:19 */
 	uint16_t simplex:1;	/* FC Word 1, bit 22 */
 	uint16_t huntgroup:1;	/* FC Word 1, bit 23 */
 #endif
@@ -540,17 +538,6 @@ struct fc_vft_header {
 #define ELS_CMD_SCR       0x62000000
 #define ELS_CMD_RNID      0x78000000
 #define ELS_CMD_LIRR      0x7A000000
-/*
- * ELS commands for authentication
- * ELS_CMD_AUTH<<24 | AUTH_NEGOTIATE<<8 | AUTH_VERSION
- */
-#define ELS_CMD_AUTH      0x90000000
-#define ELS_CMD_AUTH_RJT  0x90000A01
-#define ELS_CMD_AUTH_NEG  0x90000B01
-#define ELS_CMD_AUTH_DONE 0x90000C01
-#define ELS_CMD_DH_CHA    0x90001001
-#define ELS_CMD_DH_REP    0x90001101
-#define ELS_CMD_DH_SUC    0x90001201
 #else	/*  __LITTLE_ENDIAN_BITFIELD */
 #define ELS_CMD_MASK      0xffff
 #define ELS_RSP_MASK      0xff
@@ -587,17 +574,6 @@ struct fc_vft_header {
 #define ELS_CMD_SCR       0x62
 #define ELS_CMD_RNID      0x78
 #define ELS_CMD_LIRR      0x7A
-/*
- * ELS commands for authentication
- * ELS_CMD_AUTH | AUTH_NEGOTIATE<<16 | AUTH_VERSION<<24
- */
-#define ELS_CMD_AUTH      0x00000090
-#define ELS_CMD_AUTH_RJT  0x010A0090
-#define ELS_CMD_AUTH_NEG  0x010B0090
-#define ELS_CMD_AUTH_DONE 0x010C0090
-#define ELS_CMD_DH_CHA    0x01100090
-#define ELS_CMD_DH_REP    0x01110090
-#define ELS_CMD_DH_SUC    0x01120090
 #endif
 
 /*
@@ -1370,6 +1346,9 @@ typedef struct {		/* FireFly BIU registers */
 #define MBX_HEARTBEAT       0x31
 #define MBX_WRITE_VPARMS    0x32
 #define MBX_ASYNCEVT_ENABLE 0x33
+#define MBX_READ_EVENT_LOG_STATUS 0x37
+#define MBX_READ_EVENT_LOG  0x38
+#define MBX_WRITE_EVENT_LOG 0x39
 
 #define MBX_PORT_CAPABILITIES 0x3B
 #define MBX_PORT_IOV_CONTROL 0x3C
@@ -1489,17 +1468,13 @@ typedef struct {		/* FireFly BIU registers */
 #define CMD_IOCB_LOGENTRY_CN		0x94
 #define CMD_IOCB_LOGENTRY_ASYNC_CN	0x96
 
-/* Unhandled Data Security SLI Commands */
-#define DSSCMD_IWRITE64_CR 		0xD8
-#define DSSCMD_IWRITE64_CX		0xD9
-#define DSSCMD_IREAD64_CR		0xDA
-#define DSSCMD_IREAD64_CX		0xDB
-#define DSSCMD_INVALIDATE_DEK		0xDC
-#define DSSCMD_SET_KEK			0xDD
-#define DSSCMD_GET_KEK_ID		0xDE
-#define DSSCMD_GEN_XFER			0xDF
+/* Data Security SLI Commands */
+#define DSSCMD_IWRITE64_CR		0xF8
+#define DSSCMD_IWRITE64_CX		0xF9
+#define DSSCMD_IREAD64_CR		0xFA
+#define DSSCMD_IREAD64_CX		0xFB
 
-#define CMD_MAX_IOCB_CMD        0xE6
+#define CMD_MAX_IOCB_CMD        0xFB
 #define CMD_IOCB_MASK           0xff
 
 #define MAX_MSG_DATA            28	/* max msg data in CMD_ADAPTER_MSG

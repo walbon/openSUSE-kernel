@@ -761,10 +761,6 @@ lpfc_sli_iocb_cmd_type(uint8_t iocb_cmnd)
 	case DSSCMD_IWRITE64_CX:
 	case DSSCMD_IREAD64_CR:
 	case DSSCMD_IREAD64_CX:
-	case DSSCMD_INVALIDATE_DEK:
-	case DSSCMD_SET_KEK:
-	case DSSCMD_GET_KEK_ID:
-	case DSSCMD_GEN_XFER:
 		type = LPFC_SOL_IOCB;
 		break;
 	case CMD_ABORT_XRI_CN:
@@ -6175,15 +6171,15 @@ __lpfc_sli_issue_iocb_s4(struct lpfc_hba *phba, uint32_t ring_number,
 	if (lpfc_sli4_iocb2wqe(phba, piocb, &wqe))
 		return IOCB_ERROR;
 
-	if (piocb->iocb_flag &  LPFC_IO_FCP) {
+	if ((piocb->iocb_flag & LPFC_IO_FCP) ||
+		(piocb->iocb_flag & LPFC_USE_FCPWQIDX)) {
 		/*
 		 * For FCP command IOCB, get a new WQ index to distribute
 		 * WQE across the WQsr. On the other hand, for abort IOCB,
 		 * it carries the same WQ index to the original command
 		 * IOCB.
 		 */
-		if ((piocb->iocb.ulpCommand != CMD_ABORT_XRI_CN) &&
-		    (piocb->iocb.ulpCommand != CMD_CLOSE_XRI_CN))
+		if (piocb->iocb_flag & LPFC_IO_FCP)
 			piocb->fcp_wqidx = lpfc_sli4_scmd_to_wqidx_distr(phba);
 		if (lpfc_sli4_wq_put(phba->sli4_hba.fcp_wq[piocb->fcp_wqidx],
 				     &wqe))
@@ -7187,6 +7183,8 @@ lpfc_sli_issue_abort_iotag(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 
 	/* ABTS WQE must go to the same WQ as the WQE to be aborted */
 	abtsiocbp->fcp_wqidx = cmdiocb->fcp_wqidx;
+	if (cmdiocb->iocb_flag & LPFC_IO_FCP)
+		abtsiocbp->iocb_flag |= LPFC_USE_FCPWQIDX;
 
 	if (phba->link_state >= LPFC_LINK_UP)
 		iabt->ulpCommand = CMD_ABORT_XRI_CN;
@@ -7393,6 +7391,8 @@ lpfc_sli_abort_iocb(struct lpfc_vport *vport, struct lpfc_sli_ring *pring,
 
 		/* ABTS WQE must go to the same WQ as the WQE to be aborted */
 		abtsiocb->fcp_wqidx = iocbq->fcp_wqidx;
+		if (iocbq->iocb_flag & LPFC_IO_FCP)
+			abtsiocb->iocb_flag |= LPFC_USE_FCPWQIDX;
 
 		if (lpfc_is_link_up(phba))
 			abtsiocb->iocb.ulpCommand = CMD_ABORT_XRI_CN;

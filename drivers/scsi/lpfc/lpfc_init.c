@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2004-2009 Emulex.  All rights reserved.           *
+ * Copyright (C) 2004-2010 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.emulex.com                                                  *
  * Portions Copyright (C) 2004-2005 Christoph Hellwig              *
@@ -47,14 +47,6 @@
 #include "lpfc_crtn.h"
 #include "lpfc_vport.h"
 #include "lpfc_version.h"
-#include "lpfc_auth_access.h"
-#include "lpfc_security.h"
-#include <net/sock.h>
-#include <linux/netlink.h>
-
-/* vendor ID used in SCSI netlink calls */
-#define LPFC_NL_VENDOR_ID (SCSI_NL_VID_TYPE_PCI | PCI_VENDOR_ID_EMULEX)
-const char *security_work_q_name = "fc_sc_wq";
 
 char *_dump_buf_data;
 unsigned long _dump_buf_data_order;
@@ -536,9 +528,6 @@ lpfc_config_port_post(struct lpfc_hba *phba)
 	/* Set up error attention (ERATT) polling timer */
 	mod_timer(&phba->eratt_poll, jiffies + HZ * LPFC_ERATT_POLL_INTERVAL);
 
-	if (vport->cfg_enable_auth &&
-	    vport->security_service_state == SECURITY_OFFLINE)
-			vport->auth.auth_mode = FC_AUTHMODE_UNKNOWN;
 	if (phba->hba_flag & LINK_DISABLED) {
 		lpfc_printf_log(phba,
 			KERN_ERR, LOG_INIT,
@@ -2076,17 +2065,8 @@ lpfc_cleanup(struct lpfc_vport *vport)
 void
 lpfc_stop_vport_timers(struct lpfc_vport *vport)
 {
-	struct fc_security_request *fc_sc_req;
 	del_timer_sync(&vport->els_tmofunc);
 	del_timer_sync(&vport->fc_fdmitmo);
-	while (!list_empty(&vport->sc_response_wait_queue)) {
-		list_remove_head(&vport->sc_response_wait_queue, fc_sc_req,
-					   struct fc_security_request, rlist);
-		if (!fc_sc_req)
-			continue;
-		del_timer_sync(&fc_sc_req->timer);
-		kfree(fc_sc_req);
-	}
 	lpfc_can_disctmo(vport);
 	return;
 }
@@ -2416,12 +2396,6 @@ lpfc_create_port(struct lpfc_hba *phba, int instance, struct device *dev)
 	vport->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
 	vport->fc_rscn_flush = 0;
 
-	INIT_WORK(&vport->sc_online_work, lpfc_fc_sc_security_online);
-	INIT_WORK(&vport->sc_offline_work, lpfc_fc_sc_security_offline);
-	INIT_LIST_HEAD(&vport->sc_users);
-	INIT_LIST_HEAD(&vport->sc_response_wait_queue);
-	vport->security_service_state = SECURITY_OFFLINE;
-
 	lpfc_get_vport_cfgparam(vport);
 	shost->unique_id = instance;
 	shost->max_id = LPFC_MAX_TARGET;
@@ -2467,10 +2441,6 @@ lpfc_create_port(struct lpfc_hba *phba, int instance, struct device *dev)
 	error = scsi_add_host(shost, dev);
 	if (error)
 		goto out_put_shost;
-	vport->auth.challenge = NULL;
-	vport->auth.challenge_len = 0;
-	vport->auth.dh_pub_key = NULL;
-	vport->auth.dh_pub_key_len = 0;
 
 	spin_lock_irq(&phba->hbalock);
 	list_add_tail(&vport->listentry, &phba->port_list);
@@ -4360,7 +4330,7 @@ lpfc_hba_alloc(struct pci_dev *pdev)
 		return NULL;
 	}
 
-	mutex_init(&phba->ct_event_mutex);
+	spin_lock_init(&phba->ct_ev_lock);
 	INIT_LIST_HEAD(&phba->ct_ev_waiters);
 
 	return phba;
@@ -6956,7 +6926,6 @@ lpfc_pci_probe_one_s3(struct pci_dev *pdev, const struct pci_device_id *pid)
 
 	/* Configure sysfs attributes */
 	vport = phba->pport;
-	shost = lpfc_shost_from_vport(vport);
 	error = lpfc_alloc_sysfs_attr(vport);
 	if (error) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
@@ -6964,18 +6933,6 @@ lpfc_pci_probe_one_s3(struct pci_dev *pdev, const struct pci_device_id *pid)
 		goto out_destroy_shost;
 	}
 
-	/* Add this shost to the security event list */
-	if ((lpfc_get_security_enabled)(shost)) {
-		spin_lock_irq(&fc_security_user_lock);
-		list_add_tail(&vport->sc_users, &fc_security_user_list);
-		spin_unlock_irq(&fc_security_user_lock);
-		/* Triggers fcauthd to register if it is running */
-		fc_host_post_event(shost, fc_get_event_number(),
-				   FCH_EVT_PORT_ONLINE, shost->host_no);
-		if (fc_service_state == FC_SC_SERVICESTATE_ONLINE)
-			lpfc_fc_queue_security_work(vport,
-						    &vport->sc_online_work);
-	}
 	shost = lpfc_shost_from_vport(vport); /* save shost for error cleanup */
 	/* Now, trying to enable interrupt and bring up the device */
 	cfg_mode = phba->cfg_use_msi;
@@ -7031,11 +6988,6 @@ out_remove_device:
 	lpfc_unset_hba(phba);
 out_free_sysfs_attr:
 	lpfc_free_sysfs_attr(vport);
-	if ((lpfc_get_security_enabled)(shost)) {
-		spin_lock_irq(&fc_security_user_lock);
-		list_del(&vport->sc_users);
-		spin_unlock_irq(&fc_security_user_lock);
-	}
 out_destroy_shost:
 	lpfc_destroy_shost(phba);
 out_unset_driver_resource:
@@ -7578,7 +7530,6 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
 
 	/* Configure sysfs attributes */
 	vport = phba->pport;
-	shost = lpfc_shost_from_vport(vport);
 	error = lpfc_alloc_sysfs_attr(vport);
 	if (error) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
@@ -7586,20 +7537,6 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
 		goto out_destroy_shost;
 	}
 
-	/* Add this shost to the security event list */
-	if ((lpfc_get_security_enabled)(shost)) {
-#ifdef SCSI_NL_SHOST_VENDOR
-		/* Triggers fcauthd to register if it is running */
-		fc_host_post_event(shost, fc_get_event_number(),
-				   FCH_EVT_PORT_ONLINE, shost->host_no);
-#endif
-		spin_lock_irq(&fc_security_user_lock);
-		list_add_tail(&vport->sc_users, &fc_security_user_list);
-		spin_unlock_irq(&fc_security_user_lock);
-		if (fc_service_state == FC_SC_SERVICESTATE_ONLINE)
-			lpfc_fc_queue_security_work(vport,
-						    &vport->sc_online_work);
-	}
 	shost = lpfc_shost_from_vport(vport); /* save shost for error cleanup */
 	/* Now, trying to enable interrupt and bring up the device */
 	cfg_mode = phba->cfg_use_msi;
@@ -7660,11 +7597,6 @@ out_disable_intr:
 	lpfc_sli4_disable_intr(phba);
 out_free_sysfs_attr:
 	lpfc_free_sysfs_attr(vport);
-	if ((lpfc_get_security_enabled)(shost)) {
-		spin_lock_irq(&fc_security_user_lock);
-		list_del(&vport->sc_users);
-		spin_unlock_irq(&fc_security_user_lock);
-	}
 out_destroy_shost:
 	lpfc_destroy_shost(phba);
 out_unset_driver_resource:
@@ -8314,29 +8246,12 @@ lpfc_init(void)
 			return -ENOMEM;
 		}
 	}
-	error = scsi_nl_add_driver(LPFC_NL_VENDOR_ID, &lpfc_template,
-				   lpfc_rcv_nl_msg, lpfc_rcv_nl_event);
-	if (error)
-		goto out_release_transport;
-	security_work_q = create_singlethread_workqueue(security_work_q_name);
-	if (!security_work_q)
-		goto out_nl_remove_driver;
-	INIT_LIST_HEAD(&fc_security_user_list);
 	error = pci_register_driver(&lpfc_driver);
-	if (error)
-		goto out_destroy_workqueue;
-
-	return error;
-
-out_destroy_workqueue:
-	destroy_workqueue(security_work_q);
-	security_work_q = NULL;
-out_nl_remove_driver:
-	scsi_nl_remove_driver(LPFC_NL_VENDOR_ID);
-out_release_transport:
-	fc_release_transport(lpfc_transport_template);
-	if (lpfc_enable_npiv)
-		fc_release_transport(lpfc_vport_transport_template);
+	if (error) {
+		fc_release_transport(lpfc_transport_template);
+		if (lpfc_enable_npiv)
+			fc_release_transport(lpfc_vport_transport_template);
+	}
 
 	return error;
 }
@@ -8352,10 +8267,6 @@ static void __exit
 lpfc_exit(void)
 {
 	pci_unregister_driver(&lpfc_driver);
-	if (security_work_q)
-		destroy_workqueue(security_work_q);
-	security_work_q = NULL;
-	scsi_nl_remove_driver(LPFC_NL_VENDOR_ID);
 	fc_release_transport(lpfc_transport_template);
 	if (lpfc_enable_npiv)
 		fc_release_transport(lpfc_vport_transport_template);

@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2004-2008 Emulex.  All rights reserved.           *
+ * Copyright (C) 2004-2010 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.emulex.com                                                  *
  * Portions Copyright (C) 2004-2005 Christoph Hellwig              *
@@ -44,7 +44,6 @@
 #include "lpfc_crtn.h"
 #include "lpfc_version.h"
 #include "lpfc_vport.h"
-#include "lpfc_auth_access.h"
 
 inline void lpfc_vport_set_state(struct lpfc_vport *vport,
 				 enum fc_vport_state new_state)
@@ -377,21 +376,6 @@ lpfc_vport_create(struct fc_vport *fc_vport, bool disable)
 		destroy_port(vport);
 		rc = VPORT_INVAL;
 		goto error_out;
-	}
-
-	shost = lpfc_shost_from_vport(vport);
-
-	if ((lpfc_get_security_enabled)(shost)) {
-		/* Triggers fcauthd to register if it is running */
-		fc_host_post_event(shost, fc_get_event_number(),
-				   FCH_EVT_PORT_ONLINE, shost->host_no);
-		spin_lock_irq(&fc_security_user_lock);
-		list_add_tail(&vport->sc_users, &fc_security_user_list);
-		spin_unlock_irq(&fc_security_user_lock);
-		if (fc_service_state == FC_SC_SERVICESTATE_ONLINE) {
-			lpfc_fc_queue_security_work(vport,
-				&vport->sc_online_work);
-		}
 	}
 
 	/* Create binary sysfs attribute for vport */

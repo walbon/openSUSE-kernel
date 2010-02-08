@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2004-2008 Emulex.  All rights reserved.           *
+ * Copyright (C) 2004-2010 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.emulex.com                                                  *
  *                                                                 *
@@ -21,12 +21,6 @@
 typedef int (*node_filter)(struct lpfc_nodelist *, void *);
 
 struct fc_rport;
-int lpfc_issue_els_auth(struct lpfc_vport *, struct lpfc_nodelist *,
-			uint8_t message_code, uint8_t *payload,
-			uint32_t payload_len);
-int lpfc_issue_els_auth_reject(struct lpfc_vport *vport,
-			       struct lpfc_nodelist *ndlp,
-			       uint8_t reason, uint8_t explanation);
 void lpfc_down_link(struct lpfc_hba *, LPFC_MBOXQ_t *);
 void lpfc_sli_read_link_ste(struct lpfc_hba *);
 void lpfc_dump_mem(struct lpfc_hba *, LPFC_MBOXQ_t *, uint16_t, uint16_t);
@@ -101,9 +95,7 @@ void lpfc_cleanup(struct lpfc_vport *);
 void lpfc_disc_timeout(unsigned long);
 
 struct lpfc_nodelist *__lpfc_findnode_rpi(struct lpfc_vport *, uint16_t);
-struct lpfc_nodelist *lpfc_findnode_wwnn(struct lpfc_vport *,
-					 struct lpfc_name *);
-void lpfc_port_auth_failed(struct lpfc_nodelist *, enum auth_state);
+
 void lpfc_worker_wake_up(struct lpfc_hba *);
 int lpfc_workq_post_event(struct lpfc_hba *, void *, void *, uint32_t);
 int lpfc_do_work(void *);
@@ -112,7 +104,7 @@ int lpfc_disc_state_machine(struct lpfc_vport *, struct lpfc_nodelist *, void *,
 
 void lpfc_do_scr_ns_plogi(struct lpfc_hba *, struct lpfc_vport *);
 int lpfc_check_sparm(struct lpfc_vport *, struct lpfc_nodelist *,
-		     struct serv_parm *, uint32_t);
+		     struct serv_parm *, uint32_t, int);
 int lpfc_els_abort(struct lpfc_hba *, struct lpfc_nodelist *);
 void lpfc_more_plogi(struct lpfc_vport *);
 void lpfc_more_adisc(struct lpfc_vport *);
@@ -141,8 +133,6 @@ int lpfc_els_rsp_prli_acc(struct lpfc_vport *, struct lpfc_iocbq *,
 void lpfc_cancel_retry_delay_tmo(struct lpfc_vport *, struct lpfc_nodelist *);
 void lpfc_els_retry_delay(unsigned long);
 void lpfc_els_retry_delay_handler(struct lpfc_nodelist *);
-void lpfc_reauth_node(unsigned long);
-void lpfc_reauthentication_handler(struct lpfc_nodelist *);
 void lpfc_els_unsol_event(struct lpfc_hba *, struct lpfc_sli_ring *,
 			  struct lpfc_iocbq *);
 int lpfc_els_handle_rscn(struct lpfc_vport *);
@@ -342,29 +332,6 @@ void destroy_port(struct lpfc_vport *);
 int lpfc_get_instance(void);
 void lpfc_host_attrib_init(struct Scsi_Host *);
 
-extern struct workqueue_struct *security_work_q;
-extern struct list_head fc_security_user_list;
-extern int fc_service_state;
-void lpfc_fc_sc_security_online(struct work_struct *work);
-void lpfc_fc_sc_security_offline(struct work_struct *work);
-int lpfc_fc_queue_security_work(struct lpfc_vport *, struct work_struct *);
-void lpfc_rcv_nl_event(struct notifier_block *, unsigned long , void *);
-int lpfc_selective_reset(struct lpfc_hba *);
-int lpfc_security_wait(struct lpfc_vport *);
-int  lpfc_get_security_enabled(struct Scsi_Host *);
-void lpfc_security_service_online(struct Scsi_Host *);
-void lpfc_security_service_offline(struct Scsi_Host *);
-void lpfc_security_config(struct Scsi_Host *, int status, void *);
-int lpfc_security_config_wait(struct lpfc_vport *vport);
-void lpfc_dhchap_make_challenge(struct Scsi_Host *, int , void *, uint32_t);
-void lpfc_dhchap_make_response(struct Scsi_Host *, int , void *, uint32_t);
-void lpfc_dhchap_authenticate(struct Scsi_Host *, int , void *, uint32_t);
-int lpfc_start_node_authentication(struct lpfc_nodelist *);
-int lpfc_get_auth_config(struct lpfc_vport *, struct lpfc_nodelist *);
-void lpfc_start_discovery(struct lpfc_vport *vport);
-void lpfc_start_authentication(struct lpfc_vport *, struct lpfc_nodelist *);
-int lpfc_rcv_nl_msg(struct Scsi_Host *, void *, uint32_t, uint32_t);
-
 extern void lpfc_debugfs_initialize(struct lpfc_vport *);
 extern void lpfc_debugfs_terminate(struct lpfc_vport *);
 extern void lpfc_debugfs_disc_trc(struct lpfc_vport *, int, char *, uint32_t,
@@ -372,10 +339,6 @@ extern void lpfc_debugfs_disc_trc(struct lpfc_vport *, int, char *, uint32_t,
 extern void lpfc_debugfs_slow_ring_trc(struct lpfc_hba *, char *, uint32_t,
 	uint32_t, uint32_t);
 extern struct lpfc_hbq_init *lpfc_hbq_defs[];
-
-extern spinlock_t fc_security_user_lock;
-extern struct list_head fc_security_user_list;
-extern int fc_service_state;
 
 /* externs BlockGuard */
 extern char *_dump_buf_data;
@@ -420,5 +383,5 @@ struct lpfc_vport *lpfc_find_vport_by_vpid(struct lpfc_hba *, uint16_t);
 /* functions to support SGIOv4/bsg interface */
 int lpfc_bsg_request(struct fc_bsg_job *);
 int lpfc_bsg_timeout(struct fc_bsg_job *);
-void lpfc_bsg_ct_unsol_event(struct lpfc_hba *, struct lpfc_sli_ring *,
+int lpfc_bsg_ct_unsol_event(struct lpfc_hba *, struct lpfc_sli_ring *,
 			     struct lpfc_iocbq *);

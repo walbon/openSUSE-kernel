@@ -3003,6 +3003,7 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 
 	/* ABTS WQE must go to the same WQ as the WQE to be aborted */
 	abtsiocb->fcp_wqidx = iocb->fcp_wqidx;
+	abtsiocb->iocb_flag |= LPFC_USE_FCPWQIDX;
 
 	if (lpfc_is_link_up(phba))
 		icmd->ulpCommand = CMD_ABORT_XRI_CN;
