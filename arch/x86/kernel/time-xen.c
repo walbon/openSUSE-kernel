@@ -12,7 +12,6 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/time.h>
-#include <linux/mca.h>
 #include <linux/sysctl.h>
 #include <linux/percpu.h>
 #include <linux/kernel_stat.h>
@@ -411,7 +410,7 @@ EXPORT_SYMBOL(profile_pc);
 /*
  * Default timer interrupt handler
  */
-irqreturn_t timer_interrupt(int irq, void *dev_id)
+static irqreturn_t timer_interrupt(int irq, void *dev_id)
 {
 	s64 delta, delta_cpu, stolen, blocked;
 	unsigned int i, cpu = smp_processor_id();

@@ -1147,7 +1147,7 @@ void __init setup_arch(char **cmdline_p)
 		phys_to_machine_mapping = alloc_bootmem_pages(
 			max_pfn * sizeof(unsigned long));
 		memcpy(phys_to_machine_mapping,
-		       __va(__pa(xen_start_info->mfn_list)),
+		       (unsigned long *)xen_start_info->mfn_list,
 		       p2m_pages * sizeof(unsigned long));
 		memset(phys_to_machine_mapping + p2m_pages, ~0,
 		       (max_pfn - p2m_pages) * sizeof(unsigned long));
