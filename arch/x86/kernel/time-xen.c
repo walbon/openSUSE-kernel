@@ -161,7 +161,12 @@ static inline u64 scale_delta(u64 delta, u32 mul_frac, int shift)
 static inline u64 get64(volatile u64 *ptr)
 {
 #ifndef CONFIG_64BIT
-	return cmpxchg64(ptr, 0, 0);
+	u64 res;
+	__asm__("movl %%ebx,%%eax\n"
+		"movl %%ecx,%%edx\n"
+		LOCK_PREFIX "cmpxchg8b %1"
+		: "=&A" (res) : "m" (*ptr));
+	return res;
 #else
 	return *ptr;
 #endif
@@ -170,7 +175,12 @@ static inline u64 get64(volatile u64 *ptr)
 static inline u64 get64_local(volatile u64 *ptr)
 {
 #ifndef CONFIG_64BIT
-	return cmpxchg64_local(ptr, 0, 0);
+	u64 res;
+	__asm__("movl %%ebx,%%eax\n"
+		"movl %%ecx,%%edx\n"
+		"cmpxchg8b %1"
+		: "=&A" (res) : "m" (*ptr));
+	return res;
 #else
 	return *ptr;
 #endif
