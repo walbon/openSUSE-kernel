@@ -273,10 +273,15 @@ struct be_adapter {
 	u32 cap;
 	u32 rx_fc;		/* Rx flow control */
 	u32 tx_fc;		/* Tx flow control */
+	u8 generation;		/* BladeEngine ASIC generation */
 	int link_speed;
 	u8 port_type;
 	u8 transceiver;
 };
+
+/* BladeEngine Generation numbers */
+#define BE_GEN2 2
+#define BE_GEN3 3
 
 extern const struct ethtool_ops be_ethtool_ops;
 
