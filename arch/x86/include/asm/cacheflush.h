@@ -182,6 +182,8 @@ extern const int rodata_test_data;
 void set_kernel_text_rw(void);
 void set_kernel_text_ro(void);
 #else
+static inline void mark_rodata_ro(void) { }
+static inline void mark_rodata_rw(void) { }
 static inline void set_kernel_text_rw(void) { }
 static inline void set_kernel_text_ro(void) { }
 #endif
