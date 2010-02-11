@@ -40,6 +40,7 @@
 #include <linux/irq.h>
 #include <linux/seq_file.h>
 #include <linux/root_dev.h>
+#include <linux/crash_dump.h>
 
 #include <asm/mmu.h>
 #include <asm/processor.h>
@@ -319,7 +320,10 @@ static void __init pSeries_setup_arch(void)
 static int __init pSeries_init_panel(void)
 {
 	/* Manually leave the kernel version on the panel. */
-	ppc_md.progress("SUSE Linux\n", 0);
+	if (is_kdump_kernel())
+		ppc_md.progress("SUSE Linux crashed :-(\n", 0);
+	else
+		ppc_md.progress("SUSE Linux\n", 0);
 	ppc_md.progress(init_utsname()->version, 0);
 
 	return 0;
