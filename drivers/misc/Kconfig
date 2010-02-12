@@ -166,6 +166,7 @@ config SGI_XP
 	select IA64_UNCACHED_ALLOCATOR if IA64_GENERIC || IA64_SGI_SN2
 	select GENERIC_ALLOCATOR if IA64_GENERIC || IA64_SGI_SN2
 	select SGI_GRU if X86_64 && SMP
+	select MMU_NOTIFIER
 	---help---
 	  An SGI machine can be divided into multiple Single System
 	  Images which act independently of each other and have
