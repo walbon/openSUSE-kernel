@@ -43,6 +43,8 @@
 #include <linux/mutex.h>
 #include <acpi/processor.h>
 
+#include "bios_driven_whitelist.h"
+
 #define PFX "powernow-k8: "
 #define VERSION "version 2.20.00"
 #include "powernow-k8.h"
@@ -1266,7 +1268,12 @@ static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
 		 * an UP version, and is deprecated by AMD.
 		 */
 		if (num_online_cpus() != 1) {
-			printk_once(ACPI_PSS_BIOS_BUG_MSG);
+			if (dmi_check_amd_bios_driven())
+				printk_once(KERN_INFO PFX
+					    "BIOS has built-in pstate "
+					    "transitioning capability\n");
+			else
+				printk_once(ACPI_PSS_BIOS_BUG_MSG);
 			goto err_out;
 		}
 		if (pol->cpu != 0) {
