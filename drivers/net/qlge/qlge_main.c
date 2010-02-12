@@ -73,12 +73,19 @@ static int qlge_irq_type = MSIX_IRQ;
 module_param(qlge_irq_type, int, MSIX_IRQ);
 MODULE_PARM_DESC(qlge_irq_type, "0 = MSI-X, 1 = MSI, 2 = Legacy.");
 
-int qlge_mpi_coredump = 0;
-module_param(qlge_mpi_coredump, int, S_IRUGO|S_IRUSR);
+static int qlge_mpi_coredump;
+module_param(qlge_mpi_coredump, int, 0);
 MODULE_PARM_DESC(qlge_mpi_coredump,
-		"Option to enable allocation of memory for an MPI "
-		"firmware dump. Default is 1 - allocate memory.");
-static struct pci_device_id qlge_pci_tbl[] __devinitdata = {
+		"Option to enable MPI firmware dump. "
+		"Default is OFF - Do Not allocate memory. ");
+
+static int qlge_force_coredump;
+module_param(qlge_force_coredump, int, 0);
+MODULE_PARM_DESC(qlge_force_coredump,
+		"Option to allow force of firmware core dump. "
+		"Default is OFF - Do not allow.");
+
+static DEFINE_PCI_DEVICE_TABLE(qlge_pci_tbl) = {
 	{PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, QLGE_DEVICE_ID_8012)},
 	{PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, QLGE_DEVICE_ID_8000)},
 	/* required last entry */
@@ -457,9 +464,7 @@ static int ql_set_mac_addr(struct ql_adapter *qdev, int set)
 	if (set) {
 		addr = &qdev->ndev->dev_addr[0];
 		QPRINTK(qdev, IFUP, DEBUG,
-			"Set Mac addr %02x:%02x:%02x:%02x:%02x:%02x\n",
-			addr[0], addr[1], addr[2], addr[3],
-			addr[4], addr[5]);
+			"Set Mac addr %pM\n", addr);
 	} else {
 		memset(zero_mac_addr, 0, ETH_ALEN);
 		addr = &zero_mac_addr[0];
@@ -2658,8 +2663,8 @@ static int ql_alloc_tx_resources(struct ql_adapter *qdev,
 	    pci_alloc_consistent(qdev->pdev, tx_ring->wq_size,
 				 &tx_ring->wq_base_dma);
 
-	if ((tx_ring->wq_base == NULL)
-		|| tx_ring->wq_base_dma & WQ_ADDR_ALIGN) {
+	if ((tx_ring->wq_base == NULL) ||
+	    tx_ring->wq_base_dma & WQ_ADDR_ALIGN) {
 		QPRINTK(qdev, IFUP, ERR, "tx_ring alloc failed.\n");
 		return -ENOMEM;
 	}
@@ -4445,13 +4450,6 @@ static int __devinit ql_init_device(struct pci_dev *pdev,
 		goto err_out;
 	}
 
-	/* Set PCIe read request size */
-	err = pcie_set_readrq(pdev, 4096);
-	if (err) {
-		dev_err(&pdev->dev, "Set readrq failed.\n");
-		goto err_out;
-	}
-
 	err = pci_request_regions(pdev, DRV_NAME);
 	if (err) {
 		dev_err(&pdev->dev, "PCI region request failed.\n");
@@ -4513,6 +4511,8 @@ static int __devinit ql_init_device(struct pci_dev *pdev,
 			err = -ENOMEM;
 			goto err_out;
 		}
+		if (qlge_force_coredump)
+			set_bit(QL_FRC_COREDUMP, &qdev->flags);
 	}
 	/* make sure the EEPROM is good */
 	err = qdev->nic_ops->get_flash(qdev);
