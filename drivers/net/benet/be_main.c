@@ -34,7 +34,6 @@ static DEFINE_PCI_DEVICE_TABLE(be_dev_ids) = {
 	{ PCI_DEVICE(BE_VENDOR_ID, BE_DEVICE_ID2) },
 	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID1) },
 	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID2) },
-	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID3) },
 	{ 0 }
 };
 MODULE_DEVICE_TABLE(pci, be_dev_ids);
@@ -480,10 +479,12 @@ static int be_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct be_adapter *adapter = netdev_priv(netdev);
 	if (new_mtu < BE_MIN_MTU ||
-			new_mtu > BE_MAX_JUMBO_FRAME_SIZE) {
+			new_mtu > (BE_MAX_JUMBO_FRAME_SIZE -
+					(ETH_HLEN + ETH_FCS_LEN))) {
 		dev_info(&adapter->pdev->dev,
 			"MTU must be between %d and %d bytes\n",
-			BE_MIN_MTU, BE_MAX_JUMBO_FRAME_SIZE);
+			BE_MIN_MTU,
+			(BE_MAX_JUMBO_FRAME_SIZE - (ETH_HLEN + ETH_FCS_LEN)));
 		return -EINVAL;
 	}
 	dev_info(&adapter->pdev->dev, "MTU changed from %d to %d bytes\n",
@@ -916,7 +917,7 @@ static inline struct page *be_alloc_pages(u32 size)
 static void be_post_rx_frags(struct be_adapter *adapter)
 {
 	struct be_rx_page_info *page_info_tbl = adapter->rx_obj.page_info_tbl;
-	struct be_rx_page_info *page_info = NULL;
+	struct be_rx_page_info *page_info = NULL, *prev_page_info = NULL;
 	struct be_queue_info *rxq = &adapter->rx_obj.q;
 	struct page *pagep = NULL;
 	struct be_eth_rx_d *rxd;
@@ -947,7 +948,6 @@ static void be_post_rx_frags(struct be_adapter *adapter)
 		rxd = queue_head_node(rxq);
 		rxd->fragpa_lo = cpu_to_le32(frag_dmaaddr & 0xFFFFFFFF);
 		rxd->fragpa_hi = cpu_to_le32(upper_32_bits(frag_dmaaddr));
-		queue_head_inc(rxq);
 
 		/* Any space left in the current big page for another frag? */
 		if ((page_offset + rx_frag_size + rx_frag_size) >
@@ -955,10 +955,13 @@ static void be_post_rx_frags(struct be_adapter *adapter)
 			pagep = NULL;
 			page_info->last_page_user = true;
 		}
+
+		prev_page_info = page_info;
+		queue_head_inc(rxq);
 		page_info = &page_info_tbl[rxq->head];
 	}
 	if (pagep)
-		page_info->last_page_user = true;
+		prev_page_info->last_page_user = true;
 
 	if (posted) {
 		atomic_add(posted, &rxq->used);
@@ -1803,15 +1806,19 @@ char flash_cookie[2][16] =	{"*** SE FLAS",
 				"H DIRECTORY *** "};
 
 static bool be_flash_redboot(struct be_adapter *adapter,
-			const u8 *p)
+			const u8 *p, u32 img_start, int image_size,
+			int hdr_size)
 {
 	u32 crc_offset;
 	u8 flashed_crc[4];
 	int status;
-	crc_offset = FLASH_REDBOOT_START + FLASH_REDBOOT_IMAGE_MAX_SIZE - 4
-			+ sizeof(struct flash_file_hdr) - 32*1024;
+
+	crc_offset = hdr_size + img_start + image_size - 4;
+
 	p += crc_offset;
-	status = be_cmd_get_flash_crc(adapter, flashed_crc);
+
+	status = be_cmd_get_flash_crc(adapter, flashed_crc,
+			(img_start + image_size - 4));
 	if (status) {
 		dev_err(&adapter->pdev->dev,
 		"could not get crc from flash, not flashing redboot\n");
@@ -1823,102 +1830,124 @@ static bool be_flash_redboot(struct be_adapter *adapter,
 		return false;
 	else
 		return true;
-
 }
 
-static int be_flash_image(struct be_adapter *adapter,
+static int be_flash_data(struct be_adapter *adapter,
 			const struct firmware *fw,
-			struct be_dma_mem *flash_cmd, u32 flash_type)
+			struct be_dma_mem *flash_cmd, int num_of_images)
+
 {
-	int status;
-	u32 flash_op, image_offset = 0, total_bytes, image_size = 0;
+	int status = 0, i, filehdr_size = 0;
+	u32 total_bytes = 0, flash_op;
 	int num_bytes;
 	const u8 *p = fw->data;
 	struct be_cmd_write_flashrom *req = flash_cmd->va;
+	struct flash_comp *pflashcomp;
 
-	switch (flash_type) {
-	case FLASHROM_TYPE_ISCSI_ACTIVE:
-		image_offset = FLASH_iSCSI_PRIMARY_IMAGE_START;
-		image_size = FLASH_IMAGE_MAX_SIZE;
-		break;
-	case FLASHROM_TYPE_ISCSI_BACKUP:
-		image_offset = FLASH_iSCSI_BACKUP_IMAGE_START;
-		image_size = FLASH_IMAGE_MAX_SIZE;
-		break;
-	case FLASHROM_TYPE_FCOE_FW_ACTIVE:
-		image_offset = FLASH_FCoE_PRIMARY_IMAGE_START;
-		image_size = FLASH_IMAGE_MAX_SIZE;
-		break;
-	case FLASHROM_TYPE_FCOE_FW_BACKUP:
-		image_offset = FLASH_FCoE_BACKUP_IMAGE_START;
-		image_size = FLASH_IMAGE_MAX_SIZE;
-		break;
-	case FLASHROM_TYPE_BIOS:
-		image_offset = FLASH_iSCSI_BIOS_START;
-		image_size = FLASH_BIOS_IMAGE_MAX_SIZE;
-		break;
-	case FLASHROM_TYPE_FCOE_BIOS:
-		image_offset = FLASH_FCoE_BIOS_START;
-		image_size = FLASH_BIOS_IMAGE_MAX_SIZE;
-		break;
-	case FLASHROM_TYPE_PXE_BIOS:
-		image_offset = FLASH_PXE_BIOS_START;
-		image_size = FLASH_BIOS_IMAGE_MAX_SIZE;
-		break;
-	case FLASHROM_TYPE_REDBOOT:
-		if (!be_flash_redboot(adapter, fw->data))
-			return 0;
-		image_offset = FLASH_REDBOOT_ISM_START;
-		image_size = FLASH_REDBOOT_IMAGE_MAX_SIZE;
-		break;
-	default:
-		return 0;
+	struct flash_comp gen3_flash_types[8] = {
+		{ FLASH_iSCSI_PRIMARY_IMAGE_START_g3, IMG_TYPE_ISCSI_ACTIVE,
+			FLASH_IMAGE_MAX_SIZE_g3},
+		{ FLASH_REDBOOT_START_g3, IMG_TYPE_REDBOOT,
+			FLASH_REDBOOT_IMAGE_MAX_SIZE_g3},
+		{ FLASH_iSCSI_BIOS_START_g3, IMG_TYPE_BIOS,
+			FLASH_BIOS_IMAGE_MAX_SIZE_g3},
+		{ FLASH_PXE_BIOS_START_g3, IMG_TYPE_PXE_BIOS,
+			FLASH_BIOS_IMAGE_MAX_SIZE_g3},
+		{ FLASH_FCoE_BIOS_START_g3, IMG_TYPE_FCOE_BIOS,
+			FLASH_BIOS_IMAGE_MAX_SIZE_g3},
+		{ FLASH_iSCSI_BACKUP_IMAGE_START_g3, IMG_TYPE_ISCSI_BACKUP,
+			FLASH_IMAGE_MAX_SIZE_g3},
+		{ FLASH_FCoE_PRIMARY_IMAGE_START_g3, IMG_TYPE_FCOE_FW_ACTIVE,
+			FLASH_IMAGE_MAX_SIZE_g3},
+		{ FLASH_FCoE_BACKUP_IMAGE_START_g3, IMG_TYPE_FCOE_FW_BACKUP,
+			FLASH_IMAGE_MAX_SIZE_g3}
+	};
+	struct flash_comp gen2_flash_types[8] = {
+		{ FLASH_iSCSI_PRIMARY_IMAGE_START_g2, IMG_TYPE_ISCSI_ACTIVE,
+			FLASH_IMAGE_MAX_SIZE_g2},
+		{ FLASH_REDBOOT_START_g2, IMG_TYPE_REDBOOT,
+			FLASH_REDBOOT_IMAGE_MAX_SIZE_g2},
+		{ FLASH_iSCSI_BIOS_START_g2, IMG_TYPE_BIOS,
+			FLASH_BIOS_IMAGE_MAX_SIZE_g2},
+		{ FLASH_PXE_BIOS_START_g2, IMG_TYPE_PXE_BIOS,
+			FLASH_BIOS_IMAGE_MAX_SIZE_g2},
+		{ FLASH_FCoE_BIOS_START_g2, IMG_TYPE_FCOE_BIOS,
+			FLASH_BIOS_IMAGE_MAX_SIZE_g2},
+		{ FLASH_iSCSI_BACKUP_IMAGE_START_g2, IMG_TYPE_ISCSI_BACKUP,
+			FLASH_IMAGE_MAX_SIZE_g2},
+		{ FLASH_FCoE_PRIMARY_IMAGE_START_g2, IMG_TYPE_FCOE_FW_ACTIVE,
+			FLASH_IMAGE_MAX_SIZE_g2},
+		{ FLASH_FCoE_BACKUP_IMAGE_START_g2, IMG_TYPE_FCOE_FW_BACKUP,
+			 FLASH_IMAGE_MAX_SIZE_g2}
+	};
+
+	if (adapter->generation == BE_GEN3) {
+		pflashcomp = gen3_flash_types;
+		filehdr_size = sizeof(struct flash_file_hdr_g3);
+	} else {
+		pflashcomp = gen2_flash_types;
+		filehdr_size = sizeof(struct flash_file_hdr_g2);
 	}
-
-	p += sizeof(struct flash_file_hdr) + image_offset;
-	if (p + image_size > fw->data + fw->size)
+	for (i = 0; i < 8; i++) {
+		if ((pflashcomp[i].optype == IMG_TYPE_REDBOOT) &&
+			(!be_flash_redboot(adapter, fw->data,
+			 pflashcomp[i].offset, pflashcomp[i].size,
+			 filehdr_size)))
+			continue;
+		p = fw->data;
+		p += filehdr_size + pflashcomp[i].offset
+			+ (num_of_images * sizeof(struct image_hdr));
+	if (p + pflashcomp[i].size > fw->data + fw->size)
 		return -1;
+	total_bytes = pflashcomp[i].size;
+		while (total_bytes) {
+			if (total_bytes > 32*1024)
+				num_bytes = 32*1024;
+			else
+				num_bytes = total_bytes;
+			total_bytes -= num_bytes;
 
-	total_bytes = image_size;
-
-	while (total_bytes) {
-		if (total_bytes > 32*1024)
-			num_bytes = 32*1024;
-		else
-			num_bytes = total_bytes;
-		total_bytes -= num_bytes;
-
-		if (!total_bytes)
-			flash_op = FLASHROM_OPER_FLASH;
-		else
-			flash_op = FLASHROM_OPER_SAVE;
-		memcpy(req->params.data_buf, p, num_bytes);
-		p += num_bytes;
-		status = be_cmd_write_flashrom(adapter, flash_cmd,
-				flash_type, flash_op, num_bytes);
-		if (status) {
-			dev_err(&adapter->pdev->dev,
-			"cmd to write to flash rom failed. type/op %d/%d\n",
-			flash_type, flash_op);
-			return -1;
+			if (!total_bytes)
+				flash_op = FLASHROM_OPER_FLASH;
+			else
+				flash_op = FLASHROM_OPER_SAVE;
+			memcpy(req->params.data_buf, p, num_bytes);
+			p += num_bytes;
+			status = be_cmd_write_flashrom(adapter, flash_cmd,
+				pflashcomp[i].optype, flash_op, num_bytes);
+			if (status) {
+				dev_err(&adapter->pdev->dev,
+					"cmd to write to flash rom failed.\n");
+				return -1;
+			}
+			yield();
 		}
-		yield();
 	}
-
 	return 0;
+}
+
+static int get_ufigen_type(struct flash_file_hdr_g2 *fhdr)
+{
+	if (fhdr == NULL)
+		return 0;
+	if (fhdr->build[0] == '3')
+		return BE_GEN3;
+	else if (fhdr->build[0] == '2')
+		return BE_GEN2;
+	else
+		return 0;
 }
 
 int be_load_fw(struct be_adapter *adapter, u8 *func)
 {
 	char fw_file[ETHTOOL_FLASH_MAX_FILENAME];
 	const struct firmware *fw;
-	struct flash_file_hdr *fhdr;
-	struct flash_section_info *fsec = NULL;
+	struct flash_file_hdr_g2 *fhdr;
+	struct flash_file_hdr_g3 *fhdr3;
+	struct image_hdr *img_hdr_ptr = NULL;
 	struct be_dma_mem flash_cmd;
-	int status;
+	int status, i = 0;
 	const u8 *p;
-	bool entry_found = false;
-	int flash_type;
 	char fw_ver[FW_VER_LEN];
 	char fw_cfg;
 
@@ -1936,33 +1965,8 @@ int be_load_fw(struct be_adapter *adapter, u8 *func)
 		goto fw_exit;
 
 	p = fw->data;
-	fhdr = (struct flash_file_hdr *) p;
-	if (memcmp(fhdr->sign, FW_FILE_HDR_SIGN, strlen(FW_FILE_HDR_SIGN))) {
-		dev_err(&adapter->pdev->dev,
-			"Firmware(%s) load error (signature did not match)\n",
-				fw_file);
-		status = -1;
-		goto fw_exit;
-	}
-
+	fhdr = (struct flash_file_hdr_g2 *) p;
 	dev_info(&adapter->pdev->dev, "Flashing firmware file %s\n", fw_file);
-
-	p += sizeof(struct flash_file_hdr);
-	while (p < (fw->data + fw->size)) {
-		fsec = (struct flash_section_info *)p;
-		if (!memcmp(flash_cookie, fsec->cookie, sizeof(flash_cookie))) {
-			entry_found = true;
-			break;
-		}
-		p += 32;
-	}
-
-	if (!entry_found) {
-		status = -1;
-		dev_err(&adapter->pdev->dev,
-			"Flash cookie not found in firmware image\n");
-		goto fw_exit;
-	}
 
 	flash_cmd.size = sizeof(struct be_cmd_write_flashrom) + 32*1024;
 	flash_cmd.va = pci_alloc_consistent(adapter->pdev, flash_cmd.size,
@@ -1974,12 +1978,26 @@ int be_load_fw(struct be_adapter *adapter, u8 *func)
 		goto fw_exit;
 	}
 
-	for (flash_type = FLASHROM_TYPE_ISCSI_ACTIVE;
-		flash_type <= FLASHROM_TYPE_FCOE_FW_BACKUP; flash_type++) {
-		status = be_flash_image(adapter, fw, &flash_cmd,
-				flash_type);
-		if (status)
-			break;
+	if ((adapter->generation == BE_GEN3) &&
+			(get_ufigen_type(fhdr) == BE_GEN3)) {
+		fhdr3 = (struct flash_file_hdr_g3 *) fw->data;
+		for (i = 0; i < fhdr3->num_imgs; i++) {
+			img_hdr_ptr = (struct image_hdr *) (fw->data +
+					(sizeof(struct flash_file_hdr_g3) +
+					i * sizeof(struct image_hdr)));
+			if (img_hdr_ptr->imageid == 1) {
+				status = be_flash_data(adapter, fw,
+						&flash_cmd, fhdr3->num_imgs);
+			}
+
+		}
+	} else if ((adapter->generation == BE_GEN2) &&
+			(get_ufigen_type(fhdr) == BE_GEN2)) {
+		status = be_flash_data(adapter, fw, &flash_cmd, 0);
+	} else {
+		dev_err(&adapter->pdev->dev,
+			"UFI and Interface are not compatible for flashing\n");
+		status = -1;
 	}
 
 	pci_free_consistent(adapter->pdev, flash_cmd.size, flash_cmd.va,

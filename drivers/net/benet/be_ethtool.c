@@ -112,6 +112,7 @@ static const char et_self_tests[][ETH_GSTRING_LEN] = {
 	"PHY Loopback test",
 	"External Loopback test",
 	"DDR DMA test"
+	"Link test"
 };
 
 #define ETHTOOL_TESTS_NUM ARRAY_SIZE(et_self_tests)
@@ -529,6 +530,9 @@ static void
 be_self_test(struct net_device *netdev, struct ethtool_test *test, u64 *data)
 {
 	struct be_adapter *adapter = netdev_priv(netdev);
+	bool link_up;
+	u8 mac_speed = 0;
+	u16 qos_link_speed = 0;
 
 	memset(data, 0, sizeof(u64) * ETHTOOL_TESTS_NUM);
 
@@ -545,12 +549,20 @@ be_self_test(struct net_device *netdev, struct ethtool_test *test, u64 *data)
 						&data[2]) != 0) {
 			test->flags |= ETH_TEST_FL_FAILED;
 		}
-
-		data[3] = be_test_ddr_dma(adapter);
-		if (data[3] != 0)
-			test->flags |= ETH_TEST_FL_FAILED;
 	}
 
+	if (be_test_ddr_dma(adapter) != 0) {
+		data[3] = 1;
+		test->flags |= ETH_TEST_FL_FAILED;
+	}
+
+	if (be_cmd_link_status_query(adapter, &link_up, &mac_speed,
+				&qos_link_speed) != 0) {
+		test->flags |= ETH_TEST_FL_FAILED;
+		data[4] = -1;
+	} else if (mac_speed) {
+		data[4] = 1;
+	}
 }
 
 static int
@@ -602,7 +614,7 @@ be_read_eeprom(struct net_device *netdev, struct ethtool_eeprom *eeprom,
 
 	if (!status) {
 		resp = (struct be_cmd_resp_seeprom_read *) eeprom_cmd.va;
-		memcpy(data, resp->seeprom_data, eeprom->len);
+		memcpy(data, resp->seeprom_data + eeprom->offset, eeprom->len);
 	}
 	pci_free_consistent(adapter->pdev, eeprom_cmd.size, eeprom_cmd.va,
 			eeprom_cmd.dma);
