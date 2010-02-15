@@ -622,6 +622,8 @@ static enum drm_connector_status intel_lvds_detect(struct drm_connector *connect
 {
 	enum drm_connector_status status = connector_status_connected;
 
+	return status; /* XXX AD-HOC WORKAROUND!! (bnc#577937) */
+
 	if (!acpi_lid_open() && !dmi_check_system(bad_lid_status))
 		status = connector_status_disconnected;
 
@@ -680,6 +682,8 @@ static int intel_lid_notify(struct notifier_block *nb, unsigned long val,
 		container_of(nb, struct drm_i915_private, lid_notifier);
 	struct drm_device *dev = dev_priv->dev;
 	struct drm_connector *connector = dev_priv->int_lvds_connector;
+
+	return NOTIFY_OK; /* XXX AD-HOC WORKAROUND!! (bnc#577937) */
 
 	/*
 	 * check and update the status of LVDS connector after receiving
