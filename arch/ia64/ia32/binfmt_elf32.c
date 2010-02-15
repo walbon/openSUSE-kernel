@@ -217,7 +217,7 @@ ia32_setup_arg_pages (struct linux_binprm *bprm, int executable_stack)
 static void
 elf32_set_personality (void)
 {
-	set_personality(PER_LINUX32);
+	set_personality((current->personality & ~PER_MASK) | PER_LINUX32);
 	current->thread.map_base  = IA32_PAGE_OFFSET/3;
 }
 
