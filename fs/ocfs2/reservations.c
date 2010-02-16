@@ -52,7 +52,9 @@ static unsigned int ocfs2_resv_window_bits(struct ocfs2_reservation_map *resmap)
 {
 	struct ocfs2_super *osb = resmap->m_osb;
 
-	mlog(0, "resv_level: %u\n", osb->osb_resv_level);
+	/*
+	 * TODO: These values need to scale inversly with clustersize!
+	 */
 
 	switch (osb->osb_resv_level) {
 	case 6:
@@ -190,6 +192,8 @@ static void __ocfs2_resv_trunc(struct ocfs2_alloc_reservation *resv)
 {
 	resv->r_len = 0;
 	resv->r_allocated = 0;
+	resv->r_orig_start = 0;
+	resv->r_start = 0;
 }
 
 static void ocfs2_resv_remove(struct ocfs2_reservation_map *resmap,
@@ -252,6 +256,7 @@ void ocfs2_resmap_restart(struct ocfs2_reservation_map *resmap,
 
 	ocfs2_resmap_clear_all_resv(resmap);
 	resmap->m_bitmap_len = clen;
+	resmap->m_search_start = 0;
 
 	spin_unlock(&resv_lock);
 }
@@ -273,18 +278,33 @@ static int ocfs2_try_to_extend_resv(struct ocfs2_reservation_map *resmap,
 	struct ocfs2_alloc_reservation *next_resv;
 	unsigned int bits = ocfs2_resv_window_bits(resmap);
 
+	if (my_resv->r_len > (bits/2)) {
+		/*
+		 * We don't want to go overboard extending
+		 * reservations that still have over 50% available
+		 * bits.
+		 */
+		mlog(0, "Reservation is still mostly unused, do nothing\n");
+		return 0;
+	}
+
 	next = rb_next(node);
 
 	if (next) {
 		next_resv = rb_entry(next, struct ocfs2_alloc_reservation,
 				     r_node);
-		avail_end = next_resv->r_start;
+		avail_end = next_resv->r_orig_start;
 	} else {
 		avail_end = resmap->m_bitmap_len - 1;
 	}
 
+	/*
+	 * No more allocation to the right of this node. That's fine,
+	 * we'll allow a new window to be calculated once all bits are
+	 * exhausted.
+	 */
 	if (ocfs2_resv_end(my_resv) == avail_end)
-		return -ENOENT;
+		return 0;
 
 	available = avail_end - ocfs2_resv_end(my_resv) - 1;
 
@@ -325,6 +345,8 @@ static void ocfs2_resv_insert(struct ocfs2_reservation_map *resmap,
 			BUG();
 		}
 	}
+
+	new->r_orig_start = new->r_start;
 
 	rb_link_node(&new->r_node, parent, p);
 	rb_insert_color(&new->r_node, root);
@@ -425,7 +447,7 @@ static void ocfs2_resv_find_window(struct ocfs2_reservation_map *resmap,
 	prev_resv = ocfs2_find_resv(resmap, goal);
 
 	if (prev_resv == NULL) {
-		mlog(0, "Farthest left window\n");
+		mlog(0, "Goal in farthest left window\n");
 
 		/* Ok, we're the farthest left window. */
 		next = rb_first(root);
@@ -616,6 +638,13 @@ int ocfs2_resmap_resv_bits(struct ocfs2_reservation_map *resmap,
 	if (ocfs2_resv_empty(resv)) {
 		mlog(0, "empty reservation, find new window\n");
 
+		/*
+		 * Try to get a window here. If it works, we must fall
+		 * through and test the bitmap . This avoids some
+		 * ping-ponging of windows due to non-reserved space
+		 * being allocation before we initialize a window for
+		 * that inode.
+		 */
 		ocfs2_resv_find_window(resmap, resv);
 
 		if (ocfs2_resv_empty(resv)) {
@@ -623,7 +652,10 @@ int ocfs2_resmap_resv_bits(struct ocfs2_reservation_map *resmap,
 			 * If resv is still empty, we return zero
 			 * bytes and allow ocfs2_resmap_claimed_bits()
 			 * to start our new reservation after the
-			 * allocator has done it's work.
+			 * allocator has done it's work. This could
+			 * result in the allocator using bits that are
+			 * owned by another window which is
+			 * sub-optimal, but a valid case.
 			 */
 			*cstart = *clen = 0;
 			ret = 0;

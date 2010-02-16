@@ -37,15 +37,25 @@ struct ocfs2_bitmap_resv_ops;
 struct ocfs2_alloc_reservation {
 	struct rb_node	r_node;
 
-	unsigned int	r_start;
-	unsigned int	r_len;
+	unsigned int	r_start;	/* Begining of current window */
+	unsigned int	r_len;		/* Length of the window */
 
-	unsigned int	r_last_len;
-	unsigned int	r_last_start;
+	unsigned int	r_last_len;	/* Length of most recent alloc */
+	unsigned int	r_last_start;	/* Start of most recent alloc */
+
+	unsigned int	r_orig_start;	/* Recorded start of the
+					 * window, before any
+					 * allocation was done from
+					 * it. This allows search and
+					 * extension of other windows
+					 * to be more realistic as to
+					 * what bits have been used
+					 * already. */
 
 	unsigned int	r_allocated;
 
-	int		r_inuse;
+	int		r_inuse;	/* r_inuse is set when r_node
+					 * is part of an rbtree. */
 };
 
 struct ocfs2_reservation_map {
@@ -57,6 +67,11 @@ struct ocfs2_reservation_map {
 	 * bitmap is provided. */
 	u32			m_bitmap_len;	/* Number of valid
 						 * bits available */
+
+	unsigned int		m_search_start;	/* Records the end
+						 * location of our
+						 * most recent
+						 * allocation. */
 };
 
 void ocfs2_resv_init_once(struct ocfs2_alloc_reservation *resv);
@@ -93,7 +108,7 @@ int ocfs2_resmap_init(struct ocfs2_super *osb,
  *
  * Re-initialize the parameters of a reservation bitmap. This is
  * useful for local alloc window slides.
- *
+ * 
  * If any bitmap parameters have changed, this function will call
  * ocfs2_trunc_resv against all existing reservations. A future
  * version will recalculate existing reservations based on the new

@@ -7307,6 +7307,8 @@ int ocfs2_convert_inline_data_to_extents(struct inode *inode,
 		}
 		did_quota = 1;
 
+		data_ac->ac_resv = &OCFS2_I(inode)->ip_la_data_resv;
+
 		ret = ocfs2_claim_clusters(osb, handle, data_ac, 1, &bit_off,
 					   &num);
 		if (ret) {
