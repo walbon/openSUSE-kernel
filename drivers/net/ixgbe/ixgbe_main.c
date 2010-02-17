@@ -1852,6 +1852,7 @@ static int ixgbe_request_irq(struct ixgbe_adapter *adapter)
 	if (entropy)
 		irq_flags = IRQF_SAMPLE_RANDOM;
 
+
 	if (adapter->flags & IXGBE_FLAG_MSIX_ENABLED) {
 		err = ixgbe_request_msix_irqs(adapter);
 	} else if (adapter->flags & IXGBE_FLAG_MSI_ENABLED) {
