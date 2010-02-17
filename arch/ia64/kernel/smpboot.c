@@ -388,6 +388,11 @@ smp_callin (void)
 
 	fix_b0_for_bsp();
 
+	/*
+	 * local memory node for secondary processors
+	 */
+	set_numa_mem(local_memory_node(cpu_to_node_map[cpuid]));
+
 	ipi_call_lock_irq();
 	spin_lock(&vector_lock);
 	/* Setup the per cpu irq handling data structures */

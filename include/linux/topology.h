@@ -223,4 +223,16 @@ int arch_update_cpu_topology(void);
 #define numa_node_id()		(cpu_to_node(raw_smp_processor_id()))
 #endif
 
+/*
+ * Returns number of "local memory node" for systems with memoryless nodes.
+ * Default is the current/local node.
+ */
+#ifndef numa_mem_id
+#define numa_mem_id	numa_node_id
+#endif
+
+#ifndef cpu_to_mem
+#define cpu_to_mem	cpu_to_node
+#endif
+
 #endif /* _LINUX_TOPOLOGY_H */

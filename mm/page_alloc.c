@@ -55,6 +55,11 @@
 #include <asm/div64.h>
 #include "internal.h"
 
+#ifdef CONFIG_HAVE_MEMORYLESS_NODES
+DEFINE_PER_CPU(int, numa_mem);		/* Kernel "local memory" node */
+EXPORT_PER_CPU_SYMBOL(numa_mem);
+#endif
+
 /*
  * Array of node states.
  */
@@ -2713,6 +2718,24 @@ static void build_zonelist_cache(pg_data_t *pgdat)
 		zlc->z_to_n[z - zonelist->_zonerefs] = zonelist_node_idx(z);
 }
 
+#ifdef CONFIG_HAVE_MEMORYLESS_NODES
+/*
+ * Return node id of node used for "local" allocations.
+ * I.e., first node id of first zone in arg node's generic zonelist.
+ * Used for initializing percpu 'numa_mem', which is used primarily
+ * for kernel allocations, so use GFP_KERNEL flags to locate zonelist.
+ */
+int local_memory_node(int node)
+{
+	struct zone *zone;
+
+	(void)first_zones_zonelist(node_zonelist(node, GFP_KERNEL),
+				   gfp_zone(GFP_KERNEL),
+				   NULL,
+				   &zone);
+	return zone->node;
+}
+#endif
 
 #else	/* CONFIG_NUMA */
 
@@ -2779,6 +2802,23 @@ static int __build_all_zonelists(void *dummy)
 		build_zonelists(pgdat);
 		build_zonelist_cache(pgdat);
 	}
+
+#ifdef CONFIG_HAVE_MEMORYLESS_NODES
+	/*
+	 * We now know the "local memory node" for each node--
+	 * i.e., the node of the first zone in the generic zonelist.
+	 * Set up numa_mem percpu variable for on-line cpus.  During
+	 * boot, only the boot cpu should be on-line;  we'll init the
+	 * secondary cpus' numa_mem as they come on-line.  During
+	 * node/memory hotplug, we'll fixup all on-line cpus.
+	 */
+	{
+		int cpu;
+		for_each_online_cpu(cpu)
+			cpu_to_mem(cpu) = local_memory_node(cpu_to_node(cpu));
+	}
+#endif
+
 	return 0;
 }
 

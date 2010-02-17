@@ -30,6 +30,29 @@
  */
 #define cpu_to_node(cpu) (int)(cpu_to_node_map[cpu])
 
+#ifdef CONFIG_HAVE_MEMORYLESS_NODES
+
+DECLARE_PER_CPU(int, numa_mem);
+
+#define set_numa_mem(node) percpu_write(numa_mem, node)
+
+/*
+ * Returns the number of the node from which 'cpu'
+ * allocates local memory.
+ */
+#define cpu_to_mem(cpu)	per_cpu(numa_mem, (cpu))
+#define numa_mem_id()	percpu_read(numa_mem)
+
+#else	/* !CONFIG_HAVE_MEMORYLESS_NODES */
+
+#define numa_mem numa_node
+static inline void set_numa_mem(int node) {}
+/*
+ * let cpu_to_mem() and numa_mem_id() default in <linux/topology.h>
+ */
+
+#endif	/* [!]CONFIG_HAVE_MEMORYLESS_NODES */
+
 /*
  * Returns a bitmask of CPUs on Node 'node'.
  */
