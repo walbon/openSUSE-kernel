@@ -2396,12 +2396,16 @@ void cpuset_unlock(void)
 
 int cpuset_mem_spread_node(void)
 {
-	int node;
+	int node = current->cpuset_mem_spread_rotor;
 
-	node = next_node(current->cpuset_mem_spread_rotor, current->mems_allowed);
-	if (node == MAX_NUMNODES)
-		node = first_node(current->mems_allowed);
+	do {
+		node = next_node(node, current->mems_allowed);
+		if (node == MAX_NUMNODES)
+			node = first_node(current->mems_allowed);
+	} while (!node_state(node, N_NORMAL_MEMORY));
+
 	current->cpuset_mem_spread_rotor = node;
+
 	return node;
 }
 EXPORT_SYMBOL_GPL(cpuset_mem_spread_node);
