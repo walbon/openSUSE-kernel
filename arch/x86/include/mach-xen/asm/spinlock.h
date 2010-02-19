@@ -230,13 +230,13 @@ static __always_inline void __ticket_spin_lock(raw_spinlock_t *lock)
 	bool free;
 
 	__ticket_spin_lock_preamble;
-	if (likely(free))
-		return;
-	token = xen_spin_adjust(lock, token);
-	do {
-		count = __ticket_spin_count(lock);
-		__ticket_spin_lock_body;
-	} while (unlikely(!count) && !xen_spin_wait(lock, token));
+	if (unlikely(!free)) {
+		token = xen_spin_adjust(lock, token);
+		do {
+			count = __ticket_spin_count(lock);
+			__ticket_spin_lock_body;
+		} while (unlikely(!count) && !xen_spin_wait(lock, token));
+	}
 	lock->owner = raw_smp_processor_id();
 }
 
@@ -247,13 +247,14 @@ static __always_inline void __ticket_spin_lock_flags(raw_spinlock_t *lock,
 	bool free;
 
 	__ticket_spin_lock_preamble;
-	if (likely(free))
-		return;
-	token = xen_spin_adjust(lock, token);
-	do {
-		count = __ticket_spin_count(lock);
-		__ticket_spin_lock_body;
-	} while (unlikely(!count) && !xen_spin_wait_flags(lock, &token, flags));
+	if (unlikely(!free)) {
+		token = xen_spin_adjust(lock, token);
+		do {
+			count = __ticket_spin_count(lock);
+			__ticket_spin_lock_body;
+		} while (unlikely(!count)
+			 && !xen_spin_wait_flags(lock, &token, flags));
+	}
 	lock->owner = raw_smp_processor_id();
 }
 

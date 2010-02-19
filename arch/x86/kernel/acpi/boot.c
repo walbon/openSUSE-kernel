@@ -458,7 +458,7 @@ int acpi_gsi_to_irq(u32 gsi, unsigned int *irq)
 {
 	*irq = gsi;
 
-#if defined(CONFIG_X86_IO_APIC) && !defined(CONFIG_XEN)
+#ifdef CONFIG_X86_IO_APIC
 	if (acpi_irq_model == ACPI_IRQ_MODEL_IOAPIC)
 		setup_IO_APIC_irq_extra(gsi);
 #endif
