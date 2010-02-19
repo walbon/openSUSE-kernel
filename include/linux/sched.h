@@ -1249,7 +1249,7 @@ struct task_struct {
 	 * a short time
 	 */
 	unsigned char fpu_counter;
-#ifdef CONFIG_BLK_DEV_IO_TRACE
+#if defined(CONFIG_BLK_DEV_IO_TRACE) || defined(CONFIG_X86_32)
 	unsigned int btrace_seq;
 #endif
 
