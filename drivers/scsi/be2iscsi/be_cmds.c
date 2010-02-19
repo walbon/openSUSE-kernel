@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2005 - 2009 ServerEngines
+ * Copyright (C) 2005 - 2010 ServerEngines
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -32,18 +32,11 @@ void be_mcc_notify(struct beiscsi_hba *phba)
 unsigned int alloc_mcc_tag(struct beiscsi_hba *phba)
 {
 	unsigned int tag = 0;
-	unsigned int num = 0;
 
-mcc_tag_rdy:
 	if (phba->ctrl.mcc_tag_available) {
 		tag = phba->ctrl.mcc_tag[phba->ctrl.mcc_alloc_index];
 		phba->ctrl.mcc_tag[phba->ctrl.mcc_alloc_index] = 0;
 		phba->ctrl.mcc_numtag[tag] = 0;
-	} else {
-		udelay(100);
-		num++;
-		if (num < mcc_timeout)
-			goto mcc_tag_rdy;
 	}
 	if (tag) {
 		phba->ctrl.mcc_tag_available--;

@@ -338,6 +338,16 @@ qla2x00_initialize_adapter(scsi_qla_host_t *vha)
 	rval = qla2x00_init_rings(vha);
 	ha->flags.chip_reset_done = 1;
 
+	if (rval == QLA_SUCCESS && IS_QLA84XX(ha)) {
+	/* Issue verify 84xx FW IOCB to complete 84xx initialization */
+		rval = qla84xx_init_chip(vha);
+		if (rval != QLA_SUCCESS) {
+			qla_printk(KERN_ERR, ha,
+				"Unable to initialize ISP84XX.\n");
+		qla84xx_put_chip(vha);
+		}
+	}
+
 	return (rval);
 }
 
@@ -2901,8 +2911,13 @@ qla2x00_find_all_fabric_devs(scsi_qla_host_t *vha,
 		if (qla2x00_is_reserved_id(vha, loop_id))
 			continue;
 
-		if (atomic_read(&vha->loop_down_timer) || LOOP_TRANSITION(vha))
+		if (atomic_read(&vha->loop_down_timer) ||
+		    LOOP_TRANSITION(vha)) {
+			atomic_set(&vha->loop_down_timer, 0);
+			set_bit(LOOP_RESYNC_NEEDED, &vha->dpc_flags);
+			set_bit(LOCAL_LOOP_UPDATE, &vha->dpc_flags);
 			break;
+		}
 
 		if (swl != NULL) {
 			if (last_dev) {
@@ -4878,6 +4893,15 @@ qla81xx_nvram_config(scsi_qla_host_t *vha)
 }
 
 void
-qla81xx_update_fw_options(scsi_qla_host_t *ha)
+qla81xx_update_fw_options(scsi_qla_host_t *vha)
 {
+	struct qla_hw_data *ha = vha->hw;
+
+	if (!ql2xetsenable)
+		return;
+
+	/* Enable ETS Burst. */
+	memset(ha->fw_options, 0, sizeof(ha->fw_options));
+	ha->fw_options[2] |= BIT_9;
+	qla2x00_set_fw_options(vha, ha->fw_options);
 }

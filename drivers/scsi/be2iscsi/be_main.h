@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2005 - 2009 ServerEngines
+ * Copyright (C) 2005 - 2010 ServerEngines
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -40,11 +40,14 @@
 #define DRV_DESC		BE_NAME " " "Driver"
 
 #define BE_VENDOR_ID 		0x19A2
+/* DEVICE ID's for BE2 */
 #define BE_DEVICE_ID1		0x212
 #define OC_DEVICE_ID1		0x702
 #define OC_DEVICE_ID2		0x703
+
+/* DEVICE ID's for BE3 */
+#define BE_DEVICE_ID2		0x222
 #define OC_DEVICE_ID3		0x712
-#define OC_DEVICE_ID4		0x222
 
 #define BE2_IO_DEPTH		1024
 #define BE2_MAX_SESSIONS	256
@@ -56,10 +59,10 @@
 #define BE2_DEFPDU_DATA_SZ	8192
 
 #define MAX_CPUS		31
-#define BEISCSI_SGLIST_ELEMENTS	BE2_SGE
+#define BEISCSI_SGLIST_ELEMENTS	30
 
 #define BEISCSI_CMD_PER_LUN	128	/* scsi_host->cmd_per_lun */
-#define BEISCSI_MAX_SECTORS	2048	/* scsi_host->max_sectors */
+#define BEISCSI_MAX_SECTORS	256	/* scsi_host->max_sectors */
 
 #define BEISCSI_MAX_CMD_LEN	16	/* scsi_host->max_cmd_len */
 #define BEISCSI_NUM_MAX_LUN	256	/* scsi_host->max_lun */
@@ -254,6 +257,11 @@ struct hba_parameters {
 	unsigned int num_sge;
 };
 
+struct invalidate_command_table {
+	unsigned short icd;
+	unsigned short cid;
+} __packed;
+
 struct beiscsi_hba {
 	struct hba_parameters params;
 	struct hwi_controller *phwi_ctrlr;
@@ -325,6 +333,9 @@ struct beiscsi_hba {
 	struct workqueue_struct *wq;	/* The actuak work queue */
 	struct work_struct work_cqs;	/* The work being queued */
 	struct be_ctrl_info ctrl;
+	unsigned int generation;
+	struct invalidate_command_table inv_tbl[128];
+
 };
 
 struct beiscsi_session {
@@ -487,8 +498,6 @@ struct hwi_async_entry {
 	struct list_head data_busy_list;
 };
 
-#define BE_MIN_ASYNC_ENTRIES 128
-
 struct hwi_async_pdu_context {
 	struct {
 		struct be_bus_address pa_base;
@@ -529,7 +538,7 @@ struct hwi_async_pdu_context {
 	 * This is a varying size list! Do not add anything
 	 * after this entry!!
 	 */
-	struct hwi_async_entry async_entry[BE_MIN_ASYNC_ENTRIES];
+	struct hwi_async_entry async_entry[BE2_MAX_SESSIONS * 2];
 };
 
 #define PDUCQE_CODE_MASK	0x0000003F

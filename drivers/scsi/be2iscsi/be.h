@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2005 - 2009 ServerEngines
+ * Copyright (C) 2005 - 2010 ServerEngines
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -25,6 +25,9 @@
 #define MCC_Q_LEN	128
 #define MCC_CQ_LEN	256
 #define MAX_MCC_CMD	16
+/* BladeEngine Generation numbers */
+#define BE_GEN2 2
+#define BE_GEN3 3
 
 struct be_dma_mem {
 	void *va;

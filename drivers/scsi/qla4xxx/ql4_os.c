@@ -42,17 +42,18 @@ static struct kmem_cache *srb_cachep;
  * Module parameter information and variables
  */
 int ql4xdiscoverywait = 60;
-module_param(ql4xdiscoverywait, int, S_IRUGO | S_IRUSR);
+module_param_named(ql4xdiscoverywait, ql4xdiscoverywait, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ql4xdiscoverywait, "Discovery wait time");
+
 int ql4xdontresethba = 0;
-module_param(ql4xdontresethba, int, S_IRUGO | S_IRUSR);
+module_param_named(ql4xdontresethba, ql4xdontresethba, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ql4xdontresethba,
 		 "Dont reset the HBA when the driver gets 0x8002 AEN "
 		 " default it will reset hba :0"
 		 " set to 1 to avoid resetting HBA");
 
 int ql4xextended_error_logging = 0; /* 0 = off, 1 = log errors */
-module_param(ql4xextended_error_logging, int, S_IRUGO | S_IRUSR);
+module_param_named(ql4xextended_error_logging, ql4xextended_error_logging, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ql4xextended_error_logging,
 		 "Option to enable extended error logging, "
 		 "Default is 0 - no logging, 1 - debug logging");
@@ -384,7 +385,6 @@ void qla4xxx_mark_device_missing(struct scsi_qla_host *ha,
 		      ddb_entry->fw_ddb_index));
 	iscsi_block_session(ddb_entry->sess);
 	iscsi_conn_error_event(ddb_entry->conn, ISCSI_ERR_CONN_FAILED);
-	set_bit(DF_NO_RELOGIN, &ddb_entry->flags);
 }
 
 /***
@@ -434,9 +434,10 @@ void qla4xxx_srb_compl(struct scsi_qla_host *ha, struct srb *srb)
 {
 	struct scsi_cmnd *cmd = srb->cmd;
 
-	qla4xxx_srb_free_dma(ha, srb);
-
-	mempool_free(srb, ha->srb_mempool);
+	if (!(srb->flags & SRB_SCSI_PASSTHRU)) {
+		qla4xxx_srb_free_dma(ha, srb);
+		mempool_free(srb, ha->srb_mempool);
+	}
 
 	cmd->scsi_done(cmd);
 }
@@ -680,24 +681,6 @@ static void qla4xxx_timer(struct scsi_qla_host *ha)
 
 	/* Search for relogin's to time-out and port down retry. */
 	list_for_each_entry_safe(ddb_entry, dtemp, &ha->ddb_list, list) {
-		/* First check to see if the device has exhausted the
-		 * port down retry count */
-		if (atomic_read(&ddb_entry->state) == DDB_STATE_MISSING) {
-			if (atomic_read(&ddb_entry->port_down_timer) == 0)
-				continue;
-
-			if (atomic_dec_and_test(&ddb_entry->port_down_timer)) {
-				DEBUG2(printk("scsi%ld: %s: index [%d] "
-					"port down retry count of (%d) secs "
-					"exhausted.\n",
-					ha->host_no, __func__,
-					ddb_entry->fw_ddb_index,
-					ha->port_down_retry_count);)
-
-				atomic_set(&ddb_entry->state, DDB_STATE_DEAD);
-				start_dpc++;
-			}
-		}
 		/* Count down time between sending relogins */
 		if (adapter_up(ha) &&
 		    !test_bit(DF_RELOGIN, &ddb_entry->flags) &&
@@ -732,8 +715,7 @@ static void qla4xxx_timer(struct scsi_qla_host *ha)
 			if (atomic_read(&ddb_entry->state) !=
 			    DDB_STATE_ONLINE &&
 			    ddb_entry->fw_ddb_device_state ==
-			    DDB_DS_SESSION_FAILED &&
-			    !test_bit(DF_NO_RELOGIN, &ddb_entry->flags)) {
+			    DDB_DS_SESSION_FAILED) {
 				/* Reset retry relogin timer */
 				atomic_inc(&ddb_entry->relogin_retry_count);
 				DEBUG2(printk("scsi%ld: index[%d] relogin"
@@ -1299,9 +1281,8 @@ static void qla4xxx_do_dpc(struct work_struct *work)
 	    test_and_clear_bit(DPC_RELOGIN_DEVICE, &ha->dpc_flags)) {
 		list_for_each_entry_safe(ddb_entry, dtemp,
 					 &ha->ddb_list, list) {
-			if ((test_and_clear_bit(DF_RELOGIN, &ddb_entry->flags)) &&
-			    (!test_bit(DF_NO_RELOGIN, &ddb_entry->flags)) &&
-			    (atomic_read(&ddb_entry->state) != DDB_STATE_ONLINE))
+			if (test_and_clear_bit(DF_RELOGIN, &ddb_entry->flags) &&
+			    atomic_read(&ddb_entry->state) != DDB_STATE_ONLINE)
 				qla4xxx_relogin_device(ha, ddb_entry);
 
 			/*
@@ -1321,10 +1302,33 @@ static void qla4xxx_do_dpc(struct work_struct *work)
 
 	if (test_and_clear_bit(DPC_LINK_CHANGED, &ha->dpc_flags)) {
 		if (!test_bit(AF_LINK_UP, &ha->flags)) {
-		/* ---- link down? --- */
+			/* ---- link down? --- */
 			list_for_each_entry_safe(ddb_entry, dtemp, &ha->ddb_list, list) {
-			if (atomic_read(&ddb_entry->state) == DDB_STATE_ONLINE)
-				qla4xxx_mark_device_missing(ha, ddb_entry);
+				if (atomic_read(&ddb_entry->state) == DDB_STATE_ONLINE)
+					qla4xxx_mark_device_missing(ha, ddb_entry);
+			}
+		} else {
+			/* ---- link up? --- *
+			 * F/W will auto login to all devices ONLY ONCE after
+			 * link up during driver initialization and runtime
+			 * fatal error recovery.  Therefore, the driver must
+			 * manually relogin to devices when recovering from
+			 * connection failures, logouts, expired KATO, etc. */
+
+			list_for_each_entry_safe(ddb_entry, dtemp, &ha->ddb_list, list) {
+				if ((atomic_read(&ddb_entry->state) == DDB_STATE_MISSING) ||
+						(atomic_read(&ddb_entry->state) == DDB_STATE_DEAD)) {
+					if (ddb_entry->fw_ddb_device_state == DDB_DS_SESSION_ACTIVE) {
+						atomic_set(&ddb_entry->state, DDB_STATE_ONLINE);
+						dev_info(&ha->pdev->dev,
+							"scsi%ld: %s: ddb[%d] os[%d] marked ONLINE\n",
+							ha->host_no, __func__, ddb_entry->fw_ddb_index,
+							ddb_entry->os_target_id);
+
+						iscsi_unblock_session(ddb_entry->sess);
+					} else
+						qla4xxx_relogin_device(ha, ddb_entry);
+				}
 			}
 		}
 	}
@@ -1836,7 +1840,7 @@ static int qla4xxx_eh_abort(struct scsi_cmnd *cmd)
 	struct scsi_qla_host *ha;
 	struct srb *srb = NULL;
 	struct ddb_entry *ddb_entry;
-	int ret = SUCCESS;
+	int ret = FAILED;
 	unsigned int channel;
 	unsigned int id;
 	unsigned int lun;
@@ -1844,7 +1848,6 @@ static int qla4xxx_eh_abort(struct scsi_cmnd *cmd)
 	unsigned long flags = 0;
 	int i = 0;
 	int got_ref = 0;
-	unsigned long wait_online;
 
 	if (cmd == NULL) {
 		DEBUG2(printk("ABORT - **** SCSI mid-layer passing in NULL cmd\n"));
@@ -1866,7 +1869,7 @@ static int qla4xxx_eh_abort(struct scsi_cmnd *cmd)
 	if (!cmd->SCp.ptr) {
 		DEBUG2(printk("scsi%ld: ABORT - cmd already completed.\n",
 			      ha->host_no));
-		return ret;
+		return SUCCESS;
 	}
 
 
@@ -1906,27 +1909,6 @@ static int qla4xxx_eh_abort(struct scsi_cmnd *cmd)
 		got_ref++;
 
 		spin_unlock_irqrestore(&ha->hardware_lock, flags);
-
-		/*
-		 * If device is not online wait for 10 sec for device to come online,
-		 * else return error and do not issue abort task.
-		 */
-		if (atomic_read(&ddb_entry->state) != DDB_STATE_ONLINE) {
-			wait_online = jiffies + (DEVICE_ONLINE_TOV * HZ);
-			while (time_before(jiffies, wait_online)) {
-				set_current_state(TASK_INTERRUPTIBLE);
-				schedule_timeout(HZ);
-				if (atomic_read(&ddb_entry->state) == DDB_STATE_ONLINE)
-					break;
-			}
-			if (atomic_read(&ddb_entry->state) != DDB_STATE_ONLINE) {
-				DEBUG2(printk("scsi%ld:%d: %s: Unable to abort task."
-						"Device is not online.\n", ha->host_no
-						, cmd->device->channel, __func__));
-
-				return FAILED;
-			}
-		}
 
 		if (qla4xxx_abort_task(ha, srb) != QLA_SUCCESS) {
 			dev_info(&ha->pdev->dev,
@@ -1976,7 +1958,7 @@ static int qla4xxx_eh_device_reset(struct scsi_cmnd *cmd)
 {
 	struct scsi_qla_host *ha;
 	struct ddb_entry *ddb_entry;
-	int ret = FAILED, stat;
+	int stat;
 	struct Scsi_Host *h;
 	unsigned int b, t, l;
 
@@ -1997,7 +1979,7 @@ static int qla4xxx_eh_device_reset(struct scsi_cmnd *cmd)
 	if (!ddb_entry) {
 		DEBUG2(printk("scsi%ld: DEVICE RESET - NULL ddb entry.\n"
 				, ha->host_no));
-		return ret;
+		return FAILED;
 	}
 
 	dev_info(&ha->pdev->dev, "scsi%ld:%d:%d:%d: DEVICE RESET ISSUED.\n"
@@ -2018,7 +2000,7 @@ static int qla4xxx_eh_device_reset(struct scsi_cmnd *cmd)
 	stat = qla4xxx_reset_lun(ha, ddb_entry, l);
 	if (stat != QLA_SUCCESS) {
 		dev_info(&ha->pdev->dev, "DEVICE RESET FAILED. %d\n", stat);
-		goto eh_dev_reset_done;
+		return FAILED;
 	}
 
 	if (qla4xxx_eh_wait_for_commands(ha, scsi_target(cmd->device),
@@ -2026,23 +2008,19 @@ static int qla4xxx_eh_device_reset(struct scsi_cmnd *cmd)
 		dev_info(&ha->pdev->dev,
 			   "DEVICE RESET FAILED - waiting for "
 			   "commands.\n");
-		goto eh_dev_reset_done;
+		return FAILED;
 	}
 
 	/* Send marker. */
 	if (qla4xxx_send_marker_iocb(ha, ddb_entry, l, MM_LUN_RESET)
 		!= QLA_SUCCESS)
-		goto eh_dev_reset_done;
+		return FAILED;
 
 	dev_info(&ha->pdev->dev,
 		   "scsi(%ld:%d:%d:%d): DEVICE RESET SUCCEEDED.\n",
 		   ha->host_no, b, t, l);
 
-	ret = SUCCESS;
-
-eh_dev_reset_done:
-
-	return ret;
+	return SUCCESS;
 }
 
 /**
@@ -2062,6 +2040,13 @@ static int qla4xxx_eh_target_reset(struct scsi_cmnd *cmd)
 
 	starget_printk(KERN_INFO, scsi_target(cmd->device),
 		       "WARM TARGET RESET ISSUED.\n");
+
+	/* wait for hba to go online */
+	if (qla4xxx_wait_for_hba_online(ha) != QLA_SUCCESS) {
+		dev_info(&ha->pdev->dev, "%s: TARGET RESET."
+			 "Adapter Offline.\n", __func__);
+		return FAILED;
+	}
 
 	DEBUG2(printk(KERN_INFO
 		      "scsi%ld: TARGET_DEVICE_RESET cmd=%p jiffies = 0x%lx, "

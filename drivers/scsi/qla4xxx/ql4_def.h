@@ -160,6 +160,7 @@ struct srb {
 	struct ddb_entry	*ddb;
 	uint16_t flags;		/* (1) Status flags. */
 
+#define SRB_SCSI_PASSTHRU	BIT_2
 #define SRB_DMA_VALID		BIT_3	/* DMA Buffer mapped. */
 #define SRB_GOT_SENSE		BIT_4	/* sense data recieved. */
 	uint8_t state;		/* (1) Status flags. */
@@ -184,6 +185,7 @@ struct srb {
 	uint16_t iocb_tov;
 	uint16_t iocb_cnt;	/* Number of used iocbs */
 	uint16_t cc_stat;
+	uint32_t dma_len;
 	u_long r_start;		/* Time we recieve a cmd from OS */
 	u_long u_start;		/* Time when we handed the cmd to F/W */
 

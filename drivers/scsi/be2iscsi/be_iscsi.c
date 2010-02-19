@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2005 - 2009 ServerEngines
+ * Copyright (C) 2005 - 2010 ServerEngines
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -274,8 +274,8 @@ int beiscsi_set_param(struct iscsi_cls_conn *cls_conn,
 			conn->max_recv_dlength = 65536;
 		break;
 	case ISCSI_PARAM_MAX_BURST:
-		if (session->first_burst > 262144)
-			session->first_burst = 262144;
+		if (session->max_burst > 262144)
+			session->max_burst = 262144;
 		break;
 	default:
 		return 0;
@@ -482,7 +482,7 @@ static int beiscsi_open_conn(struct iscsi_endpoint *ep,
 	tag = mgmt_open_connection(phba, dst_addr, beiscsi_ep);
 	if (!tag) {
 		SE_DEBUG(DBG_LVL_1,
-			 "mgmt_invalidate_connection Failed for cid=%d \n",
+			 "mgmt_open_connection Failed for cid=%d \n",
 			 beiscsi_ep->ep_cid);
 	} else {
 		wait_event_interruptible(phba->ctrl.mcc_wait[tag],
@@ -561,7 +561,7 @@ beiscsi_ep_connect(struct Scsi_Host *shost, struct sockaddr *dst_addr,
 		return ERR_PTR(ret);
 	}
 
-	if (phba->state) {
+	if (phba->state != BE_ADAPTER_UP) {
 		ret = -EBUSY;
 		SE_DEBUG(DBG_LVL_1, "The Adapter state is Not UP \n");
 		return ERR_PTR(ret);
@@ -701,7 +701,7 @@ void beiscsi_conn_stop(struct iscsi_cls_conn *cls_conn, int flag)
 	if (!tag) {
 		SE_DEBUG(DBG_LVL_1,
 			 "mgmt_invalidate_connection Failed for cid=%d \n",
-			 beiscsi_ep->ep_cid);
+			  beiscsi_ep->ep_cid);
 	} else {
 		wait_event_interruptible(phba->ctrl.mcc_wait[tag],
 					 phba->ctrl.mcc_numtag[tag]);
