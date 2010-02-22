@@ -30,10 +30,6 @@
 #include <linux/audit.h>
 #include <linux/falloc.h>
 #include <linux/fs_struct.h>
-#include <trace/fs.h>
-
-DEFINE_TRACE(fs_open);
-DEFINE_TRACE(fs_close);
 
 int vfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
@@ -1048,7 +1044,6 @@ long do_sys_open(int dfd, const char __user *filename, int flags, int mode)
 				fsnotify_open(f->f_path.dentry);
 				fd_install(fd, f);
 			}
-			trace_fs_open(fd, tmp);
 		}
 		putname(tmp);
 	}
@@ -1138,7 +1133,6 @@ SYSCALL_DEFINE1(close, unsigned int, fd)
 	filp = fdt->fd[fd];
 	if (!filp)
 		goto out_unlock;
-	trace_fs_close(fd);
 	rcu_assign_pointer(fdt->fd[fd], NULL);
 	FD_CLR(fd, fdt->close_on_exec);
 	__put_unused_fd(files, fd);

@@ -33,15 +33,11 @@
 #include <linux/capability.h>
 #include <linux/syscalls.h>
 #include <linux/memcontrol.h>
-#include <trace/swap.h>
 
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 #include <linux/swapops.h>
 #include <linux/page_cgroup.h>
-
-DEFINE_TRACE(swap_file_open);
-DEFINE_TRACE(swap_file_close);
 
 static DEFINE_SPINLOCK(swap_lock);
 static unsigned int nr_swapfiles;
@@ -1664,7 +1660,6 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 	swap_map = p->swap_map;
 	p->swap_map = NULL;
 	p->flags = 0;
-	trace_swap_file_close(swap_file);
 	preswap_flush_area(p - swap_info);
 	spin_unlock(&swap_lock);
 	mutex_unlock(&swapon_mutex);
@@ -2071,7 +2066,6 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 	} else {
 		swap_info[prev].next = p - swap_info;
 	}
-	trace_swap_file_open(swap_file, name);
 	preswap_init(p - swap_info);
 	spin_unlock(&swap_lock);
 	mutex_unlock(&swapon_mutex);

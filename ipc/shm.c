@@ -40,7 +40,6 @@
 #include <linux/mount.h>
 #include <linux/ipc_namespace.h>
 #include <linux/ima.h>
-#include <trace/ipc.h>
 
 #include <asm/uaccess.h>
 
@@ -57,8 +56,6 @@ struct shm_file_data {
 
 static const struct file_operations shm_file_operations;
 static const struct vm_operations_struct shm_vm_ops;
-
-DEFINE_TRACE(ipc_shm_create);
 
 #define shm_ids(ns)	((ns)->ids[IPC_SHM_IDS])
 
@@ -454,7 +451,6 @@ SYSCALL_DEFINE3(shmget, key_t, key, size_t, size, int, shmflg)
 	struct ipc_namespace *ns;
 	struct ipc_ops shm_ops;
 	struct ipc_params shm_params;
-	long err;
 
 	ns = current->nsproxy->ipc_ns;
 
@@ -466,9 +462,7 @@ SYSCALL_DEFINE3(shmget, key_t, key, size_t, size, int, shmflg)
 	shm_params.flg = shmflg;
 	shm_params.u.size = size;
 
-	err = ipcget(ns, &shm_ids(ns), &shm_ops, &shm_params);
-	trace_ipc_shm_create(err, shmflg);
-	return err;
+	return ipcget(ns, &shm_ids(ns), &shm_ops, &shm_params);
 }
 
 static inline unsigned long copy_shmid_to_user(void __user *buf, struct shmid64_ds *in, int version)

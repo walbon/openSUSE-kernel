@@ -51,7 +51,6 @@
 #include <linux/mm.h>
 #include <linux/eventpoll.h>
 #include <linux/fs_struct.h>
-#include <trace/fs.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -1535,7 +1534,6 @@ int compat_do_execve(char * filename,
 
 	current->stack_start = current->mm->start_stack;
 
-	trace_fs_exec(filename);
 	/* execve succeeded */
 	current->fs->in_exec = 0;
 	current->in_execve = 0;

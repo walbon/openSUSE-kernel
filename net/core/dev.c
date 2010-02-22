@@ -127,7 +127,6 @@
 #include <linux/jhash.h>
 #include <linux/random.h>
 #include <trace/events/napi.h>
-#include <trace/net.h>
 
 #include "net-sysfs.h"
 
@@ -202,13 +201,6 @@ EXPORT_SYMBOL(dev_base_lock);
 
 #define NETDEV_HASHBITS	8
 #define NETDEV_HASHENTRIES (1 << NETDEV_HASHBITS)
-
-DEFINE_TRACE(net_dev_xmit);
-DEFINE_TRACE(net_dev_receive);
-DEFINE_TRACE(net_napi_schedule);
-DEFINE_TRACE(net_napi_poll);
-DEFINE_TRACE(net_napi_complete);
-EXPORT_TRACEPOINT_SYMBOL_GPL(net_napi_complete);
 
 static inline struct hlist_head *dev_name_hash(struct net *net, const char *name)
 {
@@ -1976,7 +1968,6 @@ int dev_queue_xmit(struct sk_buff *skb)
 	}
 
 gso:
-	trace_net_dev_xmit(skb);
 	/* Disable soft irqs for various locks below. Also
 	 * stops preemption for RCU.
 	 */
@@ -2428,7 +2419,6 @@ int netif_receive_skb(struct sk_buff *skb)
 
 	__get_cpu_var(netdev_rx_stat).total++;
 
-	trace_net_dev_receive(skb);
 	skb_reset_network_header(skb);
 	skb_reset_transport_header(skb);
 	skb->mac_len = skb->network_header - skb->mac_header;
@@ -2866,8 +2856,6 @@ void __napi_schedule(struct napi_struct *n)
 {
 	unsigned long flags;
 
-	trace_net_napi_schedule(n);
-
 	local_irq_save(flags);
 	list_add_tail(&n->poll_list, &__get_cpu_var(softnet_data).poll_list);
 	__raise_softirq_irqoff(NET_RX_SOFTIRQ);
@@ -2883,7 +2871,6 @@ void __napi_complete(struct napi_struct *n)
 	list_del(&n->poll_list);
 	smp_mb__before_clear_bit();
 	clear_bit(NAPI_STATE_SCHED, &n->state);
-	trace_net_napi_complete(n);
 }
 EXPORT_SYMBOL(__napi_complete);
 
@@ -2984,7 +2971,6 @@ static void net_rx_action(struct softirq_action *h)
 		 */
 		work = 0;
 		if (test_bit(NAPI_STATE_SCHED, &n->state)) {
-			trace_net_napi_poll(n);
 			work = n->poll(n, weight);
 			trace_napi_poll(n);
 		}
