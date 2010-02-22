@@ -1925,7 +1925,6 @@ static int qla4xxx_eh_abort(struct scsi_cmnd *cmd)
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 
 	/* Wait for command to complete */
-	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 	if (qla4xxx_eh_wait_on_command(ha, cmd, got_ref)) {
 		dev_info(&ha->pdev->dev,
 			"scsi%ld:%d:%d:%d: ABORT SUCCEEDED - "
@@ -1934,12 +1933,12 @@ static int qla4xxx_eh_abort(struct scsi_cmnd *cmd)
 		ret = SUCCESS;
 	}
 
-	if (got_ref)
-		sp_put(ha, srb);
-
 	DEBUG2(printk("scsi%ld:%d:%d:%d: ABORT cmd=%p, pid=%ld, ref=%d, "
 		      "ret=%x\n", ha->host_no, channel, id, lun, cmd,
 		      serial, atomic_read(&srb->ref_count), ret));
+
+	if (got_ref)
+		sp_put(ha, srb);
 
 	return ret;
 }
