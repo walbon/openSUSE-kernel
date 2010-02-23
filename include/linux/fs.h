@@ -931,12 +931,8 @@ struct file {
 #define f_vfsmnt	f_path.mnt
 	const struct file_operations	*f_op;
 	spinlock_t		f_lock;  /* f_ep_links, f_flags, no IRQ */
-	unsigned int 		f_flags;
-#if defined(__GENKSYMS__) && defined(CONFIG_X86_32)
-	long			f_count;
-#else
 	atomic_long_t		f_count;
-#endif
+	unsigned int 		f_flags;
 	fmode_t			f_mode;
 	loff_t			f_pos;
 	struct fown_struct	f_owner;
