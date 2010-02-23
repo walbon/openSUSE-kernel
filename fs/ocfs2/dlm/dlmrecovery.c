@@ -2243,7 +2243,12 @@ static void dlm_free_dead_locks(struct dlm_ctxt *dlm,
 		mlog(0, "%s:%.*s: freed %u locks for dead node %u, "
 		     "dropping ref from lockres\n", dlm->name,
 		     res->lockname.len, res->lockname.name, freed, dead_node);
-		BUG_ON(!test_bit(dead_node, res->refmap));
+		if(!test_bit(dead_node, res->refmap)) {
+			mlog(ML_ERROR, "%s:%.*s: freed %u locks for dead node %u, "
+			     "but ref was not set\n", dlm->name,
+			     res->lockname.len, res->lockname.name, freed, dead_node);
+			__dlm_print_one_lock_resource(res);
+		}
 		dlm_lockres_clear_refmap_bit(dead_node, res);
 	} else if (test_bit(dead_node, res->refmap)) {
 		mlog(0, "%s:%.*s: dead node %u had a ref, but had "
@@ -2639,7 +2644,13 @@ retry:
 			     "begin reco msg (%d)\n", dlm->name, nodenum, ret);
 			ret = 0;
 		}
-		if (ret == -EAGAIN) {
+
+		/*
+		 * Prior to commit aad1b15310b9bcd59fa81ab8f2b1513b59553ea8,
+		 * dlm_begin_reco_handler() returned EAGAIN and not -EAGAIN.
+		 * We are handling both for compatibility reasons.
+		 */
+		if (ret == -EAGAIN || ret == EAGAIN) {
 			mlog(0, "%s: trying to start recovery of node "
 			     "%u, but node %u is waiting for last recovery "
 			     "to complete, backoff for a bit\n", dlm->name,
