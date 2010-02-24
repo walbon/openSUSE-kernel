@@ -20,6 +20,10 @@
 #include <linux/cpu.h>
 #include <linux/init.h>
 #include <linux/io.h>
+#include <linux/kdebug.h>
+#ifdef CONFIG_KDB
+#include <linux/kdb.h>
+#endif
 
 #include <asm/uv/uv_mmrs.h>
 #include <asm/uv/uv_hub.h>
@@ -39,6 +43,72 @@ static u64 gru_start_paddr, gru_end_paddr;
 int uv_min_hub_revision_id;
 EXPORT_SYMBOL_GPL(uv_min_hub_revision_id);
 
+int uv_handle_nmi(struct notifier_block *self,
+		  unsigned long reason, void *data)
+{
+#ifdef CONFIG_KDB
+	struct die_args *args = data;
+	struct pt_regs *regs = args->regs;
+	static int controlling_cpu = -1;
+#endif
+	unsigned long flags;
+	static DEFINE_SPINLOCK(uv_nmi_lock);
+
+	if (reason != DIE_NMI_IPI)
+		return NOTIFY_OK;
+
+#ifdef CONFIG_KDB
+	spin_lock_irqsave(&uv_nmi_lock, flags);
+	if (controlling_cpu == -1) {
+		controlling_cpu = smp_processor_id();
+		spin_unlock_irqrestore(&uv_nmi_lock, flags);
+		(void)kdb(KDB_REASON_NMI, reason, regs);
+		controlling_cpu = -1;
+	} else {
+		spin_unlock_irqrestore(&uv_nmi_lock, flags);
+		(void)kdb(KDB_REASON_ENTER_SLAVE, reason, regs);
+	}
+#else
+	/*
+	 * Use a lock so only one cpu prints at a time
+	 * to prevent intermixed output.
+	 */
+	spin_lock_irqsave(&uv_nmi_lock, flags);
+	printk(KERN_INFO "NMI stack dump cpu %u:\n",
+				smp_processor_id());
+	dump_stack();
+	spin_unlock_irqrestore(&uv_nmi_lock, flags);
+#endif /* CONFIG_KDB */
+
+	return NOTIFY_STOP;
+}
+
+static struct notifier_block uv_dump_stack_nmi_nb = {
+  .notifier_call = uv_handle_nmi,
+  .next = NULL,
+  .priority = 0
+};
+
+void uv_register_nmi_notifier(void)
+{
+	if (register_die_notifier(&uv_dump_stack_nmi_nb))
+		printk(KERN_WARNING "UV NMI handler failed to register\n");
+}
+
+/*
+ * Called on each cpu to unmask NMI.
+ */
+void __cpuinit uv_nmi_init(void)
+{
+	unsigned int value;
+
+	/*
+	 * Unmask NMI on all cpus
+	 */
+	value = apic_read(APIC_LVT1) | APIC_DM_NMI;
+	value &= ~APIC_LVT_MASKED;
+	apic_write(APIC_LVT1, value);
+}
 
 static int is_GRU_range(u64 start, u64 end)
 {
@@ -694,5 +764,6 @@ void __init uv_system_init(void)
 
 	uv_cpu_init();
 	uv_scir_register_cpu_notifier();
+	uv_register_nmi_notifier();
 	proc_mkdir("sgi_uv", NULL);
 }

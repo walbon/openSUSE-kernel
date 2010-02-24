@@ -366,8 +366,22 @@ static notrace __kprobes void
 unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 {
 #ifdef CONFIG_KDB
-	(void)kdb(KDB_REASON_NMI, reason, regs);
-#endif /* CONFIG_KDB */
+	static int controlling_cpu = -1;
+	static DEFINE_SPINLOCK(kdb_nmi_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&kdb_nmi_lock, flags);
+	if (controlling_cpu == -1) {
+		controlling_cpu = smp_processor_id();
+		spin_unlock_irqrestore(&kdb_nmi_lock, flags);
+		(void)kdb(KDB_REASON_NMI, reason, regs);
+		controlling_cpu = -1;
+	} else {
+		spin_unlock_irqrestore(&kdb_nmi_lock, flags);
+		(void)kdb(KDB_REASON_ENTER_SLAVE, reason, regs);
+	}
+	return;
+#else
 
 	if (notify_die(DIE_NMIUNKNOWN, "nmi", regs, reason, 2, SIGINT) ==
 			NOTIFY_STOP)
@@ -391,6 +405,7 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 		panic("NMI: Not continuing");
 
 	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
+#endif /* CONFIG_KDB */
 }
 
 static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
