@@ -106,6 +106,8 @@ struct synaptics_data {
 	unsigned char mode;			/* current mode byte */
 	int scroll;
 	struct synaptics_hw_state prev_hw;
+	struct psmouse *psmouse;
+	struct work_struct led_work;
 };
 
 int synaptics_detect(struct psmouse *psmouse, bool set_properties);
