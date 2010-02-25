@@ -415,7 +415,7 @@ static int upgrade_mode(struct dm_dev_internal *dd, fmode_t new_mode,
 		dd_new.dm_dev.mode &= ~FMODE_WRITE;
 		r = open_dev(&dd_new, dd->dm_dev.bdev->bd_dev, md);
 	}
-	if (!r)
+	if (r)
 		return r;
 
 	dd->dm_dev.mode = new_mode;
