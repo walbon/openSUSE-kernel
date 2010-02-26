@@ -358,3 +358,4 @@ xfs_get_extsz_hint(
 
 	return extsz;
 }
+EXPORT_SYMBOL_GPL(xfs_get_extsz_hint);
