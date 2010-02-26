@@ -2877,8 +2877,8 @@ xfs_iflush(
 	mp = ip->i_mount;
 
 	/*
-	 * If the inode isn't dirty, then just release the inode
-	 * flush lock and do nothing.
+	 * If the inode isn't dirty, then just release the inode flush lock and
+	 * do nothing.
 	 */
 	if (xfs_inode_clean(ip)) {
 		xfs_ifunlock(ip);
@@ -2902,6 +2902,19 @@ xfs_iflush(
 		return EAGAIN;
 	}
 	xfs_iunpin_wait(ip);
+
+	/*
+	 * For stale inodes we cannot rely on the backing buffer remaining
+	 * stale in cache for the remaining life of the stale inode and so
+	 * xfs_itobp() below may give us a buffer that no longer contains
+	 * inodes below. We have to check this after ensuring the inode is
+	 * unpinned so that it is safe to reclaim the stale inode after the
+	 * flush call.
+	 */
+	if (xfs_iflags_test(ip, XFS_ISTALE)) {
+		xfs_ifunlock(ip);
+		return 0;
+	}
 
 	/*
 	 * This may have been unpinned because the filesystem is shutting
@@ -3300,11 +3313,13 @@ xfs_iext_get_ext(
  */
 void
 xfs_iext_insert(
-	xfs_ifork_t	*ifp,		/* inode fork pointer */
+	xfs_inode_t	*ip,		/* incore inode pointer */
 	xfs_extnum_t	idx,		/* starting index of new items */
 	xfs_extnum_t	count,		/* number of inserted items */
-	xfs_bmbt_irec_t	*new)		/* items to insert */
+	xfs_bmbt_irec_t	*new,		/* items to insert */
+	int		state)		/* type of extent conversion */
 {
+	xfs_ifork_t	*ifp = (state & BMAP_ATTRFORK) ? ip->i_afp : &ip->i_df;
 	xfs_extnum_t	i;		/* extent record index */
 
 	ASSERT(ifp->if_flags & XFS_IFEXTENTS);
@@ -3549,10 +3564,12 @@ xfs_iext_add_indirect_multi(
  */
 void
 xfs_iext_remove(
-	xfs_ifork_t	*ifp,		/* inode fork pointer */
+	xfs_inode_t	*ip,		/* incore inode pointer */
 	xfs_extnum_t	idx,		/* index to begin removing exts */
-	int		ext_diff)	/* number of extents to remove */
+	int		ext_diff,	/* number of extents to remove */
+	int		state)		/* type of extent conversion */
 {
+	xfs_ifork_t	*ifp = (state & BMAP_ATTRFORK) ? ip->i_afp : &ip->i_df;
 	xfs_extnum_t	nextents;	/* number of extents in file */
 	int		new_size;	/* size of extents after removal */
 

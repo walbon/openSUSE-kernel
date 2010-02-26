@@ -55,6 +55,7 @@ typedef enum {
 	XBF_FS_MANAGED = (1 << 8),  /* filesystem controls freeing memory  */
  	XBF_ORDERED = (1 << 11),    /* use ordered writes		   */
 	XBF_READ_AHEAD = (1 << 12), /* asynchronous read-ahead		   */
+	XBF_LOG_BUFFER = (1 << 13), /* this is a buffer used for the log   */
 
 	/* flags used only as arguments to access routines */
 	XBF_LOCK = (1 << 14),       /* lock requested			   */
@@ -186,15 +187,10 @@ extern xfs_buf_t *_xfs_buf_find(xfs_buftarg_t *, xfs_off_t, size_t,
 #define xfs_incore(buftarg,blkno,len,lockit) \
 	_xfs_buf_find(buftarg, blkno ,len, lockit, NULL)
 
-extern xfs_buf_t *xfs_buf_get_flags(xfs_buftarg_t *, xfs_off_t, size_t,
+extern xfs_buf_t *xfs_buf_get(xfs_buftarg_t *, xfs_off_t, size_t,
 				xfs_buf_flags_t);
-#define xfs_buf_get(target, blkno, len, flags) \
-	xfs_buf_get_flags((target), (blkno), (len), XBF_LOCK | XBF_MAPPED)
-
-extern xfs_buf_t *xfs_buf_read_flags(xfs_buftarg_t *, xfs_off_t, size_t,
+extern xfs_buf_t *xfs_buf_read(xfs_buftarg_t *, xfs_off_t, size_t,
 				xfs_buf_flags_t);
-#define xfs_buf_read(target, blkno, len, flags) \
-	xfs_buf_read_flags((target), (blkno), (len), XBF_LOCK | XBF_MAPPED)
 
 extern xfs_buf_t *xfs_buf_get_empty(size_t, xfs_buftarg_t *);
 extern xfs_buf_t *xfs_buf_get_noaddr(size_t, xfs_buftarg_t *);

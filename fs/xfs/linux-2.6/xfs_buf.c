@@ -149,7 +149,7 @@ page_region_mask(
 	return mask;
 }
 
-STATIC_INLINE void
+STATIC void
 set_page_region(
 	struct page	*page,
 	size_t		offset,
@@ -161,7 +161,7 @@ set_page_region(
 		SetPageUptodate(page);
 }
 
-STATIC_INLINE int
+STATIC int
 test_page_region(
 	struct page	*page,
 	size_t		offset,
@@ -318,6 +318,7 @@ _xfs_buf_free_pages(
 {
 	if (bp->b_pages != bp->b_page_array) {
 		kmem_free(bp->b_pages);
+		bp->b_pages = NULL;
 	}
 }
 
@@ -349,9 +350,8 @@ xfs_buf_free(
 				ASSERT(!PagePrivate(page));
 			page_cache_release(page);
 		}
-		_xfs_buf_free_pages(bp);
 	}
-
+	_xfs_buf_free_pages(bp);
 	xfs_buf_deallocate(bp);
 }
 
@@ -582,7 +582,7 @@ found:
  *	although backing storage may not be.
  */
 xfs_buf_t *
-xfs_buf_get_flags(
+xfs_buf_get(
 	xfs_buftarg_t		*target,/* target for buffer		*/
 	xfs_off_t		ioff,	/* starting offset of range	*/
 	size_t			isize,	/* length of range		*/
@@ -661,7 +661,7 @@ _xfs_buf_read(
 }
 
 xfs_buf_t *
-xfs_buf_read_flags(
+xfs_buf_read(
 	xfs_buftarg_t		*target,
 	xfs_off_t		ioff,
 	size_t			isize,
@@ -671,7 +671,7 @@ xfs_buf_read_flags(
 
 	flags |= XBF_READ;
 
-	bp = xfs_buf_get_flags(target, ioff, isize, flags);
+	bp = xfs_buf_get(target, ioff, isize, flags);
 	if (bp) {
 		if (!XFS_BUF_ISDONE(bp)) {
 			XB_TRACE(bp, "read", (unsigned long)flags);
@@ -718,7 +718,7 @@ xfs_buf_readahead(
 		return;
 
 	flags |= (XBF_TRYLOCK|XBF_ASYNC|XBF_READ_AHEAD);
-	xfs_buf_read_flags(target, ioff, isize, flags);
+	xfs_buf_read(target, ioff, isize, flags);
 }
 
 xfs_buf_t *
@@ -1113,7 +1113,7 @@ xfs_bdwrite(
 	xfs_buf_delwri_queue(bp, 1);
 }
 
-STATIC_INLINE void
+STATIC void
 _xfs_buf_ioend(
 	xfs_buf_t		*bp,
 	int			schedule)
@@ -1177,10 +1177,14 @@ _xfs_buf_ioapply(
 	if (bp->b_flags & XBF_ORDERED) {
 		ASSERT(!(bp->b_flags & XBF_READ));
 		rw = WRITE_BARRIER;
-	} else if (bp->b_flags & _XBF_RUN_QUEUES) {
+	} else if (bp->b_flags & XBF_LOG_BUFFER) {
 		ASSERT(!(bp->b_flags & XBF_READ_AHEAD));
 		bp->b_flags &= ~_XBF_RUN_QUEUES;
 		rw = (bp->b_flags & XBF_WRITE) ? WRITE_SYNC : READ_SYNC;
+	} else if (bp->b_flags & _XBF_RUN_QUEUES) {
+		ASSERT(!(bp->b_flags & XBF_READ_AHEAD));
+		bp->b_flags &= ~_XBF_RUN_QUEUES;
+		rw = (bp->b_flags & XBF_WRITE) ? WRITE_META : READ_META;
 	} else {
 		rw = (bp->b_flags & XBF_WRITE) ? WRITE :
 		     (bp->b_flags & XBF_READ_AHEAD) ? READA : READ;
