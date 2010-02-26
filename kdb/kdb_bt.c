@@ -52,8 +52,35 @@
  *	to get a starting point for bt <address-expression>.
  */
 
+static int kdb_show_stack(struct task_struct *p, void *addr, int argcount)
+{
+	/* Use KDB arch-specific backtraces for ia64 */
+#ifdef CONFIG_IA64
+	return kdba_bt_process(p, argcount);
+#else
+	/* Use the in-kernel backtraces */
+	int old_lvl = console_loglevel;
+	console_loglevel = 15;
+	kdba_set_current_task(p);
+	if (addr) {
+		show_stack((struct task_struct *)p, addr);
+	} else if (kdb_current_regs) {
+#ifdef CONFIG_X86
+		show_stack(p, &kdb_current_regs->sp);
+#else
+		show_stack(p, NULL);
+#endif
+	} else {
+		show_stack(p, NULL);
+	}
+	console_loglevel = old_lvl;
+	return 0;
+#endif /* CONFIG_IA64 */
+}
+
+
 static int
-kdb_bt1(const struct task_struct *p, unsigned long mask, int argcount, int btaprompt)
+kdb_bt1(struct task_struct *p, unsigned long mask, int argcount, int btaprompt)
 {
 	int diag;
 	char buffer[2];
@@ -64,7 +91,7 @@ kdb_bt1(const struct task_struct *p, unsigned long mask, int argcount, int btapr
 		return 0;
 	kdb_printf("Stack traceback for pid %d\n", p->pid);
 	kdb_ps1(p);
-	diag = kdba_bt_process(p, argcount);
+	diag = kdb_show_stack(p, NULL, argcount);
 	if (btaprompt) {
 		kdb_getstr(buffer, sizeof(buffer), "Enter <q> to end, <cr> to continue:");
 		if (buffer[0] == 'q') {
@@ -169,7 +196,7 @@ kdb_bt(int argc, const char **argv)
 					     &offset, NULL);
 			if (diag)
 				return diag;
-			return kdba_bt_address(addr, argcount);
+			return kdb_show_stack(kdb_current_task, addr, argcount);
 		} else {
 			return kdb_bt1(kdb_current_task, ~0UL, argcount, 0);
 		}
