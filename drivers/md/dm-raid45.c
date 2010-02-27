@@ -1596,14 +1596,14 @@ static void sc_exit(struct stripe_cache *sc)
 {
 	if (sc->kc.cache) {
 		BUG_ON(sc_shrink(sc, atomic_read(&sc->stripes)));
+		ClearRSRecover(RS(sc));
+		stripe_recover_free(RS(sc));
 		kmem_cache_destroy(sc->kc.cache);
 	}
 
 	if (sc->mem_cache_client)
 		dm_mem_cache_client_destroy(sc->mem_cache_client);
 
-	ClearRSRecover(RS(sc));
-	stripe_recover_free(RS(sc));
 	if (RS(sc)->recover.mem_cache_client)
 		dm_mem_cache_client_destroy(RS(sc)->recover.mem_cache_client);
 
@@ -3511,8 +3511,7 @@ context_free(struct raid_set *rs, struct dm_target *ti, unsigned r)
 
 	dm_io_client_destroy(rs->sc.dm_io_client);
 	sc_exit(&rs->sc);
-	dm_region_hash_destroy(rs->recover.rh);
-	dm_dirty_log_destroy(rs->recover.dl);
+	dm_region_hash_destroy(rs->recover.rh);  /* Destroys dirty log as well. */
 	kfree(rs);
 }
 
