@@ -1357,7 +1357,7 @@ kdba_adjust_ip(kdb_reason_t reason, int error, struct pt_regs *regs)
 }
 
 void
-kdba_set_current_task(struct task_struct *p)
+kdba_set_current_task(const struct task_struct *p)
 {
 	kdb_current_task = p;
 	if (kdb_task_has_cpu(p)) {
