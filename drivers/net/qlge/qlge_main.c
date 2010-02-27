@@ -462,7 +462,7 @@ static int ql_set_mac_addr(struct ql_adapter *qdev, int set)
 	char *addr;
 
 	if (set) {
-		addr = &qdev->ndev->dev_addr[0];
+		addr = &qdev->current_mac_addr[0];
 		QPRINTK(qdev, IFUP, DEBUG,
 			"Set Mac addr %pM\n", addr);
 	} else {
@@ -2049,22 +2049,9 @@ static unsigned long ql_process_mac_rx_intr(struct ql_adapter *qdev,
 		 */
 		ql_process_mac_rx_page(qdev, rx_ring, ib_mac_rsp,
 						length, vlan_id);
-	} else {
-		struct bq_desc *lbq_desc;
-
-		/* Free small buffer that holds the IAL */
-		lbq_desc = ql_get_curr_sbuf(rx_ring);
-		QPRINTK(qdev, RX_ERR, ERR, "Dropping frame, len %d > mtu %d\n",
-			length, qdev->ndev->mtu);
-
-		/* Unwind the large buffers for this frame. */
-		while (length > 0) {
-			lbq_desc = ql_get_curr_lchunk(qdev, rx_ring);
-			length -= (length < rx_ring->lbq_buf_size) ?
-				length : rx_ring->lbq_buf_size;
-			put_page(lbq_desc->p.pg_chunk.page);
-		}
-	}
+	} else
+		ql_process_mac_split_rx_intr(qdev, rx_ring, ib_mac_rsp,
+						vlan_id);
 
 	return (unsigned long)length;
 }
@@ -4281,6 +4268,8 @@ static int qlge_set_mac_address(struct net_device *ndev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 	memcpy(ndev->dev_addr, addr->sa_data, ndev->addr_len);
+	/* Update local copy of current mac address. */
+	memcpy(qdev->current_mac_addr, ndev->dev_addr, ndev->addr_len);
 
 	status = ql_sem_spinlock(qdev, SEM_MAC_ADDR_MASK);
 	if (status)
@@ -4522,6 +4511,8 @@ static int __devinit ql_init_device(struct pci_dev *pdev,
 	}
 
 	memcpy(ndev->perm_addr, ndev->dev_addr, ndev->addr_len);
+	/* Keep local copy of current mac address. */
+	memcpy(qdev->current_mac_addr, ndev->dev_addr, ndev->addr_len);
 
 	/* Set up the default ring sizes. */
 	qdev->tx_ring_size = NUM_TX_RING_ENTRIES;
