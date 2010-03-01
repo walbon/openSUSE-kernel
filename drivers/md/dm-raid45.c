@@ -3494,7 +3494,6 @@ bad_sc:
 bad_dm_io_client:
 	ti->error = DM_MSG_PREFIX "Error allocating dm-io resources";
 free:
-	dm_region_hash_destroy(rec->rh);
 	sc_exit(&rs->sc);
 	dm_region_hash_destroy(rec->rh); /* Destroys dirty log as well. */
 free_rs:
