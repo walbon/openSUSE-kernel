@@ -734,6 +734,8 @@ static int ocfs2_local_alloc_find_clear_bits(struct ocfs2_super *osb,
 				     struct ocfs2_alloc_reservation *resv)
 {
 	int numfound, bitoff, left, startoff, lastzero;
+	int local_resv = 0;
+	struct ocfs2_alloc_reservation r;
 	void *bitmap = NULL;
 	struct ocfs2_reservation_map *resmap = &osb->osb_la_resmap;
 
@@ -745,21 +747,31 @@ static int ocfs2_local_alloc_find_clear_bits(struct ocfs2_super *osb,
 		goto bail;
 	}
 
-	bitmap = OCFS2_LOCAL_ALLOC(alloc)->la_bitmap;
+	if (!resv) {
+		local_resv = 1;
+		ocfs2_resv_init_once(&r);
+		resv = &r;
+	}
+
+	numfound = numbits;
+	if (ocfs2_resmap_resv_bits(resmap, resv, local_resv,
+				   &bitoff, &numfound) == 0) {
+		if (numfound >= numbits)
+			numfound = numbits;
+		goto bail;
+	}
 
 	/*
-	 * Ask the reservations code first whether this request can be
-	 * easily fulfilled. No errors here are fatal - if we didn't
-	 * find the number of bits needed, we'll just take the slow
-	 * path.
+	 * Code error. While reservations are enabled, local
+	 * allocation should _always_ go through them.
 	 */
-	if (ocfs2_resmap_resv_bits(resmap, resv, bitmap, &bitoff, &numfound)
-	    == 0) {
-		if (numfound >= numbits) {
-			numfound = numbits;
-			goto bail;
-		}
-	}
+	BUG_ON(osb->osb_resv_level != 0);
+
+	/*
+	 * Reservations are disabled. Handle this the old way.
+	 */
+
+	bitmap = OCFS2_LOCAL_ALLOC(alloc)->la_bitmap;
 
 	numfound = bitoff = startoff = 0;
 	lastzero = -1;
@@ -801,6 +813,9 @@ static int ocfs2_local_alloc_find_clear_bits(struct ocfs2_super *osb,
 	}
 
 bail:
+	if (local_resv)
+		ocfs2_resv_discard(resmap, resv);
+
 	mlog_exit(bitoff);
 	return bitoff;
 }
@@ -1121,7 +1136,8 @@ retry_enospc:
 	memset(OCFS2_LOCAL_ALLOC(alloc)->la_bitmap, 0,
 	       le16_to_cpu(la->la_size));
 
-	ocfs2_resmap_restart(&osb->osb_la_resmap, cluster_count);
+	ocfs2_resmap_restart(&osb->osb_la_resmap, cluster_count,
+			     OCFS2_LOCAL_ALLOC(alloc)->la_bitmap);
 
 	mlog(0, "New window allocated:\n");
 	mlog(0, "window la_bm_off = %u\n",

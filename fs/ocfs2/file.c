@@ -144,7 +144,6 @@ leave:
 static int ocfs2_file_release(struct inode *inode, struct file *file)
 {
 	struct ocfs2_inode_info *oi = OCFS2_I(inode);
-	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
 
 	mlog_entry("(0x%p, 0x%p, '%.*s')\n", inode, file,
 		       file->f_path.dentry->d_name.len,
@@ -154,21 +153,6 @@ static int ocfs2_file_release(struct inode *inode, struct file *file)
 	if (!--oi->ip_open_count)
 		oi->ip_flags &= ~OCFS2_INODE_OPEN_DIRECT;
 	spin_unlock(&oi->ip_lock);
-
-#if 0
-	/*
-	 * Disable this for now. Keeping the reservation around a bit
-	 * longer gives an improvement for workloads which rapidly do
-	 * open()/write()/close() against a file.
-	 */
-	if ((file->f_mode & FMODE_WRITE) &&
-	    (atomic_read(&inode->i_writecount) == 1)) {
-		down_write(&oi->ip_alloc_sem);
-		ocfs2_resv_discard(&osb->osb_la_resmap,
-				   &oi->ip_la_data_resv);
-		up_write(&oi->ip_alloc_sem);
-	}
-#endif
 
 	ocfs2_free_file_private(inode, file);
 

@@ -28,10 +28,8 @@
 
 #include <linux/rbtree.h>
 
-struct ocfs2_bitmap_resv_ops;
-
-#define OCFS2_DEFAULT_RESV_LEVEL	3
-#define OCFS2_MAX_RESV_LEVEL	7
+#define OCFS2_DEFAULT_RESV_LEVEL	4
+#define OCFS2_MAX_RESV_LEVEL	9
 #define OCFS2_MIN_RESV_LEVEL	0
 
 struct ocfs2_alloc_reservation {
@@ -42,17 +40,7 @@ struct ocfs2_alloc_reservation {
 
 	unsigned int	r_last_len;	/* Length of most recent alloc */
 	unsigned int	r_last_start;	/* Start of most recent alloc */
-
-	unsigned int	r_orig_start;	/* Recorded start of the
-					 * window, before any
-					 * allocation was done from
-					 * it. This allows search and
-					 * extension of other windows
-					 * to be more realistic as to
-					 * what bits have been used
-					 * already. */
-
-	unsigned int	r_allocated;
+	struct list_head	r_lru;	/* LRU list head */
 
 	int		r_inuse;	/* r_inuse is set when r_node
 					 * is part of an rbtree. */
@@ -60,6 +48,7 @@ struct ocfs2_alloc_reservation {
 
 struct ocfs2_reservation_map {
 	struct rb_root		m_reservations;
+	char			*m_disk_bitmap;
 
 	struct ocfs2_super	*m_osb;
 
@@ -72,6 +61,10 @@ struct ocfs2_reservation_map {
 						 * location of our
 						 * most recent
 						 * allocation. */
+
+	struct list_head	m_lru;		/* LRU of reservations
+						 * structures. */
+
 };
 
 void ocfs2_resv_init_once(struct ocfs2_alloc_reservation *resv);
@@ -105,17 +98,17 @@ int ocfs2_resmap_init(struct ocfs2_super *osb,
  * ocfs2_resmap_restart() - "restart" a reservation bitmap
  * @resmap: reservations bitmap
  * @clen: Number of valid bits in the bitmap
+ * @disk_bitmap: the disk bitmap this resmap should refer to.
  *
  * Re-initialize the parameters of a reservation bitmap. This is
  * useful for local alloc window slides.
- *
- * If any bitmap parameters have changed, this function will call
- * ocfs2_trunc_resv against all existing reservations. A future
- * version will recalculate existing reservations based on the new
- * bitmap.
+ * 
+ * This function will call ocfs2_trunc_resv against all existing
+ * reservations. A future version will recalculate existing
+ * reservations based on the new bitmap.
  */
 void ocfs2_resmap_restart(struct ocfs2_reservation_map *resmap,
-			  unsigned int clen);
+			  unsigned int clen, char *disk_bitmap);
 
 /**
  * ocfs2_resmap_uninit() - uninitialize a reservation bitmap structure
@@ -127,23 +120,23 @@ void ocfs2_resmap_uninit(struct ocfs2_reservation_map *resmap);
  * ocfs2_resmap_resv_bits() - Return still-valid reservation bits
  * @resmap: reservations bitmap
  * @resv: reservation to base search from
- * @disk_bitmap: up to date (from disk) allocation bitmap
+ * @tempwindow: the reservation will immediately be discarded
  * @cstart: start of proposed allocation
  * @clen: length (in clusters) of proposed allocation
  *
  * Using the reservation data from resv, this function will compare
- * resmap and disk_bitmap to determine what part (if any) of the
- * reservation window is still clear to use. An empty resv passed here
- * will just return no allocation.
+ * resmap and resmap->m_disk_bitmap to determine what part (if any) of
+ * the reservation window is still clear to use. If resv is empty,
+ * this function will try to allocate a window for it.
  *
  * On success, zero is returned and the valid allocation area is set in cstart
- * and clen. If no allocation is found, they are set to zero.
+ * and clen.
  *
- * Returns nonzero on error.
+ * Returns -ENOSPC if reservations are disabled.
  */
 int ocfs2_resmap_resv_bits(struct ocfs2_reservation_map *resmap,
 			   struct ocfs2_alloc_reservation *resv,
-			   char *disk_bitmap, int *cstart, int *clen);
+			   int tmpwindow, int *cstart, int *clen);
 
 /**
  * ocfs2_resmap_claimed_bits() - Tell the reservation code that bits were used.
