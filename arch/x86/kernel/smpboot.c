@@ -320,8 +320,7 @@ notrace static void __cpuinit start_secondary(void *unused)
 	unlock_vector_lock();
 	ipi_call_unlock();
 	per_cpu(cpu_state, smp_processor_id()) = CPU_ONLINE;
-	if (is_uv_system())
-		uv_nmi_init();
+	x86_platform.nmi_init();
 
 	/* enable local interrupts */
 	local_irq_enable();

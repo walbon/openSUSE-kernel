@@ -117,12 +117,14 @@ struct x86_cpuinit_ops {
  * @calibrate_tsc:		calibrate TSC
  * @get_wallclock:		get time from HW clock like RTC etc.
  * @set_wallclock:		set time back to HW clock
+ * @nmi_init			enable NMI on cpus
  */
 struct x86_platform_ops {
 	int (*is_untracked_pat_range)(u64 start, u64 end);
 	unsigned long (*calibrate_tsc)(void);
 	unsigned long (*get_wallclock)(void);
 	int (*set_wallclock)(unsigned long nowtime);
+	void (*nmi_init)(void);
 };
 
 extern struct x86_init_ops x86_init;
