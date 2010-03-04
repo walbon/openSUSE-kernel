@@ -645,7 +645,6 @@ static void tg3_disable_ints(struct tg3 *tp)
 static void tg3_enable_ints(struct tg3 *tp)
 {
 	int i;
-	u32 coal_now = 0;
 
 	tp->irq_sync = 0;
 	wmb();
@@ -653,13 +652,14 @@ static void tg3_enable_ints(struct tg3 *tp)
 	tw32(TG3PCI_MISC_HOST_CTRL,
 	     (tp->misc_host_ctrl & ~MISC_HOST_CTRL_MASK_PCI_INT));
 
+	tp->coal_now = tp->coalesce_mode | HOSTCC_MODE_ENABLE;
 	for (i = 0; i < tp->irq_cnt; i++) {
 		struct tg3_napi *tnapi = &tp->napi[i];
 		tw32_mailbox_f(tnapi->int_mbox, tnapi->last_tag << 24);
 		if (tp->tg3_flags2 & TG3_FLG2_1SHOT_MSI)
 			tw32_mailbox_f(tnapi->int_mbox, tnapi->last_tag << 24);
 
-		coal_now |= tnapi->coal_now;
+		tp->coal_now |= tnapi->coal_now;
 	}
 
 	/* Force an initial interrupt */
@@ -667,8 +667,9 @@ static void tg3_enable_ints(struct tg3 *tp)
 	    (tp->napi[0].hw_status->status & SD_STATUS_UPDATED))
 		tw32(GRC_LOCAL_CTRL, tp->grc_local_ctrl | GRC_LCLCTRL_SETINT);
 	else
-		tw32(HOSTCC_MODE, tp->coalesce_mode |
-		     HOSTCC_MODE_ENABLE | coal_now);
+		tw32(HOSTCC_MODE, tp->coal_now);
+
+	tp->coal_now &= ~(tp->napi[0].coal_now | tp->napi[1].coal_now);
 }
 
 static inline unsigned int tg3_has_work(struct tg3_napi *tnapi)
@@ -4632,6 +4633,12 @@ static void tg3_recycle_rx(struct tg3_napi *tnapi,
 			   pci_unmap_addr(src_map, mapping));
 	dest_desc->addr_hi = src_desc->addr_hi;
 	dest_desc->addr_lo = src_desc->addr_lo;
+
+	/* Ensure that the update to the skb happens after the physical
+	 * addresses have been transferred to the new BD location.
+	 */
+	smp_wmb();
+
 	src_map->skb = NULL;
 }
 
@@ -4732,10 +4739,15 @@ static int tg3_rx(struct tg3_napi *tnapi, int budget)
 			if (skb_size < 0)
 				goto drop_it;
 
-			ri->skb = NULL;
-
 			pci_unmap_single(tp->pdev, dma_addr, skb_size,
 					 PCI_DMA_FROMDEVICE);
+
+			/* Ensure that the update to the skb happens
+			 * after the usage of the old DMA mapping.
+			 */
+			smp_wmb();
+
+			ri->skb = NULL;
 
 			skb_put(skb, len);
 		} else {
@@ -4813,7 +4825,7 @@ next_pkt_nopost:
 	tw32_rx_mbox(tnapi->consmbox, sw_idx);
 
 	/* Refill RX ring(s). */
-	if (!(tp->tg3_flags3 & TG3_FLG3_ENABLE_RSS) || tnapi == &tp->napi[1]) {
+	if (!(tp->tg3_flags3 & TG3_FLG3_ENABLE_RSS)) {
 		if (work_mask & RXD_OPAQUE_RING_STD) {
 			tpr->rx_std_prod_idx = std_prod_idx % TG3_RX_RING_SIZE;
 			tw32_rx_mbox(TG3_RX_STD_PROD_IDX_REG,
@@ -4835,7 +4847,8 @@ next_pkt_nopost:
 		tpr->rx_std_prod_idx = std_prod_idx % TG3_RX_RING_SIZE;
 		tpr->rx_jmb_prod_idx = jmb_prod_idx % TG3_RX_JUMBO_RING_SIZE;
 
-		napi_schedule(&tp->napi[1].napi);
+		if (tnapi != &tp->napi[1])
+			napi_schedule(&tp->napi[1].napi);
 	}
 
 	return received;
@@ -4867,12 +4880,12 @@ static void tg3_poll_link(struct tg3 *tp)
 	}
 }
 
-static void tg3_rx_prodring_xfer(struct tg3 *tp,
-				 struct tg3_rx_prodring_set *dpr,
-				 struct tg3_rx_prodring_set *spr)
+static int tg3_rx_prodring_xfer(struct tg3 *tp,
+				struct tg3_rx_prodring_set *dpr,
+				struct tg3_rx_prodring_set *spr)
 {
 	u32 si, di, cpycnt, src_prod_idx;
-	int i;
+	int i, err = 0;
 
 	while (1) {
 		src_prod_idx = spr->rx_std_prod_idx;
@@ -4894,6 +4907,23 @@ static void tg3_rx_prodring_xfer(struct tg3 *tp,
 
 		si = spr->rx_std_cons_idx;
 		di = dpr->rx_std_prod_idx;
+
+		for (i = di; i < di + cpycnt; i++) {
+			if (dpr->rx_std_buffers[i].skb) {
+				cpycnt = i - di;
+				err = -ENOSPC;
+				break;
+			}
+		}
+
+		if (!cpycnt)
+			break;
+
+		/* Ensure that updates to the rx_std_buffers ring and the
+		 * shadowed hardware producer ring from tg3_recycle_skb() are
+		 * ordered correctly WRT the skb check above.
+		 */
+		smp_rmb();
 
 		memcpy(&dpr->rx_std_buffers[di],
 		       &spr->rx_std_buffers[si],
@@ -4935,6 +4965,23 @@ static void tg3_rx_prodring_xfer(struct tg3 *tp,
 		si = spr->rx_jmb_cons_idx;
 		di = dpr->rx_jmb_prod_idx;
 
+		for (i = di; i < di + cpycnt; i++) {
+			if (dpr->rx_jmb_buffers[i].skb) {
+				cpycnt = i - di;
+				err = -ENOSPC;
+				break;
+			}
+		}
+
+		if (!cpycnt)
+			break;
+
+		/* Ensure that updates to the rx_jmb_buffers ring and the
+		 * shadowed hardware producer ring from tg3_recycle_skb() are
+		 * ordered correctly WRT the skb check above.
+		 */
+		smp_rmb();
+
 		memcpy(&dpr->rx_jmb_buffers[di],
 		       &spr->rx_jmb_buffers[si],
 		       cpycnt * sizeof(struct ring_info));
@@ -4952,6 +4999,8 @@ static void tg3_rx_prodring_xfer(struct tg3 *tp,
 		dpr->rx_jmb_prod_idx = (dpr->rx_jmb_prod_idx + cpycnt) %
 				       TG3_RX_JUMBO_RING_SIZE;
 	}
+
+	return err;
 }
 
 static int tg3_poll_work(struct tg3_napi *tnapi, int work_done, int budget)
@@ -4973,27 +5022,29 @@ static int tg3_poll_work(struct tg3_napi *tnapi, int work_done, int budget)
 		work_done += tg3_rx(tnapi, budget - work_done);
 
 	if ((tp->tg3_flags3 & TG3_FLG3_ENABLE_RSS) && tnapi == &tp->napi[1]) {
-		int i;
-		u32 std_prod_idx = tp->prodring[0].rx_std_prod_idx;
-		u32 jmb_prod_idx = tp->prodring[0].rx_jmb_prod_idx;
+		struct tg3_rx_prodring_set *dpr = &tp->prodring[0];
+		int i, err = 0;
+		u32 std_prod_idx = dpr->rx_std_prod_idx;
+		u32 jmb_prod_idx = dpr->rx_jmb_prod_idx;
 
-		for (i = 2; i < tp->irq_cnt; i++)
-			tg3_rx_prodring_xfer(tp, tnapi->prodring,
-					     tp->napi[i].prodring);
+		for (i = 1; i < tp->irq_cnt; i++)
+			err |= tg3_rx_prodring_xfer(tp, dpr,
+						    tp->napi[i].prodring);
 
 		wmb();
 
-		if (std_prod_idx != tp->prodring[0].rx_std_prod_idx) {
-			u32 mbox = TG3_RX_STD_PROD_IDX_REG;
-			tw32_rx_mbox(mbox, tp->prodring[0].rx_std_prod_idx);
-		}
+		if (std_prod_idx != dpr->rx_std_prod_idx)
+			tw32_rx_mbox(TG3_RX_STD_PROD_IDX_REG,
+				     dpr->rx_std_prod_idx);
 
-		if (jmb_prod_idx != tp->prodring[0].rx_jmb_prod_idx) {
-			u32 mbox = TG3_RX_JMB_PROD_IDX_REG;
-			tw32_rx_mbox(mbox, tp->prodring[0].rx_jmb_prod_idx);
-		}
+		if (jmb_prod_idx != dpr->rx_jmb_prod_idx)
+			tw32_rx_mbox(TG3_RX_JMB_PROD_IDX_REG,
+				     dpr->rx_jmb_prod_idx);
 
 		mmiowb();
+
+		if (err)
+			tw32_f(HOSTCC_MODE, tp->coal_now);
 	}
 
 	return work_done;
@@ -6253,8 +6304,7 @@ static void tg3_free_rings(struct tg3 *tp)
 			dev_kfree_skb_any(skb);
 		}
 
-		if (tp->irq_cnt == 1 || j != tp->irq_cnt - 1)
-			tg3_rx_prodring_free(tp, &tp->prodring[j]);
+		tg3_rx_prodring_free(tp, &tp->prodring[j]);
 	}
 }
 
@@ -6290,9 +6340,10 @@ static int tg3_init_rings(struct tg3 *tp)
 		if (tnapi->rx_rcb)
 			memset(tnapi->rx_rcb, 0, TG3_RX_RCB_RING_BYTES(tp));
 
-		if ((tp->irq_cnt == 1 || i != tp->irq_cnt - 1) &&
-			tg3_rx_prodring_alloc(tp, &tp->prodring[i]))
+		if (tg3_rx_prodring_alloc(tp, &tp->prodring[i])) {
+			tg3_free_rings(tp);
 			return -ENOMEM;
+		}
 	}
 
 	return 0;
@@ -6339,7 +6390,7 @@ static void tg3_free_consistent(struct tg3 *tp)
 		tp->hw_stats = NULL;
 	}
 
-	for (i = 0; i < (tp->irq_cnt == 1 ? 1 : tp->irq_cnt - 1); i++)
+	for (i = 0; i < tp->irq_cnt; i++)
 		tg3_rx_prodring_fini(tp, &tp->prodring[i]);
 }
 
@@ -6351,7 +6402,7 @@ static int tg3_alloc_consistent(struct tg3 *tp)
 {
 	int i;
 
-	for (i = 0; i < (tp->irq_cnt == 1 ? 1 : tp->irq_cnt - 1); i++) {
+	for (i = 0; i < tp->irq_cnt; i++) {
 		if (tg3_rx_prodring_init(tp, &tp->prodring[i]))
 			goto err_out;
 	}
@@ -6416,10 +6467,7 @@ static int tg3_alloc_consistent(struct tg3 *tp)
 			break;
 		}
 
-		if (tp->irq_cnt == 1)
-			tnapi->prodring = &tp->prodring[0];
-		else if (i)
-			tnapi->prodring = &tp->prodring[i - 1];
+		tnapi->prodring = &tp->prodring[i];
 
 		/*
 		 * If multivector RSS is enabled, vector 0 does not handle
@@ -6756,6 +6804,13 @@ static int tg3_poll_fw(struct tg3 *tp)
 
 		printk(KERN_INFO PFX "%s: No firmware running.\n",
 		       tp->dev->name);
+	}
+
+	if (tp->pci_chip_rev_id == CHIPREV_ID_57765_A0) {
+		/* The 57765 A0 needs a little more
+		 * time to do some important work.
+		 */
+		mdelay(10);
 	}
 
 	return 0;
@@ -7944,6 +7999,9 @@ static int tg3_reset_hw(struct tg3 *tp, int reset_phy)
 		      RDMAC_MODE_ADDROFLOW_ENAB | RDMAC_MODE_FIFOOFLOW_ENAB |
 		      RDMAC_MODE_FIFOURUN_ENAB | RDMAC_MODE_FIFOOREAD_ENAB |
 		      RDMAC_MODE_LNGREAD_ENAB);
+
+	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5717)
+		rdmac_mode |= RDMAC_MODE_MULT_DMA_RD_DIS;
 
 	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5784 ||
 	    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5785 ||
@@ -10810,12 +10868,12 @@ static int tg3_run_loopback(struct tg3 *tp, int loopback_mode)
 	struct tg3_napi *tnapi, *rnapi;
 	struct tg3_rx_prodring_set *tpr = &tp->prodring[0];
 
+	tnapi = &tp->napi[0];
+	rnapi = &tp->napi[0];
 	if (tp->irq_cnt > 1) {
-		tnapi = &tp->napi[1];
 		rnapi = &tp->napi[1];
-	} else {
-		tnapi = &tp->napi[0];
-		rnapi = &tp->napi[0];
+		if (tp->tg3_flags3 & TG3_FLG3_ENABLE_TSS)
+			tnapi = &tp->napi[1];
 	}
 	coal_now = tnapi->coal_now | rnapi->coal_now;
 
@@ -10852,8 +10910,12 @@ static int tg3_run_loopback(struct tg3 *tp, int loopback_mode)
 
 		mac_mode = tp->mac_mode & ~MAC_MODE_PORT_MODE_MASK;
 		if (tp->tg3_flags3 & TG3_FLG3_PHY_IS_FET) {
-			if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5906)
-				tg3_writephy(tp, MII_TG3_FET_PTEST, 0x1800);
+			tg3_writephy(tp, MII_TG3_FET_PTEST,
+				     MII_TG3_FET_PTEST_FRC_TX_LINK |
+				     MII_TG3_FET_PTEST_FRC_TX_LOCK);
+			/* The write needs to be flushed for the AC131 */
+			if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5785)
+				tg3_readphy(tp, MII_TG3_FET_PTEST, &val);
 			mac_mode |= MAC_MODE_PORT_MODE_MII;
 		} else
 			mac_mode |= MAC_MODE_PORT_MODE_GMII;
@@ -12674,8 +12736,24 @@ out_not_found:
 	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57780 &&
 		 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57788)
 		strcpy(tp->board_part_number, "BCM57788");
-	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765)
+	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765 &&
+		 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57761)
+		strcpy(tp->board_part_number, "BCM57761");
+	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765 &&
+		 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57765)
 		strcpy(tp->board_part_number, "BCM57765");
+	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765 &&
+		 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57781)
+		strcpy(tp->board_part_number, "BCM57781");
+	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765 &&
+		 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57785)
+		strcpy(tp->board_part_number, "BCM57785");
+	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765 &&
+		 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57791)
+		strcpy(tp->board_part_number, "BCM57791");
+	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765 &&
+		 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57795)
+		strcpy(tp->board_part_number, "BCM57795");
 	else
 		strcpy(tp->board_part_number, "none");
 }
@@ -12777,6 +12855,12 @@ static void __devinit tg3_read_sb_ver(struct tg3 *tp, u32 val)
 		break;
 	case TG3_EEPROM_SB_REVISION_3:
 		offset = TG3_EEPROM_SB_F1R3_EDH_OFF;
+		break;
+	case TG3_EEPROM_SB_REVISION_4:
+		offset = TG3_EEPROM_SB_F1R4_EDH_OFF;
+		break;
+	case TG3_EEPROM_SB_REVISION_5:
+		offset = TG3_EEPROM_SB_F1R5_EDH_OFF;
 		break;
 	default:
 		return;
@@ -13615,6 +13699,8 @@ static int __devinit tg3_get_invariants(struct tg3 *tp)
 	      tp->pdev->device == PCI_DEVICE_ID_TIGON3_5753F ||
 	      tp->pdev->device == PCI_DEVICE_ID_TIGON3_5787F)) ||
 	    tp->pdev->device == TG3PCI_DEVICE_TIGON3_57790 ||
+	    tp->pdev->device == TG3PCI_DEVICE_TIGON3_57791 ||
+	    tp->pdev->device == TG3PCI_DEVICE_TIGON3_57795 ||
 	    (tp->tg3_flags3 & TG3_FLG3_PHY_IS_FET))
 		tp->tg3_flags |= TG3_FLAG_10_100_ONLY;
 

@@ -110,6 +110,7 @@
 #define  CHIPREV_ID_57780_A0		 0x57780000
 #define  CHIPREV_ID_57780_A1		 0x57780001
 #define  CHIPREV_ID_5717_A0		 0x05717000
+#define  CHIPREV_ID_57765_A0		 0x57785000
 #define  GET_ASIC_REV(CHIP_REV_ID)	((CHIP_REV_ID) >> 12)
 #define   ASIC_REV_5700			 0x07
 #define   ASIC_REV_5701			 0x00
@@ -1257,6 +1258,7 @@
 #define  RDMAC_MODE_MBUF_SBD_CRPT_ENAB	 0x00002000
 #define  RDMAC_MODE_FIFO_SIZE_128	 0x00020000
 #define  RDMAC_MODE_FIFO_LONG_BURST	 0x00030000
+#define  RDMAC_MODE_MULT_DMA_RD_DIS	 0x01000000
 #define  RDMAC_MODE_IPV4_LSO_EN		 0x08000000
 #define  RDMAC_MODE_IPV6_LSO_EN		 0x10000000
 #define RDMAC_STATUS			0x00004804
@@ -1862,6 +1864,8 @@
 #define TG3_EEPROM_SB_REVISION_0	0x00000000
 #define TG3_EEPROM_SB_REVISION_2	0x00020000
 #define TG3_EEPROM_SB_REVISION_3	0x00030000
+#define TG3_EEPROM_SB_REVISION_4	0x00040000
+#define TG3_EEPROM_SB_REVISION_5	0x00050000
 #define TG3_EEPROM_MAGIC_HW		0xabcd
 #define TG3_EEPROM_MAGIC_HW_MSK		0xffff
 
@@ -1879,6 +1883,8 @@
 #define TG3_EEPROM_SB_F1R2_EDH_OFF	0x14
 #define TG3_EEPROM_SB_F1R2_MBA_OFF	0x10
 #define TG3_EEPROM_SB_F1R3_EDH_OFF	0x18
+#define TG3_EEPROM_SB_F1R4_EDH_OFF	0x1c
+#define TG3_EEPROM_SB_F1R5_EDH_OFF	0x20
 #define TG3_EEPROM_SB_EDH_MAJ_MASK	0x00000700
 #define TG3_EEPROM_SB_EDH_MAJ_SHFT	8
 #define TG3_EEPROM_SB_EDH_MIN_MASK	0x000000ff
@@ -2113,6 +2119,9 @@
 
 /* Fast Ethernet Tranceiver definitions */
 #define MII_TG3_FET_PTEST		0x17
+#define  MII_TG3_FET_PTEST_FRC_TX_LINK	0x1000
+#define  MII_TG3_FET_PTEST_FRC_TX_LOCK	0x0800
+
 #define MII_TG3_FET_TEST		0x1f
 #define  MII_TG3_FET_SHADOW_EN		0x0080
 
@@ -2704,6 +2713,7 @@ struct tg3 {
 	struct net_device		*dev;
 	struct pci_dev			*pdev;
 
+	u32				coal_now;
 	u32				msg_enable;
 
 	/* begin "tx thread" cacheline section */
@@ -2722,7 +2732,7 @@ struct tg3 {
 	struct vlan_group		*vlgrp;
 #endif
 
-	struct tg3_rx_prodring_set	prodring[TG3_IRQ_MAX_VECS - 1];
+	struct tg3_rx_prodring_set	prodring[TG3_IRQ_MAX_VECS];
 
 
 	/* begin "everything else" cacheline(s) section */
