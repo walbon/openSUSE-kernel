@@ -59,13 +59,13 @@
 
 #define DRV_MODULE_NAME		"bnx2"
 #define PFX DRV_MODULE_NAME	": "
-#define DRV_MODULE_VERSION	"2.0.3"
-#define DRV_MODULE_RELDATE	"Dec 03, 2009"
-#define FW_MIPS_FILE_06		"bnx2/bnx2-mips-06-5.0.0.j3.fw"
+#define DRV_MODULE_VERSION	"2.0.4"
+#define DRV_MODULE_RELDATE	"Mar 03, 2010"
+#define FW_MIPS_FILE_06		"bnx2/bnx2-mips-06-5.0.0.j6.fw"
 #define FW_RV2P_FILE_06		"bnx2/bnx2-rv2p-06-5.0.0.j3.fw"
-#define FW_MIPS_FILE_09		"bnx2/bnx2-mips-09-5.0.0.j3.fw"
-#define FW_RV2P_FILE_09_Ax	"bnx2/bnx2-rv2p-09ax-5.0.0.j3.fw"
-#define FW_RV2P_FILE_09		"bnx2/bnx2-rv2p-09-5.0.0.j3.fw"
+#define FW_MIPS_FILE_09		"bnx2/bnx2-mips-09-5.0.0.j9.fw"
+#define FW_RV2P_FILE_09_Ax	"bnx2/bnx2-rv2p-09ax-5.0.0.j10.fw"
+#define FW_RV2P_FILE_09		"bnx2/bnx2-rv2p-09-5.0.0.j10.fw"
 
 #define RUN_AT(x) (jiffies + (x))
 
@@ -1282,7 +1282,7 @@ bnx2_init_rx_context(struct bnx2 *bp, u32 cid)
 		if (lo_water >= bp->rx_ring_size)
 			lo_water = 0;
 
-		hi_water = bp->rx_ring_size / 4;
+		hi_water = min_t(int, bp->rx_ring_size / 4, lo_water + 16);
 
 		if (hi_water <= lo_water)
 			lo_water = 0;
@@ -6149,6 +6149,10 @@ bnx2_enable_msix(struct bnx2 *bp, int msix_vecs)
 	REG_WR(bp, BNX2_PCI_MSIX_TBL_OFF_BIR, BNX2_PCI_GRC_WINDOW2_BASE);
 	REG_WR(bp, BNX2_PCI_MSIX_PBA_OFF_BIT, BNX2_PCI_GRC_WINDOW3_BASE);
 
+	/*  Need to flush the previous three writes to ensure MSI-X
+	 *  is setup properly */
+	REG_RD(bp, BNX2_PCI_MSIX_CONTROL);
+
 	for (i = 0; i < BNX2_MAX_MSIX_VEC; i++) {
 		msix_ent[i].entry = i;
 		msix_ent[i].vector = 0;
@@ -7108,6 +7112,13 @@ bnx2_change_ring_size(struct bnx2 *bp, u32 rx, u32 tx)
 			dev_close(bp->dev);
 			return rc;
 		}
+#ifdef BCM_CNIC
+		mutex_lock(&bp->cnic_lock);
+		/* Let cnic know about the new status block. */
+		if (bp->cnic_eth_dev.drv_state & CNIC_DRV_STATE_REGD)
+			bnx2_setup_cnic_irq_info(bp);
+		mutex_unlock(&bp->cnic_lock);
+#endif
 		bnx2_netif_start(bp);
 	}
 	return 0;
