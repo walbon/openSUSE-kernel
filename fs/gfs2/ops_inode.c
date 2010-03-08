@@ -1393,32 +1393,18 @@ out:
 
 const struct inode_operations gfs2_file_iops = {
 	.permission = gfs2_permission,
-	.setattr = gfs2_setattr,
 	.getattr = gfs2_getattr,
-	.setxattr = gfs2_setxattr,
 	.getxattr = gfs2_getxattr,
 	.listxattr = gfs2_listxattr,
-	.removexattr = gfs2_removexattr,
 	.fiemap = gfs2_fiemap,
 };
 
 const struct inode_operations gfs2_dir_iops = {
-	.create = gfs2_create,
 	.lookup = gfs2_lookup,
-	.link = gfs2_link,
-	.unlink = gfs2_unlink,
-	.symlink = gfs2_symlink,
-	.mkdir = gfs2_mkdir,
-	.rmdir = gfs2_rmdir,
-	.mknod = gfs2_mknod,
-	.rename = gfs2_rename,
 	.permission = gfs2_permission,
-	.setattr = gfs2_setattr,
 	.getattr = gfs2_getattr,
-	.setxattr = gfs2_setxattr,
 	.getxattr = gfs2_getxattr,
 	.listxattr = gfs2_listxattr,
-	.removexattr = gfs2_removexattr,
 	.fiemap = gfs2_fiemap,
 };
 
@@ -1426,12 +1412,9 @@ const struct inode_operations gfs2_symlink_iops = {
 	.readlink = gfs2_readlink,
 	.follow_link = gfs2_follow_link,
 	.permission = gfs2_permission,
-	.setattr = gfs2_setattr,
 	.getattr = gfs2_getattr,
-	.setxattr = gfs2_setxattr,
 	.getxattr = gfs2_getxattr,
 	.listxattr = gfs2_listxattr,
-	.removexattr = gfs2_removexattr,
 	.fiemap = gfs2_fiemap,
 };
 
