@@ -2871,10 +2871,8 @@ static int qeth_l3_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	int data_offset = -1;
 	int nr_frags;
 
-	if ((card->info.type == QETH_CARD_TYPE_IQD) &&
-	    (((skb->protocol != htons(ETH_P_IPV6)) &&
-	      (skb->protocol != htons(ETH_P_IP))) ||
-	     card->options.sniffer))
+	if (((card->info.type == QETH_CARD_TYPE_IQD) && (!ipv)) ||
+	     card->options.sniffer)
 			goto tx_drop;
 
 	if ((card->state != CARD_STATE_UP) || !card->lan_online) {
@@ -2920,14 +2918,14 @@ static int qeth_l3_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		if (data_offset < 0)
 			skb_pull(new_skb, ETH_HLEN);
 	} else {
-		if (new_skb->protocol == htons(ETH_P_IP)) {
+		if (ipv == 4) {
 			if (card->dev->type == ARPHRD_IEEE802_TR)
 				skb_pull(new_skb, TR_HLEN);
 			else
 				skb_pull(new_skb, ETH_HLEN);
 		}
 
-		if (new_skb->protocol == ETH_P_IPV6 && card->vlangrp &&
+		if (ipv == 6 && card->vlangrp &&
 				vlan_tx_tag_present(new_skb)) {
 			skb_push(new_skb, VLAN_HLEN);
 			skb_copy_to_linear_data(new_skb, new_skb->data + 4, 4);
@@ -3321,8 +3319,6 @@ static int __qeth_l3_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 	BUG_ON(!card);
 	QETH_DBF_TEXT(SETUP, 2, "setonlin");
 	QETH_DBF_HEX(SETUP, 2, &card, sizeof(void *));
-
-	qeth_set_allowed_threads(card, QETH_RECOVER_THREAD, 1);
 
 	recover_flag = card->state;
 	rc = ccw_device_set_online(CARD_RDEV(card));
