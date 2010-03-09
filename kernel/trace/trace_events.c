@@ -93,6 +93,38 @@ int trace_define_common_fields(struct ftrace_event_call *call)
 }
 EXPORT_SYMBOL_GPL(trace_define_common_fields);
 
+/* file pointer helpers */
+int ftrace_file_name_len (const struct file *f)
+{
+	/* This performs pretty terribly - obviously */
+	int len = 1;
+	char *buf, *fname;
+
+	if (!(buf = kzalloc(PAGE_SIZE, GFP_KERNEL)))
+		return len;
+	fname = d_path(&f->f_path, buf, PAGE_SIZE);
+	if (!IS_ERR (fname))
+		len += strlen (fname);
+	kfree(buf);
+	return len;
+}
+
+void ftrace_assign_file (char *dest, int dest_len, const struct file *f)
+{
+	char *buf, *fname;
+
+	dest[0] = '\0';
+	if (!(buf = kzalloc(PAGE_SIZE, GFP_KERNEL)))
+		return;
+
+	/* it would be nicer to write this directly into the
+	 * allocated buffer, but d_path doesn't like that */
+	fname = d_path(&f->f_path, buf, PAGE_SIZE);
+	if (!IS_ERR (fname))
+		strncpy (dest, fname, dest_len);
+	kfree(buf);
+}
+
 #ifdef CONFIG_MODULES
 
 static void trace_destroy_fields(struct ftrace_event_call *call)

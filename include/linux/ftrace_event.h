@@ -167,6 +167,10 @@ extern int trace_define_common_fields(struct ftrace_event_call *call);
 
 int trace_set_clr_event(const char *system, const char *event, int set);
 
+/* file pointer helpers */
+extern int  ftrace_file_name_len (const struct file *f);
+extern void ftrace_assign_file   (char *dest, int dest_len, const struct file *f);
+
 /*
  * The double __builtin_constant_p is because gcc will give us an error
  * if we try to allocate the static variable to fmt if it is not a
