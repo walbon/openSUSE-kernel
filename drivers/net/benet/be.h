@@ -38,7 +38,7 @@
 #define BE3_NAME		"ServerEngines BladeEngine3 10Gbps NIC"
 #define OC_NAME			"Emulex OneConnect 10Gbps NIC"
 #define OC_NAME1		"Emulex OneConnect 10Gbps NIC (be3)"
-#define DRV_DESC		BE_NAME "Driver"
+#define DRV_DESC		"ServerEngines BladeEngine 10Gbps NIC Driver"
 
 #define BE_VENDOR_ID 		0x19a2
 #define BE_DEVICE_ID1		0x211
@@ -250,7 +250,8 @@ struct be_adapter {
 	bool rx_post_starved;	/* Zero rx frags have been posted to BE */
 
 	struct vlan_group *vlan_grp;
-	u16 num_vlans;
+	u16 vlans_added;
+	u16 max_vlans;	/* Number of vlans supported */
 	u8 vlan_tag[VLAN_GROUP_ARRAY_LEN];
 	struct be_dma_mem mc_cmd_mem;
 
