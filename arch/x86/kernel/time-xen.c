@@ -548,7 +548,7 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 		do_div(stolen, NS_PER_TICK);
 		local->accounted_stolen += stolen * NS_PER_TICK;
 		local->accounted_system += stolen * NS_PER_TICK;
-		account_steal_time((cputime_t)stolen);
+		account_steal_ticks(stolen);
 	}
 
 	/*
@@ -564,7 +564,7 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 		do_div(blocked, NS_PER_TICK);
 		local->accounted_blocked += blocked * NS_PER_TICK;
 		local->accounted_system  += blocked * NS_PER_TICK;
-		account_idle_time((cputime_t)blocked);
+		account_idle_ticks(blocked);
 	}
 
 	/* Account user/system ticks. */
@@ -579,7 +579,7 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 					    (cputime_t)delta_cpu,
 					    (cputime_t)delta_cpu);
 		else
-			account_idle_time((cputime_t)delta_cpu);
+			account_idle_ticks(delta_cpu);
 	}
 
 	/* Offlined for more than a few seconds? Avoid lockup warnings. */
@@ -881,7 +881,7 @@ static void start_hz_timer(void)
 	}
 #endif
 	BUG_ON(rc);
-	cpumask_clear_cpu(cpu, nohz_cpu_mask);
+	cpumask_clear_cpu(smp_processor_id(), nohz_cpu_mask);
 }
 
 void xen_safe_halt(void)

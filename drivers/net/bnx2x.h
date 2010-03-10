@@ -1,6 +1,6 @@
 /* bnx2x.h: Broadcom Everest network driver.
  *
- * Copyright (c) 2007-2009 Broadcom Corporation
+ * Copyright (c) 2007-2010 Broadcom Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,18 +24,19 @@
 #define BCM_VLAN			1
 #endif
 
-#if defined(CONFIG_CNIC) || defined(CONFIG_CNIC_MODULE)
-#define BCM_CNIC 1
-#include "cnic_if.h"
-#endif
 
 #define BNX2X_MULTI_QUEUE
 
 #define BNX2X_NEW_NAPI
 
 
+#if defined(CONFIG_CNIC) || defined(CONFIG_CNIC_MODULE)
+#define BCM_CNIC 1
+#include "cnic_if.h"
+#endif
 
 #include <linux/mdio.h>
+#include "bnx2x_compat.h"
 #include "bnx2x_reg.h"
 #include "bnx2x_fw_defs.h"
 #include "bnx2x_hsi.h"
@@ -44,7 +45,6 @@
 /* error/debug prints */
 
 #define DRV_MODULE_NAME		"bnx2x"
-#define PFX DRV_MODULE_NAME	": "
 
 /* for messages that are currently off */
 #define BNX2X_MSG_OFF			0
@@ -58,30 +58,40 @@
 #define DP_LEVEL			KERN_NOTICE	/* was: KERN_DEBUG */
 
 /* regular debug print */
-#define DP(__mask, __fmt, __args...) do { \
-	if (bp->msglevel & (__mask)) \
-		printk(DP_LEVEL "[%s:%d(%s)]" __fmt, __func__, __LINE__, \
-			bp->dev ? (bp->dev->name) : "?", ##__args); \
-	} while (0)
+#define DP(__mask, __fmt, __args...)				\
+do {								\
+	if (bp->msg_enable & (__mask))				\
+		printk(DP_LEVEL "[%s:%d(%s)]" __fmt,		\
+		       __func__, __LINE__,			\
+		       bp->dev ? (bp->dev->name) : "?",		\
+		       ##__args);				\
+} while (0)
 
 /* errors debug print */
-#define BNX2X_DBG_ERR(__fmt, __args...) do { \
-	if (bp->msglevel & NETIF_MSG_PROBE) \
-		printk(KERN_ERR "[%s:%d(%s)]" __fmt, __func__, __LINE__, \
-			bp->dev ? (bp->dev->name) : "?", ##__args); \
-	} while (0)
+#define BNX2X_DBG_ERR(__fmt, __args...)				\
+do {								\
+	if (netif_msg_probe(bp))				\
+		pr_err("[%s:%d(%s)]" __fmt,			\
+		       __func__, __LINE__,			\
+		       bp->dev ? (bp->dev->name) : "?",		\
+		       ##__args);				\
+} while (0)
 
 /* for errors (never masked) */
-#define BNX2X_ERR(__fmt, __args...) do { \
-	printk(KERN_ERR "[%s:%d(%s)]" __fmt, __func__, __LINE__, \
-		bp->dev ? (bp->dev->name) : "?", ##__args); \
-	} while (0)
+#define BNX2X_ERR(__fmt, __args...)				\
+do {								\
+	pr_err("[%s:%d(%s)]" __fmt,				\
+	       __func__, __LINE__,				\
+	       bp->dev ? (bp->dev->name) : "?",			\
+	       ##__args);					\
+} while (0)
 
 /* before we have a dev->name use dev_info() */
-#define BNX2X_DEV_INFO(__fmt, __args...) do { \
-	if (bp->msglevel & NETIF_MSG_PROBE) \
-		dev_info(&bp->pdev->dev, __fmt, ##__args); \
-	} while (0)
+#define BNX2X_DEV_INFO(__fmt, __args...)			 \
+do {								 \
+	if (netif_msg_probe(bp))				 \
+		dev_info(&bp->pdev->dev, __fmt, ##__args);	 \
+} while (0)
 
 
 #ifdef BNX2X_STOP_ON_ERROR
@@ -130,7 +140,7 @@
 				 offset, len32); \
 	} while (0)
 
-#define VIRT_WR_DMAE_LEN(bp, data, addr, len32) \
+#define VIRT_WR_DMAE_LEN(bp, data, addr, len32, le32_swap) \
 	do { \
 		memcpy(GUNZIP_BUF(bp), data, (len32) * 4); \
 		bnx2x_write_big_buf_wb(bp, addr, len32); \
@@ -882,7 +892,7 @@ struct bnx2x {
 	/* End of fields used in the performance code paths */
 
 	int			panic;
-	int			msglevel;
+	int			msg_enable;
 
 	u32			flags;
 #define PCIX_FLAG			1

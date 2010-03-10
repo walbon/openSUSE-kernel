@@ -158,6 +158,12 @@ int acpi_processor_ppc_has_changed(struct acpi_processor *pr)
 {
 	int ret;
 
+#ifdef CONFIG_PROCESSOR_EXTERNAL_CONTROL
+	/* Xen hypervisor can handle cpufreq _PPC event */
+	if (ignore_ppc < 0 && processor_pmperf_external())
+		ignore_ppc = 0;
+#endif
+
 	if (ignore_ppc)
 		return 0;
 

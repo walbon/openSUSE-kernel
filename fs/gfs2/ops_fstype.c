@@ -828,10 +828,6 @@ static int init_inodes(struct gfs2_sbd *sdp, int undo)
 	if (undo)
 		goto fail_qinode;
 
-	error = init_journal(sdp, undo);
-	if (error)
-		goto fail;
-
 	/* Read in the master statfs inode */
 	sdp->sd_statfs_inode = gfs2_lookup_simple(master, "statfs");
 	if (IS_ERR(sdp->sd_statfs_inode)) {
@@ -867,7 +863,6 @@ fail_rindex:
 fail_statfs:
 	iput(sdp->sd_statfs_inode);
 fail_journal:
-	init_journal(sdp, UNDO);
 fail:
 	return error;
 }
@@ -1137,11 +1132,11 @@ static int fill_super(struct super_block *sb, void *data, int silent)
 		goto fail;
 	}
 
-	if (!sdp->sd_args.ar_spectator  || !(sb->s_flags & MS_RDONLY) ||
-	    sdp->sd_args.ar_ignore_local_fs) {
+	if (!(sdp->sd_args.ar_spectator  && (sb->s_flags & MS_RDONLY) &&
+	      (strncmp(sdp->sd_args.ar_lockproto, "lock_nolock", GFS2_LOCKNAME_LEN) == 0))) {
 		printk(KERN_WARNING "Only read-only GFS2 mounts are "
-		       "supported.\nPlease mount with the \"spectator\" and "
-		       "\"ro\" mount options\n");
+		       "supported.\nPlease mount with the \"spectator\", "
+		       "\"ro\" and \"lockproto=lock_nolock\" mount options\n");
 		goto fail;
 	}
 

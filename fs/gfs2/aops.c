@@ -1122,48 +1122,31 @@ cannot_release:
 }
 
 static const struct address_space_operations gfs2_writeback_aops = {
-	.writepage = gfs2_writeback_writepage,
-	.writepages = gfs2_writeback_writepages,
 	.readpage = gfs2_readpage,
 	.readpages = gfs2_readpages,
-	.sync_page = block_sync_page,
-	.write_begin = gfs2_write_begin,
-	.write_end = gfs2_write_end,
 	.bmap = gfs2_bmap,
 	.invalidatepage = gfs2_invalidatepage,
 	.releasepage = gfs2_releasepage,
-	.direct_IO = gfs2_direct_IO,
 	.migratepage = buffer_migrate_page,
 	.is_partially_uptodate = block_is_partially_uptodate,
 	.error_remove_page = generic_error_remove_page,
 };
 
 static const struct address_space_operations gfs2_ordered_aops = {
-	.writepage = gfs2_ordered_writepage,
 	.readpage = gfs2_readpage,
 	.readpages = gfs2_readpages,
-	.sync_page = block_sync_page,
-	.write_begin = gfs2_write_begin,
-	.write_end = gfs2_write_end,
 	.set_page_dirty = gfs2_set_page_dirty,
 	.bmap = gfs2_bmap,
 	.invalidatepage = gfs2_invalidatepage,
 	.releasepage = gfs2_releasepage,
-	.direct_IO = gfs2_direct_IO,
 	.migratepage = buffer_migrate_page,
 	.is_partially_uptodate = block_is_partially_uptodate,
 	.error_remove_page = generic_error_remove_page,
 };
 
 static const struct address_space_operations gfs2_jdata_aops = {
-	.writepage = gfs2_jdata_writepage,
-	.writepages = gfs2_jdata_writepages,
 	.readpage = gfs2_readpage,
 	.readpages = gfs2_readpages,
-	.sync_page = block_sync_page,
-	.write_begin = gfs2_write_begin,
-	.write_end = gfs2_write_end,
-	.set_page_dirty = gfs2_set_page_dirty,
 	.bmap = gfs2_bmap,
 	.invalidatepage = gfs2_invalidatepage,
 	.releasepage = gfs2_releasepage,

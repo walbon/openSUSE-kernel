@@ -14,6 +14,54 @@ struct pci_root_info {
 	int busnum;
 };
 
+static bool pci_use_crs = true;
+
+static int __init set_use_crs(const struct dmi_system_id *id)
+{
+	pci_use_crs = true;
+	return 0;
+}
+
+static const struct dmi_system_id pci_use_crs_table[] __initconst = {
+	/* http://bugzilla.kernel.org/show_bug.cgi?id=14183 */
+	{
+		.callback = set_use_crs,
+		.ident = "IBM System x3800",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "IBM"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "x3800"),
+		},
+	},
+	{}
+};
+
+void __init pci_acpi_crs_quirks(void)
+{
+	/* We cannot take this whitelist by date for SLES 11 SP1 or
+	 * customers might see breakage because of a simple BIOS update
+	 *
+	 * int year;
+	 *
+	 * if (dmi_get_date(DMI_BIOS_DATE, &year, NULL, NULL) && year < 2008)
+	 *      pci_use_crs = false;
+	*/
+	dmi_check_system(pci_use_crs_table);
+
+	/*
+	 * If the user specifies "pci=use_crs" or "pci=nocrs" explicitly, that
+	 * takes precedence over anything we figured out above.
+	 */
+	if (pci_probe & PCI_ROOT_NO_CRS)
+		pci_use_crs = false;
+	else if (pci_probe & PCI_USE__CRS)
+		pci_use_crs = true;
+
+	printk(KERN_INFO "PCI: %s host bridge windows from ACPI; "
+	       "if necessary, use \"pci=%s\" and report a bug\n",
+	       pci_use_crs ? "Using" : "Ignoring",
+	       pci_use_crs ? "nocrs" : "use_crs");
+}
+
 static acpi_status
 resource_to_addr(struct acpi_resource *resource,
 			struct acpi_resource_address64 *addr)
@@ -44,20 +92,6 @@ count_resource(struct acpi_resource *acpi_res, void *data)
 	return AE_OK;
 }
 
-static int
-bus_has_transparent_bridge(struct pci_bus *bus)
-{
-	struct pci_dev *dev;
-
-	list_for_each_entry(dev, &bus->devices, bus_list) {
-		u16 class = dev->class >> 8;
-
-		if (class == PCI_CLASS_BRIDGE_PCI && dev->transparent)
-			return true;
-	}
-	return false;
-}
-
 static acpi_status
 setup_resource(struct acpi_resource *acpi_res, void *data)
 {
@@ -67,11 +101,7 @@ setup_resource(struct acpi_resource *acpi_res, void *data)
 	acpi_status status;
 	unsigned long flags;
 	struct resource *root;
-	int max_root_bus_resources = PCI_BUS_NUM_RESOURCES;
 	u64 start, end;
-
-	if (bus_has_transparent_bridge(info->bus))
-		max_root_bus_resources -= 3;
 
 	status = resource_to_addr(acpi_res, &addr);
 	if (!ACPI_SUCCESS(status))
@@ -90,14 +120,6 @@ setup_resource(struct acpi_resource *acpi_res, void *data)
 
 	start = addr.minimum + addr.translation_offset;
 	end = start + addr.address_length - 1;
-	if (info->res_num >= max_root_bus_resources) {
-		printk(KERN_WARNING "PCI: Failed to allocate 0x%lx-0x%lx "
-			"from %s for %s due to _CRS returning more than "
-			"%d resource descriptors\n", (unsigned long) start,
-			(unsigned long) end, root->name, info->name,
-			max_root_bus_resources);
-		return AE_OK;
-	}
 
 	res = &info->res[info->res_num];
 	res->name = info->name;
@@ -111,7 +133,7 @@ setup_resource(struct acpi_resource *acpi_res, void *data)
 			"from %s for %s\n", (unsigned long) res->start,
 			(unsigned long) res->end, root->name, info->name);
 	} else {
-		info->bus->resource[info->res_num] = res;
+		pci_bus_add_resource(info->bus, res, 0);
 		info->res_num++;
 	}
 	return AE_OK;
@@ -123,6 +145,16 @@ get_current_resources(struct acpi_device *device, int busnum,
 {
 	struct pci_root_info info;
 	size_t size;
+
+	if (pci_probe & PCI_USE__CRS)
+		pci_bus_remove_resources(bus);
+	else
+		dev_info(&device->dev,
+                         "ignoring host bridge windows from ACPI; "
+			 "boot with \"pci=use_crs\" to use them\n");
+
+	if (pci_use_crs)
+ 		pci_bus_remove_resources(bus);
 
 	info.bus = bus;
 	info.res_num = 0;
@@ -209,9 +241,7 @@ struct pci_bus * __devinit pci_acpi_scan_root(struct acpi_device *device, int do
 	} else {
 		bus = pci_create_bus(NULL, busnum, &pci_root_ops, sd);
 		if (bus) {
-			if (pci_probe & PCI_USE__CRS)
-				get_current_resources(device, busnum, domain,
-							bus);
+			get_current_resources(device, busnum, domain, bus);
 			bus->subordinate = pci_scan_child_bus(bus);
 		}
 	}

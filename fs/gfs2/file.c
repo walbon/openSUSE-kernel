@@ -710,18 +710,11 @@ const struct file_operations gfs2_file_fops = {
 	.llseek		= gfs2_llseek,
 	.read		= do_sync_read,
 	.aio_read	= generic_file_aio_read,
-	.write		= do_sync_write,
-	.aio_write	= generic_file_aio_write,
-	.unlocked_ioctl	= gfs2_ioctl,
 	.mmap		= gfs2_mmap,
 	.open		= gfs2_open,
 	.release	= gfs2_close,
 	.fsync		= gfs2_fsync,
-	.lock		= gfs2_lock,
-	.flock		= gfs2_flock,
 	.splice_read	= generic_file_splice_read,
-	.splice_write	= generic_file_splice_write,
-	.setlease	= gfs2_setlease,
 };
 
 const struct file_operations gfs2_dir_fops = {
@@ -729,9 +722,6 @@ const struct file_operations gfs2_dir_fops = {
 	.unlocked_ioctl	= gfs2_ioctl,
 	.open		= gfs2_open,
 	.release	= gfs2_close,
-	.fsync		= gfs2_fsync,
-	.lock		= gfs2_lock,
-	.flock		= gfs2_flock,
 };
 
 #endif /* CONFIG_GFS2_FS_LOCKING_DLM */
@@ -740,23 +730,17 @@ const struct file_operations gfs2_file_fops_nolock = {
 	.llseek		= gfs2_llseek,
 	.read		= do_sync_read,
 	.aio_read	= generic_file_aio_read,
-	.write		= do_sync_write,
-	.aio_write	= generic_file_aio_write,
-	.unlocked_ioctl	= gfs2_ioctl,
 	.mmap		= gfs2_mmap,
 	.open		= gfs2_open,
 	.release	= gfs2_close,
 	.fsync		= gfs2_fsync,
 	.splice_read	= generic_file_splice_read,
-	.splice_write	= generic_file_splice_write,
 	.setlease	= generic_setlease,
 };
 
 const struct file_operations gfs2_dir_fops_nolock = {
 	.readdir	= gfs2_readdir,
-	.unlocked_ioctl	= gfs2_ioctl,
 	.open		= gfs2_open,
 	.release	= gfs2_close,
-	.fsync		= gfs2_fsync,
 };
 
