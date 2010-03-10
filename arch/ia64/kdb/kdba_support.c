@@ -1604,7 +1604,7 @@ kdba_unsave_running(struct kdba_running_process *k, struct pt_regs *regs)
 }
 
 void
-kdba_set_current_task(const struct task_struct *p)
+kdba_set_current_task(struct task_struct *p)
 {
 	int cpu = kdb_process_cpu(p);
 	struct kdb_running_process *work, *save;

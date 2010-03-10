@@ -1131,6 +1131,53 @@ kdba_longjmp(kdb_jmp_buf *jb, int reason)
 #endif /* CONFIG_X86_32 */
 
 #ifdef CONFIG_X86_32
+
+#ifdef  CONFIG_4KSTACKS
+static struct thread_info **kdba_hardirq_ctx, **kdba_softirq_ctx;
+#endif  /* CONFIG_4KSTACKS */
+
+/* On a 4K stack kernel, hardirq_ctx and softirq_ctx are [NR_CPUS] arrays.  The
+ * first element of each per-cpu stack is a struct thread_info.
+ */
+static void 
+kdba_get_stack_info_alternate(kdb_machreg_t addr, int cpu,
+                              struct kdb_activation_record *ar)
+{               
+#ifdef  CONFIG_4KSTACKS
+	struct thread_info *tinfo;
+	tinfo = (struct thread_info *)(addr & -THREAD_SIZE);
+	if (cpu < 0) {
+		/* Arbitrary address, see if it falls within any of the irq
+		 * stacks
+		 */
+		int found = 0;
+		for_each_online_cpu(cpu) {
+			if (tinfo == kdba_hardirq_ctx[cpu] ||
+			    tinfo == kdba_softirq_ctx[cpu]) {
+				found = 1;
+				break;
+			}
+		}
+		if (!found)
+			return;
+	}
+	if (tinfo == kdba_hardirq_ctx[cpu] ||
+	    tinfo == kdba_softirq_ctx[cpu]) {
+		ar->stack.physical_start = (kdb_machreg_t)tinfo;
+		ar->stack.physical_end = ar->stack.physical_start + THREAD_SIZE;
+		ar->stack.logical_start = ar->stack.physical_start +
+					  sizeof(struct thread_info);
+		ar->stack.logical_end = ar->stack.physical_end;
+		ar->stack.next = tinfo->previous_esp;
+		if (tinfo == kdba_hardirq_ctx[cpu])
+			ar->stack.id = "hardirq_ctx";
+		else
+			ar->stack.id = "softirq_ctx";
+	}
+#endif  /* CONFIG_4KSTACKS */
+}
+
+
 /*
  * kdba_stackdepth
  *
@@ -1357,7 +1404,7 @@ kdba_adjust_ip(kdb_reason_t reason, int error, struct pt_regs *regs)
 }
 
 void
-kdba_set_current_task(const struct task_struct *p)
+kdba_set_current_task(struct task_struct *p)
 {
 	kdb_current_task = p;
 	if (kdb_task_has_cpu(p)) {

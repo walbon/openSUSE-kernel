@@ -138,8 +138,6 @@ void kdba_unsave_running(struct kdba_running_process *k, struct pt_regs *regs)
 }
 
 struct kdb_activation_record;
-extern void kdba_get_stack_info_alternate(kdb_machreg_t addr, int cpu,
-					  struct kdb_activation_record *ar);
 
 extern void kdba_wait_for_cpus(void);
 
