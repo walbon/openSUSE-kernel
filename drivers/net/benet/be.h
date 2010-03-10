@@ -151,6 +151,7 @@ struct be_eq_obj {
 struct be_mcc_obj {
 	struct be_queue_info q;
 	struct be_queue_info cq;
+	bool rearm_cq;
 };
 
 struct be_drvr_stats {
@@ -265,6 +266,7 @@ struct be_adapter {
 	u32 if_handle;		/* Used to configure filtering */
 	u32 pmac_id;		/* MAC addr handle used by BE card */
 
+	bool eeh_err;
 	bool link_up;
 	u32 port_num;
 	bool promiscuous;
