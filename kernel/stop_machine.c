@@ -5,6 +5,7 @@
 #include <linux/err.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/sched.h>
 #include <linux/stop_machine.h>
 #include <linux/syscalls.h>
@@ -46,6 +47,10 @@ static struct workqueue_struct *stop_machine_wq;
 static struct stop_machine_data active, idle;
 static const struct cpumask *active_cpus;
 static void *stop_machine_work;
+
+static int stop_machine_lazy;
+module_param_named(lazy, stop_machine_lazy, int, 0444);
+MODULE_PARM_DESC(lazy, "stop machine lazy mode, avoid creating and destroying threads repeatedly (0=off [default], 1=on)");
 
 static void set_state(enum stopmachine_state newstate)
 {
@@ -124,7 +129,10 @@ int stop_machine_create(void)
 	if (!stop_machine_work)
 		goto err_out;
 done:
-	refcount++;
+	if (stop_machine_lazy)
+		refcount = 1;
+	else
+		refcount++;
 	mutex_unlock(&setup_lock);
 	return 0;
 
@@ -139,7 +147,8 @@ EXPORT_SYMBOL_GPL(stop_machine_create);
 void stop_machine_destroy(void)
 {
 	mutex_lock(&setup_lock);
-	refcount--;
+	if (!stop_machine_lazy)
+		refcount--;
 	if (refcount)
 		goto done;
 	destroy_workqueue(stop_machine_wq);
