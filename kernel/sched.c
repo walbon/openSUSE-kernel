@@ -5212,6 +5212,16 @@ cputime_t task_stime(struct task_struct *p)
 {
 	return p->stime;
 }
+
+void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
+{
+	struct task_cputime cputime;
+
+	thread_group_cputime(p, &cputime);
+
+	*ut = cputime.utime;
+	*st = cputime.stime;
+}
 #else
 cputime_t task_utime(struct task_struct *p)
 {
@@ -5250,6 +5260,37 @@ cputime_t task_stime(struct task_struct *p)
 		p->prev_stime = max(p->prev_stime, clock_t_to_cputime(stime));
 
 	return p->prev_stime;
+}
+
+/*
+ * Must be called with siglock held.
+ */
+void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
+{
+	struct signal_struct *sig = p->signal;
+	struct task_cputime cputime;
+	cputime_t rtime, utime, total;
+
+	thread_group_cputime(p, &cputime);
+
+	total = cputime_add(cputime.utime, cputime.stime);
+	rtime = nsec_to_clock_t(cputime.sum_exec_runtime);
+
+	if (total) {
+		u64 temp;
+
+		temp = (u64)(rtime * cputime.utime);
+		do_div(temp, total);
+		utime = (cputime_t)temp;
+	} else
+		utime = rtime;
+
+	sig->prev_utime = max(sig->prev_utime, utime);
+	sig->prev_stime = max(sig->prev_stime,
+			      cputime_sub(rtime, sig->prev_utime));
+
+	*ut = sig->prev_utime;
+	*st = sig->prev_stime;
 }
 #endif
 
