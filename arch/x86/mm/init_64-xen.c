@@ -999,12 +999,12 @@ void __init mem_init(void)
 const int rodata_test_data = 0xC3;
 EXPORT_SYMBOL_GPL(rodata_test_data);
 
-static int kernel_set_to_readonly;
+int kernel_set_to_readonly;
 
 void set_kernel_text_rw(void)
 {
 	unsigned long start = PFN_ALIGN(_text);
-	unsigned long end = PFN_ALIGN(__start_rodata);
+	unsigned long end = PFN_ALIGN(__stop___ex_table);
 
 	if (!kernel_set_to_readonly)
 		return;
@@ -1012,13 +1012,18 @@ void set_kernel_text_rw(void)
 	pr_debug("Set kernel text: %lx - %lx for read write\n",
 		 start, end);
 
+	/*
+	 * Make the kernel identity mapping for text RW. Kernel text
+	 * mapping will always be RO. Refer to the comment in
+	 * static_protections() in pageattr.c
+	 */
 	set_memory_rw(start, (end - start) >> PAGE_SHIFT);
 }
 
 void set_kernel_text_ro(void)
 {
 	unsigned long start = PFN_ALIGN(_text);
-	unsigned long end = PFN_ALIGN(__start_rodata);
+	unsigned long end = PFN_ALIGN(__stop___ex_table);
 
 	if (!kernel_set_to_readonly)
 		return;
@@ -1026,6 +1031,9 @@ void set_kernel_text_ro(void)
 	pr_debug("Set kernel text: %lx - %lx for read only\n",
 		 start, end);
 
+	/*
+	 * Set the kernel identity mapping for text RO.
+	 */
 	set_memory_ro(start, (end - start) >> PAGE_SHIFT);
 }
 
