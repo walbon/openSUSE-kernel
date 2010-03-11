@@ -921,9 +921,6 @@ static int update_cpumask(struct cpuset *cs, struct cpuset *trialcs,
  *    call to guarantee_online_mems(), as we know no one is changing
  *    our task's cpuset.
  *
- *    Hold callback_mutex around the two modifications of our tasks
- *    mems_allowed to synchronize with cpuset_mems_allowed().
- *
  *    While the mm_struct we are migrating is typically from some
  *    other task, the task_struct mems_allowed that we are hacking
  *    is for our current task, which must allocate new pages for that
@@ -937,9 +934,23 @@ static void cpuset_migrate_mm(struct mm_struct *mm, const nodemask_t *from,
 
 	tsk->mems_allowed = *to;
 
+	/*
+	 * After current->mems_allowed is set to a new value, current will
+	 * allocate new pages for the migrating memory region. So we must
+	 * ensure that update of current->mems_allowed have been completed
+	 * by this moment.
+	 */
+	smp_wmb();
 	do_migrate_pages(mm, from, to, MPOL_MF_MOVE_ALL);
 
 	guarantee_online_mems(task_cs(tsk),&tsk->mems_allowed);
+
+	/*
+	 * After doing migrate pages, current will allocate new pages for
+	 * itself not the other tasks. So we must ensure that update of
+	 * current->mems_allowed have been completed by this moment.
+	 */
+	smp_wmb();
 }
 
 /*
@@ -1392,11 +1403,10 @@ static void cpuset_attach(struct cgroup_subsys *ss, struct cgroup *cont,
 
 	if (cs == &top_cpuset) {
 		cpumask_copy(cpus_attach, cpu_possible_mask);
-		to = node_possible_map;
 	} else {
 		guarantee_online_cpus(cs, cpus_attach);
-		guarantee_online_mems(cs, &to);
 	}
+	guarantee_online_mems(cs, &to);
 
 	/* do per-task migration stuff possibly for each in the threadgroup */
 	cpuset_attach_task(tsk, &to, cs);
@@ -2091,15 +2101,19 @@ static int cpuset_track_online_cpus(struct notifier_block *unused_nb,
 static int cpuset_track_online_nodes(struct notifier_block *self,
 				unsigned long action, void *arg)
 {
+	nodemask_t oldmems;
+
 	cgroup_lock();
 	switch (action) {
 	case MEM_ONLINE:
-	case MEM_OFFLINE:
+		oldmems = top_cpuset.mems_allowed;
 		mutex_lock(&callback_mutex);
 		top_cpuset.mems_allowed = node_states[N_HIGH_MEMORY];
 		mutex_unlock(&callback_mutex);
-		if (action == MEM_OFFLINE)
-			scan_for_empty_cpusets(&top_cpuset);
+		update_tasks_nodemask(&top_cpuset, &oldmems, NULL);
+		break;
+	case MEM_OFFLINE:
+		scan_for_empty_cpusets(&top_cpuset);
 		break;
 	default:
 		break;
@@ -2396,16 +2410,12 @@ void cpuset_unlock(void)
 
 int cpuset_mem_spread_node(void)
 {
-	int node = current->cpuset_mem_spread_rotor;
+	int node;
 
-	do {
-		node = next_node(node, current->mems_allowed);
-		if (node == MAX_NUMNODES)
-			node = first_node(current->mems_allowed);
-	} while (!node_state(node, N_NORMAL_MEMORY));
-
+	node = next_node(current->cpuset_mem_spread_rotor, current->mems_allowed);
+	if (node == MAX_NUMNODES)
+		node = first_node(current->mems_allowed);
 	current->cpuset_mem_spread_rotor = node;
-
 	return node;
 }
 EXPORT_SYMBOL_GPL(cpuset_mem_spread_node);
