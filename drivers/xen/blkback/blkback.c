@@ -209,6 +209,7 @@ static void print_stats(blkif_t *blkif)
 int blkif_schedule(void *arg)
 {
 	blkif_t *blkif = arg;
+	struct vbd *vbd = &blkif->vbd;
 
 	blkif_get(blkif);
 
@@ -218,6 +219,8 @@ int blkif_schedule(void *arg)
 	while (!kthread_should_stop()) {
 		if (try_to_freeze())
 			continue;
+		if (unlikely(vbd->size != vbd_size(vbd)))
+			vbd_resize(blkif);
 
 		wait_event_interruptible(
 			blkif->wq,

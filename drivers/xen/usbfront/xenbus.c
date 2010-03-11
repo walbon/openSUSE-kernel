@@ -192,11 +192,23 @@ static int connect(struct xenbus_device *dev)
 	usbif_conn_request_t *req;
 	int i, idx, err;
 	int notify;
+	char name[TASK_COMM_LEN];
+	struct usb_hcd *hcd;
+
+	hcd = info_to_hcd(info);
+	snprintf(name, TASK_COMM_LEN, "xenhcd.%d", hcd->self.busnum);
 
 	err = talk_to_backend(dev, info);
 	if (err)
 		return err;
 
+	info->kthread = kthread_run(xenhcd_schedule, info, name);
+	if (IS_ERR(info->kthread)) {
+		err = PTR_ERR(info->kthread);
+		info->kthread = NULL;
+		xenbus_dev_fatal(dev, err, "Error creating thread");
+		return err;
+	}
 	/* prepare ring for hotplug notification */
 	for (idx = 0, i = 0; i < USB_CONN_RING_SIZE; i++) {
 		req = RING_GET_REQUEST(&info->conn_ring, idx);
@@ -274,7 +286,6 @@ static int usbfront_probe(struct xenbus_device *dev,
 	int err;
 	struct usb_hcd *hcd;
 	struct usbfront_info *info;
-	char name[TASK_COMM_LEN];
 
 	if (usb_disabled())
 		return -ENODEV;
@@ -298,13 +309,6 @@ static int usbfront_probe(struct xenbus_device *dev,
 	}
 
 	init_waitqueue_head(&info->wq);
-	snprintf(name, TASK_COMM_LEN, "xenhcd.%d", hcd->self.busnum);
-	info->kthread = kthread_run(xenhcd_schedule, info, name);
-	if (IS_ERR(info->kthread)) {
-		err = PTR_ERR(info->kthread);
-		info->kthread = NULL;
-		goto fail;
-	}
 
 	return 0;
 
@@ -343,8 +347,8 @@ static void backend_changed(struct xenbus_device *dev,
 	case XenbusStateInitWait:
 		if (dev->state != XenbusStateInitialising)
 			break;
-		connect(dev);
-		xenbus_switch_state(dev, XenbusStateConnected);
+		if (!connect(dev))
+			xenbus_switch_state(dev, XenbusStateConnected);
 		break;
 
 	case XenbusStateClosing:

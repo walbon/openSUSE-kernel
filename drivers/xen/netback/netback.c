@@ -1551,9 +1551,20 @@ static void netif_page_release(struct page *page, unsigned int order)
 irqreturn_t netif_be_int(int irq, void *dev_id)
 {
 	netif_t *netif = dev_id;
+	unsigned int group = GET_GROUP_INDEX(netif);
+
+	if (unlikely(group >= netbk_nr_groups)) {
+		/*
+		 * Short of having a way to bind the IRQ in disabled mode
+		 * (IRQ_NOAUTOEN), we have to ignore the first invocation(s)
+		 * (before we got assigned to a group).
+		 */
+		BUG_ON(group != UINT_MAX);
+		return IRQ_HANDLED;
+	}
 
 	add_to_net_schedule_list_tail(netif);
-	maybe_schedule_tx_action(GET_GROUP_INDEX(netif));
+	maybe_schedule_tx_action(group);
 
 	if (netif_schedulable(netif) && !netbk_queue_full(netif))
 		netif_wake_queue(netif->dev);
