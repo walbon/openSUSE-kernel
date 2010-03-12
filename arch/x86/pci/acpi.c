@@ -234,7 +234,9 @@ struct pci_bus * __devinit pci_acpi_scan_root(struct acpi_device *device, int do
 	} else {
 		bus = pci_create_bus(NULL, busnum, &pci_root_ops, sd);
 		if (bus) {
-			get_current_resources(device, busnum, domain, bus);
+			if (pci_use_crs)
+				get_current_resources(device, busnum, domain,
+						      bus);
 			bus->subordinate = pci_scan_child_bus(bus);
 		}
 	}
