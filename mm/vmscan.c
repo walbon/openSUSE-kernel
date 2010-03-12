@@ -129,7 +129,6 @@ struct scan_control {
  */
 int vm_swappiness __read_mostly = 60;
 unsigned int vm_pagecache_limit_mb __read_mostly = 0;
-EXPORT_SYMBOL(vm_pagecache_limit_mb);
 long vm_total_pages __read_mostly;	/* The total number of pages which the VM controls */
 
 static LIST_HEAD(shrinker_list);
@@ -2276,7 +2275,6 @@ unsigned long zone_reclaimable_pages(struct zone *zone)
 	return nr;
 }
 
-#ifdef CONFIG_HIBERNATION
 /*
  * Helper function for shrink_all_memory().  Tries to reclaim 'nr_pages' pages
  * from LRU lists system-wide, for given pass and priority.
@@ -2421,9 +2419,7 @@ out:
 
 	return sc.nr_reclaimed;
 }
-#endif /* CONFIG_HIBERNATION */
 
-#ifdef CONFIG_HIBERNATION
 /*
  * Function to shrink the page cache
  *
@@ -2443,16 +2439,13 @@ out:
  *
  * This function is similar to shrink_all_memory, except that it may never
  * swap out mapped pages and only does two passes.
- *
- * Note: This function uses shrink_all_zones, which comes curerntly
- * with CONFIG_HIBERNATION.
 */
 static void __shrink_page_cache(int may_write, gfp_t mask)
 {
 	unsigned long lru_pages, nr_slab;
 	unsigned long ret = 0;
 	int pass;
-	int passes = may_write? 4: 1;
+	int passes = may_write? 4: 2;
 	struct reclaim_state reclaim_state;
 	struct scan_control sc = {
 		.gfp_mask = mask,
@@ -2540,9 +2533,6 @@ static void __shrink_page_cache(int may_write, gfp_t mask)
 			 if (may_write && sc.nr_scanned && prio < DEF_PRIORITY - 2)
 			 	congestion_wait(BLK_RW_ASYNC, HZ / 10);
 		}
-
-		if (pass > 1 && !may_write)
-			goto out;
 	}
 
 out:
@@ -2556,15 +2546,6 @@ void shrink_page_cache(gfp_t mask, struct page *page)
 	if (pagecache_over_limit(1) > 0)
 		__shrink_page_cache(1, mask);
 }
-
-#else
-void shrink_page_cache(gfp_t mask, struct page *page)
-{
-	/* OOPS, not implemented */
-	return 0;
-}
-#endif
-EXPORT_SYMBOL(shrink_page_cache);
 
 /* It's optimal to keep kswapds on the same CPUs as their memory, but
    not required for correctness.  So if the last cpu in a node goes

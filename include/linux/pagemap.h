@@ -438,30 +438,13 @@ static inline int fault_in_pages_readable(const char __user *uaddr, int size)
 	return ret;
 }
 
+int add_to_page_cache(struct page *page, struct address_space *mapping,
+				pgoff_t index, gfp_t gfp_mask);
 int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 				pgoff_t index, gfp_t gfp_mask);
 int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 				pgoff_t index, gfp_t gfp_mask);
 extern void remove_from_page_cache(struct page *page);
 extern void __remove_from_page_cache(struct page *page);
-
-/*
- * Like add_to_page_cache_locked, but used to add newly allocated pages:
- * the page is new, so we can just run __set_page_locked() against it.
- */
-static inline int add_to_page_cache(struct page *page,
-		struct address_space *mapping, pgoff_t offset, gfp_t gfp_mask)
-{
-	int error;
-
-	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit(0) > 0)
-		shrink_page_cache(gfp_mask, page);
-
-	__set_page_locked(page);
-	error = add_to_page_cache_locked(page, mapping, offset, gfp_mask);
-	if (unlikely(error))
-		__clear_page_locked(page);
-	return error;
-}
 
 #endif /* _LINUX_PAGEMAP_H */
