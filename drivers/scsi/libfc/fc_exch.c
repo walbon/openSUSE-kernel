@@ -734,19 +734,14 @@ err:
  * EM is selected when a NULL match function pointer is encountered
  * or when a call to a match function returns true.
  */
-static struct fc_exch *fc_exch_alloc(struct fc_lport *lport,
-				     struct fc_frame *fp)
+static inline struct fc_exch *fc_exch_alloc(struct fc_lport *lport,
+					    struct fc_frame *fp)
 {
 	struct fc_exch_mgr_anchor *ema;
-	struct fc_exch *ep;
 
-	list_for_each_entry(ema, &lport->ema_list, ema_list) {
-		if (!ema->match || ema->match(fp)) {
-			ep = fc_exch_em_alloc(lport, ema->mp);
-			if (ep)
-				return ep;
-		}
-	}
+	list_for_each_entry(ema, &lport->ema_list, ema_list)
+		if (!ema->match || ema->match(fp))
+			return fc_exch_em_alloc(lport, ema->mp);
 	return NULL;
 }
 
@@ -920,12 +915,7 @@ static enum fc_pf_rjt_reason fc_seq_lookup_recip(struct fc_lport *lport,
 	 * Find or create the sequence.
 	 */
 	if (fc_sof_is_init(fr_sof(fp))) {
-		sp = fc_seq_start_next(&ep->seq);
-		if (!sp) {
-			reject = FC_RJT_SEQ_XS;	/* exchange shortage */
-			goto rel;
-		}
-		sp->id = fh->fh_seq_id;
+		sp = &ep->seq;
 		sp->ssb_stat |= SSB_ST_RESP;
 	} else {
 		sp = &ep->seq;
@@ -1336,17 +1326,14 @@ static void fc_exch_recv_seq_resp(struct fc_exch_mgr *mp, struct fc_frame *fp)
 		goto rel;
 	}
 	sof = fr_sof(fp);
-	if (fc_sof_is_init(sof)) {
-		sp = fc_seq_start_next(&ep->seq);
-		sp->id = fh->fh_seq_id;
+	sp = &ep->seq;
+	if (fc_sof_is_init(sof))
 		sp->ssb_stat |= SSB_ST_RESP;
-	} else {
-		sp = &ep->seq;
-		if (sp->id != fh->fh_seq_id) {
+	else if (sp->id != fh->fh_seq_id) {
 			atomic_inc(&mp->stats.seq_not_found);
 			goto rel;
-		}
 	}
+
 	f_ctl = ntoh24(fh->fh_f_ctl);
 	fr_seq(fp) = sp;
 	if (f_ctl & FC_FC_SEQ_INIT)
@@ -1763,7 +1750,6 @@ static void fc_exch_els_rec(struct fc_seq *sp, struct fc_frame *rfp)
 		fc_exch_done(sp);
 		goto out;
 	}
-	sp = fc_seq_start_next(sp);
 	acc = fc_frame_payload_get(fp, sizeof(*acc));
 	memset(acc, 0, sizeof(*acc));
 	acc->reca_cmd = ELS_LS_ACC;
