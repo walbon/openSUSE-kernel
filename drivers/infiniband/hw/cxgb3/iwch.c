@@ -147,6 +147,7 @@ static void close_rnic_dev(struct t3cdev *tdev)
 	mutex_lock(&dev_mutex);
 	list_for_each_entry_safe(dev, tmp, &dev_list, entry) {
 		if (dev->rdev.t3cdev_p == tdev) {
+			dev->rdev.flags = CXIO_ERROR_FATAL;
 			list_del(&dev->entry);
 			iwch_unregister_device(dev);
 			cxio_rdev_close(&dev->rdev);
