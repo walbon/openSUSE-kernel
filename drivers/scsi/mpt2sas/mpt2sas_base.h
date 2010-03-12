@@ -69,11 +69,11 @@
 #define MPT2SAS_DRIVER_NAME		"mpt2sas"
 #define MPT2SAS_AUTHOR	"LSI Corporation <DL-MPTFusionLinux@lsi.com>"
 #define MPT2SAS_DESCRIPTION	"LSI MPT Fusion SAS 2.0 Device Driver"
-#define MPT2SAS_DRIVER_VERSION		"04.100.01.00"
+#define MPT2SAS_DRIVER_VERSION		"04.100.01.02"
 #define MPT2SAS_MAJOR_VERSION		04
 #define MPT2SAS_MINOR_VERSION		100
 #define MPT2SAS_BUILD_VERSION		01
-#define MPT2SAS_RELEASE_VERSION		00
+#define MPT2SAS_RELEASE_VERSION		02
 
 /*
  * Set MPT2SAS_SG_DEPTH value based on user input.
@@ -119,7 +119,6 @@
 #define MPT2_IOC_PRE_RESET		1 /* prior to host reset */
 #define MPT2_IOC_AFTER_RESET		2 /* just after host reset */
 #define MPT2_IOC_DONE_RESET		3 /* links re-initialized */
-#define MPT2_IOC_RUNNING		4 /* shost running */
 
 /*
  * logging format
@@ -260,16 +259,6 @@ struct _internal_cmd {
 	u16	smid;
 };
 
-/*
- * SAS Topology Structures
- */
-
-#define MPTSAS_STATE_TR_SEND		0x0001
-#define MPTSAS_STATE_TR_COMPLETE	0x0002
-#define MPTSAS_STATE_CNTRL_SEND		0x0004
-#define MPTSAS_STATE_CNTRL_COMPLETE	0x0008
-
-#define MPT2SAS_REQ_SAS_CNTRL		0x0010
 
 /**
  * struct _sas_device - attached device information
@@ -307,7 +296,6 @@ struct _sas_device {
 	u16	slot;
 	u8	hidden_raid_component;
 	u8	responding;
-	u16	state;
 };
 
 /**
@@ -603,7 +591,6 @@ struct MPT2SAS_ADAPTER {
 	/* fw event handler */
 	char		firmware_event_name[20];
 	struct workqueue_struct	*firmware_event_thread;
-	u8		fw_events_off;
 	spinlock_t	fw_event_lock;
 	struct list_head fw_event_list;
 
@@ -611,6 +598,7 @@ struct MPT2SAS_ADAPTER {
 	int		aen_event_read_flag;
 	u8		broadcast_aen_busy;
 	u8		shost_recovery;
+	struct completion	shost_recovery_done;
 	spinlock_t 	ioc_reset_in_progress_lock;
 	u8		ioc_link_reset_in_progress;
 	u8		ignore_loginfos;

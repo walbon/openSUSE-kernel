@@ -14,7 +14,7 @@ struct pci_root_info {
 	int busnum;
 };
 
-static bool pci_use_crs = true;
+static bool pci_use_crs;
 
 static int __init set_use_crs(const struct dmi_system_id *id)
 {
@@ -146,13 +146,6 @@ get_current_resources(struct acpi_device *device, int busnum,
 	struct pci_root_info info;
 	size_t size;
 
-	if (pci_probe & PCI_USE__CRS)
-		pci_bus_remove_resources(bus);
-	else
-		dev_info(&device->dev,
-                         "ignoring host bridge windows from ACPI; "
-			 "boot with \"pci=use_crs\" to use them\n");
-
 	if (pci_use_crs)
  		pci_bus_remove_resources(bus);
 
@@ -241,7 +234,9 @@ struct pci_bus * __devinit pci_acpi_scan_root(struct acpi_device *device, int do
 	} else {
 		bus = pci_create_bus(NULL, busnum, &pci_root_ops, sd);
 		if (bus) {
-			get_current_resources(device, busnum, domain, bus);
+			if (pci_use_crs)
+				get_current_resources(device, busnum, domain,
+						      bus);
 			bus->subordinate = pci_scan_child_bus(bus);
 		}
 	}
