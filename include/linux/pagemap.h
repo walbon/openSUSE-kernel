@@ -12,6 +12,7 @@
 #include <asm/uaccess.h>
 #include <linux/gfp.h>
 #include <linux/bitops.h>
+#include <linux/swap.h>
 #include <linux/hardirq.h> /* for in_interrupt() */
 
 /*
@@ -452,6 +453,9 @@ static inline int add_to_page_cache(struct page *page,
 		struct address_space *mapping, pgoff_t offset, gfp_t gfp_mask)
 {
 	int error;
+
+	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit(0) > 0)
+		shrink_page_cache(gfp_mask, page);
 
 	__set_page_locked(page);
 	error = add_to_page_cache_locked(page, mapping, offset, gfp_mask);

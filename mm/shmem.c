@@ -943,6 +943,9 @@ found:
 	error = 1;
 	if (!inode)
 		goto out;
+
+	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit(0) > 0)
+		shrink_page_cache(GFP_KERNEL, page);
 	/*
 	 * Charge page using GFP_KERNEL while we can wait.
 	 * Charged back to the user(not to caller) when swap account is used.

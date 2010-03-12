@@ -127,8 +127,10 @@ struct scan_control {
 /*
  * From 0 .. 100.  Higher means more swappy.
  */
-int vm_swappiness = 60;
-long vm_total_pages;	/* The total number of pages which the VM controls */
+int vm_swappiness __read_mostly = 60;
+unsigned int vm_pagecache_limit_mb __read_mostly = 0;
+EXPORT_SYMBOL(vm_pagecache_limit_mb);
+long vm_total_pages __read_mostly;	/* The total number of pages which the VM controls */
 
 static LIST_HEAD(shrinker_list);
 static DECLARE_RWSEM(shrinker_rwsem);
@@ -1911,6 +1913,8 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *mem_cont,
 }
 #endif
 
+static void __shrink_page_cache(int may_write, gfp_t mask);
+
 /*
  * For kswapd, balance_pgdat() will work across all this node's zones until
  * they are all at high_wmark_pages(zone).
@@ -1961,6 +1965,10 @@ loop_again:
 	sc.nr_reclaimed = 0;
 	sc.may_writepage = !laptop_mode;
 	count_vm_event(PAGEOUTRUN);
+
+	/* this reclaims from all zones so don't count to sc.nr_reclaimed */
+	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit(0) > 0)
+		__shrink_page_cache(0, GFP_KERNEL);
 
 	for (i = 0; i < pgdat->nr_zones; i++)
 		temp_priority[i] = DEF_PRIORITY;
@@ -2104,6 +2112,8 @@ out:
 
 		zone->prev_priority = temp_priority[i];
 	}
+	/* FIXME: Do we need to loop_again also if we have not achieved our
+	 * pagecache target? i.e. && pagecache_over_limit(0) > 0 */
 	if (!all_zones_ok) {
 		cond_resched();
 
@@ -2219,7 +2229,8 @@ void wakeup_kswapd(struct zone *zone, int order)
 		return;
 
 	pgdat = zone->zone_pgdat;
-	if (zone_watermark_ok(zone, order, low_wmark_pages(zone), 0, 0))
+	if (zone_watermark_ok(zone, order, low_wmark_pages(zone), 0, 0) &&
+		(!vm_pagecache_limit_mb || pagecache_over_limit(0) <= 0))
 		return;
 	if (pgdat->kswapd_max_order < order)
 		pgdat->kswapd_max_order = order;
@@ -2411,6 +2422,149 @@ out:
 	return sc.nr_reclaimed;
 }
 #endif /* CONFIG_HIBERNATION */
+
+#ifdef CONFIG_HIBERNATION
+/*
+ * Function to shrink the page cache
+ *
+ * This function calculates the number of pages (nr_pages) the page
+ * cache is over its limit and shrinks the page cache accordingly.
+ *
+ * The maximum number of pages, the page cache shrinks in one call of
+ * this function is limited to SWAP_CLUSTER_MAX pages. Therefore it may
+ * require a number of calls to actually reach the vm_pagecache_limit_kb.
+ *
+ * The parameter may_write determines whether we should be allowed
+ * to write out (dirty) pages; if we are, we also add vm_pagecache_min_dec
+ * to nr_pages for performance reasons.
+ * This ensures that once we call the (expensive) operation of shrinking
+ * the page cache, we do some reasonable amount of work, so we don't have
+ * to call it directly again.
+ *
+ * This function is similar to shrink_all_memory, except that it may never
+ * swap out mapped pages and only does two passes.
+ *
+ * Note: This function uses shrink_all_zones, which comes curerntly
+ * with CONFIG_HIBERNATION.
+*/
+static void __shrink_page_cache(int may_write, gfp_t mask)
+{
+	unsigned long lru_pages, nr_slab;
+	unsigned long ret = 0;
+	int pass;
+	int passes = may_write? 4: 1;
+	struct reclaim_state reclaim_state;
+	struct scan_control sc = {
+		.gfp_mask = mask,
+		.may_swap = 0,
+		.may_unmap = 0,
+		.swap_cluster_max = SWAP_CLUSTER_MAX,
+		.may_writepage = may_write,
+		.swappiness = vm_swappiness,
+		.isolate_pages = isolate_pages_global,
+	};
+	struct reclaim_state *old_rs = current->reclaim_state;
+	long nr_pages;
+
+	if (may_write) {
+		/* synch reclaim doesn't need to reclaim too many */
+		nr_pages = SWAP_CLUSTER_MAX;
+	} else {
+		/* How many pages are we over the limit?
+		 * But don't enforce limit if there's plenty of free mem */
+		nr_pages = pagecache_over_limit(may_write);
+
+		/* Don't need to go there in one step; as the freed
+		 * pages are counted FREE_TO_PAGECACHE_RATIO, this
+		 * is still 2x as much as minimally needed. */
+		nr_pages /= (FREE_TO_PAGECACHE_RATIO/2);
+
+		/* Return early if there's no work to do */
+		if (nr_pages <= 0)
+			return;
+		/* But do a few at least */
+		nr_pages = max_t(unsigned long, nr_pages, SWAP_CLUSTER_MAX);
+
+	}
+
+	current->reclaim_state = &reclaim_state;
+
+	lru_pages = global_reclaimable_pages();
+	nr_slab = global_page_state(NR_SLAB_RECLAIMABLE);
+
+	/* If slab caches are huge, it's better to hit them first */
+	while (nr_slab >= lru_pages) {
+		reclaim_state.reclaimed_slab = 0;
+		shrink_slab(nr_pages, sc.gfp_mask, lru_pages);
+		if (!reclaim_state.reclaimed_slab)
+			break;
+
+		ret += reclaim_state.reclaimed_slab;
+		if (ret >= nr_pages)
+			goto out;
+
+		nr_slab -= reclaim_state.reclaimed_slab;
+	}
+
+	/*
+	 * Shrink the LRU in 4 passes:
+	 * 0 = Reclaim from inactive_list only (fast)
+	 * 1 = Reclaim from active list but don't reclaim mapped (not that fast)
+	 * Passes 2 -- 3 are only called if may_write == 1:
+	 * 2 = 2nd pass of type 1
+	 * 3 = Reclaim mapped (normal reclaim)
+	 */
+	for (pass = 0; pass < passes; pass++) {
+		int prio;
+		if (pass > 2)
+			sc.may_unmap = 1;
+
+		for (prio = DEF_PRIORITY; prio >= 0; prio--) {
+			unsigned long nr_to_scan = nr_pages - ret;
+
+			sc.nr_scanned = 0;
+			/* sc.swap_cluster_max = nr_to_scan; */
+			shrink_all_zones(nr_to_scan, prio, pass, &sc);
+			ret += sc.nr_reclaimed;
+			if (ret >= nr_pages)
+				goto out;
+
+			reclaim_state.reclaimed_slab = 0;
+			shrink_slab(sc.nr_scanned, sc.gfp_mask,
+					global_reclaimable_pages());
+			ret += reclaim_state.reclaimed_slab;
+
+			if (ret >= nr_pages)
+				goto out;
+
+			 if (may_write && sc.nr_scanned && prio < DEF_PRIORITY - 2)
+			 	congestion_wait(BLK_RW_ASYNC, HZ / 10);
+		}
+
+		if (pass > 1 && !may_write)
+			goto out;
+	}
+
+out:
+	current->reclaim_state = old_rs;
+}
+
+void shrink_page_cache(gfp_t mask, struct page *page)
+{
+	wakeup_kswapd(page_zone(page), 0);
+
+	if (pagecache_over_limit(1) > 0)
+		__shrink_page_cache(1, mask);
+}
+
+#else
+void shrink_page_cache(gfp_t mask, struct page *page)
+{
+	/* OOPS, not implemented */
+	return 0;
+}
+#endif
+EXPORT_SYMBOL(shrink_page_cache);
 
 /* It's optimal to keep kswapds on the same CPUs as their memory, but
    not required for correctness.  So if the last cpu in a node goes

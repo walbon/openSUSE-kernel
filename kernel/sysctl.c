@@ -1201,6 +1201,14 @@ static struct ctl_table vm_table[] = {
 		.extra1		= &zero,
 		.extra2		= &one_hundred,
 	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "pagecache_limit_mb",
+		.data		= &vm_pagecache_limit_mb,
+		.maxlen		= sizeof(vm_pagecache_limit_mb),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
 #ifdef CONFIG_HUGETLB_PAGE
 	 {
 		.procname	= "nr_hugepages",
