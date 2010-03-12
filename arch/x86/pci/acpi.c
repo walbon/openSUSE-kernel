@@ -14,7 +14,7 @@ struct pci_root_info {
 	int busnum;
 };
 
-static bool pci_use_crs = true;
+static bool pci_use_crs;
 
 static int __init set_use_crs(const struct dmi_system_id *id)
 {
@@ -145,13 +145,6 @@ get_current_resources(struct acpi_device *device, int busnum,
 {
 	struct pci_root_info info;
 	size_t size;
-
-	if (pci_probe & PCI_USE__CRS)
-		pci_bus_remove_resources(bus);
-	else
-		dev_info(&device->dev,
-                         "ignoring host bridge windows from ACPI; "
-			 "boot with \"pci=use_crs\" to use them\n");
 
 	if (pci_use_crs)
  		pci_bus_remove_resources(bus);
