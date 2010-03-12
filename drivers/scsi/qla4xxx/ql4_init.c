@@ -392,6 +392,7 @@ static int qla4xxx_fw_ready(struct scsi_qla_host *ha)
 		DEBUG2(printk("scsi%ld: %s: FW initialized, but "
 			      "auto-discovery still in process\n",
 			       ha->host_no, __func__));
+		ready = 1;
 	}
 
 	return ready;
@@ -963,8 +964,13 @@ int qla4xxx_reinitialize_ddb_list(struct scsi_qla_host *ha)
 			DEBUG2(printk ("scsi%ld: %s: ddb index [%d] marked "
 				       "ONLINE\n", ha->host_no, __func__,
 				       ddb_entry->fw_ddb_index));
-		} else if (atomic_read(&ddb_entry->state) == DDB_STATE_ONLINE)
+			iscsi_unblock_session(ddb_entry->sess);
+		} else if (atomic_read(&ddb_entry->state) == DDB_STATE_ONLINE) {
+			DEBUG2(printk("scsi:%ld: %s: Firmware ddb state is not "
+					"active marking device missing\n",
+					ha->host_no, __func__));
 			qla4xxx_mark_device_missing(ha, ddb_entry);
+		}
 	}
 	return status;
 }
@@ -1310,6 +1316,7 @@ int qla4xxx_initialize_adapter(struct scsi_qla_host *ha,
 	int status = QLA_ERROR;
 	int8_t ip_address[IP_ADDR_LEN] = {0} ;
 
+	DEBUG2(dev_info(&ha->pdev->dev, "%s: adapter OFFLINE\n", __func__));
 	clear_bit(AF_ONLINE, &ha->flags);
 	ha->eeprom_cmd_data = 0;
 
@@ -1374,6 +1381,8 @@ int qla4xxx_initialize_adapter(struct scsi_qla_host *ha,
 exit_init_online:
 	set_bit(AF_ONLINE, &ha->flags);
 exit_init_hba:
+	DEBUG2(printk("scsi%ld: initialize adapter: %s\n", ha->host_no,
+			status == QLA_ERROR ? "FAILED" : "SUCCEDED"));
 	return status;
 }
 
@@ -1465,8 +1474,11 @@ int qla4xxx_process_ddb_changed(struct scsi_qla_host *ha, uint32_t fw_ddb_index,
 		      "index [%d]\n", ha->host_no, __func__,
 		      ddb_entry->fw_ddb_device_state, state, fw_ddb_index));
 	if (old_fw_ddb_device_state == state &&
-	    state == DDB_DS_SESSION_ACTIVE) {
-		/* Do nothing, state not changed. */
+			state == DDB_DS_SESSION_ACTIVE) {
+		if (atomic_read(&ddb_entry->state) != DDB_STATE_ONLINE) {
+			atomic_set(&ddb_entry->state, DDB_STATE_ONLINE);
+			iscsi_unblock_session(ddb_entry->sess);
+		}
 		return QLA_SUCCESS;
 	}
 

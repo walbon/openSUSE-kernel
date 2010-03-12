@@ -380,9 +380,8 @@ void qla4xxx_mark_device_missing(struct scsi_qla_host *ha,
 				 struct ddb_entry *ddb_entry)
 {
 	atomic_set(&ddb_entry->state, DDB_STATE_MISSING);
-	DEBUG3(printk("scsi%d:%d:%d: index [%d] marked MISSING\n",
-		      ha->host_no, ddb_entry->bus, ddb_entry->target,
-		      ddb_entry->fw_ddb_index));
+	DEBUG2(printk("scsi%ld: index [%d] marked MISSING\n",
+		      ha->host_no, ddb_entry->fw_ddb_index));
 	iscsi_block_session(ddb_entry->sess);
 	iscsi_conn_error_event(ddb_entry->conn, ISCSI_ERR_CONN_FAILED);
 }
@@ -983,10 +982,9 @@ static int qla4xxx_recover_adapter(struct scsi_qla_host *ha,
 	int status;
 
 	/* Stall incoming I/O until we are done */
+	scsi_block_requests(ha->host);
 	clear_bit(AF_ONLINE, &ha->flags);
-
-	DEBUG2(printk("scsi%ld: %s calling qla4xxx_cmd_wait\n", ha->host_no,
-		      __func__));
+	DEBUG2(dev_info(&ha->pdev->dev, "%s: adapter OFFLINE\n", __func__));
 
 	/* Wait for outstanding commands to complete.
 	 * Stalls the driver for max 30 secs
@@ -1016,9 +1014,6 @@ static int qla4xxx_recover_adapter(struct scsi_qla_host *ha,
 	/* Re-initialize firmware. If successful, function returns
 	 * with ISP interrupts enabled */
 	if (status == QLA_SUCCESS) {
-		DEBUG2(printk("scsi%ld: %s - Initializing adapter..\n",
-			      ha->host_no, __func__));
-
 		/* If successful, AF_ONLINE flag set in
 		 * qla4xxx_initialize_adapter */
 		status = qla4xxx_initialize_adapter(ha, renew_ddb_list);
@@ -1070,10 +1065,13 @@ static int qla4xxx_recover_adapter(struct scsi_qla_host *ha,
 
 	ha->adapter_error_count++;
 
-	if (status == QLA_SUCCESS)
+	if (status == QLA_SUCCESS) {
 		qla4xxx_enable_intrs(ha);
+		scsi_unblock_requests(ha->host);
+	}
 
-	DEBUG2(printk("scsi%ld: recover adapter .. DONE\n", ha->host_no));
+	DEBUG2(printk("scsi%ld: recover adapter: %s\n", ha->host_no,
+			status == QLA_ERROR ? "FAILED" : "SUCCEDED"));
 	return status;
 }
 
@@ -1261,8 +1259,10 @@ static void qla4xxx_do_dpc(struct work_struct *work)
 						PRESERVE_DDB_LIST);
 			}
 			clear_bit(DPC_RESET_HA_INTR, &ha->dpc_flags);
-			if (status == QLA_SUCCESS)
+			if (status == QLA_SUCCESS) {
 				qla4xxx_enable_intrs(ha);
+				scsi_unblock_requests(ha->host);
+			}
 		}
 	}
 

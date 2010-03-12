@@ -294,6 +294,10 @@ static void qla4xxx_status_entry(struct scsi_qla_host *ha,
 
 	case SCS_DEVICE_LOGGED_OUT:
 	case SCS_DEVICE_UNAVAILABLE:
+		DEBUG2(printk(KERN_INFO "scsi%ld:%d:%d:%d: SCS_DEVICE "
+			      "state: 0x%x\n", ha->host_no,
+			      cmd->device->channel, cmd->device->id,
+			      cmd->device->lun, sts_entry->completionStatus));
 		/*
 		 * Mark device missing so that we won't continue to
 		 * send I/O to this device.  We should get a ddb
@@ -762,6 +766,7 @@ irqreturn_t qla4xxx_intr_handler(int irq, void *dev_id)
 
 			break;
 		} else if (intr_status & CSR_SCSI_RESET_INTR) {
+			scsi_block_requests(ha->host);
 			clear_bit(AF_ONLINE, &ha->flags);
 			__qla4xxx_disable_intrs(ha);
 

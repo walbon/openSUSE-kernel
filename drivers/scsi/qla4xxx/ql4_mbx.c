@@ -340,7 +340,7 @@ qla4xxx_update_local_ifcb(struct scsi_qla_host *ha,
 		return (QLA_ERROR);
 	}
 
-	DEBUG2(qla4xxx_dump_buffer(init_fw_cb, sizeof(struct addr_ctrl_blk)));
+	DEBUG3(qla4xxx_dump_buffer(init_fw_cb, sizeof(struct addr_ctrl_blk)));
 
 	/* Save some info in adapter structure. */
 	ha->acb_version = init_fw_cb->acb_version;
