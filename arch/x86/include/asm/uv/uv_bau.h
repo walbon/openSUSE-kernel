@@ -34,6 +34,7 @@
  */
 
 #define UV_ITEMS_PER_DESCRIPTOR		8
+#define MAX_BAU_CONCURRENT		4
 #define UV_CPUS_PER_ACT_STATUS		32
 #define UV_ACT_STATUS_MASK		0x3
 #define UV_ACT_STATUS_SIZE		2
@@ -45,6 +46,9 @@
 #define UV_PAYLOADQ_PNODE_SHIFT		49
 #define UV_PTC_BASENAME			"sgi_uv/ptc_statistics"
 #define uv_physnodeaddr(x)		((__pa((unsigned long)(x)) & uv_mmask))
+#define UV_ENABLE_INTD_SOFT_ACK_MODE_SHIFT 15
+#define UV_INTD_SOFT_ACK_TIMEOUT_PERIOD_SHIFT 16
+#define UV_INTD_SOFT_ACK_TIMEOUT_PERIOD 0x000000000bUL
 
 /*
  * bits in UVH_LB_BAU_SB_ACTIVATION_STATUS_0/1
@@ -87,7 +91,7 @@
  * destination nodeID associated with that specified bit.
  */
 struct bau_target_nodemask {
-	unsigned long bits[BITS_TO_LONGS(256)];
+	unsigned long bits[BITS_TO_LONGS(UV_DISTRIBUTION_SIZE)];
 };
 
 /*
@@ -146,26 +150,38 @@ struct bau_msg_header {
 	unsigned int rsvd_2:9;	/* must be zero */
 	/* bits 40:32 */
 				/* Suppl_A is 56-41 */
-	unsigned int payload_2a:8;/* becomes byte 16 of msg */
-	/* bits 48:41 */	/* not currently using */
-	unsigned int payload_2b:8;/* becomes byte 17 of msg */
-	/* bits 56:49 */	/* not currently using */
+	unsigned int sequence:16;/* message sequence number */
+	/* bits 56:41 */	/* becomes bytes 16-17 of msg */
 				/* Address field (96:57) is never used as an
 				   address (these are address bits 42:3) */
+
 	unsigned int rsvd_3:1;	/* must be zero */
 	/* bit 57 */
 				/* address bits 27:4 are payload */
-				/* these 24 bits become bytes 12-14 of msg */
+	/* these next 24  (58-81) bits become bytes 12-14 of msg */
+
+	/* bits 65:58 land in byte 12 */
 	unsigned int replied_to:1;/* sent as 0 by the source to byte 12 */
 	/* bit 58 */
+	unsigned int msg_type:3; /* software type of the message*/
+	/* bits 61:59 */
+	unsigned int canceled:1; /* message canceled, resource to be freed*/
+	/* bit 62 */
+	unsigned int payload_1a:1;/* not currently used */
+	/* bit 63 */
+	unsigned int payload_1b:2;/* not currently used */
+	/* bits 65:64 */
 
-	unsigned int payload_1a:5;/* not currently used */
-	/* bits 63:59 */
-	unsigned int payload_1b:8;/* not currently used */
-	/* bits 71:64 */
-	unsigned int payload_1c:8;/* not currently used */
-	/* bits 79:72 */
-	unsigned int payload_1d:2;/* not currently used */
+	/* bits 73:66 land in byte 13 */
+	unsigned int payload_1ca:6;/* not currently used */
+	/* bits 71:66 */
+	unsigned int payload_1c:2;/* not currently used */
+	/* bits 73:72 */
+
+	/* bits 81:74 land in byte 14 */
+	unsigned int payload_1d:6;/* not currently used */
+	/* bits 79:74 */
+	unsigned int payload_1e:2;/* not currently used */
 	/* bits 81:80 */
 
 	unsigned int rsvd_4:7;	/* must be zero */
@@ -190,6 +206,11 @@ struct bau_msg_header {
 	unsigned int rsvd_7:21;	/* must be zero */
 	/* bits 127:107 */
 };
+
+/* see msg_type: */
+#define MSG_NOOP 0
+#define MSG_REGULAR 1
+#define MSG_RETRY 2
 
 /*
  * The activation descriptor:
@@ -237,19 +258,25 @@ struct bau_payload_queue_entry {
 	unsigned short acknowledge_count; /* filled in by destination */
 	/* 16 bits, bytes 10-11 */
 
-	unsigned short replied_to:1;	/* sent as 0 by the source */
-	/* 1 bit */
-	unsigned short unused1:7;       /* not currently using */
-	/* 7 bits: byte 12) */
+	/* these next 3 bytes come from bits 58-81 of the message header */
+	unsigned short replied_to:1;    /* sent as 0 by the source */
+	unsigned short msg_type:3;      /* software message type */
+	unsigned short canceled:1;      /* sent as 0 by the source */
+	unsigned short unused1:3;       /* not currently using */
+	/* byte 12 */
 
-	unsigned char unused2[2];	/* not currently using */
-	/* bytes 13-14 */
+	unsigned char unused2a;		/* not currently using */
+	/* byte 13 */
+	unsigned char unused2;		/* not currently using */
+	/* byte 14 */
 
 	unsigned char sw_ack_vector;	/* filled in by the hardware */
 	/* byte 15 (bits 127:120) */
 
-	unsigned char unused4[3];	/* not currently using bytes 17-19 */
-	/* bytes 17-19 */
+	unsigned short sequence;	/* message sequence number */
+	/* bytes 16-17 */
+	unsigned char unused4[2];	/* not currently using bytes 18-19 */
+	/* bytes 18-19 */
 
 	int number_of_cpus;		/* filled in at destination */
 	/* 32 bits, bytes 20-23 (aligned) */
@@ -259,49 +286,60 @@ struct bau_payload_queue_entry {
 };
 
 /*
- * one for every slot in the destination payload queue
- */
-struct bau_msg_status {
-	struct bau_local_cpumask seen_by;	/* map of cpu's */
-};
-
-/*
- * one for every slot in the destination software ack resources
- */
-struct bau_sw_ack_status {
-	struct bau_payload_queue_entry *msg;	/* associated message */
-	int watcher;				/* cpu monitoring, or -1 */
-};
-
-/*
  * one on every node and per-cpu; to locate the software tables
  */
 struct bau_control {
 	struct bau_desc *descriptor_base;
-	struct bau_payload_queue_entry *bau_msg_head;
 	struct bau_payload_queue_entry *va_queue_first;
 	struct bau_payload_queue_entry *va_queue_last;
-	struct bau_msg_status *msg_statuses;
-	int *watching; /* pointer to array */
+	struct bau_payload_queue_entry *bau_msg_head;
+	struct bau_control *pnode_master;
+	struct bau_control *socket_master;
+	unsigned long timeout_interval;
+	spinlock_t quiesce_lock;
+	atomic_t active_descripter_count;
+	int max_concurrent;
+	int retry_message_scans;
+	int retry_message_actions;
+	int timeout_retry_count;
+	short cpu;
+	short blade_cpu;
+	short pnode;
+	short cpus_in_socket;
+	short cpus_in_blade;
+	unsigned short pnode_active_count;
+	unsigned short pnode_quiesce;
+	unsigned short message_number;
+	short socket_acknowledge_count[DEST_Q_SIZE];
 };
 
 /*
  * This structure is allocated per_cpu for UV TLB shootdown statistics.
  */
 struct ptc_stats {
-	unsigned long ptc_i;	/* number of IPI-style flushes */
-	unsigned long requestor;	/* number of nodes this cpu sent to */
-	unsigned long requestee;	/* times cpu was remotely requested */
-	unsigned long alltlb;	/* times all tlb's on this cpu were flushed */
-	unsigned long onetlb;	/* times just one tlb on this cpu was flushed */
-	unsigned long s_retry;	/* retries on source side timeouts */
-	unsigned long d_retry;	/* retries on destination side timeouts */
-	unsigned long sflush;	/* cycles spent in uv_flush_tlb_others */
-	unsigned long dflush;	/* cycles spent on destination side */
-	unsigned long retriesok; /* successes on retries */
-	unsigned long nomsg;	/* interrupts with no message */
-	unsigned long multmsg;	/* interrupts with multiple messages */
-	unsigned long ntargeted;/* nodes targeted */
+	/* sender statistics */
+	unsigned long s_giveup; /* number of fall backs to IPI-style flushes */
+	unsigned long s_requestor; /* number of shootdown requests */
+	unsigned long s_stimeout; /* source side timeouts */
+	unsigned long s_dtimeout; /* destination side timeouts */
+	unsigned long s_time; /* time spent in sending side */
+	unsigned long s_retriesok; /* successful retries */
+	unsigned long s_ntargcpu; /* number of cpus targeted */
+	unsigned long s_ntargpnod; /* number of blades targeted */
+	unsigned long s_resets; /* ipi-style resets */
+	unsigned long s_busy; /* status stayed busy past s/w timer */
+	/* destination statistics */
+	unsigned long d_alltlb; /* times all tlb's on this cpu were flushed */
+	unsigned long d_onetlb; /* times just one tlb on this cpu was flushed */
+	unsigned long d_multmsg; /* interrupts with multiple messages */
+	unsigned long d_nomsg; /* interrupts with no message */
+	unsigned long d_time; /* time spent on destination side */
+	unsigned long d_requestee; /* number of messages processed */
+	unsigned long d_retries; /* number of retry messages processed */
+	unsigned long d_canceled; /* number of messages canceled by retries */
+	unsigned long d_nocanceled; /* retries that found nothing to cancel */
+	unsigned long d_resets; /* number of ipi-style requests processed */
+	unsigned long d_rcanceled; /* number of messages canceled by resets */
 };
 
 static inline int bau_node_isset(int node, struct bau_target_nodemask *dstp)
@@ -316,6 +354,11 @@ static inline void bau_nodes_clear(struct bau_target_nodemask *dstp, int nbits)
 {
 	bitmap_zero(&dstp->bits[0], nbits);
 }
+static inline int bau_node_weight(struct bau_target_nodemask *dstp)
+{
+	return bitmap_weight((unsigned long *)&dstp->bits[0],
+				UV_DISTRIBUTION_SIZE);
+}
 
 static inline void bau_cpubits_clear(struct bau_local_cpumask *dstp, int nbits)
 {
@@ -327,5 +370,36 @@ static inline void bau_cpubits_clear(struct bau_local_cpumask *dstp, int nbits)
 
 extern void uv_bau_message_intr1(void);
 extern void uv_bau_timeout_intr1(void);
+
+struct atomic_short {
+	short counter;
+};
+
+/**
+ * atomic_read_short - read a short atomic variable
+ * @v: pointer of type atomic_short
+ *
+ * Atomically reads the value of @v.
+ */
+static inline int atomic_read_short(const struct atomic_short *v)
+{
+	return v->counter;
+}
+
+/**
+ * atomic_add_short_return - add and return a short int
+ * @i: short value to add
+ * @v: pointer of type atomic_short
+ *
+ * Atomically adds @i to @v and returns @i + @v
+ */
+static inline int atomic_add_short_return(short i, struct atomic_short *v)
+{
+	short __i = i;
+	asm volatile(LOCK_PREFIX "xaddw %0, %1"
+			: "+r" (i), "+m" (v->counter)
+			: : "memory");
+	return i + __i;
+}
 
 #endif /* _ASM_X86_UV_UV_BAU_H */
