@@ -1555,14 +1555,14 @@ void setup_IO_APIC_irq_extra(u32 gsi)
 	struct irq_desc *desc;
 	struct irq_cfg *cfg;
 
-        /*
-         * Convert 'gsi' to 'ioapic.pin'.
-         */
-        apic_id = mp_find_ioapic(gsi);
-        if (apic_id < 0)
-                return;
+	/*
+	 * Convert 'gsi' to 'ioapic.pin'.
+	 */
+	apic_id = mp_find_ioapic(gsi);
+	if (apic_id < 0)
+		return;
 
-        pin = mp_find_ioapic_pin(apic_id, gsi);
+	pin = mp_find_ioapic_pin(apic_id, gsi);
 	idx = find_irq_entry(apic_id, pin, mp_INT);
 	if (idx == -1)
 		return;
