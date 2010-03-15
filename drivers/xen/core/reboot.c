@@ -83,7 +83,7 @@ static int xen_suspend(void *__unused)
 	int err, old_state;
 
 	daemonize("suspend");
-	err = set_cpus_allowed(current, cpumask_of_cpu(0));
+	err = set_cpus_allowed_ptr(current, cpumask_of(0));
 	if (err) {
 		printk(KERN_ERR "Xen suspend can't run on CPU0 (%d)\n", err);
 		goto fail;
