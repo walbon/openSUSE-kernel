@@ -26,7 +26,7 @@
 #include <net/ndisc.h>
 #include <net/addrconf.h>
 #include "bonding.h"
-#include "bonding_ipv6_ops.h"
+#include "../bonding_ipv6_ops.h"
 
 /*
  * Assign bond->master_ipv6 to the next IPv6 address in the list, or

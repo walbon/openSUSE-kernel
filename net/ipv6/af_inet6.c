@@ -61,7 +61,7 @@
 #include <asm/uaccess.h>
 #include <asm/system.h>
 #include <linux/mroute6.h>
-#include "../../drivers/net/bonding/bonding_ipv6_ops.h"
+#include "../../drivers/net/bonding_ipv6_ops.h"
 
 MODULE_AUTHOR("Cast of dozens");
 MODULE_DESCRIPTION("IPv6 protocol stack for Linux");
