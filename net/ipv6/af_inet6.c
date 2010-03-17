@@ -61,6 +61,7 @@
 #include <asm/uaccess.h>
 #include <asm/system.h>
 #include <linux/mroute6.h>
+#include "../../drivers/net/bonding/bonding_ipv6_ops.h"
 
 MODULE_AUTHOR("Cast of dozens");
 MODULE_DESCRIPTION("IPv6 protocol stack for Linux");
@@ -1054,6 +1055,33 @@ static struct pernet_operations inet6_net_ops = {
 	.exit = inet6_net_exit,
 };
 
+static noinline void in6_dev_put_noinline(struct inet6_dev *idev)
+{
+	in6_dev_put(idev);
+}
+
+struct bonding_ipv6_ops bonding_ipv6_ops_real = {
+	.ndisc_build_skb = ndisc_build_skb,
+	.ndisc_send_skb = ndisc_send_skb,
+	.in6_dev_put = in6_dev_put_noinline,
+	.register_inet6addr_notifier = register_inet6addr_notifier,
+	.unregister_inet6addr_notifier = unregister_inet6addr_notifier,
+};
+
+static void ipv6_bonding_ipv6_ops_init(void)
+{
+	down_write(&bonding_ipv6_ops_sem);
+	bonding_ipv6_ops = &bonding_ipv6_ops_real;
+	up_write(&bonding_ipv6_ops_sem);
+}
+
+static void ipv6_bonding_ipv6_ops_exit(void)
+{
+	down_write(&bonding_ipv6_ops_sem);
+	bonding_ipv6_ops = &bonding_ipv6_ops_dummy;
+	up_write(&bonding_ipv6_ops_sem);
+}
+
 static int __init inet6_init(void)
 {
 	struct sk_buff *dummy_skb;
@@ -1187,6 +1215,7 @@ static int __init inet6_init(void)
 	if (err)
 		goto sysctl_fail;
 #endif
+	ipv6_bonding_ipv6_ops_init();
 out:
 	return err;
 
@@ -1257,6 +1286,8 @@ static void __exit inet6_exit(void)
 {
 	if (disable_ipv6_mod)
 		return;
+
+	ipv6_bonding_ipv6_ops_exit();
 
 	/* First of all disallow new sockets creation. */
 	sock_unregister(PF_INET6);

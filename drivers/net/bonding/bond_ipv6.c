@@ -26,6 +26,7 @@
 #include <net/ndisc.h>
 #include <net/addrconf.h>
 #include "bonding.h"
+#include "bonding_ipv6_ops.h"
 
 /*
  * Assign bond->master_ipv6 to the next IPv6 address in the list, or
@@ -36,12 +37,16 @@ static void bond_glean_dev_ipv6(struct net_device *dev, struct in6_addr *addr)
 	struct inet6_dev *idev;
 	struct inet6_ifaddr *ifa;
 
+	down_read(&bonding_ipv6_ops_sem);
+	if (!bonding_ipv6_ops->in6_dev_put)
+		goto out;
+
 	if (!dev)
-		return;
+		goto out;
 
 	idev = in6_dev_get(dev);
 	if (!idev)
-		return;
+		goto out;
 
 	read_lock_bh(&idev->lock);
 	ifa = idev->addr_list;
@@ -52,7 +57,10 @@ static void bond_glean_dev_ipv6(struct net_device *dev, struct in6_addr *addr)
 
 	read_unlock_bh(&idev->lock);
 
-	in6_dev_put(idev);
+	bonding_ipv6_ops->in6_dev_put(idev);
+
+out:
+	up_read(&bonding_ipv6_ops_sem);
 }
 
 static void bond_na_send(struct net_device *slave_dev,
@@ -75,7 +83,7 @@ static void bond_na_send(struct net_device *slave_dev,
 	pr_debug("ipv6 na on slave %s: dest %pI6, src %pI6\n",
 	       slave_dev->name, &mcaddr, daddr);
 
-	skb = ndisc_build_skb(slave_dev, &mcaddr, daddr, &icmp6h, daddr,
+	skb = bonding_ipv6_ops->ndisc_build_skb(slave_dev, &mcaddr, daddr, &icmp6h, daddr,
 			      ND_OPT_TARGET_LL_ADDR);
 
 	if (!skb) {
@@ -91,7 +99,7 @@ static void bond_na_send(struct net_device *slave_dev,
 		}
 	}
 
-	ndisc_send_skb(skb, slave_dev, NULL, &mcaddr, daddr, &icmp6h);
+	bonding_ipv6_ops->ndisc_send_skb(skb, slave_dev, NULL, &mcaddr, daddr, &icmp6h);
 }
 
 /*
@@ -108,22 +116,27 @@ void bond_send_unsolicited_na(struct bonding *bond)
 	struct inet6_dev *idev;
 	int is_router;
 
+	down_read(&bonding_ipv6_ops_sem);
+	if (!bonding_ipv6_ops->in6_dev_put)
+		goto out;
+
 	pr_debug("bond_send_unsol_na: bond %s slave %s\n", bond->dev->name,
 				slave ? slave->dev->name : "NULL");
 
 	if (!slave || !bond->send_unsol_na ||
 	    test_bit(__LINK_STATE_LINKWATCH_PENDING, &slave->dev->state))
-		return;
+		goto out;
 
 	bond->send_unsol_na--;
 
+
 	idev = in6_dev_get(bond->dev);
 	if (!idev)
-		return;
+		goto out;
 
 	is_router = !!idev->cnf.forwarding;
 
-	in6_dev_put(idev);
+	bonding_ipv6_ops->in6_dev_put(idev);
 
 	if (!ipv6_addr_any(&bond->master_ipv6))
 		bond_na_send(slave->dev, &bond->master_ipv6, is_router, 0);
@@ -134,6 +147,8 @@ void bond_send_unsolicited_na(struct bonding *bond)
 				     vlan->vlan_id);
 		}
 	}
+out:
+	up_read(&bonding_ipv6_ops_sem);
 }
 
 /*
@@ -206,11 +221,15 @@ static struct notifier_block bond_inet6addr_notifier = {
 
 void bond_register_ipv6_notifier(void)
 {
-	register_inet6addr_notifier(&bond_inet6addr_notifier);
+	down_read(&bonding_ipv6_ops_sem);
+	bonding_ipv6_ops->register_inet6addr_notifier(&bond_inet6addr_notifier);
+	up_read(&bonding_ipv6_ops_sem);
 }
 
 void bond_unregister_ipv6_notifier(void)
 {
-	unregister_inet6addr_notifier(&bond_inet6addr_notifier);
+	down_read(&bonding_ipv6_ops_sem);
+	bonding_ipv6_ops->unregister_inet6addr_notifier(&bond_inet6addr_notifier);
+	up_read(&bonding_ipv6_ops_sem);
 }
 
