@@ -110,7 +110,6 @@ struct ctlr_info
 	int			nr_frees; 
 	int			busy_configuring;
 	int			busy_initializing;
-	int			busy_scanning;
 	struct mutex		busy_shutting_down;
 
 	/* This element holds the zero based queue number of the last
@@ -126,8 +125,6 @@ struct ctlr_info
 	/* and saved for later processing */
 #endif
 	unsigned char alive;
-	struct list_head scan_list;
-	struct completion scan_wait;
 	struct device dev;
 };
 
