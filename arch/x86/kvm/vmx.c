@@ -61,6 +61,25 @@ module_param_named(unrestricted_guest,
 static int __read_mostly emulate_invalid_guest_state = 0;
 module_param(emulate_invalid_guest_state, bool, S_IRUGO);
 
+/*
+ * These 2 parameters are used to config the controls for Pause-Loop Exiting:
+ * ple_gap:    upper bound on the amount of time between two successive
+ *             executions of PAUSE in a loop. Also indicate if ple enabled.
+ *             According to test, this time is usually small than 41 cycles.
+ * ple_window: upper bound on the amount of time a guest is allowed to execute
+ *             in a PAUSE loop. Tests indicate that most spinlocks are held for
+ *             less than 2^12 cycles
+ * Time is measured based on a counter that runs at the same rate as the TSC,
+ * refer SDM volume 3b section 21.6.13 & 22.1.3.
+ */
+#define KVM_VMX_DEFAULT_PLE_GAP    41
+#define KVM_VMX_DEFAULT_PLE_WINDOW 4096
+static int ple_gap = KVM_VMX_DEFAULT_PLE_GAP;
+module_param(ple_gap, int, S_IRUGO);
+
+static int ple_window = KVM_VMX_DEFAULT_PLE_WINDOW;
+module_param(ple_window, int, S_IRUGO);
+
 struct vmcs {
 	u32 revision_id;
 	u32 abort;
@@ -318,6 +337,12 @@ static inline int cpu_has_vmx_unrestricted_guest(void)
 {
 	return vmcs_config.cpu_based_2nd_exec_ctrl &
 		SECONDARY_EXEC_UNRESTRICTED_GUEST;
+}
+
+static inline int cpu_has_vmx_ple(void)
+{
+	return vmcs_config.cpu_based_2nd_exec_ctrl &
+		SECONDARY_EXEC_PAUSE_LOOP_EXITING;
 }
 
 static inline int vm_need_virtualize_apic_accesses(struct kvm *kvm)
@@ -804,9 +829,9 @@ static u32 vmx_get_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
 	int ret = 0;
 
 	if (interruptibility & GUEST_INTR_STATE_STI)
-		ret |= X86_SHADOW_INT_STI;
+		ret |= KVM_X86_SHADOW_INT_STI;
 	if (interruptibility & GUEST_INTR_STATE_MOV_SS)
-		ret |= X86_SHADOW_INT_MOV_SS;
+		ret |= KVM_X86_SHADOW_INT_MOV_SS;
 
 	return ret & mask;
 }
@@ -818,9 +843,9 @@ static void vmx_set_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
 
 	interruptibility &= ~(GUEST_INTR_STATE_STI | GUEST_INTR_STATE_MOV_SS);
 
-	if (mask & X86_SHADOW_INT_MOV_SS)
+	if (mask & KVM_X86_SHADOW_INT_MOV_SS)
 		interruptibility |= GUEST_INTR_STATE_MOV_SS;
-	if (mask & X86_SHADOW_INT_STI)
+	else if (mask & KVM_X86_SHADOW_INT_STI)
 		interruptibility |= GUEST_INTR_STATE_STI;
 
 	if ((interruptibility != interruptibility_old))
@@ -1250,7 +1275,8 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 			SECONDARY_EXEC_WBINVD_EXITING |
 			SECONDARY_EXEC_ENABLE_VPID |
 			SECONDARY_EXEC_ENABLE_EPT |
-			SECONDARY_EXEC_UNRESTRICTED_GUEST;
+			SECONDARY_EXEC_UNRESTRICTED_GUEST |
+			SECONDARY_EXEC_PAUSE_LOOP_EXITING;
 		if (adjust_vmx_controls(min2, opt2,
 					MSR_IA32_VMX_PROCBASED_CTLS2,
 					&_cpu_based_2nd_exec_control) < 0)
@@ -1394,6 +1420,9 @@ static __init int hardware_setup(void)
 	if (enable_ept && !cpu_has_vmx_ept_2m_page())
 		kvm_disable_largepages();
 
+	if (!cpu_has_vmx_ple())
+		ple_gap = 0;
+
 	return alloc_kvm_area();
 }
 
@@ -1459,8 +1488,12 @@ static void enter_pmode(struct kvm_vcpu *vcpu)
 static gva_t rmode_tss_base(struct kvm *kvm)
 {
 	if (!kvm->arch.tss_addr) {
-		gfn_t base_gfn = kvm->memslots[0].base_gfn +
-				 kvm->memslots[0].npages - 3;
+		struct kvm_memslots *slots;
+		gfn_t base_gfn;
+
+		slots = rcu_dereference(kvm->memslots);
+		base_gfn = kvm->memslots->memslots[0].base_gfn +
+				 kvm->memslots->memslots[0].npages - 3;
 		return base_gfn << PAGE_SHIFT;
 	}
 	return kvm->arch.tss_addr;
@@ -2168,7 +2201,7 @@ static int alloc_apic_access_page(struct kvm *kvm)
 	struct kvm_userspace_memory_region kvm_userspace_mem;
 	int r = 0;
 
-	down_write(&kvm->slots_lock);
+	mutex_lock(&kvm->slots_lock);
 	if (kvm->arch.apic_access_page)
 		goto out;
 	kvm_userspace_mem.slot = APIC_ACCESS_PAGE_PRIVATE_MEMSLOT;
@@ -2181,7 +2214,7 @@ static int alloc_apic_access_page(struct kvm *kvm)
 
 	kvm->arch.apic_access_page = gfn_to_page(kvm, 0xfee00);
 out:
-	up_write(&kvm->slots_lock);
+	mutex_unlock(&kvm->slots_lock);
 	return r;
 }
 
@@ -2190,7 +2223,7 @@ static int alloc_identity_pagetable(struct kvm *kvm)
 	struct kvm_userspace_memory_region kvm_userspace_mem;
 	int r = 0;
 
-	down_write(&kvm->slots_lock);
+	mutex_lock(&kvm->slots_lock);
 	if (kvm->arch.ept_identity_pagetable)
 		goto out;
 	kvm_userspace_mem.slot = IDENTITY_PAGETABLE_PRIVATE_MEMSLOT;
@@ -2205,7 +2238,7 @@ static int alloc_identity_pagetable(struct kvm *kvm)
 	kvm->arch.ept_identity_pagetable = gfn_to_page(kvm,
 			kvm->arch.ept_identity_map_addr >> PAGE_SHIFT);
 out:
-	up_write(&kvm->slots_lock);
+	mutex_unlock(&kvm->slots_lock);
 	return r;
 }
 
@@ -2306,7 +2339,14 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 			exec_control &= ~SECONDARY_EXEC_ENABLE_EPT;
 		if (!enable_unrestricted_guest)
 			exec_control &= ~SECONDARY_EXEC_UNRESTRICTED_GUEST;
+		if (!ple_gap)
+			exec_control &= ~SECONDARY_EXEC_PAUSE_LOOP_EXITING;
 		vmcs_write32(SECONDARY_VM_EXEC_CONTROL, exec_control);
+	}
+
+	if (ple_gap) {
+		vmcs_write32(PLE_GAP, ple_gap);
+		vmcs_write32(PLE_WINDOW, ple_window);
 	}
 
 	vmcs_write32(PAGE_FAULT_ERROR_CODE_MASK, !!bypass_guest_pf);
@@ -2414,10 +2454,10 @@ static int vmx_vcpu_reset(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u64 msr;
-	int ret;
+	int ret, idx;
 
 	vcpu->arch.regs_avail = ~((1 << VCPU_REGS_RIP) | (1 << VCPU_REGS_RSP));
-	down_read(&vcpu->kvm->slots_lock);
+	idx = srcu_read_lock(&vcpu->kvm->srcu);
 	if (!init_rmode(vmx->vcpu.kvm)) {
 		ret = -ENOMEM;
 		goto out;
@@ -2525,7 +2565,7 @@ static int vmx_vcpu_reset(struct kvm_vcpu *vcpu)
 	vmx->emulation_required = 0;
 
 out:
-	up_read(&vcpu->kvm->slots_lock);
+	srcu_read_unlock(&vcpu->kvm->srcu, idx);
 	return ret;
 }
 
@@ -2625,6 +2665,34 @@ static int vmx_nmi_allowed(struct kvm_vcpu *vcpu)
 	return	!(vmcs_read32(GUEST_INTERRUPTIBILITY_INFO) &
 			(GUEST_INTR_STATE_STI | GUEST_INTR_STATE_MOV_SS |
 				GUEST_INTR_STATE_NMI));
+}
+
+static bool vmx_get_nmi_mask(struct kvm_vcpu *vcpu)
+{
+	if (!cpu_has_virtual_nmis())
+		return to_vmx(vcpu)->soft_vnmi_blocked;
+	else
+		return !!(vmcs_read32(GUEST_INTERRUPTIBILITY_INFO) &
+			  GUEST_INTR_STATE_NMI);
+}
+
+static void vmx_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
+{
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
+
+	if (!cpu_has_virtual_nmis()) {
+		if (vmx->soft_vnmi_blocked != masked) {
+			vmx->soft_vnmi_blocked = masked;
+			vmx->vnmi_blocked_time = 0;
+		}
+	} else {
+		if (masked)
+			vmcs_set_bits(GUEST_INTERRUPTIBILITY_INFO,
+				      GUEST_INTR_STATE_NMI);
+		else
+			vmcs_clear_bits(GUEST_INTERRUPTIBILITY_INFO,
+					GUEST_INTR_STATE_NMI);
+	}
 }
 
 static int vmx_interrupt_allowed(struct kvm_vcpu *vcpu)
@@ -3358,6 +3426,18 @@ static void handle_invalid_guest_state(struct kvm_vcpu *vcpu,
 }
 
 /*
+ * Indicate a busy-waiting vcpu in spinlock. We do not enable the PAUSE
+ * exiting, so only get here on cpu with PAUSE-Loop-Exiting.
+ */
+static int handle_pause(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
+{
+	skip_emulated_instruction(vcpu);
+	kvm_vcpu_on_spin(vcpu);
+
+	return 1;
+}
+
+/*
  * The exit handlers return 1 if the exit was handled fully and guest execution
  * may resume.  Otherwise they set the kvm_run parameter to indicate what needs
  * to be done to userspace and return 0.
@@ -3394,6 +3474,7 @@ static int (*kvm_vmx_exit_handlers[])(struct kvm_vcpu *vcpu,
 	[EXIT_REASON_MCE_DURING_VMENTRY]      = handle_machine_check,
 	[EXIT_REASON_EPT_VIOLATION]	      = handle_ept_violation,
 	[EXIT_REASON_EPT_MISCONFIG]           = handle_ept_misconfig,
+	[EXIT_REASON_PAUSE_INSTRUCTION]       = handle_pause,
 };
 
 static const int kvm_vmx_max_exit_handlers =
@@ -3973,6 +4054,8 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.queue_exception = vmx_queue_exception,
 	.interrupt_allowed = vmx_interrupt_allowed,
 	.nmi_allowed = vmx_nmi_allowed,
+	.get_nmi_mask = vmx_get_nmi_mask,
+	.set_nmi_mask = vmx_set_nmi_mask,
 	.enable_nmi_window = enable_nmi_window,
 	.enable_irq_window = enable_irq_window,
 	.update_cr8_intercept = update_cr8_intercept,

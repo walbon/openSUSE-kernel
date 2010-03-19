@@ -46,6 +46,7 @@ MODULE_LICENSE("GPL");
 #define SVM_FEATURE_NPT  (1 << 0)
 #define SVM_FEATURE_LBRV (1 << 1)
 #define SVM_FEATURE_SVML (1 << 2)
+#define SVM_FEATURE_PAUSE_FILTER (1 << 10)
 
 #define NESTED_EXIT_HOST	0	/* Exit handled on host level */
 #define NESTED_EXIT_DONE	1	/* Exit caused nested vmexit  */
@@ -266,7 +267,7 @@ static u32 svm_get_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
 	u32 ret = 0;
 
 	if (svm->vmcb->control.int_state & SVM_INTERRUPT_SHADOW_MASK)
-		ret |= X86_SHADOW_INT_STI | X86_SHADOW_INT_MOV_SS;
+		ret |= KVM_X86_SHADOW_INT_STI | KVM_X86_SHADOW_INT_MOV_SS;
 	return ret & mask;
 }
 
@@ -654,6 +655,11 @@ static void init_vmcb(struct vcpu_svm *svm)
 	svm->nested.vmcb = 0;
 	svm->vcpu.arch.hflags = 0;
 
+	if (svm_has(SVM_FEATURE_PAUSE_FILTER)) {
+		control->pause_filter_count = 3000;
+		control->intercept |= (1ULL << INTERCEPT_PAUSE);
+	}
+
 	enable_gif(svm);
 }
 
@@ -760,15 +766,17 @@ static void svm_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 	if (unlikely(cpu != vcpu->cpu)) {
 		u64 tsc_this, delta;
 
-		/*
-		 * Make sure that the guest sees a monotonically
-		 * increasing TSC.
-		 */
-		rdtscll(tsc_this);
-		delta = vcpu->arch.host_tsc - tsc_this;
-		svm->vmcb->control.tsc_offset += delta;
-		if (is_nested(svm))
-			svm->nested.hsave->control.tsc_offset += delta;
+		if (check_tsc_unstable()) {
+			/*
+			 * Make sure that the guest sees a monotonically
+			 * increasing TSC.
+			 */
+			rdtscll(tsc_this);
+			delta = vcpu->arch.host_tsc - tsc_this;
+			svm->vmcb->control.tsc_offset += delta;
+			if (is_nested(svm))
+				svm->nested.hsave->control.tsc_offset += delta;
+		}
 		vcpu->cpu = cpu;
 		kvm_migrate_timers(vcpu);
 		svm->asid_generation = 0;
@@ -2281,6 +2289,12 @@ static int interrupt_window_interception(struct vcpu_svm *svm,
 	return 1;
 }
 
+static int pause_interception(struct vcpu_svm *svm)
+{
+	kvm_vcpu_on_spin(&(svm->vcpu));
+	return 1;
+}
+
 static int (*svm_exit_handlers[])(struct vcpu_svm *svm,
 				      struct kvm_run *kvm_run) = {
 	[SVM_EXIT_READ_CR0]           		= emulate_on_interception,
@@ -2317,6 +2331,7 @@ static int (*svm_exit_handlers[])(struct vcpu_svm *svm,
 	[SVM_EXIT_CPUID]			= cpuid_interception,
 	[SVM_EXIT_IRET]                         = iret_interception,
 	[SVM_EXIT_INVD]                         = emulate_on_interception,
+	[SVM_EXIT_PAUSE]			= pause_interception,
 	[SVM_EXIT_HLT]				= halt_interception,
 	[SVM_EXIT_INVLPG]			= invlpg_interception,
 	[SVM_EXIT_INVLPGA]			= invlpga_interception,
@@ -2474,6 +2489,26 @@ static int svm_nmi_allowed(struct kvm_vcpu *vcpu)
 	struct vmcb *vmcb = svm->vmcb;
 	return !(vmcb->control.int_state & SVM_INTERRUPT_SHADOW_MASK) &&
 		!(svm->vcpu.arch.hflags & HF_NMI_MASK);
+}
+
+static bool svm_get_nmi_mask(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	return !!(svm->vcpu.arch.hflags & HF_NMI_MASK);
+}
+
+static void svm_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	if (masked) {
+		svm->vcpu.arch.hflags |= HF_NMI_MASK;
+		svm->vmcb->control.intercept |= (1UL << INTERCEPT_IRET);
+	} else {
+		svm->vcpu.arch.hflags &= ~HF_NMI_MASK;
+		svm->vmcb->control.intercept &= ~(1UL << INTERCEPT_IRET);
+	}
 }
 
 static int svm_interrupt_allowed(struct kvm_vcpu *vcpu)
@@ -2909,6 +2944,8 @@ static struct kvm_x86_ops svm_x86_ops = {
 	.queue_exception = svm_queue_exception,
 	.interrupt_allowed = svm_interrupt_allowed,
 	.nmi_allowed = svm_nmi_allowed,
+	.get_nmi_mask = svm_get_nmi_mask,
+	.set_nmi_mask = svm_set_nmi_mask,
 	.enable_nmi_window = enable_nmi_window,
 	.enable_irq_window = enable_irq_window,
 	.update_cr8_intercept = update_cr8_intercept,

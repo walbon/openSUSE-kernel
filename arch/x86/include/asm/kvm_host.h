@@ -25,7 +25,7 @@
 #include <asm/mtrr.h>
 #include <asm/msr-index.h>
 
-#define KVM_MAX_VCPUS 16
+#define KVM_MAX_VCPUS 64
 #define KVM_MEMORY_SLOTS 32
 /* memory slots that does not exposed to userspace */
 #define KVM_PRIVATE_MEM_SLOTS 4
@@ -377,11 +377,19 @@ struct kvm_mem_alias {
 	gfn_t base_gfn;
 	unsigned long npages;
 	gfn_t target_gfn;
+#define KVM_ALIAS_INVALID     1UL
+	unsigned long flags;
 };
 
-struct kvm_arch{
-	int naliases;
+#define KVM_ARCH_HAS_UNALIAS_INSTANTIATION
+
+struct kvm_mem_aliases {
 	struct kvm_mem_alias aliases[KVM_ALIAS_SLOTS];
+	int naliases;
+};
+
+struct kvm_arch {
+	struct kvm_mem_aliases *aliases;
 
 	unsigned int n_free_mmu_pages;
 	unsigned int n_requested_mmu_pages;
@@ -397,7 +405,6 @@ struct kvm_arch{
 	struct kvm_pic *vpic;
 	struct kvm_ioapic *vioapic;
 	struct kvm_pit *vpit;
-	struct hlist_head irq_ack_notifier_list;
 	int vapics_in_nmi_mode;
 
 	unsigned int tss_addr;
@@ -410,7 +417,6 @@ struct kvm_arch{
 	gpa_t ept_identity_map_addr;
 
 	unsigned long irq_sources_bitmap;
-	unsigned long irq_states[KVM_IOAPIC_NUM_PINS];
 	u64 vm_init_tsc;
 	s64 kvmclock_offset;
 };
@@ -520,6 +526,8 @@ struct kvm_x86_ops {
 				bool has_error_code, u32 error_code);
 	int (*interrupt_allowed)(struct kvm_vcpu *vcpu);
 	int (*nmi_allowed)(struct kvm_vcpu *vcpu);
+	bool (*get_nmi_mask)(struct kvm_vcpu *vcpu);
+	void (*set_nmi_mask)(struct kvm_vcpu *vcpu, bool masked);
 	void (*enable_nmi_window)(struct kvm_vcpu *vcpu);
 	void (*enable_irq_window)(struct kvm_vcpu *vcpu);
 	void (*update_cr8_intercept)(struct kvm_vcpu *vcpu, int tpr, int irr);

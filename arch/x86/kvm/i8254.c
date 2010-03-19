@@ -603,7 +603,7 @@ static const struct kvm_io_device_ops speaker_dev_ops = {
 	.write    = speaker_ioport_write,
 };
 
-/* Caller must have writers lock on slots_lock */
+/* Caller must hold slots_lock */
 struct kvm_pit *kvm_create_pit(struct kvm *kvm, u32 flags)
 {
 	struct kvm_pit *pit;
@@ -643,13 +643,13 @@ struct kvm_pit *kvm_create_pit(struct kvm *kvm, u32 flags)
 	kvm_register_irq_mask_notifier(kvm, 0, &pit->mask_notifier);
 
 	kvm_iodevice_init(&pit->dev, &pit_dev_ops);
-	ret = __kvm_io_bus_register_dev(&kvm->pio_bus, &pit->dev);
+	ret = kvm_io_bus_register_dev(kvm, KVM_PIO_BUS, &pit->dev);
 	if (ret < 0)
 		goto fail;
 
 	if (flags & KVM_PIT_SPEAKER_DUMMY) {
 		kvm_iodevice_init(&pit->speaker_dev, &speaker_dev_ops);
-		ret = __kvm_io_bus_register_dev(&kvm->pio_bus,
+		ret = kvm_io_bus_register_dev(kvm, KVM_PIO_BUS,
 						&pit->speaker_dev);
 		if (ret < 0)
 			goto fail_unregister;
@@ -658,7 +658,7 @@ struct kvm_pit *kvm_create_pit(struct kvm *kvm, u32 flags)
 	return pit;
 
 fail_unregister:
-	__kvm_io_bus_unregister_dev(&kvm->pio_bus, &pit->dev);
+	kvm_io_bus_unregister_dev(kvm, KVM_PIO_BUS, &pit->dev);
 
 fail:
 	if (pit->irq_source_id >= 0)
@@ -691,10 +691,8 @@ static void __inject_pit_timer_intr(struct kvm *kvm)
 	struct kvm_vcpu *vcpu;
 	int i;
 
-	mutex_lock(&kvm->irq_lock);
 	kvm_set_irq(kvm, kvm->arch.vpit->irq_source_id, 0, 1);
 	kvm_set_irq(kvm, kvm->arch.vpit->irq_source_id, 0, 0);
-	mutex_unlock(&kvm->irq_lock);
 
 	/*
 	 * Provides NMI watchdog support via Virtual Wire mode.

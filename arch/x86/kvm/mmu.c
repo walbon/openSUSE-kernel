@@ -29,6 +29,7 @@
 #include <linux/swap.h>
 #include <linux/hugetlb.h>
 #include <linux/compiler.h>
+#include <linux/srcu.h>
 
 #include <asm/page.h>
 #include <asm/cmpxchg.h>
@@ -806,19 +807,14 @@ static int kvm_handle_hva(struct kvm *kvm, unsigned long hva,
 {
 	int i, j;
 	int retval = 0;
+	struct kvm_memslots *slots;
 
-	/*
-	 * If mmap_sem isn't taken, we can look the memslots with only
-	 * the mmu_lock by skipping over the slots with userspace_addr == 0.
-	 */
-	for (i = 0; i < kvm->nmemslots; i++) {
-		struct kvm_memory_slot *memslot = &kvm->memslots[i];
+	slots = rcu_dereference(kvm->memslots);
+
+	for (i = 0; i < slots->nmemslots; i++) {
+		struct kvm_memory_slot *memslot = &slots->memslots[i];
 		unsigned long start = memslot->userspace_addr;
 		unsigned long end;
-
-		/* mmu_lock protects userspace_addr */
-		if (!start)
-			continue;
 
 		end = start + (memslot->npages << PAGE_SHIFT);
 		if (hva >= start && hva < end) {
@@ -856,9 +852,15 @@ static int kvm_age_rmapp(struct kvm *kvm, unsigned long *rmapp,
 	u64 *spte;
 	int young = 0;
 
-	/* always return old for EPT */
+	/*
+	 * Emulate the accessed bit for EPT, by checking if this page has
+	 * an EPT mapping, and clearing it if it does. On the next access,
+	 * a new EPT mapping will be established.
+	 * This has some overhead, but not as much as the cost of swapping
+	 * out actively used pages or breaking up actively used hugepages.
+	 */
 	if (!shadow_accessed_mask)
-		return 0;
+		return kvm_unmap_rmapp(kvm, rmapp, data);
 
 	spte = rmap_next(kvm, rmapp, NULL);
 	while (spte) {
@@ -1615,7 +1617,7 @@ static void mmu_unshadow(struct kvm *kvm, gfn_t gfn)
 
 static void page_header_update_slot(struct kvm *kvm, void *pte, gfn_t gfn)
 {
-	int slot = memslot_id(kvm, gfn_to_memslot(kvm, gfn));
+	int slot = memslot_id(kvm, gfn);
 	struct kvm_mmu_page *sp = page_header(__pa(pte));
 
 	__set_bit(slot, sp->slot_bitmap);
@@ -2935,10 +2937,9 @@ static int mmu_shrink(int nr_to_scan, gfp_t gfp_mask)
 	spin_lock(&kvm_lock);
 
 	list_for_each_entry(kvm, &vm_list, vm_list) {
-		int npages;
+		int npages, idx;
 
-		if (!down_read_trylock(&kvm->slots_lock))
-			continue;
+		idx = srcu_read_lock(&kvm->srcu);
 		spin_lock(&kvm->mmu_lock);
 		npages = kvm->arch.n_alloc_mmu_pages -
 			 kvm->arch.n_free_mmu_pages;
@@ -2951,7 +2952,7 @@ static int mmu_shrink(int nr_to_scan, gfp_t gfp_mask)
 		nr_to_scan--;
 
 		spin_unlock(&kvm->mmu_lock);
-		up_read(&kvm->slots_lock);
+		srcu_read_unlock(&kvm->srcu, idx);
 	}
 	if (kvm_freed)
 		list_move_tail(&kvm_freed->vm_list, &vm_list);
@@ -3018,9 +3019,11 @@ unsigned int kvm_mmu_calculate_mmu_pages(struct kvm *kvm)
 	int i;
 	unsigned int nr_mmu_pages;
 	unsigned int  nr_pages = 0;
+	struct kvm_memslots *slots;
 
-	for (i = 0; i < kvm->nmemslots; i++)
-		nr_pages += kvm->memslots[i].npages;
+	slots = rcu_dereference(kvm->memslots);
+	for (i = 0; i < slots->nmemslots; i++)
+		nr_pages += slots->memslots[i].npages;
 
 	nr_mmu_pages = nr_pages * KVM_PERMILLE_MMU_PAGES / 1000;
 	nr_mmu_pages = max(nr_mmu_pages,
@@ -3290,10 +3293,12 @@ static void audit_mappings(struct kvm_vcpu *vcpu)
 static int count_rmaps(struct kvm_vcpu *vcpu)
 {
 	int nmaps = 0;
-	int i, j, k;
+	int i, j, k, idx;
 
+	idx = srcu_read_lock(&kvm->srcu);
+	slots = rcu_dereference(kvm->memslots);
 	for (i = 0; i < KVM_MEMORY_SLOTS; ++i) {
-		struct kvm_memory_slot *m = &vcpu->kvm->memslots[i];
+		struct kvm_memory_slot *m = &slots->memslots[i];
 		struct kvm_rmap_desc *d;
 
 		for (j = 0; j < m->npages; ++j) {
@@ -3316,6 +3321,7 @@ static int count_rmaps(struct kvm_vcpu *vcpu)
 			}
 		}
 	}
+	srcu_read_unlock(&kvm->srcu, idx);
 	return nmaps;
 }
 

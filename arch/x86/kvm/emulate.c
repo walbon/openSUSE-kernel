@@ -1892,7 +1892,7 @@ special_insn:
 		}
 
 		if (c->modrm_reg == VCPU_SREG_SS)
-			toggle_interruptibility(ctxt, X86_SHADOW_INT_MOV_SS);
+			toggle_interruptibility(ctxt, KVM_X86_SHADOW_INT_MOV_SS);
 
 		if (c->modrm_reg <= 5) {
 			type_bits = (c->modrm_reg == 1) ? 9 : 1;
@@ -2123,7 +2123,7 @@ special_insn:
 		c->dst.type = OP_NONE;	/* Disable writeback. */
 		break;
 	case 0xfb: /* sti */
-		toggle_interruptibility(ctxt, X86_SHADOW_INT_STI);
+		toggle_interruptibility(ctxt, KVM_X86_SHADOW_INT_STI);
 		ctxt->eflags |= X86_EFLAGS_IF;
 		c->dst.type = OP_NONE;	/* Disable writeback. */
 		break;
