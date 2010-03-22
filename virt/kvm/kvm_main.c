@@ -1305,7 +1305,7 @@ skip_lpage:
 		kfree(old_memslots);
 	}
 
-	r = kvm_arch_prepare_memory_region(kvm, &new, old, user_alloc);
+	r = kvm_arch_prepare_memory_region(kvm, &new, old, mem, user_alloc);
 	if (r)
 		goto out_free;
 
