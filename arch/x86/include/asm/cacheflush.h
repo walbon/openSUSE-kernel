@@ -54,10 +54,10 @@ static inline void copy_from_user_page(struct vm_area_struct *vma,
  */
 
 #define _PGMT_DEFAULT		0
-#define _PGMT_WC		PG_arch_1
-#define _PGMT_UC_MINUS		PG_uncached
-#define _PGMT_WB		(PG_uncached | PG_arch_1)
-#define _PGMT_MASK		(PG_uncached | PG_arch_1)
+#define _PGMT_WC		(1UL << PG_arch_1)
+#define _PGMT_UC_MINUS		(1UL << PG_uncached)
+#define _PGMT_WB		(1UL << PG_uncached | 1UL << PG_arch_1)
+#define _PGMT_MASK		(1UL << PG_uncached | 1UL << PG_arch_1)
 #define _PGMT_CLEAR_MASK	(~_PGMT_MASK)
 
 static inline unsigned long get_page_memtype(struct page *pg)
