@@ -2289,7 +2289,7 @@ static int interrupt_window_interception(struct vcpu_svm *svm,
 	return 1;
 }
 
-static int pause_interception(struct vcpu_svm *svm)
+static int pause_interception(struct vcpu_svm *svm, struct kvm_run *kvm_run)
 {
 	kvm_vcpu_on_spin(&(svm->vcpu));
 	return 1;
