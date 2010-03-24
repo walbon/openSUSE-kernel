@@ -327,90 +327,58 @@ static void synaptics_pt_create(struct psmouse *psmouse)
  *	Functions to interpret the absolute mode packets
  ****************************************************************************/
 
-/* left and right clickpad button ranges;
- * the gap between them is interpreted as a middle-button click
- */
-#define CLICKPAD_LEFT_BTN_X \
-	((XMAX_NOMINAL - XMIN_NOMINAL) * 2 / 5 + XMIN_NOMINAL)
-#define CLICKPAD_RIGHT_BTN_X \
-	((XMAX_NOMINAL - XMIN_NOMINAL) * 3 / 5 + XMIN_NOMINAL)
-#define X_VSCROLL (XMAX_NOMINAL - (XMAX_NOMINAL - XMIN_NOMINAL) / 15)
-
-/* clicpad button toggle point */
-/* touching the toggle point (at the upper-left corner) turns on/off the
- * clickpad mode.
- */
-#define CLICKPAD_TOGGLE_X \
-	((XMAX_NOMINAL - XMIN_NOMINAL) * 1 / 10 + XMIN_NOMINAL)
-#define CLICKPAD_TOGGLE_Y \
-	(YMAX_NOMINAL * 7 / 8)
-
-/* FIXME: this is local for keeping the status through reconnection over S3/S4 */
-static int clickpad_disabled;
-
-static void clickpad_set_led(struct psmouse *psmouse, int disable)
+static void synaptics_set_led(struct psmouse *psmouse, int on)
 {
 	unsigned char param[1];
 
-	if (psmouse_sliced_command(psmouse, disable ? 0x88 : 0x10))
+	if (psmouse_sliced_command(psmouse, on ? 0x88 : 0x10))
 		return;
 	param[0] = 0x0a;
 	ps2_command(&psmouse->ps2dev, param, PSMOUSE_CMD_SETRATE);
 }
 
-static void clickpad_led_work(struct work_struct *work)
+static void synaptics_led_work(struct work_struct *work)
 {
 	struct synaptics_data *priv = container_of(work, struct synaptics_data, led_work);
-	clickpad_set_led(priv->psmouse, clickpad_disabled);
+	synaptics_set_led(priv->psmouse, priv->led_status);
 }
 
-/* additional clickpad area in percent */
-static int clickpad_area = 20;
-module_param(clickpad_area, int, 0644);
-
-/* flag to enable/disable touching in the button area */
-static int clickpad_button_sense;
-module_param(clickpad_button_sense, bool, 0644);
-
-/* handle clickpad events */
-static void clickpad_process_packet(struct synaptics_data *priv,
-				    struct synaptics_hw_state *hw)
+/* input event handler: changed by x11 synaptics driver */
+static int synaptics_led_event(struct input_dev *dev, unsigned int type,
+			       unsigned int code, int value)
 {
-	/* clickpad mode reports Y range from 0 to YMAX_NOMINAL,
-	 * where the area Y < YMIN_NOMINAL is used as click buttons
-	 */
-	if (hw->y < YMIN_NOMINAL + (YMAX_NOMINAL - YMIN_NOMINAL) * clickpad_area / 100 &&
-	   !clickpad_disabled) {
-		/* button area */
-		/* allow position change for the v-scroll area exceptionally */
-		if ((hw->x < X_VSCROLL || hw->middle) && !clickpad_button_sense)
-			hw->z = 0; /* don't move pointer */
-		/* clickpad reports only the middle button, and we need
-		 * to fake left/right buttons depending on the touch position
-		 */
-		if (hw->middle) { /* clicked? */
-			hw->middle = 0;
-			if (hw->x < CLICKPAD_LEFT_BTN_X)
-				hw->left = 1;
-			else if (hw->x > CLICKPAD_RIGHT_BTN_X)
-				hw->right = 1;
-			else
-				hw->middle = 1;
-		}
-	} else if (hw->middle && !clickpad_disabled) {
-		/* dragging */
-		hw->left = priv->prev_hw.left;
-		hw->right = priv->prev_hw.right;
-		hw->middle = priv->prev_hw.middle;
-	} else if (!(priv->prev_hw.left || priv->prev_hw.middle || priv->prev_hw.right) &&
-	    hw->x < CLICKPAD_TOGGLE_X  && hw->y > CLICKPAD_TOGGLE_Y &&
-	    hw->z > 30 && priv->prev_hw.z < 25) {
-		clickpad_disabled ^= 1;
+	struct synaptics_data *priv = dev->dev.platform_data;
+
+	if (!priv)
+		return 0;
+	if (type == EV_LED && code == LED_MUTE) {
+		priv->led_status = !!value;
 		schedule_work(&priv->led_work);
 	}
-	priv->prev_hw = *hw;
-	if (clickpad_disabled)
-		hw->z = 0; /* disable position report */
+	return 0;
+}
+
+static void synaptics_check_clickpad(struct psmouse *psmouse)
+{
+	struct synaptics_data *priv = psmouse->private;
+	unsigned char ncap[3];
+
+	if (SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0xe4)
+		return;
+	if (synaptics_send_cmd(psmouse, 0x0c, ncap))
+		return;
+	printk(KERN_INFO "Synaptics: newcap: %02x:%02x:%02x\n",
+	       ncap[0], ncap[1], ncap[2]);
+	priv->clickpad = ((ncap[0] & 0x10) >> 4) | ((ncap[1] & 0x01) << 1);
+	if (priv->clickpad)
+		printk(KERN_INFO "Synaptics: Clickpad device detected: %d\n",
+		       priv->clickpad);
+	/* XXX: this should be ncap[1] 0x20, but it's not really... */
+	priv->has_led = 1;
+	if (priv->has_led) {
+		printk(KERN_INFO "Synaptics: support LED control\n");
+		INIT_WORK(&priv->led_work, synaptics_led_work);
+	}
 }
 
 static void synaptics_parse_hw_state(unsigned char buf[], struct synaptics_data *priv, struct synaptics_hw_state *hw)
@@ -437,6 +405,13 @@ static void synaptics_parse_hw_state(unsigned char buf[], struct synaptics_data 
 			hw->middle = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
 			if (hw->w == 2)
 				hw->scroll = (signed char)(buf[1]);
+		}
+
+		if (priv->clickpad) {
+			/* clickpad reports only the middle button, report
+			 * it as the left button
+			 */
+			hw->left = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
 		}
 
 		if (SYN_CAP_FOUR_BUTTON(priv->capabilities)) {
@@ -492,9 +467,6 @@ static void synaptics_process_packet(struct psmouse *psmouse)
 	int i;
 
 	synaptics_parse_hw_state(psmouse->packet, priv, &hw);
-
-	if (SYN_CAP_CLICKPAD(priv->ext_cap))
-		clickpad_process_packet(priv, &hw);
 
 	if (hw.scroll) {
 		priv->scroll += hw.scroll;
@@ -681,15 +653,26 @@ static void set_input_params(struct input_dev *dev, struct synaptics_data *priv)
 
 	dev->absres[ABS_X] = priv->x_res;
 	dev->absres[ABS_Y] = priv->y_res;
+
+	if (priv->clickpad) {
+		__clear_bit(BTN_RIGHT, dev->keybit); /* only left-button */
+		__clear_bit(BTN_MIDDLE, dev->keybit);
+	}
+	if (priv->has_led) {
+		__set_bit(EV_LED, dev->evbit);
+		__set_bit(LED_MUTE, dev->ledbit);
+		dev->event = synaptics_led_event;
+		dev->dev.platform_data = priv;
+	}
 }
 
 static void synaptics_disconnect(struct psmouse *psmouse)
 {
 	struct synaptics_data *priv = psmouse->private;
 
-	if (SYN_CAP_CLICKPAD(priv->ext_cap)) {
+	if (priv->has_led) {
 		cancel_work_sync(&priv->led_work);
-		clickpad_set_led(psmouse, 0);
+		synaptics_set_led(psmouse, 0);
 	}
 	synaptics_reset(psmouse);
 	kfree(psmouse->private);
@@ -721,9 +704,6 @@ static int synaptics_reconnect(struct psmouse *psmouse)
 		printk(KERN_ERR "Unable to initialize Synaptics hardware.\n");
 		return -1;
 	}
-
-	if (SYN_CAP_CLICKPAD(priv->ext_cap))
-		clickpad_set_led(psmouse, clickpad_disabled);
 
 	return 0;
 }
@@ -794,13 +774,7 @@ int synaptics_init(struct psmouse *psmouse)
 		SYN_ID_MAJOR(priv->identity), SYN_ID_MINOR(priv->identity),
 		priv->model_id, priv->capabilities, priv->ext_cap);
 
-	if (SYN_CAP_CLICKPAD(priv->ext_cap)) {
-		printk(KERN_INFO "Synaptics: Clickpad mode enabled\n");
-		/* force to enable the middle button */
-		priv->capabilities |= (1 << 18);
-		INIT_WORK(&priv->led_work, clickpad_led_work);
-		clickpad_set_led(psmouse, clickpad_disabled);
-	}
+	synaptics_check_clickpad(psmouse);
 
 	set_input_params(psmouse->dev, priv);
 
