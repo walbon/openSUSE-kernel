@@ -475,6 +475,8 @@ static int dlpar_offline_cpu(struct device_node *dn)
 			if (get_cpu_current_state(cpu) == CPU_STATE_OFFLINE)
 				break;
 
+			set_preferred_offline_state(cpu, CPU_STATE_OFFLINE);
+
 			if (get_cpu_current_state(cpu) == CPU_STATE_ONLINE) {
 				cpu_maps_update_done();
 				rc = cpu_down(cpu);
@@ -489,7 +491,6 @@ static int dlpar_offline_cpu(struct device_node *dn)
 			 * The cpu is in CPU_STATE_INACTIVE.
 			 * Upgrade it's state to CPU_STATE_OFFLINE.
 			 */
-			set_preferred_offline_state(cpu, CPU_STATE_OFFLINE);
 			BUG_ON(plpar_hcall_norets(H_PROD, intserv[i])
 								!= H_SUCCESS);
 			__cpu_die(cpu);
