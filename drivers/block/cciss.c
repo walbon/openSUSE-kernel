@@ -649,8 +649,17 @@ static ssize_t cciss_show_usage_count(struct device *dev,
 }
 static DEVICE_ATTR(usage_count, S_IRUGO, cciss_show_usage_count, NULL);
 
-static struct attribute_group *cciss_host_attr_groups[] = {
+static struct attribute *cciss_host_attrs[] = {
 	&dev_attr_rescan.attr,
+	NULL
+};
+
+static struct attribute_group cciss_host_attr_group = {
+	.attrs = cciss_host_attrs,
+};
+
+static const struct attribute_group *cciss_host_attr_groups[] = {
+	&cciss_host_attr_group,
 	NULL
 };
 
