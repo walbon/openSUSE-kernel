@@ -1129,18 +1129,26 @@ qla2x00_abort_all_cmds(scsi_qla_host_t *vha, int res)
 					qla2x00_sp_compl(ha, sp);
 				} else {
 					ctx = sp->ctx;
-					if (ctx->type == SRB_LOGIN_CMD || ctx->type == SRB_LOGOUT_CMD) {
+					if (ctx->type == SRB_LOGIN_CMD ||
+					    ctx->type == SRB_LOGOUT_CMD) {
 						del_timer_sync(&ctx->timer);
 						ctx->free(sp);
 					} else {
-						struct srb_bsg* sp_bsg = (struct srb_bsg*)sp->ctx;
-						if (sp_bsg->bsg_job->request->msgcode == FC_BSG_HST_CT)
+						struct srb_bsg *sp_bsg =
+						    (struct srb_bsg *)sp->ctx;
+						struct fc_bsg_job *bsg_job =
+						    sp_bsg->bsg_job;
+
+						if (bsg_job->request->msgcode
+						    == FC_BSG_HST_CT)
 							kfree(sp->fcport);
-						sp_bsg->bsg_job->req->errors = 0;
-						sp_bsg->bsg_job->reply->result = res;
-						sp_bsg->bsg_job->job_done(sp_bsg->bsg_job);
+						bsg_job->req->errors = 0;
+						bsg_job->reply->result = res;
+						bsg_job->job_done(
+						    sp_bsg->bsg_job);
 						kfree(sp->ctx);
-						mempool_free(sp, ha->srb_mempool);
+						mempool_free(sp,
+						    ha->srb_mempool);
 					}
 				}
 			}
@@ -1676,9 +1684,11 @@ skip_pio:
 
 	/* Determine queue resources */
 	ha->max_req_queues = ha->max_rsp_queues = 1;
-	if ((ql2xmaxqueues <= 1 || ql2xmultique_tag < 1) &&
+	if ((ql2xmaxqueues <= 1 && !ql2xmultique_tag) ||
+		(ql2xmaxqueues > 1 && ql2xmultique_tag) ||
 		(!IS_QLA25XX(ha) && !IS_QLA81XX(ha)))
 		goto mqiobase_exit;
+
 	ha->mqiobase = ioremap(pci_resource_start(ha->pdev, 3),
 			pci_resource_len(ha->pdev, 3));
 	if (ha->mqiobase) {
