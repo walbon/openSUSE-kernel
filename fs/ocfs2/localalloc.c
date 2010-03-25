@@ -52,7 +52,7 @@ static u32 ocfs2_local_alloc_count_bits(struct ocfs2_dinode *alloc);
 
 static int ocfs2_local_alloc_find_clear_bits(struct ocfs2_super *osb,
 					     struct ocfs2_dinode *alloc,
-					     u32 numbits,
+					     u32 *numbits,
 					     struct ocfs2_alloc_reservation *resv);
 
 static void ocfs2_clear_local_alloc(struct ocfs2_dinode *alloc);
@@ -484,46 +484,6 @@ out:
 	return status;
 }
 
-/* Check to see if the local alloc window is within ac->ac_max_block */
-static int ocfs2_local_alloc_in_range(struct inode *inode,
-				      struct ocfs2_alloc_context *ac,
-				      u32 bits_wanted)
-{
-	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
-	struct ocfs2_dinode *alloc;
-	struct ocfs2_local_alloc *la;
-	int start;
-	u64 block_off;
-
-	if (!ac->ac_max_block)
-		return 1;
-
-	alloc = (struct ocfs2_dinode *) osb->local_alloc_bh->b_data;
-	la = OCFS2_LOCAL_ALLOC(alloc);
-
-	start = ocfs2_local_alloc_find_clear_bits(osb, alloc, bits_wanted, NULL);
-	if (start == -1) {
-		mlog_errno(-ENOSPC);
-		return 0;
-	}
-
-	/*
-	 * Converting (bm_off + start + bits_wanted) to blocks gives us
-	 * the blkno just past our actual allocation.  This is perfect
-	 * to compare with ac_max_block.
-	 */
-	block_off = ocfs2_clusters_to_blocks(inode->i_sb,
-					     le32_to_cpu(la->la_bm_off) +
-					     start + bits_wanted);
-	mlog(0, "Checking %llu against %llu\n",
-	     (unsigned long long)block_off,
-	     (unsigned long long)ac->ac_max_block);
-	if (block_off > ac->ac_max_block)
-		return 0;
-
-	return 1;
-}
-
 /*
  * make sure we've got at least bits_wanted contiguous bits in the
  * local alloc. You lose them when you drop i_mutex.
@@ -616,17 +576,6 @@ int ocfs2_reserve_local_alloc_bits(struct ocfs2_super *osb,
 		mlog(0, "Calling in_range for max block %llu\n",
 		     (unsigned long long)ac->ac_max_block);
 
-	if (!ocfs2_local_alloc_in_range(local_alloc_inode, ac,
-					bits_wanted)) {
-		/*
-		 * The window is outside ac->ac_max_block.
-		 * This errno tells the caller to keep localalloc enabled
-		 * but to get the allocation from the main bitmap.
-		 */
-		status = -EFBIG;
-		goto bail;
-	}
-
 	ac->ac_inode = local_alloc_inode;
 	/* We should never use localalloc from another slot */
 	ac->ac_alloc_slot = osb->slot_num;
@@ -667,7 +616,7 @@ int ocfs2_claim_local_alloc_bits(struct ocfs2_super *osb,
 	alloc = (struct ocfs2_dinode *) osb->local_alloc_bh->b_data;
 	la = OCFS2_LOCAL_ALLOC(alloc);
 
-	start = ocfs2_local_alloc_find_clear_bits(osb, alloc, bits_wanted,
+	start = ocfs2_local_alloc_find_clear_bits(osb, alloc, &bits_wanted,
 						  ac->ac_resv);
 	if (start == -1) {
 		/* TODO: Shouldn't we just BUG here? */
@@ -678,8 +627,6 @@ int ocfs2_claim_local_alloc_bits(struct ocfs2_super *osb,
 
 	bitmap = la->la_bitmap;
 	*bit_off = le32_to_cpu(la->la_bm_off) + start;
-	/* local alloc is always contiguous by nature -- we never
-	 * delete bits from it! */
 	*num_bits = bits_wanted;
 
 	status = ocfs2_journal_access_di(handle,
@@ -730,7 +677,7 @@ static u32 ocfs2_local_alloc_count_bits(struct ocfs2_dinode *alloc)
 
 static int ocfs2_local_alloc_find_clear_bits(struct ocfs2_super *osb,
 				     struct ocfs2_dinode *alloc,
-				     u32 numbits,
+				     u32 *numbits,
 				     struct ocfs2_alloc_reservation *resv)
 {
 	int numfound, bitoff, left, startoff, lastzero;
@@ -739,7 +686,7 @@ static int ocfs2_local_alloc_find_clear_bits(struct ocfs2_super *osb,
 	void *bitmap = NULL;
 	struct ocfs2_reservation_map *resmap = &osb->osb_la_resmap;
 
-	mlog_entry("(numbits wanted = %u)\n", numbits);
+	mlog_entry("(numbits wanted = %u)\n", *numbits);
 
 	if (!alloc->id1.bitmap1.i_total) {
 		mlog(0, "No bits in my window!\n");
@@ -750,14 +697,14 @@ static int ocfs2_local_alloc_find_clear_bits(struct ocfs2_super *osb,
 	if (!resv) {
 		local_resv = 1;
 		ocfs2_resv_init_once(&r);
+		ocfs2_resv_set_type(&r, OCFS2_RESV_FLAG_TMP);
 		resv = &r;
 	}
 
-	numfound = numbits;
-	if (ocfs2_resmap_resv_bits(resmap, resv, local_resv,
-				   &bitoff, &numfound) == 0) {
-		if (numfound >= numbits)
-			numfound = numbits;
+	numfound = *numbits;
+	if (ocfs2_resmap_resv_bits(resmap, resv, &bitoff, &numfound) == 0) {
+		if (numfound < *numbits)
+			*numbits = numfound;
 		goto bail;
 	}
 
@@ -796,7 +743,7 @@ static int ocfs2_local_alloc_find_clear_bits(struct ocfs2_super *osb,
 			startoff = bitoff+1;
 		}
 		/* we got everything we needed */
-		if (numfound == numbits) {
+		if (numfound == *numbits) {
 			/* mlog(0, "Found it all!\n"); */
 			break;
 		}
@@ -805,9 +752,10 @@ static int ocfs2_local_alloc_find_clear_bits(struct ocfs2_super *osb,
 	mlog(0, "Exiting loop, bitoff = %d, numfound = %d\n", bitoff,
 	     numfound);
 
-	if (numfound == numbits)
+	if (numfound == *numbits) {
 		bitoff = startoff - numfound;
-	else {
+		*numbits = numfound;
+	} else {
 		numfound = 0;
 		bitoff = -1;
 	}
@@ -1024,8 +972,7 @@ static int ocfs2_local_alloc_reserve_for_window(struct ocfs2_super *osb,
 	}
 
 retry_enospc:
-	(*ac)->ac_bits_wanted = osb->local_alloc_bits;
-
+	(*ac)->ac_bits_wanted = osb->local_alloc_default_bits;
 	status = ocfs2_reserve_cluster_bitmap_bits(osb, *ac);
 	if (status == -ENOSPC) {
 		if (ocfs2_recalc_la_window(osb, OCFS2_LA_EVENT_ENOSPC) ==
@@ -1101,6 +1048,7 @@ retry_enospc:
 		    OCFS2_LA_DISABLED)
 			goto bail;
 
+		ac->ac_bits_wanted = osb->local_alloc_default_bits;
 		status = ocfs2_claim_clusters(osb, handle, ac,
 					      osb->local_alloc_bits,
 					      &cluster_off,

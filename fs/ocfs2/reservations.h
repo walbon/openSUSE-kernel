@@ -5,22 +5,16 @@
  *
  * Allocation reservations function prototypes and structures.
  *
- * Copyright (C) 2009 Novell.  All rights reserved.
+ * Copyright (C) 2010 Novell.  All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * License version 2 as published by the Free Software Foundation.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public
- * License along with this program; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 021110-1307, USA.
  */
 
 #ifndef	OCFS2_RESERVATIONS_H
@@ -42,9 +36,14 @@ struct ocfs2_alloc_reservation {
 	unsigned int	r_last_start;	/* Start of most recent alloc */
 	struct list_head	r_lru;	/* LRU list head */
 
-	int		r_inuse;	/* r_inuse is set when r_node
-					 * is part of an rbtree. */
+	unsigned int	r_flags;
 };
+
+#define	OCFS2_RESV_FLAG_INUSE	0x01	/* Set when r_node is part of a btree */
+#define	OCFS2_RESV_FLAG_TMP	0x02	/* Temporary reservation, will be
+					 * destroyed immedately after use */
+#define	OCFS2_RESV_FLAG_DIR	0x04	/* Reservation is for an unindexed
+					 * directory btree */
 
 struct ocfs2_reservation_map {
 	struct rb_root		m_reservations;
@@ -57,17 +56,16 @@ struct ocfs2_reservation_map {
 	u32			m_bitmap_len;	/* Number of valid
 						 * bits available */
 
-	unsigned int		m_search_start;	/* Records the end
-						 * location of our
-						 * most recent
-						 * allocation. */
-
 	struct list_head	m_lru;		/* LRU of reservations
 						 * structures. */
 
 };
 
 void ocfs2_resv_init_once(struct ocfs2_alloc_reservation *resv);
+
+#define OCFS2_RESV_TYPES	(OCFS2_RESV_FLAG_TMP|OCFS2_RESV_FLAG_DIR)
+void ocfs2_resv_set_type(struct ocfs2_alloc_reservation *resv,
+			 unsigned int flags);
 
 /**
  * ocfs2_resv_discard() - truncate a reservation
@@ -102,7 +100,7 @@ int ocfs2_resmap_init(struct ocfs2_super *osb,
  *
  * Re-initialize the parameters of a reservation bitmap. This is
  * useful for local alloc window slides.
- * 
+ *
  * This function will call ocfs2_trunc_resv against all existing
  * reservations. A future version will recalculate existing
  * reservations based on the new bitmap.
@@ -120,7 +118,6 @@ void ocfs2_resmap_uninit(struct ocfs2_reservation_map *resmap);
  * ocfs2_resmap_resv_bits() - Return still-valid reservation bits
  * @resmap: reservations bitmap
  * @resv: reservation to base search from
- * @tempwindow: the reservation will immediately be discarded
  * @cstart: start of proposed allocation
  * @clen: length (in clusters) of proposed allocation
  *
@@ -136,7 +133,7 @@ void ocfs2_resmap_uninit(struct ocfs2_reservation_map *resmap);
  */
 int ocfs2_resmap_resv_bits(struct ocfs2_reservation_map *resmap,
 			   struct ocfs2_alloc_reservation *resv,
-			   int tmpwindow, int *cstart, int *clen);
+			   int *cstart, int *clen);
 
 /**
  * ocfs2_resmap_claimed_bits() - Tell the reservation code that bits were used.
