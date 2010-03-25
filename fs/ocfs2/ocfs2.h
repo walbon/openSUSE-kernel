@@ -256,8 +256,6 @@ enum ocfs2_mount_options
 						   control lists */
 	OCFS2_MOUNT_USRQUOTA = 1 << 10, /* We support user quotas */
 	OCFS2_MOUNT_GRPQUOTA = 1 << 11, /* We support group quotas */
-	OCFS2_MOUNT_DIR_RESV	= 1 << 12, /* Get reservations
-					    * on directories */
 };
 
 #define OCFS2_OSB_SOFT_RO			0x0001

@@ -179,8 +179,6 @@ enum {
 	Opt_usrquota,
 	Opt_grpquota,
 	Opt_resv_level,
-	Opt_dir_resv,
-	Opt_no_dir_resv,
 	Opt_err,
 };
 
@@ -208,8 +206,6 @@ static const match_table_t tokens = {
 	{Opt_usrquota, "usrquota"},
 	{Opt_grpquota, "grpquota"},
 	{Opt_resv_level, "resv_level=%u"},
-	{Opt_dir_resv, "dir_resv"},
-	{Opt_no_dir_resv, "no_dir_resv"},
 	{Opt_err, NULL}
 };
 
@@ -1454,12 +1450,6 @@ static int ocfs2_parse_options(struct super_block *sb,
 			    option < OCFS2_MAX_RESV_LEVEL)
 				mopt->resv_level = option;
 			break;
-		case Opt_dir_resv:
-			mopt->mount_opt |= OCFS2_MOUNT_DIR_RESV;
-			break;
-		case Opt_no_dir_resv:
-			mopt->mount_opt &= ~OCFS2_MOUNT_DIR_RESV;
-			break;
 		default:
 			mlog(ML_ERROR,
 			     "Unrecognized mount option \"%s\" "
@@ -1543,11 +1533,6 @@ static int ocfs2_show_options(struct seq_file *s, struct vfsmount *mnt)
 
 	if (osb->osb_resv_level != OCFS2_DEFAULT_RESV_LEVEL)
 		seq_printf(s, ",resv_level=%d", osb->osb_resv_level);
-
-	if (opts & OCFS2_MOUNT_DIR_RESV)
-		seq_printf(s, ",dir_resv");
-	else
-		seq_printf(s, ",no_dir_resv");
 
 	return 0;
 }
