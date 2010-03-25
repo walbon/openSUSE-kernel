@@ -659,8 +659,8 @@ static int igb_request_msix(struct igb_adapter *adapter)
 			sprintf(q_vector->name, "%s-unused", netdev->name);
 
 		err = request_irq(adapter->msix_entries[vector].vector,
-		                  &igb_msix_ring, 
-				  entropy ? IRQF_SAMPLE_RANDOM : 0, 
+		                  &igb_msix_ring,
+				  entropy ? IRQF_SAMPLE_RANDOM : 0,
 				  q_vector->name, q_vector);
 		if (err)
 			goto out;
