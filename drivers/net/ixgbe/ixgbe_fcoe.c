@@ -520,6 +520,9 @@ void ixgbe_configure_fcoe(struct ixgbe_adapter *adapter)
 	/* Enable L2 eth type filter for FCoE */
 	IXGBE_WRITE_REG(hw, IXGBE_ETQF(IXGBE_ETQF_FILTER_FCOE),
 			(ETH_P_FCOE | IXGBE_ETQF_FCOE | IXGBE_ETQF_FILTER_EN));
+	/* Enable L2 eth type filter for FIP */
+	IXGBE_WRITE_REG(hw, IXGBE_ETQF(IXGBE_ETQF_FILTER_FIP),
+			(ETH_P_FIP | IXGBE_ETQF_FILTER_EN));
 	if (adapter->ring_feature[RING_F_FCOE].indices) {
 		/* Use multiple rx queues for FCoE by redirection table */
 		for (i = 0; i < IXGBE_FCRETA_SIZE; i++) {
@@ -530,6 +533,12 @@ void ixgbe_configure_fcoe(struct ixgbe_adapter *adapter)
 		}
 		IXGBE_WRITE_REG(hw, IXGBE_FCRECTL, IXGBE_FCRECTL_ENA);
 		IXGBE_WRITE_REG(hw, IXGBE_ETQS(IXGBE_ETQF_FILTER_FCOE), 0);
+		fcoe_i = f->mask;
+		fcoe_i &= IXGBE_FCRETA_ENTRY_MASK;
+		fcoe_q = adapter->rx_ring[fcoe_i].reg_idx;
+		IXGBE_WRITE_REG(hw, IXGBE_ETQS(IXGBE_ETQF_FILTER_FIP),
+				IXGBE_ETQS_QUEUE_EN |
+				(fcoe_q << IXGBE_ETQS_RX_QUEUE_SHIFT));
 	} else  {
 		/* Use single rx queue for FCoE */
 		fcoe_i = f->mask;
@@ -539,6 +548,12 @@ void ixgbe_configure_fcoe(struct ixgbe_adapter *adapter)
 				IXGBE_ETQS_QUEUE_EN |
 				(fcoe_q << IXGBE_ETQS_RX_QUEUE_SHIFT));
 	}
+	/* send FIP frames to the first FCoE queue */
+	fcoe_i = f->mask;
+	fcoe_q = adapter->rx_ring[fcoe_i].reg_idx;
+	IXGBE_WRITE_REG(hw, IXGBE_ETQS(IXGBE_ETQF_FILTER_FIP),
+			IXGBE_ETQS_QUEUE_EN |
+			(fcoe_q << IXGBE_ETQS_RX_QUEUE_SHIFT));
 
 	IXGBE_WRITE_REG(hw, IXGBE_FCRXCTRL,
 			IXGBE_FCRXCTRL_FCOELLI |
@@ -614,9 +629,9 @@ int ixgbe_fcoe_enable(struct net_device *netdev)
 	netdev->vlan_features |= NETIF_F_FSO;
 	netdev->vlan_features |= NETIF_F_FCOE_MTU;
 	netdev->fcoe_ddp_xid = IXGBE_FCOE_DDP_MAX - 1;
-	netdev_features_change(netdev);
 
 	ixgbe_init_interrupt_scheme(adapter);
+	netdev_features_change(netdev);
 
 	if (netif_running(netdev))
 		netdev->netdev_ops->ndo_open(netdev);
@@ -660,11 +675,11 @@ int ixgbe_fcoe_disable(struct net_device *netdev)
 	netdev->vlan_features &= ~NETIF_F_FSO;
 	netdev->vlan_features &= ~NETIF_F_FCOE_MTU;
 	netdev->fcoe_ddp_xid = 0;
-	netdev_features_change(netdev);
 
 	ixgbe_cleanup_fcoe(adapter);
-
 	ixgbe_init_interrupt_scheme(adapter);
+	netdev_features_change(netdev);
+
 	if (netif_running(netdev))
 		netdev->netdev_ops->ndo_open(netdev);
 	rc = 0;

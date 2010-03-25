@@ -447,10 +447,19 @@ static int fcoe_ctlr_encaps(struct fcoe_ctlr *fip, struct fc_lport *lport,
 	memset(mac, 0, sizeof(mac));
 	mac->fd_desc.fip_dtype = FIP_DT_MAC;
 	mac->fd_desc.fip_dlen = sizeof(*mac) / FIP_BPW;
-	if (dtype != FIP_DT_FLOGI && dtype != FIP_DT_FDISC)
+	if (dtype != FIP_DT_FLOGI && dtype != FIP_DT_FDISC) {
 		memcpy(mac->fd_mac, fip->get_src_addr(lport), ETH_ALEN);
-	else if (fip->spma)
+	} else if (fip_flags & FIP_FL_SPMA) {
+		LIBFCOE_FIP_DBG(fip, "FLOGI/FDISC sent with SPMA\n");
 		memcpy(mac->fd_mac, fip->ctl_src_addr, ETH_ALEN);
+	} else {
+		LIBFCOE_FIP_DBG(fip, "FLOGI/FDISC sent with FPMA\n");
+		/*
+		 * Some switches expect the MAC desc to have a 0
+		 * MAC if FPMA is negotiated.
+		 */
+		memset(mac->fd_mac, 0, ETH_ALEN);
+	}
 
 	skb->protocol = htons(ETH_P_FIP);
 	skb_reset_mac_header(skb);

@@ -1904,9 +1904,10 @@ static int fcoe_disable(const char *buffer, struct kernel_param *kp)
 	fcoe = fcoe_hostlist_lookup_port(netdev);
 	rtnl_unlock();
 
-	if (fcoe)
+	if (fcoe) {
 		fc_fabric_logoff(fcoe->ctlr.lp);
-	else
+		fcoe_ctlr_link_down(&fcoe->ctlr);
+	} else
 		rc = -ENODEV;
 
 	dev_put(netdev);
@@ -1953,9 +1954,11 @@ static int fcoe_enable(const char *buffer, struct kernel_param *kp)
 	fcoe = fcoe_hostlist_lookup_port(netdev);
 	rtnl_unlock();
 
-	if (fcoe)
+	if (fcoe) {
+		if (!fcoe_link_ok(fcoe->ctlr.lp))
+			fcoe_ctlr_link_up(&fcoe->ctlr);
 		rc = fc_fabric_login(fcoe->ctlr.lp);
-	else
+	} else
 		rc = -ENODEV;
 
 	dev_put(netdev);
@@ -2148,8 +2151,7 @@ int fcoe_link_ok(struct fc_lport *lport)
 	struct net_device *netdev = port->fcoe->netdev;
 	struct ethtool_cmd ecmd = { ETHTOOL_GSET };
 
-	if ((netdev->flags & IFF_UP) && netif_carrier_ok(netdev) &&
-	    (!dev_ethtool_get_settings(netdev, &ecmd))) {
+	if (netif_oper_up(netdev) && !dev_ethtool_get_settings(netdev, &ecmd)) {
 		lport->link_supported_speeds &=
 			~(FC_PORTSPEED_1GBIT | FC_PORTSPEED_10GBIT);
 		if (ecmd.supported & (SUPPORTED_1000baseT_Half |
