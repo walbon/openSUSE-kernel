@@ -63,12 +63,20 @@ void __init prefill_possible_map(void)
 		return;
 
 	for (i = 0; i < NR_CPUS; i++) {
+#ifndef CONFIG_HOTPLUG_CPU
+		if (i >= setup_max_cpus)
+			break;
+#endif
 		rc = HYPERVISOR_vcpu_op(VCPUOP_is_up, i, NULL);
 		if (rc >= 0) {
 			set_cpu_possible(i, true);
 			nr_cpu_ids = i + 1;
 		}
 	}
+	total_cpus = num_possible_cpus();
+	for (; HYPERVISOR_vcpu_op(VCPUOP_is_up, i, NULL) >= 0; ++i)
+		if (i != smp_processor_id())
+			++total_cpus;
 }
 
 static inline void

@@ -377,6 +377,7 @@ static const struct xenbus_device_id usbfront_ids[] = {
 	{ "vusb" },
 	{ "" },
 };
+MODULE_ALIAS("xen:vusb");
 
 static struct xenbus_driver usbfront_driver = {
 	.name = "vusb",

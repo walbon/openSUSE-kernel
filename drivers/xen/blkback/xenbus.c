@@ -187,10 +187,10 @@ static int blkback_remove(struct xenbus_device *dev)
 		be->backend_watch.node = NULL;
 	}
 
-	if (be->backend_cdrom_watch.node) {
-		unregister_xenbus_watch(&be->backend_cdrom_watch);
-		kfree(be->backend_cdrom_watch.node);
-		be->backend_cdrom_watch.node = NULL;
+	if (be->cdrom_watch.node) {
+		unregister_xenbus_watch(&be->cdrom_watch);
+		kfree(be->cdrom_watch.node);
+		be->cdrom_watch.node = NULL;
 	}
 
 	if (be->blkif) {

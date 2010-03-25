@@ -87,6 +87,7 @@ unsigned int xen_spin_adjust(const raw_spinlock_t *lock, unsigned int token)
 bool xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
                    unsigned int flags)
 {
+	unsigned int cpu = raw_smp_processor_id();
 	int irq = spinlock_irq;
 	bool rc;
 	typeof(vcpu_info(0)->evtchn_upcall_mask) upcall_mask;
@@ -94,7 +95,7 @@ bool xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 	struct spinning spinning, *other;
 
 	/* If kicker interrupt not initialized yet, just spin. */
-	if (unlikely(irq < 0) || unlikely(!cpu_online(raw_smp_processor_id())))
+	if (unlikely(irq < 0) || unlikely(!cpu_online(cpu)))
 		return false;
 
 	/* announce we're spinning */
@@ -115,6 +116,7 @@ bool xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 		 * we weren't looking.
 		 */
 		if (lock->cur == spinning.ticket) {
+			lock->owner = cpu;
 			/*
 			 * If we interrupted another spinlock while it was
 			 * blocking, make sure it doesn't block (again)
@@ -208,6 +210,8 @@ bool xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 			if (!free)
 				token = spin_adjust(other->prev, lock, token);
 			other->ticket = token >> TICKET_SHIFT;
+			if (lock->cur == other->ticket)
+				lock->owner = cpu;
 		}
 	raw_local_irq_restore(upcall_mask);
 

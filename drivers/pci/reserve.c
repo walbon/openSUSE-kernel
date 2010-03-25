@@ -64,16 +64,11 @@ static int pci_reserve_parse_one(const char *str,
 	p = strchr(str, '+');
 	if (p == NULL)
 		return -EINVAL;
-	p++;
-	if (pci_reserve_parse_size(p, io_size, mem_size))
+	if (pci_reserve_parse_size(++p, io_size, mem_size))
 		return -EINVAL;
 
-	p = strchr(str, '+');
-	if (p != NULL) {
-		p++;
-		pci_reserve_parse_size(p, io_size, mem_size);
-	}
-	return 0;
+	p = strchr(p, '+');
+	return p ? pci_reserve_parse_size(p + 1, io_size, mem_size) : 0;
 }
 
 static unsigned long pci_reserve_size(struct pci_bus *pbus, int flags)

@@ -27,6 +27,11 @@ pmd_t *early_get_pmd(unsigned long va);
 #endif
 
 /*
+ * Flags to use when allocating a user page table page.
+ */
+extern gfp_t __userpte_alloc_gfp;
+
+/*
  * Allocate and free page tables.
  */
 extern pgd_t *pgd_alloc(struct mm_struct *);

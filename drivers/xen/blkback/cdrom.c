@@ -111,7 +111,7 @@ void cdrom_add_media_watch(struct backend_info *be)
 		if ( cdrom_xenstore_write_media_present(be) == 0 ) {
 			DPRINTK( "xenstore wrote OK");
 			err = xenbus_watch_path2(dev, dev->nodename, MEDIA_PRESENT,
-						 &be->backend_cdrom_watch,
+						 &be->cdrom_watch,
 						 cdrom_media_changed);
 			if (err)
 				DPRINTK( "media_present watch add failed" );
@@ -128,7 +128,7 @@ static void cdrom_media_changed(struct xenbus_watch *watch,
 	int err;
 	unsigned media_present;
 	struct backend_info *be
-		= container_of(watch, struct backend_info, backend_cdrom_watch);
+		= container_of(watch, struct backend_info, cdrom_watch);
 	struct xenbus_device *dev = be->dev;
 
 	if (!cdrom_is_type(be)) {

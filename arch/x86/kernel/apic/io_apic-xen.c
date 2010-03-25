@@ -128,7 +128,7 @@ DECLARE_BITMAP(mp_bus_not_pci, MAX_MP_BUSSES);
 
 int skip_ioapic_setup;
 
-void arch_disable_smp_support(void)
+static void __init _arch_disable_smp_support(void)
 {
 #ifdef CONFIG_PCI
 	noioapicquirk = 1;
@@ -140,7 +140,7 @@ void arch_disable_smp_support(void)
 static int __init parse_noapic(char *str)
 {
 	/* disable IO-APIC */
-	arch_disable_smp_support();
+	_arch_disable_smp_support();
 	return 0;
 }
 early_param("noapic", parse_noapic);
@@ -1638,14 +1638,14 @@ void setup_IO_APIC_irq_extra(u32 gsi)
 	struct irq_desc *desc;
 	struct irq_cfg *cfg;
 
-        /*
-         * Convert 'gsi' to 'ioapic.pin'.
-         */
-        apic_id = mp_find_ioapic(gsi);
-        if (apic_id < 0)
-                return;
+	/*
+	 * Convert 'gsi' to 'ioapic.pin'.
+	 */
+	apic_id = mp_find_ioapic(gsi);
+	if (apic_id < 0)
+		return;
 
-        pin = mp_find_ioapic_pin(apic_id, gsi);
+	pin = mp_find_ioapic_pin(apic_id, gsi);
 	idx = find_irq_entry(apic_id, pin, mp_INT);
 	if (idx == -1)
 		return;
@@ -3329,12 +3329,9 @@ unsigned int create_irq_nr(unsigned int irq_want, int node)
 	}
 	spin_unlock_irqrestore(&vector_lock, flags);
 
-	if (irq > 0) {
-		dynamic_irq_init(irq);
-		/* restore it, in case dynamic_irq_init clear it */
-		if (desc_new)
-			desc_new->chip_data = cfg_new;
-	}
+	if (irq > 0)
+		dynamic_irq_init_keep_chip_data(irq);
+
 	return irq;
 }
 
@@ -3357,17 +3354,12 @@ void destroy_irq(unsigned int irq)
 {
 	unsigned long flags;
 	struct irq_cfg *cfg;
-	struct irq_desc *desc;
 
-	/* store it, in case dynamic_irq_cleanup clear it */
-	desc = irq_to_desc(irq);
-	cfg = desc->chip_data;
-	dynamic_irq_cleanup(irq);
-	/* connect back irq_cfg */
-	desc->chip_data = cfg;
+	dynamic_irq_cleanup_keep_chip_data(irq);
 
 	free_irte(irq);
 	spin_lock_irqsave(&vector_lock, flags);
+	cfg = irq_to_desc(irq)->chip_data;
 	__clear_irq_vector(irq, cfg);
 	spin_unlock_irqrestore(&vector_lock, flags);
 }

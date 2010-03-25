@@ -397,7 +397,7 @@ static struct xenbus_device_id scsifront_ids[] = {
 	{ "vscsi" },
 	{ "" }
 };
-
+MODULE_ALIAS("xen:vscsi");
 
 static struct xenbus_driver scsifront_driver = {
 	.name			= "vscsi",

@@ -117,6 +117,8 @@ static int xen_px_notifier(struct acpi_processor *pr, int action)
 
 	perf = &op.u.set_pminfo.u.perf;
 	px = pr->performance;
+	if (!px)
+		return -EINVAL;
 
 	switch(action) {
 	case PROCESSOR_PM_CHANGE:

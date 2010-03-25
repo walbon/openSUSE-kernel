@@ -107,7 +107,7 @@ struct backend_info
 	struct xenbus_device *dev;
 	blkif_t *blkif;
 	struct xenbus_watch backend_watch;
-	struct xenbus_watch backend_cdrom_watch;
+	struct xenbus_watch cdrom_watch;
 	unsigned major;
 	unsigned minor;
 	char *mode;
