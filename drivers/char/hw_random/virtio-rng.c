@@ -128,7 +128,7 @@ static struct virtio_device_id id_table[] = {
 	{ 0 },
 };
 
-static struct virtio_driver virtio_rng = {
+static struct virtio_driver __refdata virtio_rng = {
 	.driver.name =	KBUILD_MODNAME,
 	.driver.owner =	THIS_MODULE,
 	.id_table =	id_table,
