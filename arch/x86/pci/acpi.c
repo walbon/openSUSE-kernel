@@ -120,7 +120,7 @@ setup_resource(struct acpi_resource *acpi_res, void *data)
 
 	max_len = addr.maximum - addr.minimum + 1;
 	if (addr.address_length > max_len) {
-		dev_printk(KERN_DEBUG, &info->bridge->dev,
+		printk(KERN_DEBUG
 			   "host bridge window length %#llx doesn't fit in "
 			   "%#llx-%#llx, trimming\n",
 			   (unsigned long long) addr.address_length,
