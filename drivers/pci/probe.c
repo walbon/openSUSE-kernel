@@ -1050,6 +1050,11 @@ static void pci_init_capabilities(struct pci_dev *dev)
 	/* Vital Product Data */
 	pci_vpd_pci22_init(dev);
 
+#ifdef CONFIG_XEN
+	if (!is_initial_xendomain())
+		return;
+#endif
+
 	/* Alternative Routing-ID Forwarding */
 	pci_enable_ari(dev);
 

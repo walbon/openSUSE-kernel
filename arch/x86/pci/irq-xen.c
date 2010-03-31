@@ -602,14 +602,6 @@ static __init int intel_router_probe(struct irq_router *r, struct pci_dev *route
 		return 1;
 	}
 
-	if ((device >= PCI_DEVICE_ID_INTEL_CPT_LPC_MIN) &&
-			(device <= PCI_DEVICE_ID_INTEL_CPT_LPC_MAX)) {
-		r->name = "PIIX/ICH";
-		r->get = pirq_piix_get;
-		r->set = pirq_piix_set;
-		return 1;
-	}
-
 	if ((device >= PCI_DEVICE_ID_INTEL_PCH_LPC_MIN) &&
 		(device <= PCI_DEVICE_ID_INTEL_PCH_LPC_MAX)) {
 		r->name = "PIIX/ICH";
@@ -618,6 +610,13 @@ static __init int intel_router_probe(struct irq_router *r, struct pci_dev *route
 		return 1;
 	}
 
+	if ((device >= PCI_DEVICE_ID_INTEL_CPT_LPC_MIN) && 
+		(device <= PCI_DEVICE_ID_INTEL_CPT_LPC_MAX)) {
+		r->name = "PIIX/ICH";
+		r->get = pirq_piix_get;
+		r->set = pirq_piix_set;
+		return 1;
+	}
 	return 0;
 }
 
