@@ -1302,6 +1302,7 @@ static int cciss_ioctl(struct block_device *bdev, fmode_t mode,
 			CommandList_struct *c;
 			char *buff = NULL;
 			u64bit temp64;
+			int retval = -EFAULT;
 			unsigned long flags;
 			DECLARE_COMPLETION_ONSTACK(wait);
 
@@ -1335,7 +1336,7 @@ static int cciss_ioctl(struct block_device *bdev, fmode_t mode,
 					kfree(buff);
 					return -EFAULT;
 				}
-			} else {
+			} else if (iocommand.buf_size > 0) {
 				memset(buff, 0, iocommand.buf_size);
 			}
 			if ((c = cmd_alloc(host, 0)) == NULL) {
@@ -1383,35 +1384,34 @@ static int cciss_ioctl(struct block_device *bdev, fmode_t mode,
 			wait_for_completion(&wait);
 
 			/* unlock the buffers from DMA */
-			temp64.val32.lower = c->SG[0].Addr.lower;
-			temp64.val32.upper = c->SG[0].Addr.upper;
-			pci_unmap_single(host->pdev, (dma_addr_t) temp64.val,
-					 iocommand.buf_size,
-					 PCI_DMA_BIDIRECTIONAL);
-
+			if (iocommand.buf_size > 0) {
+				temp64.val32.lower = c->SG[0].Addr.lower;
+				temp64.val32.upper = c->SG[0].Addr.upper;
+				pci_unmap_single(host->pdev,
+						 (dma_addr_t) temp64.val,
+						 iocommand.buf_size,
+						 PCI_DMA_BIDIRECTIONAL);
+			}
 			check_ioctl_unit_attention(host, c);
 
 			/* Copy the error information out */
 			iocommand.error_info = *(c->err_info);
 			if (copy_to_user
-			    (argp, &iocommand, sizeof(IOCTL_Command_struct))) {
-				kfree(buff);
-				cmd_free(host, c, 0);
-				return -EFAULT;
-			}
+			    (argp, &iocommand, sizeof(IOCTL_Command_struct)))
+				goto out_pthru;
 
 			if (iocommand.Request.Type.Direction == XFER_READ) {
 				/* Copy the data out of the buffer we created */
 				if (copy_to_user
-				    (iocommand.buf, buff, iocommand.buf_size)) {
-					kfree(buff);
-					cmd_free(host, c, 0);
-					return -EFAULT;
-				}
+				    (iocommand.buf, buff, iocommand.buf_size))
+					goto out_pthru;
 			}
-			kfree(buff);
+			retval = 0;
+		out_pthru:
+			if (iocommand.buf_size > 0)
+				kfree(buff);
 			cmd_free(host, c, 0);
-			return 0;
+			return retval;
 		}
 	case CCISS_BIG_PASSTHRU:{
 			BIG_IOCTL_Command_struct *ioc;
