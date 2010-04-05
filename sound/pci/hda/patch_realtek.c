@@ -9021,7 +9021,7 @@ static struct snd_pci_quirk alc882_cfg_tbl[] = {
 	SND_PCI_QUIRK(0x8086, 0x0022, "DX58SO", ALC889_INTEL),
 	SND_PCI_QUIRK(0x8086, 0x0021, "Intel IbexPeak", ALC889A_INTEL),
 	SND_PCI_QUIRK(0x8086, 0x3b56, "Intel IbexPeak", ALC889A_INTEL),
-	SND_PCI_QUIRK(0x8086, 0xd601, "D102GGC", ALC883_3ST_6ch),
+	SND_PCI_QUIRK(0x8086, 0xd601, "D102GGC", ALC882_6ST_DIG),
 
 	{}
 };
@@ -9776,13 +9776,12 @@ static void alc882_auto_set_output_and_unmute(struct hda_codec *codec,
 	int idx;
 
 	alc_set_pin_output(codec, nid, pin_type);
+	if (dac_idx >= spec->multiout.num_dacs)
+		return;
 	if (spec->multiout.dac_nids[dac_idx] == 0x25)
 		idx = 4;
-	else {
-		if (spec->multiout.num_dacs >= dac_idx)
-			return;
+	else
 		idx = spec->multiout.dac_nids[dac_idx] - 2;
-	}
 	snd_hda_codec_write(codec, nid, 0, AC_VERB_SET_CONNECT_SEL, idx);
 
 }
