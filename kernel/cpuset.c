@@ -934,23 +934,9 @@ static void cpuset_migrate_mm(struct mm_struct *mm, const nodemask_t *from,
 
 	tsk->mems_allowed = *to;
 
-	/*
-	 * After current->mems_allowed is set to a new value, current will
-	 * allocate new pages for the migrating memory region. So we must
-	 * ensure that update of current->mems_allowed have been completed
-	 * by this moment.
-	 */
-	smp_wmb();
 	do_migrate_pages(mm, from, to, MPOL_MF_MOVE_ALL);
 
 	guarantee_online_mems(task_cs(tsk),&tsk->mems_allowed);
-
-	/*
-	 * After doing migrate pages, current will allocate new pages for
-	 * itself not the other tasks. So we must ensure that update of
-	 * current->mems_allowed have been completed by this moment.
-	 */
-	smp_wmb();
 }
 
 /*
@@ -2113,6 +2099,10 @@ static int cpuset_track_online_nodes(struct notifier_block *self,
 		update_tasks_nodemask(&top_cpuset, &oldmems, NULL);
 		break;
 	case MEM_OFFLINE:
+		/*
+		 * needn't update top_cpuset.mems_allowed explicitly because
+		 * scan_for_empty_cpusets() will update it.
+		 */
 		scan_for_empty_cpusets(&top_cpuset);
 		break;
 	default:

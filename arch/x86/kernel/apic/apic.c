@@ -61,6 +61,12 @@ unsigned int boot_cpu_physical_apicid = -1U;
 
 /*
  * The highest APIC ID seen during enumeration.
+ *
+ * On AMD, this determines the messaging protocol we can use: if all APIC IDs
+ * are in the 0 ... 7 range, then we can use logical addressing which
+ * has some performance advantages (better broadcasting).
+ *
+ * If there's an APIC ID above 8, we use physical addressing.
  */
 unsigned int max_physical_apicid;
 

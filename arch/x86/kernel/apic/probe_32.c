@@ -52,7 +52,7 @@ static int __init print_ipi_mode(void)
 }
 late_initcall(print_ipi_mode);
 
-void __init default_setup_apic_routing(void)
+void default_setup_apic_routing(void)
 {
 	int version = apic_version[boot_cpu_physical_apicid];
 
@@ -77,7 +77,7 @@ void __init default_setup_apic_routing(void)
 		apic->setup_apic_routing();
 }
 
-static void setup_apic_flat_routing(void)
+void setup_apic_flat_routing(void)
 {
 #ifdef CONFIG_X86_IO_APIC
 	printk(KERN_INFO

@@ -2254,7 +2254,6 @@ i915_gem_object_get_pages(struct drm_gem_object *obj,
 	struct address_space *mapping;
 	struct inode *inode;
 	struct page *page;
-	int ret;
 
 	if (obj_priv->pages_refcount++ != 0)
 		return 0;
@@ -2279,6 +2278,7 @@ i915_gem_object_get_pages(struct drm_gem_object *obj,
 					   gfpmask);
 		if (IS_ERR(page))
 			goto err_pages;
+
 		obj_priv->pages[i] = page;
 	}
 
