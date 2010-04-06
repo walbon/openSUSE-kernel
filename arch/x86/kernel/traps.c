@@ -380,8 +380,7 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 		spin_unlock_irqrestore(&kdb_nmi_lock, flags);
 		(void)kdb(KDB_REASON_ENTER_SLAVE, reason, regs);
 	}
-	return;
-#else
+#endif /* CONFIG_KDB */
 
 	if (notify_die(DIE_NMIUNKNOWN, "nmi", regs, reason, 2, SIGINT) ==
 			NOTIFY_STOP)
@@ -405,7 +404,6 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 		panic("NMI: Not continuing");
 
 	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
-#endif /* CONFIG_KDB */
 }
 
 static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
