@@ -213,6 +213,8 @@ typedef struct drm_i915_private {
 	u32 gt_irq_mask_reg;
 	u32 gt_irq_enable_reg;
 	u32 de_irq_enable_reg;
+	u32 pch_irq_mask_reg;
+	u32 pch_irq_enable_reg;
 
 	u32 hotplug_supported_mask;
 	struct work_struct hotplug_work;
@@ -260,6 +262,7 @@ typedef struct drm_i915_private {
 	unsigned int lvds_use_ssc:1;
 	unsigned int edp_support:1;
 	int lvds_ssc_freq;
+	int edp_bpp;
 
 	struct notifier_block lid_notifier;
 
