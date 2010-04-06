@@ -460,9 +460,16 @@ static int hpet_next_event(unsigned long delta,
 	 * We need to read back the CMP register to make sure that
 	 * what we wrote hit the chip before we compare it to the
 	 * counter.
-	 */
-	WARN_ON_ONCE((u32)hpet_readl(HPET_Tn_CMP(timer)) != (u32)cnt);
-
+	 * An erratum on some chipsets (ICH9,..), results in comparator read
+	 * immediately following a write returning old value. Workaround
+	 * for this is to read this value second time, when first
+	 * read returns old value.
+ 	 */
+	if (unlikely((u32)hpet_readl(HPET_Tn_CMP(timer)) != (u32)cnt)) {
+		WARN_ONCE((u32)hpet_readl(HPET_Tn_CMP(timer)) != (u32)cnt,
+			  KERN_WARNING "hpet: compare register read"
+			  " back failed.\n");
+	}
 	return (s32)((u32)hpet_readl(HPET_COUNTER) - (u32)cnt) >= 0 ? -ETIME : 0;
 }
 
