@@ -69,10 +69,34 @@ static int __init alloc_node_page_cgroup(int nid)
 	return 0;
 }
 
+static void disable_cgroup_if_low_lowmem(void)
+{
+	/*
+	 * disable memcg on x86 PAE boxes with more than 8G of memory in a node
+	 * memcg structures don't fit in the lowmem there
+	 */
+#if CONFIG_X86_32 && CONFIG_X86_PAE
+	int nid;
+
+	for_each_online_node(nid) {
+		unsigned long nr_pages = NODE_DATA(nid)->node_spanned_pages;
+		if (nr_pages >= (8UL << (30 - PAGE_SHIFT))) {
+			printk(KERN_ERR "%s: node %d has more than 8G of "
+					"memory. Disabling memory cgroups.\n",
+					__func__, nid);
+			mem_cgroup_subsys.disabled = 1;
+			return;
+		}
+	}
+#endif
+}
+
 void __init page_cgroup_init_flatmem(void)
 {
 
 	int nid, fail;
+
+	disable_cgroup_if_low_lowmem();
 
 	if (mem_cgroup_disabled())
 		return;
