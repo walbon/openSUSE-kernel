@@ -3230,7 +3230,6 @@ lpfc_nlp_state_cleanup(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 	struct Scsi_Host *shost = lpfc_shost_from_vport(vport);
 
 	if (new_state == NLP_STE_UNMAPPED_NODE) {
-		ndlp->nlp_type &= ~(NLP_FCP_TARGET | NLP_FCP_INITIATOR);
 		ndlp->nlp_flag &= ~NLP_NODEV_REMOVE;
 		ndlp->nlp_type |= NLP_FC_NODE;
 	}
