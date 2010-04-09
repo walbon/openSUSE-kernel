@@ -120,8 +120,8 @@ extern unsigned long VMALLOC_START;
 #define VMALLOC_END	0x7e000000UL
 #define VMEM_MAP_END	0x80000000UL
 #else /* __s390x__ */
-#define VMALLOC_SIZE	(1UL << 30)
-#define VMALLOC_END	0x3e040000000UL
+#define VMALLOC_SIZE	(128UL << 30)
+#define VMALLOC_END	0x3e000000000UL
 #define VMEM_MAP_END	0x40000000000UL
 #endif /* __s390x__ */
 
