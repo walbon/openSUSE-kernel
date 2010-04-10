@@ -1467,7 +1467,7 @@ static int read_capacity_10(struct scsi_disk *sdkp, struct scsi_device *sdp,
 			sense_valid = scsi_sense_valid(&sshdr);
 			if (sense_valid &&
 			    sshdr.sense_key == UNIT_ATTENTION &&
-			    sshdr.asc = 0x29 && sshdr.ascq == 0x00)
+			    sshdr.asc == 0x29 && sshdr.ascq == 0x00)
 			    /* Device reset might occur several times,
 			     * give it one more chance */
 			    if (--reset_retries > 0)
