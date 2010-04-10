@@ -342,6 +342,9 @@ struct ocfs2_super
 	 */
 	unsigned int local_alloc_bits;
 	unsigned int local_alloc_default_bits;
+	/* osb_clusters_at_boot can become stale! Do not trust it to
+	 * be up to date. */
+	unsigned int osb_clusters_at_boot;
 
 	enum ocfs2_local_alloc_state local_alloc_state; /* protected
 							 * by osb_lock */
@@ -353,6 +356,7 @@ struct ocfs2_super
 	struct ocfs2_reservation_map	osb_la_resmap;
 
 	unsigned int	osb_resv_level;
+	unsigned int	osb_dir_resv_level;
 
 	/* Next three fields are for local node slot recovery during
 	 * mount. */
@@ -767,6 +771,13 @@ static inline unsigned int ocfs2_megabytes_to_clusters(struct super_block *sb,
 
 	return megs << (20 - OCFS2_SB(sb)->s_clustersize_bits);
 }
+
+static inline unsigned int ocfs2_clusters_to_megabytes(struct super_block *sb,
+						       unsigned int clusters)
+{
+	return clusters >> (20 - OCFS2_SB(sb)->s_clustersize_bits);
+}
+
 
 static inline void _ocfs2_set_bit(unsigned int bit, unsigned long *bitmap)
 {

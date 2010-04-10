@@ -22,7 +22,7 @@
 
 #include <linux/rbtree.h>
 
-#define OCFS2_DEFAULT_RESV_LEVEL	4
+#define OCFS2_DEFAULT_RESV_LEVEL	2
 #define OCFS2_MAX_RESV_LEVEL	9
 #define OCFS2_MIN_RESV_LEVEL	0
 
@@ -66,6 +66,8 @@ void ocfs2_resv_init_once(struct ocfs2_alloc_reservation *resv);
 #define OCFS2_RESV_TYPES	(OCFS2_RESV_FLAG_TMP|OCFS2_RESV_FLAG_DIR)
 void ocfs2_resv_set_type(struct ocfs2_alloc_reservation *resv,
 			 unsigned int flags);
+
+int ocfs2_dir_resv_allowed(struct ocfs2_super *osb);
 
 /**
  * ocfs2_resv_discard() - truncate a reservation
