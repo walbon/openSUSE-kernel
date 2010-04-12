@@ -705,6 +705,9 @@ static int synaptics_reconnect(struct psmouse *psmouse)
 		return -1;
 	}
 
+	if (priv->has_led)
+		synaptics_set_led(psmouse, priv->led_status);
+
 	return 0;
 }
 

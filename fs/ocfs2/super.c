@@ -95,8 +95,9 @@ struct mount_options
 	unsigned long	mount_opt;
 	unsigned int	atime_quantum;
 	signed short	slot;
-	unsigned int	localalloc_opt;
+	int		localalloc_opt;
 	unsigned int	resv_level;
+	int		dir_resv_level;
 	char		cluster_stack[OCFS2_STACK_LABEL_LEN + 1];
 };
 
@@ -179,6 +180,7 @@ enum {
 	Opt_usrquota,
 	Opt_grpquota,
 	Opt_resv_level,
+	Opt_dir_resv_level,
 	Opt_err,
 };
 
@@ -206,6 +208,7 @@ static const match_table_t tokens = {
 	{Opt_usrquota, "usrquota"},
 	{Opt_grpquota, "grpquota"},
 	{Opt_resv_level, "resv_level=%u"},
+	{Opt_dir_resv_level, "dir_resv_level=%u"},
 	{Opt_err, NULL}
 };
 
@@ -1032,9 +1035,14 @@ static int ocfs2_fill_super(struct super_block *sb, void *data, int silent)
 	osb->s_atime_quantum = parsed_options.atime_quantum;
 	osb->preferred_slot = parsed_options.slot;
 	osb->osb_commit_interval = parsed_options.commit_interval;
-	osb->local_alloc_default_bits = ocfs2_megabytes_to_clusters(sb, parsed_options.localalloc_opt);
-	osb->local_alloc_bits = osb->local_alloc_default_bits;
+
+	ocfs2_la_set_sizes(osb, parsed_options.localalloc_opt);
 	osb->osb_resv_level = parsed_options.resv_level;
+	osb->osb_dir_resv_level = parsed_options.resv_level;
+	if (parsed_options.dir_resv_level == -1)
+		osb->osb_dir_resv_level = parsed_options.resv_level;
+	else
+		osb->osb_dir_resv_level = parsed_options.dir_resv_level;
 
 	status = ocfs2_verify_userspace_stack(osb, &parsed_options);
 	if (status)
@@ -1293,9 +1301,10 @@ static int ocfs2_parse_options(struct super_block *sb,
 	mopt->mount_opt = 0;
 	mopt->atime_quantum = OCFS2_DEFAULT_ATIME_QUANTUM;
 	mopt->slot = OCFS2_INVALID_SLOT;
-	mopt->localalloc_opt = OCFS2_DEFAULT_LOCAL_ALLOC_SIZE;
+	mopt->localalloc_opt = -1;
 	mopt->cluster_stack[0] = '\0';
 	mopt->resv_level = OCFS2_DEFAULT_RESV_LEVEL;
+	mopt->dir_resv_level = -1;
 
 	if (!options) {
 		status = 1;
@@ -1386,7 +1395,7 @@ static int ocfs2_parse_options(struct super_block *sb,
 				status = 0;
 				goto bail;
 			}
-			if (option >= 0 && (option <= ocfs2_local_alloc_size(sb) * 8))
+			if (option >= 0)
 				mopt->localalloc_opt = option;
 			break;
 		case Opt_localflocks:
@@ -1450,6 +1459,17 @@ static int ocfs2_parse_options(struct super_block *sb,
 			    option < OCFS2_MAX_RESV_LEVEL)
 				mopt->resv_level = option;
 			break;
+		case Opt_dir_resv_level:
+			if (is_remount)
+				break;
+			if (match_int(&args[0], &option)) {
+				status = 0;
+				goto bail;
+			}
+			if (option >= OCFS2_MIN_RESV_LEVEL &&
+			    option < OCFS2_MAX_RESV_LEVEL)
+				mopt->dir_resv_level = option;
+			break;
 		default:
 			mlog(ML_ERROR,
 			     "Unrecognized mount option \"%s\" "
@@ -1504,7 +1524,7 @@ static int ocfs2_show_options(struct seq_file *s, struct vfsmount *mnt)
 			   (unsigned) (osb->osb_commit_interval / HZ));
 
 	local_alloc_megs = osb->local_alloc_bits >> (20 - osb->s_clustersize_bits);
-	if (local_alloc_megs != OCFS2_DEFAULT_LOCAL_ALLOC_SIZE)
+	if (local_alloc_megs != ocfs2_la_default_mb(osb))
 		seq_printf(s, ",localalloc=%d", local_alloc_megs);
 
 	if (opts & OCFS2_MOUNT_LOCALFLOCKS)
@@ -1533,6 +1553,9 @@ static int ocfs2_show_options(struct seq_file *s, struct vfsmount *mnt)
 
 	if (osb->osb_resv_level != OCFS2_DEFAULT_RESV_LEVEL)
 		seq_printf(s, ",resv_level=%d", osb->osb_resv_level);
+
+	if (osb->osb_dir_resv_level != osb->osb_resv_level)
+		seq_printf(s, ",dir_resv_level=%d", osb->osb_resv_level);
 
 	return 0;
 }
@@ -2252,6 +2275,7 @@ static int ocfs2_initialize_super(struct super_block *sb,
 	}
 
 	osb->bitmap_blkno = OCFS2_I(inode)->ip_blkno;
+	osb->osb_clusters_at_boot = OCFS2_I(inode)->ip_clusters;
 	iput(inode);
 
 	osb->bitmap_cpg = ocfs2_group_bitmap_size(sb) * 8;

@@ -273,9 +273,18 @@ static int cnic_send_nlmsg(struct cnic_local *cp, u32 type,
 	u16 len = 0;
 	u32 msg_type = ISCSI_KEVENT_IF_DOWN;
 	struct cnic_ulp_ops *ulp_ops;
+	int count = 0;
 
-	if (cp->uio_dev == -1)
+	while (count < 40 && cp->uio_dev == -1) {
+		msleep(50);
+		count++;
+	}
+
+	if (cp->uio_dev == -1) {
+		printk(KERN_WARNING PFX, "%s: no uio dev to send nl request\n",
+			cp->dev->netdev);
 		return -ENODEV;
+	}
 
 	if (csk) {
 		len = sizeof(path_req);

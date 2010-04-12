@@ -27,7 +27,7 @@
  * set 2 is at BASE + 2*512, set 3 at BASE + 3*512, and so on.
  *
  * We will use 31 sets, one for sending BAU messages from each of the 32
- * cpu's on the node.
+ * cpu's on the uvhub.
  *
  * TLB shootdown will use the first of the 8 descriptors of each set.
  * Each of the descriptors is 64 bytes in size (8*64 = 512 bytes in a set).
@@ -65,9 +65,17 @@
 #define DESTINATION_TIMEOUT_LIMIT	20
 
 /*
+ * misc. delays, in microseconds
+ */
+#define THROTTLE_DELAY			10
+#define TIMEOUT_DELAY			20
+#define BIOS_TO				1000
+/* BIOS is assumed to set the destination timeout to 1003520 nanoseconds */
+
+/*
  * number of entries in the destination side payload queue
  */
-#define DEST_Q_SIZE			17
+#define DEST_Q_SIZE			20
 /*
  * number of destination side software ack resources
  */
@@ -90,14 +98,14 @@
  * 'base_dest_nodeid' field of the header corresponds to the
  * destination nodeID associated with that specified bit.
  */
-struct bau_target_nodemask {
+struct bau_target_uvhubmask {
 	unsigned long bits[BITS_TO_LONGS(UV_DISTRIBUTION_SIZE)];
 };
 
 /*
- * mask of cpu's on a node
+ * mask of cpu's on a uvhub
  * (during initialization we need to check that unsigned long has
- *  enough bits for max. cpu's per node)
+ *  enough bits for max. cpu's per uvhub)
  */
 struct bau_local_cpumask {
 	unsigned long bits;
@@ -139,8 +147,8 @@ struct bau_msg_payload {
 struct bau_msg_header {
 	unsigned int dest_subnodeid:6;	/* must be 0x10, for the LB */
 	/* bits 5:0 */
-	unsigned int base_dest_nodeid:15; /* nasid>>1 (pnode) of */
-	/* bits 20:6 */			  /* first bit in node_map */
+	unsigned int base_dest_nodeid:15; /* nasid (pnode<<1) of */
+	/* bits 20:6 */			  /* first bit in uvhub map */
 	unsigned int command:8;	/* message type */
 	/* bits 28:21 */
 				/* 0x38: SN3net EndPoint Message */
@@ -194,7 +202,7 @@ struct bau_msg_header {
 	/* bits 95:90 */
 	unsigned int rsvd_6:5;	/* must be zero */
 	/* bits 100:96 */
-	unsigned int int_both:1;/* if 1, interrupt both sockets on the blade */
+	unsigned int int_both:1;/* if 1, interrupt both sockets on the uvhub */
 	/* bit 101*/
 	unsigned int fairness:3;/* usually zero */
 	/* bits 104:102 */
@@ -218,7 +226,7 @@ struct bau_msg_header {
  * Should be 64 bytes
  */
 struct bau_desc {
-	struct bau_target_nodemask distribution;
+	struct bau_target_uvhubmask distribution;
 	/*
 	 * message template, consisting of header and payload:
 	 */
@@ -286,31 +294,34 @@ struct bau_payload_queue_entry {
 };
 
 /*
- * one on every node and per-cpu; to locate the software tables
+ * one per-cpu; to locate the software tables
  */
 struct bau_control {
 	struct bau_desc *descriptor_base;
 	struct bau_payload_queue_entry *va_queue_first;
 	struct bau_payload_queue_entry *va_queue_last;
 	struct bau_payload_queue_entry *bau_msg_head;
-	struct bau_control *pnode_master;
+	struct bau_control *uvhub_master;
 	struct bau_control *socket_master;
 	unsigned long timeout_interval;
-	spinlock_t quiesce_lock;
 	atomic_t active_descripter_count;
 	int max_concurrent;
 	int retry_message_scans;
 	int retry_message_actions;
 	int timeout_retry_count;
+	int consec_resets;
+	int consec_short_retries;
 	short cpu;
-	short blade_cpu;
+	short uvhub_cpu;
+	short uvhub;
 	short pnode;
 	short cpus_in_socket;
-	short cpus_in_blade;
-	unsigned short pnode_active_count;
-	unsigned short pnode_quiesce;
+	short cpus_in_uvhub;
 	unsigned short message_number;
+	unsigned short uvhub_quiesce;
 	short socket_acknowledge_count[DEST_Q_SIZE];
+	cycles_t send_message;
+	spinlock_t masks_lock;
 };
 
 /*
@@ -325,7 +336,12 @@ struct ptc_stats {
 	unsigned long s_time; /* time spent in sending side */
 	unsigned long s_retriesok; /* successful retries */
 	unsigned long s_ntargcpu; /* number of cpus targeted */
-	unsigned long s_ntargpnod; /* number of blades targeted */
+	unsigned long s_ntarguvhub; /* number of uvhubs targeted */
+	unsigned long s_ntarguvhub16; /* number of times >= 16 target hubs */
+	unsigned long s_ntarguvhub8; /* number of times >= 8 target hubs */
+	unsigned long s_ntarguvhub4; /* number of times >= 4 target hubs */
+	unsigned long s_ntarguvhub2; /* number of times >= 2 target hubs */
+	unsigned long s_ntarguvhub1; /* number of times == 1 target hub */
 	unsigned long s_resets; /* ipi-style resets */
 	unsigned long s_busy; /* status stayed busy past s/w timer */
 	/* destination statistics */
@@ -342,19 +358,20 @@ struct ptc_stats {
 	unsigned long d_rcanceled; /* number of messages canceled by resets */
 };
 
-static inline int bau_node_isset(int node, struct bau_target_nodemask *dstp)
+static inline int bau_uvhub_isset(int uvhub, struct bau_target_uvhubmask *dstp)
 {
-	return constant_test_bit(node, &dstp->bits[0]);
+	return constant_test_bit(uvhub, &dstp->bits[0]);
 }
-static inline void bau_node_set(int node, struct bau_target_nodemask *dstp)
+static inline void bau_uvhub_set(int uvhub, struct bau_target_uvhubmask *dstp)
 {
-	__set_bit(node, &dstp->bits[0]);
+	__set_bit(uvhub, &dstp->bits[0]);
 }
-static inline void bau_nodes_clear(struct bau_target_nodemask *dstp, int nbits)
+static inline void bau_uvhubs_clear(struct bau_target_uvhubmask *dstp,
+				    int nbits)
 {
 	bitmap_zero(&dstp->bits[0], nbits);
 }
-static inline int bau_node_weight(struct bau_target_nodemask *dstp)
+static inline int bau_uvhub_weight(struct bau_target_uvhubmask *dstp)
 {
 	return bitmap_weight((unsigned long *)&dstp->bits[0],
 				UV_DISTRIBUTION_SIZE);
