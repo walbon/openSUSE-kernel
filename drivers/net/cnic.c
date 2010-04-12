@@ -281,8 +281,8 @@ static int cnic_send_nlmsg(struct cnic_local *cp, u32 type,
 	}
 
 	if (cp->uio_dev == -1) {
-		printk(KERN_WARNING PFX, "%s: no uio dev to send nl request\n",
-			cp->dev->netdev);
+		printk(KERN_WARNING PFX "%s: no uio dev to send nl request\n",
+			cp->dev->netdev->name);
 		return -ENODEV;
 	}
 

@@ -2019,7 +2019,6 @@ qla24xx_msix_rsp_q(int irq, void *dev_id)
 	struct rsp_que *rsp;
 	struct device_reg_24xx __iomem *reg;
 	struct scsi_qla_host *vha;
-	unsigned long flags;
 
 	rsp = (struct rsp_que *) dev_id;
 	if (!rsp) {

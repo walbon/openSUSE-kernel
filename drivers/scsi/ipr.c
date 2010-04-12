@@ -1330,12 +1330,13 @@ static void ipr_log_enhanced_dual_ioa_error(struct ipr_ioa_cfg *ioa_cfg,
 					    struct ipr_hostrcb *hostrcb)
 {
 	struct ipr_hostrcb_type_17_error *error;
+	char *reason;
 
 	error = &hostrcb->hcam.u.error.u.type_17_error;
 	error->failure_reason[sizeof(error->failure_reason) - 1] = '\0';
-	strstrip(error->failure_reason);
+	reason = strstrip(error->failure_reason);
 
-	ipr_hcam_err(hostrcb, "%s [PRC: %08X]\n", error->failure_reason,
+	ipr_hcam_err(hostrcb, "%s [PRC: %08X]\n", reason,
 		     be32_to_cpu(hostrcb->hcam.u.error.prc));
 	ipr_log_ext_vpd_compact("Remote IOA", hostrcb, &error->vpd);
 	ipr_log_hex_data(ioa_cfg, error->data,
@@ -1356,12 +1357,13 @@ static void ipr_log_dual_ioa_error(struct ipr_ioa_cfg *ioa_cfg,
 				   struct ipr_hostrcb *hostrcb)
 {
 	struct ipr_hostrcb_type_07_error *error;
+	char *reason;
 
 	error = &hostrcb->hcam.u.error.u.type_07_error;
 	error->failure_reason[sizeof(error->failure_reason) - 1] = '\0';
-	strstrip(error->failure_reason);
+	reason = strstrip(error->failure_reason);
 
-	ipr_hcam_err(hostrcb, "%s [PRC: %08X]\n", error->failure_reason,
+	ipr_hcam_err(hostrcb, "%s [PRC: %08X]\n", reason,
 		     be32_to_cpu(hostrcb->hcam.u.error.prc));
 	ipr_log_vpd_compact("Remote IOA", hostrcb, &error->vpd);
 	ipr_log_hex_data(ioa_cfg, error->data,
