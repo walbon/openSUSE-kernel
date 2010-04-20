@@ -2259,13 +2259,11 @@ static irqreturn_t cnic_irq(int irq, void *dev_instance)
 	if (cp->ack_int)
 		cp->ack_int(dev);
 
-	if (likely(test_bit(CNIC_F_CNIC_UP, &dev->flags))) {
-		prefetch(cp->status_blk.bnx2x);
-		prefetch(&cp->kcq[KCQ_PG(prod)][KCQ_IDX(prod)]);
+	prefetch(cp->status_blk.gen);
+	prefetch(&cp->kcq[KCQ_PG(prod)][KCQ_IDX(prod)]);
 
+	if (likely(test_bit(CNIC_F_CNIC_UP, &dev->flags)))
 		tasklet_schedule(&cp->cnic_irq_task);
-		cnic_chk_pkt_rings(cp);
-	}
 
 	return IRQ_HANDLED;
 }
@@ -2344,13 +2342,13 @@ static int cnic_service_bnx2x(void *data, void *status_blk)
 	struct cnic_local *cp = dev->cnic_priv;
 	u16 prod = cp->kcq_prod_idx & MAX_KCQ_IDX;
 
-	prefetch(cp->status_blk.bnx2x);
-	prefetch(&cp->kcq[KCQ_PG(prod)][KCQ_IDX(prod)]);
+	if (likely(test_bit(CNIC_F_CNIC_UP, &dev->flags))) {
+		prefetch(cp->status_blk.bnx2x);
+		prefetch(&cp->kcq[KCQ_PG(prod)][KCQ_IDX(prod)]);
 
-	if (likely(test_bit(CNIC_F_CNIC_UP, &dev->flags)))
 		tasklet_schedule(&cp->cnic_irq_task);
-
-	cnic_chk_pkt_rings(cp);
+		cnic_chk_pkt_rings(cp);
+	}
 
 	return 0;
 }
