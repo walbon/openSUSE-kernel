@@ -1,6 +1,6 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2008 QLogic Corporation
+ * Copyright (c)  2003-2010 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
@@ -22,6 +22,8 @@
  * Driver version
  */
 char qla2x00_version_str[40];
+
+static int apidev_major;
 
 /*
  * SRB allocation cache
@@ -3465,6 +3467,10 @@ static struct pci_driver qla2xxx_pci_driver = {
 	.err_handler	= &qla2xxx_err_handler,
 };
 
+static struct file_operations apidev_fops = {
+	.owner = THIS_MODULE,
+};
+
 /**
  * qla2x00_module_init - Module initialization.
  **/
@@ -3493,6 +3499,13 @@ qla2x00_module_init(void)
 		kmem_cache_destroy(srb_cachep);
 		return -ENODEV;
 	}
+
+	apidev_major = register_chrdev(0, QLA2XXX_APIDEV, &apidev_fops);
+	if (apidev_major < 0) {
+		printk(KERN_WARNING "qla2xxx: Unable to register char device "
+		    "%s\n", QLA2XXX_APIDEV);
+	}
+
 	qla2xxx_transport_vport_template =
 	    fc_attach_transport(&qla2xxx_transport_vport_functions);
 	if (!qla2xxx_transport_vport_template) {
@@ -3518,6 +3531,7 @@ qla2x00_module_init(void)
 static void __exit
 qla2x00_module_exit(void)
 {
+	unregister_chrdev(apidev_major, QLA2XXX_APIDEV);
 	pci_unregister_driver(&qla2xxx_pci_driver);
 	qla2x00_release_firmware();
 	kmem_cache_destroy(srb_cachep);

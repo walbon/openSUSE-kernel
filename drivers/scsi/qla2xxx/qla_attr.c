@@ -1,6 +1,6 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2008 QLogic Corporation
+ * Copyright (c)  2003-2010 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
@@ -965,7 +965,8 @@ qla2x00_link_state_show(struct device *dev, struct device_attribute *attr,
 	int len = 0;
 
 	if (atomic_read(&vha->loop_state) == LOOP_DOWN ||
-	    atomic_read(&vha->loop_state) == LOOP_DEAD)
+	    atomic_read(&vha->loop_state) == LOOP_DEAD ||
+	    vha->device_flags & DFLG_NO_CABLE)
 		len = snprintf(buf, PAGE_SIZE, "Link Down\n");
 	else if (atomic_read(&vha->loop_state) != LOOP_READY ||
 	    test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags) ||
@@ -1176,9 +1177,11 @@ qla24xx_84xx_fw_version_show(struct device *dev,
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
 
-	if (IS_QLA84XX(ha) && ha->cs84xx)
-		if (ha->cs84xx->op_fw_version == 0)
-			rval = qla84xx_verify_chip(vha, status);
+	if (!IS_QLA84XX(ha))
+		return snprintf(buf, PAGE_SIZE, "\n");
+
+	if (ha->cs84xx && ha->cs84xx->op_fw_version == 0)
+		rval = qla84xx_verify_chip(vha, status);
 
 	if ((rval == QLA_SUCCESS) && (status[0] == 0))
 		return snprintf(buf, PAGE_SIZE, "%u\n",

@@ -1,6 +1,6 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2008 QLogic Corporation
+ * Copyright (c)  2003-2010 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
@@ -34,7 +34,8 @@
 #include <scsi/scsi_bsg_fc.h>
 
 #include "qla_bsg.h"
-#define QLA2XXX_DRIVER_NAME  "qla2xxx"
+#define QLA2XXX_DRIVER_NAME	"qla2xxx"
+#define QLA2XXX_APIDEV		"ql2xapidev"
 
 /*
  * We have MAILBOX_REGISTER_COUNT sized arrays in a few places,
