@@ -86,6 +86,8 @@ typedef struct {
 static pending_req_t *pending_reqs;
 static struct list_head pending_free;
 static DEFINE_SPINLOCK(pending_free_lock);
+static LIST_HEAD(pending_urb_free);
+static DEFINE_SPINLOCK(urb_free_lock);
 static DECLARE_WAIT_QUEUE_HEAD(pending_free_wq);
 
 #define USBBACK_INVALID_HANDLE (~0)
@@ -272,6 +274,15 @@ fail:
 
 static void usbbk_free_urb(struct urb *urb)
 {
+	unsigned long flags;
+
+	spin_lock_irqsave(&urb_free_lock, flags);
+	list_add(&urb->urb_list, &pending_urb_free);
+	spin_unlock_irqrestore(&urb_free_lock, flags);
+}
+
+static void _usbbk_free_urb(struct urb *urb)
+{
 	if (usb_pipecontrol(urb->pipe))
 		usb_buffer_free(urb->dev, sizeof(struct usb_ctrlrequest),
 				urb->setup_packet, urb->setup_dma);
@@ -280,6 +291,29 @@ static void usbbk_free_urb(struct urb *urb)
 				urb->transfer_buffer, urb->transfer_dma);
 	barrier();
 	usb_free_urb(urb);
+}
+
+static void usbbk_free_urbs(void)
+{
+	unsigned long flags;
+	struct list_head tmp_list;
+
+	if (list_empty(&pending_urb_free))
+		return;
+
+	INIT_LIST_HEAD(&tmp_list);
+
+	spin_lock_irqsave(&urb_free_lock, flags);
+	list_splice_init(&pending_urb_free, &tmp_list);
+	spin_unlock_irqrestore(&urb_free_lock, flags);
+
+	while (!list_empty(&tmp_list)) {
+		struct urb *next_urb = list_first_entry(&tmp_list, struct urb,
+							urb_list);
+
+		list_del(&next_urb->urb_list);
+		_usbbk_free_urb(next_urb);
+	}
 }
 
 static void usbbk_notify_work(usbif_t *usbif)
@@ -1059,8 +1093,11 @@ int usbbk_schedule(void *arg)
 
 		if (usbbk_start_submit_urb(usbif))
 			usbif->waiting_reqs = 1;
+
+		usbbk_free_urbs();
 	}
 
+	usbbk_free_urbs();
 	usbif->xenusbd = NULL;
 	usbif_put(usbif);
 

@@ -1160,6 +1160,19 @@ int kern_addr_valid(unsigned long addr)
 	if (above != 0 && above != -1UL)
 		return 0;
 
+#ifdef CONFIG_XEN
+	/*
+	 * Don't walk page tables for hypervisor addresses, but allow
+	 * the M2P table to be accessed through e.g. /proc/kcore.
+	 */
+	if (addr >= (unsigned long)machine_to_phys_mapping &&
+	    addr < (unsigned long)(machine_to_phys_mapping +
+				   (1UL << machine_to_phys_order)))
+		return 1;
+	if (addr >= HYPERVISOR_VIRT_START && addr < HYPERVISOR_VIRT_END)
+		return 0;
+#endif
+
 	pgd = pgd_offset_k(addr);
 	if (pgd_none(*pgd))
 		return 0;
