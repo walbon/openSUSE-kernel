@@ -35,6 +35,9 @@
 #include <linux/kexec.h>
 #include <linux/jhash.h>
 #include <linux/device.h>
+#ifdef CONFIG_KDB
+#include <linux/kdb.h>
+#endif
 
 #include <asm/uaccess.h>
 
@@ -607,7 +610,14 @@ asmlinkage int printk(const char *fmt, ...)
 {
 	va_list args;
 	int r;
-
+#ifdef CONFIG_KDB
+	if (unlikely(kdb_trap_printk)) {
+		va_start(args, fmt);
+		r = vkdb_printf(fmt, args);
+		va_end(args);
+		return r;
+	}
+#endif
 	va_start(args, fmt);
 	r = vprintk(fmt, args);
 	va_end(args);

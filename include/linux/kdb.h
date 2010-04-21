@@ -120,11 +120,14 @@ extern int kdb(kdb_reason_t, int, struct pt_regs *);
 #define kdb(reason,error_code,frame) (0)
 #endif
 
+extern int kdb_trap_printk;
 /* Mainly used by kdb code, but this function is sometimes used
  * by hacked debug code so make it generally available, not private.
  */
 extern void kdb_printf(const char *,...)
 	    __attribute__ ((format (printf, 1, 2)));
+extern int vkdb_printf(const char *fmt, va_list args)
+	    __attribute__ ((format (printf, 1, 0)));
 typedef void (*kdb_printf_t)(const char *, ...)
 	     __attribute__ ((format (printf, 1, 2)));
 extern void kdb_init(void);

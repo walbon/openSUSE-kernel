@@ -61,6 +61,7 @@ static int kdb_show_stack(struct task_struct *p, void *addr, int argcount)
 	/* Use the in-kernel backtraces */
 	int old_lvl = console_loglevel;
 	console_loglevel = 15;
+	kdb_trap_printk++;
 	kdba_set_current_task(p);
 	if (addr) {
 		show_stack((struct task_struct *)p, addr);
@@ -74,6 +75,7 @@ static int kdb_show_stack(struct task_struct *p, void *addr, int argcount)
 		show_stack(p, NULL);
 	}
 	console_loglevel = old_lvl;
+	kdb_trap_printk--;
 	return 0;
 #endif /* CONFIG_IA64 */
 }

@@ -163,6 +163,7 @@ volatile extern int kdb_state[ /*NR_CPUS*/ ];
 #define KDB_STATE_GO1		0x00010000	/* go only releases one cpu */
 #define KDB_STATE_KEYBOARD	0x00020000	/* kdb entered via keyboard on this cpu */
 #define KDB_STATE_KEXEC		0x00040000	/* kexec issued */
+#define KDB_STATE_PAGER		0x00080000	/* pager is available */
 #define KDB_STATE_ARCH		0xff000000	/* Reserved for arch specific use */
 
 #define KDB_STATE_CPU(flag,cpu)		(kdb_state[cpu] & KDB_STATE_##flag)

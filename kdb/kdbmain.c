@@ -977,6 +977,7 @@ kdb_parse(const char *cmdstr)
 	if (KDB_FLAG(CMD_INTERRUPT)) {
 		/* Previous command was interrupted, newline must not repeat the command */
 		KDB_FLAG_CLEAR(CMD_INTERRUPT);
+		KDB_STATE_SET(PAGER);
 		argc = 0;	/* no repeat */
 	}
 
@@ -1472,20 +1473,17 @@ kdb_local(kdb_reason_t reason, int error, struct pt_regs *regs, kdb_dbtrap_t db_
 		kdb_nextline = 1;
 		KDB_STATE_CLEAR(SUPPRESS);
 #ifdef kdba_setjmp
-		/*
-		 * Use kdba_setjmp/kdba_longjmp to break out of
-		 * the pager early and to attempt to recover from kdb errors.
-		 */
+		/* Use kdba_setjmp/kdba_longjmp to attempt to recover from kdb errors. */
 		KDB_STATE_CLEAR(LONGJMP);
 		if (kdbjmpbuf) {
 			if (kdba_setjmp(&kdbjmpbuf[smp_processor_id()])) {
-				/* Command aborted (usually in pager) */
+				/* Command aborted */
 				continue;
 			}
 			else
 				KDB_STATE_SET(LONGJMP);
 		}
-#endif	/* kdba_setjmp */
+#endif /* kdba_setjmp */
 
 		cmdbuf = cmd_cur;
 		*cmdbuf = '\0';
@@ -2185,12 +2183,14 @@ kdb(kdb_reason_t reason, int error, struct pt_regs *regs)
 		KDB_STATE_CLEAR(GO1);
 		reason = KDB_REASON_SILENT;	/* Now silently go */
 	}
+	KDB_STATE_SET(PAGER);
 
 	/* Set up a consistent set of process stacks before talking to the user */
 	KDB_DEBUG_STATE("kdb 9", result);
 	result = kdba_main_loop(reason, reason2, error, db_result, regs);
 	reason = reason2;	/* back to original event type */
 
+	KDB_STATE_CLEAR(PAGER);
 	KDB_DEBUG_STATE("kdb 10", result);
 	kdba_adjust_ip(reason, error, regs);
 	KDB_STATE_CLEAR(LONGJMP);
@@ -2563,6 +2563,8 @@ kdb_md(int argc, const char **argv)
 		unsigned long a;
 		int n, z, num = (symbolic ? 1 : (16 / bytesperword));
 
+		if (KDB_FLAG(CMD_INTERRUPT))
+			return 0;
 		for (a = addr, z = 0; z < repeat; a += bytesperword, ++z) {
 			if (phys) {
 				if (kdb_getphysword(&word, a, bytesperword)
@@ -3105,7 +3107,9 @@ kdb_dmesg(int argc, const char **argv)
 	c = '\n';
 	while (start != end) {
 		char buf[201];
-	       	p = buf;
+		p = buf;
+ 		if (KDB_FLAG(CMD_INTERRUPT))
+			return 0;
 		while (start < end && (c = *KDB_WRAP(start)) && (p - buf) < sizeof(buf)-1) {
 			++start;
 			*p++ = c;
@@ -3332,6 +3336,8 @@ kdb_ps(int argc, const char **argv)
 	for (cpu = 0; cpu < NR_CPUS; ++cpu) {
 		if (!cpu_online(cpu))
 			continue;
+		if (KDB_FLAG(CMD_INTERRUPT))
+			return 0;
 		p = kdb_curr_task(cpu);
 		if (kdb_task_state(p, mask))
 			kdb_ps1(p);
@@ -3339,6 +3345,8 @@ kdb_ps(int argc, const char **argv)
 	kdb_printf("\n");
 	/* Now the real tasks */
 	kdb_do_each_thread(g, p) {
+		if (KDB_FLAG(CMD_INTERRUPT))
+			return 0;
 		if (kdb_task_state(p, mask))
 			kdb_ps1(p);
 	} kdb_while_each_thread(g, p);
@@ -3500,6 +3508,8 @@ kdb_help(int argc, const char **argv)
 	kdb_printf("%-15.15s %-20.20s %s\n", "Command", "Usage", "Description");
 	kdb_printf("----------------------------------------------------------\n");
 	for(i=0, kt=kdb_commands; i<kdb_max_commands; i++, kt++) {
+		if (KDB_FLAG(CMD_INTERRUPT))
+			return 0;
 		if (kt->cmd_name)
 			kdb_printf("%-15.15s %-20.20s %s\n", kt->cmd_name,
 				   kt->cmd_usage, kt->cmd_help);
