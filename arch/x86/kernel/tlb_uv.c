@@ -99,17 +99,21 @@ static inline void uv_reply_to_message(struct msg_desc *mdp,
 	struct bau_payload_queue_entry *msg;
 
 	msg = mdp->msg;
-	dw = (msg->sw_ack_vector << UV_SW_ACK_NPENDING) | msg->sw_ack_vector;
+	if (!msg->canceled) {
+		dw = (msg->sw_ack_vector << UV_SW_ACK_NPENDING) |
+						msg->sw_ack_vector;
+		uv_write_local_mmr(
+				UVH_LB_BAU_INTD_SOFTWARE_ACKNOWLEDGE_ALIAS, dw);
+	}
 	msg->replied_to = 1;
 	msg->sw_ack_vector = 0;
-	uv_write_local_mmr(UVH_LB_BAU_INTD_SOFTWARE_ACKNOWLEDGE_ALIAS, dw);
 }
 
 /*
  * Process the receipt of a RETRY message
  */
-static inline void uv_bau_retry_msg(struct msg_desc *mdp,
-				    struct bau_control *bcp)
+static inline void uv_bau_process_retry_msg(struct msg_desc *mdp,
+					    struct bau_control *bcp)
 {
 	int i;
 	int cancel_count = 0;
@@ -126,54 +130,47 @@ static inline void uv_bau_retry_msg(struct msg_desc *mdp,
 	/*
 	 * cancel any message from msg+1 to the retry itself
 	 */
-	bcp->retry_message_scans++;
 	for (msg2 = msg+1, i = 0; i < DEST_Q_SIZE; msg2++, i++) {
 		if (msg2 > mdp->va_queue_last)
 			msg2 = mdp->va_queue_first;
 		if (msg2 == msg)
 			break;
 
-		/* uv_bau_process_message: same conditions
-		   for cancellation as uv_do_reset */
+		/* same conditions for cancellation as uv_do_reset */
 		if ((msg2->replied_to == 0) && (msg2->canceled == 0) &&
 		    (msg2->sw_ack_vector) && ((msg2->sw_ack_vector &
 			msg->sw_ack_vector) == 0) &&
 		    (msg2->sending_cpu == msg->sending_cpu) &&
 		    (msg2->msg_type != MSG_NOOP)) {
-			bcp->retry_message_actions++;
 			slot2 = msg2 - mdp->va_queue_first;
 			mmr = uv_read_local_mmr
 				(UVH_LB_BAU_INTD_SOFTWARE_ACKNOWLEDGE);
 			msg_res = ((msg2->sw_ack_vector << 8) |
 				   msg2->sw_ack_vector);
 			/*
-			 * If this message timed out elsewhere so that a
-			 * retry was broadcast, it should have timed out
-			 * here too.
-			 * It is not 'replied_to' so some local cpu has not
-			 * seen it.  When it does get around to processing
-			 * the interrupt it should skip it, as it's going
-			 * to be marked 'canceled'.
+			 * This is a message retry; clear the resources held
+			 * by the previous message only if they timed out.
+			 * If it has not timed out we have an unexpected
+			 * situation to report.
 			 */
-			msg2->canceled = 1;
-			cancel_count++;
-			/*
-			 * this is a message retry; clear the resources
-			 * held by the previous message or retries even if
-			 * they did not time out
-			 */
-			if (mmr & msg_res) {
+			if (mmr & (msg_res << 8)) {
+				/*
+				 * is the resource timed out?
+				 * make everyone ignore the cancelled message.
+				 */
+				msg2->canceled = 1;
 				stat->d_canceled++;
+				cancel_count++;
 				uv_write_local_mmr(
 				    UVH_LB_BAU_INTD_SOFTWARE_ACKNOWLEDGE_ALIAS,
-					msg_res);
-			}
+					(msg_res << 8) | msg_res);
+			} else
+				printk(KERN_INFO "note bau retry: no effect\n");
 		}
 	}
 	if (!cancel_count)
 		stat->d_nocanceled++;
 }
-
 
 /*
  * Do all the things a cpu should do for a TLB shootdown message.
@@ -209,7 +206,7 @@ static void uv_bau_process_message(struct msg_desc *mdp,
 	 * cpu number.
 	 */
 	if (msg->msg_type == MSG_RETRY && bcp == bcp->uvhub_master)
-		uv_bau_retry_msg(mdp, bcp);
+		uv_bau_process_retry_msg(mdp, bcp);
 
 	/*
 	 * This is a sw_ack message, so we have to reply to it.
@@ -287,7 +284,7 @@ uv_do_reset(void *ptr)
 	 */
 	for (msg = bcp->va_queue_first, i = 0; i < DEST_Q_SIZE; msg++, i++) {
 		/* uv_do_reset: same conditions for cancellation as
-		   uv_bau_process_message */
+		   uv_bau_process_retry_msg() */
 		if ((msg->replied_to == 0) &&
 		    (msg->canceled == 0) &&
 		    (msg->sending_cpu == rap->sender) &&
@@ -300,18 +297,12 @@ uv_do_reset(void *ptr)
 			slot = msg - bcp->va_queue_first;
 			count++;
 			/*
-			 * only reset the resource if it is still
-			 * pending
+			 * only reset the resource if it is still pending
 			 */
 			mmr = uv_read_local_mmr
 					(UVH_LB_BAU_INTD_SOFTWARE_ACKNOWLEDGE);
 			msg_res = ((msg->sw_ack_vector << 8) |
 						   msg->sw_ack_vector);
-			/*
-			 * this is an ipi-method reset; clear the resources
-			 * held by previous message or retries even if they
-			 * did not time out
-			 */
 			if (mmr & msg_res) {
 				stat->d_rcanceled++;
 				uv_write_local_mmr(
@@ -328,7 +319,7 @@ uv_do_reset(void *ptr)
  * a given sending cpu number.
  */
 static void uv_reset_with_ipi(struct bau_target_uvhubmask *distribution,
-		int sender)
+			      int sender)
 {
 	int uvhub;
 	int cpu;
@@ -388,13 +379,12 @@ end_uvhub_quiesce(struct bau_control *hmaster)
 
 /*
  * Wait for completion of a broadcast software ack message
- * return COMPLETE, RETRY or GIVEUP
+ * return COMPLETE, RETRY(PLUGGED or TIMEOUT) or GIVEUP
  */
 static int uv_wait_completion(struct bau_desc *bau_desc,
 	unsigned long mmr_offset, int right_shift, int this_cpu,
 	struct bau_control *bcp, struct bau_control *smaster, long try)
 {
-	long source_timeouts = 0;
 	int relaxes = 0;
 	unsigned long descriptor_status;
 	unsigned long mmr;
@@ -419,14 +409,8 @@ static int uv_wait_completion(struct bau_desc *bau_desc,
 		 * state will stay IDLE.
 		 */
 		if (descriptor_status == DESC_STATUS_SOURCE_TIMEOUT) {
-			source_timeouts++;
 			stat->s_stimeout++;
-			if (source_timeouts > SOURCE_TIMEOUT_LIMIT) {
-				source_timeouts = 0;
-				printk(KERN_INFO
-			   "uv_wait_completion dest cpus done; FLUSH_RETRY\n");
-			}
-			return FLUSH_RETRY;
+			return FLUSH_GIVEUP;
 		} else if (descriptor_status ==
 					DESC_STATUS_DESTINATION_TIMEOUT) {
 			stat->s_dtimeout++;
@@ -439,35 +423,17 @@ static int uv_wait_completion(struct bau_desc *bau_desc,
 			 * ERROR that looks like a destination timeout.
 			 */
 			if (cycles_2_us(ttime - bcp->send_message) < BIOS_TO) {
-				/* wait for some completions, and stagger
-				   when each uvhub takes off again */
-				bcp->consec_short_retries++;
-				udelay((bcp->uvhub+1) * TIMEOUT_DELAY);
-				return FLUSH_RETRY;
+				bcp->conseccompletes = 0;
+				return FLUSH_RETRY_PLUGGED;
 			}
 
-			/*
-			 * After 1000 retries clear this situation
-			 * with an IPI message.
-			 */
-			if (bcp->timeout_retry_count >= 1000) {
-				bcp->timeout_retry_count = 0;
-				bcp->consec_resets++;
-				stat->s_resets++;
-				uv_reset_with_ipi(&bau_desc->distribution,
-							this_cpu);
-			}
-			bcp->timeout_retry_count++;
-			return FLUSH_RETRY;
+			bcp->conseccompletes = 0;
+			return FLUSH_RETRY_TIMEOUT;
 		} else {
 			/*
 			 * descriptor_status is still BUSY
 			 */
 			cpu_relax();
-			/*
-			 * the throttle should eliminate the need for
-			 * a test for the stay-busy bug
-			 */
 			relaxes++;
 			if (relaxes >= 10000) {
 				relaxes = 0;
@@ -476,9 +442,6 @@ static int uv_wait_completion(struct bau_desc *bau_desc,
 
 					/* single-thread the register change */
 					spin_lock(&hmaster->masks_lock);
-					printk(KERN_EMERG
-					"uvhub %d cpu %d (%d) reseting mmr\n",
- 					 bcp->uvhub, bcp->uvhub_cpu, bcp->cpu);
 					mmr = uv_read_local_mmr(mmr_offset);
 					mask = 0UL;
 					mask |= (3UL < right_shift);
@@ -486,15 +449,14 @@ static int uv_wait_completion(struct bau_desc *bau_desc,
 					mmr &= mask;
 					uv_write_local_mmr(mmr_offset, mmr);
 					spin_unlock(&hmaster->masks_lock);
-
 					end_uvhub_quiesce(hmaster);
-					return FLUSH_RETRY;
+					stat->s_busy++;
+					return FLUSH_GIVEUP;
 				}
 			}
 		}
 	}
-	bcp->consec_resets=0;
-	bcp->consec_short_retries=0;
+	bcp->conseccompletes++;
 	return FLUSH_COMPLETE;
 }
 
@@ -507,6 +469,28 @@ sec_2_cycles(unsigned long sec)
 	ns = sec * 1000000000;
 	cyc = (ns << CYC2NS_SCALE_FACTOR)/(per_cpu(cyc2ns, smp_processor_id()));
 	return cyc;
+}
+
+/*
+ * conditionally add 1 to *v, unless *v is >= u
+ * return 0 if we cannot add 1 to *v because it is >= u
+ * return 1 if we can add 1 to *v because it is < u
+ * the add is atomic
+ *
+ * This is close to atomic_add_unless(), but this allows the 'u' value
+ * to be lowered below the current 'v'.  atomic_add_unless can only stop
+ * on equal.
+ */
+static inline int atomic_inc_unless_ge(spinlock_t *lock, atomic_t *v, int u)
+{
+	spin_lock(lock);
+	if (atomic_read(v) >= u) {
+		spin_unlock(lock);
+		return 0;
+	}
+	atomic_inc(v);
+	spin_unlock(lock);
+	return 1;
 }
 
 /**
@@ -540,20 +524,27 @@ const struct cpumask *uv_flush_send_and_wait(struct bau_desc *bau_desc,
 	unsigned long index;
 	cycles_t time1;
 	cycles_t time2;
-	cycles_t while_timeout;
 	struct ptc_stats *stat = &per_cpu(ptcstats, bcp->cpu);
 	struct bau_control *smaster = bcp->socket_master;
 	struct bau_control *hmaster = bcp->uvhub_master;
 
-	/* spin here while there are bcp->max_concurrent active descriptors */
-	while (!atomic_add_unless(&hmaster->active_descripter_count, 1,
-						hmaster->max_concurrent)) {
-		udelay(THROTTLE_DELAY);
-		cpu_relax();
+	/*
+	 * Spin here while there are hmaster->max_concurrent or more active
+	 * descriptors. This is the per-uvhub 'throttle'.
+	 */
+	if (!atomic_inc_unless_ge(&hmaster->uvhub_lock,
+			&hmaster->active_descriptor_count,
+			hmaster->max_concurrent)) {
+		stat->s_throttles++;
+		do {
+			cpu_relax();
+		} while (!atomic_inc_unless_ge(&hmaster->uvhub_lock,
+			&hmaster->active_descriptor_count,
+			hmaster->max_concurrent));
 	}
-	while (hmaster->uvhub_quiesce) {
+
+	while (hmaster->uvhub_quiesce)
 		cpu_relax();
-	}
 
 	if (cpu < UV_CPUS_PER_ACT_STATUS) {
 		mmr_offset = UVH_LB_BAU_SB_ACTIVATION_STATUS_0;
@@ -563,29 +554,8 @@ const struct cpumask *uv_flush_send_and_wait(struct bau_desc *bau_desc,
 		right_shift =
 		    ((cpu - UV_CPUS_PER_ACT_STATUS) * UV_ACT_STATUS_SIZE);
 	}
-	bcp->timeout_retry_count = 0;
-	while_timeout = get_cycles() + sec_2_cycles(5);
 	time1 = get_cycles();
 	do {
-		/* in case something unexpected goes wrong and we get
-		   unending destination timeouts: */
-		if (get_cycles() > while_timeout) {
-			completion_status = FLUSH_GIVEUP;
-			break;
-		}
-		if (completion_status == FLUSH_RETRY) {
-			if (bcp->consec_short_retries > 10) {
-				completion_status = FLUSH_GIVEUP;
-				break;
-			}
-			if (bcp->consec_resets > 10) {
-				completion_status = FLUSH_GIVEUP;
-				printk(KERN_INFO
-					"Error: disabling use of BAU\n");
-				nobau = 1;
-				break;
-			}
-		}
 		/*
 		 * Every message from any given cpu gets a unique message
 		 * sequence number. But retries use that same number.
@@ -594,9 +564,6 @@ const struct cpumask *uv_flush_send_and_wait(struct bau_desc *bau_desc,
 		 * pending there.  In that case, our last send never got
 		 * placed into the queue and we need to persist until it
 		 * does.
-		 * The uv_wait_completion() function will take care of
-		 * sending the occasional reset message to clear this
-		 * message number and the resource it is using.
 		 *
 		 * Make any retry a type MSG_RETRY so that the destination will
 		 * free any resource held by a previous message from this cpu.
@@ -607,6 +574,7 @@ const struct cpumask *uv_flush_send_and_wait(struct bau_desc *bau_desc,
 		} else {
 			/* use RETRY type on all the rest; same sequence */
 			bau_desc->header.msg_type = MSG_RETRY;
+			stat->s_retry_messages++;
 		}
 		bau_desc->header.sequence = seq_number;
 		index = (1UL << UVH_LB_BAU_SB_ACTIVATION_CONTROL_PUSH_SHFT) |
@@ -618,16 +586,64 @@ const struct cpumask *uv_flush_send_and_wait(struct bau_desc *bau_desc,
 		try++;
 		completion_status = uv_wait_completion(bau_desc, mmr_offset,
 			right_shift, this_cpu, bcp, smaster, try);
-		cpu_relax();
-	} while (completion_status == FLUSH_RETRY);
-	time2 = get_cycles();
-	atomic_dec(&hmaster->active_descripter_count);
 
-	/* hold any cpu not timing out here; no other cpu currently held by
-	   the 'throttle' should enter the activation code */
-	while (hmaster->uvhub_quiesce) {
+		if (completion_status == FLUSH_RETRY_PLUGGED) {
+			/*
+			 * Our retries may be blocked by all destination swack
+			 * resources being consumed, and a timeout pending. In
+			 * that case hardware immediately returns the ERROR
+			 * that looks like a destination timeout.
+			 */
+			udelay(TIMEOUT_DELAY);
+			bcp->plugged_tries++;
+			if (bcp->plugged_tries >= PLUGSB4RESET) {
+				bcp->plugged_tries = 0;
+				quiesce_local_uvhub(hmaster);
+				spin_lock(&hmaster->queue_lock);
+				uv_reset_with_ipi(&bau_desc->distribution,
+							this_cpu);
+				spin_unlock(&hmaster->queue_lock);
+				end_uvhub_quiesce(hmaster);
+				bcp->ipi_attempts++;
+				stat->s_resets_plug++;
+			}
+		} else if (completion_status == FLUSH_RETRY_TIMEOUT) {
+			hmaster->max_concurrent = 1;
+			bcp->timeout_tries++;
+			udelay(TIMEOUT_DELAY);
+			if (bcp->timeout_tries >= TIMEOUTSB4RESET) {
+				bcp->timeout_tries = 0;
+				quiesce_local_uvhub(hmaster);
+				spin_lock(&hmaster->queue_lock);
+				uv_reset_with_ipi(&bau_desc->distribution,
+								this_cpu);
+				spin_unlock(&hmaster->queue_lock);
+				end_uvhub_quiesce(hmaster);
+				bcp->ipi_attempts++;
+				stat->s_resets_timeout++;
+			}
+		}
+		if (bcp->ipi_attempts >= 3) {
+			bcp->ipi_attempts = 0;
+			completion_status = FLUSH_GIVEUP;
+			break;
+		}
 		cpu_relax();
-	}
+	} while ((completion_status == FLUSH_RETRY_PLUGGED) ||
+		 (completion_status == FLUSH_RETRY_TIMEOUT));
+	time2 = get_cycles();
+
+	if ((completion_status == FLUSH_COMPLETE) && (bcp->conseccompletes > 5)
+	    && (hmaster->max_concurrent < hmaster->max_concurrent_constant))
+			hmaster->max_concurrent++;
+
+	/*
+	 * hold any cpu not timing out here; no other cpu currently held by
+	 * the 'throttle' should enter the activation code
+	 */
+	while (hmaster->uvhub_quiesce)
+		cpu_relax();
+	atomic_dec(&hmaster->active_descriptor_count);
 
 	/* guard against cycles wrap */
 	if (time2 > time1)
@@ -798,13 +814,11 @@ void uv_bau_message_interrupt(struct pt_regs *regs)
 	msgdesc.va_queue_last = bcp->va_queue_last;
 	msg = bcp->bau_msg_head;
 	while (msg->sw_ack_vector) {
-		if (!msg->canceled) {
-			count++;
-			msgdesc.msg_slot = msg - msgdesc.va_queue_first;
-			msgdesc.sw_ack_slot = ffs(msg->sw_ack_vector) - 1;
-			msgdesc.msg = msg;
-			uv_bau_process_message(&msgdesc, bcp);
-		}
+		count++;
+		msgdesc.msg_slot = msg - msgdesc.va_queue_first;
+		msgdesc.sw_ack_slot = ffs(msg->sw_ack_vector) - 1;
+		msgdesc.msg = msg;
+		uv_bau_process_message(&msgdesc, bcp);
 		msg++;
 		if (msg > msgdesc.va_queue_last)
 			msg = msgdesc.va_queue_first;
@@ -920,12 +934,15 @@ static int uv_ptc_seq_show(struct seq_file *file, void *data)
 		seq_printf(file,
 			"numuvhubs4 numuvhubs2 numuvhubs1 numcpus dto ");
 		seq_printf(file,
-			"retried resets giveup sto bz sw_ack recv rtime all ");
+			"retries rok resetp resett giveup sto bz throt ");
 		seq_printf(file,
-		 	"one mult none retry canc nocan reset rcan\n");
+			"sw_ack recv rtime all ");
+		seq_printf(file,
+			"one mult none retry canc nocan reset rcan\n");
 	}
 	if (cpu < num_possible_cpus() && cpu_online(cpu)) {
 		stat = &per_cpu(ptcstats, cpu);
+		/* source side statistics */
 		seq_printf(file,
 			"cpu %d %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld ",
 			   cpu, stat->s_requestor, cycles_2_us(stat->s_time),
@@ -933,9 +950,12 @@ static int uv_ptc_seq_show(struct seq_file *file, void *data)
 			   stat->s_ntarguvhub8, stat->s_ntarguvhub4,
 			   stat->s_ntarguvhub2, stat->s_ntarguvhub1,
 			   stat->s_ntargcpu, stat->s_dtimeout);
-		seq_printf(file, "%ld %ld %ld %ld %ld ",
- 			   stat->s_retriesok, stat->s_resets,
-			   stat->s_giveup, stat->s_stimeout, stat->s_busy);
+		seq_printf(file, "%ld %ld %ld %ld %ld %ld %ld %ld ",
+			   stat->s_retry_messages, stat->s_retriesok,
+			   stat->s_resets_plug, stat->s_resets_timeout,
+			   stat->s_giveup, stat->s_stimeout,
+			   stat->s_busy, stat->s_throttles);
+		/* destination side statistics */
 		seq_printf(file,
 			   "%lx %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld\n",
 			   uv_read_global_mmr64(uv_cpu_to_pnode(cpu),
@@ -946,7 +966,6 @@ static int uv_ptc_seq_show(struct seq_file *file, void *data)
 			   stat->d_nocanceled, stat->d_resets,
 			   stat->d_rcanceled);
 	}
-
 
 	return 0;
 }
@@ -999,13 +1018,21 @@ static ssize_t uv_ptc_proc_write(struct file *file, const char __user *user,
 		printk(KERN_DEBUG
 		"dto:      number of destination timeouts\n");
 		printk(KERN_DEBUG
-		"retried:  destination timeouts successfully retried\n");
+		"retries:  destination timeout retries sent\n");
 		printk(KERN_DEBUG
-		"resets:   ipi-style resource resets done\n");
+		"rok:   :  destination timeouts successfully retried\n");
+		printk(KERN_DEBUG
+		"resetp:   ipi-style resource resets for plugs\n");
+		printk(KERN_DEBUG
+		"resett:   ipi-style resource resets for timeouts\n");
 		printk(KERN_DEBUG
 		"giveup:   fall-backs to ipi-style shootdowns\n");
 		printk(KERN_DEBUG
 		"sto:      number of source timeouts\n");
+		printk(KERN_DEBUG
+		"bz:       number of stay-busy's\n");
+		printk(KERN_DEBUG
+		"throt:    number times spun in throttle\n");
 		printk(KERN_DEBUG "Destination side statistics:\n");
 		printk(KERN_DEBUG
 		"sw_ack:   image of UVH_LB_BAU_INTD_SOFTWARE_ACKNOWLEDGE\n");
@@ -1189,7 +1216,6 @@ uv_payload_queue_init(int node, int pnode)
 		bcp->va_queue_first = pqp;
 		bcp->bau_msg_head = pqp;
 		bcp->va_queue_last = pqp + (DEST_Q_SIZE - 1);
-		bcp->timeout_interval = millisec_2_cycles(1);
 	}
 	/*
 	 * need the pnode of where the memory was really allocated
@@ -1274,7 +1300,7 @@ static void uv_init_per_cpu(int nuvhubs)
 		bdp->uvhub = uvhub;
 		bdp->pnode = pnode;
 		/* time interval to catch a hardware stay-busy bug */
-		bcp->timeout_interval = millisec_2_cycles(2);
+		bcp->timeout_interval = millisec_2_cycles(3);
 		/* kludge: assume uv_hub.h is constant */
 		socket = (cpu_physical_id(cpu)>>5)&1;
 		if (socket >= bdp->num_sockets)
@@ -1303,7 +1329,6 @@ static void uv_init_per_cpu(int nuvhubs)
 				bcp->uvhub_master = hmaster;
 				for (k = 0; k < DEST_Q_SIZE; k++)
 					bcp->socket_acknowledge_count[k] = 0;
-				bcp->pnode = bdp->pnode;
 				bcp->uvhub_cpu =
 				  uv_cpu_hub_info(cpu)->blade_processor_id;
 			}
@@ -1367,5 +1392,5 @@ static int __init uv_bau_init(void)
 
 	return 0;
 }
-__initcall(uv_bau_init);
-__initcall(uv_ptc_init);
+core_initcall(uv_bau_init);
+core_initcall(uv_ptc_init);

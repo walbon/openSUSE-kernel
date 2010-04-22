@@ -34,7 +34,7 @@
  */
 
 #define UV_ITEMS_PER_DESCRIPTOR		8
-#define MAX_BAU_CONCURRENT		4
+#define MAX_BAU_CONCURRENT		3
 #define UV_CPUS_PER_ACT_STATUS		32
 #define UV_ACT_STATUS_MASK		0x3
 #define UV_ACT_STATUS_SIZE		2
@@ -68,9 +68,15 @@
  * misc. delays, in microseconds
  */
 #define THROTTLE_DELAY			10
-#define TIMEOUT_DELAY			20
+#define TIMEOUT_DELAY			10
 #define BIOS_TO				1000
 /* BIOS is assumed to set the destination timeout to 1003520 nanoseconds */
+
+/*
+ * threshholds at which to use IPI to free resources
+ */
+#define PLUGSB4RESET 100
+#define TIMEOUTSB4RESET 100
 
 /*
  * number of entries in the destination side payload queue
@@ -84,9 +90,10 @@
 /*
  * completion statuses for sending a TLB flush message
  */
-#define	FLUSH_RETRY			1
-#define	FLUSH_GIVEUP			2
-#define	FLUSH_COMPLETE			3
+#define FLUSH_RETRY_PLUGGED		1
+#define FLUSH_RETRY_TIMEOUT		2
+#define FLUSH_GIVEUP			3
+#define FLUSH_COMPLETE			4
 
 /*
  * Distribution: 32 bytes (256 bits) (bytes 0-0x1f of descriptor)
@@ -304,17 +311,17 @@ struct bau_control {
 	struct bau_control *uvhub_master;
 	struct bau_control *socket_master;
 	unsigned long timeout_interval;
-	atomic_t active_descripter_count;
+	atomic_t active_descriptor_count;
 	int max_concurrent;
+	int max_concurrent_constant;
 	int retry_message_scans;
-	int retry_message_actions;
-	int timeout_retry_count;
-	int consec_resets;
-	int consec_short_retries;
+	int plugged_tries;
+	int timeout_tries;
+	int ipi_attempts;
+	int conseccompletes;
 	short cpu;
 	short uvhub_cpu;
 	short uvhub;
-	short pnode;
 	short cpus_in_socket;
 	short cpus_in_uvhub;
 	unsigned short message_number;
@@ -322,6 +329,8 @@ struct bau_control {
 	short socket_acknowledge_count[DEST_Q_SIZE];
 	cycles_t send_message;
 	spinlock_t masks_lock;
+	spinlock_t uvhub_lock;
+	spinlock_t queue_lock;
 };
 
 /*
@@ -342,8 +351,11 @@ struct ptc_stats {
 	unsigned long s_ntarguvhub4; /* number of times >= 4 target hubs */
 	unsigned long s_ntarguvhub2; /* number of times >= 2 target hubs */
 	unsigned long s_ntarguvhub1; /* number of times == 1 target hub */
-	unsigned long s_resets; /* ipi-style resets */
+	unsigned long s_resets_plug; /* ipi-style resets from plug state */
+	unsigned long s_resets_timeout; /* ipi-style resets from timeouts */
 	unsigned long s_busy; /* status stayed busy past s/w timer */
+	unsigned long s_throttles; /* waits in throttle */
+	unsigned long s_retry_messages; /* retry broadcasts */
 	/* destination statistics */
 	unsigned long d_alltlb; /* times all tlb's on this cpu were flushed */
 	unsigned long d_onetlb; /* times just one tlb on this cpu was flushed */
