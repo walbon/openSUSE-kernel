@@ -2937,6 +2937,8 @@ kdb_lsmod(int argc, const char **argv)
 
 	kdb_printf("Module                  Size  modstruct     Used by\n");
 	list_for_each_entry(mod, kdb_modules, list) {
+		if (KDB_FLAG(CMD_INTERRUPT))
+			return 0;
 
 		kdb_printf("%-20s%8u  0x%p ", mod->name,
 			   mod->core_size, (void *)mod);
@@ -2990,6 +2992,8 @@ kdb_env(int argc, const char **argv)
 	int i;
 
 	for(i=0; i<__nenv; i++) {
+		if (KDB_FLAG(CMD_INTERRUPT))
+			return 0;
 		if (__env[i]) {
 			kdb_printf("%s\n", __env[i]);
 		}

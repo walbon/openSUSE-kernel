@@ -792,8 +792,8 @@ kdb_print_out:
 	return retlen;
 }
 
-void
-kdb_printf(const char *fmt, ...)
+
+void kdb_printf(const char *fmt, ...)
 {
 	va_list ap;
 
