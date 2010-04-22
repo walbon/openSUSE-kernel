@@ -123,6 +123,8 @@ static int i915_resume(struct drm_device *dev)
 	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
 		/* Resume the modeset for every activated CRTC */
 		drm_helper_resume_force_mode(dev);
+		if (IS_IGDNG(dev))
+			drm_helper_resume_force_mode(dev);
 	}
 
 	dev_priv->modeset_on_lid = 0;
