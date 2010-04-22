@@ -53,6 +53,36 @@ int pid_max_max = PID_MAX_LIMIT;
 #define BITS_PER_PAGE		(PAGE_SIZE*8)
 #define BITS_PER_PAGE_MASK	(BITS_PER_PAGE-1)
 
+static int __init set_pid_max(char *str)
+{
+	u64 maxp;
+
+	if (!str)
+		return -EINVAL;
+
+	maxp = memparse(str, &str);
+
+	if (maxp < pid_max_min) {
+		pr_warning(
+		    "pid_max smaller than minimum allowed value (%u)\n",
+			pid_max_min);
+		return -EINVAL;
+	}
+	if (maxp > pid_max_max) {
+		pr_warning(
+		    "pid_max larger than maximum allowed value, using %u\n",
+			pid_max_max);
+		pid_max = pid_max_max;
+	} else {
+		pid_max = maxp;
+		pr_info("pid_max set to %u\n", pid_max);
+	}
+
+	return 0;
+}
+
+early_param("pid_max", set_pid_max);
+
 static inline int mk_pid(struct pid_namespace *pid_ns,
 		struct pidmap *map, int off)
 {

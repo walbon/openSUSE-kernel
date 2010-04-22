@@ -2033,6 +2033,17 @@ and is between 256 and 4096 characters. It is defined in the file
 	pg.		[PARIDE]
 			See Documentation/blockdev/paride.txt.
 
+	pid_max=nn[KMG]	[KNL] Maximum number of PID's to use.  On a system
+			with a large amount of processors, the default
+			pid_max may not be sufficient to allow the system
+			to boot.  The range of allowed values is limited from
+			pid_max_min to pid_max_max (configuration dependent.)
+			See kernel/pid.c and include/linux/threads.h for
+			specific values.  Note that specifying a value
+			too small may cause the system to fail to boot,
+			so that value is ignored.  Using a value too large,
+			and the largest allowed value will be used instead.
+
 	pirq=		[SMP,APIC] Manual mp-table setup
 			See Documentation/x86/i386/IO-APIC.txt.
 
