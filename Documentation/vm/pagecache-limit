@@ -4,14 +4,15 @@ The patch introduces a new tunable in the proc filesystem:
 
 /proc/sys/vm/pagecache_limit_mb
 
-This tunable sets a limit to the pagecache in megabytes.
-If non-zero, it should not be set below 4 (4MB), or the system might behave erratically. In real-life, much larger limits (a few hundred MB to some GBs) will be useful.
+This tunable sets a limit to the unmapped pages in the pagecache in megabytes.
+If non-zero, it should not be set below 4 (4MB), or the system might behave erratically. In real-life, much larger limits (a few hundred MBs) will be useful.
 
 Examples:
-echo 1024 >/proc/sys/vm/pagecache_limit_mb
+echo 512 >/proc/sys/vm/pagecache_limit_mb
 
-This sets a baseline limits for the page cache (not the buffer cache!) of 1GiB.
-NOTE: The real limit depends on the amount of free memory. Every existing free page allows the page cache to grow 16x the amount of free memory above the set baseline. As soon as the free memory is needed, we free up page cache.
+This sets a baseline limits for the page cache (not the buffer cache!) of 0.5GiB.
+As we only consider pagecache pages that are unmapped, currently mapped pages (files that are mmap'ed such as e.g. binaries and libraries as well as SysV shared memory) are not limited by this.
+NOTE: The real limit depends on the amount of free memory. Every existing free page allows the page cache to grow 8x the amount of free memory above the set baseline. As soon as the free memory is needed, we free up page cache.
 
 This feature only works if CONFIG_HIBERNATION is configured in, as the
 needed helpers only exist then.

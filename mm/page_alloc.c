@@ -5237,7 +5237,9 @@ out:
  */
 unsigned long pagecache_over_limit(int synch)
 {
-	unsigned long pgcache_pages = global_page_state(NR_FILE_PAGES);
+	/* We only want to limit unmapped page cache pages */
+	unsigned long pgcache_pages = global_page_state(NR_FILE_PAGES)
+				    - global_page_state(NR_FILE_MAPPED);
 	unsigned long free_pages = global_page_state(NR_FREE_PAGES);
 	unsigned long limit;
 
