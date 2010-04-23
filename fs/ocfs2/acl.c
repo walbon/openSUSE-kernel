@@ -168,7 +168,7 @@ static struct posix_acl *ocfs2_get_acl(struct inode *inode, int type)
 }
 
 /*
- * Helper function to set i_mode in memory and disk. Some call pahs
+ * Helper function to set i_mode in memory and disk. Some call paths
  * will not have di_bh or a journal handle to pass, in which case it
  * will create it's own.
  */

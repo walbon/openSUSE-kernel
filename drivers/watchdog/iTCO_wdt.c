@@ -116,8 +116,8 @@ enum iTCO_chipsets {
 	TCO_3450,	/* 3450 */
 	TCO_EP80579,	/* EP80579 */
 	TCO_CPT1,	/* Cougar Point */
-	TCO_CPT2,	/* Cougar Point */
-	TCO_CPT3,	/* Cougar Point */
+	TCO_CPT2,	/* Cougar Point Desktop */
+	TCO_CPT3,	/* Cougar Point Mobile */
 	TCO_CPT4,	/* Cougar Point */
 	TCO_CPT5,	/* Cougar Point */
 	TCO_CPT6,	/* Cougar Point */

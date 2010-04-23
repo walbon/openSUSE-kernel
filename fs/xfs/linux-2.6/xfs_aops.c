@@ -262,50 +262,112 @@ xfs_finish_ioend(
 }
 
 /*
- * IO write completion.
+ * Buffered IO write completion for delayed allocate extents.
  */
 STATIC void
-xfs_end_io(
-	struct work_struct *work)
+xfs_end_bio_delalloc(
+	struct work_struct	*work)
 {
-	xfs_ioend_t	*ioend = container_of(work, xfs_ioend_t, io_work);
-	struct xfs_inode *ip = XFS_I(ioend->io_inode);
-	int		error = 0;
-
-	/*
-	 * For unwritten extents we need to issue transactions to convert a
-	 * range to normal written extens after the data I/O has finished.
-	 */
-	if (ioend->io_type == IOMAP_UNWRITTEN &&
-	    likely(!ioend->io_error && !XFS_FORCED_SHUTDOWN(ip->i_mount))) {
-
-		error = xfs_iomap_write_unwritten(ip, ioend->io_offset,
-						 ioend->io_size);
-		if (error)
-			ioend->io_error = error;
-	}
-
-	/*
-	 * We might have to update the on-disk file size after extending
-	 * writes.
-	 */
-	if (ioend->io_type != IOMAP_READ) {
-		error = xfs_setfilesize(ioend);
-		ASSERT(!error || error == EAGAIN);
-	}
+	xfs_ioend_t		*ioend =
+		container_of(work, xfs_ioend_t, io_work);
+	int			error;
 
 	/*
 	 * If we didn't complete processing of the ioend, requeue it to the
 	 * tail of the workqueue for another attempt later. Otherwise destroy
 	 * it.
 	 */
+	error = xfs_setfilesize(ioend);
 	if (error == EAGAIN) {
 		atomic_inc(&ioend->io_remaining);
 		xfs_finish_ioend(ioend, 0);
 		/* ensure we don't spin on blocked ioends */
 		delay(1);
-	} else
+	} else {
+		ASSERT(!error);
 		xfs_destroy_ioend(ioend);
+	}
+}
+
+/*
+ * Buffered IO write completion for regular, written extents.
+ */
+STATIC void
+xfs_end_bio_written(
+	struct work_struct	*work)
+{
+	xfs_ioend_t		*ioend =
+		container_of(work, xfs_ioend_t, io_work);
+	int			error;
+
+	/*
+	 * If we didn't complete processing of the ioend, requeue it to the
+	 * tail of the workqueue for another attempt later. Otherwise destroy
+	 * it.
+	 */
+	error = xfs_setfilesize(ioend);
+	if (error == EAGAIN) {
+		atomic_inc(&ioend->io_remaining);
+		xfs_finish_ioend(ioend, 0);
+		/* ensure we don't spin on blocked ioends */
+		delay(1);
+	} else {
+		ASSERT(!error);
+		xfs_destroy_ioend(ioend);
+	}
+}
+
+/*
+ * IO write completion for unwritten extents.
+ *
+ * Issue transactions to convert a buffer range from unwritten
+ * to written extents.
+ */
+STATIC void
+xfs_end_bio_unwritten(
+	struct work_struct	*work)
+{
+	xfs_ioend_t		*ioend =
+		container_of(work, xfs_ioend_t, io_work);
+	struct xfs_inode	*ip = XFS_I(ioend->io_inode);
+	xfs_off_t		offset = ioend->io_offset;
+	size_t			size = ioend->io_size;
+
+	if (likely(!ioend->io_error)) {
+		int	error;
+		if (!XFS_FORCED_SHUTDOWN(ip->i_mount)) {
+			error = xfs_iomap_write_unwritten(ip, offset, size);
+			if (error)
+				ioend->io_error = error;
+		}
+		/*
+		 * If we didn't complete processing of the ioend, requeue it to the
+		 * tail of the workqueue for another attempt later. Otherwise destroy
+		 * it.
+		 */
+		error = xfs_setfilesize(ioend);
+		if (error == EAGAIN) {
+			atomic_inc(&ioend->io_remaining);
+			xfs_finish_ioend(ioend, 0);
+			/* ensure we don't spin on blocked ioends */
+			delay(1);
+			return;
+		}
+	}
+	xfs_destroy_ioend(ioend);
+}
+
+/*
+ * IO read completion for regular, written extents.
+ */
+STATIC void
+xfs_end_bio_read(
+	struct work_struct	*work)
+{
+	xfs_ioend_t		*ioend =
+		container_of(work, xfs_ioend_t, io_work);
+
+	xfs_destroy_ioend(ioend);
 }
 
 /*
@@ -339,7 +401,15 @@ xfs_alloc_ioend(
 	ioend->io_offset = 0;
 	ioend->io_size = 0;
 
-	INIT_WORK(&ioend->io_work, xfs_end_io);
+	if (type == IOMAP_UNWRITTEN)
+		INIT_WORK(&ioend->io_work, xfs_end_bio_unwritten);
+	else if (type == IOMAP_DELAY)
+		INIT_WORK(&ioend->io_work, xfs_end_bio_delalloc);
+	else if (type == IOMAP_READ)
+		INIT_WORK(&ioend->io_work, xfs_end_bio_read);
+	else
+		INIT_WORK(&ioend->io_work, xfs_end_bio_written);
+
 	return ioend;
 }
 
@@ -1501,7 +1571,7 @@ xfs_end_io_direct(
 		 * didn't map an unwritten extent so switch it's completion
 		 * handler.
 		 */
-		ioend->io_type = IOMAP_NEW;
+		INIT_WORK(&ioend->io_work, xfs_end_bio_written);
 		xfs_finish_ioend(ioend, 0);
 	}
 

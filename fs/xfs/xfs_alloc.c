@@ -2709,7 +2709,6 @@ xfs_alloc_search_busy(xfs_trans_t *tp,
 	mp = tp->t_mountp;
 
 	spin_lock(&mp->m_perag[agno].pagb_lock);
-
 	uend = bno + len - 1;
 
 	/*
@@ -2722,20 +2721,17 @@ xfs_alloc_search_busy(xfs_trans_t *tp,
 		bsy = &mp->m_perag[agno].pagb_list[cnt];
 		if (!bsy->busy_tp)
 			continue;
-
 		bend = bsy->busy_start + bsy->busy_length - 1;
 		if (bno > bend || uend < bsy->busy_start)
 			continue;
+
 		/* (start1,length1) within (start2, length2) */
 		if (XFS_LSN_CMP(bsy->busy_tp->t_commit_lsn, lsn) > 0)
 			lsn = bsy->busy_tp->t_commit_lsn;
 	}
 	spin_unlock(&mp->m_perag[agno].pagb_lock);
-
-	/*
-	 * If a block was found, force the log through the LSN of the
-	 * transaction that freed the block
-	 */
+	TRACE_BUSYSEARCH("xfs_alloc_search_busy", lsn ? "found" : "not-found",
+						agno, bno, len, tp);
 	if (lsn)
 		xfs_log_force(mp, lsn, XFS_LOG_FORCE|XFS_LOG_SYNC);
 }

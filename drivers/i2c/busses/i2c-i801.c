@@ -42,7 +42,7 @@
   ICH10                 0x3a30     32     hard     yes     yes     yes
   ICH10                 0x3a60     32     hard     yes     yes     yes
   3400/5 Series (PCH)   0x3b30     32     hard     yes     yes     yes
-  CPT                   0x1c22     32     hard     yes     yes     yes
+  Cougar Point (PCH)    0x1c22     32     hard     yes     yes     yes
 
   Features supported by this driver:
   Software PEC                     no
