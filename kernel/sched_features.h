@@ -3,7 +3,11 @@
  * considers the task to be running during that period. This gives it
  * a service deficit on wakeup, allowing it to run sooner.
  */
+#ifdef CONFIG_FAIR_SLEEPERS_ON_BY_DEFAULT
 SCHED_FEAT(FAIR_SLEEPERS, 1)
+#else
+SCHED_FEAT(FAIR_SLEEPERS, 0)
+#endif
 
 /*
  * Only give sleepers 50% of their service deficit. This allows
