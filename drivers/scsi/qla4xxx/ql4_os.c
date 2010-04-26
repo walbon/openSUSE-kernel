@@ -298,7 +298,7 @@ int qla4xxx_add_sess(struct ddb_entry *ddb_entry)
 {
 	int err;
 
-	ddb_entry->sess->recovery_tmo = ddb_entry->ha->port_down_retry_count;
+	ddb_entry->sess->recovery_tmo = ddb_entry->ka_timeout;
 	err = iscsi_add_session(ddb_entry->sess, ddb_entry->fw_ddb_index);
 	if (err) {
 		DEBUG2(printk(KERN_ERR "Could not add session.\n"));

@@ -160,14 +160,21 @@ static void qla4xxx_build_scsi_iocbs(struct srb *srb,
 	cmd = srb->cmd;
 	ha = srb->ha;
 
+	avail_dsds = COMMAND_SEG;
+	cur_dsd = (struct data_seg_a64 *) & (cmd_entry->dataseg[0]);
+
+	if (srb->flags & SRB_SCSI_PASSTHRU) {
+		cur_dsd->base.addrLow = cpu_to_le32(LSDW(srb->dma_handle));
+		cur_dsd->base.addrHigh = cpu_to_le32(MSDW(srb->dma_handle));
+		cur_dsd->count = cpu_to_le32(srb->dma_len);
+		return;
+	}
+
 	if (!scsi_bufflen(cmd) || cmd->sc_data_direction == DMA_NONE) {
 		/* No data being transferred */
 		cmd_entry->ttlByteCnt = __constant_cpu_to_le32(0);
 		return;
 	}
-
-	avail_dsds = COMMAND_SEG;
-	cur_dsd = (struct data_seg_a64 *) & (cmd_entry->dataseg[0]);
 
 	scsi_for_each_sg(cmd, sg, tot_dsds, i) {
 		dma_addr_t sle_dma;
@@ -255,10 +262,14 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	}
 
 	/* Calculate the number of request entries needed. */
-	nseg = scsi_dma_map(cmd);
-	if (nseg < 0)
-		goto queuing_error;
-	tot_dsds = nseg;
+	if (srb->flags & SRB_SCSI_PASSTHRU)
+		tot_dsds = 1;
+	else {
+		nseg = scsi_dma_map(cmd);
+		if (nseg < 0)
+			goto queuing_error;
+		tot_dsds = nseg;
+	}
 
 	req_cnt = qla4xxx_calc_request_entries(tot_dsds);
 	if (!qla4xxx_space_in_req_ring(ha, req_cnt))
@@ -337,8 +348,9 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	return QLA_SUCCESS;
 
 queuing_error:
-	if (tot_dsds)
-		scsi_dma_unmap(cmd);
+	if (!(srb->flags & SRB_SCSI_PASSTHRU))
+		if (tot_dsds)
+			scsi_dma_unmap(cmd);
 
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 

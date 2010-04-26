@@ -437,7 +437,7 @@ static struct ddb_entry* qla4xxx_get_ddb_entry(struct scsi_qla_host *ha,
 	if (fw_ddb_entry == NULL) {
 		DEBUG2(printk("scsi%ld: %s: Unable to allocate dma buffer.\n",
 			      ha->host_no, __func__));
-		return NULL;
+		goto exit_get_ddb_entry_no_free;
 	}
 
 	if (qla4xxx_get_fwddb_entry(ha, fw_ddb_index, fw_ddb_entry,
@@ -447,7 +447,7 @@ static struct ddb_entry* qla4xxx_get_ddb_entry(struct scsi_qla_host *ha,
 		DEBUG2(printk("scsi%ld: %s: failed get_ddb_entry for "
 			      "fw_ddb_index %d\n", ha->host_no, __func__,
 			      fw_ddb_index));
-		return NULL;
+		goto exit_get_ddb_entry;
 	}
 
 	/* Allocate DDB if not already allocated. */
@@ -474,9 +474,11 @@ static struct ddb_entry* qla4xxx_get_ddb_entry(struct scsi_qla_host *ha,
 	}
 
 	/* if not found allocate new ddb */
+exit_get_ddb_entry:
 	dma_free_coherent(&ha->pdev->dev, sizeof(*fw_ddb_entry), fw_ddb_entry,
 			  fw_ddb_entry_dma);
 
+exit_get_ddb_entry_no_free:
 	return ddb_entry;
 }
 
@@ -504,7 +506,7 @@ static int qla4xxx_update_ddb_entry(struct scsi_qla_host *ha,
 	if (ddb_entry == NULL) {
 		DEBUG2(printk("scsi%ld: %s: ddb_entry is NULL\n", ha->host_no,
 			      __func__));
-		goto exit_update_ddb;
+		goto exit_update_ddb_no_free;
 	}
 
 	/* Make sure the dma buffer is valid */
@@ -515,7 +517,7 @@ static int qla4xxx_update_ddb_entry(struct scsi_qla_host *ha,
 		DEBUG2(printk("scsi%ld: %s: Unable to allocate dma buffer.\n",
 			      ha->host_no, __func__));
 
-		goto exit_update_ddb;
+		goto exit_update_ddb_no_free;
 	}
 
 	if ((qla4xxx_get_fwddb_entry(ha, fw_ddb_index, fw_ddb_entry,
@@ -532,6 +534,7 @@ static int qla4xxx_update_ddb_entry(struct scsi_qla_host *ha,
 		goto exit_update_ddb;
 	}
 
+	ddb_entry->options = le16_to_cpu(fw_ddb_entry->options);
 	ddb_entry->target_session_id = le16_to_cpu(fw_ddb_entry->tsid);
 	ddb_entry->task_mgmt_timeout =
 		le16_to_cpu(fw_ddb_entry->def_timeout);
@@ -540,6 +543,9 @@ static int qla4xxx_update_ddb_entry(struct scsi_qla_host *ha,
 	ddb_entry->default_relogin_timeout =
 		le16_to_cpu(fw_ddb_entry->def_timeout);
 	ddb_entry->default_time2wait = le16_to_cpu(fw_ddb_entry->iscsi_def_time2wait);
+	ddb_entry->ka_timeout = le16_to_cpu(fw_ddb_entry->ka_timeout);
+	if (ddb_entry->sess)
+		ddb_entry->sess->recovery_tmo = ddb_entry->ka_timeout;
 
 	/* Update index in case it changed */
 	ddb_entry->fw_ddb_index = fw_ddb_index;
@@ -576,11 +582,12 @@ static int qla4xxx_update_ddb_entry(struct scsi_qla_host *ha,
 					le16_to_cpu(fw_ddb_entry->port),
 					fw_ddb_entry->iscsi_name));
 
- exit_update_ddb:
+exit_update_ddb:
 	if (fw_ddb_entry)
 		dma_free_coherent(&ha->pdev->dev, sizeof(*fw_ddb_entry),
 				  fw_ddb_entry, fw_ddb_entry_dma);
 
+exit_update_ddb_no_free:
 	return status;
 }
 
@@ -664,7 +671,7 @@ int qla4_is_relogin_allowed(struct scsi_qla_host *ha, uint32_t conn_err)
  **/
 static int qla4xxx_build_ddb_list(struct scsi_qla_host *ha)
 {
-	int status = QLA_SUCCESS;
+	int status = QLA_ERROR;
 	uint32_t fw_ddb_index = 0;
 	uint32_t next_fw_ddb_index = 0;
 	uint32_t ddb_state;
@@ -679,7 +686,7 @@ static int qla4xxx_build_ddb_list(struct scsi_qla_host *ha)
 						&fw_ddb_entry_dma, GFP_KERNEL);
 	if (fw_ddb_entry == NULL) {
 		DEBUG2(dev_info(&ha->pdev->dev, "%s: DMA alloc failed\n", __func__));
-		return QLA_ERROR;
+		goto exit_build_ddb_list_no_free;
 	}
 
 	dev_info(&ha->pdev->dev, "Initializing DDBs ...\n");
@@ -693,7 +700,7 @@ static int qla4xxx_build_ddb_list(struct scsi_qla_host *ha)
 			DEBUG2(printk("scsi%ld: %s: get_ddb_entry, "
 				      "fw_ddb_index %d failed", ha->host_no,
 				      __func__, fw_ddb_index));
-			return QLA_ERROR;
+			goto exit_build_ddb_list;
 		}
 
 		DEBUG2(printk("scsi%ld: %s: Getting DDB[%d] ddbstate=0x%x, "
@@ -720,7 +727,7 @@ static int qla4xxx_build_ddb_list(struct scsi_qla_host *ha)
 						"get_ddb_entry %d failed\n",
 						ha->host_no,
 						__func__, fw_ddb_index));
-					return QLA_ERROR;
+					goto exit_build_ddb_list;
 				}
 			}
 		}
@@ -740,7 +747,7 @@ static int qla4xxx_build_ddb_list(struct scsi_qla_host *ha)
 			DEBUG2(printk("scsi%ld: %s: Unable to allocate memory "
 				      "for device at fw_ddb_index %d\n",
 				      ha->host_no, __func__, fw_ddb_index));
-			return QLA_ERROR;
+			goto exit_build_ddb_list;
 		}
 		/* Fill in the device structure */
 		if (qla4xxx_update_ddb_entry(ha, ddb_entry, fw_ddb_index) ==
@@ -752,7 +759,7 @@ static int qla4xxx_build_ddb_list(struct scsi_qla_host *ha)
 			DEBUG2(printk("scsi%ld: %s: update_ddb_entry failed "
 				      "for fw_ddb_index %d.\n",
 				      ha->host_no, __func__, fw_ddb_index));
-			return QLA_ERROR;
+			goto exit_build_ddb_list;
 		}
 
 next_one:
@@ -761,9 +768,14 @@ next_one:
 		if (next_fw_ddb_index == 0)
 			break;
 	}
-
+	status = QLA_SUCCESS;
 	dev_info(&ha->pdev->dev, "DDB list done..\n");
 
+exit_build_ddb_list:
+	dma_free_coherent(&ha->pdev->dev, sizeof(*fw_ddb_entry), fw_ddb_entry,
+			  fw_ddb_entry_dma);
+
+exit_build_ddb_list_no_free:
 	return status;
 }
 
@@ -1093,6 +1105,12 @@ static int qla4xxx_start_firmware_from_flash(struct scsi_qla_host *ha)
 		     ha->host_no, __func__));
 
 	spin_lock_irqsave(&ha->hardware_lock, flags);
+	writel(jiffies, &ha->reg->mailbox[7]);
+
+	if (is_qla4022(ha) | is_qla4032(ha))
+		writel(set_rmask(NVR_WRITE_ENABLE),
+		    &ha->reg->u1.isp4022.nvram);
+
 	/*
 	 * Firmware must be informed that the driver supports
 	 * ACB firmware features while starting firmware.
@@ -1100,13 +1118,7 @@ static int qla4xxx_start_firmware_from_flash(struct scsi_qla_host *ha)
 	 * be indicated in the IFCB offset 0x3A (acb_version).
 	 */
 	writel(ACB_SUPPORTED, &ha->reg->mailbox[6]);
-	writel(jiffies, &ha->reg->mailbox[7]);
-	if (is_qla4022(ha) | is_qla4032(ha))
-		writel(set_rmask(NVR_WRITE_ENABLE),
-		       &ha->reg->u1.isp4022.nvram);
-
-        writel(2, &ha->reg->mailbox[6]);
-        readl(&ha->reg->mailbox[6]);
+	readl(&ha->reg->mailbox[6]);
 
 	writel(set_rmask(CSR_BOOT_ENABLE), &ha->reg->ctrl_status);
 	readl(&ha->reg->ctrl_status);

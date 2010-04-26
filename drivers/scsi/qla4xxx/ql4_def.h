@@ -186,8 +186,6 @@ struct srb {
 	uint16_t iocb_cnt;	/* Number of used iocbs */
 	uint16_t cc_stat;
 	uint32_t dma_len;
-	u_long r_start;		/* Time we recieve a cmd from OS */
-	u_long u_start;		/* Time when we handed the cmd to F/W */
 
 	/* Used for extended sense / status continuation */
 	uint8_t *req_sense_ptr;
@@ -225,7 +223,7 @@ struct ddb_entry {
 
 	uint16_t os_target_id;	/* Target ID */
 	uint16_t fw_ddb_index;	/* DDB firmware index */
-	uint8_t options;
+	uint16_t options;
 	uint32_t fw_ddb_device_state; /* F/W Device State  -- see ql4_fw.h */
 
 	uint32_t CmdSn;
@@ -247,13 +245,13 @@ struct ddb_entry {
 	atomic_t relogin_timer;	/* Max Time to wait for relogin to complete */
 	atomic_t relogin_retry_count; /* Num of times relogin has been
 				       * retried */
-
 	uint16_t port;
 	uint32_t tpgt;
 	uint8_t ip_addr[IP_ADDR_LEN];
 	uint8_t iscsi_name[ISCSI_NAME_SIZE];	/* 72 x48 */
 	uint8_t iscsi_alias[0x20];
 	uint8_t isid[6];
+	uint16_t ka_timeout;
 
 	struct in6_addr remote_ipv6_addr;
 	struct in6_addr link_local_ipv6_addr;
