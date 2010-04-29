@@ -276,7 +276,7 @@ qla4xxx_get_ifcb(struct scsi_qla_host *ha, uint32_t *mbox_cmd, uint32_t *mbox_st
 	if (qla4xxx_mailbox_command(ha, 5, 5, mbox_cmd, mbox_sts)
 		!= QLA_SUCCESS) {
 		if (init_fw_cb_dma == 0 &&
-			mbox_sts[0] == MBOX_STS_COMMAND_ERROR)
+		    mbox_sts[0] == MBOX_STS_COMMAND_PARAMETER_ERROR)
 			return (QLA_SUCCESS);
 
 		DEBUG2(printk("scsi%ld: %s: "
@@ -383,15 +383,28 @@ int qla4xxx_initialize_fw_cb(struct scsi_qla_host * ha)
 	/* Default to Legacy IFCB Size */
 	ha->ifcb_size = LEGACY_IFCB_SIZE;
 
+	if (qla4xxx_get_ifcb(ha, &mbox_cmd[0], &mbox_sts[0], 0) !=
+	    QLA_SUCCESS) {
+		DEBUG2(printk("scsi%ld: %s: get ifcb failed\n",
+			       ha->host_no, __func__));
+		return status;
+	}
+
+	if (mbox_sts[0] == MBOX_STS_COMMAND_PARAMETER_ERROR &&
+	    mbox_sts[4] > LEGACY_IFCB_SIZE) {
+		/* Supports larger ifcb size */
+		ha->ifcb_size = mbox_sts[4] / 2;
+	}
+
 	init_fw_cb = dma_alloc_coherent(&ha->pdev->dev,
-					sizeof(struct addr_ctrl_blk),
+					ha->ifcb_size,
 					&init_fw_cb_dma, GFP_KERNEL);
 	if (init_fw_cb == NULL) {
 		DEBUG2(printk("scsi%ld: %s: Unable to alloc init_cb\n",
-			      ha->host_no, __func__));
-		return 10;
+			       ha->host_no, __func__));
+		goto exit_init_fw_cb_no_free;
 	}
-	memset(init_fw_cb, 0, sizeof(struct addr_ctrl_blk));
+	memset(init_fw_cb, 0, ha->ifcb_size);
 
 	/* Get Initialize Firmware Control Block. */
 	memset(&mbox_cmd, 0, sizeof(mbox_cmd));
@@ -406,12 +419,6 @@ int qla4xxx_initialize_fw_cb(struct scsi_qla_host * ha)
 				  sizeof(struct addr_ctrl_blk),
 				  init_fw_cb, init_fw_cb_dma);
 		goto exit_init_fw_cb;
-	}
-
-	if (mbox_sts[0] == MBOX_STS_COMMAND_ERROR &&
-		mbox_sts[4] > LEGACY_IFCB_SIZE) {
-		/* Supports larger ifcb size */
-		ha->ifcb_size = mbox_sts[4];
 	}
 
 	/* Initialize request and response queues. */
@@ -454,6 +461,7 @@ exit_init_fw_cb:
 	dma_free_coherent(&ha->pdev->dev, sizeof(struct addr_ctrl_blk),
 				init_fw_cb, init_fw_cb_dma);
 
+exit_init_fw_cb_no_free:
 	return status;
 }
 
@@ -467,6 +475,7 @@ int qla4xxx_get_dhcp_ip_address(struct scsi_qla_host * ha)
 	dma_addr_t init_fw_cb_dma;
 	uint32_t mbox_cmd[MBOX_REG_COUNT];
 	uint32_t mbox_sts[MBOX_REG_COUNT];
+	uint8_t	status = QLA_ERROR;
 
 	init_fw_cb = dma_alloc_coherent(&ha->pdev->dev,
 					sizeof(struct addr_ctrl_blk),
@@ -474,7 +483,7 @@ int qla4xxx_get_dhcp_ip_address(struct scsi_qla_host * ha)
 	if (init_fw_cb == NULL) {
 		printk("scsi%ld: %s: Unable to alloc init_cb\n", ha->host_no,
 		       __func__);
-		return 10;
+		goto exit_get_dhcp_ip_address_no_free;
 	}
 
 	/* Get Initialize Firmware Control Block. */
@@ -483,18 +492,19 @@ int qla4xxx_get_dhcp_ip_address(struct scsi_qla_host * ha)
 		!= QLA_SUCCESS) {
 		DEBUG2(printk("scsi%ld: %s: Failed to get init_fw_ctrl_blk\n",
 			      ha->host_no, __func__));
-		dma_free_coherent(&ha->pdev->dev,
-				  sizeof(struct addr_ctrl_blk),
-				  init_fw_cb, init_fw_cb_dma);
-		return QLA_ERROR;
+		goto exit_get_dhcp_ip_address;
 	}
 
 	/* Save IP Address. */
 	qla4xxx_update_local_ip(ha, init_fw_cb);
+	status = QLA_SUCCESS;
+
+exit_get_dhcp_ip_address:
 	dma_free_coherent(&ha->pdev->dev, sizeof(struct addr_ctrl_blk),
 				init_fw_cb, init_fw_cb_dma);
 
-	return QLA_SUCCESS;
+exit_get_dhcp_ip_address_no_free:
+	return status;
 }
 
 /**
@@ -1102,7 +1112,7 @@ int qla4xxx_send_tgts(struct scsi_qla_host *ha, char *ip, uint16_t port)
 		DEBUG2(printk("scsi%ld: %s: Unable to allocate dma buffer.\n",
 			      ha->host_no, __func__));
 		ret_val = QLA_ERROR;
-		goto qla4xxx_send_tgts_exit;
+		goto qla4xxx_send_tgts_exit_no_exit;
 	}
 
 	ret_val = qla4xxx_get_default_ddb(ha, fw_ddb_entry_dma);
@@ -1136,6 +1146,8 @@ int qla4xxx_send_tgts(struct scsi_qla_host *ha, char *ip, uint16_t port)
 qla4xxx_send_tgts_exit:
 	dma_free_coherent(&ha->pdev->dev, sizeof(*fw_ddb_entry),
 			  fw_ddb_entry, fw_ddb_entry_dma);
+
+qla4xxx_send_tgts_exit_no_exit:
 	return ret_val;
 }
 

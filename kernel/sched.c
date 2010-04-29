@@ -5577,6 +5577,11 @@ int mutex_spin_on_owner(struct mutex *lock, struct thread_info *owner)
 	if (!sched_feat(OWNER_SPIN))
 		return 0;
 
+	/* Don't spin if we hold the BKL, as "owner" may be in lock_kernel()
+	 * waiting for us */
+	if (current->lock_depth >= 0)
+		return 0;
+
 #ifdef CONFIG_DEBUG_PAGEALLOC
 	/*
 	 * Need to access the cpu field knowing that

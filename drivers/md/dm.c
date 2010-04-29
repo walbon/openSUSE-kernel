@@ -1970,7 +1970,7 @@ static int __bind(struct mapped_device *md, struct dm_table *t,
 	dm_table_set_restrictions(t, q, limits);
 	write_unlock_irqrestore(&md->map_lock, flags);
 
-	dm_get_table(md);
+	dm_table_get(md->map);
 	if (!(dm_table_get_mode(t) & FMODE_WRITE)) {
 		set_disk_ro(md->disk, 1);
 	} else {

@@ -120,13 +120,14 @@ static void scsi_requeue_request(struct request_queue *q, struct request *req,
 {
 	unsigned long flags;
 
+	spin_lock_irqsave(q->queue_lock, flags);
 	if (blk_request_aborted(req)) {
+		spin_unlock_irqrestore(q->queue_lock, flags);
 		scsi_unprep_fn(q, req);
 		blk_end_request_all(req, -EIO);
 		goto out;
 	}
 
-	spin_lock_irqsave(q->queue_lock, flags);
 	if (unprep)
 		scsi_unprep_request(req);
 	blk_requeue_request(q, req);
