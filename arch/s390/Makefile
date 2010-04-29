@@ -113,6 +113,12 @@ zfcpdump:
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
 
+vdso_install:
+ifeq ($(CONFIG_64BIT),y)
+	$(Q)$(MAKE) $(build)=arch/$(ARCH)/kernel/vdso64 $@
+endif
+	$(Q)$(MAKE) $(build)=arch/$(ARCH)/kernel/vdso32 $@
+
 # Don't use tabs in echo arguments
 define archhelp
   echo  '* image           - Kernel image for IPL ($(boot)/image)'
