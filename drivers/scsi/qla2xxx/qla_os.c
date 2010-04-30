@@ -619,6 +619,50 @@ qla2x00_wait_for_hba_online(scsi_qla_host_t *vha)
 	return (return_status);
 }
 
+/* qla2x00_wait_for_reset_ready
+ *    Wait till the HBA is online after going through
+ *    <= MAX_RETRIES_OF_ISP_ABORT  or
+ *    finally HBA is disabled ie marked offline or flash
+ *    operations are in progress.
+ *
+ * Input:
+ *     ha - pointer to host adapter structure
+ *
+ * Note:
+ *    Does context switching-Release SPIN_LOCK
+ *    (if any) before calling this routine.
+ *
+ * Return:
+ *    Success (Adapter is online/no flash ops) : 0
+ *    Failed  (Adapter is offline/disabled/flash ops in progress) : 1
+ */
+int
+qla2x00_wait_for_reset_ready(scsi_qla_host_t *vha)
+{
+	int		return_status;
+	unsigned long	wait_online;
+	struct qla_hw_data *ha = vha->hw;
+	scsi_qla_host_t *base_vha = pci_get_drvdata(ha->pdev);
+
+	wait_online = jiffies + (MAX_LOOP_TIMEOUT * HZ);
+	while (((test_bit(ISP_ABORT_NEEDED, &base_vha->dpc_flags)) ||
+		test_bit(ABORT_ISP_ACTIVE, &base_vha->dpc_flags) ||
+		test_bit(ISP_ABORT_RETRY, &base_vha->dpc_flags) ||
+		ha->optrom_state != QLA_SWAITING ||
+		ha->dpc_active) && time_before(jiffies, wait_online)) {
+
+		msleep(1000);
+	}
+	if (base_vha->flags.online &&  ha->optrom_state == QLA_SWAITING)
+		return_status = QLA_SUCCESS;
+	else
+		return_status = QLA_FUNCTION_FAILED;
+
+	DEBUG2(printk("%s return_status=%d\n", __func__,return_status));
+
+	return return_status;
+}
+
 int
 qla2x00_wait_for_chip_reset(scsi_qla_host_t *vha)
 {
@@ -1005,7 +1049,7 @@ qla2xxx_eh_host_reset(struct scsi_cmnd *cmd)
 	qla_printk(KERN_INFO, ha,
 	    "scsi(%ld:%d:%d): ADAPTER RESET ISSUED.\n", vha->host_no, id, lun);
 
-	if (qla2x00_wait_for_hba_online(vha) != QLA_SUCCESS)
+	if (qla2x00_wait_for_reset_ready(vha) != QLA_SUCCESS)
 		goto eh_host_reset_lock;
 
 	/*
@@ -1030,7 +1074,8 @@ qla2xxx_eh_host_reset(struct scsi_cmnd *cmd)
 			/* failed. schedule dpc to try */
 			set_bit(ISP_ABORT_NEEDED, &base_vha->dpc_flags);
 
-			if (qla2x00_wait_for_hba_online(vha) != QLA_SUCCESS)
+			if (qla2x00_wait_for_reset_ready(base_vha)
+				!= QLA_SUCCESS)
 				goto eh_host_reset_lock;
 		}
 		clear_bit(ABORT_ISP_ACTIVE, &base_vha->dpc_flags);
@@ -2443,9 +2488,19 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 			goto fail_ex_init_cb;
 	}
 
+	/* Get consistent memory allocated for Async Port-Database. */
+	if (!IS_FWI2_CAPABLE(ha)) {
+		ha->async_pd = dma_pool_alloc(ha->s_dma_pool, GFP_KERNEL,
+			&ha->async_pd_dma);
+		if (!ha->async_pd)
+			goto fail_async_pd;
+	}
+
 	INIT_LIST_HEAD(&ha->vp_list);
 	return 1;
 
+fail_async_pd:
+	dma_pool_free(ha->s_dma_pool, ha->ex_init_cb, ha->ex_init_cb_dma);
 fail_ex_init_cb:
 	kfree(ha->npiv_info);
 fail_npiv_info:
@@ -2547,6 +2602,9 @@ qla2x00_mem_free(struct qla_hw_data *ha)
 	if (ha->ex_init_cb)
 		dma_pool_free(ha->s_dma_pool, ha->ex_init_cb, ha->ex_init_cb_dma);
 
+	if (ha->async_pd)
+		dma_pool_free(ha->s_dma_pool, ha->async_pd, ha->async_pd_dma);
+
 	if (ha->s_dma_pool)
 		dma_pool_destroy(ha->s_dma_pool);
 
@@ -2574,6 +2632,8 @@ qla2x00_mem_free(struct qla_hw_data *ha)
 	ha->init_cb_dma = 0;
 	ha->ex_init_cb = NULL;
 	ha->ex_init_cb_dma = 0;
+	ha->async_pd = NULL;
+	ha->async_pd_dma = 0;
 
 	ha->s_dma_pool = NULL;
 
@@ -2698,6 +2758,8 @@ qla2x00_post_async_work(login, QLA_EVT_ASYNC_LOGIN);
 qla2x00_post_async_work(login_done, QLA_EVT_ASYNC_LOGIN_DONE);
 qla2x00_post_async_work(logout, QLA_EVT_ASYNC_LOGOUT);
 qla2x00_post_async_work(logout_done, QLA_EVT_ASYNC_LOGOUT_DONE);
+qla2x00_post_async_work(adisc, QLA_EVT_ASYNC_ADISC);
+qla2x00_post_async_work(adisc_done, QLA_EVT_ASYNC_ADISC_DONE);
 
 int
 qla2x00_post_uevent_work(struct scsi_qla_host *vha, u32 code)
@@ -2767,6 +2829,14 @@ qla2x00_do_work(struct scsi_qla_host *vha)
 			qla2x00_async_logout_done(vha, e->u.logio.fcport,
 			    e->u.logio.data);
 			break;
+		case QLA_EVT_ASYNC_ADISC:
+			qla2x00_async_adisc(vha, e->u.logio.fcport,
+			    e->u.logio.data);
+			break;
+		case QLA_EVT_ASYNC_ADISC_DONE:
+			qla2x00_async_adisc_done(vha, e->u.logio.fcport,
+			    e->u.logio.data);
+			break;
 		case QLA_EVT_UEVENT:
 			qla2x00_uevent_emit(vha, e->u.uevent.code);
 			break;
@@ -2792,9 +2862,8 @@ void qla2x00_relogin(struct scsi_qla_host *vha)
 	 * If the port is not ONLINE then try to login
 	 * to it if we haven't run out of retries.
 	 */
-		if (atomic_read(&fcport->state) !=
-			FCS_ONLINE && fcport->login_retry) {
-
+		if (atomic_read(&fcport->state) != FCS_ONLINE &&
+		    fcport->login_retry && !(fcport->flags & FCF_ASYNC_SENT)) {
 			fcport->login_retry--;
 			if (fcport->flags & FCF_FABRIC_DEVICE) {
 				if (fcport->flags & FCF_FCP2_DEVICE)
@@ -2805,6 +2874,7 @@ void qla2x00_relogin(struct scsi_qla_host *vha)
 							fcport->d_id.b.al_pa);
 
 				if (IS_ALOGIO_CAPABLE(ha)) {
+					fcport->flags |= FCF_ASYNC_SENT;
 					data[0] = 0;
 					data[1] = QLA_LOGIO_LOGIN_RETRIED;
 					status = qla2x00_post_async_login_work(
@@ -3403,8 +3473,6 @@ qla2xxx_pci_slot_reset(struct pci_dev *pdev)
 		ret =  PCI_ERS_RESULT_RECOVERED;
 	clear_bit(ABORT_ISP_ACTIVE, &base_vha->dpc_flags);
 
-	pci_cleanup_aer_uncorrect_error_status(pdev);
-
 	DEBUG17(qla_printk(KERN_WARNING, ha,
 	    "slot_reset-return:ret=%x\n", ret));
 
@@ -3426,6 +3494,8 @@ qla2xxx_pci_resume(struct pci_dev *pdev)
 		    "the device failed to resume I/O "
 		    "from slot/link_reset");
 	}
+
+	pci_cleanup_aer_uncorrect_error_status(pdev);
 
 	ha->flags.eeh_busy = 0;
 }

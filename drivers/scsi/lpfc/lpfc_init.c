@@ -2598,7 +2598,7 @@ lpfc_create_port(struct lpfc_hba *phba, int instance, struct device *dev)
 	init_timer(&vport->els_tmofunc);
 	vport->els_tmofunc.function = lpfc_els_timeout;
 	vport->els_tmofunc.data = (unsigned long)vport;
-	error = scsi_add_host(shost, dev);
+	error = scsi_add_host_with_dma(shost, dev, &phba->pcidev->dev);
 	if (error)
 		goto out_put_shost;
 

@@ -274,6 +274,12 @@ qla2x00_sysfs_write_optrom_ctl(struct kobject *kobj,
 			return count;
 		}
 
+		if (qla2x00_wait_for_hba_online(vha) != QLA_SUCCESS) {
+			DEBUG2(qla_printk(KERN_INFO, ha,
+				"HBA not online, failing OptROM read.\n"));
+			return -EINVAL;
+		}
+
 		DEBUG2(qla_printk(KERN_INFO, ha,
 		    "Reading flash region -- 0x%x/0x%x.\n",
 		    ha->optrom_region_start, ha->optrom_region_size));
@@ -1273,7 +1279,11 @@ qla2x00_fw_state_show(struct device *dev, struct device_attribute *attr,
 	int rval = QLA_FUNCTION_FAILED;
 	uint16_t state[5];
 
-	if (!vha->hw->flags.eeh_busy)
+	if (test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags) ||
+		test_bit(ISP_ABORT_NEEDED, &vha->dpc_flags))
+		DEBUG2_3_11(printk("%s(%ld): isp reset in progress.\n",
+			__func__, vha->host_no));
+	else if (!vha->hw->flags.eeh_busy)
 		rval = qla2x00_get_firmware_state(vha, state);
 	if (rval != QLA_SUCCESS)
 		memset(state, -1, sizeof(state));
