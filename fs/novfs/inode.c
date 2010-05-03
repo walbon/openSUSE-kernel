@@ -3247,6 +3247,8 @@ int novfs_i_setattr(struct dentry *dentry, struct iattr *attr)
 					((struct inode_data *) inode->i_private)->
 					    Flags |= UPDATE_INODE;
 
+					if (ia_valid & ATTR_SIZE)
+						inode->i_size = attr->ia_size;
 					if (ia_valid & ATTR_ATIME)
 						inode->i_atime = attr->ia_atime;
 					if (ia_valid & ATTR_MTIME)
