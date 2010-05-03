@@ -1749,6 +1749,9 @@ int novfs_set_attr(unsigned char * Path, struct iattr *Attr,
 			pathlen--;
 	}
 
+        if ((Attr->ia_valid & ATTR_FILE) && (Attr->ia_valid & ATTR_SIZE))
+		retCode = novfs_trunc_ex(Attr->ia_file->private_data, Attr->ia_size, SessionId);
+
 	cmdlen = offsetof(struct novfs_set_file_info_request,path) + pathlen;
 	cmd = kmalloc(cmdlen, GFP_KERNEL);
 	if (cmd) {
