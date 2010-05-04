@@ -2373,7 +2373,8 @@ void cpuset_unlock(void)
 }
 
 /**
- * cpuset_mem_spread_node() - On which node to begin search for a page
+ * cpuset_mem_spread_node() - On which node to begin search for a file page
+ * cpuset_slab_spread_node() - On which node to begin search for a slab page
  *
  * If a task is marked PF_SPREAD_PAGE or PF_SPREAD_SLAB (as for
  * tasks in a cpuset with is_spread_page or is_spread_slab set),
@@ -2398,16 +2399,35 @@ void cpuset_unlock(void)
  * See kmem_cache_alloc_node().
  */
 
-int cpuset_mem_spread_node(void)
+static int cpuset_spread_node(int rotor)
 {
 	int node;
 
-	node = next_node(current->cpuset_mem_spread_rotor, current->mems_allowed);
+	node = next_node(rotor, current->mems_allowed);
 	if (node == MAX_NUMNODES)
 		node = first_node(current->mems_allowed);
-	current->cpuset_mem_spread_rotor = node;
 	return node;
 }
+
+int cpuset_mem_spread_node(void)
+{
+	int rotor = current->cpuset_mem_spread_rotor & 0xffff;
+	int rem = current->cpuset_mem_spread_rotor & 0xffff0000;
+	rotor = cpuset_spread_node(rotor);
+	current->cpuset_mem_spread_rotor = rotor | rem;
+	return rotor;
+}
+
+int cpuset_slab_spread_node(void)
+{
+	/* use the top half of rotor for slab rotor */
+	int rotor = (current->cpuset_mem_spread_rotor >> 16) & 0xffff0000;
+	int rem = current->cpuset_mem_spread_rotor & 0xffff;
+	rotor = cpuset_spread_node(rotor);
+	current->cpuset_mem_spread_rotor = (rotor << 16) | rem;
+	return rotor;
+}
+
 EXPORT_SYMBOL_GPL(cpuset_mem_spread_node);
 
 /**
