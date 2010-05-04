@@ -5233,9 +5233,8 @@ out:
 /* Returns a number that's positive if the pagecache is above
  * the set limit. Note that we allow the pagecache to grow
  * larger if there's plenty of free pages.
- * If high is set we'll apply a 1.125x higher baseline
  */
-unsigned long pagecache_over_limit(int synch)
+unsigned long pagecache_over_limit()
 {
 	/* We only want to limit unmapped page cache pages */
 	unsigned long pgcache_pages = global_page_state(NR_FILE_PAGES)
@@ -5245,8 +5244,6 @@ unsigned long pagecache_over_limit(int synch)
 
 	limit = vm_pagecache_limit_mb * ((1024*1024UL)/PAGE_SIZE) +
 		FREE_TO_PAGECACHE_RATIO * free_pages;
-	if (!synch)
-		limit = limit * 7 / 8UL;
 	if (pgcache_pages > limit)
 		return pgcache_pages - limit;
 	return 0;

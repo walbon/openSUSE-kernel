@@ -944,7 +944,7 @@ found:
 	if (!inode)
 		goto out;
 
-	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit(0) > 0)
+	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit() > 0)
 		shrink_page_cache(GFP_KERNEL, page);
 	/*
 	 * Charge page using GFP_KERNEL while we can wait.
