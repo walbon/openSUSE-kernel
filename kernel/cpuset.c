@@ -2421,7 +2421,7 @@ int cpuset_mem_spread_node(void)
 int cpuset_slab_spread_node(void)
 {
 	/* use the top half of rotor for slab rotor */
-	int rotor = (current->cpuset_mem_spread_rotor >> 16) & 0xffff0000;
+	int rotor = (current->cpuset_mem_spread_rotor >> 16) & 0xffff;
 	int rem = current->cpuset_mem_spread_rotor & 0xffff;
 	rotor = cpuset_spread_node(rotor);
 	current->cpuset_mem_spread_rotor = (rotor << 16) | rem;
