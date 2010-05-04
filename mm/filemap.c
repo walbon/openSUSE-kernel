@@ -541,7 +541,7 @@ int add_to_page_cache(struct page *page,
 {
 	int error;
 
-	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit(0) > 0)
+	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit() > 0)
 		shrink_page_cache(gfp_mask, page);
 
 	__set_page_locked(page);

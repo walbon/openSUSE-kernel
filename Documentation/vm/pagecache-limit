@@ -5,7 +5,7 @@ The patch introduces a new tunable in the proc filesystem:
 /proc/sys/vm/pagecache_limit_mb
 
 This tunable sets a limit to the unmapped pages in the pagecache in megabytes.
-If non-zero, it should not be set below 4 (4MB), or the system might behave erratically. In real-life, much larger limits (a few hundred MBs) will be useful.
+If non-zero, it should not be set below 4 (4MB), or the system might behave erratically. In real-life, much larger limits (a few percent of system RAM / a hundred MBs) will be useful.
 
 Examples:
 echo 512 >/proc/sys/vm/pagecache_limit_mb
@@ -14,20 +14,20 @@ This sets a baseline limits for the page cache (not the buffer cache!) of 0.5GiB
 As we only consider pagecache pages that are unmapped, currently mapped pages (files that are mmap'ed such as e.g. binaries and libraries as well as SysV shared memory) are not limited by this.
 NOTE: The real limit depends on the amount of free memory. Every existing free page allows the page cache to grow 8x the amount of free memory above the set baseline. As soon as the free memory is needed, we free up page cache.
 
-This feature only works if CONFIG_HIBERNATION is configured in, as the
-needed helpers only exist then.
 
 How it works:
 ------------
 The heart of this patch is a new function called shrink_page_cache(). It is called from balance_pgdat (which is the worker for kswapd) if the pagecache is above the limit.
-The function is also called in __alloc_pages_slowpath (if we are above a limit calculated with 1.25x the baseline), and add_to_page_cache so we don't exclusively rely on background shrinking from kswapd.
+The function is also called in __alloc_pages_slowpath.
 
-shrink_page_cache() calculates the nr of pages the cache is over its limit. It reduces this number by a factor (so you have to call it several times to get down to the target) adds vm_pagecache_min_dec (2MB) and then shrinks the pagecache (using the Kernel LRUs).
+shrink_page_cache() calculates the nr of pages the cache is over its limit. It reduces this number by a factor (so you have to call it several times to get down to the target) then shrinks the pagecache (using the Kernel LRUs).
 
-shrink_page_cache has two modes:
-- Just do one pass, reclaiming from inactive pagecache memory.
-  This is fast (but might not find free pages). It's used from the alloc path.
-- Do 4 passes, with moving pages from active to inactive (pass 1, 3) and also allowing pages to be written out (passes 2, 3).
+shrink_page_cache does two passes:
+- Just reclaiming from inactive pagecache memory.
+  This is fast -- but it might not find enough free pages; if that happens,
+  the second pass will happen
+- In the second pass, pages from active list will also be considered.
+In both cases, only unmapped pages will be considered.
 
 The function returns the nr of reclaimed pages.
 
@@ -49,4 +49,3 @@ Foreground vs. background shrinking:
 
 Usually, the Linux kernel reclaims its memory using the kernel thread kswapd. It reclaims memory in the background. If it can't reclaim memory fast enough, it retries with higher priority and if this still doesn't succeed it uses a direct reclaim path.
 
-For keeping the pagecache below the limit, we mostly rely on the background (kswapd) functionality; workloads that allocate pagecache or memory very quickly might thus temporarily have a higher amount of page cache than they should according to this logic.
