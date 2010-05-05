@@ -1987,15 +1987,9 @@ relock:
 
 	count = ocount;
 	ret = generic_write_checks(file, ppos, &count,
-					   S_ISBLK(inode->i_mode));
+				   S_ISBLK(inode->i_mode));
 	if (ret)
 		goto out_dio;
-
-	ret = file_remove_suid(file);
-	if (ret)
-		goto out_dio;
-
-	file_update_time(file);
 
 	if (direct_io) {
 		written = generic_file_direct_write(iocb, iov, &nr_segs, *ppos,
@@ -2012,8 +2006,10 @@ relock:
 			goto out_dio;
 		}
 	} else {
-		written = generic_file_buffered_write(iocb, iov, nr_segs,
-				*ppos, ppos, count, 0);
+		current->backing_dev_info = file->f_mapping->backing_dev_info;
+		written = generic_file_buffered_write(iocb, iov, nr_segs, *ppos,
+						      ppos, count, 0);
+		current->backing_dev_info = NULL;
 	}
 
 out_dio:
