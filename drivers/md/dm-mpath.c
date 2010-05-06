@@ -58,6 +58,8 @@ struct priority_group {
 };
 
 #define FEATURE_NO_PARTITIONS 1
+#define FEATURE_NO_ABORT_Q 2
+#define no_abort_q(m)	(m->features & FEATURE_NO_ABORT_Q)
 
 /* Multipath context */
 struct multipath {
@@ -149,7 +151,8 @@ static void deactivate_path(struct work_struct *work)
 		container_of(work, struct pgpath, deactivate_path);
 
 	if (pgpath->path.dev)
-		blk_abort_queue(pgpath->path.dev->bdev->bd_disk->queue);
+		if (!no_abort_q(pgpath->pg->m))
+			blk_abort_queue(pgpath->path.dev->bdev->bd_disk->queue);
 }
 
 static struct priority_group *alloc_priority_group(void)
@@ -846,6 +849,10 @@ static int parse_features(struct arg_set *as, struct multipath *m)
 			m->features |= FEATURE_NO_PARTITIONS;
 			continue;
 		}
+		if (!strnicmp(param_name, MESG_STR("no_abort_q"))) {
+			m->features |= FEATURE_NO_ABORT_Q;
+			continue;
+		}
 		if (!strnicmp(param_name, MESG_STR("pg_init_retries")) &&
 		    (argc >= 1)) {
 			r = read_param(_params + 1, shift(as),
@@ -1422,13 +1429,16 @@ static int multipath_status(struct dm_target *ti, status_type_t type,
 	else {
 		DMEMIT("%u ", m->queue_if_no_path +
 			      (m->pg_init_retries > 0) * 2 +
-			      (m->features & FEATURE_NO_PARTITIONS));
+			      (m->features & FEATURE_NO_PARTITIONS) +
+			      (no_abort_q(m) > 0));
 		if (m->queue_if_no_path)
 			DMEMIT("queue_if_no_path ");
 		if (m->pg_init_retries)
 			DMEMIT("pg_init_retries %u ", m->pg_init_retries);
 		if (m->features & FEATURE_NO_PARTITIONS)
 			DMEMIT("no_partitions ");
+		if (m->features & FEATURE_NO_ABORT_Q)
+			DMEMIT("no_abort_q ");
 	}
 
 	if (!m->hw_handler_name || type == STATUSTYPE_INFO)
