@@ -22,14 +22,14 @@ The function is also called in __alloc_pages_slowpath.
 
 shrink_page_cache() calculates the nr of pages the cache is over its limit. It reduces this number by a factor (so you have to call it several times to get down to the target) then shrinks the pagecache (using the Kernel LRUs).
 
-shrink_page_cache does two passes:
+shrink_page_cache does several passes:
 - Just reclaiming from inactive pagecache memory.
   This is fast -- but it might not find enough free pages; if that happens,
   the second pass will happen
 - In the second pass, pages from active list will also be considered.
-In both cases, only unmapped pages will be considered.
+- The third pass is just another round of the second pass
 
-The function returns the nr of reclaimed pages.
+In all passes, only unmapped pages will be considered.
 
 
 How it changes memory management:

@@ -2454,15 +2454,15 @@ static void __shrink_page_cache(gfp_t mask)
 	nr_pages = pagecache_over_limit();
 
 	/* Don't need to go there in one step; as the freed
-	 * pages are counted FREE_TO_PAGECACHE_RATIO, this
-	 * is still 2x as much as minimally needed. */
+	 * pages are counted FREE_TO_PAGECACHE_RATIO times, this
+	 * is still more than minimally needed. */
 	nr_pages /= (FREE_TO_PAGECACHE_RATIO/2);
 
 	/* Return early if there's no work to do */
 	if (nr_pages <= 0)
 		return;
 	/* But do a few at least */
-	nr_pages = max_t(unsigned long, nr_pages, SWAP_CLUSTER_MAX);
+	nr_pages = max_t(unsigned long, nr_pages, 8*SWAP_CLUSTER_MAX);
 
 	current->reclaim_state = &reclaim_state;
 
@@ -2470,8 +2470,9 @@ static void __shrink_page_cache(gfp_t mask)
 	 * Shrink the LRU in 2 passes:
 	 * 0 = Reclaim from inactive_list only (fast)
 	 * 1 = Reclaim from active list but don't reclaim mapped (not that fast)
+	 * 2 = Reclaim from active list but don't reclaim mapped (2nd pass)
 	 */
-	for (pass = 0; pass < 2; pass++) {
+	for (pass = 0; pass < 3; pass++) {
 		int prio;
 
 		for (prio = DEF_PRIORITY; prio >= 0; prio--) {
