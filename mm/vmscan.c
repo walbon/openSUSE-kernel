@@ -2472,7 +2472,7 @@ static void __shrink_page_cache(gfp_t mask)
 	 * 1 = Reclaim from active list but don't reclaim mapped (not that fast)
 	 * 2 = Reclaim from active list but don't reclaim mapped (2nd pass)
 	 */
-	for (pass = 0; pass < 3; pass++) {
+	for (pass = 0; pass < 2; pass++) {
 		int prio;
 
 		for (prio = DEF_PRIORITY; prio >= 0; prio--) {
