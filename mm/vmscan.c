@@ -2456,7 +2456,7 @@ static void __shrink_page_cache(gfp_t mask)
 	/* Don't need to go there in one step; as the freed
 	 * pages are counted FREE_TO_PAGECACHE_RATIO times, this
 	 * is still more than minimally needed. */
-	nr_pages /= (FREE_TO_PAGECACHE_RATIO/2);
+	nr_pages /= 2;
 
 	/* Return early if there's no work to do */
 	if (nr_pages <= 0)
