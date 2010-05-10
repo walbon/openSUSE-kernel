@@ -129,6 +129,7 @@ struct scan_control {
  */
 int vm_swappiness __read_mostly = 60;
 unsigned int vm_pagecache_limit_mb __read_mostly = 0;
+unsigned int vm_pagecache_ignore_dirty __read_mostly = 1;
 long vm_total_pages __read_mostly;	/* The total number of pages which the VM controls */
 
 static LIST_HEAD(shrinker_list);
@@ -2470,9 +2471,9 @@ static void __shrink_page_cache(gfp_t mask)
 	 * Shrink the LRU in 2 passes:
 	 * 0 = Reclaim from inactive_list only (fast)
 	 * 1 = Reclaim from active list but don't reclaim mapped (not that fast)
-	 * 2 = Reclaim from active list but don't reclaim mapped (2nd pass)
+	 * 2 = Same as 1, but may_writepage = 1 (only done if we can and need it)
 	 */
-	for (pass = 0; pass < 2; pass++) {
+	for (pass = 0; pass < 3; pass++) {
 		int prio;
 
 		for (prio = DEF_PRIORITY; prio >= 0; prio--) {
@@ -2493,6 +2494,13 @@ static void __shrink_page_cache(gfp_t mask)
 			if (ret >= nr_pages)
 				goto out;
 
+		}
+		if (pass == 1) {
+			if (vm_pagecache_ignore_dirty == 1 ||
+			    (mask & (__GFP_IO || __GFP_FS) != __GFP_IO | __GFP_FS) )
+				break;
+			else
+				sc.may_writepage = 1;
 		}
 	}
 
