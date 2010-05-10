@@ -2497,7 +2497,7 @@ static void __shrink_page_cache(gfp_t mask)
 		}
 		if (pass == 1) {
 			if (vm_pagecache_ignore_dirty == 1 ||
-			    (mask & (__GFP_IO || __GFP_FS) != __GFP_IO | __GFP_FS) )
+			    (mask & (__GFP_IO | __GFP_FS) != (__GFP_IO | __GFP_FS)) )
 				break;
 			else
 				sc.may_writepage = 1;
