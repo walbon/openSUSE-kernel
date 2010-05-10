@@ -259,6 +259,7 @@ typedef struct xfs_mount {
 	__int64_t		m_update_flags;	/* sb flags we need to update
 						   on the next remount,rw */
 	struct vfsmount         *m_vfsmount;
+	struct list_head	m_mplist;	/* inode shrinker mount list */
 } xfs_mount_t;
 
 /*
