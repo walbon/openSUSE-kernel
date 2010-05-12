@@ -3974,7 +3974,8 @@ static void __ipv6_ifa_notify(int event, struct inet6_ifaddr *ifp)
 			addrconf_leave_anycast(ifp);
 		addrconf_leave_solict(ifp->idev, &ifp->addr);
 		dst_hold(&ifp->rt->u.dst);
-		ip6_del_rt(ifp->rt);
+		if (ip6_del_rt(ifp->rt))
+			dst_free(&ifp->rt->u.dst);
 		break;
 	}
 }
