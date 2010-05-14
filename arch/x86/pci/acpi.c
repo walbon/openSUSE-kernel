@@ -56,6 +56,14 @@ static const struct dmi_system_id pci_use_crs_table[] __initconst = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant ML370 G6"),
 		},
 	},
+	{
+		.callback = set_use_crs,
+		.ident = "HP ProLiant DL580 G7",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL580 G7"),
+		},
+	},
 	{}
 };
 
