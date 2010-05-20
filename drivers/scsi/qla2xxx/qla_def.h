@@ -191,6 +191,7 @@ struct req_que;
  * SCSI Request Block
  */
 typedef struct srb {
+	atomic_t ref_count;
 	struct fc_port *fcport;
 	uint32_t handle;
 
@@ -2436,7 +2437,8 @@ struct qla_hw_data {
 				(ha)->flags.msix_enabled)
 #define IS_FAC_REQUIRED(ha)	(IS_QLA81XX(ha))
 #define IS_NOCACHE_VPD_TYPE(ha)	(IS_QLA81XX(ha))
-#define IS_ALOGIO_CAPABLE(ha)	(IS_QLA23XX(ha) || IS_FWI2_CAPABLE(ha))
+#define IS_ALOGIO_CAPABLE(ha)	((IS_QLA23XX(ha) && ql2xasyncenable) || \
+				IS_FWI2_CAPABLE(ha))
 
 #define IS_IIDMA_CAPABLE(ha)    ((ha)->device_type & DT_IIDMA)
 #define IS_FWI2_CAPABLE(ha)     ((ha)->device_type & DT_FWI2)
