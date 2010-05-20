@@ -409,7 +409,7 @@ MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Andi Kleen");
 MODULE_DESCRIPTION("Intel Xeon 75xx specific DIMM error reporting");
 
-#ifdef CONFIG_MODULE
+#ifdef CONFIG_MODULES
 static void __exit xeon75xx_mce_exit(void)
 {
 	mce_cpu_specific_poll = NULL;
