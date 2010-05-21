@@ -122,9 +122,9 @@ static void scsi_requeue_request(struct request_queue *q, struct request *req,
 
 	spin_lock_irqsave(q->queue_lock, flags);
 	if (blk_request_aborted(req)) {
-		spin_unlock_irqrestore(q->queue_lock, flags);
 		scsi_unprep_fn(q, req);
-		blk_end_request_all(req, -EIO);
+		__blk_end_request_all(req, -EIO);
+		spin_unlock_irqrestore(q->queue_lock, flags);
 		goto out;
 	}
 
