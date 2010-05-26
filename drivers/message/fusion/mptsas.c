@@ -58,6 +58,7 @@
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_transport_sas.h>
+#include <scsi/scsi_transport.h>
 #include <scsi/scsi_dbg.h>
 
 #include "mptbase.h"
@@ -2330,6 +2331,46 @@ mptsas_qcmd(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 	return mptscsih_qcmd(SCpnt,done);
 }
 
+/**
+ *	mptsas_mptsas_eh_timed_out - resets the scsi_cmnd timeout
+ *		if the device under question is currently in the
+ *		device removal delay. 
+ *	@sc: scsi command that the midlayer is about to time out
+ *
+ **/
+static enum blk_eh_timer_return mptsas_eh_timed_out(struct scsi_cmnd *sc)
+{
+	MPT_SCSI_HOST *hd;
+	MPT_ADAPTER   *ioc;
+	VirtDevice    *vdevice;
+	enum blk_eh_timer_return rc = BLK_EH_NOT_HANDLED;
+
+	if ((hd = shost_priv(sc->device->host)) == NULL) {
+		printk(KERN_ERR MYNAM ": %s: Can't locate host! (sc=%p)\n",
+		    __func__, sc );
+		goto done;
+	}
+
+	ioc = hd->ioc;
+	if (ioc->bus_type != SAS) {
+		printk(KERN_ERR MYNAM ": %s: Wrong bus type (sc=%p)\n",
+		    __func__, sc );
+		goto done;
+	}
+
+	vdevice = sc->device->hostdata;
+	if (vdevice && vdevice->vtarget && vdevice->vtarget->inDMD) {
+		dtmprintk(ioc, printk(MYIOC_s_WARN_FMT ": %s: target removed "
+		    "or in device removal delay (sc=%p)\n",
+		    ioc->name, __func__, sc ));
+		rc = BLK_EH_RESET_TIMER;
+		goto done;
+	}
+
+done:
+	return rc;
+}
+
 
 static struct scsi_host_template mptsas_driver_template = {
 	.module				= THIS_MODULE,
@@ -3498,6 +3539,7 @@ static int mptsas_probe_one_phy(struct device *dev,
 	struct sas_phy *phy;
 	struct sas_port *port;
 	int error = 0;
+	VirtTarget *vtarget;
 
 	if (!dev) {
 		error = -ENODEV;
@@ -3715,6 +3757,16 @@ static int mptsas_probe_one_phy(struct device *dev,
 			mptsas_exp_repmanufacture_info(ioc,
 			    identify.sas_address,
 			    rphy_to_expander_device(rphy));
+	}
+
+	/* If the device exists,verify it wasn't previously flagged
+	as a missing device.  If so, clear it */
+	vtarget = mptsas_find_vtarget(ioc,
+	    phy_info->attached.channel,
+	    phy_info->attached.id);
+	if (vtarget && vtarget->inDMD) {
+		printk(KERN_INFO "Device returned, unsetting inDMD\n");
+		vtarget->inDMD = 0;
 	}
 
  out:
@@ -5778,6 +5830,7 @@ mptsas_init(void)
 	    sas_attach_transport(&mptsas_transport_functions);
 	if (!mptsas_transport_template)
 		return -ENODEV;
+	mptsas_transport_template->eh_timed_out = mptsas_eh_timed_out;
 
 	mptsasDoneCtx = mpt_register(mptscsih_io_done, MPTSAS_DRIVER);
 	mptsasTaskCtx = mpt_register(mptscsih_taskmgmt_complete, MPTSAS_DRIVER);

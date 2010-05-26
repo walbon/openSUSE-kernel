@@ -740,7 +740,18 @@ mptscsih_io_done(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *mr)
 				if (ioc_status & MPI_IOCSTATUS_FLAG_LOG_INFO_AVAILABLE) {
 					if ((log_info & SAS_LOGINFO_MASK)
 					    == SAS_LOGINFO_NEXUS_LOSS) {
-						sc->result = (DID_BUS_BUSY << 16);
+						VirtDevice *vdevice = sc->device->hostdata;
+
+						/* flag the device as being in device
+						removal delay so we can notify the midlayer
+						to hold off on timeout eh */
+						if (vdevice && vdevice->vtarget && 
+						    vdevice->vtarget->raidVolume)
+							printk(KERN_INFO "Skipping Raid Volume for inDMD\n" );
+						else if (vdevice && vdevice->vtarget)
+							vdevice->vtarget->inDMD = 1;
+
+						sc->result = (DID_TRANSPORT_DISRUPTED << 16);
 						break;
 					}
 				}
