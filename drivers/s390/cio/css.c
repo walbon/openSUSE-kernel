@@ -869,15 +869,10 @@ static int __init css_bus_init(void)
 
 	/* Try to enable MSS. */
 	ret = chsc_enable_facility(CHSC_SDA_OC_MSS);
-	switch (ret) {
-	case 0: /* Success. */
-		max_ssid = __MAX_SSID;
-		break;
-	case -ENOMEM:
-		goto out;
-	default:
+	if (ret)
 		max_ssid = 0;
-	}
+	else /* Success. */
+		max_ssid = __MAX_SSID;
 
 	ret = slow_subchannel_init();
 	if (ret)
@@ -1024,6 +1019,11 @@ static int __init channel_subsystem_init_sync(void)
 	return bus_for_each_drv(&css_bus_type, NULL, NULL, css_settle);
 }
 subsys_initcall_sync(channel_subsystem_init_sync);
+
+void channel_subsystem_reinit(void)
+{
+	chsc_enable_facility(CHSC_SDA_OC_MSS);
+}
 
 int sch_is_pseudo_sch(struct subchannel *sch)
 {
