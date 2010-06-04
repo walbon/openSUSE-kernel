@@ -616,7 +616,7 @@ void shrink_dcache_sb(struct super_block * sb)
  * - see the comments on shrink_dcache_for_umount() for a description of the
  *   locking
  */
-static void shrink_dcache_for_umount_subtree(struct dentry *dentry)
+void shrink_dcache_for_umount_subtree(struct dentry *dentry)
 {
 	struct dentry *parent;
 	unsigned detached = 0;
@@ -2348,3 +2348,4 @@ EXPORT_SYMBOL(have_submounts);
 EXPORT_SYMBOL(names_cachep);
 EXPORT_SYMBOL(shrink_dcache_parent);
 EXPORT_SYMBOL(shrink_dcache_sb);
+EXPORT_SYMBOL_GPL(shrink_dcache_for_umount_subtree);
