@@ -569,15 +569,17 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 
 	/* Account user/system ticks. */
 	if (delta_cpu > 0) {
+		cputime_t ct;
+
 		do_div(delta_cpu, NS_PER_TICK);
 		local->accounted_system += delta_cpu * NS_PER_TICK;
+		ct = jiffies_to_cputime(delta_cpu);
 		if (user_mode_vm(get_irq_regs()))
-			account_user_time(current, (cputime_t)delta_cpu,
-					  (cputime_t)delta_cpu);
-		else if (current != idle_task(cpu))
+			account_user_time(current, ct, cputime_to_scaled(ct));
+		else if (current != idle_task(cpu)
+			 || irq_count() != HARDIRQ_OFFSET)
 			account_system_time(current, HARDIRQ_OFFSET,
-					    (cputime_t)delta_cpu,
-					    (cputime_t)delta_cpu);
+					    ct, cputime_to_scaled(ct));
 		else
 			account_idle_ticks(delta_cpu);
 	}
