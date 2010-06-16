@@ -50,6 +50,10 @@
 #define ROM_SIZE			0x10000
 #define HPWDT_VERSION			"1.1.1"
 
+#define SECS_TO_TICKS(secs) ((secs) * 1000 / 128)
+#define TICKS_TO_SECS(ticks) ((ticks) * 128 / 1000)
+#define HPWDT_MAX_TIMER	TICKS_TO_SECS(65535)
+
 struct bios32_service_dir {
 	u32 signature;
 	u32 entry_point;
@@ -421,7 +425,7 @@ static int __devinit detect_cru_service(void)
  */
 static void hpwdt_start(void)
 {
-	reload = (soft_margin * 1000) / 128;
+	reload = SECS_TO_TICKS(soft_margin);
 	iowrite16(reload, hpwdt_timer_reg);
 	iowrite16(0x85, hpwdt_timer_con);
 }
@@ -442,8 +446,7 @@ static void hpwdt_ping(void)
 
 static int hpwdt_change_timer(int new_margin)
 {
-	/* Arbitrary, can't find the card's limits */
-	if (new_margin < 5 || new_margin > 600) {
+	if (new_margin < 1 || new_margin > HPWDT_MAX_TIMER) {
 		printk(KERN_WARNING
 			"hpwdt: New value passed in is invalid: %d seconds.\n",
 			new_margin);
@@ -454,7 +457,7 @@ static int hpwdt_change_timer(int new_margin)
 	printk(KERN_DEBUG
 		"hpwdt: New timer passed in is %d seconds.\n",
 		new_margin);
-	reload = (soft_margin * 1000) / 128;
+	reload = SECS_TO_TICKS(soft_margin);
 
 	return 0;
 }
