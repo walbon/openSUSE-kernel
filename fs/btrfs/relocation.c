@@ -1648,7 +1648,7 @@ static noinline_for_stack int merge_reloc_root(struct reloc_control *rc,
 	}
 
 	if (level == 0 && rc->stage == UPDATE_DATA_PTRS) {
-		trans = btrfs_start_transaction(root, 1);
+		trans = btrfs_start_transaction(root, 0);
 
 		leaf = path->nodes[0];
 		btrfs_item_key_to_cpu(leaf, &key, 0);
@@ -1674,7 +1674,7 @@ static noinline_for_stack int merge_reloc_root(struct reloc_control *rc,
 	while (1) {
 		leaf = NULL;
 		replaced = 0;
-		trans = btrfs_start_transaction(root, 1);
+		trans = btrfs_start_transaction(root, 0);
 		max_level = level;
 
 		ret = walk_down_reloc_tree(reloc_root, path, &level);
@@ -1802,7 +1802,7 @@ static void merge_func(struct btrfs_work *work)
 
 		merge_reloc_root(async->rc, root);
 
-		trans = btrfs_start_transaction(root, 1);
+		trans = btrfs_start_transaction(root, 0);
 		btrfs_update_reloc_root(trans, root);
 		btrfs_end_transaction(trans, root);
 	}
@@ -3296,11 +3296,11 @@ static noinline_for_stack int relocate_block_group(struct reloc_control *rc)
 	rc->create_reloc_root = 1;
 	set_reloc_control(rc);
 
-	trans = btrfs_start_transaction(rc->extent_root, 1);
+	trans = btrfs_join_transaction(rc->extent_root, 1);
 	btrfs_commit_transaction(trans, rc->extent_root);
 
 	while (1) {
-		trans = btrfs_start_transaction(rc->extent_root, 1);
+		trans = btrfs_start_transaction(rc->extent_root, 0);
 
 		ret = find_next_extent(trans, rc, path);
 		if (ret < 0)
@@ -3410,7 +3410,7 @@ static noinline_for_stack int relocate_block_group(struct reloc_control *rc)
 	smp_mb();
 
 	if (rc->extents_found > 0) {
-		trans = btrfs_start_transaction(rc->extent_root, 1);
+		trans = btrfs_join_transaction(rc->extent_root, 1);
 		btrfs_commit_transaction(trans, rc->extent_root);
 	}
 
@@ -3419,7 +3419,7 @@ static noinline_for_stack int relocate_block_group(struct reloc_control *rc)
 	unset_reloc_control(rc);
 
 	/* get rid of pinned extents */
-	trans = btrfs_start_transaction(rc->extent_root, 1);
+	trans = btrfs_join_transaction(rc->extent_root, 1);
 	btrfs_commit_transaction(trans, rc->extent_root);
 
 	return err;
@@ -3474,7 +3474,7 @@ static struct inode *create_reloc_inode(struct btrfs_fs_info *fs_info,
 	if (IS_ERR(root))
 		return ERR_CAST(root);
 
-	trans = btrfs_start_transaction(root, 1);
+	trans = btrfs_start_transaction(root, 6);
 	BUG_ON(!trans);
 
 	err = btrfs_find_free_objectid(trans, root, objectid, &objectid);
@@ -3618,7 +3618,7 @@ static noinline_for_stack int mark_garbage_root(struct btrfs_root *root)
 	struct btrfs_trans_handle *trans;
 	int ret;
 
-	trans = btrfs_start_transaction(root->fs_info->tree_root, 1);
+	trans = btrfs_start_transaction(root->fs_info->tree_root, 0);
 
 	memset(&root->root_item.drop_progress, 0,
 		sizeof(root->root_item.drop_progress));
