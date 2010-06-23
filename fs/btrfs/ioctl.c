@@ -586,19 +586,9 @@ static int btrfs_defrag_file(struct file *file,
 		if (range->flags & BTRFS_DEFRAG_RANGE_COMPRESS)
 			BTRFS_I(inode)->force_compress = 1;
 
-		ret = btrfs_check_data_free_space(root, inode, PAGE_CACHE_SIZE);
-		if (ret) {
-			ret = -ENOSPC;
-			break;
-		}
-
-		ret = btrfs_reserve_metadata_for_delalloc(root, inode, 1);
-		if (ret) {
-			btrfs_free_reserved_data_space(root, inode,
-						       PAGE_CACHE_SIZE);
-			ret = -ENOSPC;
-			break;
-		}
+		ret  = btrfs_delalloc_reserve_space(inode, PAGE_CACHE_SIZE);
+		if (ret)
+			goto err_unlock;
 again:
 		if (inode->i_size == 0 ||
 		    i > ((inode->i_size - 1) >> PAGE_CACHE_SHIFT)) {
@@ -607,8 +597,10 @@ again:
 		}
 
 		page = grab_cache_page(inode->i_mapping, i);
-		if (!page)
+		if (!page) {
+			ret = -ENOMEM;
 			goto err_reservations;
+		}
 
 		if (!PageUptodate(page)) {
 			btrfs_readpage(NULL, page);
@@ -616,6 +608,7 @@ again:
 			if (!PageUptodate(page)) {
 				unlock_page(page);
 				page_cache_release(page);
+				ret = -EIO;
 				goto err_reservations;
 			}
 		}
@@ -629,8 +622,7 @@ again:
 		wait_on_page_writeback(page);
 
 		if (PageDirty(page)) {
-			btrfs_free_reserved_data_space(root, inode,
-						       PAGE_CACHE_SIZE);
+			btrfs_delalloc_release_space(inode, PAGE_CACHE_SIZE);
 			goto loop_unlock;
 		}
 
@@ -668,7 +660,6 @@ loop_unlock:
 		page_cache_release(page);
 		mutex_unlock(&inode->i_mutex);
 
-		btrfs_unreserve_metadata_for_delalloc(root, inode, 1);
 		balance_dirty_pages_ratelimited_nr(inode->i_mapping, 1);
 		i++;
 	}
@@ -698,9 +689,9 @@ loop_unlock:
 	return 0;
 
 err_reservations:
+	btrfs_delalloc_release_space(inode, PAGE_CACHE_SIZE);
+err_unlock:
 	mutex_unlock(&inode->i_mutex);
-	btrfs_free_reserved_data_space(root, inode, PAGE_CACHE_SIZE);
-	btrfs_unreserve_metadata_for_delalloc(root, inode, 1);
 	return ret;
 }
 
