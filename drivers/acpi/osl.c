@@ -438,7 +438,15 @@ acpi_status acpi_os_remove_interrupt_handler(u32 irq, acpi_osd_handler handler)
 
 void acpi_os_sleep(acpi_integer ms)
 {
-	schedule_timeout_interruptible(msecs_to_jiffies(ms));
+	if (ms > 1000) {
+		printk(KERN_WARNING FW_BUG
+			"ACPI: Limit %lld sleep to 1 second\n", ms);
+		ms = 1000;
+	}
+	if (system_state == SYSTEM_RUNNING)
+		schedule_timeout_interruptible(msecs_to_jiffies(ms));
+	else
+		acpi_os_stall(ms * 1000);
 }
 
 void acpi_os_stall(u32 us)
