@@ -988,6 +988,7 @@ void journal_update_superblock(journal_t *journal, int wait)
 	spin_unlock(&journal->j_state_lock);
 
 	BUFFER_TRACE(bh, "marking dirty");
+	set_buffer_uptodate(bh);
 	mark_buffer_dirty(bh);
 	if (wait)
 		sync_dirty_buffer(bh);
