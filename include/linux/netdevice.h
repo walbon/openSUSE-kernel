@@ -1953,6 +1953,8 @@ static inline void skb_bond_set_mac_by_master(struct sk_buff *skb,
 	}
 }
 
+extern void (*bond_handle_arp_hook)(struct sk_buff *skb);
+
 /* On bonding slaves other than the currently active slave, suppress
  * duplicates except for 802.3ad ETH_P_SLOW, alb non-mcast/bcast, and
  * ARP on active-backup slaves with arp_validate enabled.
@@ -1974,11 +1976,13 @@ static inline int skb_bond_should_drop(struct sk_buff *skb)
 			skb_bond_set_mac_by_master(skb, master);
 		}
 
-		if (dev->priv_flags & IFF_SLAVE_INACTIVE) {
-			if ((dev->priv_flags & IFF_SLAVE_NEEDARP) &&
-			    skb->protocol == __cpu_to_be16(ETH_P_ARP))
-				return 0;
+		/* pass ARP frames directly to bonding
+		   before bridging or other hooks change them */
+		if ((master->priv_flags & IFF_MASTER_NEEDARP) &&
+		    skb->protocol == __cpu_to_be16(ETH_P_ARP))
+			bond_handle_arp_hook(skb);
 
+		if (dev->priv_flags & IFF_SLAVE_INACTIVE) {
 			if (master->priv_flags & IFF_MASTER_ALB) {
 				if (skb->pkt_type != PACKET_BROADCAST &&
 				    skb->pkt_type != PACKET_MULTICAST)

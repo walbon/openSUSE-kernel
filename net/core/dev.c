@@ -2180,6 +2180,9 @@ static inline int deliver_skb(struct sk_buff *skb,
 	return pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
 }
 
+void (*bond_handle_arp_hook)(struct sk_buff *skb);
+EXPORT_SYMBOL_GPL(bond_handle_arp_hook);
+
 #if defined(CONFIG_BRIDGE) || defined (CONFIG_BRIDGE_MODULE)
 
 #if defined(CONFIG_ATM_LANE) || defined(CONFIG_ATM_LANE_MODULE)
@@ -2408,6 +2411,10 @@ int netif_receive_skb(struct sk_buff *skb)
 	if (!skb->iif)
 		skb->iif = skb->dev->ifindex;
 
+	skb_reset_network_header(skb);
+	skb_reset_transport_header(skb);
+	skb->mac_len = skb->network_header - skb->mac_header;
+
 	null_or_orig = NULL;
 	orig_dev = skb->dev;
 	if (orig_dev->master) {
@@ -2418,10 +2425,6 @@ int netif_receive_skb(struct sk_buff *skb)
 	}
 
 	__get_cpu_var(netdev_rx_stat).total++;
-
-	skb_reset_network_header(skb);
-	skb_reset_transport_header(skb);
-	skb->mac_len = skb->network_header - skb->mac_header;
 
 	pt_prev = NULL;
 

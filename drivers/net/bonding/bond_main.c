@@ -1956,8 +1956,7 @@ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev)
 	}
 
 	slave_dev->priv_flags &= ~(IFF_MASTER_8023AD | IFF_MASTER_ALB |
-				   IFF_SLAVE_INACTIVE | IFF_BONDING |
-				   IFF_SLAVE_NEEDARP);
+				   IFF_SLAVE_INACTIVE | IFF_BONDING);
 
 	kfree(slave);
 
@@ -2667,11 +2666,12 @@ static void bond_validate_arp(struct bonding *bond, struct slave *slave, __be32 
 	}
 }
 
-static int bond_arp_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, struct net_device *orig_dev)
+static void bond_handle_arp(struct sk_buff *skb)
 {
 	struct arphdr *arp;
 	struct slave *slave;
 	struct bonding *bond;
+	struct net_device *dev = skb->dev->master, *orig_dev = skb->dev;
 	unsigned char *arp_ptr;
 	__be32 sip, tip;
 
@@ -2684,9 +2684,8 @@ static int bond_arp_rcv(struct sk_buff *skb, struct net_device *dev, struct pack
 	bond = netdev_priv(dev);
 	read_lock(&bond->lock);
 
-	pr_debug("bond_arp_rcv: bond %s skb->dev %s orig_dev %s\n",
-		bond->dev->name, skb->dev ? skb->dev->name : "NULL",
-		orig_dev ? orig_dev->name : "NULL");
+	pr_debug("bond_handle_arp: bond: %s, master: %s, slave: %s\n",
+		bond->dev->name, dev->name, orig_dev->name);
 
 	slave = bond_get_slave_by_dev(bond, orig_dev);
 	if (!slave || !slave_do_arp_validate(bond, slave))
@@ -2731,8 +2730,7 @@ static int bond_arp_rcv(struct sk_buff *skb, struct net_device *dev, struct pack
 out_unlock:
 	read_unlock(&bond->lock);
 out:
-	dev_kfree_skb(skb);
-	return NET_RX_SUCCESS;
+	return;
 }
 
 /*
@@ -3632,23 +3630,12 @@ static void bond_unregister_lacpdu(struct bonding *bond)
 
 void bond_register_arp(struct bonding *bond)
 {
-	struct packet_type *pt = &bond->arp_mon_pt;
-
-	if (pt->type)
-		return;
-
-	pt->type = htons(ETH_P_ARP);
-	pt->dev = bond->dev;
-	pt->func = bond_arp_rcv;
-	dev_add_pack(pt);
+	bond->dev->priv_flags |= IFF_MASTER_NEEDARP;
 }
 
 void bond_unregister_arp(struct bonding *bond)
 {
-	struct packet_type *pt = &bond->arp_mon_pt;
-
-	dev_remove_pack(pt);
-	pt->type = 0;
+	bond->dev->priv_flags &= ~IFF_MASTER_NEEDARP;
 }
 
 /*---------------------------- Hashing Policies -----------------------------*/
@@ -5113,6 +5100,8 @@ static int __init bonding_init(void)
 	register_inetaddr_notifier(&bond_inetaddr_notifier);
 	bond_register_ipv6_notifier();
 
+	bond_handle_arp_hook = bond_handle_arp;
+
 	goto out;
 err:
 	rtnl_lock();
@@ -5134,6 +5123,8 @@ static void __exit bonding_exit(void)
 	rtnl_lock();
 	bond_free_all();
 	rtnl_unlock();
+
+	bond_handle_arp_hook = NULL;
 }
 
 module_init(bonding_init);
