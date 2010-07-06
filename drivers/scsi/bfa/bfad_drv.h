@@ -162,7 +162,6 @@ struct bfad_s {
 	const char *pci_name;
 	struct bfa_pcidev_s hal_pcidev;
 	struct bfa_ioc_pci_attr_s pci_attr;
-	unsigned long   pci_bar0_map;
 	void __iomem   *pci_bar0_kva;
 	struct completion comp;
 	struct completion suspend;
@@ -294,5 +293,6 @@ extern struct list_head bfad_list;
 extern int bfa_lun_queue_depth;
 extern int bfad_supported_fc4s;
 extern int bfa_linkup_delay;
+extern struct mutex bfad_mutex;
 
 #endif /* __BFAD_DRV_H__ */
