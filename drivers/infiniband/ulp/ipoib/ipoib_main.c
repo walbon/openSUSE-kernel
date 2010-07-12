@@ -91,6 +91,9 @@ struct workqueue_struct *ipoib_workqueue;
 
 struct ib_sa_client ipoib_sa_client;
 
+static struct ipoib_neigh *neigh_alloc(struct neighbour *neighbour,
+				       struct net_device *dev);
+
 static void ipoib_add_one(struct ib_device *device);
 static void ipoib_remove_one(struct ib_device *device);
 
@@ -261,32 +264,16 @@ static int __path_add(struct net_device *dev, struct ipoib_path *path)
 	return 0;
 }
 
-static void path_free(struct net_device *dev, struct ipoib_path *path)
+static void path_free(struct ipoib_path *path)
 {
-	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	struct ipoib_neigh *neigh, *tn;
 	struct sk_buff *skb;
-	unsigned long flags;
 
 	while ((skb = __skb_dequeue(&path->queue)))
 		dev_kfree_skb_irq(skb);
 
-	spin_lock_irqsave(&priv->lock, flags);
-
-	list_for_each_entry_safe(neigh, tn, &path->neigh_list, list) {
-		/*
-		 * It's safe to call ipoib_put_ah() inside priv->lock
-		 * here, because we know that path->ah will always
-		 * hold one more reference, so ipoib_put_ah() will
-		 * never do more than decrement the ref count.
-		 */
-		if (neigh->ah)
-			ipoib_put_ah(neigh->ah);
-
-		ipoib_neigh_free(dev, neigh);
-	}
-
-	spin_unlock_irqrestore(&priv->lock, flags);
+	list_for_each_entry_safe(neigh, tn, &path->neigh_list, list)
+		ipoib_neigh_flush(neigh);
 
 	if (path->ah)
 		ipoib_put_ah(path->ah);
@@ -387,10 +374,11 @@ void ipoib_flush_paths(struct net_device *dev)
 	list_for_each_entry_safe(path, tp, &remove_list, list) {
 		if (path->query)
 			ib_sa_cancel_query(path->query_id, path->query);
+		ipoib_cm_flush_path(dev, path);
 		spin_unlock_irqrestore(&priv->lock, flags);
 		netif_tx_unlock_bh(dev);
 		wait_for_completion(&path->done);
-		path_free(dev, path);
+		path_free(path);
 		netif_tx_lock_bh(dev);
 		spin_lock_irqsave(&priv->lock, flags);
 	}
@@ -460,19 +448,15 @@ static void path_rec_completion(int status,
 			memcpy(&neigh->dgid.raw, &path->pathrec.dgid.raw,
 			       sizeof(union ib_gid));
 
-			if (ipoib_cm_enabled(dev, neigh->neighbour)) {
-				if (!ipoib_cm_get(neigh))
-					ipoib_cm_set(neigh, ipoib_cm_create_tx(dev,
-									       path,
-									       neigh));
-				if (!ipoib_cm_get(neigh)) {
-					list_del(&neigh->list);
-					if (neigh->ah)
-						ipoib_put_ah(neigh->ah);
-					ipoib_neigh_free(dev, neigh);
-					continue;
-				}
-			}
+			/*
+			 * If connected mode is enabled but not started,
+			 * start getting a connection.
+			 */
+			if (ipoib_cm_enabled(dev, neigh->neighbour) &&
+			    !ipoib_cm_get(neigh))
+				ipoib_cm_set(neigh, ipoib_cm_create_tx(dev,
+								       path,
+								       neigh));
 
 			while ((skb = __skb_dequeue(&neigh->queue)))
 				__skb_queue_tail(&skqueue, skb);
@@ -520,6 +504,8 @@ static struct ipoib_path *path_rec_create(struct net_device *dev, void *gid)
 	path->pathrec.numb_path     = 1;
 	path->pathrec.traffic_class = priv->broadcast->mcmember.traffic_class;
 
+	__path_add(dev, path);
+
 	return path;
 }
 
@@ -554,32 +540,27 @@ static int path_rec_start(struct net_device *dev,
 	return 0;
 }
 
-static void neigh_add_path(struct sk_buff *skb, struct net_device *dev)
+static void neigh_add_path(struct sk_buff *skb, struct net_device *dev,
+			   struct ipoib_neigh *neigh)
 {
 	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	struct ipoib_path *path;
-	struct ipoib_neigh *neigh;
+	struct neighbour *n;
 	unsigned long flags;
 
-	neigh = ipoib_neigh_alloc(skb_dst(skb)->neighbour, skb->dev);
-	if (!neigh) {
-		++dev->stats.tx_dropped;
-		dev_kfree_skb_any(skb);
-		return;
-	}
+	n = skb_dst(skb)->neighbour;
 
 	spin_lock_irqsave(&priv->lock, flags);
 
-	path = __path_find(dev, skb_dst(skb)->neighbour->ha + 4);
+	path = __path_find(dev, n->ha + 4);
 	if (!path) {
-		path = path_rec_create(dev, skb_dst(skb)->neighbour->ha + 4);
+		path = path_rec_create(dev, n->ha + 4);
 		if (!path)
-			goto err_path;
-
-		__path_add(dev, path);
+			goto err_drop;
 	}
 
-	list_add_tail(&neigh->list, &path->neigh_list);
+	if (list_empty(&neigh->list))
+		list_add_tail(&neigh->list, &path->neigh_list);
 
 	if (path->ah) {
 		kref_get(&path->ah->ref);
@@ -587,16 +568,11 @@ static void neigh_add_path(struct sk_buff *skb, struct net_device *dev)
 		memcpy(&neigh->dgid.raw, &path->pathrec.dgid.raw,
 		       sizeof(union ib_gid));
 
-		if (ipoib_cm_enabled(dev, neigh->neighbour)) {
+		if (ipoib_cm_enabled(dev, n)) {
 			if (!ipoib_cm_get(neigh))
 				ipoib_cm_set(neigh, ipoib_cm_create_tx(dev, path, neigh));
-			if (!ipoib_cm_get(neigh)) {
-				list_del(&neigh->list);
-				if (neigh->ah)
-					ipoib_put_ah(neigh->ah);
-				ipoib_neigh_free(dev, neigh);
+			if (!ipoib_cm_get(neigh))
 				goto err_drop;
-			}
 			if (skb_queue_len(&neigh->queue) < IPOIB_MAX_PATH_REC_QUEUE)
 				__skb_queue_tail(&neigh->queue, skb);
 			else {
@@ -606,12 +582,10 @@ static void neigh_add_path(struct sk_buff *skb, struct net_device *dev)
 			}
 		} else {
 			spin_unlock_irqrestore(&priv->lock, flags);
-			ipoib_send(dev, skb, path->ah, IPOIB_QPN(skb_dst(skb)->neighbour->ha));
+			ipoib_send(dev, skb, path->ah, IPOIB_QPN(n->ha));
 			return;
 		}
 	} else {
-		neigh->ah  = NULL;
-
 		if (!path->query && path_rec_start(dev, path))
 			goto err_list;
 
@@ -622,10 +596,7 @@ static void neigh_add_path(struct sk_buff *skb, struct net_device *dev)
 	return;
 
 err_list:
-	list_del(&neigh->list);
-
-err_path:
-	ipoib_neigh_free(dev, neigh);
+	list_del_init(&neigh->list);
 err_drop:
 	++dev->stats.tx_dropped;
 	dev_kfree_skb_any(skb);
@@ -633,20 +604,22 @@ err_drop:
 	spin_unlock_irqrestore(&priv->lock, flags);
 }
 
-static void ipoib_path_lookup(struct sk_buff *skb, struct net_device *dev)
+static void path_lookup(struct sk_buff *skb, struct net_device *dev,
+			struct ipoib_neigh *neigh)
 {
-	struct ipoib_dev_priv *priv = netdev_priv(skb->dev);
+	struct ipoib_dev_priv *priv;
 
 	/* Look up path record for unicasts */
 	if (skb_dst(skb)->neighbour->ha[4] != 0xff) {
-		neigh_add_path(skb, dev);
+		neigh_add_path(skb, dev, neigh);
 		return;
 	}
 
 	/* Add in the P_Key for multicasts */
+	priv = netdev_priv(dev);
 	skb_dst(skb)->neighbour->ha[8] = (priv->pkey >> 8) & 0xff;
 	skb_dst(skb)->neighbour->ha[9] = priv->pkey & 0xff;
-	ipoib_mcast_send(dev, skb_dst(skb)->neighbour->ha + 4, skb);
+	ipoib_mcast_send(dev, skb_dst(skb)->neighbour->ha + 4, skb, neigh);
 }
 
 static void unicast_arp_send(struct sk_buff *skb, struct net_device *dev,
@@ -659,35 +632,13 @@ static void unicast_arp_send(struct sk_buff *skb, struct net_device *dev,
 	spin_lock_irqsave(&priv->lock, flags);
 
 	path = __path_find(dev, phdr->hwaddr + 4);
-	if (!path || !path->valid) {
-		int new_path = 0;
-
-		if (!path) {
-			path = path_rec_create(dev, phdr->hwaddr + 4);
-			new_path = 1;
-		}
-		if (path) {
-			/* put pseudoheader back on for next time */
-			skb_push(skb, sizeof *phdr);
-			__skb_queue_tail(&path->queue, skb);
-
-			if (!path->query && path_rec_start(dev, path)) {
-				spin_unlock_irqrestore(&priv->lock, flags);
-				if (new_path)
-					path_free(dev, path);
-				return;
-			} else
-				__path_add(dev, path);
-		} else {
-			++dev->stats.tx_dropped;
-			dev_kfree_skb_any(skb);
-		}
-
-		spin_unlock_irqrestore(&priv->lock, flags);
-		return;
+	if (!path) {
+		path = path_rec_create(dev, phdr->hwaddr + 4);
+		if (!path)
+			goto drop;
 	}
 
-	if (path->ah) {
+	if (path->valid && path->ah) {
 		ipoib_dbg(priv, "Send unicast ARP to %04x\n",
 			  be16_to_cpu(path->pathrec.dlid));
 
@@ -699,11 +650,15 @@ static void unicast_arp_send(struct sk_buff *skb, struct net_device *dev,
 		/* put pseudoheader back on for next time */
 		skb_push(skb, sizeof *phdr);
 		__skb_queue_tail(&path->queue, skb);
-	} else {
-		++dev->stats.tx_dropped;
-		dev_kfree_skb_any(skb);
-	}
+	} else
+		goto drop;
 
+	spin_unlock_irqrestore(&priv->lock, flags);
+	return;
+
+drop:
+	++dev->stats.tx_dropped;
+	dev_kfree_skb_any(skb);
 	spin_unlock_irqrestore(&priv->lock, flags);
 }
 
@@ -714,31 +669,23 @@ static int ipoib_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	unsigned long flags;
 
 	if (likely(skb_dst(skb) && skb_dst(skb)->neighbour)) {
-		if (unlikely(!*to_ipoib_neigh(skb_dst(skb)->neighbour))) {
-			ipoib_path_lookup(skb, dev);
+		neigh = *to_ipoib_neigh(skb_dst(skb)->neighbour);
+
+		if (unlikely(!neigh)) {
+			neigh = neigh_alloc(skb_dst(skb)->neighbour, skb->dev);
+			if (!neigh) {
+				++dev->stats.tx_dropped;
+				dev_kfree_skb_any(skb);
+			} else
+				path_lookup(skb, dev, neigh);
 			return NETDEV_TX_OK;
 		}
-
-		neigh = *to_ipoib_neigh(skb_dst(skb)->neighbour);
 
 		if (unlikely((memcmp(&neigh->dgid.raw,
 				     skb_dst(skb)->neighbour->ha + 4,
 				     sizeof(union ib_gid))) ||
 			     (neigh->dev != dev))) {
-			spin_lock_irqsave(&priv->lock, flags);
-			/*
-			 * It's safe to call ipoib_put_ah() inside
-			 * priv->lock here, because we know that
-			 * path->ah will always hold one more reference,
-			 * so ipoib_put_ah() will never do more than
-			 * decrement the ref count.
-			 */
-			if (neigh->ah)
-				ipoib_put_ah(neigh->ah);
-			list_del(&neigh->list);
-			ipoib_neigh_free(dev, neigh);
-			spin_unlock_irqrestore(&priv->lock, flags);
-			ipoib_path_lookup(skb, dev);
+			path_lookup(skb, dev, neigh);
 			return NETDEV_TX_OK;
 		}
 
@@ -770,7 +717,7 @@ static int ipoib_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			phdr->hwaddr[8] = (priv->pkey >> 8) & 0xff;
 			phdr->hwaddr[9] = priv->pkey & 0xff;
 
-			ipoib_mcast_send(dev, phdr->hwaddr + 4, skb);
+			ipoib_mcast_send(dev, phdr->hwaddr + 4, skb, NULL);
 		} else {
 			/* unicast GID -- should be ARP or RARP reply */
 
@@ -847,34 +794,45 @@ static void ipoib_neigh_cleanup(struct neighbour *n)
 {
 	struct ipoib_neigh *neigh;
 	struct ipoib_dev_priv *priv = netdev_priv(n->dev);
+	struct sk_buff *skb;
 	unsigned long flags;
-	struct ipoib_ah *ah = NULL;
+
+	spin_lock_irqsave(&priv->lock, flags);
 
 	neigh = *to_ipoib_neigh(n);
-	if (neigh)
-		priv = netdev_priv(neigh->dev);
-	else
+	if (!neigh) {
+		spin_unlock_irqrestore(&priv->lock, flags);
 		return;
+	}
+	*to_ipoib_neigh(n) = NULL;
+	neigh->neighbour = NULL;
+
 	ipoib_dbg(priv,
 		  "neigh_cleanup for %06x %pI6\n",
 		  IPOIB_QPN(n->ha),
 		  n->ha + 4);
 
-	spin_lock_irqsave(&priv->lock, flags);
+	if (ipoib_cm_get(neigh))
+		ipoib_cm_destroy_tx(ipoib_cm_get(neigh));
 
-	if (neigh->ah)
-		ah = neigh->ah;
-	list_del(&neigh->list);
-	ipoib_neigh_free(n->dev, neigh);
+	if (!list_empty(&neigh->list))
+		list_del_init(&neigh->list);
 
 	spin_unlock_irqrestore(&priv->lock, flags);
 
-	if (ah)
-		ipoib_put_ah(ah);
+	while ((skb = __skb_dequeue(&neigh->queue))) {
+		++n->dev->stats.tx_dropped;
+		dev_kfree_skb_any(skb);
+	}
+
+	if (neigh->ah)
+		ipoib_put_ah(neigh->ah);
+
+	kfree(neigh);
 }
 
-struct ipoib_neigh *ipoib_neigh_alloc(struct neighbour *neighbour,
-				      struct net_device *dev)
+static struct ipoib_neigh *neigh_alloc(struct neighbour *neighbour,
+				       struct net_device *dev)
 {
 	struct ipoib_neigh *neigh;
 
@@ -882,27 +840,58 @@ struct ipoib_neigh *ipoib_neigh_alloc(struct neighbour *neighbour,
 	if (!neigh)
 		return NULL;
 
+	neigh->ah = NULL;
 	neigh->neighbour = neighbour;
 	neigh->dev = dev;
 	memset(&neigh->dgid.raw, 0, sizeof (union ib_gid));
 	*to_ipoib_neigh(neighbour) = neigh;
 	skb_queue_head_init(&neigh->queue);
+	INIT_LIST_HEAD(&neigh->list);
 	ipoib_cm_set(neigh, NULL);
 
 	return neigh;
 }
 
-void ipoib_neigh_free(struct net_device *dev, struct ipoib_neigh *neigh)
+/*
+ * This is called when flushing the path or multicast GID from the
+ * struct ipoib_neigh. ipoib_start_xmit() will then try to reinitialize
+ * the address the next time it is called.
+ * Note that the "neigh" pointer passed should not be used after calling this.
+ */
+void ipoib_neigh_flush(struct ipoib_neigh *neigh)
 {
+	struct net_device *dev = neigh->dev;
+	struct ipoib_dev_priv *priv = netdev_priv(dev);
+	struct sk_buff_head skqueue;
 	struct sk_buff *skb;
-	*to_ipoib_neigh(neigh->neighbour) = NULL;
-	while ((skb = __skb_dequeue(&neigh->queue))) {
-		++dev->stats.tx_dropped;
-		dev_kfree_skb_any(skb);
-	}
+	struct ipoib_ah *ah;
+	unsigned long flags;
+
+	skb_queue_head_init(&skqueue);
+
+	netif_tx_lock_bh(dev);
+	spin_lock_irqsave(&priv->lock, flags);
+
+	while ((skb = __skb_dequeue(&neigh->queue)))
+		__skb_queue_tail(&skqueue, skb);
+
+	ah = neigh->ah;
+	neigh->ah = NULL;
+	memset(&neigh->dgid.raw, 0, sizeof(union ib_gid));
+	list_del_init(&neigh->list);
 	if (ipoib_cm_get(neigh))
 		ipoib_cm_destroy_tx(ipoib_cm_get(neigh));
-	kfree(neigh);
+
+	spin_unlock_irqrestore(&priv->lock, flags);
+	netif_tx_unlock_bh(dev);
+
+	while ((skb = __skb_dequeue(&skqueue))) {
+		++dev->stats.tx_dropped;
+		dev_kfree_skb_irq(skb);
+	}
+
+	if (ah)
+		ipoib_put_ah(ah);
 }
 
 static int ipoib_neigh_setup_dev(struct net_device *dev, struct neigh_parms *parms)

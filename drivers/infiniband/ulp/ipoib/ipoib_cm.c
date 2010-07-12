@@ -796,31 +796,14 @@ void ipoib_cm_handle_tx_wc(struct net_device *dev, struct ib_wc *wc)
 
 	if (wc->status != IB_WC_SUCCESS &&
 	    wc->status != IB_WC_WR_FLUSH_ERR) {
-		struct ipoib_neigh *neigh;
-
 		ipoib_dbg(priv, "failed cm send event "
 			   "(status=%d, wrid=%d vend_err %x)\n",
 			   wc->status, wr_id, wc->vendor_err);
 
 		spin_lock_irqsave(&priv->lock, flags);
-		neigh = tx->neigh;
-
-		if (neigh) {
-			neigh->cm = NULL;
-			list_del(&neigh->list);
-			if (neigh->ah)
-				ipoib_put_ah(neigh->ah);
-			ipoib_neigh_free(dev, neigh);
-
-			tx->neigh = NULL;
-		}
-
-		if (test_and_clear_bit(IPOIB_FLAG_INITIALIZED, &tx->flags)) {
-			list_move(&tx->list, &priv->cm.reap_list);
-			queue_work(ipoib_workqueue, &priv->cm.reap_task);
-		}
 
 		clear_bit(IPOIB_FLAG_OPER_UP, &tx->flags);
+		ipoib_cm_destroy_tx(tx);
 
 		spin_unlock_irqrestore(&priv->lock, flags);
 	}
@@ -1201,7 +1184,6 @@ static int ipoib_cm_tx_handler(struct ib_cm_id *cm_id,
 	struct ipoib_cm_tx *tx = cm_id->context;
 	struct ipoib_dev_priv *priv = netdev_priv(tx->dev);
 	struct net_device *dev = priv->dev;
-	struct ipoib_neigh *neigh;
 	unsigned long flags;
 	int ret;
 
@@ -1223,22 +1205,8 @@ static int ipoib_cm_tx_handler(struct ib_cm_id *cm_id,
 		ipoib_dbg(priv, "CM error %d.\n", event->event);
 		netif_tx_lock_bh(dev);
 		spin_lock_irqsave(&priv->lock, flags);
-		neigh = tx->neigh;
 
-		if (neigh) {
-			neigh->cm = NULL;
-			list_del(&neigh->list);
-			if (neigh->ah)
-				ipoib_put_ah(neigh->ah);
-			ipoib_neigh_free(dev, neigh);
-
-			tx->neigh = NULL;
-		}
-
-		if (test_and_clear_bit(IPOIB_FLAG_INITIALIZED, &tx->flags)) {
-			list_move(&tx->list, &priv->cm.reap_list);
-			queue_work(ipoib_workqueue, &priv->cm.reap_task);
-		}
+		ipoib_cm_destroy_tx(tx);
 
 		spin_unlock_irqrestore(&priv->lock, flags);
 		netif_tx_unlock_bh(dev);
@@ -1265,20 +1233,62 @@ struct ipoib_cm_tx *ipoib_cm_create_tx(struct net_device *dev, struct ipoib_path
 	tx->path = path;
 	tx->dev = dev;
 	list_add(&tx->list, &priv->cm.start_list);
-	set_bit(IPOIB_FLAG_INITIALIZED, &tx->flags);
 	queue_work(ipoib_workqueue, &priv->cm.start_task);
 	return tx;
 }
 
+/*
+ * Note: this is called with netif_tx_lock_bh() and priv->lock held.
+ */
 void ipoib_cm_destroy_tx(struct ipoib_cm_tx *tx)
 {
 	struct ipoib_dev_priv *priv = netdev_priv(tx->dev);
-	if (test_and_clear_bit(IPOIB_FLAG_INITIALIZED, &tx->flags)) {
+	struct ipoib_neigh *neigh = tx->neigh;
+
+	if (!neigh)
+		return;
+
+	ipoib_dbg(priv, "Reap connection for gid %pI6\n", neigh->dgid.raw);
+	neigh->cm = NULL;
+	tx->neigh = NULL;
+
+	/* Force ipoib_start_xmit() to start a new connection if called */
+	if (neigh->ah) {
+		ipoib_put_ah(neigh->ah);
+		neigh->ah = NULL;
+		memset(&neigh->dgid.raw, 0, sizeof(union ib_gid));
+	}
+
+	/*
+	 * If ipoib_cm_tx_start() is actively using this tx,
+	 * don't delete it by putting it on the reap_list.
+	 * Instead, ipoib_cm_tx_start() will handle the destruction.
+	 */
+	if (!list_empty(&tx->list) ||
+	    test_bit(IPOIB_FLAG_INITIALIZED, &tx->flags)) {
 		list_move(&tx->list, &priv->cm.reap_list);
 		queue_work(ipoib_workqueue, &priv->cm.reap_task);
-		ipoib_dbg(priv, "Reap connection for gid %pI6\n",
-			  tx->neigh->dgid.raw);
-		tx->neigh = NULL;
+	}
+}
+
+/*
+ * Search the list of connections to be started and remove any entries
+ * which match the path being destroyed.
+ *
+ * This should be called with netif_tx_lock_bh() and priv->lock held.
+ */
+void ipoib_cm_flush_path(struct net_device *dev, struct ipoib_path *path)
+{
+	struct ipoib_dev_priv *priv = netdev_priv(dev);
+	struct ipoib_cm_tx *tx, *nx;
+
+	list_for_each_entry_safe(tx, nx, &priv->cm.start_list, list) {
+		tx = list_entry(priv->cm.start_list.next, typeof(*tx), list);
+		if (tx->path == path) {
+			list_del(&tx->list);
+			kfree(tx);
+			break;
+		}
 	}
 }
 
@@ -1304,6 +1314,7 @@ static void ipoib_cm_tx_start(struct work_struct *work)
 		neigh = p->neigh;
 		qpn = IPOIB_QPN(neigh->neighbour->ha);
 		memcpy(&pathrec, &p->path->pathrec, sizeof pathrec);
+		p->path = NULL;
 
 		spin_unlock_irqrestore(&priv->lock, flags);
 		netif_tx_unlock_bh(dev);
@@ -1313,18 +1324,17 @@ static void ipoib_cm_tx_start(struct work_struct *work)
 		netif_tx_lock_bh(dev);
 		spin_lock_irqsave(&priv->lock, flags);
 
-		if (ret) {
-			neigh = p->neigh;
-			if (neigh) {
+		/*
+		 * If ipoib_cm_destroy_tx() was called or there was an error,
+		 * we need to destroy tx.
+		 */
+		neigh = p->neigh;
+		if (!neigh || ret) {
+			if (neigh)
 				neigh->cm = NULL;
-				list_del(&neigh->list);
-				if (neigh->ah)
-					ipoib_put_ah(neigh->ah);
-				ipoib_neigh_free(dev, neigh);
-			}
-			list_del(&p->list);
 			kfree(p);
-		}
+		} else
+			set_bit(IPOIB_FLAG_INITIALIZED, &p->flags);
 	}
 
 	spin_unlock_irqrestore(&priv->lock, flags);
