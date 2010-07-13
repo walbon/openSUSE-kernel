@@ -1846,7 +1846,6 @@ static int NwdGetMountPath(struct novfs_xplat *pdata)
 
 	if (pdata->reqLen != sizeof(mp))
 		return -EINVAL;
-	// AUD: the pointer arg in mp still points to userspace!
 	cpylen = copy_from_user(&mp, pdata->reqData, pdata->reqLen);
 
 	if (novfs_current_mnt) {

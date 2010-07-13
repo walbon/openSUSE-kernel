@@ -207,8 +207,7 @@ int novfs_open_conn_by_ref(struct novfs_xplat *pdata, void ** Handle, struct nov
 	cmd->dataLen = datalen;
 	openConn = (struct nwd_open_conn_by_ref *) cmd->data;
 
-	openConn->uConnReference = //AUD: pointer from userspace as reference???
-		(void *) (unsigned long) ocbr.uConnReference;
+	openConn->uConnReference = (void *) (unsigned long) ocbr.uConnReference;
 	openConn->uConnFlags = ocbr.uConnFlags;
 
 	retCode =
