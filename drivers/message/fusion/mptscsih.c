@@ -2043,7 +2043,7 @@ mptscsih_abort(struct scsi_cmnd * SCpnt)
 	scsi_print_command(SCpnt);
 
 	vdevice = SCpnt->device->hostdata;
-	if (!vdevice || !vdevice->vtarget) {
+	if (!vdevice || !vdevice->vtarget || vdevice->vtarget->deleted) {
 		dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT
 		    "task abort: device has been deleted (sc=%p)\n",
 		    ioc->name, SCpnt));
