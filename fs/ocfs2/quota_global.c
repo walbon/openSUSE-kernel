@@ -462,7 +462,7 @@ int ocfs2_global_read_dquot(struct dquot *dquot)
 		 */
 		WARN_ON(journal_current_handle());
 		down_write(&OCFS2_I(gqinode)->ip_alloc_sem);
-		err = ocfs2_extend_no_holes(gqinode,
+		err = ocfs2_extend_no_holes(gqinode, NULL,
 			gqinode->i_size + (need_alloc << sb->s_blocksize_bits),
 			gqinode->i_size);
 		up_write(&OCFS2_I(gqinode)->ip_alloc_sem);
