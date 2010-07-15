@@ -1047,7 +1047,12 @@ struct jbd2_buffer_trigger_type {
 	 * before a buffer is written to the journal.  mapped_data is a mapped
 	 * buffer that is the frozen data for commit.
 	 */
-	void (*t_frozen)(struct jbd2_buffer_trigger_type *type,
+#ifndef __GENKSYMS__
+	void (*t_frozen)
+#else
+	void (*t_commit)
+#endif
+		(struct jbd2_buffer_trigger_type *type,
 			 struct buffer_head *bh, void *mapped_data,
 			 size_t size);
 
