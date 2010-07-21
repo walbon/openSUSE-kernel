@@ -1992,6 +1992,47 @@ static int ocfs2_setup_osb_uuid(struct ocfs2_super *osb, const unsigned char *uu
 	return 0;
 }
 
+/* Check to make sure entire volume is addressable on this system.
+   Requires osb_clusters_at_boot to be valid and for the journal to
+   have been read by jbd2_journal_load(). */
+static int ocfs2_check_addressable(struct ocfs2_super *osb)
+{
+	int status = 0;
+	u64 max_block =
+		ocfs2_clusters_to_blocks(osb->sb,
+					 osb->osb_clusters_at_boot) - 1;
+
+	/* Absolute addressability check (borrowed from ext4/super.c) */
+	if ((max_block >
+	     (sector_t)(~0LL) >> (osb->sb->s_blocksize_bits - 9)) ||
+	    (max_block > (pgoff_t)(~0LL) >> (PAGE_CACHE_SHIFT -
+					     osb->sb->s_blocksize_bits))) {
+		mlog(ML_ERROR, "Volume too large "
+		     "to mount safely on this system");
+		status = -EFBIG;
+		goto out;
+	}
+
+	/* 32-bit block number is always OK. */
+	if (max_block <= (u32)~0UL)
+		goto out;
+
+	/* Volume is "huge", so see if our journal is new enough to
+	   support it. */
+	if (!(OCFS2_HAS_COMPAT_FEATURE(osb->sb,
+				       OCFS2_FEATURE_COMPAT_JBD2_SB) &&
+	      jbd2_journal_check_used_features(osb->journal->j_journal, 0, 0,
+					       JBD2_FEATURE_INCOMPAT_64BIT))) {
+		mlog(ML_ERROR, "The journal cannot address the entire volume. "
+		     "Enable the 'block64' journal option with tunefs.ocfs2");
+		status = -EFBIG;
+		goto out;
+	}
+
+ out:
+	return status;
+}
+
 static int ocfs2_initialize_super(struct super_block *sb,
 				  struct buffer_head *bh,
 				  int sector_size,
@@ -2216,14 +2257,6 @@ static int ocfs2_initialize_super(struct super_block *sb,
 		goto bail;
 	}
 
-	if (ocfs2_clusters_to_blocks(osb->sb, le32_to_cpu(di->i_clusters) - 1)
-	    > (u32)~0UL) {
-		mlog(ML_ERROR, "Volume might try to write to blocks beyond "
-		     "what jbd can address in 32 bits.\n");
-		status = -EINVAL;
-		goto bail;
-	}
-
 	if (ocfs2_setup_osb_uuid(osb, di->id2.i_super.s_uuid,
 				 sizeof(di->id2.i_super.s_uuid))) {
 		mlog(ML_ERROR, "Out of memory trying to setup our uuid.\n");
@@ -2404,6 +2437,12 @@ static int ocfs2_check_volume(struct ocfs2_super *osb)
 		mlog(ML_ERROR, "ocfs2 journal load failed! %d\n", status);
 		goto finally;
 	}
+
+	/* Now that journal has been loaded, check to make sure entire
+	   volume is addressable. */
+	status = ocfs2_check_addressable(osb);
+	if (status)
+		goto finally;
 
 	if (dirty) {
 		/* recover my local alloc if we didn't unmount cleanly. */
