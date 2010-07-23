@@ -15,8 +15,44 @@
 #include <linux/kdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/nmi.h>
+#include <linux/unwind.h>
 #include <asm/system.h>
 
+#ifdef CONFIG_X86_64
+static void
+kdb_dump_trace_unwind(struct unwind_frame_info *info)
+{
+	unsigned long sp = UNW_SP(info);
+
+	if (info && info->regs.ip) {
+		/* vsnprintf: %pS output the name of a symbol with offset */
+		kdb_printf(" [<%p>] %pS\n",
+			(void *)info->regs.ip, (void *)info->regs.ip);
+	}
+	while (unwind(info) == 0 && UNW_PC(info)) {
+		kdb_printf(" [<%p>] %pS\n",
+			(void *)UNW_PC(info), (void *)UNW_PC(info));
+		if ((sp & ~(PAGE_SIZE - 1)) == (UNW_SP(info) & ~(PAGE_SIZE - 1))
+		    && sp > UNW_SP(info))
+			break;
+		sp = UNW_SP(info);
+	}
+}
+
+static void
+kdb_stack_unwind(struct task_struct *task, struct pt_regs *regs)
+{
+	struct unwind_frame_info info;
+	if (regs) {
+		if (unwind_init_frame_info(&info, task, regs))
+			return;
+	} else {
+		if (unwind_init_blocked(&info, task))
+			return;
+	}
+	kdb_dump_trace_unwind(&info);
+}
+#endif
 
 /*
  * kdb_bt
@@ -63,17 +99,10 @@ static int kdb_show_stack(struct task_struct *p, void *addr, int argcount)
 	console_loglevel = 15;
 	kdb_trap_printk++;
 	kdba_set_current_task(p);
-	if (addr) {
+	if (addr)
 		show_stack((struct task_struct *)p, addr);
-	} else if (kdb_current_regs) {
-#ifdef CONFIG_X86
-		show_stack(p, &kdb_current_regs->sp);
-#else
-		show_stack(p, NULL);
-#endif
-	} else {
-		show_stack(p, NULL);
-	}
+	else
+		kdb_stack_unwind(p, kdb_current_regs);
 	console_loglevel = old_lvl;
 	kdb_trap_printk--;
 	return 0;
@@ -96,7 +125,9 @@ kdb_bt1(struct task_struct *p, unsigned long mask, int argcount, int btaprompt)
 	diag = kdb_show_stack(p, NULL, argcount);
 	if (btaprompt) {
 		kdb_getstr(buffer, sizeof(buffer), "Enter <q> to end, <cr> to continue:");
-		if (buffer[0] == 'q') {
+		if (buffer[0] == 'q' || buffer[0] == 'Q') {
+			KDB_FLAG_SET(CMD_INTERRUPT);
+			KDB_STATE_CLEAR(PAGER);
 			kdb_printf("\n");
 			return 1;
 		}
@@ -162,7 +193,7 @@ kdb_bt(int argc, const char **argv)
 	} else if (strcmp(argv[0], "btc") == 0) {
 		unsigned long cpu = ~0;
 		struct kdb_running_process *krp;
-		const struct task_struct *save_current_task = kdb_current_task;
+		struct task_struct *save_current_task = kdb_current_task;
 		char buf[80];
 		if (argc > 1)
 			return KDB_ARGCOUNT;
@@ -183,6 +214,8 @@ kdb_bt(int argc, const char **argv)
 		kdb_printf("btc: cpu status: ");
 		kdb_parse("cpu\n");
 		for (cpu = 0, krp = kdb_running_process; cpu < NR_CPUS; ++cpu, ++krp) {
+			if (KDB_FLAG(CMD_INTERRUPT))
+				break;
 			if (!cpu_online(cpu) || !krp->seqno)
 				continue;
 			sprintf(buf, "btt 0x%p\n", krp->p);
@@ -198,7 +231,8 @@ kdb_bt(int argc, const char **argv)
 					     &offset, NULL);
 			if (diag)
 				return diag;
-			return kdb_show_stack(kdb_current_task, addr, argcount);
+			return kdb_show_stack(kdb_current_task, (void *)addr,
+					argcount);
 		} else {
 			return kdb_bt1(kdb_current_task, ~0UL, argcount, 0);
 		}
