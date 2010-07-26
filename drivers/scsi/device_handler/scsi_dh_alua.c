@@ -212,13 +212,15 @@ static void stpg_endio(struct request *req, int error)
 {
 	struct alua_dh_data *h = req->end_io_data;
 	struct scsi_sense_hdr sense_hdr;
-	unsigned err = SCSI_DH_IO;
+	unsigned err = SCSI_DH_OK;
 
 	if (error || host_byte(req->errors) != DID_OK ||
-			msg_byte(req->errors) != COMMAND_COMPLETE)
+			msg_byte(req->errors) != COMMAND_COMPLETE) {
+		err = SCSI_DH_IO;
 		goto done;
+	}
 
-	if (err == SCSI_DH_IO && h->senselen > 0) {
+	if (h->senselen > 0) {
 		err = scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
 					   &sense_hdr);
 		if (!err) {
@@ -244,7 +246,9 @@ static void stpg_endio(struct request *req, int error)
 			    print_alua_state(h->state));
 	}
 done:
-	blk_put_request(req);
+	req->end_io_data = NULL;
+	__blk_put_request(req->q, req);
+
 	if (h->callback_fn) {
 		h->callback_fn(h->callback_data, err);
 		h->callback_fn = h->callback_data = NULL;
@@ -262,7 +266,6 @@ done:
 static unsigned submit_stpg(struct alua_dh_data *h)
 {
 	struct request *rq;
-	int err = SCSI_DH_RES_TEMP_UNAVAIL;
 	int stpg_len = 8;
 	struct scsi_device *sdev = h->sdev;
 
@@ -291,7 +294,7 @@ static unsigned submit_stpg(struct alua_dh_data *h)
 	rq->end_io_data = h;
 
 	blk_execute_rq_nowait(rq->q, NULL, rq, 1, stpg_endio);
-	return err;
+	return SCSI_DH_OK;
 }
 
 /*
