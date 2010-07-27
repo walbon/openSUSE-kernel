@@ -714,7 +714,7 @@ static int fcoe_ctlr_parse_adv(struct fcoe_ctlr *fip,
 	}
 	if (!fcf->fc_map || (fcf->fc_map & 0x10000))
 		return -EINVAL;
-	if (!fcf->switch_name || !fcf->fabric_name)
+	if (!fcf->switch_name)
 		return -EINVAL;
 	return 0;
 
