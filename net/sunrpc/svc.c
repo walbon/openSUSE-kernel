@@ -883,6 +883,17 @@ int svc_register(const struct svc_serv *serv, const int family,
 			if (progp->pg_vers[i]->vs_hidden)
 				continue;
 
+			if (strcmp(progp->pg_name, "nfsd") == 0 &&
+			    i < 4 &&
+			    family == PF_INET6) {
+				/* Don't register NFSv2 or NFSv3 for IPv6
+				 * protocols as we don't support statd
+				 * on IPv6 yet
+				 */
+				dprintk("svc: ... not telling portmap\n");
+				continue;
+			}
+
 			error = __svc_register(progp->pg_name, progp->pg_prog,
 						i, family, proto, port);
 			if (error < 0)
