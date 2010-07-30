@@ -13,7 +13,7 @@
 3.	megaraid application will look at the device support flag to decide if application will
 	do the ontime device add/delete.
 
-4.	Fixed some issiues: OS hang during MSM create device. 
+4.	Fixed some issiues: OS hang during MSM create device.
 
 1 Release Date    : Thur.  Oct 29, 2009 09:12:45 PST 2009 -
 			(emaild-id:megaraidlinux@lsi.com)
