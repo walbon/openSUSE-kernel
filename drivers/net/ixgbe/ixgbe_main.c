@@ -5334,6 +5334,7 @@ static u16 ixgbe_select_queue(struct net_device *dev, struct sk_buff *skb)
 			txq -= dev->real_num_tx_queues;
 		return txq;
 	}
+
 #ifdef IXGBE_FCOE
 	if ((adapter->flags & IXGBE_FLAG_FCOE_ENABLED) &&
 	    ((skb->protocol == htons(ETH_P_FCOE)) ||

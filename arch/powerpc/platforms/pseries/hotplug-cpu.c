@@ -200,9 +200,8 @@ static void pseries_cpu_die(unsigned int cpu)
 	} else if (get_preferred_offline_state(cpu) == CPU_STATE_OFFLINE) {
 
 		for (tries = 0; tries < 25; tries++) {
-			cpu_status = smp_query_cpu_stopped(pcpu);
-			if (cpu_status == QCSS_STOPPED ||
-			    cpu_status == QCSS_HARDWARE_ERROR)
+			cpu_status = query_cpu_stopped(pcpu);
+			if (cpu_status == 0 || cpu_status == -1)
 				break;
 			cpu_relax();
 		}
@@ -375,8 +374,8 @@ static int parse_cede_parameters(void)
 static int __init pseries_cpu_hotplug_init(void)
 {
 	struct device_node *np;
-	const char *typep;
 	int cpu;
+	const char *typep;
 	int qcss_tok;
 
 	for_each_node_by_name(np, "interrupt-controller") {

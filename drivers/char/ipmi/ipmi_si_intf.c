@@ -311,18 +311,11 @@ static int register_xaction_notifier(struct notifier_block *nb)
 static void deliver_recv_msg(struct smi_info *smi_info,
 			     struct ipmi_smi_msg *msg)
 {
-	/* Deliver the message to the upper layer */
+	/* Deliver the message to the upper layer with the lock
+	   released. */
 
-	/*
-	 * Run to completion means we are single-threaded,
-	 * so locks are not held.
-	 */
 	if (smi_info->run_to_completion) {
 		ipmi_smi_msg_received(smi_info->intf, msg);
-	/*
-	 * Otherwise, release the lock, deliver the message, and
-	 * re-acquire the lock.
-	 */
 	} else {
 		spin_unlock(&(smi_info->si_lock));
 		ipmi_smi_msg_received(smi_info->intf, msg);
