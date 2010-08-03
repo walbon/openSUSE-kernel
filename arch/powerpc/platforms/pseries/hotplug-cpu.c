@@ -200,7 +200,7 @@ static void pseries_cpu_die(unsigned int cpu)
 	} else if (get_preferred_offline_state(cpu) == CPU_STATE_OFFLINE) {
 
 		for (tries = 0; tries < 25; tries++) {
-			cpu_status = query_cpu_stopped(pcpu);
+			cpu_status = smp_query_cpu_stopped(pcpu);
 			if (cpu_status == 0 || cpu_status == -1)
 				break;
 			cpu_relax();
