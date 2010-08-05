@@ -1426,6 +1426,9 @@ static int ocfs2_search_one_group(struct ocfs2_alloc_context *ac,
 
 	*num_bits = found;
 
+	if (ac->ac_find_loc_only)
+		goto out_loc_only;
+
 	ret = ocfs2_alloc_dinode_update_counts(alloc_inode, handle, ac->ac_bh,
 					       *num_bits,
 					       le16_to_cpu(gd->bg_chain));
@@ -1439,6 +1442,7 @@ static int ocfs2_search_one_group(struct ocfs2_alloc_context *ac,
 	if (ret < 0)
 		mlog_errno(ret);
 
+out_loc_only:
 	*bits_left = le16_to_cpu(gd->bg_free_bits_count);
 
 out:
@@ -1458,7 +1462,6 @@ static int ocfs2_search_chain(struct ocfs2_alloc_context *ac,
 {
 	int status;
 	u16 chain, tmp_bits;
-	u32 tmp_used;
 	u64 next_group;
 	struct inode *alloc_inode = ac->ac_inode;
 	struct buffer_head *group_bh = NULL;
@@ -1518,6 +1521,9 @@ static int ocfs2_search_chain(struct ocfs2_alloc_context *ac,
 
 	BUG_ON(*num_bits == 0);
 
+	if (ac->ac_find_loc_only)
+		goto out_loc_only;
+
 	/*
 	 * Keep track of previous block descriptor read. When
 	 * we find a target, if we have read more than X
@@ -1543,24 +1549,10 @@ static int ocfs2_search_chain(struct ocfs2_alloc_context *ac,
 		}
 	}
 
-	/* Ok, claim our bits now: set the info on dinode, chainlist
-	 * and then the group */
-	status = ocfs2_journal_access_di(handle,
-					 INODE_CACHE(alloc_inode),
-					 ac->ac_bh,
-					 OCFS2_JOURNAL_ACCESS_WRITE);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail;
-	}
-
-	tmp_used = le32_to_cpu(fe->id1.bitmap1.i_used);
-	fe->id1.bitmap1.i_used = cpu_to_le32(*num_bits + tmp_used);
-	le32_add_cpu(&cl->cl_recs[chain].c_free, -(*num_bits));
-
-	status = ocfs2_journal_dirty(handle,
-				     ac->ac_bh);
-	if (status < 0) {
+	status = ocfs2_alloc_dinode_update_counts(alloc_inode, handle,
+						  ac->ac_bh, *num_bits,
+						  chain);
+	if (status) {
 		mlog_errno(status);
 		goto bail;
 	}
@@ -1579,6 +1571,7 @@ static int ocfs2_search_chain(struct ocfs2_alloc_context *ac,
 	mlog(0, "Allocated %u bits from suballocator %llu\n", *num_bits,
 	     (unsigned long long)le64_to_cpu(fe->i_blkno));
 
+out_loc_only:
 	*bg_blkno = le64_to_cpu(bg->bg_blkno);
 	*bits_left = le16_to_cpu(bg->bg_free_bits_count);
 bail:
@@ -1774,6 +1767,115 @@ static inline void ocfs2_save_inode_ac_group(struct inode *dir,
 {
 	OCFS2_I(dir)->ip_last_used_group = ac->ac_last_group;
 	OCFS2_I(dir)->ip_last_used_slot = ac->ac_alloc_slot;
+}
+
+int ocfs2_find_new_inode_loc(struct inode *dir,
+			     struct buffer_head *parent_fe_bh,
+			     struct ocfs2_alloc_context *ac,
+			     u16 *suballoc_bit,
+			     u64 *fe_blkno)
+{
+	int ret;
+	handle_t *handle = NULL;
+	unsigned int num_bits;
+	u64 bg_blkno;
+
+	BUG_ON(!ac);
+	BUG_ON(ac->ac_bits_given != 0);
+	BUG_ON(ac->ac_bits_wanted != 1);
+	BUG_ON(ac->ac_which != OCFS2_AC_USE_INODE);
+
+	ocfs2_init_inode_ac_group(dir, parent_fe_bh, ac);
+
+	/*
+	 * The handle started here is for chain relink. Alternatively,
+	 * we could just disable relink for these calls.
+	 */
+	handle = ocfs2_start_trans(OCFS2_SB(dir->i_sb), OCFS2_SUBALLOC_ALLOC);
+	if (IS_ERR(handle)) {
+		ret = PTR_ERR(handle);
+		handle = NULL;
+		mlog_errno(ret);
+		goto out;
+	}
+
+	/*
+	 * This will instruct ocfs2_claim_suballoc_bits and
+	 * ocfs2_search_one_group to search but save actual allocation
+	 * for later.
+	 */
+	ac->ac_find_loc_only = 1;
+
+	ret = ocfs2_claim_suballoc_bits(OCFS2_SB(dir->i_sb), ac, handle, 1, 1,
+					suballoc_bit, &num_bits, &bg_blkno);
+	if (ret < 0) {
+		mlog_errno(ret);
+		goto out;
+	}
+
+	ac->ac_find_loc_bg = bg_blkno;
+	*fe_blkno = bg_blkno + (u64) (*suballoc_bit);
+
+out:
+	if (handle)
+		ocfs2_commit_trans(OCFS2_SB(dir->i_sb), handle);
+
+	return ret;
+}
+
+int ocfs2_claim_new_inode_at_loc(handle_t *handle,
+				 struct inode *dir,
+				 struct ocfs2_alloc_context *ac,
+				 u16 suballoc_bit,
+				 u64 di_blkno)
+{
+	int ret;
+	u16 chain;
+	struct buffer_head *bg_bh = NULL;
+	struct ocfs2_group_desc *bg;
+	struct ocfs2_dinode *di = (struct ocfs2_dinode *) ac->ac_bh->b_data;
+
+	ret = ocfs2_read_group_descriptor(ac->ac_inode, di,
+					  ac->ac_find_loc_bg, &bg_bh);
+	if (ret) {
+		mlog_errno(ret);
+		goto out;
+	}
+
+	bg = (struct ocfs2_group_desc *) bg_bh->b_data;
+	chain = le16_to_cpu(bg->bg_chain);
+
+	ret = ocfs2_alloc_dinode_update_counts(ac->ac_inode, handle,
+					       ac->ac_bh, 1,
+					       chain);
+	if (ret) {
+		mlog_errno(ret);
+		goto out;
+	}
+
+	ret = ocfs2_block_group_set_bits(handle,
+					 ac->ac_inode,
+					 bg,
+					 bg_bh,
+					 suballoc_bit,
+					 1);
+	if (ret < 0) {
+		mlog_errno(ret);
+		goto out;
+	}
+
+	mlog(0, "Allocated %u bits from suballocator %llu\n", 1,
+	     (unsigned long long)di_blkno);
+
+	atomic_inc(&OCFS2_SB(ac->ac_inode->i_sb)->alloc_stats.bg_allocs);
+
+	ac->ac_bits_given++;
+	ocfs2_save_inode_ac_group(dir, ac);
+
+out:
+	brelse(bg_bh);
+
+	return ret;
 }
 
 int ocfs2_claim_new_inode(struct ocfs2_super *osb,
