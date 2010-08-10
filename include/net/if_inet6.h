@@ -32,6 +32,14 @@
 
 #ifdef __KERNEL__
 
+enum {
+	INET6_IFADDR_STATE_DAD,
+	INET6_IFADDR_STATE_POSTDAD,
+	INET6_IFADDR_STATE_UP,
+	INET6_IFADDR_STATE_DEAD,
+};
+
+
 struct inet6_ifaddr 
 {
 	struct in6_addr		addr;
