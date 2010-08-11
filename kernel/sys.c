@@ -1250,15 +1250,21 @@ int do_setrlimit(struct task_struct *tsk, unsigned int resource,
 	if (resource == RLIMIT_NOFILE && new_rlim->rlim_max > sysctl_nr_open)
 		return -EPERM;
 
-	/* optimization: 'current' doesn't need locking, e.g. setrlimit */
-	if (tsk != current) {
-		/* protect tsk->signal and tsk->sighand from disappearing */
-		read_lock(&tasklist_lock);
-		if (!tsk->sighand) {
-			retval = -ESRCH;
-			goto out;
-		}
+	/* protect tsk->signal and tsk->sighand from disappearing */
+	read_lock(&tasklist_lock);
+	if (!tsk->sighand) {
+		retval = -ESRCH;
+		goto out;
 	}
+
+	old_rlim = tsk->signal->rlim + resource;
+	task_lock(tsk->group_leader);
+	if (new_rlim->rlim_max > old_rlim->rlim_max &&
+			!capable(CAP_SYS_RESOURCE))
+		retval = -EPERM;
+	if (!retval)
+		retval = security_task_setrlimit(tsk->group_leader, resource,
+				new_rlim);
 
 	if (resource == RLIMIT_CPU && new_rlim->rlim_cur == 0) {
 		/*
@@ -1270,13 +1276,6 @@ int do_setrlimit(struct task_struct *tsk, unsigned int resource,
 		new_rlim->rlim_cur = 1;
 	}
 
-	old_rlim = tsk->signal->rlim + resource;
-	task_lock(tsk->group_leader);
-	if ((new_rlim->rlim_max > old_rlim->rlim_max) &&
-				!capable(CAP_SYS_RESOURCE))
-		retval = -EPERM;
-	if (!retval)
-		retval = security_task_setrlimit(tsk, resource, new_rlim);
 	if (!retval)
 		*old_rlim = *new_rlim;
 	task_unlock(tsk->group_leader);
@@ -1295,8 +1294,7 @@ int do_setrlimit(struct task_struct *tsk, unsigned int resource,
 
 	update_rlimit_cpu(tsk, new_rlim->rlim_cur);
 out:
-	if (tsk != current)
-		read_unlock(&tasklist_lock);
+	read_unlock(&tasklist_lock);
 	return retval;
 }
 
