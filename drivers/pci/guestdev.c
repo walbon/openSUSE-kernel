@@ -81,7 +81,7 @@ struct pcidev_sbdf_node {
 	struct pcidev_sbdf_node *child;
 };
 
-static char guestdev_param[COMMAND_LINE_SIZE];
+static char __initdata guestdev_param[COMMAND_LINE_SIZE];
 static LIST_HEAD(guestdev_list);
 
 /* Get hid and uid */

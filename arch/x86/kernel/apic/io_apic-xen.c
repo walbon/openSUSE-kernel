@@ -2087,9 +2087,7 @@ void __init enable_IO_APIC(void)
 #endif
 }
 
-#ifdef CONFIG_XEN
-#define disable_IO_APIC() ((void)0)
-#else
+#ifndef CONFIG_XEN
 /*
  * Not an __init, needed by the reboot code
  */

@@ -246,7 +246,7 @@ static void pci_iomul_switch_add_locked(struct pci_iomul_switch *sw)
 	list_add(&sw->list, &switch_list);
 }
 
-#ifdef CONFIG_HOTPLUG_PCI
+#if defined(CONFIG_HOTPLUG_PCI) || defined(CONFIG_HOTPLUG_PCI_MODULE)
 static void pci_iomul_switch_del_locked(struct pci_iomul_switch *sw)
 {
 	BUG_ON(!mutex_is_locked(&switch_list_lock));
@@ -339,7 +339,7 @@ static void pci_iomul_slot_add_locked(struct pci_iomul_switch *sw,
 	list_add(&slot->sibling, &sw->slots);
 }
 
-#ifdef CONFIG_HOTPLUG_PCI
+#if defined(CONFIG_HOTPLUG_PCI) || defined(CONFIG_HOTPLUG_PCI_MODULE)
 static void pci_iomul_slot_del_locked(struct pci_iomul_switch *sw,
 				       struct pci_iomul_slot *slot)
 {
@@ -897,7 +897,7 @@ DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID,
 			quirk_iomul_reassign_ioresource);
 
 /*****************************************************************************/
-#ifdef CONFIG_HOTPLUG_PCI
+#if defined(CONFIG_HOTPLUG_PCI) || defined(CONFIG_HOTPLUG_PCI_MODULE)
 static int __devinit __pci_iomul_notifier_del_device(struct pci_dev *pdev)
 {
 	struct pci_iomul_switch *sw;
@@ -992,7 +992,7 @@ static int __devinit pci_iomul_notifier(struct notifier_block *nb,
 	return 0;
 }
 
-static struct notifier_block pci_iomul_nb = {
+static struct notifier_block __devinitdata pci_iomul_nb = {
         .notifier_call = pci_iomul_notifier,
 };
 
@@ -1385,7 +1385,7 @@ static struct miscdevice pci_iomul_miscdev = {
 	.fops = &pci_iomul_fops,
 };
 
-static int pci_iomul_init(void)
+static int __init pci_iomul_init(void)
 {
 	int error;
 	error = misc_register(&pci_iomul_miscdev);

@@ -560,13 +560,20 @@ exit:
 
 static int get_cpu_id(acpi_handle handle, int type, u32 acpi_id)
 {
-	int i;
+	int i = 0;
 	int apic_id = -1;
+
+	if (type < 0) {
+		if (!processor_cntl_external())
+			return -1;
+		type = ~type;
+		i = 1;
+	}
 
 	apic_id = map_mat_entry(handle, type, acpi_id);
 	if (apic_id == -1)
 		apic_id = map_madt_entry(type, acpi_id);
-	if (apic_id == -1)
+	if (apic_id == -1 || i)
 		return apic_id;
 
 	for_each_possible_cpu(i) {
@@ -661,7 +668,8 @@ static int acpi_processor_get_info(struct acpi_device *device)
 	if (pr->id == -1) {
 		if (ACPI_FAILURE
 		    (acpi_processor_hotadd_init(pr->handle, &pr->id)) &&
-		    !processor_cntl_external()) {
+		    get_cpu_id(pr->handle, ~device_declaration,
+			       pr->acpi_id) < 0) {
 			return -ENODEV;
 		}
 	}

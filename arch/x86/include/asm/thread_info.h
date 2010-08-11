@@ -153,7 +153,7 @@ struct thread_info {
 
 #else
 #define _TIF_WORK_CTXSW (_TIF_NOTSC \
-     /*todo | _TIF_DEBUGCTLMSR | _TIF_DS_AREA_MSR | _TIF_BTS_TRACE_TS*/)
+     /*todo | _TIF_DEBUGCTLMSR | _TIF_DS_AREA_MSR */)
 #endif
 #define _TIF_WORK_CTXSW_PREV _TIF_WORK_CTXSW
 #define _TIF_WORK_CTXSW_NEXT (_TIF_WORK_CTXSW|_TIF_DEBUG)
