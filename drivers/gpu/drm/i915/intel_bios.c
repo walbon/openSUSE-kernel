@@ -366,34 +366,6 @@ parse_driver_features(struct drm_i915_private *dev_priv,
 }
 
 static void
-parse_edp(struct drm_i915_private *dev_priv, struct bdb_header *bdb)
-{
-	struct bdb_edp *edp;
-
-	edp = find_section(bdb, BDB_EDP);
-	if (!edp) {
-		if (SUPPORTS_EDP(dev_priv->dev) && dev_priv->edp_support) {
-			DRM_DEBUG_KMS("No eDP BDB found but eDP panel supported,\
-				       assume 18bpp panel color depth.\n");
-			dev_priv->edp_bpp = 18;
-		}
-		return;
-	}
-
-	switch ((edp->color_depth >> (panel_type * 2)) & 3) {
-	case EDP_18BPP:
-		dev_priv->edp_bpp = 18;
-		break;
-	case EDP_24BPP:
-		dev_priv->edp_bpp = 24;
-		break;
-	case EDP_30BPP:
-		dev_priv->edp_bpp = 30;
-		break;
-	}
-}
-
-static void
 parse_device_mapping(struct drm_i915_private *dev_priv,
 		       struct bdb_header *bdb)
 {
@@ -457,6 +429,35 @@ parse_device_mapping(struct drm_i915_private *dev_priv,
 	}
 	return;
 }
+
+static void
+parse_edp(struct drm_i915_private *dev_priv, struct bdb_header *bdb)
+{
+	struct bdb_edp *edp;
+
+	edp = find_section(bdb, BDB_EDP);
+	if (!edp) {
+		if (SUPPORTS_EDP(dev_priv->dev) && dev_priv->edp_support) {
+			DRM_DEBUG_KMS("No eDP BDB found but eDP panel supported,\
+				       assume 18bpp panel color depth.\n");
+			dev_priv->edp_bpp = 18;
+		}
+		return;
+	}
+
+	switch ((edp->color_depth >> (panel_type * 2)) & 3) {
+	case EDP_18BPP:
+		dev_priv->edp_bpp = 18;
+		break;
+	case EDP_24BPP:
+		dev_priv->edp_bpp = 24;
+		break;
+	case EDP_30BPP:
+		dev_priv->edp_bpp = 30;
+		break;
+	}
+}
+
 /**
  * intel_init_bios - initialize VBIOS settings & find VBT
  * @dev: DRM device
