@@ -653,8 +653,9 @@ struct transaction_s
 	 * waiting for it to finish.
 	 */
 	unsigned int t_synchronous_commit:1;
+#ifndef __GENKSYMS__
 	unsigned int t_flushed_data_blocks:1;
-
+#endif
 	/*
 	 * For use by the filesystem to store fs-specific data
 	 * structures associated with the transaction
