@@ -618,6 +618,10 @@ int uv_handle_nmi(struct notifier_block *self, unsigned long reason, void *data)
 	if (reason != DIE_NMI_IPI)
 		return NOTIFY_OK;
 
+	if (in_crash_kexec)
+		/* do nothing if entering the crash kernel */
+		return NOTIFY_OK;
+
 #ifdef CONFIG_KDB
 	spin_lock(&uv_nmi_lock);
 	if (controlling_cpu == -1) {
