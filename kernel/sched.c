@@ -5620,9 +5620,6 @@ int mutex_spin_on_owner(struct mutex *lock, struct thread_info *owner,
 	/*
 	 * We need to validate that we can do a
 	 * get_cpu() and that we have the percpu area.
-	 *
-	 * If the CPU is offline, the owner will never release it so
-	 * we must not spin
 	 */
 	if (!cpu_online(cpu))
 		return 0;
@@ -5644,6 +5641,7 @@ int mutex_spin_on_owner(struct mutex *lock, struct thread_info *owner,
 
 		cpu_relax();
 	}
+
 	return 1;
 }
 #endif
