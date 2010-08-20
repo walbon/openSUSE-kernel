@@ -22,6 +22,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include "osd.h"
 #include "logging.h"
@@ -33,7 +34,7 @@ struct VMBUS_CONNECTION gVmbusConnection = {
 	.NextGpadlHandle	= ATOMIC_INIT(0xE1E10),
 };
 
-/**
+/*
  * VmbusConnect - Sends a connect request on the partition service connection
  */
 int VmbusConnect(void)
@@ -42,8 +43,6 @@ int VmbusConnect(void)
 	struct vmbus_channel_msginfo *msgInfo = NULL;
 	struct vmbus_channel_initiate_contact *msg;
 	unsigned long flags;
-
-	DPRINT_ENTER(VMBUS);
 
 	/* Make sure we are not connecting or connected */
 	if (gVmbusConnection.ConnectState != Disconnected)
@@ -92,11 +91,16 @@ int VmbusConnect(void)
 			  sizeof(struct vmbus_channel_initiate_contact),
 			  GFP_KERNEL);
 	if (msgInfo == NULL) {
-		ret = -1;
+		ret = -ENOMEM;
 		goto Cleanup;
 	}
 
 	msgInfo->WaitEvent = osd_WaitEventCreate();
+	if (!msgInfo->WaitEvent) {
+		ret = -ENOMEM;
+		goto Cleanup;
+	}
+
 	msg = (struct vmbus_channel_initiate_contact *)msgInfo->Msg;
 
 	msg->Header.MessageType = ChannelMessageInitiateContact;
@@ -149,8 +153,6 @@ int VmbusConnect(void)
 
 	kfree(msgInfo->WaitEvent);
 	kfree(msgInfo);
-	DPRINT_EXIT(VMBUS);
-
 	return 0;
 
 Cleanup:
@@ -174,12 +176,10 @@ Cleanup:
 		kfree(msgInfo);
 	}
 
-	DPRINT_EXIT(VMBUS);
-
 	return ret;
 }
 
-/**
+/*
  * VmbusDisconnect - Sends a disconnect request on the partition service connection
  */
 int VmbusDisconnect(void)
@@ -187,13 +187,13 @@ int VmbusDisconnect(void)
 	int ret = 0;
 	struct vmbus_channel_message_header *msg;
 
-	DPRINT_ENTER(VMBUS);
-
 	/* Make sure we are connected */
 	if (gVmbusConnection.ConnectState != Connected)
 		return -1;
 
 	msg = kzalloc(sizeof(struct vmbus_channel_message_header), GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
 
 	msg->MessageType = ChannelMessageUnload;
 
@@ -213,11 +213,10 @@ int VmbusDisconnect(void)
 
 Cleanup:
 	kfree(msg);
-	DPRINT_EXIT(VMBUS);
 	return ret;
 }
 
-/**
+/*
  * GetChannelFromRelId - Get the channel object given its child relative id (ie channel id)
  */
 struct vmbus_channel *GetChannelFromRelId(u32 relId)
@@ -238,7 +237,7 @@ struct vmbus_channel *GetChannelFromRelId(u32 relId)
 	return foundChannel;
 }
 
-/**
+/*
  * VmbusProcessChannelEvent - Process a channel event notification
  */
 static void VmbusProcessChannelEvent(void *context)
@@ -246,7 +245,7 @@ static void VmbusProcessChannelEvent(void *context)
 	struct vmbus_channel *channel;
 	u32 relId = (u32)(unsigned long)context;
 
-	ASSERT(relId > 0);
+	/* ASSERT(relId > 0); */
 
 	/*
 	 * Find the channel based on this relid and invokes the
@@ -258,15 +257,15 @@ static void VmbusProcessChannelEvent(void *context)
 		VmbusChannelOnChannelEvent(channel);
 		/*
 		 * WorkQueueQueueWorkItem(channel->dataWorkQueue,
-		 * 			  VmbusChannelOnChannelEvent,
-		 * 			  (void*)channel);
+		 *			  VmbusChannelOnChannelEvent,
+		 *			  (void*)channel);
 		 */
 	} else {
 		DPRINT_ERR(VMBUS, "channel not found for relid - %d.", relId);
 	}
 }
 
-/**
+/*
  * VmbusOnEvents - Handler for events
  */
 void VmbusOnEvents(void)
@@ -276,8 +275,6 @@ void VmbusOnEvents(void)
 	int bit;
 	int relid;
 	u32 *recvInterruptPage = gVmbusConnection.RecvInterruptPage;
-
-	DPRINT_ENTER(VMBUS);
 
 	/* Check events */
 	if (recvInterruptPage) {
@@ -302,12 +299,10 @@ void VmbusOnEvents(void)
 			}
 		 }
 	}
-	DPRINT_EXIT(VMBUS);
-
 	return;
 }
 
-/**
+/*
  * VmbusPostMessage - Send a msg on the vmbus's message connection
  */
 int VmbusPostMessage(void *buffer, size_t bufferLen)
@@ -319,23 +314,15 @@ int VmbusPostMessage(void *buffer, size_t bufferLen)
 	return HvPostMessage(connId, 1, buffer, bufferLen);
 }
 
-/**
+/*
  * VmbusSetEvent - Send an event notification to the parent
  */
 int VmbusSetEvent(u32 childRelId)
 {
-	int ret = 0;
-
-	DPRINT_ENTER(VMBUS);
-
 	/* Each u32 represents 32 channels */
 	set_bit(childRelId & 31,
 		(unsigned long *)gVmbusConnection.SendInterruptPage +
 		(childRelId >> 5));
 
-	ret = HvSignalEvent();
-
-	DPRINT_EXIT(VMBUS);
-
-	return ret;
+	return HvSignalEvent();
 }

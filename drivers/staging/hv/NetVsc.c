@@ -22,6 +22,7 @@
 #include <linux/mm.h>
 #include <linux/delay.h>
 #include <linux/io.h>
+#include <linux/slab.h>
 #include "osd.h"
 #include "logging.h"
 #include "NetVsc.h"
@@ -91,7 +92,7 @@ static struct netvsc_device *AllocNetDevice(struct hv_device *Device)
 
 static void FreeNetDevice(struct netvsc_device *Device)
 {
-	ASSERT(atomic_read(&Device->RefCount) == 0);
+	WARN_ON(atomic_read(&Device->RefCount) == 0);
 	Device->Device->Extension = NULL;
 	kfree(Device);
 }
@@ -130,7 +131,7 @@ static void PutNetDevice(struct hv_device *Device)
 	struct netvsc_device *netDevice;
 
 	netDevice = Device->Extension;
-	ASSERT(netDevice);
+	/* ASSERT(netDevice); */
 
 	atomic_dec(&netDevice->RefCount);
 }
@@ -166,14 +167,12 @@ static struct netvsc_device *ReleaseInboundNetDevice(struct hv_device *Device)
 	return netDevice;
 }
 
-/**
+/*
  * NetVscInitialize - Main entry point
  */
 int NetVscInitialize(struct hv_driver *drv)
 {
 	struct netvsc_driver *driver = (struct netvsc_driver *)drv;
-
-	DPRINT_ENTER(NETVSC);
 
 	DPRINT_DBG(NETVSC, "sizeof(struct hv_netvsc_packet)=%zd, "
 		   "sizeof(struct nvsp_message)=%zd, "
@@ -183,14 +182,15 @@ int NetVscInitialize(struct hv_driver *drv)
 		   sizeof(struct vmtransfer_page_packet_header));
 
 	/* Make sure we are at least 2 pages since 1 page is used for control */
-	ASSERT(driver->RingBufferSize >= (PAGE_SIZE << 1));
+	/* ASSERT(driver->RingBufferSize >= (PAGE_SIZE << 1)); */
 
 	drv->name = gDriverName;
 	memcpy(&drv->deviceType, &gNetVscDeviceType, sizeof(struct hv_guid));
 
 	/* Make sure it is set by the caller */
-	ASSERT(driver->OnReceiveCallback);
-	ASSERT(driver->OnLinkStatusChanged);
+	/* FIXME: These probably should still be tested in some way */
+	/* ASSERT(driver->OnReceiveCallback); */
+	/* ASSERT(driver->OnLinkStatusChanged); */
 
 	/* Setup the dispatch table */
 	driver->Base.OnDeviceAdd	= NetVscOnDeviceAdd;
@@ -200,9 +200,6 @@ int NetVscInitialize(struct hv_driver *drv)
 	driver->OnSend			= NetVscOnSend;
 
 	RndisFilterInit(driver);
-
-	DPRINT_EXIT(NETVSC);
-
 	return 0;
 }
 
@@ -212,18 +209,15 @@ static int NetVscInitializeReceiveBufferWithNetVsp(struct hv_device *Device)
 	struct netvsc_device *netDevice;
 	struct nvsp_message *initPacket;
 
-	DPRINT_ENTER(NETVSC);
-
 	netDevice = GetOutboundNetDevice(Device);
 	if (!netDevice) {
 		DPRINT_ERR(NETVSC, "unable to get net device..."
 			   "device being destroyed?");
-		DPRINT_EXIT(NETVSC);
 		return -1;
 	}
-	ASSERT(netDevice->ReceiveBufferSize > 0);
+	/* ASSERT(netDevice->ReceiveBufferSize > 0); */
 	/* page-size grandularity */
-	ASSERT((netDevice->ReceiveBufferSize & (PAGE_SIZE - 1)) == 0);
+	/* ASSERT((netDevice->ReceiveBufferSize & (PAGE_SIZE - 1)) == 0); */
 
 	netDevice->ReceiveBuffer =
 		osd_PageAlloc(netDevice->ReceiveBufferSize >> PAGE_SHIFT);
@@ -235,8 +229,8 @@ static int NetVscInitializeReceiveBufferWithNetVsp(struct hv_device *Device)
 		goto Cleanup;
 	}
 	/* page-aligned buffer */
-	ASSERT(((unsigned long)netDevice->ReceiveBuffer & (PAGE_SIZE - 1)) ==
-		0);
+	/* ASSERT(((unsigned long)netDevice->ReceiveBuffer & (PAGE_SIZE - 1)) == */
+	/* 	0); */
 
 	DPRINT_INFO(NETVSC, "Establishing receive buffer's GPADL...");
 
@@ -293,8 +287,8 @@ static int NetVscInitializeReceiveBufferWithNetVsp(struct hv_device *Device)
 	}
 
 	/* Parse the response */
-	ASSERT(netDevice->ReceiveSectionCount == 0);
-	ASSERT(netDevice->ReceiveSections == NULL);
+	/* ASSERT(netDevice->ReceiveSectionCount == 0); */
+	/* ASSERT(netDevice->ReceiveSections == NULL); */
 
 	netDevice->ReceiveSectionCount = initPacket->Messages.Version1Messages.SendReceiveBufferComplete.NumSections;
 
@@ -333,7 +327,6 @@ Cleanup:
 
 Exit:
 	PutNetDevice(Device);
-	DPRINT_EXIT(NETVSC);
 	return ret;
 }
 
@@ -343,18 +336,19 @@ static int NetVscInitializeSendBufferWithNetVsp(struct hv_device *Device)
 	struct netvsc_device *netDevice;
 	struct nvsp_message *initPacket;
 
-	DPRINT_ENTER(NETVSC);
-
 	netDevice = GetOutboundNetDevice(Device);
 	if (!netDevice) {
 		DPRINT_ERR(NETVSC, "unable to get net device..."
 			   "device being destroyed?");
-		DPRINT_EXIT(NETVSC);
 		return -1;
 	}
-	ASSERT(netDevice->SendBufferSize > 0);
+	if (netDevice->SendBufferSize <= 0) {
+		ret = -EINVAL;
+		goto Cleanup;
+	}
+
 	/* page-size grandularity */
-	ASSERT((netDevice->SendBufferSize & (PAGE_SIZE - 1)) == 0);
+	/* ASSERT((netDevice->SendBufferSize & (PAGE_SIZE - 1)) == 0); */
 
 	netDevice->SendBuffer =
 		osd_PageAlloc(netDevice->SendBufferSize >> PAGE_SHIFT);
@@ -365,7 +359,7 @@ static int NetVscInitializeSendBufferWithNetVsp(struct hv_device *Device)
 		goto Cleanup;
 	}
 	/* page-aligned buffer */
-	ASSERT(((unsigned long)netDevice->SendBuffer & (PAGE_SIZE - 1)) == 0);
+	/* ASSERT(((unsigned long)netDevice->SendBuffer & (PAGE_SIZE - 1)) == 0); */
 
 	DPRINT_INFO(NETVSC, "Establishing send buffer's GPADL...");
 
@@ -428,7 +422,6 @@ Cleanup:
 
 Exit:
 	PutNetDevice(Device);
-	DPRINT_EXIT(NETVSC);
 	return ret;
 }
 
@@ -436,8 +429,6 @@ static int NetVscDestroyReceiveBuffer(struct netvsc_device *NetDevice)
 {
 	struct nvsp_message *revokePacket;
 	int ret = 0;
-
-	DPRINT_ENTER(NETVSC);
 
 	/*
 	 * If we got a section count, it means we received a
@@ -469,7 +460,6 @@ static int NetVscDestroyReceiveBuffer(struct netvsc_device *NetDevice)
 		if (ret != 0) {
 			DPRINT_ERR(NETVSC, "unable to send revoke receive "
 				   "buffer to netvsp");
-			DPRINT_EXIT(NETVSC);
 			return -1;
 		}
 	}
@@ -486,7 +476,6 @@ static int NetVscDestroyReceiveBuffer(struct netvsc_device *NetDevice)
 		if (ret != 0) {
 			DPRINT_ERR(NETVSC,
 				   "unable to teardown receive buffer's gpadl");
-			DPRINT_EXIT(NETVSC);
 			return -1;
 		}
 		NetDevice->ReceiveBufferGpadlHandle = 0;
@@ -507,8 +496,6 @@ static int NetVscDestroyReceiveBuffer(struct netvsc_device *NetDevice)
 		NetDevice->ReceiveSections = NULL;
 	}
 
-	DPRINT_EXIT(NETVSC);
-
 	return ret;
 }
 
@@ -516,8 +503,6 @@ static int NetVscDestroySendBuffer(struct netvsc_device *NetDevice)
 {
 	struct nvsp_message *revokePacket;
 	int ret = 0;
-
-	DPRINT_ENTER(NETVSC);
 
 	/*
 	 * If we got a section count, it means we received a
@@ -548,7 +533,6 @@ static int NetVscDestroySendBuffer(struct netvsc_device *NetDevice)
 		if (ret != 0) {
 			DPRINT_ERR(NETVSC, "unable to send revoke send buffer "
 				   "to netvsp");
-			DPRINT_EXIT(NETVSC);
 			return -1;
 		}
 	}
@@ -566,7 +550,6 @@ static int NetVscDestroySendBuffer(struct netvsc_device *NetDevice)
 		if (ret != 0) {
 			DPRINT_ERR(NETVSC, "unable to teardown send buffer's "
 				   "gpadl");
-			DPRINT_EXIT(NETVSC);
 			return -1;
 		}
 		NetDevice->SendBufferGpadlHandle = 0;
@@ -581,8 +564,6 @@ static int NetVscDestroySendBuffer(struct netvsc_device *NetDevice)
 		NetDevice->SendBuffer = NULL;
 	}
 
-	DPRINT_EXIT(NETVSC);
-
 	return ret;
 }
 
@@ -594,13 +575,10 @@ static int NetVscConnectToVsp(struct hv_device *Device)
 	struct nvsp_message *initPacket;
 	int ndisVersion;
 
-	DPRINT_ENTER(NETVSC);
-
 	netDevice = GetOutboundNetDevice(Device);
 	if (!netDevice) {
 		DPRINT_ERR(NETVSC, "unable to get net device..."
 			   "device being destroyed?");
-		DPRINT_EXIT(NETVSC);
 		return -1;
 	}
 
@@ -690,21 +668,16 @@ static int NetVscConnectToVsp(struct hv_device *Device)
 
 Cleanup:
 	PutNetDevice(Device);
-	DPRINT_EXIT(NETVSC);
 	return ret;
 }
 
 static void NetVscDisconnectFromVsp(struct netvsc_device *NetDevice)
 {
-	DPRINT_ENTER(NETVSC);
-
 	NetVscDestroyReceiveBuffer(NetDevice);
 	NetVscDestroySendBuffer(NetDevice);
-
-	DPRINT_EXIT(NETVSC);
 }
 
-/**
+/*
  * NetVscOnDeviceAdd - Callback when the device belonging to this driver is added
  */
 static int NetVscOnDeviceAdd(struct hv_device *Device, void *AdditionalInfo)
@@ -715,8 +688,6 @@ static int NetVscOnDeviceAdd(struct hv_device *Device, void *AdditionalInfo)
 	struct hv_netvsc_packet *packet, *pos;
 	struct netvsc_driver *netDriver =
 				(struct netvsc_driver *)Device->Driver;
-
-	DPRINT_ENTER(NETVSC);
 
 	netDevice = AllocNetDevice(Device);
 	if (!netDevice) {
@@ -748,6 +719,10 @@ static int NetVscOnDeviceAdd(struct hv_device *Device, void *AdditionalInfo)
 			      &netDevice->ReceivePacketList);
 	}
 	netDevice->ChannelInitEvent = osd_WaitEventCreate();
+	if (!netDevice->ChannelInitEvent) {
+		ret = -ENOMEM;
+		goto Cleanup;
+	}
 
 	/* Open the channel */
 	ret = Device->Driver->VmbusChannelInterface.Open(Device,
@@ -777,7 +752,6 @@ static int NetVscOnDeviceAdd(struct hv_device *Device, void *AdditionalInfo)
 	DPRINT_INFO(NETVSC, "*** NetVSC channel handshake result - %d ***",
 		    ret);
 
-	DPRINT_EXIT(NETVSC);
 	return ret;
 
 Close:
@@ -802,19 +776,16 @@ Cleanup:
 		FreeNetDevice(netDevice);
 	}
 
-	DPRINT_EXIT(NETVSC);
 	return ret;
 }
 
-/**
+/*
  * NetVscOnDeviceRemove - Callback when the root bus device is removed
  */
 static int NetVscOnDeviceRemove(struct hv_device *Device)
 {
 	struct netvsc_device *netDevice;
 	struct hv_netvsc_packet *netvscPacket, *pos;
-
-	DPRINT_ENTER(NETVSC);
 
 	DPRINT_INFO(NETVSC, "Disabling outbound traffic on net device (%p)...",
 		    Device->Extension);
@@ -858,18 +829,14 @@ static int NetVscOnDeviceRemove(struct hv_device *Device)
 
 	kfree(netDevice->ChannelInitEvent);
 	FreeNetDevice(netDevice);
-
-	DPRINT_EXIT(NETVSC);
 	return 0;
 }
 
-/**
+/*
  * NetVscOnCleanup - Perform any cleanup when the driver is removed
  */
 static void NetVscOnCleanup(struct hv_driver *drv)
 {
-	DPRINT_ENTER(NETVSC);
-	DPRINT_EXIT(NETVSC);
 }
 
 static void NetVscOnSendCompletion(struct hv_device *Device,
@@ -879,13 +846,10 @@ static void NetVscOnSendCompletion(struct hv_device *Device,
 	struct nvsp_message *nvspPacket;
 	struct hv_netvsc_packet *nvscPacket;
 
-	DPRINT_ENTER(NETVSC);
-
 	netDevice = GetInboundNetDevice(Device);
 	if (!netDevice) {
 		DPRINT_ERR(NETVSC, "unable to get net device..."
 			   "device being destroyed?");
-		DPRINT_EXIT(NETVSC);
 		return;
 	}
 
@@ -907,7 +871,7 @@ static void NetVscOnSendCompletion(struct hv_device *Device,
 		   NvspMessage1TypeSendRNDISPacketComplete) {
 		/* Get the send context */
 		nvscPacket = (struct hv_netvsc_packet *)(unsigned long)Packet->TransactionId;
-		ASSERT(nvscPacket);
+		/* ASSERT(nvscPacket); */
 
 		/* Notify the layer above us */
 		nvscPacket->Completion.Send.OnSendCompletion(nvscPacket->Completion.Send.SendCompletionContext);
@@ -919,7 +883,6 @@ static void NetVscOnSendCompletion(struct hv_device *Device,
 	}
 
 	PutNetDevice(Device);
-	DPRINT_EXIT(NETVSC);
 }
 
 static int NetVscOnSend(struct hv_device *Device,
@@ -930,13 +893,10 @@ static int NetVscOnSend(struct hv_device *Device,
 
 	struct nvsp_message sendMessage;
 
-	DPRINT_ENTER(NETVSC);
-
 	netDevice = GetOutboundNetDevice(Device);
 	if (!netDevice) {
 		DPRINT_ERR(NETVSC, "net device (%p) shutting down..."
 			   "ignoring outbound packets", netDevice);
-		DPRINT_EXIT(NETVSC);
 		return -2;
 	}
 
@@ -976,8 +936,6 @@ static int NetVscOnSend(struct hv_device *Device,
 
 	atomic_inc(&netDevice->NumOutstandingSends);
 	PutNetDevice(Device);
-
-	DPRINT_EXIT(NETVSC);
 	return ret;
 }
 
@@ -997,13 +955,10 @@ static void NetVscOnReceive(struct hv_device *Device,
 	unsigned long flags;
 	LIST_HEAD(listHead);
 
-	DPRINT_ENTER(NETVSC);
-
 	netDevice = GetInboundNetDevice(Device);
 	if (!netDevice) {
 		DPRINT_ERR(NETVSC, "unable to get net device..."
 			   "device being destroyed?");
-		DPRINT_EXIT(NETVSC);
 		return;
 	}
 
@@ -1086,13 +1041,13 @@ static void NetVscOnReceive(struct hv_device *Device,
 	}
 
 	/* Remove the 1st packet to represent the xfer page packet itself */
-	xferpagePacket = (struct xferpage_packet*)listHead.next;
+	xferpagePacket = (struct xferpage_packet *)listHead.next;
 	list_del(&xferpagePacket->ListEntry);
 
 	/* This is how much we can satisfy */
 	xferpagePacket->Count = count - 1;
-	ASSERT(xferpagePacket->Count > 0 && xferpagePacket->Count <=
-		vmxferpagePacket->RangeCount);
+	/* ASSERT(xferpagePacket->Count > 0 && xferpagePacket->Count <= */
+	/* 	vmxferpagePacket->RangeCount); */
 
 	if (xferpagePacket->Count != vmxferpagePacket->RangeCount) {
 		DPRINT_INFO(NETVSC, "Needed %d netvsc pkts to satisy this xfer "
@@ -1102,7 +1057,7 @@ static void NetVscOnReceive(struct hv_device *Device,
 
 	/* Each range represents 1 RNDIS pkt that contains 1 ethernet frame */
 	for (i = 0; i < (count - 1); i++) {
-		netvscPacket = (struct hv_netvsc_packet*)listHead.next;
+		netvscPacket = (struct hv_netvsc_packet *)listHead.next;
 		list_del(&netvscPacket->ListEntry);
 
 		/* Initialize the netvsc packet */
@@ -1120,9 +1075,9 @@ static void NetVscOnReceive(struct hv_device *Device,
 					vmxferpagePacket->Ranges[i].ByteCount;
 		netvscPacket->PageBufferCount = 1;
 
-		ASSERT(vmxferpagePacket->Ranges[i].ByteOffset +
-			vmxferpagePacket->Ranges[i].ByteCount <
-			netDevice->ReceiveBufferSize);
+		/* ASSERT(vmxferpagePacket->Ranges[i].ByteOffset + */
+		/* 	vmxferpagePacket->Ranges[i].ByteCount < */
+		/* 	netDevice->ReceiveBufferSize); */
 
 		netvscPacket->PageBuffers[0].Length =
 					vmxferpagePacket->Ranges[i].ByteCount;
@@ -1160,7 +1115,7 @@ static void NetVscOnReceive(struct hv_device *Device,
 				if (bytesRemain == 0)
 					break;
 			}
-			ASSERT(bytesRemain == 0);
+			/* ASSERT(bytesRemain == 0); */
 		}
 		DPRINT_DBG(NETVSC, "[%d] - (abs offset %u len %u) => "
 			   "(pfn %llx, offset %u, len %u)", i,
@@ -1176,10 +1131,9 @@ static void NetVscOnReceive(struct hv_device *Device,
 		NetVscOnReceiveCompletion(netvscPacket->Completion.Recv.ReceiveCompletionContext);
 	}
 
-	ASSERT(list_empty(&listHead));
+	/* ASSERT(list_empty(&listHead)); */
 
 	PutNetDevice(Device);
-	DPRINT_EXIT(NETVSC);
 }
 
 static void NetVscSendReceiveCompletion(struct hv_device *Device,
@@ -1238,9 +1192,7 @@ static void NetVscOnReceiveCompletion(void *Context)
 	bool fSendReceiveComp = false;
 	unsigned long flags;
 
-	DPRINT_ENTER(NETVSC);
-
-	ASSERT(packet->XferPagePacket);
+	/* ASSERT(packet->XferPagePacket); */
 
 	/*
 	 * Even though it seems logical to do a GetOutboundNetDevice() here to
@@ -1251,14 +1203,13 @@ static void NetVscOnReceiveCompletion(void *Context)
 	if (!netDevice) {
 		DPRINT_ERR(NETVSC, "unable to get net device..."
 			   "device being destroyed?");
-		DPRINT_EXIT(NETVSC);
 		return;
 	}
 
 	/* Overloading use of the lock. */
 	spin_lock_irqsave(&netDevice->receive_packet_list_lock, flags);
 
-	ASSERT(packet->XferPagePacket->Count > 0);
+	/* ASSERT(packet->XferPagePacket->Count > 0); */
 	packet->XferPagePacket->Count--;
 
 	/*
@@ -1282,33 +1233,33 @@ static void NetVscOnReceiveCompletion(void *Context)
 		NetVscSendReceiveCompletion(device, transactionId);
 
 	PutNetDevice(device);
-	DPRINT_EXIT(NETVSC);
 }
 
-void NetVscOnChannelCallback(void *Context)
+static void NetVscOnChannelCallback(void *Context)
 {
-	const int netPacketSize = 2048;
 	int ret;
 	struct hv_device *device = Context;
 	struct netvsc_device *netDevice;
 	u32 bytesRecvd;
 	u64 requestId;
-	unsigned char packet[netPacketSize];
+	unsigned char *packet;
 	struct vmpacket_descriptor *desc;
-	unsigned char *buffer = packet;
-	int bufferlen = netPacketSize;
+	unsigned char *buffer;
+	int bufferlen = NETVSC_PACKET_SIZE;
 
+	/* ASSERT(device); */
 
-	DPRINT_ENTER(NETVSC);
-
-	ASSERT(device);
+	packet = kzalloc(NETVSC_PACKET_SIZE * sizeof(unsigned char),
+			 GFP_KERNEL);
+	if (!packet)
+		return;
+	buffer = packet;
 
 	netDevice = GetInboundNetDevice(device);
 	if (!netDevice) {
 		DPRINT_ERR(NETVSC, "net device (%p) shutting down..."
 			   "ignoring inbound packets", netDevice);
-		DPRINT_EXIT(NETVSC);
-		return;
+		goto out;
 	}
 
 	do {
@@ -1340,17 +1291,17 @@ void NetVscOnChannelCallback(void *Context)
 				}
 
 				/* reset */
-				if (bufferlen > netPacketSize) {
+				if (bufferlen > NETVSC_PACKET_SIZE) {
 					kfree(buffer);
 					buffer = packet;
-					bufferlen = netPacketSize;
+					bufferlen = NETVSC_PACKET_SIZE;
 				}
 			} else {
 				/* reset */
-				if (bufferlen > netPacketSize) {
+				if (bufferlen > NETVSC_PACKET_SIZE) {
 					kfree(buffer);
 					buffer = packet;
-					bufferlen = netPacketSize;
+					bufferlen = NETVSC_PACKET_SIZE;
 				}
 
 				break;
@@ -1367,12 +1318,11 @@ void NetVscOnChannelCallback(void *Context)
 			}
 
 			bufferlen = bytesRecvd;
-		} else {
-			ASSERT(0);
 		}
 	} while (1);
 
 	PutNetDevice(device);
-	DPRINT_EXIT(NETVSC);
+out:
+	kfree(buffer);
 	return;
 }
