@@ -65,7 +65,11 @@ struct acpi_power_register {
 	u8 space_id;
 	u8 bit_width;
 	u8 bit_offset;
+#ifdef __GENKSYMS__
+	u8 reserved;
+#else
 	u8 access_size;
+#endif
 	u64 address;
 } __attribute__ ((packed));
 
