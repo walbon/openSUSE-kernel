@@ -91,9 +91,7 @@ struct acpi_processor_cx {
 	u32 power;
 	u32 usage;
 	u64 time;
-#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
-	u8 bm_sts_skip;
-#else
+#ifdef CONFIG_PROCESSOR_EXTERNAL_CONTROL
 	/* Require raw information for external control logic */
 	struct acpi_power_register reg;
 	u32 csd_count;
@@ -102,6 +100,9 @@ struct acpi_processor_cx {
 	struct acpi_processor_cx_policy promotion;
 	struct acpi_processor_cx_policy demotion;
 	char desc[ACPI_CX_DESC_LEN];
+#ifndef __GENKSYMS__
+	u8 bm_sts_skip;
+#endif
 };
 
 struct acpi_processor_power {
