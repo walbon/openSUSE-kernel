@@ -27,6 +27,10 @@
 
 #include "VmbusApi.h"
 
+/* Defines */
+#define NETVSC_DEVICE_RING_BUFFER_SIZE	(64*PAGE_SIZE)
+#define HW_MACADDR_LEN			6
+
 /* Fwd declaration */
 struct hv_netvsc_packet;
 
@@ -89,6 +93,9 @@ struct netvsc_driver {
 	u32 RingBufferSize;
 	u32 RequestExtSize;
 
+	/* Additional num  of page buffers to allocate */
+	u32 AdditionalRequestPageBufferCount;
+
 	/*
 	 * This is set by the caller to allow us to callback when we
 	 * receive a packet from the "wire"
@@ -98,6 +105,8 @@ struct netvsc_driver {
 	void (*OnLinkStatusChanged)(struct hv_device *dev, u32 Status);
 
 	/* Specific to this driver */
+	int (*OnOpen)(struct hv_device *dev);
+	int (*OnClose)(struct hv_device *dev);
 	int (*OnSend)(struct hv_device *dev, struct hv_netvsc_packet *packet);
 
 	void *Context;
@@ -110,7 +119,5 @@ struct netvsc_device_info {
 
 /* Interface */
 int NetVscInitialize(struct hv_driver *drv);
-int RndisFilterOnOpen(struct hv_device *Device);
-int RndisFilterOnClose(struct hv_device *Device);
 
 #endif /* _NETVSC_API_H_ */

@@ -41,6 +41,11 @@ enum {
 
 #define HV_PRESENT_BIT			0x80000000
 
+#define HV_XENLINUX_GUEST_ID_LO		0x00000000
+#define HV_XENLINUX_GUEST_ID_HI		0x0B00B135
+#define HV_XENLINUX_GUEST_ID		(((u64)HV_XENLINUX_GUEST_ID_HI << 32) \
+					  | HV_XENLINUX_GUEST_ID_LO)
+
 #define HV_LINUX_GUEST_ID_LO		0x00000000
 #define HV_LINUX_GUEST_ID_HI		0xB16B00B5
 #define HV_LINUX_GUEST_ID		(((u64)HV_LINUX_GUEST_ID_HI << 32) | \
@@ -97,9 +102,8 @@ struct hv_input_signal_event_buffer {
 };
 
 struct hv_context {
-	/* We only support running on top of Hyper-V
-	* So at this point this really can only contain the Hyper-V ID
-	*/
+	/* XenLinux or native Linux. If XenLinux, the hypercall and synic pages
+	 * has already been initialized */
 	u64 GuestId;
 
 	void *HypercallPage;
