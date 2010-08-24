@@ -42,6 +42,24 @@
 #include "iwl-core.h"
 #include "iwl-io.h"
 
+/*
+ * LED mode
+ *    IWL_LED_BLINK:    adjust led blink rate based on blink table
+ *    IWL_LED_RF_STATE: turn LED on/off based on RF state
+ *			LED ON  = RF ON
+ *			LED OFF = RF OFF
+ */
+enum iwl_led_mode {
+	IWL_LED_BLINK,
+	IWL_LED_RF_STATE,
+};
+
+/* default: IWL_LED_BLINK(0) using blinking index table */
+static int led_mode;
+module_param(led_mode, int, S_IRUGO);
+MODULE_PARM_DESC(led_mode, "led mode: 0=blinking, 1=On(RF On)/Off(RF Off), "
+			   "(default 0)\n");
+
 #ifdef CONFIG_IWLWIFI_DEBUG
 static const char *led_type_str[] = {
 	__stringify(IWL_LED_TRG_TX),
@@ -170,7 +188,8 @@ static int iwl_led_off_reg(struct iwl_priv *priv, int led_id)
 static int iwl_led_associate(struct iwl_priv *priv, int led_id)
 {
 	IWL_DEBUG_LED(priv, "Associated\n");
-	priv->allow_blinking = 1;
+	if (led_mode == IWL_LED_BLINK)
+		priv->allow_blinking = 1;
 	return iwl_led_on_reg(priv, led_id);
 }
 static int iwl_led_disassociate(struct iwl_priv *priv, int led_id)
