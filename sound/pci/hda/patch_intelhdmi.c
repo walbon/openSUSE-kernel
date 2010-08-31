@@ -40,12 +40,13 @@
  *
  * The HDA correspondence of pipes/ports are converter/pin nodes.
  */
-#define INTEL_HDMI_CVTS	2
+#define INTEL_HDMI_CVTS	3
 #define INTEL_HDMI_PINS	3
 
 static char *intel_hdmi_pcm_names[INTEL_HDMI_CVTS] = {
 	"INTEL HDMI 0",
 	"INTEL HDMI 1",
+	"INTEL HDMI 2",
 };
 
 struct intel_hdmi_spec {
@@ -986,6 +987,7 @@ static struct hda_codec_preset snd_hda_preset_intelhdmi[] = {
 	{ .id = 0x80862803, .name = "G45 DEVELK", .patch = patch_intel_hdmi },
 	{ .id = 0x80862804, .name = "G45 DEVIBX", .patch = patch_intel_hdmi },
 	{ .id = 0x80860054, .name = "Q57 DEVIBX", .patch = patch_intel_hdmi },
+	{ .id = 0x80862805, .name = "CougarPoint HDMI",	.patch = patch_intel_hdmi },
 	{ .id = 0x10951392, .name = "SiI1392 HDMI",     .patch = patch_intel_hdmi },
 	{} /* terminator */
 };
@@ -995,6 +997,7 @@ MODULE_ALIAS("snd-hda-codec-id:80862801");
 MODULE_ALIAS("snd-hda-codec-id:80862802");
 MODULE_ALIAS("snd-hda-codec-id:80862803");
 MODULE_ALIAS("snd-hda-codec-id:80862804");
+MODULE_ALIAS("snd-hda-codec-id:80862805");
 MODULE_ALIAS("snd-hda-codec-id:80860054");
 MODULE_ALIAS("snd-hda-codec-id:10951392");
 
