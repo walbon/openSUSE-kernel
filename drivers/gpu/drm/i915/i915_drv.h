@@ -709,6 +709,10 @@ extern void i915_restore_display(struct drm_device *dev);
 extern int i915_master_create(struct drm_device *dev, struct drm_master *master);
 extern void i915_master_destroy(struct drm_device *dev, struct drm_master *master);
 
+/* intel_display.c */
+extern int intel_get_pipe_from_crtc_id(struct drm_device *dev, void *data,
+                                struct drm_file *file_priv);
+
 				/* i915_dma.c */
 extern void i915_kernel_lost_context(struct drm_device * dev);
 extern int i915_driver_load(struct drm_device *, unsigned long flags);
@@ -814,6 +818,7 @@ int i915_gem_get_tiling(struct drm_device *dev, void *data,
 			struct drm_file *file_priv);
 int i915_gem_get_aperture_ioctl(struct drm_device *dev, void *data,
 				struct drm_file *file_priv);
+
 void i915_gem_load(struct drm_device *dev);
 int i915_gem_init_object(struct drm_gem_object *obj);
 void i915_gem_free_object(struct drm_gem_object *obj);
