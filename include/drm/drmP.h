@@ -327,11 +327,18 @@ typedef int drm_ioctl_compat_t(struct file *filp, unsigned int cmd,
 #define DRM_ROOT_ONLY	0x4
 #define DRM_CONTROL_ALLOW 0x8
 
+/* This should never be used directly. It is to keep the fix to write to
+ * underallocated buffers from userspace without breaking modules that
+ * were built against kernel sources without the fix. */
+#define DRM_HAS_CMD_DRV 0x40000000
+
 struct drm_ioctl_desc {
 	unsigned int cmd;
 	int flags;
 	drm_ioctl_t *func;
+#ifndef __GENKSYMS__
 	unsigned int cmd_drv;
+#endif
 };
 
 /**
@@ -340,7 +347,7 @@ struct drm_ioctl_desc {
  */
 
 #define DRM_IOCTL_DEF_DRV(ioctl, _func, _flags)			\
-	[DRM_IOCTL_NR(DRM_##ioctl)] = {.cmd = DRM_##ioctl, .func = _func, .flags = _flags, .cmd_drv = DRM_IOCTL_##ioctl}
+	[DRM_IOCTL_NR(DRM_##ioctl)] = {.cmd = DRM_##ioctl, .func = _func, .flags = _flags|DRM_HAS_CMD_DRV, .cmd_drv = DRM_IOCTL_##ioctl}
 
 struct drm_magic_entry {
 	struct list_head head;
