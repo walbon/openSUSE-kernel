@@ -22,6 +22,7 @@
 #include <linux/io.h>
 #include <linux/pci.h>
 #include <linux/kdebug.h>
+#include <acpi/acpi.h>
 #ifdef CONFIG_KDB
 #include <linux/kdb.h>
 #endif
@@ -81,6 +82,7 @@ static int __init uv_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 		nodeid = early_get_nodeid();
 		x86_platform.is_untracked_pat_range =  uv_is_untracked_pat_range;
 		x86_platform.nmi_init = uv_nmi_init;
+		acpi_set_iomap_cacheable();
 		if (!strcmp(oem_table_id, "UVL"))
 			uv_system_type = UV_LEGACY_APIC;
 		else if (!strcmp(oem_table_id, "UVX"))

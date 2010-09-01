@@ -96,6 +96,11 @@ acpi_os_table_override(struct acpi_table_header *existing_table,
 		       struct acpi_table_header **new_table);
 
 /*
+ * Map acpi tables as WB - (UV only)
+ */
+void acpi_set_iomap_cacheable(void);
+
+/*
  * Spinlock primitives
  */
 acpi_status acpi_os_create_lock(acpi_spinlock * out_handle);
