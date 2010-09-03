@@ -716,21 +716,11 @@ static int scsi_try_to_abort_cmd(struct scsi_cmnd *scmd)
 
 static void scsi_abort_eh_cmnd(struct scsi_cmnd *scmd)
 {
-	int ret;
-
-	ret = __scsi_try_to_abort_cmd(scmd);
-	if ((ret == SUCCESS) || (ret == FAST_IO_FAIL))
-		return;
-	ret = scsi_try_bus_device_reset(scmd);
-	if ((ret == SUCCESS) || (ret == FAST_IO_FAIL))
-		return;
-	ret = scsi_try_target_reset(scmd);
-	if ((ret == SUCCESS) || (ret == FAST_IO_FAIL))
-		return;
-	ret = scsi_try_bus_reset(scmd);
-	if ((ret == SUCCESS) || (ret == FAST_IO_FAIL))
-		return;
-	scsi_try_host_reset(scmd);
+	if (__scsi_try_to_abort_cmd(scmd) != SUCCESS)
+		if (scsi_try_bus_device_reset(scmd) != SUCCESS)
+			if (scsi_try_target_reset(scmd) != SUCCESS)
+				if (scsi_try_bus_reset(scmd) != SUCCESS)
+					scsi_try_host_reset(scmd);
 }
 
 /**
@@ -1029,7 +1019,6 @@ retry_tur:
 		if (retry_cnt--)
 			goto retry_tur;
 		/*FALLTHRU*/
-	case FAST_IO_FAIL:
 	case SUCCESS:
 		return 0;
 	default:
@@ -1098,7 +1087,7 @@ static int scsi_eh_try_stu(struct scsi_cmnd *scmd)
 		for (i = 0; rtn == NEEDS_RETRY && i < 2; i++)
 			rtn = scsi_send_eh_cmnd(scmd, stu_command, 6, scmd->device->request_queue->rq_timeout, 0);
 
-		if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
+		if (rtn == SUCCESS)
 			return 0;
 	}
 
@@ -1985,17 +1974,17 @@ scsi_reset_provider(struct scsi_device *dev, int flag)
 	switch (flag) {
 	case SCSI_TRY_RESET_DEVICE:
 		rtn = scsi_try_bus_device_reset(scmd);
-		if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
+		if (rtn == SUCCESS)
 			break;
 		/* FALLTHROUGH */
 	case SCSI_TRY_RESET_TARGET:
 		rtn = scsi_try_target_reset(scmd);
-		if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
+		if (rtn == SUCCESS)
 			break;
 		/* FALLTHROUGH */
 	case SCSI_TRY_RESET_BUS:
 		rtn = scsi_try_bus_reset(scmd);
-		if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
+		if (rtn == SUCCESS)
 			break;
 		/* FALLTHROUGH */
 	case SCSI_TRY_RESET_HOST:
@@ -2022,7 +2011,7 @@ scsi_reset_provider(struct scsi_device *dev, int flag)
 	scsi_run_host_queues(shost);
 
 	scsi_next_command(scmd);
-	return (rtn == FAST_IO_FAIL) ? SUCCESS : rtn;
+	return rtn;
 }
 EXPORT_SYMBOL(scsi_reset_provider);
 

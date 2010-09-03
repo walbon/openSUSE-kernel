@@ -215,7 +215,7 @@ static int zfcp_scsi_eh_abort_handler(struct scsi_cmnd *scpnt)
 
 		zfcp_erp_wait(adapter);
 		ret = fc_block_scsi_eh(scpnt);
-		if (ret != SUCCESS)
+		if (ret)
 			return ret;
 		if (!(atomic_read(&adapter->status) &
 		      ZFCP_STATUS_COMMON_RUNNING)) {
@@ -257,7 +257,7 @@ static int zfcp_task_mgmt_function(struct scsi_cmnd *scpnt, u8 tm_flags)
 
 		zfcp_erp_wait(adapter);
 		ret = fc_block_scsi_eh(scpnt);
-		if (ret != SUCCESS)
+		if (ret)
 			return ret;
 
 		if (!(atomic_read(&adapter->status) &
@@ -302,7 +302,11 @@ static int zfcp_scsi_eh_host_reset_handler(struct scsi_cmnd *scpnt)
 
 	zfcp_erp_adapter_reopen(adapter, 0, "schrh_1", scpnt);
 	zfcp_erp_wait(adapter);
-	return fc_block_scsi_eh(scpnt);
+	ret = fc_block_scsi_eh(scpnt);
+	if (ret)
+		return ret;
+
+	return SUCCESS;
 }
 
 int zfcp_adapter_scsi_register(struct zfcp_adapter *adapter)
