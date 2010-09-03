@@ -81,6 +81,7 @@ static void *acpi_irq_context;
 static struct workqueue_struct *kacpid_wq;
 static struct workqueue_struct *kacpi_notify_wq;
 static struct workqueue_struct *kacpi_hotplug_wq;
+static int acpi_iomap_cacheable;
 
 struct acpi_res_list {
 	resource_size_t start;
@@ -191,6 +192,11 @@ acpi_status __init acpi_os_initialize(void)
 	return AE_OK;
 }
 
+void acpi_set_iomap_cacheable(void)
+{
+	acpi_iomap_cacheable = 1;
+}
+
 static void bind_to_cpu0(struct work_struct *work)
 {
 	set_cpus_allowed_ptr(current, cpumask_of(0));
@@ -293,12 +299,20 @@ acpi_os_map_memory(acpi_physical_address phys, acpi_size size)
 		printk(KERN_ERR PREFIX "Cannot map memory that high\n");
 		return NULL;
 	}
-	if (acpi_gbl_permanent_mmap)
+	if (acpi_gbl_permanent_mmap) {
 		/*
 		* ioremap checks to ensure this is in reserved space
 		*/
-		return ioremap((unsigned long)phys, size);
-	else
+#ifdef CONFIG_X86_64
+		if (acpi_iomap_cacheable &&
+				(e820_all_mapped(phys, phys + size, E820_RAM) ||
+				e820_all_mapped(phys, phys + size, E820_ACPI) ||
+				e820_all_mapped(phys, phys + size, E820_NVS)))
+			return ioremap_cache((unsigned long)phys, size);
+		else
+#endif
+			return ioremap((unsigned long)phys, size);
+	} else
 		return __acpi_map_table((unsigned long)phys, size);
 }
 EXPORT_SYMBOL_GPL(acpi_os_map_memory);
