@@ -500,13 +500,13 @@ static int cache_defer_cnt;
 
 struct thread_deferred_req {
 	struct cache_deferred_req handle;
-	wait_queue_head_t wait;
+	struct completion completion;
 };
 static void cache_restart_thread(struct cache_deferred_req *dreq, int too_many)
 {
 	struct thread_deferred_req *dr =
 		container_of(dreq, struct thread_deferred_req, handle);
-	wake_up(&dr->wait);
+	complete(&dr->completion);
 }
 
 static int cache_defer_req(struct cache_req *req, struct cache_head *item)
@@ -524,7 +524,8 @@ static int cache_defer_req(struct cache_req *req, struct cache_head *item)
 	}
 
 	dreq = &sleeper.handle;
-	init_waitqueue_head(&sleeper.wait);
+	sleeper.completion =
+		COMPLETION_INITIALIZER_ONSTACK(sleeper.completion);
 	dreq->revisit = cache_restart_thread;
 
  retry:
@@ -563,18 +564,27 @@ static int cache_defer_req(struct cache_req *req, struct cache_head *item)
 	}
 
 	if (dreq == &sleeper.handle) {
-		wait_event_interruptible_timeout(
-			sleeper.wait,
-			!test_bit(CACHE_PENDING, &item->flags)
-			|| list_empty(&sleeper.handle.hash),
-			3*HZ);
-		spin_lock(&cache_defer_lock);
-		if (!list_empty(&sleeper.handle.hash)) {
-			list_del_init(&sleeper.handle.recent);
-			list_del_init(&sleeper.handle.hash);
-			cache_defer_cnt--;
+		if (wait_for_completion_interruptible_timeout(
+			    &sleeper.completion, 3*HZ) <= 0) {
+			/* The completion wasn't completed, so we
+			 * need to clean up.
+			 */
+			spin_lock(&cache_defer_lock);
+			if (!list_empty(&sleeper.handle.hash)) {
+				list_del_init(&sleeper.handle.recent);
+				list_del_init(&sleeper.handle.hash);
+				cache_defer_cnt--;
+				spin_unlock(&cache_defer_lock);
+			} else {
+				/* cache_revisit_request already removed
+				 * this from the hash table, but hasn't
+				 * called ->revisit yet.  It will very soon
+				 * and we need to wait for it.
+				 */
+				spin_unlock(&cache_defer_lock);
+				wait_for_completion(&sleeper.completion);
+			}
 		}
-		spin_unlock(&cache_defer_lock);
 		if (test_bit(CACHE_PENDING, &item->flags)) {
 			/* item is still pending, try request
 			 * deferral
