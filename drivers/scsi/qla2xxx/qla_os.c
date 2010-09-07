@@ -783,12 +783,12 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 	srb_t *spt;
 	int got_ref = 0;
 
-	fc_block_scsi_eh(cmd);
-
 	if (!CMD_SP(cmd))
 		return SUCCESS;
 
-	ret = SUCCESS;
+	ret = fc_block_scsi_eh(cmd);
+	if (ret != SUCCESS)
+		return ret;
 
 	id = cmd->device->id;
 	lun = cmd->device->lun;
@@ -921,7 +921,9 @@ __qla2xxx_eh_generic_reset(char *name, enum nexus_wait_type type,
 	fc_port_t *fcport = (struct fc_port *) cmd->device->hostdata;
 	int err;
 
-	fc_block_scsi_eh(cmd);
+	err = fc_block_scsi_eh(cmd);
+	if (err != SUCCESS)
+		return err;
 
 	if (!fcport)
 		return FAILED;
@@ -996,16 +998,20 @@ qla2xxx_eh_bus_reset(struct scsi_cmnd *cmd)
 {
 	scsi_qla_host_t *vha = shost_priv(cmd->device->host);
 	fc_port_t *fcport = (struct fc_port *) cmd->device->hostdata;
-	int ret = FAILED;
+	int ret;
 	unsigned int id, lun;
 	unsigned long serial;
 	srb_t *sp = (srb_t *) CMD_SP(cmd);
 
-	fc_block_scsi_eh(cmd);
+	ret = fc_block_scsi_eh(cmd);
+	if (ret != SUCCESS)
+		return ret;
 
 	id = cmd->device->id;
 	lun = cmd->device->lun;
 	serial = cmd->serial_number;
+
+	ret = FAILED;
 
 	if (!fcport)
 		return ret;
@@ -1058,17 +1064,21 @@ qla2xxx_eh_host_reset(struct scsi_cmnd *cmd)
 	scsi_qla_host_t *vha = shost_priv(cmd->device->host);
 	fc_port_t *fcport = (struct fc_port *) cmd->device->hostdata;
 	struct qla_hw_data *ha = vha->hw;
-	int ret = FAILED;
+	int ret;
 	unsigned int id, lun;
 	unsigned long serial;
 	srb_t *sp = (srb_t *) CMD_SP(cmd);
 	scsi_qla_host_t *base_vha = pci_get_drvdata(ha->pdev);
 
-	fc_block_scsi_eh(cmd);
+	ret = fc_block_scsi_eh(cmd);
+	if (ret != SUCCESS)
+		return ret;
 
 	id = cmd->device->id;
 	lun = cmd->device->lun;
 	serial = cmd->serial_number;
+
+	ret = FAILED;
 
 	if (!fcport)
 		return ret;
