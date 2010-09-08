@@ -99,6 +99,7 @@ enum fc_disc_event {
  * @RPORT_ST_LOGO:    Remote port logout (LOGO) sent
  * @RPORT_ST_ADISC:   Discover Address sent
  * @RPORT_ST_DELETE:  Remote port being deleted
+ * @RPORT_ST_RESTART: Remote port being deleted and will restart (obsolete)
 */
 enum fc_rport_state {
 	RPORT_ST_INIT,
@@ -109,6 +110,7 @@ enum fc_rport_state {
 	RPORT_ST_LOGO,
 	RPORT_ST_ADISC,
 	RPORT_ST_DELETE,
+	RPORT_ST_RESTART,
 };
 
 /**
