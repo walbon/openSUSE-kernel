@@ -40,15 +40,11 @@ static int BlkVscOnDeviceAdd(struct hv_device *Device, void *AdditionalInfo)
 	struct storvsc_device_info *deviceInfo;
 	int ret = 0;
 
-	DPRINT_ENTER(BLKVSC);
-
 	deviceInfo = (struct storvsc_device_info *)AdditionalInfo;
 
 	ret = StorVscOnDeviceAdd(Device, AdditionalInfo);
-	if (ret != 0) {
-		DPRINT_EXIT(BLKVSC);
+	if (ret != 0)
 		return ret;
-	}
 
 	/*
 	 * We need to use the device instance guid to set the path and target
@@ -63,8 +59,6 @@ static int BlkVscOnDeviceAdd(struct hv_device *Device, void *AdditionalInfo)
 	deviceInfo->TargetId = Device->deviceInstance.data[5] << 8 |
 			       Device->deviceInstance.data[4];
 
-	DPRINT_EXIT(BLKVSC);
-
 	return ret;
 }
 
@@ -73,12 +67,10 @@ int BlkVscInitialize(struct hv_driver *Driver)
 	struct storvsc_driver_object *storDriver;
 	int ret = 0;
 
-	DPRINT_ENTER(BLKVSC);
-
 	storDriver = (struct storvsc_driver_object *)Driver;
 
 	/* Make sure we are at least 2 pages since 1 page is used for control */
-	ASSERT(storDriver->RingBufferSize >= (PAGE_SIZE << 1));
+	/* ASSERT(storDriver->RingBufferSize >= (PAGE_SIZE << 1)); */
 
 	Driver->name = gBlkDriverName;
 	memcpy(&Driver->deviceType, &gBlkVscDeviceType, sizeof(struct hv_guid));
@@ -105,8 +97,6 @@ int BlkVscInitialize(struct hv_driver *Driver)
 	storDriver->Base.OnDeviceRemove = StorVscOnDeviceRemove;
 	storDriver->Base.OnCleanup = StorVscOnCleanup;
 	storDriver->OnIORequest	= StorVscOnIORequest;
-
-	DPRINT_EXIT(BLKVSC);
 
 	return ret;
 }

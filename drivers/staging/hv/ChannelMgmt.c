@@ -20,6 +20,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/module.h>
 #include "osd.h"
@@ -32,8 +33,8 @@ struct vmbus_channel_message_table_entry {
 	void (*messageHandler)(struct vmbus_channel_message_header *msg);
 };
 
-#define MAX_MSG_TYPES                    1
-#define MAX_NUM_DEVICE_CLASSES_SUPPORTED 5
+#define MAX_MSG_TYPES                    3
+#define MAX_NUM_DEVICE_CLASSES_SUPPORTED 7
 
 static const struct hv_guid
 	gSupportedDeviceClasses[MAX_NUM_DEVICE_CLASSES_SUPPORTED] = {
@@ -80,7 +81,24 @@ static const struct hv_guid
 			0x81, 0x8B, 0x38, 0XD9, 0x0C, 0xED, 0x39, 0xDB
 		}
 	},
+	/* {9527E630-D0AE-497b-ADCE-E80AB0175CAF} */
+	/* TimeSync */
+	{
+		.data = {
+			0x30, 0xe6, 0x27, 0x95, 0xae, 0xd0, 0x7b, 0x49,
+			0xad, 0xce, 0xe8, 0x0a, 0xb0, 0x17, 0x5c, 0xaf
+		}
+	},
+	/* {57164f39-9115-4e78-ab55-382f3bd5422d} */
+	/* Heartbeat */
+	{
+		.data = {
+			0x39, 0x4f, 0x16, 0x57, 0x15, 0x91, 0x78, 0x4e,
+			0xab, 0x55, 0x38, 0x2f, 0x3b, 0xd5, 0x42, 0x2d
+		}
+	},
 };
+
 
 /**
  * prep_negotiate_resp() - Create default response for Hyper-V Negotiate message
@@ -189,10 +207,33 @@ struct hyperv_service_callback hv_cb_utils[MAX_MSG_TYPES] = {
 		.callback = chn_cb_negotiate,
 		.log_msg = "Shutdown channel functionality initialized"
 	},
+
+	/* {9527E630-D0AE-497b-ADCE-E80AB0175CAF} */
+	/* TimeSync */
+	{
+		.msg_type = HV_TIMESYNC_MSG,
+		.data = {
+			0x30, 0xe6, 0x27, 0x95, 0xae, 0xd0, 0x7b, 0x49,
+			0xad, 0xce, 0xe8, 0x0a, 0xb0, 0x17, 0x5c, 0xaf
+		},
+		.callback = chn_cb_negotiate,
+		.log_msg = "Timesync channel functionality initialized"
+	},
+	/* {57164f39-9115-4e78-ab55-382f3bd5422d} */
+	/* Heartbeat */
+	{
+		.msg_type = HV_HEARTBEAT_MSG,
+		.data = {
+			0x39, 0x4f, 0x16, 0x57, 0x15, 0x91, 0x78, 0x4e,
+			0xab, 0x55, 0x38, 0x2f, 0x3b, 0xd5, 0x42, 0x2d
+		},
+		.callback = chn_cb_negotiate,
+		.log_msg = "Heartbeat channel functionality initialized"
+	},
 };
 EXPORT_SYMBOL(hv_cb_utils);
 
-/**
+/*
  * AllocVmbusChannel - Allocate and initialize a vmbus channel object
  */
 struct vmbus_channel *AllocVmbusChannel(void)
@@ -218,25 +259,21 @@ struct vmbus_channel *AllocVmbusChannel(void)
 	return channel;
 }
 
-/**
+/*
  * ReleaseVmbusChannel - Release the vmbus channel object itself
  */
 static inline void ReleaseVmbusChannel(void *context)
 {
 	struct vmbus_channel *channel = context;
 
-	DPRINT_ENTER(VMBUS);
-
 	DPRINT_DBG(VMBUS, "releasing channel (%p)", channel);
 	destroy_workqueue(channel->ControlWQ);
 	DPRINT_DBG(VMBUS, "channel released (%p)", channel);
 
 	kfree(channel);
-
-	DPRINT_EXIT(VMBUS);
 }
 
-/**
+/*
  * FreeVmbusChannel - Release the resources used by the vmbus channel object
  */
 void FreeVmbusChannel(struct vmbus_channel *Channel)
@@ -252,7 +289,7 @@ void FreeVmbusChannel(struct vmbus_channel *Channel)
 			      Channel);
 }
 
-/**
+/*
  * VmbusChannelProcessOffer - Process the offer by creating a channel/device
  * associated with this offer
  */
@@ -264,8 +301,6 @@ static void VmbusChannelProcessOffer(void *context)
 	int ret;
 	int cnt;
 	unsigned long flags;
-
-	DPRINT_ENTER(VMBUS);
 
 	/* Make sure this is a new offer */
 	spin_lock_irqsave(&gVmbusConnection.channel_lock, flags);
@@ -292,7 +327,6 @@ static void VmbusChannelProcessOffer(void *context)
 		DPRINT_DBG(VMBUS, "Ignoring duplicate offer for relid (%d)",
 			   newChannel->OfferMsg.ChildRelId);
 		FreeVmbusChannel(newChannel);
-		DPRINT_EXIT(VMBUS);
 		return;
 	}
 
@@ -350,22 +384,19 @@ static void VmbusChannelProcessOffer(void *context)
 			cnt++;
 		}
 	}
-	DPRINT_EXIT(VMBUS);
 }
 
-/**
+/*
  * VmbusChannelProcessRescindOffer - Rescind the offer by initiating a device removal
  */
 static void VmbusChannelProcessRescindOffer(void *context)
 {
 	struct vmbus_channel *channel = context;
 
-	DPRINT_ENTER(VMBUS);
 	VmbusChildDeviceRemove(channel->DeviceObject);
-	DPRINT_EXIT(VMBUS);
 }
 
-/**
+/*
  * VmbusChannelOnOffer - Handler for channel offers from vmbus in parent partition.
  *
  * We ignore all offers except network and storage offers. For each network and
@@ -381,8 +412,6 @@ static void VmbusChannelOnOffer(struct vmbus_channel_message_header *hdr)
 	int i;
 	int fSupported = 0;
 
-	DPRINT_ENTER(VMBUS);
-
 	offer = (struct vmbus_channel_offer_channel *)hdr;
 	for (i = 0; i < MAX_NUM_DEVICE_CLASSES_SUPPORTED; i++) {
 		if (memcmp(&offer->Offer.InterfaceType,
@@ -395,7 +424,6 @@ static void VmbusChannelOnOffer(struct vmbus_channel_message_header *hdr)
 	if (!fSupported) {
 		DPRINT_DBG(VMBUS, "Ignoring channel offer notification for "
 			   "child relid %d", offer->ChildRelId);
-		DPRINT_EXIT(VMBUS);
 		return;
 	}
 
@@ -444,11 +472,9 @@ static void VmbusChannelOnOffer(struct vmbus_channel_message_header *hdr)
 	/* TODO: Make sure the offer comes from our parent partition */
 	osd_schedule_callback(newChannel->ControlWQ, VmbusChannelProcessOffer,
 			      newChannel);
-
-	DPRINT_EXIT(VMBUS);
 }
 
-/**
+/*
  * VmbusChannelOnOfferRescind - Rescind offer handler.
  *
  * We queue a work item to process this offer synchronously
@@ -457,8 +483,6 @@ static void VmbusChannelOnOfferRescind(struct vmbus_channel_message_header *hdr)
 {
 	struct vmbus_channel_rescind_offer *rescind;
 	struct vmbus_channel *channel;
-
-	DPRINT_ENTER(VMBUS);
 
 	rescind = (struct vmbus_channel_rescind_offer *)hdr;
 	channel = GetChannelFromRelId(rescind->ChildRelId);
@@ -471,11 +495,9 @@ static void VmbusChannelOnOfferRescind(struct vmbus_channel_message_header *hdr)
 	osd_schedule_callback(channel->ControlWQ,
 			      VmbusChannelProcessRescindOffer,
 			      channel);
-
-	DPRINT_EXIT(VMBUS);
 }
 
-/**
+/*
  * VmbusChannelOnOffersDelivered - This is invoked when all offers have been delivered.
  *
  * Nothing to do here.
@@ -483,11 +505,9 @@ static void VmbusChannelOnOfferRescind(struct vmbus_channel_message_header *hdr)
 static void VmbusChannelOnOffersDelivered(
 			struct vmbus_channel_message_header *hdr)
 {
-	DPRINT_ENTER(VMBUS);
-	DPRINT_EXIT(VMBUS);
 }
 
-/**
+/*
  * VmbusChannelOnOpenResult - Open result handler.
  *
  * This is invoked when we received a response to our channel open request.
@@ -502,8 +522,6 @@ static void VmbusChannelOnOpenResult(struct vmbus_channel_message_header *hdr)
 	struct vmbus_channel_message_header *requestHeader;
 	struct vmbus_channel_open_channel *openMsg;
 	unsigned long flags;
-
-	DPRINT_ENTER(VMBUS);
 
 	result = (struct vmbus_channel_open_result *)hdr;
 	DPRINT_DBG(VMBUS, "vmbus open result - %d", result->Status);
@@ -531,11 +549,9 @@ static void VmbusChannelOnOpenResult(struct vmbus_channel_message_header *hdr)
 		}
 	}
 	spin_unlock_irqrestore(&gVmbusConnection.channelmsg_lock, flags);
-
-	DPRINT_EXIT(VMBUS);
 }
 
-/**
+/*
  * VmbusChannelOnGpadlCreated - GPADL created handler.
  *
  * This is invoked when we received a response to our gpadl create request.
@@ -550,8 +566,6 @@ static void VmbusChannelOnGpadlCreated(struct vmbus_channel_message_header *hdr)
 	struct vmbus_channel_message_header *requestHeader;
 	struct vmbus_channel_gpadl_header *gpadlHeader;
 	unsigned long flags;
-
-	DPRINT_ENTER(VMBUS);
 
 	gpadlCreated = (struct vmbus_channel_gpadl_created *)hdr;
 	DPRINT_DBG(VMBUS, "vmbus gpadl created result - %d",
@@ -583,11 +597,9 @@ static void VmbusChannelOnGpadlCreated(struct vmbus_channel_message_header *hdr)
 		}
 	}
 	spin_unlock_irqrestore(&gVmbusConnection.channelmsg_lock, flags);
-
-	DPRINT_EXIT(VMBUS);
 }
 
-/**
+/*
  * VmbusChannelOnGpadlTorndown - GPADL torndown handler.
  *
  * This is invoked when we received a response to our gpadl teardown request.
@@ -603,8 +615,6 @@ static void VmbusChannelOnGpadlTorndown(
 	struct vmbus_channel_message_header *requestHeader;
 	struct vmbus_channel_gpadl_teardown *gpadlTeardown;
 	unsigned long flags;
-
-	DPRINT_ENTER(VMBUS);
 
 	gpadlTorndown = (struct vmbus_channel_gpadl_torndown *)hdr;
 
@@ -631,11 +641,9 @@ static void VmbusChannelOnGpadlTorndown(
 		}
 	}
 	spin_unlock_irqrestore(&gVmbusConnection.channelmsg_lock, flags);
-
-	DPRINT_EXIT(VMBUS);
 }
 
-/**
+/*
  * VmbusChannelOnVersionResponse - Version response handler
  *
  * This is invoked when we received a response to our initiate contact request.
@@ -651,8 +659,6 @@ static void VmbusChannelOnVersionResponse(
 	struct vmbus_channel_initiate_contact *initiate;
 	struct vmbus_channel_version_response *versionResponse;
 	unsigned long flags;
-
-	DPRINT_ENTER(VMBUS);
 
 	versionResponse = (struct vmbus_channel_version_response *)hdr;
 	spin_lock_irqsave(&gVmbusConnection.channelmsg_lock, flags);
@@ -672,8 +678,6 @@ static void VmbusChannelOnVersionResponse(
 		}
 	}
 	spin_unlock_irqrestore(&gVmbusConnection.channelmsg_lock, flags);
-
-	DPRINT_EXIT(VMBUS);
 }
 
 /* Channel message dispatch table */
@@ -698,7 +702,7 @@ static struct vmbus_channel_message_table_entry
 	{ChannelMessageUnload,			NULL},
 };
 
-/**
+/*
  * VmbusOnChannelMessage - Handler for channel protocol messages.
  *
  * This is invoked in the vmbus worker thread context.
@@ -708,8 +712,6 @@ void VmbusOnChannelMessage(void *Context)
 	struct hv_message *msg = Context;
 	struct vmbus_channel_message_header *hdr;
 	int size;
-
-	DPRINT_ENTER(VMBUS);
 
 	hdr = (struct vmbus_channel_message_header *)msg->u.Payload;
 	size = msg->Header.PayloadSize;
@@ -734,10 +736,9 @@ void VmbusOnChannelMessage(void *Context)
 
 	/* Free the msg that was allocated in VmbusOnMsgDPC() */
 	kfree(msg);
-	DPRINT_EXIT(VMBUS);
 }
 
-/**
+/*
  * VmbusChannelRequestOffers - Send a request to get all our pending offers.
  */
 int VmbusChannelRequestOffers(void)
@@ -746,14 +747,18 @@ int VmbusChannelRequestOffers(void)
 	struct vmbus_channel_msginfo *msgInfo;
 	int ret;
 
-	DPRINT_ENTER(VMBUS);
-
 	msgInfo = kmalloc(sizeof(*msgInfo) +
 			  sizeof(struct vmbus_channel_message_header),
 			  GFP_KERNEL);
-	ASSERT(msgInfo != NULL);
+	if (!msgInfo)
+		return -ENOMEM;
 
 	msgInfo->WaitEvent = osd_WaitEventCreate();
+	if (!msgInfo->WaitEvent) {
+		kfree(msgInfo);
+		return -ENOMEM;
+	}
+
 	msg = (struct vmbus_channel_message_header *)msgInfo->Msg;
 
 	msg->MessageType = ChannelMessageRequestOffers;
@@ -787,12 +792,12 @@ Cleanup:
 		kfree(msgInfo);
 	}
 
-	DPRINT_EXIT(VMBUS);
 	return ret;
 }
 
-/**
- * VmbusChannelReleaseUnattachedChannels - Release channels that are unattached/unconnected ie (no drivers associated)
+/*
+ * VmbusChannelReleaseUnattachedChannels - Release channels that are
+ * unattached/unconnected ie (no drivers associated)
  */
 void VmbusChannelReleaseUnattachedChannels(void)
 {

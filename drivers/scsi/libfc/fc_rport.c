@@ -88,6 +88,7 @@ static const char *fc_rport_state_names[] = {
 	[RPORT_ST_LOGO] = "LOGO",
 	[RPORT_ST_ADISC] = "ADISC",
 	[RPORT_ST_DELETE] = "Delete",
+	[RPORT_ST_RESTART] = "Restart",
 };
 
 /**

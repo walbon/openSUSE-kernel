@@ -28,10 +28,10 @@
 #include "VmbusApi.h"
 
 /* Defines */
-#define STORVSC_RING_BUFFER_SIZE			(10*PAGE_SIZE)
+#define STORVSC_RING_BUFFER_SIZE			(20*PAGE_SIZE)
 #define BLKVSC_RING_BUFFER_SIZE				(20*PAGE_SIZE)
 
-#define STORVSC_MAX_IO_REQUESTS				64
+#define STORVSC_MAX_IO_REQUESTS				128
 
 /*
  * In Hyper-V, each port/path/target maps to 1 scsi host adapter.  In
@@ -91,13 +91,9 @@ struct storvsc_driver_object {
 	/* Maximum # of requests in flight per channel/device */
 	u32 MaxOutstandingRequestsPerChannel;
 
-	/* Set by the caller to allow us to re-enumerate the bus on the host */
-	void (*OnHostRescan)(struct hv_device *Device);
-
 	/* Specific to this driver */
 	int (*OnIORequest)(struct hv_device *Device,
 			   struct hv_storvsc_request *Request);
-	int (*OnHostReset)(struct hv_device *Device);
 };
 
 struct storvsc_device_info {
@@ -108,6 +104,7 @@ struct storvsc_device_info {
 
 /* Interface */
 int StorVscInitialize(struct hv_driver *driver);
+int StorVscOnHostReset(struct hv_device *Device);
 int BlkVscInitialize(struct hv_driver *driver);
 
 #endif /* _STORVSC_API_H_ */

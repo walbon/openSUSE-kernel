@@ -184,6 +184,7 @@ struct acpi_object_method {
 	u32 aml_length;
 	u8 thread_count;
 	acpi_owner_id owner_id;
+	u8 modifies_namespace;
 };
 
 /******************************************************************************
