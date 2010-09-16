@@ -714,9 +714,12 @@ void __lock_page(struct page *page)
 
 	do {
 		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
-		SetPageWaiters(page);
+		if (!PageWaiters(page))
+			SetPageWaiters(page);
 		if (likely(PageLocked(page)))
 			sync_page(page);
+		while(PageLocked(page))
+			cpu_relax();
 	} while (!trylock_page(page));
 	finish_wait(wq, &wait.wait);
 }
