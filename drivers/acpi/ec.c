@@ -121,6 +121,7 @@ static struct acpi_ec {
 static int EC_FLAGS_MSI; /* Out-of-spec MSI controller */
 static int EC_FLAGS_VALIDATE_ECDT; /* ASUStec ECDTs need to be validated */
 static int EC_FLAGS_SKIP_DSDT_SCAN; /* Not all BIOS survive early DSDT scan */
+static int EG_FLAGS_ACER_BAP50CP; /* Call _REG method */
 
 /* --------------------------------------------------------------------------
                              Transaction Management
@@ -811,6 +812,14 @@ static int acpi_ec_add(struct acpi_device *device)
 {
 	struct acpi_ec *ec = NULL;
 	int ret;
+	union acpi_object params[2] = {
+		{.type = ACPI_TYPE_INTEGER},
+		{.type = ACPI_TYPE_INTEGER},
+	};
+	struct acpi_object_list arg_list = {2, params};
+
+	params[0].integer.value = 3;
+	params[1].integer.value = 1;
 
 	strcpy(acpi_device_name(device), ACPI_EC_DEVICE_NAME);
 	strcpy(acpi_device_class(device), ACPI_EC_CLASS);
@@ -847,6 +856,10 @@ static int acpi_ec_add(struct acpi_device *device)
 
 	ret = ec_install_handlers(ec);
 
+	/* Workaround for broken acer laptop */
+	if (EG_FLAGS_ACER_BAP50CP)
+		acpi_evaluate_object(ec->handle, "_REG", &arg_list, NULL);
+		
 	/* EC is fully operational, allow queries */
 	clear_bit(EC_FLAGS_QUERY_PENDING, &ec->flags);
 	return ret;
@@ -938,6 +951,12 @@ static int ec_flag_msi(const struct dmi_system_id *id)
 	return 0;
 }
 
+static int ec_flag_acer_bap50cp(const struct dmi_system_id *id)
+{
+	EG_FLAGS_ACER_BAP50CP = 1;
+	return 0;
+}
+
 static struct dmi_system_id __initdata ec_dmi_table[] = {
 	{
 	ec_skip_dsdt_scan, "Compal JFL92", {
@@ -955,6 +974,10 @@ static struct dmi_system_id __initdata ec_dmi_table[] = {
 	{
 	ec_validate_ecdt, "ASUS hardware", {
 	DMI_MATCH(DMI_BIOS_VENDOR, "ASUS") }, NULL},
+	{
+	ec_flag_acer_bap50cp, "Acer BAP50-CP", {
+	DMI_MATCH(DMI_BOARD_VENDOR, "Acer"),
+	DMI_MATCH(DMI_BOARD_NAME, "BAP50-CP")}, NULL},
 	{},
 };
 
