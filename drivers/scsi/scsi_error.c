@@ -218,6 +218,11 @@ static inline void scsi_eh_prt_fail_stats(struct Scsi_Host *shost,
 #endif
 
 #ifdef CONFIG_SCSI_NETLINK
+int scsi_sense_events = 0;
+
+module_param(scsi_sense_events, int, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(scsi_sense_events, "Post SCSI sense codes via netlink");
+
 /**
  * scsi_post_sense_event - called to post a 'Sense Code' event
  *
@@ -237,6 +242,9 @@ static void scsi_post_sense_event(struct scsi_device *sdev,
 	struct scsi_nl_sense_msg *msg;
 	u32 len, skblen;
 	int err;
+
+	if (!scsi_sense_events)
+		return;
 
 	if (!scsi_nl_sock) {
 		err = -ENOENT;
