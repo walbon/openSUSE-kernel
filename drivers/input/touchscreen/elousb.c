@@ -156,7 +156,7 @@ static void workaround_fn(struct work_struct *work)
 	struct usb_device *dev = elo->usbdev;
 	unsigned char *buffer;
 	int io_ret;
-	
+
 	if (!(buffer = kzalloc(ELO_SMARTSET_PACKET_SIZE, GFP_KERNEL)))
 		goto fail;
 
@@ -341,7 +341,7 @@ static int elousb_probe(struct usb_interface *intf, const struct usb_device_id *
 	elo->irq->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
 	if (has_broken_firmware(dev)) {
-		info("broken firmware found, installing workaround");
+		printk(KERN_INFO "elousb: broken firmware found, installing workaround\n");
 		INIT_WORK(&elo->workaround_work, &workaround_fn);
 		init_timer(&elo->timer);
 		elo->timer.data = (unsigned long) elo;
@@ -350,7 +350,10 @@ static int elousb_probe(struct usb_interface *intf, const struct usb_device_id *
 		add_timer(&elo->timer);
 	}
 
-	input_register_device(elo->dev);
+	if (input_register_device(elo->dev)) {
+		printk(KERN_ERR "elousb: failed to register input device\n");
+		goto fail4;
+	}
 
 	usb_set_intfdata(intf, elo);
 	return 0;
