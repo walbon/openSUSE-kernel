@@ -72,8 +72,7 @@ void __ref setup_vcpu_info(unsigned int cpu)
 		info.mfn = arbitrary_virt_to_mfn(v);
 	info.offset = offset_in_page(v);
 
-	if (HYPERVISOR_vcpu_op(VCPUOP_register_vcpu_info,
-			       cpu, &info))
+	if (HYPERVISOR_vcpu_op(VCPUOP_register_vcpu_info, cpu, &info))
 		BUG();
 }
 

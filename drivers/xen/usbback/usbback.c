@@ -1149,7 +1149,7 @@ static int __init usbback_init(void)
 		return -ENODEV;
 
 	mmap_pages = usbif_reqs * USBIF_MAX_SEGMENTS_PER_REQUEST;
-	pending_reqs = kmalloc(sizeof(pending_reqs[0]) *
+	pending_reqs = kzalloc(sizeof(pending_reqs[0]) *
 			usbif_reqs, GFP_KERNEL);
 	pending_grant_handles = kmalloc(sizeof(pending_grant_handles[0]) *
 			mmap_pages, GFP_KERNEL);
@@ -1163,7 +1163,6 @@ static int __init usbback_init(void)
 	for (i = 0; i < mmap_pages; i++)
 		pending_grant_handles[i] = USBBACK_INVALID_HANDLE;
 
-	memset(pending_reqs, 0, sizeof(pending_reqs));
 	INIT_LIST_HEAD(&pending_free);
 
 	for (i = 0; i < usbif_reqs; i++)

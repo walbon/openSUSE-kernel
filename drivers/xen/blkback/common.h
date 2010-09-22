@@ -41,7 +41,6 @@
 #include <asm/hypervisor.h>
 #include <xen/blkif.h>
 #include <xen/gnttab.h>
-#include <xen/driver_util.h>
 #include <xen/xenbus.h>
 #include "blkback-pagemap.h"
 

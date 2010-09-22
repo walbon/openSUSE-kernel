@@ -407,7 +407,7 @@ static inline void io_apic_eoi(unsigned int apic, unsigned int vector)
 	struct io_apic __iomem *io_apic = io_apic_base(apic);
 	writel(vector, &io_apic->eoi);
 }
-#endif /* CONFIG_XEN */
+#endif /* !CONFIG_XEN */
 
 static inline unsigned int io_apic_read(unsigned int apic, unsigned int reg)
 {
@@ -716,7 +716,7 @@ static void clear_IO_APIC (void)
 #else
 #define add_pin_to_irq_node(cfg, node, apic, pin)
 #define add_pin_to_irq_node_nopanic(cfg, node, apic, pin) 0
-#endif /* CONFIG_XEN */
+#endif /* !CONFIG_XEN */
 
 #ifdef CONFIG_X86_32
 /*
@@ -1822,6 +1822,8 @@ __apicdebuginit(void) print_IO_APIC(void)
 		struct irq_pin_list *entry;
 
 		cfg = desc->chip_data;
+		if (!cfg)
+			continue;
 		entry = cfg->irq_2_pin;
 		if (!entry)
 			continue;
@@ -2017,7 +2019,7 @@ fs_initcall(print_all_ICs);
 
 /* Where if anywhere is the i8259 connect in external int mode */
 static struct { int pin, apic; } ioapic_i8259 = { -1, -1 };
-#endif /* CONFIG_XEN */
+#endif /* !CONFIG_XEN */
 
 void __init enable_IO_APIC(void)
 {
@@ -2783,7 +2785,7 @@ static struct irq_chip ir_ioapic_chip __read_mostly = {
 #endif
 	.retrigger	= ioapic_retrigger_irq,
 };
-#endif /* CONFIG_XEN */
+#endif /* !CONFIG_XEN */
 
 static inline void init_IO_APIC_traps(void)
 {
@@ -3361,7 +3363,7 @@ void destroy_irq(unsigned int irq)
 	__clear_irq_vector(irq, cfg);
 	spin_unlock_irqrestore(&vector_lock, flags);
 }
-#endif /* CONFIG_XEN */
+#endif /* !CONFIG_XEN */
 
 /*
  * MSI message composition
@@ -3453,7 +3455,7 @@ static int set_msi_irq_affinity(unsigned int irq, const struct cpumask *mask)
 
 	cfg = desc->chip_data;
 
-	read_msi_msg_desc(desc, &msg);
+	get_cached_msi_msg_desc(desc, &msg);
 
 	msg.data &= ~MSI_DATA_VECTOR_MASK;
 	msg.data |= MSI_DATA_VECTOR(cfg->vector);

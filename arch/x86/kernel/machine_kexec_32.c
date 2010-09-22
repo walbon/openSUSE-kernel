@@ -45,6 +45,17 @@ static int machine_kexec_alloc_page_tables(struct kimage *image)
 {
 	image->arch.pgd = (pgd_t *)get_zeroed_page(GFP_KERNEL);
 #ifdef CONFIG_X86_PAE
+#ifdef CONFIG_XEN /* machine address must fit into xki->page_list[PA_PGD] */
+	if (image->arch.pgd) {
+		struct page *pg = virt_to_page(image->arch.pgd);
+
+		if (xen_limit_pages_to_max_mfn(pg, 0, BITS_PER_LONG) < 0) {
+			image->arch.pgd = NULL;
+			__free_page(pg);
+			return -ENOMEM;
+		}
+	}
+#endif
 	image->arch.pmd0 = (pmd_t *)get_zeroed_page(GFP_KERNEL);
 	image->arch.pmd1 = (pmd_t *)get_zeroed_page(GFP_KERNEL);
 #endif

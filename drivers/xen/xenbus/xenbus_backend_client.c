@@ -32,9 +32,9 @@
 
 #include <linux/err.h>
 #include <linux/delay.h>
+#include <linux/vmalloc.h>
 #include <xen/gnttab.h>
 #include <xen/xenbus.h>
-#include <xen/driver_util.h>
 
 /* Based on Rusty Russell's skeleton driver's map_page */
 struct vm_struct *xenbus_map_ring_valloc(struct xenbus_device *dev, int gnt_ref)

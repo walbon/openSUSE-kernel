@@ -111,12 +111,9 @@ blktap_ring_clear_pte(struct vm_area_struct *vma,
 
 	offset  = (int)((uvaddr - vma->vm_start) >> PAGE_SHIFT);
 	page    = map[offset];
-	if (page) {
-		ClearPageReserved(page);
-		if (PageBlkback(page)) {
-			ClearPageBlkback(page);
-			set_page_private(page, 0);
-		}
+	if (page && PageBlkback(page)) {
+		ClearPageBlkback(page);
+		set_page_private(page, 0);
 	}
 	map[offset] = NULL;
 

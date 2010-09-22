@@ -535,7 +535,7 @@ struct rq {
 	unsigned long nr_running;
 	#define CPU_LOAD_IDX_MAX 5
 	unsigned long cpu_load[CPU_LOAD_IDX_MAX];
-#ifdef CONFIG_NO_HZ
+#if defined(CONFIG_NO_HZ) && (!defined(__GENKSYMS__) || !defined(CONFIG_XEN))
 	unsigned long last_tick_seen;
 	unsigned char in_nohz_recently;
 #endif

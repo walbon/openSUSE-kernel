@@ -409,13 +409,12 @@ efrm_nic_add(struct pci_dev *dev, unsigned flags, const uint8_t *mac_addr,
 	}
 
 	/* Allocate memory for the new adapter-structure. */
-	lnic = kmalloc(sizeof(*lnic), GFP_KERNEL);
+	lnic = kzalloc(sizeof(*lnic), GFP_KERNEL);
 	if (lnic == NULL) {
 		EFRM_ERR("%s: ERROR: failed to allocate memory", __func__);
 		rc = -ENOMEM;
 		goto failed;
 	}
-	memset(lnic, 0, sizeof(*lnic));
 	nic = &lnic->efrm_nic.efhw_nic;
 
 	lnic->ev_handlers = &ev_handler;

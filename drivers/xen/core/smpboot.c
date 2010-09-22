@@ -40,10 +40,7 @@ cpumask_var_t vcpu_initialized_mask;
 DEFINE_PER_CPU(struct cpuinfo_x86, cpu_info);
 EXPORT_PER_CPU_SYMBOL(cpu_info);
 
-static int __read_mostly resched_irq = -1;
-static int __read_mostly callfunc_irq = -1;
-static int __read_mostly call1func_irq = -1;
-static int __read_mostly reboot_irq = -1;
+static int __read_mostly ipi_irq = -1;
 
 #ifdef CONFIG_X86_LOCAL_APIC
 #define set_cpu_to_apicid(cpu, apicid) (per_cpu(x86_cpu_to_apicid, cpu) = (apicid))
@@ -103,70 +100,52 @@ remove_siblinginfo(unsigned int cpu)
 	cpu_data(cpu).booted_cores = 0;
 }
 
+static irqreturn_t ipi_interrupt(int irq, void *dev_id)
+{
+	static void(*const handlers[])(struct pt_regs *) = {
+		[RESCHEDULE_VECTOR] = smp_reschedule_interrupt,
+		[CALL_FUNCTION_VECTOR] = smp_call_function_interrupt,
+		[CALL_FUNC_SINGLE_VECTOR] = smp_call_function_single_interrupt,
+		[REBOOT_VECTOR] = smp_reboot_interrupt,
+	};
+	unsigned long *pending = __get_cpu_var(ipi_pending);
+	unsigned int ipi = find_first_bit(pending, NR_IPIS);
+	struct pt_regs *regs = get_irq_regs();
+	irqreturn_t ret = IRQ_NONE;
+
+	while (ipi < NR_IPIS) {
+		clear_bit(ipi, pending);
+		handlers[ipi](regs);
+		ret = IRQ_HANDLED;
+
+		ipi = find_next_bit(pending, NR_IPIS, ipi);
+		if (unlikely(ipi >= NR_IPIS))
+			ipi = find_first_bit(pending, NR_IPIS);
+	}
+
+	return ret;
+}
+
 static int __cpuinit xen_smp_intr_init(unsigned int cpu)
 {
-	static struct irqaction resched_action = {
-		.handler = smp_reschedule_interrupt,
+	static struct irqaction ipi_action = {
+		.handler = ipi_interrupt,
 		.flags   = IRQF_DISABLED,
-		.name    = "resched"
-	}, callfunc_action = {
-		.handler = smp_call_function_interrupt,
-		.flags   = IRQF_DISABLED,
-		.name    = "callfunc"
-	}, call1func_action = {
-		.handler = smp_call_function_single_interrupt,
-		.flags   = IRQF_DISABLED,
-		.name    = "call1func"
-	}, reboot_action = {
-		.handler = smp_reboot_interrupt,
-		.flags   = IRQF_DISABLED,
-		.name    = "reboot"
+		.name    = "ipi"
 	};
 	int rc;
 
-	rc = bind_ipi_to_irqaction(RESCHEDULE_VECTOR,
-				   cpu,
-				   &resched_action);
+	rc = bind_ipi_to_irqaction(cpu, &ipi_action);
 	if (rc < 0)
 		return rc;
-	if (resched_irq < 0)
-		resched_irq = rc;
+	if (ipi_irq < 0)
+		ipi_irq = rc;
 	else
-		BUG_ON(resched_irq != rc);
-
-	rc = bind_ipi_to_irqaction(CALL_FUNCTION_VECTOR,
-				   cpu,
-				   &callfunc_action);
-	if (rc < 0)
-		goto unbind_resched;
-	if (callfunc_irq < 0)
-		callfunc_irq = rc;
-	else
-		BUG_ON(callfunc_irq != rc);
-
-	rc = bind_ipi_to_irqaction(CALL_FUNC_SINGLE_VECTOR,
-				   cpu,
-				   &call1func_action);
-	if (rc < 0)
-		goto unbind_call;
-	if (call1func_irq < 0)
-		call1func_irq = rc;
-	else
-		BUG_ON(call1func_irq != rc);
-
-	rc = bind_ipi_to_irqaction(REBOOT_VECTOR,
-				   cpu,
-				   &reboot_action);
-	if (rc < 0)
-		goto unbind_call1;
-	if (reboot_irq < 0)
-		reboot_irq = rc;
-	else
-		BUG_ON(reboot_irq != rc);
+		BUG_ON(ipi_irq != rc);
 
 	rc = xen_spinlock_init(cpu);
 	if (rc < 0)
-		goto unbind_reboot;
+		goto unbind_ipi;
 
 	if ((cpu != 0) && ((rc = local_setup_timer(cpu)) != 0))
 		goto fail;
@@ -175,14 +154,8 @@ static int __cpuinit xen_smp_intr_init(unsigned int cpu)
 
  fail:
 	xen_spinlock_cleanup(cpu);
- unbind_reboot:
-	unbind_from_per_cpu_irq(reboot_irq, cpu, NULL);
- unbind_call1:
-	unbind_from_per_cpu_irq(call1func_irq, cpu, NULL);
- unbind_call:
-	unbind_from_per_cpu_irq(callfunc_irq, cpu, NULL);
- unbind_resched:
-	unbind_from_per_cpu_irq(resched_irq, cpu, NULL);
+ unbind_ipi:
+	unbind_from_per_cpu_irq(ipi_irq, cpu, NULL);
 	return rc;
 }
 
@@ -192,10 +165,7 @@ static void __cpuinit xen_smp_intr_exit(unsigned int cpu)
 	if (cpu != 0)
 		local_teardown_timer(cpu);
 
-	unbind_from_per_cpu_irq(resched_irq, cpu, NULL);
-	unbind_from_per_cpu_irq(callfunc_irq, cpu, NULL);
-	unbind_from_per_cpu_irq(call1func_irq, cpu, NULL);
-	unbind_from_per_cpu_irq(reboot_irq, cpu, NULL);
+	unbind_from_per_cpu_irq(ipi_irq, cpu, NULL);
 	xen_spinlock_cleanup(cpu);
 }
 #endif
@@ -234,17 +204,12 @@ static void __cpuinit cpu_initialize_context(unsigned int cpu)
 	ctxt.flags = VGCF_IN_KERNEL;
 	ctxt.user_regs.ds = __USER_DS;
 	ctxt.user_regs.es = __USER_DS;
-	ctxt.user_regs.fs = 0;
-	ctxt.user_regs.gs = 0;
 	ctxt.user_regs.ss = __KERNEL_DS;
 	ctxt.user_regs.eip = (unsigned long)cpu_bringup_and_idle;
 	ctxt.user_regs.eflags = X86_EFLAGS_IF | 0x1000; /* IOPL_RING1 */
 
-	memset(&ctxt.fpu_ctxt, 0, sizeof(ctxt.fpu_ctxt));
-
 	smp_trap_init(ctxt.trap_ctxt);
 
-	ctxt.ldt_ents = 0;
 	ctxt.gdt_frames[0] = arbitrary_virt_to_mfn(get_cpu_gdt_table(cpu));
 	ctxt.gdt_ents = GDT_SIZE / 8;
 

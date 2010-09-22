@@ -117,7 +117,10 @@ static inline void tick_check_idle(int cpu) { }
 static inline int tick_oneshot_mode_active(void) { return 0; }
 #endif /* !CONFIG_GENERIC_CLOCKEVENTS */
 
-# ifdef CONFIG_NO_HZ
+# if defined(CONFIG_XEN)
+static inline void tick_nohz_stop_sched_tick(int inidle) { }
+static inline void tick_nohz_restart_sched_tick(void) { }
+# elif defined(CONFIG_NO_HZ)
 extern void tick_nohz_stop_sched_tick(int inidle);
 extern void tick_nohz_restart_sched_tick(void);
 extern ktime_t tick_nohz_get_sleep_length(void);

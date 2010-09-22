@@ -78,10 +78,8 @@ void evtchn_device_upcall(int port)
 
 	spin_lock(&port_user_lock);
 
-	mask_evtchn(port);
-	clear_evtchn(port);
-
 	if ((u = port_user[port]) != NULL) {
+		clear_evtchn(port);
 		if ((u->ring_prod - u->ring_cons) < EVTCHN_RING_SIZE) {
 			u->ring[EVTCHN_RING_MASK(u->ring_prod)] = port;
 			wmb(); /* Ensure ring contents visible */

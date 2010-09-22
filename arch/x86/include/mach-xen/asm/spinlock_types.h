@@ -5,6 +5,8 @@
 # error "please don't include this file directly"
 #endif
 
+#include <asm/types.h>
+
 typedef union {
 	unsigned int slock;
 	struct {

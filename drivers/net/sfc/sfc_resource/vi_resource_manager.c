@@ -86,13 +86,11 @@ efrm_create_or_destroy_vi_resource_manager(
 		    dims->rxq_min, dims->rxq_lim,
 		    dims->txq_min, dims->txq_lim);
 
-	efrm_vi_manager = kmalloc(sizeof(*efrm_vi_manager), GFP_KERNEL);
+	efrm_vi_manager = kzalloc(sizeof(*efrm_vi_manager), GFP_KERNEL);
 	if (efrm_vi_manager == NULL) {
 		rc = -ENOMEM;
 		goto fail_alloc;
 	}
-
-	memset(efrm_vi_manager, 0, sizeof(*efrm_vi_manager));
 
 	efrm_vi_manager->iscsi_dmaq_instance_is_free = true;
 

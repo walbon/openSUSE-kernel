@@ -43,12 +43,12 @@ static int direct_remap_area_pte_fn(pte_t *pte,
 
 static int __direct_remap_pfn_range(struct mm_struct *mm,
 				    unsigned long address,
-				    unsigned long mfn,
+				    phys_addr_t mfn,
 				    unsigned long size,
 				    pgprot_t prot,
 				    domid_t  domid)
 {
-	int rc;
+	int rc = 0;
 	unsigned long i, start_address;
 	mmu_update_t *u, *v, *w;
 
@@ -68,8 +68,8 @@ static int __direct_remap_pfn_range(struct mm_struct *mm,
 						 direct_remap_area_pte_fn, &w);
 			if (rc)
 				goto out;
-			rc = -EFAULT;
-			if (HYPERVISOR_mmu_update(u, v - u, NULL, domid) < 0)
+			rc = HYPERVISOR_mmu_update(u, v - u, NULL, domid);
+			if (rc < 0)
 				goto out;
 			v = w = u;
 			start_address = address;
@@ -94,12 +94,8 @@ static int __direct_remap_pfn_range(struct mm_struct *mm,
 					 direct_remap_area_pte_fn, &w);
 		if (rc)
 			goto out;
-		rc = -EFAULT;
-		if (unlikely(HYPERVISOR_mmu_update(u, v - u, NULL, domid) < 0))
-			goto out;
+		rc = HYPERVISOR_mmu_update(u, v - u, NULL, domid);
 	}
-
-	rc = 0;
 
  out:
 	flush_tlb_all();
@@ -273,8 +269,8 @@ int ioremap_check_change_attr(unsigned long mfn, unsigned long size,
 static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 		unsigned long size, unsigned long prot_val, void *caller)
 {
-	unsigned long mfn, offset, vaddr;
-	resource_size_t last_addr;
+	unsigned long offset, vaddr;
+	phys_addr_t mfn, last_addr;
 	const resource_size_t unaligned_phys_addr = phys_addr;
 	const unsigned long unaligned_size = size;
 	struct vm_struct *area;

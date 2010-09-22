@@ -165,13 +165,12 @@ efrm_dl_probe(struct efx_dl_device *efrm_dev,
 	 * the callbacks that we want depends on the NIC type.
 	 */
 	lnic->dl_callbacks =
-	    kmalloc(sizeof(struct efx_dl_callbacks), GFP_KERNEL);
+	    kzalloc(sizeof(struct efx_dl_callbacks), GFP_KERNEL);
 	if (!lnic->dl_callbacks) {
 		EFRM_ERR("Out of memory (%s)", __func__);
 		efrm_nic_del(lnic);
 		return -ENOMEM;
 	}
-	memset(lnic->dl_callbacks, 0, sizeof(*lnic->dl_callbacks));
 	lnic->dl_callbacks->mtu_changed = efrm_dl_mtu_changed;
 
 	if ((res->flags & EFX_DL_FALCON_DUAL_FUNC) == 0) {

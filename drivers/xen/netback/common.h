@@ -44,7 +44,6 @@
 #include <asm/pgalloc.h>
 #include <xen/interface/grant_table.h>
 #include <xen/gnttab.h>
-#include <xen/driver_util.h>
 #include <xen/xenbus.h>
 
 #define DPRINTK(_f, _a...)			\
@@ -100,7 +99,6 @@ typedef struct netif_st {
 
 	/* Miscellaneous private stuff. */
 	struct list_head list;  /* scheduling list */
-	struct list_head group_list;
 	atomic_t         refcnt;
 	struct net_device *dev;
 	struct net_device_stats stats;
@@ -225,11 +223,6 @@ struct pending_tx_info {
 };
 typedef unsigned int pending_ring_idx_t;
 
-struct page_ext {
-	unsigned int group;
-	unsigned int idx;
-};
-
 struct netbk_rx_meta {
 	skb_frag_t frag;
 	int id;
@@ -269,18 +262,14 @@ struct xen_netbk {
 
 	struct list_head pending_inuse_head;
 	struct list_head net_schedule_list;
-	struct list_head group_domain_list;
 
 	spinlock_t net_schedule_list_lock;
 	spinlock_t release_lock;
-	spinlock_t group_domain_list_lock;
 
 	struct page **mmap_pages;
 
-	unsigned int group_domain_nr;
+	atomic_t nr_groups;
 	unsigned int alloc_index;
-
-	struct page_ext page_extinfo[MAX_PENDING_REQS];
 
 	struct pending_tx_info pending_tx_info[MAX_PENDING_REQS];
 	struct netbk_tx_pending_inuse pending_inuse[MAX_PENDING_REQS];
