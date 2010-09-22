@@ -28,7 +28,6 @@
 #include <asm/pgtable.h>
 #include <asm/hypercall.h>
 #include <xen/xenbus.h>
-#include <xen/driver_util.h>
 #include <xen/gnttab.h>
 
 #include "accel_util.h"

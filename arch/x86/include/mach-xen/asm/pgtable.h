@@ -229,10 +229,9 @@ static inline pte_t pfn_pte(unsigned long page_nr, pgprot_t pgprot)
 		     massage_pgprot(pgprot));
 }
 
-static inline pte_t pfn_pte_ma(unsigned long page_nr, pgprot_t pgprot)
+static inline pte_t pfn_pte_ma(phys_addr_t page_nr, pgprot_t pgprot)
 {
-	return __pte_ma(((phys_addr_t)page_nr << PAGE_SHIFT) |
-			massage_pgprot(pgprot));
+	return __pte_ma((page_nr << PAGE_SHIFT) | massage_pgprot(pgprot));
 }
 
 static inline pmd_t pfn_pmd(unsigned long page_nr, pgprot_t pgprot)

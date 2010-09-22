@@ -104,7 +104,7 @@ struct acpi_processor_cx {
 	struct acpi_processor_cx_policy promotion;
 	struct acpi_processor_cx_policy demotion;
 	char desc[ACPI_CX_DESC_LEN];
-#ifndef __GENKSYMS__
+#if !defined(CONFIG_PROCESSOR_EXTERNAL_CONTROL) && !defined(__GENKSYMS__)
 	u8 bm_sts_skip;
 #endif
 };
@@ -445,13 +445,6 @@ extern int processor_extcntl_prepare(struct acpi_processor *pr);
 extern int acpi_processor_get_performance_info(struct acpi_processor *pr);
 extern int acpi_processor_get_psd(struct acpi_processor *pr);
 void arch_acpi_processor_init_extcntl(const struct processor_extcntl_ops **);
-
-/*
- * Declarations for objects and functions removed in native 2.6.29, and
- * thus moved to drivers/acpi/processor_extcntl.c.
- */
-extern struct notifier_block acpi_processor_latency_notifier;
-int acpi_processor_set_power_policy(struct acpi_processor *);
 #else
 static inline int processor_cntl_external(void) {return 0;}
 static inline int processor_pm_external(void) {return 0;}

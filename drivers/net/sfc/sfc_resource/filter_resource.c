@@ -111,10 +111,9 @@ int efrm_create_filter_resource_manager(struct efrm_resource_manager **rm_out)
 	EFRM_ASSERT(rm_out);
 
 	efrm_filter_manager =
-	    kmalloc(sizeof(struct filter_resource_manager), GFP_KERNEL);
+	    kzalloc(sizeof(struct filter_resource_manager), GFP_KERNEL);
 	if (efrm_filter_manager == 0)
 		return -ENOMEM;
-	memset(efrm_filter_manager, 0, sizeof(*efrm_filter_manager));
 
 	rc = efrm_resource_manager_ctor(&efrm_filter_manager->rm,
 					filter_rm_dtor, "FILTER",

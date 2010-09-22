@@ -50,7 +50,6 @@
 #include <linux/moduleparam.h>
 #include <net/sock.h>
 #include <net/pkt_sched.h>
-#include <net/arp.h>
 #include <net/route.h>
 #include <asm/uaccess.h>
 #include <xen/evtchn.h>
@@ -220,7 +219,6 @@ static void netif_disconnect_backend(struct netfront_info *);
 static int network_connect(struct net_device *);
 static void network_tx_buf_gc(struct net_device *);
 static void network_alloc_rx_buffers(struct net_device *);
-static void send_fake_arp(struct net_device *);
 
 static irqreturn_t netif_int(int irq, void *dev_id);
 
@@ -235,6 +233,25 @@ static void xennet_sysfs_delif(struct net_device *netdev);
 static inline int xennet_can_sg(struct net_device *dev)
 {
 	return dev->features & NETIF_F_SG;
+}
+
+/*
+ * Work around net.ipv4.conf.*.arp_notify no being enabled by default.
+ */
+static void __devinit netfront_enable_arp_notify(struct netfront_info *info)
+{
+#ifdef CONFIG_INET
+	struct in_device *in_dev;
+
+	rtnl_lock();
+	in_dev = __in_dev_get_rtnl(info->netdev);
+	if (in_dev && !IN_DEV_CONF_GET(in_dev, ARP_NOTIFY))
+		IN_DEV_CONF_SET(in_dev, ARP_NOTIFY, 1);
+	rtnl_unlock();
+	if (!in_dev)
+		printk(KERN_WARNING "Cannot enable ARP notification on %s\n",
+		       info->xbdev->nodename);
+#endif
 }
 
 /**
@@ -265,6 +282,8 @@ static int __devinit netfront_probe(struct xenbus_device *dev,
 		       __FUNCTION__, err);
 		goto fail;
 	}
+
+	netfront_enable_arp_notify(info);
 
 	err = xennet_sysfs_addif(info->netdev);
 	if (err) {
@@ -552,43 +571,13 @@ static void backend_changed(struct xenbus_device *dev,
 		if (network_connect(netdev) != 0)
 			break;
 		xenbus_switch_state(dev, XenbusStateConnected);
-		send_fake_arp(netdev);
+		netif_notify_peers(netdev);
 		break;
 
 	case XenbusStateClosing:
 		xenbus_frontend_closed(dev);
 		break;
 	}
-}
-
-/** Send a packet on a net device to encourage switches to learn the
- * MAC. We send a fake ARP request.
- *
- * @param dev device
- * @return 0 on success, error code otherwise
- */
-static void send_fake_arp(struct net_device *dev)
-{
-#ifdef CONFIG_INET
-	struct sk_buff *skb;
-	u32             src_ip, dst_ip;
-
-	dst_ip = INADDR_BROADCAST;
-	src_ip = inet_select_addr(dev, dst_ip, RT_SCOPE_LINK);
-
-	/* No IP? Then nothing to do. */
-	if (src_ip == 0)
-		return;
-
-	skb = arp_create(ARPOP_REPLY, ETH_P_ARP,
-			 dst_ip, dev, src_ip,
-			 /*dst_hw*/ NULL, /*src_hw*/ NULL,
-			 /*target_hw*/ dev->dev_addr);
-	if (skb == NULL)
-		return;
-
-	dev_queue_xmit(skb);
-#endif
 }
 
 static inline int netfront_tx_slot_available(struct netfront_info *np)
@@ -2118,32 +2107,6 @@ static struct net_device * __devinit create_netdev(struct xenbus_device *dev)
 	return ERR_PTR(err);
 }
 
-#ifdef CONFIG_INET
-/*
- * We use this notifier to send out a fake ARP reply to reset switches and
- * router ARP caches when an IP interface is brought up on a VIF.
- */
-static int
-inetdev_notify(struct notifier_block *this, unsigned long event, void *ptr)
-{
-	struct in_ifaddr  *ifa = (struct in_ifaddr *)ptr;
-	struct net_device *dev = ifa->ifa_dev->dev;
-
-	/* UP event and is it one of our devices? */
-	if (event == NETDEV_UP && dev->netdev_ops->ndo_open == network_open)
-		send_fake_arp(dev);
-
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block notifier_inetdev = {
-	.notifier_call  = inetdev_notify,
-	.next           = NULL,
-	.priority       = 0
-};
-#endif
-
-
 static void netif_disconnect_backend(struct netfront_info *info)
 {
 	/* Stop old i/f to prevent errors whilst we rebuild the state. */
@@ -2197,8 +2160,6 @@ static struct xenbus_driver netfront_driver = {
 
 static int __init netif_init(void)
 {
-	int err;
-
 	if (!is_running_on_xen())
 		return -ENODEV;
 
@@ -2216,26 +2177,13 @@ static int __init netif_init(void)
 
 	IPRINTK("Initialising virtual ethernet driver.\n");
 
-#ifdef CONFIG_INET
-	(void)register_inetaddr_notifier(&notifier_inetdev);
-#endif
-
-	err = xenbus_register_frontend(&netfront_driver);
-	if (err) {
-#ifdef CONFIG_INET
-		unregister_inetaddr_notifier(&notifier_inetdev);
-#endif
-	}
-	return err;
+	return xenbus_register_frontend(&netfront_driver);
 }
 module_init(netif_init);
 
 
 static void __exit netif_exit(void)
 {
-#ifdef CONFIG_INET
-	unregister_inetaddr_notifier(&notifier_inetdev);
-#endif
 	xenbus_unregister_driver(&netfront_driver);
 
 	netif_exit_accel();

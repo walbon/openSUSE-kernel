@@ -47,7 +47,7 @@ int efhw_iopage_alloc(struct efhw_nic *nic, struct efhw_iopage *p)
 
 	EFHW_ASSERT((handle & ~PAGE_MASK) == 0);
 
-	memset((void *)kva, 0, PAGE_SIZE);
+	clear_page(kva);
 	efhw_page_init_from_va(&p->p, kva);
 
 	p->dma_addr = handle;

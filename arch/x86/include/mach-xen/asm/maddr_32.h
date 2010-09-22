@@ -94,7 +94,7 @@ static inline unsigned long mfn_to_pfn(unsigned long mfn)
  *      require. In all the cases we care about, the FOREIGN_FRAME bit is
  *      masked (e.g., pfn_to_mfn()) so behaviour there is correct.
  */
-static inline unsigned long mfn_to_local_pfn(unsigned long mfn)
+static inline unsigned long mfn_to_local_pfn(phys_addr_t mfn)
 {
 	unsigned long pfn = mfn_to_pfn(mfn);
 	if (likely(pfn < max_mapnr)

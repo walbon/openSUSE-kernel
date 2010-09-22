@@ -754,7 +754,7 @@ void __init xen_init_pt(void)
 		unsigned long adr = page[pud_index(addr)];
 
 		addr_to_page(adr, page);
-		memcpy(level2_fixmap_pgt, page, PAGE_SIZE);
+		copy_page(level2_fixmap_pgt, page);
 	}
 	level3_kernel_pgt[pud_index(addr)] =
 		__pud(__pa_symbol(level2_fixmap_pgt) | _PAGE_TABLE);
@@ -913,6 +913,21 @@ void __init paging_init(void)
  */
 #ifdef CONFIG_MEMORY_HOTPLUG
 /*
+ * After memory hotplug the variables max_pfn, max_low_pfn and high_memory need
+ * updating.
+ */
+static void  update_end_of_memory_vars(u64 start, u64 size)
+{
+	unsigned long end_pfn = PFN_UP(start + size);
+
+	if (end_pfn > max_pfn) {
+		max_pfn = end_pfn;
+		max_low_pfn = end_pfn;
+		high_memory = (void *)__va(max_pfn * PAGE_SIZE - 1) + 1;
+	}
+}
+
+/*
  * Memory is added always to NORMAL zone. This means you will never get
  * additional DMA/DMA32 memory.
  */
@@ -930,6 +945,9 @@ int arch_add_memory(int nid, u64 start, u64 size)
 
 	ret = __add_pages(nid, zone, start_pfn, nr_pages);
 	WARN_ON_ONCE(ret);
+
+	/* update max_pfn, max_low_pfn and high_memory */
+	update_end_of_memory_vars(start, size);
 
 	return ret;
 }

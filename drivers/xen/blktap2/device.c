@@ -278,7 +278,6 @@ blktap_device_fast_flush(struct blktap *tap, struct blktap_request *request)
 
 		page = map[offset];
 		if (page) {
-			ClearPageReserved(map[offset]);
 			if (PageBlkback(page)) {
 				ClearPageBlkback(page);
 				set_page_private(page, 0);

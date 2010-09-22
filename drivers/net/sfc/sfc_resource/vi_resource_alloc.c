@@ -631,14 +631,13 @@ efrm_vi_resource_alloc_or_free(struct efrm_client *client,
 	rx_q_tag &= (1 << TX_DESCQ_LABEL_WIDTH) - 1;
 	tx_q_tag &= (1 << RX_DESCQ_LABEL_WIDTH) - 1;
 
-	virs = kmalloc(sizeof(*virs), GFP_KERNEL);
+	virs = kzalloc(sizeof(*virs), GFP_KERNEL);
 	if (virs == NULL) {
 		EFRM_ERR("%s: Error allocating VI resource object",
 			 __func__);
 		rc = -ENOMEM;
 		goto fail_alloc;
 	}
-	memset(virs, 0, sizeof(*virs));
 
 	/* Some macros make the assumption that the struct efrm_resource is
 	 * the first member of a struct vi_resource. */

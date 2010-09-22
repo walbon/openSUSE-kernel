@@ -42,9 +42,9 @@
 
 /*define NETBE_DEBUG_INTERRUPT*/
 
-struct xen_netbk *xen_netbk;
-unsigned int netbk_nr_groups;
-static bool use_kthreads = true;
+struct xen_netbk *__read_mostly xen_netbk;
+unsigned int __read_mostly netbk_nr_groups;
+static bool __read_mostly use_kthreads = true;
 static bool __initdata bind_threads;
 
 #define GET_GROUP_INDEX(netif) ((netif)->group)
@@ -74,9 +74,42 @@ static inline unsigned long idx_to_kaddr(struct xen_netbk *netbk, unsigned int i
 }
 
 /* extra field used in struct page */
-static inline void netif_set_page_ext(struct page *pg, struct page_ext *ext)
+union page_ext {
+	struct {
+#if BITS_PER_LONG < 64
+#define GROUP_WIDTH (BITS_PER_LONG - CONFIG_XEN_NETDEV_TX_SHIFT)
+#define MAX_GROUPS ((1U << GROUP_WIDTH) - 1)
+		unsigned int grp:GROUP_WIDTH;
+		unsigned int idx:CONFIG_XEN_NETDEV_TX_SHIFT;
+#else
+#define MAX_GROUPS UINT_MAX
+		unsigned int grp, idx;
+#endif
+	} e;
+	void *mapping;
+};
+
+static inline void netif_set_page_ext(struct page *pg, unsigned int group,
+				      unsigned int idx)
 {
-	pg->mapping = (void *)ext;
+	union page_ext ext = { .e = { .grp = group + 1, .idx = idx } };
+
+	BUILD_BUG_ON(sizeof(ext) > sizeof(ext.mapping));
+	pg->mapping = ext.mapping;
+}
+
+static inline unsigned int netif_page_group(const struct page *pg)
+{
+	union page_ext ext = { .mapping = pg->mapping };
+
+	return ext.e.grp - 1;
+}
+
+static inline unsigned int netif_page_index(const struct page *pg)
+{
+	union page_ext ext = { .mapping = pg->mapping };
+
+	return ext.e.idx;
 }
 
 #define PKT_PROT_LEN 64
@@ -368,7 +401,7 @@ static u16 netbk_gop_frag(netif_t *netif, struct netbk_rx_meta *meta,
 
 	req = RING_GET_REQUEST(&netif->rx, netif->rx.req_cons + i);
 	if (netif->copying_receiver) {
-		struct page_ext *ext;
+		unsigned int group, idx;
 
 		/* The fragment needs to be copied rather than
 		   flipped. */
@@ -376,18 +409,17 @@ static u16 netbk_gop_frag(netif_t *netif, struct netbk_rx_meta *meta,
 		copy_gop = npo->copy + npo->copy_prod++;
 		copy_gop->flags = GNTCOPY_dest_gref;
 		if (PageForeign(page) &&
-		    (ext = (void *)page->mapping) != NULL &&
-		    ext->idx < MAX_PENDING_REQS &&
-		    ext->group < netbk_nr_groups) {
+		    page->mapping != NULL &&
+		    (idx = netif_page_index(page)) < MAX_PENDING_REQS &&
+		    (group = netif_page_group(page)) < netbk_nr_groups) {
 			struct pending_tx_info *src_pend;
+			unsigned int grp;
 
-			netbk = &xen_netbk[ext->group];
-			BUG_ON(ext < netbk->page_extinfo ||
-			       ext >= netbk->page_extinfo +
-				      ARRAY_SIZE(netbk->page_extinfo));
-			BUG_ON(netbk->mmap_pages[ext->idx] != page);
-			src_pend = &netbk->pending_tx_info[ext->idx];
-			BUG_ON(ext->group != GET_GROUP_INDEX(src_pend->netif));
+			netbk = &xen_netbk[group];
+			BUG_ON(netbk->mmap_pages[idx] != page);
+			src_pend = &netbk->pending_tx_info[idx];
+			grp = GET_GROUP_INDEX(src_pend->netif);
+			BUG_ON(group != grp && grp != UINT_MAX);
 			copy_gop->source.domid = src_pend->netif->domid;
 			copy_gop->source.u.ref = src_pend->req.gref;
 			copy_gop->flags |= GNTCOPY_source_gref;
@@ -818,17 +850,18 @@ static void remove_from_net_schedule_list(netif_t *netif)
 static void add_to_net_schedule_list_tail(netif_t *netif)
 {
 	struct xen_netbk *netbk = &xen_netbk[GET_GROUP_INDEX(netif)];
+	unsigned long flags;
 
 	if (__on_net_schedule_list(netif))
 		return;
 
-	spin_lock_irq(&netbk->net_schedule_list_lock);
+	spin_lock_irqsave(&netbk->net_schedule_list_lock, flags);
 	if (!__on_net_schedule_list(netif) &&
 	    likely(netif_schedulable(netif))) {
 		list_add_tail(&netif->list, &netbk->net_schedule_list);
 		netif_get(netif);
 	}
-	spin_unlock_irq(&netbk->net_schedule_list_lock);
+	spin_unlock_irqrestore(&netbk->net_schedule_list_lock, flags);
 }
 
 /*
@@ -1537,9 +1570,8 @@ static void netif_idx_release(struct xen_netbk *netbk, u16 pending_idx)
 
 static void netif_page_release(struct page *page, unsigned int order)
 {
-	struct page_ext *ext = (void *)page->mapping;
-	unsigned int idx = ext->idx;
-	unsigned int group = ext->group;
+	unsigned int idx = netif_page_index(page);
+	unsigned int group = netif_page_group(page);
 	struct xen_netbk *netbk = &xen_netbk[group];
 
 	BUG_ON(order);
@@ -1720,53 +1752,34 @@ static int __init netback_init(void)
 	if (!is_running_on_xen())
 		return -ENODEV;
 
+	group = netbk_nr_groups;
 	if (!netbk_nr_groups)
 		netbk_nr_groups = (num_online_cpus() + 1) / 2;
+	if (netbk_nr_groups > MAX_GROUPS)
+		netbk_nr_groups = MAX_GROUPS;
 
-	/* We can increase reservation by this much in net_rx_action(). */
-	balloon_update_driver_allowance(netbk_nr_groups * NET_RX_RING_SIZE);
-
-	xen_netbk = __vmalloc(netbk_nr_groups * sizeof(*xen_netbk),
-			    GFP_KERNEL|__GFP_HIGHMEM|__GFP_ZERO, PAGE_KERNEL);
+	do {
+		xen_netbk = __vmalloc(netbk_nr_groups * sizeof(*xen_netbk),
+				      GFP_KERNEL|__GFP_HIGHMEM|__GFP_ZERO,
+				      PAGE_KERNEL);
+	} while (!xen_netbk && (netbk_nr_groups >>= 1));
 	if (!xen_netbk) {
 		printk(KERN_ALERT "%s: out of memory\n", __func__);
 		return -ENOMEM;
 	}
+	if (group && netbk_nr_groups != group)
+		printk(KERN_WARNING
+		       "netback: only using %u (instead of %u) groups\n",
+		       netbk_nr_groups, group);
+
+	/* We can increase reservation by this much in net_rx_action(). */
+	balloon_update_driver_allowance(netbk_nr_groups * NET_RX_RING_SIZE);
 
 	for (group = 0; group < netbk_nr_groups; group++) {
 		struct xen_netbk *netbk = &xen_netbk[group];
 
-		if (use_kthreads) {
-			init_waitqueue_head(&netbk->netbk_action_wq);
-			netbk->task = kthread_create(netbk_action_thread,
-						     (void *)(long)group,
-						     "netback/%u", group);
-
-			if (!IS_ERR(netbk->task)) {
-				if (bind_threads)
-					kthread_bind(netbk->task, group);
-				wake_up_process(netbk->task);
-			} else {
-				printk(KERN_ALERT
-				       "kthread_create() fails at netback\n");
-				rc = PTR_ERR(netbk->task);
-				goto failed_init;
-			}
-		} else {
-			tasklet_init(&netbk->net_tx_tasklet, net_tx_action, group);
-			tasklet_init(&netbk->net_rx_tasklet, net_rx_action, group);
-		}
-
 		skb_queue_head_init(&netbk->rx_queue);
 		skb_queue_head_init(&netbk->tx_queue);
-
-		netbk->mmap_pages =
-			alloc_empty_pages_and_pagevec(MAX_PENDING_REQS);
-		if (netbk->mmap_pages == NULL) {
-			printk(KERN_ALERT "%s: out of memory\n", __func__);
-			rc = -ENOMEM;
-			goto failed_init;
-		}
 
 		init_timer(&netbk->net_timer);
 		netbk->net_timer.data = group;
@@ -1781,21 +1794,44 @@ static int __init netback_init(void)
 
 		INIT_LIST_HEAD(&netbk->pending_inuse_head);
 		INIT_LIST_HEAD(&netbk->net_schedule_list);
-		INIT_LIST_HEAD(&netbk->group_domain_list);
 
 		spin_lock_init(&netbk->net_schedule_list_lock);
 		spin_lock_init(&netbk->release_lock);
-		spin_lock_init(&netbk->group_domain_list_lock);
+
+		netbk->mmap_pages =
+			alloc_empty_pages_and_pagevec(MAX_PENDING_REQS);
+		if (netbk->mmap_pages == NULL) {
+			printk(KERN_ALERT "%s: out of memory\n", __func__);
+			rc = -ENOMEM;
+			goto failed_init;
+		}
 
 		for (i = 0; i < MAX_PENDING_REQS; i++) {
 			page = netbk->mmap_pages[i];
 			SetPageForeign(page, netif_page_release);
-			netbk->page_extinfo[i].group = group;
-			netbk->page_extinfo[i].idx = i;
-			netif_set_page_ext(page,
-					   &netbk->page_extinfo[i]);
+			netif_set_page_ext(page, group, i);
 			netbk->pending_ring[i] = i;
 			INIT_LIST_HEAD(&netbk->pending_inuse[i].list);
+		}
+
+		if (use_kthreads) {
+			init_waitqueue_head(&netbk->netbk_action_wq);
+			netbk->task = kthread_create(netbk_action_thread,
+						     (void *)(long)group,
+						     "netback/%u", group);
+
+			if (IS_ERR(netbk->task)) {
+				printk(KERN_ALERT
+				       "kthread_create() fails at netback\n");
+				rc = PTR_ERR(netbk->task);
+				goto failed_init;
+			}
+			if (bind_threads)
+				kthread_bind(netbk->task, group);
+			wake_up_process(netbk->task);
+		} else {
+			tasklet_init(&netbk->net_tx_tasklet, net_tx_action, group);
+			tasklet_init(&netbk->net_rx_tasklet, net_rx_action, group);
 		}
 	}
 
@@ -1821,7 +1857,7 @@ static int __init netback_init(void)
 	return 0;
 
 failed_init:
-	while (group-- > 0) {
+	do {
 		struct xen_netbk *netbk = &xen_netbk[group];
 
 		if (use_kthreads && netbk->task && !IS_ERR(netbk->task))
@@ -1829,10 +1865,10 @@ failed_init:
 		if (netbk->mmap_pages)
 			free_empty_pages_and_pagevec(netbk->mmap_pages,
 						     MAX_PENDING_REQS);
-		del_timer(&netbk->tx_pending_timer);
-		del_timer(&netbk->net_timer);
-	}
+	} while (group--);
 	vfree(xen_netbk);
+	balloon_update_driver_allowance(-(long)netbk_nr_groups
+					* NET_RX_RING_SIZE);
 
 	return rc;
 }

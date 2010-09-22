@@ -5,16 +5,15 @@
  *	portions of this file.
  */
 #define XEN_SPINLOCK_SOURCE
-#include <linux/init.h>
-#include <linux/irq.h>
-#include <linux/kernel.h>
-#include <linux/kernel_stat.h>
-#include <linux/module.h>
-#include <xen/evtchn.h>
+#include <linux/spinlock_types.h>
 
 #ifdef TICKET_SHIFT
 
-static int __read_mostly spinlock_irq = -1;
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <asm/hardirq.h>
+#include <xen/evtchn.h>
 
 struct spinning {
 	raw_spinlock_t *lock;
@@ -22,6 +21,7 @@ struct spinning {
 	struct spinning *prev;
 };
 static DEFINE_PER_CPU(struct spinning *, spinning);
+static DEFINE_PER_CPU(evtchn_port_t, poll_evtchn);
 /*
  * Protect removal of objects: Addition can be done lockless, and even
  * removal itself doesn't need protection - what needs to be prevented is
@@ -31,34 +31,72 @@ static DEFINE_PER_CPU(raw_rwlock_t, spinning_rm_lock) = __RAW_RW_LOCK_UNLOCKED;
 
 int __cpuinit xen_spinlock_init(unsigned int cpu)
 {
-	static struct irqaction spinlock_action = {
-		.handler = smp_reschedule_interrupt,
-		.flags   = IRQF_DISABLED,
-		.name    = "spinlock"
-	};
+	struct evtchn_bind_ipi bind_ipi;
 	int rc;
 
 	setup_runstate_area(cpu);
 
-	rc = bind_ipi_to_irqaction(SPIN_UNLOCK_VECTOR,
-				   cpu,
-				   &spinlock_action);
- 	if (rc < 0)
- 		return rc;
-
-	if (spinlock_irq < 0) {
-		disable_irq(rc); /* make sure it's never delivered */
-		spinlock_irq = rc;
-	} else
-		BUG_ON(spinlock_irq != rc);
+ 	WARN_ON(per_cpu(poll_evtchn, cpu));
+	bind_ipi.vcpu = cpu;
+	rc = HYPERVISOR_event_channel_op(EVTCHNOP_bind_ipi, &bind_ipi);
+	if (!rc)
+	 	per_cpu(poll_evtchn, cpu) = bind_ipi.port;
+	else
+		printk(KERN_WARNING
+		       "No spinlock poll event channel for CPU#%u (%d)\n",
+		       cpu, rc);
 
 	return 0;
 }
 
 void __cpuinit xen_spinlock_cleanup(unsigned int cpu)
 {
-	unbind_from_per_cpu_irq(spinlock_irq, cpu, NULL);
+	struct evtchn_close close;
+
+	close.port = per_cpu(poll_evtchn, cpu);
+ 	per_cpu(poll_evtchn, cpu) = 0;
+	WARN_ON(HYPERVISOR_event_channel_op(EVTCHNOP_close, &close));
 }
+
+#ifdef CONFIG_PM_SLEEP
+#include <linux/sysdev.h>
+
+static int __cpuinit spinlock_resume(struct sys_device *dev)
+{
+	unsigned int cpu;
+
+	for_each_online_cpu(cpu) {
+		per_cpu(poll_evtchn, cpu) = 0;
+		xen_spinlock_init(cpu);
+	}
+
+	return 0;
+}
+
+static struct sysdev_class __cpuinitdata spinlock_sysclass = {
+	.name	= "spinlock",
+	.resume	= spinlock_resume
+};
+
+static struct sys_device __cpuinitdata device_spinlock = {
+	.id		= 0,
+	.cls		= &spinlock_sysclass
+};
+
+static int __init spinlock_register(void)
+{
+	int rc;
+
+	if (is_initial_xendomain())
+		return 0;
+
+	rc = sysdev_class_register(&spinlock_sysclass);
+	if (!rc)
+		rc = sysdev_register(&device_spinlock);
+	return rc;
+}
+core_initcall(spinlock_register);
+#endif
 
 static unsigned int spin_adjust(struct spinning *spinning,
 				const raw_spinlock_t *lock,
@@ -88,14 +126,13 @@ bool xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
                    unsigned int flags)
 {
 	unsigned int cpu = raw_smp_processor_id();
-	int irq = spinlock_irq;
 	bool rc;
 	typeof(vcpu_info(0)->evtchn_upcall_mask) upcall_mask;
 	raw_rwlock_t *rm_lock;
 	struct spinning spinning, *other;
 
 	/* If kicker interrupt not initialized yet, just spin. */
-	if (unlikely(irq < 0) || unlikely(!cpu_online(cpu)))
+	if (unlikely(!cpu_online(cpu)) || unlikely(!percpu_read(poll_evtchn)))
 		return false;
 
 	/* announce we're spinning */
@@ -109,7 +146,7 @@ bool xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 	do {
 		bool nested = false;
 
-		xen_clear_irq_pending(irq);
+		clear_evtchn(percpu_read(poll_evtchn));
 
 		/*
 		 * Check again to make sure it didn't become free while
@@ -123,7 +160,7 @@ bool xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 			 * without rechecking the lock.
 			 */
 			if (spinning.prev)
-				xen_set_irq_pending(irq);
+				set_evtchn(percpu_read(poll_evtchn));
 			rc = true;
 			break;
 		}
@@ -173,13 +210,14 @@ bool xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 		vcpu_info_write(evtchn_upcall_mask,
 				nested ? upcall_mask : flags);
 
-		xen_poll_irq(irq);
+		if (HYPERVISOR_poll_no_timeout(&__get_cpu_var(poll_evtchn), 1))
+			BUG();
 
 		vcpu_info_write(evtchn_upcall_mask, upcall_mask);
 
-		rc = !xen_test_irq_pending(irq);
+		rc = !test_evtchn(percpu_read(poll_evtchn));
 		if (!rc)
-			kstat_incr_irqs_this_cpu(irq, irq_to_desc(irq));
+			inc_irq_stat(irq_lock_count);
 	} while (spinning.prev || rc);
 
 	/*
@@ -247,7 +285,7 @@ void xen_spin_kick(raw_spinlock_t *lock, unsigned int token)
 		raw_local_irq_restore(flags);
 
 		if (unlikely(spinning)) {
-			notify_remote_via_ipi(SPIN_UNLOCK_VECTOR, cpu);
+			notify_remote_via_evtchn(per_cpu(poll_evtchn, cpu));
 			return;
 		}
 	}

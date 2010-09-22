@@ -135,13 +135,9 @@ void xen_send_call_func_ipi(const struct cpumask *mask)
  * this function calls the 'stop' function on all other CPUs in the system.
  */
 
-irqreturn_t smp_reboot_interrupt(int irq, void *dev_id)
+void smp_reboot_interrupt(struct pt_regs *regs)
 {
-	irq_enter();
 	stop_this_cpu(NULL);
-	irq_exit();
-
-	return IRQ_HANDLED;
 }
 
 void xen_smp_send_stop(void)
@@ -177,28 +173,19 @@ void xen_smp_send_stop(void)
  * all the work is done automatically when
  * we return from the interrupt.
  */
-irqreturn_t smp_reschedule_interrupt(int irq, void *dev_id)
+void smp_reschedule_interrupt(struct pt_regs *regs)
 {
 	inc_irq_stat(irq_resched_count);
-	return IRQ_HANDLED;
 }
 
-irqreturn_t smp_call_function_interrupt(int irq, void *dev_id)
+void smp_call_function_interrupt(struct pt_regs *regs)
 {
-	irq_enter();
 	generic_smp_call_function_interrupt();
 	inc_irq_stat(irq_call_count);
-	irq_exit();
-
-	return IRQ_HANDLED;
 }
 
-irqreturn_t smp_call_function_single_interrupt(int irq, void *dev_id)
+void smp_call_function_single_interrupt(struct pt_regs *regs)
 {
-	irq_enter();
 	generic_smp_call_function_single_interrupt();
 	inc_irq_stat(irq_call_count);
-	irq_exit();
-
-	return IRQ_HANDLED;
 }

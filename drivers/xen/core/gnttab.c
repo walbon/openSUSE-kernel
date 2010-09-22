@@ -35,7 +35,6 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/seqlock.h>
-#include <linux/sysdev.h>
 #include <xen/interface/xen.h>
 #include <xen/gnttab.h>
 #include <asm/pgtable.h>
@@ -43,7 +42,6 @@
 #include <asm/synch_bitops.h>
 #include <asm/io.h>
 #include <xen/interface/memory.h>
-#include <xen/driver_util.h>
 #include <asm/gnttab_dma.h>
 
 #ifdef HAVE_XEN_PLATFORM_COMPAT_H
@@ -549,7 +547,7 @@ int gnttab_copy_grant_page(grant_ref_t ref, struct page **pagep)
 
 	new_addr = page_address(new_page);
 	addr = page_address(page);
-	memcpy(new_addr, addr, PAGE_SIZE);
+	copy_page(new_addr, addr);
 
 	pfn = page_to_pfn(page);
 	mfn = pfn_to_mfn(pfn);
@@ -712,6 +710,7 @@ EXPORT_SYMBOL(gnttab_post_map_adjust);
 
 #endif /* __HAVE_ARCH_PTE_SPECIAL */
 
+struct sys_device;
 static int gnttab_resume(struct sys_device *dev)
 {
 	if (max_nr_grant_frames() < nr_grant_frames)
@@ -721,6 +720,8 @@ static int gnttab_resume(struct sys_device *dev)
 #define gnttab_resume() gnttab_resume(NULL)
 
 #ifdef CONFIG_PM_SLEEP
+#include <linux/sysdev.h>
+
 #ifdef CONFIG_X86
 static int gnttab_suspend(struct sys_device *dev, pm_message_t state)
 {

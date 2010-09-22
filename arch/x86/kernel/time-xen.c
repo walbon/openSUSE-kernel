@@ -434,14 +434,25 @@ unsigned long profile_pc(struct pt_regs *regs)
 }
 EXPORT_SYMBOL(profile_pc);
 
+static inline void print_other_cpus(unsigned int cpu)
+{
+	unsigned int i;
+
+	for_each_online_cpu(i)
+		if (i != cpu)
+			printk(" %u: %Lx\n", i,
+			       per_cpu(local_time.processed_system, i));
+}
+
 /*
  * Default timer interrupt handler
  */
 static irqreturn_t timer_interrupt(int irq, void *dev_id)
 {
-	static unsigned int contention_count;
+	static unsigned int duty_count;
 	s64 delta, delta_cpu, stolen, blocked;
-	unsigned int i, cpu = smp_processor_id();
+	unsigned int duty_num, cpu = smp_processor_id();
+	int schedule_clock_was_set_work = 0;
 	struct shadow_time_info *shadow = &per_cpu(shadow_time, cpu);
 	struct local_time_info *local = &per_cpu(local_time, cpu);
 	bool duty = false;
@@ -458,12 +469,12 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 	 * locally disabled. -arca
 	 */
 	asm (LOCK_PREFIX "xaddl %1, %0"
-	     : "+m" (contention_count), "=r" (i) : "1" (1));
-	if (i <= duty_limit) {
+	     : "+m" (duty_count), "=r" (duty_num) : "1" (1));
+	if (duty_num <= duty_limit) {
 		write_seqlock(&xtime_lock);
 		duty = true;
 	}
-	asm (LOCK_PREFIX "decl %0" : "+m" (contention_count));
+	asm (LOCK_PREFIX "decl %0" : "+m" (duty_count));
 
 	do {
 		get_time_values_from_xen(cpu);
@@ -487,9 +498,7 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 			       cpu, delta, delta_cpu, shadow->system_timestamp,
 			       get_nsec_offset(shadow), blocked,
 			       local->processed_system);
-			for_each_cpu_and(i, cpu_online_mask, cpumask_of(cpu))
-				printk(" %u: %Lx\n", i,
-				       per_cpu(local_time.processed_system, i));
+			print_other_cpus(cpu);
 		}
 	} else if (unlikely(delta_cpu < -(s64)permitted_clock_jitter)) {
 		blocked = processed_system_time;
@@ -501,9 +510,7 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 			       cpu, delta_cpu, shadow->system_timestamp,
 			       get_nsec_offset(shadow), blocked,
 			       local->processed_system);
-			for_each_cpu_and(i, cpu_online_mask, cpumask_of(cpu))
-				printk(" %u: %Lx\n", i,
-				       per_cpu(local_time.processed_system, i));
+			print_other_cpus(cpu);
 		}
 	} else if (duty) {
 		/* System-wide jiffy work. */
@@ -520,8 +527,7 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 
 		if (shadow_tv_version != HYPERVISOR_shared_info->wc_version) {
 			update_wallclock();
-			if (keventd_up())
-				schedule_work(&clock_was_set_work);
+			schedule_clock_was_set_work = 1;
 		}
 
 		write_sequnlock(&xtime_lock);
@@ -533,6 +539,9 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 		do_div(delta, NS_PER_TICK);
 		local->processed_system += delta * NS_PER_TICK;
 	}
+
+	if (schedule_clock_was_set_work && keventd_up())
+		schedule_work(&clock_was_set_work);
 
 	/*
 	 * Account stolen ticks.
@@ -852,13 +861,17 @@ static void stop_hz_timer(void)
 	}
 
 	singleshot.timeout_abs_ns = jiffies_to_st(j);
-	if (!singleshot.timeout_abs_ns)
+	if (!singleshot.timeout_abs_ns) {
+		BUG_ON(!cpumask_test_cpu(cpu, nohz_cpu_mask));
+		rcu_enter_nohz();
 		return;
+	}
 	local = per_cpu(local_time.processed_system, cpu);
 	if ((s64)(singleshot.timeout_abs_ns - local) <= NS_PER_TICK) {
 		cpumask_clear_cpu(cpu, nohz_cpu_mask);
 		singleshot.timeout_abs_ns = local + NS_PER_TICK;
-	}
+	} else if (cpumask_test_cpu(cpu, nohz_cpu_mask))
+		rcu_enter_nohz();
 	singleshot.timeout_abs_ns += NS_PER_TICK / 2;
 	singleshot.flags = 0;
 	rc = HYPERVISOR_vcpu_op(VCPUOP_set_singleshot_timer, cpu, &singleshot);
@@ -883,7 +896,8 @@ static void start_hz_timer(void)
 	}
 #endif
 	BUG_ON(rc);
-	cpumask_clear_cpu(smp_processor_id(), nohz_cpu_mask);
+	if (cpumask_test_and_clear_cpu(cpu, nohz_cpu_mask))
+		rcu_exit_nohz();
 }
 
 void xen_safe_halt(void)

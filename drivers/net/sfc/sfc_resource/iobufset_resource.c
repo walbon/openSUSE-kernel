@@ -349,10 +349,9 @@ efrm_create_iobufset_resource_manager(struct efrm_resource_manager **rm_out)
 	EFRM_ASSERT(rm_out);
 
 	efrm_iobufset_manager =
-	    kmalloc(sizeof(*efrm_iobufset_manager), GFP_KERNEL);
+	    kzalloc(sizeof(*efrm_iobufset_manager), GFP_KERNEL);
 	if (efrm_iobufset_manager == 0)
 		return -ENOMEM;
-	memset(efrm_iobufset_manager, 0, sizeof(*efrm_iobufset_manager));
 
 	/*
 	 * Bug 1145, 1370: We need to set initial size of both the resource

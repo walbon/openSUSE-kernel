@@ -34,7 +34,6 @@
 #include <linux/slab.h>
 #include <xen/evtchn.h>
 #include <xen/gnttab.h>
-#include <xen/driver_util.h>
 #else
 #include <linux/types.h>
 #include <linux/vmalloc.h>
