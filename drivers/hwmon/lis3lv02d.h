@@ -35,6 +35,8 @@
 #define LIS_DOUBLE_ID	0x3A /* LIS3LV02D[LQ] */
 /* 1-byte registers */
 #define LIS_SINGLE_ID	0x3B /* LIS[32]02DL and others */
+/* 1-byte */
+#define LIS_3DC_ID	0x33 /* LIS3DC, HP3DC */
 
 enum lis3_reg {
 	WHO_AM_I	= 0x0F,

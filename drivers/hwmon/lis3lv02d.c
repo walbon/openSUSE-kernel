@@ -365,6 +365,8 @@ static ssize_t lis3lv02d_calibrate_store(struct device *dev,
 /* conversion btw sampling rate and the register values */
 static int lis3_12_rates[4] = {40, 160, 640, 2560};
 static int lis3_8_rates[2] = {100, 400};
+static int lis3_3dc_rates[16] = {0, 1, 10, 25, 50, 100, 200, 400, 1600, 5000};
+
 static ssize_t lis3lv02d_rate_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
@@ -373,11 +375,17 @@ static ssize_t lis3lv02d_rate_show(struct device *dev,
 
 	lis3_dev.read(&lis3_dev, CTRL_REG1, &ctrl);
 
-	if (lis3_dev.whoami == LIS_DOUBLE_ID)
+	switch (lis3_dev.whoami) {
+	case LIS_3DC_ID:
+		val = lis3_3dc_rates[(ctrl & 0xf0) >> 4];
+		break;
+	case LIS_DOUBLE_ID:
 		val = lis3_12_rates[(ctrl & (CTRL1_DF0 | CTRL1_DF1)) >> 4];
-	else
+		break;
+	default:
 		val = lis3_8_rates[(ctrl & CTRL1_DR) >> 7];
-
+		break;
+	}
 	return sprintf(buf, "%d\n", val);
 }
 
@@ -431,6 +439,11 @@ int lis3lv02d_init_device(struct lis3lv02d *dev)
 		break;
 	case LIS_SINGLE_ID:
 		printk(KERN_INFO DRIVER_NAME ": 1-byte sensor found\n");
+		dev->read_data = lis3lv02d_read_8;
+		dev->mdps_max_val = 128;
+		break;
+	case LIS_3DC_ID:
+		printk(KERN_INFO DRIVER_NAME ": 1-byte 3dc sensor found\n");
 		dev->read_data = lis3lv02d_read_8;
 		dev->mdps_max_val = 128;
 		break;
