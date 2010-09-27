@@ -493,7 +493,7 @@ static int ocfs2_read_locked_inode(struct inode *inode,
 		 * If buffer is in jbd, then its checksum may not have been
 		 * computed as yet.
 		 */
-		if (!status && (!buffer_jbd(bh)))
+		if (!status && !buffer_jbd(bh))
 			status = ocfs2_validate_inode_block(osb->sb, bh);
 	}
 	if (status < 0) {

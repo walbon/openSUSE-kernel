@@ -2896,6 +2896,8 @@ slave_configure_exit:
 		ioc->name,sdev->tagged_supported, sdev->simple_tags,
 		sdev->ordered_tags));
 
+	blk_queue_dma_alignment (sdev->request_queue, 512 - 1);
+
 	return 0;
 }
 
