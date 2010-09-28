@@ -1003,7 +1003,9 @@ struct sched_domain {
 	char *name;
 #endif
 
+#ifndef __GENKSYMS__
 	unsigned int span_weight;
+#endif
 	/*
 	 * Span of all CPUs in this domain.
 	 *
@@ -1075,8 +1077,12 @@ struct sched_domain;
 struct sched_class {
 	const struct sched_class *next;
 
+#ifdef __GENKSYMS__
+	void (*enqueue_task) (struct rq *rq, struct task_struct *p, int wakeup);
+#else
 	void (*enqueue_task) (struct rq *rq, struct task_struct *p, int wakeup,
 			      bool head);
+#endif
 	void (*dequeue_task) (struct rq *rq, struct task_struct *p, int sleep);
 	void (*yield_task) (struct rq *rq);
 
@@ -1086,8 +1092,12 @@ struct sched_class {
 	void (*put_prev_task) (struct rq *rq, struct task_struct *p);
 
 #ifdef CONFIG_SMP
+#ifdef __GENKSYMS__
+	int  (*select_task_rq)(struct task_struct *p, int sd_flag, int flags);
+#else
 	int  (*select_task_rq)(struct rq *rq, struct task_struct *p,
 			       int sd_flag, int flags);
+#endif
 
 	unsigned long (*load_balance) (struct rq *this_rq, int this_cpu,
 			struct rq *busiest, unsigned long max_load_move,
@@ -1099,8 +1109,12 @@ struct sched_class {
 			      enum cpu_idle_type idle);
 	void (*pre_schedule) (struct rq *this_rq, struct task_struct *task);
 	void (*post_schedule) (struct rq *this_rq);
+#ifdef __GENKSYMS__
+	void (*task_wake_up) (struct rq *this_rq, struct task_struct *task);
+#else
 	void (*task_waking) (struct rq *this_rq, struct task_struct *task);
 	void (*task_woken) (struct rq *this_rq, struct task_struct *task);
+#endif
 
 	void (*set_cpus_allowed)(struct task_struct *p,
 				 const struct cpumask *newmask);
@@ -1111,7 +1125,11 @@ struct sched_class {
 
 	void (*set_curr_task) (struct rq *rq);
 	void (*task_tick) (struct rq *rq, struct task_struct *p, int queued);
+#ifdef __GENKSYMS__
+	void (*task_new) (struct rq *rq, struct task_struct *p);
+#else
 	void (*task_fork) (struct task_struct *p);
+#endif
 
 	void (*switched_from) (struct rq *this_rq, struct task_struct *task,
 			       int running);
@@ -1120,11 +1138,19 @@ struct sched_class {
 	void (*prio_changed) (struct rq *this_rq, struct task_struct *task,
 			     int oldprio, int running);
 
+#ifdef __GENKSYMS__
+	unsigned int (*get_rr_interval) (struct task_struct *task);
+#else
 	unsigned int (*get_rr_interval) (struct rq *rq,
 					 struct task_struct *task);
+#endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
+#ifdef __GENKSYMS__
+	void (*moved_group) (struct task_struct *p);
+#else
 	void (*moved_group) (struct task_struct *p, int on_rq);
+#endif
 #endif
 };
 
