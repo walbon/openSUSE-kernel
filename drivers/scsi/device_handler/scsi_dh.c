@@ -211,8 +211,8 @@ store_dh_state(struct device *dev, struct device_attribute *attr,
 	struct scsi_device_handler *scsi_dh;
 	int err = -EINVAL;
 
-	if (sdev->state == SDEV_CANCEL ||
-	    sdev->state == SDEV_DEL)
+	if (sdev->sdev_state == SDEV_CANCEL ||
+	    sdev->sdev_state == SDEV_DEL)
 	    return -EBUSY;
 
 	if (!sdev->scsi_dh_data) {
@@ -452,8 +452,8 @@ int scsi_dh_activate(struct request_queue *q, activate_complete fn, void *data)
 		scsi_dh = sdev->scsi_dh_data->scsi_dh;
 	if (!scsi_dh || !get_device(&sdev->sdev_gendev))
 		err = SCSI_DH_NOSYS;
-	if (sdev->state == SDEV_CANCEL ||
-	    sdev->state == SDEV_DEL)
+	if (sdev->sdev_state == SDEV_CANCEL ||
+	    sdev->sdev_state == SDEV_DEL)
 		err = SCSI_DH_DEV_OFFLINED;
 	spin_unlock_irqrestore(q->queue_lock, flags);
 
