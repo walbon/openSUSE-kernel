@@ -4,6 +4,9 @@
  * Architecture specific compatibility types
  */
 #include <linux/types.h>
+#ifndef __GENKSYMS__
+#include <asm/uaccess.h>
+#endif
 
 #define COMPAT_USER_HZ	100
 
@@ -170,6 +173,11 @@ static inline void __user *arch_compat_alloc_user_space(long len)
 {
 	struct pt_regs *regs = current_thread_info()->kregs;
 	unsigned long usp = regs->u_regs[UREG_I6];
+	void __user *ptr;
+
+	/* If len would occupy more than half of the entire compat space... */
+	if (unlikely(len > (((compat_uptr_t)~0) >> 1)))
+		return NULL;
 
 	if (!(test_thread_flag(TIF_32BIT)))
 		usp += STACK_BIAS;
@@ -179,8 +187,15 @@ static inline void __user *arch_compat_alloc_user_space(long len)
 	usp -= len;
 	usp &= ~0x7UL;
 
-	return (void __user *) usp;
+	ptr = (void __user *) usp;
+
+	if (unlikely(!access_ok(VERIFY_WRITE, ptr, len)))
+		return NULL;
+
+	return ptr;
 }
+
+#define compat_alloc_user_space arch_compat_alloc_user_space
 
 struct compat_ipc64_perm {
 	compat_key_t key;
