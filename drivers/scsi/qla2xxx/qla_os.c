@@ -831,6 +831,9 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 	}
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 
+	if (got_ref)
+		qla2x00_sp_compl(ha, sp);
+
 	/* Wait for the command to be returned. */
 	if (wait) {
 		if (qla2x00_eh_wait_on_command(cmd) != QLA_SUCCESS) {
@@ -840,9 +843,6 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 			ret = FAILED;
 		}
 	}
-
-	if (got_ref)
-		qla2x00_sp_compl(ha, sp);
 
 	qla_printk(KERN_INFO, ha,
 	    "scsi(%ld:%d:%d): Abort command issued -- %d %lx %x.\n",
