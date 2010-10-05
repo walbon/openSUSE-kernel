@@ -781,7 +781,6 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 	struct qla_hw_data *ha = vha->hw;
 	struct req_que *req = vha->req;
 	srb_t *spt;
-	int got_ref = 0;
 
 	if (!CMD_SP(cmd))
 		return SUCCESS;
@@ -814,7 +813,6 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 
 		/* Get a reference to the sp and drop the lock.*/
 		sp_get(sp);
-		got_ref++;
 
 		spin_unlock_irqrestore(&ha->hardware_lock, flags);
 		if (ha->isp_ops->abort_command(sp)) {
@@ -827,12 +825,10 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 			wait = 1;
 		}
 		spin_lock_irqsave(&ha->hardware_lock, flags);
+		qla2x00_sp_compl(ha, sp);
 		break;
 	}
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
-
-	if (got_ref)
-		qla2x00_sp_compl(ha, sp);
 
 	/* Wait for the command to be returned. */
 	if (wait) {
