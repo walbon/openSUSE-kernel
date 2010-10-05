@@ -560,6 +560,8 @@ static int cache_defer_req(struct cache_req *req, struct cache_head *item)
 	if (!test_bit(CACHE_PENDING, &item->flags)) {
 		/* must have just been validated... */
 		cache_revisit_request(item);
+		if (dreq == &sleeper.handle)
+			wait_for_completion(&sleeper.completion);
 		return -EAGAIN;
 	}
 
