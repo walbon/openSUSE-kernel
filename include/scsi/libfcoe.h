@@ -174,4 +174,8 @@ int fcoe_ctlr_recv_flogi(struct fcoe_ctlr *, struct fc_lport *,
 u64 fcoe_wwn_from_mac(unsigned char mac[], unsigned int, unsigned int);
 int fcoe_libfc_config(struct fc_lport *, struct libfc_function_template *);
 
+static inline void fcoe_ctlr_mode(struct fcoe_ctlr *fip, enum fip_state mode)
+{
+	fip->mode = mode;
+}
 #endif /* _LIBFCOE_H */
