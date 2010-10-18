@@ -633,7 +633,8 @@ static int nfs_create_rpc_client(struct nfs_client *clp,
  */
 static void nfs_destroy_server(struct nfs_server *server)
 {
-	if (!(server->flags & NFS_MOUNT_NONLM))
+	if (!(server->flags & NFS_MOUNT_LOCAL_FLOCK) ||
+			!(server->flags & NFS_MOUNT_LOCAL_FCNTL))
 		nlmclnt_done(server->nlm_host);
 }
 
@@ -655,7 +656,8 @@ static int nfs_start_lockd(struct nfs_server *server)
 
 	if (nlm_init.nfs_version > 3)
 		return 0;
-	if (server->flags & NFS_MOUNT_NONLM)
+	if ((server->flags & NFS_MOUNT_LOCAL_FLOCK) &&
+			(server->flags & NFS_MOUNT_LOCAL_FCNTL))
 		return 0;
 
 	switch (clp->cl_proto) {
