@@ -121,12 +121,6 @@ MODULE_PARM_DESC(ql2xasyncenable,
 		"Enables usage of Async-login/adisc on ISP23xx."
 		"Default is 0 - use serialized mailbox commands.");
 
-int ql2xtargetreset = 1;
-module_param(ql2xtargetreset, int, S_IRUGO|S_IRUSR);
-MODULE_PARM_DESC(ql2xtargetreset,
-		 "Enable target reset."
-		 "Default is 1 - use hw defaults.");
-
 /*
  * SCSI host template entry points
  */
@@ -1143,7 +1137,7 @@ qla2x00_loop_reset(scsi_qla_host_t *vha)
 	struct fc_port *fcport;
 	struct qla_hw_data *ha = vha->hw;
 
-	if (ql2xtargetreset == 1 && ha->flags.enable_target_reset) {
+	if (ha->flags.enable_target_reset) {
 		list_for_each_entry(fcport, &vha->vp_fcports, list) {
 			if (fcport->port_type != FCT_TARGET)
 				continue;
