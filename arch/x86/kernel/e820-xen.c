@@ -150,6 +150,11 @@ void __init e820_add_region(u64 start, u64 size, int type)
 	__e820_add_region(&e820, start, size, type);
 }
 
+void __init e820_saved_add_region(u64 start, u64 size, int type)
+{
+	__e820_add_region(&e820_saved, start, size, type);
+}
+
 static void __init e820_print_type(u32 type)
 {
 	switch (type) {
