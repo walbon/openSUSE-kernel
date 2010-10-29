@@ -219,8 +219,6 @@ static void fc_exch_els_rrq(struct fc_seq *, struct fc_frame *);
  */
 static char *fc_exch_rctl_names[] = FC_RCTL_NAMES_INIT;
 
-#define FC_TABLE_SIZE(x)   (sizeof(x) / sizeof(x[0]))
-
 /**
  * fc_exch_name_lookup() - Lookup name by opcode
  * @op:	       Opcode to be looked up
@@ -249,7 +247,7 @@ static inline const char *fc_exch_name_lookup(unsigned int op, char **table,
 static const char *fc_exch_rctl_name(unsigned int op)
 {
 	return fc_exch_name_lookup(op, fc_exch_rctl_names,
-				   FC_TABLE_SIZE(fc_exch_rctl_names));
+				   ARRAY_SIZE(fc_exch_rctl_names));
 }
 
 /**
@@ -488,7 +486,7 @@ static int fc_seq_send(struct fc_lport *lport, struct fc_seq *sp,
 	 */
 	spin_lock_bh(&ep->ex_lock);
 	ep->f_ctl = f_ctl & ~FC_FC_FIRST_SEQ;	/* not first seq */
-	if (f_ctl & (FC_FC_END_SEQ | FC_FC_SEQ_INIT))
+	if (f_ctl & FC_FC_SEQ_INIT)
 		ep->esb_stat &= ~ESB_ST_SEQ_INIT;
 	spin_unlock_bh(&ep->ex_lock);
 	return error;
@@ -676,9 +674,10 @@ static struct fc_exch *fc_exch_em_alloc(struct fc_lport *lport,
 	}
 	memset(ep, 0, sizeof(*ep));
 
-	cpu = smp_processor_id();
+	cpu = get_cpu();
 	pool = per_cpu_ptr(mp->pool, cpu);
 	spin_lock_bh(&pool->lock);
+	put_cpu();
 	index = pool->next_index;
 	/* allocate new exch from pool */
 	while (fc_exch_ptr_get(pool, index)) {
@@ -1241,9 +1240,6 @@ static void fc_exch_recv_req(struct fc_lport *lport, struct fc_exch_mgr *mp,
 	struct fc_frame_header *fh = fc_frame_header_get(fp);
 	struct fc_seq *sp = NULL;
 	struct fc_exch *ep = NULL;
-	enum fc_sof sof;
-	enum fc_eof eof;
-	u32 f_ctl;
 	enum fc_pf_rjt_reason reject;
 
 	/* We can have the wrong fc_lport at this point with NPIV, which is a
@@ -1260,9 +1256,6 @@ static void fc_exch_recv_req(struct fc_lport *lport, struct fc_exch_mgr *mp,
 	if (reject == FC_RJT_NONE) {
 		sp = fr_seq(fp);	/* sequence will be held */
 		ep = fc_seq_exch(sp);
-		sof = fr_sof(fp);
-		eof = fr_eof(fp);
-		f_ctl = ntoh24(fh->fh_f_ctl);
 		fc_seq_send_ack(sp, fp);
 
 		/*
@@ -1932,7 +1925,7 @@ static void fc_exch_rrq(struct fc_exch *ep)
 		did = ep->sid;
 
 	fc_fill_fc_hdr(fp, FC_RCTL_ELS_REQ, did,
-		       fc_host_port_id(lport->host), FC_TYPE_ELS,
+		       lport->port_id, FC_TYPE_ELS,
 		       FC_FC_FIRST_SEQ | FC_FC_END_SEQ | FC_FC_SEQ_INIT, 0);
 
 	if (fc_exch_seq_send(lport, fp, fc_exch_rrq_resp, NULL, ep,

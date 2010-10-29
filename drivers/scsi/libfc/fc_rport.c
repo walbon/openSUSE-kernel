@@ -95,13 +95,15 @@ static const char *fc_rport_state_names[] = {
  * fc_rport_lookup() - Lookup a remote port by port_id
  * @lport:   The local port to lookup the remote port on
  * @port_id: The remote port ID to look up
+ *
+ * The caller must hold either disc_mutex or rcu_read_lock().
  */
 static struct fc_rport_priv *fc_rport_lookup(const struct fc_lport *lport,
 					     u32 port_id)
 {
 	struct fc_rport_priv *rdata;
 
-	list_for_each_entry(rdata, &lport->disc.rports, peers)
+	list_for_each_entry_rcu(rdata, &lport->disc.rports, peers)
 		if (rdata->ids.port_id == port_id)
 			return rdata;
 	return NULL;
@@ -146,8 +148,20 @@ static struct fc_rport_priv *fc_rport_create(struct fc_lport *lport,
 	INIT_DELAYED_WORK(&rdata->retry_work, fc_rport_timeout);
 	INIT_WORK(&rdata->event_work, fc_rport_work);
 	if (port_id != FC_FID_DIR_SERV)
-		list_add(&rdata->peers, &lport->disc.rports);
+		list_add_rcu(&rdata->peers, &lport->disc.rports);
 	return rdata;
+}
+
+/**
+ * fc_rport_free_rcu() - Free a remote port
+ * @rcu: The rcu_head structure inside the remote port
+ */
+static void fc_rport_free_rcu(struct rcu_head *rcu)
+{
+	struct fc_rport_priv *rdata;
+
+	rdata = container_of(rcu, struct fc_rport_priv, rcu);
+	kfree(rdata);
 }
 
 /**
@@ -159,7 +173,7 @@ static void fc_rport_destroy(struct kref *kref)
 	struct fc_rport_priv *rdata;
 
 	rdata = container_of(kref, struct fc_rport_priv, kref);
-	kfree(rdata);
+	call_rcu(&rdata->rcu, fc_rport_free_rcu);
 }
 
 /**
@@ -334,7 +348,7 @@ static void fc_rport_work(struct work_struct *work)
 				mutex_unlock(&rdata->rp_mutex);
 			} else {
 				FC_RPORT_DBG(rdata, "work delete\n");
-				list_del(&rdata->peers);
+				list_del_rcu(&rdata->peers);
 				mutex_unlock(&rdata->rp_mutex);
 				kref_put(&rdata->kref, lport->tt.rport_destroy);
 			}
@@ -500,9 +514,7 @@ static void fc_rport_timeout(struct work_struct *work)
 	case RPORT_ST_ADISC:
 		fc_rport_enter_adisc(rdata);
 		break;
-	case RPORT_ST_READY:
-	case RPORT_ST_INIT:
-	case RPORT_ST_DELETE:
+	default:
 		break;
 	}
 
@@ -536,9 +548,7 @@ static void fc_rport_error(struct fc_rport_priv *rdata, struct fc_frame *fp)
 	case RPORT_ST_ADISC:
 		fc_rport_enter_logo(rdata);
 		break;
-	case RPORT_ST_DELETE:
-	case RPORT_ST_READY:
-	case RPORT_ST_INIT:
+	default:
 		break;
 	}
 }
@@ -697,6 +707,7 @@ static void fc_rport_prli_resp(struct fc_seq *sp, struct fc_frame *fp,
 	u32 roles = FC_RPORT_ROLE_UNKNOWN;
 	u32 fcp_parm = 0;
 	u8 op;
+	u8 resp_code = 0;
 
 	mutex_lock(&rdata->rp_mutex);
 
@@ -721,11 +732,25 @@ static void fc_rport_prli_resp(struct fc_seq *sp, struct fc_frame *fp,
 	op = fc_frame_payload_op(fp);
 	if (op == ELS_LS_ACC) {
 		pp = fc_frame_payload_get(fp, sizeof(*pp));
-		if (pp && pp->prli.prli_spp_len >= sizeof(pp->spp)) {
-			fcp_parm = ntohl(pp->spp.spp_params);
-			if (fcp_parm & FCP_SPPF_RETRY)
-				rdata->flags |= FC_RP_FLAGS_RETRY;
+		if (!pp)
+			goto out;
+
+		resp_code = (pp->spp.spp_flags & FC_SPP_RESP_MASK);
+		FC_RPORT_DBG(rdata, "PRLI spp_flags = 0x%x\n",
+			     pp->spp.spp_flags);
+		if (resp_code != FC_SPP_RESP_ACK) {
+			if (resp_code == FC_SPP_RESP_CONF)
+				fc_rport_error(rdata, fp);
+			else
+				fc_rport_error_retry(rdata, fp);
+			goto out;
 		}
+		if (pp->prli.prli_spp_len < sizeof(pp->spp))
+			goto out;
+
+		fcp_parm = ntohl(pp->spp.spp_params);
+		if (fcp_parm & FCP_SPPF_RETRY)
+			rdata->flags |= FC_RP_FLAGS_RETRY;
 
 		rdata->supported_classes = FC_COS_CLASS3;
 		if (fcp_parm & FCP_SPPF_INIT_FCN)
@@ -738,7 +763,7 @@ static void fc_rport_prli_resp(struct fc_seq *sp, struct fc_frame *fp,
 
 	} else {
 		FC_RPORT_DBG(rdata, "Bad ELS response for PRLI command\n");
-		fc_rport_enter_delete(rdata, RPORT_EV_FAILED);
+		fc_rport_error_retry(rdata, fp);
 	}
 
 out:
@@ -1382,6 +1407,8 @@ static void fc_rport_recv_plogi_req(struct fc_lport *lport,
 		rjt_data.reason = ELS_RJT_BUSY;
 		rjt_data.explan = ELS_EXPL_NONE;
 		goto reject;
+	default:
+		break;
 	}
 
 	/*
@@ -1440,136 +1467,115 @@ static void fc_rport_recv_prli_req(struct fc_rport_priv *rdata,
 	struct fc_els_spp *spp;	/* response spp */
 	unsigned int len;
 	unsigned int plen;
-	enum fc_els_rjt_reason reason = ELS_RJT_UNAB;
-	enum fc_els_rjt_explan explan = ELS_EXPL_NONE;
 	enum fc_els_spp_resp resp;
 	struct fc_seq_els_data rjt_data;
 	u32 f_ctl;
 	u32 fcp_parm;
 	u32 roles = FC_RPORT_ROLE_UNKNOWN;
-	rjt_data.fp = NULL;
 
+	rjt_data.fp = NULL;
 	fh = fc_frame_header_get(rx_fp);
 
 	FC_RPORT_DBG(rdata, "Received PRLI request while in state %s\n",
 		     fc_rport_state(rdata));
 
-	switch (rdata->rp_state) {
-	case RPORT_ST_PRLI:
-	case RPORT_ST_RTV:
-	case RPORT_ST_READY:
-	case RPORT_ST_ADISC:
-		reason = ELS_RJT_NONE;
-		break;
-	default:
-		fc_frame_free(rx_fp);
-		return;
-		break;
-	}
 	len = fr_len(rx_fp) - sizeof(*fh);
 	pp = fc_frame_payload_get(rx_fp, sizeof(*pp));
-	if (pp == NULL) {
-		reason = ELS_RJT_PROT;
-		explan = ELS_EXPL_INV_LEN;
-	} else {
-		plen = ntohs(pp->prli.prli_len);
-		if ((plen % 4) != 0 || plen > len) {
-			reason = ELS_RJT_PROT;
-			explan = ELS_EXPL_INV_LEN;
-		} else if (plen < len) {
-			len = plen;
-		}
-		plen = pp->prli.prli_spp_len;
-		if ((plen % 4) != 0 || plen < sizeof(*spp) ||
-		    plen > len || len < sizeof(*pp)) {
-			reason = ELS_RJT_PROT;
-			explan = ELS_EXPL_INV_LEN;
-		}
-		rspp = &pp->spp;
+	if (!pp)
+		goto reject_len;
+	plen = ntohs(pp->prli.prli_len);
+	if ((plen % 4) != 0 || plen > len || plen < 16)
+		goto reject_len;
+	if (plen < len)
+		len = plen;
+	plen = pp->prli.prli_spp_len;
+	if ((plen % 4) != 0 || plen < sizeof(*spp) ||
+	    plen > len || len < sizeof(*pp) || plen < 12)
+		goto reject_len;
+	rspp = &pp->spp;
+
+	fp = fc_frame_alloc(lport, len);
+	if (!fp) {
+		rjt_data.reason = ELS_RJT_UNAB;
+		rjt_data.explan = ELS_EXPL_INSUF_RES;
+		goto reject;
 	}
-	if (reason != ELS_RJT_NONE ||
-	    (fp = fc_frame_alloc(lport, len)) == NULL) {
-		rjt_data.reason = reason;
-		rjt_data.explan = explan;
-		lport->tt.seq_els_rsp_send(sp, ELS_LS_RJT, &rjt_data);
-	} else {
-		sp = lport->tt.seq_start_next(sp);
-		WARN_ON(!sp);
-		pp = fc_frame_payload_get(fp, len);
-		WARN_ON(!pp);
-		memset(pp, 0, len);
-		pp->prli.prli_cmd = ELS_LS_ACC;
-		pp->prli.prli_spp_len = plen;
-		pp->prli.prli_len = htons(len);
-		len -= sizeof(struct fc_els_prli);
+	sp = lport->tt.seq_start_next(sp);
+	WARN_ON(!sp);
+	pp = fc_frame_payload_get(fp, len);
+	WARN_ON(!pp);
+	memset(pp, 0, len);
+	pp->prli.prli_cmd = ELS_LS_ACC;
+	pp->prli.prli_spp_len = plen;
+	pp->prli.prli_len = htons(len);
+	len -= sizeof(struct fc_els_prli);
 
-		/* reinitialize remote port roles */
-		rdata->ids.roles = FC_RPORT_ROLE_UNKNOWN;
+	/* reinitialize remote port roles */
+	rdata->ids.roles = FC_RPORT_ROLE_UNKNOWN;
 
-		/*
-		 * Go through all the service parameter pages and build
-		 * response.  If plen indicates longer SPP than standard,
-		 * use that.  The entire response has been pre-cleared above.
-		 */
-		spp = &pp->spp;
-		while (len >= plen) {
-			spp->spp_type = rspp->spp_type;
-			spp->spp_type_ext = rspp->spp_type_ext;
-			spp->spp_flags = rspp->spp_flags & FC_SPP_EST_IMG_PAIR;
-			resp = FC_SPP_RESP_ACK;
-			if (rspp->spp_flags & FC_SPP_RPA_VAL)
-				resp = FC_SPP_RESP_NO_PA;
-			switch (rspp->spp_type) {
-			case 0:	/* common to all FC-4 types */
-				break;
-			case FC_TYPE_FCP:
-				fcp_parm = ntohl(rspp->spp_params);
-				if (fcp_parm & FCP_SPPF_RETRY)
-					rdata->flags |= FC_RP_FLAGS_RETRY;
-				rdata->supported_classes = FC_COS_CLASS3;
-				if (fcp_parm & FCP_SPPF_INIT_FCN)
-					roles |= FC_RPORT_ROLE_FCP_INITIATOR;
-				if (fcp_parm & FCP_SPPF_TARG_FCN)
-					roles |= FC_RPORT_ROLE_FCP_TARGET;
-				rdata->ids.roles = roles;
+	/*
+	 * Go through all the service parameter pages and build
+	 * response.  If plen indicates longer SPP than standard,
+	 * use that.  The entire response has been pre-cleared above.
+	 */
+	spp = &pp->spp;
+	while (len >= plen) {
+		spp->spp_type = rspp->spp_type;
+		spp->spp_type_ext = rspp->spp_type_ext;
+		spp->spp_flags = rspp->spp_flags & FC_SPP_EST_IMG_PAIR;
+		resp = FC_SPP_RESP_ACK;
 
-				spp->spp_params =
-					htonl(lport->service_params);
-				break;
-			default:
-				resp = FC_SPP_RESP_INVL;
-				break;
-			}
-			spp->spp_flags |= resp;
-			len -= plen;
-			rspp = (struct fc_els_spp *)((char *)rspp + plen);
-			spp = (struct fc_els_spp *)((char *)spp + plen);
-		}
-
-		/*
-		 * Send LS_ACC.	 If this fails, the originator should retry.
-		 */
-		f_ctl = FC_FC_EX_CTX | FC_FC_LAST_SEQ;
-		f_ctl |= FC_FC_END_SEQ | FC_FC_SEQ_INIT;
-		ep = fc_seq_exch(sp);
-		fc_fill_fc_hdr(fp, FC_RCTL_ELS_REP, ep->did, ep->sid,
-			       FC_TYPE_ELS, f_ctl, 0);
-		lport->tt.seq_send(lport, sp, fp);
-
-		/*
-		 * Get lock and re-check state.
-		 */
-		switch (rdata->rp_state) {
-		case RPORT_ST_PRLI:
-			fc_rport_enter_ready(rdata);
+		switch (rspp->spp_type) {
+		case 0:	/* common to all FC-4 types */
 			break;
-		case RPORT_ST_READY:
-		case RPORT_ST_ADISC:
+		case FC_TYPE_FCP:
+			fcp_parm = ntohl(rspp->spp_params);
+			if (fcp_parm & FCP_SPPF_RETRY)
+				rdata->flags |= FC_RP_FLAGS_RETRY;
+			rdata->supported_classes = FC_COS_CLASS3;
+			if (fcp_parm & FCP_SPPF_INIT_FCN)
+				roles |= FC_RPORT_ROLE_FCP_INITIATOR;
+			if (fcp_parm & FCP_SPPF_TARG_FCN)
+				roles |= FC_RPORT_ROLE_FCP_TARGET;
+			rdata->ids.roles = roles;
+
+			spp->spp_params = htonl(lport->service_params);
 			break;
 		default:
+			resp = FC_SPP_RESP_INVL;
 			break;
 		}
+		spp->spp_flags |= resp;
+		len -= plen;
+		rspp = (struct fc_els_spp *)((char *)rspp + plen);
+		spp = (struct fc_els_spp *)((char *)spp + plen);
 	}
+
+	/*
+	 * Send LS_ACC.	 If this fails, the originator should retry.
+	 */
+	f_ctl = FC_FC_EX_CTX | FC_FC_LAST_SEQ;
+	f_ctl |= FC_FC_END_SEQ | FC_FC_SEQ_INIT;
+	ep = fc_seq_exch(sp);
+	fc_fill_fc_hdr(fp, FC_RCTL_ELS_REP, ep->did, ep->sid,
+		       FC_TYPE_ELS, f_ctl, 0);
+	lport->tt.seq_send(lport, sp, fp);
+
+	switch (rdata->rp_state) {
+	case RPORT_ST_PRLI:
+		fc_rport_enter_ready(rdata);
+		break;
+	default:
+		break;
+	}
+	goto drop;
+
+reject_len:
+	rjt_data.reason = ELS_RJT_PROT;
+	rjt_data.explan = ELS_EXPL_INV_LEN;
+reject:
+	lport->tt.seq_els_rsp_send(sp, ELS_LS_RJT, &rjt_data);
+drop:
 	fc_frame_free(rx_fp);
 }
 
@@ -1577,30 +1583,85 @@ static void fc_rport_recv_prli_req(struct fc_rport_priv *rdata,
  * fc_rport_recv_prlo_req() - Handler for process logout (PRLO) requests
  * @rdata: The remote port that sent the PRLO request
  * @sp:	   The sequence that the PRLO was on
- * @fp:	   The PRLO request frame
+ * @rx_fp: The PRLO request frame
  *
  * Locking Note: The rport lock is exected to be held before calling
  * this function.
  */
 static void fc_rport_recv_prlo_req(struct fc_rport_priv *rdata,
 				   struct fc_seq *sp,
-				   struct fc_frame *fp)
+				   struct fc_frame *rx_fp)
 {
 	struct fc_lport *lport = rdata->local_port;
-
 	struct fc_frame_header *fh;
+	struct fc_exch *ep;
+	struct fc_frame *fp;
+	struct {
+		struct fc_els_prlo prlo;
+		struct fc_els_spp spp;
+	} *pp;
+	struct fc_els_spp *rspp;	/* request service param page */
+	struct fc_els_spp *spp;		/* response spp */
+	unsigned int len;
+	unsigned int plen;
+	u32 f_ctl;
 	struct fc_seq_els_data rjt_data;
 
-	fh = fc_frame_header_get(fp);
+	rjt_data.fp = NULL;
+	fh = fc_frame_header_get(rx_fp);
 
 	FC_RPORT_DBG(rdata, "Received PRLO request while in state %s\n",
 		     fc_rport_state(rdata));
 
-	rjt_data.fp = NULL;
-	rjt_data.reason = ELS_RJT_UNAB;
-	rjt_data.explan = ELS_EXPL_NONE;
+	len = fr_len(rx_fp) - sizeof(*fh);
+	pp = fc_frame_payload_get(rx_fp, sizeof(*pp));
+	if (!pp)
+		goto reject_len;
+	plen = ntohs(pp->prlo.prlo_len);
+	if (plen != 20)
+		goto reject_len;
+	if (plen < len)
+		len = plen;
+
+	rspp = &pp->spp;
+
+	fp = fc_frame_alloc(lport, len);
+	if (!fp) {
+		rjt_data.reason = ELS_RJT_UNAB;
+		rjt_data.explan = ELS_EXPL_INSUF_RES;
+		goto reject;
+	}
+
+	sp = lport->tt.seq_start_next(sp);
+	WARN_ON(!sp);
+	pp = fc_frame_payload_get(fp, len);
+	WARN_ON(!pp);
+	memset(pp, 0, len);
+	pp->prlo.prlo_cmd = ELS_LS_ACC;
+	pp->prlo.prlo_obs = 0x10;
+	pp->prlo.prlo_len = htons(len);
+	spp = &pp->spp;
+	spp->spp_type = rspp->spp_type;
+	spp->spp_type_ext = rspp->spp_type_ext;
+	spp->spp_flags = FC_SPP_RESP_ACK;
+
+	fc_rport_enter_delete(rdata, RPORT_EV_LOGO);
+
+	f_ctl = FC_FC_EX_CTX | FC_FC_LAST_SEQ;
+	f_ctl |= FC_FC_END_SEQ | FC_FC_SEQ_INIT;
+	ep = fc_seq_exch(sp);
+	fc_fill_fc_hdr(fp, FC_RCTL_ELS_REP, ep->did, ep->sid,
+		       FC_TYPE_ELS, f_ctl, 0);
+	lport->tt.seq_send(lport, sp, fp);
+	goto drop;
+
+reject_len:
+	rjt_data.reason = ELS_RJT_PROT;
+	rjt_data.explan = ELS_EXPL_INV_LEN;
+reject:
 	lport->tt.seq_els_rsp_send(sp, ELS_LS_RJT, &rjt_data);
-	fc_frame_free(fp);
+drop:
+	fc_frame_free(rx_fp);
 }
 
 /**

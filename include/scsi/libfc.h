@@ -47,13 +47,18 @@
 #define ntohll(x) be64_to_cpu(x)
 #define htonll(x) cpu_to_be64(x)
 
-#define ntoh24(p) (((p)[0] << 16) | ((p)[1] << 8) | ((p)[2]))
 
-#define hton24(p, v)	do {			\
-		p[0] = (((v) >> 16) & 0xFF);	\
-		p[1] = (((v) >> 8) & 0xFF);	\
-		p[2] = ((v) & 0xFF);		\
-	} while (0)
+static inline u32 ntoh24(const u8 *p)
+{
+	return (p[0] << 16) | (p[1] << 8) | p[2];
+}
+
+static inline void hton24(u8 *p, u32 v)
+{
+	p[0] = (v >> 16) & 0xff;
+	p[1] = (v >> 8) & 0xff;
+	p[2] = v & 0xff;
+}
 
 /**
  * enum fc_lport_state - Local port states
@@ -192,29 +197,31 @@ struct fc_rport_libfc_priv {
  * @retry_work:     Handle for retries
  * @event_callback: Callback when READY, FAILED or LOGO states complete
  * @major_retries:  The retry count for the entire PLOGI/PRLI state machine
+ * @rcu:	    Structure used for freeing in an RCU-safe manner
  */
 struct fc_rport_priv {
 	struct fc_lport		    *local_port;
 	struct fc_rport		    *rport;
 	struct kref		    kref;
-	enum fc_rport_state         rp_state;
+	enum fc_rport_state	    rp_state;
 	struct fc_rport_identifiers ids;
 	u16			    flags;
-	u16		            max_seq;
+	u16			    max_seq;
 	u16			    disc_id;
 	u16			    maxframe_size;
-	unsigned int	            retries;
-	unsigned int	            e_d_tov;
-	unsigned int	            r_a_tov;
-	struct mutex                rp_mutex;
+	unsigned int		    retries;
+	unsigned int		    e_d_tov;
+	unsigned int		    r_a_tov;
+	struct mutex		    rp_mutex;
 	struct delayed_work	    retry_work;
-	enum fc_rport_event         event;
+	enum fc_rport_event	    event;
 	struct fc_rport_operations  *ops;
-	struct list_head            peers;
-	struct work_struct          event_work;
+	struct list_head	    peers;
+	struct work_struct	    event_work;
 	u32			    supported_classes;
 #ifndef __GENKSYMS__
-	unsigned int	            major_retries;
+	unsigned int		    major_retries;
+	struct rcu_head		    rcu;
 #endif
 };
 
@@ -780,6 +787,7 @@ struct fc_disc {
  * @dev_stats:             FCoE device stats (TODO: libfc should not be
  *                         FCoE aware)
  * @retry_count:           Number of retries in the current state
+ * @port_id:               FC Port ID
  * @wwpn:                  World Wide Port Name
  * @wwnn:                  World Wide Node Name
  * @service_params:        Common service parameters
@@ -826,6 +834,7 @@ struct fc_lport {
 	u8			       retry_count;
 
 	/* Fabric information */
+	u32                            port_id;
 	u64			       wwpn;
 	u64			       wwnn;
 	unsigned int		       service_params;
@@ -920,15 +929,6 @@ static inline int fc_lport_init_stats(struct fc_lport *lport)
 static inline void fc_lport_free_stats(struct fc_lport *lport)
 {
 	free_percpu(lport->dev_stats);
-}
-
-/**
- * fc_lport_get_stats() - Get a local port's statistics
- * @lport: The local port whose statistics are to be retreived
- */
-static inline struct fcoe_dev_stats *fc_lport_get_stats(struct fc_lport *lport)
-{
-	return per_cpu_ptr(lport->dev_stats, smp_processor_id());
 }
 
 /**
@@ -1058,7 +1058,6 @@ void fc_exch_mgr_reset(struct fc_lport *, u32 s_id, u32 d_id);
  * Functions for fc_functions_template
  */
 void fc_get_host_speed(struct Scsi_Host *);
-void fc_get_host_port_type(struct Scsi_Host *);
 void fc_get_host_port_state(struct Scsi_Host *);
 void fc_set_rport_loss_tmo(struct fc_rport *, u32 timeout);
 struct fc_host_statistics *fc_get_host_stats(struct Scsi_Host *);
