@@ -50,7 +50,7 @@ MODULE_LICENSE("GPL v2");
 #define	FCOE_CTLR_DEF_FKA	FIP_DEF_FKA	/* default keep alive (mS) */
 
 static void fcoe_ctlr_timeout(unsigned long);
-static void fcoe_ctlr_timer_work(struct work_struct *);
+static void fcoe_ctlr_link_work(struct work_struct *);
 static void fcoe_ctlr_recv_work(struct work_struct *);
 
 static u8 fcoe_all_fcfs[ETH_ALEN] = FIP_ALL_FCF_MACS;
@@ -115,7 +115,7 @@ void fcoe_ctlr_init(struct fcoe_ctlr *fip)
 	spin_lock_init(&fip->lock);
 	fip->flogi_oxid = FC_XID_UNKNOWN;
 	setup_timer(&fip->timer, fcoe_ctlr_timeout, (unsigned long)fip);
-	INIT_WORK(&fip->timer_work, fcoe_ctlr_timer_work);
+	INIT_WORK(&fip->link_work, fcoe_ctlr_link_work);
 	INIT_WORK(&fip->recv_work, fcoe_ctlr_recv_work);
 	skb_queue_head_init(&fip->fip_recv_list);
 }
@@ -163,7 +163,7 @@ void fcoe_ctlr_destroy(struct fcoe_ctlr *fip)
 	fcoe_ctlr_reset_fcfs(fip);
 	spin_unlock_bh(&fip->lock);
 	del_timer_sync(&fip->timer);
-	cancel_work_sync(&fip->timer_work);
+	cancel_work_sync(&fip->link_work);
 }
 EXPORT_SYMBOL(fcoe_ctlr_destroy);
 
@@ -1275,7 +1275,7 @@ static void fcoe_ctlr_timeout(unsigned long arg)
 			       "Starting FCF discovery.\n",
 			       fip->lp->host->host_no);
 			fip->reset_req = 1;
-			schedule_work(&fip->timer_work);
+			schedule_work(&fip->link_work);
 		}
 	}
 
@@ -1301,25 +1301,25 @@ static void fcoe_ctlr_timeout(unsigned long arg)
 		mod_timer(&fip->timer, next_timer);
 	}
 	if (fip->send_ctlr_ka || fip->send_port_ka)
-		schedule_work(&fip->timer_work);
+		schedule_work(&fip->link_work);
 	spin_unlock_bh(&fip->lock);
 }
 
 /**
- * fcoe_ctlr_timer_work() - Worker thread function for timer work
+ * fcoe_ctlr_link_work() - Worker thread function for link changes
  * @work: Handle to a FCoE controller
  *
  * Sends keep-alives and resets which must not
  * be called from the timer directly, since they use a mutex.
  */
-static void fcoe_ctlr_timer_work(struct work_struct *work)
+static void fcoe_ctlr_link_work(struct work_struct *work)
 {
 	struct fcoe_ctlr *fip;
 	struct fc_lport *vport;
 	u8 *mac;
 	int reset;
 
-	fip = container_of(work, struct fcoe_ctlr, timer_work);
+	fip = container_of(work, struct fcoe_ctlr, link_work);
 	spin_lock_bh(&fip->lock);
 	reset = fip->reset_req;
 	fip->reset_req = 0;

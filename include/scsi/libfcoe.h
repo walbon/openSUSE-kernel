@@ -67,7 +67,7 @@ enum fip_state {
  * @port_ka_time:  time of next port keep-alive.
  * @ctlr_ka_time:  time of next controller keep-alive.
  * @timer:	   timer struct used for all delayed events.
- * @timer_work:	   &work_struct for doing keep-alives and resets.
+ * @link_work:	   &work_struct for doing FCF selection.
  * @recv_work:	   &work_struct for receiving FIP frames.
  * @fip_recv_list: list of received FIP frames.
  * @user_mfs:	   configured maximum FC frame size, including FC header.
@@ -100,12 +100,16 @@ struct fcoe_ctlr {
 	unsigned long port_ka_time;
 	unsigned long ctlr_ka_time;
 	struct timer_list timer;
-	struct work_struct timer_work;
+	struct work_struct link_work;
 	struct work_struct recv_work;
 	struct sk_buff_head fip_recv_list;
 	u16 user_mfs;
 	u16 flogi_oxid;
 	u8 flogi_count;
+#ifdef __GENKSYMS__
+	u8 link;
+	u8 last_link;
+#endif
 	u8 reset_req;
 	u8 map_dest;
 	u8 spma;

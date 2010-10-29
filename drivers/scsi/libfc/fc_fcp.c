@@ -262,7 +262,7 @@ static void fc_fcp_timer_set(struct fc_fcp_pkt *fsp, unsigned long delay)
 static int fc_fcp_send_abort(struct fc_fcp_pkt *fsp)
 {
 	if (!fsp->seq_ptr)
-		return -EINVAL;
+		return 0;
 
 	fsp->state |= FC_SRB_ABORT_PENDING;
 	return fsp->lp->tt.seq_exch_abort(fsp->seq_ptr, 0);
@@ -1800,14 +1800,14 @@ int fc_queuecommand(struct scsi_cmnd *sc_cmd, void (*done)(struct scsi_cmnd *))
 	struct fcoe_dev_stats *stats;
 
 	lport = shost_priv(sc_cmd->device->host);
-	spin_unlock_irq(lport->host->host_lock);
 
 	rval = fc_remote_port_chkready(rport);
 	if (rval) {
 		sc_cmd->result = rval;
 		done(sc_cmd);
-		goto out;
+		return 0;
 	}
+	spin_unlock_irq(lport->host->host_lock);
 
 	if (!*(struct fc_remote_port **)rport->dd_data) {
 		/*
