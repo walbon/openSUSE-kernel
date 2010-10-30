@@ -564,6 +564,19 @@
  * tracing devices.
  */
 
+/*?
+ * Text: "%s: Setting the device online failed because of insufficient authorization\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The qeth device is configured with OSX CHPIDs. An OSX CHPID cannot be activated unless the LPAR is explicitly authorized to access it.
+ * For z/VM guest operating systems, the z/VM user ID must be explicitly authorized in addition to the LPAR.
+ * You grant these authorizations through the Service Element.
+ * User action:
+ * At the Service Element, authorize the LPAR and, if applicable, the z/VM user ID for using the OSX CHPIDs with which the qeth device has been configured.
+ * Then try again to set the device online.
+ */
 
 /*? Text: "core functions removed\n" */
 /*? Text: "%s: Device is a%s card%s%s%s\nwith link type %s.\n" */
