@@ -1526,6 +1526,13 @@ static int ocfs2_search_chain(struct ocfs2_alloc_context *ac,
 		goto bail;
 	}
 
+	status = ocfs2_block_group_set_bits(handle, alloc_inode, bg, group_bh,
+					    *bit_off, *num_bits);
+	if (status < 0) {
+		mlog_errno(status);
+		goto bail;
+	}
+
 	mlog(0, "Allocated %u bits from suballocator %llu\n", *num_bits,
 	     (unsigned long long)le64_to_cpu(fe->i_blkno));
 
