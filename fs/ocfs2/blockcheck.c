@@ -33,6 +33,12 @@
 
 #include "blockcheck.h"
 
+/* Mainline commit 4be929be34f9bdeffa40d815d32d7d60d2c7f03b */
+#ifndef USHRT_MAX
+# define USHRT_MAX	((u16)(~0U))
+# define SHRT_MAX	((s16)(USHRT_MAX>>1))
+# define SHRT_MIN	((s16)(-SHRT_MAX - 1))
+#endif
 
 /*
  * We use the following conventions:
@@ -47,7 +53,7 @@
  * Calculate the bit offset in the hamming code buffer based on the bit's
  * offset in the data buffer.  Since the hamming code reserves all
  * power-of-two bits for parity, the data bit number and the code bit
- * number are offest by all the parity bits beforehand.
+ * number are offset by all the parity bits beforehand.
  *
  * Recall that bit numbers in hamming code are 1-based.  This function
  * takes the 0-based data bit from the caller.
@@ -403,7 +409,7 @@ void ocfs2_block_check_compute(void *data, size_t blocksize,
 	 * No ecc'd ocfs2 structure is larger than 4K, so ecc will be no
 	 * larger than 16 bits.
 	 */
-	BUG_ON(ecc > USHORT_MAX);
+	BUG_ON(ecc > USHRT_MAX);
 
 	bc->bc_crc32e = cpu_to_le32(crc);
 	bc->bc_ecc = cpu_to_le16((u16)ecc);
@@ -508,7 +514,7 @@ void ocfs2_block_check_compute_bhs(struct buffer_head **bhs, int nr,
 	 * No ecc'd ocfs2 structure is larger than 4K, so ecc will be no
 	 * larger than 16 bits.
 	 */
-	BUG_ON(ecc > USHORT_MAX);
+	BUG_ON(ecc > USHRT_MAX);
 
 	bc->bc_crc32e = cpu_to_le32(crc);
 	bc->bc_ecc = cpu_to_le16((u16)ecc);

@@ -26,7 +26,6 @@
 
 #include <linux/fs.h>
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/highmem.h>
 #include <linux/bitops.h>
 #include <linux/list.h>
@@ -371,7 +370,6 @@ ocfs2_find_resv_lhs(struct ocfs2_reservation_map *resmap, unsigned int goal)
 	struct ocfs2_alloc_reservation *resv = NULL;
 	struct ocfs2_alloc_reservation *prev_resv = NULL;
 	struct rb_node *node = resmap->m_reservations.rb_node;
-	struct rb_node *prev = NULL;
 
 	assert_spin_locked(&resv_lock);
 
@@ -392,7 +390,6 @@ ocfs2_find_resv_lhs(struct ocfs2_reservation_map *resmap, unsigned int goal)
 		}
 
 		prev_resv = resv;
-		prev = node;
 		node = rb_next(node);
 	}
 
@@ -408,7 +405,7 @@ ocfs2_find_resv_lhs(struct ocfs2_reservation_map *resmap, unsigned int goal)
  * The start value of *rstart is insignificant.
  *
  * This function searches the bitmap range starting at search_start
- * with length csearch_len for a set of contiguous free bits. We try
+ * with length search_len for a set of contiguous free bits. We try
  * to find up to 'wanted' bits, but can sometimes return less.
  *
  * Returns the length of allocation, 0 if no free bits are found.
@@ -778,38 +775,28 @@ static void
 				     struct ocfs2_alloc_reservation *resv,
 				     unsigned int start, unsigned int end)
 {
-	unsigned int lhs = 0, rhs = 0;
+	unsigned int rhs = 0;
+	unsigned int old_end = ocfs2_resv_end(resv);
 
-	BUG_ON(start < resv->r_start);
+	BUG_ON(start != resv->r_start || old_end < end);
 
 	/*
 	 * Completely used? We can remove it then.
 	 */
-	if (ocfs2_resv_end(resv) <= end && resv->r_start >= start) {
+	if (old_end == end) {
 		__ocfs2_resv_discard(resmap, resv);
 		return;
 	}
 
-	if (end < ocfs2_resv_end(resv))
-		rhs = end - ocfs2_resv_end(resv);
-
-	if (start > resv->r_start)
-		lhs = start - resv->r_start;
+	rhs = old_end - end;
 
 	/*
-	 * This should have been trapped above. At the very least, rhs
-	 * should be non zero.
+	 * This should have been trapped above.
 	 */
-	BUG_ON(rhs == 0 && lhs == 0);
+	BUG_ON(rhs == 0);
 
-	if (rhs >= lhs) {
-		unsigned int old_end = ocfs2_resv_end(resv);
-
-		resv->r_start = end + 1;
-		resv->r_len = old_end - resv->r_start + 1;
-	} else {
-		resv->r_len = start - resv->r_start;
-	}
+	resv->r_start = end + 1;
+	resv->r_len = old_end - resv->r_start + 1;
 }
 
 void ocfs2_resmap_claimed_bits(struct ocfs2_reservation_map *resmap,
@@ -823,6 +810,8 @@ void ocfs2_resmap_claimed_bits(struct ocfs2_reservation_map *resmap,
 
 	if (resv == NULL)
 		return;
+
+	BUG_ON(cstart != resv->r_start);
 
 	spin_lock(&resv_lock);
 

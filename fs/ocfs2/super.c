@@ -884,9 +884,15 @@ static int ocfs2_susp_quotas(struct ocfs2_super *osb, int unsuspend)
 					sb_dqopt(sb)->files[type],
 					type, QFMT_OCFS2,
 					DQUOT_SUSPENDED);
-		else
+		else {
+			struct ocfs2_mem_dqinfo *oinfo;
+
+			/* Cancel periodic syncing before suspending */
+			oinfo = sb_dqinfo(sb, type)->dqi_priv;
+			cancel_delayed_work_sync(&oinfo->dqi_sync_work);
 			status = vfs_quota_disable(sb, type,
 						   DQUOT_SUSPENDED);
+		}
 		if (status < 0)
 			break;
 	}
@@ -939,12 +945,16 @@ static void ocfs2_disable_quotas(struct ocfs2_super *osb)
 	int type;
 	struct inode *inode;
 	struct super_block *sb = osb->sb;
+	struct ocfs2_mem_dqinfo *oinfo;
 
 	/* We mostly ignore errors in this function because there's not much
 	 * we can do when we see them */
 	for (type = 0; type < MAXQUOTAS; type++) {
 		if (!sb_has_quota_loaded(sb, type))
 			continue;
+		/* Cancel periodic syncing before we grab dqonoff_mutex */
+		oinfo = sb_dqinfo(sb, type)->dqi_priv;
+		cancel_delayed_work_sync(&oinfo->dqi_sync_work);
 		inode = igrab(sb->s_dquot.files[type]);
 		/* Turn off quotas. This will remove all dquot structures from
 		 * memory and so they will be automatically synced to global
@@ -1298,7 +1308,7 @@ static int ocfs2_parse_options(struct super_block *sb,
 		   options ? options : "(none)");
 
 	mopt->commit_interval = 0;
-	mopt->mount_opt = 0;
+	mopt->mount_opt = OCFS2_MOUNT_NOINTR;
 	mopt->atime_quantum = OCFS2_DEFAULT_ATIME_QUANTUM;
 	mopt->slot = OCFS2_INVALID_SLOT;
 	mopt->localalloc_opt = -1;
@@ -1992,47 +2002,6 @@ static int ocfs2_setup_osb_uuid(struct ocfs2_super *osb, const unsigned char *uu
 	return 0;
 }
 
-/* Check to make sure entire volume is addressable on this system.
-   Requires osb_clusters_at_boot to be valid and for the journal to
-   have been read by jbd2_journal_load(). */
-static int ocfs2_check_addressable(struct ocfs2_super *osb)
-{
-	int status = 0;
-	u64 max_block =
-		ocfs2_clusters_to_blocks(osb->sb,
-					 osb->osb_clusters_at_boot) - 1;
-
-	/* Absolute addressability check (borrowed from ext4/super.c) */
-	if ((max_block >
-	     (sector_t)(~0LL) >> (osb->sb->s_blocksize_bits - 9)) ||
-	    (max_block > (pgoff_t)(~0LL) >> (PAGE_CACHE_SHIFT -
-					     osb->sb->s_blocksize_bits))) {
-		mlog(ML_ERROR, "Volume too large "
-		     "to mount safely on this system");
-		status = -EFBIG;
-		goto out;
-	}
-
-	/* 32-bit block number is always OK. */
-	if (max_block <= (u32)~0UL)
-		goto out;
-
-	/* Volume is "huge", so see if our journal is new enough to
-	   support it. */
-	if (!(OCFS2_HAS_COMPAT_FEATURE(osb->sb,
-				       OCFS2_FEATURE_COMPAT_JBD2_SB) &&
-	      jbd2_journal_check_used_features(osb->journal->j_journal, 0, 0,
-					       JBD2_FEATURE_INCOMPAT_64BIT))) {
-		mlog(ML_ERROR, "The journal cannot address the entire volume. "
-		     "Enable the 'block64' journal option with tunefs.ocfs2");
-		status = -EFBIG;
-		goto out;
-	}
-
- out:
-	return status;
-}
-
 static int ocfs2_initialize_super(struct super_block *sb,
 				  struct buffer_head *bh,
 				  int sector_size,
@@ -2257,6 +2226,14 @@ static int ocfs2_initialize_super(struct super_block *sb,
 		goto bail;
 	}
 
+	if (ocfs2_clusters_to_blocks(osb->sb, le32_to_cpu(di->i_clusters) - 1)
+	    > (u32)~0UL) {
+		mlog(ML_ERROR, "Volume might try to write to blocks beyond "
+		     "what jbd can address in 32 bits.\n");
+		status = -EINVAL;
+		goto bail;
+	}
+
 	if (ocfs2_setup_osb_uuid(osb, di->id2.i_super.s_uuid,
 				 sizeof(di->id2.i_super.s_uuid))) {
 		mlog(ML_ERROR, "Out of memory trying to setup our uuid.\n");
@@ -2438,12 +2415,6 @@ static int ocfs2_check_volume(struct ocfs2_super *osb)
 		goto finally;
 	}
 
-	/* Now that journal has been loaded, check to make sure entire
-	   volume is addressable. */
-	status = ocfs2_check_addressable(osb);
-	if (status)
-		goto finally;
-
 	if (dirty) {
 		/* recover my local alloc if we didn't unmount cleanly. */
 		status = ocfs2_begin_local_alloc_recovery(osb,
@@ -2512,7 +2483,7 @@ static void ocfs2_delete_osb(struct ocfs2_super *osb)
 	kfree(osb->slot_recovery_generations);
 	/* FIXME
 	 * This belongs in journal shutdown, but because we have to
-	 * allocate osb->journal at the start of ocfs2_initalize_osb(),
+	 * allocate osb->journal at the start of ocfs2_initialize_osb(),
 	 * we free it here.
 	 */
 	kfree(osb->journal);
@@ -2599,6 +2570,26 @@ void __ocfs2_abort(struct super_block* sb,
 	if (!ocfs2_mount_local(OCFS2_SB(sb)))
 		OCFS2_SB(sb)->s_mount_opt |= OCFS2_MOUNT_ERRORS_PANIC;
 	ocfs2_handle_error(sb);
+}
+
+/*
+ * Void signal blockers, because in-kernel sigprocmask() only fails
+ * when SIG_* is wrong.
+ */
+void ocfs2_block_signals(sigset_t *oldset)
+{
+	int rc;
+	sigset_t blocked;
+
+	sigfillset(&blocked);
+	rc = sigprocmask(SIG_BLOCK, &blocked, oldset);
+	BUG_ON(rc);
+}
+
+void ocfs2_unblock_signals(sigset_t *oldset)
+{
+	int rc = sigprocmask(SIG_SETMASK, oldset, NULL);
+	BUG_ON(rc);
 }
 
 module_init(ocfs2_init);
