@@ -168,9 +168,16 @@ struct rpc_xprt {
 	unsigned int		max_reqs;	/* total slots */
 	unsigned long		state;		/* transport state */
 	unsigned char		shutdown   : 1,	/* being shut down */
-				resvport   : 1, /* use a reserved port */
-				swapper    : 1; /* we're swapping over this
+#ifndef __GENKSYMS__
+				resvport   : 1; /* use a reserved port */
+	unsigned int		swapper; 	/* we're swapping over this
 						   transport */
+#else
+				resvport   : 1, /* use a reserved port */
+				swapper	   : 1;	/* we're swapping over this
+						   transport */
+#endif
+
 	unsigned int		bind_index;	/* bind function index */
 
 	/*
