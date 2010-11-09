@@ -27,6 +27,7 @@
 #include <linux/pci.h>
 #include <linux/dmi.h>
 #include <linux/slab.h>
+#include <linux/completion.h>
 #include "VersionInfo.h"
 #include "osd.h"
 #include "logging.h"
@@ -353,6 +354,8 @@ static int vmbus_bus_init(int (*drv_init)(struct hv_driver *drv))
 
 
 	vmbus_drv_obj->GetChannelOffers();
+
+	wait_for_completion(&hv_channel_ready);
 
 cleanup:
 	return ret;
