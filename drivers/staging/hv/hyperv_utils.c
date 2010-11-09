@@ -24,6 +24,8 @@
 #include <linux/slab.h>
 #include <linux/sysctl.h>
 #include <linux/reboot.h>
+#include <linux/dmi.h>
+#include <linux/pci.h>
 
 #include "logging.h"
 #include "osd.h"
@@ -238,6 +240,28 @@ static void heartbeat_onchannelcallback(void *context)
 
 	kfree(buf);
 }
+
+static const struct pci_device_id __initconst
+hv_utils_pci_table[] __maybe_unused = {
+	{ PCI_DEVICE(0x1414, 0x5353) }, /* Hyper-V emulated VGA controller */
+	{ 0 }
+};
+MODULE_DEVICE_TABLE(pci, hv_utils_pci_table);
+
+static const struct dmi_system_id __initconst
+hv_utils_dmi_table[] __maybe_unused  = {
+	{
+		.ident = "Hyper-V",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Virtual Machine"),
+			DMI_MATCH(DMI_BOARD_NAME, "Virtual Machine"),
+		},
+	},
+	{ },
+};
+MODULE_DEVICE_TABLE(dmi, hv_utils_dmi_table);
+
 
 static int __init init_hyperv_utils(void)
 {
