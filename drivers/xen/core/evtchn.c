@@ -362,6 +362,33 @@ asmlinkage void __irq_entry evtchn_do_upcall(struct pt_regs *regs)
 #else
 		barrier();
 #endif
+
+		/*
+		 * Handle timer interrupts before all others, so that all
+		 * hardirq handlers see an up-to-date system time even if we
+		 * have just woken from a long idle period.
+		 */
+#ifdef PER_CPU_VIRQ_IRQ
+		if ((irq = percpu_read(virq_to_irq[VIRQ_TIMER])) != -1) {
+			port = evtchn_from_irq(irq);
+#else
+		port = percpu_read(virq_to_evtchn[VIRQ_TIMER]);
+		if (VALID_EVTCHN(port)) {
+#endif
+			l1i = port / BITS_PER_LONG;
+			l2i = port % BITS_PER_LONG;
+			if (active_evtchns(l1i) & (1ul<<l2i)) {
+				mask_evtchn(port);
+				clear_evtchn(port);
+#ifndef PER_CPU_VIRQ_IRQ
+				irq = evtchn_to_irq[port];
+				BUG_ON(irq == -1);
+#endif
+				if (!handle_irq(irq, regs))
+					BUG();
+			}
+		}
+
 		l1 = vcpu_info_xchg(evtchn_pending_sel, 0);
 
 		start_l1i = l1i = percpu_read(current_l1i);

@@ -68,7 +68,7 @@ static int xen_cx_notifier(struct acpi_processor *pr, int action)
 
 		/* Get dependency relationships */
 		if (cx->csd_count) {
-			printk("Wow! _CSD is found. Not support for now!\n");
+			pr_warning("_CSD found: Not supported for now!\n");
 			kfree(buf);
 			return -EINVAL;
 		} else {
@@ -81,7 +81,7 @@ static int xen_cx_notifier(struct acpi_processor *pr, int action)
 	}
 
 	if (!count) {
-		printk("No available Cx info for cpu %d\n", pr->acpi_id);
+		pr_info("No available Cx info for cpu %d\n", pr->acpi_id);
 		kfree(buf);
 		return -EINVAL;
 	}
@@ -181,9 +181,94 @@ static int xen_tx_notifier(struct acpi_processor *pr, int action)
 {
 	return -EINVAL;
 }
+
+#ifdef CONFIG_ACPI_HOTPLUG_CPU
+static int get_apic_id(acpi_handle handle)
+{
+	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
+	union acpi_object *obj;
+	union {
+		struct acpi_subtable_header *header;
+		struct acpi_madt_local_apic *lapic;
+		struct acpi_madt_local_x2apic *x2apic;
+	} apic;
+	int physid = -EINVAL;
+
+	if (ACPI_FAILURE(acpi_evaluate_object(handle, "_MAT", NULL, &buffer)))
+		return -EINVAL;
+
+	if (!buffer.length || !buffer.pointer)
+		return -EINVAL;
+
+	obj = buffer.pointer;
+	if (obj->type != ACPI_TYPE_BUFFER
+	    || obj->buffer.length < sizeof(*apic.header)) {
+		kfree(buffer.pointer);
+		return -EINVAL;
+	}
+
+	apic.header = (struct acpi_subtable_header *)obj->buffer.pointer;
+
+	switch (apic.header->type) {
+	case ACPI_MADT_TYPE_LOCAL_APIC:
+		if (obj->buffer.length >= sizeof(*apic.lapic)
+		    && apic.lapic->lapic_flags & ACPI_MADT_ENABLED)
+			physid = apic.lapic->id;
+		break;
+	case ACPI_MADT_TYPE_LOCAL_X2APIC:
+		if (obj->buffer.length >= sizeof(*apic.x2apic)
+		    && apic.x2apic->lapic_flags & ACPI_MADT_ENABLED)
+			physid = apic.x2apic->local_apic_id;
+		break;
+	}
+
+	kfree(buffer.pointer);
+
+	return physid;
+}
+#endif
+
 static int xen_hotplug_notifier(struct acpi_processor *pr, int event)
 {
-	return -EINVAL;
+	int ret = -EINVAL;
+#ifdef CONFIG_ACPI_HOTPLUG_CPU
+	uint32_t apic_id;
+	unsigned long long pxm;
+	acpi_status status = 0;
+	xen_platform_op_t op = {
+		.interface_version  = XENPF_INTERFACE_VERSION,
+	};
+
+	apic_id = get_apic_id(pr->handle);
+	if (apic_id < 0) {
+		pr_warning("can't get apic_id for acpi_id %#x\n",
+			   pr->acpi_id);
+		return -ENODATA;
+	}
+
+	status = acpi_evaluate_integer(pr->handle, "_PXM", NULL, &pxm);
+	if (ACPI_FAILURE(status)) {
+		pr_warning("can't get pxm for acpi_id %#x\n",
+			   pr->acpi_id);
+		return -ENODATA;
+	}
+
+	switch (event) {
+	case HOTPLUG_TYPE_ADD:
+		op.cmd = XENPF_cpu_hotadd;
+		op.u.cpu_add.apic_id = apic_id;
+		op.u.cpu_add.acpi_id = pr->acpi_id;
+		op.u.cpu_add.pxm = pxm;
+		ret = HYPERVISOR_platform_op(&op);
+		break;
+	case HOTPLUG_TYPE_REMOVE:
+		pr_warning("Xen doesn't support CPU hot remove\n");
+		ret = -EOPNOTSUPP;
+		break;
+	}
+#endif
+
+	return ret;
 }
 
 static struct processor_extcntl_ops xen_extcntl_ops = {
@@ -194,8 +279,10 @@ void arch_acpi_processor_init_extcntl(const struct processor_extcntl_ops **ops)
 {
 	unsigned int pmbits = (xen_start_info->flags & SIF_PM_MASK) >> 8;
 
+#ifndef CONFIG_ACPI_HOTPLUG_CPU
 	if (!pmbits)
 		return;
+#endif
 	if (pmbits & XEN_PROCESSOR_PM_CX)
 		xen_extcntl_ops.pm_ops[PM_TYPE_IDLE] = xen_cx_notifier;
 	if (pmbits & XEN_PROCESSOR_PM_PX)

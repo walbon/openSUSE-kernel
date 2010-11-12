@@ -336,7 +336,7 @@ config ACPI_CONTAINER
 
 config ACPI_HOTPLUG_MEMORY
 	tristate "Memory Hotplug"
-	depends on MEMORY_HOTPLUG
+	depends on MEMORY_HOTPLUG || XEN_PRIVILEGED_GUEST
 	default n
 	help
 	  This driver supports ACPI memory hotplug.  The driver

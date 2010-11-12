@@ -86,7 +86,7 @@ static int acpi_processor_remove(struct acpi_device *device, int type);
 static int acpi_processor_info_open_fs(struct inode *inode, struct file *file);
 #endif
 static void acpi_processor_notify(struct acpi_device *device, u32 event);
-static acpi_status acpi_processor_hotadd_init(acpi_handle handle, int *p_cpu);
+static acpi_status acpi_processor_hotadd_init(struct acpi_processor *pr);
 static int acpi_processor_handle_eject(struct acpi_processor *pr);
 
 
@@ -660,8 +660,7 @@ static int acpi_processor_get_info(struct acpi_device *device)
 	 *  they are physically not present.
 	 */
 	if (pr->id == -1) {
-		if (ACPI_FAILURE
-		    (acpi_processor_hotadd_init(pr->handle, &pr->id)) &&
+		if (ACPI_FAILURE(acpi_processor_hotadd_init(pr)) &&
 		    get_cpu_id(pr->handle, ~device_declaration,
 			       pr->acpi_id) < 0) {
 			return -ENODEV;
@@ -1120,11 +1119,24 @@ processor_walk_namespace_cb(acpi_handle handle,
 	return (AE_OK);
 }
 
-static acpi_status acpi_processor_hotadd_init(acpi_handle handle, int *p_cpu)
+static acpi_status acpi_processor_hotadd_init(struct acpi_processor *pr)
 {
+	acpi_handle handle = pr->handle;
+	int *p_cpu = &pr->id;
+
+#ifdef CONFIG_XEN
+	if (xen_pcpu_index(pr->acpi_id, 1) != -1)
+		return AE_OK;
+#endif
 
 	if (!is_processor_present(handle)) {
 		return AE_ERROR;
+	}
+
+	if (processor_cntl_external()) {
+		processor_notify_external(pr, PROCESSOR_HOTPLUG,
+					  HOTPLUG_TYPE_ADD);
+		return AE_OK;
 	}
 
 	if (acpi_map_lsapic(handle, p_cpu))
@@ -1140,10 +1152,11 @@ static acpi_status acpi_processor_hotadd_init(acpi_handle handle, int *p_cpu)
 
 static int acpi_processor_handle_eject(struct acpi_processor *pr)
 {
-#ifdef CONFIG_XEN
-	if (pr->id == -1)
+	if (processor_cntl_external()) {
+		processor_notify_external(pr, PROCESSOR_HOTPLUG,
+					  HOTPLUG_TYPE_REMOVE);
 		return (0);
-#endif
+	}
 
 	if (cpu_online(pr->id))
 		cpu_down(pr->id);
@@ -1153,7 +1166,7 @@ static int acpi_processor_handle_eject(struct acpi_processor *pr)
 	return (0);
 }
 #else
-static acpi_status acpi_processor_hotadd_init(acpi_handle handle, int *p_cpu)
+static acpi_status acpi_processor_hotadd_init(struct acpi_processor *pr)
 {
 	return AE_ERROR;
 }

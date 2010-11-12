@@ -30,6 +30,7 @@ struct pcifront_device {
 
 	int evtchn;
 	int gnt_ref;
+	int irq;
 
 	/* Lock this when doing any operations in sh_info */
 	spinlock_t sh_info_lock;

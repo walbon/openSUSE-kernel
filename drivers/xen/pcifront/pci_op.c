@@ -416,7 +416,7 @@ void pci_frontend_disable_msi(struct pci_dev* dev)
 #endif /* CONFIG_PCI_MSI */
 
 /* Claim resources for the PCI frontend as-is, backend won't allow changes */
-static int pcifront_claim_resource(struct pci_dev *dev, void *data)
+static int __devinit pcifront_claim_resource(struct pci_dev *dev, void *data)
 {
 	struct pcifront_device *pdev = data;
 	int i;
@@ -531,19 +531,17 @@ int __devinit pcifront_rescan_root(struct pcifront_device *pdev,
 		}
 
 		d = pci_scan_single_device(b, devfn);
-		if (d) {
-			int err;
-
+		if (d)
 			dev_info(&pdev->xdev->dev, "New device on "
 				 "%04x:%02x:%02x.%02x found.\n", domain, bus,
 				 PCI_SLOT(devfn), PCI_FUNC(devfn));
-			err = pci_bus_add_device(d);
-			if (err)
-				dev_err(&pdev->xdev->dev,
-				        "error %d adding device, continuing.\n",
-					err);
-		}
 	}
+
+	/* Claim resources before going "live" with our devices */
+	pci_walk_bus(b, pcifront_claim_resource, pdev);
+
+	/* Create SysFS and notify udev of the devices. Aka: "going live" */
+	pci_bus_add_devices(b);
 
 	return 0;
 }
