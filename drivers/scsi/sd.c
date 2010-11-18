@@ -954,8 +954,32 @@ static int sd_sync_cache(struct scsi_disk *sdkp)
 
 	if (res) {
 		sd_print_result(sdkp, res);
+
 		if (driver_byte(res) & DRIVER_SENSE)
 			sd_print_sense_hdr(sdkp, &sshdr);
+			/* we need to evaluate the error return  */
+			if ((scsi_sense_valid(&sshdr) &&
+				/* 0x3a is medium not present */
+				sshdr.asc == 0x3a))
+					/* this is no error here */
+					return 0;
+
+			switch (host_byte(res)) {
+			/* ignore errors due to racing a disconnection */
+			case DID_BAD_TARGET:
+			case DID_NO_CONNECT:
+				return 0;
+			/* signal the upper layer it might try again */
+			case DID_BUS_BUSY:
+			case DID_IMM_RETRY:
+			case DID_REQUEUE:
+			case DID_SOFT_ERROR:
+				return -EBUSY;
+			default:
+				return -EIO;
+		}
+	} else {
+		return 0;
 	}
 
 	if (res)
@@ -2289,9 +2313,17 @@ static int sd_start_stop_device(struct scsi_disk *sdkp, int start)
 		sd_print_result(sdkp, res);
 		if (driver_byte(res) & DRIVER_SENSE)
 			sd_print_sense_hdr(sdkp, &sshdr);
+		if ((scsi_sense_valid(&sshdr) &&
+			/* 0x3a is medium not present */
+			sshdr.asc == 0x3a))
+			res = 0;
 	}
 
-	return res;
+	/* SCSI error codes must not go to the generic layer */
+	if (res)
+		return -EIO;
+
+	return 0;
 }
 
 /*
@@ -2337,6 +2369,10 @@ static int sd_suspend(struct device *dev, pm_message_t mesg)
 	if ((mesg.event & PM_EVENT_SLEEP) && sdkp->device->manage_start_stop) {
 		sd_printk(KERN_NOTICE, sdkp, "Stopping disk\n");
 		ret = sd_start_stop_device(sdkp, 0);
+
+		/* an error is not worth aborting a system sleep */
+		if (!(mesg.event & PM_EVENT_AUTO))
+			ret = 0;
 	}
 
 done:

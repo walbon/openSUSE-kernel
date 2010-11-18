@@ -88,7 +88,7 @@ set_cpu_sibling_map(unsigned int cpu)
 	cpu_data(cpu).booted_cores = 1;
 }
 
-static void
+static void __cpuinit
 remove_siblinginfo(unsigned int cpu)
 {
 	cpu_data(cpu).phys_proc_id = BAD_APICID;
@@ -361,7 +361,7 @@ static int __init initialize_cpu_present_map(void)
 }
 core_initcall(initialize_cpu_present_map);
 
-int __cpuexit __cpu_disable(void)
+int __cpuinit __cpu_disable(void)
 {
 	unsigned int cpu = smp_processor_id();
 
@@ -427,6 +427,7 @@ void __ref play_dead(void)
 	idle_task_exit();
 	local_irq_disable();
 	cpumask_clear_cpu(smp_processor_id(), cpu_initialized_mask);
+	cpumask_clear_cpu(smp_processor_id(), vcpu_initialized_mask);
 	preempt_enable_no_resched();
 	VOID(HYPERVISOR_vcpu_op(VCPUOP_down, smp_processor_id(), NULL));
 #ifdef CONFIG_HOTPLUG_CPU

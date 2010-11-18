@@ -798,6 +798,9 @@ void __init setup_arch(char **cmdline_p)
 		/* Register a call for panic conditions. */
 		atomic_notifier_chain_register(&panic_notifier_list, &xen_panic_block);
 	}
+
+	set_iopl.iopl = 1;
+	WARN_ON(HYPERVISOR_physdev_op(PHYSDEVOP_set_iopl, &set_iopl));
 #endif /* CONFIG_XEN */
 
 #ifdef CONFIG_X86_32
@@ -1345,9 +1348,6 @@ void __init setup_arch(char **cmdline_p)
 #else /* CONFIG_XEN */
 	if (is_initial_xendomain())
 		e820_setup_gap();
-
-	set_iopl.iopl = 1;
-	WARN_ON(HYPERVISOR_physdev_op(PHYSDEVOP_set_iopl, &set_iopl));
 
 #ifdef CONFIG_VT
 #ifdef CONFIG_DUMMY_CONSOLE

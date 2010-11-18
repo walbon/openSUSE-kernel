@@ -388,10 +388,18 @@ nomem_out:
 
 /* Interface functions. */
 
+static char *gntdev_devnode(struct device *dev, mode_t *mode)
+{
+	return kstrdup("xen/" GNTDEV_NAME, GFP_KERNEL);
+}
+
+static struct device_type gntdev_type = {
+	.devnode = gntdev_devnode
+};
+
 /* Initialises the driver. Called when the module is loaded. */
 static int __init gntdev_init(void)
 {
-	struct class *class;
 	struct device *device;
 
 	if (!is_running_on_xen()) {
@@ -399,7 +407,7 @@ static int __init gntdev_init(void)
 		return -ENODEV;
 	}
 
-	gntdev_major = register_chrdev(0, GNTDEV_NAME, &gntdev_fops);
+	gntdev_major = __register_chrdev(0, 0, 1, GNTDEV_NAME, &gntdev_fops);
 	if (gntdev_major < 0)
 	{
 		printk(KERN_ERR "Could not register gntdev device\n");
@@ -410,15 +418,9 @@ static int __init gntdev_init(void)
 	 * device, and output the major number so that the device can be
 	 * created manually using mknod.
 	 */
-	if ((class = get_xen_class()) == NULL) {
-		printk(KERN_ERR "Error setting up xen_class\n");
-		printk(KERN_ERR "gntdev created with major number = %d\n", 
-		       gntdev_major);
-		return 0;
-	}
-
-	device = device_create(class, NULL, MKDEV(gntdev_major, 0),
-			       NULL, GNTDEV_NAME);
+	device = xen_class_device_create(&gntdev_type, NULL,
+					 MKDEV(gntdev_major, 0),
+					 NULL, GNTDEV_NAME);
 	if (IS_ERR(device)) {
 		printk(KERN_ERR "Error creating gntdev device in xen_class\n");
 		printk(KERN_ERR "gntdev created with major number = %d\n",
@@ -436,7 +438,7 @@ static void __exit gntdev_exit(void)
 	struct class *class;
 	if ((class = get_xen_class()) != NULL)
 		device_destroy(class, MKDEV(gntdev_major, 0));
-	unregister_chrdev(gntdev_major, GNTDEV_NAME);
+	__unregister_chrdev(gntdev_major, 0, 1, GNTDEV_NAME);
 }
 
 /* Called when the device is opened. */
@@ -578,7 +580,7 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 	vma->vm_mm->context.has_foreign_mappings = 1;
 #endif
 
-    exit_ret = -ENOMEM;
+	exit_ret = -ENOMEM;
 	for (i = 0; i < size; ++i) {
 
 		flags = GNTMAP_host_map;
@@ -599,8 +601,8 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 		ret = HYPERVISOR_grant_table_op(GNTTABOP_map_grant_ref, 
 						&op, 1);
 		BUG_ON(ret);
-		if (op.status) {
-            if(op.status != GNTST_eagain)
+		if (op.status != GNTST_okay) {
+			if (op.status != GNTST_eagain)
 				printk(KERN_ERR "Error mapping the grant reference "
 				       "into the kernel (%d). domid = %d; ref = %d\n",
 				       op.status,
@@ -608,9 +610,9 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 				       .u.valid.domid,
 				       private_data->grants[slot_index+i]
 				       .u.valid.ref);
-            else 
-                /* Propagate eagain instead of trying to fix it up */
-                exit_ret = -EAGAIN;
+			else
+				/* Propagate eagain instead of trying to fix it up */
+				exit_ret = -EAGAIN;
 			goto undo_map_out;
 		}
 
@@ -679,7 +681,7 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 			ret = HYPERVISOR_grant_table_op(GNTTABOP_map_grant_ref,
 							&op, 1);
 			BUG_ON(ret);
-			if (op.status) {
+			if (op.status != GNTST_okay) {
 				printk(KERN_ERR "Error mapping the grant "
 				       "reference into user space (%d). domid "
 				       "= %d; ref = %d\n", op.status,
@@ -687,9 +689,9 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 				       .valid.domid,
 				       private_data->grants[slot_index+i].u
 				       .valid.ref);
-                /* This should never happen after we've mapped into 
-                 * the kernel space. */
-                BUG_ON(op.status == GNTST_eagain);
+				/* This should never happen after we've mapped into
+				* the kernel space. */
+				BUG_ON(op.status == GNTST_eagain);
 				goto undo_map_out;
 			}
 			
@@ -713,7 +715,7 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 		}
 
 	}
-    exit_ret = 0;
+	exit_ret = 0;
 
 	up_write(&private_data->grants_sem);
 	return exit_ret;
@@ -786,7 +788,7 @@ static pte_t gntdev_clear_pte(struct vm_area_struct *vma, unsigned long addr,
 			ret = HYPERVISOR_grant_table_op(
 				GNTTABOP_unmap_grant_ref, &op, 1);
 			BUG_ON(ret);
-			if (op.status)
+			if (op.status != GNTST_okay)
 				printk("User unmap grant status = %d\n", 
 				       op.status);
 		} else {
@@ -803,7 +805,7 @@ static pte_t gntdev_clear_pte(struct vm_area_struct *vma, unsigned long addr,
 		ret = HYPERVISOR_grant_table_op(GNTTABOP_unmap_grant_ref, 
 						&op, 1);
 		BUG_ON(ret);
-		if (op.status)
+		if (op.status != GNTST_okay)
 			printk("Kernel unmap grant status = %d\n", op.status);
 
 

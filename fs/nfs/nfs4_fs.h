@@ -210,6 +210,7 @@ extern int nfs4_open_revalidate(struct inode *, struct dentry *, int, struct nam
 extern int nfs4_server_capabilities(struct nfs_server *server, struct nfs_fh *fhandle);
 extern int nfs4_proc_fs_locations(struct inode *dir, const struct qstr *name,
 		struct nfs4_fs_locations *fs_locations, struct page *page);
+extern void nfs4_release_lockowner(const struct nfs4_lock_state *);
 
 extern struct nfs4_state_recovery_ops *nfs4_reboot_recovery_ops[];
 extern struct nfs4_state_recovery_ops *nfs4_nograce_recovery_ops[];

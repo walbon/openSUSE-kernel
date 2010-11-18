@@ -89,10 +89,13 @@ int processor_notify_external(struct acpi_processor *pr, int event, int type)
 
 		ret = processor_extcntl_ops->pm_ops[type](pr, event);
 		break;
+#ifdef CONFIG_ACPI_HOTPLUG_CPU
 	case PROCESSOR_HOTPLUG:
 		if (processor_extcntl_ops->hotplug)
 			ret = processor_extcntl_ops->hotplug(pr, type);
+		xen_pcpu_hotplug(type);
 		break;
+#endif
 	default:
 		printk(KERN_ERR "Unsupport processor events %d.\n", event);
 		break;
