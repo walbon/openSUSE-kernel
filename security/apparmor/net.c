@@ -89,7 +89,7 @@ static int aa_audit_net(struct aa_profile *profile, struct aa_audit_net *sa)
 			return PROFILE_COMPLAIN(profile) ? 0 : sa->base.error;
 	}
 
-	return aa_audit(type, profile, (struct aa_audit *)sa, audit_cb);
+	return aa_audit(type, profile, &sa->base, audit_cb);
 }
 
 int aa_net_perm(struct aa_profile *profile, char *operation, int int_state,
@@ -110,11 +110,10 @@ int aa_net_perm(struct aa_profile *profile, char *operation, int int_state,
 
 	family_mask = profile->net.allowed[family];
 
-	sa.base.error = (family_mask & (1 << type)) ? 0 : -EACCES;
-
 	memset(&sa, 0, sizeof(sa));
 	sa.base.operation = operation;
 	sa.base.gfp_mask = int_state ? GFP_ATOMIC : GFP_KERNEL;
+	sa.base.error = (family_mask & (1 << type)) ? 0 : -EACCES;
 	sa.family = family;
 	sa.type = type;
 	sa.protocol = protocol;
