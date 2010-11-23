@@ -187,11 +187,10 @@ struct fw_ohci {
 	int node_id;
 	int generation;
 	int request_generation;	/* for timestamping incoming requests */
-	atomic_t bus_seconds;
+	unsigned quirks;
 
+	atomic_t bus_seconds;
 	bool use_dualbuffer;
-	bool old_uninorth;
-	bool bus_reset_packet_quirk;
 
 	/*
 	 * Spinlock for accessing fw_ohci data.  Never call out of
@@ -248,6 +247,26 @@ static inline struct fw_ohci *fw_ohci(struct fw_card *card)
 #define OHCI_VERSION_1_1		0x010010
 
 static char ohci_driver_name[] = KBUILD_MODNAME;
+
+#define PCI_DEVICE_ID_TI_TSB12LV22	0x8009
+
+#define QUIRK_CYCLE_TIMER		1
+#define QUIRK_RESET_PACKET		2
+#define QUIRK_BE_HEADERS		4
+
+/* In case of multiple matches in ohci_quirks[], only the first one is used. */
+static const struct {
+	unsigned short vendor, device, flags;
+} ohci_quirks[] = {
+	{PCI_VENDOR_ID_TI,	PCI_DEVICE_ID_TI_TSB12LV22, QUIRK_CYCLE_TIMER |
+							    QUIRK_RESET_PACKET},
+	{PCI_VENDOR_ID_TI,	PCI_ANY_ID,	QUIRK_RESET_PACKET},
+	{PCI_VENDOR_ID_AL,	PCI_ANY_ID,	QUIRK_CYCLE_TIMER},
+	{PCI_VENDOR_ID_NEC,	PCI_ANY_ID,	QUIRK_CYCLE_TIMER},
+	{PCI_VENDOR_ID_VIA,	PCI_ANY_ID,	QUIRK_CYCLE_TIMER},
+	{PCI_VENDOR_ID_RICOH,	PCI_ANY_ID,	QUIRK_CYCLE_TIMER},
+	{PCI_VENDOR_ID_APPLE,	PCI_DEVICE_ID_APPLE_UNI_N_FW, QUIRK_BE_HEADERS},
+};
 
 #ifdef CONFIG_FIREWIRE_OHCI_DEBUG
 
@@ -524,7 +543,7 @@ static void ar_context_release(struct ar_context *ctx)
 
 #if defined(CONFIG_PPC_PMAC) && defined(CONFIG_PPC32)
 #define cond_le32_to_cpu(v) \
-	(ohci->old_uninorth ? (__force __u32)(v) : le32_to_cpu(v))
+	(ohci->quirks & QUIRK_BE_HEADERS ? (__force __u32)(v) : le32_to_cpu(v))
 #else
 #define cond_le32_to_cpu(v) le32_to_cpu(v)
 #endif
@@ -605,7 +624,7 @@ static __le32 *handle_ar_packet(struct ar_context *ctx, __le32 *buffer)
 	 * at a slightly incorrect time (in bus_reset_tasklet).
 	 */
 	if (evt == OHCI1394_evt_bus_reset) {
-		if (!ohci->bus_reset_packet_quirk)
+		if (!(ohci->quirks & QUIRK_RESET_PACKET))
 			ohci->request_generation = (p.header[2] >> 16) & 0xff;
 	} else if (ctx == &ohci->ar_request_ctx) {
 		fw_core_handle_request(&ohci->card, &p);
@@ -1328,7 +1347,7 @@ static void bus_reset_tasklet(unsigned long data)
 	context_stop(&ohci->at_response_ctx);
 	reg_write(ohci, OHCI1394_IntEventClear, OHCI1394_busReset);
 
-	if (ohci->bus_reset_packet_quirk)
+	if (ohci->quirks & QUIRK_RESET_PACKET)
 		ohci->request_generation = generation;
 
 	/*
@@ -1785,14 +1804,58 @@ static int ohci_enable_phys_dma(struct fw_card *card,
 #endif /* CONFIG_FIREWIRE_OHCI_REMOTE_DMA */
 }
 
+static inline u32 cycle_timer_ticks(u32 cycle_timer)
+{
+	u32 ticks;
+
+	ticks = cycle_timer & 0xfff;
+	ticks += 3072 * ((cycle_timer >> 12) & 0x1fff);
+	ticks += (3072 * 8000) * (cycle_timer >> 25);
+	return ticks;
+}
+
 static u64 ohci_get_bus_time(struct fw_card *card)
 {
 	struct fw_ohci *ohci = fw_ohci(card);
-	u32 cycle_time;
+	u32 c0, c1, c2;
+	u32 t0, t1, t2;
+	s32 diff01, diff12;
 	u64 bus_time;
 
-	cycle_time = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
-	bus_time = ((u64)atomic_read(&ohci->bus_seconds) << 32) | cycle_time;
+	if (!ohci->quirks & QUIRK_CYCLE_TIMER) {
+		c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+	} else {
+		/*
+		 * Some controllers exhibit one or more of the following bugs
+		 * when updating the iso cycle timer register:
+		 *  - When the lowest six bits are wrapping around to zero,
+		 *    a read that happens at the same time will return garbage
+		 *    in the lowest ten bits.
+		 *  - When the cycleOffset field wraps around to zero, the
+		 *    cycleCount field is not incremented for about 60 ns.
+		 *  - Occasionally, the entire register reads zero.
+		 *
+		 * To catch these, we read the register three times and ensure
+		 * that the difference between each two consecutive reads is
+		 * approximately the same, i.e., less than twice the other.
+		 * Furthermore, any negative difference indicates an error.
+		 * (A PCI read should take at least 20 ticks of the 24.576 MHz
+		 * timer to execute, so we have enough precision to compute the
+		 * ratio of the differences.)
+		 */
+		do {
+			c0 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+			c1 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+			c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+			t0 = cycle_timer_ticks(c0);
+			t1 = cycle_timer_ticks(c1);
+			t2 = cycle_timer_ticks(c2);
+			diff01 = t1 - t0;
+			diff12 = t2 - t1;
+		} while (diff01 <= 0 || diff12 <= 0 ||
+			 diff01 / diff12 >= 2 || diff12 / diff01 >= 2);
+	}
+	bus_time = ((u64)atomic_read(&ohci->bus_seconds) << 32) | c2;
 
 	return bus_time;
 }
@@ -2420,7 +2483,7 @@ static int __devinit pci_probe(struct pci_dev *dev,
 	struct fw_ohci *ohci;
 	u32 bus_options, max_receive, link_speed, version;
 	u64 guid;
-	int err;
+	int i, err;
 	size_t size;
 
 	ohci = kzalloc(sizeof(*ohci), GFP_KERNEL);
@@ -2483,11 +2546,13 @@ static int __devinit pci_probe(struct pci_dev *dev,
 		ohci->use_dualbuffer = false;
 #endif
 
-#if defined(CONFIG_PPC_PMAC) && defined(CONFIG_PPC32)
-	ohci->old_uninorth = dev->vendor == PCI_VENDOR_ID_APPLE &&
-			     dev->device == PCI_DEVICE_ID_APPLE_UNI_N_FW;
-#endif
-	ohci->bus_reset_packet_quirk = dev->vendor == PCI_VENDOR_ID_TI;
+	for (i = 0; i < ARRAY_SIZE(ohci_quirks); i++)
+		if (ohci_quirks[i].vendor == dev->vendor &&
+		    (ohci_quirks[i].device == dev->device ||
+		     ohci_quirks[i].device == (unsigned short)PCI_ANY_ID)) {
+			ohci->quirks = ohci_quirks[i].flags;
+			break;
+		}
 
 	ar_context_init(&ohci->ar_request_ctx, ohci,
 			OHCI1394_AsReqRcvContextControlSet);
