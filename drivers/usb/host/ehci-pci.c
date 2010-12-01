@@ -107,6 +107,18 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 	if (retval)
 		return retval;
 
+	if ((pdev->vendor == PCI_VENDOR_ID_AMD && pdev->device == 0x7808) ||
+	    (pdev->vendor == PCI_VENDOR_ID_ATI && pdev->device == 0x4396)) {
+		/* On AMD SB700/SB800/Hudson-2/3 platforms, EHCI controllers
+		 * may encounter bugs when there is NULL pointer in periodic
+		 * frame list table. To avoid the issue, there should always
+		 * be a valid pointer pointer to inactive qh in the table.
+		 */
+		ehci->use_dummy_qh = 1;
+		ehci_info(ehci, "applying AMD SB700/SB800/Hudson-2/3 EHCI "
+				"dummy qh workaround\n");
+	}
+
 	/* data structure init */
 	retval = ehci_init(hcd);
 	if (retval)
