@@ -3089,29 +3089,26 @@ void ixgbe_down(struct ixgbe_adapter *adapter)
 	/* signal that we are down to the interrupt handler */
 	set_bit(__IXGBE_DOWN, &adapter->state);
 
-	/* power down the optics */
-	if (hw->phy.multispeed_fiber)
-		hw->mac.ops.disable_tx_laser(hw);
-
 	/* disable receives */
 	rxctrl = IXGBE_READ_REG(hw, IXGBE_RXCTRL);
 	IXGBE_WRITE_REG(hw, IXGBE_RXCTRL, rxctrl & ~IXGBE_RXCTRL_RXEN);
-
-	netif_tx_disable(netdev);
 
 	IXGBE_WRITE_FLUSH(hw);
 	msleep(10);
 
 	netif_tx_stop_all_queues(netdev);
 
-	ixgbe_irq_disable(adapter);
-
-	ixgbe_napi_disable_all(adapter);
-
 	clear_bit(__IXGBE_SFP_MODULE_NOT_FOUND, &adapter->state);
 	del_timer_sync(&adapter->sfp_timer);
 	del_timer_sync(&adapter->watchdog_timer);
 	cancel_work_sync(&adapter->watchdog_task);
+
+	netif_carrier_off(netdev);
+	netif_tx_disable(netdev);
+
+	ixgbe_irq_disable(adapter);
+
+	ixgbe_napi_disable_all(adapter);
 
 	if (adapter->flags & IXGBE_FLAG_FDIR_HASH_CAPABLE ||
 	    adapter->flags & IXGBE_FLAG_FDIR_PERFECT_CAPABLE)
@@ -3130,7 +3127,9 @@ void ixgbe_down(struct ixgbe_adapter *adapter)
 		                (IXGBE_READ_REG(hw, IXGBE_DMATXCTL) &
 		                 ~IXGBE_DMATXCTL_TE));
 
-	netif_carrier_off(netdev);
+	/* power down the optics */
+	if (hw->phy.multispeed_fiber)
+		hw->mac.ops.disable_tx_laser(hw);
 
 	if (!pci_channel_offline(adapter->pdev))
 		ixgbe_reset(adapter);
@@ -5846,6 +5845,11 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 			if (device_caps & IXGBE_DEVICE_CAPS_FCOE_OFFLOADS)
 				adapter->flags &= ~IXGBE_FLAG_FCOE_CAPABLE;
 		}
+	}
+	if (adapter->flags & IXGBE_FLAG_FCOE_CAPABLE) {
+		netdev->vlan_features |= NETIF_F_FCOE_CRC;
+		netdev->vlan_features |= NETIF_F_FSO;
+		netdev->vlan_features |= NETIF_F_FCOE_MTU;
 	}
 #endif /* IXGBE_FCOE */
 	if (pci_using_dac)
