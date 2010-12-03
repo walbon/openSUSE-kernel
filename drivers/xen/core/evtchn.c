@@ -210,7 +210,11 @@ DEFINE_PER_CPU(int[NR_IPIS], ipi_to_irq) = {[0 ... NR_IPIS-1] = -1};
 
 #ifdef CONFIG_SMP
 
+#if CONFIG_NR_CPUS <= 256
 static u8 cpu_evtchn[NR_EVENT_CHANNELS];
+#else
+static u16 cpu_evtchn[NR_EVENT_CHANNELS];
+#endif
 static DEFINE_PER_CPU(unsigned long[BITS_TO_LONGS(NR_EVENT_CHANNELS)],
 		      cpu_evtchn_mask);
 
@@ -257,7 +261,9 @@ static void init_evtchn_cpu_bindings(void)
 	}
 
 	memset(cpu_evtchn, 0, sizeof(cpu_evtchn));
-	memset(per_cpu(cpu_evtchn_mask, 0), ~0, sizeof(per_cpu(cpu_evtchn_mask, 0)));
+	for_each_possible_cpu(i)
+		memset(per_cpu(cpu_evtchn_mask, i), -!i,
+		       sizeof(per_cpu(cpu_evtchn_mask, i)));
 }
 
 static inline unsigned int cpu_from_evtchn(unsigned int evtchn)
@@ -862,7 +868,9 @@ int bind_virq_to_irqhandler(
 {
 	int irq, retval;
 
-	BUG_IF_VIRQ_PER_CPU(virq);
+#ifndef PER_CPU_VIRQ_IRQ
+	BUG_ON(test_bit(virq, virq_per_cpu));
+#endif
 
 	irq = bind_virq_to_irq(virq, cpu);
 	if (irq < 0)

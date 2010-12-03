@@ -448,29 +448,36 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 	 */
 	if ((card->csd.mmca_vsn >= CSD_SPEC_VER_4) &&
 	    (host->caps & (MMC_CAP_4_BIT_DATA | MMC_CAP_8_BIT_DATA))) {
-		unsigned ext_csd_bit, bus_width;
+		static unsigned ext_csd_bits[] = {
+			EXT_CSD_BUS_WIDTH_8,
+			EXT_CSD_BUS_WIDTH_4,
+			EXT_CSD_BUS_WIDTH_1
+		};
+		static unsigned bus_widths[] = {
+			MMC_BUS_WIDTH_8,
+			MMC_BUS_WIDTH_4,
+			MMC_BUS_WIDTH_1
+		};
+		unsigned idx;
 
-		if (host->caps & MMC_CAP_8_BIT_DATA) {
-			ext_csd_bit = EXT_CSD_BUS_WIDTH_8;
-			bus_width = MMC_BUS_WIDTH_8;
-		} else {
-			ext_csd_bit = EXT_CSD_BUS_WIDTH_4;
-			bus_width = MMC_BUS_WIDTH_4;
+		if (host->caps & MMC_CAP_8_BIT_DATA)
+			idx = 0;
+		else
+			idx = 1;
+		for (; idx < ARRAY_SIZE(bus_widths); idx++) {
+			err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+					 EXT_CSD_BUS_WIDTH, ext_csd_bits[idx]);
+			if (!err) {
+				mmc_set_bus_width(card->host, bus_widths[idx]);
+				err = mmc_bus_test(card, bus_widths[idx]);
+				if (!err)
+					break;
+			}
 		}
-
-		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
-				 EXT_CSD_BUS_WIDTH, ext_csd_bit);
-
-		if (err && err != -EBADMSG)
-			goto free_card;
-
 		if (err) {
-			printk(KERN_WARNING "%s: switch to bus width %d "
-			       "failed\n", mmc_hostname(card->host),
-			       1 << bus_width);
-			err = 0;
-		} else {
-			mmc_set_bus_width(card->host, bus_width);
+			printk(KERN_WARNING "%s: switch to bus width failed\n",
+			       mmc_hostname(card->host));
+			goto free_card;
 		}
 	}
 
