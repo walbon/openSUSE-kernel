@@ -972,7 +972,13 @@ static void fc_fcp_complete_locked(struct fc_fcp_pkt *fsp)
 		}
 		lport->tt.exch_done(seq);
 	}
-	fc_io_compl(fsp);
+	/*
+	 * Some resets driven by SCSI are not I/Os and do not have
+	 * SCSI commands associated with the requests. We should not
+	 * call I/O completion if we do not have a SCSI command.
+	 */
+	if (fsp->cmd)
+		fc_io_compl(fsp);
 }
 
 /**
@@ -1314,27 +1320,27 @@ static void fc_tm_done(struct fc_seq *seq, struct fc_frame *fp, void *arg)
 		 *
 		 * scsi-eh will escalate for when either happens.
 		 */
-		return;
+		goto out;
 	}
 
 	if (fc_fcp_lock_pkt(fsp))
-		return;
+		goto out;
 
 	/*
 	 * raced with eh timeout handler.
 	 */
-	if (!fsp->seq_ptr || !fsp->wait_for_comp) {
-		spin_unlock_bh(&fsp->scsi_pkt_lock);
-		return;
-	}
+	if (!fsp->seq_ptr || !fsp->wait_for_comp)
+		goto out_unlock;
 
 	fh = fc_frame_header_get(fp);
 	if (fh->fh_type != FC_TYPE_BLS)
 		fc_fcp_resp(fsp, fp);
 	fsp->seq_ptr = NULL;
 	fsp->lp->tt.exch_done(seq);
-	fc_frame_free(fp);
+out_unlock:
 	fc_fcp_unlock_pkt(fsp);
+out:
+	fc_frame_free(fp);
 }
 
 /**
@@ -1392,7 +1398,6 @@ static void fc_fcp_rec(struct fc_fcp_pkt *fsp)
 	struct fc_frame *fp;
 	struct fc_rport *rport;
 	struct fc_rport_libfc_priv *rpriv;
-	unsigned int rec_tov;
 
 	lport = fsp->lp;
 	rport = fsp->rport;
@@ -1404,8 +1409,6 @@ static void fc_fcp_rec(struct fc_fcp_pkt *fsp)
 		return;
 	}
 
-	rec_tov = get_fsp_rec_tov(fsp);
-
 	fp = fc_fcp_frame_alloc(lport, sizeof(struct fc_els_rec));
 	if (!fp)
 		goto retry;
@@ -1416,13 +1419,13 @@ static void fc_fcp_rec(struct fc_fcp_pkt *fsp)
 		       FC_FC_FIRST_SEQ | FC_FC_END_SEQ | FC_FC_SEQ_INIT, 0);
 	if (lport->tt.elsct_send(lport, rport->port_id, fp, ELS_REC,
 				 fc_fcp_rec_resp, fsp,
-				 jiffies_to_msecs(rec_tov))) {
+				 2 * lport->r_a_tov)) {
 		fc_fcp_pkt_hold(fsp);		/* hold while REC outstanding */
 		return;
 	}
 retry:
 	if (fsp->recov_retry++ < FC_MAX_RECOV_RETRY)
-		fc_fcp_timer_set(fsp, rec_tov);
+		fc_fcp_timer_set(fsp, get_fsp_rec_tov(fsp));
 	else
 		fc_fcp_recovery(fsp, FC_TIMED_OUT);
 }

@@ -2404,7 +2404,7 @@ EXPORT_SYMBOL(scsi_target_resume);
  *	(which must be a legal transition).  When the device is in this
  *	state, all commands are deferred until the scsi lld reenables
  *	the device with scsi_device_unblock or device_block_tmo fires.
- *	This routine assumes the host_lock is not held on entry.
+ *	This routine assumes the host_lock is held on entry.
  */
 int
 scsi_internal_device_block(struct scsi_device *sdev)
@@ -2448,7 +2448,7 @@ EXPORT_SYMBOL_GPL(scsi_internal_device_block);
  *	This routine transitions the device to the SDEV_RUNNING state
  *	(which must be a legal transition) allowing the midlayer to
  *	goose the queue for this device.  This routine assumes the 
- *	host_lock is not held upon entry.
+ *	host_lock is held upon entry.
  */
 int
 scsi_internal_device_unblock(struct scsi_device *sdev)
@@ -2459,23 +2459,16 @@ scsi_internal_device_unblock(struct scsi_device *sdev)
 	/* 
 	 * Try to transition the scsi device to SDEV_RUNNING
 	 * and goose the device queue if successful.  
-	 * It's possible that an sdev may be blocked before it is
-	 * completely set up.  scsi_sysfs_add_sdev() and scsi_add_lun()
-	 * will unconditionally attempt to transition the sdev to
-	 * SDEV_RUNNING.  To avoid leaving the queue stopped, we
-	 * allow for the sdev to already be in the SDEV_RUNNING state.
 	 */
-	spin_lock_irqsave(q->queue_lock, flags);
-
 	if (sdev->sdev_state == SDEV_BLOCK)
 		sdev->sdev_state = SDEV_RUNNING;
 	else if (sdev->sdev_state == SDEV_CREATED_BLOCK)
 		sdev->sdev_state = SDEV_CREATED;
-	else if (sdev->sdev_state != SDEV_RUNNING || !blk_queue_stopped(q)) {
-		spin_unlock_irqrestore(q->queue_lock, flags);
+	else if (sdev->sdev_state != SDEV_CANCEL &&
+		 sdev->sdev_state != SDEV_OFFLINE)
 		return -EINVAL;
-	}
 
+	spin_lock_irqsave(q->queue_lock, flags);
 	blk_start_queue(q);
 	spin_unlock_irqrestore(q->queue_lock, flags);
 

@@ -560,38 +560,44 @@ EXPORT_SYMBOL(fcoe_ctlr_els_send);
  *
  * Called with lock held and preemption disabled.
  *
- * An FCF is considered old if we have missed three advertisements.
- * That is, there have been no valid advertisement from it for three
- * times its keep-alive period including fuzz.
+ * An FCF is considered old if we have missed two advertisements.
+ * That is, there have been no valid advertisement from it for 2.5
+ * times its keep-alive period.
  *
  * In addition, determine the time when an FCF selection can occur.
  *
  * Also, increment the MissDiscAdvCount when no advertisement is received
  * for the corresponding FCF for 1.5 * FKA_ADV_PERIOD (FC-BB-5 LESB).
+ *
+ * Returns the time in jiffies for the next call.
  */
-static void fcoe_ctlr_age_fcfs(struct fcoe_ctlr *fip)
+static unsigned long fcoe_ctlr_age_fcfs(struct fcoe_ctlr *fip)
 {
 	struct fcoe_fcf *fcf;
 	struct fcoe_fcf *next;
+	unsigned long next_timer = jiffies + msecs_to_jiffies(FIP_VN_KA_PERIOD);
+	unsigned long deadline;
 	unsigned long sel_time = 0;
-	unsigned long mda_time = 0;
 	struct fcoe_dev_stats *stats;
 
 	list_for_each_entry_safe(fcf, next, &fip->fcfs, list) {
-		mda_time = fcf->fka_period + (fcf->fka_period >> 1);
-		if ((fip->sel_fcf == fcf) &&
-		    (time_after(jiffies, fcf->time + mda_time))) {
-			mod_timer(&fip->timer, jiffies + mda_time);
-			stats = per_cpu_ptr(fip->lp->dev_stats,
-					    smp_processor_id());
-			stats->MissDiscAdvCount++;
-			printk(KERN_INFO "libfcoe: host%d: Missing Discovery "
-			       "Advertisement for fab %16.16llx count %lld\n",
-			       fip->lp->host->host_no, fcf->fabric_name,
-			       stats->MissDiscAdvCount);
+		deadline = fcf->time + fcf->fka_period + fcf->fka_period / 2;
+		if (fip->sel_fcf == fcf) {
+			if (time_after(jiffies, deadline)) {
+				stats = per_cpu_ptr(fip->lp->dev_stats,
+						    smp_processor_id());
+				stats->MissDiscAdvCount++;
+				printk(KERN_INFO "libfcoe: host%d: "
+				       "Missing Discovery Advertisement "
+				       "for fab %16.16llx count %lld\n",
+				       fip->lp->host->host_no, fcf->fabric_name,
+				       stats->MissDiscAdvCount);
+			} else if (time_after(next_timer, deadline))
+				next_timer = deadline;
 		}
-		if (time_after(jiffies, fcf->time + fcf->fka_period * 3 +
-			       msecs_to_jiffies(FIP_FCF_FUZZ * 3))) {
+
+		deadline += fcf->fka_period;
+		if (time_after_eq(jiffies, deadline)) {
 			if (fip->sel_fcf == fcf)
 				fip->sel_fcf = NULL;
 			list_del(&fcf->list);
@@ -601,19 +607,20 @@ static void fcoe_ctlr_age_fcfs(struct fcoe_ctlr *fip)
 			stats = per_cpu_ptr(fip->lp->dev_stats,
 					    smp_processor_id());
 			stats->VLinkFailureCount++;
-		} else if (fcoe_ctlr_mtu_valid(fcf) &&
-			   (!sel_time || time_before(sel_time, fcf->time))) {
-			sel_time = fcf->time;
+		} else {
+			if (time_after(next_timer, deadline))
+				next_timer = deadline;
+			if (fcoe_ctlr_mtu_valid(fcf) &&
+			    (!sel_time || time_before(sel_time, fcf->time)))
+				sel_time = fcf->time;
 		}
 	}
-	if (sel_time) {
+	if (sel_time && !fip->sel_fcf && !fip->sel_time) {
 		sel_time += msecs_to_jiffies(FCOE_CTLR_START_DELAY);
 		fip->sel_time = sel_time;
-		if (time_before(sel_time, fip->timer.expires))
-			mod_timer(&fip->timer, sel_time);
-	} else {
-		fip->sel_time = 0;
 	}
+
+	return next_timer;
 }
 
 /**
@@ -789,18 +796,21 @@ static void fcoe_ctlr_recv_adv(struct fcoe_ctlr *fip, struct sk_buff *skb)
 		list_add(&fcf->list, &fip->fcfs);
 	} else {
 		/*
-		 * Flags in advertisements are ignored once the FCF is
-		 * selected.  Flags in unsolicited advertisements are
-		 * ignored after a usable solicited advertisement
-		 * has been received.
+		 * Update the FCF's keep-alive descriptor flags.
+		 * Other flag changes from new advertisements are
+		 * ignored after a solicited advertisement is
+		 * received and the FCF is selectable (usable).
 		 */
-		if (fcf == fip->sel_fcf) {
+		fcf->fd_flags = new.fd_flags;
+		if (!fcoe_ctlr_fcf_usable(fcf))
+			fcf->flags = new.flags;
+
+		if (fcf == fip->sel_fcf && !fcf->fd_flags) {
 			fip->ctlr_ka_time -= fcf->fka_period;
 			fip->ctlr_ka_time += new.fka_period;
 			if (time_before(fip->ctlr_ka_time, fip->timer.expires))
 				mod_timer(&fip->timer, fip->ctlr_ka_time);
-		} else if (!fcoe_ctlr_fcf_usable(fcf))
-			fcf->flags = new.flags;
+		}
 		fcf->fka_period = new.fka_period;
 		memcpy(fcf->fcf_mac, new.fcf_mac, ETH_ALEN);
 	}
@@ -832,7 +842,7 @@ static void fcoe_ctlr_recv_adv(struct fcoe_ctlr *fip, struct sk_buff *skb)
 	 * If this is the first validated FCF, note the time and
 	 * set a timer to trigger selection.
 	 */
-	if (mtu_valid && !fip->sel_time && fcoe_ctlr_fcf_usable(fcf)) {
+	if (mtu_valid && !fip->sel_fcf && fcoe_ctlr_fcf_usable(fcf)) {
 		fip->sel_time = jiffies +
 			msecs_to_jiffies(FCOE_CTLR_START_DELAY);
 		if (!timer_pending(&fip->timer) ||
@@ -1241,7 +1251,7 @@ static void fcoe_ctlr_timeout(unsigned long arg)
 	struct fcoe_ctlr *fip = (struct fcoe_ctlr *)arg;
 	struct fcoe_fcf *sel;
 	struct fcoe_fcf *fcf;
-	unsigned long next_timer = jiffies + msecs_to_jiffies(FIP_VN_KA_PERIOD);
+	unsigned long next_timer;
 
 	spin_lock_bh(&fip->lock);
 	if (fip->state == FIP_ST_DISABLED) {
@@ -1250,13 +1260,16 @@ static void fcoe_ctlr_timeout(unsigned long arg)
 	}
 
 	fcf = fip->sel_fcf;
-	fcoe_ctlr_age_fcfs(fip);
+	next_timer = fcoe_ctlr_age_fcfs(fip);
 
 	sel = fip->sel_fcf;
-	if (!sel && fip->sel_time && time_after_eq(jiffies, fip->sel_time)) {
-		fcoe_ctlr_select(fip);
-		sel = fip->sel_fcf;
-		fip->sel_time = 0;
+	if (!sel && fip->sel_time) {
+		if (time_after_eq(jiffies, fip->sel_time)) {
+			fcoe_ctlr_select(fip);
+			sel = fip->sel_fcf;
+			fip->sel_time = 0;
+		} else if (time_after(next_timer, fip->sel_time))
+			next_timer = fip->sel_time;
 	}
 
 	if (sel != fcf) {
@@ -1269,6 +1282,8 @@ static void fcoe_ctlr_timeout(unsigned long arg)
 			fip->port_ka_time = jiffies +
 				msecs_to_jiffies(FIP_VN_KA_PERIOD);
 			fip->ctlr_ka_time = jiffies + sel->fka_period;
+			if (time_after(next_timer, fip->ctlr_ka_time))
+				next_timer = fip->ctlr_ka_time;
 		} else {
 			printk(KERN_NOTICE "libfcoe: host%d: "
 			       "FIP Fibre-Channel Forwarder timed out.	"
@@ -1294,12 +1309,9 @@ static void fcoe_ctlr_timeout(unsigned long arg)
 		}
 		if (time_after(next_timer, fip->port_ka_time))
 			next_timer = fip->port_ka_time;
-		mod_timer(&fip->timer, next_timer);
-	} else if (fip->sel_time) {
-		next_timer = fip->sel_time +
-			msecs_to_jiffies(FCOE_CTLR_START_DELAY);
-		mod_timer(&fip->timer, next_timer);
 	}
+	if (!list_empty(&fip->fcfs))
+		mod_timer(&fip->timer, next_timer);
 	if (fip->send_ctlr_ka || fip->send_port_ka)
 		schedule_work(&fip->link_work);
 	spin_unlock_bh(&fip->lock);
