@@ -54,7 +54,8 @@ VOID NICInitRT3090RFRegisters(IN PRTMP_ADAPTER pAd)
 	{
 		// Init RF calibration
 		// Driver should toggle RF R30 bit7 before init RF registers
-		UINT32 RfReg = 0, data;
+		UINT8 RfReg;
+		UINT32 data;
 
 		RT30xxReadRFRegister(pAd, RF_R30, (PUCHAR)&RfReg);
 		RfReg |= 0x80;
