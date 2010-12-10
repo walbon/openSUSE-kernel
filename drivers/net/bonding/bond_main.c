@@ -2674,6 +2674,19 @@ static void bond_handle_arp(struct sk_buff *skb)
 	struct net_device *dev = skb->dev->master, *orig_dev = skb->dev;
 	unsigned char *arp_ptr;
 	__be32 sip, tip;
+	int put_orig_dev = 0;
+
+	if (dev->priv_flags & IFF_802_1Q_VLAN) {
+		/*
+		 * When using VLANS and bonding, dev and oriv_dev may be
+		 * incorrect if the physical interface supports VLAN
+		 * acceleration.  With this change ARP validation now
+		 * works for hosts only reachable on the VLAN interface.
+		 */
+		dev = vlan_dev_real_dev(dev);
+		orig_dev = dev_get_by_index(dev_net(skb->dev),skb->iif);
+		put_orig_dev = 1;
+	}
 
 	if (dev_net(dev) != &init_net)
 		goto out;
@@ -2730,6 +2743,8 @@ static void bond_handle_arp(struct sk_buff *skb)
 out_unlock:
 	read_unlock(&bond->lock);
 out:
+	if (put_orig_dev)
+		dev_put(orig_dev);
 	return;
 }
 
