@@ -345,22 +345,27 @@ static int intel_hdmi_add_pin(struct hda_codec *codec, hda_nid_t pin_nid)
 	spec->pin[spec->num_pins] = pin_nid;
 	spec->num_pins++;
 
-	/*
-	 * It is assumed that converter nodes come first in the node list and
-	 * hence have been registered and usable now.
-	 */
 	return intel_hdmi_read_pin_conn(codec, pin_nid);
 }
 
 static int intel_hdmi_add_cvt(struct hda_codec *codec, hda_nid_t nid)
 {
+	int i, found_pin = 0;
 	struct intel_hdmi_spec *spec = codec->spec;
 
-	if (spec->num_cvts >= INTEL_HDMI_CVTS) {
-		snd_printk(KERN_WARNING
-			   "HDMI: no space for converter %d \n", nid);
+	for (i = 0; i < spec->num_pins; i++)
+		if (nid == spec->pin_cvt[i]) {
+			found_pin = 1;
+			break;
+		}
+
+	if (!found_pin) {
+		snd_printdd("HDMI: Skipping node %d (no connection)\n", nid);
 		return -EINVAL;
 	}
+
+	if (snd_BUG_ON(spec->num_cvts >= INTEL_HDMI_CVTS))
+		return -E2BIG;
 
 	spec->cvt[spec->num_cvts] = nid;
 	spec->num_cvts++;
@@ -372,6 +377,8 @@ static int intel_hdmi_parse_codec(struct hda_codec *codec)
 {
 	hda_nid_t nid;
 	int i, nodes;
+	int num_tmp_cvts = 0;
+	hda_nid_t tmp_cvt[INTEL_HDMI_CVTS];
 
 	nodes = snd_hda_get_sub_nodes(codec, codec->afg, &nid);
 	if (!nid || nodes < 0) {
@@ -382,6 +389,7 @@ static int intel_hdmi_parse_codec(struct hda_codec *codec)
 	for (i = 0; i < nodes; i++, nid++) {
 		unsigned int caps;
 		unsigned int type;
+		unsigned int config;
 
 		caps = snd_hda_param_read(codec, nid, AC_PAR_AUDIO_WIDGET_CAP);
 		type = get_wcaps_type(caps);
@@ -391,18 +399,32 @@ static int intel_hdmi_parse_codec(struct hda_codec *codec)
 
 		switch (type) {
 		case AC_WID_AUD_OUT:
-			if (intel_hdmi_add_cvt(codec, nid) < 0)
-				return -EINVAL;
+			if (num_tmp_cvts >= INTEL_HDMI_CVTS) {
+				snd_printk(KERN_WARNING
+					   "HDMI: no space for converter %d\n", nid);
+				continue;
+			}
+			tmp_cvt[num_tmp_cvts] = nid;
+			num_tmp_cvts++;
 			break;
 		case AC_WID_PIN:
 			caps = snd_hda_param_read(codec, nid, AC_PAR_PIN_CAP);
 			if (!(caps & (AC_PINCAP_HDMI | AC_PINCAP_DP)))
 				continue;
+
+			config = snd_hda_codec_read(codec, nid, 0,
+					     AC_VERB_GET_CONFIG_DEFAULT, 0);
+			if (get_defcfg_connect(config) == AC_JACK_PORT_NONE)
+				continue;
+
 			if (intel_hdmi_add_pin(codec, nid) < 0)
 				return -EINVAL;
 			break;
 		}
 	}
+
+	for (i = 0; i < num_tmp_cvts; i++)
+		intel_hdmi_add_cvt(codec, tmp_cvt[i]);
 
 	/*
 	 * G45/IbexPeak don't support EPSS: the unsolicited pin hot plug event
