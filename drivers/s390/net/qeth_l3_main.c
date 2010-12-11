@@ -459,8 +459,11 @@ static void qeth_l3_set_ip_addr_list(struct qeth_card *card)
 	QETH_DBF_TEXT(TRACE, 2, "sdiplist");
 	QETH_DBF_HEX(TRACE, 2, &card, sizeof(void *));
 
-	if (card->options.sniffer)
+	if ((card->state != CARD_STATE_UP &&
+	     card->state != CARD_STATE_SOFTSETUP) || card->options.sniffer) {
 		return;
+	}
+
 	spin_lock_irqsave(&card->ip_lock, flags);
 	tbd_list = card->ip_tbd_list;
 	card->ip_tbd_list = kmalloc(sizeof(struct list_head), GFP_ATOMIC);
@@ -2926,7 +2929,7 @@ static int qeth_l3_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 				skb_pull(new_skb, ETH_HLEN);
 		}
 
-		if (ipv == 6 && card->vlangrp &&
+		if (ipv != 4 && card->vlangrp &&
 				vlan_tx_tag_present(new_skb)) {
 			skb_push(new_skb, VLAN_HLEN);
 			skb_copy_to_linear_data(new_skb, new_skb->data + 4, 4);
