@@ -2444,6 +2444,8 @@ xfs_btree_new_root(
 	union xfs_btree_ptr	rptr;
 	union xfs_btree_ptr	lptr;
 
+	printk("xfs_btree_new_root\n");
+
 	XFS_BTREE_TRACE_CURSOR(cur, XBT_ENTRY);
 	XFS_BTREE_STATS_INC(cur, newroot);
 

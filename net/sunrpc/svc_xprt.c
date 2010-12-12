@@ -725,6 +725,9 @@ int svc_recv(struct svc_rqst *rqstp, long timeout)
 			 * listener holds a reference too
 			 */
 			__module_get(newxpt->xpt_class->xcl_owner);
+			/* Must hold a reference across calls to
+			 * svc_xprt_received */
+			svc_xprt_get(newxpt);
 			svc_check_conn_limits(xprt->xpt_server);
 			spin_lock_bh(&serv->sv_lock);
 			set_bit(XPT_TEMP, &newxpt->xpt_flags);
@@ -740,6 +743,7 @@ int svc_recv(struct svc_rqst *rqstp, long timeout)
 			}
 			spin_unlock_bh(&serv->sv_lock);
 			svc_xprt_received(newxpt);
+			svc_xprt_put(newxpt);
 		}
 		svc_xprt_received(xprt);
 	} else {

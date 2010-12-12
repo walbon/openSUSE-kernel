@@ -1911,6 +1911,7 @@ xfs_alloc_fix_freelist(
 	xfs_perag_t	*pag;	/* per-ag information structure */
 	xfs_alloc_arg_t	targs;	/* local allocation arguments */
 	xfs_trans_t	*tp;	/* transaction pointer */
+	int xx;
 
 	mp = args->mp;
 
@@ -2001,8 +2002,17 @@ xfs_alloc_fix_freelist(
 	/*
 	 * Make the freelist shorter if it's too long.
 	 */
+	xx =0;
 	while (be32_to_cpu(agf->agf_flcount) > need) {
 		xfs_buf_t	*bp;
+
+		if (!(flags & XFS_ALLOC_FLAG_FREEING)) {
+			printk("xfs_alloc_fix_freelist: flcount=%ld need=%ld\n",
+			       (long)be32_to_cpu(agf->agf_flcount),
+			       (long)need);
+			xx++;
+		}
+
 
 		error = xfs_alloc_get_freelist(tp, agbp, &bno, 0);
 		if (error)
@@ -2012,6 +2022,8 @@ xfs_alloc_fix_freelist(
 		bp = xfs_btree_get_bufs(mp, tp, args->agno, bno, 0);
 		xfs_trans_binval(tp, bp);
 	}
+	if (!(flags & XFS_ALLOC_FLAG_FREEING))
+		printk("xfs xx=%d\n",xx);
 	/*
 	 * Initialize the args structure.
 	 */
