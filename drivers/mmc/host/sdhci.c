@@ -1787,10 +1787,10 @@ int sdhci_add_host(struct sdhci_host *host)
 	mmc->f_max = host->max_clk;
 	mmc->caps = MMC_CAP_SDIO_IRQ;
 
-	if (!(host->quirks & SDHCI_QUIRK_FORCE_1_BIT_DATA))
+	if (!(host->quirks & SDHCI_QUIRK_FORCE_1_BIT_DATA)) {
 		mmc->caps |= MMC_CAP_4_BIT_DATA;
-	else
 		mmc->caps |= MMC_CAP_BUS_WIDTH_TEST;
+	}
 
 	if (caps & SDHCI_CAN_DO_HISPD)
 		mmc->caps |= MMC_CAP_SD_HIGHSPEED;
