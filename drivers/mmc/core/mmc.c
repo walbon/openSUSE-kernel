@@ -468,6 +468,13 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 			err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
 					 EXT_CSD_BUS_WIDTH, ext_csd_bits[idx]);
 			if (!err) {
+				/*
+				 * if controller can't handle bus width test
+				 * use the highest bus width to
+				 * maintain compatibility with previous linux
+				 */
+				if (!(host->caps & MMC_CAP_BUS_WIDTH_TEST))
+					break;
 				mmc_set_bus_width(card->host, bus_widths[idx]);
 				err = mmc_bus_test(card, bus_widths[idx]);
 				if (!err)

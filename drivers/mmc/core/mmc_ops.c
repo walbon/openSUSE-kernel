@@ -461,9 +461,6 @@ int mmc_send_status(struct mmc_card *card, u32 *status)
 	return 0;
 }
 
-#define MMC_CMD_BUS_TEST_W		19
-#define MMC_CMD_BUS_TEST_R		14
-
 static int
 mmc_send_bus_test(struct mmc_card *card, struct mmc_host *host, u8 opcode,
 		  u8 len)
@@ -492,10 +489,11 @@ mmc_send_bus_test(struct mmc_card *card, struct mmc_host *host, u8 opcode,
 	else {
 		printk(KERN_ERR "%s: Invaild bus_width %d\n",
 		       mmc_hostname(host), len);
+		kfree(data_buf);
 		return -EINVAL;
 	}
 
-	if (opcode == MMC_CMD_BUS_TEST_W)
+	if (opcode == MMC_BUS_TEST_W)
 		memcpy(data_buf, test_buf, len);
 
 	memset(&mrq, 0, sizeof(struct mmc_request));
@@ -516,7 +514,7 @@ mmc_send_bus_test(struct mmc_card *card, struct mmc_host *host, u8 opcode,
 
 	data.blksz = len;
 	data.blocks = 1;
-	if (opcode == MMC_CMD_BUS_TEST_R)
+	if (opcode == MMC_BUS_TEST_R)
 		data.flags = MMC_DATA_READ;
 	else
 		data.flags = MMC_DATA_WRITE;
@@ -526,7 +524,7 @@ mmc_send_bus_test(struct mmc_card *card, struct mmc_host *host, u8 opcode,
 	sg_init_one(&sg, data_buf, len);
 	mmc_wait_for_req(host, &mrq);
 	err = 0;
-	if (opcode == MMC_CMD_BUS_TEST_R) {
+	if (opcode == MMC_BUS_TEST_R) {
 		for (i = 0; i < len / 4; i++)
 			if ((test_buf[i] ^ data_buf[i]) != 0xff) {
 				err = -EIO;
@@ -555,11 +553,13 @@ int mmc_bus_test(struct mmc_card *card, u8 bus_width)
 		return 0; /* no need for test */
 	else
 		return -EINVAL;
-	err = mmc_send_bus_test(card, card->host, MMC_CMD_BUS_TEST_W, width);
-	if (err < 0)
-		return err;
-	err = mmc_send_bus_test(card, card->host, MMC_CMD_BUS_TEST_R, width);
+
+	/*
+	 * ignore errors from BUS_TEST_W. BUS_TEST_R will fail
+	 * if there is a problem.  Improves chances test will work
+	 */
+	mmc_send_bus_test(card, card->host, MMC_BUS_TEST_W, width);
+	err = mmc_send_bus_test(card, card->host, MMC_BUS_TEST_R, width);
 	return err;
-
-
 }
+
