@@ -16,18 +16,22 @@
 #include <linux/idr.h>
 #include <linux/pagemap.h>
 #include <linux/leds.h>
+#include <linux/suspend.h>
 
 #include <linux/mmc/host.h>
 
 #include "core.h"
 #include "host.h"
 
+#include "host-kabi.h"
+
 #define cls_dev_to_mmc_host(d)	container_of(d, struct mmc_host, class_dev)
 
 static void mmc_host_classdev_release(struct device *dev)
 {
 	struct mmc_host *host = cls_dev_to_mmc_host(dev);
-	kfree(host);
+	struct mmc_new_host *new_host = to_mmc_new_host(host);
+	kfree(new_host);
 }
 
 static struct class mmc_host_class = {
@@ -58,14 +62,16 @@ static DEFINE_SPINLOCK(mmc_host_lock);
 struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 {
 	int err;
+	struct mmc_new_host *new_host;
 	struct mmc_host *host;
 
 	if (!idr_pre_get(&mmc_host_idr, GFP_KERNEL))
 		return NULL;
 
-	host = kzalloc(sizeof(struct mmc_host) + extra, GFP_KERNEL);
-	if (!host)
+	new_host = kzalloc(sizeof(struct mmc_new_host) + extra, GFP_KERNEL);
+	if (!new_host)
 		return NULL;
+	host = &new_host->h;
 
 	spin_lock(&mmc_host_lock);
 	err = idr_get_new(&mmc_host_idr, host, &host->index);
@@ -84,6 +90,7 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 	init_waitqueue_head(&host->wq);
 	INIT_DELAYED_WORK(&host->detect, mmc_rescan);
 	INIT_DELAYED_WORK_DEFERRABLE(&host->disable, mmc_host_deeper_disable);
+	new_host->pm_notify.notifier_call = mmc_pm_notify;
 
 	/*
 	 * By default, hosts do not support SGIO or large requests.
@@ -100,7 +107,7 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 	return host;
 
 free:
-	kfree(host);
+	kfree(new_host);
 	return NULL;
 }
 
@@ -132,6 +139,7 @@ int mmc_add_host(struct mmc_host *host)
 #endif
 
 	mmc_start_host(host);
+	register_pm_notifier(&to_mmc_new_host(host)->pm_notify);
 
 	return 0;
 }
@@ -148,6 +156,7 @@ EXPORT_SYMBOL(mmc_add_host);
  */
 void mmc_remove_host(struct mmc_host *host)
 {
+	unregister_pm_notifier(&to_mmc_new_host(host)->pm_notify);
 	mmc_stop_host(host);
 
 #ifdef CONFIG_DEBUG_FS

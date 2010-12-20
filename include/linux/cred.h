@@ -296,8 +296,10 @@ static inline void put_cred(const struct cred *_cred)
 ({							\
 	struct cred *__cred;				\
 	rcu_read_lock();				\
-	__cred = (struct cred *) __task_cred((task));	\
-	get_cred(__cred);				\
+	do {						\
+		__cred = (struct cred *) __task_cred((task));	\
+ 		BUG_ON(!__cred);			\
+ 	} while (!atomic_inc_not_zero(&((struct cred *)__cred)->usage)); \
 	rcu_read_unlock();				\
 	__cred;						\
 })
