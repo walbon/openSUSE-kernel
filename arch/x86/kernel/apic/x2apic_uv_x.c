@@ -5,7 +5,7 @@
  *
  * SGI UV APIC functions (note: not an Intel compatible APIC)
  *
- * Copyright (C) 2007-2009 Silicon Graphics, Inc. All rights reserved.
+ * Copyright (C) 2007-2010 Silicon Graphics, Inc. All rights reserved.
  */
 #include <linux/cpumask.h>
 #include <linux/hardirq.h>
@@ -44,6 +44,7 @@ DEFINE_PER_CPU(int, x2apic_extra_bits);
 
 static enum uv_system_type uv_system_type;
 static u64 gru_start_paddr, gru_end_paddr;
+static union uvh_apicid uvh_apicid;
 int uv_min_hub_revision_id;
 EXPORT_SYMBOL_GPL(uv_min_hub_revision_id);
 unsigned int uv_apicid_hibits;
@@ -93,12 +94,27 @@ static void __init uv_set_apicid_hibit(void)
 	uv_apicid_hibits = apicid_mask.s.bit_enables & UV_APICID_HIBIT_MASK;
 }
 
+static void __init early_get_apic_pnode_shift(void)
+{
+	unsigned long *mmr;
+
+	mmr = early_ioremap(UV_LOCAL_MMR_BASE | UVH_APICID, sizeof(*mmr));
+	uvh_apicid.v = *mmr;
+	early_iounmap(mmr, sizeof(*mmr));
+	if (!uvh_apicid.v)
+		/*
+		 * Old bios, use default value
+		 */
+		uvh_apicid.s.pnode_shift = UV_APIC_PNODE_SHIFT;
+}
+
 static int __init uv_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 {
 	int nodeid;
 
 	if (!strcmp(oem_id, "SGI")) {
 		nodeid = early_get_nodeid();
+		early_get_apic_pnode_shift();
 		x86_platform.is_untracked_pat_range =  uv_is_untracked_pat_range;
 		x86_platform.nmi_init = uv_nmi_init;
 		acpi_set_iomap_cacheable();
@@ -108,7 +124,7 @@ static int __init uv_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 			uv_system_type = UV_X2APIC;
 		else if (!strcmp(oem_table_id, "UVH")) {
 			__get_cpu_var(x2apic_extra_bits) =
-				nodeid << (UV_APIC_PNODE_SHIFT - 1);
+				nodeid << (uvh_apicid.s.pnode_shift - 1);
 			uv_system_type = UV_NON_UNIQUE_APIC;
 			uv_set_apicid_hibit();
 			return 1;
@@ -130,6 +146,9 @@ EXPORT_SYMBOL_GPL(is_uv_system);
 
 DEFINE_PER_CPU(struct uv_hub_info_s, __uv_hub_info);
 EXPORT_PER_CPU_SYMBOL_GPL(__uv_hub_info);
+
+DEFINE_PER_CPU(struct uv_hub_info_extra_s, __uv_hub_info_extra);
+EXPORT_PER_CPU_SYMBOL_GPL(__uv_hub_info_extra);
 
 struct uv_blade_info *uv_blade_info;
 EXPORT_SYMBOL_GPL(uv_blade_info);
@@ -766,6 +785,12 @@ void __init uv_system_init(void)
 		int apicid = per_cpu(x86_cpu_to_apicid, cpu);
 
 		nid = cpu_to_node(cpu);
+		/*
+		 * apic_pnode_shift must be set before calling uv_apicid_to_pnode();
+		 */
+		uv_cpu_hub_info_extra(cpu)->apic_pnode_shift = uvh_apicid.s.pnode_shift;
+		for (i = 0; i < UV_HUB_INFO_EXTRA_FIELDS; i++)
+			uv_cpu_hub_info_extra(cpu)->future[i] = 0;
 		pnode = uv_apicid_to_pnode(apicid);
 		blade = boot_pnode_to_blade(pnode);
 		lcpu = uv_blade_info[blade].nr_possible_cpus;
