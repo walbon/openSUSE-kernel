@@ -37,9 +37,13 @@ struct kernel_stat {
 
 DECLARE_PER_CPU(struct kernel_stat, kstat);
 
+DECLARE_PER_CPU(unsigned long, kstat_irqs_sum);
+
 #define kstat_cpu(cpu)	per_cpu(kstat, cpu)
+#define kstat_irqs_sum_cpu(cpu)	per_cpu(kstat_irqs_sum, cpu)
 /* Must have preemption disabled for this to be meaningful. */
 #define kstat_this_cpu	__get_cpu_var(kstat)
+#define kstat_irqs_sum_this_cpu	__get_cpu_var(kstat_irqs_sum)
 
 extern unsigned long long nr_context_switches(void);
 
@@ -53,6 +57,7 @@ static inline void kstat_incr_irqs_this_cpu(unsigned int irq,
 					    struct irq_desc *desc)
 {
 	kstat_this_cpu.irqs[irq]++;
+	kstat_irqs_sum_this_cpu++;
 }
 
 static inline unsigned int kstat_irqs_cpu(unsigned int irq, int cpu)
@@ -64,8 +69,10 @@ static inline unsigned int kstat_irqs_cpu(unsigned int irq, int cpu)
 extern unsigned int kstat_irqs_cpu(unsigned int irq, int cpu);
 #define kstat_irqs_this_cpu(DESC) \
 	((DESC)->kstat_irqs[smp_processor_id()])
-#define kstat_incr_irqs_this_cpu(irqno, DESC) \
-	((DESC)->kstat_irqs[smp_processor_id()]++)
+#define kstat_incr_irqs_this_cpu(irqno, DESC) do {\
+	((DESC)->kstat_irqs[smp_processor_id()]++);\
+	kstat_irqs_sum_this_cpu++; } while (0)
+
 
 #endif
 
@@ -82,6 +89,7 @@ static inline unsigned int kstat_softirqs_cpu(unsigned int irq, int cpu)
 /*
  * Number of interrupts per specific IRQ source, since bootup
  */
+#ifndef CONFIG_GENERIC_HARDIRQS
 static inline unsigned int kstat_irqs(unsigned int irq)
 {
 	unsigned int sum = 0;
@@ -92,7 +100,17 @@ static inline unsigned int kstat_irqs(unsigned int irq)
 
 	return sum;
 }
+#else
+extern unsigned int kstat_irqs(unsigned int irq);
+#endif
 
+/*
+ * Number of interrupts per cpu, since bootup
+ */
+static inline unsigned int kstat_cpu_irqs_sum(unsigned int cpu)
+{
+	return kstat_irqs_sum_cpu(cpu);
+}
 
 /*
  * Lock/unlock the current runqueue - to extract task statistics:

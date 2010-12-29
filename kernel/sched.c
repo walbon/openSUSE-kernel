@@ -5037,6 +5037,10 @@ DEFINE_PER_CPU(struct kernel_stat, kstat);
 
 EXPORT_PER_CPU_SYMBOL(kstat);
 
+DEFINE_PER_CPU(unsigned long, kstat_irqs_sum);
+
+EXPORT_PER_CPU_SYMBOL(kstat_irqs_sum);
+
 /*
  * Return any ns on the sched_clock that have not yet been accounted in
  * @p in case that task is currently running.
