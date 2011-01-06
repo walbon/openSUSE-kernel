@@ -35,8 +35,10 @@
  */
 
 #include "common.h"
+#include <linux/if_vlan.h>
 #include <linux/kthread.h>
 #include <linux/vmalloc.h>
+#include <net/tcp.h>
 #include <xen/balloon.h>
 #include <xen/interface/memory.h>
 
@@ -112,7 +114,14 @@ static inline unsigned int netif_page_index(const struct page *pg)
 	return ext.e.idx;
 }
 
-#define PKT_PROT_LEN 64
+/*
+ * This is the amount of packet we copy rather than map, so that the
+ * guest can't fiddle with the contents of the headers while we do
+ * packet processing on them (netfilter, routing, etc).
+ */
+#define PKT_PROT_LEN    (ETH_HLEN + VLAN_HLEN + \
+			 sizeof(struct iphdr) + MAX_IPOPTLEN + \
+			 sizeof(struct tcphdr) + MAX_TCP_OPTION_SPACE)
 
 #define MASK_PEND_IDX(_i) ((_i)&(MAX_PENDING_REQS-1))
 
@@ -1512,6 +1521,16 @@ static void net_tx_action(unsigned long group)
 
 		netbk_fill_frags(netbk, skb);
 
+		/*
+		 * If the initial fragment was < PKT_PROT_LEN then
+		 * pull through some bytes from the other fragments to
+		 * increase the linear region to PKT_PROT_LEN bytes.
+		 */
+		if (skb_headlen(skb) < PKT_PROT_LEN && skb_is_nonlinear(skb)) {
+			int target = min_t(int, skb->len, PKT_PROT_LEN);
+			__pskb_pull_tail(skb, target - skb_headlen(skb));
+		}
+
 		skb->dev      = netif->dev;
 		skb->protocol = eth_type_trans(skb, skb->dev);
 
@@ -1703,6 +1722,10 @@ static inline int rx_work_todo(struct xen_netbk *netbk)
 static inline int tx_work_todo(struct xen_netbk *netbk)
 {
 	if (netbk->dealloc_cons != netbk->dealloc_prod)
+		return 1;
+
+	if (netbk_copy_skb_mode == NETBK_DELAYED_COPY_SKB &&
+	    !list_empty(&netbk->pending_inuse_head))
 		return 1;
 
 	if (nr_pending_reqs(netbk) + MAX_SKB_FRAGS < MAX_PENDING_REQS &&
