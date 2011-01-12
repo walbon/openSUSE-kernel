@@ -3754,8 +3754,12 @@ static void update_cpu_power(struct sched_domain *sd, int cpu)
 	if (!power)
 		power = 1;
 
-	if (WARN_ON((long)power < 0)) {
-		printk(KERN_ERR "cpu_power = %ld; scale_rt = %ld\n", power, scale_rt);
+	if ((long)power < 0) {
+		if (printk_ratelimit()) {
+			WARN_ON_ONCE(1);
+			printk(KERN_ERR "cpu_power = %ld; scale_rt = %ld\n",
+					power, scale_rt);
+		}
 		power = 1;
 	}
 
@@ -3781,7 +3785,8 @@ static void update_group_power(struct sched_domain *sd, int cpu)
 		group = group->next;
 	} while (group != child->groups);
 
-	if (WARN_ON((long)power <= 0)) {
+	if ((long)power <= 0) {
+		WARN_ON_ONCE(1);
 		printk(KERN_ERR "cpu_power = %ld\n", power);
 		power = 1;
 	}
@@ -3863,8 +3868,11 @@ static inline void update_sg_lb_stats(struct sched_domain *sd,
 		return;
 	}
 
-	if (WARN_ON((int)group->cpu_power <= 0)) {
-		printk(KERN_ERR "group->cpu_power = %d\n", group->cpu_power);
+	if ((int)group->cpu_power <= 0) {
+		if (printk_ratelimit()) {
+			WARN_ON_ONCE(1);
+			printk(KERN_ERR "group->cpu_power = %d\n", group->cpu_power);
+		}
 		return;
 	}
 
@@ -3987,9 +3995,12 @@ static inline void fix_small_imbalance(struct sd_lb_stats *sds,
 	scaled_busy_load_per_task = sds->busiest_load_per_task
 						 * SCHED_LOAD_SCALE;
 
-	if (WARN_ON((int)sds->busiest->cpu_power <= 0)) {
-		printk(KERN_ERR "sds->busiest->cpu_power = %d\n",
+	if ((int)sds->busiest->cpu_power <= 0) {
+		if (printk_ratelimit()) {
+			WARN_ON_ONCE(1);
+			printk(KERN_ERR "sds->busiest->cpu_power = %d\n",
 				sds->busiest->cpu_power);
+		}
 		return;
 	}
 
@@ -4074,10 +4085,13 @@ static inline void calculate_imbalance(struct sd_lb_stats *sds, int this_cpu,
 
 		load_above_capacity *= (SCHED_LOAD_SCALE * SCHED_LOAD_SCALE);
 
-		if (WARN_ON((int)sds->busiest->cpu_power <= 0)) {
-			printk(KERN_ERR "sds->busiest->cpu_power = %d\n",
-					sds->busiest->cpu_power);
-			return;
+		if ((int)sds->busiest->cpu_power <= 0) {
+			if (printk_ratelimit()) {
+				WARN_ON_ONCE(1);
+				printk(KERN_ERR "sds->busiest->cpu_power = %d\n",
+						sds->busiest->cpu_power);
+				return;
+			}
 		}
 
 		load_above_capacity /= sds->busiest->cpu_power;
