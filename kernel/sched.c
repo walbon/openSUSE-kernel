@@ -3716,6 +3716,18 @@ unsigned long scale_rt_power(int cpu)
 	total = sched_avg_period() + (rq->clock - rq->age_stamp);
 	available = total - rq->rt_avg;
 
+	if (unlikely(total < rq->rt_avg)) {
+		if (printk_ratelimit()) {
+			printk(KERN_ERR "scale_rt_power: period: %lu clock: %lu age_stamp: %lu rt_avg: %lu\n",
+				sched_avg_period(), rq->clock, rq->age_stamp, rq->rt_avg);
+		}
+
+		/* Ensures that power won't end up being negative */
+		available = 0;
+	} else {
+		available = total - rq->rt_avg;
+	}
+
 	if (unlikely((s64)total < SCHED_LOAD_SCALE))
 		total = SCHED_LOAD_SCALE;
 
@@ -3754,10 +3766,10 @@ static void update_cpu_power(struct sched_domain *sd, int cpu)
 	if (!power)
 		power = 1;
 
-	if ((long)power < 0) {
+	if ((int)power <= 0) {
 		if (printk_ratelimit()) {
 			WARN_ON_ONCE(1);
-			printk(KERN_ERR "cpu_power = %ld; scale_rt = %ld\n",
+			printk(KERN_ERR "update_cpu_power: cpu_power = %lu; scale_rt = %lu\n",
 					power, scale_rt);
 		}
 		power = 1;
@@ -3785,9 +3797,9 @@ static void update_group_power(struct sched_domain *sd, int cpu)
 		group = group->next;
 	} while (group != child->groups);
 
-	if ((long)power <= 0) {
+	if ((int)power <= 0) {
 		WARN_ON_ONCE(1);
-		printk(KERN_ERR "cpu_power = %ld\n", power);
+		printk(KERN_ERR "update_group_power: cpu_power = %lu\n", power);
 		power = 1;
 	}
 
@@ -3871,7 +3883,7 @@ static inline void update_sg_lb_stats(struct sched_domain *sd,
 	if ((int)group->cpu_power <= 0) {
 		if (printk_ratelimit()) {
 			WARN_ON_ONCE(1);
-			printk(KERN_ERR "group->cpu_power = %d\n", group->cpu_power);
+			printk(KERN_ERR "update_sg_lb_stats: group->cpu_power = %d\n", group->cpu_power);
 		}
 		return;
 	}
@@ -3998,7 +4010,7 @@ static inline void fix_small_imbalance(struct sd_lb_stats *sds,
 	if ((int)sds->busiest->cpu_power <= 0) {
 		if (printk_ratelimit()) {
 			WARN_ON_ONCE(1);
-			printk(KERN_ERR "sds->busiest->cpu_power = %d\n",
+			printk(KERN_ERR "fix_small_imbalance: sds->busiest->cpu_power = %d\n",
 				sds->busiest->cpu_power);
 		}
 		return;
@@ -4088,7 +4100,7 @@ static inline void calculate_imbalance(struct sd_lb_stats *sds, int this_cpu,
 		if ((int)sds->busiest->cpu_power <= 0) {
 			if (printk_ratelimit()) {
 				WARN_ON_ONCE(1);
-				printk(KERN_ERR "sds->busiest->cpu_power = %d\n",
+				printk(KERN_ERR "calculate_imbalance: sds->busiest->cpu_power = %d\n",
 						sds->busiest->cpu_power);
 				return;
 			}
