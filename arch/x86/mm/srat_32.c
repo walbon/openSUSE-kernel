@@ -61,6 +61,20 @@ static u8 __initdata apicid_to_pxm[MAX_APICID];
 int numa_off __initdata;
 int acpi_numa __initdata;
 
+static __init int numa_setup(char *opt)
+{
+	if (!opt)
+		return -EINVAL;
+	if (!strncmp(opt, "off", 3))
+		numa_off = 1;
+#ifdef CONFIG_ACPI_NUMA
+	if (!strncmp(opt, "noacpi", 6))
+		acpi_numa = -1;
+#endif
+	return 0;
+}
+early_param("numa", numa_setup);
+
 static __init void bad_srat(void)
 {
         printk(KERN_ERR "SRAT: SRAT not used.\n");
