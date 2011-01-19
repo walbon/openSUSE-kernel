@@ -163,6 +163,25 @@ out:
 
 #ifdef CONFIG_MMU
 
+static void acct_arg_size(struct linux_binprm *bprm, unsigned long pages)
+{
+	struct mm_struct *mm = current->mm;
+	long diff = (long)(pages - bprm->vma_pages);
+
+	if (!mm || !diff)
+		return;
+
+	bprm->vma_pages = pages;
+
+#ifdef SPLIT_RSS_COUNTING
+	add_mm_counter(mm, anon_rss, diff);
+#else
+	spin_lock(&mm->page_table_lock);
+	add_mm_counter(mm, anon_rss, diff);
+	spin_unlock(&mm->page_table_lock);
+#endif
+}
+
 static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 		int write)
 {
@@ -184,6 +203,8 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 	if (write) {
 		unsigned long size = bprm->vma->vm_end - bprm->vma->vm_start;
 		struct rlimit *rlim;
+
+		acct_arg_size(bprm, size / PAGE_SIZE);
 
 		/*
 		 * We've historically supported up to 32 pages (ARG_MAX)
@@ -277,6 +298,10 @@ static bool valid_arg_len(struct linux_binprm *bprm, long len)
 }
 
 #else
+
+static inline void acct_arg_size(struct linux_binprm *bprm, unsigned long pages)
+{
+}
 
 static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 		int write)
@@ -993,6 +1018,7 @@ int flush_old_exec(struct linux_binprm * bprm)
 	/*
 	 * Release all of the old mmap stuff
 	 */
+	acct_arg_size(bprm, 0);
 	retval = exec_mmap(bprm->mm);
 	if (retval)
 		goto out;
@@ -1420,8 +1446,10 @@ int do_execve(char * filename,
 	return retval;
 
 out:
-	if (bprm->mm)
-		mmput (bprm->mm);
+	if (bprm->mm) {
+		acct_arg_size(bprm, 0);
+		mmput(bprm->mm);
+	}
 
 out_file:
 	if (bprm->file) {
