@@ -1341,6 +1341,8 @@ static int rs_ioctl(struct tty_struct *tty, struct file * file,
 			local_irq_save(flags);
 			cnow = info->state->icount;
 			local_irq_restore(flags);
+
+			memset(&icount, 0, sizeof(icount));
 			icount.cts = cnow.cts;
 			icount.dsr = cnow.dsr;
 			icount.rng = cnow.rng;
