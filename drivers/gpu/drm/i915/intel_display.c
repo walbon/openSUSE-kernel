@@ -1971,7 +1971,7 @@ static void intel_crtc_dpms(struct drm_crtc *crtc, int mode)
 	int pipe = intel_crtc->pipe;
 	bool enabled;
 
-	if (intel_crtc->dpms_mode == mode)
+	if (intel_crtc->dpms_mode == mode && !dev_priv->in_resume)
 		return;
 
 	dev_priv->display.dpms(crtc, mode);
