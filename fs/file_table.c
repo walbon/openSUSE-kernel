@@ -451,7 +451,7 @@ void __init files_init(unsigned long mempages)
 	 * Per default don't use more than 10% of our memory for files. 
 	 */ 
 
-	n = (mempages * (PAGE_SIZE / 1024)) / 10;
+	n = min_t(unsigned long, INT_MAX >> 1, (mempages * (PAGE_SIZE / 1024)) / 10);
 	files_stat.max_files = n; 
 	if (files_stat.max_files < NR_FILE)
 		files_stat.max_files = NR_FILE;

@@ -306,21 +306,19 @@ acpi_ds_exec_begin_op(struct acpi_walk_state *walk_state,
 			 * object. However, for Scope(), we want to indeed open a
 			 * new scope.
 			 */
-
 			if (op->common.aml_opcode != AML_SCOPE_OP) {
-				status = acpi_ds_load2_begin_op(walk_state,
-								NULL);
+				status =
+				    acpi_ds_load2_begin_op(walk_state, NULL);
 			} else {
 				status =
-					acpi_ds_scope_stack_push(op->named.node,
-								 op->named.node->
-								 type, walk_state);
+				    acpi_ds_scope_stack_push(op->named.node,
+							     op->named.node->
+							     type, walk_state);
 				if (ACPI_FAILURE(status)) {
 					return_ACPI_STATUS(status);
 				}
 			}
 		}
-
 		break;
 
 	case AML_CLASS_EXECUTE:

@@ -101,6 +101,13 @@ typedef struct sched_remote_shutdown sched_remote_shutdown_t;
 DEFINE_XEN_GUEST_HANDLE(sched_remote_shutdown_t);
 
 /*
+ * Latch a shutdown code, so that when the domain later shuts down it
+ * reports this code to the control tools.
+ * @arg == as for SCHEDOP_shutdown.
+ */
+#define SCHEDOP_shutdown_code 5
+
+/*
  * Reason codes for SCHEDOP_shutdown. These may be interpreted by control
  * software to determine the appropriate action. For the most part, Xen does
  * not care about the shutdown code.
@@ -109,5 +116,6 @@ DEFINE_XEN_GUEST_HANDLE(sched_remote_shutdown_t);
 #define SHUTDOWN_reboot     1  /* Clean up, kill, and then restart.          */
 #define SHUTDOWN_suspend    2  /* Clean up, save suspend info, kill.         */
 #define SHUTDOWN_crash      3  /* Tell controller we've crashed.             */
+#define SHUTDOWN_watchdog   4  /* Restart because watchdog time expired.     */
 
 #endif /* __XEN_PUBLIC_SCHED_H__ */

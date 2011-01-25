@@ -44,6 +44,9 @@ static struct phonet_protocol *phonet_proto_get(int protocol)
 	if (protocol >= PHONET_NPROTO)
 		return NULL;
 
+	if (protocol < 0)
+		return NULL;
+
 	spin_lock(&proto_tab_lock);
 	pp = proto_tab[protocol];
 	if (pp && !try_module_get(pp->prot->owner))
@@ -404,6 +407,8 @@ int __init_or_module phonet_proto_register(int protocol,
 
 	if (protocol >= PHONET_NPROTO)
 		return -EINVAL;
+	if (protocol < 0)
+		return -EINVAL;
 
 	err = proto_register(pp->prot, 1);
 	if (err)
@@ -422,6 +427,8 @@ EXPORT_SYMBOL(phonet_proto_register);
 
 void phonet_proto_unregister(int protocol, struct phonet_protocol *pp)
 {
+	if (protocol < 0)
+		return;
 	spin_lock(&proto_tab_lock);
 	BUG_ON(proto_tab[protocol] != pp);
 	proto_tab[protocol] = NULL;

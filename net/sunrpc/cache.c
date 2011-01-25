@@ -566,8 +566,16 @@ static int cache_defer_req(struct cache_req *req, struct cache_head *item)
 	}
 
 	if (dreq == &sleeper.handle) {
-		if (wait_for_completion_interruptible_timeout(
-			    &sleeper.completion, 3*HZ) <= 0) {
+		long timeout;
+		/* We cannot compare the return value of
+		 * wait_for_completion_interruptible_timeout as it is
+		 * declared 'unsigned' so -ve errors look like success.
+		 * So we must assign it to a 'long' first so as to get
+		 * the correct signed comparison.
+		 */
+		timeout = wait_for_completion_interruptible_timeout(
+			&sleeper.completion, 3*HZ);
+		if (timeout <= 0) {
 			/* The completion wasn't completed, so we
 			 * need to clean up.
 			 */

@@ -5,7 +5,7 @@
  *
  * SGI UV APIC functions (note: not an Intel compatible APIC)
  *
- * Copyright (C) 2007-2009 Silicon Graphics, Inc. All rights reserved.
+ * Copyright (C) 2007-2010 Silicon Graphics, Inc. All rights reserved.
  */
 #include <linux/cpumask.h>
 #include <linux/hardirq.h>
@@ -44,10 +44,23 @@ DEFINE_PER_CPU(int, x2apic_extra_bits);
 
 static enum uv_system_type uv_system_type;
 static u64 gru_start_paddr, gru_end_paddr;
+static union uvh_apicid uvh_apicid;
 int uv_min_hub_revision_id;
 EXPORT_SYMBOL_GPL(uv_min_hub_revision_id);
+unsigned int uv_apicid_hibits;
+EXPORT_SYMBOL_GPL(uv_apicid_hibits);
 static DEFINE_SPINLOCK(uv_nmi_lock);
 
+
+static unsigned long __init uv_early_read_mmr(unsigned long addr)
+{
+	unsigned long val, *mmr;
+
+	mmr = early_ioremap(UV_LOCAL_MMR_BASE | addr, sizeof(*mmr));
+	val = *mmr;
+	early_iounmap(mmr, sizeof(*mmr));
+	return val;
+}
 
 static int is_GRU_range(u64 start, u64 end)
 {
@@ -59,27 +72,51 @@ static int uv_is_untracked_pat_range(u64 start, u64 end)
 	return is_ISA_range(start, end) || is_GRU_range(start, end);
 }
 
-static int early_get_nodeid(void)
+static int __init early_get_pnodeid(void)
 {
 	union uvh_node_id_u node_id;
-	unsigned long *mmr;
-
-	mmr = early_ioremap(UV_LOCAL_MMR_BASE | UVH_NODE_ID, sizeof(*mmr));
-	node_id.v = *mmr;
-	early_iounmap(mmr, sizeof(*mmr));
+	union uvh_si_addr_map_config_u m_n_config;
+	int pnode;
 
 	/* Currently, all blades have same revision number */
+	node_id.v = uv_early_read_mmr(UVH_NODE_ID);
+	m_n_config.v = uv_early_read_mmr(UVH_SI_ADDR_MAP_CONFIG);
 	uv_min_hub_revision_id = node_id.s.revision;
 
-	return node_id.s.node_id;
+	pnode = (node_id.s.node_id >> 1) & ((1 << m_n_config.s.n_skt) - 1);
+	return pnode;
+}
+
+/*
+ * Add an extra bit as dictated by bios to the destination apicid of
+ * interrupts potentially passing through the UV HUB.  This prevents
+ * a deadlock between interrupts and IO port operations.
+ */
+static void __init uv_set_apicid_hibit(void)
+{
+	union uvh_lb_target_physical_apic_id_mask_u apicid_mask;
+
+	apicid_mask.v = uv_early_read_mmr(UVH_LB_TARGET_PHYSICAL_APIC_ID_MASK);
+	uv_apicid_hibits = apicid_mask.s.bit_enables & UV_APICID_HIBIT_MASK;
+}
+
+static void __init early_get_apic_pnode_shift(void)
+{
+	uvh_apicid.v = uv_early_read_mmr(UVH_APICID);
+	if (!uvh_apicid.v)
+		/*
+		 * Old bios, use default value
+		 */
+		uvh_apicid.s.pnode_shift = UV_APIC_PNODE_SHIFT;
 }
 
 static int __init uv_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 {
-	int nodeid;
+	int pnodeid;
 
 	if (!strcmp(oem_id, "SGI")) {
-		nodeid = early_get_nodeid();
+		pnodeid = early_get_pnodeid();
+		early_get_apic_pnode_shift();
 		x86_platform.is_untracked_pat_range =  uv_is_untracked_pat_range;
 		x86_platform.nmi_init = uv_nmi_init;
 		acpi_set_iomap_cacheable();
@@ -89,8 +126,9 @@ static int __init uv_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 			uv_system_type = UV_X2APIC;
 		else if (!strcmp(oem_table_id, "UVH")) {
 			__get_cpu_var(x2apic_extra_bits) =
-				nodeid << (UV_APIC_PNODE_SHIFT - 1);
+				pnodeid << uvh_apicid.s.pnode_shift;
 			uv_system_type = UV_NON_UNIQUE_APIC;
+			uv_set_apicid_hibit();
 			return 1;
 		}
 	}
@@ -110,6 +148,9 @@ EXPORT_SYMBOL_GPL(is_uv_system);
 
 DEFINE_PER_CPU(struct uv_hub_info_s, __uv_hub_info);
 EXPORT_PER_CPU_SYMBOL_GPL(__uv_hub_info);
+
+DEFINE_PER_CPU(struct uv_hub_info_extra_s, __uv_hub_info_extra);
+EXPORT_PER_CPU_SYMBOL_GPL(__uv_hub_info_extra);
 
 struct uv_blade_info *uv_blade_info;
 EXPORT_SYMBOL_GPL(uv_blade_info);
@@ -144,6 +185,7 @@ static int __cpuinit uv_wakeup_secondary(int phys_apicid, unsigned long start_ri
 	int pnode;
 
 	pnode = uv_apicid_to_pnode(phys_apicid);
+	phys_apicid |= uv_apicid_hibits;
 	val = (1UL << UVH_IPI_INT_SEND_SHFT) |
 	    (phys_apicid << UVH_IPI_INT_APIC_ID_SHFT) |
 	    ((start_rip << UVH_IPI_INT_VECTOR_SHFT) >> 12) |
@@ -225,7 +267,7 @@ static unsigned int uv_cpu_mask_to_apicid(const struct cpumask *cpumask)
 	int cpu = cpumask_first(cpumask);
 
 	if ((unsigned)cpu < nr_cpu_ids)
-		return per_cpu(x86_cpu_to_apicid, cpu);
+		return per_cpu(x86_cpu_to_apicid, cpu) | uv_apicid_hibits;
 	else
 		return BAD_APICID;
 }
@@ -245,7 +287,7 @@ uv_cpu_mask_to_apicid_and(const struct cpumask *cpumask,
 			break;
 	}
 	if (cpu < nr_cpu_ids)
-		return per_cpu(x86_cpu_to_apicid, cpu);
+		return per_cpu(x86_cpu_to_apicid, cpu) | uv_apicid_hibits;
 
 	return BAD_APICID;
 }
@@ -674,27 +716,32 @@ void uv_nmi_init(void)
 void __init uv_system_init(void)
 {
 	union uvh_si_addr_map_config_u m_n_config;
+	union uvh_rh_gam_mmioh_overlay_config_mmr_u mmioh;
 	union uvh_node_id_u node_id;
 	unsigned long gnode_upper, lowmem_redir_base, lowmem_redir_size;
-	int bytes, nid, cpu, lcpu, pnode, blade, i, j, m_val, n_val;
+	int bytes, nid, cpu, lcpu, pnode, blade, i, j, m_val, n_val, n_io;
 	int gnode_extra, max_pnode = 0;
 	unsigned long mmr_base, present, paddr;
-	unsigned short pnode_mask;
+	unsigned short pnode_mask, pnode_io_mask;
 
 	map_low_mmrs();
 
 	m_n_config.v = uv_read_local_mmr(UVH_SI_ADDR_MAP_CONFIG);
 	m_val = m_n_config.s.m_skt;
 	n_val = m_n_config.s.n_skt;
+	mmioh.v = uv_read_local_mmr(UVH_RH_GAM_MMIOH_OVERLAY_CONFIG_MMR);
+	n_io = mmioh.s.n_io;
 	mmr_base =
 	    uv_read_local_mmr(UVH_RH_GAM_MMR_OVERLAY_CONFIG_MMR) &
 	    ~UV_MMR_ENABLE;
 	pnode_mask = (1 << n_val) - 1;
+	pnode_io_mask = (1 << n_io) - 1;
+
 	node_id.v = uv_read_local_mmr(UVH_NODE_ID);
 	gnode_extra = (node_id.s.node_id & ~((1 << n_val) - 1)) >> 1;
 	gnode_upper = ((unsigned long)gnode_extra  << m_val);
-	printk(KERN_DEBUG "UV: N %d, M %d, gnode_upper 0x%lx, gnode_extra 0x%x\n",
-			n_val, m_val, gnode_upper, gnode_extra);
+	printk(KERN_DEBUG "UV: N %d, M %d, N_IO: %d, gnode_upper 0x%lx, gnode_extra 0x%x, pnode_mask 0x%x, pnode_io_mask 0x%x\n",
+			n_val, m_val, n_io, gnode_upper, gnode_extra, pnode_mask, pnode_io_mask);
 
 	printk(KERN_DEBUG "UV: global MMR base 0x%lx\n", mmr_base);
 
@@ -727,7 +774,7 @@ void __init uv_system_init(void)
 		for (j = 0; j < 64; j++) {
 			if (!test_bit(j, &present))
 				continue;
-			pnode = (i * 64 + j);
+			pnode = (i * 64 + j) & pnode_mask;
 			uv_blade_info[blade].pnode = pnode;
 			uv_blade_info[blade].nr_possible_cpus = 0;
 			uv_blade_info[blade].nr_online_cpus = 0;
@@ -745,6 +792,13 @@ void __init uv_system_init(void)
 		int apicid = per_cpu(x86_cpu_to_apicid, cpu);
 
 		nid = cpu_to_node(cpu);
+		/*
+		 * apic_pnode_shift must be set before calling uv_apicid_to_pnode();
+		 */
+		uv_cpu_hub_info(cpu)->pnode_mask = pnode_mask;
+		uv_cpu_hub_info_extra(cpu)->apic_pnode_shift = uvh_apicid.s.pnode_shift;
+		for (i = 0; i < UV_HUB_INFO_EXTRA_FIELDS; i++)
+			uv_cpu_hub_info_extra(cpu)->future[i] = 0;
 		pnode = uv_apicid_to_pnode(apicid);
 		blade = boot_pnode_to_blade(pnode);
 		lcpu = uv_blade_info[blade].nr_possible_cpus;
@@ -760,7 +814,6 @@ void __init uv_system_init(void)
 		uv_cpu_hub_info(cpu)->numa_blade_id = blade;
 		uv_cpu_hub_info(cpu)->blade_processor_id = lcpu;
 		uv_cpu_hub_info(cpu)->pnode = pnode;
-		uv_cpu_hub_info(cpu)->pnode_mask = pnode_mask;
 		uv_cpu_hub_info(cpu)->gpa_mask = (1UL << (m_val + n_val)) - 1;
 		uv_cpu_hub_info(cpu)->gnode_upper = gnode_upper;
 		uv_cpu_hub_info(cpu)->gnode_extra = gnode_extra;
@@ -784,7 +837,7 @@ void __init uv_system_init(void)
 
 	map_gru_high(max_pnode);
 	map_mmr_high(max_pnode);
-	map_mmioh_high(max_pnode);
+	map_mmioh_high(max_pnode & pnode_io_mask);
 
 	uv_cpu_init();
 	uv_scir_register_cpu_notifier();

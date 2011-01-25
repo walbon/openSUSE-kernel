@@ -102,6 +102,7 @@ static int i915_resume(struct drm_device *dev)
 
 	if (pci_enable_device(dev->pdev))
 		return -1;
+	dev_priv->in_resume = true;
 	pci_set_master(dev->pdev);
 
 	i915_restore_state(dev);
@@ -128,6 +129,7 @@ static int i915_resume(struct drm_device *dev)
 	}
 
 	dev_priv->modeset_on_lid = 0;
+	dev_priv->in_resume = false;
 
 	return ret;
 }

@@ -468,16 +468,26 @@ asmlinkage void __irq_entry evtchn_do_upcall(struct pt_regs *regs)
 
 static struct irq_chip dynirq_chip;
 
-static int find_unbound_irq(unsigned int cpu, bool percpu)
+static int find_unbound_irq(unsigned int node, bool percpu)
 {
 	static int warned;
 	int irq;
 
 	for (irq = DYNIRQ_BASE; irq < (DYNIRQ_BASE + NR_DYNIRQS); irq++) {
-		struct irq_desc *desc = irq_to_desc_alloc_node(irq, cpu_to_node(cpu));
-		struct irq_cfg *cfg = desc->chip_data;
+		struct irq_desc *desc;
+		struct irq_cfg *cfg;
 
-		if (!cfg->bindcount) {
+		desc = irq_to_desc(irq);
+		if (!desc)
+			desc = irq_to_desc_alloc_node(irq, node);
+		else if (desc->chip != &no_irq_chip &&
+			 desc->chip != &dynirq_chip)
+			continue;
+		if (!desc)
+			return -ENOMEM;
+
+		cfg = desc->chip_data;
+		if (cfg && !cfg->bindcount) {
 			irq_flow_handler_t handle;
 			const char *name;
 
@@ -511,7 +521,7 @@ static int bind_caller_port_to_irq(unsigned int caller_port)
 	spin_lock(&irq_mapping_update_lock);
 
 	if ((irq = evtchn_to_irq[caller_port]) == -1) {
-		if ((irq = find_unbound_irq(smp_processor_id(), false)) < 0)
+		if ((irq = find_unbound_irq(numa_node_id(), false)) < 0)
 			goto out;
 
 		evtchn_to_irq[caller_port] = irq;
@@ -534,7 +544,7 @@ static int bind_local_port_to_irq(unsigned int local_port)
 
 	BUG_ON(evtchn_to_irq[local_port] != -1);
 
-	if ((irq = find_unbound_irq(smp_processor_id(), false)) < 0) {
+	if ((irq = find_unbound_irq(numa_node_id(), false)) < 0) {
 		if (close_evtchn(local_port))
 			BUG();
 		goto out;
@@ -586,7 +596,7 @@ static int bind_virq_to_irq(unsigned int virq, unsigned int cpu)
 	spin_lock(&irq_mapping_update_lock);
 
 	if ((irq = per_cpu(virq_to_irq, cpu)[virq]) == -1) {
-		if ((irq = find_unbound_irq(cpu, false)) < 0)
+		if ((irq = find_unbound_irq(cpu_to_node(cpu), false)) < 0)
 			goto out;
 
 		bind_virq.virq = virq;
@@ -628,7 +638,7 @@ static int bind_ipi_to_irq(unsigned int ipi, unsigned int cpu)
 	spin_lock(&irq_mapping_update_lock);
 
 	if ((irq = per_cpu(ipi_to_irq, cpu)[ipi]) == -1) {
-		if ((irq = find_unbound_irq(cpu, false)) < 0)
+		if ((irq = find_unbound_irq(cpu_to_node(cpu), false)) < 0)
 			goto out;
 
 		bind_ipi.vcpu = cpu;
@@ -930,7 +940,7 @@ int bind_virq_to_irqaction(
 
 		BUG_ON(!retval);
 
-		if ((irq = find_unbound_irq(cpu, true)) < 0) {
+		if ((irq = find_unbound_irq(cpu_to_node(cpu), true)) < 0) {
 			if (cur)
 				virq_actions[virq] = cur->next;
 			spin_unlock(&irq_mapping_update_lock);
@@ -1029,7 +1039,7 @@ int __cpuinit bind_ipi_to_irqaction(
 	}
 
 	if (ipi_irq < 0) {
-		if ((ipi_irq = find_unbound_irq(cpu, true)) < 0) {
+		if ((ipi_irq = find_unbound_irq(cpu_to_node(cpu), true)) < 0) {
 			spin_unlock(&irq_mapping_update_lock);
 			return ipi_irq;
 		}

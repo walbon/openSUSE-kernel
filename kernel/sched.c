@@ -3716,6 +3716,18 @@ unsigned long scale_rt_power(int cpu)
 	total = sched_avg_period() + (rq->clock - rq->age_stamp);
 	available = total - rq->rt_avg;
 
+	if (unlikely(total < rq->rt_avg)) {
+		if (printk_ratelimit()) {
+			printk(KERN_ERR "scale_rt_power: period: %lu clock: %lu age_stamp: %lu rt_avg: %lu\n",
+				sched_avg_period(), rq->clock, rq->age_stamp, rq->rt_avg);
+		}
+
+		/* Ensures that power won't end up being negative */
+		available = 0;
+	} else {
+		available = total - rq->rt_avg;
+	}
+
 	if (unlikely((s64)total < SCHED_LOAD_SCALE))
 		total = SCHED_LOAD_SCALE;
 
@@ -3729,6 +3741,7 @@ static void update_cpu_power(struct sched_domain *sd, int cpu)
 	unsigned long weight = sd->span_weight;
 	unsigned long power = SCHED_LOAD_SCALE;
 	struct sched_group *sdg = sd->groups;
+	unsigned long scale_rt;
 
 	if (sched_feat(ARCH_POWER))
 		power *= arch_scale_freq_power(sd, cpu);
@@ -3746,11 +3759,21 @@ static void update_cpu_power(struct sched_domain *sd, int cpu)
 		power >>= SCHED_LOAD_SHIFT;
 	}
 
-	power *= scale_rt_power(cpu);
+	scale_rt = scale_rt_power(cpu);
+	power *= scale_rt;
 	power >>= SCHED_LOAD_SHIFT;
 
 	if (!power)
 		power = 1;
+
+	if ((int)power <= 0) {
+		if (printk_ratelimit()) {
+			WARN_ON_ONCE(1);
+			printk(KERN_ERR "update_cpu_power: cpu_power = %lu; scale_rt = %lu\n",
+					power, scale_rt);
+		}
+		power = 1;
+	}
 
 	sdg->cpu_power = power;
 }
@@ -3773,6 +3796,12 @@ static void update_group_power(struct sched_domain *sd, int cpu)
 		power += group->cpu_power;
 		group = group->next;
 	} while (group != child->groups);
+
+	if ((int)power <= 0) {
+		WARN_ON_ONCE(1);
+		printk(KERN_ERR "update_group_power: cpu_power = %lu\n", power);
+		power = 1;
+	}
 
 	sdg->cpu_power = power;
 }
@@ -3848,6 +3877,14 @@ static inline void update_sg_lb_stats(struct sched_domain *sd,
 	if (idle != CPU_NEWLY_IDLE && local_group &&
 	    balance_cpu != this_cpu && balance) {
 		*balance = 0;
+		return;
+	}
+
+	if ((int)group->cpu_power <= 0) {
+		if (printk_ratelimit()) {
+			WARN_ON_ONCE(1);
+			printk(KERN_ERR "update_sg_lb_stats: group->cpu_power = %d\n", group->cpu_power);
+		}
 		return;
 	}
 
@@ -3969,6 +4006,16 @@ static inline void fix_small_imbalance(struct sd_lb_stats *sds,
 
 	scaled_busy_load_per_task = sds->busiest_load_per_task
 						 * SCHED_LOAD_SCALE;
+
+	if ((int)sds->busiest->cpu_power <= 0) {
+		if (printk_ratelimit()) {
+			WARN_ON_ONCE(1);
+			printk(KERN_ERR "fix_small_imbalance: sds->busiest->cpu_power = %d\n",
+				sds->busiest->cpu_power);
+		}
+		return;
+	}
+
 	scaled_busy_load_per_task /= sds->busiest->cpu_power;
 
 	if (sds->max_load - sds->this_load + scaled_busy_load_per_task >=
@@ -4049,6 +4096,15 @@ static inline void calculate_imbalance(struct sd_lb_stats *sds, int this_cpu,
 						sds->busiest_group_capacity);
 
 		load_above_capacity *= (SCHED_LOAD_SCALE * SCHED_LOAD_SCALE);
+
+		if ((int)sds->busiest->cpu_power <= 0) {
+			if (printk_ratelimit()) {
+				WARN_ON_ONCE(1);
+				printk(KERN_ERR "calculate_imbalance: sds->busiest->cpu_power = %d\n",
+						sds->busiest->cpu_power);
+				return;
+			}
+		}
 
 		load_above_capacity /= sds->busiest->cpu_power;
 	}
@@ -5036,6 +5092,10 @@ static inline void idle_balance(int cpu, struct rq *rq)
 DEFINE_PER_CPU(struct kernel_stat, kstat);
 
 EXPORT_PER_CPU_SYMBOL(kstat);
+
+DEFINE_PER_CPU(unsigned long, kstat_irqs_sum);
+
+EXPORT_PER_CPU_SYMBOL(kstat_irqs_sum);
 
 /*
  * Return any ns on the sched_clock that have not yet been accounted in
