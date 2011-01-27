@@ -1517,13 +1517,14 @@ static int __init uv_init_per_cpu(int nuvhubs)
 		kmalloc(nuvhubs * sizeof(struct uvhub_desc), GFP_KERNEL);
 	memset(uvhub_descs, 0, nuvhubs * sizeof(struct uvhub_desc));
 	uvhub_mask = kzalloc((nuvhubs+7)/8, GFP_KERNEL);
+
 	for_each_present_cpu(cpu) {
 		bcp = &per_cpu(bau_control, cpu);
 		memset(bcp, 0, sizeof(struct bau_control));
 		pnode = uv_cpu_hub_info(cpu)->pnode;
 		uvhub = uv_cpu_hub_info(cpu)->numa_blade_id;
-		*(uvhub_mask + (uvhub/8)) |= (1 << (uvhub%8));
 		bdp = &uvhub_descs[uvhub];
+		*(uvhub_mask + (uvhub/8)) |= (1 << (uvhub%8));
 		bdp->num_cpus++;
 		bdp->uvhub = uvhub;
 		bdp->pnode = pnode;
@@ -1535,7 +1536,8 @@ static int __init uv_init_per_cpu(int nuvhubs)
 		sdp->cpu_number[sdp->num_cpus] = cpu;
 		sdp->num_cpus++;
 		if (sdp->num_cpus > MAX_CPUS_PER_SOCKET) {
-			printk(KERN_EMERG "%d cpus per socket invalid\n", sdp->num_cpus);
+			printk(KERN_EMERG "%d cpus per socket invalid\n",
+				sdp->num_cpus);
 			return 1;
 		}
 	}
