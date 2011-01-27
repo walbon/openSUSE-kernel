@@ -74,6 +74,8 @@
 
 #include "buffer_head_io.h"
 
+#include "kapi.h"
+
 static struct kmem_cache *ocfs2_inode_cachep = NULL;
 struct kmem_cache *ocfs2_dquot_cachep;
 struct kmem_cache *ocfs2_qf_chunk_cachep;
