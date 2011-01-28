@@ -311,6 +311,14 @@ static inline int uv_apicid_to_pnode(int apicid)
 }
 
 /*
+ * Convert an apicid to the socket number on the blade
+ */
+static inline int uv_apicid_to_socket(int apicid)
+{
+	return (apicid >> (uv_hub_info_extra->apic_pnode_shift - 1)) & 1;
+}
+
+/*
  * Access global MMRs using the low memory MMR32 space. This region supports
  * faster MMR access but not all MMRs are accessible in this space.
  */
