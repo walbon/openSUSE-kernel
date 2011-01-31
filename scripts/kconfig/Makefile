@@ -123,7 +123,7 @@ cloneconfig: $(obj)/conf
 	*)	cat $(CLONECONFIG) > .config.running ;;		\
 	esac &&							\
 	echo -e "Cloning configuration file $(CLONECONFIG)\n"
-	$(Q)$< -D .config.running arch/$(SRCARCH)/Kconfig
+	$(Q)$< --defconfig=.config.running arch/$(SRCARCH)/Kconfig
 
 defconfig: $(obj)/conf
 ifeq ($(KBUILD_DEFCONFIG),)
