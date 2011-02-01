@@ -4250,12 +4250,20 @@ static ctl_table kdb_root_table[] = {
 static int
 kdb_cpu_callback(struct notifier_block *nfb, unsigned long action, void *hcpu)
 {
-	if (action == CPU_ONLINE) {
-		int cpu =(unsigned long)hcpu;
-		cpumask_t save_cpus_allowed = current->cpus_allowed;
-		set_cpus_allowed_ptr(current, &cpumask_of_cpu(cpu));
+	if (action == CPU_ONLINE && kdb_on) {
+		int cpu = (unsigned long)hcpu;
+		int ret;
+
+		cpumask_var_t save_cpus_allowed;
+
+	        if (!zalloc_cpumask_var(&save_cpus_allowed, GFP_KERNEL))
+	                return NOTIFY_BAD;
+
+		cpumask_copy(save_cpus_allowed, &current->cpus_allowed);
+		set_cpus_allowed_ptr(current, cpumask_of(cpu));
 		kdb(KDB_REASON_CPU_UP, 0, NULL); /* do kdb setup on this cpu */
-		set_cpus_allowed_ptr(current, &save_cpus_allowed);
+		set_cpus_allowed_ptr(current, save_cpus_allowed);
+		free_cpumask_var(save_cpus_allowed);
 	}
 	return NOTIFY_OK;
 }
