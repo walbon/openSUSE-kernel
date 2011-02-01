@@ -137,7 +137,8 @@ static int synaptics_capability(struct psmouse *psmouse)
 		return -1;
 	priv->capabilities = (cap[0] << 16) | (cap[1] << 8) | cap[2];
 	priv->ext_cap = 0;
-	if (!SYN_CAP_VALID(priv->capabilities))
+	if (!SYN_CAP_VALID(priv->capabilities) &&
+	    (priv->capabilities & 0xffff00) != 0xd00000)
 		return -1;
 
 	/*
@@ -363,7 +364,9 @@ static void synaptics_check_clickpad(struct psmouse *psmouse)
 	struct synaptics_data *priv = psmouse->private;
 	unsigned char ncap[3];
 
-	if (SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0xe4)
+	if (SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0xe4 &&
+	    (SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0x64 ||
+	     priv->capabilities != 0xd00073))
 		return;
 	if (synaptics_send_cmd(psmouse, 0x0c, ncap))
 		return;
