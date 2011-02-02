@@ -714,7 +714,8 @@ void __lock_page(struct page *page)
 
 	do {
 		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
-		SetPageWaiters(page);
+		if (!PageWaiters(page))
+			SetPageWaiters(page);
 		if (likely(PageLocked(page)))
 			sync_page(page);
 	} while (!trylock_page(page));
@@ -730,7 +731,8 @@ int __lock_page_killable(struct page *page)
 
 	do {
 		prepare_to_wait(wq, &wait.wait, TASK_KILLABLE);
-		SetPageWaiters(page);
+		if (!PageWaiters(page))
+			SetPageWaiters(page);
 		if (likely(PageLocked(page))) {
 			err = sync_page_killable(page);
 			if (err)
@@ -750,7 +752,8 @@ void  __wait_on_page_locked(struct page *page)
 
 	do {
 		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
-		SetPageWaiters(page);
+		if (!PageWaiters(page))
+			SetPageWaiters(page);
 		if (likely(PageLocked(page)))
 			sync_page(page);
 	} while (PageLocked(page));
