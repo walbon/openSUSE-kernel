@@ -195,7 +195,7 @@ static __always_inline int __ticket_spin_trylock(raw_spinlock_t *lock)
 
 #define __ticket_spin_count(lock) \
 	(per_cpu(runstate.state, (lock)->owner) == RUNSTATE_running \
-	 ? 1 << 10 : 1)
+	 ? 1 << 10 : 2)
 
 static inline int __ticket_spin_is_locked(raw_spinlock_t *lock)
 {

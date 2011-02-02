@@ -1676,28 +1676,35 @@ EXPORT_SYMBOL_GPL(nr_pirqs);
 
 int __init arch_probe_nr_irqs(void)
 {
-	int nr_irqs_gsi, nr = acpi_probe_gsi();
+	int nr;
 
-	if (nr <= NR_IRQS_LEGACY) {
-		/* for acpi=off or acpi not compiled in */
-		int idx;
+	if (is_initial_xendomain()) {
+		int nr_irqs_gsi;
 
-		for (nr = idx = 0; idx < nr_ioapics; idx++)
-			nr += io_apic_get_redir_entries(idx) + 1;
-	}
-	nr_irqs_gsi = max(nr, NR_IRQS_LEGACY);
+		nr = acpi_probe_gsi();
+		if (nr <= NR_IRQS_LEGACY) {
+			/* for acpi=off or acpi not compiled in */
+			int idx;
 
-	nr = nr_irqs_gsi + 8 * nr_cpu_ids;
+			for (nr = idx = 0; idx < nr_ioapics; idx++)
+				nr += io_apic_get_redir_entries(idx) + 1;
+		}
+		nr_irqs_gsi = max(nr, NR_IRQS_LEGACY);
+
+		nr = nr_irqs_gsi + 8 * nr_cpu_ids;
 #ifdef CONFIG_PCI_MSI
-	nr += nr_irqs_gsi * 16;
+		nr += nr_irqs_gsi * 16;
 #endif
+		printk(KERN_DEBUG "nr_irqs_gsi: %d\n", nr_irqs_gsi);
+	} else
+		nr = NR_VECTORS + 8 * nr_cpu_ids;
+
 	if (nr_pirqs > nr) {
 		nr_pirqs = nr;
-		nr_irqs = nr + NR_DYNIRQS;
+		nr_irqs = nr + min_t(long, NR_DYNIRQS, NR_EVENT_CHANNELS);
 	}
 
-	printk(KERN_DEBUG "nr_irqs_gsi=%d nr_pirqs=%d\n",
-	       nr_irqs_gsi, nr_pirqs);
+	printk(KERN_DEBUG "nr_pirqs: %d\n", nr_pirqs);
 
 	return 0;
 }
@@ -1738,6 +1745,7 @@ void evtchn_register_pirq(int irq)
 				      "fasteoi");
 }
 
+#ifdef CONFIG_PCI_MSI
 int evtchn_map_pirq(int irq, int xen_pirq)
 {
 	if (irq < 0) {
@@ -1786,6 +1794,7 @@ int evtchn_map_pirq(int irq, int xen_pirq)
 	}
 	return index_from_irq(irq) ? irq : -EINVAL;
 }
+#endif
 
 int evtchn_get_xen_pirq(int irq)
 {
