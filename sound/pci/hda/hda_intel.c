@@ -252,6 +252,11 @@ enum { SDI0, SDI1, SDI2, SDI3, SDO0, SDO1, SDO2, SDO3 };
 /* max buffer size - no h/w limit, you can increase as you like */
 #define AZX_MAX_BUF_SIZE	(1024*1024*1024)
 /* max number of PCM devics per card */
+/* XXX due to compatibility for LSI binary-only modem driver, we have to
+ * keep the fixed number 8 here.
+ * The new items will be handlded separetly.
+ */
+#define OLD_AZX_MAX_PCMS		8
 #define AZX_MAX_PCMS		10
 
 /* RIRB int mask: overrun[2], response[0] */
@@ -399,8 +404,8 @@ struct azx {
 	/* streams (x num_streams) */
 	struct azx_dev *azx_dev;
 
-	/* PCM */
-	struct snd_pcm *pcm[AZX_MAX_PCMS];
+	/* old PCM -- for compatibility reason */
+	struct snd_pcm *old_pcm[OLD_AZX_MAX_PCMS];
 
 	/* HD codec */
 	unsigned short codec_mask;
@@ -434,6 +439,9 @@ struct azx {
 
 	/* reboot notifier (for mysterious hangup problem at power-down) */
 	struct notifier_block reboot_notifier;
+
+	/* PCM */
+	struct snd_pcm *pcm[AZX_MAX_PCMS];
 };
 
 /* driver types */
@@ -1960,6 +1968,8 @@ static void azx_pcm_free(struct snd_pcm *pcm)
 	struct azx_pcm *apcm = pcm->private_data;
 	if (apcm) {
 		apcm->chip->pcm[pcm->device] = NULL;
+		if (pcm->device < OLD_AZX_MAX_PCMS)
+			apcm->chip->old_pcm[pcm->device] = NULL;
 		kfree(apcm);
 	}
 }
@@ -2000,6 +2010,8 @@ azx_attach_pcm_stream(struct hda_bus *bus, struct hda_codec *codec,
 	if (cpcm->pcm_type == HDA_PCM_TYPE_MODEM)
 		pcm->dev_class = SNDRV_PCM_CLASS_MODEM;
 	chip->pcm[pcm_dev] = pcm;
+	if (pcm_dev < OLD_AZX_MAX_PCMS)
+		chip->old_pcm[pcm_dev] = pcm;
 	cpcm->pcm = pcm;
 	for (s = 0; s < 2; s++) {
 		apcm->hinfo[s] = &cpcm->stream[s];
