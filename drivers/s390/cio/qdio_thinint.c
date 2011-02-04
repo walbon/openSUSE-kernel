@@ -130,6 +130,7 @@ static inline int shared_ind(struct qdio_irq *irq_ptr)
  */
 static void tiqdio_thinint_handler(void *ind, void *drv_data)
 {
+	u32 si_used = q_indicators[TIQDIO_SHARED_IND].ind;
 	struct qdio_q *q;
 
 	qdio_perf_stat_inc(&perf_stats.thin_int);
@@ -141,43 +142,35 @@ static void tiqdio_thinint_handler(void *ind, void *drv_data)
 	if (!css_qdio_omit_svs)
 		do_clear_global_summary();
 
-	/*
-	 * reset local summary indicator (tiqdio_alsi) to stop adapter
-	 * interrupts for now
-	 */
-	xchg((u8 *)ind, 0);
-
 	/* protect tiq_list entries, only changed in activate or shutdown */
 	rcu_read_lock();
 
 	/* check for work on all inbound thinint queues */
-	list_for_each_entry_rcu(q, &tiq_list, entry)
+	list_for_each_entry_rcu(q, &tiq_list, entry) {
 		/* only process queues from changed sets */
-		if (*q->irq_ptr->dsci) {
+		if (unlikely(shared_ind(q->irq_ptr))) {
+			if (!si_used)
+				continue;
+		} else if (!*q->irq_ptr->dsci)
+			continue;
 
-			/* only clear it if the indicator is non-shared */
-			if (!shared_ind(q->irq_ptr))
-				xchg(q->irq_ptr->dsci, 0);
-			/*
-			 * don't call inbound processing directly since
-			 * that could starve other thinint queues
-			 */
-			tasklet_schedule(&q->tasklet);
-		}
-
+		/* only clear it if the indicator is non-shared */
+		if (!shared_ind(q->irq_ptr))
+			xchg(q->irq_ptr->dsci, 0);
+		/*
+		 * don't call inbound processing directly since
+		 * that could starve other thinint queues
+		 */
+		tasklet_schedule(&q->tasklet);
+	}
 	rcu_read_unlock();
 
 	/*
 	 * if we used the shared indicator clear it now after all queues
 	 * were processed
 	 */
-	if (atomic_read(&q_indicators[TIQDIO_SHARED_IND].count)) {
+	if (si_used)
 		xchg(&q_indicators[TIQDIO_SHARED_IND].ind, 0);
-
-		/* prevent racing */
-		if (*tiqdio_alsi)
-			xchg(&q_indicators[TIQDIO_SHARED_IND].ind, 1);
-	}
 }
 
 static int set_subchannel_ind(struct qdio_irq *irq_ptr, int reset)
