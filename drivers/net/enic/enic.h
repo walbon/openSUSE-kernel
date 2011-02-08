@@ -1,5 +1,5 @@
 /*
- * Copyright 2008 Cisco Systems, Inc.  All rights reserved.
+ * Copyright 2008-2010 Cisco Systems, Inc.  All rights reserved.
  * Copyright 2007 Nuova Systems, Inc.  All rights reserved.
  *
  * This program is free software; you may redistribute it and/or modify
@@ -20,8 +20,6 @@
 #ifndef _ENIC_H_
 #define _ENIC_H_
 
-#include <linux/inet_lro.h>
-
 #include "vnic_enet.h"
 #include "vnic_dev.h"
 #include "vnic_wq.h"
@@ -33,13 +31,10 @@
 #include "vnic_rss.h"
 
 #define DRV_NAME		"enic"
-#define DRV_DESCRIPTION		"Cisco 10G Ethernet Driver"
-#define DRV_VERSION		"1.1.0.100"
-#define DRV_COPYRIGHT		"Copyright 2008-2009 Cisco Systems, Inc"
+#define DRV_DESCRIPTION		"Cisco VIC Ethernet NIC Driver"
+#define DRV_VERSION		"1.4.1.2-1"
+#define DRV_COPYRIGHT		"Copyright 2008-2010 Cisco Systems, Inc"
 #define PFX			DRV_NAME ": "
-
-#define ENIC_LRO_MAX_DESC	8
-#define ENIC_LRO_MAX_AGGR	64
 
 #define ENIC_BARS_MAX		6
 
@@ -89,15 +84,20 @@ struct enic {
 	spinlock_t devcmd_lock;
 	u8 mac_addr[ETH_ALEN];
 	u8 mc_addr[ENIC_MULTICAST_PERFECT_FILTERS][ETH_ALEN];
+	unsigned int flags;
 	unsigned int mc_count;
 	int csum_rx_enabled;
 	u32 port_mtu;
+	u32 rx_coalesce_usecs;
+	u32 tx_coalesce_usecs;
 
 	/* work queue cache line section */
 	____cacheline_aligned struct vnic_wq wq[ENIC_WQ_MAX];
 	spinlock_t wq_lock[ENIC_WQ_MAX];
 	unsigned int wq_count;
 	struct vlan_group *vlan_group;
+	u16 loop_enable;
+	u16 loop_tag;
 
 	/* receive queue cache line section */
 	____cacheline_aligned struct vnic_rq rq[ENIC_RQ_MAX];
@@ -106,8 +106,6 @@ struct enic {
 	u64 rq_truncated_pkts;
 	u64 rq_bad_fcs;
 	struct napi_struct napi;
-	struct net_lro_mgr lro_mgr;
-	struct net_lro_desc lro_desc[ENIC_LRO_MAX_DESC];
 
 	/* interrupt resource cache line section */
 	____cacheline_aligned struct vnic_intr intr[ENIC_INTR_MAX];
