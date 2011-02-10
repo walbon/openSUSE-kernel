@@ -411,7 +411,7 @@ _xfs_buf_lookup_pages(
 					__func__, gfp_mask);
 
 			XFS_STATS_INC(xb_page_retries);
-			xfsbufd_wakeup(0, gfp_mask);
+			xfsbufd_wakeup(1, gfp_mask);
 			congestion_wait(BLK_RW_ASYNC, HZ/50);
 			goto retry;
 		}
@@ -1560,6 +1560,7 @@ xfs_alloc_delwrite_queue(
 	INIT_LIST_HEAD(&btp->bt_list);
 	INIT_LIST_HEAD(&btp->bt_delwrite_queue);
 	spin_lock_init(&btp->bt_delwrite_lock);
+	atomic_set(&btp->bt_qcount, 0);
 	btp->bt_flags = 0;
 	btp->bt_task = kthread_run(xfsbufd, btp, "xfsbufd");
 	if (IS_ERR(btp->bt_task)) {
@@ -1622,6 +1623,7 @@ xfs_buf_delwri_queue(
 
 	bp->b_flags |= _XBF_DELWRI_Q;
 	list_add_tail(&bp->b_list, dwq);
+	atomic_inc(&bp->b_target->bt_qcount);
 	bp->b_queuetime = jiffies;
 	spin_unlock(dwlk);
 
@@ -1664,16 +1666,22 @@ xfsbufd_wakeup(
 	gfp_t			mask)
 {
 	xfs_buftarg_t		*btp;
+	int count = 0;
 
 	spin_lock(&xfs_buftarg_lock);
 	list_for_each_entry(btp, &xfs_buftarg_list, bt_list) {
 		if (test_bit(XBT_FORCE_SLEEP, &btp->bt_flags))
 			continue;
-		set_bit(XBT_FORCE_FLUSH, &btp->bt_flags);
-		wake_up_process(btp->bt_task);
+		if (list_empty(&btp->bt_delwrite_queue))
+			continue;
+		count += atomic_read(&btp->bt_qcount);
+		if (priority) {
+			set_bit(XBT_FORCE_FLUSH, &btp->bt_flags);
+			wake_up_process(btp->bt_task);
+		}
 	}
 	spin_unlock(&xfs_buftarg_lock);
-	return 0;
+	return count;
 }
 
 /*
@@ -1710,6 +1718,7 @@ xfs_buf_delwri_split(
 					 _XBF_RUN_QUEUES);
 			bp->b_flags |= XBF_WRITE;
 			list_move_tail(&bp->b_list, list);
+			atomic_dec(&bp->b_target->bt_qcount);
 		} else
 			skipped++;
 	}
