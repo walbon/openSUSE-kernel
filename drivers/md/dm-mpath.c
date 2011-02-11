@@ -631,6 +631,7 @@ static struct pgpath *parse_path(struct arg_set *as, struct path_selector *ps,
 			format_dev_t(p->path.pdev, dev);
 			p->is_active = 0;
 		} else {
+			DMWARN("Cannot access device path %s: %d", path, r);
 			ti->error = "error getting device";
 			goto bad;
 		}
@@ -1454,7 +1455,7 @@ static int multipath_status(struct dm_target *ti, status_type_t type,
 	else if (m->current_pg)
 		pg_num = m->current_pg->pg_num;
 	else
-			pg_num = 1;
+		pg_num = (m->nr_priority_groups ? 1 : 0);
 
 	DMEMIT("%u ", pg_num);
 
