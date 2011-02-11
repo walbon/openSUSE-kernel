@@ -55,6 +55,10 @@ module_param_named(ddp_min, fcoe_ddp_min, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ddp_min, "Minimum I/O size in bytes for "	\
 		 "Direct Data Placement (DDP).");
 
+static unsigned int fcoe_use_vlan_id = 1;
+module_param_named(use_vlan_id, fcoe_use_vlan_id, uint, S_IRUGO);
+MODULE_PARM_DESC(use_vlan_id, "Include VLAN ID in generated WWNN/WWPN.");
+
 DEFINE_MUTEX(fcoe_config_mutex);
 
 /* fcoe_percpu_clean completion.  Waiter protected by fcoe_create_mutex */
@@ -662,9 +666,10 @@ static int fcoe_netdev_config(struct fc_lport *lport, struct net_device *netdev)
 		/*
 		 * Use NAA 1&2 (FC-FS Rev. 2.0, Sec. 15) to generate WWNN/WWPN:
 		 * For WWNN, we use NAA 1 w/ bit 27-16 of word 0 as 0.
-		 * For WWPN, we use NAA 2 w/ bit 27-16 of word 0 from VLAN ID
+		 * For WWPN, we use NAA 2 w/ bit 27-16 of word 0 from VLAN ID.
+		 * If use_vlan_id is 0 the VLAN ID is not used.
 		 */
-		if (netdev->priv_flags & IFF_802_1Q_VLAN)
+		if (fcoe_use_vlan_id && netdev->priv_flags & IFF_802_1Q_VLAN)
 			vid = vlan_dev_vlan_id(netdev);
 
 		if (fcoe_get_wwn(netdev, &wwnn, NETDEV_FCOE_WWNN))
