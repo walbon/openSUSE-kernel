@@ -130,9 +130,9 @@ struct inquiry_data {
  *              M O D U L E   G L O B A L S
  */
 
-static unsigned long aac_build_sg(struct scsi_cmnd* scsicmd, struct sgmap* sgmap);
-static unsigned long aac_build_sg64(struct scsi_cmnd* scsicmd, struct sgmap64* psg);
-static unsigned long aac_build_sgraw(struct scsi_cmnd* scsicmd, struct sgmapraw* psg);
+static long aac_build_sg(struct scsi_cmnd* scsicmd, struct sgmap* sgmap);
+static long aac_build_sg64(struct scsi_cmnd* scsicmd, struct sgmap64* psg);
+static long aac_build_sgraw(struct scsi_cmnd* scsicmd, struct sgmapraw* psg);
 static int aac_send_srb_fib(struct scsi_cmnd* scsicmd);
 #ifdef AAC_DETAILED_STATUS_INFO
 static char *aac_get_status_string(u32 status);
@@ -949,6 +949,8 @@ static int aac_read_raw_io(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, u3
 {
 	u16 fibsize;
 	struct aac_raw_io *readcmd;
+	long ret;
+
 	aac_fib_init(fib);
 	readcmd = (struct aac_raw_io *) fib_data(fib);
 	readcmd->block[0] = cpu_to_le32((u32)(lba&0xffffffff));
@@ -959,7 +961,10 @@ static int aac_read_raw_io(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, u3
 	readcmd->bpTotal = 0;
 	readcmd->bpComplete = 0;
 
-	aac_build_sgraw(cmd, &readcmd->sg);
+	ret = aac_build_sgraw(cmd, &readcmd->sg);
+	if (ret < 0)
+		return ret;
+
 	fibsize = sizeof(struct aac_raw_io) + ((le32_to_cpu(readcmd->sg.count) - 1) * sizeof (struct sgentryraw));
 	BUG_ON(fibsize > (fib->dev->max_fib_size - sizeof(struct aac_fibhdr)));
 	/*
@@ -978,6 +983,8 @@ static int aac_read_block64(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, u
 {
 	u16 fibsize;
 	struct aac_read64 *readcmd;
+	long ret;
+
 	aac_fib_init(fib);
 	readcmd = (struct aac_read64 *) fib_data(fib);
 	readcmd->command = cpu_to_le32(VM_CtHostRead64);
@@ -987,7 +994,10 @@ static int aac_read_block64(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, u
 	readcmd->pad   = 0;
 	readcmd->flags = 0;
 
-	aac_build_sg64(cmd, &readcmd->sg);
+	ret = aac_build_sg64(cmd, &readcmd->sg);
+	if (ret < 0)
+		return ret;
+
 	fibsize = sizeof(struct aac_read64) +
 		((le32_to_cpu(readcmd->sg.count) - 1) *
 		 sizeof (struct sgentry64));
@@ -1009,6 +1019,8 @@ static int aac_read_block(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, u32
 {
 	u16 fibsize;
 	struct aac_read *readcmd;
+	long ret;
+
 	aac_fib_init(fib);
 	readcmd = (struct aac_read *) fib_data(fib);
 	readcmd->command = cpu_to_le32(VM_CtBlockRead);
@@ -1016,7 +1028,10 @@ static int aac_read_block(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, u32
 	readcmd->block = cpu_to_le32((u32)(lba&0xffffffff));
 	readcmd->count = cpu_to_le32(count * 512);
 
-	aac_build_sg(cmd, &readcmd->sg);
+	ret = aac_build_sg(cmd, &readcmd->sg);
+	if (ret < 0)
+		return ret;
+
 	fibsize = sizeof(struct aac_read) +
 			((le32_to_cpu(readcmd->sg.count) - 1) *
 			 sizeof (struct sgentry));
@@ -1038,6 +1053,8 @@ static int aac_write_raw_io(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, u
 {
 	u16 fibsize;
 	struct aac_raw_io *writecmd;
+	long ret;
+
 	aac_fib_init(fib);
 	writecmd = (struct aac_raw_io *) fib_data(fib);
 	writecmd->block[0] = cpu_to_le32((u32)(lba&0xffffffff));
@@ -1051,7 +1068,10 @@ static int aac_write_raw_io(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, u
 	writecmd->bpTotal = 0;
 	writecmd->bpComplete = 0;
 
-	aac_build_sgraw(cmd, &writecmd->sg);
+	ret = aac_build_sgraw(cmd, &writecmd->sg);
+	if (ret < 0)
+		return ret;
+
 	fibsize = sizeof(struct aac_raw_io) + ((le32_to_cpu(writecmd->sg.count) - 1) * sizeof (struct sgentryraw));
 	BUG_ON(fibsize > (fib->dev->max_fib_size - sizeof(struct aac_fibhdr)));
 	/*
@@ -1070,6 +1090,8 @@ static int aac_write_block64(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, 
 {
 	u16 fibsize;
 	struct aac_write64 *writecmd;
+	long ret;
+
 	aac_fib_init(fib);
 	writecmd = (struct aac_write64 *) fib_data(fib);
 	writecmd->command = cpu_to_le32(VM_CtHostWrite64);
@@ -1079,7 +1101,10 @@ static int aac_write_block64(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, 
 	writecmd->pad	= 0;
 	writecmd->flags	= 0;
 
-	aac_build_sg64(cmd, &writecmd->sg);
+	ret = aac_build_sg64(cmd, &writecmd->sg);
+	if (ret < 0)
+		return ret;
+
 	fibsize = sizeof(struct aac_write64) +
 		((le32_to_cpu(writecmd->sg.count) - 1) *
 		 sizeof (struct sgentry64));
@@ -1101,6 +1126,8 @@ static int aac_write_block(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, u3
 {
 	u16 fibsize;
 	struct aac_write *writecmd;
+	long ret;
+
 	aac_fib_init(fib);
 	writecmd = (struct aac_write *) fib_data(fib);
 	writecmd->command = cpu_to_le32(VM_CtBlockWrite);
@@ -1110,7 +1137,10 @@ static int aac_write_block(struct fib * fib, struct scsi_cmnd * cmd, u64 lba, u3
 	writecmd->sg.count = cpu_to_le32(1);
 	/* ->stable is not used - it did mean which type of write */
 
-	aac_build_sg(cmd, &writecmd->sg);
+	ret = aac_build_sg(cmd, &writecmd->sg);
+	if (ret < 0)
+		return ret;
+
 	fibsize = sizeof(struct aac_write) +
 		((le32_to_cpu(writecmd->sg.count) - 1) *
 		 sizeof (struct sgentry));
@@ -1172,8 +1202,12 @@ static int aac_scsi_64(struct fib * fib, struct scsi_cmnd * cmd)
 {
 	u16 fibsize;
 	struct aac_srb * srbcmd = aac_scsi_common(fib, cmd);
+	long ret;
 
-	aac_build_sg64(cmd, (struct sgmap64*) &srbcmd->sg);
+	ret = aac_build_sg64(cmd, (struct sgmap64*) &srbcmd->sg);
+	if (ret < 0)
+		return ret;
+
 	srbcmd->count = cpu_to_le32(scsi_bufflen(cmd));
 
 	memset(srbcmd->cdb, 0, sizeof(srbcmd->cdb));
@@ -1200,8 +1234,12 @@ static int aac_scsi_32(struct fib * fib, struct scsi_cmnd * cmd)
 {
 	u16 fibsize;
 	struct aac_srb * srbcmd = aac_scsi_common(fib, cmd);
+	long ret;
 
-	aac_build_sg(cmd, (struct sgmap*)&srbcmd->sg);
+	ret = aac_build_sg(cmd, (struct sgmap*)&srbcmd->sg);
+	if (ret < 0)
+		return ret;
+
 	srbcmd->count = cpu_to_le32(scsi_bufflen(cmd));
 
 	memset(srbcmd->cdb, 0, sizeof(srbcmd->cdb));
@@ -2748,7 +2786,7 @@ static int aac_send_srb_fib(struct scsi_cmnd* scsicmd)
 	return -1;
 }
 
-static unsigned long aac_build_sg(struct scsi_cmnd* scsicmd, struct sgmap* psg)
+static long aac_build_sg(struct scsi_cmnd* scsicmd, struct sgmap* psg)
 {
 	struct aac_dev *dev;
 	unsigned long byte_count = 0;
@@ -2761,7 +2799,6 @@ static unsigned long aac_build_sg(struct scsi_cmnd* scsicmd, struct sgmap* psg)
 	psg->sg[0].count = 0;
 
 	nseg = scsi_dma_map(scsicmd);
-	BUG_ON(nseg < 0);
 	if (nseg) {
 		struct scatterlist *sg;
 		int i;
@@ -2786,11 +2823,11 @@ static unsigned long aac_build_sg(struct scsi_cmnd* scsicmd, struct sgmap* psg)
 					byte_count, scsicmd->underflow);
 		}
 	}
-	return byte_count;
+	return (nseg < 0) ? nseg : byte_count;
 }
 
 
-static unsigned long aac_build_sg64(struct scsi_cmnd* scsicmd, struct sgmap64* psg)
+static long aac_build_sg64(struct scsi_cmnd* scsicmd, struct sgmap64* psg)
 {
 	struct aac_dev *dev;
 	unsigned long byte_count = 0;
@@ -2805,7 +2842,6 @@ static unsigned long aac_build_sg64(struct scsi_cmnd* scsicmd, struct sgmap64* p
 	psg->sg[0].count = 0;
 
 	nseg = scsi_dma_map(scsicmd);
-	BUG_ON(nseg < 0);
 	if (nseg) {
 		struct scatterlist *sg;
 		int i;
@@ -2832,10 +2868,10 @@ static unsigned long aac_build_sg64(struct scsi_cmnd* scsicmd, struct sgmap64* p
 					byte_count, scsicmd->underflow);
 		}
 	}
-	return byte_count;
+	return (nseg < 0) ? nseg : byte_count;
 }
 
-static unsigned long aac_build_sgraw(struct scsi_cmnd* scsicmd, struct sgmapraw* psg)
+static long aac_build_sgraw(struct scsi_cmnd* scsicmd, struct sgmapraw* psg)
 {
 	unsigned long byte_count = 0;
 	int nseg;
@@ -2850,7 +2886,6 @@ static unsigned long aac_build_sgraw(struct scsi_cmnd* scsicmd, struct sgmapraw*
 	psg->sg[0].flags = 0;
 
 	nseg = scsi_dma_map(scsicmd);
-	BUG_ON(nseg < 0);
 	if (nseg) {
 		struct scatterlist *sg;
 		int i;
@@ -2880,7 +2915,7 @@ static unsigned long aac_build_sgraw(struct scsi_cmnd* scsicmd, struct sgmapraw*
 					byte_count, scsicmd->underflow);
 		}
 	}
-	return byte_count;
+	return nseg < 0 ? nseg : byte_count;
 }
 
 #ifdef AAC_DETAILED_STATUS_INFO
