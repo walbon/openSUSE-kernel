@@ -131,6 +131,7 @@ struct ehci_hcd {			/* one per controller */
 	unsigned		has_amcc_usb23:1;
 	unsigned		need_io_watchdog:1;
 	unsigned		broken_periodic:1;
+	unsigned		amd_l1_fix:1;
 	unsigned		use_dummy_qh:1;	/* AMD Frame List table quirk*/
 
 	/* required for usb32 quirk */
