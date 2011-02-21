@@ -180,7 +180,7 @@ void generic_smp_call_function_interrupt(void)
 
 	/*
 	 * Ensure entry is visible on call_function_queue after we have
-	 * entered the IPI. See comment in smp_call_function_many.
+	 * entered the IPI. See comment in smp_call_function_many
 	 * If we don't have this, then we may miss an entry on the list
 	 * and never get another IPI to process it.
 	 */
@@ -192,6 +192,7 @@ void generic_smp_call_function_interrupt(void)
 	 */
 	list_for_each_entry_rcu(data, &call_function.queue, csd.list) {
 		int refs;
+		void (*func) (void *info);
 
 		/*
 		 * Since we walk the list without any locks, we might
@@ -206,28 +207,41 @@ void generic_smp_call_function_interrupt(void)
 		if (!cpumask_test_cpu(cpu, data->cpumask))
 			continue;
 
-		smp_rmb();
+		smp_mb(); /* If we see our bit set above, we need to see */
+			  /* all the processing associated with the prior */
+			  /* incarnation of this callback. */
 
 		if (atomic_read(&data->refs) == 0)
 			continue;
 
-		if (!cpumask_test_and_clear_cpu(cpu, data->cpumask))
-			continue;
+		smp_rmb(); /* We need to read ->refs before we read either */
+			   /* ->csd.func and ->csd.info. */
 
-		data->csd.func(data->csd.info);
+		func = data->csd.func;			/* for later warn */
+		func(data->csd.info);
+
+		/*
+		 * If the cpu mask is not still set then it enabled interrupts,
+		 * we took another smp interrupt, and executed the function
+		 * twice on this cpu.  In theory that copy decremented refs.
+		 */
+		if (!cpumask_test_and_clear_cpu(cpu, data->cpumask)) {
+			WARN(1, "%pS enabled interrupts and double executed\n",
+			     func);
+			continue;
+		}
 
 		refs = atomic_dec_return(&data->refs);
 		WARN_ON(refs < 0);
-		if (!refs) {
-			WARN_ON(!cpumask_empty(data->cpumask));
-
-			spin_lock(&call_function.lock);
-			list_del_rcu(&data->csd.list);
-			spin_unlock(&call_function.lock);
-		}
 
 		if (refs)
 			continue;
+
+		WARN_ON(!cpumask_empty(data->cpumask));
+
+		spin_lock(&call_function.lock);
+		list_del_rcu(&data->csd.list);
+		spin_unlock(&call_function.lock);
 
 		csd_unlock(&data->csd);
 	}
@@ -388,7 +402,7 @@ void smp_call_function_many(const struct cpumask *mask,
 {
 	struct call_function_data *data;
 	unsigned long flags;
-	int cpu, next_cpu, this_cpu = smp_processor_id();
+	int refs, cpu, next_cpu, this_cpu = smp_processor_id();
 
 	/*
 	 * Can deadlock when called with interrupts disabled.
@@ -427,16 +441,24 @@ void smp_call_function_many(const struct cpumask *mask,
 	data->csd.info = info;
 	cpumask_and(data->cpumask, mask, cpu_online_mask);
 	cpumask_clear_cpu(this_cpu, data->cpumask);
+	refs = cpumask_weight(data->cpumask);
+
+	/* some callers might race with other cpus changing the mask */
+	if (unlikely(!refs)) {
+		csd_unlock(&data->csd);
+		return;
+	}
 
 	/*
-	 * To ensure the interrupt handler gets an complete view
-	 * we order the cpumask and refs writes and order the read
-	 * of them in the interrupt handler.  In addition we may
-	 * only clear our own cpu bit from the mask.
+	 * We reuse the call function data without waiting for any grace
+	 * period after some other cpu removes it from the global queue.
+	 * This means a cpu might find our data block as it is writen.
+	 * The interrupt handler waits until it sees refs filled out
+	 * while its cpu mask bit is set; here we may only clear our
+	 * own cpu mask bit, and must wait to set refs until we are sure
+	 * previous writes are complete and we have obtained the lock to
+	 * add the element to the queue.
 	 */
-	smp_wmb();
-
-	atomic_set(&data->refs, cpumask_weight(data->cpumask));
 
 	spin_lock_irqsave(&call_function.lock, flags);
 	/*
@@ -445,6 +467,11 @@ void smp_call_function_many(const struct cpumask *mask,
 	 * will not miss any other list entries:
 	 */
 	list_add_rcu(&data->csd.list, &call_function.queue);
+	/*
+	 * We rely on the wmb() in list_add_rcu to order the writes
+	 * to func, data, and cpumask before this write to refs.
+	 */
+	atomic_set(&data->refs, refs);
 	spin_unlock_irqrestore(&call_function.lock, flags);
 
 	/*
