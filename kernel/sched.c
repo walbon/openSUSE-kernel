@@ -4023,6 +4023,12 @@ static inline void update_sd_lb_stats(struct sched_domain *sd, int this_cpu,
 	do {
 		int local_group;
 
+		/* this has been observed to happen during 'init 0' power down */
+		if (!group) {
+			WARN_ON_ONCE(1);
+			return;
+		}
+
 		local_group = cpumask_test_cpu(this_cpu,
 					       sched_group_cpus(group));
 		memset(&sgs, 0, sizeof(sgs));
@@ -4166,7 +4172,9 @@ static inline void calculate_imbalance(struct sd_lb_stats *sds, int this_cpu,
 {
 	unsigned long max_pull, load_above_capacity = ~0UL;
 
-	sds->busiest_load_per_task /= sds->busiest_nr_running;
+	WARN_ON_ONCE(!sds->busiest_nr_running);
+
+	sds->busiest_load_per_task /= (sds->busiest_nr_running?: 1);
 	if (sds->group_imb) {
 		sds->busiest_load_per_task =
 			min(sds->busiest_load_per_task, sds->avg_load);
@@ -4301,6 +4309,11 @@ find_busiest_group(struct sched_domain *sd, int this_cpu,
 
 	if (sds.this_load >= sds.max_load)
 		goto out_balanced;
+
+	if (unlikely(sds.total_pwr == 0)) {
+		sds.total_pwr = 1;
+		WARN_ON_ONCE(1);
+	}
 
 	sds.avg_load = (SCHED_LOAD_SCALE * sds.total_load) / sds.total_pwr;
 
