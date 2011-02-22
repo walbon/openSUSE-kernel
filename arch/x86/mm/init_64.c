@@ -50,6 +50,7 @@
 #include <asm/cacheflush.h>
 #include <asm/init.h>
 #include <linux/bootmem.h>
+#include <asm/uv/uv.h>
 
 static unsigned long dma_reserve __initdata;
 
