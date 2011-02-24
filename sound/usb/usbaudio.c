@@ -1482,12 +1482,14 @@ static int snd_usb_hw_params(struct snd_pcm_substream *substream,
 	}
 
 	if (changed) {
+		mutex_lock(&register_mutex);
 		/* format changed */
 		release_substream_urbs(subs, 0);
 		/* influenced: period_bytes, channels, rate, format, */
 		ret = init_substream_urbs(subs, params_period_bytes(hw_params),
 					  params_rate(hw_params),
 					  snd_pcm_format_physical_width(params_format(hw_params)) * params_channels(hw_params));
+		mutex_unlock(&register_mutex);
 	}
 
 	return ret;
@@ -1505,8 +1507,10 @@ static int snd_usb_hw_free(struct snd_pcm_substream *substream)
 	subs->cur_audiofmt = NULL;
 	subs->cur_rate = 0;
 	subs->period_bytes = 0;
+	mutex_lock(&register_mutex);
 	if (!subs->stream->chip->shutdown)
 		release_substream_urbs(subs, 0);
+	mutex_unlock(&register_mutex);
 	return snd_pcm_free_vmalloc_buffer(substream);
 }
 
