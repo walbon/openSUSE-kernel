@@ -155,5 +155,10 @@ extern void *alloc_large_system_hash(const char *tablename,
 #endif
 extern int hashdist;		/* Distribute hashes across NUMA nodes? */
 
+#ifdef CONFIG_X86_64
+#define bootmem_test_and_clear_bit test_and_clear_bit_long
+#else
+#define bootmem_test_and_clear_bit test_and_clear_bit
+#endif
 
 #endif /* _LINUX_BOOTMEM_H */

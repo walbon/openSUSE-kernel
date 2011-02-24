@@ -239,7 +239,7 @@ static void __init __free(bootmem_data_t *bdata,
 		bdata->hint_idx = sidx;
 
 	for (idx = sidx; idx < eidx; idx++)
-		if (!test_and_clear_bit(idx, bdata->node_bootmem_map))
+		if (!bootmem_test_and_clear_bit(idx, bdata->node_bootmem_map))
 			BUG();
 }
 
