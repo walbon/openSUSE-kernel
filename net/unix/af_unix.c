@@ -1379,7 +1379,7 @@ static int unix_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
 	struct sk_buff *skb;
 	long timeo;
 	struct scm_cookie tmp_scm;
-	int max_level;
+	int max_level = 0;
 
 	if (NULL == siocb->scm)
 		siocb->scm = &tmp_scm;
@@ -1422,8 +1422,8 @@ static int unix_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
 		err = unix_attach_fds(siocb->scm, skb);
 		if (err < 0)
 			goto out_free;
+		max_level = err + 1;
 	}
-	max_level = err + 1;
 	unix_get_secdata(siocb->scm, skb);
 
 	skb_reset_transport_header(skb);
@@ -1535,7 +1535,7 @@ static int unix_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
 	int sent = 0;
 	struct scm_cookie tmp_scm;
 	bool fds_sent = false;
-	int max_level;
+	int max_level = 0;
 
 	if (NULL == siocb->scm)
 		siocb->scm = &tmp_scm;
