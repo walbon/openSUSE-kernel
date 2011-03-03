@@ -576,8 +576,8 @@ xfs_bulkstat_single(
 	 */
 
 	ino = (xfs_ino_t)*lastinop;
-	error = xfs_bulkstat_one(mp, ino, buffer, sizeof(xfs_bstat_t),
-				 NULL, 0, &res);
+	error = xfs_bulkstat_one(mp, ino, buffer, sizeof(xfs_bstat_t), NULL, 0,
+				 &res);
 	if (error) {
 		/*
 		 * Special case way failed, do it the "long" way
