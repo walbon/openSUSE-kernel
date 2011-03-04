@@ -1379,7 +1379,7 @@ static int unix_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
 	struct sk_buff *skb;
 	long timeo;
 	struct scm_cookie tmp_scm;
-	int max_level = 0;
+	int max_level = 1;
 
 	if (NULL == siocb->scm)
 		siocb->scm = &tmp_scm;
@@ -1535,7 +1535,7 @@ static int unix_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
 	int sent = 0;
 	struct scm_cookie tmp_scm;
 	bool fds_sent = false;
-	int max_level = 0;
+	int max_level = 1;
 
 	if (NULL == siocb->scm)
 		siocb->scm = &tmp_scm;
