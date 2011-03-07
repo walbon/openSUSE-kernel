@@ -211,8 +211,8 @@ static int ixgbe_get_settings(struct net_device *netdev,
 		ecmd->port = PORT_FIBRE;
 		break;
 	case ixgbe_phy_nl:
-	case ixgbe_phy_tw_tyco:
-	case ixgbe_phy_tw_unknown:
+	case ixgbe_phy_sfp_passive_tyco:
+	case ixgbe_phy_sfp_passive_unknown:
 	case ixgbe_phy_sfp_ftl:
 	case ixgbe_phy_sfp_avago:
 	case ixgbe_phy_sfp_intel:
@@ -232,6 +232,13 @@ static int ixgbe_get_settings(struct net_device *netdev,
 			break;
 		case ixgbe_sfp_type_not_present:
 			ecmd->port = PORT_NONE;
+			break;
+		case ixgbe_sfp_type_1g_cu_core0:
+		case ixgbe_sfp_type_1g_cu_core1:
+			ecmd->port = PORT_TP;
+			ecmd->supported = SUPPORTED_TP;
+			ecmd->advertising = (ADVERTISED_1000baseT_Full |
+			                     ADVERTISED_TP);
 			break;
 		case ixgbe_sfp_type_unknown:
 		default:

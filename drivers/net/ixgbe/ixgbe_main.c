@@ -1220,17 +1220,18 @@ static void ixgbe_check_sfp_event(struct ixgbe_adapter *adapter, u32 eicr)
 {
 	struct ixgbe_hw *hw = &adapter->hw;
 
+	if (eicr & IXGBE_EICR_GPI_SDP2) {
+		/* Clear the interrupt */
+		IXGBE_WRITE_REG(hw, IXGBE_EICR, IXGBE_EICR_GPI_SDP2);
+		if (!test_bit(__IXGBE_DOWN, &adapter->state))
+			schedule_work(&adapter->sfp_config_module_task);
+	}
+
 	if (eicr & IXGBE_EICR_GPI_SDP1) {
 		/* Clear the interrupt */
 		IXGBE_WRITE_REG(hw, IXGBE_EICR, IXGBE_EICR_GPI_SDP1);
-		schedule_work(&adapter->multispeed_fiber_task);
-	} else if (eicr & IXGBE_EICR_GPI_SDP2) {
-		/* Clear the interrupt */
-		IXGBE_WRITE_REG(hw, IXGBE_EICR, IXGBE_EICR_GPI_SDP2);
-		schedule_work(&adapter->sfp_config_module_task);
-	} else {
-		/* Interrupt isn't for us... */
-		return;
+		if (!test_bit(__IXGBE_DOWN, &adapter->state))
+			schedule_work(&adapter->multispeed_fiber_task);
 	}
 }
 
@@ -2631,8 +2632,10 @@ static inline bool ixgbe_is_sfp(struct ixgbe_hw *hw)
 	case ixgbe_phy_sfp_ftl:
 	case ixgbe_phy_sfp_intel:
 	case ixgbe_phy_sfp_unknown:
-	case ixgbe_phy_tw_tyco:
-	case ixgbe_phy_tw_unknown:
+	case ixgbe_phy_sfp_passive_tyco:
+	case ixgbe_phy_sfp_passive_unknown:
+	case ixgbe_phy_sfp_active_unknown:
+	case ixgbe_phy_sfp_ftl_active:
 		return true;
 	default:
 		return false;
@@ -2853,6 +2856,14 @@ static int ixgbe_up_complete(struct ixgbe_adapter *adapter)
 	clear_bit(__IXGBE_DOWN, &adapter->state);
 	ixgbe_napi_enable_all(adapter);
 
+	if (ixgbe_is_sfp(hw)) {
+		ixgbe_sfp_link_config(adapter);
+	} else {
+		err = ixgbe_non_sfp_link_config(hw);
+		if (err)
+			DPRINTK(DRV, CRIT, "link_config FAILED %d\n", err);
+	}
+
 	/* clear any pending interrupts, may auto mask */
 	IXGBE_READ_REG(hw, IXGBE_EICR);
 
@@ -2877,26 +2888,8 @@ static int ixgbe_up_complete(struct ixgbe_adapter *adapter)
 	 * If we're not hot-pluggable SFP+, we just need to configure link
 	 * and bring it up.
 	 */
-	if (hw->phy.type == ixgbe_phy_unknown) {
-		err = hw->phy.ops.identify(hw);
-		if (err == IXGBE_ERR_SFP_NOT_SUPPORTED) {
-			/*
-			 * Take the device down and schedule the sfp tasklet
-			 * which will unregister_netdev and log it.
-			 */
-			ixgbe_down(adapter);
-			schedule_work(&adapter->sfp_config_module_task);
-			return err;
-		}
-	}
-
-	if (ixgbe_is_sfp(hw)) {
-		ixgbe_sfp_link_config(adapter);
-	} else {
-		err = ixgbe_non_sfp_link_config(hw);
-		if (err)
-			DPRINTK(PROBE, ERR, "link_config FAILED %d\n", err);
-	}
+	if (hw->phy.type == ixgbe_phy_unknown)
+		schedule_work(&adapter->sfp_config_module_task);
 
 	for (i = 0; i < adapter->num_tx_queues; i++)
 		set_bit(__IXGBE_FDIR_INIT_DONE,
