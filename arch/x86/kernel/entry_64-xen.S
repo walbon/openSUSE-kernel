@@ -347,7 +347,7 @@ NMI_MASK = 0x80000000
 ENTRY(save_args)
 	XCPT_FRAME offset=__stringify(ORIG_RAX-ARGOFFSET+16)
 	cld
-	movq %rdi, RDI+16-ARGOFFSET(%rsp)
+	movq_cfi rdi, __stringify(RDI+16-ARGOFFSET)
 	movq %rsi, RSI+16-ARGOFFSET(%rsp)
 	movq %rdx, RDX+16-ARGOFFSET(%rsp)
 	movq %rcx, RCX+16-ARGOFFSET(%rsp)
@@ -355,7 +355,7 @@ ENTRY(save_args)
 	movq  %r8,  R8+16-ARGOFFSET(%rsp)
 	movq  %r9,  R9+16-ARGOFFSET(%rsp)
 	movq %r10, R10+16-ARGOFFSET(%rsp)
-	movq_cfi r11, __stringify(R11+16-ARGOFFSET)
+	movq %r11, R11+16-ARGOFFSET(%rsp)
 
 	leaq -ARGOFFSET+16(%rsp),%rdi	/* arg1 for handler */
 	movq_cfi rbp, 8		/* push %rbp */
