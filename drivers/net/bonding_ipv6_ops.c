@@ -30,4 +30,6 @@ struct bonding_ipv6_ops *bonding_ipv6_ops = &bonding_ipv6_ops_dummy;
 
 EXPORT_SYMBOL(bonding_ipv6_ops);
 EXPORT_SYMBOL(bonding_ipv6_ops_dummy);
+DECLARE_RWSEM(bonding_ipv6_ops_sem);
+EXPORT_SYMBOL(bonding_ipv6_ops_sem);
 
