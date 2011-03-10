@@ -23,5 +23,4 @@ struct bonding_ipv6_ops {
 
 extern struct bonding_ipv6_ops bonding_ipv6_ops_dummy;
 extern struct bonding_ipv6_ops *bonding_ipv6_ops;
-extern struct rw_semaphore bonding_ipv6_ops_sem;
 

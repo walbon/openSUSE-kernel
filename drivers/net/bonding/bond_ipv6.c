@@ -37,16 +37,15 @@ static void bond_glean_dev_ipv6(struct net_device *dev, struct in6_addr *addr)
 	struct inet6_dev *idev;
 	struct inet6_ifaddr *ifa;
 
-	down_read(&bonding_ipv6_ops_sem);
 	if (!bonding_ipv6_ops->in6_dev_put)
-		goto out;
+		return;
 
 	if (!dev)
-		goto out;
+		return;
 
 	idev = in6_dev_get(dev);
 	if (!idev)
-		goto out;
+		return;
 
 	read_lock_bh(&idev->lock);
 	ifa = idev->addr_list;
@@ -58,9 +57,6 @@ static void bond_glean_dev_ipv6(struct net_device *dev, struct in6_addr *addr)
 	read_unlock_bh(&idev->lock);
 
 	bonding_ipv6_ops->in6_dev_put(idev);
-
-out:
-	up_read(&bonding_ipv6_ops_sem);
 }
 
 static void bond_na_send(struct net_device *slave_dev,
@@ -123,23 +119,22 @@ void bond_send_unsolicited_na(struct bonding *bond)
 	struct inet6_dev *idev;
 	int is_router;
 
-	down_read(&bonding_ipv6_ops_sem);
 	if (!bonding_ipv6_ops->in6_dev_put)
-		goto out;
+		return;
 
 	pr_debug("bond_send_unsol_na: bond %s slave %s\n", bond->dev->name,
 				slave ? slave->dev->name : "NULL");
 
 	if (!slave || !bond->send_unsol_na ||
 	    test_bit(__LINK_STATE_LINKWATCH_PENDING, &slave->dev->state))
-		goto out;
+		return;
 
 	bond->send_unsol_na--;
 
 
 	idev = in6_dev_get(bond->dev);
 	if (!idev)
-		goto out;
+		return;
 
 	is_router = !!idev->cnf.forwarding;
 
@@ -154,8 +149,6 @@ void bond_send_unsolicited_na(struct bonding *bond)
 				     vlan->vlan_id);
 		}
 	}
-out:
-	up_read(&bonding_ipv6_ops_sem);
 }
 
 /*
@@ -228,15 +221,11 @@ static struct notifier_block bond_inet6addr_notifier = {
 
 void bond_register_ipv6_notifier(void)
 {
-	down_read(&bonding_ipv6_ops_sem);
 	bonding_ipv6_ops->register_inet6addr_notifier(&bond_inet6addr_notifier);
-	up_read(&bonding_ipv6_ops_sem);
 }
 
 void bond_unregister_ipv6_notifier(void)
 {
-	down_read(&bonding_ipv6_ops_sem);
 	bonding_ipv6_ops->unregister_inet6addr_notifier(&bond_inet6addr_notifier);
-	up_read(&bonding_ipv6_ops_sem);
 }
 

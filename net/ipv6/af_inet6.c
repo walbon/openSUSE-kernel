@@ -1070,16 +1070,12 @@ struct bonding_ipv6_ops bonding_ipv6_ops_real = {
 
 static void ipv6_bonding_ipv6_ops_init(void)
 {
-	down_write(&bonding_ipv6_ops_sem);
 	bonding_ipv6_ops = &bonding_ipv6_ops_real;
-	up_write(&bonding_ipv6_ops_sem);
 }
 
 static void ipv6_bonding_ipv6_ops_exit(void)
 {
-	down_write(&bonding_ipv6_ops_sem);
 	bonding_ipv6_ops = &bonding_ipv6_ops_dummy;
-	up_write(&bonding_ipv6_ops_sem);
 }
 
 static int __init inet6_init(void)
