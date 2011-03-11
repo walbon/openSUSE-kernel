@@ -1937,6 +1937,7 @@ qla24xx_msix_rsp_q(int irq, void *dev_id)
 	struct rsp_que *rsp;
 	struct device_reg_24xx __iomem *reg;
 	struct scsi_qla_host *vha;
+	unsigned long flags;
 
 	rsp = (struct rsp_que *) dev_id;
 	if (!rsp) {
@@ -1947,7 +1948,7 @@ qla24xx_msix_rsp_q(int irq, void *dev_id)
 	ha = rsp->hw;
 	reg = &ha->iobase->isp24;
 
-	spin_lock_irq(&ha->hardware_lock);
+	spin_lock_irqsave(&ha->hardware_lock, flags);
 
 	vha = pci_get_drvdata(ha->pdev);
 	qla24xx_process_response_queue(vha, rsp);
@@ -1955,7 +1956,7 @@ qla24xx_msix_rsp_q(int irq, void *dev_id)
 		WRT_REG_DWORD(&reg->hccr, HCCRX_CLR_RISC_INT);
 		RD_REG_DWORD_RELAXED(&reg->hccr);
 	}
-	spin_unlock_irq(&ha->hardware_lock);
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 
 	return IRQ_HANDLED;
 }
