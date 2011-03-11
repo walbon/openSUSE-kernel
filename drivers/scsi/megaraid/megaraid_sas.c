@@ -1968,11 +1968,6 @@ megasas_complete_cmd(struct megasas_instance *instance, struct megasas_cmd *cmd,
 
 	case MFI_CMD_PD_SCSI_IO:
 	case MFI_CMD_LD_SCSI_IO:
-		if (!cmd->scmd) {
-			printk(KERN_DEBUG "megasas: invalid completion on"
-			       " command %p status %x\n", cmd, hdr->cmd_status);
-			break;
-		}
 
 		/*
 		 * MFI_CMD_PD_SCSI_IO and MFI_CMD_LD_SCSI_IO could have been
@@ -1987,6 +1982,12 @@ megasas_complete_cmd(struct megasas_instance *instance, struct megasas_cmd *cmd,
 
 	case MFI_CMD_LD_READ:
 	case MFI_CMD_LD_WRITE:
+
+		if (!cmd->scmd) {
+			printk(KERN_DEBUG "megasas: invalid completion on"
+			       " command %p status %x\n", cmd, hdr->cmd_status);
+			break;
+		}
 
 		if (alt_status) {
 			cmd->scmd->result = alt_status << 16;
