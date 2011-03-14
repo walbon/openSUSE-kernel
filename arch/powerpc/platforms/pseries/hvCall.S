@@ -240,4 +240,3 @@ _GLOBAL(plpar_hcall9_raw)
 	mtcrf	0xff,r0
 
 	blr				/* return r3 = status */
-
