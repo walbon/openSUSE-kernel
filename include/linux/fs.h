@@ -418,6 +418,19 @@ typedef int (get_block_t)(struct inode *inode, sector_t iblock,
 typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 			ssize_t bytes, void *private);
 
+typedef void (new_dio_iodone_t)(struct kiocb *iocb, loff_t offset,
+			ssize_t bytes, void *private,
+			int ret, bool is_async);
+
+/* Encode a new_dio_iodone_t function pointer as a dio_iodone_t */
+#define		new_dio_iodone_to_dio_iodone(f)	((dio_iodone_t *) ((unsigned long)(f) | 1))
+
+/* Extract an encoded new_dio_iodone_t from a dio_iodone_t value */
+#define		dio_iodone_to_new_dio_iodone(f)	((new_dio_iodone_t *) ((unsigned long)(f) ^ 1))
+
+/* Determine whether a dio_iodone_t contains an encoded new_dio_iodone_t */
+#define		dio_iodone_is_new(f)		((unsigned long)(f) & 1)
+
 /*
  * Attribute flags.  These should be or-ed together to figure out what
  * has been changed!

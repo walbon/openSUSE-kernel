@@ -604,7 +604,9 @@ bail:
 static void ocfs2_dio_end_io(struct kiocb *iocb,
 			     loff_t offset,
 			     ssize_t bytes,
-			     void *private)
+			     void *private,
+			     int ret,
+			     bool is_async)
 {
 	struct inode *inode = iocb->ki_filp->f_path.dentry->d_inode;
 	int level;
@@ -621,6 +623,9 @@ static void ocfs2_dio_end_io(struct kiocb *iocb,
 
 	level = ocfs2_iocb_rw_locked_level(iocb);
 	ocfs2_rw_unlock(inode, level);
+
+	if (is_async)
+		aio_complete(iocb, ret, 0);
 }
 
 /*
@@ -671,7 +676,7 @@ static ssize_t ocfs2_direct_IO(int rw,
 					    inode->i_sb->s_bdev, iov, offset,
 					    nr_segs,
 					    ocfs2_direct_IO_get_blocks,
-					    ocfs2_dio_end_io);
+					    new_dio_iodone_to_dio_iodone(ocfs2_dio_end_io));
 
 	mlog_exit(ret);
 	return ret;
