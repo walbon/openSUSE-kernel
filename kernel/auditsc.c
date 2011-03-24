@@ -438,16 +438,21 @@ static int match_tree_refs(struct audit_context *ctx, struct audit_tree *tree)
 	return 0;
 }
 
-/* Determine if any context name data matches a rule's watch data */
-/* Compare a task_struct with an audit_rule.  Return 1 on match, 0
- * otherwise. */
+/*
+ * Determine if any context name data matches a rule's watch data
+ * Compare a task_struct with an audit_rule.  Return 1 on match, 0
+ * otherwise.
+ *
+ * Assumption: tsk==current or we are being indirectly called from
+ * copy_process() so direct access to tsk->cred is allowed.
+ */
 static int audit_filter_rules(struct task_struct *tsk,
 			      struct audit_krule *rule,
 			      struct audit_context *ctx,
 			      struct audit_names *name,
 			      enum audit_state *state)
 {
-	const struct cred *cred = get_task_cred(tsk);
+	const struct cred *cred = tsk->cred;
 	int i, j, need_sid = 1;
 	u32 sid;
 
@@ -635,10 +640,8 @@ static int audit_filter_rules(struct task_struct *tsk,
 			break;
 		}
 
-		if (!result) {
-			put_cred(cred);
+		if (!result)
 			return 0;
-		}
 	}
 
 	if (ctx) {
@@ -654,7 +657,6 @@ static int audit_filter_rules(struct task_struct *tsk,
 	case AUDIT_NEVER:    *state = AUDIT_DISABLED;	    break;
 	case AUDIT_ALWAYS:   *state = AUDIT_RECORD_CONTEXT; break;
 	}
-	put_cred(cred);
 	return 1;
 }
 
