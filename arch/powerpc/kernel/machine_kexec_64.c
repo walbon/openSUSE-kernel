@@ -156,14 +156,14 @@ void kexec_copy_flush(struct kimage *image)
 
 #ifdef CONFIG_SMP
 
-static int kexec_all_irq_disabled = 0;
+static int kexec_all_irq_disabled;
 
 static void kexec_smp_down(void *arg)
 {
 	local_irq_disable();
 	mb(); /* make sure our irqs are disabled before we say they are */
 	get_paca()->kexec_state = KEXEC_STATE_IRQS_OFF;
-	while(kexec_all_irq_disabled == 0)
+	while (kexec_all_irq_disabled == 0)
 		cpu_relax();
 	mb(); /* make sure all irqs are disabled before this */
 	/*
@@ -204,8 +204,8 @@ static void kexec_prepare_cpus_wait(int wait_state)
 {
 	int my_cpu, i, notified=-1;
 
+	wake_offline_cpus();
 	my_cpu = get_cpu();
-
 	/* Make sure each CPU has atleast made it to the state we need */
 	for (i=0; i < NR_CPUS; i++) {
 		if (i == my_cpu)
@@ -237,13 +237,12 @@ static void kexec_prepare_cpus_wait(int wait_state)
 			}
 		}
 	}
-
 	mb();
 }
 
 static void kexec_prepare_cpus(void)
 {
-	wake_offline_cpus();
+
 	smp_call_function(kexec_smp_down, NULL, /* wait */0);
 	local_irq_disable();
 	mb(); /* make sure IRQs are disabled before we say they are */
@@ -253,13 +252,13 @@ static void kexec_prepare_cpus(void)
 	/* we are sure every CPU has IRQs off at this point */
 	kexec_all_irq_disabled = 1;
 
- 	/* after we tell the others to go down */
+	/* after we tell the others to go down */
 	if (ppc_md.kexec_cpu_down)
 		ppc_md.kexec_cpu_down(0, 0);
 
-	/* Before removing MMU mapings make sure all CPUs have entered real mode */
+/* Before removing MMU mapings make sure all CPUs have entered real mode */
 	kexec_prepare_cpus_wait(KEXEC_STATE_REAL_MODE);
- 
+
 	put_cpu();
 }
 

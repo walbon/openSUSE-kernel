@@ -472,8 +472,8 @@ _GLOBAL(kexec_wait)
 1:	mflr	r5
 	addi	r5,r5,kexec_flag-1b
 
-	li	r4,KEXEC_STATE_REAL_MODE
-	stb	r4,PACAKEXECSTATE(r13)
+	li      r4,KEXEC_STATE_REAL_MODE
+	stb     r4,PACAKEXECSTATE(r13)
 	SYNC
 
 99:	HMT_LOW
