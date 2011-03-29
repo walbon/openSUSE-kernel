@@ -339,9 +339,45 @@ static void stripe_io_hints(struct dm_target *ti,
 	blk_limits_io_opt(limits, chunk_size * sc->stripes);
 }
 
+/*
+ * Sector offset taken relative to the start of the target instead of
+ * relative to the start of the device.
+ */
+#define dm_target_offset(ti, sector) ((sector) - (ti)->begin)
+
+static void stripe_map_sector(struct stripe_c *sc, sector_t sector,
+				uint32_t *stripe, sector_t *result)
+{
+	sector_t offset = dm_target_offset(sc->ti, sector);
+	sector_t chunk = offset >> sc->chunk_shift;
+
+	*stripe = sector_div(chunk, sc->stripes);
+	*result = (chunk << sc->chunk_shift) | (offset & sc->chunk_mask);
+}
+
+static int stripe_merge(struct dm_target *ti, struct bvec_merge_data *bvm,
+			struct bio_vec *biovec, int max_size)
+{
+	struct stripe_c *sc = ti->private;
+	sector_t bvm_sector = bvm->bi_sector;
+	uint32_t stripe;
+	struct request_queue *q;
+
+	stripe_map_sector(sc, bvm_sector, &stripe, &bvm_sector);
+
+	q = bdev_get_queue(sc->stripe[stripe].dev->bdev);
+	if (!q->merge_bvec_fn)
+		return max_size;
+
+	bvm->bi_bdev = sc->stripe[stripe].dev->bdev;
+	bvm->bi_sector = sc->stripe[stripe].physical_start + bvm_sector;
+
+	return min(max_size, q->merge_bvec_fn(q, bvm, biovec));
+}
+
 static struct target_type stripe_target = {
 	.name   = "striped",
-	.version = {1, 3, 0},
+	.version = {1, 4, 0},
 	.module = THIS_MODULE,
 	.ctr    = stripe_ctr,
 	.dtr    = stripe_dtr,
@@ -350,6 +386,7 @@ static struct target_type stripe_target = {
 	.status = stripe_status,
 	.iterate_devices = stripe_iterate_devices,
 	.io_hints = stripe_io_hints,
+	.merge  = stripe_merge,
 };
 
 int __init dm_stripe_init(void)

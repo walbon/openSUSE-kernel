@@ -713,12 +713,19 @@ void __lock_page(struct page *page)
 	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
 
 	do {
+		while(PageUptodate(page) && !need_resched()) {
+			cpu_relax();
+			if (!PageLocked(page) && trylock_page(page))
+				goto done;
+		}
+
 		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
 		if (!PageWaiters(page))
 			SetPageWaiters(page);
 		if (likely(PageLocked(page)))
 			sync_page(page);
-	} while (!trylock_page(page));
+	} while (PageLocked(page) || !trylock_page(page));
+done:
 	finish_wait(wq, &wait.wait);
 }
 EXPORT_SYMBOL(__lock_page);
