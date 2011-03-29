@@ -55,7 +55,7 @@ module_param_named(ddp_min, fcoe_ddp_min, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ddp_min, "Minimum I/O size in bytes for "	\
 		 "Direct Data Placement (DDP).");
 
-static unsigned int fcoe_use_vlan_id = 1;
+static unsigned int fcoe_use_vlan_id = 0;
 module_param_named(use_vlan_id, fcoe_use_vlan_id, uint, S_IRUGO);
 MODULE_PARM_DESC(use_vlan_id, "Include VLAN ID in generated WWNN/WWPN.");
 
