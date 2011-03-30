@@ -404,7 +404,7 @@ xfs_dm_bulkall_iget_one(
 	int		error;
 
 	error = xfs_iget(mp, NULL, ino,
-			 XFS_IGET_UNTRUSTED, XFS_ILOCK_SHARED, &ip);
+			 XFS_IGET_UNTRUSTED, XFS_ILOCK_SHARED, &ip, 0);
 	if (error)
 		return error;
 
@@ -449,7 +449,9 @@ xfs_dm_bulkall_one(
 	void		__user *buffer,	/* buffer to place output in */
 	int		ubsize,		/* size of buffer */
 	void		*private_data,	/* my private data */
+	xfs_daddr_t	bno,		/* not used */
 	int		*ubused,	/* amount of buffer we used */
+	void		*dip,		/* not used */
 	int		*res)		/* bulkstat result code */
 {
 	dm_xstat_t	*xbuf;
@@ -548,7 +550,7 @@ xfs_dm_bulkattr_iget_one(
 	int		error;
 
 	error = xfs_iget(mp, NULL, ino,
-			 XFS_IGET_UNTRUSTED, XFS_ILOCK_SHARED, &ip);
+			 XFS_IGET_UNTRUSTED, XFS_ILOCK_SHARED, &ip, 0);
 	if (error)
 		return error;
 
@@ -572,7 +574,9 @@ xfs_dm_bulkattr_one(
 	void		__user *buffer,	/* buffer to place output in */
 	int		ubsize,		/* size of buffer */
 	void		*private_data,	/* my private data */
+	xfs_daddr_t	bno,		/* not used */
 	int		*ubused,	/* amount of buffer we used */
+	void		*dip,		/* not used */
 	int		*res)		/* bulkstat result code */
 {
 	dm_stat_t	*sbuf;
@@ -1189,7 +1193,7 @@ xfs_dm_get_bulkall_rvp(
 	memcpy(&dmb.fsid, mp->m_fixedfsid, sizeof(dm_fsid_t));
 	error = xfs_bulkstat(mp, (xfs_ino_t *)&loc, &nelems,
 			     xfs_dm_bulkall_one, (void*)&dmb, statstruct_sz,
-			     bufp, &done);
+			     bufp, 0, &done);
 	if (error)
 		return(-error); /* Return negative error to DMAPI */
 
@@ -1285,7 +1289,7 @@ xfs_dm_get_bulkattr_rvp(
 	memcpy(&dmb.fsid, mp->m_fixedfsid, sizeof(dm_fsid_t));
 	error = xfs_bulkstat(mp, (xfs_ino_t *)&loc, &nelems,
 				xfs_dm_bulkattr_one, (void*)&dmb,
-				statstruct_sz, bufp, &done);
+				statstruct_sz, bufp, 0, &done);
 	if (error)
 		return(-error); /* Return negative error to DMAPI */
 
@@ -3008,7 +3012,7 @@ xfs_dm_fh_to_inode(
 	if (ino == 0)
 		return -ESTALE;
 
-	error = xfs_iget(mp, NULL, ino, 0, XFS_ILOCK_SHARED, &ip);
+	error = xfs_iget(mp, NULL, ino, 0, XFS_ILOCK_SHARED, &ip, 0);
 	if (error)
 		return -error;
 	if (!ip)

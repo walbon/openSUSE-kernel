@@ -1366,7 +1366,7 @@ xfs_lookup(
 	if (error)
 		goto out;
 
-	error = xfs_iget(dp->i_mount, NULL, inum, 0, 0, ipp);
+	error = xfs_iget(dp->i_mount, NULL, inum, 0, 0, ipp, 0);
 	if (error)
 		goto out_free_name;
 

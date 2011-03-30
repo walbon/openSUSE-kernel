@@ -28,7 +28,9 @@ typedef int (*bulkstat_one_pf)(struct xfs_mount	*mp,
 			       void		__user *buffer,
 			       int		ubsize,
 			       void		*private_data,
+			       xfs_daddr_t	bno, /* Kabi: Unused */
 			       int		*ubused,
+			       void		*dip, /* kABI: Unused */
 			       int		*stat);
 
 /*
@@ -50,6 +52,7 @@ xfs_bulkstat(
 	void		*private_data,	/* private data for formatter */
 	size_t		statstruct_size,/* sizeof struct that we're filling */
 	char		__user *ubuffer,/* buffer with inode stats */
+	int		flags,		/* kABI: unused */
 	int		*done);		/* 1 if there are more stats to get */
 
 int
@@ -82,7 +85,9 @@ xfs_bulkstat_one(
 	void			__user *buffer,
 	int			ubsize,
 	void			*private_data,
+	xfs_daddr_t		bno,
 	int			*ubused,
+	void			*dip,
 	int			*stat);
 
 int

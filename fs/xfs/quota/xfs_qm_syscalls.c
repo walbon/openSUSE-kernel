@@ -266,7 +266,7 @@ xfs_qm_scall_trunc_qfiles(
 	}
 
 	if ((flags & XFS_DQ_USER) && mp->m_sb.sb_uquotino != NULLFSINO) {
-		error = xfs_iget(mp, NULL, mp->m_sb.sb_uquotino, 0, 0, &qip);
+		error = xfs_iget(mp, NULL, mp->m_sb.sb_uquotino, 0, 0, &qip, 0);
 		if (!error) {
 			error = xfs_truncate_file(mp, qip);
 			IRELE(qip);
@@ -275,7 +275,8 @@ xfs_qm_scall_trunc_qfiles(
 
 	if ((flags & (XFS_DQ_GROUP|XFS_DQ_PROJ)) &&
 	    mp->m_sb.sb_gquotino != NULLFSINO) {
-		error2 = xfs_iget(mp, NULL, mp->m_sb.sb_gquotino, 0, 0, &qip);
+		error2 = xfs_iget(mp, NULL, mp->m_sb.sb_gquotino, 0, 0, &qip,
+				  0);
 		if (!error2) {
 			error2 = xfs_truncate_file(mp, qip);
 			IRELE(qip);
@@ -420,12 +421,12 @@ xfs_qm_scall_getqstat(
 	}
 	if (!uip && mp->m_sb.sb_uquotino != NULLFSINO) {
 		if (xfs_iget(mp, NULL, mp->m_sb.sb_uquotino,
-					0, 0, &uip) == 0)
+					0, 0, &uip, 0) == 0)
 			tempuqip = B_TRUE;
 	}
 	if (!gip && mp->m_sb.sb_gquotino != NULLFSINO) {
 		if (xfs_iget(mp, NULL, mp->m_sb.sb_gquotino,
-					0, 0, &gip) == 0)
+					0, 0, &gip, 0) == 0)
 			tempgqip = B_TRUE;
 	}
 	if (uip) {
@@ -1137,7 +1138,7 @@ xfs_qm_internalqcheck_adjust(
 	ipreleased = B_FALSE;
  again:
 	lock_flags = XFS_ILOCK_SHARED;
-	if ((error = xfs_iget(mp, NULL, ino, 0, lock_flags, &ip))) {
+	if ((error = xfs_iget(mp, NULL, ino, 0, lock_flags, &ip, 0))) {
 		*res = BULKSTAT_RV_NOTHING;
 		return (error);
 	}
