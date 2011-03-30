@@ -43,6 +43,7 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/ctype.h>
 #include <linux/usb.h>
 #include <linux/vmalloc.h>
 #include <linux/moduleparam.h>
@@ -3488,6 +3489,15 @@ static int snd_usb_audio_dev_free(struct snd_device *device)
 	return snd_usb_audio_free(chip);
 }
 
+static void remove_trailing_spaces(char *str)
+{
+	char *p;
+
+	if (!*str)
+		return;
+	for (p = str + strlen(str) - 1; p >= str && isspace(*p); p--)
+		*p = 0;
+}
 
 /*
  * create a chip instance and set its names.
@@ -3546,7 +3556,7 @@ static int snd_usb_audio_create(struct usb_device *dev, int idx,
 	snd_component_add(card, component);
 
 	/* retrieve the device string as shortname */
- 	if (quirk && quirk->product_name) {
+	if (quirk && quirk->product_name && *quirk->product_name) {
 		strlcpy(card->shortname, quirk->product_name, sizeof(card->shortname));
 	} else {
 		if (!dev->descriptor.iProduct ||
@@ -3558,9 +3568,10 @@ static int snd_usb_audio_create(struct usb_device *dev, int idx,
 				USB_ID_PRODUCT(chip->usb_id));
 		}
 	}
+	remove_trailing_spaces(card->shortname);
 
 	/* retrieve the vendor and device strings as longname */
-	if (quirk && quirk->vendor_name) {
+	if (quirk && quirk->vendor_name && *quirk->vendor_name) {
 		len = strlcpy(card->longname, quirk->vendor_name, sizeof(card->longname));
 	} else {
 		if (dev->descriptor.iManufacturer)
@@ -3570,8 +3581,11 @@ static int snd_usb_audio_create(struct usb_device *dev, int idx,
 			len = 0;
 		/* we don't really care if there isn't any vendor string */
 	}
-	if (len > 0)
-		strlcat(card->longname, " ", sizeof(card->longname));
+	if (len > 0) {
+		remove_trailing_spaces(card->longname);
+		if (*card->longname)
+			strlcat(card->longname, " ", sizeof(card->longname));
+	}
 
 	strlcat(card->longname, card->shortname, sizeof(card->longname));
 
