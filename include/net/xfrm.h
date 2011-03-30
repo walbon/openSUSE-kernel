@@ -273,7 +273,11 @@ struct xfrm_policy_afinfo {
 					     struct dst_entry *dst,
 					     int nfheader_len);
 	int			(*fill_dst)(struct xfrm_dst *xdst,
-					    struct net_device *dev);
+					    struct net_device *dev
+#ifndef __GENKSYMS__
+					    , struct flowi *fl
+#endif
+					);
 };
 
 extern int xfrm_policy_register_afinfo(struct xfrm_policy_afinfo *afinfo);
