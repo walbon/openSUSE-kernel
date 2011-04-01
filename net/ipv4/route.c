@@ -90,7 +90,6 @@
 #include <linux/jhash.h>
 #include <linux/rcupdate.h>
 #include <linux/times.h>
-#include <linux/swap.h>
 #include <net/dst.h>
 #include <net/net_namespace.h>
 #include <net/protocol.h>
@@ -421,8 +420,12 @@ proc_dointvec_route(struct ctl_table *table, int write, void __user *buffer,
 
 	ret = proc_dointvec(table, write, buffer, lenp, ppos);
 
-	if (!ret && write)
-		ip_rt_max_size = new_size;
+	if (!ret && write) {
+		ret = mem_reserve_kmem_cache_set(&ipv4_route_reserve,
+				ipv4_dst_ops.kmem_cachep, new_size);
+		if (!ret)
+			ip_rt_max_size = new_size;
+	}
 	mutex_unlock(&ipv4_route_lock);
 
 	return ret;
@@ -3498,16 +3501,8 @@ int __init ip_rt_init(void)
 
 	mem_reserve_init(&ipv4_route_reserve, "IPv4 route cache",
 			&net_rx_reserve);
-
-	/*
-	 * Reserve one route cache entry per swapfile that could possibly be
-	 * allocated. Even this should not be necessary as once an NFS-backed
-	 * swapfile is activated, the rtable entry should not be cleared from
-	 * the routing cache. dst_alloc will detect if this assumption ever
-	 * breaks but having the reserve will prevent a deadlock
-	 */
 	mem_reserve_kmem_cache_set(&ipv4_route_reserve,
-			ipv4_dst_ops.kmem_cachep, MAX_SWAPFILES);
+			ipv4_dst_ops.kmem_cachep, ip_rt_max_size);
 
 	devinet_init();
 	ip_fib_init();

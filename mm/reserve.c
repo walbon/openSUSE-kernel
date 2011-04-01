@@ -442,38 +442,6 @@ int mem_reserve_kmem_cache_set(struct mem_reserve *res, struct kmem_cache *s,
 EXPORT_SYMBOL_GPL(mem_reserve_kmem_cache_set);
 
 /**
- * mem_reserve_kmem_cache_add() - change the size in a relative way
- * @res - reserve to set
- * @s - kmem_cache to reserve from
- * @objects - number of objects to adjust the reserve by
- *
- * Similar to mem_reserve_kmem_cache_set, expect that the argument is relative
- * instead of absolute
- *
- * Returns -ENOMEM on failure.
- */
-int mem_reserve_kmem_cache_add(struct mem_reserve *res, struct kmem_cache *s,
-			       int objects)
-{
-	int ret;
-	long pages, bytes;
-
-	mutex_lock(&mem_reserve_mutex);
-	if (objects >= 0)
-		pages = kmem_alloc_estimate(s, GFP_ATOMIC, objects);
-	else {
-		pages = kmem_alloc_estimate(s, GFP_ATOMIC, -objects);
-		pages = -pages;
-	}
-	bytes = objects * kmem_cache_size(s);
-	ret = __mem_reserve_add(res, pages, bytes);
-	mutex_unlock(&mem_reserve_mutex);
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(mem_reserve_kmem_cache_add);
-
-/**
  * mem_reserve_kmem_cache_charge() - charge (or uncharge) usage of objs
  * @res - reserve to charge
  * @objs - objects to charge for

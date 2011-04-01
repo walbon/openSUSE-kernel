@@ -21,14 +21,13 @@
 
 #include "internal.h"
 
-struct kmem_cache *nfs_page_cachep;
-struct mem_reserve nfs_page_reserve;
+static struct kmem_cache *nfs_page_cachep;
 
 static inline struct nfs_page *
-nfs_page_alloc(gfp_t gfp_mask)
+nfs_page_alloc(void)
 {
 	struct nfs_page	*p;
-	p = kmem_cache_alloc(nfs_page_cachep, gfp_mask);
+	p = kmem_cache_alloc(nfs_page_cachep, GFP_NOIO);
 	if (p) {
 		memset(p, 0, sizeof(*p));
 		INIT_LIST_HEAD(&p->wb_list);
@@ -60,13 +59,10 @@ nfs_create_request(struct nfs_open_context *ctx, struct inode *inode,
 		   unsigned int offset, unsigned int count)
 {
 	struct nfs_page		*req;
-	gfp_t gfp_mask = GFP_NOIO;
-	if (IS_SWAPFILE(inode))
-		gfp_mask |= __GFP_MEMALLOC;
 
 	for (;;) {
 		/* try to allocate the request struct */
-		req = nfs_page_alloc(gfp_mask);
+		req = nfs_page_alloc();
 		if (req != NULL)
 			break;
 
@@ -436,11 +432,6 @@ int __init nfs_init_nfspagecache(void)
 					    NULL);
 	if (nfs_page_cachep == NULL)
 		return -ENOMEM;
-
-#ifdef CONFIG_NFS_SWAP
-	mem_reserve_init(&nfs_page_reserve, "NFS page request cache",
-						&mem_reserve_root);
-#endif
 
 	return 0;
 }

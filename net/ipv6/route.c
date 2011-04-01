@@ -41,7 +41,6 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/nsproxy.h>
-#include <linux/swap.h>
 #include <net/net_namespace.h>
 #include <net/snmp.h>
 #include <net/ipv6.h>
@@ -2584,8 +2583,12 @@ proc_dointvec_route(struct ctl_table *table, int write,
 
 	ret = proc_dointvec(table, write, buffer, lenp, ppos);
 
-	if (!ret && write)
-		net->ipv6.sysctl.ip6_rt_max_size = new_size;
+	if (!ret && write) {
+		ret = mem_reserve_kmem_cache_set(&net->ipv6.ip6_rt_reserve,
+				net->ipv6.ip6_dst_ops.kmem_cachep, new_size);
+		if (!ret)
+			net->ipv6.sysctl.ip6_rt_max_size = new_size;
+	}
 	mutex_unlock(&net->ipv6.sysctl.ip6_rt_lock);
 
 	return ret;
@@ -2784,16 +2787,9 @@ static int ip6_route_net_init(struct net *net)
 
 	mem_reserve_init(&net->ipv6.ip6_rt_reserve, "IPv6 route cache",
 			 &net_rx_reserve);
-	/*
-	 * Reserve one route cache entry per swapfile that could possibly be
-	 * allocated. Even this should not be necessary as once an NFS-backed
-	 * swapfile is activated, the rtable entry should not be cleared from
-	 * the routing cache. dst_alloc will detect if this assumption ever
-	 * breaks but having the reserve will prevent a deadlock
-	 */
 	ret = mem_reserve_kmem_cache_set(&net->ipv6.ip6_rt_reserve,
 			net->ipv6.ip6_dst_ops.kmem_cachep,
-			MAX_SWAPFILES);
+			net->ipv6.sysctl.ip6_rt_max_size);
 	if (ret)
 		goto out_reserve_fail;
 

@@ -50,9 +50,6 @@ struct kmem_cache;
 int mem_reserve_kmem_cache_set(struct mem_reserve *res,
 			       struct kmem_cache *s,
 			       int objects);
-int mem_reserve_kmem_cache_add(struct mem_reserve *res,
-			       struct kmem_cache *s,
-			       int objects);
 int mem_reserve_kmem_cache_charge(struct mem_reserve *res,
 				  struct kmem_cache *s, long objs);
 
