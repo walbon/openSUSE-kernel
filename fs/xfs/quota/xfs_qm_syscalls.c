@@ -1213,7 +1213,7 @@ xfs_qm_internalqcheck(
 		 */
 		error = xfs_bulkstat(mp, &lastino, &count,
 				 xfs_qm_internalqcheck_adjust,
-				 NULL, 0, NULL, &done);
+				 NULL, 0, NULL, 0, &done);
 		if (error) {
 			cmn_err(CE_DEBUG, "Bulkstat returned error 0x%x", error);
 			break;
