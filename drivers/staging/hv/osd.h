@@ -26,6 +26,7 @@
 #define _OSD_H_
 
 #include <linux/workqueue.h>
+#include <asm/sync_bitops.h>
 
 /* Defines */
 #define ALIGN_UP(value, align)	(((value) & (align-1)) ?		\
