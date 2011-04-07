@@ -305,6 +305,24 @@ struct sock {
 };
 
 /*
+ * Prevent kabi-breakage by extending the original struct sock
+ */
+struct sock_kabi {
+	struct {
+		int len;
+	} sk_backlog;
+};
+
+#define SOCK_KABI_SIZE ALIGN(sizeof(struct sock_kabi), sizeof(long))
+
+static inline unsigned int sock_kabi_alloc_size(unsigned int prot_sock_size)
+{
+       return ALIGN(prot_sock_size, sizeof(long)) + SOCK_KABI_SIZE;
+}
+
+static inline struct sock_kabi *sock_kabi(const struct sock *sk);
+
+/*
  * Hashed lists helper routines
  */
 static inline struct sock *__sk_head(const struct hlist_head *head)
@@ -607,8 +625,8 @@ static inline int sk_stream_memory_free(struct sock *sk)
 	return sk->sk_wmem_queued < sk->sk_sndbuf;
 }
 
-/* The per-socket spinlock must be held here. */
-static inline void sk_add_backlog(struct sock *sk, struct sk_buff *skb)
+/* OOB backlog add */
+static inline void __sk_add_backlog(struct sock *sk, struct sk_buff *skb)
 {
 	if (!sk->sk_backlog.tail) {
 		sk->sk_backlog.head = sk->sk_backlog.tail = skb;
@@ -617,6 +635,27 @@ static inline void sk_add_backlog(struct sock *sk, struct sk_buff *skb)
 		sk->sk_backlog.tail = skb;
 	}
 	skb->next = NULL;
+}
+
+/*
+ * Take into account size of receive queue and backlog queue
+ */
+static inline bool sk_rcvqueues_full(const struct sock *sk, const struct sk_buff *skb)
+{
+	unsigned int qsize = sock_kabi(sk)->sk_backlog.len + atomic_read(&sk->sk_rmem_alloc);
+
+	return qsize + skb->truesize > sk->sk_rcvbuf;
+}
+
+/* The per-socket spinlock must be held here. */
+static inline __must_check int sk_add_backlog(struct sock *sk, struct sk_buff *skb)
+{
+	if (sk_rcvqueues_full(sk, skb))
+		return -ENOBUFS;
+
+	__sk_add_backlog(sk, skb);
+	sock_kabi(sk)->sk_backlog.len += skb->truesize;
+	return 0;
 }
 
 extern int __sk_backlog_rcv(struct sock *sk, struct sk_buff *skb);
@@ -753,6 +792,14 @@ struct proto {
 	atomic_t		socks;
 #endif
 };
+
+static inline struct sock_kabi *sock_kabi(const struct sock *sk)
+{
+	unsigned int obj_size = sk->sk_prot_creator->obj_size;
+	unsigned int kabi_offset = obj_size - SOCK_KABI_SIZE;
+
+	return (struct sock_kabi *)(((u8 *)sk) + kabi_offset);
+}
 
 extern int proto_register(struct proto *prot, int alloc_slab);
 extern void proto_unregister(struct proto *prot);
