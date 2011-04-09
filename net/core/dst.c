@@ -165,14 +165,30 @@ EXPORT_SYMBOL(dst_discard);
 void * dst_alloc(struct dst_ops * ops)
 {
 	struct dst_entry * dst;
+	unsigned long pflags = current->flags;
+	current->flags &= ~PF_MEMALLOC;
 
 	if (ops->gc && atomic_read(&ops->entries) > ops->gc_thresh) {
 		if (ops->gc(ops))
 			return NULL;
 	}
 	dst = kmem_cache_zalloc(ops->kmem_cachep, GFP_ATOMIC);
-	if (!dst)
-		return NULL;
+	tsk_restore_flags(current, pflags, PF_MEMALLOC);
+	if (!dst) {
+		if (current->flags & PF_MEMALLOC) {
+			/*
+			 * If current had PF_MEMALLOC, retry the allocation
+			 * with it. This shouldn't happen because the rtable
+			 * entry for a route of an emergency socket should
+			 * not be cleared up. Warn if this assumption breaks
+			 */
+			WARN_ON(1);
+			dst = kmem_cache_zalloc(ops->kmem_cachep, GFP_ATOMIC);
+			if (!dst)
+				return NULL;
+		} else
+			return NULL;
+	}
 	atomic_set(&dst->__refcnt, 0);
 	dst->ops = ops;
 	dst->lastuse = jiffies;

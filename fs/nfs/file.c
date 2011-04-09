@@ -526,13 +526,27 @@ static int nfs_launder_page(struct page *page)
 }
 
 #ifdef CONFIG_NFS_SWAP
+extern struct kmem_cache *nfs_page_cachep;
+extern struct mem_reserve nfs_page_reserve;
+
 static int nfs_swapon(struct file *file)
 {
+	int ret;
+
+	/* Reserve nfs_page_cache for the maximum swapfile size */
+	ret = mem_reserve_kmem_cache_add(&nfs_page_reserve, nfs_page_cachep,
+		i_size_read(file->f_mapping->host) >> PAGE_SHIFT);
+	if (ret)
+		return ret;
+
 	return xs_swapper(NFS_CLIENT(file->f_mapping->host)->cl_xprt, 1);
 }
 
 static int nfs_swapoff(struct file *file)
 {
+	mem_reserve_kmem_cache_add(&nfs_page_reserve, nfs_page_cachep,
+		-(i_size_read(file->f_mapping->host) >> PAGE_SHIFT));
+
 	return xs_swapper(NFS_CLIENT(file->f_mapping->host)->cl_xprt, 0);
 }
 #endif
