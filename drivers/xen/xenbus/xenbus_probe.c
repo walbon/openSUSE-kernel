@@ -946,11 +946,107 @@ void unregister_xenstore_notifier(struct notifier_block *nb)
 }
 EXPORT_SYMBOL_GPL(unregister_xenstore_notifier);
 
+#ifdef CONFIG_CRASH_DUMP
+static DECLARE_WAIT_QUEUE_HEAD(be_state_wq);
+static int be_state;
+
+static void xenbus_reset_state_changed(struct xenbus_watch *w, const char **v, unsigned int l)
+{
+	xenbus_scanf(XBT_NIL, v[XS_WATCH_PATH], "", "%i", &be_state);
+	printk(KERN_INFO "XENBUS: %s %s\n", v[XS_WATCH_PATH], xenbus_strstate(be_state));
+	wake_up(&be_state_wq);
+}
+
+static int xenbus_reset_check_final(int *st)
+{
+	return *st == XenbusStateInitialising || *st == XenbusStateInitWait;
+}
+
+static void xenbus_reset_frontend_state(char *backend, char *frontend)
+{
+	struct xenbus_watch watch;
+
+	memset(&watch, 0, sizeof(watch));
+	watch.node = kasprintf(GFP_NOIO | __GFP_HIGH, "%s/state", backend);
+	if (!watch.node)
+		return;
+
+	watch.callback = xenbus_reset_state_changed;
+	be_state = XenbusStateUnknown;
+
+	printk(KERN_INFO "XENBUS: triggering reconnect on %s\n", backend);
+	register_xenbus_watch(&watch);
+
+	xenbus_printf(XBT_NIL, frontend, "state", "%d", XenbusStateClosing);
+	wait_event_interruptible(be_state_wq, be_state == XenbusStateClosing);
+
+	xenbus_printf(XBT_NIL, frontend, "state", "%d", XenbusStateClosed);
+	wait_event_interruptible(be_state_wq, be_state == XenbusStateClosed);
+
+	xenbus_printf(XBT_NIL, frontend, "state", "%d", XenbusStateInitialising);
+	wait_event_interruptible(be_state_wq, xenbus_reset_check_final(&be_state));
+
+	unregister_xenbus_watch(&watch);
+	printk(KERN_INFO "XENBUS: reconnect done on %s\n", backend);
+	kfree(watch.node);
+}
+
+static void xenbus_reset_check_state(char *class, char *dev)
+{
+	int state, err;
+	char *backend, *frontend;
+
+	frontend = kasprintf(GFP_NOIO | __GFP_HIGH, "device/%s/%s", class, dev);
+	if (!frontend)
+		return;
+
+	err = xenbus_scanf(XBT_NIL, frontend, "state", "%i", &state);
+	/* frontend connected? */
+	if (err == 1 && state == XenbusStateConnected) {
+		backend = xenbus_read(XBT_NIL, frontend, "backend", NULL);
+		if (!backend || IS_ERR(backend))
+			goto out;
+		err = xenbus_scanf(XBT_NIL, backend, "state", "%i", &state);
+		/* backend connected? */
+		if (err == 1 && state == XenbusStateConnected)
+			xenbus_reset_frontend_state(backend, frontend);
+		kfree(backend);
+	}
+out:
+	kfree(frontend);
+}
+
+static void xenbus_reset_state(void)
+{
+	char **devclass, **dev;
+	int devclass_n, dev_n;
+	int i, j;
+
+	devclass = xenbus_directory(XBT_NIL, "device", "", &devclass_n);
+	if (IS_ERR(devclass))
+		return;
+
+	for (i = 0; i < devclass_n; i++) {
+		dev = xenbus_directory(XBT_NIL, "device", devclass[i], &dev_n);
+		if (IS_ERR(dev))
+			continue;
+		for (j = 0; j < dev_n; j++)
+			xenbus_reset_check_state(devclass[i], dev[j]);
+		kfree(dev);
+	}
+	kfree(devclass);
+}
+#endif
 
 void xenbus_probe(struct work_struct *unused)
 {
 	BUG_ON(!is_xenstored_ready());
 
+#ifdef CONFIG_CRASH_DUMP
+	/* reset devices in XenbusStateConnected state */
+	if (!is_initial_xendomain() && reset_devices)
+		xenbus_reset_state();
+#endif
 	/* Enumerate devices in xenstore and watch for changes. */
 	xenbus_probe_devices(&xenbus_frontend);
 	register_xenbus_watch(&fe_watch);
@@ -961,7 +1057,8 @@ void xenbus_probe(struct work_struct *unused)
 }
 
 
-#if defined(CONFIG_PROC_FS) && defined(CONFIG_XEN_PRIVILEGED_GUEST)
+#ifdef CONFIG_XEN_PRIVILEGED_GUEST
+#ifdef CONFIG_PROC_FS
 static struct file_operations xsd_kva_fops;
 static struct proc_dir_entry *xsd_kva_intf;
 static struct proc_dir_entry *xsd_port_intf;
@@ -1023,8 +1120,9 @@ static int xsd_port_read(char *page, char **start, off_t off,
 }
 #endif
 
-#if defined(CONFIG_XEN) || defined(MODULE)
-int xenbus_conn(domid_t remote_dom, unsigned long *grant_ref, evtchn_port_t *local_port)
+#ifdef CONFIG_XEN_XENBUS_DEV
+int xenbus_conn(domid_t remote_dom, grant_ref_t *grant_ref,
+		evtchn_port_t *local_port)
 {
 	struct evtchn_alloc_unbound alloc_unbound;
 	int rc, rc2;
@@ -1032,10 +1130,8 @@ int xenbus_conn(domid_t remote_dom, unsigned long *grant_ref, evtchn_port_t *loc
 	BUG_ON(atomic_read(&xenbus_xsd_state) != XENBUS_XSD_FOREIGN_INIT);
 	BUG_ON(!is_initial_xendomain());
 
-#if defined(CONFIG_PROC_FS) && defined(CONFIG_XEN_PRIVILEGED_GUEST)
 	remove_xen_proc_entry("xsd_kva");
 	remove_xen_proc_entry("xsd_port");
-#endif
 
 	rc = close_evtchn(xen_store_evtchn);
 	if (rc != 0)
@@ -1073,6 +1169,7 @@ fail0:
 	return rc;
 }
 #endif
+#endif /* CONFIG_XEN_PRIVILEGED_GUEST */
 
 #ifndef MODULE
 static int __init xenbus_probe_init(void)
