@@ -17,6 +17,30 @@
 #include "check.h"
 #include "ibm.h"
 
+static char *dasd_force_ldl[4];
+static char *dasd_force_cdl[4];
+
+module_param_array(dasd_force_ldl, charp, NULL, 0);
+MODULE_PARM_DESC(dasd_force_ldl, "force a block device to be detected as DASD "
+                                 "(LDL format)");
+module_param_array(dasd_force_cdl, charp, NULL, 0);
+MODULE_PARM_DESC(dasd_force_cdl, "force a block device to be detected as DASD "
+                                 "(CDL format)");
+
+static inline bool match_array(char **arr, const char *match)
+{
+	if (!arr)
+		return false;
+
+	while (*arr) {
+		if (!strcmp(*arr, match))
+			return true;
+		arr++;
+	}
+
+	return false;
+}
+
 /*
  * compute the block number from a
  * cyl-cyl-head-head structure
@@ -75,6 +99,7 @@ ibm_partition(struct parsed_partitions *state, struct block_device *bdev)
 	unsigned char *data;
 	Sector sect;
 	sector_t labelsect;
+	bool fake_cdl = false;
 
 	res = 0;
 	blocksize = bdev_logical_block_size(bdev);
@@ -94,9 +119,29 @@ ibm_partition(struct parsed_partitions *state, struct block_device *bdev)
 	if (label == NULL)
 		goto out_nolab;
 
-	if (ioctl_by_bdev(bdev, BIODASDINFO2, (unsigned long)info) != 0 ||
-	    ioctl_by_bdev(bdev, HDIO_GETGEO, (unsigned long)geo) != 0)
+	if (match_array(dasd_force_ldl, bdev->bd_disk->disk_name)) {
+		memset(info, 0, sizeof(dasd_information2_t));
+		info->format = DASD_FORMAT_LDL;
+		info->label_block = 2;
+	} else if (match_array(dasd_force_cdl, bdev->bd_disk->disk_name)) {
+		memset(info, 0, sizeof(dasd_information2_t));
+		info->format = DASD_FORMAT_CDL;
+		info->label_block = 2;
+		fake_cdl = true;
+	} else if (ioctl_by_bdev(bdev, BIODASDINFO2, (unsigned long)info) != 0) {
 		goto out_freeall;
+	}
+
+	if (ioctl_by_bdev(bdev, HDIO_GETGEO, (unsigned long)geo) != 0)
+		goto out_freeall;
+
+	if (fake_cdl) {
+		/* CDL disks always are on 15/12 layout, so calculate over */
+		geo->cylinders = (geo->heads * geo->sectors * geo->cylinders)
+				/ (15 * 12);
+		geo->heads = 15;
+		geo->sectors = 12;
+	}
 
 	/*
 	 * Special case for FBA disks: label sector does not depend on

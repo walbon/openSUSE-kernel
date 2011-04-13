@@ -214,12 +214,15 @@ static void nfs_mark_uptodate(struct page *page, unsigned int base, unsigned int
 	SetPageUptodate(page);
 }
 
-static int wb_priority(struct writeback_control *wbc)
+static int wb_priority(struct writeback_control *wbc, struct inode *inode)
 {
 	if (wbc->for_reclaim)
 		return FLUSH_HIGHPRI | FLUSH_STABLE;
 	if (wbc->for_kupdate)
 		return FLUSH_LOWPRI;
+	if (wbc->sync_mode == WB_SYNC_ALL &&
+	    (wbc->range_end - wbc->range_start) <= NFS_SERVER(inode)->wsize - 1)
+		return FLUSH_STABLE;
 	return 0;
 }
 
@@ -338,7 +341,7 @@ static int nfs_writepage_locked(struct page *page, struct writeback_control *wbc
 	int err;
 
 	nfs_pageio_init_write(&pgio, page_file_mapping(page)->host,
-			wb_priority(wbc));
+			wb_priority(wbc, page->mapping->host));
 	err = nfs_do_writepage(page, wbc, &pgio);
 	nfs_pageio_complete(&pgio);
 	if (err < 0)
@@ -403,7 +406,7 @@ int nfs_writepages(struct address_space *mapping, struct writeback_control *wbc)
 
 	nfs_inc_stats(inode, NFSIOS_VFSWRITEPAGES);
 
-	nfs_pageio_init_write(&pgio, inode, wb_priority(wbc));
+	nfs_pageio_init_write(&pgio, inode, wb_priority(wbc, inode));
 	err = write_cache_pages(mapping, wbc, nfs_writepages_callback, &pgio);
 	nfs_pageio_complete(&pgio);
 

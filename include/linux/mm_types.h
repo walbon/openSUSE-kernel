@@ -188,6 +188,9 @@ struct vm_area_struct {
 #ifdef CONFIG_NUMA
 	struct mempolicy *vm_policy;	/* NUMA policy for the VMA */
 #endif
+#ifndef __GENKSYMS__
+	struct vm_area_struct *vm_prev;
+#endif
 };
 
 struct core_thread {

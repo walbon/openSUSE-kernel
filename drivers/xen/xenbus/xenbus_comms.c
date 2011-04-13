@@ -246,7 +246,9 @@ int xb_init_comms(void)
 		printk(KERN_WARNING "XENBUS response ring is not quiescent "
 		       "(%08x:%08x): fixing up\n",
 		       intf->rsp_cons, intf->rsp_prod);
-		intf->rsp_cons = intf->rsp_prod;
+		/* breaks kdump */
+		if (!reset_devices)
+			intf->rsp_cons = intf->rsp_prod;
 	}
 
 #if defined(CONFIG_XEN) || defined(MODULE)
