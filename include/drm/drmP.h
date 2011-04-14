@@ -1025,11 +1025,7 @@ struct drm_device {
 	struct pci_controller *hose;
 #endif
 	struct drm_sg_mem *sg;	/**< Scatter gather memory */
-#ifdef __GENKSYMS__
 	int num_crtcs;                  /**< Number of CRTCs on this device */
-#else
-	unsigned int num_crtcs;                  /**< Number of CRTCs on this device */
-#endif
 	void *dev_private;		/**< device private data */
 	void *mm_private;
 	struct address_space *dev_mapping;
