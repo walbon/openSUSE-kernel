@@ -163,7 +163,7 @@ out:
 
 #ifdef CONFIG_MMU
 
-static void acct_arg_size(struct linux_binprm *bprm, unsigned long pages)
+void acct_arg_size(struct linux_binprm *bprm, unsigned long pages)
 {
 	struct mm_struct *mm = current->mm;
 	long diff = (long)(pages - bprm->vma_pages);
@@ -173,16 +173,12 @@ static void acct_arg_size(struct linux_binprm *bprm, unsigned long pages)
 
 	bprm->vma_pages = pages;
 
-#ifdef SPLIT_RSS_COUNTING
-	add_mm_counter(mm, anon_rss, diff);
-#else
-	spin_lock(&mm->page_table_lock);
-	add_mm_counter(mm, anon_rss, diff);
-	spin_unlock(&mm->page_table_lock);
-#endif
+	down_write(&mm->mmap_sem);
+	mm->total_vm += diff;
+	up_write(&mm->mmap_sem);
 }
 
-static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
+struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 		int write)
 {
 	struct page *page;
@@ -299,11 +295,11 @@ static bool valid_arg_len(struct linux_binprm *bprm, long len)
 
 #else
 
-static inline void acct_arg_size(struct linux_binprm *bprm, unsigned long pages)
+void acct_arg_size(struct linux_binprm *bprm, unsigned long pages)
 {
 }
 
-static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
+struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 		int write)
 {
 	struct page *page;

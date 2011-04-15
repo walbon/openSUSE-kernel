@@ -281,7 +281,9 @@ void VmbusOnEvents(void)
 		for (dword = 0; dword < maxdword; dword++) {
 			if (recvInterruptPage[dword]) {
 				for (bit = 0; bit < 32; bit++) {
-					if (sync_test_and_clear_bit(bit, (unsigned long *)&recvInterruptPage[dword])) {
+					if (sync_test_and_clear_bit(bit,
+						(unsigned long *)
+						&recvInterruptPage[dword])) {
 						relid = (dword << 5) + bit;
 						DPRINT_DBG(VMBUS, "event detected for relid - %d", relid);
 
