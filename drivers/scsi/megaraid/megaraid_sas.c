@@ -1983,7 +1983,7 @@ megasas_complete_cmd(struct megasas_instance *instance, struct megasas_cmd *cmd,
 	case MFI_CMD_LD_READ:
 	case MFI_CMD_LD_WRITE:
 
-		if (!cmd->scmd) {
+		if (!cmd->scmd && !cmd->sync_cmd) {
 			printk(KERN_DEBUG "megasas: invalid completion on"
 			       " command %p status %x\n", cmd, hdr->cmd_status);
 			break;
