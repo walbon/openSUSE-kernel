@@ -618,7 +618,7 @@ static int ses_intf_add(struct device *cdev,
 	 * we found the enclosure */
 	shost_for_each_device(tmp_sdev, sdev->host) {
 		if (tmp_sdev->lun != 0 ||
-		    tmp_sdev->state != SDEV_RUNNING ||
+		    tmp_sdev->sdev_state != SDEV_RUNNING ||
 		    scsi_device_enclosure(tmp_sdev))
 			continue;
 		ses_match_to_enclosure(edev, tmp_sdev);
