@@ -342,6 +342,7 @@ static void dump_tasks(const struct mem_cgroup *mem)
  * flag though it's unlikely that  we select a process with CAP_SYS_RAW_IO
  * set.
  */
+#define K(x) ((x) << (PAGE_SHIFT-10))
 static void __oom_kill_task(struct task_struct *p, int verbose)
 {
 	if (is_global_init(p)) {
@@ -357,8 +358,11 @@ static void __oom_kill_task(struct task_struct *p, int verbose)
 	}
 
 	if (verbose)
-		printk(KERN_ERR "Killed process %d (%s)\n",
-				task_pid_nr(p), p->comm);
+		printk(KERN_ERR "Killed process %d (%s) "
+			"anon-rss:%lukB, file-rss:%lukB\n",
+				task_pid_nr(p), p->comm,
+				K(get_mm_counter(p->mm, MM_ANONPAGES)),
+				K(get_mm_counter(p->mm, MM_FILEPAGES)));
 
 	/*
 	 * We give our sacrificial lamb high priority and access to
