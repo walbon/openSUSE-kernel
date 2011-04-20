@@ -98,6 +98,7 @@ static int lpp_status(struct path_selector *ps, struct dm_path *path,
 					 atomic_read(&pi->io_count));
 		break;
 		case STATUSTYPE_TABLE:
+			DMEMIT("%u ", pi->repeat_count);
 		break;
 		}
 	}
