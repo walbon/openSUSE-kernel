@@ -5448,6 +5448,13 @@ static int patch_stac92hd83xxx(struct hda_codec *codec)
 	spec->capvols = stac92hd83xxx_capvols;
 	spec->capsws = stac92hd83xxx_capsws;
 
+	if (codec->bus->pci && codec->bus->pci->vendor == PCI_VENDOR_ID_AMD) {
+		snd_printk(KERN_INFO "idt92hd83xxx: "
+			   "Enable sync_write for AMD chipset\n");
+		codec->bus->sync_write = 1;
+		codec->bus->allow_bus_reset = 1;
+	}
+
 	spec->board_config = snd_hda_check_board_config(codec,
 							STAC_92HD83XXX_MODELS,
 							stac92hd83xxx_models,
