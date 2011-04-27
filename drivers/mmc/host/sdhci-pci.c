@@ -201,6 +201,9 @@ static int jmicron_probe(struct sdhci_pci_chip *chip)
 	if (chip->pdev->device == PCI_DEVICE_ID_JMICRON_JMB388_ESD)
 		chip->quirks |= SDHCI_QUIRK_MMC_VDD_180;
 
+	/* unsable RO-detection */
+	chip->quirks |= SDHCI_QUIRK_UNSTABLE_RO_DETECT;
+
 	return 0;
 }
 

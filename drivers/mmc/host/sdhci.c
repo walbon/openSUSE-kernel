@@ -1173,26 +1173,44 @@ out:
 	spin_unlock_irqrestore(&host->lock, flags);
 }
 
-static int sdhci_get_ro(struct mmc_host *mmc)
+static int check_ro(struct sdhci_host *host)
 {
-	struct sdhci_host *host;
 	unsigned long flags;
 	int present;
 
+	spin_lock_irqsave(&host->lock, flags);
+	present = sdhci_readl(host, SDHCI_PRESENT_STATE);
+	spin_unlock_irqrestore(&host->lock, flags);
+	present = !(present & SDHCI_WRITE_PROTECT);
+	if (host->quirks & SDHCI_QUIRK_INVERTED_WRITE_PROTECT)
+		present = !present;
+	return present;
+}
+
+#define SAMPLE_COUNT	5
+
+static int sdhci_get_ro(struct mmc_host *mmc)
+{
+	struct sdhci_host *host;
+	int i, ro_count;
+
 	host = mmc_priv(mmc);
 
-	spin_lock_irqsave(&host->lock, flags);
-
 	if (host->flags & SDHCI_DEVICE_DEAD)
-		present = 0;
-	else
-		present = sdhci_readl(host, SDHCI_PRESENT_STATE);
+		return 0;
 
-	spin_unlock_irqrestore(&host->lock, flags);
+	if (!(host->quirks & SDHCI_QUIRK_UNSTABLE_RO_DETECT))
+		return check_ro(host);
 
-	if (host->quirks & SDHCI_QUIRK_INVERTED_WRITE_PROTECT)
-		return !!(present & SDHCI_WRITE_PROTECT);
-	return !(present & SDHCI_WRITE_PROTECT);
+	ro_count = 0;
+	for (i = 0; i < SAMPLE_COUNT; i++) {
+		if (check_ro(host)) {
+			if (++ro_count > SAMPLE_COUNT / 2)
+				return 1;
+		}
+		msleep(30);
+	}
+	return 0;
 }
 
 static void sdhci_enable_sdio_irq(struct mmc_host *mmc, int enable)

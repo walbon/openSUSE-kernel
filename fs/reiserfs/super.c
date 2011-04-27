@@ -442,30 +442,25 @@ int remove_save_link(struct inode *inode, int truncate)
 	return journal_end(&th, inode->i_sb, JOURNAL_PER_BALANCE_CNT);
 }
 
-/*
- * Detach the priv root from the root. Technically this becomes anonymous
- * but we don't want it added to the anon list. This is necessary to
- * work around shrink_dcache_for_umount BUG'ing on the xattr dentries if
- * we don't clean them up before the call and Oopsing on cleaning up
- * xattrs during inode deletion if we do.
- */
-static void detach_privroot(struct super_block *s)
-{
-	struct dentry *root = REISERFS_SB(s)->priv_root;
-	if (!root)
-		return;
-
-	d_drop(root);
-	dput(root->d_parent);
-	spin_lock(&dcache_lock);
-	list_del_init(&root->d_u.d_child);
-	root->d_parent = root;
-	spin_unlock(&dcache_lock);
-}
-
 static void reiserfs_kill_sb(struct super_block *s)
 {
-	detach_privroot(s);
+	if (REISERFS_SB(s)) {
+		/*
+		 * Force any pending inode evictions to occur now. Any
+		 * inodes to be removed that have extended attributes
+		 * associated with them need to clean them up before
+		 * we can release the extended attribute root dentries.
+		 * shrink_dcache_for_umount will BUG if we don't release
+		 * those before it's called so ->put_super is too late.
+		 */
+		shrink_dcache_sb(s);
+
+		dput(REISERFS_SB(s)->xattr_root);
+		REISERFS_SB(s)->xattr_root = NULL;
+		dput(REISERFS_SB(s)->priv_root);
+		REISERFS_SB(s)->priv_root = NULL;
+	}
+
 	kill_block_super(s);
 }
 
@@ -473,8 +468,6 @@ static void reiserfs_put_super(struct super_block *s)
 {
 	struct reiserfs_transaction_handle th;
 	th.t_trans_id = 0;
-
-	reiserfs_xattr_shutdown(s);
 
 	lock_kernel();
 
