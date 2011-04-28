@@ -991,10 +991,14 @@ static void build_feature_ctl(struct mixer_build *state, unsigned char *desc,
 		append_ctl_name(kctl, control == USB_FEATURE_MUTE ?
 				" Switch" : " Volume");
 		if (control == USB_FEATURE_VOLUME) {
-			kctl->tlv.c = mixer_vol_tlv;
-			kctl->vd[0].access |= 
-				SNDRV_CTL_ELEM_ACCESS_TLV_READ |
-				SNDRV_CTL_ELEM_ACCESS_TLV_CALLBACK;
+			int dBmin = convert_signed_value(cval, cval->min);
+			int dBmax = convert_signed_value(cval, cval->max);
+			if (dBmin < dBmax) {
+				kctl->tlv.c = mixer_vol_tlv;
+				kctl->vd[0].access |=
+					SNDRV_CTL_ELEM_ACCESS_TLV_READ |
+					SNDRV_CTL_ELEM_ACCESS_TLV_CALLBACK;
+			}
 		}
 		break;
 
