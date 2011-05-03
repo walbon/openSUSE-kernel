@@ -53,7 +53,6 @@
 #include <linux/bootmem.h>
 #include <linux/pci.h>
 #include <linux/debugfs.h>
-#include <linux/perf_event.h>
 
 #include <asm/uaccess.h>
 #include <asm/system.h>

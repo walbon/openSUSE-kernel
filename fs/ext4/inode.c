@@ -3829,7 +3829,7 @@ static ssize_t ext4_ext_direct_IO(int rw, struct kiocb *iocb,
 					 inode->i_sb->s_bdev, iov,
 					 offset, nr_segs,
 					 ext4_get_block_dio_write,
-					 new_dio_iodone_to_dio_iodone(ext4_end_io_dio));
+					 ext4_end_io_dio);
 		if (iocb->private)
 			EXT4_I(inode)->cur_aio_dio = NULL;
 		/*

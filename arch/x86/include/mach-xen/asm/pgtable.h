@@ -715,7 +715,7 @@ struct vm_area_struct;
 
 int direct_remap_pfn_range(struct vm_area_struct *vma,
                            unsigned long address,
-                           unsigned long mfn,
+                           phys_addr_t mfn,
                            unsigned long size,
                            pgprot_t prot,
                            domid_t  domid);

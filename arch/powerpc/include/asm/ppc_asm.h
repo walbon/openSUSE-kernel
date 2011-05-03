@@ -32,9 +32,8 @@
 #define ACCOUNT_CPU_USER_ENTRY(ra, rb)					\
 	beq	2f;			/* if from kernel mode */	\
 	MFTB(ra);			/* get timebase */		\
-	ld	rb,DTLINDIRECTPTR(r13); /* get indirect DTL pointer */	\
-	std	ra,DTL_STARTTIME(rb);					\
-	ld	rb,DTL_STARTTIME_USER(rb);				\
+	ld	rb,PACA_STARTTIME_USER(r13);				\
+	std	ra,PACA_STARTTIME(r13);					\
 	subf	rb,rb,ra;		/* subtract start value */	\
 	ld	ra,PACA_USER_TIME(r13);					\
 	add	ra,ra,rb;		/* add on to user time */	\
@@ -43,9 +42,8 @@
 
 #define ACCOUNT_CPU_USER_EXIT(ra, rb)					\
 	MFTB(ra);			/* get timebase */		\
-	ld	rb,DTLINDIRECTPTR(r13); /*get indirect DTL pointer */	\
-	std	ra,DTL_STARTTIME_USER(rb);				\
-	ld	rb,DTL_STARTTIME(rb);					\
+	ld	rb,PACA_STARTTIME(r13);					\
+	std	ra,PACA_STARTTIME_USER(r13);				\
 	subf	rb,rb,ra;		/* subtract start value */	\
 	ld	ra,PACA_SYSTEM_TIME(r13);				\
 	add	ra,ra,rb;		/* add on to system time */	\
@@ -57,8 +55,7 @@ BEGIN_FW_FTR_SECTION;							\
 	beq	33f;							\
 	/* from user - see if there are any DTL entries to process */	\
 	ld	r10,PACALPPACAPTR(r13);	/* get ptr to VPA */		\
-	ld	r11,DTLINDIRECTPTR(r13); /* get ptr to indirect DTL area */ \
-	ld	r11,DTL_DTL_RIDX(r11);	/* get log read index */	\
+	ld	r11,PACA_DTL_RIDX(r13);	/* get log read index */	\
 	ld	r10,LPPACA_DTLIDX(r10);	/* get log write index */	\
 	cmpd	cr1,r11,r10;						\
 	beq+	cr1,33f;						\

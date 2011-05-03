@@ -73,7 +73,6 @@ struct slb_shadow slb_shadow[] __cacheline_aligned = {
  */
 struct paca_struct paca[NR_CPUS];
 EXPORT_SYMBOL(paca);
-struct dtl_indirect_struct dtl_indirect[NR_CPUS];
 
 void __init initialise_pacas(void)
 {
@@ -104,7 +103,6 @@ void __init initialise_pacas(void)
 #ifdef CONFIG_PPC_STD_MMU_64
 		new_paca->slb_shadow_ptr = &slb_shadow[cpu];
 #endif /* CONFIG_PPC_STD_MMU_64 */
-		new_paca->startpurr = (u64)&dtl_indirect[cpu];
 
 	}
 }

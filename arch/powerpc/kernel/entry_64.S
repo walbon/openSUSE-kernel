@@ -102,8 +102,7 @@ BEGIN_FW_FTR_SECTION
 	beq	33f
 	/* if from user, see if there are any DTL entries to process */
 	ld	r10,PACALPPACAPTR(r13)	/* get ptr to VPA */
-	ld	r11,DTLINDIRECTPTR(r13)	/* get ptr to indirect DTL area */
-	ld	r11,DTL_DTL_RIDX(r11)	/* get log read index */
+	ld	r11,PACA_DTL_RIDX(r13)	/* get log read index */
 	ld	r10,LPPACA_DTLIDX(r10)	/* get log write index */
 	cmpd	cr1,r11,r10
 	beq+	cr1,33f

@@ -434,17 +434,12 @@ int drm_ioctl(struct inode *inode, struct file *filp,
 		goto err_i1;
 	if ((nr >= DRM_COMMAND_BASE) && (nr < DRM_COMMAND_END) &&
 	    (nr < DRM_COMMAND_BASE + dev->driver->num_ioctls)) {
+		u32 drv_size;
 		ioctl = &dev->driver->ioctls[nr - DRM_COMMAND_BASE];
+		drv_size = _IOC_SIZE(ioctl->cmd_drv);
 		usize = asize = _IOC_SIZE(cmd);
-
-		/* The flag check enables a workaround for modules built
-		 * against the initial kernel source that did not contain
-		 * ioctl->cmd_drv */
-		if (ioctl->flags & DRM_HAS_CMD_DRV) {
-			u32 drv_size = _IOC_SIZE(ioctl->cmd_drv);
-			if (drv_size > asize)
-				asize = drv_size;
-		}
+		if (drv_size > asize)
+			asize = drv_size;
 	}
 	else if ((nr >= DRM_COMMAND_END) || (nr < DRM_COMMAND_BASE)) {
 		ioctl = &drm_ioctls[nr];

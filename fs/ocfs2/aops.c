@@ -676,7 +676,7 @@ static ssize_t ocfs2_direct_IO(int rw,
 					    inode->i_sb->s_bdev, iov, offset,
 					    nr_segs,
 					    ocfs2_direct_IO_get_blocks,
-					    new_dio_iodone_to_dio_iodone(ocfs2_dio_end_io));
+					    ocfs2_dio_end_io);
 
 	mlog_exit(ret);
 	return ret;

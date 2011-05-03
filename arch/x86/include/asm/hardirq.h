@@ -21,9 +21,6 @@ typedef struct {
 #ifndef CONFIG_XEN
 	unsigned int irq_tlb_count;
 #else
-#ifdef __GENKSYMS__
-#define irq_lock_count irq_tlb_count
-#endif
 	unsigned int irq_lock_count;
 #endif
 #endif

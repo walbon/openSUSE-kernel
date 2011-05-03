@@ -653,9 +653,8 @@ struct transaction_s
 	 * waiting for it to finish.
 	 */
 	unsigned int t_synchronous_commit:1;
-#ifndef __GENKSYMS__
 	unsigned int t_flushed_data_blocks:1;
-#endif
+
 	/*
 	 * For use by the filesystem to store fs-specific data
 	 * structures associated with the transaction
@@ -1049,12 +1048,7 @@ struct jbd2_buffer_trigger_type {
 	 * before a buffer is written to the journal.  mapped_data is a mapped
 	 * buffer that is the frozen data for commit.
 	 */
-#ifndef __GENKSYMS__
-	void (*t_frozen)
-#else
-	void (*t_commit)
-#endif
-		(struct jbd2_buffer_trigger_type *type,
+	void (*t_frozen)(struct jbd2_buffer_trigger_type *type,
 			 struct buffer_head *bh, void *mapped_data,
 			 size_t size);
 

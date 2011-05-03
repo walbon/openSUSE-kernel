@@ -174,15 +174,11 @@ struct hrtimer_cpu_base {
 #ifdef CONFIG_HIGH_RES_TIMERS
 	ktime_t				expires_next;
 	int				hres_active;
-#ifdef __GENKSYMS__
-	unsigned long			nr_events;
-#else
 	int				hang_detected;
 	unsigned long			nr_events;
 	unsigned long			nr_retries;
 	unsigned long			nr_hangs;
 	ktime_t				max_hang_time;
-#endif
 #endif
 };
 

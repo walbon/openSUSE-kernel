@@ -1239,7 +1239,7 @@ struct sock *sk_clone(const struct sock *sk, const gfp_t priority)
 		sock_lock_init(newsk);
 		bh_lock_sock(newsk);
 		newsk->sk_backlog.head	= newsk->sk_backlog.tail = NULL;
-		sock_kabi(newsk)->sk_backlog.len = 0;
+		newsk->sk_backlog.len = 0;
 
 		atomic_set(&newsk->sk_rmem_alloc, 0);
 		/*
@@ -1654,7 +1654,7 @@ static void __release_sock(struct sock *sk)
 	 * Doing the zeroing here guarantee we can not loop forever
 	 * while a wild producer attempts to flood us.
 	 */
-	sock_kabi(sk)->sk_backlog.len = 0;
+	sk->sk_backlog.len = 0;
 }
 
 /**
@@ -2330,9 +2330,6 @@ static inline void release_proto_idx(struct proto *prot)
 
 int proto_register(struct proto *prot, int alloc_slab)
 {
-
-	prot->obj_size = sock_kabi_alloc_size(prot->obj_size);
-
 	if (alloc_slab) {
 		prot->slab = kmem_cache_create(prot->name, prot->obj_size, 0,
 					SLAB_HWCACHE_ALIGN | prot->slab_flags,

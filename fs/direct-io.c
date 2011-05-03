@@ -245,18 +245,8 @@ static int dio_complete(struct dio *dio, loff_t offset, int ret, bool is_async)
 		ret = transferred;
 
 	if (dio->end_io && dio->result) {
-		if (dio_iodone_is_new(dio->end_io)) {
-			new_dio_iodone_t *end_io =
-				dio_iodone_to_new_dio_iodone(dio->end_io);
-
-			end_io(dio->iocb, offset, transferred,
-					dio->map_bh.b_private, ret, is_async);
-		} else {
-			dio->end_io(dio->iocb, offset, transferred,
-					dio->map_bh.b_private);
-			if (is_async)
-				aio_complete(dio->iocb, ret, 0);
-		}
+		dio->end_io(dio->iocb, offset, transferred,
+			    dio->map_bh.b_private, ret, is_async);
 	} else if (is_async) {
 		aio_complete(dio->iocb, ret, 0);
 	}

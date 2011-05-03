@@ -151,8 +151,8 @@ static void refresh_zone_stat_thresholds(void)
 		tolerate_drift = low_wmark_pages(zone) - min_wmark_pages(zone);
 		max_drift = num_online_cpus() * threshold;
 		if (max_drift > tolerate_drift)
-			zone->zone_pgdat->percpu_drift_mark[zone_idx(zone)] =
-					high_wmark_pages(zone) + max_drift;
+			zone->percpu_drift_mark = high_wmark_pages(zone) +
+					max_drift;
 	}
 }
 

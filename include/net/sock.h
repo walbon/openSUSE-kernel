@@ -243,6 +243,7 @@ struct sock {
 	struct {
 		struct sk_buff *head;
 		struct sk_buff *tail;
+		int len;
 	} sk_backlog;
 	wait_queue_head_t	*sk_sleep;
 	struct dst_entry	*sk_dst_cache;
@@ -303,24 +304,6 @@ struct sock {
 						  struct sk_buff *skb);  
 	void                    (*sk_destruct)(struct sock *sk);
 };
-
-/*
- * Prevent kabi-breakage by extending the original struct sock
- */
-struct sock_kabi {
-	struct {
-		int len;
-	} sk_backlog;
-};
-
-#define SOCK_KABI_SIZE ALIGN(sizeof(struct sock_kabi), sizeof(long))
-
-static inline unsigned int sock_kabi_alloc_size(unsigned int prot_sock_size)
-{
-       return ALIGN(prot_sock_size, sizeof(long)) + SOCK_KABI_SIZE;
-}
-
-static inline struct sock_kabi *sock_kabi(const struct sock *sk);
 
 /*
  * Hashed lists helper routines
@@ -642,7 +625,7 @@ static inline void __sk_add_backlog(struct sock *sk, struct sk_buff *skb)
  */
 static inline bool sk_rcvqueues_full(const struct sock *sk, const struct sk_buff *skb)
 {
-	unsigned int qsize = sock_kabi(sk)->sk_backlog.len + atomic_read(&sk->sk_rmem_alloc);
+	unsigned int qsize = sk->sk_backlog.len + atomic_read(&sk->sk_rmem_alloc);
 
 	return qsize + skb->truesize > sk->sk_rcvbuf;
 }
@@ -654,7 +637,7 @@ static inline __must_check int sk_add_backlog(struct sock *sk, struct sk_buff *s
 		return -ENOBUFS;
 
 	__sk_add_backlog(sk, skb);
-	sock_kabi(sk)->sk_backlog.len += skb->truesize;
+	sk->sk_backlog.len += skb->truesize;
 	return 0;
 }
 
@@ -792,14 +775,6 @@ struct proto {
 	atomic_t		socks;
 #endif
 };
-
-static inline struct sock_kabi *sock_kabi(const struct sock *sk)
-{
-	unsigned int obj_size = sk->sk_prot_creator->obj_size;
-	unsigned int kabi_offset = obj_size - SOCK_KABI_SIZE;
-
-	return (struct sock_kabi *)(((u8 *)sk) + kabi_offset);
-}
 
 extern int proto_register(struct proto *prot, int alloc_slab);
 extern void proto_unregister(struct proto *prot);

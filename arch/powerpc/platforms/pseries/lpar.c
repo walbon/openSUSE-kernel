@@ -280,10 +280,10 @@ void vpa_init(int cpu)
 	 * Register dispatch trace log, if one has been allocated.
 	 */
 	pp = &paca[cpu];
-	dtl = get_dtl_indirect_ptr()->dispatch_log;
+	dtl = pp->dispatch_log;
 	if (dtl) {
-		get_dtl_indirect_ptr()->dtl_ridx = 0;
-		get_dtl_indirect_ptr()->dtl_curr = dtl;
+		pp->dtl_ridx = 0;
+		pp->dtl_curr = dtl;
 		lppaca[cpu].dtl_idx = 0;
 
 		/* hypervisor reads buffer length from this field */

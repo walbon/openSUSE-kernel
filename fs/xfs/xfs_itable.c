@@ -79,7 +79,7 @@ xfs_bulkstat_one_int(
 		return XFS_ERROR(ENOMEM);
 
 	error = xfs_iget(mp, NULL, ino,
-			 XFS_IGET_UNTRUSTED, XFS_ILOCK_SHARED, &ip, 0);
+			 XFS_IGET_UNTRUSTED, XFS_ILOCK_SHARED, &ip);
 	if (error) {
 		*stat = BULKSTAT_RV_NOTHING;
 		goto out_free;
@@ -178,9 +178,7 @@ xfs_bulkstat_one(
 	void		__user *buffer,	/* buffer to place output in */
 	int		ubsize,		/* size of buffer */
 	void		*private_data,	/* my private data */
-	xfs_daddr_t	bno,		/* not used */
 	int		*ubused,	/* bytes used by me */
-	void		*dip,		/* not used */
 	int		*stat)		/* BULKSTAT_RV_... */
 {
 	return xfs_bulkstat_one_int(mp, ino, buffer, ubsize,
@@ -201,7 +199,6 @@ xfs_bulkstat(
 	void			*private_data,/* private data for formatter */
 	size_t			statstruct_size, /* sizeof struct filling */
 	char			__user *ubuffer, /* buffer with inode stats */
-	int			flags, /* kABI: unused */
 	int			*done)	/* 1 if there are more stats to get */
 {
 	xfs_agblock_t		agbno=0;/* allocation group block number */
@@ -487,8 +484,7 @@ xfs_bulkstat(
 				 */
 				ubused = statstruct_size;
 				error = formatter(mp, ino, ubufp, ubleft, NULL,
-						  0, &ubused, NULL,
-						  &fmterror);
+						  &ubused, &fmterror);
 				if (fmterror == BULKSTAT_RV_NOTHING) {
 					if (error && error != ENOENT &&
 						error != EINVAL) {
@@ -581,7 +577,7 @@ xfs_bulkstat_single(
 
 	ino = (xfs_ino_t)*lastinop;
 	error = xfs_bulkstat_one(mp, ino, buffer, sizeof(xfs_bstat_t), NULL, 0,
-				 0, NULL, &res);
+				 &res);
 	if (error) {
 		/*
 		 * Special case way failed, do it the "long" way
@@ -590,7 +586,7 @@ xfs_bulkstat_single(
 		(*lastinop)--;
 		count = 1;
 		if (xfs_bulkstat(mp, lastinop, &count, xfs_bulkstat_one, NULL,
-				sizeof(xfs_bstat_t), buffer, 0, done))
+				sizeof(xfs_bstat_t), buffer, done))
 			return error;
 		if (count == 0 || (xfs_ino_t)*lastinop != ino)
 			return error == EFSCORRUPTED ?

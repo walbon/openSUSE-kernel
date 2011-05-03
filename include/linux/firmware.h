@@ -11,9 +11,7 @@
 struct firmware {
 	size_t size;
 	const u8 *data;
-#ifndef __GENKSYMS__
 	struct page **pages;
-#endif
 };
 
 struct device;

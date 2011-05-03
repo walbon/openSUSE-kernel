@@ -1553,13 +1553,13 @@ xfs_vm_direct_IO(
 		ret = blockdev_direct_IO_own_locking(rw, iocb, inode,
 			bdev, iov, offset, nr_segs,
 			xfs_get_blocks_direct,
-			new_dio_iodone_to_dio_iodone(xfs_end_io_direct));
+			xfs_end_io_direct);
 	} else {
 		iocb->private = xfs_alloc_ioend(inode, IOMAP_READ);
 		ret = blockdev_direct_IO_no_locking(rw, iocb, inode,
 			bdev, iov, offset, nr_segs,
 			xfs_get_blocks_direct,
-			new_dio_iodone_to_dio_iodone(xfs_end_io_direct));
+			xfs_end_io_direct);
 	}
 
 	if (unlikely(ret != -EIOCBQUEUED && iocb->private))

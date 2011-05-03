@@ -232,9 +232,9 @@ static u64 read_spurr(u64 tb)
  */
 static u64 scan_dispatch_log(u64 stop_tb)
 {
-	u64 i = get_dtl_indirect_ptr()->dtl_ridx;
-	struct dtl_entry *dtl = get_dtl_indirect_ptr()->dtl_curr;
-	struct dtl_entry *dtl_end = get_dtl_indirect_ptr()->dispatch_log_end;
+	u64 i = local_paca->dtl_ridx;
+	struct dtl_entry *dtl = local_paca->dtl_curr;
+	struct dtl_entry *dtl_end = local_paca->dispatch_log_end;
 	struct lppaca *vpa = local_paca->lppaca_ptr;
 	u64 tb_delta;
 	u64 stolen = 0;
@@ -252,7 +252,7 @@ static u64 scan_dispatch_log(u64 stop_tb)
 		if (i + N_DISPATCH_LOG < vpa->dtl_idx) {
 			/* buffer has overflowed */
 			i = vpa->dtl_idx - N_DISPATCH_LOG;
-			dtl = get_dtl_indirect_ptr()->dispatch_log + (i % N_DISPATCH_LOG);
+			dtl = local_paca->dispatch_log + (i % N_DISPATCH_LOG);
 			continue;
 		}
 		if (dtb > stop_tb)
@@ -261,10 +261,10 @@ static u64 scan_dispatch_log(u64 stop_tb)
 		++i;
 		++dtl;
 		if (dtl == dtl_end)
-			dtl = get_dtl_indirect_ptr()->dispatch_log;
+			dtl = local_paca->dispatch_log;
 	}
-	get_dtl_indirect_ptr()->dtl_ridx = i;
-	get_dtl_indirect_ptr()->dtl_curr = dtl;
+	local_paca->dtl_ridx = i;
+	local_paca->dtl_curr = dtl;
 	return stolen;
 }
 
@@ -276,24 +276,24 @@ void accumulate_stolen_time(void)
 {
 	u64 sst, ust;
 
-	sst = scan_dispatch_log(get_dtl_indirect_ptr()->starttime_user);
-	ust = scan_dispatch_log(get_dtl_indirect_ptr()->starttime);
+	sst = scan_dispatch_log(get_paca()->starttime_user);
+	ust = scan_dispatch_log(get_paca()->starttime);
 	get_paca()->system_time -= sst;
 	get_paca()->user_time -= ust;
-	get_dtl_indirect_ptr()->stolen_time += ust + sst;
+	get_paca()->stolen_time += ust + sst;
 }
 
 static inline u64 calculate_stolen_time(u64 stop_tb)
 {
 	u64 stolen = 0;
 
-	if (get_dtl_indirect_ptr()->dtl_ridx != get_paca()->lppaca_ptr->dtl_idx) {
+	if (get_paca()->dtl_ridx != get_paca()->lppaca_ptr->dtl_idx) {
 		stolen = scan_dispatch_log(stop_tb);
 		get_paca()->system_time -= stolen;
 	}
 
-	stolen += get_dtl_indirect_ptr()->stolen_time;
-	get_dtl_indirect_ptr()->stolen_time = 0;
+	stolen += get_paca()->stolen_time;
+	get_paca()->stolen_time = 0;
 	return stolen;
 }
 
@@ -318,8 +318,8 @@ void account_system_vtime(struct task_struct *tsk)
 	local_irq_save(flags);
 	now = mftb();
 	nowscaled = read_spurr(now);
-	get_paca()->system_time += now - get_dtl_indirect_ptr()->starttime;
-	get_dtl_indirect_ptr()->starttime = now;
+	get_paca()->system_time += now - get_paca()->starttime;
+	get_paca()->starttime = now;
 	deltascaled = nowscaled - get_paca()->startspurr;
 	get_paca()->startspurr = nowscaled;
 
@@ -327,8 +327,8 @@ void account_system_vtime(struct task_struct *tsk)
 
 	delta = get_paca()->system_time;
 	get_paca()->system_time = 0;
-	udelta = get_paca()->user_time - get_dtl_indirect_ptr()->utime_sspurr;
-	get_dtl_indirect_ptr()->utime_sspurr = get_paca()->user_time;
+	udelta = get_paca()->user_time - get_paca()->utime_sspurr;
+	get_paca()->utime_sspurr = get_paca()->user_time;
 
 	/*
 	 * Because we don't read the SPURR on every kernel entry/exit,
@@ -350,7 +350,7 @@ void account_system_vtime(struct task_struct *tsk)
 			sys_scaled = deltascaled;
 		}
 	}
-	get_dtl_indirect_ptr()->user_time_scaled += user_scaled;
+	get_paca()->user_time_scaled += user_scaled;
 
 	if (in_irq() || idle_task(smp_processor_id()) != tsk) {
 		account_system_time(tsk, 0, delta, sys_scaled);
@@ -376,10 +376,10 @@ void account_process_tick(struct task_struct *tsk, int user_tick)
 	cputime_t utime, utimescaled;
 
 	utime = get_paca()->user_time;
-	utimescaled = get_dtl_indirect_ptr()->user_time_scaled;
+	utimescaled = get_paca()->user_time_scaled;
 	get_paca()->user_time = 0;
-	get_dtl_indirect_ptr()->user_time_scaled = 0;
-	get_dtl_indirect_ptr()->utime_sspurr = 0;
+	get_paca()->user_time_scaled = 0;
+	get_paca()->utime_sspurr = 0;
 	account_user_time(tsk, utime, utimescaled);
 }
 

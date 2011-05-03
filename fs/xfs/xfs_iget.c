@@ -401,8 +401,7 @@ xfs_iget(
 	xfs_ino_t	ino,
 	uint		flags,
 	uint		lock_flags,
-	xfs_inode_t	**ipp,
-	xfs_daddr_t	bno) /* kABI: Unused */
+	xfs_inode_t	**ipp)
 {
 	xfs_inode_t	*ip;
 	int		error;

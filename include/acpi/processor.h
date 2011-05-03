@@ -65,11 +65,7 @@ struct acpi_power_register {
 	u8 space_id;
 	u8 bit_width;
 	u8 bit_offset;
-#ifdef __GENKSYMS__
-	u8 reserved;
-#else
 	u8 access_size;
-#endif
 	u64 address;
 } __attribute__ ((packed));
 
@@ -95,7 +91,9 @@ struct acpi_processor_cx {
 	u32 power;
 	u32 usage;
 	u64 time;
-#ifdef CONFIG_PROCESSOR_EXTERNAL_CONTROL
+#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
+	u8 bm_sts_skip;
+#else
 	/* Require raw information for external control logic */
 	struct acpi_power_register reg;
 	u32 csd_count;
@@ -104,9 +102,6 @@ struct acpi_processor_cx {
 	struct acpi_processor_cx_policy promotion;
 	struct acpi_processor_cx_policy demotion;
 	char desc[ACPI_CX_DESC_LEN];
-#if !defined(CONFIG_PROCESSOR_EXTERNAL_CONTROL) && !defined(__GENKSYMS__)
-	u8 bm_sts_skip;
-#endif
 };
 
 struct acpi_processor_power {

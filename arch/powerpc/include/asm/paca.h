@@ -35,21 +35,8 @@ extern unsigned int debug_smp_processor_id(void); /* from linux/smp.h */
 
 #define get_lppaca()	(get_paca()->lppaca_ptr)
 #define get_slb_shadow()	(get_paca()->slb_shadow_ptr)
-#define get_dtl_indirect_ptr()	((struct dtl_indirect_struct *)get_paca()->startpurr)
 
 struct task_struct;
-
-struct dtl_indirect_struct {
-	struct dtl_entry *dispatch_log;
-	struct dtl_entry *dispatch_log_end;
-	u64 user_time_scaled;           /* accumulated usermode SPURR ticks */
-	u64 starttime;                  /* TB value snapshot */
-	u64 starttime_user;             /* TB value on exit to usermode */
-	u64 utime_sspurr;               /* ->user_time when ->startspurr set */
-	u64 stolen_time;                /* TB ticks taken by hypervisor */
-	u64 dtl_ridx;                   /* read index in dispatch log */
-	struct dtl_entry *dtl_curr;     /* pointer corresponding to dtl_ridx */
-};
 
 /*
  * Defines the layout of the paca.
@@ -89,11 +76,11 @@ struct paca_struct {
 	s16 hw_cpu_id;			/* Physical processor number */
 	u8 cpu_start;			/* At startup, processor spins until */
 					/* this becomes non-zero. */
-#ifndef __GENKSYMS__ /* this fits a hole (alignment) */
 	u8 kexec_state;         /* set when kexec down has irqs off */
-#endif
 #ifdef CONFIG_PPC_STD_MMU_64
 	struct slb_shadow *slb_shadow_ptr;
+	struct dtl_entry *dispatch_log;
+	struct dtl_entry *dispatch_log_end;
 
 	/*
 	 * Now, starting in cacheline 2, the exception save areas
@@ -143,12 +130,17 @@ struct paca_struct {
 	/* Stuff for accurate time accounting */
 	u64 user_time;			/* accumulated usermode TB ticks */
 	u64 system_time;		/* accumulated system TB ticks */
-	u64 startpurr;			/* Points to RMO memory area for DTL-based timekeeping */
+	u64 user_time_scaled;		/* accumulated usermode SPURR ticks */
+	u64 starttime;			/* TB value snapshot */
+	u64 starttime_user;		/* TB value on exit to usermode */
 	u64 startspurr;			/* SPURR value snapshot */
+	u64 utime_sspurr;		/* ->user_time when ->startspurr set */
+	u64 stolen_time;		/* TB ticks taken by hypervisor */
+	u64 dtl_ridx;			/* read index in dispatch log */
+	struct dtl_entry *dtl_curr;	/* pointer corresponding to dtl_ridx */
 };
 
 extern struct paca_struct paca[];
-extern struct dtl_indirect_struct dtl_indirect[];
 extern void initialise_pacas(void);
 
 #endif /* __KERNEL__ */

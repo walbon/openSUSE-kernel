@@ -6,9 +6,6 @@
 #include <linux/types.h>
 #include <linux/sched.h>
 #include <linux/thread_info.h>
-#ifndef __GENKSYMS__
-#include <asm/uaccess.h>
-#endif
 
 #define PSW32_MASK_PER		0x40000000UL
 #define PSW32_MASK_DAT		0x04000000UL
@@ -186,24 +183,12 @@ static inline int is_compat_task(void)
 static inline void __user *arch_compat_alloc_user_space(long len)
 {
 	unsigned long stack;
-	void __user *ptr;
-
-	/* If len would occupy more than half of the entire compat space... */
-	if (unlikely(len > (((compat_uptr_t)~0) >> 1)))
-		return NULL;
 
 	stack = KSTK_ESP(current);
 	if (is_compat_task())
 		stack &= 0x7fffffffUL;
-	ptr = (void __user *) (stack - len);
-
-	if (unlikely(!access_ok(VERIFY_WRITE, ptr, len)))
-		return NULL;
-
-	return ptr;
+	return (void __user *) (stack - len);
 }
-
-#define compat_alloc_user_space arch_compat_alloc_user_space
 
 struct compat_ipc64_perm {
 	compat_key_t key;

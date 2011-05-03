@@ -37,8 +37,6 @@
 #include "sd_ops.h"
 #include "sdio_ops.h"
 
-#include "host-kabi.h"
-
 static struct workqueue_struct *workqueue;
 
 /*
@@ -1047,7 +1045,7 @@ void mmc_rescan(struct work_struct *work)
 
 	spin_lock_irqsave(&host->lock, flags);
 
-	if (to_mmc_new_host(host)->rescan_disable) {
+	if (host->rescan_disable) {
 		spin_unlock_irqrestore(&host->lock, flags);
 		return;
 	}
@@ -1318,9 +1316,8 @@ EXPORT_SYMBOL(mmc_resume_host);
 int mmc_pm_notify(struct notifier_block *notify_block,
 					unsigned long mode, void *unused)
 {
-	struct mmc_new_host *new_host = container_of(
-		notify_block, struct mmc_new_host, pm_notify);
-	struct mmc_host *host = &new_host->h;
+	struct mmc_host *host = container_of(
+		notify_block, struct mmc_host, pm_notify);
 	unsigned long flags;
 
 
@@ -1329,7 +1326,7 @@ int mmc_pm_notify(struct notifier_block *notify_block,
 	case PM_SUSPEND_PREPARE:
 
 		spin_lock_irqsave(&host->lock, flags);
-		to_mmc_new_host(host)->rescan_disable = 1;
+		host->rescan_disable = 1;
 		spin_unlock_irqrestore(&host->lock, flags);
 		cancel_delayed_work_sync(&host->detect);
 
@@ -1351,7 +1348,7 @@ int mmc_pm_notify(struct notifier_block *notify_block,
 	case PM_POST_RESTORE:
 
 		spin_lock_irqsave(&host->lock, flags);
-		to_mmc_new_host(host)->rescan_disable = 0;
+		host->rescan_disable = 0;
 		spin_unlock_irqrestore(&host->lock, flags);
 		mmc_detect_change(host, 0);
 

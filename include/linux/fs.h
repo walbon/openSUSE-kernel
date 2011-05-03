@@ -416,20 +416,8 @@ struct buffer_head;
 typedef int (get_block_t)(struct inode *inode, sector_t iblock,
 			struct buffer_head *bh_result, int create);
 typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
-			ssize_t bytes, void *private);
-
-typedef void (new_dio_iodone_t)(struct kiocb *iocb, loff_t offset,
-			ssize_t bytes, void *private,
-			int ret, bool is_async);
-
-/* Encode a new_dio_iodone_t function pointer as a dio_iodone_t */
-#define		new_dio_iodone_to_dio_iodone(f)	((dio_iodone_t *) ((unsigned long)(f) | 1))
-
-/* Extract an encoded new_dio_iodone_t from a dio_iodone_t value */
-#define		dio_iodone_to_new_dio_iodone(f)	((new_dio_iodone_t *) ((unsigned long)(f) ^ 1))
-
-/* Determine whether a dio_iodone_t contains an encoded new_dio_iodone_t */
-#define		dio_iodone_is_new(f)		((unsigned long)(f) & 1)
+			ssize_t bytes, void *private, int ret,
+			bool is_async);
 
 /*
  * Attribute flags.  These should be or-ed together to figure out what
@@ -2412,7 +2400,7 @@ extern const struct file_operations simple_dir_operations;
 extern const struct inode_operations simple_dir_inode_operations;
 struct tree_descr { char *name; const struct file_operations *ops; int mode; };
 struct dentry *d_alloc_name(struct dentry *, const char *);
-extern int simple_fill_super(struct super_block *, int, struct tree_descr *);
+extern int simple_fill_super(struct super_block *, unsigned long, struct tree_descr *);
 extern int simple_pin_fs(struct file_system_type *, struct vfsmount **mount, int *count);
 extern void simple_release_fs(struct vfsmount **mount, int *count);
 

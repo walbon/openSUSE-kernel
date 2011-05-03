@@ -7,9 +7,6 @@
 #include <linux/types.h>
 #include <asm/page.h>
 #include <asm/ptrace.h>
-#ifndef __GENKSYMS__
-#include <asm/uaccess.h>
-#endif
 
 #define COMPAT_USER_HZ	100
 
@@ -151,22 +148,9 @@ static inline void __user *arch_compat_alloc_user_space(long len)
 {
 	struct pt_regs *regs = (struct pt_regs *)
 		((unsigned long) current_thread_info() + THREAD_SIZE - 32) - 1;
-	void __user *ptr;
 
-	/* If len would occupy more than half of the entire compat space... */
-	if (unlikely(len > (((compat_uptr_t)~0) >> 1)))
-		return NULL;
-
-	ptr = (void __user *) (regs->regs[29] - len);
-
-	if (unlikely(!access_ok(VERIFY_WRITE, ptr, len)))
-		return NULL;
-
-	return ptr;
-
+	return (void __user *) (regs->regs[29] - len);
 }
-
-#define compat_alloc_user_space arch_compat_alloc_user_space
 
 struct compat_ipc64_perm {
 	compat_key_t key;

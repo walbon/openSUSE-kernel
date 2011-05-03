@@ -6,9 +6,6 @@
  */
 #include <linux/types.h>
 #include <linux/sched.h>
-#ifndef __GENKSYMS__
-#include <asm/uaccess.h>
-#endif
 
 #define COMPAT_USER_HZ	100
 
@@ -140,11 +137,6 @@ static inline void __user *arch_compat_alloc_user_space(long len)
 {
 	struct pt_regs *regs = current->thread.regs;
 	unsigned long usp = regs->gpr[1];
-	void __user *ptr;
-
-	/* If len would occupy more than half of the entire compat space... */
-	if (unlikely(len > (((compat_uptr_t)~0) >> 1)))
-		return NULL;
 
 	/*
 	 * We cant access below the stack pointer in the 32bit ABI and
@@ -153,16 +145,8 @@ static inline void __user *arch_compat_alloc_user_space(long len)
 	if (!(test_thread_flag(TIF_32BIT)))
 		usp -= 288;
 
-	ptr = (void __user *) (usp - len);
-
-	if (unlikely(!access_ok(VERIFY_WRITE, ptr, len)))
-		return NULL;
-
-	return ptr;
-
+	return (void __user *) (usp - len);
 }
-
-#define compat_alloc_user_space arch_compat_alloc_user_space
 
 /*
  * ipc64_perm is actually 32/64bit clean but since the compat layer refers to

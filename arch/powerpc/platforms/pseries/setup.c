@@ -286,7 +286,6 @@ static int alloc_dispatch_logs(void)
 	int cpu, ret;
 	struct paca_struct *pp;
 	struct dtl_entry *dtl;
-	struct dtl_indirect_struct *dtli;
 
 	if (!firmware_has_feature(FW_FEATURE_SPLPAR))
 		return 0;
@@ -302,17 +301,16 @@ static int alloc_dispatch_logs(void)
 			break;
 		}
 
-		dtli = (struct dtl_indirect_struct *)pp->startpurr;
-		dtli->dtl_ridx = 0;
-		dtli->dispatch_log = dtl;
-		dtli->dispatch_log_end = dtl + N_DISPATCH_LOG;
-		dtli->dtl_curr = dtl;
+		pp->dtl_ridx = 0;
+		pp->dispatch_log = dtl;
+		pp->dispatch_log_end = dtl + N_DISPATCH_LOG;
+		pp->dtl_curr = dtl;
 	}
 
 	/* Register the DTL for the current (boot) cpu */
-	dtl = get_dtl_indirect_ptr()->dispatch_log;
-	get_dtl_indirect_ptr()->dtl_ridx = 0;
-	get_dtl_indirect_ptr()->dtl_curr = dtl;
+	dtl = get_paca()->dispatch_log;
+	get_paca()->dtl_ridx = 0;
+	get_paca()->dtl_curr = dtl;
 	get_paca()->lppaca_ptr->dtl_idx = 0;
 
 	/* hypervisor reads buffer length from this field */

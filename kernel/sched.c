@@ -493,7 +493,7 @@ struct rq {
 	unsigned long nr_running;
 	#define CPU_LOAD_IDX_MAX 5
 	unsigned long cpu_load[CPU_LOAD_IDX_MAX];
-#if defined(CONFIG_NO_HZ) && (!defined(__GENKSYMS__) || !defined(CONFIG_XEN))
+#ifdef CONFIG_NO_HZ
 	unsigned long last_tick_seen;
 	unsigned char in_nohz_recently;
 #endif
@@ -501,9 +501,6 @@ struct rq {
 	struct load_weight load;
 	unsigned long nr_load_updates;
 	u64 nr_switches;
-#ifdef __GENKSYMS__
-	u64 nr_migrations_in;
-#endif
 
 	struct cfs_rq cfs;
 	struct rt_rq rt;
@@ -529,9 +526,7 @@ struct rq {
 	struct mm_struct *prev_mm;
 
 	u64 clock;
-#ifndef __GENKSYMS__
 	u64 clock_task;
-#endif
 
 	atomic_t nr_iowait;
 
@@ -539,9 +534,7 @@ struct rq {
 	struct root_domain *rd;
 	struct sched_domain *sd;
 
-#ifndef __GENKSYMS__
 	unsigned long cpu_power;
-#endif
 
 	unsigned char idle_at_tick;
 	/* For active balancing */

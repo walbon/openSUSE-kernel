@@ -897,9 +897,7 @@ struct sched_group {
 	 * single CPU.
 	 */
 	unsigned int cpu_power;
-#ifndef __GENKSYMS__
 	unsigned int group_weight;
-#endif
 
 	/*
 	 * The CPUs this group covers.
@@ -998,9 +996,7 @@ struct sched_domain {
 	char *name;
 #endif
 
-#ifndef __GENKSYMS__
 	unsigned int span_weight;
-#endif
 	/*
 	 * Span of all CPUs in this domain.
 	 *
@@ -1072,12 +1068,8 @@ struct sched_domain;
 struct sched_class {
 	const struct sched_class *next;
 
-#ifdef __GENKSYMS__
-	void (*enqueue_task) (struct rq *rq, struct task_struct *p, int wakeup);
-#else
 	void (*enqueue_task) (struct rq *rq, struct task_struct *p, int wakeup,
 			      bool head);
-#endif
 	void (*dequeue_task) (struct rq *rq, struct task_struct *p, int sleep);
 	void (*yield_task) (struct rq *rq);
 
@@ -1087,12 +1079,8 @@ struct sched_class {
 	void (*put_prev_task) (struct rq *rq, struct task_struct *p);
 
 #ifdef CONFIG_SMP
-#ifdef __GENKSYMS__
-	int  (*select_task_rq)(struct task_struct *p, int sd_flag, int flags);
-#else
 	int  (*select_task_rq)(struct rq *rq, struct task_struct *p,
 			       int sd_flag, int flags);
-#endif
 
 	unsigned long (*load_balance) (struct rq *this_rq, int this_cpu,
 			struct rq *busiest, unsigned long max_load_move,
@@ -1104,12 +1092,8 @@ struct sched_class {
 			      enum cpu_idle_type idle);
 	void (*pre_schedule) (struct rq *this_rq, struct task_struct *task);
 	void (*post_schedule) (struct rq *this_rq);
-#ifdef __GENKSYMS__
-	void (*task_wake_up) (struct rq *this_rq, struct task_struct *task);
-#else
 	void (*task_waking) (struct rq *this_rq, struct task_struct *task);
 	void (*task_woken) (struct rq *this_rq, struct task_struct *task);
-#endif
 
 	void (*set_cpus_allowed)(struct task_struct *p,
 				 const struct cpumask *newmask);
@@ -1120,11 +1104,7 @@ struct sched_class {
 
 	void (*set_curr_task) (struct rq *rq);
 	void (*task_tick) (struct rq *rq, struct task_struct *p, int queued);
-#ifdef __GENKSYMS__
-	void (*task_new) (struct rq *rq, struct task_struct *p);
-#else
 	void (*task_fork) (struct task_struct *p);
-#endif
 
 	void (*switched_from) (struct rq *this_rq, struct task_struct *task,
 			       int running);
@@ -1133,19 +1113,11 @@ struct sched_class {
 	void (*prio_changed) (struct rq *this_rq, struct task_struct *task,
 			     int oldprio, int running);
 
-#ifdef __GENKSYMS__
-	unsigned int (*get_rr_interval) (struct task_struct *task);
-#else
 	unsigned int (*get_rr_interval) (struct rq *rq,
 					 struct task_struct *task);
-#endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
-#ifdef __GENKSYMS__
-	void (*moved_group) (struct task_struct *p);
-#else
 	void (*task_move_group) (struct task_struct *p, int on_rq);
-#endif
 #endif
 };
 
@@ -1176,7 +1148,6 @@ struct sched_statistics {
 	u64			nr_failed_migrations_running;
 	u64			nr_failed_migrations_hot;
 	u64			nr_forced_migrations;
-	u64			nr_forced2_migrations;
 
 	u64			nr_wakeups;
 	u64			nr_wakeups_sync;
@@ -1222,43 +1193,8 @@ struct sched_entity {
 	u64			avg_running;
 
 #ifdef CONFIG_SCHEDSTATS
-#ifndef __GENKSYMS__
 	struct sched_statistics statistics;
-#else
-	u64			wait_start;
-	u64			wait_max;
-	u64			wait_count;
-	u64			wait_sum;
-	u64			iowait_count;
-	u64			iowait_sum;
-
-	u64			sleep_start;
-	u64			sleep_max;
-	s64			sum_sleep_runtime;
-
-	u64			block_start;
-	u64			block_max;
-	u64			exec_max;
-	u64			slice_max;
-
-	u64			nr_migrations_cold;
-	u64			nr_failed_migrations_affine;
-	u64			nr_failed_migrations_running;
-	u64			nr_failed_migrations_hot;
-	u64			nr_forced_migrations;
-	u64			nr_forced2_migrations;
-
-	u64			nr_wakeups;
-	u64			nr_wakeups_sync;
-	u64			nr_wakeups_migrate;
-	u64			nr_wakeups_local;
-	u64			nr_wakeups_remote;
-	u64			nr_wakeups_affine;
-	u64			nr_wakeups_affine_attempts;
-	u64			nr_wakeups_passive;
-	u64			nr_wakeups_idle;
-#endif /* __GENKSYMS__ */
-#endif /* CONFIG_SCHEDSTATS */
+#endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	struct sched_entity	*parent;
@@ -1618,11 +1554,6 @@ struct task_struct {
 	/* bitmask of trace recursion */
 	unsigned long trace_recursion;
 #endif /* CONFIG_TRACING */
-#ifdef __GENKSYMS__
-	unsigned long stack_start; /* nobody should use this */
-#else
-	unsigned long ___________unused;
-#endif
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR /* memcg uses this to do batch job */
 	struct memcg_batch_info {
 		int do_batch;	/* incremented when batch uncharge started */

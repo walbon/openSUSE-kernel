@@ -1138,7 +1138,6 @@ compat_sys_sysinfo(struct compat_sysinfo __user *info)
 	return 0;
 }
 
-#undef compat_alloc_user_space
 /*
  * Allocate user-space memory for the duration of a single system call,
  * in order to marshall parameters inside a compat thunk.

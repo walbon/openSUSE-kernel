@@ -236,9 +236,7 @@ xfs_bulkstat_one_compat(
 	void		__user *buffer,	/* buffer to place output in */
 	int		ubsize,		/* size of buffer */
 	void		*private_data,	/* my private data */
-	xfs_daddr_t	bno,		/* not used */
 	int		*ubused,	/* bytes used by me */
-	void		*dip,		/* not used */
 	int		*stat)		/* BULKSTAT_RV_... */
 {
 	return xfs_bulkstat_one_int(mp, ino, buffer, ubsize,
@@ -297,11 +295,11 @@ xfs_compat_ioc_bulkstat(
 
 		error = xfs_bulkstat_one_compat(mp, inlast, bulkreq.ubuffer,
 					        sizeof(compat_xfs_bstat_t),
-						NULL, 0, 0, NULL, &res);
+						NULL, 0, &res);
 	} else if (cmd == XFS_IOC_FSBULKSTAT_32) {
 		error = xfs_bulkstat(mp, &inlast, &count,
 			xfs_bulkstat_one_compat, NULL,
-			sizeof(compat_xfs_bstat_t), bulkreq.ubuffer, 0, &done);
+			sizeof(compat_xfs_bstat_t), bulkreq.ubuffer, &done);
 	} else
 		error = XFS_ERROR(EINVAL);
 	if (error)

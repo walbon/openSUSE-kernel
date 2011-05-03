@@ -13,9 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/module.h>
-#ifndef __GENKSYMS__
 #include <linux/compat.h>
-#endif
 
 static const struct file_operations fuse_direct_io_file_operations;
 

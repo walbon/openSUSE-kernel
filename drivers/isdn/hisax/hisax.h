@@ -959,9 +959,7 @@ struct IsdnCardState {
 	u_long		event;
 	struct work_struct tqueue;
 	struct timer_list dbusytimer;
-#ifndef __GENKSYMS__
 	unsigned int	irq_cnt;
-#endif
 #ifdef ERROR_STATISTIC
 	int		err_crc;
 	int		err_tx;

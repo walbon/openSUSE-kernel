@@ -6,9 +6,6 @@
 #include <linux/types.h>
 #include <linux/sched.h>
 #include <linux/thread_info.h>
-#ifndef __GENKSYMS__
-#include <asm/uaccess.h>
-#endif
 
 #define COMPAT_USER_HZ 100
 
@@ -152,20 +149,8 @@ static inline compat_uptr_t ptr_to_compat(void __user *uptr)
 static __inline__ void __user *arch_compat_alloc_user_space(long len)
 {
 	struct pt_regs *regs = &current->thread.regs;
-	void __user *ptr;
-
-	/* If len would occupy more than half of the entire compat space... */
-	if (unlikely(len > (((compat_uptr_t)~0) >> 1)))
-		return NULL;
-
-	ptr = (void __user *)regs->gr[30];
-	if (unlikely(!access_ok(VERIFY_WRITE, ptr, len)))
-		return NULL;
-
-	return ptr;
+	return (void __user *)regs->gr[30];
 }
-
-#define compat_alloc_user_space arch_compat_alloc_user_space
 
 static inline int __is_compat_task(struct task_struct *t)
 {

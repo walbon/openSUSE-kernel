@@ -105,7 +105,7 @@ unsigned long zone_nr_free_pages(struct zone *zone)
 	 * potentially causing a live-lock. While kswapd is awake and
 	 * free pages are low, get a better estimate for free pages
 	 */
-	if (nr_free_pages < zone->zone_pgdat->percpu_drift_mark[zone_idx(zone)] &&
+	if (nr_free_pages < zone->percpu_drift_mark &&
 			!waitqueue_active(&zone->zone_pgdat->kswapd_wait))
 		return zone_page_state_snapshot(zone, NR_FREE_PAGES);
 
