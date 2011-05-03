@@ -3897,7 +3897,7 @@ int __init arch_probe_nr_irqs(void)
 	/*
 	 * for MSI and HT dyn irq
 	 */
-	nr += nr_irqs_gsi * 16;
+	nr += nr_irqs_gsi * 64;
 #endif
 	if (nr < nr_irqs)
 		nr_irqs = nr;
