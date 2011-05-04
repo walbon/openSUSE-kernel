@@ -1203,6 +1203,7 @@ ENTRY(spurious_interrupt_bug)
 	CFI_ADJUST_CFA_OFFSET 4
 	jmp error_code
 	CFI_ENDPROC
+END(spurious_interrupt_bug)
 #endif /* !CONFIG_XEN */
 
 ENTRY(fixup_4gb_segment)
@@ -1211,7 +1212,7 @@ ENTRY(fixup_4gb_segment)
 	CFI_ADJUST_CFA_OFFSET 4
 	jmp error_code
 	CFI_ENDPROC
-END(spurious_interrupt_bug)
+END(fixup_4gb_segment)
 
 #ifdef CONFIG_STACK_UNWIND
 ENTRY(arch_unwind_init_running)
