@@ -74,8 +74,8 @@ MODULE_PARM_DESC(enable, "Enable Intel HD audio interface.");
 module_param_array(model, charp, NULL, 0444);
 MODULE_PARM_DESC(model, "Use the given board model.");
 module_param_array(position_fix, int, NULL, 0444);
-MODULE_PARM_DESC(position_fix, "Fix DMA pointer "
-		 "(0 = auto, 1 = none, 2 = POSBUF).");
+MODULE_PARM_DESC(position_fix, "DMA pointer read method."
+		 "(0 = auto, 1 = LPIB, 2 = POSBUF, 3 = VIACOMBO).");
 module_param_array(bdl_pos_adj, int, NULL, 0644);
 MODULE_PARM_DESC(bdl_pos_adj, "BDL position adjustment offset.");
 module_param_array(probe_mask, int, NULL, 0444);
@@ -166,7 +166,7 @@ MODULE_DESCRIPTION("Intel HDA driver");
 #define   ICH6_GSTS_FSTS	(1 << 1)   /* flush status */
 #define ICH6_REG_INTCTL			0x20
 #define ICH6_REG_INTSTS			0x24
-#define ICH6_REG_WALCLK			0x30
+#define ICH6_REG_WALLCLK		0x30	/* 24Mhz source */
 #define ICH6_REG_SYNC			0x34	
 #define ICH6_REG_CORBLBASE		0x40
 #define ICH6_REG_CORBUBASE		0x44
@@ -302,6 +302,7 @@ enum {
 	POS_FIX_AUTO,
 	POS_FIX_LPIB,
 	POS_FIX_POSBUF,
+	POS_FIX_VIACOMBO,
 };
 
 /* Defines for ATI HD Audio support in SB450 south bridge */
@@ -338,8 +339,8 @@ struct azx_dev {
 	unsigned int period_bytes; /* size of the period in bytes */
 	unsigned int frags;	/* number for period in the play buffer */
 	unsigned int fifo_size;	/* FIFO size */
-	unsigned long start_jiffies;	/* start + minimum jiffies */
-	unsigned long min_jiffies;	/* minimum jiffies before position is valid */
+	unsigned long start_wallclk;	/* start + minimum wallclk */
+	unsigned long period_wallclk;	/* wallclk for period */
 
 	void __iomem *sd_addr;	/* stream descriptor pointer */
 
@@ -359,7 +360,6 @@ struct azx_dev {
 	unsigned int opened :1;
 	unsigned int running :1;
 	unsigned int irq_pending :1;
-	unsigned int start_flag: 1;	/* stream full start flag */
 	/*
 	 * For VIA:
 	 *  A flag to ensure DMA position is 0
@@ -422,14 +422,13 @@ struct azx {
 	struct snd_dma_buffer posbuf;
 
 	/* flags */
-	int position_fix;
+	int position_fix[2]; /* for both playback/capture streams */
 	unsigned int running :1;
 	unsigned int initialized :1;
 	unsigned int single_cmd :1;
 	unsigned int polling_mode :1;
 	unsigned int msi :1;
 	unsigned int irq_pending_warned :1;
-	unsigned int via_dmapos_patch :1; /* enable DMA-position fix for VIA */
 	unsigned int probing :1; /* codec probing phase */
 
 	/* for debugging */
@@ -1033,9 +1032,12 @@ static void azx_init_pci(struct azx *chip)
 	/* Clear bits 0-2 of PCI register TCSEL (at offset 0x44)
 	 * TCSEL == Traffic Class Select Register, which sets PCI express QOS
 	 * Ensuring these bits are 0 clears playback static on some HD Audio
-	 * codecs
+	 * codecs.
+	 * The PCI register TCSEL is defined in the Intel manuals.
 	 */
-	update_pci_byte(chip->pci, ICH6_PCIREG_TCSEL, 0x07, 0);
+	if (chip->driver_type != AZX_DRIVER_ATI &&
+	    chip->driver_type != AZX_DRIVER_ATIHDMI)
+		update_pci_byte(chip->pci, ICH6_PCIREG_TCSEL, 0x07, 0);
 
 	switch (chip->driver_type) {
 	case AZX_DRIVER_ATI:
@@ -1084,6 +1086,7 @@ static irqreturn_t azx_interrupt(int irq, void *dev_id)
 	struct azx *chip = dev_id;
 	struct azx_dev *azx_dev;
 	u32 status;
+	u8 sd_status;
 	int i, ok;
 
 	spin_lock(&chip->reg_lock);
@@ -1097,8 +1100,10 @@ static irqreturn_t azx_interrupt(int irq, void *dev_id)
 	for (i = 0; i < chip->num_streams; i++) {
 		azx_dev = &chip->azx_dev[i];
 		if (status & azx_dev->sd_int_sta_mask) {
+			sd_status = azx_sd_readb(azx_dev, SD_STS);
 			azx_sd_writeb(azx_dev, SD_STS, SD_INT_MASK);
-			if (!azx_dev->substream || !azx_dev->running)
+			if (!azx_dev->substream || !azx_dev->running ||
+			    !(sd_status & SD_INT_COMPLETE))
 				continue;
 			/* check whether this IRQ is really acceptable */
 			ok = azx_position_ok(chip, azx_dev);
@@ -1295,9 +1300,8 @@ static int azx_setup_controller(struct azx *chip, struct azx_dev *azx_dev)
 	azx_sd_writel(azx_dev, SD_BDLPU, upper_32_bits(azx_dev->bdl.addr));
 
 	/* enable the position buffer */
-	if (chip->position_fix == POS_FIX_POSBUF ||
-	    chip->position_fix == POS_FIX_AUTO ||
-	    chip->via_dmapos_patch) {
+	if (chip->position_fix[0] != POS_FIX_LPIB ||
+	    chip->position_fix[1] != POS_FIX_LPIB) {
 		if (!(azx_readl(chip, DPLBASE) & ICH6_DPLBASE_ENABLE))
 			azx_writel(chip, DPLBASE,
 				(u32)chip->posbuf.addr | ICH6_DPLBASE_ENABLE);
@@ -1417,6 +1421,17 @@ static int __devinit azx_codec_create(struct azx *chip, const char *model)
 				azx_init_chip(chip);
 			}
 		}
+	}
+
+	/* AMD chipsets often cause the communication stalls upon certain
+	 * sequence like the pin-detection.  It seems that forcing the synced
+	 * access works around the stall.  Grrr...
+	 */
+	if (chip->pci->vendor == PCI_VENDOR_ID_AMD ||
+	    chip->pci->vendor == PCI_VENDOR_ID_ATI) {
+		snd_printk(KERN_INFO SFX "Enable sync_write for AMD chipset\n");
+		chip->bus->sync_write = 1;
+		chip->bus->allow_bus_reset = 1;
 	}
 
 	/* Then create codec instances */
@@ -1661,8 +1676,9 @@ static int azx_pcm_prepare(struct snd_pcm_substream *substream)
 			return err;
 	}
 
-	azx_dev->min_jiffies = (runtime->period_size * HZ) /
-						(runtime->rate * 2);
+	/* wallclk has 24Mhz clock source */
+	azx_dev->period_wallclk = (((runtime->period_size * 24000) /
+						runtime->rate) * 1000);
 	azx_setup_controller(chip, azx_dev);
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		azx_dev->fifo_size = azx_sd_readw(azx_dev, SD_FIFOSIZE) + 1;
@@ -1721,14 +1737,15 @@ static int azx_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 		if (s->pcm->card != substream->pcm->card)
 			continue;
 		azx_dev = get_azx_dev(s);
-		if (rstart) {
-			azx_dev->start_flag = 1;
-			azx_dev->start_jiffies = jiffies + azx_dev->min_jiffies;
-		}
-		if (start)
+		if (start) {
+			azx_dev->start_wallclk = azx_readl(chip, WALLCLK);
+			if (!rstart)
+				azx_dev->start_wallclk -=
+						azx_dev->period_wallclk;
 			azx_stream_start(chip, azx_dev);
-		else
+		} else {
 			azx_stream_stop(chip, azx_dev);
+		}
 		azx_dev->running = start;
 	}
 	spin_unlock(&chip->reg_lock);
@@ -1836,17 +1853,21 @@ static unsigned int azx_get_position(struct azx *chip,
 				     struct azx_dev *azx_dev)
 {
 	unsigned int pos;
+	int stream = azx_dev->substream->stream;
 
-	if (chip->via_dmapos_patch)
-		pos = azx_via_get_position(chip, azx_dev);
-	else if (chip->position_fix == POS_FIX_POSBUF ||
-		 chip->position_fix == POS_FIX_AUTO) {
-		/* use the position buffer */
-		pos = le32_to_cpu(*azx_dev->posbuf);
-	} else {
+	switch (chip->position_fix[stream]) {
+	case POS_FIX_LPIB:
 		/* read LPIB */
 		pos = azx_sd_readl(azx_dev, SD_LPIB);
+		break;
+	case POS_FIX_VIACOMBO:
+		pos = azx_via_get_position(chip, azx_dev);
+		break;
+	default:
+		/* use the position buffer */
+		pos = le32_to_cpu(*azx_dev->posbuf);
 	}
+
 	if (pos >= azx_dev->bufsize)
 		pos = 0;
 	return pos;
@@ -1872,32 +1893,35 @@ static snd_pcm_uframes_t azx_pcm_pointer(struct snd_pcm_substream *substream)
  */
 static int azx_position_ok(struct azx *chip, struct azx_dev *azx_dev)
 {
+	u32 wallclk;
 	unsigned int pos;
+	int stream;
 
-	if (azx_dev->start_flag &&
-	    time_before_eq(jiffies, azx_dev->start_jiffies))
+	wallclk = azx_readl(chip, WALLCLK) - azx_dev->start_wallclk;
+	if (wallclk < (azx_dev->period_wallclk * 2) / 3)
 		return -1;	/* bogus (too early) interrupt */
-	azx_dev->start_flag = 0;
 
+	stream = azx_dev->substream->stream;
 	pos = azx_get_position(chip, azx_dev);
-	if (chip->position_fix == POS_FIX_AUTO) {
+	if (chip->position_fix[stream] == POS_FIX_AUTO) {
 		if (!pos) {
 			printk(KERN_WARNING
 			       "hda-intel: Invalid position buffer, "
 			       "using LPIB read method instead.\n");
-			chip->position_fix = POS_FIX_LPIB;
+			chip->position_fix[stream] = POS_FIX_LPIB;
 			pos = azx_get_position(chip, azx_dev);
 		} else
-			chip->position_fix = POS_FIX_POSBUF;
+			chip->position_fix[stream] = POS_FIX_POSBUF;
 	}
 
-	if (!bdl_pos_adj[chip->dev_index])
-		return 1; /* no delayed ack */
 	if (WARN_ONCE(!azx_dev->period_bytes,
 		      "hda-intel: zero azx_dev->period_bytes"))
-		return 0; /* this shouldn't happen! */
-	if (pos % azx_dev->period_bytes > azx_dev->period_bytes / 2)
-		return 0; /* NG - it's below the period boundary */
+		return -1; /* this shouldn't happen! */
+	if (wallclk < (azx_dev->period_wallclk * 5) / 4 &&
+	    pos % azx_dev->period_bytes > azx_dev->period_bytes / 2)
+		/* NG - it's below the first next period boundary */
+		return bdl_pos_adj[chip->dev_index] ? 0 : -1;
+	azx_dev->start_wallclk += wallclk;
 	return 1; /* OK, it's fine */
 }
 
@@ -1907,7 +1931,7 @@ static int azx_position_ok(struct azx *chip, struct azx_dev *azx_dev)
 static void azx_irq_pending_work(struct work_struct *work)
 {
 	struct azx *chip = container_of(work, struct azx, irq_pending_work);
-	int i, pending;
+	int i, pending, ok;
 
 	if (!chip->irq_pending_warned) {
 		printk(KERN_WARNING
@@ -1926,18 +1950,21 @@ static void azx_irq_pending_work(struct work_struct *work)
 			    !azx_dev->substream ||
 			    !azx_dev->running)
 				continue;
-			if (azx_position_ok(chip, azx_dev)) {
+			ok = azx_position_ok(chip, azx_dev);
+			if (ok > 0) {
 				azx_dev->irq_pending = 0;
 				spin_unlock(&chip->reg_lock);
 				snd_pcm_period_elapsed(azx_dev->substream);
 				spin_lock(&chip->reg_lock);
+			} else if (ok < 0) {
+				pending = 0;	/* too early */
 			} else
 				pending++;
 		}
 		spin_unlock_irq(&chip->reg_lock);
 		if (!pending)
 			return;
-		cond_resched();
+		msleep(1);
 	}
 }
 
@@ -2295,18 +2322,9 @@ static int __devinit check_position_fix(struct azx *chip, int fix)
 	switch (fix) {
 	case POS_FIX_LPIB:
 	case POS_FIX_POSBUF:
+	case POS_FIX_VIACOMBO:
 		return fix;
 	}
-
-	/* Check VIA/ATI HD Audio Controller exist */
-	switch (chip->driver_type) {
-	case AZX_DRIVER_VIA:
-	case AZX_DRIVER_ATI:
-		chip->via_dmapos_patch = 1;
-		/* Use link position directly, avoid any transfer problem. */
-		return POS_FIX_LPIB;
-	}
-	chip->via_dmapos_patch = 0;
 
 	q = snd_pci_quirk_lookup(chip->pci, position_fix_list);
 	if (q) {
@@ -2316,6 +2334,20 @@ static int __devinit check_position_fix(struct azx *chip, int fix)
 		       q->value, q->subvendor, q->subdevice);
 		return q->value;
 	}
+
+	/* Check VIA/ATI HD Audio Controller exist */
+	switch (chip->driver_type) {
+	case AZX_DRIVER_VIA:
+	case AZX_DRIVER_ATI:
+		/* Use link position directly, avoid any transfer problem. */
+		return POS_FIX_VIACOMBO;
+	case AZX_DRIVER_GENERIC:
+		/* AMD chipsets behave often badly, too */
+		if (chip->pci->vendor == PCI_VENDOR_ID_AMD)
+			return POS_FIX_VIACOMBO;
+		break;
+	}
+
 	return POS_FIX_AUTO;
 }
 
@@ -2438,7 +2470,8 @@ static int __devinit azx_create(struct snd_card *card, struct pci_dev *pci,
 	chip->dev_index = dev;
 	INIT_WORK(&chip->irq_pending_work, azx_irq_pending_work);
 
-	chip->position_fix = check_position_fix(chip, position_fix[dev]);
+	chip->position_fix[0] = chip->position_fix[1] =
+		check_position_fix(chip, position_fix[dev]);
 	check_probe_mask(chip, dev);
 
 	chip->single_cmd = single_cmd;
