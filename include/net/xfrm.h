@@ -274,9 +274,7 @@ struct xfrm_policy_afinfo {
 					     int nfheader_len);
 	int			(*fill_dst)(struct xfrm_dst *xdst,
 					    struct net_device *dev
-#ifndef __GENKSYMS__
 					    , struct flowi *fl
-#endif
 					);
 };
 

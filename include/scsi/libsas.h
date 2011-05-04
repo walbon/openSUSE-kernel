@@ -204,9 +204,7 @@ struct domain_device {
         };
 
         void *lldd_dev;
-#ifndef __GENKSYMS__
 	int gone;
-#endif
 };
 
 struct sas_discovery_event {
@@ -362,10 +360,8 @@ struct sas_ha_struct {
 	/* The class calls this to send a task for execution. */
 	int lldd_max_execute_num;
 	int lldd_queue_size;
-#ifndef __GENKSYMS__
 	int strict_wide_ports; /* both sas_addr and attached_sas_addr must match
 				* their siblings when forming wide ports */
-#endif
 	/* LLDD calls these to notify the class of an event. */
 	void (*notify_ha_event)(struct sas_ha_struct *, enum ha_event);
 	void (*notify_port_event)(struct asd_sas_phy *, enum port_event);

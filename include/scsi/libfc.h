@@ -219,10 +219,8 @@ struct fc_rport_priv {
 	struct list_head	    peers;
 	struct work_struct	    event_work;
 	u32			    supported_classes;
-#ifndef __GENKSYMS__
 	unsigned int		    major_retries;
 	struct rcu_head		    rcu;
-#endif
 };
 
 /**
@@ -834,9 +832,7 @@ struct fc_lport {
 	u8			       retry_count;
 
 	/* Fabric information */
-#ifndef __GENKSYMS__
 	u32                            port_id;
-#endif
 	u64			       wwpn;
 	u64			       wwnn;
 	unsigned int		       service_params;

@@ -106,10 +106,8 @@ struct fcoe_ctlr {
 	u16 user_mfs;
 	u16 flogi_oxid;
 	u8 flogi_count;
-#ifdef __GENKSYMS__
 	u8 link;
 	u8 last_link;
-#endif
 	u8 reset_req;
 	u8 map_dest;
 	u8 spma;

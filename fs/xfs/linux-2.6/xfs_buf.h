@@ -125,9 +125,7 @@ typedef struct xfs_buftarg {
 	struct list_head	bt_delwrite_queue;
 	spinlock_t		bt_delwrite_lock;
 	unsigned long		bt_flags;
-#ifndef __GENKSYMS__
 	atomic_t		bt_qcount;
-#endif
 } xfs_buftarg_t;
 
 /*
