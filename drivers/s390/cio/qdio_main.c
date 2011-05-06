@@ -406,8 +406,11 @@ static inline void qdio_stop_polling(struct qdio_q *q)
 		set_buf_state(q, q->u.in.ack_start, SLSB_P_INPUT_NOT_INIT);
 }
 
-static void announce_buffer_error(struct qdio_q *q, int count)
+static void process_buffer_error(struct qdio_q *q, int count)
 {
+	unsigned char state = (q->is_input_q) ? SLSB_P_INPUT_NOT_INIT :
+					SLSB_P_OUTPUT_NOT_INIT;
+
 	q->qdio_error |= QDIO_ERROR_SLSB_STATE;
 
 	/* special handling for no target buffer empty */
@@ -425,6 +428,12 @@ static void announce_buffer_error(struct qdio_q *q, int count)
 	DBF_ERROR("F14:%2x F15:%2x",
 		  q->sbal[q->first_to_check]->element[14].flags & 0xff,
 		  q->sbal[q->first_to_check]->element[15].flags & 0xff);
+
+	/*
+	 * Interrupts may be avoided as long as the error is present
+	 * so change the buffer state immediately to avoid starvation.
+	 */
+	set_buf_states(q, q->first_to_check, state, count);
 }
 
 static inline void inbound_primed(struct qdio_q *q, int count)
@@ -502,8 +511,7 @@ static int get_inbound_buffer_frontier(struct qdio_q *q)
 		atomic_sub(count, &q->nr_buf_used);
 		break;
 	case SLSB_P_INPUT_ERROR:
-		announce_buffer_error(q, count);
-		/* process the buffer, the upper layer will take care of it */
+		process_buffer_error(q, count);
 		q->first_to_check = add_buf(q->first_to_check, count);
 		atomic_sub(count, &q->nr_buf_used);
 		break;
@@ -653,8 +661,7 @@ static int get_outbound_buffer_frontier(struct qdio_q *q)
 		q->first_to_check = add_buf(q->first_to_check, count);
 		break;
 	case SLSB_P_OUTPUT_ERROR:
-		announce_buffer_error(q, count);
-		/* process the buffer, the upper layer will take care of it */
+		process_buffer_error(q, count);
 		q->first_to_check = add_buf(q->first_to_check, count);
 		atomic_sub(count, &q->nr_buf_used);
 		break;
