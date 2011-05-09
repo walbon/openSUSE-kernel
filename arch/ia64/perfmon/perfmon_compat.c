@@ -675,6 +675,7 @@ int pfm_smpl_buf_alloc_compat(struct pfm_context *ctx, size_t rsize, int fd)
 		goto error_kmem;
 	}
 	memset(vma, 0, sizeof(*vma));
+	INIT_LIST_HEAD(&vma->anon_vma_chain);
 
 	/*
 	 * simulate effect of mmap()

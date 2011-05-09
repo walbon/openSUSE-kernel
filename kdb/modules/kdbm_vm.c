@@ -15,6 +15,7 @@
 #include <linux/mm.h>
 #include <linux/swap.h>
 #include <linux/swapops.h>
+#include <linux/rmap.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -90,8 +91,8 @@ kdbm_print_vm(struct vm_area_struct *vp, unsigned long addr, int verbose_flg)
 	kdb_printf("shared.vm_set.list.prev = 0x%p\n", (void *) vp->shared.vm_set.list.prev);
 	kdb_printf("shared.vm_set.parent = 0x%p\n", (void *) vp->shared.vm_set.parent);
 	kdb_printf("shared.vm_set.head = 0x%p\n", (void *) vp->shared.vm_set.head);
-	kdb_printf("anon_vma_node.next = 0x%p\n", (void *) vp->anon_vma_node.next);
-	kdb_printf("anon_vma_node.prev = 0x%p\n", (void *) vp->anon_vma_node.prev);
+	kdb_printf("anon_vma root = 0x%p\n", (void *) vp->anon_vma->root);
+	kdb_printf("anon_vma = 0x%p\n", (void *) vp->anon_vma);
 	kdb_printf("vm_ops = 0x%p\n", (void *) vp->vm_ops);
 	if (vp->vm_ops != NULL) {
 		kdb_printf("vm_ops->open = 0x%p\n", vp->vm_ops->open);
