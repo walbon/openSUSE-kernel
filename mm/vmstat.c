@@ -16,6 +16,7 @@
 #include <linux/vmstat.h>
 #include <linux/sched.h>
 #include <linux/math64.h>
+#include <linux/compaction.h>
 
 #ifdef CONFIG_VM_EVENT_COUNTERS
 DEFINE_PER_CPU(struct vm_event_state, vm_event_states) = {{0}};
@@ -391,6 +392,7 @@ void zone_statistics(struct zone *preferred_zone, struct zone *z)
 #endif
 
 #ifdef CONFIG_COMPACTION
+
 struct contig_page_info {
 	unsigned long free_pages;
 	unsigned long free_blocks_total;

@@ -834,8 +834,11 @@ static int migrate_to_node(struct mm_struct *mm, int source, int dest,
 	check_range(mm, mm->mmap->vm_start, mm->task_size, &nmask,
 			flags | MPOL_MF_DISCONTIG_OK, &pagelist);
 
-	if (!list_empty(&pagelist))
+	if (!list_empty(&pagelist)) {
 		err = migrate_pages(&pagelist, new_node_page, dest, 0);
+		if (err)
+			putback_lru_pages(&pagelist);
+	}
 
 	return err;
 }
@@ -1050,9 +1053,12 @@ static long do_mbind(unsigned long start, unsigned long len,
 
 		err = mbind_range(vma, start, end, new);
 
-		if (!list_empty(&pagelist))
+		if (!list_empty(&pagelist)) {
 			nr_failed = migrate_pages(&pagelist, new_vma_page,
 						(unsigned long)vma, 0);
+			if (nr_failed)
+				putback_lru_pages(&pagelist);
+		}
 
 		if (!err && nr_failed && (flags & MPOL_MF_STRICT))
 			err = -EIO;

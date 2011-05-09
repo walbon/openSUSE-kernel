@@ -673,29 +673,30 @@ do_migrate_range(unsigned long start_pfn, unsigned long end_pfn)
 			list_add_tail(&page->lru, &source);
 			move_pages--;
 		} else {
-			/* Becasue we don't have big zone->lock. we should
-			   check this again here. */
-			if (page_count(page))
-				not_managed++;
 #ifdef CONFIG_DEBUG_VM
 			printk(KERN_INFO "removing from LRU failed"
 					 " %lx/%d/%lx\n",
 				pfn, page_count(page), page->flags);
 #endif
+			/* Becasue we don't have big zone->lock. we should
+			   check this again here. */
+			if (page_count(page)) {
+				not_managed++;
+				ret = -EBUSY;
+				break;
+			}
 		}
 	}
-	ret = -EBUSY;
-	if (not_managed) {
-		if (!list_empty(&source))
+	if (!list_empty(&source)) {
+		if (not_managed) {
 			putback_lru_pages(&source);
-		goto out;
+			goto out;
+		}
+		/* this function returns # of failed pages */
+		ret = migrate_pages(&source, hotremove_migrate_alloc, 0, 1);
+		if (ret)
+			putback_lru_pages(&source);
 	}
-	ret = 0;
-	if (list_empty(&source))
-		goto out;
-	/* this function returns # of failed pages */
-	ret = migrate_pages(&source, hotremove_migrate_alloc, 0, 1);
-
 out:
 	return ret;
 }

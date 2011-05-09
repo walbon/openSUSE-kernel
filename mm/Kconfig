@@ -170,7 +170,7 @@ config SPLIT_PTLOCK_CPUS
 config COMPACTION
 	bool "Allow for memory compaction"
 	select MIGRATION
-	depends on EXPERIMENTAL && HUGETLB_PAGE && MMU
+	depends on MMU
 	help
 	  Allows the compaction of memory for the allocation of huge pages.
 
@@ -180,7 +180,7 @@ config COMPACTION
 config MIGRATION
 	bool "Page migration"
 	def_bool y
-	depends on NUMA || ARCH_ENABLE_MEMORY_HOTREMOVE
+	depends on NUMA || ARCH_ENABLE_MEMORY_HOTREMOVE || COMPACTION
 	help
 	  Allows the migration of the physical location of pages of processes
 	  while the virtual addresses are not changed. This is useful in
