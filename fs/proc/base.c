@@ -332,11 +332,11 @@ static int proc_pid_wchan(struct task_struct *task, char *buffer)
 
 static int lock_trace(struct task_struct *task)
 {
-	int err = mutex_lock_killable(&task->signal->cred_guard_mutex);
+	int err = mutex_lock_killable(&task->cred_guard_mutex);
 	if (err)
 		return err;
 	if (!ptrace_may_access(task, PTRACE_MODE_ATTACH)) {
-		mutex_unlock(&task->signal->cred_guard_mutex);
+		mutex_unlock(&task->cred_guard_mutex);
 		return -EPERM;
 	}
 	return 0;
@@ -344,7 +344,7 @@ static int lock_trace(struct task_struct *task)
 
 static void unlock_trace(struct task_struct *task)
 {
-	mutex_unlock(&task->signal->cred_guard_mutex);
+	mutex_unlock(&task->cred_guard_mutex);
 }
 
 #ifdef CONFIG_STACKTRACE
