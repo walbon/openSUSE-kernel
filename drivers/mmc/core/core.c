@@ -1343,7 +1343,6 @@ int mmc_pm_notify(struct notifier_block *notify_block,
 
 		mmc_detach_bus(host);
 		mmc_release_host(host);
-		/* host->pm_flags = 0; */
 		break;
 
 	case PM_POST_SUSPEND:
