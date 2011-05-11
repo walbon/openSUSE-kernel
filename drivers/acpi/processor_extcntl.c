@@ -97,7 +97,7 @@ int processor_notify_external(struct acpi_processor *pr, int event, int type)
 		break;
 #endif
 	default:
-		printk(KERN_ERR "Unsupport processor events %d.\n", event);
+		pr_err("Unsupported processor event %d.\n", event);
 		break;
 	}
 

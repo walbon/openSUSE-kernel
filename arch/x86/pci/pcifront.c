@@ -16,7 +16,8 @@ static int pcifront_enable_irq(struct pci_dev *dev)
 {
 	u8 irq;
 	pci_read_config_byte(dev, PCI_INTERRUPT_LINE, &irq);
-	irq_to_desc_alloc_node(irq, numa_node_id());
+	if (!irq_to_desc_alloc_node(irq, numa_node_id()))
+		return -ENOMEM;
 	evtchn_register_pirq(irq);
 	dev->irq = irq;
 
@@ -33,7 +34,7 @@ static int __init pcifront_x86_stub_init(void)
 	if (raw_pci_ops)
 		return 0;
 
-	printk(KERN_INFO "PCI: setting up Xen PCI frontend stub\n");
+	pr_info("PCI: setting up Xen PCI frontend stub\n");
 
 	/* Copied from arch/i386/pci/common.c */
 	pci_cache_line_size = 32 >> 2;

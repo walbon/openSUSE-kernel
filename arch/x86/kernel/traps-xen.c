@@ -394,15 +394,13 @@ static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 		if (notify_die(DIE_NMI_IPI, "nmi_ipi", regs, reason, 2, SIGINT)
 								== NOTIFY_STOP)
 			return;
-#ifdef CONFIG_X86_LOCAL_APIC
-#ifdef ARCH_HAS_NMI_WATCHDOG
+#ifdef CONFIG_SMP
 		/*
 		 * Ok, so this is none of the documented NMI sources,
 		 * so it must be the NMI watchdog.
 		 */
 		if (nmi_watchdog_tick(regs, reason))
 			return;
-#endif
 		if (!do_nmi_callback(regs, cpu))
 			unknown_nmi_error(reason, regs);
 #else
@@ -971,4 +969,7 @@ void __cpuinit smp_trap_init(trap_info_t *trap_ctxt)
 		trap_ctxt[t->vector].cs = t->cs;
 		trap_ctxt[t->vector].address = t->address;
 	}
+	TI_SET_IF(trap_ctxt + NMI_VECTOR, 1);
+	trap_ctxt[NMI_VECTOR].cs = __KERNEL_CS;
+	trap_ctxt[NMI_VECTOR].address = (unsigned long)nmi;
 }

@@ -6,16 +6,16 @@
  */
 
 #include <linux/init.h>
+#include <linux/spinlock.h>
 #include <linux/start_kernel.h>
 
 #include <asm/setup.h>
 #include <asm/sections.h>
 #include <asm/e820.h>
-#include <asm/page.h>
+#include <asm/pgtable.h>
 #include <asm/trampoline.h>
 #include <asm/apic.h>
 #include <asm/io_apic.h>
-#include <asm/bios_ebda.h>
 
 static void __init i386_default_early_setup(void)
 {
@@ -32,6 +32,22 @@ static void __init i386_default_early_setup(void)
 
 void __init i386_start_kernel(void)
 {
+#ifdef CONFIG_XEN
+	struct xen_platform_parameters pp;
+
+	WARN_ON(HYPERVISOR_vm_assist(VMASST_CMD_enable,
+				     VMASST_TYPE_4gb_segments));
+
+	init_mm.pgd = swapper_pg_dir = (pgd_t *)xen_start_info->pt_base;
+
+	if (HYPERVISOR_xen_version(XENVER_platform_parameters, &pp) == 0) {
+		hypervisor_virt_start = pp.virt_start;
+		reserve_top_address(0UL - pp.virt_start);
+	}
+
+	BUG_ON(pte_index(hypervisor_virt_start));
+#endif
+
 	reserve_trampoline_memory();
 
 	reserve_early(__pa_symbol(&_text), __pa_symbol(&__bss_stop), "TEXT DATA BSS");
@@ -57,6 +73,11 @@ void __init i386_start_kernel(void)
 		break;
 	}
 #else
+#ifdef CONFIG_BLK_DEV_INITRD
+	BUG_ON(xen_start_info->flags & SIF_MOD_START_PFN);
+	if (xen_start_info->mod_start)
+		xen_initrd_start = __pa(xen_start_info->mod_start);
+#endif
 	{
 		int max_cmdline;
 

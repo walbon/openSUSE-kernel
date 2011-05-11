@@ -33,7 +33,7 @@ obj-$(CONFIG_CPU_FREQ)			+= cpufreq/
 
 obj-$(CONFIG_X86_LOCAL_APIC)		+= perfctr-watchdog.o
 
-disabled-obj-$(CONFIG_XEN) := hypervisor.o vmware.o sched.o perfctr-watchdog.o
+disabled-obj-$(CONFIG_XEN) := hypervisor.o perfctr-watchdog.o sched.o vmware.o
 
 quiet_cmd_mkcapflags = MKCAP   $@
       cmd_mkcapflags = $(PERL) $(srctree)/$(src)/mkcapflags.pl $< $@

@@ -151,6 +151,7 @@ static inline int acpi_notify_hypervisor_state(u8 sleep_state,
  */
 static inline unsigned int acpi_processor_cstate_check(unsigned int max_cstate)
 {
+#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
 	/*
 	 * Early models (<=5) of AMD Opterons are not supposed to go into
 	 * C2 state.
@@ -165,6 +166,7 @@ static inline unsigned int acpi_processor_cstate_check(unsigned int max_cstate)
 	else if (boot_cpu_has(X86_FEATURE_AMDC1E))
 		return 1;
 	else
+#endif
 		return max_cstate;
 }
 

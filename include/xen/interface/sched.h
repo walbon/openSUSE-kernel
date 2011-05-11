@@ -108,6 +108,22 @@ DEFINE_XEN_GUEST_HANDLE(sched_remote_shutdown_t);
 #define SCHEDOP_shutdown_code 5
 
 /*
+ * Setup, poke and destroy a domain watchdog timer.
+ * @arg == pointer to sched_watchdog structure.
+ * With id == 0, setup a domain watchdog timer to cause domain shutdown
+ *               after timeout, returns watchdog id.
+ * With id != 0 and timeout == 0, destroy domain watchdog timer.
+ * With id != 0 and timeout != 0, poke watchdog timer and set new timeout.
+ */
+#define SCHEDOP_watchdog    6
+struct sched_watchdog {
+    uint32_t id;                /* watchdog ID */
+    uint32_t timeout;           /* timeout */
+};
+typedef struct sched_watchdog sched_watchdog_t;
+DEFINE_XEN_GUEST_HANDLE(sched_watchdog_t);
+
+/*
  * Reason codes for SCHEDOP_shutdown. These may be interpreted by control
  * software to determine the appropriate action. For the most part, Xen does
  * not care about the shutdown code.

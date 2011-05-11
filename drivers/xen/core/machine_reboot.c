@@ -56,11 +56,6 @@ void machine_power_off(void)
 	HYPERVISOR_shutdown(SHUTDOWN_poweroff);
 }
 
-int reboot_thru_bios = 0;	/* for dmi_scan.c */
-EXPORT_SYMBOL(machine_restart);
-EXPORT_SYMBOL(machine_halt);
-EXPORT_SYMBOL(machine_power_off);
-
 #ifdef CONFIG_PM_SLEEP
 static void pre_suspend(void)
 {
@@ -211,8 +206,7 @@ int __xen_suspend(int fast_suspend, void (*resume_notifier)(int))
 
 #if defined(__i386__) || defined(__x86_64__)
 	if (xen_feature(XENFEAT_auto_translated_physmap)) {
-		printk(KERN_WARNING "Cannot suspend in "
-		       "auto_translated_physmap mode.\n");
+		pr_warning("Can't suspend in auto_translated_physmap mode\n");
 		return -EOPNOTSUPP;
 	}
 #endif
@@ -222,7 +216,7 @@ int __xen_suspend(int fast_suspend, void (*resume_notifier)(int))
 		fast_suspend = 0;
 
 	if (fast_suspend && _check(stop_machine_create)) {
-		printk(KERN_ERR "%s() failed: %d\n", what, err);
+		pr_err("%s() failed: %d\n", what, err);
 		return err;
 	}
 
@@ -233,7 +227,7 @@ int __xen_suspend(int fast_suspend, void (*resume_notifier)(int))
 		dpm_resume_end(PMSG_RESUME);
 		if (fast_suspend)
 			stop_machine_destroy();
-		printk(KERN_ERR "%s() failed: %d\n", what, err);
+		pr_err("%s() failed: %d\n", what, err);
 		return err;
 	}
 
@@ -244,7 +238,7 @@ int __xen_suspend(int fast_suspend, void (*resume_notifier)(int))
 			xenbus_suspend_cancel();
 			dpm_resume_end(PMSG_RESUME);
 			stop_machine_destroy();
-			printk(KERN_ERR "%s() failed: %d\n", what, err);
+			pr_err("%s() failed: %d\n", what, err);
 			return err;
 		}
 
@@ -264,8 +258,7 @@ int __xen_suspend(int fast_suspend, void (*resume_notifier)(int))
 			if (err) {
 				xenbus_suspend_cancel();
 				dpm_resume_end(PMSG_RESUME);
-				printk(KERN_ERR "%s() failed: %d\n",
-				       what, err);
+				pr_err("%s() failed: %d\n", what, err);
 				return err;
 			}
 

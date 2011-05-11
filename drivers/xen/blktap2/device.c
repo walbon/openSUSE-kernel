@@ -17,7 +17,7 @@
 #include "../blkback/blkback-pagemap.h"
 
 #if 0
-#define DPRINTK_IOCTL(_f, _a...) printk(KERN_ALERT _f, ## _a)
+#define DPRINTK_IOCTL(_f, _a...) pr_alert(_f, ## _a)
 #else
 #define DPRINTK_IOCTL(_f, _a...) ((void)0)
 #endif
@@ -133,8 +133,6 @@ blktap_device_ioctl(struct block_device *bd, fmode_t mode,
 		return 0;
 
 	default:
-		/*printk(KERN_ALERT "ioctl %08x not supported by Xen blkdev\n",
-		  command);*/
 		return -EINVAL; /* same return as native Linux */
 	}
 
@@ -762,7 +760,7 @@ blktap_device_close_bdev(struct blktap *tap)
 	dev = &tap->device;
 
 	if (dev->bdev)
-		blkdev_put(dev->bdev);
+		blkdev_put(dev->bdev, FMODE_WRITE);
 
 	dev->bdev = NULL;
 	clear_bit(BLKTAP_PASSTHROUGH, &tap->dev_inuse);
@@ -786,7 +784,7 @@ blktap_device_open_bdev(struct blktap *tap, u32 pdev)
 	if (!bdev->bd_disk) {
 		BTERR("device %x:%x doesn't exist\n",
 		      MAJOR(pdev), MINOR(pdev));
-		blkdev_put(dev->bdev);
+		blkdev_put(bdev, FMODE_WRITE);
 		return -ENOENT;
 	}
 

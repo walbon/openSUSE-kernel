@@ -49,9 +49,7 @@
 #include <asm/i387.h>
 #include <asm/mmu_context.h>
 #include <asm/prctl.h>
-#include <xen/interface/platform.h>
 #include <xen/interface/physdev.h>
-#include <xen/interface/vcpu.h>
 #include <asm/desc.h>
 #include <asm/proto.h>
 #include <asm/hardirq.h>
@@ -60,11 +58,8 @@
 #include <asm/syscalls.h>
 #include <asm/ds.h>
 
-#include <xen/cpu_hotplug.h>
-
 asmlinkage extern void ret_from_fork(void);
 
-DEFINE_PER_CPU(unsigned long, old_rsp);
 static DEFINE_PER_CPU(unsigned char, is_idle);
 
 unsigned long kernel_thread_flags = CLONE_VM | CLONE_UNTRACED;
@@ -305,7 +300,6 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 
 	p->thread.sp = (unsigned long) childregs;
 	p->thread.sp0 = (unsigned long) (childregs+1);
-	p->thread.usersp = me->thread.usersp;
 
 	set_tsk_thread_flag(p, TIF_FORK);
 
@@ -367,7 +361,6 @@ start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 	load_gs_index(0);
 	regs->ip		= new_ip;
 	regs->sp		= new_sp;
-	percpu_write(old_rsp, new_sp);
 	regs->cs		= __USER_CS;
 	regs->ss		= __USER_DS;
 	regs->flags		= 0x200;
@@ -548,8 +541,6 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	/*
 	 * Switch the PDA context.
 	 */
-	prev->usersp = percpu_read(old_rsp);
-	percpu_write(old_rsp, next->usersp);
 	percpu_write(current_task, next_p);
 
 	percpu_write(kernel_stack,

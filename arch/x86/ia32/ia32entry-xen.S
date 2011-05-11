@@ -25,10 +25,10 @@
 	.macro IA32_ARG_FIXUP noebp=0
 	movl	%edi,%r8d
 	.if \noebp
-	jmp	ia32_common
+	jmp	.Lia32_common
 	.else
 	movl	%ebp,%r9d
-ia32_common:
+.Lia32_common:
 	.endif
 	xchg	%ecx,%esi
 	movl	%ebx,%edi
@@ -145,9 +145,7 @@ ENTRY(ia32_sysenter_target)
 	orl    $TS_COMPAT,TI_status(%r10)
 	testl  $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%r10)
 	jnz  sysenter_tracesys
-	cmpq	$(IA32_NR_syscalls-1),%rax
-	ja	ia32_badsys
-	jmp	ia32_do_call
+	jmp .Lia32_check_call
 
 #ifdef CONFIG_AUDITSYSCALL
 	.macro auditsys_entry_common
@@ -171,24 +169,8 @@ ENTRY(ia32_sysenter_target)
 sysenter_auditsys:
 	auditsys_entry_common
 	movl %ebp,%r9d			/* reload 6th syscall arg */
-	jmp ia32_dispatch
+	jmp .Lia32_dispatch
 #endif
-
-sysenter_tracesys:
-#ifdef CONFIG_AUDITSYSCALL
-	testl	$(_TIF_WORK_SYSCALL_ENTRY & ~_TIF_SYSCALL_AUDIT),TI_flags(%r10)
-	jz	sysenter_auditsys
-#endif
-	SAVE_REST
-	CLEAR_RREGS
-	movq	$-ENOSYS,RAX(%rsp)/* ptrace can change this for a bad syscall */
-	movq	%rsp,%rdi        /* &pt_regs -> arg1 */
-	call	syscall_trace_enter
-	LOAD_ARGS32 ARGOFFSET  /* reload args from stack in case ptrace changed it */
-	RESTORE_REST
-	cmpq	$(IA32_NR_syscalls-1),%rax
-	ja	int_ret_from_sys_call /* sysenter_tracesys has set RAX(%rsp) */
-	jmp	ia32_do_call
 	CFI_ENDPROC
 ENDPROC(ia32_sysenter_target)
 
@@ -250,7 +232,7 @@ cstar_auditsys:
 	movl %r9d,R9-ARGOFFSET(%rsp)	/* register to be clobbered by call */
 	auditsys_entry_common
 	movl R9-ARGOFFSET(%rsp),%r9d	/* reload 6th syscall arg */
-	jmp ia32_dispatch
+	jmp .Lia32_dispatch
 #endif
 
 cstar_tracesys:
@@ -324,17 +306,23 @@ ENTRY(ia32_syscall)
 	orl   $TS_COMPAT,TI_status(%r10)
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%r10)
 	jnz ia32_tracesys
+.Lia32_check_call:
 	cmpq $(IA32_NR_syscalls-1),%rax
 	ja ia32_badsys
 ia32_do_call:
 	IA32_ARG_FIXUP
-ia32_dispatch:
+.Lia32_dispatch:
 	call *ia32_sys_call_table(,%rax,8) # xxx: rip relative
 ia32_sysret:
 	movq %rax,RAX-ARGOFFSET(%rsp)
 	CLEAR_RREGS -ARGOFFSET
 	jmp int_ret_from_sys_call 
 
+sysenter_tracesys:
+#ifdef CONFIG_AUDITSYSCALL
+	testl $(_TIF_WORK_SYSCALL_ENTRY & ~_TIF_SYSCALL_AUDIT),TI_flags(%r10)
+	jz sysenter_auditsys
+#endif
 ia32_tracesys:			 
 	SAVE_REST
 	CLEAR_RREGS

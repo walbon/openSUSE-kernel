@@ -212,7 +212,7 @@ blktap_ring_open(struct inode *inode, struct file *filp)
 	struct blktap *tap;
 
 	idx = iminor(inode);
-	if (idx < 0 || idx >= MAX_BLKTAP_DEVICE || blktaps[idx] == NULL) {
+	if (idx < 0 || idx >= CONFIG_XEN_NR_TAP2_DEVICES || !blktaps[idx]) {
 		BTERR("unable to open device blktap%d\n", idx);
 		return -ENODEV;
 	}
@@ -478,7 +478,7 @@ static unsigned int blktap_ring_poll(struct file *filp, poll_table *wait)
 	return 0;
 }
 
-static struct file_operations blktap_ring_file_operations = {
+static const struct file_operations blktap_ring_file_operations = {
 	.owner    = THIS_MODULE,
 	.open     = blktap_ring_open,
 	.release  = blktap_ring_release,
@@ -588,7 +588,8 @@ blktap_ring_init(int *major)
 {
 	int err;
 
-	err = register_chrdev(0, "blktap2", &blktap_ring_file_operations);
+	err = __register_chrdev(0, 0, CONFIG_XEN_NR_TAP2_DEVICES, "blktap2",
+				&blktap_ring_file_operations);
 	if (err < 0) {
 		BTERR("error registering blktap ring device: %d\n", err);
 		return err;
@@ -603,7 +604,8 @@ int
 blktap_ring_free(void)
 {
 	if (blktap_ring_major)
-		unregister_chrdev(blktap_ring_major, "blktap2");
+		__unregister_chrdev(blktap_ring_major, 0,
+				    CONFIG_XEN_NR_TAP2_DEVICES, "blktap2");
 
 	return 0;
 }

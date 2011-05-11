@@ -232,9 +232,9 @@ static int xen_hotplug_notifier(struct acpi_processor *pr, int event)
 {
 	int ret = -EINVAL;
 #ifdef CONFIG_ACPI_HOTPLUG_CPU
+	acpi_status status = 0;
 	uint32_t apic_id;
 	unsigned long long pxm;
-	acpi_status status = 0;
 	xen_platform_op_t op = {
 		.interface_version  = XENPF_INTERFACE_VERSION,
 	};

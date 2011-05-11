@@ -34,11 +34,6 @@ static inline void xen_set_pte(pte_t *ptep, pte_t pte)
 	ptep->pte_low = pte.pte_low;
 }
 
-static inline void xen_set_pte_atomic(pte_t *ptep, pte_t pte)
-{
-	set_64bit((unsigned long long *)(ptep), __pte_val(pte));
-}
-
 static inline void xen_set_pmd(pmd_t *pmdp, pmd_t pmd)
 {
 	xen_l2_entry_update(pmdp, pmd);

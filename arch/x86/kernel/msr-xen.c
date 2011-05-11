@@ -187,10 +187,9 @@ static int pmsr_device_create(unsigned int cpu)
 		if ((minor_bias + cpu) >> MINORBITS) {
 			if (!warned) {
 				warned = true;
-				printk(KERN_WARNING
-				       "Physical MSRs of CPUs beyond %u will"
-				       " not be accessible\n",
-				       MINORMASK - minor_bias);
+				pr_warning("Physical MSRs of CPUs beyond %u"
+					   " will not be accessible\n",
+					   MINORMASK - minor_bias);
 			}
 			return -EDOM;
 		}
@@ -200,10 +199,9 @@ static int pmsr_device_create(unsigned int cpu)
 		if (!map) {
 			if (!warned) {
 				warned = true;
-				printk(KERN_WARNING
-				       "Physical MSRs of CPUs beyond %u may"
-				       " not be accessible\n",
-				       nr_xen_cpu_ids - 1);
+				pr_warning("Physical MSRs of CPUs beyond %u"
+					   " may not be accessible\n",
+					   nr_xen_cpu_ids - 1);
 			}
 			return -ENOMEM;
 		}
@@ -293,7 +291,7 @@ static int __init msr_init(void)
 	if (__register_chrdev(MSR_MAJOR, minor_bias,
 			      MINORMASK + 1 - minor_bias,
 			      "pcpu/msr", &pmsr_fops)) {
-		printk(KERN_ERR "msr: unable to get minors for pmsr\n");
+		pr_err("msr: unable to get minors for pmsr\n");
 		goto out;
 	}
 	pmsr_class = class_create(THIS_MODULE, "pmsr");
@@ -316,9 +314,8 @@ out_chrdev:
 			    MINORMASK + 1 - minor_bias, "pcpu/msr");
 out:
 	if (err)
-		printk(KERN_WARNING
-		       "msr: Could not initialize physical MSR access (%d)\n",
-		       err);
+		pr_warning("msr: can't initialize physical MSR access (%d)\n",
+			   err);
 	nr_xen_cpu_ids = 0;
 	kfree(xen_cpu_online_map);
 	return 0;

@@ -62,6 +62,7 @@
 #include <asm/uaccess.h>
 #include <xen/interface/grant_table.h>
 #include <xen/gnttab.h>
+#include <xen/net-util.h>
 
 struct netfront_cb {
 	struct page *page;
@@ -205,10 +206,8 @@ static inline grant_ref_t xennet_get_rx_ref(struct netfront_info *np,
 #define DPRINTK(fmt, args...)				\
 	pr_debug("netfront (%s:%d) " fmt,		\
 		 __FUNCTION__, __LINE__, ##args)
-#define IPRINTK(fmt, args...)				\
-	printk(KERN_INFO "netfront: " fmt, ##args)
-#define WPRINTK(fmt, args...)				\
-	printk(KERN_WARNING "netfront: " fmt, ##args)
+#define IPRINTK(fmt, args...) pr_info("netfront: " fmt, ##args)
+#define WPRINTK(fmt, args...) pr_warning("netfront: " fmt, ##args)
 
 static int setup_device(struct xenbus_device *, struct netfront_info *);
 static struct net_device *create_netdev(struct xenbus_device *);
@@ -236,7 +235,7 @@ static inline int xennet_can_sg(struct net_device *dev)
 }
 
 /*
- * Work around net.ipv4.conf.*.arp_notify no being enabled by default.
+ * Work around net.ipv4.conf.*.arp_notify not being enabled by default.
  */
 static void __devinit netfront_enable_arp_notify(struct netfront_info *info)
 {
@@ -278,8 +277,8 @@ static int __devinit netfront_probe(struct xenbus_device *dev,
 
 	err = register_netdev(info->netdev);
 	if (err) {
-		printk(KERN_WARNING "%s: register_netdev err=%d\n",
-		       __FUNCTION__, err);
+		pr_warning("%s: register_netdev err=%d\n",
+			   __FUNCTION__, err);
 		goto fail;
 	}
 
@@ -288,8 +287,8 @@ static int __devinit netfront_probe(struct xenbus_device *dev,
 	err = xennet_sysfs_addif(info->netdev);
 	if (err) {
 		unregister_netdev(info->netdev);
-		printk(KERN_WARNING "%s: add sysfs failed err=%d\n",
-		       __FUNCTION__, err);
+		pr_warning("%s: add sysfs failed err=%d\n",
+			   __FUNCTION__, err);
 		goto fail;
 	}
 
@@ -609,12 +608,10 @@ int netfront_check_queue_ready(struct net_device *dev)
 }
 EXPORT_SYMBOL(netfront_check_queue_ready);
 
-
 static int network_open(struct net_device *dev)
 {
 	struct netfront_info *np = netdev_priv(dev);
 
-	memset(&np->stats, 0, sizeof(np->stats));
 	napi_enable(&np->napi);
 
 	spin_lock_bh(&np->rx_lock);
@@ -658,9 +655,8 @@ static void network_tx_buf_gc(struct net_device *dev)
 			skb = np->tx_skbs[id];
 			if (unlikely(gnttab_query_foreign_access(
 				np->grant_tx_ref[id]) != 0)) {
-				printk(KERN_ALERT "network_tx_buf_gc: warning "
-				       "-- grant still in use by backend "
-				       "domain.\n");
+				pr_alert("network_tx_buf_gc: grant still"
+					 " in use by backend domain\n");
 				BUG();
 			}
 			gnttab_end_foreign_access_ref(np->grant_tx_ref[id]);
@@ -947,8 +943,7 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	frags += DIV_ROUND_UP(offset + len, PAGE_SIZE);
 	if (unlikely(frags > MAX_SKB_FRAGS + 1)) {
-		printk(KERN_ALERT "xennet: skb rides the rocket: %d frags\n",
-		       frags);
+		pr_alert("xennet: skb rides the rocket: %d frags\n", frags);
 		dump_stack();
 		goto drop;
 	}
@@ -984,10 +979,8 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL) /* local packet? */
 		tx->flags |= NETTXF_csum_blank | NETTXF_data_validated;
-#ifdef CONFIG_XEN
-	if (skb->proto_data_valid) /* remote but checksummed? */
+	else if (skb->ip_summed == CHECKSUM_UNNECESSARY)
 		tx->flags |= NETTXF_data_validated;
-#endif
 
 #if HAVE_TSO
 	if (skb_shinfo(skb)->gso_size) {
@@ -1019,8 +1012,8 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (notify)
 		notify_remote_via_irq(np->irq);
 
-	np->stats.tx_bytes += skb->len;
-	np->stats.tx_packets++;
+	dev->stats.tx_bytes += skb->len;
+	dev->stats.tx_packets++;
 	dev->trans_start = jiffies;
 
 	/* Note: It is not safe to access skb after network_tx_buf_gc()! */
@@ -1034,7 +1027,7 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	return NETDEV_TX_OK;
 
  drop:
-	np->stats.tx_dropped++;
+	dev->stats.tx_dropped++;
 	dev_kfree_skb(skb);
 	return NETDEV_TX_OK;
 }
@@ -1351,7 +1344,7 @@ static int netif_poll(struct napi_struct *napi, int budget)
 err:	
 			while ((skb = __skb_dequeue(&tmpq)))
 				__skb_queue_tail(&errq, skb);
-			np->stats.rx_errors++;
+			dev->stats.rx_errors++;
 			i = np->rx.rsp_cons;
 			continue;
 		}
@@ -1412,20 +1405,15 @@ err:
 		skb->truesize += skb->data_len - (RX_COPY_THRESHOLD - len);
 		skb->len += skb->data_len;
 
-		/*
-		 * Old backends do not assert data_validated but we
-		 * can infer it from csum_blank so test both flags.
-		 */
-		if (rx->flags & (NETRXF_data_validated|NETRXF_csum_blank))
+		if (rx->flags & NETRXF_csum_blank)
+			skb->ip_summed = CHECKSUM_PARTIAL;
+		else if (rx->flags & NETRXF_data_validated)
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 		else
 			skb->ip_summed = CHECKSUM_NONE;
-#ifdef CONFIG_XEN
-		skb->proto_data_valid = (skb->ip_summed != CHECKSUM_NONE);
-		skb->proto_csum_blank = !!(rx->flags & NETRXF_csum_blank);
-#endif
-		np->stats.rx_packets++;
-		np->stats.rx_bytes += skb->len;
+
+		dev->stats.rx_packets++;
+		dev->stats.rx_bytes += skb->len;
 
 		__skb_queue_tail(&rxq, skb);
 
@@ -1466,6 +1454,11 @@ err:
 
 		/* Ethernet work: Delayed to here as it peeks the header. */
 		skb->protocol = eth_type_trans(skb, dev);
+
+		if (skb_checksum_setup(skb, &np->rx_gso_csum_fixups)) {
+			kfree_skb(skb);
+			continue;
+		}
 
 		/* Pass it up. */
 		netif_receive_skb(skb);
@@ -1670,10 +1663,8 @@ static int network_close(struct net_device *dev)
 
 static struct net_device_stats *network_get_stats(struct net_device *dev)
 {
-	struct netfront_info *np = netdev_priv(dev);
-
-	netfront_accelerator_call_get_stats(np, dev);
-	return &np->stats;
+	netfront_accelerator_call_get_stats(dev);
+	return &dev->stats;
 }
 
 static int xennet_set_mac_address(struct net_device *dev, void *p)
@@ -1753,6 +1744,48 @@ static void xennet_set_features(struct net_device *dev)
 	 */
 	if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,9))
 		xennet_set_tso(dev, 1);
+}
+
+static const struct xennet_stat {
+	char name[ETH_GSTRING_LEN];
+	u16 offset;
+} xennet_stats[] = {
+	{
+		"rx_gso_csum_fixups",
+		offsetof(struct netfront_info, rx_gso_csum_fixups) / sizeof(long)
+	},
+};
+
+static int xennet_get_sset_count(struct net_device *dev, int sset)
+{
+	switch (sset) {
+	case ETH_SS_STATS:
+		return ARRAY_SIZE(xennet_stats);
+	}
+	return -EOPNOTSUPP;
+}
+
+static void xennet_get_ethtool_stats(struct net_device *dev,
+				     struct ethtool_stats *stats, u64 *data)
+{
+	unsigned long *np = netdev_priv(dev);
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(xennet_stats); i++)
+		data[i] = np[xennet_stats[i].offset];
+}
+
+static void xennet_get_strings(struct net_device *dev, u32 stringset, u8 *data)
+{
+	unsigned int i;
+
+	switch (stringset) {
+	case ETH_SS_STATS:
+		for (i = 0; i < ARRAY_SIZE(xennet_stats); i++)
+			memcpy(data + i * ETH_GSTRING_LEN,
+			       xennet_stats[i].name, ETH_GSTRING_LEN);
+		break;
+	}
 }
 
 static void netfront_get_drvinfo(struct net_device *dev,
@@ -1880,6 +1913,10 @@ static const struct ethtool_ops network_ethtool_ops =
 	.set_tso = xennet_set_tso,
 #endif
 	.get_link = ethtool_op_get_link,
+
+	.get_sset_count = xennet_get_sset_count,
+	.get_ethtool_stats = xennet_get_ethtool_stats,
+	.get_strings = xennet_get_strings,
 };
 
 #ifdef CONFIG_SYSFS
@@ -2039,8 +2076,7 @@ static struct net_device * __devinit create_netdev(struct xenbus_device *dev)
 
 	netdev = alloc_etherdev(sizeof(struct netfront_info));
 	if (!netdev) {
-		printk(KERN_WARNING "%s> alloc_etherdev failed.\n",
-		       __FUNCTION__);
+		pr_warning("%s: alloc_etherdev failed\n", __FUNCTION__);
 		return ERR_PTR(-ENOMEM);
 	}
 
@@ -2075,14 +2111,14 @@ static struct net_device * __devinit create_netdev(struct xenbus_device *dev)
 	/* A grant for every tx ring slot */
 	if (gnttab_alloc_grant_references(TX_MAX_TARGET,
 					  &np->gref_tx_head) < 0) {
-		printk(KERN_ALERT "#### netfront can't alloc tx grant refs\n");
+		pr_alert("#### netfront can't alloc tx grant refs\n");
 		err = -ENOMEM;
 		goto exit;
 	}
 	/* A grant for every rx ring slot */
 	if (gnttab_alloc_grant_references(RX_MAX_TARGET,
 					  &np->gref_rx_head) < 0) {
-		printk(KERN_ALERT "#### netfront can't alloc rx grant refs\n");
+		pr_alert("#### netfront can't alloc rx grant refs\n");
 		err = -ENOMEM;
 		goto exit_free_tx;
 	}
@@ -2170,7 +2206,7 @@ static int __init netif_init(void)
 	}
 
 	if (!MODPARM_rx_flip && !MODPARM_rx_copy)
-		MODPARM_rx_flip = 1; /* Default is to flip. */
+		MODPARM_rx_copy = 1; /* Default is to copy. */
 #endif
 
 	netif_init_accel();

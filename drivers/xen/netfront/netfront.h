@@ -149,8 +149,6 @@ struct netfront_info {
 	struct list_head list;
 	struct net_device *netdev;
 
-	struct net_device_stats stats;
-
 	struct netif_tx_front_ring tx;
 	struct netif_rx_front_ring rx;
 
@@ -193,6 +191,9 @@ struct netfront_info {
 	unsigned long rx_pfn_array[NET_RX_RING_SIZE];
 	struct multicall_entry rx_mcl[NET_RX_RING_SIZE+1];
 	struct mmu_update rx_mmu[NET_RX_RING_SIZE];
+
+	/* Statistics */
+	unsigned long rx_gso_csum_fixups;
 
 	/* Private pointer to state internal to accelerator module */
 	void *accel_priv;
@@ -260,8 +261,7 @@ extern
 void netfront_accelerator_call_stop_napi_irq(struct netfront_info *np,
 					     struct net_device *dev);
 extern
-int netfront_accelerator_call_get_stats(struct netfront_info *np,
-					struct net_device *dev);
+int netfront_accelerator_call_get_stats(struct net_device *dev);
 extern
 void netfront_accelerator_add_watch(struct netfront_info *np);
 

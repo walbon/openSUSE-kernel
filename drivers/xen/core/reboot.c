@@ -84,14 +84,14 @@ static int xen_suspend(void *__unused)
 	daemonize("suspend");
 	err = set_cpus_allowed_ptr(current, cpumask_of(0));
 	if (err) {
-		printk(KERN_ERR "Xen suspend can't run on CPU0 (%d)\n", err);
+		pr_err("Xen suspend can't run on CPU0 (%d)\n", err);
 		goto fail;
 	}
 
 	do {
 		err = __xen_suspend(fast_suspend, xen_resume_notifier);
 		if (err) {
-			printk(KERN_ERR "Xen suspend failed (%d)\n", err);
+			pr_err("Xen suspend failed (%d)\n", err);
 			goto fail;
 		}
 		if (!suspend_cancelled)
@@ -157,8 +157,8 @@ static void __shutdown_handler(struct work_struct *unused)
 			    NULL, CLONE_FS | CLONE_FILES);
 
 	if (err < 0) {
-		printk(KERN_WARNING "Error creating shutdown process (%d): "
-		       "retrying...\n", -err);
+		pr_warning("Error creating shutdown process (%d): "
+			   "retrying...\n", -err);
 		schedule_delayed_work(&shutdown_work, HZ/2);
 	}
 }
@@ -206,7 +206,7 @@ static void shutdown_handler(struct xenbus_watch *watch,
 	else if (strcmp(str, "halt") == 0)
 		new_state = SHUTDOWN_HALT;
 	else
-		printk("Ignoring shutdown request: %s\n", str);
+		pr_warning("Ignoring shutdown request: %s\n", str);
 
 	switch_shutdown_state(new_state);
 
@@ -225,8 +225,7 @@ static void sysrq_handler(struct xenbus_watch *watch, const char **vec,
 	if (err)
 		return;
 	if (!xenbus_scanf(xbt, "control", "sysrq", "%c", &sysrq_key)) {
-		printk(KERN_ERR "Unable to read sysrq code in "
-		       "control/sysrq\n");
+		pr_err("Unable to read sysrq code in control/sysrq\n");
 		xenbus_transaction_end(xbt, 1);
 		return;
 	}
@@ -276,7 +275,7 @@ static int setup_suspend_evtchn(void)
 		return -1;
 
 	port = irq_to_evtchn_port(irq);
-	printk(KERN_INFO "suspend: event channel %d\n", port);
+	pr_info("suspend: event channel %d\n", port);
 	sprintf(portstr, "%d", port);
 	xenbus_write(XBT_NIL, "device/suspend", "event-channel", portstr);
 
@@ -290,26 +289,29 @@ static int setup_shutdown_watcher(void)
 {
 	int err;
 
+	err = register_xenbus_watch(&sysrq_watch);
+	if (err) {
+		pr_err("Failed to set sysrq watcher\n");
+		return err;
+	}
+
+	if (is_initial_xendomain())
+		return 0;
+
 	xenbus_scanf(XBT_NIL, "control",
 		     "platform-feature-multiprocessor-suspend",
 		     "%d", &fast_suspend);
 
 	err = register_xenbus_watch(&shutdown_watch);
 	if (err) {
-		printk(KERN_ERR "Failed to set shutdown watcher\n");
-		return err;
-	}
-
-	err = register_xenbus_watch(&sysrq_watch);
-	if (err) {
-		printk(KERN_ERR "Failed to set sysrq watcher\n");
+		pr_err("Failed to set shutdown watcher\n");
 		return err;
 	}
 
 	/* suspend event channel */
 	err = setup_suspend_evtchn();
 	if (err) {
-		printk(KERN_ERR "Failed to register suspend event channel\n");
+		pr_err("Failed to register suspend event channel\n");
 		return err;
 	}
 

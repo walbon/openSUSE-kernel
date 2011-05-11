@@ -118,8 +118,8 @@ static void scsifront_gnttab_done(struct vscsifrnt_shadow *s, uint32_t id)
 		for (i = 0; i < s->nr_segments; i++) {
 			if (unlikely(gnttab_query_foreign_access(
 				s->gref[i]) != 0)) {
-				printk(KERN_ALERT "scsifront: "
-					"grant still in use by backend.\n");
+				pr_alert("scsifront: "
+					 "grant still in use by backend\n");
 				BUG();
 			}
 			gnttab_end_foreign_access(s->gref[i], 0UL);
@@ -256,7 +256,7 @@ static int map_data_for_request(struct vscsifrnt_info *info,
 
 	err = gnttab_alloc_grant_references(VSCSIIF_SG_TABLESIZE, &gref_head);
 	if (err) {
-		printk(KERN_ERR "scsifront: gnttab_alloc_grant_references() error\n");
+		pr_err("scsifront: gnttab_alloc_grant_references() error\n");
 		return -ENOMEM;
 	}
 
@@ -267,7 +267,7 @@ static int map_data_for_request(struct vscsifrnt_info *info,
 
 		nr_pages = (data_len + sgl->offset + PAGE_SIZE - 1) >> PAGE_SHIFT;
 		if (nr_pages > VSCSIIF_SG_TABLESIZE) {
-			printk(KERN_ERR "scsifront: Unable to map request_buffer for command!\n");
+			pr_err("scsifront: Unable to map request_buffer for command!\n");
 			ref_cnt = (-E2BIG);
 			goto big_to_sg;
 		}
@@ -318,12 +318,16 @@ big_to_sg:
 static int scsifront_queuecommand(struct scsi_cmnd *sc,
 				  void (*done)(struct scsi_cmnd *))
 {
-	struct vscsifrnt_info *info =
-		(struct vscsifrnt_info *) sc->device->host->hostdata;
+	struct vscsifrnt_info *info = shost_priv(sc->device->host);
 	vscsiif_request_t *ring_req;
 	int ref_cnt;
 	uint16_t rqid;
 
+/* debug printk to identify more missing scsi commands
+	printk(KERN_INFO "scsicmd: len=%i, 0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x",sc->cmd_len,
+		sc->cmnd[0],sc->cmnd[1],sc->cmnd[2],sc->cmnd[3],sc->cmnd[4],
+		sc->cmnd[5],sc->cmnd[6],sc->cmnd[7],sc->cmnd[8],sc->cmnd[9]);
+*/
 	if (RING_FULL(&info->ring)) {
 		goto out_host_busy;
 	}
@@ -390,8 +394,7 @@ static int scsifront_eh_abort_handler(struct scsi_cmnd *sc)
 static int scsifront_dev_reset_handler(struct scsi_cmnd *sc)
 {
 	struct Scsi_Host *host = sc->device->host;
-	struct vscsifrnt_info *info =
-		(struct vscsifrnt_info *) sc->device->host->hostdata;
+	struct vscsifrnt_info *info = shost_priv(host);
 
 	vscsiif_request_t *ring_req;
 	uint16_t rqid;

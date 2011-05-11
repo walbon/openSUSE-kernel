@@ -43,6 +43,7 @@
 #include <xen/interface/sched.h>
 #include <xen/interface/nmi.h>
 #include <xen/interface/tmem.h>
+#include <xen/interface/vcpu.h>
 #include <xen/interface/arch-x86/xen-mca.h>
 #include <asm/percpu.h>
 #include <asm/ptrace.h>
@@ -86,7 +87,9 @@ extern start_info_t *xen_start_info;
 #define init_hypervisor(c) ((void)((c)->x86_hyper_vendor = X86_HYPER_VENDOR_XEN))
 #define init_hypervisor_platform() init_hypervisor(&boot_cpu_data)
 
+DECLARE_PER_CPU(struct vcpu_runstate_info, runstate);
 struct vcpu_runstate_info *setup_runstate_area(unsigned int cpu);
+#define vcpu_running(cpu) (per_cpu(runstate.state, cpu) == RUNSTATE_running)
 
 /* arch/xen/kernel/evtchn.c */
 /* Force a proper event-channel callback from Xen. */
@@ -145,6 +148,8 @@ struct page;
 int xen_limit_pages_to_max_mfn(
 	struct page *pages, unsigned int order, unsigned int address_bits);
 
+bool __cold hypervisor_oom(void);
+
 /* Turn jiffies into Xen system time. */
 u64 jiffies_to_st(unsigned long jiffies);
 
@@ -158,7 +163,7 @@ void scrub_pages(void *, unsigned int);
 
 DECLARE_PER_CPU(bool, xen_lazy_mmu);
 
-void xen_multicall_flush(bool);
+void xen_multicall_flush(void);
 
 int __must_check xen_multi_update_va_mapping(unsigned long va, pte_t,
 					     unsigned long flags);
@@ -176,7 +181,7 @@ static inline void arch_enter_lazy_mmu_mode(void)
 static inline void arch_leave_lazy_mmu_mode(void)
 {
 	percpu_write(xen_lazy_mmu, false);
-	xen_multicall_flush(false);
+	xen_multicall_flush();
 }
 
 #define arch_use_lazy_mmu_mode() unlikely(percpu_read(xen_lazy_mmu))
@@ -190,13 +195,13 @@ static inline void arch_leave_lazy_mmu_mode(void)
 static inline void arch_flush_lazy_mmu_mode(void)
 {
 	if (arch_use_lazy_mmu_mode())
-		xen_multicall_flush(false);
+		xen_multicall_flush();
 }
 #endif
 
 #else /* !CONFIG_XEN || MODULE */
 
-static inline void xen_multicall_flush(bool ignore) {}
+static inline void xen_multicall_flush(void) {}
 #define arch_use_lazy_mmu_mode() false
 #define xen_multi_update_va_mapping(...) ({ BUG(); -ENOSYS; })
 #define xen_multi_mmu_update(...) ({ BUG(); -ENOSYS; })

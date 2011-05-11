@@ -472,15 +472,15 @@ static void pcistub_remove(struct pci_dev *dev)
 			found_psdev->pdev);
 
 		if (found_psdev->pdev) {
-			printk(KERN_WARNING "pciback: ****** removing device "
-			       "%s while still in-use! ******\n",
-			       pci_name(found_psdev->dev));
-			printk(KERN_WARNING "pciback: ****** driver domain may "
-			       "still access this device's i/o resources!\n");
-			printk(KERN_WARNING "pciback: ****** shutdown driver "
-			       "domain before binding device\n");
-			printk(KERN_WARNING "pciback: ****** to other drivers "
-			       "or domains\n");
+			pr_warning("pciback: ****** removing device %s"
+				   " while still in-use! ******\n",
+				   pci_name(found_psdev->dev));
+			pr_warning("pciback: ****** driver domain may still"
+				   " access this device's i/o resources!\n");
+			pr_warning("pciback: ****** shutdown driver "
+				   "domain before binding device\n");
+			pr_warning("pciback: ****** to other drivers "
+				   "or domains\n");
 
 			pciback_release_pci_dev(found_psdev->pdev,
 						found_psdev->dev);
@@ -495,7 +495,7 @@ static void pcistub_remove(struct pci_dev *dev)
 	}
 }
 
-static const struct pci_device_id pcistub_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(pcistub_ids) = {
 	{
 	 .vendor = PCI_ANY_ID,
 	 .device = PCI_ANY_ID,
@@ -1009,8 +1009,7 @@ static ssize_t pcistub_slot_add(struct device_driver *drv, const char *buf,
 		err = count;
 	return err;
 }
-
-DRIVER_ATTR(new_slot, S_IWUSR, NULL, pcistub_slot_add);
+static DRIVER_ATTR(new_slot, S_IWUSR, NULL, pcistub_slot_add);
 
 static ssize_t pcistub_slot_remove(struct device_driver *drv, const char *buf,
 				   size_t count)
@@ -1029,8 +1028,7 @@ static ssize_t pcistub_slot_remove(struct device_driver *drv, const char *buf,
 		err = count;
 	return err;
 }
-
-DRIVER_ATTR(remove_slot, S_IWUSR, NULL, pcistub_slot_remove);
+static DRIVER_ATTR(remove_slot, S_IWUSR, NULL, pcistub_slot_remove);
 
 static ssize_t pcistub_slot_show(struct device_driver *drv, char *buf)
 {
@@ -1053,8 +1051,7 @@ static ssize_t pcistub_slot_show(struct device_driver *drv, char *buf)
 
 	return count;
 }
-
-DRIVER_ATTR(slots, S_IRUSR, pcistub_slot_show, NULL);
+static DRIVER_ATTR(slots, S_IRUSR, pcistub_slot_show, NULL);
 
 static ssize_t pcistub_quirk_add(struct device_driver *drv, const char *buf,
 				 size_t count)
@@ -1118,8 +1115,7 @@ static ssize_t pcistub_quirk_show(struct device_driver *drv, char *buf)
 
 	return count;
 }
-
-DRIVER_ATTR(quirks, S_IRUSR | S_IWUSR, pcistub_quirk_show, pcistub_quirk_add);
+static DRIVER_ATTR(quirks, S_IRUSR | S_IWUSR, pcistub_quirk_show, pcistub_quirk_add);
 
 static ssize_t permissive_add(struct device_driver *drv, const char *buf,
 			      size_t count)
@@ -1184,8 +1180,7 @@ static ssize_t permissive_show(struct device_driver *drv, char *buf)
 	spin_unlock_irqrestore(&pcistub_devices_lock, flags);
 	return count;
 }
-
-DRIVER_ATTR(permissive, S_IRUSR | S_IWUSR, permissive_show, permissive_add);
+static DRIVER_ATTR(permissive, S_IRUSR | S_IWUSR, permissive_show, permissive_add);
 
 #ifdef CONFIG_PCI_MSI
 
@@ -1280,7 +1275,7 @@ static int __init pcistub_init(void)
 	return err;
 
       parse_error:
-	printk(KERN_ERR "pciback: Error parsing pci_devs_to_hide at \"%s\"\n",
+	pr_err("pciback: Error parsing pci_devs_to_hide at \"%s\"\n",
 	       pci_devs_to_hide + pos);
 	return -EINVAL;
 }

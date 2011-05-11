@@ -410,7 +410,7 @@ int xen_get_topology_info(unsigned int cpu, u32 *core, u32 *sock, u32 *node)
 	BUILD_BUG_ON(XEN_SYSCTL_INTERFACE_VERSION > 8);
 	topologyinfo(8);
 
-/* #if CONFIG_XEN_COMPAT < 0x040100 */
+#if CONFIG_XEN_COMPAT < 0x040100
 #define pm_op_cputopo(ver) do {						\
 	memset(&sysctl, 0, sizeof(sysctl));				\
 	sysctl.v##ver.cmd = XEN_SYSCTL_pm_op;				\
@@ -434,7 +434,7 @@ int xen_get_topology_info(unsigned int cpu, u32 *core, u32 *sock, u32 *node)
 
 	if (rc)
 		pm_op_cputopo(7);
-/* #endif */
+#endif
 #if CONFIG_XEN_COMPAT < 0x040000
 	if (rc)
 		pm_op_cputopo(6);

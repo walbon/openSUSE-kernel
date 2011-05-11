@@ -47,7 +47,6 @@
 #include <linux/init.h>
 #include <linux/console.h>
 #include <linux/sysrq.h>
-#include <linux/screen_info.h>
 #include <linux/vt.h>
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -244,6 +243,7 @@ static int __init xen_console_init(void)
 }
 console_initcall(xen_console_init);
 
+#ifdef CONFIG_XEN_PRIVILEGED_GUEST
 /*** Useful function for console debugging -- goes straight to Xen. ***/
 asmlinkage int xprintk(const char *fmt, ...)
 {
@@ -261,6 +261,7 @@ asmlinkage int xprintk(const char *fmt, ...)
 
 	return 0;
 }
+#endif
 
 /*** Forcibly flush console data before dying. ***/
 void xencons_force_flush(void)
@@ -284,6 +285,9 @@ void xencons_force_flush(void)
 	}
 }
 
+
+#ifdef CONFIG_XEN_PRIVILEGED_GUEST
+#include <linux/screen_info.h>
 
 void __init dom0_init_screen_info(const struct dom0_vga_console_info *info, size_t size)
 {
@@ -340,6 +344,7 @@ void __init dom0_init_screen_info(const struct dom0_vga_console_info *info, size
 		break;
 	}
 }
+#endif
 
 
 /******************** User-space console driver (/dev/console) ************/
@@ -714,10 +719,10 @@ static int __init xencons_init(void)
 	tty_set_operations(xencons_driver, &xencons_ops);
 
 	if ((rc = tty_register_driver(DRV(xencons_driver))) != 0) {
-		printk("WARNING: Failed to register Xen virtual "
-		       "console driver as '%s%d'\n",
-		       DRV(xencons_driver)->name,
-		       DRV(xencons_driver)->name_base);
+		pr_warning("WARNING: Failed to register Xen virtual "
+			   "console driver as '%s%d'\n",
+			   DRV(xencons_driver)->name,
+			   DRV(xencons_driver)->name_base);
 		put_tty_driver(xencons_driver);
 		xencons_driver = NULL;
 		return rc;
@@ -734,8 +739,8 @@ static int __init xencons_init(void)
 		BUG_ON(xencons_priv_irq < 0);
 	}
 
-	printk("Xen virtual console successfully installed as %s%d\n",
-	       DRV(xencons_driver)->name, xc_num);
+	pr_info("Xen virtual console successfully installed as %s%d\n",
+		DRV(xencons_driver)->name, xc_num);
 
 	return 0;
 }

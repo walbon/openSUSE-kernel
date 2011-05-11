@@ -1,6 +1,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
+#include <linux/kobject.h>
 #include <linux/notifier.h>
 #include <linux/cpu.h>
 #include <xen/cpu_hotplug.h>
@@ -24,7 +25,7 @@ static int local_cpu_hotplug_request(void)
 	return (current->mm != NULL);
 }
 
-static void __cpuinit vcpu_hotplug(unsigned int cpu)
+static void __cpuinit vcpu_hotplug(unsigned int cpu, struct sys_device *dev)
 {
 	int err;
 	char dir[32], state[32];
@@ -35,18 +36,20 @@ static void __cpuinit vcpu_hotplug(unsigned int cpu)
 	sprintf(dir, "cpu/%u", cpu);
 	err = xenbus_scanf(XBT_NIL, dir, "availability", "%s", state);
 	if (err != 1) {
-		printk(KERN_ERR "XENBUS: Unable to read cpu state\n");
+		pr_err("XENBUS: Unable to read cpu state\n");
 		return;
 	}
 
 	if (strcmp(state, "online") == 0) {
 		cpumask_set_cpu(cpu, xenbus_allowed_cpumask);
-		(void)cpu_up(cpu);
+		if (!cpu_up(cpu) && dev)
+			kobject_uevent(&dev->kobj, KOBJ_ONLINE);
 	} else if (strcmp(state, "offline") == 0) {
 		cpumask_clear_cpu(cpu, xenbus_allowed_cpumask);
-		(void)cpu_down(cpu);
+		if (!cpu_down(cpu) && dev)
+			kobject_uevent(&dev->kobj, KOBJ_OFFLINE);
 	} else {
-		printk(KERN_ERR "XENBUS: unknown state(%s) on CPU%d\n",
+		pr_err("XENBUS: unknown state(%s) on CPU%d\n",
 		       state, cpu);
 	}
 }
@@ -60,7 +63,7 @@ static void __cpuinit handle_vcpu_hotplug_event(
 
 	if ((cpustr = strstr(node, "cpu/")) != NULL) {
 		sscanf(cpustr, "cpu/%u", &cpu);
-		vcpu_hotplug(cpu);
+		vcpu_hotplug(cpu, get_cpu_sysdev(cpu));
 	}
 }
 
@@ -93,9 +96,8 @@ static int __cpuinit setup_cpu_watcher(struct notifier_block *notifier,
 
 	if (!is_initial_xendomain()) {
 		for_each_possible_cpu(i)
-			vcpu_hotplug(i);
-		printk(KERN_INFO "Brought up %ld CPUs\n",
-		       (long)num_online_cpus());
+			vcpu_hotplug(i, get_cpu_sysdev(i));
+		pr_info("Brought up %ld CPUs\n", (long)num_online_cpus());
 	}
 
 	return NOTIFY_DONE;
@@ -129,10 +131,9 @@ int __ref smp_suspend(void)
 			continue;
 		err = cpu_down(cpu);
 		if (err) {
-			printk(KERN_CRIT "Failed to take all CPUs "
-			       "down: %d.\n", err);
+			pr_crit("Failed to take all CPUs down: %d\n", err);
 			for_each_possible_cpu(cpu)
-				vcpu_hotplug(cpu);
+				vcpu_hotplug(cpu, NULL);
 			return err;
 		}
 	}
@@ -147,7 +148,7 @@ void __ref smp_resume(void)
 	for_each_possible_cpu(cpu) {
 		if (cpu == 0)
 			continue;
-		vcpu_hotplug(cpu);
+		vcpu_hotplug(cpu, NULL);
 	}
 }
 
@@ -158,8 +159,8 @@ int cpu_up_check(unsigned int cpu)
 	if (local_cpu_hotplug_request()) {
 		cpumask_set_cpu(cpu, local_allowed_cpumask);
 		if (!cpumask_test_cpu(cpu, xenbus_allowed_cpumask)) {
-			printk("%s: attempt to bring up CPU %u disallowed by "
-			       "remote admin.\n", __FUNCTION__, cpu);
+			pr_warning("%s: attempt to bring up CPU %u disallowed "
+				   "by remote admin.\n", __FUNCTION__, cpu);
 			rc = -EBUSY;
 		}
 	} else if (!cpumask_test_cpu(cpu, local_allowed_cpumask) ||

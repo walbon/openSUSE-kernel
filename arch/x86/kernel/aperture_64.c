@@ -38,17 +38,7 @@ int fallback_aper_force __initdata;
 
 int fix_aperture __initdata = 1;
 
-struct bus_dev_range {
-	int bus;
-	int dev_base;
-	int dev_limit;
-};
-
-static struct bus_dev_range bus_dev_ranges[] __initdata = {
-	{ 0x00, 0x18, 0x20},
-	{ 0xff, 0x00, 0x20},
-	{ 0xfe, 0x00, 0x20}
-};
+#define bus_dev_ranges k8_bus_dev_ranges
 
 static struct resource gart_resource = {
 	.name	= "GART",
@@ -290,7 +280,7 @@ void __init early_gart_iommu_check(void)
 
 	/* This is mostly duplicate of iommu_hole_init */
 	fix = 0;
-	for (i = 0; i < ARRAY_SIZE(bus_dev_ranges); i++) {
+	for (i = 0; bus_dev_ranges[i].dev_limit; i++) {
 		int bus;
 		int dev_base, dev_limit;
 
@@ -345,7 +335,7 @@ void __init early_gart_iommu_check(void)
 		return;
 
 	/* different nodes have different setting, disable them all at first*/
-	for (i = 0; i < ARRAY_SIZE(bus_dev_ranges); i++) {
+	for (i = 0; i < bus_dev_ranges[i].dev_limit; i++) {
 		int bus;
 		int dev_base, dev_limit;
 
@@ -386,7 +376,7 @@ void __init gart_iommu_hole_init(void)
 
 	fix = 0;
 	node = 0;
-	for (i = 0; i < ARRAY_SIZE(bus_dev_ranges); i++) {
+	for (i = 0; i < bus_dev_ranges[i].dev_limit; i++) {
 		int bus;
 		int dev_base, dev_limit;
 		u32 ctl;
@@ -501,7 +491,7 @@ out:
 	}
 
 	/* Fix up the north bridges */
-	for (i = 0; i < ARRAY_SIZE(bus_dev_ranges); i++) {
+	for (i = 0; i < bus_dev_ranges[i].dev_limit; i++) {
 		int bus;
 		int dev_base, dev_limit;
 

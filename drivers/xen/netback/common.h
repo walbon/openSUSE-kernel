@@ -38,21 +38,15 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/wait.h>
-#include <xen/evtchn.h>
 #include <xen/interface/io/netif.h>
-#include <asm/io.h>
-#include <asm/pgalloc.h>
-#include <xen/interface/grant_table.h>
-#include <xen/gnttab.h>
 #include <xen/xenbus.h>
+#include <xen/interface/event_channel.h>
 
 #define DPRINTK(_f, _a...)			\
 	pr_debug("(file=%s, line=%d) " _f,	\
 		 __FILE__ , __LINE__ , ## _a )
-#define IPRINTK(fmt, args...)				\
-	printk(KERN_INFO "xen_net: " fmt, ##args)
-#define WPRINTK(fmt, args...)				\
-	printk(KERN_WARNING "xen_net: " fmt, ##args)
+#define IPRINTK(fmt, args...) pr_info("xen_net: " fmt, ##args)
+#define WPRINTK(fmt, args...) pr_warning("xen_net: " fmt, ##args)
 
 typedef struct netif_st {
 	/* Unique identifier for this interface. */
@@ -62,11 +56,6 @@ typedef struct netif_st {
 
 	u8               fe_dev_addr[6];
 
-	/* Physical parameters of the comms window. */
-	grant_handle_t   tx_shmem_handle;
-	grant_ref_t      tx_shmem_ref;
-	grant_handle_t   rx_shmem_handle;
-	grant_ref_t      rx_shmem_ref;
 	unsigned int     irq;
 
 	/* The shared rings and indexes. */
@@ -75,8 +64,13 @@ typedef struct netif_st {
 	struct vm_struct *tx_comms_area;
 	struct vm_struct *rx_comms_area;
 
-	/* Set of features that can be turned on in dev->features. */
-	int features;
+	/* Flags that must not be set in dev->features */
+	int features_disabled;
+
+	/* Frontend feature information. */
+	u8 can_sg:1;
+	u8 gso:1;
+	u8 csum:1;
 
 	/* Internal feature information. */
 	u8 can_queue:1;	/* can queue packets for receiver? */
@@ -95,13 +89,13 @@ typedef struct netif_st {
 	struct timer_list tx_queue_timeout;
 
 	/* Statistics */
-	int nr_copied_skbs;
+	unsigned long nr_copied_skbs;
+	unsigned long rx_gso_csum_fixups;
 
 	/* Miscellaneous private stuff. */
 	struct list_head list;  /* scheduling list */
 	atomic_t         refcnt;
 	struct net_device *dev;
-	struct net_device_stats stats;
 
 	unsigned int carrier;
 
@@ -180,11 +174,12 @@ void netif_accel_init(void);
 #define NET_TX_RING_SIZE __CONST_RING_SIZE(netif_tx, PAGE_SIZE)
 #define NET_RX_RING_SIZE __CONST_RING_SIZE(netif_rx, PAGE_SIZE)
 
-void netif_disconnect(netif_t *netif);
+void netif_disconnect(struct backend_info *be);
 
+void netif_set_features(netif_t *netif);
 netif_t *netif_alloc(struct device *parent, domid_t domid, unsigned int handle);
-int netif_map(netif_t *netif, unsigned long tx_ring_ref,
-	      unsigned long rx_ring_ref, unsigned int evtchn);
+int netif_map(struct backend_info *be, grant_ref_t tx_ring_ref,
+	      grant_ref_t rx_ring_ref, evtchn_port_t evtchn);
 
 #define netif_get(_b) (atomic_inc(&(_b)->refcnt))
 #define netif_put(_b)						\
@@ -202,7 +197,6 @@ void netif_schedule_work(netif_t *netif);
 void netif_deschedule_work(netif_t *netif);
 
 int netif_be_start_xmit(struct sk_buff *skb, struct net_device *dev);
-struct net_device_stats *netif_be_get_stats(struct net_device *dev);
 irqreturn_t netif_be_int(int irq, void *dev_id);
 
 static inline int netbk_can_queue(struct net_device *dev)
@@ -214,7 +208,7 @@ static inline int netbk_can_queue(struct net_device *dev)
 static inline int netbk_can_sg(struct net_device *dev)
 {
 	netif_t *netif = netdev_priv(dev);
-	return netif->features & NETIF_F_SG;
+	return netif->can_sg;
 }
 
 struct pending_tx_info {
@@ -261,9 +255,9 @@ struct xen_netbk {
 	pending_ring_idx_t dealloc_cons;
 
 	struct list_head pending_inuse_head;
-	struct list_head net_schedule_list;
+	struct list_head schedule_list;
 
-	spinlock_t net_schedule_list_lock;
+	spinlock_t schedule_list_lock;
 	spinlock_t release_lock;
 
 	struct page **mmap_pages;

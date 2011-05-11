@@ -396,8 +396,8 @@ blktap_sysfs_set_verbosity(struct class *class, const char *buf, size_t size)
 
 	return -EINVAL;
 }
-CLASS_ATTR(verbosity, S_IRUSR | S_IWUSR,
-	   blktap_sysfs_show_verbosity, blktap_sysfs_set_verbosity);
+static CLASS_ATTR(verbosity, S_IRUSR | S_IWUSR,
+		  blktap_sysfs_show_verbosity, blktap_sysfs_set_verbosity);
 
 static ssize_t
 blktap_sysfs_show_devices(struct class *class, char *buf)
@@ -406,7 +406,7 @@ blktap_sysfs_show_devices(struct class *class, char *buf)
 	struct blktap *tap;
 
 	ret = 0;
-	for (i = 0; i < MAX_BLKTAP_DEVICE; i++) {
+	for (i = 0; i < CONFIG_XEN_NR_TAP2_DEVICES; i++) {
 		tap = blktaps[i];
 		if (!tap)
 			continue;
@@ -422,7 +422,7 @@ blktap_sysfs_show_devices(struct class *class, char *buf)
 
 	return ret;
 }
-CLASS_ATTR(devices, S_IRUSR, blktap_sysfs_show_devices, NULL);
+static CLASS_ATTR(devices, S_IRUSR, blktap_sysfs_show_devices, NULL);
 
 void
 blktap_sysfs_free(void)

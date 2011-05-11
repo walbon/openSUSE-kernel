@@ -42,14 +42,11 @@
 
 #include <asm/irqflags.h>
 #include <asm/smp-processor-id.h>
-#include <xen/interface/vcpu.h>
-
-DECLARE_PER_CPU(struct vcpu_runstate_info, runstate);
 
 int xen_spinlock_init(unsigned int cpu);
 void xen_spinlock_cleanup(unsigned int cpu);
-bool xen_spin_wait(raw_spinlock_t *, unsigned int *token,
-		   unsigned int flags);
+unsigned int xen_spin_wait(raw_spinlock_t *, unsigned int *token,
+			   unsigned int flags);
 unsigned int xen_spin_adjust(const raw_spinlock_t *, unsigned int token);
 void xen_spin_kick(raw_spinlock_t *, unsigned int token);
 
@@ -193,9 +190,7 @@ static __always_inline int __ticket_spin_trylock(raw_spinlock_t *lock)
 }
 #endif
 
-#define __ticket_spin_count(lock) \
-	(per_cpu(runstate.state, (lock)->owner) == RUNSTATE_running \
-	 ? 1 << 10 : 2)
+#define __ticket_spin_count(lock) (vcpu_running((lock)->owner) ? 1 << 10 : 1)
 
 static inline int __ticket_spin_is_locked(raw_spinlock_t *lock)
 {
@@ -223,11 +218,11 @@ static __always_inline void __ticket_spin_lock(raw_spinlock_t *lock)
 	else {
 		token = xen_spin_adjust(lock, token);
 		raw_local_irq_restore(flags);
+		count = __ticket_spin_count(lock);
 		do {
-			count = __ticket_spin_count(lock);
 			__ticket_spin_lock_body;
 		} while (unlikely(!count)
-			 && !xen_spin_wait(lock, &token, flags));
+			 && (count = xen_spin_wait(lock, &token, flags)));
 	}
 	lock->owner = raw_smp_processor_id();
 }
@@ -241,11 +236,11 @@ static __always_inline void __ticket_spin_lock_flags(raw_spinlock_t *lock,
 	__ticket_spin_lock_preamble;
 	if (unlikely(!free)) {
 		token = xen_spin_adjust(lock, token);
+		count = __ticket_spin_count(lock);
 		do {
-			count = __ticket_spin_count(lock);
 			__ticket_spin_lock_body;
 		} while (unlikely(!count)
-			 && !xen_spin_wait(lock, &token, flags));
+			 && (count = xen_spin_wait(lock, &token, flags)));
 	}
 	lock->owner = raw_smp_processor_id();
 }

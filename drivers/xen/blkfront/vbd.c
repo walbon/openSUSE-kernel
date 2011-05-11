@@ -110,11 +110,7 @@ static const struct block_device_operations xlvbd_block_fops =
 	.owner = THIS_MODULE,
 	.open = blkif_open,
 	.release = blkif_release,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,28)
 	.ioctl  = blkif_ioctl,
-#else
-	.locked_ioctl  = blkif_ioctl,
-#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,16)
 	.getgeo = blkif_getgeo
 #endif
@@ -189,7 +185,8 @@ xlbd_alloc_major_info(int major, int minor, int index)
 			return NULL;
 		}
 
-		printk("xen-vbd: registered block device major %i\n", ptr->major);
+		pr_info("xen-vbd: registered block device major %i\n",
+			ptr->major);
 	}
 
 	ptr->minors = minors;
@@ -348,7 +345,8 @@ xlvbd_add(blkif_sector_t capacity, int vdevice, u16 vdisk_info,
 
 	if ((vdevice>>EXT_SHIFT) > 1) {
 		/* this is above the extended range; something is wrong */
-		printk(KERN_WARNING "blkfront: vdevice 0x%x is above the extended range; ignoring\n", vdevice);
+		pr_warning("blkfront: vdevice %#x is above the extended range;"
+			   " ignoring\n", vdevice);
 		return -ENODEV;
 	}
 
@@ -483,15 +481,16 @@ xlvbd_barrier(struct blkfront_info *info)
 		info->feature_barrier ? QUEUE_ORDERED_DRAIN : QUEUE_ORDERED_NONE, NULL);
 	if (err)
 		return err;
-	printk(KERN_INFO "blkfront: %s: barriers %s\n",
-	       info->gd->disk_name, info->feature_barrier ? "enabled" : "disabled");
+	pr_info("blkfront: %s: barriers %s\n",
+		info->gd->disk_name,
+		info->feature_barrier ? "enabled" : "disabled");
 	return 0;
 }
 #else
 int
 xlvbd_barrier(struct blkfront_info *info)
 {
-	printk(KERN_INFO "blkfront: %s: barriers disabled\n", info->gd->disk_name);
+	pr_info("blkfront: %s: barriers disabled\n", info->gd->disk_name);
 	return -ENOSYS;
 }
 #endif

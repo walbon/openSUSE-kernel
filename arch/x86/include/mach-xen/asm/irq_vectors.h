@@ -12,9 +12,10 @@
 
 #define RESCHEDULE_VECTOR		0
 #define CALL_FUNCTION_VECTOR		1
-#define CALL_FUNC_SINGLE_VECTOR		2
-#define REBOOT_VECTOR			3
-#define NR_IPIS				4
+#define NMI_VECTOR			0x02
+#define CALL_FUNC_SINGLE_VECTOR		3
+#define REBOOT_VECTOR			4
+#define NR_IPIS				5
 
 /*
  * The maximum number of vectors supported by i386 processors
@@ -57,21 +58,22 @@ static inline int invalid_vm86_irq(int irq)
  */
 #define PIRQ_BASE			0
 
-#define CPU_VECTOR_LIMIT		(  8 * NR_CPUS      )
 #define IO_APIC_VECTOR_LIMIT		( 32 * MAX_IO_APICS )
 
-#ifdef CONFIG_X86_IO_APIC
-# if !defined(NR_CPUS) || !defined(MAX_IO_APICS)
-/* nothing */
-# elif defined(CONFIG_SPARSE_IRQ)
+#ifdef CONFIG_SPARSE_IRQ
+# define CPU_VECTOR_LIMIT		(64 * NR_CPUS)
+#else
+# define CPU_VECTOR_LIMIT		(32 * NR_CPUS)
+#endif
+
+#if defined(CONFIG_X86_IO_APIC)
+# ifdef CONFIG_SPARSE_IRQ
+#  define NR_PIRQS			(NR_VECTORS + IO_APIC_VECTOR_LIMIT)
+# else
 #  define NR_PIRQS					\
-	(CPU_VECTOR_LIMIT > IO_APIC_VECTOR_LIMIT ?	\
+	(CPU_VECTOR_LIMIT < IO_APIC_VECTOR_LIMIT ?	\
 		(NR_VECTORS + CPU_VECTOR_LIMIT)  :	\
 		(NR_VECTORS + IO_APIC_VECTOR_LIMIT))
-# elif NR_CPUS < MAX_IO_APICS
-#  define NR_PIRQS 			(NR_VECTORS + 4*CPU_VECTOR_LIMIT)
-# else
-#  define NR_PIRQS			(NR_VECTORS + IO_APIC_VECTOR_LIMIT)
 # endif
 #elif defined(CONFIG_XEN_PCIDEV_FRONTEND)
 # define NR_PIRQS			(NR_VECTORS + CPU_VECTOR_LIMIT)
@@ -80,7 +82,7 @@ static inline int invalid_vm86_irq(int irq)
 #endif
 
 #ifndef __ASSEMBLY__
-#if defined(CONFIG_X86_IO_APIC) && defined(CONFIG_SPARSE_IRQ)
+#ifdef CONFIG_SPARSE_IRQ
 extern int nr_pirqs;
 #else
 # define nr_pirqs			NR_PIRQS
@@ -88,7 +90,11 @@ extern int nr_pirqs;
 #endif
 
 #define DYNIRQ_BASE			(PIRQ_BASE + nr_pirqs)
+#ifdef CONFIG_SPARSE_IRQ
+#define NR_DYNIRQS			(CPU_VECTOR_LIMIT + CONFIG_XEN_NR_GUEST_DEVICES)
+#else
 #define NR_DYNIRQS			(64 + CONFIG_XEN_NR_GUEST_DEVICES)
+#endif
 
 #define NR_IRQS				(NR_PIRQS + NR_DYNIRQS)
 

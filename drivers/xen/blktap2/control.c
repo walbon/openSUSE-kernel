@@ -4,7 +4,7 @@
 #include "blktap.h"
 
 static DEFINE_SPINLOCK(blktap_control_lock);
-struct blktap *blktaps[MAX_BLKTAP_DEVICE];
+struct blktap *blktaps[CONFIG_XEN_NR_TAP2_DEVICES];
 
 static int ring_major;
 static int device_major;
@@ -38,11 +38,11 @@ blktap_control_create_tap(void)
 	blktap_control_initialize_tap(tap);
 
 	spin_lock_irq(&blktap_control_lock);
-	for (minor = 0; minor < MAX_BLKTAP_DEVICE; minor++)
+	for (minor = 0; minor < CONFIG_XEN_NR_TAP2_DEVICES; minor++)
 		if (!blktaps[minor])
 			break;
 
-	if (minor == MAX_BLKTAP_DEVICE) {
+	if (minor == CONFIG_XEN_NR_TAP2_DEVICES) {
 		kfree(tap);
 		tap = NULL;
 		goto out;
@@ -70,7 +70,7 @@ blktap_control_allocate_tap(void)
 
 	spin_lock_irq(&blktap_control_lock);
 
-	for (minor = 0; minor < MAX_BLKTAP_DEVICE; minor++) {
+	for (minor = 0; minor < CONFIG_XEN_NR_TAP2_DEVICES; minor++) {
 		tap = blktaps[minor];
 		if (!tap)
 			goto found;
@@ -136,7 +136,7 @@ blktap_control_ioctl(struct inode *inode, struct file *filp,
 	case BLKTAP2_IOCTL_FREE_TAP:
 		dev = arg;
 
-		if (dev >= MAX_BLKTAP_DEVICE || !blktaps[dev])
+		if (dev >= CONFIG_XEN_NR_TAP2_DEVICES || !blktaps[dev])
 			return -EINVAL;
 
 		blktap_control_destroy_device(blktaps[dev]);
@@ -146,7 +146,7 @@ blktap_control_ioctl(struct inode *inode, struct file *filp,
 	return -ENOIOCTLCMD;
 }
 
-static struct file_operations blktap_control_file_operations = {
+static const struct file_operations blktap_control_file_operations = {
 	.owner    = THIS_MODULE,
 	.ioctl    = blktap_control_ioctl,
 };
@@ -230,7 +230,7 @@ blktap_control_free(void)
 {
 	int i;
 
-	for (i = 0; i < MAX_BLKTAP_DEVICE; i++)
+	for (i = 0; i < CONFIG_XEN_NR_TAP2_DEVICES; i++)
 		blktap_control_destroy_device(blktaps[i]);
 
 	if (blktap_control_registered)

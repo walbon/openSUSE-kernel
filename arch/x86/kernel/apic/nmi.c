@@ -27,9 +27,10 @@
 #include <linux/kdebug.h>
 #include <linux/smp.h>
 
-#ifdef ARCH_HAS_NMI_WATCHDOG
+#ifndef CONFIG_XEN
 #include <asm/i8259.h>
 #else
+#include <asm/ipi.h>
 #include <asm/nmi.h>
 #endif
 #include <asm/io_apic.h>
@@ -42,11 +43,11 @@
 
 int unknown_nmi_panic;
 
+static cpumask_t backtrace_mask __read_mostly;
+
 #ifdef ARCH_HAS_NMI_WATCHDOG
 
 int nmi_watchdog_enabled;
-
-static cpumask_t backtrace_mask __read_mostly;
 
 /* nmi_active:
  * >0: the lapic NMI watchdog is active, but can be disabled
@@ -393,6 +394,8 @@ void touch_nmi_watchdog(void)
 }
 EXPORT_SYMBOL(touch_nmi_watchdog);
 
+#endif /* ARCH_HAS_NMI_WATCHDOG */
+
 notrace __kprobes int
 nmi_watchdog_tick(struct pt_regs *regs, unsigned reason)
 {
@@ -413,12 +416,17 @@ nmi_watchdog_tick(struct pt_regs *regs, unsigned reason)
 		touched = 1;
 	}
 
+#ifdef ARCH_HAS_NMI_WATCHDOG
 	sum = get_timer_irqs(cpu);
 
 	if (__get_cpu_var(nmi_touch)) {
 		__get_cpu_var(nmi_touch) = 0;
 		touched = 1;
 	}
+#else
+	sum = 0;
+	(void)(sum + touched);
+#endif
 
 	/* We can be called before check_nmi_watchdog, hence NULL check. */
 	if (cpumask_test_cpu(cpu, &backtrace_mask)) {
@@ -434,6 +442,7 @@ nmi_watchdog_tick(struct pt_regs *regs, unsigned reason)
 		rc = 1;
 	}
 
+#ifdef ARCH_HAS_NMI_WATCHDOG
 	/* Could check oops_in_progress here too, but it's safer not to */
 	if (mce_in_progress())
 		touched = 1;
@@ -472,10 +481,9 @@ nmi_watchdog_tick(struct pt_regs *regs, unsigned reason)
 		rc = 1;
 		break;
 	}
+#endif /* ARCH_HAS_NMI_WATCHDOG */
 	return rc;
 }
-
-#endif /* ARCH_HAS_NMI_WATCHDOG */
 
 #ifdef CONFIG_SYSCTL
 
@@ -567,7 +575,6 @@ int do_nmi_callback(struct pt_regs *regs, int cpu)
 	return 0;
 }
 
-#ifdef ARCH_HAS_NMI_WATCHDOG
 void arch_trigger_all_cpu_backtrace(void)
 {
 	int i;
@@ -575,7 +582,11 @@ void arch_trigger_all_cpu_backtrace(void)
 	cpumask_copy(&backtrace_mask, cpu_online_mask);
 
 	printk(KERN_INFO "sending NMI to all CPUs:\n");
+#ifndef CONFIG_XEN
 	apic->send_IPI_all(NMI_VECTOR);
+#else
+	xen_send_IPI_all(NMI_VECTOR);
+#endif
 
 	/* Wait for up to 10 seconds for all CPUs to do the backtrace */
 	for (i = 0; i < 10 * 1000; i++) {
@@ -584,4 +595,3 @@ void arch_trigger_all_cpu_backtrace(void)
 		mdelay(1);
 	}
 }
-#endif

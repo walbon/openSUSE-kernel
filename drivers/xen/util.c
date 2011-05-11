@@ -14,7 +14,7 @@ static struct class *_get_xen_class(void)
 		xen_class = class_create(THIS_MODULE, "xen");
 	mutex_unlock(&xc_mutex);
 	if (IS_ERR(xen_class))
-		printk("Failed to create xen sysfs class.\n");
+		pr_err("failed to create xen sysfs class\n");
 
 	return xen_class;
 }
@@ -27,7 +27,6 @@ struct class *get_xen_class(void)
 }
 EXPORT_SYMBOL_GPL(get_xen_class);
 
-#if defined(CONFIG_XEN_BACKEND) || defined(CONFIG_XEN_BACKEND_MODULE)
 static void xcdev_release(struct device *dev)
 {
 	kfree(dev);
@@ -73,4 +72,3 @@ struct device *xen_class_device_create(struct device_type *type,
 	return ERR_PTR(err);
 }
 EXPORT_SYMBOL_GPL(xen_class_device_create);
-#endif

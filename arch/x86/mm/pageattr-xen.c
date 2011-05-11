@@ -675,7 +675,29 @@ repeat:
 		 * Do we really change anything ?
 		 */
 		if (__pte_val(old_pte) != __pte_val(new_pte)) {
-			set_pte_atomic(kpte, new_pte);
+			mmu_update_t u;
+
+			u.ptr = virt_to_machine(kpte);
+			u.val = __pte_val(new_pte);
+			WARN_ON_ONCE(arch_use_lazy_mmu_mode());
+			do {
+				err = HYPERVISOR_mmu_update(&u, 1, NULL,
+							    DOMID_SELF);
+				switch (err) {
+				case 0:
+					break;
+				case -ENOMEM:
+					BUG_ON(!primary);
+					BUG_ON(!((pgprot_val(cpa->mask_set) |
+						  pgprot_val(cpa->mask_clr)) &
+						 _PAGE_CACHE_MASK));
+					if (hypervisor_oom())
+						continue;
+					/* fall through */
+				default:
+					return err;
+				}
+			} while (err);
 			cpa->flags |= CPA_FLUSHTLB;
 		}
 		cpa->numpages = 1;

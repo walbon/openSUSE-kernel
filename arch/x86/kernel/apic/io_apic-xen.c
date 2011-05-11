@@ -31,8 +31,6 @@
 #include <linux/acpi.h>
 #include <linux/module.h>
 #include <linux/sysdev.h>
-#include <linux/msi.h>
-#include <linux/htirq.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <linux/jiffies.h>	/* time_after() */
@@ -40,8 +38,6 @@
 #include <acpi/acpi_bus.h>
 #endif
 #include <linux/bootmem.h>
-#include <linux/dmar.h>
-#include <linux/hpet.h>
 
 #include <asm/idle.h>
 #include <asm/io.h>
@@ -54,14 +50,8 @@
 #include <asm/timer.h>
 #include <asm/i8259.h>
 #include <asm/nmi.h>
-#include <asm/msidef.h>
-#include <asm/hypertransport.h>
 #include <asm/setup.h>
-#include <asm/irq_remapping.h>
-#include <asm/hpet.h>
 #include <asm/hw_irq.h>
-#include <asm/uv/uv_hub.h>
-#include <asm/uv/uv_irq.h>
 
 #include <asm/apic.h>
 
@@ -1451,8 +1441,8 @@ int setup_ioapic_entry(int apic_id, int irq,
 	 */
 	memset(entry,0,sizeof(*entry));
 
-	if (intr_remapping_enabled) {
 #ifndef CONFIG_XEN
+	if (intr_remapping_enabled) {
 		struct intel_iommu *iommu = map_ioapic_to_ir(apic_id);
 		struct irte irte;
 		struct IR_IO_APIC_route_entry *ir_entry =
@@ -1496,8 +1486,9 @@ int setup_ioapic_entry(int apic_id, int irq,
 		 * irq handler will do the explicit EOI to the io-apic.
 		 */
 		ir_entry->vector = pin;
+	} else
 #endif
-	} else {
+	{
 		entry->delivery_mode = apic->irq_delivery_mode;
 		entry->dest_mode = apic->irq_dest_mode;
 		entry->dest = destination;
@@ -1516,6 +1507,10 @@ int setup_ioapic_entry(int apic_id, int irq,
 	return 0;
 }
 
+static struct {
+	DECLARE_BITMAP(pin_programmed, MP_MAX_IOAPIC_PIN + 1);
+} mp_ioapic_routing[MAX_IO_APICS];
+
 static void setup_IO_APIC_irq(int apic_id, int pin, unsigned int irq, struct irq_desc *desc,
 			      int trigger, int polarity)
 {
@@ -1527,6 +1522,44 @@ static void setup_IO_APIC_irq(int apic_id, int pin, unsigned int irq, struct irq
 		return;
 
 	cfg = desc->chip_data;
+
+#ifdef CONFIG_XEN
+	/*
+	 * For legacy IRQs we may get here before trigger mode and polarity
+	 * get obtained, but Xen refuses to set those through
+	 * PHYSDEVOP_setup_gsi more than once (perhaps even at all).
+	 */
+	if (irq >= NR_IRQS_LEGACY
+	    || test_bit(pin, mp_ioapic_routing[apic_id].pin_programmed)) {
+		struct physdev_setup_gsi setup_gsi = {
+			.gsi = irq,
+			.triggering = trigger,
+			.polarity = polarity
+		};
+		struct physdev_map_pirq map_pirq = {
+			.domid = DOMID_SELF,
+			.type = MAP_PIRQ_TYPE_GSI,
+			.index = irq,
+			.pirq = irq
+		};
+
+		switch (HYPERVISOR_physdev_op(PHYSDEVOP_setup_gsi,
+					      &setup_gsi)) {
+		case -EEXIST:
+			if (irq < NR_IRQS_LEGACY)
+				break;
+			/* fall through */
+		case 0:
+			evtchn_register_pirq(irq);
+			if (HYPERVISOR_physdev_op(PHYSDEVOP_map_pirq,
+						  &map_pirq) == 0) {
+				/* fake (for init_IO_APIC_traps()): */
+				cfg->vector = irq;
+				return;
+			}
+		}
+	}
+#endif
 
 	if (assign_irq_vector(irq, cfg, apic->target_cpus()))
 		return;
@@ -1558,10 +1591,6 @@ static void setup_IO_APIC_irq(int apic_id, int pin, unsigned int irq, struct irq
 
 	ioapic_write_entry(apic_id, pin, entry);
 }
-
-static struct {
-	DECLARE_BITMAP(pin_programmed, MP_MAX_IOAPIC_PIN + 1);
-} mp_ioapic_routing[MAX_IO_APICS];
 
 static void __init setup_IO_APIC_irqs(void)
 {
@@ -3989,7 +4018,7 @@ int __init arch_probe_nr_irqs(void)
 	/*
 	 * for MSI and HT dyn irq
 	 */
-	nr += nr_irqs_gsi * 16;
+	nr += nr_irqs_gsi * 64;
 #endif
 	if (nr < nr_irqs)
 		nr_irqs = nr;
@@ -4100,10 +4129,9 @@ u8 __init io_apic_unique_id(u8 id)
 #endif
 }
 
-#ifdef CONFIG_X86_32
+#if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)
 int __init io_apic_get_unique_id(int ioapic, int apic_id)
 {
-#ifndef CONFIG_XEN
 	union IO_APIC_reg_00 reg_00;
 	static physid_mask_t apic_id_map = PHYSID_MASK_NONE;
 	physid_mask_t tmp;
@@ -4172,7 +4200,6 @@ int __init io_apic_get_unique_id(int ioapic, int apic_id)
 
 	apic_printk(APIC_VERBOSE, KERN_INFO
 			"IOAPIC[%d]: Assigned apic_id %d\n", ioapic, apic_id);
-#endif /* !CONFIG_XEN */
 
 	return apic_id;
 }

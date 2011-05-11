@@ -105,13 +105,24 @@ struct acpi_processor_cx {
 };
 
 struct acpi_processor_power {
+#ifdef CONFIG_PROCESSOR_EXTERNAL_CONTROL
+	union { /* 'dev' is actually only used for taking its address. */
+#endif
 	struct cpuidle_device dev;
+#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
 	struct acpi_processor_cx *state;
 	unsigned long bm_check_timestamp;
 	u32 default_state;
+#else
+	struct {
+#endif
 	int count;
 	struct acpi_processor_cx states[ACPI_PROCESSOR_MAX_POWER];
+#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
 	int timer_broadcast_on_state;
+#else
+	}; };
+#endif
 };
 
 /* Performance Management */

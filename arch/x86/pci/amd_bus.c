@@ -2,10 +2,11 @@
 #include <linux/pci.h>
 #include <linux/topology.h>
 #include <linux/cpu.h>
+#include <asm/k8.h>
+#include <asm/pci-direct.h>
 #include <asm/pci_x86.h>
 
 #ifdef CONFIG_X86_64
-#include <asm/pci-direct.h>
 #include <asm/mpspec.h>
 #include <linux/cpumask.h>
 #endif
@@ -544,6 +545,34 @@ static struct notifier_block __cpuinitdata amd_cpu_notifier = {
 };
 #endif /* CONFIG_XEN */
 
+static void __init pci_enable_pci_io_ecs(void)
+{
+#if defined(CONFIG_K8_NB) && defined(CONFIG_XEN)/* native could use this too */
+	unsigned int i, n;
+
+	for (n = i = 0; !n && k8_bus_dev_ranges[i].dev_limit; ++i) {
+		u8 bus = k8_bus_dev_ranges[i].bus;
+		u8 slot = k8_bus_dev_ranges[i].dev_base;
+		u8 limit = k8_bus_dev_ranges[i].dev_limit;
+
+		for (; slot < limit; ++slot) {
+			u32 val = read_pci_config(bus, slot, 3, 0);
+
+			if (!early_is_k8_nb(val))
+				continue;
+
+			val = read_pci_config(bus, slot, 3, 0x8c);
+			if (!(val & (ENABLE_CF8_EXT_CFG >> 32))) {
+				val |= ENABLE_CF8_EXT_CFG >> 32;
+				write_pci_config(bus, slot, 3, 0x8c, val);
+			}
+			++n;
+		}
+	}
+	pr_info("Extended Config Space enabled on %u nodes\n", n);
+#endif
+}
+
 static int __init pci_io_ecs_init(void)
 {
 	int cpu;
@@ -551,6 +580,10 @@ static int __init pci_io_ecs_init(void)
 	/* assume all cpus from fam10h have IO ECS */
         if (boot_cpu_data.x86 < 0x10)
 		return 0;
+
+	/* Try the PCI method first. */
+	if (early_pci_allowed())
+		pci_enable_pci_io_ecs();
 
 #ifndef CONFIG_XEN
 	register_cpu_notifier(&amd_cpu_notifier);

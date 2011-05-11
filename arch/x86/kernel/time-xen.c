@@ -89,20 +89,6 @@ static DECLARE_WORK(clock_was_set_work, __clock_was_set);
  */
 #define clobber_induction_variable(v) asm ( "" : "+r" (v) )
 
-static inline void __normalize_time(time_t *sec, s64 *nsec)
-{
-	while (*nsec >= NSEC_PER_SEC) {
-		clobber_induction_variable(*nsec);
-		(*nsec) -= NSEC_PER_SEC;
-		(*sec)++;
-	}
-	while (*nsec < 0) {
-		clobber_induction_variable(*nsec);
-		(*nsec) += NSEC_PER_SEC;
-		(*sec)--;
-	}
-}
-
 /* Does this guest OS track Xen time, or set its wall clock independently? */
 static int independent_wallclock = 0;
 static int __init __independent_wallclock(char *str)
@@ -303,8 +289,7 @@ static void sync_xen_wallclock(unsigned long dummy);
 static DEFINE_TIMER(sync_xen_wallclock_timer, sync_xen_wallclock, 0, 0);
 static void sync_xen_wallclock(unsigned long dummy)
 {
-	time_t sec;
-	s64 nsec;
+	struct timespec now;
 	struct xen_platform_op op;
 
 	BUG_ON(!is_initial_xendomain());
@@ -313,13 +298,11 @@ static void sync_xen_wallclock(unsigned long dummy)
 
 	write_seqlock_irq(&xtime_lock);
 
-	sec  = xtime.tv_sec;
-	nsec = xtime.tv_nsec;
-	__normalize_time(&sec, &nsec);
+	set_normalized_timespec(&now, xtime.tv_sec, xtime.tv_nsec);
 
 	op.cmd = XENPF_settime;
-	op.u.settime.secs        = sec;
-	op.u.settime.nsecs       = nsec;
+	op.u.settime.secs        = now.tv_sec;
+	op.u.settime.nsecs       = now.tv_nsec;
 	op.u.settime.system_time = processed_system_time;
 	WARN_ON(HYPERVISOR_platform_op(&op));
 
@@ -907,14 +890,12 @@ void xen_safe_halt(void)
 	HYPERVISOR_block();
 	start_hz_timer();
 }
-EXPORT_SYMBOL(xen_safe_halt);
 
 void xen_halt(void)
 {
 	if (irqs_disabled())
 		VOID(HYPERVISOR_vcpu_op(VCPUOP_down, smp_processor_id(), NULL));
 }
-EXPORT_SYMBOL(xen_halt);
 
 #ifdef CONFIG_SMP
 int __cpuinit local_setup_timer(unsigned int cpu)

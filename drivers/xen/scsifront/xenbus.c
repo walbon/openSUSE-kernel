@@ -27,7 +27,11 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
  */
- 
+
+/*
+* Patched to support >2TB drives
+* 2010, Samuel Kvasnica, IMS Nanofabrication AG
+*/
 
 #include <linux/version.h>
 #include "common.h"
@@ -211,7 +215,7 @@ static int scsifront_probe(struct xenbus_device *dev,
 	if (IS_ERR(info->kthread)) {
 		err = PTR_ERR(info->kthread);
 		info->kthread = NULL;
-		printk(KERN_ERR "scsifront: kthread start err %d\n", err);
+		pr_err("scsifront: kthread start err %d\n", err);
 		goto free_sring;
 	}
 
@@ -219,10 +223,11 @@ static int scsifront_probe(struct xenbus_device *dev,
 	host->max_channel = 0;
 	host->max_lun     = VSCSIIF_MAX_LUN;
 	host->max_sectors = (VSCSIIF_SG_TABLESIZE - 1) * PAGE_SIZE / 512;
+	host->max_cmd_len = VSCSIIF_MAX_COMMAND_SIZE;
 
 	err = scsi_add_host(host, &dev->dev);
 	if (err) {
-		printk(KERN_ERR "scsifront: fail to add scsi host %d\n", err);
+		pr_err("scsifront: fail to add scsi host %d\n", err);
 		goto free_sring;
 	}
 
@@ -313,7 +318,7 @@ static void scsifront_do_lun_hotplug(struct vscsifrnt_info *info, int op)
 			if (device_state == XenbusStateInitialised) {
 				sdev = scsi_device_lookup(info->host, chn, tgt, lun);
 				if (sdev) {
-					printk(KERN_ERR "scsifront: Device already in use.\n");
+					pr_err("scsifront: Device already in use.\n");
 					scsi_device_put(sdev);
 					xenbus_printf(XBT_NIL, dev->nodename,
 						state_str, "%d", XenbusStateClosed);

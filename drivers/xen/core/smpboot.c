@@ -32,24 +32,12 @@ extern void failsafe_callback(void);
 extern void system_call(void);
 extern void smp_trap_init(trap_info_t *);
 
-/* Number of siblings per CPU package */
-int smp_num_siblings = 1;
-
 cpumask_var_t vcpu_initialized_mask;
 
 DEFINE_PER_CPU(struct cpuinfo_x86, cpu_info);
 EXPORT_PER_CPU_SYMBOL(cpu_info);
 
 static int __read_mostly ipi_irq = -1;
-
-#ifdef CONFIG_X86_LOCAL_APIC
-#define set_cpu_to_apicid(cpu, apicid) (per_cpu(x86_cpu_to_apicid, cpu) = (apicid))
-#else
-#define set_cpu_to_apicid(cpu, apicid)
-#endif
-
-DEFINE_PER_CPU(cpumask_var_t, cpu_sibling_map);
-DEFINE_PER_CPU(cpumask_var_t, cpu_core_map);
 
 void __init prefill_possible_map(void)
 {
@@ -76,30 +64,6 @@ void __init prefill_possible_map(void)
 			++total_cpus;
 }
 
-static inline void
-set_cpu_sibling_map(unsigned int cpu)
-{
-	cpu_data(cpu).phys_proc_id = cpu;
-	cpu_data(cpu).cpu_core_id  = 0;
-
-	cpumask_copy(cpu_sibling_mask(cpu), cpumask_of(cpu));
-	cpumask_copy(cpu_core_mask(cpu), cpumask_of(cpu));
-
-	cpu_data(cpu).booted_cores = 1;
-}
-
-static void __cpuinit
-remove_siblinginfo(unsigned int cpu)
-{
-	cpu_data(cpu).phys_proc_id = BAD_APICID;
-	cpu_data(cpu).cpu_core_id  = BAD_APICID;
-
-	cpumask_clear(cpu_sibling_mask(cpu));
-	cpumask_clear(cpu_core_mask(cpu));
-
-	cpu_data(cpu).booted_cores = 0;
-}
-
 static irqreturn_t ipi_interrupt(int irq, void *dev_id)
 {
 	static void(*const handlers[])(struct pt_regs *) = {
@@ -109,18 +73,24 @@ static irqreturn_t ipi_interrupt(int irq, void *dev_id)
 		[REBOOT_VECTOR] = smp_reboot_interrupt,
 	};
 	unsigned long *pending = __get_cpu_var(ipi_pending);
-	unsigned int ipi = find_first_bit(pending, NR_IPIS);
 	struct pt_regs *regs = get_irq_regs();
 	irqreturn_t ret = IRQ_NONE;
 
-	while (ipi < NR_IPIS) {
-		clear_bit(ipi, pending);
-		handlers[ipi](regs);
-		ret = IRQ_HANDLED;
+	for (;;) {
+		unsigned int ipi = find_first_bit(pending, NR_IPIS);
 
-		ipi = find_next_bit(pending, NR_IPIS, ipi);
-		if (unlikely(ipi >= NR_IPIS))
+		if (ipi >= NR_IPIS) {
+			clear_ipi_evtchn();
 			ipi = find_first_bit(pending, NR_IPIS);
+		}
+		if (ipi >= NR_IPIS)
+			return ret;
+		ret = IRQ_HANDLED;
+		do {
+			clear_bit(ipi, pending);
+			handlers[ipi](regs);
+			ipi = find_next_bit(pending, NR_IPIS, ipi);
+		} while (ipi < NR_IPIS);
 	}
 
 	return ret;
@@ -254,21 +224,8 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 	apicid = 0;
 	if (HYPERVISOR_vcpu_op(VCPUOP_get_physid, 0, &cpu_id) == 0)
 		apicid = xen_vcpu_physid_to_x86_apicid(cpu_id.phys_id);
-	boot_cpu_data.apicid = apicid;
 	cpu_data(0) = boot_cpu_data;
-
-	set_cpu_to_apicid(0, apicid);
-
 	current_thread_info()->cpu = 0;
-
-	for_each_possible_cpu (cpu) {
-		alloc_cpumask_var(&per_cpu(cpu_sibling_map, cpu), GFP_KERNEL);
-		alloc_cpumask_var(&per_cpu(cpu_core_map, cpu), GFP_KERNEL);
-		cpumask_clear(cpu_sibling_mask(cpu));
-		cpumask_clear(cpu_core_mask(cpu));
-	}
-
-	set_cpu_sibling_map(0);
 
 	if (xen_smp_intr_init(0))
 		BUG();
@@ -279,7 +236,7 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 
 	/* Restrict the possible_map according to max_cpus. */
 	while ((num_possible_cpus() > 1) && (num_possible_cpus() > max_cpus)) {
-		for (cpu = nr_cpu_ids-1; !cpumask_test_cpu(cpu, cpu_possible_mask); cpu--)
+		for (cpu = nr_cpu_ids-1; !cpu_possible(cpu); cpu--)
 			continue;
 		set_cpu_possible(cpu, false);
 	}
@@ -300,9 +257,6 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 			apicid = xen_vcpu_physid_to_x86_apicid(cpu_id.phys_id);
 		cpu_data(cpu) = boot_cpu_data;
 		cpu_data(cpu).cpu_index = cpu;
-		cpu_data(cpu).apicid = apicid;
-
-		set_cpu_to_apicid(cpu, apicid);
 
 #ifdef __x86_64__
 		clear_tsk_thread_flag(idle, TIF_FORK);
@@ -368,8 +322,6 @@ int __cpuinit __cpu_disable(void)
 	if (cpu == 0)
 		return -EBUSY;
 
-	remove_siblinginfo(cpu);
-
 	set_cpu_online(cpu, false);
 	fixup_irqs();
 
@@ -405,14 +357,11 @@ int __cpuinit __cpu_up(unsigned int cpu)
 		alternatives_smp_switch(1);
 
 	/* This must be done before setting cpu_online_map */
-	set_cpu_sibling_map(cpu);
 	wmb();
 
 	rc = xen_smp_intr_init(cpu);
-	if (rc) {
-		remove_siblinginfo(cpu);
+	if (rc)
 		return rc;
-	}
 
 	set_cpu_online(cpu, true);
 

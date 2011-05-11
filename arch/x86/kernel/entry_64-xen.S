@@ -173,13 +173,6 @@ GLOBAL(return_to_handler)
 #define retint_kernel retint_restore_args
 #endif
 
-#ifdef CONFIG_PARAVIRT
-ENTRY(native_usergs_sysret64)
-	swapgs
-	sysretq
-ENDPROC(native_usergs_sysret64)
-#endif /* CONFIG_PARAVIRT */
-
 
 .macro TRACE_IRQS_IRETQ offset=ARGOFFSET
 #ifdef CONFIG_TRACE_IRQFLAGS

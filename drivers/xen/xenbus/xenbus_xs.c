@@ -135,9 +135,8 @@ static int get_error(const char *errorstring)
 
 	for (i = 0; strcmp(errorstring, xsd_errors[i].errstring) != 0; i++) {
 		if (i == ARRAY_SIZE(xsd_errors) - 1) {
-			printk(KERN_WARNING
-			       "XENBUS xen store gave: unknown error %s",
-			       errorstring);
+			pr_warning("XENBUS xen store gave: unknown error %s",
+				   errorstring);
 			return EINVAL;
 		}
 	}
@@ -281,9 +280,9 @@ static void *xs_talkv(struct xenbus_transaction t,
 
 	if (msg.type != type) {
 		if (printk_ratelimit())
-			printk(KERN_WARNING
-			       "XENBUS unexpected type [%d], expected [%d]\n",
-			       msg.type, type);
+			pr_warning("XENBUS unexpected type [%d],"
+				   " expected [%d]\n",
+				   msg.type, type);
 		kfree(ret);
 		return ERR_PTR(-EINVAL);
 	}
@@ -542,18 +541,15 @@ int xenbus_printf(struct xenbus_transaction t,
 {
 	va_list ap;
 	int ret;
-#define PRINTF_BUFFER_SIZE 4096
 	char *printf_buffer;
 
-	printf_buffer = kmalloc(PRINTF_BUFFER_SIZE, GFP_NOIO | __GFP_HIGH);
-	if (printf_buffer == NULL)
-		return -ENOMEM;
-
 	va_start(ap, fmt);
-	ret = vsnprintf(printf_buffer, PRINTF_BUFFER_SIZE, fmt, ap);
+	printf_buffer = kvasprintf(GFP_NOIO | __GFP_HIGH, fmt, ap);
 	va_end(ap);
 
-	BUG_ON(ret > PRINTF_BUFFER_SIZE-1);
+	if (!printf_buffer)
+		return -ENOMEM;
+
 	ret = xenbus_write(t, dir, node, printf_buffer);
 
 	kfree(printf_buffer);
@@ -683,9 +679,8 @@ void unregister_xenbus_watch(struct xenbus_watch *watch)
 
 	err = xs_unwatch(watch->node, token);
 	if (err)
-		printk(KERN_WARNING
-		       "XENBUS Failed to release watch %s: %i\n",
-		       watch->node, err);
+		pr_warning("XENBUS Failed to release watch %s: %i\n",
+			   watch->node, err);
 
 	up_read(&xs_state.watch_mutex);
 
@@ -919,8 +914,8 @@ static int xenbus_thread(void *unused)
 	for (;;) {
 		err = process_msg();
 		if (err)
-			printk(KERN_WARNING "XENBUS error %d while reading "
-			       "message\n", err);
+			pr_warning("XENBUS error %d while reading "
+				   "message\n", err);
 		if (kthread_should_stop())
 			break;
 	}

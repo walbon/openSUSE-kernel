@@ -52,8 +52,6 @@
 #endif
 
 #include <xen/interface/physdev.h>
-#include <xen/interface/vcpu.h>
-#include <xen/cpu_hotplug.h>
 
 #include <linux/err.h>
 

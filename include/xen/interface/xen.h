@@ -261,6 +261,9 @@ DEFINE_XEN_GUEST_HANDLE(xen_pfn_t);
  * cmd: MMUEXT_COPY_PAGE
  * mfn: Machine frame number of the destination page.
  * src_mfn: Machine frame number of the source page.
+ *
+ * cmd: MMUEXT_[UN]MARK_SUPER
+ * mfn: Machine frame number of head of superpage to be [un]marked.
  */
 #define MMUEXT_PIN_L1_TABLE      0
 #define MMUEXT_PIN_L2_TABLE      1
@@ -280,13 +283,15 @@ DEFINE_XEN_GUEST_HANDLE(xen_pfn_t);
 #define MMUEXT_CLEAR_PAGE       16
 #define MMUEXT_COPY_PAGE        17
 #define MMUEXT_FLUSH_CACHE_GLOBAL 18
+#define MMUEXT_MARK_SUPER       19
+#define MMUEXT_UNMARK_SUPER     20
 
 #ifndef __ASSEMBLY__
 struct mmuext_op {
     unsigned int cmd;
     union {
         /* [UN]PIN_TABLE, NEW_BASEPTR, NEW_USER_BASEPTR
-         * CLEAR_PAGE, COPY_PAGE */
+         * CLEAR_PAGE, COPY_PAGE, [UN]MARK_SUPER */
         xen_pfn_t     mfn;
         /* INVLPG_LOCAL, INVLPG_ALL, SET_LDT */
         unsigned long linear_addr;
@@ -383,8 +388,11 @@ typedef uint16_t domid_t;
  * DOMID_COW is used as the owner of sharable pages */
 #define DOMID_COW  (0x7FF3U)
 
-/* DOMID_INVALID is used to identity invalid domid */
-#define DOMID_INVALID (0x7FFFU)
+/* DOMID_INVALID is used to identify pages with unknown owner. */
+#define DOMID_INVALID (0x7FF4U)
+
+/* Idle domain. */
+#define DOMID_IDLE (0x7FFFU)
 
 /*
  * Send an array of these to HYPERVISOR_mmu_update().
@@ -599,7 +607,9 @@ struct start_info {
     unsigned long pt_base;      /* VIRTUAL address of page directory.     */
     unsigned long nr_pt_frames; /* Number of bootstrap p.t. frames.       */
     unsigned long mfn_list;     /* VIRTUAL address of page-frame list.    */
-    unsigned long mod_start;    /* VIRTUAL address of pre-loaded module.  */
+    unsigned long mod_start;    /* VIRTUAL address of pre-loaded module   */
+                                /* (PFN of pre-loaded module if           */
+                                /*  SIF_MOD_START_PFN set in flags).      */
     unsigned long mod_len;      /* Size (bytes) of pre-loaded module.     */
     int8_t cmd_line[MAX_GUEST_CMDLINE];
     /* The pfn range here covers both page table and p->m table frames.   */
@@ -618,6 +628,7 @@ typedef struct start_info start_info_t;
 #define SIF_PRIVILEGED    (1<<0)  /* Is the domain privileged? */
 #define SIF_INITDOMAIN    (1<<1)  /* Is this the initial control domain? */
 #define SIF_MULTIBOOT_MOD (1<<2)  /* Is mod_start a multiboot module? */
+#define SIF_MOD_START_PFN (1<<3)  /* Is mod_start a PFN? */
 #define SIF_PM_MASK       (0xFF<<8) /* reserve 1 byte for xen-pm options */
 
 /*
@@ -708,12 +719,21 @@ __DEFINE_XEN_GUEST_HANDLE(uint64, uint64_t);
 
 /* Default definitions for macros used by domctl/sysctl. */
 #if defined(__XEN__) || defined(__XEN_TOOLS__)
+
 #ifndef uint64_aligned_t
 #define uint64_aligned_t uint64_t
 #endif
 #ifndef XEN_GUEST_HANDLE_64
 #define XEN_GUEST_HANDLE_64(name) XEN_GUEST_HANDLE(name)
 #endif
+
+#ifndef __ASSEMBLY__
+struct xenctl_cpumap {
+    XEN_GUEST_HANDLE_64(uint8) bitmap;
+    uint32_t nr_cpus;
+};
 #endif
+
+#endif /* defined(__XEN__) || defined(__XEN_TOOLS__) */
 
 #endif /* __XEN_PUBLIC_XEN_H__ */

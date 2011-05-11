@@ -158,21 +158,6 @@ int create_lookup_pte_addr(struct mm_struct *mm,
 
 EXPORT_SYMBOL(create_lookup_pte_addr);
 
-static int noop_fn(
-	pte_t *pte, struct page *pmd_page, unsigned long addr, void *data)
-{
-	return 0;
-}
-
-int touch_pte_range(struct mm_struct *mm,
-		    unsigned long address,
-		    unsigned long size)
-{
-	return apply_to_page_range(mm, address, size, noop_fn, NULL);
-}
-
-EXPORT_SYMBOL(touch_pte_range);
-
 int page_is_ram(unsigned long pagenr)
 {
 	resource_size_t addr, end;

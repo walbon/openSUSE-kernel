@@ -126,9 +126,9 @@ void __remove_from_page_cache(struct page *page)
 	 * stale data around in the precache once our page is gone
 	 */
 	if (PageUptodate(page))
-		precache_put(page->mapping, page->index, page);
+		precache_put(mapping, page->index, page);
 	else
-		precache_flush(page->mapping, page->index);
+		precache_flush(mapping, page->index);
 
 	radix_tree_delete(&mapping->page_tree, page->index);
 	page->mapping = NULL;

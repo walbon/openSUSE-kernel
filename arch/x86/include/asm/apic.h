@@ -292,15 +292,18 @@ static inline void apic_disable(void) { }
 struct apic {
 	char *name;
 
+#ifndef CONFIG_XEN
 	int (*probe)(void);
 	int (*acpi_madt_oem_check)(char *oem_id, char *oem_table_id);
 	int (*apic_id_registered)(void);
+#endif
 
 	u32 irq_delivery_mode;
 	u32 irq_dest_mode;
 
 	const struct cpumask *(*target_cpus)(void);
 
+#ifndef CONFIG_XEN
 	int disable_esr;
 
 	int dest_logical;
@@ -321,8 +324,10 @@ struct apic {
 	void (*setup_portio_remap)(void);
 	int (*check_phys_apicid_present)(int phys_apicid);
 	void (*enable_apic_mode)(void);
+#endif
 	int (*phys_pkg_id)(int cpuid_apic, int index_msb);
 
+#ifndef CONFIG_XEN
 	/*
 	 * When one of the next two hooks returns 1 the apic
 	 * is switched to this. Essentially they are additional
@@ -337,6 +342,7 @@ struct apic {
 	unsigned int (*cpu_mask_to_apicid)(const struct cpumask *cpumask);
 	unsigned int (*cpu_mask_to_apicid_and)(const struct cpumask *cpumask,
 					       const struct cpumask *andmask);
+#endif
 
 	/* ipi */
 	void (*send_IPI_mask)(const struct cpumask *mask, int vector);
@@ -346,6 +352,7 @@ struct apic {
 	void (*send_IPI_all)(int vector);
 	void (*send_IPI_self)(int vector);
 
+#ifndef CONFIG_XEN
 	/* wakeup_secondary_cpu */
 	int (*wakeup_secondary_cpu)(int apicid, unsigned long start_eip);
 
@@ -363,6 +370,7 @@ struct apic {
 	void (*icr_write)(u32 low, u32 high);
 	void (*wait_icr_idle)(void);
 	u32 (*safe_wait_icr_idle)(void);
+#endif
 };
 
 /*
@@ -485,10 +493,10 @@ static inline const struct cpumask *default_target_cpus(void)
 #endif
 }
 
+#ifndef CONFIG_XEN
+
 DECLARE_EARLY_PER_CPU(u16, x86_bios_cpu_apicid);
 
-
-#ifndef CONFIG_XEN
 
 static inline unsigned int read_apic_id(void)
 {

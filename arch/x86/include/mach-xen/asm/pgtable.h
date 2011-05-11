@@ -29,9 +29,6 @@ extern struct list_head pgd_list;
 #define set_pte(ptep, pte)		xen_set_pte(ptep, pte)
 #define set_pte_at(mm, addr, ptep, pte)	xen_set_pte_at(mm, addr, ptep, pte)
 
-#define set_pte_atomic(ptep, pte)					\
-	xen_set_pte_atomic(ptep, pte)
-
 #define set_pmd(pmdp, pmd)		xen_set_pmd(pmdp, pmd)
 
 #ifndef __PAGETABLE_PUD_FOLDED
@@ -727,9 +724,6 @@ int direct_kernel_remap_pfn_range(unsigned long address,
 int create_lookup_pte_addr(struct mm_struct *mm,
                            unsigned long address,
                            uint64_t *ptep);
-int touch_pte_range(struct mm_struct *mm,
-                    unsigned long address,
-                    unsigned long size);
 
 #endif	/* __ASSEMBLY__ */
 

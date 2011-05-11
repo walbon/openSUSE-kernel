@@ -241,8 +241,8 @@ static void xenfb_update_screen(struct xenfb_info *info)
 	mutex_unlock(&info->mm_lock);
 
 	if (x2 < x1 || y2 < y1) {
-		printk("xenfb_update_screen bogus rect %d %d %d %d\n",
-		       x1, x2, y1, y2);
+		pr_warning("xenfb_update_screen bogus rect %d %d %d %d\n",
+			   x1, x2, y1, y2);
 		WARN_ON(1);
 	}
 	xenfb_do_update(info, x1, y1, x2 - x1, y2 - y1);
@@ -757,30 +757,29 @@ static void xenfb_init_shared_page(struct xenfb_info *info,
 static int xenfb_connect_backend(struct xenbus_device *dev,
 				 struct xenfb_info *info)
 {
-	int ret;
+	int ret, irq;
 	struct xenbus_transaction xbt;
 
-	ret = bind_listening_port_to_irqhandler(
+	irq = bind_listening_port_to_irqhandler(
 		dev->otherend_id, xenfb_event_handler, 0, "xenfb", info);
-	if (ret < 0) {
-		xenbus_dev_fatal(dev, ret,
+	if (irq < 0) {
+		xenbus_dev_fatal(dev, irq,
 				 "bind_listening_port_to_irqhandler");
-		return ret;
+		return irq;
 	}
-	info->irq = ret;
 
  again:
 	ret = xenbus_transaction_start(&xbt);
 	if (ret) {
 		xenbus_dev_fatal(dev, ret, "starting transaction");
-		return ret;
+		goto unbind_irq;
 	}
 	ret = xenbus_printf(xbt, dev->nodename, "page-ref", "%lu",
 			    virt_to_mfn(info->page));
 	if (ret)
 		goto error_xenbus;
 	ret = xenbus_printf(xbt, dev->nodename, "event-channel", "%u",
-			    irq_to_evtchn_port(info->irq));
+			    irq_to_evtchn_port(irq));
 	if (ret)
 		goto error_xenbus;
 	ret = xenbus_printf(xbt, dev->nodename, "protocol", "%s",
@@ -795,15 +794,18 @@ static int xenfb_connect_backend(struct xenbus_device *dev,
 		if (ret == -EAGAIN)
 			goto again;
 		xenbus_dev_fatal(dev, ret, "completing transaction");
-		return ret;
+		goto unbind_irq;
 	}
 
+	info->irq = irq;
 	xenbus_switch_state(dev, XenbusStateInitialised);
 	return 0;
 
  error_xenbus:
 	xenbus_transaction_end(xbt, 1);
 	xenbus_dev_fatal(dev, ret, "writing xenstore");
+ unbind_irq:
+	unbind_from_irqhandler(irq, info);
 	return ret;
 }
 

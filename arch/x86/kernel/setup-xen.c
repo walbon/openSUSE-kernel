@@ -198,9 +198,9 @@ static struct resource bss_resource = {
 
 #ifdef CONFIG_X86_32
 /* cpu data as detected by the assembly code in head.S */
-struct cpuinfo_x86 new_cpu_data __cpuinitdata = {0, 0, 0, 0, -1, 1, 0, 0, -1};
+struct cpuinfo_x86 new_cpu_data __cpuinitdata = { .wp_works_ok = 1, .hard_math = 1 };
 /* common cpu data for all cpus */
-struct cpuinfo_x86 boot_cpu_data __read_mostly = {0, 0, 0, 0, -1, 1, 0, 0, -1};
+struct cpuinfo_x86 boot_cpu_data __read_mostly = { .wp_works_ok = 1, .hard_math = 1 };
 EXPORT_SYMBOL(boot_cpu_data);
 #ifndef CONFIG_XEN
 static void set_mca_bus(int x)
@@ -401,7 +401,7 @@ static void __init relocate_initrd(void)
 #else
 	printk(KERN_ERR "initrd extends beyond end of memory "
 	       "(0x%08lx > 0x%08lx)\ndisabling initrd\n",
-	       __pa(xen_start_info->mod_start) + xen_start_info->mod_len,
+	       xen_initrd_start + xen_start_info->mod_len,
 	       max_low_pfn_mapped << PAGE_SHIFT);
 	initrd_start = 0;
 #endif
@@ -419,7 +419,7 @@ static void __init reserve_initrd(void)
 	    !ramdisk_image || !ramdisk_size)
 		return;		/* No initrd provided by bootloader */
 #else
-	unsigned long ramdisk_image = __pa(xen_start_info->mod_start);
+	unsigned long ramdisk_image = xen_initrd_start;
 	unsigned long ramdisk_size  = xen_start_info->mod_len;
 	unsigned long ramdisk_end   = ramdisk_image + ramdisk_size;
 	unsigned long end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT;

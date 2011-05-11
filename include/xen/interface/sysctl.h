@@ -93,8 +93,10 @@ DEFINE_XEN_GUEST_HANDLE(xen_sysctl_tbuf_op_t);
 struct xen_sysctl_physinfo {
     uint32_t threads_per_core;
     uint32_t cores_per_socket;
-    uint32_t nr_cpus, max_cpu_id;
-    uint32_t nr_nodes, max_node_id;
+    uint32_t nr_cpus;     /* # CPUs currently online */
+    uint32_t max_cpu_id;  /* Largest possible CPU ID on this host */
+    uint32_t nr_nodes;    /* # nodes currently online */
+    uint32_t max_node_id; /* Largest possible node ID on this host */
     uint32_t cpu_khz;
     uint64_aligned_t total_pages;
     uint64_aligned_t free_pages;
@@ -223,6 +225,11 @@ struct pm_cx_stat {
     uint64_aligned_t idle_time;                 /* idle time from boot */
     XEN_GUEST_HANDLE_64(uint64) triggers;    /* Cx trigger counts */
     XEN_GUEST_HANDLE_64(uint64) residencies; /* Cx residencies */
+    uint64_aligned_t pc3;
+    uint64_aligned_t pc6;
+    uint64_aligned_t pc7;
+    uint64_aligned_t cc3;
+    uint64_aligned_t cc6;
 };
 
 struct xen_sysctl_get_pmstat {
@@ -246,21 +253,12 @@ struct xen_sysctl_get_pmstat {
 typedef struct xen_sysctl_get_pmstat xen_sysctl_get_pmstat_t;
 DEFINE_XEN_GUEST_HANDLE(xen_sysctl_get_pmstat_t);
 
-/*
- * Status codes. Must be greater than 0 to avoid confusing
- * sysctl callers that see 0 as a plain successful return.
- */
-#define XEN_CPU_HOTPLUG_STATUS_OFFLINE 1
-#define XEN_CPU_HOTPLUG_STATUS_ONLINE  2
-#define XEN_CPU_HOTPLUG_STATUS_NEW     3
-
 /* XEN_SYSCTL_cpu_hotplug */
 struct xen_sysctl_cpu_hotplug {
     /* IN variables */
     uint32_t cpu;   /* Physical cpu. */
 #define XEN_SYSCTL_CPU_HOTPLUG_ONLINE  0
 #define XEN_SYSCTL_CPU_HOTPLUG_OFFLINE 1
-#define XEN_SYSCTL_CPU_HOTPLUG_STATUS 2
     uint32_t op;    /* hotplug opcode */
 };
 typedef struct xen_sysctl_cpu_hotplug xen_sysctl_cpu_hotplug_t;
@@ -463,17 +461,17 @@ struct xen_sysctl_topologyinfo {
      * IN: maximum addressable entry in the caller-provided arrays.
      * OUT: largest cpu identifier in the system.
      * If OUT is greater than IN then the arrays are truncated!
+     * If OUT is leass than IN then the array tails are not written by sysctl.
      */
     uint32_t max_cpu_index;
 
     /*
-     * If not NULL, this array is filled with core/socket/node identifier for 
-     * each cpu.
+     * If not NULL, these arrays are filled with core/socket/node identifier
+     * for each cpu.
      * If a cpu has no core/socket/node information (e.g., cpu not present) 
-     * then the sentinel value ~0u is written.
-     * The size of this array is specified by the caller in @max_cpu_index.
-     * If the actual @max_cpu_index is smaller than the array then the trailing
-     * elements of the array will not be written by the sysctl.
+     * then the sentinel value ~0u is written to each array.
+     * The number of array elements written by the sysctl is:
+     *   min(@max_cpu_index_IN,@max_cpu_index_OUT)+1
      */
     XEN_GUEST_HANDLE_64(uint32) cpu_to_core;
     XEN_GUEST_HANDLE_64(uint32) cpu_to_socket;
@@ -535,14 +533,46 @@ struct xen_sysctl_cpupool_op {
 typedef struct xen_sysctl_cpupool_op xen_sysctl_cpupool_op_t;
 DEFINE_XEN_GUEST_HANDLE(xen_sysctl_cpupool_op_t);
 
+#define ARINC653_MAX_DOMAINS_PER_SCHEDULE   64
+/*
+ * This structure is used to pass a new ARINC653 schedule from a
+ * privileged domain (ie dom0) to Xen.
+ */
+struct xen_sysctl_arinc653_schedule {
+    /* major_frame holds the time for the new schedule's major frame
+     * in nanoseconds. */
+    uint64_aligned_t     major_frame;
+    /* num_sched_entries holds how many of the entries in the
+     * sched_entries[] array are valid. */
+    uint8_t     num_sched_entries;
+    /* The sched_entries array holds the actual schedule entries. */
+    struct {
+        /* dom_handle must match a domain's UUID */
+        xen_domain_handle_t dom_handle;
+        /* If a domain has multiple VCPUs, vcpu_id specifies which one
+         * this schedule entry applies to. It should be set to 0 if
+         * there is only one VCPU for the domain. */
+        unsigned int vcpu_id;
+        /* runtime specifies the amount of time that should be allocated
+         * to this VCPU per major frame. It is specified in nanoseconds */
+        uint64_aligned_t runtime;
+    } sched_entries[ARINC653_MAX_DOMAINS_PER_SCHEDULE];
+};
+typedef struct xen_sysctl_arinc653_schedule xen_sysctl_arinc653_schedule_t;
+DEFINE_XEN_GUEST_HANDLE(xen_sysctl_arinc653_schedule_t);
+
 /* XEN_SYSCTL_scheduler_op */
 /* Set or get info? */
 #define XEN_SYSCTL_SCHEDOP_putinfo 0
 #define XEN_SYSCTL_SCHEDOP_getinfo 1
 struct xen_sysctl_scheduler_op {
-    uint32_t sched_id;  /* XEN_SCHEDULER_* (domctl.h) */
-    uint32_t cmd;       /* XEN_SYSCTL_SCHEDOP_* */
+    uint32_t cpupool_id; /* Cpupool whose scheduler is to be targetted. */
+    uint32_t sched_id;   /* XEN_SCHEDULER_* (domctl.h) */
+    uint32_t cmd;        /* XEN_SYSCTL_SCHEDOP_* */
     union {
+        struct xen_sysctl_sched_arinc653 {
+            XEN_GUEST_HANDLE_64(xen_sysctl_arinc653_schedule_t) schedule;
+        } sched_arinc653;
     } u;
 };
 typedef struct xen_sysctl_scheduler_op xen_sysctl_scheduler_op_t;

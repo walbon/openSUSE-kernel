@@ -20,6 +20,9 @@ extern void touch_nmi_watchdog(void);
 extern void acpi_nmi_disable(void);
 extern void acpi_nmi_enable(void);
 #else
+#ifdef CONFIG_XEN
+#include <asm/nmi.h>
+#endif
 static inline void touch_nmi_watchdog(void)
 {
 	touch_softlockup_watchdog();

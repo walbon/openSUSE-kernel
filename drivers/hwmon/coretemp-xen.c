@@ -453,8 +453,8 @@ static int coretemp_device_add(unsigned int cpu)
 	 * without thermal sensors will be filtered out.
 	 */
 	if (!(info.cpuid_6_eax & 0x1)) {
-		printk(KERN_INFO DRVNAME ": CPU (model=0x%x)"
-		       " has no thermal sensor.\n", info.pdev_entry->x86_model);
+		pr_info(DRVNAME ": CPU (model=0x%x)"
+			" has no thermal sensor.\n", info.pdev_entry->x86_model);
 		goto exit_entry_free;
 	}
 

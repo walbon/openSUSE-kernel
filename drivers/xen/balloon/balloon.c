@@ -113,12 +113,11 @@ static LIST_HEAD(ballooned_pages);
 /* Main work function, always executed in process context. */
 static void balloon_process(struct work_struct *unused);
 static DECLARE_WORK(balloon_worker, balloon_process);
-static struct timer_list balloon_timer;
 
 /* When ballooning out (allocating memory to return to Xen) we don't really 
    want the kernel to try too hard since that can trigger the oom killer. */
-#define GFP_BALLOON \
-	(GFP_HIGHUSER|__GFP_NOWARN|__GFP_NORETRY|__GFP_NOMEMALLOC|__GFP_COLD)
+#define GFP_BALLOON (GFP_HIGHUSER|__GFP_NOWARN|__GFP_NORETRY|__GFP_NOMEMALLOC|\
+		     __GFP_NOTRACK|__GFP_COLD)
 
 #define PAGE_TO_LIST(p) (&(p)->lru)
 #define LIST_TO_PAGE(l) list_entry((l), struct page, lru)
@@ -129,10 +128,8 @@ static struct timer_list balloon_timer;
 		PAGE_TO_LIST(p)->prev = NULL;	\
 	} while(0)
 
-#define IPRINTK(fmt, args...) \
-	printk(KERN_INFO "xen_mem: " fmt, ##args)
-#define WPRINTK(fmt, args...) \
-	printk(KERN_WARNING "xen_mem: " fmt, ##args)
+#define IPRINTK(fmt, args...) pr_info("xen_mem: " fmt, ##args)
+#define WPRINTK(fmt, args...) pr_warning("xen_mem: " fmt, ##args)
 
 /* balloon_append: add the given page to the balloon. */
 static void balloon_append(struct page *page, int account)
@@ -230,6 +227,7 @@ static void balloon_alarm(unsigned long unused)
 {
 	schedule_work(&balloon_worker);
 }
+static DEFINE_TIMER(balloon_timer, balloon_alarm, 0, 0);
 
 static unsigned long current_target(void)
 {
@@ -497,7 +495,7 @@ static int balloon_init_watcher(struct notifier_block *notifier,
 
 	err = register_xenbus_watch(&target_watch);
 	if (err)
-		printk(KERN_ERR "Failed to set balloon watcher\n");
+		pr_err("Failed to set balloon watcher\n");
 
 	return NOTIFY_DONE;
 }
@@ -610,10 +608,6 @@ static int __init balloon_init(void)
 	bs.balloon_high  = 0;
 	bs.driver_pages  = 0UL;
 
-	init_timer(&balloon_timer);
-	balloon_timer.data = 0;
-	balloon_timer.function = balloon_alarm;
-    
 #ifdef CONFIG_PROC_FS
 	if ((balloon_pde = create_xen_proc_entry("balloon", 0644)) == NULL) {
 		WPRINTK("Unable to create /proc/xen/balloon.\n");
@@ -712,7 +706,7 @@ struct page **alloc_empty_pages_and_pagevec(int nr_pages)
 		}
 		balloon_unlock(flags);
 
-		page = pagevec[i] = alloc_page(GFP_KERNEL|__GFP_COLD);
+		page = pagevec[i] = alloc_page(GFP_KERNEL|__GFP_NOTRACK|__GFP_COLD);
 		if (page == NULL)
 			goto err;
 

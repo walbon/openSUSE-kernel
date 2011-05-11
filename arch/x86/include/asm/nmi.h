@@ -15,8 +15,6 @@ int do_nmi_callback(struct pt_regs *regs, int cpu);
 
 extern void die_nmi(char *str, struct pt_regs *regs, int do_panic);
 
-extern int unknown_nmi_panic;
-
 #ifdef ARCH_HAS_NMI_WATCHDOG
 
 extern int check_nmi_watchdog(void);
@@ -32,7 +30,6 @@ extern void setup_apic_nmi_watchdog(void *);
 extern void stop_apic_nmi_watchdog(void *);
 extern void disable_timer_nmi_watchdog(void);
 extern void enable_timer_nmi_watchdog(void);
-extern int nmi_watchdog_tick(struct pt_regs *regs, unsigned reason);
 extern void cpu_nmi_set_wd_enabled(void);
 
 extern atomic_t nmi_active;
@@ -45,9 +42,19 @@ extern unsigned int nmi_watchdog;
 struct ctl_table;
 extern int proc_nmi_enabled(struct ctl_table *, int ,
 			void __user *, size_t *, loff_t *);
+#endif
 
+extern int nmi_watchdog_tick(struct pt_regs *regs, unsigned reason);
+
+extern int unknown_nmi_panic;
+
+#if defined(ARCH_HAS_NMI_WATCHDOG) || \
+    (defined(CONFIG_XEN_SMPBOOT) && CONFIG_XEN_COMPAT >= 0x030200)
 void arch_trigger_all_cpu_backtrace(void);
 #define arch_trigger_all_cpu_backtrace arch_trigger_all_cpu_backtrace
+#endif
+
+#ifdef ARCH_HAS_NMI_WATCHDOG
 
 static inline void localise_nmi_watchdog(void)
 {

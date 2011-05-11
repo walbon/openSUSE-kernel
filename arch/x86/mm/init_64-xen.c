@@ -181,13 +181,72 @@ static int __init nonx32_setup(char *str)
 }
 __setup("noexec32=", nonx32_setup);
 
+static struct reserved_pfn_range {
+	unsigned long pfn, nr;
+} reserved_pfn_ranges[3] __meminitdata;
+
+void __init reserve_pfn_range(unsigned long pfn, unsigned long nr, char *name)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(reserved_pfn_ranges); ++i) {
+		struct reserved_pfn_range *range = reserved_pfn_ranges + i;
+
+		if (!range->nr) {
+			range->pfn = pfn;
+			range->nr = nr;
+			break;
+		}
+		BUG_ON(range->pfn < pfn + nr && pfn < range->pfn + range->nr);
+		if (range->pfn > pfn) {
+			i = ARRAY_SIZE(reserved_pfn_ranges) - 1;
+			if (reserved_pfn_ranges[i].nr)
+				continue;
+			for (; reserved_pfn_ranges + i > range; --i)
+				reserved_pfn_ranges[i]
+					 = reserved_pfn_ranges[i - 1];
+			range->pfn = pfn;
+			range->nr = nr;
+			break;
+		}
+	}
+	BUG_ON(i >= ARRAY_SIZE(reserved_pfn_ranges));
+	reserve_early(pfn << PAGE_SHIFT, (pfn + nr) << PAGE_SHIFT, name);
+}
+
+void __init reserve_pgtable_low(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(reserved_pfn_ranges); ++i) {
+		struct reserved_pfn_range *range = reserved_pfn_ranges + i;
+
+		if (!range->nr)
+			break;
+		if (e820_table_start <= range->pfn
+		    && e820_table_top > range->pfn) {
+			reserve_early(e820_table_start << PAGE_SHIFT,
+				      range->pfn << PAGE_SHIFT,
+				      "PGTABLE");
+			e820_table_start = range->pfn + range->nr;
+		}
+	}
+}
+
 static __init unsigned long get_table_end(void)
 {
+	unsigned int i;
+
 	BUG_ON(!e820_table_end);
-	if (xen_start_info->mfn_list < __START_KERNEL_map
-	    && e820_table_end == xen_start_info->first_p2m_pfn) {
-		e820_table_end += xen_start_info->nr_p2m_frames;
-		e820_table_top += xen_start_info->nr_p2m_frames;
+	for (i = 0; i < ARRAY_SIZE(reserved_pfn_ranges); ++i) {
+		struct reserved_pfn_range *range = reserved_pfn_ranges + i;
+
+		if (!range->nr)
+			break;
+		if (e820_table_end == range->pfn) {
+			e820_table_end += range->nr;
+			e820_table_top += range->nr;
+		}
 	}
 	return e820_table_end++;
 }
@@ -204,7 +263,7 @@ static __ref void *spp_getpage(void)
 		ptr = (void *) get_zeroed_page(GFP_ATOMIC | __GFP_NOTRACK);
 	else if (e820_table_end < e820_table_top) {
 		ptr = __va(get_table_end() << PAGE_SHIFT);
-		memset(ptr, 0, PAGE_SIZE);
+		clear_page(ptr);
 	} else
 		ptr = alloc_bootmem_pages(PAGE_SIZE);
 
@@ -426,14 +485,25 @@ static inline int __meminit make_readonly(unsigned long paddr)
 	    && !max_pfn_mapped
 	    && (paddr >= (e820_table_start << PAGE_SHIFT))) {
 		unsigned long top = e820_table_top;
+		unsigned int i;
 
-		/* Account for the range get_table_end() skips. */
-		if (xen_start_info->mfn_list < __START_KERNEL_map
-		    && e820_table_end <= xen_start_info->first_p2m_pfn
-		    && top > xen_start_info->first_p2m_pfn)
-			top += xen_start_info->nr_p2m_frames;
+		/* Account for the ranges get_table_end() skips. */
+		for (i = 0; i < ARRAY_SIZE(reserved_pfn_ranges); ++i) {
+			const struct reserved_pfn_range *range;
+
+			range = reserved_pfn_ranges + i;
+			if (!range->nr)
+				continue;
+			if (e820_table_end <= range->pfn && top > range->pfn) {
+				if (paddr > (range->pfn << PAGE_SHIFT)
+				    && paddr < ((range->pfn + range->nr)
+					        << PAGE_SHIFT))
+					break;
+				top += range->nr;
+			}
+		}
 		if (paddr < (top << PAGE_SHIFT))
-			readonly = 1;
+			readonly = (i >= ARRAY_SIZE(reserved_pfn_ranges));
 	}
 	/* Make old page tables read-only. */
 	if (!xen_feature(XENFEAT_writable_page_tables)
@@ -790,9 +860,6 @@ void __init xen_finish_init_mapping(void)
 	    && xen_start_info->mfn_list >= __START_KERNEL_map)
 		phys_to_machine_mapping =
 			__va(__pa(xen_start_info->mfn_list));
-	if (xen_start_info->mod_start)
-		xen_start_info->mod_start = (unsigned long)
-			__va(__pa(xen_start_info->mod_start));
 
 	/* Unpin the no longer used Xen provided page tables. */
 	mmuext.cmd = MMUEXT_UNPIN_TABLE;
@@ -844,7 +911,7 @@ kernel_physical_mapping_init(unsigned long start,
 						 page_size_mask);
 		unmap_low_page(pud);
 
-		if(!after_bootmem) {
+		if (!after_bootmem) {
 			if (max_pfn_mapped)
 				make_page_readonly(__va(pud_phys),
 						   XENFEAT_writable_page_tables);

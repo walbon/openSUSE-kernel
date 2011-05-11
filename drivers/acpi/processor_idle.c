@@ -632,7 +632,9 @@ static int acpi_processor_power_verify(struct acpi_processor *pr)
 	unsigned int i;
 	unsigned int working = 0;
 
+#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
 	pr->power.timer_broadcast_on_state = INT_MAX;
+#endif
 
 	for (i = 1; i < ACPI_PROCESSOR_MAX_POWER && i <= max_cstate; i++) {
 		struct acpi_processor_cx *cx = &pr->power.states[i];
@@ -712,18 +714,27 @@ static int acpi_processor_power_seq_show(struct seq_file *seq, void *offset)
 	if (!pr)
 		goto end;
 
-	seq_printf(seq, "active state:            C%zd\n"
+	seq_printf(seq,
+#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
+		   "active state:            C%zd\n"
+#endif
 		   "max_cstate:              C%d\n"
 		   "maximum allowed latency: %d usec\n",
+#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
 		   pr->power.state ? pr->power.state - pr->power.states : 0,
+#endif
 		   max_cstate, pm_qos_requirement(PM_QOS_CPU_DMA_LATENCY));
 
 	seq_puts(seq, "states:\n");
 
 	for (i = 1; i <= pr->power.count; i++) {
 		seq_printf(seq, "   %cC%d:                  ",
+#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
 			   (&pr->power.states[i] ==
 			    pr->power.state ? '*' : ' '), i);
+#else
+			    ' ', i);
+#endif
 
 		if (!pr->power.states[i].valid) {
 			seq_puts(seq, "<not supported>\n");

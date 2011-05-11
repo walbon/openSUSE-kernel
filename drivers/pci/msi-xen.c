@@ -53,47 +53,6 @@ int arch_msi_check_device(struct pci_dev *dev, int nvec, int type)
 }
 #endif
 
-#ifndef arch_setup_msi_irqs
-int arch_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
-{
-	struct msi_desc *entry;
-	int ret;
-
-	/*
-	 * If an architecture wants to support multiple MSI, it needs to
-	 * override arch_setup_msi_irqs()
-	 */
-	if (type == PCI_CAP_ID_MSI && nvec > 1)
-		return 1;
-
-	list_for_each_entry(entry, &dev->msi_list, list) {
-		ret = arch_setup_msi_irq(dev, entry);
-		if (ret < 0)
-			return ret;
-		if (ret > 0)
-			return -ENOSPC;
-	}
-
-	return 0;
-}
-#endif
-
-#ifndef arch_teardown_msi_irqs
-void arch_teardown_msi_irqs(struct pci_dev *dev)
-{
-	struct msi_desc *entry;
-
-	list_for_each_entry(entry, &dev->msi_list, list) {
-		int i, nvec;
-		if (entry->irq == 0)
-			continue;
-		nvec = 1 << entry->msi_attrib.multiple;
-		for (i = 0; i < nvec; i++)
-			arch_teardown_msi_irq(entry->irq + i);
-	}
-}
-#endif
-
 static void msi_set_enable(struct pci_dev *dev, int pos, int enable)
 {
 	u16 control;
@@ -239,7 +198,7 @@ static int msi_unmap_pirq(struct pci_dev *dev, int pirq)
 		? pirq : evtchn_get_xen_pirq(pirq);
 
 	if ((rc = HYPERVISOR_physdev_op(PHYSDEVOP_unmap_pirq, &unmap)))
-		dev_warn(&dev->dev, "unmap irq %x failed\n", pirq);
+		dev_warn(&dev->dev, "unmap irq %d failed\n", pirq);
 
 	if (rc < 0)
 		return rc;

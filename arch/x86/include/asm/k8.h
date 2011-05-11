@@ -3,7 +3,14 @@
 
 #include <linux/pci.h>
 
+struct k8_bus_dev_range {
+	u8 bus;
+	u8 dev_base;
+	u8 dev_limit;
+};
+
 extern struct pci_device_id k8_nb_ids[];
+extern const struct k8_bus_dev_range k8_bus_dev_ranges[];
 
 extern int early_is_k8_nb(u32 value);
 extern struct pci_dev **k8_northbridges;

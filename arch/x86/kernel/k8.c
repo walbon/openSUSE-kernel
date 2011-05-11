@@ -18,9 +18,21 @@ static u32 *flush_words;
 struct pci_device_id k8_nb_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_K8_NB_MISC) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_10H_NB_MISC) },
+#ifdef CONFIG_XEN
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_11H_NB_MISC) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, 0x1703) }, /* Fam12, Fam14 */
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, 0x1603) }, /* Fam15 */
+#endif
 	{}
 };
 EXPORT_SYMBOL(k8_nb_ids);
+
+const struct k8_bus_dev_range k8_bus_dev_ranges[] __initconst = {
+	{ 0x00, 0x18, 0x20 },
+	{ 0xff, 0x00, 0x20 },
+	{ 0xfe, 0x00, 0x20 },
+	{ }
+};
 
 struct pci_dev **k8_northbridges;
 EXPORT_SYMBOL(k8_northbridges);

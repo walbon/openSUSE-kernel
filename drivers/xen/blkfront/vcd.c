@@ -95,18 +95,17 @@ static int submit_cdrom_cmd(struct blkfront_info *info,
 	struct vcd_generic_command *vgc;
 
 	if (cgc->buffer && cgc->buflen > MAX_PACKET_DATA) {
-		printk(KERN_WARNING "%s() Packet buffer length is to large \n", __func__);
+		pr_warning("%s() Packet buffer length is to large \n", __func__);
 		return -EIO;
 	}
 
-	page = alloc_page(GFP_NOIO);
+	page = alloc_page(GFP_NOIO|__GFP_ZERO);
 	if (!page) {
-		printk(KERN_CRIT "%s() Unable to allocate page\n", __func__);
+		pr_crit("%s() Unable to allocate page\n", __func__);
 		return -ENOMEM;
 	}
 
 	size = PAGE_SIZE;
-	memset(page_address(page), 0, PAGE_SIZE);
 	sp = page_address(page);
 	xcp = &(sp->xcp);
 	xcp->type = XEN_TYPE_CDROM_PACKET;
@@ -162,13 +161,12 @@ static int xencdrom_open(struct cdrom_device_info *cdi, int purpose)
 		return -EIO;
 	}
 
-	page = alloc_page(GFP_NOIO);
+	page = alloc_page(GFP_NOIO|__GFP_ZERO);
 	if (!page) {
-		printk(KERN_CRIT "%s() Unable to allocate page\n", __func__);
+		pr_crit("%s() Unable to allocate page\n", __func__);
 		return -ENOMEM;
 	}
 
-	memset(page_address(page), 0, PAGE_SIZE);
 	sp = page_address(page);
 	xco = &(sp->xco);
 	xco->type = XEN_TYPE_CDROM_OPEN;
@@ -204,13 +202,12 @@ static int xencdrom_media_changed(struct cdrom_device_info *cdi, int disc_nr)
 
 	info = cdi->disk->private_data;
 
-	page = alloc_page(GFP_NOIO);
+	page = alloc_page(GFP_NOIO|__GFP_ZERO);
 	if (!page) {
-		printk(KERN_CRIT "%s() Unable to allocate page\n", __func__);
+		pr_crit("%s() Unable to allocate page\n", __func__);
 		return -ENOMEM;
 	}
 
-	memset(page_address(page), 0, PAGE_SIZE);
 	sp = page_address(page);
 	xcmc = &(sp->xcmc);
 	xcmc->type = XEN_TYPE_CDROM_MEDIA_CHANGED;
@@ -278,13 +275,12 @@ static int xencdrom_supported(struct blkfront_info *info)
 	union xen_block_packet *sp;
 	struct xen_cdrom_support *xcs;
 
-	page = alloc_page(GFP_NOIO);
+	page = alloc_page(GFP_NOIO|__GFP_ZERO);
 	if (!page) {
-		printk(KERN_CRIT "%s() Unable to allocate page\n", __func__);
+		pr_crit("%s() Unable to allocate page\n", __func__);
 		return -ENOMEM;
 	}
 
-	memset(page_address(page), 0, PAGE_SIZE);
 	sp = page_address(page);
 	xcs = &(sp->xcs);
 	xcs->type = XEN_TYPE_CDROM_SUPPORT;
@@ -460,7 +456,7 @@ void register_vcd(struct blkfront_info *info)
 	/* Create new vcd_disk and fill in cdrom_info */
 	vcd = (struct vcd_disk *)kzalloc(sizeof(struct vcd_disk), GFP_KERNEL);
 	if (!vcd) {
-		printk(KERN_INFO "%s():  Unable to allocate vcd struct!\n", __func__);
+		pr_info("%s(): Unable to allocate vcd struct!\n", __func__);
 		goto out;
 	}
 	spin_lock_init(&vcd->vcd_cdrom_info_lock);
@@ -475,8 +471,8 @@ void register_vcd(struct blkfront_info *info)
 			CDC_MRW | CDC_MRW_W | CDC_RAM);
 
 	if (register_cdrom(&(vcd->vcd_cdrom_info)) != 0) {
-		printk(KERN_WARNING "%s() Cannot register blkdev as a cdrom %d!\n", __func__,
-				gd->major);
+		pr_warning("%s() Cannot register blkdev as a cdrom %d!\n",
+			   __func__, gd->major);
 		goto err_out;
 	}
 	gd->fops = &xencdrom_bdops;

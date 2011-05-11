@@ -60,11 +60,6 @@ static inline void xen_set_pte(pte_t *ptep, pte_t pte)
 	*ptep = pte;
 }
 
-static inline void xen_set_pte_atomic(pte_t *ptep, pte_t pte)
-{
-	xen_set_pte(ptep, pte);
-}
-
 #ifdef CONFIG_SMP
 static inline pte_t xen_ptep_get_and_clear(pte_t *xp, pte_t ret)
 {

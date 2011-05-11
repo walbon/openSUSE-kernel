@@ -44,9 +44,11 @@
 #include <xen/interface/vcpu.h>
 #include <linux/module.h>
 #include <linux/percpu.h>
-#include <linux/highmem.h>
 #include <asm/tlbflush.h>
 #include <linux/highmem.h>
+#ifdef CONFIG_X86_32
+#include <linux/bootmem.h> /* for max_pfn */
+#endif
 
 EXPORT_SYMBOL(hypercall_page);
 
@@ -108,9 +110,8 @@ void __init adjust_boot_vcpu_info(void)
 	lpfn = mfn_to_local_pfn(lmfn);
 	rpfn = mfn_to_local_pfn(rmfn);
 
-	printk(KERN_INFO
-	       "Swapping MFNs for PFN %lx and %lx (MFN %lx and %lx)\n",
-	       lpfn, rpfn, lmfn, rmfn);
+	pr_info("Swapping MFNs for PFN %lx and %lx (MFN %lx and %lx)\n",
+		lpfn, rpfn, lmfn, rmfn);
 
 	xen_l1_entry_update(lpte, pfn_pte_ma(rmfn, pte_pgprot(*lpte)));
 	xen_l1_entry_update(rpte, pfn_pte_ma(lmfn, pte_pgprot(*rpte)));
@@ -155,7 +156,6 @@ void __init adjust_boot_vcpu_info(void)
 #define NR_MMUEXT (BITS_PER_LONG / 4)
 
 DEFINE_PER_CPU(bool, xen_lazy_mmu);
-EXPORT_PER_CPU_SYMBOL(xen_lazy_mmu);
 struct lazy_mmu {
 	unsigned int nr_mc, nr_mmu, nr_mmuext;
 	multicall_entry_t mc[NR_MC];
@@ -175,8 +175,8 @@ static inline bool use_lazy_mmu_mode(void)
 
 static void multicall_failed(const multicall_entry_t *mc, int rc)
 {
-	printk(KERN_EMERG "hypercall#%lu(%lx, %lx, %lx, %lx)"
-			  " failed: %d (caller %lx)\n",
+	pr_emerg("hypercall#%lu(%lx, %lx, %lx, %lx) failed: %d"
+		 " (caller %lx)\n",
 	       mc->op, mc->args[0], mc->args[1], mc->args[2], mc->args[3],
 	       rc, mc->args[5]);
 	BUG();
@@ -216,11 +216,10 @@ static int _xen_multicall_flush(bool ret_last) {
 	return 0;
 }
 
-void xen_multicall_flush(bool force) {
-	if (force || use_lazy_mmu_mode())
+void xen_multicall_flush(void) {
+	if (use_lazy_mmu_mode())
 		_xen_multicall_flush(false);
 }
-EXPORT_SYMBOL(xen_multicall_flush);
 
 int xen_multi_update_va_mapping(unsigned long va, pte_t pte,
 				unsigned long uvmf)
@@ -919,9 +918,9 @@ void xen_destroy_contiguous_region(unsigned long vstart, unsigned int order)
 			unsigned int j = 0;
 
 			if (!page) {
-				printk(KERN_WARNING "Xen and kernel out of memory "
-				       "while trying to release an order %u "
-				       "contiguous region\n", order);
+				pr_warning("Xen and kernel out of memory"
+					   " while trying to release an order"
+					   " %u contiguous region\n", order);
 				break;
 			}
 			pfn = page_to_pfn(page);
@@ -1211,6 +1210,21 @@ int xen_limit_pages_to_max_mfn(
 	return 0;
 }
 EXPORT_SYMBOL_GPL(xen_limit_pages_to_max_mfn);
+
+bool hypervisor_oom(void)
+{
+	WARN_ONCE(1, "Hypervisor is out of memory");
+	return false;//temp
+}
+
+int walk_system_ram_range(unsigned long start_pfn, unsigned long nr_pages,
+			  void *arg, int (*func)(unsigned long, unsigned long,
+						 void *))
+{
+	return start_pfn < max_pfn && nr_pages
+	       ? func(start_pfn, min(max_pfn - start_pfn, nr_pages), arg)
+	       : -1;
+}
 
 int write_ldt_entry(struct desc_struct *ldt, int entry, const void *desc)
 {
