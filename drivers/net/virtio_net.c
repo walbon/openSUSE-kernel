@@ -390,16 +390,16 @@ static void skb_recv_done(struct virtqueue *rvq)
 
 static void virtnet_napi_enable(struct virtnet_info *vi)
 {
-       napi_enable(&vi->napi);
+	napi_enable(&vi->napi);
 
-       /* If all buffers were filled by other side before we napi_enabled, we
-        * won't get another interrupt, so process any outstanding packets
-        * now.  virtnet_poll wants re-enable the queue, so we disable here.
-        * We synchronize against interrupts via NAPI_STATE_SCHED */
-       if (napi_schedule_prep(&vi->napi)) {
-               vi->rvq->vq_ops->disable_cb(vi->rvq);
-               __napi_schedule(&vi->napi);
-       }
+	/* If all buffers were filled by other side before we napi_enabled, we
+	 * won't get another interrupt, so process any outstanding packets
+	 * now.  virtnet_poll wants re-enable the queue, so we disable here.
+	 * We synchronize against interrupts via NAPI_STATE_SCHED */
+	if (napi_schedule_prep(&vi->napi)) {
+		vi->rvq->vq_ops->disable_cb(vi->rvq);
+		__napi_schedule(&vi->napi);
+	}
 }
 
 static void refill_work(struct work_struct *work)
@@ -522,7 +522,6 @@ static netdev_tx_t start_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct virtnet_info *vi = netdev_priv(dev);
 	int capacity;
 
-again:
 	/* Free up any pending old buffers before queueing new ones. */
 	free_old_xmit_skbs(vi);
 
@@ -531,14 +530,20 @@ again:
 
 	/* This can happen with OOM and indirect buffers. */
 	if (unlikely(capacity < 0)) {
-		netif_stop_queue(dev);
-		dev_warn(&dev->dev, "Unexpected full queue\n");
-		if (unlikely(!vi->svq->vq_ops->enable_cb(vi->svq))) {
-			vi->svq->vq_ops->disable_cb(vi->svq);
-			netif_start_queue(dev);
-			goto again;
+		if (net_ratelimit()) {
+			if (likely(capacity == -ENOMEM)) {
+				dev_warn(&dev->dev,
+					 "TX queue failure: out of memory\n");
+			} else {
+				dev->stats.tx_fifo_errors++;
+				dev_warn(&dev->dev,
+					 "Unexpected TX queue failure: %d\n",
+					 capacity);
+			}
 		}
-		return NETDEV_TX_BUSY;
+		dev->stats.tx_dropped++;
+		kfree_skb(skb);
+		return NETDEV_TX_OK;
 	}
 	vi->svq->vq_ops->kick(vi->svq);
 
@@ -603,7 +608,6 @@ static int virtnet_open(struct net_device *dev)
 	struct virtnet_info *vi = netdev_priv(dev);
 
 	virtnet_napi_enable(vi);
-
 	return 0;
 }
 

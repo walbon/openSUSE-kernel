@@ -2704,6 +2704,10 @@ static void bond_handle_arp(struct sk_buff *skb)
 	if (!slave || !slave_do_arp_validate(bond, slave))
 		goto out_unlock;
 
+	skb = skb_share_check(skb, GFP_ATOMIC);
+	if (!skb)
+		goto out_unlock;
+
 	if (!pskb_may_pull(skb, arp_hdr_len(dev)))
 		goto out_unlock;
 

@@ -136,7 +136,8 @@ static int synaptics_capability(struct psmouse *psmouse)
 	if (synaptics_send_cmd(psmouse, SYN_QUE_CAPABILITIES, cap))
 		return -1;
 	priv->capabilities = (cap[0] << 16) | (cap[1] << 8) | cap[2];
-	priv->ext_cap = 0;
+	priv->ext_cap = priv->ext_cap_0c = 0;
+
 	if (!SYN_CAP_VALID(priv->capabilities) &&
 	    (priv->capabilities & 0xffff00) != 0xd00000)
 		return -1;
@@ -150,7 +151,7 @@ static int synaptics_capability(struct psmouse *psmouse)
 	if (SYN_EXT_CAP_REQUESTS(priv->capabilities) >= 1) {
 		if (synaptics_send_cmd(psmouse, SYN_QUE_EXT_CAPAB, cap)) {
 			printk(KERN_ERR "Synaptics claims to have extended capabilities,"
-			       " but I'm not able to read them.");
+			       " but I'm not able to read them.\n");
 		} else {
 			priv->ext_cap = (cap[0] << 16) | (cap[1] << 8) | cap[2];
 
@@ -162,6 +163,16 @@ static int synaptics_capability(struct psmouse *psmouse)
 				priv->ext_cap &= 0xff0fff;
 		}
 	}
+
+	if (SYN_EXT_CAP_REQUESTS(priv->capabilities) >= 4) {
+		if (synaptics_send_cmd(psmouse, SYN_QUE_EXT_CAPAB_0C, cap)) {
+			printk(KERN_ERR "Synaptics claims to have extended capability 0x0c,"
+			       " but I'm not able to read it.\n");
+		} else {
+			priv->ext_cap_0c = (cap[0] << 16) | (cap[1] << 8) | cap[2];
+		}
+	}
+
 	return 0;
 }
 
@@ -372,10 +383,6 @@ static void synaptics_check_clickpad(struct psmouse *psmouse)
 		return;
 	printk(KERN_INFO "Synaptics: newcap: %02x:%02x:%02x\n",
 	       ncap[0], ncap[1], ncap[2]);
-	priv->clickpad = ((ncap[0] & 0x10) >> 4) | ((ncap[1] & 0x01) << 1);
-	if (priv->clickpad)
-		printk(KERN_INFO "Synaptics: Clickpad device detected: %d\n",
-		       priv->clickpad);
 	/* XXX: this should be ncap[1] 0x20, but it's not really... */
 	priv->has_led = 1;
 	if (priv->has_led) {
@@ -404,17 +411,18 @@ static void synaptics_parse_hw_state(unsigned char buf[], struct synaptics_data 
 		hw->left  = (buf[0] & 0x01) ? 1 : 0;
 		hw->right = (buf[0] & 0x02) ? 1 : 0;
 
-		if (SYN_CAP_MIDDLE_BUTTON(priv->capabilities)) {
+		if (SYN_CAP_CLICKPAD(priv->ext_cap_0c)) {
+			/*
+			 * Clickpad's button is transmitted as middle button,
+			 * however, since it is primary button, we will report
+			 * it as BTN_LEFT.
+			 */
+			hw->left = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
+
+		} else if (SYN_CAP_MIDDLE_BUTTON(priv->capabilities)) {
 			hw->middle = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
 			if (hw->w == 2)
 				hw->scroll = (signed char)(buf[1]);
-		}
-
-		if (priv->clickpad) {
-			/* clickpad reports only the middle button, report
-			 * it as the left button
-			 */
-			hw->left = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
 		}
 
 		if (SYN_CAP_FOUR_BUTTON(priv->capabilities)) {
@@ -657,8 +665,9 @@ static void set_input_params(struct input_dev *dev, struct synaptics_data *priv)
 	dev->absres[ABS_X] = priv->x_res;
 	dev->absres[ABS_Y] = priv->y_res;
 
-	if (priv->clickpad) {
-		__clear_bit(BTN_RIGHT, dev->keybit); /* only left-button */
+	if (SYN_CAP_CLICKPAD(priv->ext_cap_0c)) {
+		/* Clickpads report only left button */
+		__clear_bit(BTN_RIGHT, dev->keybit);
 		__clear_bit(BTN_MIDDLE, dev->keybit);
 	}
 	if (priv->has_led) {
@@ -775,10 +784,10 @@ int synaptics_init(struct psmouse *psmouse)
 
 	priv->pkt_type = SYN_MODEL_NEWABS(priv->model_id) ? SYN_NEWABS : SYN_OLDABS;
 
-	printk(KERN_INFO "Synaptics Touchpad, model: %ld, fw: %ld.%ld, id: %#lx, caps: %#lx/%#lx\n",
+	printk(KERN_INFO "Synaptics Touchpad, model: %ld, fw: %ld.%ld, id: %#lx, caps: %#lx/%#lx/%#lx\n",
 		SYN_ID_MODEL(priv->identity),
 		SYN_ID_MAJOR(priv->identity), SYN_ID_MINOR(priv->identity),
-		priv->model_id, priv->capabilities, priv->ext_cap);
+		priv->model_id, priv->capabilities, priv->ext_cap, priv->ext_cap_0c);
 
 	synaptics_check_clickpad(psmouse);
 

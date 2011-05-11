@@ -117,11 +117,11 @@ static void *m_start(struct seq_file *m, loff_t *pos)
 
 	priv->task = get_pid_task(priv->pid, PIDTYPE_PID);
 	if (!priv->task)
-		return NULL;
+		return ERR_PTR(-ESRCH);
 
 	mm = mm_for_maps(priv->task);
-	if (!mm)
-		return NULL;
+	if (!mm || IS_ERR(mm))
+		return mm;
 	down_read(&mm->mmap_sem);
 
 	tail_vma = get_gate_vma(priv->task);
@@ -690,8 +690,9 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 	if (!task)
 		goto out;
 
-	ret = -EACCES;
-	if (!ptrace_may_access(task, PTRACE_MODE_READ))
+	mm = mm_for_maps(task);
+	ret = PTR_ERR(mm);
+	if (!mm || IS_ERR(mm))
 		goto out_task;
 
 	ret = -EINVAL;
@@ -702,10 +703,6 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 	ret = 0;
 
 	if (!count)
-		goto out_task;
-
-	mm = get_task_mm(task);
-	if (!mm)
 		goto out_task;
 
 
