@@ -664,6 +664,10 @@ int svc_recv(struct svc_rqst *rqstp, long timeout)
 		BUG_ON(pool->sp_nwaking < 0);
 	}
 
+	/* Normally we will wait up to 5 seconds for any required
+	 * cache information to be provided.
+	 */
+	rqstp->rq_chandle.thread_wait = 5*HZ;
 	xprt = svc_xprt_dequeue(pool);
 	if (xprt) {
 		rqstp->rq_xprt = xprt;
@@ -671,6 +675,11 @@ int svc_recv(struct svc_rqst *rqstp, long timeout)
 		rqstp->rq_reserved = serv->sv_max_mesg;
 		atomic_add(rqstp->rq_reserved, &xprt->xpt_reserved);
 
+		/* As there is a shortage of threads and this request
+		 * had to be queue, don't allow the thread to wait so
+		 * long for cache updates.
+		 */
+		rqstp->rq_chandle.thread_wait = 1*HZ;
 	} else {
 		/* No data pending. Go to sleep */
 		svc_thread_enqueue(pool, rqstp);

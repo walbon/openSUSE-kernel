@@ -522,11 +522,13 @@ static int cache_defer_req(struct cache_req *req, struct cache_head *item)
 		if (net_random()&1)
 			return -ENOMEM;
 	}
-
-	dreq = &sleeper.handle;
-	sleeper.completion =
+	if (req->thread_wait) {
+		dreq = &sleeper.handle;
+		sleeper.completion =
 		COMPLETION_INITIALIZER_ONSTACK(sleeper.completion);
-	dreq->revisit = cache_restart_thread;
+		dreq->revisit = cache_restart_thread;
+	} else
+		dreq = req->defer(req);
 
  retry:
 	if (dreq == NULL)
@@ -574,7 +576,7 @@ static int cache_defer_req(struct cache_req *req, struct cache_head *item)
 		 * the correct signed comparison.
 		 */
 		timeout = wait_for_completion_interruptible_timeout(
-			&sleeper.completion, 3*HZ);
+			&sleeper.completion, req->thread_wait);
 		if (timeout <= 0) {
 			/* The completion wasn't completed, so we
 			 * need to clean up.
