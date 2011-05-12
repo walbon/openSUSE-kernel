@@ -233,7 +233,7 @@ static struct page *read_sb_page(mddev_t *mddev, long offset,
 
 		target = rdev->sb_start + offset + index * (PAGE_SIZE/512);
 
-		if (sync_page_io(rdev->bdev, target,
+		if (sync_page_io(rdev, target,
 				 roundup(size, bdev_logical_block_size(rdev->bdev)),
 				 page, READ)) {
 			page->index = index;
@@ -498,11 +498,11 @@ void bitmap_update_sb(struct bitmap *bitmap)
 	spin_unlock_irqrestore(&bitmap->lock, flags);
 	sb = (bitmap_super_t *)kmap_atomic(bitmap->sb_page, KM_USER0);
 	sb->events = cpu_to_le64(bitmap->mddev->events);
-	if (bitmap->mddev->events < bitmap->events_cleared) {
+	if (bitmap->mddev->events < bitmap->events_cleared)
 		/* rocking back to read-only */
 		bitmap->events_cleared = bitmap->mddev->events;
-		sb->events_cleared = cpu_to_le64(bitmap->events_cleared);
-	}
+	sb->events_cleared = cpu_to_le64(bitmap->events_cleared);
+	sb->state = cpu_to_le32(bitmap->flags);
 	kunmap_atomic(sb, KM_USER0);
 	write_page(bitmap, bitmap->sb_page, 1);
 }
@@ -620,7 +620,7 @@ success:
 	if (le32_to_cpu(sb->version) == BITMAP_MAJOR_HOSTENDIAN)
 		bitmap->flags |= BITMAP_HOSTENDIAN;
 	bitmap->events_cleared = le64_to_cpu(sb->events_cleared);
-	if (sb->state & cpu_to_le32(BITMAP_STALE))
+	if (bitmap->flags & BITMAP_STALE)
 		bitmap->events_cleared = bitmap->mddev->events;
 	err = 0;
 out:
@@ -652,11 +652,15 @@ static int bitmap_mask_state(struct bitmap *bitmap, enum bitmap_state bits,
 	sb = (bitmap_super_t *)kmap_atomic(bitmap->sb_page, KM_USER0);
 	old = le32_to_cpu(sb->state) & bits;
 	switch (op) {
-		case MASK_SET: sb->state |= cpu_to_le32(bits);
-				break;
-		case MASK_UNSET: sb->state &= cpu_to_le32(~bits);
-				break;
-		default: BUG();
+	case MASK_SET: sb->state |= cpu_to_le32(bits);
+		bitmap->flags |= bits;
+		break;
+
+	case MASK_UNSET: sb->state &= cpu_to_le32(~bits);
+		bitmap->flags &= ~bits;
+		break;
+
+	default: BUG();
 	}
 	kunmap_atomic(sb, KM_USER0);
 	return old;
@@ -968,10 +972,11 @@ static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
 				page = bitmap->sb_page;
 				offset = sizeof(bitmap_super_t);
 				if (!file)
-					read_sb_page(bitmap->mddev,
-						     bitmap->offset,
-						     page,
-						     index, count);
+					page = read_sb_page(
+						bitmap->mddev,
+						bitmap->offset,
+						page,
+						index, count);
 			} else if (file) {
 				page = read_page(file, index, bitmap, count);
 				offset = 0;
@@ -1072,7 +1077,7 @@ static void bitmap_count_page(struct bitmap *bitmap, sector_t offset, int inc)
 	bitmap_checkfree(bitmap, page);
 }
 static bitmap_counter_t *bitmap_get_counter(struct bitmap *bitmap,
-					    sector_t offset, int *blocks,
+					    sector_t offset, sector_t *blocks,
 					    int create);
 
 /*
@@ -1086,7 +1091,7 @@ void bitmap_daemon_work(mddev_t *mddev)
 	unsigned long j;
 	unsigned long flags;
 	struct page *page = NULL, *lastpage = NULL;
-	int blocks;
+	sector_t blocks;
 	void *paddr;
 
 	/* Use a mutex to guard daemon_work against
@@ -1217,7 +1222,7 @@ void bitmap_daemon_work(mddev_t *mddev)
 }
 
 static bitmap_counter_t *bitmap_get_counter(struct bitmap *bitmap,
-					    sector_t offset, int *blocks,
+					    sector_t offset, sector_t *blocks,
 					    int create)
 __releases(bitmap->lock)
 __acquires(bitmap->lock)
@@ -1266,7 +1271,7 @@ int bitmap_startwrite(struct bitmap *bitmap, sector_t offset, unsigned long sect
 	}
 
 	while (sectors) {
-		int blocks;
+		sector_t blocks;
 		bitmap_counter_t *bmc;
 
 		spin_lock_irq(&bitmap->lock);
@@ -1329,7 +1334,7 @@ void bitmap_endwrite(struct bitmap *bitmap, sector_t offset, unsigned long secto
 		success = 0;
 
 	while (sectors) {
-		int blocks;
+		sector_t blocks;
 		unsigned long flags;
 		bitmap_counter_t *bmc;
 
@@ -1366,7 +1371,7 @@ void bitmap_endwrite(struct bitmap *bitmap, sector_t offset, unsigned long secto
 	}
 }
 
-static int __bitmap_start_sync(struct bitmap *bitmap, sector_t offset, int *blocks,
+static int __bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks,
 			       int degraded)
 {
 	bitmap_counter_t *bmc;
@@ -1395,7 +1400,7 @@ static int __bitmap_start_sync(struct bitmap *bitmap, sector_t offset, int *bloc
 	return rv;
 }
 
-int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, int *blocks,
+int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks,
 		      int degraded)
 {
 	/* bitmap_start_sync must always report on multiples of whole
@@ -1406,7 +1411,7 @@ int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, int *blocks,
 	 * Return the 'or' of the result.
 	 */
 	int rv = 0;
-	int blocks1;
+	sector_t blocks1;
 
 	*blocks = 0;
 	while (*blocks < (PAGE_SIZE>>9)) {
@@ -1418,7 +1423,7 @@ int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, int *blocks,
 	return rv;
 }
 
-void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, int *blocks, int aborted)
+void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, int aborted)
 {
 	bitmap_counter_t *bmc;
 	unsigned long flags;
@@ -1461,7 +1466,7 @@ void bitmap_close_sync(struct bitmap *bitmap)
 	 * RESYNC bit wherever it is still on
 	 */
 	sector_t sector = 0;
-	int blocks;
+	sector_t blocks;
 	if (!bitmap)
 		return;
 	while (sector < bitmap->mddev->resync_max_sectors) {
@@ -1473,7 +1478,7 @@ void bitmap_close_sync(struct bitmap *bitmap)
 void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector)
 {
 	sector_t s = 0;
-	int blocks;
+	sector_t blocks;
 
 	if (!bitmap)
 		return;
@@ -1487,7 +1492,7 @@ void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector)
 	wait_event(bitmap->mddev->recovery_wait,
 		   atomic_read(&bitmap->mddev->recovery_active) == 0);
 
-	bitmap->mddev->curr_resync_completed = bitmap->mddev->curr_resync;
+	bitmap->mddev->curr_resync_completed = sector;
 	set_bit(MD_CHANGE_CLEAN, &bitmap->mddev->flags);
 	sector &= ~((1ULL << CHUNK_BLOCK_SHIFT(bitmap)) - 1);
 	s = 0;
@@ -1506,7 +1511,7 @@ static void bitmap_set_memory_bits(struct bitmap *bitmap, sector_t offset, int n
 	 * be 0 at this point
 	 */
 
-	int secs;
+	sector_t secs;
 	bitmap_counter_t *bmc;
 	spin_lock_irq(&bitmap->lock);
 	bmc = bitmap_get_counter(bitmap, offset, &secs, 1);
@@ -1534,6 +1539,12 @@ void bitmap_dirty_bits(struct bitmap *bitmap, unsigned long s, unsigned long e)
 		sector_t sec = (sector_t)chunk << CHUNK_BLOCK_SHIFT(bitmap);
 		bitmap_set_memory_bits(bitmap, sec, 1);
 		bitmap_file_set_bit(bitmap, sec);
+		if (sec < bitmap->mddev->recovery_cp)
+			/* We are asserting that the array is dirty,
+			 * so move the recovery_cp address back so
+			 * that it is obvious that it is dirty
+			 */
+			bitmap->mddev->recovery_cp = sec;
 	}
 }
 

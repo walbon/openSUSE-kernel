@@ -68,8 +68,6 @@ struct mdk_rdev_s
 #define	In_sync		2		/* device is in_sync with rest of array */
 #define	WriteMostly	4		/* Avoid reading if at all possible */
 #define	BarriersNotsupp	5		/* BIO_RW_BARRIER is not supported */
-#define	AllReserved	6		/* If whole device is reserved for
-					 * one array */
 #define	AutoDetected	7		/* added by auto-detect */
 #define Blocked		8		/* An error occured on an externally
 					 * managed array, don't allow writes
@@ -81,6 +79,9 @@ struct mdk_rdev_s
 
 	int desc_nr;			/* descriptor index in the superblock */
 	int raid_disk;			/* role of device in array */
+	int new_raid_disk;		/* role that the device will have in
+					 * the array after a level-change completes.
+					 */
 	int saved_raid_disk;		/* role that device used to have in the
 					 * array and could again if we did a partial
 					 * resync from the bitmap
@@ -97,6 +98,9 @@ struct mdk_rdev_s
 	atomic_t	read_errors;	/* number of consecutive read errors that
 					 * we have tried to ignore.
 					 */
+	struct timespec last_read_error;	/* monotonic time since our
+						 * last read error
+						 */
 	atomic_t	corrected_errors; /* number of corrected read errors,
 					   * for reporting to userspace and storing
 					   * in superblock.
@@ -117,12 +121,17 @@ struct mddev_s
 	unsigned long			flags;
 #define MD_CHANGE_DEVS	0	/* Some device status has changed */
 #define MD_CHANGE_CLEAN 1	/* transition to or from 'clean' */
-#define MD_CHANGE_PENDING 2	/* superblock update in progress */
+#define MD_CHANGE_PENDING 2	/* switch from 'clean' to 'active' in progress */
 
 	int				suspended;
 	atomic_t			active_io;
 	int				ro;
-
+	int				sysfs_active; /* set when sysfs deletes
+						       * are happening, so run/
+						       * takeover/stop are not safe
+						       */
+	int				ready; /* See when safe to pass 
+						* IO requests down */
 	struct gendisk			*gendisk;
 
 	struct kobject			kobj;
@@ -150,6 +159,12 @@ struct mddev_s
 	int				external_size; /* size managed
 							* externally */
 	__u64				events;
+	/* If the last 'event' was simply a clean->dirty transition, and
+	 * we didn't write it to the spares, then it is safe and simple
+	 * to just decrement the event count on a dirty->clean transition.
+	 * So we record that possibility here.
+	 */
+	int				can_decrease_events;
 
 	char				uuid[16];
 
@@ -291,7 +306,23 @@ struct mddev_s
 								*/
 	struct mutex			bitmap_mutex;
 
+	atomic_t 			max_corr_read_errors; /* max read retries */
 	struct list_head		all_mddevs;
+
+	struct attribute_group		*to_remove;
+
+	struct bio_set			*bio_set;
+
+	/* Generic barrier handling.
+	 * If there is a pending barrier request, all other
+	 * writes are blocked while the devices are flushed.
+	 * The last to finish a flush schedules a worker to
+	 * submit the barrier request (without the barrier flag),
+	 * then submit more flush requests.
+	 */
+	struct bio *barrier;
+	atomic_t flush_pending;
+	struct work_struct barrier_work;
 };
 
 
@@ -432,10 +463,11 @@ extern void md_done_sync(mddev_t *mddev, int blocks, int ok);
 extern void md_error(mddev_t *mddev, mdk_rdev_t *rdev);
 
 extern int mddev_congested(mddev_t *mddev, int bits);
+extern void md_barrier_request(mddev_t *mddev, struct bio *bio);
 extern void md_super_write(mddev_t *mddev, mdk_rdev_t *rdev,
 			   sector_t sector, int size, struct page *page);
 extern void md_super_wait(mddev_t *mddev);
-extern int sync_page_io(struct block_device *bdev, sector_t sector, int size,
+extern int sync_page_io(mdk_rdev_t *rdev, sector_t sector, int size,
 			struct page *page, int rw);
 extern void md_do_sync(mddev_t *mddev);
 extern void md_new_event(mddev_t *mddev);
@@ -446,4 +478,8 @@ extern int md_check_no_bitmap(mddev_t *mddev);
 extern int md_integrity_register(mddev_t *mddev);
 void md_integrity_add_rdev(mdk_rdev_t *rdev, mddev_t *mddev);
 
+extern struct bio *bio_clone_mddev(struct bio *bio, gfp_t gfp_mask,
+				   mddev_t *mddev);
+extern struct bio *bio_alloc_mddev(gfp_t gfp_mask, int nr_iovecs,
+				   mddev_t *mddev);
 #endif /* _MD_MD_H */

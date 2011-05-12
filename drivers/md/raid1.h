@@ -35,6 +35,7 @@ struct r1_private_data_s {
 	struct list_head	retry_list;
 	/* queue pending writes and submit them on unplug */
 	struct bio_list		pending_bio_list;
+	int			pending_count;
 	/* queue of writes that have been unplugged */
 	struct bio_list		flushing_bio_list;
 
@@ -59,6 +60,11 @@ struct r1_private_data_s {
 
 	mempool_t *r1bio_pool;
 	mempool_t *r1buf_pool;
+
+	/* When taking over an array from a different personality, we store
+	 * the new thread here until we fully activate the array.
+	 */
+	struct mdk_thread_s	*thread;
 };
 
 typedef struct r1_private_data_s conf_t;
