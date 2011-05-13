@@ -295,8 +295,8 @@ static int alloc_dispatch_logs(void)
 	dtl_cache = kmem_cache_create("dtl", DISPATCH_LOG_BYTES,
 						DISPATCH_LOG_BYTES, 0, NULL); 
 	if (!dtl_cache) {
-		pr_warn("Failed to create dispatch trace log buffer cache\n");
-		pr_warn("Stolen time statistics will be unreliable\n");
+		pr_warning("Failed to create dispatch trace log buffer cache\n");
+		pr_warning("Stolen time statistics will be unreliable\n");
 		return 0;
 	}
 
