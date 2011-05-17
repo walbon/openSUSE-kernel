@@ -178,7 +178,7 @@ ia64_mca_cpe_move_page(u64 paddr, u32 node)
 
 	list_add(&page->lru, &pagelist);
 	SetPageMemError(page);		/* Mark the page as bad */
-	ret = migrate_pages(&pagelist, alloc_migrate_page, node);
+	ret = migrate_pages(&pagelist, alloc_migrate_page, node, false, true);
 	if (ret == 0) {
 		total_badpages++;
 		if (record_bad_paddr)
