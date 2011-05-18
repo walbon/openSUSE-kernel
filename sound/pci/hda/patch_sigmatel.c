@@ -3515,25 +3515,33 @@ static int check_mic_pin(struct hda_codec *codec, hda_nid_t nid,
 			 hda_nid_t *fixed, hda_nid_t *ext, hda_nid_t *dock)
 {
 	unsigned int cfg;
+	unsigned int type;
 
 	if (!nid)
 		return 0;
 	cfg = snd_hda_codec_get_pincfg(codec, nid);
+	type = get_defcfg_device(cfg);
 	switch (get_defcfg_connect(cfg)) {
 	case AC_JACK_PORT_BOTH:
 	case AC_JACK_PORT_FIXED:
 		if (*fixed)
 			return 1; /* already occupied */
+		if (type != AC_JACK_MIC_IN)
+			return 1; /* invalid type */
 		*fixed = nid;
 		break;
 	case AC_JACK_PORT_COMPLEX:
 		if ((get_defcfg_location(cfg) & 0xF0) == AC_JACK_LOC_SEPARATE) {
 			if (*dock)
 				return 1; /* already occupied */
+			if (type != AC_JACK_MIC_IN && type != AC_JACK_LINE_IN)
+				return 1; /* invalid type */
 			*dock = nid;
 		} else {
 			if (*ext)
 				return 1; /* already occupied */
+			if (type != AC_JACK_MIC_IN)
+				return 1; /* invalid type */
 			*ext = nid;
 		}
 		break;
@@ -3584,15 +3592,9 @@ static int set_mic_route(struct hda_codec *codec,
 static int stac_check_auto_mic(struct hda_codec *codec)
 {
 	struct sigmatel_spec *spec = codec->spec;
-	struct auto_pin_cfg *cfg = &spec->autocfg;
 	hda_nid_t fixed, ext, dock;
 	hda_nid_t nid, end_nid;
-	int i;
 
-	for (i = AUTO_PIN_LINE; i < AUTO_PIN_LAST; i++) {
-		if (cfg->input_pins[i])
-			return 0; /* must be exclusively mics */
-	}
 	fixed = ext = dock = 0;
 	/* read all default configuration for pin complex */
 	end_nid = codec->start_nid + codec->num_nodes;
