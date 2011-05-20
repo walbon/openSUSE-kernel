@@ -44,6 +44,9 @@ static struct xfrm_policy_afinfo *xfrm_policy_afinfo[NPROTO];
 
 static struct kmem_cache *xfrm_dst_cache __read_mostly;
 
+static int xfrm_gc_interval __read_mostly = 5 * 60 * HZ;
+static struct delayed_work expires_work;
+
 static HLIST_HEAD(xfrm_policy_gc_list);
 static DEFINE_SPINLOCK(xfrm_policy_gc_lock);
 
@@ -2172,6 +2175,16 @@ static int xfrm_flush_bundles(struct net *net)
 	return 0;
 }
 
+static void xfrm_gc_worker_func(struct work_struct *work)
+{
+	struct net *net;
+
+	for_each_net(net)
+		__xfrm_garbage_collect(net);
+
+	schedule_delayed_work(&expires_work, xfrm_gc_interval);
+}
+
 static void xfrm_init_pmtu(struct dst_entry *dst)
 {
 	do {
@@ -2429,8 +2442,13 @@ static int __net_init xfrm_policy_init(struct net *net)
 
 	INIT_LIST_HEAD(&net->xfrm.policy_all);
 	INIT_WORK(&net->xfrm.policy_hash_work, xfrm_hash_resize);
-	if (net_eq(net, &init_net))
+	if (net_eq(net, &init_net)) {
 		register_netdevice_notifier(&xfrm_dev_notifier);
+
+		INIT_DELAYED_WORK_DEFERRABLE(&expires_work, xfrm_gc_worker_func);
+		schedule_delayed_work(&expires_work,
+			net_random() % xfrm_gc_interval + xfrm_gc_interval);
+	}
 	return 0;
 
 out_bydst:
