@@ -48,9 +48,6 @@
  * struct page (these bits with information) are always mapped into kernel
  * address space...
  *
- * PG_buddy is set to indicate that the page is free and in the buddy system
- * (see mm/page_alloc.c).
- *
  * PG_hwpoison indicates that a page got corrupted in hardware and contains
  * data with incorrect ECC bits that triggered a machine check. Accessing is
  * not safe since it may cause another machine check. Don't touch!
@@ -98,7 +95,6 @@ enum pageflags {
 	PG_swapcache,		/* Swap page: swp_entry_t in private */
 	PG_mappedtodisk,	/* Has blocks allocated on-disk */
 	PG_reclaim,		/* To be reclaimed asap */
-	PG_buddy,		/* Page is free, on buddy lists */
 	PG_swapbacked,		/* Page is backed by RAM/swap */
 	PG_unevictable,		/* Page is "unevictable"  */
 #ifdef CONFIG_HAVE_MLOCKED_PAGE_BIT
@@ -109,6 +105,9 @@ enum pageflags {
 #endif
 #ifdef CONFIG_MEMORY_FAILURE
 	PG_hwpoison,		/* hardware poisoned page. Don't touch */
+#endif
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+	PG_compound_lock,
 #endif
 #ifdef CONFIG_XEN
 	PG_foreign,		/* Page is owned by foreign allocator. */
@@ -258,7 +257,6 @@ PAGEFLAG(OwnerPriv1, owner_priv_1) TESTCLEARFLAG(OwnerPriv1, owner_priv_1)
  * risky: they bypass page accounting.
  */
 TESTPAGEFLAG(Writeback, writeback) TESTSCFLAG(Writeback, writeback)
-__PAGEFLAG(Buddy, buddy)
 PAGEFLAG(MappedToDisk, mappedtodisk)
 
 /* PG_readahead is only used for file reads; PG_reclaim is only for writes */
@@ -396,7 +394,7 @@ static inline void set_page_writeback(struct page *page)
  * tests can be used in performance sensitive paths. PageCompound is
  * generally not used in hot code paths.
  */
-__PAGEFLAG(Head, head)
+__PAGEFLAG(Head, head) CLEARPAGEFLAG(Head, head)
 __PAGEFLAG(Tail, tail)
 
 static inline int PageCompound(struct page *page)
@@ -404,6 +402,13 @@ static inline int PageCompound(struct page *page)
 	return page->flags & ((1L << PG_head) | (1L << PG_tail));
 
 }
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+static inline void ClearPageCompound(struct page *page)
+{
+	BUG_ON(!PageHead(page));
+	ClearPageHead(page);
+}
+#endif
 #else
 /*
  * Reduce page flag use as much as possible by overlapping
@@ -441,6 +446,14 @@ static inline void __ClearPageTail(struct page *page)
 	page->flags &= ~PG_head_tail_mask;
 }
 
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+static inline void ClearPageCompound(struct page *page)
+{
+	BUG_ON((page->flags & PG_head_tail_mask) != (1 << PG_compound));
+	clear_bit(PG_compound, &page->flags);
+}
+#endif
+
 #endif /* !PAGEFLAGS_EXTENDED */
 
 #ifdef CONFIG_PAGEFLAGS_EXTENDED
@@ -449,10 +462,49 @@ PAGEFLAG(MemError, memerror)
 PAGEFLAG_FALSE(MemError)
 #endif
 
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+/*
+ * PageHuge() only returns true for hugetlbfs pages, but not for
+ * normal or transparent huge pages.
+ *
+ * PageTransHuge() returns true for both transparent huge and
+ * hugetlbfs pages, but not normal pages. PageTransHuge() can only be
+ * called only in the core VM paths where hugetlbfs pages can't exist.
+ */
+static inline int PageTransHuge(struct page *page)
+{
+	VM_BUG_ON(PageTail(page));
+	return PageHead(page);
+}
+
+static inline int PageTransCompound(struct page *page)
+{
+	return PageCompound(page);
+}
+
+#else
+
+static inline int PageTransHuge(struct page *page)
+{
+	return 0;
+}
+
+static inline int PageTransCompound(struct page *page)
+{
+	return 0;
+}
+#endif
+
 #ifdef CONFIG_HAVE_MLOCKED_PAGE_BIT
 #define __PG_MLOCKED		(1 << PG_mlocked)
 #else
 #define __PG_MLOCKED		0
+#endif
+
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+#define __PG_COMPOUND_LOCK		(1 << PG_compound_lock)
+#else
+#define __PG_COMPOUND_LOCK		0
 #endif
 
 #ifndef CONFIG_XEN
@@ -468,10 +520,10 @@ PAGEFLAG_FALSE(MemError)
 #define PAGE_FLAGS_CHECK_AT_FREE \
 	(1 << PG_lru	 | 1 << PG_locked    | \
 	 1 << PG_private | 1 << PG_private_2 | \
-	 1 << PG_buddy	 | 1 << PG_writeback | 1 << PG_reserved | \
+	 1 << PG_writeback | 1 << PG_reserved | \
 	 1 << PG_slab	 | 1 << PG_swapcache | 1 << PG_active | \
-	 1 << PG_unevictable | __PG_MLOCKED | __PG_HWPOISON | \
-	 __PG_XEN | 1 << PG_waiters)
+	 1 << PG_unevictable | __PG_MLOCKED | __PG_HWPOISON | 1 << __PG_XEN | \
+	 1 << PG_waiters | __PG_COMPOUND_LOCK)
 
 /*
  * Flags checked when a page is prepped for return by the page allocator.

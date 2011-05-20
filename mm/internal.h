@@ -270,6 +270,11 @@ static inline void mminit_validate_memmodel_limits(unsigned long *start_pfn,
 }
 #endif /* CONFIG_SPARSEMEM */
 
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+extern unsigned long vma_address(struct page *page,
+				 struct vm_area_struct *vma);
+#endif
+
 int __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 		     unsigned long start, int len, unsigned int foll_flags,
 		     struct page **pages, struct vm_area_struct **vmas);
