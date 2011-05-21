@@ -838,8 +838,11 @@ static void power_pmu_disable(struct perf_event *event)
 	cpuhw = &__get_cpu_var(cpu_hw_events);
 	for (i = 0; i < cpuhw->n_events; ++i) {
 		if (event == cpuhw->event[i]) {
-			while (++i < cpuhw->n_events)
+			while (++i < cpuhw->n_events) {
 				cpuhw->event[i-1] = cpuhw->event[i];
+				cpuhw->events[i-1] = cpuhw->events[i];
+				cpuhw->flags[i-1] = cpuhw->flags[i];
+			}
 			--cpuhw->n_events;
 			ppmu->disable_pmc(event->hw.idx - 1, cpuhw->mmcr);
 			if (event->hw.idx) {
@@ -1155,6 +1158,7 @@ static void record_and_restart(struct perf_event *event, unsigned long val,
 			if (left <= 0)
 				left = period;
 			record = 1;
+			event->hw.last_period = event->hw.sample_period;
 		}
 		if (left < 0x80000000LL)
 			val = 0x80000000LL - left;
@@ -1165,7 +1169,7 @@ static void record_and_restart(struct perf_event *event, unsigned long val,
 	 */
 	if (record) {
 		struct perf_sample_data data = {
-			.addr	= 0,
+			.addr	= ~0ULL,
 			.period	= event->hw.last_period,
 		};
 

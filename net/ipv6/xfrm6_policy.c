@@ -225,7 +225,13 @@ _decode_session6(struct sk_buff *skb, struct flowi *fl, int reverse)
 
 static inline int xfrm6_garbage_collect(struct dst_ops *ops)
 {
-	xfrm6_policy_afinfo.garbage_collect(&init_net);
+	struct net *net;
+
+	rcu_read_lock();
+	for_each_net_rcu(net)
+		xfrm6_policy_afinfo.garbage_collect(net);
+	rcu_read_unlock();
+
 	return (atomic_read(&xfrm6_dst_ops.entries) > xfrm6_dst_ops.gc_thresh*2);
 }
 

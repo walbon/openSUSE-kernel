@@ -191,7 +191,13 @@ _decode_session4(struct sk_buff *skb, struct flowi *fl, int reverse)
 
 static inline int xfrm4_garbage_collect(struct dst_ops *ops)
 {
-	xfrm4_policy_afinfo.garbage_collect(&init_net);
+	struct net *net;
+
+	rcu_read_lock();
+	for_each_net_rcu(net)
+		xfrm4_policy_afinfo.garbage_collect(net);
+	rcu_read_unlock();
+
 	return (atomic_read(&xfrm4_dst_ops.entries) > xfrm4_dst_ops.gc_thresh*2);
 }
 
