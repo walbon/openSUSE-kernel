@@ -303,37 +303,16 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &min_wakeup_granularity_ns,
 		.extra2		= &max_wakeup_granularity_ns,
 	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_shares_ratelimit",
-		.data		= &sysctl_sched_shares_ratelimit,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &sched_proc_update_handler,
-		.extra1		= &min_sched_shares_ratelimit,
-		.extra2		= &max_sched_shares_ratelimit,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
+ 	{
+ 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "sched_tunable_scaling",
 		.data		= &sysctl_sched_tunable_scaling,
 		.maxlen		= sizeof(enum sched_tunable_scaling),
 		.mode		= 0644,
-		.proc_handler	= &sched_proc_update_handler,
+		.proc_handler	= &proc_dointvec_minmax,
 		.strategy	= &sysctl_intvec,
 		.extra1		= &min_sched_tunable_scaling,
 		.extra2		= &max_sched_tunable_scaling,
-	},
-
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_shares_thresh",
-		.data		= &sysctl_sched_shares_thresh,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_minmax,
-		.strategy	= &sysctl_intvec,
-		.extra1		= &zero,
 	},
 	{
 		.ctl_name	= CTL_UNNUMBERED,
@@ -341,7 +320,9 @@ static struct ctl_table kern_table[] = {
 		.data		= &sysctl_sched_features,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
+		.proc_handler	= &sched_proc_update_handler,
+		.extra1		= &min_sched_shares_ratelimit,
+		.extra2		= &max_sched_shares_ratelimit,
 	},
 	{
 		.ctl_name	= CTL_UNNUMBERED,
@@ -368,12 +349,19 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+		.procname	= "sched_shares_window",
+		.data		= &sysctl_sched_shares_window,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "timer_migration",
 		.data		= &sysctl_timer_migration,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_minmax,
+		.proc_handler	= &sched_proc_update_handler,
 		.strategy	= &sysctl_intvec,
 		.extra1		= &zero,
 		.extra2		= &one,
@@ -387,6 +375,17 @@ static struct ctl_table kern_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &sched_rt_handler,
 	},
+#ifdef CONFIG_CFS_BANDWIDTH
+	{
+		.procname	= "sched_cfs_bandwidth_consistent",
+		.data		= &sysctl_sched_cfs_bandwidth_consistent,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= sched_cfs_consistent_handler,
+		.extra1		= &zero,
+		.extra2		= &one,
+	},
+#endif
 	{
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "sched_rt_runtime_us",
@@ -411,6 +410,14 @@ static struct ctl_table kern_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.procname	= "sched_cfs_bandwidth_slice_us",
+		.data		= &sysctl_sched_cfs_bandwidth_slice,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &one,
 	},
 #endif
 #ifdef CONFIG_LOCK_STAT

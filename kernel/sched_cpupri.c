@@ -47,9 +47,7 @@ static int convert_prio(int prio)
 }
 
 #define for_each_cpupri_active(array, idx)                    \
-  for (idx = find_first_bit(array, CPUPRI_NR_PRIORITIES);     \
-       idx < CPUPRI_NR_PRIORITIES;                            \
-       idx = find_next_bit(array, CPUPRI_NR_PRIORITIES, idx+1))
+	for_each_bit(idx, array, CPUPRI_NR_PRIORITIES)
 
 /**
  * cpupri_find - find the best (lowest-pri) CPU in the system
@@ -167,13 +165,9 @@ void cpupri_set(struct cpupri *cp, int cpu, int newpri)
  *
  * Returns: -ENOMEM if memory fails.
  */
-int cpupri_init(struct cpupri *cp, bool bootmem)
+int cpupri_init(struct cpupri *cp)
 {
-	gfp_t gfp = GFP_KERNEL;
 	int i;
-
-	if (bootmem)
-		gfp = GFP_NOWAIT;
 
 	memset(cp, 0, sizeof(*cp));
 
@@ -182,7 +176,7 @@ int cpupri_init(struct cpupri *cp, bool bootmem)
 
 		spin_lock_init(&vec->lock);
 		vec->count = 0;
-		if (!zalloc_cpumask_var(&vec->mask, gfp))
+		if (!zalloc_cpumask_var(&vec->mask, GFP_KERNEL))
 			goto cleanup;
 	}
 
