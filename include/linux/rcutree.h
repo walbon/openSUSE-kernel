@@ -37,6 +37,7 @@ extern void rcu_bh_qs(int cpu);
 extern int rcu_cpu_notify(struct notifier_block *self,
 			  unsigned long action, void *hcpu);
 extern int rcu_needs_cpu(int cpu);
+extern int rcu_expedited_torture_stats(char *page);
 
 #ifdef CONFIG_TREE_PREEMPT_RCU
 

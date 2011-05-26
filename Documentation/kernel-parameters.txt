@@ -2511,6 +2511,13 @@ and is between 256 and 4096 characters. It is defined in the file
 	stifb=		[HW]
 			Format: bpp:<bpp1>[:<bpp2>[:<bpp3>...]]
 
+	stop_machine.lazy=
+			[KNL,BOOT]
+			Stop machine lazy mode.  Avoid creating and destroying
+			stop_machine threads repeatedly.
+			0 = off [default]
+			1 = on
+
 	sunrpc.min_resvport=
 	sunrpc.max_resvport=
 			[NFS,SUNRPC]

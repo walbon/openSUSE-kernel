@@ -1139,7 +1139,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	p->bts = NULL;
 
 	/* Perform scheduler related setup. Assign this task to a CPU. */
-	sched_fork(p);
+	sched_fork(p, clone_flags);
 
 	retval = perf_event_init_task(p);
 	if (retval)
@@ -1459,7 +1459,7 @@ long do_fork(unsigned long clone_flags,
 			set_tsk_thread_flag(p, TIF_SIGPENDING);
 			__set_task_state(p, TASK_STOPPED);
 		} else {
-			wake_up_new_task(p);
+			wake_up_new_task(p, clone_flags);
 		}
 
 		tracehook_report_clone_complete(trace, regs,

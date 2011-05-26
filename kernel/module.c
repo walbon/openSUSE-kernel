@@ -816,8 +816,16 @@ SYSCALL_DEFINE2(delete_module, const char __user *, name_user,
 		return -EFAULT;
 	name[MODULE_NAME_LEN-1] = '\0';
 
-	if (mutex_lock_interruptible(&module_mutex) != 0)
-		return -EINTR;
+	/* Create stop_machine threads since free_module relies on
+	 * a non-failing stop_machine call. */
+	ret = stop_machine_create();
+	if (ret)
+		return ret;
+
+	if (mutex_lock_interruptible(&module_mutex) != 0) {
+		ret = -EINTR;
+		goto out_stop;
+	}
 
 	mod = find_module(name);
 	if (!mod) {
@@ -876,6 +884,8 @@ SYSCALL_DEFINE2(delete_module, const char __user *, name_user,
 
  out:
 	mutex_unlock(&module_mutex);
+out_stop:
+	stop_machine_destroy();
 	return ret;
 }
 

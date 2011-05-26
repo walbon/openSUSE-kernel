@@ -23,7 +23,8 @@ static void check_preempt_curr_idle(struct rq *rq, struct task_struct *p, int fl
 static struct task_struct *pick_next_task_idle(struct rq *rq)
 {
 	schedstat_inc(rq, sched_goidle);
-	calc_load_account_idle(rq);
+	/* adjust the active tasks as we might go into a long sleep */
+	calc_load_account_active(rq);
 	return rq->idle;
 }
 
@@ -32,7 +33,7 @@ static struct task_struct *pick_next_task_idle(struct rq *rq)
  * message if some code attempts to do it:
  */
 static void
-dequeue_task_idle(struct rq *rq, struct task_struct *p, int flags)
+dequeue_task_idle(struct rq *rq, struct task_struct *p, int sleep)
 {
 	spin_unlock_irq(&rq->lock);
 	printk(KERN_ERR "bad: scheduling from the idle thread!\n");
@@ -44,6 +45,24 @@ static void put_prev_task_idle(struct rq *rq, struct task_struct *prev)
 {
 }
 
+#ifdef CONFIG_SMP
+static unsigned long
+load_balance_idle(struct rq *this_rq, int this_cpu, struct rq *busiest,
+		  unsigned long max_load_move,
+		  struct sched_domain *sd, enum cpu_idle_type idle,
+		  int *all_pinned, int *this_best_prio)
+{
+	return 0;
+}
+
+static int
+move_one_task_idle(struct rq *this_rq, int this_cpu, struct rq *busiest,
+		   struct sched_domain *sd, enum cpu_idle_type idle)
+{
+	return 0;
+}
+#endif
+
 static void task_tick_idle(struct rq *rq, struct task_struct *curr, int queued)
 {
 }
@@ -52,18 +71,34 @@ static void set_curr_task_idle(struct rq *rq)
 {
 }
 
-static void switched_to_idle(struct rq *rq, struct task_struct *p)
+static void switched_to_idle(struct rq *rq, struct task_struct *p,
+			     int running)
 {
-	BUG();
+	/* Can this actually happen?? */
+	if (running)
+		resched_task(rq->curr);
+	else
+		check_preempt_curr(rq, p, 0);
 }
 
-static void
-prio_changed_idle(struct rq *rq, struct task_struct *p, int oldprio)
+static void prio_changed_idle(struct rq *rq, struct task_struct *p,
+			      int oldprio, int running)
 {
-	BUG();
+	/* This can happen for hot plug CPUS */
+
+	/*
+	 * Reschedule if we are currently running on this runqueue and
+	 * our priority decreased, or if we are not currently running on
+	 * this runqueue and our priority is higher than the current's
+	 */
+	if (running) {
+		if (p->prio > oldprio)
+			resched_task(rq->curr);
+	} else
+		check_preempt_curr(rq, p, 0);
 }
 
-static unsigned int get_rr_interval_idle(struct rq *rq, struct task_struct *task)
+unsigned int get_rr_interval_idle(struct rq *rq, struct task_struct *task)
 {
 	return 0;
 }
@@ -85,6 +120,9 @@ static const struct sched_class idle_sched_class = {
 
 #ifdef CONFIG_SMP
 	.select_task_rq		= select_task_rq_idle,
+
+	.load_balance		= load_balance_idle,
+	.move_one_task		= move_one_task_idle,
 #endif
 
 	.set_curr_task          = set_curr_task_idle,
