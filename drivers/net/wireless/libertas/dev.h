@@ -10,6 +10,7 @@
 #include <linux/wireless.h>
 #include <linux/ethtool.h>
 #include <linux/debugfs.h>
+#include <linux/kfifo.h>
 
 #include "defs.h"
 #include "hostcmd.h"
@@ -194,7 +195,7 @@ struct lbs_private {
 	u32 resp_len[2];
 
 	/* Events sent from hardware to driver */
-	struct kfifo *event_fifo;
+	struct kfifo event_fifo;
 
 	/* nickname */
 	u8 nodename[16];
