@@ -51,6 +51,7 @@
 #include <linux/init.h>
 #include <linux/ksm.h>
 #include <linux/rmap.h>
+#include <linux/hugetlb.h>
 #include <linux/rcupdate.h>
 #include <linux/module.h>
 #include <linux/memcontrol.h>
