@@ -1136,7 +1136,7 @@ config DEFAULT_VM_DIRTY_RATIO
 	  Only use this if you really know what you are doing.
 
 config PROFILING
-	bool "Profiling support (EXPERIMENTAL)"
+	bool "Profiling support"
 	help
 	  Say Y here to enable the extended profiling support mechanisms used
 	  by profilers such as OProfile.

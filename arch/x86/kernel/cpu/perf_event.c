@@ -1106,7 +1106,7 @@ static void p6_pmu_disable_all(void)
 
 	/* p6 only has one enable register */
 	rdmsrl(MSR_P6_EVNTSEL0, val);
-	val &= ~ARCH_PERFMON_EVENTSEL0_ENABLE;
+	val &= ~ARCH_PERFMON_EVENTSEL_ENABLE;
 	wrmsrl(MSR_P6_EVNTSEL0, val);
 }
 
@@ -1148,9 +1148,9 @@ static void amd_pmu_disable_all(void)
 		if (!test_bit(idx, cpuc->active_mask))
 			continue;
 		rdmsrl(MSR_K7_EVNTSEL0 + idx, val);
-		if (!(val & ARCH_PERFMON_EVENTSEL0_ENABLE))
+		if (!(val & ARCH_PERFMON_EVENTSEL_ENABLE))
 			continue;
-		val &= ~ARCH_PERFMON_EVENTSEL0_ENABLE;
+		val &= ~ARCH_PERFMON_EVENTSEL_ENABLE;
 		wrmsrl(MSR_K7_EVNTSEL0 + idx, val);
 	}
 }
@@ -1175,7 +1175,7 @@ static void p6_pmu_enable_all(void)
 
 	/* p6 only has one enable register */
 	rdmsrl(MSR_P6_EVNTSEL0, val);
-	val |= ARCH_PERFMON_EVENTSEL0_ENABLE;
+	val |= ARCH_PERFMON_EVENTSEL_ENABLE;
 	wrmsrl(MSR_P6_EVNTSEL0, val);
 }
 
@@ -1221,7 +1221,7 @@ static void amd_pmu_enable_all(void)
 			continue;
 
 		val = event->hw.config;
-		val |= ARCH_PERFMON_EVENTSEL0_ENABLE;
+		val |= ARCH_PERFMON_EVENTSEL_ENABLE;
 		wrmsrl(MSR_K7_EVNTSEL0 + idx, val);
 	}
 }
@@ -1250,7 +1250,7 @@ static inline void intel_pmu_ack_status(u64 ack)
 static inline void x86_pmu_enable_event(struct hw_perf_event *hwc, int idx)
 {
 	(void)checking_wrmsrl(hwc->config_base + idx,
-			      hwc->config | ARCH_PERFMON_EVENTSEL0_ENABLE);
+			      hwc->config | ARCH_PERFMON_EVENTSEL_ENABLE);
 }
 
 static inline void x86_pmu_disable_event(struct hw_perf_event *hwc, int idx)
@@ -1278,7 +1278,7 @@ p6_pmu_disable_event(struct hw_perf_event *hwc, int idx)
 	u64 val = P6_NOP_EVENT;
 
 	if (cpuc->enabled)
-		val |= ARCH_PERFMON_EVENTSEL0_ENABLE;
+		val |= ARCH_PERFMON_EVENTSEL_ENABLE;
 
 	(void)checking_wrmsrl(hwc->config_base + idx, val);
 }
@@ -1396,7 +1396,7 @@ static void p6_pmu_enable_event(struct hw_perf_event *hwc, int idx)
 
 	val = hwc->config;
 	if (cpuc->enabled)
-		val |= ARCH_PERFMON_EVENTSEL0_ENABLE;
+		val |= ARCH_PERFMON_EVENTSEL_ENABLE;
 
 	(void)checking_wrmsrl(hwc->config_base + idx, val);
 }

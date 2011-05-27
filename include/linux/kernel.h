@@ -407,6 +407,7 @@ int printk_hash(const char *, const char *, ...);
         pr_printk_hash(KERN_ERR, fmt, ##__VA_ARGS__)
 #define pr_warning(fmt, ...) \
         pr_printk_hash(KERN_WARNING, fmt, ##__VA_ARGS__)
+#define pr_warn pr_warning
 #define pr_notice(fmt, ...) \
         pr_printk_hash(KERN_NOTICE, fmt, ##__VA_ARGS__)
 #define pr_info(fmt, ...) \
