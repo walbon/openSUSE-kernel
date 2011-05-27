@@ -160,6 +160,7 @@ again:
 		goto again;
 	if (err)
 		pr_warning("Error %d ending transaction", err);
+	return;
 abort:
 	xenbus_transaction_end(xbt, 1);
 }

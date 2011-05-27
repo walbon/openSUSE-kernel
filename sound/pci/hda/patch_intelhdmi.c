@@ -1048,6 +1048,7 @@ static struct hda_codec_preset snd_hda_preset_intelhdmi[] = {
 	{ .id = 0x80862804, .name = "G45 DEVIBX", .patch = patch_intel_hdmi },
 	{ .id = 0x80860054, .name = "Q57 DEVIBX", .patch = patch_intel_hdmi },
 	{ .id = 0x80862805, .name = "CougarPoint HDMI",	.patch = patch_intel_hdmi },
+	{ .id = 0x80862806, .name = "PantherPoint HDMI", .patch = patch_intel_hdmi },
 	{ .id = 0x10951392, .name = "SiI1392 HDMI",     .patch = patch_intel_hdmi },
 	{} /* terminator */
 };
