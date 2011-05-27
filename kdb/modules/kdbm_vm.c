@@ -56,7 +56,11 @@ static struct __vmflags vmflags[] = {
 	{ VM_ACCOUNT, "VM_ACCOUNT " },
 	{ VM_HUGETLB, "VM_HUGETLB " },
 	{ VM_NONLINEAR, "VM_NONLINEAR " },
+#ifndef CONFIG_TRANSPARENT_HUGEPAGE
 	{ VM_MAPPED_COPY, "VM_MAPPED_COPY " },
+#else
+	{ VM_HUGEPAGE, "VM_HUGEPAGE " },
+#endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 	{ VM_INSERTPAGE, "VM_INSERTPAGE " },
 	{ 0, "" }
 };

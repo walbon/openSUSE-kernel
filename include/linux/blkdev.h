@@ -313,6 +313,8 @@ struct queue_limits {
 	unsigned int		io_min;
 	unsigned int		io_opt;
 	unsigned int		max_discard_sectors;
+	unsigned int		discard_granularity;
+	unsigned int		discard_alignment;
 
 	unsigned short		logical_block_size;
 	unsigned short		max_hw_segments;
@@ -320,6 +322,8 @@ struct queue_limits {
 
 	unsigned char		misaligned;
 	unsigned char		cluster;
+	unsigned char		discard_misaligned;
+	signed char		discard_zeroes_data;
 };
 
 struct request_queue
@@ -458,8 +462,8 @@ struct request_queue
 #define QUEUE_FLAG_NONROT      14	/* non-rotational device (SSD) */
 #define QUEUE_FLAG_VIRT        QUEUE_FLAG_NONROT /* paravirt device */
 #define QUEUE_FLAG_IO_STAT     15	/* do IO stats */
-#define QUEUE_FLAG_CQ	       16	/* hardware does queuing */
-#define QUEUE_FLAG_DISCARD     17	/* supports DISCARD */
+#define QUEUE_FLAG_DISCARD     16	/* supports DISCARD */
+#define QUEUE_FLAG_NOXMERGES   18	/* No extended merges */
 
 #define QUEUE_FLAG_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_STACKABLE)	|	\
@@ -582,9 +586,10 @@ enum {
 
 #define blk_queue_plugged(q)	test_bit(QUEUE_FLAG_PLUGGED, &(q)->queue_flags)
 #define blk_queue_tagged(q)	test_bit(QUEUE_FLAG_QUEUED, &(q)->queue_flags)
-#define blk_queue_queuing(q)	test_bit(QUEUE_FLAG_CQ, &(q)->queue_flags)
 #define blk_queue_stopped(q)	test_bit(QUEUE_FLAG_STOPPED, &(q)->queue_flags)
 #define blk_queue_nomerges(q)	test_bit(QUEUE_FLAG_NOMERGES, &(q)->queue_flags)
+#define blk_queue_noxmerges(q)	\
+	test_bit(QUEUE_FLAG_NOXMERGES, &(q)->queue_flags)
 #define blk_queue_nonrot(q)	test_bit(QUEUE_FLAG_NONROT, &(q)->queue_flags)
 #define blk_queue_io_stat(q)	test_bit(QUEUE_FLAG_IO_STAT, &(q)->queue_flags)
 #define blk_queue_flushing(q)	((q)->ordseq)
@@ -753,6 +758,17 @@ struct req_iterator {
 
 #define rq_iter_last(rq, _iter)					\
 		(_iter.bio->bi_next == NULL && _iter.i == _iter.bio->bi_vcnt-1)
+
+#ifndef ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE
+# error	"You should define ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE for your platform"
+#endif
+#if ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE
+extern void rq_flush_dcache_pages(struct request *rq);
+#else
+static inline void rq_flush_dcache_pages(struct request *rq)
+{
+}
+#endif
 
 extern int blk_register_queue(struct gendisk *disk);
 extern void blk_unregister_queue(struct gendisk *disk);
@@ -1127,18 +1143,13 @@ static inline int queue_alignment_offset(struct request_queue *q)
 	return q->limits.alignment_offset;
 }
 
-static inline int queue_limit_alignment_offset(struct queue_limits *lim, sector_t offset)
+static inline int queue_limit_alignment_offset(struct queue_limits *lim, sector_t sector)
 {
 	unsigned int granularity = max(lim->physical_block_size, lim->io_min);
+	unsigned int alignment = (sector << 9) & (granularity - 1);
 
-	offset &= granularity - 1;
-	return (granularity + lim->alignment_offset - offset) & (granularity - 1);
-}
-
-static inline int queue_sector_alignment_offset(struct request_queue *q,
-						sector_t sector)
-{
-	return queue_limit_alignment_offset(&q->limits, sector << 9);
+	return (granularity + lim->alignment_offset - alignment)
+		& (granularity - 1);
 }
 
 static inline int bdev_alignment_offset(struct block_device *bdev)
@@ -1152,6 +1163,35 @@ static inline int bdev_alignment_offset(struct block_device *bdev)
 		return bdev->bd_part->alignment_offset;
 
 	return q->limits.alignment_offset;
+}
+
+static inline int queue_discard_alignment(struct request_queue *q)
+{
+	if (q->limits.discard_misaligned)
+		return -1;
+
+	return q->limits.discard_alignment;
+}
+
+static inline int queue_limit_discard_alignment(struct queue_limits *lim, sector_t sector)
+{
+	unsigned int alignment = (sector << 9) & (lim->discard_granularity - 1);
+
+	return (lim->discard_granularity + lim->discard_alignment - alignment)
+		& (lim->discard_granularity - 1);
+}
+
+static inline unsigned int queue_discard_zeroes_data(struct request_queue *q)
+{
+	if (q->limits.discard_zeroes_data == 1)
+		return 1;
+
+	return 0;
+}
+
+static inline unsigned int bdev_discard_zeroes_data(struct block_device *bdev)
+{
+	return queue_discard_zeroes_data(bdev_get_queue(bdev));
 }
 
 static inline int queue_dma_alignment(struct request_queue *q)
