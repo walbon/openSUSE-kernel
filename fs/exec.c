@@ -43,7 +43,6 @@
 #include <linux/pid_namespace.h>
 #include <linux/module.h>
 #include <linux/namei.h>
-#include <linux/proc_fs.h>
 #include <linux/mount.h>
 #include <linux/security.h>
 #include <linux/ima.h>
@@ -68,6 +67,12 @@ int core_uses_pid;
 char core_pattern[CORENAME_MAX_SIZE] = "core";
 unsigned int core_pipe_limit;
 int suid_dumpable = 0;
+
+struct core_name {
+	char *corename;
+	int used, size;
+};
+static atomic_t call_count = ATOMIC_INIT(1);
 
 /* The maximal length of core_pattern is also specified in sysctl.c */
 
@@ -1490,127 +1495,186 @@ void set_binfmt(struct linux_binfmt *new)
 
 EXPORT_SYMBOL(set_binfmt);
 
+static int expand_corename(struct core_name *cn)
+{
+	char *old_corename = cn->corename;
+
+	cn->size = CORENAME_MAX_SIZE * atomic_inc_return(&call_count);
+	cn->corename = krealloc(old_corename, cn->size, GFP_KERNEL);
+
+	if (!cn->corename) {
+		kfree(old_corename);
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+static int cn_printf(struct core_name *cn, const char *fmt, ...)
+{
+	char *cur;
+	int need;
+	int ret;
+	va_list arg;
+
+	va_start(arg, fmt);
+	need = vsnprintf(NULL, 0, fmt, arg);
+	va_end(arg);
+
+	if (likely(need < cn->size - cn->used - 1))
+		goto out_printf;
+
+	ret = expand_corename(cn);
+	if (ret)
+		goto expand_fail;
+
+out_printf:
+	cur = cn->corename + cn->used;
+	va_start(arg, fmt);
+	vsnprintf(cur, need + 1, fmt, arg);
+	va_end(arg);
+	cn->used += need;
+	return 0;
+
+expand_fail:
+	return ret;
+}
+
+static int cn_print_exe_file(struct core_name *cn)
+{
+	struct file *exe_file;
+	char *pathbuf, *path, *p;
+	int ret;
+
+	exe_file = get_mm_exe_file(current->mm);
+	if (!exe_file)
+		return cn_printf(cn, "(unknown)");
+
+	pathbuf = kmalloc(PATH_MAX, GFP_TEMPORARY);
+	if (!pathbuf) {
+		ret = -ENOMEM;
+		goto put_exe_file;
+	}
+
+	path = d_path(&exe_file->f_path, pathbuf, PATH_MAX);
+	if (IS_ERR(path)) {
+		ret = PTR_ERR(path);
+		goto free_buf;
+	}
+
+	for (p = path; *p; p++)
+		if (*p == '/')
+			*p = '!';
+
+	ret = cn_printf(cn, "%s", path);
+
+free_buf:
+	kfree(pathbuf);
+put_exe_file:
+	fput(exe_file);
+	return ret;
+}
+
 /* format_corename will inspect the pattern parameter, and output a
  * name into corename, which must have space for at least
  * CORENAME_MAX_SIZE bytes plus one byte for the zero terminator.
  */
-static int format_corename(char *corename, long signr)
+static int format_corename(struct core_name *cn, long signr)
 {
 	const struct cred *cred = current_cred();
 	const char *pat_ptr = core_pattern;
 	int ispipe = (*pat_ptr == '|');
-	char *out_ptr = corename;
-	char *const out_end = corename + CORENAME_MAX_SIZE;
-	int rc;
 	int pid_in_pattern = 0;
+	int err = 0;
+
+	cn->size = CORENAME_MAX_SIZE * atomic_read(&call_count);
+	cn->corename = kmalloc(cn->size, GFP_KERNEL);
+	cn->used = 0;
+
+	if (!cn->corename)
+		return -ENOMEM;
 
 	/* Repeat as long as we have more pattern to process and more output
 	   space */
 	while (*pat_ptr) {
 		if (*pat_ptr != '%') {
-			if (out_ptr == out_end)
+			if (*pat_ptr == 0)
 				goto out;
-			*out_ptr++ = *pat_ptr++;
+			err = cn_printf(cn, "%c", *pat_ptr++);
 		} else {
 			switch (*++pat_ptr) {
+			/* single % at the end, drop that */
 			case 0:
 				goto out;
 			/* Double percent, output one percent */
 			case '%':
-				if (out_ptr == out_end)
-					goto out;
-				*out_ptr++ = '%';
+				err = cn_printf(cn, "%c", '%');
 				break;
 			/* pid */
 			case 'p':
 				pid_in_pattern = 1;
-				rc = snprintf(out_ptr, out_end - out_ptr,
-					      "%d", task_tgid_vnr(current));
-				if (rc > out_end - out_ptr)
-					goto out;
-				out_ptr += rc;
+				err = cn_printf(cn, "%d",
+					      task_tgid_vnr(current));
 				break;
 			/* uid */
 			case 'u':
-				rc = snprintf(out_ptr, out_end - out_ptr,
-					      "%d", cred->uid);
-				if (rc > out_end - out_ptr)
-					goto out;
-				out_ptr += rc;
+				err = cn_printf(cn, "%d", cred->uid);
 				break;
 			/* gid */
 			case 'g':
-				rc = snprintf(out_ptr, out_end - out_ptr,
-					      "%d", cred->gid);
-				if (rc > out_end - out_ptr)
-					goto out;
-				out_ptr += rc;
+				err = cn_printf(cn, "%d", cred->gid);
 				break;
 			/* signal that caused the coredump */
 			case 's':
-				rc = snprintf(out_ptr, out_end - out_ptr,
-					      "%ld", signr);
-				if (rc > out_end - out_ptr)
-					goto out;
-				out_ptr += rc;
+				err = cn_printf(cn, "%ld", signr);
 				break;
 			/* UNIX time of coredump */
 			case 't': {
 				struct timeval tv;
 				do_gettimeofday(&tv);
-				rc = snprintf(out_ptr, out_end - out_ptr,
-					      "%lu", tv.tv_sec);
-				if (rc > out_end - out_ptr)
-					goto out;
-				out_ptr += rc;
+				err = cn_printf(cn, "%lu", tv.tv_sec);
 				break;
 			}
 			/* hostname */
 			case 'h':
 				down_read(&uts_sem);
-				rc = snprintf(out_ptr, out_end - out_ptr,
-					      "%s", utsname()->nodename);
+				err = cn_printf(cn, "%s",
+					      utsname()->nodename);
 				up_read(&uts_sem);
-				if (rc > out_end - out_ptr)
-					goto out;
-				out_ptr += rc;
 				break;
 			/* executable */
 			case 'e':
-				rc = snprintf(out_ptr, out_end - out_ptr,
-					      "%s", current->comm);
-				if (rc > out_end - out_ptr)
-					goto out;
-				out_ptr += rc;
+				err = cn_printf(cn, "%s", current->comm);
+				break;
+			case 'E':
+				err = cn_print_exe_file(cn);
 				break;
 			/* core limit size */
 			case 'c':
-				rc = snprintf(out_ptr, out_end - out_ptr,
-					      "%lu", rlimit(RLIMIT_CORE));
-				if (rc > out_end - out_ptr)
-					goto out;
-				out_ptr += rc;
+				err = cn_printf(cn, "%lu",
+					      rlimit(RLIMIT_CORE));
 				break;
 			default:
 				break;
 			}
 			++pat_ptr;
 		}
+
+		if (err)
+			return err;
 	}
+
 	/* Backward compatibility with core_uses_pid:
 	 *
 	 * If core_pattern does not include a %p (as is the default)
 	 * and core_uses_pid is set, then .%pid will be appended to
 	 * the filename. Do not do this for piped commands. */
 	if (!ispipe && !pid_in_pattern && core_uses_pid) {
-		rc = snprintf(out_ptr, out_end - out_ptr,
-			      ".%d", task_tgid_vnr(current));
-		if (rc > out_end - out_ptr)
-			goto out;
-		out_ptr += rc;
+		err = cn_printf(cn, ".%d", task_tgid_vnr(current));
+		if (err)
+			return err;
 	}
 out:
-	*out_ptr = 0;
 	return ispipe;
 }
 
@@ -1835,7 +1899,7 @@ static void wait_for_dump_helpers(struct file *file)
 void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 {
 	struct core_state core_state;
-	char corename[CORENAME_MAX_SIZE + 1];
+	struct core_name cn;
 	struct mm_struct *mm = current->mm;
 	struct linux_binfmt * binfmt;
 	struct inode * inode;
@@ -1902,8 +1966,14 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 	 * uses lock_kernel()
 	 */
  	lock_kernel();
-	ispipe = format_corename(corename, signr);
+	ispipe = format_corename(&cn, signr);
 	unlock_kernel();
+
+	if (ispipe == -ENOMEM) {
+		printk(KERN_WARNING "format_corename failed\n");
+		printk(KERN_WARNING "Aborting core\n");
+		goto fail_corename;
+	}
 
 	if ((!ispipe) && (core_limit < binfmt->min_coredump))
 		goto fail_unlock;
@@ -1939,7 +2009,7 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 			goto fail_dropcount;
 		}
 
-		helper_argv = argv_split(GFP_KERNEL, corename+1, &helper_argc);
+		helper_argv = argv_split(GFP_KERNEL, cn.corename+1, &helper_argc);
 		if (!helper_argv) {
 			printk(KERN_WARNING "%s failed to allocate memory\n",
 			       __func__);
@@ -1952,11 +2022,11 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 		if (call_usermodehelper_pipe(helper_argv[0], helper_argv, NULL,
 				&file)) {
  			printk(KERN_INFO "Core dump to %s pipe failed\n",
-			       corename);
+			       cn.corename);
 			goto fail_dropcount;
  		}
  	} else
- 		file = filp_open(corename,
+		file = filp_open(cn.corename,
 				 O_CREAT | 2 | O_NOFOLLOW | O_LARGEFILE | flag,
 				 0600);
 	if (IS_ERR(file))
@@ -2000,6 +2070,8 @@ fail_unlock:
 	if (helper_argv)
 		argv_free(helper_argv);
 
+	kfree(cn.corename);
+fail_corename:
 	revert_creds(old_cred);
 	put_cred(cred);
 	coredump_finish(mm);
