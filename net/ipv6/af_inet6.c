@@ -91,7 +91,7 @@ MODULE_PARM_DESC(autoconf, "Enable IPv6 address autoconfiguration on all interfa
 
 static __inline__ struct ipv6_pinfo *inet6_sk_generic(struct sock *sk)
 {
-	const int offset = sk->sk_prot->obj_size - sizeof(struct ipv6_pinfo);
+	const int offset = sk->sk_prot->obj_size - SOCK_KABI_ALLOC_SIZE - sizeof(struct ipv6_pinfo);
 
 	return (struct ipv6_pinfo *)(((u8 *)sk) + offset);
 }

@@ -315,10 +315,11 @@ struct sock_kabi {
 
 #define SOCK_KABI_SIZE ALIGN(sizeof(struct sock_kabi), sizeof(long))
 
-static inline unsigned int sock_kabi_alloc_size(unsigned int prot_sock_size)
-{
-       return ALIGN(prot_sock_size, sizeof(long)) + SOCK_KABI_SIZE;
-}
+/*
+ * we need to allocate extra room to long-align the sock_kabi
+ * beyond the end of the original structure - see comment at sock_kabi()
+ */
+#define SOCK_KABI_ALLOC_SIZE (SOCK_KABI_SIZE + sizeof(long) - 1)
 
 static inline struct sock_kabi *sock_kabi(const struct sock *sk);
 
@@ -793,12 +794,18 @@ struct proto {
 #endif
 };
 
+/*
+ * return the position of the sock_kabi structure within a sk; room for
+ * sock_kabi + sizeof(long) - 1 is allocated at the end so that there is always
+ * room to long-align the sock_kabi, yet we can always calculate the original
+ * length, which would not be possible if we only allocated the minimum
+ * required for the alignment
+ */
 static inline struct sock_kabi *sock_kabi(const struct sock *sk)
 {
-	unsigned int obj_size = sk->sk_prot_creator->obj_size;
-	unsigned int kabi_offset = obj_size - SOCK_KABI_SIZE;
+	unsigned int orig_size = sk->sk_prot_creator->obj_size - SOCK_KABI_ALLOC_SIZE;
 
-	return (struct sock_kabi *)(((u8 *)sk) + kabi_offset);
+	return (struct sock_kabi *)(((u8 *)sk) + ALIGN(orig_size, sizeof(long)));
 }
 
 extern int proto_register(struct proto *prot, int alloc_slab);

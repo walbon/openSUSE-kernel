@@ -2331,7 +2331,7 @@ static inline void release_proto_idx(struct proto *prot)
 int proto_register(struct proto *prot, int alloc_slab)
 {
 
-	prot->obj_size = sock_kabi_alloc_size(prot->obj_size);
+	prot->obj_size += SOCK_KABI_ALLOC_SIZE;
 
 	if (alloc_slab) {
 		prot->slab = kmem_cache_create(prot->name, prot->obj_size, 0,
