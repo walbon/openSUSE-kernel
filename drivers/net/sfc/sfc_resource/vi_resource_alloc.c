@@ -118,8 +118,8 @@ static inline int efrm_vi_rm_alloc_id(uint16_t vi_flags, int32_t evq_capacity)
 	}
 
 	if (vi_flags & EFHW_VI_RM_WITH_INTERRUPT) {
-		rc = __kfifo_get(efrm_vi_manager->instances_with_interrupt,
-				 (unsigned char *)&instance, sizeof(instance));
+		rc = kfifo_out(&efrm_vi_manager->instances_with_interrupt,
+			       (unsigned char *)&instance, sizeof(instance));
 		if (rc != sizeof(instance)) {
 			EFRM_ASSERT(rc == 0);
 			instance = -1;
@@ -128,8 +128,8 @@ static inline int efrm_vi_rm_alloc_id(uint16_t vi_flags, int32_t evq_capacity)
 	}
 
 	/* Otherwise a normal run-of-the-mill VI. */
-	rc = __kfifo_get(efrm_vi_manager->instances_with_timer,
-			 (unsigned char *)&instance, sizeof(instance));
+	rc = kfifo_out(&efrm_vi_manager->instances_with_timer,
+		       (unsigned char *)&instance, sizeof(instance));
 	if (rc != sizeof(instance)) {
 		EFRM_ASSERT(rc == 0);
 		instance = -1;
@@ -159,16 +159,16 @@ static void efrm_vi_rm_free_id(int instance)
 	} else {
 		if (instance >= efrm_vi_manager->with_timer_base &&
 		    instance < efrm_vi_manager->with_timer_limit) {
-			instances = efrm_vi_manager->instances_with_timer;
+			instances = &efrm_vi_manager->instances_with_timer;
 		} else {
 			EFRM_ASSERT(instance >=
 				    efrm_vi_manager->with_interrupt_base);
 			EFRM_ASSERT(instance <
 				    efrm_vi_manager->with_interrupt_limit);
-			instances = efrm_vi_manager->instances_with_interrupt;
+			instances = &efrm_vi_manager->instances_with_interrupt;
 		}
 
-		EFRM_VERIFY_EQ(kfifo_put(instances, (unsigned char *)&instance,
+		EFRM_VERIFY_EQ(kfifo_out(instances, (unsigned char *)&instance,
 					 sizeof(instance)), sizeof(instance));
 	}
 }

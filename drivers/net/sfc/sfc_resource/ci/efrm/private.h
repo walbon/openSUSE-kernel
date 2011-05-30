@@ -71,23 +71,19 @@ efrm_create_vi_resource_manager(struct efrm_resource_manager **out,
 
 /*! Allocate instance pool. Use kfifo_vfree to destroy it. */
 static inline int
-efrm_kfifo_id_ctor(struct kfifo **ids_out,
+efrm_kfifo_id_ctor(struct kfifo *ids,
 		   unsigned int base, unsigned int limit, spinlock_t *lock)
 {
 	unsigned int i;
-	struct kfifo *ids;
 	unsigned char *buffer;
 	unsigned int size = roundup_pow_of_two((limit - base) * sizeof(int));
 	EFRM_ASSERT(base <= limit);
 	buffer = vmalloc(size);
-	ids = kfifo_init(buffer, size, GFP_KERNEL, lock);
-	if (IS_ERR(ids))
-		return PTR_ERR(ids);
+	kfifo_init(ids, buffer, size);
 	for (i = base; i < limit; i++)
-		EFRM_VERIFY_EQ(__kfifo_put(ids, (unsigned char *)&i,
-					   sizeof(i)), sizeof(i));
+		EFRM_VERIFY_EQ(kfifo_in(ids, (unsigned char *)&i,
+					sizeof(i)), sizeof(i));
 
-	*ids_out = ids;
 	return 0;
 }
 

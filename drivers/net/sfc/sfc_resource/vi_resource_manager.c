@@ -198,10 +198,10 @@ fail_rm_ctor:
 	destroy_workqueue(efrm_vi_manager->workqueue);
 fail_create_workqueue:
 	EFRM_ASSERT(list_empty(&efrm_vi_manager->close_pending));
-	kfifo_vfree(efrm_vi_manager->instances_with_interrupt);
+	kfifo_vfree(&efrm_vi_manager->instances_with_interrupt);
 fail_with_int_id_pool:
 
-	kfifo_vfree(efrm_vi_manager->instances_with_timer);
+	kfifo_vfree(&efrm_vi_manager->instances_with_timer);
 fail_with_timer_id_pool:
 
 	if (destroy)

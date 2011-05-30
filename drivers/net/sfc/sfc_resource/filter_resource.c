@@ -48,7 +48,7 @@
 
 struct filter_resource_manager {
 	struct efrm_resource_manager rm;
-	struct kfifo *free_ids;
+	struct kfifo free_ids;
 };
 
 static struct filter_resource_manager *efrm_filter_manager;
@@ -70,7 +70,7 @@ void efrm_filter_resource_free(struct filter_resource *frs)
 
 	/* Free this filter. */
 	id = EFRM_RESOURCE_INSTANCE(frs->rs.rs_handle);
-	EFRM_VERIFY_EQ(kfifo_put(efrm_filter_manager->free_ids,
+	EFRM_VERIFY_EQ(kfifo_out(&efrm_filter_manager->free_ids,
 				 (unsigned char *)&id, sizeof(id)),
 		       sizeof(id));
 
@@ -96,7 +96,7 @@ static void filter_rm_dtor(struct efrm_resource_manager *rm)
 	EFRM_RESOURCE_MANAGER_ASSERT_VALID(&efrm_filter_manager->rm);
 	EFRM_ASSERT(&efrm_filter_manager->rm == rm);
 
-	kfifo_vfree(efrm_filter_manager->free_ids);
+	kfifo_vfree(&efrm_filter_manager->free_ids);
 	EFRM_TRACE("%s: done", __func__);
 }
 
@@ -130,7 +130,7 @@ int efrm_create_filter_resource_manager(struct efrm_resource_manager **rm_out)
 
 	*rm_out = &efrm_filter_manager->rm;
 	EFRM_TRACE("%s: filter resources created - %d IDs",
-		   __func__, kfifo_len(efrm_filter_manager->free_ids));
+		   __func__, kfifo_len(&efrm_filter_manager->free_ids));
 	return 0;
 
 fail2:
@@ -195,7 +195,7 @@ efrm_filter_resource_alloc(struct vi_resource *vi_parent,
 		return -ENOMEM;
 
 	/* Allocate an instance. */
-	rc = kfifo_get(efrm_filter_manager->free_ids,
+	rc = kfifo_out(&efrm_filter_manager->free_ids,
 		       (unsigned char *)&instance, sizeof(instance));
 	if (rc != sizeof(instance)) {
 		EFRM_TRACE("%s: out of instances", __func__);

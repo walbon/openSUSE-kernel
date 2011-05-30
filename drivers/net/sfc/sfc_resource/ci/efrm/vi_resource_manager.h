@@ -62,10 +62,10 @@ enum {
 struct vi_resource_manager {
 	struct efrm_resource_manager rm;
 
-	struct kfifo *instances_with_timer;
+	struct kfifo instances_with_timer;
 	int with_timer_base;
 	int with_timer_limit;
-	struct kfifo *instances_with_interrupt;
+	struct kfifo instances_with_interrupt;
 	int with_interrupt_base;
 	int with_interrupt_limit;
 

@@ -50,7 +50,7 @@
 
 struct iobufset_resource_manager {
 	struct efrm_resource_manager rm;
-	struct kfifo *free_ids;
+	struct kfifo free_ids;
 };
 
 struct iobufset_resource_manager *efrm_iobufset_manager;
@@ -97,8 +97,8 @@ void efrm_iobufset_resource_free(struct iobufset_resource *rs)
 
 	/* free the instance number */
 	id = EFRM_RESOURCE_INSTANCE(rs->rs.rs_handle);
-	EFRM_VERIFY_EQ(kfifo_put(efrm_iobufset_manager->free_ids,
-				 (unsigned char *)&id, sizeof(id)), sizeof(id));
+	EFRM_VERIFY_EQ(kfifo_in(&efrm_iobufset_manager->free_ids,
+				(unsigned char *)&id, sizeof(id)), sizeof(id));
 
 	efrm_vi_resource_release(rs->evq);
 	if (rs->linked)
@@ -181,7 +181,7 @@ efrm_iobufset_resource_alloc(int32_t n_pages,
 	}
 
 	/* Allocate an instance number. */
-	rc = kfifo_get(efrm_iobufset_manager->free_ids,
+	rc = kfifo_out(&efrm_iobufset_manager->free_ids,
 		       (unsigned char *)&instance, sizeof(instance));
 	if (rc != sizeof(instance)) {
 		EFRM_WARN("%s: out of instances", __func__);
@@ -338,7 +338,7 @@ EXPORT_SYMBOL(efrm_iobufset_resource_alloc);
 static void iobufset_rm_dtor(struct efrm_resource_manager *rm)
 {
 	EFRM_ASSERT(&efrm_iobufset_manager->rm == rm);
-	kfifo_vfree(efrm_iobufset_manager->free_ids);
+	kfifo_vfree(&efrm_iobufset_manager->free_ids);
 }
 
 int
@@ -394,7 +394,7 @@ efrm_create_iobufset_resource_manager(struct efrm_resource_manager **rm_out)
 	return 0;
 
 fail2:
-	kfifo_vfree(efrm_iobufset_manager->free_ids);
+	kfifo_vfree(&efrm_iobufset_manager->free_ids);
 fail1:
 	EFRM_DO_DEBUG(memset(efrm_iobufset_manager, 0,
 			     sizeof(*efrm_iobufset_manager)));
