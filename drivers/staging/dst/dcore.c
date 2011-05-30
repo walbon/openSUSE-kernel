@@ -170,8 +170,7 @@ static int dst_node_create_disk(struct dst_node *n)
 
 	n->queue->queuedata = n;
 	blk_queue_make_request(n->queue, dst_request);
-	blk_queue_max_phys_segments(n->queue, n->max_pages);
-	blk_queue_max_hw_segments(n->queue, n->max_pages);
+	blk_queue_max_segments(n->queue, n->max_pages);
 
 	err = -ENOMEM;
 	n->disk = alloc_disk(1);

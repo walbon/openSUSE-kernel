@@ -1224,19 +1224,10 @@ static int sd_done(struct scsi_cmnd *SCpnt)
 		SCpnt->result = 0;
 		memset(SCpnt->sense_buffer, 0, SCSI_SENSE_BUFFERSIZE);
 		break;
-	case ABORTED_COMMAND:
-		if (sshdr.asc == 0x10) { /* DIF: Disk detected corruption */
-			scsi_print_result(SCpnt);
-			scsi_print_sense("sd", SCpnt);
+	case ABORTED_COMMAND: /* DIF: Target detected corruption */
+	case ILLEGAL_REQUEST: /* DIX: Host detected corruption */
+		if (sshdr.asc == 0x10)
 			good_bytes = sd_completed_bytes(SCpnt);
-		}
-		break;
-	case ILLEGAL_REQUEST:
-		if (sshdr.asc == 0x10) { /* DIX: HBA detected corruption */
-			scsi_print_result(SCpnt);
-			scsi_print_sense("sd", SCpnt);
-			good_bytes = sd_completed_bytes(SCpnt);
-		}
 		break;
 	default:
 		break;
@@ -1246,8 +1237,19 @@ static int sd_done(struct scsi_cmnd *SCpnt)
 		sd_dif_complete(SCpnt, good_bytes);
 
 	if (scsi_host_dif_capable(sdkp->device->host, sdkp->protection_type)
-	    == SD_DIF_TYPE2_PROTECTION && SCpnt->cmnd != SCpnt->request->cmd)
+	    == SD_DIF_TYPE2_PROTECTION && SCpnt->cmnd != SCpnt->request->cmd) {
+
+		/* We have to print a failed command here as the
+		 * extended CDB gets freed before scsi_io_completion()
+		 * is called.
+		 */
+		if (result)
+			scsi_print_command(SCpnt);
+
 		mempool_free(SCpnt->cmnd, sd_cdb_pool);
+		SCpnt->cmnd = NULL;
+		SCpnt->cmd_len = 0;
+	}
 
 	return good_bytes;
 }
@@ -1992,7 +1994,7 @@ static void sd_read_block_limits(struct scsi_disk *sdkp)
 {
 	struct request_queue *q = sdkp->disk->queue;
 	unsigned int sector_sz = sdkp->device->sector_size;
-	const int vpd_len = 32;
+	const int vpd_len = 64;
 	unsigned char *buffer = kmalloc(vpd_len, GFP_KERNEL);
 
 	if (!buffer ||
@@ -2042,7 +2044,7 @@ static void sd_read_block_characteristics(struct scsi_disk *sdkp)
 {
 	unsigned char *buffer;
 	u16 rot;
-	const int vpd_len = 32;
+	const int vpd_len = 64;
 
 	buffer = kmalloc(vpd_len, GFP_KERNEL);
 
@@ -2228,7 +2230,7 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 	blk_queue_prep_rq(sdp->request_queue, sd_prep_fn);
 
 	gd->driverfs_dev = &sdp->sdev_gendev;
-	gd->flags = GENHD_FL_EXT_DEVT | GENHD_FL_DRIVERFS;
+	gd->flags = GENHD_FL_EXT_DEVT;
 	if (sdp->removable)
 		gd->flags |= GENHD_FL_REMOVABLE;
 

@@ -199,7 +199,7 @@ static int create_strip_zones(mddev_t *mddev, raid0_conf_t **private_conf)
 		 */
 
 		if (rdev1->bdev->bd_disk->queue->merge_bvec_fn) {
-			blk_queue_max_phys_segments(mddev->queue, 1);
+			blk_queue_max_segments(mddev->queue, 1);
 			blk_queue_segment_boundary(mddev->queue,
 						   PAGE_CACHE_SIZE - 1);
 		}
@@ -346,7 +346,7 @@ static int raid0_run(mddev_t *mddev)
 	}
 	if (md_check_no_bitmap(mddev))
 		return -EINVAL;
-	blk_queue_max_sectors(mddev->queue, mddev->chunk_sectors);
+	blk_queue_max_hw_sectors(mddev->queue, mddev->chunk_sectors);
 	mddev->queue->queue_lock = &mddev->queue->__queue_lock;
 
 	/* if private is not null, we are here after takeover */

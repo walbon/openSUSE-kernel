@@ -1183,7 +1183,7 @@ static int raid10_add_disk(mddev_t *mddev, mdk_rdev_t *rdev)
 			 * violation.
 			 */
 			if (rdev->bdev->bd_disk->queue->merge_bvec_fn) {
-				blk_queue_max_phys_segments(mddev->queue, 1);
+				blk_queue_max_segments(mddev->queue, 1);
 				blk_queue_segment_boundary(mddev->queue,
 							   PAGE_CACHE_SIZE - 1);
 			}
@@ -2328,7 +2328,7 @@ static int run(mddev_t *mddev)
 		 * within a single page.
 		 */
 		if (rdev->bdev->bd_disk->queue->merge_bvec_fn) {
-			blk_queue_max_phys_segments(mddev->queue, 1);
+			blk_queue_max_segments(mddev->queue, 1);
 			blk_queue_segment_boundary(mddev->queue,
 						   PAGE_CACHE_SIZE - 1);
 		}

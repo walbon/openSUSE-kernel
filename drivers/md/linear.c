@@ -176,7 +176,7 @@ static linear_conf_t *linear_conf(mddev_t *mddev, int raid_disks)
 		 * a single page.
 		 */
 		if (rdev->bdev->bd_disk->queue->merge_bvec_fn) {
-			blk_queue_max_phys_segments(mddev->queue, 1);
+			blk_queue_max_segments(mddev->queue, 1);
 			blk_queue_segment_boundary(mddev->queue,
 						   PAGE_CACHE_SIZE - 1);
 		}

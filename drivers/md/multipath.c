@@ -307,7 +307,7 @@ static int multipath_add_disk(mddev_t *mddev, mdk_rdev_t *rdev)
 		 * merge_bvec_fn will be involved in multipath.)
 		 */
 			if (q->merge_bvec_fn) {
-				blk_queue_max_phys_segments(mddev->queue, 1);
+				blk_queue_max_segments(mddev->queue, 1);
 				blk_queue_segment_boundary(mddev->queue,
 							   PAGE_CACHE_SIZE - 1);
 			}
@@ -479,7 +479,7 @@ static int multipath_run (mddev_t *mddev)
 		 * violating it, not that we ever expect a device with
 		 * a merge_bvec_fn to be involved in multipath */
 		if (rdev->bdev->bd_disk->queue->merge_bvec_fn) {
-			blk_queue_max_phys_segments(mddev->queue, 1);
+			blk_queue_max_segments(mddev->queue, 1);
 			blk_queue_segment_boundary(mddev->queue,
 						   PAGE_CACHE_SIZE - 1);
 		}
