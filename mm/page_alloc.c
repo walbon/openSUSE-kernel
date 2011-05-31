@@ -649,6 +649,13 @@ static bool free_pages_prepare(struct page *page, unsigned int order)
 	int i;
 	int bad = 0;
 
+#ifdef CONFIG_XEN
+	if (PageForeign(page)) {
+		PageForeignDestructor(page, order);
+		return false;
+	}
+#endif
+
 	trace_mm_page_free_direct(page, order);
 	kmemcheck_free_shadow(page, order);
 
@@ -676,13 +683,8 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 	int wasMlocked = __TestClearPageMlocked(page);
 
 #ifdef CONFIG_XEN
-	if (PageForeign(page)) {
-		WARN_ON(wasMlocked);
-		PageForeignDestructor(page, order);
-		return;
-	}
+	WARN_ON(PageForeign(page) && wasMlocked);
 #endif
-
 	if (!free_pages_prepare(page, order))
 		return;
 
@@ -1174,13 +1176,8 @@ void free_hot_cold_page(struct page *page, int cold)
 	int wasMlocked = __TestClearPageMlocked(page);
 
 #ifdef CONFIG_XEN
-	if (PageForeign(page)) {
-		WARN_ON(wasMlocked);
-		PageForeignDestructor(page, 0);
-		return;
-	}
+	WARN_ON(PageForeign(page) && wasMlocked);
 #endif
-
 	if (!free_pages_prepare(page, 0))
 		return;
 

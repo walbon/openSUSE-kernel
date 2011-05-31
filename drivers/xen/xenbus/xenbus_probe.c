@@ -955,7 +955,7 @@ static int be_state;
 static void xenbus_reset_state_changed(struct xenbus_watch *w, const char **v, unsigned int l)
 {
 	xenbus_scanf(XBT_NIL, v[XS_WATCH_PATH], "", "%i", &be_state);
-	printk(KERN_INFO "XENBUS: %s %s\n", v[XS_WATCH_PATH], xenbus_strstate(be_state));
+	pr_info("XENBUS: %s %s\n", v[XS_WATCH_PATH], xenbus_strstate(be_state));
 	wake_up(&be_state_wq);
 }
 
@@ -976,7 +976,7 @@ static void xenbus_reset_frontend_state(char *backend, char *frontend)
 	watch.callback = xenbus_reset_state_changed;
 	be_state = XenbusStateUnknown;
 
-	printk(KERN_INFO "XENBUS: triggering reconnect on %s\n", backend);
+	pr_info("XENBUS: triggering reconnect on %s\n", backend);
 	register_xenbus_watch(&watch);
 
 	xenbus_printf(XBT_NIL, frontend, "state", "%d", XenbusStateClosing);
@@ -989,7 +989,7 @@ static void xenbus_reset_frontend_state(char *backend, char *frontend)
 	wait_event_interruptible(be_state_wq, xenbus_reset_check_final(&be_state));
 
 	unregister_xenbus_watch(&watch);
-	printk(KERN_INFO "XENBUS: reconnect done on %s\n", backend);
+	pr_info("XENBUS: reconnect done on %s\n", backend);
 	kfree(watch.node);
 }
 

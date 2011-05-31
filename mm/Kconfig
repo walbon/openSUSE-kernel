@@ -191,7 +191,7 @@ config MIGRATION
 
 config TRANSPARENT_HUGEPAGE
 	bool "Transparent Hugepage Support"
-	depends on X86 && MMU
+	depends on X86 && !XEN && MMU
 	select COMPACTION
 	help
 	  Transparent Hugepages allows the kernel to use huge pages and

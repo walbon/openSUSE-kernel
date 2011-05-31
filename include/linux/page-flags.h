@@ -522,8 +522,8 @@ static inline int PageTransCompound(struct page *page)
 	 1 << PG_private | 1 << PG_private_2 | \
 	 1 << PG_writeback | 1 << PG_reserved | \
 	 1 << PG_slab	 | 1 << PG_swapcache | 1 << PG_active | \
-	 1 << PG_unevictable | __PG_MLOCKED | __PG_HWPOISON | 1 << __PG_XEN | \
-	 1 << PG_waiters | __PG_COMPOUND_LOCK)
+	 1 << PG_unevictable | __PG_MLOCKED | __PG_HWPOISON | 1 << PG_waiters | \
+	 __PG_COMPOUND_LOCK | __PG_XEN)
 
 /*
  * Flags checked when a page is prepped for return by the page allocator.
