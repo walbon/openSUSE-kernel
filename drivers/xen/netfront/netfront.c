@@ -213,6 +213,7 @@ static int setup_device(struct xenbus_device *, struct netfront_info *);
 static struct net_device *create_netdev(struct xenbus_device *);
 
 static void end_access(int, void *);
+static void netif_release_rings(struct netfront_info *);
 static void netif_disconnect_backend(struct netfront_info *);
 
 static int network_connect(struct net_device *);
@@ -540,6 +541,7 @@ static int setup_device(struct xenbus_device *dev, struct netfront_info *info)
 	return 0;
 
  fail:
+	netif_release_rings(info);
 	return err;
 }
 
@@ -2143,6 +2145,16 @@ static struct net_device * __devinit create_netdev(struct xenbus_device *dev)
 	return ERR_PTR(err);
 }
 
+static void netif_release_rings(struct netfront_info *info)
+{
+	end_access(info->tx_ring_ref, info->tx.sring);
+	end_access(info->rx_ring_ref, info->rx.sring);
+	info->tx_ring_ref = GRANT_INVALID_REF;
+	info->rx_ring_ref = GRANT_INVALID_REF;
+	info->tx.sring = NULL;
+	info->rx.sring = NULL;
+}
+
 static void netif_disconnect_backend(struct netfront_info *info)
 {
 	/* Stop old i/f to prevent errors whilst we rebuild the state. */
@@ -2156,12 +2168,7 @@ static void netif_disconnect_backend(struct netfront_info *info)
 		unbind_from_irqhandler(info->irq, info->netdev);
 	info->irq = 0;
 
-	end_access(info->tx_ring_ref, info->tx.sring);
-	end_access(info->rx_ring_ref, info->rx.sring);
-	info->tx_ring_ref = GRANT_INVALID_REF;
-	info->rx_ring_ref = GRANT_INVALID_REF;
-	info->tx.sring = NULL;
-	info->rx.sring = NULL;
+	netif_release_rings(info);
 }
 
 

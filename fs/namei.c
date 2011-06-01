@@ -35,6 +35,8 @@
 #include <linux/fs_struct.h>
 #include <asm/uaccess.h>
 
+#include "internal.h"
+
 #define ACC_MODE(x) ("\000\004\002\006"[(x)&O_ACCMODE])
 
 /* [Feb-1997 T. Schoebel-Theuer]
@@ -109,6 +111,7 @@
  */
 
 static int __link_path_walk(const char *name, struct nameidata *nd);
+static inline int open_to_namei_flags(int flag);
 
 /* In order to reduce some races, while at the same time doing additional
  * checking and hopefully speeding things up, we copy filenames to the
@@ -1174,7 +1177,8 @@ static int path_lookup_open(int dfd, const char *name,
 	if (filp == NULL)
 		return -ENFILE;
 	nd->intent.open.file = filp;
-	nd->intent.open.flags = open_flags;
+	filp->f_flags = open_flags;
+	nd->intent.open.flags = open_to_namei_flags(open_flags);
 	nd->intent.open.create_mode = 0;
 	err = do_path_lookup(dfd, name, lookup_flags|LOOKUP_OPEN, nd);
 	if (IS_ERR(nd->intent.open.file)) {
@@ -1737,7 +1741,7 @@ struct file *do_filp_open(int dfd, const char *pathname,
 	 */
 	if (!(flag & O_CREAT)) {
 		error = path_lookup_open(dfd, pathname, lookup_flags(flag),
-					 &nd, flag);
+					 &nd, open_flag);
 		if (error)
 			return ERR_PTR(error);
 		goto ok;
@@ -1772,6 +1776,7 @@ struct file *do_filp_open(int dfd, const char *pathname,
 	if (filp == NULL)
 		goto exit_parent;
 	nd.intent.open.file = filp;
+	filp->f_flags = open_flag;
 	nd.intent.open.flags = flag;
 	nd.intent.open.create_mode = mode;
 	dir = nd.path.dentry;
@@ -1812,7 +1817,7 @@ do_last:
 			mnt_drop_write(nd.path.mnt);
 			goto exit;
 		}
-		filp = nameidata_to_filp(&nd, open_flag);
+		filp = nameidata_to_filp(&nd);
 		if (IS_ERR(filp))
 			ima_counts_put(&nd.path,
 				       acc_mode & (MAY_READ | MAY_WRITE |
@@ -1872,7 +1877,7 @@ ok:
 			mnt_drop_write(nd.path.mnt);
 		goto exit;
 	}
-	filp = nameidata_to_filp(&nd, open_flag);
+	filp = nameidata_to_filp(&nd);
 	if (IS_ERR(filp))
 		ima_counts_put(&nd.path,
 			       acc_mode & (MAY_READ | MAY_WRITE | MAY_EXEC));

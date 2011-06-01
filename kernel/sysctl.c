@@ -1231,7 +1231,7 @@ static struct ctl_table vm_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 #ifdef CONFIG_HUGETLB_PAGE
-	 {
+	{
 		.procname	= "nr_hugepages",
 		.data		= NULL,
 		.maxlen		= sizeof(unsigned long),
@@ -1239,16 +1239,27 @@ static struct ctl_table vm_table[] = {
 		.proc_handler	= &hugetlb_sysctl_handler,
 		.extra1		= (void *)&hugetlb_zero,
 		.extra2		= (void *)&hugetlb_infinity,
-	 },
-	 {
+	},
+#ifdef CONFIG_NUMA
+	{
+		.procname	= "nr_hugepages_mempolicy",
+		.data		= NULL,
+		.maxlen		= sizeof(unsigned long),
+		.mode		= 0644,
+		.proc_handler	= &hugetlb_mempolicy_sysctl_handler,
+		.extra1		= (void *)&hugetlb_zero,
+		.extra2		= (void *)&hugetlb_infinity,
+	},
+#endif
+	{
 		.ctl_name	= VM_HUGETLB_GROUP,
 		.procname	= "hugetlb_shm_group",
 		.data		= &sysctl_hugetlb_shm_group,
 		.maxlen		= sizeof(gid_t),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
-	 },
-	 {
+	},
+	{
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "hugepages_treat_as_movable",
 		.data		= &hugepages_treat_as_movable,

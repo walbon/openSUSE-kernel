@@ -84,3 +84,10 @@ extern void mark_files_ro(struct super_block *);
  * super.c
  */
 extern int do_remount_sb(struct super_block *, int, void *, int);
+
+/*
+ * open.c
+ */
+struct nameidata;
+extern struct file *nameidata_to_filp(struct nameidata *);
+extern void release_open_intent(struct nameidata *);

@@ -245,14 +245,19 @@ static inline int __next_node(int n, const nodemask_t *srcp)
 	return min_t(int,MAX_NUMNODES,find_next_bit(srcp->bits, MAX_NUMNODES, n+1));
 }
 
+static inline void init_nodemask_of_node(nodemask_t *mask, int node)
+{
+	nodes_clear(*mask);
+	node_set(node, *mask);
+}
+
 #define nodemask_of_node(node)						\
 ({									\
 	typeof(_unused_nodemask_arg_) m;				\
 	if (sizeof(m) == sizeof(unsigned long)) {			\
-		m.bits[0] = 1UL<<(node);				\
+		m.bits[0] = 1UL << (node);				\
 	} else {							\
-		nodes_clear(m);						\
-		node_set((node), m);					\
+		init_nodemask_of_node(&m, (node));			\
 	}								\
 	m;								\
 })
@@ -484,10 +489,10 @@ static inline int num_node_state(enum node_states state)
  */
 
 #if NODES_SHIFT > 8 /* nodemask_t > 64 bytes */
-#define NODEMASK_ALLOC(x, m) struct x *m = kmalloc(sizeof(*m), GFP_KERNEL)
+#define NODEMASK_ALLOC(type, name) type *name = kmalloc(sizeof(*name), GFP_KERNEL)
 #define NODEMASK_FREE(m) kfree(m)
 #else
-#define NODEMASK_ALLOC(x, m) struct x _m, *m = &_m
+#define NODEMASK_ALLOC(type, name) type _name, *name = &_name
 #define NODEMASK_FREE(m)
 #endif
 
@@ -497,7 +502,7 @@ struct nodemask_scratch {
 	nodemask_t	mask2;
 };
 
-#define NODEMASK_SCRATCH(x) NODEMASK_ALLOC(nodemask_scratch, x)
+#define NODEMASK_SCRATCH(x) NODEMASK_ALLOC(struct nodemask_scratch, x)
 #define NODEMASK_SCRATCH_FREE(x)  NODEMASK_FREE(x)
 
 
