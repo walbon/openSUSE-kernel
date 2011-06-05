@@ -739,6 +739,7 @@ struct qeth_card {
 	struct service_level qeth_service_level;
 	struct qdio_ssqd_desc ssqd;
 	struct mutex conf_mutex;
+	struct mutex discipline_mutex;
 };
 
 struct qeth_card_list_struct {
