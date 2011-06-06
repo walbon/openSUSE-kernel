@@ -515,10 +515,10 @@ static void mem_cgroup_charge_statistics(struct mem_cgroup *mem,
 
 	if (nr_pages > 0)
 		__mem_cgroup_stat_add_safe(cpustat,
-				MEM_CGROUP_STAT_PGPGIN_COUNT, nr_pages);
+				MEM_CGROUP_STAT_PGPGIN_COUNT, 1);
 	else {
 		__mem_cgroup_stat_add_safe(cpustat,
-				MEM_CGROUP_STAT_PGPGOUT_COUNT, nr_pages);
+				MEM_CGROUP_STAT_PGPGOUT_COUNT, 1);
 		nr_pages = -nr_pages;
 	}
 	__mem_cgroup_stat_add_safe(cpustat, MEM_CGROUP_STAT_EVENTS, nr_pages);
@@ -1496,9 +1496,9 @@ static void mem_cgroup_cancel_charge(struct mem_cgroup *mem,
 					int page_size)
 {
 	if (!mem_cgroup_is_root(mem)) {
-		res_counter_uncharge(&mem->res, page_size >> PAGE_SHIFT);
+		res_counter_uncharge(&mem->res, page_size);
 		if (do_swap_account)
-			res_counter_uncharge(&mem->memsw, page_size >> PAGE_SHIFT);
+			res_counter_uncharge(&mem->memsw, page_size);
 	}
 	css_put(&mem->css);
 }
@@ -1550,11 +1550,16 @@ struct mem_cgroup *try_get_mem_cgroup_from_page(struct page *page)
 	return mem;
 }
 
+/*
+ * commit a charge got by __mem_cgroup_try_charge() and makes page_cgroup to be
+ * USED state. If already USED, uncharge and return.
+ */
 static void __mem_cgroup_commit_charge(struct mem_cgroup *mem,
 				       struct page_cgroup *pc,
 				       enum charge_type ctype,
 				       int page_size)
 {
+	bool file = false;
 	int nr_pages = page_size >> PAGE_SHIFT;
 
 	/* try_charge() can return NULL to *memcg, taking care of it. */
@@ -1585,6 +1590,7 @@ static void __mem_cgroup_commit_charge(struct mem_cgroup *mem,
 	case MEM_CGROUP_CHARGE_TYPE_SHMEM:
 		SetPageCgroupCache(pc);
 		SetPageCgroupUsed(pc);
+		file = true;
 		break;
 	case MEM_CGROUP_CHARGE_TYPE_MAPPED:
 		ClearPageCgroupCache(pc);
@@ -1594,10 +1600,10 @@ static void __mem_cgroup_commit_charge(struct mem_cgroup *mem,
 		break;
 	}
 
-	mem_cgroup_charge_statistics(mem, pc, true, nr_pages);
+	mem_cgroup_charge_statistics(mem, pc, file, nr_pages);
 	unlock_page_cgroup(pc);
 }
-
+  
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 
 #define PCGF_NOCOPY_AT_SPLIT ((1 << PCG_LOCK) | \
@@ -1652,6 +1658,7 @@ static void __mem_cgroup_move_account(struct page_cgroup *pc,
 	int cpu;
 	struct mem_cgroup_stat *stat;
 	struct mem_cgroup_stat_cpu *cpustat;
+	bool file = PageCgroupCache(pc);
 	int nr_pages = charge_size >> PAGE_SHIFT;
 
 	VM_BUG_ON(from == to);
@@ -1661,8 +1668,8 @@ static void __mem_cgroup_move_account(struct page_cgroup *pc,
 	VM_BUG_ON(pc->mem_cgroup != from);
 
 	if (!mem_cgroup_is_root(from))
-		res_counter_uncharge(&from->res, PAGE_SIZE);
-	mem_cgroup_charge_statistics(from, pc, false, -nr_pages);
+		res_counter_uncharge(&from->res, charge_size);
+	mem_cgroup_charge_statistics(from, pc, file, -nr_pages);
 
 	page = pc->page;
 	if (page_mapped(page) && !PageAnon(page)) {
@@ -1686,7 +1693,7 @@ static void __mem_cgroup_move_account(struct page_cgroup *pc,
 
 	css_get(&to->css);
 	pc->mem_cgroup = to;
-	mem_cgroup_charge_statistics(to, pc, true, nr_pages);
+	mem_cgroup_charge_statistics(to, pc, file, nr_pages);
 	/*
 	 * We charges against "to" which may not have any tasks. Then, "to"
 	 * can be under rmdir(). But in current implementation, caller of
@@ -2048,6 +2055,7 @@ __mem_cgroup_uncharge_common(struct page *page, enum charge_type ctype)
 	struct mem_cgroup *mem = NULL;
 	struct mem_cgroup_per_zone *mz;
 	int page_size = PAGE_SIZE;
+	bool file = !PageAnon(page);
 
 	if (mem_cgroup_disabled())
 		return NULL;
@@ -2096,7 +2104,7 @@ __mem_cgroup_uncharge_common(struct page *page, enum charge_type ctype)
 		__do_uncharge(mem, ctype, page_size);
 	if (ctype == MEM_CGROUP_CHARGE_TYPE_SWAPOUT)
 		mem_cgroup_swap_statistics(mem, true);
-	mem_cgroup_charge_statistics(mem, pc, false, -count);
+	mem_cgroup_charge_statistics(mem, pc, file, -count);
 
 	ClearPageCgroupUsed(pc);
 	/*
