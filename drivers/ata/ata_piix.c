@@ -174,6 +174,7 @@ static int piix_sidpr_scr_read(struct ata_link *link,
 			       unsigned int reg, u32 *val);
 static int piix_sidpr_scr_write(struct ata_link *link,
 				unsigned int reg, u32 val);
+static bool piix_irq_check(struct ata_port *ap);
 #ifdef CONFIG_PM
 static int piix_pci_device_suspend(struct pci_dev *pdev, pm_message_t mesg);
 static int piix_pci_device_resume(struct pci_dev *pdev);
@@ -322,8 +323,13 @@ static struct scsi_host_template piix_sht = {
 	ATA_BMDMA_SHT(DRV_NAME),
 };
 
-static struct ata_port_operations piix_pata_ops = {
+static struct ata_port_operations piix_sata_ops = {
 	.inherits		= &ata_bmdma32_port_ops,
+	.sff_irq_check		= piix_irq_check,
+};
+
+static struct ata_port_operations piix_pata_ops = {
+	.inherits		= &piix_sata_ops,
 	.cable_detect		= ata_cable_40wire,
 	.set_piomode		= piix_set_piomode,
 	.set_dmamode		= piix_set_dmamode,
@@ -339,10 +345,6 @@ static struct ata_port_operations ich_pata_ops = {
 	.inherits		= &piix_pata_ops,
 	.cable_detect		= ich_pata_cable_detect,
 	.set_dmamode		= ich_set_dmamode,
-};
-
-static struct ata_port_operations piix_sata_ops = {
-	.inherits		= &ata_bmdma32_port_ops,
 };
 
 static struct ata_port_operations piix_sidpr_sata_ops = {
@@ -965,80 +967,6 @@ static int piix_sidpr_scr_read(struct ata_link *link,
 	return 0;
 }
 
-static irqreturn_t piix_interrupt(int irq, void *dev_instance)
-{
-	struct ata_host *host = dev_instance;
-	bool retried = false;
-	unsigned int i;
-	unsigned int handled = 0, polling = 0, idle = 0;
-	unsigned long flags;
-
-	spin_lock_irqsave(&host->lock, flags);
-retry:
-	handled = idle = polling = 0;
-	for (i = 0; i < host->n_ports; i++) {
-		struct ata_port *ap = host->ports[i];
-		struct ata_queued_cmd *qc;
-
-		if (ata_port_is_dummy(ap))
-			continue;
-
-		qc = ata_qc_from_tag(ap, ap->link.active_tag);
-		if (qc) {
-			if (!(qc->tf.flags & ATA_TFLAG_POLLING))
-				handled |= ata_sff_host_intr(ap, qc);
-			else
-				polling |= 1 << i;
-		} else
-			idle |= 1 << i;
-	}
-
-	/*
-	 * If no port was expecting IRQ but the controller is actually
-	 * asserting IRQ line, nobody cared will ensue.  Check IRQ
-	 * pending status if available and clear spurious IRQ.
-	 */
-	if (!handled && !retried) {
-		bool retry = false;
-
-		for (i = 0; i < host->n_ports; i++) {
-			struct ata_port *ap = host->ports[i];
-			u8 host_stat;
-
-			if (polling & (1 << i))
-				continue;
-
-			if (unlikely(!ap->ioaddr.bmdma_addr))
-				continue;
-
-			host_stat = ap->ops->bmdma_status(ap);
-			if (!(host_stat & ATA_DMA_INTR))
-				continue;
-
-			if (idle & (1 << i)) {
-				ap->ops->sff_check_status(ap);
-				ap->ops->sff_irq_clear(ap);
-			} else {
-				/* clear INTRQ and check if BUSY cleared */
-				if (!(ap->ops->sff_check_status(ap) & ATA_BUSY))
-					retry |= true;
-				/*
-				 * With command in flight, we can't do
-				 * sff_irq_clear() w/o racing with completion.
-				 */
-			}
-		}
-		if (retry) {
-			retried = true;
-			goto retry;
-		}
-	}
-
-	spin_unlock_irqrestore(&host->lock, flags);
-
-	return IRQ_RETVAL(handled);
-}
-
 static int piix_sidpr_scr_write(struct ata_link *link,
 				unsigned int reg, u32 val)
 {
@@ -1053,6 +981,14 @@ static int piix_sidpr_scr_write(struct ata_link *link,
 	iowrite32(val, hpriv->sidpr + PIIX_SIDPR_DATA);
 	spin_unlock_irqrestore(&hpriv->sidpr_lock, flags);
 	return 0;
+}
+
+static bool piix_irq_check(struct ata_port *ap)
+{
+	if (unlikely(!ap->ioaddr.bmdma_addr))
+		return false;
+
+	return ap->ops->bmdma_status(ap) & ATA_DMA_INTR;
 }
 
 #ifdef CONFIG_PM
@@ -1664,7 +1600,7 @@ static int __devinit piix_init_one(struct pci_dev *pdev,
 		hpriv->map = piix_init_sata_map(pdev, port_info,
 					piix_map_db_table[ent->driver_data]);
 
-	rc = ata_pci_sff_prepare_host(pdev, ppi, &host);
+	rc = ata_pci_bmdma_prepare_host(pdev, ppi, &host);
 	if (rc)
 		return rc;
 	host->private_data = hpriv;
@@ -1701,7 +1637,7 @@ static int __devinit piix_init_one(struct pci_dev *pdev,
 	host->flags |= ATA_HOST_PARALLEL_SCAN;
 
 	pci_set_master(pdev);
-	return ata_pci_sff_activate_host(host, piix_interrupt, &piix_sht);
+	return ata_pci_sff_activate_host(host, ata_bmdma_interrupt, &piix_sht);
 }
 
 static void piix_remove_one(struct pci_dev *pdev)

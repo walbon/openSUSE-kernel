@@ -386,7 +386,7 @@ static void __devexit cpqarray_remove_one_eisa (int i)
 }
 
 /* pdev is NULL for eisa */
-static int __init cpqarray_register_ctlr( int i, struct pci_dev *pdev)
+static int __devinit cpqarray_register_ctlr( int i, struct pci_dev *pdev)
 {
 	struct request_queue *q;
 	int j;
@@ -503,7 +503,7 @@ Enomem4:
 	return -1;
 }
 
-static int __init cpqarray_init_one( struct pci_dev *pdev,
+static int __devinit cpqarray_init_one( struct pci_dev *pdev,
 	const struct pci_device_id *ent)
 {
 	int i;
@@ -740,7 +740,7 @@ __setup("smart2=", cpqarray_setup);
 /*
  * Find an EISA controller's signature.  Set up an hba if we find it.
  */
-static int __init cpqarray_eisa_detect(void)
+static int __devinit cpqarray_eisa_detect(void)
 {
 	int i=0, j;
 	__u32 board_id;
@@ -1162,7 +1162,8 @@ out_passthru:
 		return error;
 	case IDAGETCTLRSIG:
 		if (!arg) return -EINVAL;
-		put_user(host->ctlr_sig, (int __user *)arg);
+		if (put_user(host->ctlr_sig, (int __user *)arg))
+			return -EFAULT;
 		return 0;
 	case IDAREVALIDATEVOLS:
 		if (MINOR(bdev->bd_dev) != 0)
@@ -1170,7 +1171,8 @@ out_passthru:
 		return revalidate_allvol(host);
 	case IDADRIVERVERSION:
 		if (!arg) return -EINVAL;
-		put_user(DRIVER_VERSION, (unsigned long __user *)arg);
+		if (put_user(DRIVER_VERSION, (unsigned long __user *)arg))
+			return -EFAULT;
 		return 0;
 	case IDAGETPCIINFO:
 	{
@@ -1225,17 +1227,11 @@ static int ida_ctlr_ioctl(ctlr_info_t *h, int dsk, ida_ioctl_t *io)
 	/* Pre submit processing */
 	switch(io->cmd) {
 	case PASSTHRU_A:
-		p = kmalloc(io->sg[0].size, GFP_KERNEL);
-		if (!p) 
-		{ 
-			error = -ENOMEM; 
-			cmd_free(h, c, 0); 
-			return(error);
-		}
-		if (copy_from_user(p, io->sg[0].addr, io->sg[0].size)) {
-			kfree(p);
-			cmd_free(h, c, 0); 
-			return -EFAULT;
+		p = memdup_user(io->sg[0].addr, io->sg[0].size);
+		if (IS_ERR(p)) {
+			error = PTR_ERR(p);
+			cmd_free(h, c, 0);
+			return error;
 		}
 		c->req.hdr.blk = pci_map_single(h->pci_dev, &(io->c), 
 				sizeof(ida_ioctl_t), 
@@ -1266,18 +1262,12 @@ static int ida_ctlr_ioctl(ctlr_info_t *h, int dsk, ida_ioctl_t *io)
 	case DIAG_PASS_THRU:
 	case COLLECT_BUFFER:
 	case WRITE_FLASH_ROM:
-		p = kmalloc(io->sg[0].size, GFP_KERNEL);
-		if (!p) 
- 		{ 
-                        error = -ENOMEM; 
-                        cmd_free(h, c, 0);
-                        return(error);
+		p = memdup_user(io->sg[0].addr, io->sg[0].size);
+		if (IS_ERR(p)) {
+			error = PTR_ERR(p);
+			cmd_free(h, c, 0);
+			return error;
                 }
-		if (copy_from_user(p, io->sg[0].addr, io->sg[0].size)) {
-			kfree(p);
-                        cmd_free(h, c, 0);
-			return -EFAULT;
-		}
 		c->req.sg[0].size = io->sg[0].size;
 		c->req.sg[0].addr = pci_map_single(h->pci_dev, p, 
 			c->req.sg[0].size, PCI_DMA_BIDIRECTIONAL); 

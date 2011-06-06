@@ -112,10 +112,10 @@ static void sas_scsi_task_done(struct sas_task *task)
 		case SAS_ABORTED_TASK:
 			hs = DID_ABORT;
 			break;
-		case SAM_CHECK_COND:
+		case SAM_STAT_CHECK_CONDITION:
 			memcpy(sc->sense_buffer, ts->buf,
 			       min(SCSI_SENSE_BUFFERSIZE, ts->buf_valid_size));
-			stat = SAM_CHECK_COND;
+			stat = SAM_STAT_CHECK_CONDITION;
 			break;
 		default:
 			stat = ts->stat;
@@ -127,17 +127,6 @@ static void sas_scsi_task_done(struct sas_task *task)
 	list_del_init(&task->list);
 	sas_free_task(task);
 	sc->scsi_done(sc);
-}
-
-static enum task_attribute sas_scsi_get_task_attr(struct scsi_cmnd *cmd)
-{
-	enum task_attribute ta = TASK_ATTR_SIMPLE;
-	if (cmd->request && blk_rq_tagged(cmd->request)) {
-		if (cmd->device->ordered_tags &&
-		    (cmd->request->cmd_flags & REQ_HARDBARRIER))
-			ta = TASK_ATTR_ORDERED;
-	}
-	return ta;
 }
 
 static struct sas_task *sas_create_task(struct scsi_cmnd *cmd,
@@ -159,7 +148,7 @@ static struct sas_task *sas_create_task(struct scsi_cmnd *cmd,
 	task->ssp_task.retry_count = 1;
 	int_to_scsilun(cmd->device->lun, &lun);
 	memcpy(task->ssp_task.LUN, &lun.scsi_lun, 8);
-	task->ssp_task.task_attr = sas_scsi_get_task_attr(cmd);
+	task->ssp_task.task_attr = TASK_ATTR_SIMPLE;
 	memcpy(task->ssp_task.cdb, cmd->cmnd, 16);
 
 	task->scatter = scsi_sglist(cmd);
@@ -825,7 +814,7 @@ void sas_slave_destroy(struct scsi_device *scsi_dev)
 	struct domain_device *dev = sdev_to_domain_dev(scsi_dev);
 
 	if (dev_is_sata(dev))
-		ata_port_disable(dev->sata_dev.ap);
+		dev->sata_dev.ap->link.device[0].class = ATA_DEV_NONE;
 }
 
 int sas_change_queue_depth(struct scsi_device *scsi_dev, int new_depth,
@@ -1037,8 +1026,6 @@ int __sas_task_abort(struct sas_task *task)
 void sas_task_abort(struct sas_task *task)
 {
 	struct scsi_cmnd *sc = task->uldd_task;
-	struct request_queue *q = sc->device->request_queue;
-	unsigned long flags;
 
 	/* Escape for libsas internal commands */
 	if (!sc) {
@@ -1050,13 +1037,15 @@ void sas_task_abort(struct sas_task *task)
 
 	if (dev_is_sata(task->dev)) {
 		sas_ata_task_abort(task);
-		return;
-	}
+	} else {
+		struct request_queue *q = sc->device->request_queue;
+		unsigned long flags;
 
-	spin_lock_irqsave(q->queue_lock, flags);
-	blk_abort_request(sc->request);
-	spin_unlock_irqrestore(q->queue_lock, flags);
-	scsi_schedule_eh(sc->device->host);
+		spin_lock_irqsave(q->queue_lock, flags);
+		blk_abort_request(sc->request);
+		spin_unlock_irqrestore(q->queue_lock, flags);
+		scsi_schedule_eh(sc->device->host);
+	}
 }
 
 int sas_slave_alloc(struct scsi_device *scsi_dev)

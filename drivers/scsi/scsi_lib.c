@@ -85,7 +85,7 @@ static void scsi_unprep_request(struct request *req)
 {
 	struct scsi_cmnd *cmd = req->special;
 
-	req->cmd_flags &= ~REQ_DONTPREP;
+	blk_unprep_request(req);
 	req->special = NULL;
 
 	scsi_put_command(cmd);
@@ -101,41 +101,6 @@ static void scsi_unprep_fn(struct request_queue *q, struct request *req)
 	}
 }
 
-
-/*
- * Function:	scsi_requeue_request()
- *
- * Purpose:	Requeue a request.
- *
- * Arguments:	q	- queue to operate on
- *		req	- request to be requeued.
- *		unprep	- indicate if unprep needed.
- *
- * Returns:	Nothing
- *
- * Notes:	Upon return, req is a stale pointer.
- */
-static void scsi_requeue_request(struct request_queue *q, struct request *req,
-				 int unprep)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(q->queue_lock, flags);
-	if (blk_request_aborted(req)) {
-		scsi_unprep_fn(q, req);
-		__blk_end_request_all(req, -EIO);
-		spin_unlock_irqrestore(q->queue_lock, flags);
-		goto out;
-	}
-
-	if (unprep)
-		scsi_unprep_request(req);
-	blk_requeue_request(q, req);
-	spin_unlock_irqrestore(q->queue_lock, flags);
-
-out:
-	scsi_run_queue(q);
-}
 
 /**
  * __scsi_queue_insert - private queue insertion
@@ -155,6 +120,7 @@ static int __scsi_queue_insert(struct scsi_cmnd *cmd, int reason, int unbusy)
 	struct scsi_device *device = cmd->device;
 	struct scsi_target *starget = scsi_target(device);
 	struct request_queue *q = device->request_queue;
+	unsigned long flags;
 
 	SCSI_LOG_MLQUEUE(1,
 		 printk("Inserting command %p into mlqueue\n", cmd));
@@ -191,7 +157,22 @@ static int __scsi_queue_insert(struct scsi_cmnd *cmd, int reason, int unbusy)
 	if (unbusy)
 		scsi_device_unbusy(device);
 
-	scsi_requeue_request(q, cmd->request, 0);
+	/*
+	 * Requeue this command.  It will go before all other commands
+	 * that are already in the queue.
+	 *
+	 * NOTE: there is magic here about the way the queue is plugged if
+	 * we have no outstanding commands.
+	 * 
+	 * Although we *don't* plug the queue, we call the request
+	 * function.  The SCSI request function detects the blocked condition
+	 * and plugs the queue appropriately.
+         */
+	spin_lock_irqsave(q->queue_lock, flags);
+	blk_requeue_request(q, cmd->request);
+	spin_unlock_irqrestore(q->queue_lock, flags);
+
+	scsi_run_queue(q);
 
 	return 0;
 }
@@ -513,8 +494,14 @@ static void scsi_run_queue(struct request_queue *q)
 static void scsi_requeue_command(struct request_queue *q, struct scsi_cmnd *cmd)
 {
 	struct request *req = cmd->request;
+	unsigned long flags;
 
-	scsi_requeue_request(q, req, 1);
+	spin_lock_irqsave(q->queue_lock, flags);
+	scsi_unprep_request(req);
+	blk_requeue_request(q, req);
+	spin_unlock_irqrestore(q->queue_lock, flags);
+
+	scsi_run_queue(q);
 }
 
 void scsi_next_command(struct scsi_cmnd *cmd)
@@ -751,19 +738,23 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 			sense_deferred = scsi_sense_is_deferred(&sshdr);
 	}
 
-	req->errors = result;
-	if (sense_valid && req->sense) {
-		int len = 8 + cmd->sense_buffer[7];
+	if (req->cmd_type == REQ_TYPE_BLOCK_PC) { /* SG_IO ioctl from block level */
+		req->errors = result;
+		if (result) {
+			if (sense_valid && req->sense) {
+				/*
+				 * SG_IO wants current and deferred errors
+				 */
+				int len = 8 + cmd->sense_buffer[7];
 
-		if (len > SCSI_SENSE_BUFFERSIZE)
-			len = SCSI_SENSE_BUFFERSIZE;
-		memcpy(req->sense, cmd->sense_buffer,  len);
-		req->sense_len = len;
-	}
-
-	if (blk_pc_request(req)) { /* SG_IO ioctl from block level */
-		if ((result) && (!sense_deferred))
-			error = -EIO;
+				if (len > SCSI_SENSE_BUFFERSIZE)
+					len = SCSI_SENSE_BUFFERSIZE;
+				memcpy(req->sense, cmd->sense_buffer,  len);
+				req->sense_len = len;
+			}
+			if (!sense_deferred)
+				error = -EIO;
+		}
 
 		req->resid_len = scsi_get_resid(cmd);
 
@@ -782,7 +773,8 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 		}
 	}
 
-	BUG_ON(blk_bidi_rq(req)); /* bidi not support for !blk_pc_request yet */
+	/* no bidi support for !REQ_TYPE_BLOCK_PC yet */
+	BUG_ON(blk_bidi_rq(req));
 
 	/*
 	 * Next deal with any sectors which we were able to correctly
@@ -1035,11 +1027,8 @@ int scsi_init_io(struct scsi_cmnd *cmd, gfp_t gfp_mask)
 
 err_exit:
 	scsi_release_buffers(cmd);
-	if (error == BLKPREP_KILL)
-		scsi_put_command(cmd);
-	else /* BLKPREP_DEFER */
-		scsi_unprep_request(cmd->request);
-
+	cmd->request->special = NULL;
+	scsi_put_command(cmd);
 	return error;
 }
 EXPORT_SYMBOL(scsi_init_io);
@@ -1396,12 +1385,6 @@ static void scsi_kill_request(struct request *req, struct request_queue *q)
 	struct Scsi_Host *shost;
 
 	blk_start_request(req);
-
-	if (unlikely(cmd == NULL)) {
-		printk(KERN_CRIT "impossible request in %s.\n",
-				 __func__);
-		BUG();
-	}
 
 	sdev = cmd->device;
 	starget = scsi_target(sdev);

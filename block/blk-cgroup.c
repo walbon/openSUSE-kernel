@@ -37,7 +37,7 @@ EXPORT_SYMBOL_GPL(cgroup_to_blkio_cgroup);
  */
 void io_add_stat(uint64_t *stat, uint64_t add, unsigned int flags)
 {
-	if (flags & REQ_RW)
+	if (flags & REQ_WRITE)
 		stat[IO_WRITE] += add;
 	else
 		stat[IO_READ] += add;
@@ -45,7 +45,7 @@ void io_add_stat(uint64_t *stat, uint64_t add, unsigned int flags)
 	 * Everywhere in the block layer, an IO is treated as sync if it is a
 	 * read or a SYNC write. We follow the same norm.
 	 */
-	if (!(flags & REQ_RW) || flags & REQ_RW_SYNC)
+	if (!(flags & REQ_WRITE) || flags & REQ_SYNC)
 		stat[IO_SYNC] += add;
 	else
 		stat[IO_ASYNC] += add;

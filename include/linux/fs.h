@@ -8,6 +8,7 @@
 
 #include <linux/limits.h>
 #include <linux/ioctl.h>
+#include <linux/blk_types.h>
 
 /*
  * It's silly to have NR_OPEN bigger than NR_FILE, but you can change
@@ -117,7 +118,7 @@ struct inodes_stat_t {
  *			immediately wait on this read without caring about
  *			unplugging.
  * READA		Used for read-ahead operations. Lower priority, and the
- *			 block layer could (in theory) choose to ignore this
+ *			block layer could (in theory) choose to ignore this
  *			request if it runs into resource problems.
  * WRITE		A normal async write. Device will be plugged.
  * SWRITE		Like WRITE, but a special case for ll_rw_block() that
@@ -136,37 +137,36 @@ struct inodes_stat_t {
  * SWRITE_SYNC
  * SWRITE_SYNC_PLUG	Like WRITE_SYNC/WRITE_SYNC_PLUG, but locks the buffer.
  *			See SWRITE.
- * WRITE_BARRIER	Like WRITE, but tells the block layer that all
- *			previously submitted writes must be safely on storage
- *			before this one is started. Also guarantees that when
- *			this write is complete, it itself is also safely on
- *			storage. Prevents reordering of writes on both sides
- *			of this IO.
+ * WRITE_FLUSH		Like WRITE_SYNC but with preceding cache flush.
+ * WRITE_FUA		Like WRITE_SYNC but data is guaranteed to be on
+ *			non-volatile media on completion.
+ * WRITE_FLUSH_FUA	Combination of WRITE_FLUSH and FUA. The IO is preceded
+ *			by a cache flush and data is guaranteed to be on
+ *			non-volatile media on completion.
  *
  */
-#define RW_MASK		1
-#define RWA_MASK		16
-#define READ 0
-#define WRITE 1
-#define READA			16 /* readahead - don't block if no resources */
-#define SWRITE			17 /* for ll_rw_block(), wait for buffer lock */
-#define READ_SYNC	(READ | (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_UNPLUG))
-#define READ_META	(READ | (1 << BIO_RW_META))
-#define WRITE_SYNC_PLUG	(WRITE | (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_NOIDLE))
-#define WRITE_SYNC	(WRITE_SYNC_PLUG | (1 << BIO_RW_UNPLUG))
-#define WRITE_ODIRECT_PLUG	(WRITE | (1 << BIO_RW_SYNCIO))
-#define WRITE_META	(WRITE | (1 << BIO_RW_META))
-#define SWRITE_SYNC_PLUG	\
-			(SWRITE | (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_NOIDLE))
-#define SWRITE_SYNC	(SWRITE_SYNC_PLUG | (1 << BIO_RW_UNPLUG))
-#define WRITE_BARRIER	(WRITE | (1 << BIO_RW_BARRIER))
+#define RW_MASK			REQ_WRITE
+#define RWA_MASK		REQ_RAHEAD
 
-/*
- * These aren't really reads or writes, they pass down information about
- * parts of device that are now unused by the file system.
- */
-#define DISCARD_NOBARRIER (WRITE | (1 << BIO_RW_DISCARD))
-#define DISCARD_BARRIER (DISCARD_NOBARRIER | (1 << BIO_RW_BARRIER))
+#define READ			0
+#define WRITE			RW_MASK
+#define READA			RWA_MASK
+#define SWRITE			(WRITE | READA)
+
+#define READ_SYNC		(READ | REQ_SYNC | REQ_UNPLUG)
+#define READ_META		(READ | REQ_META)
+#define WRITE_SYNC_PLUG		(WRITE | REQ_SYNC | REQ_NOIDLE)
+#define WRITE_SYNC		(WRITE | REQ_SYNC | REQ_NOIDLE | REQ_UNPLUG)
+#define WRITE_ODIRECT_PLUG	(WRITE | REQ_SYNC)
+#define WRITE_META		(WRITE | REQ_META)
+#define WRITE_FLUSH		(WRITE | REQ_SYNC | REQ_NOIDLE | REQ_UNPLUG | \
+				 REQ_FLUSH)
+#define WRITE_FUA		(WRITE | REQ_SYNC | REQ_NOIDLE | REQ_UNPLUG | \
+				 REQ_FUA)
+#define WRITE_FLUSH_FUA		(WRITE | REQ_SYNC | REQ_NOIDLE | REQ_UNPLUG | \
+				 REQ_FLUSH | REQ_FUA)
+#define SWRITE_SYNC_PLUG	(SWRITE | REQ_SYNC | REQ_NOIDLE)
+#define SWRITE_SYNC		(SWRITE | REQ_SYNC | REQ_NOIDLE | REQ_UNPLUG)
 
 #define SEL_IN		1
 #define SEL_OUT		2
@@ -311,6 +311,7 @@ struct inodes_stat_t {
 #define BLKALIGNOFF _IO(0x12,122)
 #define BLKPBSZGET _IO(0x12,123)
 #define BLKDISCARDZEROES _IO(0x12,124)
+#define BLKSECDISCARD _IO(0x12,125)
 
 #define BMAP_IOCTL 1		/* obsolete - kept for compatibility */
 #define FIBMAP	   _IO(0x00,1)	/* bmap access */
@@ -664,6 +665,7 @@ struct block_device {
 	int			bd_openers;
 	struct mutex		bd_mutex;	/* open/close mutex */
 	struct list_head	bd_inodes;
+	void *			bd_claiming;
 	void *			bd_holder;
 	int			bd_holders;
 #ifdef CONFIG_SYSFS
@@ -2222,7 +2224,6 @@ extern struct file * get_empty_filp(void);
 extern void file_move(struct file *f, struct list_head *list);
 extern void file_kill(struct file *f);
 #ifdef CONFIG_BLOCK
-struct bio;
 extern void submit_bio(int, struct bio *);
 extern int bdev_read_only(struct block_device *);
 #endif
@@ -2250,7 +2251,7 @@ extern int generic_segment_checks(const struct iovec *iov,
 /* fs/block_dev.c */
 extern ssize_t blkdev_aio_write(struct kiocb *iocb, const struct iovec *iov,
 				unsigned long nr_segs, loff_t pos);
-extern int block_fsync(struct file *filp, struct dentry *dentry, int datasync);
+extern int blkdev_fsync(struct file *filp, struct dentry *dentry, int datasync);
 
 /* fs/splice.c */
 extern ssize_t generic_file_splice_read(struct file *, loff_t *,
