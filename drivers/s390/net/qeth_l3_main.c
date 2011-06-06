@@ -3267,6 +3267,8 @@ static void qeth_l3_remove_device(struct ccwgroup_device *cgdev)
 {
 	struct qeth_card *card = dev_get_drvdata(&cgdev->dev);
 
+	qeth_l3_remove_device_attributes(&cgdev->dev);
+
 	qeth_set_allowed_threads(card, 0, 1);
 	wait_event(card->wait_q, qeth_threads_running(card, 0xffffffff) == 0);
 
@@ -3278,7 +3280,6 @@ static void qeth_l3_remove_device(struct ccwgroup_device *cgdev)
 		card->dev = NULL;
 	}
 
-	qeth_l3_remove_device_attributes(&cgdev->dev);
 	qeth_l3_clear_ip_list(card, 0);
 	qeth_l3_clear_ipato_list(card);
 	return;
@@ -3291,6 +3292,7 @@ static int __qeth_l3_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 	enum qeth_card_states recover_flag;
 
 	BUG_ON(!card);
+	mutex_lock(&card->discipline_mutex);
 	mutex_lock(&card->conf_mutex);
 	QETH_DBF_TEXT(SETUP, 2, "setonlin");
 	QETH_DBF_HEX(SETUP, 2, &card, sizeof(void *));
@@ -3391,6 +3393,7 @@ contin:
 	kobject_uevent(&gdev->dev.kobj, KOBJ_CHANGE);
 out:
 	mutex_unlock(&card->conf_mutex);
+	mutex_unlock(&card->discipline_mutex);
 	return rc;
 out_remove:
 	qeth_l3_stop_card(card, 0);
@@ -3402,6 +3405,7 @@ out_remove:
 	else
 		card->state = CARD_STATE_DOWN;
 	mutex_unlock(&card->conf_mutex);
+	mutex_unlock(&card->discipline_mutex);
 	return -ENODEV;
 }
 
@@ -3417,6 +3421,7 @@ static int __qeth_l3_set_offline(struct ccwgroup_device *cgdev,
 	int rc = 0, rc2 = 0, rc3 = 0;
 	enum qeth_card_states recover_flag;
 
+	mutex_lock(&card->discipline_mutex);
 	mutex_lock(&card->conf_mutex);
 	QETH_DBF_TEXT(SETUP, 3, "setoffl");
 	QETH_DBF_HEX(SETUP, 3, &card, sizeof(void *));
@@ -3437,6 +3442,7 @@ static int __qeth_l3_set_offline(struct ccwgroup_device *cgdev,
 	/* let user_space know that device is offline */
 	kobject_uevent(&cgdev->dev.kobj, KOBJ_CHANGE);
 	mutex_unlock(&card->conf_mutex);
+	mutex_unlock(&card->discipline_mutex);
 	return 0;
 }
 
