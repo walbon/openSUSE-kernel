@@ -11,6 +11,7 @@
 #include <linux/lmb.h>
 #include <asm/bug.h>
 #include <asm/abs_addr.h>
+#include <asm/machdep.h>
 
 /*
  * Generic direct DMA implementation
@@ -94,6 +95,18 @@ static int dma_direct_dma_supported(struct device *dev, u64 mask)
 #endif
 }
 
+static u64 dma_direct_get_required_mask(struct device *dev)
+{
+	u64 end, mask;
+
+	end = lmb_end_of_DRAM() + get_dma_offset(dev);
+
+	mask = 1ULL << (fls64(end) - 1);
+	mask += mask - 1;
+
+	return mask;
+}
+
 static inline dma_addr_t dma_direct_map_page(struct device *dev,
 					     struct page *page,
 					     unsigned long offset,
@@ -135,13 +148,14 @@ static inline void dma_direct_sync_single_range(struct device *dev,
 #endif
 
 struct dma_map_ops dma_direct_ops = {
-	.alloc_coherent	= dma_direct_alloc_coherent,
-	.free_coherent	= dma_direct_free_coherent,
-	.map_sg		= dma_direct_map_sg,
-	.unmap_sg	= dma_direct_unmap_sg,
-	.dma_supported	= dma_direct_dma_supported,
-	.map_page	= dma_direct_map_page,
-	.unmap_page	= dma_direct_unmap_page,
+	.alloc_coherent			= dma_direct_alloc_coherent,
+	.free_coherent			= dma_direct_free_coherent,
+	.map_sg				= dma_direct_map_sg,
+	.unmap_sg			= dma_direct_unmap_sg,
+	.dma_supported			= dma_direct_dma_supported,
+	.map_page			= dma_direct_map_page,
+	.unmap_page			= dma_direct_unmap_page,
+	.get_required_mask		= dma_direct_get_required_mask,
 #ifdef CONFIG_NOT_COHERENT_CACHE
 	.sync_single_range_for_cpu 	= dma_direct_sync_single_range,
 	.sync_single_range_for_device 	= dma_direct_sync_single_range,
@@ -152,6 +166,40 @@ struct dma_map_ops dma_direct_ops = {
 EXPORT_SYMBOL(dma_direct_ops);
 
 #define PREALLOC_DMA_DEBUG_ENTRIES (1 << 16)
+
+int dma_set_mask(struct device *dev, u64 dma_mask)
+{
+	struct dma_map_ops *dma_ops = get_dma_ops(dev);
+
+	if (ppc_md.dma_set_mask)
+		return ppc_md.dma_set_mask(dev, dma_mask);
+	if (unlikely(dma_ops == NULL))
+		return -EIO;
+	if (dma_ops->set_dma_mask != NULL)
+		return dma_ops->set_dma_mask(dev, dma_mask);
+	if (!dev->dma_mask || !dma_supported(dev, dma_mask))
+		return -EIO;
+	*dev->dma_mask = dma_mask;
+	return 0;
+}
+EXPORT_SYMBOL(dma_set_mask);
+
+u64 dma_get_required_mask(struct device *dev)
+{
+	struct dma_map_ops *dma_ops = get_dma_ops(dev);
+
+	if (ppc_md.dma_get_required_mask)
+		return ppc_md.dma_get_required_mask(dev);
+
+	if (unlikely(dma_ops == NULL))
+		return 0;
+
+	if (dma_ops->get_required_mask)
+		return dma_ops->get_required_mask(dev);
+
+	return DMA_BIT_MASK(8 * sizeof(dma_addr_t));
+}
+EXPORT_SYMBOL_GPL(dma_get_required_mask);
 
 static int __init dma_init(void)
 {
