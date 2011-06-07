@@ -18,6 +18,8 @@
 #define MSR_ARCH_PERFMON_EVENTSEL0			     0x186
 #define MSR_ARCH_PERFMON_EVENTSEL1			     0x187
 
+#define ARCH_PERFMON_EVENTSEL_EVENT			0x000000FFULL
+#define ARCH_PERFMON_EVENTSEL_UMASK			0x0000FF00ULL
 #define ARCH_PERFMON_EVENTSEL_USR			(1ULL << 16)
 #define ARCH_PERFMON_EVENTSEL_OS			(1ULL << 17)
 #define ARCH_PERFMON_EVENTSEL_EDGE			(1ULL << 18)
@@ -27,14 +29,24 @@
 #define ARCH_PERFMON_EVENTSEL_INV			(1ULL << 23)
 #define ARCH_PERFMON_EVENTSEL_CMASK			0xFF000000ULL
 
-/*
- * Includes eventsel and unit mask as well:
- */
-#define ARCH_PERFMON_EVENT_MASK				    0xffff
+#define AMD64_EVENTSEL_EVENT	\
+	(ARCH_PERFMON_EVENTSEL_EVENT | (0x0FULL << 32))
+#define INTEL_ARCH_EVENT_MASK	\
+	(ARCH_PERFMON_EVENTSEL_UMASK | ARCH_PERFMON_EVENTSEL_EVENT)
+
+#define X86_RAW_EVENT_MASK		\
+	(ARCH_PERFMON_EVENTSEL_EVENT |	\
+	 ARCH_PERFMON_EVENTSEL_UMASK |	\
+	 ARCH_PERFMON_EVENTSEL_EDGE  |	\
+	 ARCH_PERFMON_EVENTSEL_INV   |	\
+	 ARCH_PERFMON_EVENTSEL_CMASK)
+#define AMD64_RAW_EVENT_MASK		\
+	(X86_RAW_EVENT_MASK          |  \
+	 AMD64_EVENTSEL_EVENT)
 
 #define ARCH_PERFMON_UNHALTED_CORE_CYCLES_SEL		      0x3c
 #define ARCH_PERFMON_UNHALTED_CORE_CYCLES_UMASK		(0x00 << 8)
-#define ARCH_PERFMON_UNHALTED_CORE_CYCLES_INDEX 		 0
+#define ARCH_PERFMON_UNHALTED_CORE_CYCLES_INDEX			 0
 #define ARCH_PERFMON_UNHALTED_CORE_CYCLES_PRESENT \
 		(1 << (ARCH_PERFMON_UNHALTED_CORE_CYCLES_INDEX))
 
@@ -47,7 +59,7 @@
 union cpuid10_eax {
 	struct {
 		unsigned int version_id:8;
-		unsigned int num_events:8;
+		unsigned int num_counters:8;
 		unsigned int bit_width:8;
 		unsigned int mask_length:8;
 	} split;
@@ -56,7 +68,7 @@ union cpuid10_eax {
 
 union cpuid10_edx {
 	struct {
-		unsigned int num_events_fixed:4;
+		unsigned int num_counters_fixed:4;
 		unsigned int reserved:28;
 	} split;
 	unsigned int full;

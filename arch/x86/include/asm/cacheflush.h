@@ -192,7 +192,6 @@ extern int kernel_set_to_readonly;
 void set_kernel_text_rw(void);
 void set_kernel_text_ro(void);
 #else
-static inline void mark_rodata_ro(void) { }
 static inline void mark_rodata_rw(void) { }
 static inline void set_kernel_text_rw(void) { }
 static inline void set_kernel_text_ro(void) { }

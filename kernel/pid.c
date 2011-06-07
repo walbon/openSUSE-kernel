@@ -516,9 +516,9 @@ void __init pidmap_init(void)
 {
 	/* bump default and minimum pid_max based on number of cpus */
 	pid_max = min(pid_max_max, max(pid_max,
-				PIDS_PER_CPU_DEFAULT * num_possible_cpus()));
+				(int)(PIDS_PER_CPU_DEFAULT * num_possible_cpus())));
 	pid_max_min = max(pid_max_min,
-				PIDS_PER_CPU_MIN * num_possible_cpus());
+			  (int)(PIDS_PER_CPU_MIN * num_possible_cpus()));
 	pr_info("pid_max: default: %u minimum: %u\n", pid_max, pid_max_min);
 
 	init_pid_ns.pidmap[0].page = kzalloc(PAGE_SIZE, GFP_KERNEL);

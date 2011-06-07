@@ -497,6 +497,21 @@ sys_call_table:
 	.quad sys_signalfd
 	.quad sys_ni_syscall
 	.quad sys_eventfd
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall				/* 480 */
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall				/* 485 */
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall				/* 490 */
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall
+	.quad sys_perf_event_open
 
 	.size sys_call_table, . - sys_call_table
 	.type sys_call_table, @object

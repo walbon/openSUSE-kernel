@@ -24,11 +24,11 @@ typedef struct {
 	unsigned int irq_lock_count;
 #endif
 #endif
-#ifdef CONFIG_X86_MCE
+#ifdef CONFIG_X86_THERMAL_VECTOR
 	unsigned int irq_thermal_count;
-# ifdef CONFIG_X86_MCE_THRESHOLD
+#endif
+#ifdef CONFIG_X86_MCE_THRESHOLD
 	unsigned int irq_threshold_count;
-# endif
 #endif
 } ____cacheline_aligned irq_cpustat_t;
 

@@ -138,6 +138,16 @@ config PPC_FPU
 	bool
 	default y if PPC64
 
+config FSL_EMB_PERF_EVENT
+	bool
+	depends on FSL_EMB_PERFMON && PERF_EVENTS && !PPC_PERF_CTRS
+	default y
+
+config FSL_EMB_PERF_EVENT_E500
+	bool
+	depends on FSL_EMB_PERF_EVENT && E500
+	default y
+
 config 4xx
 	bool
 	depends on 40x || 44x
