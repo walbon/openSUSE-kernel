@@ -40,6 +40,8 @@
 #define DRIVER_NAME     "lis3lv02d"
 #define ACPI_MDPS_CLASS "accelerometer"
 
+static int in_suspend;
+
 /* Delayed LEDs infrastructure ------------------------------------ */
 
 /* Special LED class that can defer work */
@@ -88,6 +90,8 @@ MODULE_DEVICE_TABLE(acpi, lis3lv02d_device_ids);
 int lis3lv02d_acpi_init(struct lis3lv02d *lis3)
 {
 	struct acpi_device *dev = lis3->bus_priv;
+	if (in_suspend)
+		return -EBUSY;
 	if (acpi_evaluate_object(dev->handle, METHOD_NAME__INI,
 				 NULL, NULL) != AE_OK)
 		return -EINVAL;
@@ -111,6 +115,8 @@ int lis3lv02d_acpi_read(struct lis3lv02d *lis3, int reg, u8 *ret)
 	unsigned long long lret;
 	acpi_status status;
 
+	if (in_suspend)
+		return -EBUSY;
 	arg0.integer.value = reg;
 
 	status = acpi_evaluate_integer(dev->handle, "ALRD", &args, &lret);
@@ -133,6 +139,8 @@ int lis3lv02d_acpi_write(struct lis3lv02d *lis3, int reg, u8 val)
 	union acpi_object in_obj[2];
 	struct acpi_object_list args = { 2, in_obj };
 
+	if (in_suspend)
+		return -EBUSY;
 	in_obj[0].type          = ACPI_TYPE_INTEGER;
 	in_obj[0].integer.value = reg;
 	in_obj[1].type          = ACPI_TYPE_INTEGER;
@@ -345,11 +353,13 @@ static int lis3lv02d_suspend(struct acpi_device *device, pm_message_t state)
 {
 	/* make sure the device is off when we suspend */
 	lis3lv02d_poweroff(&lis3_dev);
+	in_suspend = 1;
 	return 0;
 }
 
 static int lis3lv02d_resume(struct acpi_device *device)
 {
+	in_suspend = 0;
 	lis3lv02d_poweron(&lis3_dev);
 	return 0;
 }
