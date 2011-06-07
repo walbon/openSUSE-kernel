@@ -65,7 +65,7 @@ TRACE_EVENT(block_rq_insert,
 		__entry->nr_sector = (rq->cmd_type == REQ_TYPE_BLOCK_PC) ?
 					0 : blk_rq_sectors(rq);
 		__entry->bytes     = (rq->cmd_type == REQ_TYPE_BLOCK_PC) ?
-					0 : blk_rq_sectors(rq);
+					0 : blk_rq_bytes(rq);
 
 		blk_fill_rwbs_rq(__entry->rwbs, rq);
 		blk_dump_cmd(__get_str(cmd), rq);
