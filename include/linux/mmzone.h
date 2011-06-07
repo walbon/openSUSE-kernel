@@ -655,6 +655,7 @@ typedef struct pglist_data {
 	 * It is here solely for kABI purposes. -js
 	 */
 	unsigned long percpu_drift_mark[MAX_NR_ZONES];
+	enum zone_type classzone_idx;
 #endif
 } pg_data_t;
 
@@ -672,7 +673,7 @@ typedef struct pglist_data {
 void get_zone_counts(unsigned long *active, unsigned long *inactive,
 			unsigned long *free);
 void build_all_zonelists(void);
-void wakeup_kswapd(struct zone *zone, int order);
+void wakeup_kswapd(struct zone *zone, int order, enum zone_type classzone_idx);
 int zone_watermark_ok(struct zone *z, int order, unsigned long mark,
 		int classzone_idx, int alloc_flags);
 enum memmap_context {
