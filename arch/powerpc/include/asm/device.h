@@ -45,4 +45,6 @@ dev_archdata_get_node(const struct dev_archdata *ad)
 struct pdev_archdata {
 };
 
+#define ARCH_HAS_DMA_GET_REQUIRED_MASK
+
 #endif /* _ASM_POWERPC_DEVICE_H */

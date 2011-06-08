@@ -60,6 +60,7 @@
 #include <asm/idle.h>
 #include <asm/syscalls.h>
 #include <asm/ds.h>
+#include <asm/debugreg.h>
 
 asmlinkage void ret_from_fork(void) __asm__("ret_from_fork");
 asmlinkage void cstar_ret_from_fork(void) __asm__("cstar_ret_from_fork");

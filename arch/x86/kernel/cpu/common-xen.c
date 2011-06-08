@@ -883,10 +883,8 @@ static void __cpuinit identify_cpu(struct cpuinfo_x86 *c)
 			boot_cpu_data.x86_capability[i] &= c->x86_capability[i];
 	}
 
-#ifdef CONFIG_X86_MCE
 	/* Init Machine Check Exception if available. */
-	mcheck_init(c);
-#endif
+	mcheck_cpu_init(c);
 
 	select_idle_routine(c);
 
@@ -917,6 +915,10 @@ void __init identify_boot_cpu(void)
 #endif
 	init_hw_perf_events();
 }
+
+#ifdef CONFIG_XEN
+void set_perf_event_pending(void) {}
+#endif
 
 void __cpuinit identify_secondary_cpu(struct cpuinfo_x86 *c)
 {

@@ -474,12 +474,9 @@ xlvbd_del(struct blkfront_info *info)
 int
 xlvbd_barrier(struct blkfront_info *info)
 {
-	int err;
+	if (info->feature_barrier)
+		blk_queue_flush(info->rq, REQ_FLUSH);
 
-	err = blk_queue_ordered(info->rq,
-		info->feature_barrier ? QUEUE_ORDERED_DRAIN : QUEUE_ORDERED_NONE, NULL);
-	if (err)
-		return err;
 	pr_info("blkfront: %s: barriers %s\n",
 		info->gd->disk_name,
 		info->feature_barrier ? "enabled" : "disabled");
