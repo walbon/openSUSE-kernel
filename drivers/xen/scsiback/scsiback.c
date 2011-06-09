@@ -388,7 +388,7 @@ static struct bio *request_map_sg(pending_req_t *pending_req)
 			if (bio->bi_vcnt >= nr_vecs) {
 				bio->bi_flags &= ~(1 << BIO_SEG_VALID);
 				if (pending_req->sc_data_direction == WRITE)
-					bio->bi_rw |= REQ_WRITE;
+					bio->bi_rw |= (1 << BIO_RW);
 				bio = NULL;
 			}
 

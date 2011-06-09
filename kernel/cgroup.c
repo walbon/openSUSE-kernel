@@ -3848,6 +3848,7 @@ void cgroup_exit(struct task_struct *tsk, int run_callbacks)
 		 */
 		for (i = 0; i < CGROUP_SUBSYS_COUNT; i++) {
 			struct cgroup_subsys *ss = subsys[i];
+			WARN_ON(!ss);
 			if (ss && ss->exit) {
 				struct cgroup *old_cgrp =
 					rcu_dereference(cg->subsys[i])->cgroup;

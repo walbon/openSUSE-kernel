@@ -646,7 +646,7 @@ blktap_device_process_request(struct blktap *tap,
 	blkif_req.handle = 0;
 	blkif_req.operation = rq_data_dir(req) ?
 		BLKIF_OP_WRITE : BLKIF_OP_READ;
-	if (unlikely(req->cmd_type == REQ_TYPE_BLOCK_PC))
+	if (unlikely(blk_pc_request(req)))
 		blkif_req.operation = BLKIF_OP_PACKET;
 
 	request->id        = (unsigned long)req;
@@ -713,7 +713,7 @@ blktap_device_process_request(struct blktap *tap,
 	wmb(); /* blktap_poll() reads req_prod_pvt asynchronously */
 	ring->ring.req_prod_pvt++;
 
-	if (unlikely(req->cmd_type == REQ_TYPE_BLOCK_PC))
+	if (unlikely(blk_pc_request(req)))
 		tap->stats.st_pk_req++;
 	else if (rq_data_dir(req)) {
 		tap->stats.st_wr_sect += nr_sects;
@@ -844,9 +844,15 @@ blktap_device_run_queue(struct blktap *tap)
 	BTDBG("running queue for %d\n", tap->minor);
 
 	while ((req = blk_peek_request(rq)) != NULL) {
-		if (req->cmd_type != REQ_TYPE_FS) {
+		if (!blk_fs_request(req)) {
 			blk_start_request(req);
 			__blk_end_request_all(req, -EIO);
+			continue;
+		}
+
+		if (blk_barrier_rq(req)) {
+			blk_start_request(req);
+			__blk_end_request_all(req, -EOPNOTSUPP);
 			continue;
 		}
 

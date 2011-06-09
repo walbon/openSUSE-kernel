@@ -189,7 +189,7 @@ blktap_device_make_request(struct blktap *tap, struct request *rq)
 
 	request->rq = rq;
 	request->operation = write ? BLKIF_OP_WRITE : BLKIF_OP_READ;
-	if (unlikely(rq->cmd_type == REQ_TYPE_BLOCK_PC))
+	if (unlikely(blk_pc_request(rq)))
 		request->operation = BLKIF_OP_PACKET;
 
 	err = blktap_request_get_pages(tap, request, nsegs);
@@ -244,7 +244,7 @@ blktap_device_run_queue(struct blktap *tap)
 		if (!rq)
 			break;
 
-		if (rq->cmd_type != REQ_TYPE_FS) {
+		if (!blk_fs_request(rq)) {
 			__blktap_end_queued_rq(rq, -EOPNOTSUPP);
 			continue;
 		}
@@ -305,6 +305,9 @@ blktap_device_configure(struct blktap *tap,
 
 	/* Make sure buffer addresses are sector-aligned. */
 	blk_queue_dma_alignment(rq, 511);
+
+	/* We are reordering, but cacheless. */
+	blk_queue_ordered(rq, QUEUE_ORDERED_DRAIN, NULL);
 
 	spin_unlock_irq(&dev->lock);
 }
