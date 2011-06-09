@@ -745,6 +745,7 @@ static int pkt_generic_packet(struct pktcdvd_device *pd, struct packet_command *
 
 	rq->timeout = 60*HZ;
 	rq->cmd_type = REQ_TYPE_BLOCK_PC;
+	rq->cmd_flags |= REQ_HARDBARRIER;
 	if (cgc->quiet)
 		rq->cmd_flags |= REQ_QUIET;
 
@@ -1213,7 +1214,7 @@ static int pkt_start_recovery(struct packet_data *pkt)
 	pkt->bio->bi_flags = 1 << BIO_UPTODATE;
 	pkt->bio->bi_idx = 0;
 
-	BUG_ON(pkt->bio->bi_rw != REQ_WRITE);
+	BUG_ON(pkt->bio->bi_rw != (1 << BIO_RW));
 	BUG_ON(pkt->bio->bi_vcnt != pkt->frames);
 	BUG_ON(pkt->bio->bi_size != pkt->frames * CD_FRAMESIZE);
 	BUG_ON(pkt->bio->bi_end_io != pkt_end_io_packet_write);

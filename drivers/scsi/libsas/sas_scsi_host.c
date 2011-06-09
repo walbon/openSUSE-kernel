@@ -112,10 +112,10 @@ static void sas_scsi_task_done(struct sas_task *task)
 		case SAS_ABORTED_TASK:
 			hs = DID_ABORT;
 			break;
-		case SAM_STAT_CHECK_CONDITION:
+		case SAM_CHECK_COND:
 			memcpy(sc->sense_buffer, ts->buf,
 			       min(SCSI_SENSE_BUFFERSIZE, ts->buf_valid_size));
-			stat = SAM_STAT_CHECK_CONDITION;
+			stat = SAM_CHECK_COND;
 			break;
 		default:
 			stat = ts->stat;
@@ -127,6 +127,17 @@ static void sas_scsi_task_done(struct sas_task *task)
 	list_del_init(&task->list);
 	sas_free_task(task);
 	sc->scsi_done(sc);
+}
+
+static enum task_attribute sas_scsi_get_task_attr(struct scsi_cmnd *cmd)
+{
+	enum task_attribute ta = TASK_ATTR_SIMPLE;
+	if (cmd->request && blk_rq_tagged(cmd->request)) {
+		if (cmd->device->ordered_tags &&
+		    (cmd->request->cmd_flags & REQ_HARDBARRIER))
+			ta = TASK_ATTR_ORDERED;
+	}
+	return ta;
 }
 
 static struct sas_task *sas_create_task(struct scsi_cmnd *cmd,
@@ -148,7 +159,7 @@ static struct sas_task *sas_create_task(struct scsi_cmnd *cmd,
 	task->ssp_task.retry_count = 1;
 	int_to_scsilun(cmd->device->lun, &lun);
 	memcpy(task->ssp_task.LUN, &lun.scsi_lun, 8);
-	task->ssp_task.task_attr = TASK_ATTR_SIMPLE;
+	task->ssp_task.task_attr = sas_scsi_get_task_attr(cmd);
 	memcpy(task->ssp_task.cdb, cmd->cmnd, 16);
 
 	task->scatter = scsi_sglist(cmd);

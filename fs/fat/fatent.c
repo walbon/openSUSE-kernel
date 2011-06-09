@@ -573,12 +573,8 @@ int fat_free_clusters(struct inode *inode, int cluster)
 		if (cluster != fatent.entry + 1) {
 			int nr_clus = fatent.entry - first_cl + 1;
 
-			sb_issue_discard(sb,
-				 fat_clus_to_blknr(sbi, first_cl),
-				 nr_clus * sbi->sec_per_clus,
-				 GFP_NOFS,
-				 BLKDEV_IFL_WAIT);
-
+			sb_issue_discard(sb, fat_clus_to_blknr(sbi, first_cl),
+					 nr_clus * sbi->sec_per_clus);
 			first_cl = cluster;
 		}
 

@@ -222,8 +222,7 @@ void blk_abort_queue(struct request_queue *q)
 	list_splice_init(&q->timeout_list, &list);
 
 	list_for_each_entry_safe(rq, tmp, &list, timeout_list)
-		if (!blk_queue_stopped(q))
-			blk_abort_request(rq);
+		blk_abort_request(rq);
 
 	/*
 	 * Occasionally, blk_abort_request() will return without

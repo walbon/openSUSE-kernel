@@ -300,7 +300,7 @@ static int flush_header(struct log_c *lc)
 		.count = 0,
 	};
 
-	lc->io_req.bi_rw = WRITE_FLUSH;
+	lc->io_req.bi_rw = WRITE_BARRIER;
 
 	return dm_io(&lc->io_req, 1, &null_location, NULL);
 }

@@ -85,22 +85,11 @@ static void scsi_unprep_request(struct request *req)
 {
 	struct scsi_cmnd *cmd = req->special;
 
-	blk_unprep_request(req);
+	req->cmd_flags &= ~REQ_DONTPREP;
 	req->special = NULL;
 
 	scsi_put_command(cmd);
 }
-
-static void scsi_unprep_fn(struct request_queue *q, struct request *req)
-{
-	struct scsi_cmnd *cmd = req->special;
-
-	if (cmd) {
-		scsi_release_buffers(cmd);
-		scsi_unprep_request(req);
-	}
-}
-
 
 /**
  * __scsi_queue_insert - private queue insertion
@@ -738,7 +727,7 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 			sense_deferred = scsi_sense_is_deferred(&sshdr);
 	}
 
-	if (req->cmd_type == REQ_TYPE_BLOCK_PC) { /* SG_IO ioctl from block level */
+	if (blk_pc_request(req)) { /* SG_IO ioctl from block level */
 		req->errors = result;
 		if (result) {
 			if (sense_valid && req->sense) {
@@ -773,8 +762,7 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 		}
 	}
 
-	/* no bidi support for !REQ_TYPE_BLOCK_PC yet */
-	BUG_ON(blk_bidi_rq(req));
+	BUG_ON(blk_bidi_rq(req)); /* bidi not support for !blk_pc_request yet */
 
 	/*
 	 * Next deal with any sectors which we were able to correctly
@@ -1027,8 +1015,11 @@ int scsi_init_io(struct scsi_cmnd *cmd, gfp_t gfp_mask)
 
 err_exit:
 	scsi_release_buffers(cmd);
-	cmd->request->special = NULL;
-	scsi_put_command(cmd);
+	if (error == BLKPREP_KILL)
+		scsi_put_command(cmd);
+	else /* BLKPREP_DEFER */
+		scsi_unprep_request(cmd->request);
+
 	return error;
 }
 EXPORT_SYMBOL(scsi_init_io);
@@ -1386,6 +1377,12 @@ static void scsi_kill_request(struct request *req, struct request_queue *q)
 
 	blk_start_request(req);
 
+	if (unlikely(cmd == NULL)) {
+		printk(KERN_CRIT "impossible request in %s.\n",
+				 __func__);
+		BUG();
+	}
+
 	sdev = cmd->device;
 	starget = scsi_target(sdev);
 	shost = sdev->host;
@@ -1682,7 +1679,6 @@ struct request_queue *scsi_alloc_queue(struct scsi_device *sdev)
 		return NULL;
 
 	blk_queue_prep_rq(q, scsi_prep_fn);
-	blk_queue_unprep_rq(q, scsi_unprep_fn);
 	blk_queue_softirq_done(q, scsi_softirq_done);
 	blk_queue_rq_timed_out(q, scsi_times_out);
 	blk_queue_lld_busy(q, scsi_lld_busy);

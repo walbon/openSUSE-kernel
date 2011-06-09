@@ -476,7 +476,7 @@ static void end_workqueue_bio(struct bio *bio, int err)
 	end_io_wq->work.func = end_workqueue_fn;
 	end_io_wq->work.flags = 0;
 
-	if (bio->bi_rw & REQ_WRITE) {
+	if (bio->bi_rw & (1 << BIO_RW)) {
 		if (end_io_wq->metadata)
 			btrfs_queue_worker(&fs_info->endio_meta_write_workers,
 					   &end_io_wq->work);
@@ -596,7 +596,7 @@ int btrfs_wq_submit_bio(struct btrfs_fs_info *fs_info, struct inode *inode,
 
 	atomic_inc(&fs_info->nr_async_submits);
 
-	if (rw & REQ_SYNC)
+	if (rw & (1 << BIO_RW_SYNCIO))
 		btrfs_set_work_high_prio(&async->work);
 
 	btrfs_queue_worker(&fs_info->workers, &async->work);
@@ -657,7 +657,7 @@ static int btree_submit_bio_hook(struct inode *inode, int rw, struct bio *bio,
 					  bio, 1);
 	BUG_ON(ret);
 
-	if (!(rw & REQ_WRITE)) {
+	if (!(rw & (1 << BIO_RW))) {
 		/*
 		 * called for a read, do the setup so that checksum validation
 		 * can happen in the async kernel threads
@@ -1425,7 +1425,7 @@ static void end_workqueue_fn(struct btrfs_work *work)
 	 * ram and up to date before trying to verify things.  For
 	 * blocksize <= pagesize, it is basically a noop
 	 */
-	if (!(bio->bi_rw & REQ_WRITE) && end_io_wq->metadata &&
+	if (!(bio->bi_rw & (1 << BIO_RW)) && end_io_wq->metadata &&
 	    !bio_ready_for_csum(bio)) {
 		btrfs_queue_worker(&fs_info->endio_meta_workers,
 				   &end_io_wq->work);
@@ -2061,7 +2061,7 @@ static void btrfs_end_buffer_write_sync(struct buffer_head *bh, int uptodate)
 	if (uptodate) {
 		set_buffer_uptodate(bh);
 	} else {
-		if (printk_ratelimit()) {
+		if (!buffer_eopnotsupp(bh) && printk_ratelimit()) {
 			printk(KERN_WARNING "lost page write due to "
 					"I/O error on %s\n",
 				       bdevname(bh->b_bdev, b));
@@ -2198,10 +2198,21 @@ static int write_dev_supers(struct btrfs_device *device,
 			bh->b_end_io = btrfs_end_buffer_write_sync;
 		}
 
-		if (i == last_barrier && do_barriers)
-			ret = submit_bh(WRITE_FLUSH_FUA, bh);
-		else
+		if (i == last_barrier && do_barriers && device->barriers) {
+			ret = submit_bh(WRITE_BARRIER, bh);
+			if (ret == -EOPNOTSUPP) {
+				printk("btrfs: disabling barriers on dev %s\n",
+				       device->name);
+				set_buffer_uptodate(bh);
+				device->barriers = 0;
+				/* one reference for submit_bh */
+				get_bh(bh);
+				lock_buffer(bh);
+				ret = submit_bh(WRITE_SYNC, bh);
+			}
+		} else {
 			ret = submit_bh(WRITE_SYNC, bh);
+		}
 
 		if (ret)
 			errors++;

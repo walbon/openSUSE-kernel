@@ -417,7 +417,6 @@ void ata_sff_tf_load(struct ata_port *ap, const struct ata_taskfile *tf)
 		if (ioaddr->ctl_addr)
 			iowrite8(tf->ctl, ioaddr->ctl_addr);
 		ap->last_ctl = tf->ctl;
-		ata_wait_idle(ap);
 	}
 
 	if (is_addr && (tf->flags & ATA_TFLAG_LBA48)) {
@@ -453,8 +452,6 @@ void ata_sff_tf_load(struct ata_port *ap, const struct ata_taskfile *tf)
 		iowrite8(tf->device, ioaddr->device_addr);
 		VPRINTK("device 0x%X\n", tf->device);
 	}
-
-	ata_wait_idle(ap);
 }
 EXPORT_SYMBOL_GPL(ata_sff_tf_load);
 
@@ -1040,8 +1037,7 @@ static void ata_hsm_qc_complete(struct ata_queued_cmd *qc, int in_wq)
 int ata_sff_hsm_move(struct ata_port *ap, struct ata_queued_cmd *qc,
 		     u8 status, int in_wq)
 {
-	struct ata_link *link = qc->dev->link;
-	struct ata_eh_info *ehi = &link->eh_info;
+	struct ata_eh_info *ehi = &ap->link.eh_info;
 	unsigned long flags = 0;
 	int poll_next;
 
@@ -1297,14 +1293,8 @@ fsm_start:
 }
 EXPORT_SYMBOL_GPL(ata_sff_hsm_move);
 
-void ata_sff_queue_pio_task(struct ata_link *link, unsigned long delay)
+void ata_sff_queue_pio_task(struct ata_port *ap, unsigned long delay)
 {
-	struct ata_port *ap = link->ap;
-
-	WARN_ON((ap->sff_pio_task_link != NULL) &&
-		(ap->sff_pio_task_link != link));
-	ap->sff_pio_task_link = link;
-
 	/* may fail if ata_sff_flush_pio_task() in progress */
 	queue_delayed_work(ata_sff_wq, &ap->sff_pio_task,
 			   msecs_to_jiffies(delay));
@@ -1326,18 +1316,14 @@ static void ata_sff_pio_task(struct work_struct *work)
 {
 	struct ata_port *ap =
 		container_of(work, struct ata_port, sff_pio_task.work);
-	struct ata_link *link = ap->sff_pio_task_link;
 	struct ata_queued_cmd *qc;
 	u8 status;
 	int poll_next;
 
-	BUG_ON(ap->sff_pio_task_link == NULL); 
 	/* qc can be NULL if timeout occurred */
-	qc = ata_qc_from_tag(ap, link->active_tag);
-	if (!qc) {
-		ap->sff_pio_task_link = NULL;
+	qc = ata_qc_from_tag(ap, ap->link.active_tag);
+	if (!qc)
 		return;
-	}
 
 fsm_start:
 	WARN_ON_ONCE(ap->hsm_task_state == HSM_ST_IDLE);
@@ -1354,16 +1340,11 @@ fsm_start:
 		msleep(2);
 		status = ata_sff_busy_wait(ap, ATA_BUSY, 10);
 		if (status & ATA_BUSY) {
-			ata_sff_queue_pio_task(link, ATA_SHORT_PAUSE);
+			ata_sff_queue_pio_task(ap, ATA_SHORT_PAUSE);
 			return;
 		}
 	}
 
-	/*
-	 * hsm_move() may trigger another command to be processed.
-	 * clean the link beforehand.
-	 */
-	ap->sff_pio_task_link = NULL;
 	/* move the HSM */
 	poll_next = ata_sff_hsm_move(ap, qc, status, 1);
 
@@ -1390,7 +1371,6 @@ fsm_start:
 unsigned int ata_sff_qc_issue(struct ata_queued_cmd *qc)
 {
 	struct ata_port *ap = qc->ap;
-	struct ata_link *link = qc->dev->link;
 
 	/* Use polling pio if the LLD doesn't handle
 	 * interrupt driven pio and atapi CDB interrupt.
@@ -1411,7 +1391,7 @@ unsigned int ata_sff_qc_issue(struct ata_queued_cmd *qc)
 		ap->hsm_task_state = HSM_ST_LAST;
 
 		if (qc->tf.flags & ATA_TFLAG_POLLING)
-			ata_sff_queue_pio_task(link, 0);
+			ata_sff_queue_pio_task(ap, 0);
 
 		break;
 
@@ -1424,7 +1404,7 @@ unsigned int ata_sff_qc_issue(struct ata_queued_cmd *qc)
 		if (qc->tf.flags & ATA_TFLAG_WRITE) {
 			/* PIO data out protocol */
 			ap->hsm_task_state = HSM_ST_FIRST;
-			ata_sff_queue_pio_task(link, 0);
+			ata_sff_queue_pio_task(ap, 0);
 
 			/* always send first data block using the
 			 * ata_sff_pio_task() codepath.
@@ -1434,7 +1414,7 @@ unsigned int ata_sff_qc_issue(struct ata_queued_cmd *qc)
 			ap->hsm_task_state = HSM_ST;
 
 			if (qc->tf.flags & ATA_TFLAG_POLLING)
-				ata_sff_queue_pio_task(link, 0);
+				ata_sff_queue_pio_task(ap, 0);
 
 			/* if polling, ata_sff_pio_task() handles the
 			 * rest.  otherwise, interrupt handler takes
@@ -1456,7 +1436,7 @@ unsigned int ata_sff_qc_issue(struct ata_queued_cmd *qc)
 		/* send cdb by polling if no cdb interrupt */
 		if ((!(qc->dev->flags & ATA_DFLAG_CDB_INTR)) ||
 		    (qc->tf.flags & ATA_TFLAG_POLLING))
-			ata_sff_queue_pio_task(link, 0);
+			ata_sff_queue_pio_task(ap, 0);
 		break;
 
 	default:
@@ -2743,7 +2723,10 @@ EXPORT_SYMBOL_GPL(ata_bmdma_dumb_qc_prep);
 unsigned int ata_bmdma_qc_issue(struct ata_queued_cmd *qc)
 {
 	struct ata_port *ap = qc->ap;
-	struct ata_link *link = qc->dev->link;
+
+	/* see ata_dma_blacklisted() */
+	BUG_ON((ap->flags & ATA_FLAG_PIO_POLLING) &&
+	       qc->tf.protocol == ATAPI_PROT_DMA);
 
 	/* defer PIO handling to sff_qc_issue */
 	if (!ata_is_dma(qc->tf.protocol))
@@ -2772,7 +2755,7 @@ unsigned int ata_bmdma_qc_issue(struct ata_queued_cmd *qc)
 
 		/* send cdb by polling if no cdb interrupt */
 		if (!(qc->dev->flags & ATA_DFLAG_CDB_INTR))
-			ata_sff_queue_pio_task(link, 0);
+			ata_sff_queue_pio_task(ap, 0);
 		break;
 
 	default:

@@ -168,11 +168,9 @@ static int act_log_check(struct blk_trace *bt, u32 what, sector_t sector,
 static const u32 ddir_act[2] = { BLK_TC_ACT(BLK_TC_READ),
 				 BLK_TC_ACT(BLK_TC_WRITE) };
 
-#define BLK_TC_RAHEAD		BLK_TC_AHEAD
-
 /* The ilog2() calls fall out because they're constant */
-#define MASK_TC_BIT(rw, __name) ((rw & REQ_ ## __name) << \
-	  (ilog2(BLK_TC_ ## __name) + BLK_TC_SHIFT - __REQ_ ## __name))
+#define MASK_TC_BIT(rw, __name) ((rw & (1 << BIO_RW_ ## __name)) << \
+	  (ilog2(BLK_TC_ ## __name) + BLK_TC_SHIFT - BIO_RW_ ## __name))
 
 /*
  * The worker for the various blk_add_trace*() types. Fills out a
@@ -195,8 +193,9 @@ static void __blk_add_trace(struct blk_trace *bt, sector_t sector, int bytes,
 		return;
 
 	what |= ddir_act[rw & WRITE];
-	what |= MASK_TC_BIT(rw, SYNC);
-	what |= MASK_TC_BIT(rw, RAHEAD);
+	what |= MASK_TC_BIT(rw, BARRIER);
+	what |= MASK_TC_BIT(rw, SYNCIO);
+	what |= MASK_TC_BIT(rw, AHEAD);
 	what |= MASK_TC_BIT(rw, META);
 	what |= MASK_TC_BIT(rw, DISCARD);
 
@@ -661,13 +660,10 @@ static void blk_add_trace_rq(struct request_queue *q, struct request *rq,
 	if (likely(!bt))
 		return;
 
-	if (rq->cmd_flags & REQ_DISCARD)
-		rw |= REQ_DISCARD;
+	if (blk_discard_rq(rq))
+		rw |= (1 << BIO_RW_DISCARD);
 
-	if (rq->cmd_flags & REQ_SECURE)
-		rw |= REQ_SECURE;
-
-	if (rq->cmd_type == REQ_TYPE_BLOCK_PC) {
+	if (blk_pc_request(rq)) {
 		what |= BLK_TC_ACT(BLK_TC_PC);
 		__blk_add_trace(bt, 0, blk_rq_bytes(rq), rw,
 				what, rq->errors, rq->cmd_len, rq->cmd);
@@ -911,7 +907,7 @@ void blk_add_driver_data(struct request_queue *q,
 	if (likely(!bt))
 		return;
 
-	if (rq->cmd_type == REQ_TYPE_BLOCK_PC)
+	if (blk_pc_request(rq))
 		__blk_add_trace(bt, 0, blk_rq_bytes(rq), 0,
 				BLK_TA_DRV_DATA, rq->errors, len, data);
 	else
@@ -1711,7 +1707,7 @@ void blk_dump_cmd(char *buf, struct request *rq)
 	int len = rq->cmd_len;
 	unsigned char *cmd = rq->cmd;
 
-	if (rq->cmd_type != REQ_TYPE_BLOCK_PC) {
+	if (!blk_pc_request(rq)) {
 		buf[0] = '\0';
 		return;
 	}
@@ -1736,21 +1732,21 @@ void blk_fill_rwbs(char *rwbs, u32 rw, int bytes)
 
 	if (rw & WRITE)
 		rwbs[i++] = 'W';
-	else if (rw & REQ_DISCARD)
+	else if (rw & 1 << BIO_RW_DISCARD)
 		rwbs[i++] = 'D';
 	else if (bytes)
 		rwbs[i++] = 'R';
 	else
 		rwbs[i++] = 'N';
 
-	if (rw & REQ_RAHEAD)
+	if (rw & 1 << BIO_RW_AHEAD)
 		rwbs[i++] = 'A';
-	if (rw & REQ_SYNC)
+	if (rw & 1 << BIO_RW_BARRIER)
+		rwbs[i++] = 'B';
+	if (rw & 1 << BIO_RW_SYNCIO)
 		rwbs[i++] = 'S';
-	if (rw & REQ_META)
+	if (rw & 1 << BIO_RW_META)
 		rwbs[i++] = 'M';
-	if (rw & REQ_SECURE)
-		rwbs[i++] = 'E';
 
 	rwbs[i] = '\0';
 }
@@ -1760,11 +1756,8 @@ void blk_fill_rwbs_rq(char *rwbs, struct request *rq)
 	int rw = rq->cmd_flags & 0x03;
 	int bytes;
 
-	if (rq->cmd_flags & REQ_DISCARD)
-		rw |= REQ_DISCARD;
-
-	if (rq->cmd_flags & REQ_SECURE)
-		rw |= REQ_SECURE;
+	if (blk_discard_rq(rq))
+		rw |= (1 << BIO_RW_DISCARD);
 
 	bytes = blk_rq_bytes(rq);
 

@@ -36,23 +36,6 @@ void blk_queue_prep_rq(struct request_queue *q, prep_rq_fn *pfn)
 EXPORT_SYMBOL(blk_queue_prep_rq);
 
 /**
- * blk_queue_unprep_rq - set an unprepare_request function for queue
- * @q:		queue
- * @ufn:	unprepare_request function
- *
- * It's possible for a queue to register an unprepare_request callback
- * which is invoked before the request is finally completed. The goal
- * of the function is to deallocate any data that was allocated in the
- * prepare_request callback.
- *
- */
-void blk_queue_unprep_rq(struct request_queue *q, unprep_rq_fn *ufn)
-{
-	q->unprep_rq_fn = ufn;
-}
-EXPORT_SYMBOL(blk_queue_unprep_rq);
-
-/**
  * blk_queue_merge_bvec - set a merge_bvec function for queue
  * @q:		queue
  * @mbfn:	merge_bvec_fn
@@ -772,26 +755,6 @@ void blk_queue_update_dma_alignment(struct request_queue *q, int mask)
 		q->dma_alignment = mask;
 }
 EXPORT_SYMBOL(blk_queue_update_dma_alignment);
-
-/**
- * blk_queue_flush - configure queue's cache flush capability
- * @q:		the request queue for the device
- * @flush:	0, REQ_FLUSH or REQ_FLUSH | REQ_FUA
- *
- * Tell block layer cache flush capability of @q.  If it supports
- * flushing, REQ_FLUSH should be set.  If it supports bypassing
- * write cache for individual writes, REQ_FUA should be set.
- */
-void blk_queue_flush(struct request_queue *q, unsigned int flush)
-{
-	WARN_ON_ONCE(flush & ~(REQ_FLUSH | REQ_FUA));
-
-	if (WARN_ON_ONCE(!(flush & REQ_FLUSH) && (flush & REQ_FUA)))
-		flush &= ~REQ_FUA;
-
-	q->flush_flags = flush & (REQ_FLUSH | REQ_FUA);
-}
-EXPORT_SYMBOL_GPL(blk_queue_flush);
 
 static int __init blk_settings_init(void)
 {

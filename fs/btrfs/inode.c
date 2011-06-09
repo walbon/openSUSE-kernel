@@ -1415,7 +1415,7 @@ static int btrfs_submit_bio_hook(struct inode *inode, int rw, struct bio *bio,
 	ret = btrfs_bio_wq_end_io(root->fs_info, bio, 0);
 	BUG_ON(ret);
 
-	if (!(rw & REQ_WRITE)) {
+	if (!(rw & (1 << BIO_RW))) {
 		if (bio_flags & EXTENT_BIO_COMPRESSED) {
 			return btrfs_submit_compressed_read(inode, bio,
 						    mirror_num, bio_flags);
@@ -1826,7 +1826,7 @@ static int btrfs_io_failed_hook(struct bio *failed_bio,
 	bio->bi_size = 0;
 
 	bio_add_page(bio, page, failrec->len, start - page_offset(page));
-	if (failed_bio->bi_rw & REQ_WRITE)
+	if (failed_bio->bi_rw & (1 << BIO_RW))
 		rw = WRITE;
 	else
 		rw = READ;

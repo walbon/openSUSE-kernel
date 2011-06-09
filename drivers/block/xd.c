@@ -321,7 +321,7 @@ static void do_xd_request (struct request_queue * q)
 		int res = -EIO;
 		int retry;
 
-		if (req->cmd_type != REQ_TYPE_FS)
+		if (!blk_fs_request(req))
 			goto done;
 		if (block + count > get_capacity(req->rq_disk))
 			goto done;

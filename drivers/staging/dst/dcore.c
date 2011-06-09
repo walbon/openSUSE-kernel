@@ -102,7 +102,7 @@ static int dst_request(struct request_queue *q, struct bio *bio)
 	struct dst_node *n = q->queuedata;
 	int err = -EIO;
 
-	if (bio->bi_rw & REQ_FLUSH && !bio->bi_size && !blk_queue_discard(q)) {
+	if (bio_empty_barrier(bio) && !blk_queue_discard(q)) {
 		/*
 		 * This is a dirty^Wnice hack, but if we complete this
 		 * operation with -EOPNOTSUPP like intended, XFS
