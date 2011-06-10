@@ -294,7 +294,7 @@ static int linear_make_request (struct request_queue *q, struct bio *bio)
 	sector_t start_sector;
 	int cpu;
 
-	if (unlikely(bio_rw_flagged(bio, BIO_RW_BARRIER))) {
+	if (unlikely(bio->bi_rw & REQ_HARDBARRIER)) {
 		md_barrier_request(mddev, bio);
 		return 0;
 	}

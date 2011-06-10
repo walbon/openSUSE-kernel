@@ -261,7 +261,7 @@ struct mddev_s
 							 * fails.  Only supported
 							 */
 	struct bio			*biolist; 	/* bios that need to be retried
-							 * because BIO_RW_BARRIER is not supported
+							 * because REQ_HARDBARRIER is not supported
 							 */
 
 	atomic_t			recovery_active; /* blocks scheduled, but not written */

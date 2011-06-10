@@ -391,19 +391,24 @@ static int scsi_check_sense(struct scsi_cmnd *scmd)
 		    (sshdr.asc == 0x04) && (sshdr.ascq == 0x02))
 			return FAILED;
 
-		if (blk_barrier_rq(scmd->request))
-			/*
-			 * barrier requests should always retry on UA
-			 * otherwise block will get a spurious error
-			 */
-			return NEEDS_RETRY;
-		else
-			/*
-			 * for normal (non barrier) commands, pass the
-			 * UA upwards for a determination in the
-			 * completion functions
-			 */
-			return SUCCESS;
+		if (sshdr.asc == 0x3f && sshdr.ascq == 0x0e)
+			scmd_printk(KERN_WARNING, scmd,
+				    "Warning! Received an indication that the "
+				    "LUN assignments on this target have "
+				    "changed. The Linux SCSI layer does not "
+				    "automatically remap LUN assignments.\n");
+		else if (sshdr.asc == 0x3f)
+			scmd_printk(KERN_WARNING, scmd,
+				    "Warning! Received an indication that the "
+				    "operating parameters on this target have "
+				    "changed. The Linux SCSI layer does not "
+				    "automatically adjust these parameters.\n");
+
+		/*
+		 * Pass the UA upwards for a determination in the completion
+		 * functions.
+		 */
+		return SUCCESS;
 
 		/* these three are not supported */
 	case COPY_ABORTED:
@@ -544,10 +549,12 @@ static int scsi_eh_completed_normally(struct scsi_cmnd *scmd)
 		 */
 		return SUCCESS;
 	case RESERVATION_CONFLICT:
-		/*
-		 * let issuer deal with this, it could be just fine
-		 */
-		return SUCCESS;
+		if (scmd->cmnd[0] == TEST_UNIT_READY)
+			/* it is a success, we probed the device and
+			 * found it */
+			return SUCCESS;
+		/* otherwise, we failed to send the command */
+		return FAILED;
 	case QUEUE_FULL:
 		scsi_handle_queue_full(scmd->device);
 		/* fall through */
@@ -1414,16 +1421,16 @@ int scsi_noretry_cmd(struct scsi_cmnd *scmd)
 	case DID_OK:
 		break;
 	case DID_BUS_BUSY:
-		return blk_failfast_transport(scmd->request);
+		return (scmd->request->cmd_flags & REQ_FAILFAST_TRANSPORT);
 	case DID_PARITY:
-		return blk_failfast_dev(scmd->request);
+		return (scmd->request->cmd_flags & REQ_FAILFAST_DEV);
 	case DID_ERROR:
 		if (msg_byte(scmd->result) == COMMAND_COMPLETE &&
 		    status_byte(scmd->result) == RESERVATION_CONFLICT)
 			return 0;
 		/* fall through */
 	case DID_SOFT_ERROR:
-		return blk_failfast_driver(scmd->request);
+		return (scmd->request->cmd_flags & REQ_FAILFAST_DRIVER);
 	}
 
 	switch (status_byte(scmd->result)) {
@@ -1432,7 +1439,9 @@ int scsi_noretry_cmd(struct scsi_cmnd *scmd)
 		 * assume caller has checked sense and determinted
 		 * the check condition was retryable.
 		 */
-		return blk_failfast_dev(scmd->request);
+		if (scmd->request->cmd_flags & REQ_FAILFAST_DEV ||
+		    scmd->request->cmd_type == REQ_TYPE_BLOCK_PC)
+			return 1;
 	}
 
 	return 0;
