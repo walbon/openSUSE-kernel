@@ -106,7 +106,7 @@ void extent_io_tree_init(struct extent_io_tree *tree,
 			  struct address_space *mapping, gfp_t mask)
 {
 	tree->state = RB_ROOT;
-	tree->buffer = RB_ROOT;
+	INIT_RADIX_TREE(&tree->buffer, GFP_ATOMIC);
 	tree->ops = NULL;
 	tree->dirty_bytes = 0;
 	spin_lock_init(&tree->lock);
@@ -137,7 +137,7 @@ static struct extent_state *alloc_extent_state(gfp_t mask)
 	return state;
 }
 
-static void free_extent_state(struct extent_state *state)
+void free_extent_state(struct extent_state *state)
 {
 	if (!state)
 		return;
@@ -235,50 +235,6 @@ static inline struct rb_node *tree_search(struct extent_io_tree *tree,
 	if (!ret)
 		return prev;
 	return ret;
-}
-
-static struct extent_buffer *buffer_tree_insert(struct extent_io_tree *tree,
-					  u64 offset, struct rb_node *node)
-{
-	struct rb_root *root = &tree->buffer;
-	struct rb_node **p = &root->rb_node;
-	struct rb_node *parent = NULL;
-	struct extent_buffer *eb;
-
-	while (*p) {
-		parent = *p;
-		eb = rb_entry(parent, struct extent_buffer, rb_node);
-
-		if (offset < eb->start)
-			p = &(*p)->rb_left;
-		else if (offset > eb->start)
-			p = &(*p)->rb_right;
-		else
-			return eb;
-	}
-
-	rb_link_node(node, parent, p);
-	rb_insert_color(node, root);
-	return NULL;
-}
-
-static struct extent_buffer *buffer_search(struct extent_io_tree *tree,
-					   u64 offset)
-{
-	struct rb_root *root = &tree->buffer;
-	struct rb_node *n = root->rb_node;
-	struct extent_buffer *eb;
-
-	while (n) {
-		eb = rb_entry(n, struct extent_buffer, rb_node);
-		if (offset < eb->start)
-			n = n->rb_left;
-		else if (offset > eb->start)
-			n = n->rb_right;
-		else
-			return eb;
-	}
-	return NULL;
 }
 
 static void merge_cb(struct extent_io_tree *tree, struct extent_state *new,
@@ -736,6 +692,15 @@ static void cache_state(struct extent_state *state,
 	}
 }
 
+static void uncache_state(struct extent_state **cached_ptr)
+{
+	if (cached_ptr && (*cached_ptr)) {
+		struct extent_state *state = *cached_ptr;
+		*cached_ptr = NULL;
+		free_extent_state(state);
+	}
+}
+
 /*
  * set some bits on a range in the tree.  This may require allocations or
  * sleeping, so the gfp mask is used to indicate what is allowed.
@@ -747,10 +712,9 @@ static void cache_state(struct extent_state *state,
  * [start, end] is inclusive This takes the tree lock.
  */
 
-static int set_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
-			  int bits, int exclusive_bits, u64 *failed_start,
-			  struct extent_state **cached_state,
-			  gfp_t mask)
+int set_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
+		   int bits, int exclusive_bits, u64 *failed_start,
+		   struct extent_state **cached_state, gfp_t mask)
 {
 	struct extent_state *state;
 	struct extent_state *prealloc = NULL;
@@ -987,10 +951,10 @@ static int clear_extent_new(struct extent_io_tree *tree, u64 start, u64 end,
 }
 
 int set_extent_uptodate(struct extent_io_tree *tree, u64 start, u64 end,
-			gfp_t mask)
+			struct extent_state **cached_state, gfp_t mask)
 {
-	return set_extent_bit(tree, start, end, EXTENT_UPTODATE, 0, NULL,
-			      NULL, mask);
+	return set_extent_bit(tree, start, end, EXTENT_UPTODATE, 0,
+			      NULL, cached_state, mask);
 }
 
 static int clear_extent_uptodate(struct extent_io_tree *tree, u64 start,
@@ -1059,8 +1023,7 @@ int unlock_extent_cached(struct extent_io_tree *tree, u64 start, u64 end,
 				mask);
 }
 
-int unlock_extent(struct extent_io_tree *tree, u64 start, u64 end,
-		  gfp_t mask)
+int unlock_extent(struct extent_io_tree *tree, u64 start, u64 end, gfp_t mask)
 {
 	return clear_extent_bit(tree, start, end, EXTENT_LOCKED, 1, 0, NULL,
 				mask);
@@ -1480,12 +1443,13 @@ int extent_clear_unlock_delalloc(struct inode *inode,
  */
 u64 count_range_bits(struct extent_io_tree *tree,
 		     u64 *start, u64 search_end, u64 max_bytes,
-		     unsigned long bits)
+		     unsigned long bits, int contig)
 {
 	struct rb_node *node;
 	struct extent_state *state;
 	u64 cur_start = *start;
 	u64 total_bytes = 0;
+	u64 last = 0;
 	int found = 0;
 
 	if (search_end <= cur_start) {
@@ -1510,7 +1474,9 @@ u64 count_range_bits(struct extent_io_tree *tree,
 		state = rb_entry(node, struct extent_state, rb_node);
 		if (state->start > search_end)
 			break;
-		if (state->end >= cur_start && (state->state & bits)) {
+		if (contig && found && state->start > last + 1)
+			break;
+		if (state->end >= cur_start && (state->state & bits) == bits) {
 			total_bytes += min(search_end, state->end) + 1 -
 				       max(cur_start, state->start);
 			if (total_bytes >= max_bytes)
@@ -1519,6 +1485,9 @@ u64 count_range_bits(struct extent_io_tree *tree,
 				*start = state->start;
 				found = 1;
 			}
+			last = state->end;
+		} else if (contig && found) {
+			break;
 		}
 		node = rb_next(node);
 		if (!node)
@@ -1776,6 +1745,9 @@ static void end_bio_extent_readpage(struct bio *bio, int err)
 
 	do {
 		struct page *page = bvec->bv_page;
+		struct extent_state *cached = NULL;
+		struct extent_state *state;
+
 		tree = &BTRFS_I(page->mapping->host)->io_tree;
 
 		start = ((u64)page->index << PAGE_CACHE_SHIFT) +
@@ -1790,9 +1762,20 @@ static void end_bio_extent_readpage(struct bio *bio, int err)
 		if (++bvec <= bvec_end)
 			prefetchw(&bvec->bv_page->flags);
 
+		spin_lock(&tree->lock);
+		state = find_first_extent_bit_state(tree, start, EXTENT_LOCKED);
+		if (state && state->start == start) {
+			/*
+			 * take a reference on the state, unlock will drop
+			 * the ref
+			 */
+			cache_state(state, &cached);
+		}
+		spin_unlock(&tree->lock);
+
 		if (uptodate && tree->ops && tree->ops->readpage_end_io_hook) {
 			ret = tree->ops->readpage_end_io_hook(page, start, end,
-							      NULL);
+							      state);
 			if (ret)
 				uptodate = 0;
 		}
@@ -1805,15 +1788,16 @@ static void end_bio_extent_readpage(struct bio *bio, int err)
 					test_bit(BIO_UPTODATE, &bio->bi_flags);
 				if (err)
 					uptodate = 0;
+				uncache_state(&cached);
 				continue;
 			}
 		}
 
 		if (uptodate) {
-			set_extent_uptodate(tree, start, end,
+			set_extent_uptodate(tree, start, end, &cached,
 					    GFP_ATOMIC);
 		}
-		unlock_extent(tree, start, end, GFP_ATOMIC);
+		unlock_extent_cached(tree, start, end, &cached, GFP_ATOMIC);
 
 		if (whole_page) {
 			if (uptodate) {
@@ -1852,6 +1836,7 @@ static void end_bio_extent_preparewrite(struct bio *bio, int err)
 
 	do {
 		struct page *page = bvec->bv_page;
+		struct extent_state *cached = NULL;
 		tree = &BTRFS_I(page->mapping->host)->io_tree;
 
 		start = ((u64)page->index << PAGE_CACHE_SHIFT) +
@@ -1862,22 +1847,23 @@ static void end_bio_extent_preparewrite(struct bio *bio, int err)
 			prefetchw(&bvec->bv_page->flags);
 
 		if (uptodate) {
-			set_extent_uptodate(tree, start, end, GFP_ATOMIC);
+			set_extent_uptodate(tree, start, end, &cached,
+					    GFP_ATOMIC);
 		} else {
 			ClearPageUptodate(page);
 			SetPageError(page);
 		}
 
-		unlock_extent(tree, start, end, GFP_ATOMIC);
+		unlock_extent_cached(tree, start, end, &cached, GFP_ATOMIC);
 
 	} while (bvec >= bio->bi_io_vec);
 
 	bio_put(bio);
 }
 
-static struct bio *
-extent_bio_alloc(struct block_device *bdev, u64 first_sector, int nr_vecs,
-		 gfp_t gfp_flags)
+struct bio *
+btrfs_bio_alloc(struct block_device *bdev, u64 first_sector, int nr_vecs,
+		gfp_t gfp_flags)
 {
 	struct bio *bio;
 
@@ -1904,18 +1890,16 @@ static int submit_one_bio(int rw, struct bio *bio, int mirror_num,
 	struct page *page = bvec->bv_page;
 	struct extent_io_tree *tree = bio->bi_private;
 	u64 start;
-	u64 end;
 
 	start = ((u64)page->index << PAGE_CACHE_SHIFT) + bvec->bv_offset;
-	end = start + bvec->bv_len - 1;
 
 	bio->bi_private = NULL;
 
 	bio_get(bio);
 
 	if (tree->ops && tree->ops->submit_bio_hook)
-		tree->ops->submit_bio_hook(page->mapping->host, rw, bio,
-					   mirror_num, bio_flags);
+		ret = tree->ops->submit_bio_hook(page->mapping->host, rw, bio,
+					   mirror_num, bio_flags, start);
 	else
 		submit_bio(rw, bio);
 	if (bio_flagged(bio, BIO_EOPNOTSUPP))
@@ -1968,7 +1952,9 @@ static int submit_extent_page(int rw, struct extent_io_tree *tree,
 	else
 		nr = bio_get_nr_vecs(bdev);
 
-	bio = extent_bio_alloc(bdev, sector, nr, GFP_NOFS | __GFP_HIGH);
+	bio = btrfs_bio_alloc(bdev, sector, nr, GFP_NOFS | __GFP_HIGH);
+	if (!bio)
+		return -ENOMEM;
 
 	bio_add_page(bio, page, page_size, offset);
 	bio->bi_end_io = end_io_func;
@@ -1993,6 +1979,7 @@ void set_page_extent_mapped(struct page *page)
 
 static void set_page_extent_head(struct page *page, unsigned long len)
 {
+	WARN_ON(!PagePrivate(page));
 	set_page_private(page, EXTENT_PAGE_PRIVATE_FIRST_PAGE | len << 2);
 }
 
@@ -2019,6 +2006,7 @@ static int __extent_read_full_page(struct extent_io_tree *tree,
 	sector_t sector;
 	struct extent_map *em;
 	struct block_device *bdev;
+	struct btrfs_ordered_extent *ordered;
 	int ret;
 	int nr = 0;
 	size_t page_offset = 0;
@@ -2037,7 +2025,15 @@ static int __extent_read_full_page(struct extent_io_tree *tree,
 	}
 
 	end = page_end;
-	lock_extent(tree, start, end, GFP_NOFS);
+	while (1) {
+		lock_extent(tree, start, end, GFP_NOFS);
+		ordered = btrfs_lookup_ordered_extent(inode, start);
+		if (!ordered)
+			break;
+		unlock_extent(tree, start, end, GFP_NOFS);
+		btrfs_start_ordered_extent(inode, ordered, 1);
+		btrfs_put_ordered_extent(ordered);
+	}
 
 	if (page->index == last_byte >> PAGE_CACHE_SHIFT) {
 		char *userpage;
@@ -2054,14 +2050,17 @@ static int __extent_read_full_page(struct extent_io_tree *tree,
 	while (cur <= end) {
 		if (cur >= last_byte) {
 			char *userpage;
+			struct extent_state *cached = NULL;
+
 			iosize = PAGE_CACHE_SIZE - page_offset;
 			userpage = kmap_atomic(page, KM_USER0);
 			memset(userpage + page_offset, 0, iosize);
 			flush_dcache_page(page);
 			kunmap_atomic(userpage, KM_USER0);
 			set_extent_uptodate(tree, cur, cur + iosize - 1,
-					    GFP_NOFS);
-			unlock_extent(tree, cur, cur + iosize - 1, GFP_NOFS);
+					    &cached, GFP_NOFS);
+			unlock_extent_cached(tree, cur, cur + iosize - 1,
+					     &cached, GFP_NOFS);
 			break;
 		}
 		em = get_extent(inode, page, page_offset, cur,
@@ -2075,8 +2074,11 @@ static int __extent_read_full_page(struct extent_io_tree *tree,
 		BUG_ON(extent_map_end(em) <= cur);
 		BUG_ON(end < cur);
 
-		if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags))
+		if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags)) {
 			this_bio_flag = EXTENT_BIO_COMPRESSED;
+			extent_set_compress_type(&this_bio_flag,
+						 em->compress_type);
+		}
 
 		iosize = min(extent_map_end(em) - cur, end - cur + 1);
 		cur_end = min(extent_map_end(em) - 1, end);
@@ -2098,14 +2100,17 @@ static int __extent_read_full_page(struct extent_io_tree *tree,
 		/* we've found a hole, just zero and go on */
 		if (block_start == EXTENT_MAP_HOLE) {
 			char *userpage;
+			struct extent_state *cached = NULL;
+
 			userpage = kmap_atomic(page, KM_USER0);
 			memset(userpage + page_offset, 0, iosize);
 			flush_dcache_page(page);
 			kunmap_atomic(userpage, KM_USER0);
 
 			set_extent_uptodate(tree, cur, cur + iosize - 1,
-					    GFP_NOFS);
-			unlock_extent(tree, cur, cur + iosize - 1, GFP_NOFS);
+					    &cached, GFP_NOFS);
+			unlock_extent_cached(tree, cur, cur + iosize - 1,
+			                     &cached, GFP_NOFS);
 			cur = cur + iosize;
 			page_offset += iosize;
 			continue;
@@ -2171,7 +2176,7 @@ int extent_read_full_page(struct extent_io_tree *tree, struct page *page,
 	ret = __extent_read_full_page(tree, page, get_extent, &bio, 0,
 				      &bio_flags);
 	if (bio)
-		submit_one_bio(READ, bio, 0, bio_flags);
+		ret = submit_one_bio(READ, bio, 0, bio_flags);
 	return ret;
 }
 
@@ -2206,7 +2211,6 @@ static int __extent_writepage(struct page *page, struct writeback_control *wbc,
 	u64 last_byte = i_size_read(inode);
 	u64 block_start;
 	u64 iosize;
-	u64 unlock_start;
 	sector_t sector;
 	struct extent_state *cached_state = NULL;
 	struct extent_map *em;
@@ -2228,6 +2232,8 @@ static int __extent_writepage(struct page *page, struct writeback_control *wbc,
 		write_flags = WRITE_SYNC_PLUG;
 	else
 		write_flags = WRITE;
+
+	trace___extent_writepage(page, inode, wbc);
 
 	WARN_ON(!PageLocked(page));
 	pg_offset = i_size & (PAGE_CACHE_SIZE - 1);
@@ -2331,7 +2337,6 @@ static int __extent_writepage(struct page *page, struct writeback_control *wbc,
 		if (tree->ops && tree->ops->writepage_end_io_hook)
 			tree->ops->writepage_end_io_hook(page, start,
 							 page_end, NULL, 1);
-		unlock_start = page_end + 1;
 		goto done;
 	}
 
@@ -2342,7 +2347,6 @@ static int __extent_writepage(struct page *page, struct writeback_control *wbc,
 			if (tree->ops && tree->ops->writepage_end_io_hook)
 				tree->ops->writepage_end_io_hook(page, cur,
 							 page_end, NULL, 1);
-			unlock_start = page_end + 1;
 			break;
 		}
 		em = epd->get_extent(inode, page, pg_offset, cur,
@@ -2389,7 +2393,6 @@ static int __extent_writepage(struct page *page, struct writeback_control *wbc,
 
 			cur += iosize;
 			pg_offset += iosize;
-			unlock_start = cur;
 			continue;
 		}
 		/* leave this out until we have a page_mkwrite call */
@@ -2475,7 +2478,6 @@ static int extent_write_cache_pages(struct extent_io_tree *tree,
 	pgoff_t index;
 	pgoff_t end;		/* Inclusive */
 	int scanned = 0;
-	int range_whole = 0;
 
 	pagevec_init(&pvec, 0);
 	if (wbc->range_cyclic) {
@@ -2484,8 +2486,6 @@ static int extent_write_cache_pages(struct extent_io_tree *tree,
 	} else {
 		index = wbc->range_start >> PAGE_CACHE_SHIFT;
 		end = wbc->range_end >> PAGE_CACHE_SHIFT;
-		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
-			range_whole = 1;
 		scanned = 1;
 	}
 retry:
@@ -2693,7 +2693,7 @@ int extent_readpages(struct extent_io_tree *tree,
 		prefetchw(&page->flags);
 		list_del(&page->lru);
 		if (!add_to_page_cache_lru(page, mapping,
-					page->index, GFP_KERNEL)) {
+					page->index, GFP_NOFS)) {
 			__extent_read_full_page(tree, page, get_extent,
 						&bio, 0, &bio_flags);
 		}
@@ -2827,12 +2827,17 @@ int extent_prepare_write(struct extent_io_tree *tree,
 					 NULL, 1,
 					 end_bio_extent_preparewrite, 0,
 					 0, 0);
+			if (ret && !err)
+				err = ret;
 			iocount++;
 			block_start = block_start + iosize;
 		} else {
-			set_extent_uptodate(tree, block_start, cur_end,
+			struct extent_state *cached = NULL;
+
+			set_extent_uptodate(tree, block_start, cur_end, &cached,
 					    GFP_NOFS);
-			unlock_extent(tree, block_start, cur_end, GFP_NOFS);
+			unlock_extent_cached(tree, block_start, cur_end,
+					     &cached, GFP_NOFS);
 			block_start = cur_end + 1;
 		}
 		page_offset = block_start & (PAGE_CACHE_SIZE - 1);
@@ -2871,9 +2876,17 @@ int try_release_extent_state(struct extent_map_tree *map,
 		 * at this point we can safely clear everything except the
 		 * locked bit and the nodatasum bit
 		 */
-		clear_extent_bit(tree, start, end,
+		ret = clear_extent_bit(tree, start, end,
 				 ~(EXTENT_LOCKED | EXTENT_NODATASUM),
 				 0, 0, NULL, mask);
+
+		/* if clear_extent_bit failed for enomem reasons,
+		 * we can't allow the release to continue.
+		 */
+		if (ret < 0)
+			ret = 0;
+		else
+			ret = 1;
 	}
 	return ret;
 }
@@ -2953,49 +2966,169 @@ out:
 	return sector;
 }
 
+/*
+ * helper function for fiemap, which doesn't want to see any holes.
+ * This maps until we find something past 'last'
+ */
+static struct extent_map *get_extent_skip_holes(struct inode *inode,
+						u64 offset,
+						u64 last,
+						get_extent_t *get_extent)
+{
+	u64 sectorsize = BTRFS_I(inode)->root->sectorsize;
+	struct extent_map *em;
+	u64 len;
+
+	if (offset >= last)
+		return NULL;
+
+	while(1) {
+		len = last - offset;
+		if (len == 0)
+			break;
+		len = (len + sectorsize - 1) & ~(sectorsize - 1);
+		em = get_extent(inode, NULL, 0, offset, len, 0);
+		if (!em || IS_ERR(em))
+			return em;
+
+		/* if this isn't a hole return it */
+		if (!test_bit(EXTENT_FLAG_VACANCY, &em->flags) &&
+		    em->block_start != EXTENT_MAP_HOLE) {
+			return em;
+		}
+
+		/* this is a hole, advance to the next extent */
+		offset = extent_map_end(em);
+		free_extent_map(em);
+		if (offset >= last)
+			break;
+	}
+	return NULL;
+}
+
 int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		__u64 start, __u64 len, get_extent_t *get_extent)
 {
-	int ret;
+	int ret = 0;
 	u64 off = start;
 	u64 max = start + len;
 	u32 flags = 0;
+	u32 found_type;
+	u64 last;
+	u64 last_for_get_extent = 0;
 	u64 disko = 0;
+	u64 isize = i_size_read(inode);
+	struct btrfs_key found_key;
 	struct extent_map *em = NULL;
 	struct extent_state *cached_state = NULL;
+	struct btrfs_path *path;
+	struct btrfs_file_extent_item *item;
 	int end = 0;
-	u64 em_start = 0, em_len = 0;
+	u64 em_start = 0;
+	u64 em_len = 0;
+	u64 em_end = 0;
 	unsigned long emflags;
-	ret = 0;
 
 	if (len == 0)
 		return -EINVAL;
 
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+	path->leave_spinning = 1;
+
+	/*
+	 * lookup the last file extent.  We're not using i_size here
+	 * because there might be preallocation past i_size
+	 */
+	ret = btrfs_lookup_file_extent(NULL, BTRFS_I(inode)->root,
+				       path, inode->i_ino, -1, 0);
+	if (ret < 0) {
+		btrfs_free_path(path);
+		return ret;
+	}
+	WARN_ON(!ret);
+	path->slots[0]--;
+	item = btrfs_item_ptr(path->nodes[0], path->slots[0],
+			      struct btrfs_file_extent_item);
+	btrfs_item_key_to_cpu(path->nodes[0], &found_key, path->slots[0]);
+	found_type = btrfs_key_type(&found_key);
+
+	/* No extents, but there might be delalloc bits */
+	if (found_key.objectid != inode->i_ino ||
+	    found_type != BTRFS_EXTENT_DATA_KEY) {
+		/* have to trust i_size as the end */
+		last = (u64)-1;
+		last_for_get_extent = isize;
+	} else {
+		/*
+		 * remember the start of the last extent.  There are a
+		 * bunch of different factors that go into the length of the
+		 * extent, so its much less complex to remember where it started
+		 */
+		last = found_key.offset;
+		last_for_get_extent = last + 1;
+	}
+	btrfs_free_path(path);
+
+	/*
+	 * we might have some extents allocated but more delalloc past those
+	 * extents.  so, we trust isize unless the start of the last extent is
+	 * beyond isize
+	 */
+	if (last < isize) {
+		last = (u64)-1;
+		last_for_get_extent = isize;
+	}
+
 	lock_extent_bits(&BTRFS_I(inode)->io_tree, start, start + len, 0,
 			 &cached_state, GFP_NOFS);
-	em = get_extent(inode, NULL, 0, off, max - off, 0);
+
+	em = get_extent_skip_holes(inode, off, last_for_get_extent,
+				   get_extent);
 	if (!em)
 		goto out;
 	if (IS_ERR(em)) {
 		ret = PTR_ERR(em);
 		goto out;
 	}
+
 	while (!end) {
-		off = em->start + em->len;
-		if (off >= max)
-			end = 1;
+		u64 offset_in_extent;
 
-		em_start = em->start;
-		em_len = em->len;
+		/* break if the extent we found is outside the range */
+		if (em->start >= max || extent_map_end(em) < off)
+			break;
 
+		/*
+		 * get_extent may return an extent that starts before our
+		 * requested range.  We have to make sure the ranges
+		 * we return to fiemap always move forward and don't
+		 * overlap, so adjust the offsets here
+		 */
+		em_start = max(em->start, off);
+
+		/*
+		 * record the offset from the start of the extent
+		 * for adjusting the disk offset below
+		 */
+		offset_in_extent = em_start - em->start;
+		em_end = extent_map_end(em);
+		em_len = em_end - em_start;
+		emflags = em->flags;
 		disko = 0;
 		flags = 0;
+
+		/*
+		 * bump off for our next call to get_extent
+		 */
+		off = extent_map_end(em);
+		if (off >= max)
+			end = 1;
 
 		if (em->block_start == EXTENT_MAP_LAST_BYTE) {
 			end = 1;
 			flags |= FIEMAP_EXTENT_LAST;
-		} else if (em->block_start == EXTENT_MAP_HOLE) {
-			flags |= FIEMAP_EXTENT_UNWRITTEN;
 		} else if (em->block_start == EXTENT_MAP_INLINE) {
 			flags |= (FIEMAP_EXTENT_DATA_INLINE |
 				  FIEMAP_EXTENT_NOT_ALIGNED);
@@ -3003,32 +3136,32 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			flags |= (FIEMAP_EXTENT_DELALLOC |
 				  FIEMAP_EXTENT_UNKNOWN);
 		} else {
-			disko = em->block_start;
+			disko = em->block_start + offset_in_extent;
 		}
 		if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags))
 			flags |= FIEMAP_EXTENT_ENCODED;
 
-		emflags = em->flags;
 		free_extent_map(em);
 		em = NULL;
-
-		if (!end) {
-			em = get_extent(inode, NULL, 0, off, max - off, 0);
-			if (!em)
-				goto out;
-			if (IS_ERR(em)) {
-				ret = PTR_ERR(em);
-				goto out;
-			}
-			emflags = em->flags;
-		}
-		if (test_bit(EXTENT_FLAG_VACANCY, &emflags)) {
+		if ((em_start >= last) || em_len == (u64)-1 ||
+		   (last == (u64)-1 && isize <= em_end)) {
 			flags |= FIEMAP_EXTENT_LAST;
 			end = 1;
 		}
 
+		/* now scan forward to see if this is really the last extent. */
+		em = get_extent_skip_holes(inode, off, last_for_get_extent,
+					   get_extent);
+		if (IS_ERR(em)) {
+			ret = PTR_ERR(em);
+			goto out;
+		}
+		if (!em) {
+			flags |= FIEMAP_EXTENT_LAST;
+			end = 1;
+		}
 		ret = fiemap_fill_next_extent(fieinfo, em_start, disko,
-					em_len, flags);
+					      em_len, flags);
 		if (ret)
 			goto out_free;
 	}
@@ -3082,10 +3215,13 @@ static struct extent_buffer *__alloc_extent_buffer(struct extent_io_tree *tree,
 #endif
 
 	eb = kmem_cache_zalloc(extent_buffer_cache, mask);
+	if (eb == NULL)
+		return NULL;
 	eb->start = start;
 	eb->len = len;
 	spin_lock_init(&eb->lock);
 	init_waitqueue_head(&eb->lock_wq);
+	INIT_RCU_HEAD(&eb->rcu_head);
 
 #if LEAK_DEBUG
 	spin_lock_irqsave(&leak_lock, flags);
@@ -3108,6 +3244,39 @@ static void __free_extent_buffer(struct extent_buffer *eb)
 	kmem_cache_free(extent_buffer_cache, eb);
 }
 
+/*
+ * Helper for releasing extent buffer page.
+ */
+static void btrfs_release_extent_buffer_page(struct extent_buffer *eb,
+						unsigned long start_idx)
+{
+	unsigned long index;
+	struct page *page;
+
+	if (!eb->first_page)
+		return;
+
+	index = num_extent_pages(eb->start, eb->len);
+	if (start_idx >= index)
+		return;
+
+	do {
+		index--;
+		page = extent_buffer_page(eb, index);
+		if (page)
+			page_cache_release(page);
+	} while (index != start_idx);
+}
+
+/*
+ * Helper for releasing the extent buffer.
+ */
+static inline void btrfs_release_extent_buffer(struct extent_buffer *eb)
+{
+	btrfs_release_extent_buffer_page(eb, 0);
+	__free_extent_buffer(eb);
+}
+
 struct extent_buffer *alloc_extent_buffer(struct extent_io_tree *tree,
 					  u64 start, unsigned long len,
 					  struct page *page0,
@@ -3121,16 +3290,16 @@ struct extent_buffer *alloc_extent_buffer(struct extent_io_tree *tree,
 	struct page *p;
 	struct address_space *mapping = tree->mapping;
 	int uptodate = 1;
+	int ret;
 
-	spin_lock(&tree->buffer_lock);
-	eb = buffer_search(tree, start);
-	if (eb) {
-		atomic_inc(&eb->refs);
-		spin_unlock(&tree->buffer_lock);
+	rcu_read_lock();
+	eb = radix_tree_lookup(&tree->buffer, start >> PAGE_CACHE_SHIFT);
+	if (eb && atomic_inc_not_zero(&eb->refs)) {
+		rcu_read_unlock();
 		mark_page_accessed(eb->first_page);
 		return eb;
 	}
-	spin_unlock(&tree->buffer_lock);
+	rcu_read_unlock();
 
 	eb = __alloc_extent_buffer(tree, start, len, mask);
 	if (!eb)
@@ -3164,31 +3333,59 @@ struct extent_buffer *alloc_extent_buffer(struct extent_io_tree *tree,
 		}
 		if (!PageUptodate(p))
 			uptodate = 0;
-		unlock_page(p);
+
+		/*
+		 * see below about how we avoid a nasty race with release page
+		 * and why we unlock later
+		 */
+		if (i != 0)
+			unlock_page(p);
 	}
 	if (uptodate)
 		set_bit(EXTENT_BUFFER_UPTODATE, &eb->bflags);
 
+	ret = radix_tree_preload(GFP_NOFS & ~__GFP_HIGHMEM);
+	if (ret)
+		goto free_eb;
+
 	spin_lock(&tree->buffer_lock);
-	exists = buffer_tree_insert(tree, start, &eb->rb_node);
-	if (exists) {
+	ret = radix_tree_insert(&tree->buffer, start >> PAGE_CACHE_SHIFT, eb);
+	if (ret == -EEXIST) {
+		exists = radix_tree_lookup(&tree->buffer,
+						start >> PAGE_CACHE_SHIFT);
 		/* add one reference for the caller */
 		atomic_inc(&exists->refs);
 		spin_unlock(&tree->buffer_lock);
+		radix_tree_preload_end();
 		goto free_eb;
 	}
 	/* add one reference for the tree */
 	atomic_inc(&eb->refs);
 	spin_unlock(&tree->buffer_lock);
+	radix_tree_preload_end();
+
+	/*
+	 * there is a race where release page may have
+	 * tried to find this extent buffer in the radix
+	 * but failed.  It will tell the VM it is safe to
+	 * reclaim the, and it will clear the page private bit.
+	 * We must make sure to set the page private bit properly
+	 * after the extent buffer is in the radix tree so
+	 * it doesn't get lost
+	 */
+	set_page_extent_mapped(eb->first_page);
+	set_page_extent_head(eb->first_page, eb->len);
+	if (!page0)
+		unlock_page(eb->first_page);
 	return eb;
 
 free_eb:
+	if (eb->first_page && !page0)
+		unlock_page(eb->first_page);
+
 	if (!atomic_dec_and_test(&eb->refs))
 		return exists;
-	for (index = 1; index < i; index++)
-		page_cache_release(extent_buffer_page(eb, index));
-	page_cache_release(extent_buffer_page(eb, 0));
-	__free_extent_buffer(eb);
+	btrfs_release_extent_buffer(eb);
 	return exists;
 }
 
@@ -3198,16 +3395,16 @@ struct extent_buffer *find_extent_buffer(struct extent_io_tree *tree,
 {
 	struct extent_buffer *eb;
 
-	spin_lock(&tree->buffer_lock);
-	eb = buffer_search(tree, start);
-	if (eb)
-		atomic_inc(&eb->refs);
-	spin_unlock(&tree->buffer_lock);
-
-	if (eb)
+	rcu_read_lock();
+	eb = radix_tree_lookup(&tree->buffer, start >> PAGE_CACHE_SHIFT);
+	if (eb && atomic_inc_not_zero(&eb->refs)) {
+		rcu_read_unlock();
 		mark_page_accessed(eb->first_page);
+		return eb;
+	}
+	rcu_read_unlock();
 
-	return eb;
+	return NULL;
 }
 
 void free_extent_buffer(struct extent_buffer *eb)
@@ -3236,10 +3433,11 @@ int clear_extent_buffer_dirty(struct extent_io_tree *tree,
 			continue;
 
 		lock_page(page);
+		WARN_ON(!PagePrivate(page));
+
+		set_page_extent_mapped(page);
 		if (i == 0)
 			set_page_extent_head(page, eb->len);
-		else
-			set_page_private(page, EXTENT_PAGE_PRIVATE);
 
 		clear_page_dirty_for_io(page);
 		spin_lock_irq(&page->mapping->tree_lock);
@@ -3306,7 +3504,7 @@ int set_extent_buffer_uptodate(struct extent_io_tree *tree,
 	num_pages = num_extent_pages(eb->start, eb->len);
 
 	set_extent_uptodate(tree, eb->start, eb->start + eb->len - 1,
-			    GFP_NOFS);
+			    NULL, GFP_NOFS);
 	for (i = 0; i < num_pages; i++) {
 		page = extent_buffer_page(eb, i);
 		if ((i == 0 && (eb->start & (PAGE_CACHE_SIZE - 1))) ||
@@ -3429,6 +3627,13 @@ int read_extent_buffer_pages(struct extent_io_tree *tree,
 
 	for (i = start_i; i < num_pages; i++) {
 		page = extent_buffer_page(eb, i);
+
+		WARN_ON(!PagePrivate(page));
+
+		set_page_extent_mapped(page);
+		if (i == 0)
+			set_page_extent_head(page, eb->len);
+
 		if (inc_all_pages)
 			page_cache_get(page);
 		if (!PageUptodate(page)) {
@@ -3534,6 +3739,7 @@ int map_private_extent_buffer(struct extent_buffer *eb, unsigned long start,
 		       "wanted %lu %lu\n", (unsigned long long)eb->start,
 		       eb->len, start, min_len);
 		WARN_ON(1);
+		return -EINVAL;
 	}
 
 	p = extent_buffer_page(eb, i);
@@ -3726,6 +3932,12 @@ static void move_pages(struct page *dst_page, struct page *src_page,
 	kunmap_atomic(dst_kaddr, KM_USER0);
 }
 
+static inline bool areas_overlap(unsigned long src, unsigned long dst, unsigned long len)
+{
+	unsigned long distance = (src > dst) ? src - dst : dst - src;
+	return distance < len;
+}
+
 static void copy_pages(struct page *dst_page, struct page *src_page,
 		       unsigned long dst_off, unsigned long src_off,
 		       unsigned long len)
@@ -3733,10 +3945,12 @@ static void copy_pages(struct page *dst_page, struct page *src_page,
 	char *dst_kaddr = kmap_atomic(dst_page, KM_USER0);
 	char *src_kaddr;
 
-	if (dst_page != src_page)
+	if (dst_page != src_page) {
 		src_kaddr = kmap_atomic(src_page, KM_USER1);
-	else
+	} else {
 		src_kaddr = dst_kaddr;
+		BUG_ON(areas_overlap(src_off, dst_off, len));
+	}
 
 	memcpy(dst_kaddr + dst_off, src_kaddr + src_off, len);
 	kunmap_atomic(dst_kaddr, KM_USER0);
@@ -3811,7 +4025,7 @@ void memmove_extent_buffer(struct extent_buffer *dst, unsigned long dst_offset,
 		       "len %lu len %lu\n", dst_offset, len, dst->len);
 		BUG_ON(1);
 	}
-	if (dst_offset < src_offset) {
+	if (!areas_overlap(src_offset, dst_offset, len)) {
 		memcpy_extent_buffer(dst, dst_offset, src_offset, len);
 		return;
 	}
@@ -3837,34 +4051,47 @@ void memmove_extent_buffer(struct extent_buffer *dst, unsigned long dst_offset,
 	}
 }
 
+static inline void btrfs_release_extent_buffer_rcu(struct rcu_head *head)
+{
+	struct extent_buffer *eb =
+			container_of(head, struct extent_buffer, rcu_head);
+
+	btrfs_release_extent_buffer(eb);
+}
+
 int try_release_extent_buffer(struct extent_io_tree *tree, struct page *page)
 {
 	u64 start = page_offset(page);
 	struct extent_buffer *eb;
 	int ret = 1;
-	unsigned long i;
-	unsigned long num_pages;
 
 	spin_lock(&tree->buffer_lock);
-	eb = buffer_search(tree, start);
-	if (!eb)
-		goto out;
-
-	if (atomic_read(&eb->refs) > 1) {
-		ret = 0;
-		goto out;
+	eb = radix_tree_lookup(&tree->buffer, start >> PAGE_CACHE_SHIFT);
+	if (!eb) {
+		spin_unlock(&tree->buffer_lock);
+		return ret;
 	}
+
 	if (test_bit(EXTENT_BUFFER_DIRTY, &eb->bflags)) {
 		ret = 0;
 		goto out;
 	}
-	/* at this point we can safely release the extent buffer */
-	num_pages = num_extent_pages(eb->start, eb->len);
-	for (i = 0; i < num_pages; i++)
-		page_cache_release(extent_buffer_page(eb, i));
-	rb_erase(&eb->rb_node, &tree->buffer);
-	__free_extent_buffer(eb);
+
+	/*
+	 * set @eb->refs to 0 if it is already 1, and then release the @eb.
+	 * Or go back.
+	 */
+	if (atomic_cmpxchg(&eb->refs, 1, 0) != 1) {
+		ret = 0;
+		goto out;
+	}
+
+	radix_tree_delete(&tree->buffer, start >> PAGE_CACHE_SHIFT);
 out:
 	spin_unlock(&tree->buffer_lock);
+
+	/* at this point we can safely release the extent buffer */
+	if (atomic_read(&eb->refs) == 0)
+		call_rcu(&eb->rcu_head, btrfs_release_extent_buffer_rcu);
 	return ret;
 }
