@@ -3846,7 +3846,7 @@ void cgroup_exit(struct task_struct *tsk, int run_callbacks)
 		 * modular subsystems can't use callbacks, so no need to lock
 		 * the subsys array
 		 */
-		for (i = 0; i < CGROUP_SUBSYS_COUNT; i++) {
+		for (i = 0; i < CGROUP_BUILTIN_SUBSYS_COUNT; i++) {
 			struct cgroup_subsys *ss = subsys[i];
 			WARN_ON(!ss);
 			if (ss && ss->exit) {
