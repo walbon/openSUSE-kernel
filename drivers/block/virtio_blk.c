@@ -64,10 +64,14 @@ static void blk_done(struct virtqueue *vq)
 			break;
 		}
 
-		if (blk_pc_request(vbr->req)) {
+		switch (vbr->req->cmd_type) {
+		case REQ_TYPE_BLOCK_PC:
 			vbr->req->resid_len = vbr->in_hdr.residual;
 			vbr->req->sense_len = vbr->in_hdr.sense_len;
 			vbr->req->errors = vbr->in_hdr.errors;
+			break;
+		default:
+			break;
 		}
 
 		__blk_end_request_all(vbr->req, error);
@@ -91,31 +95,30 @@ static bool do_req(struct request_queue *q, struct virtio_blk *vblk,
 		return false;
 
 	vbr->req = req;
-	switch (req->cmd_type) {
-	case REQ_TYPE_FS:
-		vbr->out_hdr.type = 0;
-		vbr->out_hdr.sector = blk_rq_pos(vbr->req);
-		vbr->out_hdr.ioprio = req_get_ioprio(vbr->req);
-		break;
-	case REQ_TYPE_BLOCK_PC:
-		vbr->out_hdr.type = VIRTIO_BLK_T_SCSI_CMD;
+
+	if (req->cmd_flags & REQ_FLUSH) {
+		vbr->out_hdr.type = VIRTIO_BLK_T_FLUSH;
 		vbr->out_hdr.sector = 0;
 		vbr->out_hdr.ioprio = req_get_ioprio(vbr->req);
-		break;
-	case REQ_TYPE_LINUX_BLOCK:
-		if (req->cmd[0] == REQ_LB_OP_FLUSH) {
-			vbr->out_hdr.type = VIRTIO_BLK_T_FLUSH;
+	} else {
+		switch (req->cmd_type) {
+		case REQ_TYPE_FS:
+			vbr->out_hdr.type = 0;
+			vbr->out_hdr.sector = blk_rq_pos(vbr->req);
+			vbr->out_hdr.ioprio = req_get_ioprio(vbr->req);
+			break;
+		case REQ_TYPE_BLOCK_PC:
+			vbr->out_hdr.type = VIRTIO_BLK_T_SCSI_CMD;
 			vbr->out_hdr.sector = 0;
 			vbr->out_hdr.ioprio = req_get_ioprio(vbr->req);
 			break;
+		default:
+			/* We don't put anything else in the queue. */
+			BUG();
 		}
-		/*FALLTHRU*/
-	default:
-		/* We don't put anything else in the queue. */
-		BUG();
 	}
 
-	if (blk_barrier_rq(vbr->req))
+	if (vbr->req->cmd_flags & REQ_HARDBARRIER)
 		vbr->out_hdr.type |= VIRTIO_BLK_T_BARRIER;
 
 	sg_set_buf(&vblk->sg[out++], &vbr->out_hdr, sizeof(vbr->out_hdr));
@@ -126,12 +129,12 @@ static bool do_req(struct request_queue *q, struct virtio_blk *vblk,
 	 * block, and before the normal inhdr we put the sense data and the
 	 * inhdr with additional status information before the normal inhdr.
 	 */
-	if (blk_pc_request(vbr->req))
+	if (vbr->req->cmd_type == REQ_TYPE_BLOCK_PC)
 		sg_set_buf(&vblk->sg[out++], vbr->req->cmd, vbr->req->cmd_len);
 
 	num = blk_rq_map_sg(q, vbr->req, vblk->sg + out);
 
-	if (blk_pc_request(vbr->req)) {
+	if (vbr->req->cmd_type == REQ_TYPE_BLOCK_PC) {
 		sg_set_buf(&vblk->sg[num + out + in++], vbr->req->sense, 96);
 		sg_set_buf(&vblk->sg[num + out + in++], &vbr->in_hdr,
 			   sizeof(vbr->in_hdr));
@@ -180,12 +183,6 @@ static void do_virtblk_request(struct request_queue *q)
 
 	if (issued)
 		vblk->vq->vq_ops->kick(vblk->vq);
-}
-
-static void virtblk_prepare_flush(struct request_queue *q, struct request *req)
-{
-	req->cmd_type = REQ_TYPE_LINUX_BLOCK;
-	req->cmd[0] = REQ_LB_OP_FLUSH;
 }
 
 static int virtblk_ioctl(struct block_device *bdev, fmode_t mode,
@@ -325,10 +322,9 @@ static int __devinit virtblk_probe(struct virtio_device *vdev)
 
 	/* If barriers are supported, tell block layer that queue is ordered */
 	if (virtio_has_feature(vdev, VIRTIO_BLK_F_FLUSH))
-		blk_queue_ordered(q, QUEUE_ORDERED_DRAIN_FLUSH,
-				  virtblk_prepare_flush);
+		blk_queue_ordered(q, QUEUE_ORDERED_DRAIN_FLUSH);
 	else if (virtio_has_feature(vdev, VIRTIO_BLK_F_BARRIER))
-		blk_queue_ordered(q, QUEUE_ORDERED_TAG, NULL);
+		blk_queue_ordered(q, QUEUE_ORDERED_TAG);
 
 	/* If disk is read-only in the host, the guest should obey */
 	if (virtio_has_feature(vdev, VIRTIO_BLK_F_RO))
