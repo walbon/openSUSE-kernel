@@ -11,13 +11,16 @@ struct k8_bus_dev_range {
 
 extern struct pci_device_id k8_nb_ids[];
 extern const struct k8_bus_dev_range k8_bus_dev_ranges[];
+struct bootnode;
 
 extern int early_is_k8_nb(u32 value);
 extern struct pci_dev **k8_northbridges;
 extern int num_k8_northbridges;
 extern int cache_k8_northbridges(void);
 extern void k8_flush_garts(void);
-extern int k8_scan_nodes(unsigned long start, unsigned long end);
+extern int k8_get_nodes(struct bootnode *nodes);
+extern int k8_numa_init(unsigned long start_pfn, unsigned long end_pfn);
+extern int k8_scan_nodes(void);
 
 #ifdef CONFIG_K8_NB
 extern int num_k8_northbridges;
