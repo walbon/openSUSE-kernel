@@ -630,6 +630,16 @@ static int __init setup_elfcorehdr(char *arg)
 early_param("elfcorehdr", setup_elfcorehdr);
 #endif
 
+static __init void reserve_ibft_region(void)
+{
+	unsigned long addr, size = 0;
+
+	addr = find_ibft_region(&size);
+
+	if (size)
+		reserve_early_overlap_ok(addr, addr + size, "ibft");
+}
+
 #ifdef CONFIG_X86_RESERVE_LOW_64K
 static int __init dmi_low_memory_corruption(const struct dmi_system_id *d)
 {
@@ -921,6 +931,8 @@ void __init setup_arch(char **cmdline_p)
 
 	reserve_brk();
 
+	reserve_ibft_region();
+
 	init_gbpages();
 
 	/* max_pfn_mapped is updated here */
@@ -988,8 +1000,6 @@ void __init setup_arch(char **cmdline_p)
 	 */
 	dma32_reserve_bootmem();
 #endif
-
-	reserve_ibft_region();
 
 #ifdef CONFIG_KVM_CLOCK
 	kvmclock_init();
