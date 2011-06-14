@@ -205,6 +205,8 @@ static void sync_dquots(int type)
 	spin_lock(&sb_lock);
 restart:
 	list_for_each_entry(sb, &super_blocks, s_list) {
+		if (list_empty(&sb->s_instances))
+			continue;
 		/* This test just improves performance so it needn't be
 		 * reliable... */
 		for (cnt = 0; cnt < MAXQUOTAS; cnt++) {
