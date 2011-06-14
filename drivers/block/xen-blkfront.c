@@ -90,7 +90,7 @@ struct blkfront_info
 	struct gnttab_free_callback callback;
 	struct blk_shadow shadow[BLK_RING_SIZE];
 	unsigned long shadow_free;
-	int feature_barrier;
+	unsigned int feature_flush;
 	int is_ready;
 
 	/**
@@ -192,14 +192,11 @@ static int blkif_ioctl(struct block_device *bdev, fmode_t mode,
 }
 
 /*
- * blkif_queue_request
+ * Generate a Xen blkfront IO request from a blk layer request.  Reads
+ * and writes are handled as expected.  Since we lack a loose flush
+ * request, we map flushes into a full ordered barrier.
  *
- * request block io
- *
- * id: for guest use only.
- * operation: BLKIF_OP_{READ,WRITE,PROBE}
- * buffer: buffer to read/write into. this should be a
- *   virtual address in the guest os.
+ * @req: a request struct
  */
 static int blkif_queue_request(struct request *req)
 {
@@ -236,8 +233,18 @@ static int blkif_queue_request(struct request *req)
 
 	ring_req->operation = rq_data_dir(req) ?
 		BLKIF_OP_WRITE : BLKIF_OP_READ;
-	if (req->cmd_flags & REQ_HARDBARRIER)
+
+	if (req->cmd_flags & (REQ_FLUSH | REQ_FUA)) {
+		/*
+		 * Ideally we could just do an unordered
+		 * flush-to-disk, but all we have is a full write
+		 * barrier at the moment.  However, a barrier write is
+		 * a superset of FUA, so we can implement it the same
+		 * way.  (It's also a FLUSH+FUA, since it is
+		 * guaranteed ordered WRT previous writes.)
+		 */
 		ring_req->operation = BLKIF_OP_WRITE_BARRIER;
+	}
 
 	ring_req->nr_segments = blk_rq_map_sg(req->q, req, info->sg);
 	BUG_ON(ring_req->nr_segments > BLKIF_MAX_SEGMENTS_PER_REQUEST);
@@ -366,20 +373,12 @@ static int xlvbd_init_blk_queue(struct gendisk *gd, u16 sector_size)
 }
 
 
-static int xlvbd_barrier(struct blkfront_info *info)
+static void xlvbd_flush(struct blkfront_info *info)
 {
-	int err;
-
-	err = blk_queue_ordered(info->rq,
-				info->feature_barrier ? QUEUE_ORDERED_DRAIN : QUEUE_ORDERED_NONE);
-
-	if (err)
-		return err;
-
+	blk_queue_flush(info->rq, info->feature_flush);
 	printk(KERN_INFO "blkfront: %s: barriers %s\n",
 	       info->gd->disk_name,
-	       info->feature_barrier ? "enabled" : "disabled");
-	return 0;
+	       info->feature_flush ? "enabled" : "disabled");
 }
 
 
@@ -453,8 +452,7 @@ static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
 	info->rq = gd->queue;
 	info->gd = gd;
 
-	if (info->feature_barrier)
-		xlvbd_barrier(info);
+	xlvbd_flush(info);
 
 	if (vdisk_info & VDISK_READONLY)
 		set_disk_ro(gd, 1);
@@ -565,8 +563,8 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
 				printk(KERN_WARNING "blkfront: %s: write barrier op failed\n",
 				       info->gd->disk_name);
 				error = -EOPNOTSUPP;
-				info->feature_barrier = 0;
-				xlvbd_barrier(info);
+				info->feature_flush = 0;
+				xlvbd_flush(info);
 			}
 			/* fall through */
 		case BLKIF_OP_READ:
@@ -863,7 +861,7 @@ static int blkfront_resume(struct xenbus_device *dev)
 static void blkfront_connect(struct blkfront_info *info)
 {
 	unsigned long long sectors;
-	unsigned long sector_size;
+	unsigned long sector_size, barrier;
 	unsigned int binfo;
 	int err;
 
@@ -887,10 +885,20 @@ static void blkfront_connect(struct blkfront_info *info)
 	}
 
 	err = xenbus_gather(XBT_NIL, info->xbdev->otherend,
-			    "feature-barrier", "%lu", &info->feature_barrier,
+			    "feature-barrier", "%lu", &barrier,
 			    NULL);
-	if (err)
-		info->feature_barrier = 0;
+
+	/*
+	 * If there's no "feature-barrier" defined, then it means
+	 * we're dealing with a very old backend which writes
+	 * synchronously; nothing to do.
+	 *
+	 * If there are barriers, then we use flush.
+	 */
+	info->feature_flush = 0;
+
+	if (!err && barrier)
+		info->feature_flush = REQ_FLUSH | REQ_FUA;
 
 	err = xlvbd_alloc_gendisk(sectors, info, binfo, sector_size);
 	if (err) {

@@ -45,7 +45,6 @@ struct btrfs_device {
 	int running_pending;
 	u64 generation;
 
-	int barriers;
 	int writeable;
 	int in_fs_metadata;
 	int missing;

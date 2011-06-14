@@ -418,7 +418,7 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 		operation = WRITE;
 		break;
 	case BLKIF_OP_WRITE_BARRIER:
-		operation = WRITE_BARRIER;
+		operation = WRITE_FLUSH_FUA;
 		break;
 	default:
 		operation = 0; /* make gcc happy */
@@ -427,7 +427,7 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 
 	/* Check that number of segments is sane. */
 	nseg = req->nr_segments;
-	if (unlikely(nseg == 0 && operation != WRITE_BARRIER) || 
+	if (unlikely(nseg == 0 && !(operation & (REQ_FLUSH|REQ_FUA))) ||
 	    unlikely(nseg > BLKIF_MAX_SEGMENTS_PER_REQUEST)) {
 		DPRINTK("Bad number of segments in request (%d)\n", nseg);
 		goto fail_response;
@@ -535,7 +535,7 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 	}
 
 	if (!bio) {
-		BUG_ON(operation != WRITE_BARRIER);
+		BUG_ON(!(operation & (REQ_FLUSH|REQ_FUA)));
 		bio = bio_alloc(GFP_KERNEL, 0);
 		if (unlikely(bio == NULL))
 			goto fail_put_bio;
@@ -550,7 +550,7 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 
 	if (operation == READ)
 		blkif->st_rd_sect += preq.nr_sects;
-	else if (operation == WRITE || operation == WRITE_BARRIER)
+	else
 		blkif->st_wr_sect += preq.nr_sects;
 
 	return;
