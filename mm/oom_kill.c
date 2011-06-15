@@ -167,14 +167,6 @@ unsigned long badness(struct task_struct *p, unsigned long uptime)
 		points /= 4;
 
 	/*
-	 * If p's nodes don't overlap ours, it may still help to kill p
-	 * because p may have allocated or otherwise mapped memory on
-	 * this node before. However it will be less likely.
-	 */
-	if (!has_intersects_mems_allowed(p))
-		points /= 8;
-
-	/*
 	 * Adjust the score by oom_adj.
 	 */
 	if (oom_adj) {
@@ -246,6 +238,8 @@ static struct task_struct *select_bad_process(unsigned long *ppoints,
 		if (is_global_init(p))
 			continue;
 		if (mem && !task_in_mem_cgroup(p, mem))
+			continue;
+		if (!has_intersects_mems_allowed(p))
 			continue;
 
 		/*
