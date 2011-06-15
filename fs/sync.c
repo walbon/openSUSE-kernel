@@ -37,7 +37,7 @@ static int __sync_filesystem(struct super_block *sb, int wait)
 	/* Avoid doing twice syncing and cache pruning for quota sync */
 	if (!wait) {
 		writeout_quota_sb(sb, -1);
-		writeback_inodes_sb(sb);
+		writeback_inodes_sb_locked(sb, 1);
 	} else {
 		sync_quota_sb(sb, -1);
 		sync_inodes_sb(sb);
