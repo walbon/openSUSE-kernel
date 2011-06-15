@@ -24,9 +24,6 @@
 #include <asm/apic.h>
 #include <asm/k8.h>
 
-static struct bootnode __initdata nodes[8];
-static nodemask_t __initdata nodes_parsed = NODE_MASK_NONE;
-
 static __init int find_northbridge(void)
 {
 	int num;
@@ -79,26 +76,12 @@ static __init void early_get_boot_cpu_id(void)
 	early_init_lapic_mapping();
 }
 
-int __init k8_get_nodes(struct bootnode *physnodes)
+int __init k8_scan_nodes(unsigned long start, unsigned long end)
 {
-	int i;
-	int ret = 0;
-
-	for_each_node_mask(i, nodes_parsed) {
-		physnodes[ret].start = nodes[i].start;
-		physnodes[ret].end = nodes[i].end;
-		ret++;
-	}
-	return ret;
-}
-
-int __init k8_numa_init(unsigned long start_pfn, unsigned long end_pfn)
-{
-	unsigned long start = PFN_PHYS(start_pfn);
-	unsigned long end = PFN_PHYS(end_pfn);
-	unsigned numnodes;
+	unsigned numnodes, cores, bits, apicid_base;
 	unsigned long prevbase;
-	int i, nb, found = 0;
+	struct bootnode nodes[8];
+	int i, j, nb, found = 0;
 	u32 nodeid, reg;
 
 	if (!early_pci_allowed())
@@ -115,8 +98,9 @@ int __init k8_numa_init(unsigned long start_pfn, unsigned long end_pfn)
 	if (numnodes <= 1)
 		return -1;
 
-	pr_info("Number of physical nodes %d\n", numnodes);
+	pr_info("Number of nodes %d\n", numnodes);
 
+	memset(&nodes, 0, sizeof(nodes));
 	prevbase = 0;
 	for (i = 0; i < 8; i++) {
 		unsigned long base, limit;
@@ -146,7 +130,7 @@ int __init k8_numa_init(unsigned long start_pfn, unsigned long end_pfn)
 			       nodeid, (base >> 8) & 3, (limit >> 8) & 3);
 			return -1;
 		}
-		if (node_isset(nodeid, nodes_parsed)) {
+		if (node_isset(nodeid, node_possible_map)) {
 			pr_info("Node %d already present, skipping\n",
 				nodeid);
 			continue;
@@ -157,8 +141,8 @@ int __init k8_numa_init(unsigned long start_pfn, unsigned long end_pfn)
 		limit |= (1<<24)-1;
 		limit++;
 
-		if (limit > end)
-			limit = end;
+		if (limit > max_pfn << PAGE_SHIFT)
+			limit = max_pfn << PAGE_SHIFT;
 		if (limit <= base)
 			continue;
 
@@ -196,23 +180,12 @@ int __init k8_numa_init(unsigned long start_pfn, unsigned long end_pfn)
 
 		prevbase = base;
 
-		node_set(nodeid, nodes_parsed);
+		node_set(nodeid, node_possible_map);
 	}
 
 	if (!found)
 		return -1;
-	return 0;
-}
 
-int __init k8_scan_nodes(void)
-{
-	unsigned int bits;
-	unsigned int cores;
-	unsigned int apicid_base;
-	int i;
-
-	BUG_ON(nodes_empty(nodes_parsed));
-	node_possible_map = nodes_parsed;
 	memnode_shift = compute_hash_shift(nodes, 8, NULL);
 	if (memnode_shift < 0) {
 		pr_err("No NUMA node hash function found. Contact maintainer\n");
@@ -231,8 +204,9 @@ int __init k8_scan_nodes(void)
 		apicid_base = boot_cpu_physical_apicid;
 	}
 
-	for_each_node_mask(i, node_possible_map) {
-		int j;
+	for (i = 0; i < 8; i++) {
+		if (nodes[i].start == nodes[i].end)
+			continue;
 
 		e820_register_active_regions(i,
 				nodes[i].start >> PAGE_SHIFT,

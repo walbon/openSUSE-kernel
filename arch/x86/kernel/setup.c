@@ -107,7 +107,6 @@
 #include <asm/percpu.h>
 #include <asm/topology.h>
 #include <asm/apicdef.h>
-#include <asm/k8.h>
 #ifdef CONFIG_X86_64
 #include <asm/numa_64.h>
 #endif
@@ -730,9 +729,6 @@ static struct dmi_system_id __initdata bad_bios_dmi_table[] = {
 
 void __init setup_arch(char **cmdline_p)
 {
-	int acpi = 0;
-	int k8 = 0;
-
 #ifdef CONFIG_X86_32
 	memcpy(&boot_cpu_data, &new_cpu_data, sizeof(new_cpu_data));
 	visws_early_detect();
@@ -981,11 +977,7 @@ void __init setup_arch(char **cmdline_p)
 	acpi_numa_init();
 #endif
 
-#ifdef CONFIG_K8_NUMA
-	k8 = !k8_numa_init(0, max_pfn);
-#endif
-
-	initmem_init(0, max_pfn, acpi, k8);
+	initmem_init(0, max_pfn);
 
 #ifdef CONFIG_ACPI_SLEEP
 	/*

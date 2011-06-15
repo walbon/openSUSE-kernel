@@ -3600,7 +3600,7 @@ static ssize_t cm_show_counter(struct kobject *obj, struct attribute *attr,
 		       atomic_long_read(&group->counter[cm_attr->index]));
 }
 
-static const struct sysfs_ops cm_counter_ops = {
+static struct sysfs_ops cm_counter_ops = {
 	.show = cm_show_counter
 };
 
