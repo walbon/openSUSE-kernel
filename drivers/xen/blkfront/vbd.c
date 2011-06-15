@@ -423,8 +423,7 @@ xlvbd_add(blkif_sector_t capacity, int vdevice, u16 vdisk_info,
 	info->rq = gd->queue;
 	info->gd = gd;
 
-	if (info->feature_barrier)
-		xlvbd_barrier(info);
+	xlvbd_flush(info);
 
 	if (vdisk_info & VDISK_READONLY)
 		set_disk_ro(gd, 1);
@@ -470,26 +469,14 @@ xlvbd_del(struct blkfront_info *info)
 	info->rq = NULL;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,16)
-int
-xlvbd_barrier(struct blkfront_info *info)
+void
+xlvbd_flush(struct blkfront_info *info)
 {
-	if (info->feature_barrier)
-		blk_queue_flush(info->rq, REQ_FLUSH);
-
+	blk_queue_flush(info->rq, info->feature_flush);
 	pr_info("blkfront: %s: barriers %s\n",
 		info->gd->disk_name,
-		info->feature_barrier ? "enabled" : "disabled");
-	return 0;
+		info->feature_flush ? "enabled" : "disabled");
 }
-#else
-int
-xlvbd_barrier(struct blkfront_info *info)
-{
-	pr_info("blkfront: %s: barriers disabled\n", info->gd->disk_name);
-	return -ENOSYS;
-}
-#endif
 
 #ifdef CONFIG_SYSFS
 static ssize_t show_media(struct device *dev,

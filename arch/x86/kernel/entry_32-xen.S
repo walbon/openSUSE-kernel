@@ -338,6 +338,10 @@ ENTRY(ret_from_fork)
 END(ret_from_fork)
 
 /*
+ * Interrupt exit functions should be protected against kprobes
+ */
+	.pushsection .kprobes.text, "ax"
+/*
  * Return to user mode is not as complex as all this looks,
  * but we want the default path for a system call return to
  * go as quickly as possible which is why some of this is
@@ -387,6 +391,10 @@ need_resched:
 END(resume_kernel)
 #endif
 	CFI_ENDPROC
+/*
+ * End of kprobes section
+ */
+	.popsection
 
 /* SYSENTER_RETURN points to after the "sysenter" instruction in
    the vsyscall page.  See vsyscall-sysentry.S, which defines the symbol.  */
@@ -542,10 +550,14 @@ ENTRY(ia32pv_sysenter_target)
 	.align 4
 	.long 1b,syscall_fault
 .previous
-	/* fall through */
+	jmp system_call
 	CFI_ENDPROC
 ENDPROC(ia32pv_sysenter_target)
 
+/*
+ * syscall stub including irq exit should be protected against kprobes
+ */
+	.pushsection .kprobes.text, "ax"
 	# system call handler stub
 ENTRY(system_call)
 	RING0_INT_FRAME			# can't unwind into user space anyway
@@ -777,6 +789,10 @@ syscall_badsys:
 	jmp resume_userspace
 END(syscall_badsys)
 	CFI_ENDPROC
+/*
+ * End of kprobes section
+ */
+	.popsection
 
 /*
  * System calls that need a pt_regs pointer.
@@ -887,6 +903,10 @@ common_interrupt:
 ENDPROC(common_interrupt)
 	CFI_ENDPROC
 
+/*
+ *  Irq entries should be protected against kprobes
+ */
+	.pushsection .kprobes.text, "ax"
 #define BUILD_INTERRUPT3(name, nr, fn)	\
 ENTRY(name)				\
 	RING0_INT_FRAME;		\
@@ -907,6 +927,8 @@ ENDPROC(name)
 
 #else
 #define UNWIND_ESPFIX_STACK
+
+	.pushsection .kprobes.text, "ax"
 
 # A note on the "critical region" in our callback handler.
 # We want to avoid stacking callback handlers due to events occurring
@@ -1213,6 +1235,10 @@ ENTRY(fixup_4gb_segment)
 	jmp error_code
 	CFI_ENDPROC
 END(fixup_4gb_segment)
+/*
+ * End of kprobes section
+ */
+	.popsection
 
 #ifdef CONFIG_STACK_UNWIND
 ENTRY(arch_unwind_init_running)
@@ -1358,17 +1384,14 @@ END(ftrace_graph_caller)
 
 .globl return_to_handler
 return_to_handler:
-	pushl $0
 	pushl %eax
-	pushl %ecx
 	pushl %edx
 	movl %ebp, %eax
 	call ftrace_return_to_handler
-	movl %eax, 0xc(%esp)
+	movl %eax, %ecx
 	popl %edx
-	popl %ecx
 	popl %eax
-	ret
+	jmp *%ecx
 #endif
 
 #include <asm/alternative-asm.h>

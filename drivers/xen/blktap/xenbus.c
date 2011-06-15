@@ -481,12 +481,6 @@ static int connect_ring(struct backend_info *be)
 		be->blkif->blk_protocol = BLKIF_PROTOCOL_X86_32;
 	else if (0 == strcmp(protocol, XEN_IO_PROTO_ABI_X86_64))
 		be->blkif->blk_protocol = BLKIF_PROTOCOL_X86_64;
-#if 1 /* maintain compatibility with early sles10-sp1 and paravirt netware betas */
-	else if (0 == strcmp(protocol, "1"))
-		be->blkif->blk_protocol = BLKIF_PROTOCOL_X86_32;
-	else if (0 == strcmp(protocol, "2"))
-		be->blkif->blk_protocol = BLKIF_PROTOCOL_X86_64;
-#endif
 	else {
 		xenbus_dev_fatal(dev, err, "unknown fe protocol %s", protocol);
 		return -1;

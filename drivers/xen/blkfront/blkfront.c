@@ -328,7 +328,7 @@ static void connect(struct blkfront_info *info)
 	unsigned long long sectors;
 	unsigned long sector_size;
 	unsigned int binfo;
-	int err;
+	int err, barrier;
 
 	switch (info->connected) {
 	case BLKIF_STATE_CONNECTED:
@@ -364,10 +364,19 @@ static void connect(struct blkfront_info *info)
 	}
 
 	err = xenbus_gather(XBT_NIL, info->xbdev->otherend,
-			    "feature-barrier", "%d", &info->feature_barrier,
+			    "feature-barrier", "%d", &barrier,
 			    NULL);
-	if (err)
-		info->feature_barrier = 0;
+	/*
+	 * If there's no "feature-barrier" defined, then it means
+	 * we're dealing with a very old backend which writes
+	 * synchronously; nothing to do.
+	 *
+	 * If there are barriers, then we use flush.
+	 */
+	if (!err && barrier)
+		info->feature_flush = REQ_FLUSH | REQ_FUA;
+	else
+		info->feature_flush = 0;
 
 	err = xlvbd_add(sectors, info->vdevice, binfo, sector_size, info);
 	if (err) {
@@ -691,7 +700,7 @@ static int blkif_queue_request(struct request *req)
 
 	ring_req->operation = rq_data_dir(req) ?
 		BLKIF_OP_WRITE : BLKIF_OP_READ;
-	if (req->cmd_flags & (REQ_FLUSH|REQ_FUA))
+	if (req->cmd_flags & (REQ_FLUSH | REQ_FUA))
 		ring_req->operation = BLKIF_OP_WRITE_BARRIER;
 	if (req->cmd_type == REQ_TYPE_BLOCK_PC)
 		ring_req->operation = BLKIF_OP_PACKET;
@@ -752,8 +761,8 @@ void do_blkif_request(struct request_queue *rq)
 
 		blk_start_request(req);
 
-		if ((req->cmd_type != REQ_TYPE_FS) &&
-		    (req->cmd_type != REQ_TYPE_BLOCK_PC)) {
+		if (req->cmd_type != REQ_TYPE_FS
+		    && req->cmd_type != REQ_TYPE_BLOCK_PC) {
 			__blk_end_request_all(req, -EIO);
 			continue;
 		}
@@ -819,8 +828,19 @@ static irqreturn_t blkif_int(int irq, void *dev_id)
 					   " write barrier op failed\n",
 					   info->gd->disk_name);
 				ret = -EOPNOTSUPP;
-				info->feature_barrier = 0;
-			        xlvbd_barrier(info);
+			}
+			if (unlikely(bret->status == BLKIF_RSP_ERROR &&
+				     info->shadow[id].req.nr_segments == 0)) {
+				pr_warning("blkfront: %s:"
+					   " empty write barrier op failed\n",
+					   info->gd->disk_name);
+				ret = -EOPNOTSUPP;
+			}
+			if (unlikely(ret)) {
+				if (ret == -EOPNOTSUPP)
+					ret = 0;
+				info->feature_flush = 0;
+			        xlvbd_flush(info);
 			}
 			/* fall through */
 		case BLKIF_OP_READ:

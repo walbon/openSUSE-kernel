@@ -263,7 +263,12 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 
 	task_user_gs(p) = get_user_gs(regs);
 
+	p->thread.io_bitmap_ptr = NULL;
 	tsk = current;
+	err = -ENOMEM;
+
+	memset(p->thread.ptrace_bps, 0, sizeof(p->thread.ptrace_bps));
+
 	if (test_tsk_thread_flag(tsk, TIF_CSTAR))
 		p->thread.ip = (unsigned long) cstar_ret_from_fork;
 	if (unlikely(test_tsk_thread_flag(tsk, TIF_IO_BITMAP))) {

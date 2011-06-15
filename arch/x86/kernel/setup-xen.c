@@ -73,6 +73,7 @@
 
 #include <asm/mtrr.h>
 #include <asm/apic.h>
+#include <asm/trampoline.h>
 #include <asm/e820.h>
 #include <asm/mpspec.h>
 #include <asm/setup.h>
@@ -699,8 +700,10 @@ static __init void reserve_ibft_region(void)
 
 	addr = find_ibft_region(&size);
 
+#ifndef CONFIG_XEN
 	if (size)
 		reserve_early_overlap_ok(addr, addr + size, "ibft");
+#endif
 }
 
 #ifdef CONFIG_X86_RESERVE_LOW_64K
@@ -1051,6 +1054,8 @@ void __init setup_arch(char **cmdline_p)
 
 	reserve_brk();
 
+	reserve_ibft_region();
+
 	init_gbpages();
 
 	/* max_pfn_mapped is updated here */
@@ -1127,8 +1132,6 @@ void __init setup_arch(char **cmdline_p)
 	 */
 	dma32_reserve_bootmem();
 #endif
-
-	reserve_ibft_region();
 
 #ifdef CONFIG_KVM_CLOCK
 	kvmclock_init();
@@ -1344,19 +1347,9 @@ void __init setup_arch(char **cmdline_p)
 
 	x86_init.resources.reserve_resources();
 
-#ifndef CONFIG_XEN
-	e820_setup_gap();
-
-#ifdef CONFIG_VT
-#if defined(CONFIG_VGA_CONSOLE)
-	if (!efi_enabled || (efi_mem_type(0xa0000) != EFI_CONVENTIONAL_MEMORY))
-		conswitchp = &vga_con;
-#elif defined(CONFIG_DUMMY_CONSOLE)
-	conswitchp = &dummy_con;
-#endif
-#endif
-#else /* CONFIG_XEN */
+#ifdef CONFIG_XEN
 	if (is_initial_xendomain())
+#endif
 		e820_setup_gap();
 
 #ifdef CONFIG_VT
@@ -1364,14 +1357,18 @@ void __init setup_arch(char **cmdline_p)
 	conswitchp = &dummy_con;
 #endif
 #ifdef CONFIG_VGA_CONSOLE
-	if (is_initial_xendomain())
+#ifdef CONFIG_XEN
+	if (!is_initial_xendomain())
+		;
+	else
+#endif
+	if (!efi_enabled || efi_mem_type(0xa0000) != EFI_CONVENTIONAL_MEMORY)
 		conswitchp = &vga_con;
 #endif
 #endif
-#endif /* CONFIG_XEN */
 	x86_init.oem.banner();
 
-	mcheck_intel_therm_init();
+	mcheck_init();
 }
 
 #ifdef CONFIG_X86_32
