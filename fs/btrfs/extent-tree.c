@@ -1759,8 +1759,7 @@ static int remove_extent_backref(struct btrfs_trans_handle *trans,
 static int btrfs_issue_discard(struct block_device *bdev,
 				u64 start, u64 len)
 {
-	return blkdev_issue_discard(bdev, start >> 9, len >> 9, GFP_NOFS,
-			BLKDEV_IFL_WAIT);
+	return blkdev_issue_discard(bdev, start >> 9, len >> 9, GFP_NOFS, 0);
 }
 
 static int btrfs_discard_extent(struct btrfs_root *root, u64 bytenr,

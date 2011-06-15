@@ -186,7 +186,7 @@ static int ocfs2_sync_file(struct file *file,
 		 */
 		if (osb->s_mount_opt & OCFS2_MOUNT_BARRIER)
 			blkdev_issue_flush(inode->i_sb->s_bdev, GFP_KERNEL,
-					   NULL, BLKDEV_IFL_WAIT);
+					   NULL);
 		goto bail;
 	}
 

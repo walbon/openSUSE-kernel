@@ -166,7 +166,7 @@ static int discard_swap(struct swap_info_struct *si)
 		}
 
 		err = blkdev_issue_discard(si->bdev, start_block,
-				nr_blocks, GFP_KERNEL, BLKDEV_IFL_WAIT);
+				nr_blocks, GFP_KERNEL, 0);
 		if (err)
 			break;
 
@@ -205,7 +205,7 @@ static void discard_swap_cluster(struct swap_info_struct *si,
 			start_block <<= PAGE_SHIFT - 9;
 			nr_blocks <<= PAGE_SHIFT - 9;
 			if (blkdev_issue_discard(si->bdev, start_block,
-				    nr_blocks, GFP_NOIO, BLKDEV_IFL_WAIT))
+				    nr_blocks, GFP_NOIO, 0))
 				break;
 		}
 
