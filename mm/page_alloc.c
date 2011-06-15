@@ -1807,13 +1807,14 @@ __alloc_pages_high_priority(gfp_t gfp_mask, unsigned int order,
 
 static inline
 void wake_all_kswapd(unsigned int order, struct zonelist *zonelist,
-						enum zone_type high_zoneidx)
+						enum zone_type high_zoneidx,
+						enum zone_type classzone_idx)
 {
 	struct zoneref *z;
 	struct zone *zone;
 
 	for_each_zone_zonelist(zone, z, zonelist, high_zoneidx)
-		wakeup_kswapd(zone, order);
+		wakeup_kswapd(zone, order, classzone_idx);
 }
 
 int gfp_to_alloc_flags(gfp_t gfp_mask)
@@ -1892,7 +1893,9 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 		goto nopage;
 
 restart:
-	wake_all_kswapd(order, zonelist, high_zoneidx);
+	if (!(gfp_mask & __GFP_NO_KSWAPD))
+		wake_all_kswapd(order, zonelist, high_zoneidx,
+						zone_idx(preferred_zone));
 
 	/*
 	 * OK, we're below the kswapd watermark and have kicked background
@@ -4862,7 +4865,7 @@ static int test_reserve_limits(void)
 	int node;
 
 	for_each_zone(zone)
-		wakeup_kswapd(zone, 0);
+		wakeup_kswapd(zone, 0, MAX_NR_ZONES - 1);
 
 	for_each_online_node(node) {
 		struct page *page = alloc_pages_node(node, GFP_KERNEL, 0);

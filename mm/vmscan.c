@@ -1973,12 +1973,16 @@ static void __shrink_page_cache(gfp_t mask);
  * interoperates with the page allocator fallback scheme to ensure that aging
  * of pages is balanced across the zones.
  */
-static unsigned long balance_pgdat(pg_data_t *pgdat, int order)
+static unsigned long balance_pgdat(pg_data_t *pgdat, int order,
+							int classzone_idx)
 {
 	int all_zones_ok;
+	int any_zone_ok;
 	int priority;
 	int i;
+	int end_zone = 0;	/* Inclusive.  0 = ZONE_DMA */
 	unsigned long total_scanned;
+	unsigned long total_reclaimed;
 	struct reclaim_state *reclaim_state = current->reclaim_state;
 	struct scan_control sc = {
 		.gfp_mask = GFP_KERNEL,
@@ -1999,6 +2003,7 @@ static unsigned long balance_pgdat(pg_data_t *pgdat, int order)
 
 loop_again:
 	total_scanned = 0;
+	total_reclaimed = 0;
 	sc.nr_reclaimed = 0;
 	sc.may_writepage = !laptop_mode;
 	count_vm_event(PAGEOUTRUN);
@@ -2011,7 +2016,6 @@ loop_again:
 		temp_priority[i] = DEF_PRIORITY;
 
 	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
-		int end_zone = 0;	/* Inclusive.  0 = ZONE_DMA */
 		unsigned long lru_pages = 0;
 
 		/* The swap token gets in the way of swapout... */
@@ -2019,6 +2023,7 @@ loop_again:
 			disable_swap_token();
 
 		all_zones_ok = 1;
+		any_zone_ok = 0;
 
 		/*
 		 * Scan in the highmem->dma direction for the highest
@@ -2119,8 +2124,16 @@ loop_again:
 			if (total_scanned > SWAP_CLUSTER_MAX * 2 &&
 			    total_scanned > sc.nr_reclaimed + sc.nr_reclaimed / 2)
 				sc.may_writepage = 1;
+
+			if (!zone_watermark_ok(zone, order,
+					       	high_wmark_pages(zone), end_zone, 0)) {
+				all_zones_ok = 0;	
+			} else {
+				if (i <= classzone_idx)
+					any_zone_ok = 1;
+			}
 		}
-		if (all_zones_ok)
+		if (all_zones_ok || (order && any_zone_ok))
 			break;		/* kswapd: all done */
 		/*
 		 * OK, kswapd is getting into trouble.  Take a nap, then take
@@ -2139,6 +2152,8 @@ loop_again:
 			break;
 	}
 out:
+	total_reclaimed += sc.nr_reclaimed;
+
 	/*
 	 * Note within each zone the priority level at which this zone was
 	 * brought into a happy state.  So that the next thread which scans this
@@ -2149,9 +2164,13 @@ out:
 
 		zone->prev_priority = temp_priority[i];
 	}
-	/* FIXME: Do we need to loop_again also if we have not achieved our
-	 * pagecache target? i.e. && pagecache_over_limit(0) > 0 */
-	if (!all_zones_ok) {
+
+	/*
+	 * order-0: All zones must meet high watermark for a balanced node
+	 * high-order: Any zone below pgdats classzone_idx must meet the high
+	 *             watermark for a balanced node
+	 */
+	if (!(all_zones_ok || (order && any_zone_ok))) {
 		cond_resched();
 
 		try_to_freeze();
@@ -2165,15 +2184,48 @@ out:
 		 * little point trying all over again as kswapd may
 		 * infinite loop.
 		 *
+		 * Similarly, if we have reclaimed far more pages than the
+		 * original request size, it's likely that contiguous reclaim
+		 * is not finding the pages it needs and it should give
+		 * up.
+		 *
 		 * Instead, recheck all watermarks at order-0 as they
 		 * are the most important. If watermarks are ok, kswapd will go
 		 * back to sleep. High-order users can still perform direct
 		 * reclaim if they wish.
 		 */
-		if (sc.nr_reclaimed < SWAP_CLUSTER_MAX)
+		if (sc.nr_reclaimed < SWAP_CLUSTER_MAX ||
+				(order > PAGE_ALLOC_COSTLY_ORDER && total_reclaimed > (4UL << order)) )
 			order = sc.order = 0;
 
 		goto loop_again;
+	}
+
+	/*
+	 * If kswapd was reclaiming at a higher order, it has the option of
+	 * sleeping without all zones being balanced. Before it does, it must
+	 * ensure that the watermarks for order-0 on *all* zones are met and
+	 * that the congestion flags are cleared. The congestion flag must
+	 * be cleared as kswapd is the only mechanism that clears the flag
+	 * and it is potentially going to sleep here.
+	 */
+	if (order) {
+		for (i = 0; i <= end_zone; i++) {
+			struct zone *zone = pgdat->node_zones + i;
+
+			if (!populated_zone(zone))
+				continue;
+
+			if (zone_is_all_unreclaimable(zone) && priority != DEF_PRIORITY)
+				continue;
+
+			/* Confirm the zone is balanced for order-0 */
+			if (!zone_watermark_ok(zone, 0,
+					high_wmark_pages(zone), 0, 0)) {
+				order = sc.order = 0;
+				goto loop_again;
+			}
+		}
 	}
 
 	return sc.nr_reclaimed;
@@ -2195,6 +2247,7 @@ out:
 static int kswapd(void *p)
 {
 	unsigned long order;
+	int classzone_idx;
 	pg_data_t *pgdat = (pg_data_t*)p;
 	struct task_struct *tsk = current;
 	DEFINE_WAIT(wait);
@@ -2225,23 +2278,29 @@ static int kswapd(void *p)
 	set_freezable();
 
 	order = 0;
+	classzone_idx = MAX_NR_ZONES - 1;
 	for ( ; ; ) {
 		unsigned long new_order;
+		int new_classzone_idx;
 
 		prepare_to_wait(&pgdat->kswapd_wait, &wait, TASK_INTERRUPTIBLE);
 		new_order = pgdat->kswapd_max_order;
+		new_classzone_idx = pgdat->classzone_idx;
 		pgdat->kswapd_max_order = 0;
-		if (order < new_order) {
+		pgdat->classzone_idx = MAX_NR_ZONES - 1;
+		if (order < new_order || classzone_idx > new_classzone_idx) {
 			/*
 			 * Don't sleep if someone wants a larger 'order'
-			 * allocation
+			 * allocation or has tigher zone constraints
 			 */
 			order = new_order;
+			classzone_idx = new_classzone_idx;
 		} else {
 			if (!freezing(current))
 				schedule();
 
 			order = pgdat->kswapd_max_order;
+			classzone_idx = pgdat->classzone_idx;
 		}
 		finish_wait(&pgdat->kswapd_wait, &wait);
 
@@ -2249,7 +2308,7 @@ static int kswapd(void *p)
 			/* We can speed up thawing tasks if we don't call
 			 * balance_pgdat after returning from the refrigerator
 			 */
-			balance_pgdat(pgdat, order);
+			balance_pgdat(pgdat, order, classzone_idx);
 		}
 	}
 	return 0;
@@ -2258,7 +2317,7 @@ static int kswapd(void *p)
 /*
  * A zone is low on free memory, so wake its kswapd task to service it.
  */
-void wakeup_kswapd(struct zone *zone, int order)
+void wakeup_kswapd(struct zone *zone, int order, enum zone_type classzone_idx)
 {
 	pg_data_t *pgdat;
 
@@ -2268,8 +2327,10 @@ void wakeup_kswapd(struct zone *zone, int order)
 	pgdat = zone->zone_pgdat;
 	if (zone_watermark_ok(zone, order, low_wmark_pages(zone), 0, 0))
 		return;
-	if (pgdat->kswapd_max_order < order)
+	if (pgdat->kswapd_max_order < order) {
 		pgdat->kswapd_max_order = order;
+		pgdat->classzone_idx = min(pgdat->classzone_idx, classzone_idx);
+	}
 	if (!cpuset_zone_allowed_hardwall(zone, GFP_KERNEL))
 		return;
 	if (!waitqueue_active(&pgdat->kswapd_wait))
