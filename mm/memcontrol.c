@@ -1555,8 +1555,10 @@ static int __mem_cgroup_try_charge(struct mm_struct *mm,
 			goto charged;
 
 		/* If killed, bypass charge */
-		if (fatal_signal_pending(current))
+		if (fatal_signal_pending(current)) {
+			css_put(&mem->css);
 			goto bypass;
+		}
 
 		ret = res_counter_charge(&mem->res, bytes, &fail_res);
 		if (likely(!ret)) {
