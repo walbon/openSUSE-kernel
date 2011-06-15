@@ -1307,6 +1307,7 @@ EXPORT_SYMBOL(writeback_inodes_sb_nr);
 /**
  * writeback_inodes_sb	-	writeback dirty inodes from given super_block
  * @sb: the superblock
+ * @locked: sb already pinned
  *
  * Start writeback on some inodes on this super_block. No guarantees are made
  * on how many (if any) will be written, and this function does not wait
@@ -1327,7 +1328,7 @@ void writeback_inodes_sb_locked(struct super_block *sb, int locked)
 	nr_to_write = nr_dirty + nr_unstable +
 			(inodes_stat.nr_inodes - inodes_stat.nr_unused);
 
-	writeback_inodes_sb_nr(sb, nr_to_write, locked);
+	bdi_start_writeback(sb->s_bdi, sb, nr_to_write, locked);
 }
 EXPORT_SYMBOL(writeback_inodes_sb_locked);
 
