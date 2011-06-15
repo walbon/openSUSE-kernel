@@ -122,7 +122,7 @@ static ssize_t edac_pci_instance_store(struct kobject *kobj,
 }
 
 /* fs_ops table */
-static const struct sysfs_ops pci_instance_ops = {
+static struct sysfs_ops pci_instance_ops = {
 	.show = edac_pci_instance_show,
 	.store = edac_pci_instance_store
 };
@@ -262,7 +262,7 @@ static ssize_t edac_pci_dev_store(struct kobject *kobj,
 	return -EIO;
 }
 
-static const struct sysfs_ops edac_pci_sysfs_ops = {
+static struct sysfs_ops edac_pci_sysfs_ops = {
 	.show = edac_pci_dev_show,
 	.store = edac_pci_dev_store
 };

@@ -8,7 +8,7 @@
  * This flag is otherwise unused and ABI specified to be 0, so nobody should
  * care what we do with it.
  */
-#define PERF_EFLAGS_EXACT      (1UL << 3)
+#define PERF_EFLAGS_EXACT	(1UL << 3)
 
 #endif
 

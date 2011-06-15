@@ -850,6 +850,12 @@ blktap_device_run_queue(struct blktap *tap)
 			continue;
 		}
 
+		if (req->cmd_flags & (REQ_FLUSH | REQ_FUA)) {
+			blk_start_request(req);
+			__blk_end_request_all(req, -EOPNOTSUPP);
+			continue;
+		}
+
 #ifdef ENABLE_PASSTHROUGH
 		if (test_bit(BLKTAP_PASSTHROUGH, &tap->dev_inuse)) {
 			blk_start_request(req);

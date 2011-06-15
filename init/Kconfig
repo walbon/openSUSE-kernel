@@ -470,6 +470,7 @@ config HAVE_UNSTABLE_SCHED_CLOCK
 menuconfig CGROUPS
 	boolean "Control Group support"
 	default n if KERNEL_DESKTOP
+	depends on EVENTFD
 	default y
 	help
 	  This option adds support for grouping sets of processes together, for
