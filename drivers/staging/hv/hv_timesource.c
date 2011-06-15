@@ -5,9 +5,9 @@
  * Copyright (C) 2010, Novell, Inc.
  * Author : K. Y. Srinivasan <ksrinivasan@novell.com>
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -20,6 +20,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
  *
  */
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/version.h>
 #include <linux/clocksource.h>
@@ -27,23 +28,11 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/dmi.h>
+#include <asm/hyperv.h>
+#include <asm/mshyperv.h>
+#include <asm/hypervisor.h>
 
 #define HV_CLOCK_SHIFT	22
-/*
- * HyperV defined synthetic CPUID leaves:
- */
-#define HV_CPUID_SIGNATURE	0x40000000
-#define HV_CPUID_MIN		0x40000005
-#define HV_HYPERVISOR_PRESENT_BIT	0x80000000
-#define HV_CPUID_FEATURES	0x40000003
-#define HV_CPUID_RECOMMENDATIONS	0x40000004
-
-/*
- * HyperV defined synthetic MSRs
- */
-
-#define HV_X64_MSR_TIME_REF_COUNT	0x40000020
-
 
 static cycle_t read_hv_clock(struct clocksource *arg)
 {
@@ -94,49 +83,16 @@ hv_timesource_pci_table[] __maybe_unused = {
 MODULE_DEVICE_TABLE(pci, hv_timesource_pci_table);
 
 
-static int __init hv_detect_hyperv(void)
-{
-	u32 eax, ebx, ecx, edx;
-	char hyp_signature[13];
-
-	cpuid(1, &eax, &ebx, &ecx, &edx);
-
-	if (!(ecx & HV_HYPERVISOR_PRESENT_BIT))
-		return 1;
-
-	cpuid(HV_CPUID_SIGNATURE, &eax, &ebx, &ecx, &edx);
-	*(u32 *)(hyp_signature + 0) = ebx;
-	*(u32 *)(hyp_signature + 4) = ecx;
-	*(u32 *)(hyp_signature + 8) = edx;
-
-	if ((eax < HV_CPUID_MIN) || (memcmp("Microsoft Hv", hyp_signature, 12)))
-		return 1;
-
-	/*
-	 * Extract the features, recommendations etc.
-	 */
-	cpuid(HV_CPUID_FEATURES, &eax, &ebx, &ecx, &edx);
-	if (!(eax & 0x10)) {
-		printk(KERN_WARNING "HyperV Time Ref Counter not available!\n");
-		return 1;
-	}
-
-	cpuid(HV_CPUID_RECOMMENDATIONS, &eax, &ebx, &ecx, &edx);
-	printk(KERN_INFO "HyperV recommendations: %x\n", eax);
-	printk(KERN_INFO "HyperV spin count: %x\n", ebx);
-	return 0;
-}
-
-
 static int __init init_hv_clocksource(void)
 {
-	if (hv_detect_hyperv())
+	if ((x86_hyper != &x86_hyper_ms_hyperv) ||
+		!(ms_hyperv.features & HV_X64_MSR_TIME_REF_COUNT_AVAILABLE))
 		return -ENODEV;
 
 	if (!dmi_check_system(hv_timesource_dmi_table))
 		return -ENODEV;
 
-	printk(KERN_INFO "Registering HyperV clock source\n");
+	pr_info("Registering HyperV clock source\n");
 	return clocksource_register(&hyperv_cs);
 }
 
