@@ -90,3 +90,7 @@ config PCI_IOV
 	  physical resources.
 
 	  If unsure, say N.
+
+config PCI_LABEL
+	def_bool y if (DMI || ACPI)
+	select NLS

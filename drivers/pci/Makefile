@@ -55,11 +55,12 @@ obj-$(CONFIG_MN10300) += setup-bus.o
 
 #
 # ACPI Related PCI FW Functions
+# ACPI _DSM provided firmware instance and string name
 #
 obj-$(CONFIG_ACPI)    += pci-acpi.o
 
 # SMBIOS provided firmware instance and labels
-obj-$(CONFIG_DMI)    += pci-label.o
+obj-$(CONFIG_PCI_LABEL) += pci-label.o
 
 # Cardbus & CompactPCI use setup-bus
 obj-$(CONFIG_HOTPLUG) += setup-bus.o
