@@ -2426,6 +2426,10 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		goto cantfind_ext4;
 	sbi->s_kbytes_written = le64_to_cpu(es->s_kbytes_written);
 
+#ifndef CONFIG_EXT4_FS_RW
+	sb->s_flags |= MS_RDONLY;
+	ext4_msg(sb, KERN_INFO, "ext4 is supported in read-only mode only");
+#endif
 	/* Set defaults before we parse the mount options */
 	def_mount_opts = le32_to_cpu(es->s_default_mount_opts);
 	if (def_mount_opts & EXT4_DEFM_DEBUG)
@@ -3512,6 +3516,14 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 #endif
 	if (sbi->s_journal && sbi->s_journal->j_task->io_context)
 		journal_ioprio = sbi->s_journal->j_task->io_context->ioprio;
+
+#ifndef CONFIG_EXT$_FS_RW
+	if (!(*flags & MS_RDONLY)) {
+		*flags |= MS_RDONLY;
+		ext4_msg(sb, KERN_INFO,
+			 "ext4 is supported in read-only mode only");
+	}
+#endif
 
 	/*
 	 * Allow the "check" option to be passed as a remount option.
