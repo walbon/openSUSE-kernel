@@ -3517,7 +3517,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 	if (sbi->s_journal && sbi->s_journal->j_task->io_context)
 		journal_ioprio = sbi->s_journal->j_task->io_context->ioprio;
 
-#ifndef CONFIG_EXT$_FS_RW
+#ifndef CONFIG_EXT4_FS_RW
 	if (!(*flags & MS_RDONLY)) {
 		*flags |= MS_RDONLY;
 		ext4_msg(sb, KERN_INFO,
