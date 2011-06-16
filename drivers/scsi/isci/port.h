@@ -1,0 +1,396 @@
+/*
+ * This file is provided under a dual BSD/GPLv2 license.  When using or
+ * redistributing this file, you may do so under either license.
+ *
+ * GPL LICENSE SUMMARY
+ *
+ * Copyright(c) 2008 - 2011 Intel Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+ * The full GNU General Public License is included in this distribution
+ * in the file called LICENSE.GPL.
+ *
+ * BSD LICENSE
+ *
+ * Copyright(c) 2008 - 2011 Intel Corporation. All rights reserved.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *   * Redistributions in binary form must reproduce the above copyright
+ *     notice, this list of conditions and the following disclaimer in
+ *     the documentation and/or other materials provided with the
+ *     distribution.
+ *   * Neither the name of Intel Corporation nor the names of its
+ *     contributors may be used to endorse or promote products derived
+ *     from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#ifndef _ISCI_PORT_H_
+#define _ISCI_PORT_H_
+
+#include <scsi/libsas.h>
+#include "isci.h"
+#include "sas.h"
+#include "phy.h"
+
+#define SCIC_SDS_DUMMY_PORT   0xFF
+
+struct isci_phy;
+struct isci_host;
+
+enum isci_status {
+	isci_freed        = 0x00,
+	isci_starting     = 0x01,
+	isci_ready        = 0x02,
+	isci_ready_for_io = 0x03,
+	isci_stopping     = 0x04,
+	isci_stopped      = 0x05,
+};
+
+/**
+ * struct scic_sds_port
+ *
+ * The core port object provides the the abstraction for an SCU port.
+ */
+struct scic_sds_port {
+	/**
+	 * This field contains the information for the base port state machine.
+	 */
+	struct sci_base_state_machine sm;
+
+	bool ready_exit;
+
+	/**
+	 * This field is the port index that is reported to the SCI USER.
+	 * This allows the actual hardware physical port to change without
+	 * the SCI USER getting a different answer for the get port index.
+	 */
+	u8 logical_port_index;
+
+	/**
+	 * This field is the port index used to program the SCU hardware.
+	 */
+	u8 physical_port_index;
+
+	/**
+	 * This field contains the active phy mask for the port.
+	 * This mask is used in conjunction with the phy state to determine
+	 * which phy to select for some port operations.
+	 */
+	u8 active_phy_mask;
+
+	u16 reserved_rni;
+	u16 reserved_tci;
+
+	/**
+	 * This field contains the count of the io requests started on this port
+	 * object.  It is used to control controller shutdown.
+	 */
+	u32 started_request_count;
+
+	/**
+	 * This field contains the number of devices assigned to this port.
+	 * It is used to control port start requests.
+	 */
+	u32 assigned_device_count;
+
+	/**
+	 * This field contains the reason for the port not going ready.  It is
+	 * assigned in the state handlers and used in the state transition.
+	 */
+	u32 not_ready_reason;
+
+	/**
+	 * This field is the table of phys assigned to the port.
+	 */
+	struct scic_sds_phy *phy_table[SCI_MAX_PHYS];
+
+	/**
+	 * This field is a pointer back to the controller that owns this
+	 * port object.
+	 */
+	struct scic_sds_controller *owning_controller;
+
+	/* timer used for port start/stop operations */
+	struct sci_timer	timer;
+
+	/**
+	 * This field is the pointer to the port task scheduler registers
+	 * for the SCU hardware.
+	 */
+	struct scu_port_task_scheduler_registers __iomem
+		*port_task_scheduler_registers;
+
+	/**
+	 * This field is identical for all port objects and points to the port
+	 * task scheduler group PE configuration registers.
+	 * It is used to assign PEs to a port.
+	 */
+	u32 __iomem *port_pe_configuration_register;
+
+	/**
+	 * This field is the VIIT register space for ths port object.
+	 */
+	struct scu_viit_entry __iomem *viit_registers;
+};
+
+
+
+/**
+ * struct isci_port - This class represents the port object used to internally
+ *    represent libsas port objects. It also keeps a list of remote device
+ *    objects.
+ *
+ *
+ */
+struct isci_port {
+	enum isci_status status;
+	struct isci_host *isci_host;
+	struct asd_sas_port sas_port;
+	struct list_head remote_dev_list;
+	spinlock_t state_lock;
+	struct list_head domain_dev_list;
+	struct completion start_complete;
+	struct completion hard_reset_complete;
+	enum sci_status hard_reset_status;
+	struct scic_sds_port sci;
+};
+
+static inline struct isci_port *sci_port_to_iport(struct scic_sds_port *sci_port)
+{
+	struct isci_port *iport = container_of(sci_port, typeof(*iport), sci);
+
+	return iport;
+}
+
+enum scic_port_not_ready_reason_code {
+	SCIC_PORT_NOT_READY_NO_ACTIVE_PHYS,
+	SCIC_PORT_NOT_READY_HARD_RESET_REQUESTED,
+	SCIC_PORT_NOT_READY_INVALID_PORT_CONFIGURATION,
+	SCIC_PORT_NOT_READY_RECONFIGURING,
+
+	SCIC_PORT_NOT_READY_REASON_CODE_MAX
+};
+
+struct scic_port_end_point_properties {
+	struct sci_sas_address sas_address;
+	struct scic_phy_proto protocols;
+};
+
+struct scic_port_properties {
+	u32 index;
+	struct scic_port_end_point_properties local;
+	struct scic_port_end_point_properties remote;
+	u32 phy_mask;
+};
+
+/**
+ * enum scic_sds_port_states - This enumeration depicts all the states for the
+ *    common port state machine.
+ *
+ *
+ */
+enum scic_sds_port_states {
+	/**
+	 * This state indicates that the port has successfully been stopped.
+	 * In this state no new IO operations are permitted.
+	 * This state is entered from the STOPPING state.
+	 */
+	SCI_PORT_STOPPED,
+
+	/**
+	 * This state indicates that the port is in the process of stopping.
+	 * In this state no new IO operations are permitted, but existing IO
+	 * operations are allowed to complete.
+	 * This state is entered from the READY state.
+	 */
+	SCI_PORT_STOPPING,
+
+	/**
+	 * This state indicates the port is now ready.  Thus, the user is
+	 * able to perform IO operations on this port.
+	 * This state is entered from the STARTING state.
+	 */
+	SCI_PORT_READY,
+
+	/**
+	 * The substate where the port is started and ready but has no
+	 * active phys.
+	 */
+	SCI_PORT_SUB_WAITING,
+
+	/**
+	 * The substate where the port is started and ready and there is
+	 * at least one phy operational.
+	 */
+	SCI_PORT_SUB_OPERATIONAL,
+
+	/**
+	 * The substate where the port is started and there was an
+	 * add/remove phy event.  This state is only used in Automatic
+	 * Port Configuration Mode (APC)
+	 */
+	SCI_PORT_SUB_CONFIGURING,
+
+	/**
+	 * This state indicates the port is in the process of performing a hard
+	 * reset.  Thus, the user is unable to perform IO operations on this
+	 * port.
+	 * This state is entered from the READY state.
+	 */
+	SCI_PORT_RESETTING,
+
+	/**
+	 * This state indicates the port has failed a reset request.  This state
+	 * is entered when a port reset request times out.
+	 * This state is entered from the RESETTING state.
+	 */
+	SCI_PORT_FAILED,
+
+
+};
+
+/**
+ * scic_sds_port_get_controller() -
+ *
+ * Helper macro to get the owning controller of this port
+ */
+#define scic_sds_port_get_controller(this_port)	\
+	((this_port)->owning_controller)
+
+/**
+ * scic_sds_port_get_index() -
+ *
+ * This macro returns the physical port index for this port object
+ */
+#define scic_sds_port_get_index(this_port) \
+	((this_port)->physical_port_index)
+
+
+static inline void scic_sds_port_decrement_request_count(struct scic_sds_port *sci_port)
+{
+	if (WARN_ONCE(sci_port->started_request_count == 0,
+		       "%s: tried to decrement started_request_count past 0!?",
+			__func__))
+		/* pass */;
+	else
+		sci_port->started_request_count--;
+}
+
+#define scic_sds_port_active_phy(port, phy) \
+	(((port)->active_phy_mask & (1 << (phy)->phy_index)) != 0)
+
+void scic_sds_port_construct(
+	struct scic_sds_port *sci_port,
+	u8 port_index,
+	struct scic_sds_controller *scic);
+
+enum sci_status scic_sds_port_initialize(
+	struct scic_sds_port *sci_port,
+	void __iomem *port_task_scheduler_registers,
+	void __iomem *port_configuration_regsiter,
+	void __iomem *viit_registers);
+
+enum sci_status scic_sds_port_start(struct scic_sds_port *sci_port);
+enum sci_status scic_sds_port_stop(struct scic_sds_port *sci_port);
+
+enum sci_status scic_sds_port_add_phy(
+	struct scic_sds_port *sci_port,
+	struct scic_sds_phy *sci_phy);
+
+enum sci_status scic_sds_port_remove_phy(
+	struct scic_sds_port *sci_port,
+	struct scic_sds_phy *sci_phy);
+
+void scic_sds_port_setup_transports(
+	struct scic_sds_port *sci_port,
+	u32 device_id);
+
+
+void scic_sds_port_deactivate_phy(
+	struct scic_sds_port *sci_port,
+	struct scic_sds_phy *sci_phy,
+	bool do_notify_user);
+
+bool scic_sds_port_link_detected(
+	struct scic_sds_port *sci_port,
+	struct scic_sds_phy *sci_phy);
+
+enum sci_status scic_sds_port_link_up(struct scic_sds_port *sci_port,
+				      struct scic_sds_phy *sci_phy);
+enum sci_status scic_sds_port_link_down(struct scic_sds_port *sci_port,
+					struct scic_sds_phy *sci_phy);
+
+struct scic_sds_request;
+struct scic_sds_remote_device;
+enum sci_status scic_sds_port_start_io(
+	struct scic_sds_port *sci_port,
+	struct scic_sds_remote_device *sci_dev,
+	struct scic_sds_request *sci_req);
+
+enum sci_status scic_sds_port_complete_io(
+	struct scic_sds_port *sci_port,
+	struct scic_sds_remote_device *sci_dev,
+	struct scic_sds_request *sci_req);
+
+enum sas_linkrate scic_sds_port_get_max_allowed_speed(
+	struct scic_sds_port *sci_port);
+
+void scic_sds_port_broadcast_change_received(
+	struct scic_sds_port *sci_port,
+	struct scic_sds_phy *sci_phy);
+
+bool scic_sds_port_is_valid_phy_assignment(
+	struct scic_sds_port *sci_port,
+	u32 phy_index);
+
+void scic_sds_port_get_sas_address(
+	struct scic_sds_port *sci_port,
+	struct sci_sas_address *sas_address);
+
+void scic_sds_port_get_attached_sas_address(
+	struct scic_sds_port *sci_port,
+	struct sci_sas_address *sas_address);
+
+enum isci_status isci_port_get_state(
+	struct isci_port *isci_port);
+
+void isci_port_formed(struct asd_sas_phy *);
+void isci_port_deformed(struct asd_sas_phy *);
+
+void isci_port_init(
+	struct isci_port *port,
+	struct isci_host *host,
+	int index);
+
+int isci_port_perform_hard_reset(struct isci_host *ihost, struct isci_port *iport,
+				 struct isci_phy *iphy);
+#endif /* !defined(_ISCI_PORT_H_) */
