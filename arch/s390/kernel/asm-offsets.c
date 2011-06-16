@@ -30,6 +30,7 @@ int main(void)
 	DEFINE(__TI_precount, offsetof(struct thread_info, preempt_count));
 	DEFINE(__TI_user_timer, offsetof(struct thread_info, user_timer));
 	DEFINE(__TI_system_timer, offsetof(struct thread_info, system_timer));
+	DEFINE(__TI_last_break, offsetof(struct thread_info, last_break));
 	BLANK();
 	DEFINE(__PT_ARGS, offsetof(struct pt_regs, args));
 	DEFINE(__PT_PSW, offsetof(struct pt_regs, psw));
@@ -66,5 +67,8 @@ int main(void)
 	DEFINE(__SIGP_RESTART, sigp_restart);
 	DEFINE(__SIGP_SENSE, sigp_sense);
 	DEFINE(__SIGP_INITIAL_CPU_RESET, sigp_initial_cpu_reset);
+#ifdef CONFIG_64BIT
+	DEFINE(__LC_CMF_HPP, offsetof(struct _lowcore, cmf_hpp));
+#endif
 	return 0;
 }

@@ -1081,7 +1081,10 @@ static void qeth_init_qdio_info(struct qeth_card *card)
 	atomic_set(&card->qdio.state, QETH_QDIO_UNINITIALIZED);
 	/* inbound */
 	card->qdio.in_buf_size = QETH_IN_BUF_SIZE_DEFAULT;
-	card->qdio.init_pool.buf_count = QETH_IN_BUF_COUNT_DEFAULT;
+	if (card->info.type == QETH_CARD_TYPE_IQD)
+		card->qdio.init_pool.buf_count = QETH_IN_BUF_COUNT_HSDEFAULT;
+	else
+		card->qdio.init_pool.buf_count = QETH_IN_BUF_COUNT_DEFAULT;
 	card->qdio.in_buf_pool.buf_count = card->qdio.init_pool.buf_count;
 	INIT_LIST_HEAD(&card->qdio.in_buf_pool.entry_list);
 	INIT_LIST_HEAD(&card->qdio.init_pool.entry_list);
@@ -2057,6 +2060,13 @@ static int qeth_ulp_setup_cb(struct qeth_card *card, struct qeth_reply *reply,
 	memcpy(&card->token.ulp_connection_r,
 	       QETH_ULP_SETUP_RESP_CONNECTION_TOKEN(iob->data),
 	       QETH_MPC_TOKEN_LENGTH);
+	if (!strncmp("00S", QETH_ULP_SETUP_RESP_CONNECTION_TOKEN(iob->data),
+		     3)) {
+		QETH_DBF_TEXT(SETUP, 2, "olmlimit");
+		dev_err(&card->gdev->dev, "A connection could not be "
+			"established because of an OLM limit\n");
+		iob->rc = -EMLINK;
+	}
 	QETH_DBF_TEXT_(SETUP, 2, "  rc%d", iob->rc);
 	return 0;
 }
@@ -2947,6 +2957,27 @@ static void qeth_check_outbound_queue(struct qeth_qdio_out_q *queue)
 		}
 	}
 }
+
+void qeth_qdio_start_poll(struct ccw_device *ccwdev, int queue,
+		unsigned long card_ptr)
+{
+	struct qeth_card *card = (struct qeth_card *)card_ptr;
+
+	if (card->dev && (card->dev->flags & IFF_UP))
+		napi_schedule(&card->napi);
+}
+EXPORT_SYMBOL_GPL(qeth_qdio_start_poll);
+
+void qeth_qdio_input_handler(struct ccw_device *ccwdev, unsigned int qdio_err,
+		unsigned int queue, int first_element, int count,
+		unsigned long card_ptr)
+{
+	struct qeth_card *card = (struct qeth_card *)card_ptr;
+
+	if (qdio_err)
+		qeth_schedule_recovery(card);
+}
+EXPORT_SYMBOL_GPL(qeth_qdio_input_handler);
 
 void qeth_qdio_output_handler(struct ccw_device *ccwdev,
 		unsigned int qdio_error, int __queue, int first_element,
@@ -3897,6 +3928,7 @@ static int qeth_qdio_establish(struct qeth_card *card)
 	init_data.no_output_qs           = card->qdio.no_out_queues;
 	init_data.input_handler          = card->discipline.input_handler;
 	init_data.output_handler         = card->discipline.output_handler;
+	init_data.queue_start_poll	 = card->discipline.start_poll;
 	init_data.int_parm               = (unsigned long) card;
 	init_data.flags                  = QDIO_INBOUND_0COPY_SBALS |
 					   QDIO_OUTBOUND_0COPY_SBALS |
@@ -4514,8 +4546,8 @@ static struct {
 /* 20 */{"queue 1 buffer usage"},
 	{"queue 2 buffer usage"},
 	{"queue 3 buffer usage"},
-	{"rx handler time"},
-	{"rx handler count"},
+	{"rx poll time"},
+	{"rx poll count"},
 	{"rx do_QDIO time"},
 	{"rx do_QDIO count"},
 	{"tx handler time"},

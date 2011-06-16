@@ -271,7 +271,6 @@ typedef char *COMPILE_VERSION;
 /* qdio device driver */
 #include "drivers/s390/cio/qdio.h"
 #include "drivers/s390/cio/qdio_thinint.c"
-#include "drivers/s390/cio/qdio_perf.h"
 
 
 /* KVM */

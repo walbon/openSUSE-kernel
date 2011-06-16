@@ -362,6 +362,7 @@ typedef struct elf64_shdr {
 #define NT_386_TLS	0x200		/* i386 TLS slots (struct user_desc) */
 #define NT_386_IOPERM	0x201		/* x86 io permission bitmap (1=deny) */
 #define NT_PRXSTATUS	0x300		/* s390 upper register halves */
+#define NT_S390_LAST_BREAK	0x306	/* s390 breaking event address */
 
 
 /* Note header in a PT_NOTE section */

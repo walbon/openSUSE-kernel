@@ -219,7 +219,8 @@ static inline int qeth_is_ipa_enabled(struct qeth_ipa_info *ipa,
 /*****************************************************************************/
 #define QETH_MAX_QUEUES 4
 #define QETH_IN_BUF_SIZE_DEFAULT 65536
-#define QETH_IN_BUF_COUNT_DEFAULT 16
+#define QETH_IN_BUF_COUNT_DEFAULT 64
+#define QETH_IN_BUF_COUNT_HSDEFAULT 128
 #define QETH_IN_BUF_COUNT_MIN 8
 #define QETH_IN_BUF_COUNT_MAX 128
 #define QETH_MAX_BUFFER_ELEMENTS(card) ((card)->qdio.in_buf_size >> 12)
@@ -350,7 +351,7 @@ enum qeth_header_ids {
 #define QETH_HDR_EXT_SRC_MAC_ADDR     0x08
 #define QETH_HDR_EXT_CSUM_HDR_REQ     0x10
 #define QETH_HDR_EXT_CSUM_TRANSP_REQ  0x20
-#define QETH_HDR_EXT_UDP_TSO          0x40 /*bit off for TCP*/
+#define QETH_HDR_EXT_UDP	      0x40 /*bit off for TCP*/
 
 static inline int qeth_is_last_sbale(struct qdio_buffer_element *sbale)
 {
@@ -629,6 +630,7 @@ struct qeth_card_info {
 	int unique_id;
 	struct qeth_card_blkt blkt;
 	__u32 csum_mask;
+	__u32 tx_csum_mask;
 	enum qeth_ipa_promisc_modes promisc_mode;
 };
 
@@ -669,6 +671,7 @@ enum qeth_discipline_id {
 };
 
 struct qeth_discipline {
+	void (*start_poll)(struct ccw_device *, int, unsigned long);
 	qdio_handler_t *input_handler;
 	qdio_handler_t *output_handler;
 	int (*recover)(void *ptr);
@@ -694,6 +697,16 @@ struct qeth_skb_data {
 
 #define QETH_SKB_MAGIC 0x71657468
 #define QETH_SIGA_CC2_RETRIES 3
+
+struct qeth_rx {
+	int b_count;
+	int b_index;
+	struct qdio_buffer_element *b_element;
+	int e_offset;
+	int qdio_err;
+};
+
+#define QETH_NAPI_WEIGHT 128
 
 struct qeth_card {
 	struct list_head list;
@@ -740,6 +753,8 @@ struct qeth_card {
 	struct qdio_ssqd_desc ssqd;
 	struct mutex conf_mutex;
 	struct mutex discipline_mutex;
+	struct napi_struct napi;
+	struct qeth_rx rx;
 };
 
 struct qeth_card_list_struct {
@@ -823,6 +838,10 @@ struct sk_buff *qeth_core_get_next_skb(struct qeth_card *,
 		struct qdio_buffer *, struct qdio_buffer_element **, int *,
 		struct qeth_hdr **);
 void qeth_schedule_recovery(struct qeth_card *);
+void qeth_qdio_start_poll(struct ccw_device *, int, unsigned long);
+void qeth_qdio_input_handler(struct ccw_device *,
+		unsigned int, unsigned int, int,
+		int, unsigned long);
 void qeth_qdio_output_handler(struct ccw_device *, unsigned int,
 			int, int, int, unsigned long);
 void qeth_clear_ipacmd_list(struct qeth_card *);

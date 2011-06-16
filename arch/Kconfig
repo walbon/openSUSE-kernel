@@ -117,6 +117,9 @@ config HAVE_HW_BREAKPOINT
 	select PERF_EVENTS
 
 
+config HAVE_ARCH_MUTEX_CPU_RELAX
+	bool
+
 source "kernel/gcov/Kconfig"
 
 config FAIR_SLEEPERS_ON_BY_DEFAULT

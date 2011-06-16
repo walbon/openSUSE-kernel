@@ -111,7 +111,7 @@ static int dasd_ioctl_quiesce(struct dasd_block *block)
 	pr_info("%s: The DASD has been put in the quiesce "
 		"state\n", dev_name(&base->cdev->dev));
 	spin_lock_irqsave(get_ccwdev_lock(base->cdev), flags);
-	base->stopped |= DASD_STOPPED_QUIESCE;
+	dasd_device_set_stop_bits(base, DASD_STOPPED_QUIESCE);
 	spin_unlock_irqrestore(get_ccwdev_lock(base->cdev), flags);
 	return 0;
 }
@@ -132,7 +132,7 @@ static int dasd_ioctl_resume(struct dasd_block *block)
 	pr_info("%s: I/O operations have been resumed "
 		"on the DASD\n", dev_name(&base->cdev->dev));
 	spin_lock_irqsave(get_ccwdev_lock(base->cdev), flags);
-	base->stopped &= ~DASD_STOPPED_QUIESCE;
+	dasd_device_remove_stop_bits(base, DASD_STOPPED_QUIESCE);
 	spin_unlock_irqrestore(get_ccwdev_lock(base->cdev), flags);
 
 	dasd_schedule_block_bh(block);
@@ -212,7 +212,8 @@ dasd_ioctl_format(struct block_device *bdev, void __user *argp)
 	base = dasd_device_from_gendisk(bdev->bd_disk);
 	if (!base)
 		return -ENODEV;
-	if (base->features & DASD_FEATURE_READONLY) {
+	if (base->features & DASD_FEATURE_READONLY ||
+	    test_bit(DASD_FLAG_DEVICE_RO, &base->flags)) {
 		dasd_put_device(base);
  		return -EROFS;
 	}
@@ -372,6 +373,10 @@ dasd_ioctl_set_ro(struct block_device *bdev, void __user *argp)
 	base = dasd_device_from_gendisk(bdev->bd_disk);
 	if (!base)
 		return -ENODEV;
+	if (!intval && test_bit(DASD_FLAG_DEVICE_RO, &base->flags)) {
+		dasd_put_device(base);
+		return -EROFS;
+	}
 	set_disk_ro(bdev->bd_disk, intval);
 	rc = dasd_set_feature(base->cdev, DASD_FEATURE_READONLY, intval);
 	dasd_put_device(base);
