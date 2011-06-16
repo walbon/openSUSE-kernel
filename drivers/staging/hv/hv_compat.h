@@ -21,7 +21,7 @@
 #define pr_warn(fmt, arg...) printk(KERN_WARNING fmt, ##arg)
 #endif
 
-
+#ifndef DEF_SCSI_QCMD
 #define DEF_SCSI_QCMD(func_name) \
 	int func_name(struct scsi_cmnd *cmd, \
 			void (*done)(struct scsi_cmnd *))   \
@@ -30,8 +30,8 @@
 		rc = func_name##_lck(cmd, done);			\
 		return rc;						\
 	}
+#endif
 
-#define blk_queue_max_segments(a, b)
 
 #ifndef netdev_err
 static inline void netdev_err(struct net_device *net, const char *fmt, ...)
