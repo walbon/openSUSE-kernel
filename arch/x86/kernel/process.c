@@ -14,6 +14,7 @@
 #include <asm/system.h>
 #include <asm/apic.h>
 #include <asm/syscalls.h>
+#include <asm/cpu.h>
 #include <asm/idle.h>
 #include <asm/uaccess.h>
 #include <asm/i387.h>
@@ -403,7 +404,7 @@ static int __cpuinitdata force_mwait;
 #define MWAIT_ECX_EXTENDED_INFO		0x01
 #define MWAIT_EDX_C1			0xf0
 
-static int __cpuinit mwait_usable(const struct cpuinfo_x86 *c)
+int __cpuinit mwait_usable(const struct cpuinfo_x86 *c)
 {
 	u32 eax, ebx, ecx, edx;
 
