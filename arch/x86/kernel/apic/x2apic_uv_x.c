@@ -51,7 +51,6 @@ unsigned int uv_apicid_hibits;
 EXPORT_SYMBOL_GPL(uv_apicid_hibits);
 static DEFINE_SPINLOCK(uv_nmi_lock);
 
-
 static unsigned long __init uv_early_read_mmr(unsigned long addr)
 {
 	unsigned long val, *mmr;
@@ -75,14 +74,18 @@ static int uv_is_untracked_pat_range(u64 start, u64 end)
 static int __init early_get_pnodeid(void)
 {
 	union uvh_node_id_u node_id;
-	union uvh_si_addr_map_config_u m_n_config;
+	union uvh_rh_gam_config_mmr_u  m_n_config;
 	int pnode;
 
 	/* Currently, all blades have same revision number */
 	node_id.v = uv_early_read_mmr(UVH_NODE_ID);
-	m_n_config.v = uv_early_read_mmr(UVH_SI_ADDR_MAP_CONFIG);
+	m_n_config.v = uv_early_read_mmr(UVH_RH_GAM_CONFIG_MMR);
 	uv_min_hub_revision_id = node_id.s.revision;
 
+	if (node_id.s.part_number == UV2_HUB_PART_NUMBER)
+		uv_min_hub_revision_id += UV2_HUB_REVISION_BASE - 1;
+
+	uv_hub_info->hub_revision = uv_min_hub_revision_id;
 	pnode = (node_id.s.node_id >> 1) & ((1 << m_n_config.s.n_skt) - 1);
 	return pnode;
 }
@@ -94,10 +97,14 @@ static int __init early_get_pnodeid(void)
  */
 static void __init uv_set_apicid_hibit(void)
 {
-	union uvh_lb_target_physical_apic_id_mask_u apicid_mask;
+	union uv1h_lb_target_physical_apic_id_mask_u apicid_mask;
 
-	apicid_mask.v = uv_early_read_mmr(UVH_LB_TARGET_PHYSICAL_APIC_ID_MASK);
-	uv_apicid_hibits = apicid_mask.s.bit_enables & UV_APICID_HIBIT_MASK;
+	if (is_uv1_hub()) {
+		apicid_mask.v =
+			uv_early_read_mmr(UV1H_LB_TARGET_PHYSICAL_APIC_ID_MASK);
+		uv_apicid_hibits =
+			apicid_mask.s1.bit_enables & UV_APICID_HIBIT_MASK;
+	}
 }
 
 static void __init early_get_apic_pnode_shift(void)
@@ -112,9 +119,13 @@ static void __init early_get_apic_pnode_shift(void)
 
 static int __init uv_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 {
-	int pnodeid;
+	int pnodeid, is_uv1, is_uv2;
 
-	if (!strcmp(oem_id, "SGI")) {
+	is_uv1 = !strcmp(oem_id, "SGI");
+	is_uv2 = !strcmp(oem_id, "SGI2");
+	if (is_uv1 || is_uv2) {
+		uv_hub_info->hub_revision =
+			is_uv1 ? UV1_HUB_REVISION_BASE : UV2_HUB_REVISION_BASE;
 		pnodeid = early_get_pnodeid();
 		early_get_apic_pnode_shift();
 		x86_platform.is_untracked_pat_range =  uv_is_untracked_pat_range;
@@ -148,9 +159,6 @@ EXPORT_SYMBOL_GPL(is_uv_system);
 
 DEFINE_PER_CPU(struct uv_hub_info_s, __uv_hub_info);
 EXPORT_PER_CPU_SYMBOL_GPL(__uv_hub_info);
-
-DEFINE_PER_CPU(struct uv_hub_info_extra_s, __uv_hub_info_extra);
-EXPORT_PER_CPU_SYMBOL_GPL(__uv_hub_info_extra);
 
 struct uv_blade_info *uv_blade_info;
 EXPORT_SYMBOL_GPL(uv_blade_info);
@@ -413,14 +421,14 @@ struct redir_addr {
 #define DEST_SHIFT UVH_RH_GAM_ALIAS210_REDIRECT_CONFIG_0_MMR_DEST_BASE_SHFT
 
 static __initdata struct redir_addr redir_addrs[] = {
-	{UVH_RH_GAM_ALIAS210_REDIRECT_CONFIG_0_MMR, UVH_SI_ALIAS0_OVERLAY_CONFIG},
-	{UVH_RH_GAM_ALIAS210_REDIRECT_CONFIG_1_MMR, UVH_SI_ALIAS1_OVERLAY_CONFIG},
-	{UVH_RH_GAM_ALIAS210_REDIRECT_CONFIG_2_MMR, UVH_SI_ALIAS2_OVERLAY_CONFIG},
+	{UVH_RH_GAM_ALIAS210_REDIRECT_CONFIG_0_MMR, UVH_RH_GAM_ALIAS210_OVERLAY_CONFIG_0_MMR},
+	{UVH_RH_GAM_ALIAS210_REDIRECT_CONFIG_1_MMR, UVH_RH_GAM_ALIAS210_OVERLAY_CONFIG_1_MMR},
+	{UVH_RH_GAM_ALIAS210_REDIRECT_CONFIG_2_MMR, UVH_RH_GAM_ALIAS210_OVERLAY_CONFIG_2_MMR},
 };
 
 static __init void get_lowmem_redirect(unsigned long *base, unsigned long *size)
 {
-	union uvh_si_alias0_overlay_config_u alias;
+	union uvh_rh_gam_alias210_overlay_config_2_mmr_u alias;
 	union uvh_rh_gam_alias210_redirect_config_2_mmr_u redirect;
 	int i;
 
@@ -480,12 +488,19 @@ static __init void map_mmr_high(int max_pnode)
 static __init void map_mmioh_high(int max_pnode)
 {
 	union uvh_rh_gam_mmioh_overlay_config_mmr_u mmioh;
-	int shift = UVH_RH_GAM_MMIOH_OVERLAY_CONFIG_MMR_BASE_SHFT;
+	int shift;
 
 	mmioh.v = uv_read_local_mmr(UVH_RH_GAM_MMIOH_OVERLAY_CONFIG_MMR);
-	if (mmioh.s.enable)
-		map_high("MMIOH", mmioh.s.base, shift, mmioh.s.m_io,
+	if (is_uv1_hub() && mmioh.s1.enable) {
+		shift = UV1H_RH_GAM_MMIOH_OVERLAY_CONFIG_MMR_BASE_SHFT;
+		map_high("MMIOH", mmioh.s1.base, shift, mmioh.s1.m_io,
 			max_pnode, map_uc);
+	}
+	if (is_uv2_hub() && mmioh.s2.enable) {
+		shift = UV2H_RH_GAM_MMIOH_OVERLAY_CONFIG_MMR_BASE_SHFT;
+		map_high("MMIOH", mmioh.s2.base, shift, mmioh.s2.m_io,
+			max_pnode, map_uc);
+	}
 }
 
 static __init void map_low_mmrs(void)
@@ -715,7 +730,7 @@ void uv_nmi_init(void)
 
 void __init uv_system_init(void)
 {
-	union uvh_si_addr_map_config_u m_n_config;
+	union uvh_rh_gam_config_mmr_u  m_n_config;
 	union uvh_rh_gam_mmioh_overlay_config_mmr_u mmioh;
 	union uvh_node_id_u node_id;
 	unsigned long gnode_upper, lowmem_redir_base, lowmem_redir_size;
@@ -724,13 +739,14 @@ void __init uv_system_init(void)
 	unsigned long mmr_base, present, paddr;
 	unsigned short pnode_mask, pnode_io_mask;
 
+	printk(KERN_INFO "UV: Found %s hub\n", is_uv1_hub() ? "UV1" : "UV2");
 	map_low_mmrs();
 
-	m_n_config.v = uv_read_local_mmr(UVH_SI_ADDR_MAP_CONFIG);
+	m_n_config.v = uv_read_local_mmr(UVH_RH_GAM_CONFIG_MMR );
 	m_val = m_n_config.s.m_skt;
 	n_val = m_n_config.s.n_skt;
 	mmioh.v = uv_read_local_mmr(UVH_RH_GAM_MMIOH_OVERLAY_CONFIG_MMR);
-	n_io = mmioh.s.n_io;
+	n_io = is_uv1_hub() ? mmioh.s1.n_io : mmioh.s2.n_io;
 	mmr_base =
 	    uv_read_local_mmr(UVH_RH_GAM_MMR_OVERLAY_CONFIG_MMR) &
 	    ~UV_MMR_ENABLE;
@@ -796,9 +812,9 @@ void __init uv_system_init(void)
 		 * apic_pnode_shift must be set before calling uv_apicid_to_pnode();
 		 */
 		uv_cpu_hub_info(cpu)->pnode_mask = pnode_mask;
-		uv_cpu_hub_info_extra(cpu)->apic_pnode_shift = uvh_apicid.s.pnode_shift;
-		for (i = 0; i < UV_HUB_INFO_EXTRA_FIELDS; i++)
-			uv_cpu_hub_info_extra(cpu)->future[i] = 0;
+		uv_cpu_hub_info(cpu)->apic_pnode_shift = uvh_apicid.s.pnode_shift;
+		uv_cpu_hub_info(cpu)->hub_revision = uv_hub_info->hub_revision;
+
 		pnode = uv_apicid_to_pnode(apicid);
 		blade = boot_pnode_to_blade(pnode);
 		lcpu = uv_blade_info[blade].nr_possible_cpus;
