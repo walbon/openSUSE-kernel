@@ -130,6 +130,9 @@ struct request {
 	 * physical address coalescing is performed.
 	 */
 	unsigned short nr_phys_segments;
+#if defined(CONFIG_BLK_DEV_INTEGRITY)
+	unsigned short nr_integrity_segments;
+#endif
 
 	unsigned short ioprio;
 
@@ -249,11 +252,12 @@ struct queue_limits {
 
 	unsigned short		logical_block_size;
 	unsigned short		max_segments;
+	unsigned short		max_integrity_segments;
 
 	unsigned char		misaligned;
-	unsigned char		cluster;
 	unsigned char		discard_misaligned;
-	signed char		discard_zeroes_data;
+	unsigned char		cluster;
+	unsigned char		discard_zeroes_data;
 };
 
 struct request_queue
@@ -1039,13 +1043,16 @@ static inline int queue_limit_discard_alignment(struct queue_limits *lim, sector
 {
 	unsigned int alignment = (sector << 9) & (lim->discard_granularity - 1);
 
+	if (!lim->max_discard_sectors)
+		return 0;
+
 	return (lim->discard_granularity + lim->discard_alignment - alignment)
 		& (lim->discard_granularity - 1);
 }
 
 static inline unsigned int queue_discard_zeroes_data(struct request_queue *q)
 {
-	if (q->limits.discard_zeroes_data == 1)
+	if (q->limits.max_discard_sectors && q->limits.discard_zeroes_data == 1)
 		return 1;
 
 	return 0;
@@ -1178,11 +1185,17 @@ struct blk_integrity {
 	struct kobject		kobj;
 };
 
+extern bool blk_integrity_is_initialized(struct gendisk *);
 extern int blk_integrity_register(struct gendisk *, struct blk_integrity *);
 extern void blk_integrity_unregister(struct gendisk *);
 extern int blk_integrity_compare(struct gendisk *, struct gendisk *);
-extern int blk_rq_map_integrity_sg(struct request *, struct scatterlist *);
-extern int blk_rq_count_integrity_sg(struct request *);
+extern int blk_rq_map_integrity_sg(struct request_queue *, struct bio *,
+				   struct scatterlist *);
+extern int blk_rq_count_integrity_sg(struct request_queue *, struct bio *);
+extern int blk_integrity_merge_rq(struct request_queue *, struct request *,
+				  struct request *);
+extern int blk_integrity_merge_bio(struct request_queue *, struct request *,
+				   struct bio *);
 
 static inline
 struct blk_integrity *bdev_get_integrity(struct block_device *bdev)
@@ -1203,16 +1216,33 @@ static inline int blk_integrity_rq(struct request *rq)
 	return bio_integrity(rq->bio);
 }
 
+static inline void blk_queue_max_integrity_segments(struct request_queue *q,
+						    unsigned int segs)
+{
+	q->limits.max_integrity_segments = segs;
+}
+
+static inline unsigned short
+queue_max_integrity_segments(struct request_queue *q)
+{
+	return q->limits.max_integrity_segments;
+}
+
 #else /* CONFIG_BLK_DEV_INTEGRITY */
 
 #define blk_integrity_rq(rq)			(0)
-#define blk_rq_count_integrity_sg(a)		(0)
-#define blk_rq_map_integrity_sg(a, b)		(0)
+#define blk_rq_count_integrity_sg(a, b)		(0)
+#define blk_rq_map_integrity_sg(a, b, c)	(0)
 #define bdev_get_integrity(a)			(0)
 #define blk_get_integrity(a)			(0)
 #define blk_integrity_compare(a, b)		(0)
 #define blk_integrity_register(a, b)		(0)
 #define blk_integrity_unregister(a)		do { } while (0);
+#define blk_queue_max_integrity_segments(a, b)	do { } while (0);
+#define queue_max_integrity_segments(a)		(0)
+#define blk_integrity_merge_rq(a, b, c)		(0)
+#define blk_integrity_merge_bio(a, b, c)	(0)
+#define blk_integrity_is_initialized(a)		(0)
 
 #endif /* CONFIG_BLK_DEV_INTEGRITY */
 

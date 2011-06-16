@@ -304,7 +304,6 @@ struct biovec_slab {
 };
 
 extern struct bio_set *fs_bio_set;
-extern struct biovec_slab bvec_slabs[BIOVEC_NR_POOLS] __read_mostly;
 
 /*
  * a small number of entries is fine, not going to be performance critical.
@@ -491,6 +490,10 @@ static inline struct bio *bio_list_get(struct bio_list *bl)
 
 #define bip_for_each_vec(bvl, bip, i)					\
 	__bip_for_each_vec(bvl, bip, i, (bip)->bip_idx)
+
+#define bio_for_each_integrity_vec(_bvl, _bio, _iter)			\
+	for_each_bio(_bio)						\
+		bip_for_each_vec(_bvl, _bio->bi_integrity, _iter)
 
 #define bio_integrity(bio) (bio->bi_integrity != NULL)
 

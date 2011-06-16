@@ -111,6 +111,11 @@ static ssize_t queue_max_segments_show(struct request_queue *q, char *page)
 	return queue_var_show(queue_max_segments(q), (page));
 }
 
+static ssize_t queue_max_integrity_segments_show(struct request_queue *q, char *page)
+{
+	return queue_var_show(q->limits.max_integrity_segments, (page));
+}
+
 static ssize_t queue_max_segment_size_show(struct request_queue *q, char *page)
 {
 	if (blk_queue_cluster(q))
@@ -146,7 +151,8 @@ static ssize_t queue_discard_granularity_show(struct request_queue *q, char *pag
 
 static ssize_t queue_discard_max_show(struct request_queue *q, char *page)
 {
-	return queue_var_show(q->limits.max_discard_sectors << 9, page);
+	return sprintf(page, "%llu\n",
+		       (unsigned long long)q->limits.max_discard_sectors << 9);
 }
 
 static ssize_t queue_discard_zeroes_data_show(struct request_queue *q, char *page)
@@ -287,6 +293,11 @@ static struct queue_sysfs_entry queue_max_segments_entry = {
 	.show = queue_max_segments_show,
 };
 
+static struct queue_sysfs_entry queue_max_integrity_segments_entry = {
+	.attr = {.name = "max_integrity_segments", .mode = S_IRUGO },
+	.show = queue_max_integrity_segments_show,
+};
+
 static struct queue_sysfs_entry queue_max_segment_size_entry = {
 	.attr = {.name = "max_segment_size", .mode = S_IRUGO },
 	.show = queue_max_segment_size_show,
@@ -374,6 +385,7 @@ static struct attribute *default_attrs[] = {
 	&queue_max_hw_sectors_entry.attr,
 	&queue_max_sectors_entry.attr,
 	&queue_max_segments_entry.attr,
+	&queue_max_integrity_segments_entry.attr,
 	&queue_max_segment_size_entry.attr,
 	&queue_iosched_entry.attr,
 	&queue_hw_sector_size_entry.attr,
