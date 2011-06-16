@@ -84,8 +84,7 @@ static int arcmsr_abort(struct scsi_cmnd *);
 static int arcmsr_bus_reset(struct scsi_cmnd *);
 static int arcmsr_bios_param(struct scsi_device *sdev,
 		struct block_device *bdev, sector_t capacity, int *info);
-static int arcmsr_queue_command(struct scsi_cmnd *cmd,
-					void (*done) (struct scsi_cmnd *));
+static int arcmsr_queue_command(struct Scsi_Host *h, struct scsi_cmnd *cmd);
 static int arcmsr_probe(struct pci_dev *pdev,
 				const struct pci_device_id *id);
 static void arcmsr_remove(struct pci_dev *pdev);
@@ -2080,7 +2079,7 @@ static void arcmsr_handle_virtual_command(struct AdapterControlBlock *acb,
 	}
 }
 
-static int arcmsr_queue_command(struct scsi_cmnd *cmd,
+static int arcmsr_queue_command_lck(struct scsi_cmnd *cmd,
 	void (* done)(struct scsi_cmnd *))
 {
 	struct Scsi_Host *host = cmd->device->host;
@@ -2122,6 +2121,8 @@ static int arcmsr_queue_command(struct scsi_cmnd *cmd,
 	arcmsr_post_ccb(acb, ccb);
 	return 0;
 }
+
+static DEF_SCSI_QCMD(arcmsr_queue_command)
 
 static bool arcmsr_get_hba_config(struct AdapterControlBlock *acb)
 {

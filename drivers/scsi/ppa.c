@@ -797,7 +797,7 @@ static int ppa_engine(ppa_struct *dev, struct scsi_cmnd *cmd)
 	return 0;
 }
 
-static int ppa_queuecommand(struct scsi_cmnd *cmd,
+static int ppa_queuecommand_lck(struct scsi_cmnd *cmd,
 		void (*done) (struct scsi_cmnd *))
 {
 	ppa_struct *dev = ppa_dev(cmd->device->host);
@@ -819,6 +819,8 @@ static int ppa_queuecommand(struct scsi_cmnd *cmd,
 
 	return 0;
 }
+
+static DEF_SCSI_QCMD(ppa_queuecommand)
 
 /*
  * Apparently the disk->capacity attribute is off by 1 sector 
