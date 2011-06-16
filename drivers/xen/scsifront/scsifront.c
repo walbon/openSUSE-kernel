@@ -315,8 +315,10 @@ big_to_sg:
 	return ref_cnt;
 }
 
-static int scsifront_queuecommand(struct scsi_cmnd *sc,
-				  void (*done)(struct scsi_cmnd *))
+static int scsifront_queuecommand(struct Scsi_Host *, struct scsi_cmnd *);
+
+static int scsifront_queuecommand_lck(struct scsi_cmnd *sc,
+				      void (*done)(struct scsi_cmnd *))
 {
 	struct vscsifrnt_info *info = shost_priv(sc->device->host);
 	vscsiif_request_t *ring_req;
@@ -384,6 +386,7 @@ out_fail_command:
 	return 0;
 }
 
+static DEF_SCSI_QCMD(scsifront_queuecommand);
 
 static int scsifront_eh_abort_handler(struct scsi_cmnd *sc)
 {

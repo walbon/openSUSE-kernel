@@ -1079,7 +1079,7 @@ static void build_srb(struct scsi_cmnd *cmd, struct DeviceCtlBlk *dcb,
  *        and is expected to be held on return.
  *
  **/
-static int dc395x_queue_command(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
+static int dc395x_queue_command_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 {
 	struct DeviceCtlBlk *dcb;
 	struct ScsiReqBlk *srb;
@@ -1153,6 +1153,7 @@ complete:
 	return 0;
 }
 
+static DEF_SCSI_QCMD(dc395x_queue_command)
 
 /*
  * Return the disk geometry for the given SCSI device.

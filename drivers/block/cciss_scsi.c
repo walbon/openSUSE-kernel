@@ -60,8 +60,8 @@ static int cciss_scsi_proc_info(
 		int length, 	   /* length of data in buffer */
 		int func);	   /* 0 == read, 1 == write */
 
-static int cciss_scsi_queue_command (struct scsi_cmnd *cmd,
-		void (* done)(struct scsi_cmnd *));
+static int cciss_scsi_queue_command (struct Scsi_Host *h,
+				     struct scsi_cmnd *cmd);
 static int cciss_eh_device_reset_handler(struct scsi_cmnd *);
 static int cciss_eh_abort_handler(struct scsi_cmnd *);
 
@@ -1397,7 +1397,7 @@ cciss_scatter_gather(struct pci_dev *pdev,
 
 
 static int
-cciss_scsi_queue_command (struct scsi_cmnd *cmd, void (* done)(struct scsi_cmnd *))
+cciss_scsi_queue_command_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 {
 	ctlr_info_t **c;
 	int ctlr, rc;
@@ -1504,8 +1504,9 @@ cciss_scsi_queue_command (struct scsi_cmnd *cmd, void (* done)(struct scsi_cmnd 
 	return 0;
 }
 
-static void 
-cciss_unregister_scsi(int ctlr)
+static DEF_SCSI_QCMD(cciss_scsi_queue_command)
+
+static void cciss_unregister_scsi(ctlr_info_t *h)
 {
 	struct cciss_scsi_adapter_data_t *sa;
 	struct cciss_scsi_cmd_stack_t *stk;
@@ -1513,23 +1514,23 @@ cciss_unregister_scsi(int ctlr)
 
 	/* we are being forcibly unloaded, and may not refuse. */
 
-	spin_lock_irqsave(CCISS_LOCK(ctlr), flags);
-	sa = (struct cciss_scsi_adapter_data_t *) hba[ctlr]->scsi_ctlr;
+	spin_lock_irqsave(CCISS_LOCK(h->ctlr), flags);
+	sa = (struct cciss_scsi_adapter_data_t *) hba[h->ctlr]->scsi_ctlr;
 	stk = &sa->cmd_stack; 
 
 	/* if we weren't ever actually registered, don't unregister */ 
 	if (sa->registered) {
-		spin_unlock_irqrestore(CCISS_LOCK(ctlr), flags);
+		spin_unlock_irqrestore(CCISS_LOCK(h->ctlr), flags);
 		scsi_remove_host(sa->scsi_host);
 		scsi_host_put(sa->scsi_host);
-		spin_lock_irqsave(CCISS_LOCK(ctlr), flags);
+		spin_lock_irqsave(CCISS_LOCK(h->ctlr), flags);
 	}
 
 	/* set scsi_host to NULL so our detect routine will 
 	   find us on register */
 	sa->scsi_host = NULL;
-	spin_unlock_irqrestore(CCISS_LOCK(ctlr), flags);
-	scsi_cmd_stack_free(ctlr);
+	spin_unlock_irqrestore(CCISS_LOCK(h->ctlr), flags);
+	scsi_cmd_stack_free(h->ctlr);
 	kfree(sa);
 }
 

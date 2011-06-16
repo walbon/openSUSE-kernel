@@ -1315,7 +1315,7 @@ megasas_dump_pending_frames(struct megasas_instance *instance)
  * @done:			Callback entry point
  */
 static int
-megasas_queue_command(struct scsi_cmnd *scmd, void (*done) (struct scsi_cmnd *))
+megasas_queue_command_lck(struct scsi_cmnd *scmd, void (*done) (struct scsi_cmnd *))
 {
 	u32 frame_count;
 	struct megasas_cmd *cmd;
@@ -1400,6 +1400,8 @@ megasas_queue_command(struct scsi_cmnd *scmd, void (*done) (struct scsi_cmnd *))
 	done(scmd);
 	return 0;
 }
+
+static DEF_SCSI_QCMD(megasas_queue_command)
 
 static struct megasas_instance *megasas_lookup_instance(u16 host_no)
 {
