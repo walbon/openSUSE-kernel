@@ -535,7 +535,8 @@ int pci_mmcfg_config_num;
 
 static int __init acpi_mcfg_oem_check(struct acpi_table_mcfg *mcfg)
 {
-	if (!strcmp(mcfg->header.oem_id, "SGI"))
+	if (!strcmp(mcfg->header.oem_id, "SGI") ||
+	    		!strcmp(mcfg->header.oem_id, "SGI2"))
 		acpi_mcfg_64bit_base_addr = TRUE;
 
 	return 0;

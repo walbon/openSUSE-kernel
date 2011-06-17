@@ -19,12 +19,13 @@
  * MA  02111-1307, USA.
  *
  * The full GNU General Public License is included in this distribution
- * in the file called LICENSE.
+ * in the file called "COPYING".
  *
  */
 
 #include <linux/netdevice.h>
 #include <linux/delay.h>
+#include <linux/if_vlan.h>
 #include "netxen_nic.h"
 #include "netxen_nic_hw.h"
 
@@ -217,7 +218,7 @@ int netxen_alloc_sw_resources(struct netxen_adapter *adapter)
 	if (cmd_buf_arr == NULL) {
 		dev_err(&pdev->dev, "%s: failed to allocate cmd buffer ring\n",
 		       netdev->name);
-		return -ENOMEM;
+		goto err_out;
 	}
 	memset(cmd_buf_arr, 0, TX_BUFF_RINGSIZE(tx_ring));
 	tx_ring->cmd_buf_arr = cmd_buf_arr;
@@ -229,7 +230,7 @@ int netxen_alloc_sw_resources(struct netxen_adapter *adapter)
 	if (rds_ring == NULL) {
 		dev_err(&pdev->dev, "%s: failed to allocate rds ring struct\n",
 		       netdev->name);
-		return -ENOMEM;
+		goto err_out;
 	}
 	recv_ctx->rds_rings = rds_ring;
 
@@ -345,7 +346,7 @@ static u32 netxen_decode_crb_addr(u32 addr)
 	if (pci_base == NETXEN_ADDR_ERROR)
 		return pci_base;
 	else
-		return (pci_base + offset);
+		return pci_base + offset;
 }
 
 #define NETXEN_MAX_ROM_WAIT_USEC	100
@@ -613,22 +614,123 @@ static struct uni_table_desc *nx_get_table_desc(const u8 *unirom, int section)
 	return NULL;
 }
 
+#define	QLCNIC_FILEHEADER_SIZE	(14 * 4)
+
 static int
-nx_set_product_offs(struct netxen_adapter *adapter)
+netxen_nic_validate_header(struct netxen_adapter *adapter)
+ {
+	const u8 *unirom = adapter->fw->data;
+	struct uni_table_desc *directory = (struct uni_table_desc *) &unirom[0];
+	u32 fw_file_size = adapter->fw->size;
+	u32 tab_size;
+	__le32 entries;
+	__le32 entry_size;
+
+	if (fw_file_size < QLCNIC_FILEHEADER_SIZE)
+		return -EINVAL;
+
+	entries = cpu_to_le32(directory->num_entries);
+	entry_size = cpu_to_le32(directory->entry_size);
+	tab_size = cpu_to_le32(directory->findex) + (entries * entry_size);
+
+	if (fw_file_size < tab_size)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int
+netxen_nic_validate_bootld(struct netxen_adapter *adapter)
+{
+	struct uni_table_desc *tab_desc;
+	struct uni_data_desc *descr;
+	const u8 *unirom = adapter->fw->data;
+	__le32 idx = cpu_to_le32(*((int *)&unirom[adapter->file_prd_off] +
+				NX_UNI_BOOTLD_IDX_OFF));
+	u32 offs;
+	u32 tab_size;
+	u32 data_size;
+
+	tab_desc = nx_get_table_desc(unirom, NX_UNI_DIR_SECT_BOOTLD);
+
+	if (!tab_desc)
+		return -EINVAL;
+
+	tab_size = cpu_to_le32(tab_desc->findex) +
+			(cpu_to_le32(tab_desc->entry_size) * (idx + 1));
+
+	if (adapter->fw->size < tab_size)
+		return -EINVAL;
+
+	offs = cpu_to_le32(tab_desc->findex) +
+		(cpu_to_le32(tab_desc->entry_size) * (idx));
+	descr = (struct uni_data_desc *)&unirom[offs];
+
+	data_size = cpu_to_le32(descr->findex) + cpu_to_le32(descr->size);
+
+	if (adapter->fw->size < data_size)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int
+netxen_nic_validate_fw(struct netxen_adapter *adapter)
+{
+	struct uni_table_desc *tab_desc;
+	struct uni_data_desc *descr;
+	const u8 *unirom = adapter->fw->data;
+	__le32 idx = cpu_to_le32(*((int *)&unirom[adapter->file_prd_off] +
+				NX_UNI_FIRMWARE_IDX_OFF));
+	u32 offs;
+	u32 tab_size;
+	u32 data_size;
+
+	tab_desc = nx_get_table_desc(unirom, NX_UNI_DIR_SECT_FW);
+
+	if (!tab_desc)
+		return -EINVAL;
+
+	tab_size = cpu_to_le32(tab_desc->findex) +
+			(cpu_to_le32(tab_desc->entry_size) * (idx + 1));
+
+	if (adapter->fw->size < tab_size)
+		return -EINVAL;
+
+	offs = cpu_to_le32(tab_desc->findex) +
+		(cpu_to_le32(tab_desc->entry_size) * (idx));
+	descr = (struct uni_data_desc *)&unirom[offs];
+	data_size = cpu_to_le32(descr->findex) + cpu_to_le32(descr->size);
+
+	if (adapter->fw->size < data_size)
+		return -EINVAL;
+
+	return 0;
+}
+
+
+static int
+netxen_nic_validate_product_offs(struct netxen_adapter *adapter)
 {
 	struct uni_table_desc *ptab_descr;
 	const u8 *unirom = adapter->fw->data;
-	uint32_t i;
-	__le32 entries;
-
 	int mn_present = (NX_IS_REVISION_P2(adapter->ahw.revision_id)) ?
 			1 : netxen_p3_has_mn(adapter);
+	__le32 entries;
+	__le32 entry_size;
+	u32 tab_size;
+	u32 i;
 
 	ptab_descr = nx_get_table_desc(unirom, NX_UNI_DIR_SECT_PRODUCT_TBL);
 	if (ptab_descr == NULL)
-		return -1;
+		return -EINVAL;
 
 	entries = cpu_to_le32(ptab_descr->num_entries);
+	entry_size = cpu_to_le32(ptab_descr->entry_size);
+	tab_size = cpu_to_le32(ptab_descr->findex) + (entries * entry_size);
+
+	if (adapter->fw->size < tab_size)
+		return -EINVAL;
 
 nomn:
 	for (i = 0; i < entries; i++) {
@@ -657,9 +759,38 @@ nomn:
 		goto nomn;
 	}
 
-	return -1;
+	return -EINVAL;
 }
 
+static int
+netxen_nic_validate_unified_romimage(struct netxen_adapter *adapter)
+{
+	if (netxen_nic_validate_header(adapter)) {
+		dev_err(&adapter->pdev->dev,
+				"unified image: header validation failed\n");
+		return -EINVAL;
+	}
+
+	if (netxen_nic_validate_product_offs(adapter)) {
+		dev_err(&adapter->pdev->dev,
+				"unified image: product validation failed\n");
+		return -EINVAL;
+	}
+
+	if (netxen_nic_validate_bootld(adapter)) {
+		dev_err(&adapter->pdev->dev,
+				"unified image: bootld validation failed\n");
+		return -EINVAL;
+	}
+
+	if (netxen_nic_validate_fw(adapter)) {
+		dev_err(&adapter->pdev->dev,
+				"unified image: firmware validation failed\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
 
 static struct uni_data_desc *nx_get_data_desc(struct netxen_adapter *adapter,
 			u32 section, u32 idx_offset)
@@ -761,7 +892,7 @@ nx_get_bios_version(struct netxen_adapter *adapter)
 	if (adapter->fw_type == NX_UNIFIED_ROMIMAGE) {
 		bios_ver = cpu_to_le32(*((u32 *) (&fw->data[prd_off])
 						+ NX_UNI_BIOS_VERSION_OFF));
-		return (bios_ver << 24) + ((bios_ver >> 8) & 0xff00) +
+		return (bios_ver << 16) + ((bios_ver >> 8) & 0xff00) +
 							(bios_ver >> 24);
 	} else
 		return cpu_to_le32(*(u32 *)&fw->data[NX_BIOS_VERSION_OFFSET]);
@@ -840,6 +971,7 @@ static char *fw_name[] = {
 	NX_P2_MN_ROMIMAGE_NAME,
 	NX_P3_CT_ROMIMAGE_NAME,
 	NX_P3_MN_ROMIMAGE_NAME,
+	NX_UNIFIED_ROMIMAGE_NAME,
 	NX_FLASH_ROMIMAGE_NAME,
 };
 
@@ -888,6 +1020,16 @@ netxen_load_firmware(struct netxen_adapter *adapter)
 
 			flashaddr += 8;
 		}
+
+		size = (__force u32)nx_get_fw_size(adapter) % 8;
+		if (size) {
+			data = cpu_to_le64(ptr64[i]);
+
+			if (adapter->pci_mem_write(adapter,
+						flashaddr, data))
+				return -EIO;
+		}
+
 	} else {
 		u64 data;
 		u32 hi, lo;
@@ -932,26 +1074,22 @@ static int
 netxen_validate_firmware(struct netxen_adapter *adapter)
 {
 	__le32 val;
-	u32 ver, min_ver, bios, min_size;
+	u32 ver, min_ver, bios;
 	struct pci_dev *pdev = adapter->pdev;
 	const struct firmware *fw = adapter->fw;
 	u8 fw_type = adapter->fw_type;
 
 	if (fw_type == NX_UNIFIED_ROMIMAGE) {
-		if (nx_set_product_offs(adapter))
+		if (netxen_nic_validate_unified_romimage(adapter))
 			return -EINVAL;
-
-		min_size = NX_UNI_FW_MIN_SIZE;
 	} else {
 		val = cpu_to_le32(*(u32 *)&fw->data[NX_FW_MAGIC_OFFSET]);
 		if ((__force u32)val != NETXEN_BDINFO_MAGIC)
 			return -EINVAL;
 
-		min_size = NX_FW_MIN_SIZE;
+		if (fw->size < NX_FW_MIN_SIZE)
+			return -EINVAL;
 	}
-
-	if (fw->size < min_size)
-		return -EINVAL;
 
 	val = nx_get_fw_version(adapter);
 
@@ -1372,7 +1510,9 @@ netxen_process_rcv(struct netxen_adapter *adapter,
 	struct netxen_rx_buffer *buffer;
 	struct sk_buff *skb;
 	struct nx_host_rds_ring *rds_ring;
+	struct ethhdr *eth_hdr;
 	int index, length, cksum, pkt_offset;
+	u16 vid = 0xffff;
 
 	if (unlikely(ring >= adapter->max_rds_rings))
 		return NULL;
@@ -1402,9 +1542,20 @@ netxen_process_rcv(struct netxen_adapter *adapter,
 	if (pkt_offset)
 		skb_pull(skb, pkt_offset);
 
+	if (adapter->vlgrp) {
+		if (!__vlan_get_tag(skb, &vid)) {
+			eth_hdr = (struct ethhdr *) skb->data;
+			memmove(skb->data + VLAN_HLEN, eth_hdr, ETH_ALEN * 2);
+			skb_pull(skb, VLAN_HLEN);
+		}
+	}
+
 	skb->protocol = eth_type_trans(skb, netdev);
 
-	napi_gro_receive(&sds_ring->napi, skb);
+	if (vid != 0xffff)
+		vlan_gro_receive(&sds_ring->napi, adapter->vlgrp, vid, skb);
+	else
+		napi_gro_receive(&sds_ring->napi, skb);
 
 	adapter->stats.rx_pkts++;
 	adapter->stats.rxbytes += length;
@@ -1428,11 +1579,13 @@ netxen_process_lro(struct netxen_adapter *adapter,
 	struct nx_host_rds_ring *rds_ring;
 	struct iphdr *iph;
 	struct tcphdr *th;
+	struct ethhdr *eth_hdr;
 	bool push, timestamp;
 	int l2_hdr_offset, l4_hdr_offset;
 	int index;
 	u16 lro_length, length, data_offset;
 	u32 seq_number;
+	u16 vid = 0xffff;
 
 	if (unlikely(ring > adapter->max_rds_rings))
 		return NULL;
@@ -1464,6 +1617,15 @@ netxen_process_lro(struct netxen_adapter *adapter,
 	skb_put(skb, lro_length + data_offset);
 
 	skb_pull(skb, l2_hdr_offset);
+
+	if (adapter->vlgrp) {
+		if (!__vlan_get_tag(skb, &vid)) {
+			eth_hdr = (struct ethhdr *) skb->data;
+			memmove(skb->data + VLAN_HLEN, eth_hdr, ETH_ALEN * 2);
+			skb_pull(skb, VLAN_HLEN);
+		}
+	}
+
 	skb->protocol = eth_type_trans(skb, netdev);
 
 	iph = (struct iphdr *)skb->data;
@@ -1478,7 +1640,10 @@ netxen_process_lro(struct netxen_adapter *adapter,
 
 	length = skb->len;
 
-	netif_receive_skb(skb);
+	if ((vid != 0xffff))
+		vlan_hwaccel_receive_skb(skb, adapter->vlgrp, vid);
+	else
+		netif_receive_skb(skb);
 
 	adapter->stats.lro_pkts++;
 	adapter->stats.rxbytes += length;
@@ -1625,14 +1790,10 @@ int netxen_process_cmd_ring(struct netxen_adapter *adapter)
 
 		smp_mb();
 
-		if (netif_queue_stopped(netdev) && netif_carrier_ok(netdev)) {
-			__netif_tx_lock(tx_ring->txq, smp_processor_id());
-			if (netxen_tx_avail(tx_ring) > TX_STOP_THRESH) {
+		if (netif_queue_stopped(netdev) && netif_carrier_ok(netdev))
+			if (netxen_tx_avail(tx_ring) > TX_STOP_THRESH)
 				netif_wake_queue(netdev);
-				adapter->tx_timeo_cnt = 0;
-			}
-			__netif_tx_unlock(tx_ring->txq);
-		}
+		adapter->tx_timeo_cnt = 0;
 	}
 	/*
 	 * If everything is freed up to consumer then check if the ring is full
@@ -1651,7 +1812,7 @@ int netxen_process_cmd_ring(struct netxen_adapter *adapter)
 	done = (sw_consumer == hw_consumer);
 	spin_unlock(&adapter->tx_clean_lock);
 
-	return (done);
+	return done;
 }
 
 void
@@ -1666,7 +1827,6 @@ netxen_post_rx_buffers(struct netxen_adapter *adapter, u32 ringid,
 
 	producer = rds_ring->producer;
 
-	spin_lock(&rds_ring->lock);
 	head = &rds_ring->free_list;
 	while (!list_empty(head)) {
 
@@ -1688,7 +1848,6 @@ netxen_post_rx_buffers(struct netxen_adapter *adapter, u32 ringid,
 
 		producer = get_next_index(producer, rds_ring->num_desc);
 	}
-	spin_unlock(&rds_ring->lock);
 
 	if (count) {
 		rds_ring->producer = producer;
@@ -1723,9 +1882,10 @@ netxen_post_rx_buffers_nodb(struct netxen_adapter *adapter,
 	int producer, count = 0;
 	struct list_head *head;
 
-	producer = rds_ring->producer;
 	if (!spin_trylock(&rds_ring->lock))
 		return;
+
+	producer = rds_ring->producer;
 
 	head = &rds_ring->free_list;
 	while (!list_empty(head)) {
@@ -1760,6 +1920,5 @@ netxen_post_rx_buffers_nodb(struct netxen_adapter *adapter,
 void netxen_nic_clear_stats(struct netxen_adapter *adapter)
 {
 	memset(&adapter->stats, 0, sizeof(adapter->stats));
-	return;
 }
 
