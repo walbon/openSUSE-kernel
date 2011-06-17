@@ -399,6 +399,13 @@ static struct ctl_table ipv4_table[] = {
 		.proc_handler	= ipv4_local_port_range,
 		.strategy	= ipv4_sysctl_local_port_range,
 	},
+	{
+		.procname	= "ip_local_reserved_ports",
+		.data		= sysctl_local_reserved_ports,
+		.maxlen		= 65536,
+		.mode		= 0644,
+		.proc_handler	= proc_do_large_bitmap,
+	},
 #ifdef CONFIG_IP_MULTICAST
 	{
 		.ctl_name	= NET_IPV4_IGMP_MAX_MEMBERSHIPS,
