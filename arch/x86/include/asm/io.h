@@ -180,8 +180,19 @@ extern void set_iounmap_nonlazy(void);
 # include "io_64.h"
 #endif
 
-extern void *xlate_dev_mem_ptr(unsigned long phys);
-extern void unxlate_dev_mem_ptr(unsigned long phys, void *addr);
+#define ARCH_HAS_VALID_PHYS_ADDR_RANGE
+static inline int valid_phys_addr_range (phys_addr_t addr, size_t size)
+{
+	return 1;
+}
+
+static inline int valid_mmap_phys_addr_range (unsigned long pfn, size_t size)
+{
+	return 1;
+}
+
+extern void *xlate_dev_mem_ptr(phys_addr_t phys);
+extern void unxlate_dev_mem_ptr(phys_addr_t phys, void *addr);
 
 extern int ioremap_change_attr(unsigned long vaddr, unsigned long size,
 				unsigned long prot_val);
