@@ -96,6 +96,10 @@ typedef struct xfs_dmops {
 #define XFS_DMAPI_UNMOUNT_FLAGS(mp) \
 	(((mp)->m_dmevmask & (1 << DM_EVENT_UNMOUNT)) ? 0 : DM_FLAGS_UNWANTED)
 
+#define XFS_DMAPI_PREUNMOUNT_FLAGS(mp) \
+	(((mp)->m_dmevmask & (1 << DM_EVENT_PREUNMOUNT)) \
+		? 0 : DM_FLAGS_UNWANTED)
+
 #define XFS_SEND_DATA(mp, ev,ip,off,len,fl,lock) \
 	(*(mp)->m_dm_ops->xfs_send_data)(ev,ip,off,len,fl,lock)
 #define XFS_SEND_MMAP(mp, vma,fl) \
@@ -112,7 +116,7 @@ do { \
 		(*(mp)->m_dm_ops->xfs_send_namesp)(DM_EVENT_PREUNMOUNT, mp, \
 			(mp)->m_rootip, DM_RIGHT_NULL, \
 			(mp)->m_rootip, DM_RIGHT_NULL, \
-			NULL, NULL, 0, 0, XFS_DMAPI_UNMOUNT_FLAGS(mp)); \
+			NULL, NULL, 0, 0, XFS_DMAPI_PREUNMOUNT_FLAGS(mp)); \
 	} \
 } while (0)
 #define XFS_SEND_UNMOUNT(mp) \
