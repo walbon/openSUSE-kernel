@@ -119,7 +119,7 @@ static inline int range_is_allowed(unsigned long pfn, unsigned long size)
 }
 #endif
 
-void __attribute__((weak)) unxlate_dev_mem_ptr(unsigned long phys, void *addr)
+void __attribute__((weak)) unxlate_dev_mem_ptr(phys_addr_t phys, void *addr)
 {
 }
 
@@ -131,9 +131,12 @@ void __attribute__((weak)) unxlate_dev_mem_ptr(unsigned long phys, void *addr)
 static ssize_t read_mem(struct file * file, char __user * buf,
 			size_t count, loff_t *ppos)
 {
-	unsigned long p = *ppos;
+	phys_addr_t p = *ppos;
 	ssize_t read, sz;
 	char *ptr;
+
+	if (p != *ppos)
+		return 0;
 
 	if (!valid_phys_addr_range(p, count))
 		return -EFAULT;
@@ -198,10 +201,13 @@ static ssize_t read_mem(struct file * file, char __user * buf,
 static ssize_t write_mem(struct file * file, const char __user * buf, 
 			 size_t count, loff_t *ppos)
 {
-	unsigned long p = *ppos;
+	phys_addr_t p = *ppos;
 	ssize_t written, sz;
 	unsigned long copied;
 	void *ptr;
+
+	if (p != *ppos)
+		return -EFBIG;
 
 	if (!valid_phys_addr_range(p, count))
 		return -EFAULT;
