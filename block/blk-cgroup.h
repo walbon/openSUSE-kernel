@@ -165,7 +165,7 @@ static inline char *blkg_path(struct blkio_group *blkg) { return NULL; }
 
 #endif
 
-#define BLKIO_WEIGHT_MIN	100
+#define BLKIO_WEIGHT_MIN	10
 #define BLKIO_WEIGHT_MAX	1000
 #define BLKIO_WEIGHT_DEFAULT	500
 
@@ -211,6 +211,7 @@ static inline void blkiocg_set_start_empty_time(struct blkio_group *blkg) {}
 #if defined(CONFIG_BLK_CGROUP) || defined(CONFIG_BLK_CGROUP_MODULE)
 extern struct blkio_cgroup blkio_root_cgroup;
 extern struct blkio_cgroup *cgroup_to_blkio_cgroup(struct cgroup *cgroup);
+extern struct blkio_cgroup *task_blkio_cgroup(struct task_struct *tsk);
 extern void blkiocg_add_blkio_group(struct blkio_cgroup *blkcg,
 			struct blkio_group *blkg, void *key, dev_t dev);
 extern int blkiocg_del_blkio_group(struct blkio_group *blkg);
@@ -232,6 +233,8 @@ void blkiocg_update_io_remove_stats(struct blkio_group *blkg,
 struct cgroup;
 static inline struct blkio_cgroup *
 cgroup_to_blkio_cgroup(struct cgroup *cgroup) { return NULL; }
+static inline struct blkio_cgroup *
+task_blkio_cgroup(struct task_struct *tsk) { return NULL; }
 
 static inline void blkiocg_add_blkio_group(struct blkio_cgroup *blkcg,
 			struct blkio_group *blkg, void *key, dev_t dev) {}
