@@ -38,19 +38,6 @@
 #define CR3_L_MODE_RESERVED_BITS (CR3_NONPAE_RESERVED_BITS |	\
 				  0xFFFFFF0000000000ULL)
 
-#define KVM_GUEST_CR0_MASK_UNRESTRICTED_GUEST				\
-	(X86_CR0_WP | X86_CR0_NE | X86_CR0_NW | X86_CR0_CD)
-#define KVM_GUEST_CR0_MASK						\
-	(KVM_GUEST_CR0_MASK_UNRESTRICTED_GUEST | X86_CR0_PG | X86_CR0_PE)
-#define KVM_VM_CR0_ALWAYS_ON_UNRESTRICTED_GUEST				\
-	(X86_CR0_WP | X86_CR0_NE | X86_CR0_TS | X86_CR0_MP)
-#define KVM_VM_CR0_ALWAYS_ON						\
-	(KVM_VM_CR0_ALWAYS_ON_UNRESTRICTED_GUEST | X86_CR0_PG | X86_CR0_PE)
-#define KVM_GUEST_CR4_MASK						\
-	(X86_CR4_VME | X86_CR4_PSE | X86_CR4_PAE | X86_CR4_PGE | X86_CR4_VMXE)
-#define KVM_PMODE_VM_CR4_ALWAYS_ON (X86_CR4_PAE | X86_CR4_VMXE)
-#define KVM_RMODE_VM_CR4_ALWAYS_ON (X86_CR4_VME | X86_CR4_PAE | X86_CR4_VMXE)
-
 #define INVALID_PAGE (~(hpa_t)0)
 #define UNMAPPED_GVA (~(gpa_t)0)
 
@@ -320,8 +307,8 @@ struct kvm_vcpu_arch {
 		unsigned long mmu_seq;
 	} update_pte;
 
-	struct i387_fxsave_struct host_fx_image;
-	struct i387_fxsave_struct guest_fx_image;
+	struct fpu guest_fpu;
+	u64 xcr0;
 
 	gva_t mmio_fault_cr2;
 	struct kvm_pio_request pio;
@@ -515,6 +502,8 @@ struct kvm_x86_ops {
 	void (*cache_reg)(struct kvm_vcpu *vcpu, enum kvm_reg reg);
 	unsigned long (*get_rflags)(struct kvm_vcpu *vcpu);
 	void (*set_rflags)(struct kvm_vcpu *vcpu, unsigned long rflags);
+	void (*fpu_activate)(struct kvm_vcpu *vcpu);
+	void (*fpu_deactivate)(struct kvm_vcpu *vcpu);
 
 	void (*tlb_flush)(struct kvm_vcpu *vcpu);
 
@@ -625,6 +614,7 @@ void kvm_set_cr8(struct kvm_vcpu *vcpu, unsigned long cr8);
 unsigned long kvm_get_cr8(struct kvm_vcpu *vcpu);
 void kvm_lmsw(struct kvm_vcpu *vcpu, unsigned long msw);
 void kvm_get_cs_db_l_bits(struct kvm_vcpu *vcpu, int *db, int *l);
+int kvm_set_xcr(struct kvm_vcpu *vcpu, u32 index, u64 xcr);
 
 int kvm_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata);
 int kvm_set_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 data);
@@ -723,21 +713,6 @@ static inline unsigned long read_msr(unsigned long msr)
 	return value;
 }
 #endif
-
-static inline void kvm_fx_save(struct i387_fxsave_struct *image)
-{
-	asm("fxsave (%0)":: "r" (image));
-}
-
-static inline void kvm_fx_restore(struct i387_fxsave_struct *image)
-{
-	asm("fxrstor (%0)":: "r" (image));
-}
-
-static inline void kvm_fx_finit(void)
-{
-	asm("finit");
-}
 
 static inline u32 get_rdx_init_val(void)
 {

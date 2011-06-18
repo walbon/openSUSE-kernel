@@ -35,6 +35,8 @@
 #include <asm/vmx.h>
 #include <asm/virtext.h>
 #include <asm/mce.h>
+#include <asm/i387.h>
+#include <asm/xcr.h>
 
 #include "trace.h"
 
@@ -63,6 +65,19 @@ static int __read_mostly emulate_invalid_guest_state = 0;
 module_param(emulate_invalid_guest_state, bool, S_IRUGO);
 
 #define RMODE_GUEST_OWNED_EFLAGS_BITS (~(X86_EFLAGS_IOPL | X86_EFLAGS_VM))
+
+#define KVM_GUEST_CR0_MASK_UNRESTRICTED_GUEST				\
+	(X86_CR0_WP | X86_CR0_NE | X86_CR0_NW | X86_CR0_CD)
+#define KVM_GUEST_CR0_MASK						\
+	(KVM_GUEST_CR0_MASK_UNRESTRICTED_GUEST | X86_CR0_PG | X86_CR0_PE)
+#define KVM_VM_CR0_ALWAYS_ON_UNRESTRICTED_GUEST				\
+	(X86_CR0_WP | X86_CR0_NE | X86_CR0_MP)
+#define KVM_VM_CR0_ALWAYS_ON						\
+	(KVM_VM_CR0_ALWAYS_ON_UNRESTRICTED_GUEST | X86_CR0_PG | X86_CR0_PE)
+#define KVM_GUEST_CR4_MASK						\
+	(X86_CR4_VME | X86_CR4_PSE | X86_CR4_PAE | X86_CR4_PGE | X86_CR4_VMXE)
+#define KVM_PMODE_VM_CR4_ALWAYS_ON (X86_CR4_PAE | X86_CR4_VMXE)
+#define KVM_RMODE_VM_CR4_ALWAYS_ON (X86_CR4_VME | X86_CR4_PAE | X86_CR4_VMXE)
 
 /*
  * These 2 parameters are used to config the controls for Pause-Loop Exiting:
@@ -566,9 +581,8 @@ static void update_exception_bitmap(struct kvm_vcpu *vcpu)
 {
 	u32 eb;
 
-	eb = (1u << PF_VECTOR) | (1u << UD_VECTOR) | (1u << MC_VECTOR);
-	if (!vcpu->fpu_active)
-		eb |= 1u << NM_VECTOR;
+	eb = (1u << PF_VECTOR) | (1u << UD_VECTOR) | (1u << MC_VECTOR)
+		| (1u << NM_VECTOR);
 	/*
 	 * Unconditionally intercept #DB so we can maintain dr6 without
 	 * reading it every exit.
@@ -582,6 +596,8 @@ static void update_exception_bitmap(struct kvm_vcpu *vcpu)
 		eb = ~0;
 	if (enable_ept)
 		eb &= ~(1u << PF_VECTOR); /* bypass_guest_pf = 0 */
+	if (vcpu->fpu_active)
+		eb &= ~(1u << NM_VECTOR);
 	vmcs_write32(EXCEPTION_BITMAP, eb);
 }
 
@@ -804,9 +820,6 @@ static void vmx_fpu_activate(struct kvm_vcpu *vcpu)
 
 static void vmx_fpu_deactivate(struct kvm_vcpu *vcpu)
 {
-	if (!vcpu->fpu_active)
-		return;
-	vcpu->fpu_active = 0;
 	vmcs_set_bits(GUEST_CR0, X86_CR0_TS);
 	update_exception_bitmap(vcpu);
 }
@@ -1729,8 +1742,6 @@ static void vmx_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0)
 	else
 		hw_cr0 = (cr0 & ~KVM_GUEST_CR0_MASK) | KVM_VM_CR0_ALWAYS_ON;
 
-	vmx_fpu_deactivate(vcpu);
-
 	if (vmx->rmode.vm86_active && (cr0 & X86_CR0_PE))
 		enter_pmode(vcpu);
 
@@ -1749,12 +1760,12 @@ static void vmx_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0)
 	if (enable_ept)
 		ept_update_paging_mode_cr0(&hw_cr0, cr0, vcpu);
 
+	if (!vcpu->fpu_active)
+		hw_cr0 |= X86_CR0_TS;
+
 	vmcs_writel(CR0_READ_SHADOW, cr0);
 	vmcs_writel(GUEST_CR0, hw_cr0);
 	vcpu->arch.cr0 = cr0;
-
-	if (!(cr0 & X86_CR0_TS) || !(cr0 & X86_CR0_PE))
-		vmx_fpu_activate(vcpu);
 }
 
 static u64 construct_eptp(unsigned long root_hpa)
@@ -1784,8 +1795,6 @@ static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 
 	vmx_flush_tlb(vcpu);
 	vmcs_writel(GUEST_CR3, guest_cr3);
-	if (vcpu->arch.cr0 & X86_CR0_PE)
-		vmx_fpu_deactivate(vcpu);
 }
 
 static void vmx_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
@@ -2996,11 +3005,10 @@ static int handle_cr(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 		};
 		break;
 	case 2: /* clts */
-		vmx_fpu_deactivate(vcpu);
 		vcpu->arch.cr0 &= ~X86_CR0_TS;
 		vmcs_writel(CR0_READ_SHADOW, vcpu->arch.cr0);
-		vmx_fpu_activate(vcpu);
 		skip_emulated_instruction(vcpu);
+		vmx_fpu_activate(vcpu);
 		return 1;
 	case 1: /*mov from cr*/
 		switch (cr) {
@@ -3224,6 +3232,16 @@ static int handle_wbinvd(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 {
 	skip_emulated_instruction(vcpu);
 	/* TODO: Add support for VT-d/pass-through device */
+	return 1;
+}
+
+static int handle_xsetbv(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
+{
+	u64 new_bv = kvm_read_edx_eax(vcpu);
+	u32 index = kvm_register_read(vcpu, VCPU_REGS_RCX);
+
+	if (kvm_set_xcr(vcpu, index, new_bv) == 0)
+		skip_emulated_instruction(vcpu);
 	return 1;
 }
 
@@ -3505,6 +3523,7 @@ static int (*kvm_vmx_exit_handlers[])(struct kvm_vcpu *vcpu,
 	[EXIT_REASON_TPR_BELOW_THRESHOLD]     = handle_tpr_below_threshold,
 	[EXIT_REASON_APIC_ACCESS]             = handle_apic_access,
 	[EXIT_REASON_WBINVD]                  = handle_wbinvd,
+	[EXIT_REASON_XSETBV]                  = handle_xsetbv,
 	[EXIT_REASON_TASK_SWITCH]             = handle_task_switch,
 	[EXIT_REASON_MCE_DURING_VMENTRY]      = handle_machine_check,
 	[EXIT_REASON_EPT_VIOLATION]	      = handle_ept_violation,
@@ -4075,6 +4094,7 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.cache_reg = vmx_cache_reg,
 	.get_rflags = vmx_get_rflags,
 	.set_rflags = vmx_set_rflags,
+	.fpu_deactivate = vmx_fpu_deactivate,
 
 	.tlb_flush = vmx_flush_tlb,
 
