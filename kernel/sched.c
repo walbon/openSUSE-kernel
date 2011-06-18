@@ -4175,8 +4175,8 @@ static inline void calculate_imbalance(struct sd_lb_stats *sds, int this_cpu,
 				WARN_ON_ONCE(1);
 				printk(KERN_ERR "calculate_imbalance: sds->busiest->cpu_power = %d\n",
 						sds->busiest->cpu_power);
-				return;
 			}
+			return;
 		}
 
 		load_above_capacity /= sds->busiest->cpu_power;
