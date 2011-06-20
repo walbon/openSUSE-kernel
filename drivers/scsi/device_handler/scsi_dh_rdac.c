@@ -791,6 +791,7 @@ static const struct scsi_dh_devlist rdac_dev_list[] = {
 	{"IBM", "3526", 0},
 	{"SGI", "TP9400", 0},
 	{"SGI", "TP9500", 0},
+	{"SGI", "TP9700", 0},
 	{"SGI", "IS", 0},
 	{"STK", "OPENstorage D280", 0},
 	{"STK", "FLEXLINE 380", 0},
@@ -805,12 +806,14 @@ static const struct scsi_dh_devlist rdac_dev_list[] = {
 	{"DELL", "MD32xx", 0},
 	{"DELL", "MD32xxi", 0},
 	{"DELL", "MD36xxi", 0},
+	{"DELL", "MD36xxf", 0},
 	{"LSI", "INF-01-00", 0},
 	{"ENGENIO", "INF-01-00", 0},
 	{"STK", "FLEXLINE 380", 0},
 	{"SUN", "CSM100_R_FC", 0},
 	{"SUN", "STK6580_6780", 0},
-	{"SUN", "SUN_6180", 0},	
+	{"SUN", "SUN_6180", 0},
+	{"SUN", "ArrayStorage", 0},
 	{NULL, NULL, 0},
 };
 
