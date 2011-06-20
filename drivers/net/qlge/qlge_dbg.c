@@ -1236,12 +1236,8 @@ static void ql_get_core_dump(struct ql_adapter *qdev)
 			"that is up.\n");
 		return;
 	}
-
-	if (ql_mb_sys_err(qdev)) {
-		QPRINTK(qdev, IFUP, ERR,
-			"Fail force coredump with ql_mb_sys_err().\n");
-		return;
-	}
+	/* Start the firmware dump and reset. */
+	queue_delayed_work(qdev->workqueue, &qdev->mpi_reset_work, 0);
 }
 
 void ql_gen_reg_dump(struct ql_adapter *qdev,
@@ -1319,9 +1315,28 @@ void ql_gen_reg_dump(struct ql_adapter *qdev,
 	status = ql_get_ets_regs(qdev, &mpi_coredump->ets[0]);
 	if (status)
 		return;
+}
 
-	if (test_bit(QL_FRC_COREDUMP, &qdev->flags))
+void ql_get_dump(struct ql_adapter *qdev, void *buff)
+{
+	/*
+	 * If the dump has already been taken and is stored
+	 * in our internal buffer and if force dump is set then
+	 * just start the spool to dump it to the log file
+	 * and also, take a snapshot of the general regs to
+	 * to the user's buffer or else take complete dump
+	 * to the user's buffer if force is not set.
+	 */
+
+	if (!test_bit(QL_FRC_COREDUMP, &qdev->flags)) {
+		if(!ql_core_dump(qdev, buff))
+			ql_soft_reset_mpi_risc(qdev);
+		else
+			QPRINTK(qdev, DRV, ERR,"coredump failed!\n");
+	} else {
+		ql_gen_reg_dump(qdev, buff);
 		ql_get_core_dump(qdev);
+	}
 }
 
 /* Coredump to messages log file using separate worker thread */

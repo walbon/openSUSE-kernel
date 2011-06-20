@@ -181,14 +181,24 @@ struct rdac_dh_data {
 	struct rdac_controller	*ctlr;
 #define UNINITIALIZED_LUN	(1 << 8)
 	unsigned		lun;
+
+#define RDAC_MODE		0
+#define RDAC_MODE_AVT		1
+#define RDAC_MODE_IOSHIP	2
+	unsigned char		mode;
+
 #define RDAC_STATE_ACTIVE	0
 #define RDAC_STATE_PASSIVE	1
 	unsigned char		state;
 
 #define RDAC_LUN_UNOWNED	0
 #define RDAC_LUN_OWNED		1
-#define RDAC_LUN_AVT		2
 	char			lun_state;
+
+#define RDAC_PREFERRED		0
+#define RDAC_NON_PREFERRED	1
+	char			preferred;
+
 	unsigned char		sense[SCSI_SENSE_BUFFERSIZE];
 	union			{
 		struct c2_inquiry c2;
@@ -198,11 +208,15 @@ struct rdac_dh_data {
 	} inq;
 };
 
+static const char *mode[] = {
+	"RDAC",
+	"AVT",
+	"IOSHIP",
+};
 static const char *lun_state[] =
 {
 	"unowned",
 	"owned",
-	"owned (AVT mode)",
 };
 
 struct rdac_queue_data {
@@ -457,25 +471,33 @@ static int check_ownership(struct scsi_device *sdev, struct rdac_dh_data *h)
 	int err;
 	struct c9_inquiry *inqp;
 
-	h->lun_state = RDAC_LUN_UNOWNED;
 	h->state = RDAC_STATE_ACTIVE;
 	err = submit_inquiry(sdev, 0xC9, sizeof(struct c9_inquiry), h);
 	if (err == SCSI_DH_OK) {
 		inqp = &h->inq.c9;
-		if ((inqp->avte_cvp >> 7) == 0x1) {
-			/* LUN in AVT mode */
-			sdev_printk(KERN_NOTICE, sdev,
-				    "%s: AVT mode detected\n",
-				    RDAC_NAME);
-			h->lun_state = RDAC_LUN_AVT;
-		} else if ((inqp->avte_cvp & 0x1) != 0) {
-			/* LUN was owned by the controller */
-			h->lun_state = RDAC_LUN_OWNED;
-		}
-	}
+		/* detect the operating mode */
+		if ((inqp->avte_cvp >> 5) & 0x1)
+			h->mode = RDAC_MODE_IOSHIP; /* LUN in IOSHIP mode */
+		else if (inqp->avte_cvp >> 7)
+			h->mode = RDAC_MODE_AVT; /* LUN in AVT mode */
+		else
+			h->mode = RDAC_MODE; /* LUN in RDAC mode */
 
-	if (h->lun_state == RDAC_LUN_UNOWNED)
-		h->state = RDAC_STATE_PASSIVE;
+		/* Update ownership */
+		if (inqp->avte_cvp & 0x1)
+			h->lun_state = RDAC_LUN_OWNED;
+		else {
+			h->lun_state = RDAC_LUN_UNOWNED;
+			if (h->mode == RDAC_MODE)
+				h->state = RDAC_STATE_PASSIVE;
+		}
+
+		/* Update path prio*/
+		if (inqp->path_prio & 0x1)
+			h->preferred = RDAC_PREFERRED;
+		else
+			h->preferred = RDAC_NON_PREFERRED;
+	}
 
 	return err;
 }
@@ -647,12 +669,27 @@ static int rdac_activate(struct scsi_device *sdev,
 {
 	struct rdac_dh_data *h = get_rdac_data(sdev);
 	int err = SCSI_DH_OK;
+	int act = 0;
 
 	err = check_ownership(sdev, h);
 	if (err != SCSI_DH_OK)
 		goto done;
 
-	if (h->lun_state == RDAC_LUN_UNOWNED) {
+	switch (h->mode) {
+	case RDAC_MODE:
+		if (h->lun_state == RDAC_LUN_UNOWNED)
+			act = 1;
+		break;
+	case RDAC_MODE_IOSHIP:
+		if ((h->lun_state == RDAC_LUN_UNOWNED) &&
+		    (h->preferred == RDAC_PREFERRED))
+			act = 1;
+		break;
+	default:
+		break;
+	}
+
+	if (act) {
 		err = queue_mode_select(sdev, fn, data);
 		if (err == SCSI_DH_OK)
 			return 0;
@@ -754,6 +791,7 @@ static const struct scsi_dh_devlist rdac_dev_list[] = {
 	{"IBM", "3526", 0},
 	{"SGI", "TP9400", 0},
 	{"SGI", "TP9500", 0},
+	{"SGI", "TP9700", 0},
 	{"SGI", "IS", 0},
 	{"STK", "OPENstorage D280", 0},
 	{"STK", "FLEXLINE 380", 0},
@@ -768,12 +806,14 @@ static const struct scsi_dh_devlist rdac_dev_list[] = {
 	{"DELL", "MD32xx", 0},
 	{"DELL", "MD32xxi", 0},
 	{"DELL", "MD36xxi", 0},
+	{"DELL", "MD36xxf", 0},
 	{"LSI", "INF-01-00", 0},
 	{"ENGENIO", "INF-01-00", 0},
 	{"STK", "FLEXLINE 380", 0},
 	{"SUN", "CSM100_R_FC", 0},
 	{"SUN", "STK6580_6780", 0},
-	{"SUN", "SUN_6180", 0},	
+	{"SUN", "SUN_6180", 0},
+	{"SUN", "ArrayStorage", 0},
 	{NULL, NULL, 0},
 };
 
@@ -836,8 +876,9 @@ static int rdac_bus_attach(struct scsi_device *sdev)
 	spin_unlock_irqrestore(sdev->request_queue->queue_lock, flags);
 
 	sdev_printk(KERN_NOTICE, sdev,
-		    "%s: LUN %d (%s)\n",
-		    RDAC_NAME, h->lun, lun_state[(int)h->lun_state]);
+		    "%s: LUN %d (%s) (%s)\n",
+		    RDAC_NAME, h->lun, mode[(int)h->mode],
+		    lun_state[(int)h->lun_state]);
 
 	return 0;
 

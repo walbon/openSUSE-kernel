@@ -444,6 +444,12 @@ struct kvm_ioeventfd {
 #define KVM_CAP_VCPU_EVENTS 41
 #endif
 #define KVM_CAP_INTR_SHADOW 49
+#ifdef __KVM_HAVE_XSAVE
+#define KVM_CAP_XSAVE 55
+#endif
+#ifdef __KVM_HAVE_XCRS
+#define KVM_CAP_XCRS 56
+#endif
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
@@ -662,6 +668,13 @@ struct kvm_debug_guest {
 #define KVM_TRC_STLB_WRITE       (KVM_TRC_HANDLER + 0x17)
 #define KVM_TRC_STLB_INVAL       (KVM_TRC_HANDLER + 0x18)
 #define KVM_TRC_PPC_INSTR        (KVM_TRC_HANDLER + 0x19)
+
+/* Available with KVM_CAP_XSAVE */
+#define KVM_GET_XSAVE		  _IOR(KVMIO,  0xa4, struct kvm_xsave)
+#define KVM_SET_XSAVE		  _IOW(KVMIO,  0xa5, struct kvm_xsave)
+/* Available with KVM_CAP_XCRS */
+#define KVM_GET_XCRS		  _IOR(KVMIO,  0xa6, struct kvm_xcrs)
+#define KVM_SET_XCRS		  _IOW(KVMIO,  0xa7, struct kvm_xcrs)
 
 #define KVM_DEV_ASSIGN_ENABLE_IOMMU	(1 << 0)
 

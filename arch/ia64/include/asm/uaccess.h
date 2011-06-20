@@ -366,7 +366,7 @@ ia64_done_with_exception (struct pt_regs *regs)
 
 #define ARCH_HAS_TRANSLATE_MEM_PTR	1
 static __inline__ char *
-xlate_dev_mem_ptr (unsigned long p)
+xlate_dev_mem_ptr (phys_addr_t p)
 {
 	struct page *page;
 	char * ptr;

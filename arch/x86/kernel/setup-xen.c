@@ -795,6 +795,8 @@ static struct dmi_system_id __initdata bad_bios_dmi_table[] = {
 
 void __init setup_arch(char **cmdline_p)
 {
+	int acpi = 0;
+	int k8 = 0;
 #ifdef CONFIG_XEN
 	unsigned int i;
 	unsigned long p2m_pages;
@@ -1106,10 +1108,15 @@ void __init setup_arch(char **cmdline_p)
 	/*
 	 * Parse SRAT to discover nodes.
 	 */
-	acpi_numa_init();
+	acpi = acpi_numa_init();
 #endif
 
-	initmem_init(0, max_pfn);
+#ifdef CONFIG_K8_NUMA
+	if (!acpi)
+		k8 = !k8_numa_init(0, max_pfn);
+#endif
+
+	initmem_init(0, max_pfn, acpi, k8);
 
 #ifdef CONFIG_ACPI_SLEEP
 	/*

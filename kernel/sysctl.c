@@ -3019,6 +3019,273 @@ static int proc_do_cad_pid(struct ctl_table *table, int write,
 	return 0;
 }
 
+static void proc_skip_char(char **buf, size_t *size, const char v)
+{
+	while (*size) {
+		if (**buf != v)
+			break;
+		(*size)--;
+		(*buf)++;
+	}
+}
+
+#define TMPBUFLEN 22
+/**
+ * proc_get_long - reads an ASCII formated integer from a user buffer
+ *
+ * @buf - a kernel buffer
+ * @size - size of the kernel buffer
+ * @val - this is where the number will be stored
+ * @neg - set to %TRUE if number is negative
+ * @perm_tr - a vector which contains the allowed trailers
+ * @perm_tr_len - size of the perm_tr vector
+ * @tr - pointer to store the trailer character
+ *
+ * In case of success 0 is returned and buf and size are updated with
+ * the amount of bytes read. If tr is non NULL and a trailing
+ * character exist (size is non zero after returning from this
+ * function) tr is updated with the trailing character.
+ */
+static int proc_get_long(char **buf, size_t *size,
+			  unsigned long *val, int *negp,
+			  const char *perm_tr, unsigned perm_tr_len, char *tr)
+{
+	int len;
+	char *p, tmp[TMPBUFLEN];
+
+	if (!*size)
+		return -EINVAL;
+
+	len = *size;
+	if (len > TMPBUFLEN - 1)
+		len = TMPBUFLEN - 1;
+
+	memcpy(tmp, *buf, len);
+
+	tmp[len] = 0;
+	p = tmp;
+	if (*p == '-' && *size > 1) {
+		*negp = -1;
+		p++;
+	} else
+		*negp = 0;
+	if (!isdigit(*p))
+		return -EINVAL;
+
+	*val = simple_strtoul(p, &p, 0);
+
+	len = p - tmp;
+
+	/* We don't know if the next char is whitespace thus we may accept
+	 * invalid integers (e.g. 1234...a) or two integers instead of one
+	 * (e.g. 123...1). So lets not allow such large numbers. */
+	if (len == TMPBUFLEN - 1)
+		return -EINVAL;
+
+	if (len < *size && perm_tr_len && !memchr(perm_tr, *p, perm_tr_len))
+		return -EINVAL;
+
+	if (tr && (len < *size))
+		*tr = *p;
+
+	*buf += len;
+	*size -= len;
+
+	return 0;
+}
+
+/**
+ * proc_put_long - coverts an integer to a decimal ASCII formated string
+ *
+ * @buf - the user buffer
+ * @size - the size of the user buffer
+ * @val - the integer to be converted
+ * @neg - sign of the number, %TRUE for negative
+ *
+ * In case of success 0 is returned and buf and size are updated with
+ * the amount of bytes read.
+ */
+static int proc_put_long(void __user **buf, size_t *size, unsigned long val,
+			  int neg)
+{
+	int len;
+	char tmp[TMPBUFLEN], *p = tmp;
+
+	sprintf(p, "%s%lu", neg ? "-" : "", val);
+	len = strlen(tmp);
+	if (len > *size)
+		len = *size;
+	if (copy_to_user(*buf, tmp, len))
+		return -EFAULT;
+	*size -= len;
+	*buf += len;
+	return 0;
+}
+#undef TMPBUFLEN
+
+static int proc_put_char(void __user **buf, size_t *size, char c)
+{
+	if (*size) {
+		char __user **buffer = (char __user **)buf;
+		if (put_user(c, *buffer))
+			return -EFAULT;
+		(*size)--, (*buffer)++;
+		*buf = *buffer;
+	}
+	return 0;
+}
+
+/**
+ * proc_do_large_bitmap - read/write from/to a large bitmap
+ * @table: the sysctl table
+ * @write: %TRUE if this is a write to the sysctl file
+ * @buffer: the user buffer
+ * @lenp: the size of the user buffer
+ * @ppos: file position
+ *
+ * The bitmap is stored at table->data and the bitmap length (in bits)
+ * in table->maxlen.
+ *
+ * We use a range comma separated format (e.g. 1,3-4,10-10) so that
+ * large bitmaps may be represented in a compact manner. Writing into
+ * the file will clear the bitmap then update it with the given input.
+ *
+ * Returns 0 on success.
+ */
+int proc_do_large_bitmap(struct ctl_table *table, int write, struct file *filp,
+			 void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int err = 0;
+	int first = 1;
+	size_t left = *lenp;
+	unsigned long bitmap_len = table->maxlen;
+	unsigned long *bitmap = (unsigned long *) table->data;
+	unsigned long *tmp_bitmap = NULL;
+	char tr_a[] = { '-', ',', '\n' }, tr_b[] = { ',', '\n', 0 }, c;
+
+	if (!bitmap_len || !left || (*ppos && !write)) {
+		*lenp = 0;
+		return 0;
+	}
+
+	if (write) {
+		unsigned long page = 0;
+		char *kbuf;
+
+		if (left > PAGE_SIZE - 1)
+			left = PAGE_SIZE - 1;
+
+		page = __get_free_page(GFP_KERNEL);
+		kbuf = (char *) page;
+		if (!kbuf)
+			return -ENOMEM;
+		if (copy_from_user(kbuf, buffer, left)) {
+			free_page(page);
+			return -EFAULT;
+                }
+		kbuf[left] = 0;
+
+		tmp_bitmap = kzalloc(BITS_TO_LONGS(bitmap_len) * sizeof(unsigned long),
+				     GFP_KERNEL);
+		if (!tmp_bitmap) {
+			free_page(page);
+			return -ENOMEM;
+		}
+		proc_skip_char(&kbuf, &left, '\n');
+		while (!err && left) {
+			unsigned long val_a, val_b;
+			int neg;
+
+			err = proc_get_long(&kbuf, &left, &val_a, &neg, tr_a,
+					     sizeof(tr_a), &c);
+			if (err)
+				break;
+			if (val_a >= bitmap_len || neg) {
+				err = -EINVAL;
+				break;
+			}
+
+			val_b = val_a;
+			if (left) {
+				kbuf++;
+				left--;
+			}
+
+			if (c == '-') {
+				err = proc_get_long(&kbuf, &left, &val_b,
+						     &neg, tr_b, sizeof(tr_b),
+						     &c);
+				if (err)
+					break;
+				if (val_b >= bitmap_len || neg ||
+				    val_a > val_b) {
+					err = -EINVAL;
+					break;
+				}
+				if (left) {
+					kbuf++;
+					left--;
+				}
+			}
+
+			while (val_a <= val_b)
+				set_bit(val_a++, tmp_bitmap);
+
+			first = 0;
+			proc_skip_char(&kbuf, &left, '\n');
+		}
+		free_page(page);
+	} else {
+		unsigned long bit_a, bit_b = 0;
+
+		while (left) {
+			bit_a = find_next_bit(bitmap, bitmap_len, bit_b);
+			if (bit_a >= bitmap_len)
+				break;
+			bit_b = find_next_zero_bit(bitmap, bitmap_len,
+						   bit_a + 1) - 1;
+
+			if (!first) {
+				err = proc_put_char(&buffer, &left, ',');
+				if (err)
+					break;
+			}
+			err = proc_put_long(&buffer, &left, bit_a, 0);
+			if (err)
+				break;
+			if (bit_a != bit_b) {
+				err = proc_put_char(&buffer, &left, '-');
+				if (err)
+					break;
+				err = proc_put_long(&buffer, &left, bit_b, 0);
+				if (err)
+					break;
+			}
+
+			first = 0; bit_b++;
+		}
+		if (!err)
+			err = proc_put_char(&buffer, &left, '\n');
+	}
+
+	if (!err) {
+		if (write) {
+			if (*ppos)
+				bitmap_or(bitmap, bitmap, tmp_bitmap, bitmap_len);
+			else
+				memcpy(bitmap, tmp_bitmap,
+					BITS_TO_LONGS(bitmap_len) * sizeof(unsigned long));
+		}
+		kfree(tmp_bitmap);
+		*lenp -= left;
+		*ppos += *lenp;
+		return 0;
+	} else {
+		kfree(tmp_bitmap);
+		return err;
+	}
+}
+
 #else /* CONFIG_PROC_FS */
 
 int proc_dostring(struct ctl_table *table, int write,

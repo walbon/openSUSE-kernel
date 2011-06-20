@@ -50,6 +50,8 @@
 #include <asm/mtrr.h>
 #include <asm/mce.h>
 #include <asm/pvclock.h>
+#include <asm/i387.h>
+#include <asm/xcr.h>
 
 #define MAX_IO_MSRS 256
 #define CR0_RESERVED_BITS						\
@@ -60,6 +62,7 @@
 	(~(unsigned long)(X86_CR4_VME | X86_CR4_PVI | X86_CR4_TSD | X86_CR4_DE\
 			  | X86_CR4_PSE | X86_CR4_PAE | X86_CR4_MCE	\
 			  | X86_CR4_PGE | X86_CR4_PCE | X86_CR4_OSFXSR	\
+			  | X86_CR4_OSXSAVE \
 			  | X86_CR4_OSXMMEXCPT | X86_CR4_VMXE))
 
 #define CR8_RESERVED_BITS (~(unsigned long)X86_CR8_TPR)
@@ -125,6 +128,13 @@ struct kvm_stats_debugfs_item debugfs_entries[] = {
 	{ "largepages", VM_STAT(lpages) },
 	{ NULL }
 };
+
+u64 __read_mostly host_xcr0;
+
+static inline u32 bit(int bitno)
+{
+	return 1 << (bitno & 31);
+}
 
 unsigned long segment_base(u16 selector)
 {
@@ -352,12 +362,72 @@ void kvm_lmsw(struct kvm_vcpu *vcpu, unsigned long msw)
 }
 EXPORT_SYMBOL_GPL(kvm_lmsw);
 
+int __kvm_set_xcr(struct kvm_vcpu *vcpu, u32 index, u64 xcr)
+{
+	u64 xcr0;
+
+	/* Only support XCR_XFEATURE_ENABLED_MASK(xcr0) now  */
+	if (index != XCR_XFEATURE_ENABLED_MASK)
+		return 1;
+	xcr0 = xcr;
+	if (kvm_x86_ops->get_cpl(vcpu) != 0)
+		return 1;
+	if (!(xcr0 & XSTATE_FP))
+		return 1;
+	if ((xcr0 & XSTATE_YMM) && !(xcr0 & XSTATE_SSE))
+		return 1;
+	if (xcr0 & ~host_xcr0)
+		return 1;
+	vcpu->arch.xcr0 = xcr0;
+	vcpu->guest_xcr0_loaded = 0;
+	return 0;
+}
+
+int kvm_set_xcr(struct kvm_vcpu *vcpu, u32 index, u64 xcr)
+{
+	if (__kvm_set_xcr(vcpu, index, xcr)) {
+		kvm_inject_gp(vcpu, 0);
+		return 1;
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(kvm_set_xcr);
+
+static bool guest_cpuid_has_xsave(struct kvm_vcpu *vcpu)
+{
+	struct kvm_cpuid_entry2 *best;
+
+	best = kvm_find_cpuid_entry(vcpu, 1, 0);
+	return best && (best->ecx & bit(X86_FEATURE_XSAVE));
+}
+
+static void update_cpuid(struct kvm_vcpu *vcpu)
+{
+	struct kvm_cpuid_entry2 *best;
+
+	best = kvm_find_cpuid_entry(vcpu, 1, 0);
+	if (!best)
+		return;
+
+	/* Update OSXSAVE bit */
+	if (cpu_has_xsave && best->function == 0x1) {
+		best->ecx &= ~(bit(X86_FEATURE_OSXSAVE));
+		if (vcpu->arch.cr4 & X86_CR4_OSXSAVE)
+			best->ecx |= bit(X86_FEATURE_OSXSAVE);
+	}
+}
+
 void kvm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 {
 	unsigned long old_cr4 = vcpu->arch.cr4;
 	unsigned long pdptr_bits = X86_CR4_PGE | X86_CR4_PSE | X86_CR4_PAE;
 
 	if (cr4 & CR4_RESERVED_BITS) {
+		kvm_inject_gp(vcpu, 0);
+		return;
+	}
+
+	if (!guest_cpuid_has_xsave(vcpu) && (cr4 & X86_CR4_OSXSAVE)) {
 		kvm_inject_gp(vcpu, 0);
 		return;
 	}
@@ -382,6 +452,9 @@ void kvm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 	vcpu->arch.cr4 = cr4;
 	vcpu->arch.mmu.base_role.cr4_pge = (cr4 & X86_CR4_PGE) && !tdp_enabled;
 	kvm_mmu_reset_context(vcpu);
+
+	if ((cr4 ^ old_cr4) & X86_CR4_OSXSAVE)
+		update_cpuid(vcpu);
 }
 EXPORT_SYMBOL_GPL(kvm_set_cr4);
 
@@ -454,11 +527,6 @@ unsigned long kvm_get_cr8(struct kvm_vcpu *vcpu)
 		return vcpu->arch.cr8;
 }
 EXPORT_SYMBOL_GPL(kvm_get_cr8);
-
-static inline u32 bit(int bitno)
-{
-	return 1 << (bitno & 31);
-}
 
 /*
  * List of msr numbers which we expose to userspace through KVM_GET_MSRS
@@ -1251,6 +1319,7 @@ int kvm_dev_ioctl_check_extension(long ext)
 	case KVM_CAP_SET_IDENTITY_MAP_ADDR:
 	case KVM_CAP_ADJUST_CLOCK:
 	case KVM_CAP_VCPU_EVENTS:
+	case KVM_CAP_XSAVE:
 		r = 1;
 		break;
 	case KVM_CAP_COALESCED_MMIO:
@@ -1273,6 +1342,9 @@ int kvm_dev_ioctl_check_extension(long ext)
 		break;
 	case KVM_CAP_MCE:
 		r = KVM_MAX_MCE_BANKS;
+		break;
+	case KVM_CAP_XCRS:
+		r = cpu_has_xsave;
 		break;
 	default:
 		r = 0;
@@ -1358,8 +1430,8 @@ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 
 void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 {
-	kvm_x86_ops->vcpu_put(vcpu);
 	kvm_put_guest_fpu(vcpu);
+	kvm_x86_ops->vcpu_put(vcpu);
 }
 
 static int is_efer_nx(void)
@@ -1424,6 +1496,7 @@ static int kvm_vcpu_ioctl_set_cpuid(struct kvm_vcpu *vcpu,
 	cpuid_fix_nx_cap(vcpu);
 	r = 0;
 	kvm_apic_set_version(vcpu);
+	update_cpuid(vcpu);
 
 out_free:
 	vfree(cpuid_entries);
@@ -1446,6 +1519,7 @@ static int kvm_vcpu_ioctl_set_cpuid2(struct kvm_vcpu *vcpu,
 		goto out;
 	vcpu->arch.cpuid_nent = cpuid->nent;
 	kvm_apic_set_version(vcpu);
+	update_cpuid(vcpu);
 	return 0;
 
 out:
@@ -1519,13 +1593,14 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		0 /* Reserved */ | f_lm | F(3DNOWEXT) | F(3DNOW);
 	/* cpuid 1.ecx */
 	const u32 kvm_supported_word4_x86_features =
-		F(XMM3) | bit((4*32+ 3)) /* MONITOR */ | 0 /* Reserved, DTES64 */ |
+		F(XMM3) | bit((4*32+ 3)) /* MONITOR */ | F(PCLMULQDQ) |
+		0 /* Reserved, DTES64 */ |
 		0 /* DS-CPL, VMX, SMX, EST */ |
 		0 /* TM2 */ | F(SSSE3) | 0 /* CNXT-ID */ | 0 /* Reserved */ |
 		0 /* Reserved */ | F(CX16) | 0 /* xTPR Update, PDCM */ |
 		0 /* Reserved, DCA */ | F(XMM4_1) |
 		F(XMM4_2) | F(X2APIC) | F(MOVBE) | F(POPCNT) |
-		0 /* Reserved, XSAVE, OSXSAVE */;
+		0 /* Reserved, AES */ | F(XSAVE) | 0 /* OSXSAVE */ | F(AVX);
 	/* cpuid 0x80000001.ecx */
 	const u32 kvm_supported_word6_x86_features =
 		F(LAHF_LM) | F(CMP_LEGACY) | F(SVM) | 0 /* ExtApicSpace */ |
@@ -1540,7 +1615,7 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 
 	switch (function) {
 	case 0:
-		entry->eax = min(entry->eax, (u32)0xb);
+		entry->eax = min(entry->eax, (u32)0xd);
 		break;
 	case 1:
 		entry->edx &= kvm_supported_word0_x86_features;
@@ -1590,6 +1665,20 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		for (i = 1; *nent < maxnent; ++i) {
 			level_type = entry[i - 1].ecx & 0xff00;
 			if (!level_type)
+				break;
+			do_cpuid_1_ent(&entry[i], function, i);
+			entry[i].flags |=
+			       KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+			++*nent;
+		}
+		break;
+	}
+	case 0xd: {
+		int i;
+
+		entry->flags |= KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+		for (i = 1; *nent < maxnent; ++i) {
+			if (entry[i - 1].eax == 0 && i != 2)
 				break;
 			do_cpuid_1_ent(&entry[i], function, i);
 			entry[i].flags |=
@@ -1860,6 +1949,77 @@ static int kvm_vcpu_ioctl_x86_set_vcpu_events(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
+static void kvm_vcpu_ioctl_x86_get_xsave(struct kvm_vcpu *vcpu,
+					 struct kvm_xsave *guest_xsave)
+{
+	if (cpu_has_xsave)
+		memcpy(guest_xsave->region,
+			&vcpu->arch.guest_fpu.state->xsave,
+			sizeof(struct xsave_struct));
+	else {
+		memcpy(guest_xsave->region,
+			&vcpu->arch.guest_fpu.state->fxsave,
+			sizeof(struct i387_fxsave_struct));
+		*(u64 *)&guest_xsave->region[XSAVE_HDR_OFFSET / sizeof(u32)] =
+			XSTATE_FPSSE;
+	}
+}
+
+static int kvm_vcpu_ioctl_x86_set_xsave(struct kvm_vcpu *vcpu,
+					struct kvm_xsave *guest_xsave)
+{
+	u64 xstate_bv =
+		*(u64 *)&guest_xsave->region[XSAVE_HDR_OFFSET / sizeof(u32)];
+
+	if (cpu_has_xsave)
+		memcpy(&vcpu->arch.guest_fpu.state->xsave,
+			guest_xsave->region, sizeof(struct xsave_struct));
+	else {
+		if (xstate_bv & ~XSTATE_FPSSE)
+			return -EINVAL;
+		memcpy(&vcpu->arch.guest_fpu.state->fxsave,
+			guest_xsave->region, sizeof(struct i387_fxsave_struct));
+	}
+	return 0;
+}
+
+static void kvm_vcpu_ioctl_x86_get_xcrs(struct kvm_vcpu *vcpu,
+					struct kvm_xcrs *guest_xcrs)
+{
+	if (!cpu_has_xsave) {
+		guest_xcrs->nr_xcrs = 0;
+		return;
+	}
+
+	guest_xcrs->nr_xcrs = 1;
+	guest_xcrs->flags = 0;
+	guest_xcrs->xcrs[0].xcr = XCR_XFEATURE_ENABLED_MASK;
+	guest_xcrs->xcrs[0].value = vcpu->arch.xcr0;
+}
+
+static int kvm_vcpu_ioctl_x86_set_xcrs(struct kvm_vcpu *vcpu,
+				       struct kvm_xcrs *guest_xcrs)
+{
+	int i, r = 0;
+
+	if (!cpu_has_xsave)
+		return -EINVAL;
+
+	if (guest_xcrs->nr_xcrs > KVM_MAX_XCRS || guest_xcrs->flags)
+		return -EINVAL;
+
+	for (i = 0; i < guest_xcrs->nr_xcrs; i++)
+		/* Only support XCR0 currently */
+		if (guest_xcrs->xcrs[0].xcr == XCR_XFEATURE_ENABLED_MASK) {
+			r = __kvm_set_xcr(vcpu, XCR_XFEATURE_ENABLED_MASK,
+				guest_xcrs->xcrs[0].value);
+			break;
+		}
+	if (r)
+		r = -EINVAL;
+	return r;
+}
+
 long kvm_arch_vcpu_ioctl(struct file *filp,
 			 unsigned int ioctl, unsigned long arg)
 {
@@ -1867,6 +2027,8 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 	void __user *argp = (void __user *)arg;
 	int r;
 	struct kvm_lapic_state *lapic = NULL;
+	struct kvm_xsave *xsave = NULL;
+	struct kvm_xcrs *xcrs = NULL;
 
 	switch (ioctl) {
 	case KVM_GET_LAPIC: {
@@ -2040,11 +2202,69 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 		r = kvm_vcpu_ioctl_x86_set_vcpu_events(vcpu, &events);
 		break;
 	}
+	case KVM_GET_XSAVE: {
+		xsave = kzalloc(sizeof(struct kvm_xsave), GFP_KERNEL);
+		r = -ENOMEM;
+		if (!xsave)
+			break;
+
+		kvm_vcpu_ioctl_x86_get_xsave(vcpu, xsave);
+
+		r = -EFAULT;
+		if (copy_to_user(argp, xsave, sizeof(struct kvm_xsave)))
+			break;
+		r = 0;
+		break;
+	}
+	case KVM_SET_XSAVE: {
+		xsave = kzalloc(sizeof(struct kvm_xsave), GFP_KERNEL);
+		r = -ENOMEM;
+		if (!xsave)
+			break;
+
+		r = -EFAULT;
+		if (copy_from_user(xsave, argp, sizeof(struct kvm_xsave)))
+			break;
+
+		r = kvm_vcpu_ioctl_x86_set_xsave(vcpu, xsave);
+		break;
+	}
+	case KVM_GET_XCRS: {
+		xcrs = kzalloc(sizeof(struct kvm_xcrs), GFP_KERNEL);
+		r = -ENOMEM;
+		if (!xcrs)
+			break;
+
+		kvm_vcpu_ioctl_x86_get_xcrs(vcpu, xcrs);
+
+		r = -EFAULT;
+		if (copy_to_user(argp, xcrs,
+				 sizeof(struct kvm_xcrs)))
+			break;
+		r = 0;
+		break;
+	}
+	case KVM_SET_XCRS: {
+		xcrs = kzalloc(sizeof(struct kvm_xcrs), GFP_KERNEL);
+		r = -ENOMEM;
+		if (!xcrs)
+			break;
+
+		r = -EFAULT;
+		if (copy_from_user(xcrs, argp,
+				   sizeof(struct kvm_xcrs)))
+			break;
+
+		r = kvm_vcpu_ioctl_x86_set_xcrs(vcpu, xcrs);
+		break;
+	}
 	default:
 		r = -EINVAL;
 	}
 out:
 	kfree(lapic);
+	kfree(xsave);
+	kfree(xcrs);
 	return r;
 }
 
@@ -2989,6 +3209,7 @@ int emulate_invlpg(struct kvm_vcpu *vcpu, gva_t address)
 int emulate_clts(struct kvm_vcpu *vcpu)
 {
 	kvm_x86_ops->set_cr0(vcpu, vcpu->arch.cr0 & ~X86_CR0_TS);
+	kvm_x86_ops->fpu_activate(vcpu);
 	return X86EMUL_CONTINUE;
 }
 
@@ -3475,6 +3696,9 @@ int kvm_arch_init(void *opaque)
 					  CPUFREQ_TRANSITION_NOTIFIER);
 	}
 
+	if (cpu_has_xsave)
+		host_xcr0 = xgetbv(XCR_XFEATURE_ENABLED_MASK);
+
 	return 0;
 
 out:
@@ -3868,6 +4092,25 @@ static void inject_pending_event(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 	}
 }
 
+static void kvm_load_guest_xcr0(struct kvm_vcpu *vcpu)
+{
+	if ((vcpu->arch.cr4 & X86_CR4_OSXSAVE) &&
+		!vcpu->guest_xcr0_loaded) {
+		/* kvm_set_xcr() also depends on this */
+		xsetbv(XCR_XFEATURE_ENABLED_MASK, vcpu->arch.xcr0);
+		vcpu->guest_xcr0_loaded = 1;
+	}
+}
+
+static void kvm_put_guest_xcr0(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->guest_xcr0_loaded) {
+		if (vcpu->arch.xcr0 != host_xcr0)
+			xsetbv(XCR_XFEATURE_ENABLED_MASK, host_xcr0);
+		vcpu->guest_xcr0_loaded = 0;
+	}
+}
+
 static int vcpu_enter_guest(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 {
 	int r;
@@ -3902,12 +4145,17 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 			r = 0;
 			goto out;
 		}
+		if (test_and_clear_bit(KVM_REQ_DEACTIVATE_FPU, &vcpu->requests)) {
+			vcpu->fpu_active = 0;
+			kvm_x86_ops->fpu_deactivate(vcpu);
+		}
 	}
 
 	preempt_disable();
 
 	kvm_x86_ops->prepare_guest_switch(vcpu);
 	kvm_load_guest_fpu(vcpu);
+	kvm_load_guest_xcr0(vcpu);
 
 	kvm_get_msr(vcpu, MSR_IA32_TSC, &vcpu->arch.last_guest_tsc);
 
@@ -4947,27 +5195,6 @@ int kvm_arch_vcpu_ioctl_set_guest_debug(struct kvm_vcpu *vcpu,
 }
 
 /*
- * fxsave fpu state.  Taken from x86_64/processor.h.  To be killed when
- * we have asm/x86/processor.h
- */
-struct fxsave {
-	u16	cwd;
-	u16	swd;
-	u16	twd;
-	u16	fop;
-	u64	rip;
-	u64	rdp;
-	u32	mxcsr;
-	u32	mxcsr_mask;
-	u32	st_space[32];	/* 8*16 bytes for each FP-reg = 128 bytes */
-#ifdef CONFIG_X86_64
-	u32	xmm_space[64];	/* 16*16 bytes for each XMM-reg = 256 bytes */
-#else
-	u32	xmm_space[32];	/* 8*16 bytes for each XMM-reg = 128 bytes */
-#endif
-};
-
-/*
  * Translate a guest virtual address to a guest physical address.
  */
 int kvm_arch_vcpu_ioctl_translate(struct kvm_vcpu *vcpu,
@@ -4992,7 +5219,8 @@ int kvm_arch_vcpu_ioctl_translate(struct kvm_vcpu *vcpu,
 
 int kvm_arch_vcpu_ioctl_get_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
-	struct fxsave *fxsave = (struct fxsave *)&vcpu->arch.guest_fx_image;
+	struct i387_fxsave_struct *fxsave =
+			&vcpu->arch.guest_fpu.state->fxsave;
 
 	vcpu_load(vcpu);
 
@@ -5012,7 +5240,8 @@ int kvm_arch_vcpu_ioctl_get_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 
 int kvm_arch_vcpu_ioctl_set_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
-	struct fxsave *fxsave = (struct fxsave *)&vcpu->arch.guest_fx_image;
+	struct i387_fxsave_struct *fxsave =
+			&vcpu->arch.guest_fpu.state->fxsave;
 
 	vcpu_load(vcpu);
 
@@ -5032,53 +5261,51 @@ int kvm_arch_vcpu_ioctl_set_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 
 void fx_init(struct kvm_vcpu *vcpu)
 {
-	unsigned after_mxcsr_mask;
+	fpu_alloc(&vcpu->arch.guest_fpu);
+	fpu_finit(&vcpu->arch.guest_fpu);
 
 	/*
-	 * Touch the fpu the first time in non atomic context as if
-	 * this is the first fpu instruction the exception handler
-	 * will fire before the instruction returns and it'll have to
-	 * allocate ram with GFP_KERNEL.
+	 * Ensure guest xcr0 is valid for loading
 	 */
-	if (!used_math())
-		kvm_fx_save(&vcpu->arch.host_fx_image);
-
-	/* Initialize guest FPU by resetting ours and saving into guest's */
-	preempt_disable();
-	kvm_fx_save(&vcpu->arch.host_fx_image);
-	kvm_fx_finit();
-	kvm_fx_save(&vcpu->arch.guest_fx_image);
-	kvm_fx_restore(&vcpu->arch.host_fx_image);
-	preempt_enable();
+	vcpu->arch.xcr0 = XSTATE_FP;
 
 	vcpu->arch.cr0 |= X86_CR0_ET;
-	after_mxcsr_mask = offsetof(struct i387_fxsave_struct, st_space);
-	vcpu->arch.guest_fx_image.mxcsr = 0x1f80;
-	memset((void *)&vcpu->arch.guest_fx_image + after_mxcsr_mask,
-	       0, sizeof(struct i387_fxsave_struct) - after_mxcsr_mask);
 }
 EXPORT_SYMBOL_GPL(fx_init);
+
+static void fx_free(struct kvm_vcpu *vcpu)
+{
+	fpu_free(&vcpu->arch.guest_fpu);
+}
 
 void kvm_load_guest_fpu(struct kvm_vcpu *vcpu)
 {
 	if (!vcpu->fpu_active || vcpu->guest_fpu_loaded)
 		return;
 
+	/*
+	 * Restore all possible states in the guest,
+	 * and assume host would use all available bits.
+	 * Guest xcr0 would be loaded later.
+	 */
+	kvm_put_guest_xcr0(vcpu);
 	vcpu->guest_fpu_loaded = 1;
-	kvm_fx_save(&vcpu->arch.host_fx_image);
-	kvm_fx_restore(&vcpu->arch.guest_fx_image);
+	unlazy_fpu(current);
+	fpu_restore_checking(&vcpu->arch.guest_fpu);
 }
 EXPORT_SYMBOL_GPL(kvm_load_guest_fpu);
 
 void kvm_put_guest_fpu(struct kvm_vcpu *vcpu)
 {
+	kvm_put_guest_xcr0(vcpu);
+
 	if (!vcpu->guest_fpu_loaded)
 		return;
 
 	vcpu->guest_fpu_loaded = 0;
-	kvm_fx_save(&vcpu->arch.guest_fx_image);
-	kvm_fx_restore(&vcpu->arch.host_fx_image);
+	fpu_save_init(&vcpu->arch.guest_fpu);
 	++vcpu->stat.fpu_reload;
+	set_bit(KVM_REQ_DEACTIVATE_FPU, &vcpu->requests);
 }
 EXPORT_SYMBOL_GPL(kvm_put_guest_fpu);
 
@@ -5089,6 +5316,7 @@ void kvm_arch_vcpu_free(struct kvm_vcpu *vcpu)
 		vcpu->arch.time_page = NULL;
 	}
 
+	fx_free(vcpu);
 	kvm_x86_ops->vcpu_free(vcpu);
 }
 
@@ -5101,9 +5329,6 @@ struct kvm_vcpu *kvm_arch_vcpu_create(struct kvm *kvm,
 int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
 {
 	int r;
-
-	/* We do fxsave: this must be aligned. */
-	BUG_ON((unsigned long)&vcpu->arch.host_fx_image & 0xF);
 
 	vcpu->arch.mtrr_state.have_fixed = 1;
 	vcpu_load(vcpu);
@@ -5126,6 +5351,7 @@ void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
 	kvm_mmu_unload(vcpu);
 	vcpu_put(vcpu);
 
+	fx_free(vcpu);
 	kvm_x86_ops->vcpu_free(vcpu);
 }
 

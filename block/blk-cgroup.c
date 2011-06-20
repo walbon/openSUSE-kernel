@@ -85,6 +85,13 @@ struct blkio_cgroup *cgroup_to_blkio_cgroup(struct cgroup *cgroup)
 }
 EXPORT_SYMBOL_GPL(cgroup_to_blkio_cgroup);
 
+struct blkio_cgroup *task_blkio_cgroup(struct task_struct *tsk)
+{
+	return container_of(task_subsys_state(tsk, blkio_subsys_id),
+			    struct blkio_cgroup, css);
+}
+EXPORT_SYMBOL_GPL(task_blkio_cgroup);
+
 /*
  * Add to the appropriate stat variable depending on the request type.
  * This should be called with the blkg->stats_lock held.
@@ -809,8 +816,6 @@ static int blkiocg_weight_device_read(struct cgroup *cgrp, struct cftype *cft,
 {
 	struct blkio_cgroup *blkcg;
 	struct blkio_policy_node *pn;
-
-	seq_printf(m, "dev\tweight\n");
 
 	blkcg = cgroup_to_blkio_cgroup(cgrp);
 	if (!list_empty(&blkcg->policy_list)) {

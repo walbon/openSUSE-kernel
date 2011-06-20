@@ -38,7 +38,7 @@
 #include <asm/cacheflush.h>
 #include <asm/swiotlb.h>
 #include <asm/dma.h>
-#include <asm/k8.h>
+#include <asm/amd_nb.h>
 
 static unsigned long iommu_bus_base;	/* GART remapping area (physical) */
 static unsigned long iommu_size;	/* size of remapping area bytes */
@@ -138,7 +138,7 @@ static void flush_gart(void)
 
 	spin_lock_irqsave(&iommu_bitmap_lock, flags);
 	if (need_flush) {
-		k8_flush_garts();
+		amd_flush_garts();
 		need_flush = false;
 	}
 	spin_unlock_irqrestore(&iommu_bitmap_lock, flags);
@@ -548,14 +548,17 @@ static void enable_gart_translations(void)
 {
 	int i;
 
-	for (i = 0; i < num_k8_northbridges; i++) {
-		struct pci_dev *dev = k8_northbridges[i];
+	if (!amd_nb_has_feature(AMD_NB_GART))
+		return;
+
+	for (i = 0; i < amd_nb_num(); i++) {
+		struct pci_dev *dev = node_to_amd_nb(i)->misc;
 
 		enable_gart_translation(dev, __pa(agp_gatt_table));
 	}
 
 	/* Flush the GART-TLB to remove stale entries */
-	k8_flush_garts();
+	amd_flush_garts();
 }
 
 /*
@@ -577,13 +580,16 @@ static int gart_resume(struct sys_device *dev)
 {
 	printk(KERN_INFO "PCI-DMA: Resuming GART IOMMU\n");
 
+	if (!amd_nb_has_feature(AMD_NB_GART))
+		return 1;
+
 	if (fix_up_north_bridges) {
 		int i;
 
 		printk(KERN_INFO "PCI-DMA: Restoring GART aperture settings\n");
 
-		for (i = 0; i < num_k8_northbridges; i++) {
-			struct pci_dev *dev = k8_northbridges[i];
+		for (i = 0; i < amd_nb_num(); i++) {
+			struct pci_dev *dev = node_to_amd_nb(i)->misc;
 
 			/*
 			 * Don't enable translations just yet.  That is the next
@@ -622,7 +628,7 @@ static struct sys_device device_gart = {
  * Private Northbridge GATT initialization in case we cannot use the
  * AGP driver for some reason.
  */
-static __init int init_k8_gatt(struct agp_kern_info *info)
+static __init int init_amd_gatt(struct agp_kern_info *info)
 {
 	unsigned aper_size, gatt_size, new_aper_size;
 	unsigned aper_base, new_aper_base;
@@ -633,8 +639,8 @@ static __init int init_k8_gatt(struct agp_kern_info *info)
 	printk(KERN_INFO "PCI-DMA: Disabling AGP.\n");
 	aper_size = aper_base = info->aper_size = 0;
 	dev = NULL;
-	for (i = 0; i < num_k8_northbridges; i++) {
-		dev = k8_northbridges[i];
+	for (i = 0; i < amd_nb_num(); i++) {
+		dev = node_to_amd_nb(i)->misc;
 		new_aper_base = read_aperture(dev, &new_aper_size);
 		if (!new_aper_base)
 			goto nommu;
@@ -699,10 +705,13 @@ void gart_iommu_shutdown(void)
 	if (no_agp && (dma_ops != &gart_dma_ops))
 		return;
 
-	for (i = 0; i < num_k8_northbridges; i++) {
+	if (!amd_nb_has_feature(AMD_NB_GART))
+		return;
+
+	for (i = 0; i < amd_nb_num(); i++) {
 		u32 ctl;
 
-		dev = k8_northbridges[i];
+		dev = node_to_amd_nb(i)->misc;
 		pci_read_config_dword(dev, AMD64_GARTAPERTURECTL, &ctl);
 
 		ctl &= ~GARTEN;
@@ -720,14 +729,14 @@ void __init gart_iommu_init(void)
 	unsigned long scratch;
 	long i;
 
-	if (num_k8_northbridges == 0)
+	if (!amd_nb_has_feature(AMD_NB_GART))
 		return;
 
 #ifndef CONFIG_AGP_AMD64
 	no_agp = 1;
 #else
 	/* Makefile puts PCI initialization via subsys_initcall first. */
-	/* Add other K8 AGP bridge drivers here */
+	/* Add other AMD AGP bridge drivers here */
 	no_agp = no_agp ||
 		(agp_amd64_init() < 0) ||
 		(agp_copy_info(agp_bridge, &info) < 0);
@@ -743,7 +752,7 @@ void __init gart_iommu_init(void)
 	if (no_iommu ||
 	    (!force_iommu && max_pfn <= MAX_DMA32_PFN) ||
 	    !gart_iommu_aperture ||
-	    (no_agp && init_k8_gatt(&info) < 0)) {
+	    (no_agp && init_amd_gatt(&info) < 0)) {
 		if (max_pfn > MAX_DMA32_PFN) {
 			printk(KERN_WARNING "More than 4GB of memory "
 			       "but GART IOMMU not available.\n");

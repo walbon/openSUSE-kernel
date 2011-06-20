@@ -1,6 +1,8 @@
 #ifndef _EDAC_MCE_AMD_H
 #define _EDAC_MCE_AMD_H
 
+#include <linux/notifier.h>
+
 #include <asm/mce.h>
 
 #define ERROR_CODE(x)			((x) & 0xffff)
@@ -20,12 +22,13 @@
 #define II_MSG(x)			ii_msgs[II(x)]
 #define LL(x)				(((x) >> 0) & 0x3)
 #define LL_MSG(x)			ll_msgs[LL(x)]
-#define RRRR(x)				(((x) >> 4) & 0xf)
-#define RRRR_MSG(x)			rrrr_msgs[RRRR(x)]
 #define TO(x)				(((x) >> 8) & 0x1)
 #define TO_MSG(x)			to_msgs[TO(x)]
 #define PP(x)				(((x) >> 9) & 0x3)
 #define PP_MSG(x)			pp_msgs[PP(x)]
+
+#define RRRR(x)				(((x) >> 4) & 0xf)
+#define RRRR_MSG(x)			((RRRR(x) < 9) ?  rrrr_msgs[RRRR(x)] : "Wrong R4!")
 
 #define K8_NBSH				0x4C
 
@@ -60,10 +63,10 @@ struct err_regs {
 	u32 nbeal;
 };
 
-
 void amd_report_gart_errors(bool);
-void amd_register_ecc_decoder(void (*f)(int, struct err_regs *));
-void amd_unregister_ecc_decoder(void (*f)(int, struct err_regs *));
-void amd_decode_nb_mce(int, struct err_regs *, int);
+void amd_register_ecc_decoder(void (*f)(int, struct mce *, u32));
+void amd_unregister_ecc_decoder(void (*f)(int, struct mce *, u32));
+void amd_decode_nb_mce(int, struct mce *, u32);
+int amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data);
 
 #endif /* _EDAC_MCE_AMD_H */

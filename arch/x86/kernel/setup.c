@@ -107,6 +107,7 @@
 #include <asm/percpu.h>
 #include <asm/topology.h>
 #include <asm/apicdef.h>
+#include <asm/amd_nb.h>
 #ifdef CONFIG_X86_64
 #include <asm/numa_64.h>
 #endif
@@ -304,6 +305,20 @@ static void __init reserve_brk(void)
 	/* Mark brk area as locked down and no longer taking any
 	   new allocations */
 	_brk_start = 0;
+}
+
+static unsigned long __init reserve_log_buf(unsigned long len)
+{
+	unsigned long end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT;
+	unsigned long addr = end_of_lowmem - len;
+	unsigned long mem;
+
+	mem = find_e820_area(addr, end_of_lowmem, len, PAGE_SIZE);
+	if (mem == -1ULL)
+		return 0ULL;
+
+	reserve_early(mem, mem + len, "LOG BUF");
+	return mem;
 }
 
 #ifdef CONFIG_BLK_DEV_INITRD
@@ -729,6 +744,9 @@ static struct dmi_system_id __initdata bad_bios_dmi_table[] = {
 
 void __init setup_arch(char **cmdline_p)
 {
+	int acpi = 0;
+	int amd = 0;
+
 #ifdef CONFIG_X86_32
 	memcpy(&boot_cpu_data, &new_cpu_data, sizeof(new_cpu_data));
 	visws_early_detect();
@@ -956,6 +974,8 @@ void __init setup_arch(char **cmdline_p)
 	if (init_ohci1394_dma_early)
 		init_ohci1394_dma_on_all_controllers();
 #endif
+	/* Allocate bigger log buffer as early as possible */
+	setup_log_buf(reserve_log_buf);
 
 	reserve_initrd();
 
@@ -977,7 +997,11 @@ void __init setup_arch(char **cmdline_p)
 	acpi_numa_init();
 #endif
 
-	initmem_init(0, max_pfn);
+#ifdef CONFIG_AMD_NUMA
+	amd = !amd_numa_init(0, max_pfn);
+#endif
+
+	initmem_init(0, max_pfn, acpi, amd);
 
 #ifdef CONFIG_ACPI_SLEEP
 	/*

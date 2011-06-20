@@ -535,6 +535,7 @@ static int ql_mailbox_command(struct ql_adapter *qdev, struct mbox_params *mbcp)
 	int status;
 	unsigned long count;
 
+	mutex_lock(&qdev->mpi_mutex);
 
 	/* Begin polled mode for MPI */
 	ql_write32(qdev, INTR_MASK, (INTR_MASK_PI << 16));
@@ -604,23 +605,7 @@ done:
 end:
 	/* End polled mode for MPI */
 	ql_write32(qdev, INTR_MASK, (INTR_MASK_PI << 16) | INTR_MASK_PI);
-	return status;
-}
-
-int ql_mb_sys_err(struct ql_adapter *qdev)
-{
-	struct mbox_params mbc;
-	struct mbox_params *mbcp = &mbc;
-	int status;
-
-	memset(mbcp, 0, sizeof(struct mbox_params));
-
-	mbcp->in_count = 1;
-	mbcp->out_count = 0;
-
-	mbcp->mbox_in[0] = MB_CMD_MAKE_SYS_ERR;
-
-	status = ql_mailbox_command(qdev, mbcp);
+	mutex_unlock(&qdev->mpi_mutex);
 	return status;
 }
 
@@ -1050,8 +1035,8 @@ int ql_mb_set_mgmnt_traffic_ctl(struct ql_adapter *qdev, u32 control)
 		return status;
 
 	if (mbcp->mbox_out[0] == MB_CMD_STS_INVLD_CMD) {
-		QPRINTK(qdev, DRV, ERR,
-			"Command not supported by firmware.\n");
+		QPRINTK(qdev, DRV, DEBUG,
+			"Command not supported by firmware version.\n");
 		status = -EINVAL;
 	} else if (mbcp->mbox_out[0] == MB_CMD_STS_ERR) {
 		/* This indicates that the firmware is
@@ -1089,8 +1074,8 @@ static int ql_mb_get_mgmnt_traffic_ctl(struct ql_adapter *qdev, u32 *control)
 	}
 
 	if (mbcp->mbox_out[0] == MB_CMD_STS_INVLD_CMD) {
-		QPRINTK(qdev, DRV, ERR,
-			"Command not supported by firmware.\n");
+		QPRINTK(qdev, DRV, DEBUG,
+			"Command not supported by firmware version.\n");
 		status = -EINVAL;
 	} else if (mbcp->mbox_out[0] == MB_CMD_STS_ERR) {
 		QPRINTK(qdev, DRV, ERR,
@@ -1123,9 +1108,7 @@ int ql_wait_fifo_empty(struct ql_adapter *qdev)
 static int ql_set_port_cfg(struct ql_adapter *qdev)
 {
 	int status;
-	rtnl_lock();
 	status = ql_mb_set_port_cfg(qdev);
-	rtnl_unlock();
 	if (status)
 		return status;
 	status = ql_idc_wait(qdev);
@@ -1146,9 +1129,7 @@ void ql_mpi_port_cfg_work(struct work_struct *work)
 	    container_of(work, struct ql_adapter, mpi_port_cfg_work.work);
 	int status;
 
-	rtnl_lock();
 	status = ql_mb_get_port_cfg(qdev);
-	rtnl_unlock();
 	if (status) {
 		QPRINTK(qdev, DRV, ERR,
 			"Bug: Failed to get port config data.\n");
@@ -1191,7 +1172,6 @@ void ql_mpi_idc_work(struct work_struct *work)
 	u32 aen;
 	int timeout;
 
-	rtnl_lock();
 	aen = mbcp->mbox_out[1] >> 16;
 	timeout = (mbcp->mbox_out[1] >> 8) & 0xf;
 
@@ -1255,7 +1235,6 @@ void ql_mpi_idc_work(struct work_struct *work)
 		}
 		break;
 	}
-	rtnl_unlock();
 }
 
 void ql_mpi_work(struct work_struct *work)
@@ -1266,7 +1245,7 @@ void ql_mpi_work(struct work_struct *work)
 	struct mbox_params *mbcp = &mbc;
 	int err = 0;
 
-	rtnl_lock();
+	mutex_lock(&qdev->mpi_mutex);
 	/* Begin polled mode for MPI */
 	ql_write32(qdev, INTR_MASK, (INTR_MASK_PI << 16));
 
@@ -1283,7 +1262,7 @@ void ql_mpi_work(struct work_struct *work)
 
 	/* End polled mode for MPI */
 	ql_write32(qdev, INTR_MASK, (INTR_MASK_PI << 16) | INTR_MASK_PI);
-	rtnl_unlock();
+	mutex_unlock(&qdev->mpi_mutex);
 	ql_enable_completion_interrupt(qdev, 0);
 }
 
