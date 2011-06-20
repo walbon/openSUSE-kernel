@@ -356,7 +356,7 @@ static struct dentry * __d_find_alias(struct inode *inode, int want_discon)
 	while (next != head) {
 		tmp = next;
 		next = tmp->next;
-		prefetch(next);
+		list_prefetch(next);
 		alias = list_entry(tmp, struct dentry, d_alias);
  		if (S_ISDIR(inode->i_mode) || !d_unhashed(alias)) {
 			if (IS_ROOT(alias) &&
