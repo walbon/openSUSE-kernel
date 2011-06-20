@@ -546,10 +546,15 @@ void *xlate_dev_mem_ptr(unsigned long phys)
 	return addr;
 }
 
-void unxlate_dev_mem_ptr(unsigned long phys, void *addr)
+void unxlate_dev_mem_ptr(phys_addr_t phys, void *addr)
 {
-	if (page_is_ram(phys >> PAGE_SHIFT))
+	unsigned long pfn = phys >> PAGE_SHIFT;
+
+	if (page_is_ram(pfn)) {
+		if (phys >= __pa(high_memory))
+			kunmap(pfn_to_page(pfn));
 		return;
+	}
 
 	iounmap((void __iomem *)((unsigned long)addr & PAGE_MASK));
 	return;

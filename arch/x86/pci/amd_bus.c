@@ -2,9 +2,9 @@
 #include <linux/pci.h>
 #include <linux/topology.h>
 #include <linux/cpu.h>
-#include <asm/k8.h>
-#include <asm/pci-direct.h>
+#include <asm/amd_nb.h>
 #include <asm/pci_x86.h>
+#include <asm/pci-direct.h>
 
 #ifdef CONFIG_X86_64
 #include <asm/mpspec.h>
@@ -515,7 +515,7 @@ static int __init early_fill_mp_bus_info(void) { return 0; }
 #define ENABLE_CF8_EXT_CFG      (1ULL << 46)
 
 #ifndef CONFIG_XEN
-static void enable_pci_io_ecs(void *unused)
+static void __cpuinit enable_pci_io_ecs(void *unused)
 {
 	u64 reg;
 	rdmsrl(MSR_AMD64_NB_CFG, reg);
@@ -547,18 +547,18 @@ static struct notifier_block __cpuinitdata amd_cpu_notifier = {
 
 static void __init pci_enable_pci_io_ecs(void)
 {
-#if defined(CONFIG_K8_NB) && defined(CONFIG_XEN)/* native could use this too */
+#ifdef CONFIG_AMD_NB
 	unsigned int i, n;
 
-	for (n = i = 0; !n && k8_bus_dev_ranges[i].dev_limit; ++i) {
-		u8 bus = k8_bus_dev_ranges[i].bus;
-		u8 slot = k8_bus_dev_ranges[i].dev_base;
-		u8 limit = k8_bus_dev_ranges[i].dev_limit;
+	for (n = i = 0; !n && amd_nb_bus_dev_ranges[i].dev_limit; ++i) {
+		u8 bus = amd_nb_bus_dev_ranges[i].bus;
+		u8 slot = amd_nb_bus_dev_ranges[i].dev_base;
+		u8 limit = amd_nb_bus_dev_ranges[i].dev_limit;
 
 		for (; slot < limit; ++slot) {
 			u32 val = read_pci_config(bus, slot, 3, 0);
 
-			if (!early_is_k8_nb(val))
+			if (!early_is_amd_nb(val))
 				continue;
 
 			val = read_pci_config(bus, slot, 3, 0x8c);

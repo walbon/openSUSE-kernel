@@ -2,7 +2,7 @@
 #include "edac_mce_amd.h"
 
 static bool report_gart_errors;
-static void (*nb_bus_decoder)(int node_id, struct err_regs *regs);
+static void (*nb_bus_decoder)(int node_id, struct mce *m, u32 nbcfg);
 
 void amd_report_gart_errors(bool v)
 {
@@ -10,13 +10,13 @@ void amd_report_gart_errors(bool v)
 }
 EXPORT_SYMBOL_GPL(amd_report_gart_errors);
 
-void amd_register_ecc_decoder(void (*f)(int, struct err_regs *))
+void amd_register_ecc_decoder(void (*f)(int, struct mce *, u32))
 {
 	nb_bus_decoder = f;
 }
 EXPORT_SYMBOL_GPL(amd_register_ecc_decoder);
 
-void amd_unregister_ecc_decoder(void (*f)(int, struct err_regs *))
+void amd_unregister_ecc_decoder(void (*f)(int, struct mce *, u32))
 {
 	if (nb_bus_decoder) {
 		WARN_ON(nb_bus_decoder != f);
@@ -30,62 +30,31 @@ EXPORT_SYMBOL_GPL(amd_unregister_ecc_decoder);
  * string representation for the different MCA reported error types, see F3x48
  * or MSR0000_0411.
  */
-const char *tt_msgs[] = {        /* transaction type */
-	"instruction",
-	"data",
-	"generic",
-	"reserved"
-};
+
+/* transaction type */
+const char *tt_msgs[] = { "INSN", "DATA", "GEN", "RESV" };
 EXPORT_SYMBOL_GPL(tt_msgs);
 
-const char *ll_msgs[] = {	/* cache level */
-	"L0",
-	"L1",
-	"L2",
-	"L3/generic"
-};
+/* cache level */
+const char *ll_msgs[] = { "RESV", "L1", "L2", "L3/GEN" };
 EXPORT_SYMBOL_GPL(ll_msgs);
 
+/* memory transaction type */
 const char *rrrr_msgs[] = {
-	"generic",
-	"generic read",
-	"generic write",
-	"data read",
-	"data write",
-	"inst fetch",
-	"prefetch",
-	"evict",
-	"snoop",
-	"reserved RRRR= 9",
-	"reserved RRRR= 10",
-	"reserved RRRR= 11",
-	"reserved RRRR= 12",
-	"reserved RRRR= 13",
-	"reserved RRRR= 14",
-	"reserved RRRR= 15"
+       "GEN", "RD", "WR", "DRD", "DWR", "IRD", "PRF", "EV", "SNP"
 };
 EXPORT_SYMBOL_GPL(rrrr_msgs);
 
-const char *pp_msgs[] = {	/* participating processor */
-	"local node originated (SRC)",
-	"local node responded to request (RES)",
-	"local node observed as 3rd party (OBS)",
-	"generic"
-};
+/* participating processor */
+const char *pp_msgs[] = { "SRC", "RES", "OBS", "GEN" };
 EXPORT_SYMBOL_GPL(pp_msgs);
 
-const char *to_msgs[] = {
-	"no timeout",
-	"timed out"
-};
+/* request timeout */
+const char *to_msgs[] = { "no timeout",	"timed out" };
 EXPORT_SYMBOL_GPL(to_msgs);
 
-const char *ii_msgs[] = {	/* memory or i/o */
-	"mem access",
-	"reserved",
-	"i/o access",
-	"generic"
-};
+/* memory or i/o */
+const char *ii_msgs[] = { "MEM", "RESV", "IO", "GEN" };
 EXPORT_SYMBOL_GPL(ii_msgs);
 
 /*
@@ -128,17 +97,17 @@ const char *ext_msgs[] = {
 };
 EXPORT_SYMBOL_GPL(ext_msgs);
 
-static void amd_decode_dc_mce(u64 mc0_status)
+static void amd_decode_dc_mce(struct mce *m)
 {
-	u32 ec  = mc0_status & 0xffff;
-	u32 xec = (mc0_status >> 16) & 0xf;
+	u32 ec  = m->status & 0xffff;
+	u32 xec = (m->status >> 16) & 0xf;
 
-	pr_emerg(" Data Cache Error");
+	pr_emerg(HW_ERR "Data Cache Error: ");
 
 	if (xec == 1 && TLB_ERROR(ec))
 		pr_cont(": %s TLB multimatch.\n", LL_MSG(ec));
 	else if (xec == 0) {
-		if (mc0_status & (1ULL << 40))
+		if (m->status & (1ULL << 40))
 			pr_cont(" during Data Scrub.\n");
 		else if (TLB_ERROR(ec))
 			pr_cont(": %s TLB parity error.\n", LL_MSG(ec));
@@ -168,15 +137,15 @@ static void amd_decode_dc_mce(u64 mc0_status)
 	return;
 
 wrong_dc_mce:
-	pr_warning("Corrupted DC MCE info?\n");
+	pr_emerg(HW_ERR "Corrupted DC MCE info?\n");
 }
 
-static void amd_decode_ic_mce(u64 mc1_status)
+static void amd_decode_ic_mce(struct mce *m)
 {
-	u32 ec  = mc1_status & 0xffff;
-	u32 xec = (mc1_status >> 16) & 0xf;
+	u32 ec  = m->status & 0xffff;
+	u32 xec = (m->status >> 16) & 0xf;
 
-	pr_emerg(" Instruction Cache Error");
+	pr_emerg(HW_ERR "Instruction Cache Error");
 
 	if (xec == 1 && TLB_ERROR(ec))
 		pr_cont(": %s TLB multimatch.\n", LL_MSG(ec));
@@ -185,7 +154,7 @@ static void amd_decode_ic_mce(u64 mc1_status)
 			pr_cont(": %s TLB Parity error.\n", LL_MSG(ec));
 		else if (BUS_ERROR(ec)) {
 			if (boot_cpu_data.x86 == 0xf &&
-			    (mc1_status & (1ULL << 58)))
+			    (m->status & BIT(58)))
 				pr_cont(" during system linefill.\n");
 			else
 				pr_cont(" during attempted NB data read.\n");
@@ -225,15 +194,15 @@ static void amd_decode_ic_mce(u64 mc1_status)
 	return;
 
 wrong_ic_mce:
-	pr_warning("Corrupted IC MCE info?\n");
+	pr_emerg(HW_ERR "Corrupted IC MCE info?\n");
 }
 
-static void amd_decode_bu_mce(u64 mc2_status)
+static void amd_decode_bu_mce(struct mce *m)
 {
-	u32 ec = mc2_status & 0xffff;
-	u32 xec = (mc2_status >> 16) & 0xf;
+	u32 ec = m->status & 0xffff;
+	u32 xec = (m->status >> 16) & 0xf;
 
-	pr_emerg(" Bus Unit Error");
+	pr_emerg(HW_ERR "Bus Unit Error");
 
 	if (xec == 0x1)
 		pr_cont(" in the write data buffers.\n");
@@ -267,15 +236,15 @@ static void amd_decode_bu_mce(u64 mc2_status)
 	return;
 
 wrong_bu_mce:
-	pr_warning("Corrupted BU MCE info?\n");
+	pr_emerg(HW_ERR "Corrupted BU MCE info?\n");
 }
 
-static void amd_decode_ls_mce(u64 mc3_status)
+static void amd_decode_ls_mce(struct mce *m)
 {
-	u32 ec  = mc3_status & 0xffff;
-	u32 xec = (mc3_status >> 16) & 0xf;
+	u32 ec  = m->status & 0xffff;
+	u32 xec = (m->status >> 16) & 0xf;
 
-	pr_emerg(" Load Store Error");
+	pr_emerg(HW_ERR "Load Store Error");
 
 	if (xec == 0x0) {
 		u8 rrrr = (ec >> 4) & 0xf;
@@ -288,15 +257,14 @@ static void amd_decode_ls_mce(u64 mc3_status)
 	return;
 
 wrong_ls_mce:
-	pr_warning("Corrupted LS MCE info?\n");
+	pr_emerg(HW_ERR "Corrupted LS MCE info?\n");
 }
 
-void amd_decode_nb_mce(int node_id, struct err_regs *regs, int handle_errors)
+void amd_decode_nb_mce(int node_id, struct mce *m, u32 nbcfg)
 {
-	u32 ec  = ERROR_CODE(regs->nbsl);
-
-	if (!handle_errors)
-		return;
+	u32 ec   = m->status & 0xffff;
+	u32 nbsh = (u32)(m->status >> 32);
+	u32 nbsl = (u32)m->status;
 
 	/*
 	 * GART TLB error reporting is disabled by default. Bail out early.
@@ -304,7 +272,7 @@ void amd_decode_nb_mce(int node_id, struct err_regs *regs, int handle_errors)
 	if (TLB_ERROR(ec) && !report_gart_errors)
 		return;
 
-	pr_emerg(" Northbridge Error, node %d", node_id);
+	pr_emerg(HW_ERR "Northbridge Error, node %d", node_id);
 
 	/*
 	 * F10h, revD can disable ErrCpu[3:0] so check that first and also the
@@ -312,10 +280,10 @@ void amd_decode_nb_mce(int node_id, struct err_regs *regs, int handle_errors)
 	 */
 	if ((boot_cpu_data.x86 == 0x10) &&
 	    (boot_cpu_data.x86_model > 7)) {
-		if (regs->nbsh & K8_NBSH_ERR_CPU_VAL)
-			pr_cont(", core: %u\n", (u8)(regs->nbsh & 0xf));
+		if (nbsh & K8_NBSH_ERR_CPU_VAL)
+			pr_cont(", core: %u\n", (u8)(nbsh & 0xf));
 	} else {
-		u8 assoc_cpus = regs->nbsh & 0xf;
+		u8 assoc_cpus = nbsh & 0xf;
 
 		if (assoc_cpus > 0)
 			pr_cont(", core: %d", fls(assoc_cpus) - 1);
@@ -323,53 +291,50 @@ void amd_decode_nb_mce(int node_id, struct err_regs *regs, int handle_errors)
 		pr_cont("\n");
 	}
 
-	pr_emerg("%s.\n", EXT_ERR_MSG(regs->nbsl));
+	pr_emerg(HW_ERR "%s.\n", EXT_ERR_MSG(nbsl));
 
 	if (BUS_ERROR(ec) && nb_bus_decoder)
-		nb_bus_decoder(node_id, regs);
+		nb_bus_decoder(node_id, m, nbcfg);
 }
 EXPORT_SYMBOL_GPL(amd_decode_nb_mce);
 
-static void amd_decode_fr_mce(u64 mc5_status)
+static void amd_decode_fr_mce(struct mce *m)
 {
 	/* we have only one error signature so match all fields at once. */
-	if ((mc5_status & 0xffff) == 0x0f0f)
-		pr_emerg(" FR Error: CPU Watchdog timer expire.\n");
+	if ((m->status & 0xffff) == 0x0f0f)
+		pr_emerg(HW_ERR " FR Error: CPU Watchdog timer expire.\n");
 	else
-		pr_warning("Corrupted FR MCE info?\n");
+		pr_emerg(HW_ERR "Corrupted FR MCE info?\n");
 }
 
-static inline void amd_decode_err_code(unsigned int ec)
+static inline void amd_decode_err_code(u16 ec)
 {
 	if (TLB_ERROR(ec)) {
-		pr_emerg(" Transaction: %s, Cache Level %s\n",
+		pr_emerg(HW_ERR "Transaction: %s, Cache Level: %s\n",
 			 TT_MSG(ec), LL_MSG(ec));
 	} else if (MEM_ERROR(ec)) {
-		pr_emerg(" Transaction: %s, Type: %s, Cache Level: %s",
+		pr_emerg(HW_ERR "Transaction: %s, Type: %s, Cache Level: %s\n",
 			 RRRR_MSG(ec), TT_MSG(ec), LL_MSG(ec));
 	} else if (BUS_ERROR(ec)) {
-		pr_emerg(" Transaction type: %s(%s), %s, Cache Level: %s, "
+		pr_emerg(HW_ERR "Transaction: %s (%s), %s, Cache Level: %s, "
 			 "Participating Processor: %s\n",
 			  RRRR_MSG(ec), II_MSG(ec), TO_MSG(ec), LL_MSG(ec),
 			  PP_MSG(ec));
 	} else
-		pr_warning("Huh? Unknown MCE error 0x%x\n", ec);
+		pr_emerg(HW_ERR "Huh? Unknown MCE error 0x%x\n", ec);
 }
 
-static int amd_decode_mce(struct notifier_block *nb, unsigned long val,
-			   void *data)
+int amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
 {
 	struct mce *m = (struct mce *)data;
-	struct err_regs regs;
 	int node, ecc;
 
-	pr_emerg("MC%d_STATUS: ", m->bank);
+	pr_emerg(HW_ERR "MC%d_STATUS: ", m->bank);
 
-	pr_cont("%sorrected error, report: %s, MiscV: %svalid, "
+	pr_cont("%sorrected error, other errors lost: %s, "
 		 "CPU context corrupt: %s",
 		 ((m->status & MCI_STATUS_UC) ? "Unc"  : "C"),
-		 ((m->status & MCI_STATUS_EN) ? "yes"  : "no"),
-		 ((m->status & MCI_STATUS_MISCV) ? ""  : "in"),
+		 ((m->status & MCI_STATUS_OVER) ? "yes"  : "no"),
 		 ((m->status & MCI_STATUS_PCC) ? "yes" : "no"));
 
 	/* do the two bits[14:13] together */
@@ -381,33 +346,28 @@ static int amd_decode_mce(struct notifier_block *nb, unsigned long val,
 
 	switch (m->bank) {
 	case 0:
-		amd_decode_dc_mce(m->status);
+		amd_decode_dc_mce(m);
 		break;
 
 	case 1:
-		amd_decode_ic_mce(m->status);
+		amd_decode_ic_mce(m);
 		break;
 
 	case 2:
-		amd_decode_bu_mce(m->status);
+		amd_decode_bu_mce(m);
 		break;
 
 	case 3:
-		amd_decode_ls_mce(m->status);
+		amd_decode_ls_mce(m);
 		break;
 
 	case 4:
-		regs.nbsl  = (u32) m->status;
-		regs.nbsh  = (u32)(m->status >> 32);
-		regs.nbeal = (u32) m->addr;
-		regs.nbeah = (u32)(m->addr >> 32);
-		node       = amd_get_nb_id(m->extcpu);
-
-		amd_decode_nb_mce(node, &regs, 1);
+		node = amd_get_nb_id(m->extcpu);
+		amd_decode_nb_mce(node, m, 0);
 		break;
 
 	case 5:
-		amd_decode_fr_mce(m->status);
+		amd_decode_fr_mce(m);
 		break;
 
 	default:
@@ -418,6 +378,7 @@ static int amd_decode_mce(struct notifier_block *nb, unsigned long val,
 
 	return NOTIFY_STOP;
 }
+EXPORT_SYMBOL_GPL(amd_decode_mce);
 
 static struct notifier_block amd_mce_dec_nb = {
 	.notifier_call	= amd_decode_mce,
@@ -426,11 +387,15 @@ static struct notifier_block amd_mce_dec_nb = {
 static int __init mce_amd_init(void)
 {
 	/*
-	 * We can decode MCEs for Opteron and later CPUs:
+	 * We can decode MCEs for K8, F10h and F11h CPUs:
 	 */
-	if ((boot_cpu_data.x86_vendor == X86_VENDOR_AMD) &&
-	    (boot_cpu_data.x86 >= 0xf))
-		atomic_notifier_chain_register(&x86_mce_decoder_chain, &amd_mce_dec_nb);
+	if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD)
+		return 0;
+
+	if (boot_cpu_data.x86 < 0xf || boot_cpu_data.x86 > 0x11)
+		return 0;
+
+	atomic_notifier_chain_register(&x86_mce_decoder_chain, &amd_mce_dec_nb);
 
 	return 0;
 }
