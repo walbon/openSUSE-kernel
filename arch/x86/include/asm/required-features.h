@@ -87,5 +87,4 @@
 #define REQUIRED_MASK8	0
 #define REQUIRED_MASK9	0
 
-
 #endif /* _ASM_X86_REQUIRED_FEATURES_H */

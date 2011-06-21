@@ -162,23 +162,25 @@
 
 /*
  * Auxiliary flags: Linux defined - For features scattered in various
- * CPUID levels like 0x6, 0xA etc
+ * CPUID levels like 0x6, 0xA etc, word 7
  */
 #define X86_FEATURE_IDA		(7*32+ 0) /* Intel Dynamic Acceleration */
 #define X86_FEATURE_ARAT	(7*32+ 1) /* Always Running APIC Timer */
 #define X86_FEATURE_CPB		(7*32+ 2) /* AMD Core Performance Boost */
+#define X86_FEATURE_XSAVEOPT	(7*32+ 4) /* "xsaveopt" Optimized Xsave */
 #define X86_FEATURE_PTS		(7*32+ 6) /* Intel Package Thermal Status */
 #define X86_FEATURE_DTS		(7*32+ 7) /* Digital Thermal Sensor */
 
-/* Virtualization flags: Linux defined */
+/* Virtualization flags: Linux defined, word 8 */
 #define X86_FEATURE_TPR_SHADOW  (8*32+ 0) /* Intel TPR Shadow */
 #define X86_FEATURE_VNMI        (8*32+ 1) /* Intel Virtual NMI */
 #define X86_FEATURE_FLEXPRIORITY (8*32+ 2) /* Intel FlexPriority */
 #define X86_FEATURE_EPT         (8*32+ 3) /* Intel Extended Page Table */
 #define X86_FEATURE_VPID        (8*32+ 4) /* Intel Virtual Processor ID */
 
- /* Intel-defined CPU features, CPUID level 0x00000007:0 (ebx), word 9 */
-#define X86_FEATURE_SMEP	(9*32+ 7) /* Supervisor Mode Execution Protection */
+/* Intel-defined CPU features, CPUID level 0x00000007:0 (ebx), word 9 */
+#define X86_FEATURE_FSGSBASE	(9*32+0)  /* {RD/WR}{FS/GS}BASE instructions*/
+#define X86_FEATURE_SMEP	(9*32+7)  /* Supervisor Mode Execution Protection */
 
 #if defined(__KERNEL__) && !defined(__ASSEMBLY__)
 
