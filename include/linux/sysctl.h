@@ -973,7 +973,7 @@ extern struct ctl_table_header *__sysctl_head_next(struct nsproxy *namespaces,
 extern void sysctl_head_finish(struct ctl_table_header *prev);
 extern int sysctl_perm(struct ctl_table_root *root,
 		struct ctl_table *table, int op);
-extern int proc_do_large_bitmap(struct ctl_table *, int, struct file *,
+extern int proc_do_large_bitmap(struct ctl_table *, int, 
 				void __user *, size_t *, loff_t *);
 
 
