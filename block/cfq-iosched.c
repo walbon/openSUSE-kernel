@@ -1234,7 +1234,7 @@ static void cfq_service_tree_add(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 		/* Move this cfq to root group */
 		cfq_log_cfqq(cfqd, cfqq, "moving to root group");
 		if (!RB_EMPTY_NODE(&cfqq->rb_node))
-			cfq_group_service_tree_del(cfqd, cfqq->cfqg);
+			cfq_group_notify_queue_del(cfqd, cfqq->cfqg);
 		cfqq->orig_cfqg = cfqq->cfqg;
 		cfqq->cfqg = &cfqd->root_group;
 		atomic_inc(&cfqd->root_group.ref);
@@ -1244,7 +1244,7 @@ static void cfq_service_tree_add(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 		/* cfqq is sequential now needs to go to its original group */
 		BUG_ON(cfqq->cfqg != &cfqd->root_group);
 		if (!RB_EMPTY_NODE(&cfqq->rb_node))
-			cfq_group_service_tree_del(cfqd, cfqq->cfqg);
+			cfq_group_notify_queue_del(cfqd, cfqq->cfqg);
 		cfq_put_cfqg(cfqq->cfqg);
 		cfqq->cfqg = cfqq->orig_cfqg;
 		cfqq->orig_cfqg = NULL;
