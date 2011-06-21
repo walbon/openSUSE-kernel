@@ -6434,7 +6434,7 @@ static void __init ata_parse_force_param(void)
 
 static int __init ata_init(void)
 {
-	int rc;
+	int rc = -ENOMEM;
 
 	ata_parse_force_param();
 
@@ -6450,9 +6450,8 @@ static int __init ata_init(void)
 	ata_scsi_transport_template = ata_attach_transport();
 	if (!ata_scsi_transport_template) {
 		ata_sff_exit();
-		rc = -ENOMEM;
 		goto fail;
-	}		
+	}
 
 	printk(KERN_DEBUG "libata version " DRV_VERSION " loaded.\n");
 	return 0;
