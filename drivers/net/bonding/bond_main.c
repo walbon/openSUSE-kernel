@@ -249,6 +249,18 @@ static int bond_add_vlan(struct bonding *bond, unsigned short vlan_id)
 	pr_debug("bond: %s, vlan id %d\n",
 		(bond ? bond->dev->name : "None"), vlan_id);
 
+	write_lock_bh(&bond->lock);
+
+	list_for_each_entry(vlan, &bond->vlan_list, vlan_list) {
+		if (vlan->vlan_id == vlan_id) {
+			pr_debug("VLAN ID %d already on bond %s\n", vlan_id, bond->dev->name);
+			write_unlock_bh(&bond->lock);
+			return 0;
+		}
+	}
+
+	write_unlock_bh(&bond->lock);
+
 	vlan = kzalloc(sizeof(struct vlan_entry), GFP_KERNEL);
 	if (!vlan)
 		return -ENOMEM;
@@ -295,9 +307,10 @@ static int bond_del_vlan(struct bonding *bond, unsigned short vlan_id)
 
 			kfree(vlan);
 
-			if (list_empty(&bond->vlan_list) &&
+			if (bond->vlan_list.next->next == &bond->vlan_list &&
 			    (bond->slave_cnt == 0)) {
-				/* Last VLAN removed and no slaves, so
+				/* Last VLAN removed (the only member of vlan_list
+				 * is the special vid == 0 vlan) and no slaves, so
 				 * restore block on adding VLANs. This will
 				 * be removed once new slaves that are not
 				 * VLAN challenged will be added.
@@ -398,6 +411,7 @@ int bond_dev_queue_xmit(struct bonding *bond, struct sk_buff *skb,
 {
 	unsigned short uninitialized_var(vlan_id);
 
+	/* Test vlan_list not vlgrp to catch and handle 802.1p tags */
 	if (!list_empty(&bond->vlan_list) &&
 	    !(slave_dev->features & NETIF_F_HW_VLAN_TX) &&
 	    vlan_get_tag(skb, &vlan_id) == 0) {
@@ -450,7 +464,9 @@ static void bond_vlan_rx_register(struct net_device *bond_dev,
 	struct slave *slave;
 	int i;
 
+	write_lock(&bond->lock);
 	bond->vlgrp = grp;
+	write_unlock(&bond->lock);
 
 	bond_for_each_slave(bond, slave, i) {
 		struct net_device *slave_dev = slave->dev;
@@ -534,7 +550,7 @@ static void bond_add_vlans_on_slave(struct bonding *bond, struct net_device *sla
 
 	write_lock_bh(&bond->lock);
 
-	if (list_empty(&bond->vlan_list))
+	if (!bond->vlgrp)
 		goto out;
 
 	if ((slave_dev->features & NETIF_F_HW_VLAN_RX) &&
@@ -561,7 +577,7 @@ static void bond_del_vlans_from_slave(struct bonding *bond,
 
 	write_lock_bh(&bond->lock);
 
-	if (list_empty(&bond->vlan_list))
+	if (!bond->vlgrp)
 		goto out;
 
 	if (!(slave_dev->features & NETIF_F_HW_VLAN_FILTER) ||
@@ -569,6 +585,8 @@ static void bond_del_vlans_from_slave(struct bonding *bond,
 		goto unreg;
 
 	list_for_each_entry(vlan, &bond->vlan_list, vlan_list) {
+		if (!vlan->vlan_id)
+			continue;
 		/* Save and then restore vlan_dev in the grp array,
 		 * since the slave's driver might clear it.
 		 */
@@ -1412,7 +1430,7 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
 	/* no need to lock since we're protected by rtnl_lock */
 	if (slave_dev->features & NETIF_F_VLAN_CHALLENGED) {
 		pr_debug("%s: NETIF_F_VLAN_CHALLENGED\n", slave_dev->name);
-		if (!list_empty(&bond->vlan_list)) {
+		if (bond->vlgrp) {
 			pr_err(DRV_NAME
 			       ": %s: Error: cannot enslave VLAN "
 			       "challenged slave %s on VLAN enabled "
@@ -1896,7 +1914,7 @@ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev)
 		 */
 		memset(bond_dev->dev_addr, 0, bond_dev->addr_len);
 
-		if (list_empty(&bond->vlan_list)) {
+		if (!bond->vlgrp) {
 			bond_dev->features |= NETIF_F_VLAN_CHALLENGED;
 		} else {
 			pr_warning(DRV_NAME
@@ -2096,9 +2114,9 @@ static int bond_release_all(struct net_device *bond_dev)
 	 */
 	memset(bond_dev->dev_addr, 0, bond_dev->addr_len);
 
-	if (list_empty(&bond->vlan_list))
+	if (!bond->vlgrp) {
 		bond_dev->features |= NETIF_F_VLAN_CHALLENGED;
-	else {
+	} else {
 		pr_warning(DRV_NAME
 		       ": %s: Warning: clearing HW address of %s while it "
 		       "still has VLANs.\n",
@@ -2550,7 +2568,7 @@ static void bond_arp_send_all(struct bonding *bond, struct slave *slave)
 		if (!targets[i])
 			break;
 		pr_debug("basa: target %x\n", targets[i]);
-		if (list_empty(&bond->vlan_list)) {
+		if (!bond->vlgrp) {
 			pr_debug("basa: empty vlan: arp_send\n");
 			bond_arp_send(slave->dev, ARPOP_REQUEST, targets[i],
 				      bond->master_ip, 0);
@@ -2640,6 +2658,9 @@ static void bond_send_gratuitous_arp(struct bonding *bond)
 		bond_arp_send(slave->dev, ARPOP_REPLY, bond->master_ip,
 				bond->master_ip, 0);
 	}
+
+	if (!bond->vlgrp)
+		return;
 
 	list_for_each_entry(vlan, &bond->vlan_list, vlan_list) {
 		vlan_dev = vlan_group_get_device(bond->vlgrp, vlan->vlan_id);
@@ -3617,6 +3638,8 @@ static int bond_inetaddr_event(struct notifier_block *this, unsigned long event,
 		}
 
 		list_for_each_entry(vlan, &bond->vlan_list, vlan_list) {
+			if (!bond->vlgrp)
+				continue;
 			vlan_dev = vlan_group_get_device(bond->vlgrp, vlan->vlan_id);
 			if (vlan_dev == event_dev) {
 				switch (event) {
@@ -4606,12 +4629,18 @@ static void bond_work_cancel_all(struct bonding *bond)
 static void bond_deinit(struct net_device *bond_dev)
 {
 	struct bonding *bond = netdev_priv(bond_dev);
+	struct vlan_entry *vlan, *tmp;
 
 	list_del(&bond->bond_list);
 
 	bond_work_cancel_all(bond);
 
 	bond_remove_proc_entry(bond);
+
+	list_for_each_entry_safe(vlan, tmp, &bond->vlan_list, vlan_list) {
+		list_del(&vlan->vlan_list);
+		kfree(vlan);
+	}
 }
 
 /* Unregister and free all bond devices.
