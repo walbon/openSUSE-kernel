@@ -177,6 +177,7 @@ static const struct trans_ctl_table trans_net_unix_table[] = {
 };
 
 static const struct trans_ctl_table trans_net_ipv4_route_table[] = {
+	{ NET_IPV4_CONF_PROXY_ARP_PVLAN,	"proxy_arp_pvlan" },
 	{ NET_IPV4_ROUTE_FLUSH,			"flush" },
 	{ NET_IPV4_ROUTE_MIN_DELAY,		"min_delay" },
 	{ NET_IPV4_ROUTE_MAX_DELAY,		"max_delay" },
