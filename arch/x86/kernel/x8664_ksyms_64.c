@@ -28,7 +28,8 @@ EXPORT_SYMBOL(__put_user_2);
 EXPORT_SYMBOL(__put_user_4);
 EXPORT_SYMBOL(__put_user_8);
 
-EXPORT_SYMBOL(copy_user_generic);
+EXPORT_SYMBOL(copy_user_generic_string);
+EXPORT_SYMBOL(copy_user_generic_unrolled);
 EXPORT_SYMBOL(__copy_user_nocache);
 EXPORT_SYMBOL(copy_from_user);
 EXPORT_SYMBOL(copy_to_user);
@@ -54,6 +55,7 @@ extern void *__memcpy(void *, const void *, __kernel_size_t);
 EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(memcpy);
 EXPORT_SYMBOL(__memcpy);
+EXPORT_SYMBOL(memmove);
 
 EXPORT_SYMBOL(empty_zero_page);
 EXPORT_SYMBOL(init_level4_pgt);
