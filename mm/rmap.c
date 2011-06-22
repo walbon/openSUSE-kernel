@@ -896,7 +896,7 @@ void do_page_add_anon_rmap(struct page *page,
 		return;
 
 	VM_BUG_ON(!PageLocked(page));
-	VM_BUG_ON(address < vma->vm_start || address >= vma->vm_end);
+	/* address might be in next vma when migration races vma_adjust */
 	if (first)
 		__page_set_anon_rmap(page, vma, address, exclusive);
 	else
