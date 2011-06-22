@@ -314,8 +314,8 @@ static unsigned long __init reserve_log_buf(unsigned long len)
 	unsigned long mem;
 
 	mem = find_e820_area(addr, end_of_lowmem, len, PAGE_SIZE);
-	if (mem == -1ULL)
-		return 0ULL;
+	if (mem == -1UL)
+		return 0UL;
 
 	reserve_early(mem, mem + len, "LOG BUF");
 	return mem;

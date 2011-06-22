@@ -29,6 +29,7 @@
 #include <linux/if_link.h>
 #include <linux/if_macvlan.h>
 #include <net/rtnetlink.h>
+#include <net/xfrm.h>
 
 #define MACVLAN_HASH_SIZE	(1 << BITS_PER_BYTE)
 
@@ -44,6 +45,7 @@ struct macvlan_dev {
 	struct hlist_node	hlist;
 	struct macvlan_port	*port;
 	struct net_device	*lowerdev;
+	enum macvlan_mode	mode;
 };
 
 
@@ -102,7 +104,9 @@ static int macvlan_addr_busy(const struct macvlan_port *port,
 }
 
 static void macvlan_broadcast(struct sk_buff *skb,
-			      const struct macvlan_port *port)
+			      const struct macvlan_port *port,
+			      struct net_device *src,
+			      enum macvlan_mode mode)
 {
 	const struct ethhdr *eth = eth_hdr(skb);
 	const struct macvlan_dev *vlan;
@@ -110,20 +114,28 @@ static void macvlan_broadcast(struct sk_buff *skb,
 	struct net_device *dev;
 	struct sk_buff *nskb;
 	unsigned int i;
+	bool local;
 
 	if (skb->protocol == htons(ETH_P_PAUSE))
 		return;
 
 	for (i = 0; i < MACVLAN_HASH_SIZE; i++) {
 		hlist_for_each_entry_rcu(vlan, n, &port->vlan_hash[i], hlist) {
+			if (vlan->dev == src || !(vlan->mode & mode))
+				continue;
+
 			dev = vlan->dev;
 
 			nskb = skb_clone(skb, GFP_ATOMIC);
+			local = mode == MACVLAN_MODE_BRIDGE;
 			if (nskb == NULL) {
 				dev->stats.rx_errors++;
 				dev->stats.rx_dropped++;
 				continue;
 			}
+
+			if (local)
+				dev_forward_skb(dev, skb);
 
 			dev->stats.rx_bytes += skb->len + ETH_HLEN;
 			dev->stats.rx_packets++;
@@ -146,6 +158,7 @@ static struct sk_buff *macvlan_handle_frame(struct sk_buff *skb)
 	const struct ethhdr *eth = eth_hdr(skb);
 	const struct macvlan_port *port;
 	const struct macvlan_dev *vlan;
+	const struct macvlan_dev *src;
 	struct net_device *dev;
 
 	port = rcu_dereference(skb->dev->macvlan_port);
@@ -153,7 +166,25 @@ static struct sk_buff *macvlan_handle_frame(struct sk_buff *skb)
 		return skb;
 
 	if (is_multicast_ether_addr(eth->h_dest)) {
-		macvlan_broadcast(skb, port);
+		src = macvlan_hash_lookup(port, eth->h_source);
+		if (!src)
+			/* frame comes from an external address */
+			macvlan_broadcast(skb, port, NULL,
+					  MACVLAN_MODE_PRIVATE |
+					  MACVLAN_MODE_VEPA    |
+					  MACVLAN_MODE_BRIDGE);
+		else if (src->mode == MACVLAN_MODE_VEPA)
+			/* flood to everyone except source */
+			macvlan_broadcast(skb, port, src->dev,
+					  MACVLAN_MODE_VEPA |
+					  MACVLAN_MODE_BRIDGE);
+		else if (src->mode == MACVLAN_MODE_BRIDGE)
+			/*
+			 * flood only to VEPA ports, bridge ports
+			 * already saw the frame on the way out.
+			 */
+			macvlan_broadcast(skb, port, src->dev,
+					  MACVLAN_MODE_VEPA);
 		return skb;
 	}
 
@@ -184,18 +215,51 @@ static struct sk_buff *macvlan_handle_frame(struct sk_buff *skb)
 	return NULL;
 }
 
+static int macvlan_queue_xmit(struct sk_buff *skb, struct net_device *dev)
+{
+	const struct macvlan_dev *vlan = netdev_priv(dev);
+	const struct macvlan_port *port = vlan->port;
+	const struct macvlan_dev *dest;
+
+	if (vlan->mode == MACVLAN_MODE_BRIDGE) {
+		const struct ethhdr *eth = (void *)skb->data;
+
+		/* send to other bridge ports directly */
+		if (is_multicast_ether_addr(eth->h_dest)) {
+			macvlan_broadcast(skb, port, dev, MACVLAN_MODE_BRIDGE);
+			goto xmit_world;
+		}
+
+		dest = macvlan_hash_lookup(port, eth->h_dest);
+		if (dest && dest->mode == MACVLAN_MODE_BRIDGE) {
+			int ret = dev_forward_skb(dest->dev, skb);
+			if (ret == NET_RX_SUCCESS) {
+				dev->stats.rx_bytes += skb->len + ETH_HLEN;
+				dev->stats.rx_packets++;
+			}
+			else {
+				dev->stats.rx_errors++;
+				dev->stats.rx_dropped++;
+			}
+
+			return NET_XMIT_SUCCESS;
+		}
+	}
+
+xmit_world:
+	skb->dev = vlan->lowerdev;
+	return dev_queue_xmit(skb);
+}
+
 static netdev_tx_t macvlan_start_xmit(struct sk_buff *skb,
 				      struct net_device *dev)
 {
 	int i = skb_get_queue_mapping(skb);
 	struct netdev_queue *txq = netdev_get_tx_queue(dev, i);
-	const struct macvlan_dev *vlan = netdev_priv(dev);
 	unsigned int len = skb->len;
 	int ret;
 
-	skb->dev = vlan->lowerdev;
-	ret = dev_queue_xmit(skb);
-
+	ret = macvlan_queue_xmit(skb, dev);
 	if (likely(ret == NET_XMIT_SUCCESS)) {
 		txq->tx_packets++;
 		txq->tx_bytes += len;
@@ -483,6 +547,17 @@ static int macvlan_validate(struct nlattr *tb[], struct nlattr *data[])
 		if (!is_valid_ether_addr(nla_data(tb[IFLA_ADDRESS])))
 			return -EADDRNOTAVAIL;
 	}
+
+	if (data && data[IFLA_MACVLAN_MODE]) {
+		switch (nla_get_u32(data[IFLA_MACVLAN_MODE])) {
+		case MACVLAN_MODE_PRIVATE:
+		case MACVLAN_MODE_VEPA:
+		case MACVLAN_MODE_BRIDGE:
+			break;
+		default:
+			return -EINVAL;
+		}
+	}
 	return 0;
 }
 
@@ -547,6 +622,10 @@ static int macvlan_newlink(struct net_device *dev,
 	vlan->dev      = dev;
 	vlan->port     = port;
 
+	vlan->mode     = MACVLAN_MODE_VEPA;
+	if (data && data[IFLA_MACVLAN_MODE])
+		vlan->mode = nla_get_u32(data[IFLA_MACVLAN_MODE]);
+
 	err = register_netdevice(dev);
 	if (err < 0)
 		return err;
@@ -568,6 +647,36 @@ static void macvlan_dellink(struct net_device *dev)
 		macvlan_port_destroy(port->dev);
 }
 
+static int macvlan_changelink(struct net_device *dev,
+		struct nlattr *tb[], struct nlattr *data[])
+{
+	struct macvlan_dev *vlan = netdev_priv(dev);
+	if (data && data[IFLA_MACVLAN_MODE])
+		vlan->mode = nla_get_u32(data[IFLA_MACVLAN_MODE]);
+	return 0;
+}
+
+static size_t macvlan_get_size(const struct net_device *dev)
+{
+	return nla_total_size(4);
+}
+
+static int macvlan_fill_info(struct sk_buff *skb,
+				const struct net_device *dev)
+{
+	struct macvlan_dev *vlan = netdev_priv(dev);
+
+	NLA_PUT_U32(skb, IFLA_MACVLAN_MODE, vlan->mode);
+	return 0;
+
+nla_put_failure:
+	return -EMSGSIZE;
+}
+
+static const struct nla_policy macvlan_policy[IFLA_MACVLAN_MAX + 1] = {
+	[IFLA_MACVLAN_MODE] = { .type = NLA_U32 },
+};
+
 static struct rtnl_link_ops macvlan_link_ops __read_mostly = {
 	.kind		= "macvlan",
 	.priv_size	= sizeof(struct macvlan_dev),
@@ -576,6 +685,11 @@ static struct rtnl_link_ops macvlan_link_ops __read_mostly = {
 	.validate	= macvlan_validate,
 	.newlink	= macvlan_newlink,
 	.dellink	= macvlan_dellink,
+	.maxtype	= IFLA_MACVLAN_MAX,
+	.policy		= macvlan_policy,
+	.changelink	= macvlan_changelink,
+	.get_size	= macvlan_get_size,
+	.fill_info	= macvlan_fill_info,
 };
 
 static int macvlan_device_event(struct notifier_block *unused,

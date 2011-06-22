@@ -1366,6 +1366,48 @@ static inline void net_timestamp(struct sk_buff *skb)
 		skb->tstamp.tv64 = 0;
 }
 
+/* netif_setup_tc - Handle tc mappings on real_num_tx_queues change
+ * @dev: Network device
+ * @txq: number of queues available
+ *
+ * If real_num_tx_queues is changed the tc mappings may no longer be
+ * valid. To resolve this verify the tc mapping remains valid and if
+ * not NULL the mapping. With no priorities mapping to this
+ * offset/count pair it will no longer be used. In the worst case TC0
+ * is invalid nothing can be done so disable priority mappings. If is
+ * expected that drivers will fix this mapping if they can before
+ * calling netif_set_real_num_tx_queues.
+ */
+void netif_setup_tc(struct net_device *dev, unsigned int txq)
+{
+	int i;
+	struct netdev_tc_txq *tc = &dev->tc_to_txq[0];
+
+	/* If TC0 is invalidated disable TC mapping */
+	if (tc->offset + tc->count > txq) {
+		pr_warning("Number of in use tx queues changed "
+			   "invalidating tc mappings. Priority "
+			   "traffic classification disabled!\n");
+		dev->num_tc = 0;
+		return;
+	}
+
+	/* Invalidated prio to tc mappings set to TC0 */
+	for (i = 1; i < TC_BITMASK + 1; i++) {
+		int q = netdev_get_prio_tc_map(dev, i);
+
+		tc = &dev->tc_to_txq[q];
+		if (tc->offset + tc->count > txq) {
+			pr_warning("Number of in use tx queues "
+				   "changed. Priority %i to tc "
+				   "mapping %i is no longer valid "
+				   "setting map to 0\n",
+				   i, q);
+			netdev_set_prio_tc_map(dev, i, 0);
+		}
+	}
+}
+
 /*
  *	Support routine. Sends outgoing frames to any network
  *	taps currently in use.
@@ -1433,6 +1475,8 @@ void netif_set_real_num_tx_queues(struct net_device *dev, unsigned int txq)
 		dev->real_num_tx_queues = txq;
 		qdisc_reset_all_tx_gt(dev, txq);
 	}
+	if (dev->num_tc)
+		netif_setup_tc(dev, txq);
 }
 EXPORT_SYMBOL(netif_set_real_num_tx_queues);
 
@@ -1809,12 +1853,20 @@ static u32 skb_tx_hashrnd;
 u16 skb_tx_hash(const struct net_device *dev, const struct sk_buff *skb)
 {
 	u32 hash;
+	u16 qoffset = 0;
+	u16 qcount = dev->real_num_tx_queues;
 
 	if (skb_rx_queue_recorded(skb)) {
 		hash = skb_get_rx_queue(skb);
 		while (unlikely(hash >= dev->real_num_tx_queues))
 			hash -= dev->real_num_tx_queues;
 		return hash;
+	}
+
+	if (dev->num_tc) {
+		u8 tc = netdev_get_prio_tc_map(dev, skb->priority);
+		qoffset = dev->tc_to_txq[tc].offset;
+		qcount = dev->tc_to_txq[tc].count;
 	}
 
 	if (skb->sk && skb->sk->sk_hash)
@@ -1824,7 +1876,7 @@ u16 skb_tx_hash(const struct net_device *dev, const struct sk_buff *skb)
 
 	hash = jhash_1word(hash, skb_tx_hashrnd);
 
-	return (u16) (((u64) hash * dev->real_num_tx_queues) >> 32);
+	return (u16) (((u64) hash * qcount) >> 32) + qoffset;
 }
 EXPORT_SYMBOL(skb_tx_hash);
 
@@ -2142,6 +2194,62 @@ static void net_tx_action(struct softirq_action *h)
 	}
 }
 
+static inline bool is_skb_forwardable(struct net_device *dev,
+				      struct sk_buff *skb)
+{
+	unsigned int len;
+
+	if (!(dev->flags & IFF_UP))
+		return false;
+
+	len = dev->mtu + dev->hard_header_len + VLAN_HLEN;
+	if (skb->len <= len)
+		return true;
+
+	/* if TSO is enabled, we don't care about the length as the packet
+	 * could be forwarded without being segmented before
+	 */
+	if (skb_is_gso(skb))
+		return true;
+
+	return false;
+}
+
+/**
+ * dev_forward_skb - loopback an skb to another netif
+ *
+ * @dev: destination network device
+ * @skb: buffer to forward
+ *
+ * return values:
+ *	NET_RX_SUCCESS	(no congestion)
+ *	NET_RX_DROP     (packet was dropped, but freed)
+ *
+ * dev_forward_skb can be used for injecting an skb from the
+ * start_xmit function of one device into the receive queue
+ * of another device.
+ *
+ * The receiving device may be in another namespace, so
+ * we have to clear all information in the skb that could
+ * impact namespace isolation.
+ */
+int dev_forward_skb(struct net_device *dev, struct sk_buff *skb)
+{
+	skb_orphan(skb);
+	nf_reset(skb);
+
+	if (unlikely(!is_skb_forwardable(dev, skb))) {
+		kfree_skb(skb);
+		return NET_RX_DROP;
+	}
+	skb->dev = dev;
+	skb->tstamp.tv64 = 0;
+	skb->pkt_type = PACKET_HOST;
+	skb->protocol = eth_type_trans(skb, dev);
+	return netif_rx(skb);
+}
+EXPORT_SYMBOL_GPL(dev_forward_skb);
+
 static inline int deliver_skb(struct sk_buff *skb,
 			      struct packet_type *pt_prev,
 			      struct net_device *orig_dev)
@@ -2360,7 +2468,7 @@ int netif_receive_skb(struct sk_buff *skb)
 	if (!skb->tstamp.tv64)
 		net_timestamp(skb);
 
-	if (skb->vlan_tci && vlan_hwaccel_do_receive(skb))
+	if (vlan_tx_tag_present(skb) && vlan_hwaccel_do_receive(skb))
 		return NET_RX_SUCCESS;
 
 	/* Emergency skb are special, they should

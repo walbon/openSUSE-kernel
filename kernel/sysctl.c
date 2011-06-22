@@ -3152,7 +3152,7 @@ static int proc_put_char(void __user **buf, size_t *size, char c)
  *
  * Returns 0 on success.
  */
-int proc_do_large_bitmap(struct ctl_table *table, int write, struct file *filp,
+int proc_do_large_bitmap(struct ctl_table *table, int write,
 			 void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	int err = 0;
