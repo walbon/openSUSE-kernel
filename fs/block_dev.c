@@ -1231,6 +1231,7 @@ struct block_device *open_by_devnum(dev_t dev, fmode_t mode)
 
 EXPORT_SYMBOL(open_by_devnum);
 
+extern int __invalidate_device2(struct block_device *, bool);
 /**
  * flush_disk - invalidates all buffer-cache entries on a disk
  *
@@ -1240,9 +1241,9 @@ EXPORT_SYMBOL(open_by_devnum);
  * when a disk has been changed -- either by a media change or online
  * resize.
  */
-static void flush_disk(struct block_device *bdev)
+static void flush_disk(struct block_device *bdev, bool kill_dirty)
 {
-	if (__invalidate_device(bdev)) {
+	if (__invalidate_device2(bdev, kill_dirty)) {
 		char name[BDEVNAME_SIZE] = "";
 
 		if (bdev->bd_disk)
@@ -1279,7 +1280,7 @@ void check_disk_size_change(struct gendisk *disk, struct block_device *bdev)
 		       "%s: detected capacity change from %lld to %lld\n",
 		       name, bdev_size, disk_size);
 		i_size_write(bdev->bd_inode, disk_size);
-		flush_disk(bdev);
+		flush_disk(bdev, false);
 	}
 }
 EXPORT_SYMBOL(check_disk_size_change);
@@ -1331,7 +1332,7 @@ int check_disk_change(struct block_device *bdev)
 	if (!bdops->media_changed(bdev->bd_disk))
 		return 0;
 
-	flush_disk(bdev);
+	flush_disk(bdev, true);
 	if (bdops->revalidate_disk)
 		bdops->revalidate_disk(bdev->bd_disk);
 	return 1;
@@ -1804,7 +1805,7 @@ void close_bdev_exclusive(struct block_device *bdev, fmode_t mode)
 
 EXPORT_SYMBOL(close_bdev_exclusive);
 
-int __invalidate_device(struct block_device *bdev)
+int __invalidate_device2(struct block_device *bdev, bool kill_dirty)
 {
 	struct super_block *sb = get_super(bdev);
 	int res = 0;
@@ -1817,10 +1818,17 @@ int __invalidate_device(struct block_device *bdev)
 		 * hold).
 		 */
 		shrink_dcache_sb(sb);
-		res = invalidate_inodes(sb);
+		if (kill_dirty)
+			res = invalidate_inodes(sb);
+		else
+			res = invalidate_clean_inodes(sb);
 		drop_super(sb);
 	}
 	invalidate_bdev(bdev);
 	return res;
+}
+int __invalidate_device(struct block_device *bdev)
+{
+	return __invalidate_device2(bdev, true);
 }
 EXPORT_SYMBOL(__invalidate_device);
