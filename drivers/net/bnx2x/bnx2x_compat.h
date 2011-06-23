@@ -743,4 +743,10 @@ static inline const char *netdev_name(const struct net_device *dev)
 	for (mclist = (dev)->mc_list; mclist; mclist = mclist->next)
 #endif
 
+#if (LINUX_VERSION_CODE < 0x020625)
+static inline int netif_set_real_num_rx_queues(struct net_device *dev, int num)
+{
+	return 0;
+}
+#endif
 #endif /* __BNX2X_COMPAT_H__ */
