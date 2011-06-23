@@ -177,7 +177,6 @@ static const struct trans_ctl_table trans_net_unix_table[] = {
 };
 
 static const struct trans_ctl_table trans_net_ipv4_route_table[] = {
-	{ NET_IPV4_CONF_PROXY_ARP_PVLAN,	"proxy_arp_pvlan" },
 	{ NET_IPV4_ROUTE_FLUSH,			"flush" },
 	{ NET_IPV4_ROUTE_MIN_DELAY,		"min_delay" },
 	{ NET_IPV4_ROUTE_MAX_DELAY,		"max_delay" },
@@ -205,6 +204,7 @@ static const struct trans_ctl_table trans_net_ipv4_conf_vars_table[] = {
 	{ NET_IPV4_CONF_MC_FORWARDING,		"mc_forwarding" },
 
 	{ NET_IPV4_CONF_PROXY_ARP,		"proxy_arp" },
+	{ NET_IPV4_CONF_PROXY_ARP_PVLAN,	"proxy_arp_pvlan" },
 	{ NET_IPV4_CONF_ACCEPT_REDIRECTS,	"accept_redirects" },
 	{ NET_IPV4_CONF_SECURE_REDIRECTS,	"secure_redirects" },
 	{ NET_IPV4_CONF_SEND_REDIRECTS,		"send_redirects" },
