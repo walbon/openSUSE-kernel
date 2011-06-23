@@ -373,7 +373,8 @@ static void dispose_list(struct list_head *head)
 /*
  * Invalidate all inodes for a device.
  */
-static int invalidate_list(struct list_head *head, struct list_head *dispose)
+static int invalidate_list(struct list_head *head, struct list_head *dispose,
+			   int kill_dirty)
 {
 	struct list_head *next;
 	int busy = 0, count = 0;
@@ -395,6 +396,10 @@ static int invalidate_list(struct list_head *head, struct list_head *dispose)
 		if (tmp == head)
 			break;
 		inode = list_entry(tmp, struct inode, i_sb_list);
+		if (inode->i_state & I_DIRTY && !kill_dirty) {
+			busy = 1;
+			continue;
+		}
 		if (inode->i_state & I_NEW)
 			continue;
 		invalidate_inode_buffers(inode);
@@ -429,7 +434,7 @@ int invalidate_inodes(struct super_block *sb)
 	spin_lock(&inode_lock);
 	inotify_unmount_inodes(&sb->s_inodes);
 	fsnotify_unmount_inodes(&sb->s_inodes);
-	busy = invalidate_list(&sb->s_inodes, &throw_away);
+	busy = invalidate_list(&sb->s_inodes, &throw_away, true);
 	spin_unlock(&inode_lock);
 
 	dispose_list(&throw_away);
@@ -438,6 +443,23 @@ int invalidate_inodes(struct super_block *sb)
 	return busy;
 }
 EXPORT_SYMBOL(invalidate_inodes);
+int invalidate_clean_inodes(struct super_block *sb)
+{
+	int busy;
+	LIST_HEAD(throw_away);
+
+	down_write(&iprune_sem);
+	spin_lock(&inode_lock);
+	inotify_unmount_inodes(&sb->s_inodes);
+	fsnotify_unmount_inodes(&sb->s_inodes);
+	busy = invalidate_list(&sb->s_inodes, &throw_away, false);
+	spin_unlock(&inode_lock);
+
+	dispose_list(&throw_away);
+	up_write(&iprune_sem);
+
+	return busy;
+}
 
 static int can_unuse(struct inode *inode)
 {

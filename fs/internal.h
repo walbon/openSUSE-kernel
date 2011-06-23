@@ -84,3 +84,8 @@ extern void mark_files_ro(struct super_block *);
  * super.c
  */
 extern int do_remount_sb(struct super_block *, int, void *, int);
+
+/*
+ * inode.c
+ */
+extern int invalidate_clean_inodes(struct super_block *sb);
