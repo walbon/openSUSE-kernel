@@ -93,6 +93,11 @@ EXPORT_SYMBOL_GPL(kvm_x86_ops);
 int ignore_msrs = 0;
 module_param_named(ignore_msrs, ignore_msrs, bool, S_IRUGO | S_IWUSR);
 
+bool kvm_has_tsc_control;
+EXPORT_SYMBOL_GPL(kvm_has_tsc_control);
+u32  kvm_max_guest_tsc_khz;
+EXPORT_SYMBOL_GPL(kvm_max_guest_tsc_khz);
+
 struct kvm_stats_debugfs_item debugfs_entries[] = {
 	{ "pf_fixed", VCPU_STAT(pf_fixed) },
 	{ "pf_guest", VCPU_STAT(pf_guest) },
@@ -506,16 +511,15 @@ void kvm_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)
 }
 EXPORT_SYMBOL_GPL(kvm_set_cr3);
 
-void kvm_set_cr8(struct kvm_vcpu *vcpu, unsigned long cr8)
+int kvm_set_cr8(struct kvm_vcpu *vcpu, unsigned long cr8)
 {
-	if (cr8 & CR8_RESERVED_BITS) {
-		kvm_inject_gp(vcpu, 0);
-		return;
-	}
+	if (cr8 & CR8_RESERVED_BITS)
+		return 1;
 	if (irqchip_in_kernel(vcpu->kvm))
 		kvm_lapic_set_tpr(vcpu, cr8);
 	else
 		vcpu->arch.cr8 = cr8;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(kvm_set_cr8);
 
@@ -697,6 +701,14 @@ static void kvm_set_time_scale(uint32_t tsc_khz, struct pvclock_vcpu_time_info *
 
 static DEFINE_PER_CPU(unsigned long, cpu_tsc_khz);
 
+static u64 vcpu_tsc_khz(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->arch.virtual_tsc_khz)
+		return vcpu->arch.virtual_tsc_khz;
+	else
+		return __get_cpu_var(cpu_tsc_khz);
+}
+
 static void kvm_write_guest_time(struct kvm_vcpu *v)
 {
 	struct timespec ts;
@@ -710,7 +722,7 @@ static void kvm_write_guest_time(struct kvm_vcpu *v)
 	if ((!vcpu->time_page))
 		return;
 
-	this_tsc_khz = get_cpu_var(cpu_tsc_khz);
+	this_tsc_khz = vcpu_tsc_khz(v);
 	if (unlikely(vcpu->hv_clock_tsc_khz != this_tsc_khz)) {
 		kvm_set_time_scale(this_tsc_khz, &vcpu->hv_clock);
 		vcpu->hv_clock_tsc_khz = this_tsc_khz;
@@ -1319,6 +1331,7 @@ int kvm_dev_ioctl_check_extension(long ext)
 	case KVM_CAP_SET_IDENTITY_MAP_ADDR:
 	case KVM_CAP_ADJUST_CLOCK:
 	case KVM_CAP_VCPU_EVENTS:
+	case KVM_CAP_GET_TSC_KHZ:
 	case KVM_CAP_XSAVE:
 		r = 1;
 		break;
@@ -1345,6 +1358,9 @@ int kvm_dev_ioctl_check_extension(long ext)
 		break;
 	case KVM_CAP_XCRS:
 		r = cpu_has_xsave;
+		break;
+	case KVM_CAP_TSC_CONTROL:
+		r = kvm_has_tsc_control;
 		break;
 	default:
 		r = 0;
@@ -2257,6 +2273,33 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 
 		r = kvm_vcpu_ioctl_x86_set_xcrs(vcpu, xcrs);
 		break;
+	}
+	case KVM_SET_TSC_KHZ: {
+	      u32 user_tsc_khz;
+
+	      r = -EINVAL;
+	      if (!kvm_has_tsc_control)
+		      break;
+
+	      user_tsc_khz = (u32)arg;
+
+	      if (user_tsc_khz >= kvm_max_guest_tsc_khz)
+		      goto out;
+
+	      kvm_x86_ops->set_tsc_khz(vcpu, user_tsc_khz);
+
+	      r = 0;
+	      goto out;
+	}
+	case KVM_GET_TSC_KHZ: {
+	      r = -EIO;
+
+	      if (check_tsc_unstable())
+		      goto out;
+
+	      r = vcpu_tsc_khz(vcpu);
+
+	      goto out;
 	}
 	default:
 		r = -EINVAL;
@@ -3280,11 +3323,12 @@ static void cache_all_regs(struct kvm_vcpu *vcpu)
 	vcpu->arch.regs_dirty = ~0;
 }
 
-int emulate_instruction(struct kvm_vcpu *vcpu,
+int x86_emulate_instruction(struct kvm_vcpu *vcpu,
 			struct kvm_run *run,
 			unsigned long cr2,
-			u16 error_code,
-			int emulation_type)
+			int emulation_type,
+			void *insn,
+			int insn_len)
 {
 	int r, shadow_mask;
 	struct decode_cache *c;
@@ -3315,7 +3359,8 @@ int emulate_instruction(struct kvm_vcpu *vcpu,
 			? X86EMUL_MODE_PROT64 :	cs_db
 			? X86EMUL_MODE_PROT32 : X86EMUL_MODE_PROT16;
 
-		r = x86_decode_insn(&vcpu->arch.emulate_ctxt, &emulate_ops);
+		r = x86_decode_insn(&vcpu->arch.emulate_ctxt, &emulate_ops,
+				    insn, insn_len);
 
 		/* Only allow emulation of specific instructions on #UD
 		 * (namely VMMCALL, sysenter, sysexit, syscall)*/
@@ -3395,7 +3440,7 @@ int emulate_instruction(struct kvm_vcpu *vcpu,
 
 	return EMULATE_DONE;
 }
-EXPORT_SYMBOL_GPL(emulate_instruction);
+EXPORT_SYMBOL_GPL(x86_emulate_instruction);
 
 static int pio_copy_data(struct kvm_vcpu *vcpu)
 {
@@ -4338,8 +4383,12 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 	}
 
 	/* re-sync apic's tpr */
-	if (!irqchip_in_kernel(vcpu->kvm))
-		kvm_set_cr8(vcpu, kvm_run->cr8);
+	if (!irqchip_in_kernel(vcpu->kvm)) {
+		if (kvm_set_cr8(vcpu, kvm_run->cr8) != 0) {
+			r = -EINVAL;
+			goto out;
+		}
+	}
 
 	if (vcpu->arch.pio.cur_count) {
 		r = complete_pio(vcpu);
@@ -4353,9 +4402,9 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 		vcpu->mmio_needed = 0;
 
 		vcpu->srcu_idx = srcu_read_lock(&vcpu->kvm->srcu);
-		r = emulate_instruction(vcpu, kvm_run,
-					vcpu->arch.mmio_fault_cr2, 0,
-					EMULTYPE_NO_DECODE);
+		r = x86_emulate_instruction(vcpu, kvm_run,
+					vcpu->arch.mmio_fault_cr2,
+					EMULTYPE_NO_DECODE, NULL, 0);
 		srcu_read_unlock(&vcpu->kvm->srcu, vcpu->srcu_idx);
 		if (r == EMULATE_DO_MMIO) {
 			/*

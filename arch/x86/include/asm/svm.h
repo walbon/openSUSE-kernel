@@ -81,7 +81,12 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 	u32 event_inj_err;
 	u64 nested_cr3;
 	u64 lbr_ctl;
-	u8 reserved_5[832];
+	u32 clean;
+	u32 reserved_5;
+	u64 next_rip;
+	u8 insn_len;
+	u8 insn_bytes[15];
+	u8 reserved_6[800];
 };
 
 
@@ -238,6 +243,8 @@ struct __attribute__ ((__packed__)) vmcb {
 
 #define SVM_EXITINFOSHIFT_TS_REASON_IRET 36
 #define SVM_EXITINFOSHIFT_TS_REASON_JMP 38
+
+#define SVM_EXITINFO_REG_MASK 0x0F
 
 #define	SVM_EXIT_READ_CR0 	0x000
 #define	SVM_EXIT_READ_CR3 	0x003

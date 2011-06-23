@@ -2761,7 +2761,7 @@ static int handle_rmode_exception(struct kvm_vcpu *vcpu,
 	 * Cause the #SS fault with 0 error code in VM86 mode.
 	 */
 	if (((vec == GP_VECTOR) || (vec == SS_VECTOR)) && err_code == 0)
-		if (emulate_instruction(vcpu, NULL, 0, 0, 0) == EMULATE_DONE)
+		if (emulate_instruction(vcpu, NULL, 0) == EMULATE_DONE)
 			return 1;
 	/*
 	 * Forward all other exceptions that are valid in real mode.
@@ -2852,7 +2852,7 @@ static int handle_exception(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 	}
 
 	if (is_invalid_opcode(intr_info)) {
-		er = emulate_instruction(vcpu, kvm_run, 0, 0, EMULTYPE_TRAP_UD);
+		er = emulate_instruction(vcpu, kvm_run, EMULTYPE_TRAP_UD);
 		if (er != EMULATE_DONE)
 			kvm_queue_exception(vcpu, UD_VECTOR);
 		return 1;
@@ -2871,7 +2871,7 @@ static int handle_exception(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 
 		if (kvm_event_needs_reinjection(vcpu))
 			kvm_mmu_unprotect_page_virt(vcpu, cr2);
-		return kvm_mmu_page_fault(vcpu, cr2, error_code);
+		return kvm_mmu_page_fault(vcpu, cr2, error_code, NULL, 0);
 	}
 
 	if (vmx->rmode.vm86_active &&
@@ -2943,7 +2943,7 @@ static int handle_io(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 
 	if (string) {
 		if (emulate_instruction(vcpu,
-					kvm_run, 0, 0, 0) == EMULATE_DO_MMIO)
+					kvm_run, 0) == EMULATE_DO_MMIO)
 			return 0;
 		return 1;
 	}
@@ -2996,8 +2996,10 @@ static int handle_cr(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 		case 8: {
 				u8 cr8_prev = kvm_get_cr8(vcpu);
 				u8 cr8 = kvm_register_read(vcpu, reg);
-				kvm_set_cr8(vcpu, cr8);
-				skip_emulated_instruction(vcpu);
+				if (kvm_set_cr8(vcpu, cr8))
+					kvm_inject_gp(vcpu, 0);
+				else
+					skip_emulated_instruction(vcpu);
 				if (irqchip_in_kernel(vcpu->kvm))
 					return 1;
 				if (cr8_prev <= cr8)
@@ -3257,7 +3259,7 @@ static int handle_apic_access(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 	exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
 	offset = exit_qualification & 0xffful;
 
-	er = emulate_instruction(vcpu, kvm_run, 0, 0, 0);
+	er = emulate_instruction(vcpu, kvm_run, 0);
 
 	if (er !=  EMULATE_DONE) {
 		printk(KERN_ERR
@@ -3350,7 +3352,7 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 
 	gpa = vmcs_read64(GUEST_PHYSICAL_ADDRESS);
 	trace_kvm_page_fault(gpa, exit_qualification);
-	return kvm_mmu_page_fault(vcpu, gpa & PAGE_MASK, 0);
+	return kvm_mmu_page_fault(vcpu, gpa & PAGE_MASK, 0, NULL, 0);
 }
 
 static u64 ept_rsvd_mask(u64 spte, int level)
@@ -3459,7 +3461,7 @@ static void handle_invalid_guest_state(struct kvm_vcpu *vcpu,
 	preempt_enable();
 
 	while (!guest_state_valid(vcpu)) {
-		err = emulate_instruction(vcpu, kvm_run, 0, 0, 0);
+		err = emulate_instruction(vcpu, kvm_run, 0);
 
 		if (err == EMULATE_DO_MMIO)
 			break;
@@ -4059,6 +4061,16 @@ static bool vmx_gb_page_enable(void)
 	return false;
 }
 
+/*
+ * Empty call-back. Needs to be implemented when VMX enables the SET_TSC_KHZ
+ * ioctl. In this case the call-back should update internal vmx state to make
+ * the changes effective.
+ */
+static void vmx_set_tsc_khz(struct kvm_vcpu *vcpu, u32 user_tsc_khz)
+{
+	/* Nothing to do here */
+}
+
 static struct kvm_x86_ops vmx_x86_ops = {
 	.cpu_has_kvm_support = cpu_has_kvm_support,
 	.disabled_by_bios = vmx_disabled_by_bios,
@@ -4124,6 +4136,8 @@ static struct kvm_x86_ops vmx_x86_ops = {
 
 	.exit_reasons_str = vmx_exit_reasons_str,
 	.gb_page_enable = vmx_gb_page_enable,
+
+	.set_tsc_khz = vmx_set_tsc_khz,
 };
 
 static int __init vmx_init(void)

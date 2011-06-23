@@ -262,6 +262,7 @@ struct kvm_mmu {
 
 struct kvm_vcpu_arch {
 	u64 host_tsc;
+	u64 guest_tsc;
 	/*
 	 * rip and regs accesses must go through
 	 * kvm_{register,rip}_{read,write} functions.
@@ -346,6 +347,8 @@ struct kvm_vcpu_arch {
 	bool singlestep; /* guest is single stepped by KVM */
 	u64 last_guest_tsc;
 	u64 last_kernel_ns;
+
+	u32 virtual_tsc_khz;
 
 	bool nmi_pending;
 	bool nmi_injected;
@@ -530,6 +533,8 @@ struct kvm_x86_ops {
 	u64 (*get_mt_mask)(struct kvm_vcpu *vcpu, gfn_t gfn, bool is_mmio);
 	bool (*gb_page_enable)(void);
 
+	void (*set_tsc_khz)(struct kvm_vcpu *vcpu, u32 user_tsc_khz);
+
 	const struct trace_print_flags *exit_reasons_str;
 };
 
@@ -562,6 +567,13 @@ u8 kvm_get_guest_memory_type(struct kvm_vcpu *vcpu, gfn_t gfn);
 
 extern bool tdp_enabled;
 
+/* control of guest tsc rate supported? */
+extern bool kvm_has_tsc_control;
+/* minimum supported tsc_khz for guests */
+extern u32  kvm_min_guest_tsc_khz;
+/* maximum supported tsc_khz for guests */
+extern u32  kvm_max_guest_tsc_khz;
+
 enum emulation_result {
 	EMULATE_DONE,       /* no further processing */
 	EMULATE_DO_MMIO,      /* kvm_run filled with mmio request */
@@ -571,8 +583,16 @@ enum emulation_result {
 #define EMULTYPE_NO_DECODE	    (1 << 0)
 #define EMULTYPE_TRAP_UD	    (1 << 1)
 #define EMULTYPE_SKIP		    (1 << 2)
-int emulate_instruction(struct kvm_vcpu *vcpu, struct kvm_run *run,
-			unsigned long cr2, u16 error_code, int emulation_type);
+int x86_emulate_instruction(struct kvm_vcpu *vcpu, struct kvm_run *run,
+			unsigned long cr2, int emulation_type,
+			void *insn, int insn_len);
+
+static inline int emulate_instruction(struct kvm_vcpu *vcpu,
+			struct kvm_run *run, int emulation_type)
+{
+	return x86_emulate_instruction(vcpu, run, 0, emulation_type, NULL, 0);
+}
+
 void kvm_report_emulation_failure(struct kvm_vcpu *cvpu, const char *context);
 void realmode_lgdt(struct kvm_vcpu *vcpu, u16 size, unsigned long address);
 void realmode_lidt(struct kvm_vcpu *vcpu, u16 size, unsigned long address);
@@ -610,7 +630,7 @@ int kvm_task_switch(struct kvm_vcpu *vcpu, u16 tss_selector, int reason);
 void kvm_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0);
 void kvm_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3);
 void kvm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4);
-void kvm_set_cr8(struct kvm_vcpu *vcpu, unsigned long cr8);
+int kvm_set_cr8(struct kvm_vcpu *vcpu, unsigned long cr8);
 unsigned long kvm_get_cr8(struct kvm_vcpu *vcpu);
 void kvm_lmsw(struct kvm_vcpu *vcpu, unsigned long msw);
 void kvm_get_cs_db_l_bits(struct kvm_vcpu *vcpu, int *db, int *l);
@@ -656,7 +676,8 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu);
 
 int kvm_fix_hypercall(struct kvm_vcpu *vcpu);
 
-int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t gva, u32 error_code);
+int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t gva, u32 error_code,
+		       void *insn, int insn_len);
 void kvm_mmu_invlpg(struct kvm_vcpu *vcpu, gva_t gva);
 
 void kvm_enable_tdp(void);

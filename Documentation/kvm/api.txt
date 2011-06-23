@@ -694,6 +694,28 @@ If KVM_CAP_INTR_SHADOW is available, KVM_VCPUEVENT_VALID_SHADOW can be set in
 the flags field to signal that interrupt.shadow contains a valid state and
 shall be written into the VCPU.
 
+4.31 KVM_SET_TSC_KHZ
+
+Capability: KVM_CAP_TSC_CONTROL
+Architectures: x86
+Type: vcpu ioctl
+Parameters: virtual tsc_khz
+Returns: 0 on success, -1 on error
+
+Specifies the tsc frequency for the virtual machine. The unit of the
+frequency is KHz.
+
+4.32 KVM_GET_TSC_KHZ
+
+Capability: KVM_CAP_GET_TSC_KHZ
+Architectures: x86
+Type: vcpu ioctl
+Parameters: none
+Returns: virtual tsc-khz on success, negative value on error
+
+Returns the tsc frequency of the guest. The unit of the return value is
+KHz. If the host has unstable tsc this ioctl returns -EIO instead as an
+error.
 
 4.41 KVM_GET_XSAVE
 

@@ -451,6 +451,9 @@ struct kvm_ioeventfd {
 #define KVM_CAP_XCRS 56
 #endif
 
+#define KVM_CAP_TSC_CONTROL 60
+#define KVM_CAP_GET_TSC_KHZ 61
+
 #ifdef KVM_CAP_IRQ_ROUTING
 
 struct kvm_irq_routing_irqchip {
@@ -616,6 +619,10 @@ struct kvm_clock_data {
 #define KVM_X86_SETUP_MCE         _IOW(KVMIO,  0x9c, __u64)
 #define KVM_X86_GET_MCE_CAP_SUPPORTED _IOR(KVMIO,  0x9d, __u64)
 #define KVM_X86_SET_MCE           _IOW(KVMIO,  0x9e, struct kvm_x86_mce)
+
+/* Available with KVM_CAP_TSC_CONTROL */
+#define KVM_SET_TSC_KHZ           _IO(KVMIO,  0xa2)
+#define KVM_GET_TSC_KHZ           _IO(KVMIO,  0xa3)
 
 /*
  * Deprecated interfaces
