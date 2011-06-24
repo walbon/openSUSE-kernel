@@ -307,7 +307,7 @@ int btrfs_acl_chmod(struct inode *inode)
 		return 0;
 
 	acl = btrfs_get_acl(inode, ACL_TYPE_ACCESS);
-	if (IS_ERR(acl) || !acl)
+	if (IS_ERR_OR_NULL(acl))
 		return PTR_ERR(acl);
 
 	clone = posix_acl_clone(acl, GFP_KERNEL);
@@ -324,13 +324,13 @@ int btrfs_acl_chmod(struct inode *inode)
 	return ret;
 }
 
-const struct xattr_handler btrfs_xattr_acl_default_handler = {
+struct xattr_handler btrfs_xattr_acl_default_handler = {
 	.prefix = POSIX_ACL_XATTR_DEFAULT,
 	.get	= btrfs_xattr_acl_default_get,
 	.set	= btrfs_xattr_acl_default_set,
 };
 
-const struct xattr_handler btrfs_xattr_acl_access_handler = {
+struct xattr_handler btrfs_xattr_acl_access_handler = {
 	.prefix = POSIX_ACL_XATTR_ACCESS,
 	.get	= btrfs_xattr_acl_access_get,
 	.set	= btrfs_xattr_acl_access_set,
