@@ -1,7 +1,7 @@
 #/*******************************************************************
 # * This file is part of the Emulex Linux Device Driver for         *
 # * Fibre Channel Host Bus Adapters.                                *
-# * Copyright (C) 2004-2010 Emulex.  All rights reserved.           *
+# * Copyright (C) 2004-2011 Emulex.  All rights reserved.           *
 # * EMULEX and SLI are trademarks of Emulex.                        *
 # * www.emulex.com                                                  *
 # *                                                                 *
@@ -19,9 +19,18 @@
 # *******************************************************************/
 ######################################################################
 
+EXTRAVERSION = $(shell echo ${KERNELVERSION} | \
+sed -e 's/[0-9]*.[0-9]*.[0-9]*.\([0-9]*\).*/\1/')
+
 ifneq ($(GCOV),)
   EXTRA_CFLAGS += -fprofile-arcs -ftest-coverage
   EXTRA_CFLAGS += -O0
+endif
+
+ifeq ($(EXTRAVERSION),12)
+   EXTRA_CFLAGS += -DBUILD_SLES11_SP1
+else
+   EXTRA_CFLAGS += -DBUILD_RHEL6
 endif
 
 obj-$(CONFIG_SCSI_LPFC) := lpfc.o
