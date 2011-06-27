@@ -156,9 +156,16 @@ static void bnx2x_storm_stats_post(struct bnx2x *bp)
 		struct common_query_ramrod_data ramrod_data = {0};
 		int i, rc;
 
+		spin_lock_bh(&bp->stats_lock);
+
+		if (bp->stats_pending) {
+			spin_unlock_bh(&bp->stats_lock);
+			return;
+		}
+
 		ramrod_data.drv_counter = bp->stats_counter++;
 		ramrod_data.collect_port = bp->port.pmf ? 1 : 0;
-		for_each_queue(bp, i)
+		for_each_eth_queue(bp, i)
 			ramrod_data.ctr_id_vector |= (1 << bp->fp[i].cl_id);
 
 		rc = bnx2x_sp_post(bp, RAMROD_CMD_ID_COMMON_STAT_QUERY, 0,
@@ -166,6 +173,8 @@ static void bnx2x_storm_stats_post(struct bnx2x *bp)
 				   ((u32 *)&ramrod_data)[0], 1);
 		if (rc == 0)
 			bp->stats_pending = 1;
+
+		spin_unlock_bh(&bp->stats_lock);
 	}
 }
 
@@ -743,6 +752,14 @@ static int bnx2x_storm_stats_update(struct bnx2x *bp)
 	struct host_func_stats *fstats = bnx2x_sp(bp, func_stats);
 	struct bnx2x_eth_stats *estats = &bp->eth_stats;
 	int i;
+	u16 cur_stats_counter;
+
+	/* Make sure we use the value of the counter
+	 * used for sending the last stats ramrod.
+	 */
+	spin_lock_bh(&bp->stats_lock);
+	cur_stats_counter = bp->stats_counter - 1;
+	spin_unlock_bh(&bp->stats_lock);
 
 	memcpy(&(fstats->total_bytes_received_hi),
 	       &(bnx2x_sp(bp, func_stats_base)->total_bytes_received_hi),
@@ -754,7 +771,7 @@ static int bnx2x_storm_stats_update(struct bnx2x *bp)
 	estats->no_buff_discard_hi = 0;
 	estats->no_buff_discard_lo = 0;
 
-	for_each_queue(bp, i) {
+	for_each_eth_queue(bp, i) {
 		struct bnx2x_fastpath *fp = &bp->fp[i];
 		int cl_id = fp->cl_id;
 		struct tstorm_per_client_stats *tclient =
@@ -770,25 +787,22 @@ static int bnx2x_storm_stats_update(struct bnx2x *bp)
 		u32 diff;
 
 		/* are storm stats valid? */
-		if ((u16)(le16_to_cpu(xclient->stats_counter) + 1) !=
-							bp->stats_counter) {
+		if (le16_to_cpu(xclient->stats_counter) != cur_stats_counter) {
 			DP(BNX2X_MSG_STATS, "[%d] stats not updated by xstorm"
 			   "  xstorm counter (0x%x) != stats_counter (0x%x)\n",
-			   i, xclient->stats_counter, bp->stats_counter);
+			   i, xclient->stats_counter, cur_stats_counter + 1);
 			return -1;
 		}
-		if ((u16)(le16_to_cpu(tclient->stats_counter) + 1) !=
-							bp->stats_counter) {
+		if (le16_to_cpu(tclient->stats_counter) != cur_stats_counter) {
 			DP(BNX2X_MSG_STATS, "[%d] stats not updated by tstorm"
 			   "  tstorm counter (0x%x) != stats_counter (0x%x)\n",
-			   i, tclient->stats_counter, bp->stats_counter);
+			   i, tclient->stats_counter, cur_stats_counter + 1);
 			return -2;
 		}
-		if ((u16)(le16_to_cpu(uclient->stats_counter) + 1) !=
-							bp->stats_counter) {
+		if (le16_to_cpu(uclient->stats_counter) != cur_stats_counter) {
 			DP(BNX2X_MSG_STATS, "[%d] stats not updated by ustorm"
 			   "  ustorm counter (0x%x) != stats_counter (0x%x)\n",
-			   i, uclient->stats_counter, bp->stats_counter);
+			   i, uclient->stats_counter, cur_stats_counter + 1);
 			return -4;
 		}
 
@@ -987,7 +1001,7 @@ static void bnx2x_net_stats_update(struct bnx2x *bp)
 	nstats->tx_bytes = bnx2x_hilo(&estats->total_bytes_transmitted_hi);
 
 	tmp = estats->mac_discard;
-	for_each_queue(bp, i)
+	for_each_rx_queue(bp, i)
 		tmp += le32_to_cpu(bp->fp[i].old_tclient.checksum_discard);
 	nstats->rx_dropped = tmp;
 
@@ -1078,7 +1092,7 @@ static void bnx2x_stats_update(struct bnx2x *bp)
 		       bp->dev->name,
 		       estats->brb_drop_lo, estats->brb_truncate_lo);
 
-		for_each_queue(bp, i) {
+		for_each_eth_queue(bp, i) {
 			struct bnx2x_fastpath *fp = &bp->fp[i];
 			struct bnx2x_eth_q_stats *qstats = &fp->eth_q_stats;
 
@@ -1092,7 +1106,7 @@ static void bnx2x_stats_update(struct bnx2x *bp)
 			       fp->rx_calls, fp->rx_pkt);
 		}
 
-		for_each_queue(bp, i) {
+		for_each_eth_queue(bp, i) {
 			struct bnx2x_fastpath *fp = &bp->fp[i];
 			struct bnx2x_eth_q_stats *qstats = &fp->eth_q_stats;
 			struct netdev_queue *txq =
@@ -1220,16 +1234,18 @@ static const struct {
 
 void bnx2x_stats_handle(struct bnx2x *bp, enum bnx2x_stats_event event)
 {
-	enum bnx2x_stats_state state = bp->stats_state;
+	enum bnx2x_stats_state state;
 
 	if (unlikely(bp->panic))
 		return;
 
-	bnx2x_stats_stm[state][event].action(bp);
-	bp->stats_state = bnx2x_stats_stm[state][event].next_state;
+	bnx2x_stats_stm[bp->stats_state][event].action(bp);
 
-	/* Make sure the state has been "changed" */
-	smp_wmb();
+	/* Protect a state change flow */
+	spin_lock_bh(&bp->stats_lock);
+	state = bp->stats_state;
+	bp->stats_state = bnx2x_stats_stm[state][event].next_state;
+	spin_unlock_bh(&bp->stats_lock);
 
 	if ((event != STATS_EVENT_UPDATE) || netif_msg_timer(bp))
 		DP(BNX2X_MSG_STATS, "state %d -> event %d -> state %d\n",
@@ -1370,7 +1386,8 @@ void bnx2x_stats_init(struct bnx2x *bp)
 		memset(&fp->eth_q_stats, 0, sizeof(struct bnx2x_eth_q_stats));
 	}
 
-	for_each_queue(bp, i) {
+	/* FW stats are currently collected for ETH clients only */
+	for_each_eth_queue(bp, i) {
 		/* Set initial stats counter in the stats ramrod data to -1 */
 		int cl_id = bp->fp[i].cl_id;
 

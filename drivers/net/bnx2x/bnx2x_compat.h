@@ -9,6 +9,8 @@
 #include <linux/in6.h>
 #include <linux/version.h>
 
+#include <linux/if_vlan.h>
+
 #if (LINUX_VERSION_CODE < 0x02061e)
 #define skb_record_rx_queue(skb, index)
 #define skb_tx_hash(dev, skb)	0
@@ -749,4 +751,53 @@ static inline int netif_set_real_num_rx_queues(struct net_device *dev, int num)
 	return 0;
 }
 #endif
+
+/**
+ * vlan_get_protocol - get protocol EtherType.
+ * @skb: skbuff to query
+ *
+ * Returns the EtherType of the packet, regardless of whether it is
+ * vlan encapsulated (normal or hardware accelerated) or not.
+ */
+static inline __be16 vlan_get_protocol(const struct sk_buff *skb)
+{
+	__be16 protocol = 0;
+
+#ifdef BCM_VLAN
+	if (vlan_tx_tag_present(skb) ||
+	     skb->protocol != cpu_to_be16(ETH_P_8021Q))
+#else
+	if (skb->protocol != cpu_to_be16(ETH_P_8021Q))
+#endif
+		protocol = skb->protocol;
+	else {
+		__be16 proto, *protop;
+		protop = skb_header_pointer(skb, offsetof(struct vlan_ethhdr,
+						h_vlan_encapsulated_proto),
+						sizeof(proto), &proto);
+		if (likely(protop))
+			protocol = *protop;
+	}
+
+	return protocol;
+}
+
+#ifndef __rcu
+#define __rcu
+#endif
+
+#ifndef rcu_dereference_protected
+#define rcu_dereference_protected(p, c) \
+	rcu_dereference((p))
+#endif
+
+#ifndef netdev_uc_count
+#define netdev_uc_count(dev)	((dev)->uc.count)
+#endif
+
+#ifndef netdev_for_each_uc_addr
+#define netdev_for_each_uc_addr(ha, dev) \
+	list_for_each_entry(ha, &dev->uc.list, list)
+#endif
+
 #endif /* __BNX2X_COMPAT_H__ */

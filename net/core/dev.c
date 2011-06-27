@@ -1850,16 +1850,21 @@ out_kfree_skb:
 
 static u32 skb_tx_hashrnd;
 
-u16 skb_tx_hash(const struct net_device *dev, const struct sk_buff *skb)
+/*
+ * Returns a Tx hash based on the given packet descriptor a Tx queues' number
+ * to be used as a distribution range.
+ */
+u16 __skb_tx_hash(const struct net_device *dev, const struct sk_buff *skb,
+		  unsigned int num_tx_queues)
 {
 	u32 hash;
 	u16 qoffset = 0;
-	u16 qcount = dev->real_num_tx_queues;
+	u16 qcount = num_tx_queues;
 
 	if (skb_rx_queue_recorded(skb)) {
 		hash = skb_get_rx_queue(skb);
-		while (unlikely(hash >= dev->real_num_tx_queues))
-			hash -= dev->real_num_tx_queues;
+		while (unlikely(hash >= num_tx_queues))
+			hash -= num_tx_queues;
 		return hash;
 	}
 
@@ -1878,7 +1883,7 @@ u16 skb_tx_hash(const struct net_device *dev, const struct sk_buff *skb)
 
 	return (u16) (((u64) hash * qcount) >> 32) + qoffset;
 }
-EXPORT_SYMBOL(skb_tx_hash);
+EXPORT_SYMBOL(__skb_tx_hash);
 
 static struct netdev_queue *dev_pick_tx(struct net_device *dev,
 					struct sk_buff *skb)

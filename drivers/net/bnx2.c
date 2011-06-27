@@ -60,11 +60,11 @@
 #include "bnx2_fw.h"
 
 #define DRV_MODULE_NAME		"bnx2"
-#define DRV_MODULE_VERSION	"2.0.18"
-#define DRV_MODULE_RELDATE	"Oct 7, 2010"
-#define FW_MIPS_FILE_06		"bnx2/bnx2-mips-06-6.0.15.fw"
+#define DRV_MODULE_VERSION	"2.0.21"
+#define DRV_MODULE_RELDATE	"Dec 23, 2010"
+#define FW_MIPS_FILE_06		"bnx2/bnx2-mips-06-6.2.1.fw"
 #define FW_RV2P_FILE_06		"bnx2/bnx2-rv2p-06-6.0.15.fw"
-#define FW_MIPS_FILE_09		"bnx2/bnx2-mips-09-6.0.17.fw"
+#define FW_MIPS_FILE_09		"bnx2/bnx2-mips-09-6.2.1.fw"
 #define FW_RV2P_FILE_09_Ax	"bnx2/bnx2-rv2p-09ax-6.0.17.fw"
 #define FW_RV2P_FILE_09		"bnx2/bnx2-rv2p-09-6.0.17.fw"
 
@@ -443,7 +443,8 @@ bnx2_cnic_stop(struct bnx2 *bp)
 	struct cnic_ctl_info info;
 
 	mutex_lock(&bp->cnic_lock);
-	c_ops = bp->cnic_ops;
+	c_ops = rcu_dereference_protected(bp->cnic_ops,
+					  lockdep_is_held(&bp->cnic_lock));
 	if (c_ops) {
 		info.cmd = CNIC_CTL_STOP_CMD;
 		c_ops->cnic_ctl(bp->cnic_data, &info);
@@ -458,7 +459,8 @@ bnx2_cnic_start(struct bnx2 *bp)
 	struct cnic_ctl_info info;
 
 	mutex_lock(&bp->cnic_lock);
-	c_ops = bp->cnic_ops;
+	c_ops = rcu_dereference_protected(bp->cnic_ops,
+					  lockdep_is_held(&bp->cnic_lock));
 	if (c_ops) {
 		if (!(bp->flags & BNX2_FLAG_USING_MSIX)) {
 			struct bnx2_napi *bnapi = &bp->bnx2_napi[0];
@@ -4677,13 +4679,28 @@ bnx2_reset_chip(struct bnx2 *bp, u32 reset_code)
 
 	/* Wait for the current PCI transaction to complete before
 	 * issuing a reset. */
-	REG_WR(bp, BNX2_MISC_ENABLE_CLR_BITS,
-	       BNX2_MISC_ENABLE_CLR_BITS_TX_DMA_ENABLE |
-	       BNX2_MISC_ENABLE_CLR_BITS_DMA_ENGINE_ENABLE |
-	       BNX2_MISC_ENABLE_CLR_BITS_RX_DMA_ENABLE |
-	       BNX2_MISC_ENABLE_CLR_BITS_HOST_COALESCE_ENABLE);
-	val = REG_RD(bp, BNX2_MISC_ENABLE_CLR_BITS);
-	udelay(5);
+	if ((CHIP_NUM(bp) == CHIP_NUM_5706) ||
+	    (CHIP_NUM(bp) == CHIP_NUM_5708)) {
+		REG_WR(bp, BNX2_MISC_ENABLE_CLR_BITS,
+		       BNX2_MISC_ENABLE_CLR_BITS_TX_DMA_ENABLE |
+		       BNX2_MISC_ENABLE_CLR_BITS_DMA_ENGINE_ENABLE |
+		       BNX2_MISC_ENABLE_CLR_BITS_RX_DMA_ENABLE |
+		       BNX2_MISC_ENABLE_CLR_BITS_HOST_COALESCE_ENABLE);
+		val = REG_RD(bp, BNX2_MISC_ENABLE_CLR_BITS);
+		udelay(5);
+	} else {  /* 5709 */
+		val = REG_RD(bp, BNX2_MISC_NEW_CORE_CTL);
+		val &= ~BNX2_MISC_NEW_CORE_CTL_DMA_ENABLE;
+		REG_WR(bp, BNX2_MISC_NEW_CORE_CTL, val);
+		val = REG_RD(bp, BNX2_MISC_NEW_CORE_CTL);
+
+		for (i = 0; i < 100; i++) {
+			msleep(1);
+			val = REG_RD(bp, BNX2_PCICFG_DEVICE_CONTROL);
+			if (!(val & BNX2_PCICFG_DEVICE_STATUS_NO_PEND))
+				break;
+		}
+	}
 
 	/* Wait for the firmware to tell us it is ok to issue a reset. */
 	bnx2_fw_sync(bp, BNX2_DRV_MSG_DATA_WAIT0 | reset_code, 1, 1);
@@ -4705,7 +4722,7 @@ bnx2_reset_chip(struct bnx2 *bp, u32 reset_code)
 		val = BNX2_PCICFG_MISC_CONFIG_REG_WINDOW_ENA |
 		      BNX2_PCICFG_MISC_CONFIG_TARGET_MB_WORD_SWAP;
 
-		pci_write_config_dword(bp->pdev, BNX2_PCICFG_MISC_CONFIG, val);
+		REG_WR(bp, BNX2_PCICFG_MISC_CONFIG, val);
 
 	} else {
 		val = BNX2_PCICFG_MISC_CONFIG_CORE_RST_REQ |
@@ -6121,7 +6138,7 @@ bnx2_request_irq(struct bnx2 *bp)
 }
 
 static void
-bnx2_free_irq(struct bnx2 *bp)
+__bnx2_free_irq(struct bnx2 *bp)
 {
 	struct bnx2_irq *irq;
 	int i;
@@ -6132,6 +6149,13 @@ bnx2_free_irq(struct bnx2 *bp)
 			free_irq(irq->vector, &bp->bnx2_napi[i]);
 		irq->requested = 0;
 	}
+}
+
+static void
+bnx2_free_irq(struct bnx2 *bp)
+{
+
+	__bnx2_free_irq(bp);
 	if (bp->flags & BNX2_FLAG_USING_MSI)
 		pci_disable_msi(bp->pdev);
 	else if (bp->flags & BNX2_FLAG_USING_MSIX)
@@ -6871,28 +6895,30 @@ bnx2_get_regs(struct net_device *dev, struct ethtool_regs *regs, void *_p)
 	u32 *p = _p, i, offset;
 	u8 *orig_p = _p;
 	struct bnx2 *bp = netdev_priv(dev);
-	u32 reg_boundaries[] = { 0x0000, 0x0098, 0x0400, 0x045c,
-				 0x0800, 0x0880, 0x0c00, 0x0c10,
-				 0x0c30, 0x0d08, 0x1000, 0x101c,
-				 0x1040, 0x1048, 0x1080, 0x10a4,
-				 0x1400, 0x1490, 0x1498, 0x14f0,
-				 0x1500, 0x155c, 0x1580, 0x15dc,
-				 0x1600, 0x1658, 0x1680, 0x16d8,
-				 0x1800, 0x1820, 0x1840, 0x1854,
-				 0x1880, 0x1894, 0x1900, 0x1984,
-				 0x1c00, 0x1c0c, 0x1c40, 0x1c54,
-				 0x1c80, 0x1c94, 0x1d00, 0x1d84,
-				 0x2000, 0x2030, 0x23c0, 0x2400,
-				 0x2800, 0x2820, 0x2830, 0x2850,
-				 0x2b40, 0x2c10, 0x2fc0, 0x3058,
-				 0x3c00, 0x3c94, 0x4000, 0x4010,
-				 0x4080, 0x4090, 0x43c0, 0x4458,
-				 0x4c00, 0x4c18, 0x4c40, 0x4c54,
-				 0x4fc0, 0x5010, 0x53c0, 0x5444,
-				 0x5c00, 0x5c18, 0x5c80, 0x5c90,
-				 0x5fc0, 0x6000, 0x6400, 0x6428,
-				 0x6800, 0x6848, 0x684c, 0x6860,
-				 0x6888, 0x6910, 0x8000 };
+	static const u32 reg_boundaries[] = {
+		0x0000, 0x0098, 0x0400, 0x045c,
+		0x0800, 0x0880, 0x0c00, 0x0c10,
+		0x0c30, 0x0d08, 0x1000, 0x101c,
+		0x1040, 0x1048, 0x1080, 0x10a4,
+		0x1400, 0x1490, 0x1498, 0x14f0,
+		0x1500, 0x155c, 0x1580, 0x15dc,
+		0x1600, 0x1658, 0x1680, 0x16d8,
+		0x1800, 0x1820, 0x1840, 0x1854,
+		0x1880, 0x1894, 0x1900, 0x1984,
+		0x1c00, 0x1c0c, 0x1c40, 0x1c54,
+		0x1c80, 0x1c94, 0x1d00, 0x1d84,
+		0x2000, 0x2030, 0x23c0, 0x2400,
+		0x2800, 0x2820, 0x2830, 0x2850,
+		0x2b40, 0x2c10, 0x2fc0, 0x3058,
+		0x3c00, 0x3c94, 0x4000, 0x4010,
+		0x4080, 0x4090, 0x43c0, 0x4458,
+		0x4c00, 0x4c18, 0x4c40, 0x4c54,
+		0x4fc0, 0x5010, 0x53c0, 0x5444,
+		0x5c00, 0x5c18, 0x5c80, 0x5c90,
+		0x5fc0, 0x6000, 0x6400, 0x6428,
+		0x6800, 0x6848, 0x684c, 0x6860,
+		0x6888, 0x6910, 0x8000
+	};
 
 	regs->version = 0;
 
@@ -7150,6 +7176,7 @@ bnx2_change_ring_size(struct bnx2 *bp, u32 rx, u32 tx)
 
 		bnx2_netif_stop(bp, true);
 		bnx2_reset_chip(bp, BNX2_DRV_MSG_CODE_RESET);
+		__bnx2_free_irq(bp);
 		bnx2_free_skbs(bp);
 		bnx2_free_mem(bp);
 	}
@@ -7161,6 +7188,9 @@ bnx2_change_ring_size(struct bnx2 *bp, u32 rx, u32 tx)
 		int rc;
 
 		rc = bnx2_alloc_mem(bp);
+		if (!rc)
+			rc = bnx2_request_irq(bp);
+
 		if (!rc)
 			rc = bnx2_init_nic(bp, 0);
 
@@ -7965,15 +7995,15 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
 		goto err_out_release;
 	}
 
+	bnx2_set_power_state(bp, PCI_D0);
+
 	/* Configure byte swap and enable write to the reg_window registers.
 	 * Rely on CPU to do target byte swapping on big endian systems
 	 * The chip's target access swapping will not swap all accesses
 	 */
-	pci_write_config_dword(bp->pdev, BNX2_PCICFG_MISC_CONFIG,
-			       BNX2_PCICFG_MISC_CONFIG_REG_WINDOW_ENA |
-			       BNX2_PCICFG_MISC_CONFIG_TARGET_MB_WORD_SWAP);
-
-	bnx2_set_power_state(bp, PCI_D0);
+	REG_WR(bp, BNX2_PCICFG_MISC_CONFIG,
+		   BNX2_PCICFG_MISC_CONFIG_REG_WINDOW_ENA |
+		   BNX2_PCICFG_MISC_CONFIG_TARGET_MB_WORD_SWAP);
 
 	bp->chip_id = REG_RD(bp, BNX2_MISC_ID);
 
@@ -7990,11 +8020,8 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
 
 		/* AER (Advanced Error Reporting) hooks */
 		err = pci_enable_pcie_error_reporting(pdev);
-		if (err) {
-			dev_err(&pdev->dev, "pci_enable_pcie_error_reporting "
-					    "failed 0x%x\n", err);
-			/* non-fatal, continue */
-		}
+		if (!err)
+			bp->flags |= BNX2_FLAG_AER_ENABLED;
 
 	} else {
 		bp->pcix_cap = pci_find_capability(pdev, PCI_CAP_ID_PCIX);
@@ -8257,8 +8284,10 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
 	return 0;
 
 err_out_unmap:
-	if (bp->flags & BNX2_FLAG_PCIE)
+	if (bp->flags & BNX2_FLAG_AER_ENABLED) {
 		pci_disable_pcie_error_reporting(pdev);
+		bp->flags &= ~BNX2_FLAG_AER_ENABLED;
+	}
 
 	if (bp->regview) {
 		iounmap(bp->regview);
@@ -8440,8 +8469,6 @@ bnx2_remove_one(struct pci_dev *pdev)
 	struct net_device *dev = pci_get_drvdata(pdev);
 	struct bnx2 *bp = netdev_priv(dev);
 
-	flush_scheduled_work();
-
 	unregister_netdev(dev);
 
 	if (bp->mips_firmware)
@@ -8454,8 +8481,10 @@ bnx2_remove_one(struct pci_dev *pdev)
 
 	kfree(bp->temp_stats_blk);
 
-	if (bp->flags & BNX2_FLAG_PCIE)
+	if (bp->flags & BNX2_FLAG_AER_ENABLED) {
 		pci_disable_pcie_error_reporting(pdev);
+		bp->flags &= ~BNX2_FLAG_AER_ENABLED;
+	}
 
 	free_netdev(dev);
 
@@ -8478,7 +8507,7 @@ bnx2_suspend(struct pci_dev *pdev, pm_message_t state)
 	if (!netif_running(dev))
 		return 0;
 
-	flush_scheduled_work();
+	cancel_work_sync(&bp->reset_task);
 	bnx2_netif_stop(bp, true);
 	netif_device_detach(dev);
 	del_timer_sync(&bp->timer);
@@ -8571,7 +8600,7 @@ static pci_ers_result_t bnx2_io_slot_reset(struct pci_dev *pdev)
 	}
 	rtnl_unlock();
 
-	if (!(bp->flags & BNX2_FLAG_PCIE))
+	if (!(bp->flags & BNX2_FLAG_AER_ENABLED))
 		return result;
 
 	err = pci_cleanup_aer_uncorrect_error_status(pdev);
