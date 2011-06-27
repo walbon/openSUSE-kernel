@@ -211,9 +211,20 @@ static void flush_end_io(struct request *flush_rq, int error)
 		queued |= blk_flush_complete_seq(rq, seq, error);
 	}
 
-	/* after populating an empty queue, kick it to avoid stall */
-	if (queued && was_empty)
-		__blk_run_queue(q);
+	/*
+	 * Kick the queue to avoid stall for two cases:
+	 * 1. Moving a request silently to empty queue_head may stall the
+	 * queue.
+	 * 2. When flush request is running in non-queueable queue, the
+	 * queue is hold. Restart the queue after flush request is finished
+	 * to avoid stall.
+	 * This function is called from request completion path and calling
+	 * directly into request_fn may confuse the driver.  Always use
+	 * kblockd.
+	 */
+	if ((queued && was_empty) || q->flush_queue_delayed)
+		__blk_run_queue(q, true);
+	q->flush_queue_delayed = 0;
 }
 
 /**
@@ -256,7 +267,7 @@ static bool blk_kick_flush(struct request_queue *q)
 	q->flush_rq.end_io = flush_end_io;
 
 	q->flush_pending_idx ^= 1;
-	elv_insert(q, &q->flush_rq, ELEVATOR_INSERT_FRONT);
+	list_add_tail(&q->flush_rq.queuelist, &q->queue_head);
 	return true;
 }
 
@@ -267,7 +278,7 @@ static void flush_data_end_io(struct request *rq, int error)
 
 	/* after populating an empty queue, kick it to avoid stall */
 	if (blk_flush_complete_seq(rq, REQ_FSEQ_DATA, error) && was_empty)
-		__blk_run_queue(q);
+		__blk_run_queue(q, false);
 }
 
 /**
@@ -305,7 +316,7 @@ void blk_insert_flush(struct request *rq)
 	 */
 	if ((policy & REQ_FSEQ_DATA) &&
 	    !(policy & (REQ_FSEQ_PREFLUSH | REQ_FSEQ_POSTFLUSH))) {
-		list_add(&rq->queuelist, &q->queue_head);
+		list_add_tail(&rq->queuelist, &q->queue_head);
 		return;
 	}
 
