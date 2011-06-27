@@ -30,7 +30,7 @@
 #include <scsi/scsi_transport_iscsi.h>
 #include <scsi/iscsi_if.h>
 
-#define ISCSI_SESSION_ATTRS 22
+#define ISCSI_SESSION_ATTRS 23
 #define ISCSI_CONN_ATTRS 13
 #define ISCSI_HOST_ATTRS 4
 
@@ -921,6 +921,7 @@ iscsi_create_conn(struct iscsi_cls_session *session, int dd_size, uint32_t cid)
 	if (dd_size)
 		conn->dd_data = &conn[1];
 
+	mutex_init(&conn->ep_mutex);
 	INIT_LIST_HEAD(&conn->conn_list);
 	conn->transport = transport;
 	conn->cid = cid;
@@ -942,7 +943,6 @@ iscsi_create_conn(struct iscsi_cls_session *session, int dd_size, uint32_t cid)
 
 	spin_lock_irqsave(&connlock, flags);
 	list_add(&conn->conn_list, &connlist);
-	conn->active = 1;
 	spin_unlock_irqrestore(&connlock, flags);
 
 	ISCSI_DBG_TRANS_CONN(conn, "Completed conn creation\n");
@@ -968,7 +968,6 @@ int iscsi_destroy_conn(struct iscsi_cls_conn *conn)
 	unsigned long flags;
 
 	spin_lock_irqsave(&connlock, flags);
-	conn->active = 0;
 	list_del(&conn->conn_list);
 	spin_unlock_irqrestore(&connlock, flags);
 
@@ -1397,6 +1396,29 @@ release_host:
 	return err;
 }
 
+static int iscsi_if_ep_disconnect(struct iscsi_transport *transport,
+				  u64 ep_handle)
+{
+	struct iscsi_cls_conn *conn;
+	struct iscsi_endpoint *ep;
+
+	if (!transport->ep_disconnect)
+		return -EINVAL;
+
+	ep = iscsi_lookup_endpoint(ep_handle);
+	if (!ep)
+		return -EINVAL;
+	conn = ep->conn;
+	if (conn) {
+		mutex_lock(&conn->ep_mutex);
+		conn->ep = NULL;
+		mutex_unlock(&conn->ep_mutex);
+	}
+
+	transport->ep_disconnect(ep);
+	return 0;
+}
+
 static int
 iscsi_if_transport_ep(struct iscsi_transport *transport,
 		      struct iscsi_uevent *ev, int msg_type)
@@ -1421,14 +1443,8 @@ iscsi_if_transport_ep(struct iscsi_transport *transport,
 						   ev->u.ep_poll.timeout_ms);
 		break;
 	case ISCSI_UEVENT_TRANSPORT_EP_DISCONNECT:
-		if (!transport->ep_disconnect)
-			return -EINVAL;
-
-		ep = iscsi_lookup_endpoint(ev->u.ep_disconnect.ep_handle);
-		if (!ep)
-			return -EINVAL;
-
-		transport->ep_disconnect(ep);
+		rc = iscsi_if_ep_disconnect(transport,
+					    ev->u.ep_disconnect.ep_handle);
 		break;
 	}
 	return rc;
@@ -1576,12 +1592,31 @@ iscsi_if_recv_msg(struct sk_buff *skb, struct nlmsghdr *nlh, uint32_t *group)
 		session = iscsi_session_lookup(ev->u.b_conn.sid);
 		conn = iscsi_conn_lookup(ev->u.b_conn.sid, ev->u.b_conn.cid);
 
-		if (session && conn)
-			ev->r.retcode =	transport->bind_conn(session, conn,
-					ev->u.b_conn.transport_eph,
-					ev->u.b_conn.is_leading);
-		else
+		if (conn && conn->ep)
+			iscsi_if_ep_disconnect(transport, conn->ep->id);
+
+		if (!session || !conn) {
 			err = -EINVAL;
+			break;
+		}
+
+		ev->r.retcode =	transport->bind_conn(session, conn,
+						ev->u.b_conn.transport_eph,
+						ev->u.b_conn.is_leading);
+		if (ev->r.retcode || !transport->ep_connect)
+			break;
+
+		ep = iscsi_lookup_endpoint(ev->u.b_conn.transport_eph);
+		if (ep) {
+			ep->conn = conn;
+
+			mutex_lock(&conn->ep_mutex);
+			conn->ep = ep;
+			mutex_unlock(&conn->ep_mutex);
+		} else
+			iscsi_cls_conn_printk(KERN_ERR, conn,
+					      "Could not set ep conn "
+					      "binding\n");
 		break;
 	case ISCSI_UEVENT_SET_PARAM:
 		err = iscsi_set_param(transport, ev);
@@ -1714,12 +1749,47 @@ iscsi_conn_attr(data_digest, ISCSI_PARAM_DATADGST_EN);
 iscsi_conn_attr(ifmarker, ISCSI_PARAM_IFMARKER_EN);
 iscsi_conn_attr(ofmarker, ISCSI_PARAM_OFMARKER_EN);
 iscsi_conn_attr(persistent_port, ISCSI_PARAM_PERSISTENT_PORT);
-iscsi_conn_attr(port, ISCSI_PARAM_CONN_PORT);
 iscsi_conn_attr(exp_statsn, ISCSI_PARAM_EXP_STATSN);
 iscsi_conn_attr(persistent_address, ISCSI_PARAM_PERSISTENT_ADDRESS);
-iscsi_conn_attr(address, ISCSI_PARAM_CONN_ADDRESS);
 iscsi_conn_attr(ping_tmo, ISCSI_PARAM_PING_TMO);
 iscsi_conn_attr(recv_tmo, ISCSI_PARAM_RECV_TMO);
+
+#define iscsi_conn_ep_attr_show(param)					\
+static ssize_t show_conn_ep_param_##param(struct device *dev,		\
+					  struct device_attribute *attr,\
+					  char *buf)			\
+{									\
+	struct iscsi_cls_conn *conn = iscsi_dev_to_conn(dev->parent);	\
+	struct iscsi_transport *t = conn->transport;			\
+	struct iscsi_endpoint *ep;					\
+	ssize_t rc;							\
+									\
+	/*								\
+	 * Need to make sure ep_disconnect does not free the LLD's	\
+	 * interconnect resources while we are trying to read them.	\
+	 */								\
+	mutex_lock(&conn->ep_mutex);					\
+	ep = conn->ep;							\
+	if (!ep && t->ep_connect) {					\
+		mutex_unlock(&conn->ep_mutex);				\
+		return -ENOTCONN;					\
+	}								\
+									\
+	if (ep)								\
+		rc = t->get_ep_param(ep, param, buf);			\
+	else								\
+		rc = t->get_conn_param(conn, param, buf);		\
+	mutex_unlock(&conn->ep_mutex);					\
+	return rc;							\
+}
+
+#define iscsi_conn_ep_attr(field, param)				\
+	iscsi_conn_ep_attr_show(param)					\
+static ISCSI_CLASS_ATTR(conn, field, S_IRUGO,				\
+			show_conn_ep_param_##param, NULL);
+
+iscsi_conn_ep_attr(address, ISCSI_PARAM_CONN_ADDRESS);
+iscsi_conn_ep_attr(port, ISCSI_PARAM_CONN_PORT);
 
 /*
  * iSCSI session attrs
@@ -1762,7 +1832,8 @@ iscsi_session_attr(abort_tmo, ISCSI_PARAM_ABORT_TMO, 0);
 iscsi_session_attr(lu_reset_tmo, ISCSI_PARAM_LU_RESET_TMO, 0);
 iscsi_session_attr(tgt_reset_tmo, ISCSI_PARAM_TGT_RESET_TMO, 0);
 iscsi_session_attr(ifacename, ISCSI_PARAM_IFACE_NAME, 0);
-iscsi_session_attr(initiatorname, ISCSI_PARAM_INITIATOR_NAME, 0)
+iscsi_session_attr(initiatorname, ISCSI_PARAM_INITIATOR_NAME, 0);
+iscsi_session_attr(targetalias, ISCSI_PARAM_TARGET_ALIAS, 0);
 
 static ssize_t
 show_priv_session_state(struct device *dev, struct device_attribute *attr,
@@ -1813,7 +1884,7 @@ store_priv_session_##field(struct device *dev,				\
 #define iscsi_priv_session_rw_attr(field, format)			\
 	iscsi_priv_session_attr_show(field, format)			\
 	iscsi_priv_session_attr_store(field)				\
-static ISCSI_CLASS_ATTR(priv_sess, field, S_IRUGO | S_IWUGO,		\
+static ISCSI_CLASS_ATTR(priv_sess, field, S_IRUGO | S_IWUSR,		\
 			show_priv_session_##field,			\
 			store_priv_session_##field)
 iscsi_priv_session_rw_attr(recovery_tmo, "%d");
@@ -2038,6 +2109,7 @@ iscsi_register_transport(struct iscsi_transport *tt)
 	SETUP_SESSION_RD_ATTR(tgt_reset_tmo,ISCSI_TGT_RESET_TMO);
 	SETUP_SESSION_RD_ATTR(ifacename, ISCSI_IFACE_NAME);
 	SETUP_SESSION_RD_ATTR(initiatorname, ISCSI_INITIATOR_NAME);
+	SETUP_SESSION_RD_ATTR(targetalias, ISCSI_TARGET_ALIAS);
 	SETUP_PRIV_SESSION_RW_ATTR(recovery_tmo);
 	SETUP_PRIV_SESSION_RD_ATTR(state);
 
@@ -2165,3 +2237,4 @@ MODULE_AUTHOR("Mike Christie <michaelc@cs.wisc.edu>, "
 MODULE_DESCRIPTION("iSCSI Transport Interface");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(ISCSI_TRANSPORT_VERSION);
+MODULE_ALIAS_NET_PF_PROTO(PF_NETLINK, NETLINK_ISCSI);
