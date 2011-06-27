@@ -5,7 +5,7 @@
  *      For use with LSI PCI chip/adapter(s)
  *      running LSI Fusion MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 1999-2008 LSI Corporation
+ *  Copyright (c) 1999-2010 LSI Corporation
  *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  */
@@ -63,6 +63,8 @@
 #ifdef CONFIG_MTRR
 #include <asm/mtrr.h>
 #endif
+#include <linux/kthread.h>
+#include <scsi/scsi_host.h>
 
 #include "mptbase.h"
 #include "lsi/mpi_log_fc.h"
@@ -117,6 +119,7 @@ MODULE_PARM_DESC(mpt_fwfault_debug, "Enable detection of Firmware fault"
 	" and halt Firmware on fault - (default=0)");
 
 
+static char	MptCallbacksName[MPT_MAX_PROTOCOL_DRIVERS][50];
 
 #ifdef MFCNT
 static int mfcounter = 0;
@@ -213,7 +216,7 @@ static int	ProcessEventNotification(MPT_ADAPTER *ioc,
 static void	mpt_iocstatus_info(MPT_ADAPTER *ioc, u32 ioc_status, MPT_FRAME_HDR *mf);
 static void	mpt_fc_log_info(MPT_ADAPTER *ioc, u32 log_info);
 static void	mpt_spi_log_info(MPT_ADAPTER *ioc, u32 log_info);
-static void	mpt_sas_log_info(MPT_ADAPTER *ioc, u32 log_info);
+static void	mpt_sas_log_info(MPT_ADAPTER *ioc, u32 log_info , u8 cb_idx);
 static int	mpt_read_ioc_pg_3(MPT_ADAPTER *ioc);
 static void	mpt_inactive_raid_list_free(MPT_ADAPTER *ioc);
 
@@ -336,6 +339,32 @@ mpt_is_discovery_complete(MPT_ADAPTER *ioc)
 	return rc;
 }
 
+
+/**
+ *  mpt_remove_dead_ioc_func - kthread context to remove dead ioc
+ * @arg: input argument, used to derive ioc
+ *
+ * Return 0 if controller is removed from pci subsystem.
+ * Return -1 for other case.
+ */
+static int mpt_remove_dead_ioc_func(void *arg)
+{
+	MPT_ADAPTER *ioc = (MPT_ADAPTER *)arg;
+	struct pci_dev *pdev;
+
+	if ((ioc == NULL))
+		return -1;
+
+	pdev = ioc->pcidev;
+	if ((pdev == NULL))
+		return -1;
+
+	pci_remove_bus_device(pdev);
+	return 0;
+}
+
+
+
 /**
  *	mpt_fault_reset_work - work performed on workq after ioc fault
  *	@work: input argument, used to derive ioc
@@ -349,12 +378,45 @@ mpt_fault_reset_work(struct work_struct *work)
 	u32		 ioc_raw_state;
 	int		 rc;
 	unsigned long	 flags;
+	MPT_SCSI_HOST	*hd;
+	struct task_struct *p;
 
 	if (ioc->ioc_reset_in_progress || !ioc->active)
 		goto out;
 
+
 	ioc_raw_state = mpt_GetIocState(ioc, 0);
-	if ((ioc_raw_state & MPI_IOC_STATE_MASK) == MPI_IOC_STATE_FAULT) {
+	if ((ioc_raw_state & MPI_IOC_STATE_MASK) == MPI_IOC_STATE_MASK) {
+		printk(MYIOC_s_INFO_FMT "%s: IOC is non-operational !!!!\n",
+		    ioc->name, __func__);
+
+		/*
+		 * Call mptscsih_flush_pending_cmds callback so that we
+		 * flush all pending commands back to OS.
+		 * This call is required to aovid deadlock at block layer.
+		 * Dead IOC will fail to do diag reset,and this call is safe
+		 * since dead ioc will never return any command back from HW.
+		 */
+		hd = shost_priv(ioc->sh);
+		ioc->schedule_dead_ioc_flush_running_cmds(hd);
+
+		/*Remove the Dead Host */
+		p = kthread_run(mpt_remove_dead_ioc_func, ioc,
+				"mpt_dead_ioc_%d", ioc->id);
+		if (IS_ERR(p))	{
+			printk(MYIOC_s_ERR_FMT
+				"%s: Running mpt_dead_ioc thread failed !\n",
+				ioc->name, __func__);
+		} else {
+			printk(MYIOC_s_WARN_FMT
+				"%s: Running mpt_dead_ioc thread success !\n",
+				ioc->name, __func__);
+		}
+		return; /* don't rearm timer */
+	}
+
+	if ((ioc_raw_state & MPI_IOC_STATE_MASK)
+			== MPI_IOC_STATE_FAULT) {
 		printk(MYIOC_s_WARN_FMT "IOC is in FAULT state (%04xh)!!!\n",
 		       ioc->name, ioc_raw_state & MPI_DOORBELL_DATA_MASK);
 		printk(MYIOC_s_WARN_FMT "Issuing HardReset from %s!!\n",
@@ -499,7 +561,7 @@ mpt_reply(MPT_ADAPTER *ioc, u32 pa)
 		else if (ioc->bus_type == SPI)
 			mpt_spi_log_info(ioc, log_info);
 		else if (ioc->bus_type == SAS)
-			mpt_sas_log_info(ioc, log_info);
+			mpt_sas_log_info(ioc, log_info, cb_idx);
 	}
 
 	/* TODO - add shost_attrs, or command line option, and
@@ -656,7 +718,7 @@ mptbase_reply(MPT_ADAPTER *ioc, MPT_FRAME_HDR *req, MPT_FRAME_HDR *reply)
  *	considered an error by the caller.
  */
 u8
-mpt_register(MPT_CALLBACK cbfunc, MPT_DRIVER_CLASS dclass)
+mpt_register(MPT_CALLBACK cbfunc, MPT_DRIVER_CLASS dclass, char *func_name)
 {
 	u8 cb_idx;
 	last_drv_idx = MPT_MAX_PROTOCOL_DRIVERS;
@@ -671,6 +733,8 @@ mpt_register(MPT_CALLBACK cbfunc, MPT_DRIVER_CLASS dclass)
 			MptDriverClass[cb_idx] = dclass;
 			MptEvHandlers[cb_idx] = NULL;
 			last_drv_idx = cb_idx;
+			memcpy(MptCallbacksName[cb_idx], func_name,
+			    strlen(func_name) > 50 ? 50 : strlen(func_name));
 			break;
 		}
 	}
@@ -1648,6 +1712,7 @@ mpt_mapresources(MPT_ADAPTER *ioc)
 		} else {
 			printk(MYIOC_s_WARN_FMT "no suitable DMA mask for %s\n",
 			    ioc->name, pci_name(pdev));
+			pci_release_selected_regions(pdev, ioc->bars);
 			return r;
 		}
 	} else {
@@ -1660,6 +1725,7 @@ mpt_mapresources(MPT_ADAPTER *ioc)
 		} else {
 			printk(MYIOC_s_WARN_FMT "no suitable DMA mask for %s\n",
 			    ioc->name, pci_name(pdev));
+			pci_release_selected_regions(pdev, ioc->bars);
 			return r;
 		}
 	}
@@ -1695,6 +1761,7 @@ mpt_mapresources(MPT_ADAPTER *ioc)
 	if (mem == NULL) {
 		printk(MYIOC_s_ERR_FMT ": ERROR - Unable to map adapter"
 			" memory!\n", ioc->name);
+		pci_release_selected_regions(pdev, ioc->bars);
 		return -EINVAL;
 	}
 	ioc->memmap = mem;
@@ -1932,6 +1999,9 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
 		ioc->msi_enable = 0;
 		break;
 	}
+
+	ioc->fw_events_off = 1;
+
 	if (ioc->errata_flag_1064)
 		pci_disable_io_access(pdev);
 
@@ -5763,7 +5833,7 @@ mpt_inactive_raid_volumes(MPT_ADAPTER *ioc, u8 channel, u8 id)
 		device_is_online = 0;
 		num_paths = mpt_raid_phys_disk_get_num_paths(ioc,
 		    buffer->PhysDisk[i].PhysDiskNum);
-		if (num_paths < 2)
+		if (!num_paths)
 			continue;
 		phys_disk_1 = kzalloc(offsetof(RaidPhysDiskPage1_t,Path) +
 		   (num_paths * sizeof(RAID_PHYS_DISK1_PATH)), GFP_KERNEL);
@@ -6582,8 +6652,17 @@ mpt_config(MPT_ADAPTER *ioc, CONFIGPARMS *pCfg)
 			pReq->Action, ioc->mptbase_cmds.status, timeleft));
 		if (ioc->mptbase_cmds.status & MPT_MGMT_STATUS_DID_IOCRESET)
 			goto out;
-		if (!timeleft)
+		if (!timeleft) {
+			spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
+			if (ioc->ioc_reset_in_progress) {
+				spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
+				printk(MYIOC_s_INFO_FMT "%s: host reset in progress mpt_config timed out.!!\n",
+					__func__, ioc->name);
+				return -EFAULT;
+			}
+			spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
 			issue_hard_reset = 1;
+		}
 		goto out;
 	}
 
@@ -6623,11 +6702,18 @@ mpt_config(MPT_ADAPTER *ioc, CONFIGPARMS *pCfg)
 		issue_hard_reset = 0;
 		printk(MYIOC_s_WARN_FMT "Issuing Reset from %s!!\n",
 		    ioc->name, __func__);
-		if (mpt_SoftResetHandler(ioc, CAN_SLEEP) != 0)
+		if (retry_count == 0) {
+			if (mpt_SoftResetHandler(ioc, CAN_SLEEP) != 0) {
+				mpt_HardResetHandler(ioc, CAN_SLEEP);
+				retry_count++;
+			}
+		} else {
 			mpt_HardResetHandler(ioc, CAN_SLEEP);
+		}
+
 		mpt_free_msg_frame(ioc, mf);
 		/* attempt one retry for a timed out command */
-		if (!retry_count) {
+		if (retry_count < 2) {
 			printk(MYIOC_s_INFO_FMT
 			    "Attempting Retry Config request"
 			    " type 0x%x, page 0x%x,"
@@ -7137,8 +7223,9 @@ mpt_SoftResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 			mpt_signal_reset(cb_idx, ioc, MPT_IOC_SETUP_RESET);
 	}
 
-   spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
+	spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
 	if (ioc->taskmgmt_in_progress) {
+		ioc->ioc_reset_in_progress = 0;
 		spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
 		return -1;
 	}
@@ -7266,7 +7353,18 @@ mpt_HardResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 	spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
 	if (ioc->ioc_reset_in_progress) {
 		spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
-		return 0;
+		ioc->wait_on_reset_completion = 1;
+		do {
+			ssleep(1);
+		} while (ioc->ioc_reset_in_progress == 1);
+		ioc->wait_on_reset_completion = 0;
+		return ioc->reset_status;
+	}
+	if(ioc->wait_on_reset_completion) {
+		spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
+		rc = 0;
+		time_count = jiffies;
+		goto exit;
 	}
 	ioc->ioc_reset_in_progress = 1;
 	if (ioc->alt_ioc)
@@ -7303,6 +7401,7 @@ mpt_HardResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 	ioc->taskmgmt_quiesce_io = 0;
 	ioc->ioc_reset_in_progress = 0;
 	ioc->taskmgmt_in_progress = 0;
+	ioc->reset_status = rc;
 	if (ioc->alt_ioc) {
 		ioc->alt_ioc->taskmgmt_quiesce_io = 0;
 		ioc->alt_ioc->ioc_reset_in_progress = 0;
@@ -7329,7 +7428,7 @@ mpt_HardResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 		ioc->DiagBuffer[i] = NULL;
 		ioc->DiagBuffer_Status[i] = 0;
 	}
-
+exit:
 	dtmprintk(ioc,
 	    printk(MYIOC_s_DEBUG_FMT
 		"HardResetHandler: completed (%d seconds): %s\n", ioc->name,
@@ -7575,7 +7674,12 @@ mpt_display_event_info(MPT_ADAPTER *ioc, EventNotificationReply_t *pEventReply)
 		case MPI_EVENT_SAS_PLS_LR_RATE_3_0:
 			snprintf(evStr, EVENT_DESCR_STR_SZ,
 			   "SAS PHY Link Status: Phy=%d:"
-			   " Rate 3.0 Gpbs",PhyNumber);
+			   " Rate 3.0 Gbps",PhyNumber);
+			break;
+		case MPI_EVENT_SAS_PLS_LR_RATE_6_0:
+			snprintf(evStr, EVENT_DESCR_STR_SZ,
+			   "SAS PHY Link Status: Phy=%d:"
+			   " Rate 6.0 Gbps",PhyNumber);
 			break;
 		default:
 			snprintf(evStr, EVENT_DESCR_STR_SZ,
@@ -8183,7 +8287,7 @@ mpt_spi_log_info(MPT_ADAPTER *ioc, u32 log_info)
  *	Refer to lsi/mpi_log_sas.h.
  **/
 static void
-mpt_sas_log_info(MPT_ADAPTER *ioc, u32 log_info)
+mpt_sas_log_info(MPT_ADAPTER *ioc, u32 log_info, u8 cb_idx)
 {
 union loginfo_type {
 	u32	loginfo;
@@ -8237,21 +8341,22 @@ union loginfo_type {
 	if (sub_code_desc != NULL)
 		printk(MYIOC_s_INFO_FMT
 			"LogInfo(0x%08x): Originator={%s}, Code={%s},"
-			" SubCode={%s}\n",
+			" SubCode={%s} cb_idx %s\n",
 			ioc->name, log_info, originator_desc, code_desc,
-			sub_code_desc);
+			sub_code_desc, MptCallbacksName[cb_idx]);
 	else if (code_desc != NULL)
 		printk(MYIOC_s_INFO_FMT
 			"LogInfo(0x%08x): Originator={%s}, Code={%s},"
-			" SubCode(0x%04x)\n",
+			" SubCode(0x%04x) cb_idx %s\n",
 			ioc->name, log_info, originator_desc, code_desc,
-			sas_loginfo.dw.subcode);
+			sas_loginfo.dw.subcode, MptCallbacksName[cb_idx]);
 	else
 		printk(MYIOC_s_INFO_FMT
 			"LogInfo(0x%08x): Originator={%s}, Code=(0x%02x),"
-			" SubCode(0x%04x)\n",
+			" SubCode(0x%04x) cb_idx %s\n",
 			ioc->name, log_info, originator_desc,
-			sas_loginfo.dw.code, sas_loginfo.dw.subcode);
+			sas_loginfo.dw.code, sas_loginfo.dw.subcode,
+			MptCallbacksName[cb_idx]);
 }
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
@@ -8622,7 +8727,8 @@ fusion_init(void)
 	/*  Register ourselves (mptbase) in order to facilitate
 	 *  EventNotification handling.
 	 */
-	mpt_base_index = mpt_register(mptbase_reply, MPTBASE_DRIVER);
+	mpt_base_index = mpt_register(mptbase_reply, MPTBASE_DRIVER,
+	    "mptbase_reply");
 
 	/* Register for hard reset handling callbacks.
 	 */

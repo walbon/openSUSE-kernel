@@ -3,7 +3,7 @@
  *      For use with LSI PCI chip/adapter(s)
  *      running LSI Fusion MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 1999-2008 LSI Corporation
+ *  Copyright (c) 1999-2010 LSI Corporation
  *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  */
@@ -727,7 +727,7 @@ static int mptspi_slave_configure(struct scsi_device *sdev)
 }
 
 static int
-mptspi_qcmd_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
+mptspi_qcmd(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 {
 	struct _MPT_SCSI_HOST *hd = shost_priv(SCpnt->device->host);
 	VirtDevice	*vdevice = SCpnt->device->hostdata;
@@ -751,8 +751,6 @@ mptspi_qcmd_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 
 	return mptscsih_qcmd(SCpnt,done);
 }
-
-static DEF_SCSI_QCMD(mptspi_qcmd)
 
 static void mptspi_slave_destroy(struct scsi_device *sdev)
 {
@@ -814,7 +812,11 @@ static int mptspi_write_spi_device_pg1(struct scsi_target *starget,
 	struct _x_config_parms cfg;
 	struct _CONFIG_PAGE_HEADER hdr;
 	int err = -EBUSY;
-
+	u32 nego_parms;
+	u32 period;
+	struct scsi_device *sdev;
+	int i;
+	
 	/* don't allow updating nego parameters on RAID devices */
 	if (starget->channel == 0 &&
 	    mptspi_is_raid(hd, starget->id))
@@ -850,6 +852,24 @@ static int mptspi_write_spi_device_pg1(struct scsi_target *starget,
 	pg1->Header.PageLength = hdr.PageLength;
 	pg1->Header.PageNumber = hdr.PageNumber;
 	pg1->Header.PageType = hdr.PageType;
+
+	nego_parms = le32_to_cpu(pg1->RequestedParameters);
+	period = (nego_parms & MPI_SCSIDEVPAGE1_RP_MIN_SYNC_PERIOD_MASK) >> 
+	    MPI_SCSIDEVPAGE1_RP_SHIFT_MIN_SYNC_PERIOD;
+	if (period == 8) {
+		/* Turn on inline data padding for TAPE when running U320 */
+		for (i = 0 ; i < 16; i++) {
+			sdev = scsi_device_lookup_by_target(starget, i);
+			if (sdev && sdev->type == TYPE_TAPE) {
+				sdev_printk(KERN_DEBUG, sdev, MYIOC_s_FMT 
+				     "IDP:ON\n", ioc->name);
+				nego_parms |= MPI_SCSIDEVPAGE1_RP_IDP;
+				pg1->RequestedParameters =
+				    cpu_to_le32(nego_parms);
+				break;
+			}
+		}
+	}
 
 	mptspi_print_write_nego(hd, starget, le32_to_cpu(pg1->RequestedParameters));
 
@@ -1042,16 +1062,10 @@ struct work_queue_wrapper {
 };
 
 static void
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 mpt_work_wrapper(struct work_struct *work)
 {
 	struct work_queue_wrapper *wqw =
 		container_of(work, struct work_queue_wrapper, work);
-#else
-mpt_work_wrapper(void *data)
-{
-	struct work_queue_wrapper *wqw = (struct work_queue_wrapper *)data;
-#endif
 	struct _MPT_SCSI_HOST *hd = wqw->hd;
 	MPT_ADAPTER *ioc = hd->ioc;
 	struct Scsi_Host *shost = ioc->sh;
@@ -1100,11 +1114,7 @@ static void mpt_dv_raid(struct _MPT_SCSI_HOST *hd, int disk)
 		    ioc->name, disk);
 		return;
 	}
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 	INIT_WORK(&wqw->work, mpt_work_wrapper);
-#else
-	INIT_WORK(&wqw->work, mpt_work_wrapper, wqw);
-#endif
 	wqw->hd = hd;
 	wqw->disk = disk;
 
@@ -1198,16 +1208,10 @@ MODULE_DEVICE_TABLE(pci, mptspi_pci_table);
  * renegotiate for a given target
  **/
 static void
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 mptspi_dv_renegotiate_work(struct work_struct *work)
 {
 	struct work_queue_wrapper *wqw =
 		container_of(work, struct work_queue_wrapper, work);
-#else
-mptspi_dv_renegotiate_work(void *data)
-{
-	struct work_queue_wrapper *wqw = (struct work_queue_wrapper *)data;
-#endif
 	struct _MPT_SCSI_HOST *hd = wqw->hd;
 	struct scsi_device *sdev;
 	struct scsi_target *starget;
@@ -1242,11 +1246,7 @@ mptspi_dv_renegotiate(struct _MPT_SCSI_HOST *hd)
 	if (!wqw)
 		return;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 	INIT_WORK(&wqw->work, mptspi_dv_renegotiate_work);
-#else
-	INIT_WORK(&wqw->work, mptspi_dv_renegotiate_work, wqw);
-#endif
 	wqw->hd = hd;
 
 	schedule_work(&wqw->work);
@@ -1520,9 +1520,12 @@ mptspi_init(void)
 	if (!mptspi_transport_template)
 		return -ENODEV;
 
-	mptspiDoneCtx = mpt_register(mptscsih_io_done, MPTSPI_DRIVER);
-	mptspiTaskCtx = mpt_register(mptscsih_taskmgmt_complete, MPTSPI_DRIVER);
-	mptspiInternalCtx = mpt_register(mptscsih_scandv_complete, MPTSPI_DRIVER);
+	mptspiDoneCtx = mpt_register(mptscsih_io_done, MPTSPI_DRIVER,
+	    "mptscsih_io_done");
+	mptspiTaskCtx = mpt_register(mptscsih_taskmgmt_complete, MPTSPI_DRIVER,
+	    "mptscsih_taskmgmt_complete");
+	mptspiInternalCtx = mpt_register(mptscsih_scandv_complete,
+	    MPTSPI_DRIVER, "mptscsih_scandv_complete");
 
 	mpt_event_register(mptspiDoneCtx, mptspi_event_process);
 	mpt_reset_register(mptspiDoneCtx, mptspi_ioc_reset);

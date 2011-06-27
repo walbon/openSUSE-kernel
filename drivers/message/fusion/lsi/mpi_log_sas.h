@@ -1,6 +1,6 @@
 /***************************************************************************
  *                                                                         *
- *  Copyright (c) 2000-2008 LSI Corporation.  All rights reserved.         *
+ *  Copyright (c) 200-2010 LSI Corporation.  All rights reserved.         *
  *                                                                         *
  * Description                                                             *
  * ------------                                                            *

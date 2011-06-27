@@ -3,7 +3,7 @@
  *      For use with LSI PCI chip/adapter(s)
  *      running LSI Fusion MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 1999-2008 LSI Corporation
+ *  Copyright (c) 1999-2010 LSI Corporation
  *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  */
@@ -107,7 +107,8 @@ static u8	mptfcInternalCtx = MPT_MAX_PROTOCOL_DRIVERS;
 
 static int mptfc_target_alloc(struct scsi_target *starget);
 static int mptfc_slave_alloc(struct scsi_device *sdev);
-static int mptfc_qcmd(struct Scsi_Host *shost, struct scsi_cmnd *SCpnt);
+static int mptfc_qcmd(struct scsi_cmnd *SCpnt,
+		      void (*done)(struct scsi_cmnd *));
 static void mptfc_target_destroy(struct scsi_target *starget);
 static void mptfc_set_rport_loss_tmo(struct fc_rport *rport, uint32_t timeout);
 static void __devexit mptfc_remove(struct pci_dev *pdev);
@@ -234,34 +235,29 @@ mptfc_block_error_handler(struct scsi_cmnd *SCpnt,
 	unsigned long		flags;
 	int			ready;
 	MPT_ADAPTER		*ioc;
-	int			loops = 40;	/* seconds */
 
 	hd = shost_priv(SCpnt->device->host);
 	ioc = hd->ioc;
 	spin_lock_irqsave(shost->host_lock, flags);
-	while ((ready = fc_remote_port_chkready(rport) >> 16) == DID_IMM_RETRY
-	 || (loops > 0 && ioc->active == 0)) {
+	while ((ready = fc_remote_port_chkready(rport) >> 16) == DID_IMM_RETRY) {
 		spin_unlock_irqrestore(shost->host_lock, flags);
 		dfcprintk (ioc, printk(MYIOC_s_DEBUG_FMT
 			"mptfc_block_error_handler.%d: %d:%d, port status is "
-			"%x, active flag %d, deferring %s recovery.\n",
+			"DID_IMM_RETRY, deferring %s recovery.\n",
 			ioc->name, ioc->sh->host_no,
-			SCpnt->device->id, SCpnt->device->lun,
-			ready, ioc->active, caller));
+			SCpnt->device->id, SCpnt->device->lun, caller));
 		msleep(1000);
 		spin_lock_irqsave(shost->host_lock, flags);
-		loops --;
 	}
 	spin_unlock_irqrestore(shost->host_lock, flags);
 
-	if (ready == DID_NO_CONNECT || !SCpnt->device->hostdata
-	 || ioc->active == 0) {
+	if (ready == DID_NO_CONNECT || !SCpnt->device->hostdata) {
 		dfcprintk (ioc, printk(MYIOC_s_DEBUG_FMT
 			"%s.%d: %d:%d, failing recovery, "
-			"port state %x, active %d, vdevice %p.\n", caller,
+			"port state %d, vdevice %p.\n", caller,
 			ioc->name, ioc->sh->host_no,
 			SCpnt->device->id, SCpnt->device->lun, ready,
-			ioc->active, SCpnt->device->hostdata));
+			SCpnt->device->hostdata));
 		return FAILED;
 	}
 	dfcprintk (ioc, printk(MYIOC_s_DEBUG_FMT
@@ -685,7 +681,7 @@ mptfc_slave_alloc(struct scsi_device *sdev)
 }
 
 static int
-mptfc_qcmd_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
+mptfc_qcmd(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 {
 	struct mptfc_rport_info	*ri;
 	struct fc_rport	*rport = starget_to_rport(scsi_target(SCpnt->device));
@@ -715,8 +711,6 @@ mptfc_qcmd_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 
 	return mptscsih_qcmd(SCpnt,done);
 }
-
-static DEF_SCSI_QCMD(mptfc_qcmd)
 
 /*
  *	mptfc_display_port_link_speed - displaying link speed
@@ -1525,9 +1519,12 @@ mptfc_init(void)
 	if (!mptfc_transport_template)
 		return -ENODEV;
 
-	mptfcDoneCtx = mpt_register(mptscsih_io_done, MPTFC_DRIVER);
-	mptfcTaskCtx = mpt_register(mptscsih_taskmgmt_complete, MPTFC_DRIVER);
-	mptfcInternalCtx = mpt_register(mptscsih_scandv_complete, MPTFC_DRIVER);
+	mptfcDoneCtx = mpt_register(mptscsih_io_done, MPTFC_DRIVER,
+	    "mptscsih_scandv_complete");
+	mptfcTaskCtx = mpt_register(mptscsih_taskmgmt_complete, MPTFC_DRIVER,
+	    "mptscsih_scandv_complete");
+	mptfcInternalCtx = mpt_register(mptscsih_scandv_complete, MPTFC_DRIVER,
+	    "mptscsih_scandv_complete");
 
 	mpt_event_register(mptfcDoneCtx, mptfc_event_process);
 	mpt_reset_register(mptfcDoneCtx, mptfc_ioc_reset);

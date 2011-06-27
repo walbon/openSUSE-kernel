@@ -106,6 +106,11 @@ MODULE_PARM_DESC(mpt_sdev_queue_depth,
     " Max Device Queue Depth (default="
     __MODULE_STRING(MPT_SCSI_CMD_PER_DEV_HIGH) ")");
 
+static int mpt_loadtime_max_sectors = 8192;
+module_param(mpt_loadtime_max_sectors, int, 0);
+MODULE_PARM_DESC(mpt_loadtime_max_sectors,
+		" Maximum sector define for Host Bus Adaptor.Range 64 to 8192 default=8192");
+
 /* scsi-mid layer global parmeter is max_report_luns, which is 511 */
 #define MPTSAS_MAX_LUN (16895)
 static int max_lun = MPTSAS_MAX_LUN;
@@ -340,10 +345,11 @@ mptsas_add_fw_event(MPT_ADAPTER *ioc, struct fw_event_work *fw_event,
 	spin_lock_irqsave(&ioc->fw_event_lock, flags);
 	list_add_tail(&fw_event->list, &ioc->fw_event_list);
 	INIT_DELAYED_WORK(&fw_event->work, mptsas_firmware_event_work);
-	devtprintk(ioc, printk(MYIOC_s_DEBUG_FMT "%s: add (fw_event=0x%p)\n",
-	    ioc->name, __func__, fw_event));
-	queue_delayed_work(ioc->fw_event_q, &fw_event->work,
-	    delay);
+	devtprintk(ioc, printk(MYIOC_s_DEBUG_FMT "%s: add (fw_event=0x%p)"
+		"on cpuid %d\n", ioc->name, __func__,
+		fw_event,smp_processor_id()));
+	queue_delayed_work_on(smp_processor_id(), ioc->fw_event_q,
+	    &fw_event->work, delay);
 	spin_unlock_irqrestore(&ioc->fw_event_lock, flags);
 }
 
@@ -355,10 +361,16 @@ mptsas_requeue_fw_event(MPT_ADAPTER *ioc, struct fw_event_work *fw_event,
 	unsigned long flags;
 	spin_lock_irqsave(&ioc->fw_event_lock, flags);
 	devtprintk(ioc, printk(MYIOC_s_DEBUG_FMT "%s: reschedule task "
-	    "(fw_event=0x%p)\n", ioc->name,__FUNCTION__, fw_event));
+	    "(fw_event=0x%p)on cpuid %d\n", ioc->name, __func__,
+		fw_event,smp_processor_id()));
 	fw_event->retries++;
-	queue_delayed_work(ioc->fw_event_q, &fw_event->work,
-	    msecs_to_jiffies(delay));
+#ifdef queue_delayed_work_on
+	queue_delayed_work_on(smp_processor_id(),ioc->fw_event_q,
+	    &fw_event->work, msecs_to_jiffies(delay));
+#else
+	queue_delayed_work(ioc->fw_event_q,
+	    &fw_event->work, msecs_to_jiffies(delay));
+#endif
 	spin_unlock_irqrestore(&ioc->fw_event_lock, flags);
 }
 
@@ -716,6 +728,7 @@ mptsas_add_device_component_by_fw(MPT_ADAPTER *ioc, u8 channel, u8 id)
 	    (MPI_SAS_DEVICE_PGAD_FORM_BUS_TARGET_ID <<
 	     MPI_SAS_DEVICE_PGAD_FORM_SHIFT),
 	    (channel << 8) + id);
+ 	/* TODO: determine if we need to add check for fw B_T mapping */
 	if (rc)
 		return;
 
@@ -1360,7 +1373,7 @@ mptsas_taskmgmt_complete(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *mr)
 	 * enable work queue to remove device from upper layers
 	 */
 	list_del(&target_reset_list->list);
-	if ((mptsas_find_vtarget(ioc, channel, id)) && !ioc->fw_events_off)
+	if (!ioc->fw_events_off)
 		mptsas_queue_device_delete(ioc,
 			&target_reset_list->sas_event_data);
 
@@ -1429,6 +1442,7 @@ enum device_state{
 	DEVICE_RETRY,
 	DEVICE_ERROR,
 	DEVICE_READY,
+	DEVICE_START_UNIT,
 };
 
 
@@ -1960,21 +1974,25 @@ mptsas_test_unit_ready(MPT_ADAPTER *ioc, u8 channel, u8 id, u16 count)
 			state = DEVICE_RETRY;
 			break;
 		} else if (skey == NOT_READY) {
-			/*
-			 * medium isn't present
-			 */
+			/* medium isn't present */
 			if (asc == 0x3a) {
 				state = DEVICE_READY;
 				goto tur_done;
 			}
-			/*
-			 * LU becoming ready, or
-			 * LU hasn't self-configured yet
-			 */
-			if ((asc == 0x04 && ascq == 0x01) ||
-			    (asc == 0x04 && ascq == 0x11) ||
-			    asc == 0x3e) {
-				state = DEVICE_RETRY;
+			/* LOGICAL UNIT NOT READY */
+			else if (asc == 0x04) {
+				if (ascq == 0x03 ||
+				   ascq == 0x0b ||
+				   ascq == 0x0c) {
+					state = DEVICE_ERROR;
+				} else {
+					state = DEVICE_START_UNIT;
+					break;
+				}
+			}
+			/* LOGICAL UNIT HAS NOT SELF-CONFIGURED YET */
+			else if (asc == 0x3e && !ascq) {
+				state = DEVICE_START_UNIT;
 				break;
 			}
 		} else if (skey == ILLEGAL_REQUEST) {
@@ -2008,6 +2026,15 @@ mptsas_test_unit_ready(MPT_ADAPTER *ioc, u8 channel, u8 id, u16 count)
 		goto tur_done;
 	}
  tur_done:
+	/* Try Sending START_STOP scsi command */
+	if(state == DEVICE_START_UNIT) {
+		iocmd->cmd = START_STOP;
+		rc = mptscsih_do_cmd(hd, iocmd);
+		devtprintk(ioc, printk(MYIOC_s_DEBUG_FMT "%s: rc=0x%02x\n",
+		    ioc->name, __FUNCTION__, rc));
+		/* No need to check return value rc, since TUR is going to be retried */
+		state = DEVICE_RETRY;
+	}
 	kfree(iocmd);
 	return state;
 }
@@ -2159,7 +2186,9 @@ mptsas_target_alloc(struct scsi_target *starget)
 			ioc->name, p->phy_info[i].attached.channel,
 			p->phy_info[i].attached.id, p->phy_info[i].attached.phy_id,
 			(unsigned long long)p->phy_info[i].attached.sas_address);
-
+			vtarget->handle = p->phy_info[i].attached.handle;
+			vtarget->sas_address =  p->phy_info[i].
+						attached.sas_address;
 			/*
 			 * Exposing hidden raid components
 			 */
@@ -2307,7 +2336,7 @@ mptsas_slave_alloc(struct scsi_device *sdev)
  *
  **/
 static int
-mptsas_qcmd_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
+mptsas_qcmd(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 {
 	MPT_SCSI_HOST	*hd;
 	MPT_ADAPTER	*ioc;
@@ -2331,8 +2360,6 @@ mptsas_qcmd_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 	return mptscsih_qcmd(SCpnt,done);
 }
 
-static DEF_SCSI_QCMD(mptsas_qcmd)
-
 /**
  *	mptsas_mptsas_eh_timed_out - resets the scsi_cmnd timeout
  *		if the device under question is currently in the
@@ -2348,27 +2375,36 @@ static enum blk_eh_timer_return mptsas_eh_timed_out(struct scsi_cmnd *sc)
 	enum blk_eh_timer_return rc = BLK_EH_NOT_HANDLED;
 
 	if ((hd = shost_priv(sc->device->host)) == NULL) {
-		printk(KERN_ERR MYNAM ": %s: Can't locate host! (sc=%p)\n",
+		printk(KERN_ERR MYNAM ": %s: Can't locate host! (sc=%p)\n", 
 		    __func__, sc );
 		goto done;
 	}
 
 	ioc = hd->ioc;
 	if (ioc->bus_type != SAS) {
-		printk(KERN_ERR MYNAM ": %s: Wrong bus type (sc=%p)\n",
+		printk(KERN_ERR MYNAM ": %s: Wrong bus type (sc=%p)\n", 
 		    __func__, sc );
 		goto done;
 	}
 
+	/* In case if IOC is in reset from internal context.
+ 	*  Do not execute EEH for the same IOC. SML should to reset timer.
+ 	*/
+	if (ioc->ioc_reset_in_progress) {
+		dtmprintk(ioc, printk(MYIOC_s_WARN_FMT ": %s: ioc is in reset,"
+		    "SML need to reset the timer (sc=%p)\n", 
+		    ioc->name, __func__, sc ));
+		rc = BLK_EH_RESET_TIMER;
+	}
 	vdevice = sc->device->hostdata;
-	if ((vdevice && vdevice->vtarget) &&
-	    (vdevice->vtarget->inDMD || vdevice->vtarget->deleted)) {
+	if (vdevice && vdevice->vtarget && (vdevice->vtarget->inDMD
+		|| vdevice->vtarget->deleted)) {
 		dtmprintk(ioc, printk(MYIOC_s_WARN_FMT ": %s: target removed "
-		    "or in device removal delay (sc=%p)\n",
+		    "or in device removal delay (sc=%p)\n", 
 		    ioc->name, __func__, sc ));
 		rc = BLK_EH_RESET_TIMER;
 		goto done;
-	}
+	} 
 
 done:
 	return rc;
@@ -2390,7 +2426,6 @@ static struct scsi_host_template mptsas_driver_template = {
 	.change_queue_depth		= mptscsih_change_queue_depth,
 	.eh_abort_handler		= mptscsih_abort,
 	.eh_device_reset_handler	= mptscsih_dev_reset,
-	.eh_bus_reset_handler		= mptscsih_bus_reset,
 	.eh_host_reset_handler		= mptscsih_host_reset,
 	.bios_param			= mptscsih_bios_param,
 	.can_queue			= MPT_SAS_CAN_QUEUE,
@@ -2400,6 +2435,7 @@ static struct scsi_host_template mptsas_driver_template = {
 	.cmd_per_lun			= 7,
 	.use_clustering			= ENABLE_CLUSTERING,
 	.shost_attrs			= mptscsih_host_attrs,
+	.sdev_attrs			= mptscsih_dev_attrs,
 };
 
 /**
@@ -2898,7 +2934,7 @@ mptsas_sas_io_unit_pg1(MPT_ADAPTER *ioc)
 	SasIOUnitPage1_t *buffer;
 	dma_addr_t dma_handle;
 	int error;
-	u16 device_missing_delay;
+	u8 device_missing_delay;
 
 	memset(&hdr, 0, sizeof(ConfigExtendedPageHeader_t));
 	memset(&cfg, 0, sizeof(CONFIGPARMS));
@@ -2934,8 +2970,8 @@ mptsas_sas_io_unit_pg1(MPT_ADAPTER *ioc)
 		goto out_free_consistent;
 
 	ioc->io_missing_delay  =
-	    le16_to_cpu(buffer->IODeviceMissingDelay);
-	device_missing_delay = le16_to_cpu(buffer->ReportDeviceMissingDelay);
+	    buffer->IODeviceMissingDelay;
+	device_missing_delay = buffer->ReportDeviceMissingDelay;
 	ioc->device_missing_delay = (device_missing_delay & MPI_SAS_IOUNIT1_REPORT_MISSING_UNIT_16) ?
 	    (device_missing_delay & MPI_SAS_IOUNIT1_REPORT_MISSING_TIMEOUT_MASK) * 16 :
 	    device_missing_delay & MPI_SAS_IOUNIT1_REPORT_MISSING_TIMEOUT_MASK;
@@ -3026,6 +3062,8 @@ mptsas_sas_phy_pg0(MPT_ADAPTER *ioc, struct mptsas_phyinfo *phy_info,
  *	@form:
  *	@form_specific:
  *
+ * 	TODO: check all calls to this function for proper return checking
+ *
  **/
 static int
 mptsas_sas_device_pg0(MPT_ADAPTER *ioc, struct mptsas_devinfo *device_info,
@@ -3098,6 +3136,7 @@ mptsas_sas_device_pg0(MPT_ADAPTER *ioc, struct mptsas_devinfo *device_info,
 	device_info->sas_address = le64_to_cpu(sas_address);
 	device_info->device_info =
 	    le32_to_cpu(buffer->DeviceInfo);
+	device_info->flags = le16_to_cpu(buffer->Flags);
 
  out_free_consistent:
 	pci_free_consistent(ioc->pcidev, hdr.ExtPageLength * 4,
@@ -3576,6 +3615,9 @@ static int mptsas_probe_one_phy(struct device *dev,
 	case MPI_SAS_IOUNIT0_RATE_3_0:
 		phy->negotiated_linkrate = SAS_LINK_RATE_3_0_GBPS;
 		break;
+	case MPI_SAS_IOUNIT0_RATE_6_0:
+		phy->negotiated_linkrate = SAS_LINK_RATE_6_0_GBPS;
+		break;
 	case MPI_SAS_IOUNIT0_RATE_SATA_OOB_COMPLETE:
 	case MPI_SAS_IOUNIT0_RATE_UNKNOWN:
 	default:
@@ -3826,6 +3868,7 @@ mptsas_probe_hba_phys(MPT_ADAPTER *ioc)
 			 MPI_SAS_PHY_PGAD_FORM_SHIFT), i);
 		port_info->phy_info[i].identify.handle =
 		    port_info->phy_info[i].handle;
+ 		/* TODO: determine if we need to add check for fw B_T mapping */
 		mptsas_sas_device_pg0(ioc, &port_info->phy_info[i].identify,
 			(MPI_SAS_DEVICE_PGAD_FORM_HANDLE <<
 			 MPI_SAS_DEVICE_PGAD_FORM_SHIFT),
@@ -3874,6 +3917,7 @@ mptsas_expander_refresh(MPT_ADAPTER *ioc, struct mptsas_portinfo *port_info)
 		    (MPI_SAS_EXPAND_PGAD_FORM_HANDLE_PHY_NUM <<
 		    MPI_SAS_EXPAND_PGAD_FORM_SHIFT), (i << 16) + handle);
 
+ 		/* TODO: determine if we need to add check for fw B_T mapping */
 		mptsas_sas_device_pg0(ioc,
 		    &port_info->phy_info[i].identify,
 		    (MPI_SAS_DEVICE_PGAD_FORM_HANDLE <<
@@ -3949,7 +3993,7 @@ mptsas_expander_event_add(MPT_ADAPTER *ioc,
 
 	printk(MYIOC_s_INFO_FMT "add expander: num_phys %d, "
 	    "sas_addr (0x%llx)\n", ioc->name, port_info->num_phys,
-	    (unsigned long long)sas_address);
+	    (unsigned long long)le64_to_cpu(sas_address));
 
 	mptsas_expander_refresh(ioc, port_info);
 }
@@ -4207,7 +4251,8 @@ mptsas_send_link_status_event(struct fw_event_work *fw_event)
 	}
 
 	if (link_rate == MPI_SAS_IOUNIT0_RATE_1_5 ||
-	    link_rate == MPI_SAS_IOUNIT0_RATE_3_0) {
+	    link_rate == MPI_SAS_IOUNIT0_RATE_3_0 ||
+	    link_rate == MPI_SAS_IOUNIT0_RATE_6_0) {
 
 		if (!port_info) {
 			if (ioc->old_sas_discovery_protocal) {
@@ -4275,6 +4320,7 @@ mptsas_not_responding_devices(MPT_ADAPTER *ioc)
 		sas_device.handle = 0;
 		retry_count = 0;
 retry_page:
+ 		/* TODO: determine if we need to add check for fw B_T mapping */
 		retval = mptsas_sas_device_pg0(ioc, &sas_device,
 				(MPI_SAS_DEVICE_PGAD_FORM_BUS_TARGET_ID
 				<< MPI_SAS_DEVICE_PGAD_FORM_SHIFT),
@@ -4430,6 +4476,17 @@ mptsas_probe_devices(MPT_ADAPTER *ioc)
 		      MPI_SAS_DEVICE_INFO_STP_TARGET |
 		      MPI_SAS_DEVICE_INFO_SATA_DEVICE)) == 0)
 			continue;
+
+		/* If there is no FW B_T mapping for this device then continue
+		 * */
+		if (!(sas_device.flags & MPI_SAS_DEVICE0_FLAGS_DEVICE_PRESENT)
+		    || !(sas_device.flags &
+		          MPI_SAS_DEVICE0_FLAGS_DEVICE_MAPPED)) {
+			printk( KERN_ERR
+			    "Device page0 flag value %x from %s:%d\n",
+			    sas_device.flags, __func__, __LINE__ );
+			continue;
+		}
 
 		phy_info = mptsas_refreshing_device_handles(ioc, &sas_device);
 		if (!phy_info)
@@ -4776,6 +4833,17 @@ mptsas_adding_inactive_raid_components(MPT_ADAPTER *ioc, u8 channel, u8 id)
 			phys_disk.PhysDiskID))
 			continue;
 
+		/* If there is no FW B_T mapping for this device then continue
+		 * */
+		if (!(sas_device.flags & MPI_SAS_DEVICE0_FLAGS_DEVICE_PRESENT)
+		    || !(sas_device.flags &
+		          MPI_SAS_DEVICE0_FLAGS_DEVICE_MAPPED)) {
+			printk( KERN_ERR
+			    "Device page0 flag value %x from %s:%d\n",
+			    sas_device.flags, __func__, __LINE__ );
+			continue;
+		}
+
 		phy_info = mptsas_find_phyinfo_by_sas_address(ioc,
 		    sas_device.sas_address);
 		mptsas_add_end_device(ioc, phy_info);
@@ -4799,6 +4867,7 @@ mptsas_hotplug_work(MPT_ADAPTER *ioc, struct fw_event_work *fw_event,
 	VirtTarget *vtarget;
 	enum device_state state;
 	int i;
+	struct mptsas_portinfo *port_info;
 
 	switch (hot_plug_info->event_type) {
 
@@ -4827,12 +4896,52 @@ mptsas_hotplug_work(MPT_ADAPTER *ioc, struct fw_event_work *fw_event,
 		    (hot_plug_info->channel << 8) +
 		    hot_plug_info->id);
 
+		/* If there is no FW B_T mapping for this device then continue
+		 * */
+		if (!(sas_device.flags & MPI_SAS_DEVICE0_FLAGS_DEVICE_PRESENT)
+		    || !(sas_device.flags &
+		          MPI_SAS_DEVICE0_FLAGS_DEVICE_MAPPED)) {
+			printk( KERN_ERR
+			    "Device page0 flag value %x from %s:%d\n",
+			    sas_device.flags, __func__, __LINE__ );
+			break;
+		}
+
 		if (!sas_device.handle)
 			return;
 
 		phy_info = mptsas_refreshing_device_handles(ioc, &sas_device);
-		if (!phy_info)
+		/* Only For SATA Device ADD */
+		if (!phy_info && (sas_device.device_info &
+			    MPI_SAS_DEVICE_INFO_SATA_DEVICE)) {
+			devtprintk(ioc, printk(MYIOC_s_DEBUG_FMT
+				"%s %d SATA HOT PLUG: "
+			    	"parent handle of device %x\n", ioc->name,
+			       	__func__, __LINE__, sas_device.handle_parent));
+			port_info = mptsas_find_portinfo_by_handle(ioc,
+				sas_device.handle_parent);
+
+			if (port_info == ioc->hba_port_info)
+				mptsas_probe_hba_phys(ioc);
+			else if (port_info)
+				mptsas_expander_refresh(ioc, port_info);
+			else {
+				dfailprintk(ioc, printk(MYIOC_s_ERR_FMT
+					"%s %d port info is NULL \n",
+					ioc->name, __func__, __LINE__));
+				break;
+			}
+			phy_info = mptsas_refreshing_device_handles
+				(ioc, &sas_device);
+		}
+
+		if (!phy_info) {
+			dfailprintk(ioc, printk(MYIOC_s_ERR_FMT
+				"%s %d phy info is NULL \n",
+			    ioc->name, __func__, __LINE__));
 			break;
+		}
+
 
 		if (mptsas_get_rphy(phy_info))
 			break;
@@ -4879,6 +4988,17 @@ mptsas_hotplug_work(MPT_ADAPTER *ioc, struct fw_event_work *fw_event,
 			dfailprintk(ioc, printk(MYIOC_s_ERR_FMT
 			"%s: fw_id=%d exit at line=%d\n", ioc->name,
 				 __func__, hot_plug_info->id, __LINE__));
+			break;
+		}
+
+		/* If there is no FW B_T mapping for this device then continue
+		 * */
+		if (!(sas_device.flags & MPI_SAS_DEVICE0_FLAGS_DEVICE_PRESENT)
+		    || !(sas_device.flags &
+		          MPI_SAS_DEVICE0_FLAGS_DEVICE_MAPPED)) {
+			printk( KERN_ERR
+			    "Device page0 flag value %x from %s:%d\n",
+			    sas_device.flags, __func__, __LINE__ );
 			break;
 		}
 
@@ -4932,6 +5052,17 @@ mptsas_hotplug_work(MPT_ADAPTER *ioc, struct fw_event_work *fw_event,
 				    "%s: fw_id=%d exit at line=%d\n",
 				    ioc->name, __func__,
 				    hot_plug_info->id, __LINE__));
+			break;
+		}
+
+		/* If there is no FW B_T mapping for this device then continue
+		 * */
+		if (!(sas_device.flags & MPI_SAS_DEVICE0_FLAGS_DEVICE_PRESENT)
+		    || !(sas_device.flags &
+		          MPI_SAS_DEVICE0_FLAGS_DEVICE_MAPPED)) {
+			printk( KERN_ERR
+			    "Device page0 flag value %x from %s:%d\n",
+			    sas_device.flags, __func__, __LINE__ );
 			break;
 		}
 
@@ -5479,12 +5610,47 @@ mptsas_event_process(MPT_ADAPTER *ioc, EventNotificationReply_t *reply)
 	{
 		EVENT_DATA_SAS_DEVICE_STATUS_CHANGE *sas_event_data =
 		    (EVENT_DATA_SAS_DEVICE_STATUS_CHANGE *)reply->Data;
+		u16	ioc_stat;
+		ioc_stat = le16_to_cpu(reply->IOCStatus);
 
 		if (sas_event_data->ReasonCode ==
 		    MPI_EVENT_SAS_DEV_STAT_RC_NOT_RESPONDING) {
 			mptsas_target_reset_queue(ioc, sas_event_data);
 			return 0;
 		}
+		if (sas_event_data->ReasonCode ==
+			MPI_EVENT_SAS_DEV_STAT_RC_INTERNAL_DEVICE_RESET &&
+			ioc->device_missing_delay &&
+			(ioc_stat & MPI_IOCSTATUS_FLAG_LOG_INFO_AVAILABLE)) {
+			VirtTarget *vtarget = NULL;
+			u8		id, channel;
+			u32	 log_info = le32_to_cpu(reply->IOCLogInfo);
+
+			id = sas_event_data->TargetID;
+			channel = sas_event_data->Bus;
+
+			vtarget = mptsas_find_vtarget(ioc, channel, id);
+			if (vtarget) {
+				devtprintk(ioc, printk(MYIOC_s_DEBUG_FMT
+				    "LogInfo (0x%x) available for "
+				   "INTERNAL_DEVICE_RESET"
+				   "fw_id %d fw_channel %d\n", ioc->name,
+				   log_info, id, channel));
+				if (vtarget->raidVolume) {
+					devtprintk(ioc, printk(MYIOC_s_DEBUG_FMT
+					"Skipping Raid Volume for inDMD\n",
+					ioc->name));
+				} else {
+					devtprintk(ioc, printk(MYIOC_s_DEBUG_FMT
+					"Setting device flag inDMD\n",
+					ioc->name));
+					vtarget->inDMD = 1;
+				}
+
+			}
+
+		}
+
 		break;
 	}
 	case MPI_EVENT_SAS_EXPANDER_STATUS_CHANGE:
@@ -5595,6 +5761,8 @@ mptsas_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	ioc->TaskCtx = mptsasTaskCtx;
 	ioc->InternalCtx = mptsasInternalCtx;
 	ioc->schedule_target_reset = &mptsas_schedule_target_reset;
+	ioc->schedule_dead_ioc_flush_running_cmds =
+				&mptscsih_flush_running_cmds;
 	/*  Added sanity check on readiness of the MPT adapter.
 	 */
 	if (ioc->last_state != MPI_IOC_STATE_OPERATIONAL) {
@@ -5693,6 +5861,21 @@ mptsas_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		sh->sg_tablesize = numSGE;
 	}
 
+	if (mpt_loadtime_max_sectors) {
+		if(mpt_loadtime_max_sectors < 64 || 
+			mpt_loadtime_max_sectors > 8192) {
+			printk("Invalid value passed for mpt_loadtime_max_sectors"
+				" %d. Range from 64 to 8192\n",
+		  		mpt_loadtime_max_sectors);
+		}
+		// Make sure it is even number value
+		mpt_loadtime_max_sectors &=  0xFFFFFFFE;
+		dprintk(ioc, printk (MYIOC_s_DEBUG_FMT
+			"Resetting max sector to %d from %d\n",
+		  ioc->name, mpt_loadtime_max_sectors, sh->max_sectors));
+		sh->max_sectors = mpt_loadtime_max_sectors;
+	}
+
 	hd = shost_priv(sh);
 	hd->ioc = ioc;
 
@@ -5770,6 +5953,12 @@ mptsas_remove(struct pci_dev *pdev)
 	struct mptsas_portinfo *p, *n;
 	int i;
 
+	if(!ioc->sh) {
+		printk(MYIOC_s_INFO_FMT "IOC is in Target mode\n", ioc->name);
+		mpt_detach(pdev);
+		return;
+	}
+
 	mptsas_shutdown(pdev);
 
 	mptsas_del_device_components(ioc);
@@ -5835,13 +6024,18 @@ mptsas_init(void)
 		return -ENODEV;
 	mptsas_transport_template->eh_timed_out = mptsas_eh_timed_out;
 
-	mptsasDoneCtx = mpt_register(mptscsih_io_done, MPTSAS_DRIVER);
-	mptsasTaskCtx = mpt_register(mptscsih_taskmgmt_complete, MPTSAS_DRIVER);
+	mptsasDoneCtx = mpt_register(mptscsih_io_done, MPTSAS_DRIVER,
+	    "mptscsih_io_done");
+	mptsasTaskCtx = mpt_register(mptscsih_taskmgmt_complete, MPTSAS_DRIVER,
+	    "mptscsih_taskmgmt_complete");
 	mptsasInternalCtx =
-		mpt_register(mptscsih_scandv_complete, MPTSAS_DRIVER);
-	mptsasMgmtCtx = mpt_register(mptsas_mgmt_done, MPTSAS_DRIVER);
+		mpt_register(mptscsih_scandv_complete, MPTSAS_DRIVER,
+		    "mptscsih_scandv_complete");
+	mptsasMgmtCtx = mpt_register(mptsas_mgmt_done, MPTSAS_DRIVER,
+	    "mptsas_mgmt_done");
 	mptsasDeviceResetCtx =
-		mpt_register(mptsas_taskmgmt_complete, MPTSAS_DRIVER);
+		mpt_register(mptsas_taskmgmt_complete, MPTSAS_DRIVER,
+		    "mptsas_taskmgmt_complete");
 
 	mpt_event_register(mptsasDoneCtx, mptsas_event_process);
 	mpt_reset_register(mptsasDoneCtx, mptsas_ioc_reset);

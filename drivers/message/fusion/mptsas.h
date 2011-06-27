@@ -5,7 +5,7 @@
  *          LSIFC9xx/LSI409xx Fibre Channel
  *      running LSI MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 1999-2008 LSI Corporation
+ *  Copyright (c) 1999-2010 LSI Corporation
  *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  */
@@ -142,6 +142,7 @@ struct mptsas_devinfo {
 	u64	sas_address;    /* WWN of this device,
 				   SATA is assigned by HBA,expander */
 	u32	device_info;	/* bitfield detailed info about this device */
+	u16	flags;		/* sas device pg0 flags */
 };
 
 /*

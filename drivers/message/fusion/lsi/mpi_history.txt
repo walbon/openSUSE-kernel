@@ -3,7 +3,7 @@
  MPI Header File Change History
  ==============================
 
- Copyright (c) 2000-2008 LSI Corporation.
+ Copyright (c) 2000-2010 LSI Corporation.
 
  ---------------------------------------
  Header Set Release Version:    01.05.20

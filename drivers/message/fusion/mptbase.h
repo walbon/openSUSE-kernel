@@ -5,7 +5,7 @@
  *          LSIFC9xx/LSI409xx Fibre Channel
  *      running LSI Fusion MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 1999-2008 LSI Corporation
+ *  Copyright (c) 1999-2010 LSI Corporation
  *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  */
@@ -69,14 +69,14 @@
 #endif
 
 #ifndef COPYRIGHT
-#define COPYRIGHT	"Copyright (c) 1999-2008 " MODULEAUTHOR
+#define COPYRIGHT	"Copyright (c) 1999-2010 " MODULEAUTHOR
 #endif
 
-#define MPT_LINUX_VERSION_COMMON	"4.22.00.00"
-#define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-4.22.00.00"
+#define MPT_LINUX_VERSION_COMMON	"4.28.00.00suse"
+#define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-4.28.00.00"
 #define WHAT_MAGIC_STRING		"@" "(" "#" ")"
 #define MPT_LINUX_MAJOR_VERSION		4
-#define MPT_LINUX_MINOR_VERSION		22
+#define MPT_LINUX_MINOR_VERSION		28
 #define MPT_LINUX_BUILD_VERSION		00
 #define MPT_LINUX_RELEASE_VERSION	00
 
@@ -423,6 +423,8 @@ typedef struct _VirtTarget {
 	u8			 inDMD;		/* currently in the device 
 						   removal delay timer */
 	int			 num_luns;
+	u64     		 sas_address;
+	u16     		 handle;
 } VirtTarget;
 
 typedef struct _VirtDevice {
@@ -602,10 +604,47 @@ struct mptfc_rport_info
 	u8		flags;
 };
 
+/*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+
+/*
+ * MPT_SCSI_HOST defines - Used by the IOCTL and the SCSI drivers
+ * Private to the driver.
+ */
+
+#define MPT_HOST_BUS_UNKNOWN		(0xFF)
+#define MPT_HOST_TOO_MANY_TM		(0x05)
+#define MPT_HOST_NVRAM_INVALID		(0xFFFFFFFF)
+#define MPT_HOST_NO_CHAIN		(0xFFFFFFFF)
+#define MPT_NVRAM_MASK_TIMEOUT		(0x000000FF)
+#define MPT_NVRAM_SYNC_MASK		(0x0000FF00)
+#define MPT_NVRAM_SYNC_SHIFT		(8)
+#define MPT_NVRAM_DISCONNECT_ENABLE	(0x00010000)
+#define MPT_NVRAM_ID_SCAN_ENABLE	(0x00020000)
+#define MPT_NVRAM_LUN_SCAN_ENABLE	(0x00040000)
+#define MPT_NVRAM_TAG_QUEUE_ENABLE	(0x00080000)
+#define MPT_NVRAM_WIDE_DISABLE		(0x00100000)
+#define MPT_NVRAM_BOOT_CHOICE		(0x00200000)
+
+typedef enum {
+	FC,
+	SPI,
+	SAS
+} BUS_TYPE;
+
+typedef struct _MPT_SCSI_HOST {
+	struct _MPT_ADAPTER		 *ioc;
+	ushort			  sel_timeout[MPT_MAX_FC_DEVICES];
+	char 			  *info_kbuf;
+	long			  last_queue_full;
+	u16			  spi_pending;
+	struct list_head	  target_reset_list;
+} MPT_SCSI_HOST;
+
 typedef void (*MPT_ADD_SGE)(void *pAddr, u32 flagslength, dma_addr_t dma_addr);
 typedef void (*MPT_ADD_CHAIN)(void *pAddr, u8 next, u16 length, dma_addr_t dma_addr);
 typedef void (*MPT_SCHEDULE_TARGET_RESET)(void *ioc);
 
+typedef void (*MPT_FLUSH_RUNNING_CMDS)(MPT_SCSI_HOST *hd);
 /*
  *  Adapter Structure - pci_dev specific. Maximum: MPT_MAX_ADAPTERS
  */
@@ -625,7 +664,7 @@ typedef struct _MPT_ADAPTER
 	u16			 nvdata_version_default;
 	int			 debug_level;
 	u8			 io_missing_delay;
-	u8			 device_missing_delay;
+	u16			 device_missing_delay;
 	SYSIF_REGS __iomem	*chip;		/* == c8817000 (mmap) */
 	SYSIF_REGS __iomem	*pio_chip;	/* Programmed IO (downloadboot) */
 	u8			 bus_type;
@@ -761,7 +800,10 @@ typedef struct _MPT_ADAPTER
 	int			 taskmgmt_in_progress;
 	u8			 taskmgmt_quiesce_io;
 	u8			 ioc_reset_in_progress;
+	u8			 reset_status;
+	u8			 wait_on_reset_completion;
 	MPT_SCHEDULE_TARGET_RESET schedule_target_reset;
+	MPT_FLUSH_RUNNING_CMDS schedule_dead_ioc_flush_running_cmds;
 #if defined(CPQ_CIM)
 	u8			 num_ports;
 #endif
@@ -861,41 +903,6 @@ typedef struct _mpt_sge {
 #define MPT_INDEX_2_RFPTR(ioc,idx) \
 	(MPT_FRAME_HDR*)( (u8*)(ioc)->reply_frames + (ioc)->req_sz * (idx) )
 
-/*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
-
-/*
- * MPT_SCSI_HOST defines - Used by the IOCTL and the SCSI drivers
- * Private to the driver.
- */
-
-#define MPT_HOST_BUS_UNKNOWN		(0xFF)
-#define MPT_HOST_TOO_MANY_TM		(0x05)
-#define MPT_HOST_NVRAM_INVALID		(0xFFFFFFFF)
-#define MPT_HOST_NO_CHAIN		(0xFFFFFFFF)
-#define MPT_NVRAM_MASK_TIMEOUT		(0x000000FF)
-#define MPT_NVRAM_SYNC_MASK		(0x0000FF00)
-#define MPT_NVRAM_SYNC_SHIFT		(8)
-#define MPT_NVRAM_DISCONNECT_ENABLE	(0x00010000)
-#define MPT_NVRAM_ID_SCAN_ENABLE	(0x00020000)
-#define MPT_NVRAM_LUN_SCAN_ENABLE	(0x00040000)
-#define MPT_NVRAM_TAG_QUEUE_ENABLE	(0x00080000)
-#define MPT_NVRAM_WIDE_DISABLE		(0x00100000)
-#define MPT_NVRAM_BOOT_CHOICE		(0x00200000)
-
-typedef enum {
-	FC,
-	SPI,
-	SAS
-} BUS_TYPE;
-
-typedef struct _MPT_SCSI_HOST {
-	MPT_ADAPTER		 *ioc;
-	ushort			  sel_timeout[MPT_MAX_FC_DEVICES];
-	char			  *info_kbuf;
-	long			  last_queue_full;
-	u16			  spi_pending;
-	struct list_head	  target_reset_list;
-} MPT_SCSI_HOST;
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 /*
@@ -924,7 +931,8 @@ extern void	 mpt_detach(struct pci_dev *pdev);
 extern int	 mpt_suspend(struct pci_dev *pdev, pm_message_t state);
 extern int	 mpt_resume(struct pci_dev *pdev);
 #endif
-extern u8	 mpt_register(MPT_CALLBACK cbfunc, MPT_DRIVER_CLASS dclass);
+extern u8	 mpt_register(MPT_CALLBACK cbfunc, MPT_DRIVER_CLASS dclass,
+		char *func_name);
 extern void	 mpt_deregister(u8 cb_idx);
 extern int	 mpt_event_register(u8 cb_idx, MPT_EVHANDLER ev_cbfunc);
 extern void	 mpt_event_deregister(u8 cb_idx);

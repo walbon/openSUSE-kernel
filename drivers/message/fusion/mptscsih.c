@@ -3,7 +3,7 @@
  *      For use with LSI PCI chip/adapter(s)
  *      running LSI Fusion MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 1999-2008 LSI Corporation
+ *  Copyright (c) 1999-2010 LSI Corporation
  *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  */
@@ -1015,7 +1015,7 @@ out:
  *
  *	Must be called while new I/Os are being queued.
  */
-static void
+void
 mptscsih_flush_running_cmds(MPT_SCSI_HOST *hd)
 {
 	MPT_ADAPTER *ioc = hd->ioc;
@@ -1046,6 +1046,7 @@ mptscsih_flush_running_cmds(MPT_SCSI_HOST *hd)
 		sc->scsi_done(sc);
 	}
 }
+EXPORT_SYMBOL(mptscsih_flush_running_cmds);
 
 /*
  *	mptscsih_search_running_cmds - Delete any commands associated
@@ -1163,11 +1164,6 @@ mptscsih_remove(struct pci_dev *pdev)
 	struct Scsi_Host	*host = ioc->sh;
 	MPT_SCSI_HOST		*hd;
 	int sz1;
-
-	if(!host) {
-		mpt_detach(pdev);
-		return;
-	}
 
 	scsi_remove_host(host);
 
@@ -1508,11 +1504,8 @@ mptscsih_qcmd(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 	dmfprintk(ioc, printk(MYIOC_s_DEBUG_FMT "qcmd: SCpnt=%p, done()=%p\n",
 		ioc->name, SCpnt, done));
 
-	if (ioc->taskmgmt_quiesce_io) {
-		dtmprintk(ioc, printk(MYIOC_s_WARN_FMT "qcmd: SCpnt=%p timeout + 60HZ\n",
-			ioc->name, SCpnt));
+	if (ioc->taskmgmt_quiesce_io)
 		return SCSI_MLQUEUE_HOST_BUSY;
-	}
 
 	/*
 	 *  Put together a MPT SCSI request...
@@ -1882,8 +1875,14 @@ mptscsih_IssueTaskMgmt(MPT_SCSI_HOST *hd, u8 type, u8 channel, u8 id, int lun, i
 			    "FAILED!!\n", ioc->name);
 		return 0;
 	}
+	
+	/* DOORBELL ACTIVE check is not required if MPI_IOCFACTS_CAPABILITY_HIGH_PRI_Q
+ 	*  is supported.
+ 	*/
 
-	if (ioc_raw_state & MPI_DOORBELL_ACTIVE) {
+	if (!((ioc->facts.IOCCapabilities & MPI_IOCFACTS_CAPABILITY_HIGH_PRI_Q) &&
+	    (ioc->facts.MsgVersion >= MPI_VERSION_01_05)) && 
+		(ioc_raw_state & MPI_DOORBELL_ACTIVE)) {
 		printk(MYIOC_s_WARN_FMT
 			"TaskMgmt type=%x: ioc_state: "
 			"DOORBELL_ACTIVE (0x%x)!\n",
@@ -1981,8 +1980,7 @@ mptscsih_IssueTaskMgmt(MPT_SCSI_HOST *hd, u8 type, u8 channel, u8 id, int lun, i
 	if (issue_hard_reset) {
 		printk(MYIOC_s_WARN_FMT "Issuing Reset from %s!!\n",
 			ioc->name, __func__);
-		if ((retval = mpt_SoftResetHandler(ioc, CAN_SLEEP)) != 0)
-			retval = mpt_HardResetHandler(ioc, CAN_SLEEP);
+		retval = mpt_HardResetHandler(ioc, CAN_SLEEP);
 		mpt_free_msg_frame(ioc, mf);
 	}
 
@@ -2042,7 +2040,7 @@ mptscsih_abort(struct scsi_cmnd * SCpnt)
 	scsi_print_command(SCpnt);
 
 	vdevice = SCpnt->device->hostdata;
-	if (!vdevice || !vdevice->vtarget || vdevice->vtarget->deleted) {
+	if (!vdevice || !vdevice->vtarget) {
 		dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT
 		    "task abort: device has been deleted (sc=%p)\n",
 		    ioc->name, SCpnt));
@@ -2896,7 +2894,8 @@ slave_configure_exit:
 		ioc->name,sdev->tagged_supported, sdev->simple_tags,
 		sdev->ordered_tags));
 
-	blk_queue_dma_alignment (sdev->request_queue, 512 - 1);
+	blk_queue_dma_alignment(sdev->request_queue, 512 - 1);
+	printk("sdev dma_alignment %d \n",sdev->request_queue->dma_alignment);
 
 	return 0;
 }
@@ -4002,7 +4001,91 @@ struct device_attribute *mptscsih_host_attrs[] = {
 	NULL,
 };
 
+/* device attributes */
+
+/**
+ * mptscsih_device_sas_address_show - sas address
+ * @cdev - pointer to embedded class device
+ * @buf - the buffer returned
+ *
+ * This is the sas address for the target
+ *
+ * A sysfs 'read-only' shost attribute.
+ */
+static ssize_t
+mptscsih_device_sas_address_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	VirtDevice *vdevice = sdev->hostdata;
+
+	if (vdevice && vdevice->vtarget) {
+		return snprintf(buf, PAGE_SIZE, "0x%016llx\n",
+	    		(unsigned long long)vdevice->vtarget->sas_address);
+	} else
+		return snprintf(buf, PAGE_SIZE, "0x0\n");
+}
+static DEVICE_ATTR(sas_address, S_IRUGO, mptscsih_device_sas_address_show,
+ 			NULL);
+
+/**
+ * mptscsih_device_handle_show - device handle
+ * @cdev - pointer to embedded class device
+ * @buf - the buffer returned
+ *
+ * This is the firmware assigned device handle
+ *
+ * A sysfs 'read-only' shost attribute.
+ */
+static ssize_t
+mptscsih_device_handle_show(struct device *dev, struct device_attribute *attr,
+    char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	VirtDevice *vdevice = sdev->hostdata;
+
+	if (vdevice && vdevice->vtarget)
+		return snprintf(buf, PAGE_SIZE, "0x%04x\n",
+		    vdevice->vtarget->handle);
+	else
+		return snprintf(buf, PAGE_SIZE, "0x0\n");
+}
+static DEVICE_ATTR(sas_device_handle, S_IRUGO, mptscsih_device_handle_show,
+ 		NULL);
+/**
+ * mptscsih_fw_id_show - device handle
+ * @cdev - pointer to embedded class device
+ * @buf - the buffer returned
+ *
+ * This is the firmware assigned id.
+ *
+ * A sysfs 'read-only' shost attribute.
+ */
+static ssize_t
+mptscsih_device_fw_id_show(struct device *dev, struct device_attribute *attr,
+    char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	VirtDevice *vdevice = sdev->hostdata;
+
+	if (vdevice && vdevice->vtarget)
+		return snprintf(buf, PAGE_SIZE, "0x%04x\n",
+		    vdevice->vtarget->id);
+	else
+		return snprintf(buf, PAGE_SIZE, "0x0\n");
+}
+static DEVICE_ATTR(fw_id, S_IRUGO, mptscsih_device_fw_id_show,
+ 		NULL);
+
+struct device_attribute *mptscsih_dev_attrs[] = {
+	&dev_attr_sas_address,
+	&dev_attr_sas_device_handle,
+	&dev_attr_fw_id,
+	NULL,
+};
+
 EXPORT_SYMBOL(mptscsih_host_attrs);
+EXPORT_SYMBOL(mptscsih_dev_attrs);
 
 EXPORT_SYMBOL(mptscsih_remove);
 EXPORT_SYMBOL(mptscsih_shutdown);

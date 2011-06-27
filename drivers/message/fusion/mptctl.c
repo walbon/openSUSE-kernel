@@ -4,7 +4,7 @@
  *      For use with LSI PCI chip/adapters
  *      running LSI Fusion MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 1999-2008 LSI Corporation
+ *  Copyright (c) 1999-2010 LSI Corporation
  *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  */
@@ -66,7 +66,7 @@
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_tcq.h>
 
-#define COPYRIGHT	"Copyright (c) 1999-2008 LSI Corporation"
+#define COPYRIGHT	"Copyright (c) 1999-2010 LSI Corporation"
 #define MODULEAUTHOR	"LSI Corporation"
 #include "mptbase.h"
 #include "mptctl.h"
@@ -631,13 +631,6 @@ mptctl_event_process(MPT_ADAPTER *ioc, EventNotificationReply_t *pEvReply)
 }
 
 static int
-mptctl_release(struct inode *inode, struct file *filep)
-{
-	fasync_helper(-1, filep, 0, &async_queue);
-	return 0;
-}
-
-static int
 mptctl_fasync(int fd, struct file *filep, int mode)
 {
 	MPT_ADAPTER	*ioc;
@@ -646,6 +639,12 @@ mptctl_fasync(int fd, struct file *filep, int mode)
 		ioc->aen_event_read_flag=0;
 
 	return fasync_helper(fd, filep, mode, &async_queue);
+}
+
+static int
+mptctl_release(struct inode *inode, struct file *filep)
+{
+	return fasync_helper(-1, filep, 0, &async_queue);
 }
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
@@ -1410,8 +1409,10 @@ mptctl_getiocinfo (unsigned long arg, unsigned int data_size)
 	else
 		karg->adapterType = MPT_IOCTL_INTERFACE_SCSI;
 
-	if (karg->hdr.port > 1)
+	if (karg->hdr.port > 1) {
+		kfree(karg);
 		return -EINVAL;
+	}
 	port = karg->hdr.port;
 
 	karg->port = port;
@@ -2879,9 +2880,9 @@ mptctl_hp_targetinfo(unsigned long arg)
 static struct file_operations mptctl_fops = {
 	.owner =	THIS_MODULE,
 	.llseek =	no_llseek,
+	.release =	mptctl_release,
 	.fasync =	mptctl_fasync,
 	.unlocked_ioctl = mptctl_ioctl,
-	.release =	mptctl_release,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = compat_mpctl_ioctl,
 #endif
@@ -3130,7 +3131,8 @@ static int __init mptctl_init(void)
 	 *  Install our handler
 	 */
 	++where;
-	mptctl_id = mpt_register(mptctl_reply, MPTCTL_DRIVER);
+	mptctl_id = mpt_register(mptctl_reply, MPTCTL_DRIVER,
+	    "mptctl_reply");
 	if (!mptctl_id || mptctl_id >= MPT_MAX_PROTOCOL_DRIVERS) {
 		printk(KERN_ERR MYNAM ": ERROR: Failed to register with Fusion MPT base driver\n");
 		misc_deregister(&mptctl_miscdev);
@@ -3138,7 +3140,8 @@ static int __init mptctl_init(void)
 		goto out_fail;
 	}
 
-	mptctl_taskmgmt_id = mpt_register(mptctl_taskmgmt_reply, MPTCTL_DRIVER);
+	mptctl_taskmgmt_id = mpt_register(mptctl_taskmgmt_reply, MPTCTL_DRIVER,
+	    "mptctl_taskmgmt_reply");
 	mpt_reset_register(mptctl_id, mptctl_ioc_reset);
 	mpt_event_register(mptctl_id, mptctl_event_process);
 
