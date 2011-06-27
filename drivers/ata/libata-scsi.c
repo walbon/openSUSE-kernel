@@ -1146,6 +1146,8 @@ static int ata_scsi_dev_config(struct scsi_device *sdev,
 		scsi_adjust_queue_depth(sdev, MSG_SIMPLE_TAG, depth);
 	}
 
+	blk_queue_flush_queueable(q, false);
+
 	dev->sdev = sdev;
 	return 0;
 }
@@ -2131,8 +2133,6 @@ static unsigned int ata_scsiop_inq_b0(struct ata_scsi_args *args, u8 *rbuf)
 		put_unaligned_be64(65535 * 512 / 8, &rbuf[36]);
 		put_unaligned_be32(1, &rbuf[28]);
 	}
-
-	blk_queue_flush_queueable(q, false);
 
 	return 0;
 }
