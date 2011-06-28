@@ -220,6 +220,7 @@ struct dmar_atsr_unit {
 
 /* Intel DMAR  initialization functions */
 extern int intel_iommu_init(void);
+extern int x2apic_supported(void);
 #else
 static inline int intel_iommu_init(void)
 {
@@ -229,5 +230,6 @@ static inline int intel_iommu_init(void)
 	return -ENODEV;
 #endif
 }
+static inline int x2apic_supported(void) { return 0; }
 #endif /* !CONFIG_DMAR */
 #endif /* __DMAR_H__ */
