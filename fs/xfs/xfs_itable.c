@@ -483,8 +483,9 @@ xfs_bulkstat(
 				 * Get the inode and fill in a single buffer.
 				 */
 				ubused = statstruct_size;
-				error = formatter(mp, ino, ubufp, ubleft, NULL,
-						  &ubused, &fmterror);
+				error = formatter(mp, ino, ubufp, ubleft,
+						  private_data, &ubused,
+						  &fmterror);
 				if (fmterror == BULKSTAT_RV_NOTHING) {
 					if (error && error != ENOENT &&
 						error != EINVAL) {
