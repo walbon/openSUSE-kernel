@@ -364,7 +364,7 @@ config ISCSI_TCP
 
 	 http://open-iscsi.org
 
-source "drivers/scsi/cxgb3i/Kconfig"
+source "drivers/scsi/cxgbi/Kconfig"
 source "drivers/scsi/bnx2i/Kconfig"
 source "drivers/scsi/be2iscsi/Kconfig"
 
