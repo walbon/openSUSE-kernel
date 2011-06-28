@@ -954,7 +954,8 @@ static int be_state;
 
 static void xenbus_reset_state_changed(struct xenbus_watch *w, const char **v, unsigned int l)
 {
-	xenbus_scanf(XBT_NIL, v[XS_WATCH_PATH], "", "%i", &be_state);
+	if (xenbus_scanf(XBT_NIL, v[XS_WATCH_PATH], "", "%i", &be_state) != 1)
+		be_state = XenbusStateUnknown;
 	pr_info("XENBUS: %s %s\n", v[XS_WATCH_PATH], xenbus_strstate(be_state));
 	wake_up(&be_state_wq);
 }

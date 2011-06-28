@@ -159,8 +159,7 @@ static void queue_flush(struct xenbus_dev_data *u, struct list_head *queue,
 			int err)
 {
 	if (!err) {
-		/* list_splice_tail(queue, &u->read_buffers); */
-		list_splice(queue, u->read_buffers.prev);
+		list_splice_tail(queue, &u->read_buffers);
 		wake_up(&u->read_waitq);
 	} else
 		while (!list_empty(queue)) {
@@ -234,7 +233,7 @@ static ssize_t xenbus_dev_write(struct file *filp,
 	void *reply = NULL;
 	LIST_HEAD(queue);
 	char *path, *token;
-	struct watch_adapter *watch, *tmp_watch;
+	struct watch_adapter *watch;
 	int err, rc = len;
 
 	if (!is_xenstored_ready())
@@ -290,8 +289,7 @@ static ssize_t xenbus_dev_write(struct file *filp,
 			
 			list_add(&watch->list, &u->watches);
 		} else {
-			list_for_each_entry_safe(watch, tmp_watch,
-                                                 &u->watches, list) {
+			list_for_each_entry(watch, &u->watches, list) {
 				if (!strcmp(watch->token, token) &&
 				    !strcmp(watch->watch.node, path))
 				{
