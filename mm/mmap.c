@@ -1683,6 +1683,7 @@ int expand_upwards(struct vm_area_struct *vma, unsigned long address)
 			error = acct_stack_growth(vma, size, grow);
 			if (!error)
 				vma->vm_end = address;
+		}
 	}
 out_unlock: __maybe_unused
 	anon_vma_unlock(vma);
