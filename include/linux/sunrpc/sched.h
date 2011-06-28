@@ -55,6 +55,9 @@ struct rpc_task {
 	struct rpc_message	tk_msg;		/* RPC call info */
 	__u8			tk_garb_retry;
 	__u8			tk_cred_retry;
+#ifndef  __GENKSYMS__
+	__u8			tk_rebind_retry;
+#endif
 
 	/*
 	 * callback	to be executed after waking up
