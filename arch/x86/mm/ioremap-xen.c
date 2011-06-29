@@ -197,6 +197,16 @@ int page_is_ram(unsigned long pagenr)
 	return 0;
 }
 
+#ifdef CONFIG_MODULES
+/*
+ * Force the implementation of ioremap_page_range() to be pulled in from
+ * lib/lib.a even if there is no other reference from the core kernel to it
+ * (native uses it in __ioremap_caller()), so that it gets exported.
+ */
+static void *const __section(.discard.ioremap) __used
+_ioremap_page_range = ioremap_page_range;
+#endif
+
 /*
  * Fix up the linear direct mapping of the kernel to avoid cache attribute
  * conflicts.
