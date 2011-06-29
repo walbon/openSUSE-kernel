@@ -34,6 +34,7 @@
 #include <linux/cper.h>
 #include <linux/nmi.h>
 #include <linux/hardirq.h>
+#include <linux/pstore.h>
 #include <acpi/apei.h>
 
 #include "apei-internal.h"
@@ -928,6 +929,157 @@ static int erst_check_table(struct acpi_table_erst *erst_tab)
 	return 0;
 }
 
+static int erst_open_pstore(struct pstore_info *psi);
+static int erst_close_pstore(struct pstore_info *psi);
+static ssize_t erst_reader(u64 *id, enum pstore_type_id *type,
+		       struct timespec *time);
+static u64 erst_writer(enum pstore_type_id type, size_t size);
+
+static struct pstore_info erst_info = {
+	.owner		= THIS_MODULE,
+	.name		= "erst",
+	.open		= erst_open_pstore,
+	.close		= erst_close_pstore,
+	.read		= erst_reader,
+	.write		= erst_writer,
+	.erase		= erst_clear
+};
+
+#define CPER_CREATOR_PSTORE						\
+	UUID_LE(0x75a574e3, 0x5052, 0x4b29, 0x8a, 0x8e, 0xbe, 0x2c,	\
+		0x64, 0x90, 0xb8, 0x9d)
+#define CPER_SECTION_TYPE_DMESG						\
+	UUID_LE(0xc197e04e, 0xd545, 0x4a70, 0x9c, 0x17, 0xa5, 0x54,	\
+		0x94, 0x19, 0xeb, 0x12)
+#define CPER_SECTION_TYPE_MCE						\
+	UUID_LE(0xfe08ffbe, 0x95e4, 0x4be7, 0xbc, 0x73, 0x40, 0x96,	\
+		0x04, 0x4a, 0x38, 0xfc)
+
+struct cper_pstore_record {
+	struct cper_record_header hdr;
+	struct cper_section_descriptor sec_hdr;
+	char data[];
+} __packed;
+
+static int reader_pos;
+
+static int erst_open_pstore(struct pstore_info *psi)
+{
+	int rc;
+
+	if (erst_disable)
+		return -ENODEV;
+
+	rc = erst_get_record_id_begin(&reader_pos);
+
+	return rc;
+}
+
+static int erst_close_pstore(struct pstore_info *psi)
+{
+	erst_get_record_id_end();
+
+	return 0;
+}
+
+static ssize_t erst_reader(u64 *id, enum pstore_type_id *type,
+		       struct timespec *time)
+{
+	int rc;
+	ssize_t len = 0;
+	u64 record_id;
+	struct cper_pstore_record *rcd = (struct cper_pstore_record *)
+					(erst_info.buf - sizeof(*rcd));
+
+	if (erst_disable)
+		return -ENODEV;
+
+skip:
+	rc = erst_get_record_id_next(&reader_pos, &record_id);
+	if (rc)
+		goto out;
+
+	/* no more record */
+	if (record_id == APEI_ERST_INVALID_RECORD_ID) {
+		rc = -1;
+		goto out;
+	}
+
+	len = erst_read(record_id, &rcd->hdr, sizeof(*rcd) +
+			erst_info.bufsize);
+	/* The record may be cleared by others, try read next record */
+	if (len == -ENOENT)
+		goto skip;
+	else if (len < 0) {
+		rc = -1;
+		goto out;
+	}
+	if (uuid_le_cmp(rcd->hdr.creator_id, CPER_CREATOR_PSTORE) != 0)
+		goto skip;
+
+	*id = record_id;
+	if (uuid_le_cmp(rcd->sec_hdr.section_type,
+			CPER_SECTION_TYPE_DMESG) == 0)
+		*type = PSTORE_TYPE_DMESG;
+	else if (uuid_le_cmp(rcd->sec_hdr.section_type,
+			     CPER_SECTION_TYPE_MCE) == 0)
+		*type = PSTORE_TYPE_MCE;
+	else
+		*type = PSTORE_TYPE_UNKNOWN;
+
+	if (rcd->hdr.validation_bits & CPER_VALID_TIMESTAMP)
+		time->tv_sec = rcd->hdr.timestamp;
+	else
+		time->tv_sec = 0;
+	time->tv_nsec = 0;
+
+out:
+	return (rc < 0) ? rc : (len - sizeof(*rcd));
+}
+
+static u64 erst_writer(enum pstore_type_id type, size_t size)
+{
+	struct cper_pstore_record *rcd = (struct cper_pstore_record *)
+					(erst_info.buf - sizeof(*rcd));
+
+	memset(rcd, 0, sizeof(*rcd));
+	memcpy(rcd->hdr.signature, CPER_SIG_RECORD, CPER_SIG_SIZE);
+	rcd->hdr.revision = CPER_RECORD_REV;
+	rcd->hdr.signature_end = CPER_SIG_END;
+	rcd->hdr.section_count = 1;
+	rcd->hdr.error_severity = CPER_SEV_FATAL;
+	/* timestamp valid. platform_id, partition_id are invalid */
+	rcd->hdr.validation_bits = CPER_VALID_TIMESTAMP;
+	rcd->hdr.timestamp = get_seconds();
+	rcd->hdr.record_length = sizeof(*rcd) + size;
+	rcd->hdr.creator_id = CPER_CREATOR_PSTORE;
+	rcd->hdr.notification_type = CPER_NOTIFY_MCE;
+	rcd->hdr.record_id = cper_next_record_id();
+	rcd->hdr.flags = CPER_HW_ERROR_FLAGS_PREVERR;
+
+	rcd->sec_hdr.section_offset = sizeof(*rcd);
+	rcd->sec_hdr.section_length = size;
+	rcd->sec_hdr.revision = CPER_SEC_REV;
+	/* fru_id and fru_text is invalid */
+	rcd->sec_hdr.validation_bits = 0;
+	rcd->sec_hdr.flags = CPER_SEC_PRIMARY;
+	switch (type) {
+	case PSTORE_TYPE_DMESG:
+		rcd->sec_hdr.section_type = CPER_SECTION_TYPE_DMESG;
+		break;
+	case PSTORE_TYPE_MCE:
+		rcd->sec_hdr.section_type = CPER_SECTION_TYPE_MCE;
+		break;
+	default:
+		return -EINVAL;
+	}
+	rcd->sec_hdr.section_severity = CPER_SEV_FATAL;
+
+	erst_write(&rcd->hdr);
+
+	return rcd->hdr.record_id;
+}
+
 static int __init erst_init(void)
 {
 	int rc = 0;
@@ -1001,6 +1153,18 @@ static int __init erst_init(void)
 					  erst_erange.size);
 	if (!erst_erange.vaddr)
 		goto err_release_erange;
+
+	buf = kmalloc(erst_erange.size, GFP_KERNEL);
+	mutex_init(&erst_info.buf_mutex);
+	if (buf) {
+		erst_info.buf = buf + sizeof(struct cper_pstore_record);
+		erst_info.bufsize = erst_erange.size -
+				    sizeof(struct cper_pstore_record);
+		if (pstore_register(&erst_info)) {
+			pr_info(ERST_PFX "Could not register with persistent store\n");
+			kfree(buf);
+		}
+	}
 
 	pr_info(ERST_PFX
 	"Error Record Serialization Table (ERST) support is initialized.\n");

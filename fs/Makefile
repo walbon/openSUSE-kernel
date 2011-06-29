@@ -132,3 +132,4 @@ obj-$(CONFIG_BTRFS_FS)		+= btrfs/
 obj-$(CONFIG_GFS2_FS)           += gfs2/
 obj-$(CONFIG_NOVFS)		+= novfs/
 obj-$(CONFIG_EXOFS_FS)          += exofs/
+obj-$(CONFIG_PSTORE)		+= pstore/
