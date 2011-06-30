@@ -54,7 +54,7 @@ static void cp210x_dtr_rts(struct usb_serial_port *p, int on);
 
 static int debug;
 
-static struct usb_device_id id_table [] = {
+static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(0x045B, 0x0053) }, /* Renesas RX610 RX-Stick */
 	{ USB_DEVICE(0x0471, 0x066A) }, /* AKTAKOM ACE-1001 cable */
 	{ USB_DEVICE(0x0489, 0xE000) }, /* Pirelli Broadband S.p.A, DP-L10 SIP/GSM Mobile */
@@ -335,11 +335,6 @@ static int cp210x_set_config(struct usb_serial_port *port, u8 request,
 		return -EPROTO;
 	}
 
-	/* Single data value */
-	result = usb_control_msg(serial->dev,
-			usb_sndctrlpipe(serial->dev, 0),
-			request, REQTYPE_HOST_TO_DEVICE, data[0],
-			0, NULL, 0, 300);
 	return 0;
 }
 
@@ -635,7 +630,7 @@ static void cp210x_set_termios(struct tty_struct *tty,
 				baud);
 		if (cp210x_set_config_single(port, CP210X_SET_BAUDDIV,
 					((BAUD_RATE_GEN_FREQ + baud/2) / baud))) {
-			dbg("Baud rate requested not supported by device\n");
+			dbg("Baud rate requested not supported by device");
 			baud = tty_termios_baud_rate(old_termios);
 		}
 	}

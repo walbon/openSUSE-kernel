@@ -1065,6 +1065,7 @@ static int uhci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 	}
 
 	spin_unlock_irq(&uhci->lock);
+	synchronize_irq(hcd->irq);
 
 	/* If interrupts don't work and remote wakeup is enabled then
 	 * the suspended root hub needs to be polled.

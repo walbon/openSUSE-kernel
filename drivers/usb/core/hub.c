@@ -1248,6 +1248,9 @@ static int hub_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	desc = intf->cur_altsetting;
 	hdev = interface_to_usbdev(intf);
 
+	/* Hubs have proper suspend/resume support */
+	usb_enable_autosuspend(hdev);
+
 	if (hdev->level == MAX_TOPO_LEVEL) {
 		dev_err(&intf->dev,
 			"Unsupported bus topology: hub nested too deep\n");
@@ -2022,7 +2025,7 @@ static int hub_port_wait_reset(struct usb_hub *hub, int port1,
 		if (!(portstatus & USB_PORT_STAT_RESET) &&
 		    (portstatus & USB_PORT_STAT_ENABLE)) {
 			if (hub_is_wusb(hub))
-				udev->speed = USB_SPEED_VARIABLE;
+				udev->speed = USB_SPEED_WIRELESS;
 			else if (portstatus & USB_PORT_STAT_HIGH_SPEED)
 				udev->speed = USB_SPEED_HIGH;
 			else if (portstatus & USB_PORT_STAT_LOW_SPEED)
@@ -2048,7 +2051,9 @@ static int hub_port_reset(struct usb_hub *hub, int port1,
 				struct usb_device *udev, unsigned int delay)
 {
 	int i, status;
+	struct usb_hcd *hcd;
 
+	hcd = bus_to_hcd(udev->bus);
 	/* Block EHCI CF initialization during the port reset.
 	 * Some companion controllers don't like it when they mix.
 	 */
@@ -2076,6 +2081,14 @@ static int hub_port_reset(struct usb_hub *hub, int port1,
 			/* TRSTRCY = 10 ms; plus some extra */
 			msleep(10 + 40);
 			update_address(udev, 0);
+			if (hcd->driver->reset_device) {
+				status = hcd->driver->reset_device(hcd, udev);
+				if (status < 0) {
+					dev_err(&udev->dev, "Cannot reset "
+							"HCD device state\n");
+					break;
+				}
+			}
 			/* FALL THROUGH */
 		case -ENOTCONN:
 		case -ENODEV:
@@ -2421,7 +2434,7 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
 }
 
 /* caller has locked udev */
-static int remote_wakeup(struct usb_device *udev)
+int usb_remote_wakeup(struct usb_device *udev)
 {
 	int	status = 0;
 
@@ -2465,7 +2478,7 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
 	return status;
 }
 
-static inline int remote_wakeup(struct usb_device *udev)
+int usb_remote_wakeup(struct usb_device *udev)
 {
 	return 0;
 }
@@ -2535,11 +2548,6 @@ void usb_root_hub_lost_power(struct usb_device *rhdev)
 EXPORT_SYMBOL_GPL(usb_root_hub_lost_power);
 
 #else	/* CONFIG_PM */
-
-static inline int remote_wakeup(struct usb_device *udev)
-{
-	return 0;
-}
 
 #define hub_suspend		NULL
 #define hub_resume		NULL
@@ -2685,14 +2693,7 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 
 	mutex_lock(&usb_address0_mutex);
 
-	if ((hcd->driver->flags & HCD_USB3) && udev->config) {
-		/* FIXME this will need special handling by the xHCI driver. */
-		dev_dbg(&udev->dev,
-				"xHCI reset of configured device "
-				"not supported yet.\n");
-		retval = -EINVAL;
-		goto fail;
-	} else if (!udev->config && oldspeed == USB_SPEED_SUPER) {
+	if (!udev->config && oldspeed == USB_SPEED_SUPER) {
 		/* Don't reset USB 3.0 devices during an initial setup */
 		usb_set_device_state(udev, USB_STATE_DEFAULT);
 	} else {
@@ -2718,7 +2719,7 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 	 */
 	switch (udev->speed) {
 	case USB_SPEED_SUPER:
-	case USB_SPEED_VARIABLE:	/* fixed at 512 */
+	case USB_SPEED_WIRELESS:	/* fixed at 512 */
 		udev->ep0.desc.wMaxPacketSize = cpu_to_le16(512);
 		break;
 	case USB_SPEED_HIGH:		/* fixed at 64 */
@@ -2746,7 +2747,7 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 	case USB_SPEED_SUPER:
 				speed = "super";
 				break;
-	case USB_SPEED_VARIABLE:
+	case USB_SPEED_WIRELESS:
 				speed = "variable";
 				type = "Wireless ";
 				break;
@@ -3054,7 +3055,7 @@ static void hub_port_connect_change(struct usb_hub *hub, int port1,
 			/* For a suspended device, treat this as a
 			 * remote wakeup event.
 			 */
-			status = remote_wakeup(udev);
+			status = usb_remote_wakeup(udev);
 #endif
 
 		} else {
@@ -3405,7 +3406,7 @@ static void hub_events(void)
 					msleep(10);
 
 					usb_lock_device(udev);
-					ret = remote_wakeup(hdev->
+					ret = usb_remote_wakeup(hdev->
 							children[i-1]);
 					usb_unlock_device(udev);
 					if (ret < 0)
@@ -3499,7 +3500,7 @@ static int hub_thread(void *__unused)
 	return 0;
 }
 
-static struct usb_device_id hub_id_table [] = {
+static const struct usb_device_id hub_id_table[] = {
     { .match_flags = USB_DEVICE_ID_MATCH_DEV_CLASS,
       .bDeviceClass = USB_CLASS_HUB},
     { .match_flags = USB_DEVICE_ID_MATCH_INT_CLASS,

@@ -274,56 +274,55 @@ static int usb_probe_interface(struct device *dev)
 	intf->needs_binding = 0;
 
 	if (usb_device_is_owned(udev))
-		return -ENODEV;
+		return error;
 
 	if (udev->authorized == 0) {
 		dev_err(&intf->dev, "Device is not authorized for usage\n");
-		return -ENODEV;
+		return error;
 	}
 
 	id = usb_match_id(intf, driver->id_table);
 	if (!id)
 		id = usb_match_dynamic_id(intf, driver);
-	if (id) {
-		dev_dbg(dev, "%s - got id\n", __func__);
+	if (!id)
+		return error;
 
-		error = usb_autoresume_device(udev);
-		if (error)
-			return error;
+	dev_dbg(dev, "%s - got id\n", __func__);
 
-		/* Interface "power state" doesn't correspond to any hardware
-		 * state whatsoever.  We use it to record when it's bound to
-		 * a driver that may start I/0:  it's not frozen/quiesced.
-		 */
-		mark_active(intf);
-		intf->condition = USB_INTERFACE_BINDING;
+	error = usb_autoresume_device(udev);
+	if (error)
+		return error;
 
-		/* The interface should always appear to be in use
-		 * unless the driver suports autosuspend.
-		 */
-		atomic_set(&intf->pm_usage_cnt, !driver->supports_autosuspend);
+	/* Interface "power state" doesn't correspond to any hardware
+	 * state whatsoever.  We use it to record when it's bound to
+	 * a driver that may start I/0:  it's not frozen/quiesced.
+	 */
+	mark_active(intf);
+	intf->condition = USB_INTERFACE_BINDING;
 
-		/* Carry out a deferred switch to altsetting 0 */
-		if (intf->needs_altsetting0) {
-			error = usb_set_interface(udev, intf->altsetting[0].
-					desc.bInterfaceNumber, 0);
-			if (error < 0)
-				goto err;
+	/* The interface should always appear to be in use
+	 * unless the driver suports autosuspend.
+	 */
+	atomic_set(&intf->pm_usage_cnt, !driver->supports_autosuspend);
 
-			intf->needs_altsetting0 = 0;
-		}
-
-		error = driver->probe(intf, id);
-		if (error)
+	/* Carry out a deferred switch to altsetting 0 */
+	if (intf->needs_altsetting0) {
+		error = usb_set_interface(udev, intf->altsetting[0].
+				desc.bInterfaceNumber, 0);
+		if (error < 0)
 			goto err;
-
-		intf->condition = USB_INTERFACE_BOUND;
-		usb_autosuspend_device(udev);
+		intf->needs_altsetting0 = 0;
 	}
 
+	error = driver->probe(intf, id);
+	if (error)
+		goto err;
+
+	intf->condition = USB_INTERFACE_BOUND;
+	usb_autosuspend_device(udev);
 	return error;
 
-err:
+ err:
 	mark_quiesced(intf);
 	intf->needs_remote_wakeup = 0;
 	intf->condition = USB_INTERFACE_UNBOUND;
@@ -1405,6 +1404,48 @@ static int usb_resume_both(struct usb_device *udev, pm_message_t msg)
 
 #ifdef CONFIG_USB_SUSPEND
 
+/**
+ * usb_enable_autosuspend - allow a USB device to be autosuspended
+ * @udev: the USB device which may be autosuspended
+ *
+ * This routine allows @udev to be autosuspended.  An autosuspend won't
+ * take place until the autosuspend_delay has elapsed and all the other
+ * necessary conditions are satisfied.
+ *
+ * The caller must hold @udev's device lock.
+ */
+int usb_enable_autosuspend(struct usb_device *udev)
+{
+	if (udev->autosuspend_disabled) {
+		udev->autosuspend_disabled = 0;
+		usb_autosuspend_device(udev);
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(usb_enable_autosuspend);
+
+/**
+ * usb_disable_autosuspend - prevent a USB device from being autosuspended
+ * @udev: the USB device which may not be autosuspended
+ *
+ * This routine prevents @udev from being autosuspended and wakes it up
+ * if it is already autosuspended.
+ *
+ * The caller must hold @udev's device lock.
+ */
+int usb_disable_autosuspend(struct usb_device *udev)
+{
+	int rc = 0;
+
+	if (!udev->autosuspend_disabled) {
+		rc = usb_autoresume_device(udev);
+		if (rc == 0)
+			udev->autosuspend_disabled = 1;
+	}
+	return rc;
+}
+EXPORT_SYMBOL_GPL(usb_disable_autosuspend);
+
 /* Internal routine to adjust a device's usage counter and change
  * its autosuspend state.
  */
@@ -1468,8 +1509,7 @@ void usb_autoresume_work(struct work_struct *work)
  * driver requires remote-wakeup capability during autosuspend but remote
  * wakeup is disabled, the autosuspend will fail.
  *
- * Often the caller will hold @udev's device lock, but this is not
- * necessary.
+ * The caller must hold @udev's device lock.
  *
  * This routine can run only in process context.
  */
@@ -1492,6 +1532,8 @@ void usb_autosuspend_device(struct usb_device *udev)
  * @udev's usage counter left unchanged.  If it or any of the usage counters
  * for an active interface is greater than 0, or autosuspend is not allowed
  * for any other reason, no autosuspend request will be queued.
+ *
+ * The caller must hold @udev's device lock.
  *
  * This routine can run only in process context.
  */
@@ -1516,8 +1558,7 @@ void usb_try_autosuspend_device(struct usb_device *udev)
  * @udev's usage counter is incremented to prevent subsequent autosuspends.
  * However if the autoresume fails then the usage counter is re-decremented.
  *
- * Often the caller will hold @udev's device lock, but this is not
- * necessary (and attempting it might cause deadlock).
+ * The caller must hold @udev's device lock.
  *
  * This routine can run only in process context.
  */

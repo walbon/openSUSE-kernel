@@ -50,7 +50,7 @@ struct pl2303_buf {
 	char		*buf_put;
 };
 
-static struct usb_device_id id_table [] = {
+static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(PL2303_VENDOR_ID, PL2303_PRODUCT_ID) },
 	{ USB_DEVICE(PL2303_VENDOR_ID, PL2303_PRODUCT_ID_RSAQ2) },
 	{ USB_DEVICE(PL2303_VENDOR_ID, PL2303_PRODUCT_ID_DCU11) },
@@ -100,6 +100,7 @@ static struct usb_device_id id_table [] = {
 	{ USB_DEVICE(ZEAGLE_VENDOR_ID, ZEAGLE_N2ITION3_PRODUCT_ID) },
 	{ USB_DEVICE(SONY_VENDOR_ID, SONY_QN3USB_PRODUCT_ID) },
 	{ USB_DEVICE(SANWA_VENDOR_ID, SANWA_PRODUCT_ID) },
+	{ USB_DEVICE(ADLINK_VENDOR_ID, ADLINK_ND6530_PRODUCT_ID) },
 	{ }					/* Terminating entry */
 };
 
@@ -454,7 +455,6 @@ static void pl2303_send(struct usb_serial_port *port)
 			      port->write_urb->transfer_buffer);
 
 	port->write_urb->transfer_buffer_length = count;
-	port->write_urb->dev = port->serial->dev;
 	result = usb_submit_urb(port->write_urb, GFP_ATOMIC);
 	if (result) {
 		dev_err(&port->dev, "%s - failed submitting write urb,"
@@ -772,7 +772,6 @@ static int pl2303_open(struct tty_struct *tty, struct usb_serial_port *port)
 		pl2303_set_termios(tty, port, &tmp_termios);
 
 	dbg("%s - submitting read urb", __func__);
-	port->read_urb->dev = serial->dev;
 	result = usb_submit_urb(port->read_urb, GFP_KERNEL);
 	if (result) {
 		dev_err(&port->dev, "%s - failed submitting read urb,"
@@ -782,7 +781,6 @@ static int pl2303_open(struct tty_struct *tty, struct usb_serial_port *port)
 	}
 
 	dbg("%s - submitting interrupt urb", __func__);
-	port->interrupt_in_urb->dev = serial->dev;
 	result = usb_submit_urb(port->interrupt_in_urb, GFP_KERNEL);
 	if (result) {
 		dev_err(&port->dev, "%s - failed submitting interrupt urb,"
@@ -898,10 +896,23 @@ static int wait_modem_info(struct usb_serial_port *port, unsigned int arg)
 static int pl2303_ioctl(struct tty_struct *tty, struct file *file,
 			unsigned int cmd, unsigned long arg)
 {
+	struct serial_struct ser;
 	struct usb_serial_port *port = tty->driver_data;
 	dbg("%s (%d) cmd = 0x%04x", __func__, port->number, cmd);
 
 	switch (cmd) {
+	case TIOCGSERIAL:
+		memset(&ser, 0, sizeof ser);
+		ser.type = PORT_16654;
+		ser.line = port->serial->minor;
+		ser.port = port->number;
+		ser.baud_base = 460800;
+
+		if (copy_to_user((void __user *)arg, &ser, sizeof ser))
+			return -EFAULT;
+
+		return 0;
+
 	case TIOCMIWAIT:
 		dbg("%s (%d) TIOCMIWAIT", __func__,  port->number);
 		return wait_modem_info(port, arg);
@@ -1056,7 +1067,6 @@ static void pl2303_push_data(struct tty_struct *tty,
 		tty_flag = TTY_FRAME;
 	dbg("%s - tty_flag = %d", __func__, tty_flag);
 
-	tty_buffer_request_room(tty, urb->actual_length + 1);
 	/* overrun is special, not associated with a char */
 	if (line_status & UART_OVERRUN_ERROR)
 		tty_insert_flip_char(tty, 0, TTY_OVERRUN);
@@ -1095,7 +1105,6 @@ static void pl2303_read_bulk_callback(struct urb *urb)
 			 * the read */
 			dbg("%s - caught -EPROTO, resubmitting the urb",
 			    __func__);
-			urb->dev = port->serial->dev;
 			result = usb_submit_urb(urb, GFP_ATOMIC);
 			if (result)
 				dev_err(&urb->dev->dev, "%s - failed"
@@ -1123,7 +1132,6 @@ static void pl2303_read_bulk_callback(struct urb *urb)
 	tty_kref_put(tty);
 	/* Schedule the next read _if_ we are still open */
 	if (port->port.count) {
-		urb->dev = port->serial->dev;
 		result = usb_submit_urb(urb, GFP_ATOMIC);
 		if (result)
 			dev_err(&urb->dev->dev, "%s - failed resubmitting"
@@ -1160,7 +1168,6 @@ static void pl2303_write_bulk_callback(struct urb *urb)
 		dbg("%s - nonzero write bulk status received: %d", __func__,
 		    status);
 		port->write_urb->transfer_buffer_length = 1;
-		port->write_urb->dev = port->serial->dev;
 		result = usb_submit_urb(port->write_urb, GFP_ATOMIC);
 		if (result)
 			dev_err(&urb->dev->dev, "%s - failed resubmitting write"

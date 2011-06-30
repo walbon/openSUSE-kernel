@@ -289,6 +289,7 @@ struct hc_driver {
 		 */
 	int	(*update_hub_device)(struct usb_hcd *, struct usb_device *hdev,
 			struct usb_tt *tt, gfp_t mem_flags);
+	int	(*reset_device)(struct usb_hcd *, struct usb_device *);
 
 #ifdef CONFIG_KDB_USB
 	/* KDB poll function for this HC */

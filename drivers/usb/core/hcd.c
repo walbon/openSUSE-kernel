@@ -1673,11 +1673,16 @@ int usb_hcd_alloc_bandwidth(struct usb_device *udev,
 			}
 		}
 		for (i = 0; i < num_intfs; ++i) {
+			struct usb_host_interface *first_alt;
+			int iface_num;
+
+			first_alt = &new_config->intf_cache[i]->altsetting[0];
+			iface_num = first_alt->desc.bInterfaceNumber;
 			/* Set up endpoints for alternate interface setting 0 */
-			alt = usb_find_alt_setting(new_config, i, 0);
+			alt = usb_find_alt_setting(new_config, iface_num, 0);
 			if (!alt)
 				/* No alt setting 0? Pick the first setting. */
-				alt = &new_config->intf_cache[i]->altsetting[0];
+				alt = first_alt;
 
 			for (j = 0; j < alt->desc.bNumEndpoints; j++) {
 				ret = hcd->driver->add_endpoint(hcd, udev, &alt->endpoint[j]);
@@ -1863,8 +1868,7 @@ static void hcd_resume_work(struct work_struct *work)
 	struct usb_device *udev = hcd->self.root_hub;
 
 	usb_lock_device(udev);
-	usb_mark_last_busy(udev);
-	usb_external_resume_device(udev, PMSG_REMOTE_RESUME);
+	usb_remote_wakeup(udev);
 	usb_unlock_device(udev);
 }
 

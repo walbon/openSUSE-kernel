@@ -429,7 +429,6 @@ next_buffer:
 		throttled = acm->throttle;
 		spin_unlock_irqrestore(&acm->throttle_lock, flags);
 		if (!throttled) {
-			tty_buffer_request_room(tty, buf->size);
 			tty_insert_flip_string(tty, buf->base, buf->size);
 			tty_flip_buffer_push(tty);
 		} else {
@@ -556,7 +555,7 @@ static int acm_tty_open(struct tty_struct *tty, struct file *filp)
 
 	acm = acm_table[tty->index];
 	if (!acm || !acm->dev)
-		goto err_out;
+		goto out;
 	else
 		rv = 0;
 
@@ -572,8 +571,9 @@ static int acm_tty_open(struct tty_struct *tty, struct file *filp)
 
 	mutex_lock(&acm->mutex);
 	if (acm->port.count++) {
+		mutex_unlock(&acm->mutex);
 		usb_autopm_put_interface(acm->control);
-		goto done;
+		goto out;
 	}
 
 	acm->ctrlurb->dev = acm->dev;
@@ -602,18 +602,18 @@ static int acm_tty_open(struct tty_struct *tty, struct file *filp)
 	set_bit(ASYNCB_INITIALIZED, &acm->port.flags);
 	rv = tty_port_block_til_ready(&acm->port, tty, filp);
 	tasklet_schedule(&acm->urb_task);
-done:
+
 	mutex_unlock(&acm->mutex);
-err_out:
+out:
 	mutex_unlock(&open_mutex);
 	return rv;
 
 full_bailout:
 	usb_kill_urb(acm->ctrlurb);
 bail_out:
-	usb_autopm_put_interface(acm->control);
 	acm->port.count--;
 	mutex_unlock(&acm->mutex);
+	usb_autopm_put_interface(acm->control);
 early_bail:
 	mutex_unlock(&open_mutex);
 	tty_port_tty_set(&acm->port, NULL);
@@ -1016,7 +1016,7 @@ static int acm_probe(struct usb_interface *intf,
 		case USB_CDC_CALL_MANAGEMENT_TYPE:
 			call_management_function = buffer[3];
 			call_interface_num = buffer[4];
-			if ((call_management_function & 3) != 3)
+			if ( (quirks & NOT_A_MODEM) == 0 && (call_management_function & 3) != 3)
 				dev_err(&intf->dev, "This device cannot do calls on its own. It is not a modem.\n");
 			break;
 		default:
@@ -1469,6 +1469,23 @@ err_out:
 	return rv;
 }
 
+static int acm_reset_resume(struct usb_interface *intf)
+{
+	struct acm *acm = usb_get_intfdata(intf);
+	struct tty_struct *tty;
+
+	mutex_lock(&acm->mutex);
+	if (acm->port.count) {
+		tty = tty_port_tty_get(&acm->port);
+		if (tty) {
+			tty_hangup(tty);
+			tty_kref_put(tty);
+		}
+	}
+	mutex_unlock(&acm->mutex);
+	return acm_resume(intf);
+}
+
 #endif /* CONFIG_PM */
 
 #define NOKIA_PCSUITE_ACM_INFO(x) \
@@ -1485,7 +1502,7 @@ err_out:
  * USB driver structure.
  */
 
-static struct usb_device_id acm_ids[] = {
+static const struct usb_device_id acm_ids[] = {
 	/* quirky and broken devices */
 	{ USB_DEVICE(0x0870, 0x0001), /* Metricom GS Modem */
 	.driver_info = NO_UNION_NORMAL, /* has no union descriptor */
@@ -1612,6 +1629,11 @@ static struct usb_device_id acm_ids[] = {
 	{ USB_INTERFACE_INFO(USB_CLASS_COMM, USB_CDC_SUBCLASS_ACM,
 		USB_CDC_PROTO_NONE) },
 
+	/* Support Lego NXT using pbLua firmware */
+	{ USB_DEVICE(0x0694, 0xff00),
+	.driver_info = NOT_A_MODEM,
+       	},
+
 	/* control interfaces with various AT-command sets */
 	{ USB_INTERFACE_INFO(USB_CLASS_COMM, USB_CDC_SUBCLASS_ACM,
 		USB_CDC_ACM_PROTO_AT_V25TER) },
@@ -1638,6 +1660,7 @@ static struct usb_driver acm_driver = {
 #ifdef CONFIG_PM
 	.suspend =	acm_suspend,
 	.resume =	acm_resume,
+	.reset_resume =	acm_reset_resume,
 #endif
 	.id_table =	acm_ids,
 #ifdef CONFIG_PM

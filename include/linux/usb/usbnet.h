@@ -93,6 +93,7 @@ struct driver_info {
 #define FLAG_WLAN	0x0080		/* use "wlan%d" names */
 #define FLAG_AVOID_UNLINK_URBS 0x0100	/* don't unlink urbs at usbnet_stop() */
 #define FLAG_SEND_ZLP	0x0200		/* hw requires ZLPs are sent */
+#define FLAG_WWAN	0x0400		/* use "wwan%d" names */
 
 #define FLAG_LINK_INTR	0x0800		/* updates link (carrier) status */
 
@@ -212,26 +213,5 @@ extern u32 usbnet_get_msglevel (struct net_device *);
 extern void usbnet_set_msglevel (struct net_device *, u32);
 extern void usbnet_get_drvinfo (struct net_device *, struct ethtool_drvinfo *);
 extern int usbnet_nway_reset(struct net_device *net);
-
-/* messaging support includes the interface name, so it must not be
- * used before it has one ... notably, in minidriver bind() calls.
- */
-#ifdef DEBUG
-#define devdbg(usbnet, fmt, arg...) \
-	printk(KERN_DEBUG "%s: " fmt "\n" , (usbnet)->net->name , ## arg)
-#else
-#define devdbg(usbnet, fmt, arg...) \
-	({ if (0) printk(KERN_DEBUG "%s: " fmt "\n" , (usbnet)->net->name , \
-		## arg); 0; })
-#endif
-
-#define deverr(usbnet, fmt, arg...) \
-	printk(KERN_ERR "%s: " fmt "\n" , (usbnet)->net->name , ## arg)
-#define devwarn(usbnet, fmt, arg...) \
-	printk(KERN_WARNING "%s: " fmt "\n" , (usbnet)->net->name , ## arg)
-
-#define devinfo(usbnet, fmt, arg...) \
-	printk(KERN_INFO "%s: " fmt "\n" , (usbnet)->net->name , ## arg); \
-
 
 #endif /* __LINUX_USB_USBNET_H */
