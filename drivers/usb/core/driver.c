@@ -25,8 +25,8 @@
 #include <linux/device.h>
 #include <linux/usb.h>
 #include <linux/usb/quirks.h>
+#include <linux/usb/hcd.h>
 #include <linux/workqueue.h>
-#include "hcd.h"
 #include "usb.h"
 
 

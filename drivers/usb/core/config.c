@@ -1,12 +1,14 @@
 #include <linux/usb.h>
 #include <linux/usb/ch9.h>
+#include <linux/usb/hcd.h>
+#include <linux/usb/quirks.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/device.h>
 #include <asm/byteorder.h>
 #include "usb.h"
-#include "hcd.h"
+
 
 #define USB_MAXALTSETTING		128	/* Hard limit */
 #define USB_MAXENDPOINTS		30	/* Hard limit */
@@ -478,9 +480,10 @@ skip_to_next_interface_descriptor:
 	return buffer - buffer0 + i;
 }
 
-static int usb_parse_configuration(struct device *ddev, int cfgidx,
+static int usb_parse_configuration(struct usb_device *dev, int cfgidx,
     struct usb_host_config *config, unsigned char *buffer, int size)
 {
+	struct device *ddev = &dev->dev;
 	unsigned char *buffer0 = buffer;
 	int cfgno;
 	int nintf, nintf_orig;
@@ -549,6 +552,16 @@ static int usb_parse_configuration(struct device *ddev, int cfgidx,
 			}
 
 			inum = d->bInterfaceNumber;
+
+			if ((dev->quirks & USB_QUIRK_HONOR_BNUMINTERFACES) &&
+			    n >= nintf_orig) {
+				dev_warn(ddev, "config %d has more interface "
+				    "descriptors, than it declares in "
+				    "bNumInterfaces, ignoring interface "
+				    "number: %d\n", cfgno, inum);
+				continue;
+			}
+
 			if (inum >= nintf_orig)
 				dev_warn(ddev, "config %d has an invalid "
 				    "interface number: %d but max is %d\n",
@@ -722,7 +735,6 @@ int usb_get_configuration(struct usb_device *dev)
 	int ncfg = dev->descriptor.bNumConfigurations;
 	int result = 0;
 	unsigned int cfgno, length;
-	unsigned char *buffer;
 	unsigned char *bigbuffer;
 	struct usb_config_descriptor *desc;
 
@@ -751,17 +763,16 @@ int usb_get_configuration(struct usb_device *dev)
 	if (!dev->rawdescriptors)
 		goto err2;
 
-	buffer = kmalloc(USB_DT_CONFIG_SIZE, GFP_KERNEL);
-	if (!buffer)
+	desc = kmalloc(USB_DT_CONFIG_SIZE, GFP_KERNEL);
+	if (!desc)
 		goto err2;
-	desc = (struct usb_config_descriptor *)buffer;
 
 	result = 0;
 	for (; cfgno < ncfg; cfgno++) {
 		/* We grab just the first descriptor so we know how long
 		 * the whole configuration is */
 		result = usb_get_descriptor(dev, USB_DT_CONFIG, cfgno,
-		    buffer, USB_DT_CONFIG_SIZE);
+		    desc, USB_DT_CONFIG_SIZE);
 		if (result < 0) {
 			dev_err(ddev, "unable to read config index %d "
 			    "descriptor/%s: %d\n", cfgno, "start", result);
@@ -800,7 +811,7 @@ int usb_get_configuration(struct usb_device *dev)
 
 		dev->rawdescriptors[cfgno] = bigbuffer;
 
-		result = usb_parse_configuration(&dev->dev, cfgno,
+		result = usb_parse_configuration(dev, cfgno,
 		    &dev->config[cfgno], bigbuffer, length);
 		if (result < 0) {
 			++cfgno;
@@ -810,7 +821,7 @@ int usb_get_configuration(struct usb_device *dev)
 	result = 0;
 
 err:
-	kfree(buffer);
+	kfree(desc);
 out_not_authorized:
 	dev->descriptor.bNumConfigurations = cfgno;
 err2:

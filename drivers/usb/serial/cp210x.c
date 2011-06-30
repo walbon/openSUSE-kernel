@@ -161,6 +161,8 @@ static struct usb_serial_driver cp210x_device = {
 	.usb_driver		= &cp210x_driver,
 	.id_table		= id_table,
 	.num_ports		= 1,
+	.bulk_in_size		= 256,
+	.bulk_out_size		= 256,
 	.open			= cp210x_open,
 	.close			= cp210x_close,
 	.break_ctl		= cp210x_break_ctl,
@@ -392,7 +394,6 @@ static unsigned int cp210x_quantise_baudrate(unsigned int baud) {
 
 static int cp210x_open(struct tty_struct *tty, struct usb_serial_port *port)
 {
-	struct usb_serial *serial = port->serial;
 	int result;
 
 	dbg("%s - port %d", __func__, port->number);
@@ -403,20 +404,9 @@ static int cp210x_open(struct tty_struct *tty, struct usb_serial_port *port)
 		return -EPROTO;
 	}
 
-	/* Start reading from the device */
-	usb_fill_bulk_urb(port->read_urb, serial->dev,
-			usb_rcvbulkpipe(serial->dev,
-			port->bulk_in_endpointAddress),
-			port->read_urb->transfer_buffer,
-			port->read_urb->transfer_buffer_length,
-			serial->type->read_bulk_callback,
-			port);
-	result = usb_submit_urb(port->read_urb, GFP_KERNEL);
-	if (result) {
-		dev_err(&port->dev, "%s - failed resubmitting read urb, "
-				"error %d\n", __func__, result);
+	result = usb_serial_generic_submit_read_urb(port, GFP_KERNEL);
+	if (result)
 		return result;
-	}
 
 	/* Configure the termios structure */
 	cp210x_get_termios(tty, port);
@@ -442,10 +432,7 @@ static void cp210x_close(struct usb_serial_port *port)
 {
 	dbg("%s - port %d", __func__, port->number);
 
-	/* shutdown our urbs */
-	dbg("%s - shutting down urbs", __func__);
-	usb_kill_urb(port->write_urb);
-	usb_kill_urb(port->read_urb);
+	usb_serial_generic_close(port);
 
 	mutex_lock(&port->serial->disc_mutex);
 	if (!port->serial->disconnected)

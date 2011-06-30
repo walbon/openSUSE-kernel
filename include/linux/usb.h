@@ -596,6 +596,16 @@ static inline void usb_mark_last_busy(struct usb_device *udev)
 /* for drivers using iso endpoints */
 extern int usb_get_current_frame_number(struct usb_device *usb_dev);
 
+/* Sets up a group of bulk endpoints to support multiple stream IDs. */
+extern int usb_alloc_streams(struct usb_interface *interface,
+		struct usb_host_endpoint **eps, unsigned int num_eps,
+		unsigned int num_streams, gfp_t mem_flags);
+
+/* Reverts a group of bulk endpoints back to not using stream IDs. */
+extern void usb_free_streams(struct usb_interface *interface,
+		struct usb_host_endpoint **eps, unsigned int num_eps,
+		gfp_t mem_flags);
+
 /* used these for multi-interface device registration */
 extern int usb_driver_claim_interface(struct usb_driver *driver,
 			struct usb_interface *iface, void *priv);
@@ -989,9 +999,18 @@ extern int usb_disabled(void);
 					 * needed */
 #define URB_FREE_BUFFER		0x0100	/* Free transfer buffer with the URB */
 
+/* The following flags are used internally by usbcore and HCDs */
 #define URB_DIR_IN		0x0200	/* Transfer from device to host */
 #define URB_DIR_OUT		0
 #define URB_DIR_MASK		URB_DIR_IN
+
+#define URB_DMA_MAP_SINGLE	0x00010000	/* Non-scatter-gather mapping */
+#define URB_DMA_MAP_PAGE	0x00020000	/* HCD-unsupported S-G */
+#define URB_DMA_MAP_SG		0x00040000	/* HCD-supported S-G */
+#define URB_MAP_LOCAL		0x00080000	/* HCD-local-memory mapping */
+#define URB_SETUP_MAP_SINGLE	0x00100000	/* Setup packet DMA mapped */
+#define URB_SETUP_MAP_LOCAL	0x00200000	/* HCD-local setup packet */
+#define URB_DMA_SG_COMBINED	0x00400000	/* S-G entries were combined */
 
 struct usb_iso_packet_descriptor {
 	unsigned int offset;
@@ -1213,6 +1232,7 @@ struct urb {
 	struct usb_device *dev; 	/* (in) pointer to associated device */
 	struct usb_host_endpoint *ep;	/* (internal) pointer to endpoint */
 	unsigned int pipe;		/* (in) pipe information */
+	unsigned int stream_id;		/* (in) stream ID */
 	int status;			/* (return) non-ISO status */
 	unsigned int transfer_flags;	/* (in) URB_SHORT_NOT_OK | ...*/
 	void *transfer_buffer;		/* (in) associated data buffer */

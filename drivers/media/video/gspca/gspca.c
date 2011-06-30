@@ -429,10 +429,10 @@ static void destroy_urbs(struct gspca_dev *gspca_dev)
 		gspca_dev->urb[i] = NULL;
 		usb_kill_urb(urb);
 		if (urb->transfer_buffer != NULL)
-			usb_buffer_free(gspca_dev->dev,
-					urb->transfer_buffer_length,
-					urb->transfer_buffer,
-					urb->transfer_dma);
+			usb_free_coherent(gspca_dev->dev,
+					  urb->transfer_buffer_length,
+					  urb->transfer_buffer,
+					  urb->transfer_dma);
 		usb_free_urb(urb);
 	}
 }
@@ -544,7 +544,7 @@ static int create_urbs(struct gspca_dev *gspca_dev,
 			destroy_urbs(gspca_dev);
 			return -ENOMEM;
 		}
-		urb->transfer_buffer = usb_buffer_alloc(gspca_dev->dev,
+		urb->transfer_buffer = usb_alloc_coherent(gspca_dev->dev,
 						bsize,
 						GFP_KERNEL,
 						&urb->transfer_dma);

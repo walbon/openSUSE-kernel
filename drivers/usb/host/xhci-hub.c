@@ -64,15 +64,15 @@ static void xhci_hub_descriptor(struct xhci_hcd *xhci,
 static unsigned int xhci_port_speed(unsigned int port_status)
 {
 	if (DEV_LOWSPEED(port_status))
-		return 1 << USB_PORT_FEAT_LOWSPEED;
+		return USB_PORT_STAT_LOW_SPEED;
 	if (DEV_HIGHSPEED(port_status))
-		return 1 << USB_PORT_FEAT_HIGHSPEED;
+		return USB_PORT_STAT_HIGH_SPEED;
 	if (DEV_SUPERSPEED(port_status))
-		return 1 << USB_PORT_FEAT_SUPERSPEED;
+		return USB_PORT_STAT_SUPER_SPEED;
 	/*
 	 * FIXME: Yes, we should check for full speed, but the core uses that as
 	 * a default in portspeed() in usb/core/hub.c (which is the only place
-	 * USB_PORT_FEAT_*SPEED is used).
+	 * USB_PORT_STAT_*_SPEED is used).
 	 */
 	return 0;
 }
@@ -205,27 +205,27 @@ int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 
 		/* wPortChange bits */
 		if (temp & PORT_CSC)
-			status |= 1 << USB_PORT_FEAT_C_CONNECTION;
+			status |= USB_PORT_STAT_C_CONNECTION << 16;
 		if (temp & PORT_PEC)
-			status |= 1 << USB_PORT_FEAT_C_ENABLE;
+			status |= USB_PORT_STAT_C_ENABLE << 16;
 		if ((temp & PORT_OCC))
-			status |= 1 << USB_PORT_FEAT_C_OVER_CURRENT;
+			status |= USB_PORT_STAT_C_OVERCURRENT << 16;
 		/*
 		 * FIXME ignoring suspend, reset, and USB 2.1/3.0 specific
 		 * changes
 		 */
 		if (temp & PORT_CONNECT) {
-			status |= 1 << USB_PORT_FEAT_CONNECTION;
+			status |= USB_PORT_STAT_CONNECTION;
 			status |= xhci_port_speed(temp);
 		}
 		if (temp & PORT_PE)
-			status |= 1 << USB_PORT_FEAT_ENABLE;
+			status |= USB_PORT_STAT_ENABLE;
 		if (temp & PORT_OC)
-			status |= 1 << USB_PORT_FEAT_OVER_CURRENT;
+			status |= USB_PORT_STAT_OVERCURRENT;
 		if (temp & PORT_RESET)
-			status |= 1 << USB_PORT_FEAT_RESET;
+			status |= USB_PORT_STAT_RESET;
 		if (temp & PORT_POWER)
-			status |= 1 << USB_PORT_FEAT_POWER;
+			status |= USB_PORT_STAT_POWER;
 		xhci_dbg(xhci, "Get port status returned 0x%x\n", status);
 		put_unaligned(cpu_to_le32(status), (__le32 *) buf);
 		break;
