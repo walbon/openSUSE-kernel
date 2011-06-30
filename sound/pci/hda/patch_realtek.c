@@ -358,6 +358,8 @@ struct alc_spec {
 	/* for PLL fix */
 	hda_nid_t pll_nid;
 	unsigned int pll_coef_idx, pll_coef_bit;
+
+	unsigned int sku_cfg; /* SKU cfg override */
 };
 
 /*
@@ -1254,6 +1256,11 @@ static void alc_init_auto_mic(struct hda_codec *codec)
 	spec->unsol_event = alc_sku_unsol_event;
 }
 
+/* Could be any non-zero and even value. When used as fixup, tells
+ * the driver to ignore any present sku defines.
+ */
+#define ALC_FIXUP_SKU_IGNORE (2)
+
 /* check subsystem ID and set up device-specific initialization;
  * return 1 if initialized, 0 if invalid SSID
  */
@@ -1270,6 +1277,13 @@ static int alc_subsystem_id(struct hda_codec *codec,
 	unsigned int ass, tmp, i;
 	unsigned nid;
 	struct alc_spec *spec = codec->spec;
+
+	if (spec->sku_cfg) {
+		ass = spec->sku_cfg;
+		if (ass == ALC_FIXUP_SKU_IGNORE)
+			return 0;
+		goto do_sku;
+	}
 
 	ass = codec->subsystem_id & 0xffff;
 	if ((ass != codec->bus->pci->subsystem_device) && (ass & 1))
@@ -1389,12 +1403,14 @@ struct alc_pincfg {
 struct alc_fixup {
 	const struct alc_pincfg *pins;
 	const struct hda_verb *verbs;
+	unsigned int sku_cfg;
 };
 
 static void alc_pick_fixup(struct hda_codec *codec,
 			   const struct snd_pci_quirk *quirk,
 			   const struct alc_fixup *fix)
 {
+	struct alc_spec *spec = codec->spec;
 	const struct alc_pincfg *cfg;
 
 	quirk = snd_pci_quirk_lookup(codec->bus->pci, quirk);
@@ -1409,6 +1425,7 @@ static void alc_pick_fixup(struct hda_codec *codec,
 	}
 	if (fix->verbs)
 		add_verb(codec->spec, fix->verbs);
+	spec->sku_cfg = fix->sku_cfg;
 }
 
 static int alc_read_coef_idx(struct hda_codec *codec,
@@ -18107,6 +18124,30 @@ static void alc662_auto_init(struct hda_codec *codec)
 		alc_inithook(codec);
 }
 
+enum {
+	ALC662_FIX_HP_RP5800
+};
+
+static struct alc_pincfg alc662_hp_rp5800_pinfix[] = {
+	{ 0x14, 0x0221201f }, /* HP out */
+	{ 0x15, 0x99130120 }, /* speaker out */
+	{ 0x18, 0x95a6912e }, /* int-mic */
+	{ 0x19, 0x02a12020 }, /* ext-mic */
+	{ }
+};
+
+static const struct alc_fixup alc662_fixups[] = {
+	[ALC662_FIX_HP_RP5800] = {
+		.pins = alc662_hp_rp5800_pinfix,
+		.sku_cfg = ALC_FIXUP_SKU_IGNORE,
+	},
+};
+
+static struct snd_pci_quirk alc662_fixup_tbl[] = {
+	SND_PCI_QUIRK(0x103c, 0x1632, "HP RP5800", ALC662_FIX_HP_RP5800),
+	{}
+};
+
 static int patch_alc662(struct hda_codec *codec)
 {
 	struct alc_spec *spec;
@@ -18137,6 +18178,8 @@ static int patch_alc662(struct hda_codec *codec)
 		       codec->chip_name);
 		board_config = ALC662_AUTO;
 	}
+
+	alc_pick_fixup(codec, alc662_fixup_tbl, alc662_fixups);
 
 	if (board_config == ALC662_AUTO) {
 		/* automatic parse from the BIOS config */
