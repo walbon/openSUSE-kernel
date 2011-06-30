@@ -213,7 +213,7 @@ static int handshake_on_error_set_halt(struct ehci_hcd *ehci, void __iomem *ptr,
 	if (error) {
 		ehci_halt(ehci);
 		ehci_to_hcd(ehci)->state = HC_STATE_HALT;
-		ehci_err(ehci, "force halt; handhake %p %08x %08x -> %d\n",
+		ehci_err(ehci, "force halt; handshake %p %08x %08x -> %d\n",
 			ptr, mask, done, error);
 	}
 
@@ -569,7 +569,7 @@ static int ehci_init(struct usb_hcd *hcd)
 
 	/* controllers may cache some of the periodic schedule ... */
 	if (HCC_ISOC_CACHE(hcc_params))		// full frame cache
-		ehci->i_thresh = 8;
+		ehci->i_thresh = 2 + 8;
 	else					// N microframes cached
 		ehci->i_thresh = 2 + HCC_ISOC_THRES(hcc_params);
 
@@ -619,6 +619,8 @@ static int ehci_init(struct usb_hcd *hcd)
 	}
 	ehci->command = temp;
 
+	/* Accept arbitrarily long scatter-gather lists */
+	hcd->self.sg_tablesize = ~0;
 	return 0;
 }
 
