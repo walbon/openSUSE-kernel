@@ -160,6 +160,21 @@ int h_get_mpp(struct hvcall_mpp_data *mpp_data)
 }
 EXPORT_SYMBOL(h_get_mpp);
 
+int h_get_mpp_x(struct hvcall_mpp_x_data *mpp_x_data)
+{
+	int rc;
+	unsigned long retbuf[PLPAR_HCALL9_BUFSIZE] = { 0 };
+
+	rc = plpar_hcall9(H_GET_MPP_X, retbuf);
+
+	mpp_x_data->coalesced_bytes = retbuf[0];
+	mpp_x_data->pool_coalesced_bytes = retbuf[1];
+	mpp_x_data->pool_purr_cycles = retbuf[2];
+	mpp_x_data->pool_spurr_cycles = retbuf[3];
+
+	return rc;
+}
+
 struct hvcall_ppp_data {
 	u64	entitlement;
 	u64	unallocated_entitlement;
@@ -344,6 +359,30 @@ static void parse_mpp_data(struct seq_file *m)
 	seq_printf(m, "backing_memory=%ld bytes\n", mpp_data.backing_mem);
 }
 
+/**
+ * parse_mpp_x_data
+ * Parse out data returned from h_get_mpp_x
+ */
+static void parse_mpp_x_data(struct seq_file *m)
+{
+	struct hvcall_mpp_x_data mpp_x_data;
+
+	if (!firmware_has_feature(FW_FEATURE_XCMO))
+		return;
+	if (h_get_mpp_x(&mpp_x_data))
+		return;
+
+	seq_printf(m, "coalesced_bytes=%ld\n", mpp_x_data.coalesced_bytes);
+
+	if (mpp_x_data.pool_coalesced_bytes)
+		seq_printf(m, "pool_coalesced_bytes=%ld\n",
+			   mpp_x_data.pool_coalesced_bytes);
+	if (mpp_x_data.pool_purr_cycles)
+		seq_printf(m, "coalesce_pool_purr=%ld\n", mpp_x_data.pool_purr_cycles);
+	if (mpp_x_data.pool_spurr_cycles)
+		seq_printf(m, "coalesce_pool_spurr=%ld\n", mpp_x_data.pool_spurr_cycles);
+}
+
 #define SPLPAR_CHARACTERISTICS_TOKEN 20
 #define SPLPAR_MAXLENGTH 1026*(sizeof(char))
 
@@ -526,6 +565,7 @@ static int pseries_lparcfg_data(struct seq_file *m, void *v)
 		parse_system_parameter_string(m);
 		parse_ppp_data(m);
 		parse_mpp_data(m);
+		parse_mpp_x_data(m);
 		pseries_cmo_data(m);
 		splpar_dispatch_data(m);
 

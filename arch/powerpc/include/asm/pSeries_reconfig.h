@@ -14,6 +14,12 @@
 #define PSERIES_DRCONF_MEM_ADD		0x0003
 #define PSERIES_DRCONF_MEM_REMOVE	0x0004
 
+#ifdef CONFIG_PPC_SMLPAR
+extern void pSeries_coalesce_init(void);
+#else
+static inline void pSeries_coalesce_init(void) { }
+#endif
+
 #ifdef CONFIG_PPC_PSERIES
 extern int pSeries_reconfig_notifier_register(struct notifier_block *);
 extern void pSeries_reconfig_notifier_unregister(struct notifier_block *);
