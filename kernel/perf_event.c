@@ -4577,7 +4577,7 @@ perf_event_alloc(struct perf_event_attr *attr,
 
 	if (!overflow_handler && parent_event)
 		overflow_handler = parent_event->overflow_handler;
-
+	
 	event->overflow_handler	= overflow_handler;
 
 	if (attr->disabled)

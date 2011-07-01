@@ -73,7 +73,6 @@
 
 #include <asm/mtrr.h>
 #include <asm/apic.h>
-#include <asm/trampoline.h>
 #include <asm/e820.h>
 #include <asm/mpspec.h>
 #include <asm/setup.h>
@@ -112,6 +111,7 @@
 #include <asm/numa_64.h>
 #endif
 #include <asm/mce.h>
+#include <asm/trampoline.h>
 
 /*
  * end_pfn only includes RAM, while max_pfn_mapped includes all e820 entries.
