@@ -1280,7 +1280,7 @@ static void unmap_urb_for_dma(struct usb_hcd *hcd, struct urb *urb)
 	dir = usb_urb_dir_in(urb) ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
 	if (urb->transfer_flags & URB_DMA_MAP_SG)
 		dma_unmap_sg(hcd->self.controller,
-				urb->sg->sg,
+				urb->sg,
 				urb->num_sgs,
 				dir);
 	else if (urb->transfer_flags & URB_DMA_MAP_PAGE)
@@ -1318,8 +1318,7 @@ static int map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 	 * or uses the provided scatter gather list for bulk.
 	 */
 
-	if (usb_endpoint_xfer_control(&urb->ep->desc)
-	    && !(urb->transfer_flags & URB_NO_SETUP_DMA_MAP)) {
+	if (usb_endpoint_xfer_control(&urb->ep->desc)) {
 		if (hcd->self.uses_dma) {
 			urb->setup_dma = dma_map_single(
 					hcd->self.controller,
@@ -1330,7 +1329,7 @@ static int map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 						urb->setup_dma))
 				return -EAGAIN;
 			urb->transfer_flags |= URB_SETUP_MAP_SINGLE;
-		} else if (hcd->driver->flags & HCD_LOCAL_MEM)
+		} else if (hcd->driver->flags & HCD_LOCAL_MEM) {
 			ret = hcd_alloc_coherent(
 					urb->dev->bus, mem_flags,
 					&urb->setup_dma,
@@ -1340,6 +1339,7 @@ static int map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 			if (ret)
 				return ret;
 			urb->transfer_flags |= URB_SETUP_MAP_LOCAL;
+		}
 	}
 
 	dir = usb_urb_dir_in(urb) ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
@@ -1349,7 +1349,7 @@ static int map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 			if (urb->num_sgs) {
 				int n = dma_map_sg(
 						hcd->self.controller,
-						urb->sg->sg,
+						urb->sg,
 						urb->num_sgs,
 						dir);
 				if (n <= 0)
@@ -1362,9 +1362,7 @@ static int map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 							URB_DMA_SG_COMBINED;
 				}
 			} else if (urb->sg) {
-				struct scatterlist *sg;
-
-				sg = (struct scatterlist *) urb->sg;
+				struct scatterlist *sg = urb->sg;
 				urb->transfer_dma = dma_map_page(
 						hcd->self.controller,
 						sg_page(sg),

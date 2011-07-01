@@ -1492,6 +1492,7 @@ void xhci_endpoint_reset(struct usb_hcd *hcd,
 	}
 	virt_ep->stopped_td = NULL;
 	virt_ep->stopped_trb = NULL;
+	virt_ep->stopped_stream = 0;
 	spin_unlock_irqrestore(&xhci->lock, flags);
 
 	if (ret)
@@ -1511,13 +1512,7 @@ static int xhci_check_streams_endpoint(struct xhci_hcd *xhci,
 	ret = xhci_check_args(xhci_to_hcd(xhci), udev, ep, 1, __func__);
 	if (ret <= 0)
 		return -EINVAL;
-	if (!ep->ss_ep_comp) {
-		xhci_warn(xhci, "WARN: No SuperSpeed Endpoint Companion"
-				" descriptor for ep 0x%x\n",
-				ep->desc.bEndpointAddress);
-		return -EINVAL;
-	}
-	if (ep->ss_ep_comp->desc.bmAttributes == 0) {
+	if (ep->ss_ep_comp.bmAttributes == 0) {
 		xhci_warn(xhci, "WARN: SuperSpeed Endpoint Companion"
 				" descriptor for ep 0x%x does not support streams\n",
 				ep->desc.bEndpointAddress);
@@ -1575,7 +1570,6 @@ static int xhci_calculate_streams_and_bitmask(struct xhci_hcd *xhci,
 		struct usb_host_endpoint **eps, unsigned int num_eps,
 		unsigned int *num_streams, u32 *changed_ep_bitmask)
 {
-	struct usb_host_ss_ep_comp *ss_ep_comp;
 	unsigned int max_streams;
 	unsigned int endpoint_flag;
 	int i;
@@ -1587,8 +1581,8 @@ static int xhci_calculate_streams_and_bitmask(struct xhci_hcd *xhci,
 		if (ret < 0)
 			return ret;
 
-		ss_ep_comp = eps[i]->ss_ep_comp;
-		max_streams = USB_SS_MAX_STREAMS(ss_ep_comp->desc.bmAttributes);
+		max_streams = USB_SS_MAX_STREAMS(
+				eps[i]->ss_ep_comp.bmAttributes);
 		if (max_streams < (*num_streams - 1)) {
 			xhci_dbg(xhci, "Ep 0x%x only supports %u stream IDs.\n",
 					eps[i]->desc.bEndpointAddress,
@@ -1788,6 +1782,7 @@ cleanup:
 	for (i = 0; i < num_eps; i++) {
 		ep_index = xhci_get_endpoint_index(&eps[i]->desc);
 		xhci_free_stream_info(xhci, vdev->eps[ep_index].stream_info);
+		vdev->eps[ep_index].stream_info = NULL;
 		/* FIXME Unset maxPstreams in endpoint context and
 		 * update deq ptr to point to normal string ring.
 		 */
@@ -1868,6 +1863,7 @@ int xhci_free_streams(struct usb_hcd *hcd, struct usb_device *udev,
 	for (i = 0; i < num_eps; i++) {
 		ep_index = xhci_get_endpoint_index(&eps[i]->desc);
 		xhci_free_stream_info(xhci, vdev->eps[ep_index].stream_info);
+		vdev->eps[ep_index].stream_info = NULL;
 		/* FIXME Unset maxPstreams in endpoint context and
 		 * update deq ptr to point to normal string ring.
 		 */

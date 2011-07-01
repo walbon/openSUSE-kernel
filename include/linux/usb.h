@@ -45,27 +45,14 @@ struct wusb_dev;
 
 struct ep_device;
 
-/* For SS devices */
-/**
- * struct usb_host_ss_ep_comp - Valid for SuperSpeed devices only
- * @desc: endpoint companion descriptor, wMaxPacketSize in native byteorder
- * @extra: descriptors following this endpoint companion descriptor
- * @extralen: how many bytes of "extra" are valid
- */
-struct usb_host_ss_ep_comp {
-	struct usb_ss_ep_comp_descriptor	desc;
-	unsigned char				*extra;   /* Extra descriptors */
-	int					extralen;
-};
-
 /**
  * struct usb_host_endpoint - host-side endpoint descriptor and queue
  * @desc: descriptor for this endpoint, wMaxPacketSize in native byteorder
+ * @ss_ep_comp: SuperSpeed companion descriptor for this endpoint
  * @urb_list: urbs queued to this endpoint; maintained by usbcore
  * @hcpriv: for use by HCD; typically holds hardware dma queue head (QH)
  *	with one or more transfer descriptors (TDs) per urb
  * @ep_dev: ep_device for sysfs info
- * @ss_ep_comp: companion descriptor information for this endpoint
  * @extra: descriptors following this endpoint in the configuration
  * @extralen: how many bytes of "extra" are valid
  * @enabled: URBs may be submitted to this endpoint
@@ -74,11 +61,11 @@ struct usb_host_ss_ep_comp {
  * descriptor within an active interface in a given USB configuration.
  */
 struct usb_host_endpoint {
-	struct usb_endpoint_descriptor	desc;
+	struct usb_endpoint_descriptor		desc;
+	struct usb_ss_ep_comp_descriptor	ss_ep_comp;
 	struct list_head		urb_list;
 	void				*hcpriv;
 	struct ep_device 		*ep_dev;	/* For sysfs info */
-	struct usb_host_ss_ep_comp	*ss_ep_comp;	/* For SS devices */
 
 	unsigned char *extra;   /* Extra descriptors */
 	int extralen;
@@ -200,8 +187,6 @@ struct usb_interface {
 	struct work_struct reset_ws;	/* for resets in atomic context */
 };
 #define	to_usb_interface(d) container_of(d, struct usb_interface, dev)
-#define	interface_to_usbdev(intf) \
-	container_of(intf->dev.parent, struct usb_device, dev)
 
 static inline void *usb_get_intfdata(struct usb_interface *intf)
 {
@@ -523,6 +508,11 @@ struct usb_device {
 };
 #define	to_usb_device(d) container_of(d, struct usb_device, dev)
 
+static inline struct usb_device *interface_to_usbdev(struct usb_interface *intf)
+{
+	return to_usb_device(intf->dev.parent);
+}
+
 extern struct usb_device *usb_get_dev(struct usb_device *dev);
 extern void usb_put_dev(struct usb_device *dev);
 
@@ -537,7 +527,6 @@ extern int usb_lock_device_for_reset(struct usb_device *udev,
 extern int usb_reset_device(struct usb_device *dev);
 extern void usb_queue_reset_device(struct usb_interface *dev);
 
-extern struct usb_device *usb_find_device(u16 vendor_id, u16 product_id);
 
 /* USB autosuspend and autoresume */
 #ifdef CONFIG_USB_SUSPEND
@@ -992,7 +981,6 @@ extern int usb_disabled(void);
 #define URB_ISO_ASAP		0x0002	/* iso-only, urb->start_frame
 					 * ignored */
 #define URB_NO_TRANSFER_DMA_MAP	0x0004	/* urb->transfer_dma valid on submit */
-#define URB_NO_SETUP_DMA_MAP	0x0008	/* urb->setup_dma valid on submit */
 #define URB_NO_FSBR		0x0020	/* UHCI-specific */
 #define URB_ZERO_PACKET		0x0040	/* Finish bulk OUT with short packet */
 #define URB_NO_INTERRUPT	0x0080	/* HINT: no non-error interrupt
@@ -1088,12 +1076,8 @@ typedef void (*usb_complete_t)(struct urb *);
  * @setup_packet: Only used for control transfers, this points to eight bytes
  *	of setup data.  Control transfers always start by sending this data
  *	to the device.  Then transfer_buffer is read or written, if needed.
- * @setup_dma: For control transfers with URB_NO_SETUP_DMA_MAP set, the
- *	device driver has provided this DMA address for the setup packet.
- *	The host controller driver should use this in preference to
- *	setup_packet, but the HCD may chose to ignore the address if it must
- *	copy the setup packet into internal structures.  Therefore, setup_packet
- *	must always point to a valid buffer.
+ * @setup_dma: DMA pointer for the setup packet.  The caller must not use
+ *	this field; setup_packet must point to a valid buffer.
  * @start_frame: Returns the initial frame for isochronous transfers.
  * @number_of_packets: Lists the number of ISO transfer buffers.
  * @interval: Specifies the polling interval for interrupt or isochronous
@@ -1125,13 +1109,14 @@ typedef void (*usb_complete_t)(struct urb *);
  * bounce buffer or talking to an IOMMU),
  * although they're cheap on commodity x86 and ppc hardware.
  *
- * Alternatively, drivers may pass the URB_NO_xxx_DMA_MAP transfer flags,
- * which tell the host controller driver that no such mapping is needed since
+ * Alternatively, drivers may pass the URB_NO_TRANSFER_DMA_MAP transfer flag,
+ * which tells the host controller driver that no such mapping is needed for
+ * the transfer_buffer since
  * the device driver is DMA-aware.  For example, a device driver might
  * allocate a DMA buffer with usb_alloc_coherent() or call usb_buffer_map().
- * When these transfer flags are provided, host controller drivers will
- * attempt to use the dma addresses found in the transfer_dma and/or
- * setup_dma fields rather than determining a dma address themselves.
+ * When this transfer flag is provided, host controller drivers will
+ * attempt to use the dma address found in the transfer_dma
+ * field rather than determining a dma address themselves.
  *
  * Note that transfer_buffer must still be set if the controller
  * does not support DMA (as indicated by bus.uses_dma) and when talking
@@ -1154,11 +1139,9 @@ typedef void (*usb_complete_t)(struct urb *);
  * should always terminate with a short packet, even if it means adding an
  * extra zero length packet.
  *
- * Control URBs must provide a setup_packet.  The setup_packet and
- * transfer_buffer may each be mapped for DMA or not, independently of
- * the other.  The transfer_flags bits URB_NO_TRANSFER_DMA_MAP and
- * URB_NO_SETUP_DMA_MAP indicate which buffers have already been mapped.
- * URB_NO_SETUP_DMA_MAP is ignored for non-control URBs.
+ * Control URBs must provide a valid pointer in the setup_packet field.
+ * Unlike the transfer_buffer, the setup_packet may not be mapped for DMA
+ * beforehand.
  *
  * Interrupt URBs must provide an interval, saying how often (in milliseconds
  * or, for highspeed devices, 125 microsecond units)
@@ -1237,7 +1220,7 @@ struct urb {
 	unsigned int transfer_flags;	/* (in) URB_SHORT_NOT_OK | ...*/
 	void *transfer_buffer;		/* (in) associated data buffer */
 	dma_addr_t transfer_dma;	/* (in) dma addr for transfer_buffer */
-	struct usb_sg_request *sg;	/* (in) scatter gather buffer list */
+	struct scatterlist *sg;		/* (in) scatter gather buffer list */
 	int num_sgs;			/* (in) number of entries in the sg list */
 	u32 transfer_buffer_length;	/* (in) data buffer length */
 	u32 actual_length;		/* (return) actual transfer length */
@@ -1511,8 +1494,6 @@ struct usb_sg_request {
 
 	struct usb_device	*dev;
 	int			pipe;
-	struct scatterlist	*sg;
-	int			nents;
 
 	int			entries;
 	struct urb		**urbs;
@@ -1596,6 +1577,14 @@ static inline unsigned int __create_pipe(struct usb_device *dev,
 	((PIPE_INTERRUPT << 30) | __create_pipe(dev, endpoint))
 #define usb_rcvintpipe(dev,endpoint)	\
 	((PIPE_INTERRUPT << 30) | __create_pipe(dev, endpoint) | USB_DIR_IN)
+
+static inline struct usb_host_endpoint *
+usb_pipe_endpoint(struct usb_device *dev, unsigned int pipe)
+{
+	struct usb_host_endpoint **eps;
+	eps = usb_pipein(pipe) ? dev->ep_in : dev->ep_out;
+	return eps[usb_pipeendpoint(pipe)];
+}
 
 /*-------------------------------------------------------------------------*/
 
