@@ -51,20 +51,13 @@
 #include <linux/list.h>
 #include <linux/kthread.h>
 #include <linux/wait.h>
+#include <linux/usb/hcd.h>
 #include <asm/io.h>
 #include <xen/xenbus.h>
 #include <xen/evtchn.h>
 #include <xen/gnttab.h>
 #include <xen/interface/xen.h>
 #include <xen/interface/io/usbif.h>
-
-/*
- * usbfront needs USB HCD headers,
- * drivers/usb/core/hcd.h and drivers/usb/core/hub.h,
- * but, they are not in public include path.
- */
-#include "../../usb/core/hcd.h"
-#include "../../usb/core/hub.h"
 
 static inline struct usbfront_info *hcd_to_info(struct usb_hcd *hcd)
 {
