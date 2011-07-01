@@ -50,6 +50,8 @@ config X86
 	select HAVE_KERNEL_BZIP2 if !XEN
 	select HAVE_KERNEL_LZMA if !XEN
 	select HAVE_HW_BREAKPOINT
+	select PERF_EVENTS
+	select ANON_INODES
 	select HAVE_ARCH_KMEMCHECK
 
 config OUTPUT_FORMAT
@@ -1542,7 +1544,7 @@ config ARCH_USES_PG_UNCACHED
 
 config EFI
 	bool "EFI runtime service support"
-	depends on ACPI && !XEN
+	depends on ACPI && !XEN_UNPRIVILEGED_GUEST
 	---help---
 	  This enables the kernel to use EFI runtime services that are
 	  available (such as the EFI variable services).

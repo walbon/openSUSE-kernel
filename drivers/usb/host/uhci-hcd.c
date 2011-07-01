@@ -38,6 +38,7 @@
 #include <linux/dmapool.h>
 #include <linux/dma-mapping.h>
 #include <linux/usb.h>
+#include <linux/usb/hcd.h>
 #include <linux/bitops.h>
 #include <linux/dmi.h>
 
@@ -46,7 +47,6 @@
 #include <asm/irq.h>
 #include <asm/system.h>
 
-#include "../core/hcd.h"
 #include "uhci-hcd.h"
 #include "pci-quirks.h"
 
@@ -1065,6 +1065,7 @@ static int uhci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 	}
 
 	spin_unlock_irq(&uhci->lock);
+	synchronize_irq(hcd->irq);
 
 	/* If interrupts don't work and remote wakeup is enabled then
 	 * the suspended root hub needs to be polled.

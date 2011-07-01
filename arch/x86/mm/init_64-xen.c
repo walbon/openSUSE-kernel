@@ -598,7 +598,7 @@ phys_pmd_init(pmd_t *pmd_page, unsigned long address, unsigned long end,
 
 	int i = pmd_index(address);
 
-	for (; i < PTRS_PER_PMD; i++, address += PMD_SIZE) {
+	for (; i < PTRS_PER_PMD; i++, address = (address & PMD_MASK) + PMD_SIZE) {
 		unsigned long pte_phys;
 		pmd_t *pmd = pmd_page + pmd_index(address);
 		pte_t *pte;
@@ -653,7 +653,10 @@ phys_pmd_init(pmd_t *pmd_page, unsigned long address, unsigned long end,
 			if (max_pfn_mapped)
 				make_page_readonly(__va(pte_phys),
 						   XENFEAT_writable_page_tables);
-			*pmd = __pmd(pte_phys | _PAGE_TABLE);
+			if (page_size_mask & (1 << PG_LEVEL_NUM))
+				xen_l2_entry_update(pmd, __pmd(pte_phys | _PAGE_TABLE));
+			else
+				*pmd = __pmd(pte_phys | _PAGE_TABLE);
 		} else {
 			spin_lock(&init_mm.page_table_lock);
 			pmd_populate_kernel(&init_mm, pmd, __va(pte_phys));
@@ -672,7 +675,9 @@ phys_pmd_update(pud_t *pud, unsigned long address, unsigned long end,
 	unsigned long last_map_addr;
 
 	BUG_ON(!max_pfn_mapped);
-	last_map_addr = phys_pmd_init(pmd, address, end, page_size_mask, prot);
+	last_map_addr = phys_pmd_init(pmd, address, end,
+				      page_size_mask | (1 << PG_LEVEL_NUM),
+				      prot);
 	__flush_tlb_all();
 	return last_map_addr;
 }
@@ -730,7 +735,8 @@ phys_pud_init(pud_t *pud_page, unsigned long addr, unsigned long end,
 		}
 
 		pmd = alloc_low_page(&pmd_phys);
-		last_map_addr = phys_pmd_init(pmd, addr, end, page_size_mask,
+		last_map_addr = phys_pmd_init(pmd, addr, end,
+					      page_size_mask & ~(1 << PG_LEVEL_NUM),
 					      prot);
 		unmap_low_page(pmd);
 

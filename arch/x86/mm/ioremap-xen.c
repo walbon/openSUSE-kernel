@@ -197,6 +197,16 @@ int page_is_ram(unsigned long pagenr)
 	return 0;
 }
 
+#ifdef CONFIG_MODULES
+/*
+ * Force the implementation of ioremap_page_range() to be pulled in from
+ * lib/lib.a even if there is no other reference from the core kernel to it
+ * (native uses it in __ioremap_caller()), so that it gets exported.
+ */
+static void *const __section(.discard.ioremap) __used
+_ioremap_page_range = ioremap_page_range;
+#endif
+
 /*
  * Fix up the linear direct mapping of the kernel to avoid cache attribute
  * conflicts.
@@ -255,7 +265,7 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 		unsigned long size, unsigned long prot_val, void *caller)
 {
 	unsigned long offset, vaddr;
-	phys_addr_t mfn, last_addr;
+	phys_addr_t mfn, last_mfn, last_addr;
 	const resource_size_t unaligned_phys_addr = phys_addr;
 	const unsigned long unaligned_size = size;
 	struct vm_struct *area;
@@ -293,7 +303,8 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 	/*
 	 * Don't allow anybody to remap normal RAM that we're using..
 	 */
-	for (mfn = PFN_DOWN(phys_addr); mfn < PFN_UP(last_addr); mfn++) {
+	last_mfn = PFN_DOWN(last_addr);
+	for (mfn = PFN_DOWN(phys_addr); mfn <= last_mfn; mfn++) {
 		unsigned long pfn = mfn_to_local_pfn(mfn);
 
 		if (pfn_valid(pfn)) {
@@ -308,7 +319,7 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 	 * Mappings have to be page-aligned
 	 */
 	offset = phys_addr & ~PAGE_MASK;
-	phys_addr &= PAGE_MASK;
+	phys_addr &= PHYSICAL_PAGE_MASK;
 	size = PAGE_ALIGN(last_addr+1) - phys_addr;
 
 	retval = reserve_memtype(phys_addr, (u64)phys_addr + size,
@@ -530,18 +541,25 @@ EXPORT_SYMBOL(iounmap);
  * Convert a physical pointer to a virtual kernel pointer for /dev/mem
  * access
  */
-void *xlate_dev_mem_ptr(unsigned long phys)
+void *xlate_dev_mem_ptr(phys_addr_t phys)
 {
 	void *addr;
-	unsigned long start = phys & PAGE_MASK;
+	unsigned long pfn = phys >> PAGE_SHIFT;
+	phys_addr_t start = phys & PHYSICAL_PAGE_MASK;
 
 	/* If page is RAM, we can use __va. Otherwise ioremap and unmap. */
-	if (page_is_ram(start >> PAGE_SHIFT))
+	if (page_is_ram(pfn)) {
+		if (phys >= __pa(high_memory))
+			return pfn_valid(pfn)
+				? kmap(pfn_to_page(pfn))
+				: NULL;
 		return __va(phys);
+	}
 
 	addr = (void __force *)ioremap_default(start, PAGE_SIZE);
 	if (addr)
-		addr = (void *)((unsigned long)addr | (phys & ~PAGE_MASK));
+		addr = (void *)((unsigned long)addr |
+			((unsigned long)phys & ~PAGE_MASK));
 
 	return addr;
 }

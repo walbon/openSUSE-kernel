@@ -153,6 +153,8 @@ void __init xen_start_kernel(void)
 				     virt_to_machine(empty_zero_page),
 				     PAGE_KERNEL_RO);
 
+	if (!is_initial_xendomain())
+		x86_init.resources.probe_roms = x86_init_noop;
 }
 
 void __init xen_arch_setup(void)

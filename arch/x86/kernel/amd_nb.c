@@ -15,6 +15,10 @@ static u32 *flush_words;
 const struct pci_device_id amd_nb_misc_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_K8_NB_MISC) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_10H_NB_MISC) },
+#ifdef CONFIG_XEN
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_11H_NB_MISC) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, 0x1703) }, /* Fam12, Fam14 */
+#endif
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_15H_NB_MISC) },
 	{}
 };
@@ -119,6 +123,7 @@ bool __init early_is_amd_nb(u32 device)
 	return false;
 }
 
+#ifndef CONFIG_XEN
 int amd_get_subcaches(int cpu)
 {
 	struct pci_dev *link = node_to_amd_nb(amd_get_nb_id(cpu))->link;
@@ -130,7 +135,7 @@ int amd_get_subcaches(int cpu)
 
 	pci_read_config_dword(link, 0x1d4, &mask);
 
-#if defined(CONFIG_SMP) && defined(CONFIG_X86_HT)
+#ifdef CONFIG_SMP
 	cuid = cpu_data(cpu).compute_unit_id;
 #endif
 	return (mask >> (4 * cuid)) & 0xf;
@@ -159,7 +164,7 @@ int amd_set_subcaches(int cpu, int mask)
 		pci_write_config_dword(nb->misc, 0x1b8, reg & ~0x180000);
 	}
 
-#if defined(CONFIG_SMP) && defined(CONFIG_X86_HT)
+#ifdef CONFIG_SMP
 	cuid = cpu_data(cpu).compute_unit_id;
 #endif
 	mask <<= 4 * cuid;
@@ -177,6 +182,7 @@ int amd_set_subcaches(int cpu, int mask)
 
 	return 0;
 }
+#endif
 
 static int amd_cache_gart(void)
 {

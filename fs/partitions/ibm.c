@@ -156,7 +156,7 @@ int ibm_partition(struct parsed_partitions *state)
 	/*
 	 * Get volume label, extract name and type.
 	 */
-	data = read_dev_sector(state, labelsect, &sect);
+	data = read_part_sector(state, labelsect, &sect);
 	if (data == NULL)
 		goto out_readerr;
 

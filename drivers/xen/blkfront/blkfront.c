@@ -338,7 +338,7 @@ static void connect(struct blkfront_info *info)
 		 */
 		err = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
 				   "sectors", "%Lu", &sectors);
-		if (XENBUS_EXIST_ERR(err))
+		if (err != 1)
 			return;
 		pr_info("Setting capacity to %Lu\n", sectors);
 		set_capacity(info->gd, sectors);
@@ -363,9 +363,8 @@ static void connect(struct blkfront_info *info)
 		return;
 	}
 
-	err = xenbus_gather(XBT_NIL, info->xbdev->otherend,
-			    "feature-barrier", "%d", &barrier,
-			    NULL);
+	err = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+			   "feature-barrier", "%d", &barrier);
 	/*
 	 * If there's no "feature-barrier" defined, then it means
 	 * we're dealing with a very old backend which writes
@@ -373,7 +372,7 @@ static void connect(struct blkfront_info *info)
 	 *
 	 * If there are barriers, then we use flush.
 	 */
-	if (!err && barrier)
+	if (err > 0 && barrier)
 		info->feature_flush = REQ_FLUSH | REQ_FUA;
 	else
 		info->feature_flush = 0;

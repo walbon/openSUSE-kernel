@@ -887,7 +887,8 @@ static int __cpuinit acpi_processor_add(struct acpi_device *device)
 		acpi_processor_get_limit_info(pr);
 	}
 
-	if (cpuidle_get_driver() == &acpi_idle_driver)
+	if (cpuidle_get_driver() == &acpi_idle_driver
+	    || processor_pm_external())
 		acpi_processor_power_init(pr, device);
 
 	result = processor_extcntl_prepare(pr);

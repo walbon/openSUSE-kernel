@@ -40,6 +40,8 @@
 #include <asm/atomic.h>
 #include <asm/time.h>
 #include <asm/mmu.h>
+#include <asm/topology.h>
+#include <asm/pSeries_reconfig.h>
 
 struct rtas_t rtas = {
 	.lock = __RAW_SPIN_LOCK_UNLOCKED
@@ -719,6 +721,7 @@ static void rtas_percpu_suspend_me(void *info)
 	struct rtas_suspend_me_data *data =
 		(struct rtas_suspend_me_data *)info;
 
+	stop_topology_update();
 	atomic_inc(&data->working);
 
 	/* really need to ensure MSR.EE is off for H_JOIN */
@@ -752,8 +755,10 @@ static void rtas_percpu_suspend_me(void *info)
 		       smp_processor_id(), rc);
 		data->error = rc;
 	}
+	pSeries_coalesce_init();
 
 	atomic_set(&data->done, 1);
+	start_topology_update();
 
 	/* This cpu did the suspend or got an error; in either case,
 	 * we need to prod all other other cpus out of join state.

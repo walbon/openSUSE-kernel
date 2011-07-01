@@ -11,8 +11,8 @@
 #include <linux/swap.h>
 #include <linux/writeback.h>
 #include <linux/pagevec.h>
-#include <linux/prefetch.h>
 #include <linux/precache.h>
+#include <linux/prefetch.h>
 #include "extent_io.h"
 #include "extent_map.h"
 #include "compat.h"

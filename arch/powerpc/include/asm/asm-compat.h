@@ -20,6 +20,7 @@
 /* operations for longs and pointers */
 #define PPC_LL		stringify_in_c(ld)
 #define PPC_STL		stringify_in_c(std)
+#define PPC_STLU        stringify_in_c(stdu)
 #define PPC_LCMPI	stringify_in_c(cmpdi)
 #define PPC_LONG	stringify_in_c(.llong)
 #define PPC_LONG_ALIGN	stringify_in_c(.balign 8)
@@ -27,6 +28,8 @@
 #define PPC_LLARX	stringify_in_c(ldarx)
 #define PPC_STLCX	stringify_in_c(stdcx.)
 #define PPC_CNTLZL	stringify_in_c(cntlzd)
+#define PPC_LR_STKOFF	16
+#define PPC_MIN_STKFRM	112
 
 /* Move to CR, single-entry optimized version. Only available
  * on POWER4 and later.
@@ -42,6 +45,7 @@
 /* operations for longs and pointers */
 #define PPC_LL		stringify_in_c(lwz)
 #define PPC_STL		stringify_in_c(stw)
+#define PPC_STLU        stringify_in_c(stwu)
 #define PPC_LCMPI	stringify_in_c(cmpwi)
 #define PPC_LONG	stringify_in_c(.long)
 #define PPC_LONG_ALIGN	stringify_in_c(.balign 4)
@@ -50,6 +54,8 @@
 #define PPC_STLCX	stringify_in_c(stwcx.)
 #define PPC_CNTLZL	stringify_in_c(cntlzw)
 #define PPC_MTOCRF	stringify_in_c(mtcrf)
+#define PPC_LR_STKOFF	4
+#define PPC_MIN_STKFRM	16
 
 #endif
 

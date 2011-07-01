@@ -205,7 +205,7 @@ extern void set_iounmap_nonlazy(void);
 
 #endif
 
-extern void *xlate_dev_mem_ptr(unsigned long phys);
+extern void *xlate_dev_mem_ptr(phys_addr_t phys);
 extern void unxlate_dev_mem_ptr(phys_addr_t phys, void *addr);
 
 extern int ioremap_check_change_attr(unsigned long mfn, unsigned long size,

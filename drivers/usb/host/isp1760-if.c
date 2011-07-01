@@ -13,8 +13,8 @@
 #include <linux/io.h>
 #include <linux/platform_device.h>
 #include <linux/usb/isp1760.h>
+#include <linux/usb/hcd.h>
 
-#include "../core/hcd.h"
 #include "isp1760-hcd.h"
 
 #ifdef CONFIG_PPC_OF
@@ -109,7 +109,7 @@ static int of_isp1760_remove(struct of_device *dev)
 	return 0;
 }
 
-static struct of_device_id of_isp1760_match[] = {
+static const struct of_device_id of_isp1760_match[] = {
 	{
 		.compatible = "nxp,usb-isp1760",
 	},

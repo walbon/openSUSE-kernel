@@ -339,7 +339,7 @@ static int motorcontrol_probe(struct usb_interface *intf, const struct usb_devic
 		goto out;
 
 	mc->dev_no = -1;
-	mc->data = usb_buffer_alloc(dev, URB_INT_SIZE, GFP_ATOMIC, &mc->data_dma);
+	mc->data = usb_alloc_coherent(dev, URB_INT_SIZE, GFP_ATOMIC, &mc->data_dma);
 	if (!mc->data)
 		goto out;
 
@@ -394,7 +394,7 @@ out:
 	if (mc) {
 		usb_free_urb(mc->irq);
 		if (mc->data)
-			usb_buffer_free(dev, URB_INT_SIZE, mc->data, mc->data_dma);
+			usb_free_coherent(dev, URB_INT_SIZE, mc->data, mc->data_dma);
 		if (mc->dev)
 			device_unregister(mc->dev);
 		if (mc->dev_no >= 0)
@@ -418,7 +418,7 @@ static void motorcontrol_disconnect(struct usb_interface *interface)
 
 	usb_kill_urb(mc->irq);
 	usb_free_urb(mc->irq);
-	usb_buffer_free(mc->udev, URB_INT_SIZE, mc->data, mc->data_dma);
+	usb_free_coherent(mc->udev, URB_INT_SIZE, mc->data, mc->data_dma);
 
 	cancel_delayed_work(&mc->do_notify);
 

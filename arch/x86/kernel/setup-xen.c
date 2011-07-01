@@ -107,6 +107,7 @@
 #include <asm/percpu.h>
 #include <asm/topology.h>
 #include <asm/apicdef.h>
+#include <asm/amd_nb.h>
 #ifdef CONFIG_X86_64
 #include <asm/numa_64.h>
 #endif
@@ -334,6 +335,20 @@ static void __init reserve_brk(void)
 	/* Mark brk area as locked down and no longer taking any
 	   new allocations */
 	_brk_start = 0;
+}
+
+static unsigned long __init reserve_log_buf(unsigned long len)
+{
+	unsigned long end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT;
+	unsigned long addr = end_of_lowmem - len;
+	unsigned long mem;
+
+	mem = find_e820_area(addr, end_of_lowmem, len, PAGE_SIZE);
+	if (mem == -1UL)
+		return 0UL;
+
+	reserve_early(mem, mem + len, "LOG BUF");
+	return mem;
 }
 
 #ifdef CONFIG_BLK_DEV_INITRD
@@ -796,7 +811,8 @@ static struct dmi_system_id __initdata bad_bios_dmi_table[] = {
 void __init setup_arch(char **cmdline_p)
 {
 	int acpi = 0;
-	int k8 = 0;
+	int amd = 0;
+
 #ifdef CONFIG_XEN
 	unsigned int i;
 	unsigned long p2m_pages;
@@ -889,6 +905,8 @@ void __init setup_arch(char **cmdline_p)
 		                      xen_start_info->console.dom0.info_size);
 		xen_start_info->console.domU.mfn = 0;
 		xen_start_info->console.domU.evtchn = 0;
+
+		efi_probe();
 	} else
 		screen_info.orig_video_isVGA = 0;
 	copy_edid();
@@ -1061,6 +1079,54 @@ void __init setup_arch(char **cmdline_p)
 	init_gbpages();
 
 	/* max_pfn_mapped is updated here */
+#ifdef CONFIG_X86_64_XEN
+	if (xen_start_info->mfn_list < __START_KERNEL_map) {
+		/* Map P2M space only after all usable memory. */
+		unsigned long p2m_start = xen_start_info->first_p2m_pfn;
+		unsigned long p2m_end = p2m_start
+					+ xen_start_info->nr_p2m_frames;
+		unsigned long temp;
+
+		max_low_pfn_mapped = init_memory_mapping(
+			0, min(max_low_pfn, p2m_start) << PAGE_SHIFT);
+		max_pfn_mapped = max_low_pfn_mapped;
+
+		if (p2m_end < max_low_pfn)
+			max_low_pfn_mapped = init_memory_mapping(
+				p2m_end << PAGE_SHIFT,
+				max_low_pfn << PAGE_SHIFT);
+		max_pfn_mapped = max_low_pfn_mapped;
+
+		if (max_low_pfn < p2m_start)
+			max_pfn_mapped = init_memory_mapping(
+				max_low_pfn << PAGE_SHIFT,
+				p2m_start << PAGE_SHIFT);
+
+		if (max(max_low_pfn, p2m_end) < max_pfn)
+			max_pfn_mapped = init_memory_mapping(
+				max(max_low_pfn, p2m_end) << PAGE_SHIFT,
+				max_pfn << PAGE_SHIFT);
+
+		temp = max_pfn_mapped;
+		if (p2m_start < max_low_pfn) {
+			temp = init_memory_mapping(
+				p2m_start << PAGE_SHIFT,
+				min(max_low_pfn, p2m_end) << PAGE_SHIFT);
+			if (temp > max_low_pfn_mapped)
+				max_low_pfn_mapped = temp;
+		}
+
+		if (max_low_pfn < p2m_end)
+			temp = init_memory_mapping(
+				max(max_low_pfn, p2m_start) << PAGE_SHIFT,
+				p2m_end << PAGE_SHIFT);
+		if (temp > max_pfn_mapped)
+			max_pfn_mapped = temp;
+
+		goto init_memory_mapping_done;
+	}
+#endif
+
 	max_low_pfn_mapped = init_memory_mapping(0, max_low_pfn<<PAGE_SHIFT);
 	max_pfn_mapped = max_low_pfn_mapped;
 
@@ -1068,6 +1134,7 @@ void __init setup_arch(char **cmdline_p)
 	if (max_pfn > max_low_pfn) {
 		max_pfn_mapped = init_memory_mapping(1UL<<32,
 						     max_pfn<<PAGE_SHIFT);
+ init_memory_mapping_done:
 		/* can we preseve max_low_pfn ?*/
 		max_low_pfn = max_pfn;
 	}
@@ -1081,6 +1148,8 @@ void __init setup_arch(char **cmdline_p)
 	if (init_ohci1394_dma_early)
 		init_ohci1394_dma_on_all_controllers();
 #endif
+	/* Allocate bigger log buffer as early as possible */
+	setup_log_buf(reserve_log_buf);
 
 	reserve_initrd();
 
@@ -1108,15 +1177,14 @@ void __init setup_arch(char **cmdline_p)
 	/*
 	 * Parse SRAT to discover nodes.
 	 */
-	acpi = acpi_numa_init();
+	acpi_numa_init();
 #endif
 
-#ifdef CONFIG_K8_NUMA
-	if (!acpi)
-		k8 = !k8_numa_init(0, max_pfn);
+#ifdef CONFIG_AMD_NUMA
+	amd = !amd_numa_init(0, max_pfn);
 #endif
 
-	initmem_init(0, max_pfn, acpi, k8);
+	initmem_init(0, max_pfn, acpi, amd);
 
 #ifdef CONFIG_ACPI_SLEEP
 	/*

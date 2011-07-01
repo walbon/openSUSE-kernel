@@ -75,7 +75,6 @@ typedef struct {
 	void *buffer;
 	dma_addr_t transfer_dma;
 	struct usb_ctrlrequest *setup;
-	dma_addr_t setup_dma;
 
 	/* request segments */
 	uint16_t nr_buffer_segs; /* number of urb->transfer_buffer segments */
@@ -241,7 +240,7 @@ static int usbbk_alloc_urb(usbif_urb_request_t *req, pending_req_t *pending_req)
 	}
 
 	if (req->buffer_length) {
-		pending_req->buffer = usb_buffer_alloc(pending_req->stub->udev,
+		pending_req->buffer = usb_alloc_coherent(pending_req->stub->udev,
 				req->buffer_length, GFP_KERNEL,
 				&pending_req->transfer_dma);
 		if (!pending_req->buffer) {
@@ -252,9 +251,8 @@ static int usbbk_alloc_urb(usbif_urb_request_t *req, pending_req_t *pending_req)
 	}
 
 	if (usb_pipecontrol(req->pipe)) {
-		pending_req->setup = usb_buffer_alloc(pending_req->stub->udev,
-				sizeof(struct usb_ctrlrequest), GFP_KERNEL,
-				&pending_req->setup_dma);
+		pending_req->setup = kmalloc(sizeof(struct usb_ctrlrequest),
+					     GFP_KERNEL);
 		if (!pending_req->setup) {
 			pr_err("usbback: can't alloc usb_ctrlrequest\n");
 			ret = -ENOMEM;
@@ -266,8 +264,10 @@ static int usbbk_alloc_urb(usbif_urb_request_t *req, pending_req_t *pending_req)
 
 fail_free_buffer:
 	if (req->buffer_length)
-		usb_buffer_free(pending_req->stub->udev, req->buffer_length,
-				pending_req->buffer, pending_req->transfer_dma);
+		usb_free_coherent(pending_req->stub->udev,
+				  req->buffer_length,
+				  pending_req->buffer,
+				  pending_req->transfer_dma);
 fail_free_urb:
 	usb_free_urb(pending_req->urb);
 fail:
@@ -286,11 +286,10 @@ static void usbbk_free_urb(struct urb *urb)
 static void _usbbk_free_urb(struct urb *urb)
 {
 	if (usb_pipecontrol(urb->pipe))
-		usb_buffer_free(urb->dev, sizeof(struct usb_ctrlrequest),
-				urb->setup_packet, urb->setup_dma);
+		kfree(urb->setup_packet);
 	if (urb->transfer_buffer_length)
-		usb_buffer_free(urb->dev, urb->transfer_buffer_length,
-				urb->transfer_buffer, urb->transfer_dma);
+		usb_free_coherent(urb->dev, urb->transfer_buffer_length,
+				  urb->transfer_buffer, urb->transfer_dma);
 	barrier();
 	usb_free_urb(urb);
 }
@@ -536,9 +535,7 @@ static void usbbk_init_urb(usbif_urb_request_t *req, pending_req_t *pending_req)
 				pending_req->buffer, req->buffer_length,
 				usbbk_urb_complete, pending_req);
 		memcpy(pending_req->setup, req->u.ctrl, 8);
-		urb->setup_dma = pending_req->setup_dma;
 		urb->transfer_flags = req->transfer_flags;
-		urb->transfer_flags |= URB_NO_SETUP_DMA_MAP;
 
 		break;
 	case PIPE_BULK:
