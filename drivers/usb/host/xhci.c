@@ -485,6 +485,9 @@ int xhci_run(struct usb_hcd *hcd)
 
 	if (NUM_TEST_NOOPS > 0)
 		doorbell = xhci_setup_one_noop(xhci);
+	if (xhci->quirks & XHCI_NEC_HOST)
+		xhci_queue_vendor_command(xhci, 0, 0, 0,
+				TRB_TYPE(TRB_NEC_GET_FW));
 
 	if (xhci_start(xhci)) {
 		xhci_halt(xhci);
@@ -494,6 +497,8 @@ int xhci_run(struct usb_hcd *hcd)
 	xhci_dbg(xhci, "// @%p = 0x%x\n", &xhci->op_regs->command, temp);
 	if (doorbell)
 		(*doorbell)(xhci);
+	if (xhci->quirks & XHCI_NEC_HOST)
+		xhci_ring_cmd_db(xhci);
 
 	xhci_dbg(xhci, "Finished xhci_run\n");
 	return 0;
@@ -2128,6 +2133,8 @@ int xhci_address_device(struct usb_hcd *hcd, struct usb_device *udev)
 	/* If this is a Set Address to an unconfigured device, setup ep 0 */
 	if (!udev->config)
 		xhci_setup_addressable_virt_dev(xhci, udev);
+	else
+		xhci_copy_ep0_dequeue_into_input_ctx(xhci, udev);
 	/* Otherwise, assume the core has the device configured how it wants */
 	xhci_dbg(xhci, "Slot ID %d Input Context:\n", udev->slot_id);
 	xhci_dbg_ctx(xhci, virt_dev->in_ctx, 2);
