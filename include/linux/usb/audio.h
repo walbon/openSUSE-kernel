@@ -94,7 +94,7 @@ struct uac_ac_header_descriptor {
 #define UAC_DT_AC_HEADER_SIZE(n)	(8 + (n))
 
 /* As above, but more useful for defining your own descriptors: */
-#define DECLARE_UAC_AC_HEADER_DESCRIPTOR(n) 			\
+#define DECLARE_UAC_AC_HEADER_DESCRIPTOR(n)			\
 struct uac_ac_header_descriptor_##n {				\
 	__u8  bLength;						\
 	__u8  bDescriptorType;					\
@@ -158,7 +158,7 @@ struct uac_output_terminal_descriptor {
 #define UAC_DT_FEATURE_UNIT_SIZE(ch)		(7 + ((ch) + 1) * 2)
 
 /* As above, but more useful for defining your own descriptors: */
-#define DECLARE_UAC_FEATURE_UNIT_DESCRIPTOR(ch) 		\
+#define DECLARE_UAC_FEATURE_UNIT_DESCRIPTOR(ch)			\
 struct uac_feature_unit_descriptor_##ch {			\
 	__u8  bLength;						\
 	__u8  bDescriptorType;					\
@@ -217,7 +217,7 @@ struct uac_format_type_i_discrete_descriptor {
 	__u8  tSamFreq[][3];
 } __attribute__ ((packed));
 
-#define DECLARE_UAC_FORMAT_TYPE_I_DISCRETE_DESC(n) 		\
+#define DECLARE_UAC_FORMAT_TYPE_I_DISCRETE_DESC(n)		\
 struct uac_format_type_i_discrete_descriptor_##n {		\
 	__u8  bLength;						\
 	__u8  bDescriptorType;					\
