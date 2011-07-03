@@ -515,7 +515,7 @@ static void acpi_map_cpu2node(acpi_handle handle, int cpu, int physid)
 	int nid;
 
 	nid = acpi_get_node(handle);
-	if (!node_online(nid))
+	if (nid == -1 || !node_online(nid))
 		return;
 #ifdef CONFIG_X86_64
 	apicid_to_node[physid] = nid;
