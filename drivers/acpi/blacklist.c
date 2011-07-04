@@ -32,7 +32,9 @@
 #include <linux/init.h>
 #include <linux/acpi.h>
 #include <acpi/acpi_bus.h>
+#include <acpi/apei.h>
 #include <linux/dmi.h>
+#include <asm/processor.h>
 
 #include "internal.h"
 
@@ -109,12 +111,74 @@ static inline int blacklist_by_year(void)
 }
 #endif
 
+int __initdata apei_disable = -1;
+
+void __init acpi_apei_disable(void)
+{
+		apei_disable = 1;
+		hest_disable = 1;
+		erst_disable = 1;
+		ghes_disable = 1;
+}
+
+void __init acpi_apei_enable(void)
+{
+		apei_disable = 0;
+		hest_disable = 0;
+		erst_disable = 0;
+		ghes_disable = 0;
+}
+
+static int __init setup_apei_disable(char *str)
+{
+	acpi_apei_disable();
+	printk(KERN_INFO "APEI disabled by boot param\n");
+	return 0;
+}
+__setup("apei_disable", setup_apei_disable);
+
+static int __init setup_apei_enable(char *str)
+{
+	acpi_apei_enable();
+	printk(KERN_INFO "APEI enabled by boot param\n");
+	return 0;
+}
+__setup("apei_enable", setup_apei_enable);
+
+void __init acpi_apei_blacklist(void)
+{
+	/* Already overwritten by boot param */
+	if (apei_disable != -1)
+		return;
+
+#ifdef CONFIG_X86
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
+		printk (KERN_INFO "AMD CPU detected: Disabling APEI in favor"
+			" of native error interfaces\n");
+		acpi_apei_disable();
+		return;
+	}
+#endif
+	if (dmi_name_in_vendors("ProLiant")) {
+		printk (KERN_INFO "ProLiant detected: Disabling APEI in favor"
+			" of native error interfaces\n");
+		acpi_apei_disable();
+	} else {
+		/* generally enable, parts may be disabled separately
+		 * later, by erst_disable, hest_disable or ghes.disable=1
+		 * boot parameters
+		 */
+		acpi_apei_enable();
+	}
+}
+
 int __init acpi_blacklisted(void)
 {
 	int i = 0;
 	int blacklisted = 0;
 	struct acpi_table_header table_header;
 
+	acpi_apei_blacklist();
 	while (acpi_blacklist[i].oem_id[0] != '\0') {
 		if (acpi_get_table_header(acpi_blacklist[i].table, 0, &table_header)) {
 			i++;

@@ -276,6 +276,8 @@ struct acpi_osc_context {
 
 acpi_status acpi_run_osc(acpi_handle handle, struct acpi_osc_context *context);
 
+extern bool osc_sb_apei_support_acked;
+
 /* platform-wide _OSC bits */
 #define OSC_SB_PAD_SUPPORT		1
 #define OSC_SB_PPC_OST_SUPPORT		2
