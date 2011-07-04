@@ -1455,7 +1455,7 @@ static int usb_autopm_do_device(struct usb_device *udev, int inc_usage_cnt)
 
 	usb_pm_lock(udev);
 	udev->pm_usage_cnt += inc_usage_cnt;
-	WARN_ON(udev->pm_usage_cnt < 0);
+//	WARN_ON(udev->pm_usage_cnt < 0);
 	if (inc_usage_cnt)
 		udev->last_busy = jiffies;
 	if (inc_usage_cnt >= 0 && udev->pm_usage_cnt > 0) {
