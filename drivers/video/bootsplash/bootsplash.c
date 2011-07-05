@@ -921,8 +921,6 @@ static void splash_off(struct vc_data *vc,struct fb_info *info)
 	info->splash_data = 0;
 	if (rows != vc->vc_rows || cols != vc->vc_cols)
 		vc_resize(vc, rows, cols);
-	if (vc->vc_def_color != 0x07)
-		con_remap_def_color(vc, 0x07);
 }
 
 /* look for the splash with the matching size and set it as the current */
@@ -1091,14 +1089,12 @@ int splash_prepare(struct vc_data *vc, struct fb_info *info)
 	if (vc->vc_splash_data->splash_state) {
 		int cols = vc->vc_splash_data->splash_text_wi / vc->vc_font.width;
 		int rows = vc->vc_splash_data->splash_text_he / vc->vc_font.height;
-		int color = vc->vc_splash_data->splash_color << 4 | vc->vc_splash_data->splash_fg_color;
+
 		info->splash_data = vc->vc_splash_data;
 
 		/* vc_resize also calls con_switch which resets yscroll */
 		if (rows != vc->vc_rows || cols != vc->vc_cols)
 			vc_resize(vc, cols, rows);
-		if (vc->vc_def_color != color)
-			con_remap_def_color(vc, color);
 
 	} else {
 		splash_off(vc,info);
@@ -1155,6 +1151,10 @@ static int splash_status(struct vc_data *vc)
 	if (fg_console == vc->vc_num)
 		splash_prepare(vc, info);
 	if (vc->vc_splash_data && vc->vc_splash_data->splash_state) {
+		int color = vc->vc_splash_data->splash_color << 4 |
+			vc->vc_splash_data->splash_fg_color;
+		if (vc->vc_def_color != color)
+			con_remap_def_color(vc, color);
 	        if (info->splash_data) {
 			if (fg_console == vc->vc_num) {
 				update_region(vc,
@@ -1163,8 +1163,11 @@ static int splash_status(struct vc_data *vc)
 				splash_clear_margins(vc, info, 0);
 			}
 		}
-	} else
+	} else {
 		splash_off(vc,info);
+		if (vc->vc_def_color != 0x07)
+			con_remap_def_color(vc, 0x07);
+	}
 
 	return 0;
 }
