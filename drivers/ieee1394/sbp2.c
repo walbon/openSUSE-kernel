@@ -312,8 +312,10 @@ static struct hpsb_protocol_driver sbp2_driver = {
 /*
  * Interface to SCSI core
  */
-static int sbp2scsi_queuecommand(struct scsi_cmnd *,
-				 void (*)(struct scsi_cmnd *));
+static int sbp2scsi_queuecommand_lck(struct scsi_cmnd *,
+				     void (*)(struct scsi_cmnd *));
+static DEF_SCSI_QCMD(sbp2scsi_queuecommand)
+
 static int sbp2scsi_abort(struct scsi_cmnd *);
 static int sbp2scsi_reset(struct scsi_cmnd *);
 static int sbp2scsi_slave_alloc(struct scsi_device *);
@@ -1855,8 +1857,8 @@ static int sbp2_handle_status_write(struct hpsb_host *host, int nodeid,
  * SCSI interface related section
  **************************************/
 
-static int sbp2scsi_queuecommand(struct scsi_cmnd *SCpnt,
-				 void (*done)(struct scsi_cmnd *))
+static int sbp2scsi_queuecommand_lck(struct scsi_cmnd *SCpnt,
+				     void (*done)(struct scsi_cmnd *))
 {
 	struct sbp2_lu *lu = (struct sbp2_lu *)SCpnt->device->host->hostdata[0];
 	struct sbp2_fwhost_info *hi;
