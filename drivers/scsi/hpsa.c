@@ -4117,8 +4117,7 @@ static void hpsa_undo_allocations_after_kdump_soft_reset(struct ctlr_info *h)
 	kfree(h);
 }
 
-static int __devinit hpsa_init_one(struct pci_dev *pdev,
-				    const struct pci_device_id *ent)
+int hpsa_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	int dac, rc;
 	struct ctlr_info *h;
