@@ -619,6 +619,16 @@ static inline int mdio_mii_ioctl(const struct mdio_if_info *mdio,
 }
 #endif
 
+#if (LINUX_VERSION_CODE < 0x020624)
+static inline void usleep_range(unsigned long min, unsigned long max)
+{
+	if (min < 1000)
+		udelay(min);
+	else
+		msleep(min / 1000);
+}
+#endif
+
 #if (LINUX_VERSION_CODE < 0x02061D)
 static inline ssize_t
 pci_read_vpd(struct pci_dev *dev, loff_t pos, size_t count, u8 *buf)
@@ -669,10 +679,6 @@ pci_read_vpd(struct pci_dev *dev, loff_t pos, size_t count, u8 *buf)
 	 (((u8*)addr)[4] == 0xff) && (((u8*)addr)[5] == 0xff))
 #endif
 
-#ifndef DEFINE_PCI_DEVICE_TABLE
-#define DEFINE_PCI_DEVICE_TABLE(tbl) const struct pci_device_id bnx2x_pci_tbl[]
-#endif
-
 #if (LINUX_VERSION_CODE < 0x020606)
 #undef netdev_printk
 #undef netdev_err
@@ -705,6 +711,11 @@ static inline const char *netdev_name(const struct net_device *dev)
 #ifndef netdev_err
 #define netdev_err(dev, format, args...)			\
 	netdev_printk(KERN_ERR, dev, format, ##args)
+#endif
+
+#ifndef netdev_dbg
+#define netdev_dbg(dev, format, args...)			\
+	netdev_printk(KERN_DEBUG, dev, format, ##args)
 #endif
 
 #ifndef pr_cont
@@ -798,6 +809,14 @@ static inline __be16 vlan_get_protocol(const struct sk_buff *skb)
 #ifndef netdev_for_each_uc_addr
 #define netdev_for_each_uc_addr(ha, dev) \
 	list_for_each_entry(ha, &dev->uc.list, list)
+#endif
+
+#ifndef SUPPORTED_20000baseMLD2_Full
+#define SUPPORTED_20000baseMLD2_Full	(1 << 21)
+#endif
+
+#ifndef SUPPORTED_20000baseKR2_Full
+#define SUPPORTED_20000baseKR2_Full	(1 << 22)
 #endif
 
 #endif /* __BNX2X_COMPAT_H__ */
