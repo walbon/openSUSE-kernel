@@ -131,6 +131,7 @@ struct ehci_hcd {			/* one per controller */
 	unsigned		has_amcc_usb23:1;
 	unsigned		need_io_watchdog:1;
 	unsigned		broken_periodic:1;
+	unsigned		fs_i_thresh:1;	/* Intel iso scheduling */
 	unsigned		amd_l1_fix:1;
 	unsigned		use_dummy_qh:1;	/* AMD Frame List table quirk*/
 
@@ -158,10 +159,6 @@ struct ehci_hcd {			/* one per controller */
 	/* debug files */
 #ifdef DEBUG
 	struct dentry		*debug_dir;
-	struct dentry		*debug_async;
-	struct dentry		*debug_periodic;
-	struct dentry		*debug_registers;
-	struct dentry		*debug_lpm;
 #endif
 };
 
@@ -406,15 +403,12 @@ struct ehci_iso_stream {
 	u32			refcount;
 	u8			bEndpointAddress;
 	u8			highspeed;
-	u16			depth;		/* depth in uframes */
 	struct list_head	td_list;	/* queued itds/sitds */
 	struct list_head	free_list;	/* list of unused itds/sitds */
 	struct usb_device	*udev;
 	struct usb_host_endpoint *ep;
 
 	/* output of (re)scheduling */
-	unsigned long		start;		/* jiffies */
-	unsigned long		rescheduled;
 	int			next_uframe;
 	__hc32			splits;
 
