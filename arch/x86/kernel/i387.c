@@ -209,8 +209,6 @@ int xfpregs_set(struct task_struct *target, const struct user_regset *regset,
 	if (ret)
 		return ret;
 
-	set_stopped_child_used_math(target);
-
 	sanitize_i387_state(target);
 
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
@@ -245,34 +243,18 @@ int xstateregs_get(struct task_struct *target, const struct user_regset *regset,
 		return ret;
 
 	/*
-	 * First copy the fxsave bytes 0..463.
+	 * Copy the 48bytes defined by the software first into the xstate
+	 * memory layout in the thread struct, so that we can copy the entire
+	 * xstateregs to the user using one user_regset_copyout().
 	 */
-	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf,
-				  &target->thread.fpu.state->xsave, 0,
-				  offsetof(struct user_xstateregs,
-					   i387.xstate_fx_sw));
-	if (ret)
-		return ret;
+	memcpy(&target->thread.fpu.state->fxsave.sw_reserved,
+	       xstate_fx_sw_bytes, sizeof(xstate_fx_sw_bytes));
 
 	/*
-	 * Copy the 48bytes defined by software.
+	 * Copy the xstate memory layout.
 	 */
 	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf,
-				  xstate_fx_sw_bytes,
-				  offsetof(struct user_xstateregs,
-					   i387.xstate_fx_sw),
-				  offsetof(struct user_xstateregs,
-					   xsave_hdr));
-	if (ret)
-		return ret;
-
-	/*
-	 * Copy the rest of xstate memory layout.
-	 */
-	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf,
-				  &target->thread.fpu.state->xsave.xsave_hdr,
-				  offsetof(struct user_xstateregs,
-					   xsave_hdr), -1);
+				  &target->thread.fpu.state->xsave, 0, -1);
 	return ret;
 }
 
@@ -490,8 +472,6 @@ int fpregs_set(struct task_struct *target, const struct user_regset *regset,
 	ret = init_fpu(target);
 	if (ret)
 		return ret;
-
-	set_stopped_child_used_math(target);
 
 	sanitize_i387_state(target);
 
