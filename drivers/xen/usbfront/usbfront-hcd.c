@@ -86,7 +86,7 @@ static int xenhcd_setup(struct usb_hcd *hcd)
 static int xenhcd_run(struct usb_hcd *hcd)
 {
 	hcd->uses_new_polling = 1;
-	hcd->poll_rh = 0;
+	clear_bit(HCD_FLAG_POLL_RH, &hcd->flags);
 	hcd->state = HC_STATE_RUNNING;
 	create_debug_file(hcd_to_info(hcd));
 	return 0;
