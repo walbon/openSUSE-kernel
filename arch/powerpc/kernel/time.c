@@ -887,7 +887,7 @@ void update_vsyscall(struct timespec *wall_time, struct clocksource *clock,
 
 	tmp = wall_time->tv_nsec;
 	if (wall_time->tv_nsec >= NSEC_PER_SEC) {
-		printk(KERN_ERR "update_vsyscall: %d >= %d, clamping to %d\n",
+		printk(KERN_ERR "update_vsyscall: %ld >= %ld, clamping to %ld\n",
 				wall_time->tv_nsec, NSEC_PER_SEC, NSEC_PER_SEC);
 		tmp = NSEC_PER_SEC;
 	}
