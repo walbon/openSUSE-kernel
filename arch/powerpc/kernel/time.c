@@ -869,6 +869,7 @@ void update_vsyscall(struct timespec *wall_time, struct clocksource *clock,
 {
 	u64 t2x, stamp_xsec;
 	u32 frac_sec;
+	long tmp;
 
 	if (clock != &clocksource_timebase)
 		return;
@@ -884,9 +885,14 @@ void update_vsyscall(struct timespec *wall_time, struct clocksource *clock,
 	do_div(stamp_xsec, 1000000000);
 	stamp_xsec += (u64) wall_time->tv_sec * XSEC_PER_SEC;
 
-	BUG_ON(wall_time->tv_nsec >= NSEC_PER_SEC);
+	tmp = wall_time->tv_nsec;
+	if (wall_time->tv_nsec >= NSEC_PER_SEC) {
+		printk(KERN_ERR "update_vsyscall: %d >= %d, clamping to %d\n",
+				wall_time->tv_nsec, NSEC_PER_SEC, NSEC_PER_SEC);
+		tmp = NSEC_PER_SEC;
+	}
 	/* this is tv_nsec / 1e9 as a 0.32 fraction */
-	frac_sec = ((u64) wall_time->tv_nsec * 18446744073ULL) >> 32;
+	frac_sec = ((u64) tmp * 18446744073ULL) >> 32;
 	update_gtod(clock->cycle_last, stamp_xsec, t2x, wall_time, frac_sec);
 }
 
