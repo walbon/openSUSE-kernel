@@ -142,44 +142,16 @@ static void igb_vlan_rx_kill_vid(struct net_device *, u16);
 static void igb_restore_vlan(struct igb_adapter *);
 static void igb_ping_all_vfs(struct igb_adapter *);
 static void igb_msg_task(struct igb_adapter *);
-static int igb_rcv_msg_from_vf(struct igb_adapter *, u32);
 static inline void igb_set_rah_pool(struct e1000_hw *, int , int);
 static void igb_vmm_control(struct igb_adapter *);
-static int igb_set_vf_mac(struct igb_adapter *adapter, int, unsigned char *);
+static int igb_set_vf_mac(struct igb_adapter *, int, unsigned char *);
 static void igb_restore_vf_multicasts(struct igb_adapter *adapter);
-
-static inline void igb_set_vmolr(struct e1000_hw *hw, int vfn)
-{
-	u32 reg_data;
-
-	reg_data = rd32(E1000_VMOLR(vfn));
-	reg_data |= E1000_VMOLR_BAM |	 /* Accept broadcast */
-	            E1000_VMOLR_ROPE |   /* Accept packets matched in UTA */
-	            E1000_VMOLR_ROMPE |  /* Accept packets matched in MTA */
-	            E1000_VMOLR_AUPE |   /* Accept untagged packets */
-	            E1000_VMOLR_STRVLAN; /* Strip vlan tags */
-	wr32(E1000_VMOLR(vfn), reg_data);
-}
-
-static inline int igb_set_vf_rlpml(struct igb_adapter *adapter, int size,
-                                 int vfn)
-{
-	struct e1000_hw *hw = &adapter->hw;
-	u32 vmolr;
-
-	/* if it isn't the PF check to see if VFs are enabled and
-	 * increase the size to support vlan tags */
-	if (vfn < adapter->vfs_allocated_count &&
-	    adapter->vf_data[vfn].vlans_enabled)
-		size += VLAN_TAG_SIZE;
-
-	vmolr = rd32(E1000_VMOLR(vfn));
-	vmolr &= ~E1000_VMOLR_RLPML_MASK;
-	vmolr |= size | E1000_VMOLR_LPE;
-	wr32(E1000_VMOLR(vfn), vmolr);
-
-	return 0;
-}
+static int igb_ndo_set_vf_mac(struct net_device *netdev, int vf, u8 *mac);
+static int igb_ndo_set_vf_vlan(struct net_device *netdev,
+			       int vf, u16 vlan, u8 qos);
+static int igb_ndo_set_vf_bw(struct net_device *netdev, int vf, int tx_rate);
+static int igb_ndo_get_vf_config(struct net_device *netdev, int vf,
+				 struct ifla_vf_info *ivi);
 
 static inline void igb_set_rah_pool(struct e1000_hw *hw, int pool, int entry)
 {
@@ -1203,7 +1175,6 @@ int igb_up(struct igb_adapter *adapter)
 
 	igb_vmm_control(adapter);
 	igb_set_rah_pool(hw, adapter->vfs_allocated_count, 0);
-	igb_set_vmolr(hw, adapter->vfs_allocated_count);
 
 	/* Clear any pending interrupts. */
 	rd32(E1000_ICR);
@@ -1378,10 +1349,10 @@ void igb_reset(struct igb_adapter *adapter)
 	if (adapter->vfs_allocated_count) {
 		int i;
 		for (i = 0 ; i < adapter->vfs_allocated_count; i++)
-			adapter->vf_data[i].clear_to_send = false;
+			adapter->vf_data[i].flags = 0;
 
 		/* ping all the active vfs to let them know we are going down */
-			igb_ping_all_vfs(adapter);
+		igb_ping_all_vfs(adapter);
 
 		/* disable transmits and receives */
 		wr32(E1000_VFRE, 0);
@@ -1424,6 +1395,10 @@ static const struct net_device_ops igb_netdev_ops = {
 	.ndo_vlan_rx_register	= igb_vlan_rx_register,
 	.ndo_vlan_rx_add_vid	= igb_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= igb_vlan_rx_kill_vid,
+	.ndo_set_vf_mac		= igb_ndo_set_vf_mac,
+	.ndo_set_vf_vlan	= igb_ndo_set_vf_vlan,
+	.ndo_set_vf_tx_rate	= igb_ndo_set_vf_bw,
+	.ndo_get_vf_config	= igb_ndo_get_vf_config,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= igb_netpoll,
 #endif
@@ -2046,7 +2021,6 @@ static int igb_open(struct net_device *netdev)
 
 	igb_vmm_control(adapter);
 	igb_set_rah_pool(hw, adapter->vfs_allocated_count, 0);
-	igb_set_vmolr(hw, adapter->vfs_allocated_count);
 
 	err = igb_request_irq(adapter);
 	if (err)
@@ -2391,21 +2365,12 @@ static void igb_setup_rctl(struct igb_adapter *adapter)
 	 * if an un-trusted VF does not provide descriptors to hardware.
 	 */
 	if (adapter->vfs_allocated_count) {
-		u32 vmolr;
-
 		/* set all queue drop enable bits */
 		wr32(E1000_QDE, ALL_QUEUES);
 		srrctl |= E1000_SRRCTL_DROP_EN;
 
 		/* disable queue 0 to prevent tail write w/o re-config */
 		wr32(E1000_RXDCTL(0), 0);
-
-		vmolr = rd32(E1000_VMOLR(adapter->vfs_allocated_count));
-		if (rctl & E1000_RCTL_LPE)
-			vmolr |= E1000_VMOLR_LPE;
-		if (adapter->num_rx_queues > 1)
-			vmolr |= E1000_VMOLR_RSSE;
-		wr32(E1000_VMOLR(adapter->vfs_allocated_count), vmolr);
 	}
 
 	for (i = 0; i < adapter->num_rx_queues; i++) {
@@ -2414,6 +2379,26 @@ static void igb_setup_rctl(struct igb_adapter *adapter)
 	}
 
 	wr32(E1000_RCTL, rctl);
+}
+
+static inline int igb_set_vf_rlpml(struct igb_adapter *adapter, int size,
+                                   int vfn)
+{
+       struct e1000_hw *hw = &adapter->hw;
+       u32 vmolr;
+
+       /* if it isn't the PF check to see if VFs are enabled and
+        * increase the size to support vlan tags */
+       if (vfn < adapter->vfs_allocated_count &&
+           adapter->vf_data[vfn].vlans_enabled)
+               size += VLAN_TAG_SIZE;
+
+       vmolr = rd32(E1000_VMOLR(vfn));
+       vmolr &= ~E1000_VMOLR_RLPML_MASK;
+       vmolr |= size | E1000_VMOLR_LPE;
+       wr32(E1000_VMOLR(vfn), vmolr);
+
+       return 0;
 }
 
 /**
@@ -2435,10 +2420,45 @@ static void igb_rlpml_set(struct igb_adapter *adapter)
 	 * size and set the VMOLR RLPML to the size we need */
 	if (pf_id) {
 		igb_set_vf_rlpml(adapter, max_frame_size, pf_id);
-		max_frame_size = MAX_STD_JUMBO_FRAME_SIZE + VLAN_TAG_SIZE;
+		max_frame_size = MAX_JUMBO_FRAME_SIZE;
 	}
 
 	wr32(E1000_RLPML, max_frame_size);
+}
+
+static inline void igb_set_vmolr(struct igb_adapter *adapter,
+				 int vfn, bool aupe)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	u32 vmolr;
+
+	/*
+	 * This register exists only on 82576 and newer so if we are older then
+	 * we should exit and do nothing
+	 */
+	if (hw->mac.type < e1000_82576)
+		return;
+
+	vmolr = rd32(E1000_VMOLR(vfn));
+	vmolr |= E1000_VMOLR_STRVLAN;      /* Strip vlan tags */
+	if (aupe)
+		vmolr |= E1000_VMOLR_AUPE;        /* Accept untagged packets */
+	else
+		vmolr &= ~(E1000_VMOLR_AUPE); /* Tagged packets ONLY */
+
+	/* clear all bits that might not be set */
+	vmolr &= ~(E1000_VMOLR_BAM | E1000_VMOLR_RSSE);
+
+	if (adapter->num_rx_queues > 1 && vfn == adapter->vfs_allocated_count)
+		vmolr |= E1000_VMOLR_RSSE; /* enable RSS */
+	/*
+	 * for VMDq only allow the VFs and pool 0 to accept broadcast and
+	 * multicast packets
+	 */
+	if (vfn <= adapter->vfs_allocated_count)
+		vmolr |= E1000_VMOLR_BAM;	   /* Accept broadcast */
+
+	wr32(E1000_VMOLR(vfn), vmolr);
 }
 
 /**
@@ -2503,6 +2523,9 @@ static void igb_configure_rx(struct igb_adapter *adapter)
 		ring->tail = E1000_RDT(j);
 		writel(0, hw->hw_addr + ring->tail);
 		writel(0, hw->hw_addr + ring->head);
+
+		/* set filtering for VMDQ pools */
+		igb_set_vmolr(adapter, reg_idx & 0x7, true);
 
 		rxdctl = rd32(E1000_RXDCTL(j));
 		rxdctl |= E1000_RXDCTL_QUEUE_ENABLE;
@@ -4212,10 +4235,49 @@ static void igb_ping_all_vfs(struct igb_adapter *adapter)
 
 	for (i = 0 ; i < adapter->vfs_allocated_count; i++) {
 		ping = E1000_PF_CONTROL_MSG;
-		if (adapter->vf_data[i].clear_to_send)
+		if (adapter->vf_data[i].flags & IGB_VF_FLAG_CTS)
 			ping |= E1000_VT_MSGTYPE_CTS;
 		igb_write_mbx(hw, &ping, 1, i);
 	}
+}
+
+static int igb_set_vf_promisc(struct igb_adapter *adapter, u32 *msgbuf, u32 vf)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	u32 vmolr = rd32(E1000_VMOLR(vf));
+	struct vf_data_storage *vf_data = &adapter->vf_data[vf];
+
+	vf_data->flags |= ~(IGB_VF_FLAG_UNI_PROMISC |
+	                    IGB_VF_FLAG_MULTI_PROMISC);
+	vmolr &= ~(E1000_VMOLR_ROPE | E1000_VMOLR_ROMPE | E1000_VMOLR_MPME);
+
+	if (*msgbuf & E1000_VF_SET_PROMISC_MULTICAST) {
+		vmolr |= E1000_VMOLR_MPME;
+		*msgbuf &= ~E1000_VF_SET_PROMISC_MULTICAST;
+	} else {
+		/*
+		 * if we have hashes and we are clearing a multicast promisc
+		 * flag we need to write the hashes to the MTA as this step
+		 * was previously skipped
+		 */
+		if (vf_data->num_vf_mc_hashes > 30) {
+			vmolr |= E1000_VMOLR_MPME;
+		} else if (vf_data->num_vf_mc_hashes) {
+			int j;
+			vmolr |= E1000_VMOLR_ROMPE;
+			for (j = 0; j < vf_data->num_vf_mc_hashes; j++)
+				igb_mta_set(hw, vf_data->vf_mc_hashes[j]);
+		}
+	}
+
+	wr32(E1000_VMOLR(vf), vmolr);
+
+	/* there are flags left unprocessed, likely not supported */
+	if (*msgbuf & E1000_VT_MSGINFO_MASK)
+		return -EINVAL;
+
+	return 0;
+
 }
 
 static int igb_set_vf_multicasts(struct igb_adapter *adapter,
@@ -4226,18 +4288,17 @@ static int igb_set_vf_multicasts(struct igb_adapter *adapter,
 	struct vf_data_storage *vf_data = &adapter->vf_data[vf];
 	int i;
 
-	/* only up to 30 hash values supported */
-	if (n > 30)
-		n = 30;
-
-	/* salt away the number of multi cast addresses assigned
+	/* salt away the number of multicast addresses assigned
 	 * to this VF for later use to restore when the PF multi cast
 	 * list changes
 	 */
 	vf_data->num_vf_mc_hashes = n;
 
-	/* VFs are limited to using the MTA hash table for their multicast
-	 * addresses */
+	/* only up to 30 hash values supported */
+	if (n > 30)
+		n = 30;
+
+	/* store the hashes for later use */
 	for (i = 0; i < n; i++)
 		vf_data->vf_mc_hashes[i] = hash_list[i];
 
@@ -4254,9 +4315,20 @@ static void igb_restore_vf_multicasts(struct igb_adapter *adapter)
 	int i, j;
 
 	for (i = 0; i < adapter->vfs_allocated_count; i++) {
+		u32 vmolr = rd32(E1000_VMOLR(i));
+		vmolr &= ~(E1000_VMOLR_ROMPE | E1000_VMOLR_MPME);
+
 		vf_data = &adapter->vf_data[i];
-		for (j = 0; j < vf_data->num_vf_mc_hashes; j++)
-			igb_mta_set(hw, vf_data->vf_mc_hashes[j]);
+
+		if ((vf_data->num_vf_mc_hashes > 30) ||
+		    (vf_data->flags & IGB_VF_FLAG_MULTI_PROMISC)) {
+			vmolr |= E1000_VMOLR_MPME;
+		} else if (vf_data->num_vf_mc_hashes) {
+			vmolr |= E1000_VMOLR_ROMPE;
+			for (j = 0; j < vf_data->num_vf_mc_hashes; j++)
+				igb_mta_set(hw, vf_data->vf_mc_hashes[j]);
+		}
+		wr32(E1000_VMOLR(i), vmolr);
 	}
 }
 
@@ -4378,10 +4450,57 @@ static s32 igb_vlvf_set(struct igb_adapter *adapter, u32 vid, bool add, u32 vf)
 				reg |= size;
 				wr32(E1000_VMOLR(vf), reg);
 			}
-			return 0;
 		}
 	}
-	return -1;
+	return 0;
+}
+
+static void igb_set_vmvir(struct igb_adapter *adapter, u32 vid, u32 vf)
+{
+	struct e1000_hw *hw = &adapter->hw;
+
+	if (vid)
+		wr32(E1000_VMVIR(vf), (vid | E1000_VMVIR_VLANA_DEFAULT));
+	else
+		wr32(E1000_VMVIR(vf), 0);
+}
+
+static int igb_ndo_set_vf_vlan(struct net_device *netdev,
+			       int vf, u16 vlan, u8 qos)
+{
+	int err = 0;
+	struct igb_adapter *adapter = netdev_priv(netdev);
+
+	if ((vf >= adapter->vfs_allocated_count) || (vlan > 4095) || (qos > 7))
+		return -EINVAL;
+	if (vlan || qos) {
+		err = igb_vlvf_set(adapter, vlan, !!vlan, vf);
+		if (err)
+			goto out;
+		igb_set_vmvir(adapter, vlan | (qos << VLAN_PRIO_SHIFT), vf);
+		igb_set_vmolr(adapter, vf, !vlan);
+		adapter->vf_data[vf].pf_vlan = vlan;
+		adapter->vf_data[vf].pf_qos = qos;
+		dev_info(&adapter->pdev->dev,
+			 "Setting VLAN %d, QOS 0x%x on VF %d\n", vlan, qos, vf);
+		if (test_bit(__IGB_DOWN, &adapter->state)) {
+			dev_warn(&adapter->pdev->dev,
+				 "The VF VLAN has been set,"
+				 " but the PF device is not up.\n");
+			dev_warn(&adapter->pdev->dev,
+				 "Bring the PF device up before"
+				 " attempting to use the VF device.\n");
+		}
+	} else {
+		igb_vlvf_set(adapter, adapter->vf_data[vf].pf_vlan,
+				   false, vf);
+		igb_set_vmvir(adapter, vlan, vf);
+		igb_set_vmolr(adapter, vf, true);
+		adapter->vf_data[vf].pf_vlan = 0;
+		adapter->vf_data[vf].pf_qos = 0;
+       }
+out:
+       return err;
 }
 
 static int igb_set_vf_vlan(struct igb_adapter *adapter, u32 *msgbuf, u32 vf)
@@ -4392,18 +4511,23 @@ static int igb_set_vf_vlan(struct igb_adapter *adapter, u32 *msgbuf, u32 vf)
 	return igb_vlvf_set(adapter, vid, add, vf);
 }
 
-static inline void igb_vf_reset_event(struct igb_adapter *adapter, u32 vf)
+static inline void igb_vf_reset(struct igb_adapter *adapter, u32 vf)
 {
-	struct e1000_hw *hw = &adapter->hw;
-
-	/* disable mailbox functionality for vf */
-	adapter->vf_data[vf].clear_to_send = false;
+	/* clear flags */
+	adapter->vf_data[vf].flags &= ~(IGB_VF_FLAG_PF_SET_MAC);
+	adapter->vf_data[vf].last_nack = jiffies;
 
 	/* reset offloads to defaults */
-	igb_set_vmolr(hw, vf);
+	igb_set_vmolr(adapter, vf, true);
 
 	/* reset vlans for device */
 	igb_clear_vf_vfta(adapter, vf);
+	if (adapter->vf_data[vf].pf_vlan)
+		igb_ndo_set_vf_vlan(adapter->netdev, vf,
+				    adapter->vf_data[vf].pf_vlan,
+				    adapter->vf_data[vf].pf_qos);
+	else
+		igb_clear_vf_vfta(adapter, vf);
 
 	/* reset multicast table array for vf */
 	adapter->vf_data[vf].num_vf_mc_hashes = 0;
@@ -4412,7 +4536,19 @@ static inline void igb_vf_reset_event(struct igb_adapter *adapter, u32 vf)
 	igb_set_rx_mode(adapter->netdev);
 }
 
-static inline void igb_vf_reset_msg(struct igb_adapter *adapter, u32 vf)
+static void igb_vf_reset_event(struct igb_adapter *adapter, u32 vf)
+{
+	unsigned char *vf_mac = adapter->vf_data[vf].vf_mac_addresses;
+
+	/* generate a new mac address as we were hotplug removed/added */
+	if (!(adapter->vf_data[vf].flags & IGB_VF_FLAG_PF_SET_MAC))
+		random_ether_addr(vf_mac);
+
+	/* process remaining reset events */
+	igb_vf_reset(adapter, vf);
+}
+
+static void igb_vf_reset_msg(struct igb_adapter *adapter, u32 vf)
 {
 	struct e1000_hw *hw = &adapter->hw;
 	unsigned char *vf_mac = adapter->vf_data[vf].vf_mac_addresses;
@@ -4421,7 +4557,7 @@ static inline void igb_vf_reset_msg(struct igb_adapter *adapter, u32 vf)
 	u8 *addr = (u8 *)(&msgbuf[1]);
 
 	/* process all the same items cleared in a function level reset */
-	igb_vf_reset_event(adapter, vf);
+	igb_vf_reset(adapter, vf);
 
 	/* set vf mac address */
 	igb_rar_set(hw, vf_mac, rar_entry);
@@ -4433,8 +4569,7 @@ static inline void igb_vf_reset_msg(struct igb_adapter *adapter, u32 vf)
 	reg = rd32(E1000_VFRE);
 	wr32(E1000_VFRE, reg | (1 << vf));
 
-	/* enable mailbox functionality for vf */
-	adapter->vf_data[vf].clear_to_send = true;
+	adapter->vf_data[vf].flags = IGB_VF_FLAG_CTS;
 
 	/* reply to reset with ack and vf mac address */
 	msgbuf[0] = E1000_VF_RESET | E1000_VT_MSGTYPE_ACK;
@@ -4444,66 +4579,45 @@ static inline void igb_vf_reset_msg(struct igb_adapter *adapter, u32 vf)
 
 static int igb_set_vf_mac_addr(struct igb_adapter *adapter, u32 *msg, int vf)
 {
-		unsigned char *addr = (char *)&msg[1];
-		int err = -1;
+	unsigned char *addr = (char *)&msg[1];
+	int err = -1;
 
-		if (is_valid_ether_addr(addr))
-			err = igb_set_vf_mac(adapter, vf, addr);
+	if (is_valid_ether_addr(addr))
+		err = igb_set_vf_mac(adapter, vf, addr);
 
-		return err;
-
+	return err;
 }
 
 static void igb_rcv_ack_from_vf(struct igb_adapter *adapter, u32 vf)
 {
 	struct e1000_hw *hw = &adapter->hw;
+	struct vf_data_storage *vf_data = &adapter->vf_data[vf];
 	u32 msg = E1000_VT_MSGTYPE_NACK;
 
 	/* if device isn't clear to send it shouldn't be reading either */
-	if (!adapter->vf_data[vf].clear_to_send)
+	if (!(vf_data->flags & IGB_VF_FLAG_CTS) &&
+	    time_after(jiffies, vf_data->last_nack + (2 * HZ))) {
 		igb_write_mbx(hw, &msg, 1, vf);
-}
-
-
-static void igb_msg_task(struct igb_adapter *adapter)
-{
-	struct e1000_hw *hw = &adapter->hw;
-	u32 vf;
-
-	for (vf = 0; vf < adapter->vfs_allocated_count; vf++) {
-		/* process any reset requests */
-		if (!igb_check_for_rst(hw, vf)) {
-			adapter->vf_data[vf].clear_to_send = false;
-			igb_vf_reset_event(adapter, vf);
-		}
-
-		/* process any messages pending */
-		if (!igb_check_for_msg(hw, vf))
-			igb_rcv_msg_from_vf(adapter, vf);
-
-		/* process any acks */
-		if (!igb_check_for_ack(hw, vf))
-			igb_rcv_ack_from_vf(adapter, vf);
-
+		vf_data->last_nack = jiffies;
 	}
 }
 
-static int igb_rcv_msg_from_vf(struct igb_adapter *adapter, u32 vf)
+static void igb_rcv_msg_from_vf(struct igb_adapter *adapter, u32 vf)
 {
-	u32 mbx_size = E1000_VFMAILBOX_SIZE;
-	u32 msgbuf[mbx_size];
+	struct pci_dev *pdev = adapter->pdev;
+	u32 msgbuf[E1000_VFMAILBOX_SIZE];
 	struct e1000_hw *hw = &adapter->hw;
+	struct vf_data_storage *vf_data = &adapter->vf_data[vf];
 	s32 retval;
 
-	retval = igb_read_mbx(hw, msgbuf, mbx_size, vf);
+	retval = igb_read_mbx(hw, msgbuf, E1000_VFMAILBOX_SIZE, vf);
 
 	if (retval)
-		dev_err(&adapter->pdev->dev,
-		        "Error receiving message from VF\n");
+		dev_err(&pdev->dev, "Error receiving message from VF\n");
 
 	/* this is a message we already processed, do nothing */
 	if (msgbuf[0] & (E1000_VT_MSGTYPE_ACK | E1000_VT_MSGTYPE_NACK))
-		return retval;
+		return;
 
 	/*
 	 * until the vf completes a reset it should not be
@@ -4512,19 +4626,24 @@ static int igb_rcv_msg_from_vf(struct igb_adapter *adapter, u32 vf)
 
 	if (msgbuf[0] == E1000_VF_RESET) {
 		igb_vf_reset_msg(adapter, vf);
-
-		return retval;
+		return;
 	}
 
-	if (!adapter->vf_data[vf].clear_to_send) {
-		msgbuf[0] |= E1000_VT_MSGTYPE_NACK;
-		igb_write_mbx(hw, msgbuf, 1, vf);
-		return retval;
+	if (!(vf_data->flags & IGB_VF_FLAG_CTS)) {
+		msgbuf[0] = E1000_VT_MSGTYPE_NACK;
+		if (time_after(jiffies, vf_data->last_nack + (2 * HZ))) {
+			igb_write_mbx(hw, msgbuf, 1, vf);
+			vf_data->last_nack = jiffies;
+		}
+		return;
 	}
 
 	switch ((msgbuf[0] & 0xFFFF)) {
 	case E1000_VF_SET_MAC_ADDR:
 		retval = igb_set_vf_mac_addr(adapter, msgbuf, vf);
+		break;
+	case E1000_VF_SET_PROMISC:
+		retval = igb_set_vf_promisc(adapter, msgbuf, vf);
 		break;
 	case E1000_VF_SET_MULTICAST:
 		retval = igb_set_vf_multicasts(adapter, msgbuf, vf);
@@ -4533,7 +4652,10 @@ static int igb_rcv_msg_from_vf(struct igb_adapter *adapter, u32 vf)
 		retval = igb_set_vf_rlpml(adapter, msgbuf[1], vf);
 		break;
 	case E1000_VF_SET_VLAN:
-		retval = igb_set_vf_vlan(adapter, msgbuf, vf);
+		if (adapter->vf_data[vf].pf_vlan)
+			retval = -1;
+		else
+			retval = igb_set_vf_vlan(adapter, msgbuf, vf);
 		break;
 	default:
 		dev_err(&adapter->pdev->dev, "Unhandled Msg %08x\n", msgbuf[0]);
@@ -4550,8 +4672,26 @@ static int igb_rcv_msg_from_vf(struct igb_adapter *adapter, u32 vf)
 	msgbuf[0] |= E1000_VT_MSGTYPE_CTS;
 
 	igb_write_mbx(hw, msgbuf, 1, vf);
+}
 
-	return retval;
+static void igb_msg_task(struct igb_adapter *adapter)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	u32 vf;
+
+	for (vf = 0; vf < adapter->vfs_allocated_count; vf++) {
+		/* process any reset requests */
+		if (!igb_check_for_rst(hw, vf))
+			igb_vf_reset_event(adapter, vf);
+
+		/* process any messages pending */
+		if (!igb_check_for_msg(hw, vf))
+			igb_rcv_msg_from_vf(adapter, vf);
+
+		/* process any acks */
+		if (!igb_check_for_ack(hw, vf))
+			igb_rcv_ack_from_vf(adapter, vf);
+	}
 }
 
 /**
@@ -5828,6 +5968,43 @@ static int igb_set_vf_mac(struct igb_adapter *adapter,
 	igb_rar_set(hw, mac_addr, rar_entry);
 	igb_set_rah_pool(hw, vf, rar_entry);
 
+	return 0;
+}
+
+static int igb_ndo_set_vf_mac(struct net_device *netdev, int vf, u8 *mac)
+{
+	struct igb_adapter *adapter = netdev_priv(netdev);
+	if (!is_valid_ether_addr(mac) || (vf >= adapter->vfs_allocated_count))
+		return -EINVAL;
+	adapter->vf_data[vf].flags |= IGB_VF_FLAG_PF_SET_MAC;
+	dev_info(&adapter->pdev->dev, "setting MAC %pM on VF %d\n", mac, vf);
+	dev_info(&adapter->pdev->dev, "Reload the VF driver to make this"
+				      " change effective.");
+	if (test_bit(__IGB_DOWN, &adapter->state)) {
+		dev_warn(&adapter->pdev->dev, "The VF MAC address has been set,"
+			 " but the PF device is not up.\n");
+		dev_warn(&adapter->pdev->dev, "Bring the PF device up before"
+			 " attempting to use the VF device.\n");
+	}
+	return igb_set_vf_mac(adapter, vf, mac);
+}
+
+static int igb_ndo_set_vf_bw(struct net_device *netdev, int vf, int tx_rate)
+{
+	return -EOPNOTSUPP;
+}
+
+static int igb_ndo_get_vf_config(struct net_device *netdev,
+				 int vf, struct ifla_vf_info *ivi)
+{
+	struct igb_adapter *adapter = netdev_priv(netdev);
+	if (vf >= adapter->vfs_allocated_count)
+		return -EINVAL;
+	ivi->vf = vf;
+	memcpy(&ivi->mac, adapter->vf_data[vf].vf_mac_addresses, ETH_ALEN);
+	ivi->tx_rate = 0;
+	ivi->vlan = adapter->vf_data[vf].pf_vlan;
+	ivi->qos = adapter->vf_data[vf].pf_qos;
 	return 0;
 }
 
