@@ -2525,7 +2525,7 @@ static void igb_configure_rx(struct igb_adapter *adapter)
 		writel(0, hw->hw_addr + ring->head);
 
 		/* set filtering for VMDQ pools */
-		igb_set_vmolr(adapter, reg_idx & 0x7, true);
+		igb_set_vmolr(adapter, j & 0x7, true);
 
 		rxdctl = rd32(E1000_RXDCTL(j));
 		rxdctl |= E1000_RXDCTL_QUEUE_ENABLE;
