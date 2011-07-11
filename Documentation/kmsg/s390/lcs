@@ -159,3 +159,4 @@
 /*? Text: "Initialization failed\n" */
 /*? Text: "Terminating lcs module.\n" */
 /*? Text: "Device %s could not be recovered!\n" */
+/*? Text: "%s: The lcs device driver failed to recover the device\n" */
