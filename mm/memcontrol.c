@@ -1897,7 +1897,7 @@ static int mem_cgroup_move_parent(struct page_cgroup *pc,
 	if (isolate_lru_page(page))
 		goto put;
 	/* The page is isolated from LRU and we have no race with splitting */
-	nr_pages =  1 << compound_order(page);
+	nr_pages =  hpage_nr_pages(page);
 
 	parent = mem_cgroup_from_cont(pcg);
 	ret = __mem_cgroup_try_charge(NULL, gfp_mask, nr_pages, &parent, false, page);
