@@ -139,7 +139,7 @@ static inline bool res_counter_limit_check_locked(struct res_counter *cnt)
 
 static inline bool res_counter_soft_limit_check_locked(struct res_counter *cnt)
 {
-	if (cnt->usage < cnt->soft_limit)
+	if (cnt->usage <= cnt->soft_limit)
 		return true;
 
 	return false;
@@ -182,7 +182,27 @@ static inline bool res_counter_check_under_limit(struct res_counter *cnt)
 	return ret;
 }
 
-static inline bool res_counter_check_under_soft_limit(struct res_counter *cnt)
+/**
+ * res_counter_check_margin - check if the counter allows charging
+ * @cnt: the resource counter to check
+ * @bytes: the number of bytes to check the remaining space against
+ *
+ * Returns a boolean value on whether the counter can be charged
+ * @bytes or whether this would exceed the limit.
+ */
+static inline bool res_counter_check_margin(struct res_counter *cnt,
+					    unsigned long bytes)
+{
+	bool ret;
+	unsigned long flags;
+
+	spin_lock_irqsave(&cnt->lock, flags);
+	ret = cnt->limit - cnt->usage >= bytes;
+	spin_unlock_irqrestore(&cnt->lock, flags);
+	return ret;
+}
+
+static inline bool res_counter_check_within_soft_limit(struct res_counter *cnt)
 {
 	bool ret;
 	unsigned long flags;
