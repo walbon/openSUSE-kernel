@@ -4620,6 +4620,9 @@ static int do_md_stop(mddev_t * mddev, int mode, int is_open)
 
 		del_timer_sync(&mddev->safemode_timer);
 
+		bitmap_flush(mddev);
+		md_super_wait(mddev);
+
 		switch(mode) {
 		case 1: /* readonly */
 			err  = -ENXIO;
@@ -4629,8 +4632,6 @@ static int do_md_stop(mddev_t * mddev, int mode, int is_open)
 			break;
 		case 0: /* disassemble */
 		case 2: /* stop */
-			bitmap_flush(mddev);
-			md_super_wait(mddev);
 			if (mddev->ro)
 				set_disk_ro(disk, 0);
 

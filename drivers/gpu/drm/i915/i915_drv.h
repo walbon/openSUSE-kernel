@@ -996,8 +996,8 @@ extern int i915_wait_ring(struct drm_device * dev, int n, const char *caller);
 
 #define IS_I830(dev) ((dev)->pci_device == 0x3577)
 #define IS_845G(dev) ((dev)->pci_device == 0x2562)
-#define IS_I85X(dev) ((dev)->pci_device == 0x3582)
-#define IS_I855(dev) ((dev)->pci_device == 0x3582)
+#define IS_I85X(dev) ((dev)->pci_device == 0x3582 || (dev)->pci_device == 0x358e)
+#define IS_I855(dev) ((dev)->pci_device == 0x3582 || (dev)->pci_device == 0x358e)
 #define IS_I865G(dev) ((dev)->pci_device == 0x2572)
 #define IS_I8XX(dev) (IS_I830(dev) || IS_845G(dev) || IS_I85X(dev) || IS_I865G(dev))
 
