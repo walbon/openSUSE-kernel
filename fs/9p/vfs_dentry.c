@@ -104,12 +104,18 @@ void v9fs_dentry_release(struct dentry *dentry)
 	}
 }
 
+static int v9fs_dummy_revalidate(struct dentry *dentry, struct nameidata *nd)
+{
+	return 1;
+}
+
 const struct dentry_operations v9fs_cached_dentry_operations = {
 	.d_delete = v9fs_cached_dentry_delete,
 	.d_release = v9fs_dentry_release,
 };
 
 const struct dentry_operations v9fs_dentry_operations = {
+	.d_revalidate = v9fs_dummy_revalidate,
 	.d_delete = v9fs_dentry_delete,
 	.d_release = v9fs_dentry_release,
 };
