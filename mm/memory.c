@@ -2464,6 +2464,12 @@ restart:
 	}
 }
 
+static int mapping_sleep(void *x)
+{
+	schedule();
+	return 0;
+}
+
 /**
  * unmap_mapping_range - unmap the portion of all mmaps in the specified address_space corresponding to the specified page range in the underlying file.
  * @mapping: the address space containing mmaps to be unmapped.
@@ -2501,6 +2507,9 @@ void unmap_mapping_range(struct address_space *mapping,
 		details.last_index = ULONG_MAX;
 	details.i_mmap_lock = &mapping->i_mmap_lock;
 
+	wait_on_bit_lock(&mapping->flags, AS_UNMAPPING, mapping_sleep,
+			 TASK_UNINTERRUPTIBLE);
+
 	spin_lock(&mapping->i_mmap_lock);
 
 	/* Protect against endless unmapping loops */
@@ -2517,6 +2526,11 @@ void unmap_mapping_range(struct address_space *mapping,
 	if (unlikely(!list_empty(&mapping->i_mmap_nonlinear)))
 		unmap_mapping_range_list(&mapping->i_mmap_nonlinear, &details);
 	spin_unlock(&mapping->i_mmap_lock);
+
+	clear_bit_unlock(AS_UNMAPPING, &mapping->flags);
+	smp_mb__after_clear_bit();
+	wake_up_bit(&mapping->flags, AS_UNMAPPING);
+
 }
 EXPORT_SYMBOL(unmap_mapping_range);
 

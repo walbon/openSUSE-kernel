@@ -180,6 +180,11 @@ struct clocksource {
 #define CLKSRC_FSYS_MMIO_SET(mmio, addr)      do { } while (0)
 #endif
 
+#ifndef __GENKSYMS__
+#ifdef CONFIG_CLOCKSOURCE_WATCHDOG
+	cycle_t cs_last;
+#endif
+#endif
 	/*
 	 * Second part is written at each timer interrupt
 	 * Keep it in a different cache line to dirty no
