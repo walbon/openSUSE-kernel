@@ -806,12 +806,14 @@ struct hv_device_info {
 	struct hv_dev_port_info outbound;
 };
 
+struct hv_vmbus_device_id {
+	char device_type[32];
+};
+
 /* Base driver object */
 struct hv_driver {
-	const char *name;
-
 	/* the device type supported by this driver */
-	struct hv_guid dev_type;
+	const struct hv_vmbus_device_id *id_table;
 
 	struct device_driver driver;
 
@@ -824,7 +826,7 @@ struct hv_driver {
 /* Base device object */
 struct hv_device {
 	/* the device type id of this device */
-	struct hv_guid dev_type;
+	const char *device_type;
 
 	/* the device instance id of this device */
 	struct hv_guid dev_instance;
@@ -832,6 +834,9 @@ struct hv_device {
 	struct device device;
 
 	struct vmbus_channel *channel;
+
+	/* This lock protects the device extension field */
+	spinlock_t ext_lock;
 
 	/* Device extension; */
 	void *ext;
@@ -949,5 +954,5 @@ extern void prep_negotiate_resp(struct icmsg_hdr *,
 				struct icmsg_negotiate *, u8 *);
 extern void chn_cb_negotiate(void *);
 extern struct hyperv_service_callback hv_cb_utils[];
-
+const char *hv_get_devtype_name(const struct hv_guid *type);
 #endif /* _HYPERV_H */

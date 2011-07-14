@@ -21,6 +21,10 @@
 #define pr_warn(fmt, arg...) printk(KERN_WARNING fmt, ##arg)
 #endif
 
+#ifndef HV_STATUS_INSUFFICIENT_BUFFERS
+#define HV_STATUS_INSUFFICIENT_BUFFERS  19
+#endif
+
 #ifndef DEF_SCSI_QCMD
 #define DEF_SCSI_QCMD(func_name) \
 	int func_name(struct scsi_cmnd *cmd, \
