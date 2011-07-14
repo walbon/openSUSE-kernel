@@ -49,6 +49,7 @@
   Patsburg (PCH) IDF    0x1d70     32     hard     yes     yes     yes
   Patsburg (PCH) IDF    0x1d71     32     hard     yes     yes     yes
   Patsburg (PCH) IDF    0x1d72     32     hard     yes     yes     yes
+  Panther Point (PCH)   0x1e22     32     hard     yes     yes     yes
 
   Features supported by this driver:
   Software PEC                     no
@@ -602,6 +603,7 @@ static struct pci_device_id i801_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_PATSBURG_SMBUS_IDF0) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_PATSBURG_SMBUS_IDF1) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_PATSBURG_SMBUS_IDF2) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_PANTHERPOINT_SMBUS) },
 	{ 0, }
 };
 
@@ -773,6 +775,7 @@ static int __devinit i801_probe(struct pci_dev *dev, const struct pci_device_id 
 	case PCI_DEVICE_ID_INTEL_PCH_SMBUS:
 	case PCI_DEVICE_ID_INTEL_CPT_SMBUS:
 	case PCI_DEVICE_ID_INTEL_PATSBURG_SMBUS:
+	case PCI_DEVICE_ID_INTEL_PANTHERPOINT_SMBUS:
 		priv->features |= FEATURE_I2C_BLOCK_READ;
 		/* fall through */
 	case PCI_DEVICE_ID_INTEL_82801DB_3:
