@@ -71,9 +71,6 @@ perf_do_callchain(struct pt_regs *regs, struct perf_callchain_entry *entry)
 	if (!current || current->pid == 0)
 		return;
 
-	if (is_user && current->state != TASK_RUNNING)
-		return;
-
 	/*
 	 * Only the kernel side is implemented for now.
 	 */
