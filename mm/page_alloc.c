@@ -1713,6 +1713,20 @@ try_next_zone:
 	return page;
 }
 
+/*
+ * Large machines with many possible nodes should not always dump per-node
+ * meminfo in irq context.
+ */
+static inline bool should_suppress_show_mem(void)
+{
+	bool ret = false;
+
+#if NODES_SHIFT > 8
+	ret = in_interrupt();
+#endif
+	return ret;
+}
+
 static inline int
 should_alloc_retry(gfp_t gfp_mask, unsigned int order,
 				unsigned long pages_reclaimed)
@@ -2140,17 +2154,32 @@ rebalance:
 
 nopage:
 	if (!(gfp_mask & __GFP_NOWARN) && printk_ratelimit()) {
+		unsigned int filter = SHOW_MEM_FILTER_NODES;
 		if (!wait) {
 			printk(KERN_INFO "The following is only an harmless informational message.\n");
 			printk(KERN_INFO "Unless you get a _continuous_flood_ of these messages it means\n");
 			printk(KERN_INFO "everything is working fine. Allocations from irqs cannot be\n");
 			printk(KERN_INFO "perfectly reliable and the kernel is designed to handle that.\n");
 		}
-		printk(KERN_INFO "%s: page allocation failure."
+
+		/*
+		 * This documents exceptions given to allocations in certain
+		 * contexts that are allowed to allocate outside current's set
+		 * of allowed nodes.
+		 */
+		if (!(gfp_mask & __GFP_NOMEMALLOC))
+			if (test_thread_flag(TIF_MEMDIE) ||
+			    (p->flags & (PF_MEMALLOC | PF_EXITING)))
+				filter &= ~SHOW_MEM_FILTER_NODES;
+		if (in_interrupt() || !wait)
+			filter &= ~SHOW_MEM_FILTER_NODES;
+
+		pr_warning("%s: page allocation failure."
 			" order:%d, mode:0x%x, alloc_flags:0x%x pflags:0x%x\n",
 			p->comm, order, gfp_mask, alloc_flags, p->flags);
 		dump_stack();
-		show_mem();
+		if (!should_suppress_show_mem())
+			show_mem(filter);
 	}
 	return page;
 got_pg:
@@ -2419,19 +2448,39 @@ void si_meminfo_node(struct sysinfo *val, int nid)
 }
 #endif
 
+/*
+ * Determine whether the node should be displayed or not, depending on whether
+ * SHOW_MEM_FILTER_NODES was passed to show_free_areas().
+ */
+bool skip_free_areas_node(unsigned int flags, int nid)
+{
+	bool ret = false;
+
+	if (!(flags & SHOW_MEM_FILTER_NODES))
+		goto out;
+
+	ret = !node_isset(nid, cpuset_current_mems_allowed);
+out:
+	return ret;
+}
+
 #define K(x) ((x) << (PAGE_SHIFT-10))
 
 /*
  * Show free area list (used inside shift_scroll-lock stuff)
  * We also calculate the percentage fragmentation. We do this by counting the
  * memory on each free list with the exception of the first item on the list.
+ * Suppresses nodes that are not allowed by current's cpuset if
+ * SHOW_MEM_FILTER_NODES is passed.
  */
-void show_free_areas(void)
+void show_free_areas(unsigned int filter)
 {
 	int cpu;
 	struct zone *zone;
 
 	for_each_populated_zone(zone) {
+		if (skip_free_areas_node(filter, zone_to_nid(zone)))
+			continue;
 		show_node(zone);
 		printk("%s per-cpu:\n", zone->name);
 
@@ -2473,6 +2522,8 @@ void show_free_areas(void)
 	for_each_populated_zone(zone) {
 		int i;
 
+		if (skip_free_areas_node(filter, zone_to_nid(zone)))
+			continue;
 		show_node(zone);
 		printk("%s"
 			" free:%lukB"
@@ -2540,6 +2591,8 @@ void show_free_areas(void)
 	for_each_populated_zone(zone) {
  		unsigned long nr[MAX_ORDER], flags, order, total = 0;
 
+		if (skip_free_areas_node(filter, zone_to_nid(zone)))
+			continue;
 		show_node(zone);
 		printk("%s: ", zone->name);
 
