@@ -1713,6 +1713,20 @@ try_next_zone:
 	return page;
 }
 
+/*
+ * Large machines with many possible nodes should not always dump per-node
+ * meminfo in irq context.
+ */
+static inline bool should_suppress_show_mem(void)
+{
+	bool ret = false;
+
+#if NODES_SHIFT > 8
+	ret = in_interrupt();
+#endif
+	return ret;
+}
+
 static inline int
 should_alloc_retry(gfp_t gfp_mask, unsigned int order,
 				unsigned long pages_reclaimed)
@@ -2140,17 +2154,32 @@ rebalance:
 
 nopage:
 	if (!(gfp_mask & __GFP_NOWARN) && printk_ratelimit()) {
+		unsigned int filter = SHOW_MEM_FILTER_NODES;
 		if (!wait) {
 			printk(KERN_INFO "The following is only an harmless informational message.\n");
 			printk(KERN_INFO "Unless you get a _continuous_flood_ of these messages it means\n");
 			printk(KERN_INFO "everything is working fine. Allocations from irqs cannot be\n");
 			printk(KERN_INFO "perfectly reliable and the kernel is designed to handle that.\n");
 		}
-		printk(KERN_INFO "%s: page allocation failure."
+
+		/*
+		 * This documents exceptions given to allocations in certain
+		 * contexts that are allowed to allocate outside current's set
+		 * of allowed nodes.
+		 */
+		if (!(gfp_mask & __GFP_NOMEMALLOC))
+			if (test_thread_flag(TIF_MEMDIE) ||
+			    (p->flags & (PF_MEMALLOC | PF_EXITING)))
+				filter &= ~SHOW_MEM_FILTER_NODES;
+		if (in_interrupt() || !wait)
+			filter &= ~SHOW_MEM_FILTER_NODES;
+
+		pr_warning("%s: page allocation failure."
 			" order:%d, mode:0x%x, alloc_flags:0x%x pflags:0x%x\n",
 			p->comm, order, gfp_mask, alloc_flags, p->flags);
 		dump_stack();
-		show_mem();
+		if (!should_suppress_show_mem())
+			show_mem(filter);
 	}
 	return page;
 got_pg:
@@ -2419,19 +2448,39 @@ void si_meminfo_node(struct sysinfo *val, int nid)
 }
 #endif
 
+/*
+ * Determine whether the node should be displayed or not, depending on whether
+ * SHOW_MEM_FILTER_NODES was passed to show_free_areas().
+ */
+bool skip_free_areas_node(unsigned int flags, int nid)
+{
+	bool ret = false;
+
+	if (!(flags & SHOW_MEM_FILTER_NODES))
+		goto out;
+
+	ret = !node_isset(nid, cpuset_current_mems_allowed);
+out:
+	return ret;
+}
+
 #define K(x) ((x) << (PAGE_SHIFT-10))
 
 /*
  * Show free area list (used inside shift_scroll-lock stuff)
  * We also calculate the percentage fragmentation. We do this by counting the
  * memory on each free list with the exception of the first item on the list.
+ * Suppresses nodes that are not allowed by current's cpuset if
+ * SHOW_MEM_FILTER_NODES is passed.
  */
-void show_free_areas(void)
+void show_free_areas(unsigned int filter)
 {
 	int cpu;
 	struct zone *zone;
 
 	for_each_populated_zone(zone) {
+		if (skip_free_areas_node(filter, zone_to_nid(zone)))
+			continue;
 		show_node(zone);
 		printk("%s per-cpu:\n", zone->name);
 
@@ -2473,6 +2522,8 @@ void show_free_areas(void)
 	for_each_populated_zone(zone) {
 		int i;
 
+		if (skip_free_areas_node(filter, zone_to_nid(zone)))
+			continue;
 		show_node(zone);
 		printk("%s"
 			" free:%lukB"
@@ -2540,6 +2591,8 @@ void show_free_areas(void)
 	for_each_populated_zone(zone) {
  		unsigned long nr[MAX_ORDER], flags, order, total = 0;
 
+		if (skip_free_areas_node(filter, zone_to_nid(zone)))
+			continue;
 		show_node(zone);
 		printk("%s: ", zone->name);
 
@@ -2677,8 +2730,11 @@ int numa_zonelist_order_handler(ctl_table *table, int write,
 			strncpy((char*)table->data, saved_string,
 				NUMA_ZONELIST_ORDER_LEN);
 			user_zonelist_order = oldval;
-		} else if (oldval != user_zonelist_order)
-			build_all_zonelists();
+		} else if (oldval != user_zonelist_order) {
+			mutex_lock(&zonelists_mutex);
+			build_all_zonelists(NULL);
+			mutex_unlock(&zonelists_mutex);
+		}
 	}
 	return 0;
 }
@@ -3018,8 +3074,16 @@ static void build_zonelist_cache(pg_data_t *pgdat)
 
 #endif	/* CONFIG_NUMA */
 
+static void setup_zone_pageset(struct zone *zone);
+
+/*
+ * Global mutex to protect against size modification of zonelists
+ * as well as to serialize pageset setup for the new populated zone.
+ */
+DEFINE_MUTEX(zonelists_mutex);
+
 /* return values int ....just for stop_machine() */
-static int __build_all_zonelists(void *dummy)
+static __init_refok int __build_all_zonelists(void *data)
 {
 	int nid;
 
@@ -3032,6 +3096,14 @@ static int __build_all_zonelists(void *dummy)
 		build_zonelists(pgdat);
 		build_zonelist_cache(pgdat);
 	}
+
+#ifdef CONFIG_MEMORY_HOTPLUG
+	/* Setup real pagesets for the new zone */
+	if (data) {
+		struct zone *zone = data;
+		setup_zone_pageset(zone);
+	}
+#endif
 
 #ifdef CONFIG_HAVE_MEMORYLESS_NODES
 	/*
@@ -3052,7 +3124,11 @@ static int __build_all_zonelists(void *dummy)
 	return 0;
 }
 
-void build_all_zonelists(void)
+/*
+ * Called with zonelists_mutex held always
+ * unless system_state == SYSTEM_BOOTING.
+ */
+void build_all_zonelists(void *data)
 {
 	set_zonelist_order();
 
@@ -3063,7 +3139,7 @@ void build_all_zonelists(void)
 	} else {
 		/* we have to stop all cpus to guarantee there is no user
 		   of zonelist */
-		stop_machine(__build_all_zonelists, NULL, NULL);
+		stop_machine(__build_all_zonelists, data, NULL);
 		/* cpuset refresh routine should be here */
 	}
 	vm_total_pages = nr_free_pagecache_pages();
@@ -3516,6 +3592,27 @@ void __init setup_per_cpu_pageset(void)
 
 #endif
 
+static __meminit void setup_zone_pageset(struct zone *zone)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu) {
+		struct per_cpu_pageset *pset;
+		pset = zone_pcp(zone, cpu);
+
+#ifdef CONFIG_NUMA
+		if (unlikely(cpu_online(cpu) && pset == &boot_pageset[cpu])) {
+			pset = kmalloc_node(sizeof(struct per_cpu_pageset),
+					    GFP_NOWAIT, cpu_to_node(cpu));
+			zone_pcp(zone, cpu) = pset;
+		}
+#endif
+		setup_pageset(pset, zone_batchsize(zone));
+	}
+
+	return;
+}
+
 static noinline __init_refok
 int zone_wait_table_init(struct zone *zone, unsigned long zone_size_pages)
 {
@@ -3565,7 +3662,7 @@ static int __zone_pcp_update(void *data)
 	int cpu;
 	unsigned long batch = zone_batchsize(zone), flags;
 
-	for (cpu = 0; cpu < NR_CPUS; cpu++) {
+	for_each_possible_cpu(cpu) {
 		struct per_cpu_pageset *pset;
 		struct per_cpu_pages *pcp;
 
@@ -4987,7 +5084,7 @@ static void __setup_per_zone_wmarks(void)
  *    1TB     101        10GB
  *   10TB     320        32GB
  */
-void calculate_zone_inactive_ratio(struct zone *zone)
+static void __meminit calculate_zone_inactive_ratio(struct zone *zone)
 {
 	unsigned int gb, ratio;
 
@@ -5099,7 +5196,7 @@ EXPORT_SYMBOL_GPL(adjust_memalloc_reserve);
  * 8192MB:	11584k
  * 16384MB:	16384k
  */
-static int __init init_per_zone_wmark_min(void)
+int __meminit init_per_zone_wmark_min(void)
 {
 	unsigned long lowmem_kbytes;
 

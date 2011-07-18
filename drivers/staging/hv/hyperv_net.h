@@ -96,7 +96,6 @@ void netvsc_linkstatus_callback(struct hv_device *device_obj,
 				unsigned int status);
 int netvsc_recv_callback(struct hv_device *device_obj,
 			struct hv_netvsc_packet *packet);
-int netvsc_initialize(struct hv_driver *drv);
 int rndis_filter_open(struct hv_device *dev);
 int rndis_filter_close(struct hv_device *dev);
 int rndis_filter_device_add(struct hv_device *dev,
@@ -370,8 +369,11 @@ struct nvsp_message {
 struct netvsc_device {
 	struct hv_device *dev;
 
-	atomic_t refcnt;
+	int refcnt;
 	atomic_t num_outstanding_sends;
+	bool destroy;
+	bool drain_notify;
+	wait_queue_head_t waiting_to_drain;
 	/*
 	 * List of free preallocated hv_netvsc_packet to represent receive
 	 * packet
@@ -1051,6 +1053,14 @@ struct rndis_filter_packet {
 #define NDIS_PACKET_TYPE_ALL_FUNCTIONAL	0x00000200
 #define NDIS_PACKET_TYPE_FUNCTIONAL	0x00000400
 #define NDIS_PACKET_TYPE_MAC_FRAME	0x00000800
+
+static inline void netvsc_wait_to_drain(struct netvsc_device *dev)
+{
+	dev->drain_notify = true;
+	wait_event(dev->waiting_to_drain,
+		atomic_read(&dev->num_outstanding_sends) == 0);
+	dev->drain_notify = false;
+}
 
 
 

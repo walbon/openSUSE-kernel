@@ -2097,9 +2097,12 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 unsigned long mem_cgroup_shrink_node_zone(struct mem_cgroup *mem,
 						gfp_t gfp_mask, bool noswap,
 						unsigned int swappiness,
-						struct zone *zone, int nid)
+						struct zone *zone, int nid,
+						unsigned long *nr_scanned)
 {
 	struct scan_control sc = {
+		.nr_scanned = 0,
+		.nr_to_reclaim = SWAP_CLUSTER_MAX,
 		.may_writepage = !laptop_mode,
 		.may_unmap = 1,
 		.may_swap = !noswap,
@@ -2112,8 +2115,6 @@ unsigned long mem_cgroup_shrink_node_zone(struct mem_cgroup *mem,
 	sc.gfp_mask = (gfp_mask & GFP_RECLAIM_MASK) |
 			(GFP_HIGHUSER_MOVABLE & ~GFP_RECLAIM_MASK);
 	sc.nodemask = &nm;
-	sc.nr_reclaimed = 0;
-	sc.nr_scanned = 0;
 	/*
 	 * NOTE: Although we can get the priority field, using it
 	 * here is not a good idea, since it limits the pages we can scan.
@@ -2122,6 +2123,7 @@ unsigned long mem_cgroup_shrink_node_zone(struct mem_cgroup *mem,
 	 * the priority and make it zero.
 	 */
 	shrink_zone(0, zone, &sc);
+	*nr_scanned = sc.nr_scanned;
 	return sc.nr_reclaimed;
 }
 
@@ -2183,6 +2185,8 @@ static unsigned long balance_pgdat(pg_data_t *pgdat, int order,
 	unsigned long total_scanned;
 	unsigned long total_reclaimed;
 	struct reclaim_state *reclaim_state = current->reclaim_state;
+	unsigned long nr_soft_reclaimed;
+	unsigned long nr_soft_scanned;
 	struct scan_control sc = {
 		.gfp_mask = GFP_KERNEL,
 		.may_unmap = 1,
@@ -2281,12 +2285,15 @@ loop_again:
 
 			nid = pgdat->node_id;
 			zid = zone_idx(zone);
+			nr_soft_scanned = 0;
 			/*
 			 * Call soft limit reclaim before calling shrink_zone.
-			 * For now we ignore the return value
 			 */
-			mem_cgroup_soft_limit_reclaim(zone, order, sc.gfp_mask,
-							nid, zid);
+			nr_soft_reclaimed = mem_cgroup_soft_limit_reclaim(
+					zone, order, sc.gfp_mask,
+					nid, zid, &nr_soft_scanned);
+			sc.nr_reclaimed += nr_soft_reclaimed;
+			total_scanned += nr_soft_scanned;
 			/*
 			 * We put equal pressure on every zone, unless
 			 * one zone has way too many pages free

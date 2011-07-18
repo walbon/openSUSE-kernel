@@ -112,6 +112,42 @@ static const struct hv_guid
 
 };
 
+static const char *blk_dev_type = "hv_block";
+static const char *net_dev_type = "hv_net";
+static const char *scsi_dev_type = "hv_scsi";
+static const char *mouse_dev_type = "hv_mouse";
+static const char *util_dev_type = "hv_util";
+
+/*
+ * Map the dev_type guid to a human readable string for setting
+ * up module aliases. The indices used in this function are based on
+ * the table defined earlier - supported_device_classes[]
+ */
+const char *hv_get_devtype_name(const struct hv_guid *type)
+{
+	int i;
+
+	for (i = 0; i < MAX_NUM_DEVICE_CLASSES_SUPPORTED; i++) {
+		if (!memcmp(type, supported_device_classes[i].data,
+				sizeof(struct hv_guid))) {
+			switch (i) {
+			case 0:
+				return scsi_dev_type;
+			case 1:
+				return net_dev_type;
+			case 2:
+				return mouse_dev_type;
+			case 3:
+				return blk_dev_type;
+			}
+		}
+	}
+	/*
+	 * Currently the util driver is used
+	 * to handle all these devices.
+	 */
+	return util_dev_type;
+}
 
 /**
  * prep_negotiate_resp() - Create default response for Hyper-V Negotiate message

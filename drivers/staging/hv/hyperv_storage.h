@@ -265,8 +265,8 @@ struct storvsc_device {
 	struct hv_device *device;
 
 	/* 0 indicates the device is being destroyed */
-	atomic_t ref_count;
-
+	int	 ref_count;
+	bool	 destroy;
 	bool	 drain_notify;
 	atomic_t num_outstanding_req;
 
@@ -287,16 +287,20 @@ struct storvsc_device {
 };
 
 
-/* Get the stordevice object iff exists and its refcount > 1 */
-static inline struct storvsc_device *get_stor_device(struct hv_device *device)
+static inline struct storvsc_device *get_out_stor_device(
+					struct hv_device *device)
 {
 	struct storvsc_device *stor_device;
+	unsigned long flags;
 
+	spin_lock_irqsave(&device->ext_lock, flags);
 	stor_device = (struct storvsc_device *)device->ext;
-	if (stor_device && atomic_read(&stor_device->ref_count) > 1)
-		atomic_inc(&stor_device->ref_count);
+	if (stor_device && (stor_device->ref_count) &&
+		!stor_device->destroy)
+		stor_device->ref_count++;
 	else
 		stor_device = NULL;
+	spin_unlock_irqrestore(&device->ext_lock, flags);
 
 	return stor_device;
 }
@@ -305,10 +309,13 @@ static inline struct storvsc_device *get_stor_device(struct hv_device *device)
 static inline void put_stor_device(struct hv_device *device)
 {
 	struct storvsc_device *stor_device;
+	unsigned long flags;
 
+	spin_lock_irqsave(&device->ext_lock, flags);
 	stor_device = (struct storvsc_device *)device->ext;
 
-	atomic_dec(&stor_device->ref_count);
+	stor_device->ref_count--;
+	spin_unlock_irqrestore(&device->ext_lock, flags);
 }
 
 static inline void storvsc_wait_to_drain(struct storvsc_device *dev)

@@ -111,13 +111,6 @@ struct block_device_context {
 
 static const char *drv_name = "blkvsc";
 
-/* {32412632-86cb-44a2-9b5c-50d1417354f5} */
-static const struct hv_guid dev_type = {
-	.data = {
-		0x32, 0x26, 0x41, 0x32, 0xcb, 0x86, 0xa2, 0x44,
-		0x9b, 0x5c, 0x50, 0xd1, 0x41, 0x73, 0x54, 0xf5
-	}
-};
 
 /*
  * There is a circular dependency involving blkvsc_request_completion()
@@ -734,7 +727,7 @@ static int blkvsc_do_request(struct block_device_context *blkdev,
 		} else {
 			ret = blkvsc_submit_request(blkvsc_req,
 						    blkvsc_request_completion);
-			if (ret == -1) {
+			if (ret == -EAGAIN) {
 				pending = 1;
 				list_add_tail(&blkvsc_req->pend_entry,
 					      &blkdev->pending_list);
@@ -802,10 +795,15 @@ static void blkvsc_request(struct request_queue *queue)
 	}
 }
 
+static const struct hv_vmbus_device_id id_table[] = {
+	{ "hv_block" },
+	{ "" }
+};
 
 
 /* The one and only one */
 static  struct hv_driver blkvsc_drv = {
+	.id_table = id_table,
 	.probe =  blkvsc_probe,
 	.remove =  blkvsc_remove,
 	.shutdown = blkvsc_shutdown,
@@ -829,7 +827,6 @@ static int blkvsc_drv_init(void)
 
 	BUILD_BUG_ON(sizeof(sector_t) != 8);
 
-	memcpy(&drv->dev_type, &dev_type, sizeof(struct hv_guid));
 	drv->driver.name = drv_name;
 
 	/* The driver belongs to vmbus */
@@ -915,7 +912,7 @@ static int blkvsc_probe(struct hv_device *dev)
 	blkdev->gd->queue = blk_init_queue(blkvsc_request, &blkdev->lock);
 
 	blk_queue_max_segment_size(blkdev->gd->queue, PAGE_SIZE);
-	blk_queue_max_segments(blkdev->gd->queue, MAX_MULTIPAGE_BUFFER_COUNT);
+	//blk_queue_max_segments(blkdev->gd->queue, MAX_MULTIPAGE_BUFFER_COUNT);
 	blk_queue_segment_boundary(blkdev->gd->queue, PAGE_SIZE-1);
 	blk_queue_bounce_limit(blkdev->gd->queue, BLK_BOUNCE_ANY);
 	blk_queue_dma_alignment(blkdev->gd->queue, 511);
@@ -1022,5 +1019,6 @@ static void __exit blkvsc_exit(void)
 MODULE_LICENSE("GPL");
 MODULE_VERSION(HV_DRV_VERSION);
 MODULE_DESCRIPTION("Microsoft Hyper-V virtual block driver");
+MODULE_ALIAS("vmbus:hv_block");
 module_init(blkvsc_drv_init);
 module_exit(blkvsc_exit);

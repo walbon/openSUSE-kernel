@@ -776,6 +776,90 @@ static void acpi_processor_notify(struct acpi_device *device, u32 event)
 	return;
 }
 
+static int __cpuinit acpi_processor_start(struct acpi_processor *pr)
+{
+#ifndef CONFIG_XEN
+	struct acpi_device *device = per_cpu(processor_device_array, pr->id);
+#else
+	struct acpi_device *device = processor_device_array[pr->acpi_id];
+#endif
+	int result = 0;
+
+	/* _PDC call should be done before doing anything else (if reqd.). */
+	arch_acpi_processor_init_pdc(pr);
+	acpi_processor_set_pdc(pr);
+	arch_acpi_processor_cleanup_pdc(pr);
+
+#if defined(CONFIG_CPU_FREQ) || defined(CONFIG_PROCESSOR_EXTERNAL_CONTROL)
+	acpi_processor_ppc_has_changed(pr);
+#endif
+
+
+	/* _PDC call should be done before doing anything else (if reqd.). */
+	arch_acpi_processor_init_pdc(pr);
+	acpi_processor_set_pdc(pr);
+	arch_acpi_processor_cleanup_pdc(pr);
+
+#if defined(CONFIG_CPU_FREQ) || defined(CONFIG_PROCESSOR_EXTERNAL_CONTROL)
+	acpi_processor_ppc_has_changed(pr);
+#endif
+
+	/*
+	 * pr->id may equal to -1 while processor_cntl_external enabled.
+	 * throttle and thermal module don't support this case.
+	 * Tx only works when dom0 vcpu == pcpu num by far, as we give
+	 * control to dom0.
+	 */
+	if (pr->id != -1) {
+		acpi_processor_get_throttling_info(pr);
+		acpi_processor_get_limit_info(pr);
+	}
+
+	if (cpuidle_get_driver() == &acpi_idle_driver
+	    || processor_pm_external())
+		acpi_processor_power_init(pr, device);
+
+	result = processor_extcntl_prepare(pr);
+	if (result)
+		goto err_power_exit;
+
+	pr->cdev = thermal_cooling_device_register("Processor", device,
+						&processor_cooling_ops);
+	if (IS_ERR(pr->cdev)) {
+		result = PTR_ERR(pr->cdev);
+		goto err_power_exit;
+	}
+
+	dev_dbg(&device->dev, "registered as cooling_device%d\n",
+		 pr->cdev->id);
+
+	result = sysfs_create_link(&device->dev.kobj,
+				   &pr->cdev->device.kobj,
+				   "thermal_cooling");
+	if (result) {
+		printk(KERN_ERR PREFIX "Create sysfs link\n");
+		goto err_thermal_unregister;
+	}
+	result = sysfs_create_link(&pr->cdev->device.kobj,
+				   &device->dev.kobj,
+				   "device");
+	if (result) {
+		printk(KERN_ERR PREFIX "Create sysfs link\n");
+		goto err_remove_sysfs_thermal;
+	}
+
+	return 0;
+
+err_remove_sysfs_thermal:
+	sysfs_remove_link(&device->dev.kobj, "thermal_cooling");
+err_thermal_unregister:
+	thermal_cooling_device_unregister(pr->cdev);
+err_power_exit:
+	acpi_processor_power_exit(pr, device);
+
+	return result;
+}
+
 static int acpi_cpu_soft_notify(struct notifier_block *nfb,
 		unsigned long action, void *hcpu)
 {
@@ -783,9 +867,26 @@ static int acpi_cpu_soft_notify(struct notifier_block *nfb,
 	struct acpi_processor *pr = per_cpu(processors, cpu);
 
 	if (action == CPU_ONLINE && pr) {
-		acpi_processor_ppc_has_changed(pr);
-		acpi_processor_cst_has_changed(pr);
-		acpi_processor_tstate_has_changed(pr);
+		/* CPU got hotplugged and onlined the first time
+		 * Initialize missing things
+		 */
+		if (pr->flags.need_hotplug_init) {
+			struct cpuidle_driver *idle_driver = cpuidle_get_driver();
+
+			printk(KERN_INFO "Will online and init hotplugged "
+			       "CPU: %d\n", pr->id);
+			WARN(acpi_processor_start(pr), "Failed to start CPU:"
+				" %d\n", pr->id);
+			pr->flags.need_hotplug_init = 0;
+			if (idle_driver && !strcmp(idle_driver->name,
+						   "intel_idle")) {
+				intel_idle_cpu_init(pr->id);
+			}
+		} else {
+			acpi_processor_ppc_has_changed(pr);
+			acpi_processor_cst_has_changed(pr);
+			acpi_processor_tstate_has_changed(pr);
+		}
 	}
 	return NOTIFY_OK;
 }
@@ -866,68 +967,14 @@ static int __cpuinit acpi_processor_add(struct acpi_device *device)
 			goto err_remove_fs;
 		}
 	}
-
-	/* _PDC call should be done before doing anything else (if reqd.). */
-	arch_acpi_processor_init_pdc(pr);
-	acpi_processor_set_pdc(pr);
-	arch_acpi_processor_cleanup_pdc(pr);
-
-#if defined(CONFIG_CPU_FREQ) || defined(CONFIG_PROCESSOR_EXTERNAL_CONTROL)
-	acpi_processor_ppc_has_changed(pr);
-#endif
-
-	/*
-	 * pr->id may equal to -1 while processor_cntl_external enabled.
-	 * throttle and thermal module don't support this case.
-	 * Tx only works when dom0 vcpu == pcpu num by far, as we give
-	 * control to dom0.
-	 */
-	if (pr->id != -1) {
-		acpi_processor_get_throttling_info(pr);
-		acpi_processor_get_limit_info(pr);
-	}
-
-	if (cpuidle_get_driver() == &acpi_idle_driver
-	    || processor_pm_external())
-		acpi_processor_power_init(pr, device);
-
-	result = processor_extcntl_prepare(pr);
-	if (result)
-		goto err_power_exit;
-
-	pr->cdev = thermal_cooling_device_register("Processor", device,
-						&processor_cooling_ops);
-	if (IS_ERR(pr->cdev)) {
-		result = PTR_ERR(pr->cdev);
-		goto err_power_exit;
-	}
-
-	dev_dbg(&device->dev, "registered as cooling_device%d\n",
-		 pr->cdev->id);
-
-	result = sysfs_create_link(&device->dev.kobj,
-				   &pr->cdev->device.kobj,
-				   "thermal_cooling");
-	if (result) {
-		printk(KERN_ERR PREFIX "Create sysfs link\n");
-		goto err_thermal_unregister;
-	}
-	result = sysfs_create_link(&pr->cdev->device.kobj,
-				   &device->dev.kobj,
-				   "device");
-	if (result) {
-		printk(KERN_ERR PREFIX "Create sysfs link\n");
+	result = acpi_processor_start(pr);
+ 	if (result)
 		goto err_remove_sysfs;
-	}
 
 	return 0;
 
 err_remove_sysfs:
-	sysfs_remove_link(&device->dev.kobj, "thermal_cooling");
-err_thermal_unregister:
-	thermal_cooling_device_unregister(pr->cdev);
-err_power_exit:
-	acpi_processor_power_exit(pr, device);
+	sysfs_remove_link(&device->dev.kobj, "sysdev");
 err_remove_fs:
 	acpi_processor_remove_fs(device);
 err_free_cpumask:
@@ -1158,6 +1205,16 @@ static acpi_status acpi_processor_hotadd_init(struct acpi_processor *pr)
 		acpi_unmap_lsapic(*p_cpu);
 		return AE_ERROR;
 	}
+	/* CPU got hot-plugged, but cpu_data is not initialized yet
+	 * Set flag to delay cpu_idle/throttling initialization
+	 * in:
+	 * acpi_processor_add()
+	 *   acpi_processor_get_info()
+	 * and do it when the CPU gets online the first time
+	 * TBD: Cleanup above functions and try to do this more elegant.
+	 */
+	printk(KERN_INFO "CPU %d got hotplugged\n", *p_cpu);
+	pr->flags.need_hotplug_init = 1;
 
 	return AE_OK;
 }
@@ -1268,7 +1325,8 @@ static int __init acpi_processor_init(void)
 	return 0;
 
 out_cpuidle:
-	cpuidle_unregister_driver(&acpi_idle_driver);
+	if (cpuidle_get_driver() == &acpi_idle_driver)
+		cpuidle_unregister_driver(&acpi_idle_driver);
 
 #ifdef CONFIG_ACPI_PROCFS
 	remove_proc_entry(ACPI_PROCESSOR_CLASS, acpi_root_dir);
@@ -1290,7 +1348,8 @@ static void __exit acpi_processor_exit(void)
 
 	acpi_bus_unregister_driver(&acpi_processor_driver);
 
-	cpuidle_unregister_driver(&acpi_idle_driver);
+	if (cpuidle_get_driver() == &acpi_idle_driver)
+		cpuidle_unregister_driver(&acpi_idle_driver);
 
 #ifdef CONFIG_ACPI_PROCFS
 	remove_proc_entry(ACPI_PROCESSOR_CLASS, acpi_root_dir);

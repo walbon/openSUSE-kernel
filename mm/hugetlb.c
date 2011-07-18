@@ -1040,6 +1040,14 @@ static void __init gather_bootmem_prealloc(void)
 		WARN_ON(page_count(page) != 1);
 		prep_compound_huge_page(page, h->order);
 		prep_new_huge_page(h, page, page_to_nid(page));
+		/*
+		 * If we had gigantic hugepages allocated at boot time, we need
+		 * to restore the 'stolen' pages to totalram_pages in order to
+		 * fix confusing memory reports from free(1) and another
+		 * side-effects, like CommitLimit going negative.
+		 */
+		if (h->order > (MAX_ORDER - 1))
+			totalram_pages += 1 << h->order;
 	}
 }
 
@@ -1446,7 +1454,7 @@ static struct attribute_group hstate_attr_group = {
 	.attrs = hstate_attrs,
 };
 
-static int __init hugetlb_sysfs_add_hstate(struct hstate *h,
+static int __meminit hugetlb_sysfs_add_hstate(struct hstate *h,
 				struct kobject *parent,
 				struct kobject **hstate_kobjs,
 				struct attribute_group *hstate_attr_group)

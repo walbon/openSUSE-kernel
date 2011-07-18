@@ -48,7 +48,7 @@ static void p6_pmu_disable_all(void)
 	wrmsrl(MSR_P6_EVNTSEL0, val);
 }
 
-static void p6_pmu_enable_all(void)
+static void p6_pmu_enable_all(int added)
 {
 	unsigned long val;
 
@@ -84,17 +84,18 @@ static void p6_pmu_enable_event(struct perf_event *event)
 	(void)checking_wrmsrl(hwc->config_base, val);
 }
 
-static __initconst struct x86_pmu p6_pmu = {
+static __initconst const struct x86_pmu p6_pmu = {
 	.name			= "p6",
 	.handle_irq		= x86_pmu_handle_irq,
 	.disable_all		= p6_pmu_disable_all,
 	.enable_all		= p6_pmu_enable_all,
 	.enable			= p6_pmu_enable_event,
 	.disable		= p6_pmu_disable_event,
+	.hw_config		= x86_pmu_hw_config,
+	.schedule_events	= x86_schedule_events,
 	.eventsel		= MSR_P6_EVNTSEL0,
 	.perfctr		= MSR_P6_PERFCTR0,
 	.event_map		= p6_pmu_event_map,
-	.raw_event		= x86_pmu_raw_event,
 	.max_events		= ARRAY_SIZE(p6_perfmon_event_map),
 	.apic			= 1,
 	.max_period		= (1ULL << 31) - 1,

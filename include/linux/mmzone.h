@@ -657,9 +657,10 @@ typedef struct pglist_data {
 
 #include <linux/memory_hotplug.h>
 
+extern struct mutex zonelists_mutex;
 void get_zone_counts(unsigned long *active, unsigned long *inactive,
 			unsigned long *free);
-void build_all_zonelists(void);
+void build_all_zonelists(void *data);
 void wakeup_kswapd(struct zone *zone, int order, enum zone_type classzone_idx);
 int zone_watermark_ok(struct zone *z, int order, unsigned long mark,
 		int classzone_idx, int alloc_flags);

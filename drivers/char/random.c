@@ -714,6 +714,24 @@ void add_disk_randomness(struct gendisk *disk)
 }
 #endif
 
+/* Interface for in-kernel drivers of true hardware RNGs.
+ * Those devices may produce endless random bits and will be throttled
+ * when our pool is full.
+ */
+void add_hwgenerator_randomness(const char *buffer, size_t count)
+{
+	struct entropy_store *poolp = &nonblocking_pool;
+
+	/* Suspend writing if we're above the trickle threshold.
+	 * We'll be woken up again once below random_write_wakeup_thresh.
+	 */
+	wait_event_interruptible(random_write_wait,
+				 input_pool.entropy_count <= trickle_thresh);
+	mix_pool_bytes(poolp, buffer, count);
+	credit_entropy_bits(poolp, count*8);
+}
+EXPORT_SYMBOL_GPL(add_hwgenerator_randomness);
+
 #define EXTRACT_SIZE 10
 
 /*********************************************************************

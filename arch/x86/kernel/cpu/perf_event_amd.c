@@ -2,7 +2,7 @@
 
 static DEFINE_SPINLOCK(amd_nb_lock);
 
-static __initconst u64 amd_hw_cache_event_ids
+static __initconst const u64 amd_hw_cache_event_ids
 				[PERF_COUNT_HW_CACHE_MAX]
 				[PERF_COUNT_HW_CACHE_OP_MAX]
 				[PERF_COUNT_HW_CACHE_RESULT_MAX] =
@@ -52,7 +52,7 @@ static __initconst u64 amd_hw_cache_event_ids
  [ C(DTLB) ] = {
 	[ C(OP_READ) ] = {
 		[ C(RESULT_ACCESS) ] = 0x0040, /* Data Cache Accesses        */
-		[ C(RESULT_MISS)   ] = 0x0046, /* L1 DTLB and L2 DLTB Miss   */
+		[ C(RESULT_MISS)   ] = 0x0746, /* L1_DTLB_AND_L2_DLTB_MISS.ALL */
 	},
 	[ C(OP_WRITE) ] = {
 		[ C(RESULT_ACCESS) ] = 0,
@@ -66,7 +66,7 @@ static __initconst u64 amd_hw_cache_event_ids
  [ C(ITLB) ] = {
 	[ C(OP_READ) ] = {
 		[ C(RESULT_ACCESS) ] = 0x0080, /* Instruction fecthes        */
-		[ C(RESULT_MISS)   ] = 0x0085, /* Instr. fetch ITLB misses   */
+		[ C(RESULT_MISS)   ] = 0x0385, /* L1_ITLB_AND_L2_ITLB_MISS.ALL */
 	},
 	[ C(OP_WRITE) ] = {
 		[ C(RESULT_ACCESS) ] = -1,
@@ -98,12 +98,14 @@ static __initconst u64 amd_hw_cache_event_ids
  */
 static const u64 amd_perfmon_event_map[] =
 {
-  [PERF_COUNT_HW_CPU_CYCLES]		= 0x0076,
-  [PERF_COUNT_HW_INSTRUCTIONS]		= 0x00c0,
-  [PERF_COUNT_HW_CACHE_REFERENCES]	= 0x0080,
-  [PERF_COUNT_HW_CACHE_MISSES]		= 0x0081,
-  [PERF_COUNT_HW_BRANCH_INSTRUCTIONS]	= 0x00c4,
-  [PERF_COUNT_HW_BRANCH_MISSES]		= 0x00c5,
+  [PERF_COUNT_HW_CPU_CYCLES]			= 0x0076,
+  [PERF_COUNT_HW_INSTRUCTIONS]			= 0x00c0,
+  [PERF_COUNT_HW_CACHE_REFERENCES]		= 0x0080,
+  [PERF_COUNT_HW_CACHE_MISSES]			= 0x0081,
+  [PERF_COUNT_HW_BRANCH_INSTRUCTIONS]		= 0x00c2,
+  [PERF_COUNT_HW_BRANCH_MISSES]			= 0x00c3,
+  [PERF_COUNT_HW_STALLED_CYCLES_FRONTEND]	= 0x00d0, /* "Decoder empty" event */
+  [PERF_COUNT_HW_STALLED_CYCLES_BACKEND]	= 0x00d1, /* "Dispatch stalls" event */
 };
 
 static u64 amd_pmu_event_map(int hw_event)
@@ -111,9 +113,19 @@ static u64 amd_pmu_event_map(int hw_event)
 	return amd_perfmon_event_map[hw_event];
 }
 
-static u64 amd_pmu_raw_event(u64 hw_event)
+static int amd_pmu_hw_config(struct perf_event *event)
 {
-	return hw_event & AMD64_RAW_EVENT_MASK;
+	int ret = x86_pmu_hw_config(event);
+
+	if (ret)
+		return ret;
+
+	if (event->attr.type != PERF_TYPE_RAW)
+		return 0;
+
+	event->hw.config |= event->attr.config & AMD64_RAW_EVENT_MASK;
+
+	return 0;
 }
 
 /*
@@ -361,17 +373,18 @@ static void amd_pmu_cpu_dead(int cpu)
 	spin_unlock(&amd_nb_lock);
 }
 
-static __initconst struct x86_pmu amd_pmu = {
+static __initconst const struct x86_pmu amd_pmu = {
 	.name			= "AMD",
 	.handle_irq		= x86_pmu_handle_irq,
 	.disable_all		= x86_pmu_disable_all,
 	.enable_all		= x86_pmu_enable_all,
 	.enable			= x86_pmu_enable_event,
 	.disable		= x86_pmu_disable_event,
+	.hw_config		= amd_pmu_hw_config,
+	.schedule_events	= x86_schedule_events,
 	.eventsel		= MSR_K7_EVNTSEL0,
 	.perfctr		= MSR_K7_PERFCTR0,
 	.event_map		= amd_pmu_event_map,
-	.raw_event		= amd_pmu_raw_event,
 	.max_events		= ARRAY_SIZE(amd_perfmon_event_map),
 	.num_counters		= 4,
 	.cntval_bits		= 48,
@@ -531,10 +544,11 @@ static __initconst const struct x86_pmu amd_pmu_f15h = {
 	.enable_all		= x86_pmu_enable_all,
 	.enable			= x86_pmu_enable_event,
 	.disable		= x86_pmu_disable_event,
+	.hw_config		= amd_pmu_hw_config,
+	.schedule_events	= x86_schedule_events,
 	.eventsel		= MSR_F15H_PERF_CTL,
 	.perfctr		= MSR_F15H_PERF_CTR,
 	.event_map		= amd_pmu_event_map,
-	.raw_event		= amd_pmu_raw_event,
 	.max_events		= ARRAY_SIZE(amd_perfmon_event_map),
 	.num_counters		= 6,
 	.cntval_bits		= 48,
