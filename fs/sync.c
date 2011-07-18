@@ -98,7 +98,7 @@ static void sync_filesystems(int wait)
 		/* restart only when sb is no longer on the list */
 		spin_lock(&sb_lock);
 		if (p)
-			__put_super(sb);
+			__put_super(p);
 		p = sb;
 	}
 	if (p)
