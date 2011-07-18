@@ -311,8 +311,10 @@ static void free_tx_desc(struct adapter *adapter, struct sge_txq *q,
 		if (d->skb) {	/* an SGL is present */
 			if (need_unmap)
 				unmap_skb(d->skb, q, cidx, pdev);
-			if (d->eop)
+			if (d->eop) {
 				kfree_skb(d->skb);
+				d->skb = NULL;
+			}
 		}
 		++d;
 		if (++cidx == q->size) {
@@ -2058,7 +2060,7 @@ static void rx_eth(struct adapter *adap, struct sge_rspq *rq,
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 	} else
 		skb->ip_summed = CHECKSUM_NONE;
-	skb_record_rx_queue(skb, qs - &adap->sge.qs[0]);
+	skb_record_rx_queue(skb, qs - &adap->sge.qs[pi->first_qset]);
 
 	if (unlikely(p->vlan_valid)) {
 		struct vlan_group *grp = pi->vlan_grp;
@@ -2177,7 +2179,7 @@ static void lro_add_page(struct adapter *adap, struct sge_qset *qs,
 	if (!complete)
 		return;
 
-	skb_record_rx_queue(skb, qs - &adap->sge.qs[0]);
+	skb_record_rx_queue(skb, qs - &adap->sge.qs[pi->first_qset]);
 
 	if (unlikely(cpl->vlan_valid)) {
 		struct vlan_group *grp = pi->vlan_grp;
