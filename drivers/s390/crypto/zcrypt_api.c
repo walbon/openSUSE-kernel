@@ -38,6 +38,7 @@
 #include <asm/atomic.h>
 #include <asm/uaccess.h>
 #include <linux/hw_random.h>
+#include <linux/kthread.h>
 
 #include "zcrypt_api.h"
 
@@ -1129,6 +1130,8 @@ static int zcrypt_rng_device_count;
 static u32 *zcrypt_rng_buffer;
 static int zcrypt_rng_buffer_index;
 static DEFINE_MUTEX(zcrypt_rng_mutex);
+static struct task_struct *zcrypt_hwrng_fill;
+static u32 rng_pooldata;
 
 static int zcrypt_rng_data_read(struct hwrng *rng, u32 *data)
 {
@@ -1153,6 +1156,16 @@ static struct hwrng zcrypt_rng_dev = {
 	.data_read	= zcrypt_rng_data_read,
 };
 
+static void zcrypt_hwrng_fillfn(void * unused)
+{
+	while (!kthread_should_stop())
+		{
+			zcrypt_rng_data_read(&zcrypt_rng_dev, &rng_pooldata);
+			add_hwgenerator_randomness(&rng_pooldata, sizeof(u32));
+		}
+	do_exit(0);
+}
+
 static int zcrypt_rng_device_add(void)
 {
 	int rc = 0;
@@ -1169,6 +1182,7 @@ static int zcrypt_rng_device_add(void)
 		if (rc)
 			goto out_free;
 		zcrypt_rng_device_count = 1;
+		zcrypt_hwrng_fill = kthread_run(zcrypt_hwrng_fillfn, NULL, "zcrypt_hwrng_fill");
 	} else
 		zcrypt_rng_device_count++;
 	mutex_unlock(&zcrypt_rng_mutex);
@@ -1186,6 +1200,8 @@ static void zcrypt_rng_device_remove(void)
 	mutex_lock(&zcrypt_rng_mutex);
 	zcrypt_rng_device_count--;
 	if (zcrypt_rng_device_count == 0) {
+		if (zcrypt_hwrng_fill)
+			kthread_stop(zcrypt_hwrng_fill);
 		hwrng_unregister(&zcrypt_rng_dev);
 		free_page((unsigned long) zcrypt_rng_buffer);
 	}
