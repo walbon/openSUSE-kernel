@@ -1635,6 +1635,10 @@ static int zlc_zone_worth_trying(struct zonelist *zonelist, struct zoneref *z,
 static void zlc_mark_zone_full(struct zonelist *zonelist, struct zoneref *z)
 {
 }
+
+static void zlc_clear_zones_full(struct zonelist *zonelist)
+{
+}
 #endif	/* CONFIG_NUMA */
 
 /*
