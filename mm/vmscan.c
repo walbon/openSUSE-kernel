@@ -1092,7 +1092,7 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 				scan++;
 			} else {
 				if (mode == ISOLATE_BOTH &&
-						page_count(cursor_page))
+						atomic_read(&cursor_page->_count))
 					nr_lumpy_failed++;
 			}
 		}
