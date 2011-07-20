@@ -266,7 +266,7 @@ struct ErrorInfo {
 #define PADSIZE (PAD32 + PAD64DIFF * USEEXTRA)
 
 #define DIRECT_LOOKUP_SHIFT 5
-#define DIRECT_LOOKUP_BIT 0x1
+#define DIRECT_LOOKUP_BIT 0x10
 #define DIRECT_LOOKUP_MASK (~((1 << DIRECT_LOOKUP_SHIFT) - 1))
 
 #define HPSA_ERROR_BIT          0x02

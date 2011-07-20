@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel 10 Gigabit PCI Express Linux driver
-  Copyright(c) 1999 - 2009 Intel Corporation.
+  Copyright(c) 1999 - 2010 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -158,6 +158,7 @@ struct ixgbe_ring {
 
 	struct ixgbe_queue_stats stats;
 	unsigned long reinit_state;
+	int numa_node;
 	u64 rsc_count;			/* stat for coalesced packets */
 	u64 rsc_flush;			/* stats for flushed packets */
 	u32 restart_queue;		/* track tx queue restarts */
@@ -230,11 +231,11 @@ struct ixgbe_q_vector {
 	(R)->next_to_clean - (R)->next_to_use - 1)
 
 #define IXGBE_RX_DESC_ADV(R, i)	    \
-	(&(((union ixgbe_adv_rx_desc *)((R).desc))[i]))
+	(&(((union ixgbe_adv_rx_desc *)((R)->desc))[i]))
 #define IXGBE_TX_DESC_ADV(R, i)	    \
-	(&(((union ixgbe_adv_tx_desc *)((R).desc))[i]))
+	(&(((union ixgbe_adv_tx_desc *)((R)->desc))[i]))
 #define IXGBE_TX_CTXTDESC_ADV(R, i)	    \
-	(&(((struct ixgbe_adv_tx_context_desc *)((R).desc))[i]))
+	(&(((struct ixgbe_adv_tx_context_desc *)((R)->desc))[i]))
 
 #define IXGBE_MAX_JUMBO_FRAME_SIZE        16128
 #ifdef IXGBE_FCOE
@@ -276,7 +277,7 @@ struct ixgbe_adapter {
 	u16 eitr_high;
 
 	/* TX */
-	struct ixgbe_ring *tx_ring ____cacheline_aligned_in_smp; /* One per active queue */
+	struct ixgbe_ring *tx_ring[MAX_TX_QUEUES] ____cacheline_aligned_in_smp;
 	int num_tx_queues;
 	u32 tx_timeout_count;
 	bool detect_tx_hung;
@@ -285,7 +286,7 @@ struct ixgbe_adapter {
 	u64 lsc_int;
 
 	/* RX */
-	struct ixgbe_ring *rx_ring ____cacheline_aligned_in_smp; /* One per active queue */
+	struct ixgbe_ring *rx_ring[MAX_RX_QUEUES] ____cacheline_aligned_in_smp;
 	int num_rx_queues;
 	u64 hw_csum_rx_error;
 	u64 hw_rx_no_dma_resources;
@@ -380,6 +381,8 @@ struct ixgbe_adapter {
 	u64 rsc_total_flush;
 	u32 wol;
 	u16 eeprom_version;
+
+	int node;
 };
 
 enum ixbge_state_t {

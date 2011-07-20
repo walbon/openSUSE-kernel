@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel 10 Gigabit PCI Express Linux driver
-  Copyright(c) 1999 - 2009 Intel Corporation.
+  Copyright(c) 1999 - 2010 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -165,7 +165,7 @@ int ixgbe_fcoe_ddp_get(struct net_device *netdev, u16 xid,
 	unsigned int thisoff = 0;
 	unsigned int thislen = 0;
 	u32 fcbuff, fcdmarw, fcfltrw;
-	dma_addr_t addr;
+	dma_addr_t addr = 0;
 
 	if (!netdev || !sgl)
 		return 0;
@@ -501,7 +501,7 @@ int ixgbe_fso(struct ixgbe_adapter *adapter,
 
 	/* write context desc */
 	i = tx_ring->next_to_use;
-	context_desc = IXGBE_TX_CTXTDESC_ADV(*tx_ring, i);
+	context_desc = IXGBE_TX_CTXTDESC_ADV(tx_ring, i);
 	context_desc->vlan_macip_lens	= cpu_to_le32(vlan_macip_lens);
 	context_desc->seqnum_seed	= cpu_to_le32(fcoe_sof_eof);
 	context_desc->type_tucmd_mlhl	= cpu_to_le32(type_tucmd);
@@ -580,21 +580,15 @@ void ixgbe_configure_fcoe(struct ixgbe_adapter *adapter)
 		for (i = 0; i < IXGBE_FCRETA_SIZE; i++) {
 			fcoe_i = f->mask + i % f->indices;
 			fcoe_i &= IXGBE_FCRETA_ENTRY_MASK;
-			fcoe_q = adapter->rx_ring[fcoe_i].reg_idx;
+			fcoe_q = adapter->rx_ring[fcoe_i]->reg_idx;
 			IXGBE_WRITE_REG(hw, IXGBE_FCRETA(i), fcoe_q);
 		}
 		IXGBE_WRITE_REG(hw, IXGBE_FCRECTL, IXGBE_FCRECTL_ENA);
 		IXGBE_WRITE_REG(hw, IXGBE_ETQS(IXGBE_ETQF_FILTER_FCOE), 0);
-		fcoe_i = f->mask;
-		fcoe_i &= IXGBE_FCRETA_ENTRY_MASK;
-		fcoe_q = adapter->rx_ring[fcoe_i].reg_idx;
-		IXGBE_WRITE_REG(hw, IXGBE_ETQS(IXGBE_ETQF_FILTER_FIP),
-				IXGBE_ETQS_QUEUE_EN |
-				(fcoe_q << IXGBE_ETQS_RX_QUEUE_SHIFT));
 	} else  {
 		/* Use single rx queue for FCoE */
 		fcoe_i = f->mask;
-		fcoe_q = adapter->rx_ring[fcoe_i].reg_idx;
+		fcoe_q = adapter->rx_ring[fcoe_i]->reg_idx;
 		IXGBE_WRITE_REG(hw, IXGBE_FCRECTL, 0);
 		IXGBE_WRITE_REG(hw, IXGBE_ETQS(IXGBE_ETQF_FILTER_FCOE),
 				IXGBE_ETQS_QUEUE_EN |
@@ -602,7 +596,7 @@ void ixgbe_configure_fcoe(struct ixgbe_adapter *adapter)
 	}
 	/* send FIP frames to the first FCoE queue */
 	fcoe_i = f->mask;
-	fcoe_q = adapter->rx_ring[fcoe_i].reg_idx;
+	fcoe_q = adapter->rx_ring[fcoe_i]->reg_idx;
 	IXGBE_WRITE_REG(hw, IXGBE_ETQS(IXGBE_ETQF_FILTER_FIP),
 			IXGBE_ETQS_QUEUE_EN |
 			(fcoe_q << IXGBE_ETQS_RX_QUEUE_SHIFT));
@@ -671,11 +665,13 @@ int ixgbe_fcoe_enable(struct net_device *netdev)
 {
 	int rc = -EINVAL;
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+	struct ixgbe_fcoe *fcoe = &adapter->fcoe;
 
 
 	if (!(adapter->flags & IXGBE_FLAG_FCOE_CAPABLE))
 		goto out_enable;
 
+	atomic_inc(&fcoe->refcnt);
 	if (adapter->flags & IXGBE_FLAG_FCOE_ENABLED)
 		goto out_enable;
 
@@ -715,11 +711,15 @@ int ixgbe_fcoe_disable(struct net_device *netdev)
 {
 	int rc = -EINVAL;
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+	struct ixgbe_fcoe *fcoe = &adapter->fcoe;
 
 	if (!(adapter->flags & IXGBE_FLAG_FCOE_CAPABLE))
 		goto out_disable;
 
 	if (!(adapter->flags & IXGBE_FLAG_FCOE_ENABLED))
+		goto out_disable;
+
+	if (!atomic_dec_and_test(&fcoe->refcnt))
 		goto out_disable;
 
 	DPRINTK(DRV, INFO, "Disabling FCoE offload features.\n");
