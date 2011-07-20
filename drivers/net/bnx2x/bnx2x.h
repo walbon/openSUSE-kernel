@@ -26,11 +26,6 @@
 #define DRV_MODULE_RELDATE      "2011/06/13"
 #define BNX2X_BC_VER            0x040200
 
-#if defined(CONFIG_VLAN_8021Q) || defined(CONFIG_VLAN_8021Q_MODULE)
-#define BCM_VLAN			1
-#endif
-
-
 #if defined(CONFIG_CNIC) || defined(CONFIG_CNIC_MODULE)
 #define BCM_CNIC 1
 #include "../cnic_if.h"
@@ -1160,7 +1155,7 @@ struct bnx2x {
 #define NO_ISCSI_OOO_FLAG		(1 << 14)
 #define NO_ISCSI_FLAG			(1 << 15)
 #define NO_FCOE_FLAG			(1 << 16)
- 
+
 #define NO_ISCSI(bp)		((bp)->flags & NO_ISCSI_FLAG)
 #define NO_ISCSI_OOO(bp)	((bp)->flags & NO_ISCSI_OOO_FLAG)
 #define NO_FCOE(bp)		((bp)->flags & NO_FCOE_FLAG)

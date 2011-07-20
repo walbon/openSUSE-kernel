@@ -11,6 +11,12 @@
 
 #include <linux/if_vlan.h>
 
+#define OLD_VLAN			1
+#if defined(OLD_VLAN) && (defined(CONFIG_VLAN_8021Q) || defined(CONFIG_VLAN_8021Q_MODULE))
+#define BCM_VLAN			1
+#endif
+#define BNX2X_MULTI_QUEUE
+#define BNX2X_NEW_NAPI
 #if (LINUX_VERSION_CODE < 0x02061e)
 #define skb_record_rx_queue(skb, index)
 #define skb_tx_hash(dev, skb)	0

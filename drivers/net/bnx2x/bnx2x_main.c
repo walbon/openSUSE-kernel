@@ -2660,8 +2660,8 @@ static inline unsigned long bnx2x_get_q_flags(struct bnx2x *bp,
 		__set_bit(BNX2X_Q_FLG_MCAST, &flags);
 	}
 
-	/* Always set HW VLAN stripping */
-	__set_bit(BNX2X_Q_FLG_VLAN, &flags);
+	if (bp->vlgrp)
+		__set_bit(BNX2X_Q_FLG_VLAN, &flags);
 
 	return flags;
 }
@@ -4331,7 +4331,7 @@ static void bnx2x_eq_int(struct bnx2x *bp)
 			 * we may want to verify here that the bp state is
 			 * HALTING
 			 */
-			DP(NETIF_MSG_IFDOWN,
+			DP(BNX2X_MSG_SP,
 			   "got delete ramrod for MULTI[%d]\n", cid);
 #ifdef BCM_CNIC
 			if (!bnx2x_cnic_handle_cfc_del(bp, cid, elem))
@@ -4347,23 +4347,23 @@ static void bnx2x_eq_int(struct bnx2x *bp)
 			goto next_spqe;
 
 		case EVENT_RING_OPCODE_STOP_TRAFFIC:
-			DP(NETIF_MSG_IFUP, "got STOP TRAFFIC\n");
+			DP(BNX2X_MSG_SP, "got STOP TRAFFIC\n");
 			bnx2x_dcbx_set_params(bp, BNX2X_DCBX_STATE_TX_PAUSED);
 			goto next_spqe;
 
 		case EVENT_RING_OPCODE_START_TRAFFIC:
-			DP(NETIF_MSG_IFUP, "got START TRAFFIC\n");
+			DP(BNX2X_MSG_SP, "got START TRAFFIC\n");
 			bnx2x_dcbx_set_params(bp, BNX2X_DCBX_STATE_TX_RELEASED);
 			goto next_spqe;
 		case EVENT_RING_OPCODE_FUNCTION_START:
-			DP(NETIF_MSG_IFUP, "got FUNC_START ramrod\n");
+			DP(BNX2X_MSG_SP, "got FUNC_START ramrod\n");
 			if (f_obj->complete_cmd(bp, f_obj, BNX2X_F_CMD_START))
 				break;
 
 			goto next_spqe;
 
 		case EVENT_RING_OPCODE_FUNCTION_STOP:
-			DP(NETIF_MSG_IFDOWN, "got FUNC_STOP ramrod\n");
+			DP(BNX2X_MSG_SP, "got FUNC_STOP ramrod\n");
 			if (f_obj->complete_cmd(bp, f_obj, BNX2X_F_CMD_STOP))
 				break;
 
@@ -4377,7 +4377,7 @@ static void bnx2x_eq_int(struct bnx2x *bp)
 		      BNX2X_STATE_OPENING_WAIT4_PORT):
 			cid = elem->message.data.eth_event.echo &
 				BNX2X_SWCID_MASK;
-			DP(NETIF_MSG_IFUP, "got RSS_UPDATE ramrod. CID %d\n",
+			DP(BNX2X_MSG_SP, "got RSS_UPDATE ramrod. CID %d\n",
 			   cid);
 			rss_raw->clear_pending(rss_raw);
 			break;
@@ -4392,7 +4392,7 @@ static void bnx2x_eq_int(struct bnx2x *bp)
 		      BNX2X_STATE_DIAG):
 		case (EVENT_RING_OPCODE_CLASSIFICATION_RULES |
 		      BNX2X_STATE_CLOSING_WAIT4_HALT):
-			DP(NETIF_MSG_IFUP, "got (un)set mac ramrod\n");
+			DP(BNX2X_MSG_SP, "got (un)set mac ramrod\n");
 			bnx2x_handle_classification_eqe(bp, elem);
 			break;
 
@@ -4402,7 +4402,7 @@ static void bnx2x_eq_int(struct bnx2x *bp)
 		      BNX2X_STATE_DIAG):
 		case (EVENT_RING_OPCODE_MULTICAST_RULES |
 		      BNX2X_STATE_CLOSING_WAIT4_HALT):
-			DP(NETIF_MSG_IFUP, "got mcast ramrod\n");
+			DP(BNX2X_MSG_SP, "got mcast ramrod\n");
 			bnx2x_handle_mcast_eqe(bp);
 			break;
 
@@ -4412,7 +4412,7 @@ static void bnx2x_eq_int(struct bnx2x *bp)
 		      BNX2X_STATE_DIAG):
 		case (EVENT_RING_OPCODE_FILTERS_RULES |
 		      BNX2X_STATE_CLOSING_WAIT4_HALT):
-			DP(NETIF_MSG_IFUP, "got rx_mode ramrod\n");
+			DP(BNX2X_MSG_SP, "got rx_mode ramrod\n");
 			bnx2x_handle_rx_mode_eqe(bp);
 			break;
 		default:
