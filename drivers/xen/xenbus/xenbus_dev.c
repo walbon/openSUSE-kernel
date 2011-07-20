@@ -156,8 +156,7 @@ static void queue_flush(struct xenbus_dev_data *u, struct list_head *queue,
 			int err)
 {
 	if (!err) {
-		/* list_splice_tail(queue, &u->read_buffers); */
-		list_splice(queue, u->read_buffers.prev);
+		list_splice_tail(queue, &u->read_buffers);
 		wake_up(&u->read_waitq);
 	} else
 		while (!list_empty(queue)) {
