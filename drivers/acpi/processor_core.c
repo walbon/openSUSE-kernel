@@ -794,16 +794,6 @@ static int __cpuinit acpi_processor_start(struct acpi_processor *pr)
 	acpi_processor_ppc_has_changed(pr);
 #endif
 
-
-	/* _PDC call should be done before doing anything else (if reqd.). */
-	arch_acpi_processor_init_pdc(pr);
-	acpi_processor_set_pdc(pr);
-	arch_acpi_processor_cleanup_pdc(pr);
-
-#if defined(CONFIG_CPU_FREQ) || defined(CONFIG_PROCESSOR_EXTERNAL_CONTROL)
-	acpi_processor_ppc_has_changed(pr);
-#endif
-
 	/*
 	 * pr->id may equal to -1 while processor_cntl_external enabled.
 	 * throttle and thermal module don't support this case.
