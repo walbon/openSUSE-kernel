@@ -713,10 +713,13 @@ void __lock_page(struct page *page)
 	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
 
 	do {
-		while(PageUptodate(page) && !need_resched()) {
-			cpu_relax();
-			if (!PageLocked(page) && trylock_page(page))
-				goto done;
+		if (!rt_task(current)) {
+			while (PageUptodate(page) && !PageWriteback(page) &&
+					!need_resched()) {
+				cpu_relax();
+				if (!PageLocked(page) && trylock_page(page))
+					goto done;
+			}
 		}
 
 		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
