@@ -244,21 +244,6 @@ static inline int pci_vpd_find_tag(const u8 *buf, unsigned int off, unsigned int
         return -ENOENT;
 }
 
-/**
- * skb_checksum_none_assert - make sure skb ip_summed is CHECKSUM_NONE
- * @skb: skb to check
- *
- * fresh skbs have their ip_summed set to CHECKSUM_NONE.
- * Instead of forcing ip_summed to CHECKSUM_NONE, we can
- * use this helper, to document places where we make this assertion.
- */
-static inline void skb_checksum_none_assert(struct sk_buff *skb)
-{
-#ifdef DEBUG
-        BUG_ON(skb->ip_summed != CHECKSUM_NONE);
-#endif
-}
-
 #define NUMA_NO_NODE    (-1)
 
 static inline int netdev_queue_numa_node_read(const struct netdev_queue *q)

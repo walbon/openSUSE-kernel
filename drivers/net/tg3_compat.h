@@ -18,11 +18,6 @@
 #define CTL1000_ENABLE_MASTER		0x1000
 #endif
 
-static inline void skb_checksum_none_assert(struct sk_buff *skb)
-{
-	skb->ip_summed = CHECKSUM_NONE;
-}
-
 #define skb_tx_timestamp(skb)
 
 #if defined(CONFIG_X86_64) || defined(CONFIG_DMAR) || defined(CONFIG_DMA_API_DEBUG)
