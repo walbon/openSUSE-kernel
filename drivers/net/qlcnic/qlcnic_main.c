@@ -3477,7 +3477,8 @@ qlcnic_sysfs_validate_crb(struct qlcnic_adapter *adapter,
 }
 
 static ssize_t
-qlcnic_sysfs_read_crb(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_read_crb(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3501,7 +3502,8 @@ qlcnic_sysfs_read_crb(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-qlcnic_sysfs_write_crb(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_write_crb(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3538,7 +3540,8 @@ qlcnic_sysfs_validate_mem(struct qlcnic_adapter *adapter,
 }
 
 static ssize_t
-qlcnic_sysfs_read_mem(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_read_mem(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3559,7 +3562,8 @@ qlcnic_sysfs_read_mem(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-qlcnic_sysfs_write_mem(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_write_mem(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3627,7 +3631,8 @@ validate_pm_config(struct qlcnic_adapter *adapter,
 }
 
 static ssize_t
-qlcnic_sysfs_write_pm_config(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_write_pm_config(struct file *filp, struct kobject *kobj,
+			struct bin_attribute *attr,
 			char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3666,7 +3671,8 @@ qlcnic_sysfs_write_pm_config(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-qlcnic_sysfs_read_pm_config(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_read_pm_config(struct file *filp, struct kobject *kobj,
+			struct bin_attribute *attr,
 			char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3857,7 +3863,8 @@ validate_npar_config(struct qlcnic_adapter *adapter,
 }
 
 static ssize_t
-qlcnic_sysfs_write_npar_config(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_write_npar_config(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3896,7 +3903,8 @@ qlcnic_sysfs_write_npar_config(struct kobject *kobj, struct bin_attribute *attr,
 
 }
 static ssize_t
-qlcnic_sysfs_read_npar_config(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_read_npar_config(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3929,7 +3937,8 @@ qlcnic_sysfs_read_npar_config(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-qlcnic_sysfs_get_port_stats(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_get_port_stats(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3959,7 +3968,8 @@ qlcnic_sysfs_get_port_stats(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-qlcnic_sysfs_get_esw_stats(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_get_esw_stats(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3989,7 +3999,8 @@ qlcnic_sysfs_get_esw_stats(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-qlcnic_sysfs_clear_esw_stats(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_clear_esw_stats(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -4013,7 +4024,8 @@ qlcnic_sysfs_clear_esw_stats(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-qlcnic_sysfs_clear_port_stats(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_clear_port_stats(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 
@@ -4038,7 +4050,8 @@ qlcnic_sysfs_clear_port_stats(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-qlcnic_sysfs_read_pci_config(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_read_pci_config(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);

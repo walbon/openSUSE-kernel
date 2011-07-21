@@ -15,7 +15,7 @@ static int qla24xx_vport_disable(struct fc_vport *, bool);
 /* SYSFS attributes --------------------------------------------------------- */
 
 static ssize_t
-qla2x00_sysfs_read_fw_dump(struct kobject *kobj,
+qla2x00_sysfs_read_fw_dump(struct file *filp, struct kobject *kobj,
 			   struct bin_attribute *bin_attr,
 			   char *buf, loff_t off, size_t count)
 {
@@ -31,7 +31,7 @@ qla2x00_sysfs_read_fw_dump(struct kobject *kobj,
 }
 
 static ssize_t
-qla2x00_sysfs_write_fw_dump(struct kobject *kobj,
+qla2x00_sysfs_write_fw_dump(struct file *filp, struct kobject *kobj,
 			    struct bin_attribute *bin_attr,
 			    char *buf, loff_t off, size_t count)
 {
@@ -91,7 +91,7 @@ static struct bin_attribute sysfs_fw_dump_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_nvram(struct kobject *kobj,
+qla2x00_sysfs_read_nvram(struct file *filp, struct kobject *kobj,
 			 struct bin_attribute *bin_attr,
 			 char *buf, loff_t off, size_t count)
 {
@@ -110,7 +110,7 @@ qla2x00_sysfs_read_nvram(struct kobject *kobj,
 }
 
 static ssize_t
-qla2x00_sysfs_write_nvram(struct kobject *kobj,
+qla2x00_sysfs_write_nvram(struct file *filp, struct kobject *kobj,
 			  struct bin_attribute *bin_attr,
 			  char *buf, loff_t off, size_t count)
 {
@@ -176,7 +176,7 @@ static struct bin_attribute sysfs_nvram_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_optrom(struct kobject *kobj,
+qla2x00_sysfs_read_optrom(struct file *filp, struct kobject *kobj,
 			  struct bin_attribute *bin_attr,
 			  char *buf, loff_t off, size_t count)
 {
@@ -192,7 +192,7 @@ qla2x00_sysfs_read_optrom(struct kobject *kobj,
 }
 
 static ssize_t
-qla2x00_sysfs_write_optrom(struct kobject *kobj,
+qla2x00_sysfs_write_optrom(struct file *filp, struct kobject *kobj,
 			   struct bin_attribute *bin_attr,
 			   char *buf, loff_t off, size_t count)
 {
@@ -223,7 +223,7 @@ static struct bin_attribute sysfs_optrom_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_write_optrom_ctl(struct kobject *kobj,
+qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 			       struct bin_attribute *bin_attr,
 			       char *buf, loff_t off, size_t count)
 {
@@ -387,7 +387,7 @@ static struct bin_attribute sysfs_optrom_ctl_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_vpd(struct kobject *kobj,
+qla2x00_sysfs_read_vpd(struct file *filp, struct kobject *kobj,
 		       struct bin_attribute *bin_attr,
 		       char *buf, loff_t off, size_t count)
 {
@@ -408,7 +408,7 @@ qla2x00_sysfs_read_vpd(struct kobject *kobj,
 }
 
 static ssize_t
-qla2x00_sysfs_write_vpd(struct kobject *kobj,
+qla2x00_sysfs_write_vpd(struct file *filp, struct kobject *kobj,
 			struct bin_attribute *bin_attr,
 			char *buf, loff_t off, size_t count)
 {
@@ -461,7 +461,7 @@ static struct bin_attribute sysfs_vpd_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_sfp(struct kobject *kobj,
+qla2x00_sysfs_read_sfp(struct file *filp, struct kobject *kobj,
 		       struct bin_attribute *bin_attr,
 		       char *buf, loff_t off, size_t count)
 {
@@ -522,7 +522,7 @@ static struct bin_attribute sysfs_sfp_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_write_reset(struct kobject *kobj,
+qla2x00_sysfs_write_reset(struct file *filp, struct kobject *kobj,
 			struct bin_attribute *bin_attr,
 			char *buf, loff_t off, size_t count)
 {
@@ -592,7 +592,7 @@ static struct bin_attribute sysfs_reset_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_write_edc(struct kobject *kobj,
+qla2x00_sysfs_write_edc(struct file *filp, struct kobject *kobj,
 			struct bin_attribute *bin_attr,
 			char *buf, loff_t off, size_t count)
 {
@@ -650,7 +650,7 @@ static struct bin_attribute sysfs_edc_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_write_edc_status(struct kobject *kobj,
+qla2x00_sysfs_write_edc_status(struct file *filp, struct kobject *kobj,
 			struct bin_attribute *bin_attr,
 			char *buf, loff_t off, size_t count)
 {
@@ -700,7 +700,7 @@ qla2x00_sysfs_write_edc_status(struct kobject *kobj,
 }
 
 static ssize_t
-qla2x00_sysfs_read_edc_status(struct kobject *kobj,
+qla2x00_sysfs_read_edc_status(struct file *filp, struct kobject *kobj,
 			   struct bin_attribute *bin_attr,
 			   char *buf, loff_t off, size_t count)
 {
@@ -730,7 +730,7 @@ static struct bin_attribute sysfs_edc_status_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_xgmac_stats(struct kobject *kobj,
+qla2x00_sysfs_read_xgmac_stats(struct file *filp, struct kobject *kobj,
 		       struct bin_attribute *bin_attr,
 		       char *buf, loff_t off, size_t count)
 {
@@ -782,7 +782,7 @@ static struct bin_attribute sysfs_xgmac_stats_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_dcbx_tlv(struct kobject *kobj,
+qla2x00_sysfs_read_dcbx_tlv(struct file *filp, struct kobject *kobj,
 		       struct bin_attribute *bin_attr,
 		       char *buf, loff_t off, size_t count)
 {
