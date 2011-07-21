@@ -2500,14 +2500,14 @@ int netif_receive_skb(struct sk_buff *skb)
 	skb_reset_transport_header(skb);
 	skb->mac_len = skb->network_header - skb->mac_header;
 
-+	/*
-+	 * bonding note: skbs received on inactive slaves should only
-+	 * be delivered to pkt handlers that are exact matches.  Also
-+	 * the deliver_no_wcard flag will be set.  If packet handlers
-+	 * are sensitive to duplicate packets these skbs will need to
-+	 * be dropped at the handler.  The vlan accel path may have
-+	 * already set the deliver_no_wcard flag.
-+	 */
+	/*
+	 * bonding note: skbs received on inactive slaves should only
+	 * be delivered to pkt handlers that are exact matches.  Also
+	 * the deliver_no_wcard flag will be set.  If packet handlers
+	 * are sensitive to duplicate packets these skbs will need to
+	 * be dropped at the handler.  The vlan accel path may have
+	 * already set the deliver_no_wcard flag.
+	 */
 	null_or_orig = NULL;
 	orig_dev = skb->dev;
 	master = ACCESS_ONCE(orig_dev->master);
