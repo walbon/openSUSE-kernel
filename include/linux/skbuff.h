@@ -379,6 +379,7 @@ struct sk_buff {
 #ifdef CONFIG_IPV6_NDISC_NODETYPE
 	__u8			ndisc_nodetype:2;
 #endif
+	__u8			deliver_no_wcard:1;
 #ifdef	CONFIG_NETVM
 	__u8			emergency:1;
 #endif

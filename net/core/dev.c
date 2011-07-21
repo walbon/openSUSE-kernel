@@ -2466,6 +2466,7 @@ int netif_receive_skb(struct sk_buff *skb)
 	struct net_device *orig_dev;
 	struct net_device *null_or_orig;
 	struct net_device *orig_or_bond;
+	struct net_device *master;
 	int ret = NET_RX_DROP;
 	__be16 type;
 	unsigned long pflags = current->flags;
@@ -2499,13 +2500,25 @@ int netif_receive_skb(struct sk_buff *skb)
 	skb_reset_transport_header(skb);
 	skb->mac_len = skb->network_header - skb->mac_header;
 
++	/*
++	 * bonding note: skbs received on inactive slaves should only
++	 * be delivered to pkt handlers that are exact matches.  Also
++	 * the deliver_no_wcard flag will be set.  If packet handlers
++	 * are sensitive to duplicate packets these skbs will need to
++	 * be dropped at the handler.  The vlan accel path may have
++	 * already set the deliver_no_wcard flag.
++	 */
 	null_or_orig = NULL;
 	orig_dev = skb->dev;
-	if (orig_dev->master) {
-		if (skb_bond_should_drop(skb))
+	master = ACCESS_ONCE(orig_dev->master);
+	if (skb->deliver_no_wcard)
+		null_or_orig = orig_dev;
+	else if (master) {
+		if (skb_bond_should_drop(skb)) {
+			skb->deliver_no_wcard = 1;
 			null_or_orig = orig_dev; /* deliver only exact match */
-		else
-			skb->dev = orig_dev->master;
+		} else
+			skb->dev = master;
 	}
 
 	__get_cpu_var(netdev_rx_stat).total++;
