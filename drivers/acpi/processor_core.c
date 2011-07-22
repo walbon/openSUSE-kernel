@@ -1170,15 +1170,12 @@ processor_walk_namespace_cb(acpi_handle handle,
 
 static acpi_status acpi_processor_hotadd_init(struct acpi_processor *pr)
 {
-	acpi_handle handle = pr->handle;
-	int *p_cpu = &pr->id;
-
 #ifdef CONFIG_XEN
 	if (xen_pcpu_index(pr->acpi_id, 1) != -1)
 		return AE_OK;
 #endif
 
-	if (!is_processor_present(handle)) {
+	if (!is_processor_present(pr->handle)) {
 		return AE_ERROR;
 	}
 
@@ -1188,11 +1185,11 @@ static acpi_status acpi_processor_hotadd_init(struct acpi_processor *pr)
 		return AE_OK;
 	}
 
-	if (acpi_map_lsapic(handle, p_cpu))
+	if (acpi_map_lsapic(pr->handle, &pr->id))
 		return AE_ERROR;
 
-	if (arch_register_cpu(*p_cpu)) {
-		acpi_unmap_lsapic(*p_cpu);
+	if (arch_register_cpu(pr->id)) {
+		acpi_unmap_lsapic(pr->id);
 		return AE_ERROR;
 	}
 	/* CPU got hot-plugged, but cpu_data is not initialized yet
@@ -1203,7 +1200,7 @@ static acpi_status acpi_processor_hotadd_init(struct acpi_processor *pr)
 	 * and do it when the CPU gets online the first time
 	 * TBD: Cleanup above functions and try to do this more elegant.
 	 */
-	printk(KERN_INFO "CPU %d got hotplugged\n", *p_cpu);
+	printk(KERN_INFO "CPU %d got hotplugged\n", pr->id);
 	pr->flags.need_hotplug_init = 1;
 
 	return AE_OK;

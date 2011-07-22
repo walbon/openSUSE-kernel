@@ -303,7 +303,6 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 	p->thread.sp0 = (unsigned long) (childregs+1);
 
 	set_tsk_thread_flag(p, TIF_FORK);
-
 	p->thread.io_bitmap_ptr = NULL;
 
 	savesegment(gs, p->thread.gsindex);

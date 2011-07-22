@@ -953,7 +953,6 @@ void __init identify_boot_cpu(void)
 #else
 	vgetcpu_set_mode();
 #endif
-	init_hw_perf_events();
 }
 
 #ifdef CONFIG_XEN

@@ -9,6 +9,7 @@
 
 #ifdef CONFIG_XEN
 #include <xen/interface/xen.h>
+#include <xen/interface/tmem.h>
 
 /* Bits for HYPERVISOR_tmem_op(TMEM_NEW_POOL) */
 #define TMEM_POOL_MIN_PAGESHIFT   12

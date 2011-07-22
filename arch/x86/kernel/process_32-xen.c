@@ -265,12 +265,12 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 
 	p->thread.io_bitmap_ptr = NULL;
 	tsk = current;
+	if (test_tsk_thread_flag(tsk, TIF_CSTAR))
+		p->thread.ip = (unsigned long) cstar_ret_from_fork;
 	err = -ENOMEM;
 
 	memset(p->thread.ptrace_bps, 0, sizeof(p->thread.ptrace_bps));
 
-	if (test_tsk_thread_flag(tsk, TIF_CSTAR))
-		p->thread.ip = (unsigned long) cstar_ret_from_fork;
 	if (unlikely(test_tsk_thread_flag(tsk, TIF_IO_BITMAP))) {
 		p->thread.io_bitmap_ptr = kmemdup(tsk->thread.io_bitmap_ptr,
 						IO_BITMAP_BYTES, GFP_KERNEL);
