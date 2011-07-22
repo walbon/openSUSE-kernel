@@ -83,6 +83,9 @@ static int rx_copybreak;
 
 static int dspcfg_workaround = 1;
 
+/* Set to disable cable magic - needed for very long cables on some chips */
+static int no_cable_magic;
+
 /* Used to pass the media type, etc.
    Both 'options[]' and 'full_duplex[]' should exist for driver
    interoperability.
@@ -140,7 +143,8 @@ MODULE_LICENSE("GPL");
 module_param(mtu, int, 0);
 module_param(debug, int, 0);
 module_param(rx_copybreak, int, 0);
-module_param(dspcfg_workaround, int, 1);
+module_param(dspcfg_workaround, int, 0);
+module_param(no_cable_magic, int, 0);
 module_param_array(options, int, NULL, 0);
 module_param_array(full_duplex, int, NULL, 0);
 MODULE_PARM_DESC(mtu, "DP8381x MTU (all boards)");
@@ -148,6 +152,9 @@ MODULE_PARM_DESC(debug, "DP8381x default debug level");
 MODULE_PARM_DESC(rx_copybreak,
 	"DP8381x copy breakpoint for copy-only-tiny-frames");
 MODULE_PARM_DESC(dspcfg_workaround, "DP8381x: control DspCfg workaround");
+MODULE_PARM_DESC(no_cable_magic,
+	"DP8381x: set to 1 to disable magic workaround for short cables "
+	"(may help with long cables");
 MODULE_PARM_DESC(options,
 	"DP8381x: Bits 0-3: media type, bit 17: full duplex");
 MODULE_PARM_DESC(full_duplex, "DP8381x full duplex setting(s) (1)");
@@ -1219,7 +1226,7 @@ static void init_phy_fixup(struct net_device *dev)
 		writew(1, ioaddr + PGSEL);
 		writew(PMDCSR_VAL, ioaddr + PMDCSR);
 		writew(TSTDAT_VAL, ioaddr + TSTDAT);
-		np->dspcfg = (np->srr <= SRR_DP83815_C)?
+		np->dspcfg = (np->srr <= SRR_DP83815_C || no_cable_magic)?
 			DSPCFG_VAL : (DSPCFG_COEF | readw(ioaddr + DSPCFG));
 		writew(np->dspcfg, ioaddr + DSPCFG);
 		writew(SDCFG_VAL, ioaddr + SDCFG);
@@ -1585,7 +1592,7 @@ static void do_cable_magic(struct net_device *dev)
 	if (dev->if_port != PORT_TP)
 		return;
 
-	if (np->srr >= SRR_DP83816_A5)
+	if (np->srr >= SRR_DP83816_A5 || no_cable_magic)
 		return;
 
 	/*
@@ -1630,7 +1637,7 @@ static void undo_cable_magic(struct net_device *dev)
 	if (dev->if_port != PORT_TP)
 		return;
 
-	if (np->srr >= SRR_DP83816_A5)
+	if (np->srr >= SRR_DP83816_A5 || no_cable_magic)
 		return;
 
 	writew(1, ioaddr + PGSEL);
