@@ -250,19 +250,17 @@ struct cfs_bandwidth {
 #ifdef CONFIG_CFS_BANDWIDTH
 	spinlock_t lock;
 	ktime_t period;
-	u64 quota;
-	u64 runtime;
-	u64 runtime_expires;
+	u64 quota, runtime;
 	s64 hierarchal_quota;
+	u64 runtime_expires;
 
-	int idle;
+	int idle, timer_active;
 	struct hrtimer period_timer, slack_timer;
 	struct list_head throttled_cfs_rq;
 
 	/* statistics */
 	int nr_periods, nr_throttled;
 	u64 throttled_time;
-
 #endif
 };
 
@@ -441,6 +439,7 @@ struct cfs_rq {
 #endif
 };
 
+#ifdef CONFIG_FAIR_GROUP_SCHED
 #ifdef CONFIG_CFS_BANDWIDTH
 static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
 {
@@ -493,29 +492,36 @@ static void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->period_timer.function = sched_cfs_period_timer;
 	hrtimer_init(&cfs_b->slack_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	cfs_b->slack_timer.function = sched_cfs_slack_timer;
-
 }
 
 static void init_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 {
-	cfs_rq->runtime_remaining = 0;
 	cfs_rq->runtime_enabled = 0;
 	INIT_LIST_HEAD(&cfs_rq->throttled_list);
 }
 
-static void start_cfs_bandwidth(struct cfs_rq *cfs_rq)
+/* requires cfs_b->lock, may release to reprogram timer */
+static void __start_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 {
-	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(cfs_rq->tg);
+	/*
+	 * The timer may be active because we're trying to set a new bandwidth
+	 * period or because we're racing with the tear-down path
+	 * (timer_active==0 becomes visible before the hrtimer call-back
+	 * terminates).  In either case we ensure that it's re-programmed
+	 */
+	while (unlikely(hrtimer_active(&cfs_b->period_timer))) {
+		spin_unlock(&cfs_b->lock);
+		/* ensure cfs_b->lock is available while we wait */
+		hrtimer_cancel(&cfs_b->period_timer);
 
-	if (cfs_b->quota == RUNTIME_INF)
-		return;
+		spin_lock(&cfs_b->lock);
+		/* if someone else restarted the timer then we're done */
+		if (cfs_b->timer_active)
+			return;
+	}
 
-	if (hrtimer_active(&cfs_b->period_timer))
-		return;
-
-	spin_lock(&cfs_b->lock);
+	cfs_b->timer_active = 1;
 	start_bandwidth_timer(&cfs_b->period_timer, cfs_b->period);
-	spin_unlock(&cfs_b->lock);
 }
 
 static void destroy_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
@@ -524,14 +530,16 @@ static void destroy_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	hrtimer_cancel(&cfs_b->slack_timer);
 }
 #else
-#ifdef CONFIG_FAIR_GROUP_SCHED
 static void init_cfs_rq_runtime(struct cfs_rq *cfs_rq) {}
-void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b) {}
-static struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg) {}
+static void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b) {}
 static void destroy_cfs_bandwidth(struct cfs_bandwidth *cfs_b) {}
-#endif /* CONFIG_FAIR_GROUP_SCHED */
-static void start_cfs_bandwidth(struct cfs_rq *cfs_rq) {}
+
+static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
+{
+	return NULL;
+}
 #endif /* CONFIG_CFS_BANDWIDTH */
+#endif /* CONFIG_FAIR_GROUP_SCHED */
 
 /* Real-Time classes' related field in a runqueue: */
 struct rt_rq {
@@ -1573,10 +1581,16 @@ static inline void dec_cpu_load(struct rq *rq, unsigned long load)
 	update_load_sub(&rq->load, load);
 }
 
-#if (defined(CONFIG_SMP) && defined(CONFIG_FAIR_GROUP_SCHED)) || defined(CONFIG_RT_GROUP_SCHED)
+#if defined(CONFIG_RT_GROUP_SCHED) || (defined(CONFIG_FAIR_GROUP_SCHED) && \
+			(defined(CONFIG_SMP) || defined(CONFIG_CFS_BANDWIDTH)))
 typedef int (*tg_visitor)(struct task_group *, void *);
 
-/* Iterate task_group tree rooted at *from */
+/*
+ * Iterate task_group tree rooted at *from, calling @down when first entering a
+ * node and @up when leaving it for the final time.
+ *
+ * Caller must hold rcu_lock or sufficient equivalent.
+ */
 static int walk_tg_tree_from(struct task_group *from,
 			     tg_visitor down, tg_visitor up, void *data)
 {
@@ -1611,17 +1625,13 @@ out:
 /*
  * Iterate the full tree, calling @down when first entering a node and @up when
  * leaving it for the final time.
+ *
+ * Caller must hold rcu_lock or sufficient equivalent.
  */
 
 static inline int walk_tg_tree(tg_visitor down, tg_visitor up, void *data)
 {
-	int ret;
-
-	rcu_read_lock();
-	ret = walk_tg_tree_from(&root_task_group, down, up, data);
-	rcu_read_unlock();
-
-	return ret;
+	return walk_tg_tree_from(&root_task_group, down, up, data);
 }
 
 static int tg_nop(struct task_group *tg, void *data)
@@ -1717,7 +1727,9 @@ static int tg_load_down(struct task_group *tg, void *data)
 
 static void update_h_load(long cpu)
 {
+	rcu_read_lock();
 	walk_tg_tree(tg_load_down, tg_nop, (void *)cpu);
+	rcu_read_unlock();
 }
 
 #endif
@@ -6074,9 +6086,7 @@ static void unthrottle_offline_cfs_rqs(struct rq *rq)
 	}
 }
 #else
-static void unthrottle_offline_cfs_rqs(struct rq *rq)
-{
-}
+static void unthrottle_offline_cfs_rqs(struct rq *rq) {}
 #endif
 
 /*
@@ -8492,13 +8502,19 @@ static int tg_rt_schedulable(struct task_group *tg, void *data)
 
 static int __rt_schedulable(struct task_group *tg, u64 period, u64 runtime)
 {
+	int ret;
+
 	struct rt_schedulable_data data = {
 		.tg = tg,
 		.rt_period = period,
 		.rt_runtime = runtime,
 	};
 
-	return walk_tg_tree(tg_rt_schedulable, tg_nop, &data);
+	rcu_read_lock();
+	ret = walk_tg_tree(tg_rt_schedulable, tg_nop, &data);
+	rcu_read_unlock();
+
+	return ret;
 }
 
 static int tg_set_rt_bandwidth(struct task_group *tg,
@@ -8798,9 +8814,8 @@ static int __cfs_schedulable(struct task_group *tg, u64 period, u64 runtime);
 
 static int tg_set_cfs_bandwidth(struct task_group *tg, u64 period, u64 quota)
 {
-	int i, ret = 0;
+	int i, ret = 0, runtime_enabled;
 	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(tg);
-	u64 runtime_expires;
 
 	if (tg == &root_task_group)
 		return -EINVAL;
@@ -8822,17 +8837,22 @@ static int tg_set_cfs_bandwidth(struct task_group *tg, u64 period, u64 quota)
 		return -EINVAL;
 
 	mutex_lock(&cfs_constraints_mutex);
-	if (sysctl_sched_cfs_bandwidth_consistent) {
-		ret = __cfs_schedulable(tg, period, quota);
-		if (ret)
-			goto out_unlock;
-	}
+	ret = __cfs_schedulable(tg, period, quota);
+	if (ret)
+		goto out_unlock;
 
+	runtime_enabled = quota != RUNTIME_INF;
 	spin_lock_irq(&cfs_b->lock);
 	cfs_b->period = ns_to_ktime(period);
-	cfs_b->quota = cfs_b->runtime = quota;
-	runtime_expires = sched_clock_cpu(smp_processor_id()) + period;
-	cfs_b->runtime_expires = runtime_expires;
+	cfs_b->quota = quota;
+
+	__refill_cfs_bandwidth_runtime(cfs_b);
+	/* restart the period timer (if active) to handle new period expiry */
+	if (runtime_enabled && cfs_b->timer_active) {
+		/* force a reprogram */
+		cfs_b->timer_active = 0;
+		__start_cfs_bandwidth(cfs_b);
+	}
 	spin_unlock_irq(&cfs_b->lock);
 
 	for_each_possible_cpu(i) {
@@ -8840,9 +8860,8 @@ static int tg_set_cfs_bandwidth(struct task_group *tg, u64 period, u64 quota)
 		struct rq *rq = rq_of(cfs_rq);
 
 		spin_lock_irq(&rq->lock);
-		cfs_rq->runtime_enabled = quota != RUNTIME_INF;
+		cfs_rq->runtime_enabled = runtime_enabled;
 		cfs_rq->runtime_remaining = 0;
-		cfs_rq->runtime_expires = runtime_expires;
 
 		if (cfs_rq_throttled(cfs_rq))
 			unthrottle_cfs_rq(cfs_rq);
@@ -8925,7 +8944,6 @@ static int cpu_cfs_period_write_u64(struct cgroup *cgrp, struct cftype *cftype,
 	return tg_set_cfs_period(cgroup_tg(cgrp), cfs_period_us);
 }
 
-
 struct cfs_schedulable_data {
 	struct task_group *tg;
 	u64 period, quota;
@@ -8941,16 +8959,16 @@ static u64 normalize_cfs_quota(struct task_group *tg,
 	u64 quota, period;
 
 	if (tg == d->tg) {
-		if (d->quota == RUNTIME_INF)
-			return RUNTIME_INF;
 		period = d->period;
 		quota = d->quota;
 	} else {
-		if (tg_cfs_bandwidth(tg)->quota == RUNTIME_INF)
-			return RUNTIME_INF;
 		period = tg_get_cfs_period(tg);
 		quota = tg_get_cfs_quota(tg);
 	}
+
+	/* note: these should typically be equivalent */
+	if (quota == RUNTIME_INF || quota == -1)
+		return RUNTIME_INF;
 
 	return to_ratio(period, quota);
 }
@@ -8961,24 +8979,22 @@ static int tg_cfs_schedulable_down(struct task_group *tg, void *data)
 	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(tg);
 	s64 quota = 0, parent_quota = -1;
 
-	quota = normalize_cfs_quota(tg, d);
 	if (!tg->parent) {
 		quota = RUNTIME_INF;
 	} else {
 		struct cfs_bandwidth *parent_b = tg_cfs_bandwidth(tg->parent);
 
+		quota = normalize_cfs_quota(tg, d);
 		parent_quota = parent_b->hierarchal_quota;
-		if (parent_quota != RUNTIME_INF) {
-			parent_quota -= quota;
-			/* invalid hierarchy, child bandwidth exceeds parent */
-			if (parent_quota < 0)
-				return -EINVAL;
-		}
 
-		/* if no inherent limit then inherit parent quota */
+		/*
+		 * ensure max(child_quota) <= parent_quota, inherit when no
+		 * limit is set
+		 */
 		if (quota == RUNTIME_INF)
 			quota = parent_quota;
-		parent_b->hierarchal_quota = parent_quota;
+		else if (parent_quota != RUNTIME_INF && quota > parent_quota)
+			return -EINVAL;
 	}
 	cfs_b->hierarchal_quota = quota;
 
@@ -8987,40 +9003,21 @@ static int tg_cfs_schedulable_down(struct task_group *tg, void *data)
 
 static int __cfs_schedulable(struct task_group *tg, u64 period, u64 quota)
 {
+	int ret;
 	struct cfs_schedulable_data data = {
 		.tg = tg,
 		.period = period,
 		.quota = quota,
 	};
 
-	if (!sysctl_sched_cfs_bandwidth_consistent)
-		return 0;
-
 	if (quota != RUNTIME_INF) {
 		do_div(data.period, NSEC_PER_USEC);
 		do_div(data.quota, NSEC_PER_USEC);
 	}
 
-	return walk_tg_tree(tg_cfs_schedulable_down, tg_nop, &data);
-}
-
-int sched_cfs_consistent_handler(struct ctl_table *table, int write,
-		void __user *buffer, size_t *lenp,
-		loff_t *ppos)
-{
-	int ret;
-
-	mutex_lock(&cfs_constraints_mutex);
-	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
-
-	if (!ret && write && sysctl_sched_cfs_bandwidth_consistent) {
-		ret = __cfs_schedulable(NULL, 0, 0);
-
-		/* must be consistent to enable */
-		if (ret)
-			sysctl_sched_cfs_bandwidth_consistent = 0;
-	}
-	mutex_unlock(&cfs_constraints_mutex);
+	rcu_read_lock();
+	ret = walk_tg_tree(tg_cfs_schedulable_down, tg_nop, &data);
+	rcu_read_unlock();
 
 	return ret;
 }

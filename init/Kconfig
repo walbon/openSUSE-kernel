@@ -622,7 +622,6 @@ config FAIR_GROUP_SCHED
 config CFS_BANDWIDTH
 	bool "CPU bandwidth provisioning for FAIR_GROUP_SCHED"
 	depends on EXPERIMENTAL
-	depends on SMP
 	depends on FAIR_GROUP_SCHED
 	default n
 	help
@@ -630,7 +629,7 @@ config CFS_BANDWIDTH
 	  tasks running within the fair group scheduler.  Groups with no limit
 	  set are considered to be unconstrained and will run with no
 	  restriction.
-	  See tip/Documentation/scheduler/sched-bwc.txt for more information/
+	  See tip/Documentation/scheduler/sched-bwc.txt for more information.
 
 config RT_GROUP_SCHED
 	bool "Group scheduling for SCHED_RR/FIFO"
