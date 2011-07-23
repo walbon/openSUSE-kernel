@@ -27,6 +27,7 @@ EXPORT_SYMBOL(cmos_lock);
 DEFINE_SPINLOCK(rtc_lock);
 EXPORT_SYMBOL(rtc_lock);
 
+#ifndef CONFIG_XEN_UNPRIVILEGED_GUEST
 /*
  * In order to set the CMOS clock precisely, set_rtc_mmss has to be
  * called 500 ms after the second nowtime has started, because when
@@ -142,6 +143,7 @@ unsigned long mach_get_cmos_time(void)
 
 	return mktime(year, mon, day, hour, min, sec);
 }
+#endif /* CONFIG_XEN_UNPRIVILEGED_GUEST */
 
 /* Routines for accessing the CMOS RAM/RTC. */
 unsigned char rtc_cmos_read(unsigned char addr)
@@ -171,11 +173,6 @@ int update_persistent_clock(struct timespec now)
 	unsigned long flags;
 	int retval;
 
-#ifdef CONFIG_XEN
-	if (xen_update_persistent_clock() < 0 || xen_independent_wallclock())
-		return 0;
-#endif
-
 	spin_lock_irqsave(&rtc_lock, flags);
 	retval = x86_platform.set_wallclock(now.tv_sec);
 	spin_unlock_irqrestore(&rtc_lock, flags);
@@ -188,12 +185,6 @@ void read_persistent_clock(struct timespec *ts)
 {
 	unsigned long retval, flags;
 
-#ifdef CONFIG_XEN
-	if (!is_initial_xendomain()) {
-		xen_read_persistent_clock(ts);
-		return;
-	}
-#endif
 	spin_lock_irqsave(&rtc_lock, flags);
 	retval = x86_platform.get_wallclock();
 	spin_unlock_irqrestore(&rtc_lock, flags);
@@ -209,6 +200,7 @@ unsigned long long native_read_tsc(void)
 EXPORT_SYMBOL(native_read_tsc);
 
 
+#ifndef CONFIG_XEN_UNPRIVILEGED_GUEST
 static struct resource rtc_resources[] = {
 	[0] = {
 		.start	= RTC_PORT(0),
@@ -248,6 +240,11 @@ static __init int add_rtc_cmos(void)
 	}
 #endif
 
+#ifdef CONFIG_XEN
+	if (!is_initial_xendomain())
+		return 0;
+#endif
+
 	platform_device_register(&rtc_device);
 	dev_info(&rtc_device.dev,
 		 "registered platform RTC device (no PNP device found)\n");
@@ -255,3 +252,4 @@ static __init int add_rtc_cmos(void)
 	return 0;
 }
 device_initcall(add_rtc_cmos);
+#endif /* CONFIG_XEN_UNPRIVILEGED_GUEST */

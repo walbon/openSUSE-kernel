@@ -41,6 +41,9 @@
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
+#if defined(CONFIG_XEN_PRIVILEGED_GUEST) && !defined(__GENKSYMS__)
+#include <asm/time.h>
+#endif
 
 #include "timeconst.h"
 
@@ -137,6 +140,9 @@ static inline void warp_clock(void)
 	wall_to_monotonic.tv_sec -= sys_tz.tz_minuteswest * 60;
 	xtime.tv_sec += sys_tz.tz_minuteswest * 60;
 	update_xtime_cache(0);
+#ifdef CONFIG_XEN_PRIVILEGED_GUEST
+	xen_update_wallclock(&xtime);
+#endif
 	write_sequnlock_irq(&xtime_lock);
 	clock_was_set();
 }

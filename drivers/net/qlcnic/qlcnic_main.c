@@ -3744,7 +3744,8 @@ validate_esw_config(struct qlcnic_adapter *adapter,
 }
 
 static ssize_t
-qlcnic_sysfs_write_esw_config(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_write_esw_config(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3818,7 +3819,8 @@ out:
 }
 
 static ssize_t
-qlcnic_sysfs_read_esw_config(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_read_esw_config(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);

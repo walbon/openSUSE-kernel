@@ -98,11 +98,6 @@ static int __init __independent_wallclock(char *str)
 }
 __setup("independent_wallclock", __independent_wallclock);
 
-int xen_independent_wallclock(void)
-{
-	return independent_wallclock;
-}
-
 /* Permitted clock jitter, in nsecs, beyond which a warning will be printed. */
 static unsigned long permitted_clock_jitter = 10000000UL; /* 10ms */
 static int __init __permitted_clock_jitter(char *str)
@@ -231,7 +226,7 @@ static void __update_wallclock(time_t sec, long nsec)
 	set_normalized_timespec(&wall_to_monotonic, wtm_sec, wtm_nsec);
 }
 
-static void update_wallclock(void)
+static void update_wallclock(bool local)
 {
 	shared_info_t *s = HYPERVISOR_shared_info;
 
@@ -243,7 +238,7 @@ static void update_wallclock(void)
 		rmb();
 	} while ((s->wc_version & 1) | (shadow_tv_version ^ s->wc_version));
 
-	if (!independent_wallclock)
+	if (local)
 		__update_wallclock(shadow_tv.tv_sec, shadow_tv.tv_nsec);
 }
 
@@ -285,6 +280,43 @@ static inline int time_values_up_to_date(void)
 	return percpu_read(shadow_time.version) == vcpu_info_read(time.version);
 }
 
+#ifdef CONFIG_XEN_PRIVILEGED_GUEST
+int xen_update_wallclock(const struct timespec *tv)
+{
+	struct timespec now;
+	s64 nsec;
+	struct shadow_time_info *shadow;
+	struct xen_platform_op op;
+
+	if (!is_initial_xendomain() || independent_wallclock)
+		return -EPERM;
+
+	shadow = &__get_cpu_var(shadow_time);
+
+	/*
+	 * Ensure we don't get blocked for a long time so that our time delta
+	 * overflows. If that were to happen then our shadow time values would
+	 * be stale, so we can retry with fresh ones.
+	 */
+	for (;;) {
+		nsec = tv->tv_nsec - get_nsec_offset(shadow);
+		if (time_values_up_to_date())
+			break;
+		get_time_values_from_xen(smp_processor_id());
+	}
+	set_normalized_timespec(&now, tv->tv_sec, nsec);
+
+	op.cmd = XENPF_settime;
+	op.u.settime.secs        = now.tv_sec;
+	op.u.settime.nsecs       = now.tv_nsec;
+	op.u.settime.system_time = shadow->system_timestamp;
+	WARN_ON(HYPERVISOR_platform_op(&op));
+	update_wallclock(false);
+
+	return 0;
+}
+#endif
+
 static void sync_xen_wallclock(unsigned long dummy);
 static DEFINE_TIMER(sync_xen_wallclock_timer, sync_xen_wallclock, 0, 0);
 static void sync_xen_wallclock(unsigned long dummy)
@@ -306,7 +338,7 @@ static void sync_xen_wallclock(unsigned long dummy)
 	op.u.settime.system_time = processed_system_time;
 	WARN_ON(HYPERVISOR_platform_op(&op));
 
-	update_wallclock();
+	update_wallclock(false);
 
 	write_sequnlock_irq(&xtime_lock);
 
@@ -333,6 +365,36 @@ static unsigned long long local_clock(void)
 	put_cpu();
 
 	return time;
+}
+
+unsigned long xen_read_wallclock(void)
+{
+	const shared_info_t *s = HYPERVISOR_shared_info;
+	u32 version, sec, nsec;
+	u64 delta;
+
+	do {
+		version = s->wc_version;
+		rmb();
+		sec     = s->wc_sec;
+		nsec    = s->wc_nsec;
+		rmb();
+	} while ((s->wc_version & 1) | (version ^ s->wc_version));
+
+	delta = local_clock() + (u64)sec * NSEC_PER_SEC + nsec;
+	do_div(delta, NSEC_PER_SEC);
+
+	return delta;
+}
+
+int xen_write_wallclock(unsigned long now)
+{
+	if (!is_initial_xendomain() || independent_wallclock)
+		return 0;
+
+	mod_timer(&sync_xen_wallclock_timer, jiffies + 1);
+
+	return mach_set_rtc_mmss(now);
 }
 
 /*
@@ -509,7 +571,8 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 		}
 
 		if (shadow_tv_version != HYPERVISOR_shared_info->wc_version) {
-			update_wallclock();
+			update_wallclock(!is_initial_xendomain()
+					 && !independent_wallclock);
 			schedule_clock_was_set_work = 1;
 		}
 
@@ -704,35 +767,6 @@ struct vcpu_runstate_info *setup_runstate_area(unsigned int cpu)
 	return runstate;
 }
 
-void xen_read_persistent_clock(struct timespec *ts)
-{
-	const shared_info_t *s = HYPERVISOR_shared_info;
-	u32 version, sec, nsec;
-	u64 delta;
-
-	do {
-		version = s->wc_version;
-		rmb();
-		sec     = s->wc_sec;
-		nsec    = s->wc_nsec;
-		rmb();
-	} while ((s->wc_version & 1) | (version ^ s->wc_version));
-
-	delta = local_clock() + (u64)sec * NSEC_PER_SEC + nsec;
-	do_div(delta, NSEC_PER_SEC);
-
-	ts->tv_sec = delta;
-	ts->tv_nsec = 0;
-}
-
-int xen_update_persistent_clock(void)
-{
-	if (!is_initial_xendomain())
-		return -1;
-	mod_timer(&sync_xen_wallclock_timer, jiffies + 1);
-	return 0;
-}
-
 /* Dynamically-mapped IRQ. */
 static int __read_mostly timer_irq = -1;
 static struct irqaction timer_action = {
@@ -773,7 +807,7 @@ void __init time_init(void)
 
 	clocksource_register(&clocksource_xen);
 
-	update_wallclock();
+	update_wallclock(false);
 
 	use_tsc_delay();
 
