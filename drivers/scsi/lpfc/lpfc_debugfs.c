@@ -1327,8 +1327,8 @@ lpfc_idiag_pcicfg_read(struct file *file, char __user *buf, size_t nbytes,
 		return 0;
 
 	if (idiag.cmd.opcode == LPFC_IDIAG_CMD_PCICFG_RD) {
-		where = idiag.cmd.data[0];
-		count = idiag.cmd.data[1];
+		where = idiag.cmd.data[IDIAG_PCICFG_WHERE_INDX];
+		count = idiag.cmd.data[IDIAG_PCICFG_COUNT_INDX];
 	} else
 		return 0;
 
@@ -1373,6 +1373,11 @@ pcicfg_browse:
 		len += snprintf(pbuffer+len, LPFC_PCI_CFG_SIZE-len,
 				"%08x ", u32val);
 		offset += sizeof(uint32_t);
+		if (offset >= LPFC_PCI_CFG_SIZE) {
+			len += snprintf(pbuffer+len,
+					LPFC_PCI_CFG_SIZE-len, "\n");
+			break;
+		}
 		index -= sizeof(uint32_t);
 		if (!index)
 			len += snprintf(pbuffer+len, LPFC_PCI_CFG_SIZE-len,
@@ -1385,8 +1390,11 @@ pcicfg_browse:
 	}
 
 	/* Set up the offset for next portion of pci cfg read */
-	idiag.offset.last_rd += LPFC_PCI_CFG_RD_SIZE;
-	if (idiag.offset.last_rd >= LPFC_PCI_CFG_SIZE)
+	if (index == 0) {
+		idiag.offset.last_rd += LPFC_PCI_CFG_RD_SIZE;
+		if (idiag.offset.last_rd >= LPFC_PCI_CFG_SIZE)
+			idiag.offset.last_rd = 0;
+	} else
 		idiag.offset.last_rd = 0;
 
 	return simple_read_from_buffer(buf, nbytes, ppos, pbuffer, len);
@@ -1439,8 +1447,8 @@ lpfc_idiag_pcicfg_write(struct file *file, const char __user *buf,
 		if (rc != LPFC_PCI_CFG_RD_CMD_ARG)
 			goto error_out;
 		/* Read command from PCI config space, set up command fields */
-		where = idiag.cmd.data[0];
-		count = idiag.cmd.data[1];
+		where = idiag.cmd.data[IDIAG_PCICFG_WHERE_INDX];
+		count = idiag.cmd.data[IDIAG_PCICFG_COUNT_INDX];
 		if (count == LPFC_PCI_CFG_BROWSE) {
 			if (where % sizeof(uint32_t))
 				goto error_out;
@@ -1475,9 +1483,9 @@ lpfc_idiag_pcicfg_write(struct file *file, const char __user *buf,
 		if (rc != LPFC_PCI_CFG_WR_CMD_ARG)
 			goto error_out;
 		/* Write command to PCI config space, read-modify-write */
-		where = idiag.cmd.data[0];
-		count = idiag.cmd.data[1];
-		value = idiag.cmd.data[2];
+		where = idiag.cmd.data[IDIAG_PCICFG_WHERE_INDX];
+		count = idiag.cmd.data[IDIAG_PCICFG_COUNT_INDX];
+		value = idiag.cmd.data[IDIAG_PCICFG_VALUE_INDX];
 		/* Sanity checks */
 		if ((count != sizeof(uint8_t)) &&
 		    (count != sizeof(uint16_t)) &&
@@ -1558,6 +1566,292 @@ lpfc_idiag_pcicfg_write(struct file *file, const char __user *buf,
 							       u32val);
 				}
 			}
+		}
+	} else
+		/* All other opecodes are illegal for now */
+		goto error_out;
+
+	return nbytes;
+error_out:
+	memset(&idiag, 0, sizeof(idiag));
+	return -EINVAL;
+}
+
+/**
+ * lpfc_idiag_baracc_read - idiag debugfs pci bar access read
+ * @file: The file pointer to read from.
+ * @buf: The buffer to copy the data to.
+ * @nbytes: The number of bytes to read.
+ * @ppos: The position in the file to start reading from.
+ *
+ * Description:
+ * This routine reads data from the @phba pci bar memory mapped space
+ * according to the idiag command, and copies to user @buf.
+ *
+ * Returns:
+ * This function returns the amount of data that was read (this could be less
+ * than @nbytes if the end of the file was reached) or a negative error value.
+ **/
+static ssize_t
+lpfc_idiag_baracc_read(struct file *file, char __user *buf, size_t nbytes,
+		       loff_t *ppos)
+{
+	struct lpfc_debug *debug = file->private_data;
+	struct lpfc_hba *phba = (struct lpfc_hba *)debug->i_private;
+	int offset_label, offset, offset_run, len = 0, index;
+	int bar_num, acc_range, bar_size;
+	char *pbuffer;
+	void __iomem *mem_mapped_bar;
+	uint32_t if_type;
+	struct pci_dev *pdev;
+	uint32_t u32val;
+
+	pdev = phba->pcidev;
+	if (!pdev)
+		return 0;
+
+	/* This is a user read operation */
+	debug->op = LPFC_IDIAG_OP_RD;
+
+	if (!debug->buffer)
+		debug->buffer = kmalloc(LPFC_PCI_BAR_RD_BUF_SIZE, GFP_KERNEL);
+	if (!debug->buffer)
+		return 0;
+	pbuffer = debug->buffer;
+
+	if (*ppos)
+		return 0;
+
+	if (idiag.cmd.opcode == LPFC_IDIAG_CMD_BARACC_RD) {
+		bar_num   = idiag.cmd.data[IDIAG_BARACC_BAR_NUM_INDX];
+		offset    = idiag.cmd.data[IDIAG_BARACC_OFF_SET_INDX];
+		acc_range = idiag.cmd.data[IDIAG_BARACC_ACC_MOD_INDX];
+		bar_size = idiag.cmd.data[IDIAG_BARACC_BAR_SZE_INDX];
+	} else
+		return 0;
+
+	if (acc_range == 0)
+		return 0;
+
+	if_type = bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf);
+	if (if_type == LPFC_SLI_INTF_IF_TYPE_0) {
+		if (bar_num == IDIAG_BARACC_BAR_0)
+			mem_mapped_bar = phba->sli4_hba.conf_regs_memmap_p;
+		else if (bar_num == IDIAG_BARACC_BAR_1)
+			mem_mapped_bar = phba->sli4_hba.ctrl_regs_memmap_p;
+		else if (bar_num == IDIAG_BARACC_BAR_2)
+			mem_mapped_bar = phba->sli4_hba.drbl_regs_memmap_p;
+		else
+			return 0;
+	} else if (if_type == LPFC_SLI_INTF_IF_TYPE_2) {
+		if (bar_num == IDIAG_BARACC_BAR_0)
+			mem_mapped_bar = phba->sli4_hba.conf_regs_memmap_p;
+		else
+			return 0;
+	} else
+		return 0;
+
+	/* Read single PCI bar space register */
+	if (acc_range == SINGLE_WORD) {
+		offset_run = offset;
+		u32val = readl(mem_mapped_bar + offset_run);
+		len += snprintf(pbuffer+len, LPFC_PCI_BAR_RD_BUF_SIZE-len,
+				"%05x: %08x\n", offset_run, u32val);
+	} else
+		goto baracc_browse;
+
+	return simple_read_from_buffer(buf, nbytes, ppos, pbuffer, len);
+
+baracc_browse:
+
+	/* Browse all PCI bar space registers */
+	offset_label = idiag.offset.last_rd;
+	offset_run = offset_label;
+
+	/* Read PCI bar memory mapped space */
+	len += snprintf(pbuffer+len, LPFC_PCI_BAR_RD_BUF_SIZE-len,
+			"%05x: ", offset_label);
+	index = LPFC_PCI_BAR_RD_SIZE;
+	while (index > 0) {
+		u32val = readl(mem_mapped_bar + offset_run);
+		len += snprintf(pbuffer+len, LPFC_PCI_BAR_RD_BUF_SIZE-len,
+				"%08x ", u32val);
+		offset_run += sizeof(uint32_t);
+		if (acc_range == LPFC_PCI_BAR_BROWSE) {
+			if (offset_run >= bar_size) {
+				len += snprintf(pbuffer+len,
+					LPFC_PCI_BAR_RD_BUF_SIZE-len, "\n");
+				break;
+			}
+		} else {
+			if (offset_run >= offset +
+			    (acc_range * sizeof(uint32_t))) {
+				len += snprintf(pbuffer+len,
+					LPFC_PCI_BAR_RD_BUF_SIZE-len, "\n");
+				break;
+			}
+		}
+		index -= sizeof(uint32_t);
+		if (!index)
+			len += snprintf(pbuffer+len,
+					LPFC_PCI_BAR_RD_BUF_SIZE-len, "\n");
+		else if (!(index % (8 * sizeof(uint32_t)))) {
+			offset_label += (8 * sizeof(uint32_t));
+			len += snprintf(pbuffer+len,
+					LPFC_PCI_BAR_RD_BUF_SIZE-len,
+					"\n%05x: ", offset_label);
+		}
+	}
+
+	/* Set up the offset for next portion of pci bar read */
+	if (index == 0) {
+		idiag.offset.last_rd += LPFC_PCI_BAR_RD_SIZE;
+		if (acc_range == LPFC_PCI_BAR_BROWSE) {
+			if (idiag.offset.last_rd >= bar_size)
+				idiag.offset.last_rd = 0;
+		} else {
+			if (offset_run >= offset +
+			    (acc_range * sizeof(uint32_t)))
+				idiag.offset.last_rd = offset;
+		}
+	} else {
+		if (acc_range == LPFC_PCI_BAR_BROWSE)
+			idiag.offset.last_rd = 0;
+		else
+			idiag.offset.last_rd = offset;
+	}
+
+	return simple_read_from_buffer(buf, nbytes, ppos, pbuffer, len);
+}
+
+/**
+ * lpfc_idiag_baracc_write - Syntax check and set up idiag bar access commands
+ * @file: The file pointer to read from.
+ * @buf: The buffer to copy the user data from.
+ * @nbytes: The number of bytes to get.
+ * @ppos: The position in the file to start reading from.
+ *
+ * This routine get the debugfs idiag command struct from user space and
+ * then perform the syntax check for PCI bar memory mapped space read or
+ * write command accordingly. In the case of PCI bar memory mapped space
+ * read command, it sets up the command in the idiag command struct for
+ * the debugfs read operation. In the case of PCI bar memorpy mapped space
+ * write operation, it executes the write operation into the PCI bar memory
+ * mapped space accordingly.
+ *
+ * It returns the @nbytges passing in from debugfs user space when successful.
+ * In case of error conditions, it returns proper error code back to the user
+ * space.
+ */
+static ssize_t
+lpfc_idiag_baracc_write(struct file *file, const char __user *buf,
+			size_t nbytes, loff_t *ppos)
+{
+	struct lpfc_debug *debug = file->private_data;
+	struct lpfc_hba *phba = (struct lpfc_hba *)debug->i_private;
+	uint32_t bar_num, bar_size, offset, value, acc_range;
+	struct pci_dev *pdev;
+	void __iomem *mem_mapped_bar;
+	uint32_t if_type;
+	uint32_t u32val;
+	int rc;
+
+	pdev = phba->pcidev;
+	if (!pdev)
+		return -EFAULT;
+
+	/* This is a user write operation */
+	debug->op = LPFC_IDIAG_OP_WR;
+
+	rc = lpfc_idiag_cmd_get(buf, nbytes, &idiag.cmd);
+	if (rc < 0)
+		return rc;
+
+	if_type = bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf);
+	bar_num = idiag.cmd.data[IDIAG_BARACC_BAR_NUM_INDX];
+
+	if (if_type == LPFC_SLI_INTF_IF_TYPE_0) {
+		if ((bar_num != IDIAG_BARACC_BAR_0) &&
+		    (bar_num != IDIAG_BARACC_BAR_1) &&
+		    (bar_num != IDIAG_BARACC_BAR_2))
+			goto error_out;
+	} else if (if_type == LPFC_SLI_INTF_IF_TYPE_2) {
+		if (bar_num != IDIAG_BARACC_BAR_0)
+			goto error_out;
+	} else
+		goto error_out;
+
+	if (if_type == LPFC_SLI_INTF_IF_TYPE_0) {
+		if (bar_num == IDIAG_BARACC_BAR_0) {
+			idiag.cmd.data[IDIAG_BARACC_BAR_SZE_INDX] =
+				LPFC_PCI_IF0_BAR0_SIZE;
+			mem_mapped_bar = phba->sli4_hba.conf_regs_memmap_p;
+		} else if (bar_num == IDIAG_BARACC_BAR_1) {
+			idiag.cmd.data[IDIAG_BARACC_BAR_SZE_INDX] =
+				LPFC_PCI_IF0_BAR1_SIZE;
+			mem_mapped_bar = phba->sli4_hba.ctrl_regs_memmap_p;
+		} else if (bar_num == IDIAG_BARACC_BAR_2) {
+			idiag.cmd.data[IDIAG_BARACC_BAR_SZE_INDX] =
+				LPFC_PCI_IF0_BAR2_SIZE;
+			mem_mapped_bar = phba->sli4_hba.drbl_regs_memmap_p;
+		} else
+			goto error_out;
+	} else if (if_type == LPFC_SLI_INTF_IF_TYPE_2) {
+		if (bar_num == IDIAG_BARACC_BAR_0) {
+			idiag.cmd.data[IDIAG_BARACC_BAR_SZE_INDX] =
+				LPFC_PCI_IF2_BAR0_SIZE;
+			mem_mapped_bar = phba->sli4_hba.conf_regs_memmap_p;
+		} else
+			goto error_out;
+	} else
+		goto error_out;
+
+	offset = idiag.cmd.data[IDIAG_BARACC_OFF_SET_INDX];
+	if (offset % sizeof(uint32_t))
+		goto error_out;
+
+	bar_size = idiag.cmd.data[IDIAG_BARACC_BAR_SZE_INDX];
+	if (idiag.cmd.opcode == LPFC_IDIAG_CMD_BARACC_RD) {
+		/* Sanity check on PCI config read command line arguments */
+		if (rc != LPFC_PCI_BAR_RD_CMD_ARG)
+			goto error_out;
+		acc_range = idiag.cmd.data[IDIAG_BARACC_ACC_MOD_INDX];
+		if (acc_range == LPFC_PCI_BAR_BROWSE) {
+			if (offset > bar_size - sizeof(uint32_t))
+				goto error_out;
+			/* Starting offset to browse */
+			idiag.offset.last_rd = offset;
+		} else if (acc_range > SINGLE_WORD) {
+			if (offset + acc_range * sizeof(uint32_t) > bar_size)
+				goto error_out;
+			/* Starting offset to browse */
+			idiag.offset.last_rd = offset;
+		} else if (acc_range != SINGLE_WORD)
+			goto error_out;
+	} else if (idiag.cmd.opcode == LPFC_IDIAG_CMD_BARACC_WR ||
+		   idiag.cmd.opcode == LPFC_IDIAG_CMD_BARACC_ST ||
+		   idiag.cmd.opcode == LPFC_IDIAG_CMD_BARACC_CL) {
+		/* Sanity check on PCI bar write command line arguments */
+		if (rc != LPFC_PCI_BAR_WR_CMD_ARG)
+			goto error_out;
+		/* Write command to PCI bar space, read-modify-write */
+		acc_range = SINGLE_WORD;
+		value = idiag.cmd.data[IDIAG_BARACC_REG_VAL_INDX];
+		if (idiag.cmd.opcode == LPFC_IDIAG_CMD_BARACC_WR) {
+			writel(value, mem_mapped_bar + offset);
+			readl(mem_mapped_bar + offset);
+		}
+		if (idiag.cmd.opcode == LPFC_IDIAG_CMD_BARACC_ST) {
+			u32val = readl(mem_mapped_bar + offset);
+			u32val |= value;
+			writel(u32val, mem_mapped_bar + offset);
+			readl(mem_mapped_bar + offset);
+		}
+		if (idiag.cmd.opcode == LPFC_IDIAG_CMD_BARACC_CL) {
+			u32val = readl(mem_mapped_bar + offset);
+			u32val &= ~value;
+			writel(u32val, mem_mapped_bar + offset);
+			readl(mem_mapped_bar + offset);
 		}
 	} else
 		/* All other opecodes are illegal for now */
@@ -1871,8 +2165,8 @@ lpfc_idiag_queacc_read(struct file *file, char __user *buf, size_t nbytes,
 		return 0;
 
 	if (idiag.cmd.opcode == LPFC_IDIAG_CMD_QUEACC_RD) {
-		index = idiag.cmd.data[2];
-		count = idiag.cmd.data[3];
+		index = idiag.cmd.data[IDIAG_QUEACC_INDEX_INDX];
+		count = idiag.cmd.data[IDIAG_QUEACC_COUNT_INDX];
 		pque = (struct lpfc_queue *)idiag.ptr_private;
 	} else
 		return 0;
@@ -1944,12 +2238,12 @@ lpfc_idiag_queacc_write(struct file *file, const char __user *buf,
 		return rc;
 
 	/* Get and sanity check on command feilds */
-	quetp  = idiag.cmd.data[0];
-	queid  = idiag.cmd.data[1];
-	index  = idiag.cmd.data[2];
-	count  = idiag.cmd.data[3];
-	offset = idiag.cmd.data[4];
-	value  = idiag.cmd.data[5];
+	quetp  = idiag.cmd.data[IDIAG_QUEACC_QUETP_INDX];
+	queid  = idiag.cmd.data[IDIAG_QUEACC_QUEID_INDX];
+	index  = idiag.cmd.data[IDIAG_QUEACC_INDEX_INDX];
+	count  = idiag.cmd.data[IDIAG_QUEACC_COUNT_INDX];
+	offset = idiag.cmd.data[IDIAG_QUEACC_OFFST_INDX];
+	value  = idiag.cmd.data[IDIAG_QUEACC_VALUE_INDX];
 
 	/* Sanity check on command line arguments */
 	if (idiag.cmd.opcode == LPFC_IDIAG_CMD_QUEACC_WR ||
@@ -2218,7 +2512,7 @@ lpfc_idiag_drbacc_read(struct file *file, char __user *buf, size_t nbytes,
 		return 0;
 
 	if (idiag.cmd.opcode == LPFC_IDIAG_CMD_DRBACC_RD)
-		drb_reg_id = idiag.cmd.data[0];
+		drb_reg_id = idiag.cmd.data[IDIAG_DRBACC_REGID_INDX];
 	else
 		return 0;
 
@@ -2269,8 +2563,8 @@ lpfc_idiag_drbacc_write(struct file *file, const char __user *buf,
 		return rc;
 
 	/* Sanity check on command line arguments */
-	drb_reg_id = idiag.cmd.data[0];
-	value = idiag.cmd.data[1];
+	drb_reg_id = idiag.cmd.data[IDIAG_DRBACC_REGID_INDX];
+	value = idiag.cmd.data[IDIAG_DRBACC_VALUE_INDX];
 
 	if (idiag.cmd.opcode == LPFC_IDIAG_CMD_DRBACC_WR ||
 	    idiag.cmd.opcode == LPFC_IDIAG_CMD_DRBACC_ST ||
@@ -2433,7 +2727,7 @@ lpfc_idiag_ctlacc_read(struct file *file, char __user *buf, size_t nbytes,
 		return 0;
 
 	if (idiag.cmd.opcode == LPFC_IDIAG_CMD_CTLACC_RD)
-		ctl_reg_id = idiag.cmd.data[0];
+		ctl_reg_id = idiag.cmd.data[IDIAG_CTLACC_REGID_INDX];
 	else
 		return 0;
 
@@ -2481,8 +2775,8 @@ lpfc_idiag_ctlacc_write(struct file *file, const char __user *buf,
 		return rc;
 
 	/* Sanity check on command line arguments */
-	ctl_reg_id = idiag.cmd.data[0];
-	value = idiag.cmd.data[1];
+	ctl_reg_id = idiag.cmd.data[IDIAG_CTLACC_REGID_INDX];
+	value = idiag.cmd.data[IDIAG_CTLACC_VALUE_INDX];
 
 	if (idiag.cmd.opcode == LPFC_IDIAG_CMD_CTLACC_WR ||
 	    idiag.cmd.opcode == LPFC_IDIAG_CMD_CTLACC_ST ||
@@ -2572,13 +2866,10 @@ lpfc_idiag_mbxacc_get_setup(struct lpfc_hba *phba, char *pbuffer)
 	uint32_t mbx_dump_map, mbx_dump_cnt, mbx_word_cnt, mbx_mbox_cmd;
 	int len = 0;
 
-	mbx_dump_map = idiag.cmd.data[0];
-	mbx_dump_cnt = idiag.cmd.data[1];
-	mbx_word_cnt = idiag.cmd.data[2];
-	if (mbx_dump_map & LPFC_MBX_DMP_ISSUE_MBX_ALL)
-		mbx_mbox_cmd = idiag.cmd.data[3];
-	else
-		mbx_mbox_cmd = 0;
+	mbx_mbox_cmd = idiag.cmd.data[IDIAG_MBXACC_MBCMD_INDX];
+	mbx_dump_map = idiag.cmd.data[IDIAG_MBXACC_DPMAP_INDX];
+	mbx_dump_cnt = idiag.cmd.data[IDIAG_MBXACC_DPCNT_INDX];
+	mbx_word_cnt = idiag.cmd.data[IDIAG_MBXACC_WDCNT_INDX];
 
 	len += snprintf(pbuffer+len, LPFC_MBX_ACC_BUF_SIZE-len,
 			"mbx_dump_map: 0x%08x\n", mbx_dump_map);
@@ -2628,7 +2919,8 @@ lpfc_idiag_mbxacc_read(struct file *file, char __user *buf, size_t nbytes,
 	if (*ppos)
 		return 0;
 
-	if (idiag.cmd.opcode != LPFC_IDIAG_CMD_MBXACC_DP)
+	if ((idiag.cmd.opcode != LPFC_IDIAG_CMD_MBXACC_DP) &&
+	    (idiag.cmd.opcode != LPFC_IDIAG_BSG_MBXACC_DP))
 		return 0;
 
 	len = lpfc_idiag_mbxacc_get_setup(phba, pbuffer);
@@ -2667,39 +2959,42 @@ lpfc_idiag_mbxacc_write(struct file *file, const char __user *buf,
 		return rc;
 
 	/* Sanity check on command line arguments */
-	mbx_dump_map = idiag.cmd.data[0];
-	mbx_dump_cnt = idiag.cmd.data[1];
-	mbx_word_cnt = idiag.cmd.data[2];
-	mbx_mbox_cmd = idiag.cmd.data[3];
+	mbx_mbox_cmd = idiag.cmd.data[IDIAG_MBXACC_MBCMD_INDX];
+	mbx_dump_map = idiag.cmd.data[IDIAG_MBXACC_DPMAP_INDX];
+	mbx_dump_cnt = idiag.cmd.data[IDIAG_MBXACC_DPCNT_INDX];
+	mbx_word_cnt = idiag.cmd.data[IDIAG_MBXACC_WDCNT_INDX];
 
 	if (idiag.cmd.opcode == LPFC_IDIAG_CMD_MBXACC_DP) {
-		if (!(mbx_dump_map & LPFC_MBX_DMP_ALL))
+		if (!(mbx_dump_map & LPFC_MBX_DMP_MBX_ALL))
 			goto error_out;
-		if (mbx_dump_map & ~LPFC_MBX_DMP_ALL)
+		if ((mbx_dump_map & ~LPFC_MBX_DMP_MBX_ALL) &&
+		    (mbx_dump_map != LPFC_MBX_DMP_ALL))
 			goto error_out;
-		if (mbx_word_cnt == 0)
+		if (mbx_word_cnt > sizeof(MAILBOX_t))
 			goto error_out;
-		if (mbx_dump_map & LPFC_BSG_MBX_DMP_ALL) {
-			if (mbx_dump_cnt > (BSG_MBOX_SIZE)/4)
-				goto error_out;
-			if ((rc != LPFC_BSG_MBX_DMP_CMD_ARG) &&
-			    (rc != LPFC_MBX_DMP_ISSUE_MBX_CMD_ARG))
-				goto error_out;
-		}
-		if (mbx_dump_map & LPFC_MBX_DMP_ISSUE_MBX_ALL) {
-			if (mbx_dump_cnt > sizeof(MAILBOX_t))
-				goto error_out;
-			if (rc != LPFC_MBX_DMP_ISSUE_MBX_CMD_ARG)
-				goto error_out;
-		}
-		if ((mbx_dump_map & LPFC_MBX_DMP_ISSUE_MBX_ALL) &&
-		    (mbx_mbox_cmd & ~0xff))
+	} else if (idiag.cmd.opcode == LPFC_IDIAG_BSG_MBXACC_DP) {
+		if (!(mbx_dump_map & LPFC_BSG_DMP_MBX_ALL))
 			goto error_out;
-		/* as condition for stop mailbox dump */
-		if (mbx_dump_cnt == 0)
-			goto reset_out;
+		if ((mbx_dump_map & ~LPFC_BSG_DMP_MBX_ALL) &&
+		    (mbx_dump_map != LPFC_MBX_DMP_ALL))
+			goto error_out;
+		if (mbx_word_cnt > (BSG_MBOX_SIZE)/4)
+			goto error_out;
+		if (mbx_mbox_cmd != 0x9b)
+			goto error_out;
 	} else
 		goto error_out;
+
+	if (mbx_word_cnt == 0)
+		goto error_out;
+	if (rc != LPFC_MBX_DMP_ARG)
+		goto error_out;
+	if (mbx_mbox_cmd & ~0xff)
+		goto error_out;
+
+	/* condition for stop mailbox dump */
+	if (mbx_dump_cnt == 0)
+		goto reset_out;
 
 	return nbytes;
 
@@ -2937,7 +3232,7 @@ lpfc_idiag_extacc_write(struct file *file, const char __user *buf,
 	if (rc < 0)
 		return rc;
 
-	ext_map = idiag.cmd.data[0];
+	ext_map = idiag.cmd.data[IDIAG_EXTACC_EXMAP_INDX];
 
 	if (idiag.cmd.opcode != LPFC_IDIAG_CMD_EXTACC_RD)
 		goto error_out;
@@ -2991,7 +3286,7 @@ lpfc_idiag_extacc_read(struct file *file, char __user *buf, size_t nbytes,
 	if (idiag.cmd.opcode != LPFC_IDIAG_CMD_EXTACC_RD)
 		return 0;
 
-	ext_map = idiag.cmd.data[0];
+	ext_map = idiag.cmd.data[IDIAG_EXTACC_EXMAP_INDX];
 	if (ext_map & LPFC_EXT_ACC_AVAIL)
 		len = lpfc_idiag_extacc_avail_get(phba, pbuffer, len);
 	if (ext_map & LPFC_EXT_ACC_ALLOC)
@@ -3092,6 +3387,16 @@ static const struct file_operations lpfc_idiag_op_pciCfg = {
 	.release =      lpfc_idiag_cmd_release,
 };
 
+#undef lpfc_idiag_op_barAcc
+static const struct file_operations lpfc_idiag_op_barAcc = {
+	.owner =        THIS_MODULE,
+	.open =         lpfc_idiag_open,
+	.llseek =       lpfc_debugfs_lseek,
+	.read =         lpfc_idiag_baracc_read,
+	.write =        lpfc_idiag_baracc_write,
+	.release =      lpfc_idiag_cmd_release,
+};
+
 #undef lpfc_idiag_op_queInfo
 static const struct file_operations lpfc_idiag_op_queInfo = {
 	.owner =        THIS_MODULE,
@@ -3167,51 +3472,56 @@ lpfc_idiag_mbxacc_dump_bsg_mbox(struct lpfc_hba *phba, enum nemb_type nemb_tp,
 				struct lpfc_dmabuf *dmabuf, uint32_t ext_buf)
 {
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
-	uint32_t *mbx_dump_map, *mbx_dump_cnt, *mbx_word_cnt;
+	uint32_t *mbx_mbox_cmd, *mbx_dump_map, *mbx_dump_cnt, *mbx_word_cnt;
 	char line_buf[LPFC_MBX_ACC_LBUF_SZ];
 	int len = 0;
 	uint32_t do_dump = 0;
 	uint32_t *pword;
 	uint32_t i;
 
-	if (idiag.cmd.opcode != LPFC_IDIAG_CMD_MBXACC_DP)
+	if (idiag.cmd.opcode != LPFC_IDIAG_BSG_MBXACC_DP)
 		return;
 
-	mbx_dump_map = &idiag.cmd.data[0];
-	mbx_dump_cnt = &idiag.cmd.data[1];
-	mbx_word_cnt = &idiag.cmd.data[2];
+	mbx_mbox_cmd = &idiag.cmd.data[IDIAG_MBXACC_MBCMD_INDX];
+	mbx_dump_map = &idiag.cmd.data[IDIAG_MBXACC_DPMAP_INDX];
+	mbx_dump_cnt = &idiag.cmd.data[IDIAG_MBXACC_DPCNT_INDX];
+	mbx_word_cnt = &idiag.cmd.data[IDIAG_MBXACC_WDCNT_INDX];
 
-	if (!(*mbx_dump_map & LPFC_MBX_DMP_ALL) || (*mbx_dump_cnt == 0) ||
+	if (!(*mbx_dump_map & LPFC_MBX_DMP_ALL) ||
+	    (*mbx_dump_cnt == 0) ||
 	    (*mbx_word_cnt == 0))
 		return;
 
+	if (*mbx_mbox_cmd != 0x9B)
+		return;
+
 	if ((mbox_tp == mbox_rd) && (dma_tp == dma_mbox)) {
-		if (*mbx_dump_map & LPFC_BSG_MBX_DMP_RD_MBX) {
-			do_dump |= LPFC_BSG_MBX_DMP_RD_MBX;
+		if (*mbx_dump_map & LPFC_BSG_DMP_MBX_RD_MBX) {
+			do_dump |= LPFC_BSG_DMP_MBX_RD_MBX;
 			printk(KERN_ERR "\nRead mbox command (x%x), "
 			       "nemb:0x%x, extbuf_cnt:%d:\n",
 			       sta_tp, nemb_tp, ext_buf);
 		}
 	}
 	if ((mbox_tp == mbox_rd) && (dma_tp == dma_ebuf)) {
-		if (*mbx_dump_map & LPFC_BSG_MBX_DMP_RD_BUF) {
-			do_dump |= LPFC_BSG_MBX_DMP_RD_BUF;
+		if (*mbx_dump_map & LPFC_BSG_DMP_MBX_RD_BUF) {
+			do_dump |= LPFC_BSG_DMP_MBX_RD_BUF;
 			printk(KERN_ERR "\nRead mbox buffer (x%x), "
 			       "nemb:0x%x, extbuf_seq:%d:\n",
 			       sta_tp, nemb_tp, ext_buf);
 		}
 	}
 	if ((mbox_tp == mbox_wr) && (dma_tp == dma_mbox)) {
-		if (*mbx_dump_map & LPFC_BSG_MBX_DMP_WR_MBX) {
-			do_dump |= LPFC_BSG_MBX_DMP_WR_MBX;
+		if (*mbx_dump_map & LPFC_BSG_DMP_MBX_WR_MBX) {
+			do_dump |= LPFC_BSG_DMP_MBX_WR_MBX;
 			printk(KERN_ERR "\nWrite mbox command (x%x), "
 			       "nemb:0x%x, extbuf_cnt:%d:\n",
 			       sta_tp, nemb_tp, ext_buf);
 		}
 	}
 	if ((mbox_tp == mbox_wr) && (dma_tp == dma_ebuf)) {
-		if (*mbx_dump_map & LPFC_BSG_MBX_DMP_WR_BUF) {
-			do_dump |= LPFC_BSG_MBX_DMP_WR_MBX;
+		if (*mbx_dump_map & LPFC_BSG_DMP_MBX_WR_BUF) {
+			do_dump |= LPFC_BSG_DMP_MBX_WR_BUF;
 			printk(KERN_ERR "\nWrite mbox buffer (x%x), "
 			       "nemb:0x%x, extbuf_seq:%d:\n",
 			       sta_tp, nemb_tp, ext_buf);
@@ -3268,21 +3578,22 @@ lpfc_idiag_mbxacc_dump_issue_mbox(struct lpfc_hba *phba, MAILBOX_t *pmbox)
 	if (idiag.cmd.opcode != LPFC_IDIAG_CMD_MBXACC_DP)
 		return;
 
-	mbx_dump_map = &idiag.cmd.data[0];
-	mbx_dump_cnt = &idiag.cmd.data[1];
-	mbx_word_cnt = &idiag.cmd.data[2];
-	mbx_mbox_cmd = &idiag.cmd.data[3];
+	mbx_mbox_cmd = &idiag.cmd.data[IDIAG_MBXACC_MBCMD_INDX];
+	mbx_dump_map = &idiag.cmd.data[IDIAG_MBXACC_DPMAP_INDX];
+	mbx_dump_cnt = &idiag.cmd.data[IDIAG_MBXACC_DPCNT_INDX];
+	mbx_word_cnt = &idiag.cmd.data[IDIAG_MBXACC_WDCNT_INDX];
 
-	if (!(*mbx_dump_map & LPFC_MBX_DMP_ISSUE_MBX_ALL) ||
+	if (!(*mbx_dump_map & LPFC_MBX_DMP_MBX_ALL) ||
 	    (*mbx_dump_cnt == 0) ||
 	    (*mbx_word_cnt == 0))
 		return;
 
-	if ((*mbx_mbox_cmd != 0xff) && (*mbx_mbox_cmd != pmbox->mbxCommand))
+	if ((*mbx_mbox_cmd != LPFC_MBX_ALL_CMD) &&
+	    (*mbx_mbox_cmd != pmbox->mbxCommand))
 		return;
 
 	/* dump buffer content */
-	if (*mbx_dump_map & LPFC_MBX_DMP_ISSUE_MBX_WORD) {
+	if (*mbx_dump_map & LPFC_MBX_DMP_MBX_WORD) {
 		printk(KERN_ERR "Mailbox command:0x%x dump by word:\n",
 		       pmbox->mbxCommand);
 		pword = (uint32_t *)pmbox;
@@ -3305,7 +3616,7 @@ lpfc_idiag_mbxacc_dump_issue_mbox(struct lpfc_hba *phba, MAILBOX_t *pmbox)
 			printk(KERN_ERR "%s\n", line_buf);
 		printk(KERN_ERR "\n");
 	}
-	if (*mbx_dump_map & LPFC_MBX_DMP_ISSUE_MBX_BYTE) {
+	if (*mbx_dump_map & LPFC_MBX_DMP_MBX_BYTE) {
 		printk(KERN_ERR "Mailbox command:0x%x dump by byte:\n",
 		       pmbox->mbxCommand);
 		pbyte = (uint8_t *)pmbox;
@@ -3602,6 +3913,20 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 		idiag.offset.last_rd = 0;
 	}
 
+	/* iDiag PCI BAR access */
+	snprintf(name, sizeof(name), "barAcc");
+	if (!phba->idiag_bar_acc) {
+		phba->idiag_bar_acc =
+			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
+				phba->idiag_root, phba, &lpfc_idiag_op_barAcc);
+		if (!phba->idiag_bar_acc) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					"3056 Can't create idiag debugfs\n");
+			goto debug_failed;
+		}
+		idiag.offset.last_rd = 0;
+	}
+
 	/* iDiag get PCI function queue information */
 	snprintf(name, sizeof(name), "queInfo");
 	if (!phba->idiag_que_info) {
@@ -3791,6 +4116,11 @@ lpfc_debugfs_terminate(struct lpfc_vport *vport)
 				/* iDiag queInfo */
 				debugfs_remove(phba->idiag_que_info);
 				phba->idiag_que_info = NULL;
+			}
+			if (phba->idiag_bar_acc) {
+				/* iDiag barAcc */
+				debugfs_remove(phba->idiag_bar_acc);
+				phba->idiag_bar_acc = NULL;
 			}
 			if (phba->idiag_pci_cfg) {
 				/* iDiag pciCfg */
