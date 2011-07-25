@@ -777,10 +777,6 @@ pci_power_t pci_target_state(struct pci_dev *dev);
 int pci_prepare_to_sleep(struct pci_dev *dev);
 int pci_back_from_sleep(struct pci_dev *dev);
 
-/* For use by arch with custom probe code */
-void set_pcie_port_type(struct pci_dev *pdev);
-void set_pcie_hotplug_bridge(struct pci_dev *pdev);
-
 #define PCI_EXP_IDO_REQUEST	(1<<0)
 #define PCI_EXP_IDO_COMPLETION	(1<<1)
 void pci_enable_ido(struct pci_dev *dev, unsigned long type);
@@ -797,6 +793,10 @@ bool pci_ltr_supported(struct pci_dev *dev);
 int pci_enable_ltr(struct pci_dev *dev);
 void pci_disable_ltr(struct pci_dev *dev);
 int pci_set_ltr(struct pci_dev *dev, int snoop_lat_ns, int nosnoop_lat_ns);
+
+/* For use by arch with custom probe code */
+void set_pcie_port_type(struct pci_dev *pdev);
+void set_pcie_hotplug_bridge(struct pci_dev *pdev);
 
 /* Functions for PCI Hotplug drivers to use */
 int pci_bus_find_capability(struct pci_bus *bus, unsigned int devfn, int cap);
