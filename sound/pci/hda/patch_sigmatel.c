@@ -5152,7 +5152,6 @@ static struct hda_codec_ops stac92xx_patch_ops = {
 #ifdef SND_HDA_NEEDS_RESUME
 	.suspend = stac92xx_suspend,
 	.resume = stac92xx_resume,
-	.pre_resume = stac92xx_pre_resume,
 #endif
 	.reboot_notify = stac92xx_shutup,
 };
@@ -5216,6 +5215,9 @@ static int patch_stac9200(struct hda_codec *codec)
 		spec->hp_detect = 0;
 
 	codec->patch_ops = stac92xx_patch_ops;
+#ifdef SND_HDA_NEEDS_RESUME
+	codec->pre_resume = stac92xx_pre_resume;
+#endif
 
 	return 0;
 }
@@ -5299,6 +5301,9 @@ static int patch_stac925x(struct hda_codec *codec)
 	}
 
 	codec->patch_ops = stac92xx_patch_ops;
+#ifdef SND_HDA_NEEDS_RESUME
+	codec->pre_resume = stac92xx_pre_resume;
+#endif
 
 	return 0;
 }
@@ -5444,6 +5449,9 @@ again:
 		spec->hp_detect = 0;
 
 	codec->patch_ops = stac92xx_patch_ops;
+#ifdef SND_HDA_NEEDS_RESUME
+	codec->pre_resume = stac92xx_pre_resume;
+#endif
 
 	codec->proc_widget_hook = stac92hd7x_proc_hook;
 
@@ -5580,6 +5588,9 @@ again:
 	}
 
 	codec->patch_ops = stac92xx_patch_ops;
+#ifdef SND_HDA_NEEDS_RESUME
+	codec->pre_resume = stac92xx_pre_resume;
+#endif
 
 	if (find_mute_led_gpio(codec, 0))
 		snd_printd("mute LED gpio %d polarity %d\n",
@@ -5676,6 +5687,9 @@ static int patch_stac92hd71bxx(struct hda_codec *codec)
 	codec->spec = spec;
 	spec->linear_tone_beep = 0;
 	codec->patch_ops = stac92xx_patch_ops;
+#ifdef SND_HDA_NEEDS_RESUME
+	codec->pre_resume = stac92xx_pre_resume;
+#endif
 	spec->num_pins = STAC92HD71BXX_NUM_PINS;
 	switch (codec->vendor_id) {
 	case 0x111d76b6:
@@ -5991,6 +6005,9 @@ static int patch_stac922x(struct hda_codec *codec)
 	}
 
 	codec->patch_ops = stac92xx_patch_ops;
+#ifdef SND_HDA_NEEDS_RESUME
+	codec->pre_resume = stac92xx_pre_resume;
+#endif
 
 	/* Fix Mux capture level; max to 2 */
 	snd_hda_override_amp_caps(codec, 0x12, HDA_OUTPUT,
@@ -6115,6 +6132,9 @@ static int patch_stac927x(struct hda_codec *codec)
 	}
 
 	codec->patch_ops = stac92xx_patch_ops;
+#ifdef SND_HDA_NEEDS_RESUME
+	codec->pre_resume = stac92xx_pre_resume;
+#endif
 
 	codec->proc_widget_hook = stac927x_proc_hook;
 
@@ -6239,6 +6259,9 @@ static int patch_stac9205(struct hda_codec *codec)
 	}
 
 	codec->patch_ops = stac92xx_patch_ops;
+#ifdef SND_HDA_NEEDS_RESUME
+	codec->pre_resume = stac92xx_pre_resume;
+#endif
 
 	codec->proc_widget_hook = stac9205_proc_hook;
 
@@ -6334,6 +6357,9 @@ static int patch_stac9872(struct hda_codec *codec)
 	}
 	spec->input_mux = &spec->private_imux;
 	codec->patch_ops = stac92xx_patch_ops;
+#ifdef SND_HDA_NEEDS_RESUME
+	codec->pre_resume = stac92xx_pre_resume;
+#endif
 	return 0;
 }
 
