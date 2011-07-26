@@ -89,8 +89,10 @@ EXPORT_SYMBOL_HDA(snd_hda_delete_codec_preset);
 #ifdef CONFIG_SND_HDA_POWER_SAVE
 static void hda_power_work(struct work_struct *work);
 static void hda_keep_power_on(struct hda_codec *codec);
+#define hda_codec_is_power_on(codec)	((codec)->power_on)
 #else
 static inline void hda_keep_power_on(struct hda_codec *codec) {}
+#define hda_codec_is_power_on(codec)	1
 #endif
 
 const char *snd_hda_get_jack_location(u32 cfg)
@@ -1352,7 +1354,7 @@ int snd_hda_codec_amp_stereo(struct hda_codec *codec, hda_nid_t nid,
 }
 EXPORT_SYMBOL_HDA(snd_hda_codec_amp_stereo);
 
-#ifdef SND_HDA_NEEDS_RESUME
+#ifdef CONFIG_PM
 /* resume the all amp commands from the cache */
 void snd_hda_codec_resume_amp(struct hda_codec *codec)
 {
@@ -1377,7 +1379,7 @@ void snd_hda_codec_resume_amp(struct hda_codec *codec)
 	}
 }
 EXPORT_SYMBOL_HDA(snd_hda_codec_resume_amp);
-#endif /* SND_HDA_NEEDS_RESUME */
+#endif /* CONFIG_PM */
 
 /* volume */
 int snd_hda_mixer_amp_volume_info(struct snd_kcontrol *kcontrol,
@@ -2326,7 +2328,7 @@ int snd_hda_create_spdif_in_ctls(struct hda_codec *codec, hda_nid_t nid)
 }
 EXPORT_SYMBOL_HDA(snd_hda_create_spdif_in_ctls);
 
-#ifdef SND_HDA_NEEDS_RESUME
+#ifdef CONFIG_PM
 /*
  * command cache
  */
@@ -2403,58 +2405,37 @@ void snd_hda_sequence_write_cache(struct hda_codec *codec,
 					  seq->param);
 }
 EXPORT_SYMBOL_HDA(snd_hda_sequence_write_cache);
-#endif /* SND_HDA_NEEDS_RESUME */
+#endif /* CONFIG_PM */
 
-/*
- * set power state of the codec
- */
-static void hda_set_power_state(struct hda_codec *codec, hda_nid_t fg,
-				unsigned int power_state)
+void snd_hda_codec_set_power_to_all(struct hda_codec *codec, hda_nid_t fg,
+				    unsigned int power_state,
+				    bool eapd_workaround)
 {
-	hda_nid_t nid;
+	hda_nid_t nid = codec->start_nid;
 	int i;
 
-	/* this delay seems necessary to avoid click noise at power-down */
-	if (power_state == AC_PWRST_D3)
-		msleep(100);
-	snd_hda_codec_read(codec, fg, 0, AC_VERB_SET_POWER_STATE,
-			    power_state);
-	/* partial workaround for "azx_get_response timeout" */
-	if (power_state == AC_PWRST_D0)
-		msleep(10);
-
-	nid = codec->start_nid;
 	for (i = 0; i < codec->num_nodes; i++, nid++) {
 		unsigned int wcaps = get_wcaps(codec, nid);
-		if (wcaps & AC_WCAP_POWER) {
-			unsigned int wid_type = get_wcaps_type(wcaps);
-			if (power_state == AC_PWRST_D3 &&
-			    wid_type == AC_WID_PIN) {
-				unsigned int pincap;
-				/*
-				 * don't power down the widget if it controls
-				 * eapd and EAPD_BTLENABLE is set.
-				 */
-				pincap = snd_hda_query_pin_caps(codec, nid);
-				if (pincap & AC_PINCAP_EAPD) {
-					int eapd = snd_hda_codec_read(codec,
-						nid, 0,
+		if (!(wcaps & AC_WCAP_POWER))
+			continue;
+		/* don't power down the widget if it controls eapd and
+		 * EAPD_BTLENABLE is set.
+		 */
+		if (eapd_workaround && power_state == AC_PWRST_D3 &&
+		    get_wcaps_type(wcaps) == AC_WID_PIN &&
+		    (snd_hda_query_pin_caps(codec, nid) & AC_PINCAP_EAPD)) {
+			int eapd = snd_hda_codec_read(codec, nid, 0,
 						AC_VERB_GET_EAPD_BTLENABLE, 0);
-					eapd &= 0x02;
-					if (eapd)
-						continue;
-				}
-			}
-			snd_hda_codec_write(codec, nid, 0,
-					    AC_VERB_SET_POWER_STATE,
-					    power_state);
+			if (eapd & 0x02)
+				continue;
 		}
+		snd_hda_codec_write(codec, nid, 0, AC_VERB_SET_POWER_STATE,
+				    power_state);
 	}
 
 	if (power_state == AC_PWRST_D0) {
 		unsigned long end_time;
 		int state;
-		msleep(10);
 		/* wait until the codec reachs to D0 */
 		end_time = jiffies + msecs_to_jiffies(500);
 		do {
@@ -2465,6 +2446,26 @@ static void hda_set_power_state(struct hda_codec *codec, hda_nid_t fg,
 			msleep(1);
 		} while (time_after_eq(end_time, jiffies));
 	}
+}
+EXPORT_SYMBOL_HDA(snd_hda_codec_set_power_to_all);
+
+/*
+ * set power state of the codec
+ */
+static void hda_set_power_state(struct hda_codec *codec, hda_nid_t fg,
+				unsigned int power_state)
+{
+	if (codec->patch_ops.set_power_state) {
+		codec->patch_ops.set_power_state(codec, fg, power_state);
+		return;
+	}
+
+	/* this delay seems necessary to avoid click noise at power-down */
+	if (power_state == AC_PWRST_D3)
+		msleep(100);
+	snd_hda_codec_read(codec, fg, 0, AC_VERB_SET_POWER_STATE,
+			    power_state);
+	snd_hda_codec_set_power_to_all(codec, fg, power_state, true);
 }
 
 #ifdef CONFIG_SND_HDA_HWDEP
@@ -2478,7 +2479,7 @@ static void hda_exec_init_verbs(struct hda_codec *codec)
 static inline void hda_exec_init_verbs(struct hda_codec *codec) {}
 #endif
 
-#ifdef SND_HDA_NEEDS_RESUME
+#ifdef CONFIG_PM
 /*
  * call suspend and power-down; used both from PM and power-save
  */
@@ -2517,7 +2518,7 @@ static void hda_call_codec_resume(struct hda_codec *codec)
 		snd_hda_codec_resume_cache(codec);
 	}
 }
-#endif /* SND_HDA_NEEDS_RESUME */
+#endif /* CONFIG_PM */
 
 
 /**
@@ -3207,9 +3208,6 @@ int snd_hda_add_new_ctls(struct hda_codec *codec, struct snd_kcontrol_new *knew)
 EXPORT_SYMBOL_HDA(snd_hda_add_new_ctls);
 
 #ifdef CONFIG_SND_HDA_POWER_SAVE
-static void hda_set_power_state(struct hda_codec *codec, hda_nid_t fg,
-				unsigned int power_state);
-
 static void hda_power_work(struct work_struct *work)
 {
 	struct hda_codec *codec =
@@ -3465,11 +3463,8 @@ void snd_hda_bus_reboot_notify(struct hda_bus *bus)
 	if (!bus)
 		return;
 	list_for_each_entry(codec, &bus->codec_list, list) {
-#ifdef CONFIG_SND_HDA_POWER_SAVE
-		if (!codec->power_on)
-			continue;
-#endif
-		if (codec->patch_ops.reboot_notify)
+		if (hda_codec_is_power_on(codec) &&
+		    codec->patch_ops.reboot_notify)
 			codec->patch_ops.reboot_notify(codec);
 	}
 }
@@ -3983,11 +3978,10 @@ int snd_hda_suspend(struct hda_bus *bus)
 	struct hda_codec *codec;
 
 	list_for_each_entry(codec, &bus->codec_list, list) {
-#ifdef CONFIG_SND_HDA_POWER_SAVE
-		if (!codec->power_on)
-			continue;
-#endif
-		hda_call_codec_suspend(codec);
+		if (hda_codec_is_power_on(codec))
+			hda_call_codec_suspend(codec);
+		if (codec->patch_ops.post_suspend)
+			codec->patch_ops.post_suspend(codec);
 	}
 	return 0;
 }

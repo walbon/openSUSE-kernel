@@ -5045,7 +5045,7 @@ static void stac927x_proc_hook(struct snd_info_buffer *buffer,
 #define stac927x_proc_hook	NULL
 #endif
 
-#ifdef SND_HDA_NEEDS_RESUME
+#ifdef CONFIG_PM
 static int stac92xx_pre_resume(struct hda_codec *codec)
 {
 	struct sigmatel_spec *spec = codec->spec;
@@ -5141,7 +5141,7 @@ static int stac92xx_suspend(struct hda_codec *codec, pm_message_t state)
 	stac92xx_shutup(codec);
 	return 0;
 }
-#endif
+#endif /* CONFIG_PM */
 
 static struct hda_codec_ops stac92xx_patch_ops = {
 	.build_controls = stac92xx_build_controls,
@@ -5149,7 +5149,7 @@ static struct hda_codec_ops stac92xx_patch_ops = {
 	.init = stac92xx_init,
 	.free = stac92xx_free,
 	.unsol_event = stac92xx_unsol_event,
-#ifdef SND_HDA_NEEDS_RESUME
+#ifdef CONFIG_PM
 	.suspend = stac92xx_suspend,
 	.resume = stac92xx_resume,
 	.pre_resume = stac92xx_pre_resume,
