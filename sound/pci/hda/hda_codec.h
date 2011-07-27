@@ -829,7 +829,7 @@ struct hda_codec {
 	/* codec-specific additional proc output */
 	void (*proc_widget_hook)(struct snd_info_buffer *buffer,
 				 struct hda_codec *codec, hda_nid_t nid);
-#ifndef __GEN_KSYMS__
+#ifndef __GENKSYMS__
 	/* this was originally in codec_ops */
 	int (*pre_resume)(struct hda_codec *codec);
 #endif
