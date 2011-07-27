@@ -111,10 +111,6 @@ static inline char *strim(char *s)
         return s;
 }
 
-#define  PCI_EXP_LNKSTA_CLS_2_5GB 0x01  /* Current Link Speed 2.5GT/s */
-#define  PCI_EXP_LNKSTA_CLS_5_0GB 0x02  /* Current Link Speed 5.0GT/s */
-
-
 enum ethtool_flags_ext {
         ETH_FLAG_TXVLAN         = (1 << 7),     /* TX VLAN offload enabled */
         ETH_FLAG_RXVLAN         = (1 << 8),     /* RX VLAN offload enabled */
