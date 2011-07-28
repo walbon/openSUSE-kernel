@@ -313,11 +313,6 @@ static int gfs2_write_jdata_pagevec(struct address_space *mapping,
 
 		if (ret || (--(wbc->nr_to_write) <= 0))
 			ret = 1;
-		if (wbc->nonblocking && bdi_write_congested(bdi)) {
-			wbc->encountered_congestion = 1;
-			ret = 1;
-		}
-
 	}
 	gfs2_trans_end(sdp);
 	return ret;
@@ -347,11 +342,6 @@ static int gfs2_write_cache_jdata(struct address_space *mapping,
 	pgoff_t end;
 	int scanned = 0;
 	int range_whole = 0;
-
-	if (wbc->nonblocking && bdi_write_congested(bdi)) {
-		wbc->encountered_congestion = 1;
-		return 0;
-	}
 
 	pagevec_init(&pvec, 0);
 	if (wbc->range_cyclic) {
