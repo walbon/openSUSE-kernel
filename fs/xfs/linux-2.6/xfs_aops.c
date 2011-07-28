@@ -890,16 +890,8 @@ xfs_convert_page(
 
 	if (startio) {
 		if (count) {
-			struct backing_dev_info *bdi;
-
-			bdi = inode->i_mapping->backing_dev_info;
-			wbc->nr_to_write--;
-			if (bdi_write_congested(bdi)) {
-				wbc->encountered_congestion = 1;
+			if (--wbc->nr_to_write <= 0)
 				done = 1;
-			} else if (wbc->nr_to_write <= 0) {
-				done = 1;
-			}
 		}
 		xfs_start_page_writeback(page, !page_dirty, count);
 	}
@@ -990,7 +982,7 @@ xfs_page_state_convert(
 	int			all_bh = unmapped;
 
 	if (startio) {
-		if (wbc->sync_mode == WB_SYNC_NONE && wbc->nonblocking)
+		if (wbc->sync_mode == WB_SYNC_NONE)
 			trylock |= BMAPI_TRYLOCK;
 	}
 

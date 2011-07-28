@@ -1309,7 +1309,6 @@ static int cifs_partialpagewrite(struct page *page, unsigned from, unsigned to)
 static int cifs_writepages(struct address_space *mapping,
 			   struct writeback_control *wbc)
 {
-	struct backing_dev_info *bdi = mapping->backing_dev_info;
 	unsigned int bytes_to_write;
 	unsigned int bytes_written;
 	struct cifs_sb_info *cifs_sb;
@@ -1349,17 +1348,6 @@ static int cifs_writepages(struct address_space *mapping,
 	iov = kmalloc(32 * sizeof(struct kvec), GFP_KERNEL);
 	if (iov == NULL)
 		return generic_writepages(mapping, wbc);
-
-
-	/*
-	 * BB: Is this meaningful for a non-block-device file system?
-	 * If it is, we should test it again after we do I/O
-	 */
-	if (wbc->nonblocking && bdi_write_congested(bdi)) {
-		wbc->encountered_congestion = 1;
-		kfree(iov);
-		return 0;
-	}
 
 	xid = GetXid();
 
