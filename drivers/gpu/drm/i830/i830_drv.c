@@ -57,8 +57,6 @@ static struct drm_driver driver = {
 	.device_is_agp = i830_driver_device_is_agp,
 	.reclaim_buffers_locked = i830_driver_reclaim_buffers_locked,
 	.dma_quiescent = i830_driver_dma_quiescent,
-	.get_map_ofs = drm_core_get_map_ofs,
-	.get_reg_ofs = drm_core_get_reg_ofs,
 #if USE_IRQS
 	.irq_preinstall = i830_driver_irq_preinstall,
 	.irq_postinstall = i830_driver_irq_postinstall,
@@ -70,15 +68,10 @@ static struct drm_driver driver = {
 		 .owner = THIS_MODULE,
 		 .open = drm_open,
 		 .release = drm_release,
-		 .ioctl = drm_ioctl,
+		 .unlocked_ioctl = i830_ioctl,
 		 .mmap = drm_mmap,
 		 .poll = drm_poll,
 		 .fasync = drm_fasync,
-	},
-
-	.pci_driver = {
-		 .name = DRIVER_NAME,
-		 .id_table = pciidlist,
 	},
 
 	.name = DRIVER_NAME,
@@ -89,15 +82,36 @@ static struct drm_driver driver = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
+static int __devinit
+i830_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+{
+	return drm_get_pci_dev(pdev, ent, &driver);
+}
+
+static void
+i830_pci_remove(struct pci_dev *pdev)
+{
+	struct drm_device *dev = pci_get_drvdata(pdev);
+
+	drm_put_dev(dev);
+}
+
+static struct pci_driver i830_pci_driver = {
+	.name = DRIVER_NAME,
+	.id_table = pciidlist,
+	.probe = i830_pci_probe,
+	.remove = i830_pci_remove,
+};
+
 static int __init i830_init(void)
 {
 	driver.num_ioctls = i830_max_ioctl;
-	return drm_init(&driver);
+	return drm_pci_init(&driver, &i830_pci_driver);
 }
 
 static void __exit i830_exit(void)
 {
-	drm_exit(&driver);
+	drm_pci_exit(&driver, &i830_pci_driver);
 }
 
 module_init(i830_init);

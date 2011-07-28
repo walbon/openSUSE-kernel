@@ -403,6 +403,7 @@ struct fb_cursor {
 #include <linux/notifier.h>
 #include <linux/list.h>
 #include <linux/backlight.h>
+#include <linux/slab.h>
 #include <asm/io.h>
 
 struct vm_area_struct;
@@ -543,6 +544,8 @@ struct fb_cursor_user {
 #define FB_EVENT_GET_REQ                0x0D
 /*      Unbind from the console if possible */
 #define FB_EVENT_FB_UNBIND              0x0E
+/*      CONSOLE-SPECIFIC: remap all consoles to new fb - for vga switcheroo */
+#define FB_EVENT_REMAP_ALL_CONSOLE      0x0F
 
 struct fb_event {
 	struct fb_info *info;
@@ -863,9 +866,21 @@ struct fb_info {
 	/* we need the PCI or similiar aperture base/size not
 	   smem_start/size as smem_start may just be an object
 	   allocated inside the aperture so may not actually overlap */
-	resource_size_t aperture_base;
-	resource_size_t aperture_size;
+	struct apertures_struct {
+		unsigned int count;
+		struct aperture {
+			resource_size_t base;
+			resource_size_t size;
+		} ranges[0];
+	} *apertures;
 };
+
+static inline struct apertures_struct *alloc_apertures(unsigned int max_num) {
+	struct apertures_struct *a = kzalloc(sizeof(struct apertures_struct)
+			+ max_num * sizeof(struct aperture), GFP_KERNEL);
+	a->count = max_num;
+	return a;
+}
 
 #ifdef MODULE
 #define FBINFO_DEFAULT	FBINFO_MODULE
@@ -959,6 +974,8 @@ extern ssize_t fb_sys_write(struct fb_info *info, const char __user *buf,
 /* drivers/video/fbmem.c */
 extern int register_framebuffer(struct fb_info *fb_info);
 extern int unregister_framebuffer(struct fb_info *fb_info);
+extern void remove_conflicting_framebuffers(struct apertures_struct *a,
+				const char *name, bool primary);
 extern int fb_prepare_logo(struct fb_info *fb_info, int rotate);
 extern int fb_show_logo(struct fb_info *fb_info, int rotate);
 extern char* fb_get_buffer_offset(struct fb_info *info, struct fb_pixmap *buf, u32 size);

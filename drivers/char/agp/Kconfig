@@ -56,7 +56,7 @@ config AGP_AMD
 	  X on AMD Irongate, 761, and 762 chipsets.
 
 config AGP_AMD64
-	tristate "AMD Opteron/Athlon64 on-CPU GART support" if !GART_IOMMU
+	tristate "AMD Opteron/Athlon64 on-CPU GART support"
 	depends on AGP && X86 && AMD_NB
 	default y if GART_IOMMU
 	help
