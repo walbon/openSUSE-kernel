@@ -1100,6 +1100,10 @@ static struct task_struct *copy_process(unsigned long clone_flags,
  	}
 	mpol_fix_fork_child_flag(p);
 #endif
+#ifdef CONFIG_CPUSETS
+	/* slab rotor is embeded in the top 2 bytes */
+	p->cpuset_mem_spread_rotor = NUMA_NO_NODE | (NUMA_NO_NODE << 16);
+#endif
 #ifdef CONFIG_TRACE_IRQFLAGS
 	p->irq_events = 0;
 #ifdef __ARCH_WANT_INTERRUPTS_ON_CTXSW
