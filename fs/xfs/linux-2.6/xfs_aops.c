@@ -890,7 +890,8 @@ xfs_convert_page(
 
 	if (startio) {
 		if (count) {
-			if (--wbc->nr_to_write <= 0)
+			if (--wbc->nr_to_write <= 0 &&
+			    wbc->sync_mode == WB_SYNC_NONE)
 				done = 1;
 		}
 		xfs_start_page_writeback(page, !page_dirty, count);
@@ -1252,14 +1253,6 @@ xfs_vm_writepage(
 	 */
 	if (!page_has_buffers(page))
 		create_empty_buffers(page, 1 << inode->i_blkbits, 0);
-
-
-	/*
-	 *  VM calculation for nr_to_write seems off.  Bump it way
-	 *  up, this gets simple streaming writes zippy again.
-	 *  To be reviewed again after Jens' writeback changes.
-	 */
-	wbc->nr_to_write *= 4;
 
 	/*
 	 * Convert delayed allocate, unwritten or unmapped space
