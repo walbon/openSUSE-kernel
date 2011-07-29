@@ -44,7 +44,6 @@
 
 #ifdef CONFIG_NUMA
 #include <linux/cpumask.h>
-
 #include <asm/mpspec.h>
 
 #ifdef CONFIG_X86_32
