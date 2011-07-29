@@ -109,13 +109,6 @@ static inline int netif_set_real_num_rx_queues(struct net_device *dev, int num)
 	return 0;
 }
 
-enum ethtool_phys_id_state {
-	ETHTOOL_ID_INACTIVE,
-	ETHTOOL_ID_ACTIVE,
-	ETHTOOL_ID_ON,
-	ETHTOOL_ID_OFF
-};
-
 static int tg3_set_phys_id(struct net_device *dev,
 			    enum ethtool_phys_id_state state);
 static int tg3_phys_id(struct net_device *dev, u32 data)

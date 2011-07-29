@@ -111,13 +111,6 @@ static inline char *strim(char *s)
         return s;
 }
 
-enum ethtool_flags_ext {
-        ETH_FLAG_TXVLAN         = (1 << 7),     /* TX VLAN offload enabled */
-        ETH_FLAG_RXVLAN         = (1 << 8),     /* RX VLAN offload enabled */
-	ETH_FLAG_NTUPLE         = (1 << 27),    /* N-tuple filters enabled */
-        ETH_FLAG_RXHASH         = (1 << 28),
-};
-
 #define ethtool_op_set_flags compat_ethtool_op_set_flags
 
 static const u32 flags_dup_features =
