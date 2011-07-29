@@ -2431,7 +2431,8 @@ static int cpuset_spread_node(int rotor)
 
 int cpuset_mem_spread_node(void)
 {
-	int rotor = current->cpuset_mem_spread_rotor & 0xffff;
+	/* we have to cast to short because NUMA_NO_NODE is -1 */
+	int rotor = (short)(current->cpuset_mem_spread_rotor & 0xffff);
 	int rem = current->cpuset_mem_spread_rotor & 0xffff0000;
 	if (rotor == NUMA_NO_NODE)
 		rotor = node_random(&current->mems_allowed);
