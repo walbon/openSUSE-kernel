@@ -745,6 +745,15 @@ static int btrfs_set_super(struct super_block *s, void *data)
 	return set_anon_super(s, data);
 }
 
+/*
+ * subvolumes are identified by ino 256
+ */
+static inline int is_subvolume_inode(struct inode *inode)
+{
+	if (inode && inode->i_ino == BTRFS_FIRST_FREE_OBJECTID)
+		return 1;
+	return 0;
+}
 
 /*
  * Find a superblock for the given device / mount point.
@@ -863,6 +872,16 @@ static int btrfs_get_sb(struct file_system_type *fs_type, int flags,
 			dput(new_root);
 			deactivate_locked_super(s);
 			error = -ENXIO;
+			goto error_free_subvol_name;
+		}
+
+		if (!is_subvolume_inode(new_root->d_inode)) {
+			dput(root);
+			dput(new_root);
+			deactivate_locked_super(s);
+			error = -EINVAL;
+			printk(KERN_ERR "btrfs: '%s' is not a valid subvolume\n",
+					subvol_name);
 			goto error_free_subvol_name;
 		}
 		dput(root);
