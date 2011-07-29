@@ -2238,6 +2238,9 @@ and is between 256 and 4096 characters. It is defined in the file
 
 	sched_debug	[KNL] Enables verbose scheduler debug messages.
 
+	rtsched_debug	[KNL] Disallows borrowing of excess rt_runtime from neighboring runqueues.
+                        /proc/sys/kernel/sched_rt_runtime_us becomes a hard limit per runqueue.
+
 	nortsched	[KNL] Disables realtime task bandwidth control.
 
 	sc1200wdt=	[HW,WDT] SC1200 WDT (watchdog) driver
