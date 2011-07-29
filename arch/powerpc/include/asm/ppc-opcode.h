@@ -56,10 +56,11 @@
 #define __PPC_RA(a)	(((a) & 0x1f) << 16)
 #define __PPC_RB(b)	(((b) & 0x1f) << 11)
 #define __PPC_RS(s)	(((s) & 0x1f) << 21)
-#define	__PPC_XA(a)	((((a) & 0x1f) << 16) | (((a) & 0x20) >> 3))
-#define	__PPC_XB(b)	((((b) & 0x1f) << 11) | (((b) & 0x20) >> 4))
+#define __PPC_XA(a)	((((a) & 0x1f) << 16) | (((a) & 0x20) >> 3))
+#define __PPC_XB(b)	((((b) & 0x1f) << 11) | (((b) & 0x20) >> 4))
 #define __PPC_XS(s)	((((s) & 0x1f) << 21) | (((s) & 0x20) >> 5))
-#define	__PPC_XT(s)	__PPC_XS(s)
+#define __PPC_XT(s)	__PPC_XS(s)
+
 #define __PPC_T_TLB(t)	(((t) & 0x3) << 21)
 #define __PPC_WC(w)	(((w) & 0x3) << 21)
 

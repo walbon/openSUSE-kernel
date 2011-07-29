@@ -206,8 +206,8 @@ static void kexec_prepare_cpus_wait(int wait_state)
 {
 	int my_cpu, i, notified=-1;
 
-	wake_offline_cpus();
 	hw_breakpoint_disable();
+	wake_offline_cpus();
 	my_cpu = get_cpu();
 	/* Make sure each CPU has atleast made it to the state we need */
 	for (i=0; i < NR_CPUS; i++) {
