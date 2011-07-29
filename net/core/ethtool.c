@@ -319,18 +319,91 @@ err_out:
 	return ret;
 }
 
-static int __rx_ntuple_filter_add(struct ethtool_rx_ntuple_list *list,
-                                  struct ethtool_rx_ntuple_flow_spec *spec)
+static noinline_for_stack int ethtool_get_rxfh_indir(struct net_device *dev,
+						     void __user *useraddr)
 {
-	struct ethtool_rx_ntuple_flow_spec_container *fsc;
+	struct ethtool_rxfh_indir *indir;
+	u32 table_size;
+	size_t full_size;
+	int ret;
+
+	if (!dev->ethtool_ops->get_rxfh_indir)
+		return -EOPNOTSUPP;
+
+	if (copy_from_user(&table_size,
+			   useraddr + offsetof(struct ethtool_rxfh_indir, size),
+			   sizeof(table_size)))
+		return -EFAULT;
+
+	if (table_size >
+	    (KMALLOC_MAX_SIZE - sizeof(*indir)) / sizeof(*indir->ring_index))
+		return -ENOMEM;
+	full_size = sizeof(*indir) + sizeof(*indir->ring_index) * table_size;
+	indir = kmalloc(full_size, GFP_USER);
+	if (!indir)
+		return -ENOMEM;
+
+	indir->cmd = ETHTOOL_GRXFHINDIR;
+	indir->size = table_size;
+	ret = dev->ethtool_ops->get_rxfh_indir(dev, indir);
+	if (ret)
+		goto out;
+
+	if (copy_to_user(useraddr, indir, full_size))
+		ret = -EFAULT;
+
+out:
+	kfree(indir);
+	return ret;
+}
+
+static noinline_for_stack int ethtool_set_rxfh_indir(struct net_device *dev,
+						     void __user *useraddr)
+{
+	struct ethtool_rxfh_indir *indir;
+	u32 table_size;
+	size_t full_size;
+	int ret;
+
+	if (!dev->ethtool_ops->set_rxfh_indir)
+		return -EOPNOTSUPP;
+
+	if (copy_from_user(&table_size,
+			   useraddr + offsetof(struct ethtool_rxfh_indir, size),
+			   sizeof(table_size)))
+		return -EFAULT;
+
+	if (table_size >
+	    (KMALLOC_MAX_SIZE - sizeof(*indir)) / sizeof(*indir->ring_index))
+		return -ENOMEM;
+	full_size = sizeof(*indir) + sizeof(*indir->ring_index) * table_size;
+	indir = kmalloc(full_size, GFP_USER);
+	if (!indir)
+		return -ENOMEM;
+
+	if (copy_from_user(indir, useraddr, full_size)) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+	ret = dev->ethtool_ops->set_rxfh_indir(dev, indir);
+
+out:
+	kfree(indir);
+	return ret;
+}
+
+static void __rx_ntuple_filter_add(struct ethtool_rx_ntuple_list *list,
+                              struct ethtool_rx_ntuple_flow_spec *spec,
+                              struct ethtool_rx_ntuple_flow_spec_container *fsc)
+{
 
 	/* don't add filters forever */
-	if (list->count >= ETHTOOL_MAX_NTUPLE_LIST_ENTRY)
-		return 0;
-
-	fsc = kmalloc(sizeof(*fsc), GFP_ATOMIC);
-	if (!fsc)
-		return -ENOMEM;
+	if (list->count >= ETHTOOL_MAX_NTUPLE_LIST_ENTRY) {
+		/* free the container */
+		kfree(fsc);
+		return;
+	}
 
 	/* Copy the whole filter over */
 	fsc->fs.flow_type = spec->flow_type;
@@ -346,14 +419,13 @@ static int __rx_ntuple_filter_add(struct ethtool_rx_ntuple_list *list,
 	/* add to the list */
 	list_add_tail_rcu(&fsc->list, &list->list);
 	list->count++;
-
-	return 0;
 }
 
 static int ethtool_set_rx_ntuple(struct net_device *dev, void __user *useraddr)
 {
 	struct ethtool_rx_ntuple cmd;
 	const struct ethtool_ops *ops = dev->ethtool_ops;
+	struct ethtool_rx_ntuple_flow_spec_container *fsc = NULL;
 	int ret;
 
 	if (!ops->set_rx_ntuple)
@@ -365,16 +437,26 @@ static int ethtool_set_rx_ntuple(struct net_device *dev, void __user *useraddr)
 	if (copy_from_user(&cmd, useraddr, sizeof(cmd)))
 		return -EFAULT;
 
-	ret = ops->set_rx_ntuple(dev, &cmd);
-
 	/*
 	 * Cache filter in dev struct for GET operation only if
 	 * the underlying driver doesn't have its own GET operation, and
-	 * only if the filter was added successfully.
+	 * only if the filter was added successfully.  First make sure we
+	 * can allocate the filter, then continue if successful.
 	 */
-	if (!ops->get_rx_ntuple && !ret)
-		if (__rx_ntuple_filter_add(&dev->ethtool_ntuple_list, &cmd.fs))
+	if (!ops->get_rx_ntuple) {
+		fsc = kmalloc(sizeof(*fsc), GFP_ATOMIC);
+		if (!fsc)
 			return -ENOMEM;
+	}
+
+	ret = ops->set_rx_ntuple(dev, &cmd);
+	if (ret) {
+		kfree(fsc);
+		return ret;
+	}
+
+	if (!ops->get_rx_ntuple)
+		__rx_ntuple_filter_add(&dev->ethtool_ntuple_list, &cmd.fs, fsc);
 
 	return ret;
 }
@@ -1554,6 +1636,12 @@ int dev_ethtool(struct net *net, struct ifreq *ifr)
 		break;
 	case ETHTOOL_GRXNTUPLE:
 		rc = ethtool_get_rx_ntuple(dev, useraddr);
+		break;
+	case ETHTOOL_GRXFHINDIR:
+		rc = ethtool_get_rxfh_indir(dev, useraddr);
+		break;
+	case ETHTOOL_SRXFHINDIR:
+		rc = ethtool_set_rxfh_indir(dev, useraddr);
 		break;
 	default:
 		rc = -EOPNOTSUPP;
