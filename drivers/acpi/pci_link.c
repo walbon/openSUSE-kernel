@@ -557,7 +557,7 @@ static int acpi_pci_link_allocate(struct acpi_pci_link *link)
 		 * the use of IRQs 9, 10, 11, and >15.
 		 */
 		for (i = (link->irq.possible_count - 1); i >= 0; i--) {
-			if (acpi_irq_penalty[irq] >
+			if (acpi_irq_penalty[irq] >=
 			    acpi_irq_penalty[link->irq.possible[i]])
 				irq = link->irq.possible[i];
 		}
