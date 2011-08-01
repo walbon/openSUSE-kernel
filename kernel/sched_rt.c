@@ -536,11 +536,32 @@ static int balance_runtime(struct rt_rq *rt_rq)
 {
 	int more = 0;
 
-	if (rt_rq->rt_time > rt_rq->rt_runtime) {
-		spin_unlock(&rt_rq->rt_runtime_lock);
-		more = do_balance_runtime(rt_rq);
-		spin_lock(&rt_rq->rt_runtime_lock);
+	if (rt_rq->rt_time <= rt_rq->rt_runtime)
+		return 0;
+
+	if (sysctl_sched_rtsched_debug) {
+		struct rq *rq;
+		u64 period;
+
+		if (!printk_ratelimit())
+			return 0;
+
+		rq = rq_of_rt_rq(rt_rq);
+		period = sched_rt_period(rt_rq);
+		printk(KERN_WARNING "RT: throttling CPU%d\n", rq->cpu);
+
+		if (rt_rq->rt_time > period - (period >> 3)) {
+			struct task_struct *p = rq->curr;
+
+			printk(KERN_WARNING "RT: Danger!  (%s) is potential runaway.\n", p->comm);
+		}
+
+		return 0;
 	}
+
+	spin_unlock(&rt_rq->rt_runtime_lock);
+	more = do_balance_runtime(rt_rq);
+	spin_lock(&rt_rq->rt_runtime_lock);
 
 	return more;
 }
