@@ -100,7 +100,8 @@ struct isci_tmf {
 	union {
 		struct ssp_response_iu resp_iu;
 		struct dev_to_host_fis d2h_fis;
-	}                            resp;
+		u8 rsp_buf[SSP_RESP_IU_MAX_SIZE];
+	} resp;
 	unsigned char lun[8];
 	u16 io_tag;
 	struct isci_remote_device *device;
@@ -210,21 +211,6 @@ int isci_queuecommand(
 
 int isci_bus_reset_handler(struct scsi_cmnd *cmd);
 
-void isci_task_build_tmf(
-	struct isci_tmf *tmf,
-	struct isci_remote_device *isci_device,
-	enum isci_tmf_function_codes code,
-	void (*tmf_sent_cb)(enum isci_tmf_cb_state,
-			    struct isci_tmf *,
-			    void *),
-	void *cb_data);
-
-
-int isci_task_execute_tmf(
-	struct isci_host *isci_host,
-	struct isci_tmf *tmf,
-	unsigned long timeout_ms);
-
 /**
  * enum isci_completion_selection - This enum defines the possible actions to
  *    take with respect to a given request's notification back to libsas.
@@ -301,6 +287,27 @@ isci_task_set_completion_status(
 	task->task_status.stat = status;
 
 	switch (task_notification_selection) {
+
+	case isci_perform_error_io_completion:
+
+		if (task->task_proto == SAS_PROTOCOL_SMP) {
+			/* There is no error escalation in the SMP case.
+			 * Convert to a normal completion to avoid the
+			 * timeout in the discovery path and to let the
+			 * next action take place quickly.
+			 */
+			task_notification_selection
+				= isci_perform_normal_io_completion;
+
+			/* Fall through to the normal case... */
+		} else {
+			/* Use sas_task_abort */
+			/* Leave SAS_TASK_STATE_DONE clear
+			 * Leave SAS_TASK_AT_INITIATOR set.
+			 */
+			break;
+		}
+
 	case isci_perform_aborted_io_completion:
 		/* This path can occur with task-managed requests as well as
 		 * requests terminated because of LUN or device resets.
@@ -313,12 +320,6 @@ isci_task_set_completion_status(
 	default:
 		WARN_ONCE(1, "unknown task_notification_selection: %d\n",
 			 task_notification_selection);
-		/* Fall through to the error case... */
-	case isci_perform_error_io_completion:
-		/* Use sas_task_abort */
-		/* Leave SAS_TASK_STATE_DONE clear
-		 * Leave SAS_TASK_AT_INITIATOR set.
-		 */
 		break;
 	}
 

@@ -59,9 +59,18 @@
 #include <linux/firmware.h>
 #include <linux/efi.h>
 #include <asm/string.h>
+#include <scsi/scsi_host.h>
 #include "isci.h"
 #include "task.h"
 #include "probe_roms.h"
+
+#define MAJ 1
+#define MIN 0
+#define BUILD 0
+#define DRV_VERSION __stringify(MAJ) "." __stringify(MIN) "." \
+	__stringify(BUILD)
+
+MODULE_VERSION(DRV_VERSION);
 
 static struct scsi_transport_template *isci_transport_template;
 
@@ -84,10 +93,6 @@ static DEFINE_PCI_DEVICE_TABLE(isci_id_table) = {
 MODULE_DEVICE_TABLE(pci, isci_id_table);
 
 /* linux isci specific settings */
-
-int isci_si_rev = ISCI_SI_REVA2;
-module_param(isci_si_rev, int, 0);
-MODULE_PARM_DESC(isci_si_rev, "(deprecated) override default si rev (0: A0 1: A2 2: B0)");
 
 unsigned char no_outbound_task_to = 20;
 module_param(no_outbound_task_to, byte, 0);
@@ -117,6 +122,22 @@ unsigned char max_concurr_spinup = 1;
 module_param(max_concurr_spinup, byte, 0);
 MODULE_PARM_DESC(max_concurr_spinup, "Max concurrent device spinup");
 
+static ssize_t isci_show_id(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host *shost = container_of(dev, typeof(*shost), shost_dev);
+	struct sas_ha_struct *sas_ha = SHOST_TO_SAS_HA(shost);
+	struct isci_host *ihost = container_of(sas_ha, typeof(*ihost), sas_ha);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", ihost->id);
+}
+
+static DEVICE_ATTR(isci_id, S_IRUGO, isci_show_id, NULL);
+
+struct device_attribute *isci_host_attrs[] = {
+	&dev_attr_isci_id,
+	NULL
+};
+
 static struct scsi_host_template isci_sht = {
 
 	.module				= THIS_MODULE,
@@ -142,6 +163,7 @@ static struct scsi_host_template isci_sht = {
 	.slave_alloc			= sas_slave_alloc,
 	.target_destroy			= sas_target_destroy,
 	.ioctl				= sas_ioctl,
+	.shost_attrs			= isci_host_attrs,
 };
 
 static struct sas_domain_function_template isci_transport_ops  = {
@@ -236,17 +258,6 @@ static int isci_register_sas_ha(struct isci_host *isci_host)
 	return 0;
 }
 
-static ssize_t isci_show_id(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct Scsi_Host *shost = container_of(dev, typeof(*shost), shost_dev);
-	struct sas_ha_struct *sas_ha = SHOST_TO_SAS_HA(shost);
-	struct isci_host *ihost = container_of(sas_ha, typeof(*ihost), sas_ha);
-
-	return snprintf(buf, PAGE_SIZE, "%d\n", ihost->id);
-}
-
-static DEVICE_ATTR(isci_id, S_IRUGO, isci_show_id, NULL);
-
 static void isci_unregister(struct isci_host *isci_host)
 {
 	struct Scsi_Host *shost;
@@ -255,7 +266,6 @@ static void isci_unregister(struct isci_host *isci_host)
 		return;
 
 	shost = isci_host->shost;
-	device_remove_file(&shost->shost_dev, &dev_attr_isci_id);
 
 	sas_unregister_ha(&isci_host->sas_ha);
 
@@ -419,46 +429,14 @@ static struct isci_host *isci_host_alloc(struct pci_dev *pdev, int id)
 	if (err)
 		goto err_shost_remove;
 
-	err = device_create_file(&shost->shost_dev, &dev_attr_isci_id);
-	if (err)
-		goto err_unregister_ha;
-
 	return isci_host;
 
- err_unregister_ha:
-	sas_unregister_ha(&(isci_host->sas_ha));
  err_shost_remove:
 	scsi_remove_host(shost);
  err_shost:
 	scsi_host_put(shost);
 
 	return NULL;
-}
-
-static void check_si_rev(struct pci_dev *pdev)
-{
-	switch (pdev->revision) {
-	case 0:
-	case 1:
-		/* if the id is ambiguous don't update isci_si_rev */
-		break;
-	case 3:
-		isci_si_rev = ISCI_SI_REVA2;
-		break;
-	case 4:
-		isci_si_rev = ISCI_SI_REVB0;
-		break;
-	default:
-	case 5:
-		isci_si_rev = ISCI_SI_REVC0;
-		break;
-	}
-
-	dev_info(&pdev->dev, "driver configured for %s silicon (rev: %d)\n",
-		 isci_si_rev == ISCI_SI_REVA0 ? "A0" :
-		 isci_si_rev == ISCI_SI_REVA2 ? "A2" :
-		 isci_si_rev == ISCI_SI_REVB0 ? "B0" : "C0", pdev->revision);
-
 }
 
 static int __devinit isci_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
@@ -470,7 +448,8 @@ static int __devinit isci_pci_probe(struct pci_dev *pdev, const struct pci_devic
 	struct isci_orom *orom = NULL;
 	char *source = "(platform)";
 
-	check_si_rev(pdev);
+	dev_info(&pdev->dev, "driver configured for rev: %d silicon\n",
+		 pdev->revision);
 
 	pci_info = devm_kzalloc(&pdev->dev, sizeof(*pci_info), GFP_KERNEL);
 	if (!pci_info)
@@ -484,7 +463,7 @@ static int __devinit isci_pci_probe(struct pci_dev *pdev, const struct pci_devic
 		orom = isci_request_oprom(pdev);
 
 	for (i = 0; orom && i < ARRAY_SIZE(orom->ctrl); i++) {
-		if (scic_oem_parameters_validate(&orom->ctrl[i])) {
+		if (sci_oem_parameters_validate(&orom->ctrl[i])) {
 			dev_warn(&pdev->dev,
 				 "[%d]: invalid oem parameters detected, falling back to firmware\n", i);
 			devm_kfree(&pdev->dev, orom);
@@ -548,13 +527,13 @@ static int __devinit isci_pci_probe(struct pci_dev *pdev, const struct pci_devic
 
 static void __devexit isci_pci_remove(struct pci_dev *pdev)
 {
-	struct isci_host *isci_host;
+	struct isci_host *ihost;
 	int i;
 
-	for_each_isci_host(i, isci_host, pdev) {
-		isci_unregister(isci_host);
-		isci_host_deinit(isci_host);
-		scic_controller_disable_interrupts(&isci_host->sci);
+	for_each_isci_host(i, ihost, pdev) {
+		isci_unregister(ihost);
+		isci_host_deinit(ihost);
+		sci_controller_disable_interrupts(ihost);
 	}
 }
 
@@ -569,7 +548,8 @@ static __init int isci_init(void)
 {
 	int err;
 
-	pr_info("%s: Intel(R) C600 SAS Controller Driver\n", DRV_NAME);
+	pr_info("%s: Intel(R) C600 SAS Controller Driver - version %s\n",
+		DRV_NAME, DRV_VERSION);
 
 	isci_transport_template = sas_domain_attach_transport(&isci_transport_ops);
 	if (!isci_transport_template)

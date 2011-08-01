@@ -59,8 +59,6 @@
 #include <linux/interrupt.h>
 #include <linux/types.h>
 
-#include "isci_compat.h"
-
 #define DRV_NAME "isci"
 #define SCI_PCI_BAR_COUNT 2
 #define SCI_NUM_MSI_X_INT 2
@@ -75,23 +73,20 @@
 
 #define SCI_CONTROLLER_INVALID_IO_TAG 0xFFFF
 
-enum sci_controller_mode {
-	SCI_MODE_SPEED,
-	SCI_MODE_SIZE /* deprecated */
-};
-
 #define SCI_MAX_PHYS  (4UL)
 #define SCI_MAX_PORTS SCI_MAX_PHYS
 #define SCI_MAX_SMP_PHYS  (384) /* not silicon constrained */
 #define SCI_MAX_REMOTE_DEVICES (256UL)
 #define SCI_MAX_IO_REQUESTS (256UL)
+#define SCI_MAX_SEQ (16)
 #define SCI_MAX_MSIX_MESSAGES  (2)
 #define SCI_MAX_SCATTER_GATHER_ELEMENTS 130 /* not silicon constrained */
 #define SCI_MAX_CONTROLLERS 2
 #define SCI_MAX_DOMAINS  SCI_MAX_PORTS
 
 #define SCU_MAX_CRITICAL_NOTIFICATIONS    (384)
-#define SCU_MAX_EVENTS                    (128)
+#define SCU_MAX_EVENTS_SHIFT		  (7)
+#define SCU_MAX_EVENTS                    (1 << SCU_MAX_EVENTS_SHIFT)
 #define SCU_MAX_UNSOLICITED_FRAMES        (128)
 #define SCU_MAX_COMPLETION_QUEUE_SCRATCH  (128)
 #define SCU_MAX_COMPLETION_QUEUE_ENTRIES  (SCU_MAX_CRITICAL_NOTIFICATIONS \
@@ -99,6 +94,7 @@ enum sci_controller_mode {
 					   + SCU_MAX_UNSOLICITED_FRAMES	\
 					   + SCI_MAX_IO_REQUESTS \
 					   + SCU_MAX_COMPLETION_QUEUE_SCRATCH)
+#define SCU_MAX_COMPLETION_QUEUE_SHIFT	  (ilog2(SCU_MAX_COMPLETION_QUEUE_ENTRIES))
 
 #define SCU_ABSOLUTE_MAX_UNSOLICITED_FRAMES (4096)
 #define SCU_UNSOLICITED_FRAME_BUFFER_SIZE   (1024)
@@ -114,6 +110,8 @@ static inline void check_sizes(void)
 	BUILD_BUG_ON_NOT_POWER_OF_2(SCU_MAX_UNSOLICITED_FRAMES);
 	BUILD_BUG_ON_NOT_POWER_OF_2(SCU_MAX_COMPLETION_QUEUE_ENTRIES);
 	BUILD_BUG_ON(SCU_MAX_UNSOLICITED_FRAMES > SCU_ABSOLUTE_MAX_UNSOLICITED_FRAMES);
+	BUILD_BUG_ON_NOT_POWER_OF_2(SCI_MAX_IO_REQUESTS);
+	BUILD_BUG_ON_NOT_POWER_OF_2(SCI_MAX_SEQ);
 }
 
 /**
@@ -301,7 +299,7 @@ enum sci_status {
 	 * This member indicates that the operation failed, the failure is
 	 * controller implementation specific, and the response data associated
 	 * with the request is not valid.  You can query for the controller
-	 * specific error information via scic_controller_get_request_status()
+	 * specific error information via sci_controller_get_request_status()
 	 */
 	SCI_FAILURE_CONTROLLER_SPECIFIC_IO_ERR,
 
@@ -392,7 +390,7 @@ enum sci_status {
 	/**
 	 * This value indicates that an unsupported PCI device ID has been
 	 * specified.  This indicates that attempts to invoke
-	 * scic_library_allocate_controller() will fail.
+	 * sci_library_allocate_controller() will fail.
 	 */
 	SCI_FAILURE_UNSUPPORTED_PCI_DEVICE_ID
 
@@ -490,7 +488,7 @@ irqreturn_t isci_error_isr(int vec, void *data);
 /*
  * Each timer is associated with a cancellation flag that is set when
  * del_timer() is called and checked in the timer callback function. This
- * is needed since del_timer_sync() cannot be called with scic_lock held.
+ * is needed since del_timer_sync() cannot be called with sci_lock held.
  * For deinit however, del_timer_sync() is used without holding the lock.
  */
 struct sci_timer {

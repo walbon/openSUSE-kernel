@@ -57,10 +57,10 @@
 #include "unsolicited_frame_control.h"
 #include "registers.h"
 
-int scic_sds_unsolicited_frame_control_construct(struct scic_sds_controller *scic)
+int sci_unsolicited_frame_control_construct(struct isci_host *ihost)
 {
-	struct scic_sds_unsolicited_frame_control *uf_control = &scic->uf_control;
-	struct scic_sds_unsolicited_frame *uf;
+	struct sci_unsolicited_frame_control *uf_control = &ihost->uf_control;
+	struct sci_unsolicited_frame *uf;
 	u32 buf_len, header_len, i;
 	dma_addr_t dma;
 	size_t size;
@@ -72,14 +72,14 @@ int scic_sds_unsolicited_frame_control_construct(struct scic_sds_controller *sci
 	 */
 	buf_len = SCU_MAX_UNSOLICITED_FRAMES * SCU_UNSOLICITED_FRAME_BUFFER_SIZE;
 	header_len = SCU_MAX_UNSOLICITED_FRAMES * sizeof(struct scu_unsolicited_frame_header);
-	size = buf_len + header_len + SCU_MAX_UNSOLICITED_FRAMES * sizeof(dma_addr_t);
+	size = buf_len + header_len + SCU_MAX_UNSOLICITED_FRAMES * sizeof(uf_control->address_table.array[0]);
 
 	/*
 	 * The Unsolicited Frame buffers are set at the start of the UF
 	 * memory descriptor entry. The headers and address table will be
 	 * placed after the buffers.
 	 */
-	virt = dmam_alloc_coherent(scic_to_dev(scic), size, &dma, GFP_KERNEL);
+	virt = dmam_alloc_coherent(&ihost->pdev->dev, size, &dma, GFP_KERNEL);
 	if (!virt)
 		return -ENOMEM;
 
@@ -139,23 +139,14 @@ int scic_sds_unsolicited_frame_control_construct(struct scic_sds_controller *sci
 	return 0;
 }
 
-/**
- * This method returns the frame header for the specified frame index.
- * @uf_control:
- * @frame_index:
- * @frame_header:
- *
- * enum sci_status
- */
-enum sci_status scic_sds_unsolicited_frame_control_get_header(
-	struct scic_sds_unsolicited_frame_control *uf_control,
-	u32 frame_index,
-	void **frame_header)
+enum sci_status sci_unsolicited_frame_control_get_header(struct sci_unsolicited_frame_control *uf_control,
+							 u32 frame_index,
+							 void **frame_header)
 {
 	if (frame_index < SCU_MAX_UNSOLICITED_FRAMES) {
-		/*
-		 * Skip the first word in the frame since this is a controll word used
-		 * by the hardware. */
+		/* Skip the first word in the frame since this is a controll word used
+		 * by the hardware.
+		 */
 		*frame_header = &uf_control->buffers.array[frame_index].header->data;
 
 		return SCI_SUCCESS;
@@ -164,18 +155,9 @@ enum sci_status scic_sds_unsolicited_frame_control_get_header(
 	return SCI_FAILURE_INVALID_PARAMETER_VALUE;
 }
 
-/**
- * This method returns the frame buffer for the specified frame index.
- * @uf_control:
- * @frame_index:
- * @frame_buffer:
- *
- * enum sci_status
- */
-enum sci_status scic_sds_unsolicited_frame_control_get_buffer(
-	struct scic_sds_unsolicited_frame_control *uf_control,
-	u32 frame_index,
-	void **frame_buffer)
+enum sci_status sci_unsolicited_frame_control_get_buffer(struct sci_unsolicited_frame_control *uf_control,
+							 u32 frame_index,
+							 void **frame_buffer)
 {
 	if (frame_index < SCU_MAX_UNSOLICITED_FRAMES) {
 		*frame_buffer = uf_control->buffers.array[frame_index].buffer;
@@ -186,19 +168,8 @@ enum sci_status scic_sds_unsolicited_frame_control_get_buffer(
 	return SCI_FAILURE_INVALID_PARAMETER_VALUE;
 }
 
-/**
- * This method releases the frame once this is done the frame is available for
- *    re-use by the hardware.  The data contained in the frame header and frame
- *    buffer is no longer valid.
- * @uf_control: This parameter specifies the UF control object
- * @frame_index: This parameter specifies the frame index to attempt to release.
- *
- * This method returns an indication to the caller as to whether the
- * unsolicited frame get pointer should be updated.
- */
-bool scic_sds_unsolicited_frame_control_release_frame(
-	struct scic_sds_unsolicited_frame_control *uf_control,
-	u32 frame_index)
+bool sci_unsolicited_frame_control_release_frame(struct sci_unsolicited_frame_control *uf_control,
+						 u32 frame_index)
 {
 	u32 frame_get;
 	u32 frame_cycle;
@@ -209,7 +180,8 @@ bool scic_sds_unsolicited_frame_control_release_frame(
 	/*
 	 * In the event there are NULL entries in the UF table, we need to
 	 * advance the get pointer in order to find out if this frame should
-	 * be released (i.e. update the get pointer). */
+	 * be released (i.e. update the get pointer)
+	 */
 	while (lower_32_bits(uf_control->address_table.array[frame_get]) == 0 &&
 	       upper_32_bits(uf_control->address_table.array[frame_get]) == 0 &&
 	       frame_get < SCU_MAX_UNSOLICITED_FRAMES)
@@ -217,40 +189,37 @@ bool scic_sds_unsolicited_frame_control_release_frame(
 
 	/*
 	 * The table has a NULL entry as it's last element.  This is
-	 * illegal. */
+	 * illegal.
+	 */
 	BUG_ON(frame_get >= SCU_MAX_UNSOLICITED_FRAMES);
+	if (frame_index >= SCU_MAX_UNSOLICITED_FRAMES)
+		return false;
 
-	if (frame_index < SCU_MAX_UNSOLICITED_FRAMES) {
-		uf_control->buffers.array[frame_index].state = UNSOLICITED_FRAME_RELEASED;
+	uf_control->buffers.array[frame_index].state = UNSOLICITED_FRAME_RELEASED;
 
+	if (frame_get != frame_index) {
 		/*
-		 * The frame index is equal to the current get pointer so we
-		 * can now free up all of the frame entries that */
-		if (frame_get == frame_index) {
-			while (
-				uf_control->buffers.array[frame_get].state
-				== UNSOLICITED_FRAME_RELEASED
-				) {
-				uf_control->buffers.array[frame_get].state = UNSOLICITED_FRAME_EMPTY;
-
-				INCREMENT_QUEUE_GET(
-					frame_get,
-					frame_cycle,
-					SCU_MAX_UNSOLICITED_FRAMES - 1,
-					SCU_MAX_UNSOLICITED_FRAMES);
-			}
-
-			uf_control->get =
-				(SCU_UFQGP_GEN_BIT(ENABLE_BIT) | frame_cycle | frame_get);
-
-			return true;
-		} else {
-			/*
-			 * Frames remain in use until we advance the get pointer
-			 * so there is nothing we can do here */
-		}
+		 * Frames remain in use until we advance the get pointer
+		 * so there is nothing we can do here
+		 */
+		return false;
 	}
 
-	return false;
-}
+	/*
+	 * The frame index is equal to the current get pointer so we
+	 * can now free up all of the frame entries that
+	 */
+	while (uf_control->buffers.array[frame_get].state == UNSOLICITED_FRAME_RELEASED) {
+		uf_control->buffers.array[frame_get].state = UNSOLICITED_FRAME_EMPTY;
 
+		if (frame_get+1 == SCU_MAX_UNSOLICITED_FRAMES-1) {
+			frame_cycle ^= SCU_MAX_UNSOLICITED_FRAMES;
+			frame_get = 0;
+		} else
+			frame_get++;
+	}
+
+	uf_control->get = SCU_UFQGP_GEN_BIT(ENABLE_BIT) | frame_cycle | frame_get;
+
+	return true;
+}

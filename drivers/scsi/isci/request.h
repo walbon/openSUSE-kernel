@@ -89,155 +89,78 @@ enum sci_request_protocol {
 	SCIC_STP_PROTOCOL
 }; /* XXX remove me, use sas_task.{dev|task_proto} instead */;
 
-struct scic_sds_stp_request {
-	union {
-		u32 ncq;
+/**
+ * isci_stp_request - extra request infrastructure to handle pio/atapi protocol
+ * @pio_len - number of bytes requested at PIO setup
+ * @status - pio setup ending status value to tell us if we need
+ *	     to wait for another fis or if the transfer is complete.  Upon
+ *           receipt of a d2h fis this will be the status field of that fis.
+ * @sgl - track pio transfer progress as we iterate through the sgl
+ * @device_cdb_len - atapi device advertises it's transfer constraints at setup
+ */
+struct isci_stp_request {
+	u32 pio_len;
+	u8 status;
 
-		u32 udma;
-
-		struct scic_sds_stp_pio_request {
-			/*
-			 * Total transfer for the entire PIO request recorded
-			 * at request constuction time.
-			 *
-			 * @todo Should we just decrement this value for each
-			 * byte of data transitted or received to elemenate
-			 * the current_transfer_bytes field?
-			 */
-			u32 total_transfer_bytes;
-
-			/*
-			 * Total number of bytes received/transmitted in data
-			 * frames since the start of the IO request.  At the
-			 * end of the IO request this should equal the
-			 * total_transfer_bytes.
-			 */
-			u32 current_transfer_bytes;
-
-			/*
-			 * The number of bytes requested in the in the PIO
-			 * setup.
-			 */
-			u32 pio_transfer_bytes;
-
-			/*
-			 * PIO Setup ending status value to tell us if we need
-			 * to wait for another FIS or if the transfer is
-			 * complete. On the receipt of a D2H FIS this will be
-			 * the status field of that FIS.
-			 */
-			u8 ending_status;
-
-			/*
-			 * On receipt of a D2H FIS this will be the ending
-			 * error field if the ending_status has the
-			 * SATA_STATUS_ERR bit set.
-			 */
-			u8 ending_error;
-
-			struct scic_sds_request_pio_sgl {
-				struct scu_sgl_element_pair *sgl_pair;
-				u8 sgl_set;
-				u32 sgl_offset;
-			} request_current;
-		} pio;
-
-		struct {
-			/*
-			 * The number of bytes requested in the PIO setup
-			 * before CDB data frame.
-			 */
-			u32 device_preferred_cdb_length;
-		} packet;
-	} type;
+	struct isci_stp_pio_sgl {
+		int index;
+		u8 set;
+		u32 offset;
+	} sgl;
+	u32 device_cdb_len;
 };
 
-struct scic_sds_request {
-	/*
-	 * This field contains the information for the base request state
-	 * machine.
+struct isci_request {
+	enum isci_request_status status;
+	#define IREQ_COMPLETE_IN_TARGET 0
+	#define IREQ_TERMINATED 1
+	#define IREQ_TMF 2
+	#define IREQ_ACTIVE 3
+	unsigned long flags;
+	/* XXX kill ttype and ttype_ptr, allocate full sas_task */
+	enum task_type ttype;
+	union ttype_ptr_union {
+		struct sas_task *io_task_ptr;   /* When ttype==io_task  */
+		struct isci_tmf *tmf_task_ptr;  /* When ttype==tmf_task */
+	} ttype_ptr;
+	struct isci_host *isci_host;
+	/* For use in the requests_to_{complete|abort} lists: */
+	struct list_head completed_node;
+	/* For use in the reqs_in_process list: */
+	struct list_head dev_node;
+	spinlock_t state_lock;
+	dma_addr_t request_daddr;
+	dma_addr_t zero_scatter_daddr;
+	unsigned int num_sg_entries;
+	/* Note: "io_request_completion" is completed in two different ways
+	 * depending on whether this is a TMF or regular request.
+	 * - TMF requests are completed in the thread that started them;
+	 * - regular requests are completed in the request completion callback
+	 *   function.
+	 * This difference in operation allows the aborter of a TMF request
+	 * to be sure that once the TMF request completes, the I/O that the
+	 * TMF was aborting is guaranteed to have completed.
+	 *
+	 * XXX kill io_request_completion
 	 */
+	struct completion *io_request_completion;
 	struct sci_base_state_machine sm;
-
-	/*
-	 * This field simply points to the controller to which this IO request
-	 * is associated.
-	 */
-	struct scic_sds_controller *owning_controller;
-
-	/*
-	 * This field simply points to the remote device to which this IO
-	 * request is associated.
-	 */
-	struct scic_sds_remote_device *target_device;
-
-	/*
-	 * This field is utilized to determine if the SCI user is managing
-	 * the IO tag for this request or if the core is managing it.
-	 */
-	bool was_tag_assigned_by_user;
-
-	/*
-	 * This field indicates the IO tag for this request.  The IO tag is
-	 * comprised of the task_index and a sequence count. The sequence count
-	 * is utilized to help identify tasks from one life to another.
-	 */
+	struct isci_host *owning_controller;
+	struct isci_remote_device *target_device;
 	u16 io_tag;
-
-	/*
-	 * This field specifies the protocol being utilized for this
-	 * IO request.
-	 */
 	enum sci_request_protocol protocol;
-
-	/*
-	 * This field indicates the completion status taken from the SCUs
-	 * completion code.  It indicates the completion result for the SCU
-	 * hardware.
-	 */
-	u32 scu_status;
-
-	/*
-	 * This field indicates the completion status returned to the SCI user.
-	 * It indicates the users view of the io request completion.
-	 */
-	u32 sci_status;
-
-	/*
-	 * This field contains the value to be utilized when posting
-	 * (e.g. Post_TC, * Post_TC_Abort) this request to the silicon.
-	 */
+	u32 scu_status; /* hardware result */
+	u32 sci_status; /* upper layer disposition */
 	u32 post_context;
-
-	struct scu_task_context *task_context_buffer;
-	struct scu_task_context tc ____cacheline_aligned;
-
+	struct scu_task_context *tc;
 	/* could be larger with sg chaining */
 	#define SCU_SGL_SIZE ((SCI_MAX_SCATTER_GATHER_ELEMENTS + 1) / 2)
 	struct scu_sgl_element_pair sg_table[SCU_SGL_SIZE] __attribute__ ((aligned(32)));
-
-	/*
-	 * This field indicates if this request is a task management request or
-	 * normal IO request.
-	 */
-	bool is_task_management_request;
-
-	/*
-	 * This field is a pointer to the stored rx frame data.  It is used in
+	/* This field is a pointer to the stored rx frame data.  It is used in
 	 * STP internal requests and SMP response frames.  If this field is
 	 * non-NULL the saved frame must be released on IO request completion.
-	 *
-	 * @todo In the future do we want to keep a list of RX frame buffers?
 	 */
 	u32 saved_rx_frame_index;
-
-	/*
-	 * This field in the recorded device sequence for the io request.
-	 * This is recorded during the build operation and is compared in the
-	 * start operation.  If the sequence is different then there was a
-	 * change of devices from the build to start operations.
-	 */
-	u8 device_sequence;
 
 	union {
 		struct {
@@ -250,69 +173,22 @@ struct scic_sds_request {
 				u8 rsp_buf[SSP_RESP_IU_MAX_SIZE];
 			};
 		} ssp;
-
 		struct {
-			struct smp_req cmd;
 			struct smp_resp rsp;
 		} smp;
-
 		struct {
-			struct scic_sds_stp_request req;
+			struct isci_stp_request req;
 			struct host_to_dev_fis cmd;
 			struct dev_to_host_fis rsp;
 		} stp;
 	};
-
 };
 
-static inline struct scic_sds_request *to_sci_req(struct scic_sds_stp_request *stp_req)
+static inline struct isci_request *to_ireq(struct isci_stp_request *stp_req)
 {
-	struct scic_sds_request *sci_req;
+	struct isci_request *ireq;
 
-	sci_req = container_of(stp_req, typeof(*sci_req), stp.req);
-	return sci_req;
-}
-
-struct isci_request {
-	enum isci_request_status status;
-	enum task_type ttype;
-	unsigned short io_tag;
-	bool complete_in_target;
-	bool terminated;
-
-	union ttype_ptr_union {
-		struct sas_task *io_task_ptr;   /* When ttype==io_task  */
-		struct isci_tmf *tmf_task_ptr;  /* When ttype==tmf_task */
-	} ttype_ptr;
-	struct isci_host *isci_host;
-	struct isci_remote_device *isci_device;
-	/* For use in the requests_to_{complete|abort} lists: */
-	struct list_head completed_node;
-	/* For use in the reqs_in_process list: */
-	struct list_head dev_node;
-	spinlock_t state_lock;
-	dma_addr_t request_daddr;
-	dma_addr_t zero_scatter_daddr;
-
-	unsigned int num_sg_entries;			/* returned by pci_alloc_sg */
-
-	/** Note: "io_request_completion" is completed in two different ways
-	 * depending on whether this is a TMF or regular request.
-	 * - TMF requests are completed in the thread that started them;
-	 * - regular requests are completed in the request completion callback
-	 *   function.
-	 * This difference in operation allows the aborter of a TMF request
-	 * to be sure that once the TMF request completes, the I/O that the
-	 * TMF was aborting is guaranteed to have completed.
-	 */
-	struct completion *io_request_completion;
-	struct scic_sds_request sci;
-};
-
-static inline struct isci_request *sci_req_to_ireq(struct scic_sds_request *sci_req)
-{
-	struct isci_request *ireq = container_of(sci_req, typeof(*ireq), sci);
-
+	ireq = container_of(stp_req, typeof(*ireq), stp.req);
 	return ireq;
 }
 
@@ -424,123 +300,25 @@ enum sci_base_request_states {
 	SCI_REQ_FINAL,
 };
 
-/**
- * scic_sds_request_get_controller() -
- *
- * This macro will return the controller for this io request object
- */
-#define scic_sds_request_get_controller(sci_req) \
-	((sci_req)->owning_controller)
-
-/**
- * scic_sds_request_get_device() -
- *
- * This macro will return the device for this io request object
- */
-#define scic_sds_request_get_device(sci_req) \
-	((sci_req)->target_device)
-
-/**
- * scic_sds_request_get_port() -
- *
- * This macro will return the port for this io request object
- */
-#define scic_sds_request_get_port(sci_req)	\
-	scic_sds_remote_device_get_port(scic_sds_request_get_device(sci_req))
-
-/**
- * scic_sds_request_get_post_context() -
- *
- * This macro returns the constructed post context result for the io request.
- */
-#define scic_sds_request_get_post_context(sci_req)	\
-	((sci_req)->post_context)
-
-/**
- * scic_sds_request_get_task_context() -
- *
- * This is a helper macro to return the os handle for this request object.
- */
-#define scic_sds_request_get_task_context(request) \
-	((request)->task_context_buffer)
-
-/**
- * scic_sds_request_set_status() -
- *
- * This macro will set the scu hardware status and sci request completion
- * status for an io request.
- */
-#define scic_sds_request_set_status(request, scu_status_code, sci_status_code) \
-	{ \
-		(request)->scu_status = (scu_status_code); \
-		(request)->sci_status = (sci_status_code); \
-	}
-
-/**
- * SCU_SGL_ZERO() -
- *
- * This macro zeros the hardware SGL element data
- */
-#define SCU_SGL_ZERO(scu_sge) \
-	{ \
-		(scu_sge).length = 0; \
-		(scu_sge).address_lower = 0; \
-		(scu_sge).address_upper = 0; \
-		(scu_sge).address_modifier = 0;	\
-	}
-
-/**
- * SCU_SGL_COPY() -
- *
- * This macro copys the SGL Element data from the host os to the hardware SGL
- * elment data
- */
-#define SCU_SGL_COPY(scu_sge, os_sge) \
-	{ \
-		(scu_sge).length = sg_dma_len(sg); \
-		(scu_sge).address_upper = \
-			upper_32_bits(sg_dma_address(sg)); \
-		(scu_sge).address_lower = \
-			lower_32_bits(sg_dma_address(sg)); \
-		(scu_sge).address_modifier = 0;	\
-	}
-
-enum sci_status scic_sds_request_start(struct scic_sds_request *sci_req);
-enum sci_status scic_sds_io_request_terminate(struct scic_sds_request *sci_req);
+enum sci_status sci_request_start(struct isci_request *ireq);
+enum sci_status sci_io_request_terminate(struct isci_request *ireq);
 enum sci_status
-scic_sds_io_request_event_handler(struct scic_sds_request *sci_req,
+sci_io_request_event_handler(struct isci_request *ireq,
 				  u32 event_code);
 enum sci_status
-scic_sds_io_request_frame_handler(struct scic_sds_request *sci_req,
+sci_io_request_frame_handler(struct isci_request *ireq,
 				  u32 frame_index);
 enum sci_status
-scic_sds_task_request_terminate(struct scic_sds_request *sci_req);
+sci_task_request_terminate(struct isci_request *ireq);
 extern enum sci_status
-scic_sds_request_complete(struct scic_sds_request *sci_req);
+sci_request_complete(struct isci_request *ireq);
 extern enum sci_status
-scic_sds_io_request_tc_completion(struct scic_sds_request *sci_req, u32 code);
-
-/* XXX open code in caller */
-static inline void *scic_request_get_virt_addr(struct scic_sds_request *sci_req,
-					       dma_addr_t phys_addr)
-{
-	struct isci_request *ireq = sci_req_to_ireq(sci_req);
-	dma_addr_t offset;
-
-	BUG_ON(phys_addr < ireq->request_daddr);
-
-	offset = phys_addr - ireq->request_daddr;
-
-	BUG_ON(offset >= sizeof(*ireq));
-
-	return (char *)ireq + offset;
-}
+sci_io_request_tc_completion(struct isci_request *ireq, u32 code);
 
 /* XXX open code in caller */
 static inline dma_addr_t
-scic_io_request_get_dma_addr(struct scic_sds_request *sci_req, void *virt_addr)
+sci_io_request_get_dma_addr(struct isci_request *ireq, void *virt_addr)
 {
-	struct isci_request *ireq = sci_req_to_ireq(sci_req);
 
 	char *requested_addr = (char *)virt_addr;
 	char *base_addr = (char *)ireq;
@@ -550,27 +328,6 @@ scic_io_request_get_dma_addr(struct scic_sds_request *sci_req, void *virt_addr)
 
 	return ireq->request_daddr + (requested_addr - base_addr);
 }
-
-/**
- * This function gets the status of the request object.
- * @request: This parameter points to the isci_request object
- *
- * status of the object as a isci_request_status enum.
- */
-static inline enum isci_request_status
-isci_request_get_state(struct isci_request *isci_request)
-{
-	BUG_ON(isci_request == NULL);
-
-	/*probably a bad sign...	*/
-	if (isci_request->status == unallocated)
-		dev_warn(&isci_request->isci_host->pdev->dev,
-			 "%s: isci_request->status == unallocated\n",
-			 __func__);
-
-	return isci_request->status;
-}
-
 
 /**
  * isci_request_change_state() - This function sets the status of the request
@@ -657,138 +414,35 @@ isci_request_change_started_to_aborted(struct isci_request *isci_request,
 						       completion_ptr,
 						       aborted);
 }
-/**
- * isci_request_free() - This function frees the request object.
- * @isci_host: This parameter specifies the ISCI host object
- * @isci_request: This parameter points to the isci_request object
- *
- */
-static inline void isci_request_free(struct isci_host *isci_host,
-				     struct isci_request *isci_request)
-{
-	if (!isci_request)
-		return;
-
-	/* release the dma memory if we fail. */
-	dma_pool_free(isci_host->dma_pool,
-		      isci_request,
-		      isci_request->request_daddr);
-}
 
 #define isci_request_access_task(req) ((req)->ttype_ptr.io_task_ptr)
 
 #define isci_request_access_tmf(req) ((req)->ttype_ptr.tmf_task_ptr)
 
-int isci_request_alloc_tmf(struct isci_host *isci_host,
-			   struct isci_tmf *isci_tmf,
-			   struct isci_request **isci_request,
-			   struct isci_remote_device *isci_device,
-			   gfp_t gfp_flags);
-
-
-int isci_request_execute(struct isci_host *isci_host,
-			 struct sas_task *task,
-			 struct isci_request **request,
-			 gfp_t gfp_flags);
-
-/**
- * isci_request_unmap_sgl() - This function unmaps the DMA address of a given
- *    sgl
- * @request: This parameter points to the isci_request object
- * @*pdev: This Parameter is the pci_device struct for the controller
- *
- */
-static inline void
-isci_request_unmap_sgl(struct isci_request *request, struct pci_dev *pdev)
-{
-	struct sas_task *task = isci_request_access_task(request);
-
-	dev_dbg(&request->isci_host->pdev->dev,
-		"%s: request = %p, task = %p,\n"
-		"task->data_dir = %d, is_sata = %d\n ",
-		__func__,
-		request,
-		task,
-		task->data_dir,
-		sas_protocol_ata(task->task_proto));
-
-	if ((task->data_dir != PCI_DMA_NONE) &&
-	    !sas_protocol_ata(task->task_proto)) {
-		if (task->num_scatter == 0)
-			/* 0 indicates a single dma address */
-			dma_unmap_single(
-				&pdev->dev,
-				request->zero_scatter_daddr,
-				task->total_xfer_len,
-				task->data_dir
-				);
-
-		else  /* unmap the sgl dma addresses */
-			dma_unmap_sg(
-				&pdev->dev,
-				task->scatter,
-				request->num_sg_entries,
-				task->data_dir
-				);
-	}
-}
-
-/**
- * isci_request_io_request_get_next_sge() - This function is called by the sci
- *    core to retrieve the next sge for a given request.
- * @request: This parameter is the isci_request object.
- * @current_sge_address: This parameter is the last sge retrieved by the sci
- *    core for this request.
- *
- * pointer to the next sge for specified request.
- */
-static inline void *
-isci_request_io_request_get_next_sge(struct isci_request *request,
-				     void *current_sge_address)
-{
-	struct sas_task *task = isci_request_access_task(request);
-	void *ret = NULL;
-
-	dev_dbg(&request->isci_host->pdev->dev,
-		"%s: request = %p, "
-		"current_sge_address = %p, "
-		"num_scatter = %d\n",
-		__func__,
-		request,
-		current_sge_address,
-		task->num_scatter);
-
-	if (!current_sge_address)	/* First time through.. */
-		ret = task->scatter;    /* always task->scatter */
-	else if (task->num_scatter == 0) /* Next element, if num_scatter == 0 */
-		ret = NULL;              /* there is only one element. */
-	else
-		ret = sg_next(current_sge_address);     /* sg_next returns NULL
-							 * for the last element
-							 */
-
-	dev_dbg(&request->isci_host->pdev->dev,
-		"%s: next sge address = %p\n",
-		__func__,
-		ret);
-
-	return ret;
-}
-
-void
-isci_terminate_pending_requests(struct isci_host *isci_host,
-				struct isci_remote_device *isci_device,
-				enum isci_request_status new_request_state);
+struct isci_request *isci_tmf_request_from_tag(struct isci_host *ihost,
+					       struct isci_tmf *isci_tmf,
+					       u16 tag);
+int isci_request_execute(struct isci_host *ihost, struct isci_remote_device *idev,
+			 struct sas_task *task, u16 tag);
+void isci_terminate_pending_requests(struct isci_host *ihost,
+				     struct isci_remote_device *idev);
 enum sci_status
-scic_task_request_construct(struct scic_sds_controller *scic,
-			    struct scic_sds_remote_device *sci_dev,
+sci_task_request_construct(struct isci_host *ihost,
+			    struct isci_remote_device *idev,
 			    u16 io_tag,
-			    struct scic_sds_request *sci_req);
+			    struct isci_request *ireq);
 enum sci_status
-scic_task_request_construct_ssp(struct scic_sds_request *sci_req);
+sci_task_request_construct_ssp(struct isci_request *ireq);
 enum sci_status
-scic_task_request_construct_sata(struct scic_sds_request *sci_req);
-void
-scic_stp_io_request_set_ncq_tag(struct scic_sds_request *sci_req, u16 ncq_tag);
-void scic_sds_smp_request_copy_response(struct scic_sds_request *sci_req);
+sci_task_request_construct_sata(struct isci_request *ireq);
+void sci_smp_request_copy_response(struct isci_request *ireq);
+
+static inline int isci_task_is_ncq_recovery(struct sas_task *task)
+{
+	return (sas_protocol_ata(task->task_proto) &&
+		task->ata_task.fis.command == ATA_CMD_READ_LOG_EXT &&
+		task->ata_task.fis.lbal == ATA_LOG_SATA_NCQ);
+
+}
+
 #endif /* !defined(_ISCI_REQUEST_H_) */
