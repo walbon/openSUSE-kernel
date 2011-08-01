@@ -304,31 +304,55 @@ static void __init print_efi_memmap(void)
 }
 #endif  /*  EFI_DEBUG  */
 
+static int __init efi_early_reservable(u64 start, u64 size) {
+	/* Only reserve where possible:
+	 * - Not within any already allocated areas
+	 * - Not over any memory area (really needed, if above?)
+	 * - Not within any part of the kernel
+	 * - Not the bios reserved area
+	 */
+	if ((start+size >= virt_to_phys(_text)
+			&& start <= virt_to_phys(_end)) ||
+		!e820_all_mapped(start, start+size, E820_RAM) ||
+		!check_early(start, start+size-1))
+		return 0;
+	return 1;
+}
+
 void __init efi_reserve_boot_services(void)
 {
 	void *p;
 
 	for (p = memmap.map; p < memmap.map_end; p += memmap.desc_size) {
 		efi_memory_desc_t *md = p;
+		void *n = p + memmap.desc_size;
 		u64 start = md->phys_addr;
 		u64 size = md->num_pages << EFI_PAGE_SHIFT;
 
 		if (md->type != EFI_BOOT_SERVICES_CODE &&
 		    md->type != EFI_BOOT_SERVICES_DATA)
 			continue;
-		/* Only reserve where possible:
-		 * - Not within any already allocated areas
-		 * - Not over any memory area (really needed, if above?)
-		 * - Not within any part of the kernel
-		 * - Not the bios reserved area
-		*/
-		if ((start+size >= virt_to_phys(_text)
-				&& start <= virt_to_phys(_end)) ||
-			!e820_all_mapped(start, start+size, E820_RAM) ||
-			check_early(start, start+size)) {
-			/* Could not reserve, skip it */
+
+		/* Merge contiguous regions to avoid overflowing
+		 * MAX_EARLY_RES (max observed has been >140!)
+		 */
+		while (n < memmap.map_end) {
+			efi_memory_desc_t *nd = n;
+			u64 n_size = size + (nd->num_pages << EFI_PAGE_SHIFT);
+			if ((nd->type != EFI_BOOT_SERVICES_CODE &&
+			    	nd->type != EFI_BOOT_SERVICES_DATA) ||
+			    nd->phys_addr != (start + size) ||
+			    !efi_early_reservable(start, n_size))
+				break;
+			size = n_size;
+			p = nd;
+			n += memmap.desc_size;
+		}
+
+		if (!efi_early_reservable(start, size)) {
+			/* Reserve will fail, skip it */
 			md->num_pages = 0;
-			printk(KERN_INFO PFX "Could not reserve boot range "
+			printk(KERN_INFO PFX "Skip reserving boot range "
 					"[0x%010llx-0x%010llx]\n",
 						start, start+size-1);
 		} else
@@ -621,7 +645,7 @@ void __init efi_enter_virtual_mode(void)
 			set_memory_uc(addr, npages);
 		} else if (md->type == EFI_RESERVED_TYPE) {
 			printk(KERN_INFO PFX "skip EFI_RESERVED_TYPE: 0x%llX "
-				"attr=%d!\n", md->phys_addr, md->attribute);
+				"attr=0x%llx!\n", md->phys_addr, md->attribute);
 		}
 
 		systab = (u64) (unsigned long) efi_phys.systab;

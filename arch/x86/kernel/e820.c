@@ -730,7 +730,7 @@ core_initcall(e820_mark_nvs_memory);
 /*
  * Early reserved memory areas.
  */
-#define MAX_EARLY_RES 32
+#define MAX_EARLY_RES 64
 
 struct early_res {
 	u64 start, end;
@@ -906,17 +906,19 @@ void __init reserve_early(u64 start, u64 end, char *name)
 	__reserve_early(start, end, name, 0);
 }
 
+/*
+ * Check whether given range would be early reservable.
+ */
 int __init check_early(u64 start, u64 end)
 {
 	int i;
 	struct early_res *r;
 
-	for (i = 0; i < MAX_EARLY_RES && early_res[i].end; i++) {
-		r = &early_res[i];
-		if (start >= r->start && end <= r->end)
-			return 1;
-	}
-	return 0;
+	i = find_overlapped_early(start, end);
+	r = &early_res[i];
+	if (i >= MAX_EARLY_RES || r->end)
+		return 0;
+	return 1;
 }
 
 void __init free_early(u64 start, u64 end)
