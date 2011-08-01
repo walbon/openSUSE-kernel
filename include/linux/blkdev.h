@@ -404,6 +404,7 @@ struct request_queue
 #define QUEUE_FLAG_NOXMERGES   17	/* No extended merges */
 #define QUEUE_FLAG_ADD_RANDOM  18	/* Contributes to random pool */
 #define QUEUE_FLAG_SECDISCARD  19	/* supports SECDISCARD */
+#define QUEUE_FLAG_SAME_FORCE  20	/* force complete on same CPU */
 
 #define QUEUE_FLAG_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_STACKABLE)	|	\
