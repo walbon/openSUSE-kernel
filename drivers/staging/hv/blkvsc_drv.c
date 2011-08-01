@@ -26,6 +26,7 @@
 #include <linux/major.h>
 #include <linux/delay.h>
 #include <linux/hdreg.h>
+#include <linux/ata.h>
 #include <linux/slab.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -97,8 +98,7 @@ struct block_device_context {
 	enum blkvsc_device_type	device_type;
 	struct list_head pending_list;
 
-	unsigned char device_id[64];
-	unsigned int device_id_len;
+	u16 id[ATA_ID_WORDS];
 	int num_outstanding_reqs;
 	int shutting_down;
 	unsigned int sector_size;
@@ -261,8 +261,7 @@ static int blkvsc_ioctl(struct block_device *bd, fmode_t mode,
 
 	switch (cmd) {
 	case HDIO_GET_IDENTITY:
-		if (copy_to_user((void __user *)arg, blkdev->device_id,
-				 blkdev->device_id_len))
+		if (copy_to_user((void __user *)arg, blkdev->id, sizeof(blkdev->id)))
 			ret = -EFAULT;
 		break;
 	default:
@@ -387,11 +386,11 @@ static int blkvsc_do_operation(struct block_device_context *blkdev,
 		 else
 			blkdev->device_type = UNKNOWN_DEV_TYPE;
 
-		blkdev->device_id_len = buf[7];
-		if (blkdev->device_id_len > 64)
-			blkdev->device_id_len = 64;
+		if (buf[7] > ATA_ID_PROD_LEN)
+			buf[7] = ATA_ID_PROD_LEN; buf[7] = 4;
 
-		memcpy(blkdev->device_id, &buf[8], blkdev->device_id_len);
+		memcpy(&blkdev->id[ATA_ID_PROD], &buf[8], buf[7]);
+		printk(KERN_DEBUG "%s: serial %x '%s'\n", __func__, buf[7], (char*)&blkdev->id[ATA_ID_PROD]);
 		break;
 
 	case DO_CAPACITY:
