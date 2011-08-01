@@ -151,25 +151,7 @@ void __init acpi_apei_blacklist(void)
 	if (apei_disable != -1)
 		return;
 
-#ifdef CONFIG_X86
-	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
-		printk (KERN_INFO "AMD CPU detected: Disabling APEI in favor"
-			" of native error interfaces\n");
-		acpi_apei_disable();
-		return;
-	}
-#endif
-	if (dmi_name_in_vendors("ProLiant")) {
-		printk (KERN_INFO "ProLiant detected: Disabling APEI in favor"
-			" of native error interfaces\n");
-		acpi_apei_disable();
-	} else {
-		/* generally enable, parts may be disabled separately
-		 * later, by erst_disable, hest_disable or ghes.disable=1
-		 * boot parameters
-		 */
-		acpi_apei_enable();
-	}
+	acpi_apei_disable();
 }
 
 int __init acpi_blacklisted(void)

@@ -1092,11 +1092,8 @@ static int __init erst_init(void)
 	if (acpi_disabled)
 		goto err;
 
-	if (erst_disable) {
-		pr_info(ERST_PFX
-	"Error Record Serialization Table (ERST) support is disabled.\n");
-		goto err;
-	}
+	if (erst_disable)
+		return 0;
 
 	status = acpi_get_table(ACPI_SIG_ERST, 0,
 				(struct acpi_table_header **)&erst_tab);

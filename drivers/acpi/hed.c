@@ -28,6 +28,7 @@
 #include <acpi/acpi_bus.h>
 #include <acpi/acpi_drivers.h>
 #include <acpi/hed.h>
+#include <acpi/apei.h>
 
 static struct acpi_device_id acpi_hed_ids[] = {
 	{"PNP0C33", 0},
@@ -91,6 +92,12 @@ static int __init acpi_hed_init(void)
 {
 	if (acpi_disabled)
 		return -ENODEV;
+
+	if (ghes_disable || hest_disable) {
+		pr_debug("GHES or HEST APEI functions disabled, not loading "
+			 "hed driver\n");
+		return -ENODEV;
+	}
 
 	if (acpi_bus_register_driver(&acpi_hed_driver) < 0)
 		return -ENODEV;
