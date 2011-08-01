@@ -108,7 +108,7 @@ static unsigned int get_next_ino(void)
 }
 
 static struct inode *pstore_get_inode(struct super_block *sb,
-			const struct inode *dir, int mode, dev_t dev)
+					const struct inode *dir, int mode, dev_t dev)
 {
 	struct inode *inode = new_inode(sb);
 
@@ -303,7 +303,6 @@ fail:
 static int pstore_get_sb(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
 {
-
 	return get_sb_nodev(fs_type, flags, data, pstore_fill_super, mnt);
 }
 
