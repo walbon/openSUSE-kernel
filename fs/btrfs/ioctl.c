@@ -369,6 +369,8 @@ static noinline int create_subvol(struct btrfs_root *root,
 	btrfs_record_root_in_trans(trans, new_root);
 
 	ret = btrfs_create_subvol_root(trans, new_root, new_dirid);
+	if (ret)
+		goto fail;
 	/*
 	 * insert the directory item
 	 */
@@ -458,16 +460,17 @@ static int create_snapshot(struct btrfs_root *root, struct dentry *dentry,
 	if (ret)
 		goto fail;
 
+	ret = 0;
 	parent = dget_parent(dentry);
 	inode = btrfs_lookup_dentry(parent->d_inode, dentry);
 	dput(parent);
 	if (IS_ERR(inode)) {
 		ret = PTR_ERR(inode);
 		goto fail;
-	}
-	BUG_ON(!inode);
+	} else if (inode == NULL)
+		ret = -ENOENT;
+
 	d_instantiate(dentry, inode);
-	ret = 0;
 fail:
 	kfree(pending_snapshot);
 	return ret;
