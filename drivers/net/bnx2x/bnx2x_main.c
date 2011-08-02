@@ -2663,6 +2663,9 @@ static inline unsigned long bnx2x_get_q_flags(struct bnx2x *bp,
 	if (bp->vlgrp)
 		__set_bit(BNX2X_Q_FLG_VLAN, &flags);
 
+	/* configure silent vlan removal */
+	__set_bit(BNX2X_Q_FLG_SILENT_VLAN_REM, &flags);
+
 	return flags;
 }
 
@@ -2745,6 +2748,14 @@ static void bnx2x_pf_rx_q_prep(struct bnx2x *bp,
 		rxq_init->sb_cq_index = HC_SP_INDEX_ETH_FCOE_RX_CQ_CONS;
 	else
 		rxq_init->sb_cq_index = U_SB_ETH_RX_CQ_INDEX;
+
+	if (IS_FCOE_FP(fp)) {
+		rxq_init->silent_removal_value = 0;
+		rxq_init->silent_removal_mask = VLAN_VID_MASK;
+	} else {
+		rxq_init->silent_removal_value = 0;
+		rxq_init->silent_removal_mask = VLAN_PRIO_MASK | VLAN_VID_MASK;
+	}
 }
 
 static void bnx2x_pf_tx_q_prep(struct bnx2x *bp,
@@ -3757,6 +3768,10 @@ static inline int bnx2x_check_blocks_with_parity1(u32 sig, int par_num,
 				if (print)
 					_print_next_block(par_num++, "USDM");
 				break;
+			case AEU_INPUTS_ATTN_BITS_UCM_PARITY_ERROR:
+				if (print)
+					_print_next_block(par_num++, "UCM");
+				break;
 			case AEU_INPUTS_ATTN_BITS_USEMI_PARITY_ERROR:
 				if (print)
 					_print_next_block(par_num++, "USEMI");
@@ -3768,6 +3783,10 @@ static inline int bnx2x_check_blocks_with_parity1(u32 sig, int par_num,
 			case AEU_INPUTS_ATTN_BITS_CSDM_PARITY_ERROR:
 				if (print)
 					_print_next_block(par_num++, "CSDM");
+				break;
+			case AEU_INPUTS_ATTN_BITS_CCM_PARITY_ERROR:
+				if (print)
+					_print_next_block(par_num++, "CCM");
 				break;
 			}
 
@@ -3873,32 +3892,67 @@ static inline int bnx2x_check_blocks_with_parity3(u32 sig, int par_num,
 	return par_num;
 }
 
-static inline bool bnx2x_parity_attn(struct bnx2x *bp, bool *global, bool print,
-				     u32 sig0, u32 sig1, u32 sig2, u32 sig3)
+static inline int bnx2x_check_blocks_with_parity4(u32 sig, int par_num,
+						  bool print)
 {
-	if ((sig0 & HW_PRTY_ASSERT_SET_0) || (sig1 & HW_PRTY_ASSERT_SET_1) ||
-	    (sig2 & HW_PRTY_ASSERT_SET_2) || (sig3 & HW_PRTY_ASSERT_SET_3)) {
+	int i = 0;
+	u32 cur_bit = 0;
+	for (i = 0; sig; i++) {
+		cur_bit = ((u32)0x1 << i);
+		if (sig & cur_bit) {
+			switch (cur_bit) {
+			case AEU_INPUTS_ATTN_BITS_PGLUE_PARITY_ERROR:
+				if (print)
+					_print_next_block(par_num++, "PGLUE_B");
+				break;
+			case AEU_INPUTS_ATTN_BITS_ATC_PARITY_ERROR:
+				if (print)
+					_print_next_block(par_num++, "ATC");
+				break;
+			}
+
+			/* Clear the bit */
+			sig &= ~cur_bit;
+		}
+	}
+
+	return par_num;
+}
+
+static inline bool bnx2x_parity_attn(struct bnx2x *bp, bool *global, bool print,
+				     u32 *sig)
+{
+	if ((sig[0] & HW_PRTY_ASSERT_SET_0) ||
+	    (sig[1] & HW_PRTY_ASSERT_SET_1) ||
+	    (sig[2] & HW_PRTY_ASSERT_SET_2) ||
+	    (sig[3] & HW_PRTY_ASSERT_SET_3) ||
+	    (sig[4] & HW_PRTY_ASSERT_SET_4)) {
 		int par_num = 0;
 		DP(NETIF_MSG_HW, "Was parity error: HW block parity attention: "
-			"[0]:0x%08x [1]:0x%08x "
-			"[2]:0x%08x [3]:0x%08x\n",
-			  sig0 & HW_PRTY_ASSERT_SET_0,
-			  sig1 & HW_PRTY_ASSERT_SET_1,
-			  sig2 & HW_PRTY_ASSERT_SET_2,
-			  sig3 & HW_PRTY_ASSERT_SET_3);
+			"[0]:0x%08x [1]:0x%08x [2]:0x%08x [3]:0x%08x "
+			"[4]:0x%08x\n",
+			  sig[0] & HW_PRTY_ASSERT_SET_0,
+			  sig[1] & HW_PRTY_ASSERT_SET_1,
+			  sig[2] & HW_PRTY_ASSERT_SET_2,
+			  sig[3] & HW_PRTY_ASSERT_SET_3,
+			  sig[4] & HW_PRTY_ASSERT_SET_4);
 		if (print)
 			netdev_err(bp->dev,
 				   "Parity errors detected in blocks: ");
 		par_num = bnx2x_check_blocks_with_parity0(
-			sig0 & HW_PRTY_ASSERT_SET_0, par_num, print);
+			sig[0] & HW_PRTY_ASSERT_SET_0, par_num, print);
 		par_num = bnx2x_check_blocks_with_parity1(
-			sig1 & HW_PRTY_ASSERT_SET_1, par_num, global, print);
+			sig[1] & HW_PRTY_ASSERT_SET_1, par_num, global, print);
 		par_num = bnx2x_check_blocks_with_parity2(
-			sig2 & HW_PRTY_ASSERT_SET_2, par_num, print);
+			sig[2] & HW_PRTY_ASSERT_SET_2, par_num, print);
 		par_num = bnx2x_check_blocks_with_parity3(
-			sig3 & HW_PRTY_ASSERT_SET_3, par_num, global, print);
+			sig[3] & HW_PRTY_ASSERT_SET_3, par_num, global, print);
+		par_num = bnx2x_check_blocks_with_parity4(
+			sig[4] & HW_PRTY_ASSERT_SET_4, par_num, print);
+
 		if (print)
 			pr_cont("\n");
+
 		return true;
 	} else
 		return false;
@@ -3913,7 +3967,7 @@ static inline bool bnx2x_parity_attn(struct bnx2x *bp, bool *global, bool print,
  */
 bool bnx2x_chk_parity_attn(struct bnx2x *bp, bool *global, bool print)
 {
-	struct attn_route attn;
+	struct attn_route attn = { {0} };
 	int port = BP_PORT(bp);
 
 	attn.sig[0] = REG_RD(bp,
@@ -3929,8 +3983,12 @@ bool bnx2x_chk_parity_attn(struct bnx2x *bp, bool *global, bool print)
 		MISC_REG_AEU_AFTER_INVERT_4_FUNC_0 +
 			     port*4);
 
-	return bnx2x_parity_attn(bp, global, print, attn.sig[0], attn.sig[1],
-				 attn.sig[2], attn.sig[3]);
+	if (!CHIP_IS_E1x(bp))
+		attn.sig[4] = REG_RD(bp,
+			MISC_REG_AEU_AFTER_INVERT_5_FUNC_0 +
+				     port*4);
+
+	return bnx2x_parity_attn(bp, global, print, attn.sig);
 }
 
 
@@ -7643,7 +7701,7 @@ static void bnx2x_pxp_prep(struct bnx2x *bp)
 static void bnx2x_process_kill_chip_reset(struct bnx2x *bp, bool global)
 {
 	u32 not_reset_mask1, reset_mask1, not_reset_mask2, reset_mask2;
-	u32 global_bits2;
+	u32 global_bits2, stay_reset2;
 
 	/*
 	 * Bits that have to be set in reset_mask2 if we want to reset 'global'
@@ -7653,6 +7711,7 @@ static void bnx2x_process_kill_chip_reset(struct bnx2x *bp, bool global)
 		MISC_REGISTERS_RESET_REG_2_RST_MCP_N_RESET_CMN_CPU |
 		MISC_REGISTERS_RESET_REG_2_RST_MCP_N_RESET_CMN_CORE;
 
+	/* Don't reset the following blocks */
 	not_reset_mask1 =
 		MISC_REGISTERS_RESET_REG_1_RST_HC |
 		MISC_REGISTERS_RESET_REG_1_RST_PXPV |
@@ -7666,19 +7725,35 @@ static void bnx2x_process_kill_chip_reset(struct bnx2x *bp, bool global)
 		MISC_REGISTERS_RESET_REG_2_RST_RBCN |
 		MISC_REGISTERS_RESET_REG_2_RST_GRC  |
 		MISC_REGISTERS_RESET_REG_2_RST_MCP_N_RESET_REG_HARD_CORE |
-		MISC_REGISTERS_RESET_REG_2_RST_MCP_N_HARD_CORE_RST_B;
+		MISC_REGISTERS_RESET_REG_2_RST_MCP_N_HARD_CORE_RST_B |
+		MISC_REGISTERS_RESET_REG_2_RST_ATC |
+		MISC_REGISTERS_RESET_REG_2_PGLC;
 
+	/*
+	 * Keep the following blocks in reset:
+	 *  - all xxMACs are handled by the bnx2x_link code.
+	 */
+	stay_reset2 =
+		MISC_REGISTERS_RESET_REG_2_RST_BMAC0 |
+		MISC_REGISTERS_RESET_REG_2_RST_BMAC1 |
+		MISC_REGISTERS_RESET_REG_2_RST_EMAC0 |
+		MISC_REGISTERS_RESET_REG_2_RST_EMAC1 |
+		MISC_REGISTERS_RESET_REG_2_UMAC0 |
+		MISC_REGISTERS_RESET_REG_2_UMAC1 |
+		MISC_REGISTERS_RESET_REG_2_XMAC |
+		MISC_REGISTERS_RESET_REG_2_XMAC_SOFT;
+
+	/* Full reset masks according to the chip */
 	reset_mask1 = 0xffffffff;
 
 	if (CHIP_IS_E1(bp))
 		reset_mask2 = 0xffff;
-	else
+	else if (CHIP_IS_E1H(bp))
 		reset_mask2 = 0x1ffff;
-
-	if (CHIP_IS_E3(bp)) {
-		reset_mask2 |= MISC_REGISTERS_RESET_REG_2_MSTAT0;
-		reset_mask2 |= MISC_REGISTERS_RESET_REG_2_MSTAT1;
-	}
+	else if (CHIP_IS_E2(bp))
+		reset_mask2 = 0xfffff;
+	else /* CHIP_IS_E3 */
+		reset_mask2 = 0x3ffffff;
 
 	/* Don't reset global blocks unless we need to */
 	if (!global)
@@ -7707,7 +7782,12 @@ static void bnx2x_process_kill_chip_reset(struct bnx2x *bp, bool global)
 	barrier();
 	mmiowb();
 
-	REG_WR(bp, GRCBASE_MISC + MISC_REGISTERS_RESET_REG_2_SET, reset_mask2);
+	REG_WR(bp, GRCBASE_MISC + MISC_REGISTERS_RESET_REG_2_SET,
+	       reset_mask2 & (~stay_reset2));
+
+	barrier();
+	mmiowb();
+
 	REG_WR(bp, GRCBASE_MISC + MISC_REGISTERS_RESET_REG_1_SET, reset_mask1);
 	mmiowb();
 }
@@ -8799,10 +8879,13 @@ static void __devinit bnx2x_get_port_hwinfo(struct bnx2x *bp)
 #ifdef BCM_CNIC
 static void __devinit bnx2x_get_cnic_info(struct bnx2x *bp)
 {
+	int port = BP_PORT(bp);
+	int func = BP_ABS_FUNC(bp);
+
 	u32 max_iscsi_conn = FW_ENCODE_32BIT_PATTERN ^ SHMEM_RD(bp,
-				drv_lic_key[BP_PORT(bp)].max_iscsi_conn);
+				drv_lic_key[port].max_iscsi_conn);
 	u32 max_fcoe_conn = FW_ENCODE_32BIT_PATTERN ^ SHMEM_RD(bp,
-				drv_lic_key[BP_PORT(bp)].max_fcoe_conn);
+				drv_lic_key[port].max_fcoe_conn);
 
 	/* Get the number of maximum allowed iSCSI and FCoE connections */
 	bp->cnic_eth_dev.max_iscsi_conn =
@@ -8813,11 +8896,59 @@ static void __devinit bnx2x_get_cnic_info(struct bnx2x *bp)
 		(max_fcoe_conn & BNX2X_MAX_FCOE_INIT_CONN_MASK) >>
 		BNX2X_MAX_FCOE_INIT_CONN_SHIFT;
 
+	/* Read the WWN: */
+	if (!IS_MF(bp)) {
+		/* Port info */
+		bp->cnic_eth_dev.fcoe_wwn_port_name_hi =
+			SHMEM_RD(bp,
+				dev_info.port_hw_config[port].
+				 fcoe_wwn_port_name_upper);
+		bp->cnic_eth_dev.fcoe_wwn_port_name_lo =
+			SHMEM_RD(bp,
+				dev_info.port_hw_config[port].
+				 fcoe_wwn_port_name_lower);
+
+		/* Node info */
+		bp->cnic_eth_dev.fcoe_wwn_node_name_hi =
+			SHMEM_RD(bp,
+				dev_info.port_hw_config[port].
+				 fcoe_wwn_node_name_upper);
+		bp->cnic_eth_dev.fcoe_wwn_node_name_lo =
+			SHMEM_RD(bp,
+				dev_info.port_hw_config[port].
+				 fcoe_wwn_node_name_lower);
+	} else if (!IS_MF_SD(bp)) {
+		u32 cfg = MF_CFG_RD(bp, func_ext_config[func].func_cfg);
+
+		/*
+		 * Read the WWN info only if the FCoE feature is enabled for
+		 * this function.
+		 */
+		if (cfg & MACP_FUNC_CFG_FLAGS_FCOE_OFFLOAD) {
+			/* Port info */
+			bp->cnic_eth_dev.fcoe_wwn_port_name_hi =
+				MF_CFG_RD(bp, func_ext_config[func].
+						fcoe_wwn_port_name_upper);
+			bp->cnic_eth_dev.fcoe_wwn_port_name_lo =
+				MF_CFG_RD(bp, func_ext_config[func].
+						fcoe_wwn_port_name_lower);
+
+			/* Node info */
+			bp->cnic_eth_dev.fcoe_wwn_node_name_hi =
+				MF_CFG_RD(bp, func_ext_config[func].
+						fcoe_wwn_node_name_upper);
+			bp->cnic_eth_dev.fcoe_wwn_node_name_lo =
+				MF_CFG_RD(bp, func_ext_config[func].
+						fcoe_wwn_node_name_lower);
+		}
+	}
+
 	BNX2X_DEV_INFO("max_iscsi_conn 0x%x max_fcoe_conn 0x%x\n",
 		       bp->cnic_eth_dev.max_iscsi_conn,
 		       bp->cnic_eth_dev.max_fcoe_conn);
 
-	/* If mamimum allowed number of connections is zero -
+	/*
+	 * If maximum allowed number of connections is zero -
 	 * disable the feature.
 	 */
 	if (!bp->cnic_eth_dev.max_iscsi_conn)
@@ -8895,6 +9026,12 @@ static void __devinit bnx2x_get_mac_hwinfo(struct bnx2x *bp)
 		val = SHMEM_RD(bp, dev_info.port_hw_config[port].
 				   iscsi_mac_lower);
 		bnx2x_set_mac_buf(iscsi_mac, val, val2);
+
+		val2 = SHMEM_RD(bp, dev_info.port_hw_config[port].
+				    fcoe_fip_mac_upper);
+		val = SHMEM_RD(bp, dev_info.port_hw_config[port].
+				   fcoe_fip_mac_lower);
+		bnx2x_set_mac_buf(fip_mac, val, val2);
 #endif
 	}
 
@@ -8902,13 +9039,9 @@ static void __devinit bnx2x_get_mac_hwinfo(struct bnx2x *bp)
 	memcpy(bp->dev->perm_addr, bp->dev->dev_addr, ETH_ALEN);
 
 #ifdef BCM_CNIC
-	/* Set the FCoE MAC in modes other then MF_SI */
-	if (!CHIP_IS_E1x(bp)) {
-		if (IS_MF_SD(bp))
-			memcpy(fip_mac, bp->dev->dev_addr, ETH_ALEN);
-		else if (!IS_MF(bp))
-			memcpy(fip_mac, iscsi_mac, ETH_ALEN);
-	}
+	/* Set the FCoE MAC in MF_SD mode */
+	if (!CHIP_IS_E1x(bp) && IS_MF_SD(bp))
+		memcpy(fip_mac, bp->dev->dev_addr, ETH_ALEN);
 
 	/* Disable iSCSI if MAC configuration is
 	 * invalid.
@@ -9616,6 +9749,10 @@ static const struct net_device_ops bnx2x_netdev_ops = {
 #endif
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= poll_bnx2x,
+#endif
+
+#if defined(NETDEV_FCOE_WWNN) && defined(BCM_CNIC)
+	.ndo_fcoe_get_wwn	= bnx2x_fcoe_get_wwn,
 #endif
 };
 

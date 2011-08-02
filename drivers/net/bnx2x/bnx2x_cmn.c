@@ -1999,6 +1999,9 @@ int bnx2x_nic_unload(struct bnx2x *bp, int unload_mode)
 	 */
 	bnx2x_squeeze_objects(bp);
 
+	/* There should be no more pending SP commands at this stage */
+	bp->sp_state = 0;
+
 	bp->port.pmf = 0;
 
 	/* Free SKBs, SGEs, TPA pool and driver internals */
@@ -3145,6 +3148,29 @@ int bnx2x_get_link_cfg_idx(struct bnx2x *bp)
 	}
 	return LINK_CONFIG_IDX(sel_phy_idx);
 }
+
+#if defined(NETDEV_FCOE_WWNN) && defined(BCM_CNIC)
+int bnx2x_fcoe_get_wwn(struct net_device *dev, u64 *wwn, int type)
+{
+	struct bnx2x *bp = netdev_priv(dev);
+	struct cnic_eth_dev *cp = &bp->cnic_eth_dev;
+
+	switch (type) {
+	case NETDEV_FCOE_WWNN:
+		*wwn = HILO_U64(cp->fcoe_wwn_node_name_hi,
+				cp->fcoe_wwn_node_name_lo);
+		break;
+	case NETDEV_FCOE_WWPN:
+		*wwn = HILO_U64(cp->fcoe_wwn_port_name_hi,
+				cp->fcoe_wwn_port_name_lo);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+#endif
 
 /* called with rtnl_lock */
 int bnx2x_change_mtu(struct net_device *dev, int new_mtu)
