@@ -28,6 +28,7 @@
 #include <linux/ethtool.h>
 #include <linux/if_vlan.h>
 #include <linux/prefetch.h>
+#include <linux/random.h>
 #if defined(CONFIG_VLAN_8021Q) || defined(CONFIG_VLAN_8021Q_MODULE)
 #define BCM_VLAN 1
 #endif
@@ -327,7 +328,7 @@ static int cnic_send_nlmsg(struct cnic_local *cp, u32 type,
 		msleep(100);
 		retry++;
 	}
-	return 0;
+	return rc;
 }
 
 static void cnic_cm_upcall(struct cnic_local *, struct cnic_sock *, u8);
@@ -1171,7 +1172,7 @@ static int cnic_alloc_bnx2x_resc(struct cnic_dev *dev)
 
 	cp->iro_arr = ethdev->iro_arr;
 
-	cp->max_cid_space = MAX_ISCSI_TBL_SZ + BNX2X_FCOE_NUM_CONNECTIONS;
+	cp->max_cid_space = MAX_ISCSI_TBL_SZ;
 	cp->iscsi_start_cid = start_cid;
 	cp->fcoe_start_cid = start_cid + MAX_ISCSI_TBL_SZ;
 
@@ -1180,14 +1181,6 @@ static int cnic_alloc_bnx2x_resc(struct cnic_dev *dev)
 		cp->fcoe_init_cid = ethdev->fcoe_init_cid;
 		if (!cp->fcoe_init_cid)
 			cp->fcoe_init_cid = 0x10;
-	}
-
-	if (start_cid < BNX2X_ISCSI_START_CID) {
-		u32 delta = BNX2X_ISCSI_START_CID - start_cid;
-
-		cp->iscsi_start_cid = BNX2X_ISCSI_START_CID;
-		cp->fcoe_start_cid += delta;
-		cp->max_cid_space += delta;
 	}
 
 	cp->iscsi_tbl = kzalloc(sizeof(struct cnic_iscsi) * MAX_ISCSI_TBL_SZ,
@@ -2455,6 +2448,30 @@ static int cnic_bnx2x_fcoe_destroy(struct cnic_dev *dev, struct kwqe *kwqe)
 	return ret;
 }
 
+static void cnic_bnx2x_delete_wait(struct cnic_dev *dev, u32 start_cid)
+{
+	struct cnic_local *cp = dev->cnic_priv;
+	u32 i;
+
+	for (i = start_cid; i < cp->max_cid_space; i++) {
+		struct cnic_context *ctx = &cp->ctx_tbl[i];
+		int j;
+
+		while (test_bit(CTX_FL_DELETE_WAIT, &ctx->ctx_flags))
+			msleep(10);
+
+		for (j = 0; j < 5; j++) {
+			if (!test_bit(CTX_FL_OFFLD_START, &ctx->ctx_flags))
+				break;
+			msleep(20);
+		}
+
+		if (test_bit(CTX_FL_OFFLD_START, &ctx->ctx_flags))
+			netdev_warn(dev->netdev, "CID %x not deleted\n",
+				   ctx->cid);
+	}
+}
+
 static int cnic_bnx2x_fcoe_fw_destroy(struct cnic_dev *dev, struct kwqe *kwqe)
 {
 	struct fcoe_kwqe_destroy *req;
@@ -2462,6 +2479,8 @@ static int cnic_bnx2x_fcoe_fw_destroy(struct cnic_dev *dev, struct kwqe *kwqe)
 	struct cnic_local *cp = dev->cnic_priv;
 	int ret;
 	u32 cid;
+
+	cnic_bnx2x_delete_wait(dev, MAX_ISCSI_TBL_SZ);
 
 	req = (struct fcoe_kwqe_destroy *) kwqe;
 	cid = BNX2X_HW_CID(cp, cp->fcoe_init_cid);
@@ -3833,7 +3852,7 @@ static int cnic_cm_alloc_mem(struct cnic_dev *dev)
 	if (!cp->csk_tbl)
 		return -ENOMEM;
 
-	get_random_bytes(&port_id, sizeof(port_id));
+	port_id = random32();
 	port_id %= CNIC_LOCAL_PORT_RANGE;
 	if (cnic_init_id_tbl(&cp->csk_port_tbl, CNIC_LOCAL_PORT_RANGE,
 			     CNIC_LOCAL_PORT_MIN, port_id)) {
@@ -3893,7 +3912,7 @@ static int cnic_cm_init_bnx2_hw(struct cnic_dev *dev)
 {
 	u32 seed;
 
-	get_random_bytes(&seed, 4);
+	seed = random32();
 	cnic_ctx_wr(dev, 45, 0, seed);
 	return 0;
 }
@@ -3940,7 +3959,6 @@ static void cnic_close_bnx2x_conn(struct cnic_sock *csk, u32 opcode)
 static void cnic_cm_stop_bnx2x_hw(struct cnic_dev *dev)
 {
 	struct cnic_local *cp = dev->cnic_priv;
-	int i;
 
 	if (!cp->ctx_tbl)
 		return;
@@ -3948,23 +3966,7 @@ static void cnic_cm_stop_bnx2x_hw(struct cnic_dev *dev)
 	if (!netif_running(dev->netdev))
 		return;
 
-	for (i = 0; i < cp->max_cid_space; i++) {
-		struct cnic_context *ctx = &cp->ctx_tbl[i];
-		int j;
-
-		while (test_bit(CTX_FL_DELETE_WAIT, &ctx->ctx_flags))
-			msleep(10);
-
-		for (j = 0; j < 5; j++) {
-			if (!test_bit(CTX_FL_OFFLD_START, &ctx->ctx_flags))
-				break;
-			msleep(20);
-		}
-
-		if (test_bit(CTX_FL_OFFLD_START, &ctx->ctx_flags))
-			netdev_warn(dev->netdev, "CID %x not deleted\n",
-				   ctx->cid);
-	}
+	cnic_bnx2x_delete_wait(dev, 0);
 
 	cancel_delayed_work(&cp->delete_task);
 	flush_workqueue(cnic_wq);
@@ -4836,7 +4838,7 @@ static int cnic_start_bnx2x_hw(struct cnic_dev *dev)
 			cp->port_mode = CHIP_4_PORT_MODE;
 			cp->pfid = func >> 1;
 		} else {
-			cp->port_mode = CHIP_4_PORT_MODE;
+			cp->port_mode = CHIP_2_PORT_MODE;
 			cp->pfid = func & 0x6;
 		}
 	} else {
@@ -4925,7 +4927,7 @@ static void cnic_init_rings(struct cnic_dev *dev)
 		struct client_init_ramrod_data *data;
 		union l5cm_specific_data l5_data;
 		struct ustorm_eth_rx_producers rx_prods = {0};
-		u32 off, i;
+		u32 off, i, *cid_ptr;
 
 		rx_prods.bd_prod = 0;
 		rx_prods.cqe_prod = BNX2X_MAX_RCQ_DESC_CNT;
@@ -4944,6 +4946,7 @@ static void cnic_init_rings(struct cnic_dev *dev)
 		set_bit(CNIC_LCL_FL_L2_WAIT, &cp->cnic_local_flags);
 
 		data = udev->l2_buf;
+		cid_ptr = udev->l2_buf + 12;
 
 		memset(data, 0, sizeof(*data));
 
@@ -4968,12 +4971,15 @@ static void cnic_init_rings(struct cnic_dev *dev)
 				"iSCSI CLIENT_SETUP did not complete\n");
 		cnic_spq_completion(dev, DRV_CTL_RET_L2_SPQ_CREDIT_CMD, 1);
 		cnic_ring_ctl(dev, cid, cli, 1);
+		*cid_ptr = cid;
 	}
 }
 
 static void cnic_shutdown_rings(struct cnic_dev *dev)
 {
 	struct cnic_local *cp = dev->cnic_priv;
+	struct cnic_uio_dev *udev = cp->udev;
+	void *rx_ring;
 
 	if (!test_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags))
 		return;
@@ -4981,7 +4987,6 @@ static void cnic_shutdown_rings(struct cnic_dev *dev)
 	if (test_bit(CNIC_F_BNX2_CLASS, &dev->flags)) {
 		cnic_shutdown_bnx2_rx_ring(dev);
 	} else if (test_bit(CNIC_F_BNX2X_CLASS, &dev->flags)) {
-		struct cnic_local *cp = dev->cnic_priv;
 		u32 cli = cp->ethdev->iscsi_l2_client_id;
 		u32 cid = cp->ethdev->iscsi_l2_cid;
 		union l5cm_specific_data l5_data;
@@ -5011,6 +5016,8 @@ static void cnic_shutdown_rings(struct cnic_dev *dev)
 		msleep(10);
 	}
 	clear_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags);
+	rx_ring = udev->l2_ring + BCM_PAGE_SIZE;
+	memset(rx_ring, 0, BCM_PAGE_SIZE);
 }
 
 static int cnic_register_netdev(struct cnic_dev *dev)
