@@ -308,8 +308,9 @@ static int blkvsc_do_operation(struct block_device_context *blkdev,
 	struct scsi_sense_hdr sense_hdr;
 	struct vmscsi_request *vm_srb;
 	unsigned long flags;
+	u8 ch, *guid;
 
-	int ret = 0;
+	int i, ret = 0;
 
 	blkvsc_req = kmem_cache_zalloc(blkdev->request_pool, GFP_KERNEL);
 	if (!blkvsc_req)
@@ -386,11 +387,18 @@ static int blkvsc_do_operation(struct block_device_context *blkdev,
 		 else
 			blkdev->device_type = UNKNOWN_DEV_TYPE;
 
-		if (buf[7] > ATA_ID_PROD_LEN)
-			buf[7] = ATA_ID_PROD_LEN; buf[7] = 4;
-
-		memcpy(&blkdev->id[ATA_ID_PROD], &buf[8], buf[7]);
-		printk(KERN_DEBUG "%s: serial %x '%s'\n", __func__, buf[7], (char*)&blkdev->id[ATA_ID_PROD]);
+		/*
+		 * At byte offset 8 is where the identification string starts and this is:
+		 * "MSFT   ": an 8 byte string that starts with MSFT.
+		 * This is followed by 16 byte guid. Totally the length is 24 bytes.
+		 */
+		memcpy(&blkdev->id[ATA_ID_PROD], &buf[8], 8);
+		guid =(u8 *)&blkdev->id[ATA_ID_PROD] + 8;
+		for (i = 0; i < 16; i++) {
+			ch = buf[8 + 8 + i];
+			*guid++ = hex_asc_hi(ch);
+			*guid++ = hex_asc_lo(ch);
+		}
 		break;
 
 	case DO_CAPACITY:
