@@ -58,6 +58,7 @@ struct alua_dh_data {
 	int			rel_port;
 	int			tpgs;
 	int			state;
+	int			timeout;
 	unsigned char		inq[ALUA_INQUIRY_SIZE];
 	unsigned char		*buff;
 	int			bufflen;
@@ -179,6 +180,12 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 	/* Prepare the command. */
 	rq->cmd[0] = MAINTENANCE_IN;
 	rq->cmd[1] = MI_REPORT_TARGET_PGS;
+	if (h->timeout < 0) {
+		/* Use extended header format */
+		rq->cmd[1] |= 0x20;
+	} else if (h->timeout != ALUA_FAILOVER_TIMEOUT) {
+		rq->timeout = h->timeout;
+	}
 	rq->cmd[6] = (h->bufflen >> 24) & 0xff;
 	rq->cmd[7] = (h->bufflen >> 16) & 0xff;
 	rq->cmd[8] = (h->bufflen >>  8) & 0xff;
@@ -290,6 +297,8 @@ static unsigned submit_stpg(struct alua_dh_data *h)
 	rq->cmd[8] = (stpg_len >>  8) & 0xff;
 	rq->cmd[9] = stpg_len & 0xff;
 	rq->cmd_len = COMMAND_SIZE(MAINTENANCE_OUT);
+	if (h->timeout > 0)
+		rq->timeout = h->timeout;
 
 	rq->sense = h->sense;
 	memset(rq->sense, 0, SCSI_SENSE_BUFFERSIZE);
@@ -482,12 +491,15 @@ static int alua_check_sense(struct scsi_device *sdev,
 static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 {
 	struct scsi_sense_hdr sense_hdr;
-	int len, k, off, valid_states = 0;
+	int len, k, off, valid_states = 0, timeout = ALUA_FAILOVER_TIMEOUT;
 	unsigned char *ucp;
 	unsigned err;
-	unsigned long expiry, interval = 10;
+	unsigned long expiry, interval = 1;
 
-	expiry = round_jiffies_up(jiffies + ALUA_FAILOVER_TIMEOUT);
+	if (h->timeout > 0)
+		timeout = h->timeout;
+
+	expiry = round_jiffies_up(jiffies + timeout);
  retry:
 	err = submit_rtpg(sdev, h);
 
@@ -500,6 +512,15 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 		err = alua_check_sense(sdev, &sense_hdr);
 		if (err == ADD_TO_MLQUEUE && time_before(jiffies, expiry))
 			goto retry;
+		if (sense_hdr.sense_key == ILLEGAL_REQUEST &&
+		    sense_hdr.asc == 0x24 && sense_hdr.ascq == 0 &&
+		    h->timeout < 0) {
+			/*
+			 * Extended header not supported, retry.
+			 */
+			h->timeout = ALUA_FAILOVER_TIMEOUT;
+			goto retry;
+		}
 		sdev_printk(KERN_INFO, sdev,
 			    "%s: rtpg sense code %02x/%02x/%02x\n",
 			    ALUA_DH_NAME, sense_hdr.sense_key,
@@ -522,8 +543,14 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 		}
 		goto retry;
 	}
-
-	for (k = 4, ucp = h->buff + 4; k < len; k += off, ucp += off) {
+	ucp = h->buff + 4;
+	if (ucp[0] & 0x10) {
+		/* Decode extended header */
+		h->timeout = ucp[1];
+		ucp += 4;
+		expiry = round_jiffies_up(jiffies + h->timeout);
+	}
+	for (k = 4; k < len; k += off, ucp += off) {
 		if (h->group_id == (ucp[2] << 8) + ucp[3]) {
 			h->state = ucp[0] & 0x0f;
 			valid_states = ucp[1];
@@ -546,7 +573,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 	case TPGS_STATE_TRANSITIONING:
 		if (time_before(jiffies, expiry)) {
 			/* State transition, retry */
-			interval *= 10;
+			interval *= 2;
 			msleep(interval);
 			goto retry;
 		}
@@ -701,6 +728,7 @@ static int alua_bus_attach(struct scsi_device *sdev)
 	h->buff = h->inq;
 	h->bufflen = ALUA_INQUIRY_SIZE;
 	h->sdev = sdev;
+	h->timeout = -1;
 
 	err = alua_initialize(sdev, h);
 	if ((err != SCSI_DH_OK) && (err != SCSI_DH_DEV_OFFLINED))
