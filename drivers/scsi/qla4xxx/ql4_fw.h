@@ -307,6 +307,7 @@ struct qla_flt_header {
 #define FLT_REG_FW_82		0x74
 #define FLT_REG_GOLD_FW_82	0x75
 #define FLT_REG_BOOT_CODE_82	0x78
+#define FLT_REG_FW_82_1		0x97
 
 struct qla_flt_region {
 	uint32_t code;
@@ -350,7 +351,6 @@ struct qla_flt_region {
 #define MBOX_CMD_READ_FLASH			0x0026
 #define MBOX_CMD_FREE_DATABASE_ENTRY		0x0031
 #define MBOX_CMD_CONN_CLOSE			0x0056
-#define MBOX_CMD_CONN_CLOSE_SESS_LOGOUT		0x0056
 #define LOGOUT_OPTION_CLOSE_SESSION		0x02
 #define LOGOUT_OPTION_RESET			0x04
 #define LOGOUT_OPTION_FREE_DDB			0x08
