@@ -26,7 +26,6 @@
 #include <linux/major.h>
 #include <linux/delay.h>
 #include <linux/hdreg.h>
-#include <linux/ata.h>
 #include <linux/slab.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -98,7 +97,6 @@ struct block_device_context {
 	enum blkvsc_device_type	device_type;
 	struct list_head pending_list;
 
-	u16 id[ATA_ID_WORDS];
 	int num_outstanding_reqs;
 	int shutting_down;
 	unsigned int sector_size;
@@ -256,20 +254,7 @@ static void blkvsc_init_rw(struct blkvsc_request *blkvsc_req)
 static int blkvsc_ioctl(struct block_device *bd, fmode_t mode,
 			unsigned cmd, unsigned long arg)
 {
-	struct block_device_context *blkdev = bd->bd_disk->private_data;
-	int ret = 0;
-
-	switch (cmd) {
-	case HDIO_GET_IDENTITY:
-		if (copy_to_user((void __user *)arg, blkdev->id, sizeof(blkdev->id)))
-			ret = -EFAULT;
-		break;
-	default:
-		ret = -EINVAL;
-		break;
-	}
-
-	return ret;
+	return cmd == HDIO_GET_IDENTITY ? -ENOTTY : -EINVAL;
 }
 
 static void blkvsc_cmd_completion(struct hv_storvsc_request *request)
@@ -308,9 +293,8 @@ static int blkvsc_do_operation(struct block_device_context *blkdev,
 	struct scsi_sense_hdr sense_hdr;
 	struct vmscsi_request *vm_srb;
 	unsigned long flags;
-	u8 ch, *guid;
 
-	int i, ret = 0;
+	int ret = 0;
 
 	blkvsc_req = kmem_cache_zalloc(blkdev->request_pool, GFP_KERNEL);
 	if (!blkvsc_req)
@@ -387,18 +371,6 @@ static int blkvsc_do_operation(struct block_device_context *blkdev,
 		 else
 			blkdev->device_type = UNKNOWN_DEV_TYPE;
 
-		/*
-		 * At byte offset 8 is where the identification string starts and this is:
-		 * "MSFT   ": an 8 byte string that starts with MSFT.
-		 * This is followed by 16 byte guid. Totally the length is 24 bytes.
-		 */
-		memcpy(&blkdev->id[ATA_ID_PROD], &buf[8], 8);
-		guid =(u8 *)&blkdev->id[ATA_ID_PROD] + 8;
-		for (i = 0; i < 16; i++) {
-			ch = buf[8 + 8 + i];
-			*guid++ = hex_asc_hi(ch);
-			*guid++ = hex_asc_lo(ch);
-		}
 		break;
 
 	case DO_CAPACITY:
