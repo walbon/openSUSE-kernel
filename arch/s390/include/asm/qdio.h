@@ -84,6 +84,9 @@ struct qdr {
 
 #define QIB_AC_OUTBOUND_PCI_SUPPORTED	0x40
 #define QIB_RFLAGS_ENABLE_QEBSM		0x80
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+#define QIB_RFLAGS_ENABLE_DATA_DIV	0x02
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 
 /**
  * struct qib - queue information block (QIB)
@@ -334,6 +337,11 @@ struct qdio_outbuf_state {
 
 #define CHSC_AC3_FORMAT2_CQ_AVAILABLE	0x8000
 
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+#define CHSC_AC2_DATA_DIV_AVAILABLE	0x0010
+#define CHSC_AC2_DATA_DIV_ENABLED	0x0002
+
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 struct qdio_ssqd_desc {
 	u8 flags;
 	u8:8;
@@ -386,6 +394,9 @@ typedef void qdio_handler_t(struct ccw_device *, unsigned int, int,
  * @adapter_name: name for the adapter
  * @qib_param_field_format: format for qib_parm_field
  * @qib_param_field: pointer to 128 bytes or NULL, if no param field
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+ * @qib_rflags: rflags to set
+#endif
  * @input_slib_elements: pointer to no_input_qs * 128 words of data or NULL
  * @output_slib_elements: pointer to no_output_qs * 128 words of data or NULL
  * @no_input_qs: number of input queues
@@ -405,6 +416,9 @@ struct qdio_initialize {
 	unsigned char adapter_name[8];
 	unsigned int qib_param_field_format;
 	unsigned char *qib_param_field;
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+	unsigned char qib_rflags;
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 	unsigned long *input_slib_elements;
 	unsigned long *output_slib_elements;
 	unsigned int no_input_qs;

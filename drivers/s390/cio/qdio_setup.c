@@ -411,6 +411,10 @@ static void setup_qib(struct qdio_irq *irq_ptr,
 	if (qebsm_possible())
 		irq_ptr->qib.rflags |= QIB_RFLAGS_ENABLE_QEBSM;
 
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+	irq_ptr->qib.rflags |= init_data->qib_rflags;
+
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 	irq_ptr->qib.qfmt = init_data->q_format;
 	if (init_data->no_input_qs)
 		irq_ptr->qib.isliba =

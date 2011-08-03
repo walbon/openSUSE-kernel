@@ -25,6 +25,9 @@
 #include <scsi/fc/fc_fs.h>
 #include <scsi/fc/fc_gs.h>
 #include <scsi/scsi.h>
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+#include <scsi/scsi_eh.h>
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 #include <scsi/scsi_tcq.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_device.h>
@@ -63,6 +66,10 @@
         /* max. number of (data buffer) SBALEs in largest SBAL chain
            multiplied with number of sectors per 4k block */
 
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+#define ZFCP_QDIO_SBALE_LEN	PAGE_SIZE
+
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 /********************* FSF SPECIFIC DEFINES *********************************/
 
 /* ATTENTION: value must not be used by hardware */
@@ -222,6 +229,9 @@ struct zfcp_ls_adisc {
 #define ZFCP_STATUS_ADAPTER_HOST_CON_INIT	0x00000010
 #define ZFCP_STATUS_ADAPTER_ERP_PENDING		0x00000100
 #define ZFCP_STATUS_ADAPTER_LINK_UNPLUGGED	0x00000200
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+#define ZFCP_STATUS_ADAPTER_DATA_DIV_ENABLED	0x00000400
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 
 /* FC-PH/FC-GS well-known address identifiers for generic services */
 #define ZFCP_DID_WKA				0xFFFFF0
@@ -501,6 +511,9 @@ struct zfcp_adapter {
 	struct work_struct	scan_work;
 	struct service_level	service_level;
 	struct workqueue_struct	*work_queue;
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+	struct device_dma_parameters dma_parms;
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 };
 
 struct zfcp_port {

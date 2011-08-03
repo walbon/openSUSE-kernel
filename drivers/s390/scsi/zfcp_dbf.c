@@ -153,6 +153,10 @@ void _zfcp_dbf_hba_fsf_response(const char *tag2, int level,
 		if (scsi_cmnd) {
 			response->u.fcp.cmnd = (unsigned long)scsi_cmnd;
 			response->u.fcp.serial = scsi_cmnd->serial_number;
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+			response->u.fcp.data_dir =
+				qtcb->bottom.io.data_direction;
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 		}
 		break;
 
@@ -325,6 +329,9 @@ static void zfcp_dbf_hba_view_response(char **p,
 	case FSF_QTCB_FCP_CMND:
 		if (r->fsf_req_status & ZFCP_STATUS_FSFREQ_TASK_MANAGEMENT)
 			break;
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+		zfcp_dbf_out(p, "data_direction", "0x%04x", r->u.fcp.data_dir);
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 		zfcp_dbf_out(p, "scsi_cmnd", "0x%0Lx", r->u.fcp.cmnd);
 		zfcp_dbf_out(p, "scsi_serial", "0x%016Lx", r->u.fcp.serial);
 		p += sprintf(*p, "\n");

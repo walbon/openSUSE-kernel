@@ -29,6 +29,15 @@ char *zfcp_get_fcp_sns_info_ptr(struct fcp_rsp_iu *fcp_rsp_iu)
 	return fcp_sns_info_ptr;
 }
 
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+static bool enable_dif;
+
+#if defined(CONFIG_ZFCP_DIF) || defined(CONFIG_ZFCP_DIF_MODULE)
+module_param_named(dif, enable_dif, bool, 0600);
+MODULE_PARM_DESC(dif, "Enable DIF/DIX data integrity support");
+#endif
+
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 static int zfcp_scsi_change_queue_depth(struct scsi_device *sdev, int depth,
 					int reason)
 {
@@ -674,6 +683,54 @@ static int zfcp_execute_fc_job(struct fc_bsg_job *job)
 	}
 }
 
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+/**
+ * zfcp_scsi_set_prot - Configure DIF/DIX support in scsi_host
+ * @adapter: The adapter where to configure DIF/DIX for the SCSI host
+ */
+void zfcp_scsi_set_prot(struct zfcp_adapter *adapter)
+{
+	unsigned int mask = 0;
+	unsigned int data_div;
+	struct Scsi_Host *shost = adapter->scsi_host;
+
+	data_div = atomic_read(&adapter->status) &
+		   ZFCP_STATUS_ADAPTER_DATA_DIV_ENABLED;
+
+	if (enable_dif &&
+	    adapter->adapter_features & FSF_FEATURE_DIF_PROT_TYPE1)
+		mask |= SHOST_DIF_TYPE1_PROTECTION;
+
+	if (enable_dif && data_div &&
+	    adapter->adapter_features & FSF_FEATURE_DIX_PROT_TCPIP) {
+		mask |= SHOST_DIX_TYPE1_PROTECTION;
+		scsi_host_set_guard(shost, SHOST_DIX_GUARD_IP);
+		shost->sg_prot_tablesize = ZFCP_MAX_SBALES_PER_REQ / 2;
+		shost->sg_tablesize = ZFCP_MAX_SBALES_PER_REQ / 2;
+		shost->max_sectors = ZFCP_MAX_SBALES_PER_REQ * 8 / 2;
+	}
+
+	scsi_host_set_prot(shost, mask);
+}
+
+/**
+ * zfcp_scsi_dif_sense_error - Report DIF/DIX error as driver sense error
+ * @scmd: The SCSI command to report the error for
+ * @ascq: The ASCQ to put in the sense buffer
+ *
+ * See the error handling in sd_done for the sense codes used here.
+ * Set DID_SOFT_ERROR to retry the request, if possible.
+ */
+void zfcp_scsi_dif_sense_error(struct scsi_cmnd *scmd, int ascq)
+{
+	scsi_build_sense_buffer(1, scmd->sense_buffer,
+				ILLEGAL_REQUEST, 0x10, ascq);
+	set_driver_byte(scmd, DRIVER_SENSE);
+	scmd->result |= SAM_STAT_CHECK_CONDITION;
+	set_host_byte(scmd, DID_SOFT_ERROR);
+}
+
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 struct fc_function_template zfcp_transport_functions = {
 	.show_starget_port_id = 1,
 	.show_starget_port_name = 1,
@@ -725,6 +782,9 @@ struct zfcp_data zfcp_data = {
 		.use_clustering		 = 1,
 		.sdev_attrs		 = zfcp_sysfs_sdev_attrs,
 		.max_sectors		 = (ZFCP_MAX_SBALES_PER_REQ * 8),
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+		.dma_boundary		 = ZFCP_QDIO_SBALE_LEN - 1,
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 		.shost_attrs		 = zfcp_sysfs_shost_attrs,
 	},
 };
