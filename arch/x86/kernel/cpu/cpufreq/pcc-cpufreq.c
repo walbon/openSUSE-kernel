@@ -38,7 +38,7 @@
 
 #include <acpi/processor.h>
 
-#define PCC_VERSION 	"1.00.00"
+#define PCC_VERSION	"1.10.00"
 #define POLL_LOOPS 	300
 
 #define CMD_COMPLETE 	0x1
@@ -101,7 +101,7 @@ static struct acpi_generic_address doorbell;
 static u64 doorbell_preserve;
 static u64 doorbell_write;
 
-static u8 OSC_UUID[16] = {0x63, 0x9B, 0x2C, 0x9F, 0x70, 0x91, 0x49, 0x1f,
+static u8 OSC_UUID[16] = {0x9F, 0x2C, 0x9B, 0x63, 0x91, 0x70, 0x1f, 0x49,
 			  0xBB, 0x4F, 0xA5, 0x98, 0x2F, 0xA1, 0xB5, 0x46};
 
 struct pcc_cpu {
@@ -194,7 +194,7 @@ static unsigned int pcc_get_freq(unsigned int cpu)
 cmd_incomplete:
 	iowrite16(0, &pcch_hdr->status);
 	spin_unlock(&pcc_lock);
-	return -EINVAL;
+	return 0;
 }
 
 static int pcc_cpufreq_target(struct cpufreq_policy *policy,
@@ -314,8 +314,6 @@ static int __init pcc_cpufreq_do_osc(acpi_handle *handle)
 
 	input.count = 4;
 	input.pointer = in_params;
-	input.count = 4;
-	input.pointer = in_params;
 	in_params[0].type               = ACPI_TYPE_BUFFER;
 	in_params[0].buffer.length      = 16;
 	in_params[0].buffer.pointer     = OSC_UUID;
@@ -396,10 +394,14 @@ static int __init pcc_cpufreq_probe(void)
 	struct pcc_memory_resource *mem_resource;
 	struct pcc_register_resource *reg_resource;
 	union acpi_object *out_obj, *member;
-	acpi_handle handle, osc_handle;
+	acpi_handle handle, osc_handle, pcch_handle;
 	int ret = 0;
 
 	status = acpi_get_handle(NULL, "\\_SB", &handle);
+	if (ACPI_FAILURE(status))
+		return -ENODEV;
+
+	status = acpi_get_handle(handle, "PCCH", &pcch_handle);
 	if (ACPI_FAILURE(status))
 		return -ENODEV;
 
@@ -542,13 +544,13 @@ static int pcc_cpufreq_cpu_init(struct cpufreq_policy *policy)
 
 	if (!pcch_virt_addr) {
 		result = -1;
-		goto pcch_null;
+		goto out;
 	}
 
 	result = pcc_get_offset(cpu);
 	if (result) {
 		dprintk("init: PCCP evaluation failed\n");
-		goto free;
+		goto out;
 	}
 
 	policy->max = policy->cpuinfo.max_freq =
@@ -557,14 +559,15 @@ static int pcc_cpufreq_cpu_init(struct cpufreq_policy *policy)
 		ioread32(&pcch_hdr->minimum_frequency) * 1000;
 	policy->cur = pcc_get_freq(cpu);
 
+	if (!policy->cur) {
+		dprintk("init: Unable to get current CPU frequency\n");
+		result = -EINVAL;
+		goto out;
+	}
+
 	dprintk("init: policy->max is %d, policy->min is %d\n",
 		policy->max, policy->min);
-
-	return 0;
-free:
-	pcc_clear_mapping();
-	free_percpu(pcc_cpu_info);
-pcch_null:
+out:
 	return result;
 }
 
