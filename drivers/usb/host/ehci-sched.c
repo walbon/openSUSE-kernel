@@ -2422,7 +2422,7 @@ restart:
 				 */
 				*q_p = q.itd->itd_next;
 				if (!ehci->use_dummy_qh ||
-	    			    q.itd->hw_next != EHCI_LIST_END(ehci))
+				    q.itd->hw_next != EHCI_LIST_END(ehci))
 					*hw_p = q.itd->hw_next;
 				else
 					*hw_p = ehci->dummy->qh_dma;
@@ -2459,7 +2459,7 @@ restart:
 				 */
 				*q_p = q.sitd->sitd_next;
 				if (!ehci->use_dummy_qh ||
-	    			    q.sitd->hw_next != EHCI_LIST_END(ehci))
+				    q.sitd->hw_next != EHCI_LIST_END(ehci))
 					*hw_p = q.sitd->hw_next;
 				else
 					*hw_p = ehci->dummy->qh_dma;

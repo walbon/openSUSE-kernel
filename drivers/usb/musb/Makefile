@@ -72,6 +72,4 @@ endif
 
 # Debugging
 
-ifeq ($(CONFIG_USB_MUSB_DEBUG),y)
-	EXTRA_CFLAGS += -DDEBUG
-endif
+ccflags-$(CONFIG_USB_MUSB_DEBUG) := -DDEBUG

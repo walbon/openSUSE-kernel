@@ -142,7 +142,7 @@ static void ehci_mem_cleanup (struct ehci_hcd *ehci)
 	ehci->async = NULL;
 
 	if (ehci->dummy)
-		qh_put (ehci->dummy);
+		qh_put(ehci->dummy);
 	ehci->dummy = NULL;
 
 	/* DMA consistent memory and pools */
@@ -235,9 +235,8 @@ static int ehci_mem_init (struct ehci_hcd *ehci, gfp_t flags)
 	if (ehci->use_dummy_qh) {
 		struct ehci_qh_hw	*hw;
 		ehci->dummy = ehci_qh_alloc(ehci, flags);
-		if (!ehci->dummy) {
+		if (!ehci->dummy)
 			goto fail;
-		}
 
 		hw = ehci->dummy->hw;
 		hw->hw_next = EHCI_LIST_END(ehci);
