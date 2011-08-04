@@ -181,7 +181,6 @@ void qla4xxx_get_conn_event_log(struct scsi_qla_host *);
 int qla4xxx_cmd_wait(struct scsi_qla_host *, uint32_t timeout);
 
 extern int ql4xextended_error_logging;
-extern int ql4xdiscoverywait;
 extern int ql4xdontresethba;
 extern int ql4xenablemsix;
 extern int ql4xkeepalive;

@@ -163,6 +163,10 @@ extern void zfcp_scsi_schedule_rport_block(struct zfcp_port *);
 extern void zfcp_scsi_schedule_rports_block(struct zfcp_adapter *);
 extern void zfcp_scsi_scan(struct zfcp_unit *);
 extern void zfcp_scsi_scan_work(struct work_struct *);
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+extern void zfcp_scsi_set_prot(struct zfcp_adapter *);
+extern void zfcp_scsi_dif_sense_error(struct scsi_cmnd *, int);
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 
 /* zfcp_sysfs.c */
 extern struct attribute_group zfcp_sysfs_unit_attrs;

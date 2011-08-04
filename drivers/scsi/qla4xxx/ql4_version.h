@@ -5,7 +5,7 @@
  * See LICENSE.qla4xxx for copyright and licensing details.
  */
 
-#define QLA4XXX_DRIVER_VERSION	"5.02.10.00.11.2-k0"
+#define QLA4XXX_DRIVER_VERSION	"5.02.10.01.11.2-k0"
 
 /*
  * Driver Versioning Scheme:

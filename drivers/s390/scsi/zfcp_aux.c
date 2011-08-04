@@ -578,6 +578,12 @@ int zfcp_adapter_enqueue(struct ccw_device *ccw_device)
 
 	atomic_clear_mask(ZFCP_STATUS_COMMON_REMOVE, &adapter->status);
 
+#ifdef CONFIG_ZFCP_FOO_INTEGRITY
+	/* report size limit per scatter-gather segment */
+	adapter->dma_parms.max_segment_size = ZFCP_QDIO_SBALE_LEN;
+	adapter->ccw_device->dev.dma_parms = &adapter->dma_parms;
+
+#endif /* CONFIG_ZFCP_FOO_INTEGRITY */
 	if (!zfcp_adapter_scsi_register(adapter))
 		return 0;
 

@@ -79,16 +79,13 @@ static void put_indicator(u32 *addr)
 
 void tiqdio_add_input_queues(struct qdio_irq *irq_ptr)
 {
-	struct qdio_q *q;
-	int i;
-
 	/* No TDD facility? If we must use SIGA-s we can also omit SVS. */
 	if (!css_qdio_omit_svs && irq_ptr->siga_flag.sync)
 		css_qdio_omit_svs = 1;
 
 	mutex_lock(&tiq_list_lock);
-	for_each_input_queue(irq_ptr, q, i)
-		list_add_rcu(&q->entry, &tiq_list);
+	BUG_ON(irq_ptr->nr_input_qs < 1);
+	list_add_rcu(&irq_ptr->input_qs[0]->entry, &tiq_list);
 	mutex_unlock(&tiq_list_lock);
 	xchg(irq_ptr->dsci, 1);
 }
@@ -96,24 +93,24 @@ void tiqdio_add_input_queues(struct qdio_irq *irq_ptr)
 void tiqdio_remove_input_queues(struct qdio_irq *irq_ptr)
 {
 	struct qdio_q *q;
-	int i;
 
-	for (i = 0; i < irq_ptr->nr_input_qs; i++) {
-		q = irq_ptr->input_qs[i];
-		/* if establish triggered an error */
-		if (!q || !q->entry.prev || !q->entry.next)
-			continue;
+	BUG_ON(irq_ptr->nr_input_qs < 1);
+	q = irq_ptr->input_qs[0];
+	/* if establish triggered an error */
+	if (!q || !q->entry.prev || !q->entry.next)
+		return;
 
-		mutex_lock(&tiq_list_lock);
-		list_del_rcu(&q->entry);
-		mutex_unlock(&tiq_list_lock);
-		synchronize_rcu();
-	}
+	mutex_lock(&tiq_list_lock);
+	list_del_rcu(&q->entry);
+	mutex_unlock(&tiq_list_lock);
+	synchronize_rcu();
 }
 
-static inline u32 shared_ind_set(void)
+static inline u32 clear_shared_ind(void)
 {
-	return q_indicators[TIQDIO_SHARED_IND].ind;
+	if (!atomic_read(&q_indicators[TIQDIO_SHARED_IND].count))
+		return 0;
+	return xchg(&q_indicators[TIQDIO_SHARED_IND].ind, 0);
 }
 
 /**
@@ -121,25 +118,16 @@ static inline u32 shared_ind_set(void)
  * @alsi: pointer to adapter local summary indicator
  * @data: NULL
  */
-static void tiqdio_thinint_handler(void *alsi, void *data)
+static inline void tiqdio_call_inq_handlers(struct qdio_irq *irq)
 {
-	u32 si_used = shared_ind_set();
+	int i;
 	struct qdio_q *q;
 
-	last_ai_time = S390_lowcore.int_clock;
+	for (i = 0; i < irq->nr_input_qs; ++i) {
+		q = irq->input_qs[i];
 
-	/* protect tiq_list entries, only changed in activate or shutdown */
-	rcu_read_lock();
-
-	/* check for work on all inbound thinint queues */
-	list_for_each_entry_rcu(q, &tiq_list, entry) {
-
-		/* only process queues from changed sets */
-		if (unlikely(shared_ind(q->irq_ptr))) {
-			if (!si_used)
-				continue;
-		} else if (!*q->irq_ptr->dsci)
-			continue;
+		if (!references_shared_dsci(irq) && has_multiple_inq_on_dsci(irq))
+			xchg(q->irq_ptr->dsci, 0);
 
 		if (q->u.in.queue_start_poll) {
 			/* skip if polling is enabled or already in work */
@@ -153,25 +141,50 @@ static void tiqdio_thinint_handler(void *alsi, void *data)
 			q->u.in.queue_start_poll(q->irq_ptr->cdev, q->nr,
 						 q->irq_ptr->int_parm);
 		} else {
-			/* only clear it if the indicator is non-shared */
-			if (!shared_ind(q->irq_ptr))
+			if (!shared_ind(q))
 				xchg(q->irq_ptr->dsci, 0);
+
 			/*
 			 * Call inbound processing but not directly
 			 * since that could starve other thinint queues.
 			 */
 			tasklet_schedule(&q->tasklet);
 		}
+	}
+}
+
+/**
+ * tiqdio_thinint_handler - thin interrupt handler for qdio
+ * @alsi: pointer to adapter local summary indicator
+ * @data: NULL
+ */
+static void tiqdio_thinint_handler(void *alsi, void *data)
+{
+	u32 si_used = clear_shared_ind();
+	struct qdio_q *q;
+
+	last_ai_time = S390_lowcore.int_clock;
+
+	/* protect tiq_list entries, only changed in activate or shutdown */
+	rcu_read_lock();
+
+	/* check for work on all inbound thinint queues */
+	list_for_each_entry_rcu(q, &tiq_list, entry) {
+		struct qdio_irq *irq;
+
+		/* only process queues from changed sets */
+		irq = q->irq_ptr;
+		if (unlikely(references_shared_dsci(irq))) {
+			if (!si_used)
+				continue;
+		} else if (!*irq->dsci)
+			continue;
+
+		tiqdio_call_inq_handlers(irq);
+
 		qperf_inc(q, adapter_int);
 	}
 	rcu_read_unlock();
-
-	/*
-	 * If we used the shared indicator clear it now after all queues
-	 * were processed.
-	 */
-	if (si_used && shared_ind_set())
-		xchg(&q_indicators[TIQDIO_SHARED_IND].ind, 0);
 }
 
 static int set_subchannel_ind(struct qdio_irq *irq_ptr, int reset)

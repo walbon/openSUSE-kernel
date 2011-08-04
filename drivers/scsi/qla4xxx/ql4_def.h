@@ -205,7 +205,6 @@ struct srb {
 	struct scsi_cmnd *cmd;	/* (4) SCSI command block */
 	dma_addr_t dma_handle;	/* (4) for unmap of single transfers */
 	struct kref srb_ref;	/* reference count for this srb */
-	uint32_t fw_ddb_index;
 	uint8_t err_id;		/* error id */
 #define SRB_ERR_PORT	   1	/* Request failed because "port down" */
 #define SRB_ERR_LOOP	   2	/* Request failed because "loop down" */
@@ -251,9 +250,6 @@ struct ddb_entry {
 #define DF_OFFLINE		3	/* Offline Device */
 #define DF_REMOVE		4	/* FW DDB is destroyed */
 #define DF_DYNAMIC_LUN_SCAN_NEEDED	5
-
-	unsigned long dev_scan_wait_to_start_relogin;
-	unsigned long dev_scan_wait_to_complete_relogin;
 
 	uint16_t os_target_id;	/* Target ID */
 	uint16_t fw_ddb_index;	/* DDB firmware index */
@@ -390,7 +386,6 @@ struct scsi_qla_host {
 #define AF_INIT_DONE			1 /* 0x00000002 */
 #define AF_MBOX_COMMAND			2 /* 0x00000004 */
 #define AF_MBOX_COMMAND_DONE		3 /* 0x00000008 */
-#define AF_DPC_SCHEDULED		5 /* 0x00000020 */
 #define AF_INTERRUPTS_ON		6 /* 0x00000040 */
 #define AF_GET_CRASH_RECORD		7 /* 0x00000080 */
 #define AF_LINK_UP			8 /* 0x00000100 */
@@ -409,7 +404,6 @@ struct scsi_qla_host {
 #define AF_PCI_CHANNEL_IO_PERM_FAILURE	24 /* 0x01000000 */
 #define AF_PT_ACTIVE			25 /* 0x02000000 */
 #define AF_QUIESCE_OWNER		26 /* 0x04000000 */
-#define AF_P3P_RST_HDLR_ACTIVE		27 /* 0x08000000 */
 
 	unsigned long dpc_flags;
 
@@ -516,7 +510,6 @@ struct scsi_qla_host {
 
 	/* Recovery Timers */
 	uint32_t port_down_retry_count;
-	uint32_t discovery_wait;
 	atomic_t check_relogin_timeouts;
 	uint32_t retry_reset_ha_cnt;
 	uint32_t isp_reset_timer;	/* reset test timer */
@@ -900,6 +893,5 @@ static inline uint8_t ql4_is_memzero(const char *m, size_t s)
 /* Defines for process_aen() */
 #define PROCESS_ALL_AENS	 0
 #define FLUSH_DDB_CHANGED_AENS	 1
-#define RELOGIN_DDB_CHANGED_AENS 2
 
 #endif	/*_QLA4XXX_H */

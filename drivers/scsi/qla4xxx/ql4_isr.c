@@ -1033,7 +1033,6 @@ qla4_8xxx_msix_rsp_q(int irq, void *dev_id)
  * The type of AENs to process is specified by process_aen and can be
  *	PROCESS_ALL_AENS	 0
  *	FLUSH_DDB_CHANGED_AENS	 1
- *	RELOGIN_DDB_CHANGED_AENS 2
  **/
 void qla4xxx_process_aen(struct scsi_qla_host * ha, uint8_t process_aen)
 {
@@ -1068,39 +1067,6 @@ void qla4xxx_process_aen(struct scsi_qla_host * ha, uint8_t process_aen)
 					      ha->aen_out, mbox_sts[0],
 					      mbox_sts[2], mbox_sts[3]));
 				break;
-			case RELOGIN_DDB_CHANGED_AENS:
-			{
-			    /* For use during init time, we only want to
-			     * relogin non-active ddbs */
-
-			    struct ddb_entry *ddb_entry;
-
-			    ddb_entry =
-				qla4xxx_lookup_ddb_by_fw_index(ha, mbox_sts[2]);
-
-			    if (ddb_entry) {
-				DEBUG6(dev_info(&ha->pdev->dev, "%s AEN[%d] ddb"
-					" 0x%p sess 0x%p conn 0x%p state "
-					"0x%x\n", __func__, ha->aen_out,
-					ddb_entry, ddb_entry->sess,
-					ddb_entry->conn,
-					atomic_read(&ddb_entry->state)));
-
-				ddb_entry->dev_scan_wait_to_complete_relogin =
-					0;
-				ddb_entry->dev_scan_wait_to_start_relogin =
-					jiffies +
-					((ddb_entry->default_time2wait + 4)
-									* HZ);
-
-				DEBUG2(ql4_info(ha, "ddb [%d] initate"
-					      " RELOGIN after %d seconds\n",
-					      ddb_entry->fw_ddb_index,
-					      ddb_entry->default_time2wait +
-					      4));
-			    }
-			    break;
-			}
 			case PROCESS_ALL_AENS:
 			default:
 				/* WARNING: Post init only */

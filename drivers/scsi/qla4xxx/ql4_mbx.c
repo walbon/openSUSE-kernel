@@ -32,7 +32,6 @@ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
 	u_long wait_count;
 	uint32_t intr_status;
 	unsigned long flags = 0;
-	uint8_t	force_polling = 0;
 	uint32_t dev_state;
 
 	/* Make sure that pointers are valid */
@@ -42,11 +41,12 @@ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
 		return status;
 	}
 
-	if ((is_aer_supported(ha)) &&
-	    (test_bit(AF_PCI_CHANNEL_IO_PERM_FAILURE, &ha->flags))) {
-		DEBUG2(ql4_info(ha, "%s: Perm failure on EEH, "
-				"timeout MBX Exiting.\n", __func__));
-		return status;
+	if (is_qla8022(ha)) {
+		if (test_bit(AF_FW_RECOVERY, &ha->flags)) {
+			DEBUG2(ql4_warn(ha, "%s: prematurely completing "
+				"mbx cmd as firmware recovery detected\n", __func__));
+			return status;
+		}
 	}
 
 	if (is_qla8022(ha)) {
@@ -59,12 +59,13 @@ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
 				__func__);
 			return status;
 		}
+	}
 
-		if (test_bit(AF_FW_RECOVERY, &ha->flags)) {
-			DEBUG2(ql4_warn(ha, "%s: prematurely completing"
-				" mbx cmd as firmware recovery detected\n", __func__));
-			return status;
-		}
+	if ((is_aer_supported(ha)) &&
+	    (test_bit(AF_PCI_CHANNEL_IO_PERM_FAILURE, &ha->flags))) {
+		DEBUG2(ql4_info(ha, "%s: Perm failure on EEH, "
+			"timeout MBX Exiting.\n", __func__));
+		return status;
 	}
 
 	/* Mailbox code active */
@@ -136,22 +137,13 @@ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
 		goto mbox_exit;
 	}
 
-	/* Always poll for mailbox completion when calling the Disable
-	   Interrupts mailbox command, as the interrupts will be disabled
-	   upon completion */
-	if (is_qla8022(ha) &&
-	    (mbx_cmd[0] == MBOX_CMD_ENABLE_INTRS) &&
-	    (mbx_cmd[1] == INTR_DISABLE))
-		force_polling = 1;
-
 	/*
 	 * Wait for completion: Poll or completion queue
 	 */
 	if (test_bit(AF_IRQ_ATTACHED, &ha->flags) &&
 	    test_bit(AF_INTERRUPTS_ON, &ha->flags) &&
 	    test_bit(AF_ONLINE, &ha->flags) &&
-	    !test_bit(AF_HA_REMOVAL, &ha->flags) &&
-	    !force_polling) {
+	    !test_bit(AF_HA_REMOVAL, &ha->flags)) {
 		/* Do not poll for completion. Use completion queue */
 		set_bit(AF_MBOX_COMMAND_NOPOLL, &ha->flags);
 		wait_for_completion_timeout(&ha->mbx_intr_comp, MBOX_TOV * HZ);
@@ -499,9 +491,6 @@ qla4xxx_update_local_ifcb(struct scsi_qla_host *ha,
 
 	ha->port_down_retry_count = le16_to_cpu(init_fw_cb->conn_ka_timeout);
 
-	/* Save Command Line Paramater info */
-	ha->discovery_wait = ql4xdiscoverywait;
-
 	qla4xxx_update_local_ip(ha, init_fw_cb);
 
 	return QLA_SUCCESS;
@@ -565,7 +554,10 @@ int qla4xxx_initialize_fw_cb(struct scsi_qla_host * ha)
 		    __constant_cpu_to_le16(FWOPT_ENABLE_CRBDB);
 
 	init_fw_cb->fw_options &= __constant_cpu_to_le16(~FWOPT_TARGET_MODE);
-	init_fw_cb->add_fw_options &= __constant_cpu_to_le16(SERIALIZE_TASK_MGMT);
+	/* Set bit for "serialize task mgmt" all other bits need to be zero */
+	init_fw_cb->add_fw_options = 0;
+	init_fw_cb->add_fw_options |=
+		__constant_cpu_to_le16(SERIALIZE_TASK_MGMT);
 
 	if (qla4xxx_set_ifcb(ha, &mbox_cmd[0], &mbox_sts[0], init_fw_cb_dma)
 		!= QLA_SUCCESS) {
@@ -1019,7 +1011,7 @@ int qla4xxx_abort_task(struct scsi_qla_host *ha, struct srb *srb)
 		return status;
 
 	mbox_cmd[0] = MBOX_CMD_ABORT_TASK;
-	mbox_cmd[1] = srb->fw_ddb_index;
+	mbox_cmd[1] = srb->ddb->fw_ddb_index;
 	mbox_cmd[2] = index;
 	/* Immediate Command Enable */
 	mbox_cmd[5] = 0x01;

@@ -40,10 +40,6 @@ static struct kmem_cache *srb_cachep;
 /*
  * Module parameter information and variables
  */
-int ql4xdiscoverywait = 60;
-module_param(ql4xdiscoverywait, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(ql4xdiscoverywait, "Discovery wait time");
-
 int ql4xdontresethba = 0;
 module_param(ql4xdontresethba, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ql4xdontresethba,
@@ -390,11 +386,6 @@ int qla4xxx_add_sess(struct ddb_entry *ddb_entry)
 			ddb_entry->fw_ddb_index, ddb_entry->os_target_id,
 			ddb_entry->sess, ddb_entry->conn));
 
-	if (test_bit(AF_ONLINE, &ha->flags)) {
-		scsi_scan_target(&ddb_entry->sess->dev, 0,
-			ddb_entry->sess->target_id, SCAN_WILD_CARD, 0);
-        }
-
 	return 0;
 }
 
@@ -555,10 +546,9 @@ void qla4xxx_srb_compl(struct kref *ref)
  * completion handling).   Unfortunely, it sometimes calls the scheduler
  * in interrupt context which is a big NO! NO!.
  **/
-static int qla4xxx_queuecommand_lck(struct scsi_cmnd *cmd,
-				void (*done)(struct scsi_cmnd *))
+static int qla4xxx_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd)
 {
-	struct scsi_qla_host *ha = to_qla_host(cmd->device->host);
+	struct scsi_qla_host *ha = to_qla_host(host);
 	struct ddb_entry *ddb_entry = cmd->device->hostdata;
 	struct iscsi_cls_session *sess = ddb_entry->sess;
 	struct srb *srb;
@@ -625,8 +615,6 @@ qc_fail_command:
 	return 0;
 }
 
-static DEF_SCSI_QCMD(qla4xxx_queuecommand)
-
 /**
  * qla4xxx_mem_free - frees memory allocated to adapter
  * @ha: Pointer to host adapter structure.
@@ -680,10 +668,6 @@ static void qla4xxx_mem_free(struct scsi_qla_host *ha)
 		if (ha->nx_pcibase)
 			iounmap(
 			    (struct device_reg_82xx __iomem *)ha->nx_pcibase);
-
-		if (ha->nx_db_wr_ptr)
-			iounmap(
-			    (struct device_reg_82xx __iomem *)ha->nx_db_wr_ptr);
 	} else if (ha->reg)
 		iounmap(ha->reg);
 	pci_release_regions(ha->pdev);
@@ -831,14 +815,16 @@ void qla4_8xxx_watchdog(struct scsi_qla_host *ha)
 	/* don't poll if reset is going on */
 	if (!(test_bit(DPC_RETRY_RESET_HA, &ha->dpc_flags) ||
 	      test_bit(DPC_RESET_HA, &ha->dpc_flags) ||
-	      test_bit(AF_P3P_RST_HDLR_ACTIVE, &ha->flags))) {
+	      test_bit(DPC_RESET_ACTIVE, &ha->dpc_flags))) {
 		dev_state = qla4_8xxx_rd_32(ha, QLA82XX_CRB_DEV_STATE);
 		if (dev_state == QLA82XX_DEV_NEED_RESET &&
 		    !test_bit(DPC_RESET_HA, &ha->dpc_flags)) {
-			ql4_info(ha, "%s: HW State: NEED RESET!\n",
-					__func__);
-			set_bit(DPC_RESET_HA, &ha->dpc_flags);
-			qla4xxx_wake_dpc(ha);
+			if (!ql4xdontresethba) {
+				ql4_info(ha, "%s: HW State: NEED RESET!\n",
+						__func__);
+				set_bit(DPC_RESET_HA, &ha->dpc_flags);
+				qla4xxx_wake_dpc(ha);
+			}
 		} else if (dev_state == QLA82XX_DEV_NEED_QUIESCENT &&
 		    !test_bit(DPC_HA_NEED_QUIESCENT, &ha->dpc_flags)) {
 			ql4_err(ha, "%s: HW State: NEED QUIESCENT detected "
@@ -854,6 +840,34 @@ void qla4_8xxx_watchdog(struct scsi_qla_host *ha)
 			if (qla4_8xxx_check_fw_alive(ha)) {
 				halt_status = qla4_8xxx_rd_32(ha,
 						QLA82XX_PEG_HALT_STATUS1);
+
+				ql4_printk(KERN_INFO, ha,
+					"scsi(%ld): %s, Dumping hw/fw "
+					"registers: PEG_HALT_STATUS1: 0x%x, "
+					"PEG_HALT_STATUS2: 0x%x,\n "
+					"PEG_NET_0_PC: 0x%x, PEG_NET_1_PC:"
+					" 0x%x,\n PEG_NET_2_PC: 0x%x, "
+					"PEG_NET_3_PC: 0x%x,\n PEG_NET_4_PC: "
+					"0x%x\n", ha->host_no,
+					__func__, halt_status,
+					qla4_8xxx_rd_32(ha,
+							QLA82XX_PEG_HALT_STATUS2),
+					qla4_8xxx_rd_32(ha,
+							QLA82XX_CRB_PEG_NET_0 +
+							0x3c),
+					qla4_8xxx_rd_32(ha,
+							QLA82XX_CRB_PEG_NET_1 +
+							0x3c),
+					qla4_8xxx_rd_32(ha,
+							QLA82XX_CRB_PEG_NET_2 +
+							0x3c),
+					qla4_8xxx_rd_32(ha,
+							QLA82XX_CRB_PEG_NET_3 +
+							0x3c),
+					qla4_8xxx_rd_32(ha,
+							QLA82XX_CRB_PEG_NET_4 +
+							0x3c));
+
 
 				/* Since we cannot change dev_state in
 				 * interrupt context, set appropriate DPC
@@ -1018,7 +1032,7 @@ void qla4xxx_timer(struct scsi_qla_host *ha)
 	}
 
 	/* Wakeup the dpc routine for this adapter, if needed. */
-	if ((start_dpc ||
+	if (start_dpc ||
 	     test_bit(DPC_RESET_HA, &ha->dpc_flags) ||
 	     test_bit(DPC_RETRY_RESET_HA, &ha->dpc_flags) ||
 	     test_bit(DPC_RELOGIN_DEVICE, &ha->dpc_flags) ||
@@ -1037,9 +1051,7 @@ void qla4xxx_timer(struct scsi_qla_host *ha)
 	     test_bit(DPC_ISNS_REREGISTER, &ha->dpc_flags) ||
 	     test_bit(DPC_ISNS_DEREGISTER, &ha->dpc_flags) ||
 	     test_bit(DPC_ISNS_STOP, &ha->dpc_flags) ||
-	     test_bit(DPC_AEN, &ha->dpc_flags)) &&
-	     !test_bit(AF_DPC_SCHEDULED, &ha->flags) &&
-	     ha->dpc_thread) {
+	     test_bit(DPC_AEN, &ha->dpc_flags)) {
 		DEBUG2(ql4_info(ha, "%s: scheduling dpc routine"
 			      " - dpc flags = 0x%lx\n",
 			      __func__, ha->dpc_flags));
@@ -1276,7 +1288,11 @@ static int qla4xxx_recover_adapter(struct scsi_qla_host *ha)
 
 	set_bit(DPC_RESET_ACTIVE, &ha->dpc_flags);
 
-	set_bit(AF_P3P_RST_HDLR_ACTIVE, &ha->flags);
+	/* Block all sessions, so iscsi_block_scsi_eh()
+	 * blocks device_reset and target_reset error handlers
+	 * till sessions become ACTIVE
+	 */
+	qla4xxx_mark_all_devices_missing(ha);
 
 	if (test_bit(DPC_RESET_HA, &ha->dpc_flags))
 		reset_chip = 1;
@@ -1346,7 +1362,8 @@ static int qla4xxx_recover_adapter(struct scsi_qla_host *ha)
 	/* Flush any pending ddb changed AENs */
 	qla4xxx_process_aen(ha, FLUSH_DDB_CHANGED_AENS);
 
-	clear_bit(AF_P3P_RST_HDLR_ACTIVE, &ha->flags);
+	if (is_qla8022(ha))
+		clear_bit(DPC_RESET_ACTIVE, &ha->dpc_flags);
 
 recover_ha_init_adapter:
 	/* Upon successful firmware/chip reset, re-initialize the adapter */
@@ -1556,13 +1573,31 @@ exit_async_pdu_iocb:
 	return;
 }
 
+static void qla4xxx_relogin_all_devices(struct scsi_qla_host *ha)
+{
+	struct ddb_entry *ddb_entry, *dtemp;
+
+	list_for_each_entry_safe(ddb_entry, dtemp, &ha->ddb_list, list) {
+		if ((atomic_read(&ddb_entry->state) == DDB_STATE_MISSING) ||
+		    (atomic_read(&ddb_entry->state) == DDB_STATE_DEAD)) {
+			if (ddb_entry->fw_ddb_device_state ==
+			    DDB_DS_SESSION_ACTIVE) {
+				atomic_set(&ddb_entry->state, DDB_STATE_ONLINE);
+				ql4_printk(KERN_INFO, ha, "scsi%ld: %s: ddb[%d]"
+				    " marked ONLINE\n",	ha->host_no, __func__,
+				    ddb_entry->fw_ddb_index);
+
+				iscsi_unblock_session(ddb_entry->sess);
+			} else
+				qla4xxx_relogin_device(ha, ddb_entry);
+		}
+	}
+}
+
 void qla4xxx_wake_dpc(struct scsi_qla_host *ha)
 {
-	if (ha->dpc_thread &&
-	    !test_bit(AF_DPC_SCHEDULED, &ha->flags)) {
-		set_bit(AF_DPC_SCHEDULED, &ha->flags);
+	if (ha->dpc_thread)
 		queue_work(ha->dpc_thread, &ha->dpc_work);
-	}
 }
 
 /**
@@ -1590,11 +1625,11 @@ static void qla4xxx_do_dpc(struct work_struct *data)
 
 	/* Initialization not yet finished. Don't do anything yet. */
 	if (!test_bit(AF_INIT_DONE, &ha->flags))
-		goto do_dpc_exit;
+		return;
 
 	if (test_bit(AF_EEH_BUSY, &ha->flags)) {
 		DEBUG2(ql4_info(ha, "%s: flags = %lx\n", __func__, ha->flags));
-		goto do_dpc_exit;
+		return;
 	}
 
 	/* HBA is in the process of being permanently disabled.
@@ -1694,13 +1729,7 @@ dpc_post_reset_ha:
 	if (test_and_clear_bit(DPC_LINK_CHANGED, &ha->dpc_flags)) {
 		if (!test_bit(AF_LINK_UP, &ha->flags)) {
 			/* ---- link down? --- */
-			list_for_each_entry_safe(ddb_entry, dtemp,
-						 &ha->ddb_list, list) {
-				if (atomic_read(&ddb_entry->state) ==
-						DDB_STATE_ONLINE)
-					qla4xxx_mark_device_missing(ha,
-							ddb_entry);
-			}
+			qla4xxx_mark_all_devices_missing(ha);
 		} else {
 			/* ---- link up? --- *
 			 * F/W will auto login to all devices ONLY ONCE after
@@ -1708,30 +1737,7 @@ dpc_post_reset_ha:
 			 * fatal error recovery.  Therefore, the driver must
 			 * manually relogin to devices when recovering from
 			 * connection failures, logouts, expired KATO, etc. */
-
-			list_for_each_entry_safe(ddb_entry, dtemp,
-							&ha->ddb_list, list) {
-				if ((atomic_read(&ddb_entry->state) ==
-						 DDB_STATE_MISSING) ||
-				    (atomic_read(&ddb_entry->state) ==
-						 DDB_STATE_DEAD)) {
-					if ((ddb_entry->fw_ddb_device_state ==
-					     DDB_DS_SESSION_ACTIVE) &&
-					    ddb_entry->conn) {
-						atomic_set(&ddb_entry->state,
-							   DDB_STATE_ONLINE);
-						ql4_info(ha, "%s: ddb[%d]"
-							" marked ONLINE\n",
-							__func__,
-							ddb_entry->fw_ddb_index);
-
-						iscsi_unblock_session(
-							ddb_entry->sess);
-					} else
-						qla4xxx_relogin_device(
-							ha, ddb_entry);
-				}
-			}
+			qla4xxx_relogin_all_devices(ha);
 		}
 	}
 
@@ -1845,8 +1851,6 @@ dpc_post_reset_ha:
 		}
 		clear_bit(DPC_ASYNC_ISCSI_PDU, &ha->dpc_flags);
 	}
-do_dpc_exit:
-	clear_bit(AF_DPC_SCHEDULED, &ha->flags);
 }
 
 /**
