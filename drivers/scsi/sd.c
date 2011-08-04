@@ -1783,7 +1783,7 @@ static int read_capacity_10(struct scsi_disk *sdkp, struct scsi_device *sdp,
 		   0xffffffff when the want to report a size of 0 (with
 		   which they really mean no media is present) */
 		sdkp->capacity = 0;
-		sdkp->hw_sector_size = sector_size;
+		sdkp->physical_block_size = sector_size;
 		return sector_size;
 	}
 
