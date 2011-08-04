@@ -170,8 +170,6 @@ struct drm_i915_display_funcs {
 	/* clock gating init */
 };
 
-struct intel_overlay;
-
 typedef struct drm_i915_private {
 	struct drm_device *dev;
 
@@ -213,8 +211,6 @@ typedef struct drm_i915_private {
 	u32 gt_irq_mask_reg;
 	u32 gt_irq_enable_reg;
 	u32 de_irq_enable_reg;
-	u32 pch_irq_mask_reg;
-	u32 pch_irq_enable_reg;
 
 	u32 hotplug_supported_mask;
 	struct work_struct hotplug_work;
@@ -244,9 +240,6 @@ typedef struct drm_i915_private {
 
 	struct intel_opregion opregion;
 
-	/* overlay */
-	struct intel_overlay *overlay;
-
 	/* LVDS info */
 	int backlight_duty_cycle;  /* restore backlight to this value */
 	bool panel_wants_dither;
@@ -262,7 +255,6 @@ typedef struct drm_i915_private {
 	unsigned int lvds_use_ssc:1;
 	unsigned int edp_support:1;
 	int lvds_ssc_freq;
-	int edp_bpp;
 
 	struct notifier_block lid_notifier;
 
@@ -566,7 +558,6 @@ typedef struct drm_i915_private {
 	int child_dev_num;
 	struct child_device_config *child_dev;
 	struct drm_connector *int_lvds_connector;
-	bool in_resume;
 } drm_i915_private_t;
 
 /** driver private structure attached to each drm_gem_object */
@@ -710,10 +701,6 @@ extern void i915_restore_display(struct drm_device *dev);
 extern int i915_master_create(struct drm_device *dev, struct drm_master *master);
 extern void i915_master_destroy(struct drm_device *dev, struct drm_master *master);
 
-/* intel_display.c */
-extern int intel_get_pipe_from_crtc_id(struct drm_device *dev, void *data,
-                                struct drm_file *file_priv);
-
 				/* i915_dma.c */
 extern void i915_kernel_lost_context(struct drm_device * dev);
 extern int i915_driver_load(struct drm_device *, unsigned long flags);
@@ -764,8 +751,6 @@ i915_enable_pipestat(drm_i915_private_t *dev_priv, int pipe, u32 mask);
 
 void
 i915_disable_pipestat(drm_i915_private_t *dev_priv, int pipe, u32 mask);
-
-void intel_enable_asle (struct drm_device *dev);
 
 
 /* i915_mem.c */
@@ -819,7 +804,6 @@ int i915_gem_get_tiling(struct drm_device *dev, void *data,
 			struct drm_file *file_priv);
 int i915_gem_get_aperture_ioctl(struct drm_device *dev, void *data,
 				struct drm_file *file_priv);
-
 void i915_gem_load(struct drm_device *dev);
 int i915_gem_init_object(struct drm_gem_object *obj);
 void i915_gem_free_object(struct drm_gem_object *obj);
@@ -843,9 +827,6 @@ void i915_gem_cleanup_ringbuffer(struct drm_device *dev);
 int i915_gem_do_init(struct drm_device *dev, unsigned long start,
 		     unsigned long end);
 int i915_gem_idle(struct drm_device *dev);
-uint32_t i915_add_request(struct drm_device *dev, struct drm_file *file_priv,
-			  uint32_t flush_domains);
-int i915_do_wait_request(struct drm_device *dev, uint32_t seqno, int interruptible);
 int i915_lp_ring_sync(struct drm_device *dev);
 #ifdef CONFIG_XEN
 int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma);
@@ -903,13 +884,11 @@ extern int i915_restore_state(struct drm_device *dev);
 extern int intel_opregion_init(struct drm_device *dev, int resume);
 extern void intel_opregion_free(struct drm_device *dev, int suspend);
 extern void opregion_asle_intr(struct drm_device *dev);
-extern void ironlake_opregion_gse_intr(struct drm_device *dev);
 extern void opregion_enable_asle(struct drm_device *dev);
 #else
 static inline int intel_opregion_init(struct drm_device *dev, int resume) { return 0; }
 static inline void intel_opregion_free(struct drm_device *dev, int suspend) { return; }
 static inline void opregion_asle_intr(struct drm_device *dev) { return; }
-static inline void ironlake_opregion_gse_intr(struct drm_device *dev) { return; }
 static inline void opregion_enable_asle(struct drm_device *dev) { return; }
 #endif
 
@@ -996,8 +975,8 @@ extern int i915_wait_ring(struct drm_device * dev, int n, const char *caller);
 
 #define IS_I830(dev) ((dev)->pci_device == 0x3577)
 #define IS_845G(dev) ((dev)->pci_device == 0x2562)
-#define IS_I85X(dev) ((dev)->pci_device == 0x3582 || (dev)->pci_device == 0x358e)
-#define IS_I855(dev) ((dev)->pci_device == 0x3582 || (dev)->pci_device == 0x358e)
+#define IS_I85X(dev) ((dev)->pci_device == 0x3582)
+#define IS_I855(dev) ((dev)->pci_device == 0x3582)
 #define IS_I865G(dev) ((dev)->pci_device == 0x2572)
 #define IS_I8XX(dev) (IS_I830(dev) || IS_845G(dev) || IS_I85X(dev) || IS_I865G(dev))
 

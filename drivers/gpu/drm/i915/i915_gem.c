@@ -482,17 +482,14 @@ i915_gem_pread_ioctl(struct drm_device *dev, void *data,
 		return -EBADF;
 	obj_priv = obj->driver_private;
 
-	/* Bounds check source.  */
-	if (args->offset > obj->size || args->size > obj->size - args->offset) {
-		ret = -EINVAL;
-		goto err;
-	}
-
-	if (!access_ok(VERIFY_WRITE,
-				(char __user *)(uintptr_t)args->data_ptr,
-				args->size)) {
-		ret = -EFAULT;
-		goto err;
+	/* Bounds check source.
+	 *
+	 * XXX: This could use review for overflow issues...
+	 */
+	if (args->offset > obj->size || args->size > obj->size ||
+	    args->offset + args->size > obj->size) {
+		drm_gem_object_unreference(obj);
+		return -EINVAL;
 	}
 
 	if (i915_gem_object_needs_bit17_swizzle(obj)) {
@@ -503,7 +500,7 @@ i915_gem_pread_ioctl(struct drm_device *dev, void *data,
 			ret = i915_gem_shmem_pread_slow(dev, obj, args,
 							file_priv);
 	}
-err:
+
 	drm_gem_object_unreference(obj);
 
 	return ret;
@@ -595,6 +592,8 @@ i915_gem_gtt_pwrite_fast(struct drm_device *dev, struct drm_gem_object *obj,
 
 	user_data = (char __user *) (uintptr_t) args->data_ptr;
 	remain = args->size;
+	if (!access_ok(VERIFY_READ, user_data, remain))
+		return -EFAULT;
 
 
 	mutex_lock(&dev->struct_mutex);
@@ -956,17 +955,14 @@ i915_gem_pwrite_ioctl(struct drm_device *dev, void *data,
 		return -EBADF;
 	obj_priv = obj->driver_private;
 
-	/* Bounds check destination. */
-	if (args->offset > obj->size || args->size > obj->size - args->offset) {
-		ret = -EINVAL;
-		goto err;
-	}
-
-	if (!access_ok(VERIFY_READ,
-				(char __user *)(uintptr_t)args->data_ptr,
-				args->size)) {
-		ret = -EFAULT;
-		goto err;
+	/* Bounds check destination.
+	 *
+	 * XXX: This could use review for overflow issues...
+	 */
+	if (args->offset > obj->size || args->size > obj->size ||
+	    args->offset + args->size > obj->size) {
+		drm_gem_object_unreference(obj);
+		return -EINVAL;
 	}
 
 	/* We can only do the GTT pwrite on untiled buffers, as otherwise
@@ -999,8 +995,8 @@ i915_gem_pwrite_ioctl(struct drm_device *dev, void *data,
 		DRM_INFO("pwrite failed %d\n", ret);
 #endif
 
-err:
 	drm_gem_object_unreference(obj);
+
 	return ret;
 }
 
@@ -1582,7 +1578,7 @@ i915_gem_object_move_to_inactive(struct drm_gem_object *obj)
  *
  * Returned sequence numbers are nonzero on success.
  */
-uint32_t
+static uint32_t
 i915_add_request(struct drm_device *dev, struct drm_file *file_priv,
 		 uint32_t flush_domains)
 {
@@ -1821,7 +1817,7 @@ i915_gem_retire_work_handler(struct work_struct *work)
 	mutex_unlock(&dev->struct_mutex);
 }
 
-int
+static int
 i915_do_wait_request(struct drm_device *dev, uint32_t seqno, int interruptible)
 {
 	drm_i915_private_t *dev_priv = dev->dev_private;

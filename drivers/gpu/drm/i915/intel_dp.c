@@ -124,21 +124,9 @@ intel_dp_link_clock(uint8_t link_bw)
 
 /* I think this is a fiction */
 static int
-intel_dp_link_required(struct drm_device *dev,
-		       struct intel_output *intel_output, int pixel_clock)
+intel_dp_link_required(int pixel_clock)
 {
-	struct drm_i915_private *dev_priv = dev->dev_private;
-
-	if (IS_eDP(intel_output))
-		return (pixel_clock * dev_priv->edp_bpp) / 8;
-	else
-		return pixel_clock * 3;
-}
-
-static int
-intel_dp_max_data_rate(int max_link_clock, int max_lanes)
-{
-	return (max_link_clock * max_lanes * 8) / 10;
+	return pixel_clock * 3;
 }
 
 static int
@@ -149,11 +137,7 @@ intel_dp_mode_valid(struct drm_connector *connector,
 	int max_link_clock = intel_dp_link_clock(intel_dp_max_link_bw(intel_output));
 	int max_lanes = intel_dp_max_lane_count(intel_output);
 
-	/* only refuse the mode on non eDP since we have seen some wierd eDP panels
-	   which are outside spec tolerances but somehow work by magic */
-	if (!IS_eDP(intel_output) &&
-	    (intel_dp_link_required(connector->dev, intel_output, mode->clock)
-	     > intel_dp_max_data_rate(max_link_clock, max_lanes)))
+	if (intel_dp_link_required(mode->clock) > max_link_clock * max_lanes)
 		return MODE_CLOCK_HIGH;
 
 	if (mode->clock < 10000)
@@ -445,10 +429,9 @@ intel_dp_mode_fixup(struct drm_encoder *encoder, struct drm_display_mode *mode,
 
 	for (lane_count = 1; lane_count <= max_lane_count; lane_count <<= 1) {
 		for (clock = 0; clock <= max_clock; clock++) {
-			int link_avail = intel_dp_max_data_rate(intel_dp_link_clock(bws[clock]), lane_count);
+			int link_avail = intel_dp_link_clock(bws[clock]) * lane_count;
 
-			if (intel_dp_link_required(encoder->dev, intel_output, mode->clock)
-					<= link_avail) {
+			if (intel_dp_link_required(mode->clock) <= link_avail) {
 				dp_priv->link_bw = bws[clock];
 				dp_priv->lane_count = lane_count;
 				adjusted_mode->clock = intel_dp_link_clock(dp_priv->link_bw);
@@ -458,18 +441,6 @@ intel_dp_mode_fixup(struct drm_encoder *encoder, struct drm_display_mode *mode,
 				return true;
 			}
 		}
-	}
-
-	if (IS_eDP(intel_output)) {
-		/* okay we failed just pick the highest */
-		dp_priv->lane_count = max_lane_count;
-		dp_priv->link_bw = bws[max_clock];
-		adjusted_mode->clock = intel_dp_link_clock(dp_priv->link_bw);
-		DRM_DEBUG_KMS("Force picking display port link bw %02x lane "
-			      "count %d clock %d\n",
-			      dp_priv->link_bw, dp_priv->lane_count,
-			      adjusted_mode->clock);
-		return true;
 	}
 	return false;
 }
@@ -1290,10 +1261,11 @@ intel_dp_init(struct drm_device *dev, int output_reg)
 	else if (output_reg == DP_D || output_reg == PCH_DP_D)
 		intel_output->clone_mask = (1 << INTEL_DP_D_CLONE_BIT);
 
-	if (IS_eDP(intel_output))
+	if (IS_eDP(intel_output)) {
+		intel_output->crtc_mask = (1 << 1);
 		intel_output->clone_mask = (1 << INTEL_EDP_CLONE_BIT);
-
-	intel_output->crtc_mask = (1 << 0) | (1 << 1);
+	} else
+		intel_output->crtc_mask = (1 << 0) | (1 << 1);
 	connector->interlace_allowed = true;
 	connector->doublescan_allowed = 0;
 

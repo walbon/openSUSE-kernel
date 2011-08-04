@@ -181,7 +181,6 @@ static bool intel_igdng_crt_detect_hotplug(struct drm_connector *connector)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 adpa;
 	bool ret;
-	unsigned long timeout;
 
 	adpa = I915_READ(PCH_ADPA);
 
@@ -201,14 +200,8 @@ static bool intel_igdng_crt_detect_hotplug(struct drm_connector *connector)
 	DRM_DEBUG("pch crt adpa 0x%x", adpa);
 	I915_WRITE(PCH_ADPA, adpa);
 
-	timeout = jiffies + msecs_to_jiffies(500);
-	while ((I915_READ(PCH_ADPA) & ADPA_CRT_HOTPLUG_FORCE_TRIGGER) != 0) {
-		if (time_after_eq(jiffies, timeout)) {
-			DRM_DEBUG_KMS("crt_detect_hotplug timeout");
-			break;
-		}
-		msleep(1);
-	}
+	while ((I915_READ(PCH_ADPA) & ADPA_CRT_HOTPLUG_FORCE_TRIGGER) != 0)
+		;
 
 	/* Check the status to see if both blue and green are on now */
 	adpa = I915_READ(PCH_ADPA);

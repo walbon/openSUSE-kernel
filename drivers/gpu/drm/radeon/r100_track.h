@@ -65,12 +65,9 @@ struct r100_cs_track {
 	struct r100_cs_track_array	arrays[11];
 	struct r100_cs_track_cb 	cb[R300_MAX_CB];
 	struct r100_cs_track_cb 	zb;
-	struct r100_cs_track_cb 	aa;
 	struct r100_cs_track_texture	textures[R300_TRACK_MAX_TEXTURE];
 	bool				z_enabled;
 	bool                            separate_cube;
-	bool				aa_dirty;
-	bool				aaresolve;
 
 };
 
