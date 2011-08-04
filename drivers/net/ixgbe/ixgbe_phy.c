@@ -115,6 +115,9 @@ static enum ixgbe_phy_type ixgbe_get_phy_type_from_id(u32 phy_id)
 	case TN1010_PHY_ID:
 		phy_type = ixgbe_phy_tn;
 		break;
+	case AQ1202_PHY_ID:
+		phy_type = ixgbe_phy_aq;
+		break;
 	case QT2022_PHY_ID:
 		phy_type = ixgbe_phy_qt;
 		break;
@@ -135,6 +138,11 @@ static enum ixgbe_phy_type ixgbe_get_phy_type_from_id(u32 phy_id)
  **/
 s32 ixgbe_reset_phy_generic(struct ixgbe_hw *hw)
 {
+	/* Don't reset PHY if it's shut down due to overtemp. */
+	if (!hw->phy.reset_if_overtemp &&
+	    (IXGBE_ERR_OVERTEMP == hw->phy.ops.check_overtemp(hw)))
+		return 0;
+
 	/*
 	 * Perform soft PHY reset to the PHY_XS.
 	 * This will cause a soft reset to the PHY
@@ -417,6 +425,39 @@ s32 ixgbe_setup_phy_link_speed_generic(struct ixgbe_hw *hw,
 	hw->phy.ops.setup_link(hw);
 
 	return 0;
+}
+
+/**
+ * ixgbe_get_copper_link_capabilities_generic - Determines link capabilities
+ * @hw: pointer to hardware structure
+ * @speed: pointer to link speed
+ * @autoneg: boolean auto-negotiation value
+ *
+ * Determines the link capabilities by reading the AUTOC register.
+ */
+s32 ixgbe_get_copper_link_capabilities_generic(struct ixgbe_hw *hw,
+                                               ixgbe_link_speed *speed,
+                                               bool *autoneg)
+{
+	s32 status = IXGBE_ERR_LINK_SETUP;
+	u16 speed_ability;
+
+	*speed = 0;
+	*autoneg = true;
+
+	status = hw->phy.ops.read_reg(hw, MDIO_SPEED, MDIO_MMD_PMAPMD,
+	                              &speed_ability);
+
+	if (status == 0) {
+		if (speed_ability & MDIO_SPEED_10G)
+			*speed |= IXGBE_LINK_SPEED_10GB_FULL;
+		if (speed_ability & MDIO_PMA_SPEED_1000)
+			*speed |= IXGBE_LINK_SPEED_1GB_FULL;
+		if (speed_ability & MDIO_PMA_SPEED_100)
+			*speed |= IXGBE_LINK_SPEED_100_FULL;
+	}
+
+	return status;
 }
 
 /**
@@ -1370,3 +1411,44 @@ s32 ixgbe_get_phy_firmware_version_tnx(struct ixgbe_hw *hw,
 	return status;
 }
 
+/**
+ *  ixgbe_get_phy_firmware_version_generic - Gets the PHY Firmware Version
+ *  @hw: pointer to hardware structure
+ *  @firmware_version: pointer to the PHY Firmware Version
+**/
+s32 ixgbe_get_phy_firmware_version_generic(struct ixgbe_hw *hw,
+                                           u16 *firmware_version)
+{
+	s32 status = 0;
+
+	status = hw->phy.ops.read_reg(hw, AQ_FW_REV, MDIO_MMD_VEND1,
+	                              firmware_version);
+
+	return status;
+}
+
+/**
+ *  ixgbe_tn_check_overtemp - Checks if an overtemp occured.
+ *  @hw: pointer to hardware structure
+ *
+ *  Checks if the LASI temp alarm status was triggered due to overtemp
+ **/
+s32 ixgbe_tn_check_overtemp(struct ixgbe_hw *hw)
+{
+	s32 status = 0;
+	u16 phy_data = 0;
+
+	if (hw->device_id != IXGBE_DEV_ID_82599_T3_LOM)
+		goto out;
+
+	/* Check that the LASI temp alarm status was triggered */
+	hw->phy.ops.read_reg(hw, IXGBE_TN_LASI_STATUS_REG,
+	                     MDIO_MMD_PMAPMD, &phy_data);
+
+	if (!(phy_data & IXGBE_TN_LASI_STATUS_TEMP_ALARM))
+		goto out;
+
+	status = IXGBE_ERR_OVERTEMP;
+out:
+	return status;
+}

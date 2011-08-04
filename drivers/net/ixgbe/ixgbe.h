@@ -98,6 +98,23 @@
 
 #define IXGBE_MAX_RSC_INT_RATE          162760
 
+#define IXGBE_MAX_VF_MC_ENTRIES         30
+#define IXGBE_MAX_VF_FUNCTIONS          64
+#define IXGBE_MAX_VFTA_ENTRIES          128
+#define MAX_EMULATION_MAC_ADDRS         16
+#define VMDQ_P(p)   ((p) + adapter->num_vfs)
+
+struct vf_data_storage {
+	unsigned char vf_mac_addresses[ETH_ALEN];
+	u16 vf_mc_hashes[IXGBE_MAX_VF_MC_ENTRIES];
+	u16 num_vf_mc_hashes;
+	u16 default_vf_vlan_id;
+	u16 vlans_enabled;
+	unsigned char em_mac_addresses[MAX_EMULATION_MAC_ADDRS * ETH_ALEN];
+	bool clear_to_send;
+	int rar;
+};
+
 /* wrapper around a pointer to a socket buffer,
  * so a DMA handle can be stored along with the buffer */
 struct ixgbe_tx_buffer {
@@ -144,11 +161,6 @@ struct ixgbe_ring {
 	unsigned int total_bytes;
 	unsigned int total_packets;
 
-#ifdef CONFIG_IXGBE_DCA
-	/* cpu for tx queue */
-	int cpu;
-#endif
-
 	u16 work_limit;			/* max work per interrupt */
 	u16 reg_idx;			/* holds the special value that gets
 					 * the hardware register offset
@@ -166,12 +178,13 @@ struct ixgbe_ring {
 
 	unsigned int size;		/* length in bytes */
 	dma_addr_t dma;			/* phys. address of descriptor ring */
+	struct ixgbe_q_vector *q_vector; /* back-pointer to host q_vector */
 } ____cacheline_internodealigned_in_smp;
 
 enum ixgbe_ring_f_enum {
 	RING_F_NONE = 0,
 	RING_F_DCB,
-	RING_F_VMDQ,
+	RING_F_VMDQ,  /* SR-IOV uses the same ring feature */
 	RING_F_RSS,
 	RING_F_FDIR,
 #ifdef IXGBE_FCOE
@@ -183,7 +196,7 @@ enum ixgbe_ring_f_enum {
 
 #define IXGBE_MAX_DCB_INDICES   8
 #define IXGBE_MAX_RSS_INDICES  16
-#define IXGBE_MAX_VMDQ_INDICES 16
+#define IXGBE_MAX_VMDQ_INDICES 64
 #define IXGBE_MAX_FDIR_INDICES 64
 #ifdef IXGBE_FCOE
 #define IXGBE_MAX_FCOE_INDICES  8
@@ -208,6 +221,9 @@ struct ixgbe_q_vector {
 	unsigned int v_idx; /* index of q_vector within array, also used for
 	                     * finding the bit in EICR and friends that
 	                     * represents the vector for this ring */
+#ifdef CONFIG_IXGBE_DCA
+	int cpu;	    /* CPU for DCA */
+#endif
 	struct napi_struct napi;
 	DECLARE_BITMAP(rxr_idx, MAX_RX_QUEUES); /* Rx ring indices */
 	DECLARE_BITMAP(txr_idx, MAX_TX_QUEUES); /* Tx ring indices */
@@ -288,6 +304,8 @@ struct ixgbe_adapter {
 	/* RX */
 	struct ixgbe_ring *rx_ring[MAX_RX_QUEUES] ____cacheline_aligned_in_smp;
 	int num_rx_queues;
+	int num_rx_pools;		/* == num_rx_queues in 82598 */
+	int num_rx_queues_per_pool;	/* 1 if 82598, can be many if 82599 */
 	u64 hw_csum_rx_error;
 	u64 hw_rx_no_dma_resources;
 	u64 non_eop_descs;
@@ -336,6 +354,7 @@ struct ixgbe_adapter {
 	u32 flags2;
 #define IXGBE_FLAG2_RSC_CAPABLE                 (u32)(1)
 #define IXGBE_FLAG2_RSC_ENABLED                 (u32)(1 << 1)
+#define IXGBE_FLAG2_TEMP_SENSOR_CAPABLE         (u32)(1 << 2)
 /* default to trying for four seconds */
 #define IXGBE_TRY_LINK_TIMEOUT (4 * HZ)
 
@@ -383,6 +402,13 @@ struct ixgbe_adapter {
 	u16 eeprom_version;
 
 	int node;
+	struct work_struct check_overtemp_task;
+	u32 interrupt_event;
+
+	/* SR-IOV */
+	DECLARE_BITMAP(active_vfs, IXGBE_MAX_VF_FUNCTIONS);
+	unsigned int num_vfs;
+	struct vf_data_storage *vfinfo;
 };
 
 enum ixbge_state_t {
@@ -396,10 +422,12 @@ enum ixbge_state_t {
 enum ixgbe_boards {
 	board_82598,
 	board_82599,
+	board_X540,
 };
 
 extern struct ixgbe_info ixgbe_82598_info;
 extern struct ixgbe_info ixgbe_82599_info;
+extern struct ixgbe_info ixgbe_X540_info;
 #ifdef CONFIG_IXGBE_DCB
 extern const struct dcbnl_rtnl_ops dcbnl_ops;
 extern int ixgbe_copy_dcb_cfg(struct ixgbe_dcb_config *src_dcb_cfg,
@@ -444,6 +472,11 @@ extern s32 ixgbe_atr_set_flex_byte_82599(struct ixgbe_atr_input *input,
                                          u16 flex_byte);
 extern s32 ixgbe_atr_set_l4type_82599(struct ixgbe_atr_input *input,
                                       u8 l4type);
+extern void ixgbe_configure_rscctl(struct ixgbe_adapter *adapter,
+                                   struct ixgbe_ring *ring);
+extern void ixgbe_clear_rscctl(struct ixgbe_adapter *adapter,
+                               struct ixgbe_ring *ring);
+extern void ixgbe_set_rx_mode(struct net_device *netdev);
 #ifdef IXGBE_FCOE
 extern void ixgbe_configure_fcoe(struct ixgbe_adapter *adapter);
 extern int ixgbe_fso(struct ixgbe_adapter *adapter,
