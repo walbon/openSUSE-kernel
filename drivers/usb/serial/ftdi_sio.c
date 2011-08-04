@@ -2163,7 +2163,6 @@ static void ftdi_set_termios(struct tty_struct *tty,
 		/* lower DTR/RTS */
 		clear_mctrl(port, TIOCM_DTR | TIOCM_RTS);
 	}
-	return;
 }
 
 static int ftdi_tiocmget(struct tty_struct *tty, struct file *file)
@@ -2251,6 +2250,7 @@ static int ftdi_ioctl(struct tty_struct *tty, struct file *file,
 	 * - mask passed in arg for lines of interest
 	 *   (use |'ed TIOCM_RNG/DSR/CD/CTS for masking)
 	 * Caller should use TIOCGICOUNT to see which one it was.
+	 * (except that the driver doesn't support it !)
 	 *
 	 * This code is borrowed from linux/drivers/char/serial.c
 	 */
