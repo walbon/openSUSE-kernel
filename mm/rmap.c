@@ -527,10 +527,10 @@ int page_referenced(struct page *page,
 							mem_cont, vm_flags);
 			unlock_page(page);
 		}
-	}
 
-	if (page_test_and_clear_young(page))
-		referenced++;
+		if (page_test_and_clear_young(page))
+			referenced++;
+	}
 
 	return referenced;
 }
