@@ -22,6 +22,9 @@
 #error "This file is PCI bus glue.  CONFIG_PCI must be defined."
 #endif
 
+/* defined here to avoid adding to pci_ids.h for single instance use */
+#define PCI_DEVICE_ID_INTEL_CE4100_USB	0x2e70
+
 #ifdef CONFIG_KDB_USB
 #include <linux/kdb.h>
 #endif
@@ -179,6 +182,10 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 				|| pdev->device == 0x0829) {
 			ehci_info(ehci, "disable lpm for langwell/penwell\n");
 			ehci->has_lpm = 0;
+		}
+		if (pdev->device == PCI_DEVICE_ID_INTEL_CE4100_USB) {
+			hcd->has_tt = 1;
+			tdi_reset(ehci);
 		}
 		break;
 	case PCI_VENDOR_ID_TDI:
