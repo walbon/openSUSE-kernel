@@ -303,6 +303,7 @@ void i915_handle_hotplug(struct drm_device *dev)
 	struct drm_mode_config *mode_config = &dev->mode_config;
 	struct intel_encoder *encoder;
 
+	mutex_lock(&mode_config->mutex);
 	DRM_DEBUG_KMS("running encoder hotplug functions\n");
 
 	list_for_each_entry(encoder, &mode_config->encoder_list, base.head)
@@ -311,6 +312,8 @@ void i915_handle_hotplug(struct drm_device *dev)
 
 	/* Just fire off a uevent and let userspace tell us what to do */
 	drm_helper_hpd_irq_event(dev);
+
+	mutex_unlock(&mode_config->mutex);
 }
 
 static void i915_hotplug_work_func(struct work_struct *work)
