@@ -111,6 +111,11 @@ static inline char *strim(char *s)
         return s;
 }
 
+enum ethtool_flags_ext {
+        ETH_FLAG_RXHASH         = (1 << 28),
+};
+
+
 #define ethtool_op_set_flags compat_ethtool_op_set_flags
 
 static const u32 flags_dup_features =
