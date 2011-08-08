@@ -181,43 +181,6 @@ EXPORT_SYMBOL(nr_online_nodes);
 
 int page_group_by_mobility_disabled __read_mostly;
 
-static wait_queue_head_t watermark_wq __read_mostly = __WAIT_QUEUE_HEAD_INITIALIZER(watermark_wq);
-
-static inline void watermark_check_zone(struct zone *zone)
-{
-	/* If no process is waiting, nothing to do */
-	if (likely(!waitqueue_active(&watermark_wq)))
-		return;
-
-	/* Check if the high watermark is ok for order 0 */
-	if (zone_watermark_ok(zone, 0, low_wmark_pages(zone), 0, 0))
-		wake_up_interruptible(&watermark_wq);
-}
-
-/**
- * watermark_wait - Wait for watermark to go above low
- * @timeout: Wait until watermark is reached or this timeout is reached
- *
- * Waits for up to @timeout jiffies for watermark on a zone to be reached
- */
-static long watermark_wait(long timeout)
-{
-	long ret;
-	DEFINE_WAIT(wait);
-
-	prepare_to_wait(&watermark_wq, &wait, TASK_INTERRUPTIBLE);
-
-	/*
-	 * The use of io_schedule_timeout() here means that it gets
-	 * accounted for as IO waiting. This may or may not be the case
-	 * but at least this way it gets picked up by vmstat
-	 */
-	ret = io_schedule_timeout(timeout);
-	finish_wait(&watermark_wq, &wait);
-
-	return ret;
-}
-
 static void set_pageblock_migratetype(struct page *page, int migratetype)
 {
 
@@ -631,8 +594,6 @@ static void free_pcppages_bulk(struct zone *zone, int count,
 	}
 	__mod_zone_page_state(zone, NR_FREE_PAGES, count);
 	spin_unlock(&zone->lock);
-	/* A batch of pages have been freed so check zone pressure */
-	watermark_check_zone(zone);
 }
 
 static void free_one_page(struct zone *zone, struct page *page, int order,
@@ -645,8 +606,6 @@ static void free_one_page(struct zone *zone, struct page *page, int order,
 	__free_one_page(page, zone, order, migratetype);
 	__mod_zone_page_state(zone, NR_FREE_PAGES, 1 << order);
 	spin_unlock(&zone->lock);
-	/* A batch of pages have been freed so check zone pressure */
-	watermark_check_zone(zone);
 }
 
 static bool free_pages_prepare(struct page *page, unsigned int order)
@@ -1962,10 +1921,8 @@ __alloc_pages_high_priority(gfp_t gfp_mask, unsigned int order,
 			zonelist, high_zoneidx, ALLOC_NO_WATERMARKS,
 			preferred_zone, migratetype);
 
-		if (!page && gfp_mask & __GFP_NOFAIL) {
-			/* If still failing, wait for pressure on zone to relieve */
-			watermark_wait(HZ/50);
-		}
+		if (!page && gfp_mask & __GFP_NOFAIL)
+			wait_iff_congested(preferred_zone, BLK_RW_ASYNC, HZ/50);
 	} while (!page && (gfp_mask & __GFP_NOFAIL));
 
 	return page;
@@ -2165,8 +2122,8 @@ rebalance:
 	/* Check if we should retry the allocation */
 	pages_reclaimed += did_some_progress;
 	if (should_alloc_retry(gfp_mask, order, pages_reclaimed)) {
-		/* Too much pressure, back off a bit at let reclaimers do work */
-		watermark_wait(HZ/50);
+		/* Wait for some write requests to complete then retry */
+		wait_iff_congested(preferred_zone, BLK_RW_ASYNC, HZ/50);
 		goto rebalance;
 	} else {
 		/*
