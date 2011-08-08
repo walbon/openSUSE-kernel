@@ -1691,7 +1691,7 @@ tap_ops_failed:
 rtnl_link_failed:
 	inet_del_protocol(&ipgre_protocol, IPPROTO_GRE);
 add_proto_failed:
-	unregister_pernet_device(&ipgre_net_ops);
+	unregister_pernet_gen_device(ipgre_net_id, &ipgre_net_ops);
 	goto out;
 }
 
@@ -1701,7 +1701,7 @@ static void __exit ipgre_fini(void)
 	rtnl_link_unregister(&ipgre_link_ops);
 	if (inet_del_protocol(&ipgre_protocol, IPPROTO_GRE) < 0)
 		printk(KERN_INFO "ipgre close: can't remove protocol\n");
-	unregister_pernet_device(&ipgre_net_ops);
+	unregister_pernet_gen_device(ipgre_net_id, &ipgre_net_ops);
 }
 
 module_init(ipgre_init);
