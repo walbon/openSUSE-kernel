@@ -541,20 +541,23 @@ static int balance_runtime(struct rt_rq *rt_rq)
 
 	if (sysctl_sched_rtsched_debug) {
 		struct rq *rq;
+		struct task_struct *p;
 		u64 period;
 
 		if (!printk_ratelimit())
 			return 0;
 
 		rq = rq_of_rt_rq(rt_rq);
-		period = sched_rt_period(rt_rq);
 		printk(KERN_WARNING "RT: throttling CPU%d\n", rq->cpu);
 
-		if (rt_rq->rt_time > period - (period >> 3)) {
-			struct task_struct *p = rq->curr;
+		if (!rt_task(rq->curr))
+			return 0;
 
+		period = sched_rt_period(rt_rq);
+		p = rq->curr;
+
+		if (rt_rq->rt_time > period - (period >> 3))
 			printk(KERN_WARNING "RT: Danger!  (%s) is potential runaway.\n", p->comm);
-		}
 
 		return 0;
 	}
