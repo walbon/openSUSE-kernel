@@ -570,6 +570,7 @@ static void raid1_unplug(struct request_queue *q)
 	md_wakeup_thread(mddev->thread);
 }
 
+static int nr_requests = 1024;
 static int raid1_congested(void *data, int bits)
 {
 	mddev_t *mddev = data;
@@ -577,6 +578,10 @@ static int raid1_congested(void *data, int bits)
 	int i, ret = 0;
 
 	if (mddev_congested(mddev, bits))
+		return 1;
+
+	if ((bits & (1 << BDI_async_congested)) &&
+	    conf->pending_count >= nr_requests)
 		return 1;
 
 	rcu_read_lock();
@@ -613,7 +618,9 @@ static int flush_pending_writes(conf_t *conf)
 		struct bio *bio;
 		bio = bio_list_get(&conf->pending_bio_list);
 		blk_remove_plug(conf->mddev->queue);
+		conf->pending_count = 0;
 		spin_unlock_irq(&conf->device_lock);
+		wake_up(&conf->wait_barrier);
 		/* flush any pending bitmap writes to
 		 * disk before proceeding w/ I/O */
 		bitmap_unplug(conf->mddev->bitmap);
@@ -783,6 +790,7 @@ static int make_request(struct request_queue *q, struct bio * bio)
 	struct bitmap *bitmap;
 	unsigned long flags;
 	struct bio_list bl;
+	int bl_count;
 	struct page **behind_pages = NULL;
 	const int rw = bio_data_dir(bio);
 	const bool do_sync = bio_rw_flagged(bio, BIO_RW_SYNCIO);
@@ -873,6 +881,11 @@ static int make_request(struct request_queue *q, struct bio * bio)
 	/*
 	 * WRITE:
 	 */
+	if (conf->pending_count >= nr_requests) {
+		md_wakeup_thread(mddev->thread);
+		wait_event(conf->wait_barrier,
+			   conf->pending_count < nr_requests);
+	}
 	/* first select target devices under spinlock and
 	 * inc refcount on their rdev.  Record them by setting
 	 * bios[x] to bio
@@ -949,6 +962,7 @@ static int make_request(struct request_queue *q, struct bio * bio)
 		set_bit(R1BIO_Barrier, &r1_bio->state);
 
 	bio_list_init(&bl);
+	bl_count = 0;
 	for (i = 0; i < disks; i++) {
 		struct bio *mbio;
 		if (!r1_bio->bios[i])
@@ -984,6 +998,7 @@ static int make_request(struct request_queue *q, struct bio * bio)
 		atomic_inc(&r1_bio->remaining);
 
 		bio_list_add(&bl, mbio);
+		bl_count++;
 	}
 	kfree(behind_pages); /* the behind pages are attached to the bios now */
 
@@ -991,6 +1006,7 @@ static int make_request(struct request_queue *q, struct bio * bio)
 				test_bit(R1BIO_BehindIO, &r1_bio->state));
 	spin_lock_irqsave(&conf->device_lock, flags);
 	bio_list_merge(&conf->pending_bio_list, &bl);
+	conf->pending_count += bl_count;
 	bio_list_init(&bl);
 
 	blk_plug_device(mddev->queue);
@@ -2035,6 +2051,7 @@ static int run(mddev_t *mddev)
 	init_waitqueue_head(&conf->wait_barrier);
 
 	bio_list_init(&conf->pending_bio_list);
+	conf->pending_count = 0;
 	bio_list_init(&conf->flushing_bio_list);
 
 
@@ -2330,3 +2347,5 @@ MODULE_LICENSE("GPL");
 MODULE_ALIAS("md-personality-3"); /* RAID1 */
 MODULE_ALIAS("md-raid1");
 MODULE_ALIAS("md-level-1");
+
+module_param(nr_requests, int, S_IRUGO|S_IWUSR);
