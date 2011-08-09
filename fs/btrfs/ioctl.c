@@ -2146,7 +2146,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 		goto out_fput;
 
 	ret = -EXDEV;
-	if (src->i_sb != inode->i_sb || BTRFS_I(src)->root != root)
+	if (src->i_sb != inode->i_sb)
 		goto out_fput;
 
 	ret = -ENOMEM;
@@ -2210,13 +2210,14 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 		 * note the key will change type as we walk through the
 		 * tree.
 		 */
-		ret = btrfs_search_slot(NULL, root, &key, path, 0, 0);
+		ret = btrfs_search_slot(NULL, BTRFS_I(src)->root, &key, path,
+				0, 0);
 		if (ret < 0)
 			goto out;
 
 		nritems = btrfs_header_nritems(path->nodes[0]);
 		if (path->slots[0] >= nritems) {
-			ret = btrfs_next_leaf(root, path);
+			ret = btrfs_next_leaf(BTRFS_I(src)->root, path);
 			if (ret < 0)
 				goto out;
 			if (ret > 0)
@@ -2277,7 +2278,12 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 			else
 				new_key.offset = destoff;
 
-			trans = btrfs_start_transaction(root, 1);
+			/*
+			 * 1 - adjusting old extent (we may have to split it)
+			 * 1 - add new extent
+			 * 1 - inode update
+			 */
+			trans = btrfs_start_transaction(root, 3);
 			if (IS_ERR(trans)) {
 				ret = PTR_ERR(trans);
 				goto out;
