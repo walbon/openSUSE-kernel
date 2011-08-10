@@ -161,6 +161,19 @@ static inline int is_active(const struct usb_interface *f)
 	return f->is_active;
 }
 
+/* translate USB error codes to codes user space understands */
+static inline int usb_translate_errors(int error_code)
+{
+	switch (error_code) {
+	case 0:
+	case -ENOMEM:
+	case -ENODEV:
+		return error_code;
+	default:
+		return -EIO;
+	}
+}
+
 
 /* for labeling diagnostics */
 extern const char *usbcore_name;
