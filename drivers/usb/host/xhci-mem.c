@@ -845,7 +845,7 @@ static u32 xhci_find_real_port_number(struct xhci_hcd *xhci,
 		 * Skip ports that don't have known speeds, or have duplicate
 		 * Extended Capabilities port speed entries.
 		 */
-		if (port_speed == 0 || port_speed == -1)
+		if (port_speed == 0 || port_speed == DUPLICATE_ENTRY)
 			continue;
 
 		/*
@@ -1032,7 +1032,7 @@ static unsigned int xhci_parse_frame_interval(struct usb_device *udev,
  * The NAK interval is one NAK per 1 to 255 microframes, or no NAKs if interval
  * is set to 0.
  */
-static inline unsigned int xhci_get_endpoint_interval(struct usb_device *udev,
+static unsigned int xhci_get_endpoint_interval(struct usb_device *udev,
 		struct usb_host_endpoint *ep)
 {
 	unsigned int interval = 0;
@@ -1084,7 +1084,7 @@ static inline unsigned int xhci_get_endpoint_interval(struct usb_device *udev,
  * transaction opportunities per microframe", but that goes in the Max Burst
  * endpoint context field.
  */
-static inline u32 xhci_get_endpoint_mult(struct usb_device *udev,
+static u32 xhci_get_endpoint_mult(struct usb_device *udev,
 		struct usb_host_endpoint *ep)
 {
 	if (udev->speed != USB_SPEED_SUPER ||
@@ -1093,7 +1093,7 @@ static inline u32 xhci_get_endpoint_mult(struct usb_device *udev,
 	return ep->ss_ep_comp.bmAttributes;
 }
 
-static inline u32 xhci_get_endpoint_type(struct usb_device *udev,
+static u32 xhci_get_endpoint_type(struct usb_device *udev,
 		struct usb_host_endpoint *ep)
 {
 	int in;
@@ -1127,7 +1127,7 @@ static inline u32 xhci_get_endpoint_type(struct usb_device *udev,
  * Basically, this is the maxpacket size, multiplied by the burst size
  * and mult size.
  */
-static inline u32 xhci_get_max_esit_payload(struct xhci_hcd *xhci,
+static u32 xhci_get_max_esit_payload(struct xhci_hcd *xhci,
 		struct usb_device *udev,
 		struct usb_host_endpoint *ep)
 {
@@ -1770,12 +1770,12 @@ static void xhci_add_in_port(struct xhci_hcd *xhci, unsigned int num_ports,
 			 * found a similar duplicate.
 			 */
 			if (xhci->port_array[i] != major_revision &&
-				xhci->port_array[i] != (u8) -1) {
+				xhci->port_array[i] != DUPLICATE_ENTRY) {
 				if (xhci->port_array[i] == 0x03)
 					xhci->num_usb3_ports--;
 				else
 					xhci->num_usb2_ports--;
-				xhci->port_array[i] = (u8) -1;
+				xhci->port_array[i] = DUPLICATE_ENTRY;
 			}
 			/* FIXME: Should we disable the port? */
 			continue;
@@ -1874,7 +1874,7 @@ static int xhci_setup_port_arrays(struct xhci_hcd *xhci, gfp_t flags)
 		for (i = 0; i < num_ports; i++) {
 			if (xhci->port_array[i] == 0x03 ||
 					xhci->port_array[i] == 0 ||
-					xhci->port_array[i] == -1)
+					xhci->port_array[i] == DUPLICATE_ENTRY)
 				continue;
 
 			xhci->usb2_ports[port_index] =
