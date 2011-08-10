@@ -678,7 +678,7 @@ static int kdb_uhci_keyboard_set_hid_event_qh(struct uhci_qh *qh, int hid_event)
 
 /*
  * Store the current frame number in uhci->frame_number if the controller
- * is runnning.  Expand from 11 bits (of which we use only 10) to a
+ * is running.  Expand from 11 bits (of which we use only 10) to a
  * full-sized integer.
  *
  * Like many other parts of the driver, this code relies on being polled
