@@ -1164,13 +1164,6 @@ static int acpi_processor_setup_cpuidle(struct acpi_processor *pr)
 
 	return 0;
 }
-
-#else /* CONFIG_PROCESSOR_EXTERNAL_CONTROL */
-static inline int acpi_processor_setup_cpuidle(struct acpi_processor *pr)
-{
-	(void)us_to_pm_timer_ticks;
-	return 0;
-}
 #endif /* CONFIG_PROCESSOR_EXTERNAL_CONTROL */
 
 int acpi_processor_cst_has_changed(struct acpi_processor *pr)
@@ -1201,10 +1194,12 @@ int acpi_processor_cst_has_changed(struct acpi_processor *pr)
 	cpuidle_pause_and_lock();
 	cpuidle_disable_device(&pr->power.dev);
 	acpi_processor_get_power_info(pr);
+#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
 	if (pr->flags.power) {
 		acpi_processor_setup_cpuidle(pr);
 		ret = cpuidle_enable_device(&pr->power.dev);
 	}
+#endif
 	cpuidle_resume_and_unlock();
 
 	return ret;
@@ -1256,6 +1251,7 @@ int __cpuinit acpi_processor_power_init(struct acpi_processor *pr,
 	acpi_processor_get_power_info(pr);
 	pr->flags.power_setup_done = 1;
 
+#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
 	/*
 	 * Install the idle handler if processor power management is supported.
 	 * Note that we use previously set idle handler will be used on
@@ -1266,6 +1262,14 @@ int __cpuinit acpi_processor_power_init(struct acpi_processor *pr,
 		if (cpuidle_register_device(&pr->power.dev))
 			return -EIO;
 	}
+#else /* avoid compiler warning */
+	(void)us_to_pm_timer_ticks;
+#endif
+
+	if (processor_pm_external())
+		processor_notify_external(pr,
+			PROCESSOR_PM_INIT, PM_TYPE_IDLE);
+
 #ifdef CONFIG_ACPI_PROCFS
 	/* 'power' [R] */
 	entry = proc_create_data(ACPI_PROCESSOR_FILE_POWER,
@@ -1275,11 +1279,6 @@ int __cpuinit acpi_processor_power_init(struct acpi_processor *pr,
 	if (!entry)
 		return -EIO;
 #endif
-
-	if (processor_pm_external())
-		processor_notify_external(pr,
-			PROCESSOR_PM_INIT, PM_TYPE_IDLE);
-
 	return 0;
 }
 

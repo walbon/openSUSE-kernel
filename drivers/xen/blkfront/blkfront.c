@@ -89,6 +89,26 @@ static int blkfront_probe(struct xenbus_device *dev,
 	int err, vdevice, i;
 	struct blkfront_info *info;
 
+#ifndef CONFIG_XEN /* For HVM guests, do not take over CDROM devices. */
+	char *type;
+
+	type = xenbus_read(XBT_NIL, dev->nodename, "device-type", NULL);
+	if (IS_ERR(type)) {
+		xenbus_dev_fatal(dev, PTR_ERR(type), "reading dev type");
+		return PTR_ERR(type);
+	}
+	if (!strncmp(type, "cdrom", 5)) {
+		/*
+		 * We are handed a cdrom device in a hvm guest; let the
+		 * native cdrom driver handle this device.
+		 */
+		kfree(type);
+		pr_notice("blkfront: ignoring CDROM %s\n", dev->nodename);
+		return -ENXIO;
+	}
+	kfree(type);
+#endif
+
 	/* FIXME: Use dynamic device id if this is not set. */
 	err = xenbus_scanf(XBT_NIL, dev->nodename,
 			   "virtual-device", "%i", &vdevice);

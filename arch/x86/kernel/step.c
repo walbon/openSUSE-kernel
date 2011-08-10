@@ -74,7 +74,11 @@ static int is_setting_trap_flag(struct task_struct *child, struct pt_regs *regs)
 
 #ifdef CONFIG_X86_64
 		case 0x40 ... 0x4f:
+# ifndef CONFIG_XEN
 			if (regs->cs != __USER_CS)
+# else
+			if (regs->cs != __USER_CS && regs->cs != FLAT_USER_CS64)
+# endif
 				/* 32-bit mode: register increment */
 				return 0;
 			/* 64-bit mode: REX prefix */
