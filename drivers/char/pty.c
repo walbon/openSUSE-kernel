@@ -314,7 +314,7 @@ free_mem_out:
 	return -ENOMEM;
 }
 
-static int pty_bsd_ioctl(struct tty_struct *tty, struct file *file,
+static int pty_bsd_ioctl(struct tty_struct *tty,
 			 unsigned int cmd, unsigned long arg)
 {
 	switch (cmd) {
@@ -473,7 +473,7 @@ static struct ctl_table pty_root_table[] = {
 };
 
 
-static int pty_unix98_ioctl(struct tty_struct *tty, struct file *file,
+static int pty_unix98_ioctl(struct tty_struct *tty,
 			    unsigned int cmd, unsigned long arg)
 {
 	switch (cmd) {

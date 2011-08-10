@@ -576,7 +576,7 @@ static long rio_fw_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 extern int RIOShortCommand(struct rio_info *p, struct Port *PortP, int command, int len, int arg);
 
-static int rio_ioctl(struct tty_struct *tty, struct file *filp, unsigned int cmd, unsigned long arg)
+static int rio_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg)
 {
 	void __user *argp = (void __user *)arg;
 	int rc;

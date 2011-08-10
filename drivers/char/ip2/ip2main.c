@@ -172,7 +172,7 @@ static void ip2_flush_chars(PTTY);
 static int  ip2_write_room(PTTY);
 static int  ip2_chars_in_buf(PTTY);
 static void ip2_flush_buffer(PTTY);
-static int  ip2_ioctl(PTTY, struct file *, UINT, ULONG);
+static int  ip2_ioctl(PTTY, UINT, ULONG);
 static void ip2_set_termios(PTTY, struct ktermios *);
 static void ip2_set_line_discipline(PTTY);
 static void ip2_throttle(PTTY);
@@ -180,8 +180,8 @@ static void ip2_unthrottle(PTTY);
 static void ip2_stop(PTTY);
 static void ip2_start(PTTY);
 static void ip2_hangup(PTTY);
-static int  ip2_tiocmget(struct tty_struct *tty, struct file *file);
-static int  ip2_tiocmset(struct tty_struct *tty, struct file *file,
+static int  ip2_tiocmget(struct tty_struct *tty);
+static int  ip2_tiocmset(struct tty_struct *tty,
 			 unsigned int set, unsigned int clear);
 
 static void set_irq(int, int);
@@ -2017,7 +2017,7 @@ ip2_stop ( PTTY tty )
 /* Device Ioctl Section                                                       */
 /******************************************************************************/
 
-static int ip2_tiocmget(struct tty_struct *tty, struct file *file)
+static int ip2_tiocmget(struct tty_struct *tty)
 {
 	i2ChanStrPtr pCh = DevTable[tty->index];
 #ifdef	ENABLE_DSSNOW
@@ -2064,7 +2064,7 @@ static int ip2_tiocmget(struct tty_struct *tty, struct file *file)
 	      | ((pCh->dataSetIn  & I2_CTS) ? TIOCM_CTS : 0);
 }
 
-static int ip2_tiocmset(struct tty_struct *tty, struct file *file,
+static int ip2_tiocmset(struct tty_struct *tty,
 			unsigned int set, unsigned int clear)
 {
 	i2ChanStrPtr pCh = DevTable[tty->index];
@@ -2106,7 +2106,7 @@ static int ip2_tiocmset(struct tty_struct *tty, struct file *file,
 /*                                                                            */
 /******************************************************************************/
 static int
-ip2_ioctl ( PTTY tty, struct file *pFile, UINT cmd, ULONG arg )
+ip2_ioctl ( PTTY tty, UINT cmd, ULONG arg )
 {
 	wait_queue_t wait;
 	i2ChanStrPtr pCh = DevTable[tty->index];

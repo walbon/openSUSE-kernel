@@ -521,7 +521,7 @@ static void flush_buffer(struct tty_struct *tty);
 static void tx_hold(struct tty_struct *tty);
 static void tx_release(struct tty_struct *tty);
 
-static int  ioctl(struct tty_struct *tty, struct file *file, unsigned int cmd, unsigned long arg);
+static int  ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg);
 static int  chars_in_buffer(struct tty_struct *tty);
 static void throttle(struct tty_struct * tty);
 static void unthrottle(struct tty_struct * tty);
@@ -547,9 +547,9 @@ static int  tx_abort(SLMP_INFO *info);
 static int  rx_enable(SLMP_INFO *info, int enable);
 static int  modem_input_wait(SLMP_INFO *info,int arg);
 static int  wait_mgsl_event(SLMP_INFO *info, int __user *mask_ptr);
-static int  tiocmget(struct tty_struct *tty, struct file *file);
-static int  tiocmset(struct tty_struct *tty, struct file *file,
-		     unsigned int set, unsigned int clear);
+static int  tiocmget(struct tty_struct *tty);
+static int  tiocmset(struct tty_struct *tty,
+			unsigned int set, unsigned int clear);
 static int  set_break(struct tty_struct *tty, int break_state);
 
 static void add_device(SLMP_INFO *info);
@@ -1245,13 +1245,12 @@ static void tx_release(struct tty_struct *tty)
  * Arguments:
  *
  * 	tty	pointer to tty instance data
- * 	file	pointer to associated file object for device
  * 	cmd	IOCTL command code
  * 	arg	command argument/context
  *
  * Return Value:	0 if success, otherwise error code
  */
-static int do_ioctl(struct tty_struct *tty, struct file *file,
+static int do_ioctl(struct tty_struct *tty,
 		 unsigned int cmd, unsigned long arg)
 {
 	SLMP_INFO *info = tty->driver_data;
@@ -1341,12 +1340,12 @@ static int do_ioctl(struct tty_struct *tty, struct file *file,
 	return 0;
 }
 
-static int ioctl(struct tty_struct *tty, struct file *file,
+static int ioctl(struct tty_struct *tty,
 		 unsigned int cmd, unsigned long arg)
 {
 	int ret;
 	lock_kernel();
-	ret = do_ioctl(tty, file, cmd, arg);
+	ret = do_ioctl(tty, cmd, arg);
 	unlock_kernel();
 	return ret;
 }
@@ -3214,7 +3213,7 @@ static int modem_input_wait(SLMP_INFO *info,int arg)
 
 /* return the state of the serial control and status signals
  */
-static int tiocmget(struct tty_struct *tty, struct file *file)
+static int tiocmget(struct tty_struct *tty)
 {
 	SLMP_INFO *info = tty->driver_data;
 	unsigned int result;
@@ -3239,8 +3238,8 @@ static int tiocmget(struct tty_struct *tty, struct file *file)
 
 /* set modem control signals (DTR/RTS)
  */
-static int tiocmset(struct tty_struct *tty, struct file *file,
-		    unsigned int set, unsigned int clear)
+static int tiocmset(struct tty_struct *tty,
+					unsigned int set, unsigned int clear)
 {
 	SLMP_INFO *info = tty->driver_data;
  	unsigned long flags;

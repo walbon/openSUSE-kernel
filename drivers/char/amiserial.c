@@ -1194,7 +1194,7 @@ static int get_lsr_info(struct async_struct * info, unsigned int __user *value)
 }
 
 
-static int rs_tiocmget(struct tty_struct *tty, struct file *file)
+static int rs_tiocmget(struct tty_struct *tty)
 {
 	struct async_struct * info = tty->driver_data;
 	unsigned char control, status;
@@ -1216,8 +1216,8 @@ static int rs_tiocmget(struct tty_struct *tty, struct file *file)
 		| (!(status  & SER_CTS) ? TIOCM_CTS : 0);
 }
 
-static int rs_tiocmset(struct tty_struct *tty, struct file *file,
-		       unsigned int set, unsigned int clear)
+static int rs_tiocmset(struct tty_struct *tty, unsigned int set,
+						unsigned int clear)
 {
 	struct async_struct * info = tty->driver_data;
 	unsigned long flags;
@@ -1263,7 +1263,7 @@ static int rs_break(struct tty_struct *tty, int break_state)
 }
 
 
-static int rs_ioctl(struct tty_struct *tty, struct file * file,
+static int rs_ioctl(struct tty_struct *tty,
 		    unsigned int cmd, unsigned long arg)
 {
 	struct async_struct * info = tty->driver_data;

@@ -506,7 +506,7 @@ static int pl2303_open(struct tty_struct *tty, struct usb_serial_port *port)
 	return 0;
 }
 
-static int pl2303_tiocmset(struct tty_struct *tty, struct file *file,
+static int pl2303_tiocmset(struct tty_struct *tty,
 			   unsigned int set, unsigned int clear)
 {
 	struct usb_serial_port *port = tty->driver_data;
@@ -532,7 +532,7 @@ static int pl2303_tiocmset(struct tty_struct *tty, struct file *file,
 	return set_control_lines(port->serial->dev, control);
 }
 
-static int pl2303_tiocmget(struct tty_struct *tty, struct file *file)
+static int pl2303_tiocmget(struct tty_struct *tty)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct pl2303_private *priv = usb_get_serial_port_data(port);
@@ -607,7 +607,7 @@ static int wait_modem_info(struct usb_serial_port *port, unsigned int arg)
 	return 0;
 }
 
-static int pl2303_ioctl(struct tty_struct *tty, struct file *file,
+static int pl2303_ioctl(struct tty_struct *tty,
 			unsigned int cmd, unsigned long arg)
 {
 	struct serial_struct ser;
