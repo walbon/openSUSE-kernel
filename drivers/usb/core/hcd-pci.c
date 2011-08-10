@@ -79,13 +79,13 @@ int usb_hcd_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 			"Found HC with no IRQ.  Check BIOS/PCI %s setup!\n",
 			pci_name(dev));
 		retval = -ENODEV;
-		goto err1;
+		goto disable_pci;
 	}
 
 	hcd = usb_create_hcd(driver, &dev->dev, pci_name(dev));
 	if (!hcd) {
 		retval = -ENOMEM;
-		goto err1;
+		goto disable_pci;
 	}
 
 	if (driver->flags & HCD_MEMORY) {
@@ -96,13 +96,13 @@ int usb_hcd_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 				driver->description)) {
 			dev_dbg(&dev->dev, "controller already in use\n");
 			retval = -EBUSY;
-			goto err2;
+			goto clear_companion;
 		}
 		hcd->regs = ioremap_nocache(hcd->rsrc_start, hcd->rsrc_len);
 		if (hcd->regs == NULL) {
 			dev_dbg(&dev->dev, "error mapping memory\n");
 			retval = -EFAULT;
-			goto err3;
+			goto release_mem_region;
 		}
 
 	} else {
@@ -123,7 +123,7 @@ int usb_hcd_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		if (region == PCI_ROM_RESOURCE) {
 			dev_dbg(&dev->dev, "no i/o regions available\n");
 			retval = -EBUSY;
-			goto err1;
+			goto clear_companion;
 		}
 	}
 
@@ -131,19 +131,19 @@ int usb_hcd_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	retval = usb_add_hcd(hcd, dev->irq, IRQF_DISABLED | IRQF_SHARED);
 	if (retval != 0)
-		goto err4;
+		goto unmap_registers;
 	return retval;
 
- err4:
+unmap_registers:
 	if (driver->flags & HCD_MEMORY) {
 		iounmap(hcd->regs);
- err3:
+release_mem_region:
 		release_mem_region(hcd->rsrc_start, hcd->rsrc_len);
 	} else
 		release_region(hcd->rsrc_start, hcd->rsrc_len);
- err2:
+clear_companion:
 	usb_put_hcd(hcd);
- err1:
+disable_pci:
 	pci_disable_device(dev);
 	dev_err(&dev->dev, "init %s fail, %d\n", pci_name(dev), retval);
 	return retval;
@@ -240,10 +240,16 @@ static int check_root_hub_suspended(struct device *dev)
 	struct pci_dev		*pci_dev = to_pci_dev(dev);
 	struct usb_hcd		*hcd = pci_get_drvdata(pci_dev);
 
-	if (!(hcd->state == HC_STATE_SUSPENDED ||
-			hcd->state == HC_STATE_HALT)) {
+	if (HCD_RH_RUNNING(hcd)) {
 		dev_warn(dev, "Root hub is not suspended\n");
 		return -EBUSY;
+	}
+	if (hcd->shared_hcd) {
+		hcd = hcd->shared_hcd;
+		if (HCD_RH_RUNNING(hcd)) {
+			dev_warn(dev, "Secondary root hub is not suspended\n");
+			return -EBUSY;
+		}
 	}
 	return 0;
 }
@@ -267,7 +273,7 @@ static int hcd_pci_suspend(struct device *dev)
 	if (pci_dev->current_state != PCI_D0)
 		return retval;
 
-	if (hcd->driver->pci_suspend) {
+	if (hcd->driver->pci_suspend && !HCD_DEAD(hcd)) {
 		retval = hcd->driver->pci_suspend(hcd);
 		suspend_report_result(hcd->driver->pci_suspend, retval);
 		if (retval)
@@ -302,10 +308,11 @@ static int hcd_pci_suspend_noirq(struct device *dev)
 
 	pci_save_state(pci_dev);
 
-	/* If the root hub is HALTed rather than SUSPENDed,
-	 * disallow remote wakeup.
+	/* If the root hub is dead rather than suspended, disallow remote
+	 * wakeup.  usb_hc_died() should ensure that both hosts are marked as
+	 * dying, so we only need to check the primary roothub.
 	 */
-	if (hcd->state == HC_STATE_HALT)
+	if (HCD_DEAD(hcd))
 		device_set_wakeup_enable(dev, 0);
 	dev_dbg(dev, "wakeup: %d\n", device_may_wakeup(dev));
 
@@ -345,7 +352,9 @@ static int resume_common(struct device *dev, bool hibernated)
 	struct usb_hcd		*hcd = pci_get_drvdata(pci_dev);
 	int			retval;
 
-	if (hcd->state != HC_STATE_SUSPENDED) {
+	if (HCD_RH_RUNNING(hcd) ||
+			(hcd->shared_hcd &&
+			 HCD_RH_RUNNING(hcd->shared_hcd))) {
 		dev_dbg(dev, "can't resume, not suspended!\n");
 		return 0;
 	}
@@ -359,11 +368,15 @@ static int resume_common(struct device *dev, bool hibernated)
 	pci_set_master(pci_dev);
 
 	clear_bit(HCD_FLAG_SAW_IRQ, &hcd->flags);
+	if (hcd->shared_hcd)
+		clear_bit(HCD_FLAG_SAW_IRQ, &hcd->shared_hcd->flags);
 
-	if (hcd->driver->pci_resume) {
+	if (hcd->driver->pci_resume && !HCD_DEAD(hcd)) {
 		retval = hcd->driver->pci_resume(hcd, hibernated);
 		if (retval) {
 			dev_err(dev, "PCI post-resume error %d!\n", retval);
+			if (hcd->shared_hcd)
+				usb_hc_died(hcd->shared_hcd);
 			usb_hc_died(hcd);
 		}
 	}
