@@ -156,14 +156,14 @@ EXPORT_SYMBOL_GPL(ehci_cf_port_reset_rwsem);
 
 static int usb_reset_and_verify_device(struct usb_device *udev);
 
-static inline char *portspeed(int portstatus)
+static inline char *portspeed(struct usb_hub *hub, int portstatus)
 {
+	if (hub_is_superspeed(hub->hdev))
+		return "5.0 Gb/s";
 	if (portstatus & USB_PORT_STAT_HIGH_SPEED)
     		return "480 Mb/s";
 	else if (portstatus & USB_PORT_STAT_LOW_SPEED)
 		return "1.5 Mb/s";
-	else if (portstatus & USB_PORT_STAT_SUPER_SPEED)
-		return "5.0 Gb/s";
 	else
 		return "12 Mb/s";
 }
@@ -388,9 +388,6 @@ static int hub_port_status(struct usb_hub *hub, int port1,
 			u16 tmp = *status & USB_SS_PORT_STAT_MASK;
 			if (*status & USB_SS_PORT_STAT_POWER)
 				tmp |= USB_PORT_STAT_POWER;
-			if ((*status & USB_SS_PORT_STAT_SPEED) ==
-					USB_PORT_STAT_SPEED_5GBPS)
-				tmp |= USB_PORT_STAT_SUPER_SPEED;
 			*status = tmp;
 		}
 
@@ -798,12 +795,8 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 			 * USB3 protocol ports will automatically transition
 			 * to Enabled state when detect an USB3.0 device attach.
 			 * Do not disable USB3 protocol ports.
-			 * FIXME: USB3 root hub and external hubs are treated
-			 * differently here.
 			 */
-			if (hdev->descriptor.bDeviceProtocol != 3 ||
-			    (!hdev->parent &&
-			     !(portstatus & USB_PORT_STAT_SUPER_SPEED))) {
+			if (!hub_is_superspeed(hdev)) {
 				clear_port_feature(hdev, port1,
 						   USB_PORT_FEAT_ENABLE);
 				portstatus &= ~USB_PORT_STAT_ENABLE;
@@ -1306,8 +1299,14 @@ static int hub_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	desc = intf->cur_altsetting;
 	hdev = interface_to_usbdev(intf);
 
-	/* Hubs have proper suspend/resume support */
-	usb_enable_autosuspend(hdev);
+	/* Hubs have proper suspend/resume support.  USB 3.0 device suspend is
+	 * different from USB 2.0/1.1 device suspend, and unfortunately we
+	 * don't support it yet.  So leave autosuspend disabled for USB 3.0
+	 * external hubs for now.  Enable autosuspend for USB 3.0 roothubs,
+	 * since that isn't a "real" hub.
+	 */
+	if (!hub_is_superspeed(hdev) || !hdev->parent)
+		usb_enable_autosuspend(hdev);
 
 	if (hdev->level == MAX_TOPO_LEVEL) {
 		dev_err(&intf->dev,
@@ -1519,6 +1518,7 @@ void usb_set_device_state(struct usb_device *udev,
 		enum usb_device_state new_state)
 {
 	unsigned long flags;
+	int wakeup = -1;
 
 	spin_lock_irqsave(&device_state_lock, flags);
 	if (udev->state == USB_STATE_NOTATTACHED)
@@ -1533,11 +1533,10 @@ void usb_set_device_state(struct usb_device *udev,
 					|| new_state == USB_STATE_SUSPENDED)
 				;	/* No change to wakeup settings */
 			else if (new_state == USB_STATE_CONFIGURED)
-				device_set_wakeup_capable(&udev->dev,
-					(udev->actconfig->desc.bmAttributes
-					 & USB_CONFIG_ATT_WAKEUP));
+				wakeup = udev->actconfig->desc.bmAttributes
+					 & USB_CONFIG_ATT_WAKEUP;
 			else
-				device_set_wakeup_capable(&udev->dev, 0);
+				wakeup = 0;
 		}
 		if (udev->state == USB_STATE_SUSPENDED &&
 			new_state != USB_STATE_SUSPENDED)
@@ -1549,6 +1548,8 @@ void usb_set_device_state(struct usb_device *udev,
 	} else
 		recursively_mark_NOTATTACHED(udev);
 	spin_unlock_irqrestore(&device_state_lock, flags);
+	if (wakeup >= 0)
+		device_set_wakeup_capable(&udev->dev, wakeup);
 }
 EXPORT_SYMBOL_GPL(usb_set_device_state);
 
@@ -2092,14 +2093,12 @@ static int hub_port_wait_reset(struct usb_hub *hub, int port1,
 		    (portstatus & USB_PORT_STAT_ENABLE)) {
 			if (hub_is_wusb(hub))
 				udev->speed = USB_SPEED_WIRELESS;
-			else if (portstatus & USB_PORT_STAT_SUPER_SPEED)
+			else if (hub_is_superspeed(hub->hdev))
 				udev->speed = USB_SPEED_SUPER;
 			else if (portstatus & USB_PORT_STAT_HIGH_SPEED)
 				udev->speed = USB_SPEED_HIGH;
 			else if (portstatus & USB_PORT_STAT_LOW_SPEED)
 				udev->speed = USB_SPEED_LOW;
-			else if (portstatus & USB_PORT_STAT_SUPER_SPEED)
-				udev->speed = USB_SPEED_SUPER;
 			else
 				udev->speed = USB_SPEED_FULL;
 			return 0;
@@ -3092,7 +3091,7 @@ static void hub_port_connect_change(struct usb_hub *hub, int port1,
 
 	dev_dbg (hub_dev,
 		"port %d, status %04x, change %04x, %s\n",
-		port1, portstatus, portchange, portspeed (portstatus));
+		port1, portstatus, portchange, portspeed(hub, portstatus));
 
 	if (hub->has_indicators) {
 		set_port_led(hub, port1, HUB_LED_AUTO);
@@ -3193,19 +3192,8 @@ static void hub_port_connect_change(struct usb_hub *hub, int port1,
 		udev->level = hdev->level + 1;
 		udev->wusb = hub_is_wusb(hub);
 
-		/*
-		 * USB 3.0 devices are reset automatically before the connect
-		 * port status change appears, and the root hub port status
-		 * shows the correct speed.  We also get port change
-		 * notifications for USB 3.0 devices from the USB 3.0 portion of
-		 * an external USB 3.0 hub, but this isn't handled correctly yet
-		 * FIXME.
-		 */
-
-		if (!(hcd->driver->flags & HCD_USB3))
-			udev->speed = USB_SPEED_UNKNOWN;
-		else if ((hdev->parent == NULL) &&
-				(portstatus & USB_PORT_STAT_SUPER_SPEED))
+		/* Only USB 3.0 devices are connected to SuperSpeed hubs. */
+		if (hub_is_superspeed(hub->hdev))
 			udev->speed = USB_SPEED_SUPER;
 		else
 			udev->speed = USB_SPEED_UNKNOWN;
