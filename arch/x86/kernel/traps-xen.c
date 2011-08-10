@@ -314,15 +314,15 @@ gp_in_kernel:
 }
 
 static notrace __kprobes void
-pci_serr_error(unsigned char reason, struct pt_regs *regs)
+mem_parity_error(unsigned char reason, struct pt_regs *regs)
 {
-	pr_emerg("NMI: PCI system error (SERR) for reason %02x on CPU %d.\n",
-		reason, smp_processor_id());
+	printk(KERN_EMERG
+		"Uhhuh. NMI received for unknown reason %02x on CPU %d.\n",
+			reason, smp_processor_id());
 
-	/*
-	 * On some machines, PCI SERR line is used to report memory
-	 * errors. EDAC makes use of it.
-	 */
+	printk(KERN_EMERG
+		"You have some hardware problem, likely on the PCI bus.\n");
+
 #if defined(CONFIG_EDAC)
 	if (edac_handler_set()) {
 		edac_atomic_assert_error();
@@ -333,18 +333,16 @@ pci_serr_error(unsigned char reason, struct pt_regs *regs)
 	if (panic_on_unrecovered_nmi)
 		panic("NMI: Not continuing");
 
-	pr_emerg("Dazed and confused, but trying to continue\n");
+	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
 
-	/* Clear and disable the PCI SERR error line. */
-	clear_serr_error(reason);
+	/* Clear and disable the memory parity error line. */
+	clear_mem_error(reason);
 }
 
 static notrace __kprobes void
 io_check_error(unsigned char reason, struct pt_regs *regs)
 {
-	pr_emerg(
-	"NMI: IOCK error (debug interrupt?) for reason %02x on CPU %d.\n",
-		reason, smp_processor_id());
+	printk(KERN_EMERG "NMI: IOCK error (debug interrupt?)\n");
 	show_registers(regs);
 
 	if (panic_on_io_nmi)
@@ -370,14 +368,15 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 		return;
 	}
 #endif
-	pr_emerg("Uhhuh. NMI received for unknown reason %02x on CPU %d.\n",
-		reason, smp_processor_id());
+	printk(KERN_EMERG
+		"Uhhuh. NMI received for unknown reason %02x on CPU %d.\n",
+			reason, smp_processor_id());
 
-	pr_emerg("Do you have a strange power saving mode enabled?\n");
+	printk(KERN_EMERG "Do you have a strange power saving mode enabled?\n");
 	if (panic_on_unrecovered_nmi)
 		panic("NMI: Not continuing");
 
-	pr_emerg("Dazed and confused, but trying to continue\n");
+	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
 }
 
 static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
@@ -385,16 +384,16 @@ static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 	unsigned char reason = 0;
 	int cpu;
 
-	if (notify_die(DIE_NMI, "nmi", regs, reason, 2, SIGINT) == NOTIFY_STOP)
-		return;
-
 	cpu = smp_processor_id();
 
 	/* Only the BSP gets external NMIs from the system. */
 	if (!cpu)
 		reason = get_nmi_reason();
 
-	if (!(reason & NMI_REASON_MASK)) {
+	if (!(reason & 0xc0)) {
+		if (notify_die(DIE_NMI_IPI, "nmi_ipi", regs, reason, 2, SIGINT)
+								== NOTIFY_STOP)
+			return;
 #ifdef CONFIG_SMP
 		/*
 		 * Ok, so this is none of the documented NMI sources,
@@ -410,11 +409,13 @@ static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 
 		return;
 	}
+	if (notify_die(DIE_NMI, "nmi", regs, reason, 2, SIGINT) == NOTIFY_STOP)
+		return;
 
 	/* AK: following checks seem to be broken on modern chipsets. FIXME */
-	if (reason & NMI_REASON_SERR)
-		pci_serr_error(reason, regs);
-	if (reason & NMI_REASON_IOCHK)
+	if (reason & 0x80)
+		mem_parity_error(reason, regs);
+	if (reason & 0x40)
 		io_check_error(reason, regs);
 #if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)
 	/*

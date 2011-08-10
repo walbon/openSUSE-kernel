@@ -1289,6 +1289,7 @@ static int __init acpi_processor_init(void)
 	 */
 	dmi_check_system(processor_idle_dmi_table);
 
+#ifdef CONFIG_CPU_IDLE
 	if (!cpuidle_register_driver(&acpi_idle_driver)) {
 		printk(KERN_DEBUG "ACPI: %s registered with cpuidle\n",
 			acpi_idle_driver.name);
@@ -1296,6 +1297,7 @@ static int __init acpi_processor_init(void)
 		printk(KERN_DEBUG "ACPI: acpi_idle yielding to %s\n",
 			cpuidle_get_driver()->name);
 	}
+#endif
 
 	result = acpi_bus_register_driver(&acpi_processor_driver);
 	if (result < 0)

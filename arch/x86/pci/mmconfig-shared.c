@@ -20,6 +20,10 @@
 #include <asm/pci_x86.h>
 #include <asm/acpi.h>
 
+#ifdef CONFIG_XEN
+#include <xen/interface/physdev.h>
+#endif
+
 #define PREFIX "PCI: "
 
 /* aperture is up to 256MB but BIOS may reserve less */
@@ -465,6 +469,31 @@ static int __init is_mmconf_reserved(check_reserved_t is_reserved,
 			       (unsigned int)cfg->end_bus_number);
 		}
 	}
+
+#ifdef CONFIG_XEN
+	if (!with_e820)	{
+		struct physdev_pci_mmcfg_reserved r = {
+			.address = cfg->address,
+			.segment = cfg->pci_segment,
+			.start_bus = cfg->start_bus_number,
+			.end_bus = cfg->end_bus_number,
+			.flags = valid ? XEN_PCI_MMCFG_RESERVED : 0
+		};
+		int rc;
+
+		rc = HYPERVISOR_physdev_op(PHYSDEVOP_pci_mmcfg_reserved, &r);
+		switch (rc) {
+		case 0: case -ENOSYS:
+			break;
+		default:
+			pr_warn(PREFIX "Failed to report MMCONFIG reservation"
+				" state for %04x [bus%02x-%02x] to hypervisor"
+				" (%d)\n",
+				cfg->pci_segment, cfg->start_bus_number,
+				cfg->end_bus_number, rc);
+		}
+	}
+#endif
 
 	return valid;
 }

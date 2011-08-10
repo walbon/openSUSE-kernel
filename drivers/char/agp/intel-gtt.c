@@ -282,7 +282,11 @@ static struct agp_memory *alloc_agpphysmem_i8xx(size_t pg_count, int type)
 	new->page_count = pg_count;
 	new->num_scratch_pages = pg_count;
 	new->type = AGP_PHYS_MEMORY;
+#ifndef CONFIG_XEN
 	new->physical = page_to_phys(new->pages[0]);
+#else
+	new->physical = page_to_pseudophys(new->pages[0]);
+#endif
 	return new;
 }
 

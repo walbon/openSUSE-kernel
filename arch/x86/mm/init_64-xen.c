@@ -1259,7 +1259,7 @@ int kern_addr_valid(unsigned long addr)
 	 */
 	if (addr >= (unsigned long)machine_to_phys_mapping &&
 	    addr < (unsigned long)(machine_to_phys_mapping +
-				   (1UL << machine_to_phys_order)))
+				   machine_to_phys_nr))
 		return 1;
 	if (addr >= HYPERVISOR_VIRT_START && addr < HYPERVISOR_VIRT_END)
 		return 0;
