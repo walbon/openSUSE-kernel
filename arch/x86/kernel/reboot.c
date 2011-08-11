@@ -30,6 +30,8 @@
 # include <asm/iommu.h>
 #endif
 
+#include <acpi/acpi.h>
+
 /*
  * Power off function, if any
  */
