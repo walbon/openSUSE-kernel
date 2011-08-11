@@ -603,7 +603,7 @@ static __init int intel_router_probe(struct irq_router *r, struct pci_dev *route
 		return 1;
 	}
 
-	if ((device >= PCI_DEVICE_ID_INTEL_PCH_LPC_MIN && 
+	if ((device >= PCI_DEVICE_ID_INTEL_PCH_LPC_MIN &&
 		device <= PCI_DEVICE_ID_INTEL_PCH_LPC_MAX)
 	|| 	(device >=PCI_DEVICE_ID_INTEL_PANTHERPOINT_LPC_MIN &&
 		device <= PCI_DEVICE_ID_INTEL_PANTHERPOINT_LPC_MAX)) {

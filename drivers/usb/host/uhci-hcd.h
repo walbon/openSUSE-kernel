@@ -73,11 +73,11 @@
 #define   USBLEGSUP_RWC		0x8f00	/* the R/WC bits */
 #define   USBLEGSUP_RO		0x5040	/* R/O and reserved bits */
 
-#define UHCI_PTR_BITS		cpu_to_le32(0x000F)
-#define UHCI_PTR_TERM		cpu_to_le32(0x0001)
-#define UHCI_PTR_QH		cpu_to_le32(0x0002)
-#define UHCI_PTR_DEPTH		cpu_to_le32(0x0004)
-#define UHCI_PTR_BREADTH	cpu_to_le32(0x0000)
+#define UHCI_PTR_BITS(uhci)	cpu_to_hc32((uhci), 0x000F)
+#define UHCI_PTR_TERM(uhci)	cpu_to_hc32((uhci), 0x0001)
+#define UHCI_PTR_QH(uhci)	cpu_to_hc32((uhci), 0x0002)
+#define UHCI_PTR_DEPTH(uhci)	cpu_to_hc32((uhci), 0x0004)
+#define UHCI_PTR_BREADTH(uhci)	cpu_to_hc32((uhci), 0x0000)
 
 #define UHCI_NUMFRAMES		1024	/* in the frame list [array] */
 #define UHCI_MAX_SOF_NUMBER	2047	/* in an SOF packet */
@@ -92,6 +92,22 @@
 /* If a queue hasn't advanced after this much time, assume it is stuck */
 #define QH_WAIT_TIMEOUT		msecs_to_jiffies(200)
 
+
+/*
+ * __hc32 and __hc16 are "Host Controller" types, they may be equivalent to
+ * __leXX (normally) or __beXX (given UHCI_BIG_ENDIAN_DESC), depending on
+ * the host controller implementation.
+ *
+ * To facilitate the strongest possible byte-order checking from "sparse"
+ * and so on, we use __leXX unless that's not practical.
+ */
+#ifdef CONFIG_USB_UHCI_BIG_ENDIAN_DESC
+typedef __u32 __bitwise __hc32;
+typedef __u16 __bitwise __hc16;
+#else
+#define __hc32	__le32
+#define __hc16	__le16
+#endif
 
 /*
  *	Queue Headers
@@ -125,8 +141,8 @@
 
 struct uhci_qh {
 	/* Hardware fields */
-	__le32 link;			/* Next QH in the schedule */
-	__le32 element;			/* Queue element (TD) pointer */
+	__hc32 link;			/* Next QH in the schedule */
+	__hc32 element;			/* Queue element (TD) pointer */
 
 	/* Software fields */
 	dma_addr_t dma_handle;
@@ -163,14 +179,10 @@ struct uhci_qh {
  * We need a special accessor for the element pointer because it is
  * subject to asynchronous updates by the controller.
  */
-static inline __le32 qh_element(struct uhci_qh *qh) {
-	__le32 element = qh->element;
+#define qh_element(qh)		ACCESS_ONCE((qh)->element)
 
-	barrier();
-	return element;
-}
-
-#define LINK_TO_QH(qh)		(UHCI_PTR_QH | cpu_to_le32((qh)->dma_handle))
+#define LINK_TO_QH(uhci, qh)	(UHCI_PTR_QH((uhci)) | \
+				cpu_to_hc32((uhci), (qh)->dma_handle))
 
 
 /*
@@ -207,7 +219,7 @@ static inline __le32 qh_element(struct uhci_qh *qh) {
 /*
  * for TD <info>: (a.k.a. Token)
  */
-#define td_token(td)		le32_to_cpu((td)->token)
+#define td_token(uhci, td)	hc32_to_cpu((uhci), (td)->token)
 #define TD_TOKEN_DEVADDR_SHIFT	8
 #define TD_TOKEN_TOGGLE_SHIFT	19
 #define TD_TOKEN_TOGGLE		(1 << 19)
@@ -240,10 +252,10 @@ static inline __le32 qh_element(struct uhci_qh *qh) {
  */
 struct uhci_td {
 	/* Hardware fields */
-	__le32 link;
-	__le32 status;
-	__le32 token;
-	__le32 buffer;
+	__hc32 link;
+	__hc32 status;
+	__hc32 token;
+	__hc32 buffer;
 
 	/* Software fields */
 	dma_addr_t dma_handle;
@@ -258,14 +270,10 @@ struct uhci_td {
  * We need a special accessor for the control/status word because it is
  * subject to asynchronous updates by the controller.
  */
-static inline u32 td_status(struct uhci_td *td) {
-	__le32 status = td->status;
+#define td_status(uhci, td)		hc32_to_cpu((uhci), \
+						ACCESS_ONCE((td)->status))
 
-	barrier();
-	return le32_to_cpu(status);
-}
-
-#define LINK_TO_TD(td)		(cpu_to_le32((td)->dma_handle))
+#define LINK_TO_TD(uhci, td)		(cpu_to_hc32((uhci), (td)->dma_handle))
 
 
 /*
@@ -388,7 +396,7 @@ struct uhci_hcd {
 	spinlock_t lock;
 
 	dma_addr_t frame_dma_handle;	/* Hardware frame list */
-	__le32 *frame;
+	__hc32 *frame;
 	void **frame_cpu;		/* CPU's frame list */
 
 	enum uhci_rh_state rh_state;
@@ -416,6 +424,8 @@ struct uhci_hcd {
 	/* Silicon quirks */
 	unsigned int oc_low:1;			/* OverCurrent bit active low */
 	unsigned int wait_for_hp:1;		/* Wait for HP port reset */
+	unsigned int big_endian_mmio:1;		/* Big endian registers */
+	unsigned int big_endian_desc:1;		/* Big endian descriptors */
 
 	/* Support for port suspend/resume/reset */
 	unsigned long port_c_suspend;		/* Bit-arrays of ports */
@@ -485,90 +495,165 @@ struct urb_priv {
  * we use memory mapped registers.
  */
 
-#if !defined(CONFIG_USB_UHCI_SUPPORT_NON_PCI_HC)
+#ifndef CONFIG_USB_UHCI_SUPPORT_NON_PCI_HC
 /* Support PCI only */
-static inline u32 uhci_readl(struct uhci_hcd *uhci, int reg)
+static inline u32 uhci_readl(const struct uhci_hcd *uhci, int reg)
 {
 	return inl(uhci->io_addr + reg);
 }
 
-static inline void uhci_writel(struct uhci_hcd *uhci, u32 val, int reg)
+static inline void uhci_writel(const struct uhci_hcd *uhci, u32 val, int reg)
 {
 	outl(val, uhci->io_addr + reg);
 }
 
-static inline u16 uhci_readw(struct uhci_hcd *uhci, int reg)
+static inline u16 uhci_readw(const struct uhci_hcd *uhci, int reg)
 {
 	return inw(uhci->io_addr + reg);
 }
 
-static inline void uhci_writew(struct uhci_hcd *uhci, u16 val, int reg)
+static inline void uhci_writew(const struct uhci_hcd *uhci, u16 val, int reg)
 {
 	outw(val, uhci->io_addr + reg);
 }
 
-static inline u8 uhci_readb(struct uhci_hcd *uhci, int reg)
+static inline u8 uhci_readb(const struct uhci_hcd *uhci, int reg)
 {
 	return inb(uhci->io_addr + reg);
 }
 
-static inline void uhci_writeb(struct uhci_hcd *uhci, u8 val, int reg)
+static inline void uhci_writeb(const struct uhci_hcd *uhci, u8 val, int reg)
 {
 	outb(val, uhci->io_addr + reg);
 }
 
 #else
+/* Support non-PCI host controllers */
+#ifdef CONFIG_PCI
 /* Support PCI and non-PCI host controllers */
-
 #define uhci_has_pci_registers(u)	((u)->io_addr != 0)
+#else
+/* Support non-PCI host controllers only */
+#define uhci_has_pci_registers(u)	0
+#endif
 
-static inline u32 uhci_readl(struct uhci_hcd *uhci, int reg)
+#ifdef CONFIG_USB_UHCI_BIG_ENDIAN_MMIO
+/* Support (non-PCI) big endian host controllers */
+#define uhci_big_endian_mmio(u)		((u)->big_endian_mmio)
+#else
+#define uhci_big_endian_mmio(u)		0
+#endif
+
+static inline u32 uhci_readl(const struct uhci_hcd *uhci, int reg)
 {
 	if (uhci_has_pci_registers(uhci))
 		return inl(uhci->io_addr + reg);
+#ifdef CONFIG_USB_UHCI_BIG_ENDIAN_MMIO
+	else if (uhci_big_endian_mmio(uhci))
+		return readl_be(uhci->regs + reg);
+#endif
 	else
 		return readl(uhci->regs + reg);
 }
 
-static inline void uhci_writel(struct uhci_hcd *uhci, u32 val, int reg)
+static inline void uhci_writel(const struct uhci_hcd *uhci, u32 val, int reg)
 {
 	if (uhci_has_pci_registers(uhci))
 		outl(val, uhci->io_addr + reg);
+#ifdef CONFIG_USB_UHCI_BIG_ENDIAN_MMIO
+	else if (uhci_big_endian_mmio(uhci))
+		writel_be(val, uhci->regs + reg);
+#endif
 	else
 		writel(val, uhci->regs + reg);
 }
 
-static inline u16 uhci_readw(struct uhci_hcd *uhci, int reg)
+static inline u16 uhci_readw(const struct uhci_hcd *uhci, int reg)
 {
 	if (uhci_has_pci_registers(uhci))
 		return inw(uhci->io_addr + reg);
+#ifdef CONFIG_USB_UHCI_BIG_ENDIAN_MMIO
+	else if (uhci_big_endian_mmio(uhci))
+		return readw_be(uhci->regs + reg);
+#endif
 	else
 		return readw(uhci->regs + reg);
 }
 
-static inline void uhci_writew(struct uhci_hcd *uhci, u16 val, int reg)
+static inline void uhci_writew(const struct uhci_hcd *uhci, u16 val, int reg)
 {
 	if (uhci_has_pci_registers(uhci))
 		outw(val, uhci->io_addr + reg);
+#ifdef CONFIG_USB_UHCI_BIG_ENDIAN_MMIO
+	else if (uhci_big_endian_mmio(uhci))
+		writew_be(val, uhci->regs + reg);
+#endif
 	else
 		writew(val, uhci->regs + reg);
 }
 
-static inline u8 uhci_readb(struct uhci_hcd *uhci, int reg)
+static inline u8 uhci_readb(const struct uhci_hcd *uhci, int reg)
 {
 	if (uhci_has_pci_registers(uhci))
 		return inb(uhci->io_addr + reg);
+#ifdef CONFIG_USB_UHCI_BIG_ENDIAN_MMIO
+	else if (uhci_big_endian_mmio(uhci))
+		return readb_be(uhci->regs + reg);
+#endif
 	else
 		return readb(uhci->regs + reg);
 }
 
-static inline void uhci_writeb(struct uhci_hcd *uhci, u8 val, int reg)
+static inline void uhci_writeb(const struct uhci_hcd *uhci, u8 val, int reg)
 {
 	if (uhci_has_pci_registers(uhci))
 		outb(val, uhci->io_addr + reg);
+#ifdef CONFIG_USB_UHCI_BIG_ENDIAN_MMIO
+	else if (uhci_big_endian_mmio(uhci))
+		writeb_be(val, uhci->regs + reg);
+#endif
 	else
 		writeb(val, uhci->regs + reg);
 }
-#endif /* !defined(CONFIG_USB_UHCI_SUPPORT_NON_PCI_HC) */
+#endif /* CONFIG_USB_UHCI_SUPPORT_NON_PCI_HC */
+
+/*
+ * The GRLIB GRUSBHC controller can use big endian format for its descriptors.
+ *
+ * UHCI controllers accessed through PCI work normally (little-endian
+ * everywhere), so we don't bother supporting a BE-only mode.
+ */
+#ifdef CONFIG_USB_UHCI_BIG_ENDIAN_DESC
+#define uhci_big_endian_desc(u)		((u)->big_endian_desc)
+
+/* cpu to uhci */
+static inline __hc32 cpu_to_hc32(const struct uhci_hcd *uhci, const u32 x)
+{
+	return uhci_big_endian_desc(uhci)
+		? (__force __hc32)cpu_to_be32(x)
+		: (__force __hc32)cpu_to_le32(x);
+}
+
+/* uhci to cpu */
+static inline u32 hc32_to_cpu(const struct uhci_hcd *uhci, const __hc32 x)
+{
+	return uhci_big_endian_desc(uhci)
+		? be32_to_cpu((__force __be32)x)
+		: le32_to_cpu((__force __le32)x);
+}
+
+#else
+/* cpu to uhci */
+static inline __hc32 cpu_to_hc32(const struct uhci_hcd *uhci, const u32 x)
+{
+	return cpu_to_le32(x);
+}
+
+/* uhci to cpu */
+static inline u32 hc32_to_cpu(const struct uhci_hcd *uhci, const __hc32 x)
+{
+	return le32_to_cpu(x);
+}
+#endif
 
 #endif
