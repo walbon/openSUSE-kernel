@@ -497,6 +497,7 @@ struct kdb_usb_kbd_info {
 	int	poll_ret;	/* return val from poll_func */
 	int	caps_lock;	/* state of the caps lock for this keyboard */
 	struct uhci_qh *qh;
+	struct uhci_hcd *uhci;
 	int kdb_hid_event;
 	struct urb *hid_urb;    /* pointer to the HID URB */
 	/* USB Host Controller specific callbacks */

@@ -28,8 +28,9 @@
 #ifdef CONFIG_KDB_USB
 /* KDB HID QH, managed by KDB code */
 static int kdb_uhci_keyboard_check_uhci_qh(struct uhci_qh *qh);
-static int kdb_uhci_keyboard_set_qh(struct urb *urb, struct uhci_qh *qh);
+static int kdb_uhci_keyboard_set_qh(struct urb *urb, struct uhci_hcd *uhci, struct uhci_qh *qh);
 static struct uhci_qh *kdb_uhci_keyboard_get_qh(struct urb *urb);
+static struct uhci_hcd *kdb_uhci_keyboard_get_uhci(struct urb *urb);
 static int kdb_uhci_keyboard_set_hid_event(struct urb *urb, int hid_event);
 static int kdb_uhci_keyboard_get_hid_event(struct urb *urb);
 static int kdb_uhci_keyboard_set_hid_event_qh(struct uhci_qh *qh, int hid_event);
@@ -1493,11 +1494,11 @@ static int uhci_urb_enqueue(struct usb_hcd *hcd,
 	 */
 	if (kdb_uhci_keyboard_urb(urb) != -1){
 		/* KDB urb will be enqued only once */
-		kdb_uhci_keyboard_set_qh(urb, NULL);
+		kdb_uhci_keyboard_set_qh(urb, uhci, NULL);
 		qh = kdb_uhci_alloc_qh(uhci, urb->dev, urb->ep);
 		if (!qh)
 			goto err_no_qh;
-		kdb_uhci_keyboard_set_qh(urb, qh);
+		kdb_uhci_keyboard_set_qh(urb, uhci, qh);
 	} else
 #endif
 
@@ -1885,7 +1886,7 @@ rescan:
 /*
  * Activate KDB UHCI QH, called by KDB poll code.
  */
-static void kdb_activate_uhci_qh(struct uhci_qh *qh)
+static void kdb_activate_uhci_qh(struct uhci_hcd *uhci, struct uhci_qh *qh)
 {
 	struct urb_priv *urbp;
 	struct uhci_td *td;
@@ -1915,7 +1916,7 @@ static void kdb_activate_uhci_qh(struct uhci_qh *qh)
 	}
 	/* Activate KDB UHCI Keyboard HID QH */
 	td = list_entry(urbp->td_list.next, struct uhci_td, list);
-	qh->element = LINK_TO_TD(td);
+	qh->element = LINK_TO_TD(uhci, td);
 	barrier();
 }
 
@@ -1929,14 +1930,14 @@ kdb_uhci_urb_complete (struct urb *urb)
 		return;
 
 	/* Activate KDB TD */
-	kdb_activate_uhci_qh(kdb_uhci_keyboard_get_qh(urb));
+	kdb_activate_uhci_qh(kdb_uhci_keyboard_get_uhci(urb), kdb_uhci_keyboard_get_qh(urb));
 	kdb_uhci_keyboard_set_hid_event(urb, 0);
 }
 
 /*
  * Check if state of KDB URB changed (key was pressed/released).
  */
-static int uhci_check_kdb_uhci_qh(struct uhci_qh *qh)
+static int uhci_check_kdb_uhci_qh(struct uhci_hcd *uhci, struct uhci_qh *qh)
 {
 	struct urb_priv *urbp = NULL;
 	struct uhci_td *td;
@@ -1944,7 +1945,7 @@ static int uhci_check_kdb_uhci_qh(struct uhci_qh *qh)
 
 	urbp = list_entry(qh->queue.next, struct urb_priv, node);
 	td = list_entry(urbp->td_list.next, struct uhci_td, list);
-	status = td_status(td);
+	status = td_status(uhci, td);
 	if (!(status & TD_CTRL_ACTIVE)){
 		/* We're okay, the queue has advanced */
 		kdb_uhci_keyboard_set_hid_event_qh(qh, 1);

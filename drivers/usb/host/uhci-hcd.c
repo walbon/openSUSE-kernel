@@ -513,7 +513,7 @@ static int uhci_kdb_poll_char(struct urb *urb)
 	if (!urb) /* can happen if no keyboard attached */
 		return -1;
 
-	return uhci_check_kdb_uhci_qh(kdb_uhci_keyboard_get_qh(urb));
+	return uhci_check_kdb_uhci_qh(kdb_uhci_keyboard_get_uhci(urb), kdb_uhci_keyboard_get_qh(urb));
 }
 
 /* Only 1 UHCI Keyboard supported */
@@ -638,13 +638,15 @@ static int kdb_uhci_keyboard_check_uhci_qh(struct uhci_qh *qh)
 }
 
 /* Set UHCI QH using URB pointer */
-static int kdb_uhci_keyboard_set_qh(struct urb *urb, struct uhci_qh *qh)
+static int kdb_uhci_keyboard_set_qh(struct urb *urb, struct uhci_hcd *uhci, struct uhci_qh *qh)
 {
 	int i;
 
 	i = kdb_uhci_keyboard_urb(urb);
-	if (i != -1)
+	if (i != -1) {
 		kdb_usb_kbds[i].qh = qh;
+		kdb_usb_kbds[i].uhci = uhci;
+	}
 
 	return 0;
 }
@@ -657,6 +659,18 @@ static struct uhci_qh *kdb_uhci_keyboard_get_qh(struct urb *urb)
 	i = kdb_uhci_keyboard_urb(urb);
 	if (i != -1)
 		return kdb_usb_kbds[i].qh;
+
+	return NULL;
+}
+
+/* Get UHCI HCD using URB pointer */
+static struct uhci_hcd *kdb_uhci_keyboard_get_uhci(struct urb *urb)
+{
+	int i;
+
+	i = kdb_uhci_keyboard_urb(urb);
+	if (i != -1)
+		return kdb_usb_kbds[i].uhci;
 
 	return NULL;
 }
