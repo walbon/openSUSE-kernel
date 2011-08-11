@@ -1902,7 +1902,7 @@ static long local_unlink(const char *pathname)
 		if (!(dentry->d_inode) || !(dentry->d_inode->i_mode & S_IFLNK)) {
 			DbgPrint("%s not a link", name);
 			error = -ENOENT;
-			goto exit1;
+			goto exit2;
 		}
 		/* Why not before? Because we want correct error value */
 		if (nd.last.name[nd.last.len])
