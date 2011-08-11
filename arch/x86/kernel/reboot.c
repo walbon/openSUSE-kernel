@@ -285,6 +285,10 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 
 static int __init reboot_init(void)
 {
+	if (!(acpi_gbl_FADT.boot_flags & ACPI_FADT_8042)) {
+		printk(KERN_INFO "Use ACPI reboot mode\n");
+		reboot_type = BOOT_ACPI;
+	}
 	dmi_check_system(reboot_dmi_table);
 	return 0;
 }
