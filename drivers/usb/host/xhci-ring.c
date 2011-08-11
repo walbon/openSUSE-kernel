@@ -2650,6 +2650,35 @@ static u32 xhci_td_remainder(unsigned int remainder)
 		return (remainder >> 10) << 17;
 }
 
+/*
+ * For xHCI 1.0 host controllers, TD size is the number of packets remaining in
+ * the TD (*not* including this TRB).
+ *
+ * Total TD packet count = total_packet_count =
+ *     roundup(TD size in bytes / wMaxPacketSize)
+ *
+ * Packets transferred up to and including this TRB = packets_transferred =
+ *     rounddown(total bytes transferred including this TRB / wMaxPacketSize)
+ *
+ * TD size = total_packet_count - packets_transferred
+ *
+ * It must fit in bits 21:17, so it can't be bigger than 31.
+ */
+
+static u32 xhci_v1_0_td_remainder(int running_total, int trb_buff_len,
+		unsigned int total_packet_count, struct urb *urb)
+{
+	int packets_transferred;
+
+	/* All the TRB queueing functions don't count the current TRB in
+	 * running_total.
+	 */
+	packets_transferred = (running_total + trb_buff_len) /
+		le16_to_cpu(urb->ep->desc.wMaxPacketSize);
+
+	return xhci_td_remainder(total_packet_count - packets_transferred);
+}
+
 static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		struct urb *urb, int slot_id, unsigned int ep_index)
 {
@@ -2660,6 +2689,7 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	struct scatterlist *sg;
 	int num_sgs;
 	int trb_buff_len, this_sg_len, running_total;
+	unsigned int total_packet_count;
 	bool first_trb;
 	u64 addr;
 	bool more_trbs_coming;
@@ -2673,6 +2703,8 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 
 	num_trbs = count_sg_trbs_needed(xhci, urb);
 	num_sgs = urb->num_sgs;
+	total_packet_count = roundup(urb->transfer_buffer_length,
+			le16_to_cpu(urb->ep->desc.wMaxPacketSize));
 
 	trb_buff_len = prepare_transfer(xhci, xhci->devs[slot_id],
 			ep_index, urb->stream_id,
@@ -2753,11 +2785,20 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 					(unsigned int) (addr + TRB_MAX_BUFF_SIZE) & ~(TRB_MAX_BUFF_SIZE - 1),
 					(unsigned int) addr + trb_buff_len);
 		}
-		remainder = xhci_td_remainder(urb->transfer_buffer_length -
-				running_total) ;
+
+		/* Set the TRB length, TD size, and interrupter fields. */
+		if (xhci->hci_version < 0x100) {
+			remainder = xhci_td_remainder(
+					urb->transfer_buffer_length -
+					running_total);
+		} else {
+			remainder = xhci_v1_0_td_remainder(running_total,
+					trb_buff_len, total_packet_count, urb);
+		}
 		length_field = TRB_LEN(trb_buff_len) |
 			remainder |
 			TRB_INTR_TARGET(0);
+
 		if (num_trbs > 1)
 			more_trbs_coming = true;
 		else
@@ -2814,6 +2855,7 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	u32 field, length_field;
 
 	int running_total, trb_buff_len, ret;
+	unsigned int total_packet_count;
 	u64 addr;
 
 	if (urb->num_sgs)
@@ -2868,6 +2910,8 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	start_cycle = ep_ring->cycle_state;
 
 	running_total = 0;
+	total_packet_count = roundup(urb->transfer_buffer_length,
+			le16_to_cpu(urb->ep->desc.wMaxPacketSize));
 	/* How much data is in the first TRB? */
 	addr = (u64) urb->transfer_dma;
 	trb_buff_len = TRB_MAX_BUFF_SIZE -
@@ -2905,11 +2949,19 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		if (usb_urb_dir_in(urb))
 			field |= TRB_ISP;
 
-		remainder = xhci_td_remainder(urb->transfer_buffer_length -
-				running_total);
+		/* Set the TRB length, TD size, and interrupter fields. */
+		if (xhci->hci_version < 0x100) {
+			remainder = xhci_td_remainder(
+					urb->transfer_buffer_length -
+					running_total);
+		} else {
+			remainder = xhci_v1_0_td_remainder(running_total,
+					trb_buff_len, total_packet_count, urb);
+		}
 		length_field = TRB_LEN(trb_buff_len) |
 			remainder |
 			TRB_INTR_TARGET(0);
+
 		if (num_trbs > 1)
 			more_trbs_coming = true;
 		else
@@ -2996,6 +3048,17 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	field |= TRB_IDT | TRB_TYPE(TRB_SETUP);
 	if (start_cycle == 0)
 		field |= 0x1;
+
+	/* xHCI 1.0 6.4.1.2.1: Transfer Type field */
+	if (xhci->hci_version == 0x100) {
+		if (urb->transfer_buffer_length > 0) {
+			if (setup->bRequestType & USB_DIR_IN)
+				field |= TRB_TX_TYPE(TRB_DATA_IN);
+			else
+				field |= TRB_TX_TYPE(TRB_DATA_OUT);
+		}
+	}
+
 	queue_trb(xhci, ep_ring, false, true,
 		  setup->bRequestType | setup->bRequest << 8 | le16_to_cpu(setup->wValue) << 16,
 		  le16_to_cpu(setup->wIndex) | le16_to_cpu(setup->wLength) << 16,
@@ -3066,6 +3129,63 @@ static int count_isoc_trbs_needed(struct xhci_hcd *xhci,
 	return num_trbs;
 }
 
+/*
+ * The transfer burst count field of the isochronous TRB defines the number of
+ * bursts that are required to move all packets in this TD.  Only SuperSpeed
+ * devices can burst up to bMaxBurst number of packets per service interval.
+ * This field is zero based, meaning a value of zero in the field means one
+ * burst.  Basically, for everything but SuperSpeed devices, this field will be
+ * zero.  Only xHCI 1.0 host controllers support this field.
+ */
+static unsigned int xhci_get_burst_count(struct xhci_hcd *xhci,
+		struct usb_device *udev,
+		struct urb *urb, unsigned int total_packet_count)
+{
+	unsigned int max_burst;
+
+	if (xhci->hci_version < 0x100 || udev->speed != USB_SPEED_SUPER)
+		return 0;
+
+	max_burst = urb->ep->ss_ep_comp.bMaxBurst;
+	return roundup(total_packet_count, max_burst + 1) - 1;
+}
+
+/*
+ * Returns the number of packets in the last "burst" of packets.  This field is
+ * valid for all speeds of devices.  USB 2.0 devices can only do one "burst", so
+ * the last burst packet count is equal to the total number of packets in the
+ * TD.  SuperSpeed endpoints can have up to 3 bursts.  All but the last burst
+ * must contain (bMaxBurst + 1) number of packets, but the last burst can
+ * contain 1 to (bMaxBurst + 1) packets.
+ */
+static unsigned int xhci_get_last_burst_packet_count(struct xhci_hcd *xhci,
+		struct usb_device *udev,
+		struct urb *urb, unsigned int total_packet_count)
+{
+	unsigned int max_burst;
+	unsigned int residue;
+
+	if (xhci->hci_version < 0x100)
+		return 0;
+
+	switch (udev->speed) {
+	case USB_SPEED_SUPER:
+		/* bMaxBurst is zero based: 0 means 1 packet per burst */
+		max_burst = urb->ep->ss_ep_comp.bMaxBurst;
+		residue = total_packet_count % (max_burst + 1);
+		/* If residue is zero, the last burst contains (max_burst + 1)
+		 * number of packets, but the TLBPC field is zero-based.
+		 */
+		if (residue == 0)
+			return max_burst;
+		return residue - 1;
+	default:
+		if (total_packet_count == 0)
+			return 0;
+		return total_packet_count - 1;
+	}
+}
+
 /* This is for isoc transfer */
 static int xhci_queue_isoc_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		struct urb *urb, int slot_id, unsigned int ep_index)
@@ -3106,12 +3226,22 @@ static int xhci_queue_isoc_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 
 	/* Queue the first TRB, even if it's zero-length */
 	for (i = 0; i < num_tds; i++) {
-		first_trb = true;
+		unsigned int total_packet_count;
+		unsigned int burst_count;
+		unsigned int residue;
 
+		first_trb = true;
 		running_total = 0;
 		addr = start_addr + urb->iso_frame_desc[i].offset;
 		td_len = urb->iso_frame_desc[i].length;
 		td_remain_len = td_len;
+		/* FIXME: Ignoring zero-length packets, can those happen? */
+		total_packet_count = roundup(td_len,
+				le16_to_cpu(urb->ep->desc.wMaxPacketSize));
+		burst_count = xhci_get_burst_count(xhci, urb->dev, urb,
+				total_packet_count);
+		residue = xhci_get_last_burst_packet_count(xhci,
+				urb->dev, urb, total_packet_count);
 
 		trbs_per_td = count_isoc_trbs_needed(xhci, urb, i);
 
@@ -3125,7 +3255,7 @@ static int xhci_queue_isoc_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 
 		for (j = 0; j < trbs_per_td; j++) {
 			u32 remainder = 0;
-			field = 0;
+			field = TRB_TBC(burst_count) | TRB_TLBPC(residue);
 
 			if (first_trb) {
 				/* Queue the isoc TRB */
@@ -3158,6 +3288,11 @@ static int xhci_queue_isoc_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 			} else {
 				td->last_trb = ep_ring->enqueue;
 				field |= TRB_IOC;
+				if (xhci->hci_version == 0x100) {
+					/* Set BEI bit except for the last td */
+					if (i < num_tds - 1)
+						field |= TRB_BEI;
+				}
 				more_trbs_coming = false;
 			}
 
@@ -3167,10 +3302,19 @@ static int xhci_queue_isoc_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 			if (trb_buff_len > td_remain_len)
 				trb_buff_len = td_remain_len;
 
-			remainder = xhci_td_remainder(td_len - running_total);
+			/* Set the TRB length, TD size, & interrupter fields. */
+			if (xhci->hci_version < 0x100) {
+				remainder = xhci_td_remainder(
+						td_len - running_total);
+			} else {
+				remainder = xhci_v1_0_td_remainder(
+						running_total, trb_buff_len,
+						total_packet_count, urb);
+			}
 			length_field = TRB_LEN(trb_buff_len) |
 				remainder |
 				TRB_INTR_TARGET(0);
+
 			queue_trb(xhci, ep_ring, false, more_trbs_coming,
 				lower_32_bits(addr),
 				upper_32_bits(addr),

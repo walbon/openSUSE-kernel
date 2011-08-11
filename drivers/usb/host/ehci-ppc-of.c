@@ -180,7 +180,7 @@ ehci_hcd_ppc_of_probe(struct of_device *op, const struct of_device_id *match)
 
 	ehci->caps = hcd->regs;
 	ehci->regs = hcd->regs +
-			HC_LENGTH(ehci_readl(ehci, &ehci->caps->hc_capbase));
+		HC_LENGTH(ehci, ehci_readl(ehci, &ehci->caps->hc_capbase));
 
 	/* cache this readonly data; minimize chip reads */
 	ehci->hcs_params = ehci_readl(ehci, &ehci->caps->hcs_params);
