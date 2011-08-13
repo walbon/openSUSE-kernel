@@ -641,18 +641,31 @@ group_sched_in(struct perf_event *group_event,
 	       struct perf_cpu_context *cpuctx,
 	       struct perf_event_context *ctx)
 {
-	struct perf_event *event, *partial_group;
+	struct perf_event *event, *partial_group = NULL;
+	const struct pmu *pmu = group_event->pmu;
+	bool txn = false;
 	int ret;
 
 	if (group_event->state == PERF_EVENT_STATE_OFF)
 		return 0;
 
-	ret = hw_perf_group_sched_in(group_event, cpuctx, ctx);
-	if (ret)
-		return ret < 0 ? ret : 0;
+	/* Check if group transaction availabe */
+	if (pmu->start_txn)
+		txn = true;
+	else {
+		ret = hw_perf_group_sched_in(group_event, cpuctx, ctx);
+		if (ret)
+			return ret < 0 ? ret : 0;
+	}
 
-	if (event_sched_in(group_event, cpuctx, ctx))
+	if (txn)
+		pmu->start_txn(pmu);
+
+	if (event_sched_in(group_event, cpuctx, ctx)) {
+		if (txn)
+			pmu->cancel_txn(pmu);
 		return -EAGAIN;
+	}
 
 	/*
 	 * Schedule in siblings as one group (if any):
@@ -664,7 +677,14 @@ group_sched_in(struct perf_event *group_event,
 		}
 	}
 
-	return 0;
+	if (txn) {
+		ret = pmu->commit_txn(pmu);
+		if (!ret) {
+			pmu->cancel_txn(pmu);
+
+			return 0;
+		}
+	}
 
 group_error:
 	/*
@@ -677,6 +697,9 @@ group_error:
 		event_sched_out(event, cpuctx, ctx);
 	}
 	event_sched_out(group_event, cpuctx, ctx);
+
+	if (txn)
+		pmu->cancel_txn(pmu);
 
 	return -EAGAIN;
 }
