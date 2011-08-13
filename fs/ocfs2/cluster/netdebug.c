@@ -126,34 +126,35 @@ static int nst_seq_show(struct seq_file *seq, void *v)
 
 	spin_lock(&o2net_debug_lock);
 	nst = next_nst(dummy_nst);
+	if (!nst)
+		goto out;
 
-	if (nst != NULL) {
-		/* get_task_comm isn't exported.  oh well. */
-		seq_printf(seq, "%p:\n"
-			   "  pid:          %lu\n"
-			   "  tgid:         %lu\n"
-			   "  process name: %s\n"
-			   "  node:         %u\n"
-			   "  sc:           %p\n"
-			   "  message id:   %d\n"
-			   "  message type: %u\n"
-			   "  message key:  0x%08x\n"
-			   "  sock acquiry: %lu.%ld\n"
-			   "  send start:   %lu.%ld\n"
-			   "  wait start:   %lu.%ld\n",
-			   nst, (unsigned long)nst->st_task->pid,
-			   (unsigned long)nst->st_task->tgid,
-			   nst->st_task->comm, nst->st_node,
-			   nst->st_sc, nst->st_id, nst->st_msg_type,
-			   nst->st_msg_key,
-			   nst->st_sock_time.tv_sec,
-			   (long)nst->st_sock_time.tv_usec,
-			   nst->st_send_time.tv_sec,
-			   (long)nst->st_send_time.tv_usec,
-			   nst->st_status_time.tv_sec,
-			   (long)nst->st_status_time.tv_usec);
-	}
+	/* get_task_comm isn't exported.  oh well. */
+	seq_printf(seq, "%p:\n"
+		   "  pid:          %lu\n"
+		   "  tgid:         %lu\n"
+		   "  process name: %s\n"
+		   "  node:         %u\n"
+		   "  sc:           %p\n"
+		   "  message id:   %d\n"
+		   "  message type: %u\n"
+		   "  message key:  0x%08x\n"
+		   "  sock acquiry: %lu.%ld\n"
+		   "  send start:   %lu.%ld\n"
+		   "  wait start:   %lu.%ld\n",
+		   nst, (unsigned long)nst->st_task->pid,
+		   (unsigned long)nst->st_task->tgid,
+		   nst->st_task->comm, nst->st_node,
+		   nst->st_sc, nst->st_id, nst->st_msg_type,
+		   nst->st_msg_key,
+		   nst->st_sock_time.tv_sec,
+		   (long)nst->st_sock_time.tv_usec,
+		   nst->st_send_time.tv_sec,
+		   (long)nst->st_send_time.tv_usec,
+		   nst->st_status_time.tv_sec,
+		   (long)nst->st_status_time.tv_usec);
 
+out:
 	spin_unlock(&o2net_debug_lock);
 
 	return 0;
