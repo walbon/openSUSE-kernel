@@ -41,6 +41,7 @@ EXPORT_SYMBOL(pm_power_off);
 static const struct desc_ptr no_idt = {};
 static int reboot_mode;
 enum reboot_type reboot_type = BOOT_KBD;
+static int __initdata reboot_param_set;
 int reboot_force;
 
 #if defined(CONFIG_X86_32) && defined(CONFIG_SMP)
@@ -115,6 +116,7 @@ static int __init reboot_setup(char *str)
 		else
 			break;
 	}
+	reboot_param_set = 1;
 	return 1;
 }
 
@@ -285,17 +287,6 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 	{ }
 };
 
-static int __init reboot_init(void)
-{
-	if (!(acpi_gbl_FADT.boot_flags & ACPI_FADT_8042)) {
-		printk(KERN_INFO "Use ACPI reboot mode\n");
-		reboot_type = BOOT_ACPI;
-	}
-	dmi_check_system(reboot_dmi_table);
-	return 0;
-}
-core_initcall(reboot_init);
-
 /* The following code and data reboots the machine by switching to real
    mode and jumping to the BIOS reset entry point, as if the CPU has
    really been reset.  The previous version asked the keyboard
@@ -432,6 +423,18 @@ EXPORT_SYMBOL(machine_real_restart);
 #endif
 
 #endif /* CONFIG_X86_32 */
+
+static int __init reboot_init(void)
+{
+	if (!(acpi_gbl_FADT.boot_flags & ACPI_FADT_8042) &&
+	    !reboot_param_set)
+		reboot_type = BOOT_ACPI;
+#ifdef CONFIG_X86_32
+	dmi_check_system(reboot_dmi_table);
+#endif
+	return 0;
+}
+core_initcall(reboot_init);
 
 /*
  * Some Apple MacBook and MacBookPro's needs reboot=p to be able to reboot
