@@ -1565,8 +1565,13 @@ static int bnx2x_execute_vlan_mac(struct bnx2x *bp,
 				idx++;
 		}
 
-		/* Commit the data writes towards the memory */
-		mb();
+		/*
+		 *  No need for an explicit memory barrier here as long we would
+		 *  need to ensure the ordering of writing to the SPQ element
+		 *  and updating of the SPQ producer which involves a memory
+		 *  read and we will have to put a full memory barrier there
+		 *  (inside bnx2x_sp_post()).
+		 */
 
 		rc = bnx2x_sp_post(bp, o->ramrod_cmd, r->cid,
 				   U64_HI(r->rdata_mapping),
@@ -2232,8 +2237,13 @@ static int bnx2x_set_rx_mode_e2(struct bnx2x *bp,
 			 data->header.rule_cnt, p->rx_accept_flags,
 			 p->tx_accept_flags);
 
-	/* Commit writes towards the memory before sending a ramrod */
-	mb();
+	/*
+	 *  No need for an explicit memory barrier here as long we would
+	 *  need to ensure the ordering of writing to the SPQ element
+	 *  and updating of the SPQ producer which involves a memory
+	 *  read and we will have to put a full memory barrier there
+	 *  (inside bnx2x_sp_post()).
+	 */
 
 	/* Send a ramrod */
 	rc = bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_FILTER_RULES, p->cid,
@@ -2926,16 +2936,22 @@ static int bnx2x_mcast_setup_e2(struct bnx2x *bp,
 	if (!o->total_pending_num)
 		bnx2x_mcast_refresh_registry_e2(bp, o);
 
-	/* Commit writes towards the memory before sending a ramrod */
-	mb();
-
-	/* If CLEAR_ONLY was requested - don't send a ramrod and clear
+	/*
+	 * If CLEAR_ONLY was requested - don't send a ramrod and clear
 	 * RAMROD_PENDING status immediately.
 	 */
 	if (test_bit(RAMROD_DRV_CLR_ONLY, &p->ramrod_flags)) {
 		raw->clear_pending(raw);
 		return 0;
 	} else {
+		/*
+		 *  No need for an explicit memory barrier here as long we would
+		 *  need to ensure the ordering of writing to the SPQ element
+		 *  and updating of the SPQ producer which involves a memory
+		 *  read and we will have to put a full memory barrier there
+		 *  (inside bnx2x_sp_post()).
+		 */
+
 		/* Send a ramrod */
 		rc = bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_MULTICAST_RULES,
 				   raw->cid, U64_HI(raw->rdata_mapping),
@@ -3412,16 +3428,22 @@ static int bnx2x_mcast_setup_e1(struct bnx2x *bp,
 	if (rc)
 		return rc;
 
-	/* Commit writes towards the memory before sending a ramrod */
-	mb();
-
-	/* If CLEAR_ONLY was requested - don't send a ramrod and clear
+	/*
+	 * If CLEAR_ONLY was requested - don't send a ramrod and clear
 	 * RAMROD_PENDING status immediately.
 	 */
 	if (test_bit(RAMROD_DRV_CLR_ONLY, &p->ramrod_flags)) {
 		raw->clear_pending(raw);
 		return 0;
 	} else {
+		/*
+		 *  No need for an explicit memory barrier here as long we would
+		 *  need to ensure the ordering of writing to the SPQ element
+		 *  and updating of the SPQ producer which involves a memory
+		 *  read and we will have to put a full memory barrier there
+		 *  (inside bnx2x_sp_post()).
+		 */
+
 		/* Send a ramrod */
 		rc = bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_SET_MAC, raw->cid,
 				   U64_HI(raw->rdata_mapping),
@@ -4046,8 +4068,13 @@ static int bnx2x_setup_rss(struct bnx2x *bp,
 		data->capabilities |= ETH_RSS_UPDATE_RAMROD_DATA_UPDATE_RSS_KEY;
 	}
 
-	/* Commit writes towards the memory before sending a ramrod */
-	mb();
+	/*
+	 *  No need for an explicit memory barrier here as long we would
+	 *  need to ensure the ordering of writing to the SPQ element
+	 *  and updating of the SPQ producer which involves a memory
+	 *  read and we will have to put a full memory barrier there
+	 *  (inside bnx2x_sp_post()).
+	 */
 
 	/* Send a ramrod */
 	rc = bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_RSS_UPDATE, r->cid,
@@ -4203,15 +4230,29 @@ static int bnx2x_queue_comp_cmd(struct bnx2x *bp,
 
 	if (!test_and_clear_bit(cmd, &cur_pending)) {
 		BNX2X_ERR("Bad MC reply %d for queue %d in state %d "
-			  "pending 0x%lx, next_state %d\n", cmd, o->cid,
+			  "pending 0x%lx, next_state %d\n", cmd,
+			  o->cids[BNX2X_PRIMARY_CID_INDEX],
 			  o->state, cur_pending, o->next_state);
 		return -EINVAL;
 	}
 
+	if (o->next_tx_only >= o->max_cos)
+		/* >= becuase tx only must always be smaller than cos since the
+		 * primary connection suports COS 0
+		 */
+		BNX2X_ERR("illegal value for next tx_only: %d. max cos was %d",
+			   o->next_tx_only, o->max_cos);
+
 	DP(BNX2X_MSG_SP, "Completing command %d for queue %d, "
-			 "setting state to %d\n", cmd, o->cid, o->next_state);
+			 "setting state to %d\n", cmd,
+			 o->cids[BNX2X_PRIMARY_CID_INDEX], o->next_state);
+
+	if (o->next_tx_only)  /* print num tx-only if any exist */
+		DP(BNX2X_MSG_SP, "primary cid %d: num tx-only cons %d",
+			   o->cids[BNX2X_PRIMARY_CID_INDEX], o->next_tx_only);
 
 	o->state = o->next_state;
+	o->num_tx_only = o->next_tx_only;
 	o->next_state = BNX2X_Q_STATE_MAX;
 
 	/* It's important that o->state and o->next_state are
@@ -4234,139 +4275,197 @@ static void bnx2x_q_fill_setup_data_e2(struct bnx2x *bp,
 	/* Rx data */
 
 	/* IPv6 TPA supported for E2 and above only */
-	data->rx.tpa_en |= test_bit(BNX2X_Q_FLG_TPA, &params->flags) *
+	data->rx.tpa_en |= test_bit(BNX2X_Q_FLG_TPA_IPV6, &params->flags) *
 				CLIENT_INIT_RX_DATA_TPA_EN_IPV6;
 }
 
+static void bnx2x_q_fill_init_general_data(struct bnx2x *bp,
+				struct bnx2x_queue_sp_obj *o,
+				struct bnx2x_general_setup_params *params,
+				struct client_init_general_data *gen_data,
+				unsigned long *flags)
+{
+	gen_data->client_id = o->cl_id;
+
+	if (test_bit(BNX2X_Q_FLG_STATS, flags)) {
+		gen_data->statistics_counter_id =
+					params->stat_id;
+		gen_data->statistics_en_flg = 1;
+		gen_data->statistics_zero_flg =
+			test_bit(BNX2X_Q_FLG_ZERO_STATS, flags);
+	} else
+		gen_data->statistics_counter_id =
+					DISABLE_STATISTIC_COUNTER_ID_VALUE;
+
+	gen_data->is_fcoe_flg = test_bit(BNX2X_Q_FLG_FCOE, flags);
+	gen_data->activate_flg = test_bit(BNX2X_Q_FLG_ACTIVE, flags);
+	gen_data->sp_client_id = params->spcl_id;
+	gen_data->mtu = cpu_to_le16(params->mtu);
+	gen_data->func_id = o->func_id;
+
+
+	gen_data->cos = params->cos;
+
+	gen_data->traffic_type =
+		test_bit(BNX2X_Q_FLG_FCOE, flags) ?
+		LLFC_TRAFFIC_TYPE_FCOE : LLFC_TRAFFIC_TYPE_NW;
+
+	DP(BNX2X_MSG_SP, "flags: active %d, cos %d, stats en %d",
+	   gen_data->activate_flg, gen_data->cos, gen_data->statistics_en_flg);
+}
+
+static void bnx2x_q_fill_init_tx_data(struct bnx2x_queue_sp_obj *o,
+				struct bnx2x_txq_setup_params *params,
+				struct client_init_tx_data *tx_data,
+				unsigned long *flags)
+{
+	tx_data->enforce_security_flg =
+		test_bit(BNX2X_Q_FLG_TX_SEC, flags);
+	tx_data->default_vlan =
+		cpu_to_le16(params->default_vlan);
+	tx_data->default_vlan_flg =
+		test_bit(BNX2X_Q_FLG_DEF_VLAN, flags);
+	tx_data->tx_switching_flg =
+		test_bit(BNX2X_Q_FLG_TX_SWITCH, flags);
+	tx_data->anti_spoofing_flg =
+		test_bit(BNX2X_Q_FLG_ANTI_SPOOF, flags);
+	tx_data->tx_status_block_id = params->fw_sb_id;
+	tx_data->tx_sb_index_number = params->sb_cq_index;
+	tx_data->tss_leading_client_id = params->tss_leading_cl_id;
+
+	tx_data->tx_bd_page_base.lo =
+		cpu_to_le32(U64_LO(params->dscr_map));
+	tx_data->tx_bd_page_base.hi =
+		cpu_to_le32(U64_HI(params->dscr_map));
+
+	/* Don't configure any Tx switching mode during queue SETUP */
+	tx_data->state = 0;
+}
+
+static void bnx2x_q_fill_init_pause_data(struct bnx2x_queue_sp_obj *o,
+				struct rxq_pause_params *params,
+				struct client_init_rx_data *rx_data)
+{
+	/* flow control data */
+	rx_data->cqe_pause_thr_low = cpu_to_le16(params->rcq_th_lo);
+	rx_data->cqe_pause_thr_high = cpu_to_le16(params->rcq_th_hi);
+	rx_data->bd_pause_thr_low = cpu_to_le16(params->bd_th_lo);
+	rx_data->bd_pause_thr_high = cpu_to_le16(params->bd_th_hi);
+	rx_data->sge_pause_thr_low = cpu_to_le16(params->sge_th_lo);
+	rx_data->sge_pause_thr_high = cpu_to_le16(params->sge_th_hi);
+	rx_data->rx_cos_mask = cpu_to_le16(params->pri_map);
+}
+
+static void bnx2x_q_fill_init_rx_data(struct bnx2x_queue_sp_obj *o,
+				struct bnx2x_rxq_setup_params *params,
+				struct client_init_rx_data *rx_data,
+				unsigned long *flags)
+{
+		/* Rx data */
+	rx_data->tpa_en = test_bit(BNX2X_Q_FLG_TPA, flags) *
+				CLIENT_INIT_RX_DATA_TPA_EN_IPV4;
+	rx_data->vmqueue_mode_en_flg = 0;
+
+	rx_data->cache_line_alignment_log_size =
+		params->cache_line_log;
+	rx_data->enable_dynamic_hc =
+		test_bit(BNX2X_Q_FLG_DHC, flags);
+	rx_data->max_sges_for_packet = params->max_sges_pkt;
+	rx_data->client_qzone_id = params->cl_qzone_id;
+	rx_data->max_agg_size = cpu_to_le16(params->tpa_agg_sz);
+
+	/* Always start in DROP_ALL mode */
+	rx_data->state = cpu_to_le16(CLIENT_INIT_RX_DATA_UCAST_DROP_ALL |
+				     CLIENT_INIT_RX_DATA_MCAST_DROP_ALL);
+
+	/* We don't set drop flags */
+	rx_data->drop_ip_cs_err_flg = 0;
+	rx_data->drop_tcp_cs_err_flg = 0;
+	rx_data->drop_ttl0_flg = 0;
+	rx_data->drop_udp_cs_err_flg = 0;
+	rx_data->inner_vlan_removal_enable_flg =
+		test_bit(BNX2X_Q_FLG_VLAN, flags);
+	rx_data->outer_vlan_removal_enable_flg =
+		test_bit(BNX2X_Q_FLG_OV, flags);
+	rx_data->status_block_id = params->fw_sb_id;
+	rx_data->rx_sb_index_number = params->sb_cq_index;
+	rx_data->max_tpa_queues = params->max_tpa_queues;
+	rx_data->max_bytes_on_bd = cpu_to_le16(params->buf_sz);
+	rx_data->sge_buff_size = cpu_to_le16(params->sge_buf_sz);
+	rx_data->bd_page_base.lo =
+		cpu_to_le32(U64_LO(params->dscr_map));
+	rx_data->bd_page_base.hi =
+		cpu_to_le32(U64_HI(params->dscr_map));
+	rx_data->sge_page_base.lo =
+		cpu_to_le32(U64_LO(params->sge_map));
+	rx_data->sge_page_base.hi =
+		cpu_to_le32(U64_HI(params->sge_map));
+	rx_data->cqe_page_base.lo =
+		cpu_to_le32(U64_LO(params->rcq_map));
+	rx_data->cqe_page_base.hi =
+		cpu_to_le32(U64_HI(params->rcq_map));
+	rx_data->is_leading_rss = test_bit(BNX2X_Q_FLG_LEADING_RSS, flags);
+
+	if (test_bit(BNX2X_Q_FLG_MCAST, flags)) {
+		rx_data->approx_mcast_engine_id = o->func_id;
+		rx_data->is_approx_mcast = 1;
+	}
+
+	rx_data->rss_engine_id = params->rss_engine_id;
+
+	/* silent vlan removal */
+	rx_data->silent_vlan_removal_flg =
+		test_bit(BNX2X_Q_FLG_SILENT_VLAN_REM, flags);
+	rx_data->silent_vlan_value =
+		cpu_to_le16(params->silent_removal_value);
+	rx_data->silent_vlan_mask =
+		cpu_to_le16(params->silent_removal_mask);
+
+}
+
+/* initialize the general, tx and rx parts of a queue object */
 static void bnx2x_q_fill_setup_data_cmn(struct bnx2x *bp,
 				struct bnx2x_queue_state_params *cmd_params,
 				struct client_init_ramrod_data *data)
 {
-	struct bnx2x_queue_sp_obj *o = cmd_params->q_obj;
-	struct bnx2x_queue_setup_params *params = &cmd_params->params.setup;
+	bnx2x_q_fill_init_general_data(bp, cmd_params->q_obj,
+				       &cmd_params->params.setup.gen_params,
+				       &data->general,
+				       &cmd_params->params.setup.flags);
 
+	bnx2x_q_fill_init_tx_data(cmd_params->q_obj,
+				  &cmd_params->params.setup.txq_params,
+				  &data->tx,
+				  &cmd_params->params.setup.flags);
 
-	/* general */
-	data->general.client_id = o->cl_id;
+	bnx2x_q_fill_init_rx_data(cmd_params->q_obj,
+				  &cmd_params->params.setup.rxq_params,
+				  &data->rx,
+				  &cmd_params->params.setup.flags);
 
-	if (test_bit(BNX2X_Q_FLG_STATS, &params->flags)) {
-		data->general.statistics_counter_id =
-					params->gen_params.stat_id;
-		data->general.statistics_en_flg = 1;
-		data->general.statistics_zero_flg =
-			test_bit(BNX2X_Q_FLG_ZERO_STATS, &params->flags);
-	} else
-		data->general.statistics_counter_id =
-					DISABLE_STATISTIC_COUNTER_ID_VALUE;
-
-	data->general.is_fcoe_flg = test_bit(BNX2X_Q_FLG_FCOE, &params->flags);
-	data->general.activate_flg = test_bit(BNX2X_Q_FLG_ACTIVE,
-					      &params->flags);
-	data->general.sp_client_id = params->gen_params.spcl_id;
-	data->general.mtu = cpu_to_le16(params->gen_params.mtu);
-	data->general.func_id = o->func_id;
-
-
-	data->general.cos = params->txq_params.cos;
-
-	data->general.traffic_type =
-		test_bit(BNX2X_Q_FLG_FCOE, &params->flags) ?
-		LLFC_TRAFFIC_TYPE_FCOE : LLFC_TRAFFIC_TYPE_NW;
-
-	/* Rx data */
-	data->rx.tpa_en = test_bit(BNX2X_Q_FLG_TPA, &params->flags) *
-				CLIENT_INIT_RX_DATA_TPA_EN_IPV4;
-	data->rx.vmqueue_mode_en_flg = 0;
-
-	data->rx.cache_line_alignment_log_size =
-		params->rxq_params.cache_line_log;
-	data->rx.enable_dynamic_hc =
-		test_bit(BNX2X_Q_FLG_DHC, &params->flags);
-	data->rx.max_sges_for_packet = params->rxq_params.max_sges_pkt;
-	data->rx.client_qzone_id = params->rxq_params.cl_qzone_id;
-	data->rx.max_agg_size = cpu_to_le16(params->rxq_params.tpa_agg_sz);
-
-	/* Always start in DROP_ALL mode */
-	data->rx.state = cpu_to_le16(CLIENT_INIT_RX_DATA_UCAST_DROP_ALL |
-				     CLIENT_INIT_RX_DATA_MCAST_DROP_ALL);
-
-	/* We don't set drop flags */
-	data->rx.drop_ip_cs_err_flg = 0;
-	data->rx.drop_tcp_cs_err_flg = 0;
-	data->rx.drop_ttl0_flg = 0;
-	data->rx.drop_udp_cs_err_flg = 0;
-	data->rx.inner_vlan_removal_enable_flg =
-		test_bit(BNX2X_Q_FLG_VLAN, &params->flags);
-	data->rx.outer_vlan_removal_enable_flg =
-		test_bit(BNX2X_Q_FLG_OV, &params->flags);
-	data->rx.status_block_id = params->rxq_params.fw_sb_id;
-	data->rx.rx_sb_index_number = params->rxq_params.sb_cq_index;
-	data->rx.max_tpa_queues = params->rxq_params.max_tpa_queues;
-	data->rx.max_bytes_on_bd = cpu_to_le16(params->rxq_params.buf_sz);
-	data->rx.sge_buff_size = cpu_to_le16(params->rxq_params.sge_buf_sz);
-	data->rx.bd_page_base.lo =
-		cpu_to_le32(U64_LO(params->rxq_params.dscr_map));
-	data->rx.bd_page_base.hi =
-		cpu_to_le32(U64_HI(params->rxq_params.dscr_map));
-	data->rx.sge_page_base.lo =
-		cpu_to_le32(U64_LO(params->rxq_params.sge_map));
-	data->rx.sge_page_base.hi =
-		cpu_to_le32(U64_HI(params->rxq_params.sge_map));
-	data->rx.cqe_page_base.lo =
-		cpu_to_le32(U64_LO(params->rxq_params.rcq_map));
-	data->rx.cqe_page_base.hi =
-		cpu_to_le32(U64_HI(params->rxq_params.rcq_map));
-	data->rx.is_leading_rss = test_bit(BNX2X_Q_FLG_LEADING_RSS,
-					   &params->flags);
-
-	if (test_bit(BNX2X_Q_FLG_MCAST, &params->flags)) {
-		data->rx.approx_mcast_engine_id = o->func_id;
-		data->rx.is_approx_mcast = 1;
-	}
-
-	data->rx.rss_engine_id = params->rxq_params.rss_engine_id;
-
-	/* flow control data */
-	data->rx.cqe_pause_thr_low = cpu_to_le16(params->pause.rcq_th_lo);
-	data->rx.cqe_pause_thr_high = cpu_to_le16(params->pause.rcq_th_hi);
-	data->rx.bd_pause_thr_low = cpu_to_le16(params->pause.bd_th_lo);
-	data->rx.bd_pause_thr_high = cpu_to_le16(params->pause.bd_th_hi);
-	data->rx.sge_pause_thr_low = cpu_to_le16(params->pause.sge_th_lo);
-	data->rx.sge_pause_thr_high = cpu_to_le16(params->pause.sge_th_hi);
-	data->rx.rx_cos_mask = cpu_to_le16(params->pause.pri_map);
-
-	/* silent vlan removal */
-	data->rx.silent_vlan_removal_flg =
-		test_bit(BNX2X_Q_FLG_SILENT_VLAN_REM, &params->flags);
-	data->rx.silent_vlan_value =
-		cpu_to_le16(params->rxq_params.silent_removal_value);
-	data->rx.silent_vlan_mask =
-		cpu_to_le16(params->rxq_params.silent_removal_mask);
-
-	/* Tx data */
-	data->tx.enforce_security_flg =
-		test_bit(BNX2X_Q_FLG_TX_SEC, &params->flags);
-	data->tx.default_vlan =
-		cpu_to_le16(params->txq_params.default_vlan);
-	data->tx.default_vlan_flg =
-		test_bit(BNX2X_Q_FLG_DEF_VLAN, &params->flags);
-	data->tx.tx_switching_flg =
-		test_bit(BNX2X_Q_FLG_TX_SWITCH, &params->flags);
-	data->tx.anti_spoofing_flg =
-		test_bit(BNX2X_Q_FLG_ANTI_SPOOF, &params->flags);
-	data->tx.tx_status_block_id = params->txq_params.fw_sb_id;
-	data->tx.tx_sb_index_number = params->txq_params.sb_cq_index;
-	data->tx.tss_leading_client_id = params->txq_params.tss_leading_cl_id;
-
-	data->tx.tx_bd_page_base.lo =
-		cpu_to_le32(U64_LO(params->txq_params.dscr_map));
-	data->tx.tx_bd_page_base.hi =
-		cpu_to_le32(U64_HI(params->txq_params.dscr_map));
-
-	/* Don't configure any Tx switching mode during queue SETUP */
-	data->tx.state = 0;
+	bnx2x_q_fill_init_pause_data(cmd_params->q_obj,
+				     &cmd_params->params.setup.pause_params,
+				     &data->rx);
 }
 
+/* initialize the general and tx parts of a tx-only queue object */
+static void bnx2x_q_fill_setup_tx_only(struct bnx2x *bp,
+				struct bnx2x_queue_state_params *cmd_params,
+				struct tx_queue_init_ramrod_data *data)
+{
+	bnx2x_q_fill_init_general_data(bp, cmd_params->q_obj,
+				       &cmd_params->params.tx_only.gen_params,
+				       &data->general,
+				       &cmd_params->params.tx_only.flags);
+
+	bnx2x_q_fill_init_tx_data(cmd_params->q_obj,
+				  &cmd_params->params.tx_only.txq_params,
+				  &data->tx,
+				  &cmd_params->params.tx_only.flags);
+	DP(BNX2X_MSG_SP, "cid %d, tx bd page lo %x hi %x",
+	   cmd_params->q_obj->cids[0],
+	   data->tx.tx_bd_page_base.lo, data->tx.tx_bd_page_base.hi);
+}
 
 /**
  * bnx2x_q_init - init HW/FW queue
@@ -4385,6 +4484,7 @@ static inline int bnx2x_q_init(struct bnx2x *bp,
 	struct bnx2x_queue_sp_obj *o = params->q_obj;
 	struct bnx2x_queue_init_params *init = &params->params.init;
 	u16 hc_usec;
+	u8 cos;
 
 	/* Tx HC configuration */
 	if (test_bit(BNX2X_Q_TYPE_HAS_TX, &o->type) &&
@@ -4409,7 +4509,12 @@ static inline int bnx2x_q_init(struct bnx2x *bp,
 	}
 
 	/* Set CDU context validation values */
-	bnx2x_set_ctx_validation(bp, init->cxt, o->cid);
+	for (cos = 0; cos < o->max_cos; cos++) {
+		DP(BNX2X_MSG_SP, "setting context validation. cid %d, cos %d",
+				 o->cids[cos], cos);
+		DP(BNX2X_MSG_SP, "context pointer %p", init->cxts[cos]);
+		bnx2x_set_ctx_validation(bp, init->cxts[cos], o->cids[cos]);
+	}
 
 	/* As no ramrod is sent, complete the command immediately  */
 	o->complete_cmd(bp, o, BNX2X_Q_CMD_INIT);
@@ -4435,9 +4540,16 @@ static inline int bnx2x_q_send_setup_e1x(struct bnx2x *bp,
 	/* Fill the ramrod data */
 	bnx2x_q_fill_setup_data_cmn(bp, params, rdata);
 
-	mb();
+	/*
+	 *  No need for an explicit memory barrier here as long we would
+	 *  need to ensure the ordering of writing to the SPQ element
+	 *  and updating of the SPQ producer which involves a memory
+	 *  read and we will have to put a full memory barrier there
+	 *  (inside bnx2x_sp_post()).
+	 */
 
-	return bnx2x_sp_post(bp, ramrod, o->cid, U64_HI(data_mapping),
+	return bnx2x_sp_post(bp, ramrod, o->cids[BNX2X_PRIMARY_CID_INDEX],
+			     U64_HI(data_mapping),
 			     U64_LO(data_mapping), ETH_CONNECTION_TYPE);
 }
 
@@ -4457,9 +4569,64 @@ static inline int bnx2x_q_send_setup_e2(struct bnx2x *bp,
 	bnx2x_q_fill_setup_data_cmn(bp, params, rdata);
 	bnx2x_q_fill_setup_data_e2(bp, params, rdata);
 
-	mb();
+	/*
+	 *  No need for an explicit memory barrier here as long we would
+	 *  need to ensure the ordering of writing to the SPQ element
+	 *  and updating of the SPQ producer which involves a memory
+	 *  read and we will have to put a full memory barrier there
+	 *  (inside bnx2x_sp_post()).
+	 */
 
-	return bnx2x_sp_post(bp, ramrod, o->cid, U64_HI(data_mapping),
+	return bnx2x_sp_post(bp, ramrod, o->cids[BNX2X_PRIMARY_CID_INDEX],
+			     U64_HI(data_mapping),
+			     U64_LO(data_mapping), ETH_CONNECTION_TYPE);
+}
+
+static inline int bnx2x_q_send_setup_tx_only(struct bnx2x *bp,
+				  struct bnx2x_queue_state_params *params)
+{
+	struct bnx2x_queue_sp_obj *o = params->q_obj;
+	struct tx_queue_init_ramrod_data *rdata =
+		(struct tx_queue_init_ramrod_data *)o->rdata;
+	dma_addr_t data_mapping = o->rdata_mapping;
+	int ramrod = RAMROD_CMD_ID_ETH_TX_QUEUE_SETUP;
+	struct bnx2x_queue_setup_tx_only_params *tx_only_params =
+		&params->params.tx_only;
+	u8 cid_index = tx_only_params->cid_index;
+
+
+	if (cid_index >= o->max_cos) {
+		BNX2X_ERR("queue[%d]: cid_index (%d) is out of range\n",
+			  o->cl_id, cid_index);
+		return -EINVAL;
+	}
+
+	DP(BNX2X_MSG_SP, "parameters received: cos: %d sp-id: %d",
+			 tx_only_params->gen_params.cos,
+			 tx_only_params->gen_params.spcl_id);
+
+	/* Clear the ramrod data */
+	memset(rdata, 0, sizeof(*rdata));
+
+	/* Fill the ramrod data */
+	bnx2x_q_fill_setup_tx_only(bp, params, rdata);
+
+	DP(BNX2X_MSG_SP, "sending tx-only ramrod: cid %d, client-id %d,"
+			 "sp-client id %d, cos %d",
+			 o->cids[cid_index],
+			 rdata->general.client_id,
+			 rdata->general.sp_client_id, rdata->general.cos);
+
+	/*
+	 *  No need for an explicit memory barrier here as long we would
+	 *  need to ensure the ordering of writing to the SPQ element
+	 *  and updating of the SPQ producer which involves a memory
+	 *  read and we will have to put a full memory barrier there
+	 *  (inside bnx2x_sp_post()).
+	 */
+
+	return bnx2x_sp_post(bp, ramrod, o->cids[cid_index],
+			     U64_HI(data_mapping),
 			     U64_LO(data_mapping), ETH_CONNECTION_TYPE);
 }
 
@@ -4529,17 +4696,33 @@ static inline int bnx2x_q_send_update(struct bnx2x *bp,
 	struct client_update_ramrod_data *rdata =
 		(struct client_update_ramrod_data *)o->rdata;
 	dma_addr_t data_mapping = o->rdata_mapping;
+	struct bnx2x_queue_update_params *update_params =
+		&params->params.update;
+	u8 cid_index = update_params->cid_index;
+
+	if (cid_index >= o->max_cos) {
+		BNX2X_ERR("queue[%d]: cid_index (%d) is out of range\n",
+			  o->cl_id, cid_index);
+		return -EINVAL;
+	}
+
 
 	/* Clear the ramrod data */
 	memset(rdata, 0, sizeof(*rdata));
 
 	/* Fill the ramrod data */
-	bnx2x_q_fill_update_data(bp, o, &params->params.update, rdata);
+	bnx2x_q_fill_update_data(bp, o, update_params, rdata);
 
-	mb();
+	/*
+	 *  No need for an explicit memory barrier here as long we would
+	 *  need to ensure the ordering of writing to the SPQ element
+	 *  and updating of the SPQ producer which involves a memory
+	 *  read and we will have to put a full memory barrier there
+	 *  (inside bnx2x_sp_post()).
+	 */
 
-	return bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_CLIENT_UPDATE, o->cid,
-			     U64_HI(data_mapping),
+	return bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_CLIENT_UPDATE,
+			     o->cids[cid_index], U64_HI(data_mapping),
 			     U64_LO(data_mapping), ETH_CONNECTION_TYPE);
 }
 
@@ -4596,7 +4779,8 @@ static inline int bnx2x_q_send_halt(struct bnx2x *bp,
 {
 	struct bnx2x_queue_sp_obj *o = params->q_obj;
 
-	return bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_HALT, o->cid, 0, o->cl_id,
+	return bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_HALT,
+			     o->cids[BNX2X_PRIMARY_CID_INDEX], 0, o->cl_id,
 			     ETH_CONNECTION_TYPE);
 }
 
@@ -4604,18 +4788,32 @@ static inline int bnx2x_q_send_cfc_del(struct bnx2x *bp,
 				       struct bnx2x_queue_state_params *params)
 {
 	struct bnx2x_queue_sp_obj *o = params->q_obj;
+	u8 cid_idx = params->params.cfc_del.cid_index;
 
-	return bnx2x_sp_post(bp, RAMROD_CMD_ID_COMMON_CFC_DEL, o->cid, 0, 0,
-			     NONE_CONNECTION_TYPE);
+	if (cid_idx >= o->max_cos) {
+		BNX2X_ERR("queue[%d]: cid_index (%d) is out of range\n",
+			  o->cl_id, cid_idx);
+		return -EINVAL;
+	}
+
+	return bnx2x_sp_post(bp, RAMROD_CMD_ID_COMMON_CFC_DEL,
+			     o->cids[cid_idx], 0, 0, NONE_CONNECTION_TYPE);
 }
 
 static inline int bnx2x_q_send_terminate(struct bnx2x *bp,
 					struct bnx2x_queue_state_params *params)
 {
 	struct bnx2x_queue_sp_obj *o = params->q_obj;
+	u8 cid_index = params->params.terminate.cid_index;
 
-	return bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_TERMINATE, o->cid, 0, 0,
-			     ETH_CONNECTION_TYPE);
+	if (cid_index >= o->max_cos) {
+		BNX2X_ERR("queue[%d]: cid_index (%d) is out of range\n",
+			  o->cl_id, cid_index);
+		return -EINVAL;
+	}
+
+	return bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_TERMINATE,
+			     o->cids[cid_index], 0, 0, ETH_CONNECTION_TYPE);
 }
 
 static inline int bnx2x_q_send_empty(struct bnx2x *bp,
@@ -4623,7 +4821,8 @@ static inline int bnx2x_q_send_empty(struct bnx2x *bp,
 {
 	struct bnx2x_queue_sp_obj *o = params->q_obj;
 
-	return bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_EMPTY, o->cid, 0, 0,
+	return bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_EMPTY,
+			     o->cids[BNX2X_PRIMARY_CID_INDEX], 0, 0,
 			     ETH_CONNECTION_TYPE);
 }
 
@@ -4633,6 +4832,8 @@ static inline int bnx2x_queue_send_cmd_cmn(struct bnx2x *bp,
 	switch (params->cmd) {
 	case BNX2X_Q_CMD_INIT:
 		return bnx2x_q_init(bp, params);
+	case BNX2X_Q_CMD_SETUP_TX_ONLY:
+		return bnx2x_q_send_setup_tx_only(bp, params);
 	case BNX2X_Q_CMD_DEACTIVATE:
 		return bnx2x_q_send_deactivate(bp, params);
 	case BNX2X_Q_CMD_ACTIVATE:
@@ -4662,6 +4863,7 @@ static int bnx2x_queue_send_cmd_e1x(struct bnx2x *bp,
 	case BNX2X_Q_CMD_SETUP:
 		return bnx2x_q_send_setup_e1x(bp, params);
 	case BNX2X_Q_CMD_INIT:
+	case BNX2X_Q_CMD_SETUP_TX_ONLY:
 	case BNX2X_Q_CMD_DEACTIVATE:
 	case BNX2X_Q_CMD_ACTIVATE:
 	case BNX2X_Q_CMD_UPDATE:
@@ -4684,6 +4886,7 @@ static int bnx2x_queue_send_cmd_e2(struct bnx2x *bp,
 	case BNX2X_Q_CMD_SETUP:
 		return bnx2x_q_send_setup_e2(bp, params);
 	case BNX2X_Q_CMD_INIT:
+	case BNX2X_Q_CMD_SETUP_TX_ONLY:
 	case BNX2X_Q_CMD_DEACTIVATE:
 	case BNX2X_Q_CMD_ACTIVATE:
 	case BNX2X_Q_CMD_UPDATE:
@@ -4721,6 +4924,25 @@ static int bnx2x_queue_chk_transition(struct bnx2x *bp,
 {
 	enum bnx2x_q_state state = o->state, next_state = BNX2X_Q_STATE_MAX;
 	enum bnx2x_queue_cmd cmd = params->cmd;
+	struct bnx2x_queue_update_params *update_params =
+		 &params->params.update;
+	u8 next_tx_only = o->num_tx_only;
+
+	/*
+	 * Forget all pending for completion commands if a driver only state
+	 * transition has been requested.
+	 */
+	if (test_bit(RAMROD_DRV_CLR_ONLY, &params->ramrod_flags)) {
+		o->pending = 0;
+		o->next_state = BNX2X_Q_STATE_MAX;
+	}
+
+	/*
+	 * Don't allow a next state transition if we are in the middle of
+	 * the previous one.
+	 */
+	if (o->pending)
+		return -EBUSY;
 
 	switch (state) {
 	case BNX2X_Q_STATE_RESET:
@@ -4746,13 +4968,15 @@ static int bnx2x_queue_chk_transition(struct bnx2x *bp,
 			 (cmd == BNX2X_Q_CMD_UPDATE_TPA))
 			next_state = BNX2X_Q_STATE_ACTIVE;
 
+		else if (cmd == BNX2X_Q_CMD_SETUP_TX_ONLY) {
+			next_state = BNX2X_Q_STATE_MULTI_COS;
+			next_tx_only = 1;
+		}
+
 		else if (cmd == BNX2X_Q_CMD_HALT)
 			next_state = BNX2X_Q_STATE_STOPPED;
 
 		else if (cmd == BNX2X_Q_CMD_UPDATE) {
-			struct bnx2x_queue_update_params *update_params =
-				&params->params.update;
-
 			/* If "active" state change is requested, update the
 			 *  state accordingly.
 			 */
@@ -4763,6 +4987,43 @@ static int bnx2x_queue_chk_transition(struct bnx2x *bp,
 				next_state = BNX2X_Q_STATE_INACTIVE;
 			else
 				next_state = BNX2X_Q_STATE_ACTIVE;
+		}
+
+		break;
+	case BNX2X_Q_STATE_MULTI_COS:
+		if (cmd == BNX2X_Q_CMD_TERMINATE)
+			next_state = BNX2X_Q_STATE_MCOS_TERMINATED;
+
+		else if (cmd == BNX2X_Q_CMD_SETUP_TX_ONLY) {
+			next_state = BNX2X_Q_STATE_MULTI_COS;
+			next_tx_only = o->num_tx_only + 1;
+		}
+
+		else if ((cmd == BNX2X_Q_CMD_EMPTY) ||
+			 (cmd == BNX2X_Q_CMD_UPDATE_TPA))
+			next_state = BNX2X_Q_STATE_MULTI_COS;
+
+		else if (cmd == BNX2X_Q_CMD_UPDATE) {
+			/* If "active" state change is requested, update the
+			 *  state accordingly.
+			 */
+			if (test_bit(BNX2X_Q_UPDATE_ACTIVATE_CHNG,
+				     &update_params->update_flags) &&
+			    !test_bit(BNX2X_Q_UPDATE_ACTIVATE,
+				      &update_params->update_flags))
+				next_state = BNX2X_Q_STATE_INACTIVE;
+			else
+				next_state = BNX2X_Q_STATE_MULTI_COS;
+		}
+
+		break;
+	case BNX2X_Q_STATE_MCOS_TERMINATED:
+		if (cmd == BNX2X_Q_CMD_CFC_DEL) {
+			next_tx_only = o->num_tx_only - 1;
+			if (next_tx_only == 0)
+				next_state = BNX2X_Q_STATE_ACTIVE;
+			else
+				next_state = BNX2X_Q_STATE_MULTI_COS;
 		}
 
 		break;
@@ -4778,18 +5039,18 @@ static int bnx2x_queue_chk_transition(struct bnx2x *bp,
 			next_state = BNX2X_Q_STATE_STOPPED;
 
 		else if (cmd == BNX2X_Q_CMD_UPDATE) {
-			struct bnx2x_queue_update_params *update_params =
-				&params->params.update;
-
 			/* If "active" state change is requested, update the
 			 * state accordingly.
 			 */
 			if (test_bit(BNX2X_Q_UPDATE_ACTIVATE_CHNG,
 				     &update_params->update_flags) &&
 			    test_bit(BNX2X_Q_UPDATE_ACTIVATE,
-				     &update_params->update_flags))
-				next_state = BNX2X_Q_STATE_ACTIVE;
-			else
+				     &update_params->update_flags)){
+				if (o->num_tx_only == 0)
+					next_state = BNX2X_Q_STATE_ACTIVE;
+				else /* tx only queues exist for this queue */
+					next_state = BNX2X_Q_STATE_MULTI_COS;
+			} else
 				next_state = BNX2X_Q_STATE_INACTIVE;
 		}
 
@@ -4813,6 +5074,7 @@ static int bnx2x_queue_chk_transition(struct bnx2x *bp,
 		DP(BNX2X_MSG_SP, "Good state transition: %d(%d)->%d\n",
 				 state, cmd, next_state);
 		o->next_state = next_state;
+		o->next_tx_only = next_tx_only;
 		return 0;
 	}
 
@@ -4823,12 +5085,17 @@ static int bnx2x_queue_chk_transition(struct bnx2x *bp,
 
 void bnx2x_init_queue_obj(struct bnx2x *bp,
 			  struct bnx2x_queue_sp_obj *obj,
-			  u8 cl_id, u32 cid, u8 func_id, void *rdata,
+			  u8 cl_id, u32 *cids, u8 cid_cnt, u8 func_id,
+			  void *rdata,
 			  dma_addr_t rdata_mapping, unsigned long type)
 {
 	memset(obj, 0, sizeof(*obj));
 
-	obj->cid = cid;
+	/* We support only BNX2X_MULTI_TX_COS Tx CoS at the moment */
+	BUG_ON(BNX2X_MULTI_TX_COS < cid_cnt);
+
+	memcpy(obj->cids, cids, sizeof(obj->cids[0]) * cid_cnt);
+	obj->max_cos = cid_cnt;
 	obj->cl_id = cl_id;
 	obj->func_id = func_id;
 	obj->rdata = rdata;
@@ -4848,7 +5115,29 @@ void bnx2x_init_queue_obj(struct bnx2x *bp,
 	obj->set_pending = bnx2x_queue_set_pending;
 }
 
+void bnx2x_queue_set_cos_cid(struct bnx2x *bp,
+			     struct bnx2x_queue_sp_obj *obj,
+			     u32 cid, u8 index)
+{
+	obj->cids[index] = cid;
+}
+
 /********************** Function state object *********************************/
+enum bnx2x_func_state bnx2x_func_get_state(struct bnx2x *bp,
+					   struct bnx2x_func_sp_obj *o)
+{
+	/* in the middle of transaction - return INVALID state */
+	if (o->pending)
+		return BNX2X_F_STATE_MAX;
+
+	/*
+	 * unsure the order of reading of o->pending and o->state
+	 * o->pending should be read first
+	 */
+	rmb();
+
+	return o->state;
+}
 
 static int bnx2x_func_wait_comp(struct bnx2x *bp,
 				struct bnx2x_func_sp_obj *o,
@@ -4939,6 +5228,22 @@ static int bnx2x_func_chk_transition(struct bnx2x *bp,
 	enum bnx2x_func_state state = o->state, next_state = BNX2X_F_STATE_MAX;
 	enum bnx2x_func_cmd cmd = params->cmd;
 
+	/*
+	 * Forget all pending for completion commands if a driver only state
+	 * transition has been requested.
+	 */
+	if (test_bit(RAMROD_DRV_CLR_ONLY, &params->ramrod_flags)) {
+		o->pending = 0;
+		o->next_state = BNX2X_F_STATE_MAX;
+	}
+
+	/*
+	 * Don't allow a next state transition if we are in the middle of
+	 * the previous one.
+	 */
+	if (o->pending)
+		return -EBUSY;
+
 	switch (state) {
 	case BNX2X_F_STATE_RESET:
 		if (cmd == BNX2X_F_CMD_HW_INIT)
@@ -4956,6 +5261,13 @@ static int bnx2x_func_chk_transition(struct bnx2x *bp,
 	case BNX2X_F_STATE_STARTED:
 		if (cmd == BNX2X_F_CMD_STOP)
 			next_state = BNX2X_F_STATE_INITIALIZED;
+		else if (cmd == BNX2X_F_CMD_TX_STOP)
+			next_state = BNX2X_F_STATE_TX_STOPPED;
+
+		break;
+	case BNX2X_F_STATE_TX_STOPPED:
+		if (cmd == BNX2X_F_CMD_TX_START)
+			next_state = BNX2X_F_STATE_STARTED;
 
 		break;
 	default:
@@ -5226,7 +5538,13 @@ static inline int bnx2x_func_send_start(struct bnx2x *bp,
 	rdata->path_id       = BP_PATH(bp);
 	rdata->network_cos_mode = start_params->network_cos_mode;
 
-	mb();
+	/*
+	 *  No need for an explicit memory barrier here as long we would
+	 *  need to ensure the ordering of writing to the SPQ element
+	 *  and updating of the SPQ producer which involves a memory
+	 *  read and we will have to put a full memory barrier there
+	 *  (inside bnx2x_sp_post()).
+	 */
 
 	return bnx2x_sp_post(bp, RAMROD_CMD_ID_COMMON_FUNCTION_START, 0,
 			     U64_HI(data_mapping),
@@ -5238,6 +5556,38 @@ static inline int bnx2x_func_send_stop(struct bnx2x *bp,
 {
 	return bnx2x_sp_post(bp, RAMROD_CMD_ID_COMMON_FUNCTION_STOP, 0, 0, 0,
 			     NONE_CONNECTION_TYPE);
+}
+
+static inline int bnx2x_func_send_tx_stop(struct bnx2x *bp,
+				       struct bnx2x_func_state_params *params)
+{
+	return bnx2x_sp_post(bp, RAMROD_CMD_ID_COMMON_STOP_TRAFFIC, 0, 0, 0,
+			     NONE_CONNECTION_TYPE);
+}
+static inline int bnx2x_func_send_tx_start(struct bnx2x *bp,
+				       struct bnx2x_func_state_params *params)
+{
+	struct bnx2x_func_sp_obj *o = params->f_obj;
+	struct flow_control_configuration *rdata =
+		(struct flow_control_configuration *)o->rdata;
+	dma_addr_t data_mapping = o->rdata_mapping;
+	struct bnx2x_func_tx_start_params *tx_start_params =
+		&params->params.tx_start;
+	int i;
+
+	memset(rdata, 0, sizeof(*rdata));
+
+	rdata->dcb_enabled = tx_start_params->dcb_enabled;
+	rdata->dcb_version = tx_start_params->dcb_version;
+	rdata->dont_add_pri_0_en = tx_start_params->dont_add_pri_0_en;
+
+	for (i = 0; i < ARRAY_SIZE(rdata->traffic_type_to_priority_cos); i++)
+		rdata->traffic_type_to_priority_cos[i] =
+			tx_start_params->traffic_type_to_priority_cos[i];
+
+	return bnx2x_sp_post(bp, RAMROD_CMD_ID_COMMON_START_TRAFFIC, 0,
+			     U64_HI(data_mapping),
+			     U64_LO(data_mapping), NONE_CONNECTION_TYPE);
 }
 
 static int bnx2x_func_send_cmd(struct bnx2x *bp,
@@ -5252,6 +5602,10 @@ static int bnx2x_func_send_cmd(struct bnx2x *bp,
 		return bnx2x_func_send_stop(bp, params);
 	case BNX2X_F_CMD_HW_RESET:
 		return bnx2x_func_hw_reset(bp, params);
+	case BNX2X_F_CMD_TX_STOP:
+		return bnx2x_func_send_tx_stop(bp, params);
+	case BNX2X_F_CMD_TX_START:
+		return bnx2x_func_send_tx_start(bp, params);
 	default:
 		BNX2X_ERR("Unknown command: %d\n", params->cmd);
 		return -EINVAL;
