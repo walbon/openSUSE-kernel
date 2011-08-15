@@ -76,8 +76,6 @@ xfs_flush_pages(
 		xfs_iflags_clear(ip, XFS_ITRUNCATED);
 		ret = -filemap_fdatawrite(mapping);
 	}
-	if (flags & XFS_B_ASYNC)
-		return ret;
 	ret2 = xfs_wait_on_pages(ip, first, last);
 	if (!ret)
 		ret = ret2;

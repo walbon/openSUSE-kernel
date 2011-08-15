@@ -253,9 +253,8 @@ xfs_setattr(
 		if (!code &&
 		    ip->i_size != ip->i_d.di_size &&
 		    iattr->ia_size > ip->i_d.di_size) {
-			code = xfs_flush_pages(ip,
-					ip->i_d.di_size, iattr->ia_size,
-					XFS_B_ASYNC, FI_NONE);
+			code = -filemap_fdatawrite_range(inode->i_mapping,
+					ip->i_d.di_size, iattr->ia_size);
 		}
 
 		/* wait for all I/O to complete */
@@ -1083,7 +1082,7 @@ xfs_release(
 		 */
 		truncated = xfs_iflags_test_and_clear(ip, XFS_ITRUNCATED);
 		if (truncated && VN_DIRTY(VFS_I(ip)) && ip->i_delayed_blks > 0)
-			xfs_flush_pages(ip, 0, -1, XFS_B_ASYNC, FI_NONE);
+			filemap_flush(VFS_I(ip)->i_mapping);
 	}
 
 	if (ip->i_d.di_nlink != 0) {
