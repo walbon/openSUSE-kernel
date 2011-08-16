@@ -126,6 +126,7 @@ void ixgbe_set_vmolr(struct ixgbe_hw *hw, u32 vf)
 inline void ixgbe_vf_reset_event(struct ixgbe_adapter *adapter, u32 vf)
 {
 	struct ixgbe_hw *hw = &adapter->hw;
+	int rar_entry = hw->mac.num_rar_entries - (vf + 1);
 
 	/* reset offloads to defaults */
 	ixgbe_set_vmolr(hw, vf);
@@ -137,26 +138,17 @@ inline void ixgbe_vf_reset_event(struct ixgbe_adapter *adapter, u32 vf)
 	/* Flush and reset the mta with the new values */
 	ixgbe_set_rx_mode(adapter->netdev);
 
-	if (adapter->vfinfo[vf].rar > 0) {
-		adapter->hw.mac.ops.clear_rar(&adapter->hw,
-		                              adapter->vfinfo[vf].rar);
-		adapter->vfinfo[vf].rar = -1;
-	}
+	hw->mac.ops.clear_rar(hw, rar_entry);
 }
 
 int ixgbe_set_vf_mac(struct ixgbe_adapter *adapter,
                           int vf, unsigned char *mac_addr)
 {
 	struct ixgbe_hw *hw = &adapter->hw;
-
-	adapter->vfinfo[vf].rar = hw->mac.ops.set_rar(hw, vf + 1, mac_addr,
-	                                              vf, IXGBE_RAH_AV);
-	if (adapter->vfinfo[vf].rar < 0) {
-		DPRINTK(DRV, ERR, "Could not set MAC Filter for VF %d\n", vf);
-		return -1;
-	}
+	int rar_entry = hw->mac.num_rar_entries - (vf + 1);
 
 	memcpy(adapter->vfinfo[vf].vf_mac_addresses, mac_addr, 6);
+	hw->mac.ops.set_rar(hw, rar_entry, mac_addr, vf, IXGBE_RAH_AV);
 
 	return 0;
 }
