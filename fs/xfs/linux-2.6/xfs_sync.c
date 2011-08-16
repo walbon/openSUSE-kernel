@@ -237,8 +237,11 @@ xfs_sync_inode_data(
 		xfs_ilock(ip, XFS_IOLOCK_SHARED);
 	}
 
-	error = xfs_flush_pages(ip, 0, -1, (flags & SYNC_WAIT) ?
-				0 : XFS_B_ASYNC, FI_NONE);
+	xfs_iflags_clear(ip, XFS_ITRUNCATED);
+	if (flags & SYNC_WAIT)
+		error = xfs_flush_pages(ip, 0, -1, 0, FI_NONE);
+	else
+		error = -filemap_flush(mapping);
 	xfs_iunlock(ip, XFS_IOLOCK_SHARED);
 
  out_wait:
