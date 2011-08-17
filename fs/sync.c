@@ -25,7 +25,7 @@
  * wait == 1 case since in that case write_inode() functions do
  * sync_dirty_buffer() and thus effectively write one block at a time.
  */
-static int __sync_filesystem(struct super_block *sb, int wait)
+static int __sync_filesystem(struct super_block *sb, int wait, int locked)
 {
 	/*
 	 * This should be safe, as we require bdi backing to actually
@@ -37,7 +37,14 @@ static int __sync_filesystem(struct super_block *sb, int wait)
 	/* Avoid doing twice syncing and cache pruning for quota sync */
 	if (!wait) {
 		writeout_quota_sb(sb, -1);
-		writeback_inodes_sb(sb);
+		/*
+		 * This is a hack - for cases where s_umount might be held
+		 * read-write - i.e., sync_filesystem() - we tell writeback
+		 * code we hold the semaphore. For other cases we don't so
+		 * that we can avoid waiting for flusher threads as we did
+		 * so far.
+		 */
+		writeback_inodes_sb_locked(sb, locked);
 	} else {
 		sync_quota_sb(sb, -1);
 		sync_inodes_sb(sb);
@@ -68,10 +75,10 @@ int sync_filesystem(struct super_block *sb)
 	if (sb->s_flags & MS_RDONLY)
 		return 0;
 
-	ret = __sync_filesystem(sb, 0);
+	ret = __sync_filesystem(sb, 0, 1);
 	if (ret < 0)
 		return ret;
-	return __sync_filesystem(sb, 1);
+	return __sync_filesystem(sb, 1, 1);
 }
 EXPORT_SYMBOL_GPL(sync_filesystem);
 
@@ -109,7 +116,7 @@ restart:
 
 		down_read(&sb->s_umount);
 		if (!(sb->s_flags & MS_RDONLY) && sb->s_root && sb->s_bdi)
-			__sync_filesystem(sb, wait);
+			__sync_filesystem(sb, wait, 0);
 		up_read(&sb->s_umount);
 
 		/* restart only when sb is no longer on the list */

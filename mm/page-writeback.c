@@ -572,7 +572,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 	 */
 	if ((laptop_mode && pages_written) ||
 	    (!laptop_mode && (nr_reclaimable > background_thresh)))
-		bdi_start_writeback(bdi, NULL, 0);
+		bdi_start_writeback(bdi, NULL, 0, 0);
 }
 
 void set_page_dirty_balance(struct page *page, int page_mkwrite)

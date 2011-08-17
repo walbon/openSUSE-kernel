@@ -62,7 +62,7 @@
  */
 static void shrink_liability(struct ubifs_info *c, int nr_to_write)
 {
-	writeback_inodes_sb(c->vfs_sb);
+	writeback_inodes_sb_locked(c->vfs_sb, 0);
 }
 
 /**
