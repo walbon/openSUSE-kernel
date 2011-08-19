@@ -612,11 +612,15 @@ void __init efi_enter_virtual_mode(void)
 			continue;
 		}
 
-		if (!(md->attribute & EFI_MEMORY_WB)) {
+		if (!(md->attribute & EFI_MEMORY_WB) &&
+		    md->type != EFI_RESERVED_TYPE) {
 			addr = md->virt_addr;
 			npages = md->num_pages;
 			memrange_efi_to_native(&addr, &npages);
 			set_memory_uc(addr, npages);
+		} else if (md->type == EFI_RESERVED_TYPE) {
+			printk(KERN_INFO PFX "skip EFI_RESERVED_TYPE: 0x%llX "
+				"attr=0x%llx!\n", md->phys_addr, md->attribute);
 		}
 
 		systab = (u64) (unsigned long) efi_phys.systab;
