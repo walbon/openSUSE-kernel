@@ -108,7 +108,6 @@
 #ifdef CONFIG_SYSCTL
 #include <linux/sysctl.h>
 #endif
-#include <net/secure_seq.h>
 #include <linux/reserve.h>
 
 #define RT_FL_TOS(oldflp) \
