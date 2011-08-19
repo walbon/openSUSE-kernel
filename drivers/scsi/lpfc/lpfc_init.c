@@ -654,6 +654,7 @@ lpfc_config_port_post(struct lpfc_hba *phba)
 /**
  * lpfc_hba_init_link - Initialize the FC link
  * @phba: pointer to lpfc hba data structure.
+ * @flag: mailbox command issue mode - either MBX_POLL or MBX_NOWAIT
  *
  * This routine will issue the INIT_LINK mailbox command call.
  * It is available to other drivers through the lpfc_hba data
@@ -665,7 +666,7 @@ lpfc_config_port_post(struct lpfc_hba *phba)
  *		Any other value - error
  **/
 int
-lpfc_hba_init_link(struct lpfc_hba *phba)
+lpfc_hba_init_link(struct lpfc_hba *phba, uint32_t flag)
 {
 	struct lpfc_vport *vport = phba->pport;
 	LPFC_MBOXQ_t *pmb;
@@ -683,7 +684,7 @@ lpfc_hba_init_link(struct lpfc_hba *phba)
 	lpfc_init_link(phba, pmb, phba->cfg_topology, phba->cfg_link_speed);
 	pmb->mbox_cmpl = lpfc_sli_def_mbox_cmpl;
 	lpfc_set_loopback_flag(phba);
-	rc = lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT);
+	rc = lpfc_sli_issue_mbox(phba, pmb, flag);
 	if ((rc != MBX_BUSY) && (rc != MBX_SUCCESS)) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 			"0498 Adapter failed to init, mbxCmd x%x "
@@ -698,17 +699,21 @@ lpfc_hba_init_link(struct lpfc_hba *phba)
 			readl(phba->HAregaddr); /* flush */
 		}
 		phba->link_state = LPFC_HBA_ERROR;
-		if (rc != MBX_BUSY)
+		if (rc != MBX_BUSY || flag == MBX_POLL)
 			mempool_free(pmb, phba->mbox_mem_pool);
 		return -EIO;
 	}
 	phba->cfg_suppress_link_up = LPFC_INITIALIZE_LINK;
+	if (flag == MBX_POLL)
+		mempool_free(pmb, phba->mbox_mem_pool);
 
 	return 0;
 }
 
 /**
  * lpfc_hba_down_link - this routine downs the FC link
+ * @phba: pointer to lpfc hba data structure.
+ * @flag: mailbox command issue mode - either MBX_POLL or MBX_NOWAIT
  *
  * This routine will issue the DOWN_LINK mailbox command call.
  * It is available to other drivers through the lpfc_hba data
@@ -719,7 +724,7 @@ lpfc_hba_init_link(struct lpfc_hba *phba)
  *		Any other value - error
  **/
 int
-lpfc_hba_down_link(struct lpfc_hba *phba)
+lpfc_hba_down_link(struct lpfc_hba *phba, uint32_t flag)
 {
 	LPFC_MBOXQ_t *pmb;
 	int rc;
@@ -735,7 +740,7 @@ lpfc_hba_down_link(struct lpfc_hba *phba)
 		"0491 Adapter Link is disabled.\n");
 	lpfc_down_link(phba, pmb);
 	pmb->mbox_cmpl = lpfc_sli_def_mbox_cmpl;
-	rc = lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT);
+	rc = lpfc_sli_issue_mbox(phba, pmb, flag);
 	if ((rc != MBX_SUCCESS) && (rc != MBX_BUSY)) {
 		lpfc_printf_log(phba,
 		KERN_ERR, LOG_INIT,
@@ -745,6 +750,9 @@ lpfc_hba_down_link(struct lpfc_hba *phba)
 		mempool_free(pmb, phba->mbox_mem_pool);
 		return -EIO;
 	}
+	if (flag == MBX_POLL)
+		mempool_free(pmb, phba->mbox_mem_pool);
+
 	return 0;
 }
 
@@ -792,7 +800,7 @@ lpfc_hba_down_prep(struct lpfc_hba *phba)
  * down the SLI Layer.
  *
  * Return codes
- *   0 - sucess.
+ *   0 - success.
  *   Any other value - error.
  **/
 static int
@@ -848,7 +856,7 @@ lpfc_hba_down_post_s3(struct lpfc_hba *phba)
  * down the SLI Layer.
  *
  * Return codes
- *   0 - sucess.
+ *   0 - success.
  *   Any other value - error.
  **/
 static int
@@ -909,7 +917,7 @@ lpfc_hba_down_post_s4(struct lpfc_hba *phba)
  * uninitialization after the HBA is reset when bring down the SLI Layer.
  *
  * Return codes
- *   0 - sucess.
+ *   0 - success.
  *   Any other value - error.
  **/
 int
@@ -1385,7 +1393,8 @@ lpfc_handle_eratt_s3(struct lpfc_hba *phba)
 		fc_host_post_vendor_event(shost, fc_get_event_number(),
 					  sizeof(temp_event_data),
 					  (char *) &temp_event_data,
-					  LPFC_NL_VENDOR_ID);
+					  SCSI_NL_VID_TYPE_PCI
+					  | PCI_VENDOR_ID_EMULEX);
 
 		spin_lock_irq(&phba->hbalock);
 		phba->over_temp_state = HBA_OVER_TEMP;
@@ -1407,7 +1416,7 @@ lpfc_handle_eratt_s3(struct lpfc_hba *phba)
 		shost = lpfc_shost_from_vport(vport);
 		fc_host_post_vendor_event(shost, fc_get_event_number(),
 				sizeof(event_data), (char *) &event_data,
-				LPFC_NL_VENDOR_ID);
+				SCSI_NL_VID_TYPE_PCI | PCI_VENDOR_ID_EMULEX);
 
 		lpfc_offline_eratt(phba);
 	}
@@ -1498,7 +1507,7 @@ lpfc_handle_eratt_s4(struct lpfc_hba *phba)
  * routine from the API jump table function pointer from the lpfc_hba struct.
  *
  * Return codes
- *   0 - sucess.
+ *   0 - success.
  *   Any other value - error.
  **/
 void
@@ -2918,8 +2927,6 @@ void lpfc_host_attrib_init(struct Scsi_Host *shost)
 				 sizeof fc_host_symbolic_name(shost));
 
 	fc_host_supported_speeds(shost) = 0;
-	if (phba->lmt & LMT_16Gb)
-		fc_host_supported_speeds(shost) |= FC_PORTSPEED_16GBIT;
 	if (phba->lmt & LMT_10Gb)
 		fc_host_supported_speeds(shost) |= FC_PORTSPEED_10GBIT;
 	if (phba->lmt & LMT_8Gb)
@@ -2934,6 +2941,8 @@ void lpfc_host_attrib_init(struct Scsi_Host *shost)
 	fc_host_maxframe_size(shost) =
 		(((uint32_t) vport->fc_sparam.cmn.bbRcvSizeMsb & 0x0F) << 8) |
 		(uint32_t) vport->fc_sparam.cmn.bbRcvSizeLsb;
+
+	fc_host_dev_loss_tmo(shost) = vport->cfg_devloss_tmo;
 
 	/* This value is also unchanging */
 	memset(fc_host_active_fc4s(shost), 0,
@@ -3933,7 +3942,7 @@ static void lpfc_log_intr_mode(struct lpfc_hba *phba, uint32_t intr_mode)
  * PCI devices.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	other values - error
  **/
 static int
@@ -4026,34 +4035,6 @@ lpfc_reset_hba(struct lpfc_hba *phba)
 }
 
 /**
- * lpfc_sli_sriov_nr_virtfn_get - Get the number of sr-iov virtual functions
- * @phba: pointer to lpfc hba data structure.
- *
- * This function enables the PCI SR-IOV virtual functions to a physical
- * function. It invokes the PCI SR-IOV api with the @nr_vfn provided to
- * enable the number of virtual functions to the physical function. As
- * not all devices support SR-IOV, the return code from the pci_enable_sriov()
- * API call does not considered as an error condition for most of the device.
- **/
-uint16_t
-lpfc_sli_sriov_nr_virtfn_get(struct lpfc_hba *phba)
-{
-	struct pci_dev *pdev = phba->pcidev;
-	uint16_t nr_virtfn;
-	int pos;
-
-	if (!pdev->is_physfn)
-		return 0;
-
-	pos = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_SRIOV);
-	if (pos == 0)
-		return 0;
-
-	pci_read_config_word(pdev, pos + PCI_SRIOV_TOTAL_VF, &nr_virtfn);
-	return nr_virtfn;
-}
-
-/**
  * lpfc_sli_probe_sriov_nr_virtfn - Enable a number of sr-iov virtual functions
  * @phba: pointer to lpfc hba data structure.
  * @nr_vfn: number of virtual functions to be enabled.
@@ -4068,16 +4049,7 @@ int
 lpfc_sli_probe_sriov_nr_virtfn(struct lpfc_hba *phba, int nr_vfn)
 {
 	struct pci_dev *pdev = phba->pcidev;
-	uint16_t max_nr_vfn;
 	int rc;
-
-	max_nr_vfn = lpfc_sli_sriov_nr_virtfn_get(phba);
-	if (nr_vfn > max_nr_vfn) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
-				"3057 Requested vfs (%d) greater than "
-				"supported vfs (%d)", nr_vfn, max_nr_vfn);
-		return -EINVAL;
-	}
 
 	rc = pci_enable_sriov(pdev, nr_vfn);
 	if (rc) {
@@ -4100,7 +4072,7 @@ lpfc_sli_probe_sriov_nr_virtfn(struct lpfc_hba *phba, int nr_vfn)
  * support the SLI-3 HBA device it attached to.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	other values - error
  **/
 static int
@@ -4226,7 +4198,7 @@ lpfc_sli_driver_resource_unset(struct lpfc_hba *phba)
  * support the SLI-4 HBA device it attached to.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	other values - error
  **/
 static int
@@ -4544,7 +4516,7 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 		}
 	}
 
-	return 0;
+	return rc;
 
 out_free_fcp_eq_hdl:
 	kfree(phba->sli4_hba.fcp_eq_hdl);
@@ -4626,7 +4598,7 @@ lpfc_sli4_driver_resource_unset(struct lpfc_hba *phba)
 }
 
 /**
- * lpfc_init_api_table_setup - Set up init api fucntion jump table
+ * lpfc_init_api_table_setup - Set up init api function jump table
  * @phba: The hba struct for which this call is being executed.
  * @dev_grp: The HBA PCI-Device group number.
  *
@@ -4670,7 +4642,7 @@ lpfc_init_api_table_setup(struct lpfc_hba *phba, uint8_t dev_grp)
  * device specific resource setup to support the HBA device it attached to.
  *
  * Return codes
- *	0 - sucessful
+ *	0 - successful
  *	other values - error
  **/
 static int
@@ -4716,7 +4688,7 @@ lpfc_setup_driver_resource_phase1(struct lpfc_hba *phba)
  * device specific resource setup to support the HBA device it attached to.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	other values - error
  **/
 static int
@@ -4781,7 +4753,7 @@ lpfc_free_iocb_list(struct lpfc_hba *phba)
  * list and set up the IOCB tag array accordingly.
  *
  * Return codes
- *	0 - sucessful
+ *	0 - successful
  *	other values - error
  **/
 static int
@@ -4895,7 +4867,7 @@ lpfc_free_active_sgl(struct lpfc_hba *phba)
  * list and set up the sgl xritag tag array accordingly.
  *
  * Return codes
- *	0 - sucessful
+ *	0 - successful
  *	other values - error
  **/
 static int
@@ -4994,14 +4966,17 @@ out_free_mem:
  * @phba: pointer to lpfc hba data structure.
  *
  * This routine is invoked to post rpi header templates to the
- * port for those SLI4 ports that do not support extents.  This routine
+ * HBA consistent with the SLI-4 interface spec.  This routine
  * posts a PAGE_SIZE memory region to the port to hold up to
- * PAGE_SIZE modulo 64 rpi context headers.  This is an initialization routine
- * and should be called only when interrupts are disabled.
+ * PAGE_SIZE modulo 64 rpi context headers.
+ * No locks are held here because this is an initialization routine
+ * called only from probe or lpfc_online when interrupts are not
+ * enabled and the driver is reinitializing the device.
  *
  * Return codes
- * 	0 - sucessful
- * 	-ERROR - otherwise.
+ * 	0 - successful
+ * 	-ENOMEM - No available memory
+ *      -EIO - The mailbox failed to complete successfully.
  **/
 int
 lpfc_sli4_init_rpi_hdrs(struct lpfc_hba *phba)
@@ -5182,7 +5157,7 @@ lpfc_sli4_remove_rpi_hdrs(struct lpfc_hba *phba)
  * PCI device data structure is set.
  *
  * Return codes
- *      pointer to @phba - sucessful
+ *      pointer to @phba - successful
  *      NULL - error
  **/
 static struct lpfc_hba *
@@ -5238,7 +5213,7 @@ lpfc_hba_free(struct lpfc_hba *phba)
  * host with it.
  *
  * Return codes
- *      0 - sucessful
+ *      0 - successful
  *      other values - error
  **/
 static int
@@ -5408,7 +5383,7 @@ lpfc_post_init_setup(struct lpfc_hba *phba)
  * with SLI-3 interface spec.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	other values - error
  **/
 static int
@@ -5712,22 +5687,17 @@ lpfc_sli4_bar0_register_memmap(struct lpfc_hba *phba, uint32_t if_type)
 		break;
 	case LPFC_SLI_INTF_IF_TYPE_2:
 		phba->sli4_hba.u.if_type2.ERR1regaddr =
-			phba->sli4_hba.conf_regs_memmap_p +
-						LPFC_CTL_PORT_ER1_OFFSET;
+			phba->sli4_hba.conf_regs_memmap_p + LPFC_SLIPORT_ERR_1;
 		phba->sli4_hba.u.if_type2.ERR2regaddr =
-			phba->sli4_hba.conf_regs_memmap_p +
-						LPFC_CTL_PORT_ER2_OFFSET;
+			phba->sli4_hba.conf_regs_memmap_p + LPFC_SLIPORT_ERR_2;
 		phba->sli4_hba.u.if_type2.CTRLregaddr =
-			phba->sli4_hba.conf_regs_memmap_p +
-						LPFC_CTL_PORT_CTL_OFFSET;
+			phba->sli4_hba.conf_regs_memmap_p + LPFC_SLIPORT_CNTRL;
 		phba->sli4_hba.u.if_type2.STATUSregaddr =
-			phba->sli4_hba.conf_regs_memmap_p +
-						LPFC_CTL_PORT_STA_OFFSET;
+			phba->sli4_hba.conf_regs_memmap_p + LPFC_SLIPORT_STATUS;
 		phba->sli4_hba.SLIINTFregaddr =
 			phba->sli4_hba.conf_regs_memmap_p + LPFC_SLI_INTF;
 		phba->sli4_hba.PSMPHRregaddr =
-			phba->sli4_hba.conf_regs_memmap_p +
-						LPFC_CTL_PORT_SEM_OFFSET;
+		     phba->sli4_hba.conf_regs_memmap_p + LPFC_SLIPORT_IF2_SMPHR;
 		phba->sli4_hba.RQDBregaddr =
 			phba->sli4_hba.conf_regs_memmap_p + LPFC_RQ_DOORBELL;
 		phba->sli4_hba.WQDBregaddr =
@@ -5809,7 +5779,7 @@ lpfc_sli4_bar2_register_memmap(struct lpfc_hba *phba, uint32_t vf)
  * this routine.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	-ENOMEM - could not allocated memory.
  **/
 static int
@@ -5908,8 +5878,8 @@ lpfc_destroy_bootstrap_mbox(struct lpfc_hba *phba)
  * allocation for the port.
  *
  * Return codes
- * 	0 - sucessful
- * 	-ENOMEM - No availble memory
+ * 	0 - successful
+ * 	-ENOMEM - No available memory
  *      -EIO - The mailbox failed to complete successfully.
  **/
 static int
@@ -6080,8 +6050,8 @@ read_cfg_out:
  * if_types.
  *
  * Return codes
- * 	0 - sucessful
- * 	-ENOMEM - No availble memory
+ * 	0 - successful
+ * 	-ENOMEM - No available memory
  *      -EIO - The mailbox failed to complete successfully.
  **/
 static int
@@ -6139,8 +6109,8 @@ lpfc_setup_endian_order(struct lpfc_hba *phba)
  * we just use some constant number as place holder.
  *
  * Return codes
- *      0 - sucessful
- *      -ENOMEM - No availble memory
+ *      0 - successful
+ *      -ENOMEM - No available memory
  *      -EIO - The mailbox failed to complete successfully.
  **/
 static int
@@ -6434,8 +6404,8 @@ out_error:
  * operation.
  *
  * Return codes
- *      0 - sucessful
- *      -ENOMEM - No availble memory
+ *      0 - successful
+ *      -ENOMEM - No available memory
  *      -EIO - The mailbox failed to complete successfully.
  **/
 static void
@@ -6500,8 +6470,8 @@ lpfc_sli4_queue_destroy(struct lpfc_hba *phba)
  * operation.
  *
  * Return codes
- *      0 - sucessful
- *      -ENOMEM - No availble memory
+ *      0 - successful
+ *      -ENOMEM - No available memory
  *      -EIO - The mailbox failed to complete successfully.
  **/
 int
@@ -6758,8 +6728,8 @@ out_error:
  * operation.
  *
  * Return codes
- *      0 - sucessful
- *      -ENOMEM - No availble memory
+ *      0 - successful
+ *      -ENOMEM - No available memory
  *      -EIO - The mailbox failed to complete successfully.
  **/
 void
@@ -6803,8 +6773,8 @@ lpfc_sli4_queue_unset(struct lpfc_hba *phba)
  * Later, this can be used for all the slow-path events.
  *
  * Return codes
- *      0 - sucessful
- *      -ENOMEM - No availble memory
+ *      0 - successful
+ *      -ENOMEM - No available memory
  **/
 static int
 lpfc_sli4_cq_event_pool_create(struct lpfc_hba *phba)
@@ -6964,8 +6934,8 @@ lpfc_sli4_cq_event_release_all(struct lpfc_hba *phba)
  * all resources assigned to the PCI function which originates this request.
  *
  * Return codes
- *      0 - sucessful
- *      -ENOMEM - No availble memory
+ *      0 - successful
+ *      -ENOMEM - No available memory
  *      -EIO - The mailbox failed to complete successfully.
  **/
 int
@@ -7178,7 +7148,7 @@ lpfc_sli4_send_nop_mbox_cmds(struct lpfc_hba *phba, uint32_t cnt)
  * with SLI-4 interface spec.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	other values - error
  **/
 static int
@@ -7362,7 +7332,7 @@ lpfc_sli4_pci_mem_unset(struct lpfc_hba *phba)
  * will be left with MSI-X enabled and leaks its vectors.
  *
  * Return codes
- *   0 - sucessful
+ *   0 - successful
  *   other values - error
  **/
 static int
@@ -7494,7 +7464,7 @@ lpfc_sli_disable_msix(struct lpfc_hba *phba)
  * is done in this function.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	other values - error
  */
 static int
@@ -7553,7 +7523,7 @@ lpfc_sli_disable_msi(struct lpfc_hba *phba)
  * MSI-X -> MSI -> IRQ.
  *
  * Return codes
- *   0 - sucessful
+ *   0 - successful
  *   other values - error
  **/
 static uint32_t
@@ -7643,7 +7613,7 @@ lpfc_sli_disable_intr(struct lpfc_hba *phba)
  * enabled and leaks its vectors.
  *
  * Return codes
- * 0 - sucessful
+ * 0 - successful
  * other values - error
  **/
 static int
@@ -7765,7 +7735,7 @@ lpfc_sli4_disable_msix(struct lpfc_hba *phba)
  * which is done in this function.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	other values - error
  **/
 static int
@@ -7831,7 +7801,7 @@ lpfc_sli4_disable_msi(struct lpfc_hba *phba)
  * MSI-X -> MSI -> IRQ.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	other values - error
  **/
 static uint32_t
@@ -9142,6 +9112,7 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
 
 	/* Check if there are static vports to be created. */
 	lpfc_create_static_vport(phba);
+
 	return 0;
 
 out_disable_intr:
@@ -9512,13 +9483,6 @@ lpfc_io_slot_reset_s4(struct pci_dev *pdev)
 	}
 
 	pci_restore_state(pdev);
-
-	/*
-	 * As the new kernel behavior of pci_restore_state() API call clears
-	 * device saved_state flag, need to save the restored state again.
-	 */
-	pci_save_state(pdev);
-
 	if (pdev->is_busmaster)
 		pci_set_master(pdev);
 

@@ -12,6 +12,7 @@
  * Maintained by: Eddie Wai (eddie.wai@broadcom.com)
  */
 
+#include <linux/gfp.h>
 #include <scsi/scsi_tcq.h>
 #include <scsi/libiscsi.h>
 #include "bnx2i.h"

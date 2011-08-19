@@ -34,7 +34,6 @@
 #include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/genhd.h>
-#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
@@ -165,12 +164,12 @@ unsigned long read_timer(void)
 	unsigned long t, flags;
 	int i;
 
-	spin_lock_irqsave(&i8253_lock, flags);
+	raw_spin_lock_irqsave(&i8253_lock, flags);
 	t = jiffies * 11932;
 	outb_p(0, 0x43);
 	i = inb_p(0x40);
 	i |= inb(0x40) << 8;
-	spin_unlock_irqrestore(&i8253_lock, flags);
+	raw_spin_unlock_irqrestore(&i8253_lock, flags);
 	return(t - i);
 }
 #endif
@@ -734,7 +733,7 @@ static int __init hd_init(void)
 		 * the BIOS or CMOS.  This doesn't work all that well,
 		 * since this assumes that this is a primary or secondary
 		 * drive, and if we're using this legacy driver, it's
-		 * probably an auxilliary controller added to recover
+		 * probably an auxiliary controller added to recover
 		 * legacy data off an ST-506 drive.  Either way, it's
 		 * definitely safest to have the user explicitly specify
 		 * the information.

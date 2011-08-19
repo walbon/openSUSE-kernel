@@ -2,8 +2,8 @@
  * Shared support code for AMD K8 northbridges and derivates.
  * Copyright 2006 Andi Kleen, SUSE Labs. Subject to GPLv2.
  */
-#include <linux/gfp.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/errno.h>
 #include <linux/module.h>
@@ -15,17 +15,13 @@ static u32 *flush_words;
 const struct pci_device_id amd_nb_misc_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_K8_NB_MISC) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_10H_NB_MISC) },
-#ifdef CONFIG_XEN
-	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_11H_NB_MISC) },
-	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, 0x1703) }, /* Fam12, Fam14 */
-#endif
-	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_15H_NB_MISC) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_15H_NB_F3) },
 	{}
 };
 EXPORT_SYMBOL(amd_nb_misc_ids);
 
 static struct pci_device_id amd_nb_link_ids[] = {
-	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_15H_NB_LINK) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_15H_NB_F4) },
 	{}
 };
 
@@ -79,7 +75,7 @@ int amd_cache_northbridges(void)
 			next_northbridge(misc, amd_nb_misc_ids);
 		node_to_amd_nb(i)->link = link =
 			next_northbridge(link, amd_nb_link_ids);
-	}
+        }
 
 	/* some CPU families (e.g. family 0x11) do not support GART */
 	if (boot_cpu_data.x86 == 0xf || boot_cpu_data.x86 == 0x10 ||
@@ -123,7 +119,6 @@ bool __init early_is_amd_nb(u32 device)
 	return false;
 }
 
-#ifndef CONFIG_XEN
 int amd_get_subcaches(int cpu)
 {
 	struct pci_dev *link = node_to_amd_nb(amd_get_nb_id(cpu))->link;
@@ -182,26 +177,25 @@ int amd_set_subcaches(int cpu, int mask)
 
 	return 0;
 }
-#endif
 
 static int amd_cache_gart(void)
 {
 	u16 i;
 
-	if (!amd_nb_has_feature(AMD_NB_GART))
-		return 0;
+       if (!amd_nb_has_feature(AMD_NB_GART))
+               return 0;
 
-	flush_words = kmalloc(amd_nb_num() * sizeof(u32), GFP_KERNEL);
-	if (!flush_words) {
-		amd_northbridges.flags &= ~AMD_NB_GART;
-		return -ENOMEM;
-	}
+       flush_words = kmalloc(amd_nb_num() * sizeof(u32), GFP_KERNEL);
+       if (!flush_words) {
+               amd_northbridges.flags &= ~AMD_NB_GART;
+               return -ENOMEM;
+       }
 
-	for (i = 0; i != amd_nb_num(); i++)
-		pci_read_config_dword(node_to_amd_nb(i)->misc, 0x9c,
-				      &flush_words[i]);
+       for (i = 0; i != amd_nb_num(); i++)
+               pci_read_config_dword(node_to_amd_nb(i)->misc, 0x9c,
+                                     &flush_words[i]);
 
-	return 0;
+       return 0;
 }
 
 void amd_flush_garts(void)

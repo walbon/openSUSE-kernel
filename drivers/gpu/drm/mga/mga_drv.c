@@ -73,6 +73,7 @@ static struct drm_driver driver = {
 #ifdef CONFIG_COMPAT
 		.compat_ioctl = mga_compat_ioctl,
 #endif
+		.llseek = noop_llseek,
 	},
 
 	.name = DRIVER_NAME,

@@ -493,8 +493,6 @@ static void intel_pmu_pebs_disable_all(void)
 
 #include <asm/insn.h>
 
-#define MAX_INSN_SIZE	16
-
 static inline bool kernel_ip(unsigned long ip)
 {
 #ifdef CONFIG_X86_32
@@ -619,7 +617,7 @@ static void __intel_pmu_pebs_event(struct perf_event *event,
 		regs.flags &= ~PERF_EFLAGS_EXACT;
 
 	if (perf_event_overflow(event, 1, &data, &regs))
-		x86_pmu_stop(event);
+		x86_pmu_stop(event, 0);
 }
 
 static void intel_pmu_drain_pebs_core(struct pt_regs *iregs)
@@ -691,7 +689,7 @@ static void intel_pmu_drain_pebs_nhm(struct pt_regs *iregs)
 	WARN_ON_ONCE(n > MAX_PEBS_EVENTS);
 
 	for ( ; at < top; at++) {
-		for_each_bit(bit, (unsigned long *)&at->status, MAX_PEBS_EVENTS) {
+		for_each_set_bit(bit, (unsigned long *)&at->status, MAX_PEBS_EVENTS) {
 			event = cpuc->events[bit];
 			if (!test_bit(bit, cpuc->active_mask))
 				continue;

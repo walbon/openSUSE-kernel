@@ -687,9 +687,6 @@ static void bnx2fc_link_speed_update(struct fc_lport *lport)
 		case SPEED_1000:
 			lport->link_speed = FC_PORTSPEED_1GBIT;
 			break;
-		case SPEED_2500:
-			lport->link_speed = FC_PORTSPEED_2GBIT;
-			break;
 		case SPEED_10000:
 			lport->link_speed = FC_PORTSPEED_10GBIT;
 			break;
@@ -2218,7 +2215,7 @@ static int __init bnx2fc_mod_init(void)
 	if (rc)
 		goto detach_ft;
 
-	bnx2fc_wq = create_workqueue("bnx2fc");
+	bnx2fc_wq = alloc_workqueue("bnx2fc", 0, 0);
 	if (!bnx2fc_wq) {
 		rc = -ENOMEM;
 		goto release_bt;

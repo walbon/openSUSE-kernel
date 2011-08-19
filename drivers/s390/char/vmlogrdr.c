@@ -16,6 +16,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/interrupt.h>
@@ -29,7 +30,6 @@
 #include <linux/kmod.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
-#include <linux/smp_lock.h>
 #include <linux/string.h>
 
 MODULE_AUTHOR
@@ -96,6 +96,7 @@ static const struct file_operations vmlogrdr_fops = {
 	.open    = vmlogrdr_open,
 	.release = vmlogrdr_release,
 	.read    = vmlogrdr_read,
+	.llseek  = no_llseek,
 };
 
 
@@ -213,7 +214,7 @@ static void vmlogrdr_iucv_message_pending(struct iucv_path *path,
 
 static int vmlogrdr_get_recording_class_AB(void)
 {
-	char cp_command[]="QUERY COMMAND RECORDING ";
+	static const char cp_command[] = "QUERY COMMAND RECORDING ";
 	char cp_response[80];
 	char *tail;
 	int len,i;
@@ -324,11 +325,9 @@ static int vmlogrdr_open (struct inode *inode, struct file *filp)
 		return -ENOSYS;
 
 	/* Besure this device hasn't already been opened */
-	lock_kernel();
 	spin_lock_bh(&logptr->priv_lock);
 	if (logptr->dev_in_use)	{
 		spin_unlock_bh(&logptr->priv_lock);
-		unlock_kernel();
 		return -EBUSY;
 	}
 	logptr->dev_in_use = 1;
@@ -372,9 +371,8 @@ static int vmlogrdr_open (struct inode *inode, struct file *filp)
 		   || (logptr->iucv_path_severed));
 	if (logptr->iucv_path_severed)
 		goto out_record;
- 	ret = nonseekable_open(inode, filp);
-	unlock_kernel();
-	return ret;
+	nonseekable_open(inode, filp);
+	return 0;
 
 out_record:
 	if (logptr->autorecording)
@@ -384,7 +382,6 @@ out_path:
 	logptr->path = NULL;
 out_dev:
 	logptr->dev_in_use = 0;
-	unlock_kernel();
 	return -EIO;
 }
 
@@ -652,7 +649,7 @@ static ssize_t vmlogrdr_recording_status_show(struct device_driver *driver,
 					      char *buf)
 {
 
-	char cp_command[] = "QUERY RECORDING ";
+	static const char cp_command[] = "QUERY RECORDING ";
 	int len;
 
 	cpcmd(cp_command, buf, 4096, NULL);

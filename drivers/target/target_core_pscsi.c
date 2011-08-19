@@ -460,8 +460,8 @@ static struct se_device *pscsi_create_type_disk(
 	 * Claim exclusive struct block_device access to struct scsi_device
 	 * for TYPE_DISK using supplied udev_path
 	 */
-	bd = open_bdev_exclusive(se_dev->se_dev_udev_path,
-				 FMODE_WRITE|FMODE_READ, pdv);
+	bd = blkdev_get_by_path(se_dev->se_dev_udev_path,
+				FMODE_WRITE|FMODE_READ|FMODE_EXCL, pdv);
 	if (IS_ERR(bd)) {
 		printk(KERN_ERR "pSCSI: blkdev_get_by_path() failed\n");
 		scsi_device_put(sd);

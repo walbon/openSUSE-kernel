@@ -191,7 +191,7 @@
  * 'base_dest_nasid' field of the header corresponds to the
  * destination nodeID associated with that specified bit.
  */
-struct pnmask {
+struct bau_targ_hubmask {
 	unsigned long		bits[BITS_TO_LONGS(UV_DISTRIBUTION_SIZE)];
 };
 
@@ -322,7 +322,7 @@ struct bau_msg_header {
  * Should be 64 bytes
  */
 struct bau_desc {
-	struct pnmask			distribution;
+	struct bau_targ_hubmask	distribution;
 	/*
 	 * message template, consisting of header and payload:
 	 */
@@ -496,7 +496,6 @@ struct bau_control {
 	struct bau_control	*uvhub_master;
 	struct bau_control	*socket_master;
 	struct ptc_stats	*statp;
-	cpumask_t		*cpumask;
 	unsigned long		timeout_interval;
 	unsigned long		set_bau_on_time;
 	atomic_t		active_descriptor_count;
@@ -605,20 +604,20 @@ static inline void write_mmr_data_config(int pnode, unsigned long mr)
 	uv_write_global_mmr64(pnode, UVH_BAU_DATA_CONFIG, mr);
 }
 
-static inline int bau_uvhub_isset(int uvhub, struct pnmask *dstp)
+static inline int bau_uvhub_isset(int uvhub, struct bau_targ_hubmask *dstp)
 {
 	return constant_test_bit(uvhub, &dstp->bits[0]);
 }
-static inline void bau_uvhub_set(int pnode, struct pnmask *dstp)
+static inline void bau_uvhub_set(int pnode, struct bau_targ_hubmask *dstp)
 {
 	__set_bit(pnode, &dstp->bits[0]);
 }
-static inline void bau_uvhubs_clear(struct pnmask *dstp,
+static inline void bau_uvhubs_clear(struct bau_targ_hubmask *dstp,
 				    int nbits)
 {
 	bitmap_zero(&dstp->bits[0], nbits);
 }
-static inline int bau_uvhub_weight(struct pnmask *dstp)
+static inline int bau_uvhub_weight(struct bau_targ_hubmask *dstp)
 {
 	return bitmap_weight((unsigned long *)&dstp->bits[0],
 				UV_DISTRIBUTION_SIZE);

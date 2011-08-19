@@ -6,9 +6,9 @@
 #include <linux/pci.h>
 #include <linux/init.h>
 #include <linux/agp_backend.h>
-#include <linux/gfp.h>
 #include <linux/page-flags.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include "agp.h"
 
 #define AMD_MMBASE	0x14
@@ -41,22 +41,8 @@ static int amd_create_page_map(struct amd_page_map *page_map)
 	if (page_map->real == NULL)
 		return -ENOMEM;
 
-#ifndef CONFIG_X86
-	SetPageReserved(virt_to_page(page_map->real));
-	global_cache_flush();
-	page_map->remapped = ioremap_nocache(virt_to_gart(page_map->real),
-					    PAGE_SIZE);
-	if (page_map->remapped == NULL) {
-		ClearPageReserved(virt_to_page(page_map->real));
-		free_page((unsigned long) page_map->real);
-		page_map->real = NULL;
-		return -ENOMEM;
-	}
-	global_cache_flush();
-#else
 	set_memory_uc((unsigned long)page_map->real, 1);
 	page_map->remapped = page_map->real;
-#endif
 
 	for (i = 0; i < PAGE_SIZE / sizeof(unsigned long); i++) {
 		writel(agp_bridge->scratch_page, page_map->remapped+i);
@@ -68,12 +54,7 @@ static int amd_create_page_map(struct amd_page_map *page_map)
 
 static void amd_free_page_map(struct amd_page_map *page_map)
 {
-#ifndef CONFIG_X86
-	iounmap(page_map->remapped);
-	ClearPageReserved(virt_to_page(page_map->real));
-#else
 	set_memory_wb((unsigned long)page_map->real, 1);
-#endif
 	free_page((unsigned long) page_map->real);
 }
 
@@ -161,7 +142,7 @@ static int amd_create_gatt_table(struct agp_bridge_data *bridge)
 
 	agp_bridge->gatt_table_real = (u32 *)page_dir.real;
 	agp_bridge->gatt_table = (u32 __iomem *)page_dir.remapped;
-	agp_bridge->gatt_bus_addr = virt_to_gart(page_dir.real);
+	agp_bridge->gatt_bus_addr = virt_to_phys(page_dir.real);
 
 	/* Get the address for the gart region.
 	 * This is a bus address even on the alpha, b/c its
@@ -174,7 +155,7 @@ static int amd_create_gatt_table(struct agp_bridge_data *bridge)
 
 	/* Calculate the agp offset */
 	for (i = 0; i < value->num_entries / 1024; i++, addr += 0x00400000) {
-		writel(virt_to_gart(amd_irongate_private.gatt_pages[i]->real) | 1,
+		writel(virt_to_phys(amd_irongate_private.gatt_pages[i]->real) | 1,
 			page_dir.remapped+GET_PAGE_DIR_OFF(addr));
 		readl(page_dir.remapped+GET_PAGE_DIR_OFF(addr));	/* PCI Posting. */
 	}
@@ -291,7 +272,7 @@ static void amd_irongate_cleanup(void)
  * This routine could be implemented by taking the addresses
  * written to the GATT, and flushing them individually.  However
  * currently it just flushes the whole table.  Which is probably
- * more efficent, since agp_memory blocks can be a large number of
+ * more efficient, since agp_memory blocks can be a large number of
  * entries.
  */
 

@@ -13,6 +13,7 @@
  * Maintained by: Eddie Wai (eddie.wai@broadcom.com)
  */
 
+#include <linux/slab.h>
 #include <scsi/scsi_tcq.h>
 #include <scsi/libiscsi.h>
 #include "bnx2i.h"
@@ -2160,7 +2161,7 @@ static struct scsi_host_template bnx2i_host_template = {
 	.queuecommand		= iscsi_queuecommand,
 	.eh_abort_handler	= iscsi_eh_abort,
 	.eh_device_reset_handler = iscsi_eh_device_reset,
-	.eh_target_reset_handler = iscsi_eh_target_reset,
+	.eh_target_reset_handler = iscsi_eh_recover_target,
 	.change_queue_depth	= iscsi_change_queue_depth,
 	.can_queue		= 1024,
 	.max_sectors		= 127,

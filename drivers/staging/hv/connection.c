@@ -25,7 +25,6 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/wait.h>
-#include <linux/delay.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
@@ -52,13 +51,13 @@ int vmbus_connect(void)
 
 	/* Make sure we are not connecting or connected */
 	if (vmbus_connection.conn_state != DISCONNECTED)
-		return -EISCONN;
+		return -1;
 
 	/* Initialize the vmbus connection */
 	vmbus_connection.conn_state = CONNECTING;
 	vmbus_connection.work_queue = create_workqueue("hv_vmbus_con");
 	if (!vmbus_connection.work_queue) {
-		ret = -ENOMEM;
+		ret = -1;
 		goto cleanup;
 	}
 
@@ -75,7 +74,7 @@ int vmbus_connect(void)
 	vmbus_connection.int_page =
 	(void *)__get_free_pages(GFP_KERNEL|__GFP_ZERO, 0);
 	if (vmbus_connection.int_page == NULL) {
-		ret = -ENOMEM;
+		ret = -1;
 		goto cleanup;
 	}
 
@@ -91,7 +90,7 @@ int vmbus_connect(void)
 	vmbus_connection.monitor_pages =
 	(void *)__get_free_pages((GFP_KERNEL|__GFP_ZERO), 1);
 	if (vmbus_connection.monitor_pages == NULL) {
-		ret = -ENOMEM;
+		ret = -1;
 		goto cleanup;
 	}
 
@@ -158,7 +157,7 @@ int vmbus_connect(void)
 		pr_err("Unable to connect, "
 			"Version %d not supported by Hyper-V\n",
 			VMBUS_REVISION_NUMBER);
-		ret = -ECONNREFUSED;
+		ret = -1;
 		goto cleanup;
 	}
 
@@ -186,6 +185,44 @@ cleanup:
 	return ret;
 }
 
+/*
+ * vmbus_disconnect -
+ * Sends a disconnect request on the partition service connection
+ */
+int vmbus_disconnect(void)
+{
+	int ret = 0;
+	struct vmbus_channel_message_header *msg;
+
+	/* Make sure we are connected */
+	if (vmbus_connection.conn_state != CONNECTED)
+		return -1;
+
+	msg = kzalloc(sizeof(struct vmbus_channel_message_header), GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
+
+	msg->msgtype = CHANNELMSG_UNLOAD;
+
+	ret = vmbus_post_msg(msg,
+			       sizeof(struct vmbus_channel_message_header));
+	if (ret != 0)
+		goto cleanup;
+
+	free_pages((unsigned long)vmbus_connection.int_page, 0);
+	free_pages((unsigned long)vmbus_connection.monitor_pages, 1);
+
+	/* TODO: iterate thru the msg list and free up */
+	destroy_workqueue(vmbus_connection.work_queue);
+
+	vmbus_connection.conn_state = DISCONNECTED;
+
+	pr_info("hv_vmbus disconnected\n");
+
+cleanup:
+	kfree(msg);
+	return ret;
+}
 
 /*
  * relid2channel - Get the channel object given its
@@ -216,6 +253,8 @@ static void process_chn_event(u32 relid)
 {
 	struct vmbus_channel *channel;
 
+	/* ASSERT(relId > 0); */
+
 	/*
 	 * Find the channel based on this relid and invokes the
 	 * channel callback to process the event
@@ -223,7 +262,7 @@ static void process_chn_event(u32 relid)
 	channel = relid2channel(relid);
 
 	if (channel) {
-		channel->onchannel_callback(channel->channel_callback_context);
+		vmbus_onchannel_event(channel);
 	} else {
 		pr_err("channel not found for relid - %u\n", relid);
 	}
@@ -269,25 +308,10 @@ void vmbus_on_event(unsigned long data)
 int vmbus_post_msg(void *buffer, size_t buflen)
 {
 	union hv_connection_id conn_id;
-	int ret = 0;
-	int retries = 0;
 
 	conn_id.asu32 = 0;
 	conn_id.u.id = VMBUS_MESSAGE_CONNECTION_ID;
-
-	/*
-	 * hv_post_message() can have transient failures because of
-	 * insufficient resources. Retry the operation a couple of
-	 * times before giving up.
-	 */
-	while (retries < 3) {
-		ret =  hv_post_message(conn_id, 1, buffer, buflen);
-		if (ret != HV_STATUS_INSUFFICIENT_BUFFERS)
-			return ret;
-		retries++;
-		msleep(100);
-	}
-	return ret;
+	return hv_post_message(conn_id, 1, buffer, buflen);
 }
 
 /*

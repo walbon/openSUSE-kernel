@@ -42,7 +42,7 @@ int vnic_cq_alloc(struct vnic_dev *vdev, struct vnic_cq *cq, unsigned int index,
 
 	cq->ctrl = vnic_dev_get_res(vdev, RES_TYPE_CQ, index);
 	if (!cq->ctrl) {
-		printk(KERN_ERR "Failed to hook CQ[%d] resource\n", index);
+		pr_err("Failed to hook CQ[%d] resource\n", index);
 		return -EINVAL;
 	}
 
@@ -74,8 +74,6 @@ void vnic_cq_init(struct vnic_cq *cq, unsigned int flow_control_enable,
 	iowrite32(cq_message_enable, &cq->ctrl->cq_message_enable);
 	iowrite32(interrupt_offset, &cq->ctrl->interrupt_offset);
 	writeq(cq_message_addr, &cq->ctrl->cq_message_addr);
-
-	cq->interrupt_offset = interrupt_offset;
 }
 
 void vnic_cq_clean(struct vnic_cq *cq)

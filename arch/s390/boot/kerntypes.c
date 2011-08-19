@@ -15,12 +15,12 @@ typedef char *COMPILE_VERSION;
 
 /* General linux types */
 
-#include <linux/autoconf.h>
-#include <linux/compile.h>
+#include <generated/compile.h>
 #include <linux/utsname.h>
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #ifdef CONFIG_SLUB
  #include <linux/slub_def.h>
 #endif
@@ -30,7 +30,6 @@ typedef char *COMPILE_VERSION;
 #ifdef CONFIG_SLQB
  #include <linux/slqb_def.h>
 #endif
-#include <linux/slab.h>
 #include <linux/bio.h>
 #include <linux/bitmap.h>
 #include <linux/bitops.h>
@@ -160,7 +159,6 @@ typedef char *COMPILE_VERSION;
 #include <linux/signalfd.h>
 #include <linux/skbuff.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/socket.h>
 #include <linux/sockios.h>
 #include <linux/spinlock.h>
@@ -197,7 +195,7 @@ typedef char *COMPILE_VERSION;
 #include <linux/utime.h>
 #include <linux/uts.h>
 #include <linux/utsname.h>
-#include <linux/utsrelease.h>
+#include <generated/utsrelease.h>
 #include <linux/version.h>
 #include <linux/vfs.h>
 #include <linux/vmalloc.h>

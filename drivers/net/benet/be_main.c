@@ -829,7 +829,7 @@ static int be_vid_config(struct be_adapter *adapter, bool vf, u32 vf_num)
 
 	if (adapter->vlans_added <= adapter->max_vlans)  {
 		/* Construct VLAN Table to give to HW */
-		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+		for (i = 0; i < VLAN_N_VID; i++) {
 			if (adapter->vlan_tag[i]) {
 				vtag[ntags] = cpu_to_le16(i);
 				ntags++;
@@ -897,15 +897,118 @@ static void be_set_multicast_list(struct net_device *netdev)
 	}
 
 	/* Enable multicast promisc if num configured exceeds what we support */
-	if (netdev->flags & IFF_ALLMULTI || netdev->mc_count > BE_MAX_MC) {
-		be_cmd_multicast_set(adapter, adapter->if_handle, NULL, 0,
+	if (netdev->flags & IFF_ALLMULTI ||
+	    netdev_mc_count(netdev) > BE_MAX_MC) {
+		be_cmd_multicast_set(adapter, adapter->if_handle, NULL,
 				&adapter->mc_cmd_mem);
 		goto done;
 	}
-	be_cmd_multicast_set(adapter, adapter->if_handle, netdev->mc_list,
-		netdev->mc_count, &adapter->mc_cmd_mem);
+
+	be_cmd_multicast_set(adapter, adapter->if_handle, netdev,
+		&adapter->mc_cmd_mem);
 done:
 	return;
+}
+
+static int be_set_vf_mac(struct net_device *netdev, int vf, u8 *mac)
+{
+	struct be_adapter *adapter = netdev_priv(netdev);
+	int status;
+
+	if (!adapter->sriov_enabled)
+		return -EPERM;
+
+	if (!is_valid_ether_addr(mac) || (vf >= num_vfs))
+		return -EINVAL;
+
+	if (adapter->vf_cfg[vf].vf_pmac_id != BE_INVALID_PMAC_ID)
+		status = be_cmd_pmac_del(adapter,
+					adapter->vf_cfg[vf].vf_if_handle,
+					adapter->vf_cfg[vf].vf_pmac_id, vf + 1);
+
+	status = be_cmd_pmac_add(adapter, mac,
+				adapter->vf_cfg[vf].vf_if_handle,
+				&adapter->vf_cfg[vf].vf_pmac_id, vf + 1);
+
+	if (status)
+		dev_err(&adapter->pdev->dev, "MAC %pM set on VF %d Failed\n",
+				mac, vf);
+	else
+		memcpy(adapter->vf_cfg[vf].vf_mac_addr, mac, ETH_ALEN);
+
+	return status;
+}
+
+static int be_get_vf_config(struct net_device *netdev, int vf,
+			struct ifla_vf_info *vi)
+{
+	struct be_adapter *adapter = netdev_priv(netdev);
+
+	if (!adapter->sriov_enabled)
+		return -EPERM;
+
+	if (vf >= num_vfs)
+		return -EINVAL;
+
+	vi->vf = vf;
+	vi->tx_rate = adapter->vf_cfg[vf].vf_tx_rate;
+	vi->vlan = adapter->vf_cfg[vf].vf_vlan_tag;
+	vi->qos = 0;
+	memcpy(&vi->mac, adapter->vf_cfg[vf].vf_mac_addr, ETH_ALEN);
+
+	return 0;
+}
+
+static int be_set_vf_vlan(struct net_device *netdev,
+			int vf, u16 vlan, u8 qos)
+{
+	struct be_adapter *adapter = netdev_priv(netdev);
+	int status = 0;
+
+	if (!adapter->sriov_enabled)
+		return -EPERM;
+
+	if ((vf >= num_vfs) || (vlan > 4095))
+		return -EINVAL;
+
+	if (vlan) {
+		adapter->vf_cfg[vf].vf_vlan_tag = vlan;
+		adapter->vlans_added++;
+	} else {
+		adapter->vf_cfg[vf].vf_vlan_tag = 0;
+		adapter->vlans_added--;
+	}
+
+	status = be_vid_config(adapter, true, vf);
+
+	if (status)
+		dev_info(&adapter->pdev->dev,
+				"VLAN %d config on VF %d failed\n", vlan, vf);
+	return status;
+}
+
+static int be_set_vf_tx_rate(struct net_device *netdev,
+			int vf, int rate)
+{
+	struct be_adapter *adapter = netdev_priv(netdev);
+	int status = 0;
+
+	if (!adapter->sriov_enabled)
+		return -EPERM;
+
+	if ((vf >= num_vfs) || (rate < 0))
+		return -EINVAL;
+
+	if (rate > 10000)
+		rate = 10000;
+
+	adapter->vf_cfg[vf].vf_tx_rate = rate;
+	status = be_cmd_set_qos(adapter, rate / 10, vf + 1);
+
+	if (status)
+		dev_info(&adapter->pdev->dev,
+				"tx rate %d on VF %d failed\n", rate, vf);
+	return status;
 }
 
 static void be_rx_rate_update(struct be_rx_obj *rxo)
@@ -964,9 +1067,9 @@ get_rx_page_info(struct be_adapter *adapter,
 	BUG_ON(!rx_page_info->page);
 
 	if (rx_page_info->last_page_user) {
-		pci_unmap_page(adapter->pdev,
-			       pci_unmap_addr(rx_page_info, bus),
-			       adapter->big_page_size, PCI_DMA_FROMDEVICE);
+		dma_unmap_page(&adapter->pdev->dev,
+			       dma_unmap_addr(rx_page_info, bus),
+			       adapter->big_page_size, DMA_FROM_DEVICE);
 		rx_page_info->last_page_user = false;
 	}
 
@@ -1085,13 +1188,16 @@ static void be_rx_compl_process(struct be_adapter *adapter,
 
 	skb_fill_rx_data(adapter, rxo, skb, rxcp);
 
-	if (csum_passed(rxcp))
+	if (likely((netdev->features & NETIF_F_RXCSUM) && csum_passed(rxcp)))
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 	else
-		skb->ip_summed = CHECKSUM_NONE;
+		skb_checksum_none_assert(skb);
 
 	skb->truesize = skb->len + sizeof(struct sk_buff);
 	skb->protocol = eth_type_trans(skb, netdev);
+	if (adapter->netdev->features & NETIF_F_RXHASH)
+		skb->rxhash = rxcp->rss_hash;
+
 
 	if (unlikely(rxcp->vlanf)) {
 		if (!adapter->vlan_grp || adapter->vlans_added == 0) {
@@ -1153,6 +1259,9 @@ static void be_rx_compl_process_gro(struct be_adapter *adapter,
 	skb->data_len = rxcp->pkt_size;
 	skb->truesize += rxcp->pkt_size;
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
+	if (adapter->netdev->features & NETIF_F_RXHASH)
+		skb->rxhash = rxcp->rss_hash;
+
 	if (likely(!rxcp->vlanf))
 		napi_gro_frags(&eq_obj->napi);
 	else
@@ -1182,11 +1291,13 @@ static void be_parse_rx_compl_v1(struct be_adapter *adapter,
 		AMAP_GET_BITS(struct amap_eth_rx_compl_v1, numfrags, compl);
 	rxcp->pkt_type =
 		AMAP_GET_BITS(struct amap_eth_rx_compl_v1, cast_enc, compl);
+	rxcp->rss_hash =
+		AMAP_GET_BITS(struct amap_eth_rx_compl_v1, rsshash, rxcp);
 	if (rxcp->vlanf) {
 		rxcp->vtm = AMAP_GET_BITS(struct amap_eth_rx_compl_v1, vtm,
-				compl);
-		rxcp->vlan_tag = AMAP_GET_BITS(struct amap_eth_rx_compl_v1,
-					vlan_tag, compl);
+					  compl);
+		rxcp->vlan_tag = AMAP_GET_BITS(struct amap_eth_rx_compl_v1, vlan_tag,
+					       compl);
 	}
 }
 
@@ -1212,11 +1323,13 @@ static void be_parse_rx_compl_v0(struct be_adapter *adapter,
 		AMAP_GET_BITS(struct amap_eth_rx_compl_v0, numfrags, compl);
 	rxcp->pkt_type =
 		AMAP_GET_BITS(struct amap_eth_rx_compl_v0, cast_enc, compl);
+	rxcp->rss_hash =
+		AMAP_GET_BITS(struct amap_eth_rx_compl_v0, rsshash, rxcp);
 	if (rxcp->vlanf) {
 		rxcp->vtm = AMAP_GET_BITS(struct amap_eth_rx_compl_v0, vtm,
-				compl);
-		rxcp->vlan_tag = AMAP_GET_BITS(struct amap_eth_rx_compl_v0,
-					vlan_tag, compl);
+					  compl);
+		rxcp->vlan_tag = AMAP_GET_BITS(struct amap_eth_rx_compl_v0, vlan_tag,
+					       compl);
 	}
 }
 
@@ -1249,8 +1362,8 @@ static struct be_rx_compl_info *be_rx_compl_get(struct be_rx_obj *rxo)
 			rxcp->vlan_tag = swab16(rxcp->vlan_tag);
 
 		if (((adapter->pvid & VLAN_VID_MASK) ==
-			(rxcp->vlan_tag & VLAN_VID_MASK)) &&
-			!adapter->vlan_tag[rxcp->vlan_tag])
+		     (rxcp->vlan_tag & VLAN_VID_MASK)) &&
+		    !adapter->vlan_tag[rxcp->vlan_tag])
 			rxcp->vlanf = 0;
 	}
 
@@ -1303,7 +1416,7 @@ static void be_post_rx_frags(struct be_rx_obj *rxo, gfp_t gfp)
 		}
 		page_offset = page_info->page_offset;
 		page_info->page = pagep;
-		pci_unmap_addr_set(page_info, bus, page_dmaaddr);
+		dma_unmap_addr_set(page_info, bus, page_dmaaddr);
 		frag_dmaaddr = page_dmaaddr + page_info->page_offset;
 
 		rxd = queue_head_node(rxq);
@@ -2411,13 +2524,13 @@ static int be_setup(struct be_adapter *adapter)
 				cap_flags = en_flags = BE_IF_FLAGS_UNTAGGED |
 							BE_IF_FLAGS_BROADCAST;
 				status = be_cmd_if_create(adapter, cap_flags,
-						en_flags, mac, true,
-						&adapter->vf_cfg[vf].vf_if_handle,
-						NULL, vf+1);
+					en_flags, mac, true,
+					&adapter->vf_cfg[vf].vf_if_handle,
+					NULL, vf+1);
 				if (status) {
 					dev_err(&adapter->pdev->dev,
-						"Interface Create failed for"
-						" VF %d\n", vf);
+					"Interface Create failed for VF %d\n",
+					vf);
 					goto if_destroy;
 				}
 				adapter->vf_cfg[vf].vf_pmac_id =
@@ -2808,7 +2921,11 @@ static struct net_device_ops be_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_vlan_rx_register	= be_vlan_register,
 	.ndo_vlan_rx_add_vid	= be_vlan_add_vid,
-	.ndo_vlan_rx_kill_vid	= be_vlan_rem_vid
+	.ndo_vlan_rx_kill_vid	= be_vlan_rem_vid,
+	.ndo_set_vf_mac		= be_set_vf_mac,
+	.ndo_set_vf_vlan	= be_set_vf_vlan,
+	.ndo_set_vf_tx_rate	= be_set_vf_tx_rate,
+	.ndo_get_vf_config	= be_get_vf_config
 };
 
 static void be_netdev_init(struct net_device *netdev)
@@ -2817,14 +2934,17 @@ static void be_netdev_init(struct net_device *netdev)
 	struct be_rx_obj *rxo;
 	int i;
 
-	netdev->features |= NETIF_F_SG | NETIF_F_HW_VLAN_RX | NETIF_F_TSO |
-		NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_FILTER | NETIF_F_HW_CSUM |
-		NETIF_F_GRO | NETIF_F_TSO6;
+	netdev->hw_features |= NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO6 |
+		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_RXCSUM |
+		NETIF_F_HW_VLAN_TX;
+	if (be_multi_rxq(adapter))
+		netdev->hw_features |= NETIF_F_RXHASH;
 
-	netdev->vlan_features |= NETIF_F_SG | NETIF_F_TSO | NETIF_F_HW_CSUM;
+	netdev->features |= netdev->hw_features |
+		NETIF_F_HW_VLAN_RX | NETIF_F_HW_VLAN_FILTER;
 
-	if (lancer_chip(adapter))
-		netdev->vlan_features |= NETIF_F_TSO6;
+	netdev->vlan_features |= NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO6 |
+		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
 
 	netdev->flags |= IFF_MULTICAST;
 

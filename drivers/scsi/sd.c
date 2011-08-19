@@ -49,6 +49,7 @@
 #include <linux/mutex.h>
 #include <linux/string_helpers.h>
 #include <linux/async.h>
+#include <linux/slab.h>
 #include <asm/uaccess.h>
 #include <asm/unaligned.h>
 
@@ -611,7 +612,7 @@ out:
 
 static int scsi_setup_flush_cmnd(struct scsi_device *sdp, struct request *rq)
 {
-	rq->timeout = SD_TIMEOUT;
+	rq->timeout = SD_FLUSH_TIMEOUT;
 	rq->retries = SD_MAX_RETRIES;
 	rq->cmd[0] = SYNCHRONIZE_CACHE;
 	rq->cmd_len = 10;
@@ -695,7 +696,7 @@ static int sd_prep_fn(struct request_queue *q, struct request *rq)
 		 * quietly refuse to do anything to a changed disc until 
 		 * the changed bit has been reset
 		 */
-		/* printk("SCSI disk has been changed. Prohibiting further I/O.\n"); */
+		/* printk("SCSI disk has been changed or is not present. Prohibiting further I/O.\n"); */
 		goto out;
 	}
 
@@ -914,6 +915,8 @@ static int sd_prep_fn(struct request_queue *q, struct request *rq)
  *	or from within the kernel (e.g. as a result of a mount(1) ).
  *	In the latter case @inode and @filp carry an abridged amount
  *	of information as noted above.
+ *
+ *	Locking: called with bdev->bd_mutex held.
  **/
 static int sd_open(struct block_device *bdev, fmode_t mode)
 {
@@ -927,6 +930,10 @@ static int sd_open(struct block_device *bdev, fmode_t mode)
 	SCSI_LOG_HLQUEUE(3, sd_printk(KERN_INFO, sdkp, "sd_open\n"));
 
 	sdev = sdkp->device;
+
+	retval = scsi_autopm_get_device(sdev);
+	if (retval)
+		goto error_autopm;
 
 	/*
 	 * If the device is in error recovery, wait until it is done.
@@ -964,7 +971,7 @@ static int sd_open(struct block_device *bdev, fmode_t mode)
 	if (!scsi_device_online(sdev))
 		goto error_out;
 
-	if (!sdkp->openers++ && sdev->removable) {
+	if ((atomic_inc_return(&sdkp->openers) == 1) && sdev->removable) {
 		if (scsi_block_when_processing_errors(sdev))
 			scsi_set_medium_removal(sdev, SCSI_REMOVAL_PREVENT);
 	}
@@ -972,6 +979,8 @@ static int sd_open(struct block_device *bdev, fmode_t mode)
 	return 0;
 
 error_out:
+	scsi_autopm_put_device(sdev);
+error_autopm:
 	scsi_disk_put(sdkp);
 	return retval;	
 }
@@ -986,6 +995,8 @@ error_out:
  *
  *	Note: may block (uninterruptible) if error recovery is underway
  *	on this disk.
+ *
+ *	Locking: called with bdev->bd_mutex held.
  **/
 static int sd_release(struct gendisk *disk, fmode_t mode)
 {
@@ -994,7 +1005,7 @@ static int sd_release(struct gendisk *disk, fmode_t mode)
 
 	SCSI_LOG_HLQUEUE(3, sd_printk(KERN_INFO, sdkp, "sd_release\n"));
 
-	if (!--sdkp->openers && sdev->removable) {
+	if (atomic_dec_return(&sdkp->openers) == 0 && sdev->removable) {
 		if (scsi_block_when_processing_errors(sdev))
 			scsi_set_medium_removal(sdev, SCSI_REMOVAL_ALLOW);
 	}
@@ -1003,6 +1014,8 @@ static int sd_release(struct gendisk *disk, fmode_t mode)
 	 * XXX and what if there are packets in flight and this close()
 	 * XXX is followed by a "rmmod sd_mod"?
 	 */
+
+	scsi_autopm_put_device(sdev);
 	scsi_disk_put(sdkp);
 	return 0;
 }
@@ -1039,7 +1052,7 @@ static int sd_getgeo(struct block_device *bdev, struct hd_geometry *geo)
  *	@arg: this is third argument given to ioctl(2) system call.
  *	Often contains a pointer.
  *
- *	Returns 0 if successful (some ioctls return postive numbers on
+ *	Returns 0 if successful (some ioctls return positive numbers on
  *	success as well). Returns a negated errno value in case of error.
  *
  *	Note: most ioctls are forward onto the block subsystem or further
@@ -1065,7 +1078,7 @@ static int sd_ioctl(struct block_device *bdev, fmode_t mode,
 	error = scsi_nonblockable_ioctl(sdp, cmd, p,
 					(mode & FMODE_NDELAY) != 0);
 	if (!scsi_block_when_processing_errors(sdp) || !error)
-		return error;
+		goto out;
 
 	/*
 	 * Send SCSI addressing ioctls directly to mid level, send other
@@ -1075,41 +1088,66 @@ static int sd_ioctl(struct block_device *bdev, fmode_t mode,
 	switch (cmd) {
 		case SCSI_IOCTL_GET_IDLUN:
 		case SCSI_IOCTL_GET_BUS_NUMBER:
-			return scsi_ioctl(sdp, cmd, p);
+			error = scsi_ioctl(sdp, cmd, p);
+			break;
 		default:
 			error = scsi_cmd_ioctl(disk->queue, disk, mode, cmd, p);
 			if (error != -ENOTTY)
-				return error;
+				break;
+			error = scsi_ioctl(sdp, cmd, p);
+			break;
 	}
-	return scsi_ioctl(sdp, cmd, p);
+out:
+	return error;
 }
 
 static void set_media_not_present(struct scsi_disk *sdkp)
 {
-	sdkp->media_present = 0;
-	sdkp->capacity = 0;
-	sdkp->device->changed = 1;
+	if (sdkp->media_present)
+		sdkp->device->changed = 1;
+
+	if (sdkp->device->removable) {
+		sdkp->media_present = 0;
+		sdkp->capacity = 0;
+	}
+}
+
+static int media_not_present(struct scsi_disk *sdkp,
+			     struct scsi_sense_hdr *sshdr)
+{
+	if (!scsi_sense_valid(sshdr))
+		return 0;
+
+	/* not invoked for commands that could return deferred errors */
+	switch (sshdr->sense_key) {
+	case UNIT_ATTENTION:
+	case NOT_READY:
+		/* medium not present */
+		if (sshdr->asc == 0x3A) {
+			set_media_not_present(sdkp);
+			return 1;
+		}
+	}
+	return 0;
 }
 
 /**
- *	sd_media_changed - check if our medium changed
- *	@disk: kernel device descriptor 
+ *	sd_check_events - check media events
+ *	@disk: kernel device descriptor
+ *	@clearing: disk events currently being cleared
  *
- *	Returns 0 if not applicable or no change; 1 if change
+ *	Returns mask of DISK_EVENT_*.
  *
  *	Note: this function is invoked from the block subsystem.
  **/
-static int sd_media_changed(struct gendisk *disk)
+static unsigned int sd_check_events(struct gendisk *disk, unsigned int clearing)
 {
 	struct scsi_disk *sdkp = scsi_disk(disk);
 	struct scsi_device *sdp = sdkp->device;
 	struct scsi_sense_hdr *sshdr = NULL;
 	int retval;
 
-	SCSI_LOG_HLQUEUE(3, sd_printk(KERN_INFO, sdkp, "sd_media_changed\n"));
-
-	if (!sdp->removable)
-		return 0;
+	SCSI_LOG_HLQUEUE(3, sd_printk(KERN_INFO, sdkp, "sd_check_events\n"));
 
 	/*
 	 * If the device is offline, don't send any commands - just pretend as
@@ -1119,7 +1157,6 @@ static int sd_media_changed(struct gendisk *disk)
 	 */
 	if (!scsi_device_online(sdp)) {
 		set_media_not_present(sdkp);
-		retval = 1;
 		goto out;
 	}
 
@@ -1140,34 +1177,32 @@ static int sd_media_changed(struct gendisk *disk)
 					      sshdr);
 	}
 
-	/*
-	 * Unable to test, unit probably not ready.   This usually
-	 * means there is no disc in the drive.  Mark as changed,
-	 * and we will figure it out later once the drive is
-	 * available again.
-	 */
-	if (retval || (scsi_sense_valid(sshdr) &&
-		       /* 0x3a is medium not present */
-		       sshdr->asc == 0x3a)) {
+	/* failed to execute TUR, assume media not present */
+	if (host_byte(retval)) {
 		set_media_not_present(sdkp);
-		retval = 1;
 		goto out;
 	}
 
+	if (media_not_present(sdkp, sshdr))
+		goto out;
+
 	/*
 	 * For removable scsi disk we have to recognise the presence
-	 * of a disk in the drive. This is kept in the struct scsi_disk
-	 * struct and tested at open !  Daniel Roche (dan@lectra.fr)
+	 * of a disk in the drive.
 	 */
+	if (!sdkp->media_present)
+		sdp->changed = 1;
 	sdkp->media_present = 1;
-
-	retval = sdp->changed;
-	sdp->changed = 0;
 out:
-	if (retval != sdkp->previous_state)
-		sdev_evt_send_simple(sdp, SDEV_EVT_MEDIA_CHANGE, GFP_KERNEL);
-	sdkp->previous_state = retval;
+	/*
+	 * sdp->changed is set under the following conditions:
+	 *
+	 *	Medium present state has changed in either direction.
+	 *	Device has indicated UNIT_ATTENTION.
+	 */
 	kfree(sshdr);
+	retval = sdp->changed ? DISK_EVENT_MEDIA_CHANGE : 0;
+	sdp->changed = 0;
 	return retval;
 }
 
@@ -1190,7 +1225,7 @@ static int sd_sync_cache(struct scsi_disk *sdkp)
 		 * flush everything.
 		 */
 		res = scsi_execute_req(sdp, cmd, DMA_NONE, NULL, 0, &sshdr,
-				       SD_TIMEOUT, SD_MAX_RETRIES, NULL);
+				       SD_FLUSH_TIMEOUT, SD_MAX_RETRIES, NULL);
 		if (res == 0)
 			break;
 	}
@@ -1279,12 +1314,12 @@ static const struct block_device_operations sd_fops = {
 	.owner			= THIS_MODULE,
 	.open			= sd_open,
 	.release		= sd_release,
-	.locked_ioctl		= sd_ioctl,
+	.ioctl			= sd_ioctl,
 	.getgeo			= sd_getgeo,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl		= sd_compat_ioctl,
 #endif
-	.media_changed		= sd_media_changed,
+	.check_events		= sd_check_events,
 	.revalidate_disk	= sd_revalidate_disk,
 	.unlock_native_capacity	= sd_unlock_native_capacity,
 };
@@ -1430,23 +1465,6 @@ static int sd_done(struct scsi_cmnd *SCpnt)
 	}
 
 	return good_bytes;
-}
-
-static int media_not_present(struct scsi_disk *sdkp,
-			     struct scsi_sense_hdr *sshdr)
-{
-
-	if (!scsi_sense_valid(sshdr))
-		return 0;
-	/* not invoked for commands that could return deferred errors */
-	if (sshdr->sense_key != NOT_READY &&
-	    sshdr->sense_key != UNIT_ATTENTION)
-		return 0;
-	if (sshdr->asc != 0x3A) /* medium not present */
-		return 0;
-
-	set_media_not_present(sdkp);
-	return 1;
 }
 
 /*
@@ -1622,7 +1640,7 @@ static void read_capacity_error(struct scsi_disk *sdkp, struct scsi_device *sdp,
 	 */
 	if (sdp->removable &&
 	    sense_valid && sshdr->sense_key == NOT_READY)
-		sdp->changed = 1;
+		set_media_not_present(sdkp);
 
 	/*
 	 * We used to set media_present to 0 here to indicate no media
@@ -1760,10 +1778,10 @@ static int read_capacity_10(struct scsi_disk *sdkp, struct scsi_device *sdp,
 			if (sense_valid &&
 			    sshdr.sense_key == UNIT_ATTENTION &&
 			    sshdr.asc == 0x29 && sshdr.ascq == 0x00)
-			    /* Device reset might occur several times,
-			     * give it one more chance */
-			    if (--reset_retries > 0)
-				    continue;
+				/* Device reset might occur several times,
+				 * give it one more chance */
+				if (--reset_retries > 0)
+					continue;
 		}
 		retries--;
 
@@ -2023,16 +2041,26 @@ sd_read_cache_type(struct scsi_disk *sdkp, unsigned char *buffer)
 
 	int dbd;
 	int modepage;
+	int first_len;
 	struct scsi_mode_data data;
 	struct scsi_sense_hdr sshdr;
 	int old_wce = sdkp->WCE;
 	int old_rcd = sdkp->RCD;
 	int old_dpofua = sdkp->DPOFUA;
 
-	if (sdp->skip_ms_page_8)
-		goto defaults;
-
-	if (sdp->type == TYPE_RBC) {
+	first_len = 4;
+	if (sdp->skip_ms_page_8) {
+		if (sdp->type == TYPE_RBC)
+			goto defaults;
+		else {
+			if (sdp->skip_ms_page_3f)
+				goto defaults;
+			modepage = 0x3F;
+			if (sdp->use_192_bytes_for_3f)
+				first_len = 192;
+			dbd = 0;
+		}
+	} else if (sdp->type == TYPE_RBC) {
 		modepage = 6;
 		dbd = 8;
 	} else {
@@ -2041,13 +2069,15 @@ sd_read_cache_type(struct scsi_disk *sdkp, unsigned char *buffer)
 	}
 
 	/* cautiously ask */
-	res = sd_do_mode_sense(sdp, dbd, modepage, buffer, 4, &data, &sshdr);
+	res = sd_do_mode_sense(sdp, dbd, modepage, buffer, first_len,
+			&data, &sshdr);
 
 	if (!scsi_status_is_good(res))
 		goto bad_sense;
 
 	if (!data.header_length) {
 		modepage = 6;
+		first_len = 0;
 		sd_printk(KERN_ERR, sdkp, "Missing header in MODE_SENSE response\n");
 	}
 
@@ -2060,30 +2090,61 @@ sd_read_cache_type(struct scsi_disk *sdkp, unsigned char *buffer)
 	 */
 	if (len < 3)
 		goto bad_sense;
-	if (len > 20)
-		len = 20;
-
-	/* Take headers and block descriptors into account */
-	len += data.header_length + data.block_descriptor_length;
-	if (len > SD_BUF_SIZE)
-		goto bad_sense;
+	else if (len > SD_BUF_SIZE) {
+		sd_printk(KERN_NOTICE, sdkp, "Truncating mode parameter "
+			  "data from %d to %d bytes\n", len, SD_BUF_SIZE);
+		len = SD_BUF_SIZE;
+	}
+	if (modepage == 0x3F && sdp->use_192_bytes_for_3f)
+		len = 192;
 
 	/* Get the data */
-	res = sd_do_mode_sense(sdp, dbd, modepage, buffer, len, &data, &sshdr);
+	if (len > first_len)
+		res = sd_do_mode_sense(sdp, dbd, modepage, buffer, len,
+				&data, &sshdr);
 
 	if (scsi_status_is_good(res)) {
 		int offset = data.header_length + data.block_descriptor_length;
 
-		if (offset >= SD_BUF_SIZE - 2) {
-			sd_printk(KERN_ERR, sdkp, "Malformed MODE SENSE response\n");
-			goto defaults;
+		while (offset < len) {
+			u8 page_code = buffer[offset] & 0x3F;
+			u8 spf       = buffer[offset] & 0x40;
+
+			if (page_code == 8 || page_code == 6) {
+				/* We're interested only in the first 3 bytes.
+				 */
+				if (len - offset <= 2) {
+					sd_printk(KERN_ERR, sdkp, "Incomplete "
+						  "mode parameter data\n");
+					goto defaults;
+				} else {
+					modepage = page_code;
+					goto Page_found;
+				}
+			} else {
+				/* Go to the next page */
+				if (spf && len - offset > 3)
+					offset += 4 + (buffer[offset+2] << 8) +
+						buffer[offset+3];
+				else if (!spf && len - offset > 1)
+					offset += 2 + buffer[offset+1];
+				else {
+					sd_printk(KERN_ERR, sdkp, "Incomplete "
+						  "mode parameter data\n");
+					goto defaults;
+				}
+			}
 		}
 
-		if ((buffer[offset] & 0x3f) != modepage) {
+		if (modepage == 0x3F) {
+			sd_printk(KERN_ERR, sdkp, "No Caching mode page "
+				  "present\n");
+			goto defaults;
+		} else if ((buffer[offset] & 0x3f) != modepage) {
 			sd_printk(KERN_ERR, sdkp, "Got wrong page\n");
 			goto defaults;
 		}
-
+	Page_found:
 		if (modepage == 8) {
 			sdkp->WCE = ((buffer[offset + 2] & 0x04) != 0);
 			sdkp->RCD = ((buffer[offset + 2] & 0x01) != 0);
@@ -2405,7 +2466,7 @@ static void sd_unlock_native_capacity(struct gendisk *disk)
  *	which is followed by sdaaa.
  *
  *	This is basically 26 base counting with one extra 'nil' entry
- *	at the beggining from the second digit on and can be
+ *	at the beginning from the second digit on and can be
  *	determined using similar method as 26 base conversion with the
  *	index shifted -1 after each digit is computed.
  *
@@ -2480,10 +2541,11 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 
 	gd->driverfs_dev = &sdp->sdev_gendev;
 	gd->flags = GENHD_FL_EXT_DEVT;
-	if (sdp->removable)
+	if (sdp->removable) {
 		gd->flags |= GENHD_FL_REMOVABLE;
+		gd->events |= DISK_EVENT_MEDIA_CHANGE;
+	}
 
-	dev_set_drvdata(dev, sdkp);
 	add_disk(gd);
 	sd_dif_config_host(sdkp);
 
@@ -2491,6 +2553,7 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 
 	sd_printk(KERN_NOTICE, sdkp, "Attached SCSI %sdisk\n",
 		  sdp->removable ? "removable " : "");
+	scsi_autopm_put_device(sdp);
 	put_device(&sdkp->dev);
 }
 
@@ -2562,8 +2625,7 @@ static int sd_probe(struct device *dev)
 	sdkp->driver = &sd_template;
 	sdkp->disk = gd;
 	sdkp->index = index;
-	sdkp->openers = 0;
-	sdkp->previous_state = 1;
+	atomic_set(&sdkp->openers, 0);
 
 	if (!sdp->request_queue->rq_timeout) {
 		if (sdp->type != TYPE_MOD)
@@ -2574,14 +2636,15 @@ static int sd_probe(struct device *dev)
 	}
 
 	device_initialize(&sdkp->dev);
-	sdkp->dev.parent = &sdp->sdev_gendev;
+	sdkp->dev.parent = dev;
 	sdkp->dev.class = &sd_disk_class;
-	dev_set_name(&sdkp->dev, dev_name(&sdp->sdev_gendev));
+	dev_set_name(&sdkp->dev, dev_name(dev));
 
 	if (device_add(&sdkp->dev))
 		goto out_free_index;
 
-	get_device(&sdp->sdev_gendev);
+	get_device(dev);
+	dev_set_drvdata(dev, sdkp);
 
 	get_device(&sdkp->dev);	/* prevent release before async_schedule */
 	async_schedule(sd_probe_async, sdkp);
@@ -2615,8 +2678,10 @@ static int sd_remove(struct device *dev)
 {
 	struct scsi_disk *sdkp;
 
-	async_synchronize_full();
 	sdkp = dev_get_drvdata(dev);
+	scsi_autopm_get_device(sdkp->device);
+
+	async_synchronize_full();
 	blk_queue_prep_rq(sdkp->device->request_queue, scsi_prep_fn);
 	blk_queue_unprep_rq(sdkp->device->request_queue, NULL);
 	device_del(&sdkp->dev);
@@ -2842,15 +2907,15 @@ module_exit(exit_sd);
 static void sd_print_sense_hdr(struct scsi_disk *sdkp,
 			       struct scsi_sense_hdr *sshdr)
 {
-	sd_printk(KERN_INFO, sdkp, "");
+	sd_printk(KERN_INFO, sdkp, " ");
 	scsi_show_sense_hdr(sshdr);
-	sd_printk(KERN_INFO, sdkp, "");
+	sd_printk(KERN_INFO, sdkp, " ");
 	scsi_show_extd_sense(sshdr->asc, sshdr->ascq);
 }
 
 static void sd_print_result(struct scsi_disk *sdkp, int result)
 {
-	sd_printk(KERN_INFO, sdkp, "");
+	sd_printk(KERN_INFO, sdkp, " ");
 	scsi_show_result(result);
 }
 

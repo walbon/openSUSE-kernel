@@ -152,8 +152,8 @@ static struct se_device *iblock_create_virtdevice(
 	printk(KERN_INFO  "IBLOCK: Claiming struct block_device: %s\n",
 			ib_dev->ibd_udev_path);
 
-	bd = open_bdev_exclusive(ib_dev->ibd_udev_path,
-				 FMODE_WRITE|FMODE_READ, ib_dev);
+	bd = blkdev_get_by_path(ib_dev->ibd_udev_path,
+				FMODE_WRITE|FMODE_READ|FMODE_EXCL, ib_dev);
 	if (IS_ERR(bd)) {
 		ret = PTR_ERR(bd);
 		goto failed;
@@ -392,9 +392,8 @@ static int iblock_do_task(struct se_task *task)
 {
 	struct se_device *dev = task->task_se_cmd->se_dev;
 	struct iblock_req *req = IBLOCK_REQ(task);
-	struct iblock_dev *ibd = (struct iblock_dev *)req->ib_dev;
-	struct request_queue *q = bdev_get_queue(ibd->ibd_bd);
 	struct bio *bio = req->ib_bio, *nbio = NULL;
+	struct blk_plug plug;
 	int rw;
 
 	if (task->task_data_direction == DMA_TO_DEVICE) {
@@ -412,6 +411,7 @@ static int iblock_do_task(struct se_task *task)
 		rw = READ;
 	}
 
+	blk_start_plug(&plug);
 	while (bio) {
 		nbio = bio->bi_next;
 		bio->bi_next = NULL;
@@ -421,8 +421,7 @@ static int iblock_do_task(struct se_task *task)
 		submit_bio(rw, bio);
 		bio = nbio;
 	}
-	if (q->unplug_fn)
-		q->unplug_fn(q);
+	blk_finish_plug(&plug);
 
 	return PYX_TRANSPORT_SENT_TO_TRANSPORT;
 }

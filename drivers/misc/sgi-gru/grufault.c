@@ -33,6 +33,7 @@
 #include <linux/io.h>
 #include <linux/uaccess.h>
 #include <linux/security.h>
+#include <linux/prefetch.h>
 #include <asm/pgtable.h>
 #include "gru.h"
 #include "grutables.h"
@@ -534,6 +535,7 @@ static irqreturn_t gru_intr(int chiplet, int blade)
 	int cbrnum, ctxnum;
 
 	STAT(intr);
+
 	gru = &gru_base[blade]->bs_grus[chiplet];
 	if (!gru) {
 		dev_err(grudev, "GRU: invalid interrupt: cpu %d, chiplet %d\n",

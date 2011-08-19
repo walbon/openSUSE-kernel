@@ -87,8 +87,6 @@ struct drm_device;
 #include "drm_hashtab.h"
 #include "drm_mm.h"
 
-#include "drm_compat.h"
-
 #define DRM_UT_CORE 		0x01
 #define DRM_UT_DRIVER		0x02
 #define DRM_UT_KMS		0x04

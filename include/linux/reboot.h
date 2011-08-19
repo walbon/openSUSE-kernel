@@ -53,14 +53,7 @@ extern void machine_power_off(void);
 
 extern void machine_shutdown(void);
 struct pt_regs;
-#ifdef CONFIG_KDB_KDUMP
 extern void machine_crash_shutdown(struct pt_regs *);
-extern void machine_crash_shutdown_begin(void);
-extern void machine_crash_shutdown_other_cpu(struct pt_regs *);
-extern void machine_crash_shutdown_end(struct pt_regs *);
-#else
-extern void machine_crash_shutdown(struct pt_regs *);
-#endif /* !CONFIG_KDB_KDUMP */
 
 /* 
  * Architecture independent implemenations of sys_reboot commands.
@@ -71,6 +64,7 @@ extern void kernel_restart(char *cmd);
 extern void kernel_halt(void);
 extern void kernel_power_off(void);
 
+extern int C_A_D; /* for sysctl */
 void ctrl_alt_del(void);
 
 #define POWEROFF_CMD_PATH_LEN	256

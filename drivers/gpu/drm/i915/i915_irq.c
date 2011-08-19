@@ -298,12 +298,14 @@ static int i915_get_vblank_timestamp(struct drm_device *dev, int pipe,
 /*
  * Handle hotplug events outside the interrupt handler proper.
  */
-void i915_handle_hotplug(struct drm_device *dev)
+static void i915_hotplug_work_func(struct work_struct *work)
 {
+	drm_i915_private_t *dev_priv = container_of(work, drm_i915_private_t,
+						    hotplug_work);
+	struct drm_device *dev = dev_priv->dev;
 	struct drm_mode_config *mode_config = &dev->mode_config;
 	struct intel_encoder *encoder;
 
-	mutex_lock(&mode_config->mutex);
 	DRM_DEBUG_KMS("running encoder hotplug functions\n");
 
 	list_for_each_entry(encoder, &mode_config->encoder_list, base.head)
@@ -312,16 +314,6 @@ void i915_handle_hotplug(struct drm_device *dev)
 
 	/* Just fire off a uevent and let userspace tell us what to do */
 	drm_helper_hpd_irq_event(dev);
-
-	mutex_unlock(&mode_config->mutex);
-}
-
-static void i915_hotplug_work_func(struct work_struct *work)
-{
-	drm_i915_private_t *dev_priv = container_of(work, drm_i915_private_t,
-						    hotplug_work);
-	struct drm_device *dev = dev_priv->dev;
-	i915_handle_hotplug(dev);
 }
 
 static void i915_handle_rps_change(struct drm_device *dev)
@@ -730,10 +722,9 @@ i915_error_object_create(struct drm_i915_private *dev_priv,
 
 		local_irq_save(flags);
 		s = io_mapping_map_atomic_wc(dev_priv->mm.gtt_mapping,
-					     reloc_offset,
-					     KM_IRQ0);
+					     reloc_offset);
 		memcpy_fromio(d, s, PAGE_SIZE);
-		io_mapping_unmap_atomic(s, KM_IRQ0);
+		io_mapping_unmap_atomic(s);
 		local_irq_restore(flags);
 
 		dst->pages[page] = d;

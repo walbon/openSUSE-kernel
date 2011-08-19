@@ -450,27 +450,15 @@ static struct cxgbi_sock *cxgbi_sock_create(struct cxgbi_device *cdev)
 	return csk;
 }
 
-static struct rtable *find_route_ipv4(__be32 saddr, __be32 daddr,
-					__be16 sport, __be16 dport, u8 tos)
+static struct rtable *find_route_ipv4(struct flowi4 *fl4,
+				      __be32 saddr, __be32 daddr,
+				      __be16 sport, __be16 dport, u8 tos)
 {
 	struct rtable *rt;
-	struct flowi fl = {
-		.oif = 0,
-		.nl_u = {
-			.ip4_u = {
-				.daddr = daddr,
-				.saddr = saddr,
-				.tos = tos }
-			},
-		.proto = IPPROTO_TCP,
-		.uli_u = {
-			.ports = {
-				.sport = sport,
-				.dport = dport }
-			}
-	};
 
-	if (ip_route_output_flow(&init_net, &rt, &fl, NULL, 0))
+	rt = ip_route_output_ports(&init_net, fl4, NULL, daddr, saddr,
+				   dport, sport, IPPROTO_TCP, tos, 0);
+	if (IS_ERR(rt))
 		return NULL;
 
 	return rt;
@@ -483,6 +471,7 @@ static struct cxgbi_sock *cxgbi_check_route(struct sockaddr *dst_addr)
 	struct net_device *ndev;
 	struct cxgbi_device *cdev;
 	struct rtable *rt = NULL;
+	struct flowi4 fl4;
 	struct cxgbi_sock *csk = NULL;
 	unsigned int mtu = 0;
 	int port = 0xFFFF;
@@ -495,14 +484,14 @@ static struct cxgbi_sock *cxgbi_check_route(struct sockaddr *dst_addr)
 		goto err_out;
 	}
 
-	rt = find_route_ipv4(0, daddr->sin_addr.s_addr, 0, daddr->sin_port, 0);
+	rt = find_route_ipv4(&fl4, 0, daddr->sin_addr.s_addr, 0, daddr->sin_port, 0);
 	if (!rt) {
 		pr_info("no route to ipv4 0x%x, port %u.\n",
 			daddr->sin_addr.s_addr, daddr->sin_port);
 		err = -ENETUNREACH;
 		goto err_out;
 	}
-	dst = &rt->u.dst;
+	dst = &rt->dst;
 	ndev = dst->neighbour->dev;
 
 	if (rt->rt_flags & (RTCF_MULTICAST | RTCF_BROADCAST)) {
@@ -544,7 +533,7 @@ static struct cxgbi_sock *cxgbi_check_route(struct sockaddr *dst_addr)
 	csk->daddr.sin_addr.s_addr = daddr->sin_addr.s_addr;
 	csk->daddr.sin_port = daddr->sin_port;
 	csk->daddr.sin_family = daddr->sin_family;
-	csk->saddr.sin_addr.s_addr = rt->rt_src;
+	csk->saddr.sin_addr.s_addr = fl4.saddr;
 
 	return csk;
 
@@ -826,7 +815,7 @@ unsigned int cxgbi_sock_select_mss(struct cxgbi_sock *csk, unsigned int pmtu)
 	unsigned int idx;
 	struct dst_entry *dst = csk->dst;
 
-	csk->advmss = dst_metric(dst, RTAX_ADVMSS);
+	csk->advmss = dst_metric_advmss(dst);
 
 	if (csk->advmss > pmtu - 40)
 		csk->advmss = pmtu - 40;

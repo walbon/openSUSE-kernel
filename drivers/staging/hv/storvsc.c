@@ -40,8 +40,10 @@ static inline struct storvsc_device *alloc_stor_device(struct hv_device *device)
 	if (!stor_device)
 		return NULL;
 
-	stor_device->ref_count = 1;
-	stor_device->destroy = false;
+	/* Set to 2 to allow both inbound and outbound traffics */
+	/* (ie get_stor_device() and must_get_stor_device()) to proceed. */
+	atomic_cmpxchg(&stor_device->ref_count, 0, 2);
+
 	init_waitqueue_head(&stor_device->waiting_to_drain);
 	stor_device->device = device;
 	device->ext = stor_device;
@@ -54,28 +56,49 @@ static inline void free_stor_device(struct storvsc_device *device)
 	kfree(device);
 }
 
-static inline struct storvsc_device *get_in_stor_device(
+/* Get the stordevice object iff exists and its refcount > 0 */
+static inline struct storvsc_device *must_get_stor_device(
 					struct hv_device *device)
 {
 	struct storvsc_device *stor_device;
-	unsigned long flags;
 
-	spin_lock_irqsave(&device->ext_lock, flags);
 	stor_device = (struct storvsc_device *)device->ext;
-	if (!stor_device)
-		goto cleanup;
+	if (stor_device && atomic_read(&stor_device->ref_count))
+		atomic_inc(&stor_device->ref_count);
+	else
+		stor_device = NULL;
 
-	/*
-	 * If the device is being destroyed; allow incoming
-	 * traffic only to cleanup outstanding requests.
-	 */
-	if (stor_device->destroy &&
-		 (atomic_read(&stor_device->num_outstanding_req) == 0))
-		goto cleanup;
-	stor_device->ref_count++;
-cleanup:
-	spin_unlock_irqrestore(&device->ext_lock, flags);
+	return stor_device;
+}
 
+/* Drop ref count to 1 to effectively disable get_stor_device() */
+static inline struct storvsc_device *release_stor_device(
+					struct hv_device *device)
+{
+	struct storvsc_device *stor_device;
+
+	stor_device = (struct storvsc_device *)device->ext;
+
+	/* Busy wait until the ref drop to 2, then set it to 1 */
+	while (atomic_cmpxchg(&stor_device->ref_count, 2, 1) != 2)
+		udelay(100);
+
+	return stor_device;
+}
+
+/* Drop ref count to 0. No one can use stor_device object. */
+static inline struct storvsc_device *final_release_stor_device(
+			struct hv_device *device)
+{
+	struct storvsc_device *stor_device;
+
+	stor_device = (struct storvsc_device *)device->ext;
+
+	/* Busy wait until the ref drop to 1, then set it to 0 */
+	while (atomic_cmpxchg(&stor_device->ref_count, 1, 0) != 1)
+		udelay(100);
+
+	device->ext = NULL;
 	return stor_device;
 }
 
@@ -86,9 +109,9 @@ static int storvsc_channel_init(struct hv_device *device)
 	struct vstor_packet *vstor_packet;
 	int ret, t;
 
-	stor_device = get_out_stor_device(device);
+	stor_device = get_stor_device(device);
 	if (!stor_device)
-		return -ENODEV;
+		return -1;
 
 	request = &stor_device->init_request;
 	vstor_packet = &request->vstor_packet;
@@ -101,6 +124,8 @@ static int storvsc_channel_init(struct hv_device *device)
 	init_completion(&request->wait_event);
 	vstor_packet->operation = VSTOR_OPERATION_BEGIN_INITIALIZATION;
 	vstor_packet->flags = REQUEST_COMPLETION_FLAG;
+
+	DPRINT_INFO(STORVSC, "BEGIN_INITIALIZATION_OPERATION...");
 
 	ret = vmbus_sendpacket(device->channel, vstor_packet,
 			       sizeof(struct vstor_packet),
@@ -120,6 +145,7 @@ static int storvsc_channel_init(struct hv_device *device)
 	    vstor_packet->status != 0)
 		goto cleanup;
 
+	DPRINT_INFO(STORVSC, "QUERY_PROTOCOL_VERSION_OPERATION...");
 
 	/* reuse the packet for version range supported */
 	memset(vstor_packet, 0, sizeof(struct vstor_packet));
@@ -143,10 +169,13 @@ static int storvsc_channel_init(struct hv_device *device)
 		goto cleanup;
 	}
 
+	/* TODO: Check returned version */
 	if (vstor_packet->operation != VSTOR_OPERATION_COMPLETE_IO ||
 	    vstor_packet->status != 0)
 		goto cleanup;
 
+	/* Query channel properties */
+	DPRINT_INFO(STORVSC, "QUERY_PROPERTIES_OPERATION...");
 
 	memset(vstor_packet, 0, sizeof(struct vstor_packet));
 	vstor_packet->operation = VSTOR_OPERATION_QUERY_PROPERTIES;
@@ -169,6 +198,7 @@ static int storvsc_channel_init(struct hv_device *device)
 		goto cleanup;
 	}
 
+	/* TODO: Check returned version */
 	if (vstor_packet->operation != VSTOR_OPERATION_COMPLETE_IO ||
 	    vstor_packet->status != 0)
 		goto cleanup;
@@ -176,6 +206,8 @@ static int storvsc_channel_init(struct hv_device *device)
 	stor_device->path_id = vstor_packet->storage_channel_properties.path_id;
 	stor_device->target_id
 		= vstor_packet->storage_channel_properties.target_id;
+
+	DPRINT_INFO(STORVSC, "END_INITIALIZATION_OPERATION...");
 
 	memset(vstor_packet, 0, sizeof(struct vstor_packet));
 	vstor_packet->operation = VSTOR_OPERATION_END_INITIALIZATION;
@@ -200,6 +232,7 @@ static int storvsc_channel_init(struct hv_device *device)
 	    vstor_packet->status != 0)
 		goto cleanup;
 
+	DPRINT_INFO(STORVSC, "**** storage channel up and running!! ****");
 
 cleanup:
 	put_stor_device(device);
@@ -213,7 +246,9 @@ static void storvsc_on_io_completion(struct hv_device *device,
 	struct storvsc_device *stor_device;
 	struct vstor_packet *stor_pkt;
 
-	stor_device = (struct storvsc_device *)device->ext;
+	stor_device = must_get_stor_device(device);
+	if (!stor_device)
+		return;
 
 	stor_pkt = &request->vstor_packet;
 
@@ -258,6 +293,7 @@ static void storvsc_on_io_completion(struct hv_device *device,
 		wake_up(&stor_device->waiting_to_drain);
 
 
+	put_stor_device(device);
 }
 
 static void storvsc_on_receive(struct hv_device *device,
@@ -269,8 +305,13 @@ static void storvsc_on_receive(struct hv_device *device,
 		storvsc_on_io_completion(device, vstor_packet, request);
 		break;
 	case VSTOR_OPERATION_REMOVE_DEVICE:
+		DPRINT_INFO(STORVSC, "REMOVE_DEVICE_OPERATION");
+		/* TODO: */
+		break;
 
 	default:
+		DPRINT_INFO(STORVSC, "Unknown operation received - %d",
+			    vstor_packet->operation);
 		break;
 	}
 }
@@ -286,7 +327,7 @@ static void storvsc_on_channel_callback(void *context)
 	int ret;
 
 
-	stor_device = get_in_stor_device(device);
+	stor_device = must_get_stor_device(device);
 	if (!stor_device)
 		return;
 
@@ -335,7 +376,7 @@ static int storvsc_connect_to_vsp(struct hv_device *device, u32 ring_size)
 			 storvsc_on_channel_callback, device);
 
 	if (ret != 0)
-		return ret;
+		return -1;
 
 	ret = storvsc_channel_init(device);
 
@@ -351,45 +392,39 @@ int storvsc_dev_add(struct hv_device *device,
 
 	device_info = (struct storvsc_device_info *)additional_info;
 	stor_device = alloc_stor_device(device);
-	if (!stor_device)
-		return -ENOMEM;
+	if (!stor_device) {
+		ret = -1;
+		goto cleanup;
+	}
 
 	/* Save the channel properties to our storvsc channel */
 
+	/* FIXME: */
 	/*
 	 * If we support more than 1 scsi channel, we need to set the
 	 * port number here to the scsi channel but how do we get the
-	 * scsi channel prior to the bus scan.
-	 *
-	 * The host does not support this.
+	 * scsi channel prior to the bus scan
 	 */
 
 	stor_device->port_number = device_info->port_number;
 	/* Send it back up */
 	ret = storvsc_connect_to_vsp(device, device_info->ring_buffer_size);
-	if (ret) {
-		free_stor_device(stor_device);
-		return ret;
-	}
+
 	device_info->path_id = stor_device->path_id;
 	device_info->target_id = stor_device->target_id;
 
+cleanup:
 	return ret;
 }
 
 int storvsc_dev_remove(struct hv_device *device)
 {
 	struct storvsc_device *stor_device;
-	unsigned long flags;
 
-	/*
-	 * Since we currently hold a reference on the stor
-	 * device, it is safe to dereference the ext
-	 * pointer.
-	 */
-	stor_device = (struct storvsc_device *)device->ext;
+	DPRINT_INFO(STORVSC, "disabling storage device (%p)...",
+		    device->ext);
 
-	stor_device->destroy = true;
+	stor_device = release_stor_device(device);
 
 	/*
 	 * At this point, all outbound traffic should be disable. We
@@ -399,10 +434,7 @@ int storvsc_dev_remove(struct hv_device *device)
 
 	storvsc_wait_to_drain(stor_device);
 
-	spin_lock_irqsave(&device->ext_lock, flags);
-	stor_device->ref_count = 0;
-	device->ext = NULL;
-	spin_unlock_irqrestore(&device->ext_lock, flags);
+	stor_device = final_release_stor_device(device);
 
 	/* Close the channel */
 	vmbus_close(device->channel);
@@ -419,10 +451,10 @@ int storvsc_do_io(struct hv_device *device,
 	int ret = 0;
 
 	vstor_packet = &request->vstor_packet;
-	stor_device = get_out_stor_device(device);
+	stor_device = get_stor_device(device);
 
 	if (!stor_device)
-		return -ENODEV;
+		return -2;
 
 
 	request->device  = device;
@@ -529,3 +561,4 @@ int storvsc_get_major_info(struct storvsc_device_info *device_info,
 
 	return -ENODEV;
 }
+

@@ -3452,17 +3452,14 @@ static int cnic_get_v4_route(struct sockaddr_in *dst_addr,
 			     struct dst_entry **dst)
 {
 #if defined(CONFIG_INET)
-	struct flowi fl;
-	int err;
 	struct rtable *rt;
 
-	memset(&fl, 0, sizeof(fl));
-	fl.nl_u.ip4_u.daddr = dst_addr->sin_addr.s_addr;
-
-	err = ip_route_output_key(&init_net, &rt, &fl);
-	if (!err)
-		*dst = &rt->u.dst;
-	return err;
+	rt = ip_route_output(&init_net, dst_addr->sin_addr.s_addr, 0, 0, 0);
+	if (!IS_ERR(rt)) {
+		*dst = &rt->dst;
+		return 0;
+	}
+	return PTR_ERR(rt);
 #else
 	return -ENETUNREACH;
 #endif
@@ -3472,14 +3469,14 @@ static int cnic_get_v6_route(struct sockaddr_in6 *dst_addr,
 			     struct dst_entry **dst)
 {
 #if defined(CONFIG_IPV6) || (defined(CONFIG_IPV6_MODULE) && defined(MODULE))
-	struct flowi fl;
+	struct flowi6 fl6;
 
-	memset(&fl, 0, sizeof(fl));
-	ipv6_addr_copy(&fl.fl6_dst, &dst_addr->sin6_addr);
-	if (ipv6_addr_type(&fl.fl6_dst) & IPV6_ADDR_LINKLOCAL)
-		fl.oif = dst_addr->sin6_scope_id;
+	memset(&fl6, 0, sizeof(fl6));
+	ipv6_addr_copy(&fl6.daddr, &dst_addr->sin6_addr);
+	if (ipv6_addr_type(&fl6.daddr) & IPV6_ADDR_LINKLOCAL)
+		fl6.flowi6_oif = dst_addr->sin6_scope_id;
 
-	*dst = ip6_route_output(&init_net, NULL, &fl);
+	*dst = ip6_route_output(&init_net, NULL, &fl6);
 	if (*dst)
 		return 0;
 #endif
@@ -5214,15 +5211,11 @@ static struct cnic_dev *init_bnx2_cnic(struct net_device *dev)
 
 	dev_hold(dev);
 	pci_dev_get(pdev);
-	if (pdev->device == PCI_DEVICE_ID_NX2_5709 ||
-	    pdev->device == PCI_DEVICE_ID_NX2_5709S) {
-		u8 rev;
-
-		pci_read_config_byte(pdev, PCI_REVISION_ID, &rev);
-		if (rev < 0x10) {
-			pci_dev_put(pdev);
-			goto cnic_err;
-		}
+	if ((pdev->device == PCI_DEVICE_ID_NX2_5709 ||
+	     pdev->device == PCI_DEVICE_ID_NX2_5709S) &&
+	    (pdev->revision < 0x10)) {
+		pci_dev_put(pdev);
+		goto cnic_err;
 	}
 	pci_dev_put(pdev);
 

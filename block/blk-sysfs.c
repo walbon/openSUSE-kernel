@@ -2,6 +2,7 @@
  * Functions related to sysfs handling
  */
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
@@ -243,9 +244,8 @@ static ssize_t queue_nomerges_store(struct request_queue *q, const char *page,
 static ssize_t queue_rq_affinity_show(struct request_queue *q, char *page)
 {
 	bool set = test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags);
-	bool force = test_bit(QUEUE_FLAG_SAME_FORCE, &q->queue_flags);
 
-	return queue_var_show(set << force, page);
+	return queue_var_show(set, page);
 }
 
 static ssize_t
@@ -257,14 +257,10 @@ queue_rq_affinity_store(struct request_queue *q, const char *page, size_t count)
 
 	ret = queue_var_store(&val, page, count);
 	spin_lock_irq(q->queue_lock);
-	if (val) {
+	if (val)
 		queue_flag_set(QUEUE_FLAG_SAME_COMP, q);
-		if (val == 2)
-			queue_flag_set(QUEUE_FLAG_SAME_FORCE, q);
-	} else {
-		queue_flag_clear(QUEUE_FLAG_SAME_COMP, q);
-		queue_flag_clear(QUEUE_FLAG_SAME_FORCE, q);
-	}
+	else
+		queue_flag_clear(QUEUE_FLAG_SAME_COMP,  q);
 	spin_unlock_irq(q->queue_lock);
 #endif
 	return ret;
@@ -488,7 +484,7 @@ static void blk_release_queue(struct kobject *kobj)
 	kmem_cache_free(blk_requestq_cachep, q);
 }
 
-static struct sysfs_ops queue_sysfs_ops = {
+static const struct sysfs_ops queue_sysfs_ops = {
 	.show	= queue_attr_show,
 	.store	= queue_attr_store,
 };
@@ -503,7 +499,6 @@ int blk_register_queue(struct gendisk *disk)
 {
 	int ret;
 	struct device *dev = disk_to_dev(disk);
-
 	struct request_queue *q = disk->queue;
 
 	if (WARN_ON(!q))
@@ -528,7 +523,7 @@ int blk_register_queue(struct gendisk *disk)
 	if (ret) {
 		kobject_uevent(&q->kobj, KOBJ_REMOVE);
 		kobject_del(&q->kobj);
-		blk_trace_remove_sysfs(disk_to_dev(disk));
+		blk_trace_remove_sysfs(dev);
 		kobject_put(&dev->kobj);
 		return ret;
 	}

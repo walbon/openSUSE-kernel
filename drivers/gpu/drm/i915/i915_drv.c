@@ -437,8 +437,6 @@ static int i915_drm_thaw(struct drm_device *dev)
 		drm_mode_config_reset(dev);
 		drm_irq_install(dev);
 
-		i915_handle_hotplug(dev);
-
 		/* Resume the modeset for every activated CRTC */
 		drm_helper_resume_force_mode(dev);
 
@@ -787,13 +785,14 @@ static struct drm_driver driver = {
 		 .open = drm_open,
 		 .release = drm_release,
 		 .unlocked_ioctl = drm_ioctl,
-		 .mmap = i915_gem_mmap,
+		 .mmap = drm_gem_mmap,
 		 .poll = drm_poll,
 		 .fasync = drm_fasync,
 		 .read = drm_read,
 #ifdef CONFIG_COMPAT
 		 .compat_ioctl = i915_compat_ioctl,
 #endif
+		 .llseek = noop_llseek,
 	},
 
 	.name = DRIVER_NAME,

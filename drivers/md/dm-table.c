@@ -12,6 +12,7 @@
 #include <linux/blkdev.h>
 #include <linux/namei.h>
 #include <linux/ctype.h>
+#include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
@@ -71,6 +72,8 @@ struct dm_table {
 	void *event_context;
 
 	struct dm_md_mempools *mempools;
+
+	struct list_head target_callbacks;
 };
 
 /*
@@ -204,6 +207,7 @@ int dm_table_create(struct dm_table **result, fmode_t mode,
 		return -ENOMEM;
 
 	INIT_LIST_HEAD(&t->devices);
+	INIT_LIST_HEAD(&t->target_callbacks);
 	atomic_set(&t->holders, 0);
 	t->discards_supported = 1;
 
@@ -325,15 +329,18 @@ static int open_dev(struct dm_dev_internal *d, dev_t dev,
 
 	BUG_ON(d->dm_dev.bdev);
 
-	bdev = open_by_devnum(dev, d->dm_dev.mode);
+	bdev = blkdev_get_by_dev(dev, d->dm_dev.mode | FMODE_EXCL, _claim_ptr);
 	if (IS_ERR(bdev))
 		return PTR_ERR(bdev);
-	r = bd_claim_by_disk(bdev, _claim_ptr, dm_disk(md));
-	if (r)
-		blkdev_put(bdev, d->dm_dev.mode);
-	else
-		d->dm_dev.bdev = bdev;
-	return r;
+
+	r = bd_link_disk_holder(bdev, dm_disk(md));
+	if (r) {
+		blkdev_put(bdev, d->dm_dev.mode | FMODE_EXCL);
+		return r;
+	}
+
+	d->dm_dev.bdev = bdev;
+	return 0;
 }
 
 /*
@@ -344,8 +351,8 @@ static void close_dev(struct dm_dev_internal *d, struct mapped_device *md)
 	if (!d->dm_dev.bdev)
 		return;
 
-	bd_release_from_disk(d->dm_dev.bdev, dm_disk(md));
-	blkdev_put(d->dm_dev.bdev, d->dm_dev.mode);
+	bd_unlink_disk_holder(d->dm_dev.bdev, dm_disk(md));
+	blkdev_put(d->dm_dev.bdev, d->dm_dev.mode | FMODE_EXCL);
 	d->dm_dev.bdev = NULL;
 }
 
@@ -630,11 +637,8 @@ int dm_split_args(int *argc, char ***argvp, char *input)
 		return -ENOMEM;
 
 	while (1) {
-		start = end;
-
 		/* Skip whitespace */
-		while (*start && isspace(*start))
-			start++;
+		start = skip_spaces(end);
 
 		if (!*start)
 			break;	/* success, we hit the end */
@@ -1306,10 +1310,17 @@ int dm_table_resume_targets(struct dm_table *t)
 	return 0;
 }
 
+void dm_table_add_target_callbacks(struct dm_table *t, struct dm_target_callbacks *cb)
+{
+	list_add(&cb->list, &t->target_callbacks);
+}
+EXPORT_SYMBOL_GPL(dm_table_add_target_callbacks);
+
 int dm_table_any_congested(struct dm_table *t, int bdi_bits)
 {
 	struct dm_dev_internal *dd;
 	struct list_head *devices = dm_table_get_devices(t);
+	struct dm_target_callbacks *cb;
 	int r = 0;
 
 	list_for_each_entry(dd, devices, list) {
@@ -1323,6 +1334,10 @@ int dm_table_any_congested(struct dm_table *t, int bdi_bits)
 				     dm_device_name(t->md),
 				     bdevname(dd->dm_dev.bdev, b));
 	}
+
+	list_for_each_entry(cb, &t->target_callbacks, list)
+		if (cb->congested_fn)
+			r |= cb->congested_fn(cb, bdi_bits);
 
 	return r;
 }
@@ -1339,24 +1354,6 @@ int dm_table_any_busy_target(struct dm_table *t)
 	}
 
 	return 0;
-}
-
-void dm_table_unplug_all(struct dm_table *t)
-{
-	struct dm_dev_internal *dd;
-	struct list_head *devices = dm_table_get_devices(t);
-
-	list_for_each_entry(dd, devices, list) {
-		struct request_queue *q = bdev_get_queue(dd->dm_dev.bdev);
-		char b[BDEVNAME_SIZE];
-
-		if (likely(q))
-			blk_unplug(q);
-		else
-			DMWARN_LIMIT("%s: Cannot unplug nonexistent device %s",
-				     dm_device_name(t->md),
-				     bdevname(dd->dm_dev.bdev, b));
-	}
 }
 
 struct mapped_device *dm_table_get_md(struct dm_table *t)
@@ -1381,13 +1378,17 @@ bool dm_table_supports_discards(struct dm_table *t)
 		return 0;
 
 	/*
-	 * Ensure that at least one underlying device supports discards.
+	 * Unless any target used by the table set discards_supported,
+	 * require at least one underlying device to support discards.
 	 * t->devices includes internal dm devices such as mirror logs
 	 * so we need to use iterate_devices here, which targets
 	 * supporting discard must provide.
 	 */
 	while (i < dm_table_get_num_targets(t)) {
 		ti = dm_table_get_target(t, i++);
+
+		if (ti->discards_supported)
+			return 1;
 
 		if (ti->type->iterate_devices &&
 		    ti->type->iterate_devices(ti, device_discard_capable, NULL))
@@ -1406,4 +1407,3 @@ EXPORT_SYMBOL(dm_table_get_mode);
 EXPORT_SYMBOL(dm_table_get_md);
 EXPORT_SYMBOL(dm_table_put);
 EXPORT_SYMBOL(dm_table_get);
-EXPORT_SYMBOL(dm_table_unplug_all);

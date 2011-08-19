@@ -33,7 +33,6 @@
 #include <linux/pstore.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
-#include <linux/writeback.h>
 
 #include "internal.h"
 
@@ -75,37 +74,20 @@ static int pstore_unlink(struct inode *dir, struct dentry *dentry)
 	struct pstore_private *p = dentry->d_inode->i_private;
 
 	p->erase(p->id);
-	kfree(p);
 
 	return simple_unlink(dir, dentry);
+}
+
+static void pstore_evict_inode(struct inode *inode)
+{
+	end_writeback(inode);
+	kfree(inode->i_private);
 }
 
 static const struct inode_operations pstore_dir_inode_operations = {
 	.lookup		= simple_lookup,
 	.unlink		= pstore_unlink,
 };
-
-#define LAST_INO_BATCH 1024
-static DEFINE_PER_CPU(unsigned int, last_ino);
-
-static unsigned int get_next_ino(void)
-{
-	unsigned int *p = &get_cpu_var(last_ino);
-	unsigned int res = *p;
-
-#ifdef CONFIG_SMP
-	if (unlikely((res & (LAST_INO_BATCH-1)) == 0)) {
-		static atomic_t shared_last_ino;
-		int next = atomic_add_return(LAST_INO_BATCH, &shared_last_ino);
-
-		res = next - LAST_INO_BATCH;
-	}
-#endif
-
-	*p = ++res;
-	put_cpu_var(last_ino);
-	return res;
-}
 
 static struct inode *pstore_get_inode(struct super_block *sb,
 					const struct inode *dir, int mode, dev_t dev)
@@ -175,6 +157,7 @@ static int pstore_remount(struct super_block *sb, int *flags, char *data)
 static const struct super_operations pstore_ops = {
 	.statfs		= simple_statfs,
 	.drop_inode	= generic_delete_inode,
+	.evict_inode	= pstore_evict_inode,
 	.remount_fs	= pstore_remount,
 	.show_options	= generic_show_options,
 };
@@ -300,10 +283,10 @@ fail:
 	return err;
 }
 
-static int pstore_get_sb(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
+static struct dentry *pstore_mount(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data)
 {
-	return get_sb_nodev(fs_type, flags, data, pstore_fill_super, mnt);
+	return mount_single(fs_type, flags, data, pstore_fill_super);
 }
 
 static void pstore_kill_sb(struct super_block *sb)
@@ -314,7 +297,7 @@ static void pstore_kill_sb(struct super_block *sb)
 
 static struct file_system_type pstore_fs_type = {
 	.name		= "pstore",
-	.get_sb		= pstore_get_sb,
+	.mount		= pstore_mount,
 	.kill_sb	= pstore_kill_sb,
 };
 

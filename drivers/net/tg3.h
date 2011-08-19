@@ -10,8 +10,6 @@
 #ifndef _T3_H
 #define _T3_H
 
-#include "tg3_compat.h"
-
 #define TG3_64BIT_REG_HIGH		0x00UL
 #define TG3_64BIT_REG_LOW		0x04UL
 
@@ -2188,7 +2186,6 @@
 #define  MII_TG3_DSP_EXP8_REJ2MHz	0x0001
 #define  MII_TG3_DSP_EXP8_AEDW		0x0200
 #define MII_TG3_DSP_EXP75		0x0f75
-#define  MII_TG3_DSP_EXP75_SUP_CM_OSC	0x0001
 #define MII_TG3_DSP_EXP96		0x0f96
 #define MII_TG3_DSP_EXP97		0x0f97
 
@@ -2251,8 +2248,6 @@
 #define MII_TG3_MISC_SHDW_SCR5_LPED	0x0010
 #define MII_TG3_MISC_SHDW_SCR5_SEL	0x1400
 
-#define MII_TG3_MISC_SHDW_RGMII_SEL	0x2c00
-
 #define MII_TG3_TEST1			0x1e
 #define MII_TG3_TEST1_TRIM_EN		0x0010
 #define MII_TG3_TEST1_CRC_EN		0x8000
@@ -2275,8 +2270,6 @@
 #define  MII_TG3_FET_SHDW_MISCCTRL_MDIX	0x4000
 
 #define MII_TG3_FET_SHDW_AUXMODE4	0x1a
-#define MII_TG3_FET_SHDW_AM4_LED_MODE1	0x0001
-#define MII_TG3_FET_SHDW_AM4_LED_MASK	0x0003
 #define MII_TG3_FET_SHDW_AUXMODE4_SBPD	0x0008
 
 #define MII_TG3_FET_SHDW_AUXSTAT2	0x1b
@@ -2807,7 +2800,6 @@ struct tg3_napi {
 
 	u32				consmbox ____cacheline_aligned;
 	u32				rx_rcb_ptr;
-	u32				last_rx_cons;
 	u16				*rx_rcb_prod_idx;
 	struct tg3_rx_prodring_set	prodring;
 	struct tg3_rx_buffer_desc	*rx_rcb;
@@ -2815,10 +2807,11 @@ struct tg3_napi {
 	u32				tx_prod	____cacheline_aligned;
 	u32				tx_cons;
 	u32				tx_pending;
-	u32				last_tx_cons;
+ 	u32				last_tx_cons;
 	u32				prodmbox;
 	struct tg3_tx_buffer_desc	*tx_ring;
 	struct ring_info		*tx_buffers;
+ 	u32				last_rx_cons;
 
 	dma_addr_t			status_mapping;
 	dma_addr_t			rx_rcb_mapping;
@@ -2978,14 +2971,10 @@ struct tg3 {
 	u32				rx_std_max_post;
 	u32				rx_offset;
 	u32				rx_pkt_map_sz;
-#if TG3_VLAN_TAG_USED
-	struct vlan_group		*vlgrp;
-#endif
 
 
 	/* begin "everything else" cacheline(s) section */
 	unsigned long			rx_dropped;
-	struct rtnl_link_stats64	net_stats;
 	struct rtnl_link_stats64	net_stats_prev;
 	struct tg3_ethtool_stats	estats;
 	struct tg3_ethtool_stats	estats_prev;
@@ -3078,11 +3067,6 @@ struct tg3 {
 #define TG3_PHY_ID_REV_MASK		0x0000000f
 #define TG3_PHY_REV_BCM5401_B0		0x1
 
-#define TG3_PHY_OUI_MASK		0xfffffc00
-#define TG3_PHY_OUI_1			0x00206000
-#define TG3_PHY_OUI_2			0x0143bc00
-#define TG3_PHY_OUI_3			0x03625c00
-
 	/* This macro assumes the passed PHY ID is
 	 * already masked with TG3_PHY_ID_MASK.
 	 */
@@ -3097,9 +3081,7 @@ struct tg3 {
 	 (X) == TG3_PHY_ID_BCM5906 || (X) == TG3_PHY_ID_BCM5761 || \
 	 (X) == TG3_PHY_ID_BCM5718C || (X) == TG3_PHY_ID_BCM5718S || \
 	 (X) == TG3_PHY_ID_BCM57765 || (X) == TG3_PHY_ID_BCM5719C || \
-	 (X) == PHY_ID_BCM57780 || \
-	 (X) == PHY_ID_BCM50610 || (X) == PHY_ID_BCM50610M || \
-	 (X) == PHY_ID_BCMAC131 || (X) == TG3_PHY_ID_BCM8002)
+	 (X) == TG3_PHY_ID_BCM8002)
 
 	u32				phy_flags;
 #define TG3_PHYFLG_IS_LOW_POWER		0x00000001

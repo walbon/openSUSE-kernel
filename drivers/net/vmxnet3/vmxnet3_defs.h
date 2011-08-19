@@ -476,7 +476,6 @@ struct Vmxnet3_IntrConf {
 							 * each intr */
 	__le32		intrCtrl;
 	__le32		reserved[2];
-
 };
 
 /* one bit per VLAN ID, the size is in the units of u32	*/

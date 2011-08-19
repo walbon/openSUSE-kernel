@@ -20,6 +20,7 @@
 
 #include <linux/ata.h>
 #include <linux/blkdev.h>
+#include <linux/slab.h>
 
 #include <asm/lv1call.h>
 #include <asm/ps3stor.h>
@@ -112,7 +113,7 @@ static void ps3disk_scatter_gather(struct ps3_storage_device *dev,
 			memcpy(buf, dev->bounce_buf+offset, size);
 		offset += size;
 		flush_kernel_dcache_page(bvec->bv_page);
-		bvec_kunmap_irq(bvec, &flags);
+		bvec_kunmap_irq(buf, &flags);
 		i++;
 	}
 }

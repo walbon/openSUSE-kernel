@@ -67,11 +67,9 @@ static void lpfc_sli4_send_seq_to_ulp(struct lpfc_vport *,
 				      struct hbq_dmabuf *);
 static int lpfc_sli4_fp_handle_wcqe(struct lpfc_hba *, struct lpfc_queue *,
 				    struct lpfc_cqe *);
-static int lpfc_sli4_chk_avail_extnt_rsrc(struct lpfc_hba *, uint16_t);
-static uint16_t lpfc_sli4_xri_inrange(struct lpfc_hba *, uint16_t);
-static int lpfc_sli4_alloc_extent(struct lpfc_hba *, uint16_t);
-static int lpfc_sli4_dealloc_extent(struct lpfc_hba *, uint16_t);
-static IOCB_t *lpfc_get_iocb_from_iocbq(struct lpfc_iocbq *iocbq)
+
+static IOCB_t *
+lpfc_get_iocb_from_iocbq(struct lpfc_iocbq *iocbq)
 {
 	return &iocbq->iocb;
 }
@@ -2199,7 +2197,7 @@ lpfc_sli_handle_mb_event(struct lpfc_hba *phba)
 		 */
 		if (lpfc_sli_chk_mbx_command(pmbox->mbxCommand) ==
 		    MBX_SHUTDOWN) {
-			/* Unknow mailbox command compl */
+			/* Unknown mailbox command compl */
 			lpfc_printf_log(phba, KERN_ERR, LOG_MBOX | LOG_SLI,
 					"(%d):0323 Unknown Mailbox command "
 					"x%x (x%x) Cmpl\n",
@@ -2806,7 +2804,7 @@ void lpfc_poll_eratt(unsigned long ptr)
  * This function is called from the interrupt context when there is a ring
  * event for the fcp ring. The caller does not hold any lock.
  * The function processes each response iocb in the response ring until it
- * finds an iocb with LE bit set and chains all the iocbs upto the iocb with
+ * finds an iocb with LE bit set and chains all the iocbs up to the iocb with
  * LE bit set. The function will call the completion handler of the command iocb
  * if the response iocb indicates a completion for a command iocb or it is
  * an abort completion. The function will call lpfc_sli_process_unsol_iocb
@@ -3029,7 +3027,7 @@ lpfc_sli_sp_handle_rspiocb(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 	list_add_tail(&rspiocbp->list, &(pring->iocb_continueq));
 	pring->iocb_continueq_cnt++;
 
-	/* Now, determine whetehr the list is completed for processing */
+	/* Now, determine whether the list is completed for processing */
 	irsp = &rspiocbp->iocb;
 	if (irsp->ulpLe) {
 		/*
@@ -3357,7 +3355,6 @@ lpfc_sli_handle_slow_ring_event_s4(struct lpfc_hba *phba,
 							   irspiocbq);
 			break;
 		case CQE_CODE_RECEIVE:
-		case CQE_CODE_RECEIVE_V1:
 			dmabuf = container_of(cq_event, struct hbq_dmabuf,
 					      cq_event);
 			lpfc_sli4_handle_received_buffer(phba, dmabuf);
@@ -4618,7 +4615,7 @@ lpfc_sli4_read_fcoe_params(struct lpfc_hba *phba,
  * addition, this routine gets the port vpd data.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	-ENOMEM - could not allocated memory.
  **/
 static int
@@ -4715,15 +4712,10 @@ lpfc_sli4_arm_cqeq_intr(struct lpfc_hba *phba)
  * lpfc_sli4_get_avail_extnt_rsrc - Get available resource extent count.
  * @phba: Pointer to HBA context object.
  * @type: The resource extent type.
- * @extnt_count: buffer to hold port available extent count.
- * @extnt_size: buffer to hold element count per extent.
  *
- * This function calls the port and retrievs the number of available
- * extents and their size for a particular extent type.
- *
- * Returns: 0 if successful.  Nonzero otherwise.
+ * This function allocates all SLI4 resource identifiers.
  **/
-int
+static int
 lpfc_sli4_get_avail_extnt_rsrc(struct lpfc_hba *phba, uint16_t type,
 			       uint16_t *extnt_count, uint16_t *extnt_size)
 {
@@ -4900,7 +4892,7 @@ lpfc_sli4_cfg_post_extnts(struct lpfc_hba *phba, uint16_t *extnt_cnt,
 				     req_len, *emb);
 	if (alloc_len < req_len) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
-			"2982 Allocated DMA memory size (x%x) is "
+			"9000 Allocated DMA memory size (x%x) is "
 			"less than the requested DMA memory "
 			"size (x%x)\n", alloc_len, req_len);
 		return -ENOMEM;
@@ -5514,154 +5506,6 @@ lpfc_sli4_dealloc_resource_identifiers(struct lpfc_hba *phba)
 }
 
 /**
- * lpfc_sli4_get_allocated_extnts - Get the port's allocated extents.
- * @phba: Pointer to HBA context object.
- * @type: The resource extent type.
- * @extnt_count: buffer to hold port extent count response
- * @extnt_size: buffer to hold port extent size response.
- *
- * This function calls the port to read the host allocated extents
- * for a particular type.
- **/
-int
-lpfc_sli4_get_allocated_extnts(struct lpfc_hba *phba, uint16_t type,
-			       uint16_t *extnt_cnt, uint16_t *extnt_size)
-{
-	bool emb;
-	int rc = 0;
-	uint16_t curr_blks = 0;
-	uint32_t req_len, emb_len;
-	uint32_t alloc_len, mbox_tmo;
-	struct list_head *blk_list_head;
-	struct lpfc_rsrc_blks *rsrc_blk;
-	LPFC_MBOXQ_t *mbox;
-	void *virtaddr = NULL;
-	struct lpfc_mbx_nembed_rsrc_extent *n_rsrc;
-	struct lpfc_mbx_alloc_rsrc_extents *rsrc_ext;
-	union  lpfc_sli4_cfg_shdr *shdr;
-
-	switch (type) {
-	case LPFC_RSC_TYPE_FCOE_VPI:
-		blk_list_head = &phba->lpfc_vpi_blk_list;
-		break;
-	case LPFC_RSC_TYPE_FCOE_XRI:
-		blk_list_head = &phba->sli4_hba.lpfc_xri_blk_list;
-		break;
-	case LPFC_RSC_TYPE_FCOE_VFI:
-		blk_list_head = &phba->sli4_hba.lpfc_vfi_blk_list;
-		break;
-	case LPFC_RSC_TYPE_FCOE_RPI:
-		blk_list_head = &phba->sli4_hba.lpfc_rpi_blk_list;
-		break;
-	default:
-		return -EIO;
-	}
-
-	/* Count the number of extents currently allocatd for this type. */
-	list_for_each_entry(rsrc_blk, blk_list_head, list) {
-		if (curr_blks == 0) {
-			/*
-			 * The GET_ALLOCATED mailbox does not return the size,
-			 * just the count.  The size should be just the size
-			 * stored in the current allocated block and all sizes
-			 * for an extent type are the same so set the return
-			 * value now.
-			 */
-			*extnt_size = rsrc_blk->rsrc_size;
-		}
-		curr_blks++;
-	}
-
-	/* Calculate the total requested length of the dma memory. */
-	req_len = curr_blks * sizeof(uint16_t);
-
-	/*
-	 * Calculate the size of an embedded mailbox.  The uint32_t
-	 * accounts for extents-specific word.
-	 */
-	emb_len = sizeof(MAILBOX_t) - sizeof(struct mbox_header) -
-		sizeof(uint32_t);
-
-	/*
-	 * Presume the allocation and response will fit into an embedded
-	 * mailbox.  If not true, reconfigure to a non-embedded mailbox.
-	 */
-	emb = LPFC_SLI4_MBX_EMBED;
-	req_len = emb_len;
-	if (req_len > emb_len) {
-		req_len = curr_blks * sizeof(uint16_t) +
-			sizeof(union lpfc_sli4_cfg_shdr) +
-			sizeof(uint32_t);
-		emb = LPFC_SLI4_MBX_NEMBED;
-	}
-
-	mbox = (LPFC_MBOXQ_t *) mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
-	if (!mbox)
-		return -ENOMEM;
-	memset(mbox, 0, sizeof(LPFC_MBOXQ_t));
-
-	alloc_len = lpfc_sli4_config(phba, mbox, LPFC_MBOX_SUBSYSTEM_COMMON,
-				     LPFC_MBOX_OPCODE_GET_ALLOC_RSRC_EXTENT,
-				     req_len, emb);
-	if (alloc_len < req_len) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
-			"2983 Allocated DMA memory size (x%x) is "
-			"less than the requested DMA memory "
-			"size (x%x)\n", alloc_len, req_len);
-		rc = -ENOMEM;
-		goto err_exit;
-	}
-	rc = lpfc_sli4_mbox_rsrc_extent(phba, mbox, curr_blks, type, emb);
-	if (unlikely(rc)) {
-		rc = -EIO;
-		goto err_exit;
-	}
-
-	if (!phba->sli4_hba.intr_enable)
-		rc = lpfc_sli_issue_mbox(phba, mbox, MBX_POLL);
-	else {
-		mbox_tmo = lpfc_mbox_tmo_val(phba, MBX_SLI4_CONFIG);
-		rc = lpfc_sli_issue_mbox_wait(phba, mbox, mbox_tmo);
-	}
-
-	if (unlikely(rc)) {
-		rc = -EIO;
-		goto err_exit;
-	}
-
-	/*
-	 * Figure out where the response is located.  Then get local pointers
-	 * to the response data.  The port does not guarantee to respond to
-	 * all extents counts request so update the local variable with the
-	 * allocated count from the port.
-	 */
-	if (emb == LPFC_SLI4_MBX_EMBED) {
-		rsrc_ext = &mbox->u.mqe.un.alloc_rsrc_extents;
-		shdr = &rsrc_ext->header.cfg_shdr;
-		*extnt_cnt = bf_get(lpfc_mbx_rsrc_cnt, &rsrc_ext->u.rsp);
-	} else {
-		virtaddr = mbox->sge_array->addr[0];
-		n_rsrc = (struct lpfc_mbx_nembed_rsrc_extent *) virtaddr;
-		shdr = &n_rsrc->cfg_shdr;
-		*extnt_cnt = bf_get(lpfc_mbx_rsrc_cnt, n_rsrc);
-	}
-
-	if (bf_get(lpfc_mbox_hdr_status, &shdr->response)) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_MBOX | LOG_INIT,
-			"2984 Failed to read allocated resources "
-			"for type %d - Status 0x%x Add'l Status 0x%x.\n",
-			type,
-			bf_get(lpfc_mbox_hdr_status, &shdr->response),
-			bf_get(lpfc_mbox_hdr_add_status, &shdr->response));
-		rc = -EIO;
-		goto err_exit;
-	}
- err_exit:
-	lpfc_sli4_mbox_cmd_free(phba, mbox);
-	return rc;
-}
-
-/**
  * lpfc_sli4_hba_setup - SLI4 device intialization PCI function
  * @phba: Pointer to HBA context object.
  *
@@ -5993,7 +5837,6 @@ lpfc_sli4_hba_setup(struct lpfc_hba *phba)
 					"Advanced Error Reporting (AER)\n");
 			phba->cfg_aer_support = 0;
 		}
-		rc = 0;
 	}
 
 	if (!(phba->hba_flag & HBA_FCOE_MODE)) {
@@ -6017,7 +5860,7 @@ lpfc_sli4_hba_setup(struct lpfc_hba *phba)
 	phba->link_state = LPFC_LINK_DOWN;
 	spin_unlock_irq(&phba->hbalock);
 	if (phba->cfg_suppress_link_up == LPFC_INITIALIZE_LINK)
-		rc = phba->lpfc_hba_init_link(phba);
+		rc = phba->lpfc_hba_init_link(phba, MBX_NOWAIT);
 out_unset_queue:
 	/* Unset all the queues set up in this routine when error out */
 	if (rc)
@@ -6103,7 +5946,7 @@ lpfc_mbox_timeout_handler(struct lpfc_hba *phba)
 
 	/* Setting state unknown so lpfc_sli_abort_iocb_ring
 	 * would get IOCB_ERROR from lpfc_sli_issue_iocb, allowing
-	 * it to fail all oustanding SCSI IO.
+	 * it to fail all outstanding SCSI IO.
 	 */
 	spin_lock_irq(&phba->pport->work_port_lock);
 	phba->pport->work_port_events &= ~WORKER_MBOX_TMO;
@@ -6791,9 +6634,6 @@ lpfc_sli_issue_mbox_s4(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq,
 	unsigned long iflags;
 	int rc;
 
-	/* dump from issue mailbox command if setup */
-	lpfc_idiag_mbxacc_dump_issue_mbox(phba, &mboxq->u.mb);
-
 	rc = lpfc_mbox_dev_check(phba);
 	if (unlikely(rc)) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_MBOX | LOG_SLI,
@@ -7025,7 +6865,7 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
 }
 
 /**
- * lpfc_mbox_api_table_setup - Set up mbox api fucntion jump table
+ * lpfc_mbox_api_table_setup - Set up mbox api function jump table
  * @phba: The hba struct for which this call is being executed.
  * @dev_grp: The HBA PCI-Device group number.
  *
@@ -7851,7 +7691,7 @@ __lpfc_sli_issue_iocb(struct lpfc_hba *phba, uint32_t ring_number,
 }
 
 /**
- * lpfc_sli_api_table_setup - Set up sli api fucntion jump table
+ * lpfc_sli_api_table_setup - Set up sli api function jump table
  * @phba: The hba struct for which this call is being executed.
  * @dev_grp: The HBA PCI-Device group number.
  *
@@ -8525,7 +8365,7 @@ lpfc_sli_ring_taggedbuf_get(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 	struct lpfc_dmabuf *mp, *next_mp;
 	struct list_head *slp = &pring->postbufq;
 
-	/* Search postbufq, from the begining, looking for a match on tag */
+	/* Search postbufq, from the beginning, looking for a match on tag */
 	spin_lock_irq(&phba->hbalock);
 	list_for_each_entry_safe(mp, next_mp, &pring->postbufq, list) {
 		if (mp->buffer_tag == tag) {
@@ -8569,7 +8409,7 @@ lpfc_sli_ringpostbuf_get(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 	struct lpfc_dmabuf *mp, *next_mp;
 	struct list_head *slp = &pring->postbufq;
 
-	/* Search postbufq, from the begining, looking for a match on phys */
+	/* Search postbufq, from the beginning, looking for a match on phys */
 	spin_lock_irq(&phba->hbalock);
 	list_for_each_entry_safe(mp, next_mp, &pring->postbufq, list) {
 		if (mp->phys == phys) {
@@ -9442,7 +9282,7 @@ lpfc_sli_mbox_sys_shutdown(struct lpfc_hba *phba)
  * for possible error attention events. The caller must hold the hostlock
  * with spin_lock_irq().
  *
- * This fucntion returns 1 when there is Error Attention in the Host Attention
+ * This function returns 1 when there is Error Attention in the Host Attention
  * Register and returns 0 otherwise.
  **/
 static int
@@ -9495,7 +9335,7 @@ unplug_err:
  * for possible error attention events. The caller must hold the hostlock
  * with spin_lock_irq().
  *
- * This fucntion returns 1 when there is Error Attention in the Host Attention
+ * This function returns 1 when there is Error Attention in the Host Attention
  * Register and returns 0 otherwise.
  **/
 static int
@@ -9585,7 +9425,7 @@ lpfc_sli4_eratt_read(struct lpfc_hba *phba)
  * This function is called from timer soft interrupt context to check HBA's
  * error attention register bit for error attention events.
  *
- * This fucntion returns 1 when there is Error Attention in the Host Attention
+ * This function returns 1 when there is Error Attention in the Host Attention
  * Register and returns 0 otherwise.
  **/
 int
@@ -10124,7 +9964,7 @@ lpfc_sli_intr_handler(int irq, void *dev_id)
 	 * If there is deferred error attention, do not check for any interrupt.
 	 */
 	if (unlikely(phba->hba_flag & DEFER_ERATT)) {
-		spin_unlock_irq(&phba->hbalock);
+		spin_unlock(&phba->hbalock);
 		return IRQ_NONE;
 	}
 
@@ -10641,14 +10481,10 @@ lpfc_sli4_sp_handle_rcqe(struct lpfc_hba *phba, struct lpfc_rcqe *rcqe)
 	struct lpfc_queue *hrq = phba->sli4_hba.hdr_rq;
 	struct lpfc_queue *drq = phba->sli4_hba.dat_rq;
 	struct hbq_dmabuf *dma_buf;
-	uint32_t status, rq_id;
+	uint32_t status;
 	unsigned long iflags;
 
-	if (bf_get(lpfc_cqe_code, rcqe) == CQE_CODE_RECEIVE_V1)
-		rq_id = bf_get(lpfc_rcqe_rq_id_v1, rcqe);
-	else
-		rq_id = bf_get(lpfc_rcqe_rq_id, rcqe);
-	if (rq_id != hrq->queue_id)
+	if (bf_get(lpfc_rcqe_rq_id, rcqe) != hrq->queue_id)
 		goto out;
 
 	status = bf_get(lpfc_rcqe_status, rcqe);
@@ -10692,7 +10528,7 @@ out:
  * @cq: Pointer to the completion queue.
  * @wcqe: Pointer to a completion queue entry.
  *
- * This routine process a slow-path work-queue or recieve queue completion queue
+ * This routine process a slow-path work-queue or receive queue completion queue
  * entry.
  *
  * Return: true if work posted to worker thread, otherwise false.
@@ -10727,7 +10563,6 @@ lpfc_sli4_sp_handle_cqe(struct lpfc_hba *phba, struct lpfc_queue *cq,
 				(struct sli4_wcqe_xri_aborted *)&cqevt);
 		break;
 	case CQE_CODE_RECEIVE:
-	case CQE_CODE_RECEIVE_V1:
 		/* Process the RQ event */
 		phba->last_completion_time = jiffies;
 		workposted = lpfc_sli4_sp_handle_rcqe(phba,
@@ -11726,14 +11561,13 @@ lpfc_mq_create(struct lpfc_hba *phba, struct lpfc_queue *mq,
 	       &mq_create_ext->u.request, 1);
 	bf_set(lpfc_mq_context_valid, &mq_create_ext->u.request.context, 1);
 	bf_set(lpfc_mbox_hdr_version, &shdr->request,
-		phba->sli4_hba.pc_sli4_params.mqv);
+	       phba->sli4_hba.pc_sli4_params.mqv);
 	if (phba->sli4_hba.pc_sli4_params.mqv == LPFC_Q_CREATE_VERSION_1)
 		bf_set(lpfc_mbx_mq_create_ext_cq_id, &mq_create_ext->u.request,
-			cq->queue_id);
+		       cq->queue_id);
 	else
 		bf_set(lpfc_mq_context_cq_id, &mq_create_ext->u.request.context,
-			cq->queue_id);
-
+		       cq->queue_id);
 	switch (mq->entry_count) {
 	default:
 		lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
@@ -11982,6 +11816,12 @@ lpfc_rq_create(struct lpfc_hba *phba, struct lpfc_queue *hrq,
 		       &rq_create->u.request.context,
 		       hrq->entry_count);
 		rq_create->u.request.context.buffer_size = LPFC_HDR_BUF_SIZE;
+		bf_set(lpfc_rq_context_rqe_size,
+		       &rq_create->u.request.context,
+		       LPFC_RQE_SIZE_8);
+		bf_set(lpfc_rq_context_page_size,
+		       &rq_create->u.request.context,
+		       (PAGE_SIZE/SLI4_PAGE_SIZE));
 	} else {
 		switch (hrq->entry_count) {
 		default:
@@ -12057,9 +11897,12 @@ lpfc_rq_create(struct lpfc_hba *phba, struct lpfc_queue *hrq,
 	       phba->sli4_hba.pc_sli4_params.rqv);
 	if (phba->sli4_hba.pc_sli4_params.rqv == LPFC_Q_CREATE_VERSION_1) {
 		bf_set(lpfc_rq_context_rqe_count_1,
-		       &rq_create->u.request.context,
-		       hrq->entry_count);
+		       &rq_create->u.request.context, hrq->entry_count);
 		rq_create->u.request.context.buffer_size = LPFC_DATA_BUF_SIZE;
+		bf_set(lpfc_rq_context_rqe_size, &rq_create->u.request.context,
+		       LPFC_RQE_SIZE_8);
+		bf_set(lpfc_rq_context_page_size, &rq_create->u.request.context,
+		       (PAGE_SIZE/SLI4_PAGE_SIZE));
 	} else {
 		switch (drq->entry_count) {
 		default:
@@ -12502,18 +12345,19 @@ lpfc_sli4_post_sgl(struct lpfc_hba *phba,
 }
 
 /**
- * lpfc_sli4_alloc_xri - Get an available rpi in the device's range
+ * lpfc_sli4_init_rpi_hdrs - Post the rpi header memory region to the port
  * @phba: pointer to lpfc hba data structure.
  *
  * This routine is invoked to post rpi header templates to the
- * HBA consistent with the SLI-4 interface spec.  This routine
- * posts a SLI4_PAGE_SIZE memory region to the port to hold up to
- * SLI4_PAGE_SIZE modulo 64 rpi context headers.
+ * port for those SLI4 ports that do not support extents.  This routine
+ * posts a PAGE_SIZE memory region to the port to hold up to
+ * PAGE_SIZE modulo 64 rpi context headers.  This is an initialization routine
+ * and should be called only when interrupts are disabled.
  *
- * Returns
- * 	A nonzero rpi defined as rpi_base <= rpi < max_rpi if successful
- * 	LPFC_RPI_ALLOC_ERROR if no rpis are available.
- **/
+ * Return codes
+ *	0 - successful
+ *	-ERROR - otherwise.
+ */
 uint16_t
 lpfc_sli4_alloc_xri(struct lpfc_hba *phba)
 {
@@ -12769,7 +12613,7 @@ lpfc_sli4_post_els_sgl_list_ext(struct lpfc_hba *phba)
 				"3014 Working ELS Extent start %d, cnt %d\n",
 				rsrc_start, rsrc_size);
 
-		loop_cnt=min(els_xri_cnt, rsrc_size);
+		loop_cnt = min(els_xri_cnt, rsrc_size);
 		if (ttl_cnt + loop_cnt >= els_xri_cnt) {
 			loop_cnt = els_xri_cnt - ttl_cnt;
 			ttl_cnt = els_xri_cnt;
@@ -13943,13 +13787,7 @@ lpfc_sli4_handle_received_buffer(struct lpfc_hba *phba,
 		lpfc_in_buf_free(phba, &dmabuf->dbuf);
 		return;
 	}
-	if ((bf_get(lpfc_cqe_code,
-		    &dmabuf->cq_event.cqe.rcqe_cmpl) == CQE_CODE_RECEIVE_V1))
-		fcfi = bf_get(lpfc_rcqe_fcf_id_v1,
-			      &dmabuf->cq_event.cqe.rcqe_cmpl);
-	else
-		fcfi = bf_get(lpfc_rcqe_fcf_id,
-			      &dmabuf->cq_event.cqe.rcqe_cmpl);
+	fcfi = bf_get(lpfc_rcqe_fcf_id, &dmabuf->cq_event.cqe.rcqe_cmpl);
 	vport = lpfc_fc_frame_to_vport(phba, fc_hdr, fcfi);
 	if (!vport || !(vport->vpi_state & LPFC_VPI_REGISTERED)) {
 		/* throw out the frame */
@@ -13991,7 +13829,7 @@ lpfc_sli4_handle_received_buffer(struct lpfc_hba *phba,
  * sequential.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  *      -EIO - The mailbox failed to complete successfully.
  * 	When this error occurs, the driver is not guaranteed
  *	to have any rpi regions posted to the device and
@@ -14047,7 +13885,7 @@ lpfc_sli4_post_all_rpi_hdrs(struct lpfc_hba *phba)
  * maps up to 64 rpi context regions.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	-ENOMEM - No available memory
  *      -EIO - The mailbox failed to complete successfully.
  **/
@@ -14118,7 +13956,7 @@ lpfc_sli4_post_rpi_hdr(struct lpfc_hba *phba, struct lpfc_rpi_hdr *rpi_page)
  * SLI4_PAGE_SIZE modulo 64 rpi context headers.
  *
  * Returns
- * 	A nonzero rpi defined as rpi_base <= rpi < max_rpi if sucessful
+ * 	A nonzero rpi defined as rpi_base <= rpi < max_rpi if successful
  * 	LPFC_RPI_ALLOC_ERROR if no rpis are available.
  **/
 int
@@ -14467,7 +14305,7 @@ lpfc_sli4_build_dflt_fcf_record(struct lpfc_hba *phba,
  * record and processing it one at a time starting from the @fcf_index
  * for initial FCF discovery or fast FCF failover rediscovery.
  *
- * Return 0 if the mailbox command is submitted sucessfully, none 0
+ * Return 0 if the mailbox command is submitted successfully, none 0
  * otherwise.
  **/
 int
@@ -14528,7 +14366,7 @@ fail_fcf_scan:
  * This routine is invoked to read an FCF record indicated by @fcf_index
  * and to use it for FLOGI roundrobin FCF failover.
  *
- * Return 0 if the mailbox command is submitted sucessfully, none 0
+ * Return 0 if the mailbox command is submitted successfully, none 0
  * otherwise.
  **/
 int
@@ -14574,7 +14412,7 @@ fail_fcf_read:
  * This routine is invoked to read an FCF record indicated by @fcf_index to
  * determine whether it's eligible for FLOGI roundrobin failover list.
  *
- * Return 0 if the mailbox command is submitted sucessfully, none 0
+ * Return 0 if the mailbox command is submitted successfully, none 0
  * otherwise.
  **/
 int
@@ -15155,9 +14993,9 @@ lpfc_cleanup_pending_mbox(struct lpfc_vport *vport)
 			ndlp = (struct lpfc_nodelist *) mb->context2;
 			mb->context2 = NULL;
 			if (ndlp) {
-				spin_lock_irq(shost->host_lock);
+				spin_lock(shost->host_lock);
 				ndlp->nlp_flag &= ~NLP_IGNR_REG_CMPL;
-				spin_unlock_irq(shost->host_lock);
+				spin_unlock(shost->host_lock);
 				lpfc_nlp_put(ndlp);
 			}
 		}
@@ -15166,9 +15004,9 @@ lpfc_cleanup_pending_mbox(struct lpfc_vport *vport)
 
 	/* Release the ndlp with the cleaned-up active mailbox command */
 	if (act_mbx_ndlp) {
-		spin_lock_irq(shost->host_lock);
+		spin_lock(shost->host_lock);
 		act_mbx_ndlp->nlp_flag &= ~NLP_IGNR_REG_CMPL;
-		spin_unlock_irq(shost->host_lock);
+		spin_unlock(shost->host_lock);
 		lpfc_nlp_put(act_mbx_ndlp);
 	}
 }

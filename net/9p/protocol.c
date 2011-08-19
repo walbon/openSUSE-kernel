@@ -27,8 +27,9 @@
 
 #include <linux/module.h>
 #include <linux/errno.h>
-#include <linux/uaccess.h>
 #include <linux/kernel.h>
+#include <linux/uaccess.h>
+#include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/stddef.h>
 #include <linux/types.h>
@@ -204,7 +205,7 @@ p9pdu_vreadf(struct p9_fcall *pdu, int proto_version, const char *fmt,
 				if (errcode)
 					break;
 
-				*sptr = kmalloc(len + 1, GFP_KERNEL);
+				*sptr = kmalloc(len + 1, GFP_NOFS);
 				if (*sptr == NULL) {
 					errcode = -EFAULT;
 					break;
@@ -264,7 +265,7 @@ p9pdu_vreadf(struct p9_fcall *pdu, int proto_version, const char *fmt,
 			}
 			break;
 		case 'T':{
-				int16_t *nwname = va_arg(ap, int16_t *);
+				uint16_t *nwname = va_arg(ap, uint16_t *);
 				char ***wnames = va_arg(ap, char ***);
 
 				errcode = p9pdu_readf(pdu, proto_version,
@@ -272,7 +273,7 @@ p9pdu_vreadf(struct p9_fcall *pdu, int proto_version, const char *fmt,
 				if (!errcode) {
 					*wnames =
 					    kmalloc(sizeof(char *) * *nwname,
-						    GFP_KERNEL);
+						    GFP_NOFS);
 					if (!*wnames)
 						errcode = -ENOMEM;
 				}
@@ -316,7 +317,7 @@ p9pdu_vreadf(struct p9_fcall *pdu, int proto_version, const char *fmt,
 					*wqids =
 					    kmalloc(*nwqid *
 						    sizeof(struct p9_qid),
-						    GFP_KERNEL);
+						    GFP_NOFS);
 					if (*wqids == NULL)
 						errcode = -ENOMEM;
 				}
@@ -422,7 +423,9 @@ p9pdu_vwritef(struct p9_fcall *pdu, int proto_version, const char *fmt,
 				const char *sptr = va_arg(ap, const char *);
 				uint16_t len = 0;
 				if (sptr)
-					len = min_t(uint16_t, strlen(sptr), USHORT_MAX);
+					len = min_t(uint16_t, strlen(sptr),
+								USHRT_MAX);
+
 				errcode = p9pdu_writef(pdu, proto_version,
 								"w", len);
 				if (!errcode && pdu_write(pdu, sptr, len))
@@ -465,7 +468,8 @@ p9pdu_vwritef(struct p9_fcall *pdu, int proto_version, const char *fmt,
 		case 'E':{
 				 int32_t cnt = va_arg(ap, int32_t);
 				 const char *k = va_arg(ap, const void *);
-				 const char *u = va_arg(ap, const void *);
+				 const char __user *u = va_arg(ap,
+							const void __user *);
 				 errcode = p9pdu_writef(pdu, proto_version, "d",
 						 cnt);
 				 if (!errcode && pdu_write_urw(pdu, k, u, cnt))
@@ -492,7 +496,7 @@ p9pdu_vwritef(struct p9_fcall *pdu, int proto_version, const char *fmt,
 			}
 			break;
 		case 'T':{
-				int16_t nwname = va_arg(ap, int);
+				uint16_t nwname = va_arg(ap, int);
 				const char **wnames = va_arg(ap, const char **);
 
 				errcode = p9pdu_writef(pdu, proto_version, "w",
@@ -670,6 +674,7 @@ int p9dirent_read(char *buf, int len, struct p9_dirent *dirent,
 	}
 
 	strcpy(dirent->d_name, nameptr);
+	kfree(nameptr);
 
 out:
 	return fake_pdu.offset;

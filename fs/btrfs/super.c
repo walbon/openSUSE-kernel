@@ -38,7 +38,8 @@
 #include <linux/namei.h>
 #include <linux/miscdevice.h>
 #include <linux/magic.h>
-#include <linux/precache.h>
+#include <linux/slab.h>
+#include <linux/cleancache.h>
 #include "compat.h"
 #include "delayed-inode.h"
 #include "ctree.h"
@@ -603,6 +604,7 @@ static int btrfs_fill_super(struct super_block *sb,
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
 	sb->s_magic = BTRFS_SUPER_MAGIC;
 	sb->s_op = &btrfs_super_ops;
+	sb->s_d_op = &btrfs_dentry_operations;
 	sb->s_export_op = &btrfs_export_ops;
 	sb->s_xattr = btrfs_xattr_handlers;
 	sb->s_time_gran = 1;
@@ -637,7 +639,7 @@ static int btrfs_fill_super(struct super_block *sb,
 	sb->s_root = root_dentry;
 
 	save_mount_options(sb, data);
-	precache_init(sb);
+	cleancache_init_fs(sb);
 	return 0;
 
 fail_close:
@@ -721,6 +723,12 @@ static int btrfs_show_options(struct seq_file *seq, struct vfsmount *vfs)
 		seq_puts(seq, ",clear_cache");
 	if (btrfs_test_opt(root, USER_SUBVOL_RM_ALLOWED))
 		seq_puts(seq, ",user_subvol_rm_allowed");
+	if (btrfs_test_opt(root, ENOSPC_DEBUG))
+		seq_puts(seq, ",enospc_debug");
+	if (btrfs_test_opt(root, AUTO_DEFRAG))
+		seq_puts(seq, ",autodefrag");
+	if (btrfs_test_opt(root, INODE_MAP_CACHE))
+		seq_puts(seq, ",inode_cache");
 	return 0;
 }
 
@@ -761,8 +769,8 @@ static inline int is_subvolume_inode(struct inode *inode)
  * Note:  This is based on get_sb_bdev from fs/super.c with a few additions
  *	  for multiple device setup.  Make sure to keep it in sync.
  */
-static int btrfs_get_sb(struct file_system_type *fs_type, int flags,
-		const char *dev_name, void *data, struct vfsmount *mnt)
+static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
+		const char *device_name, void *data)
 {
 	struct block_device *bdev = NULL;
 	struct super_block *s;
@@ -783,9 +791,9 @@ static int btrfs_get_sb(struct file_system_type *fs_type, int flags,
 					  &subvol_name, &subvol_objectid,
 					  &subvol_rootid, &fs_devices);
 	if (error)
-		return error;
+		return ERR_PTR(error);
 
-	error = btrfs_scan_one_device(dev_name, mode, fs_type, &fs_devices);
+	error = btrfs_scan_one_device(device_name, mode, fs_type, &fs_devices);
 	if (error)
 		goto error_free_subvol_name;
 
@@ -832,7 +840,7 @@ static int btrfs_get_sb(struct file_system_type *fs_type, int flags,
 	} else {
 		char b[BDEVNAME_SIZE];
 
-		s->s_flags = flags;
+		s->s_flags = flags | MS_NOSEC;
 		strlcpy(s->s_id, bdevname(bdev, b), sizeof(s->s_id));
 		error = btrfs_fill_super(s, fs_devices, data,
 					 flags & MS_SILENT ? 1 : 0);
@@ -895,11 +903,8 @@ static int btrfs_get_sb(struct file_system_type *fs_type, int flags,
 		}
 	}
 
-	mnt->mnt_sb = s;
-	mnt->mnt_root = root;
-
 	kfree(subvol_name);
-	return 0;
+	return root;
 
 error_s:
 	error = PTR_ERR(s);
@@ -909,7 +914,7 @@ error_close_devices:
 	kfree(tree_root);
 error_free_subvol_name:
 	kfree(subvol_name);
-	return error;
+	return ERR_PTR(error);
 }
 
 static int btrfs_remount(struct super_block *sb, int *flags, char *data)
@@ -1152,7 +1157,7 @@ static int btrfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 static struct file_system_type btrfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "btrfs",
-	.get_sb		= btrfs_get_sb,
+	.mount		= btrfs_mount,
 	.kill_sb	= kill_anon_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
@@ -1203,7 +1208,7 @@ static int btrfs_unfreeze(struct super_block *sb)
 
 static const struct super_operations btrfs_super_ops = {
 	.drop_inode	= btrfs_drop_inode,
-	.delete_inode	= btrfs_delete_inode,
+	.evict_inode	= btrfs_evict_inode,
 	.put_super	= btrfs_put_super,
 	.sync_fs	= btrfs_sync_fs,
 	.show_options	= btrfs_show_options,
@@ -1221,13 +1226,17 @@ static const struct file_operations btrfs_ctl_fops = {
 	.unlocked_ioctl	 = btrfs_control_ioctl,
 	.compat_ioctl = btrfs_control_ioctl,
 	.owner	 = THIS_MODULE,
+	.llseek = noop_llseek,
 };
 
 static struct miscdevice btrfs_misc = {
-	.minor		= MISC_DYNAMIC_MINOR,
+	.minor		= BTRFS_MINOR,
 	.name		= "btrfs-control",
 	.fops		= &btrfs_ctl_fops
 };
+
+MODULE_ALIAS_MISCDEV(BTRFS_MINOR);
+MODULE_ALIAS("devname:btrfs-control");
 
 static int btrfs_interface_init(void)
 {

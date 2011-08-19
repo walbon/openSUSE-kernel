@@ -16,7 +16,7 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/slab.h>
+#include <linux/gfp.h>
 #include <linux/delay.h>
 #include <linux/libata.h>
 #include <linux/of_platform.h>
@@ -680,7 +680,7 @@ mpc52xx_ata_remove_one(struct device *dev)
 /* ======================================================================== */
 
 static int __devinit
-mpc52xx_ata_probe(struct of_device *op, const struct of_device_id *match)
+mpc52xx_ata_probe(struct platform_device *op)
 {
 	unsigned int ipb_freq;
 	struct resource res_mem;
@@ -694,7 +694,7 @@ mpc52xx_ata_probe(struct of_device *op, const struct of_device_id *match)
 	struct bcom_task *dmatsk = NULL;
 
 	/* Get ipb frequency */
-	ipb_freq = mpc5xxx_get_bus_frequency(op->node);
+	ipb_freq = mpc5xxx_get_bus_frequency(op->dev.of_node);
 	if (!ipb_freq) {
 		dev_err(&op->dev, "could not determine IPB bus frequency\n");
 		return -ENODEV;
@@ -702,7 +702,7 @@ mpc52xx_ata_probe(struct of_device *op, const struct of_device_id *match)
 
 	/* Get device base address from device tree, request the region
 	 * and ioremap it. */
-	rv = of_address_to_resource(op->node, 0, &res_mem);
+	rv = of_address_to_resource(op->dev.of_node, 0, &res_mem);
 	if (rv) {
 		dev_err(&op->dev, "could not determine device base address\n");
 		return rv;
@@ -735,14 +735,14 @@ mpc52xx_ata_probe(struct of_device *op, const struct of_device_id *match)
 	 * The MPC5200 ATA controller supports MWDMA modes 0, 1 and 2 and
 	 * UDMA modes 0, 1 and 2.
 	 */
-	prop = of_get_property(op->node, "mwdma-mode", &proplen);
+	prop = of_get_property(op->dev.of_node, "mwdma-mode", &proplen);
 	if ((prop) && (proplen >= 4))
 		mwdma_mask = ATA_MWDMA2 & ((1 << (*prop + 1)) - 1);
-	prop = of_get_property(op->node, "udma-mode", &proplen);
+	prop = of_get_property(op->dev.of_node, "udma-mode", &proplen);
 	if ((prop) && (proplen >= 4))
 		udma_mask = ATA_UDMA2 & ((1 << (*prop + 1)) - 1);
 
-	ata_irq = irq_of_parse_and_map(op->node, 0);
+	ata_irq = irq_of_parse_and_map(op->dev.of_node, 0);
 	if (ata_irq == NO_IRQ) {
 		dev_err(&op->dev, "error mapping irq\n");
 		return -EINVAL;
@@ -821,7 +821,7 @@ mpc52xx_ata_probe(struct of_device *op, const struct of_device_id *match)
 }
 
 static int
-mpc52xx_ata_remove(struct of_device *op)
+mpc52xx_ata_remove(struct platform_device *op)
 {
 	struct mpc52xx_ata_priv *priv;
 	int task_irq;
@@ -848,7 +848,7 @@ mpc52xx_ata_remove(struct of_device *op)
 #ifdef CONFIG_PM
 
 static int
-mpc52xx_ata_suspend(struct of_device *op, pm_message_t state)
+mpc52xx_ata_suspend(struct platform_device *op, pm_message_t state)
 {
 	struct ata_host *host = dev_get_drvdata(&op->dev);
 
@@ -856,7 +856,7 @@ mpc52xx_ata_suspend(struct of_device *op, pm_message_t state)
 }
 
 static int
-mpc52xx_ata_resume(struct of_device *op)
+mpc52xx_ata_resume(struct platform_device *op)
 {
 	struct ata_host *host = dev_get_drvdata(&op->dev);
 	struct mpc52xx_ata_priv *priv = host->private_data;
@@ -883,10 +883,7 @@ static struct of_device_id mpc52xx_ata_of_match[] = {
 };
 
 
-static struct of_platform_driver mpc52xx_ata_of_platform_driver = {
-	.owner		= THIS_MODULE,
-	.name		= DRV_NAME,
-	.match_table	= mpc52xx_ata_of_match,
+static struct platform_driver mpc52xx_ata_of_platform_driver = {
 	.probe		= mpc52xx_ata_probe,
 	.remove		= mpc52xx_ata_remove,
 #ifdef CONFIG_PM
@@ -896,6 +893,7 @@ static struct of_platform_driver mpc52xx_ata_of_platform_driver = {
 	.driver		= {
 		.name	= DRV_NAME,
 		.owner	= THIS_MODULE,
+		.of_match_table = mpc52xx_ata_of_match,
 	},
 };
 
@@ -908,13 +906,13 @@ static int __init
 mpc52xx_ata_init(void)
 {
 	printk(KERN_INFO "ata: MPC52xx IDE/ATA libata driver\n");
-	return of_register_platform_driver(&mpc52xx_ata_of_platform_driver);
+	return platform_driver_register(&mpc52xx_ata_of_platform_driver);
 }
 
 static void __exit
 mpc52xx_ata_exit(void)
 {
-	of_unregister_platform_driver(&mpc52xx_ata_of_platform_driver);
+	platform_driver_unregister(&mpc52xx_ata_of_platform_driver);
 }
 
 module_init(mpc52xx_ata_init);

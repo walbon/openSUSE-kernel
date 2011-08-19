@@ -12,33 +12,47 @@
 #ifndef __ARM_PMU_H__
 #define __ARM_PMU_H__
 
-#ifdef CONFIG_CPU_HAS_PMU
+#include <linux/interrupt.h>
 
-struct pmu_irqs {
-	const int   *irqs;
-	int	    num_irqs;
+enum arm_pmu_type {
+	ARM_PMU_DEVICE_CPU	= 0,
+	ARM_NUM_PMU_DEVICES,
 };
+
+/*
+ * struct arm_pmu_platdata - ARM PMU platform data
+ *
+ * @handle_irq: an optional handler which will be called from the interrupt and
+ * passed the address of the low level handler, and can be used to implement
+ * any platform specific handling before or after calling it.
+ */
+struct arm_pmu_platdata {
+	irqreturn_t (*handle_irq)(int irq, void *dev,
+				  irq_handler_t pmu_handler);
+};
+
+#ifdef CONFIG_CPU_HAS_PMU
 
 /**
  * reserve_pmu() - reserve the hardware performance counters
  *
  * Reserve the hardware performance counters in the system for exclusive use.
- * The 'struct pmu_irqs' for the system is returned on success, ERR_PTR()
+ * The platform_device for the system is returned on success, ERR_PTR()
  * encoded error on failure.
  */
-extern const struct pmu_irqs *
-reserve_pmu(void);
+extern struct platform_device *
+reserve_pmu(enum arm_pmu_type device);
 
 /**
  * release_pmu() - Relinquish control of the performance counters
  *
  * Release the performance counters and allow someone else to use them.
  * Callers must have disabled the counters and released IRQs before calling
- * this. The 'struct pmu_irqs' returned from reserve_pmu() must be passed as
+ * this. The platform_device returned from reserve_pmu() must be passed as
  * a cookie.
  */
 extern int
-release_pmu(const struct pmu_irqs *irqs);
+release_pmu(struct platform_device *pdev);
 
 /**
  * init_pmu() - Initialise the PMU.
@@ -48,24 +62,26 @@ release_pmu(const struct pmu_irqs *irqs);
  * the actual hardware initialisation.
  */
 extern int
-init_pmu(void);
+init_pmu(enum arm_pmu_type device);
 
 #else /* CONFIG_CPU_HAS_PMU */
 
-static inline const struct pmu_irqs *
-reserve_pmu(void)
+#include <linux/err.h>
+
+static inline struct platform_device *
+reserve_pmu(enum arm_pmu_type device)
 {
 	return ERR_PTR(-ENODEV);
 }
 
 static inline int
-release_pmu(const struct pmu_irqs *irqs)
+release_pmu(struct platform_device *pdev)
 {
 	return -ENODEV;
 }
 
 static inline int
-init_pmu(void)
+init_pmu(enum arm_pmu_type device)
 {
 	return -ENODEV;
 }

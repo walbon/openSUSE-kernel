@@ -1924,7 +1924,7 @@ lpfc_sli4_mbox_opcode_get(struct lpfc_hba *phba, struct lpfcMboxq *mbox)
  * @fcf_index: index to fcf table.
  *
  * This routine routine allocates and constructs non-embedded mailbox command
- * for reading a FCF table entry refered by @fcf_index.
+ * for reading a FCF table entry referred by @fcf_index.
  *
  * Return: pointer to the mailbox command constructed if successful, otherwise
  * NULL.
@@ -2031,7 +2031,7 @@ lpfc_init_vfi(struct lpfcMboxq *mbox, struct lpfc_vport *vport)
 	bf_set(lpfc_init_vfi_vp, init_vfi, 1);
 	bf_set(lpfc_init_vfi_vfi, init_vfi,
 	       vport->phba->sli4_hba.vfi_ids[vport->vfi]);
-	bf_set(lpfc_init_vfi_vpi, init_vfi,
+	bf_set(lpfc_init_vpi_vpi, init_vfi,
 	       vport->phba->vpi_ids[vport->vpi]);
 	bf_set(lpfc_init_vfi_fcfi, init_vfi,
 	       vport->phba->fcf.fcfi);

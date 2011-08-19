@@ -98,7 +98,7 @@ static DEFINE_MUTEX(ghes_list_mutex);
  * NMI may be triggered on any CPU, so ghes_nmi_lock is used for
  * mutual exclusion.
  */
-static DEFINE_SPINLOCK(ghes_nmi_lock);
+static DEFINE_RAW_SPINLOCK(ghes_nmi_lock);
 
 /*
  * Because the memory area used to transfer hardware error information
@@ -121,7 +121,7 @@ static struct vm_struct *ghes_ioremap_area;
  * These 2 spinlock is used to prevent atomic ioremap virtual memory
  * area from being mapped simultaneously.
  */
-static DEFINE_SPINLOCK(ghes_ioremap_lock_nmi);
+static DEFINE_RAW_SPINLOCK(ghes_ioremap_lock_nmi);
 static DEFINE_SPINLOCK(ghes_ioremap_lock_irq);
 
 static int ghes_ioremap_init(void)
@@ -261,7 +261,7 @@ static void ghes_copy_tofrom_phys(void *buffer, u64 paddr, u32 len,
 	while (len > 0) {
 		offset = paddr - (paddr & PAGE_MASK);
 		if (in_nmi) {
-			spin_lock(&ghes_ioremap_lock_nmi);
+			raw_spin_lock(&ghes_ioremap_lock_nmi);
 			vaddr = ghes_ioremap_pfn_nmi(paddr >> PAGE_SHIFT);
 		} else {
 			spin_lock_irqsave(&ghes_ioremap_lock_irq, flags);
@@ -278,7 +278,7 @@ static void ghes_copy_tofrom_phys(void *buffer, u64 paddr, u32 len,
 		buffer += trunk;
 		if (in_nmi) {
 			ghes_iounmap_nmi(vaddr);
-			spin_unlock(&ghes_ioremap_lock_nmi);
+			raw_spin_unlock(&ghes_ioremap_lock_nmi);
 		} else {
 			ghes_iounmap_irq(vaddr);
 			spin_unlock_irqrestore(&ghes_ioremap_lock_irq, flags);
@@ -346,21 +346,20 @@ static void ghes_clear_estatus(struct ghes *ghes)
 
 static void ghes_do_proc(struct ghes *ghes)
 {
-	int sev, sec_sev;
+	int sev, processed = 0;
 	struct acpi_hest_generic_data *gdata;
 
 	sev = ghes_severity(ghes->estatus->error_severity);
 	apei_estatus_for_each_section(ghes->estatus, gdata) {
-		sec_sev = ghes_severity(gdata->error_severity);
+#ifdef CONFIG_X86_MCE
 		if (!uuid_le_cmp(*(uuid_le *)gdata->section_type,
 				 CPER_SEC_PLATFORM_MEM)) {
-			struct cper_sec_mem_err *mem_err;
-			mem_err = (struct cper_sec_mem_err *)(gdata+1);
-#ifdef CONFIG_X86_MCE
-			apei_mce_report_mem_error(sev == GHES_SEV_CORRECTED,
-						  mem_err);
-#endif
+			apei_mce_report_mem_error(
+				sev == GHES_SEV_CORRECTED,
+				(struct cper_sec_mem_err *)(gdata+1));
+			processed = 1;
 		}
+#endif
 	}
 }
 
@@ -461,7 +460,7 @@ static int ghes_notify_nmi(struct notifier_block *this,
 	if (cmd != DIE_NMI)
 		return ret;
 
-	spin_lock(&ghes_nmi_lock);
+	raw_spin_lock(&ghes_nmi_lock);
 	list_for_each_entry_rcu(ghes, &ghes_nmi, list) {
 		if (ghes_read_estatus(ghes, 1)) {
 			ghes_clear_estatus(ghes);
@@ -496,7 +495,7 @@ static int ghes_notify_nmi(struct notifier_block *this,
 	}
 
 out:
-	spin_unlock(&ghes_nmi_lock);
+	raw_spin_unlock(&ghes_nmi_lock);
 	return ret;
 }
 

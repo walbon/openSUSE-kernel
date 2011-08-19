@@ -23,6 +23,7 @@
 #include <scsi/scsi_eh.h>
 #include <scsi/scsi_dh.h>
 #include <linux/workqueue.h>
+#include <linux/slab.h>
 
 #define RDAC_NAME "rdac"
 #define RDAC_RETRY_COUNT 5
@@ -779,42 +780,40 @@ static int rdac_check_sense(struct scsi_device *sdev,
 }
 
 static const struct scsi_dh_devlist rdac_dev_list[] = {
-	{"IBM", "1722", 0},
-	{"IBM", "1724", 0},
-	{"IBM", "1726", 0},
-	{"IBM", "1742", 0},
-	{"IBM", "1745", 0},
-	{"IBM", "1746", 0},
-	{"IBM", "1814", 0},
-	{"IBM", "1815", 0},
-	{"IBM", "1818", 0},
-	{"IBM", "3526", 0},
-	{"SGI", "TP9400", 0},
-	{"SGI", "TP9500", 0},
-	{"SGI", "TP9700", 0},
-	{"SGI", "IS", 0},
-	{"STK", "OPENstorage D280", 0},
-	{"STK", "FLEXLINE 380", 0},
-	{"SUN", "STK6580_6780", 0},
-	{"SUN", "CSM200_R", 0},
-	{"SUN", "LCSM100_I", 0},
-	{"SUN", "LCSM100_S", 0},
-	{"SUN", "LCSM100_E", 0},
-	{"SUN", "LCSM100_F", 0},
-	{"DELL", "MD3000", 0},
-	{"DELL", "MD3000i", 0},
-	{"DELL", "MD32xx", 0},
-	{"DELL", "MD32xxi", 0},
-	{"DELL", "MD36xxi", 0},
-	{"DELL", "MD36xxf", 0},
-	{"LSI", "INF-01-00", 0},
-	{"ENGENIO", "INF-01-00", 0},
-	{"STK", "FLEXLINE 380", 0},
-	{"SUN", "CSM100_R_FC", 0},
-	{"SUN", "STK6580_6780", 0},
-	{"SUN", "SUN_6180", 0},
-	{"SUN", "ArrayStorage", 0},
-	{NULL, NULL, 0},
+	{"IBM", "1722"},
+	{"IBM", "1724"},
+	{"IBM", "1726"},
+	{"IBM", "1742"},
+	{"IBM", "1745"},
+	{"IBM", "1746"},
+	{"IBM", "1814"},
+	{"IBM", "1815"},
+	{"IBM", "1818"},
+	{"IBM", "3526"},
+	{"SGI", "TP9400"},
+	{"SGI", "TP9500"},
+ 	{"SGI", "TP9700"},
+	{"SGI", "IS"},
+	{"STK", "OPENstorage D280"},
+	{"SUN", "CSM200_R"},
+	{"SUN", "LCSM100_I"},
+	{"SUN", "LCSM100_S"},
+	{"SUN", "LCSM100_E"},
+	{"SUN", "LCSM100_F"},
+	{"DELL", "MD3000"},
+	{"DELL", "MD3000i"},
+	{"DELL", "MD32xx"},
+	{"DELL", "MD32xxi"},
+	{"DELL", "MD36xxi"},
+	{"DELL", "MD36xxf"},
+	{"LSI", "INF-01-00"},
+	{"ENGENIO", "INF-01-00"},
+	{"STK", "FLEXLINE 380"},
+	{"SUN", "CSM100_R_FC"},
+	{"SUN", "STK6580_6780"},
+ 	{"SUN", "ArrayStorage"},
+	{"SUN", "SUN_6180"},
+	{NULL, NULL},
 };
 
 static int rdac_bus_attach(struct scsi_device *sdev);
@@ -839,7 +838,7 @@ static int rdac_bus_attach(struct scsi_device *sdev)
 	int err;
 	char array_name[ARRAY_LABEL_LEN];
 
-	scsi_dh_data = kzalloc(sizeof(struct scsi_device_handler *)
+	scsi_dh_data = kzalloc(sizeof(*scsi_dh_data)
 			       + sizeof(*h) , GFP_KERNEL);
 	if (!scsi_dh_data) {
 		sdev_printk(KERN_ERR, sdev, "%s: Attach failed\n",
@@ -946,4 +945,5 @@ module_exit(rdac_exit);
 
 MODULE_DESCRIPTION("Multipath LSI/Engenio RDAC driver");
 MODULE_AUTHOR("Mike Christie, Chandra Seetharaman");
+MODULE_VERSION("01.00.0000.0000");
 MODULE_LICENSE("GPL");

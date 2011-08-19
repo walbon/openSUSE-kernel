@@ -20,14 +20,14 @@
 #include <asm/processor-flags.h>
 #include <asm/percpu.h>
 
-#ifdef CONFIG_PARAVIRT_MMU
+#ifdef CONFIG_PARAVIRT
 #include <asm/asm-offsets.h>
 #include <asm/paravirt.h>
 #else
 #define GET_CR2_INTO_RCX movq %cr2, %rcx
 #endif
 
-/* we are not able to switch in one step to the final KERNEL ADRESS SPACE
+/* we are not able to switch in one step to the final KERNEL ADDRESS SPACE
  * because we need identity-mapped pages.
  *
  */
@@ -136,10 +136,9 @@ ident_complete:
 	/* Fixup phys_base */
 	addq	%rbp, phys_base(%rip)
 
-#ifdef CONFIG_X86_TRAMPOLINE
+	/* Fixup trampoline */
 	addq	%rbp, trampoline_level4_pgt + 0(%rip)
 	addq	%rbp, trampoline_level4_pgt + (511*8)(%rip)
-#endif
 
 	/* Due to ENTRY(), sometimes the empty space gets filled with
 	 * zeros. Better take a jmp than relying on empty space being
@@ -212,8 +211,8 @@ ENTRY(secondary_startup_64)
 	 */
 	lgdt	early_gdt_descr(%rip)
 
-	/* set up data segments. actually 0 would do too */
-	movl $__KERNEL_DS,%eax
+	/* set up data segments */
+	xorl %eax,%eax
 	movl %eax,%ds
 	movl %eax,%ss
 	movl %eax,%es
@@ -234,9 +233,8 @@ ENTRY(secondary_startup_64)
 	 * init data section till per cpu areas are set up.
 	 */
 	movl	$MSR_GS_BASE,%ecx
-	movq	initial_gs(%rip),%rax
-	movq    %rax,%rdx
-	shrq	$32,%rdx
+	movl	initial_gs(%rip),%eax
+	movl	initial_gs+4(%rip),%edx
 	wrmsr	
 
 	/* esi is pointer to real mode structure with interesting info.
@@ -285,8 +283,6 @@ early_idt_handlers:
 
 ENTRY(early_idt_handler)
 #ifdef CONFIG_EARLY_PRINTK
-#include <asm/calling.h>
-#include <asm/dwarf2.h>
 	cmpl $2,early_recursion_flag(%rip)
 	jz  1f
 	incl early_recursion_flag(%rip)
@@ -302,16 +298,6 @@ ENTRY(early_idt_handler)
 	testl $0x27d00,%eax
 	je 0f
 	popq %r8		# get error code
-
-	CFI_STARTPROC	simple
-	CFI_SIGNAL_FRAME
-	CFI_DEF_CFA	rsp, SS+8-RIP
-#	CFI_REL_OFFSET	ss, SS-RIP
-	CFI_REL_OFFSET	rsp, RSP-RIP
-#	CFI_REL_OFFSET	rflags, EFLAGS-RIP
-#	CFI_REL_OFFSET	cs, CS-RIP
-	CFI_REL_OFFSET	rip, RIP-RIP
-
 0:	movq 0(%rsp),%rcx	# get ip
 	movq 8(%rsp),%rdx	# get cs
 	xorl %eax,%eax
@@ -325,7 +311,6 @@ ENTRY(early_idt_handler)
 	movq 0(%rsp),%rsi	# get rip again
 	call __print_symbol
 #endif
-	CFI_ENDPROC
 #endif /* EARLY_PRINTK */
 1:	hlt
 	jmp 1b

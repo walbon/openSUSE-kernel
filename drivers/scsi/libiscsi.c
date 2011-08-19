@@ -25,6 +25,7 @@
 #include <linux/kfifo.h>
 #include <linux/delay.h>
 #include <linux/log2.h>
+#include <linux/slab.h>
 #include <asm/unaligned.h>
 #include <net/tcp.h>
 #include <scsi/scsi_cmnd.h>
@@ -2483,7 +2484,7 @@ int iscsi_eh_recover_target(struct scsi_cmnd *sc)
 {
 	int rc;
 
-	rc = iscsi_eh_target_reset(sc);	
+	rc = iscsi_eh_target_reset(sc);
 	if (rc == FAILED)
 		rc = iscsi_eh_session_reset(sc);
 	return rc;

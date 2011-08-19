@@ -16,6 +16,7 @@
 #include <linux/kref.h>
 #include <linux/mutex.h>
 #include <linux/sysrq.h>
+#include <linux/kfifo.h>
 
 #define SERIAL_TTY_MAJOR	188	/* Nice legal number now */
 #define SERIAL_TTY_MINORS	254	/* loads of devices :) */
@@ -101,7 +102,7 @@ struct usb_serial_port {
 	unsigned char		*bulk_out_buffer;
 	int			bulk_out_size;
 	struct urb		*write_urb;
-	struct kfifo		*write_fifo;
+	struct kfifo		write_fifo;
 	int			write_urb_busy;
 
 	unsigned char		*bulk_out_buffers[2];
@@ -344,8 +345,7 @@ extern int usb_serial_generic_submit_read_urb(struct usb_serial_port *port,
 extern void usb_serial_generic_process_read_urb(struct urb *urb);
 extern int usb_serial_generic_prepare_write_buffer(struct usb_serial_port *port,
 						void *dest, size_t size);
-extern int usb_serial_handle_sysrq_char(struct tty_struct *tty,
-					struct usb_serial_port *port,
+extern int usb_serial_handle_sysrq_char(struct usb_serial_port *port,
 					unsigned int ch);
 extern int usb_serial_handle_break(struct usb_serial_port *port);
 extern void usb_serial_handle_dcd_change(struct usb_serial_port *usb_port,

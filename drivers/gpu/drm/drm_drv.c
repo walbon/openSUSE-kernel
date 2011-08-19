@@ -241,7 +241,8 @@ int drm_lastclose(struct drm_device * dev)
 /** File operations structure */
 static const struct file_operations drm_stub_fops = {
 	.owner = THIS_MODULE,
-	.open = drm_stub_open
+	.open = drm_stub_open,
+	.llseek = noop_llseek,
 };
 
 static int __init drm_core_init(void)

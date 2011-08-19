@@ -21,7 +21,7 @@
 #include <linux/hardirq.h>
 #include <linux/elf.h>
 #include <linux/elfcore.h>
-#include <linux/utsrelease.h>
+#include <generated/utsrelease.h>
 #include <linux/utsname.h>
 #include <linux/numa.h>
 #include <linux/suspend.h>
@@ -31,6 +31,9 @@
 #include <linux/cpu.h>
 #include <linux/console.h>
 #include <linux/vmalloc.h>
+#include <linux/swap.h>
+#include <linux/kmsg_dump.h>
+#include <linux/syscore_ops.h>
 #include <linux/sysctl.h>
 
 #include <asm/page.h>
@@ -39,25 +42,13 @@
 #include <asm/system.h>
 #include <asm/sections.h>
 
-#ifdef CONFIG_KDB_KDUMP
-#include <linux/module.h>
-#include <linux/device.h>
-#include <linux/kdb.h>
-#endif
-
-#ifndef CONFIG_XEN
 /* Per cpu memory for storing cpu states in case of system crash. */
-note_buf_t* crash_notes;
-#endif
+note_buf_t __percpu *crash_notes;
 int dump_after_notifier;
 
 /* vmcoreinfo stuff */
 static unsigned char vmcoreinfo_data[VMCOREINFO_BYTES];
-u32
-#if defined(CONFIG_XEN) && defined(CONFIG_X86)
-__page_aligned_bss
-#endif
-vmcoreinfo_note[VMCOREINFO_NOTE_SIZE/4];
+u32 vmcoreinfo_note[VMCOREINFO_NOTE_SIZE/4];
 size_t vmcoreinfo_size;
 size_t vmcoreinfo_max_size = sizeof(vmcoreinfo_data);
 
@@ -156,15 +147,17 @@ static int do_kimage_alloc(struct kimage **rimage, unsigned long entry,
 	/* Initialize the list of destination pages */
 	INIT_LIST_HEAD(&image->dest_pages);
 
-	/* Initialize the list of unuseable pages */
+	/* Initialize the list of unusable pages */
 	INIT_LIST_HEAD(&image->unuseable_pages);
 
 	/* Read in the segments */
 	image->nr_segments = nr_segments;
 	segment_bytes = nr_segments * sizeof(*segments);
 	result = copy_from_user(image->segment, segments, segment_bytes);
-	if (result)
+	if (result) {
+		result = -EFAULT;
 		goto out;
+	}
 
 	/*
 	 * Verify we have good destination addresses.  The caller is
@@ -173,7 +166,7 @@ static int do_kimage_alloc(struct kimage **rimage, unsigned long entry,
 	 * just verifies it is an address we can use.
 	 *
 	 * Since the kernel does everything in page size chunks ensure
-	 * the destination addreses are page aligned.  Too many
+	 * the destination addresses are page aligned.  Too many
 	 * special cases crop of when we don't do this.  The most
 	 * insidious is getting overlapping destination addresses
 	 * simply because addresses are changed to page size
@@ -366,26 +359,13 @@ static int kimage_is_destination_range(struct kimage *image,
 	return 0;
 }
 
-static struct page *kimage_alloc_pages(gfp_t gfp_mask, unsigned int order, unsigned long limit)
+static struct page *kimage_alloc_pages(gfp_t gfp_mask, unsigned int order)
 {
 	struct page *pages;
 
 	pages = alloc_pages(gfp_mask, order);
 	if (pages) {
 		unsigned int count, i;
-#ifdef CONFIG_XEN
-		int address_bits;
-
-		if (limit == ~0UL)
-			address_bits = BITS_PER_LONG;
-		else
-			address_bits = ilog2(limit);
-
-		if (xen_limit_pages_to_max_mfn(pages, order, address_bits) < 0) {
-			__free_pages(pages, order);
-			return NULL;
-		}
-#endif
 		pages->mapping = NULL;
 		set_page_private(pages, order);
 		count = 1 << order;
@@ -449,10 +429,10 @@ static struct page *kimage_alloc_normal_control_pages(struct kimage *image,
 	do {
 		unsigned long pfn, epfn, addr, eaddr;
 
-		pages = kimage_alloc_pages(GFP_KERNEL, order, KEXEC_CONTROL_MEMORY_LIMIT);
+		pages = kimage_alloc_pages(GFP_KERNEL, order);
 		if (!pages)
 			break;
-		pfn   = kexec_page_to_pfn(pages);
+		pfn   = page_to_pfn(pages);
 		epfn  = pfn + count;
 		addr  = pfn << PAGE_SHIFT;
 		eaddr = epfn << PAGE_SHIFT;
@@ -477,7 +457,7 @@ static struct page *kimage_alloc_normal_control_pages(struct kimage *image,
 	/* Deal with the destination pages I have inadvertently allocated.
 	 *
 	 * Ideally I would convert multi-page allocations into single
-	 * page allocations, and add everyting to image->dest_pages.
+	 * page allocations, and add everything to image->dest_pages.
 	 *
 	 * For now it is simpler to just free the pages.
 	 */
@@ -486,7 +466,6 @@ static struct page *kimage_alloc_normal_control_pages(struct kimage *image,
 	return pages;
 }
 
-#ifndef CONFIG_XEN
 static struct page *kimage_alloc_crash_control_pages(struct kimage *image,
 						      unsigned int order)
 {
@@ -540,7 +519,7 @@ static struct page *kimage_alloc_crash_control_pages(struct kimage *image,
 		}
 		/* If I don't overlap any segments I have found my hole! */
 		if (i == image->nr_segments) {
-			pages = kexec_pfn_to_page(hole_start >> PAGE_SHIFT);
+			pages = pfn_to_page(hole_start >> PAGE_SHIFT);
 			break;
 		}
 	}
@@ -567,13 +546,6 @@ struct page *kimage_alloc_control_pages(struct kimage *image,
 
 	return pages;
 }
-#else /* !CONFIG_XEN */
-struct page *kimage_alloc_control_pages(struct kimage *image,
-					 unsigned int order)
-{
-	return kimage_alloc_normal_control_pages(image, order);
-}
-#endif
 
 static int kimage_add_entry(struct kimage *image, kimage_entry_t entry)
 {
@@ -589,7 +561,7 @@ static int kimage_add_entry(struct kimage *image, kimage_entry_t entry)
 			return -ENOMEM;
 
 		ind_page = page_address(page);
-		*image->entry = kexec_virt_to_phys(ind_page) | IND_INDIRECTION;
+		*image->entry = virt_to_phys(ind_page) | IND_INDIRECTION;
 		image->entry = ind_page;
 		image->last_entry = ind_page +
 				      ((PAGE_SIZE/sizeof(kimage_entry_t)) - 1);
@@ -633,7 +605,7 @@ static void kimage_free_extra_pages(struct kimage *image)
 	/* Walk through and free any extra destination pages I may have */
 	kimage_free_page_list(&image->dest_pages);
 
-	/* Walk through and free any unuseable pages I have cached */
+	/* Walk through and free any unusable pages I have cached */
 	kimage_free_page_list(&image->unuseable_pages);
 
 }
@@ -648,13 +620,13 @@ static void kimage_terminate(struct kimage *image)
 #define for_each_kimage_entry(image, ptr, entry) \
 	for (ptr = &image->head; (entry = *ptr) && !(entry & IND_DONE); \
 		ptr = (entry & IND_INDIRECTION)? \
-			kexec_phys_to_virt((entry & PAGE_MASK)): ptr +1)
+			phys_to_virt((entry & PAGE_MASK)): ptr +1)
 
 static void kimage_free_entry(kimage_entry_t entry)
 {
 	struct page *page;
 
-	page = kexec_pfn_to_page(entry >> PAGE_SHIFT);
+	page = pfn_to_page(entry >> PAGE_SHIFT);
 	kimage_free_pages(page);
 }
 
@@ -665,10 +637,6 @@ static void kimage_free(struct kimage *image)
 
 	if (!image)
 		return;
-
-#ifdef CONFIG_XEN
-	xen_machine_kexec_unload(image);
-#endif
 
 	kimage_free_extra_pages(image);
 	for_each_kimage_entry(image, ptr, entry) {
@@ -745,7 +713,7 @@ static struct page *kimage_alloc_page(struct kimage *image,
 	 * have a match.
 	 */
 	list_for_each_entry(page, &image->dest_pages, lru) {
-		addr = kexec_page_to_pfn(page) << PAGE_SHIFT;
+		addr = page_to_pfn(page) << PAGE_SHIFT;
 		if (addr == destination) {
 			list_del(&page->lru);
 			return page;
@@ -756,16 +724,16 @@ static struct page *kimage_alloc_page(struct kimage *image,
 		kimage_entry_t *old;
 
 		/* Allocate a page, if we run out of memory give up */
-		page = kimage_alloc_pages(gfp_mask, 0, KEXEC_SOURCE_MEMORY_LIMIT);
+		page = kimage_alloc_pages(gfp_mask, 0);
 		if (!page)
 			return NULL;
 		/* If the page cannot be used file it away */
-		if (kexec_page_to_pfn(page) >
+		if (page_to_pfn(page) >
 				(KEXEC_SOURCE_MEMORY_LIMIT >> PAGE_SHIFT)) {
 			list_add(&page->lru, &image->unuseable_pages);
 			continue;
 		}
-		addr = kexec_page_to_pfn(page) << PAGE_SHIFT;
+		addr = page_to_pfn(page) << PAGE_SHIFT;
 
 		/* If it is the destination page we want use it */
 		if (addr == destination)
@@ -788,7 +756,7 @@ static struct page *kimage_alloc_page(struct kimage *image,
 			struct page *old_page;
 
 			old_addr = *old & PAGE_MASK;
-			old_page = kexec_pfn_to_page(old_addr >> PAGE_SHIFT);
+			old_page = pfn_to_page(old_addr >> PAGE_SHIFT);
 			copy_highpage(page, old_page);
 			*old = addr | (*old & ~PAGE_MASK);
 
@@ -844,14 +812,14 @@ static int kimage_load_normal_segment(struct kimage *image,
 			result  = -ENOMEM;
 			goto out;
 		}
-		result = kimage_add_page(image, kexec_page_to_pfn(page)
+		result = kimage_add_page(image, page_to_pfn(page)
 								<< PAGE_SHIFT);
 		if (result < 0)
 			goto out;
 
 		ptr = kmap(page);
 		/* Start with a clear page */
-		memset(ptr, 0, PAGE_SIZE);
+		clear_page(ptr);
 		ptr += maddr & ~PAGE_MASK;
 		mchunk = PAGE_SIZE - (maddr & ~PAGE_MASK);
 		if (mchunk > mbytes)
@@ -864,7 +832,7 @@ static int kimage_load_normal_segment(struct kimage *image,
 		result = copy_from_user(ptr, buf, uchunk);
 		kunmap(page);
 		if (result) {
-			result = (result < 0) ? result : -EIO;
+			result = -EFAULT;
 			goto out;
 		}
 		ubytes -= uchunk;
@@ -876,7 +844,6 @@ out:
 	return result;
 }
 
-#ifndef CONFIG_XEN
 static int kimage_load_crash_segment(struct kimage *image,
 					struct kexec_segment *segment)
 {
@@ -899,7 +866,7 @@ static int kimage_load_crash_segment(struct kimage *image,
 		char *ptr;
 		size_t uchunk, mchunk;
 
-		page = kexec_pfn_to_page(maddr >> PAGE_SHIFT);
+		page = pfn_to_page(maddr >> PAGE_SHIFT);
 		if (!page) {
 			result  = -ENOMEM;
 			goto out;
@@ -920,7 +887,7 @@ static int kimage_load_crash_segment(struct kimage *image,
 		kexec_flush_icache_page(page);
 		kunmap(page);
 		if (result) {
-			result = (result < 0) ? result : -EIO;
+			result = -EFAULT;
 			goto out;
 		}
 		ubytes -= uchunk;
@@ -948,13 +915,6 @@ static int kimage_load_segment(struct kimage *image,
 
 	return result;
 }
-#else /* CONFIG_XEN */
-static int kimage_load_segment(struct kimage *image,
-				struct kexec_segment *segment)
-{
-	return kimage_load_normal_segment(image, segment);
-}
-#endif
 
 /*
  * Exec Kernel system call: for obvious reasons only root may call it.
@@ -1058,13 +1018,6 @@ SYSCALL_DEFINE4(kexec_load, unsigned long, entry, unsigned long, nr_segments,
 		}
 		kimage_terminate(image);
 	}
-#ifdef CONFIG_XEN
-	if (image) {
-		result = xen_machine_kexec_load(image);
-		if (result)
-			goto out;
-	}
-#endif
 	/* Install the new kernel, and  Uninstall the old */
 	image = xchg(dest_image, image);
 
@@ -1128,22 +1081,73 @@ void crash_kexec(struct pt_regs *regs)
 		if (kexec_crash_image) {
 			struct pt_regs fixed_regs;
 
+			kmsg_dump(KMSG_DUMP_KEXEC);
+
 			crash_setup_regs(&fixed_regs, regs);
 			crash_save_vmcoreinfo();
-			/*
-			 * If we enabled KDB, we don't want to automatically
-			 * perform a kdump since KDB will be responsible for
-			 * executing kdb through a special 'kdump' command.
-			 */
-#ifdef CONFIG_KDB_KDUMP
-			kdba_kdump_prepare(&fixed_regs);
-#else
 			machine_crash_shutdown(&fixed_regs);
-#endif
 			machine_kexec(kexec_crash_image);
 		}
 		mutex_unlock(&kexec_mutex);
 	}
+}
+
+size_t crash_get_memory_size(void)
+{
+	size_t size = 0;
+	mutex_lock(&kexec_mutex);
+	if (crashk_res.end != crashk_res.start)
+		size = crashk_res.end - crashk_res.start + 1;
+	mutex_unlock(&kexec_mutex);
+	return size;
+}
+
+void __weak crash_free_reserved_phys_range(unsigned long begin,
+					   unsigned long end)
+{
+	unsigned long addr;
+
+	for (addr = begin; addr < end; addr += PAGE_SIZE) {
+		ClearPageReserved(pfn_to_page(addr >> PAGE_SHIFT));
+		init_page_count(pfn_to_page(addr >> PAGE_SHIFT));
+		free_page((unsigned long)__va(addr));
+		totalram_pages++;
+	}
+}
+
+int crash_shrink_memory(unsigned long new_size)
+{
+	int ret = 0;
+	unsigned long start, end;
+
+	mutex_lock(&kexec_mutex);
+
+	if (kexec_crash_image) {
+		ret = -ENOENT;
+		goto unlock;
+	}
+	start = crashk_res.start;
+	end = crashk_res.end;
+
+	if (new_size >= end - start + 1) {
+		ret = -EINVAL;
+		if (new_size == end - start + 1)
+			ret = 0;
+		goto unlock;
+	}
+
+	start = roundup(start, PAGE_SIZE);
+	end = roundup(start + new_size, PAGE_SIZE);
+
+	crash_free_reserved_phys_range(end, crashk_res.end);
+
+	if ((start == end) && (crashk_res.parent != NULL))
+		release_resource(&crashk_res);
+	crashk_res.end = end - 1;
+
+unlock:
+	mutex_unlock(&kexec_mutex);
+	return ret;
 }
 
 static u32 *append_elf_note(u32 *buf, char *name, unsigned type, void *data,
@@ -1174,7 +1178,6 @@ static void final_note(u32 *buf)
 	memcpy(buf, &note, sizeof(note));
 }
 
-#ifndef CONFIG_XEN
 void crash_save_cpu(struct pt_regs *regs, int cpu)
 {
 	struct elf_prstatus prstatus;
@@ -1200,35 +1203,31 @@ void crash_save_cpu(struct pt_regs *regs, int cpu)
 		      	      &prstatus, sizeof(prstatus));
 	final_note(buf);
 }
-#endif
 
 #ifdef CONFIG_SYSCTL
 static ctl_table dump_after_notifier_table[] = {
 	{
-		.ctl_name = KERN_DUMP_AFTER_NOTIFIER,
 		.procname = "dump_after_notifier",
 		.data = &dump_after_notifier,
 		.maxlen = sizeof(int),
 		.mode = 0644,
 		.proc_handler = &proc_dointvec,
 	},
-	{ .ctl_name = 0 }
+	{ }
 };
 
 static ctl_table kexec_sys_table[] = {
 	{
-		.ctl_name = CTL_KERN,
 		.procname = "kernel",
 		.mode = 0555,
 		.child = dump_after_notifier_table,
 	},
-	{ .ctl_name = 0 }
+	{ }
 };
 #endif
 
 static int __init crash_notes_memory_init(void)
 {
-#ifndef CONFIG_XEN
 	/* Allocate memory for saving cpu registers. */
 	crash_notes = alloc_percpu(note_buf_t);
 	if (!crash_notes) {
@@ -1236,7 +1235,6 @@ static int __init crash_notes_memory_init(void)
 		" states failed\n");
 		return -ENOMEM;
 	}
-#endif
 #ifdef CONFIG_SYSCTL
 	register_sysctl_table(kexec_sys_table);
 #endif
@@ -1245,7 +1243,6 @@ static int __init crash_notes_memory_init(void)
 module_init(crash_notes_memory_init)
 
 
-#ifndef CONFIG_XEN
 /*
  * parsing the "crashkernel" commandline
  *
@@ -1408,7 +1405,7 @@ int __init parse_crashkernel(char 		 *cmdline,
 
 	return 0;
 }
-#endif
+
 
 
 void crash_save_vmcoreinfo(void)
@@ -1465,18 +1462,7 @@ static int __init crash_save_vmcoreinfo_init(void)
 
 	VMCOREINFO_SYMBOL(init_uts_ns);
 	VMCOREINFO_SYMBOL(node_online_map);
-#ifndef CONFIG_X86_XEN
 	VMCOREINFO_SYMBOL(swapper_pg_dir);
-#else
-/*
- * Since for x86-32 Xen swapper_pg_dir is a pointer rather than an array,
- * make the value stored consistent with native (i.e. the base address of
- * the page directory).
- */
-# define swapper_pg_dir *swapper_pg_dir
-	VMCOREINFO_SYMBOL(swapper_pg_dir);
-# undef swapper_pg_dir
-#endif
 	VMCOREINFO_SYMBOL(_stext);
 	VMCOREINFO_SYMBOL(vmlist);
 
@@ -1572,8 +1558,7 @@ int kernel_kexec(void)
 		if (error)
 			goto Enable_cpus;
 		local_irq_disable();
-		/* Suspend system devices */
-		error = sysdev_suspend(PMSG_FREEZE);
+		error = syscore_suspend();
 		if (error)
 			goto Enable_irqs;
 	} else
@@ -1588,7 +1573,7 @@ int kernel_kexec(void)
 
 #ifdef CONFIG_KEXEC_JUMP
 	if (kexec_image->preserve_context) {
-		sysdev_resume();
+		syscore_resume();
  Enable_irqs:
 		local_irq_enable();
  Enable_cpus:

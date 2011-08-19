@@ -122,7 +122,7 @@ static ssize_t edac_pci_instance_store(struct kobject *kobj,
 }
 
 /* fs_ops table */
-static struct sysfs_ops pci_instance_ops = {
+static const struct sysfs_ops pci_instance_ops = {
 	.show = edac_pci_instance_show,
 	.store = edac_pci_instance_store
 };
@@ -262,7 +262,7 @@ static ssize_t edac_pci_dev_store(struct kobject *kobj,
 	return -EIO;
 }
 
-static struct sysfs_ops edac_pci_sysfs_ops = {
+static const struct sysfs_ops edac_pci_sysfs_ops = {
 	.show = edac_pci_dev_show,
 	.store = edac_pci_dev_store
 };
@@ -352,7 +352,7 @@ static int edac_pci_main_kobj_setup(void)
 		return 0;
 
 	/* First time, so create the main kobject and its
-	 * controls and atributes
+	 * controls and attributes
 	 */
 	edac_class = edac_get_sysfs_class();
 	if (edac_class == NULL) {
@@ -551,7 +551,7 @@ static void edac_pci_dev_parity_clear(struct pci_dev *dev)
 /*
  *  PCI Parity polling
  *
- *	Fucntion to retrieve the current parity status
+ *	Function to retrieve the current parity status
  *	and decode it
  *
  */

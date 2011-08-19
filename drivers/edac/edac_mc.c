@@ -347,6 +347,9 @@ static void edac_mc_workq_teardown(struct mem_ctl_info *mci)
 {
 	int status;
 
+	if (mci->op_state != OP_RUNNING_POLL)
+		return;
+
 	status = cancel_delayed_work(&mci->work);
 	if (status == 0) {
 		debugf0("%s() not canceled, flush the queue\n",
@@ -444,20 +447,16 @@ fail1:
 	return 1;
 }
 
-static void complete_mc_list_del(struct rcu_head *head)
-{
-	struct mem_ctl_info *mci;
-
-	mci = container_of(head, struct mem_ctl_info, rcu);
-	INIT_LIST_HEAD(&mci->link);
-}
-
 static void del_mc_from_global_list(struct mem_ctl_info *mci)
 {
 	atomic_dec(&edac_handlers);
 	list_del_rcu(&mci->link);
-	call_rcu(&mci->rcu, complete_mc_list_del);
-	rcu_barrier();
+
+	/* these are for safe removal of devices from global list while
+	 * NMI handlers may be traversing list
+	 */
+	synchronize_rcu();
+	INIT_LIST_HEAD(&mci->link);
 }
 
 /**
@@ -612,10 +611,6 @@ static void edac_mc_scrub_block(unsigned long page, unsigned long offset,
 
 	debugf3("%s()\n", __func__);
 
-#ifdef CONFIG_XEN
-	page = mfn_to_local_pfn(page);
-#endif
-
 	/* ECC error page was not in our memory. Ignore it. */
 	if (!pfn_valid(page))
 		return;
@@ -725,7 +720,7 @@ void edac_mc_handle_ce(struct mem_ctl_info *mci,
 		 * Some MC's can remap memory so that it is still available
 		 * at a different address when PCI devices map into memory.
 		 * MC's that can't do this lose the memory where PCI devices
-		 * are mapped.  This mapping is MC dependant and so we call
+		 * are mapped.  This mapping is MC dependent and so we call
 		 * back into the MC driver for it to map the MC page to
 		 * a physical (CPU) page which can then be mapped to a virtual
 		 * page - which can then be scrubbed.

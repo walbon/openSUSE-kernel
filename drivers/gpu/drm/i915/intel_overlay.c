@@ -1504,28 +1504,25 @@ struct intel_overlay_error_state {
 };
 
 static struct overlay_registers *
-intel_overlay_map_regs_atomic(struct intel_overlay *overlay,
-			      int slot)
+intel_overlay_map_regs_atomic(struct intel_overlay *overlay)
 {
-        drm_i915_private_t *dev_priv = overlay->dev->dev_private;
+	drm_i915_private_t *dev_priv = overlay->dev->dev_private;
 	struct overlay_registers *regs;
 
 	if (OVERLAY_NEEDS_PHYSICAL(overlay->dev))
 		regs = overlay->reg_bo->phys_obj->handle->vaddr;
 	else
 		regs = io_mapping_map_atomic_wc(dev_priv->mm.gtt_mapping,
-						overlay->reg_bo->gtt_offset,
-						slot);
+						overlay->reg_bo->gtt_offset);
 
 	return regs;
 }
 
 static void intel_overlay_unmap_regs_atomic(struct intel_overlay *overlay,
-					    int slot,
 					    struct overlay_registers *regs)
 {
 	if (!OVERLAY_NEEDS_PHYSICAL(overlay->dev))
-		io_mapping_unmap_atomic(regs, slot);
+		io_mapping_unmap_atomic(regs);
 }
 
 
@@ -1551,12 +1548,12 @@ intel_overlay_capture_error_state(struct drm_device *dev)
 	else
 		error->base = (long) overlay->reg_bo->gtt_offset;
 
-	regs = intel_overlay_map_regs_atomic(overlay, KM_IRQ0);
+	regs = intel_overlay_map_regs_atomic(overlay);
 	if (!regs)
 		goto err;
 
 	memcpy_fromio(&error->regs, regs, sizeof(struct overlay_registers));
-	intel_overlay_unmap_regs_atomic(overlay, KM_IRQ0, regs);
+	intel_overlay_unmap_regs_atomic(overlay, regs);
 
 	return error;
 

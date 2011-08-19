@@ -31,14 +31,9 @@
 #include <linux/workqueue.h>
 #include <linux/completion.h>
 #include <linux/device.h>
-#include <linux/version.h>
 
 
 #include <asm/hyperv.h>
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 33)
-#include "hv_compat.h"
-#endif
 
 struct hv_guid {
 	unsigned char data[16];
@@ -528,6 +523,46 @@ enum vmbus_channel_state {
 	CHANNEL_OPEN_STATE,
 };
 
+struct vmbus_channel {
+	struct list_head listentry;
+
+	struct hv_device *device_obj;
+
+	struct timer_list poll_timer; /* SA-111 workaround */
+	struct work_struct work;
+
+	enum vmbus_channel_state state;
+	/*
+	 * For util channels, stash the
+	 * the service index for easy access.
+	 */
+	s8 util_index;
+
+	struct vmbus_channel_offer_channel offermsg;
+	/*
+	 * These are based on the OfferMsg.MonitorId.
+	 * Save it here for easy access.
+	 */
+	u8 monitor_grp;
+	u8 monitor_bit;
+
+	u32 ringbuffer_gpadlhandle;
+
+	/* Allocated memory for ring buffer */
+	void *ringbuffer_pages;
+	u32 ringbuffer_pagecount;
+	struct hv_ring_buffer_info outbound;	/* send to parent */
+	struct hv_ring_buffer_info inbound;	/* receive from parent */
+	spinlock_t inbound_lock;
+	struct workqueue_struct *controlwq;
+
+	/* Channel callback are invoked in this workqueue context */
+	/* HANDLE dataWorkQueue; */
+
+	void (*onchannel_callback)(void *context);
+	void *channel_callback_context;
+};
+
 struct vmbus_channel_debug_info {
 	u32 relid;
 	enum vmbus_channel_state state;
@@ -574,51 +609,6 @@ struct vmbus_channel_msginfo {
 	unsigned char msg[0];
 };
 
-struct vmbus_close_msg {
-	struct vmbus_channel_msginfo info;
-	struct vmbus_channel_close_channel msg;
-};
-
-struct vmbus_channel {
-	struct list_head listentry;
-
-	struct hv_device *device_obj;
-
-	struct work_struct work;
-
-	enum vmbus_channel_state state;
-	/*
-	 * For util channels, stash the
-	 * the service index for easy access.
-	 */
-	s8 util_index;
-
-	struct vmbus_channel_offer_channel offermsg;
-	/*
-	 * These are based on the OfferMsg.MonitorId.
-	 * Save it here for easy access.
-	 */
-	u8 monitor_grp;
-	u8 monitor_bit;
-
-	u32 ringbuffer_gpadlhandle;
-
-	/* Allocated memory for ring buffer */
-	void *ringbuffer_pages;
-	u32 ringbuffer_pagecount;
-	struct hv_ring_buffer_info outbound;	/* send to parent */
-	struct hv_ring_buffer_info inbound;	/* receive from parent */
-	spinlock_t inbound_lock;
-	struct workqueue_struct *controlwq;
-
-	struct vmbus_close_msg close_msg;
-
-	/* Channel callback are invoked in this workqueue context */
-	/* HANDLE dataWorkQueue; */
-
-	void (*onchannel_callback)(void *context);
-	void *channel_callback_context;
-};
 
 void free_channel(struct vmbus_channel *channel);
 
@@ -701,6 +691,7 @@ extern int vmbus_recvpacket_raw(struct vmbus_channel *channel,
 				     u32 *buffer_actual_len,
 				     u64 *requestid);
 
+extern void vmbus_onchannel_event(struct vmbus_channel *channel);
 
 extern void vmbus_get_debug_info(struct vmbus_channel *channel,
 				     struct vmbus_channel_debug_info *debug);
@@ -806,14 +797,12 @@ struct hv_device_info {
 	struct hv_dev_port_info outbound;
 };
 
-struct hv_vmbus_device_id {
-	char device_type[32];
-};
-
 /* Base driver object */
 struct hv_driver {
+	const char *name;
+
 	/* the device type supported by this driver */
-	const struct hv_vmbus_device_id *id_table;
+	struct hv_guid dev_type;
 
 	struct device_driver driver;
 
@@ -826,7 +815,7 @@ struct hv_driver {
 /* Base device object */
 struct hv_device {
 	/* the device type id of this device */
-	const char *device_type;
+	struct hv_guid dev_type;
 
 	/* the device instance id of this device */
 	struct hv_guid dev_instance;
@@ -834,9 +823,6 @@ struct hv_device {
 	struct device device;
 
 	struct vmbus_channel *channel;
-
-	/* This lock protects the device extension field */
-	spinlock_t ext_lock;
 
 	/* Device extension; */
 	void *ext;
@@ -954,5 +940,5 @@ extern void prep_negotiate_resp(struct icmsg_hdr *,
 				struct icmsg_negotiate *, u8 *);
 extern void chn_cb_negotiate(void *);
 extern struct hyperv_service_callback hv_cb_utils[];
-const char *hv_get_devtype_name(const struct hv_guid *type);
+
 #endif /* _HYPERV_H */

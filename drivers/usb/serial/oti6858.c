@@ -294,7 +294,7 @@ static void send_data(struct work_struct *work)
 	spin_unlock_irqrestore(&priv->lock, flags);
 
 	spin_lock_irqsave(&port->lock, flags);
-	count = kfifo_len(port->write_fifo);
+	count = kfifo_len(&port->write_fifo);
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	if (count > port->bulk_out_size)
@@ -330,7 +330,7 @@ static void send_data(struct work_struct *work)
 		return;
 	}
 
-	count = kfifo_out_locked(port->write_fifo,
+	count = kfifo_out_locked(&port->write_fifo,
 					port->write_urb->transfer_buffer,
 					count, &port->lock);
 	port->write_urb->transfer_buffer_length = count;
@@ -385,7 +385,7 @@ static int oti6858_write(struct tty_struct *tty, struct usb_serial_port *port,
 	if (!count)
 		return count;
 
-	count = kfifo_in_locked(port->write_fifo, buf, count, &port->lock);
+	count = kfifo_in_locked(&port->write_fifo, buf, count, &port->lock);
 
 	return count;
 }
@@ -399,7 +399,7 @@ static int oti6858_write_room(struct tty_struct *tty)
 	dbg("%s(port = %d)", __func__, port->number);
 
 	spin_lock_irqsave(&port->lock, flags);
-	room = kfifo_avail(port->write_fifo);
+	room = kfifo_avail(&port->write_fifo);
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	return room;
@@ -414,7 +414,7 @@ static int oti6858_chars_in_buffer(struct tty_struct *tty)
 	dbg("%s(port = %d)", __func__, port->number);
 
 	spin_lock_irqsave(&port->lock, flags);
-	chars = kfifo_len(port->write_fifo);
+	chars = kfifo_len(&port->write_fifo);
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	return chars;
@@ -551,9 +551,6 @@ static int oti6858_open(struct tty_struct *tty, struct usb_serial_port *port)
 	usb_clear_halt(serial->dev, port->write_urb->pipe);
 	usb_clear_halt(serial->dev, port->read_urb->pipe);
 
-	if (port->port.count != 1)
-		return 0;
-
 	buf = kmalloc(OTI6858_CTRL_PKT_SIZE, GFP_KERNEL);
 	if (buf == NULL) {
 		dev_err(&port->dev, "%s(): out of memory!\n", __func__);
@@ -611,15 +608,14 @@ static void oti6858_close(struct usb_serial_port *port)
 
 	spin_lock_irqsave(&port->lock, flags);
 	/* clear out any remaining data in the buffer */
-	kfifo_reset_out(port->write_fifo);
+	kfifo_reset_out(&port->write_fifo);
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	dbg("%s(): after buf_clear()", __func__);
 
 	/* cancel scheduled setup */
-	cancel_delayed_work(&priv->delayed_setup_work);
-	cancel_delayed_work(&priv->delayed_write_work);
-	flush_scheduled_work();
+	cancel_delayed_work_sync(&priv->delayed_setup_work);
+	cancel_delayed_work_sync(&priv->delayed_write_work);
 
 	/* shutdown our urbs */
 	dbg("%s(): shutting down urbs", __func__);
@@ -855,7 +851,7 @@ static void oti6858_read_int_callback(struct urb *urb)
 		int count;
 
 		spin_lock_irqsave(&port->lock, flags);
-		count = kfifo_len(port->write_fifo);
+		count = kfifo_len(&port->write_fifo);
 		spin_unlock_irqrestore(&port->lock, flags);
 
 		spin_lock_irqsave(&priv->lock, flags);
@@ -898,10 +894,6 @@ static void oti6858_read_bulk_callback(struct urb *urb)
 	spin_unlock_irqrestore(&priv->lock, flags);
 
 	if (status != 0) {
-		if (!port->port.count) {
-			dbg("%s(): port is closed, exiting", __func__);
-			return;
-		}
 		/*
 		if (status == -EPROTO) {
 			* PL2303 mysteriously fails with -EPROTO reschedule
@@ -925,14 +917,12 @@ static void oti6858_read_bulk_callback(struct urb *urb)
 	}
 	tty_kref_put(tty);
 
-	/* schedule the interrupt urb if we are still open */
-	if (port->port.count != 0) {
-		port->interrupt_in_urb->dev = port->serial->dev;
-		result = usb_submit_urb(port->interrupt_in_urb, GFP_ATOMIC);
-		if (result != 0) {
-			dev_err(&port->dev, "%s(): usb_submit_urb() failed,"
-					" error %d\n", __func__, result);
-		}
+	/* schedule the interrupt urb */
+	port->interrupt_in_urb->dev = port->serial->dev;
+	result = usb_submit_urb(port->interrupt_in_urb, GFP_ATOMIC);
+	if (result != 0 && result != -EPERM) {
+		dev_err(&port->dev, "%s(): usb_submit_urb() failed,"
+				" error %d\n", __func__, result);
 	}
 }
 

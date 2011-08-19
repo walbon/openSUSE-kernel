@@ -31,6 +31,7 @@
 #include <linux/fs.h>
 #include <linux/sysfs.h>
 #include <linux/ctype.h>
+#include <linux/workqueue.h>
 #include <scsi/scsi_tcq.h>
 #include <scsi/scsicam.h>
 #include <scsi/scsi_transport.h>
@@ -56,11 +57,9 @@ module_param_named(ddp_min, fcoe_ddp_min, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ddp_min, "Minimum I/O size in bytes for "	\
 		 "Direct Data Placement (DDP).");
 
-static unsigned int fcoe_use_vlan_id = 0;
-module_param_named(use_vlan_id, fcoe_use_vlan_id, uint, S_IRUGO);
-MODULE_PARM_DESC(use_vlan_id, "Include VLAN ID in generated WWNN/WWPN.");
-
 DEFINE_MUTEX(fcoe_config_mutex);
+
+static struct workqueue_struct *fcoe_wq;
 
 /* fcoe_percpu_clean completion.  Waiter protected by fcoe_create_mutex */
 static DECLARE_COMPLETION(fcoe_flush_completion);
@@ -100,8 +99,7 @@ static void fcoe_destroy_work(struct work_struct *);
 static int fcoe_ddp_setup(struct fc_lport *, u16, struct scatterlist *,
 			  unsigned int);
 static int fcoe_ddp_done(struct fc_lport *, u16);
-static int fcoe_ddp_target(struct fc_lport *, u16, struct scatterlist *,
-			   unsigned int);
+
 static int fcoe_cpu_callback(struct notifier_block *, unsigned long, void *);
 
 static bool fcoe_match(struct net_device *netdev);
@@ -145,7 +143,6 @@ static struct libfc_function_template fcoe_libfc_fcn_templ = {
 	.frame_send = fcoe_xmit,
 	.ddp_setup = fcoe_ddp_setup,
 	.ddp_done = fcoe_ddp_done,
-	.ddp_target = fcoe_ddp_target,
 	.elsct_send = fcoe_elsct_send,
 	.get_lesb = fcoe_get_lesb,
 	.lport_set_port_id = fcoe_set_port_id,
@@ -303,14 +300,14 @@ static int fcoe_interface_setup(struct fcoe_interface *fcoe,
 	 * for multiple unicast MACs.
 	 */
 	memcpy(flogi_maddr, (u8[6]) FC_FCOE_FLOGI_MAC, ETH_ALEN);
-	dev_unicast_add(netdev, flogi_maddr);
+	dev_uc_add(netdev, flogi_maddr);
 	if (fip->spma)
-		dev_unicast_add(netdev, fip->ctl_src_addr);
+		dev_uc_add(netdev, fip->ctl_src_addr);
 	if (fip->mode == FIP_MODE_VN2VN) {
-		dev_mc_add(netdev, FIP_ALL_VN2VN_MACS, ETH_ALEN, 0);
-		dev_mc_add(netdev, FIP_ALL_P2P_MACS, ETH_ALEN, 0);
+		dev_mc_add(netdev, FIP_ALL_VN2VN_MACS);
+		dev_mc_add(netdev, FIP_ALL_P2P_MACS);
 	} else
-		dev_mc_add(netdev, FIP_ALL_ENODE_MACS, ETH_ALEN, 0);
+		dev_mc_add(netdev, FIP_ALL_ENODE_MACS);
 
 	/*
 	 * setup the receive function from ethernet driver
@@ -460,17 +457,17 @@ void fcoe_interface_cleanup(struct fcoe_interface *fcoe)
 
 	/* Delete secondary MAC addresses */
 	memcpy(flogi_maddr, (u8[6]) FC_FCOE_FLOGI_MAC, ETH_ALEN);
-	dev_unicast_delete(netdev, flogi_maddr);
+	dev_uc_del(netdev, flogi_maddr);
 	if (fip->spma)
-		dev_unicast_delete(netdev, fip->ctl_src_addr);
+		dev_uc_del(netdev, fip->ctl_src_addr);
 	if (fip->mode == FIP_MODE_VN2VN) {
-		dev_mc_delete(netdev, FIP_ALL_VN2VN_MACS, ETH_ALEN, 0);
-		dev_mc_delete(netdev, FIP_ALL_P2P_MACS, ETH_ALEN, 0);
+		dev_mc_del(netdev, FIP_ALL_VN2VN_MACS);
+		dev_mc_del(netdev, FIP_ALL_P2P_MACS);
 	} else
-		dev_mc_delete(netdev, FIP_ALL_ENODE_MACS, ETH_ALEN, 0);
+		dev_mc_del(netdev, FIP_ALL_ENODE_MACS);
 
 	if (!is_zero_ether_addr(port->data_src_addr))
-		dev_unicast_delete(netdev, port->data_src_addr);
+		dev_uc_del(netdev, port->data_src_addr);
 
 	/* Tell the LLD we are done w/ FCoE */
 	ops = netdev->netdev_ops;
@@ -529,9 +526,9 @@ static void fcoe_update_src_mac(struct fc_lport *lport, u8 *addr)
 
 	rtnl_lock();
 	if (!is_zero_ether_addr(port->data_src_addr))
-		dev_unicast_delete(fcoe->netdev, port->data_src_addr);
+		dev_uc_del(fcoe->netdev, port->data_src_addr);
 	if (!is_zero_ether_addr(addr))
-		dev_unicast_add(fcoe->netdev, addr);
+		dev_uc_add(fcoe->netdev, addr);
 	memcpy(port->data_src_addr, addr, ETH_ALEN);
 	rtnl_unlock();
 }
@@ -656,7 +653,6 @@ static int fcoe_netdev_config(struct fc_lport *lport, struct net_device *netdev)
 	u64 wwnn, wwpn;
 	struct fcoe_interface *fcoe;
 	struct fcoe_port *port;
-	int vid = 0;
 
 	/* Setup lport private data to point to fcoe softc */
 	port = lport_priv(lport);
@@ -686,21 +682,12 @@ static int fcoe_netdev_config(struct fc_lport *lport, struct net_device *netdev)
 	fcoe_link_speed_update(lport);
 
 	if (!lport->vport) {
-		/*
-		 * Use NAA 1&2 (FC-FS Rev. 2.0, Sec. 15) to generate WWNN/WWPN:
-		 * For WWNN, we use NAA 1 w/ bit 27-16 of word 0 as 0.
-		 * For WWPN, we use NAA 2 w/ bit 27-16 of word 0 from VLAN ID.
-		 * If use_vlan_id is 0 the VLAN ID is not used.
-		 */
-		if (fcoe_use_vlan_id && netdev->priv_flags & IFF_802_1Q_VLAN)
-			vid = vlan_dev_vlan_id(netdev);
-
 		if (fcoe_get_wwn(netdev, &wwnn, NETDEV_FCOE_WWNN))
 			wwnn = fcoe_wwn_from_mac(fcoe->ctlr.ctl_src_addr, 1, 0);
 		fc_set_wwnn(lport, wwnn);
 		if (fcoe_get_wwn(netdev, &wwpn, NETDEV_FCOE_WWPN))
 			wwpn = fcoe_wwn_from_mac(fcoe->ctlr.ctl_src_addr,
-						 2, vid);
+						 2, 0);
 		fc_set_wwpn(lport, wwpn);
 	}
 
@@ -740,7 +727,7 @@ static int fcoe_shost_config(struct fc_lport *lport, struct device *dev)
 	}
 
 	if (!lport->vport)
-		fc_host_max_npiv_vports(lport->host) = (u16)(~0U);
+		fc_host_max_npiv_vports(lport->host) = USHRT_MAX;
 
 	snprintf(fc_host_symbolic_name(lport->host), FC_SYMBOLIC_NAME_SIZE,
 		 "%s v%s over %s", FCOE_NAME, FCOE_VERSION,
@@ -762,27 +749,12 @@ static int fcoe_shost_config(struct fc_lport *lport, struct device *dev)
  * The offload EM that this routine is associated with will handle any
  * packets that are for SCSI read requests.
  *
- * This has been enhanced to work when FCoE stack is operating in target
- * mode.
- *
  * Returns: True for read types I/O, otherwise returns false.
  */
 bool fcoe_oem_match(struct fc_frame *fp)
 {
-	struct fc_frame_header *fh = fc_frame_header_get(fp);
-	struct fcp_cmnd *fcp;
-
-	if (fc_fcp_is_read(fr_fsp(fp)) &&
-	    (fr_fsp(fp)->data_len > fcoe_ddp_min))
-		return true;
-	else if (!(ntoh24(fh->fh_f_ctl) & FC_FC_EX_CTX)) {
-		fcp = fc_frame_payload_get(fp, sizeof(*fcp));
-		if (ntohs(fh->fh_rx_id) == FC_XID_UNKNOWN &&
-		    fcp && (ntohl(fcp->fc_dl) > fcoe_ddp_min) &&
-		    (fcp->fc_flags & FCP_CFL_WRDATA))
-			return true;
-	}
-	return false;
+	return fc_fcp_is_read(fr_fsp(fp)) &&
+		(fr_fsp(fp)->data_len > fcoe_ddp_min);
 }
 
 /**
@@ -913,29 +885,6 @@ static int fcoe_ddp_setup(struct fc_lport *lport, u16 xid,
 
 	return 0;
 }
-
-/**
- * fcoe_ddp_target() - Call a LLD's ddp_target through the net device
- * @lport: The local port to setup DDP for
- * @xid:   The exchange ID for this DDP transfer
- * @sgl:   The scatterlist describing this transfer
- * @sgc:   The number of sg items
- *
- * Returns: 0 if the DDP context was not configured
- */
-static int fcoe_ddp_target(struct fc_lport *lport, u16 xid,
-			   struct scatterlist *sgl, unsigned int sgc)
-{
-#ifdef CONFIG_TCM_FC
-	struct net_device *netdev = fcoe_netdev(lport);
-
-	if (netdev->netdev_ops->ndo_fcoe_ddp_target)
-		return netdev->netdev_ops->ndo_fcoe_ddp_target(netdev, xid,
-							       sgl, sgc);
-#endif
-	return 0;
-}
-
 
 /**
  * fcoe_ddp_done() - Call a LLD's ddp_done through the net device
@@ -1257,36 +1206,6 @@ static int fcoe_cpu_callback(struct notifier_block *nfb,
 }
 
 /**
- * fcoe_select_cpu() - Selects CPU to handle post-processing of incoming
- *			command.
- * @curr_cpu:   CPU which received request
- *
- * This routine selects next CPU based on cpumask.
- *
- * Returns: int (CPU number). Caller to verify if returned CPU is online or not.
- */
-static unsigned int fcoe_select_cpu(unsigned int curr_cpu)
-{
-	static unsigned int selected_cpu;
-
-	if (num_online_cpus() == 1)
-		return curr_cpu;
-	/*
-	 * Doing following check, to skip "curr_cpu (smp_processor_id)"
-	 * from selection of CPU is intentional. This is to avoid same CPU
-	 * doing post-processing of command. "curr_cpu" to just receive
-	 * incoming request in case where rx_id is UNKNOWN and all other
-	 * CPU to actually process the command(s)
-	 */
-	do {
-		selected_cpu = cpumask_next(selected_cpu, cpu_online_mask);
-		if (selected_cpu >= nr_cpu_ids)
-			selected_cpu = cpumask_first(cpu_online_mask);
-	} while (selected_cpu == curr_cpu);
-	return selected_cpu;
-}
-
-/**
  * fcoe_rcv() - Receive packets from a net device
  * @skb:    The received packet
  * @netdev: The net device that the packet was received on
@@ -1362,20 +1281,9 @@ int fcoe_rcv(struct sk_buff *skb, struct net_device *netdev,
 	 */
 	if (ntoh24(fh->fh_f_ctl) & FC_FC_EX_CTX)
 		cpu = ntohs(fh->fh_ox_id) & fc_cpu_mask;
-	else {
+	else
 		cpu = smp_processor_id();
 
-		if ((fh->fh_type == FC_TYPE_FCP) &&
-		    (ntohs(fh->fh_rx_id) == FC_XID_UNKNOWN)) {
-			do {
-				cpu = fcoe_select_cpu(cpu);
-			} while (!cpu_online(cpu));
-		} else  if ((fh->fh_type == FC_TYPE_FCP) &&
-			    (ntohs(fh->fh_rx_id) != FC_XID_UNKNOWN)) {
-			cpu = ntohs(fh->fh_rx_id) & fc_cpu_mask;
-		} else
-			cpu = smp_processor_id();
-	}
 	fps = &per_cpu(fcoe_percpu, cpu);
 	spin_lock_bh(&fps->fcoe_rx_list.lock);
 	if (unlikely(!fps->thread)) {
@@ -1826,7 +1734,7 @@ static int fcoe_device_notification(struct notifier_block *notifier,
 		list_del(&fcoe->list);
 		port = lport_priv(fcoe->ctlr.lp);
 		fcoe_interface_cleanup(fcoe);
-		schedule_work(&port->destroy_work);
+		queue_work(fcoe_wq, &port->destroy_work);
 		goto out;
 		break;
 	case NETDEV_FEAT_CHANGE:
@@ -2243,6 +2151,10 @@ static int __init fcoe_init(void)
 	unsigned int cpu;
 	int rc = 0;
 
+	fcoe_wq = alloc_workqueue("fcoe", 0, 0);
+	if (!fcoe_wq)
+		return -ENOMEM;
+
 	/* register as a fcoe transport */
 	rc = fcoe_transport_attach(&fcoe_sw_transport);
 	if (rc) {
@@ -2281,6 +2193,7 @@ out_free:
 		fcoe_percpu_thread_destroy(cpu);
 	}
 	mutex_unlock(&fcoe_config_mutex);
+	destroy_workqueue(fcoe_wq);
 	return rc;
 }
 module_init(fcoe_init);
@@ -2306,7 +2219,7 @@ static void __exit fcoe_exit(void)
 		list_del(&fcoe->list);
 		port = lport_priv(fcoe->ctlr.lp);
 		fcoe_interface_cleanup(fcoe);
-		schedule_work(&port->destroy_work);
+		queue_work(fcoe_wq, &port->destroy_work);
 	}
 	rtnl_unlock();
 
@@ -2317,15 +2230,17 @@ static void __exit fcoe_exit(void)
 
 	mutex_unlock(&fcoe_config_mutex);
 
-	/* flush any asyncronous interface destroys,
-	 * this should happen after the netdev notifier is unregistered */
-	flush_scheduled_work();
-	/* That will flush out all the N_Ports on the hostlist, but now we
-	 * may have NPIV VN_Ports scheduled for destruction */
-	flush_scheduled_work();
+	/*
+	 * destroy_work's may be chained but destroy_workqueue()
+	 * can take care of them. Just kill the fcoe_wq.
+	 */
+	destroy_workqueue(fcoe_wq);
 
-	/* detach from scsi transport
-	 * must happen after all destroys are done, therefor after the flush */
+	/*
+	 * Detaching from the scsi transport must happen after all
+	 * destroys are done on the fcoe_wq. destroy_workqueue will
+	 * enusre the fcoe_wq is flushed.
+	 */
 	fcoe_if_exit();
 
 	/* detach from fcoe transport */
@@ -2485,7 +2400,7 @@ static int fcoe_vport_destroy(struct fc_vport *vport)
 	mutex_lock(&n_port->lp_mutex);
 	list_del(&vn_port->list);
 	mutex_unlock(&n_port->lp_mutex);
-	schedule_work(&port->destroy_work);
+	queue_work(fcoe_wq, &port->destroy_work);
 	return 0;
 }
 
@@ -2553,6 +2468,7 @@ static void fcoe_get_lesb(struct fc_lport *lport,
 	u32 lfc, vlfc, mdac;
 	struct fcoe_dev_stats *devst;
 	struct fcoe_fc_els_lesb *lesb;
+	struct rtnl_link_stats64 temp;
 	struct net_device *netdev = fcoe_netdev(lport);
 
 	lfc = 0;
@@ -2569,7 +2485,7 @@ static void fcoe_get_lesb(struct fc_lport *lport,
 	lesb->lesb_link_fail = htonl(lfc);
 	lesb->lesb_vlink_fail = htonl(vlfc);
 	lesb->lesb_miss_fka = htonl(mdac);
-	lesb->lesb_fcs_error = htonl(dev_get_stats(netdev)->rx_crc_errors);
+	lesb->lesb_fcs_error = htonl(dev_get_stats(netdev, &temp)->rx_crc_errors);
 }
 
 /**

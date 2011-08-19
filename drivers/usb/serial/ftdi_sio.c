@@ -17,7 +17,7 @@
  * See Documentation/usb/usb-serial.txt for more information on using this
  * driver
  *
- * See http://ftdi-usb-sio.sourceforge.net for upto date testing info
+ * See http://ftdi-usb-sio.sourceforge.net for up to date testing info
  *	and extra documentation
  *
  * Change entries from 2004 and earlier can be found in versions of this
@@ -45,7 +45,6 @@
 #include <linux/usb.h>
 #include <linux/serial.h>
 #include <linux/usb/serial.h>
-#include <linux/kfifo.h>
 #include "ftdi_sio.h"
 #include "ftdi_sio_ids.h"
 
@@ -1885,7 +1884,7 @@ static int ftdi_prepare_write_buffer(struct usb_serial_port *port,
 		spin_lock_irqsave(&port->lock, flags);
 		for (i = 0; i < size - 1; i += priv->max_packet_size) {
 			len = min_t(int, size - i, priv->max_packet_size) - 1;
-			c = kfifo_out(port->write_fifo, &buffer[i + 1], len);
+			c = kfifo_out(&port->write_fifo, &buffer[i + 1], len);
 			if (!c)
 				break;
 			buffer[i] = (c << 2) + 1;
@@ -1893,7 +1892,7 @@ static int ftdi_prepare_write_buffer(struct usb_serial_port *port,
 		}
 		spin_unlock_irqrestore(&port->lock, flags);
 	} else {
-		count = kfifo_out_locked(port->write_fifo, dest, size,
+		count = kfifo_out_locked(&port->write_fifo, dest, size,
 								&port->lock);
 	}
 
@@ -1958,7 +1957,7 @@ static int ftdi_process_packet(struct tty_struct *tty,
 
 	if (port->port.console && port->sysrq) {
 		for (i = 0; i < len; i++, ch++) {
-			if (!usb_serial_handle_sysrq_char(tty, port, *ch))
+			if (!usb_serial_handle_sysrq_char(port, *ch))
 				tty_insert_flip_char(tty, *ch, flag);
 		}
 	} else {
@@ -2144,8 +2143,6 @@ static void ftdi_set_termios(struct tty_struct *tty,
 				"urb failed to set to rts/cts flow control\n");
 		}
 
-		/* raise DTR/RTS */
-		set_mctrl(port, TIOCM_DTR | TIOCM_RTS);
 	} else {
 		/*
 		 * Xon/Xoff code
@@ -2193,8 +2190,6 @@ static void ftdi_set_termios(struct tty_struct *tty,
 			}
 		}
 
-		/* lower DTR/RTS */
-		clear_mctrl(port, TIOCM_DTR | TIOCM_RTS);
 	}
 }
 

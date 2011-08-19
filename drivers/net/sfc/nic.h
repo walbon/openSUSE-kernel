@@ -152,9 +152,9 @@ struct siena_nic_data {
 	int wol_filter_id;
 };
 
-extern struct efx_nic_type falcon_a1_nic_type;
-extern struct efx_nic_type falcon_b0_nic_type;
-extern struct efx_nic_type siena_a0_nic_type;
+extern const struct efx_nic_type falcon_a1_nic_type;
+extern const struct efx_nic_type falcon_b0_nic_type;
+extern const struct efx_nic_type siena_a0_nic_type;
 
 /**************************************************************************
  *
@@ -213,6 +213,7 @@ extern void falcon_stop_nic_stats(struct efx_nic *efx);
 extern void falcon_setup_xaui(struct efx_nic *efx);
 extern int falcon_reset_xaui(struct efx_nic *efx);
 extern void efx_nic_init_common(struct efx_nic *efx);
+extern void efx_nic_push_rx_indir_table(struct efx_nic *efx);
 
 int efx_nic_alloc_buffer(struct efx_nic *efx, struct efx_buffer *buffer,
 			 unsigned int len);

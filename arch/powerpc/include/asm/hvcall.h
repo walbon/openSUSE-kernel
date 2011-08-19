@@ -74,6 +74,7 @@
 #define H_NOT_ENOUGH_RESOURCES -44
 #define H_R_STATE       -45
 #define H_RESCINDEND    -46
+#define H_MULTI_THREADS_ACTIVE -9005
 
 
 /* Long Busy is a condition that can be returned by the firmware
@@ -122,7 +123,7 @@
 #define H_DABRX_KERNEL		(1UL<<(63-62))
 #define H_DABRX_USER		(1UL<<(63-63))
 
-/* Each control block has to be on a 4K bondary */
+/* Each control block has to be on a 4K boundary */
 #define H_CB_ALIGNMENT          4096
 
 /* pSeries hypervisor opcodes */
@@ -213,6 +214,19 @@
 #define H_QUERY_INT_STATE       0x1E4
 #define H_POLL_PENDING		0x1D8
 #define H_ILLAN_ATTRIBUTES	0x244
+#define H_MODIFY_HEA_QP		0x250
+#define H_QUERY_HEA_QP		0x254
+#define H_QUERY_HEA		0x258
+#define H_QUERY_HEA_PORT	0x25C
+#define H_MODIFY_HEA_PORT	0x260
+#define H_REG_BCMC		0x264
+#define H_DEREG_BCMC		0x268
+#define H_REGISTER_HEA_RPAGES	0x26C
+#define H_DISABLE_AND_GET_HEA	0x270
+#define H_GET_HEA_INFO		0x274
+#define H_ALLOC_HEA_RESOURCE	0x278
+#define H_ADD_CONN		0x284
+#define H_DEL_CONN		0x288
 #define H_JOIN			0x298
 #define H_VASI_STATE            0x2A4
 #define H_ENABLE_CRQ		0x2B0
@@ -220,8 +234,9 @@
 #define H_SET_MPP		0x2D0
 #define H_GET_MPP		0x2D4
 #define H_HOME_NODE_ASSOCIATIVITY 0x2EC
-#define H_GET_MPP_X            0x314
-#define MAX_HCALL_OPCODE       H_GET_MPP_X
+#define H_BEST_ENERGY		0x2F4
+#define H_GET_MPP_X		0x314
+#define MAX_HCALL_OPCODE	H_GET_MPP_X
 
 #ifndef __ASSEMBLY__
 

@@ -12,6 +12,7 @@
 #define EFX_EFX_H
 
 #include "net_driver.h"
+#include "filter.h"
 
 /* PCI IDs */
 #define EFX_VENDID_SFC	        0x1924
@@ -36,6 +37,7 @@ efx_hard_start_xmit(struct sk_buff *skb, struct net_device *net_dev);
 extern netdev_tx_t
 efx_enqueue_skb(struct efx_tx_queue *tx_queue, struct sk_buff *skb);
 extern void efx_xmit_done(struct efx_tx_queue *tx_queue, unsigned int index);
+extern int efx_setup_tc(struct net_device *net_dev, u8 num_tc);
 
 /* RX */
 extern int efx_probe_rx_queue(struct efx_rx_queue *rx_queue);
@@ -63,6 +65,33 @@ extern void efx_schedule_slow_fill(struct efx_rx_queue *rx_queue);
  * skb. Falcon/A1 may require up to three descriptors per skb_frag. */
 #define EFX_MIN_RING_SIZE (roundup_pow_of_two(2 * 3 * MAX_SKB_FRAGS))
 
+/* Filters */
+extern int efx_probe_filters(struct efx_nic *efx);
+extern void efx_restore_filters(struct efx_nic *efx);
+extern void efx_remove_filters(struct efx_nic *efx);
+extern int efx_filter_insert_filter(struct efx_nic *efx,
+				    struct efx_filter_spec *spec,
+				    bool replace);
+extern int efx_filter_remove_filter(struct efx_nic *efx,
+				    struct efx_filter_spec *spec);
+extern void efx_filter_clear_rx(struct efx_nic *efx,
+				enum efx_filter_priority priority);
+#ifdef CONFIG_RFS_ACCEL
+extern int efx_filter_rfs(struct net_device *net_dev, const struct sk_buff *skb,
+			  u16 rxq_index, u32 flow_id);
+extern bool __efx_filter_rfs_expire(struct efx_nic *efx, unsigned quota);
+static inline void efx_filter_rfs_expire(struct efx_channel *channel)
+{
+	if (channel->rfs_filters_added >= 60 &&
+	    __efx_filter_rfs_expire(channel->efx, 100))
+		channel->rfs_filters_added -= 60;
+}
+#define efx_filter_rfs_enabled() 1
+#else
+static inline void efx_filter_rfs_expire(struct efx_channel *channel) {}
+#define efx_filter_rfs_enabled() 0
+#endif
+
 /* Channels */
 extern void efx_process_channel_now(struct efx_channel *channel);
 extern int
@@ -73,10 +102,6 @@ extern int efx_reconfigure_port(struct efx_nic *efx);
 extern int __efx_reconfigure_port(struct efx_nic *efx);
 
 /* Ethtool support */
-extern int efx_ethtool_get_settings(struct net_device *net_dev,
-				    struct ethtool_cmd *ecmd);
-extern int efx_ethtool_set_settings(struct net_device *net_dev,
-				    struct ethtool_cmd *ecmd);
 extern const struct ethtool_ops efx_ethtool_ops;
 
 /* Reset handling */
@@ -92,9 +117,7 @@ extern void efx_init_irq_moderation(struct efx_nic *efx, int tx_usecs,
 /* Dummy PHY ops for PHY drivers */
 extern int efx_port_dummy_op_int(struct efx_nic *efx);
 extern void efx_port_dummy_op_void(struct efx_nic *efx);
-extern void
-efx_port_dummy_op_set_id_led(struct efx_nic *efx, enum efx_led_mode mode);
-extern bool efx_port_dummy_op_poll(struct efx_nic *efx);
+
 
 /* MTD */
 #ifdef CONFIG_SFC_MTD
@@ -106,8 +129,6 @@ static inline int efx_mtd_probe(struct efx_nic *efx) { return 0; }
 static inline void efx_mtd_rename(struct efx_nic *efx) {}
 static inline void efx_mtd_remove(struct efx_nic *efx) {}
 #endif
-
-extern unsigned int efx_monitor_interval;
 
 static inline void efx_schedule_channel(struct efx_channel *channel)
 {
@@ -121,6 +142,6 @@ static inline void efx_schedule_channel(struct efx_channel *channel)
 
 extern void efx_link_status_changed(struct efx_nic *efx);
 extern void efx_link_set_advertising(struct efx_nic *efx, u32);
-extern void efx_link_set_wanted_fc(struct efx_nic *efx, enum efx_fc_type);
+extern void efx_link_set_wanted_fc(struct efx_nic *efx, u8);
 
 #endif /* EFX_EFX_H */

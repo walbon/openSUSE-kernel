@@ -33,7 +33,7 @@
 
 #include "be_hw.h"
 
-#define DRV_VER			"4.0.244s"
+#define DRV_VER			"4.0.100u"
 #define DRV_NAME		"be2net"
 #define BE_NAME			"ServerEngines BladeEngine2 10Gbps NIC"
 #define BE3_NAME		"ServerEngines BladeEngine3 10Gbps NIC"
@@ -94,11 +94,6 @@ static inline char *nic_name(struct pci_dev *pdev)
 #define RX_FRAGS_REFILL_WM	(RX_Q_LEN - MAX_RX_POST)
 
 #define FW_VER_LEN		32
-
-#ifndef VLAN_PRIO_MASK
-#define VLAN_PRIO_MASK		0xe000	/* Priority Code Point */
-#define VLAN_PRIO_SHIFT		13
-#endif
 
 struct be_dma_mem {
 	void *va;
@@ -195,7 +190,7 @@ struct be_tx_obj {
 /* Struct to remember the pages posted for rx frags */
 struct be_rx_page_info {
 	struct page *page;
-	dma_addr_t bus;
+	DEFINE_DMA_UNMAP_ADDR(bus);
 	u16 page_offset;
 	bool last_page_user;
 };
@@ -341,7 +336,7 @@ struct be_adapter {
 	struct vlan_group *vlan_grp;
 	u16 vlans_added;
 	u16 max_vlans;	/* Number of vlans supported */
-	u8 vlan_tag[VLAN_GROUP_ARRAY_LEN];
+	u8 vlan_tag[VLAN_N_VID];
 	u8 vlan_prio_bmap;	/* Available Priority BitMap */
 	u16 recommended_prio;	/* Recommended Priority */
 	struct be_dma_mem mc_cmd_mem;

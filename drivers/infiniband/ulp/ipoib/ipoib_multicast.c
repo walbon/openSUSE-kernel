@@ -40,6 +40,7 @@
 #include <linux/inetdevice.h>
 #include <linux/delay.h>
 #include <linux/completion.h>
+#include <linux/slab.h>
 
 #include <net/dst.h>
 
@@ -67,14 +68,28 @@ struct ipoib_mcast_iter {
 static void ipoib_mcast_free(struct ipoib_mcast *mcast)
 {
 	struct net_device *dev = mcast->dev;
+	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	struct ipoib_neigh *neigh, *tmp;
 	int tx_dropped = 0;
 
 	ipoib_dbg_mcast(netdev_priv(dev), "deleting multicast group %pI6\n",
 			mcast->mcmember.mgid.raw);
 
-	list_for_each_entry_safe(neigh, tmp, &mcast->neigh_list, list)
-		ipoib_neigh_flush(neigh);
+	spin_lock_irq(&priv->lock);
+
+	list_for_each_entry_safe(neigh, tmp, &mcast->neigh_list, list) {
+		/*
+		 * It's safe to call ipoib_put_ah() inside priv->lock
+		 * here, because we know that mcast->ah will always
+		 * hold one more reference, so ipoib_put_ah() will
+		 * never do more than decrement the ref count.
+		 */
+		if (neigh->ah)
+			ipoib_put_ah(neigh->ah);
+		ipoib_neigh_free(dev, neigh);
+	}
+
+	spin_unlock_irq(&priv->lock);
 
 	if (mcast->ah)
 		ipoib_put_ah(mcast->ah);
@@ -640,8 +655,7 @@ static int ipoib_mcast_leave(struct net_device *dev, struct ipoib_mcast *mcast)
 	return 0;
 }
 
-void ipoib_mcast_send(struct net_device *dev, void *mgid, struct sk_buff *skb,
-		      struct ipoib_neigh *neigh)
+void ipoib_mcast_send(struct net_device *dev, void *mgid, struct sk_buff *skb)
 {
 	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	struct ipoib_mcast *mcast;
@@ -651,8 +665,11 @@ void ipoib_mcast_send(struct net_device *dev, void *mgid, struct sk_buff *skb,
 
 	if (!test_bit(IPOIB_FLAG_OPER_UP, &priv->flags)		||
 	    !priv->broadcast					||
-	    !test_bit(IPOIB_MCAST_FLAG_ATTACHED, &priv->broadcast->flags))
-		goto drop;
+	    !test_bit(IPOIB_MCAST_FLAG_ATTACHED, &priv->broadcast->flags)) {
+		++dev->stats.tx_dropped;
+		dev_kfree_skb_any(skb);
+		goto unlock;
+	}
 
 	mcast = __ipoib_mcast_find(dev, mgid);
 	if (!mcast) {
@@ -664,7 +681,9 @@ void ipoib_mcast_send(struct net_device *dev, void *mgid, struct sk_buff *skb,
 		if (!mcast) {
 			ipoib_warn(priv, "unable to allocate memory for "
 				   "multicast structure\n");
-			goto drop;
+			++dev->stats.tx_dropped;
+			dev_kfree_skb_any(skb);
+			goto out;
 		}
 
 		set_bit(IPOIB_MCAST_FLAG_SENDONLY, &mcast->flags);
@@ -674,20 +693,39 @@ void ipoib_mcast_send(struct net_device *dev, void *mgid, struct sk_buff *skb,
 	}
 
 	if (!mcast->ah) {
-		if (skb_queue_len(&mcast->pkt_queue) >= IPOIB_MAX_MCAST_QUEUE)
-			goto drop;
-		skb_queue_tail(&mcast->pkt_queue, skb);
+		if (skb_queue_len(&mcast->pkt_queue) < IPOIB_MAX_MCAST_QUEUE)
+			skb_queue_tail(&mcast->pkt_queue, skb);
+		else {
+			++dev->stats.tx_dropped;
+			dev_kfree_skb_any(skb);
+		}
+
 		if (test_bit(IPOIB_MCAST_FLAG_BUSY, &mcast->flags))
 			ipoib_dbg_mcast(priv, "no address vector, "
 					"but multicast join already started\n");
 		else if (test_bit(IPOIB_MCAST_FLAG_SENDONLY, &mcast->flags))
 			ipoib_mcast_sendonly_join(mcast);
-	} else {
-		if (neigh && list_empty(&neigh->list)) {
-			kref_get(&mcast->ah->ref);
-			neigh->ah = mcast->ah;
-			memcpy(neigh->dgid.raw, mgid, sizeof(union ib_gid));
-			list_add_tail(&neigh->list, &mcast->neigh_list);
+
+		/*
+		 * If lookup completes between here and out:, don't
+		 * want to send packet twice.
+		 */
+		mcast = NULL;
+	}
+
+out:
+	if (mcast && mcast->ah) {
+		if (skb_dst(skb)		&&
+		    skb_dst(skb)->neighbour &&
+		    !*to_ipoib_neigh(skb_dst(skb)->neighbour)) {
+			struct ipoib_neigh *neigh = ipoib_neigh_alloc(skb_dst(skb)->neighbour,
+									skb->dev);
+
+			if (neigh) {
+				kref_get(&mcast->ah->ref);
+				neigh->ah	= mcast->ah;
+				list_add_tail(&neigh->list, &mcast->neigh_list);
+			}
 		}
 
 		spin_unlock_irqrestore(&priv->lock, flags);
@@ -695,13 +733,8 @@ void ipoib_mcast_send(struct net_device *dev, void *mgid, struct sk_buff *skb,
 		return;
 	}
 
+unlock:
 	spin_unlock_irqrestore(&priv->lock, flags);
-	return;
-
-drop:
-	spin_unlock_irqrestore(&priv->lock, flags);
-	++dev->stats.tx_dropped;
-	dev_kfree_skb_any(skb);
 }
 
 void ipoib_mcast_dev_flush(struct net_device *dev)
@@ -735,11 +768,8 @@ void ipoib_mcast_dev_flush(struct net_device *dev)
 	}
 }
 
-static int ipoib_mcast_addr_is_valid(const u8 *addr, unsigned int addrlen,
-				     const u8 *broadcast)
+static int ipoib_mcast_addr_is_valid(const u8 *addr, const u8 *broadcast)
 {
-	if (addrlen != INFINIBAND_ALEN)
-		return 0;
 	/* reserved QPN, prefix, scope */
 	if (memcmp(addr, broadcast, 6))
 		return 0;
@@ -754,7 +784,7 @@ void ipoib_mcast_restart_task(struct work_struct *work)
 	struct ipoib_dev_priv *priv =
 		container_of(work, struct ipoib_dev_priv, restart_task);
 	struct net_device *dev = priv->dev;
-	struct dev_mc_list *mclist;
+	struct netdev_hw_addr *ha;
 	struct ipoib_mcast *mcast, *tmcast;
 	LIST_HEAD(remove_list);
 	unsigned long flags;
@@ -779,15 +809,13 @@ void ipoib_mcast_restart_task(struct work_struct *work)
 		clear_bit(IPOIB_MCAST_FLAG_FOUND, &mcast->flags);
 
 	/* Mark all of the entries that are found or don't exist */
-	for (mclist = dev->mc_list; mclist; mclist = mclist->next) {
+	netdev_for_each_mc_addr(ha, dev) {
 		union ib_gid mgid;
 
-		if (!ipoib_mcast_addr_is_valid(mclist->dmi_addr,
-					       mclist->dmi_addrlen,
-					       dev->broadcast))
+		if (!ipoib_mcast_addr_is_valid(ha->addr, dev->broadcast))
 			continue;
 
-		memcpy(mgid.raw, mclist->dmi_addr + 4, sizeof mgid);
+		memcpy(mgid.raw, ha->addr + 4, sizeof mgid);
 
 		mcast = __ipoib_mcast_find(dev, &mgid);
 		if (!mcast || test_bit(IPOIB_MCAST_FLAG_SENDONLY, &mcast->flags)) {

@@ -155,7 +155,6 @@ extern unsigned int vdso_enabled;
 	} while (0)
 
 #define CORE_DUMP_USE_REGSET
-#define USE_ELF_CORE_DUMP
 #define ELF_EXEC_PAGESIZE	4096
 
 /* This is the location that an ET_DYN program is loaded if exec'ed.  Typical
@@ -196,18 +195,6 @@ do {								\
 		clear_thread_flag(TIF_31BIT);			\
 } while (0)
 #endif /* __s390x__ */
-
-/*
- * An executable for which elf_read_implies_exec() returns TRUE will
- * have the READ_IMPLIES_EXEC personality flag set automatically.
- */
-#define elf_read_implies_exec(ex, executable_stack)	\
-({							\
-	if (current->mm->context.noexec &&		\
-	    executable_stack != EXSTACK_DISABLE_X)	\
-		disable_noexec(current->mm, current);	\
-	current->mm->context.noexec == 0;		\
-})
 
 #define STACK_RND_MASK	0x7ffUL
 

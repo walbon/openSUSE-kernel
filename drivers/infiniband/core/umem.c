@@ -37,6 +37,7 @@
 #include <linux/sched.h>
 #include <linux/hugetlb.h>
 #include <linux/dma-attrs.h>
+#include <linux/slab.h>
 
 #include "uverbs.h"
 
@@ -261,7 +262,7 @@ void ib_umem_release(struct ib_umem *umem)
 			umem->mm   = mm;
 			umem->diff = diff;
 
-			schedule_work(&umem->work);
+			queue_work(ib_wq, &umem->work);
 			return;
 		}
 	} else

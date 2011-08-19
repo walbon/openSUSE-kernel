@@ -15,11 +15,11 @@
 #include <linux/kallsyms.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/notifier.h>
 #include <linux/personality.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/stddef.h>
 #include <linux/thread_info.h>
 #include <linux/unistd.h>
@@ -29,12 +29,10 @@
 #include <linux/kdebug.h>
 #include <linux/utsname.h>
 #include <linux/tracehook.h>
-#include <linux/perfmon_kern.h>
 
 #include <asm/cpu.h>
 #include <asm/delay.h>
 #include <asm/elf.h>
-#include <asm/ia32.h>
 #include <asm/irq.h>
 #include <asm/kexec.h>
 #include <asm/pgalloc.h>
@@ -47,16 +45,20 @@
 
 #include "entry.h"
 
+#ifdef CONFIG_PERFMON
+# include <asm/perfmon.h>
+#endif
+
 #include "sigframe.h"
 
 void (*ia64_mark_idle)(int);
 
-unsigned long boot_option_idle_override = 0;
+unsigned long boot_option_idle_override = IDLE_NO_OVERRIDE;
 EXPORT_SYMBOL(boot_option_idle_override);
-unsigned long idle_halt;
-EXPORT_SYMBOL(idle_halt);
-unsigned long idle_nomwait;
-EXPORT_SYMBOL(idle_nomwait);
+void (*pm_idle) (void);
+EXPORT_SYMBOL(pm_idle);
+void (*pm_power_off) (void);
+EXPORT_SYMBOL(pm_power_off);
 
 void
 ia64_do_show_stack (struct unw_frame_info *info, void *arg)
@@ -165,10 +167,6 @@ console_print(const char *s)
 	printk(KERN_EMERG "%s", s);
 }
 
-/*
- * do_notify_resume_user():
- *	Called from notify_resume_user at entry.S, with interrupts disabled.
- */
 void
 do_notify_resume_user(sigset_t *unused, struct sigscratch *scr, long in_syscall)
 {
@@ -182,9 +180,14 @@ do_notify_resume_user(sigset_t *unused, struct sigscratch *scr, long in_syscall)
 		return;
 	}
 
-	/* process perfmon asynchronous work (e.g. block thread or reset) */
-	if (test_thread_flag(TIF_PERFMON_WORK))
-		pfm_handle_work(task_pt_regs(current));
+#ifdef CONFIG_PERFMON
+	if (current->thread.pfm_needs_checking)
+		/*
+		 * Note: pfm_handle_work() allow us to call it with interrupts
+		 * disabled, and may enable interrupts within the function.
+		 */
+		pfm_handle_work();
+#endif
 
 	/* deal with pending signal delivery */
 	if (test_thread_flag(TIF_SIGPENDING)) {
@@ -208,14 +211,21 @@ do_notify_resume_user(sigset_t *unused, struct sigscratch *scr, long in_syscall)
 	local_irq_disable();	/* force interrupt disable */
 }
 
+static int pal_halt        = 1;
 static int can_do_pal_halt = 1;
 
 static int __init nohalt_setup(char * str)
 {
-	can_do_pal_halt = 0;
+	pal_halt = can_do_pal_halt = 0;
 	return 1;
 }
 __setup("nohalt", nohalt_setup);
+
+void
+update_pal_halt_status(int status)
+{
+	can_do_pal_halt = pal_halt && status;
+}
 
 /*
  * We use this if we don't have any better idle routine..
@@ -225,22 +235,6 @@ default_idle (void)
 {
 	local_irq_enable();
 	while (!need_resched()) {
-#ifdef CONFIG_PERFMON
-		u64 psr = 0;
-		/*
-		 * If requested, we stop the PMU to avoid
-		 * measuring across the core idle loop.
-		 *
-		 * dcr.pp is not modified on purpose
-		 * it is used when coming out of
-		 * safe_halt() via interrupt
-		 */
-		if ((__get_cpu_var(pfm_syst_info) & PFM_ITA_CPUINFO_IDLE_EXCL)) {
-			psr = ia64_getreg(_IA64_REG_PSR);
-			if (psr & IA64_PSR_PP)
-				ia64_rsm(IA64_PSR_PP);
-		}
-#endif
 		if (can_do_pal_halt) {
 			local_irq_disable();
 			if (!need_resched()) {
@@ -249,12 +243,6 @@ default_idle (void)
 			local_irq_enable();
 		} else
 			cpu_relax();
-#ifdef CONFIG_PERFMON
-		if ((__get_cpu_var(pfm_syst_info) & PFM_ITA_CPUINFO_IDLE_EXCL)) {
-			if (psr & IA64_PSR_PP)
-				ia64_ssm(IA64_PSR_PP);
-		}
-#endif
 	}
 }
 
@@ -354,24 +342,40 @@ cpu_idle (void)
 void
 ia64_save_extra (struct task_struct *task)
 {
+#ifdef CONFIG_PERFMON
+	unsigned long info;
+#endif
+
 	if ((task->thread.flags & IA64_THREAD_DBG_VALID) != 0)
 		ia64_save_debug_regs(&task->thread.dbr[0]);
 
-#ifdef CONFIG_IA32_SUPPORT
-	if (IS_IA32_PROCESS(task_pt_regs(task)))
-		ia32_save_state(task);
+#ifdef CONFIG_PERFMON
+	if ((task->thread.flags & IA64_THREAD_PM_VALID) != 0)
+		pfm_save_regs(task);
+
+	info = __get_cpu_var(pfm_syst_info);
+	if (info & PFM_CPUINFO_SYST_WIDE)
+		pfm_syst_wide_update_task(task, info, 0);
 #endif
 }
 
 void
 ia64_load_extra (struct task_struct *task)
 {
+#ifdef CONFIG_PERFMON
+	unsigned long info;
+#endif
+
 	if ((task->thread.flags & IA64_THREAD_DBG_VALID) != 0)
 		ia64_load_debug_regs(&task->thread.dbr[0]);
 
-#ifdef CONFIG_IA32_SUPPORT
-	if (IS_IA32_PROCESS(task_pt_regs(task)))
-		ia32_load_state(task);
+#ifdef CONFIG_PERFMON
+	if ((task->thread.flags & IA64_THREAD_PM_VALID) != 0)
+		pfm_load_regs(task);
+
+	info = __get_cpu_var(pfm_syst_info);
+	if (info & PFM_CPUINFO_SYST_WIDE) 
+		pfm_syst_wide_update_task(task, info, 1);
 #endif
 }
 
@@ -411,7 +415,7 @@ copy_thread(unsigned long clone_flags,
 	     unsigned long user_stack_base, unsigned long user_stack_size,
 	     struct task_struct *p, struct pt_regs *regs)
 {
-	extern char ia64_ret_from_clone, ia32_ret_from_clone;
+	extern char ia64_ret_from_clone;
 	struct switch_stack *child_stack, *stack;
 	unsigned long rbs, child_rbs, rbs_size;
 	struct pt_regs *child_ptregs;
@@ -442,7 +446,7 @@ copy_thread(unsigned long clone_flags,
 	memcpy((void *) child_rbs, (void *) rbs, rbs_size);
 
 	if (likely(user_mode(child_ptregs))) {
-		if ((clone_flags & CLONE_SETTLS) && !IS_IA32_PROCESS(regs))
+		if (clone_flags & CLONE_SETTLS)
 			child_ptregs->r13 = regs->r16;	/* see sys_clone2() in entry.S */
 		if (user_stack_base) {
 			child_ptregs->r12 = user_stack_base + user_stack_size - 16;
@@ -462,10 +466,7 @@ copy_thread(unsigned long clone_flags,
 		child_ptregs->r13 = (unsigned long) p;		/* set `current' pointer */
 	}
 	child_stack->ar_bspstore = child_rbs + rbs_size;
-	if (IS_IA32_PROCESS(regs))
-		child_stack->b0 = (unsigned long) &ia32_ret_from_clone;
-	else
-		child_stack->b0 = (unsigned long) &ia64_ret_from_clone;
+	child_stack->b0 = (unsigned long) &ia64_ret_from_clone;
 
 	/* copy parts of thread_struct: */
 	p->thread.ksp = (unsigned long) child_stack - 16;
@@ -494,30 +495,17 @@ copy_thread(unsigned long clone_flags,
 	 * call behavior where scratch registers are preserved across
 	 * system calls (unless used by the system call itself).
 	 */
-#	define THREAD_FLAGS_TO_CLEAR	(IA64_THREAD_FPH_VALID | IA64_THREAD_DBG_VALID)
+#	define THREAD_FLAGS_TO_CLEAR	(IA64_THREAD_FPH_VALID | IA64_THREAD_DBG_VALID \
+					 | IA64_THREAD_PM_VALID)
 #	define THREAD_FLAGS_TO_SET	0
 	p->thread.flags = ((current->thread.flags & ~THREAD_FLAGS_TO_CLEAR)
 			   | THREAD_FLAGS_TO_SET);
 	ia64_drop_fpu(p);	/* don't pick up stale state from a CPU's fph */
-#ifdef CONFIG_IA32_SUPPORT
-	/*
-	 * If we're cloning an IA32 task then save the IA32 extra
-	 * state from the current task to the new task
-	 */
-	if (IS_IA32_PROCESS(task_pt_regs(current))) {
-		ia32_save_state(p);
-		if (clone_flags & CLONE_SETTLS)
-			retval = ia32_clone_tls(p, child_ptregs);
 
-		/* Copy partially mapped page list */
-		if (!retval)
-			retval = ia32_copy_ia64_partial_page_list(p,
-								clone_flags);
-	}
+#ifdef CONFIG_PERFMON
+	if (current->thread.pfm_context)
+		pfm_inherit(p, child_ptregs);
 #endif
-
-	pfm_copy_thread(p);
-
 	return retval;
 }
 
@@ -641,7 +629,9 @@ dump_fpu (struct pt_regs *pt, elf_fpregset_t dst)
 }
 
 long
-sys_execve (char __user *filename, char __user * __user *argv, char __user * __user *envp,
+sys_execve (const char __user *filename,
+	    const char __user *const __user *argv,
+	    const char __user *const __user *envp,
 	    struct pt_regs *regs)
 {
 	char *fname;
@@ -686,15 +676,6 @@ EXPORT_SYMBOL(kernel_thread);
 int
 kernel_thread_helper (int (*fn)(void *), void *arg)
 {
-#ifdef CONFIG_IA32_SUPPORT
-	if (IS_IA32_PROCESS(task_pt_regs(current))) {
-		/* A kernel thread is always a 64-bit process. */
-		current->thread.map_base  = DEFAULT_MAP_BASE;
-		current->thread.task_size = DEFAULT_TASK_SIZE;
-		ia64_set_kr(IA64_KR_IO_BASE, current->thread.old_iob);
-		ia64_set_kr(IA64_KR_TSSD, current->thread.old_k1);
-	}
-#endif
 	return (*fn)(arg);
 }
 
@@ -707,14 +688,6 @@ flush_thread (void)
 	/* drop floating-point and debug-register state if it exists: */
 	current->thread.flags &= ~(IA64_THREAD_FPH_VALID | IA64_THREAD_DBG_VALID);
 	ia64_drop_fpu(current);
-#ifdef CONFIG_IA32_SUPPORT
-	if (IS_IA32_PROCESS(task_pt_regs(current))) {
-		ia32_drop_ia64_partial_page_list(current);
-		current->thread.task_size = IA32_PAGE_OFFSET;
-		set_fs(USER_DS);
-		memset(current->thread.tls_array, 0, sizeof(current->thread.tls_array));
-	}
-#endif
 }
 
 /*
@@ -726,15 +699,15 @@ exit_thread (void)
 {
 
 	ia64_drop_fpu(current);
-
-	/* if needed, stop monitoring and flush state to perfmon context */
-	pfm_exit_thread();
+#ifdef CONFIG_PERFMON
+       /* if needed, stop monitoring and flush state to perfmon context */
+	if (current->thread.pfm_context)
+		pfm_exit_thread(current);
 
 	/* free debug register resources */
-	pfm_release_dbregs(current);
-
-	if (IS_IA32_PROCESS(task_pt_regs(current)))
-		ia32_drop_ia64_partial_page_list(current);
+	if (current->thread.flags & IA64_THREAD_DBG_VALID)
+		pfm_release_debug_registers(current);
+#endif
 }
 
 unsigned long

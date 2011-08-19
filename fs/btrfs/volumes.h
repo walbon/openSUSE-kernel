@@ -53,7 +53,7 @@ struct btrfs_device {
 
 	struct block_device *bdev;
 
-	/* the mode sent to open_bdev_exclusive */
+	/* the mode sent to blkdev_get */
 	fmode_t mode;
 
 	char *name;
@@ -202,8 +202,6 @@ int btrfs_add_device(struct btrfs_trans_handle *trans,
 int btrfs_rm_device(struct btrfs_root *root, char *device_path);
 int btrfs_cleanup_fs_uuids(void);
 int btrfs_num_copies(struct btrfs_mapping_tree *map_tree, u64 logical, u64 len);
-int btrfs_unplug_page(struct btrfs_mapping_tree *map_tree,
-		      u64 logical, struct page *page);
 int btrfs_grow_device(struct btrfs_trans_handle *trans,
 		      struct btrfs_device *device, u64 new_size);
 struct btrfs_device *btrfs_find_device(struct btrfs_root *root, u64 devid,

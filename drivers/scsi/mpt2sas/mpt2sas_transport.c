@@ -49,6 +49,7 @@
 #include <linux/workqueue.h>
 #include <linux/delay.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -298,6 +299,7 @@ _transport_expander_report_manufacture(struct MPT2SAS_ADAPTER *ioc,
 	void *data_out = NULL;
 	dma_addr_t data_out_dma;
 	u32 sz;
+	u64 *sas_address_le;
 	u16 wait_state_count;
 
 	if (ioc->shost_recovery || ioc->pci_error_recovery) {
@@ -370,7 +372,8 @@ _transport_expander_report_manufacture(struct MPT2SAS_ADAPTER *ioc,
 	mpi_request->PhysicalPort = 0xFF;
 	mpi_request->VF_ID = 0; /* TODO */
 	mpi_request->VP_ID = 0;
-	mpi_request->SASAddress = cpu_to_le64(sas_address);
+	sas_address_le = (u64 *)&mpi_request->SASAddress;
+	*sas_address_le = cpu_to_le64(sas_address);
 	mpi_request->RequestDataLength =
 	    cpu_to_le16(sizeof(struct rep_manu_request));
 	psge = &mpi_request->SGL;
@@ -1046,14 +1049,14 @@ struct phy_error_log_reply{
 	u8 function; /* 0x11 */
 	u8 function_result;
 	u8 response_length;
-	__be16 expander_change_count;
+	u16 expander_change_count;
 	u8 reserved_1[3];
 	u8 phy_identifier;
 	u8 reserved_2[2];
-	__be32 invalid_dword;
-	__be32 running_disparity_error;
-	__be32 loss_of_dword_sync;
-	__be32 phy_reset_problem;
+	u32 invalid_dword;
+	u32 running_disparity_error;
+	u32 loss_of_dword_sync;
+	u32 phy_reset_problem;
 };
 
 /**
@@ -1082,6 +1085,7 @@ _transport_get_expander_phy_error_log(struct MPT2SAS_ADAPTER *ioc,
 	void *data_out = NULL;
 	dma_addr_t data_out_dma;
 	u32 sz;
+	u64 *sas_address_le;
 	u16 wait_state_count;
 
 	if (ioc->shost_recovery || ioc->pci_error_recovery) {
@@ -1156,7 +1160,8 @@ _transport_get_expander_phy_error_log(struct MPT2SAS_ADAPTER *ioc,
 	mpi_request->PhysicalPort = 0xFF;
 	mpi_request->VF_ID = 0; /* TODO */
 	mpi_request->VP_ID = 0;
-	mpi_request->SASAddress = cpu_to_le64(phy->identify.sas_address);
+	sas_address_le = (u64 *)&mpi_request->SASAddress;
+	*sas_address_le = cpu_to_le64(phy->identify.sas_address);
 	mpi_request->RequestDataLength =
 	    cpu_to_le16(sizeof(struct phy_error_log_request));
 	psge = &mpi_request->SGL;
@@ -1401,6 +1406,7 @@ _transport_expander_phy_control(struct MPT2SAS_ADAPTER *ioc,
 	void *data_out = NULL;
 	dma_addr_t data_out_dma;
 	u32 sz;
+	u64 *sas_address_le;
 	u16 wait_state_count;
 
 	if (ioc->shost_recovery) {
@@ -1480,7 +1486,8 @@ _transport_expander_phy_control(struct MPT2SAS_ADAPTER *ioc,
 	mpi_request->PhysicalPort = 0xFF;
 	mpi_request->VF_ID = 0; /* TODO */
 	mpi_request->VP_ID = 0;
-	mpi_request->SASAddress = cpu_to_le64(phy->identify.sas_address);
+	sas_address_le = (u64 *)&mpi_request->SASAddress;
+	*sas_address_le = cpu_to_le64(phy->identify.sas_address);
 	mpi_request->RequestDataLength =
 	    cpu_to_le16(sizeof(struct phy_error_log_request));
 	psge = &mpi_request->SGL;
@@ -1907,7 +1914,7 @@ _transport_smp_handler(struct Scsi_Host *shost, struct sas_rphy *rphy,
 	mpi_request->PhysicalPort = 0xFF;
 	mpi_request->VF_ID = 0; /* TODO */
 	mpi_request->VP_ID = 0;
-	mpi_request->SASAddress = (rphy) ?
+	*((u64 *)&mpi_request->SASAddress) = (rphy) ?
 	    cpu_to_le64(rphy->identify.sas_address) :
 	    cpu_to_le64(ioc->sas_hba.sas_address);
 	mpi_request->RequestDataLength = cpu_to_le16(blk_rq_bytes(req) - 4);

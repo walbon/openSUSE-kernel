@@ -91,8 +91,7 @@ uint32_t radeon_legacy_get_memory_clock(struct radeon_device *rdev)
 	return mclk;
 }
 
-/* #ifdef CONFIG_OF */
-#if 0 /* not for SLE11-SP2 */
+#ifdef CONFIG_OF
 /*
  * Read XTAL (ref clock), SCLK and MCLK from Open Firmware device
  * tree. Hopefully, ATI OF driver is kind enough to fill these

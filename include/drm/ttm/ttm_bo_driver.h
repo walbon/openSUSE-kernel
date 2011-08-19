@@ -35,7 +35,6 @@
 #include "ttm/ttm_module.h"
 #include "drm_mm.h"
 #include "drm_global.h"
-#include "drm_compat.h"
 #include "linux/workqueue.h"
 #include "linux/fs.h"
 #include "linux/spinlock.h"

@@ -18,6 +18,7 @@
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/errno.h>
+#include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/io.h>
 #include <linux/usb.h>
@@ -39,7 +40,7 @@
 #define TD_RXER		0x0020 /* Rx error or not */
 
 #define TD_NAK		0x0010 /* No ack. */
-#define TD_STAL		0x0008 /* Stall recieved */
+#define TD_STAL		0x0008 /* Stall received */
 #define TD_TO		0x0004 /* time out */
 #define TD_UN		0x0002 /* underrun */
 #define TD_NO		0x0010 /* Rx Non Octet Aligned Packet */
@@ -105,7 +106,7 @@ void fhci_ep0_free(struct fhci_usb *usb)
 		if (ep->td_base)
 			cpm_muram_free(cpm_muram_offset(ep->td_base));
 
-		if (ep->conf_frame_Q) {
+		if (kfifo_initialized(&ep->conf_frame_Q)) {
 			size = cq_howmany(&ep->conf_frame_Q);
 			for (; size; size--) {
 				struct packet *pkt = cq_get(&ep->conf_frame_Q);
@@ -115,7 +116,7 @@ void fhci_ep0_free(struct fhci_usb *usb)
 			cq_delete(&ep->conf_frame_Q);
 		}
 
-		if (ep->empty_frame_Q) {
+		if (kfifo_initialized(&ep->empty_frame_Q)) {
 			size = cq_howmany(&ep->empty_frame_Q);
 			for (; size; size--) {
 				struct packet *pkt = cq_get(&ep->empty_frame_Q);
@@ -125,7 +126,7 @@ void fhci_ep0_free(struct fhci_usb *usb)
 			cq_delete(&ep->empty_frame_Q);
 		}
 
-		if (ep->dummy_packets_Q) {
+		if (kfifo_initialized(&ep->dummy_packets_Q)) {
 			size = cq_howmany(&ep->dummy_packets_Q);
 			for (; size; size--) {
 				u8 *buff = cq_get(&ep->dummy_packets_Q);
@@ -270,10 +271,10 @@ void fhci_init_ep_registers(struct fhci_usb *usb, struct endpoint *ep,
 
 /*
  * Collect the submitted frames and inform the application about them
- * It is also prepearing the TDs for new frames. If the Tx interrupts
- * are diabled, the application should call that routine to get
+ * It is also preparing the TDs for new frames. If the Tx interrupts
+ * are disabled, the application should call that routine to get
  * confirmation about the submitted frames. Otherwise, the routine is
- * called frome the interrupt service routine during the Tx interrupt.
+ * called from the interrupt service routine during the Tx interrupt.
  * In that case the application is informed by calling the application
  * specific 'fhci_transaction_confirm' routine
  */
@@ -336,7 +337,7 @@ static void fhci_td_transaction_confirm(struct fhci_usb *usb)
 					pkt->status = USB_TD_RX_ER_NONOCT;
 				else
 					fhci_err(usb->fhci, "illegal error "
-						 "occured\n");
+						 "occurred\n");
 			} else if (td_status & TD_NAK)
 				pkt->status = USB_TD_TX_ER_NAK;
 			else if (td_status & TD_TO)
@@ -346,7 +347,7 @@ static void fhci_td_transaction_confirm(struct fhci_usb *usb)
 			else if (td_status & TD_STAL)
 				pkt->status = USB_TD_TX_ER_STALL;
 			else
-				fhci_err(usb->fhci, "illegal error occured\n");
+				fhci_err(usb->fhci, "illegal error occurred\n");
 		} else if ((extra_data & TD_TOK_IN) &&
 				pkt->len > td_length - CRC_SIZE) {
 			pkt->status = USB_TD_RX_DATA_UNDERUN;

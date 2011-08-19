@@ -48,7 +48,7 @@
 #define DEBUG2_11(x)	do { if (ql2xextended_error_logging) { x; } } while (0)
 #define DEBUG2_13(x)	do { if (ql2xextended_error_logging) { x; } } while (0)
 #define DEBUG2_16(x)	do { if (ql2xextended_error_logging) { x; } } while (0)
-#define DEBUG2_17(x)	do { if (ql2xextended_error_logging) { x; } } while (0)
+#define DEBUG2_17(x) 	do { if (ql2xextended_error_logging) { x; } } while (0)
 
 #if defined(QL_DEBUG_LEVEL_3)
 #define DEBUG3(x)	do {x;} while (0)
@@ -135,15 +135,15 @@
 #endif
 
 #if defined(QL_DEBUG_LEVEL_17)
-#define DEBUG17(x)    do {x; } while (0)
+#define DEBUG17(x)	do {x;} while (0)
 #else
-#define DEBUG17(x)    do {} while (0)
+#define DEBUG17(x)	do {} while (0)
 #endif
 
 #if defined(QL_DEBUG_LEVEL_18)
-#define DEBUG18(x)     do {if (ql2xextended_error_logging) x; } while (0)
+#define DEBUG18(x)	do {if (ql2xextended_error_logging) x; } while (0)
 #else
-#define DEBUG18(x)     do {} while (0)
+#define DEBUG18(x)	do {} while (0)
 #endif
 
 

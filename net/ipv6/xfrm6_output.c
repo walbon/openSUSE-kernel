@@ -39,7 +39,7 @@ static int xfrm6_tunnel_check_size(struct sk_buff *skb)
 
 	if (!skb->local_df && skb->len > mtu) {
 		skb->dev = dst->dev;
-		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
+		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
 		ret = -EMSGSIZE;
 	}
 
@@ -79,7 +79,7 @@ int xfrm6_prepare_output(struct xfrm_state *x, struct sk_buff *skb)
 }
 EXPORT_SYMBOL(xfrm6_prepare_output);
 
-static int xfrm6_output_finish(struct sk_buff *skb)
+int xfrm6_output_finish(struct sk_buff *skb)
 {
 #ifdef CONFIG_NETFILTER
 	IP6CB(skb)->flags |= IP6SKB_XFRM_TRANSFORMED;
@@ -97,13 +97,13 @@ static int __xfrm6_output(struct sk_buff *skb)
 	if ((x && x->props.mode == XFRM_MODE_TUNNEL) &&
 	    ((skb->len > ip6_skb_dst_mtu(skb) && !skb_is_gso(skb)) ||
 		dst_allfrag(skb_dst(skb)))) {
-			return ip6_fragment(skb, xfrm6_output_finish);
+			return ip6_fragment(skb, x->outer_mode->afinfo->output_finish);
 	}
-	return xfrm6_output_finish(skb);
+	return x->outer_mode->afinfo->output_finish(skb);
 }
 
 int xfrm6_output(struct sk_buff *skb)
 {
-	return NF_HOOK(PF_INET6, NF_INET_POST_ROUTING, skb, NULL, skb_dst(skb)->dev,
-		       __xfrm6_output);
+	return NF_HOOK(NFPROTO_IPV6, NF_INET_POST_ROUTING, skb, NULL,
+		       skb_dst(skb)->dev, __xfrm6_output);
 }

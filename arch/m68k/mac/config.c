@@ -23,6 +23,8 @@
 #include <linux/init.h>
 #include <linux/vt_kern.h>
 #include <linux/platform_device.h>
+#include <linux/adb.h>
+#include <linux/cuda.h>
 
 #define BOOTINFO_COMPAT_1_0
 #include <asm/setup.h>
@@ -146,7 +148,7 @@ static void mac_cache_card_flush(int writeback)
 void __init config_mac(void)
 {
 	if (!MACH_IS_MAC)
-		printk(KERN_ERR "ERROR: no Mac, but config_mac() called!! \n");
+		printk(KERN_ERR "ERROR: no Mac, but config_mac() called!!\n");
 
 	mach_sched_init = mac_sched_init;
 	mach_init_IRQ = mac_init_IRQ;
@@ -324,6 +326,15 @@ static struct mac_model mac_data_table[] = {
 	}, {
 		.ident		= MAC_MODEL_CCL,
 		.name		= "Color Classic",
+		.adb_type	= MAC_ADB_CUDA,
+		.via_type	= MAC_VIA_IIci,
+		.scsi_type	= MAC_SCSI_OLD,
+		.scc_type	= MAC_SCC_II,
+		.nubus_type	= MAC_NUBUS,
+		.floppy_type	= MAC_FLOPPY_SWIM_ADDR2,
+	}, {
+		.ident		= MAC_MODEL_CCLII,
+		.name		= "Color Classic II",
 		.adb_type	= MAC_ADB_CUDA,
 		.via_type	= MAC_VIA_IIci,
 		.scsi_type	= MAC_SCSI_OLD,
@@ -792,6 +803,32 @@ static struct mac_model mac_data_table[] = {
 	}
 };
 
+static struct resource scc_a_rsrcs[] = {
+	{ .flags = IORESOURCE_MEM },
+	{ .flags = IORESOURCE_IRQ },
+};
+
+static struct resource scc_b_rsrcs[] = {
+	{ .flags = IORESOURCE_MEM },
+	{ .flags = IORESOURCE_IRQ },
+};
+
+struct platform_device scc_a_pdev = {
+	.name           = "scc",
+	.id             = 0,
+	.num_resources  = ARRAY_SIZE(scc_a_rsrcs),
+	.resource       = scc_a_rsrcs,
+};
+EXPORT_SYMBOL(scc_a_pdev);
+
+struct platform_device scc_b_pdev = {
+	.name           = "scc",
+	.id             = 1,
+	.num_resources  = ARRAY_SIZE(scc_b_rsrcs),
+	.resource       = scc_b_rsrcs,
+};
+EXPORT_SYMBOL(scc_b_pdev);
+
 static void __init mac_identify(void)
 {
 	struct mac_model *m;
@@ -814,6 +851,24 @@ static void __init mac_identify(void)
 		}
 	}
 
+	/* Set up serial port resources for the console initcall. */
+
+	scc_a_rsrcs[0].start = (resource_size_t) mac_bi_data.sccbase + 2;
+	scc_a_rsrcs[0].end   = scc_a_rsrcs[0].start;
+	scc_b_rsrcs[0].start = (resource_size_t) mac_bi_data.sccbase;
+	scc_b_rsrcs[0].end   = scc_b_rsrcs[0].start;
+
+	switch (macintosh_config->scc_type) {
+	case MAC_SCC_PSC:
+		scc_a_rsrcs[1].start = scc_a_rsrcs[1].end = IRQ_MAC_SCC_A;
+		scc_b_rsrcs[1].start = scc_b_rsrcs[1].end = IRQ_MAC_SCC_B;
+		break;
+	default:
+		scc_a_rsrcs[1].start = scc_a_rsrcs[1].end = IRQ_MAC_SCC;
+		scc_b_rsrcs[1].start = scc_b_rsrcs[1].end = IRQ_MAC_SCC;
+		break;
+	}
+
 	/*
 	 * We need to pre-init the IOPs, if any. Otherwise
 	 * the serial console won't work if the user had
@@ -821,7 +876,7 @@ static void __init mac_identify(void)
 	 */
 	iop_preinit();
 
-	printk(KERN_INFO "Detected Macintosh model: %d \n", model);
+	printk(KERN_INFO "Detected Macintosh model: %d\n", model);
 
 	/*
 	 * Report booter data:
@@ -832,12 +887,12 @@ static void __init mac_identify(void)
 		mac_bi_data.videoaddr, mac_bi_data.videorow,
 		mac_bi_data.videodepth, mac_bi_data.dimensions & 0xFFFF,
 		mac_bi_data.dimensions >> 16);
-	printk(KERN_DEBUG " Videological 0x%lx phys. 0x%lx, SCC at 0x%lx \n",
+	printk(KERN_DEBUG " Videological 0x%lx phys. 0x%lx, SCC at 0x%lx\n",
 		mac_bi_data.videological, mac_orig_videoaddr,
 		mac_bi_data.sccbase);
-	printk(KERN_DEBUG " Boottime: 0x%lx GMTBias: 0x%lx \n",
+	printk(KERN_DEBUG " Boottime: 0x%lx GMTBias: 0x%lx\n",
 		mac_bi_data.boottime, mac_bi_data.gmtbias);
-	printk(KERN_DEBUG " Machine ID: %ld CPUid: 0x%lx memory size: 0x%lx \n",
+	printk(KERN_DEBUG " Machine ID: %ld CPUid: 0x%lx memory size: 0x%lx\n",
 		mac_bi_data.id, mac_bi_data.cpuid, mac_bi_data.memsize);
 
 	iop_init();
@@ -845,6 +900,10 @@ static void __init mac_identify(void)
 	oss_init();
 	psc_init();
 	baboon_init();
+
+#ifdef CONFIG_ADB_CUDA
+	find_via_cuda();
+#endif
 }
 
 static void __init mac_report_hardware(void)
@@ -877,9 +936,26 @@ static struct platform_device esp_1_pdev = {
 	.id		= 1,
 };
 
+static struct platform_device sonic_pdev = {
+	.name		= "macsonic",
+	.id		= -1,
+};
+
+static struct platform_device mace_pdev = {
+	.name		= "macmace",
+	.id		= -1,
+};
+
 int __init mac_platform_init(void)
 {
 	u8 *swim_base;
+
+	/*
+	 * Serial devices
+	 */
+
+	platform_device_register(&scc_a_pdev);
+	platform_device_register(&scc_b_pdev);
 
 	/*
 	 * Floppy device
@@ -917,6 +993,19 @@ int __init mac_platform_init(void)
 		if ((macintosh_config->ident == MAC_MODEL_Q900) ||
 		    (macintosh_config->ident == MAC_MODEL_Q950))
 			platform_device_register(&esp_1_pdev);
+		break;
+	}
+
+	/*
+	 * Ethernet device
+	 */
+
+	switch (macintosh_config->ether_type) {
+	case MAC_ETHER_SONIC:
+		platform_device_register(&sonic_pdev);
+		break;
+	case MAC_ETHER_MACE:
+		platform_device_register(&mace_pdev);
 		break;
 	}
 

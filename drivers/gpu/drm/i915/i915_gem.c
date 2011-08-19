@@ -31,6 +31,7 @@
 #include "i915_drv.h"
 #include "i915_trace.h"
 #include "intel_drv.h"
+#include <linux/shmem_fs.h>
 #include <linux/slab.h>
 #include <linux/swap.h>
 #include <linux/pci.h>
@@ -55,7 +56,8 @@ static int i915_gem_phys_pwrite(struct drm_device *dev,
 				struct drm_file *file);
 static void i915_gem_free_object_tail(struct drm_i915_gem_object *obj);
 
-static int i915_gem_inactive_shrink(int nr_to_scan, gfp_t gfp_mask);
+static int i915_gem_inactive_shrink(struct shrinker *shrinker,
+				    struct shrink_control *sc);
 
 /* some bookkeeping */
 static void i915_gem_info_add_obj(struct drm_i915_private *dev_priv,
@@ -358,16 +360,15 @@ i915_gem_shmem_pread_fast(struct drm_device *dev,
 		if ((page_offset + remain) > PAGE_SIZE)
 			page_length = PAGE_SIZE - page_offset;
 
-		page = read_cache_page_gfp(mapping, offset >> PAGE_SHIFT,
-					   GFP_HIGHUSER | __GFP_RECLAIMABLE);
+		page = shmem_read_mapping_page(mapping, offset >> PAGE_SHIFT);
 		if (IS_ERR(page))
 			return PTR_ERR(page);
 
-		vaddr = kmap_atomic(page, KM_USER0);
+		vaddr = kmap_atomic(page);
 		ret = __copy_to_user_inatomic(user_data,
 					      vaddr + page_offset,
 					      page_length);
-		kunmap_atomic(vaddr, KM_USER0);
+		kunmap_atomic(vaddr);
 
 		mark_page_accessed(page);
 		page_cache_release(page);
@@ -462,8 +463,7 @@ i915_gem_shmem_pread_slow(struct drm_device *dev,
 		if ((data_page_offset + page_length) > PAGE_SIZE)
 			page_length = PAGE_SIZE - data_page_offset;
 
-		page = read_cache_page_gfp(mapping, offset >> PAGE_SHIFT,
-					   GFP_HIGHUSER | __GFP_RECLAIMABLE);
+		page = shmem_read_mapping_page(mapping, offset >> PAGE_SHIFT);
 		if (IS_ERR(page)) {
 			ret = PTR_ERR(page);
 			goto out;
@@ -580,10 +580,10 @@ fast_user_write(struct io_mapping *mapping,
 	char *vaddr_atomic;
 	unsigned long unwritten;
 
-	vaddr_atomic = io_mapping_map_atomic_wc(mapping, page_base, KM_USER0);
+	vaddr_atomic = io_mapping_map_atomic_wc(mapping, page_base);
 	unwritten = __copy_from_user_inatomic_nocache(vaddr_atomic + page_offset,
 						      user_data, length);
-	io_mapping_unmap_atomic(vaddr_atomic, KM_USER0);
+	io_mapping_unmap_atomic(vaddr_atomic);
 	return unwritten;
 }
 
@@ -796,8 +796,7 @@ i915_gem_shmem_pwrite_fast(struct drm_device *dev,
 		if ((page_offset + remain) > PAGE_SIZE)
 			page_length = PAGE_SIZE - page_offset;
 
-		page = read_cache_page_gfp(mapping, offset >> PAGE_SHIFT,
-					   GFP_HIGHUSER | __GFP_RECLAIMABLE);
+		page = shmem_read_mapping_page(mapping, offset >> PAGE_SHIFT);
 		if (IS_ERR(page))
 			return PTR_ERR(page);
 
@@ -906,8 +905,7 @@ i915_gem_shmem_pwrite_slow(struct drm_device *dev,
 		if ((data_page_offset + page_length) > PAGE_SIZE)
 			page_length = PAGE_SIZE - data_page_offset;
 
-		page = read_cache_page_gfp(mapping, offset >> PAGE_SHIFT,
-					   GFP_HIGHUSER | __GFP_RECLAIMABLE);
+		page = shmem_read_mapping_page(mapping, offset >> PAGE_SHIFT);
 		if (IS_ERR(page)) {
 			ret = PTR_ERR(page);
 			goto out;
@@ -1171,17 +1169,6 @@ i915_gem_mmap_ioctl(struct drm_device *dev, void *data,
 
 	return 0;
 }
-
-#ifdef CONFIG_XEN
-int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma)
-{
-	int ret = drm_gem_mmap(filp, vma);
-
-	pgprot_val(vma->vm_page_prot) |= _PAGE_IOMAP;
-
-	return ret;
-}
-#endif
 
 /**
  * i915_gem_fault - fault a page into the GTT
@@ -1560,12 +1547,10 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj,
 
 	inode = obj->base.filp->f_path.dentry->d_inode;
 	mapping = inode->i_mapping;
+	gfpmask |= mapping_gfp_mask(mapping);
+
 	for (i = 0; i < page_count; i++) {
-		page = read_cache_page_gfp(mapping, i,
-					   GFP_HIGHUSER |
-					   __GFP_COLD |
-					   __GFP_RECLAIMABLE |
-					   gfpmask);
+		page = shmem_read_mapping_page_gfp(mapping, i, gfpmask);
 		if (IS_ERR(page))
 			goto err_pages;
 
@@ -1703,13 +1688,10 @@ i915_gem_object_truncate(struct drm_i915_gem_object *obj)
 	/* Our goal here is to return as much of the memory as
 	 * is possible back to the system as we are called from OOM.
 	 * To do this we must instruct the shmfs to drop all of its
-	 * backing pages, *now*. Here we mirror the actions taken
-	 * when by shmem_delete_inode() to release the backing store.
+	 * backing pages, *now*.
 	 */
 	inode = obj->base.filp->f_path.dentry->d_inode;
-	truncate_inode_pages(inode->i_mapping, 0);
-	if (inode->i_op->truncate_range)
-		inode->i_op->truncate_range(inode, 0, (loff_t)-1);
+	shmem_truncate_range(inode, 0, (loff_t)-1);
 
 	obj->madv = __I915_MADV_PURGED;
 }
@@ -3574,6 +3556,7 @@ struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct drm_i915_gem_object *obj;
+	struct address_space *mapping;
 
 	obj = kzalloc(sizeof(*obj), GFP_KERNEL);
 	if (obj == NULL)
@@ -3583,6 +3566,9 @@ struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
 		kfree(obj);
 		return NULL;
 	}
+
+	mapping = obj->base.filp->f_path.dentry->d_inode->i_mapping;
+	mapping_set_gfp_mask(mapping, GFP_HIGHUSER | __GFP_RECLAIMABLE);
 
 	i915_gem_info_add_obj(dev_priv, size);
 
@@ -3822,8 +3808,6 @@ init_ring_lists(struct intel_ring_buffer *ring)
 	INIT_LIST_HEAD(&ring->gpu_write_list);
 }
 
-struct shrinker *_i915_registered_shrinker;
-
 void
 i915_gem_load(struct drm_device *dev)
 {
@@ -3876,12 +3860,9 @@ i915_gem_load(struct drm_device *dev)
 
 	dev_priv->mm.interruptible = true;
 
-	if (WARN_ON(_i915_registered_shrinker))
-		return;
 	dev_priv->mm.inactive_shrinker.shrink = i915_gem_inactive_shrink;
 	dev_priv->mm.inactive_shrinker.seeks = DEFAULT_SEEKS;
 	register_shrinker(&dev_priv->mm.inactive_shrinker);
-	_i915_registered_shrinker = &dev_priv->mm.inactive_shrinker;
 }
 
 /*
@@ -3964,12 +3945,11 @@ void i915_gem_detach_phys_object(struct drm_device *dev,
 
 	page_count = obj->base.size / PAGE_SIZE;
 	for (i = 0; i < page_count; i++) {
-		struct page *page = read_cache_page_gfp(mapping, i,
-							GFP_HIGHUSER | __GFP_RECLAIMABLE);
+		struct page *page = shmem_read_mapping_page(mapping, i);
 		if (!IS_ERR(page)) {
-			char *dst = kmap_atomic(page, KM_USER0);
+			char *dst = kmap_atomic(page);
 			memcpy(dst, vaddr + i*PAGE_SIZE, PAGE_SIZE);
-			kunmap_atomic(dst, KM_USER0);
+			kunmap_atomic(dst);
 
 			drm_clflush_pages(&page, 1);
 
@@ -4026,15 +4006,14 @@ i915_gem_attach_phys_object(struct drm_device *dev,
 		struct page *page;
 		char *dst, *src;
 
-		page = read_cache_page_gfp(mapping, i,
-					   GFP_HIGHUSER | __GFP_RECLAIMABLE);
+		page = shmem_read_mapping_page(mapping, i);
 		if (IS_ERR(page))
 			return PTR_ERR(page);
 
-		src = kmap_atomic(page, KM_USER0);
+		src = kmap_atomic(page);
 		dst = obj->phys_obj->handle->vaddr + (i * PAGE_SIZE);
 		memcpy(dst, src, PAGE_SIZE);
-		kunmap_atomic(src, KM_USER0);
+		kunmap_atomic(src);
 
 		mark_page_accessed(page);
 		page_cache_release(page);
@@ -4104,15 +4083,15 @@ i915_gpu_is_active(struct drm_device *dev)
 }
 
 static int
-i915_gem_inactive_shrink(int nr_to_scan, gfp_t gfp_mask)
+i915_gem_inactive_shrink(struct shrinker *shrinker, struct shrink_control *sc)
 {
-	struct shrinker *shrinker = _i915_registered_shrinker;
 	struct drm_i915_private *dev_priv =
 		container_of(shrinker,
 			     struct drm_i915_private,
 			     mm.inactive_shrinker);
 	struct drm_device *dev = dev_priv->dev;
 	struct drm_i915_gem_object *obj, *next;
+	int nr_to_scan = sc->nr_to_scan;
 	int cnt;
 
 	if (!mutex_trylock(&dev->struct_mutex))

@@ -41,6 +41,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <linux/slab.h>
+
 #include "ehca_classes.h"
 #include "ehca_irq.h"
 #include "ehca_iverbs.h"
@@ -825,8 +827,7 @@ static void __cpuinit take_over_work(struct ehca_comp_pool *pool, int cpu)
 		cq = list_entry(cct->cq_list.next, struct ehca_cq, entry);
 
 		list_del(&cq->entry);
-		__queue_comp_task(cq, per_cpu_ptr(pool->cpu_comp_tasks,
-						  smp_processor_id()));
+		__queue_comp_task(cq, this_cpu_ptr(pool->cpu_comp_tasks));
 	}
 
 	spin_unlock_irqrestore(&cct->task_lock, flags_cct);
@@ -846,7 +847,7 @@ static int __cpuinit comp_pool_callback(struct notifier_block *nfb,
 		ehca_gen_dbg("CPU: %x (CPU_PREPARE)", cpu);
 		if (!create_comp_task(pool, cpu)) {
 			ehca_gen_err("Can't create comp_task for cpu: %x", cpu);
-			return NOTIFY_BAD;
+			return notifier_from_errno(-ENOMEM);
 		}
 		break;
 	case CPU_UP_CANCELED:

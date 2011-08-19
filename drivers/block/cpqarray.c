@@ -35,6 +35,7 @@
 #include <linux/seq_file.h>
 #include <linux/init.h>
 #include <linux/hdreg.h>
+#include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/blkdev.h>
 #include <linux/genhd.h>
@@ -67,6 +68,7 @@ MODULE_LICENSE("GPL");
 
 #define CPQARRAY_DMA_MASK	0xFFFFFFFF	/* 32 bit DMA */
 
+static DEFINE_MUTEX(cpqarray_mutex);
 static int nr_ctlr;
 static ctlr_info_t *hba[MAX_CTLR];
 
@@ -157,7 +159,7 @@ static int sendcmd(
 	unsigned int blkcnt,
 	unsigned int log_unit );
 
-static int ida_open(struct block_device *bdev, fmode_t mode);
+static int ida_unlocked_open(struct block_device *bdev, fmode_t mode);
 static int ida_release(struct gendisk *disk, fmode_t mode);
 static int ida_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg);
 static int ida_getgeo(struct block_device *bdev, struct hd_geometry *geo);
@@ -195,9 +197,9 @@ static inline ctlr_info_t *get_host(struct gendisk *disk)
 
 static const struct block_device_operations ida_fops  = {
 	.owner		= THIS_MODULE,
-	.open		= ida_open,
+	.open		= ida_unlocked_open,
 	.release	= ida_release,
-	.locked_ioctl	= ida_ioctl,
+	.ioctl		= ida_ioctl,
 	.getgeo		= ida_getgeo,
 	.revalidate_disk= ida_revalidate,
 };
@@ -840,13 +842,29 @@ static int ida_open(struct block_device *bdev, fmode_t mode)
 	return 0;
 }
 
+static int ida_unlocked_open(struct block_device *bdev, fmode_t mode)
+{
+	int ret;
+
+	mutex_lock(&cpqarray_mutex);
+	ret = ida_open(bdev, mode);
+	mutex_unlock(&cpqarray_mutex);
+
+	return ret;
+}
+
 /*
  * Close.  Sync first.
  */
 static int ida_release(struct gendisk *disk, fmode_t mode)
 {
-	ctlr_info_t *host = get_host(disk);
+	ctlr_info_t *host;
+
+	mutex_lock(&cpqarray_mutex);
+	host = get_host(disk);
 	host->usage_count--;
+	mutex_unlock(&cpqarray_mutex);
+
 	return 0;
 }
 
@@ -892,9 +910,6 @@ static void do_ida_request(struct request_queue *q)
 	struct request *creq;
 	struct scatterlist tmp_sg[SG_MAX];
 	int i, dir, seg;
-
-	if (blk_queue_plugged(q))
-		goto startio;
 
 queue_next:
 	creq = blk_peek_request(q);
@@ -1128,7 +1143,7 @@ static int ida_getgeo(struct block_device *bdev, struct hd_geometry *geo)
  *  ida_ioctl does some miscellaneous stuff like reporting drive geometry,
  *  setting readahead and submitting commands from userspace to the controller.
  */
-static int ida_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
+static int ida_locked_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
 	drv_info_t *drv = get_drv(bdev->bd_disk);
 	ctlr_info_t *host = get_host(bdev->bd_disk);
@@ -1194,6 +1209,19 @@ out_passthru:
 	}
 		
 }
+
+static int ida_ioctl(struct block_device *bdev, fmode_t mode,
+			     unsigned int cmd, unsigned long param)
+{
+	int ret;
+
+	mutex_lock(&cpqarray_mutex);
+	ret = ida_locked_ioctl(bdev, mode, cmd, param);
+	mutex_unlock(&cpqarray_mutex);
+
+	return ret;
+}
+
 /*
  * ida_ctlr_ioctl is for passing commands to the controller from userspace.
  * The command block (io) has already been copied to kernel space for us,

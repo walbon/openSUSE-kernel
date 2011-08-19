@@ -40,6 +40,7 @@
 #include <linux/file.h>
 #include <linux/parser.h>
 #include <linux/semaphore.h>
+#include <linux/slab.h>
 #include <net/9p/9p.h>
 #include <net/9p/client.h>
 #include <net/9p/transport.h>
@@ -58,7 +59,6 @@
 						 * safely advertise a maxsize
 						 * of 64k */
 
-#define P9_RDMA_MAX_SGE (P9_RDMA_MAXSIZE >> PAGE_SHIFT)
 /**
  * struct p9_trans_rdma - RDMA transport instance
  *
@@ -167,7 +167,6 @@ static int parse_opts(char *params, struct p9_rdma_opts *opts)
 	substring_t args[MAX_OPT_ARGS];
 	int option;
 	char *options, *tmp_options;
-	int ret;
 
 	opts->port = P9_PORT;
 	opts->sq_depth = P9_RDMA_SQ_DEPTH;
@@ -195,7 +194,6 @@ static int parse_opts(char *params, struct p9_rdma_opts *opts)
 		if (r < 0) {
 			P9_DPRINTK(P9_DEBUG_ERROR,
 				   "integer field, but no integer?\n");
-			ret = r;
 			continue;
 		}
 		switch (token) {
@@ -307,7 +305,6 @@ handle_recv(struct p9_client *client, struct p9_trans_rdma *rdma,
 		   req, err, status);
 	rdma->state = P9_RDMA_FLUSHING;
 	client->status = Disconnected;
-	return;
 }
 
 static void
@@ -425,7 +422,7 @@ static int rdma_request(struct p9_client *client, struct p9_req_t *req)
 	struct p9_rdma_context *rpl_context = NULL;
 
 	/* Allocate an fcall for the reply */
-	rpl_context = kmalloc(sizeof *rpl_context, GFP_KERNEL);
+	rpl_context = kmalloc(sizeof *rpl_context, GFP_NOFS);
 	if (!rpl_context) {
 		err = -ENOMEM;
 		goto err_close;
@@ -438,7 +435,7 @@ static int rdma_request(struct p9_client *client, struct p9_req_t *req)
 	 */
 	if (!req->rc) {
 		req->rc = kmalloc(sizeof(struct p9_fcall)+client->msize,
-								GFP_KERNEL);
+				  GFP_NOFS);
 		if (req->rc) {
 			req->rc->sdata = (char *) req->rc +
 						sizeof(struct p9_fcall);
@@ -469,7 +466,7 @@ static int rdma_request(struct p9_client *client, struct p9_req_t *req)
 	req->rc = NULL;
 
 	/* Post the request */
-	c = kmalloc(sizeof *c, GFP_KERNEL);
+	c = kmalloc(sizeof *c, GFP_NOFS);
 	if (!c) {
 		err = -ENOMEM;
 		goto err_free1;
@@ -592,7 +589,8 @@ rdma_create_trans(struct p9_client *client, const char *addr, char *args)
 		return -ENOMEM;
 
 	/* Create the RDMA CM ID */
-	rdma->cm_id = rdma_create_id(p9_cm_event_handler, client, RDMA_PS_TCP);
+	rdma->cm_id = rdma_create_id(p9_cm_event_handler, client, RDMA_PS_TCP,
+				     IB_QPT_RC);
 	if (IS_ERR(rdma->cm_id))
 		goto error;
 

@@ -16,7 +16,7 @@
  * When reading the process is almost equal except that the header starts with
  * 0x00 0x20.
  *
- * The device simply need some stuff to understand data comming from the usb
+ * The device simply need some stuff to understand data coming from the usb
  * buffer: The First and Second byte is used for a Header, the Third and Fourth
  * tells the  device the amount of information the package holds.
  * Packages are 60 bytes long Header Stuff.
@@ -30,7 +30,7 @@
  * one.
  *
  * The driver registers himself with the USB-serial core and the USB Core. I had
- * to implement a probe function agains USB-serial, because other way, the
+ * to implement a probe function against USB-serial, because other way, the
  * driver was attaching himself to both interfaces. I have tryed with different
  * configurations of usb_serial_driver with out exit, only the probe function
  * could handle this correctly.
@@ -46,10 +46,10 @@
 
 #include <asm/unaligned.h>
 #include <linux/tty.h>
+#include <linux/slab.h>
 #include <linux/tty_flip.h>
 #include <linux/usb.h>
 #include <linux/usb/serial.h>
-#include <linux/kfifo.h>
 
 static int debug;
 
@@ -89,7 +89,7 @@ static int aircable_prepare_write_buffer(struct usb_serial_port *port,
 	int count;
 	unsigned char *buf = dest;
 
-	count = kfifo_out_locked(port->write_fifo, buf + HCI_HEADER_LENGTH,
+	count = kfifo_out_locked(&port->write_fifo, buf + HCI_HEADER_LENGTH,
 					size - HCI_HEADER_LENGTH, &port->lock);
 	buf[0] = TX_HEADER_0;
 	buf[1] = TX_HEADER_1;
@@ -131,13 +131,13 @@ static int aircable_process_packet(struct tty_struct *tty,
 		len -= HCI_HEADER_LENGTH;
 		packet += HCI_HEADER_LENGTH;
 	}
-
 	if (len <= 0) {
 		dbg("%s - malformed packet", __func__);
 		return 0;
 	}
 
 	tty_insert_flip_string(tty, packet, len);
+
 	return len;
 }
 

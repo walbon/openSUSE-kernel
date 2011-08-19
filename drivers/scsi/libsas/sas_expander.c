@@ -24,6 +24,7 @@
 
 #include <linux/scatterlist.h>
 #include <linux/blkdev.h>
+#include <linux/slab.h>
 
 #include "sas_internal.h"
 
@@ -239,7 +240,7 @@ static int sas_ex_phy_discover_helper(struct domain_device *dev, u8 *disc_req,
 				       disc_resp, DISCOVER_RESP_SIZE);
 		if (res)
 			return res;
-		/* This is detecting a failure to transmit inital
+		/* This is detecting a failure to transmit initial
 		 * dev to host FIS as described in section G.5 of
 		 * sas-2 r 04b */
 		dr = &((struct smp_resp *)disc_resp)->disc;
@@ -848,9 +849,6 @@ static struct domain_device *sas_ex_discover_expander(
 
 	res = sas_discover_expander(child);
 	if (res) {
-		spin_lock_irq(&parent->port->dev_list_lock);
-		list_del(&child->dev_list_node);
-		spin_unlock_irq(&parent->port->dev_list_lock);
 		kfree(child);
 		return NULL;
 	}

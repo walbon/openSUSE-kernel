@@ -164,7 +164,11 @@ int hv_init(void)
 		goto cleanup;
 
 	max_leaf = query_hypervisor_info();
+	/* HvQueryHypervisorFeatures(maxLeaf); */
 
+	/*
+	 * We only support running on top of Hyper-V
+	 */
 	rdmsrl(HV_X64_MSR_GUEST_OS_ID, hv_context.guestid);
 
 	if (hv_context.guestid != 0)
@@ -177,6 +181,10 @@ int hv_init(void)
 	/* See if the hypercall page is already set */
 	rdmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
 
+	/*
+	* Allocate the hypercall page memory
+	* virtaddr = osd_page_alloc(1);
+	*/
 	virtaddr = __vmalloc(PAGE_SIZE, GFP_KERNEL, PAGE_KERNEL_EXEC);
 
 	if (!virtaddr)
@@ -225,8 +233,8 @@ cleanup:
 
 		vfree(virtaddr);
 	}
-
-	return -ENOTSUPP;
+	ret = -1;
+	return ret;
 }
 
 /*
@@ -269,11 +277,11 @@ u16 hv_post_message(union hv_connection_id connection_id,
 	unsigned long addr;
 
 	if (payload_size > HV_MESSAGE_PAYLOAD_BYTE_COUNT)
-		return -EMSGSIZE;
+		return -1;
 
 	addr = (unsigned long)kmalloc(sizeof(struct aligned_input), GFP_ATOMIC);
 	if (!addr)
-		return -ENOMEM;
+		return -1;
 
 	aligned_msg = (struct hv_input_post_message *)
 			(ALIGN(addr, HV_HYPERCALL_PARAM_ALIGN));

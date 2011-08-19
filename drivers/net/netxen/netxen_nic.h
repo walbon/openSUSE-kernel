@@ -50,7 +50,6 @@
 
 #include "netxen_nic_hdr.h"
 #include "netxen_nic_hw.h"
-#include "netxen_nic_compat.h"
 
 #define _NETXEN_NIC_LINUX_MAJOR 4
 #define _NETXEN_NIC_LINUX_MINOR 0
@@ -1178,7 +1177,7 @@ struct netxen_adapter {
 	u8 max_sds_rings;
 	u8 driver_mismatch;
 	u8 msix_supported;
-	u8 rx_csum;
+	u8 __pad;
 	u8 pci_using_dac;
 	u8 portnum;
 	u8 physical_port;
@@ -1213,7 +1212,6 @@ struct netxen_adapter {
 
 	u8 mac_addr[ETH_ALEN];
 
-	struct vlan_group *vlgrp;
 	struct netxen_adapter_stats stats;
 
 	struct netxen_recv_context recv_ctx;

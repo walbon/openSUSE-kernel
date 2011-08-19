@@ -33,7 +33,6 @@
 #include <net/tcp.h>
 
 #include "bna.h"
-#include "bna_compat.h"
 
 #define BNAD_TXQ_DEPTH		2048
 #define BNAD_RXQ_DEPTH		2048
@@ -237,8 +236,6 @@ struct bnad {
 
 	struct bna_rx_config rx_config[BNAD_MAX_RXS];
 	struct bna_tx_config tx_config[BNAD_MAX_TXS];
-
-	u32		rx_csum;
 
 	void __iomem		*bar0;	/* BAR0 address */
 

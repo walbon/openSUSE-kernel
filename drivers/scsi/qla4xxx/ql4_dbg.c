@@ -20,123 +20,14 @@ void qla4xxx_dump_buffer(void *b, uint32_t size)
 	printk("------------------------------------------------------------"
 	       "--\n");
 	for (cnt = 0; cnt < size; c++) {
-		printk("%02x", *c);
+		printk(KERN_INFO "%02x", *c);
 		if (!(++cnt % 16))
-			printk("\n");
+			printk(KERN_INFO "\n");
 
 		else
-			printk("  ");
+			printk(KERN_INFO "  ");
 	}
 	printk(KERN_INFO "\n");
-}
-
-void printchar(char ch)
-{
-	if (ch>=32)
-		printk("%c", ch);
-	else
-		printk(".");
-}
-
-/**************************************************************************
- * qla4xxx_dump_bytes
- *     This routine displays bytes in hex format
- *
- * Input:
- *     dbg_mask - this call's debug print mask
- *     buffer   - data buffer to display
- *     size     - number of bytes to display
- *
- * Output:
- *     None
- *
- * Returns:
- *     None
- **************************************************************************/
-void
-qla4xxx_dump_bytes(void *buffer, uint32_t size)
-{
-	uint32_t i;
-	uint8_t  *data = (uint8_t *)buffer;
-
-	//printk("        0  1  2  3  4  5  6  7 -  8  9  A  B  C  D  E  F\n");
-	//printk("---------------------------------------------------------\n");
-
-	for (i = 0; i < size; i++, data++) {
-		if (i % 0x10 == 0) {
-			printk("%04X:  %02X", i, *data);
-		}
-		else if (i % 0x10 == 0x08) {
-			printk(" - %02X", *data);
-		}
-		else if (i % 0x10 == 0xF) {
-			printk(" %02X:  ", *data);
-			printchar(*(data-15));
-			printchar(*(data-14));
-			printchar(*(data-13));
-			printchar(*(data-12));
-			printchar(*(data-11));
-			printchar(*(data-10));
-			printchar(*(data-9));
-			printchar(*(data-8));
-			printchar(*(data-7));
-			printchar(*(data-6));
-			printchar(*(data-5));
-			printchar(*(data-4));
-			printchar(*(data-3));
-			printchar(*(data-2));
-			printchar(*(data-1));
-			printchar(*data);
-			printk("\n");
-		}
-		else {
-			printk(" %02X", *data);
-		}
-	}
-
-	if ((i != 0) && (i % 0x10)) {
-		printk("\n");
-	}
-	printk("\n");
-}
-
-void qla4xxx_dump_mbx_cmd(struct scsi_qla_host *ha, uint32_t *mbx_cmd)
-{
-	int i;
-	ql4_info(ha, "%s: Cmd ", __func__);
-	for (i = 0; i < MBOX_REG_COUNT; i++)
-		ql4_info(ha, "mb%d=%04x ", i, mbx_cmd[i]);
-	printk("\n");
-}
-
-void qla4xxx_dump_mbx_sts(struct scsi_qla_host *ha, uint32_t *mbx_sts)
-{
-	int i;
-	ql4_info(ha, "%s: Sts ", __func__);
-	for (i = 0; i < MBOX_REG_COUNT; i++)
-		printk("mb%d=%04x ", i, mbx_sts[i]);
-	printk("\n");
-
-}
-
-void __dump_prb(struct scsi_qla_host *ha, struct isns_prb *prb)
-{
-	ql4_info(ha, "Dump struct  PRB (0x%p)\n", prb);
-	ql4_info(ha, "\tPDU=0x%p, PDU_dma=0x%llx, PDU_buf_len=0x%x\n",
-		prb->pdu, (unsigned long long)prb->pdu_dma, prb->pdu_buf_len);
-	ql4_info(ha, "\ttx_len=0x%x, rx_len=0x%x, handle=0x%x\n",
-		prb->tx_len, prb->rx_len, prb->handle);
-	ql4_info(ha, "\tin_residual=0x%x, conn_id=0x%x, prb_in_use=%d\n",
-		prb->in_residual, prb->conn_id, prb->prb_in_use);
-	ql4_info(ha, "\tresid_flags=0x%x in_residual=0x%x\n",
-		prb->resid_flags, prb->in_residual);
-	ql4_info(ha, "\tconn_id=0x%x, prb_in_use=%d\n",
-		prb->conn_id, prb->prb_in_use);
-	ql4_info(ha, "\toffset=0x%x, pkt=0x%p, pkt_dma=0x%llx\n",
-		prb->offset, prb->pkt, (unsigned long long)prb->pkt_dma);
-	ql4_info(ha, "\ttgt_qry_iscsi_name=0x%p, tgt_qry_buf=0x%p, "
-		"tgt_qry_buf_len=0x%p\n", prb->tgt_qry_iscsi_name,
-		prb->tgt_qry_buf, prb->tgt_qry_buf_len);
 }
 
 void qla4xxx_dump_registers(struct scsi_qla_host *ha)

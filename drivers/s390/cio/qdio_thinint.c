@@ -7,6 +7,8 @@
  *	      Jan Glauber <jang@linux.vnet.ibm.com>
  */
 #include <linux/io.h>
+#include <linux/slab.h>
+#include <linux/kernel_stat.h>
 #include <asm/atomic.h>
 #include <asm/debug.h>
 #include <asm/qdio.h>
@@ -34,21 +36,7 @@ static u8 *tiqdio_alsi;
 
 struct indicator_t *q_indicators;
 
-static int css_qdio_omit_svs;
-
 static u64 last_ai_time;
-
-static inline unsigned long do_clear_global_summary(void)
-{
-	register unsigned long __fn asm("1") = 3;
-	register unsigned long __tmp asm("2");
-	register unsigned long __time asm("3");
-
-	asm volatile(
-		"	.insn	rre,0xb2650000,2,0"
-		: "+d" (__fn), "=d" (__tmp), "=d" (__time));
-	return __time;
-}
 
 /* returns addr for the device state change indicator */
 static u32 *get_indicator(void)
@@ -79,31 +67,32 @@ static void put_indicator(u32 *addr)
 
 void tiqdio_add_input_queues(struct qdio_irq *irq_ptr)
 {
-	/* No TDD facility? If we must use SIGA-s we can also omit SVS. */
-	if (!css_qdio_omit_svs && irq_ptr->siga_flag.sync)
-		css_qdio_omit_svs = 1;
+	struct qdio_q *q;
+	int i;
 
 	mutex_lock(&tiq_list_lock);
-	BUG_ON(irq_ptr->nr_input_qs < 1);
-	list_add_rcu(&irq_ptr->input_qs[0]->entry, &tiq_list);
+	for_each_input_queue(irq_ptr, q, i)
+		list_add_rcu(&q->entry, &tiq_list);
 	mutex_unlock(&tiq_list_lock);
-	xchg(irq_ptr->dsci, 1);
+	xchg(irq_ptr->dsci, 1 << 7);
 }
 
 void tiqdio_remove_input_queues(struct qdio_irq *irq_ptr)
 {
 	struct qdio_q *q;
+	int i;
 
-	BUG_ON(irq_ptr->nr_input_qs < 1);
-	q = irq_ptr->input_qs[0];
-	/* if establish triggered an error */
-	if (!q || !q->entry.prev || !q->entry.next)
-		return;
+	for (i = 0; i < irq_ptr->nr_input_qs; i++) {
+		q = irq_ptr->input_qs[i];
+		/* if establish triggered an error */
+		if (!q || !q->entry.prev || !q->entry.next)
+			continue;
 
-	mutex_lock(&tiq_list_lock);
-	list_del_rcu(&q->entry);
-	mutex_unlock(&tiq_list_lock);
-	synchronize_rcu();
+		mutex_lock(&tiq_list_lock);
+		list_del_rcu(&q->entry);
+		mutex_unlock(&tiq_list_lock);
+		synchronize_rcu();
+	}
 }
 
 static inline u32 clear_shared_ind(void)
@@ -118,16 +107,26 @@ static inline u32 clear_shared_ind(void)
  * @alsi: pointer to adapter local summary indicator
  * @data: NULL
  */
-static inline void tiqdio_call_inq_handlers(struct qdio_irq *irq)
+static void tiqdio_thinint_handler(void *alsi, void *data)
 {
-	int i;
+	u32 si_used = clear_shared_ind();
 	struct qdio_q *q;
 
-	for (i = 0; i < irq->nr_input_qs; ++i) {
-		q = irq->input_qs[i];
+	last_ai_time = S390_lowcore.int_clock;
+	kstat_cpu(smp_processor_id()).irqs[IOINT_QAI]++;
 
-		if (!references_shared_dsci(irq) && has_multiple_inq_on_dsci(irq))
-			xchg(q->irq_ptr->dsci, 0);
+	/* protect tiq_list entries, only changed in activate or shutdown */
+	rcu_read_lock();
+
+	/* check for work on all inbound thinint queues */
+	list_for_each_entry_rcu(q, &tiq_list, entry) {
+
+		/* only process queues from changed sets */
+		if (unlikely(shared_ind(q->irq_ptr->dsci))) {
+			if (!si_used)
+				continue;
+		} else if (!*q->irq_ptr->dsci)
+			continue;
 
 		if (q->u.in.queue_start_poll) {
 			/* skip if polling is enabled or already in work */
@@ -141,47 +140,15 @@ static inline void tiqdio_call_inq_handlers(struct qdio_irq *irq)
 			q->u.in.queue_start_poll(q->irq_ptr->cdev, q->nr,
 						 q->irq_ptr->int_parm);
 		} else {
-			if (!shared_ind(q))
+			/* only clear it if the indicator is non-shared */
+			if (!shared_ind(q->irq_ptr->dsci))
 				xchg(q->irq_ptr->dsci, 0);
-
 			/*
 			 * Call inbound processing but not directly
 			 * since that could starve other thinint queues.
 			 */
 			tasklet_schedule(&q->tasklet);
 		}
-	}
-}
-
-/**
- * tiqdio_thinint_handler - thin interrupt handler for qdio
- * @alsi: pointer to adapter local summary indicator
- * @data: NULL
- */
-static void tiqdio_thinint_handler(void *alsi, void *data)
-{
-	u32 si_used = clear_shared_ind();
-	struct qdio_q *q;
-
-	last_ai_time = S390_lowcore.int_clock;
-
-	/* protect tiq_list entries, only changed in activate or shutdown */
-	rcu_read_lock();
-
-	/* check for work on all inbound thinint queues */
-	list_for_each_entry_rcu(q, &tiq_list, entry) {
-		struct qdio_irq *irq;
-
-		/* only process queues from changed sets */
-		irq = q->irq_ptr;
-		if (unlikely(references_shared_dsci(irq))) {
-			if (!si_used)
-				continue;
-		} else if (!*irq->dsci)
-			continue;
-
-		tiqdio_call_inq_handlers(irq);
-
 		qperf_inc(q, adapter_int);
 	}
 	rcu_read_unlock();
@@ -209,8 +176,8 @@ static int set_subchannel_ind(struct qdio_irq *irq_ptr, int reset)
 		.code	= 0x0021,
 	};
 	scssc_area->operation_code = 0;
-	scssc_area->ks = PAGE_DEFAULT_KEY;
-	scssc_area->kc = PAGE_DEFAULT_KEY;
+	scssc_area->ks = PAGE_DEFAULT_KEY >> 4;
+	scssc_area->kc = PAGE_DEFAULT_KEY >> 4;
 	scssc_area->isc = QDIO_AIRQ_ISC;
 	scssc_area->schid = irq_ptr->schid;
 
@@ -269,12 +236,6 @@ int qdio_establish_thinint(struct qdio_irq *irq_ptr)
 {
 	if (!is_thinint_irq(irq_ptr))
 		return 0;
-
-	/* Check for aif time delay disablement. If installed,
-	 * omit SVS even under LPAR
-	 */
-	if (css_general_characteristics.aif_tdd)
-		css_qdio_omit_svs = 1;
 	return set_subchannel_ind(irq_ptr, 0);
 }
 
@@ -292,8 +253,8 @@ void qdio_shutdown_thinint(struct qdio_irq *irq_ptr)
 		return;
 
 	/* reset adapter interrupt indicators */
-	put_indicator(irq_ptr->dsci);
 	set_subchannel_ind(irq_ptr, 1);
+	put_indicator(irq_ptr->dsci);
 }
 
 void __exit tiqdio_unregister_thinints(void)

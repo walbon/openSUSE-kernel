@@ -65,6 +65,7 @@
  */
 
 #include <linux/scatterlist.h>
+#include <linux/slab.h>
 #include "xhci.h"
 
 static int handle_cmd_in_cmd_wait_list(struct xhci_hcd *xhci,
@@ -743,7 +744,6 @@ remove_finished_td:
 	}
 	ep->stopped_td = NULL;
 	ep->stopped_trb = NULL;
-	ep->stopped_stream = 0;
 
 	/*
 	 * Drop the lock and complete the URBs in the cancelled TD list.
@@ -1427,6 +1427,11 @@ static void xhci_cleanup_halted_endpoint(struct xhci_hcd *xhci,
 
 	xhci_queue_reset_ep(xhci, slot_id, ep_index);
 	xhci_cleanup_stalled_ring(xhci, td->urb->dev, ep_index);
+
+	ep->stopped_td = NULL;
+	ep->stopped_trb = NULL;
+	ep->stopped_stream = 0;
+
 	xhci_ring_cmd_db(xhci);
 }
 
@@ -2074,7 +2079,7 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 				 * successful event after a short transfer.
 				 * Ignore it.
 				 */
-				if ((xhci->quirks & XHCI_SPURIOUS_SUCCESS) &&
+				if ((xhci->quirks & XHCI_SPURIOUS_SUCCESS) && 
 						ep_ring->last_td_was_short) {
 					ep_ring->last_td_was_short = false;
 					ret = 0;
@@ -3113,8 +3118,8 @@ static int count_isoc_trbs_needed(struct xhci_hcd *xhci,
 	addr = (u64) (urb->transfer_dma + urb->iso_frame_desc[i].offset);
 	td_len = urb->iso_frame_desc[i].length;
 
-	running_total = TRB_MAX_BUFF_SIZE -
-			(addr & ((1 << TRB_MAX_BUFF_SHIFT) - 1));
+	running_total = TRB_MAX_BUFF_SIZE - (addr & (TRB_MAX_BUFF_SIZE - 1));
+	running_total &= TRB_MAX_BUFF_SIZE - 1;
 	if (running_total != 0)
 		num_trbs++;
 

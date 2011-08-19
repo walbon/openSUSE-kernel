@@ -99,6 +99,7 @@ enum fip_state {
  * @recv_work:	   &work_struct for receiving FIP frames.
  * @fip_recv_list: list of received FIP frames.
  * @flogi_req:	   clone of FLOGI request sent
+ * @rnd_state:	   state for pseudo-random number generator.
  * @port_id:	   proposed or selected local-port ID.
  * @user_mfs:	   configured maximum FC frame size, including FC header.
  * @flogi_oxid:    exchange ID of most recent fabric login.
@@ -136,6 +137,7 @@ struct fcoe_ctlr {
 	struct sk_buff_head fip_recv_list;
 	struct sk_buff *flogi_req;
 
+	struct rnd_state rnd_state;
 	u32 port_id;
 
 	u16 user_mfs;

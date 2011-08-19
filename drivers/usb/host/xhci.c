@@ -25,6 +25,7 @@
 #include <linux/log2.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
+#include <linux/slab.h>
 
 #include "xhci.h"
 
@@ -750,7 +751,7 @@ int xhci_resume(struct xhci_hcd *xhci, bool hibernated)
 	int			retval;
 
 	/* Wait a bit if either of the roothubs need to settle from the
-	 * transistion into bus suspend.
+	 * transition into bus suspend.
 	 */
 	if (time_before(jiffies, xhci->bus_state[0].next_statechange) ||
 			time_before(jiffies,
@@ -2272,7 +2273,7 @@ int xhci_alloc_streams(struct usb_hcd *hcd, struct usb_device *udev,
 		return -EINVAL;
 	}
 	vdev = xhci->devs[udev->slot_id];
-	/* Mark each endpoint as being in transistion, so
+	/* Mark each endpoint as being in transition, so
 	 * xhci_urb_enqueue() will reject all URBs.
 	 */
 	for (i = 0; i < num_eps; i++) {

@@ -55,6 +55,16 @@ struct consw {
 	void	(*con_invert_region)(struct vc_data *, u16 *, int);
 	u16    *(*con_screen_pos)(struct vc_data *, int);
 	unsigned long (*con_getxy)(struct vc_data *, unsigned long, int *, int *);
+	/*
+	 * Prepare the console for the debugger.  This includes, but is not
+	 * limited to, unblanking the console, loading an appropriate
+	 * palette, and allowing debugger generated output.
+	 */
+	int	(*con_debug_enter)(struct vc_data *);
+	/*
+	 * Restore the console to its pre-debug state as closely as possible.
+	 */
+	int	(*con_debug_leave)(struct vc_data *);
 };
 
 extern const struct consw *conswitchp;
@@ -63,13 +73,20 @@ extern const struct consw dummy_con;	/* dummy console buffer */
 extern const struct consw vga_con;	/* VGA text console */
 extern const struct consw newport_con;	/* SGI Newport console  */
 extern const struct consw prom_con;	/* SPARC PROM console */
-extern int console_use_vt;
 
 int con_is_bound(const struct consw *csw);
 int register_con_driver(const struct consw *csw, int first, int last);
 int unregister_con_driver(const struct consw *csw);
 int take_over_console(const struct consw *sw, int first, int last, int deflt);
 void give_up_console(const struct consw *sw);
+#ifdef CONFIG_HW_CONSOLE
+int con_debug_enter(struct vc_data *vc);
+int con_debug_leave(void);
+#else
+#define con_debug_enter(vc) (0)
+#define con_debug_leave() (0)
+#endif
+
 /* scroll */
 #define SM_UP       (1)
 #define SM_DOWN     (2)
@@ -109,6 +126,12 @@ struct console {
 	struct	 console *next;
 };
 
+/*
+ * for_each_console() allows you to iterate on each console
+ */
+#define for_each_console(con) \
+	for (con = console_drivers; con != NULL; con = con->next)
+
 extern int console_set_on_cmdline;
 
 extern int add_preferred_console(char *name, int idx, char *options);
@@ -116,9 +139,9 @@ extern int update_console_cmdline(char *name, int idx, char *name_new, int idx_n
 extern void register_console(struct console *);
 extern int unregister_console(struct console *);
 extern struct console *console_drivers;
-extern void acquire_console_sem(void);
-extern int try_acquire_console_sem(void);
-extern void release_console_sem(void);
+extern void console_lock(void);
+extern int console_trylock(void);
+extern void console_unlock(void);
 extern void console_conditional_schedule(void);
 extern void console_unblank(void);
 extern struct tty_driver *console_device(int *);
@@ -128,7 +151,7 @@ extern int is_console_locked(void);
 extern int braille_register_console(struct console *, int index,
 		char *console_options, char *braille_options);
 extern int braille_unregister_console(struct console *);
-
+extern void console_sysfs_notify(void);
 extern int console_suspend_enabled;
 
 /* Suspend and resume console messages over PM events */
@@ -143,12 +166,7 @@ void vcs_remove_sysfs(int index);
 
 /* Some debug stub to catch some of the obvious races in the VT code */
 #if 1
-#ifdef	CONFIG_KDB
-#include <linux/kdb.h>
-#define WARN_CONSOLE_UNLOCKED()	WARN_ON(!is_console_locked() && !oops_in_progress && !atomic_read(&kdb_event))
-#else	/* !CONFIG_KDB */
 #define WARN_CONSOLE_UNLOCKED()	WARN_ON(!is_console_locked() && !oops_in_progress)
-#endif	/* CONFIG_KDB */
 #else
 #define WARN_CONSOLE_UNLOCKED()
 #endif

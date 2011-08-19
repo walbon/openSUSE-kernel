@@ -333,7 +333,7 @@ struct dasd_gneq {
 	struct {
 		__u8 value:2;
 		__u8 number:6;
-	} __packed timeout;
+	} __attribute__ ((packed)) timeout;
 	__u8 reserved3;
 	__u16 subsystemID;
 	__u8 reserved2[22];

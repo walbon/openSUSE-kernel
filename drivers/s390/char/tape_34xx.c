@@ -9,11 +9,13 @@
  */
 
 #define KMSG_COMPONENT "tape_34xx"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/bio.h>
 #include <linux/workqueue.h>
+#include <linux/slab.h>
 
 #define TAPE_DBF_AREA	tape_34xx_dbf
 
@@ -136,16 +138,16 @@ tape_34xx_work_handler(struct work_struct *work)
 {
 	struct tape_34xx_work *p =
 		container_of(work, struct tape_34xx_work, work);
+	struct tape_device *device = p->device;
 
 	switch(p->op) {
 		case TO_MSEN:
-			tape_34xx_medium_sense_async(p->device);
+			tape_34xx_medium_sense_async(device);
 			break;
 		default:
 			DBF_EVENT(3, "T34XX: internal error: unknown work\n");
 	}
-
-	p->device = tape_put_device(p->device);
+	tape_put_device(device);
 	kfree(p);
 }
 
@@ -159,7 +161,7 @@ tape_34xx_schedule_work(struct tape_device *device, enum tape_op op)
 
 	INIT_WORK(&p->work, tape_34xx_work_handler);
 
-	p->device = tape_get_device_reference(device);
+	p->device = tape_get_device(device);
 	p->op     = op;
 
 	schedule_work(&p->work);
@@ -1318,8 +1320,10 @@ tape_34xx_online(struct ccw_device *cdev)
 }
 
 static struct ccw_driver tape_34xx_driver = {
-	.name = "tape_34xx",
-	.owner = THIS_MODULE,
+	.driver = {
+		.name = "tape_34xx",
+		.owner = THIS_MODULE,
+	},
 	.ids = tape_34xx_ids,
 	.probe = tape_generic_probe,
 	.remove = tape_generic_remove,

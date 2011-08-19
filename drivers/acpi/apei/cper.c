@@ -280,6 +280,12 @@ static void cper_print_pcie(const char *pfx, const struct cper_sec_pcie *pcie,
 		printk(
 	"%s""bridge: secondary_status: 0x%04x, control: 0x%04x\n",
 	pfx, pcie->bridge.secondary_status, pcie->bridge.control);
+#ifdef CONFIG_ACPI_APEI_PCIEAER
+	if (pcie->validation_bits & CPER_PCIE_VALID_AER_INFO) {
+		struct aer_capability_regs *aer_regs = (void *)pcie->aer_info;
+		cper_print_aer(pfx, gdata->error_severity, aer_regs);
+	}
+#endif
 }
 
 static const char *apei_estatus_section_flag_strs[] = {

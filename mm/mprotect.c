@@ -10,7 +10,6 @@
 
 #include <linux/mm.h>
 #include <linux/hugetlb.h>
-#include <linux/slab.h>
 #include <linux/shm.h>
 #include <linux/mman.h>
 #include <linux/fs.h>
@@ -305,11 +304,6 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 		if (error)
 			goto out;
 
-		if (vma->vm_ops && vma->vm_ops->mprotect) {
-			error = vma->vm_ops->mprotect(vma, newflags);
-			if (error < 0)
-				goto out;
-		}
 		tmp = vma->vm_end;
 		if (tmp > end)
 			tmp = end;

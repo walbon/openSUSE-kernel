@@ -143,7 +143,7 @@ static bool falcon_xmac_link_ok(struct efx_nic *efx)
 		 efx_mdio_phyxgxs_lane_sync(efx));
 }
 
-void falcon_reconfigure_xmac_core(struct efx_nic *efx)
+static void falcon_reconfigure_xmac_core(struct efx_nic *efx)
 {
 	unsigned int max_frame_len;
 	efx_oword_t reg;
@@ -362,7 +362,7 @@ void falcon_poll_xmac(struct efx_nic *efx)
 	falcon_ack_status_intr(efx);
 }
 
-struct efx_mac_operations falcon_xmac_operations = {
+const struct efx_mac_operations falcon_xmac_operations = {
 	.reconfigure	= falcon_reconfigure_xmac,
 	.update_stats	= falcon_update_stats_xmac,
 	.check_fault	= falcon_xmac_check_fault,

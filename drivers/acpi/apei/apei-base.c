@@ -606,33 +606,26 @@ EXPORT_SYMBOL_GPL(apei_get_debugfs_dir);
 
 int apei_osc_setup(void)
 {
-	static int initialized;
-	static u8 apei_uuid_str[] = "ed855e0c-6c90-47bf-a62a-26de0fc5ad5c";
+	static u8 whea_uuid_str[] = "ed855e0c-6c90-47bf-a62a-26de0fc5ad5c";
+	acpi_handle handle;
 	u32 capbuf[3];
 	struct acpi_osc_context context = {
-		.uuid_str       = apei_uuid_str,
-		.rev            = 1,
-		.cap.length     = sizeof(capbuf),
-		.cap.pointer    = capbuf,
+		.uuid_str	= whea_uuid_str,
+		.rev		= 1,
+		.cap.length	= sizeof(capbuf),
+		.cap.pointer	= capbuf,
 	};
-	acpi_handle handle;
-
-	if (initialized)
-		return 0;
 
 	capbuf[OSC_QUERY_TYPE] = OSC_QUERY_ENABLE;
 	capbuf[OSC_SUPPORT_TYPE] = 0;
 	capbuf[OSC_CONTROL_TYPE] = 0;
 
-	if (ACPI_FAILURE(acpi_get_handle(NULL, "\\_SB", &handle)))
-		return -ENODEV;
-	if (ACPI_SUCCESS(acpi_run_osc(handle, &context)))
-		kfree(context.ret.pointer);
-	else
+	if (ACPI_FAILURE(acpi_get_handle(NULL, "\\_SB", &handle))
+	    || ACPI_FAILURE(acpi_run_osc(handle, &context)))
 		return -EIO;
-
-	initialized = 1;
-
-	return 0;
+	else {
+		kfree(context.ret.pointer);
+		return 0;
+	}
 }
 EXPORT_SYMBOL_GPL(apei_osc_setup);

@@ -16,10 +16,11 @@
  *
  */
 #include <linux/rbtree.h>
-#include <linux/workqueue.h>
 
 #ifndef _CIFS_FS_SB_H
 #define _CIFS_FS_SB_H
+
+#include <linux/backing-dev.h>
 
 #define CIFS_MOUNT_NO_PERM      1 /* do not do client vfs_perm check */
 #define CIFS_MOUNT_SET_UID      2 /* set current's euid in create etc. */
@@ -39,6 +40,9 @@
 #define CIFS_MOUNT_FSCACHE	0x8000 /* local caching enabled */
 #define CIFS_MOUNT_MF_SYMLINKS	0x10000 /* Minshall+French Symlinks enabled */
 #define CIFS_MOUNT_MULTIUSER	0x20000 /* multiuser mount */
+#define CIFS_MOUNT_STRICT_IO	0x40000 /* strict cache mode */
+#define CIFS_MOUNT_RWPIDFORWARD	0x80000 /* use pid forwarding for rw */
+#define CIFS_MOUNT_POSIXACL	0x100000 /* mirror of MS_POSIXACL in mnt_cifs_flags */
 
 struct cifs_sb_info {
 	struct rb_root tlink_tree;
@@ -54,11 +58,8 @@ struct cifs_sb_info {
 	mode_t	mnt_file_mode;
 	mode_t	mnt_dir_mode;
 	unsigned int mnt_cifs_flags;
-	int	prepathlen;
-	char   *prepath; /* relative path under the share to mount to */
-#ifdef CONFIG_CIFS_DFS_UPCALL
-	char   *mountdata; /* mount options received at mount time */
-#endif
+	char   *mountdata; /* options received at mount time or via DFS refs */
+	struct backing_dev_info bdi;
 	struct delayed_work prune_tlinks;
 };
 #endif				/* _CIFS_FS_SB_H */

@@ -1,7 +1,5 @@
 #ifdef CONFIG_CPU_SUP_AMD
 
-static DEFINE_SPINLOCK(amd_nb_lock);
-
 static __initconst const u64 amd_hw_cache_event_ids
 				[PERF_COUNT_HW_CACHE_MAX]
 				[PERF_COUNT_HW_CACHE_OP_MAX]
@@ -280,17 +278,17 @@ done:
 	return &emptyconstraint;
 }
 
-static struct amd_nb *amd_alloc_nb(int cpu, int nb_id)
+static struct amd_nb *amd_alloc_nb(int cpu)
 {
 	struct amd_nb *nb;
 	int i;
 
-	nb = kmalloc(sizeof(struct amd_nb), GFP_KERNEL);
+	nb = kmalloc_node(sizeof(struct amd_nb), GFP_KERNEL | __GFP_ZERO,
+			  cpu_to_node(cpu));
 	if (!nb)
 		return NULL;
 
-	memset(nb, 0, sizeof(*nb));
-	nb->nb_id = nb_id;
+	nb->nb_id = -1;
 
 	/*
 	 * initialize all possible NB constraints
@@ -311,7 +309,7 @@ static int amd_pmu_cpu_prepare(int cpu)
 	if (boot_cpu_data.x86_max_cores < 2)
 		return NOTIFY_OK;
 
-	cpuc->amd_nb = amd_alloc_nb(cpu, -1);
+	cpuc->amd_nb = amd_alloc_nb(cpu);
 	if (!cpuc->amd_nb)
 		return NOTIFY_BAD;
 
@@ -330,8 +328,6 @@ static void amd_pmu_cpu_starting(int cpu)
 	nb_id = amd_get_nb_id(cpu);
 	WARN_ON_ONCE(nb_id == BAD_APICID);
 
-	spin_lock(&amd_nb_lock);
-
 	for_each_online_cpu(i) {
 		nb = per_cpu(cpu_hw_events, i).amd_nb;
 		if (WARN_ON_ONCE(!nb))
@@ -346,8 +342,6 @@ static void amd_pmu_cpu_starting(int cpu)
 
 	cpuc->amd_nb->nb_id = nb_id;
 	cpuc->amd_nb->refcnt++;
-
-	spin_unlock(&amd_nb_lock);
 }
 
 static void amd_pmu_cpu_dead(int cpu)
@@ -359,8 +353,6 @@ static void amd_pmu_cpu_dead(int cpu)
 
 	cpuhw = &per_cpu(cpu_hw_events, cpu);
 
-	spin_lock(&amd_nb_lock);
-
 	if (cpuhw->amd_nb) {
 		struct amd_nb *nb = cpuhw->amd_nb;
 
@@ -369,8 +361,6 @@ static void amd_pmu_cpu_dead(int cpu)
 
 		cpuhw->amd_nb = NULL;
 	}
-
-	spin_unlock(&amd_nb_lock);
 }
 
 static __initconst const struct x86_pmu amd_pmu = {

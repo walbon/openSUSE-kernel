@@ -65,8 +65,8 @@
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
+#include <linux/gfp.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/tty.h>
 #include <linux/tty_driver.h>
 #include <linux/tty_flip.h>
@@ -75,7 +75,6 @@
 #include <linux/uaccess.h>
 #include <linux/usb.h>
 #include <linux/usb/serial.h>
-#include <linux/kfifo.h>
 
 
 #ifndef CONFIG_USB_SERIAL_SAFE_PADDED
@@ -265,7 +264,7 @@ static int safe_prepare_write_buffer(struct usb_serial_port *port,
 
 	trailer_len = safe ? 2 : 0;
 
-	count = kfifo_out_locked(port->write_fifo, buf, size - trailer_len,
+	count = kfifo_out_locked(&port->write_fifo, buf, size - trailer_len,
 								&port->lock);
 	if (!safe)
 		return count;

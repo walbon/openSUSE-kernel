@@ -28,39 +28,28 @@
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/sysctl.h>
+#include <linux/pci.h>
+#include <linux/dmi.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
-#include <linux/dmi.h>
 #include <acpi/acpi_bus.h>
 #include <linux/completion.h>
 
 #include "hyperv.h"
 #include "hyperv_vmbus.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 35)
-#include <asm/mshyperv.h>
 
-int x86_hyper_ms_hyperv;
-EXPORT_SYMBOL(x86_hyper_ms_hyperv);
-
-void *x86_hyper = &x86_hyper_ms_hyperv;
-EXPORT_SYMBOL(x86_hyper);
-
-struct ms_hyperv_info ms_hyperv = {
-		.features = HV_X64_MSR_TIME_REF_COUNT_AVAILABLE,
-};
-EXPORT_SYMBOL(ms_hyperv);
-
-#endif
-
-static struct acpi_device  *hv_acpi_dev;
+static struct pci_dev *hv_pci_dev;
 
 static struct tasklet_struct msg_dpc;
 static struct tasklet_struct event_dpc;
 
 unsigned int vmbus_loglevel = (ALL_MODULES << 16 | INFO_LVL);
 EXPORT_SYMBOL(vmbus_loglevel);
+	/* (ALL_MODULES << 16 | DEBUG_LVL_ENTEREXIT); */
+	/* (((VMBUS | VMBUS_DRV)<<16) | DEBUG_LVL_ENTEREXIT); */
 
+static int pci_probe_error;
 static struct completion probe_event;
 static int irq;
 
@@ -119,17 +108,51 @@ static ssize_t vmbus_show_device_attr(struct device *dev,
 				      struct device_attribute *dev_attr,
 				      char *buf)
 {
-	struct hv_device *hv_dev = device_to_hv_device(dev);
+	struct hv_device *device_ctx = device_to_hv_device(dev);
 	struct hv_device_info device_info;
 
 	memset(&device_info, 0, sizeof(struct hv_device_info));
 
-	get_channel_info(hv_dev, &device_info);
+	get_channel_info(device_ctx, &device_info);
 
 	if (!strcmp(dev_attr->attr.name, "class_id")) {
-		return sprintf(buf, "%s\n", hv_dev->device_type);
-	} else if (!strcmp(dev_attr->attr.name, "modalias")) {
-		return sprintf(buf, "vmbus:%s\n", hv_dev->device_type);
+		return sprintf(buf, "{%02x%02x%02x%02x-%02x%02x-%02x%02x-"
+			       "%02x%02x%02x%02x%02x%02x%02x%02x}\n",
+			       device_info.chn_type.data[3],
+			       device_info.chn_type.data[2],
+			       device_info.chn_type.data[1],
+			       device_info.chn_type.data[0],
+			       device_info.chn_type.data[5],
+			       device_info.chn_type.data[4],
+			       device_info.chn_type.data[7],
+			       device_info.chn_type.data[6],
+			       device_info.chn_type.data[8],
+			       device_info.chn_type.data[9],
+			       device_info.chn_type.data[10],
+			       device_info.chn_type.data[11],
+			       device_info.chn_type.data[12],
+			       device_info.chn_type.data[13],
+			       device_info.chn_type.data[14],
+			       device_info.chn_type.data[15]);
+	} else if (!strcmp(dev_attr->attr.name, "device_id")) {
+		return sprintf(buf, "{%02x%02x%02x%02x-%02x%02x-%02x%02x-"
+			       "%02x%02x%02x%02x%02x%02x%02x%02x}\n",
+			       device_info.chn_instance.data[3],
+			       device_info.chn_instance.data[2],
+			       device_info.chn_instance.data[1],
+			       device_info.chn_instance.data[0],
+			       device_info.chn_instance.data[5],
+			       device_info.chn_instance.data[4],
+			       device_info.chn_instance.data[7],
+			       device_info.chn_instance.data[6],
+			       device_info.chn_instance.data[8],
+			       device_info.chn_instance.data[9],
+			       device_info.chn_instance.data[10],
+			       device_info.chn_instance.data[11],
+			       device_info.chn_instance.data[12],
+			       device_info.chn_instance.data[13],
+			       device_info.chn_instance.data[14],
+			       device_info.chn_instance.data[15]);
 	} else if (!strcmp(dev_attr->attr.name, "state")) {
 		return sprintf(buf, "%d\n", device_info.chn_state);
 	} else if (!strcmp(dev_attr->attr.name, "id")) {
@@ -184,7 +207,7 @@ static struct device_attribute vmbus_device_attrs[] = {
 	__ATTR(id, S_IRUGO, vmbus_show_device_attr, NULL),
 	__ATTR(state, S_IRUGO, vmbus_show_device_attr, NULL),
 	__ATTR(class_id, S_IRUGO, vmbus_show_device_attr, NULL),
-	__ATTR(modalias, S_IRUGO, vmbus_show_device_attr, NULL),
+	__ATTR(device_id, S_IRUGO, vmbus_show_device_attr, NULL),
 	__ATTR(monitor_id, S_IRUGO, vmbus_show_device_attr, NULL),
 
 	__ATTR(server_monitor_pending, S_IRUGO, vmbus_show_device_attr, NULL),
@@ -220,8 +243,54 @@ static struct device_attribute vmbus_device_attrs[] = {
 static int vmbus_uevent(struct device *device, struct kobj_uevent_env *env)
 {
 	struct hv_device *dev = device_to_hv_device(device);
+	int ret;
 
-	return add_uevent_var(env, "MODALIAS=vmbus:%s", dev->device_type);
+	ret = add_uevent_var(env, "VMBUS_DEVICE_CLASS_GUID={"
+			     "%02x%02x%02x%02x-%02x%02x-%02x%02x-"
+			     "%02x%02x%02x%02x%02x%02x%02x%02x}",
+			     dev->dev_type.data[3],
+			     dev->dev_type.data[2],
+			     dev->dev_type.data[1],
+			     dev->dev_type.data[0],
+			     dev->dev_type.data[5],
+			     dev->dev_type.data[4],
+			     dev->dev_type.data[7],
+			     dev->dev_type.data[6],
+			     dev->dev_type.data[8],
+			     dev->dev_type.data[9],
+			     dev->dev_type.data[10],
+			     dev->dev_type.data[11],
+			     dev->dev_type.data[12],
+			     dev->dev_type.data[13],
+			     dev->dev_type.data[14],
+			     dev->dev_type.data[15]);
+
+	if (ret)
+		return ret;
+
+	ret = add_uevent_var(env, "VMBUS_DEVICE_DEVICE_GUID={"
+			     "%02x%02x%02x%02x-%02x%02x-%02x%02x-"
+			     "%02x%02x%02x%02x%02x%02x%02x%02x}",
+			     dev->dev_instance.data[3],
+			     dev->dev_instance.data[2],
+			     dev->dev_instance.data[1],
+			     dev->dev_instance.data[0],
+			     dev->dev_instance.data[5],
+			     dev->dev_instance.data[4],
+			     dev->dev_instance.data[7],
+			     dev->dev_instance.data[6],
+			     dev->dev_instance.data[8],
+			     dev->dev_instance.data[9],
+			     dev->dev_instance.data[10],
+			     dev->dev_instance.data[11],
+			     dev->dev_instance.data[12],
+			     dev->dev_instance.data[13],
+			     dev->dev_instance.data[14],
+			     dev->dev_instance.data[15]);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 
@@ -230,16 +299,16 @@ static int vmbus_uevent(struct device *device, struct kobj_uevent_env *env)
  */
 static int vmbus_match(struct device *device, struct device_driver *driver)
 {
+	int match = 0;
 	struct hv_driver *drv = drv_to_hv_drv(driver);
-	struct hv_device *hv_dev = device_to_hv_device(device);
-	const struct hv_vmbus_device_id *id_array = drv->id_table;
+	struct hv_device *device_ctx = device_to_hv_device(device);
 
-	for (; *id_array->device_type != '\0'; id_array++) {
-		if (!strcmp(id_array->device_type, hv_dev->device_type))
-			return 1;
-	}
+	/* We found our driver ? */
+	if (memcmp(&device_ctx->dev_type, &drv->dev_type,
+		   sizeof(struct hv_guid)) == 0)
+		match = 1;
 
-	return 0;
+	return match;
 }
 
 /*
@@ -261,7 +330,7 @@ static int vmbus_probe(struct device *child_device)
 	} else {
 		pr_err("probe not set for driver %s\n",
 		       dev_name(child_device));
-		ret = -ENODEV;
+		ret = -1;
 	}
 	return ret;
 }
@@ -284,7 +353,7 @@ static int vmbus_remove(struct device *child_device)
 		} else {
 			pr_err("remove not set for driver %s\n",
 				dev_name(child_device));
-			ret = -ENODEV;
+			ret = -1;
 		}
 	}
 
@@ -319,9 +388,9 @@ static void vmbus_shutdown(struct device *child_device)
  */
 static void vmbus_device_release(struct device *device)
 {
-	struct hv_device *hv_dev = device_to_hv_device(device);
+	struct hv_device *device_ctx = device_to_hv_device(device);
 
-	kfree(hv_dev);
+	kfree(device_ctx);
 
 }
 
@@ -387,7 +456,7 @@ static void vmbus_on_msg_dpc(unsigned long data)
 		 * will not deliver any more messages since there is
 		 * no empty slot
 		 */
-		smp_mb();
+		mb();
 
 		if (msg->header.message_flags.msg_pending) {
 			/*
@@ -418,6 +487,7 @@ static int vmbus_on_isr(void)
 	if (msg->header.message_type != HVMSG_NONE)
 		ret |= 0x1;
 
+	/* TODO: Check if there are events to be process */
 	page_addr = hv_context.synic_event_page[cpu];
 	event = (union hv_synic_event_flags *)page_addr + VMBUS_MESSAGE_SINT;
 
@@ -458,7 +528,7 @@ static irqreturn_t vmbus_isr(int irq, void *dev_id)
  *	- get the irq resource
  *	- retrieve the channel offers
  */
-static int vmbus_bus_init(int irq)
+static int vmbus_bus_init(struct pci_dev *pdev)
 {
 	int ret;
 	unsigned int vector;
@@ -467,7 +537,7 @@ static int vmbus_bus_init(int irq)
 	ret = hv_init();
 	if (ret != 0) {
 		pr_err("Unable to initialize the hypervisor - 0x%x\n", ret);
-		return ret;
+		goto cleanup;
 	}
 
 	/* Initialize the bus context */
@@ -476,23 +546,27 @@ static int vmbus_bus_init(int irq)
 
 	/* Now, register the bus  with LDM */
 	ret = bus_register(&hv_bus);
-	if (ret)
-		return ret;
+	if (ret) {
+		ret = -1;
+		goto cleanup;
+	}
 
 	/* Get the interrupt resource */
-	ret = request_irq(irq, vmbus_isr, IRQF_SAMPLE_RANDOM,
-			driver_name, hv_acpi_dev);
+	ret = request_irq(pdev->irq, vmbus_isr,
+			  IRQF_SHARED | IRQF_SAMPLE_RANDOM,
+			  driver_name, pdev);
 
 	if (ret != 0) {
 		pr_err("Unable to request IRQ %d\n",
-			   irq);
+			   pdev->irq);
 
 		bus_unregister(&hv_bus);
 
-		return ret;
+		ret = -1;
+		goto cleanup;
 	}
 
-	vector = IRQ0_VECTOR + irq;
+	vector = IRQ0_VECTOR + pdev->irq;
 
 	/*
 	 * Notify the hypervisor of our irq and
@@ -501,15 +575,16 @@ static int vmbus_bus_init(int irq)
 	on_each_cpu(hv_synic_init, (void *)&vector, 1);
 	ret = vmbus_connect();
 	if (ret) {
-		free_irq(irq, hv_acpi_dev);
+		free_irq(pdev->irq, pdev);
 		bus_unregister(&hv_bus);
-		return ret;
+		goto cleanup;
 	}
 
 
 	vmbus_request_offers();
 
-	return 0;
+cleanup:
+	return ret;
 }
 
 /**
@@ -556,6 +631,7 @@ void vmbus_child_driver_unregister(struct device_driver *drv)
 
 	driver_unregister(drv);
 
+	drv->bus = NULL;
 }
 EXPORT_SYMBOL(vmbus_child_driver_unregister);
 
@@ -576,12 +652,8 @@ struct hv_device *vmbus_child_device_create(struct hv_guid *type,
 		return NULL;
 	}
 
-	spin_lock_init(&child_device_obj->ext_lock);
 	child_device_obj->channel = channel;
-	/*
-	 * Get the human readable device type name and stash it away.
-	 */
-	child_device_obj->device_type = hv_get_devtype_name(type);
+	memcpy(&child_device_obj->dev_type, type, sizeof(struct hv_guid));
 	memcpy(&child_device_obj->dev_instance, instance,
 	       sizeof(struct hv_guid));
 
@@ -604,7 +676,7 @@ int vmbus_child_device_register(struct hv_device *child_device_obj)
 
 	/* The new device belongs to this bus */
 	child_device_obj->device.bus = &hv_bus; /* device->dev.bus; */
-	child_device_obj->device.parent = &hv_acpi_dev->dev;
+	child_device_obj->device.parent = &hv_pci_dev->dev;
 	child_device_obj->device.release = vmbus_device_release;
 
 	/*
@@ -661,8 +733,6 @@ static int vmbus_acpi_add(struct acpi_device *device)
 {
 	acpi_status result;
 
-	hv_acpi_dev = device;
-
 	result =
 	acpi_walk_resources(device->handle, METHOD_NAME__CRS,
 			vmbus_walk_resources, &irq);
@@ -677,7 +747,6 @@ static int vmbus_acpi_add(struct acpi_device *device)
 
 static const struct acpi_device_id vmbus_acpi_device_ids[] = {
 	{"VMBUS", 0},
-	{"VMBus", 0},
 	{"", 0},
 };
 MODULE_DEVICE_TABLE(acpi, vmbus_acpi_device_ids);
@@ -688,6 +757,71 @@ static struct acpi_driver vmbus_acpi_driver = {
 	.ops = {
 		.add = vmbus_acpi_add,
 	},
+};
+
+static int vmbus_acpi_init(void)
+{
+	int result;
+
+
+	result = acpi_bus_register_driver(&vmbus_acpi_driver);
+	if (result < 0)
+		return result;
+
+	return 0;
+}
+
+static void vmbus_acpi_exit(void)
+{
+	acpi_bus_unregister_driver(&vmbus_acpi_driver);
+
+	return;
+}
+
+
+static int __devinit hv_pci_probe(struct pci_dev *pdev,
+				const struct pci_device_id *ent)
+{
+	hv_pci_dev = pdev;
+
+	pci_probe_error = pci_enable_device(pdev);
+	if (pci_probe_error)
+		goto probe_cleanup;
+
+	/*
+	 * If the PCI sub-sytem did not assign us an
+	 * irq, use the bios provided one.
+	 */
+
+	if (pdev->irq == 0)
+		pdev->irq = irq;
+
+	pci_probe_error = vmbus_bus_init(pdev);
+
+	if (pci_probe_error)
+		pci_disable_device(pdev);
+
+probe_cleanup:
+	complete(&probe_event);
+	return pci_probe_error;
+}
+
+/*
+ * We use a PCI table to determine if we should autoload this driver  This is
+ * needed by distro tools to determine if the hyperv drivers should be
+ * installed and/or configured.  We don't do anything else with the table, but
+ * it needs to be present.
+ */
+static const struct pci_device_id microsoft_hv_pci_table[] = {
+	{ PCI_DEVICE(0x1414, 0x5353) },	/* VGA compatible controller */
+	{ 0 }
+};
+MODULE_DEVICE_TABLE(pci, microsoft_hv_pci_table);
+
+static struct pci_driver hv_bus_driver = {
+	.name =           "hv_bus",
+	.probe =          hv_pci_probe,
+	.id_table =       microsoft_hv_pci_table,
 };
 
 static const struct dmi_system_id __initconst
@@ -704,7 +838,7 @@ hv_vmbus_dmi_table[] __maybe_unused  = {
 };
 MODULE_DEVICE_TABLE(dmi, hv_vmbus_dmi_table);
 
-static int __init hv_acpi_init(void)
+static int __init hv_pci_init(void)
 {
 	int ret;
 
@@ -717,22 +851,32 @@ static int __init hv_acpi_init(void)
 	 * Get irq resources first.
 	 */
 
-	ret = acpi_bus_register_driver(&vmbus_acpi_driver);
-
+	ret = vmbus_acpi_init();
 	if (ret)
 		return ret;
 
 	wait_for_completion(&probe_event);
 
 	if (irq <= 0) {
-		acpi_bus_unregister_driver(&vmbus_acpi_driver);
+		vmbus_acpi_exit();
 		return -ENODEV;
 	}
 
-	ret = vmbus_bus_init(irq);
+	vmbus_acpi_exit();
+	init_completion(&probe_event);
+	ret = pci_register_driver(&hv_bus_driver);
 	if (ret)
-		acpi_bus_unregister_driver(&vmbus_acpi_driver);
-	return ret;
+		return ret;
+	/*
+	 * All the vmbus initialization occurs within the
+	 * hv_pci_probe() function. Wait for hv_pci_probe()
+	 * to complete.
+	 */
+	wait_for_completion(&probe_event);
+
+	if (pci_probe_error)
+		pci_unregister_driver(&hv_bus_driver);
+	return pci_probe_error;
 }
 
 
@@ -740,4 +884,4 @@ MODULE_LICENSE("GPL");
 MODULE_VERSION(HV_DRV_VERSION);
 module_param(vmbus_loglevel, int, S_IRUGO|S_IWUSR);
 
-module_init(hv_acpi_init);
+module_init(hv_pci_init);

@@ -144,7 +144,7 @@ struct igb_buffer {
 			u16 next_to_watch;
 			unsigned int bytecount;
 			u16 gso_segs;
-			union skb_shared_tx shtx;
+			u8 tx_flags;
 			u8 mapped_as_page;
 		};
 		/* RX */
@@ -160,6 +160,7 @@ struct igb_tx_queue_stats {
 	u64 packets;
 	u64 bytes;
 	u64 restart_queue;
+	u64 restart_queue2;
 };
 
 struct igb_rx_queue_stats {
@@ -211,11 +212,14 @@ struct igb_ring {
 		/* TX */
 		struct {
 			struct igb_tx_queue_stats tx_stats;
+			struct u64_stats_sync tx_syncp;
+			struct u64_stats_sync tx_syncp2;
 			bool detect_tx_hung;
 		};
 		/* RX */
 		struct {
 			struct igb_rx_queue_stats rx_stats;
+			struct u64_stats_sync rx_syncp;
 			u32 rx_buffer_len;
 		};
 	};
@@ -288,6 +292,9 @@ struct igb_adapter {
 	struct timecounter clock;
 	struct timecompare compare;
 	struct hwtstamp_config hwtstamp_config;
+
+	spinlock_t stats64_lock;
+	struct rtnl_link_stats64 stats64;
 
 	/* structs defined in e1000_hw.h */
 	struct e1000_hw hw;
@@ -366,7 +373,7 @@ extern netdev_tx_t igb_xmit_frame_ring_adv(struct sk_buff *, struct igb_ring *);
 extern void igb_unmap_and_free_tx_resource(struct igb_ring *,
 					   struct igb_buffer *);
 extern void igb_alloc_rx_buffers_adv(struct igb_ring *, int);
-extern void igb_update_stats(struct igb_adapter *);
+extern void igb_update_stats(struct igb_adapter *, struct rtnl_link_stats64 *);
 extern bool igb_has_link(struct igb_adapter *adapter);
 extern void igb_set_ethtool_ops(struct net_device *);
 extern void igb_power_up_link(struct igb_adapter *);
@@ -400,17 +407,6 @@ static inline s32 igb_get_phy_info(struct e1000_hw *hw)
 	if (hw->phy.ops.get_phy_info)
 		return hw->phy.ops.get_phy_info(hw);
 
-	return 0;
-}
-
-/* compatibility stubs */
-static inline int dma_set_coherent_mask(struct device *dev, u64 mask)
-{
-	return pci_set_consistent_dma_mask(to_pci_dev(dev), mask);
-}
-
-static inline int netif_set_real_num_rx_queues(struct net_device *dev, int num)
-{
 	return 0;
 }
 

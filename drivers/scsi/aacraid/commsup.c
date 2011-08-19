@@ -94,7 +94,7 @@ void aac_fib_map_free(struct aac_dev *dev)
  *	aac_fib_setup	-	setup the fibs
  *	@dev: Adapter to set up
  *
- *	Allocate the PCI space for the fibs, map it and then intialise the
+ *	Allocate the PCI space for the fibs, map it and then initialise the
  *	fib area, the unmapped fib data and also the free list
  */
 
@@ -140,7 +140,7 @@ int aac_fib_setup(struct aac_dev * dev)
 		fibptr->hw_fib_va = hw_fib;
 		fibptr->data = (void *) fibptr->hw_fib_va->data;
 		fibptr->next = fibptr+1;	/* Forward chain the fibs */
-		init_MUTEX_LOCKED(&fibptr->event_wait);
+		sema_init(&fibptr->event_wait, 0);
 		spin_lock_init(&fibptr->event_lock);
 		hw_fib->header.XferState = cpu_to_le32(0xffffffff);
 		hw_fib->header.SenderSize = cpu_to_le16(dev->max_fib_size);
@@ -417,10 +417,11 @@ int aac_fib_send(u16 command, struct fib *fibptr, unsigned long size,
 	unsigned long qflags;
 	unsigned long mflags = 0;
 
+
 	if (!(hw_fib->header.XferState & cpu_to_le32(HostOwned)))
 		return -EBUSY;
 	/*
-	 *	There are 5 cases with the wait and reponse requested flags.
+	 *	There are 5 cases with the wait and response requested flags.
 	 *	The only invalid cases are if the caller requests to wait and
 	 *	does not request a response and if the caller does not want a
 	 *	response and the Fib is not allocated from pool. If a response
@@ -497,7 +498,7 @@ int aac_fib_send(u16 command, struct fib *fibptr, unsigned long size,
 	if (!dev->queues)
 		return -EBUSY;
 
-	if(wait) {
+	if (wait) {
 
 		spin_lock_irqsave(&dev->manage_lock, mflags);
 		if (dev->management_fib_count >= AAC_NUM_MGT_FIB) {
@@ -565,8 +566,9 @@ int aac_fib_send(u16 command, struct fib *fibptr, unsigned long size,
 			}
 		} else if (down_interruptible(&fibptr->event_wait)) {
 			/* Do nothing ... satisfy
-			* down_interruptible must_check */
+			 * down_interruptible must_check */
 		}
+
 		spin_lock_irqsave(&fibptr->event_lock, flags);
 		if (fibptr->done == 0) {
 			fibptr->done = 2; /* Tell interrupt we aborted */

@@ -1233,32 +1233,16 @@ static s32 igb_setup_serdes_link_82575(struct e1000_hw *hw)
 	 */
 	reg |= E1000_PCS_LCTL_FORCE_FCTRL;
 
-	/*
-	 * we always set sgmii to autoneg since it is the phy that will be
-	 * forcing the link and the serdes is just a go-between
-	 */
-	if (hw->mac.autoneg || igb_sgmii_active_82575(hw)) {
+	if (pcs_autoneg) {
 		/* Set PCS register for autoneg */
-		reg |= E1000_PCS_LCTL_FSV_1000 |  /* Force 1000 */
-		       E1000_PCS_LCTL_FDV_FULL |  /* SerDes Full dplx */
-		       E1000_PCS_LCTL_AN_ENABLE | /* Enable Autoneg */
+		reg |= E1000_PCS_LCTL_AN_ENABLE | /* Enable Autoneg */
 		       E1000_PCS_LCTL_AN_RESTART; /* Restart autoneg */
-		hw_dbg("Configuring Autoneg; PCS_LCTL = 0x%08X\n", reg);
+		hw_dbg("Configuring Autoneg:PCS_LCTL=0x%08X\n", reg);
 	} else {
-		/* Check for duplex first */
-		if (hw->mac.forced_speed_duplex & E1000_ALL_FULL_DUPLEX)
-			reg |= E1000_PCS_LCTL_FDV_FULL;
+		/* Set PCS register for forced link */
+		reg |= E1000_PCS_LCTL_FSD;        /* Force Speed */
 
-		/* No need to check for 1000/full since the spec states that
-		 * it requires autoneg to be enabled */
-		/* Now set speed */
-		if (hw->mac.forced_speed_duplex & E1000_ALL_100_SPEED)
-			reg |= E1000_PCS_LCTL_FSV_100;
-
-		/* Force speed and force link */
-		reg |= E1000_PCS_LCTL_FSD ; /* Force Speed */
-
-		hw_dbg("Configuring Forced Link; PCS_LCTL = 0x%08X\n", reg);
+		hw_dbg("Configuring Forced Link:PCS_LCTL=0x%08X\n", reg);
 	}
 
 	wr32(E1000_PCS_LCTL, reg);

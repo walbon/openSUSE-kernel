@@ -21,7 +21,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/init.h>
-#include <linux/atomic.h>
 #include <linux/module.h>
 #include <linux/highmem.h>
 #include <linux/device.h>
@@ -33,6 +32,8 @@
 #include <linux/skbuff.h>
 #include <linux/in.h>
 #include <linux/slab.h>
+#include <linux/dmi.h>
+#include <linux/pci.h>
 #include <net/arp.h>
 #include <net/route.h>
 #include <net/sock.h>
@@ -41,13 +42,11 @@
 #include "hyperv.h"
 #include "hyperv_net.h"
 
-static const char *driver_name = "netvsc";
-
 struct net_device_context {
 	/* point back to our device context */
 	struct hv_device *device_ctx;
-	atomic_t avail;
-	struct delayed_work dwork;
+	unsigned long avail;
+	struct work_struct work;
 };
 
 
@@ -100,6 +99,7 @@ static int netvsc_close(struct net_device *net)
 	ret = rndis_filter_close(device_obj);
 	if (ret != 0)
 		netdev_err(net, "unable to close device (ret %d).\n", ret);
+
 	return ret;
 }
 
@@ -118,9 +118,8 @@ static void netvsc_xmit_completion(void *context)
 
 		dev_kfree_skb_any(skb);
 
-		atomic_add(num_pages, &net_device_ctx->avail);
-		if (atomic_read(&net_device_ctx->avail) >=
-				PACKET_PAGES_HIWATER)
+		net_device_ctx->avail += num_pages;
+		if (net_device_ctx->avail >= PACKET_PAGES_HIWATER)
  			netif_wake_queue(net);
 	}
 }
@@ -134,7 +133,7 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 
 	/* Add 1 for skb->data and additional one for RNDIS */
 	num_pages = skb_shinfo(skb)->nr_frags + 1 + 1;
-	if (num_pages > atomic_read(&net_device_ctx->avail))
+	if (num_pages > net_device_ctx->avail)
 		return NETDEV_TX_BUSY;
 
 	/* Allocate a netvsc packet based on # of frags. */
@@ -156,6 +155,9 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 
 	/* Setup the rndis header */
 	packet->page_buf_cnt = num_pages;
+
+	/* TODO: Flush all write buffers/ memory fence ??? */
+	/* wmb(); */
 
 	/* Initialize it from the skb */
 	packet->total_data_buflen	= skb->len;
@@ -186,8 +188,8 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 		net->stats.tx_bytes += skb->len;
 		net->stats.tx_packets++;
 
-		atomic_sub(num_pages, &net_device_ctx->avail);
-		if (atomic_read(&net_device_ctx->avail) < PACKET_PAGES_LOWATER)
+		net_device_ctx->avail -= num_pages;
+		if (net_device_ctx->avail < PACKET_PAGES_LOWATER)
 			netif_stop_queue(net);
 	} else {
 		/* we are shutting down or bus overloaded, just drop packet */
@@ -218,7 +220,7 @@ void netvsc_linkstatus_callback(struct hv_device *device_obj,
 		netif_wake_queue(net);
 		netif_notify_peers(net);
 		ndev_ctx = netdev_priv(net);
-		schedule_delayed_work(&ndev_ctx->dwork, msecs_to_jiffies(20));
+		schedule_work(&ndev_ctx->work);
 	} else {
 		netif_carrier_off(net);
 		netif_stop_queue(net);
@@ -316,7 +318,7 @@ static const struct net_device_ops device_ops = {
  * Send GARP packet to network peers after migrations.
  * After Quick Migration, the network is not immediately operational in the
  * current context when receiving RNDIS_STATUS_MEDIA_CONNECT event. So, add
- * another netif_notify_peers() into a delayed work, otherwise GARP packet
+ * another netif_notify_peers() into a scheduled work, otherwise GARP packet
  * will not be sent after quick migration, and cause network disconnection.
  */
 static void netvsc_send_garp(struct work_struct *w)
@@ -324,7 +326,8 @@ static void netvsc_send_garp(struct work_struct *w)
 	struct net_device_context *ndev_ctx;
 	struct net_device *net;
 
-	ndev_ctx = container_of(w, struct net_device_context, dwork.work);
+	msleep(20);
+	ndev_ctx = container_of(w, struct net_device_context, work);
 	net = dev_get_drvdata(&ndev_ctx->device_ctx->device);
 	netif_notify_peers(net);
 }
@@ -339,33 +342,46 @@ static int netvsc_probe(struct hv_device *dev)
 
 	net = alloc_etherdev(sizeof(struct net_device_context));
 	if (!net)
-		return -ENOMEM;
+		return -1;
 
 	/* Set initial state */
 	netif_carrier_off(net);
 
 	net_device_ctx = netdev_priv(net);
 	net_device_ctx->device_ctx = dev;
-	atomic_set(&net_device_ctx->avail, ring_size);
+	net_device_ctx->avail = ring_size;
 	dev_set_drvdata(&dev->device, net);
-	INIT_DELAYED_WORK(&net_device_ctx->dwork, netvsc_send_garp);
+	INIT_WORK(&net_device_ctx->work, netvsc_send_garp);
 
 	/* Notify the netvsc driver of the new device */
 	device_info.ring_size = ring_size;
-	ret = rndis_filter_device_add(dev, &device_info);
+	ret = rndis_filte_device_add(dev, &device_info);
 	if (ret != 0) {
 		free_netdev(net);
 		dev_set_drvdata(&dev->device, NULL);
+
+		netdev_err(net, "unable to add netvsc device (ret %d)\n", ret);
 		return ret;
 	}
 
-	netif_carrier_on(net);
+	/*
+	 * If carrier is still off ie we did not get a link status callback,
+	 * update it if necessary
+	 */
+	/*
+	 * FIXME: We should use a atomic or test/set instead to avoid getting
+	 * out of sync with the device's link status
+	 */
+	if (!netif_carrier_ok(net))
+		if (!device_info.link_state)
+			netif_carrier_on(net);
 
 	memcpy(net->dev_addr, device_info.mac_adr, ETH_ALEN);
 
 	net->netdev_ops = &device_ops;
 
 	/* TODO: Add GSO and Checksum offload */
+	net->hw_features = NETIF_F_SG;
 	net->features = NETIF_F_SG;
 
 	SET_ETHTOOL_OPS(net, &ethtool_ops);
@@ -384,18 +400,16 @@ static int netvsc_probe(struct hv_device *dev)
 static int netvsc_remove(struct hv_device *dev)
 {
 	struct net_device *net = dev_get_drvdata(&dev->device);
-	struct net_device_context *ndev_ctx;
+	int ret;
 
 	if (net == NULL) {
 		dev_err(&dev->device, "No net device to remove\n");
 		return 0;
 	}
 
-	ndev_ctx = netdev_priv(net);
-	cancel_delayed_work_sync(&ndev_ctx->dwork);
-
 	/* Stop outbound asap */
 	netif_stop_queue(net);
+	/* netif_carrier_off(net); */
 
 	unregister_netdev(net);
 
@@ -403,20 +417,18 @@ static int netvsc_remove(struct hv_device *dev)
 	 * Call to the vsc driver to let it know that the device is being
 	 * removed
 	 */
-	rndis_filter_device_remove(dev);
+	ret = rndis_filter_device_remove(dev);
+	if (ret != 0) {
+		/* TODO: */
+		netdev_err(net, "unable to remove vsc device (ret %d)\n", ret);
+	}
 
 	free_netdev(net);
-	return 0;
+	return ret;
 }
-
-static const struct hv_vmbus_device_id id_table[] = {
-	{ "hv_net" },
-	{ "" }
-};
 
 /* The one and only one */
 static struct  hv_driver netvsc_drv = {
-	.id_table = id_table,
 	.probe = netvsc_probe,
 	.remove = netvsc_remove,
 };
@@ -427,6 +439,20 @@ static void __exit netvsc_drv_exit(void)
 }
 
 
+static const struct dmi_system_id __initconst
+hv_netvsc_dmi_table[] __maybe_unused  = {
+	{
+		.ident = "Hyper-V",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Virtual Machine"),
+			DMI_MATCH(DMI_BOARD_NAME, "Virtual Machine"),
+		},
+	},
+	{ },
+};
+MODULE_DEVICE_TABLE(dmi, hv_netvsc_dmi_table);
+
 static int __init netvsc_drv_init(void)
 {
 	struct hv_driver *drv = &netvsc_drv;
@@ -434,7 +460,14 @@ static int __init netvsc_drv_init(void)
 
 	pr_info("initializing....");
 
-	drv->driver.name = driver_name;
+	if (!dmi_check_system(hv_netvsc_dmi_table))
+		return -ENODEV;
+
+
+	/* Callback to client driver to complete the initialization */
+	netvsc_initialize(drv);
+
+	drv->driver.name = drv->name;
 
 	/* The driver belongs to vmbus */
 	ret = vmbus_child_driver_register(&drv->driver);
@@ -442,10 +475,16 @@ static int __init netvsc_drv_init(void)
 	return ret;
 }
 
+static const struct pci_device_id __initconst
+hv_netvsc_pci_table[] __maybe_unused = {
+	{ PCI_DEVICE(0x1414, 0x5353) }, /* VGA compatible controller */
+	{ 0 }
+};
+MODULE_DEVICE_TABLE(pci, hv_netvsc_pci_table);
+
 MODULE_LICENSE("GPL");
 MODULE_VERSION(HV_DRV_VERSION);
 MODULE_DESCRIPTION("Microsoft Hyper-V network driver");
-MODULE_ALIAS("vmbus:hv_net");
 
 module_init(netvsc_drv_init);
 module_exit(netvsc_drv_exit);

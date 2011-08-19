@@ -1242,9 +1242,7 @@ int fnic_abort_cmd(struct scsi_cmnd *sc)
 	DECLARE_COMPLETION_ONSTACK(tm_done);
 
 	/* Wait for rport to unblock */
-	ret = fc_block_scsi_eh(sc);
-	if (ret != SUCCESS)
-		return ret;
+	fc_block_scsi_eh(sc);
 
 	/* Get local-port, check ready and link up */
 	lp = shost_priv(sc->device->host);
@@ -1516,15 +1514,13 @@ int fnic_device_reset(struct scsi_cmnd *sc)
 	struct fnic_io_req *io_req;
 	struct fc_rport *rport;
 	int status;
-	int ret;
+	int ret = FAILED;
 	spinlock_t *io_lock;
 	unsigned long flags;
 	DECLARE_COMPLETION_ONSTACK(tm_done);
 
 	/* Wait for rport to unblock */
-	ret = fc_block_scsi_eh(sc);
-	if (ret != SUCCESS)
-		return ret;
+	fc_block_scsi_eh(sc);
 
 	/* Get local-port, check ready and link up */
 	lp = shost_priv(sc->device->host);
@@ -1536,7 +1532,6 @@ int fnic_device_reset(struct scsi_cmnd *sc)
 			"Device reset called FCID 0x%x, LUN 0x%x\n",
 			rport->port_id, sc->device->lun);
 
-	ret = FAILED;
 	if (lp->state != LPORT_ST_READY || !(lp->link_up))
 		goto fnic_device_reset_end;
 

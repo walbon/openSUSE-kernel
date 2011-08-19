@@ -21,7 +21,6 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/tty.h>
 #include <linux/tty_driver.h>
 #include <linux/tty_flip.h>
@@ -604,8 +603,7 @@ static void port_release(struct device *dev)
 		usb_free_urb(port->write_urbs[i]);
 		kfree(port->bulk_out_buffers[i]);
 	}
-	if (!IS_ERR(port->write_fifo) && port->write_fifo)
-		kfifo_free(port->write_fifo);
+	kfifo_free(&port->write_fifo);
 	kfree(port->bulk_in_buffer);
 	kfree(port->bulk_out_buffer);
 	kfree(port->interrupt_in_buffer);
@@ -940,7 +938,7 @@ int usb_serial_probe(struct usb_interface *interface,
 			dev_err(&interface->dev, "No free urbs available\n");
 			goto probe_error;
 		}
-		if (kfifo_alloc(port->write_fifo, PAGE_SIZE, GFP_KERNEL))
+		if (kfifo_alloc(&port->write_fifo, PAGE_SIZE, GFP_KERNEL))
 			goto probe_error;
 		buffer_size = serial->type->bulk_out_size;
 		if (!buffer_size)
@@ -1073,6 +1071,8 @@ int usb_serial_probe(struct usb_interface *interface,
 		dev_set_name(&port->dev, "ttyUSB%d", port->number);
 		dbg ("%s - registering %s", __func__, dev_name(&port->dev));
 		port->dev_state = PORT_REGISTERING;
+		device_enable_async_suspend(&port->dev);
+
 		retval = device_add(&port->dev);
 		if (retval) {
 			dev_err(&port->dev, "Error registering port device, "

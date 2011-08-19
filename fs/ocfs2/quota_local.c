@@ -8,7 +8,6 @@
 #include <linux/quotaops.h>
 #include <linux/module.h>
 
-#define MLOG_MASK_PREFIX ML_QUOTA
 #include <cluster/masklog.h>
 
 #include "ocfs2_fs.h"
@@ -23,6 +22,7 @@
 #include "quota.h"
 #include "uptodate.h"
 #include "super.h"
+#include "ocfs2_trace.h"
 
 /* Number of local quota structures per block */
 static inline unsigned int ol_quota_entries_per_block(struct super_block *sb)
@@ -475,7 +475,7 @@ static int ocfs2_recover_local_quota_file(struct inode *lqinode,
 	struct ocfs2_recovery_chunk *rchunk, *next;
 	qsize_t spacechange, inodechange;
 
-	mlog_entry("ino=%lu type=%u", (unsigned long)lqinode->i_ino, type);
+	trace_ocfs2_recover_local_quota_file((unsigned long)lqinode->i_ino, type);
 
 	list_for_each_entry_safe(rchunk, next, &(rec->r_list[type]), rc_list) {
 		chunk = rchunk->rc_chunk;
@@ -488,7 +488,7 @@ static int ocfs2_recover_local_quota_file(struct inode *lqinode,
 			break;
 		}
 		dchunk = (struct ocfs2_local_disk_chunk *)hbh->b_data;
-		for_each_bit(bit, rchunk->rc_bitmap, ol_chunk_entries(sb)) {
+		for_each_set_bit(bit, rchunk->rc_bitmap, ol_chunk_entries(sb)) {
 			qbh = NULL;
 			status = ocfs2_read_quota_block(lqinode,
 						ol_dqblk_block(sb, chunk, bit),
@@ -575,7 +575,8 @@ out_put_bh:
 	}
 	if (status < 0)
 		free_recovery_list(&(rec->r_list[type]));
-	mlog_exit(status);
+	if (status)
+		mlog_errno(status);
 	return status;
 }
 
@@ -600,7 +601,7 @@ int ocfs2_finish_quota_recovery(struct ocfs2_super *osb,
 	for (type = 0; type < MAXQUOTAS; type++) {
 		if (list_empty(&(rec->r_list[type])))
 			continue;
-		mlog(0, "Recovering quota in slot %d\n", slot_num);
+		trace_ocfs2_finish_quota_recovery(slot_num);
 		lqinode = ocfs2_get_system_file_inode(osb, ino[type], slot_num);
 		if (!lqinode) {
 			status = -ENOENT;
@@ -882,9 +883,10 @@ static void olq_set_dquot(struct buffer_head *bh, void *private)
 	dqblk->dqb_inodemod = cpu_to_le64(od->dq_dquot.dq_dqb.dqb_curinodes -
 					  od->dq_originodes);
 	spin_unlock(&dq_data_lock);
-	mlog(0, "Writing local dquot %u space %lld inodes %lld\n",
-	     od->dq_dquot.dq_id, (long long)le64_to_cpu(dqblk->dqb_spacemod),
-	     (long long)le64_to_cpu(dqblk->dqb_inodemod));
+	trace_olq_set_dquot(
+		(unsigned long long)le64_to_cpu(dqblk->dqb_spacemod),
+		(unsigned long long)le64_to_cpu(dqblk->dqb_inodemod),
+		od->dq_dquot.dq_id);
 }
 
 /* Write dquot to local quota file */
@@ -1300,7 +1302,7 @@ out:
 	return status;
 }
 
-static struct quota_format_ops ocfs2_format_ops = {
+static const struct quota_format_ops ocfs2_format_ops = {
 	.check_quota_file	= ocfs2_local_check_quota_file,
 	.read_file_info		= ocfs2_local_read_info,
 	.write_file_info	= ocfs2_global_write_info,

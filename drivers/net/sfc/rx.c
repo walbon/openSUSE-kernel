@@ -10,9 +10,11 @@
 
 #include <linux/socket.h>
 #include <linux/in.h>
+#include <linux/slab.h>
 #include <linux/ip.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
+#include <linux/prefetch.h>
 #include <net/ip.h>
 #include <net/checksum.h>
 #include "net_driver.h"
@@ -63,7 +65,7 @@
  *   rx_alloc_method = (rx_alloc_level > RX_ALLOC_LEVEL_GRO ?
  *                      RX_ALLOC_METHOD_PAGE : RX_ALLOC_METHOD_SKB)
  */
-static int rx_alloc_method = RX_ALLOC_METHOD_PAGE;
+static int rx_alloc_method = RX_ALLOC_METHOD_AUTO;
 
 #define RX_ALLOC_LEVEL_GRO 0x2000
 #define RX_ALLOC_LEVEL_MAX 0x3000
@@ -95,7 +97,8 @@ static inline unsigned int efx_rx_buf_offset(struct efx_nic *efx,
 	/* Offset is always within one page, so we don't need to consider
 	 * the page order.
 	 */
-	return (__force unsigned long) buf->dma_addr & (PAGE_SIZE - 1);
+	return (((__force unsigned long) buf->dma_addr & (PAGE_SIZE - 1)) +
+		efx->type->rx_buffer_hash_size);
 }
 static inline unsigned int efx_rx_buf_size(struct efx_nic *efx)
 {
@@ -107,7 +110,22 @@ static u8 *efx_rx_buf_eh(struct efx_nic *efx, struct efx_rx_buffer *buf)
 	if (buf->is_page)
 		return page_address(buf->u.page) + efx_rx_buf_offset(efx, buf);
 	else
-		return (u8 *)buf->u.skb->data;
+		return ((u8 *)buf->u.skb->data +
+			efx->type->rx_buffer_hash_size);
+}
+
+static inline u32 efx_rx_buf_hash(const u8 *eh)
+{
+	/* The ethernet header is always directly after any hash. */
+#if defined(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS) || NET_IP_ALIGN % 4 == 0
+	return __le32_to_cpup((const __le32 *)(eh - 4));
+#else
+	const u8 *data = eh - 4;
+	return ((u32)data[0]       |
+		(u32)data[1] << 8  |
+		(u32)data[2] << 16 |
+		(u32)data[3] << 24);
+#endif
 }
 
 /**
@@ -441,9 +459,11 @@ static void efx_rx_packet_gro(struct efx_channel *channel,
 			      const u8 *eh, bool checksummed)
 {
 	struct napi_struct *napi = &channel->napi_str;
+	gro_result_t gro_result;
 
 	/* Pass the skb/page into the GRO engine */
 	if (rx_buf->is_page) {
+		struct efx_nic *efx = channel->efx;
 		struct page *page = rx_buf->u.page;
 		struct sk_buff *skb;
 
@@ -455,9 +475,12 @@ static void efx_rx_packet_gro(struct efx_channel *channel,
 			return;
 		}
 
+		if (efx->net_dev->features & NETIF_F_RXHASH)
+			skb->rxhash = efx_rx_buf_hash(eh);
+
 		skb_shinfo(skb)->frags[0].page = page;
 		skb_shinfo(skb)->frags[0].page_offset =
-			efx_rx_buf_offset(channel->efx, rx_buf);
+			efx_rx_buf_offset(efx, rx_buf);
 		skb_shinfo(skb)->frags[0].size = rx_buf->len;
 		skb_shinfo(skb)->nr_frags = 1;
 
@@ -469,14 +492,21 @@ static void efx_rx_packet_gro(struct efx_channel *channel,
 
 		skb_record_rx_queue(skb, channel->channel);
 
-		napi_gro_frags(napi);
+		gro_result = napi_gro_frags(napi);
 	} else {
 		struct sk_buff *skb = rx_buf->u.skb;
 
 		EFX_BUG_ON_PARANOID(!checksummed);
 		rx_buf->u.skb = NULL;
 
-		napi_gro_receive(napi, skb);
+		gro_result = napi_gro_receive(napi, skb);
+	}
+
+	if (gro_result == GRO_NORMAL) {
+		channel->rx_alloc_level += RX_ALLOC_FACTOR_SKB;
+	} else if (gro_result != GRO_DROP) {
+		channel->rx_alloc_level += RX_ALLOC_FACTOR_GRO;
+		channel->irq_mod_score += 2;
 	}
 }
 
@@ -532,7 +562,7 @@ void efx_rx_packet(struct efx_rx_queue *rx_queue, unsigned int index,
 	/* Pipeline receives so that we give time for packet headers to be
 	 * prefetched into cache.
 	 */
-	rx_buf->len = len;
+	rx_buf->len = len - efx->type->rx_buffer_hash_size;
 out:
 	if (channel->rx_pkt)
 		__efx_rx_packet(channel,
@@ -563,7 +593,11 @@ void __efx_rx_packet(struct efx_channel *channel,
 
 		prefetch(skb_shinfo(skb));
 
+		skb_reserve(skb, efx->type->rx_buffer_hash_size);
 		skb_put(skb, rx_buf->len);
+
+		if (efx->net_dev->features & NETIF_F_RXHASH)
+			skb->rxhash = efx_rx_buf_hash(eh);
 
 		/* Move past the ethernet header. rx_buf->data still points
 		 * at the ethernet header */
@@ -571,6 +605,9 @@ void __efx_rx_packet(struct efx_channel *channel,
 
 		skb_record_rx_queue(skb, channel->channel);
 	}
+
+	if (unlikely(!(efx->net_dev->features & NETIF_F_RXCSUM)))
+		checksummed = false;
 
 	if (likely(checksummed || rx_buf->is_page)) {
 		efx_rx_packet_gro(channel, rx_buf, eh, checksummed);
@@ -582,7 +619,7 @@ void __efx_rx_packet(struct efx_channel *channel,
 	rx_buf->u.skb = NULL;
 
 	/* Set the SKB flags */
-	skb->ip_summed = CHECKSUM_NONE;
+	skb_checksum_none_assert(skb);
 
 	/* Pass the packet up */
 	netif_receive_skb(skb);

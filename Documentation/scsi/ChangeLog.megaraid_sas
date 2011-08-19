@@ -1,8 +1,6 @@
-
 Release Date    : Wed. May 11, 2011 17:00:00 PST 2010 -
 			(emaild-id:megaraidlinux@lsi.com)
- 			Adam Radford
-
+			Adam Radford
 Current Version : 00.00.05.38-rc1
 Old Version     : 00.00.05.34-rc1
     1. Remove MSI-X black list, use MFI_REG_STATE.ready.msiEnable.
@@ -110,7 +108,7 @@ Old Version     : 00.00.04.31-rc1
 			(emaild-id:megaraidlinux@lsi.com)
 			Bo Yang
 
-2 Current Version : 00.00.04.17.1
+2 Current Version : 00.00.04.17.1-rc1
 3 Older Version   : 00.00.04.12
 
 1.	Add the pad_0 in mfi frame structure to 0 to fix the

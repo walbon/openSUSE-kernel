@@ -16,6 +16,8 @@
 
 #ifndef __ASSEMBLY__
 
+#include <asm/x86_init.h>
+
 /*
  * ZERO_PAGE is a global shared page that is always zero: used
  * for zero-mapped memory areas etc..
@@ -26,7 +28,9 @@ extern unsigned long empty_zero_page[PAGE_SIZE / sizeof(unsigned long)];
 extern spinlock_t pgd_lock;
 extern struct list_head pgd_list;
 
-#ifdef CONFIG_PARAVIRT_MMU
+extern struct mm_struct *pgd_page_get_mm(struct page *page);
+
+#ifdef CONFIG_PARAVIRT
 #include <asm/paravirt.h>
 #else  /* !CONFIG_PARAVIRT */
 #define set_pte(ptep, pte)		native_set_pte(ptep, pte)
@@ -354,9 +358,9 @@ static inline int is_new_memtype_allowed(u64 paddr, unsigned long size,
 					 unsigned long new_flags)
 {
 	/*
-	 * PAT type is always WB for ISA. So no need to check.
+	 * PAT type is always WB for untracked ranges, so no need to check.
 	 */
-	if (is_ISA_range(paddr, paddr + size - 1))
+	if (x86_platform.is_untracked_pat_range(paddr, paddr + size))
 		return 1;
 
 	/*

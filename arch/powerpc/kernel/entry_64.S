@@ -220,7 +220,9 @@ syscall_exit:
 	bge-	syscall_error
 syscall_error_cont:
 	ld	r7,_NIP(r1)
+BEGIN_FTR_SECTION
 	stdcx.	r0,0,r1			/* to clear the reservation */
+END_FTR_SECTION_IFCLR(CPU_FTR_STCX_CHECKS_ADDRESS)
 	andi.	r6,r8,MSR_PR
 	ld	r4,_LINK(r1)
 	/*
@@ -419,6 +421,12 @@ BEGIN_FTR_SECTION
 	std	r24,THREAD_VRSAVE(r3)
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #endif /* CONFIG_ALTIVEC */
+#ifdef CONFIG_PPC64
+BEGIN_FTR_SECTION
+	mfspr	r25,SPRN_DSCR
+	std	r25,THREAD_DSCR(r3)
+END_FTR_SECTION_IFSET(CPU_FTR_DSCR)
+#endif
 	and.	r0,r0,r22
 	beq+	1f
 	andc	r22,r22,r0
@@ -437,6 +445,17 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 	sync
 #endif /* CONFIG_SMP */
 
+	/*
+	 * If we optimise away the clear of the reservation in system
+	 * calls because we know the CPU tracks the address of the
+	 * reservation, then we need to clear it here to cover the
+	 * case that the kernel context switch path has no larx
+	 * instructions.
+	 */
+BEGIN_FTR_SECTION
+	ldarx	r6,0,r1
+END_FTR_SECTION_IFSET(CPU_FTR_STCX_CHECKS_ADDRESS)
+
 	addi	r6,r4,-THREAD	/* Convert THREAD to 'current' */
 	std	r6,PACACURRENT(r13)	/* Set new 'current' */
 
@@ -449,10 +468,10 @@ BEGIN_FTR_SECTION
   FTR_SECTION_ELSE_NESTED(95)
 	clrrdi	r6,r8,40	/* get its 1T ESID */
 	clrrdi	r9,r1,40	/* get current sp 1T ESID */
-  ALT_FTR_SECTION_END_NESTED_IFCLR(CPU_FTR_1T_SEGMENT, 95)
+  ALT_MMU_FTR_SECTION_END_NESTED_IFCLR(MMU_FTR_1T_SEGMENT, 95)
 FTR_SECTION_ELSE
 	b	2f
-ALT_FTR_SECTION_END_IFSET(CPU_FTR_SLB)
+ALT_MMU_FTR_SECTION_END_IFSET(MMU_FTR_SLB)
 	clrldi.	r0,r6,2		/* is new ESID c00000000? */
 	cmpd	cr1,r6,r9	/* or is new ESID the same as current ESID? */
 	cror	eq,4*cr1+eq,eq
@@ -466,7 +485,7 @@ BEGIN_FTR_SECTION
 	li	r9,MMU_SEGSIZE_1T	/* insert B field */
 	oris	r6,r6,(MMU_SEGSIZE_1T << SLBIE_SSIZE_SHIFT)@h
 	rldimi	r7,r9,SLB_VSID_SSIZE_SHIFT,0
-END_FTR_SECTION_IFSET(CPU_FTR_1T_SEGMENT)
+END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 
 	/* Update the last bolted SLB.  No write barriers are needed
 	 * here, provided we only update the current CPU's SLB shadow
@@ -478,7 +497,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_1T_SEGMENT)
 	std	r7,SLBSHADOW_STACKVSID(r9)  /* Save VSID */
 	std	r0,SLBSHADOW_STACKESID(r9)  /* Save ESID */
 
-	/* No need to check for CPU_FTR_NO_SLBIE_B here, since when
+	/* No need to check for MMU_FTR_NO_SLBIE_B here, since when
 	 * we have 1TB segments, the only CPUs known to have the errata
 	 * only support less than 1TB of system memory and we'll never
 	 * actually hit this code path.
@@ -509,6 +528,15 @@ BEGIN_FTR_SECTION
 	mtspr	SPRN_VRSAVE,r0		/* if G4, restore VRSAVE reg */
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #endif /* CONFIG_ALTIVEC */
+#ifdef CONFIG_PPC64
+BEGIN_FTR_SECTION
+	ld	r0,THREAD_DSCR(r4)
+	cmpd	r0,r25
+	beq	1f
+	mtspr	SPRN_DSCR,r0
+1:	
+END_FTR_SECTION_IFSET(CPU_FTR_DSCR)
+#endif
 
 	/* r3-r13 are destroyed -- Cort */
 	REST_8GPRS(14, r1)
@@ -594,7 +622,16 @@ ALT_FW_FTR_SECTION_END_IFCLR(FW_FEATURE_ISERIES)
 	andi.	r0,r3,MSR_RI
 	beq-	unrecov_restore
 
+	/*
+	 * Clear the reservation. If we know the CPU tracks the address of
+	 * the reservation then we can potentially save some cycles and use
+	 * a larx. On POWER6 and POWER7 this is significantly faster.
+	 */
+BEGIN_FTR_SECTION
 	stdcx.	r0,0,r1		/* to clear the reservation */
+FTR_SECTION_ELSE
+	ldarx	r4,0,r1
+ALT_FTR_SECTION_END_IFCLR(CPU_FTR_STCX_CHECKS_ADDRESS)
 
 	/*
 	 * Clear RI before restoring r13.  If we are returning to
@@ -800,9 +837,8 @@ _GLOBAL(enter_rtas)
 	
         li      r9,1
         rldicr  r9,r9,MSR_SF_LG,(63-MSR_SF_LG)
-	ori	r9,r9,MSR_IR|MSR_DR|MSR_FE0|MSR_FE1|MSR_FP
+	ori	r9,r9,MSR_IR|MSR_DR|MSR_FE0|MSR_FE1|MSR_FP|MSR_RI
 	andc	r6,r0,r9
-	ori	r6,r6,MSR_RI
 	sync				/* disable interrupts so SRR0/1 */
 	mtmsrd	r0			/* don't get trashed */
 
@@ -817,7 +853,7 @@ _GLOBAL(enter_rtas)
 
 _STATIC(rtas_return_loc)
 	/* relocation is off at this point */
-	mfspr	r4,SPRN_SPRG_PACA	/* Get PACA */
+	GET_PACA(r4)
 	clrldi	r4,r4,2			/* convert to realmode address */
 
 	bcl	20,31,$+4
@@ -848,7 +884,7 @@ _STATIC(rtas_restore_regs)
 	REST_8GPRS(14, r1)		/* Restore the non-volatiles */
 	REST_10GPRS(22, r1)		/* ditto */
 
-	mfspr	r13,SPRN_SPRG_PACA
+	GET_PACA(r13)
 
 	ld	r4,_CCR(r1)
 	mtcr	r4

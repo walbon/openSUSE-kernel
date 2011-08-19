@@ -87,7 +87,7 @@ struct ext3_inode_info {
 	 * near to their parent directory's inode.
 	 */
 	__u32	i_block_group;
-	__u32	i_state;		/* Dynamic state flags for ext3 */
+	unsigned long	i_state_flags;	/* Dynamic state flags for ext3 */
 
 	/* block reservation info */
 	struct ext3_block_alloc_info *i_block_alloc_info;
@@ -102,9 +102,6 @@ struct ext3_inode_info {
 	 * EAs.
 	 */
 	struct rw_semaphore xattr_sem;
-#endif
-#ifdef CONFIG_EXT3_FS_NFS4ACL
-	struct nfs4acl		*i_nfs4acl;
 #endif
 
 	struct list_head i_orphan;	/* unlinked but open inodes */

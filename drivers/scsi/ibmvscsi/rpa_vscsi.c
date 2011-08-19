@@ -33,6 +33,7 @@
 #include <asm/hvcall.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
+#include <linux/gfp.h>
 #include <linux/interrupt.h>
 #include "ibmvscsi.h"
 

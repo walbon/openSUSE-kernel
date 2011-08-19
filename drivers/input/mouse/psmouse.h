@@ -47,6 +47,7 @@ struct psmouse {
 	unsigned char pktcnt;
 	unsigned char pktsize;
 	unsigned char type;
+	bool ignore_parity;
 	bool acks_disable_command;
 	unsigned int model;
 	unsigned long last;
@@ -89,7 +90,6 @@ enum psmouse_type {
 	PSMOUSE_TRACKPOINT,
 	PSMOUSE_TOUCHKIT_PS2,
 	PSMOUSE_CORTRON,
-	PSMOUSE_ELFTOUCH_PS2,
 	PSMOUSE_HGPK,
 	PSMOUSE_ELANTECH,
 	PSMOUSE_FSP,

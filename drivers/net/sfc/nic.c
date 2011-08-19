@@ -100,8 +100,8 @@ static inline efx_qword_t *efx_event(struct efx_channel *channel,
  */
 static inline int efx_event_present(efx_qword_t *event)
 {
-	return (!(EFX_DWORD_IS_ALL_ONES(event->dword[0]) |
-		  EFX_DWORD_IS_ALL_ONES(event->dword[1])));
+	return !(EFX_DWORD_IS_ALL_ONES(event->dword[0]) |
+		  EFX_DWORD_IS_ALL_ONES(event->dword[1]));
 }
 
 static bool efx_masked_compare_oword(const efx_oword_t *a, const efx_oword_t *b,
@@ -328,7 +328,7 @@ void efx_nic_free_buffer(struct efx_nic *efx, struct efx_buffer *buffer)
 static inline efx_qword_t *
 efx_tx_desc(struct efx_tx_queue *tx_queue, unsigned int index)
 {
-	return (((efx_qword_t *) (tx_queue->txd.addr)) + index);
+	return ((efx_qword_t *) (tx_queue->txd.addr)) + index;
 }
 
 /* This writes to the TX_DESC_WPTR; write pointer for TX descriptor ring */
@@ -426,8 +426,8 @@ int efx_nic_probe_tx(struct efx_tx_queue *tx_queue)
 
 void efx_nic_init_tx(struct efx_tx_queue *tx_queue)
 {
-	efx_oword_t tx_desc_ptr;
 	struct efx_nic *efx = tx_queue->efx;
+	efx_oword_t reg;
 
 	tx_queue->flushed = FLUSH_NONE;
 
@@ -435,7 +435,7 @@ void efx_nic_init_tx(struct efx_tx_queue *tx_queue)
 	efx_init_special_buffer(efx, &tx_queue->txd);
 
 	/* Push TX descriptor ring to card */
-	EFX_POPULATE_OWORD_10(tx_desc_ptr,
+	EFX_POPULATE_OWORD_10(reg,
 			      FRF_AZ_TX_DESCQ_EN, 1,
 			      FRF_AZ_TX_ISCSI_DDIG_EN, 0,
 			      FRF_AZ_TX_ISCSI_HDIG_EN, 0,
@@ -451,17 +451,15 @@ void efx_nic_init_tx(struct efx_tx_queue *tx_queue)
 
 	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0) {
 		int csum = tx_queue->queue & EFX_TXQ_TYPE_OFFLOAD;
-		EFX_SET_OWORD_FIELD(tx_desc_ptr, FRF_BZ_TX_IP_CHKSM_DIS, !csum);
-		EFX_SET_OWORD_FIELD(tx_desc_ptr, FRF_BZ_TX_TCP_CHKSM_DIS,
+		EFX_SET_OWORD_FIELD(reg, FRF_BZ_TX_IP_CHKSM_DIS, !csum);
+		EFX_SET_OWORD_FIELD(reg, FRF_BZ_TX_TCP_CHKSM_DIS,
 				    !csum);
 	}
 
-	efx_writeo_table(efx, &tx_desc_ptr, efx->type->txd_ptr_tbl_base,
+	efx_writeo_table(efx, &reg, efx->type->txd_ptr_tbl_base,
 			 tx_queue->queue);
 
 	if (efx_nic_rev(efx) < EFX_REV_FALCON_B0) {
-		efx_oword_t reg;
-
 		/* Only 128 bits in this register */
 		BUILD_BUG_ON(EFX_MAX_TX_QUEUES > 128);
 
@@ -471,6 +469,16 @@ void efx_nic_init_tx(struct efx_tx_queue *tx_queue)
 		else
 			set_bit_le(tx_queue->queue, (void *)&reg);
 		efx_writeo(efx, &reg, FR_AA_TX_CHKSM_CFG);
+	}
+
+	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0) {
+		EFX_POPULATE_OWORD_1(reg,
+				     FRF_BZ_TX_PACE,
+				     (tx_queue->queue & EFX_TXQ_TYPE_HIGHPRI) ?
+				     FFE_BZ_TX_PACE_OFF :
+				     FFE_BZ_TX_PACE_RESERVED);
+		efx_writeo_table(efx, &reg, FR_BZ_TX_PACE_TBL,
+				 tx_queue->queue);
 	}
 }
 
@@ -521,7 +529,7 @@ void efx_nic_remove_tx(struct efx_tx_queue *tx_queue)
 static inline efx_qword_t *
 efx_rx_desc(struct efx_rx_queue *rx_queue, unsigned int index)
 {
-	return (((efx_qword_t *) (rx_queue->rxd.addr)) + index);
+	return ((efx_qword_t *) (rx_queue->rxd.addr)) + index;
 }
 
 /* This creates an entry in the RX descriptor queue */
@@ -673,7 +681,7 @@ void efx_nic_eventq_read_ack(struct efx_channel *channel)
 }
 
 /* Use HW to insert a SW defined event */
-void efx_generate_event(struct efx_channel *channel, efx_qword_t *event)
+static void efx_generate_event(struct efx_channel *channel, efx_qword_t *event)
 {
 	efx_oword_t drv_ev_reg;
 
@@ -844,7 +852,6 @@ efx_handle_rx_event(struct efx_channel *channel, const efx_qword_t *event)
 	unsigned expected_ptr;
 	bool rx_ev_pkt_ok, discard = false, checksummed;
 	struct efx_rx_queue *rx_queue;
-	struct efx_nic *efx = channel->efx;
 
 	/* Basic packet information */
 	rx_ev_byte_cnt = EFX_QWORD_FIELD(*event, FSF_AZ_RX_EV_BYTE_CNT);
@@ -867,9 +874,8 @@ efx_handle_rx_event(struct efx_channel *channel, const efx_qword_t *event)
 		 * UDP/IP, then we can rely on the hardware checksum.
 		 */
 		checksummed =
-			likely(efx->rx_checksum_enabled) &&
-			(rx_ev_hdr_type == FSE_CZ_RX_EV_HDR_TYPE_IPV4V6_TCP ||
-			 rx_ev_hdr_type == FSE_CZ_RX_EV_HDR_TYPE_IPV4V6_UDP);
+			rx_ev_hdr_type == FSE_CZ_RX_EV_HDR_TYPE_IPV4V6_TCP ||
+			rx_ev_hdr_type == FSE_CZ_RX_EV_HDR_TYPE_IPV4V6_UDP;
 	} else {
 		efx_handle_rx_not_ok(rx_queue, event, &rx_ev_pkt_ok, &discard);
 		checksummed = false;
@@ -1226,8 +1232,10 @@ int efx_nic_flush_queues(struct efx_nic *efx)
 
 	/* Flush all tx queues in parallel */
 	efx_for_each_channel(channel, efx) {
-		efx_for_each_channel_tx_queue(tx_queue, channel)
-			efx_flush_tx_queue(tx_queue);
+		efx_for_each_possible_channel_tx_queue(tx_queue, channel) {
+			if (tx_queue->initialised)
+				efx_flush_tx_queue(tx_queue);
+		}
 	}
 
 	/* The hardware supports four concurrent rx flushes, each of which may
@@ -1250,8 +1258,9 @@ int efx_nic_flush_queues(struct efx_nic *efx)
 					++rx_pending;
 				}
 			}
-			efx_for_each_channel_tx_queue(tx_queue, channel) {
-				if (tx_queue->flushed != FLUSH_DONE)
+			efx_for_each_possible_channel_tx_queue(tx_queue, channel) {
+				if (tx_queue->initialised &&
+				    tx_queue->flushed != FLUSH_DONE)
 					++tx_pending;
 			}
 		}
@@ -1266,8 +1275,9 @@ int efx_nic_flush_queues(struct efx_nic *efx)
 	/* Mark the queues as all flushed. We're going to return failure
 	 * leading to a reset, or fake up success anyway */
 	efx_for_each_channel(channel, efx) {
-		efx_for_each_channel_tx_queue(tx_queue, channel) {
-			if (tx_queue->flushed != FLUSH_DONE)
+		efx_for_each_possible_channel_tx_queue(tx_queue, channel) {
+			if (tx_queue->initialised &&
+			    tx_queue->flushed != FLUSH_DONE)
 				netif_err(efx, hw, efx->net_dev,
 					  "tx queue %d flush command timed out\n",
 					  tx_queue->queue);
@@ -1499,22 +1509,21 @@ static irqreturn_t efx_msi_interrupt(int irq, void *dev_id)
 /* Setup RSS indirection table.
  * This maps from the hash value of the packet to RXQ
  */
-static void efx_setup_rss_indir_table(struct efx_nic *efx)
+void efx_nic_push_rx_indir_table(struct efx_nic *efx)
 {
-	int i = 0;
-	unsigned long offset;
+	size_t i = 0;
 	efx_dword_t dword;
 
 	if (efx_nic_rev(efx) < EFX_REV_FALCON_B0)
 		return;
 
-	for (offset = FR_BZ_RX_INDIRECTION_TBL;
-	     offset < FR_BZ_RX_INDIRECTION_TBL + 0x800;
-	     offset += 0x10) {
+	BUILD_BUG_ON(ARRAY_SIZE(efx->rx_indir_table) !=
+		     FR_BZ_RX_INDIRECTION_TBL_ROWS);
+
+	for (i = 0; i < FR_BZ_RX_INDIRECTION_TBL_ROWS; i++) {
 		EFX_POPULATE_DWORD_1(dword, FRF_BZ_IT_QUEUE,
-				     i % efx->n_rx_channels);
-		efx_writed(efx, &dword, offset);
-		i++;
+				     efx->rx_indir_table[i]);
+		efx_writed_table(efx, &dword, FR_BZ_RX_INDIRECTION_TBL, i);
 	}
 }
 
@@ -1650,7 +1659,7 @@ void efx_nic_init_common(struct efx_nic *efx)
 	EFX_INVERT_OWORD(temp);
 	efx_writeo(efx, &temp, FR_AZ_FATAL_INTR_KER);
 
-	efx_setup_rss_indir_table(efx);
+	efx_nic_push_rx_indir_table(efx);
 
 	/* Disable the ugly timer-based TX DMA backoff and allow TX DMA to be
 	 * controlled by the RX FIFO fill level. Set arbitration to one pkt/Q.
@@ -1671,6 +1680,19 @@ void efx_nic_init_common(struct efx_nic *efx)
 	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0)
 		EFX_SET_OWORD_FIELD(temp, FRF_BZ_TX_FLUSH_MIN_LEN_EN, 1);
 	efx_writeo(efx, &temp, FR_AZ_TX_RESERVED);
+
+	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0) {
+		EFX_POPULATE_OWORD_4(temp,
+				     /* Default values */
+				     FRF_BZ_TX_PACE_SB_NOT_AF, 0x15,
+				     FRF_BZ_TX_PACE_SB_AF, 0xb,
+				     FRF_BZ_TX_PACE_FB_BASE, 0,
+				     /* Allow large pace values in the
+				      * fast bin. */
+				     FRF_BZ_TX_PACE_BIN_TH,
+				     FFE_BZ_TX_PACE_RESERVED);
+		efx_writeo(efx, &temp, FR_BZ_TX_PACE);
+	}
 }
 
 /* Register dump */
@@ -1844,8 +1866,7 @@ static const struct efx_nic_reg_table efx_nic_reg_tables[] = {
 	REGISTER_TABLE_BB_CZ(TX_DESC_PTR_TBL),
 	REGISTER_TABLE_AA(EVQ_PTR_TBL_KER),
 	REGISTER_TABLE_BB_CZ(EVQ_PTR_TBL),
-	/* The register buffer is allocated with slab, so we can't
-	 * reasonably read all of the buffer table (up to 8MB!).
+	/* We can't reasonably read all of the buffer table (up to 8MB!).
 	 * However this driver will only use a few entries.  Reading
 	 * 1K entries allows for some expansion of queue count and
 	 * size before we need to change the version. */
@@ -1853,7 +1874,6 @@ static const struct efx_nic_reg_table efx_nic_reg_tables[] = {
 				  A, A, 8, 1024),
 	REGISTER_TABLE_DIMENSIONS(BUF_FULL_TBL, FR_BZ_BUF_FULL_TBL,
 				  B, Z, 8, 1024),
-	/* RX_FILTER_TBL{0,1} is huge and not used by this driver */
 	REGISTER_TABLE_CZ(RX_MAC_FILTER_TBL0),
 	REGISTER_TABLE_BB_CZ(TIMER_TBL),
 	REGISTER_TABLE_BB_CZ(TX_PACE_TBL),
@@ -1863,6 +1883,7 @@ static const struct efx_nic_reg_table efx_nic_reg_tables[] = {
 	REGISTER_TABLE_CZ(MC_TREG_SMEM),
 	/* MSIX_PBA_TABLE is not mapped */
 	/* SRM_DBG is not mapped (and is redundant with BUF_FLL_TBL) */
+	REGISTER_TABLE_BZ(RX_FILTER_TBL0),
 };
 
 size_t efx_nic_get_regs_len(struct efx_nic *efx)

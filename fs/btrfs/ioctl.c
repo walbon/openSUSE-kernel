@@ -181,7 +181,7 @@ static int btrfs_ioctl_setflags(struct file *file, void __user *arg)
 	if (ret)
 		return ret;
 
-	if (!is_owner_or_cap(inode))
+	if (!inode_owner_or_capable(inode))
 		return -EACCES;
 
 	mutex_lock(&inode->i_mutex);
@@ -282,8 +282,9 @@ static noinline int btrfs_ioctl_fitrim(struct file *file, void __user *arg)
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	mutex_lock(&fs_info->fs_devices->device_list_mutex);
-	list_for_each_entry(device, &fs_info->fs_devices->devices, dev_list) {
+	rcu_read_lock();
+	list_for_each_entry_rcu(device, &fs_info->fs_devices->devices,
+				dev_list) {
 		if (!device->bdev)
 			continue;
 		q = bdev_get_queue(device->bdev);
@@ -293,7 +294,7 @@ static noinline int btrfs_ioctl_fitrim(struct file *file, void __user *arg)
 				     minlen);
 		}
 	}
-	mutex_unlock(&fs_info->fs_devices->device_list_mutex);
+	rcu_read_unlock();
 	if (!num_devices)
 		return -EOPNOTSUPP;
 
@@ -414,8 +415,6 @@ static noinline int create_subvol(struct btrfs_root *root,
 	btrfs_record_root_in_trans(trans, new_root);
 
 	ret = btrfs_create_subvol_root(trans, new_root, new_dirid);
-	if (ret)
-		goto fail;
 	/*
 	 * insert the directory item
 	 */
@@ -505,17 +504,16 @@ static int create_snapshot(struct btrfs_root *root, struct dentry *dentry,
 	if (ret)
 		goto fail;
 
-	ret = 0;
 	parent = dget_parent(dentry);
 	inode = btrfs_lookup_dentry(parent->d_inode, dentry);
 	dput(parent);
 	if (IS_ERR(inode)) {
 		ret = PTR_ERR(inode);
 		goto fail;
-	} else if (inode == NULL)
-		ret = -ENOENT;
-
+	}
+	BUG_ON(!inode);
 	d_instantiate(dentry, inode);
+	ret = 0;
 fail:
 	kfree(pending_snapshot);
 	return ret;
@@ -566,7 +564,7 @@ static int btrfs_may_delete(struct inode *dir,struct dentry *victim,int isdir)
 		return -ENOENT;
 
 	BUG_ON(victim->d_parent->d_inode != dir);
-	audit_inode_child(victim->d_name.name, victim, dir);
+	audit_inode_child(victim, dir);
 
 	error = inode_permission(dir, MAY_WRITE | MAY_EXEC);
 	if (error)
@@ -1414,7 +1412,7 @@ static noinline int btrfs_ioctl_subvol_setflags(struct file *file,
 	if (flags & ~BTRFS_SUBVOL_RDONLY)
 		return -EOPNOTSUPP;
 
-	if (!is_owner_or_cap(inode))
+	if (!inode_owner_or_capable(inode))
 		return -EACCES;
 
 	down_write(&root->fs_info->subvol_sem);

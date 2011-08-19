@@ -59,7 +59,6 @@ struct bnx2x_dcbx_pfc_params {
 };
 
 struct bnx2x_dcbx_port_params {
-	u32 dcbx_enabled;
 	struct bnx2x_dcbx_pfc_params pfc;
 	struct bnx2x_dcbx_pg_params  ets;
 	struct bnx2x_dcbx_app_params app;
@@ -91,8 +90,6 @@ struct bnx2x_admin_priority_app_table {
 };
 
 struct bnx2x_config_dcbx_params {
-	u32 dcb_enable;
-	u32 admin_dcbx_enable;
 	u32 overwrite_settings;
 	u32 admin_dcbx_version;
 	u32 admin_ets_enable;
@@ -186,6 +183,7 @@ struct pg_help_data {
 struct bnx2x;
 void bnx2x_dcbx_update(struct work_struct *work);
 void bnx2x_dcbx_init_params(struct bnx2x *bp);
+void bnx2x_dcbx_set_state(struct bnx2x *bp, bool dcb_on, u32 dcbx_enabled);
 
 enum {
 	BNX2X_DCBX_STATE_NEG_RECEIVED = 0x1,
@@ -195,5 +193,10 @@ enum {
 
 void bnx2x_dcbx_set_params(struct bnx2x *bp, u32 state);
 void bnx2x_dcbx_pmf_update(struct bnx2x *bp);
+/* DCB netlink */
+#ifdef BCM_DCBNL
+extern const struct dcbnl_rtnl_ops bnx2x_dcbnl_ops;
+int bnx2x_dcbnl_update_applist(struct bnx2x *bp, bool delall);
+#endif /* BCM_DCBNL */
 
 #endif /* BNX2X_DCB_H */

@@ -26,6 +26,9 @@
 #define DRV_MODULE_RELDATE      "2011/06/13"
 #define BNX2X_BC_VER            0x040200
 
+#if defined(CONFIG_DCB)
+#define BCM_DCBNL
+#endif
 #if defined(CONFIG_CNIC) || defined(CONFIG_CNIC_MODULE)
 #define BCM_CNIC 1
 #include "../cnic_if.h"
@@ -40,9 +43,7 @@
 #endif
 
 #include <linux/mdio.h>
-#include <linux/pci.h>
 
-#include "bnx2x_compat.h"
 #include "bnx2x_reg.h"
 #include "bnx2x_fw_defs.h"
 #include "bnx2x_hsi.h"
@@ -118,6 +119,7 @@ do {								 \
 
 
 #ifdef BNX2X_STOP_ON_ERROR
+void bnx2x_int_disable(struct bnx2x *bp);
 #define bnx2x_panic() do { \
 		bp->panic = 1; \
 		BNX2X_ERR("driver assert\n"); \
@@ -132,7 +134,7 @@ do {								 \
 	} while (0)
 #endif
 
-#define bnx2x_mc_addr(ha)      ((ha)->dmi_addr)
+#define bnx2x_mc_addr(ha)      ((ha)->addr)
 #define bnx2x_uc_addr(ha)      ((ha)->addr)
 
 #define U64_LO(x)			(u32)(((u64)(x)) & 0xffffffff)
@@ -238,21 +240,21 @@ do {								 \
  */
 /* iSCSI L2 */
 #define BNX2X_ISCSI_ETH_CL_ID_IDX	1
-#define BNX2X_ISCSI_ETH_CID		17
+#define BNX2X_ISCSI_ETH_CID		49
 
 /* FCoE L2 */
 #define BNX2X_FCOE_ETH_CL_ID_IDX	2
-#define BNX2X_FCOE_ETH_CID		18
+#define BNX2X_FCOE_ETH_CID		50
 
 /** Additional rings budgeting */
 #ifdef BCM_CNIC
-#define CNIC_CONTEXT_USE		1
-#define FCOE_CONTEXT_USE		1
+#define CNIC_PRESENT			1
+#define FCOE_PRESENT			1
 #else
-#define CNIC_CONTEXT_USE		0
-#define FCOE_CONTEXT_USE		0
+#define CNIC_PRESENT			0
+#define FCOE_PRESENT			0
 #endif /* BCM_CNIC */
-#define NONE_ETH_CONTEXT_USE	(FCOE_CONTEXT_USE)
+#define NON_ETH_CONTEXT_USE	(FCOE_PRESENT)
 
 #define AEU_IN_ATTN_BITS_PXPPCICLOCKCLIENT_PARITY_ERROR \
 	AEU_INPUTS_ATTN_BITS_PXPPCICLOCKCLIENT_PARITY_ERROR
@@ -260,11 +262,38 @@ do {								 \
 #define SM_RX_ID			0
 #define SM_TX_ID			1
 
-/* fast path */
+/* defines for multiple tx priority indices */
+#define FIRST_TX_ONLY_COS_INDEX		1
+#define FIRST_TX_COS_INDEX		0
 
+/* defines for decodeing the fastpath index and the cos index out of the
+ * transmission queue index
+ */
+#define MAX_TXQS_PER_COS	FP_SB_MAX_E1x
+
+#define TXQ_TO_FP(txq_index)	((txq_index) % MAX_TXQS_PER_COS)
+#define TXQ_TO_COS(txq_index)	((txq_index) / MAX_TXQS_PER_COS)
+
+/* rules for calculating the cids of tx-only connections */
+#define CID_TO_FP(cid)		((cid) % MAX_TXQS_PER_COS)
+#define CID_COS_TO_TX_ONLY_CID(cid, cos)	(cid + cos * MAX_TXQS_PER_COS)
+
+/* fp index inside class of service range */
+#define FP_COS_TO_TXQ(fp, cos)    ((fp)->index + cos * MAX_TXQS_PER_COS)
+
+/*
+ * 0..15 eth cos0
+ * 16..31 eth cos1 if applicable
+ * 32..47 eth cos2 If applicable
+ * fcoe queue follows eth queues (16, 32, 48 depending on cos)
+ */
+#define MAX_ETH_TXQ_IDX(bp)	(MAX_TXQS_PER_COS * (bp)->max_cos)
+#define FCOE_TXQ_IDX(bp)	(MAX_ETH_TXQ_IDX(bp))
+
+/* fast path */
 struct sw_rx_bd {
 	struct sk_buff	*skb;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	DEFINE_DMA_UNMAP_ADDR(mapping);
 };
 
 struct sw_tx_bd {
@@ -277,7 +306,7 @@ struct sw_tx_bd {
 
 struct sw_rx_page {
 	struct page	*page;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	DEFINE_DMA_UNMAP_ADDR(mapping);
 };
 
 union db_prod {
@@ -386,6 +415,29 @@ struct bnx2x_agg_info {
 #define Q_STATS_OFFSET32(stat_name) \
 			(offsetof(struct bnx2x_eth_q_stats, stat_name) / 4)
 
+struct bnx2x_fp_txdata {
+
+	struct sw_tx_bd		*tx_buf_ring;
+
+	union eth_tx_bd_types	*tx_desc_ring;
+	dma_addr_t		tx_desc_mapping;
+
+	u32			cid;
+
+	union db_prod		tx_db;
+
+	u16			tx_pkt_prod;
+	u16			tx_pkt_cons;
+	u16			tx_bd_prod;
+	u16			tx_bd_cons;
+
+	unsigned long		tx_pkt;
+
+	__le16			*tx_cons_sb;
+
+	int			txq_index;
+};
+
 struct bnx2x_fastpath {
 	struct bnx2x		*bp; /* parent */
 
@@ -402,10 +454,8 @@ struct bnx2x_fastpath {
 
 	dma_addr_t		status_blk_mapping;
 
-	struct sw_tx_bd		*tx_buf_ring;
-
-	union eth_tx_bd_types	*tx_desc_ring;
-	dma_addr_t		tx_desc_mapping;
+	u8			max_cos; /* actual number of active tx coses */
+	struct bnx2x_fp_txdata	txdata[BNX2X_MULTI_TX_COS];
 
 	struct sw_rx_bd		*rx_buf_ring;	/* BDs mappings ring */
 	struct sw_rx_page	*rx_page_ring;	/* SGE pages mappings ring */
@@ -424,20 +474,13 @@ struct bnx2x_fastpath {
 
 	u32			cid;
 
+	__le16			fp_hc_idx;
+
 	u8			index;		/* number in fp array */
 	u8			cl_id;		/* eth client id */
 	u8			cl_qzone_id;
 	u8			fw_sb_id;	/* status block number in FW */
 	u8			igu_sb_id;	/* status block number in HW */
-	union db_prod		tx_db;
-
-	u16			tx_pkt_prod;
-	u16			tx_pkt_cons;
-	u16			tx_bd_prod;
-	u16			tx_bd_cons;
-	__le16			*tx_cons_sb;
-
-	__le16			fp_hc_idx;
 
 	u16			rx_bd_prod;
 	u16			rx_bd_cons;
@@ -447,8 +490,7 @@ struct bnx2x_fastpath {
 	/* The last maximal completed SGE */
 	u16			last_max_sge;
 	__le16			*rx_cons_sb;
-	unsigned long		tx_pkt,
-				rx_pkt,
+	unsigned long		rx_pkt,
 				rx_calls;
 
 	/* TPA related */
@@ -487,8 +529,12 @@ struct bnx2x_fastpath {
 #define FCOE_IDX			BNX2X_NUM_ETH_QUEUES(bp)
 #define bnx2x_fcoe_fp(bp)		(&bp->fp[FCOE_IDX])
 #define bnx2x_fcoe(bp, var)		(bnx2x_fcoe_fp(bp)->var)
+#define bnx2x_fcoe_tx(bp, var)		(bnx2x_fcoe_fp(bp)-> \
+						txdata[FIRST_TX_COS_INDEX].var)
 
 
+#define IS_ETH_FP(fp)			(fp->index < \
+					 BNX2X_NUM_ETH_QUEUES(fp->bp))
 #ifdef BCM_CNIC
 #define IS_FCOE_FP(fp)			(fp->index == FCOE_IDX)
 #define IS_FCOE_IDX(idx)		((idx) == FCOE_IDX)
@@ -647,18 +693,23 @@ struct bnx2x_fastpath {
 
 #define HC_INDEX_TOE_TX_CQ_CONS		4 /* Formerly Cstorm TOE CQ index   */
 					  /* (HC_INDEX_C_TOE_TX_CQ_CONS)    */
-#define HC_INDEX_ETH_TX_CQ_CONS		5 /* Formerly Cstorm ETH CQ index   */
+#define HC_INDEX_ETH_TX_CQ_CONS_COS0	5 /* Formerly Cstorm ETH CQ index   */
+					  /* (HC_INDEX_C_ETH_TX_CQ_CONS)    */
+#define HC_INDEX_ETH_TX_CQ_CONS_COS1	6 /* Formerly Cstorm ETH CQ index   */
+					  /* (HC_INDEX_C_ETH_TX_CQ_CONS)    */
+#define HC_INDEX_ETH_TX_CQ_CONS_COS2	7 /* Formerly Cstorm ETH CQ index   */
 					  /* (HC_INDEX_C_ETH_TX_CQ_CONS)    */
 
-#define U_SB_ETH_RX_CQ_INDEX		HC_INDEX_ETH_RX_CQ_CONS
-#define U_SB_ETH_RX_BD_INDEX		HC_INDEX_ETH_RX_BD_CONS
-#define C_SB_ETH_TX_CQ_INDEX		HC_INDEX_ETH_TX_CQ_CONS
+#define HC_INDEX_ETH_FIRST_TX_CQ_CONS	HC_INDEX_ETH_TX_CQ_CONS_COS0
+
 
 #define BNX2X_RX_SB_INDEX \
 	(&fp->sb_index_values[HC_INDEX_ETH_RX_CQ_CONS])
 
-#define BNX2X_TX_SB_INDEX \
-	(&fp->sb_index_values[C_SB_ETH_TX_CQ_INDEX])
+#define BNX2X_TX_SB_INDEX_BASE BNX2X_TX_SB_INDEX_COS0
+
+#define BNX2X_TX_SB_INDEX_COS0 \
+	(&fp->sb_index_values[HC_INDEX_ETH_TX_CQ_CONS_COS0])
 
 /* end of fast path */
 
@@ -843,25 +894,6 @@ extern struct workqueue_struct *bnx2x_wq;
 /* fast-path interrupt contexts E2 */
 #define FP_SB_MAX_E2		HC_SB_MAX_SB_E2
 
-/*
- * cid_cnt paramter below refers to the value returned by
- * 'bnx2x_get_l2_cid_count()' routine
- */
-
-/*
- * The number of FP context allocated by the driver == max number of regular
- * L2 queues + 1 for the FCoE L2 queue
- */
-#define L2_FP_COUNT(cid_cnt)	((cid_cnt) - FCOE_CONTEXT_USE)
-
-/*
- * The number of FP-SB allocated by the driver == max number of regular L2
- * queues + 1 for the CNIC which also consumes an FP-SB
- */
-#define FP_SB_COUNT(cid_cnt)	((cid_cnt) - CNIC_CONTEXT_USE)
-#define NUM_IGU_SB_REQUIRED(cid_cnt) \
-				(FP_SB_COUNT(cid_cnt) - NONE_ETH_CONTEXT_USE)
-
 union cdu_context {
 	struct eth_context eth;
 	char pad[1024];
@@ -869,7 +901,7 @@ union cdu_context {
 
 /* CDU host DB constants */
 #define CDU_ILT_PAGE_SZ_HW	3
-#define CDU_ILT_PAGE_SZ		(4096 << CDU_ILT_PAGE_SZ_HW) /* 32K */
+#define CDU_ILT_PAGE_SZ		(8192 << CDU_ILT_PAGE_SZ_HW) /* 64K */
 #define ILT_PAGE_CIDS		(CDU_ILT_PAGE_SZ / sizeof(union cdu_context))
 
 #ifdef BCM_CNIC
@@ -1044,6 +1076,13 @@ struct bnx2x_fw_stats_data {
 	struct per_queue_stats  queue_stats[1];
 };
 
+/* Public slow path states */
+enum {
+	BNX2X_SP_RTNL_SETUP_TC,
+	BNX2X_SP_RTNL_TX_TIMEOUT,
+};
+
+
 struct bnx2x {
 	/* Fields used in the tx and intr/napi performance paths
 	 * are grouped together in the beginning of the structure
@@ -1078,11 +1117,6 @@ struct bnx2x {
 
 	int			tx_ring_size;
 
-#ifdef BCM_VLAN
-	struct vlan_group	*vlgrp;
-#endif
-
-	u32			rx_csum;
 /* L2 header size + 2*VLANs (8 bytes) + LLC SNAP (8 bytes) */
 #define ETH_OVREHEAD		(ETH_HLEN + 8 + 8)
 #define ETH_MIN_PACKET_SIZE		60
@@ -1148,13 +1182,11 @@ struct bnx2x {
 #define NO_MCP_FLAG			(1 << 9)
 
 #define BP_NOMCP(bp)			(bp->flags & NO_MCP_FLAG)
-#define HW_VLAN_TX_FLAG			(1 << 10)
-#define HW_VLAN_RX_FLAG			(1 << 11)
-#define MF_FUNC_DIS			(1 << 12)
-#define OWN_CNIC_IRQ			(1 << 13)
-#define NO_ISCSI_OOO_FLAG		(1 << 14)
-#define NO_ISCSI_FLAG			(1 << 15)
-#define NO_FCOE_FLAG			(1 << 16)
+#define MF_FUNC_DIS			(1 << 11)
+#define OWN_CNIC_IRQ			(1 << 12)
+#define NO_ISCSI_OOO_FLAG		(1 << 13)
+#define NO_ISCSI_FLAG			(1 << 14)
+#define NO_FCOE_FLAG			(1 << 15)
 
 #define NO_ISCSI(bp)		((bp)->flags & NO_ISCSI_FLAG)
 #define NO_ISCSI_OOO(bp)	((bp)->flags & NO_ISCSI_OOO_FLAG)
@@ -1165,7 +1197,7 @@ struct bnx2x {
 	int			mrrs;
 
 	struct delayed_work	sp_task;
-	struct delayed_work	reset_task;
+	struct delayed_work	sp_rtnl_task;
 
 	struct delayed_work	period_task;
 	struct timer_list	timer;
@@ -1214,7 +1246,7 @@ struct bnx2x {
 
 	u32			lin_cnt;
 
-	int			state;
+	u16			state;
 #define BNX2X_STATE_CLOSED		0
 #define BNX2X_STATE_OPENING_WAIT4_LOAD	0x1000
 #define BNX2X_STATE_OPENING_WAIT4_PORT	0x2000
@@ -1226,6 +1258,10 @@ struct bnx2x {
 #define BNX2X_STATE_ERROR		0xf000
 
 	int			multi_mode;
+#define BNX2X_MAX_PRIORITY		8
+#define BNX2X_MAX_ENTRIES_PER_PRI	16
+#define BNX2X_MAX_COS			3
+#define BNX2X_MAX_TX_COS		2
 	int			num_queues;
 	int			disable_tpa;
 
@@ -1275,11 +1311,21 @@ struct bnx2x {
 	struct bnx2x_ilt	*ilt;
 #define BP_ILT(bp)		((bp)->ilt)
 #define ILT_MAX_LINES		256
+/*
+ * Maximum supported number of RSS queues: number of IGU SBs minus one that goes
+ * to CNIC.
+ */
+#define BNX2X_MAX_RSS_COUNT(bp)	((bp)->igu_sb_cnt - CNIC_PRESENT)
 
-	int			l2_cid_count;
-#define L2_ILT_LINES(bp)	(DIV_ROUND_UP((bp)->l2_cid_count, \
-				 ILT_PAGE_CIDS))
-#define BNX2X_DB_SIZE(bp)	((bp)->l2_cid_count * (1 << BNX2X_DB_SHIFT))
+/*
+ * Maximum CID count that might be required by the bnx2x:
+ * Max Tss * Max_Tx_Multi_Cos + CNIC L2 Clients (FCoE and iSCSI related)
+ */
+#define BNX2X_L2_CID_COUNT(bp)	(MAX_TXQS_PER_COS * BNX2X_MULTI_TX_COS +\
+					NON_ETH_CONTEXT_USE + CNIC_PRESENT)
+#define L2_ILT_LINES(bp)	(DIV_ROUND_UP(BNX2X_L2_CID_COUNT(bp),\
+					ILT_PAGE_CIDS))
+#define BNX2X_DB_SIZE(bp)	(BNX2X_L2_CID_COUNT(bp) * (1 << BNX2X_DB_SHIFT))
 
 	int			qm_cid_count;
 
@@ -1368,12 +1414,26 @@ struct bnx2x {
 #define INIT_CSEM_PRAM_DATA(bp)		(bp->csem_pram_data)
 
 #define PHY_FW_VER_LEN			20
+	char			fw_ver[32];
 	const struct firmware	*firmware;
 
 	/* LLDP params */
 	struct bnx2x_config_lldp_params		lldp_config_params;
 
-	/* DCBX params */
+	/* DCB support on/off */
+	u16 dcb_state;
+#define BNX2X_DCB_STATE_OFF			0
+#define BNX2X_DCB_STATE_ON			1
+
+	/* DCBX engine mode */
+	int dcbx_enabled;
+#define BNX2X_DCBX_ENABLED_OFF			0
+#define BNX2X_DCBX_ENABLED_ON_NEG_OFF		1
+#define BNX2X_DCBX_ENABLED_ON_NEG_ON		2
+#define BNX2X_DCBX_ENABLED_INVALID		(-1)
+
+	bool dcbx_mode_uset;
+
 	struct bnx2x_config_dcbx_params		dcbx_config_params;
 	struct bnx2x_dcbx_port_params		dcbx_port_params;
 	int					dcb_version;
@@ -1395,21 +1455,36 @@ struct bnx2x {
 
 	unsigned long				sp_state;
 
+	/* operation indication for the sp_rtnl task */
+	unsigned long				sp_rtnl_state;
+
 	/* DCBX Negotation results */
 	struct dcbx_features			dcbx_local_feat;
 	u32					dcbx_error;
 
+#ifdef BCM_DCBNL
+	struct dcbx_features			dcbx_remote_feat;
+	u32					dcbx_remote_flags;
+#endif
 	u32					pending_max;
+
+	/* multiple tx classes of service */
+	u8					max_cos;
+
+	/* priority to cos mapping */
+	u8					prio_to_cos[8];
 };
 
 /* Tx queues may be less or equal to Rx queues */
 extern int num_queues;
 #define BNX2X_NUM_QUEUES(bp)	(bp->num_queues)
-#define BNX2X_NUM_ETH_QUEUES(bp) (BNX2X_NUM_QUEUES(bp) - NONE_ETH_CONTEXT_USE)
+#define BNX2X_NUM_ETH_QUEUES(bp) (BNX2X_NUM_QUEUES(bp) - NON_ETH_CONTEXT_USE)
+#define BNX2X_NUM_RX_QUEUES(bp)	BNX2X_NUM_QUEUES(bp)
 
 #define is_multi(bp)		(BNX2X_NUM_QUEUES(bp) > 1)
 
-#define BNX2X_MAX_QUEUES(bp)	(bp->igu_sb_cnt - CNIC_CONTEXT_USE)
+#define BNX2X_MAX_QUEUES(bp)	BNX2X_MAX_RSS_COUNT(bp)
+/* #define is_eth_multi(bp)	(BNX2X_NUM_ETH_QUEUES(bp) > 1) */
 
 #define RSS_IPV4_CAP_MASK						\
 	TSTORM_ETH_FUNCTION_COMMON_CONFIG_RSS_IPV4_CAPABILITY
@@ -1444,42 +1519,47 @@ struct bnx2x_func_init_params {
 };
 
 #define for_each_eth_queue(bp, var) \
-	for (var = 0; var < BNX2X_NUM_ETH_QUEUES(bp); var++)
+	for ((var) = 0; (var) < BNX2X_NUM_ETH_QUEUES(bp); (var)++)
 
 #define for_each_nondefault_eth_queue(bp, var) \
-	for (var = 1; var < BNX2X_NUM_ETH_QUEUES(bp); var++)
+	for ((var) = 1; (var) < BNX2X_NUM_ETH_QUEUES(bp); (var)++)
 
 #define for_each_queue(bp, var) \
-	for (var = 0; var < BNX2X_NUM_QUEUES(bp); var++) \
+	for ((var) = 0; (var) < BNX2X_NUM_QUEUES(bp); (var)++) \
 		if (skip_queue(bp, var))	\
 			continue;		\
 		else
 
+/* Skip forwarding FP */
 #define for_each_rx_queue(bp, var) \
-	for (var = 0; var < BNX2X_NUM_QUEUES(bp); var++) \
+	for ((var) = 0; (var) < BNX2X_NUM_QUEUES(bp); (var)++) \
 		if (skip_rx_queue(bp, var))	\
 			continue;		\
 		else
 
+/* Skip OOO FP */
 #define for_each_tx_queue(bp, var) \
-	for (var = 0; var < BNX2X_NUM_QUEUES(bp); var++) \
+	for ((var) = 0; (var) < BNX2X_NUM_QUEUES(bp); (var)++) \
 		if (skip_tx_queue(bp, var))	\
 			continue;		\
 		else
 
 #define for_each_nondefault_queue(bp, var) \
-	for (var = 1; var < BNX2X_NUM_QUEUES(bp); var++) \
+	for ((var) = 1; (var) < BNX2X_NUM_QUEUES(bp); (var)++) \
 		if (skip_queue(bp, var))	\
 			continue;		\
 		else
 
+#define for_each_cos_in_tx_queue(fp, var) \
+	for ((var) = 0; (var) < (fp)->max_cos; (var)++)
+
 /* skip rx queue
- * if FCOE l2 support is diabled and this is the fcoe L2 queue
+ * if FCOE l2 support is disabled and this is the fcoe L2 queue
  */
 #define skip_rx_queue(bp, idx)	(NO_FCOE(bp) && IS_FCOE_IDX(idx))
 
 /* skip tx queue
- * if FCOE l2 support is diabled and this is the fcoe L2 queue
+ * if FCOE l2 support is disabled and this is the fcoe L2 queue
  */
 #define skip_tx_queue(bp, idx)	(NO_FCOE(bp) && IS_FCOE_IDX(idx))
 
@@ -1846,7 +1926,7 @@ static inline u32 reg_poll(struct bnx2x *bp, u32 reg, u32 expected, int ms,
 #define HW_PRTY_ASSERT_SET_4 (AEU_INPUTS_ATTN_BITS_PGLUE_PARITY_ERROR | \
 			      AEU_INPUTS_ATTN_BITS_ATC_PARITY_ERROR)
 
-#define MULTI_FLAGS(bp) \
+#define RSS_FLAGS(bp) \
 		(TSTORM_ETH_FUNCTION_COMMON_CONFIG_RSS_IPV4_CAPABILITY | \
 		 TSTORM_ETH_FUNCTION_COMMON_CONFIG_RSS_IPV4_TCP_CAPABILITY | \
 		 TSTORM_ETH_FUNCTION_COMMON_CONFIG_RSS_IPV6_CAPABILITY | \
@@ -1913,6 +1993,9 @@ static inline u32 reg_poll(struct bnx2x *bp, u32 reg, u32 expected, int ms,
 #ifndef ETH_MAX_RX_CLIENTS_E2
 #define ETH_MAX_RX_CLIENTS_E2		ETH_MAX_RX_CLIENTS_E1H
 #endif
+
+#define BNX2X_VPD_LEN			128
+#define VENDOR_ID_LEN			4
 
 /* Congestion management fairness mode */
 #define CMNG_FNS_NONE		0

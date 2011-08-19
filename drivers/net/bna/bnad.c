@@ -28,7 +28,6 @@
 #include "bnad.h"
 #include "bna.h"
 #include "cna.h"
-#include "bna_compat.h"
 
 static DEFINE_MUTEX(bnad_fwimg_mutex);
 
@@ -503,7 +502,7 @@ bnad_poll_cq(struct bnad *bnad, struct bna_ccb *ccb, int budget)
 
 		skb_put(skb, ntohs(cmpl->length));
 		if (likely
-		    (bnad->rx_csum &&
+		    ((bnad->netdev->features & NETIF_F_RXCSUM) &&
 		     (((flags & BNA_CQ_EF_IPV4) &&
 		      (flags & BNA_CQ_EF_L3_CKSUM_OK)) ||
 		      (flags & BNA_CQ_EF_IPV6)) &&
@@ -511,7 +510,7 @@ bnad_poll_cq(struct bnad *bnad, struct bna_ccb *ccb, int budget)
 		      (flags & BNA_CQ_EF_L4_CKSUM_OK)))
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 		else
-			skb->ip_summed = CHECKSUM_NONE;
+			skb_checksum_none_assert(skb);
 
 		rcb->rxq->rx_packets++;
 		rcb->rxq->rx_bytes += skb->len;
@@ -1572,10 +1571,10 @@ static void
 bnad_netdev_mc_list_get(struct net_device *netdev, u8 *mc_list)
 {
 	int i = 1; /* Index 0 has broadcast address */
-	struct dev_addr_list *mc_addr;
+	struct netdev_hw_addr *mc_addr;
 
 	netdev_for_each_mc_addr(mc_addr, netdev) {
-		memcpy(&mc_list[i * ETH_ALEN], &mc_addr->da_addr[0],
+		memcpy(&mc_list[i * ETH_ALEN], &mc_addr->addr[0],
 							ETH_ALEN);
 		i++;
 	}
@@ -2681,11 +2680,6 @@ bnad_get_stats64(struct net_device *netdev, struct rtnl_link_stats64 *stats)
 	return stats;
 }
 
-static struct net_device_stats *bnad_get_stats(struct net_device *netdev)
-{
-	return bnad_get_stats64(netdev, &netdev->stats);
-}
-
 static void
 bnad_set_rx_mode(struct net_device *netdev)
 {
@@ -2889,7 +2883,7 @@ static const struct net_device_ops bnad_netdev_ops = {
 	.ndo_open		= bnad_open,
 	.ndo_stop		= bnad_stop,
 	.ndo_start_xmit		= bnad_start_xmit,
-	.ndo_get_stats		= bnad_get_stats,
+	.ndo_get_stats64		= bnad_get_stats64,
 	.ndo_set_rx_mode	= bnad_set_rx_mode,
 	.ndo_set_multicast_list = bnad_set_rx_mode,
 	.ndo_validate_addr      = eth_validate_addr,
@@ -2908,23 +2902,20 @@ bnad_netdev_init(struct bnad *bnad, bool using_dac)
 {
 	struct net_device *netdev = bnad->netdev;
 
-	netdev->features |= NETIF_F_IPV6_CSUM;
-	netdev->features |= NETIF_F_TSO;
-	netdev->features |= NETIF_F_TSO6;
+	netdev->hw_features = NETIF_F_SG | NETIF_F_RXCSUM |
+		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
+		NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_HW_VLAN_TX;
 
-	netdev->features |= NETIF_F_GRO;
-	pr_warn("bna: GRO enabled, using kernel stack GRO\n");
+	netdev->vlan_features = NETIF_F_SG | NETIF_F_HIGHDMA |
+		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
+		NETIF_F_TSO | NETIF_F_TSO6;
 
-	netdev->features |= NETIF_F_SG | NETIF_F_IP_CSUM;
+	netdev->features |= netdev->hw_features |
+		NETIF_F_HW_VLAN_RX | NETIF_F_HW_VLAN_FILTER;
 
 	if (using_dac)
 		netdev->features |= NETIF_F_HIGHDMA;
 
-	netdev->features |=
-		NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX |
-		NETIF_F_HW_VLAN_FILTER;
-
-	netdev->vlan_features = netdev->features;
 	netdev->mem_start = bnad->mmio_start;
 	netdev->mem_end = bnad->mmio_start + bnad->mmio_len - 1;
 
@@ -2975,7 +2966,6 @@ bnad_init(struct bnad *bnad,
 
 	bnad->txq_depth = BNAD_TXQ_DEPTH;
 	bnad->rxq_depth = BNAD_RXQ_DEPTH;
-	bnad->rx_csum = true;
 
 	bnad->tx_coalescing_timeo = BFI_TX_COALESCING_TIMEO;
 	bnad->rx_coalescing_timeo = BFI_RX_COALESCING_TIMEO;

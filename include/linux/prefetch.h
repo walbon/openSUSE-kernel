@@ -29,7 +29,7 @@
 	prefetchw(x)	- prefetches the cacheline at "x" for write
 	spin_lock_prefetch(x) - prefetches the spinlock *x for taking
 	
-	there is also PREFETCH_STRIDE which is the architecure-prefered 
+	there is also PREFETCH_STRIDE which is the architecure-preferred 
 	"lookahead" size for prefetching streamed operations.
 	
 */
@@ -48,33 +48,6 @@
 
 #ifndef PREFETCH_STRIDE
 #define PREFETCH_STRIDE (4*L1_CACHE_BYTES)
-#endif
-
-/*
- * Prefetch for list pointer chasing. The architecture defines this
- * if it believes list prefetches are a good idea on the particular CPU.
- */
-#include <linux/prefetch_config.h>
-#ifdef LIST_PREFETCH_NONE	/* No prefetching for lists */
-#define list_prefetch(x) ((void)0)
-#define list_prefetch_nonnull(x) ((void)0)
-#elif defined(LIST_PREFETCH)	/* Do prefetching of list elements */
-#define	list_prefetch(x) prefetch(x)
-#ifdef LIST_PREFETCH_UNCOND		/* Never mind about a NULL prefetch */
-#define	list_prefetch_nonnull(x) prefetch(x)
-#elif defined(LIST_PREFETCH_BRANCH)	/* Avoid NULL prefetch (TLB miss ...) */
-#define	list_prefetch_nonnull(x) if (likely(x)) prefetch(x)
-#elif defined(LIST_PREFETCH_CMOV)	/* Avoid NULL prefetch hoping compiler will use cond move instead of branch */
-#define	list_prefetch_nonnull(x) prefetch((void*)(x)?: (void*)&(x))
-#elif defined(LIST_PREFETCH_NEVERNULL)	/* NULL prefetch, branch or cond move are all too expensive */
-#define list_prefetch_nonnull(x) ((void)0)
-#else
-#error LIST_PREFETCH_UNCOND, _BRANCH, _CMOV, or _NEVERNULL needs to be defined
-#endif
-#else
-#warn LIST_PREFETCH_NONE or LIST_PREFETCH needs to be defined. Defaulting to unconditional prefetch.
-define list_prefetch(x) prefetch(x)
-define list_prefetch_nonnull(x) prefetch(x)
 #endif
 
 static inline void prefetch_range(void *addr, size_t len)

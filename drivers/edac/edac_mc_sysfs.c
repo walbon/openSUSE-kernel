@@ -234,7 +234,7 @@ static ssize_t csrowdev_store(struct kobject *kobj, struct attribute *attr,
 	return -EIO;
 }
 
-static struct sysfs_ops csrowfs_ops = {
+static const struct sysfs_ops csrowfs_ops = {
 	.show = csrowdev_show,
 	.store = csrowdev_store
 };
@@ -567,7 +567,7 @@ static ssize_t mcidev_store(struct kobject *kobj, struct attribute *attr,
 }
 
 /* Intermediate show/store table */
-static struct sysfs_ops mci_ops = {
+static const struct sysfs_ops mci_ops = {
 	.show = mcidev_show,
 	.store = mcidev_store
 };
@@ -849,7 +849,7 @@ static void edac_remove_mci_instance_attributes(struct mem_ctl_info *mci,
 
 	/*
 	 * loop if there are attributes and until we hit a NULL entry
-	 * Remove first all the atributes
+	 * Remove first all the attributes
 	 */
 	while (sysfs_attrib) {
 		debugf4("%s() sysfs_attrib = %p\n",__func__, sysfs_attrib);

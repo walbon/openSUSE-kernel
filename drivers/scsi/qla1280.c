@@ -78,7 +78,7 @@
 	- Clean up vchan handling
     Rev  3.23.33 July 3, 2003, Jes Sorensen
 	- Don't define register access macros before define determining MMIO.
-	  This just happend to work out on ia64 but not elsewhere.
+	  This just happened to work out on ia64 but not elsewhere.
 	- Don't try and read from the card while it is in reset as
 	  it won't respond and causes an MCA
     Rev  3.23.32 June 23, 2003, Jes Sorensen
@@ -348,7 +348,6 @@
 #include <linux/pci.h>
 #include <linux/proc_fs.h>
 #include <linux/stat.h>
-#include <linux/slab.h>
 #include <linux/pci_ids.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
@@ -580,13 +579,13 @@ struct qla_fw qla1280_fw_tbl[QL_NUM_FW_IMAGES] = {
 
 /* NOTE: Order of boards in this table must match order in qla1280_pci_tbl */
 static struct qla_boards ql1280_board_tbl[] = {
-	{.name="QLA12160", .numPorts=2, .fw_index=2},
-	{.name="QLA1040" , .numPorts=1, .fw_index=0},
-	{.name="QLA1080" , .numPorts=1, .fw_index=1},
-	{.name="QLA1240" , .numPorts=2, .fw_index=1},
-	{.name="QLA1280" , .numPorts=2, .fw_index=1},
-	{.name="QLA10160", .numPorts=1, .fw_index=2},
-	{.name="        ", .numPorts=0, .fw_index=-1},
+	{.name = "QLA12160", .numPorts = 2, .fw_index = 2},
+	{.name = "QLA1040" , .numPorts = 1, .fw_index = 0},
+	{.name = "QLA1080" , .numPorts = 1, .fw_index = 1},
+	{.name = "QLA1240" , .numPorts = 2, .fw_index = 1},
+	{.name = "QLA1280" , .numPorts = 2, .fw_index = 1},
+	{.name = "QLA10160", .numPorts = 1, .fw_index = 2},
+	{.name = "        ", .numPorts = 0, .fw_index = -1},
 };
 
 static int qla1280_verbose = 1;
@@ -1560,7 +1559,7 @@ qla1280_request_firmware(struct scsi_qla_host *ha)
 
 	fwname = qla1280_fw_tbl[index].fwname;
 	err = request_firmware(&fw, fwname, &ha->pdev->dev);
-	
+
 	if (err) {
 		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
 		       fwname, err);
@@ -1716,7 +1715,7 @@ qla1280_load_firmware_pio(struct scsi_qla_host *ha)
 	const __le16 *fw_data;
 	uint16_t risc_address, risc_code_size;
 	uint16_t mb[MAILBOX_REGISTER_COUNT], i;
-	int err=0;
+	int err = 0;
 
 	fw = qla1280_request_firmware(ha);
 	if (IS_ERR(fw))
@@ -4067,7 +4066,7 @@ __qla1280_print_scsi_cmd(struct scsi_cmnd *cmd)
 	   } */
 	printk("  tag=%d, transfersize=0x%x \n",
 	       cmd->tag, cmd->transfersize);
-	printk("  Pid=%li, SP=0x%p\n", cmd->serial_number, CMD_SP(cmd));
+	printk("  SP=0x%p\n", CMD_SP(cmd));
 	printk(" underflow size = 0x%x, direction=0x%x\n",
 	       cmd->underflow, cmd->sc_data_direction);
 }
@@ -4474,7 +4473,7 @@ qla1280_exit(void)
 
 	pci_unregister_driver(&qla1280_pci_driver);
 	/* release any allocated firmware images */
-	for (i=0; i<QL_NUM_FW_IMAGES; i++) {
+	for (i = 0; i < QL_NUM_FW_IMAGES; i++) {
 		if (qla1280_fw_tbl[i].fw) {
 			release_firmware(qla1280_fw_tbl[i].fw);
 			qla1280_fw_tbl[i].fw = NULL;

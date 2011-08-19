@@ -280,7 +280,7 @@ static int powermate_alloc_buffers(struct usb_device *udev, struct powermate_dev
 
 	pm->configcr = kmalloc(sizeof(*(pm->configcr)), GFP_KERNEL);
 	if (!pm->configcr)
-		return -1;
+		return -ENOMEM;
 
 	return 0;
 }
@@ -333,7 +333,7 @@ static int powermate_probe(struct usb_interface *intf, const struct usb_device_i
 	pm->input = input_dev;
 
 	usb_make_path(udev, pm->phys, sizeof(pm->phys));
-	strlcpy(pm->phys, "/input0", sizeof(pm->phys));
+	strlcat(pm->phys, "/input0", sizeof(pm->phys));
 
 	spin_lock_init(&pm->lock);
 

@@ -435,18 +435,6 @@ int radeon_dummy_page_init(struct radeon_device *rdev)
 	rdev->dummy_page.page = alloc_page(GFP_DMA32 | GFP_KERNEL | __GFP_ZERO);
 	if (rdev->dummy_page.page == NULL)
 		return -ENOMEM;
-#ifdef CONFIG_XEN
-	{
-		int ret = xen_limit_pages_to_max_mfn(rdev->dummy_page.page,
-						     0, 32);
-
-		if (!ret)
-			clear_page(page_address(rdev->dummy_page.page));
-		else
-			dev_warn(rdev->dev,
-				 "Error restricting dummy page: %d\n", ret);
-	}
-#endif
 	rdev->dummy_page.addr = pci_map_page(rdev->pdev, rdev->dummy_page.page,
 					0, PAGE_SIZE, PCI_DMA_BIDIRECTIONAL);
 	if (pci_dma_mapping_error(rdev->pdev, rdev->dummy_page.addr)) {
@@ -716,9 +704,8 @@ int radeon_device_init(struct radeon_device *rdev,
 	rdev->gpu_lockup = false;
 	rdev->accel_working = false;
 
-	DRM_INFO("initializing kernel modesetting (%s 0x%04X:0x%04X 0x%04X:0x%04X).\n",
-		radeon_family_name[rdev->family], pdev->vendor, pdev->device,
-		pdev->subsystem_vendor, pdev->subsystem_device);
+	DRM_INFO("initializing kernel modesetting (%s 0x%04X:0x%04X).\n",
+		radeon_family_name[rdev->family], pdev->vendor, pdev->device);
 
 	/* mutex initialization are all done here so we
 	 * can recall function without having locking issues */
@@ -910,9 +897,9 @@ int radeon_suspend_kms(struct drm_device *dev, pm_message_t state)
 		pci_disable_device(dev->pdev);
 		pci_set_power_state(dev->pdev, PCI_D3hot);
 	}
-	acquire_console_sem();
+	console_lock();
 	radeon_fbdev_set_suspend(rdev, 1);
-	release_console_sem();
+	console_unlock();
 	return 0;
 }
 
@@ -924,11 +911,11 @@ int radeon_resume_kms(struct drm_device *dev)
 	if (dev->switch_power_state == DRM_SWITCH_POWER_OFF)
 		return 0;
 
-	acquire_console_sem();
+	console_lock();
 	pci_set_power_state(dev->pdev, PCI_D0);
 	pci_restore_state(dev->pdev);
 	if (pci_enable_device(dev->pdev)) {
-		release_console_sem();
+		console_unlock();
 		return -1;
 	}
 	pci_set_master(dev->pdev);
@@ -939,7 +926,7 @@ int radeon_resume_kms(struct drm_device *dev)
 	radeon_restore_bios_scratch_regs(rdev);
 
 	radeon_fbdev_set_suspend(rdev, 0);
-	release_console_sem();
+	console_unlock();
 
 	/* init dig PHYs */
 	if (rdev->is_atom_bios)

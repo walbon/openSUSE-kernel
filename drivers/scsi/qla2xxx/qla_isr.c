@@ -7,6 +7,7 @@
 #include "qla_def.h"
 
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <scsi/scsi_tcq.h>
 #include <scsi/scsi_bsg_fc.h>
 #include <scsi/scsi_eh.h>
@@ -413,7 +414,7 @@ skip_rio:
 				    "marked OFFLINE!\n");
 				vha->flags.online = 0;
 			} else {
-				/* Check to see if MPI timeout occured */
+				/* Check to see if MPI timeout occurred */
 				if ((mbx & MBX_3) && (ha->flags.port0))
 					set_bit(MPI_RESET_NEEDED,
 					    &vha->dpc_flags);
@@ -1198,7 +1199,7 @@ qla24xx_logio_entry(scsi_qla_host_t *vha, struct req_que *req,
 
 	data[0] = MBS_COMMAND_ERROR;
 	data[1] = lio->u.logio.flags & SRB_LOGIN_RETRIED ?
-		QLA_LOGIO_LOGIN_RETRIED: 0;
+		QLA_LOGIO_LOGIN_RETRIED : 0;
 	if (logio->entry_status) {
 		DEBUG2(printk(KERN_WARNING
 		    "scsi(%ld:%x): Async-%s error entry - "
@@ -1231,6 +1232,7 @@ qla24xx_logio_entry(scsi_qla_host_t *vha, struct req_que *req,
 				fcport->flags |= FCF_FCP2_DEVICE;
 		} else if (iop[0] & BIT_5)
 			fcport->port_type = FCT_INITIATOR;
+
 		if (logio->io_parameter[7] || logio->io_parameter[8])
 			fcport->supported_classes |= FC_COS_CLASS2;
 		if (logio->io_parameter[9] || logio->io_parameter[10])
@@ -1587,7 +1589,7 @@ qla2x00_status_entry(scsi_qla_host_t *vha, struct rsp_que *rsp, void *pkt)
 		return;
 	}
 
-	lscsi_status = scsi_status & STATUS_MASK;
+  	lscsi_status = scsi_status & STATUS_MASK;
 
 	fcport = sp->fcport;
 
@@ -1921,16 +1923,16 @@ qla2x00_error_entry(scsi_qla_host_t *vha, struct rsp_que *rsp, sts_entry_t *pkt)
 	} else if (pkt->entry_type == COMMAND_A64_TYPE || pkt->entry_type ==
 		COMMAND_TYPE || pkt->entry_type == COMMAND_TYPE_7
 		|| pkt->entry_type == COMMAND_TYPE_6) {
-			DEBUG2(printk("scsi(%ld): Error entry - invalid handle\n",
-				vha->host_no));
-			qla_printk(KERN_WARNING, ha,
-				"Error entry - invalid handle\n");
+		DEBUG2(printk("scsi(%ld): Error entry - invalid handle\n",
+			vha->host_no));
+		qla_printk(KERN_WARNING, ha,
+			"Error entry - invalid handle\n");
 
-			if (IS_QLA82XX(ha))
-				set_bit(FCOE_CTX_RESET_NEEDED, &vha->dpc_flags);
-			else
-				set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
-			qla2xxx_wake_dpc(vha);
+		if (IS_QLA82XX(ha))
+			set_bit(FCOE_CTX_RESET_NEEDED, &vha->dpc_flags);
+		else
+			set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
+		qla2xxx_wake_dpc(vha);
 	}
 }
 
@@ -2187,6 +2189,7 @@ qla24xx_intr_handler(int irq, void *dev_id)
 		set_bit(MBX_INTERRUPT, &ha->mbx_cmd_flags);
 		complete(&ha->mbx_intr_comp);
 	}
+
 	return IRQ_HANDLED;
 }
 
@@ -2329,7 +2332,6 @@ qla24xx_msix_default(int irq, void *dev_id)
 		set_bit(MBX_INTERRUPT, &ha->mbx_cmd_flags);
 		complete(&ha->mbx_intr_comp);
 	}
-
 	return IRQ_HANDLED;
 }
 

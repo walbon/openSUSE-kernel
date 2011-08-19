@@ -33,6 +33,7 @@
  *
  */
 
+#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
 #include <linux/spinlock.h>
@@ -998,7 +999,7 @@ static void ata_gen_passthru_sense(struct ata_queued_cmd *qc)
  *	@qc: Command that we are erroring out
  *
  *	Generate sense block for a failed ATA command @qc.  Descriptor
- *	format is used to accomodate LBA48 block address.
+ *	format is used to accommodate LBA48 block address.
  *
  *	LOCKING:
  *	None.
@@ -1096,10 +1097,10 @@ static int ata_scsi_dev_config(struct scsi_device *sdev,
 	/* configure max sectors */
 	blk_queue_max_hw_sectors(q, dev->max_sectors);
 
-	sdev->sector_size = ATA_SECT_SIZE;
-
 	if (dev->class == ATA_DEV_ATAPI) {
 		void *buf;
+
+		sdev->sector_size = ATA_SECT_SIZE;
 
 		/* set DMA padding */
 		blk_queue_update_dma_pad(q, ATA_DMA_PAD_SZ - 1);
@@ -1114,10 +1115,7 @@ static int ata_scsi_dev_config(struct scsi_device *sdev,
 
 		blk_queue_dma_drain(q, atapi_drain_needed, buf, ATAPI_MAX_DRAIN);
 	} else {
-		/* ATA devices must be sector aligned */
 		sdev->sector_size = ata_id_logical_sector_size(dev->id);
-		blk_queue_update_dma_alignment(sdev->request_queue,
-					       sdev->sector_size - 1);
 		sdev->manage_start_stop = 1;
 	}
 
@@ -2059,6 +2057,17 @@ static unsigned int ata_scsiop_inq_83(struct ata_scsi_args *args, u8 *rbuf)
 		      ATA_ID_SERNO_LEN);
 	num += ATA_ID_SERNO_LEN;
 
+	if (ata_id_has_wwn(args->id)) {
+		/* SAT defined lu world wide name */
+		/* piv=0, assoc=lu, code_set=binary, designator=NAA */
+		rbuf[num + 0] = 1;
+		rbuf[num + 1] = 3;
+		rbuf[num + 3] = ATA_ID_WWN_LEN;
+		num += 4;
+		ata_id_string(args->id, (unsigned char *) rbuf + num,
+			      ATA_ID_WWN, ATA_ID_WWN_LEN);
+		num += ATA_ID_WWN_LEN;
+	}
 	rbuf[3] = num - 4;    /* page len (assume less than 256 bytes) */
 	return 0;
 }
@@ -3462,7 +3471,7 @@ void ata_scsi_scan_host(struct ata_port *ap, int sync)
 				"                  switching to async\n");
 	}
 
-	queue_delayed_work(ata_aux_wq, &ap->hotplug_task,
+	queue_delayed_work(system_long_wq, &ap->hotplug_task,
 			   round_jiffies_relative(HZ));
 }
 
@@ -3609,6 +3618,7 @@ void ata_scsi_hotplug(struct work_struct *work)
 	}
 
 	DPRINTK("ENTER\n");
+	mutex_lock(&ap->scsi_scan_mutex);
 
 	/* Unplug detached devices.  We cannot use link iterator here
 	 * because PMP links have to be scanned even if PMP is
@@ -3622,6 +3632,7 @@ void ata_scsi_hotplug(struct work_struct *work)
 	/* scan for new ones */
 	ata_scsi_scan_host(ap, 0);
 
+	mutex_unlock(&ap->scsi_scan_mutex);
 	DPRINTK("EXIT\n");
 }
 
@@ -3700,9 +3711,7 @@ int ata_scsi_user_scan(struct Scsi_Host *shost, unsigned int channel,
  *	@work: Pointer to ATA port to perform scsi_rescan_device()
  *
  *	After ATA pass thru (SAT) commands are executed successfully,
- *	libata need to propagate the changes to SCSI layer.  This
- *	function must be executed from ata_aux_wq such that sdev
- *	attach/detach don't race with rescan.
+ *	libata need to propagate the changes to SCSI layer.
  *
  *	LOCKING:
  *	Kernel thread context (may sleep).
@@ -3715,6 +3724,7 @@ void ata_scsi_dev_rescan(struct work_struct *work)
 	struct ata_device *dev;
 	unsigned long flags;
 
+	mutex_lock(&ap->scsi_scan_mutex);
 	spin_lock_irqsave(ap->lock, flags);
 
 	ata_for_each_link(link, ap, EDGE) {
@@ -3734,6 +3744,7 @@ void ata_scsi_dev_rescan(struct work_struct *work)
 	}
 
 	spin_unlock_irqrestore(ap->lock, flags);
+	mutex_unlock(&ap->scsi_scan_mutex);
 }
 
 /**
@@ -3786,6 +3797,12 @@ EXPORT_SYMBOL_GPL(ata_sas_port_alloc);
  */
 int ata_sas_port_start(struct ata_port *ap)
 {
+	/*
+	 * the port is marked as frozen at allocation time, but if we don't
+	 * have new eh, we won't thaw it
+	 */
+	if (!ap->ops->error_handler)
+		ap->pflags &= ~ATA_PFLAG_FROZEN;
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ata_sas_port_start);

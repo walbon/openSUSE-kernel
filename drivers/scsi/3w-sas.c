@@ -890,6 +890,7 @@ static const struct file_operations twl_fops = {
 	.unlocked_ioctl	= twl_chrdev_ioctl,
 	.open		= twl_chrdev_open,
 	.release	= NULL,
+	.llseek		= noop_llseek,
 };
 
 /* This function passes sense data from firmware to scsi layer */

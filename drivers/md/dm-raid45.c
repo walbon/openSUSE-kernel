@@ -67,6 +67,7 @@ static const char *version = "v0.2597k";
 #include <linux/kernel.h>
 #include <linux/vmalloc.h>
 #include <linux/raid/xor.h>
+#include <linux/slab.h>
 
 #include <linux/bio.h>
 #include <linux/dm-io.h>
@@ -194,10 +195,6 @@ enum chunk_flags {
 	CHUNK_UNLOCK,		/* Enforce chunk unlock. */
 	CHUNK_UPTODATE,		/* Chunk pages are uptodate. */
 };
-
-#if READ != 0 || WRITE != 1
-#error dm-raid45: READ/WRITE != 0/1 used as index!!!
-#endif
 
 enum bl_type {
 	WRITE_QUEUED = WRITE + 1,
@@ -1587,18 +1584,13 @@ static int sc_init(struct raid_set *rs, unsigned stripes)
 		return PTR_ERR(rec->mem_cache_client);
 
 	/* Create dm-io client context for IO stripes. */
-	sc->dm_io_client =
-		dm_io_client_create((stripes > 32 ? 32 : stripes) *
-				    rs->set.raid_devs *
-				    chunk_pages(rs->set.io_size));
+	sc->dm_io_client = dm_io_client_create();
 	if (IS_ERR(sc->dm_io_client))
 		return PTR_ERR(sc->dm_io_client);
 
 	/* FIXME: intermingeled with stripe cache initialization. */
 	/* Create dm-io client context for recovery stripes. */
-	rec->dm_io_client =
-		dm_io_client_create(rstripes * rs->set.raid_devs *
-				    chunk_pages(rec->io_size));
+	rec->dm_io_client = dm_io_client_create();
 	if (IS_ERR(rec->dm_io_client))
 		return PTR_ERR(rec->dm_io_client);
 
@@ -3328,18 +3320,6 @@ static void do_ios(struct raid_set *rs, struct bio_list *ios)
 	bio_list_merge_head(ios, &reject);
 }
 
-/* Unplug: let any queued io role on the sets devices. */
-static void do_unplug(struct raid_set *rs)
-{
-	struct raid_dev *dev = rs->dev + rs->set.raid_devs;
-
-	while (dev-- > rs->dev) {
-		/* Only call any device unplug function, if io got queued. */
-		if (TestClearDevIoQueued(dev))
-			blk_unplug(bdev_get_queue(dev->dev->bdev));
-	}
-}
-
 /* Send an event in case we're getting too busy. */
 static void do_busy_event(struct raid_set *rs)
 {
@@ -3396,8 +3376,6 @@ static void do_raid(struct work_struct *ws)
 
 	/* Try to recover regions. */
 	r = do_recovery(rs);
-	if (r)
-		do_unplug(rs);	/* Unplug the sets device queues. */
 
 	/* Quickly grab all new ios queued and add them to the work list. */
 	mutex_lock(&rs->io.in_lock);
@@ -3409,8 +3387,6 @@ static void do_raid(struct work_struct *ws)
 		do_ios(rs, ios); /* Got ios to work into the cache. */
 
 	r = do_flush(rs);		/* Flush any stripes on io list. */
-	if (r)
-		do_unplug(rs);		/* Unplug the sets device queues. */
 
 	do_busy_event(rs);	/* Check if we got too busy. */
 }
@@ -3490,7 +3466,7 @@ static unsigned xor_optimize(struct raid_set *rs)
 	unsigned chunks_max = 2, speed_max = 0;
 	struct xor_func *f = ARRAY_END(xor_funcs), *f_max = NULL;
 	struct stripe *stripe;
-	unsigned io_size, speed_hm = 0, speed_min = ~0, speed_xor_blocks = 0;
+	unsigned io_size = 0, speed_hm = 0, speed_min = ~0, speed_xor_blocks = 0;
 
 	BUG_ON(list_empty(&rs->recover.stripes));
 #ifndef DMRAID45_XOR_TEST
@@ -3808,7 +3784,8 @@ DMINFO("rs->set.sectors_per_dev=%llu", (unsigned long long) rs->set.sectors_per_
 			TI_ERR("Invalid RAID device offset parameter");
 
 		dev->start = tmp;
-		r = dm_get_device(ti, argv[0], dm_table_get_mode(ti->table), &dev->dev);
+		r = dm_get_device(ti, argv[0],
+				  dm_table_get_mode(ti->table), &dev->dev);
 		if (r)
 			TI_ERR_RET("RAID device lookup failure", r);
 

@@ -13,7 +13,11 @@
 #include <linux/mm_inline.h>
 #include <linux/backing-dev.h>
 #include <linux/sysctl.h>
+#include <linux/sysfs.h>
 #include "internal.h"
+
+#define CREATE_TRACE_POINTS
+#include <trace/events/compaction.h>
 
 /*
  * compact_control is used to track pages being migrated and the free pages
@@ -60,7 +64,7 @@ static unsigned long isolate_freepages_block(struct zone *zone,
 				struct list_head *freelist)
 {
 	unsigned long zone_end_pfn, end_pfn;
-	int total_isolated = 0;
+	int nr_scanned = 0, total_isolated = 0;
 	struct page *cursor;
 
 	/* Get the last PFN we should scan for free pages at */
@@ -81,6 +85,7 @@ static unsigned long isolate_freepages_block(struct zone *zone,
 
 		if (!pfn_valid_within(blockpfn))
 			continue;
+		nr_scanned++;
 
 		if (!PageBuddy(page))
 			continue;
@@ -100,6 +105,7 @@ static unsigned long isolate_freepages_block(struct zone *zone,
 		}
 	}
 
+	trace_mm_compaction_isolate_freepages(nr_scanned, total_isolated);
 	return total_isolated;
 }
 
@@ -255,14 +261,13 @@ typedef enum {
 /*
  * Isolate all pages that can be migrated from the block pointed to by
  * the migrate scanner within compact_control.
- *
- * Returns false if compaction should abort at this point due to congestion.
  */
 static isolate_migrate_t isolate_migratepages(struct zone *zone,
 					struct compact_control *cc)
 {
 	unsigned long low_pfn, end_pfn;
 	unsigned long last_pageblock_nr = 0, pageblock_nr;
+	unsigned long nr_scanned = 0, nr_isolated = 0;
 	struct list_head *migratelist = &cc->migratepages;
 
 	/* Do not scan outside zone boundaries */
@@ -317,6 +322,7 @@ static isolate_migrate_t isolate_migratepages(struct zone *zone,
 
 		if (!pfn_valid_within(low_pfn))
 			continue;
+		nr_scanned++;
 
 		/* Get the page and skip if free */
 		page = pfn_to_page(low_pfn);
@@ -360,6 +366,7 @@ static isolate_migrate_t isolate_migratepages(struct zone *zone,
 		del_page_from_lru_list(zone, page, page_lru(page));
 		list_add(&page->lru, migratelist);
 		cc->nr_migratepages++;
+		nr_isolated++;
 
 		/* Avoid isolating too much */
 		if (cc->nr_migratepages == COMPACT_CLUSTER_MAX)
@@ -370,6 +377,8 @@ static isolate_migrate_t isolate_migratepages(struct zone *zone,
 
 	spin_unlock_irq(&zone->lru_lock);
 	cc->migrate_pfn = low_pfn;
+
+	trace_mm_compaction_isolate_migratepages(nr_scanned, nr_isolated);
 
 	return ISOLATE_SUCCESS;
 }
@@ -421,10 +430,10 @@ static void update_nr_listpages(struct compact_control *cc)
 }
 
 static int compact_finished(struct zone *zone,
-						struct compact_control *cc)
+			    struct compact_control *cc)
 {
 	unsigned int order;
-	unsigned long watermark = low_wmark_pages(zone) + (1 << cc->order);
+	unsigned long watermark;
 
 	if (fatal_signal_pending(current))
 		return COMPACT_PARTIAL;
@@ -433,15 +442,18 @@ static int compact_finished(struct zone *zone,
 	if (cc->free_pfn <= cc->migrate_pfn)
 		return COMPACT_COMPLETE;
 
-	/* Compaction run is not finished if the watermark is not met */
-	if (!zone_watermark_ok(zone, cc->order, watermark, 0, 0))
-		return COMPACT_CONTINUE;
-
 	/*
 	 * order == -1 is expected when compacting via
 	 * /proc/sys/vm/compact_memory
 	 */
 	if (cc->order == -1)
+		return COMPACT_CONTINUE;
+
+	/* Compaction run is not finished if the watermark is not met */
+	watermark = low_wmark_pages(zone);
+	watermark += (1 << cc->order);
+
+	if (!zone_watermark_ok(zone, cc->order, watermark, 0, 0))
 		return COMPACT_CONTINUE;
 
 	/* Direct compactor: Is a suitable page free? */
@@ -471,6 +483,13 @@ unsigned long compaction_suitable(struct zone *zone, int order)
 	unsigned long watermark;
 
 	/*
+	 * order == -1 is expected when compacting via
+	 * /proc/sys/vm/compact_memory
+	 */
+	if (order == -1)
+		return COMPACT_CONTINUE;
+
+	/*
 	 * Watermarks for order-0 must be met for compaction. Note the 2UL.
 	 * This is because during migration, copies of pages need to be
 	 * allocated and for a short time, the footprint is higher
@@ -480,17 +499,11 @@ unsigned long compaction_suitable(struct zone *zone, int order)
 		return COMPACT_SKIPPED;
 
 	/*
-	 * order == -1 is expected when compacting via
-	 * /proc/sys/vm/compact_memory
-	 */
-	if (order == -1)
-		return COMPACT_CONTINUE;
-
-	/*
 	 * fragmentation index determines if allocation failures are due to
 	 * low memory or external fragmentation
 	 *
-	 * index of -1 implies allocations might succeed dependingon watermarks
+	 * index of -1000 implies allocations might succeed depending on
+	 * watermarks
 	 * index towards 0 implies failure is due to lack of memory
 	 * index towards 1000 implies failure is due to fragmentation
 	 *
@@ -500,7 +513,8 @@ unsigned long compaction_suitable(struct zone *zone, int order)
 	if (fragindex >= 0 && fragindex <= sysctl_extfrag_threshold)
 		return COMPACT_SKIPPED;
 
-	if (fragindex == -1 && zone_watermark_ok(zone, order, watermark, 0, 0))
+	if (fragindex == -1000 && zone_watermark_ok(zone, order, watermark,
+	    0, 0))
 		return COMPACT_PARTIAL;
 
 	return COMPACT_CONTINUE;
@@ -530,18 +544,20 @@ static int compact_zone(struct zone *zone, struct compact_control *cc)
 
 	while ((ret = compact_finished(zone, cc)) == COMPACT_CONTINUE) {
 		unsigned long nr_migrate, nr_remaining;
+		int err;
 
 		switch (isolate_migratepages(zone, cc)) {
 		case ISOLATE_ABORT:
+			ret = COMPACT_PARTIAL;
 			goto out;
 		case ISOLATE_NONE:
 			continue;
 		case ISOLATE_SUCCESS:
 			;
 		}
-		
+
 		nr_migrate = cc->nr_migratepages;
-		migrate_pages(&cc->migratepages, compaction_alloc,
+		err = migrate_pages(&cc->migratepages, compaction_alloc,
 				(unsigned long)cc, false,
 				cc->sync);
 		update_nr_listpages(cc);
@@ -551,9 +567,11 @@ static int compact_zone(struct zone *zone, struct compact_control *cc)
 		count_vm_events(COMPACTPAGES, nr_migrate - nr_remaining);
 		if (nr_remaining)
 			count_vm_events(COMPACTPAGEFAILED, nr_remaining);
+		trace_mm_compaction_migratepages(nr_migrate - nr_remaining,
+						nr_remaining);
 
 		/* Release LRU pages not migrated */
-		if (!list_empty(&cc->migratepages)) {
+		if (err) {
 			putback_lru_pages(&cc->migratepages);
 			cc->nr_migratepages = 0;
 		}
@@ -569,8 +587,8 @@ out:
 }
 
 unsigned long compact_zone_order(struct zone *zone,
-						int order, gfp_t gfp_mask,
-						bool sync)
+				 int order, gfp_t gfp_mask,
+				 bool sync)
 {
 	struct compact_control cc = {
 		.nr_freepages = 0,
@@ -614,7 +632,7 @@ unsigned long try_to_compact_pages(struct zonelist *zonelist,
 	 * made because an assumption is made that the page allocator can satisfy
 	 * the "cheaper" orders without taking special steps
 	 */
-	if (order <= PAGE_ALLOC_COSTLY_ORDER || !may_enter_fs || !may_perform_io)
+	if (!order || !may_enter_fs || !may_perform_io)
 		return rc;
 
 	count_vm_event(COMPACTSTALL);
@@ -705,3 +723,25 @@ int sysctl_extfrag_handler(struct ctl_table *table, int write,
 
 	return 0;
 }
+
+#if defined(CONFIG_SYSFS) && defined(CONFIG_NUMA)
+ssize_t sysfs_compact_node(struct sys_device *dev,
+			struct sysdev_attribute *attr,
+			const char *buf, size_t count)
+{
+	compact_node(dev->id);
+
+	return count;
+}
+static SYSDEV_ATTR(compact, S_IWUSR, NULL, sysfs_compact_node);
+
+int compaction_register_node(struct node *node)
+{
+	return sysdev_create_file(&node->sysdev, &attr_compact);
+}
+
+void compaction_unregister_node(struct node *node)
+{
+	return sysdev_remove_file(&node->sysdev, &attr_compact);
+}
+#endif /* CONFIG_SYSFS && CONFIG_NUMA */

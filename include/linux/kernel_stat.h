@@ -25,6 +25,7 @@ struct cpu_usage_stat {
 	cputime64_t iowait;
 	cputime64_t steal;
 	cputime64_t guest;
+	cputime64_t guest_nice;
 };
 
 struct kernel_stat {
@@ -32,32 +33,27 @@ struct kernel_stat {
 #ifndef CONFIG_GENERIC_HARDIRQS
        unsigned int irqs[NR_IRQS];
 #endif
+	unsigned long irqs_sum;
 	unsigned int softirqs[NR_SOFTIRQS];
 };
 
 DECLARE_PER_CPU(struct kernel_stat, kstat);
 
-DECLARE_PER_CPU(unsigned long, kstat_irqs_sum);
-
 #define kstat_cpu(cpu)	per_cpu(kstat, cpu)
-#define kstat_irqs_sum_cpu(cpu)	per_cpu(kstat_irqs_sum, cpu)
 /* Must have preemption disabled for this to be meaningful. */
 #define kstat_this_cpu	__get_cpu_var(kstat)
-#define kstat_irqs_sum_this_cpu	__get_cpu_var(kstat_irqs_sum)
 
 extern unsigned long long nr_context_switches(void);
 
 #ifndef CONFIG_GENERIC_HARDIRQS
-#define kstat_irqs_this_cpu(irq) \
-	(kstat_this_cpu.irqs[irq])
 
 struct irq_desc;
 
 static inline void kstat_incr_irqs_this_cpu(unsigned int irq,
 					    struct irq_desc *desc)
 {
-	kstat_this_cpu.irqs[irq]++;
-	kstat_irqs_sum_this_cpu++;
+	__this_cpu_inc(kstat.irqs[irq]);
+	__this_cpu_inc(kstat.irqs_sum);
 }
 
 static inline unsigned int kstat_irqs_cpu(unsigned int irq, int cpu)
@@ -67,18 +63,18 @@ static inline unsigned int kstat_irqs_cpu(unsigned int irq, int cpu)
 #else
 #include <linux/irq.h>
 extern unsigned int kstat_irqs_cpu(unsigned int irq, int cpu);
-#define kstat_irqs_this_cpu(DESC) \
-	((DESC)->kstat_irqs[smp_processor_id()])
-#define kstat_incr_irqs_this_cpu(irqno, DESC) do {\
-	((DESC)->kstat_irqs[smp_processor_id()]++);\
-	kstat_irqs_sum_this_cpu++; } while (0)
 
+#define kstat_incr_irqs_this_cpu(irqno, DESC)		\
+do {							\
+	__this_cpu_inc(*(DESC)->kstat_irqs);		\
+	__this_cpu_inc(kstat.irqs_sum);			\
+} while (0)
 
 #endif
 
 static inline void kstat_incr_softirqs_this_cpu(unsigned int irq)
 {
-	kstat_this_cpu.softirqs[irq]++;
+	__this_cpu_inc(kstat.softirqs[irq]);
 }
 
 static inline unsigned int kstat_softirqs_cpu(unsigned int irq, int cpu)
@@ -109,7 +105,7 @@ extern unsigned int kstat_irqs(unsigned int irq);
  */
 static inline unsigned int kstat_cpu_irqs_sum(unsigned int cpu)
 {
-	return kstat_irqs_sum_cpu(cpu);
+	return kstat_cpu(cpu).irqs_sum;
 }
 
 /*

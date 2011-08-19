@@ -26,6 +26,7 @@
 #include <linux/jiffies.h>
 #include <linux/errno.h>
 #include <linux/tty.h>
+#include <linux/slab.h>
 #include <linux/tty_flip.h>
 #include <linux/module.h>
 #include <linux/usb.h>
@@ -618,10 +619,10 @@ static void sierra_indat_callback(struct urb *urb)
 	}
 
 	/* Resubmit urb so we continue receiving */
-	if (port->port.count && status != -ESHUTDOWN && status != -EPERM) {
+	if (status != -ESHUTDOWN && status != -EPERM) {
 		usb_mark_last_busy(port->serial->dev);
 		err = usb_submit_urb(urb, GFP_ATOMIC);
-		if (err)
+		if (err && err != -EPERM)
 			dev_err(&port->dev, "resubmit read urb failed."
 				"(%d)\n", err);
 	}
@@ -678,11 +679,11 @@ static void sierra_instat_callback(struct urb *urb)
 		dev_dbg(&port->dev, "%s: error %d\n", __func__, status);
 
 	/* Resubmit urb so we continue receiving IRQ data */
-	if (port->port.count && status != -ESHUTDOWN && status != -ENOENT) {
+	if (status != -ESHUTDOWN && status != -ENOENT) {
 		usb_mark_last_busy(serial->dev);
 		urb->dev = serial->dev;
 		err = usb_submit_urb(urb, GFP_ATOMIC);
-		if (err)
+		if (err && err != -EPERM)
 			dev_err(&port->dev, "%s: resubmit intr urb "
 				"failed. (%d)\n", __func__, err);
 	}
@@ -818,7 +819,7 @@ static void sierra_close(struct usb_serial_port *port)
 				sierra_send_setup(port);
 			else
 				usb_autopm_get_interface_no_resume(serial->interface);
-
+				
 		}
 		mutex_unlock(&serial->disc_mutex);
 		spin_lock_irq(&intfdata->susp_lock);

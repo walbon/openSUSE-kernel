@@ -25,6 +25,7 @@
 #include <linux/interrupt.h>
 #include <linux/aer.h>
 #include <linux/gfp.h>
+#include <linux/kernel.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_device.h>
@@ -50,7 +51,6 @@
 #define LPFC_DEF_DEVLOSS_TMO 30
 #define LPFC_MIN_DEVLOSS_TMO 1
 #define LPFC_MAX_DEVLOSS_TMO 255
-#define BUILD_SLES11_SP1
 
 /**
  * lpfc_jedec_to_ascii - Hex to ascii convertor according to JEDEC rules
@@ -503,10 +503,10 @@ lpfc_link_state_store(struct device *dev, struct device_attribute *attr,
 
 	if ((strncmp(buf, "up", sizeof("up") - 1) == 0) &&
 			(phba->link_state == LPFC_LINK_DOWN))
-		status = phba->lpfc_hba_init_link(phba);
+		status = phba->lpfc_hba_init_link(phba, MBX_NOWAIT);
 	else if ((strncmp(buf, "down", sizeof("down") - 1) == 0) &&
 			(phba->link_state >= LPFC_LINK_UP))
-		status = phba->lpfc_hba_down_link(phba);
+		status = phba->lpfc_hba_down_link(phba, MBX_NOWAIT);
 
 	if (status == 0)
 		return strlen(buf);
@@ -728,7 +728,7 @@ lpfc_selective_reset(struct lpfc_hba *phba)
  * Notes:
  * Assumes any error from lpfc_selective_reset() will be negative.
  * If lpfc_selective_reset() returns zero then the length of the buffer
- * is returned which indicates succcess
+ * is returned which indicates success
  *
  * Returns:
  * -EINVAL if the buffer does not contain the string "selective"
@@ -752,47 +752,6 @@ lpfc_issue_reset(struct device *dev, struct device_attribute *attr,
 		return strlen(buf);
 	else
 		return status;
-}
-
-/**
- * lpfc_sli4_pdev_status_reg_wait - Wait for pdev status register for readyness
- * @phba: lpfc_hba pointer.
- *
- * Description:
- * SLI4 interface type-2 device to wait on the sliport status register for
- * the readyness after performing a firmware reset.
- *
- * Returns:
- * zero for success
- **/
-static int
-lpfc_sli4_pdev_status_reg_wait(struct lpfc_hba *phba)
-{
-	struct lpfc_register portstat_reg;
-	int i;
-
-
-	lpfc_readl(phba->sli4_hba.u.if_type2.STATUSregaddr,
-		   &portstat_reg.word0);
-
-	/* wait for the SLI port firmware ready after firmware reset */
-	for (i = 0; i < LPFC_FW_RESET_MAXIMUM_WAIT_10MS_CNT; i++) {
-		msleep(10);
-		lpfc_readl(phba->sli4_hba.u.if_type2.STATUSregaddr,
-			   &portstat_reg.word0);
-		if (!bf_get(lpfc_sliport_status_err, &portstat_reg))
-			continue;
-		if (!bf_get(lpfc_sliport_status_rn, &portstat_reg))
-			continue;
-		if (!bf_get(lpfc_sliport_status_rdy, &portstat_reg))
-			continue;
-		break;
-	}
-
-	if (i < LPFC_FW_RESET_MAXIMUM_WAIT_10MS_CNT)
-		return 0;
-	else
-		return -EIO;
 }
 
 /**
@@ -846,10 +805,7 @@ lpfc_sli4_pdev_reg_request(struct lpfc_hba *phba, uint32_t opcode)
 	readl(phba->sli4_hba.conf_regs_memmap_p + LPFC_CTL_PDEV_CTL_OFFSET);
 
 	/* delay driver action following IF_TYPE_2 reset */
-	rc = lpfc_sli4_pdev_status_reg_wait(phba);
-
-	if (rc)
-		return -EIO;
+	msleep(100);
 
 	init_completion(&online_compl);
 	rc = lpfc_workq_post_event(phba, &status, &online_compl,
@@ -939,10 +895,6 @@ lpfc_board_mode_store(struct device *dev, struct device_attribute *attr,
 
 	if (!phba->cfg_enable_hba_reset)
 		return -EACCES;
-
-	lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
-		"3050 lpfc_board_mode set to %s\n", buf);
-
 	init_completion(&online_compl);
 
 	if(strncmp(buf, "online", sizeof("online") - 1) == 0) {
@@ -1338,10 +1290,6 @@ lpfc_poll_store(struct device *dev, struct device_attribute *attr,
 	if (phba->sli_rev == LPFC_SLI_REV4)
 		val = 0;
 
-	lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
-		"3051 lpfc_poll changed from %d to %d\n",
-		phba->cfg_poll, val);
-
 	spin_lock_irq(&phba->hbalock);
 
 	old_val = phba->cfg_poll;
@@ -1466,10 +1414,80 @@ lpfc_sriov_hw_max_virtfn_show(struct device *dev,
 	struct Scsi_Host *shost = class_to_shost(dev);
 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
 	struct lpfc_hba *phba = vport->phba;
-	uint16_t max_nr_virtfn;
+	struct pci_dev *pdev = phba->pcidev;
+	union  lpfc_sli4_cfg_shdr *shdr;
+	uint32_t shdr_status, shdr_add_status;
+	LPFC_MBOXQ_t *mboxq;
+	struct lpfc_mbx_get_prof_cfg *get_prof_cfg;
+	struct lpfc_rsrc_desc_pcie *desc;
+	uint32_t max_nr_virtfn;
+	uint32_t desc_count;
+	int length, rc, i;
 
-	max_nr_virtfn = lpfc_sli_sriov_nr_virtfn_get(phba);
-	return snprintf(buf, PAGE_SIZE, "%d\n", max_nr_virtfn);
+	if ((phba->sli_rev < LPFC_SLI_REV4) ||
+	    (bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf) !=
+	     LPFC_SLI_INTF_IF_TYPE_2))
+		return -EPERM;
+
+	if (!pdev->is_physfn)
+		return snprintf(buf, PAGE_SIZE, "%d\n", 0);
+
+	mboxq = (LPFC_MBOXQ_t *)mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+	if (!mboxq)
+		return -ENOMEM;
+
+	/* get the maximum number of virtfn support by physfn */
+	length = (sizeof(struct lpfc_mbx_get_prof_cfg) -
+		  sizeof(struct lpfc_sli4_cfg_mhdr));
+	lpfc_sli4_config(phba, mboxq, LPFC_MBOX_SUBSYSTEM_COMMON,
+			 LPFC_MBOX_OPCODE_GET_PROFILE_CONFIG,
+			 length, LPFC_SLI4_MBX_EMBED);
+	shdr = (union lpfc_sli4_cfg_shdr *)
+		&mboxq->u.mqe.un.sli4_config.header.cfg_shdr;
+	bf_set(lpfc_mbox_hdr_pf_num, &shdr->request,
+	       phba->sli4_hba.iov.pf_number + 1);
+
+	get_prof_cfg = &mboxq->u.mqe.un.get_prof_cfg;
+	bf_set(lpfc_mbx_get_prof_cfg_prof_tp, &get_prof_cfg->u.request,
+	       LPFC_CFG_TYPE_CURRENT_ACTIVE);
+
+	rc = lpfc_sli_issue_mbox_wait(phba, mboxq,
+				lpfc_mbox_tmo_val(phba, MBX_SLI4_CONFIG));
+
+	if (rc != MBX_TIMEOUT) {
+		/* check return status */
+		shdr_status = bf_get(lpfc_mbox_hdr_status, &shdr->response);
+		shdr_add_status = bf_get(lpfc_mbox_hdr_add_status,
+					 &shdr->response);
+		if (shdr_status || shdr_add_status || rc)
+			goto error_out;
+
+	} else
+		goto error_out;
+
+	desc_count = get_prof_cfg->u.response.prof_cfg.rsrc_desc_count;
+
+	for (i = 0; i < LPFC_RSRC_DESC_MAX_NUM; i++) {
+		desc = (struct lpfc_rsrc_desc_pcie *)
+			&get_prof_cfg->u.response.prof_cfg.desc[i];
+		if (LPFC_RSRC_DESC_TYPE_PCIE ==
+		    bf_get(lpfc_rsrc_desc_pcie_type, desc)) {
+			max_nr_virtfn = bf_get(lpfc_rsrc_desc_pcie_nr_virtfn,
+					       desc);
+			break;
+		}
+	}
+
+	if (i < LPFC_RSRC_DESC_MAX_NUM) {
+		if (rc != MBX_TIMEOUT)
+			mempool_free(mboxq, phba->mbox_mem_pool);
+		return snprintf(buf, PAGE_SIZE, "%d\n", max_nr_virtfn);
+	}
+
+error_out:
+	if (rc != MBX_TIMEOUT)
+		mempool_free(mboxq, phba->mbox_mem_pool);
+	return -EIO;
 }
 
 /**
@@ -1587,9 +1605,6 @@ static int \
 lpfc_##attr##_set(struct lpfc_hba *phba, uint val) \
 { \
 	if (val >= minval && val <= maxval) {\
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT, \
-			"3052 lpfc_" #attr " changed from %d to %d\n", \
-			phba->cfg_##attr, val); \
 		phba->cfg_##attr = val;\
 		return 0;\
 	}\
@@ -1747,9 +1762,6 @@ static int \
 lpfc_##attr##_set(struct lpfc_vport *vport, uint val) \
 { \
 	if (val >= minval && val <= maxval) {\
-		lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT, \
-			"3053 lpfc_" #attr " changed from %d to %d\n", \
-			vport->cfg_##attr, val); \
 		vport->cfg_##attr = val;\
 		return 0;\
 	}\
@@ -2040,12 +2052,11 @@ lpfc_soft_wwpn_store(struct device *dev, struct device_attribute *attr,
 
 	/* Validate and store the new name */
 	for (i=0, j=0; i < 16; i++) {
-		if ((*buf >= 'a') && (*buf <= 'f'))
-			j = ((j << 4) | ((*buf++ -'a') + 10));
-		else if ((*buf >= 'A') && (*buf <= 'F'))
-			j = ((j << 4) | ((*buf++ -'A') + 10));
-		else if ((*buf >= '0') && (*buf <= '9'))
-			j = ((j << 4) | (*buf++ -'0'));
+		int value;
+
+		value = hex_to_bin(*buf++);
+		if (value >= 0)
+			j = (j << 4) | value;
 		else
 			return -EINVAL;
 		if (i % 2) {
@@ -2137,12 +2148,11 @@ lpfc_soft_wwnn_store(struct device *dev, struct device_attribute *attr,
 
 	/* Validate and store the new name */
 	for (i=0, j=0; i < 16; i++) {
-		if ((*buf >= 'a') && (*buf <= 'f'))
-			j = ((j << 4) | ((*buf++ -'a') + 10));
-		else if ((*buf >= 'A') && (*buf <= 'F'))
-			j = ((j << 4) | ((*buf++ -'A') + 10));
-		else if ((*buf >= '0') && (*buf <= '9'))
-			j = ((j << 4) | (*buf++ -'0'));
+		int value;
+
+		value = hex_to_bin(*buf++);
+		if (value >= 0)
+			j = (j << 4) | value;
 		else
 			return -EINVAL;
 		if (i % 2) {
@@ -2376,6 +2386,11 @@ lpfc_nodev_tmo_set(struct lpfc_vport *vport, int val)
 	if (val >= LPFC_MIN_DEVLOSS_TMO && val <= LPFC_MAX_DEVLOSS_TMO) {
 		vport->cfg_nodev_tmo = val;
 		vport->cfg_devloss_tmo = val;
+		/*
+		 * For compat: set the fc_host dev loss so new rports
+		 * will get the value.
+		 */
+		fc_host_dev_loss_tmo(lpfc_shost_from_vport(vport)) = val;
 		lpfc_update_rport_devloss_tmo(vport);
 		return 0;
 	}
@@ -2425,6 +2440,7 @@ lpfc_devloss_tmo_set(struct lpfc_vport *vport, int val)
 		vport->cfg_nodev_tmo = val;
 		vport->cfg_devloss_tmo = val;
 		vport->dev_loss_tmo_changed = 1;
+		fc_host_dev_loss_tmo(lpfc_shost_from_vport(vport)) = val;
 		lpfc_update_rport_devloss_tmo(vport);
 		return 0;
 	}
@@ -2662,9 +2678,6 @@ lpfc_topology_store(struct device *dev, struct device_attribute *attr,
 		if (nolip)
 			return strlen(buf);
 
-		lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
-			"3054 lpfc_topology changed from %d to %d\n",
-			prev_val, val);
 		err = lpfc_issue_lip(lpfc_shost_from_vport(phba->pport));
 		if (err) {
 			phba->cfg_topology = prev_val;
@@ -2971,17 +2984,10 @@ static DEVICE_ATTR(lpfc_stat_data_ctrl, S_IRUGO | S_IWUSR,
  * sysfs file. This function export the statistical data to user
  * applications.
  **/
-#ifdef BUILD_SLES11_SP1
 static ssize_t
 sysfs_drvr_stat_data_read(struct file *filp, struct kobject *kobj,
 		struct bin_attribute *bin_attr,
 		char *buf, loff_t off, size_t count)
-#else
-static ssize_t
-sysfs_drvr_stat_data_read(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *bin_attr,
-		char *buf, loff_t off, size_t count)
-#endif
 {
 	struct device *dev = container_of(kobj, struct device,
 		kobj);
@@ -3094,10 +3100,6 @@ lpfc_link_speed_store(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 	if (sscanf(val_buf, "%i", &val) != 1)
 		return -EINVAL;
-
-	lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
-		"3055 lpfc_link_speed changed from %d to %d %s\n",
-		phba->cfg_link_speed, val, nolip ? "(nolip)" : "(lip)");
 
 	if (((val == LPFC_USER_LINK_SPEED_1G) && !(phba->lmt & LMT_1Gb)) ||
 	    ((val == LPFC_USER_LINK_SPEED_2G) && !(phba->lmt & LMT_2Gb)) ||
@@ -3611,9 +3613,9 @@ LPFC_ATTR_RW(poll_tmo, 10, 1, 255,
 /*
 # lpfc_use_msi: Use MSI (Message Signaled Interrupts) in systems that
 #		support this feature
-#       0  = MSI disabled (default)
+#       0  = MSI disabled
 #       1  = MSI enabled
-#       2  = MSI-X enabled
+#       2  = MSI-X enabled (default)
 # Value range is [0,2]. Default value is 2.
 */
 LPFC_ATTR_R(use_msi, 2, 0, 2, "Use Message Signaled Interrupts (1) or "
@@ -3676,9 +3678,7 @@ LPFC_ATTR_R(enable_bg, 0, 0, 1, "Enable BlockGuard Support");
 #	- Default will result in registering capabilities for all profiles.
 #
 */
-unsigned int lpfc_prot_mask = SHOST_DIF_TYPE1_PROTECTION |
-                              SHOST_DIX_TYPE0_PROTECTION |
-                              SHOST_DIX_TYPE1_PROTECTION;
+unsigned int lpfc_prot_mask = SHOST_DIF_TYPE1_PROTECTION;
 
 module_param(lpfc_prot_mask, uint, S_IRUGO);
 MODULE_PARM_DESC(lpfc_prot_mask, "host protection mask");
@@ -3858,17 +3858,10 @@ struct device_attribute *lpfc_vport_attrs[] = {
  * -EPERM adapter is offline
  * value of count, buf contents written
  **/
-#ifdef BUILD_SLES11_SP1
 static ssize_t
 sysfs_ctlreg_write(struct file *filp, struct kobject *kobj,
 		   struct bin_attribute *bin_attr,
 		   char *buf, loff_t off, size_t count)
-#else
-static ssize_t
-sysfs_ctlreg_write(struct file *filp, struct kobject *kobj,
-		   struct bin_attribute *bin_attr,
-		   char *buf, loff_t off, size_t count)
-#endif
 {
 	size_t buf_off;
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3906,7 +3899,7 @@ sysfs_ctlreg_write(struct file *filp, struct kobject *kobj,
  * @filp: open sysfs file
  * @kobj: kernel kobject that contains the kernel class device.
  * @bin_attr: kernel attributes passed to us.
- * @buf: if succesful contains the data from the adapter IOREG space.
+ * @buf: if successful contains the data from the adapter IOREG space.
  * @off: offset into buffer to beginning of data.
  * @count: bytes to transfer.
  *
@@ -3919,17 +3912,10 @@ sysfs_ctlreg_write(struct file *filp, struct kobject *kobj,
  * -EINVAL off, count or buff address invalid
  * value of count, buf contents read
  **/
-#ifdef BUILD_SLES11_SP1
 static ssize_t
 sysfs_ctlreg_read(struct file *filp, struct kobject *kobj,
 		  struct bin_attribute *bin_attr,
 		  char *buf, loff_t off, size_t count)
-#else
-static ssize_t
-sysfs_ctlreg_read(struct file *filp, struct kobject *kobj,
-		  struct bin_attribute *bin_attr,
-		  char *buf, loff_t off, size_t count)
-#endif
 {
 	size_t buf_off;
 	uint32_t * tmp_ptr;
@@ -4013,17 +3999,10 @@ sysfs_mbox_idle(struct lpfc_hba *phba)
  * -EAGAIN offset, state or mbox is NULL
  * count number of bytes transferred
  **/
-#ifdef BUILD_SLES11_SP1
 static ssize_t
 sysfs_mbox_write(struct file *filp, struct kobject *kobj,
 		 struct bin_attribute *bin_attr,
 		 char *buf, loff_t off, size_t count)
-#else
-static ssize_t
-sysfs_mbox_write(struct file *filp, struct kobject *kobj,
-		 struct bin_attribute *bin_attr,
-		 char *buf, loff_t off, size_t count)
-#endif
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct Scsi_Host  *shost = class_to_shost(dev);
@@ -4099,17 +4078,10 @@ sysfs_mbox_write(struct file *filp, struct kobject *kobj,
  * -ENODEV mailbox error
  * count number of bytes transferred
  **/
-#ifdef BUILD_SLES11_SP1
 static ssize_t
 sysfs_mbox_read(struct file *filp, struct kobject *kobj,
 		struct bin_attribute *bin_attr,
 		char *buf, loff_t off, size_t count)
-#else
-static ssize_t
-sysfs_mbox_read(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *bin_attr,
-		char *buf, loff_t off, size_t count)
-#endif
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct Scsi_Host  *shost = class_to_shost(dev);
@@ -4846,7 +4818,7 @@ static FC_RPORT_ATTR(field, S_IRUGO, lpfc_show_rport_##field, NULL)
  * Description:
  * This function is called by the transport after the @fc_vport's symbolic name
  * has been changed. This function re-registers the symbolic name with the
- * switch to propogate the change into the fabric if the vport is active.
+ * switch to propagate the change into the fabric if the vport is active.
  **/
 static void
 lpfc_set_vport_symbolic_name(struct fc_vport *fc_vport)
@@ -4863,7 +4835,7 @@ lpfc_set_vport_symbolic_name(struct fc_vport *fc_vport)
  *
  * This function is called by the lpfc_get_cfgparam() routine to set the
  * module lpfc_log_verbose into the @phba cfg_log_verbose for use with
- * log messsage according to the module's lpfc_log_verbose parameter setting
+ * log message according to the module's lpfc_log_verbose parameter setting
  * before hba port or vport created.
  **/
 static void

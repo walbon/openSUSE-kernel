@@ -35,8 +35,6 @@ struct access_method {
 	unsigned long (*fifo_full)(struct ctlr_info *h);
 	bool (*intr_pending)(struct ctlr_info *h);
 	unsigned long (*command_completed)(struct ctlr_info *h);
-	unsigned long (*lock)(struct ctlr_info *h);
-	void (*unlock)(struct ctlr_info *h, unsigned long flags);
 };
 
 struct hpsa_scsi_dev_t {
@@ -62,7 +60,7 @@ struct ctlr_info {
 	struct CfgTable __iomem *cfgtable;
 	int     max_sg_entries;
 	int	interrupts_enabled;
-	int	software_raid;
+	int	major;
 	int 	max_commands;
 	int	commands_outstanding;
 	int 	max_outstanding; /* Debug */
@@ -98,9 +96,6 @@ struct ctlr_info {
 	int			nr_allocs;
 	int			nr_frees;
 	int			busy_initializing;
-#define BUSY_INIT_IDLE 0
-#define BUSY_INIT_BUSY 1
-#define BUSY_INIT_SHUTDOWN 2
 	int			busy_scanning;
 	int			scan_finished;
 	spinlock_t		scan_lock;
@@ -162,7 +157,7 @@ struct ctlr_info {
  * HPSA_BOARD_READY_ITERATIONS are derived from those.
  */
 #define HPSA_BOARD_READY_WAIT_SECS (120)
-#define HPSA_BOARD_NOT_READY_WAIT_SECS (120)
+#define HPSA_BOARD_NOT_READY_WAIT_SECS (100)
 #define HPSA_BOARD_READY_POLL_INTERVAL_MSECS (100)
 #define HPSA_BOARD_READY_POLL_INTERVAL \
 	((HPSA_BOARD_READY_POLL_INTERVAL_MSECS * HZ) / 1000)
@@ -219,7 +214,7 @@ static void SA5_submit_command(struct ctlr_info *h,
 	dev_dbg(&h->pdev->dev, "Sending %x, tag = %x\n", c->busaddr,
 		c->Header.Tag.lower);
 	writel(c->busaddr, h->vaddr + SA5_REQUEST_PORT_OFFSET);
-	(void) readl(h->vaddr + SA5_SCRATCHPAD_OFFSET);
+	(void) readl(h->vaddr + SA5_REQUEST_PORT_OFFSET);
 	h->commands_outstanding++;
 	if (h->commands_outstanding > h->max_outstanding)
 		h->max_outstanding = h->commands_outstanding;
@@ -325,22 +320,6 @@ static unsigned long SA5_completed(struct ctlr_info *h)
 
 	return register_value;
 }
-
-/*
- * Does controller specific locking for submits
- */
-static unsigned long SA5_lock(struct ctlr_info *h)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&h->lock, flags);
-	return flags;
-}
-
-static void SA5_unlock(struct ctlr_info *h, unsigned long flags)
-{
-	spin_unlock_irqrestore(&h->lock, flags);
-}
 /*
  *	Returns true if an interrupt is pending..
  */
@@ -373,8 +352,6 @@ static struct access_method SA5_access = {
 	SA5_fifo_full,
 	SA5_intr_pending,
 	SA5_completed,
-	SA5_lock,
-	SA5_unlock,
 };
 
 static struct access_method SA5_performant_access = {
@@ -383,8 +360,6 @@ static struct access_method SA5_performant_access = {
 	SA5_fifo_full,
 	SA5_performant_intr_pending,
 	SA5_performant_completed,
-	SA5_lock,
-	SA5_unlock,
 };
 
 struct board_type {

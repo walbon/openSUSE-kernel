@@ -11,7 +11,6 @@
  */
 #include <linux/kernel.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/errno.h>
 #include <linux/ptrace.h>
@@ -19,7 +18,6 @@
 #include <linux/security.h>
 #include <linux/audit.h>
 #include <linux/signal.h>
-#include <linux/perfmon_kern.h>
 #include <linux/regset.h>
 #include <linux/elf.h>
 #include <linux/tracehook.h>
@@ -31,6 +29,9 @@
 #include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/unwind.h>
+#ifdef CONFIG_PERFMON
+#include <asm/perfmon.h>
+#endif
 
 #include "entry.h"
 
@@ -637,7 +638,7 @@ ptrace_attach_sync_user_rbs (struct task_struct *child)
 	 */
 
 	read_lock(&tasklist_lock);
-	if (child->signal) {
+	if (child->sighand) {
 		spin_lock_irq(&child->sighand->siglock);
 		if (child->state == TASK_STOPPED &&
 		    !test_and_set_tsk_thread_flag(child, TIF_RESTORE_RSE)) {
@@ -661,7 +662,7 @@ ptrace_attach_sync_user_rbs (struct task_struct *child)
 	 * job control stop, so that SIGCONT can be used to wake it up.
 	 */
 	read_lock(&tasklist_lock);
-	if (child->signal) {
+	if (child->sighand) {
 		spin_lock_irq(&child->sighand->siglock);
 		if (child->state == TASK_TRACED &&
 		    (child->signal->flags & SIGNAL_STOP_STOPPED)) {
@@ -1176,7 +1177,8 @@ ptrace_disable (struct task_struct *child)
 }
 
 long
-arch_ptrace (struct task_struct *child, long request, long addr, long data)
+arch_ptrace (struct task_struct *child, long request,
+	     unsigned long addr, unsigned long data)
 {
 	switch (request) {
 	case PTRACE_PEEKTEXT:
@@ -1248,13 +1250,8 @@ syscall_trace_enter (long arg0, long arg1, long arg2, long arg3,
 		long syscall;
 		int arch;
 
-		if (IS_IA32_PROCESS(&regs)) {
-			syscall = regs.r1;
-			arch = AUDIT_ARCH_I386;
-		} else {
-			syscall = regs.r15;
-			arch = AUDIT_ARCH_IA64;
-		}
+		syscall = regs.r15;
+		arch = AUDIT_ARCH_IA64;
 
 		audit_syscall_entry(arch, syscall, arg0, arg1, arg2, arg3);
 	}
@@ -2102,6 +2099,7 @@ access_uarea(struct task_struct *child, unsigned long addr,
 				"address 0x%lx\n", addr);
 		return -1;
 	}
+#ifdef CONFIG_PERFMON
 	/*
 	 * Check if debug registers are used by perfmon. This
 	 * test must be done once we know that we can do the
@@ -2119,8 +2117,9 @@ access_uarea(struct task_struct *child, unsigned long addr,
 	 * IA64_THREAD_DBG_VALID. The registers are restored
 	 * by the PMU context switch code.
 	 */
-	if (pfm_use_dbregs(child))
+	if (pfm_use_debug_registers(child))
 		return -1;
+#endif
 
 	if (!(child->thread.flags & IA64_THREAD_DBG_VALID)) {
 		child->thread.flags |= IA64_THREAD_DBG_VALID;
@@ -2168,11 +2167,6 @@ static const struct user_regset_view user_ia64_view = {
 
 const struct user_regset_view *task_user_regset_view(struct task_struct *tsk)
 {
-#ifdef CONFIG_IA32_SUPPORT
-	extern const struct user_regset_view user_ia32_view;
-	if (IS_IA32_PROCESS(task_pt_regs(tsk)))
-		return &user_ia32_view;
-#endif
 	return &user_ia64_view;
 }
 

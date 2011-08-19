@@ -10,8 +10,10 @@
  */
 
 #include <linux/of.h>
-#include <linux/lmb.h>
+#include <linux/memblock.h>
 #include <linux/vmalloc.h>
+#include <linux/memory.h>
+
 #include <asm/firmware.h>
 #include <asm/machdep.h>
 #include <asm/pSeries_reconfig.h>
@@ -20,24 +22,25 @@
 static unsigned long get_memblock_size(void)
 {
 	struct device_node *np;
-	unsigned int memblock_size = 0;
+	unsigned int memblock_size = MIN_MEMORY_BLOCK_SIZE;
+	struct resource r;
 
 	np = of_find_node_by_path("/ibm,dynamic-reconfiguration-memory");
 	if (np) {
-		const unsigned long *size;
+		const __be64 *size;
 
 		size = of_get_property(np, "ibm,lmb-size", NULL);
-		memblock_size = size ? *size : 0;
-
+		if (size)
+			memblock_size = be64_to_cpup(size);
 		of_node_put(np);
-	} else {
+	} else  if (machine_is(pseries)) {
+		/* This fallback really only applies to pseries */
 		unsigned int memzero_size = 0;
-		const unsigned int *regs;
 
 		np = of_find_node_by_path("/memory@0");
 		if (np) {
-			regs = of_get_property(np, "reg", NULL);
-			memzero_size = regs ? regs[3] : 0;
+			if (!of_address_to_resource(np, 0, &r))
+				memzero_size = resource_size(&r);
 			of_node_put(np);
 		}
 
@@ -50,22 +53,27 @@ static unsigned long get_memblock_size(void)
 			sprintf(buf, "/memory@%x", memzero_size);
 			np = of_find_node_by_path(buf);
 			if (np) {
-				regs = of_get_property(np, "reg", NULL);
-				memblock_size = regs ? regs[3] : 0;
+				if (!of_address_to_resource(np, 0, &r))
+					memblock_size = resource_size(&r);
 				of_node_put(np);
 			}
 		}
 	}
-
 	return memblock_size;
 }
 
+/* WARNING: This is going to override the generic definition whenever
+ * pseries is built-in regardless of what platform is active at boot
+ * time. This is fine for now as this is the only "option" and it
+ * should work everywhere. If not, we'll have to turn this into a
+ * ppc_md. callback
+ */
 unsigned long memory_block_size_bytes(void)
 {
 	return get_memblock_size();
 }
 
-static int pseries_remove_lmb(unsigned long base, unsigned int lmb_size)
+static int pseries_remove_memblock(unsigned long base, unsigned int memblock_size)
 {
 	unsigned long start, start_pfn;
 	struct zone *zone;
@@ -74,7 +82,7 @@ static int pseries_remove_lmb(unsigned long base, unsigned int lmb_size)
 	start_pfn = base >> PAGE_SHIFT;
 
 	if (!pfn_valid(start_pfn)) {
-		lmb_remove(base, lmb_size);
+		memblock_remove(base, memblock_size);
 		return 0;
 	}
 
@@ -89,20 +97,20 @@ static int pseries_remove_lmb(unsigned long base, unsigned int lmb_size)
 	 * to sysfs "state" file and we can't remove sysfs entries
 	 * while writing to it. So we have to defer it to here.
 	 */
-	ret = __remove_pages(zone, start_pfn, lmb_size >> PAGE_SHIFT);
+	ret = __remove_pages(zone, start_pfn, memblock_size >> PAGE_SHIFT);
 	if (ret)
 		return ret;
 
 	/*
 	 * Update memory regions for memory remove
 	 */
-	lmb_remove(base, lmb_size);
+	memblock_remove(base, memblock_size);
 
 	/*
 	 * Remove htab bolted mappings for this section of memory
 	 */
 	start = (unsigned long)__va(base);
-	ret = remove_section_mapping(start, start + lmb_size);
+	ret = remove_section_mapping(start, start + memblock_size);
 
 	/* Ensure all vmalloc mappings are flushed in case they also
 	 * hit that section of memory
@@ -128,7 +136,7 @@ static int pseries_remove_memory(struct device_node *np)
 		return 0;
 
 	/*
-	 * Find the bae address and size of the lmb
+	 * Find the bae address and size of the memblock
 	 */
 	regs = of_get_property(np, "reg", NULL);
 	if (!regs)
@@ -137,7 +145,7 @@ static int pseries_remove_memory(struct device_node *np)
 	base = *(unsigned long *)regs;
 	lmb_size = regs[3];
 
-	ret = pseries_remove_lmb(base, lmb_size);
+	ret = pseries_remove_memblock(base, lmb_size);
 	return ret;
 }
 
@@ -157,7 +165,7 @@ static int pseries_add_memory(struct device_node *np)
 		return 0;
 
 	/*
-	 * Find the base and size of the lmb
+	 * Find the base and size of the memblock
 	 */
 	regs = of_get_property(np, "reg", NULL);
 	if (!regs)
@@ -169,7 +177,7 @@ static int pseries_add_memory(struct device_node *np)
 	/*
 	 * Update memory region to represent the memory add
 	 */
-	ret = lmb_add(base, lmb_size);
+	ret = memblock_add(base, lmb_size);
 	return (ret < 0) ? -EINVAL : 0;
 }
 
@@ -183,10 +191,10 @@ static int pseries_drconf_memory(unsigned long *base, unsigned int action)
 		return -EINVAL;
 
 	if (action == PSERIES_DRCONF_MEM_ADD) {
-		rc = lmb_add(*base, memblock_size);
+		rc = memblock_add(*base, memblock_size);
 		rc = (rc < 0) ? -EINVAL : 0;
 	} else if (action == PSERIES_DRCONF_MEM_REMOVE) {
-		rc = pseries_remove_lmb(*base, memblock_size);
+		rc = pseries_remove_memblock(*base, memblock_size);
 	} else {
 		rc = -EINVAL;
 	}

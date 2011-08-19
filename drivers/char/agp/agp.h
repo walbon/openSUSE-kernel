@@ -31,10 +31,6 @@
 
 #include <asm/agp.h>	/* for flush_agp_cache() */
 
-#ifndef virt_to_gart
-#define virt_to_gart virt_to_phys
-#endif
-
 #define PFX "agpgart: "
 
 //#define AGP_DEBUG 1
@@ -241,7 +237,7 @@ extern int agp_try_unsupported_boot;
 
 long compat_agp_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 
-/* Chipset independant registers (from AGP Spec) */
+/* Chipset independent registers (from AGP Spec) */
 #define AGP_APBASE	0x10
 
 #define AGPSTAT		0x4

@@ -18,6 +18,7 @@
 #include <linux/in.h>
 #include <linux/udp.h>
 #include <linux/rtnetlink.h>
+#include <linux/slab.h>
 #include <asm/io.h>
 #include "net_driver.h"
 #include "efx.h"
@@ -37,7 +38,7 @@ struct efx_loopback_payload {
 	struct udphdr udp;
 	__be16 iteration;
 	const char msg[64];
-} __attribute__ ((packed));
+} __packed;
 
 /* Loopback test source MAC address */
 static const unsigned char payload_source[ETH_ALEN] = {
@@ -46,6 +47,16 @@ static const unsigned char payload_source[ETH_ALEN] = {
 
 static const char payload_msg[] =
 	"Hello world! This is an Efx loopback test in progress!";
+
+/* Interrupt mode names */
+static const unsigned int efx_interrupt_mode_max = EFX_INT_MODE_MAX;
+static const char *efx_interrupt_mode_names[] = {
+	[EFX_INT_MODE_MSIX]   = "MSI-X",
+	[EFX_INT_MODE_MSI]    = "MSI",
+	[EFX_INT_MODE_LEGACY] = "legacy",
+};
+#define INT_MODE(efx) \
+	STRING_TABLE_LOOKUP(efx->interrupt_mode, efx_interrupt_mode)
 
 /**
  * efx_loopback_state - persistent state during a loopback selftest
@@ -618,7 +629,7 @@ static int efx_test_loopbacks(struct efx_nic *efx, struct efx_self_tests *tests,
 			goto out;
 		}
 
-		/* Test both types of TX queue */
+		/* Test all enabled types of TX queue */
 		efx_for_each_channel_tx_queue(tx_queue, channel) {
 			state->offload_csum = (tx_queue->queue &
 					       EFX_TXQ_TYPE_OFFLOAD);
@@ -684,12 +695,12 @@ int efx_selftest(struct efx_nic *efx, struct efx_self_tests *tests,
 	/* Offline (i.e. disruptive) testing
 	 * This checks MAC and PHY loopback on the specified port. */
 
-	/* force the carrier state off so the kernel doesn't transmit during
-	 * the loopback test, and the watchdog timeout doesn't fire. Also put
-	 * falcon into loopback for the register test.
+	/* Detach the device so the kernel doesn't transmit during the
+	 * loopback test and the watchdog timeout doesn't fire.
 	 */
+	netif_device_detach(efx->net_dev);
+
 	mutex_lock(&efx->mac_lock);
-	efx->port_inhibited = true;
 	if (efx->loopback_modes) {
 		/* We need the 312 clock from the PHY to test the XMAC
 		 * registers, so move into XGMII loopback if available */
@@ -739,12 +750,11 @@ int efx_selftest(struct efx_nic *efx, struct efx_self_tests *tests,
 	/* restore the PHY to the previous state */
 	mutex_lock(&efx->mac_lock);
 	efx->phy_mode = phy_mode;
-	efx->port_inhibited = false;
 	efx->loopback_mode = loopback_mode;
 	__efx_reconfigure_port(efx);
 	mutex_unlock(&efx->mac_lock);
 
-	netif_tx_wake_all_queues(efx->net_dev);
+	netif_device_attach(efx->net_dev);
 
 	return rc_test;
 }

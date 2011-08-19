@@ -27,12 +27,8 @@ struct port_ctrl_stat_regs {
 	__le32 rsrvd1[32];	/* 0x60-0xdf */
 	__le32 gp_out;		/* 0xe0 */
 	__le32 gp_in;		/* 0xe4 */
-	__le32 probe_mux_addr;	/* 0xe8 */
-	__le32 probe_mux_data;	/* 0xec */
-	__le32 stats_index;	/* 0xf0 */
-	__le32 stats_read_data_inc;	/* 0xf4 */
-	__le32 stats_read_data_noinc;	/* 0xf8 */
-	__le32 port_err_status;	/* 0xfc */
+	__le32 rsrvd2[5];	/* 0xe8-0xfb */
+	__le32 port_err_status; /* 0xfc */
 };
 
 struct host_mem_cfg_regs {
@@ -92,9 +88,7 @@ struct isp_reg {
 	__le32 req_q_in;    /* SCSI Request Queue Producer Index */
 	__le32 rsp_q_out;   /* SCSI Completion Queue Consumer Index */
 
-	__le32 reserved2[2];	/* 0x40 */
-	__le32 arc_madi_cmd;
-	__le32 arc_madi_data;
+	__le32 reserved2[4];	/* 0x40 */
 
 	union {
 		struct {
@@ -112,10 +106,7 @@ struct isp_reg {
 			__le32 gp_out; /* 0xe0 */
 			__le32 gp_in;
 
-			__le32 probe_mux_addr;
-			__le32 probe_mux_data;
-
-			__le32 reserved5[3];
+			__le32 reserved5[5];
 
 			__le32 port_err_status; /* 0xfc */
 		} __attribute__ ((packed)) isp4010;
@@ -307,7 +298,6 @@ struct qla_flt_header {
 #define FLT_REG_FW_82		0x74
 #define FLT_REG_GOLD_FW_82	0x75
 #define FLT_REG_BOOT_CODE_82	0x78
-#define FLT_REG_FW_82_1		0x97
 
 struct qla_flt_region {
 	uint32_t code;
@@ -335,25 +325,15 @@ struct qla_flt_region {
 #define MBOX_CMD_GET_MANAGEMENT_DATA		0x001E
 #define MBOX_CMD_GET_FW_STATUS			0x001F
 #define MBOX_CMD_SET_ISNS_SERVICE		0x0021
-/* Mailbox Cmd 1*/
 #define ISNS_DISABLE				0
-#define ISNSv4_ENABLE				1
-#define ISNS_REPORT_STATUS			2
-#define ISNSv6_ENABLE				3
-/* Mailbox Sts 5 */
-#define ISNS_STATUS_ACTIVE			1
-#define ISNS_STATUS_NOT_ACTIVE			0
-
+#define ISNS_ENABLE				1
 #define MBOX_CMD_COPY_FLASH			0x0024
 #define MBOX_CMD_WRITE_FLASH			0x0025
-/* Mailbox 5 */
-#define WRITE_FLASH_OPTION_COMMIT_DATA		2
 #define MBOX_CMD_READ_FLASH			0x0026
-#define MBOX_CMD_FREE_DATABASE_ENTRY		0x0031
-#define MBOX_CMD_CONN_CLOSE			0x0056
-#define LOGOUT_OPTION_CLOSE_SESSION		0x02
-#define LOGOUT_OPTION_RESET			0x04
-#define LOGOUT_OPTION_FREE_DDB			0x08
+#define MBOX_CMD_CLEAR_DATABASE_ENTRY		0x0031
+#define MBOX_CMD_CONN_CLOSE_SESS_LOGOUT		0x0056
+#define LOGOUT_OPTION_CLOSE_SESSION		0x01
+#define LOGOUT_OPTION_RELOGIN			0x02
 #define MBOX_CMD_EXECUTE_IOCB_A64		0x005A
 #define MBOX_CMD_INITIALIZE_FIRMWARE		0x0060
 #define MBOX_CMD_GET_INIT_FW_CTRL_BLOCK		0x0061
@@ -367,7 +347,6 @@ struct qla_flt_region {
 #define DDB_DS_LOGIN_IN_PROCESS			0x07
 #define MBOX_CMD_GET_FW_STATE			0x0069
 #define MBOX_CMD_GET_INIT_FW_CTRL_BLOCK_DEFAULTS 0x006A
-#define MBOX_CMD_GET_DIAGNOSTICS_DATA		0x0075
 #define MBOX_CMD_GET_SYS_INFO			0x0078
 #define MBOX_CMD_RESTORE_FACTORY_DEFAULTS	0x0087
 #define MBOX_CMD_SET_ACB			0x0088
@@ -408,13 +387,6 @@ struct qla_flt_region {
 #define MBOX_STS_COMMAND_COMPLETE		0x4000
 #define MBOX_STS_COMMAND_ERROR			0x4005
 
-#define MBOX_DRVR_ASYNC_EVENT_STATUS		7
-#define MBOX_DRVR_ASTS_SMDAPI_RESERVED		0x7001
-#define MBOX_DRVR_ASTS_ISNS_STATUS_CHANGE	0x7002
-#define ISNS_CHG_SERVER_OFFLINE			0x0001
-#define ISNS_CHG_TGT_DATABASE			0x0002
-#define MBOX_DRVR_ASTS_LUN_STATUS_CHANGE	0x7003
-
 #define MBOX_ASYNC_EVENT_STATUS			8
 #define MBOX_ASTS_SYSTEM_ERROR			0x8002
 #define MBOX_ASTS_REQUEST_TRANSFER_ERROR	0x8003
@@ -434,18 +406,12 @@ struct qla_flt_region {
 #define MBOX_ASTS_IP_ADDRESS_CHANGED		0x801C
 #define MBOX_ASTS_DHCP_LEASE_EXPIRED		0x801D
 #define MBOX_ASTS_DHCP_LEASE_ACQUIRED		0x801F
-#define MBOX_ASTS_ISNS				0x8021
-#define MBOX_ASTS_SOCKET_IOCB			0x8023
+#define MBOX_ASTS_ISNS_UNSOLICITED_PDU_RECEIVED 0x8021
 #define MBOX_ASTS_DUPLICATE_IP			0x8025
 #define MBOX_ASTS_ARP_COMPLETE			0x8026
 #define MBOX_ASTS_SUBNET_STATE_CHANGE		0x8027
 #define MBOX_ASTS_RESPONSE_QUEUE_FULL		0x8028
 #define MBOX_ASTS_IP_ADDR_STATE_CHANGED		0x8029
-/* Mailbox 5 */
-#define IPADDR_STATECHG_IP_INDEX_MASK		0x0000000F
-/*see IP Address Index Defines below */
-#define IPADDR_STATECHG_ADDL_INFO_MASK		0x000000F0
-
 #define MBOX_ASTS_IPV6_PREFIX_EXPIRED		0x802B
 #define MBOX_ASTS_IPV6_ND_PREFIX_IGNORED	0x802C
 #define MBOX_ASTS_IPV6_LCL_PREFIX_IGNORED	0x802D
@@ -459,10 +425,6 @@ struct qla_flt_region {
 #define MBOX_ASTS_IPSEC_SYSTEM_FATAL_ERROR	0x8022
 #define MBOX_ASTS_SUBNET_STATE_CHANGE		0x8027
 
-/* ACB Location Defines */
-#define ACB_PRIMARY		0x00
-#define ACB_SECONDARY		0x01
-
 /* ACB State Defines */
 #define ACB_STATE_UNCONFIGURED	0x00
 #define ACB_STATE_INVALID	0x01
@@ -471,12 +433,6 @@ struct qla_flt_region {
 #define ACB_STATE_DEPRICATED	0x04
 #define ACB_STATE_VALID		0x05
 #define ACB_STATE_DISABLING	0x06
-
-/* IP Address Index Defines */
-#define IP_INDEX_IPv4			0x00
-#define IP_INDEX_IPv6_LINK_LOCAL	0x01
-#define IP_INDEX_IPv6_ADDR0		0x02
-#define IP_INDEX_IPv6_ADDR1		0x03
 
 /*************************************************************************/
 
@@ -499,7 +455,7 @@ struct addr_ctrl_blk {
 	uint8_t res0;	/* 07 */
 	uint16_t eth_mtu_size;	/* 08-09 */
 	uint16_t add_fw_options;	/* 0A-0B */
-#define	SERIALIZE_TASK_MGMT		  0x0400
+#define SERIALIZE_TASK_MGMT		0x0400
 
 	uint8_t hb_interval;	/* 0C */
 	uint8_t inst_num; /* 0D */
@@ -517,7 +473,6 @@ struct addr_ctrl_blk {
 
 	uint16_t iscsi_opts;	/* 30-31 */
 	uint16_t ipv4_tcp_opts;	/* 32-33 */
-#define TOPT_ISNSv4_ENABLE		0x4000
 	uint16_t ipv4_ip_opts;	/* 34-35 */
 #define  IPOPT_IPv4_PROTOCOL_ENABLE	0x8000
 
@@ -562,9 +517,7 @@ struct addr_ctrl_blk {
 	uint8_t ipv4_sec_ip_addr[4];	/* D0-D3 */
 	uint8_t ipv4_dhcp_vid_len;	/* D4 */
 	uint8_t ipv4_dhcp_vid[11];	/* D5-DF */
-	uint8_t ipv4_isns_svr_ip[4];	/* E0-E3 */
-	uint16_t isns_svr_port;		/* E4-E5 */
-	uint8_t res11[14];		/* E6-F3 */
+	uint8_t res11[20];	/* E0-F3 */
 	uint8_t ipv4_dhcp_alt_cid_len;	/* F4 */
 	uint8_t ipv4_dhcp_alt_cid[11];	/* F5-FF */
 	uint8_t iscsi_name[224];	/* 100-1DF */
@@ -580,7 +533,6 @@ struct addr_ctrl_blk {
 #define IPV6_ADDOPT_AUTOCONFIG_LINK_LOCAL_ADDR		0x0001
 
 	uint16_t ipv6_tcp_opts;	/* 20A-20B */
-#define IPV6_TCPOPT_ISNSv6_ENABLE			0x4000
 	uint8_t ipv6_tcp_wsf;	/* 20C */
 	uint16_t ipv6_flow_lbl;	/* 20D-20F */
 	uint8_t ipv6_dflt_rtr_addr[16]; /* 210-21F */
@@ -597,10 +549,10 @@ struct addr_ctrl_blk {
 #define IP_ADDRSTATE_DISABLING		6
 
 	uint8_t ipv6_dflt_rtr_state;    /* 225 */
-#define IPV6_RTRSTATE_UNKNOWN			0
-#define IPV6_RTRSTATE_MANUAL			1
-#define IPV6_RTRSTATE_ADVERTISED		3
-#define IPV6_RTRSTATE_STALE			4
+#define IPV6_RTRSTATE_UNKNOWN                   0
+#define IPV6_RTRSTATE_MANUAL                    1
+#define IPV6_RTRSTATE_ADVERTISED                3
+#define IPV6_RTRSTATE_STALE                     4
 
 	uint8_t ipv6_traffic_class;	/* 226 */
 	uint8_t ipv6_hop_limit;	/* 227 */
@@ -612,8 +564,7 @@ struct addr_ctrl_blk {
 	uint32_t ipv6_nd_stale_timeout;	/* 258-25B */
 	uint8_t ipv6_dup_addr_detect_count;	/* 25C */
 	uint8_t ipv6_cache_id;	/* 25D */
-	uint8_t res13[2];	/* 25E-25F */
-	uint8_t ipv6_isns_svr_ip[16];	/* 260-26F */
+	uint8_t res13[18];	/* 25E-26F */
 	uint32_t ipv6_gw_advrt_mtu;	/* 270-273 */
 	uint8_t res14[140];	/* 274-2FF */
 };
@@ -737,7 +688,30 @@ struct mbx_sys_info {
 	uint32_t pci_func;	      /* 20-23 this PCI function */
 	unsigned char serial_number[16];  /* 24-33 serial number string */
 	uint8_t reserved[12];		  /* 34-3f */
-} __attribute__ ((packed));
+};
+
+struct about_fw_info {
+	uint16_t fw_major;		/* 00 - 01 */
+	uint16_t fw_minor;		/* 02 - 03 */
+	uint16_t fw_patch;		/* 04 - 05 */
+	uint16_t fw_build;		/* 06 - 07 */
+	uint8_t fw_build_date[16];	/* 08 - 17 ASCII String */
+	uint8_t fw_build_time[16];	/* 18 - 27 ASCII String */
+	uint8_t fw_build_user[16];	/* 28 - 37 ASCII String */
+	uint16_t fw_load_source;	/* 38 - 39 */
+					/* 1 = Flash Primary,
+					   2 = Flash Secondary,
+					   3 = Host Download
+					*/
+	uint8_t reserved1[6];		/* 3A - 3F */
+	uint16_t iscsi_major;		/* 40 - 41 */
+	uint16_t iscsi_minor;		/* 42 - 43 */
+	uint16_t bootload_major;	/* 44 - 45 */
+	uint16_t bootload_minor;	/* 46 - 47 */
+	uint16_t bootload_patch;	/* 48 - 49 */
+	uint16_t bootload_build;	/* 4A - 4B */
+	uint8_t reserved2[180];		/* 4C - FF */
+};
 
 struct crash_record {
 	uint16_t fw_major_version;	/* 00 - 01 */
@@ -789,19 +763,18 @@ struct conn_event_log_entry {
 
 /* IOCB header structure */
 struct qla4_header {
-	uint8_t entry_type;
-#define ET_STATUS		0x03
-#define ET_MARKER		0x04
-#define ET_CONT_T1		0x0A
-#define ET_STATUS_CONTINUATION	0x10
-#define ET_CMND_T3		0x19
-#define ET_ASYNC_ISCSI_PDU	0x37
-#define ET_PASSTHRU0		0x3A
-#define ET_PASSTHRU_STATUS	0x3C
+	uint8_t entryType;
+#define ET_STATUS		 0x03
+#define ET_MARKER		 0x04
+#define ET_CONT_T1		 0x0A
+#define ET_STATUS_CONTINUATION	 0x10
+#define ET_CMND_T3		 0x19
+#define ET_PASSTHRU0		 0x3A
+#define ET_PASSTHRU_STATUS	 0x3C
 
-	uint8_t entry_status;
-	uint8_t system_defined;
-	uint8_t entry_count;
+	uint8_t entryStatus;
+	uint8_t systemDefined;
+	uint8_t entryCount;
 
 	/* SyetemDefined definition */
 };
@@ -822,8 +795,8 @@ struct queue_entry {
 
 struct data_seg_a64 {
 	struct {
-		uint32_t addr_lo;
-		uint32_t addr_hi;
+		uint32_t addrLow;
+		uint32_t addrHigh;
 
 	} base;
 
@@ -906,27 +879,6 @@ struct qla4_marker_entry {
 	uint64_t reserved6;	/* 38-3F */
 };
 
-/* Asynchronous PDU IOCB structure */
-struct async_pdu_iocb {
-	struct qla4_header hdr;		/* 00-02 */
-	uint32_t async_pdu_handle;	/* 03-06 */
-	uint16_t target_id;		/* 07-08 */
-	uint16_t status;		/* 09-0A */
-#define ASYNC_PDU_IOCB_STS_OK  0x01
-	uint32_t rsrvd;			/* 0B-0F */
-	uint8_t iscsi_pdu_hdr[48];	/* 10-3F */
-};
-
-struct async_msg_pdu_iocb {
-	struct list_head list;
-	uint8_t iocb[0x40];
-};
-
-struct async_pdu_sense {
-	uint16_t  sense_len;		/* 00-01 */
-	uint8_t   sense_data[0];
-};
-
 /* Status entry structure*/
 struct status_entry {
 	struct qla4_header hdr;	/* 00-03 */
@@ -979,45 +931,41 @@ struct passthru0 {
 	struct qla4_header hdr;		       /* 00-03 */
 	uint32_t handle;	/* 04-07 */
 	uint16_t target;	/* 08-09 */
-	uint16_t conn_id;	/* 0A-0B */
+	uint16_t connectionID;	/* 0A-0B */
+#define ISNS_DEFAULT_SERVER_CONN_ID	((uint16_t)0x8000)
 
-	uint16_t ctrl_flags;	/* 0C-0D */
+	uint16_t controlFlags;	/* 0C-0D */
 #define PT_FLAG_ETHERNET_FRAME		0x8000
-#define PT_FLAG_ISCSI_PDU		0x1000
+#define PT_FLAG_ISNS_PDU		0x8000
 #define PT_FLAG_SEND_BUFFER		0x0200
 #define PT_FLAG_WAIT_4_RESPONSE		0x0100
 
 	uint16_t timeout;	/* 0E-0F */
 #define PT_DEFAULT_TIMEOUT		30 /* seconds */
 
-	struct data_seg_a64 out_data_seg64;	/* 10-1B */
+	struct data_seg_a64 outDataSeg64;	/* 10-1B */
 	uint32_t res1;		/* 1C-1F */
-	struct data_seg_a64 in_data_seg64;	/* 20-2B */
-	uint8_t res2[16];	/* 2C-3B */
-	uint32_t async_pdu_handle; /* 3E-3F */
+	struct data_seg_a64 inDataSeg64;	/* 20-2B */
+	uint8_t res2[20];	/* 2C-3F */
 };
 
 struct passthru_status {
 	struct qla4_header hdr;		       /* 00-03 */
 	uint32_t handle;	/* 04-07 */
 	uint16_t target;	/* 08-09 */
-	uint16_t conn_id;	/* 0A-0B */
+	uint16_t connectionID;	/* 0A-0B */
 
-	uint8_t cmpl_status;	/* 0C */
+	uint8_t completionStatus;	/* 0C */
 #define PASSTHRU_STATUS_COMPLETE		0x01
 
-	uint8_t residual_flags;	/* 0D */
-#define PT_STATUS_RESID_DATA_OUT_OVERRUN	0x01
-#define PT_STATUS_RESID_DATA_OUT_UNDERRUN	0x02
-#define PT_STATUS_RESID_DATA_IN_OVERRUN		0x04
-#define PT_STATUS_RESID_DATA_IN_UNDERRUN	0x08
+	uint8_t residualFlags;	/* 0D */
 
 	uint16_t timeout;	/* 0E-0F */
-	uint16_t port_number;	/* 10-11 */
+	uint16_t portNumber;	/* 10-11 */
 	uint8_t res1[10];	/* 12-1B */
-	uint32_t out_residual;	/* 1C-1F */
+	uint32_t outResidual;	/* 1C-1F */
 	uint8_t res2[12];	/* 20-2B */
-	uint32_t in_residual;	/* 2C-2F */
+	uint32_t inResidual;	/* 2C-2F */
 	uint8_t res4[16];	/* 30-3F */
 };
 

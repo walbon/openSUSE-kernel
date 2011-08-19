@@ -339,7 +339,7 @@ static int radeon_legacy_backlight_get_brightness(struct backlight_device *bd)
 	return pdata->negative ? MAX_RADEON_LEVEL - backlight_level : backlight_level;
 }
 
-static struct backlight_ops radeon_backlight_ops = {
+static const struct backlight_ops radeon_backlight_ops = {
 	.get_brightness = radeon_legacy_backlight_get_brightness,
 	.update_status	= radeon_legacy_backlight_update_status,
 };
@@ -350,7 +350,7 @@ void radeon_legacy_backlight_init(struct radeon_encoder *radeon_encoder,
 	struct drm_device *dev = radeon_encoder->base.dev;
 	struct radeon_device *rdev = dev->dev_private;
 	struct backlight_device *bd;
-	/*struct backlight_properties props;*/
+	struct backlight_properties props;
 	struct radeon_backlight_privdata *pdata;
 	uint8_t backlight_level;
 
@@ -369,13 +369,14 @@ void radeon_legacy_backlight_init(struct radeon_encoder *radeon_encoder,
 		goto error;
 	}
 
+	props.max_brightness = MAX_RADEON_LEVEL;
+	props.type = BACKLIGHT_RAW;
 	bd = backlight_device_register("radeon_bl", &drm_connector->kdev,
-				       pdata, &radeon_backlight_ops);
+				       pdata, &radeon_backlight_ops, &props);
 	if (IS_ERR(bd)) {
 		DRM_ERROR("Backlight registration failed\n");
 		goto error;
 	}
-	bd->props.max_brightness = MAX_RADEON_LEVEL;
 
 	pdata->encoder = radeon_encoder;
 

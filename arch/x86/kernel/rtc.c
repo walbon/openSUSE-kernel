@@ -6,6 +6,7 @@
 #include <linux/acpi.h>
 #include <linux/bcd.h>
 #include <linux/pnp.h>
+#include <linux/of.h>
 
 #include <asm/vsyscall.h>
 #include <asm/x86_init.h>
@@ -27,7 +28,6 @@ EXPORT_SYMBOL(cmos_lock);
 DEFINE_SPINLOCK(rtc_lock);
 EXPORT_SYMBOL(rtc_lock);
 
-#ifndef CONFIG_XEN_UNPRIVILEGED_GUEST
 /*
  * In order to set the CMOS clock precisely, set_rtc_mmss has to be
  * called 500 ms after the second nowtime has started, because when
@@ -77,7 +77,7 @@ int mach_set_rtc_mmss(unsigned long nowtime)
 		CMOS_WRITE(real_seconds, RTC_SECONDS);
 		CMOS_WRITE(real_minutes, RTC_MINUTES);
 	} else {
-		printk(KERN_WARNING
+		printk_once(KERN_NOTICE
 		       "set_rtc_mmss: can't update from %d to %d\n",
 		       cmos_minutes, real_minutes);
 		retval = -1;
@@ -143,7 +143,6 @@ unsigned long mach_get_cmos_time(void)
 
 	return mktime(year, mon, day, hour, min, sec);
 }
-#endif /* CONFIG_XEN_UNPRIVILEGED_GUEST */
 
 /* Routines for accessing the CMOS RAM/RTC. */
 unsigned char rtc_cmos_read(unsigned char addr)
@@ -200,7 +199,6 @@ unsigned long long native_read_tsc(void)
 EXPORT_SYMBOL(native_read_tsc);
 
 
-#ifndef CONFIG_XEN_UNPRIVILEGED_GUEST
 static struct resource rtc_resources[] = {
 	[0] = {
 		.start	= RTC_PORT(0),
@@ -239,11 +237,8 @@ static __init int add_rtc_cmos(void)
 		}
 	}
 #endif
-
-#ifdef CONFIG_XEN
-	if (!is_initial_xendomain())
+	if (of_have_populated_dt())
 		return 0;
-#endif
 
 	platform_device_register(&rtc_device);
 	dev_info(&rtc_device.dev,
@@ -252,4 +247,3 @@ static __init int add_rtc_cmos(void)
 	return 0;
 }
 device_initcall(add_rtc_cmos);
-#endif /* CONFIG_XEN_UNPRIVILEGED_GUEST */

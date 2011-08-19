@@ -11,6 +11,7 @@
 #include <linux/device.h>
 #include <linux/stat.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/ctype.h>
 #include <linux/kmod.h>
 #include <linux/err.h>
@@ -102,18 +103,17 @@ static struct ctl_table callhome_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_handler_callhome,
 	},
-	{ .ctl_name = 0 }
+	{}
 };
 
 static struct ctl_table kern_dir_table[] = {
 	{
-		.ctl_name	= CTL_KERN,
 		.procname	= "kernel",
 		.maxlen		= 0,
 		.mode		= 0555,
 		.child		= callhome_table,
 	},
-	{ .ctl_name = 0 }
+	{}
 };
 
 /*

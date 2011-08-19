@@ -20,7 +20,6 @@
 #include <asm/idals.h>
 #include <asm/ebcdic.h>
 #include <asm/io.h>
-#include <asm/todclk.h>
 #include <asm/ccwdev.h>
 
 #include "dasd_int.h"
@@ -66,8 +65,10 @@ dasd_fba_set_online(struct ccw_device *cdev)
 }
 
 static struct ccw_driver dasd_fba_driver = {
-	.name        = "dasd-fba",
-	.owner       = THIS_MODULE,
+	.driver = {
+		.name	= "dasd-fba",
+		.owner	= THIS_MODULE,
+	},
 	.ids         = dasd_fba_ids,
 	.probe       = dasd_fba_probe,
 	.remove      = dasd_generic_remove,

@@ -80,9 +80,7 @@
 #include <asm/system.h>
 
 #include "fbcon.h"
-#ifdef CONFIG_BOOTSPLASH
-#include "../bootsplash/bootsplash.h"
-#endif
+#include <linux/bootsplash.h>
 
 #ifdef FBCONDEBUG
 #  define DPRINTK(fmt, args...) printk(KERN_DEBUG "%s: " fmt, __func__ , ## args)
@@ -290,10 +288,11 @@ static inline int fbcon_is_inactive(struct vc_data *vc, struct fb_info *info)
 	struct fbcon_ops *ops = info->fbcon_par;
 
 	return (info->state != FBINFO_STATE_RUNNING ||
-		vc->vc_mode != KD_TEXT || ops->graphics);
+		vc->vc_mode != KD_TEXT || ops->graphics) &&
+		!vt_force_oops_output(vc);
 }
 
-static inline int get_color(struct vc_data *vc, struct fb_info *info,
+static int get_color(struct vc_data *vc, struct fb_info *info,
 	      u16 c, int is_fg)
 {
 	int depth = fb_get_color_depth(&info->var, &info->fix);
@@ -376,29 +375,27 @@ static void fb_flashcursor(struct work_struct *work)
 {
 	struct fb_info *info = container_of(work, struct fb_info, queue);
 	struct fbcon_ops *ops = info->fbcon_par;
-	struct display *p;
 	struct vc_data *vc = NULL;
 	int c;
 	int mode;
 
-	acquire_console_sem();
+	console_lock();
 	if (ops && ops->currcon != -1)
 		vc = vc_cons[ops->currcon].d;
 
 	if (!vc || !CON_IS_VISIBLE(vc) ||
  	    registered_fb[con2fb_map[vc->vc_num]] != info ||
 	    vc->vc_deccm != 1) {
-		release_console_sem();
+		console_unlock();
 		return;
 	}
 
-	p = &fb_display[vc->vc_num];
 	c = scr_readw((u16 *) vc->vc_pos);
 	mode = (!ops->cursor_flash || ops->cursor_state.enable) ?
 		CM_ERASE : CM_DRAW;
 	ops->cursor(vc, info, mode, softback_lines, get_color(vc, info, c, 1),
 		    get_color(vc, info, c, 0));
-	release_console_sem();
+	console_unlock();
 }
 
 static void cursor_timer_handler(unsigned long dev_addr)
@@ -544,9 +541,7 @@ static int fbcon_takeover(int show_logo)
 	for (i = first_fb_vc; i <= last_fb_vc; i++)
 		con2fb_map[i] = info_idx;
 
-#ifdef CONFIG_BOOTSPLASH
 	splash_init();
-#endif
 
 	err = take_over_console(&fb_con, first_fb_vc, last_fb_vc,
 				fbcon_is_default);
@@ -833,10 +828,10 @@ static int set_con2fb_map(int unit, int newidx, int user)
 	if (oldidx == newidx)
 		return 0;
 
-	if (!info || fbcon_has_exited)
+	if (!info)
 		return -EINVAL;
 
- 	if (!err && !search_for_mapped_con()) {
+	if (!search_for_mapped_con() || !con_is_bound(&fb_con)) {
 		info_idx = newidx;
 		return fbcon_takeover(0);
 	}
@@ -846,7 +841,7 @@ static int set_con2fb_map(int unit, int newidx, int user)
 
 	found = search_fb_in_map(newidx);
 
-	acquire_console_sem();
+	console_lock();
 	con2fb_map[unit] = newidx;
 	if (!err && !found)
  		err = con2fb_acquire_newinfo(vc, info, unit, oldidx);
@@ -873,7 +868,7 @@ static int set_con2fb_map(int unit, int newidx, int user)
 	if (!search_fb_in_map(info_idx))
 		info_idx = newidx;
 
-	release_console_sem();
+	console_unlock();
  	return err;
 }
 
@@ -1084,6 +1079,7 @@ static void fbcon_init(struct vc_data *vc, int init)
 	if (p->userfont)
 		charcnt = FNTCHARCNT(p->fontdata);
 
+	vc->vc_panic_force_write = !!(info->flags & FBINFO_CAN_FORCE_OUTPUT);
 	vc->vc_can_do_color = (fb_get_color_depth(&info->var, &info->fix)!=1);
 	vc->vc_complement_mask = vc->vc_can_do_color ? 0x7700 : 0x0800;
 	if (charcnt == 256) {
@@ -1112,10 +1108,15 @@ static void fbcon_init(struct vc_data *vc, int init)
 
 #ifdef CONFIG_BOOTSPLASH
 	if (vc->vc_splash_data && vc->vc_splash_data->splash_state) {
-		new_cols = vc->vc_splash_data->splash_text_wi / vc->vc_font.width;
-		new_rows = vc->vc_splash_data->splash_text_he / vc->vc_font.height;
+		new_cols = vc->vc_splash_data->splash_vc_text_wi
+			/ vc->vc_font.width;
+		new_rows = vc->vc_splash_data->splash_vc_text_he
+			/ vc->vc_font.height;
 		logo = 0;
-		con_remap_def_color(vc, vc->vc_splash_data->splash_color << 4 | vc->vc_splash_data->splash_fg_color);
+		con_remap_def_color(vc,
+				    (vc->vc_splash_data->imgd->splash_color
+				     << 4) |
+				    vc->vc_splash_data->imgd->splash_fg_color);
 	}
 #endif
 
@@ -1821,10 +1822,8 @@ static int fbcon_scroll(struct vc_data *vc, int t, int b, int dir,
 			fbcon_softback_note(vc, t, count);
 		if (logo_shown >= 0)
 			goto redraw_up;
-#ifdef CONFIG_BOOTSPLASH
-		if (info->splash_data)
+		if (SPLASH_DATA(info))
 			goto redraw_up;
-#endif
 		switch (p->scrollmode) {
 		case SCROLL_MOVE:
 			fbcon_redraw_blit(vc, info, p, t, b - t - count,
@@ -1916,10 +1915,8 @@ static int fbcon_scroll(struct vc_data *vc, int t, int b, int dir,
 			count = vc->vc_rows;
 		if (logo_shown >= 0)
 			goto redraw_down;
-#ifdef CONFIG_BOOTSPLASH
-		if (info->splash_data)
+		if (SPLASH_DATA(info))
 			goto redraw_down;
-#endif
 		switch (p->scrollmode) {
 		case SCROLL_MOVE:
 			fbcon_redraw_blit(vc, info, p, b - 1, b - t - count,
@@ -2069,13 +2066,11 @@ static void fbcon_bmove_rec(struct vc_data *vc, struct display *p, int sy, int s
 		return;
 	}
 
-#ifdef CONFIG_BOOTSPLASH
-	if (info->splash_data && sy == dy && height == 1) {
-		/* must use slower redraw bmove to keep background pic intact */
-	    splash_bmove_redraw(vc, info, sy, sx, dx, width);
+	if (SPLASH_DATA(info) && sy == dy && height == 1) {
+		/*must use slower redraw bmove to keep background pic intact*/
+		splash_bmove_redraw(vc, info, sy, sx, dx, width);
 		return;
 	}
-#endif
 	ops->bmove(vc, info, real_y(p, sy), sx, real_y(p, dy), dx,
 		   height, width);
 }
@@ -2190,9 +2185,13 @@ static int fbcon_switch(struct vc_data *vc)
 		splash_prepare(vc, info);
 		if (vc->vc_splash_data && vc->vc_splash_data->splash_state &&
 		    vc->vc_splash_data != prev_sd) {
-			vc_resize(vc, vc->vc_splash_data->splash_text_wi / vc->vc_font.width,
-				  vc->vc_splash_data->splash_text_he / vc->vc_font.height);
-			con_remap_def_color(vc, vc->vc_splash_data->splash_color << 4 | vc->vc_splash_data->splash_fg_color);
+			vc_resize(vc, vc->vc_splash_data->splash_vc_text_wi
+				  / vc->vc_font.width,
+				  vc->vc_splash_data->splash_vc_text_he
+				  / vc->vc_font.height);
+			con_remap_def_color(vc,
+					    vc->vc_splash_data->imgd->splash_color << 4
+					    | vc->vc_splash_data->imgd->splash_fg_color);
 		}
 	}
 #endif
@@ -2330,12 +2329,11 @@ static void fbcon_generic_blank(struct vc_data *vc, struct fb_info *info,
 {
 	struct fb_event event;
 
-#ifdef CONFIG_BOOTSPLASH
-	if (info->splash_data) {
+	if (SPLASH_DATA(info)) {
 		splash_blank(vc, info, blank);
 		return;
 	}
-#endif
+
 	if (blank) {
 		unsigned short charmask = vc->vc_hi_font_mask ?
 			0x1ff : 0xff;
@@ -2395,6 +2393,30 @@ static int fbcon_blank(struct vc_data *vc, int blank, int mode_switch)
 	else
 		fbcon_add_cursor_timer(info);
 
+	return 0;
+}
+
+static int fbcon_debug_enter(struct vc_data *vc)
+{
+	struct fb_info *info = registered_fb[con2fb_map[vc->vc_num]];
+	struct fbcon_ops *ops = info->fbcon_par;
+
+	ops->save_graphics = ops->graphics;
+	ops->graphics = 0;
+	if (info->fbops->fb_debug_enter)
+		info->fbops->fb_debug_enter(info);
+	fbcon_set_palette(vc, color_table);
+	return 0;
+}
+
+static int fbcon_debug_leave(struct vc_data *vc)
+{
+	struct fb_info *info = registered_fb[con2fb_map[vc->vc_num]];
+	struct fbcon_ops *ops = info->fbcon_par;
+
+	ops->graphics = ops->save_graphics;
+	if (info->fbops->fb_debug_leave)
+		info->fbops->fb_debug_leave(info);
 	return 0;
 }
 
@@ -2537,12 +2559,10 @@ static int fbcon_do_set_font(struct vc_data *vc, int w, int h,
 
 		cols = FBCON_SWAP(ops->rotate, info->var.xres, info->var.yres);
 		rows = FBCON_SWAP(ops->rotate, info->var.yres, info->var.xres);
-#ifdef CONFIG_BOOTSPLASH
-		if (info->splash_data) {
-			cols = info->splash_data->splash_text_wi;
-			rows = info->splash_data->splash_text_he;
+		if (SPLASH_DATA(info)) {
+			cols = TEXT_WIDTH_FROM_SPLASH_DATA(info);
+			rows = TEXT_HIGHT_FROM_SPLASH_DATA(info);
 		}
-#endif
 		cols /= w;
 		rows /= h;
 		vc_resize(vc, cols, rows);
@@ -3338,6 +3358,8 @@ static const struct consw fb_con = {
 	.con_screen_pos 	= fbcon_screen_pos,
 	.con_getxy 		= fbcon_getxy,
 	.con_resize             = fbcon_resize,
+	.con_debug_enter	= fbcon_debug_enter,
+	.con_debug_leave	= fbcon_debug_leave,
 };
 
 static struct notifier_block fbcon_event_notifier = {
@@ -3355,7 +3377,7 @@ static ssize_t store_rotate(struct device *device,
 	if (fbcon_has_exited)
 		return count;
 
-	acquire_console_sem();
+	console_lock();
 	idx = con2fb_map[fg_console];
 
 	if (idx == -1 || registered_fb[idx] == NULL)
@@ -3365,7 +3387,7 @@ static ssize_t store_rotate(struct device *device,
 	rotate = simple_strtoul(buf, last, 0);
 	fbcon_rotate(info, rotate);
 err:
-	release_console_sem();
+	console_unlock();
 	return count;
 }
 
@@ -3380,7 +3402,7 @@ static ssize_t store_rotate_all(struct device *device,
 	if (fbcon_has_exited)
 		return count;
 
-	acquire_console_sem();
+	console_lock();
 	idx = con2fb_map[fg_console];
 
 	if (idx == -1 || registered_fb[idx] == NULL)
@@ -3390,7 +3412,7 @@ static ssize_t store_rotate_all(struct device *device,
 	rotate = simple_strtoul(buf, last, 0);
 	fbcon_rotate_all(info, rotate);
 err:
-	release_console_sem();
+	console_unlock();
 	return count;
 }
 
@@ -3403,7 +3425,7 @@ static ssize_t show_rotate(struct device *device,
 	if (fbcon_has_exited)
 		return 0;
 
-	acquire_console_sem();
+	console_lock();
 	idx = con2fb_map[fg_console];
 
 	if (idx == -1 || registered_fb[idx] == NULL)
@@ -3412,7 +3434,7 @@ static ssize_t show_rotate(struct device *device,
 	info = registered_fb[idx];
 	rotate = fbcon_get_rotate(info);
 err:
-	release_console_sem();
+	console_unlock();
 	return snprintf(buf, PAGE_SIZE, "%d\n", rotate);
 }
 
@@ -3426,7 +3448,7 @@ static ssize_t show_cursor_blink(struct device *device,
 	if (fbcon_has_exited)
 		return 0;
 
-	acquire_console_sem();
+	console_lock();
 	idx = con2fb_map[fg_console];
 
 	if (idx == -1 || registered_fb[idx] == NULL)
@@ -3440,7 +3462,7 @@ static ssize_t show_cursor_blink(struct device *device,
 
 	blink = (ops->flags & FBCON_FLAGS_CURSOR_TIMER) ? 1 : 0;
 err:
-	release_console_sem();
+	console_unlock();
 	return snprintf(buf, PAGE_SIZE, "%d\n", blink);
 }
 
@@ -3455,7 +3477,7 @@ static ssize_t store_cursor_blink(struct device *device,
 	if (fbcon_has_exited)
 		return count;
 
-	acquire_console_sem();
+	console_lock();
 	idx = con2fb_map[fg_console];
 
 	if (idx == -1 || registered_fb[idx] == NULL)
@@ -3477,7 +3499,7 @@ static ssize_t store_cursor_blink(struct device *device,
 	}
 
 err:
-	release_console_sem();
+	console_unlock();
 	return count;
 }
 
@@ -3516,7 +3538,7 @@ static void fbcon_start(void)
 	if (num_registered_fb) {
 		int i;
 
-		acquire_console_sem();
+		console_lock();
 
 		for (i = 0; i < FB_MAX; i++) {
 			if (registered_fb[i] != NULL) {
@@ -3525,7 +3547,7 @@ static void fbcon_start(void)
 			}
 		}
 
-		release_console_sem();
+		console_unlock();
 		fbcon_takeover(0);
 	}
 }
@@ -3542,7 +3564,7 @@ static void fbcon_exit(void)
 	softback_buf = 0UL;
 
 	for (i = 0; i < FB_MAX; i++) {
-		int pending;
+		int pending = 0;
 
 		mapped = 0;
 		info = registered_fb[i];
@@ -3550,7 +3572,8 @@ static void fbcon_exit(void)
 		if (info == NULL)
 			continue;
 
-		pending = cancel_work_sync(&info->queue);
+		if (info->queue.func)
+			pending = cancel_work_sync(&info->queue);
 		DPRINTK("fbcon: %s pending work\n", (pending ? "canceled" :
 			"no"));
 
@@ -3585,7 +3608,7 @@ static int __init fb_console_init(void)
 {
 	int i;
 
-	acquire_console_sem();
+	console_lock();
 	fb_register_client(&fbcon_event_notifier);
 	fbcon_device = device_create(fb_class, NULL, MKDEV(0, 0), NULL,
 				     "fbcon");
@@ -3601,7 +3624,7 @@ static int __init fb_console_init(void)
 	for (i = 0; i < MAX_NR_CONSOLES; i++)
 		con2fb_map[i] = -1;
 
-	release_console_sem();
+	console_unlock();
 	fbcon_start();
 	return 0;
 }
@@ -3624,12 +3647,12 @@ static void __exit fbcon_deinit_device(void)
 
 static void __exit fb_console_exit(void)
 {
-	acquire_console_sem();
+	console_lock();
 	fb_unregister_client(&fbcon_event_notifier);
 	fbcon_deinit_device();
 	device_destroy(fb_class, MKDEV(0, 0));
 	fbcon_exit();
-	release_console_sem();
+	console_unlock();
 	unregister_con_driver(&fb_con);
 }	
 

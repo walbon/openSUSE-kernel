@@ -22,9 +22,6 @@
 #ifdef __KERNEL__
 
 #include <linux/rwsem.h>
-#ifdef CONFIG_KDB_USB
-#include <linux/kdb.h>
-#endif
 
 #define MAX_TOPO_LEVEL		6
 
@@ -87,7 +84,7 @@ struct usb_hcd {
 
 	struct timer_list	rh_timer;	/* drives root-hub polling */
 	struct urb		*status_urb;	/* the current status urb */
-#ifdef CONFIG_PM
+#ifdef CONFIG_USB_SUSPEND
 	struct work_struct	wakeup_work;	/* for remote wakeup */
 #endif
 
@@ -105,6 +102,7 @@ struct usb_hcd {
 #define HCD_FLAG_SAW_IRQ		1
 #define HCD_FLAG_POLL_RH		2	/* poll for rh status? */
 #define HCD_FLAG_POLL_PENDING		3	/* status has changed? */
+#define HCD_FLAG_WAKEUP_PENDING		4	/* root hub is resuming? */
 #define HCD_FLAG_RH_RUNNING		5	/* root hub is running? */
 #define HCD_FLAG_DEAD			6	/* controller has died? */
 
@@ -115,6 +113,7 @@ struct usb_hcd {
 #define HCD_SAW_IRQ(hcd)	((hcd)->flags & (1U << HCD_FLAG_SAW_IRQ))
 #define HCD_POLL_RH(hcd)	((hcd)->flags & (1U << HCD_FLAG_POLL_RH))
 #define HCD_POLL_PENDING(hcd)	((hcd)->flags & (1U << HCD_FLAG_POLL_PENDING))
+#define HCD_WAKEUP_PENDING(hcd)	((hcd)->flags & (1U << HCD_FLAG_WAKEUP_PENDING))
 #define HCD_RH_RUNNING(hcd)	((hcd)->flags & (1U << HCD_FLAG_RH_RUNNING))
 #define HCD_DEAD(hcd)		((hcd)->flags & (1U << HCD_FLAG_DEAD))
 
@@ -226,7 +225,7 @@ struct hc_driver {
 	 * a whole, not just the root hub; they're for PCI bus glue.
 	 */
 	/* called after suspending the hub, before entering D3 etc */
-	int	(*pci_suspend)(struct usb_hcd *hcd);
+	int	(*pci_suspend)(struct usb_hcd *hcd, bool do_wakeup);
 
 	/* called after entering D0 (etc), before resuming the hub */
 	int	(*pci_resume)(struct usb_hcd *hcd, bool hibernated);
@@ -344,14 +343,6 @@ struct hc_driver {
 		 * address is set
 		 */
 	int	(*update_device)(struct usb_hcd *, struct usb_device *);
-
-#ifdef CONFIG_KDB_USB
-	/* KDB poll function for this HC */
-	int	(*kdb_poll_char)(struct urb *urb);
-	void	(*kdb_completion)(struct urb *urb);
-	kdb_hc_keyboard_attach_t	kdb_hc_keyboard_attach;
-	kdb_hc_keyboard_detach_t	kdb_hc_keyboard_detach;
-#endif /* CONFIG_KDB_USB */
 };
 
 extern int usb_hcd_link_urb_to_ep(struct usb_hcd *hcd, struct urb *urb);
@@ -576,16 +567,20 @@ extern int usb_find_interface_driver(struct usb_device *dev,
 #define usb_endpoint_out(ep_dir)	(!((ep_dir) & USB_DIR_IN))
 
 #ifdef CONFIG_PM
-extern void usb_hcd_resume_root_hub(struct usb_hcd *hcd);
 extern void usb_root_hub_lost_power(struct usb_device *rhdev);
 extern int hcd_bus_suspend(struct usb_device *rhdev, pm_message_t msg);
 extern int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg);
+#endif /* CONFIG_PM */
+
+#ifdef CONFIG_USB_SUSPEND
+extern void usb_hcd_resume_root_hub(struct usb_hcd *hcd);
 #else
 static inline void usb_hcd_resume_root_hub(struct usb_hcd *hcd)
 {
 	return;
 }
-#endif /* CONFIG_PM */
+#endif /* CONFIG_USB_SUSPEND */
+
 
 /*
  * USB device fs stuff

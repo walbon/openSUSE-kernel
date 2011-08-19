@@ -103,7 +103,7 @@ qh_update (struct ehci_hcd *ehci, struct ehci_qh *qh, struct ehci_qtd *qtd)
 	if (!(hw->hw_info1 & cpu_to_hc32(ehci, 1 << 14))) {
 		unsigned	is_out, epnum;
 
-		is_out = qh->is_out;
+		is_out = !(qtd->hw_token & cpu_to_hc32(ehci, 1 << 8));
 		epnum = (hc32_to_cpup(ehci, &hw->hw_info1) >> 8) & 0x0f;
 		if (unlikely (!usb_gettoggle (qh->dev, epnum, is_out))) {
 			hw->hw_token &= ~cpu_to_hc32(ehci, QTD_TOGGLE);
@@ -296,28 +296,6 @@ __acquires(ehci->lock)
 	spin_lock (&ehci->lock);
 }
 
-/*
- * Lock hackery here...
- * ehci_urb_done() makes the assumption that it's called with ehci->lock held.
- * So, lock it if it isn't already.
- */
-static void
-kdb_ehci_urb_done(struct ehci_hcd *ehci, struct urb *urb, int status)
-__acquires(ehci->lock)
-__releases(ehci->lock)
-{
-#ifdef CONFIG_KDB_USB
-	int locked;
-	if (!spin_is_locked(&ehci->lock)) {
-		spin_lock(&ehci->lock);
-		locked = 1;
-	}
-	ehci_urb_done(ehci, urb, status);
-	if (locked)
-		spin_unlock(&ehci->lock);
-#endif
-}
-
 static void start_unlink_async (struct ehci_hcd *ehci, struct ehci_qh *qh);
 static void unlink_async (struct ehci_hcd *ehci, struct ehci_qh *qh);
 
@@ -327,16 +305,9 @@ static int qh_schedule (struct ehci_hcd *ehci, struct ehci_qh *qh);
  * Process and free completed qtds for a qh, returning URBs to drivers.
  * Chases up to qh->hw_current.  Returns number of completions called,
  * indicating how much "real" work we did.
- *
- * The KDB part is ugly but KDB wants its own copy and it keeps getting
- * out of sync. The difference with kdb=1 is that we will only process
- * qtds that are associated with kdburb. ehci_urb_done also releases
- * and retakes ehci->lock. We may not have that lock while KDB is
- * running.
  */
 static unsigned
-__qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh, int kdb,
-		  struct urb *kdburb)
+qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh)
 {
 	struct ehci_qtd		*last, *end = qh->dummy;
 	struct list_head	*entry, *tmp;
@@ -345,9 +316,6 @@ __qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh, int kdb,
 	unsigned		count = 0;
 	u8			state;
 	struct ehci_qh_hw	*hw = qh->hw;
-
-	if (kdb && !kdburb)
-		return 0;
 
 	if (unlikely (list_empty (&qh->qtd_list)))
 		return count;
@@ -384,18 +352,10 @@ __qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh, int kdb,
 		qtd = list_entry (entry, struct ehci_qtd, qtd_list);
 		urb = qtd->urb;
 
-		if (kdburb && urb != kdburb)
-			continue;
-
 		/* clean up any state from previous QTD ...*/
 		if (last) {
 			if (likely (last->urb != urb)) {
-				if (kdb)
-					kdb_ehci_urb_done(ehci, last->urb,
-							  last_status);
-				else
-					ehci_urb_done(ehci, last->urb,
-						      last_status);
+				ehci_urb_done(ehci, last->urb, last_status);
 				count++;
 				last_status = -EINPROGRESS;
 			}
@@ -550,10 +510,7 @@ __qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh, int kdb,
 
 	/* last urb's completion might still need calling */
 	if (likely (last != NULL)) {
-		if (kdb)
-			kdb_ehci_urb_done(ehci, last->urb, last_status);
-		else
-			ehci_urb_done(ehci, last->urb, last_status);
+		ehci_urb_done(ehci, last->urb, last_status);
 		count++;
 		ehci_qtd_free (ehci, last);
 	}
@@ -606,19 +563,6 @@ __qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh, int kdb,
 	}
 
 	return count;
-}
-
-static unsigned
-qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh)
-{
-	return __qh_completions(ehci, qh, 0, NULL);
-}
-
-unsigned
-qh_completions_kdb(struct ehci_hcd *ehci, struct ehci_qh *qh,
-		   struct urb *kdburb)
-{
-	return __qh_completions(ehci, qh, 1, kdburb);
 }
 
 /*-------------------------------------------------------------------------*/
@@ -1002,7 +946,6 @@ done:
 	hw = qh->hw;
 	hw->hw_info1 = cpu_to_hc32(ehci, info1);
 	hw->hw_info2 = cpu_to_hc32(ehci, info2);
-	qh->is_out = !is_input;
 	usb_settoggle (urb->dev, usb_pipeendpoint (urb->pipe), !is_input, 1);
 	qh_refresh (ehci, qh);
 	return qh;
@@ -1241,6 +1184,10 @@ static void end_unlink_async (struct ehci_hcd *ehci)
 		ehci->reclaim = NULL;
 		start_unlink_async (ehci, next);
 	}
+
+	if (ehci->has_synopsys_hc_bug)
+		ehci_writel(ehci, (u32) ehci->async->qh_dma,
+			    &ehci->regs->async_next);
 }
 
 /* makes sure the async qh will become idle */

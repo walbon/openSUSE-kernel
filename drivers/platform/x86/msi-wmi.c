@@ -20,74 +20,44 @@
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/init.h>
-#include <linux/types.h>
 #include <linux/input.h>
-#include <acpi/acpi_drivers.h>
+#include <linux/input/sparse-keymap.h>
 #include <linux/acpi.h>
-#include <linux/string.h>
-#include <linux/hrtimer.h>
 #include <linux/backlight.h>
+#include <linux/slab.h>
 
 MODULE_AUTHOR("Thomas Renninger <trenn@suse.de>");
 MODULE_DESCRIPTION("MSI laptop WMI hotkeys driver");
 MODULE_LICENSE("GPL");
 
-static int debug;
-module_param(debug, int, 0);
-MODULE_PARM_DESC(debug, "Set this to 1 to let the driver be more verbose");
-
 MODULE_ALIAS("wmi:551A1F84-FBDD-4125-91DB-3EA8F44F1D45");
 MODULE_ALIAS("wmi:B6F3EEF2-3D2F-49DC-9DE3-85BCE18C62F2");
 
-/* Temporary workaround until the WMI sysfs interface goes in
-		{ "svn", DMI_SYS_VENDOR },
-		{ "pn",  DMI_PRODUCT_NAME },
-		{ "pvr", DMI_PRODUCT_VERSION },
-		{ "rvn", DMI_BOARD_VENDOR },
-		{ "rn",  DMI_BOARD_NAME },
-*/
-
-MODULE_ALIAS("dmi:*:svnMICRO-STARINTERNATIONAL*:pnMS-6638:*");
-
 #define DRV_NAME "msi-wmi"
-#define DRV_PFX DRV_NAME ": "
 
 #define MSIWMI_BIOS_GUID "551A1F84-FBDD-4125-91DB-3EA8F44F1D45"
 #define MSIWMI_EVENT_GUID "B6F3EEF2-3D2F-49DC-9DE3-85BCE18C62F2"
 
-#define dprintk(msg...)	do {			\
-	if (debug)				\
-		printk(KERN_INFO DRV_PFX  msg); \
-	} while (0)
-
-struct key_entry {
-	char type;		/* See KE_* below */
-	u16 code;
-	u16 keycode;
-	int instance;
-	ktime_t last_pressed;
-};
-
-/*
- * KE_KEY the only used key type, but keep this, others might also
- * show up in the future. Compare with hp-wmi.c
- */
-enum { KE_KEY, KE_END };
-
+#define SCANCODE_BASE 0xD0
+#define MSI_WMI_BRIGHTNESSUP   SCANCODE_BASE
+#define MSI_WMI_BRIGHTNESSDOWN (SCANCODE_BASE + 1)
+#define MSI_WMI_VOLUMEUP       (SCANCODE_BASE + 2)
+#define MSI_WMI_VOLUMEDOWN     (SCANCODE_BASE + 3)
+#define MSI_WMI_MUTE           (SCANCODE_BASE + 4)
 static struct key_entry msi_wmi_keymap[] = {
-	{ KE_KEY, 0xd0, KEY_BRIGHTNESSUP,   0, {0, } },
-	{ KE_KEY, 0xd1, KEY_BRIGHTNESSDOWN, 1, {0, } },
-	{ KE_KEY, 0xd2, KEY_VOLUMEUP,	2, {0, } },
-	{ KE_KEY, 0xd3, KEY_VOLUMEDOWN,	3, {0, } },
+	{ KE_KEY, MSI_WMI_BRIGHTNESSUP,   {KEY_BRIGHTNESSUP} },
+	{ KE_KEY, MSI_WMI_BRIGHTNESSDOWN, {KEY_BRIGHTNESSDOWN} },
+	{ KE_KEY, MSI_WMI_VOLUMEUP,       {KEY_VOLUMEUP} },
+	{ KE_KEY, MSI_WMI_VOLUMEDOWN,     {KEY_VOLUMEDOWN} },
+	{ KE_KEY, MSI_WMI_MUTE,           {KEY_MUTE} },
 	{ KE_END, 0}
 };
+static ktime_t last_pressed[ARRAY_SIZE(msi_wmi_keymap) - 1];
 
-struct backlight_device *backlight;
+static struct backlight_device *backlight;
 
 static int backlight_map[] = { 0x00, 0x33, 0x66, 0x99, 0xCC, 0xFF };
 
@@ -106,7 +76,7 @@ static int msi_wmi_query_block(int instance, int *ret)
 
 	if (!obj || obj->type != ACPI_TYPE_INTEGER) {
 		if (obj) {
-			printk(KERN_ERR DRV_PFX "query block returned object "
+			pr_err("query block returned object "
 			       "type: %d - buffer length:%d\n", obj->type,
 			       obj->type == ACPI_TYPE_BUFFER ?
 			       obj->buffer.length : 0);
@@ -125,8 +95,8 @@ static int msi_wmi_set_block(int instance, int value)
 
 	struct acpi_buffer input = { sizeof(int), &value };
 
-	dprintk("Going to set block of instance: %d - value: %d\n",
-		instance, value);
+	pr_debug("Going to set block of instance: %d - value: %d\n",
+		 instance, value);
 
 	status = wmi_set_block(MSIWMI_BIOS_GUID, instance, &input);
 
@@ -135,23 +105,24 @@ static int msi_wmi_set_block(int instance, int value)
 
 static int bl_get(struct backlight_device *bd)
 {
-	int level, err, ret = 0;
+	int level, err, ret;
 
 	/* Instance 1 is "get backlight", cmp with DSDT */
 	err = msi_wmi_query_block(1, &ret);
-	if (err)
-		printk(KERN_ERR DRV_PFX "Could not query backlight: %d\n", err);
-	dprintk("Get: Query block returned: %d\n", ret);
+	if (err) {
+		pr_err("Could not query backlight: %d\n", err);
+		return -EINVAL;
+	}
+	pr_debug("Get: Query block returned: %d\n", ret);
 	for (level = 0; level < ARRAY_SIZE(backlight_map); level++) {
 		if (backlight_map[level] == ret) {
-			dprintk("Current backlight level: 0x%X - index: %d\n",
-				backlight_map[level], level);
+			pr_debug("Current backlight level: 0x%X - index: %d\n",
+				 backlight_map[level], level);
 			break;
 		}
 	}
 	if (level == ARRAY_SIZE(backlight_map)) {
-		printk(KERN_ERR DRV_PFX "get: Invalid brightness value: 0x%X\n",
-		       ret);
+		pr_err("get: Invalid brightness value: 0x%X\n", ret);
 		return -EINVAL;
 	}
 	return level;
@@ -167,65 +138,10 @@ static int bl_set_status(struct backlight_device *bd)
 	return msi_wmi_set_block(0, backlight_map[bright]);
 }
 
-static struct backlight_ops msi_backlight_ops = {
+static const struct backlight_ops msi_backlight_ops = {
 	.get_brightness	= bl_get,
 	.update_status	= bl_set_status,
 };
-
-static struct key_entry *msi_wmi_get_entry_by_scancode(int code)
-{
-	struct key_entry *key;
-
-	for (key = msi_wmi_keymap; key->type != KE_END; key++)
-		if (code == key->code)
-			return key;
-
-	return NULL;
-}
-
-static struct key_entry *msi_wmi_get_entry_by_keycode(int keycode)
-{
-	struct key_entry *key;
-
-	for (key = msi_wmi_keymap; key->type != KE_END; key++)
-		if (key->type == KE_KEY && keycode == key->keycode)
-			return key;
-
-	return NULL;
-}
-
-static int msi_wmi_getkeycode(struct input_dev *dev, int scancode, int *keycode)
-{
-	struct key_entry *key = msi_wmi_get_entry_by_scancode(scancode);
-
-	if (key && key->type == KE_KEY) {
-		*keycode = key->keycode;
-		return 0;
-	}
-
-	return -EINVAL;
-}
-
-static int msi_wmi_setkeycode(struct input_dev *dev, int scancode, int keycode)
-{
-	struct key_entry *key;
-	int old_keycode;
-
-	if (keycode < 0 || keycode > KEY_MAX)
-		return -EINVAL;
-
-	key = msi_wmi_get_entry_by_scancode(scancode);
-	if (key && key->type == KE_KEY) {
-		old_keycode = key->keycode;
-		key->keycode = keycode;
-		set_bit(keycode, dev->keybit);
-		if (!msi_wmi_get_entry_by_keycode(old_keycode))
-			clear_bit(old_keycode, dev->keybit);
-		return 0;
-	}
-
-	return -EINVAL;
-}
 
 static void msi_wmi_notify(u32 value, void *context)
 {
@@ -233,133 +149,140 @@ static void msi_wmi_notify(u32 value, void *context)
 	static struct key_entry *key;
 	union acpi_object *obj;
 	ktime_t cur;
+	acpi_status status;
 
-	wmi_get_event_data(value, &response);
+	status = wmi_get_event_data(value, &response);
+	if (status != AE_OK) {
+		pr_info("bad event status 0x%x\n", status);
+		return;
+	}
 
 	obj = (union acpi_object *)response.pointer;
 
 	if (obj && obj->type == ACPI_TYPE_INTEGER) {
 		int eventcode = obj->integer.value;
-		dprintk("Eventcode: 0x%x\n", eventcode);
-		key = msi_wmi_get_entry_by_scancode(eventcode);
+		pr_debug("Eventcode: 0x%x\n", eventcode);
+		key = sparse_keymap_entry_from_scancode(msi_wmi_input_dev,
+				eventcode);
 		if (key) {
+			ktime_t diff;
 			cur = ktime_get_real();
+			diff = ktime_sub(cur, last_pressed[key->code -
+					SCANCODE_BASE]);
 			/* Ignore event if the same event happened in a 50 ms
 			   timeframe -> Key press may result in 10-20 GPEs */
-			if (ktime_to_us(ktime_sub(cur, key->last_pressed))
-			    < 1000 * 50) {
-				dprintk("Suppressed key event 0x%X - "
-					"Last press was %lld us ago\n",
-					 key->code,
-					 ktime_to_us(ktime_sub(cur,
-						       key->last_pressed)));
+			if (ktime_to_us(diff) < 1000 * 50) {
+				pr_debug("Suppressed key event 0x%X - "
+					 "Last press was %lld us ago\n",
+					 key->code, ktime_to_us(diff));
 				return;
 			}
-			key->last_pressed = cur;
+			last_pressed[key->code - SCANCODE_BASE] = cur;
 
-			switch (key->type) {
-			case KE_KEY:
-				/* Brightness is served via acpi video driver */
-				if (!backlight &&
-				    (key->keycode == KEY_BRIGHTNESSUP ||
-				     key->keycode == KEY_BRIGHTNESSDOWN))
-					break;
-
-				dprintk("Send key: 0x%X - "
-					"Input layer keycode: %d\n", key->code,
-					 key->keycode);
-				input_report_key(msi_wmi_input_dev,
-						 key->keycode, 1);
-				input_sync(msi_wmi_input_dev);
-				input_report_key(msi_wmi_input_dev,
-						 key->keycode, 0);
-				input_sync(msi_wmi_input_dev);
-				break;
+			if (key->type == KE_KEY &&
+			/* Brightness is served via acpi video driver */
+			(!acpi_video_backlight_support() ||
+			(key->code != MSI_WMI_BRIGHTNESSUP &&
+			key->code != MSI_WMI_BRIGHTNESSDOWN))) {
+				pr_debug("Send key: 0x%X - "
+					 "Input layer keycode: %d\n",
+					 key->code, key->keycode);
+				sparse_keymap_report_entry(msi_wmi_input_dev,
+						key, 1, true);
 			}
 		} else
-			printk(KERN_INFO "Unknown key pressed - %x\n",
-			       eventcode);
+			pr_info("Unknown key pressed - %x\n", eventcode);
 	} else
-		printk(KERN_INFO DRV_PFX "Unknown event received\n");
+		pr_info("Unknown event received\n");
 	kfree(response.pointer);
 }
 
 static int __init msi_wmi_input_setup(void)
 {
-	struct key_entry *key;
 	int err;
 
 	msi_wmi_input_dev = input_allocate_device();
+	if (!msi_wmi_input_dev)
+		return -ENOMEM;
 
 	msi_wmi_input_dev->name = "MSI WMI hotkeys";
 	msi_wmi_input_dev->phys = "wmi/input0";
 	msi_wmi_input_dev->id.bustype = BUS_HOST;
-	msi_wmi_input_dev->getkeycode = msi_wmi_getkeycode;
-	msi_wmi_input_dev->setkeycode = msi_wmi_setkeycode;
 
-	for (key = msi_wmi_keymap; key->type != KE_END; key++) {
-		switch (key->type) {
-		case KE_KEY:
-			set_bit(EV_KEY, msi_wmi_input_dev->evbit);
-			set_bit(key->keycode, msi_wmi_input_dev->keybit);
-			break;
-		}
-	}
+	err = sparse_keymap_setup(msi_wmi_input_dev, msi_wmi_keymap, NULL);
+	if (err)
+		goto err_free_dev;
 
 	err = input_register_device(msi_wmi_input_dev);
 
-	if (err) {
-		input_free_device(msi_wmi_input_dev);
-		return err;
-	}
+	if (err)
+		goto err_free_keymap;
+
+	memset(last_pressed, 0, sizeof(last_pressed));
 
 	return 0;
+
+err_free_keymap:
+	sparse_keymap_free(msi_wmi_input_dev);
+err_free_dev:
+	input_free_device(msi_wmi_input_dev);
+	return err;
 }
 
 static int __init msi_wmi_init(void)
 {
 	int err;
 
-	if (wmi_has_guid(MSIWMI_EVENT_GUID)) {
-		err = wmi_install_notify_handler(MSIWMI_EVENT_GUID,
-						 msi_wmi_notify, NULL);
-		if (err)
-			return -EINVAL;
-
-		err = msi_wmi_input_setup();
-		if (err) {
-			wmi_remove_notify_handler(MSIWMI_EVENT_GUID);
-			return -EINVAL;
-		}
-
-		if (!acpi_video_backlight_support()) {
-			backlight = backlight_device_register(DRV_NAME,
-					      NULL, NULL, &msi_backlight_ops);
-			if (IS_ERR(backlight)) {
-				wmi_remove_notify_handler(MSIWMI_EVENT_GUID);
-				input_unregister_device(msi_wmi_input_dev);
-				return -EINVAL;
-			}
-
-			backlight->props.max_brightness = ARRAY_SIZE(backlight_map) - 1;
-			err = bl_get(NULL);
-			if (err < 0) {
-				wmi_remove_notify_handler(MSIWMI_EVENT_GUID);
-				input_unregister_device(msi_wmi_input_dev);
-				backlight_device_unregister(backlight);
-				return -EINVAL;
-			}
-			backlight->props.brightness = err;
-		}
+	if (!wmi_has_guid(MSIWMI_EVENT_GUID)) {
+		pr_err("This machine doesn't have MSI-hotkeys through WMI\n");
+		return -ENODEV;
 	}
-	printk(KERN_INFO DRV_PFX "Event handler installed\n");
+	err = wmi_install_notify_handler(MSIWMI_EVENT_GUID,
+			msi_wmi_notify, NULL);
+	if (ACPI_FAILURE(err))
+		return -EINVAL;
+
+	err = msi_wmi_input_setup();
+	if (err)
+		goto err_uninstall_notifier;
+
+	if (!acpi_video_backlight_support()) {
+		struct backlight_properties props;
+		memset(&props, 0, sizeof(struct backlight_properties));
+		props.type = BACKLIGHT_PLATFORM;
+		props.max_brightness = ARRAY_SIZE(backlight_map) - 1;
+		backlight = backlight_device_register(DRV_NAME, NULL, NULL,
+						      &msi_backlight_ops,
+						      &props);
+		if (IS_ERR(backlight)) {
+			err = PTR_ERR(backlight);
+			goto err_free_input;
+		}
+
+		err = bl_get(NULL);
+		if (err < 0)
+			goto err_free_backlight;
+
+		backlight->props.brightness = err;
+	}
+	pr_debug("Event handler installed\n");
+
 	return 0;
+
+err_free_backlight:
+	backlight_device_unregister(backlight);
+err_free_input:
+	input_unregister_device(msi_wmi_input_dev);
+err_uninstall_notifier:
+	wmi_remove_notify_handler(MSIWMI_EVENT_GUID);
+	return err;
 }
 
 static void __exit msi_wmi_exit(void)
 {
 	if (wmi_has_guid(MSIWMI_EVENT_GUID)) {
 		wmi_remove_notify_handler(MSIWMI_EVENT_GUID);
+		sparse_keymap_free(msi_wmi_input_dev);
 		input_unregister_device(msi_wmi_input_dev);
 		backlight_device_unregister(backlight);
 	}

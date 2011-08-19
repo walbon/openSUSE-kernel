@@ -23,8 +23,8 @@
 #include <asm/debug.h>
 #include <asm/idals.h>
 #include <asm/ebcdic.h>
+#include <asm/compat.h>
 #include <asm/io.h>
-#include <asm/todclk.h>
 #include <asm/uaccess.h>
 #include <asm/cio.h>
 #include <asm/ccwdev.h>
@@ -33,14 +33,6 @@
 #include "dasd_int.h"
 #include "dasd_eckd.h"
 #include "../cio/chsc.h"
-
-/* emergency request for reserve/release */
-static struct {
-	struct dasd_ccw_req cqr;
-	struct ccw1 ccw;
-	char data[32];
-} *dasd_reserve_req;
-static DEFINE_MUTEX(dasd_reserve_mutex);
 
 
 #ifdef PRINTK_HEADER
@@ -98,6 +90,14 @@ static struct ccw_driver dasd_eckd_driver; /* see below */
 #define INIT_CQR_OK 0
 #define INIT_CQR_UNFORMATTED 1
 #define INIT_CQR_ERROR 2
+
+/* emergency request for reserve/release */
+static struct {
+	struct dasd_ccw_req cqr;
+	struct ccw1 ccw;
+	char data[32];
+} *dasd_reserve_req;
+static DEFINE_MUTEX(dasd_reserve_mutex);
 
 /* definitions for the path verification worker */
 struct path_verification_work_data {
@@ -861,6 +861,7 @@ static int dasd_eckd_read_conf_immediately(struct dasd_device *device,
 
 	dasd_eckd_fill_rcd_cqr(device, cqr, rcd_buffer, lpm);
 	clear_bit(DASD_CQR_FLAGS_USE_ERP, &cqr->flags);
+	set_bit(DASD_CQR_ALLOW_SLOCK, &cqr->flags);
 	cqr->retries = 5;
 	rc = dasd_sleep_on_immediatly(cqr);
 	return rc;
@@ -1360,8 +1361,8 @@ dasd_eckd_check_characteristics(struct dasd_device *device)
 	struct dasd_block *block;
 	struct dasd_uid temp_uid;
 	int is_known, rc, i;
-	unsigned long value;
 	int readonly;
+	unsigned long value;
 
 	if (!ccw_device_is_pathgroup(device->cdev)) {
 		dev_warn(&device->cdev->dev,
@@ -1460,15 +1461,6 @@ dasd_eckd_check_characteristics(struct dasd_device *device)
 				"Read device characteristic failed, rc=%d", rc);
 		goto out_err3;
 	}
-
-	if ((device->features & DASD_FEATURE_USERAW) &&
-  	    !(private->rdc_data.facilities.RT_in_LR)) {
-  		dev_err(&device->cdev->dev, "DASD raw track access not "
-  			"available\n");
-  		rc = -EINVAL;
-  		goto out_err3;
-  	}
-
 	/* find the valid cylinder size */
 	if (private->rdc_data.no_cyl == LV_COMPAT_CYL &&
 	    private->rdc_data.long_no_cyl)
@@ -1619,10 +1611,8 @@ static void dasd_eckd_analysis_callback(struct dasd_ccw_req *init_cqr,
 
 static int dasd_eckd_start_analysis(struct dasd_block *block)
 {
-	struct dasd_eckd_private *private;
 	struct dasd_ccw_req *init_cqr;
 
-	private = (struct dasd_eckd_private *) block->base->private;
 	init_cqr = dasd_eckd_analysis_ccw(block->base);
 	if (IS_ERR(init_cqr))
 		return PTR_ERR(init_cqr);
@@ -2272,7 +2262,6 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_cmd_track(
 					       unsigned int blk_per_trk,
 					       unsigned int blksize)
 {
-	struct dasd_eckd_private *private;
 	unsigned long *idaws;
 	struct dasd_ccw_req *cqr;
 	struct ccw1 *ccw;
@@ -2291,7 +2280,6 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_cmd_track(
 	unsigned int recoffs;
 
 	basedev = block->base;
-	private = (struct dasd_eckd_private *) basedev->private;
 	if (rq_data_dir(req) == READ)
 		cmd = DASD_ECKD_CCW_READ_TRACK_DATA;
 	else if (rq_data_dir(req) == WRITE)
@@ -2564,8 +2552,7 @@ static int prepare_itcw(struct itcw *itcw,
 
 	dcw = itcw_add_dcw(itcw, pfx_cmd, 0,
 		     &pfxdata, sizeof(pfxdata), total_data_size);
-
-	return rc;
+	return IS_ERR(dcw) ? PTR_ERR(dcw) : 0;
 }
 
 static struct dasd_ccw_req *dasd_eckd_build_cp_tpm_track(
@@ -2581,7 +2568,6 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_tpm_track(
 					       unsigned int blk_per_trk,
 					       unsigned int blksize)
 {
-	struct dasd_eckd_private *private;
 	struct dasd_ccw_req *cqr;
 	struct req_iterator iter;
 	struct bio_vec *bv;
@@ -2602,7 +2588,6 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_tpm_track(
 	unsigned int count, count_to_trk_end;
 
 	basedev = block->base;
-	private = (struct dasd_eckd_private *) basedev->private;
 	if (rq_data_dir(req) == READ) {
 		cmd = DASD_ECKD_CCW_READ_TRACK_DATA;
 		itcw_op = ITCW_OP_READ;
@@ -2657,6 +2642,7 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_tpm_track(
 		dasd_sfree_request(cqr, startdev);
 		return ERR_PTR(-EAGAIN);
 	}
+	len_to_track_end = 0;
 	/*
 	 * A tidaw can address 4k of memory, but must not cross page boundaries
 	 * We can let the block layer handle this by setting
@@ -2698,7 +2684,7 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_tpm_track(
 				dst += part_len;
 			}
 		}
-	} else  {
+	} else {
 		rq_for_each_segment(bv, req, iter) {
 			dst = page_address(bv->bv_page) + bv->bv_offset;
 			last_tidaw = itcw_add_tidaw(itcw, 0x00,
@@ -2808,7 +2794,6 @@ static struct dasd_ccw_req *dasd_raw_build_cp(struct dasd_device *startdev,
 					       struct dasd_block *block,
 					       struct request *req)
 {
-	struct dasd_eckd_private *private;
 	unsigned long *idaws;
 	struct dasd_device *basedev;
 	struct dasd_ccw_req *cqr;
@@ -2843,7 +2828,6 @@ static struct dasd_ccw_req *dasd_raw_build_cp(struct dasd_device *startdev,
 	trkcount = last_trk - first_trk + 1;
 	first_offs = 0;
 	basedev = block->base;
-	private = (struct dasd_eckd_private *) basedev->private;
 
 	if (rq_data_dir(req) == READ)
 		cmd = DASD_ECKD_CCW_READ_TRACK;
@@ -2866,7 +2850,7 @@ static struct dasd_ccw_req *dasd_raw_build_cp(struct dasd_device *startdev,
 	/*
 	 * struct PFX_eckd_data has up to 2 byte as extended parameter
 	 * this is needed for write full track and has to be mentioned
-	 * seperately
+	 * separately
 	 * add 8 instead of 2 to keep 8 byte boundary
 	 */
 	pfx_datasize = sizeof(struct PFX_eckd_data) + 8;
@@ -3450,13 +3434,16 @@ static int dasd_symm_io(struct dasd_device *device, void __user *argp)
 	rc = -EFAULT;
 	if (copy_from_user(&usrparm, argp, sizeof(usrparm)))
 		goto out;
-#ifndef CONFIG_64BIT
-	/* Make sure pointers are sane even on 31 bit. */
-	if ((usrparm.psf_data >> 32) != 0 || (usrparm.rssd_result >> 32) != 0) {
+	if (is_compat_task() || sizeof(long) == 4) {
+		/* Make sure pointers are sane even on 31 bit. */
 		rc = -EINVAL;
-		goto out;
+		if ((usrparm.psf_data >> 32) != 0)
+			goto out;
+		if ((usrparm.rssd_result >> 32) != 0)
+			goto out;
+		usrparm.psf_data &= 0x7fffffffULL;
+		usrparm.rssd_result &= 0x7fffffffULL;
 	}
-#endif
 	/* alloc I/O data area */
 	psf_data = kzalloc(usrparm.psf_data_len, GFP_KERNEL | GFP_DMA);
 	rssd_result = kzalloc(usrparm.rssd_result_len, GFP_KERNEL | GFP_DMA);
@@ -3940,10 +3927,16 @@ static int dasd_eckd_reload_device(struct dasd_device *device)
 {
 	struct dasd_eckd_private *private;
 	int rc, old_base;
-	char uid[60];
+	char print_uid[60];
+	struct dasd_uid uid;
+	unsigned long flags;
 
 	private = (struct dasd_eckd_private *) device->private;
+
+	spin_lock_irqsave(get_ccwdev_lock(device->cdev), flags);
 	old_base = private->uid.base_unit_addr;
+	spin_unlock_irqrestore(get_ccwdev_lock(device->cdev), flags);
+
 	/* Read Configuration Data */
 	rc = dasd_eckd_read_conf(device);
 	if (rc)
@@ -3952,28 +3945,27 @@ static int dasd_eckd_reload_device(struct dasd_device *device)
 	rc = dasd_eckd_generate_uid(device);
 	if (rc)
 		goto out_err;
-
 	/*
 	 * update unit address configuration and
 	 * add device to alias management
 	 */
 	dasd_alias_update_add_device(device);
 
-	if (old_base != private->uid.base_unit_addr) {
-		if (strlen(private->uid.vduit) > 0)
-			snprintf(uid, 60, "%s.%s.%04x.%02x.%s",
-				 private->uid.vendor, private->uid.serial,
-				 private->uid.ssid, private->uid.base_unit_addr,
-				 private->uid.vduit);
+	dasd_eckd_get_uid(device, &uid);
+
+	if (old_base != uid.base_unit_addr) {
+		if (strlen(uid.vduit) > 0)
+			snprintf(print_uid, sizeof(print_uid),
+				 "%s.%s.%04x.%02x.%s", uid.vendor, uid.serial,
+				 uid.ssid, uid.base_unit_addr, uid.vduit);
 		else
-			snprintf(uid, 60, "%s.%s.%04x.%02x",
-				 private->uid.vendor, private->uid.serial,
-				 private->uid.ssid,
-				 private->uid.base_unit_addr);
+			snprintf(print_uid, sizeof(print_uid),
+				 "%s.%s.%04x.%02x", uid.vendor, uid.serial,
+				 uid.ssid, uid.base_unit_addr);
 
 		dev_info(&device->cdev->dev,
 			 "An Alias device was reassigned to a new base device "
-			 "with UID: %s\n", uid);
+			 "with UID: %s\n", print_uid);
 	}
 	return 0;
 
@@ -3982,8 +3974,10 @@ out_err:
 }
 
 static struct ccw_driver dasd_eckd_driver = {
-	.name	     = "dasd-eckd",
-	.owner	     = THIS_MODULE,
+	.driver = {
+		.name	= "dasd-eckd",
+		.owner	= THIS_MODULE,
+	},
 	.ids	     = dasd_eckd_ids,
 	.probe	     = dasd_eckd_probe,
 	.remove      = dasd_generic_remove,
@@ -4037,8 +4031,8 @@ static struct dasd_discipline dasd_eckd_discipline = {
 	.ioctl = dasd_eckd_ioctl,
 	.freeze = dasd_eckd_pm_freeze,
 	.restore = dasd_eckd_restore_device,
-	.get_uid = dasd_eckd_get_uid,
 	.reload = dasd_eckd_reload_device,
+	.get_uid = dasd_eckd_get_uid,
 };
 
 static int __init

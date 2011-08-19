@@ -30,6 +30,7 @@
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/memory_hotplug.h>
+#include <linux/slab.h>
 #include <acpi/acpi_drivers.h>
 
 #define ACPI_MEMORY_DEVICE_CLASS		"memory"
@@ -86,14 +87,6 @@ struct acpi_memory_device {
 };
 
 static int acpi_hotmem_initialized;
-
-#ifdef CONFIG_XEN
-#include "../xen/core/acpi_memhotplug.c"
-#define memory_add_physaddr_to_nid(start) 0
-#else
-static inline int xen_hotadd_mem_init(void) { return 0; }
-static inline void xen_hotadd_mem_exit(void) {}
-#endif
 
 static acpi_status
 acpi_memory_get_resource(struct acpi_resource *resource, void *context)
@@ -236,10 +229,6 @@ static int acpi_memory_enable_device(struct acpi_memory_device *mem_device)
 		return result;
 	}
 
-#ifdef CONFIG_XEN
-	return xen_hotadd_memory(mem_device);
-#endif
-
 	node = acpi_get_node(mem_device->device->handle);
 	/*
 	 * Tell the VM there is more memory here...
@@ -322,10 +311,6 @@ static int acpi_memory_disable_device(struct acpi_memory_device *mem_device)
 	int result;
 	struct acpi_memory_info *info, *n;
 
-
-#ifdef CONFIG_XEN
-	return -EOPNOTSUPP;
-#endif
 
 	/*
 	 * Ask the VM to offline this memory range.
@@ -546,10 +531,6 @@ static int __init acpi_memory_device_init(void)
 	acpi_status status;
 
 
-	result = xen_hotadd_mem_init();
-	if (result < 0)
-		return result;
-
 	result = acpi_bus_register_driver(&acpi_memory_device_driver);
 
 	if (result < 0)
@@ -557,7 +538,7 @@ static int __init acpi_memory_device_init(void)
 
 	status = acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT,
 				     ACPI_UINT32_MAX,
-				     acpi_memory_register_notify_handler,
+				     acpi_memory_register_notify_handler, NULL,
 				     NULL, NULL);
 
 	if (ACPI_FAILURE(status)) {
@@ -581,15 +562,13 @@ static void __exit acpi_memory_device_exit(void)
 	 */
 	status = acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT,
 				     ACPI_UINT32_MAX,
-				     acpi_memory_deregister_notify_handler,
+				     acpi_memory_deregister_notify_handler, NULL,
 				     NULL, NULL);
 
 	if (ACPI_FAILURE(status))
 		ACPI_EXCEPTION((AE_INFO, status, "walk_namespace failed"));
 
 	acpi_bus_unregister_driver(&acpi_memory_device_driver);
-
-	xen_hotadd_mem_exit();
 
 	return;
 }

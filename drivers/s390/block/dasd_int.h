@@ -231,8 +231,8 @@ struct dasd_ccw_req {
 /* per dasd_ccw_req flags */
 #define DASD_CQR_FLAGS_USE_ERP   0	/* use ERP for this request */
 #define DASD_CQR_FLAGS_FAILFAST  1	/* FAILFAST */
-#define DASD_CQR_VERIFY_PATH     2      /* path verification request */
-#define DASD_CQR_ALLOW_SLOCK     3      /* Try this request even when lock was
+#define DASD_CQR_VERIFY_PATH	 2	/* path verification request */
+#define DASD_CQR_ALLOW_SLOCK	 3	/* Try this request even when lock was
 					 * stolen. Should not be combined with
 					 * DASD_CQR_FLAGS_USE_ERP
 					 */
@@ -351,10 +351,10 @@ struct dasd_discipline {
 	int (*freeze) (struct dasd_device *);
 	int (*restore) (struct dasd_device *);
 
- 	int (*get_uid) (struct dasd_device *, struct dasd_uid *);
-
 	/* reload device after state change */
 	int (*reload) (struct dasd_device *);
+
+	int (*get_uid) (struct dasd_device *, struct dasd_uid *);
 };
 
 extern struct dasd_discipline *dasd_diag_discipline_pointer;

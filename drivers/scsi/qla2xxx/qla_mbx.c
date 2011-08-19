@@ -7,6 +7,7 @@
 #include "qla_def.h"
 
 #include <linux/delay.h>
+#include <linux/gfp.h>
 
 
 /*
@@ -65,8 +66,8 @@ qla2x00_mailbox_command(scsi_qla_host_t *vha, mbx_cmd_t *mcp)
 	DEBUG11(printk("%s(%ld): entered.\n", __func__, base_vha->host_no));
 
 	if (ha->flags.pci_channel_io_perm_failure) {
-		DEBUG(printk(KERN_WARNING "%s(%ld): Perm failure on EEH,"
-		    "timeout MBX Exiting.\n", __func__, vha->host_no));
+		DEBUG(printk("%s(%ld): Perm failure on EEH, timeout MBX "
+			     "Exiting.\n", __func__, vha->host_no));
 		return QLA_FUNCTION_TIMEOUT;
 	}
 
@@ -302,7 +303,7 @@ qla2x00_mailbox_command(scsi_qla_host_t *vha, mbx_cmd_t *mcp)
 			    !test_bit(ISP_ABORT_RETRY, &vha->dpc_flags)) {
 
 				qla_printk(KERN_WARNING, ha,
-				    "Mailbox command timeout occured. "
+				    "Mailbox command timeout occurred. "
 				    "Scheduling ISP " "abort. eeh_busy: 0x%x\n",
 				    ha->flags.eeh_busy);
 				set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
@@ -320,7 +321,7 @@ qla2x00_mailbox_command(scsi_qla_host_t *vha, mbx_cmd_t *mcp)
 			    !test_bit(ISP_ABORT_RETRY, &vha->dpc_flags)) {
 
 				qla_printk(KERN_WARNING, ha,
-				    "Mailbox command timeout occured. "
+				    "Mailbox command timeout occurred. "
 				    "Issuing ISP abort.\n");
 
 				set_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags);
@@ -1261,11 +1262,11 @@ qla2x00_get_port_database(scsi_qla_host_t *vha, fc_port_t *fcport, uint8_t opt)
 		if (pd24->current_login_state != PDS_PRLI_COMPLETE &&
 		    pd24->last_login_state != PDS_PRLI_COMPLETE) {
 			DEBUG2(qla_printk(KERN_WARNING, ha,
-			    "scsi(%ld): Unable to verify login-state (%x/%x) "
-			    " - portid=%02x%02x%02x.\n", vha->host_no,
-			    pd24->current_login_state, pd24->last_login_state,
-			    fcport->d_id.b.domain, fcport->d_id.b.area,
-			    fcport->d_id.b.al_pa));
+			   "scsi(%ld): Unable to verify login-state (%x/%x) "
+			   " - portid=%02x%02x%02x.\n", vha->host_no,
+			   pd24->current_login_state, pd24->last_login_state,
+			   fcport->d_id.b.domain, fcport->d_id.b.area,
+			   fcport->d_id.b.al_pa));
 			rval = QLA_FUNCTION_FAILED;
 			goto gpd_error_out;
 		}
@@ -1290,11 +1291,11 @@ qla2x00_get_port_database(scsi_qla_host_t *vha, fc_port_t *fcport, uint8_t opt)
 		if (pd->master_state != PD_STATE_PORT_LOGGED_IN &&
 		    pd->slave_state != PD_STATE_PORT_LOGGED_IN) {
 			DEBUG2(qla_printk(KERN_WARNING, ha,
-			    "scsi(%ld): Unable to verify login-state (%x/%x) "
-			    " - portid=%02x%02x%02x.\n", vha->host_no,
-			    pd->master_state, pd->slave_state,
-			    fcport->d_id.b.domain, fcport->d_id.b.area,
-			    fcport->d_id.b.al_pa));
+			   "scsi(%ld): Unable to verify login-state (%x/%x) "
+			   " - portid=%02x%02x%02x.\n", vha->host_no,
+			   pd->master_state, pd->slave_state,
+			   fcport->d_id.b.domain, fcport->d_id.b.area,
+			   fcport->d_id.b.al_pa));
 			rval = QLA_FUNCTION_FAILED;
 			goto gpd_error_out;
 		}
@@ -3746,7 +3747,8 @@ qla2x00_read_ram_word(scsi_qla_host_t *vha, uint32_t risc_addr, uint32_t *data)
 }
 
 int
-qla2x00_loopback_test(scsi_qla_host_t *vha, struct msg_echo_lb *mreq, uint16_t *mresp)
+qla2x00_loopback_test(scsi_qla_host_t *vha, struct msg_echo_lb *mreq,
+	uint16_t *mresp)
 {
 	int rval;
 	mbx_cmd_t mc;
@@ -3769,7 +3771,7 @@ qla2x00_loopback_test(scsi_qla_host_t *vha, struct msg_echo_lb *mreq, uint16_t *
 	mcp->mb[20] = LSW(MSD(mreq->send_dma));
 	mcp->mb[21] = MSW(MSD(mreq->send_dma));
 
-	/* recieve data address */
+	/* receive data address */
 	mcp->mb[16] = LSW(mreq->rcv_dma);
 	mcp->mb[17] = MSW(mreq->rcv_dma);
 	mcp->mb[6] = LSW(MSD(mreq->rcv_dma));
@@ -3793,9 +3795,11 @@ qla2x00_loopback_test(scsi_qla_host_t *vha, struct msg_echo_lb *mreq, uint16_t *
 
 	if (rval != QLA_SUCCESS) {
 		DEBUG2(printk(KERN_WARNING
-		    "(%ld): failed=%x mb[0]=0x%x "
-			"mb[1]=0x%x mb[2]=0x%x mb[3]=0x%x mb[18]=0x%x mb[19]=0x%x. \n", vha->host_no, rval,
-			mcp->mb[0], mcp->mb[1], mcp->mb[2], mcp->mb[3], mcp->mb[18], mcp->mb[19]));
+			"(%ld): failed=%x mb[0]=0x%x "
+			"mb[1]=0x%x mb[2]=0x%x mb[3]=0x%x mb[18]=0x%x "
+			"mb[19]=0x%x.\n",
+			vha->host_no, rval, mcp->mb[0], mcp->mb[1], mcp->mb[2],
+			mcp->mb[3], mcp->mb[18], mcp->mb[19]));
 	} else {
 		DEBUG2(printk(KERN_WARNING
 		    "scsi(%ld): done.\n", vha->host_no));
@@ -3807,7 +3811,8 @@ qla2x00_loopback_test(scsi_qla_host_t *vha, struct msg_echo_lb *mreq, uint16_t *
 }
 
 int
-qla2x00_echo_test(scsi_qla_host_t *vha, struct msg_echo_lb *mreq, uint16_t *mresp)
+qla2x00_echo_test(scsi_qla_host_t *vha, struct msg_echo_lb *mreq,
+	uint16_t *mresp)
 {
 	int rval;
 	mbx_cmd_t mc;
@@ -3862,7 +3867,7 @@ qla2x00_echo_test(scsi_qla_host_t *vha, struct msg_echo_lb *mreq, uint16_t *mres
 	}
 
 	/* Copy mailbox information */
-	memcpy( mresp, mcp->mb, 64);
+	memcpy(mresp, mcp->mb, 64);
 	return rval;
 }
 
@@ -3997,8 +4002,8 @@ qla2x00_get_data_rate(scsi_qla_host_t *vha)
 	if (!IS_FWI2_CAPABLE(ha))
 		return QLA_FUNCTION_FAILED;
 
-	DEBUG11(printk(KERN_INFO "%s(%ld): entered.\n", __func__,
-	    vha->host_no));
+	DEBUG11(qla_printk(KERN_INFO, ha,
+		"%s(%ld): entered.\n", __func__, vha->host_no));
 
 	mcp->mb[0] = MBC_DATA_RATE;
 	mcp->mb[1] = 0;

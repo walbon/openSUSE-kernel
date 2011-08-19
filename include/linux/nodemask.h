@@ -66,12 +66,8 @@
  * int num_online_nodes()		Number of online Nodes
  * int num_possible_nodes()		Number of all possible Nodes
  *
- * int node_random(mask)		Random node with set bit in mask
- *
  * int node_online(node)		Is some node online?
  * int node_possible(node)		Is some node possible?
- *
- * int any_online_node(mask)		First online node in mask
  *
  * node_set_online(node)		set bit 'node' in node_online_map
  * node_set_offline(node)		clear bit 'node' in node_online_map
@@ -434,7 +430,6 @@ static inline void node_set_offline(int nid)
 	node_clear_state(nid, N_ONLINE);
 	nr_online_nodes = num_node_state(N_ONLINE);
 }
-
 #else
 
 static inline int node_state(int node, enum node_states state)
@@ -465,29 +460,10 @@ static inline int num_node_state(enum node_states state)
 
 #define node_set_online(node)	   node_set_state((node), N_ONLINE)
 #define node_set_offline(node)	   node_clear_state((node), N_ONLINE)
-
-#endif
-
-#if defined(CONFIG_NUMA) && (MAX_NUMNODES > 1)
-extern int node_random(const nodemask_t *maskp);
-#else
-static inline int node_random(const nodemask_t *mask)
-{
-	return 0;
-}
 #endif
 
 #define node_online_map 	node_states[N_ONLINE]
 #define node_possible_map 	node_states[N_POSSIBLE]
-
-#define any_online_node(mask)			\
-({						\
-	int node;				\
-	for_each_node_mask(node, (mask))	\
-		if (node_online(node))		\
-			break;			\
-	node;					\
-})
 
 #define num_online_nodes()	num_node_state(N_ONLINE)
 #define num_possible_nodes()	num_node_state(N_POSSIBLE)
@@ -498,15 +474,17 @@ static inline int node_random(const nodemask_t *mask)
 #define for_each_online_node(node) for_each_node_state(node, N_ONLINE)
 
 /*
- * For nodemask scrach area.(See CPUMASK_ALLOC() in cpumask.h)
+ * For nodemask scrach area.
+ * NODEMASK_ALLOC(type, name) allocates an object with a specified type and
+ * name.
  */
-
-#if NODES_SHIFT > 8 /* nodemask_t > 64 bytes */
-#define NODEMASK_ALLOC(type, name) type *name = kmalloc(sizeof(*name), GFP_KERNEL)
-#define NODEMASK_FREE(m) kfree(m)
+#if NODES_SHIFT > 8 /* nodemask_t > 256 bytes */
+#define NODEMASK_ALLOC(type, name, gfp_flags)	\
+			type *name = kmalloc(sizeof(*name), gfp_flags)
+#define NODEMASK_FREE(m)			kfree(m)
 #else
-#define NODEMASK_ALLOC(type, name) type _name, *name = &_name
-#define NODEMASK_FREE(m)
+#define NODEMASK_ALLOC(type, name, gfp_flags)	type _##name, *name = &_##name
+#define NODEMASK_FREE(m)			do {} while (0)
 #endif
 
 /* A example struture for using NODEMASK_ALLOC, used in mempolicy. */
@@ -515,8 +493,10 @@ struct nodemask_scratch {
 	nodemask_t	mask2;
 };
 
-#define NODEMASK_SCRATCH(x) NODEMASK_ALLOC(struct nodemask_scratch, x)
-#define NODEMASK_SCRATCH_FREE(x)  NODEMASK_FREE(x)
+#define NODEMASK_SCRATCH(x)						\
+			NODEMASK_ALLOC(struct nodemask_scratch, x,	\
+					GFP_KERNEL | __GFP_NORETRY)
+#define NODEMASK_SCRATCH_FREE(x)	NODEMASK_FREE(x)
 
 
 #endif /* __LINUX_NODEMASK_H */

@@ -14,6 +14,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/usb.h>
+#include <linux/slab.h>
 
 #include "phidget.h"
 
@@ -339,7 +340,8 @@ static int motorcontrol_probe(struct usb_interface *intf, const struct usb_devic
 		goto out;
 
 	mc->dev_no = -1;
-	mc->data = usb_alloc_coherent(dev, URB_INT_SIZE, GFP_ATOMIC, &mc->data_dma);
+	mc->data = usb_alloc_coherent(dev, URB_INT_SIZE, GFP_ATOMIC,
+				      &mc->data_dma);
 	if (!mc->data)
 		goto out;
 
@@ -394,7 +396,8 @@ out:
 	if (mc) {
 		usb_free_urb(mc->irq);
 		if (mc->data)
-			usb_free_coherent(dev, URB_INT_SIZE, mc->data, mc->data_dma);
+			usb_free_coherent(dev, URB_INT_SIZE, mc->data,
+					  mc->data_dma);
 		if (mc->dev)
 			device_unregister(mc->dev);
 		if (mc->dev_no >= 0)

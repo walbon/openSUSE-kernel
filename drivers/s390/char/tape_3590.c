@@ -9,8 +9,10 @@
  */
 
 #define KMSG_COMPONENT "tape_3590"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/bio.h>
 #include <asm/ebcdic.h>
@@ -22,6 +24,8 @@
 #include "tape_std.h"
 #include "tape_3590.h"
 
+static struct workqueue_struct *tape_3590_wq;
+
 /*
  * Pointer to debug area.
  */
@@ -29,7 +33,7 @@ debug_info_t *TAPE_DBF_AREA = NULL;
 EXPORT_SYMBOL(TAPE_DBF_AREA);
 
 /*******************************************************************
- * Error Recovery fuctions:
+ * Error Recovery functions:
  * - Read Opposite:		 implemented
  * - Read Device (buffered) log: BRA
  * - Read Library log:		 BRA
@@ -136,7 +140,7 @@ static void int_to_ext_kekl(struct tape3592_kekl *in,
 		out->type_on_tape = TAPE390_KEKL_TYPE_LABEL;
 	memcpy(out->label, in->label, sizeof(in->label));
 	EBCASC(out->label, sizeof(in->label));
-	strstrip(out->label);
+	strim(out->label);
 }
 
 static void int_to_ext_kekl_pair(struct tape3592_kekl_pair *in,
@@ -659,10 +663,10 @@ tape_3590_schedule_work(struct tape_device *device, enum tape_op op)
 
 	INIT_WORK(&p->work, tape_3590_work_handler);
 
-	p->device = tape_get_device_reference(device);
+	p->device = tape_get_device(device);
 	p->op = op;
 
-	schedule_work(&p->work);
+	queue_work(tape_3590_wq, &p->work);
 	return 0;
 }
 
@@ -792,10 +796,8 @@ static void tape_3590_med_state_set(struct tape_device *device,
 static int
 tape_3590_done(struct tape_device *device, struct tape_request *request)
 {
-	struct tape_3590_disc_data *disc_data;
 
 	DBF_EVENT(6, "%s done\n", tape_op_verbose[request->op]);
-	disc_data = device->discdata;
 
 	switch (request->op) {
 	case TO_BSB:
@@ -847,7 +849,7 @@ tape_3590_done(struct tape_device *device, struct tape_request *request)
 }
 
 /*
- * This fuction is called, when error recovery was successfull
+ * This function is called, when error recovery was successful
  */
 static inline int
 tape_3590_erp_succeded(struct tape_device *device, struct tape_request *request)
@@ -858,7 +860,7 @@ tape_3590_erp_succeded(struct tape_device *device, struct tape_request *request)
 }
 
 /*
- * This fuction is called, when error recovery was not successfull
+ * This function is called, when error recovery was not successful
  */
 static inline int
 tape_3590_erp_failed(struct tape_device *device, struct tape_request *request,
@@ -1390,17 +1392,12 @@ tape_3590_print_era_msg(struct tape_device *device, struct irb *irb)
 static int tape_3590_crypt_error(struct tape_device *device,
 				 struct tape_request *request, struct irb *irb)
 {
-	u8 cu_rc, ekm_rc1;
+	u8 cu_rc;
 	u16 ekm_rc2;
-	u32 drv_rc;
-	const char *bus_id;
 	char *sense;
 
 	sense = ((struct tape_3590_sense *) irb->ecw)->fmt.data;
-	bus_id = dev_name(&device->cdev->dev);
 	cu_rc = sense[0];
-	drv_rc = *((u32*) &sense[5]) & 0xffffff;
-	ekm_rc1 = sense[9];
 	ekm_rc2 = *((u16*) &sense[10]);
 	if ((cu_rc == 0) && (ekm_rc2 == 0xee31))
 		/* key not defined on EKM */
@@ -1425,7 +1422,6 @@ tape_3590_unit_check(struct tape_device *device, struct tape_request *request,
 		     struct irb *irb)
 {
 	struct tape_3590_sense *sense;
-	int rc;
 
 #ifdef CONFIG_S390_TAPE_BLOCK
 	if (request->op == TO_BLOCK) {
@@ -1450,7 +1446,6 @@ tape_3590_unit_check(struct tape_device *device, struct tape_request *request,
 	 *   - "break":     basic error recovery is done
 	 *   - "goto out:": just print error message if available
 	 */
-	rc = -EIO;
 	switch (sense->rc_rqc) {
 
 	case 0x1110:
@@ -1678,7 +1673,7 @@ fail_kmalloc:
 static void
 tape_3590_cleanup_device(struct tape_device *device)
 {
-	flush_scheduled_work();
+	flush_workqueue(tape_3590_wq);
 	tape_std_unassign(device);
 
 	kfree(device->discdata);
@@ -1757,8 +1752,10 @@ tape_3590_online(struct ccw_device *cdev)
 }
 
 static struct ccw_driver tape_3590_driver = {
-	.name = "tape_3590",
-	.owner = THIS_MODULE,
+	.driver = {
+		.name = "tape_3590",
+		.owner = THIS_MODULE,
+	},
 	.ids = tape_3590_ids,
 	.probe = tape_generic_probe,
 	.remove = tape_generic_remove,
@@ -1782,11 +1779,17 @@ tape_3590_init(void)
 #endif
 
 	DBF_EVENT(3, "3590 init\n");
+
+	tape_3590_wq = alloc_workqueue("tape_3590", 0, 0);
+	if (!tape_3590_wq)
+		return -ENOMEM;
+
 	/* Register driver for 3590 tapes. */
 	rc = ccw_driver_register(&tape_3590_driver);
-	if (rc)
+	if (rc) {
+		destroy_workqueue(tape_3590_wq);
 		DBF_EVENT(3, "3590 init failed\n");
-	else
+	} else
 		DBF_EVENT(3, "3590 registered\n");
 	return rc;
 }
@@ -1795,7 +1798,7 @@ static void
 tape_3590_exit(void)
 {
 	ccw_driver_unregister(&tape_3590_driver);
-
+	destroy_workqueue(tape_3590_wq);
 	debug_unregister(TAPE_DBF_AREA);
 }
 

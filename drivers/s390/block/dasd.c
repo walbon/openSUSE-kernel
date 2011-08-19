@@ -11,6 +11,7 @@
 #define KMSG_COMPONENT "dasd"
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
+#include <linux/kernel_stat.h>
 #include <linux/kmod.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -25,7 +26,6 @@
 #include <asm/ccwdev.h>
 #include <asm/ebcdic.h>
 #include <asm/idals.h>
-#include <asm/todclk.h>
 #include <asm/itcw.h>
 #include <asm/diag.h>
 
@@ -855,7 +855,6 @@ int dasd_term_IO(struct dasd_ccw_req *cqr)
 		rc = ccw_device_clear(device->cdev, (long) cqr);
 		switch (rc) {
 		case 0:	/* termination successful */
-			cqr->retries--;
 			cqr->status = DASD_CQR_CLEAR_PENDING;
 			cqr->stopclk = get_clock();
 			cqr->starttime = 0;
@@ -1111,6 +1110,7 @@ void dasd_int_handler(struct ccw_device *cdev, unsigned long intparm,
 	unsigned long long now;
 	int expires;
 
+	kstat_cpu(smp_processor_id()).irqs[IOINT_DAS]++;
 	if (IS_ERR(irb)) {
 		switch (PTR_ERR(irb)) {
 		case -EIO:
@@ -1359,14 +1359,14 @@ static void __dasd_device_check_expire(struct dasd_device *device)
 		if (device->discipline->term_IO(cqr) != 0) {
 			/* Hmpf, try again in 5 sec */
 			dev_err(&device->cdev->dev,
-				"cqr %p timed out (%lds) but cannot be "
+				"cqr %p timed out (%lus) but cannot be "
 				"ended, retrying in 5 s\n",
 				cqr, (cqr->expires/HZ));
 			cqr->expires += 5*HZ;
 			dasd_device_set_timer(device, 5*HZ);
 		} else {
 			dev_err(&device->cdev->dev,
-				"cqr %p timed out (%lds), %i retries "
+				"cqr %p timed out (%lus), %i retries "
 				"remaining\n", cqr, (cqr->expires/HZ),
 				cqr->retries);
 		}
@@ -1742,11 +1742,20 @@ int dasd_sleep_on_interruptible(struct dasd_ccw_req *cqr)
 static inline int _dasd_term_running_cqr(struct dasd_device *device)
 {
 	struct dasd_ccw_req *cqr;
+	int rc;
 
 	if (list_empty(&device->ccw_queue))
 		return 0;
 	cqr = list_entry(device->ccw_queue.next, struct dasd_ccw_req, devlist);
-	return device->discipline->term_IO(cqr);
+	rc = device->discipline->term_IO(cqr);
+	if (!rc)
+		/*
+		 * CQR terminated because a more important request is pending.
+		 * Undo decreasing of retry counter because this is
+		 * not an error case.
+		 */
+		cqr->retries++;
+	return rc;
 }
 
 int dasd_sleep_on_immediatly(struct dasd_ccw_req *cqr)
@@ -1917,7 +1926,7 @@ static void __dasd_process_request_queue(struct dasd_block *block)
 		return;
 	}
 	/* Now we try to fetch requests from the request queue */
-	while (!blk_queue_plugged(queue) && (req = blk_peek_request(queue))) {
+	while ((req = blk_peek_request(queue))) {
 		if (basedev->features & DASD_FEATURE_READONLY &&
 		    rq_data_dir(req) == WRITE) {
 			DBF_DEV_EVENT(DBF_ERR, basedev,
@@ -2015,7 +2024,8 @@ restart:
 		/*  Process requests that may be recovered */
 		if (cqr->status == DASD_CQR_NEED_ERP) {
 			erp_fn = base->discipline->erp_action(cqr);
-			erp_fn(cqr);
+			if (IS_ERR(erp_fn(cqr)))
+				continue;
 			goto restart;
 		}
 
@@ -2261,19 +2271,20 @@ static void dasd_setup_queue(struct dasd_block *block)
 {
 	int max;
 
- 	if (block->base->features & DASD_FEATURE_USERAW) {
- 		/*
- 		 * the max_blocks value for raw_track access is 256
- 		 * it is higher than the native ECKD value because we
- 		 * only need one ccw per track
- 		 * so the max_hw_sectors are
- 		 * 2048 x 512B = 1024kB = 16 tracks
- 		 */
- 		max = 2048;
- 	} else {
- 		max = block->base->discipline->max_blocks << block->s2b_shift;
- 	}
- 	blk_queue_logical_block_size(block->request_queue, block->bp_block);
+	if (block->base->features & DASD_FEATURE_USERAW) {
+		/*
+		 * the max_blocks value for raw_track access is 256
+		 * it is higher than the native ECKD value because we
+		 * only need one ccw per track
+		 * so the max_hw_sectors are
+		 * 2048 x 512B = 1024kB = 16 tracks
+		 */
+		max = 2048;
+	} else {
+		max = block->base->discipline->max_blocks << block->s2b_shift;
+	}
+	blk_queue_logical_block_size(block->request_queue,
+				     block->bp_block);
 	blk_queue_max_hw_sectors(block->request_queue, max);
 	blk_queue_max_segments(block->request_queue, -1L);
 	/* with page sized segments we can translate each segement into
@@ -2787,6 +2798,10 @@ int dasd_generic_pm_freeze(struct ccw_device *cdev)
 
 	if (IS_ERR(device))
 		return PTR_ERR(device);
+
+	if (device->discipline->freeze)
+		rc = device->discipline->freeze(device);
+
 	/* disallow new I/O  */
 	dasd_device_set_stop_bits(device, DASD_STOPPED_PM);
 	/* clear active requests */
@@ -2822,9 +2837,6 @@ int dasd_generic_pm_freeze(struct ccw_device *cdev)
 	spin_lock_irq(get_ccwdev_lock(cdev));
 	list_splice_tail(&freeze_queue, &device->ccw_queue);
 	spin_unlock_irq(get_ccwdev_lock(cdev));
-
-	if (device->discipline->freeze)
-		rc = device->discipline->freeze(device);
 
 	dasd_put_device(device);
 	return rc;

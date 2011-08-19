@@ -56,7 +56,7 @@ static void qla4xxx_advance_req_ring_ptr(struct scsi_qla_host *ha)
  *	- advances the request_in pointer
  *	- checks for queue full
  **/
-int qla4xxx_get_req_pkt(struct scsi_qla_host *ha,
+static int qla4xxx_get_req_pkt(struct scsi_qla_host *ha,
 			       struct queue_entry **queue_entry)
 {
 	uint16_t req_cnt = 1;
@@ -100,8 +100,8 @@ int qla4xxx_send_marker_iocb(struct scsi_qla_host *ha,
 	}
 
 	/* Put the marker in the request queue */
-	marker_entry->hdr.entry_type = ET_MARKER;
-	marker_entry->hdr.entry_count = 1;
+	marker_entry->hdr.entryType = ET_MARKER;
+	marker_entry->hdr.entryCount = 1;
 	marker_entry->target = cpu_to_le16(ddb_entry->fw_ddb_index);
 	marker_entry->modifier = cpu_to_le16(mrkr_mod);
 	int_to_scsilun(lun, &marker_entry->lun);
@@ -125,9 +125,9 @@ qla4xxx_alloc_cont_entry(struct scsi_qla_host *ha)
 	qla4xxx_advance_req_ring_ptr(ha);
 
 	/* Load packet defaults */
-	cont_entry->hdr.entry_type = ET_CONTINUE;
-	cont_entry->hdr.entry_count = 1;
-	cont_entry->hdr.system_defined = (uint8_t) cpu_to_le16(ha->request_in);
+	cont_entry->hdr.entryType = ET_CONTINUE;
+	cont_entry->hdr.entryCount = 1;
+	cont_entry->hdr.systemDefined = (uint8_t) cpu_to_le16(ha->request_in);
 
 	return cont_entry;
 }
@@ -159,21 +159,14 @@ static void qla4xxx_build_scsi_iocbs(struct srb *srb,
 	cmd = srb->cmd;
 	ha = srb->ha;
 
-	avail_dsds = COMMAND_SEG;
-	cur_dsd = (struct data_seg_a64 *) & (cmd_entry->dataseg[0]);
-
-	if (srb->flags & SRB_SCSI_PASSTHRU) {
-		cur_dsd->base.addr_lo = cpu_to_le32(LSDW(srb->dma_handle));
-		cur_dsd->base.addr_hi = cpu_to_le32(MSDW(srb->dma_handle));
-		cur_dsd->count = cpu_to_le32(srb->dma_len);
-		return;
-	}
-
 	if (!scsi_bufflen(cmd) || cmd->sc_data_direction == DMA_NONE) {
 		/* No data being transferred */
 		cmd_entry->ttlByteCnt = __constant_cpu_to_le32(0);
 		return;
 	}
+
+	avail_dsds = COMMAND_SEG;
+	cur_dsd = (struct data_seg_a64 *) & (cmd_entry->dataseg[0]);
 
 	scsi_for_each_sg(cmd, sg, tot_dsds, i) {
 		dma_addr_t sle_dma;
@@ -190,8 +183,8 @@ static void qla4xxx_build_scsi_iocbs(struct srb *srb,
 		}
 
 		sle_dma = sg_dma_address(sg);
-		cur_dsd->base.addr_lo = cpu_to_le32(LSDW(sle_dma));
-		cur_dsd->base.addr_hi = cpu_to_le32(MSDW(sle_dma));
+		cur_dsd->base.addrLow = cpu_to_le32(LSDW(sle_dma));
+		cur_dsd->base.addrHigh = cpu_to_le32(MSDW(sle_dma));
 		cur_dsd->count = cpu_to_le32(sg_dma_len(sg));
 		avail_dsds--;
 
@@ -273,7 +266,6 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	int nseg;
 	uint16_t tot_dsds;
 	uint16_t req_cnt;
-	uint16_t i;
 	unsigned long flags;
 	uint32_t index;
 	char tag[2];
@@ -286,23 +278,7 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	/* Acquire hardware specific lock */
 	spin_lock_irqsave(&ha->hardware_lock, flags);
 
-	/* Check for room in active srb array */
-	index = ha->current_active_index;
-	for (i = 0; i < MAX_SRBS; i++) {
-		index++;
-		if (index == MAX_SRBS)
-			index = 1;
-		if (ha->active_srb_array[index] == NULL) {
-			ha->current_active_index = index;
-			break;
-		}
-	}
-	if (i >= MAX_SRBS) {
-		ql4_info(ha, "%s: NO more SRB entries used "
-			"iocbs=%d, \n reqs remaining=%d\n",
-			__func__, ha->iocb_cnt, ha->req_q_count);
-		goto queuing_error;
-	}
+	index = (uint32_t)cmd->request->tag;
 
 	/*
 	 * Check to see if adapter is online before placing request on
@@ -311,20 +287,17 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	 * garbage for pointers.
 	 */
 	if (!test_bit(AF_ONLINE, &ha->flags)) {
-		DEBUG2(ql4_info(ha, "%s: Adapter OFFLINE! "
-			      "Do not issue command.\n", __func__));
+		DEBUG2(printk("scsi%ld: %s: Adapter OFFLINE! "
+			      "Do not issue command.\n",
+			      ha->host_no, __func__));
 		goto queuing_error;
 	}
 
 	/* Calculate the number of request entries needed. */
-	if (srb->flags & SRB_SCSI_PASSTHRU)
-		tot_dsds = 1;
-	else {
-		nseg = scsi_dma_map(cmd);
-		if (nseg < 0)
-			goto queuing_error;
-		tot_dsds = nseg;
-	}
+	nseg = scsi_dma_map(cmd);
+	if (nseg < 0)
+		goto queuing_error;
+	tot_dsds = nseg;
 
 	req_cnt = qla4xxx_calc_request_entries(tot_dsds);
 	if (!qla4xxx_space_in_req_ring(ha, req_cnt))
@@ -337,7 +310,7 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	/* Build command packet */
 	cmd_entry = (struct command_t3_entry *) ha->request_ptr;
 	memset(cmd_entry, 0, sizeof(struct command_t3_entry));
-	cmd_entry->hdr.entry_type = ET_COMMAND;
+	cmd_entry->hdr.entryType = ET_COMMAND;
 	cmd_entry->handle = cpu_to_le32(index);
 	cmd_entry->target = cpu_to_le16(ddb_entry->fw_ddb_index);
 	cmd_entry->connection_id = cpu_to_le16(ddb_entry->connection_id);
@@ -347,7 +320,7 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	cmd_entry->ttlByteCnt = cpu_to_le32(scsi_bufflen(cmd));
 	memcpy(cmd_entry->cdb, cmd->cmnd, cmd->cmd_len);
 	cmd_entry->dataSegCnt = cpu_to_le16(tot_dsds);
-	cmd_entry->hdr.entry_count = req_cnt;
+	cmd_entry->hdr.entryCount = req_cnt;
 
 	/* Set data transfer direction control flags
 	 * NOTE: Look at data_direction bits iff there is data to be
@@ -383,9 +356,7 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	qla4xxx_build_scsi_iocbs(srb, cmd_entry, tot_dsds);
 	wmb();
 
-	/* put command in active array */
-	ha->active_srb_array[index] = srb;
-	srb->cmd->host_scribble = (unsigned char *) (unsigned long)index;
+	srb->cmd->host_scribble = (unsigned char *)(unsigned long)index;
 
 	/* update counters */
 	srb->state = SRB_ACTIVE_STATE;
@@ -402,9 +373,8 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	return QLA_SUCCESS;
 
 queuing_error:
-	if (!(srb->flags & SRB_SCSI_PASSTHRU))
-		if (tot_dsds)
-			scsi_dma_unmap(cmd);
+	if (tot_dsds)
+		scsi_dma_unmap(cmd);
 
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 

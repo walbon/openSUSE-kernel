@@ -43,6 +43,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <linux/slab.h>
+
 #include "ehca_classes.h"
 #include "ehca_tools.h"
 #include "ehca_qes.h"
@@ -249,7 +251,7 @@ static inline int ibqptype2servicetype(enum ib_qp_type ibqptype)
 		return ST_UD;
 	case IB_QPT_RAW_IPV6:
 		return -EINVAL;
-	case IB_QPT_RAW_ETY:
+	case IB_QPT_RAW_ETHERTYPE:
 		return -EINVAL;
 	default:
 		ehca_gen_err("Invalid ibqptype=%x", ibqptype);

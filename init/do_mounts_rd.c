@@ -7,10 +7,10 @@
 #include <linux/cramfs_fs.h>
 #include <linux/initrd.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 
 #include "do_mounts.h"
 #include "../fs/squashfs/squashfs_fs.h"
-#include "../fs/squashfs3/squashfs3_fs.h"
 
 #include <linux/decompress/generic.h>
 
@@ -58,21 +58,19 @@ identify_ramdisk_image(int fd, int start_block, decompress_fn *decompressor)
 	struct romfs_super_block *romfsb;
 	struct cramfs_super *cramfsb;
 	struct squashfs_super_block *squashfsb;
-	struct squashfs3_super_block *squashfs3sb;
 	int nblocks = -1;
 	unsigned char *buf;
 	const char *compress_name;
 
 	buf = kmalloc(size, GFP_KERNEL);
 	if (!buf)
-		return -1;
+		return -ENOMEM;
 
 	minixsb = (struct minix_super_block *) buf;
 	ext2sb = (struct ext2_super_block *) buf;
 	romfsb = (struct romfs_super_block *) buf;
 	cramfsb = (struct cramfs_super *) buf;
 	squashfsb = (struct squashfs_super_block *) buf;
-	squashfs3sb = (struct squashfs3_super_block *) buf;
 	memset(buf, 0xe5, size);
 
 	/*
@@ -112,24 +110,12 @@ identify_ramdisk_image(int fd, int start_block, decompress_fn *decompressor)
 	}
 
 	/* squashfs is at block zero too */
-	if (le32_to_cpu(squashfsb->s_magic) == SQUASHFS_MAGIC &&
-	    le16_to_cpu(squashfsb->s_major) == SQUASHFS_MAJOR) {
+	if (le32_to_cpu(squashfsb->s_magic) == SQUASHFS_MAGIC) {
 		printk(KERN_NOTICE
 		       "RAMDISK: squashfs filesystem found at block %d\n",
 		       start_block);
 		nblocks = (le64_to_cpu(squashfsb->bytes_used) + BLOCK_SIZE - 1)
 			 >> BLOCK_SIZE_BITS;
-		goto done;
-	}
-	if (squashfs3sb->s_magic == SQUASHFS_MAGIC &&
-	    squashfs3sb->s_major <= 3) {
-		printk(KERN_NOTICE
-		       "RAMDISK: squashfs3 filesystem found at block %d\n",
-		       start_block);
-		if (squashfs3sb->s_major < 3)
-			nblocks = (squashfs3sb->bytes_used_2+BLOCK_SIZE-1)>>BLOCK_SIZE_BITS;
-		else
-			nblocks = (squashfs3sb->bytes_used+BLOCK_SIZE-1)>>BLOCK_SIZE_BITS;
 		goto done;
 	}
 
@@ -182,7 +168,7 @@ int __init rd_load_image(char *from)
 	char rotator[4] = { '|' , '/' , '-' , '\\' };
 #endif
 
-	out_fd = sys_open("/dev/ram", O_RDWR, 0);
+	out_fd = sys_open((const char __user __force *) "/dev/ram", O_RDWR, 0);
 	if (out_fd < 0)
 		goto out;
 
@@ -281,7 +267,7 @@ noclose_input:
 	sys_close(out_fd);
 out:
 	kfree(buf);
-	sys_unlink("/dev/ram");
+	sys_unlink((const char __user __force *) "/dev/ram");
 	return res;
 }
 

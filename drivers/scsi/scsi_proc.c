@@ -20,12 +20,12 @@
 #include <linux/init.h>
 #include <linux/string.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/proc_fs.h>
 #include <linux/errno.h>
 #include <linux/blkdev.h>
 #include <linux/seq_file.h>
 #include <linux/mutex.h>
+#include <linux/gfp.h>
 #include <asm/uaccess.h>
 
 #include <scsi/scsi.h>
@@ -381,11 +381,6 @@ static ssize_t proc_scsi_write(struct file *file, const char __user *buf,
 	return err;
 }
 
-/**
- * proc_scsi_show - show contents of /proc/scsi/scsi (attached devices)
- * @s: output goes here
- * @p: not used
- */
 static int always_match(struct device *dev, void *data)
 {
 	return 1;
@@ -432,7 +427,7 @@ static int scsi_seq_show(struct seq_file *sfile, void *dev)
 	return proc_print_scsidevice(dev, sfile);
 }
 
-static struct seq_operations scsi_seq_ops = {
+static const struct seq_operations scsi_seq_ops = {
 	.start	= scsi_seq_start,
 	.next	= scsi_seq_next,
 	.stop	= scsi_seq_stop,

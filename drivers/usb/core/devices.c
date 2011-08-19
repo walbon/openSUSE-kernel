@@ -51,10 +51,9 @@
 
 #include <linux/fs.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
+#include <linux/gfp.h>
 #include <linux/poll.h>
 #include <linux/usb.h>
-#include <linux/smp_lock.h>
 #include <linux/usbdevice_fs.h>
 #include <linux/usb/hcd.h>
 #include <linux/mutex.h>
@@ -522,6 +521,7 @@ static ssize_t usb_device_dump(char __user **buffer, size_t *nbytes,
 	case USB_SPEED_UNKNOWN:		/* usb 1.1 root hub code */
 	case USB_SPEED_FULL:
 		speed = "12"; break;
+	case USB_SPEED_WIRELESS:	/* Wireless has no real fixed speed */
 	case USB_SPEED_HIGH:
 		speed = "480"; break;
 	case USB_SPEED_SUPER:

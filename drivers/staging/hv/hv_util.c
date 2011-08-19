@@ -26,6 +26,8 @@
 #include <linux/slab.h>
 #include <linux/sysctl.h>
 #include <linux/reboot.h>
+#include <linux/dmi.h>
+#include <linux/pci.h>
 
 #include "hyperv.h"
 #include "hv_kvp.h"
@@ -33,8 +35,6 @@
 static u8 *shut_txf_buf;
 static u8 *time_txf_buf;
 static u8 *hbeat_txf_buf;
-
-static const char *driver_name = "hv_util";
 
 static void shutdown_onchannelcallback(void *context)
 {
@@ -210,33 +210,28 @@ static void heartbeat_onchannelcallback(void *context)
 	}
 }
 
-/*
- * The devices managed by the util driver don't need any additional
- * setup.
- */
-static int util_probe(struct hv_device *dev)
-{
-	return 0;
-}
-
-static int util_remove(struct hv_device *dev)
-{
-	return 0;
-}
-
-
-static const struct hv_vmbus_device_id id_table[] = {
-	{ "hv_util" },
-	{ "" }
+static const struct pci_device_id __initconst
+hv_utils_pci_table[] __maybe_unused = {
+	{ PCI_DEVICE(0x1414, 0x5353) }, /* Hyper-V emulated VGA controller */
+	{ 0 }
 };
+MODULE_DEVICE_TABLE(pci, hv_utils_pci_table);
 
 
-/* The one and only one */
-static  struct hv_driver util_drv = {
-	.id_table = id_table,
-	.probe =  util_probe,
-	.remove =  util_remove,
+static const struct dmi_system_id __initconst
+hv_utils_dmi_table[] __maybe_unused  = {
+	{
+		.ident = "Hyper-V",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Virtual Machine"),
+			DMI_MATCH(DMI_BOARD_NAME, "Virtual Machine"),
+		},
+	},
+	{ },
 };
+MODULE_DEVICE_TABLE(dmi, hv_utils_dmi_table);
+
 
 static int __init init_hyperv_utils(void)
 {
@@ -245,6 +240,9 @@ static int __init init_hyperv_utils(void)
 	if (hv_kvp_init())
 		return -ENODEV;
 
+
+	if (!dmi_check_system(hv_utils_dmi_table))
+		return -ENODEV;
 
 	shut_txf_buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
 	time_txf_buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
@@ -266,9 +264,7 @@ static int __init init_hyperv_utils(void)
 
 	hv_cb_utils[HV_KVP_MSG].callback = &hv_kvp_onchannelcallback;
 
-	util_drv.driver.name = driver_name;
-
-	return vmbus_child_driver_register(&util_drv.driver);
+	return 0;
 }
 
 static void exit_hyperv_utils(void)
@@ -306,6 +302,5 @@ module_init(init_hyperv_utils);
 module_exit(exit_hyperv_utils);
 
 MODULE_DESCRIPTION("Hyper-V Utilities");
-MODULE_ALIAS("vmbus:hv_util");
 MODULE_VERSION(HV_DRV_VERSION);
 MODULE_LICENSE("GPL");

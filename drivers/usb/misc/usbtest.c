@@ -104,7 +104,7 @@ get_endpoints(struct usbtest_dev *dev, struct usb_interface *intf)
 		alt = intf->altsetting + tmp;
 
 		/* take the first altsetting with in-bulk + out-bulk;
-		 * ignore other endpoints and altsetttings.
+		 * ignore other endpoints and altsettings.
 		 */
 		for (ep = 0; ep < alt->desc.bNumEndpoints; ep++) {
 			struct usb_host_endpoint	*e;
@@ -1763,6 +1763,7 @@ static int test_unaligned_bulk(
  * off just killing the userspace task and waiting for it to exit.
  */
 
+/* No BKL needed */
 static int
 usbtest_ioctl(struct usb_interface *intf, unsigned int code, void *buf)
 {
@@ -1790,10 +1791,6 @@ usbtest_ioctl(struct usb_interface *intf, unsigned int code, void *buf)
 		return -ERESTARTSYS;
 
 	/* FIXME: What if a system sleep starts while a test is running? */
-	if (!intf->is_active) {
-		mutex_unlock(&dev->lock);
-		return -EHOSTUNREACH;
-	}
 
 	/* some devices, like ez-usb default devices, need a non-default
 	 * altsetting to have any active endpoints.  some tests change
@@ -2509,7 +2506,7 @@ static struct usb_driver usbtest_driver = {
 	.name =		"usbtest",
 	.id_table =	id_table,
 	.probe =	usbtest_probe,
-	.ioctl =	usbtest_ioctl,
+	.unlocked_ioctl = usbtest_ioctl,
 	.disconnect =	usbtest_disconnect,
 	.suspend =	usbtest_suspend,
 	.resume =	usbtest_resume,

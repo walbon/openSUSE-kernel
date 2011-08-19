@@ -22,6 +22,7 @@
 #include <linux/sort.h>
 #include <linux/rcupdate.h>
 #include <linux/kthread.h>
+#include <linux/slab.h>
 #include "compat.h"
 #include "hash.h"
 #include "ctree.h"
@@ -666,9 +667,7 @@ int btrfs_lookup_extent(struct btrfs_root *root, u64 start, u64 len)
 	struct btrfs_path *path;
 
 	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
-
+	BUG_ON(!path);
 	key.objectid = start;
 	key.offset = len;
 	btrfs_set_key_type(&key, BTRFS_EXTENT_ITEM_KEY);
@@ -1775,8 +1774,6 @@ static int btrfs_discard_extent(struct btrfs_root *root, u64 bytenr,
 	u64 discarded_bytes = 0;
 	struct btrfs_multi_bio *multi = NULL;
 
-	if (!btrfs_test_opt(root, DISCARD))
-		return 0;
 
 	/* Tell the block device(s) that the sectors can be discarded */
 	ret = btrfs_map_block(&root->fs_info->mapping_tree, REQ_DISCARD,
@@ -1784,6 +1781,7 @@ static int btrfs_discard_extent(struct btrfs_root *root, u64 bytenr,
 	if (!ret) {
 		struct btrfs_bio_stripe *stripe = multi->stripes;
 		int i;
+
 
 		for (i = 0; i < multi->num_stripes; i++, stripe++) {
 			ret = btrfs_issue_discard(stripe->dev->bdev,
@@ -1796,12 +1794,12 @@ static int btrfs_discard_extent(struct btrfs_root *root, u64 bytenr,
 		}
 		kfree(multi);
 	}
-
 	if (discarded_bytes && ret == -EOPNOTSUPP)
 		ret = 0;
 
 	if (actual_bytes)
 		*actual_bytes = discarded_bytes;
+
 
 	return ret;
 }
@@ -3277,9 +3275,6 @@ again:
 	}
 
 	ret = btrfs_alloc_chunk(trans, extent_root, flags);
-	if (ret < 0 && ret != -ENOSPC)
-		goto out;
-
 	spin_lock(&space_info->lock);
 	if (ret)
 		space_info->full = 1;
@@ -3289,7 +3284,6 @@ again:
 	space_info->force_alloc = CHUNK_ALLOC_NO_FORCE;
 	space_info->chunk_alloc = 0;
 	spin_unlock(&space_info->lock);
-out:
 	mutex_unlock(&extent_root->fs_info->chunk_mutex);
 	return ret;
 }
@@ -4848,7 +4842,7 @@ static noinline int find_free_extent(struct btrfs_trans_handle *trans,
 				     u64 num_bytes, u64 empty_size,
 				     u64 search_start, u64 search_end,
 				     u64 hint_byte, struct btrfs_key *ins,
-				     int data)
+				     u64 data)
 {
 	int ret = 0;
 	struct btrfs_root *root = orig_root->fs_info->extent_root;
@@ -4875,7 +4869,7 @@ static noinline int find_free_extent(struct btrfs_trans_handle *trans,
 
 	space_info = __find_space_info(root->fs_info, data);
 	if (!space_info) {
-		printk(KERN_ERR "No space info for %d\n", data);
+		printk(KERN_ERR "No space info for %llu\n", data);
 		return -ENOSPC;
 	}
 
@@ -5027,7 +5021,8 @@ have_block_group:
 
 		spin_lock(&block_group->free_space_ctl->tree_lock);
 		if (cached &&
-		    block_group->free_space_ctl->free_space < num_bytes + empty_size) {
+		    block_group->free_space_ctl->free_space <
+		    num_bytes + empty_size) {
 			spin_unlock(&block_group->free_space_ctl->tree_lock);
 			goto loop;
 		}
@@ -5499,8 +5494,7 @@ static int alloc_reserved_tree_block(struct btrfs_trans_handle *trans,
 	u32 size = sizeof(*extent_item) + sizeof(*block_info) + sizeof(*iref);
 
 	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
+	BUG_ON(!path);
 
 	path->leave_spinning = 1;
 	ret = btrfs_insert_empty_item(trans, fs_info->extent_root, path,
@@ -6271,14 +6265,10 @@ int btrfs_drop_snapshot(struct btrfs_root *root,
 	int level;
 
 	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
+	BUG_ON(!path);
 
 	wc = kzalloc(sizeof(*wc), GFP_NOFS);
-	if (!wc) {
-		btrfs_free_path(path);
-		return -ENOMEM;
-	}
+	BUG_ON(!wc);
 
 	trans = btrfs_start_transaction(tree_root, 0);
 	BUG_ON(IS_ERR(trans));
@@ -7150,8 +7140,8 @@ int btrfs_remove_block_group(struct btrfs_trans_handle *trans,
 
 	memcpy(&key, &block_group->key, sizeof(key));
 	if (block_group->flags & (BTRFS_BLOCK_GROUP_DUP |
-				BTRFS_BLOCK_GROUP_RAID1 |
-				BTRFS_BLOCK_GROUP_RAID10))
+				  BTRFS_BLOCK_GROUP_RAID1 |
+				  BTRFS_BLOCK_GROUP_RAID10))
 		factor = 2;
 	else
 		factor = 1;
@@ -7172,10 +7162,7 @@ int btrfs_remove_block_group(struct btrfs_trans_handle *trans,
 	spin_unlock(&cluster->refill_lock);
 
 	path = btrfs_alloc_path();
-	if (!path) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	BUG_ON(!path);
 
 	inode = lookup_free_space_inode(root, block_group, path);
 	if (!IS_ERR(inode)) {

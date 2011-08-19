@@ -36,6 +36,7 @@
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_transport_sas.h>
 #include <linux/scatterlist.h>
+#include <linux/slab.h>
 
 struct block_device;
 
@@ -362,6 +363,7 @@ struct sas_ha_struct {
 	int lldd_queue_size;
 	int strict_wide_ports; /* both sas_addr and attached_sas_addr must match
 				* their siblings when forming wide ports */
+
 	/* LLDD calls these to notify the class of an event. */
 	void (*notify_ha_event)(struct sas_ha_struct *, enum ha_event);
 	void (*notify_port_event)(struct asd_sas_phy *, enum port_event);

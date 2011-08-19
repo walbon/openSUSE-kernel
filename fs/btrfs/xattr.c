@@ -265,7 +265,7 @@ err:
  * List of handlers for synthetic system.* attributes.  All real ondisk
  * attributes are handled directly.
  */
-struct xattr_handler *btrfs_xattr_handlers[] = {
+const struct xattr_handler *btrfs_xattr_handlers[] = {
 #ifdef CONFIG_BTRFS_FS_POSIX_ACL
 	&btrfs_xattr_acl_access_handler,
 	&btrfs_xattr_acl_default_handler,
@@ -361,7 +361,8 @@ int btrfs_removexattr(struct dentry *dentry, const char *name)
 }
 
 int btrfs_xattr_security_init(struct btrfs_trans_handle *trans,
-			      struct inode *inode, struct inode *dir)
+			      struct inode *inode, struct inode *dir,
+			      const struct qstr *qstr)
 {
 	int err;
 	size_t len;
@@ -369,7 +370,8 @@ int btrfs_xattr_security_init(struct btrfs_trans_handle *trans,
 	char *suffix;
 	char *name;
 
-	err = security_inode_init_security(inode, dir, &suffix, &value, &len);
+	err = security_inode_init_security(inode, dir, qstr, &suffix, &value,
+					   &len);
 	if (err) {
 		if (err == -EOPNOTSUPP)
 			return 0;

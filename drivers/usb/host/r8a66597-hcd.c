@@ -38,6 +38,7 @@
 #include <linux/io.h>
 #include <linux/mm.h>
 #include <linux/irq.h>
+#include <linux/slab.h>
 #include <asm/cacheflush.h>
 
 #include "r8a66597.h"
@@ -859,8 +860,6 @@ static void force_dequeue(struct r8a66597 *r8a66597, u16 pipenum, u16 address)
 		return;
 
 	list_for_each_entry_safe(td, next, list, queue) {
-		if (!td)
-			continue;
 		if (td->address != address)
 			continue;
 
@@ -1030,6 +1029,8 @@ static void start_root_hub_sampling(struct r8a66597 *r8a66597, int port,
 /* this function must be called with interrupt disabled */
 static void r8a66597_check_syssts(struct r8a66597 *r8a66597, int port,
 					u16 syssts)
+__releases(r8a66597->lock)
+__acquires(r8a66597->lock)
 {
 	if (syssts == SE0) {
 		r8a66597_write(r8a66597, ~ATTCH, get_intsts_reg(port));
@@ -1047,7 +1048,9 @@ static void r8a66597_check_syssts(struct r8a66597 *r8a66597, int port,
 			usb_hcd_resume_root_hub(r8a66597_to_hcd(r8a66597));
 	}
 
+	spin_unlock(&r8a66597->lock);
 	usb_hcd_poll_rh_status(r8a66597_to_hcd(r8a66597));
+	spin_lock(&r8a66597->lock);
 }
 
 /* this function must be called with interrupt disabled */
@@ -1062,7 +1065,7 @@ static void r8a66597_usb_connect(struct r8a66597 *r8a66597, int port)
 	else if (speed == LSMODE)
 		rh->port |= USB_PORT_STAT_LOW_SPEED;
 
-	rh->port &= USB_PORT_STAT_RESET;
+	rh->port &= ~USB_PORT_STAT_RESET;
 	rh->port |= USB_PORT_STAT_ENABLE;
 }
 
@@ -2052,8 +2055,6 @@ static struct r8a66597_device *get_r8a66597_device(struct r8a66597 *r8a66597,
 	struct list_head *list = &r8a66597->child_device;
 
 	list_for_each_entry(dev, list, device_list) {
-		if (!dev)
-			continue;
 		if (dev->usb_address != addr)
 			continue;
 
@@ -2404,7 +2405,7 @@ static int __devexit r8a66597_remove(struct platform_device *pdev)
 
 	del_timer_sync(&r8a66597->rh_timer);
 	usb_remove_hcd(hcd);
-	iounmap((void *)r8a66597->reg);
+	iounmap(r8a66597->reg);
 #ifdef CONFIG_HAVE_CLK
 	if (r8a66597->pdata->on_chip)
 		clk_put(r8a66597->clk);
@@ -2496,7 +2497,7 @@ static int __devinit r8a66597_probe(struct platform_device *pdev)
 	init_timer(&r8a66597->rh_timer);
 	r8a66597->rh_timer.function = r8a66597_timer;
 	r8a66597->rh_timer.data = (unsigned long)r8a66597;
-	r8a66597->reg = (unsigned long)reg;
+	r8a66597->reg = reg;
 
 	/* make sure no interrupts are pending */
 	ret = r8a66597_clock_enable(r8a66597);

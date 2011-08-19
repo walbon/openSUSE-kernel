@@ -9,7 +9,6 @@
 
 #include <linux/mm.h>
 #include <linux/hugetlb.h>
-#include <linux/slab.h>
 #include <linux/shm.h>
 #include <linux/ksm.h>
 #include <linux/mman.h>
@@ -94,8 +93,7 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 		 * and we propagate stale pages into the dst afterward.
 		 */
 		mapping = vma->vm_file->f_mapping;
-		spin_lock(&mapping->i_mmap_lock);
-		new_vma->vm_truncate_count = 0;
+		mutex_lock(&mapping->i_mmap_mutex);
 	}
 
 	/*
@@ -103,7 +101,7 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 	 * pte locks because exclusive mmap_sem prevents deadlock.
 	 */
 	old_pte = pte_offset_map_lock(mm, old_pmd, old_addr, &old_ptl);
- 	new_pte = pte_offset_map_nested(new_pmd, new_addr);
+	new_pte = pte_offset_map(new_pmd, new_addr);
 	new_ptl = pte_lockptr(mm, new_pmd);
 	if (new_ptl != old_ptl)
 		spin_lock_nested(new_ptl, SINGLE_DEPTH_NESTING);
@@ -121,10 +119,10 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 	arch_leave_lazy_mmu_mode();
 	if (new_ptl != old_ptl)
 		spin_unlock(new_ptl);
-	pte_unmap_nested(new_pte - 1);
+	pte_unmap(new_pte - 1);
 	pte_unmap_unlock(old_pte - 1, old_ptl);
 	if (mapping)
-		spin_unlock(&mapping->i_mmap_lock);
+		mutex_unlock(&mapping->i_mmap_mutex);
 	mmu_notifier_invalidate_range_end(vma->vm_mm, old_start, old_end);
 }
 

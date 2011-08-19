@@ -44,6 +44,7 @@
 #include <linux/err.h>
 #include <linux/blkdev.h>
 #include <linux/freezer.h>
+#include <linux/gfp.h>
 #include <linux/scatterlist.h>
 #include <linux/libata.h>
 
@@ -684,7 +685,6 @@ enum blk_eh_timer_return sas_scsi_timed_out(struct scsi_cmnd *cmd)
 
 	if (sas_ata_timed_out(cmd, task, &rtn))
 		return rtn;
-
 
 	if (!task) {
 		cmd->request->timeout /= 2;

@@ -21,6 +21,7 @@
 #include <linux/writeback.h>
 #include <linux/blkdev.h>
 #include <linux/rbtree.h>
+#include <linux/slab.h>
 #include "ctree.h"
 #include "disk-io.h"
 #include "transaction.h"
@@ -711,7 +712,7 @@ again:
 	WARN_ON(cur->checked);
 	if (!list_empty(&cur->upper)) {
 		/*
-		 * the backref was added previously when processsing
+		 * the backref was added previously when processing
 		 * backref of type BTRFS_TREE_BLOCK_REF_KEY
 		 */
 		BUG_ON(!list_is_singular(&cur->upper));
@@ -2361,7 +2362,7 @@ struct btrfs_root *select_one_root(struct btrfs_trans_handle *trans,
 		root = next->root;
 		BUG_ON(!root);
 
-		/* no other choice for non-refernce counted tree */
+		/* no other choice for non-references counted tree */
 		if (!root->ref_cows)
 			return root;
 

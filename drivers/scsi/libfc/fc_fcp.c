@@ -1783,7 +1783,7 @@ static inline int fc_fcp_lport_queue_ready(struct fc_lport *lport)
  */
 int fc_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *sc_cmd)
 {
-	struct fc_lport *lport = shost_priv(sc_cmd->device->host);
+	struct fc_lport *lport = shost_priv(shost);
 	struct fc_rport *rport = starget_to_rport(scsi_target(sc_cmd->device));
 	struct fc_fcp_pkt *fsp;
 	struct fc_rport_libfc_priv *rpriv;

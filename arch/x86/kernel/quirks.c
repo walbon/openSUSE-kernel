@@ -4,7 +4,9 @@
 #include <linux/pci.h>
 #include <linux/irq.h>
 
-#if defined(CONFIG_X86_IO_APIC) && (defined(CONFIG_SMP) || defined(CONFIG_XEN)) && defined(CONFIG_PCI)
+#include <asm/hpet.h>
+
+#if defined(CONFIG_X86_IO_APIC) && defined(CONFIG_SMP) && defined(CONFIG_PCI)
 
 static void __devinit quirk_intel_irqbalance(struct pci_dev *dev)
 {
@@ -33,20 +35,9 @@ static void __devinit quirk_intel_irqbalance(struct pci_dev *dev)
 	if (!(word & (1 << 13))) {
 		dev_info(&dev->dev, "Intel E7520/7320/7525 detected; "
 			"disabling irq balancing and affinity\n");
-#ifndef CONFIG_XEN
 		noirqdebug_setup("");
 #ifdef CONFIG_PROC_FS
 		no_irq_affinity = 1;
-#endif
-#else
-		{
-			struct xen_platform_op op = {
-				.cmd = XENPF_platform_quirk,
-				.u.platform_quirk.quirk_id = QUIRK_NOIRQBALANCING
-			};
-
-			WARN_ON(HYPERVISOR_platform_op(&op));
-		}
 #endif
 	}
 
@@ -63,8 +54,6 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_E7520_MCH,
 #endif
 
 #if defined(CONFIG_HPET_TIMER)
-#include <asm/hpet.h>
-
 unsigned long force_hpet_address;
 
 static enum {
@@ -355,6 +344,8 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8235,
 			 vt8237_force_enable_hpet);
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8237,
 			 vt8237_force_enable_hpet);
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_CX700,
+			 vt8237_force_enable_hpet);
 
 static void ati_force_hpet_resume(void)
 {
@@ -506,6 +497,9 @@ void force_hpet_resume(void)
 /*
  * HPET MSI on some boards (ATI SB700/SB800) has side effect on
  * floppy DMA. Disable HPET MSI on such platforms.
+ * See erratum #27 (Misinterpreted MSI Requests May Result in
+ * Corrupted LPC DMA Data) in AMD Publication #46837,
+ * "SB700 Family Product Errata", Rev. 1.0, March 2010.
  */
 static void force_disable_hpet_msi(struct pci_dev *unused)
 {

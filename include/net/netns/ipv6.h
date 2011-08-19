@@ -25,8 +25,6 @@ struct netns_sysctl_ipv6 {
 	int ip6_rt_mtu_expires;
 	int ip6_rt_min_advmss;
 	int icmpv6_time;
-
-	struct mutex ip6_rt_lock;
 };
 
 struct netns_ipv6 {
@@ -38,7 +36,9 @@ struct netns_ipv6 {
 	struct xt_table		*ip6table_filter;
 	struct xt_table		*ip6table_mangle;
 	struct xt_table		*ip6table_raw;
+#ifdef CONFIG_SECURITY
 	struct xt_table		*ip6table_security;
+#endif
 #endif
 	struct rt6_info         *ip6_null_entry;
 	struct rt6_statistics   *rt6_stats;
@@ -58,18 +58,12 @@ struct netns_ipv6 {
 	struct sock             *ndisc_sk;
 	struct sock             *tcp_sk;
 	struct sock             *igmp_sk;
-
-	struct mem_reserve	ip6_rt_reserve;
 #ifdef CONFIG_IPV6_MROUTE
-	struct sock		*mroute6_sk;
-	struct mfc6_cache	**mfc6_cache_array;
-	struct mif_device	*vif6_table;
-	int			maxvif;
-	atomic_t		cache_resolve_queue_len;
-	int			mroute_do_assert;
-	int			mroute_do_pim;
-#ifdef CONFIG_IPV6_PIMSM_V2
-	int			mroute_reg_vif_num;
+#ifndef CONFIG_IPV6_MROUTE_MULTIPLE_TABLES
+	struct mr6_table	*mrt6;
+#else
+	struct list_head	mr6_tables;
+	struct fib_rules_ops	*mr6_rules_ops;
 #endif
 #endif
 };

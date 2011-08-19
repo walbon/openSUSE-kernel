@@ -8,6 +8,7 @@
 #include "qla_gbl.h"
 
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 
 #include "qla_devtbl.h"
@@ -37,7 +38,6 @@ static int qla2x00_restart_isp(scsi_qla_host_t *);
 static struct qla_chip_state_84xx *qla84xx_get_chip(struct scsi_qla_host *);
 static int qla84xx_init_chip(scsi_qla_host_t *);
 static int qla25xx_init_queues(struct qla_hw_data *);
-int qla24xx_update_fcport_fcp_prio(scsi_qla_host_t *, fc_port_t *);
 
 /* SRB Extensions ---------------------------------------------------------- */
 
@@ -989,7 +989,7 @@ qla24xx_reset_risc(scsi_qla_host_t *vha)
 	struct device_reg_24xx __iomem *reg = &ha->iobase->isp24;
 	uint32_t cnt, d2;
 	uint16_t wd;
-	static int abts_cnt = 0; /* ISP abort retry counts */
+	static int abts_cnt; /* ISP abort retry counts */
 
 	spin_lock_irqsave(&ha->hardware_lock, flags);
 
@@ -3170,7 +3170,6 @@ qla2x00_find_all_fabric_devs(scsi_qla_host_t *vha,
 	struct scsi_qla_host *tvp;
 
 	rval = QLA_SUCCESS;
-	wrap.b24 = 0;
 
 	/* Try GID_PT to get device list, else GAN. */
 	swl = kcalloc(MAX_FIBRE_DEVICES, sizeof(sw_info_t), GFP_KERNEL);
@@ -3956,7 +3955,7 @@ qla2x00_abort_isp_cleanup(scsi_qla_host_t *vha)
 	unsigned long flags;
 	fc_port_t *fcport;
 
-	/* For ISP82XX driver waits for completion of the commands
+	/* For ISP82XX, driver waits for completion of the commands.
 	 * online flag should be set.
 	 */
 	if (!IS_QLA82XX(ha))
@@ -3968,9 +3967,9 @@ qla2x00_abort_isp_cleanup(scsi_qla_host_t *vha)
 	qla_printk(KERN_INFO, ha,
 	    "Performing ISP error recovery - ha= %p.\n", ha);
 
-	/* For ISP82XX reset_chip is just disabling an interrupts
-	 * Driver waits for the completion of the commands,
-	 * the interrupts needs to be enabled.
+	/* For ISP82XX, reset_chip is just disabling interrupts.
+	 * Driver waits for the completion of the commands.
+	 * the interrupts need to be enabled.
 	 */
 	if (!IS_QLA82XX(ha))
 		ha->isp_ops->reset_chip(vha);
@@ -4018,7 +4017,7 @@ qla2x00_abort_isp_cleanup(scsi_qla_host_t *vha)
 		if (IS_QLA82XX(ha)) {
 			qla82xx_chip_reset_cleanup(vha);
 
-			/* Done waiting for pending commands
+			/* Done waiting for pending commands.
 			 * Reset the online flag.
 			 */
 			vha->flags.online = 0;
@@ -5438,10 +5437,10 @@ qla82xx_restart_isp(scsi_qla_host_t *vha)
 
 		/* Update the firmware version */
 		qla2x00_get_fw_version(vha, &ha->fw_major_version,
-			&ha->fw_minor_version, &ha->fw_subminor_version,
-			&ha->fw_attributes, &ha->fw_memory_size,
-			ha->mpi_version, &ha->mpi_capabilities,
-			ha->phy_version);
+		    &ha->fw_minor_version, &ha->fw_subminor_version,
+		    &ha->fw_attributes, &ha->fw_memory_size,
+		    ha->mpi_version, &ha->mpi_capabilities,
+		    ha->phy_version);
 
 		if (ha->fce) {
 			ha->flags.fce_enabled = 1;
@@ -5524,7 +5523,7 @@ qla81xx_update_fw_options(scsi_qla_host_t *vha)
  *
  * Return:
  *	non-zero (if found)
- * 	-1 (if not found)
+ *	-1 (if not found)
  *
  * Context:
  * 	Kernel context

@@ -40,7 +40,7 @@ static ssize_t kpagecount_read(struct file *file, char __user *buf,
 			ppage = pfn_to_page(pfn);
 		else
 			ppage = NULL;
-		if (!ppage)
+		if (!ppage || PageSlab(ppage))
 			pcount = 0;
 		else
 			pcount = page_mapcount(ppage);
@@ -148,7 +148,7 @@ u64 stable_page_flags(struct page *page)
 	u |= kpf_copy_bit(k, KPF_HWPOISON,	PG_hwpoison);
 #endif
 
-#ifdef CONFIG_IA64_UNCACHED_ALLOCATOR
+#ifdef CONFIG_ARCH_USES_PG_UNCACHED
 	u |= kpf_copy_bit(k, KPF_UNCACHED,	PG_uncached);
 #endif
 

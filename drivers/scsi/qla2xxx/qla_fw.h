@@ -456,7 +456,7 @@ struct cmd_type_7 {
 
 	uint8_t crn;
 
-	uint8_t fcp_cdb[MAX_CMDSZ];	/* SCSI command words. */
+	uint8_t fcp_cdb[MAX_CMDSZ]; 	/* SCSI command words. */
 	uint32_t byte_count;		/* Total byte count. */
 
 	uint8_t port_id[3];		/* PortID of destination port. */

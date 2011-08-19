@@ -22,6 +22,7 @@
 #include <linux/usb/serial.h>
 #include <linux/uaccess.h>
 #include <linux/kfifo.h>
+#include <linux/serial.h>
 
 static int debug;
 
@@ -153,7 +154,7 @@ static void generic_cleanup(struct usb_serial_port *port)
 				usb_kill_urb(port->write_urbs[i]);
 
 			spin_lock_irqsave(&port->lock, flags);
-			kfifo_reset_out(port->write_fifo);
+			kfifo_reset_out(&port->write_fifo);
 			spin_unlock_irqrestore(&port->lock, flags);
 		}
 		if (port->bulk_in_size)
@@ -171,7 +172,7 @@ EXPORT_SYMBOL_GPL(usb_serial_generic_close);
 int usb_serial_generic_prepare_write_buffer(struct usb_serial_port *port,
 						void *dest, size_t size)
 {
-	return kfifo_out_locked(port->write_fifo, dest, size, &port->lock);
+	return kfifo_out_locked(&port->write_fifo, dest, size, &port->lock);
 }
 
 /**
@@ -191,7 +192,7 @@ static int usb_serial_generic_write_start(struct usb_serial_port *port)
 		return 0;
 retry:
 	spin_lock_irqsave(&port->lock, flags);
-	if (!port->write_urbs_free || !kfifo_len(port->write_fifo)) {
+	if (!port->write_urbs_free || !kfifo_len(&port->write_fifo)) {
 		clear_bit_unlock(USB_SERIAL_WRITE_BUSY, &port->flags);
 		spin_unlock_irqrestore(&port->lock, flags);
 		return 0;
@@ -260,7 +261,7 @@ int usb_serial_generic_write(struct tty_struct *tty,
 	if (!count)
 		return 0;
 
-	count = kfifo_in_locked(port->write_fifo, buf, count, &port->lock);
+	count = kfifo_in_locked(&port->write_fifo, buf, count, &port->lock);
 	result = usb_serial_generic_write_start(port);
 	if (result)
 		return result;
@@ -281,7 +282,7 @@ int usb_serial_generic_write_room(struct tty_struct *tty)
 		return 0;
 
 	spin_lock_irqsave(&port->lock, flags);
-	room = port->write_fifo->size - kfifo_len(port->write_fifo);
+	room = kfifo_avail(&port->write_fifo);
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	dbg("%s - returns %d", __func__, room);
@@ -300,7 +301,7 @@ int usb_serial_generic_chars_in_buffer(struct tty_struct *tty)
 		return 0;
 
 	spin_lock_irqsave(&port->lock, flags);
-	chars = kfifo_len(port->write_fifo) + port->tx_bytes;
+	chars = kfifo_len(&port->write_fifo) + port->tx_bytes;
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	dbg("%s - returns %d", __func__, chars);
@@ -342,7 +343,7 @@ void usb_serial_generic_process_read_urb(struct urb *urb)
 		tty_insert_flip_string(tty, ch, urb->actual_length);
 	else {
 		for (i = 0; i < urb->actual_length; i++, ch++) {
-			if (!usb_serial_handle_sysrq_char(tty, port, *ch))
+			if (!usb_serial_handle_sysrq_char(port, *ch))
 				tty_insert_flip_char(tty, *ch, TTY_NORMAL);
 		}
 	}
@@ -403,7 +404,7 @@ void usb_serial_generic_write_bulk_callback(struct urb *urb)
 		dbg("%s - non-zero urb status: %d", __func__, status);
 
 		spin_lock_irqsave(&port->lock, flags);
-		kfifo_reset(port->write_fifo);
+		kfifo_reset_out(&port->write_fifo);
 		spin_unlock_irqrestore(&port->lock, flags);
 	} else {
 		usb_serial_generic_write_start(port);
@@ -447,12 +448,11 @@ void usb_serial_generic_unthrottle(struct tty_struct *tty)
 EXPORT_SYMBOL_GPL(usb_serial_generic_unthrottle);
 
 #ifdef CONFIG_MAGIC_SYSRQ
-int usb_serial_handle_sysrq_char(struct tty_struct *tty,
-			struct usb_serial_port *port, unsigned int ch)
+int usb_serial_handle_sysrq_char(struct usb_serial_port *port, unsigned int ch)
 {
 	if (port->sysrq && port->port.console) {
 		if (ch && time_before(jiffies, port->sysrq)) {
-			handle_sysrq(ch, tty);
+			handle_sysrq(ch);
 			port->sysrq = 0;
 			return 1;
 		}
@@ -461,8 +461,7 @@ int usb_serial_handle_sysrq_char(struct tty_struct *tty,
 	return 0;
 }
 #else
-int usb_serial_handle_sysrq_char(struct tty_struct *tty,
-			struct usb_serial_port *port, unsigned int ch)
+int usb_serial_handle_sysrq_char(struct usb_serial_port *port, unsigned int ch)
 {
 	return 0;
 }
@@ -507,7 +506,7 @@ int usb_serial_generic_resume(struct usb_serial *serial)
 
 	for (i = 0; i < serial->num_ports; i++) {
 		port = serial->port[i];
-		if (!port->port.count)
+		if (!test_bit(ASYNCB_INITIALIZED, &port->port.flags))
 			continue;
 
 		if (port->read_urb) {

@@ -7,6 +7,7 @@
  *  published by the Free Software Foundation.
  */
 
+#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/kobject.h>
@@ -14,11 +15,10 @@
 #include <asm/xen/hypervisor.h>
 #include <asm/xen/hypercall.h>
 
+#include <xen/xen.h>
 #include <xen/xenbus.h>
 #include <xen/interface/xen.h>
 #include <xen/interface/version.h>
-
-#include "xenbus/xenbus_comms.h"
 
 #define HYPERVISOR_ATTR_RO(_name) \
 static struct hyp_sysfs_attr  _name##_attr = __ATTR_RO(_name)
@@ -118,8 +118,9 @@ static ssize_t uuid_show(struct hyp_sysfs_attr *attr, char *buffer)
 {
 	char *vm, *val;
 	int ret;
+	extern int xenstored_ready;
 
-	if (!is_xenstored_ready())
+	if (!xenstored_ready)
 		return -EBUSY;
 
 	vm = xenbus_read(XBT_NIL, "vm", "", NULL);
@@ -214,7 +215,7 @@ static struct attribute_group xen_compilation_group = {
 	.attrs = xen_compile_attrs,
 };
 
-int __init static xen_compilation_init(void)
+static int __init xen_compilation_init(void)
 {
 	return sysfs_create_group(hypervisor_kobj, &xen_compilation_group);
 }
@@ -426,7 +427,7 @@ static ssize_t hyp_sysfs_store(struct kobject *kobj,
 	return 0;
 }
 
-static struct sysfs_ops hyp_sysfs_ops = {
+static const struct sysfs_ops hyp_sysfs_ops = {
 	.show = hyp_sysfs_show,
 	.store = hyp_sysfs_store,
 };

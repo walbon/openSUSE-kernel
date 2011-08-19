@@ -732,11 +732,13 @@ static void bnx2x_get_drvinfo(struct net_device *dev,
 		bnx2x_release_phy_lock(bp);
 	}
 
-	snprintf(info->fw_version, 32, "BC:%d.%d.%d%s%s",
+	strncpy(info->fw_version, bp->fw_ver, 32);
+	snprintf(info->fw_version + strlen(bp->fw_ver), 32 - strlen(bp->fw_ver),
+		 "bc %d.%d.%d%s%s",
 		 (bp->common.bc_ver & 0xff0000) >> 16,
 		 (bp->common.bc_ver & 0xff00) >> 8,
 		 (bp->common.bc_ver & 0xff),
-		 ((phy_fw_ver[0] != '\0') ? " PHY:" : ""), phy_fw_ver);
+		 ((phy_fw_ver[0] != '\0') ? " phy " : ""), phy_fw_ver);
 	strcpy(info->bus_info, pci_name(bp->pdev));
 	info->n_stats = BNX2X_NUM_STATS;
 	info->testinfo_len = BNX2X_NUM_TESTS;
@@ -1413,84 +1415,6 @@ static int bnx2x_set_pauseparam(struct net_device *dev,
 	return 0;
 }
 
-static int bnx2x_set_flags(struct net_device *dev, u32 data)
-{
-	struct bnx2x *bp = netdev_priv(dev);
-	int changed = 0;
-	int rc = 0;
-
-	if (bp->recovery_state != BNX2X_RECOVERY_DONE) {
-		printk(KERN_ERR "Handling parity error recovery. Try again later\n");
-		return -EAGAIN;
-	}
-
-	/* TPA requires Rx CSUM offloading */
-	if ((data & ETH_FLAG_LRO) && bp->rx_csum) {
-		if (!bp->disable_tpa) {
-			if (!(dev->features & NETIF_F_LRO)) {
-				dev->features |= NETIF_F_LRO;
-				bp->flags |= TPA_ENABLE_FLAG;
-				changed = 1;
-			}
-		} else
-			rc = -EINVAL;
-	} else if (dev->features & NETIF_F_LRO) {
-		dev->features &= ~NETIF_F_LRO;
-		bp->flags &= ~TPA_ENABLE_FLAG;
-		changed = 1;
-	}
-
-	if (changed && netif_running(dev)) {
-		bnx2x_nic_unload(bp, UNLOAD_NORMAL);
-		rc = bnx2x_nic_load(bp, LOAD_NORMAL);
-	}
-
-	return rc;
-}
-
-static u32 bnx2x_get_rx_csum(struct net_device *dev)
-{
-	struct bnx2x *bp = netdev_priv(dev);
-
-	return bp->rx_csum;
-}
-
-static int bnx2x_set_rx_csum(struct net_device *dev, u32 data)
-{
-	struct bnx2x *bp = netdev_priv(dev);
-	int rc = 0;
-
-	if (bp->recovery_state != BNX2X_RECOVERY_DONE) {
-		printk(KERN_ERR "Handling parity error recovery. Try again later\n");
-		return -EAGAIN;
-	}
-
-	bp->rx_csum = data;
-
-	/* Disable TPA, when Rx CSUM is disabled. Otherwise all
-	   TPA'ed packets will be discarded due to wrong TCP CSUM */
-	if (!data) {
-		u32 flags = ethtool_op_get_flags(dev);
-
-		rc = bnx2x_set_flags(dev, (flags & ~ETH_FLAG_LRO));
-	}
-
-	return rc;
-}
-
-static int bnx2x_set_tso(struct net_device *dev, u32 data)
-{
-	if (data) {
-		dev->features |= (NETIF_F_TSO | NETIF_F_TSO_ECN);
-		dev->features |= NETIF_F_TSO6;
-	} else {
-		dev->features &= ~(NETIF_F_TSO | NETIF_F_TSO_ECN);
-		dev->features &= ~NETIF_F_TSO6;
-	}
-
-	return 0;
-}
-
 static const struct {
 	char string[ETH_GSTRING_LEN];
 } bnx2x_tests_str_arr[BNX2X_NUM_TESTS] = {
@@ -1775,6 +1699,7 @@ static int bnx2x_run_loopback(struct bnx2x *bp, int loopback_mode)
 	unsigned char *packet;
 	struct bnx2x_fastpath *fp_rx = &bp->fp[0];
 	struct bnx2x_fastpath *fp_tx = &bp->fp[0];
+	struct bnx2x_fp_txdata *txdata = &fp_tx->txdata[0];
 	u16 tx_start_idx, tx_idx;
 	u16 rx_start_idx, rx_idx;
 	u16 pkt_prod, bd_prod, rx_comp_cons;
@@ -1829,17 +1754,17 @@ static int bnx2x_run_loopback(struct bnx2x *bp, int loopback_mode)
 
 	/* send the loopback packet */
 	num_pkts = 0;
-	tx_start_idx = le16_to_cpu(*fp_tx->tx_cons_sb);
+	tx_start_idx = le16_to_cpu(*txdata->tx_cons_sb);
 	rx_start_idx = le16_to_cpu(*fp_rx->rx_cons_sb);
 
-	pkt_prod = fp_tx->tx_pkt_prod++;
-	tx_buf = &fp_tx->tx_buf_ring[TX_BD(pkt_prod)];
-	tx_buf->first_bd = fp_tx->tx_bd_prod;
+	pkt_prod = txdata->tx_pkt_prod++;
+	tx_buf = &txdata->tx_buf_ring[TX_BD(pkt_prod)];
+	tx_buf->first_bd = txdata->tx_bd_prod;
 	tx_buf->skb = skb;
 	tx_buf->flags = 0;
 
-	bd_prod = TX_BD(fp_tx->tx_bd_prod);
-	tx_start_bd = &fp_tx->tx_desc_ring[bd_prod].start_bd;
+	bd_prod = TX_BD(txdata->tx_bd_prod);
+	tx_start_bd = &txdata->tx_desc_ring[bd_prod].start_bd;
 	tx_start_bd->addr_hi = cpu_to_le32(U64_HI(mapping));
 	tx_start_bd->addr_lo = cpu_to_le32(U64_LO(mapping));
 	tx_start_bd->nbd = cpu_to_le16(2); /* start + pbd */
@@ -1856,27 +1781,27 @@ static int bnx2x_run_loopback(struct bnx2x *bp, int loopback_mode)
 	/* turn on parsing and get a BD */
 	bd_prod = TX_BD(NEXT_TX_IDX(bd_prod));
 
-	pbd_e1x = &fp_tx->tx_desc_ring[bd_prod].parse_bd_e1x;
-	pbd_e2 = &fp_tx->tx_desc_ring[bd_prod].parse_bd_e2;
+	pbd_e1x = &txdata->tx_desc_ring[bd_prod].parse_bd_e1x;
+	pbd_e2 = &txdata->tx_desc_ring[bd_prod].parse_bd_e2;
 
 	memset(pbd_e2, 0, sizeof(struct eth_tx_parse_bd_e2));
 	memset(pbd_e1x, 0, sizeof(struct eth_tx_parse_bd_e1x));
 
 	wmb();
 
-	fp_tx->tx_db.data.prod += 2;
+	txdata->tx_db.data.prod += 2;
 	barrier();
-	DOORBELL(bp, fp_tx->index, fp_tx->tx_db.raw);
+	DOORBELL(bp, txdata->cid, txdata->tx_db.raw);
 
 	mmiowb();
 	barrier();
 
 	num_pkts++;
-	fp_tx->tx_bd_prod += 2; /* start + pbd */
+	txdata->tx_bd_prod += 2; /* start + pbd */
 
 	udelay(100);
 
-	tx_idx = le16_to_cpu(*fp_tx->tx_cons_sb);
+	tx_idx = le16_to_cpu(*txdata->tx_cons_sb);
 	if (tx_idx != tx_start_idx + num_pkts)
 		goto test_loopback_exit;
 
@@ -1890,7 +1815,7 @@ static int bnx2x_run_loopback(struct bnx2x *bp, int loopback_mode)
 		 * bnx2x_tx_int()), as both are taking netif_tx_lock().
 		 */
 		local_bh_disable();
-		bnx2x_tx_int(fp_tx);
+		bnx2x_tx_int(bp, txdata);
 		local_bh_enable();
 	}
 
@@ -1911,7 +1836,7 @@ static int bnx2x_run_loopback(struct bnx2x *bp, int loopback_mode)
 
 	rx_buf = &fp_rx->rx_buf_ring[RX_BD(fp_rx->rx_bd_cons)];
 	dma_sync_single_for_device(&bp->pdev->dev,
-				   pci_unmap_addr(rx_buf, mapping),
+				   dma_unmap_addr(rx_buf, mapping),
 				   fp_rx->rx_buf_size, DMA_FROM_DEVICE);
 	skb = rx_buf->skb;
 	skb_reserve(skb, cqe->fast_path_cqe.placement_offset);
@@ -2283,37 +2208,120 @@ static void bnx2x_get_ethtool_stats(struct net_device *dev,
 	}
 }
 
-static int bnx2x_phys_id(struct net_device *dev, u32 data)
+static int bnx2x_set_phys_id(struct net_device *dev,
+			     enum ethtool_phys_id_state state)
 {
 	struct bnx2x *bp = netdev_priv(dev);
-	int i;
 
 	if (!netif_running(dev))
-		return 0;
+		return -EAGAIN;
 
 	if (!bp->port.pmf)
-		return 0;
+		return -EOPNOTSUPP;
 
-	if (data == 0)
-		data = 2;
+	switch (state) {
+	case ETHTOOL_ID_ACTIVE:
+		return 1;	/* cycle on/off once per second */
 
-	for (i = 0; i < (data * 2); i++) {
-		if ((i % 2) == 0)
-			bnx2x_set_led(&bp->link_params, &bp->link_vars,
-				      LED_MODE_ON, SPEED_1000);
-		else
-			bnx2x_set_led(&bp->link_params, &bp->link_vars,
-				      LED_MODE_FRONT_PANEL_OFF, 0);
+	case ETHTOOL_ID_ON:
+		bnx2x_set_led(&bp->link_params, &bp->link_vars,
+			      LED_MODE_ON, SPEED_1000);
+		break;
 
-		msleep_interruptible(500);
-		if (signal_pending(current))
-			break;
+	case ETHTOOL_ID_OFF:
+		bnx2x_set_led(&bp->link_params, &bp->link_vars,
+			      LED_MODE_FRONT_PANEL_OFF, 0);
+
+		break;
+
+	case ETHTOOL_ID_INACTIVE:
+		bnx2x_set_led(&bp->link_params, &bp->link_vars,
+			      LED_MODE_OPER,
+			      bp->link_vars.line_speed);
 	}
 
-	bnx2x_set_led(&bp->link_params, &bp->link_vars,
-		      LED_MODE_OPER, bp->link_vars.line_speed);
+	return 0;
+}
+
+static int bnx2x_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *info,
+			   void *rules __always_unused)
+{
+	struct bnx2x *bp = netdev_priv(dev);
+
+	switch (info->cmd) {
+	case ETHTOOL_GRXRINGS:
+		info->data = BNX2X_NUM_ETH_QUEUES(bp);
+		return 0;
+
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static int bnx2x_get_rxfh_indir(struct net_device *dev,
+				struct ethtool_rxfh_indir *indir)
+{
+	struct bnx2x *bp = netdev_priv(dev);
+	size_t copy_size =
+		min_t(size_t, indir->size, T_ETH_INDIRECTION_TABLE_SIZE);
+	u8 ind_table[T_ETH_INDIRECTION_TABLE_SIZE] = {0};
+	size_t i;
+
+	if (bp->multi_mode == ETH_RSS_MODE_DISABLED)
+		return -EOPNOTSUPP;
+
+	/* Get the current configuration of the RSS indirection table */
+	bnx2x_get_rss_ind_table(&bp->rss_conf_obj, ind_table);
+
+	/*
+	 * We can't use a memcpy() as an internal storage of an
+	 * indirection table is a u8 array while indir->ring_index
+	 * points to an array of u32.
+	 *
+	 * Indirection table contains the FW Client IDs, so we need to
+	 * align the returned table to the Client ID of the leading RSS
+	 * queue.
+	 */
+	for (i = 0; i < copy_size; i++)
+		indir->ring_index[i] = ind_table[i] - bp->fp->cl_id;
+
+	indir->size = T_ETH_INDIRECTION_TABLE_SIZE;
 
 	return 0;
+}
+
+static int bnx2x_set_rxfh_indir(struct net_device *dev,
+				const struct ethtool_rxfh_indir *indir)
+{
+	struct bnx2x *bp = netdev_priv(dev);
+	size_t i;
+	u8 ind_table[T_ETH_INDIRECTION_TABLE_SIZE] = {0};
+	u32 num_eth_queues = BNX2X_NUM_ETH_QUEUES(bp);
+
+	if (bp->multi_mode == ETH_RSS_MODE_DISABLED)
+		return -EOPNOTSUPP;
+
+	/* validate the size */
+	if (indir->size != T_ETH_INDIRECTION_TABLE_SIZE)
+		return -EINVAL;
+
+	for (i = 0; i < T_ETH_INDIRECTION_TABLE_SIZE; i++) {
+		/* validate the indices */
+		if (indir->ring_index[i] >= num_eth_queues)
+			return -EINVAL;
+		/*
+		 * The same as in bnx2x_get_rxfh_indir: we can't use a memcpy()
+		 * as an internal storage of an indirection table is a u8 array
+		 * while indir->ring_index points to an array of u32.
+		 *
+		 * Indirection table contains the FW Client IDs, so we need to
+		 * align the received table to the Client ID of the leading RSS
+		 * queue
+		 */
+		ind_table[i] = indir->ring_index[i] + bp->fp->cl_id;
+	}
+
+	return bnx2x_config_rss_pf(bp, ind_table, false);
 }
 
 static const struct ethtool_ops bnx2x_ethtool_ops = {
@@ -2337,21 +2345,14 @@ static const struct ethtool_ops bnx2x_ethtool_ops = {
 	.set_ringparam		= bnx2x_set_ringparam,
 	.get_pauseparam		= bnx2x_get_pauseparam,
 	.set_pauseparam		= bnx2x_set_pauseparam,
-	.get_rx_csum		= bnx2x_get_rx_csum,
-	.set_rx_csum		= bnx2x_set_rx_csum,
-	.get_tx_csum		= ethtool_op_get_tx_csum,
-	.set_tx_csum		= ethtool_op_set_tx_hw_csum,
-	.set_flags		= bnx2x_set_flags,
-	.get_flags		= ethtool_op_get_flags,
-	.get_sg			= ethtool_op_get_sg,
-	.set_sg			= ethtool_op_set_sg,
-	.get_tso		= ethtool_op_get_tso,
-	.set_tso		= bnx2x_set_tso,
 	.self_test		= bnx2x_self_test,
 	.get_sset_count		= bnx2x_get_sset_count,
 	.get_strings		= bnx2x_get_strings,
-	.phys_id		= bnx2x_phys_id,
+	.set_phys_id		= bnx2x_set_phys_id,
 	.get_ethtool_stats	= bnx2x_get_ethtool_stats,
+	.get_rxnfc		= bnx2x_get_rxnfc,
+	.get_rxfh_indir		= bnx2x_get_rxfh_indir,
+	.set_rxfh_indir		= bnx2x_set_rxfh_indir,
 };
 
 void bnx2x_set_ethtool_ops(struct net_device *netdev)

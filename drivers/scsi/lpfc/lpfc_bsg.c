@@ -42,7 +42,6 @@
 #include "lpfc.h"
 #include "lpfc_logmsg.h"
 #include "lpfc_crtn.h"
-#include "lpfc_debugfs.h"
 #include "lpfc_vport.h"
 #include "lpfc_version.h"
 
@@ -601,7 +600,7 @@ lpfc_bsg_rport_els(struct fc_bsg_job *job)
 	dd_data->context_un.iocb.cmdiocbq = cmdiocbq;
 	dd_data->context_un.iocb.rspiocbq = rspiocbq;
 	dd_data->context_un.iocb.set_job = job;
-	dd_data->context_un.iocb.bmp = NULL;;
+	dd_data->context_un.iocb.bmp = NULL;
 	dd_data->context_un.iocb.ndlp = ndlp;
 
 	if (phba->cfg_poll & DISABLE_FCP_RING_INT) {
@@ -1472,12 +1471,13 @@ send_mgmt_rsp_exit:
 /**
  * lpfc_bsg_diag_mode_enter - process preparing into device diag loopback mode
  * @phba: Pointer to HBA context object.
+ * @job: LPFC_BSG_VENDOR_DIAG_MODE
  *
  * This function is responsible for preparing driver for diag loopback
  * on device.
  */
 static int
-lpfc_bsg_diag_mode_enter(struct lpfc_hba *phba)
+lpfc_bsg_diag_mode_enter(struct lpfc_hba *phba, struct fc_bsg_job *job)
 {
 	struct lpfc_vport **vports;
 	struct Scsi_Host *shost;
@@ -1521,6 +1521,7 @@ lpfc_bsg_diag_mode_enter(struct lpfc_hba *phba)
 /**
  * lpfc_bsg_diag_mode_exit - exit process from device diag loopback mode
  * @phba: Pointer to HBA context object.
+ * @job: LPFC_BSG_VENDOR_DIAG_MODE
  *
  * This function is responsible for driver exit processing of setting up
  * diag loopback mode on device.
@@ -1585,7 +1586,7 @@ lpfc_sli3_bsg_diag_loopback_mode(struct lpfc_hba *phba, struct fc_bsg_job *job)
 		goto job_error;
 	}
 
-	rc = lpfc_bsg_diag_mode_enter(phba);
+	rc = lpfc_bsg_diag_mode_enter(phba, job);
 	if (rc)
 		goto job_error;
 
@@ -1757,7 +1758,7 @@ lpfc_sli4_bsg_diag_loopback_mode(struct lpfc_hba *phba, struct fc_bsg_job *job)
 		goto job_error;
 	}
 
-	rc = lpfc_bsg_diag_mode_enter(phba);
+	rc = lpfc_bsg_diag_mode_enter(phba, job);
 	if (rc)
 		goto job_error;
 
@@ -1915,7 +1916,7 @@ lpfc_sli4_bsg_diag_mode_end(struct fc_bsg_job *job)
 	rc = lpfc_sli4_bsg_set_link_diag_state(phba, 0);
 
 	if (!rc)
-		rc = phba->lpfc_hba_init_link(phba);
+		rc = phba->lpfc_hba_init_link(phba, MBX_NOWAIT);
 
 	return rc;
 }
@@ -1981,7 +1982,7 @@ lpfc_sli4_bsg_link_diag_test(struct fc_bsg_job *job)
 		goto job_error;
 	}
 
-	rc = lpfc_bsg_diag_mode_enter(phba);
+	rc = lpfc_bsg_diag_mode_enter(phba, job);
 	if (rc)
 		goto job_error;
 
@@ -2470,7 +2471,7 @@ out:
  * @rxxri: Receive exchange id
  * @len: Number of data bytes
  *
- * This function allocates and posts a data buffer of sufficient size to recieve
+ * This function allocates and posts a data buffer of sufficient size to receive
  * an unsolicted CT command.
  **/
 static int lpfcdiag_loop_post_rxbufs(struct lpfc_hba *phba, uint16_t rxxri,
@@ -2969,7 +2970,7 @@ lpfc_bsg_issue_mbox_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 		return;
 	}
 
-	/* 
+	/*
 	 * The outgoing buffer is readily referred from the dma buffer,
 	 * just need to get header part from mailboxq structure.
 	 */
@@ -3177,11 +3178,6 @@ lpfc_bsg_issue_mbox_ext_handle_job(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 				"(x%x/x%x) complete bsg job done, bsize:%d\n",
 				phba->mbox_ext_buf_ctx.nembType,
 				phba->mbox_ext_buf_ctx.mboxType, size);
-		lpfc_idiag_mbxacc_dump_bsg_mbox(phba,
-					phba->mbox_ext_buf_ctx.nembType,
-					phba->mbox_ext_buf_ctx.mboxType,
-					dma_ebuf, sta_pos_addr,
-					phba->mbox_ext_buf_ctx.mbx_dmabuf, 0);
 	} else
 		spin_unlock_irqrestore(&phba->ct_ev_lock, flags);
 
@@ -3434,10 +3430,6 @@ lpfc_bsg_sli_cfg_read_cmd_ext(struct lpfc_hba *phba, struct fc_bsg_job *job,
 				"ext_buf_cnt:%d\n", ext_buf_cnt);
 	}
 
-	/* before dma descriptor setup */
-	lpfc_idiag_mbxacc_dump_bsg_mbox(phba, nemb_tp, mbox_rd, dma_mbox,
-					sta_pre_addr, dmabuf, ext_buf_cnt);
-
 	/* reject non-embedded mailbox command with none external buffer */
 	if (ext_buf_cnt == 0) {
 		rc = -EPERM;
@@ -3485,10 +3477,6 @@ lpfc_bsg_sli_cfg_read_cmd_ext(struct lpfc_hba *phba, struct fc_bsg_job *job,
 		}
 	}
 
-	/* after dma descriptor setup */
-	lpfc_idiag_mbxacc_dump_bsg_mbox(phba, nemb_tp, mbox_rd, dma_mbox,
-					sta_pos_addr, dmabuf, ext_buf_cnt);
-
 	/* construct base driver mbox command */
 	pmb = &pmboxq->u.mb;
 	pmbx = (uint8_t *)dmabuf->virt;
@@ -3523,7 +3511,7 @@ lpfc_bsg_sli_cfg_read_cmd_ext(struct lpfc_hba *phba, struct fc_bsg_job *job,
 		lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
 				"2947 Issued SLI_CONFIG ext-buffer "
 				"maibox command, rc:x%x\n", rc);
-		return SLI_CONFIG_HANDLED;
+		return 1;
 	}
 	lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
 			"2948 Failed to issue SLI_CONFIG ext-buffer "
@@ -3561,7 +3549,7 @@ lpfc_bsg_sli_cfg_write_cmd_ext(struct lpfc_hba *phba, struct fc_bsg_job *job,
 	LPFC_MBOXQ_t *pmboxq = NULL;
 	MAILBOX_t *pmb;
 	uint8_t *mbx;
-	int rc = SLI_CONFIG_NOT_HANDLED, i;
+	int rc = 0, i;
 
 	mbox_req =
 	   (struct dfc_mbox_req *)job->request->rqst_data.h_vendor.vendor_cmd;
@@ -3603,19 +3591,11 @@ lpfc_bsg_sli_cfg_write_cmd_ext(struct lpfc_hba *phba, struct fc_bsg_job *job,
 				"ext_buf_cnt:%d\n", ext_buf_cnt);
 	}
 
-	/* before dma buffer descriptor setup */
-	lpfc_idiag_mbxacc_dump_bsg_mbox(phba, nemb_tp, mbox_wr, dma_mbox,
-					sta_pre_addr, dmabuf, ext_buf_cnt);
-
 	if (ext_buf_cnt == 0)
 		return -EPERM;
 
 	/* for the first external buffer */
 	lpfc_bsg_sli_cfg_dma_desc_setup(phba, nemb_tp, 0, dmabuf, dmabuf);
-
-	/* after dma descriptor setup */
-	lpfc_idiag_mbxacc_dump_bsg_mbox(phba, nemb_tp, mbox_wr, dma_mbox,
-					sta_pos_addr, dmabuf, ext_buf_cnt);
 
 	/* log for looking forward */
 	for (i = 1; i < ext_buf_cnt; i++) {
@@ -3680,18 +3660,13 @@ lpfc_bsg_sli_cfg_write_cmd_ext(struct lpfc_hba *phba, struct fc_bsg_job *job,
 			lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
 					"2955 Issued SLI_CONFIG ext-buffer "
 					"maibox command, rc:x%x\n", rc);
-			return SLI_CONFIG_HANDLED;
+			return 1;
 		}
 		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
 				"2956 Failed to issue SLI_CONFIG ext-buffer "
 				"maibox command, rc:x%x\n", rc);
 		rc = -EPIPE;
 	}
-
-	/* wait for additoinal external buffers */
-	job->reply->result = 0;
-	job->job_done(job);
-	return SLI_CONFIG_HANDLED;
 
 job_error:
 	if (pmboxq)
@@ -3865,12 +3840,6 @@ lpfc_bsg_read_ebuf_get(struct lpfc_hba *phba, struct fc_bsg_job *job)
 	dmabuf = list_first_entry(&phba->mbox_ext_buf_ctx.ext_dmabuf_list,
 				  struct lpfc_dmabuf, list);
 	list_del_init(&dmabuf->list);
-
-	/* after dma buffer descriptor setup */
-	lpfc_idiag_mbxacc_dump_bsg_mbox(phba, phba->mbox_ext_buf_ctx.nembType,
-					mbox_rd, dma_ebuf, sta_pos_addr,
-					dmabuf, index);
-
 	pbuf = (uint8_t *)dmabuf->virt;
 	job->reply->reply_payload_rcv_len =
 		sg_copy_from_buffer(job->reply_payload.sg_list,
@@ -3953,11 +3922,6 @@ lpfc_bsg_write_ebuf_set(struct lpfc_hba *phba, struct fc_bsg_job *job,
 					dmabuf);
 	list_add_tail(&dmabuf->list, &phba->mbox_ext_buf_ctx.ext_dmabuf_list);
 
-	/* after write dma buffer */
-	lpfc_idiag_mbxacc_dump_bsg_mbox(phba, phba->mbox_ext_buf_ctx.nembType,
-					mbox_wr, dma_ebuf, sta_pos_addr,
-					dmabuf, index);
-
 	if (phba->mbox_ext_buf_ctx.seqNum == phba->mbox_ext_buf_ctx.numBuf) {
 		lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
 				"2968 SLI_CONFIG ext-buffer wr all %d "
@@ -3995,7 +3959,7 @@ lpfc_bsg_write_ebuf_set(struct lpfc_hba *phba, struct fc_bsg_job *job,
 			lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
 					"2969 Issued SLI_CONFIG ext-buffer "
 					"maibox command, rc:x%x\n", rc);
-			return SLI_CONFIG_HANDLED;
+			return 1;
 		}
 		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
 				"2970 Failed to issue SLI_CONFIG ext-buffer "
@@ -4075,14 +4039,14 @@ lpfc_bsg_handle_sli_cfg_ext(struct lpfc_hba *phba, struct fc_bsg_job *job,
 			    struct lpfc_dmabuf *dmabuf)
 {
 	struct dfc_mbox_req *mbox_req;
-	int rc = SLI_CONFIG_NOT_HANDLED;
+	int rc;
 
 	mbox_req =
 	   (struct dfc_mbox_req *)job->request->rqst_data.h_vendor.vendor_cmd;
 
 	/* mbox command with/without single external buffer */
 	if (mbox_req->extMboxTag == 0 && mbox_req->extSeqNum == 0)
-		return rc;
+		return SLI_CONFIG_NOT_HANDLED;
 
 	/* mbox command and first external buffer */
 	if (phba->mbox_ext_buf_ctx.state == LPFC_BSG_MBOX_IDLE) {
@@ -4173,6 +4137,13 @@ lpfc_bsg_issue_mbox(struct lpfc_hba *phba, struct fc_bsg_job *job,
 	/* in case no data is transferred */
 	job->reply->reply_payload_rcv_len = 0;
 
+	/* sanity check to protect driver */
+	if (job->reply_payload.payload_len > BSG_MBOX_SIZE ||
+	    job->request_payload.payload_len > BSG_MBOX_SIZE) {
+		rc = -ERANGE;
+		goto job_done;
+	}
+
 	/*
 	 * Don't allow mailbox commands to be sent when blocked or when in
 	 * the middle of discovery
@@ -4184,13 +4155,6 @@ lpfc_bsg_issue_mbox(struct lpfc_hba *phba, struct fc_bsg_job *job,
 
 	mbox_req =
 	    (struct dfc_mbox_req *)job->request->rqst_data.h_vendor.vendor_cmd;
-
-	/* sanity check to protect driver */
-	if (job->reply_payload.payload_len > BSG_MBOX_SIZE ||
-	    job->request_payload.payload_len > BSG_MBOX_SIZE) {
-		rc = -ERANGE;
-		goto job_done;
-	}
 
 	/* check if requested extended data lengths are valid */
 	if ((mbox_req->inExtWLen > BSG_MBOX_SIZE/sizeof(uint32_t)) ||
@@ -4285,7 +4249,7 @@ lpfc_bsg_issue_mbox(struct lpfc_hba *phba, struct fc_bsg_job *job,
 		 * mailbox extension size
 		 */
 		if ((transmit_length > receive_length) ||
-			(transmit_length > BSG_MBOX_SIZE - sizeof(MAILBOX_t))) {
+			(transmit_length > MAILBOX_EXT_SIZE)) {
 			rc = -ERANGE;
 			goto job_done;
 		}
@@ -4308,7 +4272,7 @@ lpfc_bsg_issue_mbox(struct lpfc_hba *phba, struct fc_bsg_job *job,
 		/* receive length cannot be greater than mailbox
 		 * extension size
 		 */
-		if (receive_length > BSG_MBOX_SIZE - sizeof(MAILBOX_t)) {
+		if (receive_length > MAILBOX_EXT_SIZE) {
 			rc = -ERANGE;
 			goto job_done;
 		}
@@ -4342,8 +4306,7 @@ lpfc_bsg_issue_mbox(struct lpfc_hba *phba, struct fc_bsg_job *job,
 			bde = (struct ulp_bde64 *)&pmb->un.varWords[4];
 
 			/* bde size cannot be greater than mailbox ext size */
-			if (bde->tus.f.bdeSize >
-			    BSG_MBOX_SIZE - sizeof(MAILBOX_t)) {
+			if (bde->tus.f.bdeSize > MAILBOX_EXT_SIZE) {
 				rc = -ERANGE;
 				goto job_done;
 			}
@@ -4369,8 +4332,7 @@ lpfc_bsg_issue_mbox(struct lpfc_hba *phba, struct fc_bsg_job *job,
 				 * mailbox extension size
 				 */
 				if ((receive_length == 0) ||
-				    (receive_length >
-				     BSG_MBOX_SIZE - sizeof(MAILBOX_t))) {
+				    (receive_length > MAILBOX_EXT_SIZE)) {
 					rc = -ERANGE;
 					goto job_done;
 				}

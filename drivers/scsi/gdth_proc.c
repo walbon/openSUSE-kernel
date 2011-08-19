@@ -3,6 +3,7 @@
  */
 
 #include <linux/completion.h>
+#include <linux/slab.h>
 
 int gdth_proc_info(struct Scsi_Host *host, char *buffer,char **start,off_t offset,int length,   
                    int inout)
@@ -364,8 +365,10 @@ static int gdth_get_info(char *buffer,char **start,off_t offset,int length,
                     len = 0;
                     begin = pos;
                 }
-                if (pos > offset + length)
+		if (pos > offset + length) {
+		    gdth_ioctl_free(ha, GDTH_SCRATCH, buf, paddr);
                     goto stop_output;
+		}
             }
         }
         gdth_ioctl_free(ha, GDTH_SCRATCH, buf, paddr);
@@ -449,8 +452,10 @@ static int gdth_get_info(char *buffer,char **start,off_t offset,int length,
                     len = 0;
                     begin = pos;
                 }
-                if (pos > offset + length)
+		if (pos > offset + length) {
+		    gdth_ioctl_free(ha, GDTH_SCRATCH, buf, paddr);
                     goto stop_output;
+		}
             } while (drv_no != -1);
              
             if (is_mirr) {
@@ -471,8 +476,10 @@ static int gdth_get_info(char *buffer,char **start,off_t offset,int length,
                 len = 0;
                 begin = pos;
             }
-            if (pos > offset + length)
+	    if (pos > offset + length) {
+		gdth_ioctl_free(ha, GDTH_SCRATCH, buf, paddr);
                 goto stop_output;
+	    }
         }       
         gdth_ioctl_free(ha, GDTH_SCRATCH, buf, paddr);
         
@@ -541,8 +548,10 @@ static int gdth_get_info(char *buffer,char **start,off_t offset,int length,
                     len = 0;
                     begin = pos;
                 }
-                if (pos > offset + length)
+		if (pos > offset + length) {
+		    gdth_ioctl_free(ha, GDTH_SCRATCH, buf, paddr);
                     goto stop_output;
+		}
             }
         }
         gdth_ioctl_free(ha, GDTH_SCRATCH, buf, paddr);

@@ -18,6 +18,7 @@
 #include <linux/ctype.h>
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 
 #include <asm/debug.h>
 #include <asm/uaccess.h>
@@ -301,7 +302,7 @@ dasd_parse_keyword( char *parsestring ) {
 /*
  * Try to interprete the first element on the comma separated parse string
  * as a device number or a range of devices. If the interpretation is
- * successfull, create the matching dasd_devmap entries and return a pointer
+ * successful, create the matching dasd_devmap entries and return a pointer
  * to the residual string.
  * If interpretation fails or in case of an error, return an error code.
  */
@@ -1056,7 +1057,7 @@ static ssize_t dasd_vendor_show(struct device *dev,
 
 	if (device->discipline && device->discipline->get_uid &&
 	    !device->discipline->get_uid(device, &uid))
-		vendor = uid.vendor;
+			vendor = uid.vendor;
 
 	dasd_put_device(device);
 

@@ -34,7 +34,7 @@ MODULE_LICENSE("GPL v2");
 
 static int fcoe_transport_create(const char *, struct kernel_param *);
 static int fcoe_transport_destroy(const char *, struct kernel_param *);
-static int fcoe_transport_show(char *, struct kernel_param *);
+static int fcoe_transport_show(char *buffer, const struct kernel_param *kp);
 static struct fcoe_transport *fcoe_transport_lookup(struct net_device *device);
 static struct fcoe_transport *fcoe_netdev_map_lookup(struct net_device *device);
 static int fcoe_transport_enable(const char *, struct kernel_param *);
@@ -377,7 +377,7 @@ out_attach:
 }
 EXPORT_SYMBOL(fcoe_transport_detach);
 
-static int fcoe_transport_show(char *buffer, struct kernel_param *kp)
+static int fcoe_transport_show(char *buffer, const struct kernel_param *kp)
 {
 	int i, j;
 	struct fcoe_transport *ft = NULL;

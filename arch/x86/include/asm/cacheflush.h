@@ -1,48 +1,8 @@
 #ifndef _ASM_X86_CACHEFLUSH_H
 #define _ASM_X86_CACHEFLUSH_H
 
-/* Keep includes the same across arches.  */
-#include <linux/mm.h>
-
 /* Caches aren't brain-dead on the intel. */
-static inline void flush_cache_all(void) { }
-static inline void flush_cache_mm(struct mm_struct *mm) { }
-static inline void flush_cache_dup_mm(struct mm_struct *mm) { }
-static inline void flush_cache_range(struct vm_area_struct *vma,
-				     unsigned long start, unsigned long end) { }
-static inline void flush_cache_page(struct vm_area_struct *vma,
-				    unsigned long vmaddr, unsigned long pfn) { }
-#define ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE 0
-static inline void flush_dcache_page(struct page *page) { }
-static inline void flush_dcache_mmap_lock(struct address_space *mapping) { }
-static inline void flush_dcache_mmap_unlock(struct address_space *mapping) { }
-static inline void flush_icache_range(unsigned long start,
-				      unsigned long end) { }
-static inline void flush_icache_page(struct vm_area_struct *vma,
-				     struct page *page) { }
-static inline void flush_icache_user_range(struct vm_area_struct *vma,
-					   struct page *page,
-					   unsigned long addr,
-					   unsigned long len) { }
-static inline void flush_cache_vmap(unsigned long start, unsigned long end) { }
-static inline void flush_cache_vunmap(unsigned long start,
-				      unsigned long end) { }
-
-static inline void copy_to_user_page(struct vm_area_struct *vma,
-				     struct page *page, unsigned long vaddr,
-				     void *dst, const void *src,
-				     unsigned long len)
-{
-	memcpy(dst, src, len);
-}
-
-static inline void copy_from_user_page(struct vm_area_struct *vma,
-				       struct page *page, unsigned long vaddr,
-				       void *dst, const void *src,
-				       unsigned long len)
-{
-	memcpy(dst, src, len);
-}
+#include <asm-generic/cacheflush.h>
 
 #ifdef CONFIG_X86_PAT
 /*
@@ -111,7 +71,7 @@ static inline void set_page_memtype(struct page *pg, unsigned long memtype) { }
  * Read/Write    : ReadOnly, ReadWrite
  * Presence      : NotPresent
  *
- * Within a catagory, the attributes are mutually exclusive.
+ * Within a category, the attributes are mutually exclusive.
  *
  * The implementation of this API will take care of various aspects that
  * are associated with changing such attributes, such as:
@@ -141,7 +101,6 @@ int set_memory_x(unsigned long addr, int numpages);
 int set_memory_nx(unsigned long addr, int numpages);
 int set_memory_ro(unsigned long addr, int numpages);
 int set_memory_rw(unsigned long addr, int numpages);
-int set_memory_rw_force(unsigned long addr, int numpages);
 int set_memory_np(unsigned long addr, int numpages);
 int set_memory_4k(unsigned long addr, int numpages);
 
@@ -179,20 +138,17 @@ int set_pages_x(struct page *page, int numpages);
 int set_pages_nx(struct page *page, int numpages);
 int set_pages_ro(struct page *page, int numpages);
 int set_pages_rw(struct page *page, int numpages);
-int set_pages_rw_force(struct page *page, int numpages);
 
 
 void clflush_cache_range(void *addr, unsigned int size);
 
 #ifdef CONFIG_DEBUG_RODATA
 void mark_rodata_ro(void);
-void mark_rodata_rw(void);
 extern const int rodata_test_data;
 extern int kernel_set_to_readonly;
 void set_kernel_text_rw(void);
 void set_kernel_text_ro(void);
 #else
-static inline void mark_rodata_rw(void) { }
 static inline void set_kernel_text_rw(void) { }
 static inline void set_kernel_text_ro(void) { }
 #endif

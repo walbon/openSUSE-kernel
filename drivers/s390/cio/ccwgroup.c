@@ -293,29 +293,25 @@ int ccwgroup_create_from_string(struct device *root, unsigned int creator_id,
 	}
 
 	dev_set_name(&gdev->dev, "%s", dev_name(&gdev->cdev[0]->dev));
-	dev_set_uevent_suppress(&gdev->dev, 1);
+
 	rc = device_add(&gdev->dev);
 	if (rc)
 		goto error;
-
 	get_device(&gdev->dev);
 	rc = device_create_file(&gdev->dev, &dev_attr_ungroup);
-	if (rc)
-		goto error_unreg;
+
+	if (rc) {
+		device_unregister(&gdev->dev);
+		goto error;
+	}
 
 	rc = __ccwgroup_create_symlinks(gdev);
-	if (rc)
-		goto error_attr;
-
-	dev_set_uevent_suppress(&gdev->dev, 0);
-	kobject_uevent(&gdev->dev.kobj, KOBJ_ADD);
-	mutex_unlock(&gdev->reg_mutex);
-	put_device(&gdev->dev);
-	return 0;
-
-error_attr:
+	if (!rc) {
+		mutex_unlock(&gdev->reg_mutex);
+		put_device(&gdev->dev);
+		return 0;
+	}
 	device_remove_file(&gdev->dev, &dev_attr_ungroup);
-error_unreg:
 	device_unregister(&gdev->dev);
 error:
 	for (i = 0; i < num_devices; i++)
@@ -432,7 +428,7 @@ ccwgroup_online_store (struct device *dev, struct device_attribute *attr, const 
 	gdev = to_ccwgroupdev(dev);
 	gdrv = to_ccwgroupdrv(dev->driver);
 
-	if (!try_module_get(gdrv->owner))
+	if (!try_module_get(gdrv->driver.owner))
 		return -EINVAL;
 
 	ret = strict_strtoul(buf, 0, &value);
@@ -446,7 +442,7 @@ ccwgroup_online_store (struct device *dev, struct device_attribute *attr, const 
 	else
 		ret = -EINVAL;
 out:
-	module_put(gdrv->owner);
+	module_put(gdrv->driver.owner);
 	return (ret == 0) ? count : ret;
 }
 
@@ -620,8 +616,6 @@ int ccwgroup_driver_register(struct ccwgroup_driver *cdriver)
 {
 	/* register our new driver with the core */
 	cdriver->driver.bus = &ccwgroup_bus_type;
-	cdriver->driver.name = cdriver->name;
-	cdriver->driver.owner = cdriver->owner;
 
 	return driver_register(&cdriver->driver);
 }

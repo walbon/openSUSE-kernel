@@ -19,7 +19,6 @@
 #ifndef __BTRFS_CTREE__
 #define __BTRFS_CTREE__
 
-#include <linux/version.h>
 #include <linux/mm.h>
 #include <linux/highmem.h>
 #include <linux/fs.h>
@@ -730,7 +729,7 @@ struct btrfs_space_info {
 	u64 total_bytes;	/* total bytes in the space,
 				   this doesn't take mirrors into account */
 	u64 bytes_used;		/* total bytes used,
-				   this does't take mirrors into account */
+				   this doesn't take mirrors into account */
 	u64 bytes_pinned;	/* total bytes pinned, will be freed when the
 				   transaction finishes */
 	u64 bytes_reserved;	/* total bytes the allocator has reserved for
@@ -1336,6 +1335,11 @@ struct btrfs_ioctl_defrag_range_args {
  */
 #define BTRFS_STRING_ITEM_KEY	253
 
+/*
+ * Flags for mount options.
+ *
+ * Note: don't forget to add new options to btrfs_show_options()
+ */
 #define BTRFS_MOUNT_NODATASUM		(1 << 0)
 #define BTRFS_MOUNT_NODATACOW		(1 << 1)
 #define BTRFS_MOUNT_NOBARRIER		(1 << 2)
@@ -1374,7 +1378,6 @@ struct btrfs_ioctl_defrag_range_args {
 #define BTRFS_INODE_NOATIME		(1 << 9)
 #define BTRFS_INODE_DIRSYNC		(1 << 10)
 #define BTRFS_INODE_COMPRESS		(1 << 11)
-
 
 #define BTRFS_INODE_ROOT_ITEM_INIT	(1 << 31)
 
@@ -2501,6 +2504,9 @@ struct btrfs_csum_item *btrfs_lookup_csum(struct btrfs_trans_handle *trans,
 					  struct btrfs_root *root,
 					  struct btrfs_path *path,
 					  u64 bytenr, int cow);
+int btrfs_csum_truncate(struct btrfs_trans_handle *trans,
+			struct btrfs_root *root, struct btrfs_path *path,
+			u64 isize);
 int btrfs_lookup_csums_range(struct btrfs_root *root, u64 start, u64 end,
 			     struct list_head *list, int search_commit);
 /* inode.c */
@@ -2545,12 +2551,12 @@ unsigned long btrfs_force_ra(struct address_space *mapping,
 			      pgoff_t offset, pgoff_t last_index);
 int btrfs_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf);
 int btrfs_readpage(struct file *file, struct page *page);
-void btrfs_delete_inode(struct inode *inode);
-int btrfs_write_inode(struct inode *inode, int wait);
-void btrfs_dirty_inode(struct inode *inode);
+void btrfs_evict_inode(struct inode *inode);
+int btrfs_write_inode(struct inode *inode, struct writeback_control *wbc);
+void btrfs_dirty_inode(struct inode *inode, int flags);
 struct inode *btrfs_alloc_inode(struct super_block *sb);
 void btrfs_destroy_inode(struct inode *inode);
-void btrfs_drop_inode(struct inode *inode);
+int btrfs_drop_inode(struct inode *inode);
 int btrfs_init_cachep(void);
 void btrfs_destroy_cachep(void);
 long btrfs_ioctl_trans_end(struct file *file);
@@ -2572,7 +2578,7 @@ void btrfs_orphan_post_snapshot(struct btrfs_trans_handle *trans,
 				struct btrfs_pending_snapshot *pending);
 void btrfs_orphan_commit_root(struct btrfs_trans_handle *trans,
 			      struct btrfs_root *root);
-int btrfs_cont_expand(struct inode *inode, loff_t size);
+int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size);
 int btrfs_invalidate_inodes(struct btrfs_root *root);
 void btrfs_add_delayed_iput(struct inode *inode);
 void btrfs_run_delayed_iputs(struct btrfs_root *root);
@@ -2592,12 +2598,11 @@ void btrfs_inherit_iflags(struct inode *inode, struct inode *dir);
 int btrfs_defrag_file(struct inode *inode, struct file *file,
 		      struct btrfs_ioctl_defrag_range_args *range,
 		      u64 newer_than, unsigned long max_pages);
-
 /* file.c */
 int btrfs_add_inode_defrag(struct btrfs_trans_handle *trans,
 			   struct inode *inode);
 int btrfs_run_defrag_inodes(struct btrfs_fs_info *fs_info);
-int btrfs_sync_file(struct file *file, struct dentry *dentry, int datasync);
+int btrfs_sync_file(struct file *file, int datasync);
 int btrfs_drop_extent_cache(struct inode *inode, u64 start, u64 end,
 			    int skip_pinned);
 extern const struct file_operations btrfs_file_operations;
@@ -2637,7 +2642,7 @@ do {								\
 
 /* acl.c */
 #ifdef CONFIG_BTRFS_FS_POSIX_ACL
-int btrfs_check_acl(struct inode *inode, int mask);
+int btrfs_check_acl(struct inode *inode, int mask, unsigned int flags);
 #else
 #define btrfs_check_acl NULL
 #endif

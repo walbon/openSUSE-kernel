@@ -28,7 +28,6 @@
 #include <asm/reboot.h>
 #include <asm/virtext.h>
 
-
 int in_crash_kexec;
 
 #if defined(CONFIG_SMP) && defined(CONFIG_X86_LOCAL_APIC)

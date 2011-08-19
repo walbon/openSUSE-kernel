@@ -172,7 +172,7 @@
  */
 #define PCI_DEVICE_ID_AMD_15H_NB_F1	0x1601
 #define PCI_DEVICE_ID_AMD_15H_NB_F2	0x1602
-#define PCI_DEVICE_ID_AMD_15H_NB_F3	0x1603
+
 
 /*
  * Function 1 - Address Map

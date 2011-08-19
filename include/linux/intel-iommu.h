@@ -29,10 +29,6 @@
 #include <asm/cacheflush.h>
 #include <asm/iommu.h>
 
-/* DMAR Flags bits */
-#define DMAR_INTR_REMAP 0x1
-#define DMAR_X2APIC_OPT_OUT 0x2
-
 /*
  * Intel IOMMU register specification per version 1.0 public spec.
  */
@@ -336,6 +332,7 @@ struct intel_iommu {
 #ifdef CONFIG_INTR_REMAP
 	struct ir_table *ir_table;	/* Interrupt remapping info */
 #endif
+	int		node;
 };
 
 static inline void __iommu_flush_cache(

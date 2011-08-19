@@ -52,7 +52,7 @@
 #include "hpsa.h"
 
 /* HPSA_DRIVER_VERSION must be 3 byte values (0-255) separated by '.' */
-#define HPSA_DRIVER_VERSION "110526.863-1"
+#define HPSA_DRIVER_VERSION "2.0.2-1"
 #define DRIVER_NAME "HP HPSA Driver (v " HPSA_DRIVER_VERSION ")"
 
 /* How long to wait (in milliseconds) for board to go into simple mode */
@@ -88,6 +88,7 @@ static const struct pci_device_id hpsa_pci_device_id[] = {
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3249},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x324a},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x324b},
+	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3233},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3350},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3351},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3352},
@@ -95,9 +96,7 @@ static const struct pci_device_id hpsa_pci_device_id[] = {
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3354},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3355},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3356},
-	{PCI_VENDOR_ID_HP,     PCI_ANY_ID,      PCI_ANY_ID, PCI_ANY_ID,
-		PCI_CLASS_STORAGE_RAID << 8, 0xffff << 8, 0},
-	{PCI_VENDOR_ID_COMPAQ,     PCI_ANY_ID,  PCI_ANY_ID, PCI_ANY_ID,
+	{PCI_VENDOR_ID_HP,     PCI_ANY_ID,	PCI_ANY_ID, PCI_ANY_ID,
 		PCI_CLASS_STORAGE_RAID << 8, 0xffff << 8, 0},
 	{0,}
 };
@@ -532,22 +531,17 @@ static void enqueue_cmd_and_start_io(struct ctlr_info *h,
 	unsigned long flags;
 
 	set_performant_mode(h, c);
-	flags = h->access.lock(h);
+	spin_lock_irqsave(&h->lock, flags);
 	addQ(&h->reqQ, c);
 	h->Qdepth++;
 	start_io(h);
-	h->access.unlock(h, flags);
+	spin_unlock_irqrestore(&h->lock, flags);
 }
 
 static inline void removeQ(struct CommandList *c)
 {
-	int empty;
-
-	empty = list_empty(&c->list);
-	if (empty) {
-		WARN_ON(empty);
+	if (WARN_ON(list_empty(&c->list)))
 		return;
-	}
 	list_del_init(&c->list);
 }
 
@@ -1043,6 +1037,7 @@ static void complete_scsi_command(struct CommandList *cp)
 	unsigned char sense_key;
 	unsigned char asc;      /* additional sense code */
 	unsigned char ascq;     /* additional sense code qualifier */
+	unsigned long sense_data_size;
 
 	ei = cp->err_info;
 	cmd = (struct scsi_cmnd *) cp->scsi_cmd;
@@ -1057,10 +1052,14 @@ static void complete_scsi_command(struct CommandList *cp)
 	cmd->result |= ei->ScsiStatus;
 
 	/* copy the sense data whether we need to or not. */
-	memcpy(cmd->sense_buffer, ei->SenseInfo,
-		ei->SenseLen > SCSI_SENSE_BUFFERSIZE ?
-			SCSI_SENSE_BUFFERSIZE :
-			ei->SenseLen);
+	if (SCSI_SENSE_BUFFERSIZE < sizeof(ei->SenseInfo))
+		sense_data_size = SCSI_SENSE_BUFFERSIZE;
+	else
+		sense_data_size = sizeof(ei->SenseInfo);
+	if (ei->SenseLen < sense_data_size)
+		sense_data_size = ei->SenseLen;
+
+	memcpy(cmd->sense_buffer, ei->SenseInfo, sense_data_size);
 	scsi_set_resid(cmd, ei->ResidualCnt);
 
 	if (ei->CommandStatus == 0) {
@@ -1899,17 +1898,13 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 		hpsa_set_bus_target_lun(this_device, bus, target, lun);
 
 		switch (this_device->devtype) {
-		case TYPE_ROM:
-
-			if (!h->software_raid) { /* Real Smart Array? */
-
+		case TYPE_ROM: {
 			/* We don't *really* support actual CD-ROM devices,
-			 * on real Smart Arrays, just "One Button Disaster
-			 * Recovery" tape drive which temporarily pretends to
-			 * be a CD-ROM drive.  So we check that the device is
-			 * really an OBDR tape device by checking for "$DR-10"
-			 * in bytes 43-48 of the inquiry data.  We do support
-			 * CD-ROMs on software RAID "Smart Arrays" though.
+			 * just "One Button Disaster Recovery" tape drive
+			 * which temporarily pretends to be a CD-ROM drive.
+			 * So we check that the device is really an OBDR tape
+			 * device by checking for "$DR-10" in bytes 43-48 of
+			 * the inquiry data.
 			 */
 				char obdr_sig[7];
 #define OBDR_TAPE_SIG "$DR-10"
@@ -1918,7 +1913,7 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 				if (strncmp(obdr_sig, OBDR_TAPE_SIG, 6) != 0)
 					/* Not OBDR device, ignore it. */
 					break;
-			} /* else, it's a software RAID "Smart Array" */
+			}
 			ncurrent++;
 			break;
 		case TYPE_DISK:
@@ -2545,7 +2540,7 @@ static int hpsa_passthru_ioctl(struct ctlr_info *h, void __user *argp)
 		buff = kmalloc(iocommand.buf_size, GFP_KERNEL);
 		if (buff == NULL)
 			return -EFAULT;
-		if (iocommand.Request.Type.Direction & XFER_WRITE) {
+		if (iocommand.Request.Type.Direction == XFER_WRITE) {
 			/* Copy the data into the buffer we created */
 			if (copy_from_user(buff, iocommand.buf,
 				iocommand.buf_size)) {
@@ -2602,7 +2597,7 @@ static int hpsa_passthru_ioctl(struct ctlr_info *h, void __user *argp)
 		cmd_special_free(h, c);
 		return -EFAULT;
 	}
-	if ((iocommand.Request.Type.Direction & XFER_READ) &&
+	if (iocommand.Request.Type.Direction == XFER_READ &&
 		iocommand.buf_size > 0) {
 		/* Copy the data out of the buffer we created */
 		if (copy_to_user(iocommand.buf, buff, iocommand.buf_size)) {
@@ -2678,7 +2673,7 @@ static int hpsa_big_passthru_ioctl(struct ctlr_info *h, void __user *argp)
 			status = -ENOMEM;
 			goto cleanup1;
 		}
-		if (ioc->Request.Type.Direction & XFER_WRITE) {
+		if (ioc->Request.Type.Direction == XFER_WRITE) {
 			if (copy_from_user(buff[sg_used], data_ptr, sz)) {
 				status = -ENOMEM;
 				goto cleanup1;
@@ -2723,7 +2718,7 @@ static int hpsa_big_passthru_ioctl(struct ctlr_info *h, void __user *argp)
 		status = -EFAULT;
 		goto cleanup1;
 	}
-	if ((ioc->Request.Type.Direction & XFER_READ) && ioc->buf_size > 0) {
+	if (ioc->Request.Type.Direction == XFER_READ && ioc->buf_size > 0) {
 		/* Copy the data out of the buffer we created */
 		BYTE __user *ptr = ioc->buf;
 		for (i = 0; i < sg_used; i++) {
@@ -3292,31 +3287,6 @@ static int hpsa_controller_hard_reset(struct pci_dev *pdev,
 	return 0;
 }
 
-static int hpsa_wait_for_board_state(struct pci_dev *pdev,
-	void __iomem *vaddr, int wait_for_ready)
-{
-	int i, iterations;
-	u32 scratchpad;
-	if (wait_for_ready)
-		iterations = HPSA_BOARD_READY_ITERATIONS;
-	else
-		iterations = HPSA_BOARD_NOT_READY_ITERATIONS;
-
-	for (i = 0; i < iterations; i++) {
-		scratchpad = readl(vaddr + SA5_SCRATCHPAD_OFFSET);
-		if (wait_for_ready) {
-			if (scratchpad == HPSA_FIRMWARE_READY)
-				return 0;
-		} else {
-			if (scratchpad != HPSA_FIRMWARE_READY)
-				return 0;
-		}
-		msleep(HPSA_BOARD_READY_POLL_INTERVAL_MSECS);
-	}
-	dev_warn(&pdev->dev, "board not ready, timed out.\n");
-	return -ENODEV;
-}
-
 static __devinit void init_driver_version(char *driver_version, int len)
 {
 	memset(driver_version, 0, len);
@@ -3352,6 +3322,7 @@ static __devinit void read_driver_ver_from_cfgtable(
 static __devinit int controller_reset_failed(
 	struct CfgTable __iomem *cfgtable)
 {
+
 	char *driver_ver, *old_driver_ver;
 	int rc, size = sizeof(cfgtable->driver_version);
 
@@ -3472,13 +3443,8 @@ static __devinit int hpsa_kdump_hard_reset_controller(struct pci_dev *pdev)
 	pci_write_config_word(pdev, 4, command_register);
 
 	/* Some devices (notably the HP Smart Array 5i Controller)
-	 * need a little pause here.  Not all controllers though,
-	 * and for some we will miss the transition to NOT READY
-	 * if we wait here.   As a heuristic, if either doorbell
-	 * reset method is supported, we'll skip this sleep.
-	 */
-	if (!use_doorbell)
-		msleep(HPSA_POST_RESET_PAUSE_MSECS);
+	   need a little pause here */
+	msleep(HPSA_POST_RESET_PAUSE_MSECS);
 
 	/* Wait for board to become not ready, then ready. */
 	dev_info(&pdev->dev, "Waiting for board to reset.\n");
@@ -3642,16 +3608,6 @@ default_int_mode:
 	h->intr[h->intr_mode] = h->pdev->irq;
 }
 
-int (*hpsa_alternate_pci_init)(struct ctlr_info *h,
-	struct pci_dev *pdev, u32 board_id, void *intr, void *remove);
-/* ^^^ note, since pdev and board_id are already in h, look into
- * removing the pdev and board_id parameters.  However the Ibanez
- * hpsa_alternate_pci_init function does some funny things, so it's
- * not immediately clear to me that removing these is perfectly
- * straightforward.  Also I renamed this function hpsa_alternate_pci_init
- * (previously just alternate_pci_init) since we export it.
- */
-EXPORT_SYMBOL(hpsa_alternate_pci_init);
 static int __devinit hpsa_lookup_board_id(struct pci_dev *pdev, u32 *board_id)
 {
 	int i;
@@ -3669,15 +3625,9 @@ static int __devinit hpsa_lookup_board_id(struct pci_dev *pdev, u32 *board_id)
 	if ((subsystem_vendor_id != PCI_VENDOR_ID_HP &&
 		subsystem_vendor_id != PCI_VENDOR_ID_COMPAQ) ||
 		!hpsa_allow_any) {
-		/* Ibanez check */
-		if ((subsystem_vendor_id != 0x1000) &&
-		    (subsystem_vendor_id != 0x1590) &&
-		    (subsystem_vendor_id != 0x103c) &&
-		    (*board_id != 0x1783103c)) {
-			dev_warn(&pdev->dev, "unrecognized board ID: "
-				"0x%08x, ignoring.\n", *board_id);
-				return -ENODEV;
-		}
+		dev_warn(&pdev->dev, "unrecognized board ID: "
+			"0x%08x, ignoring.\n", *board_id);
+			return -ENODEV;
 	}
 	return ARRAY_SIZE(products) - 1; /* generic unknown smart array */
 }
@@ -3704,6 +3654,31 @@ static int __devinit hpsa_pci_find_memory_BAR(struct pci_dev *pdev,
 			return 0;
 		}
 	dev_warn(&pdev->dev, "no memory BAR found\n");
+	return -ENODEV;
+}
+
+static int __devinit hpsa_wait_for_board_state(struct pci_dev *pdev,
+	void __iomem *vaddr, int wait_for_ready)
+{
+	int i, iterations;
+	u32 scratchpad;
+	if (wait_for_ready)
+		iterations = HPSA_BOARD_READY_ITERATIONS;
+	else
+		iterations = HPSA_BOARD_NOT_READY_ITERATIONS;
+
+	for (i = 0; i < iterations; i++) {
+		scratchpad = readl(vaddr + SA5_SCRATCHPAD_OFFSET);
+		if (wait_for_ready) {
+			if (scratchpad == HPSA_FIRMWARE_READY)
+				return 0;
+		} else {
+			if (scratchpad != HPSA_FIRMWARE_READY)
+				return 0;
+		}
+		msleep(HPSA_BOARD_READY_POLL_INTERVAL_MSECS);
+	}
+	dev_warn(&pdev->dev, "board not ready, timed out.\n");
 	return -ENODEV;
 }
 
@@ -3740,7 +3715,7 @@ static int __devinit hpsa_find_cfgtables(struct ctlr_info *h)
 		return -ENOMEM;
 	rc = write_driver_ver_to_cfgtable(h->cfgtable);
 	if (rc)
-		return -ENOMEM;
+		return rc;
 	/* Find performant mode table. */
 	trans_offset = readl(&h->cfgtable->TransMethodOffset);
 	h->transtable = remap_pci_mem(pci_resource_start(h->pdev,
@@ -3847,7 +3822,7 @@ static void __devinit hpsa_wait_for_mode_change_ack(struct ctlr_info *h)
 		if (!(doorbell_value & CFGTBL_ChangeReq))
 			break;
 		/* delay and try again */
-		msleep(10);
+		usleep_range(10000, 20000);
 	}
 }
 
@@ -3874,8 +3849,6 @@ static int __devinit hpsa_enter_simple_mode(struct ctlr_info *h)
 	return 0;
 }
 
-static void __devexit hpsa_remove_one(struct pci_dev *pdev);
-
 static int __devinit hpsa_pci_init(struct ctlr_info *h)
 {
 	int prod_index, err;
@@ -3883,11 +3856,6 @@ static int __devinit hpsa_pci_init(struct ctlr_info *h)
 	prod_index = hpsa_lookup_board_id(h->pdev, &h->board_id);
 	if (prod_index < 0)
 		return -ENODEV;
-
-	// Skip over sabine.
-	if ((h->board_id == 0x1783103c) || (h->board_id == 0x005f1590))
-		return -ENODEV;
-
 	h->product_name = products[prod_index].product_name;
 	h->access = *(products[prod_index].access);
 
@@ -3907,23 +3875,7 @@ static int __devinit hpsa_pci_init(struct ctlr_info *h)
 			"cannot obtain PCI resources, aborting\n");
 		return err;
 	}
-
-	if (hpsa_alternate_pci_init) {
-		h->intr_mode = SIMPLE_MODE_INT;
-		err = hpsa_alternate_pci_init(h, h->pdev, h->board_id,
-				do_hpsa_intr_msi, hpsa_remove_one);
-		if (err < 0)
-			goto err_out_free_res;
-		/* If 1 it's a real Smart Array HBA, we want to continue on. */
-		if (err != 1) {
-			/* init is done for this IBANEZ board (i.e. an ICH10) */
-			return err;
-		}
-
-	}
-
 	hpsa_interrupt_mode(h);
-
 	err = hpsa_pci_find_memory_BAR(h->pdev, &h->paddr);
 	if (err)
 		goto err_out_free_res;
@@ -4059,8 +4011,7 @@ static int hpsa_request_irq(struct ctlr_info *h,
 				IRQF_DISABLED, h->devname, h);
 	else
 		rc = request_irq(h->intr[h->intr_mode], intxhandler,
-				h->software_raid ? IRQF_SHARED : IRQF_DISABLED,
-				h->devname, h);
+				IRQF_DISABLED, h->devname, h);
 	if (rc) {
 		dev_err(&h->pdev->dev, "unable to get irq %d for %s\n",
 		       h->intr[h->intr_mode], h->devname);
@@ -4153,7 +4104,7 @@ reinit_after_soft_reset:
 		return -ENOMEM;
 
 	h->pdev = pdev;
-	h->busy_initializing = BUSY_INIT_BUSY;
+	h->busy_initializing = 1;
 	h->intr_mode = hpsa_simple_mode ? SIMPLE_MODE_INT : PERF_MODE_INT;
 	INIT_LIST_HEAD(&h->cmpQ);
 	INIT_LIST_HEAD(&h->reqQ);
@@ -4262,7 +4213,7 @@ reinit_after_soft_reset:
 
 	hpsa_hba_inquiry(h);
 	hpsa_register_scsi(h);	/* hook ourselves into SCSI subsystem */
-	h->busy_initializing = BUSY_INIT_IDLE;
+	h->busy_initializing = 0;
 	return 1;
 
 clean4:
@@ -4271,11 +4222,10 @@ clean4:
 	free_irq(h->intr[h->intr_mode], h);
 clean2:
 clean1:
-	h->busy_initializing = BUSY_INIT_IDLE;
+	h->busy_initializing = 0;
 	kfree(h);
 	return rc;
 }
-EXPORT_SYMBOL(hpsa_init_one);
 
 static void hpsa_flush_cache(struct ctlr_info *h)
 {
@@ -4312,20 +4262,13 @@ static void hpsa_shutdown(struct pci_dev *pdev)
 	 * To write all data in the battery backed cache to disks
 	 */
 	hpsa_flush_cache(h);
-	h->busy_initializing = BUSY_INIT_SHUTDOWN;
 	h->access.set_intr_mask(h, HPSA_INTR_OFF);
-	if (h->intr[h->intr_mode] != 0)
-	    free_irq(h->intr[h->intr_mode], h);
+	free_irq(h->intr[h->intr_mode], h);
 #ifdef CONFIG_PCI_MSI
-	if (h->msix_vector) {
-		if (h->pdev->msix_enabled) {
-			pci_disable_msix(h->pdev);
-		}
-	} else if (h->msi_vector) {
-		if (h->pdev->msi_enabled) {
-			pci_disable_msi(h->pdev);
-		}
-	}
+	if (h->msix_vector)
+		pci_disable_msix(h->pdev);
+	else if (h->msi_vector)
+		pci_disable_msi(h->pdev);
 #endif				/* CONFIG_PCI_MSI */
 }
 
@@ -4338,12 +4281,6 @@ static void __devexit hpsa_remove_one(struct pci_dev *pdev)
 		return;
 	}
 	h = pci_get_drvdata(pdev);
-
-	if ((h->board_id == 0x1783103c) || (h->board_id == 0x005f1590)) {
-		printk("%s: Not processing board 0x%02x\n", __func__, h->board_id);
-		return;
-	}
-
 	hpsa_unregister_scsi(h);	/* unhook from SCSI subsystem */
 	hpsa_shutdown(pdev);
 	iounmap(h->vaddr);
@@ -4356,9 +4293,8 @@ static void __devexit hpsa_remove_one(struct pci_dev *pdev)
 	pci_free_consistent(h->pdev,
 		h->nr_cmds * sizeof(struct ErrorInfo),
 		h->errinfo_pool, h->errinfo_pool_dhandle);
-	if (h->intr_mode != SIMPLE_MODE_INT)
-		pci_free_consistent(h->pdev, h->reply_pool_size,
-			h->reply_pool, h->reply_pool_dhandle);
+	pci_free_consistent(h->pdev, h->reply_pool_size,
+		h->reply_pool, h->reply_pool_dhandle);
 	kfree(h->cmd_pool_bits);
 	kfree(h->blockFetchTable);
 	kfree(h->hba_inquiry_data);
@@ -4497,7 +4433,7 @@ static __devinit void hpsa_put_ctlr_into_performant_mode(struct ctlr_info *h)
 {
 	u32 trans_support;
 
-	if (h->intr_mode == SIMPLE_MODE_INT)
+	if (hpsa_simple_mode)
 		return;
 
 	trans_support = readl(&(h->cfgtable->TransportSupport));

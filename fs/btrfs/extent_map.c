@@ -1,5 +1,4 @@
 #include <linux/err.h>
-#include <linux/gfp.h>
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/spinlock.h>
@@ -242,7 +241,7 @@ out:
  * Insert @em into @tree or perform a simple forward/backward merge with
  * existing mappings.  The extent_map struct passed in will be inserted
  * into the tree directly, with an additional reference taken, or a
- * reference dropped if the merge attempt was sucessfull.
+ * reference dropped if the merge attempt was successful.
  */
 int add_extent_mapping(struct extent_map_tree *tree,
 		       struct extent_map *em)

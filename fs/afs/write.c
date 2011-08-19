@@ -84,23 +84,21 @@ void afs_put_writeback(struct afs_writeback *wb)
  * partly or wholly fill a page that's under preparation for writing
  */
 static int afs_fill_page(struct afs_vnode *vnode, struct key *key,
-			 loff_t pos, unsigned len, struct page *page)
+			 loff_t pos, struct page *page)
 {
 	loff_t i_size;
-	unsigned eof;
 	int ret;
+	int len;
 
-	_enter(",,%llu,%u", (unsigned long long)pos, len);
-
-	ASSERTCMP(len, <=, PAGE_CACHE_SIZE);
+	_enter(",,%llu", (unsigned long long)pos);
 
 	i_size = i_size_read(&vnode->vfs_inode);
-	if (pos + len > i_size)
-		eof = i_size;
+	if (pos + PAGE_CACHE_SIZE > i_size)
+		len = i_size - pos;
 	else
-		eof = PAGE_CACHE_SIZE;
+		len = PAGE_CACHE_SIZE;
 
-	ret = afs_vnode_fetch_data(vnode, key, 0, eof, page);
+	ret = afs_vnode_fetch_data(vnode, key, pos, len, page);
 	if (ret < 0) {
 		if (ret == -ENOENT) {
 			_debug("got NOENT from server"
@@ -140,6 +138,7 @@ int afs_write_begin(struct file *file, struct address_space *mapping,
 	candidate->first = candidate->last = index;
 	candidate->offset_first = from;
 	candidate->to_last = to;
+	INIT_LIST_HEAD(&candidate->link);
 	candidate->usage = 1;
 	candidate->state = AFS_WBACK_PENDING;
 	init_waitqueue_head(&candidate->waitq);
@@ -152,9 +151,8 @@ int afs_write_begin(struct file *file, struct address_space *mapping,
 	*pagep = page;
 	/* page won't leak in error case: it eventually gets cleaned off LRU */
 
-	if (!PageUptodate(page)) {
-		_debug("not up to date");
-		ret = afs_fill_page(vnode, key, pos, len, page);
+	if (!PageUptodate(page) && len != PAGE_CACHE_SIZE) {
+		ret = afs_fill_page(vnode, key, index << PAGE_CACHE_SHIFT, page);
 		if (ret < 0) {
 			kfree(candidate);
 			_leave(" = %d [prep]", ret);
@@ -568,27 +566,6 @@ int afs_writepages(struct address_space *mapping,
 }
 
 /*
- * write an inode back
- */
-int afs_write_inode(struct inode *inode, int sync)
-{
-	struct afs_vnode *vnode = AFS_FS_I(inode);
-	int ret;
-
-	_enter("{%x:%u},", vnode->fid.vid, vnode->fid.vnode);
-
-	ret = 0;
-	if (sync) {
-		ret = filemap_fdatawait(inode->i_mapping);
-		if (ret < 0)
-			__mark_inode_dirty(inode, I_DIRTY_DATASYNC);
-	}
-
-	_leave(" = %d", ret);
-	return ret;
-}
-
-/*
  * completion of write to server
  */
 void afs_pages_written_back(struct afs_vnode *vnode, struct afs_call *call)
@@ -654,7 +631,6 @@ ssize_t afs_file_write(struct kiocb *iocb, const struct iovec *iov,
 	struct afs_vnode *vnode = AFS_FS_I(dentry->d_inode);
 	ssize_t result;
 	size_t count = iov_length(iov, nr_segs);
-	int ret;
 
 	_enter("{%x.%u},{%zu},%lu,",
 	       vnode->fid.vid, vnode->fid.vnode, count, nr_segs);
@@ -674,13 +650,6 @@ ssize_t afs_file_write(struct kiocb *iocb, const struct iovec *iov,
 		return result;
 	}
 
-	/* return error values for O_SYNC and IS_SYNC() */
-	if (IS_SYNC(&vnode->vfs_inode) || iocb->ki_filp->f_flags & O_SYNC) {
-		ret = afs_fsync(iocb->ki_filp, dentry, 1);
-		if (ret < 0)
-			result = ret;
-	}
-
 	_leave(" = %zd", result);
 	return result;
 }
@@ -692,7 +661,6 @@ int afs_writeback_all(struct afs_vnode *vnode)
 {
 	struct address_space *mapping = vnode->vfs_inode.i_mapping;
 	struct writeback_control wbc = {
-		.bdi		= mapping->backing_dev_info,
 		.sync_mode	= WB_SYNC_ALL,
 		.nr_to_write	= LONG_MAX,
 		.range_cyclic	= 1,
@@ -713,8 +681,9 @@ int afs_writeback_all(struct afs_vnode *vnode)
  * - the return status from this call provides a reliable indication of
  *   whether any write errors occurred for this process.
  */
-int afs_fsync(struct file *file, struct dentry *dentry, int datasync)
+int afs_fsync(struct file *file, int datasync)
 {
+	struct dentry *dentry = file->f_path.dentry;
 	struct afs_writeback *wb, *xwb;
 	struct afs_vnode *vnode = AFS_FS_I(dentry->d_inode);
 	int ret;

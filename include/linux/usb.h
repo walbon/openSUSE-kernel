@@ -20,6 +20,7 @@
 #include <linux/completion.h>	/* for struct completion */
 #include <linux/sched.h>	/* for current && schedule_timeout */
 #include <linux/mutex.h>	/* for struct mutex */
+#include <linux/pm_runtime.h>	/* for runtime PM */
 
 struct usb_device;
 struct usb_driver;
@@ -109,7 +110,6 @@ enum usb_interface_condition {
  *	number from the USB core by calling usb_register_dev().
  * @condition: binding state of the interface: not bound, binding
  *	(in probe()), bound to a driver, or unbinding (in disconnect())
- * @is_active: flag set when the interface is bound and not suspended.
  * @sysfs_files_created: sysfs attributes exist
  * @ep_devs_created: endpoint child pseudo-devices exist
  * @unregistering: flag set when the interface is being unregistered
@@ -122,8 +122,7 @@ enum usb_interface_condition {
  * @dev: driver model's view of this device
  * @usb_dev: if an interface is bound to the USB major, this will point
  *	to the sysfs representation for that device.
- * @pm_usage_cnt: PM usage counter for this interface; autosuspend is not
- *	allowed unless the counter is 0.
+ * @pm_usage_cnt: PM usage counter for this interface
  * @reset_ws: Used for scheduling resets from atomic context.
  * @reset_running: set to 1 if the interface is currently running a
  *      queued reset so that usb_cancel_queued_reset() doesn't try to
@@ -173,7 +172,6 @@ struct usb_interface {
 	int minor;			/* minor number this interface is
 					 * bound to */
 	enum usb_interface_condition condition;		/* state of binding */
-	unsigned is_active:1;		/* the interface is not suspended */
 	unsigned sysfs_files_created:1;	/* the sysfs attributes exist */
 	unsigned ep_devs_created:1;	/* endpoint "devices" exist */
 	unsigned unregistering:1;	/* unregistration is in progress */
@@ -316,6 +314,10 @@ struct usb_bus {
 	int busnum;			/* Bus number (in order of reg) */
 	const char *bus_name;		/* stable id (PCI slot_name etc) */
 	u8 uses_dma;			/* Does the host controller use DMA? */
+	u8 uses_pio_for_control;	/*
+					 * Does the host controller use PIO
+					 * for control transfers?
+					 */
 	u8 otg_port;			/* 0, or number of OTG/HNP port */
 	unsigned is_b_host:1;		/* true during some HNP roleswitches */
 	unsigned b_hnp_enable:1;	/* OTG: did A-Host enable HNP? */
@@ -326,6 +328,7 @@ struct usb_bus {
 
 	struct usb_devmap devmap;	/* device address allocation map */
 	struct usb_device *root_hub;	/* Root hub */
+	struct usb_bus *hs_companion;	/* Companion EHCI bus, if any */
 	struct list_head bus_list;	/* list of busses */
 
 	int bandwidth_allocated;	/* on this bus: how much of the time
@@ -387,7 +390,6 @@ struct usb_tt;
  * @portnum: parent port number (origin 1)
  * @level: number of USB hub ancestors
  * @can_submit: URBs may be submitted
- * @discon_suspended: disconnected while suspended
  * @persist_enabled:  USB_PERSIST enabled for this device
  * @have_langid: whether string_langid is valid
  * @authorized: policy has said we can use it;
@@ -407,20 +409,12 @@ struct usb_tt;
  * @usbfs_dentry: usbfs dentry entry for the device
  * @maxchild: number of ports if hub
  * @children: child devices - USB devices that are attached to this hub
- * @pm_usage_cnt: usage counter for autosuspend
  * @quirks: quirks of the whole device
  * @urbnum: number of URBs submitted for the whole device
  * @active_duration: total time device is not suspended
- * @autosuspend: for delayed autosuspends
- * @autoresume: for autoresumes requested while in_interrupt
- * @pm_mutex: protects PM operations
- * @last_busy: time of last use
- * @autosuspend_delay: in jiffies
  * @connect_time: time device was first connected
  * @do_remote_wakeup:  remote wakeup should be enabled
  * @reset_resume: needs reset instead of resume
- * @autosuspend_disabled: autosuspend disabled by the user
- * @skip_sys_resume: skip the next system resume
  * @wusb_dev: if this is a Wireless USB device, link to the WUSB
  *	specific data for the device.
  * @slot_id: Slot ID assigned by xHCI
@@ -461,7 +455,6 @@ struct usb_device {
 	u8 level;
 
 	unsigned can_submit:1;
-	unsigned discon_suspended:1;
 	unsigned persist_enabled:1;
 	unsigned have_langid:1;
 	unsigned authorized:1;
@@ -485,25 +478,16 @@ struct usb_device {
 	int maxchild;
 	struct usb_device *children[USB_MAXCHILDREN];
 
-	int pm_usage_cnt;
 	u32 quirks;
 	atomic_t urbnum;
 
 	unsigned long active_duration;
 
 #ifdef CONFIG_PM
-	struct delayed_work autosuspend;
-	struct work_struct autoresume;
-	struct mutex pm_mutex;
-
-	unsigned long last_busy;
-	int autosuspend_delay;
 	unsigned long connect_time;
 
 	unsigned do_remote_wakeup:1;
 	unsigned reset_resume:1;
-	unsigned autosuspend_disabled:1;
-	unsigned skip_sys_resume:1;
 #endif
 	struct wusb_dev *wusb_dev;
 	int slot_id;
@@ -519,9 +503,9 @@ extern struct usb_device *usb_get_dev(struct usb_device *dev);
 extern void usb_put_dev(struct usb_device *dev);
 
 /* USB device locking */
-#define usb_lock_device(udev)		down(&(udev)->dev.sem)
-#define usb_unlock_device(udev)		up(&(udev)->dev.sem)
-#define usb_trylock_device(udev)	down_trylock(&(udev)->dev.sem)
+#define usb_lock_device(udev)		device_lock(&(udev)->dev)
+#define usb_unlock_device(udev)		device_unlock(&(udev)->dev)
+#define usb_trylock_device(udev)	device_trylock(&(udev)->dev)
 extern int usb_lock_device_for_reset(struct usb_device *udev,
 				     const struct usb_interface *iface);
 
@@ -532,28 +516,19 @@ extern void usb_queue_reset_device(struct usb_interface *dev);
 
 /* USB autosuspend and autoresume */
 #ifdef CONFIG_USB_SUSPEND
-extern int usb_enable_autosuspend(struct usb_device *udev);
-extern int usb_disable_autosuspend(struct usb_device *udev);
+extern void usb_enable_autosuspend(struct usb_device *udev);
+extern void usb_disable_autosuspend(struct usb_device *udev);
 
 extern int usb_autopm_get_interface(struct usb_interface *intf);
 extern void usb_autopm_put_interface(struct usb_interface *intf);
 extern int usb_autopm_get_interface_async(struct usb_interface *intf);
 extern void usb_autopm_put_interface_async(struct usb_interface *intf);
-
-static inline void usb_autopm_get_interface_no_resume(
-		struct usb_interface *intf)
-{
-	atomic_inc(&intf->pm_usage_cnt);
-}
-static inline void usb_autopm_put_interface_no_suspend(
-		struct usb_interface *intf)
-{
-	atomic_dec(&intf->pm_usage_cnt);
-}
+extern void usb_autopm_get_interface_no_resume(struct usb_interface *intf);
+extern void usb_autopm_put_interface_no_suspend(struct usb_interface *intf);
 
 static inline void usb_mark_last_busy(struct usb_device *udev)
 {
-	udev->last_busy = jiffies;
+	pm_runtime_mark_last_busy(&udev->dev);
 }
 
 #else
@@ -648,7 +623,7 @@ extern struct usb_host_interface *usb_find_alt_setting(
  * USB hubs.  That makes it stay the same until systems are physically
  * reconfigured, by re-cabling a tree of USB devices or by moving USB host
  * controllers.  Adding and removing devices, including virtual root hubs
- * in host controller driver modules, does not change these path identifers;
+ * in host controller driver modules, does not change these path identifiers;
  * neither does rebooting or re-enumerating.  These are more useful identifiers
  * than changeable ("unstable") ones like bus numbers or device addresses.
  *
@@ -818,7 +793,7 @@ struct usbdrv_wrap {
  *	usb_set_intfdata() to associate driver-specific data with the
  *	interface.  It may also use usb_set_interface() to specify the
  *	appropriate altsetting.  If unwilling to manage the interface,
- *	return -ENODEV, if genuine IO errors occured, an appropriate
+ *	return -ENODEV, if genuine IO errors occurred, an appropriate
  *	negative errno value.
  * @disconnect: Called when the interface is no longer accessible, usually
  *	because its device has been (or is being) disconnected or the
@@ -873,7 +848,7 @@ struct usb_driver {
 
 	void (*disconnect) (struct usb_interface *intf);
 
-	int (*ioctl) (struct usb_interface *intf, unsigned int code,
+	int (*unlocked_ioctl) (struct usb_interface *intf, unsigned int code,
 			void *buf);
 
 	int (*suspend) (struct usb_interface *intf, pm_message_t message);
@@ -1403,18 +1378,6 @@ void *usb_alloc_coherent(struct usb_device *dev, size_t size,
 	gfp_t mem_flags, dma_addr_t *dma);
 void usb_free_coherent(struct usb_device *dev, size_t size,
 	void *addr, dma_addr_t dma);
-
-/* Compatible macros while we switch over */
-static inline void *usb_buffer_alloc(struct usb_device *dev, size_t size,
-				     gfp_t mem_flags, dma_addr_t *dma)
-{
-	return usb_alloc_coherent(dev, size, mem_flags, dma);
-}
-static inline void usb_buffer_free(struct usb_device *dev, size_t size,
-				   void *addr, dma_addr_t dma)
-{
-	return usb_free_coherent(dev, size, addr, dma);
-}
 
 #if 0
 struct urb *usb_buffer_map(struct urb *urb);

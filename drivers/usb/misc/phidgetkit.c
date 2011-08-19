@@ -569,7 +569,8 @@ static int interfacekit_probe(struct usb_interface *intf, const struct usb_devic
 
 	kit->dev_no = -1;
 	kit->ifkit = ifkit;
-	kit->data = usb_alloc_coherent(dev, URB_INT_SIZE, GFP_ATOMIC, &kit->data_dma);
+	kit->data = usb_alloc_coherent(dev, URB_INT_SIZE, GFP_ATOMIC,
+				       &kit->data_dma);
 	if (!kit->data)
 		goto out;
 
@@ -655,7 +656,8 @@ out:
 	if (kit) {
 		usb_free_urb(kit->irq);
 		if (kit->data)
-			usb_free_coherent(dev, URB_INT_SIZE, kit->data, kit->data_dma);
+			usb_free_coherent(dev, URB_INT_SIZE, kit->data,
+					  kit->data_dma);
 		if (kit->dev)
 			device_unregister(kit->dev);
 		if (kit->dev_no >= 0)

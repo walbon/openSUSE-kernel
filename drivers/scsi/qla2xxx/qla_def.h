@@ -1717,7 +1717,7 @@ typedef struct fc_port {
 #define FCS_DEVICE_LOST		3
 #define FCS_ONLINE		4
 
-static const char *port_state_str[] = {
+static const char * const port_state_str[] = {
 	"Unknown",
 	"UNCONFIGURED",
 	"DEAD",
@@ -2094,7 +2094,7 @@ struct ct_sns_pkt {
 };
 
 /*
- * SNS command structures -- for 2200 compatability.
+ * SNS command structures -- for 2200 compatibility.
  */
 #define	RFT_ID_SNS_SCMD_LEN	22
 #define	RFT_ID_SNS_CMD_SIZE	60
@@ -2422,7 +2422,7 @@ struct qla_hw_data {
 		uint32_t	disable_serdes		:1;
 		uint32_t	gpsc_supported		:1;
 		uint32_t	npiv_supported		:1;
-		uint32_t	pci_channel_io_perm_failure:1;
+		uint32_t	pci_channel_io_perm_failure	:1;
 		uint32_t	fce_enabled		:1;
 		uint32_t	fac_supported		:1;
 
@@ -2819,7 +2819,7 @@ struct qla_hw_data {
 #define NUM_DSD_CHAIN 4096
 
 	uint8_t fw_type;
-	__le32 file_prd_off;    /* File firmware product offset */
+	__le32 file_prd_off;	/* File firmware product offset */
 };
 
 /*
@@ -2914,10 +2914,10 @@ typedef struct scsi_qla_host {
 	uint16_t	fcoe_fcf_idx;
 	uint8_t		fcoe_vn_port_mac[6];
 
-	uint32_t	vp_abort_cnt;
+	uint32_t   	vp_abort_cnt;
 
 	struct fc_vport	*fc_vport;	/* holds fc_vport * for each vport */
-	uint16_t	vp_idx;		/* vport ID */
+	uint16_t        vp_idx;		/* vport ID */
 
 	unsigned long		vp_flags;
 #define VP_IDX_ACQUIRED		0	/* bit no 0 */
@@ -2925,12 +2925,12 @@ typedef struct scsi_qla_host {
 #define VP_BIND_NEEDED		2
 #define VP_DELETE_NEEDED	3
 #define VP_SCR_NEEDED		4	/* State Change Request registration */
-	atomic_t		vp_state;
+	atomic_t 		vp_state;
 #define VP_OFFLINE		0
 #define VP_ACTIVE		1
 #define VP_FAILED		2
 // #define VP_DISABLE		3
-	uint16_t	vp_err_state;
+	uint16_t 	vp_err_state;
 	uint16_t	vp_prev_err_state;
 #define VP_ERR_UNKWN		0
 #define VP_ERR_PORTDWN		1

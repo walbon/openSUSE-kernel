@@ -1296,7 +1296,6 @@ static void bnx2fc_init_failure(struct bnx2fc_hba *hba, u32 err_code)
 		break;
 	case FCOE_KCQE_COMPLETION_STATUS_WRONG_HSI_VERSION:
 		printk(KERN_ERR PFX "init failure due to HSI mismatch\n");
-		break;
 	default:
 		printk(KERN_ERR PFX "Unknown Error code %d\n", err_code);
 	}

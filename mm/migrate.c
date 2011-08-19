@@ -32,6 +32,8 @@
 #include <linux/security.h>
 #include <linux/memcontrol.h>
 #include <linux/syscalls.h>
+#include <linux/hugetlb.h>
+#include <linux/gfp.h>
 
 #include <asm/tlbflush.h>
 
@@ -56,7 +58,6 @@ int migrate_prep(void)
 
 	return 0;
 }
-EXPORT_SYMBOL(migrate_prep);
 
 /* Do the necessary work of migrate_prep but not if it involves other CPUs */
 int migrate_prep_local(void)
@@ -65,27 +66,23 @@ int migrate_prep_local(void)
 
 	return 0;
 }
+EXPORT_SYMBOL(migrate_prep);
 
 /*
  * Add isolated pages on the list back to the LRU under page lock
  * to avoid leaking evictable pages back onto unevictable list.
- *
- * returns the number of pages put back.
  */
-int putback_lru_pages(struct list_head *l)
+void putback_lru_pages(struct list_head *l)
 {
 	struct page *page;
 	struct page *page2;
-	int count = 0;
 
 	list_for_each_entry_safe(page, page2, l, lru) {
 		list_del(&page->lru);
 		dec_zone_page_state(page, NR_ISOLATED_ANON +
 				page_is_file_cache(page));
 		putback_lru_page(page);
-		count++;
 	}
-	return count;
 }
 EXPORT_SYMBOL(putback_lru_pages);
 
@@ -103,28 +100,36 @@ static int remove_migration_pte(struct page *new, struct vm_area_struct *vma,
 	pte_t *ptep, pte;
  	spinlock_t *ptl;
 
- 	pgd = pgd_offset(mm, addr);
-	if (!pgd_present(*pgd))
-		goto out;
+	if (unlikely(PageHuge(new))) {
+		ptep = huge_pte_offset(mm, addr);
+		if (!ptep)
+			goto out;
+		ptl = &mm->page_table_lock;
+	} else {
+		pgd = pgd_offset(mm, addr);
+		if (!pgd_present(*pgd))
+			goto out;
 
-	pud = pud_offset(pgd, addr);
-	if (!pud_present(*pud))
-		goto out;
+		pud = pud_offset(pgd, addr);
+		if (!pud_present(*pud))
+			goto out;
 
-	pmd = pmd_offset(pud, addr);
-	if (pmd_trans_huge(*pmd))
-		goto out;
-	if (!pmd_present(*pmd))
-		goto out;
+		pmd = pmd_offset(pud, addr);
+		if (pmd_trans_huge(*pmd))
+			goto out;
+		if (!pmd_present(*pmd))
+			goto out;
 
-	ptep = pte_offset_map(pmd, addr);
+		ptep = pte_offset_map(pmd, addr);
 
-	if (!is_swap_pte(*ptep)) {
-		pte_unmap(ptep);
-		goto out;
- 	}
+		if (!is_swap_pte(*ptep)) {
+			pte_unmap(ptep);
+			goto out;
+		}
 
- 	ptl = pte_lockptr(mm, pmd);
+		ptl = pte_lockptr(mm, pmd);
+	}
+
  	spin_lock(ptl);
 	pte = *ptep;
 	if (!is_swap_pte(pte))
@@ -140,16 +145,25 @@ static int remove_migration_pte(struct page *new, struct vm_area_struct *vma,
 	pte = pte_mkold(mk_pte(new, vma->vm_page_prot));
 	if (is_write_migration_entry(entry))
 		pte = pte_mkwrite(pte);
+#ifdef CONFIG_HUGETLB_PAGE
+	if (PageHuge(new))
+		pte = pte_mkhuge(pte);
+#endif
 	flush_cache_page(vma, addr, pte_pfn(pte));
 	set_pte_at(mm, addr, ptep, pte);
 
-	if (PageAnon(new))
+	if (PageHuge(new)) {
+		if (PageAnon(new))
+			hugepage_add_anon_rmap(new, vma, addr);
+		else
+			page_dup_rmap(new);
+	} else if (PageAnon(new))
 		page_add_anon_rmap(new, vma, addr);
 	else
 		page_add_file_rmap(new);
 
 	/* No need to invalidate - it was non-present before */
-	update_mmu_cache(vma, addr, pte);
+	update_mmu_cache(vma, addr, ptep);
 unlock:
 	pte_unmap_unlock(ptep, ptl);
 out:
@@ -236,7 +250,7 @@ static int migrate_page_move_mapping(struct address_space *mapping,
 
 	expected_count = 2 + page_has_private(page);
 	if (page_count(page) != expected_count ||
-			(struct page *)radix_tree_deref_slot(pslot) != page) {
+		radix_tree_deref_slot_protected(pslot, &mapping->tree_lock) != page) {
 		spin_unlock_irq(&mapping->tree_lock);
 		return -EAGAIN;
 	}
@@ -286,13 +300,59 @@ static int migrate_page_move_mapping(struct address_space *mapping,
 }
 
 /*
+ * The expected number of remaining references is the same as that
+ * of migrate_page_move_mapping().
+ */
+int migrate_huge_page_move_mapping(struct address_space *mapping,
+				   struct page *newpage, struct page *page)
+{
+	int expected_count;
+	void **pslot;
+
+	if (!mapping) {
+		if (page_count(page) != 1)
+			return -EAGAIN;
+		return 0;
+	}
+
+	spin_lock_irq(&mapping->tree_lock);
+
+	pslot = radix_tree_lookup_slot(&mapping->page_tree,
+					page_index(page));
+
+	expected_count = 2 + page_has_private(page);
+	if (page_count(page) != expected_count ||
+		radix_tree_deref_slot_protected(pslot, &mapping->tree_lock) != page) {
+		spin_unlock_irq(&mapping->tree_lock);
+		return -EAGAIN;
+	}
+
+	if (!page_freeze_refs(page, expected_count)) {
+		spin_unlock_irq(&mapping->tree_lock);
+		return -EAGAIN;
+	}
+
+	get_page(newpage);
+
+	radix_tree_replace_slot(pslot, newpage);
+
+	page_unfreeze_refs(page, expected_count);
+
+	__put_page(page);
+
+	spin_unlock_irq(&mapping->tree_lock);
+	return 0;
+}
+
+/*
  * Copy the page to its new location
  */
-static void migrate_page_copy(struct page *newpage, struct page *page)
+void migrate_page_copy(struct page *newpage, struct page *page)
 {
-	int anon;
-
-	copy_highpage(newpage, page);
+	if (PageHuge(page))
+		copy_huge_page(newpage, page);
+	else
+		copy_highpage(newpage, page);
 
 	if (PageError(page))
 		SetPageError(newpage);
@@ -303,8 +363,8 @@ static void migrate_page_copy(struct page *newpage, struct page *page)
 	if (TestClearPageActive(page)) {
 		VM_BUG_ON(PageUnevictable(page));
 		SetPageActive(newpage);
-	} else
-		unevictable_migrate_page(newpage, page);
+	} else if (TestClearPageUnevictable(page))
+		SetPageUnevictable(newpage);
 	if (PageChecked(page))
 		SetPageChecked(newpage);
 	if (PageMappedToDisk(page))
@@ -317,7 +377,7 @@ static void migrate_page_copy(struct page *newpage, struct page *page)
 		 * redo the accounting that clear_page_dirty_for_io undid,
 		 * but we can't use set_page_dirty because that function
 		 * is actually a signal that all of the page has become dirty.
-		 * Wheras only part of our page may be dirty.
+		 * Whereas only part of our page may be dirty.
 		 */
 		__set_page_dirty_nobuffers(newpage);
  	}
@@ -328,8 +388,6 @@ static void migrate_page_copy(struct page *newpage, struct page *page)
 	ClearPageSwapCache(page);
 	ClearPagePrivate(page);
 	set_page_private(page, 0);
-	/* page->mapping contains a flag for PageAnon() */
-	anon = PageAnon(page);
 	page->mapping = NULL;
 
 	/*
@@ -577,7 +635,7 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 	struct page *newpage = get_new_page(page, private, &result);
 	int remap_swapcache = 1;
 	int charge = 0;
-	struct mem_cgroup *mem = NULL;
+	struct mem_cgroup *mem;
 	struct anon_vma *anon_vma = NULL;
 
 	if (!newpage)
@@ -632,7 +690,7 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 	}
 
 	/* charge against new page */
-	charge = mem_cgroup_prepare_migration(page, newpage, &mem);
+	charge = mem_cgroup_prepare_migration(page, newpage, &mem, GFP_KERNEL);
 	if (charge == -ENOMEM) {
 		rc = -ENOMEM;
 		goto unlock;
@@ -665,15 +723,11 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 		 * Only page_lock_anon_vma() understands the subtleties of
 		 * getting a hold on an anon_vma from outside one of its mms.
 		 */
-		anon_vma = page_lock_anon_vma(page);
+		anon_vma = page_get_anon_vma(page);
 		if (anon_vma) {
 			/*
-			 * Take a reference count on the anon_vma if the
-			 * page is mapped so that it is guaranteed to
-			 * exist when the page is remapped later
+			 * Anon page
 			 */
-			get_anon_vma(anon_vma);
-			page_unlock_anon_vma(anon_vma);
 		} else if (PageSwapCache(page)) {
 			/*
 			 * We cannot be sure that the anon_vma of an unmapped
@@ -726,7 +780,7 @@ skip_unmap:
 
 	/* Drop an anon_vma reference if we took one */
 	if (anon_vma)
-		drop_anon_vma(anon_vma);
+		put_anon_vma(anon_vma);
 
 uncharge:
 	if (!charge)
@@ -778,6 +832,76 @@ move_newpage:
 			*result = rc;
 		else
 			*result = page_to_nid(newpage);
+	}
+	return rc;
+}
+
+/*
+ * Counterpart of unmap_and_move_page() for hugepage migration.
+ *
+ * This function doesn't wait the completion of hugepage I/O
+ * because there is no race between I/O and migration for hugepage.
+ * Note that currently hugepage I/O occurs only in direct I/O
+ * where no lock is held and PG_writeback is irrelevant,
+ * and writeback status of all subpages are counted in the reference
+ * count of the head page (i.e. if all subpages of a 2MB hugepage are
+ * under direct I/O, the reference of the head page is 512 and a bit more.)
+ * This means that when we try to migrate hugepage whose subpages are
+ * doing direct I/O, some references remain after try_to_unmap() and
+ * hugepage migration fails without data corruption.
+ *
+ * There is also no race when direct I/O is issued on the page under migration,
+ * because then pte is replaced with migration swap entry and direct I/O code
+ * will wait in the page fault for migration to complete.
+ */
+static int unmap_and_move_huge_page(new_page_t get_new_page,
+				unsigned long private, struct page *hpage,
+				int force, bool offlining, bool sync)
+{
+	int rc = 0;
+	int *result = NULL;
+	struct page *new_hpage = get_new_page(hpage, private, &result);
+	struct anon_vma *anon_vma = NULL;
+
+	if (!new_hpage)
+		return -ENOMEM;
+
+	rc = -EAGAIN;
+
+	if (!trylock_page(hpage)) {
+		if (!force || !sync)
+			goto out;
+		lock_page(hpage);
+	}
+
+	if (PageAnon(hpage))
+		anon_vma = page_get_anon_vma(hpage);
+
+	try_to_unmap(hpage, TTU_MIGRATION|TTU_IGNORE_MLOCK|TTU_IGNORE_ACCESS);
+
+	if (!page_mapped(hpage))
+		rc = move_to_new_page(new_hpage, hpage, 1, sync);
+
+	if (rc)
+		remove_migration_ptes(hpage, hpage);
+
+	if (anon_vma)
+		put_anon_vma(anon_vma);
+out:
+	unlock_page(hpage);
+
+	if (rc != -EAGAIN) {
+		list_del(&hpage->lru);
+		put_page(hpage);
+	}
+
+	put_page(new_hpage);
+
+	if (result) {
+		if (rc)
+			*result = rc;
+		else
+			*result = page_to_nid(new_hpage);
 	}
 	return rc;
 }
@@ -858,6 +982,50 @@ out:
 
 	return nr_failed + retry;
 }
+
+int migrate_huge_pages(struct list_head *from,
+		new_page_t get_new_page, unsigned long private, bool offlining,
+		bool sync)
+{
+	int retry = 1;
+	int nr_failed = 0;
+	int pass = 0;
+	struct page *page;
+	struct page *page2;
+	int rc;
+
+	for (pass = 0; pass < 10 && retry; pass++) {
+		retry = 0;
+
+		list_for_each_entry_safe(page, page2, from, lru) {
+			cond_resched();
+
+			rc = unmap_and_move_huge_page(get_new_page,
+					private, page, pass > 2, offlining,
+					sync);
+
+			switch(rc) {
+			case -ENOMEM:
+				goto out;
+			case -EAGAIN:
+				retry++;
+				break;
+			case 0:
+				break;
+			default:
+				/* Permanent failure */
+				nr_failed++;
+				break;
+			}
+		}
+	}
+	rc = 0;
+out:
+	if (rc)
+		return rc;
+
+	return nr_failed + retry;
+}
 EXPORT_SYMBOL(migrate_pages);
 
 #ifdef CONFIG_NUMA
@@ -913,7 +1081,7 @@ static int do_move_page_to_node_array(struct mm_struct *mm,
 
 		err = -EFAULT;
 		vma = find_vma(mm, pp->addr);
-		if (!vma || !vma_migratable(vma))
+		if (!vma || pp->addr < vma->vm_start || !vma_migratable(vma))
 			goto set_status;
 
 		page = follow_page(vma, pp->addr, FOLL_GET|FOLL_SPLIT);
@@ -1080,7 +1248,7 @@ static void do_pages_stat_array(struct mm_struct *mm, unsigned long nr_pages,
 		int err = -EFAULT;
 
 		vma = find_vma(mm, addr);
-		if (!vma)
+		if (!vma || addr < vma->vm_start)
 			goto set_status;
 
 		page = follow_page(vma, addr, 0);
@@ -1116,33 +1284,27 @@ static int do_pages_stat(struct mm_struct *mm, unsigned long nr_pages,
 #define DO_PAGES_STAT_CHUNK_NR 16
 	const void __user *chunk_pages[DO_PAGES_STAT_CHUNK_NR];
 	int chunk_status[DO_PAGES_STAT_CHUNK_NR];
-	unsigned long i, chunk_nr = DO_PAGES_STAT_CHUNK_NR;
-	int err;
 
-	for (i = 0; i < nr_pages; i += chunk_nr) {
-		if (chunk_nr + i > nr_pages)
-			chunk_nr = nr_pages - i;
+	while (nr_pages) {
+		unsigned long chunk_nr;
 
-		err = copy_from_user(chunk_pages, &pages[i],
-				     chunk_nr * sizeof(*chunk_pages));
-		if (err) {
-			err = -EFAULT;
-			goto out;
-		}
+		chunk_nr = nr_pages;
+		if (chunk_nr > DO_PAGES_STAT_CHUNK_NR)
+			chunk_nr = DO_PAGES_STAT_CHUNK_NR;
+
+		if (copy_from_user(chunk_pages, pages, chunk_nr * sizeof(*chunk_pages)))
+			break;
 
 		do_pages_stat_array(mm, chunk_nr, chunk_pages, chunk_status);
 
-		err = copy_to_user(&status[i], chunk_status,
-				   chunk_nr * sizeof(*chunk_status));
-		if (err) {
-			err = -EFAULT;
-			goto out;
-		}
-	}
-	err = 0;
+		if (copy_to_user(status, chunk_status, chunk_nr * sizeof(*status)))
+			break;
 
-out:
-	return err;
+		pages += chunk_nr;
+		status += chunk_nr;
+		nr_pages -= chunk_nr;
+	}
+	return nr_pages ? -EFAULT : 0;
 }
 
 /*
@@ -1167,14 +1329,14 @@ SYSCALL_DEFINE6(move_pages, pid_t, pid, unsigned long, nr_pages,
 		return -EPERM;
 
 	/* Find the mm_struct */
-	read_lock(&tasklist_lock);
+	rcu_read_lock();
 	task = pid ? find_task_by_vpid(pid) : current;
 	if (!task) {
-		read_unlock(&tasklist_lock);
+		rcu_read_unlock();
 		return -ESRCH;
 	}
 	mm = get_task_mm(task);
-	read_unlock(&tasklist_lock);
+	rcu_read_unlock();
 
 	if (!mm)
 		return -EINVAL;

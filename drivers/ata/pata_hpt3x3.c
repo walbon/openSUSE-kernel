@@ -151,7 +151,7 @@ static struct ata_port_operations hpt3x3_port_ops = {
 	.check_atapi_dma= hpt3x3_atapi_dma,
 	.freeze		= hpt3x3_freeze,
 #endif
-	
+
 };
 
 /**
@@ -180,7 +180,7 @@ static void hpt3x3_init_chipset(struct pci_dev *dev)
  *	@id: Entry in match table
  *
  *	Perform basic initialisation. We set the device up so we access all
- *	ports via BAR4. This is neccessary to work around errata.
+ *	ports via BAR4. This is necessary to work around errata.
  */
 
 static int hpt3x3_init_one(struct pci_dev *pdev, const struct pci_device_id *id)

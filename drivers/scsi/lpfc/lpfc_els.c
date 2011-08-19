@@ -102,7 +102,7 @@ lpfc_els_chk_latt(struct lpfc_vport *vport)
 			 phba->pport->port_state);
 
 	/* CLEAR_LA should re-enable link attention events and
-	 * we should then imediately take a LATT event. The
+	 * we should then immediately take a LATT event. The
 	 * LATT processing should call lpfc_linkdown() which
 	 * will cleanup any left over in-progress discovery
 	 * events.
@@ -647,15 +647,21 @@ lpfc_cmpl_els_flogi_fabric(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 		}
 		lpfc_cleanup_pending_mbox(vport);
 
-		if (phba->sli_rev == LPFC_SLI_REV4) {
+		if (phba->sli_rev == LPFC_SLI_REV4)
 			lpfc_sli4_unreg_all_rpis(vport);
+
+		if (phba->sli3_options & LPFC_SLI3_NPIV_ENABLED) {
 			lpfc_mbx_unreg_vpi(vport);
 			spin_lock_irq(shost->host_lock);
 			vport->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
-			/*
-			* If VPI is unreged, driver need to do INIT_VPI
-			* before re-registering
-			*/
+			spin_unlock_irq(shost->host_lock);
+		}
+		/*
+		 * If VPI is unreged, driver need to do INIT_VPI
+		 * before re-registering
+		 */
+		if (phba->sli_rev == LPFC_SLI_REV4) {
+			spin_lock_irq(shost->host_lock);
 			vport->fc_flag |= FC_VPORT_NEEDS_INIT_VPI;
 			spin_unlock_irq(shost->host_lock);
 		}
@@ -934,7 +940,7 @@ lpfc_cmpl_els_flogi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 
 	/* FLOGI completes successfully */
 	lpfc_printf_vlog(vport, KERN_INFO, LOG_ELS,
-			 "0101 FLOGI completes sucessfully "
+			 "0101 FLOGI completes successfully "
 			 "Data: x%x x%x x%x x%x\n",
 			 irsp->un.ulpWord[4], sp->cmn.e_d_tov,
 			 sp->cmn.w2.r_a_tov, sp->cmn.edtovResolution);
@@ -1090,14 +1096,11 @@ lpfc_issue_els_flogi(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 			/* Set the fcfi to the fcfi we registered with */
 			elsiocb->iocb.ulpContext = phba->fcf.fcfi;
 		}
-	} else {
-		if (phba->sli3_options & LPFC_SLI3_NPIV_ENABLED) {
-			sp->cmn.request_multiple_Nport = 1;
-			/* For FLOGI, Let FLOGI rsp set the NPortID for VPI 0 */
-			icmd->ulpCt_h = 1;
-			icmd->ulpCt_l = 0;
-		} else
-			sp->cmn.request_multiple_Nport = 0;
+	} else if (phba->sli3_options & LPFC_SLI3_NPIV_ENABLED) {
+		sp->cmn.request_multiple_Nport = 1;
+		/* For FLOGI, Let FLOGI rsp set the NPortID for VPI 0 */
+		icmd->ulpCt_h = 1;
+		icmd->ulpCt_l = 0;
 	}
 
 	if (phba->fc_topology != LPFC_TOPOLOGY_LOOP) {
@@ -1599,7 +1602,7 @@ out:
  * This routine is the completion callback function for issuing the Port
  * Login (PLOGI) command. For PLOGI completion, there must be an active
  * ndlp on the vport node list that matches the remote node ID from the
- * PLOGI reponse IOCB. If such ndlp does not exist, the PLOGI is simply
+ * PLOGI response IOCB. If such ndlp does not exist, the PLOGI is simply
  * ignored and command IOCB released. The PLOGI response IOCB status is
  * checked for error conditons. If there is error status reported, PLOGI
  * retry shall be attempted by invoking the lpfc_els_retry() routine.
@@ -4605,7 +4608,7 @@ lpfc_els_rcv_rscn(struct lpfc_vport *vport, struct lpfc_iocbq *cmdiocb,
 	/* Indicate we are walking fc_rscn_id_list on this vport */
 	vport->fc_rscn_flush = 1;
 	spin_unlock_irq(shost->host_lock);
-	/* Get the array count after sucessfully have the token */
+	/* Get the array count after successfully have the token */
 	rscn_cnt = vport->fc_rscn_id_cnt;
 	/* If we are already processing an RSCN, save the received
 	 * RSCN payload buffer, cmdiocb->context2 to process later.
@@ -7311,10 +7314,9 @@ lpfc_cmpl_els_npiv_logo(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	struct lpfc_vport *vport = cmdiocb->vport;
 	IOCB_t *irsp;
 	struct lpfc_nodelist *ndlp;
-	struct Scsi_Host *shost;
+	struct Scsi_Host *shost = lpfc_shost_from_vport(vport);
 
 	ndlp = (struct lpfc_nodelist *)cmdiocb->context1;
-	shost = lpfc_shost_from_vport(vport);
 	irsp = &rspiocb->iocb;
 	lpfc_debugfs_disc_trc(vport, LPFC_DISC_TRC_ELS_CMD,
 		"LOGO npiv cmpl:  status:x%x/x%x did:x%x",

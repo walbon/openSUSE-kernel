@@ -4,7 +4,7 @@
  * Author: Michael S. Tsirkin <mst@redhat.com>
  *
  * Inspiration, some code, and most witty comments come from
- * Documentation/lguest/lguest.c, by Rusty Russell
+ * Documentation/virtual/lguest/lguest.c, by Rusty Russell
  *
  * This work is licensed under the terms of the GNU GPL, version 2.
  *
@@ -62,22 +62,25 @@ static int vhost_poll_wakeup(wait_queue_t *wait, unsigned mode, int sync,
 	return 0;
 }
 
-/* Init poll structure */
-void vhost_poll_init(struct vhost_poll *poll, vhost_work_fn_t fn,
-		     unsigned long mask, struct vhost_dev *dev)
+static void vhost_work_init(struct vhost_work *work, vhost_work_fn_t fn)
 {
-	struct vhost_work *work = &poll->work;
-
-	init_waitqueue_func_entry(&poll->wait, vhost_poll_wakeup);
-	init_poll_funcptr(&poll->table, vhost_poll_func);
-	poll->mask = mask;
-	poll->dev = dev;
-
 	INIT_LIST_HEAD(&work->node);
 	work->fn = fn;
 	init_waitqueue_head(&work->done);
 	work->flushing = 0;
 	work->queue_seq = work->done_seq = 0;
+}
+
+/* Init poll structure */
+void vhost_poll_init(struct vhost_poll *poll, vhost_work_fn_t fn,
+		     unsigned long mask, struct vhost_dev *dev)
+{
+	init_waitqueue_func_entry(&poll->wait, vhost_poll_wakeup);
+	init_poll_funcptr(&poll->table, vhost_poll_func);
+	poll->mask = mask;
+	poll->dev = dev;
+
+	vhost_work_init(&poll->work, fn);
 }
 
 /* Start polling a file. We add ourselves to file's wait queue. The caller must
@@ -109,29 +112,32 @@ static bool vhost_work_seq_done(struct vhost_dev *dev, struct vhost_work *work,
 	return left <= 0;
 }
 
+static void vhost_work_flush(struct vhost_dev *dev, struct vhost_work *work)
+{
+	unsigned seq;
+	int flushing;
+
+	spin_lock_irq(&dev->work_lock);
+	seq = work->queue_seq;
+	work->flushing++;
+	spin_unlock_irq(&dev->work_lock);
+	wait_event(work->done, vhost_work_seq_done(dev, work, seq));
+	spin_lock_irq(&dev->work_lock);
+	flushing = --work->flushing;
+	spin_unlock_irq(&dev->work_lock);
+	BUG_ON(flushing < 0);
+}
+
 /* Flush any work that has been scheduled. When calling this, don't hold any
  * locks that are also used by the callback. */
 void vhost_poll_flush(struct vhost_poll *poll)
 {
-	struct vhost_work *work = &poll->work;
-	unsigned seq;
-	int flushing;
-
-	spin_lock_irq(&poll->dev->work_lock);
-	seq = work->queue_seq;
-	work->flushing++;
-	spin_unlock_irq(&poll->dev->work_lock);
-	wait_event(work->done, vhost_work_seq_done(poll->dev, work, seq));
-	spin_lock_irq(&poll->dev->work_lock);
-	flushing = --work->flushing;
-	spin_unlock_irq(&poll->dev->work_lock);
-	BUG_ON(flushing < 0);
+	vhost_work_flush(poll->dev, &poll->work);
 }
 
-void vhost_poll_queue(struct vhost_poll *poll)
+static inline void vhost_work_queue(struct vhost_dev *dev,
+				    struct vhost_work *work)
 {
-	struct vhost_dev *dev = poll->dev;
-	struct vhost_work *work = &poll->work;
 	unsigned long flags;
 
 	spin_lock_irqsave(&dev->work_lock, flags);
@@ -141,6 +147,11 @@ void vhost_poll_queue(struct vhost_poll *poll)
 		wake_up_process(dev->worker);
 	}
 	spin_unlock_irqrestore(&dev->work_lock, flags);
+}
+
+void vhost_poll_queue(struct vhost_poll *poll)
+{
+	vhost_work_queue(poll->dev, &poll->work);
 }
 
 static void vhost_vq_reset(struct vhost_dev *dev,
@@ -294,6 +305,31 @@ long vhost_dev_check_owner(struct vhost_dev *dev)
 	return dev->mm == current->mm ? 0 : -EPERM;
 }
 
+struct vhost_attach_cgroups_struct {
+	struct vhost_work work;
+	struct task_struct *owner;
+	int ret;
+};
+
+static void vhost_attach_cgroups_work(struct vhost_work *work)
+{
+	struct vhost_attach_cgroups_struct *s;
+
+	s = container_of(work, struct vhost_attach_cgroups_struct, work);
+	s->ret = cgroup_attach_task_all(s->owner, current);
+}
+
+static int vhost_attach_cgroups(struct vhost_dev *dev)
+{
+	struct vhost_attach_cgroups_struct attach;
+
+	attach.owner = current;
+	vhost_work_init(&attach.work, vhost_attach_cgroups_work);
+	vhost_work_queue(dev, &attach.work);
+	vhost_work_flush(dev, &attach.work);
+	return attach.ret;
+}
+
 /* Caller should have device mutex */
 static long vhost_dev_set_owner(struct vhost_dev *dev)
 {
@@ -315,10 +351,11 @@ static long vhost_dev_set_owner(struct vhost_dev *dev)
 	}
 
 	dev->worker = worker;
-	err = cgroup_attach_task_current_cg(worker);
+	wake_up_process(worker);	/* avoid contributing to loadavg */
+
+	err = vhost_attach_cgroups(dev);
 	if (err)
 		goto err_cgroup;
-	wake_up_process(worker);	/* avoid contributing to loadavg */
 
 	err = vhost_dev_alloc_iovecs(dev);
 	if (err)
@@ -349,7 +386,7 @@ long vhost_dev_reset_owner(struct vhost_dev *dev)
 	vhost_dev_cleanup(dev);
 
 	memory->nregions = 0;
-	dev->memory = memory;
+	RCU_INIT_POINTER(dev->memory, memory);
 	return 0;
 }
 
@@ -383,8 +420,9 @@ void vhost_dev_cleanup(struct vhost_dev *dev)
 		fput(dev->log_file);
 	dev->log_file = NULL;
 	/* No one will access memory at this point */
-	kfree(dev->memory);
-	dev->memory = NULL;
+	kfree(rcu_dereference_protected(dev->memory,
+					lockdep_is_held(&dev->mutex)));
+	RCU_INIT_POINTER(dev->memory, NULL);
 	WARN_ON(!list_empty(&dev->work_list));
 	if (dev->worker) {
 		kthread_stop(dev->worker);
@@ -473,7 +511,11 @@ static int vq_access_ok(struct vhost_dev *d, unsigned int num,
 /* Caller should have device mutex but not vq mutex */
 int vhost_log_access_ok(struct vhost_dev *dev)
 {
-	return memory_access_ok(dev, dev->memory, 1);
+	struct vhost_memory *mp;
+
+	mp = rcu_dereference_protected(dev->memory,
+				       lockdep_is_held(&dev->mutex));
+	return memory_access_ok(dev, mp, 1);
 }
 
 /* Verify access for write logging. */
@@ -484,7 +526,8 @@ static int vq_log_access_ok(struct vhost_dev *d, struct vhost_virtqueue *vq,
 	struct vhost_memory *mp;
 	size_t s = vhost_has_feature(d, VIRTIO_RING_F_EVENT_IDX) ? 2 : 0;
 
-	mp = vq->dev->memory;
+	mp = rcu_dereference_protected(vq->dev->memory,
+				       lockdep_is_held(&vq->mutex));
 	return vq_memory_access_ok(log_base, mp,
 			    vhost_has_feature(vq->dev, VHOST_F_LOG_ALL)) &&
 		(!vq->log_used || log_access_ok(log_base, vq->log_addr,
@@ -527,7 +570,8 @@ static long vhost_set_memory(struct vhost_dev *d, struct vhost_memory __user *m)
 		kfree(newmem);
 		return -EFAULT;
 	}
-	oldmem = d->memory;
+	oldmem = rcu_dereference_protected(d->memory,
+					   lockdep_is_held(&d->mutex));
 	rcu_assign_pointer(d->memory, newmem);
 	synchronize_rcu();
 	kfree(oldmem);
@@ -1006,7 +1050,7 @@ static int get_indirect(struct vhost_dev *dev, struct vhost_virtqueue *vq,
 	count = indirect->len / sizeof desc;
 	/* Buffers are chained via a 16 bit next field, so
 	 * we can have at most 2^16 of these. */
-	if (unlikely(count > USHORT_MAX + 1)) {
+	if (unlikely(count > USHRT_MAX + 1)) {
 		vq_err(vq, "Indirect buffer length too big: %d\n",
 		       indirect->len);
 		return -E2BIG;
@@ -1136,7 +1180,7 @@ int vhost_get_vq_desc(struct vhost_dev *dev, struct vhost_virtqueue *vq,
 			       i, vq->num, head);
 			return -EINVAL;
 		}
-		ret = copy_from_user(&desc, vq->desc + i, sizeof desc);
+		ret = __copy_from_user(&desc, vq->desc + i, sizeof desc);
 		if (unlikely(ret)) {
 			vq_err(vq, "Failed to get descriptor: idx %d addr %p\n",
 			       i, vq->desc + i);

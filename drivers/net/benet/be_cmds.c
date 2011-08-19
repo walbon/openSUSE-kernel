@@ -1589,8 +1589,7 @@ err:
  * (mc == NULL) => multicast promiscuous
  */
 int be_cmd_multicast_set(struct be_adapter *adapter, u32 if_id,
-		struct dev_mc_list *mc_list, u32 mc_count,
-		struct be_dma_mem *mem)
+		struct net_device *netdev, struct be_dma_mem *mem)
 {
 	struct be_mcc_wrb *wrb;
 	struct be_cmd_req_mcast_mac_config *req = mem->va;
@@ -1617,13 +1616,15 @@ int be_cmd_multicast_set(struct be_adapter *adapter, u32 if_id,
 		OPCODE_COMMON_NTWK_MULTICAST_SET, sizeof(*req));
 
 	req->interface_id = if_id;
-	if (mc_list) {
+	if (netdev) {
 		int i;
-		struct dev_mc_list *mc;
+		struct netdev_hw_addr *ha;
 
-		req->num_mac = cpu_to_le16(mc_count);
-		for (mc = mc_list, i = 0; mc; mc = mc->next, i++)
-			memcpy(req->mac[i].byte, mc->dmi_addr, ETH_ALEN);
+		req->num_mac = cpu_to_le16(netdev_mc_count(netdev));
+
+		i = 0;
+		netdev_for_each_mc_addr(ha, netdev)
+			memcpy(req->mac[i++].byte, ha->addr, ETH_ALEN);
 	} else {
 		req->promiscuous = 1;
 	}

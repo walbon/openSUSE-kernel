@@ -10,6 +10,7 @@
  * by the Free Software Foundation.
  */
 
+#include <linux/err.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -159,7 +160,7 @@ static int ghash_async_init(struct ahash_request *req)
 	struct ahash_request *cryptd_req = ahash_request_ctx(req);
 	struct cryptd_ahash *cryptd_tfm = ctx->cryptd_tfm;
 
-	if (irq_fpu_usable()) {
+	if (!irq_fpu_usable()) {
 		memcpy(cryptd_req, req, sizeof(*req));
 		ahash_request_set_tfm(cryptd_req, &cryptd_tfm->base);
 		return crypto_ahash_init(cryptd_req);
@@ -177,7 +178,7 @@ static int ghash_async_update(struct ahash_request *req)
 {
 	struct ahash_request *cryptd_req = ahash_request_ctx(req);
 
-	if (irq_fpu_usable()) {
+	if (!irq_fpu_usable()) {
 		struct crypto_ahash *tfm = crypto_ahash_reqtfm(req);
 		struct ghash_async_ctx *ctx = crypto_ahash_ctx(tfm);
 		struct cryptd_ahash *cryptd_tfm = ctx->cryptd_tfm;
@@ -195,7 +196,7 @@ static int ghash_async_final(struct ahash_request *req)
 {
 	struct ahash_request *cryptd_req = ahash_request_ctx(req);
 
-	if (irq_fpu_usable()) {
+	if (!irq_fpu_usable()) {
 		struct crypto_ahash *tfm = crypto_ahash_reqtfm(req);
 		struct ghash_async_ctx *ctx = crypto_ahash_ctx(tfm);
 		struct cryptd_ahash *cryptd_tfm = ctx->cryptd_tfm;
@@ -216,7 +217,7 @@ static int ghash_async_digest(struct ahash_request *req)
 	struct ahash_request *cryptd_req = ahash_request_ctx(req);
 	struct cryptd_ahash *cryptd_tfm = ctx->cryptd_tfm;
 
-	if (irq_fpu_usable()) {
+	if (!irq_fpu_usable()) {
 		memcpy(cryptd_req, req, sizeof(*req));
 		ahash_request_set_tfm(cryptd_req, &cryptd_tfm->base);
 		return crypto_ahash_digest(cryptd_req);

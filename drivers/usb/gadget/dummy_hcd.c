@@ -748,7 +748,8 @@ static DEVICE_ATTR (function, S_IRUGO, show_function, NULL);
  */
 
 int
-usb_gadget_register_driver (struct usb_gadget_driver *driver)
+usb_gadget_probe_driver(struct usb_gadget_driver *driver,
+		int (*bind)(struct usb_gadget *))
 {
 	struct dummy	*dum = the_controller;
 	int		retval, i;
@@ -757,8 +758,7 @@ usb_gadget_register_driver (struct usb_gadget_driver *driver)
 		return -EINVAL;
 	if (dum->driver)
 		return -EBUSY;
-	if (!driver->bind || !driver->setup
-			|| driver->speed == USB_SPEED_UNKNOWN)
+	if (!bind || !driver->setup || driver->speed == USB_SPEED_UNKNOWN)
 		return -EINVAL;
 
 	/*
@@ -796,7 +796,7 @@ usb_gadget_register_driver (struct usb_gadget_driver *driver)
 	dum->gadget.dev.driver = &driver->driver;
 	dev_dbg (udc_dev(dum), "binding gadget driver '%s'\n",
 			driver->driver.name);
-	retval = driver->bind(&dum->gadget);
+	retval = bind(&dum->gadget);
 	if (retval) {
 		dum->driver = NULL;
 		dum->gadget.dev.driver = NULL;
@@ -812,7 +812,7 @@ usb_gadget_register_driver (struct usb_gadget_driver *driver)
 	usb_hcd_poll_rh_status (dummy_to_hcd (dum));
 	return 0;
 }
-EXPORT_SYMBOL (usb_gadget_register_driver);
+EXPORT_SYMBOL(usb_gadget_probe_driver);
 
 int
 usb_gadget_unregister_driver (struct usb_gadget_driver *driver)
@@ -874,6 +874,8 @@ static int dummy_udc_probe (struct platform_device *pdev)
 	struct dummy	*dum = the_controller;
 	int		rc;
 
+	usb_get_hcd(dummy_to_hcd(dum));
+
 	dum->gadget.name = gadget_name;
 	dum->gadget.ops = &dummy_ops;
 	dum->gadget.is_dualspeed = 1;
@@ -885,15 +887,16 @@ static int dummy_udc_probe (struct platform_device *pdev)
 	dum->gadget.dev.parent = &pdev->dev;
 	dum->gadget.dev.release = dummy_gadget_release;
 	rc = device_register (&dum->gadget.dev);
-	if (rc < 0)
+	if (rc < 0) {
+		put_device(&dum->gadget.dev);
 		return rc;
+	}
 
-	usb_get_hcd (dummy_to_hcd (dum));
-
-	platform_set_drvdata (pdev, dum);
 	rc = device_create_file (&dum->gadget.dev, &dev_attr_function);
 	if (rc < 0)
 		device_unregister (&dum->gadget.dev);
+	else
+		platform_set_drvdata(pdev, dum);
 	return rc;
 }
 
@@ -1994,11 +1997,29 @@ static int __init init (void)
 	retval = platform_device_add(the_hcd_pdev);
 	if (retval < 0)
 		goto err_add_hcd;
+	if (!the_controller) {
+		/*
+		 * The hcd was added successfully but its probe function failed
+		 * for some reason.
+		 */
+		retval = -EINVAL;
+		goto err_add_udc;
+	}
 	retval = platform_device_add(the_udc_pdev);
 	if (retval < 0)
 		goto err_add_udc;
+	if (!platform_get_drvdata(the_udc_pdev)) {
+		/*
+		 * The udc was added successfully but its probe function failed
+		 * for some reason.
+		 */
+		retval = -EINVAL;
+		goto err_probe_udc;
+	}
 	return retval;
 
+err_probe_udc:
+	platform_device_del(the_udc_pdev);
 err_add_udc:
 	platform_device_del(the_hcd_pdev);
 err_add_hcd:

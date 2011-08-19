@@ -19,7 +19,9 @@
 #define __KVM_HAVE_MSIX
 #define __KVM_HAVE_MCE
 #define __KVM_HAVE_PIT_STATE2
+#define __KVM_HAVE_XEN_HVM
 #define __KVM_HAVE_VCPU_EVENTS
+#define __KVM_HAVE_DEBUGREGS
 #define __KVM_HAVE_XSAVE
 #define __KVM_HAVE_XCRS
 
@@ -288,6 +290,15 @@ struct kvm_vcpu_events {
 	__u32 sipi_vector;
 	__u32 flags;
 	__u32 reserved[10];
+};
+
+/* for KVM_GET/SET_DEBUGREGS */
+struct kvm_debugregs {
+	__u64 db[4];
+	__u64 dr6;
+	__u64 dr7;
+	__u64 flags;
+	__u64 reserved[9];
 };
 
 /* for KVM_CAP_XSAVE */

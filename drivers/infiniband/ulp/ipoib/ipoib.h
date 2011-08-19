@@ -50,7 +50,7 @@
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_pack.h>
 #include <rdma/ib_sa.h>
-#include <linux/inet_lro.h>
+#include <linux/sched.h>
 
 /* constants */
 
@@ -91,7 +91,6 @@ enum {
 	IPOIB_STOP_REAPER	  = 7,
 	IPOIB_FLAG_ADMIN_CM	  = 9,
 	IPOIB_FLAG_UMCAST	  = 10,
-	IPOIB_FLAG_CSUM		  = 11,
 
 	IPOIB_MAX_BACKOFF_SECONDS = 16,
 
@@ -99,9 +98,6 @@ enum {
 	IPOIB_MCAST_FLAG_SENDONLY = 1,
 	IPOIB_MCAST_FLAG_BUSY	  = 2,	/* joining or already joined */
 	IPOIB_MCAST_FLAG_ATTACHED = 3,
-
-	IPOIB_MAX_LRO_DESCRIPTORS = 8,
-	IPOIB_LRO_MAX_AGGR 	  = 64,
 
 	MAX_SEND_CQE		  = 16,
 	IPOIB_CM_COPYBREAK	  = 256,
@@ -262,11 +258,6 @@ struct ipoib_ethtool_st {
 	u16     max_coalesced_frames;
 };
 
-struct ipoib_lro {
-	struct net_lro_mgr lro_mgr;
-	struct net_lro_desc lro_desc[IPOIB_MAX_LRO_DESCRIPTORS];
-};
-
 /*
  * Device private locking: network stack tx_lock protects members used
  * in TX fast path, lock protects everything else.  lock nests inside
@@ -352,8 +343,6 @@ struct ipoib_dev_priv {
 	int	hca_caps;
 	struct ipoib_ethtool_st ethtool;
 	struct timer_list poll_timer;
-
-	struct ipoib_lro lro;
 };
 
 struct ipoib_ah {
@@ -415,7 +404,9 @@ static inline struct ipoib_neigh **to_ipoib_neigh(struct neighbour *neigh)
 				     INFINIBAND_ALEN, sizeof(void *));
 }
 
-void ipoib_neigh_flush(struct ipoib_neigh *neigh);
+struct ipoib_neigh *ipoib_neigh_alloc(struct neighbour *neigh,
+				      struct net_device *dev);
+void ipoib_neigh_free(struct net_device *dev, struct ipoib_neigh *neigh);
 
 extern struct workqueue_struct *ipoib_workqueue;
 
@@ -462,8 +453,7 @@ void ipoib_dev_cleanup(struct net_device *dev);
 
 void ipoib_mcast_join_task(struct work_struct *work);
 void ipoib_mcast_carrier_on_task(struct work_struct *work);
-void ipoib_mcast_send(struct net_device *dev, void *mgid, struct sk_buff *skb,
-		      struct ipoib_neigh *neigh);
+void ipoib_mcast_send(struct net_device *dev, void *mgid, struct sk_buff *skb);
 
 void ipoib_mcast_restart_task(struct work_struct *work);
 int ipoib_mcast_start_thread(struct net_device *dev);
@@ -569,7 +559,6 @@ void ipoib_cm_dev_cleanup(struct net_device *dev);
 struct ipoib_cm_tx *ipoib_cm_create_tx(struct net_device *dev, struct ipoib_path *path,
 				    struct ipoib_neigh *neigh);
 void ipoib_cm_destroy_tx(struct ipoib_cm_tx *tx);
-void ipoib_cm_flush_path(struct net_device *dev, struct ipoib_path *path);
 void ipoib_cm_skb_too_long(struct net_device *dev, struct sk_buff *skb,
 			   unsigned int mtu);
 void ipoib_cm_handle_rx_wc(struct net_device *dev, struct ib_wc *wc);
@@ -654,12 +643,6 @@ struct ipoib_cm_tx *ipoib_cm_create_tx(struct net_device *dev, struct ipoib_path
 
 static inline
 void ipoib_cm_destroy_tx(struct ipoib_cm_tx *tx)
-{
-	return;
-}
-
-static inline
-void ipoib_cm_flush_path(struct net_device *dev, struct ipoib_path *path)
 {
 	return;
 }

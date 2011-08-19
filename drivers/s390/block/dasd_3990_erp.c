@@ -10,9 +10,7 @@
 #define KMSG_COMPONENT "dasd-eckd"
 
 #include <linux/timer.h>
-#include <linux/slab.h>
 #include <asm/idals.h>
-#include <asm/todclk.h>
 
 #define PRINTK_HEADER "dasd_erp(3990): "
 
@@ -2201,7 +2199,7 @@ dasd_3990_erp_inspect_32(struct dasd_ccw_req * erp, char *sense)
 
 /*
  *****************************************************************************
- * main ERP control fuctions (24 and 32 byte sense)
+ * main ERP control functions (24 and 32 byte sense)
  *****************************************************************************
  */
 
@@ -2209,7 +2207,7 @@ dasd_3990_erp_inspect_32(struct dasd_ccw_req * erp, char *sense)
  * DASD_3990_ERP_CONTROL_CHECK
  *
  * DESCRIPTION
- *   Does a generic inspection if a control check occured and sets up
+ *   Does a generic inspection if a control check occurred and sets up
  *   the related error recovery procedure
  *
  * PARAMETER
@@ -2252,7 +2250,7 @@ dasd_3990_erp_inspect(struct dasd_ccw_req *erp)
 	struct dasd_ccw_req *erp_new = NULL;
 	char *sense;
 
-	/* if this problem occured on an alias retry on base */
+	/* if this problem occurred on an alias retry on base */
 	erp_new = dasd_3990_erp_inspect_alias(erp);
 	if (erp_new)
 		return erp_new;
@@ -2284,7 +2282,7 @@ dasd_3990_erp_inspect(struct dasd_ccw_req *erp)
  * DASD_3990_ERP_ADD_ERP
  *
  * DESCRIPTION
- *   This funtion adds an additional request block (ERP) to the head of
+ *   This function adds an additional request block (ERP) to the head of
  *   the given cqr (or erp).
  *   For a command mode cqr the erp is initialized as an default erp
  *   (retry TIC).
@@ -2333,7 +2331,7 @@ static struct dasd_ccw_req *dasd_3990_erp_add_erp(struct dasd_ccw_req *cqr)
                                      cqr->retries);
 			dasd_block_set_timer(device->block, (HZ << 3));
                 }
-		return cqr;
+		return erp;
 	}
 
 	ccw = cqr->cpaddr;
@@ -2396,6 +2394,9 @@ dasd_3990_erp_additional_erp(struct dasd_ccw_req * cqr)
 
 	/* add erp and initialize with default TIC */
 	erp = dasd_3990_erp_add_erp(cqr);
+
+	if (IS_ERR(erp))
+		return erp;
 
 	/* inspect sense, determine specific ERP if possible */
 	if (erp != cqr) {
@@ -2736,6 +2737,8 @@ dasd_3990_erp_action(struct dasd_ccw_req * cqr)
 	if (erp == NULL) {
 		/* no matching erp found - set up erp */
 		erp = dasd_3990_erp_additional_erp(cqr);
+		if (IS_ERR(erp))
+			return erp;
 	} else {
 		/* matching erp found - set all leading erp's to DONE */
 		erp = dasd_3990_erp_handle_match_erp(cqr, erp);

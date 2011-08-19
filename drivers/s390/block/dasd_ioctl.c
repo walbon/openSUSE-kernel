@@ -16,8 +16,8 @@
 #include <linux/major.h>
 #include <linux/fs.h>
 #include <linux/blkpg.h>
-#include <linux/smp_lock.h>
-
+#include <linux/slab.h>
+#include <asm/compat.h>
 #include <asm/ccwdev.h>
 #include <asm/cmb.h>
 #include <asm/uaccess.h>
@@ -215,7 +215,7 @@ dasd_ioctl_format(struct block_device *bdev, void __user *argp)
 	if (base->features & DASD_FEATURE_READONLY ||
 	    test_bit(DASD_FLAG_DEVICE_RO, &base->flags)) {
 		dasd_put_device(base);
- 		return -EROFS;
+		return -EROFS;
 	}
 	if (copy_from_user(&fdata, argp, sizeof(struct format_data_t))) {
 		dasd_put_device(base);
@@ -384,9 +384,8 @@ dasd_ioctl_set_ro(struct block_device *bdev, void __user *argp)
 }
 
 static int dasd_ioctl_readall_cmb(struct dasd_block *block, unsigned int cmd,
-		unsigned long arg)
+				  struct cmbdata __user *argp)
 {
-	struct cmbdata __user *argp = (void __user *) arg;
 	size_t size = _IOC_SIZE(cmd);
 	struct cmbdata data;
 	int ret;
@@ -397,14 +396,18 @@ static int dasd_ioctl_readall_cmb(struct dasd_block *block, unsigned int cmd,
 	return ret;
 }
 
-static int
-dasd_do_ioctl(struct block_device *bdev, fmode_t mode,
-	      unsigned int cmd, unsigned long arg)
+int dasd_ioctl(struct block_device *bdev, fmode_t mode,
+	       unsigned int cmd, unsigned long arg)
 {
 	struct dasd_block *block;
 	struct dasd_device *base;
-	void __user *argp = (void __user *)arg;
+	void __user *argp;
 	int rc;
+
+	if (is_compat_task())
+		argp = compat_ptr(arg);
+	else
+		argp = (void __user *)arg;
 
 	if ((_IOC_DIR(cmd) != _IOC_NONE) && !arg) {
 		PRINT_DEBUG("empty data ptr");
@@ -451,13 +454,13 @@ dasd_do_ioctl(struct block_device *bdev, fmode_t mode,
 		rc = dasd_ioctl_api_version(argp);
 		break;
 	case BIODASDCMFENABLE:
-		rc = enable_cmf(block->base->cdev);
+		rc = enable_cmf(base->cdev);
 		break;
 	case BIODASDCMFDISABLE:
-		rc = disable_cmf(block->base->cdev);
+		rc = disable_cmf(base->cdev);
 		break;
 	case BIODASDREADALLCMB:
-		rc = dasd_ioctl_readall_cmb(block, cmd, arg);
+		rc = dasd_ioctl_readall_cmb(block, cmd, argp);
 		break;
 	default:
 		/* if the discipline has an ioctl method try it. */
@@ -469,16 +472,5 @@ dasd_do_ioctl(struct block_device *bdev, fmode_t mode,
 			rc = -EINVAL;
 	}
 	dasd_put_device(base);
-	return rc;
-}
-
-int dasd_ioctl(struct block_device *bdev, fmode_t mode,
-	       unsigned int cmd, unsigned long arg)
-{
-	int rc;
-
-	lock_kernel();
-	rc = dasd_do_ioctl(bdev, mode, cmd, arg);
-	unlock_kernel();
 	return rc;
 }

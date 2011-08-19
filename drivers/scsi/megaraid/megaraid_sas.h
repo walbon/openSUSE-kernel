@@ -33,7 +33,7 @@
 /*
  * MegaRAID SAS Driver meta data
  */
-#define MEGASAS_VERSION				"00.00.05.38-SL1"
+#define MEGASAS_VERSION				"00.00.05.38-rc1"
 #define MEGASAS_RELDATE				"May. 11, 2011"
 #define MEGASAS_EXT_VERSION			"Wed. May. 11 17:00:00 PDT 2011"
 
@@ -780,8 +780,6 @@ struct megasas_ctrl_info {
 #define MFI_1068_PCSR_OFFSET			0x84
 #define MFI_1068_FW_HANDSHAKE_OFFSET		0x64
 #define MFI_1068_FW_READY			0xDDDD0000
-
-
 /*
 * register set for both 1068 and 1078 controllers
 * structure extended for 1078 registers
@@ -793,46 +791,46 @@ struct megasas_register_set {
 	u32	fusion_host_diag;		/*0008h*/
 	u32	reserved_01;			/*000Ch*/
 
-	u32	inbound_msg_0;			/*0010h*/
-	u32	inbound_msg_1;			/*0014h*/
-	u32	outbound_msg_0;			/*0018h*/
-	u32	outbound_msg_1;			/*001Ch*/
+	u32 	inbound_msg_0;			/*0010h*/
+	u32 	inbound_msg_1;			/*0014h*/
+	u32 	outbound_msg_0;			/*0018h*/
+	u32 	outbound_msg_1;			/*001Ch*/
 
-	u32	inbound_doorbell;		/*0020h*/
-	u32	inbound_intr_status;		/*0024h*/
-	u32	inbound_intr_mask;		/*0028h*/
+	u32 	inbound_doorbell;		/*0020h*/
+	u32 	inbound_intr_status;		/*0024h*/
+	u32 	inbound_intr_mask;		/*0028h*/
 
-	u32	outbound_doorbell;		/*002Ch*/
-	u32	outbound_intr_status;		/*0030h*/
-	u32	outbound_intr_mask;		/*0034h*/
+	u32 	outbound_doorbell;		/*002Ch*/
+	u32 	outbound_intr_status;		/*0030h*/
+	u32 	outbound_intr_mask;		/*0034h*/
 
-	u32	reserved_1[2];			/*0038h*/
+	u32 	reserved_1[2];			/*0038h*/
 
-	u32	inbound_queue_port;		/*0040h*/
-	u32	outbound_queue_port;		/*0044h*/
+	u32 	inbound_queue_port;		/*0040h*/
+	u32 	outbound_queue_port;		/*0044h*/
 
 	u32	reserved_2[9];			/*0048h*/
 	u32	reply_post_host_index;		/*006Ch*/
 	u32	reserved_2_2[12];		/*0070h*/
 
-	u32	outbound_doorbell_clear;	/*00A0h*/
+	u32 	outbound_doorbell_clear;	/*00A0h*/
 
-	u32	reserved_3[3];			/*00A4h*/
+	u32 	reserved_3[3];			/*00A4h*/
 
-	u32	outbound_scratch_pad ;		/*00B0h*/
+	u32 	outbound_scratch_pad ;		/*00B0h*/
 	u32	outbound_scratch_pad_2;         /*00B4h*/
 
 	u32	reserved_4[2];			/*00B8h*/
 
-	u32	inbound_low_queue_port ;	/*00C0h*/
+	u32 	inbound_low_queue_port ;	/*00C0h*/
 
-	u32	inbound_high_queue_port ;	/*00C4h*/
+	u32 	inbound_high_queue_port ;	/*00C4h*/
 
-	u32	reserved_5;			/*00C8h*/
+	u32 	reserved_5;			/*00C8h*/
 	u32	res_6[11];			/*CCh*/
 	u32	host_diag;
 	u32	seq_offset;
-	u32	index_registers[807];		/*00CCh*/
+	u32 	index_registers[807];		/*00CCh*/
 } __attribute__ ((packed));
 
 struct megasas_sge32 {

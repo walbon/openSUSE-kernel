@@ -712,6 +712,7 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 		goto err_out_free_exch_mgr;
 	}
 	fc_host_maxframe_size(lp->host) = lp->mfs;
+	fc_host_dev_loss_tmo(lp->host) = fnic->config.port_down_timeout / 1000;
 
 	sprintf(fc_host_symbolic_name(lp->host),
 		DRV_NAME " v" DRV_VERSION " over %s", fnic->name);

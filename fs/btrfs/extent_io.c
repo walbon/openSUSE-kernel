@@ -2,7 +2,6 @@
 #include <linux/slab.h>
 #include <linux/bio.h>
 #include <linux/mm.h>
-#include <linux/gfp.h>
 #include <linux/pagemap.h>
 #include <linux/page-flags.h>
 #include <linux/module.h>
@@ -11,8 +10,8 @@
 #include <linux/swap.h>
 #include <linux/writeback.h>
 #include <linux/pagevec.h>
-#include <linux/precache.h>
 #include <linux/prefetch.h>
+#include <linux/cleancache.h>
 #include "extent_io.h"
 #include "extent_map.h"
 #include "compat.h"
@@ -1973,7 +1972,7 @@ static int __extent_read_full_page(struct extent_io_tree *tree,
 	set_page_extent_mapped(page);
 
 	if (!PageUptodate(page)) {
-		if (precache_get(page->mapping, page->index, page) == 1) {
+		if (cleancache_get_page(page) == 0) {
 			BUG_ON(blocksize != PAGE_SIZE);
 			goto out;
 		}
@@ -2184,7 +2183,7 @@ static int __extent_writepage(struct page *page, struct writeback_control *wbc,
 	unsigned long nr_written = 0;
 
 	if (wbc->sync_mode == WB_SYNC_ALL)
-		write_flags = WRITE_SYNC_PLUG;
+		write_flags = WRITE_SYNC;
 	else
 		write_flags = WRITE;
 
@@ -2551,7 +2550,6 @@ int extent_write_full_page(struct extent_io_tree *tree, struct page *page,
 		.sync_io = wbc->sync_mode == WB_SYNC_ALL,
 	};
 	struct writeback_control wbc_writepages = {
-		.bdi		= wbc->bdi,
 		.sync_mode	= wbc->sync_mode,
 		.older_than_this = NULL,
 		.nr_to_write	= 64,
@@ -2585,7 +2583,6 @@ int extent_write_locked_range(struct extent_io_tree *tree, struct inode *inode,
 		.sync_io = mode == WB_SYNC_ALL,
 	};
 	struct writeback_control wbc_writepages = {
-		.bdi		= inode->i_mapping->backing_dev_info,
 		.sync_mode	= mode,
 		.older_than_this = NULL,
 		.nr_to_write	= nr_pages * 2,
@@ -3027,7 +3024,6 @@ static struct extent_buffer *__alloc_extent_buffer(struct extent_io_tree *tree,
 	eb->len = len;
 	spin_lock_init(&eb->lock);
 	init_waitqueue_head(&eb->lock_wq);
-	INIT_RCU_HEAD(&eb->rcu_head);
 
 #if LEAK_DEBUG
 	spin_lock_irqsave(&leak_lock, flags);

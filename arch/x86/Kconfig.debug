@@ -25,15 +25,13 @@ config STRICT_DEVMEM
 config X86_VERBOSE_BOOTUP
 	bool "Enable verbose x86 bootup info messages"
 	default y
-	depends on !XEN
 	---help---
 	  Enables the informational output from the decompression stage
 	  (e.g. bzImage) of the boot. If you disable this you will still
 	  see errors. Disable this if you want silent bootup.
 
 config EARLY_PRINTK
-	bool "Early printk" if EMBEDDED
-	depends on !XEN_UNPRIVILEGED_GUEST
+	bool "Early printk" if EXPERT
 	default y
 	---help---
 	  Write kernel log output directly into the VGA buffer or to a serial
@@ -45,9 +43,12 @@ config EARLY_PRINTK
 	  with klogd/syslogd or the X server. You should normally N here,
 	  unless you want to debug such a crash.
 
+config EARLY_PRINTK_MRST
+	bool "Early printk for MRST platform support"
+	depends on EARLY_PRINTK && X86_MRST
+
 config EARLY_PRINTK_DBGP
 	bool "Early printk via EHCI debug port"
-	default n
 	depends on EARLY_PRINTK && PCI
 	---help---
 	  Write kernel log output directly into the EHCI debug port.
@@ -64,27 +65,6 @@ config DEBUG_STACKOVERFLOW
 	---help---
 	  This option will cause messages to be printed if free stack space
 	  drops below a certain limit.
-
-config DEBUG_STACK_USAGE
-	bool "Stack utilization instrumentation"
-	depends on DEBUG_KERNEL
-	---help---
-	  Enables the display of the minimum amount of free stack which each
-	  task has ever had available in the sysrq-T and sysrq-P debug output.
-
-	  This option will slow down process creation somewhat.
-
-config DEBUG_PER_CPU_MAPS
-	bool "Debug access to per_cpu maps"
-	depends on DEBUG_KERNEL
-	depends on SMP
-	default n
-	---help---
-	  Say Y to verify that the per_cpu map being accessed has
-	  been setup.  Adds a fair amount of code to kernel memory
-	  and decreases performance.
-
-	  Say N if unsure.
 
 config X86_PTDUMP
 	bool "Export kernel pagetable layout to userspace via debugfs"
@@ -117,6 +97,17 @@ config DEBUG_RODATA_TEST
 	  feature as well as for the change_page_attr() infrastructure.
 	  If in doubt, say "N"
 
+config DEBUG_SET_MODULE_RONX
+	bool "Set loadable kernel module data as NX and text as RO"
+	depends on MODULES
+	---help---
+	  This option helps catch unintended modifications to loadable
+	  kernel module's text and read-only data. It also prevents execution
+	  of module data. Such protection may interfere with run-time code
+	  patching and dynamic kernel tracing - and they might also protect
+	  against certain classes of kernel exploits.
+	  If in doubt, say "N".
+
 config DEBUG_NX_TEST
 	tristate "Testcase for the NX non-executable stack feature"
 	depends on DEBUG_KERNEL && m
@@ -125,20 +116,10 @@ config DEBUG_NX_TEST
 	  and the software setup of this feature.
 	  If in doubt, say "N"
 
-config 4KSTACKS
-	bool "Use 4Kb for kernel stacks instead of 8Kb"
-	depends on X86_32
-	---help---
-	  If you say Y here the kernel will use a 4Kb stacksize for the
-	  kernel stack attached to each process/thread. This facilitates
-	  running more threads on a system and also reduces the pressure
-	  on the VM subsystem for higher order allocations. This option
-	  will also use IRQ stacks to compensate for the reduced stackspace.
-
 config DOUBLEFAULT
 	default y
-	bool "Enable doublefault exception handler" if EMBEDDED
-	depends on X86_32 && !X86_NO_TSS
+	bool "Enable doublefault exception handler" if EXPERT
+	depends on X86_32
 	---help---
 	  This option allows trapping of rare doublefault exceptions that
 	  would otherwise cause a system to silently reboot. Disabling this
@@ -176,18 +157,8 @@ config IOMMU_LEAK
 	  Add a simple leak tracer to the IOMMU code. This is useful when you
 	  are debugging a buggy device driver that leaks IOMMU mappings.
 
-config X86_DS_SELFTEST
-    bool "DS selftest"
-    default y
-    depends on DEBUG_KERNEL
-    depends on X86_DS
-	---help---
-	  Perform Debug Store selftests at boot time.
-	  If in doubt, say "N".
-
 config HAVE_MMIOTRACE_SUPPORT
 	def_bool y
-	depends on !XEN
 
 config X86_DECODER_SELFTEST
 	bool "x86 instruction decoder selftest"
@@ -276,7 +247,6 @@ config DEBUG_BOOT_PARAMS
 	bool "Debug boot parameters"
 	depends on DEBUG_KERNEL
 	depends on DEBUG_FS
-	depends on !XEN
 	---help---
 	  This option will cause struct boot_params to be exported via debugfs.
 
@@ -300,91 +270,18 @@ config OPTIMIZE_INLINING
 
 	  If unsure, say N.
 
-config KDB
-	bool "Built-in Kernel Debugger support"
-	depends on DEBUG_KERNEL && !XEN
-	select KALLSYMS
-	select KALLSYMS_ALL
-	help
-	  This option provides a built-in kernel debugger.  The built-in
-	  kernel debugger contains commands which allow memory to be examined,
-	  instructions to be disassembled and breakpoints to be set.  For details,
-	  see Documentation/kdb/kdb.mm and the manual pages kdb_bt, kdb_ss, etc.
-	  Kdb can also be used via the serial port.  Set up the system to
-	  have a serial console (see Documentation/serial-console.txt).
-	  The key sequence <escape>KDB on the serial port will cause the
-	  kernel debugger to be entered with input from the serial port and
-	  output to the serial console.  If unsure, say N.
+config DEBUG_STRICT_USER_COPY_CHECKS
+	bool "Strict copy size checks"
+	depends on DEBUG_KERNEL && !TRACE_BRANCH_PROFILING
+	---help---
+	  Enabling this option turns a certain set of sanity checks for user
+	  copy operations into compile time failures.
 
-config KDB_MODULES
-	tristate "KDB modules"
-	depends on KDB
-	help
-	  KDB can be extended by adding your own modules, in directory
-	  kdb/modules.  This option selects the way that these modules should
-	  be compiled, as free standing modules (select M) or built into the
-	  kernel (select Y).  If unsure say M.
+	  The copy_from_user() etc checks are there to help test if there
+	  are sufficient security checks on the length argument of
+	  the copy operation, by having gcc prove that the argument is
+	  within bounds.
 
-config KDB_OFF
-	bool "KDB off by default"
-	depends on KDB
-	help
-	  Normally kdb is activated by default, as long as CONFIG_KDB is set.
-	  If you want to ship a kernel with kdb support but only have kdb
-	  turned on when the user requests it then select this option.  When
-	  compiled with CONFIG_KDB_OFF, kdb ignores all events unless you boot
-	  with kdb=on or you echo "1" > /proc/sys/kernel/kdb.  This option also
-	  works in reverse, if kdb is normally activated, you can boot with
-	  kdb=off or echo "0" > /proc/sys/kernel/kdb to deactivate kdb. If
-	  unsure, say N.
-
-config KDB_CONTINUE_CATASTROPHIC
-	int "KDB continues after catastrophic errors"
-	depends on KDB
-	default "0"
-	help
-	  This integer controls the behaviour of kdb when the kernel gets a
-	  catastrophic error, i.e. for a panic, oops, NMI or other watchdog
-	  tripping.  CONFIG_KDB_CONTINUE_CATASTROPHIC interacts with
-	  /proc/sys/kernel/kdb and CONFIG_LKCD_DUMP (if your kernel has the
-	  LKCD patch).
-	  When KDB is active (/proc/sys/kernel/kdb == 1) and a catastrophic
-	  error occurs, nothing extra happens until you type 'go'.
-	  CONFIG_KDB_CONTINUE_CATASTROPHIC == 0 (default).  The first time
-	  you type 'go', kdb warns you.  The second time you type 'go', KDB
-	  tries to continue - no guarantees that the kernel is still usable.
-	  CONFIG_KDB_CONTINUE_CATASTROPHIC == 1.  KDB tries to continue - no
-	  guarantees that the kernel is still usable.
-	  CONFIG_KDB_CONTINUE_CATASTROPHIC == 2.  If your kernel has the LKCD
-	  patch and LKCD is configured to take a dump then KDB forces a dump.
-	  Whether or not a dump is taken, KDB forces a reboot.
-	  When KDB is not active (/proc/sys/kernel/kdb == 0) and a catastrophic
-	  error occurs, the following steps are automatic, no human
-	  intervention is required.
-	  CONFIG_KDB_CONTINUE_CATASTROPHIC == 0 (default) or 1.  KDB attempts
-	  to continue - no guarantees that the kernel is still usable.
-	  CONFIG_KDB_CONTINUE_CATASTROPHIC == 2.  If your kernel has the LKCD
-	  patch and LKCD is configured to take a dump then KDB automatically
-	  forces a dump.  Whether or not a dump is taken, KDB forces a
-	  reboot.
-	  If you are not sure, say 0.  Read Documentation/kdb/dump.txt before
-	  setting to 2.
-
-config KDB_USB
-	bool "Support for USB Keyboard in KDB"
-	depends on KDB && (USB_OHCI_HCD || USB_EHCI_HCD || USB_UHCI_HCD)
-	help
-	  If you want to use kdb from USB keyboards then say Y here.  If you
-	  say N then kdb can only be used from a PC (AT) keyboard or a serial
-	  console.
-
-config KDB_KDUMP
-	bool "Support for Kdump in KDB"
-	depends on KDB
-	select KEXEC
-	default N
-	help
-	  If you want to take Kdump kernel vmcore from KDB then say Y here.
-	  If unsure, say N.
+	  If unsure, or if you run an older (pre 4.4) gcc, say N.
 
 endmenu

@@ -8,6 +8,7 @@
 
 #include <linux/kthread.h>
 #include <linux/vmalloc.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 
 static int qla24xx_vport_disable(struct fc_vport *, bool);
@@ -281,9 +282,9 @@ qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 		}
 
 		if (qla2x00_wait_for_hba_online(vha) != QLA_SUCCESS) {
-			DEBUG2(qla_printk(KERN_INFO, ha,
-				"HBA not online, failing OptROM read.\n"));
-			return -EINVAL;
+			qla_printk(KERN_WARNING, ha,
+				"HBA not online, failing NVRAM update.\n");
+			return -EAGAIN;
 		}
 
 		DEBUG2(qla_printk(KERN_INFO, ha,
@@ -324,9 +325,8 @@ qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 		else if (start == (ha->flt_region_boot * 4) ||
 		    start == (ha->flt_region_fw * 4))
 			valid = 1;
-		else if (IS_QLA24XX_TYPE(ha) || IS_QLA25XX(ha)
-			|| IS_QLA8XXX_TYPE(ha))
-		    valid = 1;
+		else if (IS_QLA25XX(ha) || IS_QLA8XXX_TYPE(ha))
+			valid = 1;
 		if (!valid) {
 			qla_printk(KERN_WARNING, ha,
 			    "Invalid start region 0x%x/0x%x.\n", start, size);
@@ -632,9 +632,9 @@ qla2x00_sysfs_write_edc(struct file *filp, struct kobject *kobj,
 	    dev, adr, len, opt);
 	if (rval != QLA_SUCCESS) {
 		DEBUG2(qla_printk(KERN_INFO, ha,
-		    "Unable to write EDC (%x) %02x:%02x:%04x:%02x:%02hhx.\n",
+		    "Unable to write EDC (%x) %02x:%02x:%04x:%02x:%02x.\n",
 		    rval, dev, adr, opt, len, buf[8]));
-		return -EINVAL;
+		return 0;
 	}
 
 	return count;
@@ -691,7 +691,7 @@ qla2x00_sysfs_write_edc_status(struct file *filp, struct kobject *kobj,
 		DEBUG2(qla_printk(KERN_INFO, ha,
 		    "Unable to write EDC status (%x) %02x:%02x:%04x:%02x.\n",
 		    rval, dev, adr, opt, len));
-		return -EINVAL;
+		return 0;
 	}
 
 	ha->edc_data_len = len;
@@ -1328,7 +1328,7 @@ qla2x00_thermal_temp_show(struct device *dev,
 	else if (!vha->hw->flags.eeh_busy)
 		rval = qla2x00_get_thermal_temp(vha, &temp, &frac);
 	if (rval != QLA_SUCCESS)
-		return snprintf(buf, PAGE_SIZE, "\n");
+		temp = frac = 0;
 
 	return snprintf(buf, PAGE_SIZE, "%d.%02d\n", temp, frac);
 }
@@ -1708,12 +1708,14 @@ static void
 qla2x00_get_host_fabric_name(struct Scsi_Host *shost)
 {
 	scsi_qla_host_t *vha = shost_priv(shost);
-	u64 node_name = 0xFFFFFFFF;
+	uint8_t node_name[WWN_SIZE] = { 0xFF, 0xFF, 0xFF, 0xFF, \
+		0xFF, 0xFF, 0xFF, 0xFF};
+	u64 fabric_name = wwn_to_u64(node_name);
 
 	if (vha->device_flags & SWITCH_FOUND)
-		node_name = wwn_to_u64(vha->fabric_node_name);
+		fabric_name = wwn_to_u64(vha->fabric_node_name);
 
-	fc_host_fabric_name(shost) = node_name;
+	fc_host_fabric_name(shost) = fabric_name;
 }
 
 static void
@@ -1806,6 +1808,7 @@ qla24xx_vport_create(struct fc_vport *fc_vport, bool disable)
 	}
 
 	/* initialize attributes */
+	fc_host_dev_loss_tmo(vha->host) = ha->port_down_retry_count;
 	fc_host_node_name(vha->host) = wwn_to_u64(vha->node_name);
 	fc_host_port_name(vha->host) = wwn_to_u64(vha->port_name);
 	fc_host_supported_classes(vha->host) =
@@ -2015,6 +2018,7 @@ qla2x00_init_host_attr(scsi_qla_host_t *vha)
 	struct qla_hw_data *ha = vha->hw;
 	u32 speed = FC_PORTSPEED_UNKNOWN;
 
+	fc_host_dev_loss_tmo(vha->host) = ha->port_down_retry_count;
 	fc_host_node_name(vha->host) = wwn_to_u64(vha->node_name);
 	fc_host_port_name(vha->host) = wwn_to_u64(vha->port_name);
 	fc_host_supported_classes(vha->host) = FC_COS_CLASS3;

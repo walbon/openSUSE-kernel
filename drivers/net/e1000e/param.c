@@ -66,10 +66,9 @@ MODULE_PARM_DESC(copybreak,
 	module_param_array_named(X, X, int, &num_##X, 0);	\
 	MODULE_PARM_DESC(X, desc);
 
-
 /*
  * Transmit Interrupt Delay in units of 1.024 microseconds
- * Tx interrupt delay needs to typically be set to something non zero
+ * Tx interrupt delay needs to typically be set to something non-zero
  *
  * Valid Range: 0-65535
  */
@@ -116,6 +115,7 @@ E1000_PARAM(InterruptThrottleRate, "Interrupt Throttling Rate");
 #define DEFAULT_ITR 3
 #define MAX_ITR 100000
 #define MIN_ITR 100
+
 /* IntMode (Interrupt Mode)
  *
  * Valid Range: 0 - 2

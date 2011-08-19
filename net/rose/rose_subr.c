@@ -15,6 +15,7 @@
 #include <linux/string.h>
 #include <linux/sockios.h>
 #include <linux/net.h>
+#include <linux/slab.h>
 #include <net/ax25.h>
 #include <linux/inet.h>
 #include <linux/netdevice.h>
@@ -417,7 +418,7 @@ int rose_parse_facilities(unsigned char *p, unsigned packet_len,
 
 		default:
 			printk(KERN_DEBUG "ROSE: rose_parse_facilities - unknown facilities family %02X\n", *p);
-			len = 0;
+			len = 1;
 			break;
 		}
 
