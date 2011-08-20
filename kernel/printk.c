@@ -318,12 +318,9 @@ static int check_syslog_permissions(int type, bool from_file)
 	if (syslog_action_restricted(type)) {
 		if (capable(CAP_SYSLOG))
 			return 0;
-		/* For historical reasons, accept CAP_SYS_ADMIN too, with a warning */
-		if (capable(CAP_SYS_ADMIN)) {
-			WARN_ONCE(1, "Attempt to access syslog with CAP_SYS_ADMIN "
-				 "but no CAP_SYSLOG (deprecated).\n");
+		/* For historical reasons, accept CAP_SYS_ADMIN too */
+		if (capable(CAP_SYS_ADMIN))
 			return 0;
-		}
 		return -EPERM;
 	}
 	return 0;
