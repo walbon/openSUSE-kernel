@@ -980,6 +980,16 @@ static inline u64 global_rt_runtime(void)
 	return (u64)sysctl_sched_rt_runtime * NSEC_PER_USEC;
 }
 
+int __read_mostly sysctl_sched_rtsched_debug;
+
+static int __init parse_rtsched_debug(char *arg)
+{
+	sysctl_sched_rtsched_debug = 1;
+	return 0;
+}
+early_param("rtsched_debug", parse_rtsched_debug);
+
+
 #ifndef prepare_arch_switch
 # define prepare_arch_switch(next)	do { } while (0)
 #endif
