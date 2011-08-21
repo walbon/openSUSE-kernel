@@ -26,11 +26,15 @@
 
 #include <linux/version.h>
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+#include <generated/utsrelease.h>
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 #include <linux/utsrelease.h>
 #endif
 
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,18)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+#include <generated/autoconf.h>
+#elif LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,18)
 #include <linux/config.h>
 #else
 #include <linux/autoconf.h>

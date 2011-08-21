@@ -535,8 +535,8 @@ sheep_net_poll( struct file *f, struct poll_table_struct *wait )
 	return 0;
 }
 
-static int
-sheep_net_ioctl( struct inode *inode, struct file *f, unsigned int code, unsigned long arg )
+static long
+sheep_net_ioctl(struct file *f, unsigned int code, unsigned long arg)
 {
 	struct SheepVars *v = (struct SheepVars *)f->private_data;
 	D(bug("sheep_net: ioctl %04x\n", code));
@@ -610,7 +610,7 @@ error:
 			return -ENODEV;
 		if( copy_from_user(addr, (void *)arg, 6))
 			return -EFAULT;
-		ret = dev_mc_add(v->ether, addr, 6, 0);
+		ret = dev_mc_add(v->ether, addr);
 		return ret;
 	}
 
@@ -622,7 +622,7 @@ error:
 			return -ENODEV;
 		if( copy_from_user(addr, (void *)arg, 6))
 			return -EFAULT;
-		return dev_mc_delete(v->ether, addr, 6, 0);
+		return dev_mc_del(v->ether, addr);
 	}
 
 #if 0
@@ -664,7 +664,7 @@ static struct file_operations sheep_net_fops = {
 	.write		= do_sync_write,
 	.aio_write	= sheep_net_aio_write,
 	.poll		= sheep_net_poll,
-	.ioctl		= sheep_net_ioctl,
+	.unlocked_ioctl	= sheep_net_ioctl,
 	.open		= sheep_net_open,
 	.release	= sheep_net_release,
 };
