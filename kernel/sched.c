@@ -4465,6 +4465,11 @@ need_resched:
 EXPORT_SYMBOL(schedule);
 
 #ifdef CONFIG_MUTEX_SPIN_ON_OWNER
+#include <asm/mutex.h>
+
+#ifndef arch_cpu_is_running
+#define arch_cpu_is_running(cpu) true
+#endif
 
 static inline bool owner_running(struct mutex *lock, struct task_struct *owner)
 {
@@ -4482,7 +4487,8 @@ static inline bool owner_running(struct mutex *lock, struct task_struct *owner)
 	 */
 	barrier();
 
-	ret = owner->on_cpu;
+	ret = owner->on_cpu
+	      && arch_cpu_is_running(task_thread_info(owner)->cpu);
 fail:
 	rcu_read_unlock();
 
