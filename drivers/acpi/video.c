@@ -72,6 +72,8 @@ MODULE_LICENSE("GPL");
 
 static int brightness_switch_enabled = 1;
 module_param(brightness_switch_enabled, bool, 0644);
+static int video_switch_key = KEY_SWITCHVIDEOMODE;
+module_param(video_switch_key, int, 0644);
 
 /*
  * By default, we don't allow duplicate ACPI video bus devices
@@ -1445,7 +1447,7 @@ static void acpi_video_bus_notify(struct acpi_device *device, u32 event)
 	case ACPI_VIDEO_NOTIFY_SWITCH:	/* User requested a switch,
 					 * most likely via hotkey. */
 		acpi_bus_generate_proc_event(device, event, 0);
-		keycode = KEY_SWITCHVIDEOMODE;
+		keycode = video_switch_key;
 		break;
 
 	case ACPI_VIDEO_NOTIFY_PROBE:	/* User plugged in or removed a video
@@ -1453,12 +1455,12 @@ static void acpi_video_bus_notify(struct acpi_device *device, u32 event)
 		acpi_video_device_enumerate(video);
 		acpi_video_device_rebind(video);
 		acpi_bus_generate_proc_event(device, event, 0);
-		keycode = KEY_SWITCHVIDEOMODE;
+		keycode = video_switch_key;
 		break;
 
 	case ACPI_VIDEO_NOTIFY_CYCLE:	/* Cycle Display output hotkey pressed. */
 		acpi_bus_generate_proc_event(device, event, 0);
-		keycode = KEY_SWITCHVIDEOMODE;
+		keycode = video_switch_key;
 		break;
 	case ACPI_VIDEO_NOTIFY_NEXT_OUTPUT:	/* Next Display output hotkey pressed. */
 		acpi_bus_generate_proc_event(device, event, 0);
@@ -1670,7 +1672,8 @@ static int acpi_video_bus_add(struct acpi_device *device)
 	input->id.product = 0x06;
 	input->dev.parent = &device->dev;
 	input->evbit[0] = BIT(EV_KEY);
-	set_bit(KEY_SWITCHVIDEOMODE, input->keybit);
+	if (video_switch_key && video_switch_key < KEY_CNT)
+		set_bit(KEY_SWITCHVIDEOMODE, input->keybit);
 	set_bit(KEY_VIDEO_NEXT, input->keybit);
 	set_bit(KEY_VIDEO_PREV, input->keybit);
 	set_bit(KEY_BRIGHTNESS_CYCLE, input->keybit);

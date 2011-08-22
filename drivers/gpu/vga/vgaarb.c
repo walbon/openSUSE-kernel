@@ -177,6 +177,9 @@ static struct vga_device *__vga_tryget(struct vga_device *vgadev,
 	    (vgadev->decodes & VGA_RSRC_LEGACY_MEM))
 		rsrc |= VGA_RSRC_LEGACY_MEM;
 
+	/* only turn on legacy resources if device decodes them */
+	rsrc &= ~VGA_RSRC_LEGACY_MASK | vgadev->decodes;
+
 	pr_debug("%s: %d\n", __func__, rsrc);
 	pr_debug("%s: owns: %d\n", __func__, vgadev->owns);
 
@@ -655,12 +658,13 @@ static inline void vga_update_device_decodes(struct vga_device *vgadev,
 		vgadev->owns &= ~old_decodes;
 		list_for_each_entry(new_vgadev, &vga_list, list) {
 			if ((new_vgadev != vgadev) &&
-			    (new_vgadev->decodes & VGA_RSRC_LEGACY_MASK)) {
+			    (new_vgadev->decodes & old_decodes & VGA_RSRC_LEGACY_MASK)) {
 				pr_info("vgaarb: transferring owner from PCI:%s to PCI:%s\n", pci_name(vgadev->pdev), pci_name(new_vgadev->pdev));
-				conflict = __vga_tryget(new_vgadev, VGA_RSRC_LEGACY_MASK);
-				if (!conflict)
-					__vga_put(new_vgadev, VGA_RSRC_LEGACY_MASK);
-				break;
+				conflict = __vga_tryget(new_vgadev, old_decodes & VGA_RSRC_LEGACY_MASK);
+				if (!conflict) {
+					__vga_put(new_vgadev, old_decodes & VGA_RSRC_LEGACY_MASK);
+					break;
+				}
 			}
 		}
 	}

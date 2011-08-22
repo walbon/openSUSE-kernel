@@ -146,7 +146,8 @@ static int synaptics_capability(struct psmouse *psmouse)
 	 * Older firmwares had submodel ID fixed to 0x47
 	 */
 	if (SYN_ID_FULL(priv->identity) < 0x705 &&
-	    SYN_CAP_SUBMODEL_ID(priv->capabilities) != 0x47) {
+	    SYN_CAP_SUBMODEL_ID(priv->capabilities) != 0x47 &&
+	    (priv->capabilities & 0xffff00) != 0xd00000) {
 		return -1;
 	}
 
@@ -436,7 +437,9 @@ static void synaptics_check_clickpad(struct psmouse *psmouse)
 	struct synaptics_data *priv = psmouse->private;
 	unsigned char ncap[3];
 
-	if (SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0xe4)
+	if (SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0xe4 &&
+	    (SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0x64 ||
+	     priv->capabilities != 0xd00073))
 		return;
 	if (synaptics_send_cmd(psmouse, 0x0c, ncap))
 		return;
