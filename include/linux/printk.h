@@ -156,7 +156,7 @@ extern void dump_stack(void) __cold;
 
 /* generate magic string for scripts/kmsg-doc to parse */
 #define pr_printk_hash(level, format, ...) \
-	__KMSG_PRINT(level _FMT_ format _ARGS_ ##__VA_ARGS__ _END_)
+	__KMSG_PRINT(level _FMT_ format _ARGS_ __VA_ARGS__ _END_)
 
 #elif defined(CONFIG_KMSG_IDS) && defined(KMSG_COMPONENT)
 
