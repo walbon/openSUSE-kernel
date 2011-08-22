@@ -497,10 +497,16 @@ static int read_balance(conf_t *conf, r1bio_t *r1_bio)
 	return best_disk;
 }
 
+static int max_queued = INT_MAX;
+
 int md_raid1_congested(mddev_t *mddev, int bits)
 {
 	conf_t *conf = mddev->private;
 	int i, ret = 0;
+
+	if ((bits & (1 << BDI_async_congested)) &&
+	    conf->pending_count >= max_queued)
+		return 1;
 
 	rcu_read_lock();
 	for (i = 0; i < mddev->raid_disks; i++) {
@@ -542,7 +548,9 @@ static void flush_pending_writes(conf_t *conf)
 	if (conf->pending_bio_list.head) {
 		struct bio *bio;
 		bio = bio_list_get(&conf->pending_bio_list);
+		conf->pending_count = 0;
 		spin_unlock_irq(&conf->device_lock);
+		wake_up(&conf->wait_barrier);
 		/* flush any pending bitmap writes to
 		 * disk before proceeding w/ I/O */
 		bitmap_unplug(conf->mddev->bitmap);
@@ -800,6 +808,11 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 	/*
 	 * WRITE:
 	 */
+	if (conf->pending_count >= max_queued) {
+		md_wakeup_thread(mddev->thread);
+		wait_event(conf->wait_barrier,
+			   conf->pending_count < max_queued);
+	}
 	/* first select target devices under spinlock and
 	 * inc refcount on their rdev.  Record them by setting
 	 * bios[x] to bio
@@ -902,6 +915,7 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 		atomic_inc(&r1_bio->remaining);
 		spin_lock_irqsave(&conf->device_lock, flags);
 		bio_list_add(&conf->pending_bio_list, mbio);
+		conf->pending_count++;
 		spin_unlock_irqrestore(&conf->device_lock, flags);
 	}
 	r1_bio_write_done(r1_bio);
@@ -1900,6 +1914,7 @@ static conf_t *setup_conf(mddev_t *mddev)
 	init_waitqueue_head(&conf->wait_barrier);
 
 	bio_list_init(&conf->pending_bio_list);
+	conf->pending_count = 0;
 
 	conf->last_used = -1;
 	for (i = 0; i < conf->raid_disks; i++) {
@@ -2264,3 +2279,5 @@ MODULE_DESCRIPTION("RAID1 (mirroring) personality for MD");
 MODULE_ALIAS("md-personality-3"); /* RAID1 */
 MODULE_ALIAS("md-raid1");
 MODULE_ALIAS("md-level-1");
+
+module_param(max_queued, int, S_IRUGO|S_IWUSR);

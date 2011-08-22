@@ -968,7 +968,7 @@ struct rpc_xprt *xprt_alloc(struct net *net, int size, int max_req)
 	atomic_set(&xprt->count, 1);
 
 	xprt->max_reqs = max_req;
-	xprt->slot = kcalloc(max_req, sizeof(struct rpc_rqst), GFP_KERNEL);
+	xprt->slot = kcalloc(max_req, sizeof(struct rpc_rqst), GFP_KERNEL | __GFP_REPEAT);
 	if (xprt->slot == NULL)
 		goto out_free;
 
