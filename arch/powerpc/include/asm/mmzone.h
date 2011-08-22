@@ -34,14 +34,6 @@ extern cpumask_t numa_cpumask_lookup_table[];
 #ifdef CONFIG_MEMORY_HOTPLUG
 extern unsigned long max_pfn;
 #endif
-
-/*
- * Following are macros that each numa implmentation must define.
- */
-
-#define node_start_pfn(nid)	(NODE_DATA(nid)->node_start_pfn)
-#define node_end_pfn(nid)	(NODE_DATA(nid)->node_end_pfn)
-
 #endif /* CONFIG_NEED_MULTIPLE_NODES */
 
 #endif /* __KERNEL__ */
