@@ -283,10 +283,4 @@ config SENSORS_AMS_I2C
 	  I2C variant of motion sensor, found in early 2005 PowerBooks and
 	  iBooks.
 
-config MACONLINUX
-	tristate "Mac on Linux kernel module"
-	depends on PPC32 && PPC_PMAC && MODULES && NET
-	help
-	  call helpdesk
-
 endif # MACINTOSH_DRIVERS
