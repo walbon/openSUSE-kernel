@@ -1579,7 +1579,7 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			[NETFILTER] Enable connection tracking flow accounting
 			0 to disable accounting
 			1 to enable accounting
-			Default value is 0.
+			Default value is 1.
 
 	nfsaddrs=	[NFS] Deprecated.  Use ip= instead.
 			See Documentation/filesystems/nfs/nfsroot.txt.
