@@ -528,6 +528,17 @@ void gfs2_recover_func(struct work_struct *work)
 			}
 		}
 
+		/*
+		 * SLE-specific bailout. We don't allow writes under any
+		 * circumstances.
+		 */
+		fs_warn(sdp, "jid=%d: The file system was shut down uncleanly "
+		        "and needs journal replay, which requires write "
+			"access. Please repair before attempting migration.\n",
+			jd->jd_jid);
+		error = -EROFS;
+		goto fail_gunlock_tr;
+
 		if (ro) {
 			fs_warn(sdp, "jid=%u: Can't replay: read-only block "
 				"device\n", jd->jd_jid);

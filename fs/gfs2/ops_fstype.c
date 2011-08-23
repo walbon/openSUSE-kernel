@@ -1089,6 +1089,7 @@ static int fill_super(struct super_block *sb, struct gfs2_args *args, int silent
 		printk(KERN_WARNING "Only read-only GFS2 mounts are "
 		       "supported.\nPlease mount with the \"spectator\" and "
 		       "\"ro\" mount options\n");
+		error = -EROFS;
 		goto fail;
 	}
 
