@@ -1341,12 +1341,17 @@ static unsigned long unmap_page_range(struct mmu_gather *tlb,
 unsigned long unmap_vmas(struct mmu_gather *tlb,
 		struct vm_area_struct *vma, unsigned long start_addr,
 		unsigned long end_addr, unsigned long *nr_accounted,
-		struct zap_details *details)
+		struct zap_details *details, int fullmm)
 {
 	unsigned long start = start_addr;
 	struct mm_struct *mm = vma->vm_mm;
 
+	/*
+	 * mmu_notifier_invalidate_range_start can sleep. Don't initialize
+	 * mmu_gather until it completes
+	 */
 	mmu_notifier_invalidate_range_start(mm, start_addr, end_addr);
+	tlb_gather_mmu(tlb, mm, fullmm);
 	for ( ; vma && vma->vm_start < end_addr; vma = vma->vm_next) {
 		unsigned long end;
 
@@ -1405,9 +1410,8 @@ unsigned long zap_page_range(struct vm_area_struct *vma, unsigned long address,
 	unsigned long nr_accounted = 0;
 
 	lru_add_drain();
-	tlb_gather_mmu(&tlb, mm, 0);
 	update_hiwater_rss(mm);
-	end = unmap_vmas(&tlb, vma, address, end, &nr_accounted, details);
+	end = unmap_vmas(&tlb, vma, address, end, &nr_accounted, details, 0);
 	tlb_finish_mmu(&tlb, address, end);
 	return end;
 }
