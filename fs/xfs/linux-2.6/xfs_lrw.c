@@ -573,6 +573,7 @@ xfs_write(
 	size_t			ocount = 0, count;
 	loff_t			pos;
 	int			need_i_mutex;
+	int			unaligned_io = 0;
 
 	XFS_STATS_INC(xs_write_calls);
 
@@ -649,8 +650,12 @@ start:
 			xfs_iunlock(xip, XFS_ILOCK_EXCL|iolock);
 			return XFS_ERROR(-EINVAL);
 		}
+		if ((pos & mp->m_blockmask) ||
+				((pos + count) & mp->m_blockmask))
+			unaligned_io = 1;
 
-		if (!need_i_mutex && (mapping->nrpages || pos > xip->i_size)) {
+		if (!need_i_mutex && (mapping->nrpages ||
+				unaligned_io || pos > xip->i_size)) {
 			xfs_iunlock(xip, XFS_ILOCK_EXCL|iolock);
 			iolock = XFS_IOLOCK_EXCL;
 			need_i_mutex = 1;
@@ -719,7 +724,9 @@ start:
 				goto out_unlock_internal;
 		}
 
-		if (need_i_mutex) {
+		if (unaligned_io)
+			xfs_ioend_wait(xip);
+		else if (need_i_mutex) {
 			/* demote the lock now the cached pages are gone */
 			xfs_ilock_demote(xip, XFS_IOLOCK_EXCL);
 			mutex_unlock(&inode->i_mutex);
