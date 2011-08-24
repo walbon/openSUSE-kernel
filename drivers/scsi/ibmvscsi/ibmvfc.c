@@ -2362,17 +2362,19 @@ static int ibmvfc_eh_abort_handler(struct scsi_cmnd *cmd)
 	struct scsi_device *sdev = cmd->device;
 	struct ibmvfc_host *vhost = shost_priv(sdev->host);
 	int cancel_rc, abort_rc;
-	int rc = FAILED;
+	int rc;
 
 	ENTER;
-	fc_block_scsi_eh(cmd);
+	rc = fc_block_scsi_eh(cmd);
+	if (rc != SUCCESS)
+		goto out;
 	ibmvfc_wait_while_resetting(vhost);
 	cancel_rc = ibmvfc_cancel_all(sdev, IBMVFC_TMF_ABORT_TASK_SET);
 	abort_rc = ibmvfc_abort_task_set(sdev);
 
 	if (!cancel_rc && !abort_rc)
 		rc = ibmvfc_wait_for_ops(vhost, sdev, ibmvfc_match_lun);
-
+out:
 	LEAVE;
 	return rc;
 }
@@ -2389,17 +2391,19 @@ static int ibmvfc_eh_device_reset_handler(struct scsi_cmnd *cmd)
 	struct scsi_device *sdev = cmd->device;
 	struct ibmvfc_host *vhost = shost_priv(sdev->host);
 	int cancel_rc, reset_rc;
-	int rc = FAILED;
+	int rc;
 
 	ENTER;
-	fc_block_scsi_eh(cmd);
+	rc = fc_block_scsi_eh(cmd);
+	if (rc != SUCCESS)
+		goto out;
 	ibmvfc_wait_while_resetting(vhost);
 	cancel_rc = ibmvfc_cancel_all(sdev, IBMVFC_TMF_LUN_RESET);
 	reset_rc = ibmvfc_reset_device(sdev, IBMVFC_LUN_RESET, "LUN");
 
 	if (!cancel_rc && !reset_rc)
 		rc = ibmvfc_wait_for_ops(vhost, sdev, ibmvfc_match_lun);
-
+out:
 	LEAVE;
 	return rc;
 }
@@ -2429,18 +2433,20 @@ static int ibmvfc_eh_target_reset_handler(struct scsi_cmnd *cmd)
 	struct ibmvfc_host *vhost = shost_priv(sdev->host);
 	struct scsi_target *starget = scsi_target(sdev);
 	int reset_rc;
-	int rc = FAILED;
+	int rc;
 	unsigned long cancel_rc = 0;
 
 	ENTER;
-	fc_block_scsi_eh(cmd);
+	rc = fc_block_scsi_eh(cmd);
+	if (rc != SUCCESS)
+		goto out;
 	ibmvfc_wait_while_resetting(vhost);
 	starget_for_each_device(starget, &cancel_rc, ibmvfc_dev_cancel_all_reset);
 	reset_rc = ibmvfc_reset_device(sdev, IBMVFC_TARGET_RESET, "target");
 
 	if (!cancel_rc && !reset_rc)
 		rc = ibmvfc_wait_for_ops(vhost, starget, ibmvfc_match_target);
-
+out:
 	LEAVE;
 	return rc;
 }

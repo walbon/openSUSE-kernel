@@ -3261,12 +3261,13 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 	struct lpfc_iocbq *abtsiocb;
 	struct lpfc_scsi_buf *lpfc_cmd;
 	IOCB_t *cmd, *icmd;
-	int ret = SUCCESS;
+	int ret;
 	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(waitq);
 
 	ret = fc_block_scsi_eh(cmnd);
-	if (ret)
+	if (ret != SUCCESS)
 		return ret;
+
 	lpfc_cmd = (struct lpfc_scsi_buf *)cmnd->host_scribble;
 	if (!lpfc_cmd) {
 		lpfc_printf_vlog(vport, KERN_WARNING, LOG_FCP,
@@ -3594,7 +3595,7 @@ lpfc_device_reset_handler(struct scsi_cmnd *cmnd)
 	}
 	pnode = rdata->pnode;
 	status = fc_block_scsi_eh(cmnd);
-	if (status)
+	if (status != SUCCESS)
 		return status;
 
 	status = lpfc_chk_tgt_mapped(vport, cmnd);
@@ -3661,7 +3662,7 @@ lpfc_target_reset_handler(struct scsi_cmnd *cmnd)
 	}
 	pnode = rdata->pnode;
 	status = fc_block_scsi_eh(cmnd);
-	if (status)
+	if (status != SUCCESS)
 		return status;
 
 	status = lpfc_chk_tgt_mapped(vport, cmnd);
@@ -3729,7 +3730,7 @@ lpfc_bus_reset_handler(struct scsi_cmnd *cmnd)
 		sizeof(scsi_event), (char *)&scsi_event, LPFC_NL_VENDOR_ID);
 
 	ret = fc_block_scsi_eh(cmnd);
-	if (ret)
+	if (ret != SUCCESS)
 		return ret;
 
 	/*
