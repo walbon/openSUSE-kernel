@@ -2469,14 +2469,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			controller if no parameter or 1 is given or disable
 			it if 0 is given (See Documentation/cgroups/memory.txt)
 
-	unsupported	Allow loading of unsupported kernel modules:
-			0 = only allow supported modules,
-			1 = warn when loading unsupported modules,
-			2 = don't warn.
-
-			CONFIG_ENTERPRISE_SUPPORT must be enabled for this
-			to have any effect.
-
 	swiotlb=	[IA-64] Number of I/O TLB slabs
 
 	switches=	[HW,M68k]
@@ -2594,6 +2586,14 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 
 	unknown_nmi_panic
 			[X86] Cause panic on unknown NMI.
+
+	unsupported	Allow loading of unsupported kernel modules:
+			0 = only allow supported modules,
+			1 = warn when loading unsupported modules,
+			2 = don't warn.
+
+			CONFIG_ENTERPRISE_SUPPORT must be enabled for this
+			to have any effect.
 
 	usbcore.authorized_default=
 			[USB] Default USB device authorization:

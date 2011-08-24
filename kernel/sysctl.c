@@ -640,15 +640,6 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &minolduid,
 		.extra2		= &maxolduid,
 	},
-#if defined(CONFIG_MODULES) && defined(CONFIG_ENTERPRISE_SUPPORT)
-	{
-		.procname	= "unsupported",
-		.data		= &unsupported,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
-#endif
 	{
 		.procname	= "overflowgid",
 		.data		= &overflowgid,
@@ -685,6 +676,15 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &pid_max_min,
 		.extra2		= &pid_max_max,
 	},
+#if defined(CONFIG_MODULES) && defined(CONFIG_ENTERPRISE_SUPPORT)
+	{
+		.procname	= "unsupported",
+		.data		= &unsupported,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+#endif
 	{
 		.procname	= "panic_on_oops",
 		.data		= &panic_on_oops,
