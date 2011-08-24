@@ -507,6 +507,14 @@ int add_to_page_cache(struct page *page,
 {
 	int error;
 
+	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit() > 0)
+		shrink_page_cache(gfp_mask, page);
+	/* FIXME: If we add dirty pages to pagecache here, and we call
+	 * shrink_page_cache(), it might need to write out some pages to
+	 * keep us below the set pagecache limit -- in order for that to
+	 * be successful, we might need to throttle here and do some
+	 * congestion_wait(BLK_RW_ASYNC, HZ/10) here. */
+
 	__set_page_locked(page);
 	error = add_to_page_cache_locked(page, mapping, offset, gfp_mask);
 	if (unlikely(error))
