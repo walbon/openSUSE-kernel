@@ -649,10 +649,54 @@ static void clear_IO_APIC_pin(unsigned int apic, unsigned int pin)
 	entry = ioapic_read_entry(apic, pin);
 	if (entry.delivery_mode == dest_SMI)
 		return;
+
 	/*
-	 * Disable it in the IO-APIC irq-routing table:
+ 	 * Make sure the entry is masked and re-read the contents to check
+ 	 * if it is a level triggered pin and if the remoteIRR is set.
+ 	 */
+	if (!entry.mask) {
+		entry.mask = 1;
+		ioapic_write_entry(apic, pin, entry);
+		entry = ioapic_read_entry(apic, pin);
+	}
+
+	if (entry.irr) {
+		/*
+		 * Make sure the trigger mode is set to level.
+		 */
+		if (!entry.trigger) {
+			entry.trigger = 1;
+			ioapic_write_entry(apic, pin, entry);
+		}
+
+		if (mp_ioapics[apic].apicver >= 0x20) {
+			unsigned long flags;
+
+			spin_lock_irqsave(&ioapic_lock, flags);
+			io_apic_eoi(apic, entry.vector);
+			spin_unlock_irqrestore(&ioapic_lock, flags);
+		} else {
+			/*
+			 * Mechanism by which we clear remoteIRR in this
+			 * case is by changing the trigger mode to edge and
+			 * back to level.
+			 */
+			entry.trigger = 0;
+			ioapic_write_entry(apic, pin, entry);
+			entry.trigger = 1;
+			ioapic_write_entry(apic, pin, entry);
+		}
+	}
+
+	/*
+	 * Clear the rest of the bits in the IO-APIC RTE except for the mask
+	 * bit.
 	 */
 	ioapic_mask_entry(apic, pin);
+	entry = ioapic_read_entry(apic, pin);
+	if (entry.irr)
+		printk(KERN_ERR "Unable to reset IRR for apic: %d, pin :%d\n",
+		       mp_ioapics[apic].apicid, pin);
 }
 
 static void clear_IO_APIC (void)
