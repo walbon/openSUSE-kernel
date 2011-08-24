@@ -3256,7 +3256,7 @@ fc_scsi_scan_rport(struct work_struct *work)
  * necessary to avoid the scsi_eh failing recovery actions for blocked
  * rports which would lead to offlined SCSI devices.
  *
- * Returns: 0 if the fc_rport left the state FC_PORTSTATE_BLOCKED.
+ * Returns: SUCCESS if the fc_rport left the state FC_PORTSTATE_BLOCKED.
  *	    FAST_IO_FAIL if the fast_io_fail_tmo fired, this should be
  *	    passed back to scsi_eh.
  */
@@ -3278,7 +3278,7 @@ int fc_block_scsi_eh(struct scsi_cmnd *cmnd)
 	if (rport->flags & FC_RPORT_FAST_FAIL_TIMEDOUT)
 		return FAST_IO_FAIL;
 
-	return 0;
+	return SUCCESS;
 }
 EXPORT_SYMBOL(fc_block_scsi_eh);
 

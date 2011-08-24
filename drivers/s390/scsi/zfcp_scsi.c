@@ -198,7 +198,7 @@ static int zfcp_scsi_eh_abort_handler(struct scsi_cmnd *scpnt)
 
 		zfcp_erp_wait(adapter);
 		ret = fc_block_scsi_eh(scpnt);
-		if (ret) {
+		if (ret != SUCCESS) {
 			zfcp_dbf_scsi_abort("abrt_bl", scpnt, NULL);
 			return ret;
 		}
@@ -243,7 +243,7 @@ static int zfcp_task_mgmt_function(struct scsi_cmnd *scpnt, u8 tm_flags)
 
 		zfcp_erp_wait(adapter);
 		ret = fc_block_scsi_eh(scpnt);
-		if (ret)
+		if (ret != SUCCESS)
 			return ret;
 
 		if (!(atomic_read(&adapter->status) &
@@ -281,15 +281,10 @@ static int zfcp_scsi_eh_host_reset_handler(struct scsi_cmnd *scpnt)
 {
 	struct zfcp_scsi_dev *zfcp_sdev = sdev_to_zfcp(scpnt->device);
 	struct zfcp_adapter *adapter = zfcp_sdev->port->adapter;
-	int ret;
 
 	zfcp_erp_adapter_reopen(adapter, 0, "schrh_1");
 	zfcp_erp_wait(adapter);
-	ret = fc_block_scsi_eh(scpnt);
-	if (ret)
-		return ret;
-
-	return SUCCESS;
+	return fc_block_scsi_eh(scpnt);
 }
 
 struct scsi_transport_template *zfcp_scsi_transport_template;

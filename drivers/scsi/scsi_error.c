@@ -728,11 +728,20 @@ static int scsi_try_to_abort_cmd(struct scsi_host_template *hostt, struct scsi_c
 
 static void scsi_abort_eh_cmnd(struct scsi_cmnd *scmd)
 {
-	if (scsi_try_to_abort_cmd(scmd->device->host->hostt, scmd) != SUCCESS)
-		if (scsi_try_bus_device_reset(scmd) != SUCCESS)
-			if (scsi_try_target_reset(scmd) != SUCCESS)
-				if (scsi_try_bus_reset(scmd) != SUCCESS)
-					scsi_try_host_reset(scmd);
+	int rtn;
+
+	rtn = scsi_try_to_abort_cmd(scmd->device->host->hostt, scmd);
+	if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
+		return;
+	rtn = scsi_try_bus_device_reset(scmd);
+	if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
+		return;
+	rtn = scsi_try_target_reset(scmd);
+	if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
+		return;
+	rtn = scsi_try_bus_reset(scmd);
+	if (rtn != SUCCESS && rtn != FAST_IO_FAIL)
+		scsi_try_host_reset(scmd);
 }
 
 /**
@@ -1030,6 +1039,7 @@ retry_tur:
 		if (retry_cnt--)
 			goto retry_tur;
 		/*FALLTHRU*/
+	case FAST_IO_FAIL:
 	case SUCCESS:
 		return 0;
 	default:
@@ -1139,7 +1149,7 @@ static int scsi_eh_try_stu(struct scsi_cmnd *scmd)
 		for (i = 0; rtn == NEEDS_RETRY && i < 2; i++)
 			rtn = scsi_send_eh_cmnd(scmd, stu_command, 6, scmd->device->request_queue->rq_timeout, 0);
 
-		if (rtn == SUCCESS)
+		if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
 			return 0;
 	}
 
@@ -2041,17 +2051,17 @@ scsi_reset_provider(struct scsi_device *dev, int flag)
 	switch (flag) {
 	case SCSI_TRY_RESET_DEVICE:
 		rtn = scsi_try_bus_device_reset(scmd);
-		if (rtn == SUCCESS)
+		if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
 			break;
 		/* FALLTHROUGH */
 	case SCSI_TRY_RESET_TARGET:
 		rtn = scsi_try_target_reset(scmd);
-		if (rtn == SUCCESS)
+		if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
 			break;
 		/* FALLTHROUGH */
 	case SCSI_TRY_RESET_BUS:
 		rtn = scsi_try_bus_reset(scmd);
-		if (rtn == SUCCESS)
+		if (rtn == SUCCESS || rtn == FAST_IO_FAIL)
 			break;
 		/* FALLTHROUGH */
 	case SCSI_TRY_RESET_HOST:
