@@ -1,6 +1,6 @@
 /*
  *    Disk Array driver for HP Smart Array controllers, SCSI Tape module.
- *    (C) Copyright 2001, 2007 Hewlett-Packard Development Company, L.P.
+ *    (C) Copyright 2001, 2010 Hewlett-Packard Development Company, L.P.
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -74,6 +74,5 @@ struct cciss_scsi_hba_t {
 #define CCISS_MAX_SCSI_DEVS_PER_HBA 16
 	struct cciss_scsi_dev_t dev[CCISS_MAX_SCSI_DEVS_PER_HBA];
 };
-
 #endif /* _CCISS_SCSI_H_ */
 #endif /* CONFIG_CISS_SCSI_TAPE */
