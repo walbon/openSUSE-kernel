@@ -239,7 +239,7 @@ static void stpg_endio(struct request *req, int error)
 			goto done;
 		}
 		err = alua_check_sense(h->sdev, &sense_hdr);
-		if (err == ADD_TO_MLQUEUE) {
+		if (err == ADD_TO_MLQUEUE || err == NEEDS_RETRY) {
 			err = SCSI_DH_RETRY;
 			goto done;
 		}
@@ -451,7 +451,7 @@ static int alua_check_sense(struct scsi_device *sdev,
 			/*
 			 * LUN Not Accessible - ALUA state transition
 			 */
-			return ADD_TO_MLQUEUE;
+			return NEEDS_RETRY;
 		if (sense_hdr->asc == 0x04 && sense_hdr->ascq == 0x0b)
 			/*
 			 * LUN Not Accessible -- Target port in standby state
@@ -531,6 +531,11 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 			return SCSI_DH_IO;
 
 		err = alua_check_sense(sdev, &sense_hdr);
+		if (err == NEEDS_RETRY && time_before(jiffies, expiry)) {
+			interval *= 2;
+			msleep(interval);
+			goto retry;
+		}
 		if (err == ADD_TO_MLQUEUE && time_before(jiffies, expiry))
 			goto retry;
 		if (sense_hdr.sense_key == ILLEGAL_REQUEST &&
@@ -658,6 +663,7 @@ static int alua_activate(struct scsi_device *sdev,
 	struct alua_dh_data *h = get_alua_data(sdev);
 	int err = SCSI_DH_OK;
 
+retry:
 	err = alua_rtpg(sdev, h);
 	if (err != SCSI_DH_OK)
 		goto out;
@@ -671,6 +677,8 @@ static int alua_activate(struct scsi_device *sdev,
 		if (err == SCSI_DH_OK)
 			return 0;
 		h->callback_fn = h->callback_data = NULL;
+		if (err == SCSI_DH_RETRY)
+			goto retry;
 	}
 
 out:
