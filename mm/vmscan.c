@@ -148,8 +148,10 @@ struct scan_control {
 /*
  * From 0 .. 100.  Higher means more swappy.
  */
-int vm_swappiness = 60;
-long vm_total_pages;	/* The total number of pages which the VM controls */
+int vm_swappiness __read_mostly = 60;
+unsigned int vm_pagecache_limit_mb __read_mostly = 0;
+unsigned int vm_pagecache_ignore_dirty __read_mostly = 1;
+long vm_total_pages __read_mostly;	/* The total number of pages which the VM controls */
 
 static LIST_HEAD(shrinker_list);
 static DECLARE_RWSEM(shrinker_rwsem);
@@ -2363,6 +2365,8 @@ static bool sleeping_prematurely(pg_data_t *pgdat, int order, long remaining,
 		return !all_zones_ok;
 }
 
+static void __shrink_page_cache(gfp_t mask);
+
 /*
  * For kswapd, balance_pgdat() will work across all this node's zones until
  * they are all at high_wmark_pages(zone).
@@ -2417,6 +2421,10 @@ loop_again:
 	sc.nr_reclaimed = 0;
 	sc.may_writepage = !laptop_mode;
 	count_vm_event(PAGEOUTRUN);
+
+	/* this reclaims from all zones so don't count to sc.nr_reclaimed */
+	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit() > 0)
+		__shrink_page_cache(GFP_KERNEL);
 
 	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
 		unsigned long lru_pages = 0;
@@ -2587,6 +2595,8 @@ loop_again:
 	}
 out:
 
+	/* FIXME: Do we need to loop_again also if we have not achieved our
+	 * pagecache target? i.e. && pagecache_over_limit(0) > 0 */
 	/*
 	 * order-0: All zones must meet high watermark for a balanced node
 	 * high-order: Balanced zones must make up at least 25% of the node
@@ -2899,6 +2909,158 @@ unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
 	return nr_reclaimed;
 }
 #endif /* CONFIG_HIBERNATION */
+
+
+/*
+ * We had to resurect this function for __shrink_page_cache (upstream has
+ * removed it and reworked shrink_all_memory by 7b51755c).
+ *
+ * Tries to reclaim 'nr_pages' pages from LRU lists system-wide, for given
+ * pass and priority.
+ *
+ * For pass > 3 we also try to shrink the LRU lists that contain a few pages
+ */
+static void shrink_all_zones(unsigned long nr_pages, int prio,
+				      int pass, struct scan_control *sc)
+{
+	struct zone *zone;
+	unsigned long nr_reclaimed = 0;
+
+	for_each_populated_zone(zone) {
+		enum lru_list l;
+
+		if (zone->all_unreclaimable && prio != DEF_PRIORITY)
+			continue;
+
+		for_each_evictable_lru(l) {
+			enum zone_stat_item ls = NR_LRU_BASE + l;
+			unsigned long lru_pages = zone_page_state(zone, ls);
+
+			/* For pass = 0, we don't shrink the active list */
+			if (pass == 0 && (l == LRU_ACTIVE_ANON ||
+						l == LRU_ACTIVE_FILE))
+				continue;
+
+			/* Original code relied on nr_saved_scan which is no
+			 * longer present so we are doing just a raw estimation
+			 * TODO: Is this OK?
+			 */
+			if (((lru_pages >> prio) + 1) >= nr_pages || pass > 3) {
+				unsigned long nr_to_scan;
+
+				nr_to_scan = min(nr_pages, lru_pages);
+				nr_reclaimed += shrink_list(l, nr_to_scan, zone,
+								sc, prio);
+				if (nr_reclaimed >= nr_pages) {
+					sc->nr_reclaimed += nr_reclaimed;
+					return;
+				}
+			}
+		}
+	}
+	sc->nr_reclaimed += nr_reclaimed;
+}
+
+/*
+ * Function to shrink the page cache
+ *
+ * This function calculates the number of pages (nr_pages) the page
+ * cache is over its limit and shrinks the page cache accordingly.
+ *
+ * The maximum number of pages, the page cache shrinks in one call of
+ * this function is limited to SWAP_CLUSTER_MAX pages. Therefore it may
+ * require a number of calls to actually reach the vm_pagecache_limit_kb.
+ *
+ * This function is similar to shrink_all_memory, except that it may never
+ * swap out mapped pages and only does two passes.
+ */
+static void __shrink_page_cache(gfp_t mask)
+{
+	unsigned long ret = 0;
+	int pass;
+	struct reclaim_state reclaim_state;
+	struct scan_control sc = {
+		.gfp_mask = mask,
+		.may_swap = 0,
+		.may_unmap = 0,
+		.may_writepage = 0,
+		.swappiness = vm_swappiness,
+	};
+	struct shrink_control shrink = {
+		.gfp_mask = mask,
+	};
+	struct reclaim_state *old_rs = current->reclaim_state;
+	long nr_pages;
+
+	/* How many pages are we over the limit?
+	 * But don't enforce limit if there's plenty of free mem */
+	nr_pages = pagecache_over_limit();
+
+	/* Don't need to go there in one step; as the freed
+	 * pages are counted FREE_TO_PAGECACHE_RATIO times, this
+	 * is still more than minimally needed. */
+	nr_pages /= 2;
+
+	/* Return early if there's no work to do */
+	if (nr_pages <= 0)
+		return;
+	/* But do a few at least */
+	nr_pages = max_t(unsigned long, nr_pages, 8*SWAP_CLUSTER_MAX);
+
+	current->reclaim_state = &reclaim_state;
+
+	/*
+	 * Shrink the LRU in 2 passes:
+	 * 0 = Reclaim from inactive_list only (fast)
+	 * 1 = Reclaim from active list but don't reclaim mapped (not that fast)
+	 * 2 = Same as 1, but may_writepage = 1 (only done if we can and need it)
+	 */
+	for (pass = 0; pass < 3; pass++) {
+		int prio;
+
+		for (prio = DEF_PRIORITY; prio >= 0; prio--) {
+			unsigned long nr_to_scan = nr_pages - ret;
+
+			sc.nr_scanned = 0;
+			/* sc.swap_cluster_max = nr_to_scan; */
+			shrink_all_zones(nr_to_scan, prio, pass, &sc);
+			ret += sc.nr_reclaimed;
+			if (ret >= nr_pages)
+				goto out;
+
+			reclaim_state.reclaimed_slab = 0;
+			shrink_slab(&shrink, sc.nr_scanned,
+					global_reclaimable_pages());
+			ret += reclaim_state.reclaimed_slab;
+
+			if (ret >= nr_pages)
+				goto out;
+
+		}
+		if (pass == 1) {
+			if (vm_pagecache_ignore_dirty == 1 ||
+			    (mask & (__GFP_IO | __GFP_FS)) != (__GFP_IO | __GFP_FS) )
+				break;
+			else
+				sc.may_writepage = 1;
+		}
+	}
+
+out:
+	current->reclaim_state = old_rs;
+}
+
+void shrink_page_cache(gfp_t mask, struct page *page)
+{
+	/* FIXME: As we only want to get rid of non-mapped pagecache
+	 * pages and we know we have too many of them, we should not
+	 * need kswapd. */
+	/*
+	wakeup_kswapd(page_zone(page), 0);
+	*/
+
+	__shrink_page_cache(mask);
+}
 
 /* It's optimal to keep kswapds on the same CPUs as their memory, but
    not required for correctness.  So if the last cpu in a node goes

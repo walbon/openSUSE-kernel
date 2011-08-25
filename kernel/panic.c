@@ -179,8 +179,8 @@ static const struct tnt tnts[] = {
 	{ TAINT_CRAP,			'C', ' ' },
 	{ TAINT_FIRMWARE_WORKAROUND,	'I', ' ' },
 #ifdef CONFIG_ENTERPRISE_SUPPORT
-	{ TAINT_NO_SUPPORT,             'N', ' ' },
-	{ TAINT_EXTERNAL_SUPPORT,       'X', ' ' },
+	{ TAINT_NO_SUPPORT,		'N', ' ' },
+	{ TAINT_EXTERNAL_SUPPORT,	'X', ' ' },
 #endif
 };
 

@@ -640,15 +640,6 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &minolduid,
 		.extra2		= &maxolduid,
 	},
-#if defined(CONFIG_MODULES) && defined(CONFIG_ENTERPRISE_SUPPORT)
-	{
-		.procname	= "unsupported",
-		.data		= &unsupported,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
-#endif
 	{
 		.procname	= "overflowgid",
 		.data		= &overflowgid,
@@ -685,6 +676,15 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &pid_max_min,
 		.extra2		= &pid_max_max,
 	},
+#if defined(CONFIG_MODULES) && defined(CONFIG_ENTERPRISE_SUPPORT)
+	{
+		.procname	= "unsupported",
+		.data		= &unsupported,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+#endif
 	{
 		.procname	= "panic_on_oops",
 		.data		= &panic_on_oops,
@@ -1125,6 +1125,20 @@ static struct ctl_table vm_table[] = {
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &zero,
 		.extra2		= &one_hundred,
+	},
+	{
+		.procname	= "pagecache_limit_mb",
+		.data		= &vm_pagecache_limit_mb,
+		.maxlen		= sizeof(vm_pagecache_limit_mb),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.procname	= "pagecache_limit_ignore_dirty",
+		.data		= &vm_pagecache_ignore_dirty,
+		.maxlen		= sizeof(vm_pagecache_ignore_dirty),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
 	},
 #ifdef CONFIG_HUGETLB_PAGE
 	{

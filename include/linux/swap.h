@@ -266,6 +266,11 @@ extern unsigned long mem_cgroup_shrink_node_zone(struct mem_cgroup *mem,
 extern int __isolate_lru_page(struct page *page, int mode, int file);
 extern unsigned long shrink_all_memory(unsigned long nr_pages);
 extern int vm_swappiness;
+#define FREE_TO_PAGECACHE_RATIO 8
+extern unsigned long pagecache_over_limit(void);
+extern void shrink_page_cache(gfp_t mask, struct page *page);
+extern unsigned int vm_pagecache_limit_mb;
+extern unsigned int vm_pagecache_ignore_dirty;
 extern int remove_mapping(struct address_space *mapping, struct page *page);
 extern long vm_total_pages;
 

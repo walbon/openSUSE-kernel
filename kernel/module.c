@@ -1588,9 +1588,36 @@ static int mod_sysfs_setup(struct module *mod,
 	add_sect_attrs(mod, info);
 	add_notes_attrs(mod, info);
 
+#ifdef CONFIG_ENTERPRISE_SUPPORT
+	/* We don't use add_taint() here because it also disables lockdep. */
+	if (mod->taints & (1 << TAINT_EXTERNAL_SUPPORT))
+		add_nonfatal_taint(TAINT_EXTERNAL_SUPPORT);
+	else if (mod->taints == (1 << TAINT_NO_SUPPORT)) {
+		if (unsupported == 0) {
+			printk(KERN_WARNING "%s: module not supported by "
+			       "Novell, refusing to load. To override, echo "
+			       "1 > /proc/sys/kernel/unsupported\n", mod->name);
+			err = -ENOEXEC;
+			goto out_remove_attrs;
+		}
+		add_nonfatal_taint(TAINT_NO_SUPPORT);
+		if (unsupported == 1) {
+			printk(KERN_WARNING "%s: module is not supported by "
+			       "Novell. Novell Technical Services may decline "
+			       "your support request if it involves a kernel "
+			       "fault.\n", mod->name);
+		}
+	}
+#endif
+
 	kobject_uevent(&mod->mkobj.kobj, KOBJ_ADD);
 	return 0;
 
+out_remove_attrs:
+	remove_notes_attrs(mod);
+	remove_sect_attrs(mod);
+	del_usage_links(mod);
+	module_remove_modinfo_attrs(mod);
 out_unreg_param:
 	module_param_sysfs_remove(mod);
 out_unreg_holders:
@@ -2905,29 +2932,6 @@ static struct module *load_module(void __user *umod,
 	err = mod_sysfs_setup(mod, &info, mod->kp, mod->num_kp);
 	if (err < 0)
 		goto unlink;
-
-#ifdef CONFIG_ENTERPRISE_SUPPORT
-	/* We don't use add_taint() here because it also disables lockdep. */
-	if (mod->taints & (1 << TAINT_EXTERNAL_SUPPORT))
-		add_nonfatal_taint(TAINT_EXTERNAL_SUPPORT);
-	else if (mod->taints == (1 << TAINT_NO_SUPPORT)) {
-		if (unsupported == 0) {
-			printk(KERN_WARNING "%s: module not supported by "
-					"Novell, refusing to load. To override, echo "
-					"1 > /proc/sys/kernel/unsupported\n", mod->name);
-			err = -ENOEXEC;
-			goto unlink;
-		}
-		add_nonfatal_taint(TAINT_NO_SUPPORT);
-		if (unsupported == 1) {
-			printk(KERN_WARNING "%s: module is not supported by "
-					"Novell. Novell Technical Services may decline "
-					"your support request if it involves a kernel "
-					"fault.\n", mod->name);
-		}
-	}
-#endif
-
 
 	/* Initialize unwind table */
 	add_unwind_table(mod, &info);
