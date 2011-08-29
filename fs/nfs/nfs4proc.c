@@ -248,19 +248,12 @@ static int nfs4_handle_exception(const struct nfs_server *server, int errorcode,
 			if (state == NULL)
 				break;
 			nfs4_state_mark_reclaim_nograce(clp, state);
-		case -NFS4ERR_STALE_CLIENTID:
+			goto do_state_recovery;
 		case -NFS4ERR_STALE_STATEID:
+		case -NFS4ERR_STALE_CLIENTID:
 		case -NFS4ERR_EXPIRED:
-			nfs4_schedule_state_recovery(clp);
-			ret = nfs4_wait_clnt_recover(clp);
-			if (ret == 0)
-				exception->retry = 1;
-#if !defined(CONFIG_NFS_V4_1)
-			break;
-#else /* !defined(CONFIG_NFS_V4_1) */
-			if (!nfs4_has_session(server->nfs_client))
-				break;
-			/* FALLTHROUGH */
+			goto do_state_recovery;
+#if defined(CONFIG_NFS_V4_1)
 		case -NFS4ERR_BADSESSION:
 		case -NFS4ERR_BADSLOT:
 		case -NFS4ERR_BAD_HIGH_SLOT:
@@ -273,7 +266,7 @@ static int nfs4_handle_exception(const struct nfs_server *server, int errorcode,
 			set_bit(NFS4CLNT_SESSION_SETUP, &clp->cl_state);
 			exception->retry = 1;
 			/* FALLTHROUGH */
-#endif /* !defined(CONFIG_NFS_V4_1) */
+#endif /* defined(CONFIG_NFS_V4_1) */
 		case -NFS4ERR_FILE_OPEN:
 			if (exception->timeout > HZ) {
 				/* We have retried a decent amount, time to
@@ -292,6 +285,12 @@ static int nfs4_handle_exception(const struct nfs_server *server, int errorcode,
 	}
 	/* We failed to handle the error */
 	return nfs4_map_errors(ret);
+do_state_recovery:
+	nfs4_schedule_state_recovery(clp);
+	ret = nfs4_wait_clnt_recover(clp);
+	if (ret == 0)
+		exception->retry = 1;
+	return ret;
 }
 
 
@@ -1074,6 +1073,7 @@ static int nfs4_open_recover(struct nfs4_opendata *opendata, struct nfs4_state *
 	clear_bit(NFS_DELEGATED_STATE, &state->flags);
 	smp_rmb();
 	if (state->n_rdwr != 0) {
+		clear_bit(NFS_O_RDWR_STATE, &state->flags);
 		ret = nfs4_open_recover_helper(opendata, FMODE_READ|FMODE_WRITE, &newstate);
 		if (ret != 0)
 			return ret;
@@ -1081,6 +1081,7 @@ static int nfs4_open_recover(struct nfs4_opendata *opendata, struct nfs4_state *
 			return -ESTALE;
 	}
 	if (state->n_wronly != 0) {
+		clear_bit(NFS_O_WRONLY_STATE, &state->flags);
 		ret = nfs4_open_recover_helper(opendata, FMODE_WRITE, &newstate);
 		if (ret != 0)
 			return ret;
@@ -1088,6 +1089,7 @@ static int nfs4_open_recover(struct nfs4_opendata *opendata, struct nfs4_state *
 			return -ESTALE;
 	}
 	if (state->n_rdonly != 0) {
+		clear_bit(NFS_O_RDONLY_STATE, &state->flags);
 		ret = nfs4_open_recover_helper(opendata, FMODE_READ, &newstate);
 		if (ret != 0)
 			return ret;
@@ -3381,15 +3383,11 @@ _nfs4_async_handle_error(struct rpc_task *task, const struct nfs_server *server,
 			if (state == NULL)
 				break;
 			nfs4_state_mark_reclaim_nograce(clp, state);
-		case -NFS4ERR_STALE_CLIENTID:
+			goto do_state_recovery;
 		case -NFS4ERR_STALE_STATEID:
+		case -NFS4ERR_STALE_CLIENTID:
 		case -NFS4ERR_EXPIRED:
-			rpc_sleep_on(&clp->cl_rpcwaitq, task, NULL);
-			nfs4_schedule_state_recovery(clp);
-			if (test_bit(NFS4CLNT_MANAGER_RUNNING, &clp->cl_state) == 0)
-				rpc_wake_up_queued_task(&clp->cl_rpcwaitq, task);
-			task->tk_status = 0;
-			return -EAGAIN;
+			goto do_state_recovery;
 #if defined(CONFIG_NFS_V4_1)
 		case -NFS4ERR_BADSESSION:
 		case -NFS4ERR_BADSLOT:
@@ -3417,6 +3415,13 @@ _nfs4_async_handle_error(struct rpc_task *task, const struct nfs_server *server,
 	}
 	task->tk_status = nfs4_map_errors(task->tk_status);
 	return 0;
+do_state_recovery:
+	rpc_sleep_on(&clp->cl_rpcwaitq, task, NULL);
+	nfs4_schedule_state_recovery(clp);
+	if (test_bit(NFS4CLNT_MANAGER_RUNNING, &clp->cl_state) == 0)
+		rpc_wake_up_queued_task(&clp->cl_rpcwaitq, task);
+	task->tk_status = 0;
+	return -EAGAIN;
 }
 
 static int
@@ -4038,6 +4043,12 @@ static void nfs4_handle_setlk_error(struct nfs_server *server, struct nfs4_lock_
 		if (new_lock_owner != 0 ||
 		   (lsp->ls_flags & NFS_LOCK_INITIALIZED) != 0)
 			nfs4_state_mark_reclaim_nograce(clp, state);
+		lsp->ls_seqid.flags &= ~NFS_SEQID_CONFIRMED;
+		break;
+	case -NFS4ERR_STALE_STATEID:
+		if (new_lock_owner != 0 ||
+		    (lsp->ls_flags & NFS_LOCK_INITIALIZED) != 0)
+			nfs4_state_mark_reclaim_reboot(clp, state);
 		lsp->ls_seqid.flags &= ~NFS_SEQID_CONFIRMED;
 	};
 }
