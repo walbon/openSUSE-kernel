@@ -419,7 +419,7 @@ static int should_end_transaction(struct btrfs_trans_handle *trans,
 {
 	int ret;
 	ret = btrfs_block_rsv_check(trans, root,
-				    &root->fs_info->global_block_rsv, 0, 5);
+				    &root->fs_info->global_block_rsv, 0, 5, 0);
 	return ret ? 1 : 0;
 }
 
@@ -908,7 +908,6 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	}
 
 	btrfs_reloc_pre_snapshot(trans, pending, &to_reserve);
-	btrfs_orphan_pre_snapshot(trans, pending, &to_reserve);
 
 	if (to_reserve > 0) {
 		ret = btrfs_block_rsv_add(trans, root, &pending->block_rsv,
@@ -999,7 +998,6 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	BUG_ON(IS_ERR(pending->snap));
 
 	btrfs_reloc_post_snapshot(trans, pending);
-	btrfs_orphan_post_snapshot(trans, pending);
 fail:
 	kfree(new_root_item);
 	btrfs_block_rsv_release(root, &pending->block_rsv, (u64)-1);

@@ -20,6 +20,7 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/math64.h>
+#include <linux/ratelimit.h>
 #include "ctree.h"
 #include "free-space-cache.h"
 #include "transaction.h"
@@ -196,7 +197,7 @@ int btrfs_truncate_free_space_cache(struct btrfs_root *root,
 	trans->block_rsv = root->orphan_block_rsv;
 	ret = btrfs_block_rsv_check(trans, root,
 				    root->orphan_block_rsv,
-				    0, 5);
+				    0, 5, 0);
 	if (ret)
 		return ret;
 
@@ -337,11 +338,12 @@ int __load_free_space_cache(struct btrfs_root *root, struct inode *inode,
 
 			gen = addr;
 			if (*gen != BTRFS_I(inode)->generation) {
-				printk(KERN_ERR "btrfs: space cache generation"
-				       " (%llu) does not match inode (%llu)\n",
-				       (unsigned long long)*gen,
-				       (unsigned long long)
-				       BTRFS_I(inode)->generation);
+				printk_ratelimited(KERN_ERR "btrfs: space cache"
+					" generation (%llu) does not match "
+					"inode (%llu)\n",
+					(unsigned long long)*gen,
+					(unsigned long long)
+					BTRFS_I(inode)->generation);
 				kunmap(page);
 				unlock_page(page);
 				page_cache_release(page);
@@ -796,7 +798,7 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	key.offset = offset;
 	key.type = 0;
 
-	ret = btrfs_search_slot(trans, root, &key, path, 1, 1);
+	ret = btrfs_search_slot(trans, root, &key, path, 0, 1);
 	if (ret < 0) {
 		ret = -1;
 		clear_extent_bit(&BTRFS_I(inode)->io_tree, 0, bytes - 1,
@@ -2468,9 +2470,19 @@ int btrfs_trim_block_group(struct btrfs_block_group_cache *block_group,
 		spin_unlock(&ctl->tree_lock);
 
 		if (bytes >= minlen) {
-			int update_ret;
-			update_ret = btrfs_update_reserved_bytes(block_group,
-								 bytes, 1, 1);
+			struct btrfs_space_info *space_info;
+			int update = 0;
+
+			space_info = block_group->space_info;
+			spin_lock(&space_info->lock);
+			spin_lock(&block_group->lock);
+			if (!block_group->ro) {
+				block_group->reserved += bytes;
+				space_info->bytes_reserved += bytes;
+				update = 1;
+			}
+			spin_unlock(&block_group->lock);
+			spin_unlock(&space_info->lock);
 
 			ret = btrfs_error_discard_extent(fs_info->extent_root,
 							 start,
@@ -2478,9 +2490,16 @@ int btrfs_trim_block_group(struct btrfs_block_group_cache *block_group,
 							 &actually_trimmed);
 
 			btrfs_add_free_space(block_group, start, bytes);
-			if (!update_ret)
-				btrfs_update_reserved_bytes(block_group,
-							    bytes, 0, 1);
+			if (update) {
+				spin_lock(&space_info->lock);
+				spin_lock(&block_group->lock);
+				if (block_group->ro)
+					space_info->bytes_readonly += bytes;
+				block_group->reserved -= bytes;
+				space_info->bytes_reserved -= bytes;
+				spin_unlock(&space_info->lock);
+				spin_unlock(&block_group->lock);
+			}
 
 			if (ret)
 				break;

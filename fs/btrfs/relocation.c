@@ -2042,7 +2042,7 @@ static noinline_for_stack int merge_reloc_root(struct reloc_control *rc,
 		trans->block_rsv = rc->block_rsv;
 
 		ret = btrfs_block_rsv_check(trans, root, rc->block_rsv,
-					    min_reserved, 0);
+					    min_reserved, 0, 0);
 		if (ret) {
 			BUG_ON(ret != -EAGAIN);
 			ret = btrfs_commit_transaction(trans, root);
@@ -3650,9 +3650,6 @@ int prepare_to_relocate(struct reloc_control *rc)
 	if (ret)
 		return ret;
 
-	rc->block_rsv->refill_used = 1;
-	btrfs_add_durable_block_rsv(rc->extent_root->fs_info, rc->block_rsv);
-
 	memset(&rc->cluster, 0, sizeof(rc->cluster));
 	rc->search_start = rc->block_group->key.objectid;
 	rc->extents_found = 0;
@@ -3778,7 +3775,7 @@ restart:
 		}
 
 		ret = btrfs_block_rsv_check(trans, rc->extent_root,
-					    rc->block_rsv, 0, 5);
+					    rc->block_rsv, 0, 5, 0);
 		if (ret < 0) {
 			if (ret != -EAGAIN) {
 				err = ret;
