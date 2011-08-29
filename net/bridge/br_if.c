@@ -230,6 +230,7 @@ static struct net_bridge_port *new_nbp(struct net_bridge *br,
 
 int br_add_bridge(struct net *net, const char *name)
 {
+	int ret;
 	struct net_device *dev;
 
 	dev = alloc_netdev(sizeof(struct net_bridge), name,
@@ -238,20 +239,23 @@ int br_add_bridge(struct net *net, const char *name)
 	if (!dev)
 		return -ENOMEM;
 
+	if (!try_module_get(THIS_MODULE)) {
+		free_netdev(dev);
+		return -ENOENT;
+	}
+
 	dev_net_set(dev, net);
 
-	return register_netdev(dev);
+	ret = register_netdev(dev);
+	if (ret)
+		module_put(THIS_MODULE);
+	return ret;
 }
 
 int br_del_bridge(struct net *net, const char *name)
 {
 	struct net_device *dev;
 	int ret = 0;
-
-	if (!try_module_get(THIS_MODULE)) {
-		free_netdev(dev);
-		return -ENOENT;
-	}
 
 	rtnl_lock();
 	dev = __dev_get_by_name(net, name);
