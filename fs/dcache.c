@@ -432,8 +432,13 @@ repeat:
  	if (d_unhashed(dentry))
 		goto kill_it;
 
-	/* Otherwise leave it cached and ensure it's on the LRU */
-	dentry->d_flags |= DCACHE_REFERENCED;
+	/*
+	 * If this dentry needs lookup, don't set the referenced flag so that it
+	 * is more likely to be cleaned up by the dcache shrinker in case of
+	 * memory pressure.
+	 */
+	if (!d_need_lookup(dentry))
+		dentry->d_flags |= DCACHE_REFERENCED;
 	dentry_lru_add(dentry);
 
 	dentry->d_count--;
@@ -1377,6 +1382,10 @@ static void __d_instantiate(struct dentry *dentry, struct inode *inode)
 		list_add(&dentry->d_alias, &inode->i_dentry);
 	}
 	dentry->d_inode = inode;
+	if (d_need_lookup(dentry)) {
+		__d_drop(dentry);
+		dentry->d_flags &= ~DCACHE_NEED_LOOKUP;
+	}
 	dentry_rcuwalk_barrier(dentry);
 	spin_unlock(&dentry->d_lock);
 	fsnotify_d_instantiate(dentry, inode);
