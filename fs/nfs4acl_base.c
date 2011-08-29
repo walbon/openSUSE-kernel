@@ -17,6 +17,7 @@
 #include <linux/fs.h>
 #include <linux/fs_struct.h>
 #include <linux/nfs4acl.h>
+#include <linux/slab.h>
 
 MODULE_LICENSE("GPL");
 

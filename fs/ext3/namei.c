@@ -40,6 +40,7 @@
 #include "namei.h"
 #include "xattr.h"
 #include "acl.h"
+#include "nfs4acl.h"
 
 /*
  * define how far ahead to read directories while searching them.
@@ -2515,6 +2516,16 @@ end_rename:
 	return retval;
 }
 
+int ext3_permission(struct inode *inode, int mask)
+{
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+	if (test_opt(inode->i_sb, NFS4ACL))
+		return ext3_nfs4acl_permission(inode, nfs4acl_want_to_mask(mask));
+	else
+#endif
+        return generic_permission(inode, mask, 0, ext3_check_acl);
+}
+
 /*
  * directories can handle most operations...
  */
@@ -2536,6 +2547,8 @@ const struct inode_operations ext3_dir_inode_operations = {
 	.removexattr	= generic_removexattr,
 #endif
 	.check_acl	= ext3_check_acl,
+	.may_create	= ext3_may_create,
+	.may_delete	= ext3_may_delete,
 };
 
 const struct inode_operations ext3_special_inode_operations = {
@@ -2547,4 +2560,6 @@ const struct inode_operations ext3_special_inode_operations = {
 	.removexattr	= generic_removexattr,
 #endif
 	.check_acl	= ext3_check_acl,
+	.may_create	= ext3_may_create,
+	.may_delete	= ext3_may_delete,
 };

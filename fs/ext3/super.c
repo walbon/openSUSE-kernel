@@ -37,11 +37,13 @@
 #include <linux/seq_file.h>
 #include <linux/log2.h>
 #include <linux/cleancache.h>
+#include <linux/nfs4acl.h>
 
 #include <asm/uaccess.h>
 
 #include "xattr.h"
 #include "acl.h"
+#include "nfs4acl.h"
 #include "namei.h"
 
 #ifdef CONFIG_EXT3_DEFAULTS_TO_ORDERED
@@ -490,6 +492,9 @@ static struct inode *ext3_alloc_inode(struct super_block *sb)
 	ei = kmem_cache_alloc(ext3_inode_cachep, GFP_NOFS);
 	if (!ei)
 		return NULL;
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+	ei->i_nfs4acl = EXT3_NFS4ACL_NOT_CACHED;
+#endif
 	ei->i_block_alloc_info = NULL;
 	ei->vfs_inode.i_version = 1;
 	atomic_set(&ei->i_datasync_tid, 0);
@@ -654,8 +659,13 @@ static int ext3_show_options(struct seq_file *seq, struct vfsmount *vfs)
 #ifdef CONFIG_EXT3_FS_POSIX_ACL
 	if (test_opt(sb, POSIX_ACL))
 		seq_puts(seq, ",acl");
-	if (!test_opt(sb, POSIX_ACL) && (def_mount_opts & EXT3_DEFM_ACL))
+	if (!test_opt(sb, POSIX_ACL) && !test_opt(sb, NFS4ACL) &&
+	    (def_mount_opts & EXT3_DEFM_ACL))
 		seq_puts(seq, ",noacl");
+#endif
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+	if (test_opt(sb, NFS4ACL))
+		seq_puts(seq, ",acl=nfs4");
 #endif
 	if (!test_opt(sb, RESERVATION))
 		seq_puts(seq, ",noreservation");
@@ -813,7 +823,7 @@ enum {
 	Opt_bsd_df, Opt_minix_df, Opt_grpid, Opt_nogrpid,
 	Opt_resgid, Opt_resuid, Opt_sb, Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_nouid32, Opt_nocheck, Opt_debug, Opt_oldalloc, Opt_orlov,
-	Opt_user_xattr, Opt_nouser_xattr, Opt_acl, Opt_noacl,
+	Opt_user_xattr, Opt_nouser_xattr, Opt_acl, Opt_acl_flavor, Opt_noacl,
 	Opt_reservation, Opt_noreservation, Opt_noload, Opt_nobh, Opt_bh,
 	Opt_commit, Opt_journal_update, Opt_journal_inum, Opt_journal_dev,
 	Opt_abort, Opt_data_journal, Opt_data_ordered, Opt_data_writeback,
@@ -846,6 +856,7 @@ static const match_table_t tokens = {
 	{Opt_user_xattr, "user_xattr"},
 	{Opt_nouser_xattr, "nouser_xattr"},
 	{Opt_acl, "acl"},
+	{Opt_acl_flavor, "acl=%s"},
 	{Opt_noacl, "noacl"},
 	{Opt_reservation, "reservation"},
 	{Opt_noreservation, "noreservation"},
@@ -1056,20 +1067,33 @@ static int parse_options (char *options, struct super_block *sb,
 				"(no)user_xattr options not supported");
 			break;
 #endif
-#ifdef CONFIG_EXT3_FS_POSIX_ACL
 		case Opt_acl:
-			set_opt(sbi->s_mount_opt, POSIX_ACL);
+			args[0].to = args[0].from;
+			/* fall through */
+		case Opt_acl_flavor:
+#ifdef CONFIG_EXT3_FS_POSIX_ACL
+			if (match_string(&args[0], "") ||
+			    match_string(&args[0], "posix")) {
+				set_opt(sbi->s_mount_opt, POSIX_ACL);
+				clear_opt(sbi->s_mount_opt, NFS4ACL);
+			} else
+#endif
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+			if (match_string(&args[0], "nfs4")) {
+				clear_opt(sbi->s_mount_opt, POSIX_ACL);
+				set_opt(sbi->s_mount_opt, NFS4ACL);
+			} else
+#endif
+			{
+				printk(KERN_ERR "EXT3-fs: unsupported acl "
+				       "flavor\n");
+				return 0;
+			}
 			break;
 		case Opt_noacl:
 			clear_opt(sbi->s_mount_opt, POSIX_ACL);
+			clear_opt(sbi->s_mount_opt, NFS4ACL);
 			break;
-#else
-		case Opt_acl:
-		case Opt_noacl:
-			ext3_msg(sb, KERN_INFO,
-				"(no)acl options not supported");
-			break;
-#endif
 		case Opt_reservation:
 			set_opt(sbi->s_mount_opt, RESERVATION);
 			break;
@@ -1728,8 +1752,11 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 			    NULL, 0))
 		goto failed_mount;
 
-	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
-		(test_opt(sb, POSIX_ACL) ? MS_POSIXACL : 0);
+	sb->s_flags = (sb->s_flags & ~MS_POSIXACL);
+	if (sbi->s_mount_opt & EXT3_MOUNT_POSIX_ACL)
+		sb->s_flags |= MS_POSIXACL;
+	if (sbi->s_mount_opt & EXT3_MOUNT_NFS4ACL)
+		sb->s_flags |= MS_POSIXACL | MS_WITHAPPEND;
 
 	if (le32_to_cpu(es->s_rev_level) == EXT3_GOOD_OLD_REV &&
 	    (EXT3_HAS_COMPAT_FEATURE(sb, ~0U) ||
@@ -2615,8 +2642,11 @@ static int ext3_remount (struct super_block * sb, int * flags, char * data)
 	if (test_opt(sb, ABORT))
 		ext3_abort(sb, __func__, "Abort forced by user");
 
-	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
-		(test_opt(sb, POSIX_ACL) ? MS_POSIXACL : 0);
+	sb->s_flags = (sb->s_flags & ~MS_POSIXACL);
+	if (sbi->s_mount_opt & EXT3_MOUNT_POSIX_ACL)
+		sb->s_flags |= MS_POSIXACL;
+	if (sbi->s_mount_opt & EXT3_MOUNT_NFS4ACL)
+		sb->s_flags |= MS_POSIXACL | MS_WITHAPPEND;
 
 	es = sbi->s_es;
 

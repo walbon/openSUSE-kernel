@@ -114,6 +114,9 @@ static const struct xattr_handler *ext3_xattr_handler_map[] = {
 #ifdef CONFIG_EXT3_FS_SECURITY
 	[EXT3_XATTR_INDEX_SECURITY]	     = &ext3_xattr_security_handler,
 #endif
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+	[EXT3_XATTR_INDEX_NFS4ACL]	     = &ext3_nfs4acl_xattr_handler,
+#endif
 };
 
 const struct xattr_handler *ext3_xattr_handlers[] = {
@@ -125,6 +128,12 @@ const struct xattr_handler *ext3_xattr_handlers[] = {
 #endif
 #ifdef CONFIG_EXT3_FS_SECURITY
 	&ext3_xattr_security_handler,
+#endif
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+	&ext3_nfs4acl_xattr_handler,
+#ifdef NFS4ACL_DEBUG
+	&ext3_masked_nfs4acl_xattr_handler,
+#endif
 #endif
 	NULL
 };
