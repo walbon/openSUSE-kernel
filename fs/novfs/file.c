@@ -414,7 +414,7 @@ int novfs_listx_file_info(char *Path, char *buffer, ssize_t buffer_size, ssize_t
 
 	*dataLen = 0;
 	cmdlen = offsetof(struct novfs_verify_file_request, path) + pathlen;
-	cmd = (struct novfs_verify_file_request *)kmalloc(cmdlen, GFP_KERNEL);
+	cmd = (struct novfs_verify_file_request *) kmalloc(cmdlen + 1, GFP_KERNEL);
 	if (cmd) {
 		cmd->Command.CommandType = VFS_COMMAND_LIST_EXTENDED_ATTRIBUTES;
 		cmd->Command.SequenceNumber = 0;

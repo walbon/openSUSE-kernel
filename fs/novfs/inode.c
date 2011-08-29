@@ -346,9 +346,10 @@ int novfs_remove_from_root(char *RemoveName)
 
 	dir = novfs_root->d_inode;
 
-	novfs_lock_inode_cache(dir);
-	novfs_remove_inode_entry(dir, &name, 0);
-	novfs_unlock_inode_cache(dir);
+	if (novfs_lock_inode_cache(dir)) {
+		novfs_remove_inode_entry(dir, &name, 0);
+		novfs_unlock_inode_cache(dir);
+	}
 
 	return (0);
 }
@@ -368,20 +369,20 @@ int novfs_add_to_root(char *AddName)
 
 	dir = novfs_root->d_inode;
 
-	novfs_lock_inode_cache(dir);
+	if (novfs_lock_inode_cache(dir)) {
+		ino = 0;
 
-	ino = 0;
+		if (!novfs_lookup_inode_cache(dir, &name, 0)) {
+			info.mode = S_IFDIR | 0700;
+			info.size = 0;
+			info.atime = info.ctime = info.mtime = CURRENT_TIME;
 
-	if (!novfs_lookup_inode_cache(dir, &name, 0)) {
-		info.mode = S_IFDIR | 0700;
-		info.size = 0;
-		info.atime = info.ctime = info.mtime = CURRENT_TIME;
+			ino = (ino_t) atomic_inc_return(&novfs_Inode_Number);
+			novfs_add_inode_entry(dir, &name, ino, &info);
+		}
 
-		ino = (ino_t) atomic_inc_return(&novfs_Inode_Number);
-		novfs_add_inode_entry(dir, &name, ino, &info);
+		novfs_unlock_inode_cache(dir);
 	}
-
-	novfs_unlock_inode_cache(dir);
 
 	return (0);
 }
@@ -519,6 +520,7 @@ int verify_dentry(struct dentry *dentry, int Flags)
 					}
 				}
 				novfs_unlock_inode_cache(dir);
+				iLock = 0;
 			}
 
 			if (IS_ROOT(dentry->d_parent)) {
@@ -539,26 +541,28 @@ int verify_dentry(struct dentry *dentry, int Flags)
 				list = novfs_get_scopeusers();
 
 				iLock = novfs_lock_inode_cache(dir);
-				novfs_invalidate_inode_cache(dir);
+				if (iLock) {
+					novfs_invalidate_inode_cache(dir);
 
-				if (list) {
-					cp = list;
-					while (*cp) {
-						name.name = cp;
-						name.len = strlen(cp);
-						name.hash = novfs_internal_hash(&name);
-						cp += (name.len + 1);
-						ino = 0;
-						if (novfs_get_entry(dir, &name, &ino, info)) {
-							info->mode = S_IFDIR | 0700;
-							info->size = 0;
-							info->atime = info->ctime = info->mtime = CURRENT_TIME;
-							ino = (ino_t) atomic_inc_return(&novfs_Inode_Number);
-							novfs_add_inode_entry(dir, &name, ino, info);
+					if (list) {
+						cp = list;
+						while (*cp) {
+							name.name = cp;
+							name.len = strlen(cp);
+							name.hash = novfs_internal_hash(&name);
+							cp += (name.len + 1);
+							ino = 0;
+							if (novfs_get_entry(dir, &name, &ino, info)) {
+								info->mode = S_IFDIR | 0700;
+								info->size = 0;
+								info->atime = info->ctime = info->mtime = CURRENT_TIME;
+								ino = (ino_t) atomic_inc_return(&novfs_Inode_Number);
+								novfs_add_inode_entry(dir, &name, ino, info);
+							}
 						}
 					}
+					novfs_free_invalid_entries(dir);
 				}
-				novfs_free_invalid_entries(dir);
 			} else {
 
 				path = novfs_dget_path(dentry, info->name, PATH_LENGTH_BUFFER);
@@ -572,13 +576,15 @@ int verify_dentry(struct dentry *dentry, int Flags)
 						if (0 == retVal) {
 							dentry->d_time = jiffies + (novfs_update_timeout * HZ);
 							iLock = novfs_lock_inode_cache(dir);
-							if (novfs_update_entry(dir, &name, 0, info)) {
-								if (dentry->d_inode) {
-									ino = dentry->d_inode->i_ino;
-								} else {
-									ino = (ino_t) atomic_inc_return(&novfs_Inode_Number);
+							if (iLock) {
+								if (novfs_update_entry(dir, &name, 0, info)) {
+									if (dentry->d_inode) {
+										ino = dentry->d_inode->i_ino;
+									} else {
+										ino = (ino_t) atomic_inc_return(&novfs_Inode_Number);
+									}
+									novfs_add_inode_entry(dir, &name, ino, info);
 								}
-								novfs_add_inode_entry(dir, &name, ino, info);
 							}
 							if (dentry->d_inode) {
 								update_inode(dentry->d_inode, info);
@@ -593,18 +599,20 @@ int verify_dentry(struct dentry *dentry, int Flags)
 						} else if (-EINTR != retVal) {
 							retVal = 0;
 							iLock = novfs_lock_inode_cache(dir);
-							novfs_remove_inode_entry(dir, &name, 0);
-							if (dentry->d_inode && !(dentry->d_inode->i_flags & S_DEAD)) {
-								dentry->d_inode->i_flags |= S_DEAD;
-								dentry->d_inode->i_size = 0;
-								dentry->d_inode->i_atime.tv_sec =
-								    dentry->d_inode->i_atime.tv_nsec =
-								    dentry->d_inode->i_ctime.tv_sec =
-								    dentry->d_inode->i_ctime.tv_nsec =
-								    dentry->d_inode->i_mtime.tv_sec =
-								    dentry->d_inode->i_mtime.tv_nsec = 0;
-								dentry->d_inode->i_blocks = 0;
-								d_delete(dentry);	/* Remove from cache */
+							if (iLock) {
+								novfs_remove_inode_entry(dir, &name, 0);
+								if (dentry->d_inode && !(dentry->d_inode->i_flags & S_DEAD)) {
+									dentry->d_inode->i_flags |= S_DEAD;
+									dentry->d_inode->i_size = 0;
+									dentry->d_inode->i_atime.tv_sec =
+									    dentry->d_inode->i_atime.tv_nsec =
+									    dentry->d_inode->i_ctime.tv_sec =
+									    dentry->d_inode->i_ctime.tv_nsec =
+									    dentry->d_inode->i_mtime.tv_sec =
+									    dentry->d_inode->i_mtime.tv_nsec = 0;
+									dentry->d_inode->i_blocks = 0;
+									d_delete(dentry);	/* Remove from cache */
+								}
 							}
 						}
 					} else {
@@ -675,6 +683,8 @@ int novfs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 	struct inode *dir;
 	struct inode_data *id;
 	struct qstr name;
+	struct novfs_dir_cache *dc;
+	unsigned long tmp_jiffies;
 
 	__DbgPrint("%s: 0x%p %.*s\n"
 		   "   d_count: %d\n"
@@ -685,29 +695,36 @@ int novfs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 		retCode = 1;
 	} else {
 		if (dentry->d_inode && dentry->d_parent && (dir = dentry->d_parent->d_inode) && (id = dir->i_private)) {
-			/*
-			 * Check timer to see if in valid time limit
-			 */
-			if (jiffies > dentry->d_time) {
-				/*
-				 * Revalidate entry
-				 */
-				name.len = dentry->d_name.len;
-				name.name = dentry->d_name.name;
-				name.hash = novfs_internal_hash(&dentry->d_name);
-				dentry->d_time = 0;
+			
+			name.len = dentry->d_name.len;
+			name.name = dentry->d_name.name;
+			name.hash = novfs_internal_hash(&dentry->d_name);
+			
+			if (novfs_lock_inode_cache(dir)) {
+				if ((dc = novfs_lookup_inode_cache(dir, &name, 0))) {
+					/*
+					 * Check timer to see if in valid time limit
+					 */
+					tmp_jiffies = jiffies;
+					DbgPrint("tmp jiffies is: %lu ", tmp_jiffies);
+					if (time_after(tmp_jiffies, dentry->d_time) || time_before(tmp_jiffies, (unsigned long)dc->jiffies)) {
+						novfs_unlock_inode_cache(dir);
+						dentry->d_time = 0;
 
-				if (0 == verify_dentry(dentry, 0)) {
-					if (novfs_lock_inode_cache(dir)) {
-						if (novfs_lookup_inode_cache(dir, &name, 0)) {
-							dentry->d_time = jiffies + (novfs_update_timeout * HZ);
+						/*
+						 * Revalidate entry
+					 	 */
+						if (0 == verify_dentry(dentry, 0)) {
+							dentry->d_time = tmp_jiffies + (novfs_update_timeout * HZ);
 							retCode = 1;
 						}
+					} else {
 						novfs_unlock_inode_cache(dir);
+						retCode = 1;
 					}
-				}
-			} else {
-				retCode = 1;
+				} else {
+					novfs_unlock_inode_cache(dir);
+				}	
 			}
 		}
 	}
@@ -977,18 +994,18 @@ void processList(struct file *file, void *dirent, filldir_t filldir, char *list,
 			cp += (name.len + 1);
 
 			pinfo = kmalloc(sizeof(struct novfs_entry_info) + PATH_LENGTH_BUFFER, GFP_KERNEL);
-			pinfo->mode = S_IFDIR | 0700;
-			pinfo->size = 0;
-			pinfo->atime = pinfo->ctime = pinfo->mtime = CURRENT_TIME;
-			strcpy(pinfo->name, name.name);
-			pinfo->namelength = name.len;
+			if (pinfo) {
+				pinfo->mode = S_IFDIR | 0700;
+				pinfo->size = 0;
+				pinfo->atime = pinfo->ctime = pinfo->mtime = CURRENT_TIME;
+				strcpy(pinfo->name, name.name);
+				pinfo->namelength = name.len;
+				novfs_Dump_Info(pinfo);
+				kfree(pinfo);
+			}
 
-			novfs_Dump_Info(pinfo);
-
-			filldir(dirent, pinfo->name, pinfo->namelength, file->f_pos, file->f_pos, pinfo->mode >> 12);
+			filldir(dirent, name.name, name.len, file->f_pos, file->f_pos, (S_IFDIR | 0700) >> 12);
 			file->f_pos += 1;
-
-			kfree(pinfo);
 		}
 	}
 
@@ -1354,13 +1371,13 @@ int novfs_f_open(struct inode *inode, struct file *file)
 
 					if (parent && parent->d_inode) {
 						struct inode *dir = parent->d_inode;
-						novfs_lock_inode_cache(dir);
-						ino = 0;
-						if (novfs_get_entry(dir, &file->f_dentry->d_name, &ino, info)) {
-							((struct inode_data *)inode->i_private)->Flags |= UPDATE_INODE;
+						if (novfs_lock_inode_cache(dir)) {
+							ino = 0;
+							if (novfs_get_entry(dir, &file->f_dentry->d_name, &ino, info)) {
+								((struct inode_data *)inode->i_private)->Flags |= UPDATE_INODE;
+							}
+							novfs_unlock_inode_cache(dir);
 						}
-
-						novfs_unlock_inode_cache(dir);
 					}
 					dput(parent);
 				}
@@ -2530,7 +2547,10 @@ int novfs_i_unlink(struct inode *dir, struct dentry *dentry)
 						}
 					}
 					if (!retCode || IS_DEADDIR(inode)) {
-						novfs_remove_inode_entry(dir, &dentry->d_name, 0);
+						if (novfs_lock_inode_cache(dir)) {
+							novfs_remove_inode_entry(dir, &dentry->d_name, 0);
+							novfs_unlock_inode_cache(dir);
+						}
 						dentry->d_time = 0;
 						t64 = 0;
 						novfs_scope_set_userspace(&t64, &t64, &t64, &t64);
@@ -2592,11 +2612,12 @@ int novfs_i_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 
 							dentry->d_time = jiffies + (novfs_update_timeout * HZ);
 
-							novfs_lock_inode_cache(dir);
-							if (novfs_update_entry(dir, &dentry->d_name, 0, &info)) {
-								novfs_add_inode_entry(dir, &dentry->d_name, inode->i_ino, &info);
+							if (novfs_lock_inode_cache(dir)) {
+								if (novfs_update_entry(dir, &dentry->d_name, 0, &info)) {
+									novfs_add_inode_entry(dir, &dentry->d_name, inode->i_ino, &info);
+								}
+								novfs_unlock_inode_cache(dir);
 							}
-							novfs_unlock_inode_cache(dir);
 						}
 
 					}
@@ -2642,9 +2663,10 @@ int novfs_i_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 		novfs_d_add(parent, dentry, inode, 0);
 		memset(&info, 0, sizeof(info));
 		info.mode = inode->i_mode;
-		novfs_lock_inode_cache(dir);
-		novfs_add_inode_entry(dir, &dentry->d_name, inode->i_ino, &info);
-		novfs_unlock_inode_cache(dir);
+		if (novfs_lock_inode_cache(dir)) {
+			novfs_add_inode_entry(dir, &dentry->d_name, inode->i_ino, &info);
+			novfs_unlock_inode_cache(dir);
+		}
 
 		dput(parent);
 
@@ -2759,17 +2781,23 @@ int novfs_i_rename(struct inode *odir, struct dentry *od, struct inode *ndir, st
 							if (!retCode) {
 								info = (struct novfs_entry_info *)oldbuf;
 								od->d_time = 0;
-								novfs_remove_inode_entry(odir, &od->d_name, 0);
-								novfs_remove_inode_entry(ndir, &nd->d_name, 0);
-								novfs_get_file_info(newpath, info, session);
-								nd->d_time = jiffies + (novfs_update_timeout * HZ);
-
-								if (od->d_inode && od->d_inode->i_ino) {
-									ino = od->d_inode->i_ino;
-								} else {
-									ino = (ino_t) atomic_inc_return(&novfs_Inode_Number);
+								if (novfs_lock_inode_cache(odir)) {
+									novfs_remove_inode_entry(odir, &od->d_name, 0);
+									novfs_unlock_inode_cache(odir);
 								}
-								novfs_add_inode_entry(ndir, &nd->d_name, ino, info);
+								if (novfs_lock_inode_cache(ndir)) {
+									novfs_remove_inode_entry(ndir, &nd->d_name, 0);
+									novfs_get_file_info(newpath, info, session);
+									nd->d_time = jiffies + (novfs_update_timeout * HZ);
+
+									if (od->d_inode && od->d_inode->i_ino) {
+										ino = od->d_inode->i_ino;
+									} else {
+										ino = (ino_t) atomic_inc_return(&novfs_Inode_Number);
+									}
+									novfs_add_inode_entry(ndir, &nd->d_name, ino, info);
+									novfs_unlock_inode_cache(ndir);
+								}
 							}
 						}
 					}
@@ -2857,8 +2885,8 @@ int novfs_i_setattr(struct dentry *dentry, struct iattr *attr)
 					}
 				}
 			}
+			kfree(buf);
 		}
-		kfree(buf);
 	}
 	DbgPrint("return 0x%x", retVal);
 
@@ -3166,7 +3194,10 @@ void novfs_clear_inode(struct inode *inode)
 
 		DbgPrint("inode=0x%p ino=%d Scope=0x%p Name=%s", inode, inode->i_ino, id->Scope, id->Name);
 
-		novfs_free_inode_cache(inode);
+		if (novfs_lock_inode_cache(inode)) {
+			novfs_free_inode_cache(inode);
+			novfs_unlock_inode_cache(inode);
+		}
 
 		down(&InodeList_lock);
 		list_del(&id->IList);
@@ -3411,7 +3442,10 @@ int novfs_fill_super(struct super_block *SB, void *Data, int Silent)
 				server->d_time = 0xffffffff;
 				d_add(server, inode);
 				DbgPrint("d_add %s 0x%p", SERVER_DIRECTORY_NAME, server);
-				novfs_add_inode_entry(novfs_root->d_inode, &name, inode->i_ino, &info);
+				if (novfs_lock_inode_cache(novfs_root->d_inode)) {
+					novfs_add_inode_entry(novfs_root->d_inode, &name, inode->i_ino, &info);
+					novfs_unlock_inode_cache(novfs_root->d_inode);
+				}
 			}
 		}
 
@@ -3434,7 +3468,10 @@ int novfs_fill_super(struct super_block *SB, void *Data, int Silent)
 
 				d_add(tree, inode);
 				DbgPrint("d_add %s 0x%p", TREE_DIRECTORY_NAME, tree);
-				novfs_add_inode_entry(novfs_root->d_inode, &name, inode->i_ino, &info);
+				if (novfs_lock_inode_cache(novfs_root->d_inode)) {
+					novfs_add_inode_entry(novfs_root->d_inode, &name, inode->i_ino, &info);
+					novfs_unlock_inode_cache(novfs_root->d_inode);
+				}
 			}
 		}
 	}

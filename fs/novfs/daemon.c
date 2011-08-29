@@ -1839,6 +1839,7 @@ static int unmap_drive(struct novfs_xplat *pdata, struct novfs_schandle Session)
 	if (dm) {
 		__DbgPrint("%s: Remove dm=0x%p %s\n"
 			   "   hash:    0x%x\n" "   namelen: %d\n", __func__, dm, dm->name, dm->hash, dm->namelen);
+		local_unlink(dm->name);
 		list_del(&dm->list);
 		kfree(dm);
 	}
