@@ -1066,6 +1066,7 @@ static int too_many_isolated(struct zone *zone, int file,
 		struct scan_control *sc)
 {
 	unsigned long inactive, isolated;
+	int ratio;
 
 	if (current_is_kswapd())
 		return 0;
@@ -1081,7 +1082,8 @@ static int too_many_isolated(struct zone *zone, int file,
 		isolated = zone_page_state(zone, NR_ISOLATED_ANON);
 	}
 
-	return isolated > inactive;
+	ratio = sc->gfp_mask & (__GFP_IO | __GFP_FS) ? 1 : 8;
+	return isolated > inactive * ratio;
 }
 
 /*
