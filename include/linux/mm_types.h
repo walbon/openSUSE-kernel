@@ -71,6 +71,14 @@ struct page {
 	union {
 		pgoff_t index;		/* Our offset within mapping. */
 		void *freelist;		/* SLUB: freelist req. slab lock */
+		bool pfmemalloc;	/* If set by the page allocator,
+					 * ALLOC_NO_WATERMARKS was set and the
+					 * low watermark was not met implying
+					 * that the system is under some
+					 * pressure. The caller should try
+					 * ensure this page is only used to
+					 * free other pages.
+					 */
 	};
 	struct list_head lru;		/* Pageout list, eg. active_list
 					 * protected by zone->lru_lock !

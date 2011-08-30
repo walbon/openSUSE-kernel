@@ -313,7 +313,13 @@ extern void kswapd_stop(int nid);
 /* linux/mm/page_io.c */
 extern int swap_readpage(struct page *);
 extern int swap_writepage(struct page *page, struct writeback_control *wbc);
+extern int swap_set_page_dirty(struct page *page);
 extern void end_swap_bio_read(struct bio *bio, int err);
+
+int add_swap_extent(struct swap_info_struct *, unsigned long start_pfn,
+		unsigned long nr_pages, sector_t);
+int generic_swapfile_activate(struct swap_info_struct *, struct file *,
+		sector_t *);
 
 /* linux/mm/swap_state.c */
 extern struct address_space swapper_space;
@@ -349,6 +355,7 @@ extern int swap_type_of(dev_t, sector_t, struct block_device **);
 extern unsigned int count_swap_pages(int, int);
 extern sector_t map_swap_page(struct page *, struct block_device **);
 extern sector_t swapdev_block(int, pgoff_t);
+extern struct swap_info_struct *page_swap_info(struct page *);
 extern int reuse_swap_page(struct page *);
 extern int try_to_free_swap(struct page *);
 struct backing_dev_info;

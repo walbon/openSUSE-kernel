@@ -30,6 +30,8 @@
 
 #include <trace/events/kmem.h>
 
+#include "internal.h"
+
 /*
  * Lock order:
  *   1. slab_lock(page)
@@ -1242,7 +1244,8 @@ static void setup_object(struct kmem_cache *s, struct page *page,
 		s->ctor(object);
 }
 
-static struct page *new_slab(struct kmem_cache *s, gfp_t flags, int node)
+static struct page *new_slab(struct kmem_cache *s, gfp_t flags, int node,
+							bool *pfmemalloc)
 {
 	struct page *page;
 	void *start;
@@ -1257,6 +1260,7 @@ static struct page *new_slab(struct kmem_cache *s, gfp_t flags, int node)
 		goto out;
 
 	inc_slabs_node(s, page_to_nid(page), page->objects);
+	*pfmemalloc = page->pfmemalloc;
 	page->slab = s;
 	page->flags |= 1 << PG_slab;
 
@@ -1772,6 +1776,14 @@ slab_out_of_memory(struct kmem_cache *s, gfp_t gfpflags, int nid)
 	}
 }
 
+static inline bool pfmemalloc_match(struct kmem_cache_cpu *c, gfp_t gfpflags)
+{
+	if (unlikely(c->pfmemalloc))
+		return gfp_pfmemalloc_allowed(gfpflags);
+
+	return true;
+}
+
 /*
  * Slow path. The lockless freelist is empty or we need to perform
  * debugging duties.
@@ -1796,6 +1808,7 @@ static void *__slab_alloc(struct kmem_cache *s, gfp_t gfpflags, int node,
 	void **object;
 	struct page *page;
 	unsigned long flags;
+	bool pfmemalloc = false;
 
 	local_irq_save(flags);
 #ifdef CONFIG_PREEMPT
@@ -1815,7 +1828,13 @@ static void *__slab_alloc(struct kmem_cache *s, gfp_t gfpflags, int node,
 		goto new_slab;
 
 	slab_lock(page);
-	if (unlikely(!node_match(c, node)))
+
+	/*
+	 * By rights, we should be searching for a slab page that was
+	 * PFMEMALLOC but right now, we are losing the pfmemalloc
+	 * information when the page leaves the per-cpu allocator
+	 */
+	if (unlikely(!pfmemalloc_match(c, gfpflags) || !node_match(c, node)))
 		goto another_slab;
 
 	stat(s, ALLOC_REFILL);
@@ -1853,7 +1872,7 @@ new_slab:
 	if (gfpflags & __GFP_WAIT)
 		local_irq_enable();
 
-	page = new_slab(s, gfpflags, node);
+	page = new_slab(s, gfpflags, node, &pfmemalloc);
 
 	if (gfpflags & __GFP_WAIT)
 		local_irq_disable();
@@ -1868,6 +1887,7 @@ new_slab:
 		__SetPageSlubFrozen(page);
 		c->node = page_to_nid(page);
 		c->page = page;
+		c->pfmemalloc = pfmemalloc;
 		goto load_freelist;
 	}
 	if (!(gfpflags & __GFP_NOWARN) && printk_ratelimit())
@@ -1927,8 +1947,8 @@ redo:
 	barrier();
 
 	object = c->freelist;
-	if (unlikely(!object || !node_match(c, node)))
-
+	if (unlikely(!object || !node_match(c, node) ||
+					!pfmemalloc_match(c, gfpflags)))
 		object = __slab_alloc(s, gfpflags, node, addr, c);
 
 	else {
@@ -2351,10 +2371,11 @@ static void early_kmem_cache_node_alloc(int node)
 	struct page *page;
 	struct kmem_cache_node *n;
 	unsigned long flags;
+	bool pfmemalloc;	/* Ignore this early in boot */
 
 	BUG_ON(kmem_cache_node->size < sizeof(struct kmem_cache_node));
 
-	page = new_slab(kmem_cache_node, GFP_NOWAIT, node);
+	page = new_slab(kmem_cache_node, GFP_NOWAIT, node, &pfmemalloc);
 
 	BUG_ON(!page);
 	if (page_to_nid(page) != node) {

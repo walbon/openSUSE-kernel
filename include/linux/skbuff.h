@@ -396,6 +396,7 @@ struct sk_buff {
 #ifdef CONFIG_IPV6_NDISC_NODETYPE
 	__u8			ndisc_nodetype:2;
 #endif
+	__u8			pfmemalloc:1;
 	__u8			ooo_okay:1;
 	kmemcheck_bitfield_end(flags2);
 
@@ -433,6 +434,15 @@ struct sk_buff {
 #include <linux/slab.h>
 
 #include <asm/system.h>
+
+#define SKB_ALLOC_FCLONE	0x01
+#define SKB_ALLOC_RX		0x02
+
+/* Returns true if the skb was allocated from PFMEMALLOC reserves */
+static inline bool skb_pfmemalloc(struct sk_buff *skb)
+{
+	return unlikely(skb->pfmemalloc);
+}
 
 /*
  * skb might have a dst pointer attached, refcounted or not.
@@ -491,7 +501,7 @@ extern void kfree_skb(struct sk_buff *skb);
 extern void consume_skb(struct sk_buff *skb);
 extern void	       __kfree_skb(struct sk_buff *skb);
 extern struct sk_buff *__alloc_skb(unsigned int size,
-				   gfp_t priority, int fclone, int node);
+				   gfp_t priority, int flags, int node);
 static inline struct sk_buff *alloc_skb(unsigned int size,
 					gfp_t priority)
 {
@@ -501,7 +511,7 @@ static inline struct sk_buff *alloc_skb(unsigned int size,
 static inline struct sk_buff *alloc_skb_fclone(unsigned int size,
 					       gfp_t priority)
 {
-	return __alloc_skb(size, priority, 1, NUMA_NO_NODE);
+	return __alloc_skb(size, priority, SKB_ALLOC_FCLONE, NUMA_NO_NODE);
 }
 
 extern bool skb_recycle_check(struct sk_buff *skb, int skb_size);
@@ -1114,6 +1124,8 @@ static inline void skb_fill_page_desc(struct sk_buff *skb, int i,
 {
 	skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
+	if (page->pfmemalloc)
+		skb->pfmemalloc	  = true;
 	frag->page		  = page;
 	frag->page_offset	  = off;
 	frag->size		  = size;
@@ -1532,7 +1544,8 @@ static inline void __skb_queue_purge(struct sk_buff_head *list)
 static inline struct sk_buff *__dev_alloc_skb(unsigned int length,
 					      gfp_t gfp_mask)
 {
-	struct sk_buff *skb = alloc_skb(length + NET_SKB_PAD, gfp_mask);
+	struct sk_buff *skb = __alloc_skb(length + NET_SKB_PAD, gfp_mask,
+						SKB_ALLOC_RX, NUMA_NO_NODE);
 	if (likely(skb))
 		skb_reserve(skb, NET_SKB_PAD);
 	return skb;
@@ -1583,7 +1596,7 @@ static inline struct sk_buff *netdev_alloc_skb_ip_align(struct net_device *dev,
  */
 static inline struct page *__netdev_alloc_page(struct net_device *dev, gfp_t gfp_mask)
 {
-	return alloc_pages_node(NUMA_NO_NODE, gfp_mask, 0);
+	return alloc_pages_node(NUMA_NO_NODE, gfp_mask | __GFP_MEMALLOC, 0);
 }
 
 /**
