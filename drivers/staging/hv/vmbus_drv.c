@@ -274,7 +274,7 @@ static int vmbus_match(struct device *device, struct device_driver *driver)
 
 	for (; !is_null_guid(id_array->guid); id_array++)
 		if (!memcmp(&id_array->guid, &hv_dev->dev_type.b,
-				sizeof(struct hv_vmbus_device_id)))
+				sizeof(uuid_le)))
 			return 1;
 
 	return 0;
@@ -392,9 +392,6 @@ static void vmbus_onmessage_work(struct work_struct *work)
 	kfree(ctx);
 }
 
-/*
- * vmbus_on_msg_dpc - DPC routine to handle messages from the hypervisior
- */
 static void vmbus_on_msg_dpc(unsigned long data)
 {
 	int cpu = smp_processor_id();
@@ -438,53 +435,36 @@ static void vmbus_on_msg_dpc(unsigned long data)
 	}
 }
 
-/*
- * vmbus_on_isr - ISR routine
- */
-static int vmbus_on_isr(void)
+static irqreturn_t vmbus_isr(int irq, void *dev_id)
 {
-	int ret = 0;
 	int cpu = smp_processor_id();
 	void *page_addr;
 	struct hv_message *msg;
 	union hv_synic_event_flags *event;
+	bool handled = false;
 
 	page_addr = hv_context.synic_message_page[cpu];
 	msg = (struct hv_message *)page_addr + VMBUS_MESSAGE_SINT;
 
 	/* Check if there are actual msgs to be process */
-	if (msg->header.message_type != HVMSG_NONE)
-		ret |= 0x1;
+	if (msg->header.message_type != HVMSG_NONE) {
+		handled = true;
+		tasklet_schedule(&msg_dpc);
+	}
 
 	page_addr = hv_context.synic_event_page[cpu];
 	event = (union hv_synic_event_flags *)page_addr + VMBUS_MESSAGE_SINT;
 
 	/* Since we are a child, we only need to check bit 0 */
-	if (sync_test_and_clear_bit(0, (unsigned long *) &event->flags32[0]))
-		ret |= 0x2;
-
-	return ret;
-}
-
-
-static irqreturn_t vmbus_isr(int irq, void *dev_id)
-{
-	int ret;
-
-	ret = vmbus_on_isr();
-
-	/* Schedules a dpc if necessary */
-	if (ret > 0) {
-		if (test_bit(0, (unsigned long *)&ret))
-			tasklet_schedule(&msg_dpc);
-
-		if (test_bit(1, (unsigned long *)&ret))
-			tasklet_schedule(&event_dpc);
-
-		return IRQ_HANDLED;
-	} else {
-		return IRQ_NONE;
+	if (sync_test_and_clear_bit(0, (unsigned long *) &event->flags32[0])) {
+		handled = true;
+		tasklet_schedule(&event_dpc);
 	}
+
+	if (handled)
+		return IRQ_HANDLED;
+	else
+		return IRQ_NONE;
 }
 
 /*
@@ -508,16 +488,13 @@ static int vmbus_bus_init(int irq)
 		return ret;
 	}
 
-	/* Initialize the bus context */
 	tasklet_init(&msg_dpc, vmbus_on_msg_dpc, 0);
 	tasklet_init(&event_dpc, vmbus_on_event, 0);
 
-	/* Now, register the bus  with LDM */
 	ret = bus_register(&hv_bus);
 	if (ret)
 		return ret;
 
-	/* Get the interrupt resource */
 	ret = request_irq(irq, vmbus_isr, IRQF_SAMPLE_RANDOM,
 			driver_name, hv_acpi_dev);
 
@@ -606,7 +583,6 @@ struct hv_device *vmbus_child_device_create(uuid_le *type,
 {
 	struct hv_device *child_device_obj;
 
-	/* Allocate the new child device */
 	child_device_obj = kzalloc(sizeof(struct hv_device), GFP_KERNEL);
 	if (!child_device_obj) {
 		pr_err("Unable to allocate device object for child device\n");
@@ -631,12 +607,10 @@ int vmbus_child_device_register(struct hv_device *child_device_obj)
 
 	static atomic_t device_num = ATOMIC_INIT(0);
 
-	/* Set the device name. Otherwise, device_register() will fail. */
 	dev_set_name(&child_device_obj->device, "vmbus_0_%d",
 		     atomic_inc_return(&device_num));
 
-	/* The new device belongs to this bus */
-	child_device_obj->device.bus = &hv_bus; /* device->dev.bus; */
+	child_device_obj->device.bus = &hv_bus;
 	child_device_obj->device.parent = &hv_acpi_dev->dev;
 	child_device_obj->device.release = vmbus_device_release;
 
@@ -696,9 +670,8 @@ static int vmbus_acpi_add(struct acpi_device *device)
 
 	hv_acpi_dev = device;
 
-	result =
-	acpi_walk_resources(device->handle, METHOD_NAME__CRS,
-			vmbus_walk_resources, &irq);
+	result = acpi_walk_resources(device->handle, METHOD_NAME__CRS,
+					vmbus_walk_resources, &irq);
 
 	if (ACPI_FAILURE(result)) {
 		complete(&probe_event);
