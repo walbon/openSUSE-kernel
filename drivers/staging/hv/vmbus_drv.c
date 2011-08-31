@@ -46,6 +46,7 @@ static struct tasklet_struct event_dpc;
 unsigned int vmbus_loglevel = (ALL_MODULES << 16 | INFO_LVL);
 EXPORT_SYMBOL(vmbus_loglevel);
 
+static int suse_no_dmi;
 static struct completion probe_event;
 static int irq;
 
@@ -715,7 +716,7 @@ static int __init hv_acpi_init(void)
 	int ret, t;
 
 	/* Do not stall 5 seconds */
-	if (!dmi_check_system(hv_vmbus_dmi_table))
+	if (!suse_no_dmi && !dmi_check_system(hv_vmbus_dmi_table))
 		return -ENODEV;
 
 	init_completion(&probe_event);
@@ -755,5 +756,6 @@ cleanup:
 MODULE_LICENSE("GPL");
 MODULE_VERSION(HV_DRV_VERSION);
 module_param(vmbus_loglevel, int, S_IRUGO|S_IWUSR);
+module_param(suse_no_dmi, int, S_IRUGO|S_IWUSR);
 
 module_init(hv_acpi_init);
