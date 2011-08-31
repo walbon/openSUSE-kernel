@@ -71,6 +71,7 @@
  */
 enum pageflags {
 	PG_locked,		/* Page is locked. Don't touch. */
+	PG_waiters,		/* Page has PG_locked waiters. */
 	PG_error,
 	PG_referenced,
 	PG_uptodate,
@@ -217,6 +218,7 @@ static inline int __TestClearPage##uname(struct page *page) { return 0; }
 struct page;	/* forward declaration */
 
 TESTPAGEFLAG(Locked, locked)
+PAGEFLAG(Waiters, waiters)
 PAGEFLAG(Error, error) TESTCLEARFLAG(Error, error)
 PAGEFLAG(Referenced, referenced) TESTCLEARFLAG(Referenced, referenced)
 PAGEFLAG(Dirty, dirty) TESTSCFLAG(Dirty, dirty) __CLEARPAGEFLAG(Dirty, dirty)
@@ -517,7 +519,7 @@ static inline int PageTransCompound(struct page *page)
 	 1 << PG_writeback | 1 << PG_reserved | \
 	 1 << PG_slab	 | 1 << PG_swapcache | 1 << PG_active | \
 	 1 << PG_unevictable | __PG_MLOCKED | __PG_HWPOISON | \
-	 __PG_COMPOUND_LOCK | __PG_XEN)
+	 1 << PG_waiters | __PG_COMPOUND_LOCK | __PG_XEN)
 
 /*
  * Flags checked when a page is prepped for return by the page allocator.

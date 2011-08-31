@@ -183,7 +183,7 @@ static inline int page_cache_add_speculative(struct page *page, int count)
 	if (unlikely(!atomic_add_unless(&page->_count, count, 0)))
 		return 0;
 #endif
-	VM_BUG_ON(PageCompound(page) && page != compound_head(page));
+	VM_BUG_ON(PageTail(page));
 
 	return 1;
 }
@@ -368,13 +368,15 @@ static inline int lock_page_or_retry(struct page *page, struct mm_struct *mm,
  * Never use this directly!
  */
 extern void wait_on_page_bit(struct page *page, int bit_nr);
+extern void __wait_on_page_locked(struct page *page);
 
 extern int wait_on_page_bit_killable(struct page *page, int bit_nr);
+extern int __wait_on_page_locked_killable(struct page *page);
 
 static inline int wait_on_page_locked_killable(struct page *page)
 {
 	if (PageLocked(page))
-		return wait_on_page_bit_killable(page, PG_locked);
+		return __wait_on_page_locked_killable(page);
 	return 0;
 }
 
@@ -388,7 +390,7 @@ static inline int wait_on_page_locked_killable(struct page *page)
 static inline void wait_on_page_locked(struct page *page)
 {
 	if (PageLocked(page))
-		wait_on_page_bit(page, PG_locked);
+		__wait_on_page_locked(page);
 }
 
 /* 
