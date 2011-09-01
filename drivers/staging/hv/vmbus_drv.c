@@ -30,7 +30,6 @@
 #include <linux/sysctl.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
-#include <linux/dmi.h>
 #include <acpi/acpi_bus.h>
 #include <linux/completion.h>
 
@@ -46,7 +45,6 @@ static struct tasklet_struct event_dpc;
 unsigned int vmbus_loglevel = (ALL_MODULES << 16 | INFO_LVL);
 EXPORT_SYMBOL(vmbus_loglevel);
 
-static int suse_no_dmi;
 static struct completion probe_event;
 static int irq;
 
@@ -697,27 +695,9 @@ static struct acpi_driver vmbus_acpi_driver = {
 	},
 };
 
-static const struct dmi_system_id __initconst
-hv_vmbus_dmi_table[] __maybe_unused  = {
-	{
-		.ident = "Hyper-V",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Virtual Machine"),
-			DMI_MATCH(DMI_BOARD_NAME, "Virtual Machine"),
-		},
-	},
-	{ },
-};
-MODULE_DEVICE_TABLE(dmi, hv_vmbus_dmi_table);
-
 static int __init hv_acpi_init(void)
 {
 	int ret, t;
-
-	/* Do not stall 5 seconds */
-	if (!suse_no_dmi && !dmi_check_system(hv_vmbus_dmi_table))
-		return -ENODEV;
 
 	init_completion(&probe_event);
 
@@ -756,6 +736,5 @@ cleanup:
 MODULE_LICENSE("GPL");
 MODULE_VERSION(HV_DRV_VERSION);
 module_param(vmbus_loglevel, int, S_IRUGO|S_IWUSR);
-module_param(suse_no_dmi, int, S_IRUGO|S_IWUSR);
 
 module_init(hv_acpi_init);
