@@ -135,28 +135,30 @@
  */
 
 /*?
- * Text: "%s: cqr %p timed out (%is), %i retries remaining\n"
+ * Text: "%s: cqr %p timed out (%lus), %i retries remaining\n"
  * Severity: Error
  * Parameter:
  *   @1: bus ID of the DASD
- *   @2: pointer to request
+ *   @2: request
  *   @3: timeout value
  *   @4: number of retries left
  * Description:
- * One try of the error recovery procedure (ERP) for the channel queued request
+ * A try of the error recovery procedure (ERP) for the channel queued request
  * (cqr) timed out and failed to recover the error. ERP continues for the DASD.
  * User action:
  * Ignore this message if it occurs infrequently and if the recovery succeeds
  * during one of the retries. If this error persists, check for related
  * previous error messages and report the problem to your support organization.
+ *
+ * The timeout can be changed by writing a new value to the sysfs 'expires' attribute of the DASD. The value specifies the timeout in seconds.
  */
 
 /*?
- * Text: "%s: cqr %p timed out (%is) but cannot be ended, retrying in 5 s\n"
+ * Text: "%s: cqr %p timed out (%lus) but cannot be ended, retrying in 5 s\n"
  * Severity: Error
  * Parameter:
  *   @1: bus ID of the DASD
- *   @2: pointer to request
+ *   @2: request
  *   @3: timeout value
  * Description:
  * A try of the error recovery procedure (ERP) for the channel queued request
@@ -167,6 +169,8 @@
  * Ignore this message if it occurs infrequently and if the recovery succeeds
  * during one of the retries. If this error persists, check for related
  * previous error messages and report the problem to your support organization.
+ *
+ * The timeout can be changed by writing a new value to the sysfs 'expires' attribute of the DASD. The value specifies the timeout in seconds.
  */
 
 /*?
@@ -465,6 +469,32 @@
  * Note the reason code and contact your support organization.
 */
 
+/*?
+ * Text: "%s: No operational channel path is left for the device\n"
+ * Severity: Warning
+ * Parameter:
+ *   @1: bus ID of the DASD
+ * Description:
+ * All channel paths to the device have become non-operational. The DASD
+ * device driver suspends I/O operations and queues I/O requests for this
+ * device until at least one channel path becomes operational again.
+ * User action:
+ * Ensure that each channel path to the device has been set up correctly
+ * and that the related physical cable connections are in place.
+ */
+
+/*?
+ * Text: "%s: A channel path to the device has become operational\n"
+ * Severity: Informational
+ * Parameter:
+ *   @1: bus ID of the DASD
+ * Description:
+ * At least one channel path of this device has become operational again.
+ * The DASD device driver resumes I/O operations to the device and processes
+ * the I/O requests that were queued while there was no operational channel path.
+ * User action:
+ * None.
+ */
 
 ------------------------------------------------------------------------------------
 /* dasd_diag */

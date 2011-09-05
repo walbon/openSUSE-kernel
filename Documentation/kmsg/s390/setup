@@ -1,27 +1,4 @@
 /*?
- * Text: "Execute protection active, mvcos available\n"
- * Severity: Informational
- * Description:
- * The kernel parameter 'noexec' has been specified. The kernel will
- * honor the execute bit of mappings and will use the mvcos instruction
- * to copy between the user and kernel address space.
- * User action:
- * None.
- */
-
-/*?
- * Text: "Execute protection active, mvcos not available\n"
- * Severity: Informational
- * Description:
- * The kernel parameter 'noexec' has been specified. The kernel will
- * honor the execute bit of mappings. The mvcos instruction is not
- * available and the kernel will use the slower page table walk method
- * to copy between the user and kernel address space.
- * User action:
- * None.
- */
-
-/*?
  * Text: "Address spaces switched, mvcos available\n"
  * Severity: Informational
  * Description:
@@ -58,7 +35,7 @@
  * memory.
  * User action:
  * Lower the load address of the initial RAM disk, reduce the size of the
- * initial RAM disk, or increase the size if the system memory to make the
+ * initial RAM disk, or increase the size of the system memory to make the
  * initial RAM disk fit into the memory.
  */
 
