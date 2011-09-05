@@ -283,3 +283,17 @@ config USB_YUREX
 	  To compile this driver as a module, choose M here: the
 	  module will be called yurex.
 
+config USB_VST
+	tristate "USB VST driver"
+	depends on USB
+	help
+	  This driver is intended for Vernier Software Technologies
+	  bulk usb devices such as their Ocean-Optics spectrometers or
+	  Labquest.
+	  It is a bulk channel driver with configurable read and write
+	  timeouts.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called vstusb.
+
+

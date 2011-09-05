@@ -805,7 +805,7 @@ static struct dentry *mount_subvol(const char *subvol_name, int flags,
 	struct vfsmount *mnt;
 	struct mnt_namespace *ns_private;
 	char *newargs;
-	struct path path;
+	struct nameidata nd;
 	int error;
 
 	newargs = setup_root_args(data);
@@ -829,16 +829,16 @@ static struct dentry *mount_subvol(const char *subvol_name, int flags,
 	 * found.
 	 */
 	error = vfs_path_lookup(mnt->mnt_root, mnt, subvol_name,
-				LOOKUP_FOLLOW, &path);
+				LOOKUP_FOLLOW, &nd);
 	put_mnt_ns(ns_private);
 	if (error)
 		return ERR_PTR(error);
 
 	/* Get a ref to the sb and the dentry we found and return it */
-	s = path.mnt->mnt_sb;
+	s = nd.path.mnt->mnt_sb;
 	atomic_inc(&s->s_active);
-	root = dget(path.dentry);
-	path_put(&path);
+	root = dget(nd.path.dentry);
+	path_put(&nd.path);
 	down_write(&s->s_umount);
 
 	return root;
