@@ -63,6 +63,7 @@
 #include "xfs_filestream.h"
 #include "xfs_vnodeops.h"
 #include "xfs_trace.h"
+#include "xfs_message.h"
 
 EXPORT_SYMBOL(xfs_iunlock);
 EXPORT_SYMBOL(xfs_attr_remove);
@@ -91,3 +92,4 @@ EXPORT_SYMBOL(kmem_alloc);
 EXPORT_SYMBOL(xfs_change_file_space);
 EXPORT_SYMBOL(xfs_get_extsz_hint);
 EXPORT_SYMBOL(__tracepoint_xfs_irele);
+EXPORT_SYMBOL(assfail);
