@@ -1527,7 +1527,7 @@ static struct pernet_operations ip6_tnl_net_ops = {
  * Return: 0 on success
  **/
 
-static int __init ip6_tunnel_init(void)
+static int  ip6_tunnel_init(void)
 {
 	int  err;
 

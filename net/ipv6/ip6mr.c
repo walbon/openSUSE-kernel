@@ -1329,7 +1329,7 @@ static struct pernet_operations ip6mr_net_ops = {
 	.exit = ip6mr_net_exit,
 };
 
-int __init ip6_mr_init(void)
+int  ip6_mr_init(void)
 {
 	int err;
 

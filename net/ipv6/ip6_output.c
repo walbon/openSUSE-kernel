@@ -600,7 +600,7 @@ static u32 hashidentrnd __read_mostly;
 #define FID_HASH_SZ 16
 static u32 ipv6_fragmentation_id[FID_HASH_SZ];
 
-void __init initialize_hashidentrnd(void)
+void  initialize_hashidentrnd(void)
 {
 	get_random_bytes(&hashidentrnd, sizeof(hashidentrnd));
 }

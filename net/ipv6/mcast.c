@@ -2668,7 +2668,7 @@ static struct pernet_operations igmp6_net_ops = {
 	.exit = igmp6_net_exit,
 };
 
-int __init igmp6_init(void)
+int  igmp6_init(void)
 {
 	return register_pernet_subsys(&igmp6_net_ops);
 }

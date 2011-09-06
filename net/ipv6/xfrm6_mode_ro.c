@@ -65,7 +65,7 @@ static struct xfrm_mode xfrm6_ro_mode = {
 	.encap = XFRM_MODE_ROUTEOPTIMIZATION,
 };
 
-static int __init xfrm6_ro_init(void)
+static int  xfrm6_ro_init(void)
 {
 	return xfrm_register_mode(&xfrm6_ro_mode, AF_INET6);
 }

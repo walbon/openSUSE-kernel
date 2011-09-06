@@ -514,7 +514,7 @@ static const struct inet6_protocol nodata_protocol = {
 	.flags		=	INET6_PROTO_NOPOLICY,
 };
 
-int __init ipv6_exthdrs_init(void)
+int  ipv6_exthdrs_init(void)
 {
 	int ret;
 

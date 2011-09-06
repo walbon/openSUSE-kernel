@@ -479,7 +479,7 @@ static const struct xfrm_type mip6_rthdr_type =
 	.hdr_offset	= mip6_rthdr_offset,
 };
 
-static int __init mip6_init(void)
+static int  mip6_init(void)
 {
 	printk(KERN_INFO "Mobile IPv6\n");
 

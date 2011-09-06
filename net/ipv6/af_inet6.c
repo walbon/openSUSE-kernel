@@ -77,17 +77,10 @@ struct ipv6_params ipv6_defaults = {
 	.disable_ipv6 = 0,
 	.autoconf = 1,
 };
+EXPORT_SYMBOL(ipv6_defaults);
 
-static int disable_ipv6_mod = 0;
-
-module_param_named(disable, disable_ipv6_mod, int, 0444);
-MODULE_PARM_DESC(disable, "Disable IPv6 module such that it is non-functional");
-
-module_param_named(disable_ipv6, ipv6_defaults.disable_ipv6, int, 0444);
-MODULE_PARM_DESC(disable_ipv6, "Disable IPv6 on all interfaces");
-
-module_param_named(autoconf, ipv6_defaults.autoconf, int, 0444);
-MODULE_PARM_DESC(autoconf, "Enable IPv6 address autoconfiguration on all interfaces");
+int disable_ipv6_mod = 0;
+EXPORT_SYMBOL(disable_ipv6_mod);
 
 static __inline__ struct ipv6_pinfo *inet6_sk_generic(struct sock *sk)
 {
@@ -955,7 +948,7 @@ static struct packet_type ipv6_packet_type __read_mostly = {
 	.gro_complete = ipv6_gro_complete,
 };
 
-static int __init ipv6_packet_init(void)
+static int  ipv6_packet_init(void)
 {
 	dev_add_pack(&ipv6_packet_type);
 	return 0;
@@ -1059,7 +1052,7 @@ static struct pernet_operations inet6_net_ops = {
 	.exit = inet6_net_exit,
 };
 
-static int __init inet6_init(void)
+static int  inet6_init(void)
 {
 	struct sk_buff *dummy_skb;
 	struct list_head *r;
@@ -1070,6 +1063,13 @@ static int __init inet6_init(void)
 	/* Register the socket-side information for inet6_create.  */
 	for(r = &inetsw6[0]; r < &inetsw6[SOCK_MAX]; ++r)
 		INIT_LIST_HEAD(r);
+
+	return err;
+}
+
+int inet6_init_real(void)
+{
+	int err = 0;
 
 	if (disable_ipv6_mod) {
 		printk(KERN_INFO
@@ -1259,8 +1259,13 @@ out_unregister_tcp_proto:
 	goto out;
 }
 module_init(inet6_init);
+EXPORT_SYMBOL(inet6_init_real);
 
 static void __exit inet6_exit(void)
+{
+}
+
+void inet6_exit_real(void)
 {
 	if (disable_ipv6_mod)
 		return;
@@ -1311,5 +1316,4 @@ static void __exit inet6_exit(void)
 	rcu_barrier(); /* Wait for completion of call_rcu()'s */
 }
 module_exit(inet6_exit);
-
-MODULE_ALIAS_NETPROTO(PF_INET6);
+EXPORT_SYMBOL(inet6_exit_real);

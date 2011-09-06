@@ -386,7 +386,7 @@ static struct pernet_operations ipv6_addr_label_ops = {
 	.exit = ip6addrlbl_net_exit,
 };
 
-int __init ipv6_addr_label_init(void)
+int  ipv6_addr_label_init(void)
 {
 	spin_lock_init(&ip6addrlbl_table.lock);
 
@@ -590,7 +590,7 @@ out:
 	return err;
 }
 
-void __init ipv6_addr_label_rtnl_register(void)
+void  ipv6_addr_label_rtnl_register(void)
 {
 	__rtnl_register(PF_INET6, RTM_NEWADDRLABEL, ip6addrlbl_newdel, NULL);
 	__rtnl_register(PF_INET6, RTM_DELADDRLABEL, ip6addrlbl_newdel, NULL);
