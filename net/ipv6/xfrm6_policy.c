@@ -279,7 +279,7 @@ static struct xfrm_policy_afinfo xfrm6_policy_afinfo = {
 	.blackhole_route =	ip6_blackhole_route,
 };
 
-static int __init xfrm6_policy_init(void)
+static int  xfrm6_policy_init(void)
 {
 	return xfrm_policy_register_afinfo(&xfrm6_policy_afinfo);
 }
@@ -304,7 +304,7 @@ static struct ctl_table xfrm6_policy_table[] = {
 static struct ctl_table_header *sysctl_hdr;
 #endif
 
-int __init xfrm6_init(void)
+int  xfrm6_init(void)
 {
 	int ret;
 	unsigned int gc_thresh;

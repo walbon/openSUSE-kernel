@@ -137,3 +137,4 @@
 
 /*? Text: "driver unloaded\n" */
 /*? Text: "driver initialized\n" */
+/*? Text: "netif_stop_queue() cannot be called before register_netdev()\n" */

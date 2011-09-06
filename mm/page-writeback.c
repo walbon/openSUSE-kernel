@@ -244,13 +244,8 @@ void task_dirty_inc(struct task_struct *tsk)
 static void bdi_writeout_fraction(struct backing_dev_info *bdi,
 		long *numerator, long *denominator)
 {
-	if (bdi_cap_writeback_dirty(bdi)) {
-		prop_fraction_percpu(&vm_completions, &bdi->completions,
+	prop_fraction_percpu(&vm_completions, &bdi->completions,
 				numerator, denominator);
-	} else {
-		*numerator = 0;
-		*denominator = 1;
-	}
 }
 
 static inline void task_dirties_fraction(struct task_struct *tsk,
@@ -274,12 +269,13 @@ static inline void task_dirties_fraction(struct task_struct *tsk,
  * effectively curb the growth of dirty pages. Light dirtiers with high enough
  * dirty threshold may never get throttled.
  */
+#define TASK_LIMIT_FRACTION 8
 static unsigned long task_dirty_limit(struct task_struct *tsk,
 				       unsigned long bdi_dirty)
 {
 	long numerator, denominator;
 	unsigned long dirty = bdi_dirty;
-	u64 inv = dirty >> 3;
+	u64 inv = dirty / TASK_LIMIT_FRACTION;
 
 	task_dirties_fraction(tsk, &numerator, &denominator);
 	inv *= numerator;
@@ -288,6 +284,12 @@ static unsigned long task_dirty_limit(struct task_struct *tsk,
 	dirty -= inv;
 
 	return max(dirty, bdi_dirty/2);
+}
+
+/* Minimum limit for any task */
+static unsigned long task_min_dirty_limit(unsigned long bdi_dirty)
+{
+	return bdi_dirty - bdi_dirty / TASK_LIMIT_FRACTION;
 }
 
 /*
@@ -483,9 +485,12 @@ static void balance_dirty_pages(struct address_space *mapping,
 	unsigned long background_thresh;
 	unsigned long dirty_thresh;
 	unsigned long bdi_thresh;
+	unsigned long task_bdi_thresh;
+	unsigned long min_task_bdi_thresh;
 	unsigned long pages_written = 0;
 	unsigned long pause = 1;
 	bool dirty_exceeded = false;
+	bool clear_dirty_exceeded = true;
 	struct backing_dev_info *bdi = mapping->backing_dev_info;
 
 	for (;;) {
@@ -512,7 +517,8 @@ static void balance_dirty_pages(struct address_space *mapping,
 			break;
 
 		bdi_thresh = bdi_dirty_limit(bdi, dirty_thresh);
-		bdi_thresh = task_dirty_limit(current, bdi_thresh);
+		min_task_bdi_thresh = task_min_dirty_limit(bdi_thresh);
+		task_bdi_thresh = task_dirty_limit(current, bdi_thresh);
 
 		/*
 		 * In order to avoid the stacked BDI deadlock we need
@@ -524,7 +530,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 		 * actually dirty; with m+n sitting in the percpu
 		 * deltas.
 		 */
-		if (bdi_thresh < 2*bdi_stat_error(bdi)) {
+		if (task_bdi_thresh < 2 * bdi_stat_error(bdi)) {
 			bdi_nr_reclaimable = bdi_stat_sum(bdi, BDI_RECLAIMABLE);
 			bdi_nr_writeback = bdi_stat_sum(bdi, BDI_WRITEBACK);
 		} else {
@@ -539,8 +545,12 @@ static void balance_dirty_pages(struct address_space *mapping,
 		 * the last resort safeguard.
 		 */
 		dirty_exceeded =
-			(bdi_nr_reclaimable + bdi_nr_writeback > bdi_thresh)
-			|| (nr_reclaimable + nr_writeback > dirty_thresh);
+		    (bdi_nr_reclaimable + bdi_nr_writeback > task_bdi_thresh)
+		    || (nr_reclaimable + nr_writeback > dirty_thresh);
+		clear_dirty_exceeded =
+		    (bdi_nr_reclaimable + bdi_nr_writeback <=
+							min_task_bdi_thresh) &&
+		    (nr_reclaimable + nr_writeback <= dirty_thresh);
 
 		if (!dirty_exceeded)
 			break;
@@ -558,7 +568,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 		 * up.
 		 */
 		trace_wbc_balance_dirty_start(&wbc, bdi);
-		if (bdi_nr_reclaimable > bdi_thresh) {
+		if (bdi_nr_reclaimable > task_bdi_thresh) {
 			writeback_inodes_wb(&bdi->wb, &wbc);
 			pages_written += write_chunk - wbc.nr_to_write;
 			trace_wbc_balance_dirty_written(&wbc, bdi);
@@ -578,7 +588,8 @@ static void balance_dirty_pages(struct address_space *mapping,
 			pause = HZ / 10;
 	}
 
-	if (!dirty_exceeded && bdi->dirty_exceeded)
+	/* Clear dirty_exceeded flag only when no task can exceed the limit */
+	if (clear_dirty_exceeded && bdi->dirty_exceeded)
 		bdi->dirty_exceeded = 0;
 
 	if (writeback_in_progress(bdi))
@@ -626,8 +637,12 @@ static DEFINE_PER_CPU(unsigned long, bdp_ratelimits) = 0;
 void balance_dirty_pages_ratelimited_nr(struct address_space *mapping,
 					unsigned long nr_pages_dirtied)
 {
+	struct backing_dev_info *bdi = mapping->backing_dev_info;
 	unsigned long ratelimit;
 	unsigned long *p;
+
+	if (!bdi_cap_account_dirty(bdi))
+		return;
 
 	ratelimit = ratelimit_pages;
 	if (mapping->backing_dev_info->dirty_exceeded)
@@ -892,12 +907,12 @@ int write_cache_pages(struct address_space *mapping,
 			range_whole = 1;
 		cycled = 1; /* ignore range_cyclic tests */
 	}
-	if (wbc->sync_mode == WB_SYNC_ALL)
+	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag = PAGECACHE_TAG_TOWRITE;
 	else
 		tag = PAGECACHE_TAG_DIRTY;
 retry:
-	if (wbc->sync_mode == WB_SYNC_ALL)
+	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag_pages_for_writeback(mapping, index, end);
 	done_index = index;
 	while (!done && (index <= end)) {

@@ -1305,13 +1305,6 @@ static unsigned long unmap_page_range(struct mmu_gather *tlb,
 	return addr;
 }
 
-#ifdef CONFIG_SMP
-/* zap one pte page at a time */
-#define ZAP_BLOCK_SIZE		(FREE_PTE_NR * PAGE_SIZE)
-#else
-#define ZAP_BLOCK_SIZE		(253 * PAGE_SIZE)
-#endif
-
 /**
  * unmap_vmas - unmap a range of memory covered by a list of vma's
  * @tlb: address of the caller's struct mmu_gather
@@ -1324,10 +1317,6 @@ static unsigned long unmap_page_range(struct mmu_gather *tlb,
  * Returns the end address of the unmapping (restart addr if interrupted).
  *
  * Unmap all pages in the vma list.
- *
- * We aim to not hold locks for too long (for scheduling latency reasons).
- * So zap pages in ZAP_BLOCK_SIZE bytecounts.  This means we need to
- * return the ending mmu_gather to the caller.
  *
  * Only addresses between `start' and `end' will be unmapped.
  *

@@ -1307,7 +1307,7 @@ static struct pernet_operations raw6_net_ops = {
 	.exit = raw6_exit_net,
 };
 
-int __init raw6_proc_init(void)
+int  raw6_proc_init(void)
 {
 	return register_pernet_subsys(&raw6_net_ops);
 }
@@ -1353,7 +1353,7 @@ static struct inet_protosw rawv6_protosw = {
 	.flags		= INET_PROTOSW_REUSE,
 };
 
-int __init rawv6_init(void)
+int  rawv6_init(void)
 {
 	int ret;
 

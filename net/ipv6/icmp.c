@@ -867,7 +867,7 @@ static struct pernet_operations icmpv6_sk_ops = {
        .exit = icmpv6_sk_exit,
 };
 
-int __init icmpv6_init(void)
+int  icmpv6_init(void)
 {
 	int err;
 

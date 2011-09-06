@@ -469,16 +469,11 @@
  */
 
 /*?
- * Text: "%s: MAC address %2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x already exists\n"
+ * Text: "%s: MAC address %pM already exists\n"
  * Severity: Warning
  * Parameter:
  *   @1: bus ID of the qeth device
- *   @2: first token of the MAC-address
- *   @3: second token of the MAC-address
- *   @4: third token of the MAC-address
- *   @5: fourth token of the MAC-address
- *   @6: fifth token of the MAC-address
- *   @7: sixth token of the MAC-address
+ *   @2: MAC-address
  * Description:
  * Setting the MAC address for the qeth device fails, because this
  * MAC address is already defined on the OSA CHPID.
@@ -487,16 +482,11 @@
  */
 
 /*?
- * Text: "%s: MAC address %2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x is not authorized\n"
+ * Text: "%s: MAC address %pM is not authorized\n"
  * Severity: Warning
  * Parameter:
  *   @1: bus ID of the qeth device
- *   @2: first token of the MAC-address
- *   @3: second token of the MAC-address
- *   @4: third token of the MAC-address
- *   @5: fourth token of the MAC-address
- *   @6: fifth token of the MAC-address
- *   @7: sixth token of the MAC-address
+ *   @2: MAC-address
  * Description:
  * This qeth device is a virtual network interface card (NIC), to which z/VM
  * has already assigned a MAC address. z/VM MAC address verification does
@@ -565,6 +555,41 @@
  */
 
 /*?
+ * Text: "%s: Enabling HW TX checksumming for %s failed, using SW TX checksumming\n"
+ * Severity: Warning
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ *   @2: network interface name
+ * Description:
+ * The network adapter supports hardware checksumming for outgoing IP packages
+ * but the qeth device driver could not enable hardware TX checksumming on the
+ * adapter. The qeth device driver continues to use software checksumming for
+ * outgoing IP packages.
+ * User action:
+ * None if you do not require hardware checksumming for outgoing network
+ * traffic. If you want to enable hardware checksumming, ungroup and regroup
+ * the subchannel triplet of the device. If this does not resolve the problem,
+ * reboot Linux. If the problem persists, gather Linux debug data and report
+ * the problem to your support organization.
+ */
+
+/*?
+ * Text: "%s: A connection could not be established because of an OLM limit\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * z/OS has activated Optimized Latency Mode (OLM) for a connection through an OSA Express3 adapter.
+ * This reduces the maximum number of concurrent connections per physical port for shared adapters.
+ * The new connection would exceed the maximum. Linux cannot establish further connections using
+ * this adapter.
+ * User action:
+ * If possible, deactivate an existing connection that uses this adapter and try again to establish
+ * the new connection. If you cannot free an existing connection, use a different adapter for the
+ * new connection.
+ */
+
+/*?
  * Text: "%s: Setting the device online failed because of insufficient authorization\n"
  * Severity: Error
  * Parameter:
@@ -586,7 +611,7 @@
 /*? Text: "%s: Priority Queueing not supported\n" */
 /*? Text: "%s: sense data available. cstat 0x%X dstat 0x%X\n" */
 /*? Text: "loading core functions\n" */
-/*? Text: "%s: MAC address %2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x successfully registered on device %s\n" */
+/*? Text: "%s: MAC address %pM successfully registered on device %s\n" */
 /*? Text: "%s: Device successfully recovered!\n" */
 /*? Text: "register layer 2 discipline\n" */
 /*? Text: "unregister layer 2 discipline\n" */
@@ -616,4 +641,49 @@
 /*? Text: "%s: Adapter does not support QDIO data connection isolation\n" */
 /*? Text: "%s: Adapter is dedicated. QDIO data connection isolation not supported\n" */
 /*? Text: "%s: TSO does not permit QDIO data connection isolation\n" */
+/*? Text: "%s: HW TX Checksumming enabled\n" */
+/*? Text: "netif_stop_queue() cannot be called before register_netdev()\n" */
 
+/*?
+ * Text: "%s: Failed to create completion queue\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The HiperSockets device could not be configured with a completion queue.
+ * A completion queue is required to operate AF_IUCV communication in an LPAR.
+ * User action:
+ * i) Investigate if you have the latest firmware level in place.
+ * ii) If the problem persists and is not caused by a version mismatch, contact IBM
+ * support.
+ */
+
+/*?
+ * Text: "%s: Completion Queueing supported\n"
+ * Severity: Informational
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The HiperSockets device supports completion queueing. This is required to
+ * set up AF_IUCV communication in an LPAR.
+ */
+
+/*?
+ * Text: "%s: Completion Queue support enabled"
+ * Severity: Informational
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The HiperSockets device is enabled for completion queueing. This is part of
+ * the process to set up AF_IUCV communication in an LPAR.
+ */
+
+/*?
+ * Text: "%s: Completion Queue support disabled"
+ * Severity: Informational
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The HiperSockets device is disabled for completion queueing. This device
+ * cannot or no longer be used to set up AF_IUCV communication in an LPAR.
+ */

@@ -157,7 +157,7 @@ static const struct inet6_protocol tunnel46_protocol = {
 	.flags          = INET6_PROTO_NOPOLICY|INET6_PROTO_FINAL,
 };
 
-static int __init tunnel6_init(void)
+static int  tunnel6_init(void)
 {
 	if (inet6_add_protocol(&tunnel6_protocol, IPPROTO_IPV6)) {
 		printk(KERN_ERR "tunnel6 init(): can't add protocol\n");

@@ -660,4 +660,7 @@ extern int ipv6_static_sysctl_register(void);
 extern void ipv6_static_sysctl_unregister(void);
 #endif
 
+extern struct ipv6_params ipv6_defaults;
+extern int disable_ipv6_mod;
+
 #endif /* _NET_IPV6_H */

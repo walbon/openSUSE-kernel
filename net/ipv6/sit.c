@@ -1265,7 +1265,7 @@ static void __exit sit_cleanup(void)
 	rcu_barrier(); /* Wait for completion of call_rcu()'s */
 }
 
-static int __init sit_init(void)
+static int  sit_init(void)
 {
 	int err;
 

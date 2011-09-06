@@ -1750,22 +1750,22 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 	u64 fraction[2], denominator;
 	enum lru_list l;
 	int noswap = 0;
-	int force_scan = 0;
+	bool force_scan = false;
 
-
-	anon  = zone_nr_lru_pages(zone, sc, LRU_ACTIVE_ANON) +
-		zone_nr_lru_pages(zone, sc, LRU_INACTIVE_ANON);
-	file  = zone_nr_lru_pages(zone, sc, LRU_ACTIVE_FILE) +
-		zone_nr_lru_pages(zone, sc, LRU_INACTIVE_FILE);
-
-	if (((anon + file) >> priority) < SWAP_CLUSTER_MAX) {
-		/* kswapd does zone balancing and need to scan this zone */
-		if (scanning_global_lru(sc) && current_is_kswapd())
-			force_scan = 1;
-		/* memcg may have small limit and need to avoid priority drop */
-		if (!scanning_global_lru(sc))
-			force_scan = 1;
-	}
+	/*
+	 * If the zone or memcg is small, nr[l] can be 0.  This
+	 * results in no scanning on this priority and a potential
+	 * priority drop.  Global direct reclaim can go to the next
+	 * zone and tends to have no problems. Global kswapd is for
+	 * zone balancing and it needs to scan a minimum amount. When
+	 * reclaiming for a memcg, a priority drop can cause high
+	 * latencies, so it's better to scan a minimum amount there as
+	 * well.
+	 */
+	if (scanning_global_lru(sc) && current_is_kswapd())
+		force_scan = true;
+	if (!scanning_global_lru(sc))
+		force_scan = true;
 
 	/* If we have no swap space, do not bother scanning anon pages. */
 	if (!sc->may_swap || (nr_swap_pages <= 0)) {
@@ -1775,6 +1775,11 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 		denominator = 1;
 		goto out;
 	}
+
+	anon  = zone_nr_lru_pages(zone, sc, LRU_ACTIVE_ANON) +
+		zone_nr_lru_pages(zone, sc, LRU_INACTIVE_ANON);
+	file  = zone_nr_lru_pages(zone, sc, LRU_ACTIVE_FILE) +
+		zone_nr_lru_pages(zone, sc, LRU_INACTIVE_FILE);
 
 	if (scanning_global_lru(sc)) {
 		free  = zone_page_state(zone, NR_FREE_PAGES);
@@ -1840,23 +1845,9 @@ out:
 		scan = zone_nr_lru_pages(zone, sc, l);
 		if (priority || noswap) {
 			scan >>= priority;
+			if (!scan && force_scan)
+				scan = SWAP_CLUSTER_MAX;
 			scan = div64_u64(scan * fraction[file], denominator);
-		}
-
-		/*
-		 * If zone is small or memcg is small, nr[l] can be 0.
-		 * This results no-scan on this priority and priority drop down.
-		 * For global direct reclaim, it can visit next zone and tend
-		 * not to have problems. For global kswapd, it's for zone
-		 * balancing and it need to scan a small amounts. When using
-		 * memcg, priority drop can cause big latency. So, it's better
-		 * to scan small amount. See may_noscan above.
-		 */
-		if (!scan && force_scan) {
-			if (file)
-				scan = SWAP_CLUSTER_MAX;
-			else if (!noswap)
-				scan = SWAP_CLUSTER_MAX;
 		}
 		nr[l] = scan;
 	}
@@ -2513,6 +2504,9 @@ loop_again:
 					high_wmark_pages(zone), 0, 0)) {
 				end_zone = i;
 				break;
+			} else {
+				/* If balanced, clear the congested flag */
+				zone_clear_flag(zone, ZONE_CONGESTED);
 			}
 		}
 		if (i < 0)
@@ -2652,8 +2646,12 @@ loop_again:
 	}
 out:
 
-	/* FIXME: Do we need to loop_again also if we have not achieved our
-	 * pagecache target? i.e. && pagecache_over_limit(0) > 0 */
+	/* We do not need to loop_again if we have not achieved our
+	 * pagecache target (i.e. && pagecache_over_limit(0) > 0) because
+	 * the limit will be checked next time a page is added to the page
+	 * cache. This might cause a short stall but we should rather not
+	 * keep kswapd awake.
+	 */
 	/*
 	 * order-0: All zones must meet high watermark for a balanced node
 	 * high-order: Balanced zones must make up at least 25% of the node
@@ -2999,13 +2997,22 @@ static void shrink_all_zones(unsigned long nr_pages, int prio,
 				continue;
 
 			/* Original code relied on nr_saved_scan which is no
-			 * longer present so we are doing just a raw estimation
-			 * TODO: Is this OK?
+			 * longer present so we are just considering LRU pages.
+			 * This means that the zone has to have quite large
+			 * LRU list for default priority and minimum nr_pages
+			 * size (8*SWAP_CLUSTER_MAX). In the end we will tend
+			 * to reclaim more from large zones wrt. small.
+			 * This should be OK because shrink_page_cache is called
+			 * when we are getting to short memory condition so
+			 * LRUs tend to be large.
 			 */
 			if (((lru_pages >> prio) + 1) >= nr_pages || pass > 3) {
 				unsigned long nr_to_scan;
 
 				nr_to_scan = min(nr_pages, lru_pages);
+				/* shrink_list takes lru_lock with IRQ off so we
+				 * should be careful about really huge nr_to_scan
+				 */
 				nr_reclaimed += shrink_list(l, nr_to_scan, zone,
 								sc, prio);
 				if (nr_reclaimed >= nr_pages) {

@@ -100,7 +100,7 @@ static struct xfrm_mode xfrm6_tunnel_mode = {
 	.flags = XFRM_MODE_FLAG_TUNNEL,
 };
 
-static int __init xfrm6_mode_tunnel_init(void)
+static int  xfrm6_mode_tunnel_init(void)
 {
 	return xfrm_register_mode(&xfrm6_tunnel_mode, AF_INET6);
 }

@@ -2284,7 +2284,7 @@ static struct pernet_operations tcpv6_net_ops = {
 	.exit_batch = tcpv6_net_exit_batch,
 };
 
-int __init tcpv6_init(void)
+int  tcpv6_init(void)
 {
 	int ret;
 

@@ -2873,7 +2873,7 @@ static struct notifier_block ip6_route_dev_notifier = {
 	.priority = 0,
 };
 
-int __init ip6_route_init(void)
+int  ip6_route_init(void)
 {
 	int ret;
 

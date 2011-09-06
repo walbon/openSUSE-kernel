@@ -782,43 +782,56 @@ extern void device_shutdown(void);
 /* debugging and troubleshooting/diagnostic helpers. */
 extern const char *dev_driver_string(const struct device *dev);
 
-
 #ifdef CONFIG_PRINTK
 
-#if defined(KMSG_COMPONENT) && (defined(CONFIG_KMSG_IDS) || defined(__KMSG_CHECKER))
-/* dev_printk_hash for message documentation */
 #if defined(__KMSG_CHECKER) && defined(KMSG_COMPONENT)
 
 /* generate magic string for scripts/kmsg-doc to parse */
-#define dev_printk_hash(level, dev, format, arg...) \
-	__KMSG_DEV(level _FMT_ format _ARGS_ dev, ## arg _END_)
+#define dev_emerg(dev, format, arg...)		\
+	__KMSG_DEV(KERN_EMERG _FMT_ format _ARGS_ dev, ## arg _END_)
+#define dev_alert(dev, format, arg...)		\
+	__KMSG_DEV(KERN_ALERT _FMT_ format _ARGS_ dev, ## arg _END_)
+#define dev_crit(dev, format, arg...)		\
+	__KMSG_DEV(KERN_CRIT _FMT_ format _ARGS_ dev, ## arg _END_)
+#define dev_err(dev, format, arg...)		\
+	__KMSG_DEV(KERN_ERR _FMT_ format _ARGS_ dev, ## arg _END_)
+#define dev_warn(dev, format, arg...)		\
+	__KMSG_DEV(KERN_WARNING _FMT_ format _ARGS_ dev, ## arg _END_)
+#define dev_notice(dev, format, arg...)		\
+	__KMSG_DEV(KERN_NOTICE _FMT_ format _ARGS_ dev, ## arg _END_)
+#define _dev_info(dev, format, arg...)		\
+	__KMSG_DEV(KERN_INFO _FMT_ format _ARGS_ dev, ## arg _END_)
 
 #elif defined(CONFIG_KMSG_IDS) && defined(KMSG_COMPONENT)
 
-int printk_dev_hash(const char *, const char *, const char *, ...);
-#define dev_printk_hash(level, dev, format, arg...) \
-	printk_dev_hash(level "%s.%06x: ", dev_driver_string(dev), \
-			"%s: " format, dev_name(dev), ## arg)
+extern int dev_printk_hash(const char *level, const struct device *dev,
+			   const char *fmt, ...);
+extern int dev_emerg_hash(const struct device *dev, const char *fmt, ...)
+	__attribute__ ((format (printf, 2, 3)));
+extern int dev_alert_hash(const struct device *dev, const char *fmt, ...)
+	__attribute__ ((format (printf, 2, 3)));
+extern int dev_crit_hash(const struct device *dev, const char *fmt, ...)
+	__attribute__ ((format (printf, 2, 3)));
+extern int dev_err_hash(const struct device *dev, const char *fmt, ...)
+	__attribute__ ((format (printf, 2, 3)));
+extern int dev_warn_hash(const struct device *dev, const char *fmt, ...)
+	__attribute__ ((format (printf, 2, 3)));
+extern int dev_notice_hash(const struct device *dev, const char *fmt, ...)
+	__attribute__ ((format (printf, 2, 3)));
+extern int _dev_info_hash(const struct device *dev, const char *fmt, ...)
+	__attribute__ ((format (printf, 2, 3)));
 
-#endif
+#define dev_printk dev_printk_hash
+#define dev_emerg dev_emerg_hash
+#define dev_alert dev_alert_hash
+#define dev_crit dev_crit_hash
+#define dev_err dev_err_hash
+#define dev_warn dev_warn_hash
+#define dev_notice dev_notice_hash
+#define _dev_info _dev_info_hash
 
-#define dev_printk(level, dev, format, arg...)          \
-        dev_printk_hash(level , dev , format , ## arg)
-#define dev_emerg(dev, format, arg...)		\
-	dev_printk_hash(KERN_EMERG , dev , format , ## arg)
-#define dev_alert(dev, format, arg...)		\
-	dev_printk_hash(KERN_ALERT , dev , format , ## arg)
-#define dev_crit(dev, format, arg...)		\
-	dev_printk_hash(KERN_CRIT , dev , format , ## arg)
-#define dev_err(dev, format, arg...)		\
-	dev_printk_hash(KERN_ERR , dev , format , ## arg)
-#define dev_warn(dev, format, arg...)		\
-	dev_printk_hash(KERN_WARNING , dev , format , ## arg)
-#define dev_notice(dev, format, arg...)		\
-	dev_printk_hash(KERN_NOTICE , dev , format , ## arg)
-#define _dev_info(dev, format, arg...)		\
-	dev_printk_hash(KERN_INFO , dev , format , ## arg)
-#else
+#else /* !defined(CONFIG_KMSG_IDS) */
+
 extern int dev_printk(const char *level, const struct device *dev,
 		      const char *fmt, ...)
 	__attribute__ ((format (printf, 3, 4)));
@@ -836,8 +849,10 @@ extern int dev_notice(const struct device *dev, const char *fmt, ...)
 	__attribute__ ((format (printf, 2, 3)));
 extern int _dev_info(const struct device *dev, const char *fmt, ...)
 	__attribute__ ((format (printf, 2, 3)));
-#endif
-#else
+
+#endif /* !defined(CONFIG_KMSG_IDS) */
+
+#else /* !defined(CONFIG_PRINTK) */
 
 static inline int dev_printk(const char *level, const struct device *dev,
 		      const char *fmt, ...)
@@ -875,7 +890,7 @@ static inline int _dev_info(const struct device *dev, const char *fmt, ...)
 static inline int _dev_info(const struct device *dev, const char *fmt, ...)
 	{ return 0; }
 
-#endif
+#endif /* !defined(CONFIG_PRINTK) */
 
 /*
  * Stupid hackaround for existing uses of non-printk uses dev_info

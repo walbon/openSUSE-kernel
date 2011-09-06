@@ -30,7 +30,6 @@
 #include <linux/sysctl.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
-#include <linux/dmi.h>
 #include <acpi/acpi_bus.h>
 #include <linux/completion.h>
 
@@ -46,7 +45,6 @@ static struct tasklet_struct event_dpc;
 unsigned int vmbus_loglevel = (ALL_MODULES << 16 | INFO_LVL);
 EXPORT_SYMBOL(vmbus_loglevel);
 
-static int suse_no_dmi;
 static struct completion probe_event;
 static int irq;
 
@@ -95,6 +93,14 @@ static void get_channel_info(struct hv_device *device,
 		debug_info.outbound.bytes_avail_towrite;
 }
 
+#define VMBUS_ALIAS_LEN ((sizeof((struct hv_vmbus_device_id *)0)->guid) * 2)
+static void print_alias_name(struct hv_device *hv_dev, char *alias_name)
+{
+	int i;
+	for (i = 0; i < VMBUS_ALIAS_LEN; i += 2)
+		sprintf(&alias_name[i], "%02x", hv_dev->dev_type.b[i/2]);
+}
+
 /*
  * vmbus_show_device_attr - Show the device attribute in sysfs.
  *
@@ -107,6 +113,7 @@ static ssize_t vmbus_show_device_attr(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_device_info device_info;
+	char alias_name[VMBUS_ALIAS_LEN + 1];
 
 	memset(&device_info, 0, sizeof(struct hv_device_info));
 
@@ -150,6 +157,9 @@ static ssize_t vmbus_show_device_attr(struct device *dev,
 			       device_info.chn_instance.b[13],
 			       device_info.chn_instance.b[14],
 			       device_info.chn_instance.b[15]);
+	} else if (!strcmp(dev_attr->attr.name, "modalias")) {
+		print_alias_name(hv_dev, alias_name);
+		return sprintf(buf, "vmbus:%s\n", alias_name);
 	} else if (!strcmp(dev_attr->attr.name, "state")) {
 		return sprintf(buf, "%d\n", device_info.chn_state);
 	} else if (!strcmp(dev_attr->attr.name, "id")) {
@@ -206,6 +216,7 @@ static struct device_attribute vmbus_device_attrs[] = {
 	__ATTR(class_id, S_IRUGO, vmbus_show_device_attr, NULL),
 	__ATTR(device_id, S_IRUGO, vmbus_show_device_attr, NULL),
 	__ATTR(monitor_id, S_IRUGO, vmbus_show_device_attr, NULL),
+	__ATTR(modalias, S_IRUGO, vmbus_show_device_attr, NULL),
 
 	__ATTR(server_monitor_pending, S_IRUGO, vmbus_show_device_attr, NULL),
 	__ATTR(server_monitor_latency, S_IRUGO, vmbus_show_device_attr, NULL),
@@ -244,12 +255,10 @@ static struct device_attribute vmbus_device_attrs[] = {
 static int vmbus_uevent(struct device *device, struct kobj_uevent_env *env)
 {
 	struct hv_device *dev = device_to_hv_device(device);
-	int i, ret;
-	char alias_name[((sizeof((struct hv_vmbus_device_id *)0)->guid) + 1) * 2];
+	int ret;
+	char alias_name[VMBUS_ALIAS_LEN + 1];
 
-	for (i = 0; i < ((sizeof((struct hv_vmbus_device_id *)0)->guid) * 2); i += 2)
-		sprintf(&alias_name[i], "%02x", dev->dev_type.b[i/2]);
-
+	print_alias_name(dev, alias_name);
 	ret = add_uevent_var(env, "MODALIAS=vmbus:%s", alias_name);
 	return ret;
 }
@@ -697,27 +706,9 @@ static struct acpi_driver vmbus_acpi_driver = {
 	},
 };
 
-static const struct dmi_system_id __initconst
-hv_vmbus_dmi_table[] __maybe_unused  = {
-	{
-		.ident = "Hyper-V",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Virtual Machine"),
-			DMI_MATCH(DMI_BOARD_NAME, "Virtual Machine"),
-		},
-	},
-	{ },
-};
-MODULE_DEVICE_TABLE(dmi, hv_vmbus_dmi_table);
-
 static int __init hv_acpi_init(void)
 {
 	int ret, t;
-
-	/* Do not stall 5 seconds */
-	if (!suse_no_dmi && !dmi_check_system(hv_vmbus_dmi_table))
-		return -ENODEV;
 
 	init_completion(&probe_event);
 
@@ -756,6 +747,5 @@ cleanup:
 MODULE_LICENSE("GPL");
 MODULE_VERSION(HV_DRV_VERSION);
 module_param(vmbus_loglevel, int, S_IRUGO|S_IWUSR);
-module_param(suse_no_dmi, int, S_IRUGO|S_IWUSR);
 
 module_init(hv_acpi_init);

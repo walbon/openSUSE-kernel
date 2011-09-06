@@ -330,7 +330,7 @@ static struct pernet_operations ipv6_proc_ops = {
 	.exit = ipv6_proc_exit_net,
 };
 
-int __init ipv6_misc_proc_init(void)
+int  ipv6_misc_proc_init(void)
 {
 	return register_pernet_subsys(&ipv6_proc_ops);
 }

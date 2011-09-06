@@ -3098,7 +3098,7 @@ static struct pernet_operations if6_proc_net_ops = {
        .exit = if6_proc_net_exit,
 };
 
-int __init if6_proc_init(void)
+int  if6_proc_init(void)
 {
 	return register_pernet_subsys(&if6_proc_net_ops);
 }
@@ -4643,7 +4643,7 @@ static struct rtnl_af_ops inet6_ops = {
  *	Init / cleanup code
  */
 
-int __init addrconf_init(void)
+int  addrconf_init(void)
 {
 	int i, err;
 

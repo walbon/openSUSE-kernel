@@ -725,7 +725,7 @@ static struct pernet_operations ip6_frags_ops = {
 	.exit = ipv6_frags_exit_net,
 };
 
-int __init ipv6_frag_init(void)
+int  ipv6_frag_init(void)
 {
 	int ret;
 

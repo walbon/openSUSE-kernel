@@ -187,7 +187,7 @@ static const struct inet6_protocol ipcomp6_protocol =
 	.flags		= INET6_PROTO_NOPOLICY,
 };
 
-static int __init ipcomp6_init(void)
+static int  ipcomp6_init(void)
 {
 	if (xfrm_register_type(&ipcomp6_type, AF_INET6) < 0) {
 		printk(KERN_INFO "ipcomp6 init: can't add xfrm type\n");
