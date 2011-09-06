@@ -789,6 +789,12 @@ struct file *open_exec(const char *name)
 
 	fsnotify_open(file);
 
+	if (file->f_op && file->f_op->open_exec) {
+		err = file->f_op->open_exec(file->f_path.dentry->d_inode);
+		if (err)
+			goto exit;
+	}
+
 	err = deny_write_access(file);
 	if (err)
 		goto exit;
