@@ -1169,37 +1169,58 @@ void mark_rodata_ro(void)
 	unsigned long rodata_end = PAGE_ALIGN((unsigned long) &__end_rodata);
 	unsigned long data_start = (unsigned long) &_sdata;
 
-	printk(KERN_INFO "Write protecting the kernel read-only data: %luk\n",
-	       (end - start) >> 10);
-	set_memory_ro(start, (end - start) >> PAGE_SHIFT);
+	if (!kernel_set_to_readonly) {
+		printk(KERN_INFO "Write protecting the kernel read-only data: %luk\n",
+		       (end - start) >> 10);
+		set_memory_ro(start, (end - start) >> PAGE_SHIFT);
 
-	kernel_set_to_readonly = 1;
+		kernel_set_to_readonly = 1;
 
-	/*
-	 * The rodata section (but not the kernel text!) should also be
-	 * not-executable.
-	 */
-	set_memory_nx(rodata_start, (end - rodata_start) >> PAGE_SHIFT);
+		/*
+		 * The rodata section (but not the kernel text!) should also be
+		 * not-executable.
+		 */
+		set_memory_nx(rodata_start, (end - rodata_start) >> PAGE_SHIFT);
 
-	rodata_test();
+		rodata_test();
 
 #ifdef CONFIG_CPA_DEBUG
-	printk(KERN_INFO "Testing CPA: undo %lx-%lx\n", start, end);
-	set_memory_rw(start, (end-start) >> PAGE_SHIFT);
+		printk(KERN_INFO "Testing CPA: undo %lx-%lx\n", start, end);
+		set_memory_rw(start, (end-start) >> PAGE_SHIFT);
 
-	printk(KERN_INFO "Testing CPA: again\n");
-	set_memory_ro(start, (end-start) >> PAGE_SHIFT);
+		printk(KERN_INFO "Testing CPA: again\n");
+		set_memory_ro(start, (end-start) >> PAGE_SHIFT);
 #endif
 
-	free_init_pages("unused kernel memory",
-			(unsigned long) page_address(virt_to_page(text_end)),
-			(unsigned long)
+		free_init_pages("unused kernel memory",
+				(unsigned long)
+				 page_address(virt_to_page(text_end)),
+				(unsigned long)
 				 page_address(virt_to_page(rodata_start)));
-	free_init_pages("unused kernel memory",
-			(unsigned long) page_address(virt_to_page(rodata_end)),
-			(unsigned long) page_address(virt_to_page(data_start)));
+		free_init_pages("unused kernel memory",
+				(unsigned long)
+				 page_address(virt_to_page(rodata_end)),
+				(unsigned long)
+				 page_address(virt_to_page(data_start)));
+	} else {
+		printk(KERN_INFO "Write protecting the kernel read-only data: %luk\n",
+		       (rodata_end - rodata_start) >> 10);
+		set_memory_ro(rodata_start, (rodata_end - rodata_start) >> PAGE_SHIFT);
+	}
 }
+EXPORT_SYMBOL_GPL(mark_rodata_ro);
 
+void mark_rodata_rw(void)
+{
+	unsigned long rodata_start =
+		((unsigned long)__start_rodata + PAGE_SIZE - 1) & PAGE_MASK;
+	unsigned long rodata_end = PAGE_ALIGN((unsigned long) &__end_rodata);
+
+	printk(KERN_INFO "Write un-protecting the kernel read-only data: %luk\n",
+	       (rodata_end - rodata_start) >> 10);
+	set_memory_rw_force(rodata_start, (rodata_end - rodata_start) >> PAGE_SHIFT);
+}
+EXPORT_SYMBOL_GPL(mark_rodata_rw);
 #endif
 
 int kern_addr_valid(unsigned long addr)
