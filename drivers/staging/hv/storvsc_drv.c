@@ -1333,7 +1333,8 @@ static DEF_SCSI_QCMD(storvsc_queuecommand)
 /* Scsi driver */
 static struct scsi_host_template scsi_driver = {
 	.module	=		THIS_MODULE,
-	.name =			"storvsc_host_t",
+	.name =			"hv_storvsc",
+	.proc_name =		"hv_storvsc",
 	.bios_param =		storvsc_get_chs,
 	.queuecommand =		storvsc_queuecommand,
 	.eh_host_reset_handler =	storvsc_host_reset_handler,
