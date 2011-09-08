@@ -55,6 +55,7 @@ int vbd_create(blkif_t *blkif, blkif_vdev_t handle, unsigned major,
 {
 	struct vbd *vbd;
 	struct block_device *bdev;
+	struct request_queue *q;
 
 	vbd = &blkif->vbd;
 	vbd->handle   = handle; 
@@ -89,6 +90,10 @@ int vbd_create(blkif_t *blkif, blkif_vdev_t handle, unsigned major,
 		vbd->type |= VDISK_CDROM;
 	if (vbd->bdev->bd_disk->flags & GENHD_FL_REMOVABLE)
 		vbd->type |= VDISK_REMOVABLE;
+
+	q = bdev_get_queue(bdev);
+	if (q && q->flush_flags)
+		vbd->flush_support = true;
 
 	DPRINTK("Successful creation of handle=%04x (dom=%u)\n",
 		handle, blkif->domid);

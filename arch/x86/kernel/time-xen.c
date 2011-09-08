@@ -284,7 +284,6 @@ int xen_update_wallclock(const struct timespec *tv)
 
 	return 0;
 }
-#endif
 
 static void sync_xen_wallclock(unsigned long dummy);
 static DEFINE_TIMER(sync_xen_wallclock_timer, sync_xen_wallclock, 0, 0);
@@ -311,6 +310,7 @@ static void sync_xen_wallclock(unsigned long dummy)
 	/* Once per minute. */
 	mod_timer(&sync_xen_wallclock_timer, jiffies + 60*HZ);
 }
+#endif /* CONFIG_XEN_PRIVILEGED_GUEST */
 
 unsigned long long xen_local_clock(void)
 {
@@ -358,7 +358,9 @@ int xen_write_wallclock(unsigned long now)
 	if (!is_initial_xendomain() || independent_wallclock)
 		return 0;
 
+#ifdef CONFIG_XEN_PRIVILEGED_GUEST
 	mod_timer(&sync_xen_wallclock_timer, jiffies + 1);
+#endif
 
 	return mach_set_rtc_mmss(now);
 }
