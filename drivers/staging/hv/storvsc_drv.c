@@ -42,6 +42,8 @@
 
 #include "hyperv.h"
 
+#define MODULE_NAME "hv_storvsc"
+
 #define STORVSC_RING_BUFFER_SIZE			(20*PAGE_SIZE)
 static int storvsc_ringbuffer_size = STORVSC_RING_BUFFER_SIZE;
 
@@ -546,7 +548,7 @@ static void storvsc_on_io_completion(struct hv_device *device,
 		/* CHECK_CONDITION */
 		if (vstor_packet->vm_srb.srb_status & 0x80) {
 			/* autosense data available */
-			DPRINT_WARN(STORVSC, "storvsc pkt %p autosense data "
+			DPRINT_WARN(STORVSC, MODULE_NAME " pkt %p autosense data "
 				    "valid - len %d\n", request,
 				    vstor_packet->vm_srb.sense_info_length);
 
@@ -1164,7 +1166,7 @@ static void storvsc_command_completion(struct hv_storvsc_request *request)
 	if (scmnd->result) {
 		if (scsi_normalize_sense(scmnd->sense_buffer,
 				SCSI_SENSE_BUFFERSIZE, &sense_hdr))
-			scsi_print_sense_hdr("storvsc", &sense_hdr);
+			scsi_print_sense_hdr(MODULE_NAME, &sense_hdr);
 	}
 
 	scsi_set_resid(scmnd,
@@ -1333,8 +1335,8 @@ static DEF_SCSI_QCMD(storvsc_queuecommand)
 /* Scsi driver */
 static struct scsi_host_template scsi_driver = {
 	.module	=		THIS_MODULE,
-	.name =			"hv_storvsc",
-	.proc_name =		"hv_storvsc",
+	.name =			MODULE_NAME,
+	.proc_name =		MODULE_NAME,
 	.bios_param =		storvsc_get_chs,
 	.queuecommand =		storvsc_queuecommand,
 	.eh_host_reset_handler =	storvsc_host_reset_handler,
@@ -1468,7 +1470,7 @@ err_out:
 /* The one and only one */
 
 static struct hv_driver storvsc_drv = {
-	.name = "storvsc",
+	.name = MODULE_NAME,
 	.id_table = id_table,
 	.probe = storvsc_probe,
 	.remove = storvsc_remove,
