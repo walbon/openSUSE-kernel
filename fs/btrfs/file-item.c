@@ -212,9 +212,10 @@ static int __btrfs_lookup_bio_sums(struct btrfs_root *root,
 				sum = 0;
 				if (BTRFS_I(inode)->root->root_key.objectid ==
 				    BTRFS_DATA_RELOC_TREE_OBJECTID) {
-					set_extent_bits(io_tree, offset,
+					ret = set_extent_bits(io_tree, offset,
 						offset + bvec->bv_len - 1,
 						EXTENT_NODATASUM, GFP_NOFS);
+					BUG_ON(ret < 0);
 				} else {
 					printk(KERN_INFO "btrfs no csum found "
 					       "for inode %llu start %llu\n",
