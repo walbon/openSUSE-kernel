@@ -92,12 +92,6 @@ int generic_swap_writepage(struct page *page, struct writeback_control *wbc)
 	struct bio *bio;
 	int rw = WRITE;
 
-	if (frontswap_put_page(page) == 0) {
-		set_page_writeback(page);
-		unlock_page(page);
-		end_page_writeback(page);
-		return 0;
-	}
 	bio = get_swap_bio(GFP_NOIO, page, end_swap_bio_write);
 	if (bio == NULL) {
 		set_page_dirty(page);
@@ -117,11 +111,6 @@ int generic_swap_writepage(struct page *page, struct writeback_control *wbc)
 int generic_swap_readpage(struct page *page)
 {
 	struct bio *bio;
-	if (frontswap_get_page(page) == 0) {
-		SetPageUptodate(page);
-		unlock_page(page);
-		return 0;
-	}
 	bio = get_swap_bio(GFP_KERNEL, page, end_swap_bio_read);
 	if (bio == NULL) {
 		unlock_page(page);
@@ -240,6 +229,13 @@ int swap_writepage(struct page *page, struct writeback_control *wbc)
 		return ret;
 	}
 
+	if (frontswap_put_page(page) == 0) {
+		set_page_writeback(page);
+		unlock_page(page);
+		end_page_writeback(page);
+		return 0;
+	}
+
 	swap_file = sis->swap_file;
 	mapping = swap_file->f_mapping;
 	if (mapping->a_ops->swap_writepage) {
@@ -261,6 +257,12 @@ int swap_readpage(struct page *page)
 
 	VM_BUG_ON(!PageLocked(page));
 	VM_BUG_ON(PageUptodate(page));
+
+	if (frontswap_get_page(page) == 0) {
+		SetPageUptodate(page);
+		unlock_page(page);
+		return 0;
+	}
 
 	swap_file = sis->swap_file;
 	mapping = swap_file->f_mapping;

@@ -24,6 +24,7 @@
 #include "xfs_sb.h"
 #include "xfs_ag.h"
 #include "xfs_dir2.h"
+#include "xfs_dmapi.h"
 #include "xfs_mount.h"
 #include "xfs_da_btree.h"
 #include "xfs_bmap_btree.h"
@@ -114,6 +115,18 @@ xfs_rename(
 	int		num_inodes;
 
 	trace_xfs_rename(src_dp, target_dp, src_name, target_name);
+
+	if (DM_EVENT_ENABLED(src_dp, DM_EVENT_RENAME) ||
+	    DM_EVENT_ENABLED(target_dp, DM_EVENT_RENAME)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_RENAME,
+					src_dp, DM_RIGHT_NULL,
+					target_dp, DM_RIGHT_NULL,
+					src_name->name, target_name->name,
+					0, 0, 0);
+		if (error)
+			return error;
+	}
+	/* Return through std_return after this point. */
 
 	new_parent = (src_dp != target_dp);
 	src_is_directory = ((src_ip->i_d.di_mode & S_IFMT) == S_IFDIR);
@@ -346,13 +359,26 @@ xfs_rename(
 	 * trans_commit will unlock src_ip, target_ip & decrement
 	 * the vnode references.
 	 */
-	return xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
+	error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
+
+	/* Fall through to std_return with error = 0 or errno from
+	 * xfs_trans_commit	 */
+std_return:
+	if (DM_EVENT_ENABLED(src_dp, DM_EVENT_POSTRENAME) ||
+	    DM_EVENT_ENABLED(target_dp, DM_EVENT_POSTRENAME)) {
+		(void) XFS_SEND_NAMESP (mp, DM_EVENT_POSTRENAME,
+					src_dp, DM_RIGHT_NULL,
+					target_dp, DM_RIGHT_NULL,
+					src_name->name, target_name->name,
+					0, error, 0);
+	}
+	return error;
 
  abort_return:
 	cancel_flags |= XFS_TRANS_ABORT;
+	/* FALLTHROUGH */
  error_return:
 	xfs_bmap_cancel(&free_list);
 	xfs_trans_cancel(tp, cancel_flags);
- std_return:
-	return error;
+	goto std_return;
 }

@@ -1852,7 +1852,7 @@ static struct pernet_operations ndisc_net_ops = {
 	.exit = ndisc_net_exit,
 };
 
-int __init ndisc_init(void)
+int  ndisc_init(void)
 {
 	int err;
 

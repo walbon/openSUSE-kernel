@@ -54,7 +54,7 @@ static int btrfs_destroy_ordered_extents(struct btrfs_root *root);
 static int btrfs_destroy_delayed_refs(struct btrfs_transaction *trans,
 				      struct btrfs_root *root);
 static int btrfs_destroy_pending_snapshots(struct btrfs_transaction *t);
-static int btrfs_destroy_delalloc_inodes(struct btrfs_root *root);
+static void btrfs_destroy_delalloc_inodes(struct btrfs_root *root);
 static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 					struct extent_io_tree *dirty_pages,
 					int mark);
@@ -326,13 +326,14 @@ static int verify_parent_transid(struct extent_io_tree *io_tree,
 				 struct extent_buffer *eb, u64 parent_transid)
 {
 	struct extent_state *cached_state = NULL;
-	int ret;
+	int ret, err;
 
 	if (!parent_transid || btrfs_header_generation(eb) == parent_transid)
 		return 0;
 
-	lock_extent_bits(io_tree, eb->start, eb->start + eb->len - 1,
-			 0, &cached_state, GFP_NOFS);
+	ret = lock_extent_bits(io_tree, eb->start, eb->start + eb->len - 1,
+			       0, &cached_state, GFP_NOFS);
+	BUG_ON(ret < 0);
 	if (extent_buffer_uptodate(io_tree, eb, cached_state) &&
 	    btrfs_header_generation(eb) == parent_transid) {
 		ret = 0;
@@ -346,8 +347,9 @@ static int verify_parent_transid(struct extent_io_tree *io_tree,
 	ret = 1;
 	clear_extent_buffer_uptodate(io_tree, eb, &cached_state);
 out:
-	unlock_extent_cached(io_tree, eb->start, eb->start + eb->len - 1,
-			     &cached_state, GFP_NOFS);
+	err = unlock_extent_cached(io_tree, eb->start, eb->start + eb->len - 1,
+				   &cached_state, GFP_NOFS);
+	BUG_ON(err < 0);
 	return ret;
 }
 
@@ -809,9 +811,9 @@ static int btree_submit_bio_hook(struct inode *inode, int rw, struct bio *bio,
 {
 	int ret;
 
-	ret = btrfs_bio_wq_end_io(BTRFS_I(inode)->root->fs_info,
-					  bio, 1);
-	BUG_ON(ret);
+	ret = btrfs_bio_wq_end_io(BTRFS_I(inode)->root->fs_info, bio, 1);
+	if (ret)
+		return ret;
 
 	if (!(rw & REQ_WRITE)) {
 		/*
@@ -1056,10 +1058,9 @@ int clean_tree_block(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 	return 0;
 }
 
-static int __setup_root(u32 nodesize, u32 leafsize, u32 sectorsize,
-			u32 stripesize, struct btrfs_root *root,
-			struct btrfs_fs_info *fs_info,
-			u64 objectid)
+static void __setup_root(u32 nodesize, u32 leafsize, u32 sectorsize,
+			 u32 stripesize, struct btrfs_root *root,
+			 struct btrfs_fs_info *fs_info, u64 objectid)
 {
 	root->node = NULL;
 	root->commit_root = NULL;
@@ -1117,7 +1118,6 @@ static int __setup_root(u32 nodesize, u32 leafsize, u32 sectorsize,
 	INIT_LIST_HEAD(&root->anon_super.s_instances);
 	init_rwsem(&root->anon_super.s_umount);
 
-	return 0;
 }
 
 static int find_and_setup_root(struct btrfs_root *tree_root,
@@ -2942,7 +2942,7 @@ static int btrfs_destroy_pending_snapshots(struct btrfs_transaction *t)
 	return 0;
 }
 
-static int btrfs_destroy_delalloc_inodes(struct btrfs_root *root)
+static void btrfs_destroy_delalloc_inodes(struct btrfs_root *root)
 {
 	struct btrfs_inode *btrfs_inode;
 	struct list_head splice;
@@ -2962,8 +2962,6 @@ static int btrfs_destroy_delalloc_inodes(struct btrfs_root *root)
 	}
 
 	spin_unlock(&root->fs_info->delalloc_lock);
-
-	return 0;
 }
 
 static int btrfs_destroy_marked_extents(struct btrfs_root *root,
@@ -2985,7 +2983,9 @@ static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 		if (ret)
 			break;
 
-		clear_extent_bits(dirty_pages, start, end, mark, GFP_NOFS);
+		ret = clear_extent_bits(dirty_pages, start, end, mark,
+					GFP_NOFS);
+		BUG_ON(ret < 0);
 		while (start <= end) {
 			index = start >> PAGE_CACHE_SHIFT;
 			start = (u64)(index + 1) << PAGE_CACHE_SHIFT;
@@ -3046,7 +3046,8 @@ static int btrfs_destroy_pinned_extent(struct btrfs_root *root,
 							 end + 1 - start,
 							 NULL);
 
-		clear_extent_dirty(unpin, start, end, GFP_NOFS);
+		ret = clear_extent_dirty(unpin, start, end, GFP_NOFS);
+		BUG_ON(ret < 0);
 		btrfs_error_unpin_extent_range(root, start, end);
 		cond_resched();
 	}

@@ -116,7 +116,7 @@ static struct xfrm_mode xfrm6_beet_mode = {
 	.flags = XFRM_MODE_FLAG_TUNNEL,
 };
 
-static int __init xfrm6_beet_init(void)
+static int  xfrm6_beet_init(void)
 {
 	return xfrm_register_mode(&xfrm6_beet_mode, AF_INET6);
 }

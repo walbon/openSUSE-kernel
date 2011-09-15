@@ -636,7 +636,9 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
 		if (ret)
 			break;
 
-		clear_extent_bits(dirty_pages, start, end, mark, GFP_NOFS);
+		ret = clear_extent_bits(dirty_pages, start, end,
+					mark, GFP_NOFS);
+		BUG_ON(ret < 0);
 		while (start <= end) {
 			index = start >> PAGE_CACHE_SHIFT;
 			start = (u64)(index + 1) << PAGE_CACHE_SHIFT;
@@ -1396,6 +1398,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
  */
 int btrfs_clean_old_snapshots(struct btrfs_root *root)
 {
+	int ret;
 	LIST_HEAD(list);
 	struct btrfs_fs_info *fs_info = root->fs_info;
 
@@ -1411,9 +1414,10 @@ int btrfs_clean_old_snapshots(struct btrfs_root *root)
 
 		if (btrfs_header_backref_rev(root->node) <
 		    BTRFS_MIXED_BACKREF_REV)
-			btrfs_drop_snapshot(root, NULL, 0);
+			ret = btrfs_drop_snapshot(root, NULL, 0);
 		else
-			btrfs_drop_snapshot(root, NULL, 1);
+			ret = btrfs_drop_snapshot(root, NULL, 1);
+		BUG_ON(ret);
 	}
 	return 0;
 }

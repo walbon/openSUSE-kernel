@@ -267,18 +267,6 @@ static int __init init_extcntl(void)
 }
 arch_initcall(init_extcntl);
 
-bool processor_extcntl_has_mwait(void)
-{
-	u32 eax, ecx;
-
-	if (!(xen_start_info->flags & (XEN_PROCESSOR_PM_CX << 8)))
-		return false;
-
-	asm("cpuid" : "=a" (eax), "=c" (ecx) : "0" (1) : "edx", "ebx");
-
-	return ecx & (1 << (X86_FEATURE_MWAIT % 32));
-}
-
 unsigned int cpufreq_quick_get(unsigned int cpu)
 {
 	xen_platform_op_t op;

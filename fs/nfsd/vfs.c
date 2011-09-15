@@ -389,6 +389,15 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
 			put_write_access(inode);
 			goto out_nfserr;
 		}
+
+		/*
+		 * Tell a Hierarchical Storage Manager (e.g. via DMAPI) to
+		 * return EAGAIN when an action would take minutes instead of
+		 * milliseconds so that NFS can reply to the client with
+		 * NFSERR_JUKEBOX instead of blocking an nfsd thread.
+		 */
+		if (rqstp->rq_vers >= 3)
+			iap->ia_valid |= ATTR_NO_BLOCK;
 	}
 
 	/* sanitize the mode change */
@@ -425,6 +434,9 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
 		fh_lock(fhp);
 
 		host_err = notify_change(dentry, iap);
+		/* to get NFSERR_JUKEBOX on the wire, need -ETIMEDOUT */
+		if (host_err == -EAGAIN)
+			host_err = -ETIMEDOUT;
 		err = nfserrno(host_err);
 		fh_unlock(fhp);
 	}
@@ -883,6 +895,10 @@ nfsd_vfs_read(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
 
 	err = nfserr_perm;
 
+	/* Support HSMs -- see comment in nfsd_setattr() */
+	if (rqstp->rq_vers >= 3)
+		file->f_flags |= O_NONBLOCK;
+
 	if (file->f_op->splice_read && rqstp->rq_splice_ok) {
 		struct splice_desc sd = {
 			.len		= 0,
@@ -905,8 +921,12 @@ nfsd_vfs_read(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
 		*count = host_err;
 		err = 0;
 		fsnotify_access(file);
-	} else 
+	} else {
+		/* to get NFSERR_JUKEBOX on the wire, need -ETIMEDOUT */
+		if (host_err == -EAGAIN)
+			host_err = -ETIMEDOUT;
 		err = nfserrno(host_err);
+	}
 	return err;
 }
 
@@ -998,6 +1018,10 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
 		spin_unlock(&file->f_lock);
 	}
 
+	/* Support HSMs -- see comment in nfsd_setattr() */
+	if (rqstp->rq_vers >= 3)
+		file->f_flags |= O_NONBLOCK;
+
 	/* Write the data. */
 	oldfs = get_fs(); set_fs(KERNEL_DS);
 	host_err = vfs_writev(file, (struct iovec __user *)vec, vlen, &offset);
@@ -1019,8 +1043,12 @@ out_nfserr:
 	dprintk("nfsd: write complete host_err=%d\n", host_err);
 	if (host_err >= 0)
 		err = 0;
-	else
+	else {
+		/* to get NFSERR_JUKEBOX on the wire, need -ETIMEDOUT */
+		if (host_err == -EAGAIN)
+			host_err = -ETIMEDOUT;
 		err = nfserrno(host_err);
+	}
 	return err;
 }
 

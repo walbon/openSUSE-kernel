@@ -120,6 +120,7 @@ VBD_SHOW(oo_req,  "%d\n", be->blkif->st_oo_req);
 VBD_SHOW(rd_req,  "%d\n", be->blkif->st_rd_req);
 VBD_SHOW(wr_req,  "%d\n", be->blkif->st_wr_req);
 VBD_SHOW(br_req,  "%d\n", be->blkif->st_br_req);
+VBD_SHOW(fl_req,  "%d\n", be->blkif->st_fl_req);
 VBD_SHOW(rd_sect, "%d\n", be->blkif->st_rd_sect);
 VBD_SHOW(wr_sect, "%d\n", be->blkif->st_wr_sect);
 
@@ -128,6 +129,7 @@ static struct attribute *vbdstat_attrs[] = {
 	&dev_attr_rd_req.attr,
 	&dev_attr_wr_req.attr,
 	&dev_attr_br_req.attr,
+	&dev_attr_fl_req.attr,
 	&dev_attr_rd_sect.attr,
 	&dev_attr_wr_sect.attr,
 	NULL
@@ -215,6 +217,20 @@ int blkback_barrier(struct xenbus_transaction xbt,
 			    "%d", state);
 	if (err)
 		xenbus_dev_fatal(dev, err, "writing feature-barrier");
+
+	return err;
+}
+
+int blkback_flush_diskcache(struct xenbus_transaction xbt,
+			    struct backend_info *be, int state)
+{
+	struct xenbus_device *dev = be->dev;
+	int err;
+
+	err = xenbus_printf(xbt, dev->nodename, "feature-flush-cache",
+			    "%d", state);
+	if (err)
+		xenbus_dev_fatal(dev, err, "writing feature-flush-cache");
 
 	return err;
 }
@@ -439,6 +455,10 @@ again:
 		xenbus_dev_fatal(dev, err, "starting transaction");
 		return;
 	}
+
+	err = blkback_flush_diskcache(xbt, be, be->blkif->vbd.flush_support);
+	if (err)
+		goto abort;
 
 	err = blkback_barrier(xbt, be, 1);
 	if (err)

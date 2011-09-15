@@ -867,15 +867,15 @@ static irqreturn_t blkif_int(int irq, void *dev_id)
 		case BLKIF_OP_FLUSH_DISKCACHE:
 		case BLKIF_OP_WRITE_BARRIER:
 			what = bret->operation == BLKIF_OP_WRITE_BARRIER ?
-			       "barrier" : "flush disk cache";
+			       "write barrier" : "flush disk cache";
 			if (unlikely(bret->status == BLKIF_RSP_EOPNOTSUPP)) {
-				pr_warn("blkfront: %s: write %s op failed\n",
+				pr_warn("blkfront: %s: %s op failed\n",
 					what, info->gd->disk_name);
 				ret = -EOPNOTSUPP;
 			}
 			if (unlikely(bret->status == BLKIF_RSP_ERROR &&
 				     info->shadow[id].req.nr_segments == 0)) {
-				pr_warn("blkfront: %s: empty write %s op failed\n",
+				pr_warn("blkfront: %s: empty %s op failed\n",
 					what, info->gd->disk_name);
 				ret = -EOPNOTSUPP;
 			}

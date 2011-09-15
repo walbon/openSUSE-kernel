@@ -502,7 +502,12 @@ xfs_vn_setattr(
 	struct dentry	*dentry,
 	struct iattr	*iattr)
 {
-	return -xfs_setattr(XFS_I(dentry->d_inode), iattr, 0);
+	int flags = 0;
+#ifdef ATTR_NO_BLOCK
+	if (iattr->ia_valid & ATTR_NO_BLOCK)
+		flags |= O_NONBLOCK;
+#endif
+	return -xfs_setattr(XFS_I(dentry->d_inode), iattr, flags);
 }
 
 #define XFS_FIEMAP_FLAGS	(FIEMAP_FLAG_SYNC|FIEMAP_FLAG_XATTR)

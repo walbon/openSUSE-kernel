@@ -295,7 +295,7 @@ static struct pernet_operations fib6_rules_net_ops = {
 	.exit = fib6_rules_net_exit,
 };
 
-int __init fib6_rules_init(void)
+int  fib6_rules_init(void)
 {
 	return register_pernet_subsys(&fib6_rules_net_ops);
 }

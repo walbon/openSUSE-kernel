@@ -2649,7 +2649,7 @@ static int xsetbv_interception(struct vcpu_svm *svm)
 	return 1;
 }
 
-static int monitor_interception(struct vcpu_svm *svm, struct kvm_run *kvm_run)
+static int monitor_interception(struct vcpu_svm *svm)
 {
 	svm->next_rip = kvm_rip_read(&svm->vcpu) + 3;
 	skip_emulated_instruction(&svm->vcpu);
@@ -2657,7 +2657,7 @@ static int monitor_interception(struct vcpu_svm *svm, struct kvm_run *kvm_run)
 	return 1;
 }
 
-static int mwait_interception(struct vcpu_svm *svm, struct kvm_run *kvm_run)
+static int mwait_interception(struct vcpu_svm *svm)
 {
 	svm->next_rip = kvm_rip_read(&svm->vcpu) + 3;
 	skip_emulated_instruction(&svm->vcpu);

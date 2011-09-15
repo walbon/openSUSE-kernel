@@ -56,6 +56,8 @@ nfs4acl-y			:= nfs4acl_base.o nfs4acl_xattr.o \
 
 obj-y				+= quota/
 
+obj-$(CONFIG_DMAPI)		+= dmapi/
+
 obj-$(CONFIG_PROC_FS)		+= proc/
 obj-y				+= partitions/
 obj-$(CONFIG_SYSFS)		+= sysfs/

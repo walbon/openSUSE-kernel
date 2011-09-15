@@ -2646,8 +2646,12 @@ loop_again:
 	}
 out:
 
-	/* FIXME: Do we need to loop_again also if we have not achieved our
-	 * pagecache target? i.e. && pagecache_over_limit(0) > 0 */
+	/* We do not need to loop_again if we have not achieved our
+	 * pagecache target (i.e. && pagecache_over_limit(0) > 0) because
+	 * the limit will be checked next time a page is added to the page
+	 * cache. This might cause a short stall but we should rather not
+	 * keep kswapd awake.
+	 */
 	/*
 	 * order-0: All zones must meet high watermark for a balanced node
 	 * high-order: Balanced zones must make up at least 25% of the node
@@ -2993,13 +2997,22 @@ static void shrink_all_zones(unsigned long nr_pages, int prio,
 				continue;
 
 			/* Original code relied on nr_saved_scan which is no
-			 * longer present so we are doing just a raw estimation
-			 * TODO: Is this OK?
+			 * longer present so we are just considering LRU pages.
+			 * This means that the zone has to have quite large
+			 * LRU list for default priority and minimum nr_pages
+			 * size (8*SWAP_CLUSTER_MAX). In the end we will tend
+			 * to reclaim more from large zones wrt. small.
+			 * This should be OK because shrink_page_cache is called
+			 * when we are getting to short memory condition so
+			 * LRUs tend to be large.
 			 */
 			if (((lru_pages >> prio) + 1) >= nr_pages || pass > 3) {
 				unsigned long nr_to_scan;
 
 				nr_to_scan = min(nr_pages, lru_pages);
+				/* shrink_list takes lru_lock with IRQ off so we
+				 * should be careful about really huge nr_to_scan
+				 */
 				nr_reclaimed += shrink_list(l, nr_to_scan, zone,
 								sc, prio);
 				if (nr_reclaimed >= nr_pages) {

@@ -66,7 +66,7 @@ static struct xfrm_mode xfrm6_transport_mode = {
 	.encap = XFRM_MODE_TRANSPORT,
 };
 
-static int __init xfrm6_transport_init(void)
+static int  xfrm6_transport_init(void)
 {
 	return xfrm_register_mode(&xfrm6_transport_mode, AF_INET6);
 }

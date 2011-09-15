@@ -35,11 +35,15 @@
 #include "xfs_da_btree.h"
 #include "xfs_ioctl.h"
 #include "xfs_trace.h"
+#include "xfs_dmapi.h"
 
 #include <linux/dcache.h>
 #include <linux/falloc.h>
 
 static const struct vm_operations_struct xfs_file_vm_ops;
+#ifdef HAVE_DMAPI
+static struct vm_operations_struct xfs_dmapi_file_vm_ops;
+#endif
 
 /*
  * Locking primitives for read and write IO paths to ensure we consistently use
@@ -125,13 +129,12 @@ xfs_iozero(
 }
 
 STATIC int
-xfs_file_fsync(
-	struct file		*file,
+__xfs_fsync(
+	struct inode		*inode,
 	loff_t			start,
 	loff_t			end,
 	int			datasync)
 {
-	struct inode		*inode = file->f_mapping->host;
 	struct xfs_inode	*ip = XFS_I(inode);
 	struct xfs_mount	*mp = ip->i_mount;
 	struct xfs_trans	*tp;
@@ -251,6 +254,22 @@ xfs_file_fsync(
 		xfs_blkdev_issue_flush(mp->m_ddev_targp);
 
 	return -error;
+}
+
+STATIC int
+xfs_file_fsync(
+	struct file		*file,
+	loff_t			start,
+	loff_t			end,
+	int			datasync)
+{
+	return __xfs_fsync(file->f_mapping->host, start, end, datasync);
+}
+
+int
+xfs_fsync(struct xfs_inode *ip, int datasync)
+{
+	return -__xfs_fsync(VFS_I(ip), 0, LLONG_MAX, datasync);
 }
 
 STATIC ssize_t
@@ -996,6 +1015,23 @@ xfs_file_release(
 	return -xfs_release(XFS_I(inode));
 }
 
+#ifdef HAVE_DMAPI
+STATIC int
+xfs_vm_fault(
+	struct vm_area_struct	*vma,
+	struct vm_fault	*vmf)
+{
+	struct inode	*inode = vma->vm_file->f_path.dentry->d_inode;
+	struct xfs_mount *mp = XFS_M(inode->i_sb);
+
+	ASSERT_ALWAYS(mp->m_flags & XFS_MOUNT_DMAPI);
+
+	if (XFS_SEND_MMAP(mp, vma, 0))
+		return VM_FAULT_SIGBUS;
+	return filemap_fault(vma, vmf);
+}
+#endif /* HAVE_DMAPI */
+
 STATIC int
 xfs_file_readdir(
 	struct file	*filp,
@@ -1036,9 +1072,55 @@ xfs_file_mmap(
 	vma->vm_ops = &xfs_file_vm_ops;
 	vma->vm_flags |= VM_CAN_NONLINEAR;
 
+#ifdef HAVE_DMAPI
+	if (XFS_M(filp->f_path.dentry->d_inode->i_sb)->m_flags & XFS_MOUNT_DMAPI)
+		vma->vm_ops = &xfs_dmapi_file_vm_ops;
+#endif /* HAVE_DMAPI */
+
 	file_accessed(filp);
 	return 0;
 }
+
+#ifdef HAVE_DMAPI
+#ifdef HAVE_VMOP_MPROTECT
+STATIC int
+xfs_vm_mprotect(
+	struct vm_area_struct *vma,
+	unsigned int	newflags)
+{
+	struct inode	*inode = vma->vm_file->f_path.dentry->d_inode;
+	struct xfs_mount *mp = XFS_M(inode->i_sb);
+	int		error = 0;
+
+	if (mp->m_flags & XFS_MOUNT_DMAPI) {
+		if ((vma->vm_flags & VM_MAYSHARE) &&
+		    (newflags & VM_WRITE) && !(vma->vm_flags & VM_WRITE))
+			error = XFS_SEND_MMAP(mp, vma, VM_WRITE);
+	}
+	return error;
+}
+#endif /* HAVE_VMOP_MPROTECT */
+#endif /* HAVE_DMAPI */
+
+#ifdef HAVE_FOP_OPEN_EXEC
+/* If the user is attempting to execute a file that is offline then
+ * we have to trigger a DMAPI READ event before the file is marked as busy
+ * otherwise the invisible I/O will not be able to write to the file to bring
+ * it back online.
+ */
+STATIC int
+xfs_file_open_exec(
+	struct inode	*inode)
+{
+	struct xfs_mount *mp = XFS_M(inode->i_sb);
+	struct xfs_inode *ip = XFS_I(inode);
+
+	if (unlikely(mp->m_flags & XFS_MOUNT_DMAPI) &&
+	             DM_EVENT_ENABLED(ip, DM_EVENT_READ))
+		return -XFS_SEND_DATA(mp, DM_EVENT_READ, ip, 0, 0, 0, NULL);
+	return 0;
+}
+#endif /* HAVE_FOP_OPEN_EXEC */
 
 /*
  * mmap()d file has taken write protection fault and is being made
@@ -1089,3 +1171,13 @@ static const struct vm_operations_struct xfs_file_vm_ops = {
 	.fault		= filemap_fault,
 	.page_mkwrite	= xfs_vm_page_mkwrite,
 };
+
+#ifdef HAVE_DMAPI
+static struct vm_operations_struct xfs_dmapi_file_vm_ops = {
+	.fault		= xfs_vm_fault,
+	.page_mkwrite	= xfs_vm_page_mkwrite,
+#ifdef HAVE_VMOP_MPROTECT
+	.mprotect	= xfs_vm_mprotect,
+#endif
+};
+#endif /* HAVE_DMAPI */

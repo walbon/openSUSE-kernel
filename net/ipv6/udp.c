@@ -1489,7 +1489,7 @@ static struct inet_protosw udpv6_protosw = {
 };
 
 
-int __init udpv6_init(void)
+int  udpv6_init(void)
 {
 	int ret;
 

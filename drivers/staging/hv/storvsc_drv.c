@@ -1164,7 +1164,7 @@ static void storvsc_command_completion(struct hv_storvsc_request *request)
 	if (scmnd->result) {
 		if (scsi_normalize_sense(scmnd->sense_buffer,
 				SCSI_SENSE_BUFFERSIZE, &sense_hdr))
-			scsi_print_sense_hdr("storvsc", &sense_hdr);
+			scsi_print_sense_hdr(KBUILD_MODNAME, &sense_hdr);
 	}
 
 	scsi_set_resid(scmnd,
@@ -1333,7 +1333,8 @@ static DEF_SCSI_QCMD(storvsc_queuecommand)
 /* Scsi driver */
 static struct scsi_host_template scsi_driver = {
 	.module	=		THIS_MODULE,
-	.name =			"storvsc_host_t",
+	.name =			KBUILD_MODNAME,
+	.proc_name =		KBUILD_MODNAME,
 	.bios_param =		storvsc_get_chs,
 	.queuecommand =		storvsc_queuecommand,
 	.eh_host_reset_handler =	storvsc_host_reset_handler,
@@ -1467,7 +1468,7 @@ err_out:
 /* The one and only one */
 
 static struct hv_driver storvsc_drv = {
-	.name = "storvsc",
+	.name = KBUILD_MODNAME,
 	.id_table = id_table,
 	.probe = storvsc_probe,
 	.remove = storvsc_remove,

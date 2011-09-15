@@ -1571,7 +1571,7 @@ static struct pernet_operations fib6_net_ops = {
 	.exit = fib6_net_exit,
 };
 
-int __init fib6_init(void)
+int  fib6_init(void)
 {
 	int ret = -ENOMEM;
 

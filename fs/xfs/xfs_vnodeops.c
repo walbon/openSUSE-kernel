@@ -26,6 +26,7 @@
 #include "xfs_sb.h"
 #include "xfs_ag.h"
 #include "xfs_dir2.h"
+#include "xfs_dmapi.h"
 #include "xfs_mount.h"
 #include "xfs_da_btree.h"
 #include "xfs_bmap_btree.h"
@@ -138,6 +139,16 @@ xfs_setattr(
 			goto error_return;
 		}
 	} else {
+		if (DM_EVENT_ENABLED(ip, DM_EVENT_TRUNCATE) &&
+		    !(flags & XFS_ATTR_DMI)) {
+			int dmflags = AT_DELAY_FLAG(flags) | DM_SEM_FLAG_WR;
+			code = XFS_SEND_DATA(mp, DM_EVENT_TRUNCATE, ip,
+				iattr->ia_size, 0, dmflags, NULL);
+			if (code) {
+				lock_flags = 0;
+				goto error_return;
+			}
+		}
 		if (need_iolock)
 			lock_flags |= XFS_IOLOCK_EXCL;
 	}
@@ -458,10 +469,17 @@ xfs_setattr(
 			return XFS_ERROR(code);
 	}
 
+	if (DM_EVENT_ENABLED(ip, DM_EVENT_ATTRIBUTE) &&
+	    !(flags & XFS_ATTR_DMI)) {
+		(void) XFS_SEND_NAMESP(mp, DM_EVENT_ATTRIBUTE, ip, DM_RIGHT_NULL,
+					NULL, DM_RIGHT_NULL, NULL, NULL,
+					0, 0, AT_DELAY_FLAG(flags));
+	}
 	return 0;
 
  abort_return:
 	commit_flags |= XFS_TRANS_ABORT;
+	/* FALLTHROUGH */
  error_return:
 	xfs_qm_dqrele(udqp);
 	xfs_qm_dqrele(gdqp);
@@ -565,16 +583,11 @@ xfs_readlink(
 }
 
 /*
- * Flags for xfs_free_eofblocks
- */
-#define XFS_FREE_EOF_TRYLOCK	(1<<0)
-
-/*
  * This is called by xfs_inactive to free any blocks beyond eof
  * when the link count isn't zero and by xfs_dm_punch_hole() when
  * punching a hole to EOF.
  */
-STATIC int
+int
 xfs_free_eofblocks(
 	xfs_mount_t	*mp,
 	xfs_inode_t	*ip,
@@ -633,14 +646,15 @@ xfs_free_eofblocks(
 				xfs_trans_cancel(tp, 0);
 				return 0;
 			}
-		} else {
+		} else if (!(flags & XFS_FREE_EOF_HASLOCK)){
 			xfs_ilock(ip, XFS_IOLOCK_EXCL);
 		}
 		error = xfs_itruncate_start(ip, XFS_ITRUNC_DEFINITE,
 				    ip->i_size);
 		if (error) {
 			xfs_trans_cancel(tp, 0);
-			xfs_iunlock(ip, XFS_IOLOCK_EXCL);
+			if (!(flags & XFS_FREE_EOF_HASLOCK))
+				xfs_iunlock(ip, XFS_IOLOCK_EXCL);
 			return error;
 		}
 
@@ -1055,6 +1069,9 @@ xfs_inactive(
 
 	mp = ip->i_mount;
 
+	if (ip->i_d.di_nlink == 0 && DM_EVENT_ENABLED(ip, DM_EVENT_DESTROY))
+		XFS_SEND_DESTROY(mp, ip, DM_RIGHT_NULL);
+
 	error = 0;
 
 	/* If this is a read-only mount, don't do this (would generate I/O) */
@@ -1301,6 +1318,16 @@ xfs_create(
 	if (XFS_FORCED_SHUTDOWN(mp))
 		return XFS_ERROR(EIO);
 
+	if (DM_EVENT_ENABLED(dp, DM_EVENT_CREATE)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_CREATE,
+				dp, DM_RIGHT_NULL, NULL,
+				DM_RIGHT_NULL, name->name, NULL,
+				mode, 0, 0);
+
+		if (error)
+			return error;
+	}
+
 	if (dp->i_d.di_flags & XFS_DIFLAG_PROJINHERIT)
 		prid = xfs_get_projid(dp);
 	else
@@ -1448,7 +1475,16 @@ xfs_create(
 	xfs_qm_dqrele(gdqp);
 
 	*ipp = ip;
-	return 0;
+
+	/* Fallthrough to std_return with error = 0  */
+ std_return:
+	if (DM_EVENT_ENABLED(dp, DM_EVENT_POSTCREATE)) {
+		XFS_SEND_NAMESP(mp, DM_EVENT_POSTCREATE, dp, DM_RIGHT_NULL,
+				ip, DM_RIGHT_NULL, name->name, NULL, mode,
+				error, 0);
+	}
+
+	return error;
 
  out_bmap_cancel:
 	xfs_bmap_cancel(&free_list);
@@ -1470,7 +1506,8 @@ xfs_create(
 
 	if (unlock_dp_on_error)
 		xfs_iunlock(dp, XFS_ILOCK_EXCL);
-	return error;
+
+	goto std_return;
 }
 
 #ifdef DEBUG
@@ -1677,6 +1714,14 @@ xfs_remove(
 	if (XFS_FORCED_SHUTDOWN(mp))
 		return XFS_ERROR(EIO);
 
+	if (DM_EVENT_ENABLED(dp, DM_EVENT_REMOVE)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_REMOVE, dp, DM_RIGHT_NULL,
+					NULL, DM_RIGHT_NULL, name->name, NULL,
+					ip->i_d.di_mode, 0, 0);
+		if (error)
+			return error;
+	}
+
 	error = xfs_qm_dqattach(dp, 0);
 	if (error)
 		goto std_return;
@@ -1807,15 +1852,21 @@ xfs_remove(
 	if (!is_dir && link_zero && xfs_inode_is_filestream(ip))
 		xfs_filestream_deassociate(ip);
 
-	return 0;
+ std_return:
+	if (DM_EVENT_ENABLED(dp, DM_EVENT_POSTREMOVE)) {
+		XFS_SEND_NAMESP(mp, DM_EVENT_POSTREMOVE, dp, DM_RIGHT_NULL,
+				NULL, DM_RIGHT_NULL, name->name, NULL,
+				ip->i_d.di_mode, error, 0);
+	}
+
+	return error;
 
  out_bmap_cancel:
 	xfs_bmap_cancel(&free_list);
 	cancel_flags |= XFS_TRANS_ABORT;
  out_trans_cancel:
 	xfs_trans_cancel(tp, cancel_flags);
- std_return:
-	return error;
+	goto std_return;
 }
 
 int
@@ -1839,6 +1890,17 @@ xfs_link(
 
 	if (XFS_FORCED_SHUTDOWN(mp))
 		return XFS_ERROR(EIO);
+
+	if (DM_EVENT_ENABLED(tdp, DM_EVENT_LINK)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_LINK,
+					tdp, DM_RIGHT_NULL,
+					sip, DM_RIGHT_NULL,
+					target_name->name, NULL, 0, 0, 0);
+		if (error)
+			return error;
+	}
+
+	/* Return through std_return after this point. */
 
 	error = xfs_qm_dqattach(sip, 0);
 	if (error)
@@ -1919,14 +1981,27 @@ xfs_link(
 		goto abort_return;
 	}
 
-	return xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
+	error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
+	if (error)
+		goto std_return;
+
+	/* Fall through to std_return with error = 0. */
+std_return:
+	if (DM_EVENT_ENABLED(sip, DM_EVENT_POSTLINK)) {
+		(void) XFS_SEND_NAMESP(mp, DM_EVENT_POSTLINK,
+				tdp, DM_RIGHT_NULL,
+				sip, DM_RIGHT_NULL,
+				target_name->name, NULL, 0, error, 0);
+	}
+	return error;
 
  abort_return:
 	cancel_flags |= XFS_TRANS_ABORT;
+	/* FALLTHROUGH */
+
  error_return:
 	xfs_trans_cancel(tp, cancel_flags);
- std_return:
-	return error;
+	goto std_return;
 }
 
 int
@@ -1976,6 +2051,17 @@ xfs_symlink(
 	pathlen = strlen(target_path);
 	if (pathlen >= MAXPATHLEN)      /* total string too long */
 		return XFS_ERROR(ENAMETOOLONG);
+
+	if (DM_EVENT_ENABLED(dp, DM_EVENT_SYMLINK)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_SYMLINK, dp,
+					DM_RIGHT_NULL, NULL, DM_RIGHT_NULL,
+					link_name->name,
+					(unsigned char *)target_path, 0, 0, 0);
+		if (error)
+			return error;
+	}
+
+	/* Return through std_return after this point. */
 
 	udqp = gdqp = NULL;
 	if (dp->i_d.di_flags & XFS_DIFLAG_PROJINHERIT)
@@ -2149,8 +2235,21 @@ xfs_symlink(
 	xfs_qm_dqrele(udqp);
 	xfs_qm_dqrele(gdqp);
 
-	*ipp = ip;
-	return 0;
+	/* Fall through to std_return with error = 0 or errno from
+	 * xfs_trans_commit	*/
+std_return:
+	if (DM_EVENT_ENABLED(dp, DM_EVENT_POSTSYMLINK)) {
+		(void) XFS_SEND_NAMESP(mp, DM_EVENT_POSTSYMLINK,
+					dp, DM_RIGHT_NULL,
+					error ? NULL : ip,
+					DM_RIGHT_NULL, link_name->name,
+					(unsigned char *)target_path,
+					0, error, 0);
+	}
+
+	if (!error)
+		*ipp = ip;
+	return error;
 
  error2:
 	IRELE(ip);
@@ -2164,8 +2263,8 @@ xfs_symlink(
 
 	if (unlock_dp_on_error)
 		xfs_iunlock(dp, XFS_ILOCK_EXCL);
- std_return:
-	return error;
+
+	goto std_return;
 }
 
 int
@@ -2269,9 +2368,25 @@ xfs_alloc_file_space(
 	startoffset_fsb	= XFS_B_TO_FSBT(mp, offset);
 	allocatesize_fsb = XFS_B_TO_FSB(mp, count);
 
+	/*	Generate a DMAPI event if needed.	*/
+	if (alloc_type != 0 && offset < ip->i_size &&
+			(attr_flags & XFS_ATTR_DMI) == 0  &&
+			DM_EVENT_ENABLED(ip, DM_EVENT_WRITE)) {
+		xfs_off_t           end_dmi_offset;
+
+		end_dmi_offset = offset+len;
+		if (end_dmi_offset > ip->i_size)
+			end_dmi_offset = ip->i_size;
+		error = XFS_SEND_DATA(mp, DM_EVENT_WRITE, ip, offset,
+				      end_dmi_offset - offset, 0, NULL);
+		if (error)
+			return error;
+	}
+
 	/*
 	 * Allocate file space until done or until there is an error
 	 */
+retry:
 	while (allocatesize_fsb && !error) {
 		xfs_fileoff_t	s, e;
 
@@ -2374,6 +2489,17 @@ xfs_alloc_file_space(
 		startoffset_fsb += allocated_fsb;
 		allocatesize_fsb -= allocated_fsb;
 	}
+dmapi_enospc_check:
+	if (error == ENOSPC && (attr_flags & XFS_ATTR_DMI) == 0 &&
+	    DM_EVENT_ENABLED(ip, DM_EVENT_NOSPACE)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_NOSPACE,
+				ip, DM_RIGHT_NULL,
+				ip, DM_RIGHT_NULL,
+				NULL, NULL, 0, 0, 0); /* Delay flag intentionally unused */
+		if (error == 0)
+			goto retry;	/* Maybe DMAPI app. has made space */
+		/* else fall through with error from XFS_SEND_DATA */
+	}
 
 	return error;
 
@@ -2384,7 +2510,7 @@ error0:	/* Cancel bmap, unlock inode, unreserve quota blocks, cancel trans */
 error1:	/* Just cancel transaction */
 	xfs_trans_cancel(tp, XFS_TRANS_RELEASE_LOG_RES | XFS_TRANS_ABORT);
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
-	return error;
+	goto dmapi_enospc_check;
 }
 
 /*
@@ -2497,6 +2623,7 @@ xfs_free_file_space(
 {
 	int			committed;
 	int			done;
+	xfs_off_t		end_dmi_offset;
 	xfs_fileoff_t		endoffset_fsb;
 	int			error;
 	xfs_fsblock_t		firstfsb;
@@ -2526,7 +2653,19 @@ xfs_free_file_space(
 		return error;
 	rt = XFS_IS_REALTIME_INODE(ip);
 	startoffset_fsb	= XFS_B_TO_FSB(mp, offset);
-	endoffset_fsb = XFS_B_TO_FSBT(mp, offset + len);
+	end_dmi_offset = offset + len;
+	endoffset_fsb = XFS_B_TO_FSBT(mp, end_dmi_offset);
+
+	if (offset < ip->i_size && (attr_flags & XFS_ATTR_DMI) == 0 &&
+	    DM_EVENT_ENABLED(ip, DM_EVENT_WRITE)) {
+		if (end_dmi_offset > ip->i_size)
+			end_dmi_offset = ip->i_size;
+		error = XFS_SEND_DATA(mp, DM_EVENT_WRITE, ip,
+				offset, end_dmi_offset - offset,
+				AT_DELAY_FLAG(attr_flags), NULL);
+		if (error)
+			return error;
+	}
 
 	if (attr_flags & XFS_ATTR_NOLOCK)
 		need_iolock = 0;

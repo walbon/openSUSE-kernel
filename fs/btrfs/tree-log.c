@@ -212,14 +212,13 @@ int btrfs_pin_log_trans(struct btrfs_root *root)
  * indicate we're done making changes to the log tree
  * and wake up anyone waiting to do a sync
  */
-int btrfs_end_log_trans(struct btrfs_root *root)
+void btrfs_end_log_trans(struct btrfs_root *root)
 {
 	if (atomic_dec_and_test(&root->log_writers)) {
 		smp_mb();
 		if (waitqueue_active(&root->log_writer_wait))
 			wake_up(&root->log_writer_wait);
 	}
-	return 0;
 }
 
 
@@ -275,9 +274,13 @@ static int process_one_buffer(struct btrfs_root *log,
 			      struct extent_buffer *eb,
 			      struct walk_control *wc, u64 gen)
 {
-	if (wc->pin)
-		btrfs_pin_extent(log->fs_info->extent_root,
-				 eb->start, eb->len, 0);
+	if (wc->pin) {
+		int ret = btrfs_pin_extent(log->fs_info->extent_root,
+					   eb->start, eb->len, 0);
+		if (ret)
+			btrfs_panic(log->fs_info, ret, "Cannot pin extent in "
+				    "range %llu(%llu)\n", eb->start, eb->len);
+	}
 
 	if (btrfs_buffer_uptodate(eb, gen)) {
 		if (wc->write)
@@ -1961,7 +1964,7 @@ static int wait_log_commit(struct btrfs_trans_handle *trans,
 	return 0;
 }
 
-static int wait_for_writer(struct btrfs_trans_handle *trans,
+static void wait_for_writer(struct btrfs_trans_handle *trans,
 			   struct btrfs_root *root)
 {
 	DEFINE_WAIT(wait);
@@ -1975,7 +1978,6 @@ static int wait_for_writer(struct btrfs_trans_handle *trans,
 		mutex_lock(&root->log_mutex);
 		finish_wait(&root->log_writer_wait, &wait);
 	}
-	return 0;
 }
 
 /*
@@ -2178,8 +2180,9 @@ static void free_log_tree(struct btrfs_trans_handle *trans,
 		if (ret)
 			break;
 
-		clear_extent_bits(&log->dirty_log_pages, start, end,
-				  EXTENT_DIRTY | EXTENT_NEW, GFP_NOFS);
+		ret = clear_extent_bits(&log->dirty_log_pages, start, end,
+					EXTENT_DIRTY | EXTENT_NEW, GFP_NOFS);
+		BUG_ON(ret < 0);
 	}
 
 	free_extent_buffer(log->node);
@@ -3166,7 +3169,10 @@ int btrfs_recover_log_trees(struct btrfs_root *log_root_tree)
 	fs_info->log_root_recovering = 1;
 
 	trans = btrfs_start_transaction(fs_info->tree_root, 0);
-	BUG_ON(IS_ERR(trans));
+	if (IS_ERR(trans)) {
+		btrfs_free_path(path);
+		return PTR_ERR(trans);
+	}
 
 	wc.trans = trans;
 	wc.pin = 1;

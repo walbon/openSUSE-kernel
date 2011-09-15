@@ -208,11 +208,14 @@ block_group_cache_tree_search(struct btrfs_fs_info *info, u64 bytenr,
 static int add_excluded_extent(struct btrfs_root *root,
 			       u64 start, u64 num_bytes)
 {
+	int ret;
 	u64 end = start + num_bytes - 1;
-	set_extent_bits(&root->fs_info->freed_extents[0],
-			start, end, EXTENT_UPTODATE, GFP_NOFS);
-	set_extent_bits(&root->fs_info->freed_extents[1],
-			start, end, EXTENT_UPTODATE, GFP_NOFS);
+	ret = set_extent_bits(&root->fs_info->freed_extents[0],
+			      start, end, EXTENT_UPTODATE, GFP_NOFS);
+	BUG_ON(ret < 0);
+	ret = set_extent_bits(&root->fs_info->freed_extents[1],
+			      start, end, EXTENT_UPTODATE, GFP_NOFS);
+	BUG_ON(ret < 0);
 	return 0;
 }
 
@@ -220,14 +223,17 @@ static void free_excluded_extents(struct btrfs_root *root,
 				  struct btrfs_block_group_cache *cache)
 {
 	u64 start, end;
+	int ret;
 
 	start = cache->key.objectid;
 	end = start + cache->key.offset - 1;
 
-	clear_extent_bits(&root->fs_info->freed_extents[0],
-			  start, end, EXTENT_UPTODATE, GFP_NOFS);
-	clear_extent_bits(&root->fs_info->freed_extents[1],
-			  start, end, EXTENT_UPTODATE, GFP_NOFS);
+	ret = clear_extent_bits(&root->fs_info->freed_extents[0],
+				start, end, EXTENT_UPTODATE, GFP_NOFS);
+	BUG_ON(ret < 0);
+	ret = clear_extent_bits(&root->fs_info->freed_extents[1],
+				start, end, EXTENT_UPTODATE, GFP_NOFS);
+	BUG_ON(ret < 0);
 }
 
 static int exclude_super_stripes(struct btrfs_root *root,
@@ -1549,7 +1555,7 @@ out:
  * helper to add new inline back ref
  */
 static noinline_for_stack
-int setup_inline_extent_backref(struct btrfs_trans_handle *trans,
+void setup_inline_extent_backref(struct btrfs_trans_handle *trans,
 				struct btrfs_root *root,
 				struct btrfs_path *path,
 				struct btrfs_extent_inline_ref *iref,
@@ -1609,7 +1615,6 @@ int setup_inline_extent_backref(struct btrfs_trans_handle *trans,
 		btrfs_set_extent_inline_ref_offset(leaf, iref, root_objectid);
 	}
 	btrfs_mark_buffer_dirty(leaf);
-	return 0;
 }
 
 static int lookup_extent_backref(struct btrfs_trans_handle *trans,
@@ -1728,10 +1733,11 @@ int insert_inline_extent_backref(struct btrfs_trans_handle *trans,
 		ret = update_inline_extent_backref(trans, root, path, iref,
 						   refs_to_add, extent_op);
 	} else if (ret == -ENOENT) {
-		ret = setup_inline_extent_backref(trans, root, path, iref,
-						  parent, root_objectid,
-						  owner, offset, refs_to_add,
-						  extent_op);
+		ret = 0;
+		setup_inline_extent_backref(trans, root, path, iref,
+					    parent, root_objectid,
+					    owner, offset, refs_to_add,
+					    extent_op);
 	}
 	return ret;
 }
@@ -2093,8 +2099,14 @@ static int run_one_delayed_ref(struct btrfs_trans_handle *trans,
 		BUG_ON(extent_op);
 		head = btrfs_delayed_node_to_head(node);
 		if (insert_reserved) {
-			btrfs_pin_extent(root, node->bytenr,
-					 node->num_bytes, 1);
+			ret = btrfs_pin_extent(root, node->bytenr,
+					       node->num_bytes, 1);
+			if (ret)
+				btrfs_panic(root->fs_info, ret,
+					    "Cannot pin extent in range "
+					    "%llu(%llu)\n",
+					    node->bytenr, node->num_bytes);
+
 			if (head->is_data) {
 				ret = btrfs_del_csums(trans, root,
 						      node->bytenr,
@@ -4202,8 +4214,9 @@ static int update_block_group(struct btrfs_trans_handle *trans,
 			spin_unlock(&cache->lock);
 			spin_unlock(&cache->space_info->lock);
 
-			set_extent_dirty(info->pinned_extents,
-					 bytenr, bytenr + num_bytes - 1,
+			/* Can't return -ENOMEM */
+			set_extent_dirty(info->pinned_extents, bytenr,
+					 bytenr + num_bytes - 1,
 					 GFP_NOFS | __GFP_NOFAIL);
 		}
 		btrfs_put_block_group(cache);
@@ -4228,9 +4241,9 @@ static u64 first_logical_byte(struct btrfs_root *root, u64 search_start)
 	return bytenr;
 }
 
-static int pin_down_extent(struct btrfs_root *root,
-			   struct btrfs_block_group_cache *cache,
-			   u64 bytenr, u64 num_bytes, int reserved)
+static void pin_down_extent(struct btrfs_root *root,
+			    struct btrfs_block_group_cache *cache,
+			    u64 bytenr, u64 num_bytes, int reserved)
 {
 	spin_lock(&cache->space_info->lock);
 	spin_lock(&cache->lock);
@@ -4243,9 +4256,9 @@ static int pin_down_extent(struct btrfs_root *root,
 	spin_unlock(&cache->lock);
 	spin_unlock(&cache->space_info->lock);
 
+	/* __GFP_NOFAIL means it can't return -ENOMEM */
 	set_extent_dirty(root->fs_info->pinned_extents, bytenr,
 			 bytenr + num_bytes - 1, GFP_NOFS | __GFP_NOFAIL);
-	return 0;
 }
 
 /*
@@ -4257,7 +4270,8 @@ int btrfs_pin_extent(struct btrfs_root *root,
 	struct btrfs_block_group_cache *cache;
 
 	cache = btrfs_lookup_block_group(root->fs_info, bytenr);
-	BUG_ON(!cache);
+	if (cache == NULL)
+		return -ENOENT;
 
 	pin_down_extent(root, cache, bytenr, num_bytes, reserved);
 
@@ -4317,8 +4331,8 @@ static int btrfs_update_reserved_bytes(struct btrfs_block_group_cache *cache,
 	return ret;
 }
 
-int btrfs_prepare_extent_commit(struct btrfs_trans_handle *trans,
-				struct btrfs_root *root)
+void btrfs_prepare_extent_commit(struct btrfs_trans_handle *trans,
+				 struct btrfs_root *root)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_caching_control *next;
@@ -4347,7 +4361,6 @@ int btrfs_prepare_extent_commit(struct btrfs_trans_handle *trans,
 	up_write(&fs_info->extent_commit_sem);
 
 	update_global_block_rsv(fs_info);
-	return 0;
 }
 
 static int unpin_extent_range(struct btrfs_root *root, u64 start, u64 end)
@@ -4414,7 +4427,8 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans,
 			ret = btrfs_discard_extent(root, start,
 						   end + 1 - start, NULL);
 
-		clear_extent_dirty(unpin, start, end, GFP_NOFS);
+		ret = clear_extent_dirty(unpin, start, end, GFP_NOFS);
+		BUG_ON(ret < 0);
 		unpin_extent_range(root, start, end);
 		cond_resched();
 	}
@@ -4756,8 +4770,11 @@ int btrfs_free_extent(struct btrfs_trans_handle *trans,
 	if (root_objectid == BTRFS_TREE_LOG_OBJECTID) {
 		WARN_ON(owner >= BTRFS_FIRST_FREE_OBJECTID);
 		/* unlocks the pinned mutex */
-		btrfs_pin_extent(root, bytenr, num_bytes, 1);
-		ret = 0;
+		ret = btrfs_pin_extent(root, bytenr, num_bytes, 1);
+		if (ret)
+			btrfs_panic(root->fs_info, ret, "Cannot pin "
+				    "extent in range %llu(%llu)\n",
+				    bytenr, num_bytes);
 	} else if (owner < BTRFS_FIRST_FREE_OBJECTID) {
 		ret = btrfs_add_delayed_tree_ref(trans, bytenr, num_bytes,
 					parent, root_objectid, (int)owner,
@@ -5639,6 +5656,7 @@ struct extent_buffer *btrfs_init_new_buffer(struct btrfs_trans_handle *trans,
 					    int level)
 {
 	struct extent_buffer *buf;
+	int ret;
 
 	buf = btrfs_find_create_tree_block(root, bytenr, blocksize);
 	if (!buf)
@@ -5657,14 +5675,21 @@ struct extent_buffer *btrfs_init_new_buffer(struct btrfs_trans_handle *trans,
 		 * EXENT bit to differentiate dirty pages.
 		 */
 		if (root->log_transid % 2 == 0)
-			set_extent_dirty(&root->dirty_log_pages, buf->start,
-					buf->start + buf->len - 1, GFP_NOFS);
+			ret = set_extent_dirty(&root->dirty_log_pages,
+					       buf->start,
+					       buf->start + buf->len - 1,
+					       GFP_NOFS);
 		else
-			set_extent_new(&root->dirty_log_pages, buf->start,
-					buf->start + buf->len - 1, GFP_NOFS);
+			ret = set_extent_new(&root->dirty_log_pages,
+					     buf->start,
+					     buf->start + buf->len - 1,
+					     GFP_NOFS);
+		BUG_ON(ret < 0);
 	} else {
-		set_extent_dirty(&trans->transaction->dirty_pages, buf->start,
-			 buf->start + buf->len - 1, GFP_NOFS);
+		ret = set_extent_dirty(&trans->transaction->dirty_pages,
+				       buf->start, buf->start + buf->len - 1,
+				       GFP_NOFS);
+		BUG_ON(ret < 0);
 	}
 	trans->blocks_used++;
 	/* this returns a buffer locked for blocking */
@@ -6272,8 +6297,8 @@ static noinline int walk_up_tree(struct btrfs_trans_handle *trans,
  * also make sure backrefs for the shared block and all lower level
  * blocks are properly updated.
  */
-void btrfs_drop_snapshot(struct btrfs_root *root,
-			 struct btrfs_block_rsv *block_rsv, int update_ref)
+int btrfs_drop_snapshot(struct btrfs_root *root,
+			struct btrfs_block_rsv *block_rsv, int update_ref)
 {
 	struct btrfs_path *path;
 	struct btrfs_trans_handle *trans;
@@ -6299,7 +6324,11 @@ void btrfs_drop_snapshot(struct btrfs_root *root,
 	}
 
 	trans = btrfs_start_transaction(tree_root, 0);
-	BUG_ON(IS_ERR(trans));
+	if (IS_ERR(trans)) {
+		kfree(wc);
+		btrfs_free_path(path);
+		return PTR_ERR(trans);
+	}
 
 	if (block_rsv)
 		trans->block_rsv = block_rsv;
@@ -6438,7 +6467,7 @@ out_free:
 out:
 	if (err)
 		btrfs_std_error(root->fs_info, err);
-	return;
+	return err;
 }
 
 /*
@@ -6695,7 +6724,7 @@ u64 btrfs_account_ro_block_groups_free_space(struct btrfs_space_info *sinfo)
 	return free_bytes;
 }
 
-int btrfs_set_block_group_rw(struct btrfs_root *root,
+void btrfs_set_block_group_rw(struct btrfs_root *root,
 			      struct btrfs_block_group_cache *cache)
 {
 	struct btrfs_space_info *sinfo = cache->space_info;
@@ -6711,7 +6740,6 @@ int btrfs_set_block_group_rw(struct btrfs_root *root,
 	cache->ro = 0;
 	spin_unlock(&cache->lock);
 	spin_unlock(&sinfo->lock);
-	return 0;
 }
 
 /*

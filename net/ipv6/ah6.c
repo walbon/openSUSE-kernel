@@ -728,7 +728,7 @@ static const struct inet6_protocol ah6_protocol = {
 	.flags		=	INET6_PROTO_NOPOLICY,
 };
 
-static int __init ah6_init(void)
+static int  ah6_init(void)
 {
 	if (xfrm_register_type(&ah6_type, AF_INET6) < 0) {
 		printk(KERN_INFO "ipv6 ah init: can't add xfrm type\n");
