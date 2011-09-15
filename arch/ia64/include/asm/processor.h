@@ -42,7 +42,6 @@
 
 #define IA64_THREAD_FPH_VALID	(__IA64_UL(1) << 0)	/* floating-point high state valid? */
 #define IA64_THREAD_DBG_VALID	(__IA64_UL(1) << 1)	/* debug registers valid? */
-#define IA64_THREAD_PM_VALID	(__IA64_UL(1) << 2)	/* performance registers valid? */
 #define IA64_THREAD_UAC_NOPRINT	(__IA64_UL(1) << 3)	/* don't log unaligned accesses */
 #define IA64_THREAD_UAC_SIGBUS	(__IA64_UL(1) << 4)	/* generate SIGBUS on unaligned acc. */
 #define IA64_THREAD_MIGRATION	(__IA64_UL(1) << 5)	/* require migration
@@ -280,15 +279,6 @@ struct thread_struct {
 	__u64 task_size;		/* limit for task size */
 	__u64 rbs_bot;			/* the base address for the RBS */
 	int last_fph_cpu;		/* CPU that may hold the contents of f32-f127 */
-
-#ifdef CONFIG_PERFMON
-	void *pfm_context;		     /* pointer to detailed PMU context */
-	unsigned long pfm_needs_checking;    /* when >0, pending perfmon work on kernel exit */
-# define INIT_THREAD_PM		.pfm_context =		NULL,     \
-				.pfm_needs_checking =	0UL,
-#else
-# define INIT_THREAD_PM
-#endif
 	unsigned long dbr[IA64_NUM_DBG_REGS];
 	unsigned long ibr[IA64_NUM_DBG_REGS];
 	struct ia64_fpreg fph[96];	/* saved/loaded on demand */
@@ -302,7 +292,6 @@ struct thread_struct {
 	.rbs_bot =	STACK_TOP - DEFAULT_USER_STACK_SIZE,	\
 	.task_size =	DEFAULT_TASK_SIZE,			\
 	.last_fph_cpu =  -1,					\
-	INIT_THREAD_PM						\
 	.dbr =		{0, },					\
 	.ibr =		{0, },					\
 	.fph =		{{{{0}}}, }				\

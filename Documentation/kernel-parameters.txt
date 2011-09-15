@@ -2092,6 +2092,9 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			allocator.  This parameter is primarily	for debugging
 			and performance comparison.
 
+	perfmon_debug	[PERFMON] Enables Perfmon debug messages. Needed
+			to see traces of the early startup startup phase.
+
 	pf.		[PARIDE]
 			See Documentation/blockdev/paride.txt.
 

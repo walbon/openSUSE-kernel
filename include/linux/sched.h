@@ -100,6 +100,7 @@ struct bio_list;
 struct fs_struct;
 struct perf_event_context;
 struct blk_plug;
+struct pfm_context;
 
 /*
  * List of flags we want to share for kernel threads,
@@ -1569,6 +1570,9 @@ struct task_struct {
 #endif
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 	atomic_t ptrace_bp_refcnt;
+#endif
+#ifdef CONFIG_PERFMON
+	struct pfm_context *pfm_context;
 #endif
 };
 

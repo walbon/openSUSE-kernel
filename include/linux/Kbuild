@@ -287,6 +287,10 @@ header-y += patchkey.h
 header-y += pci.h
 header-y += pci_regs.h
 header-y += perf_event.h
+ifeq ($(ARCH), "ia64")
+header-y += perfmon.h
+header-y += perfmon_dfl_smpl.h
+endif
 header-y += personality.h
 header-y += pfkeyv2.h
 header-y += pg.h
