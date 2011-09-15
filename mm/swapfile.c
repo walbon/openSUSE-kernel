@@ -1355,7 +1355,10 @@ sector_t map_swap_page(struct page *page, struct block_device **bdev)
 static void destroy_swap_extents(struct swap_info_struct *sis)
 {
 	struct file *swap_file = sis->swap_file;
-	struct address_space *mapping = swap_file->f_mapping;
+	struct address_space *mapping = NULL;
+
+	if (swap_file)
+		mapping = swap_file->f_mapping;
 
 	while (!list_empty(&sis->first_swap_extent.list)) {
 		struct swap_extent *se;
@@ -1366,7 +1369,7 @@ static void destroy_swap_extents(struct swap_info_struct *sis)
 		kfree(se);
 	}
 
-	if (mapping->a_ops->swap_deactivate)
+	if (mapping && mapping->a_ops->swap_deactivate)
 		mapping->a_ops->swap_deactivate(swap_file);
 }
 
