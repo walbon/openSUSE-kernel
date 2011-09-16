@@ -1354,7 +1354,7 @@ randomize_range(unsigned long start, unsigned long end, unsigned long len)
  */
 void add_hwgenerator_randomness(const char *buffer, size_t count)
 {
-	struct entropy_store *poolp = &nonblocking_pool;
+	struct entropy_store *poolp = &input_pool;
 
 	/* Suspend writing if we're above the trickle threshold.
 	 * We'll be woken up again once below random_write_wakeup_thresh.
