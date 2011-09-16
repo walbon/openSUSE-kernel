@@ -2048,8 +2048,8 @@ static noinline_for_stack int merge_reloc_root(struct reloc_control *rc,
 		BUG_ON(IS_ERR(trans));
 		trans->block_rsv = rc->block_rsv;
 
-		ret = btrfs_block_rsv_check(trans, root, rc->block_rsv,
-					    min_reserved, 0, 0);
+		ret = btrfs_block_rsv_check(root, rc->block_rsv, min_reserved,
+					    0, 0);
 		if (ret) {
 			BUG_ON(ret != -EAGAIN);
 			ret = btrfs_commit_transaction(trans, root);
@@ -2159,8 +2159,7 @@ int prepare_to_merge(struct reloc_control *rc, int err)
 again:
 	if (!err) {
 		num_bytes = rc->merging_rsv_size;
-		ret = btrfs_block_rsv_add(NULL, root, rc->block_rsv,
-					  num_bytes);
+		ret = btrfs_block_rsv_add(root, rc->block_rsv, num_bytes);
 		if (ret)
 			err = ret;
 	}
@@ -2435,7 +2434,7 @@ static int reserve_metadata_space(struct btrfs_trans_handle *trans,
 	num_bytes = calcu_metadata_size(rc, node, 1) * 2;
 
 	trans->block_rsv = rc->block_rsv;
-	ret = btrfs_block_rsv_add(trans, root, rc->block_rsv, num_bytes);
+	ret = btrfs_block_rsv_add(root, rc->block_rsv, num_bytes);
 	if (ret) {
 		if (ret == -EAGAIN)
 			rc->commit_transaction = 1;
@@ -3345,8 +3344,11 @@ static int find_data_references(struct reloc_control *rc,
 	}
 
 	key.objectid = ref_objectid;
-	key.offset = ref_offset;
 	key.type = BTRFS_EXTENT_DATA_KEY;
+	if (ref_offset > ((u64)-1 << 32))
+		key.offset = 0;
+	else
+		key.offset = ref_offset;
 
 	path->search_commit_root = 1;
 	path->skip_locking = 1;
@@ -3667,7 +3669,7 @@ int prepare_to_relocate(struct reloc_control *rc)
 	 * btrfs_init_reloc_root will use them when there
 	 * is no reservation in transaction handle.
 	 */
-	ret = btrfs_block_rsv_add(NULL, rc->extent_root, rc->block_rsv,
+	ret = btrfs_block_rsv_add(rc->extent_root, rc->block_rsv,
 				  rc->extent_root->nodesize * 256);
 	if (ret)
 		return ret;
@@ -3796,8 +3798,8 @@ restart:
 			}
 		}
 
-		ret = btrfs_block_rsv_check(trans, rc->extent_root,
-					    rc->block_rsv, 0, 5, 0);
+		ret = btrfs_block_rsv_check(rc->extent_root, rc->block_rsv, 0,
+					    5, 0);
 		if (ret < 0) {
 			if (ret != -EAGAIN) {
 				err = ret;

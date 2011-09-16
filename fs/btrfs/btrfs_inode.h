@@ -72,9 +72,6 @@ struct btrfs_inode {
 	/* node for the red-black tree that links inodes in subvolume root */
 	struct rb_node rb_node;
 
-	/* the space_info for where this inode's data allocations are done */
-	struct btrfs_space_info *space_info;
-
 	/* full 64 bit generation number, struct vfs_inode doesn't have a big
 	 * enough field for this.
 	 */
@@ -177,7 +174,11 @@ static inline u64 btrfs_ino(struct inode *inode)
 {
 	u64 ino = BTRFS_I(inode)->location.objectid;
 
-	if (ino <= BTRFS_FIRST_FREE_OBJECTID)
+	/*
+	 * !ino: btree_inode
+	 * type == BTRFS_ROOT_ITEM_KEY: subvol dir
+	 */
+	if (!ino || BTRFS_I(inode)->location.type == BTRFS_ROOT_ITEM_KEY)
 		ino = inode->i_ino;
 	return ino;
 }
