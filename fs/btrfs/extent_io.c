@@ -1353,7 +1353,15 @@ again:
 			goto out_failed;
 		}
 	}
-	BUG_ON(ret);
+	if (ret) {
+		/*
+		 * This should never happen - lock_delalloc_pages only returns
+		 * 0 or -EAGAIN which are handled above.
+		 */
+		printk(KERN_ERR "btrfs: unexpected return %d from "
+		       "lock_delalloc_pages\n", ret);
+		BUG();
+	}
 
 	/* step three, lock the state bits for the whole range */
 	ret = lock_extent_bits(tree, delalloc_start, delalloc_end,

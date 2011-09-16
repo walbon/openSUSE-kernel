@@ -407,7 +407,10 @@ int btrfs_add_root_ref(struct btrfs_trans_handle *trans,
 again:
 	ret = btrfs_insert_empty_item(trans, tree_root, path, &key,
 				      sizeof(*ref) + name_len);
-	BUG_ON(ret);
+	if (ret) {
+		btrfs_std_error(tree_root->fs_info, ret);
+		goto out_free;
+	}
 
 	leaf = path->nodes[0];
 	ref = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_root_ref);
@@ -426,8 +429,9 @@ again:
 		goto again;
 	}
 
+out_free:
 	btrfs_free_path(path);
-	return 0;
+	return ret;
 }
 
 /*

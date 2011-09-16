@@ -996,7 +996,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 				 parent_root->root_key.objectid,
 				 btrfs_ino(parent_inode), index,
 				 dentry->d_name.name, dentry->d_name.len);
-	BUG_ON(ret);
+	btrfs_std_error(fs_info, ret);
 	dput(parent);
 
 	key.offset = (u64)-1;

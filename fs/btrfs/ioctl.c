@@ -329,6 +329,7 @@ static noinline int create_subvol(struct btrfs_root *root,
 	struct btrfs_root *new_root;
 	struct dentry *parent = dentry->d_parent;
 	struct inode *dir;
+	struct inode *inode;
 	int ret;
 	int err;
 	u64 objectid;
@@ -415,6 +416,8 @@ static noinline int create_subvol(struct btrfs_root *root,
 	btrfs_record_root_in_trans(trans, new_root);
 
 	ret = btrfs_create_subvol_root(trans, new_root, new_dirid);
+	if (ret)
+		goto fail;
 	/*
 	 * insert the directory item
 	 */
@@ -434,10 +437,16 @@ static noinline int create_subvol(struct btrfs_root *root,
 	ret = btrfs_add_root_ref(trans, root->fs_info->tree_root,
 				 objectid, root->root_key.objectid,
 				 btrfs_ino(dir), index, name, namelen);
+	if (ret)
+		goto fail;
 
-	BUG_ON(ret);
+	inode = btrfs_lookup_dentry(dir, dentry);
+	if (IS_ERR(inode)) {
+		ret = PTR_ERR(inode);
+		goto fail;
+	}
 
-	d_instantiate(dentry, btrfs_lookup_dentry(dir, dentry));
+	d_instantiate(dentry, inode);
 fail:
 	if (async_transid) {
 		*async_transid = trans->transid;
@@ -507,7 +516,7 @@ static int create_snapshot(struct btrfs_root *root, struct dentry *dentry,
 		ret = PTR_ERR(inode);
 		goto fail;
 	}
-	BUG_ON(!inode);
+
 	d_instantiate(dentry, inode);
 	ret = 0;
 fail:

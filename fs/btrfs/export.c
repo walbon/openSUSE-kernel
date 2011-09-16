@@ -193,7 +193,13 @@ static struct dentry *btrfs_get_parent(struct dentry *child)
 	if (ret < 0)
 		goto fail;
 
-	BUG_ON(ret == 0);
+	if (ret == 0) {
+		/* Missing ref, should go readonly. */
+		ret = -ENOENT;
+		btrfs_std_error(root->fs_info, ret);
+		goto fail;
+	}
+
 	if (path->slots[0] == 0) {
 		ret = -ENOENT;
 		goto fail;
