@@ -1362,13 +1362,10 @@ static int do_end_io(struct multipath *m, struct request *clone,
 
 	spin_lock_irqsave(&m->lock, flags);
 	if (!m->nr_valid_paths) {
-		if (!m->queue_if_no_path) {
-			if (!__must_push_back(m))
-				r = -EIO;
-		} else {
-			if (error == -EBADE)
-				r = error;
-		}
+		if (!m->queue_if_no_path && !__must_push_back(m))
+			r = -EIO;
+		else if (error == -EBADE)
+			r = error;
 	}
 	spin_unlock_irqrestore(&m->lock, flags);
 
