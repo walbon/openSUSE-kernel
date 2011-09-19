@@ -538,7 +538,13 @@ struct port_hw_cfg {		    /* port 0: 0x12c  port 1: 0x2bc */
 	u32 fcoe_wwn_node_name_upper;
 	u32 fcoe_wwn_node_name_lower;
 
-	u32 Reserved1[50];					/* 0x1C0 */
+	u32 Reserved1[49];				    /* 0x1C0 */
+
+	/*  Enable RJ45 magjack pair swapping on 10GBase-T PHY (0=default),
+	      84833 only */
+	u32 xgbt_phy_cfg;				    /* 0x284 */
+	#define PORT_HW_CFG_RJ45_PAIR_SWAP_MASK             0x000000FF
+	#define PORT_HW_CFG_RJ45_PAIR_SWAP_SHIFT                     0
 
 		u32 default_cfg;			    /* 0x288 */
 	#define PORT_HW_CFG_GPIO0_CONFIG_MASK               0x00000003
@@ -696,7 +702,7 @@ struct port_hw_cfg {		    /* port 0: 0x12c  port 1: 0x2bc */
 		#define PORT_HW_CFG_XGXS_EXT_PHY2_TYPE_BCM84823      0x00000b00
 		#define PORT_HW_CFG_XGXS_EXT_PHY2_TYPE_BCM54640      0x00000c00
 		#define PORT_HW_CFG_XGXS_EXT_PHY2_TYPE_BCM84833      0x00000d00
-		#define PORT_HW_CFG_XGXS_EXT_PHY2_TYPE_BCM54616      0x00000e00
+		#define PORT_HW_CFG_XGXS_EXT_PHY2_TYPE_BCM54618SE    0x00000e00
 		#define PORT_HW_CFG_XGXS_EXT_PHY2_TYPE_BCM8722       0x00000f00
 		#define PORT_HW_CFG_XGXS_EXT_PHY2_TYPE_FAILURE       0x0000fd00
 		#define PORT_HW_CFG_XGXS_EXT_PHY2_TYPE_NOT_CONN      0x0000ff00
@@ -751,7 +757,7 @@ struct port_hw_cfg {		    /* port 0: 0x12c  port 1: 0x2bc */
 		#define PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM84823       0x00000b00
 		#define PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM54640       0x00000c00
 		#define PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM84833       0x00000d00
-		#define PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM54616       0x00000e00
+		#define PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM54618SE     0x00000e00
 		#define PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM8722        0x00000f00
 		#define PORT_HW_CFG_XGXS_EXT_PHY_TYPE_DIRECT_WC      0x0000fc00
 		#define PORT_HW_CFG_XGXS_EXT_PHY_TYPE_FAILURE        0x0000fd00
@@ -1196,6 +1202,10 @@ struct drv_port_mb {
 	#define LINK_STATUS_LINK_PARTNER_10GXFD_CAPABLE		0x00800000
 	#define LINK_STATUS_LINK_PARTNER_20GXFD_CAPABLE		0x10000000
 
+	#define LINK_STATUS_PFC_ENABLED				0x20000000
+
+	#define LINK_STATUS_PHYSICAL_LINK_FLAG			0x40000000
+
 	u32 port_stx;
 
 	u32 stat_nig_timer;
@@ -1234,6 +1244,7 @@ struct drv_func_mb {
 	#define REQ_BC_VER_4_VRFY_FIRST_PHY_OPT_MDL     0x00050006
 	#define DRV_MSG_CODE_VRFY_SPECIFIC_PHY_OPT_MDL  0xa1000000
 	#define REQ_BC_VER_4_VRFY_SPECIFIC_PHY_OPT_MDL  0x00050234
+	#define REQ_BC_VER_4_SFP_TX_DISABLE_SUPPORTED   0x00070014
 
 	#define DRV_MSG_CODE_DCBX_ADMIN_PMF_MSG         0xb0000000
 	#define DRV_MSG_CODE_DCBX_PMF_DRV_OK            0xb2000000
@@ -1825,6 +1836,7 @@ struct lldp_local_mib {
 	#define DCBX_LOCAL_APP_ERROR             0x00000004
 	#define DCBX_LOCAL_PFC_MISMATCH          0x00000010
 	#define DCBX_LOCAL_APP_MISMATCH          0x00000020
+	#define DCBX_REMOTE_MIB_ERROR		 0x00000040
 	struct dcbx_features   features;
 	u32 suffix_seq_num;
 };
