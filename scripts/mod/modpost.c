@@ -1648,7 +1648,7 @@ static void check_sec_ref(struct module *mod, const char *modname,
  * Dashes inside character range patterns (e.g. [0-9]) are left unchanged.
  * (copied from module-init-tools/util.c)
  */
-char *underscores(char *string)
+static char *underscores(char *string)
 {
 	unsigned int i;
 
