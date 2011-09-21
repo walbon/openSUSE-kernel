@@ -363,13 +363,50 @@ static int bnx2x_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 		}
 
 		/* advertise the requested speed and duplex if supported */
-		cmd->advertising &= bp->port.supported[cfg_idx];
+		if (cmd->advertising & ~(bp->port.supported[cfg_idx])) {
+			DP(NETIF_MSG_LINK, "Advertisement parameters "
+					   "are not supported\n");
+			return -EINVAL;
+		}
 
 		bp->link_params.req_line_speed[cfg_idx] = SPEED_AUTO_NEG;
-		bp->link_params.req_duplex[cfg_idx] = DUPLEX_FULL;
-		bp->port.advertising[cfg_idx] |= (ADVERTISED_Autoneg |
+		bp->link_params.req_duplex[cfg_idx] = cmd->duplex;
+		bp->port.advertising[cfg_idx] = (ADVERTISED_Autoneg |
 					 cmd->advertising);
+		if (cmd->advertising) {
 
+			bp->link_params.speed_cap_mask[cfg_idx] = 0;
+			if (cmd->advertising & ADVERTISED_10baseT_Half) {
+				bp->link_params.speed_cap_mask[cfg_idx] |=
+				PORT_HW_CFG_SPEED_CAPABILITY_D0_10M_HALF;
+			}
+			if (cmd->advertising & ADVERTISED_10baseT_Full)
+				bp->link_params.speed_cap_mask[cfg_idx] |=
+				PORT_HW_CFG_SPEED_CAPABILITY_D0_10M_FULL;
+
+			if (cmd->advertising & ADVERTISED_100baseT_Full)
+				bp->link_params.speed_cap_mask[cfg_idx] |=
+				PORT_HW_CFG_SPEED_CAPABILITY_D0_100M_FULL;
+
+			if (cmd->advertising & ADVERTISED_100baseT_Half) {
+				bp->link_params.speed_cap_mask[cfg_idx] |=
+				     PORT_HW_CFG_SPEED_CAPABILITY_D0_100M_HALF;
+			}
+			if (cmd->advertising & ADVERTISED_1000baseT_Half) {
+				bp->link_params.speed_cap_mask[cfg_idx] |=
+					PORT_HW_CFG_SPEED_CAPABILITY_D0_1G;
+			}
+			if (cmd->advertising & (ADVERTISED_1000baseT_Full |
+						ADVERTISED_1000baseKX_Full))
+				bp->link_params.speed_cap_mask[cfg_idx] |=
+					PORT_HW_CFG_SPEED_CAPABILITY_D0_1G;
+
+			if (cmd->advertising & (ADVERTISED_10000baseT_Full |
+						ADVERTISED_10000baseKX4_Full |
+						ADVERTISED_10000baseKR_Full))
+				bp->link_params.speed_cap_mask[cfg_idx] |=
+					PORT_HW_CFG_SPEED_CAPABILITY_D0_10G;
+		}
 	} else { /* forced speed */
 		/* advertise the requested speed and duplex if supported */
 		switch (speed) {
@@ -1310,10 +1347,7 @@ static void bnx2x_get_ringparam(struct net_device *dev,
 	if (bp->rx_ring_size)
 		ering->rx_pending = bp->rx_ring_size;
 	else
-		if (bp->state == BNX2X_STATE_OPEN && bp->num_queues)
-			ering->rx_pending = MAX_RX_AVAIL/bp->num_queues;
-		else
-			ering->rx_pending = MAX_RX_AVAIL;
+		ering->rx_pending = MAX_RX_AVAIL;
 
 	ering->rx_mini_pending = 0;
 	ering->rx_jumbo_pending = 0;
@@ -1835,7 +1869,7 @@ static int bnx2x_run_loopback(struct bnx2x *bp, int loopback_mode)
 		goto test_loopback_rx_exit;
 
 	rx_buf = &fp_rx->rx_buf_ring[RX_BD(fp_rx->rx_bd_cons)];
-	dma_sync_single_for_device(&bp->pdev->dev,
+	dma_sync_single_for_cpu(&bp->pdev->dev,
 				   dma_unmap_addr(rx_buf, mapping),
 				   fp_rx->rx_buf_size, DMA_FROM_DEVICE);
 	skb = rx_buf->skb;

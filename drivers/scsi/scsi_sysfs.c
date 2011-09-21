@@ -300,7 +300,7 @@ static void scsi_device_dev_release_usercontext(struct work_struct *work)
 	struct list_head *this, *tmp;
 	unsigned long flags;
 
-	sdev = container_of(work, struct scsi_device, ew.work);
+	sdev = container_of(work, struct scsi_device, release_work);
 
 	parent = sdev->sdev_gendev.parent;
 	starget = to_scsi_target(parent);
@@ -322,7 +322,11 @@ static void scsi_device_dev_release_usercontext(struct work_struct *work)
 		kfree(evt);
 	}
 
+	/* Freeing the queue signals to block that we're done */
+	scsi_free_queue(sdev->request_queue);
+
 	blk_put_queue(sdev->request_queue);
+
 	/* NULL queue means the device can't be used */
 	sdev->request_queue = NULL;
 
@@ -338,8 +342,8 @@ static void scsi_device_dev_release_usercontext(struct work_struct *work)
 static void scsi_device_dev_release(struct device *dev)
 {
 	struct scsi_device *sdp = to_scsi_device(dev);
-	execute_in_process_context(scsi_device_dev_release_usercontext,
-				   &sdp->ew);
+
+	queue_work(scsi_wq, &sdp->release_work);
 }
 
 static struct class sdev_class = {
@@ -936,8 +940,6 @@ void __scsi_remove_device(struct scsi_device *sdev)
 	/* cause the request function to reject all I/O requests */
 	sdev->request_queue->queuedata = NULL;
 
-	/* Freeing the queue signals to block that we're done */
-	scsi_free_queue(sdev->request_queue);
 	put_device(dev);
 }
 
@@ -1070,6 +1072,8 @@ void scsi_sysfs_device_initialize(struct scsi_device *sdev)
 	dev_set_name(&sdev->sdev_dev, "%d:%d:%d:%d",
 		     sdev->host->host_no, sdev->channel, sdev->id, sdev->lun);
 	sdev->scsi_level = starget->scsi_level;
+	INIT_WORK(&sdev->release_work, scsi_device_dev_release_usercontext);
+
 	transport_setup_device(&sdev->sdev_gendev);
 	spin_lock_irqsave(shost->host_lock, flags);
 	list_add_tail(&sdev->same_target_siblings, &starget->devices);

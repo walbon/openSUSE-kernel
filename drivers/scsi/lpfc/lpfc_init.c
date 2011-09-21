@@ -1481,15 +1481,18 @@ lpfc_handle_eratt_s4(struct lpfc_hba *phba)
 			return;
 		}
 		if (bf_get(lpfc_sliport_status_rn, &portstat_reg)) {
-			/*
-			 * TODO: Attempt port recovery via a port reset.
-			 * When fully implemented, the driver should
-			 * attempt to recover the port here and return.
-			 * For now, log an error and take the port offline.
-			 */
+			/* need reset: attempt for port recovery */
 			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 					"2887 Port Error: Attempting "
 					"Port Recovery\n");
+			lpfc_offline_prep(phba);
+			lpfc_offline(phba);
+			lpfc_sli_brdrestart(phba);
+			if (lpfc_online(phba) == 0) {
+				lpfc_unblock_mgmt_io(phba);
+				return;
+			}
+			/* fall through for not able to recover */
 		}
 		lpfc_sli4_offline_eratt(phba);
 		break;
@@ -1958,7 +1961,7 @@ lpfc_get_hba_model_desc(struct lpfc_hba *phba, uint8_t *mdp, uint8_t *descp)
 	case PCI_DEVICE_ID_LANCER_FCOE:
 	case PCI_DEVICE_ID_LANCER_FCOE_VF:
 		oneConnect = 1;
-		m = (typeof(m)){"OCe50100", "PCIe", "FCoE"};
+		m = (typeof(m)){"OCe15100", "PCIe", "FCoE"};
 		break;
 	default:
 		m = (typeof(m)){"Unknown", "", ""};
@@ -2927,6 +2930,8 @@ void lpfc_host_attrib_init(struct Scsi_Host *shost)
 				 sizeof fc_host_symbolic_name(shost));
 
 	fc_host_supported_speeds(shost) = 0;
+	if (phba->lmt & LMT_16Gb)
+		fc_host_supported_speeds(shost) |= FC_PORTSPEED_16GBIT;
 	if (phba->lmt & LMT_10Gb)
 		fc_host_supported_speeds(shost) |= FC_PORTSPEED_10GBIT;
 	if (phba->lmt & LMT_8Gb)
@@ -3632,8 +3637,7 @@ lpfc_sli4_async_fip_evt(struct lpfc_hba *phba,
 			lpfc_sli4_fcf_dead_failthrough(phba);
 		} else {
 			/* Reset FCF roundrobin bmask for new discovery */
-			memset(phba->fcf.fcf_rr_bmask, 0,
-			       sizeof(*phba->fcf.fcf_rr_bmask));
+			lpfc_sli4_clear_fcf_rr_bmask(phba);
 			/*
 			 * Handling fast FCF failover to a DEAD FCF event is
 			 * considered equalivant to receiving CVL to all vports.
@@ -3647,7 +3651,7 @@ lpfc_sli4_async_fip_evt(struct lpfc_hba *phba,
 			" tag 0x%x\n", acqe_fip->index, acqe_fip->event_tag);
 
 		vport = lpfc_find_vport_by_vpid(phba,
-				acqe_fip->index - phba->vpi_base);
+						acqe_fip->index);
 		ndlp = lpfc_sli4_perform_vport_cvl(vport);
 		if (!ndlp)
 			break;
@@ -3719,8 +3723,7 @@ lpfc_sli4_async_fip_evt(struct lpfc_hba *phba,
 				 * Reset FCF roundrobin bmask for new
 				 * discovery.
 				 */
-				memset(phba->fcf.fcf_rr_bmask, 0,
-				       sizeof(*phba->fcf.fcf_rr_bmask));
+				lpfc_sli4_clear_fcf_rr_bmask(phba);
 		}
 		break;
 	default:
@@ -3949,7 +3952,7 @@ static int
 lpfc_enable_pci_dev(struct lpfc_hba *phba)
 {
 	struct pci_dev *pdev;
-	int bars;
+	int bars = 0;
 
 	/* Obtain PCI device reference */
 	if (!phba->pcidev)
@@ -3978,6 +3981,8 @@ lpfc_enable_pci_dev(struct lpfc_hba *phba)
 out_disable_device:
 	pci_disable_device(pdev);
 out_error:
+	lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+			"1401 Failed to enable pci device, bars:x%x\n", bars);
 	return -ENODEV;
 }
 
@@ -4035,6 +4040,31 @@ lpfc_reset_hba(struct lpfc_hba *phba)
 }
 
 /**
+ * lpfc_sli_sriov_nr_virtfn_get - Get the number of sr-iov virtual functions
+ * @phba: pointer to lpfc hba data structure.
+ *
+ * This function enables the PCI SR-IOV virtual functions to a physical
+ * function. It invokes the PCI SR-IOV api with the @nr_vfn provided to
+ * enable the number of virtual functions to the physical function. As
+ * not all devices support SR-IOV, the return code from the pci_enable_sriov()
+ * API call does not considered as an error condition for most of the device.
+ **/
+uint16_t
+lpfc_sli_sriov_nr_virtfn_get(struct lpfc_hba *phba)
+{
+	struct pci_dev *pdev = phba->pcidev;
+	uint16_t nr_virtfn;
+	int pos;
+
+	pos = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_SRIOV);
+	if (pos == 0)
+		return 0;
+
+	pci_read_config_word(pdev, pos + PCI_SRIOV_TOTAL_VF, &nr_virtfn);
+	return nr_virtfn;
+}
+
+/**
  * lpfc_sli_probe_sriov_nr_virtfn - Enable a number of sr-iov virtual functions
  * @phba: pointer to lpfc hba data structure.
  * @nr_vfn: number of virtual functions to be enabled.
@@ -4049,7 +4079,16 @@ int
 lpfc_sli_probe_sriov_nr_virtfn(struct lpfc_hba *phba, int nr_vfn)
 {
 	struct pci_dev *pdev = phba->pcidev;
+	uint16_t max_nr_vfn;
 	int rc;
+
+	max_nr_vfn = lpfc_sli_sriov_nr_virtfn_get(phba);
+	if (nr_vfn > max_nr_vfn) {
+		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+				"3057 Requested vfs (%d) greater than "
+				"supported vfs (%d)", nr_vfn, max_nr_vfn);
+		return -EINVAL;
+	}
 
 	rc = pci_enable_sriov(pdev, nr_vfn);
 	if (rc) {
@@ -4516,7 +4555,7 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 		}
 	}
 
-	return rc;
+	return 0;
 
 out_free_fcp_eq_hdl:
 	kfree(phba->sli4_hba.fcp_eq_hdl);
@@ -4966,17 +5005,14 @@ out_free_mem:
  * @phba: pointer to lpfc hba data structure.
  *
  * This routine is invoked to post rpi header templates to the
- * HBA consistent with the SLI-4 interface spec.  This routine
+ * port for those SLI4 ports that do not support extents.  This routine
  * posts a PAGE_SIZE memory region to the port to hold up to
- * PAGE_SIZE modulo 64 rpi context headers.
- * No locks are held here because this is an initialization routine
- * called only from probe or lpfc_online when interrupts are not
- * enabled and the driver is reinitializing the device.
+ * PAGE_SIZE modulo 64 rpi context headers.  This is an initialization routine
+ * and should be called only when interrupts are disabled.
  *
  * Return codes
  * 	0 - successful
- * 	-ENOMEM - No available memory
- *      -EIO - The mailbox failed to complete successfully.
+ *	-ERROR - otherwise.
  **/
 int
 lpfc_sli4_init_rpi_hdrs(struct lpfc_hba *phba)
@@ -5687,17 +5723,22 @@ lpfc_sli4_bar0_register_memmap(struct lpfc_hba *phba, uint32_t if_type)
 		break;
 	case LPFC_SLI_INTF_IF_TYPE_2:
 		phba->sli4_hba.u.if_type2.ERR1regaddr =
-			phba->sli4_hba.conf_regs_memmap_p + LPFC_SLIPORT_ERR_1;
+			phba->sli4_hba.conf_regs_memmap_p +
+						LPFC_CTL_PORT_ER1_OFFSET;
 		phba->sli4_hba.u.if_type2.ERR2regaddr =
-			phba->sli4_hba.conf_regs_memmap_p + LPFC_SLIPORT_ERR_2;
+			phba->sli4_hba.conf_regs_memmap_p +
+						LPFC_CTL_PORT_ER2_OFFSET;
 		phba->sli4_hba.u.if_type2.CTRLregaddr =
-			phba->sli4_hba.conf_regs_memmap_p + LPFC_SLIPORT_CNTRL;
+			phba->sli4_hba.conf_regs_memmap_p +
+						LPFC_CTL_PORT_CTL_OFFSET;
 		phba->sli4_hba.u.if_type2.STATUSregaddr =
-			phba->sli4_hba.conf_regs_memmap_p + LPFC_SLIPORT_STATUS;
+			phba->sli4_hba.conf_regs_memmap_p +
+						LPFC_CTL_PORT_STA_OFFSET;
 		phba->sli4_hba.SLIINTFregaddr =
 			phba->sli4_hba.conf_regs_memmap_p + LPFC_SLI_INTF;
 		phba->sli4_hba.PSMPHRregaddr =
-		     phba->sli4_hba.conf_regs_memmap_p + LPFC_SLIPORT_IF2_SMPHR;
+			phba->sli4_hba.conf_regs_memmap_p +
+						LPFC_CTL_PORT_SEM_OFFSET;
 		phba->sli4_hba.RQDBregaddr =
 			phba->sli4_hba.conf_regs_memmap_p + LPFC_RQ_DOORBELL;
 		phba->sli4_hba.WQDBregaddr =
@@ -8232,11 +8273,8 @@ lpfc_pci_probe_one_s3(struct pci_dev *pdev, const struct pci_device_id *pid)
 
 	/* Perform generic PCI device enabling operation */
 	error = lpfc_enable_pci_dev(phba);
-	if (error) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
-				"1401 Failed to enable pci device.\n");
+	if (error)
 		goto out_free_phba;
-	}
 
 	/* Set up SLI API function jump table for PCI-device group-0 HBAs */
 	error = lpfc_api_table_setup(phba, LPFC_PCI_DEV_LP);
@@ -8282,6 +8320,9 @@ lpfc_pci_probe_one_s3(struct pci_dev *pdev, const struct pci_device_id *pid)
 				"1406 Failed to set up driver resource.\n");
 		goto out_free_iocb_list;
 	}
+
+	/* Get the default values for Model Name and Description */
+	lpfc_get_hba_model_desc(phba, phba->ModelName, phba->ModelDesc);
 
 	/* Create SCSI host to the physical port */
 	error = lpfc_create_shost(phba);
@@ -8846,24 +8887,25 @@ lpfc_write_firmware(struct lpfc_hba *phba, const struct firmware *fw)
 	uint32_t offset = 0, temp_offset = 0;
 
 	INIT_LIST_HEAD(&dma_buffer_list);
-	if ((image->magic_number != LPFC_GROUP_OJECT_MAGIC_NUM) ||
-	    (bf_get(lpfc_grp_hdr_file_type, image) != LPFC_FILE_TYPE_GROUP) ||
-	    (bf_get(lpfc_grp_hdr_id, image) != LPFC_FILE_ID_GROUP) ||
-	    (image->size != fw->size)) {
+	if ((be32_to_cpu(image->magic_number) != LPFC_GROUP_OJECT_MAGIC_NUM) ||
+	    (bf_get_be32(lpfc_grp_hdr_file_type, image) !=
+	     LPFC_FILE_TYPE_GROUP) ||
+	    (bf_get_be32(lpfc_grp_hdr_id, image) != LPFC_FILE_ID_GROUP) ||
+	    (be32_to_cpu(image->size) != fw->size)) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"3022 Invalid FW image found. "
-				"Magic:%d Type:%x ID:%x\n",
-				image->magic_number,
-				bf_get(lpfc_grp_hdr_file_type, image),
-				bf_get(lpfc_grp_hdr_id, image));
+				"Magic:%x Type:%x ID:%x\n",
+				be32_to_cpu(image->magic_number),
+				bf_get_be32(lpfc_grp_hdr_file_type, image),
+				bf_get_be32(lpfc_grp_hdr_id, image));
 		return -EINVAL;
 	}
 	lpfc_decode_firmware_rev(phba, fwrev, 1);
-	if (strncmp(fwrev, image->rev_name, strnlen(fwrev, 16))) {
+	if (strncmp(fwrev, image->revision, strnlen(image->revision, 16))) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"3023 Updating Firmware. Current Version:%s "
 				"New Version:%s\n",
-				fwrev, image->rev_name);
+				fwrev, image->revision);
 		for (i = 0; i < LPFC_MBX_WR_CONFIG_MAX_BDE; i++) {
 			dmabuf = kzalloc(sizeof(struct lpfc_dmabuf),
 					 GFP_KERNEL);
@@ -8885,16 +8927,16 @@ lpfc_write_firmware(struct lpfc_hba *phba, const struct firmware *fw)
 		while (offset < fw->size) {
 			temp_offset = offset;
 			list_for_each_entry(dmabuf, &dma_buffer_list, list) {
-				if (offset + SLI4_PAGE_SIZE > fw->size) {
-					temp_offset += fw->size - offset;
+				if (temp_offset + SLI4_PAGE_SIZE > fw->size) {
 					memcpy(dmabuf->virt,
 					       fw->data + temp_offset,
-					       fw->size - offset);
+					       fw->size - temp_offset);
+					temp_offset = fw->size;
 					break;
 				}
-				temp_offset += SLI4_PAGE_SIZE;
 				memcpy(dmabuf->virt, fw->data + temp_offset,
 				       SLI4_PAGE_SIZE);
+				temp_offset += SLI4_PAGE_SIZE;
 			}
 			rc = lpfc_wr_object(phba, &dma_buffer_list,
 				    (fw->size - offset), &offset);
@@ -8956,11 +8998,8 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
 
 	/* Perform generic PCI device enabling operation */
 	error = lpfc_enable_pci_dev(phba);
-	if (error) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
-				"1409 Failed to enable pci device.\n");
+	if (error)
 		goto out_free_phba;
-	}
 
 	/* Set up SLI API function jump table for PCI-device group-1 HBAs */
 	error = lpfc_api_table_setup(phba, LPFC_PCI_DEV_OC);
@@ -9005,6 +9044,7 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
 	}
 
 	INIT_LIST_HEAD(&phba->active_rrq_list);
+	INIT_LIST_HEAD(&phba->fcf.fcf_pri_list);
 
 	/* Set up common device driver resources */
 	error = lpfc_setup_driver_resource_phase2(phba);
@@ -9013,6 +9053,9 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
 				"1414 Failed to set up driver resource.\n");
 		goto out_free_iocb_list;
 	}
+
+	/* Get the default values for Model Name and Description */
+	lpfc_get_hba_model_desc(phba, phba->ModelName, phba->ModelDesc);
 
 	/* Create SCSI host to the physical port */
 	error = lpfc_create_shost(phba);
@@ -9112,7 +9155,6 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
 
 	/* Check if there are static vports to be created. */
 	lpfc_create_static_vport(phba);
-
 	return 0;
 
 out_disable_intr:
@@ -9483,6 +9525,13 @@ lpfc_io_slot_reset_s4(struct pci_dev *pdev)
 	}
 
 	pci_restore_state(pdev);
+
+	/*
+	 * As the new kernel behavior of pci_restore_state() API call clears
+	 * device saved_state flag, need to save the restored state again.
+	 */
+	pci_save_state(pdev);
+
 	if (pdev->is_busmaster)
 		pci_set_master(pdev);
 

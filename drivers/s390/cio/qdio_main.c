@@ -15,7 +15,6 @@
 #include <linux/delay.h>
 #include <linux/gfp.h>
 #include <linux/io.h>
-#include <linux/kernel_stat.h>
 #include <asm/atomic.h>
 #include <asm/debug.h>
 #include <asm/qdio.h>
@@ -1123,7 +1122,6 @@ void qdio_int_handler(struct ccw_device *cdev, unsigned long intparm,
 		return;
 	}
 
-	kstat_cpu(smp_processor_id()).irqs[IOINT_QDI]++;
 	if (irq_ptr->perf_stat_enabled)
 		irq_ptr->perf_stat.qdio_int++;
 
