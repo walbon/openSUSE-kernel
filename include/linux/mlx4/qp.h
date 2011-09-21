@@ -74,6 +74,7 @@ enum {
 	MLX4_QP_ST_UC				= 0x1,
 	MLX4_QP_ST_RD				= 0x2,
 	MLX4_QP_ST_UD				= 0x3,
+	MLX4_QP_ST_XRC				= 0x6,
 	MLX4_QP_ST_MLX				= 0x7
 };
 
@@ -137,7 +138,7 @@ struct mlx4_qp_context {
 	__be32			ssn;
 	__be32			params2;
 	__be32			rnr_nextrecvpsn;
-	__be32			srcd;
+	__be32			xrcd;
 	__be32			cqn_recv;
 	__be64			db_rec_addr;
 	__be32			qkey;
@@ -327,6 +328,7 @@ static inline struct mlx4_qp *__mlx4_qp_lookup(struct mlx4_dev *dev, u32 qpn)
 	return radix_tree_lookup(&dev->qp_table_tree, qpn & (dev->caps.num_qps - 1));
 }
 
+struct mlx4_qp *mlx4_qp_lookup_lock(struct mlx4_dev *dev, u32 qpn);
 void mlx4_qp_remove(struct mlx4_dev *dev, struct mlx4_qp *qp);
 
 #endif /* MLX4_QP_H */

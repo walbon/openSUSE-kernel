@@ -236,7 +236,6 @@ struct mlx4_eq_table {
 struct mlx4_srq_table {
 	struct mlx4_bitmap	bitmap;
 	spinlock_t		lock;
-	struct radix_tree_root	tree;
 	struct mlx4_icm_table	table;
 	struct mlx4_icm_table	cmpt_table;
 };
@@ -335,6 +334,7 @@ struct mlx4_priv {
 	struct mlx4_cmd		cmd;
 
 	struct mlx4_bitmap	pd_bitmap;
+	struct mlx4_bitmap	xrcd_bitmap;
 	struct mlx4_uar_table	uar_table;
 	struct mlx4_mr_table	mr_table;
 	struct mlx4_cq_table	cq_table;
@@ -383,6 +383,7 @@ int mlx4_alloc_eq_table(struct mlx4_dev *dev);
 void mlx4_free_eq_table(struct mlx4_dev *dev);
 
 int mlx4_init_pd_table(struct mlx4_dev *dev);
+int mlx4_init_xrcd_table(struct mlx4_dev *dev);
 int mlx4_init_uar_table(struct mlx4_dev *dev);
 int mlx4_init_mr_table(struct mlx4_dev *dev);
 int mlx4_init_eq_table(struct mlx4_dev *dev);
@@ -399,6 +400,7 @@ void mlx4_cleanup_cq_table(struct mlx4_dev *dev);
 void mlx4_cleanup_qp_table(struct mlx4_dev *dev);
 void mlx4_cleanup_srq_table(struct mlx4_dev *dev);
 void mlx4_cleanup_mcg_table(struct mlx4_dev *dev);
+void mlx4_cleanup_xrcd_table(struct mlx4_dev *dev);
 
 void mlx4_start_catas_poll(struct mlx4_dev *dev);
 void mlx4_stop_catas_poll(struct mlx4_dev *dev);

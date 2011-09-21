@@ -72,6 +72,13 @@ MODULE_PARM_DESC(id, "ID string for RME HDSPM interface.");
 module_param_array(enable, bool, NULL, 0444);
 MODULE_PARM_DESC(enable, "Enable/disable specific HDSPM soundcards.");
 
+/* obsoleted options; just place holders */
+static int precise_ptr[SNDRV_CARDS];
+static int line_outs_monitor[SNDRV_CARDS];
+static int enable_monitor[SNDRV_CARDS];
+module_param_array(precise_ptr, bool, NULL, 0444);
+module_param_array(line_outs_monitor, bool, NULL, 0444);
+module_param_array(enable_monitor, bool, NULL, 0444);
 
 MODULE_AUTHOR
 (

@@ -4288,5 +4288,8 @@ MODULE_PARM_DESC(debug, "debug output mask");
 module_param_named(fw_restart, iwl3945_mod_params.restart_fw, int, S_IRUGO);
 MODULE_PARM_DESC(fw_restart, "restart firmware in case of error");
 
+/* obsoleted options, readded to be compatible with SLE11-SP1 */
+module_param_named(fw_restart3945, iwl3945_mod_params.restart_fw, int, 0444);
+
 module_exit(iwl3945_exit);
 module_init(iwl3945_init);
