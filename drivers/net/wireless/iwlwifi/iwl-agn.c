@@ -3993,3 +3993,14 @@ MODULE_PARM_DESC(plcp_check, "Check plcp health (default: 1 [enabled])");
 
 module_param_named(ack_check, iwlagn_mod_params.ack_check, bool, S_IRUGO);
 MODULE_PARM_DESC(ack_check, "Check ack health (default: 0 [disabled])");
+
+/* obsoleted options, readded to be compatible with SLE11-SP1 */
+module_param_named(debug50, iwl_debug_level, uint, 0444);
+module_param_named(fw_restart4965, iwlagn_mod_params.restart_fw, int, 0444);
+module_param_named(amsdu_size_8K50, iwlagn_mod_params.amsdu_size_8K, int, 0444);
+module_param_named(11n_disable50, iwlagn_mod_params.disable_11n, int, 0444);
+module_param_named(queues_num50, iwlagn_mod_params.num_of_queues, int, 0444);
+module_param_named(swcrypto50, iwlagn_mod_params.sw_crypto, int, 0444);
+static int dummy;
+module_param_named(disable_hw_scan, dummy, int, 0444);
+module_param_named(antenna, dummy, int, 0444);
