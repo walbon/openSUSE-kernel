@@ -128,6 +128,8 @@ static int mlx4_ib_query_device(struct ib_device *ibdev,
 	    (dev->dev->caps.bmme_flags & MLX4_BMME_FLAG_REMOTE_INV) &&
 	    (dev->dev->caps.bmme_flags & MLX4_BMME_FLAG_FAST_REG_WR))
 		props->device_cap_flags |= IB_DEVICE_MEM_MGT_EXTENSIONS;
+	if (dev->dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC)
+		props->device_cap_flags |= IB_DEVICE_XRC;
 
 	props->vendor_id	   = be32_to_cpup((__be32 *) (out_mad->data + 36)) &
 		0xffffff;
@@ -538,7 +540,7 @@ static struct ib_pd *mlx4_ib_alloc_pd(struct ib_device *ibdev,
 	struct mlx4_ib_pd *pd;
 	int err;
 
-	pd = kmalloc(sizeof *pd, GFP_KERNEL);
+	pd = kzalloc(sizeof *pd, GFP_KERNEL);
 	if (!pd)
 		return ERR_PTR(-ENOMEM);
 
@@ -694,6 +696,80 @@ static int mlx4_ib_mcg_detach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 
 	return 0;
 }
+
+static void mlx4_dummy_comp_handler(struct ib_cq *cq, void *cq_context)
+{
+}
+
+static struct ib_xrcd *mlx4_ib_alloc_xrcd(struct ib_device *ibdev,
+					  struct ib_ucontext *context,
+					  struct ib_udata *udata)
+{
+	struct mlx4_ib_xrcd *xrcd;
+	struct mlx4_ib_dev *mdev = to_mdev(ibdev);
+	struct ib_pd *pd;
+	struct ib_cq *cq;
+	int err;
+
+	if (!(mdev->dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC))
+		return ERR_PTR(-ENOSYS);
+
+	xrcd = kmalloc(sizeof *xrcd, GFP_KERNEL);
+	if (!xrcd)
+		return ERR_PTR(-ENOMEM);
+
+	err = mlx4_xrcd_alloc(mdev->dev, &xrcd->xrcdn);
+	if (err)
+		goto err_xrcd;
+
+	pd = mlx4_ib_alloc_pd(ibdev, NULL, NULL);
+	if (IS_ERR(pd)) {
+		err = PTR_ERR(pd);
+		goto err_pd;
+	}
+	pd->device  = ibdev;
+
+	cq = mlx4_ib_create_cq(ibdev, 1, 0, NULL, NULL);
+	if (IS_ERR(cq)) {
+		err = PTR_ERR(cq);
+		goto err_cq;
+	}
+	cq->device        = ibdev;
+	cq->comp_handler  = mlx4_dummy_comp_handler;
+
+	if (context)
+		if (ib_copy_to_udata(udata, &xrcd->xrcdn, sizeof(__u32))) {
+			err = -EFAULT;
+			goto err_copy;
+		}
+
+	xrcd->cq = cq;
+	xrcd->pd = pd;
+	return &xrcd->ibxrcd;
+
+err_copy:
+	mlx4_ib_destroy_cq(cq);
+err_cq:
+	mlx4_ib_dealloc_pd(pd);
+err_pd:
+	mlx4_xrcd_free(mdev->dev, xrcd->xrcdn);
+err_xrcd:
+	kfree(xrcd);
+	return ERR_PTR(err);
+}
+
+static int mlx4_ib_dealloc_xrcd(struct ib_xrcd *xrcd)
+{
+	struct mlx4_ib_xrcd *mxrcd = to_mxrcd(xrcd);
+
+	mlx4_ib_destroy_cq(mxrcd->cq);
+	mlx4_ib_dealloc_pd(mxrcd->pd);
+	mlx4_xrcd_free(to_mdev(xrcd->device)->dev, to_mxrcd(xrcd)->xrcdn);
+	kfree(xrcd);
+
+	return 0;
+}
+
 
 static int init_node_data(struct mlx4_ib_dev *dev)
 {
@@ -1092,6 +1168,25 @@ static void *mlx4_ib_add(struct mlx4_dev *dev)
 	ibdev->ib_dev.map_phys_fmr	= mlx4_ib_map_phys_fmr;
 	ibdev->ib_dev.unmap_fmr		= mlx4_ib_unmap_fmr;
 	ibdev->ib_dev.dealloc_fmr	= mlx4_ib_fmr_dealloc;
+	if (dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC) {
+		ibdev->ib_dev.create_xrc_srq = mlx4_ib_create_xrc_srq;
+		ibdev->ib_dev.alloc_xrcd = mlx4_ib_alloc_xrcd;
+		ibdev->ib_dev.dealloc_xrcd = mlx4_ib_dealloc_xrcd;
+		ibdev->ib_dev.create_xrc_rcv_qp = mlx4_ib_create_xrc_rcv_qp;
+		ibdev->ib_dev.modify_xrc_rcv_qp = mlx4_ib_modify_xrc_rcv_qp;
+		ibdev->ib_dev.query_xrc_rcv_qp = mlx4_ib_query_xrc_rcv_qp;
+		ibdev->ib_dev.reg_xrc_rcv_qp = mlx4_ib_reg_xrc_rcv_qp;
+		ibdev->ib_dev.unreg_xrc_rcv_qp = mlx4_ib_unreg_xrc_rcv_qp;
+		ibdev->ib_dev.uverbs_cmd_mask |=
+			(1ull << IB_USER_VERBS_CMD_CREATE_XRC_SRQ)	|
+			(1ull << IB_USER_VERBS_CMD_OPEN_XRC_DOMAIN)	|
+			(1ull << IB_USER_VERBS_CMD_CLOSE_XRC_DOMAIN)	|
+			(1ull << IB_USER_VERBS_CMD_CREATE_XRC_RCV_QP)	|
+			(1ull << IB_USER_VERBS_CMD_MODIFY_XRC_RCV_QP)	|
+			(1ull << IB_USER_VERBS_CMD_QUERY_XRC_RCV_QP)	|
+			(1ull << IB_USER_VERBS_CMD_REG_XRC_RCV_QP)	|
+			(1ull << IB_USER_VERBS_CMD_UNREG_XRC_RCV_QP);
+	}
 
 	spin_lock_init(&iboe->lock);
 
@@ -1100,6 +1195,7 @@ static void *mlx4_ib_add(struct mlx4_dev *dev)
 
 	spin_lock_init(&ibdev->sm_lock);
 	mutex_init(&ibdev->cap_mask_mutex);
+	mutex_init(&ibdev->xrc_reg_mutex);
 
 	if (ib_register_device(&ibdev->ib_dev, NULL))
 		goto err_map;

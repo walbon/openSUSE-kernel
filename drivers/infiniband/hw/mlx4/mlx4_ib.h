@@ -56,6 +56,13 @@ struct mlx4_ib_pd {
 	u32			pdn;
 };
 
+struct mlx4_ib_xrcd {
+	struct ib_xrcd	ibxrcd;
+	u32		xrcdn;
+	struct ib_pd	*pd;
+	struct ib_cq	*cq;
+};
+
 struct mlx4_ib_cq_buf {
 	struct mlx4_buf		buf;
 	struct mlx4_mtt		mtt;
@@ -110,6 +117,7 @@ struct mlx4_ib_wq {
 enum mlx4_ib_qp_flags {
 	MLX4_IB_QP_LSO				= 1 << 0,
 	MLX4_IB_QP_BLOCK_MULTICAST_LOOPBACK	= 1 << 1,
+	MLX4_IB_XRC_RCV				= 1 << 2,
 };
 
 struct mlx4_ib_gid_entry {
@@ -139,6 +147,9 @@ struct mlx4_ib_qp {
 	int			buf_size;
 	struct mutex		mutex;
 	u32			flags;
+	struct list_head	xrc_reg_list;
+	spinlock_t		xrc_reg_list_lock;
+	u16			xrcdn;
 	u8			port;
 	u8			alt_port;
 	u8			atomic_rd_en;
@@ -191,6 +202,7 @@ struct mlx4_ib_dev {
 	spinlock_t		sm_lock;
 
 	struct mutex		cap_mask_mutex;
+	struct mutex		xrc_reg_mutex;
 	bool			ib_active;
 	struct mlx4_ib_iboe	iboe;
 };
@@ -208,6 +220,11 @@ static inline struct mlx4_ib_ucontext *to_mucontext(struct ib_ucontext *ibuconte
 static inline struct mlx4_ib_pd *to_mpd(struct ib_pd *ibpd)
 {
 	return container_of(ibpd, struct mlx4_ib_pd, ibpd);
+}
+
+static inline struct mlx4_ib_xrcd *to_mxrcd(struct ib_xrcd *ibxrcd)
+{
+	return container_of(ibxrcd, struct mlx4_ib_xrcd, ibxrcd);
 }
 
 static inline struct mlx4_ib_cq *to_mcq(struct ib_cq *ibcq)
@@ -294,6 +311,11 @@ int mlx4_ib_destroy_ah(struct ib_ah *ah);
 struct ib_srq *mlx4_ib_create_srq(struct ib_pd *pd,
 				  struct ib_srq_init_attr *init_attr,
 				  struct ib_udata *udata);
+struct ib_srq *mlx4_ib_create_xrc_srq(struct ib_pd *pd,
+				      struct ib_cq *xrc_cq,
+				      struct ib_xrcd *xrcd,
+				      struct ib_srq_init_attr *init_attr,
+				      struct ib_udata *udata);
 int mlx4_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 		       enum ib_srq_attr_mask attr_mask, struct ib_udata *udata);
 int mlx4_ib_query_srq(struct ib_srq *srq, struct ib_srq_attr *srq_attr);
@@ -330,6 +352,16 @@ int mlx4_ib_map_phys_fmr(struct ib_fmr *ibfmr, u64 *page_list, int npages,
 			 u64 iova);
 int mlx4_ib_unmap_fmr(struct list_head *fmr_list);
 int mlx4_ib_fmr_dealloc(struct ib_fmr *fmr);
+int mlx4_ib_create_xrc_rcv_qp(struct ib_qp_init_attr *init_attr,
+			      u32 *qp_num);
+int mlx4_ib_modify_xrc_rcv_qp(struct ib_xrcd *xrcd, u32 qp_num,
+			      struct ib_qp_attr *attr, int attr_mask);
+int mlx4_ib_query_xrc_rcv_qp(struct ib_xrcd *xrcd, u32 qp_num,
+			     struct ib_qp_attr *attr, int attr_mask,
+			     struct ib_qp_init_attr *init_attr);
+int mlx4_ib_reg_xrc_rcv_qp(struct ib_xrcd *xrcd, void *context, u32 qp_num);
+int mlx4_ib_unreg_xrc_rcv_qp(struct ib_xrcd *xrcd, void *context, u32 qp_num);
+
 
 int mlx4_ib_resolve_grh(struct mlx4_ib_dev *dev, const struct ib_ah_attr *ah_attr,
 			u8 *mac, int *is_mcast, u8 port);
