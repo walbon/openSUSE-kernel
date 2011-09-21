@@ -2613,6 +2613,7 @@ static const char *esp_info(struct Scsi_Host *host)
 struct scsi_host_template scsi_esp_template = {
 	.module			= THIS_MODULE,
 	.name			= "esp",
+	.proc_name		= KBUILD_MODNAME,
 	.info			= esp_info,
 	.queuecommand		= esp_queuecommand,
 	.target_alloc		= esp_target_alloc,

@@ -125,6 +125,7 @@ static struct scsi_host_template arcmsr_scsi_host_template = {
 	.module			= THIS_MODULE,
 	.name			= "ARCMSR ARECA SATA/SAS RAID Controller"
 				ARCMSR_DRIVER_VERSION,
+	.proc_name		= KBUILD_MODNAME,
 	.info			= arcmsr_info,
 	.queuecommand		= arcmsr_queue_command,
 	.eh_abort_handler		= arcmsr_abort,

@@ -557,6 +557,7 @@ static int uas_slave_configure(struct scsi_device *sdev)
 static struct scsi_host_template uas_host_template = {
 	.module = THIS_MODULE,
 	.name = "uas",
+	.proc_name		= KBUILD_MODNAME,
 	.queuecommand = uas_queuecommand,
 	.slave_alloc = uas_slave_alloc,
 	.slave_configure = uas_slave_configure,

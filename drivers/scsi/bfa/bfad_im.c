@@ -791,6 +791,7 @@ bfad_im_slave_configure(struct scsi_device *sdev)
 struct scsi_host_template bfad_im_scsi_host_template = {
 	.module = THIS_MODULE,
 	.name = BFAD_DRIVER_NAME,
+	.proc_name		= KBUILD_MODNAME,
 	.info = bfad_im_info,
 	.queuecommand = bfad_im_queuecommand,
 	.eh_abort_handler = bfad_im_abort_handler,
@@ -813,6 +814,7 @@ struct scsi_host_template bfad_im_scsi_host_template = {
 struct scsi_host_template bfad_im_vport_template = {
 	.module = THIS_MODULE,
 	.name = BFAD_DRIVER_NAME,
+	.proc_name		= KBUILD_MODNAME,
 	.info = bfad_im_info,
 	.queuecommand = bfad_im_queuecommand,
 	.eh_abort_handler = bfad_im_abort_handler,

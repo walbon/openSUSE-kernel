@@ -54,6 +54,7 @@ static const struct mvs_chip_info mvs_chips[] = {
 static struct scsi_host_template mvs_sht = {
 	.module			= THIS_MODULE,
 	.name			= DRV_NAME,
+	.proc_name		= KBUILD_MODNAME,
 	.queuecommand		= sas_queuecommand,
 	.target_alloc		= sas_target_alloc,
 	.slave_configure	= mvs_slave_configure,

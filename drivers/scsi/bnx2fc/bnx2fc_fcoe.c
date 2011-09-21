@@ -2409,6 +2409,7 @@ static struct fc_function_template bnx2fc_vport_xport_function = {
 static struct scsi_host_template bnx2fc_shost_template = {
 	.module			= THIS_MODULE,
 	.name			= "Broadcom Offload FCoE Initiator",
+	.proc_name		= KBUILD_MODNAME,
 	.queuecommand		= bnx2fc_queuecommand,
 	.eh_abort_handler	= bnx2fc_eh_abort,	  /* abts */
 	.eh_device_reset_handler = bnx2fc_eh_device_reset, /* lun reset */

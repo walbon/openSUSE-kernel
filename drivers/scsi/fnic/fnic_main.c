@@ -93,6 +93,7 @@ static int fnic_slave_alloc(struct scsi_device *sdev)
 static struct scsi_host_template fnic_host_template = {
 	.module = THIS_MODULE,
 	.name = DRV_NAME,
+	.proc_name		= KBUILD_MODNAME,
 	.queuecommand = fnic_queuecommand,
 	.eh_abort_handler = fnic_abort_cmd,
 	.eh_device_reset_handler = fnic_device_reset,

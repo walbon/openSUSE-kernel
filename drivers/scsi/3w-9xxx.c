@@ -2011,6 +2011,7 @@ static int twa_slave_configure(struct scsi_device *sdev)
 static struct scsi_host_template driver_template = {
 	.module			= THIS_MODULE,
 	.name			= "3ware 9000 Storage Controller",
+	.proc_name		= KBUILD_MODNAME,
 	.queuecommand		= twa_scsi_queue,
 	.eh_host_reset_handler	= twa_scsi_eh_reset,
 	.bios_param		= twa_scsi_biosparam,

@@ -59,6 +59,7 @@ struct workqueue_struct *pm8001_wq;
 static struct scsi_host_template pm8001_sht = {
 	.module			= THIS_MODULE,
 	.name			= DRV_NAME,
+	.proc_name		= KBUILD_MODNAME,
 	.queuecommand		= sas_queuecommand,
 	.target_alloc		= sas_target_alloc,
 	.slave_configure	= pm8001_slave_configure,

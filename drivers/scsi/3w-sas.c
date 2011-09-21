@@ -1588,6 +1588,7 @@ static int twl_slave_configure(struct scsi_device *sdev)
 static struct scsi_host_template driver_template = {
 	.module			= THIS_MODULE,
 	.name			= "3w-sas",
+	.proc_name		= KBUILD_MODNAME,
 	.queuecommand		= twl_scsi_queue,
 	.eh_host_reset_handler	= twl_scsi_eh_reset,
 	.bios_param		= twl_scsi_biosparam,

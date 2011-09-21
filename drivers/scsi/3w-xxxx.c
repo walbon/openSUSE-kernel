@@ -2265,6 +2265,7 @@ static int tw_slave_configure(struct scsi_device *sdev)
 static struct scsi_host_template driver_template = {
 	.module			= THIS_MODULE,
 	.name			= "3ware Storage Controller",
+	.proc_name		= KBUILD_MODNAME,
 	.queuecommand		= tw_scsi_queue,
 	.eh_host_reset_handler	= tw_scsi_eh_reset,
 	.bios_param		= tw_scsi_biosparam,

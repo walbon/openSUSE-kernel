@@ -3872,6 +3872,7 @@ lpfc_slave_destroy(struct scsi_device *sdev)
 struct scsi_host_template lpfc_template = {
 	.module			= THIS_MODULE,
 	.name			= LPFC_DRIVER_NAME,
+	.proc_name		= KBUILD_MODNAME,
 	.info			= lpfc_info,
 	.queuecommand		= lpfc_queuecommand,
 	.eh_abort_handler	= lpfc_abort_handler,
@@ -3895,6 +3896,7 @@ struct scsi_host_template lpfc_template = {
 struct scsi_host_template lpfc_vport_template = {
 	.module			= THIS_MODULE,
 	.name			= LPFC_DRIVER_NAME,
+	.proc_name		= KBUILD_MODNAME,
 	.info			= lpfc_info,
 	.queuecommand		= lpfc_queuecommand,
 	.eh_abort_handler	= lpfc_abort_handler,

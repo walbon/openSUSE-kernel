@@ -985,6 +985,7 @@ static int eata_pio_detect(struct scsi_host_template *tpnt)
 static struct scsi_host_template driver_template = {
 	.proc_name		= "eata_pio",
 	.name              	= "EATA (Extended Attachment) PIO driver",
+	.proc_name		= KBUILD_MODNAME,
 	.proc_info         	= eata_pio_proc_info,
 	.detect            	= eata_pio_detect,
 	.release           	= eata_pio_release,

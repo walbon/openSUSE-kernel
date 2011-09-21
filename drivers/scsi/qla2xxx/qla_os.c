@@ -199,6 +199,7 @@ static int qla2x00_change_queue_type(struct scsi_device *, int);
 struct scsi_host_template qla2xxx_driver_template = {
 	.module			= THIS_MODULE,
 	.name			= QLA2XXX_DRIVER_NAME,
+	.proc_name		= KBUILD_MODNAME,
 	.queuecommand		= qla2xxx_queuecommand,
 
 	.eh_abort_handler	= qla2xxx_eh_abort,
