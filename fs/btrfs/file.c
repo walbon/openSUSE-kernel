@@ -1066,6 +1066,7 @@ static noinline int prepare_pages(struct btrfs_root *root, struct file *file,
 	int i;
 	unsigned long index = pos >> PAGE_CACHE_SHIFT;
 	struct inode *inode = fdentry(file)->d_inode;
+	gfp_t mask = btrfs_alloc_write_mask(inode->i_mapping);
 	int err = 0;
 	int faili = 0;
 	u64 start_pos;
@@ -1077,7 +1078,7 @@ static noinline int prepare_pages(struct btrfs_root *root, struct file *file,
 again:
 	for (i = 0; i < num_pages; i++) {
 		pages[i] = find_or_create_page(inode->i_mapping, index + i,
-					       GFP_NOFS);
+					       mask);
 		if (!pages[i]) {
 			faili = i - 1;
 			err = -ENOMEM;
@@ -1836,16 +1837,26 @@ static loff_t btrfs_file_llseek(struct file *file, loff_t offset, int origin)
 		goto out;
 	case SEEK_DATA:
 	case SEEK_HOLE:
+		if (offset >= i_size_read(inode)) {
+			mutex_unlock(&inode->i_mutex);
+			return -ENXIO;
+		}
+
 		ret = find_desired_extent(inode, &offset, origin);
-		if (ret)
-			goto error;
+		if (ret) {
+			mutex_unlock(&inode->i_mutex);
+			return ret;
+		}
 	}
 
-	ret = -EINVAL;
-	if (offset < 0 && !(file->f_mode & FMODE_UNSIGNED_OFFSET))
-		goto error;
-	if (offset > inode->i_sb->s_maxbytes)
-		goto error;
+	if (offset < 0 && !(file->f_mode & FMODE_UNSIGNED_OFFSET)) {
+		offset = -EINVAL;
+		goto out;
+	}
+	if (offset > inode->i_sb->s_maxbytes) {
+		offset = -EINVAL;
+		goto out;
+	}
 
 	/* Special lock needed here? */
 	if (offset != file->f_pos) {
@@ -1855,9 +1866,6 @@ static loff_t btrfs_file_llseek(struct file *file, loff_t offset, int origin)
 out:
 	mutex_unlock(&inode->i_mutex);
 	return offset;
-error:
-	mutex_unlock(&inode->i_mutex);
-	return ret;
 }
 
 const struct file_operations btrfs_file_operations = {
