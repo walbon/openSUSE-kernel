@@ -1726,7 +1726,7 @@ static const char *supported(const char *modname)
 			line = pat_basename;
 			mod = mod_basename;
 		}
-		if (!fnmatch(line, mod, FNM_PATHNAME)) {
+		if (!fnmatch(line, mod, 0)) {
 			free(orig_mod);
 			return how;
 		}
