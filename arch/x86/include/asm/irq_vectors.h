@@ -50,6 +50,7 @@
 #ifdef CONFIG_X86_32
 # define SYSCALL_VECTOR			0x80
 #endif
+#define KDBENTER_VECTOR 	0x81
 
 /*
  * Vectors 0x30-0x3f are used for ISA interrupts.
@@ -116,6 +117,12 @@
 
 /* Xen vector callback to receive events in a HVM domain */
 #define XEN_HVM_EVTCHN_CALLBACK		0xf3
+
+/*
+ * KDB_VECTOR will take over vector 0xfe when it is needed, as in theory
+ * it should not be used anyway.
+ */
+#define LKDB_VECTOR			0xfe
 
 /*
  * Local APIC timer IRQ vector is on a different priority level,

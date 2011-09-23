@@ -109,6 +109,10 @@ bool early_boot_irqs_disabled __read_mostly;
 enum system_states system_state __read_mostly;
 EXPORT_SYMBOL(system_state);
 
+#ifdef	CONFIG_KDB
+#include <linux/lkdb.h>
+#endif	/* CONFIG_KDB */
+
 /*
  * Boot command-line arguments
  */
@@ -155,6 +159,26 @@ const char * envp_init[MAX_INIT_ENVS+2] = { "HOME=/", "TERM=linux", NULL, };
 static const char *panic_later, *panic_param;
 
 extern const struct obs_kernel_param __setup_start[], __setup_end[];
+
+#ifdef	CONFIG_KDB
+static int __init lkdb_setup(char *str)
+{
+	if (strcmp(str, "on") == 0) {
+		kdb_on = 1;
+	} else if (strcmp(str, "on-nokey") == 0) {
+		kdb_on = 2;
+	} else if (strcmp(str, "off") == 0) {
+		kdb_on = 0;
+	} else if (strcmp(str, "early") == 0) {
+		kdb_on = 1;
+		lkdb_flags |= LKDB_FLAG_EARLYKDB;
+	} else
+		printk("kdb flag %s not recognised\n", str);
+	return 0;
+}
+
+__setup("kdb=", lkdb_setup);
+#endif	/* CONFIG_KDB */
 
 static int __init obsolete_checksetup(char *line)
 {
@@ -597,6 +621,14 @@ asmlinkage void __init start_kernel(void)
 	calibrate_delay();
 	pidmap_init();
 	anon_vma_init();
+
+#ifdef	CONFIG_KDB
+	legacy_kdb_init();
+	if (LKDB_FLAG(EARLYKDB)) {
+		KDB_ENTER();
+	}
+#endif	/* CONFIG_KDB */
+
 #ifdef CONFIG_X86
 	if (efi_enabled)
 		efi_enter_virtual_mode();

@@ -1360,6 +1360,33 @@ apicinterrupt XEN_HVM_EVTCHN_CALLBACK \
 
 #endif /* CONFIG_PARAVIRT_XEN */
 
+#ifdef	CONFIG_KDB
+
+#ifdef CONFIG_SMP
+apicinterrupt LKDB_VECTOR \
+	kdb_interrupt, smp_kdb_interrupt
+#endif	/* CONFIG_SMP */
+
+ENTRY(kdb_call)
+	INTR_FRAME
+	cld
+	pushq $-1			# orig_eax
+	CFI_ADJUST_CFA_OFFSET 8
+	SAVE_ALL
+	movq $1,%rdi			# LKDB_REASON_ENTER
+	movq $0,%rsi			# error_code
+	movq %rsp,%rdx			# struct pt_regs
+	call kdb
+	RESTORE_ALL
+	addq $8,%rsp			# forget orig_eax
+	CFI_ADJUST_CFA_OFFSET -8
+	iretq
+	CFI_ENDPROC
+END(kdb_call)
+
+#endif	/* CONFIG_KDB */
+
+
 /*
  * Some functions should be protected against kprobes
  */

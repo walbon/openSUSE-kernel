@@ -1,6 +1,5 @@
 #ifndef _KDB_H
 #define _KDB_H
-
 /*
  * Kernel Debugger Architecture Independent Global Headers
  *
@@ -17,6 +16,7 @@
 #include <linux/init.h>
 #include <linux/sched.h>
 #include <asm/atomic.h>
+#include <linux/slab.h>
 
 #define KDB_POLL_FUNC_MAX	5
 extern int kdb_poll_idx;
@@ -27,6 +27,9 @@ extern int kdb_poll_idx;
  */
 extern int kdb_initial_cpu;
 extern atomic_t kdb_event;
+
+#define KDB_IS_RUNNING() (0)
+#define KDB_8250() (0)
 
 /* Types and messages used for dynamically added kdb shell commands */
 
@@ -83,6 +86,7 @@ extern const char *kdb_diemsg;
 					  * not use keyboard */
 #define KDB_FLAG_NO_I8042	(1 << 7) /* No i8042 chip is available, do
 					  * not use keyboard */
+#define KDB_FLAG_RECOVERY	(1 << 8) /* kdb is being entered for an error which has been recovered */
 
 extern int kdb_flags;	/* Global flags, see kdb_state for per cpu state */
 
@@ -111,17 +115,21 @@ typedef enum {
 	KDB_REASON_RECURSE,	/* Recursive entry to kdb;
 				 * regs probably valid */
 	KDB_REASON_SSTEP,	/* Single Step trap. - regs valid */
+	KDB_REASON_CPU_UP,	/* Add one cpu to kdb; regs invalid */
+	KDB_REASON_SILENT,	/* Silent entry/exit to kdb; regs invalid - internal only */
 } kdb_reason_t;
 
+#define kdb(reason,error_code,frame) (0)
+
+#ifdef CONFIG_KGDB
 extern int kdb_trap_printk;
+typedef int (*kdb_printf_t)(const char *, ...)
+             __attribute__ ((format (printf, 1, 2)));
 extern int vkdb_printf(const char *fmt, va_list args)
 	    __attribute__ ((format (printf, 1, 0)));
-extern int kdb_printf(const char *, ...)
-	    __attribute__ ((format (printf, 1, 2)));
-typedef int (*kdb_printf_t)(const char *, ...)
-	     __attribute__ ((format (printf, 1, 2)));
-
+extern int kdb_printf(const char *fmt, ...);
 extern void kdb_init(int level);
+#endif
 
 /* Access to kdb specific polling devices */
 typedef int (*get_char_func)(void);
@@ -153,20 +161,18 @@ extern int kdb_register(char *, kdb_func_t, char *, char *, short);
 extern int kdb_register_repeat(char *, kdb_func_t, char *, char *,
 			       short, kdb_repeat_t);
 extern int kdb_unregister(char *);
-#else /* ! CONFIG_KGDB_KDB */
-#define kdb_printf(...)
-#define kdb_init(x)
-#define kdb_register(...)
-#define kdb_register_repeat(...)
-#define kdb_uregister(x)
-#endif	/* CONFIG_KGDB_KDB */
+#endif	/* CONFIG_KGDB */
+
 enum {
 	KDB_NOT_INITIALIZED,
 	KDB_INIT_EARLY,
 	KDB_INIT_FULL,
 };
 
-extern int kdbgetintenv(const char *, int *);
+#if defined(CONFIG_KGDB_KDB)
 extern int kdb_set(int, const char **);
+extern int kdbgetintenv(const char *, int *);
+extern atomic_t kdb_event;
+#endif
 
 #endif	/* !_KDB_H */

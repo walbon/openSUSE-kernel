@@ -42,6 +42,9 @@
 #include <linux/reboot.h>
 #include <linux/notifier.h>
 #include <linux/jiffies.h>
+#ifdef CONFIG_KDB
+#include <linux/lkdb.h>
+#endif /* CONFIG_KDB */
 
 #include <linux/bootsplash.h>
 
@@ -1202,6 +1205,12 @@ static void kbd_keycode(unsigned int keycode, int down, int hw_raw)
 			if (keycode < BTN_MISC && printk_ratelimit())
 				pr_warning("can't emulate rawmode for keycode %d\n",
 					   keycode);
+#ifdef	CONFIG_KDB
+	if (down && !rep && keycode == KEY_PAUSE && kdb_on == 1) {
+		kdb(LKDB_REASON_KEYBOARD, 0, get_irq_regs());
+		return;
+	}
+#endif	/* CONFIG_KDB */
 
 	/* This code has to be redone for some non-x86 platforms */
 	if (down == 1 && (keycode == 0x3c || keycode == 0x01)) {

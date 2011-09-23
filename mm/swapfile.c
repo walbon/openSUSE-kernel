@@ -13,6 +13,10 @@
 #include <linux/swap.h>
 #include <linux/vmalloc.h>
 #include <linux/pagemap.h>
+#ifdef	CONFIG_KDB
+#include <linux/lkdb.h>
+#include <linux/kdbprivate.h>
+#endif	/* CONFIG_KDB */
 #include <linux/namei.h>
 #include <linux/shmem_fs.h>
 #include <linux/blkdev.h>
@@ -2138,12 +2142,11 @@ out:
 	return error;
 }
 
-void si_swapinfo(struct sysinfo *val)
+void _si_swapinfo(struct sysinfo *val)
 {
 	unsigned int type;
 	unsigned long nr_to_be_unused = 0;
 
-	spin_lock(&swap_lock);
 	for (type = 0; type < nr_swapfiles; type++) {
 		struct swap_info_struct *si = swap_info[type];
 
@@ -2152,6 +2155,12 @@ void si_swapinfo(struct sysinfo *val)
 	}
 	val->freeswap = nr_swap_pages + nr_to_be_unused;
 	val->totalswap = total_swap_pages + nr_to_be_unused;
+}
+
+void si_swapinfo(struct sysinfo *val)
+{
+	spin_lock(&swap_lock);
+	_si_swapinfo(val);
 	spin_unlock(&swap_lock);
 }
 

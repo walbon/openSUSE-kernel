@@ -154,6 +154,7 @@ enum
 	KERN_MAX_LOCK_DEPTH=74, /* int: rtmutex's maximum lock depth */
 	KERN_NMI_WATCHDOG=75, /* int: enable/disable nmi watchdog */
 	KERN_PANIC_ON_NMI=76, /* int: whether we will panic on an unrecovered */
+ 	KERN_KDB=77,		/* int: kdb on/off */
 	KERN_PANIC_ON_IO_NMI=79, /* int: whether we will panic on an io NMI */
 };
 

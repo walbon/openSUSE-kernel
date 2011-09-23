@@ -511,9 +511,9 @@ void __kprobes arch_prepare_kretprobe(struct kretprobe_instance *ri,
 /* Check the instruction in the slot is break */
 static int __kprobes __is_ia64_break_inst(bundle_t *bundle, uint slot)
 {
-	unsigned int major_opcode;
+	unsigned int major_opcode = 0;
 	unsigned int template = bundle->quad0.template;
-	unsigned long kprobe_inst;
+	unsigned long kprobe_inst = 0;
 
 	/* Move to slot 2, if bundle is MLX type and kprobe slot is 1 */
 	if (slot == 1 && bundle_encoding[template][1] == L)

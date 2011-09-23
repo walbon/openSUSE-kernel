@@ -15,6 +15,9 @@
 #include <linux/bug.h>
 #include <linux/nmi.h>
 #include <linux/sysfs.h>
+#ifdef CONFIG_KDB
+#include <linux/lkdb.h>
+#endif
 
 #include <asm/stacktrace.h>
 #include <linux/unwind.h>
@@ -322,6 +325,9 @@ void __kprobes oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 		/* Nest count reaches zero, release the lock. */
 		arch_spin_unlock(&die_lock);
 	raw_local_irq_restore(flags);
+#ifdef CONFIG_KB
+	kdb(LKDB_REASON_OOPS, signr, regs);
+#endif
 	oops_exit();
 
 	if (!signr)
@@ -355,6 +361,11 @@ int __kprobes __die(const char *str, struct pt_regs *regs, long err)
 		return 1;
 
 	show_registers(regs);
+
+#ifdef CONFIG_KDB
+	kdb(LKDB_REASON_NMI, 0, regs);
+#endif
+
 #ifdef CONFIG_X86_32
 	if (user_mode_vm(regs)) {
 		sp = regs->sp;
@@ -389,6 +400,9 @@ void die(const char *str, struct pt_regs *regs, long err)
 
 	if (__die(str, regs, err))
 		sig = 0;
+#ifdef CONFIG_KDB
+	lkdb_diemsg = str;
+#endif
 	oops_end(flags, regs, sig);
 }
 

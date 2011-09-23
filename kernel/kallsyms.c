@@ -553,7 +553,7 @@ static int kallsyms_open(struct inode *inode, struct file *file)
 	return ret;
 }
 
-#ifdef	CONFIG_KGDB_KDB
+#if defined(CONFIG_KGDB) || defined(CONFIG_KDB)
 const char *kdb_walk_kallsyms(loff_t *pos)
 {
 	static struct kallsym_iter kdb_walk_kallsyms_iter;

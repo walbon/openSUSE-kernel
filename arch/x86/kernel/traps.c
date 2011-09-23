@@ -45,6 +45,10 @@
 #include <linux/edac.h>
 #endif
 
+#ifdef CONFIG_KDB
+#include <linux/lkdb.h>
+#endif /* CONFIG_KDB */
+
 #include <asm/kmemcheck.h>
 #include <asm/stacktrace.h>
 #include <asm/processor.h>
@@ -371,6 +375,24 @@ io_check_error(unsigned char reason, struct pt_regs *regs)
 static notrace __kprobes void
 unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 {
+#ifdef CONFIG_KDB
+	static int controlling_cpu = -1;
+	static DEFINE_SPINLOCK(kdb_nmi_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&kdb_nmi_lock, flags);
+	if (controlling_cpu == -1) {
+		controlling_cpu = smp_processor_id();
+		spin_unlock_irqrestore(&kdb_nmi_lock, flags);
+		(void)kdb(LKDB_REASON_NMI, reason, regs);
+		controlling_cpu = -1;
+	} else {
+		spin_unlock_irqrestore(&kdb_nmi_lock, flags);
+		(void)kdb(LKDB_REASON_ENTER_SLAVE, reason, regs);
+	}
+	return;
+#else
+
 	if (notify_die(DIE_NMIUNKNOWN, "nmi", regs, reason, 2, SIGINT) ==
 			NOTIFY_STOP)
 		return;
@@ -392,6 +414,7 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 		panic("NMI: Not continuing");
 
 	pr_emerg("Dazed and confused, but trying to continue\n");
+#endif /* CONFIG_KDB */
 }
 
 static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
@@ -409,6 +432,16 @@ static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 	/* Non-CPU-specific NMI: NMI sources can be processed on any CPU */
 	raw_spin_lock(&nmi_reason_lock);
 	reason = get_nmi_reason();
+
+#if defined(CONFIG_SMP) && defined(CONFIG_KDB)
+	/*
+	 * Call the kernel debugger to see if this NMI is due
+	 * to an KDB requested IPI.  If so, kdb will handle it.
+	 */
+	if (kdb_ipi(regs, NULL)) {
+		return;
+	}
+#endif /* defined(CONFIG_SMP) && defined(CONFIG_KDB) */
 
 	if (reason & NMI_REASON_MASK) {
 		if (reason & NMI_REASON_SERR)
@@ -461,6 +494,12 @@ dotraplinkage void __kprobes do_int3(struct pt_regs *regs, long error_code)
 			== NOTIFY_STOP)
 		return;
 #endif /* CONFIG_KGDB_LOW_LEVEL_TRAP */
+
+#ifdef CONFIG_KDB
+	if (kdb(LKDB_REASON_BREAK, error_code, regs))
+		return;
+#endif
+
 #ifdef CONFIG_KPROBES
 	if (notify_die(DIE_INT3, "int3", regs, error_code, 3, SIGTRAP)
 			== NOTIFY_STOP)
@@ -561,6 +600,11 @@ dotraplinkage void __kprobes do_debug(struct pt_regs *regs, long error_code)
 
 	/* Store the virtualized DR6 value */
 	tsk->thread.debugreg6 = dr6;
+
+#ifdef  CONFIG_KDB
+	if (kdb(LKDB_REASON_DEBUG, error_code, regs))
+		return;
+#endif  /* CONFIG_KDB */
 
 	if (notify_die(DIE_DEBUG, "debug", regs, PTR_ERR(&dr6), error_code,
 							SIGTRAP) == NOTIFY_STOP)

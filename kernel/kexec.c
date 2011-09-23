@@ -42,6 +42,12 @@
 #include <asm/system.h>
 #include <asm/sections.h>
 
+#ifdef CONFIG_KDB_KDUMP
+#include <linux/module.h>
+#include <linux/device.h>
+#include <linux/lkdb.h>
+#endif
+
 #ifndef CONFIG_XEN
 /* Per cpu memory for storing cpu states in case of system crash. */
 note_buf_t __percpu *crash_notes;
@@ -1131,7 +1137,16 @@ void crash_kexec(struct pt_regs *regs)
 
 			crash_setup_regs(&fixed_regs, regs);
 			crash_save_vmcoreinfo();
+			/*
+			 * If we enabled KDB, we don't want to automatically
+			 * perform a kdump since KDB will be responsible for
+			 * executing kdb through a special 'kdump' command.
+			 */
+#ifdef CONFIG_KDB_KDUMP
+			kdba_kdump_prepare(&fixed_regs);
+#else
 			machine_crash_shutdown(&fixed_regs);
+#endif
 			machine_kexec(kexec_crash_image);
 		}
 		mutex_unlock(&kexec_mutex);

@@ -16,6 +16,9 @@
 #include <linux/kbd_kern.h>
 #include <linux/kbd_diacr.h>
 #include <asm/uaccess.h>
+#ifdef CONFIG_KDB
+#include <linux/lkdb.h>
+#endif /* CONFIG_KDB */
 
 #include "keyboard.h"
 
@@ -285,6 +288,13 @@ kbd_keycode(struct kbd_data *kbd, unsigned int keycode)
 
 	if (!kbd || !kbd->tty)
 		return;
+
+#ifdef	CONFIG_KDB
+	if (down && !rep && keycode == KEY_PAUSE && kdb_on == 1) {
+		kdb(LKDB_REASON_KEYBOARD, 0, get_irq_regs());
+		return;
+	}
+#endif	/* CONFIG_KDB */
 
 	if (keycode >= 384)
 		keysym = kbd->key_maps[5][keycode - 384];

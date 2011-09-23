@@ -167,7 +167,12 @@ void vcs_remove_sysfs(int index);
 
 /* Some debug stub to catch some of the obvious races in the VT code */
 #if 1
+#ifdef	CONFIG_KDB
+#include <linux/lkdb.h>
+#define WARN_CONSOLE_UNLOCKED()	WARN_ON(!is_console_locked() && !oops_in_progress && !atomic_read(&lkdb_event))
+#else	/* !CONFIG_KDB */
 #define WARN_CONSOLE_UNLOCKED()	WARN_ON(!is_console_locked() && !oops_in_progress)
+#endif	/* CONFIG_KDB */
 #else
 #define WARN_CONSOLE_UNLOCKED()
 #endif

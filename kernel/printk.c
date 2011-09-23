@@ -34,7 +34,12 @@
 #include <linux/memblock.h>
 #include <linux/syscalls.h>
 #include <linux/kexec.h>
+#ifdef CONFIG_KDB
+#include <linux/lkdb.h>
+#endif
+#ifdef CONFIG_KGDB
 #include <linux/kdb.h>
+#endif
 #include <linux/ratelimit.h>
 #include <linux/kmsg_dump.h>
 #include <linux/syslog.h>
@@ -485,7 +490,7 @@ SYSCALL_DEFINE3(syslog, int, type, char __user *, buf, int, len)
 	return do_syslog(type, buf, len, SYSLOG_FROM_CALL);
 }
 
-#ifdef	CONFIG_KGDB_KDB
+#if defined(CONFIG_KGDB) || defined(CONFIG_KDB)
 /* kdb dmesg command needs access to the syslog buffer.  do_syslog()
  * uses locks so it cannot be used during debugging.  Just tell kdb
  * where the start and end of the physical and logical logs are.  This
@@ -499,7 +504,7 @@ void kdb_syslog_data(char *syslog_data[4])
 		(logged_chars < log_buf_len ? logged_chars : log_buf_len);
 	syslog_data[3] = log_buf + log_end;
 }
-#endif	/* CONFIG_KGDB_KDB */
+#endif	/* CONFIG_KGDB || CONFIG_KDB */
 
 #ifdef CONFIG_DEBUG_KERNEL
 /* Its very handy to be able to view the syslog buffer during debug.

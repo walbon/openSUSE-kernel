@@ -23,6 +23,9 @@
 #include <linux/init.h>
 #include <linux/nmi.h>
 #include <linux/dmi.h>
+#ifdef CONFIG_KDB_KDUMP
+#include <linux/lkdb.h>
+#endif
 
 #define PANIC_TIMER_STEP 100
 #define PANIC_BLINK_SPD 18
@@ -81,6 +84,11 @@ NORET_TYPE void panic(const char * fmt, ...)
 	dump_stack();
 #endif
 
+#ifdef CONFIG_KDB_KDUMP
+	if (lkdb_kdump_state == LKDB_KDUMP_RESET) {
+		(void)kdb(LKDB_REASON_OOPS, 999, get_irq_regs());
+	}
+#endif
 	/*
 	 * If we have crashed and we have a crash kernel loaded let it handle
 	 * everything else.

@@ -1967,6 +1967,28 @@ out:
 
 #endif /* CONFIG_SYSCTL */
 
+#ifdef	CONFIG_KDB
+#include <linux/lkdb.h>
+#include <linux/kdbprivate.h>
+/* Like hugetlb_report_meminfo() but using lkdb_printf() */
+void
+kdb_hugetlb_report_meminfo(void)
+{
+	struct hstate *h = &default_hstate;
+	lkdb_printf(
+		"HugePages_Total: %5lu\n"
+		"HugePages_Free:  %5lu\n"
+		"HugePages_Rsvd:  %5lu\n"
+		"HugePages_Surp:  %5lu\n"
+		"Hugepagesize:    %5lu kB\n",
+		h->nr_huge_pages,
+		h->free_huge_pages,
+		h->resv_huge_pages,
+		h->surplus_huge_pages,
+		1UL << (huge_page_order(h) + PAGE_SHIFT - 10));
+}
+#endif	/* CONFIG_KDB */
+
 void hugetlb_report_meminfo(struct seq_file *m)
 {
 	struct hstate *h = &default_hstate;
