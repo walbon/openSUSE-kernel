@@ -4009,8 +4009,6 @@ struct inode *btrfs_lookup_dentry(struct inode *dir, struct dentry *dentry)
 		memcpy(&location, dentry->d_fsdata, sizeof(struct btrfs_key));
 		kfree(dentry->d_fsdata);
 		dentry->d_fsdata = NULL;
-		/* This thing is hashed, drop it for now */
-		d_drop(dentry);
 	} else {
 		ret = btrfs_inode_by_name(dir, dentry, &location);
 	}
@@ -4078,9 +4076,7 @@ static struct dentry *btrfs_lookup(struct inode *dir, struct dentry *dentry,
 				   struct nameidata *nd)
 {
 	struct inode *inode = btrfs_lookup_dentry(dir, dentry);
-	struct dentry *ret;
 
-	inode = btrfs_lookup_dentry(dir, dentry);
 	if (IS_ERR(inode)) {
 		if (PTR_ERR(inode) == -ENOENT)
 			inode = NULL;
@@ -4088,13 +4084,7 @@ static struct dentry *btrfs_lookup(struct inode *dir, struct dentry *dentry,
 			return ERR_CAST(inode);
 	}
 
-	ret = d_splice_alias(inode, dentry);
-	if (unlikely(d_need_lookup(dentry))) {
-		spin_lock(&dentry->d_lock);
-		dentry->d_flags &= ~DCACHE_NEED_LOOKUP;
-		spin_unlock(&dentry->d_lock);
-	}
-	return ret;
+	return d_splice_alias(inode, dentry);
 }
 
 unsigned char btrfs_filetype_table[] = {
