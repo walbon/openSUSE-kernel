@@ -22,7 +22,7 @@
  * (you will need to reboot afterwards) */
 /* #define BNX2X_STOP_ON_ERROR */
 
-#define DRV_MODULE_VERSION      "1.70.00-0"
+#define DRV_MODULE_VERSION      "1.70.00-1"
 #define DRV_MODULE_RELDATE      "2011/06/13"
 #define BNX2X_BC_VER            0x040200
 
