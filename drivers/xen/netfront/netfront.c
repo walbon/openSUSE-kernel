@@ -1665,7 +1665,9 @@ static int network_close(struct net_device *dev)
 
 static struct net_device_stats *network_get_stats(struct net_device *dev)
 {
-	netfront_accelerator_call_get_stats(dev);
+	struct netfront_info *np = netdev_priv(dev);
+
+	netfront_accelerator_call_get_stats(np, dev);
 	return &dev->stats;
 }
 

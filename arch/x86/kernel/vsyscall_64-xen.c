@@ -297,11 +297,7 @@ static int __init vsyscall_init(void)
 	BUG_ON((VSYSCALL_ADDR(0) != __fix_to_virt(VSYSCALL_FIRST_PAGE)));
 	BUG_ON((unsigned long) &vgetcpu != VSYSCALL_ADDR(__NR_vgetcpu));
 #ifdef CONFIG_XEN
-	vsyscall_gtod_data.sysctl_enabled = 0; /* disable vgettimeofay() */
- 	if (boot_cpu_has(X86_FEATURE_RDTSCP))
-		vgetcpu_mode = VGETCPU_RDTSCP;
-	else
-		vgetcpu_mode = VGETCPU_LSL;
+	vsyscall_gtod_data.sysctl_enabled = 0; /* disable vgettimeofday() */
 #endif
 #ifdef CONFIG_SYSCTL
 	register_sysctl_table(kernel_root_table2);

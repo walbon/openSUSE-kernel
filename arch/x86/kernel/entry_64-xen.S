@@ -487,7 +487,7 @@ END(ret_from_fork)
 ENTRY(system_call)
 	INTR_FRAME start=2 offset=2*8
 	SAVE_ARGS -8,0
-	movq  %rax,ORIG_RAX-ARGOFFSET(%rsp) 
+	movq  %rax,ORIG_RAX-ARGOFFSET(%rsp)
 	GET_THREAD_INFO(%rcx)
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%rcx)
 	jnz tracesys

@@ -128,7 +128,7 @@ static int via_cputemp_probe(struct platform_device *pdev)
 
 	/* test if we can access the TEMPERATURE MSR */
 	err = rdmsr_safe_on_pcpu(pdev->id, data->msr, &eax, &edx);
-	if (err >= 0) {
+	if (err < 0) {
 		dev_err(&pdev->dev,
 			"Unable to access TEMPERATURE MSR, giving up\n");
 		return err;

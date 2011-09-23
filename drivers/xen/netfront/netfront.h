@@ -262,7 +262,8 @@ extern
 void netfront_accelerator_call_stop_napi_irq(struct netfront_info *np,
 					     struct net_device *dev);
 extern
-int netfront_accelerator_call_get_stats(struct net_device *dev);
+int netfront_accelerator_call_get_stats(struct netfront_info *np,
+					struct net_device *dev);
 extern
 void netfront_accelerator_add_watch(struct netfront_info *np);
 

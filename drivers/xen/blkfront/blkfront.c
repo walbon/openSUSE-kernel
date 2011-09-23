@@ -360,6 +360,13 @@ static void connect(struct blkfront_info *info)
 				   "sectors", "%Lu", &sectors);
 		if (err != 1)
 			return;
+		err = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+				   "sector-size", "%lu", &sector_size);
+		if (err != 1)
+			sector_size = 0;
+		if (sector_size)
+			blk_queue_logical_block_size(info->gd->queue,
+						     sector_size);
 		pr_info("Setting capacity to %Lu\n", sectors);
 		set_capacity(info->gd, sectors);
 		revalidate_disk(info->gd);
@@ -801,8 +808,10 @@ void do_blkif_request(struct request_queue *rq)
 
 		blk_start_request(req);
 
-		if (req->cmd_type != REQ_TYPE_FS
-		    && req->cmd_type != REQ_TYPE_BLOCK_PC) {
+		if ((req->cmd_type != REQ_TYPE_FS
+		     && req->cmd_type != REQ_TYPE_BLOCK_PC) ||
+		    ((req->cmd_flags & (REQ_FLUSH | REQ_FUA)) &&
+		     !info->flush_op)) {
 			__blk_end_request_all(req, -EIO);
 			continue;
 		}
