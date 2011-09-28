@@ -792,7 +792,7 @@ static int follow_automount(struct path *path, unsigned flags,
 	 * they're stat'ing a directory and appended a '/' to the name.
 	 */
 	if (!(flags & (LOOKUP_CONTINUE | LOOKUP_DIRECTORY |
-		       LOOKUP_OPEN | LOOKUP_CREATE)))
+		       LOOKUP_OPEN | LOOKUP_CREATE | LOOKUP_AUTOMOUNT)))
 		return -EISDIR;
 
 	current->total_link_count++;
