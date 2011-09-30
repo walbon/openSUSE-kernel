@@ -152,6 +152,13 @@ void __init acpi_apei_blacklist(void)
 		return;
 
 	acpi_apei_disable();
+
+	if (dmi_name_in_vendors("Dell")) {
+		printk (KERN_INFO "Dell detected: Enabling APEI HEST parsing"
+			" if available\n");
+		hest_disable = 0;
+	}
+
 }
 
 int __init acpi_blacklisted(void)
