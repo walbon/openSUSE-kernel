@@ -3298,7 +3298,7 @@ int pci_select_bars(struct pci_dev *dev, unsigned long flags)
 {
 	int i, bars = 0;
 	for (i = 0; i < PCI_NUM_RESOURCES; i++) {
-#if CONFIG_PCI_IOV
+#ifdef CONFIG_PCI_IOV
 		if (i >= PCI_IOV_RESOURCES && i <= PCI_IOV_RESOURCE_END)
 			continue;
 #endif
