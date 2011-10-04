@@ -1114,7 +1114,7 @@ static int __pci_enable_device_flags(struct pci_dev *dev,
 				     resource_size_t flags)
 {
 	int err;
-	int i, bars = 0;
+	int bars;
 
 	/*
 	 * Power state could be unknown at this point, either due to a fresh
@@ -1131,10 +1131,7 @@ static int __pci_enable_device_flags(struct pci_dev *dev,
 	if (atomic_add_return(1, &dev->enable_cnt) > 1)
 		return 0;		/* already enabled */
 
-	for (i = 0; i < DEVICE_COUNT_RESOURCE; i++)
-		if (dev->resource[i].flags & flags)
-			bars |= (1 << i);
-
+	bars = pci_select_bars(dev, flags);
 	err = do_pci_enable_device(dev, bars);
 	if (err < 0)
 		atomic_dec(&dev->enable_cnt);
@@ -3300,9 +3297,14 @@ out:
 int pci_select_bars(struct pci_dev *dev, unsigned long flags)
 {
 	int i, bars = 0;
-	for (i = 0; i < PCI_NUM_RESOURCES; i++)
+	for (i = 0; i < PCI_NUM_RESOURCES; i++) {
+#if CONFIG_PCI_IOV
+		if (i >= PCI_IOV_RESOURCES && i <= PCI_IOV_RESOURCE_END)
+			continue;
+#endif
 		if (pci_resource_flags(dev, i) & flags)
 			bars |= (1 << i);
+	}
 	return bars;
 }
 
