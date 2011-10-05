@@ -1131,6 +1131,58 @@ kdba_longjmp(kdb_jmp_buf *jb, int reason)
 #endif /* CONFIG_X86_32 */
 
 #ifdef CONFIG_X86_32
+
+#define XCS "xcs"
+#define RSP "esp"
+#define RIP "eip"
+#define ARCH_RSP esp
+#define ARCH_RIP eip
+#define ARCH_NORMAL_PADDING (19 * 4)
+
+#ifdef	CONFIG_4KSTACKS
+static struct thread_info **kdba_hardirq_ctx, **kdba_softirq_ctx;
+#endif	/* CONFIG_4KSTACKS */
+
+/* On a 4K stack kernel, hardirq_ctx and softirq_ctx are [NR_CPUS] arrays.  The
+ * first element of each per-cpu stack is a struct thread_info.
+ */
+void
+kdba_get_stack_info_alternate(kdb_machreg_t addr, int cpu,
+			      struct lkdb_activation_record *ar)
+{
+#ifdef	CONFIG_4KSTACKS
+	struct thread_info *tinfo;
+	tinfo = (struct thread_info *)(addr & -THREAD_SIZE);
+	if (cpu < 0) {
+		/* Arbitrary address, see if it falls within any of the irq
+		 * stacks
+		 */
+		int found = 0;
+		for_each_online_cpu(cpu) {
+			if (tinfo == kdba_hardirq_ctx[cpu] ||
+			    tinfo == kdba_softirq_ctx[cpu]) {
+				found = 1;
+				break;
+			}
+		}
+		if (!found)
+			return;
+	}
+	if (tinfo == kdba_hardirq_ctx[cpu] ||
+	    tinfo == kdba_softirq_ctx[cpu]) {
+		ar->stack.physical_start = (kdb_machreg_t)tinfo;
+		ar->stack.physical_end = ar->stack.physical_start + THREAD_SIZE;
+		ar->stack.logical_start = ar->stack.physical_start +
+					  sizeof(struct thread_info);
+		ar->stack.logical_end = ar->stack.physical_end;
+		ar->stack.next = tinfo->previous_esp;
+		if (tinfo == kdba_hardirq_ctx[cpu])
+			ar->stack.id = "hardirq_ctx";
+		else
+			ar->stack.id = "softirq_ctx";
+	}
+#endif	/* CONFIG_4KSTACKS */
+}
 /*
  * kdba_stackdepth
  *
@@ -1162,7 +1214,7 @@ kdba_stackdepth1(struct task_struct *p, unsigned long sp)
 		used = sizeof(*tinfo) + THREAD_SIZE - (sp & (THREAD_SIZE-1));
 		type = NULL;
 		if (lkdb_task_has_cpu(p)) {
-			struct kdb_activation_record ar;
+			struct lkdb_activation_record ar;
 			memset(&ar, 0, sizeof(ar));
 			kdba_get_stack_info_alternate(sp, -1, &ar);
 			type = ar.stack.id;
@@ -1220,7 +1272,7 @@ kdba_stackdepth(int argc, const char **argv)
 			kdba_stackdepth1(p, krp->arch.sp);
 	}
 	/* Now the tasks that are not on cpus */
-	kdb_do_each_thread(g, p) {
+	lkdb_do_each_thread(g, p) {
 		if (lkdb_task_has_cpu(p))
 			continue;
 		esp = p->thread.sp;
@@ -1228,7 +1280,7 @@ kdba_stackdepth(int argc, const char **argv)
 		over = used >= threshold;
 		if (over)
 			kdba_stackdepth1(p, esp);
-	} kdb_while_each_thread(g, p);
+	} lkdb_while_each_thread(g, p);
 
 	return 0;
 }
