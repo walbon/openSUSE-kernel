@@ -2511,6 +2511,20 @@ int usbvision_muxsel(struct usb_usbvision *usbvision, int channel)
 	return 0;
 }
 
+/* we need to add a lot of dummy parameters */
+
+module_param_named(adjustCompression, adjust_compression, int, 0444);
+MODULE_PARM_DESC(adjustCompression, " Set the ADPCM compression for the device.  Default: 1 (On)");
+
+module_param_named(SwitchSVideoInput, switch_svideo_input, int, 0444);
+MODULE_PARM_DESC(SwitchSVideoInput, " Set the S-Video input.  Some cables and input device are wired differently. Default: 0 (Off)");
+
+module_param_named(adjust_X_Offset, adjust_x_offset, int, 0644);
+MODULE_PARM_DESC(adjust_X_Offset, "adjust X offset display [core]");
+
+module_param_named(adjust_Y_Offset, adjust_y_offset, int, 0644);
+MODULE_PARM_DESC(adjust_Y_Offset, "adjust Y offset display [core]");
+
 /*
  * Overrides for Emacs so that we follow Linus's tabbing style.
  * ---------------------------------------------------------------------------
