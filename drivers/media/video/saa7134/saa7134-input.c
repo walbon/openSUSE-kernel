@@ -970,3 +970,7 @@ static int saa7134_raw_decode_irq(struct saa7134_dev *dev)
 
 	return 1;
 }
+
+/* add dummy parameters for compatibility */
+static unsigned int disable_other_ir;
+module_param(disable_other_ir, int, 0644);
