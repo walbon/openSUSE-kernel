@@ -7353,6 +7353,7 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 	u16 device_caps;
 #endif
 	u32 eec;
+	u16 wol_cap;
 
 	/* Catch broken hardware that put the wrong VF device ID in
 	 * the PCIe SR-IOV capability.
@@ -7606,6 +7607,8 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 	if (!(adapter->flags & IXGBE_FLAG_RSS_ENABLED))
 		netdev->features &= ~NETIF_F_RXHASH;
 
+	/* WOL not supported for all but the following */
+	adapter->wol = 0;
 	switch (pdev->device) {
 	case IXGBE_DEV_ID_82599_SFP:
 		/* Only this subdevice supports WOL */
@@ -7623,8 +7626,15 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 		adapter->wol = (IXGBE_WUFC_MAG | IXGBE_WUFC_EX |
 				IXGBE_WUFC_MC | IXGBE_WUFC_BC);
 		break;
-	default:
-		adapter->wol = 0;
+	case IXGBE_DEV_ID_X540T:
+		/* Check eeprom to see if it is enabled */
+		hw->eeprom.ops.read(hw, 0x2c, &adapter->eeprom_cap);
+		wol_cap = adapter->eeprom_cap & IXGBE_DEVICE_CAPS_WOL_MASK;
+
+		if ((wol_cap == IXGBE_DEVICE_CAPS_WOL_PORT0_1) ||
+		    ((wol_cap == IXGBE_DEVICE_CAPS_WOL_PORT0) &&
+		     (hw->bus.func == 0)))
+			adapter->wol = IXGBE_WUFC_MAG;
 		break;
 	}
 	device_set_wakeup_enable(&adapter->pdev->dev, adapter->wol);

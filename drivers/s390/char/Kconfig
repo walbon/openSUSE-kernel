@@ -151,7 +151,7 @@ config VMLOGRDR
 	  This driver depends on the IUCV support driver.
 
 config VMCP
-	def_bool y
+	def_tristate m
 	prompt "Support for the z/VM CP interface"
 	depends on S390
 	help
