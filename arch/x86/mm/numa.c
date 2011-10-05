@@ -194,7 +194,8 @@ static void __init setup_node_data(int nid, u64 start, u64 end)
 {
 	const u64 nd_low = PFN_PHYS(MAX_DMA_PFN);
 	const u64 nd_high = PFN_PHYS(max_pfn_mapped);
-	const size_t nd_size = roundup(sizeof(pg_data_t), PAGE_SIZE);
+	const size_t cache_alias_offset = nid * SMP_CACHE_BYTES;
+	size_t nd_size = roundup(sizeof(pg_data_t) + cache_alias_offset, PAGE_SIZE);
 	bool remapped = false;
 	u64 nd_pa;
 	void *nd;
@@ -237,6 +238,9 @@ static void __init setup_node_data(int nid, u64 start, u64 end)
 		memblock_x86_reserve_range(nd_pa, nd_pa + nd_size, "NODE_DATA");
 		nd = __va(nd_pa);
 	}
+
+	nd += cache_alias_offset;
+	nd_pa += cache_alias_offset;
 
 	/* report and initialize */
 	printk(KERN_INFO "  NODE_DATA [%016Lx - %016Lx]%s\n",
