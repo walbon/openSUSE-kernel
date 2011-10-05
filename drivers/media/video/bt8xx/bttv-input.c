@@ -586,3 +586,9 @@ void bttv_input_fini(struct bttv *btv)
 	kfree(btv->remote);
 	btv->remote = NULL;
 }
+
+/* add dummy parameters for compatibility */
+static int repeat_delay = 500;
+module_param(repeat_delay, int, 0644);
+static int repeat_period = 33;
+module_param(repeat_period, int, 0644);
