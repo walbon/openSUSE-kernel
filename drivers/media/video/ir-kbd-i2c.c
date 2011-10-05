@@ -490,6 +490,12 @@ static void __exit ir_fini(void)
 module_init(ir_init);
 module_exit(ir_fini);
 
+/* add dummy parameter */
+
+static int hauppauge;
+module_param(hauppauge, int, 0644);    /* Choose Hauppauge remote */
+
+
 /*
  * Overrides for Emacs so that we follow Linus's tabbing style.
  * ---------------------------------------------------------------------------
