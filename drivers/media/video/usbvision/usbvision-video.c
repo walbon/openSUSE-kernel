@@ -141,9 +141,9 @@ static int radio_nr = -1;
 /* Grab parameters for the device driver */
 
 /* Showing parameters under SYSFS */
-module_param(isoc_mode, int, 0444);
+module_param(isoc_mode, int, 0444); module_param_named(isocMode, isoc_mode, int, 0444);
 module_param(video_debug, int, 0444);
-module_param(power_on_at_open, int, 0444);
+module_param(power_on_at_open, int, 0444); module_param_named(PowerOnAtOpen, power_on_at_open, int, 0444);
 module_param(video_nr, int, 0444);
 module_param(radio_nr, int, 0444);
 
