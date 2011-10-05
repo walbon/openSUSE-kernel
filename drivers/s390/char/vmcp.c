@@ -11,16 +11,24 @@
  * The idea of this driver is based on cpint from Neale Ferguson and #CP in CMS
  */
 
+#define KMSG_COMPONENT "vmcp"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
+
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/miscdevice.h>
+#include <linux/module.h>
 #include <linux/slab.h>
 #include <asm/compat.h>
 #include <asm/cpcmd.h>
 #include <asm/debug.h>
 #include <asm/uaccess.h>
 #include "vmcp.h"
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Christian Borntraeger <borntraeger@de.ibm.com>");
+MODULE_DESCRIPTION("z/VM CP interface");
 
 static debug_info_t *vmcp_debug;
 
@@ -190,8 +198,11 @@ static int __init vmcp_init(void)
 {
 	int ret;
 
-	if (!MACHINE_IS_VM)
-		return 0;
+	if (!MACHINE_IS_VM) {
+		pr_warning("The z/VM CP interface device driver cannot be "
+			   "loaded without z/VM\n");
+		return -ENODEV;
+	}
 
 	vmcp_debug = debug_register("vmcp", 1, 1, 240);
 	if (!vmcp_debug)
@@ -204,8 +215,19 @@ static int __init vmcp_init(void)
 	}
 
 	ret = misc_register(&vmcp_dev);
-	if (ret)
+	if (ret) {
 		debug_unregister(vmcp_debug);
-	return ret;
+		return ret;
+	}
+
+	return 0;
 }
-device_initcall(vmcp_init);
+
+static void __exit vmcp_exit(void)
+{
+	misc_deregister(&vmcp_dev);
+	debug_unregister(vmcp_debug);
+}
+
+module_init(vmcp_init);
+module_exit(vmcp_exit);
