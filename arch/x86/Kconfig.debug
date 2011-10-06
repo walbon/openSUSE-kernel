@@ -290,7 +290,7 @@ config DEBUG_STRICT_USER_COPY_CHECKS
 
 config KDB
 	bool "Built-in Kernel Debugger support"
-	depends on DEBUG_KERNEL
+	depends on DEBUG_KERNEL && !XEN
 	select KALLSYMS
 	select KALLSYMS_ALL
 	help

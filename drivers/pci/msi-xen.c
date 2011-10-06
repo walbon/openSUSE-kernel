@@ -27,9 +27,9 @@
 
 static int pci_msi_enable = 1;
 #if CONFIG_XEN_COMPAT < 0x040200
-static bool pci_seg_supported = true;
+static int pci_seg_supported = 1;
 #else
-#define pci_seg_supported true
+#define pci_seg_supported 1
 #endif
 
 static LIST_HEAD(msi_dev_head);
@@ -261,7 +261,7 @@ static int msi_map_vector(struct pci_dev *dev, int entry_nr, u64 table_base)
 		map_irq.bus = dev->bus->number;
 		rc = HYPERVISOR_physdev_op(PHYSDEVOP_map_pirq, &map_irq);
 		if (rc != -EINVAL)
-			pci_seg_supported = false;
+			pci_seg_supported = 0;
 	}
 #endif
 	if (rc)

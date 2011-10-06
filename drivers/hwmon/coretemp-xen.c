@@ -418,7 +418,7 @@ static int chk_ucode_version(struct platform_device *pdev)
 		if (!(c->ucode_rev + 1)) {
 			dev_err(&pdev->dev,
 				"Cannot determine microcode revision of "
-				"CPU#%u!\n", pdev->id);
+				"PKG#%u!\n", pdev->id);
 			return -ENODEV;
 		} else if (c->ucode_rev < 0x39) {
 			dev_err(&pdev->dev,
@@ -507,21 +507,21 @@ static int create_core_data(struct platform_device *pdev,
 
 	/* We can access status register. Get Critical Temperature */
 	if (pkg_flag)
-		tdata->tjmax = get_pkg_tjmax(pdev->id, &pdev->dev);
+		tdata->tjmax = get_pkg_tjmax(cpu, &pdev->dev);
 	else
 		tdata->tjmax = get_tjmax(pdata, cpu, &pdev->dev);
 
 	update_ttarget(pdata->x86_model, tdata, &pdev->dev);
+	pdata->core_data[attr_no] = tdata;
 
 	/* Create sysfs interfaces */
 	err = create_core_attrs(tdata, &pdev->dev, attr_no);
 	if (err)
 		goto exit_free;
 
-	pdata->core_data[attr_no] = tdata;
-
 	return 0;
 exit_free:
+	pdata->core_data[attr_no] = NULL;
 	kfree(tdata);
 	return err;
 }
