@@ -14,6 +14,7 @@
 #include <net/ipv6.h>
 #include <net/addrconf.h>
 #include <net/inet_frag.h>
+#include "ipv6_noinit.h"
 
 static struct ctl_table empty[1];
 

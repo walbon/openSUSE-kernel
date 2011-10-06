@@ -62,6 +62,7 @@
 #include <asm/uaccess.h>
 #include <asm/system.h>
 #include <linux/mroute6.h>
+#include "ipv6_noinit.h"
 
 MODULE_AUTHOR("Cast of dozens");
 MODULE_DESCRIPTION("IPv6 protocol stack for Linux");
@@ -948,7 +949,7 @@ static struct packet_type ipv6_packet_type __read_mostly = {
 	.gro_complete = ipv6_gro_complete,
 };
 
-static int  ipv6_packet_init(void)
+static int __init ipv6_packet_init(void)
 {
 	dev_add_pack(&ipv6_packet_type);
 	return 0;
@@ -1052,7 +1053,7 @@ static struct pernet_operations inet6_net_ops = {
 	.exit = inet6_net_exit,
 };
 
-static int  inet6_init(void)
+static int __init inet6_init(void)
 {
 	struct sk_buff *dummy_skb;
 	struct list_head *r;

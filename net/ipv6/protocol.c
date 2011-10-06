@@ -24,6 +24,7 @@
 #include <linux/netdevice.h>
 #include <linux/spinlock.h>
 #include <net/protocol.h>
+#include "ipv6_noinit.h"
 
 const struct inet6_protocol __rcu *inet6_protos[MAX_INET_PROTOS] __read_mostly;
 

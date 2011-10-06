@@ -90,6 +90,7 @@
 
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv6.h>
+#include "ipv6_noinit.h"
 
 static u32 ndisc_hash(const void *pkey,
 		      const struct net_device *dev,
@@ -1852,7 +1853,7 @@ static struct pernet_operations ndisc_net_ops = {
 	.exit = ndisc_net_exit,
 };
 
-int  ndisc_init(void)
+int __init ndisc_init(void)
 {
 	int err;
 

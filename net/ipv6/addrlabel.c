@@ -18,6 +18,7 @@
 #include <linux/if_addrlabel.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include "ipv6_noinit.h"
 
 #if 0
 #define ADDRLABEL(x...) printk(x)
@@ -386,7 +387,7 @@ static struct pernet_operations ipv6_addr_label_ops = {
 	.exit = ip6addrlbl_net_exit,
 };
 
-int  ipv6_addr_label_init(void)
+int __init ipv6_addr_label_init(void)
 {
 	spin_lock_init(&ip6addrlbl_table.lock);
 
@@ -590,7 +591,7 @@ out:
 	return err;
 }
 
-void  ipv6_addr_label_rtnl_register(void)
+void __init ipv6_addr_label_rtnl_register(void)
 {
 	__rtnl_register(PF_INET6, RTM_NEWADDRLABEL, ip6addrlbl_newdel,
 			NULL, NULL);

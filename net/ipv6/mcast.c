@@ -62,6 +62,7 @@
 #include <net/inet_common.h>
 
 #include <net/ip6_checksum.h>
+#include "ipv6_noinit.h"
 
 /* Set to 3 to get tracing... */
 #define MCAST_DEBUG 2
@@ -2668,7 +2669,7 @@ static struct pernet_operations igmp6_net_ops = {
 	.exit = igmp6_net_exit,
 };
 
-int  igmp6_init(void)
+int __init igmp6_init(void)
 {
 	return register_pernet_subsys(&igmp6_net_ops);
 }

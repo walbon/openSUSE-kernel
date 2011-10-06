@@ -47,6 +47,7 @@
 #endif
 
 #include <asm/uaccess.h>
+#include "ipv6_noinit.h"
 
 int ipv6_find_tlv(struct sk_buff *skb, int offset, int type)
 {
@@ -514,7 +515,7 @@ static const struct inet6_protocol nodata_protocol = {
 	.flags		=	INET6_PROTO_NOPOLICY,
 };
 
-int  ipv6_exthdrs_init(void)
+int __init ipv6_exthdrs_init(void)
 {
 	int ret;
 

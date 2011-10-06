@@ -44,6 +44,7 @@
 #include <net/ip6_route.h>
 #include <net/addrconf.h>
 #include <net/xfrm.h>
+#include "ipv6_noinit.h"
 
 
 

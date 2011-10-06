@@ -9,6 +9,7 @@
 #include <net/xfrm.h>
 #include <net/ip6_checksum.h>
 #include <net/netfilter/nf_queue.h>
+#include "ipv6_noinit.h"
 
 int ip6_route_me_harder(struct sk_buff *skb)
 {
@@ -174,7 +175,7 @@ static const struct nf_afinfo nf_ip6_afinfo = {
 	.route_key_size		= sizeof(struct ip6_rt_info),
 };
 
-int  ipv6_netfilter_init(void)
+int __init ipv6_netfilter_init(void)
 {
 	return nf_register_afinfo(&nf_ip6_afinfo);
 }

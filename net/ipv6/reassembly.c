@@ -54,6 +54,7 @@
 #include <net/ndisc.h>
 #include <net/addrconf.h>
 #include <net/inet_frag.h>
+#include "ipv6_noinit.h"
 
 struct ip6frag_skb_cb
 {
@@ -725,7 +726,7 @@ static struct pernet_operations ip6_frags_ops = {
 	.exit = ipv6_frags_exit_net,
 };
 
-int  ipv6_frag_init(void)
+int __init ipv6_frag_init(void)
 {
 	int ret;
 

@@ -49,6 +49,7 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include "udp_impl.h"
+#include "ipv6_noinit.h"
 
 int ipv6_rcv_saddr_equal(const struct sock *sk, const struct sock *sk2)
 {
@@ -1489,7 +1490,7 @@ static struct inet_protosw udpv6_protosw = {
 };
 
 
-int  udpv6_init(void)
+int __init udpv6_init(void)
 {
 	int ret;
 

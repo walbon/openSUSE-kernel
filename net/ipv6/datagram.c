@@ -32,6 +32,7 @@
 
 #include <linux/errqueue.h>
 #include <asm/uaccess.h>
+#include "ipv6_noinit.h"
 
 int ip6_datagram_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 {

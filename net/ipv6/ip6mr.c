@@ -52,6 +52,7 @@
 #include <net/addrconf.h>
 #include <linux/netfilter_ipv6.h>
 #include <net/ip6_checksum.h>
+#include "ipv6_noinit.h"
 
 struct mr6_table {
 	struct list_head	list;
@@ -1329,7 +1330,7 @@ static struct pernet_operations ip6mr_net_ops = {
 	.exit = ip6mr_net_exit,
 };
 
-int  ip6_mr_init(void)
+int __init ip6_mr_init(void)
 {
 	int err;
 

@@ -15,6 +15,7 @@
 #include <linux/netfilter_ipv6.h>
 #include <net/ipv6.h>
 #include <net/xfrm.h>
+#include "ipv6_noinit.h"
 
 int xfrm6_extract_input(struct xfrm_state *x, struct sk_buff *skb)
 {

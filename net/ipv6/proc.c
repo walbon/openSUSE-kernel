@@ -28,6 +28,7 @@
 #include <net/udp.h>
 #include <net/transp_v6.h>
 #include <net/ipv6.h>
+#include "ipv6_noinit.h"
 
 static int sockstat6_seq_show(struct seq_file *seq, void *v)
 {
@@ -330,7 +331,7 @@ static struct pernet_operations ipv6_proc_ops = {
 	.exit = ipv6_proc_exit_net,
 };
 
-int  ipv6_misc_proc_init(void)
+int __init ipv6_misc_proc_init(void)
 {
 	return register_pernet_subsys(&ipv6_proc_ops);
 }

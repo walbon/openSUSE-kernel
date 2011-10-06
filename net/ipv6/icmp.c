@@ -67,6 +67,7 @@
 
 #include <asm/uaccess.h>
 #include <asm/system.h>
+#include "ipv6_noinit.h"
 
 /*
  *	The ICMP socket(s). This is the most convenient way to flow control
@@ -867,7 +868,7 @@ static struct pernet_operations icmpv6_sk_ops = {
        .exit = icmpv6_sk_exit,
 };
 
-int  icmpv6_init(void)
+int __init icmpv6_init(void)
 {
 	int err;
 

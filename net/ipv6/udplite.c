@@ -12,6 +12,7 @@
  *		2 of the License, or (at your option) any later version.
  */
 #include "udp_impl.h"
+#include "ipv6_noinit.h"
 
 static int udplitev6_rcv(struct sk_buff *skb)
 {
@@ -67,7 +68,7 @@ static struct inet_protosw udplite6_protosw = {
 	.flags		= INET_PROTOSW_PERMANENT,
 };
 
-int  udplitev6_init(void)
+int __init udplitev6_init(void)
 {
 	int ret;
 
@@ -120,7 +121,7 @@ static struct pernet_operations udplite6_net_ops = {
 	.exit = udplite6_proc_exit_net,
 };
 
-int  udplite6_proc_init(void)
+int __init udplite6_proc_init(void)
 {
 	return register_pernet_subsys(&udplite6_net_ops);
 }

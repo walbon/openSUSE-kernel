@@ -38,6 +38,7 @@
 
 #include <net/ip6_fib.h>
 #include <net/ip6_route.h>
+#include "ipv6_noinit.h"
 
 #define RT6_DEBUG 2
 
@@ -1571,7 +1572,7 @@ static struct pernet_operations fib6_net_ops = {
 	.exit = fib6_net_exit,
 };
 
-int  fib6_init(void)
+int __init fib6_init(void)
 {
 	int ret = -ENOMEM;
 

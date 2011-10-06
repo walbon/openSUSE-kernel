@@ -55,6 +55,7 @@
 #include <net/xfrm.h>
 #include <net/checksum.h>
 #include <linux/mroute6.h>
+#include "ipv6_noinit.h"
 
 int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *));
 
@@ -600,7 +601,7 @@ static u32 hashidentrnd __read_mostly;
 #define FID_HASH_SZ 16
 static u32 ipv6_fragmentation_id[FID_HASH_SZ];
 
-void  initialize_hashidentrnd(void)
+void __init initialize_hashidentrnd(void)
 {
 	get_random_bytes(&hashidentrnd, sizeof(hashidentrnd));
 }

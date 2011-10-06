@@ -18,6 +18,7 @@
 #include <net/dsfield.h>
 #include <net/ipv6.h>
 #include <net/addrconf.h>
+#include "ipv6_noinit.h"
 
 static void
 __xfrm6_init_tempsel(struct xfrm_selector *sel, const struct flowi *fl)
@@ -184,7 +185,7 @@ static struct xfrm_state_afinfo xfrm6_state_afinfo = {
 	.transport_finish	= xfrm6_transport_finish,
 };
 
-int  xfrm6_state_init(void)
+int __init xfrm6_state_init(void)
 {
 	return xfrm_state_register_afinfo(&xfrm6_state_afinfo);
 }

@@ -20,6 +20,7 @@
 #include <linux/kernel.h>
 #include <net/ipv6.h>
 #include <net/tcp.h>
+#include "ipv6_noinit.h"
 
 extern int sysctl_tcp_syncookies;
 extern __u32 syncookie_secret[2][16-4+SHA_DIGEST_WORDS];

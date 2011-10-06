@@ -43,6 +43,7 @@
 #include <net/ip6_route.h>
 
 #include <net/checksum.h>
+#include "ipv6_noinit.h"
 
 static int ipv6_dev_ac_dec(struct net_device *dev, const struct in6_addr *addr);
 

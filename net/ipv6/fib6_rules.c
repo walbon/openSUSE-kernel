@@ -20,6 +20,7 @@
 #include <net/addrconf.h>
 #include <net/ip6_route.h>
 #include <net/netlink.h>
+#include "ipv6_noinit.h"
 
 struct fib6_rule
 {
@@ -295,7 +296,7 @@ static struct pernet_operations fib6_rules_net_ops = {
 	.exit = fib6_rules_net_exit,
 };
 
-int  fib6_rules_init(void)
+int __init fib6_rules_init(void)
 {
 	return register_pernet_subsys(&fib6_rules_net_ops);
 }

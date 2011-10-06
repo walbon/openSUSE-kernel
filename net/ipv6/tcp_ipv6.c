@@ -70,6 +70,7 @@
 
 #include <linux/crypto.h>
 #include <linux/scatterlist.h>
+#include "ipv6_noinit.h"
 
 static void	tcp_v6_send_reset(struct sock *sk, struct sk_buff *skb);
 static void	tcp_v6_reqsk_send_ack(struct sock *sk, struct sk_buff *skb,
@@ -2284,7 +2285,7 @@ static struct pernet_operations tcpv6_net_ops = {
 	.exit_batch = tcpv6_net_exit_batch,
 };
 
-int  tcpv6_init(void)
+int __init tcpv6_init(void)
 {
 	int ret;
 

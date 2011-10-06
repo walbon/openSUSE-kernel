@@ -60,6 +60,7 @@
 #ifdef CONFIG_SYSCTL
 #include <linux/sysctl.h>
 #endif
+#include "ipv6_noinit.h"
 
 /* Set to 3 to get tracing. */
 #define RT6_DEBUG 2
@@ -2873,7 +2874,7 @@ static struct notifier_block ip6_route_dev_notifier = {
 	.priority = 0,
 };
 
-int  ip6_route_init(void)
+int __init ip6_route_init(void)
 {
 	int ret;
 

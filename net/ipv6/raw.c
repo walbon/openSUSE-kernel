@@ -61,6 +61,7 @@
 
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include "ipv6_noinit.h"
 
 static struct raw_hashinfo raw_v6_hashinfo = {
 	.lock = __RW_LOCK_UNLOCKED(raw_v6_hashinfo.lock),
@@ -1307,7 +1308,7 @@ static struct pernet_operations raw6_net_ops = {
 	.exit = raw6_exit_net,
 };
 
-int  raw6_proc_init(void)
+int __init raw6_proc_init(void)
 {
 	return register_pernet_subsys(&raw6_net_ops);
 }
@@ -1353,7 +1354,7 @@ static struct inet_protosw rawv6_protosw = {
 	.flags		= INET_PROTOSW_REUSE,
 };
 
-int  rawv6_init(void)
+int __init rawv6_init(void)
 {
 	int ret;
 
