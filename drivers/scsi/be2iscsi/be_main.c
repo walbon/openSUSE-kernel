@@ -1122,7 +1122,12 @@ be_complete_io(struct beiscsi_conn *beiscsi_conn,
 						& SOL_STS_MASK) >> 8);
 	flags = ((psol->dw[offsetof(struct amap_sol_cqe, i_flags) / 32]
 					& SOL_FLAGS_MASK) >> 24) | 0x80;
+	if (!task->sc) {
+		if (io_task->scsi_cmnd)
+			scsi_dma_unmap(io_task->scsi_cmnd);
 
+		return;
+	}
 	task->sc->result = (DID_OK << 16) | status;
 	if (rsp != ISCSI_STATUS_CMD_COMPLETED) {
 		task->sc->result = DID_ERROR << 16;
@@ -4043,11 +4048,11 @@ static int beiscsi_mtask(struct iscsi_task *task)
 				      TGT_DM_CMD);
 			AMAP_SET_BITS(struct amap_iscsi_wrb, cmdsn_itt,
 				      pwrb, 0);
-			AMAP_SET_BITS(struct amap_iscsi_wrb, dmsg, pwrb, 0);
+			AMAP_SET_BITS(struct amap_iscsi_wrb, dmsg, pwrb, 1);
 		} else {
 			AMAP_SET_BITS(struct amap_iscsi_wrb, type, pwrb,
 				      INI_RD_CMD);
-			AMAP_SET_BITS(struct amap_iscsi_wrb, dmsg, pwrb, 1);
+			AMAP_SET_BITS(struct amap_iscsi_wrb, dmsg, pwrb, 0);
 		}
 		hwi_write_buffer(pwrb, task);
 		break;
