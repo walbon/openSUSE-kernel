@@ -111,22 +111,27 @@ static inline int blacklist_by_year(void)
 }
 #endif
 
-int __initdata apei_disable = -1;
+#ifdef CONFIG_ACPI_APEI
+static int __initdata apei_disable = -1;
 
-void __init acpi_apei_disable(void)
+static void __init acpi_apei_disable(void)
 {
 		apei_disable = 1;
 		hest_disable = 1;
 		erst_disable = 1;
+#ifdef CONFIG ACPI_APEI_GHES
 		ghes_disable = 1;
+#endif
 }
 
-void __init acpi_apei_enable(void)
+static void __init acpi_apei_enable(void)
 {
 		apei_disable = 0;
 		hest_disable = 0;
 		erst_disable = 0;
+#ifdef CONFIG ACPI_APEI_GHES
 		ghes_disable = 0;
+#endif
 }
 
 static int __init setup_apei_disable(char *str)
@@ -145,7 +150,7 @@ static int __init setup_apei_enable(char *str)
 }
 __setup("apei_enable", setup_apei_enable);
 
-void __init acpi_apei_blacklist(void)
+static void __init acpi_apei_blacklist(void)
 {
 	/* Already overwritten by boot param */
 	if (apei_disable != -1)
@@ -160,6 +165,9 @@ void __init acpi_apei_blacklist(void)
 	}
 
 }
+#else /* !CONFIG_ACPI_APEI */
+#define acpi_apei_blacklist() ((void)0)
+#endif
 
 int __init acpi_blacklisted(void)
 {
