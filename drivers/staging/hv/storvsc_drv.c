@@ -1122,6 +1122,33 @@ static void storvsc_command_completion(struct hv_storvsc_request *request)
 	kmem_cache_free(host_dev->request_pool, cmd_request);
 }
 
+static bool storvsc_check_scsi_cmd(struct scsi_cmnd *scmnd)
+{
+	bool ret = true;
+	u8 scsi_op = scmnd->cmnd[0];
+
+	switch (scsi_op) {
+		/* smartd sends this command, which will offline the device */
+		case SET_WINDOW:
+			scmnd->result = DID_ERROR << 16;
+			ret = false;
+			break;
+#if 0
+		case TEST_UNIT_READY:
+		case INQUIRY:
+		case MODE_SENSE:
+		case READ_CAPACITY:
+		case READ_10:
+		case WRITE_10:
+		case SYNCHRONIZE_CACHE:
+		case REPORT_LUNS:
+			break;
+#endif
+		default:
+			break;
+	}
+	return ret;
+}
 
 /*
  * storvsc_queuecommand - Initiate command processing
@@ -1141,6 +1168,10 @@ static int storvsc_queuecommand_lck(struct scsi_cmnd *scmnd,
 	unsigned int sg_count = 0;
 	struct vmscsi_request *vm_srb;
 
+	if (storvsc_check_scsi_cmd(scmnd) == false) {
+		done(scmnd);
+		return 0;
+	}
 
 	/* If retrying, no need to prep the cmd */
 	if (scmnd->host_scribble) {
