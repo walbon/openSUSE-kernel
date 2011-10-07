@@ -315,12 +315,12 @@ iscsi_iface_net_attr(ipv6_iface, link_local_addr, ISCSI_NET_PARAM_IPV6_LINKLOCAL
 iscsi_iface_net_attr(ipv6_iface, router_addr, ISCSI_NET_PARAM_IPV6_ROUTER);
 iscsi_iface_net_attr(ipv6_iface, ipaddr_autocfg,
 		     ISCSI_NET_PARAM_IPV6_ADDR_AUTOCFG);
-iscsi_iface_net_attr(ipv6_iface, linklocal_autocfg,
+iscsi_iface_net_attr(ipv6_iface, link_local_autocfg,
 		     ISCSI_NET_PARAM_IPV6_LINKLOCAL_AUTOCFG);
 
 /* common read only iface attribute */
 iscsi_iface_net_attr(iface, enabled, ISCSI_NET_PARAM_IFACE_ENABLE);
-iscsi_iface_net_attr(iface, vlan, ISCSI_NET_PARAM_VLAN_ID);
+iscsi_iface_net_attr(iface, vlan_id, ISCSI_NET_PARAM_VLAN_ID);
 iscsi_iface_net_attr(iface, vlan_priority, ISCSI_NET_PARAM_VLAN_PRIORITY);
 iscsi_iface_net_attr(iface, vlan_enabled, ISCSI_NET_PARAM_VLAN_ENABLED);
 iscsi_iface_net_attr(iface, mtu, ISCSI_NET_PARAM_MTU);
@@ -336,7 +336,7 @@ static mode_t iscsi_iface_attr_is_visible(struct kobject *kobj,
 
 	if (attr == &dev_attr_iface_enabled.attr)
 		param = ISCSI_NET_PARAM_IFACE_ENABLE;
-	else if (attr == &dev_attr_iface_vlan.attr)
+	else if (attr == &dev_attr_iface_vlan_id.attr)
 		param = ISCSI_NET_PARAM_VLAN_ID;
 	else if (attr == &dev_attr_iface_vlan_priority.attr)
 		param = ISCSI_NET_PARAM_VLAN_PRIORITY;
@@ -366,7 +366,7 @@ static mode_t iscsi_iface_attr_is_visible(struct kobject *kobj,
 			param = ISCSI_NET_PARAM_IPV6_ROUTER;
 		else if (attr == &dev_attr_ipv6_iface_ipaddr_autocfg.attr)
 			param = ISCSI_NET_PARAM_IPV6_ADDR_AUTOCFG;
-		else if (attr == &dev_attr_ipv6_iface_linklocal_autocfg.attr)
+		else if (attr == &dev_attr_ipv6_iface_link_local_autocfg.attr)
 			param = ISCSI_NET_PARAM_IPV6_LINKLOCAL_AUTOCFG;
 		else
 			return 0;
@@ -380,7 +380,7 @@ static mode_t iscsi_iface_attr_is_visible(struct kobject *kobj,
 
 static struct attribute *iscsi_iface_attrs[] = {
 	&dev_attr_iface_enabled.attr,
-	&dev_attr_iface_vlan.attr,
+	&dev_attr_iface_vlan_id.attr,
 	&dev_attr_iface_vlan_priority.attr,
 	&dev_attr_iface_vlan_enabled.attr,
 	&dev_attr_ipv4_iface_ipaddress.attr,
@@ -391,7 +391,7 @@ static struct attribute *iscsi_iface_attrs[] = {
 	&dev_attr_ipv6_iface_link_local_addr.attr,
 	&dev_attr_ipv6_iface_router_addr.attr,
 	&dev_attr_ipv6_iface_ipaddr_autocfg.attr,
-	&dev_attr_ipv6_iface_linklocal_autocfg.attr,
+	&dev_attr_ipv6_iface_link_local_autocfg.attr,
 	&dev_attr_iface_mtu.attr,
 	&dev_attr_iface_port.attr,
 	NULL,
@@ -1903,7 +1903,7 @@ iscsi_set_path(struct iscsi_transport *transport, struct iscsi_uevent *ev)
 
 static int
 iscsi_set_iface_params(struct iscsi_transport *transport,
-		       struct iscsi_uevent *ev)
+		       struct iscsi_uevent *ev, uint32_t len)
 {
 	char *data = (char *)ev + sizeof(*ev);
 	struct Scsi_Host *shost;
@@ -1919,8 +1919,7 @@ iscsi_set_iface_params(struct iscsi_transport *transport,
 		return -ENODEV;
 	}
 
-	err = transport->set_iface_param(shost, data,
-					 ev->u.set_iface_params.count);
+	err = transport->set_iface_param(shost, data, len);
 	scsi_host_put(shost);
 	return err;
 }
@@ -2065,7 +2064,8 @@ iscsi_if_recv_msg(struct sk_buff *skb, struct nlmsghdr *nlh, uint32_t *group)
 		err = iscsi_set_path(transport, ev);
 		break;
 	case ISCSI_UEVENT_SET_IFACE_PARAMS:
-		err = iscsi_set_iface_params(transport, ev);
+		err = iscsi_set_iface_params(transport, ev,
+					     nlmsg_attrlen(nlh, sizeof(*ev)));
 		break;
 	default:
 		err = -ENOSYS;
