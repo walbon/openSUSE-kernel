@@ -1462,16 +1462,17 @@ int __init enable_IR(void)
 void __init enable_IR_x2apic(void)
 {
 	unsigned long flags;
-	int ret, x2apic_enabled = 0;
+	int ret = 0, x2apic_enabled = 0;
 	int dmar_table_init_ret;
 
 	dmar_table_init_ret = dmar_table_init();
-	if (dmar_table_init_ret && !x2apic_supported())
+	if (dmar_table_init_ret && !cpu_has_x2apic)
 		return;
 
 	ret = save_ioapic_entries();
 	if (ret) {
 		pr_info("Saving IO-APIC state failed: %d\n", ret);
+		ret = 0;
 		goto out;
 	}
 
@@ -1498,7 +1499,8 @@ void __init enable_IR_x2apic(void)
 		x2apic_force_phys();
 	}
 
-	x2apic_enabled = 1;
+	if (x2apic_supported())
+		x2apic_enabled = 1;
 
 	if (x2apic_supported() && !x2apic_mode) {
 		x2apic_mode = 1;
@@ -1518,8 +1520,14 @@ out:
 
 	if (x2apic_preenabled)
 		panic("x2apic: enabled by BIOS but kernel init failed.");
-	else if (cpu_has_x2apic)
+	else if (!ret && cpu_has_x2apic) /* IR enabling failed */
 		pr_info("Not enabling x2apic, Intr-remapping init failed.\n");
+	else if (!x2apic_supported() && cpu_has_x2apic)
+		WARN(1, "Your BIOS is broken and requested that x2apic be "
+			"disabled.\n This will leave your machine vulnerable to"
+			" irq-injection attacks\n"
+			"Use 'intel_iommu=no_x2apic_optout' to override BIOS "
+			"request\n");
 }
 
 #ifdef CONFIG_X86_64

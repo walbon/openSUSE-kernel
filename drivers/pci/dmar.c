@@ -700,7 +700,7 @@ int __init detect_intel_iommu(void)
 		struct acpi_table_dmar *dmar;
 
 		dmar = (struct acpi_table_dmar *) dmar_tbl;
-		if (ret && cpu_has_x2apic && dmar->flags & 0x1)
+		if (ret && x2apic_supported() && dmar->flags & DMAR_INTR_REMAP)
 			printk(KERN_INFO
 			       "Queued invalidation will be enabled to support "
 			       "x2apic and Intr-remapping.\n");
@@ -1456,6 +1456,31 @@ int __init dmar_ir_support(void)
 	dmar = (struct acpi_table_dmar *)dmar_tbl;
 	if (!dmar)
 		return 0;
-	return dmar->flags & 0x1;
+	return dmar->flags & DMAR_INTR_REMAP;
 }
+
+/*
+ * Check if the platform support x2apic
+ * three necessary conditions:
+ * a. processor support x2apic
+ * b. interrupt remapping support
+ * c. when interrupt reamapping support,firmware does not request to opt out
+ *  x2apic by not set x2APIC_OPT_OUT bit at DMAR flags or ignore the request
+ *  by adding kernel option.
+ */
+int __init x2apic_supported(void)
+{
+	struct acpi_table_dmar *dmar;
+	unsigned int flags = 0;
+
+	if (!cpu_has_x2apic)
+		return 0;
+
+	dmar = (struct acpi_table_dmar *)dmar_tbl;
+	if (!dmar)
+		return 0;
+	flags = DMAR_INTR_REMAP | (no_x2apic_optout ? 0 : DMAR_X2APIC_OPT_OUT);
+	return ((dmar->flags & flags) == DMAR_INTR_REMAP);
+}
+
 IOMMU_INIT_POST(detect_intel_iommu);

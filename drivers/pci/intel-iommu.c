@@ -399,6 +399,7 @@ int dmar_disabled = 0;
 #else
 int dmar_disabled = 1;
 #endif /*CONFIG_DMAR_DEFAULT_ON*/
+int no_x2apic_optout = 0;
 
 static int dmar_map_gfx = 1;
 static int dmar_forcedac;
@@ -434,6 +435,11 @@ static int __init intel_iommu_setup(char *str)
 			printk(KERN_INFO
 				"Intel-IOMMU: disable batched IOTLB flush\n");
 			intel_iommu_strict = 1;
+		} else if (!strncmp(str, "no_x2apic_optout", 16)) {
+			printk(KERN_INFO
+				"Intel-IOMMU: ignore BIOS x2apic opt out "
+				"request\n");
+			no_x2apic_optout = 1;
 		} else if (!strncmp(str, "sp_off", 6)) {
 			printk(KERN_INFO
 				"Intel-IOMMU: disable supported super page\n");
