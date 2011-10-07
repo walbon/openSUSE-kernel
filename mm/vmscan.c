@@ -2133,9 +2133,7 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 			}
 		}
 		total_scanned += sc->nr_scanned;
-		if (sc->nr_reclaimed >= sc->nr_to_reclaim ||
-				((sc->gfp_mask & __GFP_NO_KSWAPD) &&
-					(total_scanned > (4UL << sc->order) || !sc->nr_reclaimed)))
+		if (sc->nr_reclaimed >= sc->nr_to_reclaim)
 			goto out;
 
 		/*
@@ -2247,8 +2245,8 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 		.gfp_mask = gfp_mask,
 		.may_writepage = !laptop_mode,
 		.nr_to_reclaim = SWAP_CLUSTER_MAX,
-		.may_unmap = !(gfp_mask & __GFP_NO_KSWAPD),
-		.may_swap = !(gfp_mask & __GFP_NO_KSWAPD),
+		.may_unmap = 1,
+		.may_swap = 1,
 		.swappiness = vm_swappiness,
 		.order = order,
 		.mem_cgroup = NULL,
