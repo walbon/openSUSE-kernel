@@ -575,10 +575,6 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 
 	INIT_LIST_HEAD(&bitmap_list);
 
-	node = rb_first(&ctl->free_space_offset);
-	if (!node)
-		return -1;
-
 	if (!i_size_read(inode))
 		return -1;
 
@@ -640,6 +636,12 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	 */
 	if (block_group)
 		start = block_group->key.objectid;
+
+	node = rb_first(&ctl->free_space_offset);
+	if (!node && cluster) {
+		node = rb_first(&cluster->root);
+		cluster = NULL;
+	}
 
 	/* Write out the extent entries */
 	do {
@@ -810,9 +812,10 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	if (ret)
 		goto out;
 
-	BTRFS_I(inode)->generation = trans->transid;
 
-	filemap_write_and_wait(inode->i_mapping);
+	ret = filemap_write_and_wait(inode->i_mapping);
+	if (ret)
+		goto out;
 
 	key.objectid = BTRFS_FREE_SPACE_OBJECTID;
 	key.offset = offset;
@@ -846,6 +849,8 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 			goto out;
 		}
 	}
+
+	BTRFS_I(inode)->generation = trans->transid;
 	header = btrfs_item_ptr(leaf, path->slots[0],
 				struct btrfs_free_space_header);
 	btrfs_set_free_space_entries(leaf, header, entries);
