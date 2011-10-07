@@ -214,7 +214,7 @@ int mvs_phy_control(struct asd_sas_phy *sas_phy, enum phy_func func,
 		break;
 	case PHY_FUNC_RELEASE_SPINUP_HOLD:
 	default:
-		rc = -EOPNOTSUPP;
+		rc = -ENOSYS;
 	}
 	msleep(200);
 	return rc;
@@ -274,36 +274,6 @@ static void mvs_bytes_dmaed(struct mvs_info *mvi, int i)
 
 	mvi->sas->notify_port_event(sas_phy,
 				   PORTE_BYTES_DMAED);
-}
-
-int mvs_slave_alloc(struct scsi_device *scsi_dev)
-{
-	struct domain_device *dev = sdev_to_domain_dev(scsi_dev);
-	if (dev_is_sata(dev)) {
-		/* We don't need to rescan targets
-		 * if REPORT_LUNS request is failed
-		 */
-		if (scsi_dev->lun > 0)
-			return -ENXIO;
-		scsi_dev->tagged_supported = 1;
-	}
-
-	return sas_slave_alloc(scsi_dev);
-}
-
-int mvs_slave_configure(struct scsi_device *sdev)
-{
-	struct domain_device *dev = sdev_to_domain_dev(sdev);
-	int ret = sas_slave_configure(sdev);
-
-	if (ret)
-		return ret;
-	if (!dev_is_sata(dev)) {
-		sas_change_queue_depth(sdev,
-			MVS_QUEUE_SIZE,
-			SCSI_QDEPTH_DEFAULT);
-	}
-	return 0;
 }
 
 void mvs_scan_start(struct Scsi_Host *shost)
@@ -1387,28 +1357,6 @@ void mvs_dev_gone(struct domain_device *dev)
 	mvs_dev_gone_notify(dev);
 }
 
-static  struct sas_task *mvs_alloc_task(void)
-{
-	struct sas_task *task = kzalloc(sizeof(struct sas_task), GFP_KERNEL);
-
-	if (task) {
-		INIT_LIST_HEAD(&task->list);
-		spin_lock_init(&task->task_state_lock);
-		task->task_state_flags = SAS_TASK_STATE_PENDING;
-		init_timer(&task->timer);
-		init_completion(&task->completion);
-	}
-	return task;
-}
-
-static  void mvs_free_task(struct sas_task *task)
-{
-	if (task) {
-		BUG_ON(!list_empty(&task->list));
-		kfree(task);
-	}
-}
-
 static void mvs_task_done(struct sas_task *task)
 {
 	if (!del_timer(&task->timer))
@@ -1432,7 +1380,7 @@ static int mvs_exec_internal_tmf_task(struct domain_device *dev,
 	struct sas_task *task = NULL;
 
 	for (retry = 0; retry < 3; retry++) {
-		task = mvs_alloc_task();
+		task = sas_alloc_task(GFP_KERNEL);
 		if (!task)
 			return -ENOMEM;
 
@@ -1490,15 +1438,14 @@ static int mvs_exec_internal_tmf_task(struct domain_device *dev,
 				    SAS_ADDR(dev->sas_addr),
 				    task->task_status.resp,
 				    task->task_status.stat);
-			mvs_free_task(task);
+			sas_free_task(task);
 			task = NULL;
 
 		}
 	}
 ex_err:
 	BUG_ON(retry == 3 && task != NULL);
-	if (task != NULL)
-		mvs_free_task(task);
+	sas_free_task(task);
 	return res;
 }
 
