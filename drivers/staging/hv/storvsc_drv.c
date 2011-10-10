@@ -1124,30 +1124,19 @@ static void storvsc_command_completion(struct hv_storvsc_request *request)
 
 static bool storvsc_check_scsi_cmd(struct scsi_cmnd *scmnd)
 {
-	bool ret = true;
+	bool allowed = true;
 	u8 scsi_op = scmnd->cmnd[0];
 
 	switch (scsi_op) {
 		/* smartd sends this command, which will offline the device */
 		case SET_WINDOW:
 			scmnd->result = DID_ERROR << 16;
-			ret = false;
+			allowed = false;
 			break;
-#if 0
-		case TEST_UNIT_READY:
-		case INQUIRY:
-		case MODE_SENSE:
-		case READ_CAPACITY:
-		case READ_10:
-		case WRITE_10:
-		case SYNCHRONIZE_CACHE:
-		case REPORT_LUNS:
-			break;
-#endif
 		default:
 			break;
 	}
-	return ret;
+	return allowed;
 }
 
 /*
