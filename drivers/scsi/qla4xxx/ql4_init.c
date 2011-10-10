@@ -765,6 +765,44 @@ int qla4xxx_start_firmware(struct scsi_qla_host *ha)
 	}
 	return status;
 }
+/**
+ * qla4xxx_free_ddb_index - Free DDBs reserved by firmware
+ * @ha: pointer to adapter structure
+ *
+ * Since firmware is not running in autoconnect mode the DDB indices should
+ * be freed so that when login happens from user space there are free DDB
+ * indices available.
+ **/
+static void qla4xxx_free_ddb_index(struct scsi_qla_host *ha)
+{
+	int max_ddbs;
+	int ret;
+	uint32_t idx = 0, next_idx = 0;
+	uint32_t state = 0, conn_err = 0;
+
+	max_ddbs =  is_qla40XX(ha) ? MAX_PRST_DEV_DB_ENTRIES :
+				     MAX_DEV_DB_ENTRIES;
+
+	for (idx = 0; idx < max_ddbs; idx = next_idx) {
+		ret = qla4xxx_get_fwddb_entry(ha, idx, NULL, 0, NULL,
+					      &next_idx, &state, &conn_err,
+						NULL, NULL);
+		if (ret == QLA_ERROR)
+			continue;
+		if (state == DDB_DS_NO_CONNECTION_ACTIVE ||
+		    state == DDB_DS_SESSION_FAILED) {
+			DEBUG2(ql4_printk(KERN_INFO, ha,
+					  "Freeing DDB index = 0x%x\n", idx));
+			ret = qla4xxx_clear_ddb_entry(ha, idx);
+			if (ret == QLA_ERROR)
+				ql4_printk(KERN_ERR, ha,
+					   "Unable to clear DDB index = "
+					   "0x%x\n", idx);
+		}
+		if (next_idx == 0)
+			break;
+	}
+}
 
 
 /**
@@ -801,6 +839,8 @@ int qla4xxx_initialize_adapter(struct scsi_qla_host *ha)
 	status = qla4xxx_init_firmware(ha);
 	if (status == QLA_ERROR)
 		goto exit_init_hba;
+
+	qla4xxx_free_ddb_index(ha);
 
 	set_bit(AF_ONLINE, &ha->flags);
 exit_init_hba:
@@ -840,6 +880,10 @@ int qla4xxx_process_ddb_changed(struct scsi_qla_host *ha, uint32_t fw_ddb_index,
 	if (ddb_entry == NULL) {
 		ql4_printk(KERN_ERR, ha, "%s: No ddb_entry at FW index [%d]\n",
 			   __func__, fw_ddb_index);
+
+		if (state == DDB_DS_NO_CONNECTION_ACTIVE)
+			clear_bit(fw_ddb_index, ha->ddb_idx_map);
+
 		goto exit_ddb_event;
 	}
 
@@ -856,6 +900,7 @@ int qla4xxx_process_ddb_changed(struct scsi_qla_host *ha, uint32_t fw_ddb_index,
 		switch (state) {
 		case DDB_DS_SESSION_ACTIVE:
 		case DDB_DS_DISCOVERY:
+			iscsi_conn_start(ddb_entry->conn);
 			iscsi_conn_login_event(ddb_entry->conn,
 					       ISCSI_CONN_STATE_LOGGED_IN);
 			qla4xxx_update_session_conn_param(ha, ddb_entry);
@@ -870,7 +915,8 @@ int qla4xxx_process_ddb_changed(struct scsi_qla_host *ha, uint32_t fw_ddb_index,
 		}
 		break;
 	case DDB_DS_SESSION_ACTIVE:
-		if (state == DDB_DS_SESSION_FAILED) {
+		switch (state) {
+		case DDB_DS_SESSION_FAILED:
 			/*
 			 * iscsi_session failure  will cause userspace to
 			 * stop the connection which in turn would block the
@@ -879,6 +925,28 @@ int qla4xxx_process_ddb_changed(struct scsi_qla_host *ha, uint32_t fw_ddb_index,
 			iscsi_session_failure(ddb_entry->sess->dd_data,
 					      ISCSI_ERR_CONN_FAILED);
 			status = QLA_SUCCESS;
+			break;
+		case DDB_DS_NO_CONNECTION_ACTIVE:
+			clear_bit(fw_ddb_index, ha->ddb_idx_map);
+			status = QLA_SUCCESS;
+			break;
+		}
+		break;
+	case DDB_DS_SESSION_FAILED:
+		switch (state) {
+		case DDB_DS_SESSION_ACTIVE:
+		case DDB_DS_DISCOVERY:
+			iscsi_conn_start(ddb_entry->conn);
+			iscsi_conn_login_event(ddb_entry->conn,
+					       ISCSI_CONN_STATE_LOGGED_IN);
+			qla4xxx_update_session_conn_param(ha, ddb_entry);
+			status = QLA_SUCCESS;
+			break;
+		case DDB_DS_SESSION_FAILED:
+			iscsi_session_failure(ddb_entry->sess->dd_data,
+					      ISCSI_ERR_CONN_FAILED);
+			status = QLA_SUCCESS;
+			break;
 		}
 		break;
 	default:

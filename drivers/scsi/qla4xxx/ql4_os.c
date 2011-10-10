@@ -997,6 +997,7 @@ qla4xxx_session_create(struct iscsi_endpoint *ep,
 	qla_ep = ep->dd_data;
 	dst_addr = (struct sockaddr *)&qla_ep->dst_addr;
 	ha = to_qla_host(qla_ep->host);
+
 get_ddb_index:
 	ddb_index = find_first_zero_bit(ha->ddb_idx_map, MAX_DDB_ENTRIES);
 
@@ -1055,6 +1056,8 @@ static void qla4xxx_session_destroy(struct iscsi_cls_session *cls_sess)
 	sess = cls_sess->dd_data;
 	ddb_entry = sess->dd_data;
 	ha = ddb_entry->ha;
+
+	qla4xxx_clear_ddb_entry(ha, ddb_entry->fw_ddb_index);
 
 	spin_lock_irqsave(&ha->hardware_lock, flags);
 	qla4xxx_free_ddb(ha, ddb_entry);
@@ -1132,8 +1135,12 @@ static int qla4xxx_conn_start(struct iscsi_cls_conn *cls_conn)
 		*/
 		if (mbx_sts)
 			if (ddb_entry->fw_ddb_device_state ==
-							DDB_DS_SESSION_ACTIVE)
+						DDB_DS_SESSION_ACTIVE) {
+				iscsi_conn_start(ddb_entry->conn);
+				iscsi_conn_login_event(ddb_entry->conn,
+						ISCSI_CONN_STATE_LOGGED_IN);
 				goto exit_set_param;
+			}
 
 		ql4_printk(KERN_ERR, ha, "%s: Failed set param for index[%d]\n",
 			   __func__, ddb_entry->fw_ddb_index);
@@ -1148,10 +1155,13 @@ static int qla4xxx_conn_start(struct iscsi_cls_conn *cls_conn)
 		goto exit_conn_start;
 	}
 
-	ddb_entry->fw_ddb_device_state = DDB_DS_LOGIN_IN_PROCESS;
+	if (ddb_entry->fw_ddb_device_state == DDB_DS_NO_CONNECTION_ACTIVE)
+		ddb_entry->fw_ddb_device_state = DDB_DS_LOGIN_IN_PROCESS;
+
+	DEBUG2(printk(KERN_INFO "%s: DDB state [%d]\n", __func__,
+		      ddb_entry->fw_ddb_device_state));
 
 exit_set_param:
-	iscsi_conn_start(cls_conn);
 	ret = 0;
 
 exit_conn_start:
@@ -1176,14 +1186,6 @@ static void qla4xxx_conn_destroy(struct iscsi_cls_conn *cls_conn)
 	options = LOGOUT_OPTION_CLOSE_SESSION;
 	if (qla4xxx_session_logout_ddb(ha, ddb_entry, options) == QLA_ERROR)
 		ql4_printk(KERN_ERR, ha, "%s: Logout failed\n", __func__);
-	else
-		qla4xxx_clear_ddb_entry(ha, ddb_entry->fw_ddb_index);
-
-	/*
-	 * Clear the DDB bit so that next login can use the bit
-	 * if FW is not clearing the DDB entry then set DDB will fail anyways
-	 */
-	clear_bit(ddb_entry->fw_ddb_index, ha->ddb_idx_map);
 }
 
 static void qla4xxx_task_work(struct work_struct *wdata)
@@ -1263,7 +1265,7 @@ static int qla4xxx_alloc_pdu(struct iscsi_task *task, uint8_t opcode)
 	DEBUG2(ql4_printk(KERN_INFO, ha, "%s: MaxRecvLen %u, iscsi hrd %d\n",
 		      __func__, task->conn->max_recv_dlength, hdr_len));
 
-	task_data->resp_len = task->conn->max_recv_dlength;
+	task_data->resp_len = task->conn->max_recv_dlength + hdr_len;
 	task_data->resp_buffer = dma_alloc_coherent(&ha->pdev->dev,
 						    task_data->resp_len,
 						    &task_data->resp_dma,
@@ -1271,8 +1273,9 @@ static int qla4xxx_alloc_pdu(struct iscsi_task *task, uint8_t opcode)
 	if (!task_data->resp_buffer)
 		goto exit_alloc_pdu;
 
+	task_data->req_len = task->data_count + hdr_len;
 	task_data->req_buffer = dma_alloc_coherent(&ha->pdev->dev,
-						   task->data_count + hdr_len,
+						   task_data->req_len,
 						   &task_data->req_dma,
 						   GFP_ATOMIC);
 	if (!task_data->req_buffer)
@@ -1290,7 +1293,7 @@ exit_alloc_pdu:
 				  task_data->resp_buffer, task_data->resp_dma);
 
 	if (task_data->req_buffer)
-		dma_free_coherent(&ha->pdev->dev, task->data_count + hdr_len,
+		dma_free_coherent(&ha->pdev->dev, task_data->req_len,
 				  task_data->req_buffer, task_data->req_dma);
 	return -ENOMEM;
 }
@@ -1319,7 +1322,7 @@ static void qla4xxx_task_cleanup(struct iscsi_task *task)
 
 	dma_free_coherent(&ha->pdev->dev, task_data->resp_len,
 			  task_data->resp_buffer, task_data->resp_dma);
-	dma_free_coherent(&ha->pdev->dev, task->data_count + hdr_len,
+	dma_free_coherent(&ha->pdev->dev, task_data->req_len,
 			  task_data->req_buffer, task_data->req_dma);
 	return;
 }
@@ -1597,6 +1600,10 @@ static void qla4xxx_mem_free(struct scsi_qla_host *ha)
 
 	if (ha->chap_dma_pool)
 		dma_pool_destroy(ha->chap_dma_pool);
+
+	if (ha->chap_list)
+		vfree(ha->chap_list);
+	ha->chap_list = NULL;
 
 	/* release io space registers  */
 	if (is_qla8022(ha)) {
@@ -2768,12 +2775,10 @@ static int get_fw_boot_info(struct scsi_qla_host *ha, uint16_t ddb_index[])
 
 	func_num = PCI_FUNC(ha->pdev->devfn);
 
-	DEBUG2(ql4_printk(KERN_INFO, ha,
-			  "%s: Get FW  boot info for 0x%x func %d\n", __func__,
-			  (is_qla4032(ha) ? PCI_DEVICE_ID_QLOGIC_ISP4032 :
-			   PCI_DEVICE_ID_QLOGIC_ISP8022), func_num));
+	ql4_printk(KERN_INFO, ha, "%s: Get FW boot info for 0x%x func %d\n",
+		   __func__, ha->pdev->device, func_num);
 
-	if (is_qla4032(ha)) {
+	if (is_qla40XX(ha)) {
 		if (func_num == 1) {
 			addr = NVRAM_PORT0_BOOT_MODE;
 			pri_addr = NVRAM_PORT0_BOOT_PRI_TGT;
@@ -2801,15 +2806,11 @@ static int get_fw_boot_info(struct scsi_qla_host *ha, uint16_t ddb_index[])
 		val = rd_nvram_byte(ha, pri_addr);
 		if (val & BIT_7)
 			ddb_index[0] = (val & 0x7f);
-		else
-			ddb_index[0] = 0;
 
 		/* get secondary valid target index */
 		val = rd_nvram_byte(ha, sec_addr);
 		if (val & BIT_7)
 			ddb_index[1] = (val & 0x7f);
-		else
-			ddb_index[1] = 1;
 
 	} else if (is_qla8022(ha)) {
 		buf = dma_alloc_coherent(&ha->pdev->dev, size,
@@ -2851,15 +2852,10 @@ static int get_fw_boot_info(struct scsi_qla_host *ha, uint16_t ddb_index[])
 		/* get primary valid target index */
 		if (buf[2] & BIT_7)
 			ddb_index[0] = buf[2] & 0x7f;
-		else
-			ddb_index[0] = 0;
 
 		/* get secondary valid target index */
 		if (buf[11] & BIT_7)
 			ddb_index[1] = buf[11] & 0x7f;
-		else
-			ddb_index[1] = 1;
-
 	} else {
 		ret = QLA_ERROR;
 		goto exit_boot_info;
@@ -2874,6 +2870,60 @@ exit_boot_info_free:
 exit_boot_info:
 	return ret;
 }
+
+/**
+ * qla4xxx_get_bidi_chap - Get a BIDI CHAP user and password
+ * @ha: pointer to adapter structure
+ * @username: CHAP username to be returned
+ * @password: CHAP password to be returned
+ *
+ * If a boot entry has BIDI CHAP enabled then we need to set the BIDI CHAP
+ * user and password in the sysfs entry in /sys/firmware/iscsi_boot#/.
+ * So from the CHAP cache find the first BIDI CHAP entry and set it
+ * to the boot record in sysfs.
+ **/
+static int qla4xxx_get_bidi_chap(struct scsi_qla_host *ha, char *username,
+			    char *password)
+{
+	int i, ret = -EINVAL;
+	int max_chap_entries = 0;
+	struct ql4_chap_table *chap_table;
+
+	if (is_qla8022(ha))
+		max_chap_entries = (ha->hw.flt_chap_size / 2) /
+						sizeof(struct ql4_chap_table);
+	else
+		max_chap_entries = MAX_CHAP_ENTRIES_40XX;
+
+	if (!ha->chap_list) {
+		ql4_printk(KERN_ERR, ha, "Do not have CHAP table cache\n");
+		return ret;
+	}
+
+	mutex_lock(&ha->chap_sem);
+	for (i = 0; i < max_chap_entries; i++) {
+		chap_table = (struct ql4_chap_table *)ha->chap_list + i;
+		if (chap_table->cookie !=
+		    __constant_cpu_to_le16(CHAP_VALID_COOKIE)) {
+			continue;
+		}
+
+		if (chap_table->flags & BIT_7) /* local */
+			continue;
+
+		if (!(chap_table->flags & BIT_6)) /* Not BIDI */
+			continue;
+
+		strncpy(password, chap_table->secret, QL4_CHAP_MAX_SECRET_LEN);
+		strncpy(username, chap_table->name, QL4_CHAP_MAX_NAME_LEN);
+		ret = 0;
+		break;
+	}
+	mutex_unlock(&ha->chap_sem);
+
+	return ret;
+}
+
 
 static int qla4xxx_get_boot_target(struct scsi_qla_host *ha,
 				   struct ql4_boot_session_info *boot_sess,
@@ -2946,10 +2996,10 @@ static int qla4xxx_get_boot_target(struct scsi_qla_host *ha,
 
 		DEBUG2(ql4_printk(KERN_INFO, ha, "Setting BIDI chap\n"));
 
-		ret = qla4xxx_get_chap(ha, (char *)&boot_conn->chap.
-				       intr_chap_name,
-				       (char *)&boot_conn->chap.intr_secret,
-				       (idx + 1));
+		ret = qla4xxx_get_bidi_chap(ha,
+				    (char *)&boot_conn->chap.intr_chap_name,
+				    (char *)&boot_conn->chap.intr_secret);
+
 		if (ret) {
 			ql4_printk(KERN_ERR, ha, "Failed to set BIDI chap\n");
 			ret = QLA_ERROR;
@@ -2969,9 +3019,12 @@ exit_boot_target:
 static int qla4xxx_get_boot_info(struct scsi_qla_host *ha)
 {
 	uint16_t ddb_index[2];
-	int ret = QLA_SUCCESS;
+	int ret = QLA_ERROR;
+	int rval;
 
 	memset(ddb_index, 0, sizeof(ddb_index));
+	ddb_index[0] = 0xffff;
+	ddb_index[1] = 0xffff;
 	ret = get_fw_boot_info(ha, ddb_index);
 	if (ret != QLA_SUCCESS) {
 		DEBUG2(ql4_printk(KERN_ERR, ha,
@@ -2979,19 +3032,30 @@ static int qla4xxx_get_boot_info(struct scsi_qla_host *ha)
 		return ret;
 	}
 
-	ret = qla4xxx_get_boot_target(ha, &(ha->boot_tgt.boot_pri_sess),
+	if (ddb_index[0] == 0xffff)
+		goto sec_target;
+
+	rval = qla4xxx_get_boot_target(ha, &(ha->boot_tgt.boot_pri_sess),
 				      ddb_index[0]);
-	if (ret != QLA_SUCCESS) {
+	if (rval != QLA_SUCCESS) {
 		DEBUG2(ql4_printk(KERN_ERR, ha, "%s: Failed to get "
 				  "primary target\n", __func__));
-	}
+	} else
+		ret = QLA_SUCCESS;
 
-	ret = qla4xxx_get_boot_target(ha, &(ha->boot_tgt.boot_sec_sess),
+sec_target:
+	if (ddb_index[1] == 0xffff)
+		goto exit_get_boot_info;
+
+	rval = qla4xxx_get_boot_target(ha, &(ha->boot_tgt.boot_sec_sess),
 				      ddb_index[1]);
-	if (ret != QLA_SUCCESS) {
+	if (rval != QLA_SUCCESS) {
 		DEBUG2(ql4_printk(KERN_ERR, ha, "%s: Failed to get "
 				  "secondary target\n", __func__));
-	}
+	} else
+		ret = QLA_SUCCESS;
+
+exit_get_boot_info:
 	return ret;
 }
 
@@ -3049,6 +3113,66 @@ put_host:
 kset_free:
 	iscsi_boot_destroy_kset(ha->boot_kset);
 	return -ENOMEM;
+}
+
+
+/**
+ * qla4xxx_create chap_list - Create CHAP list from FLASH
+ * @ha: pointer to adapter structure
+ *
+ * Read flash and make a list of CHAP entries, during login when a CHAP entry
+ * is received, it will be checked in this list. If entry exist then the CHAP
+ * entry index is set in the DDB. If CHAP entry does not exist in this list
+ * then a new entry is added in FLASH in CHAP table and the index obtained is
+ * used in the DDB.
+ **/
+static void qla4xxx_create_chap_list(struct scsi_qla_host *ha)
+{
+	int rval = 0;
+	uint8_t *chap_flash_data = NULL;
+	uint32_t offset;
+	dma_addr_t chap_dma;
+	uint32_t chap_size = 0;
+
+	if (is_qla40XX(ha))
+		chap_size = MAX_CHAP_ENTRIES_40XX  *
+					sizeof(struct ql4_chap_table);
+	else	/* Single region contains CHAP info for both
+		 * ports which is divided into half for each port.
+		 */
+		chap_size = ha->hw.flt_chap_size / 2;
+
+	chap_flash_data = dma_alloc_coherent(&ha->pdev->dev, chap_size,
+					  &chap_dma, GFP_KERNEL);
+	if (!chap_flash_data) {
+		ql4_printk(KERN_ERR, ha, "No memory for chap_flash_data\n");
+		return;
+	}
+	if (is_qla40XX(ha))
+		offset = FLASH_CHAP_OFFSET;
+	else {
+		offset = FLASH_RAW_ACCESS_ADDR + (ha->hw.flt_region_chap << 2);
+		if (ha->port_num == 1)
+			offset += chap_size;
+	}
+
+	rval = qla4xxx_get_flash(ha, chap_dma, offset, chap_size);
+	if (rval != QLA_SUCCESS)
+		goto exit_chap_list;
+
+	if (ha->chap_list == NULL)
+		ha->chap_list = vmalloc(chap_size);
+	if (ha->chap_list == NULL) {
+		ql4_printk(KERN_ERR, ha, "No memory for ha->chap_list\n");
+		goto exit_chap_list;
+	}
+
+	memcpy(ha->chap_list, chap_flash_data, chap_size);
+
+exit_chap_list:
+	dma_free_coherent(&ha->pdev->dev, chap_size,
+			chap_flash_data, chap_dma);
+	return;
 }
 
 /**
@@ -3128,6 +3252,7 @@ static int __devinit qla4xxx_probe_adapter(struct pci_dev *pdev,
 	INIT_LIST_HEAD(&ha->free_srb_q);
 
 	mutex_init(&ha->mbox_sem);
+	mutex_init(&ha->chap_sem);
 	init_completion(&ha->mbx_intr_comp);
 	init_completion(&ha->disable_acb_comp);
 
@@ -3258,6 +3383,8 @@ static int __devinit qla4xxx_probe_adapter(struct pci_dev *pdev,
 	       qla4xxx_version_str, ha->pdev->device, pci_name(ha->pdev),
 	       ha->host_no, ha->firmware_version[0], ha->firmware_version[1],
 	       ha->patch_number, ha->build_number);
+
+	qla4xxx_create_chap_list(ha);
 
 	if (qla4xxx_setup_boot_info(ha))
 		ql4_printk(KERN_ERR, ha, "%s:ISCSI boot info setup failed\n",
