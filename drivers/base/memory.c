@@ -245,7 +245,7 @@ static bool pages_correctly_reserved(unsigned long start_pfn,
 		page = pfn_to_page(pfn);
 
 		for (j = 0; j < PAGES_PER_SECTION; j++) {
-			if (PageReserved(page + i))
+			if (PageReserved(page + j))
 				continue;
 
 			printk(KERN_WARNING "section number %ld page number %d "
