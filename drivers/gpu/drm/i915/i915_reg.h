@@ -2540,9 +2540,17 @@
 #define _CURBBASE		0x700c4
 #define _CURBPOS			0x700c8
 
+#define _CURBCNTR_IVB		0x71080
+#define _CURBBASE_IVB		0x71084
+#define _CURBPOS_IVB		0x71088
+
 #define CURCNTR(pipe) _PIPE(pipe, _CURACNTR, _CURBCNTR)
 #define CURBASE(pipe) _PIPE(pipe, _CURABASE, _CURBBASE)
 #define CURPOS(pipe) _PIPE(pipe, _CURAPOS, _CURBPOS)
+
+#define CURCNTR_IVB(pipe) _PIPE(pipe, _CURACNTR, _CURBCNTR_IVB)
+#define CURBASE_IVB(pipe) _PIPE(pipe, _CURABASE, _CURBBASE_IVB)
+#define CURPOS_IVB(pipe) _PIPE(pipe, _CURAPOS, _CURBPOS_IVB)
 
 /* Display A control */
 #define _DSPACNTR                0x70180
@@ -3071,6 +3079,11 @@
 #define  TRANS_6BPC             (2<<5)
 #define  TRANS_12BPC            (3<<5)
 
+#define _TRANSA_CHICKEN2	 0xf0064
+#define _TRANSB_CHICKEN2	 0xf1064
+#define TRANS_CHICKEN2(pipe) _PIPE(pipe, _TRANSA_CHICKEN2, _TRANSB_CHICKEN2)
+#define   TRANS_AUTOTRAIN_GEN_STALL_DIS	(1<<31)
+
 #define SOUTH_CHICKEN2		0xc2004
 #define  DPLS_EDP_PPS_FIX_DIS	(1<<0)
 
@@ -3428,5 +3441,30 @@
 #define   GEN6_READ_OC_PARAMS			0xc
 #define   GEN6_PCODE_WRITE_MIN_FREQ_TABLE	0x9
 #define GEN6_PCODE_DATA				0x138128
+
+#define G4X_AUD_VID_DID			0x62020
+#define INTEL_AUDIO_DEVCL		0x808629FB
+#define INTEL_AUDIO_DEVBLC		0x80862801
+#define INTEL_AUDIO_DEVCTG		0x80862802
+
+#define G4X_AUD_CNTL_ST			0x620B4
+#define G4X_ELDV_DEVCL_DEVBLC		(1 << 13)
+#define G4X_ELDV_DEVCTG			(1 << 14)
+#define G4X_ELD_ADDR			(0xf << 5)
+#define G4X_ELD_ACK			(1 << 4)
+#define G4X_HDMIW_HDMIEDID		0x6210C
+
+#define GEN5_HDMIW_HDMIEDID_A		0xE2050
+#define GEN5_AUD_CNTL_ST_A		0xE20B4
+#define GEN5_ELD_BUFFER_SIZE		(0x1f << 10)
+#define GEN5_ELD_ADDRESS		(0x1f << 5)
+#define GEN5_ELD_ACK			(1 << 4)
+#define GEN5_AUD_CNTL_ST2		0xE20C0
+#define GEN5_ELD_VALIDB			(1 << 0)
+#define GEN5_CP_READYB			(1 << 1)
+
+#define GEN7_HDMIW_HDMIEDID_A		0xE5050
+#define GEN7_AUD_CNTRL_ST_A		0xE50B4
+#define GEN7_AUD_CNTRL_ST2		0xE50C0
 
 #endif /* _I915_REG_H_ */
