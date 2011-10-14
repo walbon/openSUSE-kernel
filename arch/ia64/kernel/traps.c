@@ -14,7 +14,7 @@
 #include <linux/vt_kern.h>		/* For unblank_screen() */
 #include <linux/module.h>       /* for EXPORT_SYMBOL */
 #ifdef	CONFIG_KDB
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #endif	/* CONFIG_KDB */
 #include <linux/hardirq.h>
 #include <linux/kprobes.h>
@@ -22,7 +22,6 @@
 #include <linux/kdebug.h>
 
 #include <asm/fpswa.h>
-#include <asm/ia32.h>
 #include <asm/intrinsics.h>
 #include <asm/processor.h>
 #include <asm/uaccess.h>
@@ -82,7 +81,7 @@ die (const char *str, struct pt_regs *regs, long err)
 		return 1;
 
 #ifdef	CONFIG_KDB
-	(void)kdb(KDB_REASON_OOPS, err, regs);
+	(void)kdb(LKDB_REASON_OOPS, err, regs);
 #endif	/* CONFIG_KDB */
 
 	if (panic_on_oops)
@@ -180,13 +179,13 @@ __kprobes ia64_bad_break (unsigned long break_num, struct pt_regs *regs)
 		} else {
 #ifdef	CONFIG_KDB
 			if (break_num == KDB_BREAK_ENTER &&
-			    kdb(KDB_REASON_ENTER, break_num, regs))
+			    kdb(LKDB_REASON_ENTER, break_num, regs))
 				return;		/* kdb handled it */
 			if (break_num == KDB_BREAK_ENTER_SLAVE &&
-			    kdb(KDB_REASON_ENTER_SLAVE, break_num, regs))
+			    kdb(LKDB_REASON_ENTER_SLAVE, break_num, regs))
 				return;		/* kdb handled it */
 			if (break_num == KDB_BREAK_BREAK &&
-			    kdb(KDB_REASON_BREAK, break_num, regs))
+			    kdb(LKDB_REASON_BREAK, break_num, regs))
 				return;		/* kdb handled it */
 #endif	/* CONFIG_KDB */
 			if (notify_die(DIE_BREAK, "bad break", regs, break_num, TRAP_BRKPT, SIGTRAP)
@@ -584,7 +583,7 @@ ia64_fault (unsigned long vector, unsigned long isr, unsigned long ifa,
 			       	== NOTIFY_STOP)
 			return;
 #ifdef	CONFIG_KDB
-		if (!user_mode(&regs) && kdb(KDB_REASON_DEBUG, vector, &regs))
+		if (!user_mode(&regs) && kdb(LKDB_REASON_DEBUG, vector, &regs))
 			return; /* kdb handled this */
 #endif	/* CONFIG_KDB */
 		siginfo.si_signo = SIGTRAP;
@@ -648,10 +647,6 @@ ia64_fault (unsigned long vector, unsigned long isr, unsigned long ifa,
 		break;
 
 	      case 45:
-#ifdef CONFIG_IA32_SUPPORT
-		if (ia32_exception(&regs, isr) == 0)
-			return;
-#endif
 		printk(KERN_ERR "Unexpected IA-32 exception (Trap 45)\n");
 		printk(KERN_ERR "  iip - 0x%lx, ifa - 0x%lx, isr - 0x%lx\n",
 		       iip, ifa, isr);
@@ -659,10 +654,6 @@ ia64_fault (unsigned long vector, unsigned long isr, unsigned long ifa,
 		break;
 
 	      case 46:
-#ifdef CONFIG_IA32_SUPPORT
-		if (ia32_intercept(&regs, isr) == 0)
-			return;
-#endif
 		printk(KERN_ERR "Unexpected IA-32 intercept trap (Trap 46)\n");
 		printk(KERN_ERR "  iip - 0x%lx, ifa - 0x%lx, isr - 0x%lx, iim - 0x%lx\n",
 		       iip, ifa, isr, iim);

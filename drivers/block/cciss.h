@@ -48,8 +48,8 @@ typedef struct _drive_info_struct
 				   */
 	struct device dev;
 	__u8 uid[16];	    /* from inquiry page 0x83,
-			    /* not necc. null terminated.
-			    */
+			     * not necc. null terminated.
+			     */
 	char vendor[VENDOR_LEN + 1]; /* SCSI vendor string */
 	char model[MODEL_LEN + 1];   /* SCSI model string */
 	char rev[REV_LEN + 1];       /* SCSI revision string */

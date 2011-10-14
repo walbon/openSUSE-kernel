@@ -33,6 +33,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/uio.h>
 #include <linux/notifier.h>
@@ -481,6 +482,7 @@ static const struct file_operations xenbus_dev_file_ops = {
 	.write = xenbus_dev_write,
 	.open = xenbus_dev_open,
 	.release = xenbus_dev_release,
+	.llseek = no_llseek,
 	.poll = xenbus_dev_poll,
 #ifdef CONFIG_XEN_PRIVILEGED_GUEST
 	.unlocked_ioctl = xenbus_dev_ioctl

@@ -16,6 +16,7 @@
 #include <linux/string.h>
 #include <linux/sockios.h>
 #include <linux/net.h>
+#include <linux/slab.h>
 #include <net/ax25.h>
 #include <linux/inet.h>
 #include <linux/netdevice.h>
@@ -77,8 +78,9 @@ static int __must_check rose_add_node(struct rose_route_struct *rose_route,
 
 	rose_neigh = rose_neigh_list;
 	while (rose_neigh != NULL) {
-		if (ax25cmp(&rose_route->neighbour, &rose_neigh->callsign) == 0
-		    && rose_neigh->dev == dev)
+		if (ax25cmp(&rose_route->neighbour,
+			    &rose_neigh->callsign) == 0 &&
+		    rose_neigh->dev == dev)
 			break;
 		rose_neigh = rose_neigh->next;
 	}
@@ -107,7 +109,9 @@ static int __must_check rose_add_node(struct rose_route_struct *rose_route,
 		init_timer(&rose_neigh->t0timer);
 
 		if (rose_route->ndigis != 0) {
-			if ((rose_neigh->digipeat = kmalloc(sizeof(ax25_digi), GFP_KERNEL)) == NULL) {
+			rose_neigh->digipeat =
+				kmalloc(sizeof(ax25_digi), GFP_ATOMIC);
+			if (rose_neigh->digipeat == NULL) {
 				kfree(rose_neigh);
 				res = -ENOMEM;
 				goto out;
@@ -315,8 +319,9 @@ static int rose_del_node(struct rose_route_struct *rose_route,
 
 	rose_neigh = rose_neigh_list;
 	while (rose_neigh != NULL) {
-		if (ax25cmp(&rose_route->neighbour, &rose_neigh->callsign) == 0
-		    && rose_neigh->dev == dev)
+		if (ax25cmp(&rose_route->neighbour,
+			    &rose_neigh->callsign) == 0 &&
+		    rose_neigh->dev == dev)
 			break;
 		rose_neigh = rose_neigh->next;
 	}
@@ -582,7 +587,7 @@ static int rose_clear_routes(void)
 
 /*
  *	Check that the device given is a valid AX.25 interface that is "up".
- * 	called whith RTNL
+ * 	called with RTNL
  */
 static struct net_device *rose_ax25_dev_find(char *devname)
 {
@@ -604,13 +609,13 @@ struct net_device *rose_dev_first(void)
 {
 	struct net_device *dev, *first = NULL;
 
-	read_lock(&dev_base_lock);
-	for_each_netdev(&init_net, dev) {
+	rcu_read_lock();
+	for_each_netdev_rcu(&init_net, dev) {
 		if ((dev->flags & IFF_UP) && dev->type == ARPHRD_ROSE)
 			if (first == NULL || strncmp(dev->name, first->name, 3) < 0)
 				first = dev;
 	}
-	read_unlock(&dev_base_lock);
+	rcu_read_unlock();
 
 	return first;
 }
@@ -622,8 +627,8 @@ struct net_device *rose_dev_get(rose_address *addr)
 {
 	struct net_device *dev;
 
-	read_lock(&dev_base_lock);
-	for_each_netdev(&init_net, dev) {
+	rcu_read_lock();
+	for_each_netdev_rcu(&init_net, dev) {
 		if ((dev->flags & IFF_UP) && dev->type == ARPHRD_ROSE && rosecmp(addr, (rose_address *)dev->dev_addr) == 0) {
 			dev_hold(dev);
 			goto out;
@@ -631,7 +636,7 @@ struct net_device *rose_dev_get(rose_address *addr)
 	}
 	dev = NULL;
 out:
-	read_unlock(&dev_base_lock);
+	rcu_read_unlock();
 	return dev;
 }
 
@@ -639,14 +644,14 @@ static int rose_dev_exists(rose_address *addr)
 {
 	struct net_device *dev;
 
-	read_lock(&dev_base_lock);
-	for_each_netdev(&init_net, dev) {
+	rcu_read_lock();
+	for_each_netdev_rcu(&init_net, dev) {
 		if ((dev->flags & IFF_UP) && dev->type == ARPHRD_ROSE && rosecmp(addr, (rose_address *)dev->dev_addr) == 0)
 			goto out;
 	}
 	dev = NULL;
 out:
-	read_unlock(&dev_base_lock);
+	rcu_read_unlock();
 	return dev != NULL;
 }
 
@@ -669,29 +674,34 @@ struct rose_route *rose_route_free_lci(unsigned int lci, struct rose_neigh *neig
  *	Find a neighbour or a route given a ROSE address.
  */
 struct rose_neigh *rose_get_neigh(rose_address *addr, unsigned char *cause,
-	unsigned char *diagnostic, int new)
+	unsigned char *diagnostic, int route_frame)
 {
 	struct rose_neigh *res = NULL;
 	struct rose_node *node;
 	int failed = 0;
 	int i;
 
-	if (!new) spin_lock_bh(&rose_node_list_lock);
+	if (!route_frame) spin_lock_bh(&rose_node_list_lock);
 	for (node = rose_node_list; node != NULL; node = node->next) {
 		if (rosecmpm(addr, &node->address, node->mask) == 0) {
 			for (i = 0; i < node->count; i++) {
-				if (new) {
-					if (node->neighbour[i]->restarted) {
-						res = node->neighbour[i];
-						goto out;
-					}
+				if (node->neighbour[i]->restarted) {
+					res = node->neighbour[i];
+					goto out;
 				}
-				else {
+			}
+		}
+	}
+	if (!route_frame) { /* connect request */
+		for (node = rose_node_list; node != NULL; node = node->next) {
+			if (rosecmpm(addr, &node->address, node->mask) == 0) {
+				for (i = 0; i < node->count; i++) {
 					if (!rose_ftimer_running(node->neighbour[i])) {
 						res = node->neighbour[i];
+						failed = 0;
 						goto out;
-					} else
-						failed = 1;
+					}
+					failed = 1;
 				}
 			}
 		}
@@ -706,8 +716,7 @@ struct rose_neigh *rose_get_neigh(rose_address *addr, unsigned char *cause,
 	}
 
 out:
-	if (!new) spin_unlock_bh(&rose_node_list_lock);
-
+	if (!route_frame) spin_unlock_bh(&rose_node_list_lock);
 	return res;
 }
 

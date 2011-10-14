@@ -8,6 +8,7 @@ enum {
 	PCG_USED, /* this object is in use. */
 	PCG_MIGRATION, /* under page migration */
 	/* flags for mem_cgroup and file and I/O status */
+	PCG_MOVE_LOCK, /* For race between move_account v.s. following bits */
 	PCG_FILE_MAPPED, /* page is accounted as "mapped" */
 	/* No lock in page_cgroup */
 	PCG_ACCT_LRU, /* page has been accounted for (under lru_lock) */
@@ -15,7 +16,7 @@ enum {
 };
 
 #ifndef __GENERATING_BOUNDS_H
-#include <linux/bounds.h>
+#include <generated/bounds.h>
 
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR
 #include <linux/bit_spinlock.h>
@@ -91,6 +92,10 @@ TESTPCGFLAG(Migration, MIGRATION)
 
 static inline void lock_page_cgroup(struct page_cgroup *pc)
 {
+	/*
+	 * Don't take this lock in IRQ context.
+	 * This lock is for pc->mem_cgroup, USED, CACHE, MIGRATION
+	 */
 	bit_spin_lock(PCG_LOCK, &pc->flags);
 }
 
@@ -99,9 +104,22 @@ static inline void unlock_page_cgroup(struct page_cgroup *pc)
 	bit_spin_unlock(PCG_LOCK, &pc->flags);
 }
 
-static inline int page_is_cgroup_locked(struct page_cgroup *pc)
+static inline void move_lock_page_cgroup(struct page_cgroup *pc,
+	unsigned long *flags)
 {
-	return bit_spin_is_locked(PCG_LOCK, &pc->flags);
+	/*
+	 * We know updates to pc->flags of page cache's stats are from both of
+	 * usual context or IRQ context. Disable IRQ to avoid deadlock.
+	 */
+	local_irq_save(*flags);
+	bit_spin_lock(PCG_MOVE_LOCK, &pc->flags);
+}
+
+static inline void move_unlock_page_cgroup(struct page_cgroup *pc,
+	unsigned long *flags)
+{
+	bit_spin_unlock(PCG_MOVE_LOCK, &pc->flags);
+	local_irq_restore(*flags);
 }
 
 #ifdef CONFIG_SPARSEMEM
@@ -120,7 +138,7 @@ static inline int page_is_cgroup_locked(struct page_cgroup *pc)
 
 #define PCG_ARRAYID_OFFSET	(BITS_PER_LONG - PCG_ARRAYID_WIDTH)
 /*
- * Zero the shift count for non-existant fields, to prevent compiler
+ * Zero the shift count for non-existent fields, to prevent compiler
  * warnings and ensure references are optimized away.
  */
 #define PCG_ARRAYID_SHIFT	(PCG_ARRAYID_OFFSET * (PCG_ARRAYID_WIDTH != 0))
@@ -162,6 +180,8 @@ static inline void __init page_cgroup_init_flatmem(void)
 #include <linux/swap.h>
 
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR_SWAP
+extern unsigned short swap_cgroup_cmpxchg(swp_entry_t ent,
+					unsigned short old, unsigned short new);
 extern unsigned short swap_cgroup_record(swp_entry_t ent, unsigned short id);
 extern unsigned short lookup_swap_cgroup(swp_entry_t ent);
 extern int swap_cgroup_swapon(int type, unsigned long max_pages);

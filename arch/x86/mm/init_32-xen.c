@@ -25,11 +25,12 @@
 #include <linux/pfn.h>
 #include <linux/poison.h>
 #include <linux/bootmem.h>
-#include <linux/slab.h>
+#include <linux/memblock.h>
 #include <linux/proc_fs.h>
 #include <linux/memory_hotplug.h>
 #include <linux/initrd.h>
 #include <linux/cpumask.h>
+#include <linux/gfp.h>
 #include <linux/dma-mapping.h>
 #include <linux/scatterlist.h>
 
@@ -46,6 +47,7 @@
 #include <asm/bugs.h>
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
+#include <asm/olpc_ofw.h>
 #include <asm/pgalloc.h>
 #include <asm/sections.h>
 #include <asm/hypervisor.h>
@@ -63,14 +65,14 @@ bool __read_mostly __vmalloc_start_set = false;
 
 static __init void *alloc_low_page(void)
 {
-	unsigned long pfn = e820_table_end++;
+	unsigned long pfn = pgt_buf_end++;
 	void *adr;
 
-	if (pfn >= e820_table_top)
+	if (pfn >= pgt_buf_top)
 		panic("alloc_low_page: ran out of memory");
 
 	adr = __va(pfn * PAGE_SIZE);
-	memset(adr, 0, PAGE_SIZE);
+	clear_page(adr);
 	return adr;
 }
 
@@ -171,8 +173,8 @@ static pte_t *__init page_table_kmap_check(pte_t *pte, pmd_t *pmd,
 	if (pmd_idx_kmap_begin != pmd_idx_kmap_end
 	    && (vaddr >> PMD_SHIFT) >= pmd_idx_kmap_begin
 	    && (vaddr >> PMD_SHIFT) <= pmd_idx_kmap_end
-	    && ((__pa(pte) >> PAGE_SHIFT) < e820_table_start
-		|| (__pa(pte) >> PAGE_SHIFT) >= e820_table_end)) {
+	    && ((__pa(pte) >> PAGE_SHIFT) < pgt_buf_start
+		|| (__pa(pte) >> PAGE_SHIFT) >= pgt_buf_end)) {
 		pte_t *newpte;
 		int i;
 
@@ -241,7 +243,7 @@ page_table_range_init(unsigned long start, unsigned long end, pgd_t *pgd_base)
 
 static inline int is_kernel_text(unsigned long addr)
 {
-	if (addr >= PAGE_OFFSET && addr <= (unsigned long)__init_end)
+	if (addr >= (unsigned long)_text && addr <= (unsigned long)__init_end)
 		return 1;
 	return 0;
 }
@@ -257,6 +259,7 @@ kernel_physical_mapping_init(unsigned long start,
 			     unsigned long page_size_mask)
 {
 	int use_pse = page_size_mask == (1<<PG_LEVEL_2M);
+	unsigned long last_map_addr = end;
 	unsigned long start_pfn, end_pfn;
 	pgd_t *pgd_base = swapper_pg_dir;
 	int pgd_idx, pmd_idx, pte_ofs;
@@ -376,9 +379,10 @@ repeat:
 					prot = PAGE_KERNEL_EXEC;
 
 				pages_4k++;
-				if (mapping_iter == 1)
+				if (mapping_iter == 1) {
 					set_pte(pte, pfn_pte(pfn, init_prot));
-				else
+					last_map_addr = (pfn << PAGE_SHIFT) + PAGE_SIZE;
+				} else
 					set_pte(pte, pfn_pte(pfn, prot));
 			}
 		}
@@ -404,7 +408,7 @@ repeat:
 		mapping_iter = 2;
 		goto repeat;
 	}
-	return 0;
+	return last_map_addr;
 }
 
 pte_t *kmap_pte;
@@ -448,7 +452,7 @@ static void __init permanent_kmaps_init(pgd_t *pgd_base)
 	pkmap_page_table = pte;
 }
 
-static void __init add_one_highpage_init(struct page *page, int pfn)
+static void __init add_one_highpage_init(struct page *page)
 {
 	ClearPageReserved(page);
 	init_page_count(page);
@@ -456,49 +460,28 @@ static void __init add_one_highpage_init(struct page *page, int pfn)
 	totalhigh_pages++;
 }
 
-struct add_highpages_data {
-	unsigned long start_pfn;
-	unsigned long end_pfn;
-};
-
-static int __init add_highpages_work_fn(unsigned long start_pfn,
-					 unsigned long end_pfn, void *datax)
+void __init add_highpages_with_active_regions(int nid,
+			 unsigned long start_pfn, unsigned long end_pfn)
 {
-	int node_pfn;
-	struct page *page;
-	unsigned long final_start_pfn, final_end_pfn;
-	struct add_highpages_data *data;
+	struct range *range;
+	int nr_range;
+	int i;
 
-	data = (struct add_highpages_data *)datax;
+	nr_range = __get_free_all_memory_range(&range, nid, start_pfn, end_pfn);
 
-	final_start_pfn = max(start_pfn, data->start_pfn);
-	final_end_pfn = min(end_pfn, data->end_pfn);
-	if (final_start_pfn >= final_end_pfn)
-		return 0;
+	for (i = 0; i < nr_range; i++) {
+		struct page *page;
+		int node_pfn;
 
-	for (node_pfn = final_start_pfn; node_pfn < final_end_pfn;
-	     node_pfn++) {
-		if (!pfn_valid(node_pfn))
-			continue;
-		page = pfn_to_page(node_pfn);
-		add_one_highpage_init(page, node_pfn);
+		for (node_pfn = range[i].start; node_pfn < range[i].end;
+		     node_pfn++) {
+			if (!pfn_valid(node_pfn))
+				continue;
+			page = pfn_to_page(node_pfn);
+			add_one_highpage_init(page);
+		}
 	}
-
-	return 0;
-
 }
-
-void __init add_highpages_with_active_regions(int nid, unsigned long start_pfn,
-					      unsigned long end_pfn)
-{
-	struct add_highpages_data data;
-
-	data.start_pfn = start_pfn;
-	data.end_pfn = end_pfn;
-
-	work_with_active_regions(nid, add_highpages_work_fn, &data);
-}
-
 #else
 static inline void permanent_kmaps_init(pgd_t *pgd_base)
 {
@@ -546,48 +529,6 @@ static void __init pagetable_init(void)
 	pgd_t *pgd_base = (pgd_t *)xen_start_info->pt_base;
 
 	permanent_kmaps_init(pgd_base);
-}
-
-#if defined(CONFIG_ACPI_SLEEP) && !defined(CONFIG_XEN)
-/*
- * ACPI suspend needs this for resume, because things like the intel-agp
- * driver might have split up a kernel 4MB mapping.
- */
-char swsusp_pg_dir[PAGE_SIZE]
-	__attribute__ ((aligned(PAGE_SIZE)));
-
-static inline void save_pg_dir(void)
-{
-	memcpy(swsusp_pg_dir, swapper_pg_dir, PAGE_SIZE);
-}
-#else /* !CONFIG_ACPI_SLEEP */
-static inline void save_pg_dir(void)
-{
-}
-#endif /* !CONFIG_ACPI_SLEEP */
-
-void zap_low_mappings(bool early)
-{
-	int i;
-
-	/*
-	 * Zap initial low-memory mappings.
-	 *
-	 * Note that "pgd_clear()" doesn't do it for
-	 * us, because pgd_clear() is a no-op on i386.
-	 */
-	for (i = 0; i < KERNEL_PGD_BOUNDARY; i++) {
-#if defined(CONFIG_X86_PAE) && !defined(CONFIG_XEN)
-		set_pgd(swapper_pg_dir+i, __pgd(1 + __pa(empty_zero_page)));
-#else
-		set_pgd(swapper_pg_dir+i, __pgd(0));
-#endif
-	}
-
-	if (early)
-		__flush_tlb();
-	else
-		flush_tlb_all();
 }
 
 pteval_t __supported_pte_mask __read_mostly = ~(_PAGE_NX | _PAGE_GLOBAL);
@@ -705,21 +646,20 @@ void __init find_low_pfn_range(void)
 }
 
 #ifndef CONFIG_NEED_MULTIPLE_NODES
-void __init initmem_init(unsigned long start_pfn, unsigned long end_pfn,
-				int acpi, int k8)
+void __init initmem_init(void)
 {
 #ifdef CONFIG_HIGHMEM
 	highstart_pfn = highend_pfn = max_pfn;
 	if (max_pfn > max_low_pfn)
 		highstart_pfn = max_low_pfn;
-	e820_register_active_regions(0, 0, highend_pfn);
+	memblock_x86_register_active_regions(0, 0, highend_pfn);
 	sparse_memory_present_with_active_regions(0);
 	printk(KERN_NOTICE "%ldMB HIGHMEM available.\n",
 		pages_to_mb(highend_pfn - highstart_pfn));
 	num_physpages = highend_pfn;
 	high_memory = (void *) __va(highstart_pfn * PAGE_SIZE - 1) + 1;
 #else
-	e820_register_active_regions(0, 0, max_low_pfn);
+	memblock_x86_register_active_regions(0, 0, max_low_pfn);
 	sparse_memory_present_with_active_regions(0);
 	num_physpages = max_low_pfn;
 	high_memory = (void *) __va(max_low_pfn * PAGE_SIZE - 1) + 1;
@@ -740,8 +680,10 @@ static void __init zone_sizes_init(void)
 {
 	unsigned long max_zone_pfns[MAX_NR_ZONES];
 	memset(max_zone_pfns, 0, sizeof(max_zone_pfns));
+#ifdef CONFIG_ZONE_DMA
 	max_zone_pfns[ZONE_DMA] =
 		virt_to_phys((char *)MAX_DMA_ADDRESS) >> PAGE_SHIFT;
+#endif
 	max_zone_pfns[ZONE_NORMAL] = max_low_pfn;
 #ifdef CONFIG_HIGHMEM
 	max_zone_pfns[ZONE_HIGHMEM] = highend_pfn;
@@ -752,65 +694,17 @@ static void __init zone_sizes_init(void)
 	xen_init_pgd_pin();
 }
 
-static unsigned long __init setup_node_bootmem(int nodeid,
-				 unsigned long start_pfn,
-				 unsigned long end_pfn,
-				 unsigned long bootmap)
-{
-	unsigned long bootmap_size;
-
-	/* don't touch min_low_pfn */
-	bootmap_size = init_bootmem_node(NODE_DATA(nodeid),
-					 bootmap >> PAGE_SHIFT,
-					 start_pfn, end_pfn);
-	printk(KERN_INFO "  node %d low ram: %08lx - %08lx\n",
-		nodeid, start_pfn<<PAGE_SHIFT, end_pfn<<PAGE_SHIFT);
-	printk(KERN_INFO "  node %d bootmap %08lx - %08lx\n",
-		 nodeid, bootmap, bootmap + bootmap_size);
-	free_bootmem_with_active_regions(nodeid, end_pfn);
-	early_res_to_bootmem(start_pfn<<PAGE_SHIFT, end_pfn<<PAGE_SHIFT);
-
-	return bootmap + bootmap_size;
-}
-
 void __init setup_bootmem_allocator(void)
 {
-	int nodeid;
-	unsigned long bootmap_size, bootmap;
-	unsigned long end_xen_pfn = min(max_low_pfn, xen_start_info->nr_pages);
-
-	/*
-	 * Initialize the boot-time allocator (with low memory only):
-	 */
-	bootmap_size = bootmem_bootmap_pages(end_xen_pfn)<<PAGE_SHIFT;
-	bootmap = find_e820_area(0, min(max_pfn_mapped,
-				        xen_start_info->nr_pages)<<PAGE_SHIFT,
-				 bootmap_size, PAGE_SIZE);
-	if (bootmap == -1L)
-		panic("Cannot find bootmem map of size %ld\n", bootmap_size);
-	reserve_early(bootmap, bootmap + bootmap_size, "BOOTMAP");
+#ifdef CONFIG_XEN
+	if (max_low_pfn > xen_start_info->nr_pages)
+		memblock_x86_reserve_range(xen_start_info->nr_pages << PAGE_SHIFT,
+					   max_low_pfn << PAGE_SHIFT, "BALLOON");
+#endif
 
 	printk(KERN_INFO "  mapped low ram: 0 - %08lx\n",
 		 max_pfn_mapped<<PAGE_SHIFT);
 	printk(KERN_INFO "  low ram: 0 - %08lx\n", max_low_pfn<<PAGE_SHIFT);
-
-	for_each_online_node(nodeid) {
-		 unsigned long start_pfn, end_pfn;
-
-#ifdef CONFIG_NEED_MULTIPLE_NODES
-		start_pfn = node_start_pfn[nodeid];
-		end_pfn = node_end_pfn[nodeid];
-		if (start_pfn > end_xen_pfn)
-			continue;
-		if (end_pfn > end_xen_pfn)
-			end_pfn = end_xen_pfn;
-#else
-		start_pfn = 0;
-		end_pfn = end_xen_pfn;
-#endif
-		bootmap = setup_node_bootmem(nodeid, start_pfn, end_pfn,
-						 bootmap);
-	}
 
 	after_bootmem = 1;
 }
@@ -861,8 +755,8 @@ unsigned long __init extend_init_mapping(unsigned long tables_space)
 	}
 
 	if (start_pfn > start)
-		reserve_early(start << PAGE_SHIFT,
-			      start_pfn << PAGE_SHIFT, "INITMAP");
+		memblock_x86_reserve_range(start << PAGE_SHIFT,
+					   start_pfn << PAGE_SHIFT, "INITMAP");
 
 	return start_pfn;
 }
@@ -885,6 +779,8 @@ void __init paging_init(void)
 	/*
 	 * NOTE: at this point the bootmem allocator is fully available.
 	 */
+	olpc_dt_build_devicetree();
+	sparse_memory_present_with_active_regions(MAX_NUMNODES);
 	sparse_init();
 	zone_sizes_init();
 }
@@ -957,8 +853,7 @@ void __init mem_init(void)
 		reservedpages << (PAGE_SHIFT-10),
 		datasize >> 10,
 		initsize >> 10,
-		(unsigned long) (totalhigh_pages << (PAGE_SHIFT-10))
-	       );
+		totalhigh_pages << (PAGE_SHIFT-10));
 
 	printk(KERN_INFO "virtual kernel memory layout:\n"
 		"    fixmap  : 0x%08lx - 0x%08lx   (%4ld kB)\n"
@@ -1017,9 +912,6 @@ void __init mem_init(void)
 
 	if (boot_cpu_data.wp_works_ok < 0)
 		test_wp_bit();
-
-	save_pg_dir();
-	zap_low_mappings(true);
 }
 
 #ifdef CONFIG_MEMORY_HOTPLUG
@@ -1092,6 +984,23 @@ void set_kernel_text_ro(void)
 	set_pages_ro(virt_to_page(start), size >> PAGE_SHIFT);
 }
 
+static void mark_nxdata_nx(void)
+{
+	/*
+	 * When this called, init has already been executed and released,
+	 * so everything past _etext should be NX.
+	 */
+	unsigned long start = PFN_ALIGN(_etext);
+	/*
+	 * This comes from is_kernel_text upper limit. Also HPAGE where used:
+	 */
+	unsigned long size = (((unsigned long)__init_end + HPAGE_SIZE) & HPAGE_MASK) - start;
+
+	if (__supported_pte_mask & _PAGE_NX)
+		printk(KERN_INFO "NX-protecting the kernel data: %luk\n", size >> 10);
+	set_pages_nx(virt_to_page(start), size >> PAGE_SHIFT);
+}
+
 void mark_rodata_ro(void)
 {
 	unsigned long start = PFN_ALIGN(_text);
@@ -1126,6 +1035,7 @@ void mark_rodata_ro(void)
 	printk(KERN_INFO "Testing CPA: write protecting again\n");
 	set_pages_ro(virt_to_page(start), size >> PAGE_SHIFT);
 #endif
+	mark_nxdata_nx();
 }
 EXPORT_SYMBOL_GPL(mark_rodata_ro);
 
@@ -1143,8 +1053,3 @@ void mark_rodata_rw(void)
 EXPORT_SYMBOL_GPL(mark_rodata_rw);
 #endif
 
-int __init reserve_bootmem_generic(unsigned long phys, unsigned long len,
-				   int flags)
-{
-	return reserve_bootmem(phys, len, flags);
-}

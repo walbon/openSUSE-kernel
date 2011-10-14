@@ -29,7 +29,7 @@
 
 #include <net/iucv/af_iucv.h>
 
-#define VERSION "1.1"
+#define VERSION "1.2"
 
 static char iucv_userid[80];
 
@@ -41,7 +41,7 @@ static struct proto iucv_proto = {
 	.obj_size	= sizeof(struct iucv_sock),
 };
 
-static struct iucv_interface *pr_iucv;
+static struct iucv_interface *pr_iucv = NULL;
 
 /* special AF_IUCV IPRM messages */
 static const u8 iprm_shutdown[8] =
@@ -60,7 +60,7 @@ do {									\
 	DEFINE_WAIT(__wait);						\
 	long __timeo = timeo;						\
 	ret = 0;							\
-	prepare_to_wait(sk->sk_sleep, &__wait, TASK_INTERRUPTIBLE);	\
+	prepare_to_wait(sk_sleep(sk), &__wait, TASK_INTERRUPTIBLE);	\
 	while (!(condition)) {						\
 		if (!__timeo) {						\
 			ret = -EAGAIN;					\
@@ -77,7 +77,7 @@ do {									\
 		if (ret)						\
 			break;						\
 	}								\
-	finish_wait(sk->sk_sleep, &__wait);				\
+	finish_wait(sk_sleep(sk), &__wait);				\
 } while (0)
 
 #define iucv_sock_wait(sk, condition, timeo)				\
@@ -143,7 +143,6 @@ static void afiucv_pm_complete(struct device *dev)
 #ifdef CONFIG_PM_DEBUG
 	printk(KERN_WARNING "afiucv_pm_complete\n");
 #endif
-	return;
 }
 
 /**
@@ -198,7 +197,6 @@ static int afiucv_pm_freeze(struct device *dev)
  */
 static int afiucv_pm_restore_thaw(struct device *dev)
 {
-	struct iucv_sock *iucv;
 	struct sock *sk;
 	struct hlist_node *node;
 
@@ -207,7 +205,6 @@ static int afiucv_pm_restore_thaw(struct device *dev)
 #endif
 	read_lock(&iucv_sk_list.lock);
 	sk_for_each(sk, node, &iucv_sk_list.head) {
-		iucv = iucv_sk(sk);
 		switch (sk->sk_state) {
 		case IUCV_CONNECTED:
 			sk->sk_err = EPIPE;
@@ -258,7 +255,7 @@ static struct device *af_iucv_dev;
  *	PRMDATA[0..6]	socket data (max 7 bytes);
  *	PRMDATA[7]	socket data length value (len is 0xff - PRMDATA[7])
  *
- * The socket data length is computed by substracting the socket data length
+ * The socket data length is computed by subtracting the socket data length
  * value from 0xFF.
  * If the socket data len is greater 7, then PRMDATA can be used for special
  * notifications (see iucv_sock_shutdown); and further,
@@ -316,11 +313,14 @@ static inline int iucv_below_msglim(struct sock *sk)
  */
 static void iucv_sock_wake_msglim(struct sock *sk)
 {
-	read_lock(&sk->sk_callback_lock);
-	if (sk_has_sleeper(sk))
-		wake_up_interruptible_all(sk->sk_sleep);
+	struct socket_wq *wq;
+
+	rcu_read_lock();
+	wq = rcu_dereference(sk->sk_wq);
+	if (wq_has_sleeper(wq))
+		wake_up_interruptible_all(&wq->wait);
 	sk_wake_async(sk, SOCK_WAKE_SPACE, POLL_OUT);
-	read_unlock(&sk->sk_callback_lock);
+	rcu_read_unlock();
 }
 
 /**
@@ -366,9 +366,9 @@ static int afiucv_hs_send(struct iucv_message *imsg, struct sock *sock,
 	if (imsg)
 		memcpy(&phs_hdr->iucv_hdr, imsg, sizeof(struct iucv_message));
 
-	read_lock(&dev_base_lock);
-	skb->dev = __dev_get_by_index(net, sock->sk_bound_dev_if);
-	read_unlock(&dev_base_lock);
+	rcu_read_lock();
+	skb->dev = dev_get_by_index_rcu(net, sock->sk_bound_dev_if);
+	rcu_read_unlock();
 	if (!skb->dev)
 		return -ENODEV;
 	if (!(skb->dev->flags & IFF_UP))
@@ -380,6 +380,7 @@ static int afiucv_hs_send(struct iucv_message *imsg, struct sock *sock,
 			skb_trim(skb, skb->dev->mtu);
 	}
 	skb->protocol = ETH_P_AF_IUCV;
+	skb_shinfo(skb)->tx_flags |= SKBTX_DRV_NEEDS_SK_REF;
 	nskb = skb_clone(skb, GFP_ATOMIC);
 	if (!nskb)
 		return -ENOMEM;
@@ -490,8 +491,6 @@ static void iucv_sock_close(struct sock *sk)
 			sk->sk_state_change(sk);
 		}
 	case IUCV_DISCONN:
-		err = 0;
-
 		sk->sk_state = IUCV_CLOSING;
 		sk->sk_state_change(sk);
 
@@ -500,7 +499,7 @@ static void iucv_sock_close(struct sock *sk)
 				timeo = sk->sk_lingertime;
 			else
 				timeo = IUCV_DISCONN_TIMEOUT;
-			err = iucv_sock_wait(sk,
+			iucv_sock_wait(sk,
 					iucv_sock_in_state(sk, IUCV_CLOSED, 0),
 					timeo);
 		}
@@ -568,6 +567,10 @@ static struct sock *iucv_sock_alloc(struct socket *sock, int proto, gfp_t prio)
 	iucv->path = NULL;
 	iucv->sk_txnotify = afiucv_hs_callback_txnotify;
 	memset(&iucv->src_user_id , 0, 32);
+	if (pr_iucv)
+		iucv->transport = AF_IUCV_TRANS_IUCV;
+	else
+		iucv->transport = AF_IUCV_TRANS_HIPER;
 
 	sk->sk_destruct = iucv_sock_destruct;
 	sk->sk_sndtimeo = IUCV_CONN_TIMEOUT;
@@ -585,7 +588,8 @@ static struct sock *iucv_sock_alloc(struct socket *sock, int proto, gfp_t prio)
 }
 
 /* Create an IUCV socket */
-static int iucv_sock_create(struct net *net, struct socket *sock, int protocol)
+static int iucv_sock_create(struct net *net, struct socket *sock, int protocol,
+			    int kern)
 {
 	struct sock *sk;
 
@@ -639,7 +643,7 @@ void iucv_accept_enqueue(struct sock *parent, struct sock *sk)
 	list_add_tail(&iucv_sk(sk)->accept_q, &par->accept_q);
 	spin_unlock_irqrestore(&par->accept_q_lock, flags);
 	iucv_sk(sk)->parent = parent;
-	parent->sk_ack_backlog++;
+	sk_acceptq_added(parent);
 }
 
 void iucv_accept_unlink(struct sock *sk)
@@ -650,7 +654,7 @@ void iucv_accept_unlink(struct sock *sk)
 	spin_lock_irqsave(&par->accept_q_lock, flags);
 	list_del_init(&iucv_sk(sk)->accept_q);
 	spin_unlock_irqrestore(&par->accept_q_lock, flags);
-	iucv_sk(sk)->parent->sk_ack_backlog--;
+	sk_acceptq_removed(iucv_sk(sk)->parent);
 	iucv_sk(sk)->parent = NULL;
 	sock_put(sk);
 }
@@ -722,7 +726,6 @@ static int iucv_sock_bind(struct socket *sock, struct sockaddr *addr,
 		goto done_unlock;
 
 	/* Bind the socket */
-
 	if (pr_iucv)
 		if (!memcmp(sa->siucv_user_id, iucv_userid, 8))
 			goto vm_bind; /* VM IUCV transport */
@@ -730,8 +733,8 @@ static int iucv_sock_bind(struct socket *sock, struct sockaddr *addr,
 	/* try hiper transport */
 	memcpy(uid, sa->siucv_user_id, sizeof(uid));
 	ASCEBC(uid, 8);
-	read_lock(&dev_base_lock);
-	for_each_netdev(&init_net, dev) {
+	rcu_read_lock();
+	for_each_netdev_rcu(&init_net, dev) {
 		if (!memcmp(dev->perm_addr, uid, 8)) {
 			memcpy(iucv->src_name, sa->siucv_name, 8);
 			memcpy(iucv->src_user_id, sa->siucv_user_id, 8);
@@ -740,11 +743,11 @@ static int iucv_sock_bind(struct socket *sock, struct sockaddr *addr,
 			iucv->transport = AF_IUCV_TRANS_HIPER;
 			if (!iucv->msglimit)
 				iucv->msglimit = IUCV_HIPER_MSGLIM_DEFAULT;
-			read_unlock(&dev_base_lock);
+			rcu_read_unlock();
 			goto done_unlock;
 		}
 	}
-	read_unlock(&dev_base_lock);
+	rcu_read_unlock();
 vm_bind:
 	if (pr_iucv) {
 		/* use local userid for backward compat */
@@ -864,7 +867,6 @@ done:
 	return err;
 }
 
-
 /* Connect an unconnected socket */
 static int iucv_sock_connect(struct socket *sock, struct sockaddr *addr,
 			     int alen, int flags)
@@ -919,6 +921,7 @@ static int iucv_sock_connect(struct socket *sock, struct sockaddr *addr,
 		iucv_path_free(iucv->path);
 		iucv->path = NULL;
 	}
+
 done:
 	release_sock(sk);
 	return err;
@@ -968,7 +971,7 @@ static int iucv_sock_accept(struct socket *sock, struct socket *newsock,
 	timeo = sock_rcvtimeo(sk, flags & O_NONBLOCK);
 
 	/* Wait for an incoming connection */
-	add_wait_queue_exclusive(sk->sk_sleep, &wait);
+	add_wait_queue_exclusive(sk_sleep(sk), &wait);
 	while (!(nsk = iucv_accept_dequeue(sk, newsock))) {
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (!timeo) {
@@ -992,7 +995,7 @@ static int iucv_sock_accept(struct socket *sock, struct socket *newsock,
 	}
 
 	set_current_state(TASK_RUNNING);
-	remove_wait_queue(sk->sk_sleep, &wait);
+	remove_wait_queue(sk_sleep(sk), &wait);
 
 	if (err)
 		goto done;
@@ -1433,8 +1436,7 @@ static int iucv_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
 			if (atomic_read(&iucv->msg_recv) >=
 							iucv->msglimit / 2) {
 				/* send WIN to peer */
-				blen = sizeof(struct af_iucv_trans_hdr) +
-					ETH_HLEN;
+				blen = sizeof(struct af_iucv_trans_hdr) + ETH_HLEN;
 				sskb = sock_alloc_send_skb(sk, blen, 1, &err);
 				if (sskb) {
 					skb_reserve(sskb,
@@ -1481,7 +1483,7 @@ unsigned int iucv_sock_poll(struct file *file, struct socket *sock,
 	struct sock *sk = sock->sk;
 	unsigned int mask = 0;
 
-	sock_poll_wait(file, sk->sk_sleep, wait);
+	sock_poll_wait(file, sk_sleep(sk), wait);
 
 	if (sk->sk_state == IUCV_LISTEN)
 		return iucv_accept_poll(sk);
@@ -1631,8 +1633,9 @@ static int iucv_sock_setsockopt(struct socket *sock, int level, int optname,
 		case IUCV_BOUND:
 			if (val < 1 || val > (u16)(~0))
 				rc = -EINVAL;
-			else
+			else {
 				iucv->msglimit = val;
+			}
 			break;
 		default:
 			rc = -EINVAL;
@@ -1970,8 +1973,9 @@ static int afiucv_hs_callback_syn(struct sock *sk, struct sk_buff *skb)
 	niucv->msglimit = iucv->msglimit;
 	if (!trans_hdr->window)
 		niucv->msglimit_peer = IUCV_HIPER_MSGLIM_DEFAULT;
-	else
+	else {
 		niucv->msglimit_peer = trans_hdr->window;
+	}
 	memcpy(niucv->dst_name, trans_hdr->srcAppName, 8);
 	memcpy(niucv->dst_user_id, trans_hdr->srcUserID, 8);
 	memcpy(niucv->src_name, iucv->src_name, 8);
@@ -1986,8 +1990,9 @@ static int afiucv_hs_callback_syn(struct sock *sk, struct sk_buff *skb)
 		iucv_accept_enqueue(sk, nsk);
 		nsk->sk_state = IUCV_CONNECTED;
 		sk->sk_data_ready(sk, 1);
-	} else
+	} else {
 		iucv_sock_kill(nsk);
+	}
 	bh_unlock_sock(sk);
 
 out:
@@ -2003,10 +2008,12 @@ static int afiucv_hs_callback_synack(struct sock *sk, struct sk_buff *skb)
 	struct af_iucv_trans_hdr *trans_hdr =
 					(struct af_iucv_trans_hdr *)skb->data;
 
-	if (!iucv)
+	if (!iucv) {
 		goto out;
-	if (sk->sk_state != IUCV_BOUND)
+	}
+	if (sk->sk_state != IUCV_BOUND) {
 		goto out;
+	}
 	bh_lock_sock(sk);
 	iucv->msglimit_peer = trans_hdr->window;
 	sk->sk_state = IUCV_CONNECTED;
@@ -2024,10 +2031,12 @@ static int afiucv_hs_callback_synfin(struct sock *sk, struct sk_buff *skb)
 {
 	struct iucv_sock *iucv = iucv_sk(sk);
 
-	if (!iucv)
+	if (!iucv) {
 		goto out;
-	if (sk->sk_state != IUCV_BOUND)
+	}
+	if (sk->sk_state != IUCV_BOUND) {
 		goto out;
+	}
 	bh_lock_sock(sk);
 	sk->sk_state = IUCV_DISCONN;
 	sk->sk_state_change(sk);
@@ -2067,11 +2076,13 @@ static int afiucv_hs_callback_win(struct sock *sk, struct sk_buff *skb)
 	struct af_iucv_trans_hdr *trans_hdr =
 					(struct af_iucv_trans_hdr *)skb->data;
 
-	if (!iucv)
+	if (!iucv) {
 		return NET_RX_SUCCESS;
+	}
 
-	if (sk->sk_state != IUCV_CONNECTED)
+	if (sk->sk_state != IUCV_CONNECTED) {
 		return NET_RX_SUCCESS;
+	}
 
 	atomic_sub(trans_hdr->window, &iucv->msg_sent);
 	iucv_sock_wake_msglim(sk);
@@ -2117,8 +2128,8 @@ static int afiucv_hs_callback_rx(struct sock *sk, struct sk_buff *skb)
 
 /**
  * afiucv_hs_rcv() - base function for arriving data through HiperSockets
- *                   transport
- *                   called from netif RX softirq
+ *		     transport
+ *		     called from netif RX softirq
  **/
 static int afiucv_hs_rcv(struct sk_buff *skb, struct net_device *dev,
 	struct packet_type *pt, struct net_device *orig_dev)
@@ -2208,7 +2219,7 @@ static int afiucv_hs_rcv(struct sk_buff *skb, struct net_device *dev,
 		err = afiucv_hs_callback_rx(sk, skb);
 		break;
 	default:
-		;
+		break;
 	}
 
 	return err;
@@ -2216,7 +2227,7 @@ static int afiucv_hs_rcv(struct sk_buff *skb, struct net_device *dev,
 
 /**
  * afiucv_hs_callback_txnotify() - handle send notifcations from HiperSockets
- *                                 transport
+ *				   transport
  **/
 static void afiucv_hs_callback_txnotify(struct sk_buff *skb,
 					enum iucv_tx_notify n)
@@ -2230,6 +2241,7 @@ static void afiucv_hs_callback_txnotify(struct sk_buff *skb,
 	unsigned long flags;
 	struct hlist_node *node;
 
+
 	read_lock(&iucv_sk_list.lock);
 	sk_for_each(sk, node, &iucv_sk_list.head)
 		if (sk == isk) {
@@ -2238,14 +2250,16 @@ static void afiucv_hs_callback_txnotify(struct sk_buff *skb,
 		}
 	read_unlock(&iucv_sk_list.lock);
 
-	if (!iucv)
+	if (!iucv) {
 		return;
+	}
 
 	bh_lock_sock(sk);
 	list = &iucv->send_skb_q;
 	list_skb = list->next;
-	if (skb_queue_empty(list))
+	if (skb_queue_empty(list)) {
 		goto out_unlock;
+	}
 
 	spin_lock_irqsave(&list->lock, flags);
 	while (list_skb != (struct sk_buff *)list) {
@@ -2310,7 +2324,7 @@ static const struct proto_ops iucv_sock_ops = {
 	.getsockopt	= iucv_sock_getsockopt,
 };
 
-static struct net_proto_family iucv_sock_family_ops = {
+static const struct net_proto_family iucv_sock_family_ops = {
 	.family	= AF_IUCV,
 	.owner	= THIS_MODULE,
 	.create	= iucv_sock_create,

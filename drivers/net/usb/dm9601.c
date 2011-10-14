@@ -21,6 +21,7 @@
 #include <linux/usb.h>
 #include <linux/crc32.h>
 #include <linux/usb/usbnet.h>
+#include <linux/slab.h>
 
 /* datasheet:
  http://ptm2.cc.utu.fi/ftp/network/cards/DM9601/From_NET/DM9601-DS-P01-930914.pdf
@@ -385,10 +386,10 @@ static void dm9601_set_multicast(struct net_device *net)
 		   netdev_mc_count(net) > DM_MAX_MCAST) {
 		rx_ctl |= 0x04;
 	} else if (!netdev_mc_empty(net)) {
-		struct dev_mc_list *mc_list;
+		struct netdev_hw_addr *ha;
 
-		netdev_for_each_mc_addr(mc_list, net) {
-			u32 crc = ether_crc(ETH_ALEN, mc_list->dmi_addr) >> 26;
+		netdev_for_each_mc_addr(ha, net) {
+			u32 crc = ether_crc(ETH_ALEN, ha->addr) >> 26;
 			hashes[crc >> 3] |= 1 << (crc & 0x7);
 		}
 	}
@@ -598,13 +599,13 @@ static void dm9601_status(struct usbnet *dev, struct urb *urb)
 
 static int dm9601_link_reset(struct usbnet *dev)
 {
-	struct ethtool_cmd ecmd;
+	struct ethtool_cmd ecmd = { .cmd = ETHTOOL_GSET };
 
 	mii_check_media(&dev->mii, 1, 1);
 	mii_ethtool_gset(&dev->mii, &ecmd);
 
-	netdev_dbg(dev->net, "link_reset() speed: %d duplex: %d\n",
-		   ecmd.speed, ecmd.duplex);
+	netdev_dbg(dev->net, "link_reset() speed: %u duplex: %d\n",
+		   ethtool_cmd_speed(&ecmd), ecmd.duplex);
 
 	return 0;
 }

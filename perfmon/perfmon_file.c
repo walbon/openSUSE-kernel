@@ -398,7 +398,7 @@ static unsigned int pfm_poll(struct file *filp, poll_table *wait)
 	return mask;
 }
 
-static int pfm_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
+static long pfm_ioctl(struct file *file, unsigned int cmd,
 		     unsigned long arg)
 {
 	PFM_DBG("pfm_ioctl called");
@@ -633,7 +633,7 @@ const struct file_operations pfm_file_ops = {
 	.read = pfm_read,
 	.write = pfm_write,
 	.poll = pfm_poll,
-	.ioctl = pfm_ioctl,
+	.unlocked_ioctl = pfm_ioctl,
 	.open = pfm_no_open, /* special open to disallow open via /proc */
 	.fasync = pfm_fasync,
 	.release = pfm_close,

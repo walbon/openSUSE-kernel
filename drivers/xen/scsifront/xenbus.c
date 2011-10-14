@@ -34,6 +34,7 @@
 */
 
 #include <linux/version.h>
+#include <linux/slab.h>
 #include "common.h"
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,11)
@@ -398,7 +399,7 @@ static void scsifront_backend_changed(struct xenbus_device *dev,
 }
 
 
-static struct xenbus_device_id scsifront_ids[] = {
+static const struct xenbus_device_id scsifront_ids[] = {
 	{ "vscsi" },
 	{ "" }
 };

@@ -136,7 +136,11 @@ lpfc_debugfs_disc_trc_data(struct lpfc_vport *vport, char *buf, int size)
 	int i, index, len, enable;
 	uint32_t ms;
 	struct lpfc_debugfs_trc *dtp;
-	char buffer[LPFC_DEBUG_TRC_ENTRY_SIZE];
+	char *buffer;
+
+	buffer = kmalloc(LPFC_DEBUG_TRC_ENTRY_SIZE, GFP_KERNEL);
+	if (!buffer)
+		return 0;
 
 	enable = lpfc_debugfs_enable;
 	lpfc_debugfs_enable = 0;
@@ -168,6 +172,8 @@ lpfc_debugfs_disc_trc_data(struct lpfc_vport *vport, char *buf, int size)
 	}
 
 	lpfc_debugfs_enable = enable;
+	kfree(buffer);
+
 	return len;
 }
 
@@ -196,8 +202,11 @@ lpfc_debugfs_slow_ring_trc_data(struct lpfc_hba *phba, char *buf, int size)
 	int i, index, len, enable;
 	uint32_t ms;
 	struct lpfc_debugfs_trc *dtp;
-	char buffer[LPFC_DEBUG_TRC_ENTRY_SIZE];
+	char *buffer;
 
+	buffer = kmalloc(LPFC_DEBUG_TRC_ENTRY_SIZE, GFP_KERNEL);
+	if (!buffer)
+		return 0;
 
 	enable = lpfc_debugfs_enable;
 	lpfc_debugfs_enable = 0;
@@ -229,6 +238,8 @@ lpfc_debugfs_slow_ring_trc_data(struct lpfc_hba *phba, char *buf, int size)
 	}
 
 	lpfc_debugfs_enable = enable;
+	kfree(buffer);
+
 	return len;
 }
 
@@ -379,7 +390,11 @@ lpfc_debugfs_dumpHBASlim_data(struct lpfc_hba *phba, char *buf, int size)
 	int len = 0;
 	int i, off;
 	uint32_t *ptr;
-	char buffer[1024];
+	char *buffer;
+
+	buffer = kmalloc(1024, GFP_KERNEL);
+	if (!buffer)
+		return 0;
 
 	off = 0;
 	spin_lock_irq(&phba->hbalock);
@@ -408,6 +423,8 @@ lpfc_debugfs_dumpHBASlim_data(struct lpfc_hba *phba, char *buf, int size)
 	}
 
 	spin_unlock_irq(&phba->hbalock);
+	kfree(buffer);
+
 	return len;
 }
 
@@ -909,7 +926,7 @@ lpfc_debugfs_dumpData_open(struct inode *inode, struct file *file)
 	if (!debug)
 		goto out;
 
-	/* Round to page boundry */
+	/* Round to page boundary */
 	printk(KERN_ERR "9059 BLKGRD:  %s: _dump_buf_data=0x%p\n",
 			__func__, _dump_buf_data);
 	debug->buffer = _dump_buf_data;
@@ -939,7 +956,7 @@ lpfc_debugfs_dumpDif_open(struct inode *inode, struct file *file)
 	if (!debug)
 		goto out;
 
-	/* Round to page boundry */
+	/* Round to page boundary */
 	printk(KERN_ERR	"9060 BLKGRD: %s: _dump_buf_dif=0x%p file=%s\n",
 		__func__, _dump_buf_dif, file->f_dentry->d_name.name);
 	debug->buffer = _dump_buf_dif;
@@ -3823,7 +3840,7 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 			debugfs_create_dir(name, phba->hba_debugfs_root);
 		if (!vport->vport_debugfs_root) {
 			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
-					 "0417 Cant create debugfs\n");
+					 "0417 Can't create debugfs\n");
 			goto debug_failed;
 		}
 		atomic_inc(&phba->debugfs_vport_count);

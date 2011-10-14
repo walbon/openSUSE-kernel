@@ -43,6 +43,8 @@
 #include <linux/mii.h>
 #include <linux/usb.h>
 #include <linux/usb/usbnet.h>
+#include <linux/slab.h>
+#include <linux/kernel.h>
 #include <linux/pm_runtime.h>
 
 #define DRIVER_VERSION		"22-Aug-2005"
@@ -107,7 +109,7 @@ int usbnet_get_endpoints(struct usbnet *dev, struct usb_interface *intf)
 
 		/* take the first altsetting with in-bulk + out-bulk;
 		 * remember any status endpoint, just in case;
-		 * ignore other endpoints and altsetttings.
+		 * ignore other endpoints and altsettings.
 		 */
 		for (ep = 0; ep < alt->desc.bNumEndpoints; ep++) {
 			struct usb_host_endpoint	*e;
@@ -158,16 +160,6 @@ int usbnet_get_endpoints(struct usbnet *dev, struct usb_interface *intf)
 }
 EXPORT_SYMBOL_GPL(usbnet_get_endpoints);
 
-static u8 nibble(unsigned char c)
-{
-	if (likely(isdigit(c)))
-		return c - '0';
-	c = toupper(c);
-	if (likely(isxdigit(c)))
-		return 10 + c - 'A';
-	return 0;
-}
-
 int usbnet_get_ethernet_addr(struct usbnet *dev, int iMACAddress)
 {
 	int 		tmp, i;
@@ -183,7 +175,7 @@ int usbnet_get_ethernet_addr(struct usbnet *dev, int iMACAddress)
 	}
 	for (i = tmp = 0; i < 6; i++, tmp += 2)
 		dev->net->dev_addr [i] =
-			(nibble(buf [tmp]) << 4) + nibble(buf [tmp + 1]);
+			(hex_to_bin(buf[tmp]) << 4) + hex_to_bin(buf[tmp + 1]);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(usbnet_get_ethernet_addr);
@@ -1264,8 +1256,7 @@ void usbnet_disconnect (struct usb_interface *intf)
 	net = dev->net;
 	unregister_netdev (net);
 
-	/* we don't hold rtnl here ... */
-	flush_scheduled_work ();
+	cancel_work_sync(&dev->kevent);
 
 	if (dev->driver_info->unbind)
 		dev->driver_info->unbind (dev, intf);
@@ -1291,6 +1282,14 @@ static const struct net_device_ops usbnet_netdev_ops = {
 /*-------------------------------------------------------------------------*/
 
 // precondition: never called in_interrupt
+
+static struct device_type wlan_type = {
+	.name	= "wlan",
+};
+
+static struct device_type wwan_type = {
+	.name	= "wwan",
+};
 
 int
 usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
@@ -1420,6 +1419,11 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 	if (!dev->rx_urb_size)
 		dev->rx_urb_size = dev->hard_mtu;
 	dev->maxpacket = usb_maxpacket (dev->udev, dev->out, 1);
+
+	if ((dev->driver_info->flags & FLAG_WLAN) != 0)
+		SET_NETDEV_DEVTYPE(net, &wlan_type);
+	if ((dev->driver_info->flags & FLAG_WWAN) != 0)
+		SET_NETDEV_DEVTYPE(net, &wwan_type);
 
 	status = register_netdev (net);
 	if (status)

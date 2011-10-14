@@ -2,6 +2,7 @@
 #define _BLKTAP_H_
 
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/init.h>

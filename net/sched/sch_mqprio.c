@@ -29,18 +29,18 @@ static void mqprio_destroy(struct Qdisc *sch)
 	struct mqprio_sched *priv = qdisc_priv(sch);
 	unsigned int ntx;
 
-	if (!priv->qdiscs)
-		return;
-
-	for (ntx = 0; ntx < dev->num_tx_queues && priv->qdiscs[ntx]; ntx++)
-		qdisc_destroy(priv->qdiscs[ntx]);
+	if (priv->qdiscs) {
+		for (ntx = 0;
+		     ntx < dev->num_tx_queues && priv->qdiscs[ntx];
+		     ntx++)
+			qdisc_destroy(priv->qdiscs[ntx]);
+		kfree(priv->qdiscs);
+	}
 
 	if (priv->hw_owned && dev->netdev_ops->ndo_setup_tc)
 		dev->netdev_ops->ndo_setup_tc(dev, 0);
 	else
 		netdev_set_num_tc(dev, 0);
-
-	kfree(priv->qdiscs);
 }
 
 static int mqprio_parse_opt(struct net_device *dev, struct tc_mqprio_qopt *qopt)
@@ -123,14 +123,13 @@ static int mqprio_init(struct Qdisc *sch, struct nlattr *opt)
 
 	for (i = 0; i < dev->num_tx_queues; i++) {
 		dev_queue = netdev_get_tx_queue(dev, i);
-		qdisc = qdisc_create_dflt(dev, dev_queue, &pfifo_fast_ops,
+		qdisc = qdisc_create_dflt(dev_queue, &pfifo_fast_ops,
 					  TC_H_MAKE(TC_H_MAJ(sch->handle),
 						    TC_H_MIN(i + 1)));
 		if (qdisc == NULL) {
 			err = -ENOMEM;
 			goto err;
 		}
-		qdisc->flags |= TCQ_F_CAN_BYPASS;
 		priv->qdiscs[i] = qdisc;
 	}
 
@@ -216,7 +215,7 @@ static int mqprio_dump(struct Qdisc *sch, struct sk_buff *skb)
 	struct net_device *dev = qdisc_dev(sch);
 	struct mqprio_sched *priv = qdisc_priv(sch);
 	unsigned char *b = skb_tail_pointer(skb);
-	struct tc_mqprio_qopt opt;
+	struct tc_mqprio_qopt opt = { 0 };
 	struct Qdisc *qdisc;
 	unsigned int i;
 
@@ -312,7 +311,9 @@ static int mqprio_dump_class(struct Qdisc *sch, unsigned long cl,
 }
 
 static int mqprio_dump_class_stats(struct Qdisc *sch, unsigned long cl,
-			       struct gnet_dump *d)
+				   struct gnet_dump *d)
+	__releases(d->lock)
+	__acquires(d->lock)
 {
 	struct net_device *dev = qdisc_dev(sch);
 
@@ -390,7 +391,7 @@ static const struct Qdisc_class_ops mqprio_class_ops = {
 	.dump_stats	= mqprio_dump_class_stats,
 };
 
-struct Qdisc_ops mqprio_qdisc_ops __read_mostly = {
+static struct Qdisc_ops mqprio_qdisc_ops __read_mostly = {
 	.cl_ops		= &mqprio_class_ops,
 	.id		= "mqprio",
 	.priv_size	= sizeof(struct mqprio_sched),

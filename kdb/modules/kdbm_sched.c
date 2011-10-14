@@ -6,7 +6,7 @@
  * Copyright (c) 2005 Silicon Graphics, Inc.  All Rights Reserved.
  */
 
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -23,34 +23,34 @@ kdbm_runqueues(int argc, const char **argv)
 	int ret = 0;
 
 	if (argc == 1) {
-		ret = kdbgetularg((char *)argv[1], &cpu);
+		ret = lkdbgetularg((char *)argv[1], &cpu);
 		if (!ret) {
 			if (!cpu_online(cpu)) {
-				kdb_printf("Invalid cpu number\n");
+				lkdb_printf("Invalid cpu number\n");
 			} else
-				kdb_runqueue(cpu, kdb_printf);
+				lkdb_runqueue(cpu, lkdb_printf);
 		}
 	} else if (argc == 0) {
 		for_each_online_cpu(cpu)
-			kdb_runqueue(cpu, kdb_printf);
+			lkdb_runqueue(cpu, lkdb_printf);
 	} else {
 		/* More than one arg */
-		kdb_printf("Specify one cpu number\n");
+		lkdb_printf("Specify one cpu number\n");
 	}
 	return ret;
 }
 
 static int __init kdbm_sched_init(void)
 {
-	kdb_register("rq",  kdbm_runqueues, "<cpunum>", "Display runqueue for <cpunum>", 0);
-	kdb_register("rqa", kdbm_runqueues, "", "Display all runqueues", 0);
+	lkdb_register("rq",  kdbm_runqueues, "<cpunum>", "Display runqueue for <cpunum>", 0);
+	lkdb_register("rqa", kdbm_runqueues, "", "Display all runqueues", 0);
 	return 0;
 }
 
 static void __exit kdbm_sched_exit(void)
 {
-	kdb_unregister("rq");
-	kdb_unregister("rqa");
+	lkdb_unregister("rq");
+	lkdb_unregister("rqa");
 }
 
 module_init(kdbm_sched_init)

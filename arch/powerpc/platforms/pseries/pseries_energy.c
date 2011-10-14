@@ -26,40 +26,11 @@
 #define MODULE_VERS "1.0"
 #define MODULE_NAME "pseries_energy"
 
-/* New hcall number */
-
-#define H_BEST_ENERGY		0x2F4
-
 /* Driver flags */
 
 static int sysfs_entries;
 
-static int nr_threads_per_core;
-
 /* Helper routines */
-
-/* CPU to core index mapping */
-
-#define cpu_core_index_of_thread(cpu)	((cpu) / nr_threads_per_core)
-#define cpu_first_thread_of_core(core)	((core) * nr_threads_per_core)
-
-/* Get the threads-per-core from device tree */
-
-static void get_threads_per_core(void)
-{
-	struct device_node *dn = NULL;
-	int len;
-	const int *intserv;
-
-	nr_threads_per_core = 1; /* default */
-
-	dn = of_find_node_by_type(NULL, "cpu");
-	intserv = of_get_property(dn, "ibm,ppc-interrupt-server#s", &len);
-	if (intserv)
-		nr_threads_per_core = len / sizeof(int);
-
-	of_node_put(dn);
-}
 
 /*
  * Routine to detect firmware support for hcall
@@ -237,13 +208,13 @@ static ssize_t get_best_energy_data(struct sys_device *dev,
 /* Wrapper functions */
 
 static ssize_t cpu_activate_hint_list_show(struct sysdev_class *class,
-						char *page)
+			struct sysdev_class_attribute *attr, char *page)
 {
 	return get_best_energy_list(page, 1);
 }
 
 static ssize_t cpu_deactivate_hint_list_show(struct sysdev_class *class,
-						char *page)
+			struct sysdev_class_attribute *attr, char *page)
 {
 	return get_best_energy_list(page, 0);
 }
@@ -304,9 +275,6 @@ static int __init pseries_energy_init(void)
 
 	if (err)
 		return err;
-
-	get_threads_per_core();
-
 	for_each_possible_cpu(cpu) {
 		cpu_sys_dev = get_cpu_sysdev(cpu);
 		err = sysfs_create_file(&cpu_sys_dev->kobj,

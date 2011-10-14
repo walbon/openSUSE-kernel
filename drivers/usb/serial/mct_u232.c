@@ -874,7 +874,7 @@ static void mct_u232_unthrottle(struct tty_struct *tty)
 	}
 }
 
-static int mct_u232_ioctl(struct tty_struct *tty,
+static int  mct_u232_ioctl(struct tty_struct *tty,
 			unsigned int cmd, unsigned long arg)
 {
 	DEFINE_WAIT(wait);

@@ -161,7 +161,7 @@
  *
  * 2003/02/12 - Christoph Hellwig <hch@infradead.org>
  *
- * Cleaned up host template defintion
+ * Cleaned up host template definition
  * Removed now obsolete wd7000.h
  */
 
@@ -171,7 +171,6 @@
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/string.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/ioport.h>
 #include <linux/proc_fs.h>
@@ -838,7 +837,7 @@ static inline Scb *alloc_scbs(struct Scsi_Host *host, int needed)
 		}
 	}
 
-	/* Take the lock, then check we didnt get beaten, if so try again */
+	/* Take the lock, then check we didn't get beaten, if so try again */
 	spin_lock_irqsave(&scbpool_lock, flags);
 	if (freescbs < needed) {
 		spin_unlock_irqrestore(&scbpool_lock, flags);

@@ -9,7 +9,7 @@
  */
 
 #include <linux/types.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/module.h>
 #include <asm/sal.h>
@@ -29,7 +29,7 @@ MODULE_LICENSE("GPL");
 static int
 kdba_pod(int argc, const char **argv)
 {
-	kdb_printf("WARNING: pod commands are dangerous unless you know exactly\n"
+	lkdb_printf("WARNING: pod commands are dangerous unless you know exactly\n"
 		   "what you are doing.  If in doubt, type exit immediately.\n");
 	return ia64_sn_pod_mode();
 }
@@ -43,7 +43,7 @@ static int __init
 kdba_pod_init(void)
 {
 	if (ia64_platform_is("sn2"))
-		kdb_register("pod", kdba_pod, NULL, "Enter POD", 0);
+		lkdb_register("pod", kdba_pod, NULL, "Enter POD", 0);
 
 	return 0;
 }
@@ -57,7 +57,7 @@ static void __exit
 kdba_pod_exit(void)
 {
 	if (ia64_platform_is("sn2"))
-		kdb_unregister("pod");
+		lkdb_unregister("pod");
 }
 
 module_init(kdba_pod_init)

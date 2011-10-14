@@ -15,6 +15,7 @@
 #include <linux/seq_file.h>
 #include <linux/i2c.h>
 #include <linux/mii.h>
+#include <linux/slab.h>
 #include "net_driver.h"
 #include "bitfield.h"
 #include "efx.h"
@@ -691,7 +692,7 @@ static int falcon_gmii_wait(struct efx_nic *efx)
 	efx_oword_t md_stat;
 	int count;
 
-	/* wait upto 50ms - taken max from datasheet */
+	/* wait up to 50ms - taken max from datasheet */
 	for (count = 0; count < 5000; count++) {
 		efx_reado(efx, &md_stat, FR_AB_MD_STAT);
 		if (EFX_OWORD_FIELD(md_stat, FRF_AB_MD_BSY) == 0) {
@@ -1106,22 +1107,9 @@ static int __falcon_reset_hw(struct efx_nic *efx, enum reset_type method)
 
 	/* Restore PCI configuration if needed */
 	if (method == RESET_TYPE_WORLD) {
-		if (efx_nic_is_dual_func(efx)) {
-			rc = pci_restore_state(nic_data->pci_dev2);
-			if (rc) {
-				netif_err(efx, drv, efx->net_dev,
-					  "failed to restore PCI config for "
-					  "the secondary function\n");
-				goto fail3;
-			}
-		}
-		rc = pci_restore_state(efx->pci_dev);
-		if (rc) {
-			netif_err(efx, drv, efx->net_dev,
-				  "failed to restore PCI config for the "
-				  "primary function\n");
-			goto fail4;
-		}
+		if (efx_nic_is_dual_func(efx))
+			pci_restore_state(nic_data->pci_dev2);
+		pci_restore_state(efx->pci_dev);
 		netif_dbg(efx, drv, efx->net_dev,
 			  "successfully restored PCI config\n");
 	}
@@ -1132,7 +1120,7 @@ static int __falcon_reset_hw(struct efx_nic *efx, enum reset_type method)
 		rc = -ETIMEDOUT;
 		netif_err(efx, hw, efx->net_dev,
 			  "timed out waiting for hardware reset\n");
-		goto fail5;
+		goto fail3;
 	}
 	netif_dbg(efx, hw, efx->net_dev, "hardware reset complete\n");
 
@@ -1140,11 +1128,9 @@ static int __falcon_reset_hw(struct efx_nic *efx, enum reset_type method)
 
 	/* pci_save_state() and pci_restore_state() MUST be called in pairs */
 fail2:
-fail3:
 	pci_restore_state(efx->pci_dev);
 fail1:
-fail4:
-fail5:
+fail3:
 	return rc;
 }
 
@@ -1235,7 +1221,7 @@ static int falcon_reset_sram(struct efx_nic *efx)
 
 			return 0;
 		}
-	} while (++count < 20);	/* wait upto 0.4 sec */
+	} while (++count < 20);	/* wait up to 0.4 sec */
 
 	netif_err(efx, hw, efx->net_dev, "timed out waiting for SRAM reset\n");
 	return -ETIMEDOUT;
@@ -1515,6 +1501,13 @@ static void falcon_init_rx_cfg(struct efx_nic *efx)
 		EFX_SET_OWORD_FIELD(reg, FRF_BZ_RX_XON_TX_TH, ctrl_xon_thr);
 		EFX_SET_OWORD_FIELD(reg, FRF_BZ_RX_XOFF_TX_TH, ctrl_xoff_thr);
 		EFX_SET_OWORD_FIELD(reg, FRF_BZ_RX_INGR_EN, 1);
+
+		/* Enable hash insertion. This is broken for the
+		 * 'Falcon' hash so also select Toeplitz TCP/IPv4 and
+		 * IPv4 hashes. */
+		EFX_SET_OWORD_FIELD(reg, FRF_BZ_RX_HASH_INSRT_HDR, 1);
+		EFX_SET_OWORD_FIELD(reg, FRF_BZ_RX_HASH_ALG, 1);
+		EFX_SET_OWORD_FIELD(reg, FRF_BZ_RX_IP_HASH, 1);
 	}
 	/* Always enable XOFF signal from RX FIFO.  We enable
 	 * or disable transmission of pause frames at the MAC. */
@@ -1578,8 +1571,12 @@ static int falcon_init_nic(struct efx_nic *efx)
 
 	falcon_init_rx_cfg(efx);
 
-	/* Set destination of both TX and RX Flush events */
 	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0) {
+		/* Set hash key for IPv4 */
+		memcpy(&temp, efx->rx_hash_key, sizeof(temp));
+		efx_writeo(efx, &temp, FR_BZ_RX_RSS_TKEY);
+
+		/* Set destination of both TX and RX Flush events */
 		EFX_POPULATE_OWORD_1(temp, FRF_BZ_FLS_EVQ_ID, 0);
 		efx_writeo(efx, &temp, FR_BZ_DP_CTRL);
 	}
@@ -1706,7 +1703,7 @@ static int falcon_set_wol(struct efx_nic *efx, u32 type)
  **************************************************************************
  */
 
-struct efx_nic_type falcon_a1_nic_type = {
+const struct efx_nic_type falcon_a1_nic_type = {
 	.probe = falcon_probe_nic,
 	.remove = falcon_remove_nic,
 	.init = falcon_init_nic,
@@ -1744,9 +1741,10 @@ struct efx_nic_type falcon_a1_nic_type = {
 	.tx_dc_base = 0x130000,
 	.rx_dc_base = 0x100000,
 	.offload_features = NETIF_F_IP_CSUM,
+	.reset_world_flags = ETH_RESET_IRQ,
 };
 
-struct efx_nic_type falcon_b0_nic_type = {
+const struct efx_nic_type falcon_b0_nic_type = {
 	.probe = falcon_probe_nic,
 	.remove = falcon_remove_nic,
 	.init = falcon_init_nic,
@@ -1784,6 +1782,7 @@ struct efx_nic_type falcon_b0_nic_type = {
 	.evq_ptr_tbl_base = FR_BZ_EVQ_PTR_TBL,
 	.evq_rptr_tbl_base = FR_BZ_EVQ_RPTR,
 	.max_dma_mask = DMA_BIT_MASK(FSF_AZ_TX_KER_BUF_ADDR_WIDTH),
+	.rx_buffer_hash_size = 0x10,
 	.rx_buffer_padding = 0,
 	.max_interrupt_mode = EFX_INT_MODE_MSIX,
 	.phys_addr_channels = 32, /* Hardware limit is 64, but the legacy
@@ -1791,6 +1790,7 @@ struct efx_nic_type falcon_b0_nic_type = {
 				   * channels */
 	.tx_dc_base = 0x130000,
 	.rx_dc_base = 0x100000,
-	.offload_features = NETIF_F_IP_CSUM,
+	.offload_features = NETIF_F_IP_CSUM | NETIF_F_RXHASH | NETIF_F_NTUPLE,
+	.reset_world_flags = ETH_RESET_IRQ,
 };
 

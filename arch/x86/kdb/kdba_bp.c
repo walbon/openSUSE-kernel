@@ -13,7 +13,7 @@
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/ptrace.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 
 
@@ -25,7 +25,7 @@ static char *kdba_rwtypes[] = { "Instruction(Register)", "Data Write",
  * breakpoint registers for every CPU.
  */
 
-static kdbhard_bp_t kdb_hardbreaks[NR_CPUS][KDB_MAXHARDBPT];
+static kdbhard_bp_t kdb_hardbreaks[NR_CPUS][LKDB_MAXHARDBPT];
 
 /*
  * kdba_db_trap
@@ -74,7 +74,7 @@ kdba_db_trap(struct pt_regs *regs, int error_unused)
 	int rw, reg;
 	int i;
 	kdb_dbtrap_t rv = KDB_DB_BPT;
-	kdb_bp_t *bp;
+	lkdb_bp_t *bp;
 	int cpu = smp_processor_id();
 
 	if (KDB_NULL_REGS(regs))
@@ -84,31 +84,31 @@ kdba_db_trap(struct pt_regs *regs, int error_unused)
 	dr7 = kdba_getdr7();
 
 	if (KDB_DEBUG(BP))
-		kdb_printf("kdb: dr6 0x%lx dr7 0x%lx\n", dr6, dr7);
+		lkdb_printf("kdb: dr6 0x%lx dr7 0x%lx\n", dr6, dr7);
 	if (dr6 & DR6_BS) {
 		if (KDB_STATE(SSBPT)) {
 			if (KDB_DEBUG(BP))
-				kdb_printf("ssbpt\n");
+				lkdb_printf("ssbpt\n");
 			KDB_STATE_CLEAR(SSBPT);
-			for(i=0,bp=kdb_breakpoints;
-			    i < KDB_MAXBPT;
+			for(i=0,bp=lkdb_breakpoints;
+			    i < LKDB_MAXBPT;
 			    i++, bp++) {
 				if (KDB_DEBUG(BP))
-					kdb_printf("bp 0x%p enabled %d delayed %d global %d cpu %d\n",
+					lkdb_printf("bp 0x%p enabled %d delayed %d global %d cpu %d\n",
 						   bp, bp->bp_enabled, bp->bp_delayed, bp->bp_global, bp->bp_cpu);
 				if (!bp->bp_enabled)
 					continue;
 				if (!bp->bp_global && bp->bp_cpu != smp_processor_id())
 					continue;
 				if (KDB_DEBUG(BP))
-					kdb_printf("bp for this cpu\n");
+					lkdb_printf("bp for this cpu\n");
 				if (bp->bp_delayed) {
 					bp->bp_delayed = 0;
 					if (KDB_DEBUG(BP)){
 						/* Can't be hw breakpoint */
 						if (bp->bp_hardtype)
-							kdb_printf("kdb: Error - hw bp delayed\n");
-						kdb_printf("kdba_installbp\n");
+							lkdb_printf("kdb: Error - hw bp delayed\n");
+						lkdb_printf("kdba_installbp\n");
 					}
 					kdba_installbp(regs, bp);
 					if (!KDB_STATE(DOING_SS)) {
@@ -118,8 +118,8 @@ kdba_db_trap(struct pt_regs *regs, int error_unused)
 					break;
 				}
 			}
-			if (i == KDB_MAXBPT) {
-				kdb_printf("kdb: Unable to find delayed breakpoint\n");
+			if (i == LKDB_MAXBPT) {
+				lkdb_printf("kdb: Unable to find delayed breakpoint\n");
 			}
 			if (!KDB_STATE(DOING_SS)) {
 				regs->flags &= ~X86_EFLAGS_TF;
@@ -143,8 +143,8 @@ kdba_db_trap(struct pt_regs *regs, int error_unused)
 		if (KDB_STATE(DOING_SSB)) {
 			unsigned char instruction[2];
 
-			kdb_id1(regs->ip);
-			if (kdb_getarea(instruction, regs->ip) ||
+			lkdb_id1(regs->ip);
+			if (lkdb_getarea(instruction, regs->ip) ||
 			    (instruction[0]&0xf0) == 0xe0 ||	/* short disp jumps */
 			    (instruction[0]&0xf0) == 0x70 ||	/* Misc. jumps */
 			    instruction[0]        == 0xc2 ||	/* ret */
@@ -165,9 +165,9 @@ kdba_db_trap(struct pt_regs *regs, int error_unused)
 			/*
 			 * Print current insn
 			 */
-			kdb_printf("SS trap at ");
-			kdb_symbol_print(regs->ip, NULL, KDB_SP_DEFAULT|KDB_SP_NEWLINE);
-			kdb_id1(regs->ip);
+			lkdb_printf("SS trap at ");
+			lkdb_symbol_print(regs->ip, NULL, KDB_SP_DEFAULT|KDB_SP_NEWLINE);
+			lkdb_id1(regs->ip);
 			KDB_STATE_CLEAR(DOING_SS);
 		}
 
@@ -213,7 +213,7 @@ handle:
 	/*
 	 * Determine which breakpoint was encountered.
 	 */
-	for(i=0, bp=kdb_breakpoints; i<KDB_MAXBPT; i++, bp++) {
+	for(i=0, bp=lkdb_breakpoints; i<LKDB_MAXBPT; i++, bp++) {
 		if (!(bp->bp_free)
 		 && (bp->bp_global || bp->bp_cpu == smp_processor_id())
 		 && (bp->bp_hard[cpu])
@@ -221,7 +221,7 @@ handle:
 			/*
 			 * Hit this breakpoint.
 			 */
-			kdb_printf("%s breakpoint #%d at " kdb_bfd_vma_fmt "\n",
+			lkdb_printf("%s breakpoint #%d at " kdb_bfd_vma_fmt "\n",
 				  kdba_rwtypes[rw],
 				  i, bp->bp_addr);
 
@@ -230,7 +230,7 @@ handle:
 			 * the current instruction.
 			 */
 			if (rw == 0) {
-				kdb_id1(regs->ip);
+				lkdb_id1(regs->ip);
 			}
 
 			goto handled;
@@ -292,7 +292,7 @@ kdba_bp_trap(struct pt_regs *regs, int error_unused)
 {
 	int i;
 	kdb_dbtrap_t rv;
-	kdb_bp_t *bp;
+	lkdb_bp_t *bp;
 
 	if (KDB_NULL_REGS(regs))
 		return KDB_DB_NOBPT;
@@ -301,13 +301,13 @@ kdba_bp_trap(struct pt_regs *regs, int error_unused)
 	 * Determine which breakpoint was encountered.
 	 */
 	if (KDB_DEBUG(BP))
-		kdb_printf("kdba_bp_trap: ip=0x%lx (not adjusted) "
+		lkdb_printf("kdba_bp_trap: ip=0x%lx (not adjusted) "
 			   "flags=0x%lx regs=0x%p sp=0x%lx\n",
 			   regs->ip, regs->flags, regs, regs->sp);
 
 	rv = KDB_DB_NOBPT;	/* Cause kdb() to return */
 
-	for(i=0, bp=kdb_breakpoints; i<KDB_MAXBPT; i++, bp++) {
+	for(i=0, bp=lkdb_breakpoints; i<LKDB_MAXBPT; i++, bp++) {
 		if (bp->bp_free)
 			continue;
 		if (!bp->bp_global && bp->bp_cpu != smp_processor_id())
@@ -315,9 +315,9 @@ kdba_bp_trap(struct pt_regs *regs, int error_unused)
 		 if ((void *)bp->bp_addr == (void *)(regs->ip - bp->bp_adjust)) {
 			/* Hit this breakpoint.  */
 			regs->ip -= bp->bp_adjust;
-			kdb_printf("Instruction(i) breakpoint #%d at 0x%lx (adjusted)\n",
+			lkdb_printf("Instruction(i) breakpoint #%d at 0x%lx (adjusted)\n",
 				  i, regs->ip);
-			kdb_id1(regs->ip);
+			lkdb_id1(regs->ip);
 			rv = KDB_DB_BPT;
 			bp->bp_delay = 1;
 			/* SSBPT is set when the kernel debugger must single
@@ -355,13 +355,13 @@ kdba_bp_trap(struct pt_regs *regs, int error_unused)
  */
 
 static void
-kdba_handle_bp(struct pt_regs *regs, kdb_bp_t *bp)
+kdba_handle_bp(struct pt_regs *regs, lkdb_bp_t *bp)
 {
 	if (KDB_NULL_REGS(regs))
 		return;
 
 	if (KDB_DEBUG(BP))
-		kdb_printf("regs->ip = 0x%lx\n", regs->ip);
+		lkdb_printf("regs->ip = 0x%lx\n", regs->ip);
 
 	/*
 	 * Setup single step
@@ -421,7 +421,7 @@ kdba_bptype(kdbhard_bp_t *bph)
 static void
 kdba_printbpreg(kdbhard_bp_t *bph)
 {
-	kdb_printf(" in dr%ld", bph->bph_reg);
+	lkdb_printf(" in dr%ld", bph->bph_reg);
 }
 
 /*
@@ -441,11 +441,11 @@ kdba_printbpreg(kdbhard_bp_t *bph)
  */
 
 void
-kdba_printbp(kdb_bp_t *bp)
+kdba_printbp(lkdb_bp_t *bp)
 {
 	int cpu;
 
-	kdb_printf("\n    is enabled");
+	lkdb_printf("\n    is enabled");
 	if (bp->bp_hardtype) {
 		if (bp->bp_global)
 			cpu = smp_processor_id();
@@ -453,7 +453,7 @@ kdba_printbp(kdb_bp_t *bp)
 			cpu = bp->bp_cpu;
 		kdba_printbpreg(bp->bp_hard[cpu]);
 		if (bp->bp_hard[cpu]->bph_mode != 0) {
-			kdb_printf(" for %d bytes",
+			lkdb_printf(" for %d bytes",
 				   bp->bp_hard[cpu]->bph_length+1);
 		}
 	}
@@ -482,7 +482,7 @@ kdba_printbp(kdb_bp_t *bp)
  */
 
 int
-kdba_parsebp(int argc, const char **argv, int *nextargp, kdb_bp_t *bp)
+kdba_parsebp(int argc, const char **argv, int *nextargp, lkdb_bp_t *bp)
 {
 	int nextarg = *nextargp;
 	int diag;
@@ -500,7 +500,7 @@ kdba_parsebp(int argc, const char **argv, int *nextargp, kdb_bp_t *bp)
 		} else if (strnicmp(argv[nextarg], "inst", sizeof("inst")) == 0) {
 			bph->bph_mode = 0;
 		} else {
-			return KDB_ARGCOUNT;
+			return LKDB_ARGCOUNT;
 		}
 
 		bph->bph_length = 3;	/* Default to 4 byte */
@@ -510,14 +510,14 @@ kdba_parsebp(int argc, const char **argv, int *nextargp, kdb_bp_t *bp)
 		if ((argc + 1) != nextarg) {
 			unsigned long len;
 
-			diag = kdbgetularg((char *)argv[nextarg],
+			diag = lkdbgetularg((char *)argv[nextarg],
 					   &len);
 			if (diag)
 				return diag;
 
 
 			if ((len > 4) || (len == 3))
-				return KDB_BADLENGTH;
+				return LKDB_BADLENGTH;
 
 			bph->bph_length = len;
 			bph->bph_length--; /* Normalize for debug register */
@@ -525,7 +525,7 @@ kdba_parsebp(int argc, const char **argv, int *nextargp, kdb_bp_t *bp)
 		}
 
 		if ((argc + 1) != nextarg)
-			return KDB_ARGCOUNT;
+			return LKDB_ARGCOUNT;
 
 		/*
 		 * Indicate to architecture independent level that
@@ -536,7 +536,7 @@ kdba_parsebp(int argc, const char **argv, int *nextargp, kdb_bp_t *bp)
 		bph->bph_free = 0;
 	} else {
 		if (KDB_DEBUG(BP))
-			kdb_printf("kdba_bp: no args, forcehw is %d\n", bp->bp_forcehw);
+			lkdb_printf("kdba_bp: no args, forcehw is %d\n", bp->bp_forcehw);
 		if (bp->bp_forcehw) {
 			/*
 			 * We are forced to use a hardware register for this
@@ -556,8 +556,11 @@ kdba_parsebp(int argc, const char **argv, int *nextargp, kdb_bp_t *bp)
 	}
 
 	if (bph->bph_mode != 2 && kdba_verify_rw(bp->bp_addr, bph->bph_length+1)) {
-		kdb_printf("Invalid address for breakpoint, ignoring bp command\n");
-		return KDB_BADADDR;
+		lkdb_printf("Invalid address for breakpoint, ignoring bp command\n");
+		lkdb_printf("Maybe the kernel or data segment is read-only\n");
+		lkdb_printf(
+	   "Check that the kernel is configured with CONFIG_DEBUG_RODATA=n\n");
+		return LKDB_BADADDR;
 	}
 
 	*nextargp = nextarg;
@@ -587,15 +590,15 @@ kdba_allocbp(kdbhard_bp_t *bph, int *diagp, unsigned int cpu)
 	int i;
 	kdbhard_bp_t *newbph;
 
-	for(i=0; i < KDB_MAXHARDBPT; i++) {
+	for(i=0; i < LKDB_MAXHARDBPT; i++) {
 		newbph=&(kdb_hardbreaks[cpu][i]);
 		if (newbph->bph_free) {
 			break;
 		}
 	}
 
-	if (i == KDB_MAXHARDBPT) {
-		*diagp = KDB_TOOMANYDBREGS;
+	if (i == LKDB_MAXHARDBPT) {
+		*diagp = LKDB_TOOMANYDBREGS;
 		return NULL;
 	}
 
@@ -641,7 +644,7 @@ kdba_allocbp(kdbhard_bp_t *bph, int *diagp, unsigned int cpu)
  */
 
 void
-kdba_alloc_hwbp(kdb_bp_t *bp, int *diagp)
+kdba_alloc_hwbp(lkdb_bp_t *bp, int *diagp)
 {
 	int i;
 
@@ -701,7 +704,7 @@ kdba_freebp(kdbhard_bp_t *bph)
  */
 
 void
-kdba_free_hwbp(kdb_bp_t *bp)
+kdba_free_hwbp(lkdb_bp_t *bp)
 {
 	int i;
 
@@ -762,7 +765,7 @@ kdba_initbp(void)
 		/* Called early so we don't know actual
 		 * ammount of CPUs
 		 */
-		for(j=0; j < KDB_MAXHARDBPT; j++) {
+		for(j=0; j < LKDB_MAXHARDBPT; j++) {
 			bph=&(kdb_hardbreaks[i][j]);
 			bph->bph_reg = j;
 			bph->bph_free = 1;
@@ -798,7 +801,7 @@ kdba_initbp(void)
  */
 
 int
-kdba_installbp(struct pt_regs *regs, kdb_bp_t *bp)
+kdba_installbp(struct pt_regs *regs, lkdb_bp_t *bp)
 {
 	int cpu = smp_processor_id();
 
@@ -807,18 +810,18 @@ kdba_installbp(struct pt_regs *regs, kdb_bp_t *bp)
 	 */
 
 	if (KDB_DEBUG(BP)) {
-		kdb_printf("kdba_installbp bp_installed %d\n", bp->bp_installed);
+		lkdb_printf("kdba_installbp bp_installed %d\n", bp->bp_installed);
 	}
 	if (!KDB_STATE(SSBPT))
 		bp->bp_delay = 0;
 
 	if (bp->bp_hardtype) {
 		if (KDB_DEBUG(BP) && !bp->bp_global && cpu != bp->bp_cpu){
-			kdb_printf("kdba_installbp: cpu != bp->bp_cpu for local hw bp\n");
+			lkdb_printf("kdba_installbp: cpu != bp->bp_cpu for local hw bp\n");
 		}
 
 		if (KDB_DEBUG(BP) && !bp->bp_hard[cpu]){
-			kdb_printf("kdba_installbp: Error - bp_hard[smp_processor_id()] is emply\n");
+			lkdb_printf("kdba_installbp: Error - bp_hard[smp_processor_id()] is emply\n");
 			return 1;
 		}
 
@@ -826,24 +829,24 @@ kdba_installbp(struct pt_regs *regs, kdb_bp_t *bp)
 			kdba_installdbreg(bp);
 			bp->bp_hard[cpu]->bph_installed = 1;
 			if (KDB_DEBUG(BP)) {
-				kdb_printf("kdba_installbp hardware reg %ld at " kdb_bfd_vma_fmt "\n",
+				lkdb_printf("kdba_installbp hardware reg %ld at " kdb_bfd_vma_fmt "\n",
 				   bp->bp_hard[cpu]->bph_reg, bp->bp_addr);
 			}
 		}
 	} else if (!bp->bp_installed) {
 		if (bp->bp_delay) {
 			if (KDB_DEBUG(BP))
-				kdb_printf("kdba_installbp delayed bp\n");
+				lkdb_printf("kdba_installbp delayed bp\n");
 			kdba_handle_bp(regs, bp);
 		} else {
-			if (kdb_getarea_size(&(bp->bp_inst), bp->bp_addr, 1) ||
-			    kdb_putword(bp->bp_addr, IA32_BREAKPOINT_INSTRUCTION, 1)) {
-				kdb_printf("kdba_installbp failed to set software breakpoint at " kdb_bfd_vma_fmt "\n", bp->bp_addr);
+			if (lkdb_getarea_size(&(bp->bp_inst), bp->bp_addr, 1) ||
+			    lkdb_putword(bp->bp_addr, IA32_BREAKPOINT_INSTRUCTION, 1)) {
+				lkdb_printf("kdba_installbp failed to set software breakpoint at " kdb_bfd_vma_fmt "\n", bp->bp_addr);
 				return(1);
 			}
 			bp->bp_installed = 1;
 			if (KDB_DEBUG(BP))
-				kdb_printf("kdba_installbp instruction 0x%x at " kdb_bfd_vma_fmt "\n",
+				lkdb_printf("kdba_installbp instruction 0x%x at " kdb_bfd_vma_fmt "\n",
 					   IA32_BREAKPOINT_INSTRUCTION, bp->bp_addr);
 		}
 	}
@@ -867,7 +870,7 @@ kdba_installbp(struct pt_regs *regs, kdb_bp_t *bp)
  */
 
 int
-kdba_removebp(kdb_bp_t *bp)
+kdba_removebp(lkdb_bp_t *bp)
 {
 	int cpu = smp_processor_id();
 
@@ -876,27 +879,27 @@ kdba_removebp(kdb_bp_t *bp)
 	 * for software breakpoints, restore the instruction stream.
 	 */
 	if (KDB_DEBUG(BP)) {
-		kdb_printf("kdba_removebp bp_installed %d\n", bp->bp_installed);
+		lkdb_printf("kdba_removebp bp_installed %d\n", bp->bp_installed);
 	}
 
 	if (bp->bp_hardtype) {
 		if (KDB_DEBUG(BP) && !bp->bp_global && cpu != bp->bp_cpu){
-			kdb_printf("kdba_removebp: cpu != bp->bp_cpu for local hw bp\n");
+			lkdb_printf("kdba_removebp: cpu != bp->bp_cpu for local hw bp\n");
 		}
 
 		if (KDB_DEBUG(BP) && !bp->bp_hard[cpu]){
-			kdb_printf("kdba_removebp: Error - bp_hard[smp_processor_id()] is emply\n");
+			lkdb_printf("kdba_removebp: Error - bp_hard[smp_processor_id()] is emply\n");
 			return 1;
 		}
 
 		if (KDB_DEBUG(BP)) {
-			kdb_printf("kdb: removing hardware reg %ld at " kdb_bfd_vma_fmt "\n",
+			lkdb_printf("kdb: removing hardware reg %ld at " kdb_bfd_vma_fmt "\n",
 				   bp->bp_hard[cpu]->bph_reg, bp->bp_addr);
 		}
 
 		if (bp->bp_hard[cpu]->bph_installed){
 			if (KDB_DEBUG(BP)) {
-				kdb_printf("kdba_installbp hardware reg %ld at " kdb_bfd_vma_fmt "\n",
+				lkdb_printf("kdba_installbp hardware reg %ld at " kdb_bfd_vma_fmt "\n",
 				   bp->bp_hard[cpu]->bph_reg, bp->bp_addr);
 			}
 			kdba_removedbreg(bp);
@@ -904,9 +907,9 @@ kdba_removebp(kdb_bp_t *bp)
 		}
 	} else if (bp->bp_installed) {
 		if (KDB_DEBUG(BP))
-			kdb_printf("kdb: restoring instruction 0x%x at " kdb_bfd_vma_fmt "\n",
+			lkdb_printf("kdb: restoring instruction 0x%x at " kdb_bfd_vma_fmt "\n",
 				   bp->bp_inst, bp->bp_addr);
-		if (kdb_putword(bp->bp_addr, bp->bp_inst, 1))
+		if (lkdb_putword(bp->bp_addr, bp->bp_inst, 1))
 			return(1);
 		bp->bp_installed = 0;
 	}

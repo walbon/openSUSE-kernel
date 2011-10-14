@@ -179,7 +179,6 @@ int kl_member_size(
 	char *		/* struct name */,
 	char *		/* member name */);
 
-/* cpw: get rid of last arguent FILE * */
 void kl_print_member(void *, kltype_t *, int, int);
 void kl_print_pointer_type(void *, kltype_t *, int, int);
 void kl_print_function_type(void *, kltype_t *, int, int);

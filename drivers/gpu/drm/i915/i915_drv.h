@@ -208,6 +208,8 @@ struct drm_i915_display_funcs {
 			     struct drm_display_mode *adjusted_mode,
 			     int x, int y,
 			     struct drm_framebuffer *old_fb);
+	void (*write_eld)(struct drm_connector *connector,
+			  struct drm_crtc *crtc);
 	void (*fdi_link_train)(struct drm_crtc *crtc);
 	void (*init_clock_gating)(struct drm_device *dev);
 	void (*init_pch_clock_gating)(struct drm_device *dev);
@@ -909,7 +911,7 @@ struct drm_i915_gem_request {
 
 struct drm_i915_file_private {
 	struct {
-		spinlock_t lock;
+		struct spinlock lock;
 		struct list_head request_list;
 	} mm;
 };
@@ -1031,7 +1033,6 @@ extern int i915_irq_emit(struct drm_device *dev, void *data,
 			 struct drm_file *file_priv);
 extern int i915_irq_wait(struct drm_device *dev, void *data,
 			 struct drm_file *file_priv);
-extern void i915_handle_hotplug(struct drm_device *dev);
 
 extern void intel_irq_init(struct drm_device *dev);
 

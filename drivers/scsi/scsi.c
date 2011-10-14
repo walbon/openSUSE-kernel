@@ -67,6 +67,14 @@
 #include "scsi_priv.h"
 #include "scsi_logging.h"
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/scsi.h>
+
+/*
+ * Utility multithreaded workqueue for SCSI.
+ */
+struct workqueue_struct *scsi_wq;
+
 static void scsi_done(struct scsi_cmnd *cmd);
 
 /*
@@ -738,11 +746,13 @@ int scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 		cmd->result = (DID_NO_CONNECT << 16);
 		scsi_done(cmd);
 	} else {
+		trace_scsi_dispatch_cmd_start(cmd);
 		cmd->scsi_done = scsi_done;
 		rtn = host->hostt->queuecommand(host, cmd);
 	}
 
 	if (rtn) {
+		trace_scsi_dispatch_cmd_error(cmd, rtn);
 		if (rtn != SCSI_MLQUEUE_DEVICE_BUSY &&
 		    rtn != SCSI_MLQUEUE_TARGET_BUSY)
 			rtn = SCSI_MLQUEUE_HOST_BUSY;
@@ -773,6 +783,7 @@ int scsi_dispatch_cmd(struct scsi_cmnd *cmd)
  */
 static void scsi_done(struct scsi_cmnd *cmd)
 {
+	trace_scsi_dispatch_cmd_done(cmd);
 	blk_complete_request(cmd->request);
 }
 
@@ -1300,11 +1311,14 @@ MODULE_PARM_DESC(scsi_logging_level, "a bit mask of logging levels");
 
 static int __init init_scsi(void)
 {
-	int error;
+	int error = -ENOMEM;
 
+	scsi_wq = alloc_workqueue("scsi", 0, 0);
+	if (!scsi_wq)
+		return error;
 	error = scsi_init_queue();
 	if (error)
-		return error;
+		goto cleanup_wq;
 	error = scsi_init_procfs();
 	if (error)
 		goto cleanup_queue;
@@ -1336,6 +1350,8 @@ cleanup_procfs:
 	scsi_exit_procfs();
 cleanup_queue:
 	scsi_exit_queue();
+cleanup_wq:
+	destroy_workqueue(scsi_wq);
 	printk(KERN_ERR "SCSI subsystem failed to initialize, error = %d\n",
 	       -error);
 	return error;
@@ -1350,6 +1366,7 @@ static void __exit exit_scsi(void)
 	scsi_exit_devinfo();
 	scsi_exit_procfs();
 	scsi_exit_queue();
+	destroy_workqueue(scsi_wq);
 }
 
 subsys_initcall(init_scsi);

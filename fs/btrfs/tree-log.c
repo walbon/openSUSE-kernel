@@ -17,6 +17,7 @@
  */
 
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include "ctree.h"
 #include "transaction.h"
 #include "disk-io.h"
@@ -211,14 +212,13 @@ int btrfs_pin_log_trans(struct btrfs_root *root)
  * indicate we're done making changes to the log tree
  * and wake up anyone waiting to do a sync
  */
-int btrfs_end_log_trans(struct btrfs_root *root)
+void btrfs_end_log_trans(struct btrfs_root *root)
 {
 	if (atomic_dec_and_test(&root->log_writers)) {
 		smp_mb();
 		if (waitqueue_active(&root->log_writer_wait))
 			wake_up(&root->log_writer_wait);
 	}
-	return 0;
 }
 
 
@@ -274,9 +274,13 @@ static int process_one_buffer(struct btrfs_root *log,
 			      struct extent_buffer *eb,
 			      struct walk_control *wc, u64 gen)
 {
-	if (wc->pin)
-		btrfs_pin_extent(log->fs_info->extent_root,
-				 eb->start, eb->len, 0);
+	if (wc->pin) {
+		int ret = btrfs_pin_extent(log->fs_info->extent_root,
+					   eb->start, eb->len, 0);
+		if (ret)
+			btrfs_panic(log->fs_info, ret, "Cannot pin extent in "
+				    "range %llu(%llu)\n", eb->start, eb->len);
+	}
 
 	if (btrfs_buffer_uptodate(eb, gen)) {
 		if (wc->write)
@@ -798,14 +802,15 @@ static noinline int add_inode_ref(struct btrfs_trans_handle *trans,
 				  struct extent_buffer *eb, int slot,
 				  struct btrfs_key *key)
 {
-	struct inode *dir;
-	int ret;
 	struct btrfs_inode_ref *ref;
+	struct btrfs_dir_item *di;
+	struct inode *dir;
 	struct inode *inode;
-	char *name;
-	int namelen;
 	unsigned long ref_ptr;
 	unsigned long ref_end;
+	char *name;
+	int namelen;
+	int ret;
 	int search_done = 0;
 
 	/*
@@ -905,6 +910,25 @@ again:
 		 * coresponding ref, it does not need to check again.
 		 */
 		search_done = 1;
+	}
+	btrfs_release_path(path);
+
+	/* look for a conflicting sequence number */
+	di = btrfs_lookup_dir_index_item(trans, root, path, btrfs_ino(dir),
+					 btrfs_inode_ref_index(eb, ref),
+					 name, namelen, 0);
+	if (di && !IS_ERR(di)) {
+		ret = drop_one_dir_item(trans, root, path, dir, di);
+		BUG_ON(ret);
+	}
+	btrfs_release_path(path);
+
+	/* look for a conflicing name */
+	di = btrfs_lookup_dir_item(trans, root, path, btrfs_ino(dir),
+				   name, namelen, 0);
+	if (di && !IS_ERR(di)) {
+		ret = drop_one_dir_item(trans, root, path, dir, di);
+		BUG_ON(ret);
 	}
 	btrfs_release_path(path);
 
@@ -1732,8 +1756,8 @@ static noinline int walk_down_log_tree(struct btrfs_trans_handle *trans,
 				btrfs_read_buffer(next, ptr_gen);
 
 				btrfs_tree_lock(next);
-				clean_tree_block(trans, root, next);
 				btrfs_set_lock_blocking(next);
+				clean_tree_block(trans, root, next);
 				btrfs_wait_tree_block_writeback(next);
 				btrfs_tree_unlock(next);
 
@@ -1801,8 +1825,8 @@ static noinline int walk_up_log_tree(struct btrfs_trans_handle *trans,
 				next = path->nodes[*level];
 
 				btrfs_tree_lock(next);
-				clean_tree_block(trans, root, next);
 				btrfs_set_lock_blocking(next);
+				clean_tree_block(trans, root, next);
 				btrfs_wait_tree_block_writeback(next);
 				btrfs_tree_unlock(next);
 
@@ -1869,8 +1893,8 @@ static int walk_log_tree(struct btrfs_trans_handle *trans,
 			next = path->nodes[orig_level];
 
 			btrfs_tree_lock(next);
-			clean_tree_block(trans, log, next);
 			btrfs_set_lock_blocking(next);
+			clean_tree_block(trans, log, next);
 			btrfs_wait_tree_block_writeback(next);
 			btrfs_tree_unlock(next);
 
@@ -1940,7 +1964,7 @@ static int wait_log_commit(struct btrfs_trans_handle *trans,
 	return 0;
 }
 
-static int wait_for_writer(struct btrfs_trans_handle *trans,
+static void wait_for_writer(struct btrfs_trans_handle *trans,
 			   struct btrfs_root *root)
 {
 	DEFINE_WAIT(wait);
@@ -1954,7 +1978,6 @@ static int wait_for_writer(struct btrfs_trans_handle *trans,
 		mutex_lock(&root->log_mutex);
 		finish_wait(&root->log_writer_wait, &wait);
 	}
-	return 0;
 }
 
 /*
@@ -2157,8 +2180,9 @@ static void free_log_tree(struct btrfs_trans_handle *trans,
 		if (ret)
 			break;
 
-		clear_extent_bits(&log->dirty_log_pages, start, end,
-				  EXTENT_DIRTY | EXTENT_NEW, GFP_NOFS);
+		ret = clear_extent_bits(&log->dirty_log_pages, start, end,
+					EXTENT_DIRTY | EXTENT_NEW, GFP_NOFS);
+		BUG_ON(ret < 0);
 	}
 
 	free_extent_buffer(log->node);
@@ -3145,7 +3169,10 @@ int btrfs_recover_log_trees(struct btrfs_root *log_root_tree)
 	fs_info->log_root_recovering = 1;
 
 	trans = btrfs_start_transaction(fs_info->tree_root, 0);
-	BUG_ON(IS_ERR(trans));
+	if (IS_ERR(trans)) {
+		btrfs_free_path(path);
+		return PTR_ERR(trans);
+	}
 
 	wc.trans = trans;
 	wc.pin = 1;

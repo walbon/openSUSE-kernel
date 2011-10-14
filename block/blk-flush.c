@@ -68,6 +68,7 @@
 #include <linux/module.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
+#include <linux/gfp.h>
 
 #include "blk.h"
 
@@ -193,7 +194,6 @@ static void flush_end_io(struct request *flush_rq, int error)
 {
 	struct request_queue *q = flush_rq->q;
 	struct list_head *running = &q->flush_queue[q->flush_running_idx];
-	bool was_empty = elv_queue_empty(q);
 	bool queued = false;
 	struct request *rq, *n;
 
@@ -222,8 +222,8 @@ static void flush_end_io(struct request *flush_rq, int error)
 	 * directly into request_fn may confuse the driver.  Always use
 	 * kblockd.
 	 */
-	if ((queued && was_empty) || q->flush_queue_delayed)
-		__blk_run_queue(q, true);
+	if (queued || q->flush_queue_delayed)
+		blk_run_queue_async(q);
 	q->flush_queue_delayed = 0;
 }
 
@@ -274,18 +274,20 @@ static bool blk_kick_flush(struct request_queue *q)
 static void flush_data_end_io(struct request *rq, int error)
 {
 	struct request_queue *q = rq->q;
-	bool was_empty = elv_queue_empty(q);
 
-	/* after populating an empty queue, kick it to avoid stall */
-	if (blk_flush_complete_seq(rq, REQ_FSEQ_DATA, error) && was_empty)
-		__blk_run_queue(q, false);
+	/*
+	 * After populating an empty queue, kick it to avoid stall.  Read
+	 * the comment in flush_end_io().
+	 */
+	if (blk_flush_complete_seq(rq, REQ_FSEQ_DATA, error))
+		blk_run_queue_async(q);
 }
 
 /**
  * blk_insert_flush - insert a new FLUSH/FUA request
  * @rq: request to insert
  *
- * To be called from elv_insert() for %ELEVATOR_INSERT_FLUSH insertions.
+ * To be called from __elv_add_request() for %ELEVATOR_INSERT_FLUSH insertions.
  * @rq is being submitted.  Analyze what needs to be done and put it on the
  * right queue.
  *

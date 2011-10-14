@@ -1407,20 +1407,6 @@ UNUSUAL_DEV(  0x0f19, 0x0105, 0x0100, 0x0100,
 		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
 		US_FL_IGNORE_RESIDUE ),
 
-/* Jeremy Katz <katzj@redhat.com>:
- * The Blackberry Pearl can run in two modes; a usb-storage only mode
- * and a mode that allows access via mass storage and to its database.
- * The berry_charge module will set the device to dual mode and thus we
- * should ignore its native mode if that module is built
- */
-#ifdef CONFIG_USB_BERRY_CHARGE
-UNUSUAL_DEV(  0x0fca, 0x0006, 0x0001, 0x0001,
-		"RIM",
-		"Blackberry Pearl",
-		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
-		US_FL_IGNORE_DEVICE ),
-#endif
-
 /* Submitted by Nick Holloway */
 UNUSUAL_DEV( 0x0f88, 0x042e, 0x0100, 0x0100,
 		"VTech",
@@ -2001,6 +1987,16 @@ UNUSUAL_DEV(  0x4146, 0xba01, 0x0100, 0x0100,
 		"Iomega",
 		"Micro Mini 1GB",
 		USB_SC_DEVICE, USB_PR_DEVICE, NULL, US_FL_NOT_LOCKABLE ),
+
+/*
+ * Nick Bowler <nbowler@elliptictech.com>
+ * SCSI stack spams (otherwise harmless) error messages.
+ */
+UNUSUAL_DEV(  0xc251, 0x4003, 0x0100, 0x0100,
+		"Keil Software, Inc.",
+		"V2M MotherBoard",
+		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
+		US_FL_NOT_LOCKABLE),
 
 /* Reported by Andrew Simmons <andrew.simmons@gmail.com> */
 UNUSUAL_DEV(  0xed06, 0x4500, 0x0001, 0x0001,

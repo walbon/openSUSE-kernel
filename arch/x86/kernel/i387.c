@@ -8,6 +8,7 @@
 #include <linux/module.h>
 #include <linux/regset.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 
 #include <asm/sigcontext.h>
 #include <asm/processor.h>
@@ -39,6 +40,7 @@
 
 static unsigned int		mxcsr_feature_mask __read_mostly = 0xffffffffu;
 unsigned int xstate_size;
+EXPORT_SYMBOL_GPL(xstate_size);
 unsigned int sig_xstate_ia32_size = sizeof(struct _fpstate_ia32);
 static struct i387_fxsave_struct fx_scratch __cpuinitdata;
 
@@ -58,62 +60,68 @@ void __cpuinit mxcsr_feature_mask_init(void)
 	stts();
 }
 
-void __cpuinit init_thread_xstate(void)
+static void __cpuinit init_thread_xstate(void)
 {
-	if (!HAVE_HWFP) {
-		xstate_size = sizeof(struct i387_soft_struct);
-		return;
-	}
+	/*
+	 * Note that xstate_size might be overwriten later during
+	 * xsave_init().
+	 */
 
-	if (cpu_has_xsave) {
-		xsave_cntxt_init();
+	if (!HAVE_HWFP) {
+		/*
+		 * Disable xsave as we do not support it if i387
+		 * emulation is enabled.
+		 */
+		setup_clear_cpu_cap(X86_FEATURE_XSAVE);
+		setup_clear_cpu_cap(X86_FEATURE_XSAVEOPT);
+		xstate_size = sizeof(struct i387_soft_struct);
 		return;
 	}
 
 	if (cpu_has_fxsr)
 		xstate_size = sizeof(struct i387_fxsave_struct);
-#ifdef CONFIG_X86_32
 	else
 		xstate_size = sizeof(struct i387_fsave_struct);
-#endif
 }
 
-#ifdef CONFIG_X86_64
 /*
  * Called at bootup to set up the initial FPU state that is later cloned
  * into all processes.
  */
+
 void __cpuinit fpu_init(void)
 {
-	unsigned long oldcr0 = read_cr0();
+	unsigned long cr0;
+	unsigned long cr4_mask = 0;
 
-	set_in_cr4(X86_CR4_OSFXSR);
-	set_in_cr4(X86_CR4_OSXMMEXCPT);
+	if (cpu_has_fxsr)
+		cr4_mask |= X86_CR4_OSFXSR;
+	if (cpu_has_xmm)
+		cr4_mask |= X86_CR4_OSXMMEXCPT;
+	if (cr4_mask)
+		set_in_cr4(cr4_mask);
 
-	write_cr0(oldcr0 & ~(X86_CR0_TS|X86_CR0_EM)); /* clear TS and EM */
+	cr0 = read_cr0();
+	cr0 &= ~(X86_CR0_TS|X86_CR0_EM); /* clear TS and EM */
+	if (!HAVE_HWFP)
+		cr0 |= X86_CR0_EM;
+	write_cr0(cr0);
 
-	/*
-	 * Boot processor to setup the FP and extended state context info.
-	 */
 	if (!smp_processor_id())
 		init_thread_xstate();
-	xsave_init();
 
 	mxcsr_feature_mask_init();
 	/* clean state in init */
 	current_thread_info()->status = 0;
 	clear_used_math();
 }
-#endif	/* CONFIG_X86_64 */
 
 void fpu_finit(struct fpu *fpu)
 {
-#ifdef CONFIG_X86_32
 	if (!HAVE_HWFP) {
 		finit_soft_fpu(&fpu->state->soft);
 		return;
 	}
-#endif
 
 	if (cpu_has_fxsr) {
 		struct i387_fxsave_struct *fx = &fpu->state->fxsave;
@@ -137,7 +145,7 @@ EXPORT_SYMBOL_GPL(fpu_finit);
  * The _current_ task is using the FPU for the first time
  * so initialize it and set the mxcsr to its default
  * value at reset if we support XMM instructions and then
- * remeber the current task has used the FPU.
+ * remember the current task has used the FPU.
  */
 int init_fpu(struct task_struct *tsk)
 {
@@ -161,6 +169,7 @@ int init_fpu(struct task_struct *tsk)
 	set_stopped_child_used_math(tsk);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(init_fpu);
 
 /*
  * The xstateregs_active() routine is the same as the fpregs_active() routine,
@@ -378,19 +387,17 @@ convert_from_fxsr(struct user_i387_ia32_struct *env, struct task_struct *tsk)
 #ifdef CONFIG_X86_64
 	env->fip = fxsave->rip;
 	env->foo = fxsave->rdp;
+	/*
+	 * should be actually ds/cs at fpu exception time, but
+	 * that information is not available in 64bit mode.
+	 */
+	env->fcs = task_pt_regs(tsk)->cs;
 	if (tsk == current) {
-		/*
-		 * should be actually ds/cs at fpu exception time, but
-		 * that information is not available in 64bit mode.
-		 */
-		asm("mov %%ds, %[fos]" : [fos] "=r" (env->fos));
-		asm("mov %%cs, %[fcs]" : [fcs] "=r" (env->fcs));
+		savesegment(ds, env->fos);
 	} else {
-		struct pt_regs *regs = task_pt_regs(tsk);
-
-		env->fos = 0xffff0000 | tsk->thread.ds;
-		env->fcs = regs->cs;
+		env->fos = tsk->thread.ds;
 	}
+	env->fos |= 0xffff0000;
 #else
 	env->fip = fxsave->fip;
 	env->fcs = (u16) fxsave->fcs | ((u32) fxsave->fop << 16);

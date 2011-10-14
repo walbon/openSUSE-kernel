@@ -36,12 +36,6 @@ ACPI_MODULE_NAME("processor_extcntl")
 
 static int processor_extcntl_parse_csd(struct acpi_processor *pr);
 static int processor_extcntl_get_performance(struct acpi_processor *pr);
-/*
- * External processor control logic may register with its own set of
- * ops to get ACPI related notification. One example is like VMM.
- */
-const struct processor_extcntl_ops *processor_extcntl_ops;
-EXPORT_SYMBOL(processor_extcntl_ops);
 
 static int processor_notify_smm(void)
 {
@@ -102,21 +96,6 @@ int processor_notify_external(struct acpi_processor *pr, int event, int type)
 	}
 
 	return ret;
-}
-
-/*
- * External control logic can decide to grab full or part of physical
- * processor control bits. Take a VMM for example, physical processors
- * are owned by VMM and thus existence information like hotplug is
- * always required to be notified to VMM. Similar is processor idle
- * state which is also necessarily controlled by VMM. But for other
- * control bits like performance/throttle states, VMM may choose to
- * control or not upon its own policy.
- */
-void processor_extcntl_init(void)
-{
-	if (!processor_extcntl_ops)
-		arch_acpi_processor_init_extcntl(&processor_extcntl_ops);
 }
 
 /*

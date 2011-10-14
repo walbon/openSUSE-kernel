@@ -33,6 +33,7 @@
 #include <linux/sched.h>
 #include <linux/hardirq.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
@@ -95,7 +96,7 @@ void __init adjust_boot_vcpu_info(void)
 	 * arch_use_lazy_mmu_mode(), though undesirable, is safe except for the
 	 * accesses to variables that were updated in setup_percpu_areas().
 	 */
-	lpte = lookup_address((unsigned long)&per_cpu_var(vcpu_info)
+	lpte = lookup_address((unsigned long)&vcpu_info
 			      + (__per_cpu_load - __per_cpu_start),
 			      &level);
 	rpte = lookup_address((unsigned long)&per_cpu(vcpu_info, 0), &level);
@@ -142,8 +143,8 @@ void __init adjust_boot_vcpu_info(void)
 	 */
 	memcpy(__va(rpfn << PAGE_SHIFT),
 	       __va(lpfn << PAGE_SHIFT),
-	       (unsigned long)&per_cpu_var(vcpu_info) & (PAGE_SIZE - 1));
-	level = (unsigned long)(&per_cpu_var(vcpu_info) + 1) & (PAGE_SIZE - 1);
+	       (unsigned long)&vcpu_info & (PAGE_SIZE - 1));
+	level = (unsigned long)(&vcpu_info + 1) & (PAGE_SIZE - 1);
 	if (level)
 		memcpy(__va(rpfn << PAGE_SHIFT) + level,
 		       __va(lpfn << PAGE_SHIFT) + level,
@@ -976,9 +977,9 @@ void xen_destroy_contiguous_region(unsigned long vstart, unsigned int order)
 			unsigned int j = 0;
 
 			if (!page) {
-				pr_warning("Xen and kernel out of memory"
-					   " while trying to release an order"
-					   " %u contiguous region\n", order);
+				pr_warn("Xen and kernel out of memory"
+					" while trying to release an order"
+					" %u contiguous region\n", order);
 				break;
 			}
 			pfn = page_to_pfn(page);

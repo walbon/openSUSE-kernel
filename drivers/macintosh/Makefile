@@ -4,8 +4,6 @@
 
 # Each configuration option enables a list of files.
 
-obj-$(CONFIG_MACONLINUX)	+= mol/
-
 obj-$(CONFIG_PPC_PMAC)		+= macio_asic.o macio_sysfs.o
 
 obj-$(CONFIG_PMAC_MEDIABAY)	+= mediabay.o
@@ -50,3 +48,5 @@ obj-$(CONFIG_WINDFARM_PM121)	+= windfarm_pm121.o windfarm_smu_sat.o \
 				   windfarm_max6690_sensor.o \
 				   windfarm_lm75_sensor.o windfarm_pid.o
 obj-$(CONFIG_PMAC_RACKMETER)	+= rack-meter.o
+
+obj-$(CONFIG_SENSORS_AMS)	+= ams/

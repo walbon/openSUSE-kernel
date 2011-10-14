@@ -6,6 +6,7 @@
 #include <linux/acpi.h>
 #include <linux/bcd.h>
 #include <linux/pnp.h>
+#include <linux/of.h>
 
 #include <asm/vsyscall.h>
 #include <asm/x86_init.h>
@@ -77,7 +78,7 @@ int mach_set_rtc_mmss(unsigned long nowtime)
 		CMOS_WRITE(real_seconds, RTC_SECONDS);
 		CMOS_WRITE(real_minutes, RTC_MINUTES);
 	} else {
-		printk(KERN_WARNING
+		printk_once(KERN_NOTICE
 		       "set_rtc_mmss: can't update from %d to %d\n",
 		       cmos_minutes, real_minutes);
 		retval = -1;
@@ -239,6 +240,8 @@ static __init int add_rtc_cmos(void)
 		}
 	}
 #endif
+	if (of_have_populated_dt())
+		return 0;
 
 #ifdef CONFIG_XEN
 	if (!is_initial_xendomain())

@@ -12,53 +12,14 @@
 #include <linux/string.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/nmi.h>
 #include <asm/system.h>
-#include <linux/unwind.h>
-#ifdef CONFIG_X86_32
-#include "../arch/x86/kernel/dumpstack.h"
-#endif
 
-#ifdef CONFIG_X86_64
-static void
-kdb_dump_trace_unwind (struct unwind_frame_info *info)
-{
-	unsigned long sp = UNW_SP(info);
-
-	if (info && info->regs.ip) {
-		/* vsnprintf: %pS output the name of a symbol with offset */
-		kdb_printf(" [<%p>] %pS\n",
-			(void *)info->regs.ip, (void *)info->regs.ip);
-	}
-	while (unwind(info) == 0 && UNW_PC(info)) {
-		kdb_printf(" [<%p>] %pS\n",
-			(void *)UNW_PC(info), (void *)UNW_PC(info));
-		if ((sp & ~(PAGE_SIZE - 1)) == (UNW_SP(info) & ~(PAGE_SIZE - 1))
-		    && sp > UNW_SP(info))
-			break;
-		sp = UNW_SP(info);
-	}
-}
-
-static void
-kdb_stack_unwind(struct task_struct *task, struct pt_regs *regs)
-{
-	struct unwind_frame_info info;
-	if (regs) {
-		if (unwind_init_frame_info(&info, task, regs))
-			return;
-	} else {
-		if (unwind_init_blocked(&info, task))
-			return;
-	}
-	kdb_dump_trace_unwind(&info);
-}
-#endif
 
 /*
- * kdb_bt
+ * lkdb_bt
  *
  *	This function implements the 'bt' command.  Print a stack
  *	traceback.
@@ -94,57 +55,56 @@ kdb_stack_unwind(struct task_struct *task, struct pt_regs *regs)
 static int kdb_show_stack(struct task_struct *p, void *addr, int argcount)
 {
 	/* Use KDB arch-specific backtraces for ia64 */
-#if defined(CONFIG_IA64)
+#ifdef CONFIG_IA64
 	return kdba_bt_process(p, argcount);
-#elif defined(CONFIG_X86_64)
+#else
 	/* Use the in-kernel backtraces */
 	int old_lvl = console_loglevel;
 	console_loglevel = 15;
-	kdb_trap_printk++;
 	kdba_set_current_task(p);
-	if (addr)
-		show_stack((struct task_struct *)p, addr);
-	else
-		kdb_stack_unwind(p, kdb_current_regs);
-	console_loglevel = old_lvl;
-	kdb_trap_printk--;
-	return 0;
-#else /* CONFIG_X86_32 */
-	int old_lvl = console_loglevel;
 	if (addr) {
-		show_stack_log_lvl((struct task_struct *)p, kdb_current_regs,
-				addr, 0, "");
-	} else if (kdb_current_regs) {
-		show_stack_log_lvl(p, kdb_current_regs, &kdb_current_regs->sp, 0, "");
+		show_stack((struct task_struct *)p, addr);
+		if (lkdb_current_regs)
+			kdba_dumpregs(lkdb_current_regs, NULL, NULL);
+	} else if (lkdb_current_regs) {
+#ifdef CONFIG_X86
+		show_stack(p, &lkdb_current_regs->sp);
+		if (lkdb_current_regs)
+			kdba_dumpregs(lkdb_current_regs, NULL, NULL);
+#else
+		show_stack(p, NULL);
+		if (lkdb_current_regs)
+			kdba_dumpregs(lkdb_current_regs, NULL, NULL);
+#endif
 	} else {
-		show_stack_log_lvl(p, kdb_current_regs, NULL, 0, "");
+		show_stack(p, NULL);
+		if (lkdb_current_regs)
+			kdba_dumpregs(lkdb_current_regs, NULL, NULL);
 	}
 	console_loglevel = old_lvl;
-	kdb_trap_printk--;
 	return 0;
-#endif
+#endif /* CONFIG_IA64 */
 }
 
 
 static int
-kdb_bt1(struct task_struct *p, unsigned long mask, int argcount, int btaprompt)
+lkdb_bt1(struct task_struct *p, unsigned long mask, int argcount, int btaprompt)
 {
 	int diag;
 	char buffer[2];
-	if (kdb_getarea(buffer[0], (unsigned long)p) ||
-	    kdb_getarea(buffer[0], (unsigned long)(p+1)-1))
-		return KDB_BADADDR;
-	if (!kdb_task_state(p, mask))
+	if (lkdb_getarea(buffer[0], (unsigned long)p) ||
+	    lkdb_getarea(buffer[0], (unsigned long)(p+1)-1))
+		return LKDB_BADADDR;
+	if (!lkdb_task_state(p, mask))
 		return 0;
-	kdb_printf("Stack traceback for pid %d\n", p->pid);
-	kdb_ps1(p);
+	lkdb_printf("Stack traceback for pid %d\n", p->pid);
+	lkdb_ps1(p);
 	diag = kdb_show_stack(p, NULL, argcount);
 	if (btaprompt) {
-		kdb_getstr(buffer, sizeof(buffer), "Enter <q> to end, <cr> to continue:");
-		if (buffer[0] == 'q' || buffer[0] == 'Q') {
-			KDB_FLAG_SET(CMD_INTERRUPT);
-			KDB_STATE_CLEAR(PAGER);
-			kdb_printf("\n");
+		lkdb_getstr(buffer, sizeof(buffer),
+			"Enter <q> to end, <cr> to continue:");
+		if (buffer[0] == 'q') {
+			lkdb_printf("\n");
 			return 1;
 		}
 	}
@@ -153,7 +113,7 @@ kdb_bt1(struct task_struct *p, unsigned long mask, int argcount, int btaprompt)
 }
 
 int
-kdb_bt(int argc, const char **argv)
+lkdb_bt(int argc, const char **argv)
 {
 	int diag;
 	int argcount = 5;
@@ -162,80 +122,78 @@ kdb_bt(int argc, const char **argv)
 	unsigned long addr;
 	long offset;
 
-	kdbgetintenv("BTARGS", &argcount);	/* Arguments to print */
-	kdbgetintenv("BTAPROMPT", &btaprompt);	/* Prompt after each proc in bta */
+	lkdbgetintenv("BTARGS", &argcount);	/* Arguments to print */
+	lkdbgetintenv("BTAPROMPT", &btaprompt);	/* Prompt after each proc in bta */
 
 	if (strcmp(argv[0], "bta") == 0) {
 		struct task_struct *g, *p;
 		unsigned long cpu;
-		unsigned long mask = kdb_task_state_string(argc ? argv[1] : NULL);
+		unsigned long mask = lkdb_task_state_string(argc ? argv[1] : NULL);
 		if (argc == 0)
-			kdb_ps_suppressed();
+			lkdb_ps_suppressed();
 		/* Run the active tasks first */
 		for (cpu = 0; cpu < NR_CPUS; ++cpu) {
 			if (!cpu_online(cpu))
 				continue;
-			p = kdb_curr_task(cpu);
-			if (kdb_bt1(p, mask, argcount, btaprompt))
+			p = lkdb_curr_task(cpu);
+			if (lkdb_bt1(p, mask, argcount, btaprompt))
 				return 0;
 		}
 		/* Now the inactive tasks */
-		kdb_do_each_thread(g, p) {
+		lkdb_do_each_thread(g, p) {
 			if (task_curr(p))
 				continue;
-			if (kdb_bt1(p, mask, argcount, btaprompt))
+			if (lkdb_bt1(p, mask, argcount, btaprompt))
 				return 0;
-		} kdb_while_each_thread(g, p);
+		} lkdb_while_each_thread(g, p);
 	} else if (strcmp(argv[0], "btp") == 0) {
 		struct task_struct *p;
 		unsigned long pid;
 		if (argc != 1)
-			return KDB_ARGCOUNT;
-		if ((diag = kdbgetularg((char *)argv[1], &pid)))
+			return LKDB_ARGCOUNT;
+		if ((diag = lkdbgetularg((char *)argv[1], &pid)))
 			return diag;
 		if ((p = find_task_by_pid_ns(pid, &init_pid_ns))) {
 			kdba_set_current_task(p);
-			return kdb_bt1(p, ~0UL, argcount, 0);
+			return lkdb_bt1(p, ~0UL, argcount, 0);
 		}
-		kdb_printf("No process with pid == %ld found\n", pid);
+		lkdb_printf("No process with pid == %ld found\n", pid);
 		return 0;
 	} else if (strcmp(argv[0], "btt") == 0) {
 		if (argc != 1)
-			return KDB_ARGCOUNT;
-		if ((diag = kdbgetularg((char *)argv[1], &addr)))
+			return LKDB_ARGCOUNT;
+		if ((diag = lkdbgetularg((char *)argv[1], &addr)))
 			return diag;
 		kdba_set_current_task((struct task_struct *)addr);
-		return kdb_bt1((struct task_struct *)addr, ~0UL, argcount, 0);
+		return lkdb_bt1((struct task_struct *)addr, ~0UL, argcount, 0);
 	} else if (strcmp(argv[0], "btc") == 0) {
 		unsigned long cpu = ~0;
-		struct kdb_running_process *krp;
-		struct task_struct *save_current_task = kdb_current_task;
+		struct lkdb_running_process *krp;
+		struct task_struct *save_current_task = lkdb_current_task;
 		char buf[80];
 		if (argc > 1)
-			return KDB_ARGCOUNT;
-		if (argc == 1 && (diag = kdbgetularg((char *)argv[1], &cpu)))
+			return LKDB_ARGCOUNT;
+		if (argc == 1 && (diag = lkdbgetularg((char *)argv[1], &cpu)))
 			return diag;
-		/* Recursive use of kdb_parse, do not use argv after this point */
+		/* Recursive use of lkdb_parse, do not use argv after this point */
 		argv = NULL;
 		if (cpu != ~0) {
-			krp = kdb_running_process + cpu;
+			krp = lkdb_running_process + cpu;
 			if (cpu >= NR_CPUS || !krp->seqno || !cpu_online(cpu)) {
-				kdb_printf("no process for cpu %ld\n", cpu);
+				lkdb_printf("no process for cpu %ld\n", cpu);
 				return 0;
 			}
 			sprintf(buf, "btt 0x%p\n", krp->p);
-			kdb_parse(buf);
+			lkdb_parse(buf);
 			return 0;
 		}
-		kdb_printf("btc: cpu status: ");
-		kdb_parse("cpu\n");
-		for (cpu = 0, krp = kdb_running_process; cpu < NR_CPUS; ++cpu, ++krp) {
-			if (KDB_FLAG(CMD_INTERRUPT))
-				break;
+		lkdb_printf("btc: cpu status: ");
+		lkdb_parse("cpu\n");
+		for (cpu = 0, krp = lkdb_running_process; cpu < NR_CPUS; ++cpu, ++krp) {
 			if (!cpu_online(cpu) || !krp->seqno)
 				continue;
 			sprintf(buf, "btt 0x%p\n", krp->p);
-			kdb_parse(buf);
+			lkdb_parse(buf);
 			touch_nmi_watchdog();
 		}
 		kdba_set_current_task(save_current_task);
@@ -243,14 +201,13 @@ kdb_bt(int argc, const char **argv)
 	} else {
 		if (argc) {
 			nextarg = 1;
-			diag = kdbgetaddrarg(argc, argv, &nextarg, &addr,
+			diag = lkdbgetaddrarg(argc, argv, &nextarg, &addr,
 					     &offset, NULL);
 			if (diag)
 				return diag;
-			return kdb_show_stack(kdb_current_task, (void *)addr,
-					argcount);
+			return kdb_show_stack(lkdb_current_task, (void *)addr, argcount);
 		} else {
-			return kdb_bt1(kdb_current_task, ~0UL, argcount, 0);
+			return lkdb_bt1(lkdb_current_task, ~0UL, argcount, 0);
 		}
 	}
 

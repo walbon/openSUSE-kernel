@@ -48,12 +48,13 @@ struct btrfs_device {
 	int writeable;
 	int in_fs_metadata;
 	int missing;
+	int can_discard;
 
 	spinlock_t io_lock;
 
 	struct block_device *bdev;
 
-	/* the mode sent to open_bdev_exclusive */
+	/* the mode sent to blkdev_get */
 	fmode_t mode;
 
 	char *name;
@@ -104,6 +105,7 @@ struct btrfs_fs_devices {
 	u64 rw_devices;
 	u64 missing_devices;
 	u64 total_rw_bytes;
+	u64 num_can_discard;
 	struct block_device *latest_bdev;
 
 	/* all of the devices in the FS, protected by a mutex
@@ -195,15 +197,13 @@ int btrfs_open_devices(struct btrfs_fs_devices *fs_devices,
 int btrfs_scan_one_device(const char *path, fmode_t flags, void *holder,
 			  struct btrfs_fs_devices **fs_devices_ret);
 int btrfs_close_devices(struct btrfs_fs_devices *fs_devices);
-int btrfs_close_extra_devices(struct btrfs_fs_devices *fs_devices);
+void btrfs_close_extra_devices(struct btrfs_fs_devices *fs_devices);
 int btrfs_add_device(struct btrfs_trans_handle *trans,
 		     struct btrfs_root *root,
 		     struct btrfs_device *device);
 int btrfs_rm_device(struct btrfs_root *root, char *device_path);
-int btrfs_cleanup_fs_uuids(void);
+void btrfs_cleanup_fs_uuids(void);
 int btrfs_num_copies(struct btrfs_mapping_tree *map_tree, u64 logical, u64 len);
-int btrfs_unplug_page(struct btrfs_mapping_tree *map_tree,
-		      u64 logical, struct page *page);
 int btrfs_grow_device(struct btrfs_trans_handle *trans,
 		      struct btrfs_device *device, u64 new_size);
 struct btrfs_device *btrfs_find_device(struct btrfs_root *root, u64 devid,

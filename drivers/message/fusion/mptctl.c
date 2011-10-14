@@ -54,7 +54,7 @@
 #include <linux/pci.h>
 #include <linux/delay.h>	/* for mdelay */
 #include <linux/miscdevice.h>
-#include <linux/smp_lock.h>
+#include <linux/mutex.h>
 #include <linux/compat.h>
 
 #include <asm/io.h>
@@ -92,6 +92,7 @@ MODULE_VERSION(my_VERSION);
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 
+static DEFINE_MUTEX(mptctl_mutex);
 static u8 mptctl_id = MPT_MAX_PROTOCOL_DRIVERS;
 static u8 mptctl_taskmgmt_id = MPT_MAX_PROTOCOL_DRIVERS;
 
@@ -405,16 +406,16 @@ mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
 		pScsiTm->Reserved2[ii] = 0;
 
 	switch (ioc->bus_type) {
-		case FC:
-			timeout = 40;
-			break;
-		case SAS:
-			timeout = 30;
-			break;
-		case SPI:
-		default:
-			timeout = 10;
-			break;
+	case FC:
+		timeout = 40;
+		break;
+	case SAS:
+		timeout = 30;
+		break;
+	case SPI:
+	default:
+		timeout = 10;
+		break;
 	}
 
 	dtmprintk(ioc,
@@ -428,7 +429,7 @@ mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
 		mpt_put_msg_frame_hi_pri(mptctl_taskmgmt_id, ioc, mf);
 	else {
 		retval = mpt_send_handshake_request(mptctl_taskmgmt_id, ioc,
-		    sizeof(SCSITaskMgmt_t), (u32*)pScsiTm, CAN_SLEEP);
+		    sizeof(SCSITaskMgmt_t), (u32 *)pScsiTm, CAN_SLEEP);
 		if (retval != 0) {
 			dfailprintk(ioc,
 				printk(MYIOC_s_ERR_FMT
@@ -504,7 +505,7 @@ mptctl_timeout_expired(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf)
 	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT ": %s\n",
 		ioc->name, __FUNCTION__));
 
-	if(mpt_fwfault_debug)
+	if (mpt_fwfault_debug)
 		mpt_halt_firmware(ioc);
 
 	spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
@@ -542,8 +543,7 @@ mptctl_timeout_expired(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf)
 
 	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT "Calling Reset! \n",
 		 ioc->name));
-	if (mpt_SoftResetHandler(ioc, CAN_SLEEP) != 0)
-		mpt_HardResetHandler(ioc, CAN_SLEEP);
+	mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 	mpt_free_msg_frame(ioc, mf);
 }
 
@@ -631,20 +631,25 @@ mptctl_event_process(MPT_ADAPTER *ioc, EventNotificationReply_t *pEvReply)
 }
 
 static int
-mptctl_fasync(int fd, struct file *filep, int mode)
+mptctl_release(struct inode *inode, struct file *filep)
 {
-	MPT_ADAPTER	*ioc;
-
-	list_for_each_entry(ioc, &ioc_list, list)
-		ioc->aen_event_read_flag=0;
-
-	return fasync_helper(fd, filep, mode, &async_queue);
+	fasync_helper(-1, filep, 0, &async_queue);
+	return 0;
 }
 
 static int
-mptctl_release(struct inode *inode, struct file *filep)
+mptctl_fasync(int fd, struct file *filep, int mode)
 {
-	return fasync_helper(-1, filep, 0, &async_queue);
+	MPT_ADAPTER	*ioc;
+	int ret;
+
+	mutex_lock(&mptctl_mutex);
+	list_for_each_entry(ioc, &ioc_list, list)
+		ioc->aen_event_read_flag=0;
+
+	ret = fasync_helper(fd, filep, mode, &async_queue);
+	mutex_unlock(&mptctl_mutex);
+	return ret;
 }
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
@@ -663,7 +668,6 @@ __mptctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int nonblock = (file->f_flags & O_NONBLOCK);
 	int ret;
 	MPT_ADAPTER *iocp = NULL;
-
 
 	if (copy_from_user(&khdr, uhdr, sizeof(khdr))) {
 		printk(KERN_ERR MYNAM "%s::mptctl_ioctl() @%d - "
@@ -802,9 +806,9 @@ static long
 mptctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	long ret;
-	lock_kernel();
+	mutex_lock(&mptctl_mutex);
 	ret = __mptctl_ioctl(file, cmd, arg);
-	unlock_kernel();
+	mutex_unlock(&mptctl_mutex);
 	return ret;
 }
 
@@ -2997,7 +3001,7 @@ compat_mpt_command(struct file *filp, unsigned int cmd,
 static long compat_mpctl_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
 	long ret;
-	lock_kernel();
+	mutex_lock(&mptctl_mutex);
 	switch (cmd) {
 	case MPTIOCINFO:
 	case MPTIOCINFO1:
@@ -3047,7 +3051,7 @@ static long compat_mpctl_ioctl(struct file *f, unsigned int cmd, unsigned long a
 		ret = -ENOIOCTLCMD;
 		break;
 	}
-	unlock_kernel();
+	mutex_unlock(&mptctl_mutex);
 	return ret;
 }
 

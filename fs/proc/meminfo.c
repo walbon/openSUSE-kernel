@@ -174,9 +174,9 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 }
 
 #ifdef	CONFIG_KDB
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
-/* Like meminfo_proc_show() but without the locks and using kdb_printf() */
+/* Like meminfo_proc_show() but without the locks and using lkdb_printf() */
 void
 kdb_meminfo_proc_show(void)
 {
@@ -193,7 +193,7 @@ kdb_meminfo_proc_show(void)
  */
 #define K(x) ((x) << (PAGE_SHIFT - 10))
 	si_meminfo(&i);
-	kdb_si_swapinfo(&i);
+	_si_swapinfo(&i);
 	committed = percpu_counter_read_positive(&vm_committed_as);
 	allowed = ((totalram_pages - hugetlb_total_pages())
 		* sysctl_overcommit_ratio / 100) + total_swap_pages;
@@ -208,7 +208,7 @@ kdb_meminfo_proc_show(void)
 	for (lru = LRU_BASE; lru < NR_LRU_LISTS; lru++)
 		pages[lru] = global_page_state(NR_LRU_BASE + lru);
 
-	kdb_printf(
+	lkdb_printf(
 		"MemTotal:       %8lu kB\n"
 		"MemFree:        %8lu kB\n"
 		"Buffers:        %8lu kB\n",
@@ -216,7 +216,7 @@ kdb_meminfo_proc_show(void)
 		K(i.freeram),
 		K(i.bufferram)
 		);
-	kdb_printf(
+	lkdb_printf(
 		"Cached:         %8lu kB\n"
 		"SwapCached:     %8lu kB\n"
 		"Active:         %8lu kB\n"
@@ -226,7 +226,7 @@ kdb_meminfo_proc_show(void)
 		K(pages[LRU_ACTIVE_ANON]   + pages[LRU_ACTIVE_FILE]),
                 K(pages[LRU_INACTIVE_ANON] + pages[LRU_INACTIVE_FILE])
 		);
-	kdb_printf(
+	lkdb_printf(
 		"Active(anon):   %8lu kB\n"
 		"Inactive(anon): %8lu kB\n"
 		"Active(file):   %8lu kB\n"
@@ -237,7 +237,7 @@ kdb_meminfo_proc_show(void)
 		K(pages[LRU_INACTIVE_FILE])
 		);
 #ifdef CONFIG_UNEVICTABLE_LRU
-	kdb_printf(
+	lkdb_printf(
 		"Unevictable:    %8lu kB\n"
 		"Mlocked:        %8lu kB\n",
 		K(pages[LRU_UNEVICTABLE]),
@@ -245,7 +245,7 @@ kdb_meminfo_proc_show(void)
 		);
 #endif
 #ifdef CONFIG_HIGHMEM
-	kdb_printf(
+	lkdb_printf(
 		"HighTotal:      %8lu kB\n"
 		"HighFree:       %8lu kB\n"
 		"LowTotal:       %8lu kB\n"
@@ -256,7 +256,7 @@ kdb_meminfo_proc_show(void)
 		K(i.freeram-i.freehigh)
 		);
 #endif
-	kdb_printf(
+	lkdb_printf(
 		"SwapTotal:      %8lu kB\n"
 		"SwapFree:       %8lu kB\n"
 		"Dirty:          %8lu kB\n",
@@ -264,7 +264,7 @@ kdb_meminfo_proc_show(void)
 		K(i.freeswap),
 		K(global_page_state(NR_FILE_DIRTY))
 		);
-	kdb_printf(
+	lkdb_printf(
 		"Writeback:      %8lu kB\n"
 		"AnonPages:      %8lu kB\n"
 		"Mapped:         %8lu kB\n",
@@ -272,7 +272,7 @@ kdb_meminfo_proc_show(void)
 		K(global_page_state(NR_ANON_PAGES)),
 		K(global_page_state(NR_FILE_MAPPED))
 		);
-	kdb_printf(
+	lkdb_printf(
 		"Slab:           %8lu kB\n"
 		"SReclaimable:   %8lu kB\n"
 		"SUnreclaim:     %8lu kB\n",
@@ -281,7 +281,7 @@ kdb_meminfo_proc_show(void)
 		K(global_page_state(NR_SLAB_RECLAIMABLE)),
 		K(global_page_state(NR_SLAB_UNRECLAIMABLE))
 		);
-	kdb_printf(
+	lkdb_printf(
 		"PageTables:     %8lu kB\n"
 #ifdef CONFIG_QUICKLIST
 		"Quicklists:     %8lu kB\n"
@@ -295,7 +295,7 @@ kdb_meminfo_proc_show(void)
 		K(global_page_state(NR_UNSTABLE_NFS)),
 		K(global_page_state(NR_BOUNCE))
 		);
-	kdb_printf(
+	lkdb_printf(
 		"WritebackTmp:   %8lu kB\n"
 		"CommitLimit:    %8lu kB\n"
 		"Committed_AS:   %8lu kB\n",
@@ -303,7 +303,7 @@ kdb_meminfo_proc_show(void)
 		K(allowed),
 		K(committed)
 		);
-	kdb_printf(
+	lkdb_printf(
 		"VmallocTotal:   %8lu kB\n"
 		"VmallocUsed:    %8lu kB\n"
 		"VmallocChunk:   %8lu kB\n",

@@ -187,9 +187,9 @@ static int pmsr_device_create(unsigned int cpu)
 		if ((minor_bias + cpu) >> MINORBITS) {
 			if (!warned) {
 				warned = true;
-				pr_warning("Physical MSRs of CPUs beyond %u"
-					   " will not be accessible\n",
-					   MINORMASK - minor_bias);
+				pr_warn("Physical MSRs of CPUs beyond %u"
+					" will not be accessible\n",
+					MINORMASK - minor_bias);
 			}
 			return -EDOM;
 		}
@@ -199,9 +199,9 @@ static int pmsr_device_create(unsigned int cpu)
 		if (!map) {
 			if (!warned) {
 				warned = true;
-				pr_warning("Physical MSRs of CPUs beyond %u"
-					   " may not be accessible\n",
-					   nr_xen_cpu_ids - 1);
+				pr_warn("Physical MSRs of CPUs beyond %u"
+					" may not be accessible\n",
+					nr_xen_cpu_ids - 1);
 			}
 			return -ENOMEM;
 		}
@@ -255,16 +255,14 @@ static char *pmsr_devnode(struct device *dev, mode_t *mode)
 static int __init msr_init(void)
 {
 	int err;
-	xen_platform_op_t op = {
-		.cmd                   = XENPF_get_cpuinfo,
-		.interface_version     = XENPF_INTERFACE_VERSION,
-		.u.pcpu_info.xen_cpuid = 0
-	};
+	xen_platform_op_t op;
 
 	err = _msr_init();
 	if (err || !is_initial_xendomain())
 		return err;
 
+	op.cmd = XENPF_get_cpuinfo;
+	op.u.pcpu_info.xen_cpuid = 0;
 	do {
 		err = HYPERVISOR_platform_op(&op);
 	} while (err == -EBUSY);
@@ -314,8 +312,8 @@ out_chrdev:
 			    MINORMASK + 1 - minor_bias, "pcpu/msr");
 out:
 	if (err)
-		pr_warning("msr: can't initialize physical MSR access (%d)\n",
-			   err);
+		pr_warn("msr: can't initialize physical MSR access (%d)\n",
+			err);
 	nr_xen_cpu_ids = 0;
 	kfree(xen_cpu_online_map);
 	return 0;
@@ -327,7 +325,7 @@ static void __exit msr_exit(void)
 		unsigned int cpu = 0;
 
 		unregister_pcpu_notifier(&pmsr_cpu_notifier);
-		for_each_bit(cpu, xen_cpu_online_map, nr_xen_cpu_ids)
+		for_each_set_bit(cpu, xen_cpu_online_map, nr_xen_cpu_ids)
 			pmsr_device_destroy(cpu);
 		class_destroy(pmsr_class);
 		__unregister_chrdev(MSR_MAJOR, minor_bias,

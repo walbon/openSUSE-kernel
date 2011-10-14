@@ -22,6 +22,7 @@
 #include <linux/if_packet.h>
 #include <linux/if_arp.h>
 #include <linux/if_tun.h>
+#include <linux/if_macvlan.h>
 
 #include <net/sock.h>
 
@@ -129,7 +130,8 @@ static void handle_tx(struct vhost_net *net)
 	size_t hdr_size;
 	struct socket *sock;
 
-	sock = rcu_dereference(vq->private_data);
+	/* TODO: check that we are running from vhost_worker? */
+	sock = rcu_dereference_check(vq->private_data, 1);
 	if (!sock)
 		return;
 
@@ -307,7 +309,7 @@ static void handle_rx(struct vhost_net *net)
 	size_t vhost_hlen, sock_hlen;
 	size_t vhost_len, sock_len;
 	/* TODO: check that we are running from vhost_worker? */
-	struct socket *sock = rcu_dereference(vq->private_data);
+	struct socket *sock = rcu_dereference_check(vq->private_data, 1);
 
 	if (!sock)
 		return;
@@ -468,7 +470,8 @@ static void vhost_net_enable_vq(struct vhost_net *n,
 {
 	struct socket *sock;
 
-	sock = vq->private_data;
+	sock = rcu_dereference_protected(vq->private_data,
+					 lockdep_is_held(&vq->mutex));
 	if (!sock)
 		return;
 	if (vq == n->vqs + VHOST_NET_VQ_TX) {
@@ -484,7 +487,8 @@ static struct socket *vhost_net_stop_vq(struct vhost_net *n,
 	struct socket *sock;
 
 	mutex_lock(&vq->mutex);
-	sock = vq->private_data;
+	sock = rcu_dereference_protected(vq->private_data,
+					 lockdep_is_held(&vq->mutex));
 	vhost_net_disable_vq(n, vq);
 	rcu_assign_pointer(vq->private_data, NULL);
 	mutex_unlock(&vq->mutex);
@@ -563,7 +567,7 @@ err:
 	return ERR_PTR(r);
 }
 
-static struct socket *get_tun_socket(int fd)
+static struct socket *get_tap_socket(int fd)
 {
 	struct file *file = fget(fd);
 	struct socket *sock;
@@ -571,6 +575,9 @@ static struct socket *get_tun_socket(int fd)
 	if (!file)
 		return ERR_PTR(-EBADF);
 	sock = tun_get_socket(file);
+	if (!IS_ERR(sock))
+		return sock;
+	sock = macvtap_get_socket(file);
 	if (IS_ERR(sock))
 		fput(file);
 	return sock;
@@ -586,7 +593,7 @@ static struct socket *get_socket(int fd)
 	sock = get_raw_socket(fd);
 	if (!IS_ERR(sock))
 		return sock;
-	sock = get_tun_socket(fd);
+	sock = get_tap_socket(fd);
 	if (!IS_ERR(sock))
 		return sock;
 	return ERR_PTR(-ENOTSOCK);
@@ -622,7 +629,8 @@ static long vhost_net_set_backend(struct vhost_net *n, unsigned index, int fd)
 	}
 
 	/* start polling new socket */
-	oldsock = vq->private_data;
+	oldsock = rcu_dereference_protected(vq->private_data,
+					    lockdep_is_held(&vq->mutex));
 	if (sock != oldsock) {
 		vhost_net_disable_vq(n, vq);
 		rcu_assign_pointer(vq->private_data, sock);
@@ -749,7 +757,7 @@ static long vhost_net_compat_ioctl(struct file *f, unsigned int ioctl,
 }
 #endif
 
-const static struct file_operations vhost_net_fops = {
+static const struct file_operations vhost_net_fops = {
 	.owner          = THIS_MODULE,
 	.release        = vhost_net_release,
 	.unlocked_ioctl = vhost_net_ioctl,
@@ -757,6 +765,7 @@ const static struct file_operations vhost_net_fops = {
 	.compat_ioctl   = vhost_net_compat_ioctl,
 #endif
 	.open           = vhost_net_open,
+	.llseek		= noop_llseek,
 };
 
 static struct miscdevice vhost_net_misc = {

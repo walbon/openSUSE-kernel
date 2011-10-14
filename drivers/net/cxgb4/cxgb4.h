@@ -44,7 +44,6 @@
 #include <linux/spinlock.h>
 #include <linux/timer.h>
 #include <asm/io.h>
-#include "cxgb4_compat.h"
 #include "cxgb4_uld.h"
 #include "t4_hw.h"
 
@@ -282,7 +281,6 @@ struct sge_rspq;
 
 struct port_info {
 	struct adapter *adapter;
-	struct vlan_group *vlan_grp;
 	u16    viid;
 	s16    xact_addr_filt;        /* index of exact MAC address filter */
 	u16    rss_size;              /* size of VI's RSS table slice */
@@ -292,18 +290,11 @@ struct port_info {
 	u8     port_id;
 	u8     tx_chan;
 	u8     lport;                 /* associated offload logical port */
-	u8     rx_offload;            /* CSO, etc */
 	u8     nqsets;                /* # of qsets */
 	u8     first_qset;            /* index of first qset */
 	u8     rss_mode;
 	struct link_config link_cfg;
-	struct net_device_stats netstats;
 	u16   *rss;
-};
-
-/* port_info.rx_offload flags */
-enum {
-	RX_CSO = 1 << 0,
 };
 
 struct dentry;

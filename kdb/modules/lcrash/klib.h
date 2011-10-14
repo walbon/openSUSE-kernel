@@ -26,32 +26,6 @@
 #ifndef __KLIB_H
 #define __KLIB_H
 
-/* Include header files
- */
-#if 0
- /* cpw: don't include all this: */
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <time.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <fcntl.h>
-#include <string.h>
-#include <setjmp.h>
-#include <strings.h>
-#include <errno.h>
-#include <ctype.h>
-#include <bfd.h>
-#include <assert.h>
-#endif
-
-/* cpw: change all the below includes form the < > form to " " */
-
 /* Include libutil header
  */
 #include "kl_lib.h"
@@ -278,38 +252,6 @@
 #define KL_LINUX_RELEASE        KLP->dump->mem.linux_release
 #define KL_KERNEL_FLAGS         KLP->dump->mem.kernel_flags
 
-#if 0
-/* cpw: don't need all this dump file stuff: */
-/* macros to access input files */
-#define KL_MAP_FILE       KLP->dump->map
-#define KL_DUMP_FILE      KLP->dump->dump
-#define KL_KERNTYPES_FILE KLP->kerntypes
-
-#define CORE_IS_KMEM (KL_CORE_TYPE == dev_kmem)
-#define CORE_IS_DUMP ((KL_CORE_TYPE > dev_kmem) && (KL_CORE_TYPE <= unk_core))
-
-
-/* Generic dump header structure (the first three members of
- * dump_header and dump_header_asm are the same).
- */
-typedef struct generic_dump_header_s {
-        uint64_t        magic_number;
-        uint32_t        version;
-        uint32_t        header_size;
-} generic_dump_header_t;
-
-/* Some macros for making it easier to access the generic header
- * information in a dump_header or dump_header_asm stuct.
- */
-#define DHP(dh)                 ((generic_dump_header_t*)(dh))
-#define DH_MAGIC(dh)            DHP(dh)->magic_number
-#define DH_VERSION(dh)          DHP(dh)->version
-#define DH_HEADER_SIZE(dh)      DHP(dh)->header_size
-
-extern kl_dump_header_t *DUMP_HEADER;
-extern void *DUMP_HEADER_ASM;
-#endif
-
 /* Struct to store some host architecture specific values
  */
 typedef struct kl_hostarch_s {
@@ -360,13 +302,6 @@ extern klib_t *KLP;
 #define PGLIST_DATA_SZ    (KLP->dump->mem.struct_sizes.pglist_data_sz)
 #define RUNQUEUE_SZ       (KLP->dump->mem.struct_sizes.runqueue_sz)
 
-#if 0
-cpw: used for sial?
-/* klib_jbuf has to be defined outside libklib.
- * Make sure to call setjmp(klib_jbuf) BEFORE kl_sig_setup() is called! */
-extern jmp_buf klib_jbuf;
-#endif
-
 /* Macros that eliminate the offset paramaters to the kl_uint() and kl_int()
  * functions (just makes things cleaner looking)
  */
@@ -404,7 +339,6 @@ extern jmp_buf klib_jbuf;
 
 /* Function prototypes
  */
-/* cpw: remove the last argument   FILE * */
 void kl_binary_print(uint64_t);
 void kl_print_bit_value(void *, int, int, int, int);
 void kl_print_char(void *, int);

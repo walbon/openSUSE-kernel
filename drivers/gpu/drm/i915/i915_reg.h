@@ -1309,6 +1309,7 @@
 #define   ADPA_PIPE_SELECT_MASK	(1<<30)
 #define   ADPA_PIPE_A_SELECT	0
 #define   ADPA_PIPE_B_SELECT	(1<<30)
+#define   ADPA_PIPE_SELECT(pipe) ((pipe) << 30)
 #define   ADPA_USE_VGA_HVPOLARITY (1<<15)
 #define   ADPA_SETS_HVPOLARITY	0
 #define   ADPA_VSYNC_CNTL_DISABLE (1<<11)
@@ -1451,6 +1452,7 @@
 /* Selects pipe B for LVDS data.  Must be set on pre-965. */
 #define   LVDS_PIPEB_SELECT		(1 << 30)
 #define   LVDS_PIPE_MASK		(1 << 30)
+#define   LVDS_PIPE(pipe)		((pipe) << 30)
 /* LVDS dithering flag on 965/g4x platform */
 #define   LVDS_ENABLE_DITHER		(1 << 25)
 /* LVDS sync polarity flags. Set to invert (i.e. negative) */
@@ -1489,9 +1491,6 @@
 #define   LVDS_B0B3_POWER_MASK		(3 << 2)
 #define   LVDS_B0B3_POWER_DOWN		(0 << 2)
 #define   LVDS_B0B3_POWER_UP		(3 << 2)
-
-#define LVDS_PIPE_ENABLED(V, P) \
-	(((V) & (LVDS_PIPE_MASK | LVDS_PORT_EN)) == ((P) << 30 | LVDS_PORT_EN))
 
 /* Video Data Island Packet control */
 #define VIDEO_DIP_DATA		0x61178
@@ -2083,9 +2082,6 @@
 #define   DP_PIPEB_SELECT		(1 << 30)
 #define   DP_PIPE_MASK			(1 << 30)
 
-#define DP_PIPE_ENABLED(V, P) \
-	(((V) & (DP_PIPE_MASK | DP_PORT_EN)) == ((P) << 30 | DP_PORT_EN))
-
 /* Link training mode - select a suitable mode for each stage */
 #define   DP_LINK_TRAIN_PAT_1		(0 << 28)
 #define   DP_LINK_TRAIN_PAT_2		(1 << 28)
@@ -2544,9 +2540,17 @@
 #define _CURBBASE		0x700c4
 #define _CURBPOS			0x700c8
 
+#define _CURBCNTR_IVB		0x71080
+#define _CURBBASE_IVB		0x71084
+#define _CURBPOS_IVB		0x71088
+
 #define CURCNTR(pipe) _PIPE(pipe, _CURACNTR, _CURBCNTR)
 #define CURBASE(pipe) _PIPE(pipe, _CURABASE, _CURBBASE)
 #define CURPOS(pipe) _PIPE(pipe, _CURAPOS, _CURBPOS)
+
+#define CURCNTR_IVB(pipe) _PIPE(pipe, _CURACNTR, _CURBCNTR_IVB)
+#define CURBASE_IVB(pipe) _PIPE(pipe, _CURABASE, _CURBBASE_IVB)
+#define CURPOS_IVB(pipe) _PIPE(pipe, _CURAPOS, _CURBPOS_IVB)
 
 /* Display A control */
 #define _DSPACNTR                0x70180
@@ -3075,6 +3079,11 @@
 #define  TRANS_6BPC             (2<<5)
 #define  TRANS_12BPC            (3<<5)
 
+#define _TRANSA_CHICKEN2	 0xf0064
+#define _TRANSB_CHICKEN2	 0xf1064
+#define TRANS_CHICKEN2(pipe) _PIPE(pipe, _TRANSA_CHICKEN2, _TRANSB_CHICKEN2)
+#define   TRANS_AUTOTRAIN_GEN_STALL_DIS	(1<<31)
+
 #define SOUTH_CHICKEN2		0xc2004
 #define  DPLS_EDP_PPS_FIX_DIS	(1<<0)
 
@@ -3225,14 +3234,12 @@
 #define  ADPA_CRT_HOTPLUG_VOLREF_475MV  (1<<17)
 #define  ADPA_CRT_HOTPLUG_FORCE_TRIGGER (1<<16)
 
-#define ADPA_PIPE_ENABLED(V, P) \
-	(((V) & (ADPA_TRANS_SELECT_MASK | ADPA_DAC_ENABLE)) == ((P) << 30 | ADPA_DAC_ENABLE))
-
 /* or SDVOB */
 #define HDMIB   0xe1140
 #define  PORT_ENABLE    (1 << 31)
 #define  TRANSCODER_A   (0)
 #define  TRANSCODER_B   (1 << 30)
+#define  TRANSCODER(pipe)	((pipe) << 30)
 #define  TRANSCODER_MASK   (1 << 30)
 #define  COLOR_FORMAT_8bpc      (0)
 #define  COLOR_FORMAT_12bpc     (3 << 26)
@@ -3248,9 +3255,6 @@
 #define  VSYNC_ACTIVE_HIGH      (1 << 4)
 #define  HSYNC_ACTIVE_HIGH      (1 << 3)
 #define  PORT_DETECTED          (1 << 2)
-
-#define HDMI_PIPE_ENABLED(V, P) \
-	(((V) & (TRANSCODER_MASK | PORT_ENABLE)) == ((P) << 30 | PORT_ENABLE))
 
 /* PCH SDVOB multiplex with HDMIB */
 #define PCH_SDVOB	HDMIB
@@ -3318,6 +3322,7 @@
 #define  PORT_TRANS_B_SEL_CPT	(1<<29)
 #define  PORT_TRANS_C_SEL_CPT	(2<<29)
 #define  PORT_TRANS_SEL_MASK	(3<<29)
+#define  PORT_TRANS_SEL_CPT(pipe)	((pipe) << 29)
 
 #define TRANS_DP_CTL_A		0xe0300
 #define TRANS_DP_CTL_B		0xe1300
@@ -3436,5 +3441,30 @@
 #define   GEN6_READ_OC_PARAMS			0xc
 #define   GEN6_PCODE_WRITE_MIN_FREQ_TABLE	0x9
 #define GEN6_PCODE_DATA				0x138128
+
+#define G4X_AUD_VID_DID			0x62020
+#define INTEL_AUDIO_DEVCL		0x808629FB
+#define INTEL_AUDIO_DEVBLC		0x80862801
+#define INTEL_AUDIO_DEVCTG		0x80862802
+
+#define G4X_AUD_CNTL_ST			0x620B4
+#define G4X_ELDV_DEVCL_DEVBLC		(1 << 13)
+#define G4X_ELDV_DEVCTG			(1 << 14)
+#define G4X_ELD_ADDR			(0xf << 5)
+#define G4X_ELD_ACK			(1 << 4)
+#define G4X_HDMIW_HDMIEDID		0x6210C
+
+#define GEN5_HDMIW_HDMIEDID_A		0xE2050
+#define GEN5_AUD_CNTL_ST_A		0xE20B4
+#define GEN5_ELD_BUFFER_SIZE		(0x1f << 10)
+#define GEN5_ELD_ADDRESS		(0x1f << 5)
+#define GEN5_ELD_ACK			(1 << 4)
+#define GEN5_AUD_CNTL_ST2		0xE20C0
+#define GEN5_ELD_VALIDB			(1 << 0)
+#define GEN5_CP_READYB			(1 << 1)
+
+#define GEN7_HDMIW_HDMIEDID_A		0xE5050
+#define GEN7_AUD_CNTRL_ST_A		0xE50B4
+#define GEN7_AUD_CNTRL_ST2		0xE50C0
 
 #endif /* _I915_REG_H_ */

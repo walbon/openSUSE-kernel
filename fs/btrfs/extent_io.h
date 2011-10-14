@@ -17,6 +17,7 @@
 #define EXTENT_NODATASUM (1 << 10)
 #define EXTENT_DO_ACCOUNTING (1 << 11)
 #define EXTENT_FIRST_DELALLOC (1 << 12)
+#define EXTENT_NEED_WAIT (1 << 13)
 #define EXTENT_IOBITS (EXTENT_LOCKED | EXTENT_WRITEBACK)
 #define EXTENT_CTLBITS (EXTENT_DO_ACCOUNTING | EXTENT_FIRST_DELALLOC)
 
@@ -76,15 +77,15 @@ struct extent_io_ops {
 				    struct extent_state *state);
 	int (*writepage_end_io_hook)(struct page *page, u64 start, u64 end,
 				      struct extent_state *state, int uptodate);
-	int (*set_bit_hook)(struct inode *inode, struct extent_state *state,
-			    int *bits);
-	int (*clear_bit_hook)(struct inode *inode, struct extent_state *state,
-			      int *bits);
-	int (*merge_extent_hook)(struct inode *inode,
-				 struct extent_state *new,
-				 struct extent_state *other);
-	int (*split_extent_hook)(struct inode *inode,
-				 struct extent_state *orig, u64 split);
+	void (*set_bit_hook)(struct inode *inode, struct extent_state *state,
+			     int *bits);
+	void (*clear_bit_hook)(struct inode *inode, struct extent_state *state,
+			       int *bits);
+	void (*merge_extent_hook)(struct inode *inode,
+				  struct extent_state *new,
+				  struct extent_state *other);
+	void (*split_extent_hook)(struct inode *inode,
+				  struct extent_state *orig, u64 split);
 	int (*write_cache_pages_lock_hook)(struct page *page);
 };
 
@@ -108,8 +109,6 @@ struct extent_state {
 	wait_queue_head_t wq;
 	atomic_t refs;
 	unsigned long state;
-	u64 split_start;
-	u64 split_end;
 
 	/* for use by the FS */
 	u64 private;
@@ -128,14 +127,26 @@ struct extent_buffer {
 	struct rcu_head rcu_head;
 	atomic_t refs;
 
-	/* the spinlock is used to protect most operations */
-	spinlock_t lock;
+	/* count of read lock holders on the extent buffer */
+	atomic_t write_locks;
+	atomic_t read_locks;
+	atomic_t blocking_writers;
+	atomic_t blocking_readers;
+	atomic_t spinning_readers;
+	atomic_t spinning_writers;
 
-	/*
-	 * when we keep the lock held while blocking, waiters go onto
-	 * the wq
+	/* protects write locks */
+	rwlock_t lock;
+
+	/* readers use lock_wq while they wait for the write
+	 * lock holders to unlock
 	 */
-	wait_queue_head_t lock_wq;
+	wait_queue_head_t write_lock_wq;
+
+	/* writers use read_lock_wq while they wait for readers
+	 * to unlock
+	 */
+	wait_queue_head_t read_lock_wq;
 };
 
 static inline void extent_set_compress_type(unsigned long *bio_flags,
@@ -204,6 +215,8 @@ int set_extent_dirty(struct extent_io_tree *tree, u64 start, u64 end,
 		     gfp_t mask);
 int clear_extent_dirty(struct extent_io_tree *tree, u64 start, u64 end,
 		       gfp_t mask);
+int convert_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
+		       int bits, int clear_bits, gfp_t mask);
 int set_extent_delalloc(struct extent_io_tree *tree, u64 start, u64 end,
 			struct extent_state **cached_state, gfp_t mask);
 int find_first_extent_bit(struct extent_io_tree *tree, u64 start,
@@ -264,9 +277,9 @@ void memmove_extent_buffer(struct extent_buffer *dst, unsigned long dst_offset,
 			   unsigned long src_offset, unsigned long len);
 void memset_extent_buffer(struct extent_buffer *eb, char c,
 			  unsigned long start, unsigned long len);
-int wait_extent_bit(struct extent_io_tree *tree, u64 start, u64 end, int bits);
-int clear_extent_buffer_dirty(struct extent_io_tree *tree,
-			      struct extent_buffer *eb);
+void wait_extent_bit(struct extent_io_tree *tree, u64 start, u64 end, int bits);
+void clear_extent_buffer_dirty(struct extent_io_tree *tree,
+			       struct extent_buffer *eb);
 int set_extent_buffer_dirty(struct extent_io_tree *tree,
 			     struct extent_buffer *eb);
 int set_extent_buffer_uptodate(struct extent_io_tree *tree,

@@ -38,9 +38,6 @@
 #include <asm/unaligned.h>
 #include <linux/platform_device.h>
 #include <linux/workqueue.h>
-#ifdef CONFIG_KDB_USB
-#include <linux/kdb.h>
-#endif
 
 #include <linux/usb.h>
 #include <linux/usb/hcd.h>
@@ -714,7 +711,7 @@ void usb_hcd_poll_rh_status(struct usb_hcd *hcd)
 	/* The USB 2.0 spec says 256 ms.  This is close enough and won't
 	 * exceed that limit if HZ is 100. The math is more clunky than
 	 * maybe expected, this is to make sure that all timers for USB devices
-	 * fire at the same time to give the CPU a break inbetween */
+	 * fire at the same time to give the CPU a break in between */
 	if (hcd->uses_new_polling ? HCD_POLL_RH(hcd) :
 			(length == 0 && hcd->status_urb != NULL))
 		mod_timer (&hcd->rh_timer, (jiffies/(HZ/4) + 1) * (HZ/4));
@@ -1362,6 +1359,8 @@ int usb_hcd_map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 	 */
 
 	if (usb_endpoint_xfer_control(&urb->ep->desc)) {
+		if (hcd->self.uses_pio_for_control)
+			return ret;
 		if (hcd->self.uses_dma) {
 			urb->setup_dma = dma_map_single(
 					hcd->self.controller,
@@ -2009,6 +2008,7 @@ int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg)
 
 	hcd->state = HC_STATE_RESUMING;
 	status = hcd->driver->bus_resume(hcd);
+	clear_bit(HCD_FLAG_WAKEUP_PENDING, &hcd->flags);
 	if (status == 0) {
 		/* TRSMRCY = 10 msec */
 		msleep(10);
@@ -2030,6 +2030,10 @@ int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg)
 	}
 	return status;
 }
+
+#endif	/* CONFIG_PM */
+
+#ifdef	CONFIG_USB_SUSPEND
 
 /* Workqueue routine for root-hub remote wakeup */
 static void hcd_resume_work(struct work_struct *work)
@@ -2056,13 +2060,15 @@ void usb_hcd_resume_root_hub (struct usb_hcd *hcd)
 	unsigned long flags;
 
 	spin_lock_irqsave (&hcd_root_hub_lock, flags);
-	if (hcd->rh_registered)
-		queue_work(ksuspend_usb_wq, &hcd->wakeup_work);
+	if (hcd->rh_registered) {
+		set_bit(HCD_FLAG_WAKEUP_PENDING, &hcd->flags);
+		queue_work(pm_wq, &hcd->wakeup_work);
+	}
 	spin_unlock_irqrestore (&hcd_root_hub_lock, flags);
 }
 EXPORT_SYMBOL_GPL(usb_hcd_resume_root_hub);
 
-#endif
+#endif	/* CONFIG_USB_SUSPEND */
 
 /*-------------------------------------------------------------------------*/
 
@@ -2242,7 +2248,7 @@ struct usb_hcd *usb_create_shared_hcd(const struct hc_driver *driver,
 	init_timer(&hcd->rh_timer);
 	hcd->rh_timer.function = rh_timer_func;
 	hcd->rh_timer.data = (unsigned long) hcd;
-#ifdef CONFIG_PM
+#ifdef CONFIG_USB_SUSPEND
 	INIT_WORK(&hcd->wakeup_work, hcd_resume_work);
 #endif
 
@@ -2535,7 +2541,7 @@ void usb_remove_hcd(struct usb_hcd *hcd)
 	hcd->rh_registered = 0;
 	spin_unlock_irq (&hcd_root_hub_lock);
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_USB_SUSPEND
 	cancel_work_sync(&hcd->wakeup_work);
 #endif
 
@@ -2579,74 +2585,6 @@ usb_hcd_platform_shutdown(struct platform_device* dev)
 		hcd->driver->shutdown(hcd);
 }
 EXPORT_SYMBOL_GPL(usb_hcd_platform_shutdown);
-
-#ifdef CONFIG_KDB_USB
-void *
-usb_hcd_get_kdb_poll_func(struct usb_device *udev)
-{
-	struct usb_hcd  *hcd = bus_to_hcd(udev->bus);
-
-	if (hcd && hcd->driver)
-		return (void *)(hcd->driver->kdb_poll_char);
-
-	return NULL;
-}
-EXPORT_SYMBOL_GPL (usb_hcd_get_kdb_poll_func);
-
-void *
-usb_hcd_get_kdb_completion_func(struct usb_device *udev)
-{
-	struct usb_hcd  *hcd = bus_to_hcd(udev->bus);
-
-	if (hcd && hcd->driver)
-		return (void *)(hcd->driver->kdb_completion);
-
-	return NULL;
-}
-EXPORT_SYMBOL_GPL (usb_hcd_get_kdb_completion_func);
-
-int
-usb_hcd_check_uhci(struct usb_device *udev)
-{
-	struct usb_hcd  *hcd = bus_to_hcd(udev->bus);
-
-	if (hcd && hcd->driver){
-		if (!(strcmp(hcd->driver->description, "uhci_hcd")))
-			return 1;
-	}
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL (usb_hcd_check_uhci);
-
-kdb_hc_keyboard_attach_t
-usb_hcd_get_hc_keyboard_attach(struct usb_device *udev)
-{
-	struct usb_hcd  *hcd = bus_to_hcd(udev->bus);
-
-	if (hcd && hcd->driver){
-		return hcd->driver->kdb_hc_keyboard_attach;
-	}
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL (usb_hcd_get_hc_keyboard_attach);
-
-kdb_hc_keyboard_detach_t
-usb_hcd_get_hc_keyboard_detach(struct usb_device *udev)
-{
-	struct usb_hcd  *hcd = bus_to_hcd(udev->bus);
-
-	if (hcd && hcd->driver){
-		return hcd->driver->kdb_hc_keyboard_detach;
-	}
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL (usb_hcd_get_hc_keyboard_detach);
-
-
-#endif /* CONFIG_KDB_USB */
 
 /*-------------------------------------------------------------------------*/
 

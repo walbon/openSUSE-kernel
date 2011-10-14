@@ -26,7 +26,6 @@
 #include "bnx2x_cmn.h"
 #include "bnx2x_sp.h"
 
-
 #define BNX2X_MAX_EMUL_MULTI		16
 
 /**** Exe Queue interfaces ****/
@@ -4462,8 +4461,8 @@ static void bnx2x_q_fill_setup_tx_only(struct bnx2x *bp,
 				  &cmd_params->params.tx_only.txq_params,
 				  &data->tx,
 				  &cmd_params->params.tx_only.flags);
-	DP(BNX2X_MSG_SP, "cid %d, tx bd page lo %x hi %x",
-	   cmd_params->q_obj->cids[0],
+
+	DP(BNX2X_MSG_SP, "cid %d, tx bd page lo %x hi %x",cmd_params->q_obj->cids[0],
 	   data->tx.tx_bd_page_base.lo, data->tx.tx_bd_page_base.hi);
 }
 

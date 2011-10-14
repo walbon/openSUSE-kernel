@@ -21,7 +21,7 @@
 #include <linux/nmi.h>
 #include <linux/delay.h>
 
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/kallsyms.h>
 
@@ -32,14 +32,16 @@ static struct console *kdbcons;
 #endif
 
 #define CMD_BUFLEN 256
-char kdb_prompt_str[CMD_BUFLEN];
-
+char lkdb_prompt_str[CMD_BUFLEN];
+#ifndef CONFIG_KGDB
+/* this resides in kernel/debug/kdb/kdb_io.c for KGDB */
 int kdb_trap_printk;
+#endif
 
-extern int kdb_grepping_flag;
-extern char kdb_grep_string[];
-extern int kdb_grep_leading;
-extern int kdb_grep_trailing;
+extern int lkdb_grepping_flag;
+extern char lkdb_grep_string[];
+extern int lkdb_grep_leading;
+extern int lkdb_grep_trailing;
 
 /*
  * kdb_read
@@ -117,9 +119,9 @@ kdb_read(char *buffer, size_t bufsize)
 	char escape_data[5];	/* longest vt100 escape sequence is 4 bytes */
 	char *ped = escape_data;
 	int escape_delay = 0;
-	get_char_func *f, *f_escape = NULL;
+	lget_char_func *f, *f_escape = NULL;
 
-	diag = kdbgetintenv("DTABCOUNT",&dtab_count);
+	diag = lkdbgetintenv("DTABCOUNT",&dtab_count);
 	if (diag)
 		dtab_count = 30;
 
@@ -131,7 +133,7 @@ kdb_read(char *buffer, size_t bufsize)
 
 	lastchar = cp;
 	*cp = '\0';
-	kdb_printf("%s", buffer);
+	lkdb_printf("%s", buffer);
 
 	for (;;) {
 		int key;
@@ -163,7 +165,7 @@ kdb_read(char *buffer, size_t bufsize)
 			if (bufsize <= 2) {
 				if (key == '\r')
 					key = '\n';
-				kdb_printf("%c", key);
+				lkdb_printf("%c", key);
 				*buffer++ = key;
 				*buffer = '\0';
 				return buffer;
@@ -240,11 +242,11 @@ kdb_read(char *buffer, size_t bufsize)
 				}
 				*(--lastchar) = '\0';
 				--cp;
-				kdb_printf("\b%s \r", cp);
+				lkdb_printf("\b%s \r", cp);
 				tmp = *cp;
 				*cp = '\0';
-				kdb_printf(kdb_prompt_str);
-				kdb_printf("%s", buffer);
+				lkdb_printf(lkdb_prompt_str);
+				lkdb_printf("%s", buffer);
 				*cp = tmp;
 			}
 			break;
@@ -252,57 +254,57 @@ kdb_read(char *buffer, size_t bufsize)
 		case 10: /* enter \n */
 			*lastchar++ = '\n';
 			*lastchar++ = '\0';
-			kdb_printf("\n");
+			lkdb_printf("\n");
 			return buffer;
 		case 4: /* Del */
 			if(cp < lastchar) {
 				memcpy(tmpbuffer, cp+1, lastchar - cp -1);
 				memcpy(cp, tmpbuffer, lastchar - cp -1);
 				*(--lastchar) = '\0';
-				kdb_printf("%s \r", cp);
+				lkdb_printf("%s \r", cp);
 				tmp = *cp;
 				*cp = '\0';
-				kdb_printf(kdb_prompt_str);
-				kdb_printf("%s", buffer);
+				lkdb_printf(lkdb_prompt_str);
+				lkdb_printf("%s", buffer);
 				*cp = tmp;
 			}
 			break;
 		case 1: /* Home */
 			if(cp > buffer) {
-				kdb_printf("\r");
-				kdb_printf(kdb_prompt_str);
+				lkdb_printf("\r");
+				lkdb_printf(lkdb_prompt_str);
 				cp = buffer;
 			}
 			break;
 		case 5: /* End */
 			if(cp < lastchar) {
-				kdb_printf("%s", cp);
+				lkdb_printf("%s", cp);
 				cp = lastchar;
 			}
 			break;
 		case 2: /* Left */
 			if (cp > buffer) {
-				kdb_printf("\b");
+				lkdb_printf("\b");
 				--cp;
 			}
 			break;
 		case 14: /* Down */
-			memset(tmpbuffer, ' ', strlen(kdb_prompt_str)+(lastchar-buffer));
-			*(tmpbuffer+strlen(kdb_prompt_str)+(lastchar-buffer)) = '\0';
-			kdb_printf("\r%s\r", tmpbuffer);
+			memset(tmpbuffer, ' ', strlen(lkdb_prompt_str)+(lastchar-buffer));
+			*(tmpbuffer+strlen(lkdb_prompt_str)+(lastchar-buffer)) = '\0';
+			lkdb_printf("\r%s\r", tmpbuffer);
 			*lastchar = (char)key;
 			*(lastchar+1) = '\0';
 			return lastchar;
 		case 6: /* Right */
 			if (cp < lastchar) {
-				kdb_printf("%c", *cp);
+				lkdb_printf("%c", *cp);
 				++cp;
 			}
 			break;
 		case 16: /* Up */
-			memset(tmpbuffer, ' ', strlen(kdb_prompt_str)+(lastchar-buffer));
-			*(tmpbuffer+strlen(kdb_prompt_str)+(lastchar-buffer)) = '\0';
-			kdb_printf("\r%s\r", tmpbuffer);
+			memset(tmpbuffer, ' ', strlen(lkdb_prompt_str)+(lastchar-buffer));
+			*(tmpbuffer+strlen(lkdb_prompt_str)+(lastchar-buffer)) = '\0';
+			lkdb_printf("\r%s\r", tmpbuffer);
 			*lastchar = (char)key;
 			*(lastchar+1) = '\0';
 			return lastchar;
@@ -320,25 +322,25 @@ kdb_read(char *buffer, size_t bufsize)
 				else
 					p_tmp = tmpbuffer;
 				len = strlen(p_tmp);
-				count = kallsyms_symbol_complete(p_tmp, sizeof(tmpbuffer) - (p_tmp - tmpbuffer));
+				count = lkallsyms_symbol_complete(p_tmp, sizeof(tmpbuffer) - (p_tmp - tmpbuffer));
 				if (tab == 2) {
 					if (count > 0) {
-						kdb_printf("\n%d symbols are found.", count);
+						lkdb_printf("\n%d symbols are found.", count);
 						if(count>dtab_count) {
 							count=dtab_count;
-							kdb_printf(" But only first %d symbols will be printed.\nYou can change the environment variable DTABCOUNT.", count);
+							lkdb_printf(" But only first %d symbols will be printed.\nYou can change the environment variable DTABCOUNT.", count);
 						}
-						kdb_printf("\n");
+						lkdb_printf("\n");
 						for(i=0;i<count;i++) {
-							if(kallsyms_symbol_next(p_tmp, i)<0)
+							if(lkallsyms_symbol_next(p_tmp, i)<0)
 								break;
-							kdb_printf("%s ",p_tmp);
+							lkdb_printf("%s ",p_tmp);
 							*(p_tmp+len)='\0';
 						}
-						if(i>=dtab_count)kdb_printf("...");
-						kdb_printf("\n");
-						kdb_printf(kdb_prompt_str);
-						kdb_printf("%s", buffer);
+						if(i>=dtab_count)lkdb_printf("...");
+						lkdb_printf("\n");
+						lkdb_printf(lkdb_prompt_str);
+						lkdb_printf("%s", buffer);
 					}
 				}
 				else {
@@ -348,12 +350,12 @@ kdb_read(char *buffer, size_t bufsize)
 						len_tmp = strlen(p_tmp);
 						strncpy(cp, p_tmp+len, len_tmp-len+1);
 						len = len_tmp - len;
-						kdb_printf("%s", cp);
+						lkdb_printf("%s", cp);
 						cp+=len;
 						lastchar+=len;
 					}
 				}
-				kdb_nextline = 1;		/* reset output line number */
+				lkdb_nextline = 1;		/* reset output line number */
 			}
 			break;
 		default:
@@ -363,17 +365,17 @@ kdb_read(char *buffer, size_t bufsize)
 					memcpy(cp+1, tmpbuffer, lastchar - cp);
 					*++lastchar = '\0';
 					*cp = key;
-					kdb_printf("%s\r", cp);
+					lkdb_printf("%s\r", cp);
 					++cp;
 					tmp = *cp;
 					*cp = '\0';
-					kdb_printf(kdb_prompt_str);
-					kdb_printf("%s", buffer);
+					lkdb_printf(lkdb_prompt_str);
+					lkdb_printf("%s", buffer);
 					*cp = tmp;
 				} else {
 					*++lastchar = '\0';
 					*cp++ = key;
-					kdb_printf("%c", key);
+					lkdb_printf("%c", key);
 				}
 			}
 			break;
@@ -382,7 +384,7 @@ kdb_read(char *buffer, size_t bufsize)
 }
 
 /*
- * kdb_getstr
+ * lkdb_getstr
  *
  *	Print the prompt string and read a command from the
  *	input device.
@@ -401,12 +403,12 @@ kdb_read(char *buffer, size_t bufsize)
  */
 
 char *
-kdb_getstr(char *buffer, size_t bufsize, char *prompt)
+lkdb_getstr(char *buffer, size_t bufsize, char *prompt)
 {
-	if(prompt && kdb_prompt_str!=prompt)
-		strncpy(kdb_prompt_str, prompt, CMD_BUFLEN);
-	kdb_printf(kdb_prompt_str);
-	kdb_nextline = 1;	/* Prompt and input resets line number */
+	if(prompt && lkdb_prompt_str!=prompt)
+		strncpy(lkdb_prompt_str, prompt, CMD_BUFLEN);
+	lkdb_printf(lkdb_prompt_str);
+	lkdb_nextline = 1;	/* Prompt and input resets line number */
 	return kdb_read(buffer, bufsize);
 }
 
@@ -433,7 +435,7 @@ kdb_getstr(char *buffer, size_t bufsize, char *prompt)
 static void
 kdb_input_flush(void)
 {
-	get_char_func *f;
+	lget_char_func *f;
 	int flush_delay = 1;
 	while (flush_delay--) {
 		touch_nmi_watchdog();
@@ -449,7 +451,7 @@ kdb_input_flush(void)
 }
 
 /*
- * kdb_printf
+ * lkdb_printf
  *
  *	Print a string to the output device(s).
  *
@@ -464,7 +466,7 @@ kdb_input_flush(void)
  *	kdb output.
  *
  *  If the user is doing a cmd args | grep srch
- *  then kdb_grepping_flag is set.
+ *  then lkdb_grepping_flag is set.
  *  In that case we need to accumulate full lines (ending in \n) before
  *  searching for the pattern.
  */
@@ -490,13 +492,13 @@ kdb_search_string(char *searched, char *searchfor)
 	len1 = strlen(searched)-1;
 	len2 = strlen(searchfor);
 	if (len1 < len2) return 0;
-	if (kdb_grep_leading && kdb_grep_trailing && len1 != len2) return 0;
+	if (lkdb_grep_leading && lkdb_grep_trailing && len1 != len2) return 0;
 
-	if (kdb_grep_leading) {
+	if (lkdb_grep_leading) {
 		if (!strncmp(searched, searchfor, len2)) {
 			return 1;
 		}
-	} else if (kdb_grep_trailing) {
+	} else if (lkdb_grep_trailing) {
 		if (!strncmp(searched+len1-len2, searchfor, len2)) {
 			return 1;
 		}
@@ -513,58 +515,57 @@ kdb_search_string(char *searched, char *searchfor)
 	return 0;
 }
 
-int
-vkdb_printf(const char *fmt, va_list ap)
+void
+lkdb_printf(const char *fmt, ...)
 {
+	va_list ap;
 	int diag;
 	int linecount;
 	int logging, saved_loglevel = 0;
-	int saved_trap_printk;
+	int do_longjmp = 0;
 	int got_printf_lock = 0;
-	int retlen = 0;
 	int fnd, len;
 	char *cp, *cp2, *cphold = NULL, replaced_byte = ' ';
 	char *moreprompt = "more> ";
 	struct console *c = console_drivers;
-	static DEFINE_SPINLOCK(kdb_printf_lock);
+	static DEFINE_SPINLOCK(lkdb_printf_lock);
 	unsigned long uninitialized_var(flags);
 
 	preempt_disable();
-	saved_trap_printk = kdb_trap_printk;
-	kdb_trap_printk = 0;
-
-	/* Serialize kdb_printf if multiple cpus try to write at once.
+	/* Serialize lkdb_printf if multiple cpus try to write at once.
 	 * But if any cpu goes recursive in kdb, just print the output,
 	 * even if it is interleaved with any other text.
 	 */
 	if (!KDB_STATE(PRINTF_LOCK)) {
 		KDB_STATE_SET(PRINTF_LOCK);
-		spin_lock_irqsave(&kdb_printf_lock, flags);
+		spin_lock_irqsave(&lkdb_printf_lock, flags);
 		got_printf_lock = 1;
-		atomic_inc(&kdb_event);
+		atomic_inc(&lkdb_event);
 	} else {
-		__acquire(kdb_printf_lock);
+		__acquire(lkdb_printf_lock);
 	}
 	atomic_inc(&kdb_8250);
 
-	diag = kdbgetintenv("LINES", &linecount);
+	diag = lkdbgetintenv("LINES", &linecount);
 	if (diag || linecount <= 1)
 		linecount = 22;
 
-	diag = kdbgetintenv("LOGGING", &logging);
+	diag = lkdbgetintenv("LOGGING", &logging);
 	if (diag)
 		logging = 0;
 
-	if (!kdb_grepping_flag || suspend_grep) {
+	if (!lkdb_grepping_flag || suspend_grep) {
 		/* normally, every vsnprintf starts a new buffer */
 		next_avail = kdb_buffer;
 		size_avail = sizeof(kdb_buffer);
 	}
+	va_start(ap, fmt);
 	vsnprintf(next_avail, size_avail, fmt, ap);
+	va_end(ap);
 
 	/*
-	 * If kdb_parse() found that the command was cmd xxx | grep yyy
-	 * then kdb_grepping_flag is set, and kdb_grep_string contains yyy
+	 * If lkdb_parse() found that the command was cmd xxx | grep yyy
+	 * then lkdb_grepping_flag is set, and lkdb_grep_string contains yyy
 	 *
 	 * Accumulate the print data up to a newline before searching it.
 	 * (vsnprintf does null-terminate the string that it generates)
@@ -573,7 +574,7 @@ vkdb_printf(const char *fmt, va_list ap)
 	/* skip the search if prints are temporarily unconditional */
 	if (! suspend_grep) {
 
-		if (kdb_grepping_flag) {
+		if (lkdb_grepping_flag) {
 			cp = strchr(kdb_buffer, '\n');
 			if (!cp) {
 				/*
@@ -596,14 +597,14 @@ vkdb_printf(const char *fmt, va_list ap)
 					 * the buffer
 					 */
 					cp2 = kdb_buffer;
-					len = strlen(kdb_prompt_str);
-					if (!strncmp(cp2,kdb_prompt_str, len)) {
+					len = strlen(lkdb_prompt_str);
+					if (!strncmp(cp2,lkdb_prompt_str, len)) {
 						/*
 						 * We're about to start a new
 						 * command, so we can go back
 						 * to normal mode.
 						 */
-						kdb_grepping_flag = 0;
+						lkdb_grepping_flag = 0;
 						goto kdb_printit;
 					}
 				}
@@ -629,7 +630,7 @@ vkdb_printf(const char *fmt, va_list ap)
 			 * Only continue with this output if it contains the
 			 * search string.
 			 */
-			fnd = kdb_search_string(kdb_buffer, kdb_grep_string);
+			fnd = kdb_search_string(kdb_buffer, lkdb_grep_string);
 			if (!fnd) {
 				/*
 				 * At this point the complete line at the start
@@ -678,26 +679,26 @@ kdb_printit:
 		printk("%s", kdb_buffer);
 	}
 
-	if (KDB_STATE(PAGER) && strchr(kdb_buffer, '\n'))
-		kdb_nextline++;
+	if (KDB_STATE(LONGJMP) && strchr(kdb_buffer, '\n'))
+		lkdb_nextline++;
 
 	/* check for having reached the LINES number of printed lines */
-	if (kdb_nextline == linecount) {
+	if (lkdb_nextline == linecount) {
 		char buf1[16]="";
 #if defined(CONFIG_SMP)
 		char buf2[32];
 #endif
 
 		/* Watch out for recursion here.  Any routine that calls
-		 * kdb_printf will come back through here.  And kdb_read
-		 * uses kdb_printf to echo on serial consoles ...
+		 * lkdb_printf will come back through here.  And kdb_read
+		 * uses lkdb_printf to echo on serial consoles ...
 		 */
-		kdb_nextline = 1;	/* In case of recursion */
+		lkdb_nextline = 1;	/* In case of recursion */
 
 		/*
 		 * Pause until cr.
 		 */
-		moreprompt = kdbgetenv("MOREPROMPT");
+		moreprompt = lkdbgetenv("MOREPROMPT");
 		if (moreprompt == NULL) {
 			moreprompt = "more> ";
 		}
@@ -734,7 +735,7 @@ kdb_printit:
 			printk("%s", moreprompt);
 
 		kdb_read(buf1, 2); /* '2' indicates to return immediately after getting one key. */
-		kdb_nextline = 1;	/* Really set output line 1 */
+		lkdb_nextline = 1;	/* Really set output line 1 */
 
 		/* empty and reset the buffer: */
 		kdb_buffer[0] = '\0';
@@ -742,19 +743,19 @@ kdb_printit:
 		size_avail = sizeof(kdb_buffer);
 		if ((buf1[0] == 'q') || (buf1[0] == 'Q')) {
 			/* user hit q or Q */
-			KDB_FLAG_SET(CMD_INTERRUPT);	/* command was interrupted */
-			KDB_STATE_CLEAR(PAGER);
+			do_longjmp = 1;
+			LKDB_FLAG_SET(CMD_INTERRUPT);	/* command was interrupted */
 			/* end of command output; back to normal mode */
-			kdb_grepping_flag = 0;
-			kdb_printf("\n");
+			lkdb_grepping_flag = 0;
+			lkdb_printf("\n");
 		} else if (buf1[0] && buf1[0] != '\n') {
 			/* user hit something other than enter */
 			suspend_grep = 1; /* for this recursion */
-			kdb_printf("\nOnly 'q' or 'Q' are processed at more prompt, input ignored\n");
-		} else if (kdb_grepping_flag) {
+			lkdb_printf("\nOnly 'q' or 'Q' are processed at more prompt, input ignored\n");
+		} else if (lkdb_grepping_flag) {
 			/* user hit enter */
 			suspend_grep = 1; /* for this recursion */
-			kdb_printf("\n");
+			lkdb_printf("\n");
 		}
 		kdb_input_flush();
 	}
@@ -765,7 +766,7 @@ kdb_printit:
 	 *  the terminating null, and cphold points to the null.
 	 * Then adjust the notion of available space in the buffer.
 	 */
-	if (kdb_grepping_flag && !suspend_grep) {
+	if (lkdb_grepping_flag && !suspend_grep) {
 		*cphold = replaced_byte;
 		strcpy(kdb_buffer, cphold);
 		len = strlen(kdb_buffer);
@@ -781,29 +782,22 @@ kdb_print_out:
 	atomic_dec(&kdb_8250);
 	if (KDB_STATE(PRINTF_LOCK) && got_printf_lock) {
 		got_printf_lock = 0;
-		spin_unlock_irqrestore(&kdb_printf_lock, flags);
+		spin_unlock_irqrestore(&lkdb_printf_lock, flags);
 		KDB_STATE_CLEAR(PRINTF_LOCK);
-		atomic_dec(&kdb_event);
+		atomic_dec(&lkdb_event);
 	} else {
-		__release(kdb_printf_lock);
+		__release(lkdb_printf_lock);
 	}
-	kdb_trap_printk = saved_trap_printk;
 	preempt_enable();
-	return retlen;
-}
-
-
-void kdb_printf(const char *fmt, ...)
-{
-	va_list ap;
-
-	va_start(ap, fmt);
-	vkdb_printf(fmt, ap);
-	va_end(ap);
+	if (do_longjmp)
+#ifdef kdba_setjmp
+		kdba_longjmp(&kdbjmpbuf[smp_processor_id()], 1)
+#endif	/* kdba_setjmp */
+		;
 }
 
 /*
- * kdb_io_init
+ * lkdb_io_init
  *
  *	Initialize kernel debugger output environment.
  *
@@ -819,7 +813,7 @@ void kdb_printf(const char *fmt, ...)
  */
 
 void __init
-kdb_io_init(void)
+lkdb_io_init(void)
 {
 	/*
 	 * Select a console.
@@ -843,27 +837,13 @@ kdb_io_init(void)
 
 	if (kdbcons == NULL) {
 		printk(KERN_ERR "kdb: Initialization failed - no console.  kdb is disabled.\n");
-		KDB_FLAG_SET(NO_CONSOLE);
+		LKDB_FLAG_SET(NO_CONSOLE);
 		kdb_on = 0;
 	}
 	if (!vt_console)
-		KDB_FLAG_SET(NO_VT_CONSOLE);
+		LKDB_FLAG_SET(NO_VT_CONSOLE);
 	kdb_input_flush();
 	return;
 }
-
-#ifdef CONFIG_KDB_USB
-
-int kdb_no_usb = 0;
-
-static int __init opt_kdbnousb(char *str)
-{
-	kdb_no_usb = 1;
-	return 0;
-}
-
-early_param("kdbnousb", opt_kdbnousb);
-
-#endif
 
 EXPORT_SYMBOL(kdb_read);

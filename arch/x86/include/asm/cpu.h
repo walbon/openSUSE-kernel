@@ -30,10 +30,8 @@ extern int arch_register_cpu(int num);
 extern void arch_unregister_cpu(int);
 #endif
 
-int __cpuinit mwait_usable(const struct cpuinfo_x86 *);
-
 DECLARE_PER_CPU(int, cpu_state);
 
-extern unsigned int boot_cpu_id;
+int mwait_usable(const struct cpuinfo_x86 *);
 
 #endif /* _ASM_X86_CPU_H */

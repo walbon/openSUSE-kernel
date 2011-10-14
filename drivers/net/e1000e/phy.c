@@ -658,7 +658,7 @@ s32 e1000_copper_link_setup_82577(struct e1000_hw *hw)
 	s32 ret_val;
 	u16 phy_data;
 
-	/* Enable CRS on TX. This must be set for half-duplex operation. */
+	/* Enable CRS on Tx. This must be set for half-duplex operation. */
 	ret_val = e1e_rphy(hw, I82577_CFG_REG, &phy_data);
 	if (ret_val)
 		goto out;
@@ -2390,7 +2390,7 @@ s32 e1000e_determine_phy_address(struct e1000_hw *hw)
 				ret_val = 0;
 				goto out;
 			}
-			msleep(1);
+			usleep_range(1000, 2000);
 			i++;
 		} while (i < 10);
 	}
@@ -2817,7 +2817,7 @@ void e1000_power_down_phy_copper(struct e1000_hw *hw)
 	e1e_rphy(hw, PHY_CONTROL, &mii_reg);
 	mii_reg |= MII_CR_POWER_DOWN;
 	e1e_wphy(hw, PHY_CONTROL, mii_reg);
-	msleep(1);
+	usleep_range(1000, 2000);
 }
 
 /**
@@ -3091,7 +3091,7 @@ s32 e1000_write_phy_reg_page_hv(struct e1000_hw *hw, u32 offset, u16 data)
 }
 
 /**
- *  e1000_get_phy_addr_for_hv_page - Get PHY adrress based on page
+ *  e1000_get_phy_addr_for_hv_page - Get PHY address based on page
  *  @page: page to be accessed
  **/
 static u32 e1000_get_phy_addr_for_hv_page(u32 page)

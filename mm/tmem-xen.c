@@ -5,6 +5,7 @@
  */
 
 #include <linux/types.h>
+#include <xen/interface/xen.h>
 #include <asm/hypervisor.h>
 #include "tmem.h"
 

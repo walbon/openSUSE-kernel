@@ -4,7 +4,7 @@
  * Note that you can not swap over this thing, yet. Seems to work but
  * deadlocks sometimes - you can not swap over TCP in general.
  * 
- * Copyright 1997-2000, 2008 Pavel Machek <pavel@suse.cz>
+ * Copyright 1997-2000, 2008 Pavel Machek <pavel@ucw.cz>
  * Parts copyright 2001 Steven Whitehouse <steve@chygwyn.com>
  *
  * This file is released under GPLv2 or later.
@@ -24,9 +24,11 @@
 #include <linux/errno.h>
 #include <linux/file.h>
 #include <linux/ioctl.h>
+#include <linux/mutex.h>
 #include <linux/compiler.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <net/sock.h>
 #include <linux/net.h>
 #include <linux/kthread.h>
@@ -154,6 +156,7 @@ static int sock_xmit(struct nbd_device *lo, int send, void *buf, int size,
 	struct msghdr msg;
 	struct kvec iov;
 	sigset_t blocked, oldset;
+	unsigned long pflags = current->flags;
 
 	if (unlikely(!sock)) {
 		printk(KERN_ERR "%s: Attempted %s on closed socket in sock_xmit\n",
@@ -166,8 +169,9 @@ static int sock_xmit(struct nbd_device *lo, int send, void *buf, int size,
 	siginitsetinv(&blocked, sigmask(SIGKILL));
 	sigprocmask(SIG_SETMASK, &blocked, &oldset);
 
+	current->flags |= PF_MEMALLOC;
 	do {
-		sock->sk->sk_allocation = GFP_NOIO;
+		sock->sk->sk_allocation = GFP_NOIO | __GFP_MEMALLOC;
 		iov.iov_base = buf;
 		iov.iov_len = size;
 		msg.msg_name = NULL;
@@ -190,7 +194,8 @@ static int sock_xmit(struct nbd_device *lo, int send, void *buf, int size,
 			if (lo->xmit_timeout)
 				del_timer_sync(&ti);
 		} else
-			result = kernel_recvmsg(sock, &msg, &iov, 1, size, 0);
+			result = kernel_recvmsg(sock, &msg, &iov, 1, size,
+						msg.msg_flags);
 
 		if (signal_pending(current)) {
 			siginfo_t info;
@@ -212,6 +217,7 @@ static int sock_xmit(struct nbd_device *lo, int send, void *buf, int size,
 	} while (size > 0);
 
 	sigprocmask(SIG_SETMASK, &oldset, NULL);
+	tsk_restore_flags(current, pflags, PF_MEMALLOC);
 
 	return result;
 }
@@ -401,6 +407,8 @@ static int nbd_do_it(struct nbd_device *lo)
 	int ret;
 
 	BUG_ON(lo->magic != LO_MAGIC);
+
+	sk_set_memalloc(lo->sock->sk);
 
 	lo->pid = current->pid;
 	ret = sysfs_create_file(&disk_to_dev(lo->disk)->kobj, &pid_attr.attr);
@@ -725,7 +733,7 @@ static int nbd_ioctl(struct block_device *bdev, fmode_t mode,
 static const struct block_device_operations nbd_fops =
 {
 	.owner =	THIS_MODULE,
-	.locked_ioctl =	nbd_ioctl,
+	.ioctl =	nbd_ioctl,
 };
 
 /*
@@ -751,8 +759,19 @@ static int __init nbd_init(void)
 		return -ENOMEM;
 
 	part_shift = 0;
-	if (max_part > 0)
+	if (max_part > 0) {
 		part_shift = fls(max_part);
+
+		/*
+		 * Adjust max_part according to part_shift as it is exported
+		 * to user space so that user can know the max number of
+		 * partition kernel should be able to manage.
+		 *
+		 * Note that -1 is required because partition 0 is reserved
+		 * for the whole disk.
+		 */
+		max_part = (1UL << part_shift) - 1;
+	}
 
 	if ((1UL << part_shift) > DISK_MAX_PARTS)
 		return -EINVAL;

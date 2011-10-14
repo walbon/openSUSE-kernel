@@ -32,7 +32,7 @@
 
 struct drm_fb_helper;
 
-/* #include <linux/kgdb.h> */
+#include <linux/kgdb.h>
 
 struct drm_fb_helper_crtc {
 	uint32_t crtc_id;

@@ -17,13 +17,13 @@ typedef unsigned char kdb_machinst_t;
  * KDB_MAXBPT describes the total number of breakpoints
  * supported by this architecure.
  */
-#define KDB_MAXBPT	16
+#define LKDB_MAXBPT	16
 
 /*
  * KDB_MAXHARDBPT describes the total number of hardware
  * breakpoint registers that exist.
  */
-#define KDB_MAXHARDBPT	4
+#define LKDB_MAXHARDBPT	4
 
 /* Maximum number of arguments to a function  */
 #define KDBA_MAXARGS    16
@@ -137,7 +137,9 @@ void kdba_unsave_running(struct kdba_running_process *k, struct pt_regs *regs)
 {
 }
 
-struct kdb_activation_record;
+struct lkdb_activation_record;
+extern void kdba_get_stack_info_alternate(kdb_machreg_t addr, int cpu,
+					  struct lkdb_activation_record *ar);
 
 extern void kdba_wait_for_cpus(void);
 
@@ -152,7 +154,7 @@ extern void kdba_wait_for_cpus(void);
 /*
  * Platform specific environment entries
  */
-#define KDB_PLATFORM_ENV	"IDMODE=x86", "BYTESPERWORD=4", "IDCOUNT=16"
+#define LKDB_PLATFORM_ENV	"IDMODE=x86", "BYTESPERWORD=4", "IDCOUNT=16"
 
 /*
  * Support for setjmp/longjmp
@@ -184,7 +186,7 @@ void kdba_save_running(struct kdba_running_process *k, struct pt_regs *regs)
 
 extern void kdb_interrupt(void);
 
-#define	KDB_INT_REGISTERS	8
+#define	LKDB_INT_REGISTERS	8
 
 #else	/* CONFIG_X86_32 */
 
@@ -196,7 +198,7 @@ extern kdb_machreg_t kdb_getcr(int);
 /*
  * Platform specific environment entries
  */
-#define KDB_PLATFORM_ENV	"IDMODE=x86_64", "BYTESPERWORD=8", "IDCOUNT=16"
+#define LKDB_PLATFORM_ENV	"IDMODE=x86_64", "BYTESPERWORD=8", "IDCOUNT=16"
 
 /*
  * reg indicies for x86_64 setjmp/longjmp
@@ -232,7 +234,7 @@ void kdba_save_running(struct kdba_running_process *k, struct pt_regs *regs)
 
 extern asmlinkage void kdb_interrupt(void);
 
-#define	KDB_INT_REGISTERS	16
+#define	LKDB_INT_REGISTERS	16
 
 #endif	/* !CONFIG_X86_32 */
 

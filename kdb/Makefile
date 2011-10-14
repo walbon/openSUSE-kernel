@@ -36,7 +36,7 @@ quiet_cmd_gen-kdb = GENKDB  $@
 		/^[ \t]*$$/{next} \
 		{gsub(/"/, "\\\"", $$0); \
 		  print "static __initdata char kdb_cmd" cmds++ "[] = \"" $$0 "\\n\";"} \
-		END {print "extern char *kdb_cmds[]; char __initdata *kdb_cmds[] = {"; for (i = 0; i < cmds; ++i) {print "  kdb_cmd" i ","}; print("  NULL\n};");}' \
+		END {print "extern char *kdb_cmds[]; char __initdata *lkdb_cmds[] = {"; for (i = 0; i < cmds; ++i) {print "  kdb_cmd" i ","}; print("  NULL\n};");}' \
 		$(filter-out %/Makefile,$^) > $@
 
 $(obj)/gen-kdb_cmds.c:	$(src)/kdb_cmds $(wildcard $(srctree)/arch/$(KDB_CMDS)) $(src)/Makefile

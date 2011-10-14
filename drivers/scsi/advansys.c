@@ -4544,7 +4544,7 @@ AscMemWordCopyPtrToLram(PortAddr iop_base, ushort s_addr,
  * Copy 4 bytes to LRAM.
  *
  * The source data is assumed to be in little-endian order in memory
- * and is maintained in little-endian order when writen to LRAM.
+ * and is maintained in little-endian order when written to LRAM.
  */
 static void
 AscMemDWordCopyPtrToLram(PortAddr iop_base,
@@ -9719,7 +9719,7 @@ static ushort __devinit AscInitAscDvcVar(ASC_DVC_VAR *asc_dvc)
 	asc_dvc->bug_fix_cntl = 0;
 	asc_dvc->pci_fix_asyn_xfer = 0;
 	asc_dvc->pci_fix_asyn_xfer_always = 0;
-	/* asc_dvc->init_state initalized in AscInitGetConfig(). */
+	/* asc_dvc->init_state initialized in AscInitGetConfig(). */
 	asc_dvc->sdtr_done = 0;
 	asc_dvc->cur_total_qng = 0;
 	asc_dvc->is_in_int = 0;

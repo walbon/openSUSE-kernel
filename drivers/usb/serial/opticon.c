@@ -14,6 +14,7 @@
 #include <linux/init.h>
 #include <linux/tty.h>
 #include <linux/tty_driver.h>
+#include <linux/slab.h>
 #include <linux/tty_flip.h>
 #include <linux/serial.h>
 #include <linux/module.h>
@@ -108,14 +109,14 @@ static void opticon_read_bulk_callback(struct urb *urb)
 			tty = tty_port_tty_get(&port->port);
 			if (tty) {
 				tty_insert_flip_string(tty, data + 2,
-							       data_length);
+						       data_length);
 				tty_flip_buffer_push(tty);
 				tty_kref_put(tty);
 			}
 		} else {
 			if ((data[0] == 0x00) && (data[1] == 0x01)) {
 				spin_lock_irqsave(&priv->lock, flags);
-				/* CTS status infomation package */
+				/* CTS status information package */
 				if (data[2] == 0x00)
 					priv->cts = false;
 				else
@@ -130,7 +131,7 @@ static void opticon_read_bulk_callback(struct urb *urb)
 		}
 	} else {
 		dev_dbg(&priv->udev->dev,
-			"Improper ammount of data received from the device, "
+			"Improper amount of data received from the device, "
 			"%d bytes", urb->actual_length);
 	}
 

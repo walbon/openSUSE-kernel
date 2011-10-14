@@ -811,7 +811,7 @@ mptscsih_io_done(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *mr)
 				 * DID_SOFT_ERROR is set.
 				 */
 				if (ioc->bus_type == SPI) {
-					if ((pScsiReq->CDB[0] == READ_6  && ((pScsiReq->CDB[1] & 0x02) == 0)) ||
+					if (pScsiReq->CDB[0] == READ_6  ||
 					    pScsiReq->CDB[0] == READ_10 ||
 					    pScsiReq->CDB[0] == READ_12 ||
 					    pScsiReq->CDB[0] == READ_16 ||
@@ -2274,8 +2274,7 @@ mptscsih_host_reset(struct scsi_cmnd *SCpnt)
 	/*  If our attempts to reset the host failed, then return a failed
 	 *  status.  The host will be taken off line by the SCSI mid-layer.
 	 */
-	if ((retval = mpt_SoftResetHandler(ioc, CAN_SLEEP)) != 0)
-		retval = mpt_HardResetHandler(ioc, CAN_SLEEP);
+	retval = mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 
 	if (retval < 0)
 		status = FAILED;
@@ -2524,14 +2523,14 @@ mptscsih_is_phys_disk(MPT_ADAPTER *ioc, u8 channel, u8 id)
 	if (list_empty(&ioc->raid_data.inactive_list))
 		goto out;
 
-	down(&ioc->raid_data.inactive_list_mutex);
+	mutex_lock(&ioc->raid_data.inactive_list_mutex);
 	list_for_each_entry(component_info, &ioc->raid_data.inactive_list,
 	    list) {
 		if ((component_info->d.PhysDiskID == id) &&
 		    (component_info->d.PhysDiskBus == channel))
 			rc = 1;
 	}
-	up(&ioc->raid_data.inactive_list_mutex);
+	mutex_unlock(&ioc->raid_data.inactive_list_mutex);
 
  out:
 	return rc;
@@ -2601,14 +2600,14 @@ mptscsih_raid_id_to_num(MPT_ADAPTER *ioc, u8 channel, u8 id)
 	if (list_empty(&ioc->raid_data.inactive_list))
 		goto out;
 
-	down(&ioc->raid_data.inactive_list_mutex);
+	mutex_lock(&ioc->raid_data.inactive_list_mutex);
 	list_for_each_entry(component_info, &ioc->raid_data.inactive_list,
 	    list) {
 		if ((component_info->d.PhysDiskID == id) &&
 		    (component_info->d.PhysDiskBus == channel))
 			rc = component_info->d.PhysDiskNum;
 	}
-	up(&ioc->raid_data.inactive_list_mutex);
+	mutex_unlock(&ioc->raid_data.inactive_list_mutex);
 
  out:
 	return rc;
@@ -3525,8 +3524,7 @@ mptscsih_do_cmd(MPT_SCSI_HOST *hd, INTERNAL_CMD *io)
 				goto out;
 			printk(MYIOC_s_WARN_FMT "Issuing Reset from %s!!\n",
 			    ioc->name, __func__);
-			if (mpt_SoftResetHandler(ioc, CAN_SLEEP) != 0)
-				mpt_HardResetHandler(ioc, CAN_SLEEP);
+			mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 			mpt_free_msg_frame(ioc, mf);
 		}
 		goto out;
@@ -3594,8 +3592,7 @@ mptscsih_quiesce_raid(MPT_SCSI_HOST *hd, int quiesce, u8 channel, u8 id)
 		if (!timeleft) {
 			printk(MYIOC_s_WARN_FMT "Issuing Reset from %s!!\n",
 			    ioc->name, __FUNCTION__);
-			if (mpt_SoftResetHandler(ioc, CAN_SLEEP) != 0)
-				mpt_HardResetHandler(ioc, CAN_SLEEP);
+			mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 			mpt_free_msg_frame(ioc, mf);
 		}
 		goto out;

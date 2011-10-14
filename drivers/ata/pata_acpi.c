@@ -11,6 +11,7 @@
 #include <linux/blkdev.h>
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/gfp.h>
 #include <scsi/scsi_host.h>
 #include <acpi/acpi_bus.h>
 
@@ -161,7 +162,7 @@ static void pacpi_set_dmamode(struct ata_port *ap, struct ata_device *adev)
  *
  *	Called when the libata layer is about to issue a command. We wrap
  *	this interface so that we can load the correct ATA timings if
- *	neccessary.
+ *	necessary.
  */
 
 static unsigned int pacpi_qc_issue(struct ata_queued_cmd *qc)
@@ -244,7 +245,7 @@ static struct ata_port_operations pacpi_ops = {
 static int pacpi_init_one (struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	static const struct ata_port_info info = {
-		.flags		= ATA_FLAG_SLAVE_POSS | ATA_FLAG_SRST,
+		.flags		= ATA_FLAG_SLAVE_POSS,
 
 		.pio_mask	= ATA_PIO4,
 		.mwdma_mask	= ATA_MWDMA2,

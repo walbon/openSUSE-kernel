@@ -19,7 +19,6 @@
 #include <linux/percpu.h>
 #include <linux/profile.h>
 #include <linux/sched.h>
-#include <linux/tick.h>
 #include <linux/module.h>
 
 #include <asm/irq_regs.h>
@@ -154,14 +153,14 @@ static void tick_nohz_update_jiffies(ktime_t now)
  * Updates the per cpu time idle statistics counters
  */
 static void
-update_ts_time_stats(struct tick_sched *ts, ktime_t now, u64 *last_update_time)
+update_ts_time_stats(int cpu, struct tick_sched *ts, ktime_t now, u64 *last_update_time)
 {
 	ktime_t delta;
 
 	if (ts->idle_active) {
 		delta = ktime_sub(now, ts->idle_entrytime);
 		ts->idle_sleeptime = ktime_add(ts->idle_sleeptime, delta);
-		if (nr_iowait_cpu() > 0)
+		if (nr_iowait_cpu(cpu) > 0)
 			ts->iowait_sleeptime = ktime_add(ts->iowait_sleeptime, delta);
 		ts->idle_entrytime = now;
 	}
@@ -175,19 +174,19 @@ static void tick_nohz_stop_idle(int cpu, ktime_t now)
 {
 	struct tick_sched *ts = &per_cpu(tick_cpu_sched, cpu);
 
-	update_ts_time_stats(ts, now, NULL);
+	update_ts_time_stats(cpu, ts, now, NULL);
 	ts->idle_active = 0;
 
 	sched_clock_idle_wakeup_event(0);
 }
 
-static ktime_t tick_nohz_start_idle(struct tick_sched *ts)
+static ktime_t tick_nohz_start_idle(int cpu, struct tick_sched *ts)
 {
 	ktime_t now;
 
 	now = ktime_get();
 
-	update_ts_time_stats(ts, now, NULL);
+	update_ts_time_stats(cpu, ts, now, NULL);
 
 	ts->idle_entrytime = now;
 	ts->idle_active = 1;
@@ -216,7 +215,7 @@ u64 get_cpu_idle_time_us(int cpu, u64 *last_update_time)
 	if (!tick_nohz_enabled)
 		return -1;
 
-	update_ts_time_stats(ts, ktime_get(), last_update_time);
+	update_ts_time_stats(cpu, ts, ktime_get(), last_update_time);
 
 	return ktime_to_us(ts->idle_sleeptime);
 }
@@ -242,7 +241,7 @@ u64 get_cpu_iowait_time_us(int cpu, u64 *last_update_time)
 	if (!tick_nohz_enabled)
 		return -1;
 
-	update_ts_time_stats(ts, ktime_get(), last_update_time);
+	update_ts_time_stats(cpu, ts, ktime_get(), last_update_time);
 
 	return ktime_to_us(ts->iowait_sleeptime);
 }
@@ -284,7 +283,7 @@ void tick_nohz_stop_sched_tick(int inidle)
 	 */
 	ts->inidle = 1;
 
-	now = tick_nohz_start_idle(ts);
+	now = tick_nohz_start_idle(cpu, ts);
 
 	/*
 	 * If this cpu is offline and it is the one which updates
@@ -309,7 +308,7 @@ void tick_nohz_stop_sched_tick(int inidle)
 
 		if (ratelimit < 10) {
 			printk(KERN_ERR "NOHZ: local_softirq_pending %02x\n",
-			       local_softirq_pending());
+			       (unsigned int) local_softirq_pending());
 			ratelimit++;
 		}
 		goto end;
@@ -321,17 +320,7 @@ void tick_nohz_stop_sched_tick(int inidle)
 		seq = read_seqbegin(&xtime_lock);
 		last_update = last_jiffies_update;
 		last_jiffies = jiffies;
-
-		/*
-		 * On SMP we really should only care for the CPU which
-		 * has the do_timer duty assigned. All other CPUs can
-		 * sleep as long as they want.
-		 */
-		if (cpu == tick_do_timer_cpu ||
-		    tick_do_timer_cpu == TICK_DO_TIMER_NONE)
-			time_delta = timekeeping_max_deferment();
-		else
-			time_delta = KTIME_MAX;
+		time_delta = timekeeping_max_deferment();
 	} while (read_seqretry(&xtime_lock, seq));
 
 	if (rcu_needs_cpu(cpu) || printk_needs_cpu(cpu) ||
@@ -354,6 +343,29 @@ void tick_nohz_stop_sched_tick(int inidle)
 	if ((long)delta_jiffies >= 1) {
 
 		/*
+		 * If this cpu is the one which updates jiffies, then
+		 * give up the assignment and let it be taken by the
+		 * cpu which runs the tick timer next, which might be
+		 * this cpu as well. If we don't drop this here the
+		 * jiffies might be stale and do_timer() never
+		 * invoked. Keep track of the fact that it was the one
+		 * which had the do_timer() duty last. If this cpu is
+		 * the one which had the do_timer() duty last, we
+		 * limit the sleep time to the timekeeping
+		 * max_deferement value which we retrieved
+		 * above. Otherwise we can sleep as long as we want.
+		 */
+		if (cpu == tick_do_timer_cpu) {
+			tick_do_timer_cpu = TICK_DO_TIMER_NONE;
+			ts->do_timer_last = 1;
+		} else if (tick_do_timer_cpu != TICK_DO_TIMER_NONE) {
+			time_delta = KTIME_MAX;
+			ts->do_timer_last = 0;
+		} else if (!ts->do_timer_last) {
+			time_delta = KTIME_MAX;
+		}
+
+		/*
 		 * calculate the expiry time for the next timer wheel
 		 * timer. delta_jiffies >= NEXT_TIMER_MAX_DELTA signals
 		 * that there is no timer pending or at least extremely
@@ -370,21 +382,12 @@ void tick_nohz_stop_sched_tick(int inidle)
 			 */
 			time_delta = min_t(u64, time_delta,
 					   tick_period.tv64 * delta_jiffies);
-			expires = ktime_add_ns(last_update, time_delta);
-		} else {
-			expires.tv64 = KTIME_MAX;
 		}
 
-		/*
-		 * If this cpu is the one which updates jiffies, then
-		 * give up the assignment and let it be taken by the
-		 * cpu which runs the tick timer next, which might be
-		 * this cpu as well. If we don't drop this here the
-		 * jiffies might be stale and do_timer() never
-		 * invoked.
-		 */
-		if (cpu == tick_do_timer_cpu)
-			tick_do_timer_cpu = TICK_DO_TIMER_NONE;
+		if (time_delta < KTIME_MAX)
+			expires = ktime_add_ns(last_update, time_delta);
+		else
+			expires.tv64 = KTIME_MAX;
 
 		if (delta_jiffies > 1)
 			cpumask_set_cpu(cpu, nohz_cpu_mask);
@@ -638,8 +641,7 @@ static void tick_nohz_switch_to_nohz(void)
 	}
 	local_irq_enable();
 
-	printk(KERN_INFO "Switched to NOHz mode on CPU #%d\n",
-	       smp_processor_id());
+	printk(KERN_INFO "Switched to NOHz mode on CPU #%d\n", smp_processor_id());
 }
 
 /*
@@ -770,7 +772,6 @@ void tick_setup_sched_timer(void)
 {
 	struct tick_sched *ts = &__get_cpu_var(tick_cpu_sched);
 	ktime_t now = ktime_get();
-	u64 offset;
 
 	/*
 	 * Emulate tick processing via per-CPU hrtimers:
@@ -780,10 +781,6 @@ void tick_setup_sched_timer(void)
 
 	/* Get the next period (per cpu) */
 	hrtimer_set_expires(&ts->sched_timer, tick_init_jiffy_update());
-	offset = ktime_to_ns(tick_period) >> 1;
-	do_div(offset, num_possible_cpus());
-	offset *= smp_processor_id();
-	hrtimer_add_expires_ns(&ts->sched_timer, offset);
 
 	for (;;) {
 		hrtimer_forward(&ts->sched_timer, now, tick_period);
@@ -796,8 +793,10 @@ void tick_setup_sched_timer(void)
 	}
 
 #ifdef CONFIG_NO_HZ
-	if (tick_nohz_enabled)
+	if (tick_nohz_enabled) {
 		ts->nohz_mode = NOHZ_MODE_HIGHRES;
+		printk(KERN_INFO "Switched to NOHz mode on CPU #%d\n", smp_processor_id());
+	}
 #endif
 }
 #endif /* HIGH_RES_TIMERS */

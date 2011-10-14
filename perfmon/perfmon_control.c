@@ -81,7 +81,11 @@ union pfm_control {
 	struct pfm_control_fd fd;
 };
 
+#ifdef CONFIG_COMPAT
 #define _PTR(p) (compat ? compat_ptr(p) : (void*)p)
+#else
+#define _PTR(p) (void*)p
+#endif
 
 static long pfm_control_create_context(union pfm_control *cdata, int compat)
 {
@@ -206,12 +210,13 @@ static struct pfm_control_elem pfm_control_tab[] = {
 	PFM_CMD(pfm_control_unload_context,	pfm_control_fd),
 };
 
-static int __pfm_control_ioctl(struct inode *inode, struct file *file,
+static long __pfm_control_ioctl(struct inode *inode, struct file *file,
 			       unsigned int cmd, unsigned long arg,
 			       int compat)
 {
 	union pfm_control cdata;
-	int rc, op;
+	long rc;
+	int op;
 
 	if (perfmon_disabled)
 		return -ENOSYS;
@@ -240,22 +245,26 @@ static int __pfm_control_ioctl(struct inode *inode, struct file *file,
 	return rc;
 }
 
-static int pfm_control_ioctl(struct inode *inode, struct file *file,
+static long pfm_control_ioctl(struct file *file,
 			     unsigned int cmd, unsigned long arg)
 {
-	return __pfm_control_ioctl(inode, file, cmd, arg, 0);
+	return __pfm_control_ioctl(file->f_dentry->d_inode, file, cmd, arg, 0);
 }
 
+#ifdef CONFIG_COMPAT
 static long compat_pfm_control_ioctl(struct file *file,
 				    unsigned int cmd, unsigned long arg)
 {
 	return __pfm_control_ioctl(file->f_dentry->d_inode, file, cmd, arg, 1);
 }
+#endif
 
 static const struct file_operations pfm_control_operations = {
 	.owner = THIS_MODULE,
-	.ioctl = pfm_control_ioctl,
+	.unlocked_ioctl = pfm_control_ioctl,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl = compat_pfm_control_ioctl,
+#endif
 };
 
 #ifdef USE_MISC_REGISTER

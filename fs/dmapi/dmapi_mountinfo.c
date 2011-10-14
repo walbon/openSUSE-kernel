@@ -34,7 +34,7 @@
 #include "dmapi_private.h"
 
 static LIST_HEAD(dm_fsys_map);
-static spinlock_t dm_fsys_lock = SPIN_LOCK_UNLOCKED;
+static DEFINE_SPINLOCK(dm_fsys_lock);
 
 int
 dm_code_level(void)

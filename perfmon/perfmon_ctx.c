@@ -37,6 +37,7 @@
  * 02111-1307 USA
  */
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/perfmon_kern.h>
 #include "perfmon_priv.h"

@@ -25,6 +25,7 @@
 #include <linux/interrupt.h>
 #include <linux/aer.h>
 #include <linux/gfp.h>
+#include <linux/kernel.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_device.h>
@@ -50,7 +51,13 @@
 #define LPFC_DEF_DEVLOSS_TMO 30
 #define LPFC_MIN_DEVLOSS_TMO 1
 #define LPFC_MAX_DEVLOSS_TMO 255
-#define BUILD_SLES11_SP1
+
+/*
+ * Write key size should be multiple of 4. If write key is changed
+ * make sure that library write key is also changed.
+ */
+#define LPFC_REG_WRITE_KEY_SIZE	4
+#define LPFC_REG_WRITE_KEY	"EMLX"
 
 /**
  * lpfc_jedec_to_ascii - Hex to ascii convertor according to JEDEC rules
@@ -503,10 +510,10 @@ lpfc_link_state_store(struct device *dev, struct device_attribute *attr,
 
 	if ((strncmp(buf, "up", sizeof("up") - 1) == 0) &&
 			(phba->link_state == LPFC_LINK_DOWN))
-		status = phba->lpfc_hba_init_link(phba);
+		status = phba->lpfc_hba_init_link(phba, MBX_NOWAIT);
 	else if ((strncmp(buf, "down", sizeof("down") - 1) == 0) &&
 			(phba->link_state >= LPFC_LINK_UP))
-		status = phba->lpfc_hba_down_link(phba);
+		status = phba->lpfc_hba_down_link(phba, MBX_NOWAIT);
 
 	if (status == 0)
 		return strlen(buf);
@@ -693,7 +700,7 @@ lpfc_selective_reset(struct lpfc_hba *phba)
 	int rc;
 
 	if (!phba->cfg_enable_hba_reset)
-		return -EIO;
+		return -EACCES;
 
 	status = lpfc_do_offline(phba, LPFC_EVT_OFFLINE);
 
@@ -728,7 +735,7 @@ lpfc_selective_reset(struct lpfc_hba *phba)
  * Notes:
  * Assumes any error from lpfc_selective_reset() will be negative.
  * If lpfc_selective_reset() returns zero then the length of the buffer
- * is returned which indicates succcess
+ * is returned which indicates success
  *
  * Returns:
  * -EINVAL if the buffer does not contain the string "selective"
@@ -768,12 +775,17 @@ lpfc_issue_reset(struct device *dev, struct device_attribute *attr,
 static int
 lpfc_sli4_pdev_status_reg_wait(struct lpfc_hba *phba)
 {
-	struct lpfc_register portstat_reg;
+	struct lpfc_register portstat_reg = {0};
 	int i;
 
-
+	msleep(100);
 	lpfc_readl(phba->sli4_hba.u.if_type2.STATUSregaddr,
 		   &portstat_reg.word0);
+
+	/* verify if privilaged for the request operation */
+	if (!bf_get(lpfc_sliport_status_rn, &portstat_reg) &&
+	    !bf_get(lpfc_sliport_status_err, &portstat_reg))
+		return -EPERM;
 
 	/* wait for the SLI port firmware ready after firmware reset */
 	for (i = 0; i < LPFC_FW_RESET_MAXIMUM_WAIT_10MS_CNT; i++) {
@@ -810,18 +822,24 @@ static ssize_t
 lpfc_sli4_pdev_reg_request(struct lpfc_hba *phba, uint32_t opcode)
 {
 	struct completion online_compl;
+	struct pci_dev *pdev = phba->pcidev;
 	uint32_t reg_val;
 	int status = 0;
 	int rc;
 
 	if (!phba->cfg_enable_hba_reset)
-		return -EIO;
+		return -EACCES;
 
 	if ((phba->sli_rev < LPFC_SLI_REV4) ||
 	    (bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf) !=
 	     LPFC_SLI_INTF_IF_TYPE_2))
 		return -EPERM;
 
+	/* Disable SR-IOV virtual functions if enabled */
+	if (phba->cfg_sriov_nr_virtfn) {
+		pci_disable_sriov(pdev);
+		phba->cfg_sriov_nr_virtfn = 0;
+	}
 	status = lpfc_do_offline(phba, LPFC_EVT_OFFLINE);
 
 	if (status != 0)
@@ -849,7 +867,7 @@ lpfc_sli4_pdev_reg_request(struct lpfc_hba *phba, uint32_t opcode)
 	rc = lpfc_sli4_pdev_status_reg_wait(phba);
 
 	if (rc)
-		return -EIO;
+		return rc;
 
 	init_completion(&online_compl);
 	rc = lpfc_workq_post_event(phba, &status, &online_compl,
@@ -975,7 +993,7 @@ lpfc_board_mode_store(struct device *dev, struct device_attribute *attr,
 	if (!status)
 		return strlen(buf);
 	else
-		return -EIO;
+		return status;
 }
 
 /**
@@ -2040,12 +2058,11 @@ lpfc_soft_wwpn_store(struct device *dev, struct device_attribute *attr,
 
 	/* Validate and store the new name */
 	for (i=0, j=0; i < 16; i++) {
-		if ((*buf >= 'a') && (*buf <= 'f'))
-			j = ((j << 4) | ((*buf++ -'a') + 10));
-		else if ((*buf >= 'A') && (*buf <= 'F'))
-			j = ((j << 4) | ((*buf++ -'A') + 10));
-		else if ((*buf >= '0') && (*buf <= '9'))
-			j = ((j << 4) | (*buf++ -'0'));
+		int value;
+
+		value = hex_to_bin(*buf++);
+		if (value >= 0)
+			j = (j << 4) | value;
 		else
 			return -EINVAL;
 		if (i % 2) {
@@ -2137,12 +2154,11 @@ lpfc_soft_wwnn_store(struct device *dev, struct device_attribute *attr,
 
 	/* Validate and store the new name */
 	for (i=0, j=0; i < 16; i++) {
-		if ((*buf >= 'a') && (*buf <= 'f'))
-			j = ((j << 4) | ((*buf++ -'a') + 10));
-		else if ((*buf >= 'A') && (*buf <= 'F'))
-			j = ((j << 4) | ((*buf++ -'A') + 10));
-		else if ((*buf >= '0') && (*buf <= '9'))
-			j = ((j << 4) | (*buf++ -'0'));
+		int value;
+
+		value = hex_to_bin(*buf++);
+		if (value >= 0)
+			j = (j << 4) | value;
 		else
 			return -EINVAL;
 		if (i % 2) {
@@ -2185,6 +2201,9 @@ MODULE_PARM_DESC(lpfc_enable_npiv, "Enable NPIV functionality");
 lpfc_param_show(enable_npiv);
 lpfc_param_init(enable_npiv, 1, 0, 1);
 static DEVICE_ATTR(lpfc_enable_npiv, S_IRUGO, lpfc_enable_npiv_show, NULL);
+
+LPFC_ATTR_R(fcf_failover_policy, 1, 1, 2,
+	"FCF Fast failover=1 Priority failover=2");
 
 int lpfc_enable_rrq;
 module_param(lpfc_enable_rrq, int, S_IRUGO);
@@ -2376,6 +2395,11 @@ lpfc_nodev_tmo_set(struct lpfc_vport *vport, int val)
 	if (val >= LPFC_MIN_DEVLOSS_TMO && val <= LPFC_MAX_DEVLOSS_TMO) {
 		vport->cfg_nodev_tmo = val;
 		vport->cfg_devloss_tmo = val;
+		/*
+		 * For compat: set the fc_host dev loss so new rports
+		 * will get the value.
+		 */
+		fc_host_dev_loss_tmo(lpfc_shost_from_vport(vport)) = val;
 		lpfc_update_rport_devloss_tmo(vport);
 		return 0;
 	}
@@ -2425,6 +2449,7 @@ lpfc_devloss_tmo_set(struct lpfc_vport *vport, int val)
 		vport->cfg_nodev_tmo = val;
 		vport->cfg_devloss_tmo = val;
 		vport->dev_loss_tmo_changed = 1;
+		fc_host_dev_loss_tmo(lpfc_shost_from_vport(vport)) = val;
 		lpfc_update_rport_devloss_tmo(vport);
 		return 0;
 	}
@@ -2971,17 +2996,10 @@ static DEVICE_ATTR(lpfc_stat_data_ctrl, S_IRUGO | S_IWUSR,
  * sysfs file. This function export the statistical data to user
  * applications.
  **/
-#ifdef BUILD_SLES11_SP1
 static ssize_t
 sysfs_drvr_stat_data_read(struct file *filp, struct kobject *kobj,
 		struct bin_attribute *bin_attr,
 		char *buf, loff_t off, size_t count)
-#else
-static ssize_t
-sysfs_drvr_stat_data_read(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *bin_attr,
-		char *buf, loff_t off, size_t count)
-#endif
 {
 	struct device *dev = container_of(kobj, struct device,
 		kobj);
@@ -3611,9 +3629,9 @@ LPFC_ATTR_RW(poll_tmo, 10, 1, 255,
 /*
 # lpfc_use_msi: Use MSI (Message Signaled Interrupts) in systems that
 #		support this feature
-#       0  = MSI disabled (default)
+#       0  = MSI disabled
 #       1  = MSI enabled
-#       2  = MSI-X enabled
+#       2  = MSI-X enabled (default)
 # Value range is [0,2]. Default value is 2.
 */
 LPFC_ATTR_R(use_msi, 2, 0, 2, "Use Message Signaled Interrupts (1) or "
@@ -3677,8 +3695,8 @@ LPFC_ATTR_R(enable_bg, 0, 0, 1, "Enable BlockGuard Support");
 #
 */
 unsigned int lpfc_prot_mask = SHOST_DIF_TYPE1_PROTECTION |
-                              SHOST_DIX_TYPE0_PROTECTION |
-                              SHOST_DIX_TYPE1_PROTECTION;
+			      SHOST_DIX_TYPE0_PROTECTION |
+			      SHOST_DIX_TYPE1_PROTECTION;
 
 module_param(lpfc_prot_mask, uint, S_IRUGO);
 MODULE_PARM_DESC(lpfc_prot_mask, "host protection mask");
@@ -3769,6 +3787,7 @@ struct device_attribute *lpfc_hba_attrs[] = {
 	&dev_attr_lpfc_fdmi_on,
 	&dev_attr_lpfc_max_luns,
 	&dev_attr_lpfc_enable_npiv,
+	&dev_attr_lpfc_fcf_failover_policy,
 	&dev_attr_lpfc_enable_rrq,
 	&dev_attr_nport_evt_cnt,
 	&dev_attr_board_mode,
@@ -3858,17 +3877,10 @@ struct device_attribute *lpfc_vport_attrs[] = {
  * -EPERM adapter is offline
  * value of count, buf contents written
  **/
-#ifdef BUILD_SLES11_SP1
 static ssize_t
 sysfs_ctlreg_write(struct file *filp, struct kobject *kobj,
 		   struct bin_attribute *bin_attr,
 		   char *buf, loff_t off, size_t count)
-#else
-static ssize_t
-sysfs_ctlreg_write(struct file *filp, struct kobject *kobj,
-		   struct bin_attribute *bin_attr,
-		   char *buf, loff_t off, size_t count)
-#endif
 {
 	size_t buf_off;
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -3882,18 +3894,23 @@ sysfs_ctlreg_write(struct file *filp, struct kobject *kobj,
 	if ((off + count) > FF_REG_AREA_SIZE)
 		return -ERANGE;
 
-	if (count == 0) return 0;
+	if (count <= LPFC_REG_WRITE_KEY_SIZE)
+		return 0;
 
 	if (off % 4 || count % 4 || (unsigned long)buf % 4)
 		return -EINVAL;
 
-	if (!(vport->fc_flag & FC_OFFLINE_MODE)) {
+	/* This is to protect HBA registers from accidental writes. */
+	if (memcmp(buf, LPFC_REG_WRITE_KEY, LPFC_REG_WRITE_KEY_SIZE))
+		return -EINVAL;
+
+	if (!(vport->fc_flag & FC_OFFLINE_MODE))
 		return -EPERM;
-	}
 
 	spin_lock_irq(&phba->hbalock);
-	for (buf_off = 0; buf_off < count; buf_off += sizeof(uint32_t))
-		writel(*((uint32_t *)(buf + buf_off)),
+	for (buf_off = 0; buf_off < count - LPFC_REG_WRITE_KEY_SIZE;
+			buf_off += sizeof(uint32_t))
+		writel(*((uint32_t *)(buf + buf_off + LPFC_REG_WRITE_KEY_SIZE)),
 		       phba->ctrl_regs_memmap_p + off + buf_off);
 
 	spin_unlock_irq(&phba->hbalock);
@@ -3906,7 +3923,7 @@ sysfs_ctlreg_write(struct file *filp, struct kobject *kobj,
  * @filp: open sysfs file
  * @kobj: kernel kobject that contains the kernel class device.
  * @bin_attr: kernel attributes passed to us.
- * @buf: if succesful contains the data from the adapter IOREG space.
+ * @buf: if successful contains the data from the adapter IOREG space.
  * @off: offset into buffer to beginning of data.
  * @count: bytes to transfer.
  *
@@ -3919,17 +3936,10 @@ sysfs_ctlreg_write(struct file *filp, struct kobject *kobj,
  * -EINVAL off, count or buff address invalid
  * value of count, buf contents read
  **/
-#ifdef BUILD_SLES11_SP1
 static ssize_t
 sysfs_ctlreg_read(struct file *filp, struct kobject *kobj,
 		  struct bin_attribute *bin_attr,
 		  char *buf, loff_t off, size_t count)
-#else
-static ssize_t
-sysfs_ctlreg_read(struct file *filp, struct kobject *kobj,
-		  struct bin_attribute *bin_attr,
-		  char *buf, loff_t off, size_t count)
-#endif
 {
 	size_t buf_off;
 	uint32_t * tmp_ptr;
@@ -4013,17 +4023,10 @@ sysfs_mbox_idle(struct lpfc_hba *phba)
  * -EAGAIN offset, state or mbox is NULL
  * count number of bytes transferred
  **/
-#ifdef BUILD_SLES11_SP1
 static ssize_t
 sysfs_mbox_write(struct file *filp, struct kobject *kobj,
 		 struct bin_attribute *bin_attr,
 		 char *buf, loff_t off, size_t count)
-#else
-static ssize_t
-sysfs_mbox_write(struct file *filp, struct kobject *kobj,
-		 struct bin_attribute *bin_attr,
-		 char *buf, loff_t off, size_t count)
-#endif
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct Scsi_Host  *shost = class_to_shost(dev);
@@ -4099,17 +4102,10 @@ sysfs_mbox_write(struct file *filp, struct kobject *kobj,
  * -ENODEV mailbox error
  * count number of bytes transferred
  **/
-#ifdef BUILD_SLES11_SP1
 static ssize_t
 sysfs_mbox_read(struct file *filp, struct kobject *kobj,
 		struct bin_attribute *bin_attr,
 		char *buf, loff_t off, size_t count)
-#else
-static ssize_t
-sysfs_mbox_read(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *bin_attr,
-		char *buf, loff_t off, size_t count)
-#endif
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct Scsi_Host  *shost = class_to_shost(dev);
@@ -4846,7 +4842,7 @@ static FC_RPORT_ATTR(field, S_IRUGO, lpfc_show_rport_##field, NULL)
  * Description:
  * This function is called by the transport after the @fc_vport's symbolic name
  * has been changed. This function re-registers the symbolic name with the
- * switch to propogate the change into the fabric if the vport is active.
+ * switch to propagate the change into the fabric if the vport is active.
  **/
 static void
 lpfc_set_vport_symbolic_name(struct fc_vport *fc_vport)
@@ -4863,7 +4859,7 @@ lpfc_set_vport_symbolic_name(struct fc_vport *fc_vport)
  *
  * This function is called by the lpfc_get_cfgparam() routine to set the
  * module lpfc_log_verbose into the @phba cfg_log_verbose for use with
- * log messsage according to the module's lpfc_log_verbose parameter setting
+ * log message according to the module's lpfc_log_verbose parameter setting
  * before hba port or vport created.
  **/
 static void
@@ -5017,6 +5013,7 @@ lpfc_get_cfgparam(struct lpfc_hba *phba)
 	lpfc_link_speed_init(phba, lpfc_link_speed);
 	lpfc_poll_tmo_init(phba, lpfc_poll_tmo);
 	lpfc_enable_npiv_init(phba, lpfc_enable_npiv);
+	lpfc_fcf_failover_policy_init(phba, lpfc_fcf_failover_policy);
 	lpfc_enable_rrq_init(phba, lpfc_enable_rrq);
 	lpfc_use_msi_init(phba, lpfc_use_msi);
 	lpfc_fcp_imax_init(phba, lpfc_fcp_imax);

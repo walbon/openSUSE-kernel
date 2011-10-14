@@ -1261,10 +1261,10 @@ static void digi_write_bulk_callback(struct urb *urb)
 		return;
 	}
 
-	/* try to send any buffered data on this port, if it is open */
+	/* try to send any buffered data on this port */
 	spin_lock(&priv->dp_port_lock);
 	priv->dp_write_urb_in_use = 0;
-	if (port->port.count && priv->dp_out_buf_len > 0) {
+	if (priv->dp_out_buf_len > 0) {
 		*((unsigned char *)(port->write_urb->transfer_buffer))
 			= (unsigned char)DIGI_CMD_SEND_DATA;
 		*((unsigned char *)(port->write_urb->transfer_buffer) + 1)
@@ -1287,7 +1287,7 @@ static void digi_write_bulk_callback(struct urb *urb)
 	schedule_work(&priv->dp_wakeup_work);
 
 	spin_unlock(&priv->dp_port_lock);
-	if (ret)
+	if (ret && ret != -EPERM)
 		dev_err(&port->dev,
 			"%s: usb_submit_urb failed, ret=%d, port=%d\n",
 			__func__, ret, priv->dp_port_num);
@@ -1344,8 +1344,7 @@ static int digi_open(struct tty_struct *tty, struct usb_serial_port *port)
 	struct digi_port *priv = usb_get_serial_port_data(port);
 	struct ktermios not_termios;
 
-	dbg("digi_open: TOP: port=%d, open_count=%d",
-		priv->dp_port_num, port->port.count);
+	dbg("digi_open: TOP: port=%d", priv->dp_port_num);
 
 	/* be sure the device is started up */
 	if (digi_startup_device(port->serial) != 0)
@@ -1384,8 +1383,7 @@ static void digi_close(struct usb_serial_port *port)
 	unsigned char buf[32];
 	struct digi_port *priv = usb_get_serial_port_data(port);
 
-	dbg("digi_close: TOP: port=%d, open_count=%d",
-		priv->dp_port_num, port->port.count);
+	dbg("digi_close: TOP: port=%d", priv->dp_port_num);
 
 	mutex_lock(&port->serial->disc_mutex);
 	/* if disconnected, just clear flags */
@@ -1620,7 +1618,7 @@ static void digi_read_bulk_callback(struct urb *urb)
 	/* continue read */
 	urb->dev = port->serial->dev;
 	ret = usb_submit_urb(urb, GFP_ATOMIC);
-	if (ret != 0) {
+	if (ret != 0 && ret != -EPERM) {
 		dev_err(&port->dev,
 			"%s: failed resubmitting urb, ret=%d, port=%d\n",
 			__func__, ret, priv->dp_port_num);
@@ -1653,7 +1651,7 @@ static int digi_read_inb_callback(struct urb *urb)
 
 	/* do not process callbacks on closed ports */
 	/* but do continue the read chain */
-	if (port->port.count == 0)
+	if (urb->status == -ENOENT)
 		return 0;
 
 	/* short/multiple packet check */
@@ -1757,8 +1755,9 @@ static int digi_read_oob_callback(struct urb *urb)
 			return -1;
 
 		tty = tty_port_tty_get(&port->port);
+
 		rts = 0;
-		if (port->port.count && tty)
+		if (tty)
 			rts = tty->termios->c_cflag & CRTSCTS;
 		
 		if (tty && opcode == DIGI_CMD_READ_INPUT_SIGNALS) {

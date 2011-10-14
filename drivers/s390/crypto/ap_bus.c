@@ -28,12 +28,14 @@
 #define KMSG_COMPONENT "ap"
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
+#include <linux/kernel_stat.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/interrupt.h>
 #include <linux/workqueue.h>
+#include <linux/slab.h>
 #include <linux/notifier.h>
 #include <linux/kthread.h>
 #include <linux/mutex.h>
@@ -154,14 +156,7 @@ static inline int ap_instructions_available(void)
  */
 static int ap_interrupts_available(void)
 {
-	unsigned long long facility_bits[2];
-
-	if (stfle(facility_bits, 2) <= 1)
-		return 0;
-	if (!(facility_bits[0] & (1ULL << 61)) ||
-	    !(facility_bits[1] & (1ULL << 62)))
-		return 0;
-	return 1;
+	return test_facility(2) && test_facility(65);
 }
 
 /**
@@ -255,7 +250,7 @@ __ap_query_functions(ap_qid_t qid, unsigned int *functions)
  * @functions: Pointer to functions field.
  *
  * Returns
- *   0        on success.
+ *   0	     on success.
  *   -ENODEV  if queue not valid.
  *   -EBUSY   if device busy.
  *   -EINVAL  if query function is not supported
@@ -1138,6 +1133,7 @@ out:
 
 static void ap_interrupt_handler(void *unused1, void *unused2)
 {
+	kstat_cpu(smp_processor_id()).irqs[IOINT_APB]++;
 	tasklet_schedule(&ap_tasklet);
 }
 

@@ -32,7 +32,8 @@
 #include <linux/interrupt.h>
 #include <linux/time.h>
 #include <linux/math64.h>
-#include <linux/smp_lock.h>
+#include <linux/mutex.h>
+#include <linux/slab.h>
 
 #include <asm/uaccess.h>
 #include <asm/sn/addrs.h>
@@ -52,12 +53,15 @@ MODULE_LICENSE("GPL");
 
 #define RTC_BITS 55 /* 55 bits for this implementation */
 
+static struct k_clock sgi_clock;
+
 extern unsigned long sn_rtc_cycles_per_second;
 
 #define RTC_COUNTER_ADDR        ((long *)LOCAL_MMR_ADDR(SH_RTC))
 
 #define rtc_time()              (*RTC_COUNTER_ADDR)
 
+static DEFINE_MUTEX(mmtimer_mutex);
 static long mmtimer_ioctl(struct file *file, unsigned int cmd,
 						unsigned long arg);
 static int mmtimer_mmap(struct file *file, struct vm_area_struct *vma);
@@ -71,6 +75,7 @@ static const struct file_operations mmtimer_fops = {
 	.owner = THIS_MODULE,
 	.mmap =	mmtimer_mmap,
 	.unlocked_ioctl = mmtimer_ioctl,
+	.llseek = noop_llseek,
 };
 
 /*
@@ -374,7 +379,7 @@ static long mmtimer_ioctl(struct file *file, unsigned int cmd,
 {
 	int ret = 0;
 
-	lock_kernel();
+	mutex_lock(&mmtimer_mutex);
 
 	switch (cmd) {
 	case MMTIMER_GETOFFSET:	/* offset of the counter */
@@ -417,7 +422,7 @@ static long mmtimer_ioctl(struct file *file, unsigned int cmd,
 		ret = -ENOTTY;
 		break;
 	}
-	unlock_kernel();
+	mutex_unlock(&mmtimer_mutex);
 	return ret;
 }
 
@@ -484,7 +489,7 @@ static int sgi_clock_get(clockid_t clockid, struct timespec *tp)
 	return 0;
 };
 
-static int sgi_clock_set(clockid_t clockid, struct timespec *tp)
+static int sgi_clock_set(const clockid_t clockid, const struct timespec *tp)
 {
 
 	u64 nsec;
@@ -550,7 +555,7 @@ static void mmtimer_tasklet(unsigned long data)
 {
 	int nodeid = data;
 	struct mmtimer_node *mn = &timers[nodeid];
-	struct mmtimer *x = rb_entry(mn->next, struct mmtimer, list);
+	struct mmtimer *x;
 	struct k_itimer *t;
 	unsigned long flags;
 
@@ -760,15 +765,21 @@ static int sgi_timer_set(struct k_itimer *timr, int flags,
 	return err;
 }
 
+static int sgi_clock_getres(const clockid_t which_clock, struct timespec *tp)
+{
+	tp->tv_sec = 0;
+	tp->tv_nsec = sgi_clock_period;
+	return 0;
+}
+
 static struct k_clock sgi_clock = {
-	.res = 0,
-	.clock_set = sgi_clock_set,
-	.clock_get = sgi_clock_get,
-	.timer_create = sgi_timer_create,
-	.nsleep = do_posix_clock_nonanosleep,
-	.timer_set = sgi_timer_set,
-	.timer_del = sgi_timer_del,
-	.timer_get = sgi_timer_get
+	.clock_set	= sgi_clock_set,
+	.clock_get	= sgi_clock_get,
+	.clock_getres	= sgi_clock_getres,
+	.timer_create	= sgi_timer_create,
+	.timer_set	= sgi_timer_set,
+	.timer_del	= sgi_timer_del,
+	.timer_get	= sgi_timer_get
 };
 
 /**
@@ -828,8 +839,8 @@ static int __init mmtimer_init(void)
 			(unsigned long) node);
 	}
 
-	sgi_clock_period = sgi_clock.res = NSEC_PER_SEC / sn_rtc_cycles_per_second;
-	register_posix_clock(CLOCK_SGI_CYCLE, &sgi_clock);
+	sgi_clock_period = NSEC_PER_SEC / sn_rtc_cycles_per_second;
+	posix_timers_register_clock(CLOCK_SGI_CYCLE, &sgi_clock);
 
 	printk(KERN_INFO "%s: v%s, %ld MHz\n", MMTIMER_DESC, MMTIMER_VERSION,
 	       sn_rtc_cycles_per_second/(unsigned long)1E6);

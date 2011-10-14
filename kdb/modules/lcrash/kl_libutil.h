@@ -22,7 +22,6 @@
 #ifndef __KL_LIBUTIL_H
 #define __KL_LIBUTIL_H
 
-/* cpw: change all these from the < > form to the " " form: */
 #include "kl_alloc.h"
 #include "kl_btnode.h"
 #include "kl_copt.h"

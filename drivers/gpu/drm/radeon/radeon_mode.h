@@ -37,7 +37,6 @@
 #include <drm_fixed.h>
 #include <drm_crtc_helper.h>
 #include <linux/i2c.h>
-#include <linux/i2c-id.h>
 #include <linux/i2c-algo-bit.h>
 
 struct radeon_bo;
@@ -186,17 +185,12 @@ struct radeon_pll {
 	uint32_t id;
 };
 
-struct i2c_algo_radeon_data {
-	struct i2c_adapter bit_adapter;
-	struct i2c_algo_bit_data bit_data;
-};
-
 struct radeon_i2c_chan {
 	struct i2c_adapter adapter;
 	struct drm_device *dev;
 	union {
+		struct i2c_algo_bit_data bit;
 		struct i2c_algo_dp_aux_data dp;
-		struct i2c_algo_radeon_data radeon;
 	} algo;
 	struct radeon_i2c_bus_rec rec;
 };
@@ -485,6 +479,7 @@ extern void radeon_dp_set_link_config(struct drm_connector *connector,
 				      struct drm_display_mode *mode);
 extern void radeon_dp_link_train(struct drm_encoder *encoder,
 				 struct drm_connector *connector);
+extern bool radeon_dp_needs_link_train(struct radeon_connector *radeon_connector);
 extern u8 radeon_dp_getsinktype(struct radeon_connector *radeon_connector);
 extern bool radeon_dp_getdpcd(struct radeon_connector *radeon_connector);
 extern void atombios_dig_encoder_setup(struct drm_encoder *encoder, int action, int panel_mode);
@@ -513,7 +508,6 @@ extern struct radeon_i2c_chan *radeon_i2c_create(struct drm_device *dev,
 						 struct radeon_i2c_bus_rec *rec,
 						 const char *name);
 extern void radeon_i2c_destroy(struct radeon_i2c_chan *i2c);
-extern void radeon_i2c_destroy_dp(struct radeon_i2c_chan *i2c);
 extern void radeon_i2c_get_byte(struct radeon_i2c_chan *i2c_bus,
 				u8 slave_addr,
 				u8 addr,

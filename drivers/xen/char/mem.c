@@ -3,9 +3,9 @@
  *
  *  Copyright (C) 1991, 1992  Linus Torvalds
  *
- *  Added devfs support. 
+ *  Added devfs support.
  *    Jan-11-1998, C. Scott Ananian <cananian@alumni.princeton.edu>
- *  Shared /dev/zero mmaping support, Feb 2000, Kanoj Sarcar <kanoj@sgi.com>
+ *  Shared /dev/zero mmapping support, Feb 2000, Kanoj Sarcar <kanoj@sgi.com>
  */
 
 #include <linux/mm.h>
@@ -25,9 +25,19 @@
 #include <asm/io.h>
 #include <asm/hypervisor.h>
 
+static inline unsigned long size_inside_page(unsigned long start,
+					     unsigned long size)
+{
+	unsigned long sz;
+
+	sz = PAGE_SIZE - (start & (PAGE_SIZE - 1));
+
+	return min(sz, size);
+}
+
 static inline int uncached_access(struct file *file)
 {
-	if (file->f_flags & O_SYNC)
+	if (file->f_flags & O_DSYNC)
 		return 1;
 	/* Xen sets correct MTRR type on non-RAM for us. */
 	return 0;
@@ -55,14 +65,13 @@ static inline int range_is_allowed(unsigned long pfn, unsigned long size)
 }
 
 /*
- * This funcion reads the *physical* memory. The f_pos points directly to the 
- * memory location. 
+ * This funcion reads the *physical* memory. The f_pos points directly to the
+ * memory location.
  */
-static ssize_t read_mem(struct file * file, char __user * buf,
+static ssize_t read_mem(struct file *file, char __user *buf,
 			size_t count, loff_t *ppos)
 {
 	phys_addr_t p = *ppos;
-	unsigned long ignored;
 	ssize_t read = 0, sz;
 	void __iomem *v;
 
@@ -70,15 +79,9 @@ static ssize_t read_mem(struct file * file, char __user * buf,
 		return 0;
 
 	while (count > 0) {
-		/*
-		 * Handle first page in case it's not aligned
-		 */
-		if (-p & (PAGE_SIZE - 1))
-			sz = -p & (PAGE_SIZE - 1);
-		else
-			sz = PAGE_SIZE;
+		unsigned long remaining;
 
-		sz = min_t(unsigned long, sz, count);
+		sz = size_inside_page(p, count);
 
 		if (!range_is_allowed(p >> PAGE_SHIFT, count))
 			return -EPERM;
@@ -99,10 +102,11 @@ static ssize_t read_mem(struct file * file, char __user * buf,
 			break;
 		}
 
-		ignored = copy_to_user(buf, v, sz);
+		remaining = copy_to_user(buf, v, sz);
 		iounmap(v);
-		if (ignored)
+		if (remaining)
 			return -EFAULT;
+
 		buf += sz;
 		p += sz;
 		count -= sz;
@@ -113,7 +117,7 @@ static ssize_t read_mem(struct file * file, char __user * buf,
 	return read;
 }
 
-static ssize_t write_mem(struct file * file, const char __user * buf, 
+static ssize_t write_mem(struct file *file, const char __user *buf,
 			 size_t count, loff_t *ppos)
 {
 	phys_addr_t p = *ppos;
@@ -125,15 +129,7 @@ static ssize_t write_mem(struct file * file, const char __user * buf,
 		return -EFBIG;
 
 	while (count > 0) {
-		/*
-		 * Handle first page in case it's not aligned
-		 */
-		if (-p & (PAGE_SIZE - 1))
-			sz = -p & (PAGE_SIZE - 1);
-		else
-			sz = PAGE_SIZE;
-
-		sz = min_t(unsigned long, sz, count);
+		sz = size_inside_page(p, count);
 
 		if (!range_is_allowed(p >> PAGE_SHIFT, sz))
 			return -EPERM;
@@ -172,7 +168,7 @@ static struct vm_operations_struct mmap_mem_ops = {
 #endif
 };
 
-static int xen_mmap_mem(struct file * file, struct vm_area_struct * vma)
+static int xen_mmap_mem(struct file *file, struct vm_area_struct *vma)
 {
 	size_t size = vma->vm_end - vma->vm_start;
 
@@ -202,24 +198,26 @@ static int xen_mmap_mem(struct file * file, struct vm_area_struct * vma)
  * also note that seeking relative to the "end of file" isn't supported:
  * it has no meaning, so it returns -EINVAL.
  */
-static loff_t memory_lseek(struct file * file, loff_t offset, int orig)
+static loff_t memory_lseek(struct file *file, loff_t offset, int orig)
 {
 	loff_t ret;
 
 	mutex_lock(&file->f_path.dentry->d_inode->i_mutex);
 	switch (orig) {
-		case 0:
-			file->f_pos = offset;
-			ret = file->f_pos;
-			force_successful_syscall_return();
+	case SEEK_CUR:
+		offset += file->f_pos;
+	case SEEK_SET:
+		/* to avoid userland mistaking f_pos=-9 as -EBADF=-9 */
+		if ((unsigned long long)offset >= ~0xFFFULL) {
+			ret = -EOVERFLOW;
 			break;
-		case 1:
-			file->f_pos += offset;
-			ret = file->f_pos;
-			force_successful_syscall_return();
-			break;
-		default:
-			ret = -EINVAL;
+		}
+		file->f_pos = offset;
+		ret = file->f_pos;
+		force_successful_syscall_return();
+		break;
+	default:
+		ret = -EINVAL;
 	}
 	mutex_unlock(&file->f_path.dentry->d_inode->i_mutex);
 	return ret;

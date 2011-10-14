@@ -182,74 +182,45 @@ static int xen_tx_notifier(struct acpi_processor *pr, int action)
 	return -EINVAL;
 }
 
-#ifdef CONFIG_ACPI_HOTPLUG_CPU
-static int get_apic_id(acpi_handle handle)
-{
-	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-	union acpi_object *obj;
-	union {
-		struct acpi_subtable_header *header;
-		struct acpi_madt_local_apic *lapic;
-		struct acpi_madt_local_x2apic *x2apic;
-	} apic;
-	int physid = -EINVAL;
-
-	if (ACPI_FAILURE(acpi_evaluate_object(handle, "_MAT", NULL, &buffer)))
-		return -EINVAL;
-
-	if (!buffer.length || !buffer.pointer)
-		return -EINVAL;
-
-	obj = buffer.pointer;
-	if (obj->type != ACPI_TYPE_BUFFER
-	    || obj->buffer.length < sizeof(*apic.header)) {
-		kfree(buffer.pointer);
-		return -EINVAL;
-	}
-
-	apic.header = (struct acpi_subtable_header *)obj->buffer.pointer;
-
-	switch (apic.header->type) {
-	case ACPI_MADT_TYPE_LOCAL_APIC:
-		if (obj->buffer.length >= sizeof(*apic.lapic)
-		    && apic.lapic->lapic_flags & ACPI_MADT_ENABLED)
-			physid = apic.lapic->id;
-		break;
-	case ACPI_MADT_TYPE_LOCAL_X2APIC:
-		if (obj->buffer.length >= sizeof(*apic.x2apic)
-		    && apic.x2apic->lapic_flags & ACPI_MADT_ENABLED)
-			physid = apic.x2apic->local_apic_id;
-		break;
-	}
-
-	kfree(buffer.pointer);
-
-	return physid;
-}
-#endif
-
 static int xen_hotplug_notifier(struct acpi_processor *pr, int event)
 {
 	int ret = -EINVAL;
 #ifdef CONFIG_ACPI_HOTPLUG_CPU
 	acpi_status status = 0;
+	acpi_object_type type;
 	uint32_t apic_id;
+	int device_decl = 0;
 	unsigned long long pxm;
-	xen_platform_op_t op = {
-		.interface_version  = XENPF_INTERFACE_VERSION,
-	};
+	xen_platform_op_t op;
 
-	apic_id = get_apic_id(pr->handle);
+	status = acpi_get_type(pr->handle, &type);
+	if (ACPI_FAILURE(status)) {
+		pr_warn("can't get object type for acpi_id %#x\n",
+			pr->acpi_id);
+		return -ENXIO;
+	}
+
+	switch (type) {
+	case ACPI_TYPE_PROCESSOR:
+		break;
+	case ACPI_TYPE_DEVICE:
+		device_decl = 1;
+		break;
+	default:
+		pr_warn("unsupported object type %#x for acpi_id %#x\n",
+			type, pr->acpi_id);
+		return -EOPNOTSUPP;
+	}
+
+	apic_id = acpi_get_cpuid(pr->handle, ~device_decl, pr->acpi_id);
 	if (apic_id < 0) {
-		pr_warning("can't get apic_id for acpi_id %#x\n",
-			   pr->acpi_id);
+		pr_warn("can't get apic_id for acpi_id %#x\n", pr->acpi_id);
 		return -ENODATA;
 	}
 
 	status = acpi_evaluate_integer(pr->handle, "_PXM", NULL, &pxm);
 	if (ACPI_FAILURE(status)) {
-		pr_warning("can't get pxm for acpi_id %#x\n",
-			   pr->acpi_id);
+		pr_warn("can't get pxm for acpi_id %#x\n", pr->acpi_id);
 		return -ENODATA;
 	}
 
@@ -262,7 +233,7 @@ static int xen_hotplug_notifier(struct acpi_processor *pr, int event)
 		ret = HYPERVISOR_platform_op(&op);
 		break;
 	case HOTPLUG_TYPE_REMOVE:
-		pr_warning("Xen doesn't support CPU hot remove\n");
+		pr_warn("Xen doesn't support CPU hot remove\n");
 		ret = -EOPNOTSUPP;
 		break;
 	}
@@ -275,13 +246,13 @@ static struct processor_extcntl_ops xen_extcntl_ops = {
 	.hotplug		= xen_hotplug_notifier,
 };
 
-void arch_acpi_processor_init_extcntl(const struct processor_extcntl_ops **ops)
+static int __init init_extcntl(void)
 {
 	unsigned int pmbits = (xen_start_info->flags & SIF_PM_MASK) >> 8;
 
 #ifndef CONFIG_ACPI_HOTPLUG_CPU
 	if (!pmbits)
-		return;
+		return 0;
 #endif
 	if (pmbits & XEN_PROCESSOR_PM_CX)
 		xen_extcntl_ops.pm_ops[PM_TYPE_IDLE] = xen_cx_notifier;
@@ -290,17 +261,17 @@ void arch_acpi_processor_init_extcntl(const struct processor_extcntl_ops **ops)
 	if (pmbits & XEN_PROCESSOR_PM_TX)
 		xen_extcntl_ops.pm_ops[PM_TYPE_THR] = xen_tx_notifier;
 
-	*ops = &xen_extcntl_ops;
+	processor_extcntl_ops = &xen_extcntl_ops;
+
+	return 0;
 }
-EXPORT_SYMBOL(arch_acpi_processor_init_extcntl);
+arch_initcall(init_extcntl);
 
 unsigned int cpufreq_quick_get(unsigned int cpu)
 {
-	xen_platform_op_t op = {
-		.cmd			= XENPF_get_cpu_freq,
-		.interface_version	= XENPF_INTERFACE_VERSION,
-		.u.get_cpu_freq.vcpu	= cpu
-	};
+	xen_platform_op_t op;
 
+	op.cmd = XENPF_get_cpu_freq;
+	op.u.get_cpu_freq.vcpu = cpu;
 	return HYPERVISOR_platform_op(&op) == 0 ? op.u.get_cpu_freq.freq : 0;
 }

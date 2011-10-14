@@ -30,8 +30,8 @@
  * IN THE SOFTWARE.
  */
 
-#if defined(CONFIG_XEN) || defined(MODULE)
 #include <linux/slab.h>
+#if defined(CONFIG_XEN) || defined(MODULE)
 #include <xen/evtchn.h>
 #include <xen/gnttab.h>
 #else
@@ -58,7 +58,7 @@ const char *xenbus_strstate(enum xenbus_state state)
 		[ XenbusStateInitialised  ] = "Initialised",
 		[ XenbusStateConnected    ] = "Connected",
 		[ XenbusStateClosing      ] = "Closing",
-		[ XenbusStateClosed	  ] = "Closed",
+		[ XenbusStateClosed       ] = "Closed",
 		[ XenbusStateReconfiguring ] = "Reconfiguring",
 		[ XenbusStateReconfigured ] = "Reconfigured",
 	};
@@ -165,6 +165,64 @@ int xenbus_watch_pathfmt(struct xenbus_device *dev,
 EXPORT_SYMBOL_GPL(xenbus_watch_pathfmt);
 #endif
 
+static void xenbus_switch_fatal(struct xenbus_device *, int, int,
+				const char *, ...);
+
+static int
+__xenbus_switch_state(struct xenbus_device *dev,
+		      enum xenbus_state state, int depth)
+{
+	/* We check whether the state is currently set to the given value, and
+	   if not, then the state is set.  We don't want to unconditionally
+	   write the given state, because we don't want to fire watches
+	   unnecessarily.  Furthermore, if the node has gone, we don't write
+	   to it, as the device will be tearing down, and we don't want to
+	   resurrect that directory.
+
+	   Note that, because of this cached value of our state, this
+	   function will not take a caller's Xenstore transaction
+	   (something it was trying to in the past) because dev->state
+	   would not get reset if the transaction was aborted.
+	 */
+
+	struct xenbus_transaction xbt;
+	int current_state;
+	int err, abort;
+
+	if (state == dev->state)
+		return 0;
+
+again:
+	abort = 1;
+
+	err = xenbus_transaction_start(&xbt);
+	if (err) {
+		xenbus_switch_fatal(dev, depth, err, "starting transaction");
+		return 0;
+	}
+
+	err = xenbus_scanf(xbt, dev->nodename, "state", "%d", &current_state);
+	if (err != 1)
+		goto abort;
+
+	err = xenbus_printf(xbt, dev->nodename, "state", "%d", state);
+	if (err) {
+		xenbus_switch_fatal(dev, depth, err, "writing new state");
+		goto abort;
+	}
+
+	abort = 0;
+abort:
+	err = xenbus_transaction_end(xbt, abort);
+	if (err) {
+		if (err == -EAGAIN && !abort)
+			goto again;
+		xenbus_switch_fatal(dev, depth, err, "ending transaction");
+	} else
+		dev->state = state;
+
+	return 0;
+}
 
 /**
  * xenbus_switch_state
@@ -177,41 +235,7 @@ EXPORT_SYMBOL_GPL(xenbus_watch_pathfmt);
  */
 int xenbus_switch_state(struct xenbus_device *dev, enum xenbus_state state)
 {
-	/* We check whether the state is currently set to the given value, and
-	   if not, then the state is set.  We don't want to unconditionally
-	   write the given state, because we don't want to fire watches
-	   unnecessarily.  Furthermore, if the node has gone, we don't write
-	   to it, as the device will be tearing down, and we don't want to
-	   resurrect that directory.
-
-	   Note that, because of this cached value of our state, this function
-	   will not work inside a Xenstore transaction (something it was
-	   trying to in the past) because dev->state would not get reset if
-	   the transaction was aborted.
-
-	 */
-
-	int current_state;
-	int err;
-
-	if (state == dev->state)
-		return 0;
-
-	err = xenbus_scanf(XBT_NIL, dev->nodename, "state", "%d",
-			   &current_state);
-	if (err != 1)
-		return 0;
-
-	err = xenbus_printf(XBT_NIL, dev->nodename, "state", "%d", state);
-	if (err) {
-		if (state != XenbusStateClosing) /* Avoid looping */
-			xenbus_dev_fatal(dev, err, "writing new state");
-		return err;
-	}
-
-	dev->state = state;
-
-	return 0;
+	return __xenbus_switch_state(dev, state, 0);
 }
 EXPORT_SYMBOL_GPL(xenbus_switch_state);
 
@@ -234,41 +258,22 @@ static char *error_path(struct xenbus_device *dev)
 
 
 static void _dev_error(struct xenbus_device *dev, int err,
-			const char *fmt, va_list ap)
+			const char *fmt, va_list *ap)
 {
-	int ret;
-	unsigned int len;
-	char *printf_buffer = NULL, *path_buffer = NULL;
+	char *printf_buffer, *path_buffer;
+	struct va_format vaf = { .fmt = fmt, .va = ap };
 
-#define PRINTF_BUFFER_SIZE 4096
-	printf_buffer = kmalloc(PRINTF_BUFFER_SIZE, GFP_KERNEL);
-	if (printf_buffer == NULL)
-		goto fail;
-
-	len = sprintf(printf_buffer, "%i ", -err);
-	ret = vsnprintf(printf_buffer+len, PRINTF_BUFFER_SIZE-len, fmt, ap);
-
-	BUG_ON(len + ret > PRINTF_BUFFER_SIZE-1);
-
-	dev_err(&dev->dev, "%s\n", printf_buffer);
+	printf_buffer = kasprintf(GFP_KERNEL, "%i %pV", -err, &vaf);
+	if (printf_buffer)
+		dev_err(&dev->dev, "%s\n", printf_buffer);
 
 	path_buffer = error_path(dev);
-
-	if (path_buffer == NULL) {
+	if (!printf_buffer || !path_buffer
+	    || xenbus_write(XBT_NIL, path_buffer, "error", printf_buffer))
 		dev_err(&dev->dev,
 		        "xenbus: failed to write error node for %s (%s)\n",
 		        dev->nodename, printf_buffer);
-		goto fail;
-	}
 
-	if (xenbus_write(XBT_NIL, path_buffer, "error", printf_buffer) != 0) {
-		dev_err(&dev->dev,
-		        "xenbus: failed to write error node for %s (%s)\n",
-		        dev->nodename, printf_buffer);
-		goto fail;
-	}
-
-fail:
 	kfree(printf_buffer);
 	kfree(path_buffer);
 }
@@ -283,13 +288,12 @@ fail:
  * Report the given negative errno into the store, along with the given
  * formatted message.
  */
-void xenbus_dev_error(struct xenbus_device *dev, int err, const char *fmt,
-		      ...)
+void xenbus_dev_error(struct xenbus_device *dev, int err, const char *fmt, ...)
 {
 	va_list ap;
 
 	va_start(ap, fmt);
-	_dev_error(dev, err, fmt, ap);
+	_dev_error(dev, err, fmt, &ap);
 	va_end(ap);
 }
 EXPORT_SYMBOL_GPL(xenbus_dev_error);
@@ -305,19 +309,34 @@ EXPORT_SYMBOL_GPL(xenbus_dev_error);
  * xenbus_switch_state(dev, XenbusStateClosing) to schedule an orderly
  * closedown of this driver and its peer.
  */
-void xenbus_dev_fatal(struct xenbus_device *dev, int err, const char *fmt,
-		      ...)
+void xenbus_dev_fatal(struct xenbus_device *dev, int err, const char *fmt, ...)
 {
 	va_list ap;
 
 	va_start(ap, fmt);
-	_dev_error(dev, err, fmt, ap);
+	_dev_error(dev, err, fmt, &ap);
 	va_end(ap);
 
 	xenbus_switch_state(dev, XenbusStateClosing);
 }
 EXPORT_SYMBOL_GPL(xenbus_dev_fatal);
 
+/**
+ * Equivalent to xenbus_dev_fatal(dev, err, fmt, args), but helps
+ * avoiding recursion within xenbus_switch_state.
+ */
+static void xenbus_switch_fatal(struct xenbus_device *dev, int depth, int err,
+				const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	_dev_error(dev, err, fmt, &ap);
+	va_end(ap);
+
+	if (!depth)
+		__xenbus_switch_state(dev, XenbusStateClosing, 1);
+}
 
 /**
  * xenbus_grant_ring

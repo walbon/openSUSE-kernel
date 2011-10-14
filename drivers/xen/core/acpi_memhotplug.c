@@ -44,11 +44,9 @@ static DEFINE_SPINLOCK(xen_hotmem_lock);
 
 static int xen_hyper_addmem(struct xen_hotmem_entry *entry)
 {
-	xen_platform_op_t op = {
-		.cmd            = XENPF_mem_hotadd,
-		.interface_version  = XENPF_INTERFACE_VERSION,
-	};
+	xen_platform_op_t op;
 
+	op.cmd = XENPF_mem_hotadd;
 	op.u.mem_add.spfn = entry->start >> PAGE_SHIFT;
 	op.u.mem_add.epfn = entry->end >> PAGE_SHIFT;
 	op.u.mem_add.flags = entry->flags;
@@ -105,7 +103,7 @@ static void xen_hotadd_mem_dpc(struct work_struct *work)
 		entry = list_entry(elem, struct xen_hotmem_entry, hotmem_list);
 		ret = xen_hyper_addmem(entry);
 		if (ret)
-			pr_warning("xen addmem failed with %x\n", ret);
+			pr_warn("xen addmem failed with %x\n", ret);
 		free_hotmem_entry(entry);
 		xen_hotmem.entry_nr--;
 	}

@@ -1717,7 +1717,7 @@ typedef struct fc_port {
 #define FCS_DEVICE_LOST		3
 #define FCS_ONLINE		4
 
-static const char *port_state_str[] = {
+static const char * const port_state_str[] = {
 	"Unknown",
 	"UNCONFIGURED",
 	"DEAD",
@@ -2094,7 +2094,7 @@ struct ct_sns_pkt {
 };
 
 /*
- * SNS command structures -- for 2200 compatability.
+ * SNS command structures -- for 2200 compatibility.
  */
 #define	RFT_ID_SNS_SCMD_LEN	22
 #define	RFT_ID_SNS_CMD_SIZE	60
@@ -2422,7 +2422,7 @@ struct qla_hw_data {
 		uint32_t	disable_serdes		:1;
 		uint32_t	gpsc_supported		:1;
 		uint32_t	npiv_supported		:1;
-		uint32_t	pci_channel_io_perm_failure:1;
+		uint32_t	pci_channel_io_perm_failure	:1;
 		uint32_t	fce_enabled		:1;
 		uint32_t	fac_supported		:1;
 
@@ -2438,7 +2438,8 @@ struct qla_hw_data {
 		uint32_t	quiesce_owner:1;
 		uint32_t	thermal_supported:1;
 		uint32_t	isp82xx_reset_hdlr_active:1;
-		/* 26 bits */
+		uint32_t	isp82xx_reset_owner:1;
+		/* 28 bits */
 	} flags;
 
 	/* This spinlock is used to protect "io transactions", you must
@@ -2529,6 +2530,7 @@ struct qla_hw_data {
 #define DT_ISP8021			BIT_14
 #define DT_ISP_LAST			(DT_ISP8021 << 1)
 
+#define DT_T10_PI                       BIT_25
 #define DT_IIDMA                        BIT_26
 #define DT_FWI2                         BIT_27
 #define DT_ZIO_SUPPORTED                BIT_28
@@ -2572,6 +2574,7 @@ struct qla_hw_data {
 #define IS_NOCACHE_VPD_TYPE(ha)	(IS_QLA81XX(ha))
 #define IS_ALOGIO_CAPABLE(ha)	(IS_QLA23XX(ha) || IS_FWI2_CAPABLE(ha))
 
+#define IS_T10_PI_CAPABLE(ha)   ((ha)->device_type & DT_T10_PI)
 #define IS_IIDMA_CAPABLE(ha)    ((ha)->device_type & DT_IIDMA)
 #define IS_FWI2_CAPABLE(ha)     ((ha)->device_type & DT_FWI2)
 #define IS_ZIO_SUPPORTED(ha)    ((ha)->device_type & DT_ZIO_SUPPORTED)
@@ -2819,7 +2822,13 @@ struct qla_hw_data {
 #define NUM_DSD_CHAIN 4096
 
 	uint8_t fw_type;
-	__le32 file_prd_off;    /* File firmware product offset */
+	__le32 file_prd_off;	/* File firmware product offset */
+
+	uint32_t	md_template_size;
+	void		*md_tmplt_hdr;
+	dma_addr_t      md_tmplt_hdr_dma;
+	void            *md_dump;
+	uint32_t	md_dump_size;
 };
 
 /*
@@ -2914,10 +2923,10 @@ typedef struct scsi_qla_host {
 	uint16_t	fcoe_fcf_idx;
 	uint8_t		fcoe_vn_port_mac[6];
 
-	uint32_t	vp_abort_cnt;
+	uint32_t   	vp_abort_cnt;
 
 	struct fc_vport	*fc_vport;	/* holds fc_vport * for each vport */
-	uint16_t	vp_idx;		/* vport ID */
+	uint16_t        vp_idx;		/* vport ID */
 
 	unsigned long		vp_flags;
 #define VP_IDX_ACQUIRED		0	/* bit no 0 */
@@ -2925,12 +2934,12 @@ typedef struct scsi_qla_host {
 #define VP_BIND_NEEDED		2
 #define VP_DELETE_NEEDED	3
 #define VP_SCR_NEEDED		4	/* State Change Request registration */
-	atomic_t		vp_state;
+	atomic_t 		vp_state;
 #define VP_OFFLINE		0
 #define VP_ACTIVE		1
 #define VP_FAILED		2
 // #define VP_DISABLE		3
-	uint16_t	vp_err_state;
+	uint16_t 	vp_err_state;
 	uint16_t	vp_prev_err_state;
 #define VP_ERR_UNKWN		0
 #define VP_ERR_PORTDWN		1

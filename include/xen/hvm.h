@@ -3,8 +3,11 @@
 #define XEN_HVM_H__
 
 #include <xen/interface/hvm/params.h>
+#ifndef HAVE_XEN_PLATFORM_COMPAT_H
+#include <asm/xen/hypercall.h>
+#endif
 
-static inline unsigned long hvm_get_parameter(int idx)
+static inline int hvm_get_parameter(int idx, uint64_t *value)
 {
 	struct xen_hvm_param xhv;
 	int r;
@@ -13,10 +16,16 @@ static inline unsigned long hvm_get_parameter(int idx)
 	xhv.index = idx;
 	r = HYPERVISOR_hvm_op(HVMOP_get_param, &xhv);
 	if (r < 0) {
-		pr_err("cannot get hvm parameter %d: %d.\n", idx, r);
-		return 0;
+		pr_err("Cannot get hvm parameter %d: %d!\n", idx, r);
+		return r;
 	}
-	return xhv.value;
+	*value = xhv.value;
+	return r;
 }
+
+#define HVM_CALLBACK_VIA_TYPE_VECTOR 0x2
+#define HVM_CALLBACK_VIA_TYPE_SHIFT 56
+#define HVM_CALLBACK_VECTOR(x) (((uint64_t)HVM_CALLBACK_VIA_TYPE_VECTOR)<<\
+		HVM_CALLBACK_VIA_TYPE_SHIFT | (x))
 
 #endif /* XEN_HVM_H__ */

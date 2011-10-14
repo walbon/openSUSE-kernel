@@ -120,7 +120,8 @@
 #include <linux/timer.h>
 #include <linux/dma-mapping.h>
 #include <linux/list.h>
-#include <linux/smp_lock.h>
+#include <linux/mutex.h>
+#include <linux/slab.h>
 
 #ifdef GDTH_RTC
 #include <linux/mc146818rtc.h>
@@ -139,6 +140,7 @@
 #include <scsi/scsi_host.h>
 #include "gdth.h"
 
+static DEFINE_MUTEX(gdth_mutex);
 static void gdth_delay(int milliseconds);
 static void gdth_eval_mapping(u32 size, u32 *cyls, int *heads, int *secs);
 static irqreturn_t gdth_interrupt(int irq, void *dev_id);
@@ -179,8 +181,8 @@ static const char *gdth_ctr_name(gdth_ha_str *ha);
 
 static int gdth_open(struct inode *inode, struct file *filep);
 static int gdth_close(struct inode *inode, struct file *filep);
-static int gdth_ioctl(struct inode *inode, struct file *filep,
-                      unsigned int cmd, unsigned long arg);
+static long gdth_unlocked_ioctl(struct file *filep, unsigned int cmd,
+			        unsigned long arg);
 
 static void gdth_flush(gdth_ha_str *ha);
 static int gdth_queuecommand(struct Scsi_Host *h, struct scsi_cmnd *cmd);
@@ -368,9 +370,10 @@ MODULE_LICENSE("GPL");
 
 /* ioctl interface */
 static const struct file_operations gdth_fops = {
-    .ioctl   = gdth_ioctl,
+    .unlocked_ioctl   = gdth_unlocked_ioctl,
     .open    = gdth_open,
     .release = gdth_close,
+    .llseek = noop_llseek,
 };
 
 #include "gdth_proc.h"
@@ -4043,12 +4046,12 @@ static int gdth_open(struct inode *inode, struct file *filep)
 {
     gdth_ha_str *ha;
 
-    lock_kernel();
+    mutex_lock(&gdth_mutex);
     list_for_each_entry(ha, &gdth_instances, list) {
         if (!ha->sdev)
             ha->sdev = scsi_get_host_dev(ha->shost);
     }
-    unlock_kernel();
+    mutex_unlock(&gdth_mutex);
 
     TRACE(("gdth_open()\n"));
     return 0;
@@ -4270,8 +4273,10 @@ static int ioc_general(void __user *arg, char *cmnd)
     }
 
     rval = __gdth_execute(ha->sdev, &gen.command, cmnd, gen.timeout, &gen.info);
-    if (rval < 0)
+    if (rval < 0) {
+	gdth_ioctl_free(ha, gen.data_len+gen.sense_len, buf, paddr);
         return rval;
+    }
     gen.status = rval;
 
     if (copy_to_user(arg + sizeof(gdth_ioctl_general), buf, 
@@ -4471,8 +4476,7 @@ free_fail:
     return rc;
 }
   
-static int gdth_ioctl(struct inode *inode, struct file *filep,
-                      unsigned int cmd, unsigned long arg)
+static int gdth_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
     gdth_ha_str *ha; 
     Scsi_Cmnd *scp;
@@ -4620,6 +4624,17 @@ static int gdth_ioctl(struct inode *inode, struct file *filep,
     return 0;
 }
 
+static long gdth_unlocked_ioctl(struct file *file, unsigned int cmd,
+			        unsigned long arg)
+{
+	int ret;
+
+	mutex_lock(&gdth_mutex);
+	ret = gdth_ioctl(file, cmd, arg);
+	mutex_unlock(&gdth_mutex);
+
+	return ret;
+}
 
 /* flush routine */
 static void gdth_flush(gdth_ha_str *ha)

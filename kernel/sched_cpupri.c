@@ -27,6 +27,7 @@
  *  of the License.
  */
 
+#include <linux/gfp.h>
 #include "sched_cpupri.h"
 
 /* Convert between a 140 based task->prio, and our 102 based cpupri */
@@ -46,9 +47,6 @@ static int convert_prio(int prio)
 	return cpupri;
 }
 
-#define for_each_cpupri_active(array, idx)                    \
-	for_each_bit(idx, array, CPUPRI_NR_PRIORITIES)
-
 /**
  * cpupri_find - find the best (lowest-pri) CPU in the system
  * @cp: The cpupri context
@@ -56,7 +54,7 @@ static int convert_prio(int prio)
  * @lowest_mask: A mask to fill in with selected CPUs (or NULL)
  *
  * Note: This function returns the recommended CPUs as calculated during the
- * current invokation.  By the time the call returns, the CPUs may have in
+ * current invocation.  By the time the call returns, the CPUs may have in
  * fact changed priorities any number of times.  While not ideal, it is not
  * an issue of correctness since the normal rebalancer logic will correct
  * any discrepancies created by racing against the uncertainty of the current
@@ -70,11 +68,38 @@ int cpupri_find(struct cpupri *cp, struct task_struct *p,
 	int                  idx      = 0;
 	int                  task_pri = convert_prio(p->prio);
 
-	for_each_cpupri_active(cp->pri_active, idx) {
-		struct cpupri_vec *vec  = &cp->pri_to_cpu[idx];
+	if (task_pri >= MAX_RT_PRIO)
+		return 0;
 
-		if (idx >= task_pri)
-			break;
+	for (idx = 0; idx < task_pri; idx++) {
+		struct cpupri_vec *vec  = &cp->pri_to_cpu[idx];
+		int skip = 0;
+
+		if (!atomic_read(&(vec)->count))
+			skip = 1;
+		/*
+		 * When looking at the vector, we need to read the counter,
+		 * do a memory barrier, then read the mask.
+		 *
+		 * Note: This is still all racey, but we can deal with it.
+		 *  Ideally, we only want to look at masks that are set.
+		 *
+		 *  If a mask is not set, then the only thing wrong is that we
+		 *  did a little more work than necessary.
+		 *
+		 *  If we read a zero count but the mask is set, because of the
+		 *  memory barriers, that can only happen when the highest prio
+		 *  task for a run queue has left the run queue, in which case,
+		 *  it will be followed by a pull. If the task we are processing
+		 *  fails to find a proper place to go, that pull request will
+		 *  pull this task if the run queue is running at a lower
+		 *  priority.
+		 */
+		smp_rmb();
+
+		/* Need to do the rmb for every iteration */
+		if (skip)
+			continue;
 
 		if (cpumask_any_and(&p->cpus_allowed, vec->mask) >= nr_cpu_ids)
 			continue;
@@ -114,7 +139,7 @@ void cpupri_set(struct cpupri *cp, int cpu, int newpri)
 {
 	int                 *currpri = &cp->cpu_to_pri[cpu];
 	int                  oldpri  = *currpri;
-	unsigned long        flags;
+	int                  do_mb = 0;
 
 	newpri = convert_prio(newpri);
 
@@ -127,32 +152,46 @@ void cpupri_set(struct cpupri *cp, int cpu, int newpri)
 	 * If the cpu was currently mapped to a different value, we
 	 * need to map it to the new value then remove the old value.
 	 * Note, we must add the new value first, otherwise we risk the
-	 * cpu being cleared from pri_active, and this cpu could be
-	 * missed for a push or pull.
+	 * cpu being missed by the priority loop in cpupri_find.
 	 */
 	if (likely(newpri != CPUPRI_INVALID)) {
 		struct cpupri_vec *vec = &cp->pri_to_cpu[newpri];
 
-		spin_lock_irqsave(&vec->lock, flags);
-
 		cpumask_set_cpu(cpu, vec->mask);
-		vec->count++;
-		if (vec->count == 1)
-			set_bit(newpri, cp->pri_active);
-
-		spin_unlock_irqrestore(&vec->lock, flags);
+		/*
+		 * When adding a new vector, we update the mask first,
+		 * do a write memory barrier, and then update the count, to
+		 * make sure the vector is visible when count is set.
+		 */
+		smp_mb__before_atomic_inc();
+		atomic_inc(&(vec)->count);
+		do_mb = 1;
 	}
 	if (likely(oldpri != CPUPRI_INVALID)) {
 		struct cpupri_vec *vec  = &cp->pri_to_cpu[oldpri];
 
-		spin_lock_irqsave(&vec->lock, flags);
+		/*
+		 * Because the order of modification of the vec->count
+		 * is important, we must make sure that the update
+		 * of the new prio is seen before we decrement the
+		 * old prio. This makes sure that the loop sees
+		 * one or the other when we raise the priority of
+		 * the run queue. We don't care about when we lower the
+		 * priority, as that will trigger an rt pull anyway.
+		 *
+		 * We only need to do a memory barrier if we updated
+		 * the new priority vec.
+		 */
+		if (do_mb)
+			smp_mb__after_atomic_inc();
 
-		vec->count--;
-		if (!vec->count)
-			clear_bit(oldpri, cp->pri_active);
+		/*
+		 * When removing from the vector, we decrement the counter first
+		 * do a memory barrier and then clear the mask.
+		 */
+		atomic_dec(&(vec)->count);
+		smp_mb__after_atomic_inc();
 		cpumask_clear_cpu(cpu, vec->mask);
-
-		spin_unlock_irqrestore(&vec->lock, flags);
 	}
 
 	*currpri = newpri;
@@ -174,8 +213,7 @@ int cpupri_init(struct cpupri *cp)
 	for (i = 0; i < CPUPRI_NR_PRIORITIES; i++) {
 		struct cpupri_vec *vec = &cp->pri_to_cpu[i];
 
-		spin_lock_init(&vec->lock);
-		vec->count = 0;
+		atomic_set(&vec->count, 0);
 		if (!zalloc_cpumask_var(&vec->mask, GFP_KERNEL))
 			goto cleanup;
 	}

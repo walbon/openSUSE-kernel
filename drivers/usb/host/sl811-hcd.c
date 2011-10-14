@@ -47,11 +47,13 @@
 #include <linux/usb/sl811.h>
 #include <linux/usb/hcd.h>
 #include <linux/platform_device.h>
+#include <linux/prefetch.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/system.h>
 #include <asm/byteorder.h>
+#include <asm/unaligned.h>
 
 #include "sl811.h"
 
@@ -713,17 +715,17 @@ retry:
 		/* port status seems weird until after reset, so
 		 * force the reset and make khubd clean up later.
 		 */
-		if (sl811->stat_insrmv & 1)
-			sl811->port1 |= USB_PORT_STAT_CONNECTION;
+		if (irqstat & SL11H_INTMASK_RD)
+			sl811->port1 &= ~USB_PORT_STAT_CONNECTION;
 		else
-			sl811->port1 &= ~(USB_PORT_STAT_CONNECTION);
+			sl811->port1 |= USB_PORT_STAT_CONNECTION;
 
-		sl811->port1 |= USB_PORT_STAT_C_CONNECTION;
+		sl811->port1 |= USB_PORT_STAT_C_CONNECTION << 16;
 
 	} else if (irqstat & SL11H_INTMASK_RD) {
 		if (sl811->port1 & USB_PORT_STAT_SUSPEND) {
 			DBG("wakeup\n");
-			sl811->port1 |= USB_PORT_STAT_C_SUSPEND;
+			sl811->port1 |= USB_PORT_STAT_C_SUSPEND << 16;
 			sl811->stat_wake++;
 		} else
 			irqstat &= ~SL11H_INTMASK_RD;
@@ -806,8 +808,11 @@ static int sl811h_urb_enqueue(
 #endif
 
 	/* avoid all allocations within spinlocks */
-	if (!hep->hcpriv)
+	if (!hep->hcpriv) {
 		ep = kzalloc(sizeof *ep, mem_flags);
+		if (ep == NULL)
+			return -ENOMEM;
+	}
 
 	spin_lock_irqsave(&sl811->lock, flags);
 
@@ -1267,12 +1272,12 @@ sl811h_hub_control(
 		sl811h_hub_descriptor(sl811, (struct usb_hub_descriptor *) buf);
 		break;
 	case GetHubStatus:
-		*(__le32 *) buf = cpu_to_le32(0);
+		put_unaligned_le32(0, buf);
 		break;
 	case GetPortStatus:
 		if (wIndex != 1)
 			goto error;
-		*(__le32 *) buf = cpu_to_le32(sl811->port1);
+		put_unaligned_le32(sl811->port1, buf);
 
 #ifndef	VERBOSE
 	if (*(u16*)(buf+2))	/* only if wPortChange is interesting */

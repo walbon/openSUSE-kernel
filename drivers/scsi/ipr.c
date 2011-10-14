@@ -59,6 +59,7 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/ioport.h>
 #include <linux/delay.h>
@@ -1785,7 +1786,6 @@ static void ipr_log_enhanced_dual_ioa_error(struct ipr_ioa_cfg *ioa_cfg,
 					    struct ipr_hostrcb *hostrcb)
 {
 	struct ipr_hostrcb_type_17_error *error;
-	char *reason;
 
 	if (ioa_cfg->sis64)
 		error = &hostrcb->hcam.u.error64.u.type_17_error;
@@ -1793,9 +1793,9 @@ static void ipr_log_enhanced_dual_ioa_error(struct ipr_ioa_cfg *ioa_cfg,
 		error = &hostrcb->hcam.u.error.u.type_17_error;
 
 	error->failure_reason[sizeof(error->failure_reason) - 1] = '\0';
-	reason = strstrip(error->failure_reason);
+	strim(error->failure_reason);
 
-	ipr_hcam_err(hostrcb, "%s [PRC: %08X]\n", reason,
+	ipr_hcam_err(hostrcb, "%s [PRC: %08X]\n", error->failure_reason,
 		     be32_to_cpu(hostrcb->hcam.u.error.prc));
 	ipr_log_ext_vpd_compact("Remote IOA", hostrcb, &error->vpd);
 	ipr_log_hex_data(ioa_cfg, error->data,
@@ -1816,13 +1816,12 @@ static void ipr_log_dual_ioa_error(struct ipr_ioa_cfg *ioa_cfg,
 				   struct ipr_hostrcb *hostrcb)
 {
 	struct ipr_hostrcb_type_07_error *error;
-	char *reason;
 
 	error = &hostrcb->hcam.u.error.u.type_07_error;
 	error->failure_reason[sizeof(error->failure_reason) - 1] = '\0';
-	reason = strstrip(error->failure_reason);
+	strim(error->failure_reason);
 
-	ipr_hcam_err(hostrcb, "%s [PRC: %08X]\n", reason,
+	ipr_hcam_err(hostrcb, "%s [PRC: %08X]\n", error->failure_reason,
 		     be32_to_cpu(hostrcb->hcam.u.error.prc));
 	ipr_log_vpd_compact("Remote IOA", hostrcb, &error->vpd);
 	ipr_log_hex_data(ioa_cfg, error->data,
@@ -2902,7 +2901,7 @@ static void ipr_get_ioa_dump(struct ipr_ioa_cfg *ioa_cfg, struct ipr_dump *dump)
 
 	spin_lock_irqsave(ioa_cfg->host->host_lock, lock_flags);
 
-	if (ioa_cfg->sdt_state != GET_DUMP) {
+	if (ioa_cfg->sdt_state != READ_DUMP) {
 		spin_unlock_irqrestore(ioa_cfg->host->host_lock, lock_flags);
 		return;
 	}
@@ -3098,7 +3097,7 @@ static void ipr_worker_thread(struct work_struct *work)
 	ENTER;
 	spin_lock_irqsave(ioa_cfg->host->host_lock, lock_flags);
 
-	if (ioa_cfg->sdt_state == GET_DUMP) {
+	if (ioa_cfg->sdt_state == READ_DUMP) {
 		dump = ioa_cfg->dump;
 		if (!dump) {
 			spin_unlock_irqrestore(ioa_cfg->host->host_lock, lock_flags);
@@ -3752,14 +3751,6 @@ static ssize_t ipr_store_update_fw(struct device *dev,
 
 	image_hdr = (struct ipr_ucode_image_header *)fw_entry->data;
 
-	if (be32_to_cpu(image_hdr->header_length) > fw_entry->size ||
-	    (ioa_cfg->vpd_cbs->page3_data.card_type &&
-	     ioa_cfg->vpd_cbs->page3_data.card_type != image_hdr->card_type)) {
-		dev_err(&ioa_cfg->pdev->dev, "Invalid microcode buffer\n");
-		release_firmware(fw_entry);
-		return -EINVAL;
-	}
-
 	src = (u8 *)image_hdr + be32_to_cpu(image_hdr->header_length);
 	dnld_size = fw_entry->size - be32_to_cpu(image_hdr->header_length);
 	sglist = ipr_alloc_ucode_buffer(dnld_size);
@@ -3777,6 +3768,8 @@ static ssize_t ipr_store_update_fw(struct device *dev,
 			"Microcode buffer copy to DMA buffer failed\n");
 		goto out;
 	}
+
+	ipr_info("Updating microcode, please be patient.  This may take up to 30 minutes\n");
 
 	result = ipr_update_ioa_ucode(ioa_cfg, sglist);
 
@@ -5201,7 +5194,8 @@ static int ipr_build_ioadl64(struct ipr_ioa_cfg *ioa_cfg,
 
 	nseg = scsi_dma_map(scsi_cmd);
 	if (nseg < 0) {
-		dev_err(&ioa_cfg->pdev->dev, "pci_map_sg failed!\n");
+		if (printk_ratelimit())
+			dev_err(&ioa_cfg->pdev->dev, "pci_map_sg failed!\n");
 		return -1;
 	}
 
@@ -6281,11 +6275,10 @@ static struct ata_port_operations ipr_sata_ops = {
 };
 
 static struct ata_port_info sata_port_info = {
-	.flags	= ATA_FLAG_SATA | ATA_FLAG_NO_LEGACY | ATA_FLAG_SATA_RESET |
-	ATA_FLAG_MMIO | ATA_FLAG_PIO_DMA,
-	.pio_mask	= 0x10, /* pio4 */
-	.mwdma_mask = 0x07,
-	.udma_mask	= 0x7f, /* udma0-6 */
+	.flags		= ATA_FLAG_SATA | ATA_FLAG_PIO_DMA,
+	.pio_mask	= ATA_PIO4_ONLY,
+	.mwdma_mask	= ATA_MWDMA2,
+	.udma_mask	= ATA_UDMA6,
 	.port_ops	= &ipr_sata_ops
 };
 
@@ -7450,6 +7443,8 @@ static int ipr_reset_wait_for_dump(struct ipr_cmnd *ipr_cmd)
 	struct ipr_ioa_cfg *ioa_cfg = ipr_cmd->ioa_cfg;
 
 	if (ioa_cfg->sdt_state == GET_DUMP)
+		ioa_cfg->sdt_state = WAIT_FOR_DUMP;
+	else if (ioa_cfg->sdt_state == READ_DUMP)
 		ioa_cfg->sdt_state = ABORT_DUMP;
 
 	ipr_cmd->job_step = ipr_reset_alert;
@@ -7577,16 +7572,10 @@ static int ipr_reset_restore_cfg_space(struct ipr_cmnd *ipr_cmd)
 {
 	struct ipr_ioa_cfg *ioa_cfg = ipr_cmd->ioa_cfg;
 	u32 int_reg;
-	int rc;
 
 	ENTER;
 	ioa_cfg->pdev->state_saved = true;
-	rc = pci_restore_state(ioa_cfg->pdev);
-
-	if (rc != PCIBIOS_SUCCESSFUL) {
-		ipr_cmd->s.ioasa.hdr.ioasc = cpu_to_be32(IPR_IOASC_PCI_ACCESS_ERROR);
-		return IPR_RC_JOB_CONTINUE;
-	}
+	pci_restore_state(ioa_cfg->pdev);
 
 	if (ipr_set_pcix_cmd_reg(ioa_cfg)) {
 		ipr_cmd->s.ioasa.hdr.ioasc = cpu_to_be32(IPR_IOASC_PCI_ACCESS_ERROR);
@@ -7621,6 +7610,7 @@ static int ipr_reset_restore_cfg_space(struct ipr_cmnd *ipr_cmd)
 		ipr_cmd->job_step = ipr_reset_enable_ioa;
 
 		if (GET_DUMP == ioa_cfg->sdt_state) {
+			ioa_cfg->sdt_state = READ_DUMP;
 			if (ioa_cfg->sis64)
 				ipr_reset_start_timer(ipr_cmd, IPR_SIS64_DUMP_TIMEOUT);
 			else
@@ -8010,8 +8000,12 @@ static void ipr_initiate_ioa_reset(struct ipr_ioa_cfg *ioa_cfg,
 	if (ioa_cfg->ioa_is_dead)
 		return;
 
-	if (ioa_cfg->in_reset_reload && ioa_cfg->sdt_state == GET_DUMP)
-		ioa_cfg->sdt_state = ABORT_DUMP;
+	if (ioa_cfg->in_reset_reload) {
+		if (ioa_cfg->sdt_state == GET_DUMP)
+			ioa_cfg->sdt_state = WAIT_FOR_DUMP;
+		else if (ioa_cfg->sdt_state == READ_DUMP)
+			ioa_cfg->sdt_state = ABORT_DUMP;
+	}
 
 	if (ioa_cfg->reset_retries++ >= IPR_NUM_RESET_RELOAD_RETRIES) {
 		dev_err(&ioa_cfg->pdev->dev,
@@ -8936,7 +8930,7 @@ static void __ipr_remove(struct pci_dev *pdev)
 
 	spin_unlock_irqrestore(ioa_cfg->host->host_lock, host_lock_flags);
 	wait_event(ioa_cfg->reset_wait_q, !ioa_cfg->in_reset_reload);
-	flush_scheduled_work();
+	flush_work_sync(&ioa_cfg->work_q);
 	spin_lock_irqsave(ioa_cfg->host->host_lock, host_lock_flags);
 
 	spin_lock(&ipr_driver_lock);

@@ -13,15 +13,16 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <asm/hardirq.h>
+#include <xen/clock.h>
 #include <xen/evtchn.h>
 
 struct spinning {
-	raw_spinlock_t *lock;
+	arch_spinlock_t *lock;
 	unsigned int ticket;
 	struct spinning *prev;
 };
-static DEFINE_PER_CPU(struct spinning *, spinning);
-static DEFINE_PER_CPU(evtchn_port_t, poll_evtchn);
+static DEFINE_PER_CPU(struct spinning *, _spinning);
+static DEFINE_PER_CPU_READ_MOSTLY(evtchn_port_t, poll_evtchn);
 /*
  * Protect removal of objects: Addition can be done lockless, and even
  * removal itself doesn't need protection - what needs to be prevented is
@@ -62,9 +63,9 @@ void __cpuinit xen_spinlock_cleanup(unsigned int cpu)
 }
 
 #ifdef CONFIG_PM_SLEEP
-#include <linux/sysdev.h>
+#include <linux/syscore_ops.h>
 
-static int __cpuinit spinlock_resume(struct sys_device *dev)
+static void __cpuinit spinlock_resume(void)
 {
 	unsigned int cpu;
 
@@ -72,37 +73,23 @@ static int __cpuinit spinlock_resume(struct sys_device *dev)
 		per_cpu(poll_evtchn, cpu) = 0;
 		xen_spinlock_init(cpu);
 	}
-
-	return 0;
 }
 
-static struct sysdev_class __cpuinitdata spinlock_sysclass = {
-	.name	= "spinlock",
+static struct syscore_ops __cpuinitdata spinlock_syscore_ops = {
 	.resume	= spinlock_resume
-};
-
-static struct sys_device __cpuinitdata device_spinlock = {
-	.id		= 0,
-	.cls		= &spinlock_sysclass
 };
 
 static int __init spinlock_register(void)
 {
-	int rc;
-
-	if (is_initial_xendomain())
-		return 0;
-
-	rc = sysdev_class_register(&spinlock_sysclass);
-	if (!rc)
-		rc = sysdev_register(&device_spinlock);
-	return rc;
+	if (!is_initial_xendomain())
+		register_syscore_ops(&spinlock_syscore_ops);
+	return 0;
 }
 core_initcall(spinlock_register);
 #endif
 
 static unsigned int spin_adjust(struct spinning *spinning,
-				const raw_spinlock_t *lock,
+				const arch_spinlock_t *lock,
 				unsigned int token)
 {
 	for (; spinning; spinning = spinning->prev)
@@ -120,12 +107,12 @@ static unsigned int spin_adjust(struct spinning *spinning,
 	return token;
 }
 
-unsigned int xen_spin_adjust(const raw_spinlock_t *lock, unsigned int token)
+unsigned int xen_spin_adjust(const arch_spinlock_t *lock, unsigned int token)
 {
-	return spin_adjust(percpu_read(spinning), lock, token);
+	return spin_adjust(percpu_read(_spinning), lock, token);
 }
 
-unsigned int xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
+unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 			   unsigned int flags)
 {
 	unsigned int rm_idx, cpu = raw_smp_processor_id();
@@ -140,9 +127,9 @@ unsigned int xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 	/* announce we're spinning */
 	spinning.ticket = *ptok >> TICKET_SHIFT;
 	spinning.lock = lock;
-	spinning.prev = percpu_read(spinning);
+	spinning.prev = percpu_read(_spinning);
 	smp_wmb();
-	percpu_write(spinning, &spinning);
+	percpu_write(_spinning, &spinning);
 	upcall_mask = vcpu_info_read(evtchn_upcall_mask);
 
 	do {
@@ -181,9 +168,9 @@ unsigned int xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 				 * reduce latency after the current lock was
 				 * released), but don't acquire the lock.
 				 */
-				raw_spinlock_t *lock = other->lock;
+				arch_spinlock_t *lock = other->lock;
 
-				raw_local_irq_disable();
+				arch_local_irq_disable();
 				while (lock->cur == other->ticket) {
 					unsigned int token;
 					bool kick, free;
@@ -205,7 +192,7 @@ unsigned int xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 		}
 
 		/*
-		 * No need to use raw_local_irq_restore() here, as the
+		 * No need to use arch_local_irq_restore() here, as the
 		 * intended event processing will happen with the poll
 		 * call.
 		 */
@@ -229,8 +216,8 @@ unsigned int xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 
 	/* announce we're done */
 	other = spinning.prev;
-	percpu_write(spinning, other);
-	raw_local_irq_disable();
+	percpu_write(_spinning, other);
+	arch_local_irq_disable();
 	rm_idx = percpu_read(rm_seq.idx);
 	smp_wmb();
 	percpu_write(rm_seq.idx, rm_idx + 1);
@@ -261,13 +248,13 @@ unsigned int xen_spin_wait(raw_spinlock_t *lock, unsigned int *ptok,
 	rm_idx &= 1;
 	while (percpu_read(rm_seq.ctr[rm_idx].counter))
 		cpu_relax();
-	raw_local_irq_restore(upcall_mask);
+	arch_local_irq_restore(upcall_mask);
 	*ptok = lock->cur | (spinning.ticket << TICKET_SHIFT);
 
 	return rc ? 0 : __ticket_spin_count(lock);
 }
 
-void xen_spin_kick(raw_spinlock_t *lock, unsigned int token)
+void xen_spin_kick(arch_spinlock_t *lock, unsigned int token)
 {
 	unsigned int cpu = raw_smp_processor_id(), ancor = cpu;
 
@@ -288,7 +275,7 @@ void xen_spin_kick(raw_spinlock_t *lock, unsigned int token)
 				return;
 		}
 
-		flags = __raw_local_irq_save();
+		flags = arch_local_irq_save();
 		for (;;) {
 			unsigned int rm_idx = per_cpu(rm_seq.idx, cpu);
 
@@ -299,7 +286,7 @@ void xen_spin_kick(raw_spinlock_t *lock, unsigned int token)
 #else
 			smp_mb();
 #endif
-			spinning = per_cpu(spinning, cpu);
+			spinning = per_cpu(_spinning, cpu);
 			smp_rmb();
 			if (rm_idx == per_cpu(rm_seq.idx, cpu))
 				break;
@@ -313,7 +300,7 @@ void xen_spin_kick(raw_spinlock_t *lock, unsigned int token)
 		}
 
 		atomic_dec(rm_ctr);
-		raw_local_irq_restore(flags);
+		arch_local_irq_restore(flags);
 
 		if (unlikely(spinning)) {
 			notify_remote_via_evtchn(per_cpu(poll_evtchn, cpu));

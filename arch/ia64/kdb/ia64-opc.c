@@ -27,13 +27,13 @@
 
 #ifdef __KERNEL__
 #include <linux/kernel.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <asm/ansidecl.h>
 
-#define xstrdup(string) ({ char *res = kdb_strdup(string, GFP_ATOMIC); if (!res) BUG(); res; })
-#define xmalloc(size) ({ void *res = debug_kmalloc(size, GFP_ATOMIC); if (!res) BUG(); res; })
-#define free(address) debug_kfree(address)
+#define xstrdup(string) ({ char *res = lkdb_strdup(string, GFP_ATOMIC); if (!res) BUG(); res; })
+#define xmalloc(size) ({ void *res = ldebug_kmalloc(size, GFP_ATOMIC); if (!res) BUG(); res; })
+#define free(address) ldebug_kfree(address)
 #define abort() BUG()
 
 #else	/* __KERNEL__ */

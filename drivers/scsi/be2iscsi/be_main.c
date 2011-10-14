@@ -19,6 +19,7 @@
 
 #include <linux/reboot.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/blkdev.h>
 #include <linux/pci.h>
@@ -1121,7 +1122,12 @@ be_complete_io(struct beiscsi_conn *beiscsi_conn,
 						& SOL_STS_MASK) >> 8);
 	flags = ((psol->dw[offsetof(struct amap_sol_cqe, i_flags) / 32]
 					& SOL_FLAGS_MASK) >> 24) | 0x80;
+	if (!task->sc) {
+		if (io_task->scsi_cmnd)
+			scsi_dma_unmap(io_task->scsi_cmnd);
 
+		return;
+	}
 	task->sc->result = (DID_OK << 16) | status;
 	if (rsp != ISCSI_STATUS_CMD_COMPLETED) {
 		task->sc->result = DID_ERROR << 16;
@@ -3981,11 +3987,10 @@ static int beiscsi_iotask(struct iscsi_task *task, struct scatterlist *sg,
 	}
 	memcpy(&io_task->cmd_bhs->iscsi_data_pdu.
 	       dw[offsetof(struct amap_pdu_data_out, lun) / 32],
-	       io_task->cmd_bhs->iscsi_hdr.lun, sizeof(struct scsi_lun));
+	       &io_task->cmd_bhs->iscsi_hdr.lun, sizeof(struct scsi_lun));
 
 	AMAP_SET_BITS(struct amap_iscsi_wrb, lun, pwrb,
-		      cpu_to_be16((unsigned short)io_task->cmd_bhs->iscsi_hdr.
-				  lun[0]));
+		      cpu_to_be16(*(unsigned short *)&io_task->cmd_bhs->iscsi_hdr.lun));
 	AMAP_SET_BITS(struct amap_iscsi_wrb, r2t_exp_dtl, pwrb, xferlen);
 	AMAP_SET_BITS(struct amap_iscsi_wrb, wrb_idx, pwrb,
 		      io_task->pwrb_handle->wrb_index);
@@ -4043,11 +4048,11 @@ static int beiscsi_mtask(struct iscsi_task *task)
 				      TGT_DM_CMD);
 			AMAP_SET_BITS(struct amap_iscsi_wrb, cmdsn_itt,
 				      pwrb, 0);
-			AMAP_SET_BITS(struct amap_iscsi_wrb, dmsg, pwrb, 0);
+			AMAP_SET_BITS(struct amap_iscsi_wrb, dmsg, pwrb, 1);
 		} else {
 			AMAP_SET_BITS(struct amap_iscsi_wrb, type, pwrb,
 				      INI_RD_CMD);
-			AMAP_SET_BITS(struct amap_iscsi_wrb, dmsg, pwrb, 1);
+			AMAP_SET_BITS(struct amap_iscsi_wrb, dmsg, pwrb, 0);
 		}
 		hwi_write_buffer(pwrb, task);
 		break;
@@ -4302,7 +4307,7 @@ static int __devinit beiscsi_dev_probe(struct pci_dev *pcidev,
 
 	snprintf(phba->wq_name, sizeof(phba->wq_name), "beiscsi_q_irq%u",
 		 phba->shost->host_no);
-	phba->wq = create_workqueue(phba->wq_name);
+	phba->wq = alloc_workqueue(phba->wq_name, WQ_MEM_RECLAIM, 1);
 	if (!phba->wq) {
 		shost_printk(KERN_ERR, phba->shost, "beiscsi_dev_probe-"
 				"Failed to allocate work queue\n");
@@ -4381,37 +4386,12 @@ struct iscsi_transport beiscsi_iscsi_transport = {
 	.name = DRV_NAME,
 	.caps = CAP_RECOVERY_L0 | CAP_HDRDGST | CAP_TEXT_NEGO |
 		CAP_MULTI_R2T | CAP_DATADGST | CAP_DATA_PATH_OFFLOAD,
-	.param_mask = ISCSI_MAX_RECV_DLENGTH |
-		ISCSI_MAX_XMIT_DLENGTH |
-		ISCSI_HDRDGST_EN |
-		ISCSI_DATADGST_EN |
-		ISCSI_INITIAL_R2T_EN |
-		ISCSI_MAX_R2T |
-		ISCSI_IMM_DATA_EN |
-		ISCSI_FIRST_BURST |
-		ISCSI_MAX_BURST |
-		ISCSI_PDU_INORDER_EN |
-		ISCSI_DATASEQ_INORDER_EN |
-		ISCSI_ERL |
-		ISCSI_CONN_PORT |
-		ISCSI_CONN_ADDRESS |
-		ISCSI_EXP_STATSN |
-		ISCSI_PERSISTENT_PORT |
-		ISCSI_PERSISTENT_ADDRESS |
-		ISCSI_TARGET_NAME | ISCSI_TPGT |
-		ISCSI_USERNAME | ISCSI_PASSWORD |
-		ISCSI_USERNAME_IN | ISCSI_PASSWORD_IN |
-		ISCSI_FAST_ABORT | ISCSI_ABORT_TMO |
-		ISCSI_LU_RESET_TMO |
-		ISCSI_PING_TMO | ISCSI_RECV_TMO |
-		ISCSI_IFACE_NAME | ISCSI_INITIATOR_NAME,
-	.host_param_mask = ISCSI_HOST_HWADDRESS | ISCSI_HOST_IPADDRESS |
-				ISCSI_HOST_INITIATOR_NAME,
 	.create_session = beiscsi_session_create,
 	.destroy_session = beiscsi_session_destroy,
 	.create_conn = beiscsi_conn_create,
 	.bind_conn = beiscsi_conn_bind,
 	.destroy_conn = iscsi_conn_teardown,
+	.attr_is_visible = be2iscsi_attr_is_visible,
 	.set_param = beiscsi_set_param,
 	.get_conn_param = iscsi_conn_get_param,
 	.get_session_param = iscsi_session_get_param,

@@ -111,7 +111,7 @@ static u64 do_hypercall(u64 control, void *input, void *output)
 	u64 hv_status = 0;
 	u64 input_address = (input) ? virt_to_phys(input) : 0;
 	u64 output_address = (output) ? virt_to_phys(output) : 0;
-	volatile void *hypercall_page = hv_context.hypercall_page;
+	void *hypercall_page = hv_context.hypercall_page;
 
 	__asm__ __volatile__("mov %0, %%r8" : : "r" (output_address) : "r8");
 	__asm__ __volatile__("call *%3" : "=a" (hv_status) :
@@ -132,7 +132,7 @@ static u64 do_hypercall(u64 control, void *input, void *output)
 	u64 output_address = (output) ? virt_to_phys(output) : 0;
 	u32 output_address_hi = output_address >> 32;
 	u32 output_address_lo = output_address & 0xFFFFFFFF;
-	volatile void *hypercall_page = hv_context.hypercall_page;
+	void *hypercall_page = hv_context.hypercall_page;
 
 	__asm__ __volatile__ ("call *%8" : "=d"(hv_status_hi),
 			      "=a"(hv_status_lo) : "d" (control_hi),
@@ -151,7 +151,6 @@ static u64 do_hypercall(u64 control, void *input, void *output)
  */
 int hv_init(void)
 {
-	int ret = 0;
 	int max_leaf;
 	union hv_x64_msr_hypercall_contents hypercall_msr;
 	void *virtaddr = NULL;
@@ -214,7 +213,7 @@ int hv_init(void)
 	hv_context.signal_event_param->flag_number = 0;
 	hv_context.signal_event_param->rsvdz = 0;
 
-	return ret;
+	return 0;
 
 cleanup:
 	if (virtaddr) {
@@ -370,7 +369,7 @@ void hv_synic_init(void *irqarg)
 	shared_sint.as_uint64 = 0;
 	shared_sint.vector = irq_vector; /* HV_SHARED_SINT_IDT_VECTOR + 0x20; */
 	shared_sint.masked = false;
-	shared_sint.auto_eoi = true;
+	shared_sint.auto_eoi = false;
 
 	wrmsrl(HV_X64_MSR_SINT0 + VMBUS_MESSAGE_SINT, shared_sint.as_uint64);
 

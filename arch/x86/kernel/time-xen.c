@@ -25,16 +25,16 @@
 #include <asm/time.h>
 #include <asm/timer.h>
 
-#include <xen/evtchn.h>
+#include <xen/clock.h>
 #include <xen/sysctl.h>
 #include <xen/interface/vcpu.h>
 
 #include <asm/i8253.h>
-DEFINE_SPINLOCK(i8253_lock);
+DEFINE_RAW_SPINLOCK(i8253_lock);
 EXPORT_SYMBOL(i8253_lock);
 
 #ifdef CONFIG_X86_64
-volatile unsigned long __jiffies __section_jiffies = INITIAL_JIFFIES;
+DEFINE_VVAR(volatile unsigned long, jiffies) = INITIAL_JIFFIES;
 #endif
 
 #define XEN_SHIFT 22
@@ -55,39 +55,13 @@ static DEFINE_PER_CPU(struct shadow_time_info, shadow_time);
 static struct timespec shadow_tv;
 static u32 shadow_tv_version;
 
-/* Keep track of last time we did processing/updating of jiffies and xtime. */
-static u64 processed_system_time;   /* System time (ns) at last processing. */
-
-struct local_time_info {
-	u64 processed_system;
-	u64 accounted_system;
-	/* How much CPU time was spent blocked and how much was 'stolen'? */
-	u64 accounted_stolen;
-	u64 accounted_blocked;
-};
-static DEFINE_PER_CPU(struct local_time_info, local_time);
+static u64 jiffies_bias, system_time_bias;
 
 /* Current runstate of each CPU (updated automatically by the hypervisor). */
 DEFINE_PER_CPU(struct vcpu_runstate_info, runstate);
 
 /* Must be signed, as it's compared with s64 quantities which can be -ve. */
 #define NS_PER_TICK (1000000000LL/HZ)
-
-static struct vcpu_set_periodic_timer xen_set_periodic_tick = {
-	.period_ns = NS_PER_TICK
-};
-
-static void __clock_was_set(struct work_struct *unused)
-{
-	clock_was_set();
-}
-static DECLARE_WORK(clock_was_set_work, __clock_was_set);
-
-/*
- * GCC 4.3 can turn loops over an induction variable into division. We do
- * not support arbitrary 64-bit division, and so must break the induction.
- */
-#define clobber_induction_variable(v) asm ( "" : "+r" (v) )
 
 /* Does this guest OS track Xen time, or set its wall clock independently? */
 static int independent_wallclock = 0;
@@ -106,19 +80,6 @@ static int __init __permitted_clock_jitter(char *str)
 	return 1;
 }
 __setup("permitted_clock_jitter=", __permitted_clock_jitter);
-
-/*
- * Limit on the number of CPUs that may concurrently attempt to acquire
- * xtime_lock in timer_interrupt() (reducing contention potentially leading
- * to a live lock on systems with many CPUs.
- */
-static unsigned int __read_mostly duty_limit = -2;
-static int __init set_duty_limit(char *str)
-{
-	duty_limit = simple_strtoul(str, NULL, 0) - 1;
-	return 1;
-}
-__setup("timer_duty_limit=", set_duty_limit);
 
 /*
  * Scale a 64-bit delta by scaling and multiplying by a 32-bit fraction,
@@ -203,32 +164,17 @@ static u64 get_nsec_offset(struct shadow_time_info *shadow)
 	return scale_delta(delta, shadow->tsc_to_nsec_mul, shadow->tsc_shift);
 }
 
-static void __update_wallclock(time_t sec, long nsec)
+static inline u64 processed_system_time(u64 jiffies_64)
 {
-	long wtm_nsec, xtime_nsec;
-	time_t wtm_sec, xtime_sec;
-	u64 tmp, wc_nsec;
-
-	/* Adjust wall-clock time base. */
-	wc_nsec = processed_system_time;
-	wc_nsec += sec * (u64)NSEC_PER_SEC;
-	wc_nsec += nsec;
-
-	/* Split wallclock base into seconds and nanoseconds. */
-	tmp = wc_nsec;
-	xtime_nsec = do_div(tmp, 1000000000);
-	xtime_sec  = (time_t)tmp;
-
-	wtm_sec  = wall_to_monotonic.tv_sec + (xtime.tv_sec - xtime_sec);
-	wtm_nsec = wall_to_monotonic.tv_nsec + (xtime.tv_nsec - xtime_nsec);
-
-	set_normalized_timespec(&xtime, xtime_sec, xtime_nsec);
-	set_normalized_timespec(&wall_to_monotonic, wtm_sec, wtm_nsec);
+	return (jiffies_64 - jiffies_bias) * NS_PER_TICK + system_time_bias;
 }
 
 static void update_wallclock(bool local)
 {
+	static DEFINE_MUTEX(uwc_mutex);
 	shared_info_t *s = HYPERVISOR_shared_info;
+
+	mutex_lock(&uwc_mutex);
 
 	do {
 		shadow_tv_version = s->wc_version;
@@ -238,8 +184,31 @@ static void update_wallclock(bool local)
 		rmb();
 	} while ((s->wc_version & 1) | (shadow_tv_version ^ s->wc_version));
 
-	if (local)
-		__update_wallclock(shadow_tv.tv_sec, shadow_tv.tv_nsec);
+	if (local) {
+		u64 tmp = processed_system_time(get_jiffies_64());
+		long nsec = do_div(tmp, NSEC_PER_SEC);
+		struct timespec tv;
+
+		set_normalized_timespec(&tv, shadow_tv.tv_sec + tmp,
+					shadow_tv.tv_nsec + nsec);
+		do_settimeofday(&tv);
+	}
+
+	mutex_unlock(&uwc_mutex);
+}
+
+static void _update_wallclock(struct work_struct *unused)
+{
+	update_wallclock(true);
+}
+static DECLARE_WORK(update_wallclock_work, _update_wallclock);
+
+void xen_check_wallclock_update(void)
+{
+	if (shadow_tv_version != HYPERVISOR_shared_info->wc_version
+	    && !is_initial_xendomain() && !independent_wallclock
+	    && keventd_up())
+		schedule_work(&update_wallclock_work);
 }
 
 /*
@@ -315,38 +284,35 @@ int xen_update_wallclock(const struct timespec *tv)
 
 	return 0;
 }
-#endif
 
 static void sync_xen_wallclock(unsigned long dummy);
 static DEFINE_TIMER(sync_xen_wallclock_timer, sync_xen_wallclock, 0, 0);
 static void sync_xen_wallclock(unsigned long dummy)
 {
-	struct timespec now;
+	struct timespec now, ignore;
 	struct xen_platform_op op;
 
 	BUG_ON(!is_initial_xendomain());
 	if (!ntp_synced() || independent_wallclock)
 		return;
 
-	write_seqlock_irq(&xtime_lock);
-
-	set_normalized_timespec(&now, xtime.tv_sec, xtime.tv_nsec);
+	get_xtime_and_monotonic_and_sleep_offset(&now, &ignore, &ignore);
+	set_normalized_timespec(&now, now.tv_sec, now.tv_nsec);
 
 	op.cmd = XENPF_settime;
 	op.u.settime.secs        = now.tv_sec;
 	op.u.settime.nsecs       = now.tv_nsec;
-	op.u.settime.system_time = processed_system_time;
+	op.u.settime.system_time = processed_system_time(get_jiffies_64());
 	WARN_ON(HYPERVISOR_platform_op(&op));
 
 	update_wallclock(false);
 
-	write_sequnlock_irq(&xtime_lock);
-
 	/* Once per minute. */
 	mod_timer(&sync_xen_wallclock_timer, jiffies + 60*HZ);
 }
+#endif /* CONFIG_XEN_PRIVILEGED_GUEST */
 
-static unsigned long long local_clock(void)
+unsigned long long xen_local_clock(void)
 {
 	unsigned int cpu = get_cpu();
 	struct shadow_time_info *shadow = &per_cpu(shadow_time, cpu);
@@ -381,7 +347,7 @@ unsigned long xen_read_wallclock(void)
 		rmb();
 	} while ((s->wc_version & 1) | (version ^ s->wc_version));
 
-	delta = local_clock() + (u64)sec * NSEC_PER_SEC + nsec;
+	delta = xen_local_clock() + (u64)sec * NSEC_PER_SEC + nsec;
 	do_div(delta, NSEC_PER_SEC);
 
 	return delta;
@@ -392,7 +358,9 @@ int xen_write_wallclock(unsigned long now)
 	if (!is_initial_xendomain() || independent_wallclock)
 		return 0;
 
+#ifdef CONFIG_XEN_PRIVILEGED_GUEST
 	mod_timer(&sync_xen_wallclock_timer, jiffies + 1);
+#endif
 
 	return mach_set_rtc_mmss(now);
 }
@@ -400,7 +368,7 @@ int xen_write_wallclock(unsigned long now)
 /*
  * Runstate accounting
  */
-static void get_runstate_snapshot(struct vcpu_runstate_info *res)
+void get_runstate_snapshot(struct vcpu_runstate_info *res)
 {
 	u64 state_time;
 	struct vcpu_runstate_info *state;
@@ -436,7 +404,7 @@ unsigned long long sched_clock(void)
 	 */
 	preempt_disable();
 
-	now = local_clock();
+	now = xen_local_clock();
 
 	get_runstate_snapshot(&runstate);
 
@@ -479,181 +447,6 @@ unsigned long profile_pc(struct pt_regs *regs)
 }
 EXPORT_SYMBOL(profile_pc);
 
-static inline void print_other_cpus(unsigned int cpu)
-{
-	unsigned int i;
-
-	for_each_online_cpu(i)
-		if (i != cpu)
-			printk(" %u: %Lx\n", i,
-			       per_cpu(local_time.processed_system, i));
-}
-
-/*
- * Default timer interrupt handler
- */
-static irqreturn_t timer_interrupt(int irq, void *dev_id)
-{
-	static unsigned int duty_count;
-	s64 delta, delta_cpu, stolen, blocked;
-	unsigned int duty_num, cpu = smp_processor_id();
-	int schedule_clock_was_set_work = 0;
-	struct shadow_time_info *shadow = &per_cpu(shadow_time, cpu);
-	struct local_time_info *local = &per_cpu(local_time, cpu);
-	bool duty = false;
-	struct vcpu_runstate_info runstate;
-
-	/* Keep nmi watchdog up to date */
-	inc_irq_stat(irq0_irqs);
-
-	/*
-	 * Here we are in the timer irq handler. We just have irqs locally
-	 * disabled but we don't know if the timer_bh is running on the other
-	 * CPU. We need to avoid to SMP race with it. NOTE: we don' t need
-	 * the irq version of write_lock because as just said we have irq
-	 * locally disabled. -arca
-	 */
-	asm (LOCK_PREFIX "xaddl %1, %0"
-	     : "+m" (duty_count), "=r" (duty_num) : "1" (1));
-	if (duty_num <= duty_limit) {
-		write_seqlock(&xtime_lock);
-		duty = true;
-	}
-	asm (LOCK_PREFIX "decl %0" : "+m" (duty_count));
-
-	do {
-		get_time_values_from_xen(cpu);
-
-		/* Obtain a consistent snapshot of elapsed wallclock cycles. */
-		delta = delta_cpu =
-			shadow->system_timestamp + get_nsec_offset(shadow);
-		delta     -= processed_system_time;
-		delta_cpu -= local->processed_system;
-
-		get_runstate_snapshot(&runstate);
-	} while (!time_values_up_to_date());
-
-	if (duty && unlikely(delta < -(s64)permitted_clock_jitter)) {
-		blocked = processed_system_time;
-		write_sequnlock(&xtime_lock);
-		if (printk_ratelimit()) {
-			printk("Timer ISR/%u: Time went backwards: "
-			       "delta=%Ld/%Ld shadow=%Lx off=%Lx "
-			       "processed=%Lx/%Lx\n",
-			       cpu, delta, delta_cpu, shadow->system_timestamp,
-			       get_nsec_offset(shadow), blocked,
-			       local->processed_system);
-			print_other_cpus(cpu);
-		}
-	} else if (unlikely(delta_cpu < -(s64)permitted_clock_jitter)) {
-		blocked = processed_system_time;
-		if (duty)
-			write_sequnlock(&xtime_lock);
-		if (printk_ratelimit()) {
-			printk("Timer ISR/%u: Time went backwards: delta=%Ld"
-			       " shadow=%Lx off=%Lx processed=%Lx/%Lx\n",
-			       cpu, delta_cpu, shadow->system_timestamp,
-			       get_nsec_offset(shadow), blocked,
-			       local->processed_system);
-			print_other_cpus(cpu);
-		}
-	} else if (duty) {
-		/* System-wide jiffy work. */
-		if (delta >= NS_PER_TICK) {
-			do_div(delta, NS_PER_TICK);
-			processed_system_time += delta * NS_PER_TICK;
-			while (delta > HZ) {
-				clobber_induction_variable(delta);
-				do_timer(HZ);
-				delta -= HZ;
-			}
-			do_timer(delta);
-		}
-
-		if (shadow_tv_version != HYPERVISOR_shared_info->wc_version) {
-			update_wallclock(!is_initial_xendomain()
-					 && !independent_wallclock);
-			schedule_clock_was_set_work = 1;
-		}
-
-		write_sequnlock(&xtime_lock);
-	}
-
-	delta = delta_cpu;
-	delta_cpu += local->processed_system - local->accounted_system;
-	if (delta >= NS_PER_TICK) {
-		do_div(delta, NS_PER_TICK);
-		local->processed_system += delta * NS_PER_TICK;
-	}
-
-	if (schedule_clock_was_set_work && keventd_up())
-		schedule_work(&clock_was_set_work);
-
-	/*
-	 * Account stolen ticks.
-	 * ensures that the ticks are accounted as stolen.
-	 */
-	stolen = runstate.time[RUNSTATE_runnable]
-		 + runstate.time[RUNSTATE_offline]
-		 - local->accounted_stolen;
-	if ((stolen > 0) && (delta_cpu > 0)) {
-		delta_cpu -= stolen;
-		if (unlikely(delta_cpu < 0))
-			stolen += delta_cpu; /* clamp local-time progress */
-		do_div(stolen, NS_PER_TICK);
-		local->accounted_stolen += stolen * NS_PER_TICK;
-		local->accounted_system += stolen * NS_PER_TICK;
-		account_steal_ticks(stolen);
-	}
-
-	/*
-	 * Account blocked ticks.
-	 * ensures that the ticks are accounted as idle/wait.
-	 */
-	blocked = runstate.time[RUNSTATE_blocked]
-		  - local->accounted_blocked;
-	if ((blocked > 0) && (delta_cpu > 0)) {
-		delta_cpu -= blocked;
-		if (unlikely(delta_cpu < 0))
-			blocked += delta_cpu; /* clamp local-time progress */
-		do_div(blocked, NS_PER_TICK);
-		local->accounted_blocked += blocked * NS_PER_TICK;
-		local->accounted_system  += blocked * NS_PER_TICK;
-		account_idle_ticks(blocked);
-	}
-
-	/* Account user/system ticks. */
-	if (delta_cpu > 0) {
-		cputime_t ct;
-
-		do_div(delta_cpu, NS_PER_TICK);
-		local->accounted_system += delta_cpu * NS_PER_TICK;
-		ct = jiffies_to_cputime(delta_cpu);
-		if (user_mode_vm(get_irq_regs()))
-			account_user_time(current, ct, cputime_to_scaled(ct));
-		else if (current != idle_task(cpu)
-			 || irq_count() != HARDIRQ_OFFSET)
-			account_system_time(current, HARDIRQ_OFFSET,
-					    ct, cputime_to_scaled(ct));
-		else
-			account_idle_ticks(delta_cpu);
-	}
-
-	/* Offlined for more than a few seconds? Avoid lockup warnings. */
-	if (stolen > 5*HZ)
-		touch_softlockup_watchdog();
-
-	/* Local timer processing (see update_process_times()). */
-	run_local_timers();
-	rcu_check_callbacks(cpu, user_mode_vm(get_irq_regs()));
-	printk_tick();
-	scheduler_tick();
-	run_posix_cpu_timers(current);
-	profile_tick(CPU_PROFILING);
-
-	return IRQ_HANDLED;
-}
-
 void mark_tsc_unstable(char *reason)
 {
 #ifndef CONFIG_XEN /* XXX Should tell the hypervisor about this fact. */
@@ -662,24 +455,13 @@ void mark_tsc_unstable(char *reason)
 }
 EXPORT_SYMBOL_GPL(mark_tsc_unstable);
 
-static void init_missing_ticks_accounting(unsigned int cpu)
-{
-	struct vcpu_runstate_info *runstate = setup_runstate_area(cpu);
-
-	per_cpu(local_time.accounted_blocked, cpu) =
-		runstate->time[RUNSTATE_blocked];
-	per_cpu(local_time.accounted_stolen, cpu) =
-		runstate->time[RUNSTATE_runnable] +
-		runstate->time[RUNSTATE_offline];
-}
-
 static cycle_t cs_last;
 
 static cycle_t xen_clocksource_read(struct clocksource *cs)
 {
 #ifdef CONFIG_SMP
 	cycle_t last = get64(&cs_last);
-	cycle_t ret = local_clock();
+	cycle_t ret = xen_local_clock();
 
 	if (unlikely((s64)(ret - last) < 0)) {
 		if (last - ret > permitted_clock_jitter
@@ -705,38 +487,24 @@ static cycle_t xen_clocksource_read(struct clocksource *cs)
 		last = cur;
 	}
 #else
-	return local_clock();
+	return xen_local_clock();
 #endif
 }
 
 /* No locking required. Interrupts are disabled on all CPUs. */
-static void xen_clocksource_resume(void)
+static void xen_clocksource_resume(struct clocksource *cs)
 {
 	unsigned int cpu;
 
 	init_cpu_khz();
 
-	for_each_online_cpu(cpu) {
-		switch (HYPERVISOR_vcpu_op(VCPUOP_set_periodic_timer, cpu,
-					   &xen_set_periodic_tick)) {
-		case 0:
-#if CONFIG_XEN_COMPAT <= 0x030004
-		case -ENOSYS:
-#endif
-			break;
-		default:
-			BUG();
-		}
+	for_each_online_cpu(cpu)
 		get_time_values_from_xen(cpu);
-		per_cpu(local_time.accounted_system, cpu) =
-		per_cpu(local_time.processed_system, cpu) =
-			per_cpu(shadow_time, 0).system_timestamp;
-		init_missing_ticks_accounting(cpu);
-	}
 
-	processed_system_time = per_cpu(shadow_time, 0).system_timestamp;
+	jiffies_bias = get_jiffies_64();
+	system_time_bias = per_cpu(shadow_time, 0).system_timestamp;
 
-	cs_last = local_clock();
+	cs_last = xen_local_clock();
 }
 
 static struct clocksource clocksource_xen = {
@@ -753,32 +521,24 @@ static struct clocksource clocksource_xen = {
 struct vcpu_runstate_info *setup_runstate_area(unsigned int cpu)
 {
 	struct vcpu_register_runstate_memory_area area;
-	struct vcpu_runstate_info *runstate = &per_cpu(runstate, cpu);
+	struct vcpu_runstate_info *rs = &per_cpu(runstate, cpu);
 	int rc;
 
-	set_xen_guest_handle(area.addr.h, runstate);
+	set_xen_guest_handle(area.addr.h, rs);
 	rc = HYPERVISOR_vcpu_op(VCPUOP_register_runstate_memory_area, cpu, &area);
 	if (rc) {
 		BUILD_BUG_ON(RUNSTATE_running);
-		memset(runstate, 0, sizeof(*runstate));
+		memset(rs, 0, sizeof(*rs));
 		WARN_ON(rc != -ENOSYS);
 	}
 
-	return runstate;
+	return rs;
 }
 
-/* Dynamically-mapped IRQ. */
-static int __read_mostly timer_irq = -1;
-static struct irqaction timer_action = {
-	.handler = timer_interrupt,
-	.flags   = IRQF_DISABLED|IRQF_TIMER,
-	.name    = "timer"
-};
-
-static void __init setup_cpu0_timer_irq(void)
+static void __init _late_time_init(void)
 {
-	timer_irq = bind_virq_to_irqaction(VIRQ_TIMER, 0, &timer_action);
-	BUG_ON(timer_irq < 0);
+	update_wallclock(false);
+	xen_clockevents_init();
 }
 
 void __init time_init(void)
@@ -787,191 +547,42 @@ void __init time_init(void)
 	printk(KERN_INFO "Xen reported: %u.%03u MHz processor.\n",
 	       cpu_khz / 1000, cpu_khz % 1000);
 
-	switch (HYPERVISOR_vcpu_op(VCPUOP_set_periodic_timer, 0,
-				   &xen_set_periodic_tick)) {
-	case 0:
-#if CONFIG_XEN_COMPAT <= 0x030004
-	case -ENOSYS:
-#endif
-		break;
-	default:
-		BUG();
-	}
-
+	setup_runstate_area(0);
 	get_time_values_from_xen(0);
 
-	processed_system_time = per_cpu(shadow_time, 0).system_timestamp;
-	per_cpu(local_time.processed_system, 0) = processed_system_time;
-	per_cpu(local_time.accounted_system, 0) = processed_system_time;
-	init_missing_ticks_accounting(0);
+	jiffies_bias     = jiffies_64;
+	system_time_bias = per_cpu(shadow_time, 0).system_timestamp;
 
-	clocksource_register(&clocksource_xen);
-
-	update_wallclock(false);
+	clocksource_register_hz(&clocksource_xen, NSEC_PER_SEC);
 
 	use_tsc_delay();
 
-	/* Cannot request_irq() until kmem is initialised. */
-	late_time_init = setup_cpu0_timer_irq;
-
-	if (!(duty_limit + 2))
-		duty_limit = __fls(nr_cpu_ids);
+	/*
+	 * Cannot request_irq() until kmem is initialised, and cannot
+	 * do_settimeofday() (i.e. clock_was_set()) until interrupts are on.
+	 */
+	late_time_init = _late_time_init;
 }
 
 /* Convert jiffies to system time. */
 u64 jiffies_to_st(unsigned long j)
 {
-	unsigned long seq;
-	long delta;
-	u64 st;
+	u64 j64 = get_jiffies_64();
+	long delta = j - (unsigned long)j64;
 
-	do {
-		seq = read_seqbegin(&xtime_lock);
-		delta = j - jiffies;
-		if (delta < 1) {
-			/* Triggers in some wrap-around cases, but that's okay:
-			 * we just end up with a shorter timeout. */
-			st = processed_system_time + NS_PER_TICK;
-		} else if (((unsigned long)delta >> (BITS_PER_LONG-3)) != 0) {
-			/* Very long timeout means there is no pending timer.
-			 * We indicate this to Xen by passing zero timeout. */
-			st = 0;
-		} else {
-			st = processed_system_time + delta * (u64)NS_PER_TICK;
-		}
-	} while (read_seqretry(&xtime_lock, seq));
+	if (delta < 1)
+		/* Triggers in some wrap-around cases, but that's okay:
+		 * we just end up with a shorter timeout. */
+		return processed_system_time(j64) + NS_PER_TICK;
 
-	return st;
+	if (((unsigned long)delta >> (BITS_PER_LONG-3)) != 0)
+		/* Very long timeout means there is no pending timer.
+		 * We indicate this to Xen by passing zero timeout. */
+		return 0;
+
+	return processed_system_time(j64) + delta * (u64)NS_PER_TICK;
 }
 EXPORT_SYMBOL(jiffies_to_st);
-
-/*
- * stop_hz_timer / start_hz_timer - enter/exit 'tickless mode' on an idle cpu
- * These functions are based on implementations from arch/s390/kernel/time.c
- */
-static void stop_hz_timer(void)
-{
-	struct vcpu_set_singleshot_timer singleshot;
-	unsigned int cpu = smp_processor_id();
-	unsigned long j;
-	u64 local;
-	int rc;
-
-	cpumask_set_cpu(cpu, nohz_cpu_mask);
-
-	/* See matching smp_mb in rcu_start_batch in rcupdate.c.  These mbs  */
-	/* ensure that if __rcu_pending (nested in rcu_needs_cpu) fetches a  */
-	/* value of rcp->cur that matches rdp->quiescbatch and allows us to  */
-	/* stop the hz timer then the cpumasks created for subsequent values */
-	/* of cur in rcu_start_batch are guaranteed to pick up the updated   */
-	/* nohz_cpu_mask and so will not depend on this cpu.                 */
-
-	smp_mb();
-
-	/* Leave ourselves in tick mode if rcu or softirq or timer pending. */
-	if (rcu_needs_cpu(cpu) || printk_needs_cpu(cpu) ||
-	    local_softirq_pending() ||
-	    (j = get_next_timer_interrupt(jiffies),
-	     time_before_eq(j, jiffies))) {
-		cpumask_clear_cpu(cpu, nohz_cpu_mask);
-		j = jiffies + 1;
-	}
-
-	singleshot.timeout_abs_ns = jiffies_to_st(j);
-	if (!singleshot.timeout_abs_ns) {
-		BUG_ON(!cpumask_test_cpu(cpu, nohz_cpu_mask));
-		rcu_enter_nohz();
-		return;
-	}
-	local = per_cpu(local_time.processed_system, cpu);
-	if ((s64)(singleshot.timeout_abs_ns - local) <= NS_PER_TICK) {
-		cpumask_clear_cpu(cpu, nohz_cpu_mask);
-		singleshot.timeout_abs_ns = local + NS_PER_TICK;
-	} else if (cpumask_test_cpu(cpu, nohz_cpu_mask))
-		rcu_enter_nohz();
-	singleshot.timeout_abs_ns += NS_PER_TICK / 2;
-	singleshot.flags = 0;
-	rc = HYPERVISOR_vcpu_op(VCPUOP_set_singleshot_timer, cpu, &singleshot);
-#if CONFIG_XEN_COMPAT <= 0x030004
-	if (rc) {
-		BUG_ON(rc != -ENOSYS);
-		rc = HYPERVISOR_set_timer_op(singleshot.timeout_abs_ns);
-	}
-#endif
-	BUG_ON(rc);
-}
-
-static void start_hz_timer(void)
-{
-	unsigned int cpu = smp_processor_id();
-	int rc = HYPERVISOR_vcpu_op(VCPUOP_stop_singleshot_timer, cpu, NULL);
-
-#if CONFIG_XEN_COMPAT <= 0x030004
-	if (rc) {
-		BUG_ON(rc != -ENOSYS);
-		rc = HYPERVISOR_set_timer_op(0);
-	}
-#endif
-	BUG_ON(rc);
-	if (cpumask_test_and_clear_cpu(cpu, nohz_cpu_mask))
-		rcu_exit_nohz();
-}
-
-void xen_safe_halt(void)
-{
-	stop_hz_timer();
-	/* Blocking includes an implicit local_irq_enable(). */
-	HYPERVISOR_block();
-	start_hz_timer();
-}
-
-void xen_halt(void)
-{
-	if (irqs_disabled())
-		VOID(HYPERVISOR_vcpu_op(VCPUOP_down, smp_processor_id(), NULL));
-}
-
-#ifdef CONFIG_SMP
-int __cpuinit local_setup_timer(unsigned int cpu)
-{
-	int seq, irq;
-
-	BUG_ON(cpu == 0);
-
-	switch (HYPERVISOR_vcpu_op(VCPUOP_set_periodic_timer, cpu,
-			   &xen_set_periodic_tick)) {
-	case 0:
-#if CONFIG_XEN_COMPAT <= 0x030004
-	case -ENOSYS:
-#endif
-		break;
-	default:
-		BUG();
-	}
-
-	do {
-		seq = read_seqbegin(&xtime_lock);
-		/* Use cpu0 timestamp: cpu's shadow is not initialised yet. */
-		per_cpu(local_time.accounted_system, cpu) =
-		per_cpu(local_time.processed_system, cpu) =
-			per_cpu(shadow_time, 0).system_timestamp;
-		init_missing_ticks_accounting(cpu);
-	} while (read_seqretry(&xtime_lock, seq));
-
-	irq = bind_virq_to_irqaction(VIRQ_TIMER, cpu, &timer_action);
-	if (irq < 0)
-		return irq;
-	BUG_ON(timer_irq != irq);
-
-	return 0;
-}
-
-void __cpuinit local_teardown_timer(unsigned int cpu)
-{
-	BUG_ON(cpu == 0);
-	unbind_from_per_cpu_irq(timer_irq, cpu, &timer_action);
-}
-#endif
 
 #ifdef CONFIG_CPU_FREQ
 static int time_cpufreq_notifier(struct notifier_block *nb, unsigned long val, 
@@ -1018,28 +629,23 @@ core_initcall(cpufreq_time_setup);
  */
 static ctl_table xen_subtable[] = {
 	{
-		.ctl_name	= CTL_XEN_INDEPENDENT_WALLCLOCK,
 		.procname	= "independent_wallclock",
 		.data		= &independent_wallclock,
 		.maxlen		= sizeof(independent_wallclock),
 		.mode		= 0644,
-		.strategy	= sysctl_data,
 		.proc_handler	= proc_dointvec
 	},
 	{
-		.ctl_name	= CTL_XEN_PERMITTED_CLOCK_JITTER,
 		.procname	= "permitted_clock_jitter",
 		.data		= &permitted_clock_jitter,
 		.maxlen		= sizeof(permitted_clock_jitter),
 		.mode		= 0644,
-		.strategy	= sysctl_data,
 		.proc_handler	= proc_doulongvec_minmax
 	},
 	{ }
 };
 static ctl_table xen_table[] = {
 	{
-		.ctl_name	= CTL_XEN,
 		.procname	= "xen",
 		.mode		= 0555,
 		.child		= xen_subtable

@@ -116,7 +116,6 @@ DEFINE_XEN_GUEST_HANDLE(xen_pfn_t);
 
 /* New sched_op hypercall introduced in 0x00030101. */
 #if __XEN_INTERFACE_VERSION__ < 0x00030101 || (defined(CONFIG_PARAVIRT_XEN) && !defined(HAVE_XEN_PLATFORM_COMPAT_H))
-#undef __HYPERVISOR_sched_op
 #define __HYPERVISOR_sched_op __HYPERVISOR_sched_op_compat
 #else
 #define __HYPERVISOR_sched_op __HYPERVISOR_sched_op_new
@@ -690,7 +689,7 @@ typedef struct dom0_vga_console_info {
             uint8_t  green_pos, green_size;
             uint8_t  blue_pos, blue_size;
             uint8_t  rsvd_pos, rsvd_size;
-#if __XEN_INTERFACE_VERSION__ >= 0x00030206
+#if !defined(CONFIG_XEN) ||  __XEN_INTERFACE_VERSION__ >= 0x00030206
             /* VESA capabilities (offset 0xa, VESA command 0x4f00). */
             uint32_t gbl_caps;
             /* Mode attributes (offset 0x0, VESA command 0x4f01). */

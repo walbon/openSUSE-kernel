@@ -21,10 +21,6 @@
 #include <linux/pci.h>
 #include <linux/io.h>
 
-#ifdef CONFIG_KDB_USB
-#include <linux/kdb.h>
-#endif
-
 
 /*-------------------------------------------------------------------------*/
 
@@ -323,13 +319,12 @@ static int __devinit ohci_pci_start (struct usb_hcd *hcd)
 		ohci_err (ohci, "can't start\n");
 		ohci_stop (hcd);
 	}
-
 	return ret;
 }
 
 #ifdef	CONFIG_PM
 
-static int ohci_pci_suspend(struct usb_hcd *hcd)
+static int ohci_pci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 {
 	struct ohci_hcd	*ohci = hcd_to_ohci (hcd);
 	unsigned long	flags;
@@ -422,9 +417,6 @@ static const struct hc_driver ohci_pci_hc_driver = {
 	.bus_resume =		ohci_bus_resume,
 #endif
 	.start_port_reset =	ohci_start_port_reset,
-#ifdef CONFIG_KDB_USB
-	.kdb_poll_char =	ohci_kdb_poll_char,
-#endif
 };
 
 /*-------------------------------------------------------------------------*/

@@ -16,17 +16,13 @@
  */
 
 #include <linux/etherdevice.h>
+#include <linux/if_vlan.h>
 #include <linux/ip.h>
 #include <net/ipv6.h>
 #include <net/ip6_checksum.h>
 #include <linux/firmware.h>
 #include <linux/prefetch.h>
 #include "bnx2x_cmn.h"
-
-#ifdef BCM_VLAN
-#include <linux/if_vlan.h>
-#endif
-
 #include "bnx2x_init.h"
 #include "bnx2x_sp.h"
 
@@ -328,7 +324,7 @@ static void bnx2x_tpa_start(struct bnx2x_fastpath *fp, u16 queue,
 
 	/* move empty skb from pool to prod */
 	prod_rx_buf->skb = first_buf->skb;
-	pci_unmap_addr_set(prod_rx_buf, mapping, mapping);
+	dma_unmap_addr_set(prod_rx_buf, mapping, mapping);
 	/* point prod_bd to new skb */
 	prod_bd->addr_hi = cpu_to_le32(U64_HI(mapping));
 	prod_bd->addr_lo = cpu_to_le32(U64_LO(mapping));
@@ -386,13 +382,6 @@ static inline u16 bnx2x_set_lro_mss(struct bnx2x *bp, u16 parsing_flags,
 	else /* IPv4 */
 		hdrs_len += sizeof(struct iphdr);
 
-#ifdef BCM_VLAN
-	/* There is VLAN on data, take into an account */
-	if ((bp->vlgrp == NULL) && (parsing_flags & PARSING_FLAGS_VLAN))
-#else
-	if (parsing_flags & PARSING_FLAGS_VLAN)
-#endif
-		hdrs_len += VLAN_HLEN;
 
 	/* Check if there was a TCP timestamp, if there is it's will
 	 * always be 12 bytes length: nop nop kind length echo val.
@@ -455,7 +444,7 @@ static int bnx2x_fill_frag_skb(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 
 		/* Unmap the page as we r going to pass it to the stack */
 		dma_unmap_page(&bp->pdev->dev,
-			       pci_unmap_addr(&old_rx_pg, mapping),
+			       dma_unmap_addr(&old_rx_pg, mapping),
 			       SGE_PAGE_SIZE*PAGES_PER_SGE, DMA_FROM_DEVICE);
 
 		/* Add one frag and update the appropriate fields in the skb */
@@ -498,7 +487,7 @@ static void bnx2x_tpa_stop(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 	/* Unmap skb in the pool anyway, as we are going to change
 	   pool entry status to BNX2X_TPA_STOP even if new skb allocation
 	   fails. */
-	dma_unmap_single(&bp->pdev->dev, pci_unmap_addr(rx_buf, mapping),
+	dma_unmap_single(&bp->pdev->dev, dma_unmap_addr(rx_buf, mapping),
 			 fp->rx_buf_size, DMA_FROM_DEVICE);
 
 	if (likely(new_skb)) {
@@ -522,15 +511,9 @@ static void bnx2x_tpa_stop(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 
 		if (!bnx2x_fill_frag_skb(bp, fp, queue, skb, cqe, cqe_idx)) {
-#ifdef BCM_VLAN
-			if ((bp->vlgrp != NULL) &&
-				(tpa_info->parsing_flags
-							& PARSING_FLAGS_VLAN))
-				vlan_gro_receive(&fp->napi, bp->vlgrp,
-						 tpa_info->vlan_tag, skb);
-			else
-#endif
-				napi_gro_receive(&fp->napi, skb);
+			if (tpa_info->parsing_flags & PARSING_FLAGS_VLAN)
+				__vlan_hwaccel_put_tag(skb, tpa_info->vlan_tag);
+			napi_gro_receive(&fp->napi, skb);
 		} else {
 			DP(NETIF_MSG_RX_STATUS, "Failed to allocate new pages"
 			   " - dropping packet!\n");
@@ -549,6 +532,20 @@ drop:
 	DP(NETIF_MSG_RX_STATUS,
 	   "Failed to allocate or map a new skb - dropping packet!\n");
 	fp->eth_q_stats.rx_skb_alloc_failed++;
+}
+
+/* Set Toeplitz hash value in the skb using the value from the
+ * CQE (calculated by HW).
+ */
+static inline void bnx2x_set_skb_rxhash(struct bnx2x *bp, union eth_rx_cqe *cqe,
+					struct sk_buff *skb)
+{
+	/* Set Toeplitz hash from CQE */
+	if ((bp->dev->features & NETIF_F_RXHASH) &&
+	    (cqe->fast_path_cqe.status_flags &
+	     ETH_FAST_PATH_RX_CQE_RSS_HASH_FLG))
+		skb->rxhash =
+		le32_to_cpu(cqe->fast_path_cqe.rss_hash_result);
 }
 
 int bnx2x_rx_int(struct bnx2x_fastpath *fp, int budget)
@@ -652,6 +649,9 @@ int bnx2x_rx_int(struct bnx2x_fastpath *fp, int budget)
 							bd_cons, bd_prod,
 							cqe_fp);
 
+					/* Set Toeplitz hash for LRO skb */
+					bnx2x_set_skb_rxhash(bp, cqe, skb);
+
 					goto next_rx;
 
 				} else {
@@ -677,7 +677,7 @@ int bnx2x_rx_int(struct bnx2x_fastpath *fp, int budget)
 			len = le16_to_cpu(cqe_fp->pkt_len);
 			pad = cqe_fp->placement_offset;
 			dma_sync_single_for_cpu(&bp->pdev->dev,
-					pci_unmap_addr(rx_buf, mapping),
+					dma_unmap_addr(rx_buf, mapping),
 						       pad + RX_COPY_THRESH,
 						       DMA_FROM_DEVICE);
 			prefetch(((char *)(skb)) + L1_CACHE_BYTES);
@@ -720,7 +720,7 @@ int bnx2x_rx_int(struct bnx2x_fastpath *fp, int budget)
 			} else
 			if (likely(bnx2x_alloc_rx_skb(bp, fp, bd_prod) == 0)) {
 				dma_unmap_single(&bp->pdev->dev,
-					pci_unmap_addr(rx_buf, mapping),
+					dma_unmap_addr(rx_buf, mapping),
 						 fp->rx_buf_size,
 						 DMA_FROM_DEVICE);
 				skb_reserve(skb, pad);
@@ -738,9 +738,12 @@ reuse_rx:
 
 			skb->protocol = eth_type_trans(skb, bp->dev);
 
-			skb->ip_summed = CHECKSUM_NONE;
+			/* Set Toeplitz hash for a none-LRO skb */
+			bnx2x_set_skb_rxhash(bp, cqe, skb);
 
-			if (bp->rx_csum) {
+			skb_checksum_none_assert(skb);
+
+			if (bp->dev->features & NETIF_F_RXCSUM) {
 
 				if (likely(BNX2X_RX_CSUM_OK(cqe)))
 					skb->ip_summed = CHECKSUM_UNNECESSARY;
@@ -751,15 +754,11 @@ reuse_rx:
 
 		skb_record_rx_queue(skb, fp->index);
 
-#ifdef BCM_VLAN
-		if ((bp->vlgrp != NULL) &&
-		    (le16_to_cpu(cqe_fp->pars_flags.flags) &
-		     PARSING_FLAGS_VLAN))
-			vlan_gro_receive(&fp->napi, bp->vlgrp,
-					 le16_to_cpu(cqe_fp->vlan_tag), skb);
-		else
-#endif
-			napi_gro_receive(&fp->napi, skb);
+		if (le16_to_cpu(cqe_fp->pars_flags.flags) &
+		    PARSING_FLAGS_VLAN)
+			__vlan_hwaccel_put_tag(skb,
+					       le16_to_cpu(cqe_fp->vlan_tag));
+		napi_gro_receive(&fp->napi, skb);
 
 
 next_rx:
@@ -987,8 +986,6 @@ void __bnx2x_link_report(struct bnx2x *bp)
 void bnx2x_init_rx_rings(struct bnx2x *bp)
 {
 	int func = BP_FUNC(bp);
-	int max_agg_queues = CHIP_IS_E1(bp) ? ETH_MAX_AGGREGATION_QUEUES_E1 :
-					      ETH_MAX_AGGREGATION_QUEUES_E1H_E2;
 	u16 ring_prod;
 	int i, j;
 
@@ -1001,7 +998,7 @@ void bnx2x_init_rx_rings(struct bnx2x *bp)
 
 		if (!fp->disable_tpa) {
 			/* Fill the per-aggregtion pool */
-			for (i = 0; i < max_agg_queues; i++) {
+			for (i = 0; i < MAX_AGG_QS(bp); i++) {
 				struct bnx2x_agg_info *tpa_info =
 					&fp->tpa_info[i];
 				struct sw_rx_bd *first_buf =
@@ -1018,7 +1015,7 @@ void bnx2x_init_rx_rings(struct bnx2x *bp)
 					fp->disable_tpa = 1;
 					break;
 				}
-				pci_unmap_addr_set(first_buf, mapping, 0);
+				dma_unmap_addr_set(first_buf, mapping, 0);
 				tpa_info->tpa_state = BNX2X_TPA_STOP;
 			}
 
@@ -1041,7 +1038,7 @@ void bnx2x_init_rx_rings(struct bnx2x *bp)
 					bnx2x_free_rx_sge_range(bp, fp,
 								ring_prod);
 					bnx2x_free_tpa_pool(bp, fp,
-							    max_agg_queues);
+							    MAX_AGG_QS(bp));
 					fp->disable_tpa = 1;
 					ring_prod = 0;
 					break;
@@ -1119,7 +1116,7 @@ static void bnx2x_free_rx_bds(struct bnx2x_fastpath *fp)
 		if (skb == NULL)
 			continue;
 		dma_unmap_single(&bp->pdev->dev,
-				 pci_unmap_addr(rx_buf, mapping),
+				 dma_unmap_addr(rx_buf, mapping),
 				 fp->rx_buf_size, DMA_FROM_DEVICE);
 
 		rx_buf->skb = NULL;
@@ -1137,9 +1134,7 @@ static void bnx2x_free_rx_skbs(struct bnx2x *bp)
 		bnx2x_free_rx_bds(fp);
 
 		if (!fp->disable_tpa)
-			bnx2x_free_tpa_pool(bp, fp, CHIP_IS_E1(bp) ?
-					    ETH_MAX_AGGREGATION_QUEUES_E1 :
-					    ETH_MAX_AGGREGATION_QUEUES_E1H_E2);
+			bnx2x_free_tpa_pool(bp, fp, MAX_AGG_QS(bp));
 	}
 }
 
@@ -1405,6 +1400,7 @@ void bnx2x_netif_stop(struct bnx2x *bp, int disable_hw)
 u16 bnx2x_select_queue(struct net_device *dev, struct sk_buff *skb)
 {
 	struct bnx2x *bp = netdev_priv(dev);
+
 #ifdef BCM_CNIC
 	if (!NO_FCOE(bp)) {
 		struct ethhdr *hdr = (struct ethhdr *)skb->data;
@@ -1483,7 +1479,11 @@ static inline int bnx2x_set_real_num_queues(struct bnx2x *bp)
 	}
 #endif
 
-	netif_set_real_num_tx_queues(bp->dev, tx);
+	rc = netif_set_real_num_tx_queues(bp->dev, tx);
+	if (rc) {
+		BNX2X_ERR("Failed to set real number of Tx queues: %d\n", rc);
+		return rc;
+	}
 	rc = netif_set_real_num_rx_queues(bp->dev, rx);
 	if (rc) {
 		BNX2X_ERR("Failed to set real number of Rx queues: %d\n", rc);
@@ -1746,6 +1746,12 @@ int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 		BNX2X_ERR("Unable to set real_num_queues\n");
 		LOAD_ERROR_EXIT(bp, load_error0);
 	}
+
+	/* configure multi cos mappings in kernel.
+	 * this configuration may be overriden by a multi class queue discipline
+	 * or by a dcbx negotiation result.
+	 */
+	bnx2x_setup_tc(bp->dev, bp->max_cos);
 
 	bnx2x_napi_enable(bp);
 
@@ -2692,15 +2698,12 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	   "sending pkt %u @%p  next_idx %u  bd %u @%p\n",
 	   pkt_prod, tx_buf, txdata->tx_pkt_prod, bd_prod, tx_start_bd);
 
-#ifdef BCM_VLAN
-	if ((bp->vlgrp != NULL) && vlan_tx_tag_present(skb) &&
-	    (bp->flags & HW_VLAN_TX_FLAG)) {
+	if (vlan_tx_tag_present(skb)) {
 		tx_start_bd->vlan_or_ethertype =
 		    cpu_to_le16(vlan_tx_tag_get(skb));
 		tx_start_bd->bd_flags.as_bitfield |=
 		    (X_ETH_OUTBAND_VLAN << ETH_TX_BD_FLAGS_VLAN_MODE_SHIFT);
 	} else
-#endif
 		tx_start_bd->vlan_or_ethertype = cpu_to_le16(pkt_prod);
 
 	/* turn on parsing and get a BD */
@@ -2898,6 +2901,73 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	return NETDEV_TX_OK;
 }
 
+/**
+ * bnx2x_setup_tc - routine to configure net_device for multi tc
+ *
+ * @netdev: net device to configure
+ * @tc: number of traffic classes to enable
+ *
+ * callback connected to the ndo_setup_tc function pointer
+ */
+int bnx2x_setup_tc(struct net_device *dev, u8 num_tc)
+{
+	int cos, prio, count, offset;
+	struct bnx2x *bp = netdev_priv(dev);
+
+	/* setup tc must be called under rtnl lock */
+	ASSERT_RTNL();
+
+	/* no traffic classes requested. aborting */
+	if (!num_tc) {
+		netdev_reset_tc(dev);
+		return 0;
+	}
+
+	/* requested to support too many traffic classes */
+	if (num_tc > bp->max_cos) {
+		DP(NETIF_MSG_TX_ERR, "support for too many traffic classes"
+				     " requested: %d. max supported is %d",
+				     num_tc, bp->max_cos);
+		return -EINVAL;
+	}
+
+	/* declare amount of supported traffic classes */
+	if (netdev_set_num_tc(dev, num_tc)) {
+		DP(NETIF_MSG_TX_ERR, "failed to declare %d traffic classes",
+				     num_tc);
+		return -EINVAL;
+	}
+
+	/* configure priority to traffic class mapping */
+	for (prio = 0; prio < BNX2X_MAX_PRIORITY; prio++) {
+		netdev_set_prio_tc_map(dev, prio, bp->prio_to_cos[prio]);
+		DP(BNX2X_MSG_SP, "mapping priority %d to tc %d",
+		   prio, bp->prio_to_cos[prio]);
+	}
+
+
+	/* Use this configuration to diffrentiate tc0 from other COSes
+	   This can be used for ets or pfc, and save the effort of setting
+	   up a multio class queue disc or negotiating DCBX with a switch
+	netdev_set_prio_tc_map(dev, 0, 0);
+	DP(BNX2X_MSG_SP, "mapping priority %d to tc %d", 0, 0);
+	for (prio = 1; prio < 16; prio++) {
+		netdev_set_prio_tc_map(dev, prio, 1);
+		DP(BNX2X_MSG_SP, "mapping priority %d to tc %d", prio, 1);
+	} */
+
+	/* configure traffic class to transmission queue mapping */
+	for (cos = 0; cos < bp->max_cos; cos++) {
+		count = BNX2X_NUM_ETH_QUEUES(bp);
+		offset = cos * MAX_TXQS_PER_COS;
+		netdev_set_tc_queue(dev, cos, count, offset);
+		DP(BNX2X_MSG_SP, "mapping tc %d to offset %d count %d",
+		   cos, offset, count);
+	}
+
+	return 0;
+}
+
 /* called with rtnl_lock */
 int bnx2x_change_mac_addr(struct net_device *dev, void *p)
 {
@@ -3020,15 +3090,20 @@ static int bnx2x_alloc_fp_mem_at(struct bnx2x *bp, int index)
 	struct bnx2x_fastpath *fp = &bp->fp[index];
 	int ring_size = 0;
 	u8 cos;
+	int rx_ring_size = 0;
 
 	/* if rx_ring_size specified - use it */
-	int rx_ring_size = bp->rx_ring_size ? bp->rx_ring_size :
-			   MAX_RX_AVAIL/BNX2X_NUM_RX_QUEUES(bp);
+	if (!bp->rx_ring_size) {
 
-	/* allocate at least number of buffers required by FW */
-	rx_ring_size = max_t(int, bp->disable_tpa ? MIN_RX_SIZE_NONTPA :
-						    MIN_RX_SIZE_TPA,
-				  rx_ring_size);
+		rx_ring_size = MAX_RX_AVAIL/BNX2X_NUM_RX_QUEUES(bp);
+
+		/* allocate at least number of buffers required by FW */
+		rx_ring_size = max_t(int, bp->disable_tpa ? MIN_RX_SIZE_NONTPA :
+				     MIN_RX_SIZE_TPA, rx_ring_size);
+
+		bp->rx_ring_size = rx_ring_size;
+	} else
+		rx_ring_size = bp->rx_ring_size;
 
 	/* Common */
 	sb = &bnx2x_fp(bp, index, status_blk);
@@ -3222,6 +3297,17 @@ alloc_err:
 
 }
 
+static int bnx2x_reload_if_running(struct net_device *dev)
+{
+	struct bnx2x *bp = netdev_priv(dev);
+
+	if (unlikely(!netif_running(dev)))
+		return 0;
+
+	bnx2x_nic_unload(bp, UNLOAD_NORMAL);
+	return bnx2x_nic_load(bp, LOAD_NORMAL);
+}
+
 int bnx2x_get_cur_phy_idx(struct bnx2x *bp)
 {
 	u32 sel_phy_idx = 0;
@@ -3298,7 +3384,6 @@ int bnx2x_fcoe_get_wwn(struct net_device *dev, u64 *wwn, int type)
 int bnx2x_change_mtu(struct net_device *dev, int new_mtu)
 {
 	struct bnx2x *bp = netdev_priv(dev);
-	int rc = 0;
 
 	if (bp->recovery_state != BNX2X_RECOVERY_DONE) {
 		printk(KERN_ERR "Handling parity error recovery. Try again later\n");
@@ -3315,12 +3400,55 @@ int bnx2x_change_mtu(struct net_device *dev, int new_mtu)
 	 */
 	dev->mtu = new_mtu;
 
-	if (netif_running(dev)) {
-		bnx2x_nic_unload(bp, UNLOAD_NORMAL);
-		rc = bnx2x_nic_load(bp, LOAD_NORMAL);
+	return bnx2x_reload_if_running(dev);
+}
+
+u32 bnx2x_fix_features(struct net_device *dev, u32 features)
+{
+	struct bnx2x *bp = netdev_priv(dev);
+
+	/* TPA requires Rx CSUM offloading */
+	if (!(features & NETIF_F_RXCSUM) || bp->disable_tpa)
+		features &= ~NETIF_F_LRO;
+
+	return features;
+}
+
+int bnx2x_set_features(struct net_device *dev, u32 features)
+{
+	struct bnx2x *bp = netdev_priv(dev);
+	u32 flags = bp->flags;
+	bool bnx2x_reload = false;
+
+	if (features & NETIF_F_LRO)
+		flags |= TPA_ENABLE_FLAG;
+	else
+		flags &= ~TPA_ENABLE_FLAG;
+
+	if (features & NETIF_F_LOOPBACK) {
+		if (bp->link_params.loopback_mode != LOOPBACK_BMAC) {
+			bp->link_params.loopback_mode = LOOPBACK_BMAC;
+			bnx2x_reload = true;
+		}
+	} else {
+		if (bp->link_params.loopback_mode != LOOPBACK_NONE) {
+			bp->link_params.loopback_mode = LOOPBACK_NONE;
+			bnx2x_reload = true;
+		}
 	}
 
-	return rc;
+	if (flags ^ bp->flags) {
+		bp->flags = flags;
+		bnx2x_reload = true;
+	}
+
+	if (bnx2x_reload) {
+		if (bp->recovery_state == BNX2X_RECOVERY_DONE)
+			return bnx2x_reload_if_running(dev);
+		/* else: bnx2x_nic_load() will be called at end of recovery */
+	}
+
+	return 0;
 }
 
 void bnx2x_tx_timeout(struct net_device *dev)
@@ -3409,87 +3537,6 @@ int bnx2x_resume(struct pci_dev *pdev)
 	return rc;
 }
 
-#ifdef BCM_VLAN /* ! BNX2X_UPSTREAM */
-static inline int bnx2x_set_vlan_stripping(struct bnx2x *bp, bool set)
-{
-	struct bnx2x_queue_state_params q_params = {0};
-	struct bnx2x_queue_update_params *update_params =
-		&q_params.params.update;
-	int i, rc;
-
-	/* We want to wait for completion in this context */
-	__set_bit(RAMROD_COMP_WAIT, &q_params.ramrod_flags);
-
-	/* Set the command */
-	q_params.cmd = BNX2X_Q_CMD_UPDATE;
-
-	/* Enable VLAN stripping if requested */
-	if (set)
-		__set_bit(BNX2X_Q_UPDATE_IN_VLAN_REM,
-			&update_params->update_flags);
-
-	/* Indicate that VLAN stripping configuration has changed */
-	__set_bit(BNX2X_Q_UPDATE_IN_VLAN_REM_CHNG,
-		  &update_params->update_flags);
-
-	for_each_rx_queue(bp, i) {
-		struct bnx2x_fastpath *fp = &bp->fp[i];
-
-		/* Set the appropriate Queue object */
-		q_params.q_obj = &fp->q_obj;
-
-		/* Update the Queue state */
-		rc = bnx2x_queue_state_change(bp, &q_params);
-		if (rc) {
-			BNX2X_ERR("Failed to configure VLAN stripping "
-				  "for Queue %d\n", i);
-			return rc;
-		}
-	}
-
-	return 0;
-}
-
-void bnx2x_vlan_rx_register(struct net_device *dev, struct vlan_group *vlgrp)
-{
-	struct bnx2x *bp = netdev_priv(dev);
-	int rc;
-
-	/* Configure VLAN stripping if NIC is up.
-	 * Otherwise just set the bp->vlgrp and stripping will be
-	 * configured in bnx2x_nic_load().
-	 */
-	if (bp->state == BNX2X_STATE_OPEN) {
-		if (vlgrp != NULL) {
-			rc = bnx2x_set_vlan_stripping(bp, true);
-
-			/* If we failed to configure VLAN stripping we don't
-			 * want to use HW accelerated flow in bnx2x_rx_int().
-			 * Thus we will leave bp->vlgrp to be equal to NULL to
-			 * disable it.
-			 */
-			if (rc) {
-				netdev_err(dev, "Failed to set HW "
-						"VLAN stripping\n");
-				bnx2x_set_vlan_stripping(bp, false);
-			} else
-				bp->vlgrp = vlgrp;
-		} else {
-			rc = bnx2x_set_vlan_stripping(bp, false);
-
-			if (rc)
-				netdev_err(dev, "Failed to clear HW "
-						"VLAN stripping\n");
-
-			bp->vlgrp = NULL;
-		}
-	} else
-		bp->vlgrp = vlgrp;
-
-/* called with rtnl_lock */
-
-}
-#endif /* BCM_VLAN */
 
 void bnx2x_set_ctx_validation(struct bnx2x *bp, struct eth_context *cxt,
 			      u32 cid)

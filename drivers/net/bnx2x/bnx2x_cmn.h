@@ -439,6 +439,9 @@ int bnx2x_nic_load(struct bnx2x *bp, int load_mode);
 /* hard_xmit callback */
 netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev);
 
+/* setup_tc callback */
+int bnx2x_setup_tc(struct net_device *dev, u8 num_tc);
+
 /* select_queue callback */
 u16 bnx2x_select_queue(struct net_device *dev, struct sk_buff *skb);
 
@@ -516,7 +519,7 @@ void bnx2x_free_mem_bp(struct bnx2x *bp);
  */
 int bnx2x_change_mtu(struct net_device *dev, int new_mtu);
 
-#if defined(BCM_CNIC) && (defined(CONFIG_FCOE) || defined(CONFIG_FCOE_MODULE))
+#if defined(NETDEV_FCOE_WWNN) && defined(BCM_CNIC)
 /**
  * bnx2x_fcoe_get_wwn - return the requested WWN value for this port
  *
@@ -527,26 +530,15 @@ int bnx2x_change_mtu(struct net_device *dev, int new_mtu);
  */
 int bnx2x_fcoe_get_wwn(struct net_device *dev, u64 *wwn, int type);
 #endif
+u32 bnx2x_fix_features(struct net_device *dev, u32 features);
+int bnx2x_set_features(struct net_device *dev, u32 features);
+
 /**
  * bnx2x_tx_timeout - tx timeout netdev callback
  *
  * @dev:	net device
  */
 void bnx2x_tx_timeout(struct net_device *dev);
-
-#ifdef BCM_VLAN
-/**
- * vlan rx register netdev callback
- *
- * @dev:	net device
- * @vlgrp:	vlan_group
- *
- * @return int
- */
-void bnx2x_vlan_rx_register(struct net_device *dev,
-				   struct vlan_group *vlgrp);
-
-#endif
 
 /*********************** Inlines **********************************/
 /*********************** Fast path ********************************/
@@ -817,7 +809,7 @@ static inline void bnx2x_free_rx_sge(struct bnx2x *bp,
 	if (!page)
 		return;
 
-	dma_unmap_page(&bp->pdev->dev, pci_unmap_addr(sw_buf, mapping),
+	dma_unmap_page(&bp->pdev->dev, dma_unmap_addr(sw_buf, mapping),
 		       SGE_PAGE_SIZE*PAGES_PER_SGE, DMA_FROM_DEVICE);
 	__free_pages(page, PAGES_PER_SGE_SHIFT);
 
@@ -908,7 +900,7 @@ static inline int bnx2x_alloc_rx_sge(struct bnx2x *bp,
 	}
 
 	sw_buf->page = page;
-	pci_unmap_addr_set(sw_buf, mapping, mapping);
+	dma_unmap_addr_set(sw_buf, mapping, mapping);
 
 	sge->addr_hi = cpu_to_le32(U64_HI(mapping));
 	sge->addr_lo = cpu_to_le32(U64_LO(mapping));
@@ -936,7 +928,7 @@ static inline int bnx2x_alloc_rx_skb(struct bnx2x *bp,
 	}
 
 	rx_buf->skb = skb;
-	pci_unmap_addr_set(rx_buf, mapping, mapping);
+	dma_unmap_addr_set(rx_buf, mapping, mapping);
 
 	rx_bd->addr_hi = cpu_to_le32(U64_HI(mapping));
 	rx_bd->addr_lo = cpu_to_le32(U64_LO(mapping));
@@ -957,8 +949,8 @@ static inline void bnx2x_reuse_rx_skb(struct bnx2x_fastpath *fp,
 	struct eth_rx_bd *cons_bd = &fp->rx_desc_ring[cons];
 	struct eth_rx_bd *prod_bd = &fp->rx_desc_ring[prod];
 
-	pci_unmap_addr_set(prod_rx_buf, mapping,
-			   pci_unmap_addr(cons_rx_buf, mapping));
+	dma_unmap_addr_set(prod_rx_buf, mapping,
+			   dma_unmap_addr(cons_rx_buf, mapping));
 	prod_rx_buf->skb = cons_rx_buf->skb;
 	*prod_bd = *cons_bd;
 }
@@ -987,7 +979,10 @@ static inline int bnx2x_func_start(struct bnx2x *bp)
 	/* Function parameters */
 	start_params->mf_mode = bp->mf_mode;
 	start_params->sd_vlan_tag = bp->mf_ov;
-	start_params->network_cos_mode = OVERRIDE_COS;
+	if (CHIP_IS_E1x(bp))
+		start_params->network_cos_mode = OVERRIDE_COS;
+	else
+		start_params->network_cos_mode = STATIC_COS;
 
 	return bnx2x_func_state_change(bp, &func_params);
 }
@@ -1040,7 +1035,7 @@ static inline void bnx2x_free_tpa_pool(struct bnx2x *bp,
 		}
 		if (tpa_info->tpa_state == BNX2X_TPA_START)
 			dma_unmap_single(&bp->pdev->dev,
-					 pci_unmap_addr(first_buf, mapping),
+					 dma_unmap_addr(first_buf, mapping),
 					 fp->rx_buf_size, DMA_FROM_DEVICE);
 		dev_kfree_skb(skb);
 		first_buf->skb = NULL;
@@ -1369,7 +1364,7 @@ static inline int bnx2x_clean_tx_queue(struct bnx2x *bp,
 	while (bnx2x_has_tx_work_unload(txdata)) {
 		if (!cnt) {
 			BNX2X_ERR("timeout waiting for queue[%d]: "
-			"txdata->tx_pkt_prod(%d) != txdata->tx_pkt_cons(%d)\n",
+				 "txdata->tx_pkt_prod(%d) != txdata->tx_pkt_cons(%d)\n",
 				  txdata->txq_index, txdata->tx_pkt_prod,
 				  txdata->tx_pkt_cons);
 #ifdef BNX2X_STOP_ON_ERROR

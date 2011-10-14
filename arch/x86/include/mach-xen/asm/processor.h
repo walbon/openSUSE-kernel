@@ -21,7 +21,6 @@ struct mm_struct;
 #include <asm/msr.h>
 #include <asm/desc_defs.h>
 #include <asm/nops.h>
-#include <asm/ds.h>
 
 #include <linux/personality.h>
 #include <linux/cpumask.h>
@@ -29,6 +28,8 @@ struct mm_struct;
 #include <linux/threads.h>
 #include <linux/math64.h>
 #include <linux/init.h>
+#include <linux/err.h>
+
 #include <xen/interface/physdev.h>
 
 #define HBP_NUM 4
@@ -102,10 +103,6 @@ struct cpuinfo_x86 {
 	int			x86_power;
 	unsigned long		loops_per_jiffy;
 #ifndef CONFIG_XEN
-#ifdef CONFIG_SMP
-	/* cpus sharing the last level cache: */
-	cpumask_var_t		llc_shared_map;
-#endif
 	/* cpuid returned max cores value: */
 	u16			 x86_max_cores;
 	u16			apicid;
@@ -126,7 +123,6 @@ struct cpuinfo_x86 {
 	/* Index into per_cpu list: */
 	u16			cpu_index;
 #endif
-	unsigned int		x86_hyper_vendor;
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
 #define X86_VENDOR_INTEL	0
@@ -140,10 +136,6 @@ struct cpuinfo_x86 {
 
 #define X86_VENDOR_UNKNOWN	0xff
 
-#define X86_HYPER_VENDOR_NONE  0
-#define X86_HYPER_VENDOR_VMWARE 1
-#define X86_HYPER_VENDOR_XEN   'X'
-
 /*
  * capabilities of CPUs
  */
@@ -156,10 +148,9 @@ extern __u32			cpu_caps_set[NCAPINTS];
 #ifdef CONFIG_SMP
 DECLARE_PER_CPU_SHARED_ALIGNED(struct cpuinfo_x86, cpu_info);
 #define cpu_data(cpu)		per_cpu(cpu_info, cpu)
-#define current_cpu_data	__get_cpu_var(cpu_info)
 #else
+#define cpu_info		boot_cpu_data
 #define cpu_data(cpu)		boot_cpu_data
-#define current_cpu_data	boot_cpu_data
 #endif
 
 extern const struct seq_operations cpuinfo_op;
@@ -473,6 +464,8 @@ struct thread_struct {
 	struct perf_event	*ptrace_bps[HBP_NUM];
 	/* Debug status used for traps, single steps, etc... */
 	unsigned long           debugreg6;
+	/* Keep track of the exact dr7 value set by the user */
+	unsigned long           ptrace_dr7;
 	/* Fault info: */
 	unsigned long		cr2;
 	unsigned long		trap_no;
@@ -491,10 +484,6 @@ struct thread_struct {
 	unsigned long		iopl;
 	/* Max allowed port in the bitmap, in bytes: */
 	unsigned		io_bitmap_max;
-/* MSR_IA32_DEBUGCTLMSR value to switch in if TIF_DEBUGCTLMSR is set.  */
-	unsigned long	debugctlmsr;
-	/* Debug Store context; see asm/ds.h */
-	struct ds_context	*ds_ctx;
 };
 
 static inline unsigned long xen_get_debugreg(int regno)
@@ -564,7 +553,7 @@ extern unsigned long		mmu_cr4_features;
 
 static inline void set_in_cr4(unsigned long mask)
 {
-	unsigned cr4;
+	unsigned long cr4;
 
 	mmu_cr4_features |= mask;
 	cr4 = read_cr4();
@@ -574,7 +563,7 @@ static inline void set_in_cr4(unsigned long mask)
 
 static inline void clear_in_cr4(unsigned long mask)
 {
-	unsigned cr4;
+	unsigned long cr4;
 
 	mmu_cr4_features &= ~mask;
 	cr4 = read_cr4();
@@ -719,14 +708,18 @@ static inline void __sti_mwait(unsigned long eax, unsigned long ecx)
 extern void mwait_idle_with_hints(unsigned long eax, unsigned long ecx);
 
 extern void select_idle_routine(const struct cpuinfo_x86 *c);
-extern void init_c1e_mask(void);
+extern void init_amd_e400_c1e_mask(void);
 
 extern unsigned long		boot_option_idle_override;
-extern unsigned long		idle_halt;
-extern unsigned long		idle_nomwait;
+extern bool			amd_e400_c1e_detected;
+
+enum idle_boot_override {IDLE_NO_OVERRIDE=0, IDLE_HALT, IDLE_NOMWAIT,
+			 IDLE_POLL, IDLE_FORCE_MWAIT};
 
 extern void enable_sep_cpu(void);
 extern int sysenter_setup(void);
+
+extern void early_trap_init(void);
 
 /* Defined in head.S */
 extern struct desc_ptr		early_gdt_descr;
@@ -738,28 +731,13 @@ extern void cpu_init(void);
 
 static inline unsigned long get_debugctlmsr(void)
 {
-    unsigned long debugctlmsr = 0;
+	unsigned long debugctlmsr = 0;
 
 #ifndef CONFIG_X86_DEBUGCTLMSR
 	if (boot_cpu_data.x86 < 6)
 		return 0;
 #endif
 	rdmsrl(MSR_IA32_DEBUGCTLMSR, debugctlmsr);
-
-    return debugctlmsr;
-}
-
-static inline unsigned long get_debugctlmsr_on_cpu(int cpu)
-{
-	u64 debugctlmsr = 0;
-	u32 val1, val2;
-
-#ifndef CONFIG_X86_DEBUGCTLMSR
-	if (boot_cpu_data.x86 < 6)
-		return 0;
-#endif
-	rdmsr_on_cpu(cpu, MSR_IA32_DEBUGCTLMSR, &val1, &val2);
-	debugctlmsr = val1 | ((u64)val2 << 32);
 
 	return debugctlmsr;
 }
@@ -771,18 +749,6 @@ static inline void update_debugctlmsr(unsigned long debugctlmsr)
 		return;
 #endif
 	wrmsrl(MSR_IA32_DEBUGCTLMSR, debugctlmsr);
-}
-
-static inline void update_debugctlmsr_on_cpu(int cpu,
-					     unsigned long debugctlmsr)
-{
-#ifndef CONFIG_X86_DEBUGCTLMSR
-	if (boot_cpu_data.x86 < 6)
-		return;
-#endif
-	wrmsr_on_cpu(cpu, MSR_IA32_DEBUGCTLMSR,
-		     (u32)((u64)debugctlmsr),
-		     (u32)((u64)debugctlmsr >> 32));
 }
 
 /*
@@ -886,7 +852,7 @@ extern unsigned long thread_saved_pc(struct task_struct *tsk);
 /*
  * The below -8 is to reserve 8 bytes on top of the ring0 stack.
  * This is necessary to guarantee that the entire "struct pt_regs"
- * is accessable even if the CPU haven't stored the SS/ESP registers
+ * is accessible even if the CPU haven't stored the SS/ESP registers
  * on the stack (interrupt gate does not save these registers
  * when switching to the same priv ring).
  * Therefore beware: accessing the ss/esp fields of the
@@ -991,6 +957,7 @@ unsigned long calc_aperfmperf_ratio(struct aperfmperf *old,
  * AMD errata checking
  */
 #ifdef CONFIG_CPU_SUP_AMD
+extern const int amd_erratum_383[];
 extern const int amd_erratum_400[];
 extern bool cpu_has_amd_erratum(const int *);
 

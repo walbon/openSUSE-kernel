@@ -3,7 +3,7 @@
  * 
  * (The IMM is the embedded controller in the ZIP Plus drive.)
  * 
- * My unoffical company acronym list is 21 pages long:
+ * My unofficial company acronym list is 21 pages long:
  *      FLA:    Four letter acronym with built in facility for
  *              future expansion to five letters.
  */
@@ -15,6 +15,7 @@
 #include <linux/parport.h>
 #include <linux/workqueue.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <asm/io.h>
 
 #include <scsi/scsi.h>

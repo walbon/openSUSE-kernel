@@ -17,6 +17,7 @@
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+#include <linux/atomic.h>
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -35,6 +36,8 @@
  */
 static DEFINE_SPINLOCK(pstore_lock);
 static struct pstore_info *psinfo;
+
+static char *backend;
 
 /* How much of the console log to snapshot */
 static unsigned long kmsg_bytes = 10240;
@@ -66,7 +69,8 @@ static void pstore_dump(struct kmsg_dumper *dumper,
 	unsigned long	size, total = 0;
 	char		*dst, *why;
 	u64		id;
-	int		hsize, part = 1;
+	int		hsize;
+	unsigned int	part = 1;
 
 	if (reason < ARRAY_SIZE(reason_str))
 		why = reason_str[reason];
@@ -77,7 +81,7 @@ static void pstore_dump(struct kmsg_dumper *dumper,
 	oopscount++;
 	while (total < kmsg_bytes) {
 		dst = psinfo->buf;
-		hsize = sprintf(dst, "%s#%d Part%d\n", why, oopscount, part++);
+		hsize = sprintf(dst, "%s#%d Part%d\n", why, oopscount, part);
 		size = psinfo->bufsize - hsize;
 		dst += hsize;
 
@@ -93,14 +97,16 @@ static void pstore_dump(struct kmsg_dumper *dumper,
 		memcpy(dst, s1 + s1_start, l1_cpy);
 		memcpy(dst + l1_cpy, s2 + s2_start, l2_cpy);
 
-		id = psinfo->write(PSTORE_TYPE_DMESG, hsize + l1_cpy + l2_cpy);
+		id = psinfo->write(PSTORE_TYPE_DMESG, part,
+				   hsize + l1_cpy + l2_cpy, psinfo);
 		if (reason == KMSG_DUMP_OOPS && pstore_is_mounted())
 			pstore_mkfile(PSTORE_TYPE_DMESG, psinfo->name, id,
 				      psinfo->buf, hsize + l1_cpy + l2_cpy,
-				      CURRENT_TIME, psinfo->erase);
+				      CURRENT_TIME, psinfo);
 		l1 -= l1_cpy;
 		l2 -= l2_cpy;
 		total += l1_cpy + l2_cpy;
+		part++;
 	}
 	mutex_unlock(&psinfo->buf_mutex);
 }
@@ -127,6 +133,12 @@ int pstore_register(struct pstore_info *psi)
 		spin_unlock(&pstore_lock);
 		return -EBUSY;
 	}
+
+	if (backend && strcmp(backend, psi->name)) {
+		spin_unlock(&pstore_lock);
+		return -EINVAL;
+	}
+
 	psinfo = psi;
 	spin_unlock(&pstore_lock);
 
@@ -165,9 +177,9 @@ void pstore_get_records(void)
 	if (rc)
 		goto out;
 
-	while ((size = psi->read(&id, &type, &time)) > 0) {
+	while ((size = psi->read(&id, &type, &time, psi)) > 0) {
 		if (pstore_mkfile(type, psi->name, id, psi->buf, (size_t)size,
-				  time, psi->erase))
+				  time, psi))
 			failed++;
 	}
 	psi->close(psi);
@@ -195,12 +207,15 @@ int pstore_write(enum pstore_type_id type, char *buf, size_t size)
 
 	mutex_lock(&psinfo->buf_mutex);
 	memcpy(psinfo->buf, buf, size);
-	id = psinfo->write(type, size);
+	id = psinfo->write(type, 0, size, psinfo);
 	if (pstore_is_mounted())
 		pstore_mkfile(PSTORE_TYPE_DMESG, psinfo->name, id, psinfo->buf,
-			      size, CURRENT_TIME, psinfo->erase);
+			      size, CURRENT_TIME, psinfo);
 	mutex_unlock(&psinfo->buf_mutex);
 
 	return 0;
 }
 EXPORT_SYMBOL_GPL(pstore_write);
+
+module_param(backend, charp, 0444);
+MODULE_PARM_DESC(backend, "Pstore backend to use");

@@ -48,6 +48,7 @@
  * LOW-LEVEL DEFINITIONS
  */
 
+#ifdef CONFIG_XEN
 struct irq_cfg {
 	u32 info;
 	union {
@@ -57,8 +58,8 @@ struct irq_cfg {
 #endif
 	};
 };
-
-int assign_irq_vector(int irq, struct irq_cfg *, const struct cpumask *);
+struct irq_cfg *alloc_irq_and_cfg_at(unsigned int at, int node);
+#endif
 
 /*
  * Dynamically bind an event source to an IRQ-like callback handler.

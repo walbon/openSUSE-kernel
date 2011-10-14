@@ -13,53 +13,6 @@
 #ifndef BNX2_H
 #define BNX2_H
 
-#ifndef netdev_printk
-#define NET_PARENT_DEV(netdev)  ((netdev)->dev.parent)
-
-static inline const char *netdev_name(const struct net_device *dev)
-{
-	if (dev->reg_state != NETREG_REGISTERED)
-		return "(unregistered net_device)";
-	return dev->name;
-}
-
-#define netdev_printk(level, netdev, format, args...)		\
-	dev_printk(level, NET_PARENT_DEV(netdev),		\
-		   "%s: " format,				\
-		   netdev_name(netdev), ##args)
-#endif
-
-#ifndef netdev_info
-#define netdev_info(dev, format, args...)			\
-	netdev_printk(KERN_INFO, dev, format, ##args)
-#endif
-
-#ifndef netdev_warn
-#define netdev_warn(dev, format, args...)			\
-	netdev_printk(KERN_WARNING, dev, format, ##args)
-#endif
-
-#ifndef netdev_err
-#define netdev_err(dev, format, args...)			\
-	netdev_printk(KERN_ERR, dev, format, ##args)
-#endif
-
-static inline int netif_set_real_num_rx_queues(struct net_device *dev, int num)
-{
-	return 0;
-}
-
-#ifndef rcu_dereference_protected
-
-#define rcu_dereference_protected(p, c) \
-	rcu_dereference((p))
-
-#endif
-
-#ifndef __rcu
-#define __rcu
-#endif
-
 /* Hardware data structures and register definitions automatically
  * generated from RTL code. Do not modify.
  */
@@ -341,6 +294,9 @@ struct l2_fhdr {
 		#define L2_FHDR_ERRORS_GIANT_FRAME	(1<<21)
 		#define L2_FHDR_ERRORS_TCP_XSUM		(1<<28)
 		#define L2_FHDR_ERRORS_UDP_XSUM		(1<<31)
+
+		#define L2_FHDR_STATUS_USE_RXHASH	\
+			(L2_FHDR_STATUS_TCP_SEGMENT | L2_FHDR_STATUS_RSS_HASH)
 
 	u32 l2_fhdr_hash;
 #if defined(__BIG_ENDIAN)
@@ -6610,17 +6566,17 @@ struct l2_fhdr {
 struct sw_bd {
 	struct sk_buff		*skb;
 	struct l2_fhdr		*desc;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	DEFINE_DMA_UNMAP_ADDR(mapping);
 };
 
 struct sw_pg {
 	struct page		*page;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	DEFINE_DMA_UNMAP_ADDR(mapping);
 };
 
 struct sw_tx_bd {
 	struct sk_buff		*skb;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	DEFINE_DMA_UNMAP_ADDR(mapping);
 	unsigned short		is_gso;
 	unsigned short		nr_frags;
 };
@@ -6791,18 +6747,12 @@ struct bnx2 {
 
 	struct bnx2_napi	bnx2_napi[BNX2_MAX_MSIX_VEC];
 
-#ifdef BCM_VLAN
-	struct			vlan_group *vlgrp;
-#endif
-
 	u32			rx_buf_use_size;	/* useable size */
 	u32			rx_buf_size;		/* with alignment */
 	u32			rx_copy_thresh;
 	u32			rx_jumbo_thresh;
 	u32			rx_max_ring_idx;
 	u32			rx_max_pg_ring_idx;
-
-	u32			rx_csum;
 
 	/* TX constants */
 	int		tx_ring_size;
@@ -6970,6 +6920,7 @@ struct bnx2 {
 	u8			num_tx_rings;
 	u8			num_rx_rings;
 
+	u32 			leds_save;
 	u32			idle_chk_status_idx;
 
 #ifdef BCM_CNIC

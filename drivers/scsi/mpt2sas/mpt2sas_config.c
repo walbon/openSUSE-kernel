@@ -51,6 +51,7 @@
 #include <linux/workqueue.h>
 #include <linux/delay.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 
 #include "mpt2sas_base.h"
 
@@ -257,7 +258,7 @@ mpt2sas_config_done(struct MPT2SAS_ADAPTER *ioc, u16 smid, u8 msix_index,
 #ifdef CONFIG_SCSI_MPT2SAS_LOGGING
 	_config_display_some_debug(ioc, smid, "config_done", mpi_reply);
 #endif
-	ioc->config_cmds.smid = USHORT_MAX;
+	ioc->config_cmds.smid = USHRT_MAX;
 	complete(&ioc->config_cmds.done);
 	return 1;
 }

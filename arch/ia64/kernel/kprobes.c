@@ -511,9 +511,9 @@ void __kprobes arch_prepare_kretprobe(struct kretprobe_instance *ri,
 /* Check the instruction in the slot is break */
 static int __kprobes __is_ia64_break_inst(bundle_t *bundle, uint slot)
 {
-	unsigned int major_opcode;
+	unsigned int major_opcode = 0;
 	unsigned int template = bundle->quad0.template;
-	unsigned long kprobe_inst;
+	unsigned long kprobe_inst = 0;
 
 	/* Move to slot 2, if bundle is MLX type and kprobe slot is 1 */
 	if (slot == 1 && bundle_encoding[template][1] == L)
@@ -870,7 +870,7 @@ static int __kprobes pre_kprobes_handler(struct die_args *args)
 		return 1;
 
 ss_probe:
-#if !defined(CONFIG_PREEMPT) || defined(CONFIG_FREEZER)
+#if !defined(CONFIG_PREEMPT)
 	if (p->ainsn.inst_flag == INST_FLAG_BOOSTABLE && !p->post_handler) {
 		/* Boost up -- we can execute copied instructions directly */
 		ia64_psr(regs)->ri = p->ainsn.slot;

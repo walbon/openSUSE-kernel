@@ -41,6 +41,8 @@
  * Or clear that bit field:
  *	bf_set(example_bit_field, &t1, 0);
  */
+#define bf_get_be32(name, ptr) \
+	((be32_to_cpu((ptr)->name##_WORD) >> name##_SHIFT) & name##_MASK)
 #define bf_get_le32(name, ptr) \
 	((le32_to_cpu((ptr)->name##_WORD) >> name##_SHIFT) & name##_MASK)
 #define bf_get(name, ptr) \
@@ -225,7 +227,7 @@ struct lpfc_sli4_flags {
 #define lpfc_idx_rsrc_rdy_SHIFT		0
 #define lpfc_idx_rsrc_rdy_MASK		0x00000001
 #define lpfc_idx_rsrc_rdy_WORD		word0
-#define LPFC_IDX_RSRC_RDY 		1
+#define LPFC_IDX_RSRC_RDY		1
 #define lpfc_xri_rsrc_rdy_SHIFT		1
 #define lpfc_xri_rsrc_rdy_MASK		0x00000001
 #define lpfc_xri_rsrc_rdy_WORD		word0
@@ -1120,6 +1122,11 @@ struct rq_context {
 #define lpfc_rq_context_rqe_size_SHIFT	8		/* Version 1 Only */
 #define lpfc_rq_context_rqe_size_MASK	0x0000000F
 #define lpfc_rq_context_rqe_size_WORD	word0
+#define LPFC_RQE_SIZE_8		2
+#define LPFC_RQE_SIZE_16	3
+#define LPFC_RQE_SIZE_32	4
+#define LPFC_RQE_SIZE_64	5
+#define LPFC_RQE_SIZE_128	6
 #define lpfc_rq_context_page_size_SHIFT	0		/* Version 1 Only */
 #define lpfc_rq_context_page_size_MASK	0x000000FF
 #define lpfc_rq_context_page_size_WORD	word0
@@ -3193,6 +3200,8 @@ struct lpfc_grp_hdr {
 #define lpfc_grp_hdr_id_MASK		0x000000FF
 #define lpfc_grp_hdr_id_WORD		word2
 	uint8_t rev_name[128];
+	uint8_t date[12];
+	uint8_t revision[32];
 };
 
 #define FCP_COMMAND 0x0

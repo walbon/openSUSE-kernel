@@ -22,10 +22,13 @@
  * (you will need to reboot afterwards) */
 /* #define BNX2X_STOP_ON_ERROR */
 
-#define DRV_MODULE_VERSION      "1.70.00-0"
+#define DRV_MODULE_VERSION      "1.70.00-1"
 #define DRV_MODULE_RELDATE      "2011/06/13"
 #define BNX2X_BC_VER            0x040200
 
+#if defined(CONFIG_DCB)
+#define BCM_DCBNL
+#endif
 #if defined(CONFIG_CNIC) || defined(CONFIG_CNIC_MODULE)
 #define BCM_CNIC 1
 #include "../cnic_if.h"
@@ -40,9 +43,7 @@
 #endif
 
 #include <linux/mdio.h>
-#include <linux/pci.h>
 
-#include "bnx2x_compat.h"
 #include "bnx2x_reg.h"
 #include "bnx2x_fw_defs.h"
 #include "bnx2x_hsi.h"
@@ -133,7 +134,7 @@ void bnx2x_int_disable(struct bnx2x *bp);
 	} while (0)
 #endif
 
-#define bnx2x_mc_addr(ha)      ((ha)->dmi_addr)
+#define bnx2x_mc_addr(ha)      ((ha)->addr)
 #define bnx2x_uc_addr(ha)      ((ha)->addr)
 
 #define U64_LO(x)			(u32)(((u64)(x)) & 0xffffffff)
@@ -292,7 +293,7 @@ void bnx2x_int_disable(struct bnx2x *bp);
 /* fast path */
 struct sw_rx_bd {
 	struct sk_buff	*skb;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	DEFINE_DMA_UNMAP_ADDR(mapping);
 };
 
 struct sw_tx_bd {
@@ -305,7 +306,7 @@ struct sw_tx_bd {
 
 struct sw_rx_page {
 	struct page	*page;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	DEFINE_DMA_UNMAP_ADDR(mapping);
 };
 
 union db_prod {
@@ -313,6 +314,14 @@ union db_prod {
 	u32		raw;
 };
 
+/* dropless fc FW/HW related params */
+#define BRB_SIZE(bp)		(CHIP_IS_E3(bp) ? 1024 : 512)
+#define MAX_AGG_QS(bp)		(CHIP_IS_E1(bp) ? \
+					ETH_MAX_AGGREGATION_QUEUES_E1 :\
+					ETH_MAX_AGGREGATION_QUEUES_E1H_E2)
+#define FW_DROP_LEVEL(bp)	(3 + MAX_SPQ_PENDING + MAX_AGG_QS(bp))
+#define FW_PREFETCH_CNT		16
+#define DROPLESS_FC_HEADROOM	100
 
 /* MC hsi */
 #define BCM_PAGE_SHIFT		12
@@ -329,14 +338,34 @@ union db_prod {
 /* SGE ring related macros */
 #define NUM_RX_SGE_PAGES	2
 #define RX_SGE_CNT		(BCM_PAGE_SIZE / sizeof(struct eth_rx_sge))
-#define MAX_RX_SGE_CNT		(RX_SGE_CNT - 2)
+#define NEXT_PAGE_SGE_DESC_CNT	2
+#define MAX_RX_SGE_CNT		(RX_SGE_CNT - NEXT_PAGE_SGE_DESC_CNT)
 /* RX_SGE_CNT is promised to be a power of 2 */
 #define RX_SGE_MASK		(RX_SGE_CNT - 1)
 #define NUM_RX_SGE		(RX_SGE_CNT * NUM_RX_SGE_PAGES)
 #define MAX_RX_SGE		(NUM_RX_SGE - 1)
 #define NEXT_SGE_IDX(x)		((((x) & RX_SGE_MASK) == \
-				  (MAX_RX_SGE_CNT - 1)) ? (x) + 3 : (x) + 1)
+				  (MAX_RX_SGE_CNT - 1)) ? \
+					(x) + 1 + NEXT_PAGE_SGE_DESC_CNT : \
+					(x) + 1)
 #define RX_SGE(x)		((x) & MAX_RX_SGE)
+
+/*
+ * Number of required  SGEs is the sum of two:
+ * 1. Number of possible opened aggregations (next packet for
+ *    these aggregations will probably consume SGE immidiatelly)
+ * 2. Rest of BRB blocks divided by 2 (block will consume new SGE only
+ *    after placement on BD for new TPA aggregation)
+ *
+ * Takes into account NEXT_PAGE_SGE_DESC_CNT "next" elements on each page
+ */
+#define NUM_SGE_REQ		(MAX_AGG_QS(bp) + \
+					(BRB_SIZE(bp) - MAX_AGG_QS(bp)) / 2)
+#define NUM_SGE_PG_REQ		((NUM_SGE_REQ + MAX_RX_SGE_CNT - 1) / \
+						MAX_RX_SGE_CNT)
+#define SGE_TH_LO(bp)		(NUM_SGE_REQ + \
+				 NUM_SGE_PG_REQ * NEXT_PAGE_SGE_DESC_CNT)
+#define SGE_TH_HI(bp)		(SGE_TH_LO(bp) + DROPLESS_FC_HEADROOM)
 
 /* Manipulate a bit vector defined as an array of u64 */
 
@@ -549,24 +578,43 @@ struct bnx2x_fastpath {
 
 #define NUM_TX_RINGS		16
 #define TX_DESC_CNT		(BCM_PAGE_SIZE / sizeof(union eth_tx_bd_types))
-#define MAX_TX_DESC_CNT		(TX_DESC_CNT - 1)
+#define NEXT_PAGE_TX_DESC_CNT	1
+#define MAX_TX_DESC_CNT		(TX_DESC_CNT - NEXT_PAGE_TX_DESC_CNT)
 #define NUM_TX_BD		(TX_DESC_CNT * NUM_TX_RINGS)
 #define MAX_TX_BD		(NUM_TX_BD - 1)
 #define MAX_TX_AVAIL		(MAX_TX_DESC_CNT * NUM_TX_RINGS - 2)
 #define NEXT_TX_IDX(x)		((((x) & MAX_TX_DESC_CNT) == \
-				  (MAX_TX_DESC_CNT - 1)) ? (x) + 2 : (x) + 1)
+				  (MAX_TX_DESC_CNT - 1)) ? \
+					(x) + 1 + NEXT_PAGE_TX_DESC_CNT : \
+					(x) + 1)
 #define TX_BD(x)		((x) & MAX_TX_BD)
 #define TX_BD_POFF(x)		((x) & MAX_TX_DESC_CNT)
 
 /* The RX BD ring is special, each bd is 8 bytes but the last one is 16 */
 #define NUM_RX_RINGS		8
 #define RX_DESC_CNT		(BCM_PAGE_SIZE / sizeof(struct eth_rx_bd))
-#define MAX_RX_DESC_CNT		(RX_DESC_CNT - 2)
+#define NEXT_PAGE_RX_DESC_CNT	2
+#define MAX_RX_DESC_CNT		(RX_DESC_CNT - NEXT_PAGE_RX_DESC_CNT)
 #define RX_DESC_MASK		(RX_DESC_CNT - 1)
 #define NUM_RX_BD		(RX_DESC_CNT * NUM_RX_RINGS)
 #define MAX_RX_BD		(NUM_RX_BD - 1)
 #define MAX_RX_AVAIL		(MAX_RX_DESC_CNT * NUM_RX_RINGS - 2)
-#define MIN_RX_AVAIL		128
+
+/* dropless fc calculations for BDs
+ *
+ * Number of BDs should as number of buffers in BRB:
+ * Low threshold takes into account NEXT_PAGE_RX_DESC_CNT
+ * "next" elements on each page
+ */
+#define NUM_BD_REQ		BRB_SIZE(bp)
+#define NUM_BD_PG_REQ		((NUM_BD_REQ + MAX_RX_DESC_CNT - 1) / \
+					      MAX_RX_DESC_CNT)
+#define BD_TH_LO(bp)		(NUM_BD_REQ + \
+				 NUM_BD_PG_REQ * NEXT_PAGE_RX_DESC_CNT + \
+				 FW_DROP_LEVEL(bp))
+#define BD_TH_HI(bp)		(BD_TH_LO(bp) + DROPLESS_FC_HEADROOM)
+
+#define MIN_RX_AVAIL		((bp)->dropless_fc ? BD_TH_HI(bp) + 128 : 128)
 
 #define MIN_RX_SIZE_TPA_HW	(CHIP_IS_E1(bp) ? \
 					ETH_MIN_RX_CQES_WITH_TPA_E1 : \
@@ -577,7 +625,9 @@ struct bnx2x_fastpath {
 								MIN_RX_AVAIL))
 
 #define NEXT_RX_IDX(x)		((((x) & RX_DESC_MASK) == \
-				  (MAX_RX_DESC_CNT - 1)) ? (x) + 3 : (x) + 1)
+				  (MAX_RX_DESC_CNT - 1)) ? \
+					(x) + 1 + NEXT_PAGE_RX_DESC_CNT : \
+					(x) + 1)
 #define RX_BD(x)		((x) & MAX_RX_BD)
 
 /*
@@ -587,13 +637,30 @@ struct bnx2x_fastpath {
 #define CQE_BD_REL	(sizeof(union eth_rx_cqe) / sizeof(struct eth_rx_bd))
 #define NUM_RCQ_RINGS		(NUM_RX_RINGS * CQE_BD_REL)
 #define RCQ_DESC_CNT		(BCM_PAGE_SIZE / sizeof(union eth_rx_cqe))
-#define MAX_RCQ_DESC_CNT	(RCQ_DESC_CNT - 1)
+#define NEXT_PAGE_RCQ_DESC_CNT	1
+#define MAX_RCQ_DESC_CNT	(RCQ_DESC_CNT - NEXT_PAGE_RCQ_DESC_CNT)
 #define NUM_RCQ_BD		(RCQ_DESC_CNT * NUM_RCQ_RINGS)
 #define MAX_RCQ_BD		(NUM_RCQ_BD - 1)
 #define MAX_RCQ_AVAIL		(MAX_RCQ_DESC_CNT * NUM_RCQ_RINGS - 2)
 #define NEXT_RCQ_IDX(x)		((((x) & MAX_RCQ_DESC_CNT) == \
-				  (MAX_RCQ_DESC_CNT - 1)) ? (x) + 2 : (x) + 1)
+				  (MAX_RCQ_DESC_CNT - 1)) ? \
+					(x) + 1 + NEXT_PAGE_RCQ_DESC_CNT : \
+					(x) + 1)
 #define RCQ_BD(x)		((x) & MAX_RCQ_BD)
+
+/* dropless fc calculations for RCQs
+ *
+ * Number of RCQs should be as number of buffers in BRB:
+ * Low threshold takes into account NEXT_PAGE_RCQ_DESC_CNT
+ * "next" elements on each page
+ */
+#define NUM_RCQ_REQ		BRB_SIZE(bp)
+#define NUM_RCQ_PG_REQ		((NUM_BD_REQ + MAX_RCQ_DESC_CNT - 1) / \
+					      MAX_RCQ_DESC_CNT)
+#define RCQ_TH_LO(bp)		(NUM_RCQ_REQ + \
+				 NUM_RCQ_PG_REQ * NEXT_PAGE_RCQ_DESC_CNT + \
+				 FW_DROP_LEVEL(bp))
+#define RCQ_TH_HI(bp)		(RCQ_TH_LO(bp) + DROPLESS_FC_HEADROOM)
 
 
 /* This is needed for determining of last_max */
@@ -683,24 +750,17 @@ struct bnx2x_fastpath {
 #define FP_CSB_FUNC_OFF	\
 			offsetof(struct cstorm_status_block_c, func)
 
-#define HC_INDEX_TOE_RX_CQ_CONS		0 /* Formerly Ustorm TOE CQ index */
-					  /* (HC_INDEX_U_TOE_RX_CQ_CONS)  */
-#define HC_INDEX_ETH_RX_CQ_CONS		1 /* Formerly Ustorm ETH CQ index */
-					  /* (HC_INDEX_U_ETH_RX_CQ_CONS)  */
-#define HC_INDEX_ETH_RX_BD_CONS		2 /* Formerly Ustorm ETH BD index */
-					  /* (HC_INDEX_U_ETH_RX_BD_CONS)  */
+#define HC_INDEX_ETH_RX_CQ_CONS		1
 
-#define HC_INDEX_TOE_TX_CQ_CONS		4 /* Formerly Cstorm TOE CQ index   */
-					  /* (HC_INDEX_C_TOE_TX_CQ_CONS)    */
-#define HC_INDEX_ETH_TX_CQ_CONS_COS0	5 /* Formerly Cstorm ETH CQ index   */
-					  /* (HC_INDEX_C_ETH_TX_CQ_CONS)    */
-#define HC_INDEX_ETH_TX_CQ_CONS_COS1	6 /* Formerly Cstorm ETH CQ index   */
-					  /* (HC_INDEX_C_ETH_TX_CQ_CONS)    */
-#define HC_INDEX_ETH_TX_CQ_CONS_COS2	7 /* Formerly Cstorm ETH CQ index   */
-					  /* (HC_INDEX_C_ETH_TX_CQ_CONS)    */
+#define HC_INDEX_OOO_TX_CQ_CONS		4
+
+#define HC_INDEX_ETH_TX_CQ_CONS_COS0	5
+
+#define HC_INDEX_ETH_TX_CQ_CONS_COS1	6
+
+#define HC_INDEX_ETH_TX_CQ_CONS_COS2	7
 
 #define HC_INDEX_ETH_FIRST_TX_CQ_CONS	HC_INDEX_ETH_TX_CQ_CONS_COS0
-
 
 #define BNX2X_RX_SB_INDEX \
 	(&fp->sb_index_values[HC_INDEX_ETH_RX_CQ_CONS])
@@ -1098,11 +1158,12 @@ struct bnx2x {
 #define BP_PORT(bp)			(bp->pfid & 1)
 #define BP_FUNC(bp)			(bp->pfid)
 #define BP_ABS_FUNC(bp)			(bp->pf_num)
-#define BP_E1HVN(bp)			(bp->pfid >> 1)
-#define BP_VN(bp)			(BP_E1HVN(bp)) /*remove when approved*/
-#define BP_L_ID(bp)			(BP_E1HVN(bp) << 2)
-#define BP_FW_MB_IDX(bp)		(BP_PORT(bp) +\
-					 BP_VN(bp) * (CHIP_IS_E1x(bp) ? 2  : 1))
+#define BP_VN(bp)			((bp)->pfid >> 1)
+#define BP_MAX_VN_NUM(bp)		(CHIP_MODE_IS_4_PORT(bp) ? 2 : 4)
+#define BP_L_ID(bp)			(BP_VN(bp) << 2)
+#define BP_FW_MB_IDX_VN(bp, vn)		(BP_PORT(bp) +\
+	  (vn) * ((CHIP_IS_E1x(bp) || (CHIP_MODE_IS_4_PORT(bp))) ? 2  : 1))
+#define BP_FW_MB_IDX(bp)		BP_FW_MB_IDX_VN(bp, BP_VN(bp))
 
 	struct net_device	*dev;
 	struct pci_dev		*pdev;
@@ -1116,11 +1177,6 @@ struct bnx2x {
 
 	int			tx_ring_size;
 
-#ifdef BCM_VLAN
-	struct vlan_group	*vlgrp;
-#endif
-
-	u32			rx_csum;
 /* L2 header size + 2*VLANs (8 bytes) + LLC SNAP (8 bytes) */
 #define ETH_OVREHEAD		(ETH_HLEN + 8 + 8)
 #define ETH_MIN_PACKET_SIZE		60
@@ -1186,13 +1242,11 @@ struct bnx2x {
 #define NO_MCP_FLAG			(1 << 9)
 
 #define BP_NOMCP(bp)			(bp->flags & NO_MCP_FLAG)
-#define HW_VLAN_TX_FLAG			(1 << 10)
-#define HW_VLAN_RX_FLAG			(1 << 11)
-#define MF_FUNC_DIS			(1 << 12)
-#define OWN_CNIC_IRQ			(1 << 13)
-#define NO_ISCSI_OOO_FLAG		(1 << 14)
-#define NO_ISCSI_FLAG			(1 << 15)
-#define NO_FCOE_FLAG			(1 << 16)
+#define MF_FUNC_DIS			(1 << 11)
+#define OWN_CNIC_IRQ			(1 << 12)
+#define NO_ISCSI_OOO_FLAG		(1 << 13)
+#define NO_ISCSI_FLAG			(1 << 14)
+#define NO_FCOE_FLAG			(1 << 15)
 
 #define NO_ISCSI(bp)		((bp)->flags & NO_ISCSI_FLAG)
 #define NO_ISCSI_OOO(bp)	((bp)->flags & NO_ISCSI_OOO_FLAG)
@@ -1251,7 +1305,7 @@ struct bnx2x {
 
 	u32			lin_cnt;
 
-	int			state;
+	u16			state;
 #define BNX2X_STATE_CLOSED		0
 #define BNX2X_STATE_OPENING_WAIT4_LOAD	0x1000
 #define BNX2X_STATE_OPENING_WAIT4_PORT	0x2000
@@ -1419,9 +1473,23 @@ struct bnx2x {
 #define INIT_CSEM_PRAM_DATA(bp)		(bp->csem_pram_data)
 
 #define PHY_FW_VER_LEN			20
+	char			fw_ver[32];
 	const struct firmware	*firmware;
 
-	/* DCBX params */
+	/* DCB support on/off */
+	u16 dcb_state;
+#define BNX2X_DCB_STATE_OFF			0
+#define BNX2X_DCB_STATE_ON			1
+
+	/* DCBX engine mode */
+	int dcbx_enabled;
+#define BNX2X_DCBX_ENABLED_OFF			0
+#define BNX2X_DCBX_ENABLED_ON_NEG_OFF		1
+#define BNX2X_DCBX_ENABLED_ON_NEG_ON		2
+#define BNX2X_DCBX_ENABLED_INVALID		(-1)
+
+	bool dcbx_mode_uset;
+
 	struct bnx2x_config_dcbx_params		dcbx_config_params;
 	struct bnx2x_dcbx_port_params		dcbx_port_params;
 	int					dcb_version;
@@ -1450,6 +1518,10 @@ struct bnx2x {
 	struct dcbx_features			dcbx_local_feat;
 	u32					dcbx_error;
 
+#ifdef BCM_DCBNL
+	struct dcbx_features			dcbx_remote_feat;
+	u32					dcbx_remote_flags;
+#endif
 	u32					pending_max;
 
 	/* multiple tx classes of service */
@@ -1514,12 +1586,14 @@ struct bnx2x_func_init_params {
 			continue;		\
 		else
 
+/* Skip forwarding FP */
 #define for_each_rx_queue(bp, var) \
 	for ((var) = 0; (var) < BNX2X_NUM_QUEUES(bp); (var)++) \
 		if (skip_rx_queue(bp, var))	\
 			continue;		\
 		else
 
+/* Skip OOO FP */
 #define for_each_tx_queue(bp, var) \
 	for ((var) = 0; (var) < BNX2X_NUM_QUEUES(bp); (var)++) \
 		if (skip_tx_queue(bp, var))	\
@@ -1536,12 +1610,12 @@ struct bnx2x_func_init_params {
 	for ((var) = 0; (var) < (fp)->max_cos; (var)++)
 
 /* skip rx queue
- * if FCOE l2 support is diabled and this is the fcoe L2 queue
+ * if FCOE l2 support is disabled and this is the fcoe L2 queue
  */
 #define skip_rx_queue(bp, idx)	(NO_FCOE(bp) && IS_FCOE_IDX(idx))
 
 /* skip tx queue
- * if FCOE l2 support is diabled and this is the fcoe L2 queue
+ * if FCOE l2 support is disabled and this is the fcoe L2 queue
  */
 #define skip_tx_queue(bp, idx)	(NO_FCOE(bp) && IS_FCOE_IDX(idx))
 
@@ -1752,7 +1826,7 @@ static inline u32 reg_poll(struct bnx2x *bp, u32 reg, u32 expected, int ms,
 
 #define MAX_DMAE_C_PER_PORT		8
 #define INIT_DMAE_C(bp)			(BP_PORT(bp) * MAX_DMAE_C_PER_PORT + \
-					 BP_E1HVN(bp))
+					 BP_VN(bp))
 #define PMF_DMAE_C(bp)			(BP_PORT(bp) * MAX_DMAE_C_PER_PORT + \
 					 E1HVN_MAX)
 
@@ -1778,7 +1852,7 @@ static inline u32 reg_poll(struct bnx2x *bp, u32 reg, u32 expected, int ms,
 
 /* must be used on a CID before placing it on a HW ring */
 #define HW_CID(bp, x)			((BP_PORT(bp) << 23) | \
-					 (BP_E1HVN(bp) << BNX2X_SWCID_SHIFT) | \
+					 (BP_VN(bp) << BNX2X_SWCID_SHIFT) | \
 					 (x))
 
 #define SP_DESC_CNT		(BCM_PAGE_SIZE / sizeof(struct eth_spe))
@@ -1908,7 +1982,7 @@ static inline u32 reg_poll(struct bnx2x *bp, u32 reg, u32 expected, int ms,
 #define HW_PRTY_ASSERT_SET_4 (AEU_INPUTS_ATTN_BITS_PGLUE_PARITY_ERROR | \
 			      AEU_INPUTS_ATTN_BITS_ATC_PARITY_ERROR)
 
-#define MULTI_FLAGS(bp) \
+#define RSS_FLAGS(bp) \
 		(TSTORM_ETH_FUNCTION_COMMON_CONFIG_RSS_IPV4_CAPABILITY | \
 		 TSTORM_ETH_FUNCTION_COMMON_CONFIG_RSS_IPV4_TCP_CAPABILITY | \
 		 TSTORM_ETH_FUNCTION_COMMON_CONFIG_RSS_IPV6_CAPABILITY | \
@@ -1975,6 +2049,9 @@ static inline u32 reg_poll(struct bnx2x *bp, u32 reg, u32 expected, int ms,
 #ifndef ETH_MAX_RX_CLIENTS_E2
 #define ETH_MAX_RX_CLIENTS_E2		ETH_MAX_RX_CLIENTS_E1H
 #endif
+
+#define BNX2X_VPD_LEN			128
+#define VENDOR_ID_LEN			4
 
 /* Congestion management fairness mode */
 #define CMNG_FNS_NONE		0

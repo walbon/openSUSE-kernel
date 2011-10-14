@@ -27,6 +27,8 @@
 #include <linux/blkdev.h>
 #include <linux/timer.h>
 #include <linux/scatterlist.h>
+#include <linux/slab.h>
+#include <linux/mutex.h>
 #include <scsi/scsi.h>
 
 #define DRV_NAME "ub"
@@ -246,6 +248,7 @@ struct ub_completion {
 	spinlock_t lock;
 };
 
+static DEFINE_MUTEX(ub_mutex);
 static inline void ub_init_completion(struct ub_completion *x)
 {
 	x->done = 0;
@@ -1709,6 +1712,18 @@ err_open:
 	return rc;
 }
 
+static int ub_bd_unlocked_open(struct block_device *bdev, fmode_t mode)
+{
+	int ret;
+
+	mutex_lock(&ub_mutex);
+	ret = ub_bd_open(bdev, mode);
+	mutex_unlock(&ub_mutex);
+
+	return ret;
+}
+
+
 /*
  */
 static int ub_bd_release(struct gendisk *disk, fmode_t mode)
@@ -1716,7 +1731,10 @@ static int ub_bd_release(struct gendisk *disk, fmode_t mode)
 	struct ub_lun *lun = disk->private_data;
 	struct ub_dev *sc = lun->udev;
 
+	mutex_lock(&ub_mutex);
 	ub_put(sc);
+	mutex_unlock(&ub_mutex);
+
 	return 0;
 }
 
@@ -1728,8 +1746,13 @@ static int ub_bd_ioctl(struct block_device *bdev, fmode_t mode,
 {
 	struct gendisk *disk = bdev->bd_disk;
 	void __user *usermem = (void __user *) arg;
+	int ret;
 
-	return scsi_cmd_ioctl(disk->queue, disk, mode, cmd, usermem);
+	mutex_lock(&ub_mutex);
+	ret = scsi_cmd_ioctl(disk->queue, disk, mode, cmd, usermem);
+	mutex_unlock(&ub_mutex);
+
+	return ret;
 }
 
 /*
@@ -1765,7 +1788,8 @@ static int ub_bd_revalidate(struct gendisk *disk)
  *
  * The return code is bool!
  */
-static int ub_bd_media_changed(struct gendisk *disk)
+static unsigned int ub_bd_check_events(struct gendisk *disk,
+				       unsigned int clearing)
 {
 	struct ub_lun *lun = disk->private_data;
 
@@ -1783,18 +1807,18 @@ static int ub_bd_media_changed(struct gendisk *disk)
 	 */
 	if (ub_sync_tur(lun->udev, lun) != 0) {
 		lun->changed = 1;
-		return 1;
+		return DISK_EVENT_MEDIA_CHANGE;
 	}
 
-	return lun->changed;
+	return lun->changed ? DISK_EVENT_MEDIA_CHANGE : 0;
 }
 
 static const struct block_device_operations ub_bd_fops = {
 	.owner		= THIS_MODULE,
-	.open		= ub_bd_open,
+	.open		= ub_bd_unlocked_open,
 	.release	= ub_bd_release,
-	.locked_ioctl	= ub_bd_ioctl,
-	.media_changed	= ub_bd_media_changed,
+	.ioctl		= ub_bd_ioctl,
+	.check_events	= ub_bd_check_events,
 	.revalidate_disk = ub_bd_revalidate,
 };
 

@@ -17,10 +17,6 @@
 
 #include "ocfs2.h"
 
-/* Common stuff */
-/* id number of quota format */
-#define QFMT_OCFS2 3
-
 /*
  * In-memory structures
  */
@@ -117,8 +113,5 @@ int ocfs2_local_write_dquot(struct dquot *dquot);
 
 extern const struct dquot_operations ocfs2_quota_operations;
 extern struct quota_format_type ocfs2_quota_format;
-
-int ocfs2_quota_setup(void);
-void ocfs2_quota_shutdown(void);
 
 #endif /* _OCFS2_QUOTA_H */

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook XML V4.1.2//EN"
-"http://www.oasis-open.org/docbook/xml/4.1.2/docbookx.dtd" []>
+"[http://www.oasis-open.org/docbook/xml/4.1.2/docbookx.dtd"][9] []>
 
 <book id="utrace">
   <bookinfo>
@@ -357,13 +357,12 @@
     after a successful call, no event callbacks not requested in the new
     flags will be made.  It fails with <constant>-EALREADY</constant> if
     you try to clear <constant>UTRACE_EVENT(DEATH)</constant> when the
-    <function>report_death</function> callback may already have begun, if
-    you try to clear <constant>UTRACE_EVENT(REAP)</constant> when the
-    <function>report_reap</function> callback may already have begun, or if
+    <function>report_death</function> callback may already have begun, or if
     you try to newly set <constant>UTRACE_EVENT(DEATH)</constant> or
     <constant>UTRACE_EVENT(QUIESCE)</constant> when the target is already
     dead or dying.  Like <function>utrace_control</function>, it returns
-    <constant>-ESRCH</constant> when the thread has already been detached
+    <constant>-ESRCH</constant> when the <function>report_reap</function>
+    callback may already have begun, or the thread has already been detached
     (including forcible detach on reaping).  This lets the tracing engine
     know for sure which event callbacks it will or won't see after
     <function>utrace_set_events</function> has returned.  By checking for
@@ -453,7 +452,7 @@
   <function>utrace_finish_examine</function> surrounding the calls to
   <structname>struct user_regset</structname> functions or direct examination
   of task data structures.  <function>utrace_prepare_examine</function> returns
-  an error if the task is not properly stopped and not dead.  After a
+  an error if the task is not properly stopped, or is dead.  After a
   successful examination, the paired <function>utrace_finish_examine</function>
   call returns an error if the task ever woke up during the examination.  If
   so, any data gathered may be scrambled and should be discarded.  This means

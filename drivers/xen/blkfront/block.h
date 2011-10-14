@@ -83,7 +83,7 @@ struct xlbd_major_info
 
 struct blk_shadow {
 	blkif_request_t req;
-	unsigned long request;
+	struct request *request;
 	unsigned long frame[BLKIF_MAX_SEGMENTS_PER_REQUEST];
 };
 
@@ -111,7 +111,8 @@ struct blkfront_info
 	struct gnttab_free_callback callback;
 	struct blk_shadow shadow[BLK_RING_SIZE];
 	unsigned long shadow_free;
-	int feature_flush;
+	unsigned int feature_flush;
+	unsigned int flush_op;
 	int is_ready;
 
 	/**

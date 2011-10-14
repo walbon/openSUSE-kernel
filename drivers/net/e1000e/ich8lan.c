@@ -317,16 +317,6 @@ static s32 e1000_init_phy_params_pchlan(struct e1000_hw *hw)
 	phy->autoneg_mask             = AUTONEG_ADVERTISE_SPEED_DEFAULT;
 
 	/*
-	 * Reset the PHY before any acccess to it.  Doing so, ensures that
-	 * the PHY is in a known good state before we read/write PHY registers.
-	 * The generic reset is sufficient here, because we haven't determined
-	 * the PHY type yet.
-	 */
-	ret_val = e1000e_phy_hw_reset_generic(hw);
-	if (ret_val)
-		goto out;
-
-	/*
 	 * The MAC-PHY interconnect may still be in SMBus mode
 	 * after Sx->S0.  If the manageability engine (ME) is
 	 * disabled, then toggle the LANPHYPC Value bit to force
@@ -346,7 +336,7 @@ static s32 e1000_init_phy_params_pchlan(struct e1000_hw *hw)
 	}
 
 	/*
-	 * Reset the PHY before any acccess to it.  Doing so, ensures that
+	 * Reset the PHY before any access to it.  Doing so, ensures that
 	 * the PHY is in a known good state before we read/write PHY registers.
 	 * The generic reset is sufficient here, because we haven't determined
 	 * the PHY type yet.
@@ -358,7 +348,7 @@ static s32 e1000_init_phy_params_pchlan(struct e1000_hw *hw)
 	/* Ungate automatic PHY configuration on non-managed 82579 */
 	if ((hw->mac.type == e1000_pch2lan) &&
 	    !(fwsm & E1000_ICH_FWSM_FW_VALID)) {
-		msleep(10);
+		usleep_range(10000, 20000);
 		e1000_gate_hw_phy_config_ich8lan(hw, false);
 	}
 
@@ -407,7 +397,7 @@ static s32 e1000_init_phy_params_pchlan(struct e1000_hw *hw)
 		break;
 	}
 
- out:
+out:
 	return ret_val;
 }
 
@@ -447,7 +437,7 @@ static s32 e1000_init_phy_params_ich8lan(struct e1000_hw *hw)
 	phy->id = 0;
 	while ((e1000_phy_unknown == e1000e_get_phy_type_from_id(phy->id)) &&
 	       (i++ < 100)) {
-		msleep(1);
+		usleep_range(1000, 2000);
 		ret_val = e1000e_get_phy_id(hw);
 		if (ret_val)
 			return ret_val;
@@ -584,6 +574,8 @@ static s32 e1000_init_mac_params_ich8lan(struct e1000_adapter *adapter)
 		mac->ops.check_mng_mode = e1000_check_mng_mode_ich8lan;
 		/* ID LED init */
 		mac->ops.id_led_init = e1000e_id_led_init;
+		/* blink LED */
+		mac->ops.blink_led = e1000e_blink_led_generic;
 		/* setup LED */
 		mac->ops.setup_led = e1000e_setup_led_generic;
 		/* cleanup LED */
@@ -787,6 +779,8 @@ static s32 e1000_get_variants_ich8lan(struct e1000_adapter *adapter)
 	     (!(er32(CTRL_EXT) & E1000_CTRL_EXT_LSECCK)))) {
 		adapter->flags &= ~FLAG_HAS_JUMBO_FRAMES;
 		adapter->max_hw_frame_size = ETH_FRAME_LEN + ETH_FCS_LEN;
+
+		hw->mac.ops.blink_led = NULL;
 	}
 
 	if ((adapter->hw.mac.type == e1000_ich8lan) &&
@@ -1745,8 +1739,9 @@ static s32 e1000_post_phy_reset_ich8lan(struct e1000_hw *hw)
 		goto out;
 
 	/* Allow time for h/w to get to quiescent state after reset */
-	msleep(10);
+	usleep_range(10000, 20000);
 
+	/* Perform any necessary post-reset workarounds */
 	switch (hw->mac.type) {
 	case e1000_pchlan:
 		ret_val = e1000_hv_phy_workarounds_ich8lan(hw);
@@ -1780,7 +1775,7 @@ static s32 e1000_post_phy_reset_ich8lan(struct e1000_hw *hw)
 	if (hw->mac.type == e1000_pch2lan) {
 		/* Ungate automatic PHY configuration on non-managed 82579 */
 		if (!(er32(FWSM) & E1000_ICH_FWSM_FW_VALID)) {
-			msleep(10);
+			usleep_range(10000, 20000);
 			e1000_gate_hw_phy_config_ich8lan(hw, false);
 		}
 
@@ -2575,7 +2570,7 @@ release:
 	 */
 	if (!ret_val) {
 		e1000e_reload_nvm(hw);
-		msleep(10);
+		usleep_range(10000, 20000);
 	}
 
 out:
@@ -3052,7 +3047,7 @@ static s32 e1000_reset_hw_ich8lan(struct e1000_hw *hw)
 	ew32(TCTL, E1000_TCTL_PSP);
 	e1e_flush();
 
-	msleep(10);
+	usleep_range(10000, 20000);
 
 	/* Workaround for ICH8 bit corruption issue in FIFO memory */
 	if (hw->mac.type == e1000_ich8lan) {
@@ -3100,7 +3095,7 @@ static s32 e1000_reset_hw_ich8lan(struct e1000_hw *hw)
 	if (!ret_val)
 		mutex_unlock(&swflag_mutex);
 
-	if (ctrl & E1000_CTRL_PHY_RST) {  
+	if (ctrl & E1000_CTRL_PHY_RST) {
 		ret_val = hw->phy.ops.get_cfg_done(hw);
 		if (ret_val)
 			goto out;
@@ -4104,7 +4099,7 @@ struct e1000_info e1000_pch2_info = {
 				  | FLAG_APME_IN_WUC,
 	.flags2			= FLAG2_HAS_PHY_STATS
 				  | FLAG2_HAS_EEE,
-	.pba			= 18,
+	.pba			= 26,
 	.max_hw_frame_size	= DEFAULT_JUMBO,
 	.get_variants		= e1000_get_variants_ich8lan,
 	.mac_ops		= &ich8_mac_ops,

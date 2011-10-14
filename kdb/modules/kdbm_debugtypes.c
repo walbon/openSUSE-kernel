@@ -32,7 +32,7 @@
 #define VMALLOC_START_IA64 0xa000000200000000
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/fs.h>
 #include <asm/processor.h>

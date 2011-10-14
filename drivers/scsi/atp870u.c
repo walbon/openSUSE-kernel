@@ -29,6 +29,7 @@
 #include <linux/pci.h>
 #include <linux/blkdev.h>
 #include <linux/dma-mapping.h>
+#include <linux/slab.h>
 #include <asm/system.h>
 #include <asm/io.h>
 
@@ -1227,7 +1228,7 @@ TCM_5:			/* isolation complete..  */
 	printk(" \n%x %x %x %s\n ",assignid_map,mbuf[0],mbuf[1],&mbuf[2]); */
 	i = 15;
 	j = mbuf[0];
-	if ((j & 0x20) != 0) {	/* bit5=1:ID upto 7      */
+	if ((j & 0x20) != 0) {	/* bit5=1:ID up to 7      */
 		i = 7;
 	}
 	if ((j & 0x06) == 0) {	/* IDvalid?             */

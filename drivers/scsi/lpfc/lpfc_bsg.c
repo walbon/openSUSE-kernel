@@ -601,7 +601,7 @@ lpfc_bsg_rport_els(struct fc_bsg_job *job)
 	dd_data->context_un.iocb.cmdiocbq = cmdiocbq;
 	dd_data->context_un.iocb.rspiocbq = rspiocbq;
 	dd_data->context_un.iocb.set_job = job;
-	dd_data->context_un.iocb.bmp = NULL;;
+	dd_data->context_un.iocb.bmp = NULL;
 	dd_data->context_un.iocb.ndlp = ndlp;
 
 	if (phba->cfg_poll & DISABLE_FCP_RING_INT) {
@@ -961,8 +961,10 @@ lpfc_bsg_ct_unsol_event(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 						    evt_dat->immed_dat].oxid,
 						phba->ct_ctx[
 						    evt_dat->immed_dat].SID);
+			phba->ct_ctx[evt_dat->immed_dat].rxid =
+				piocbq->iocb.ulpContext;
 			phba->ct_ctx[evt_dat->immed_dat].oxid =
-						piocbq->iocb.ulpContext;
+				piocbq->iocb.unsli3.rcvsli3.ox_id;
 			phba->ct_ctx[evt_dat->immed_dat].SID =
 				piocbq->iocb.un.rcvels.remoteID;
 			phba->ct_ctx[evt_dat->immed_dat].flags = UNSOL_VALID;
@@ -1313,7 +1315,8 @@ lpfc_issue_ct_rsp(struct lpfc_hba *phba, struct fc_bsg_job *job, uint32_t tag,
 			rc = IOCB_ERROR;
 			goto issue_ct_rsp_exit;
 		}
-		icmd->ulpContext = phba->ct_ctx[tag].oxid;
+		icmd->ulpContext = phba->ct_ctx[tag].rxid;
+		icmd->unsli3.rcvsli3.ox_id = phba->ct_ctx[tag].oxid;
 		ndlp = lpfc_findnode_did(phba->pport, phba->ct_ctx[tag].SID);
 		if (!ndlp) {
 			lpfc_printf_log(phba, KERN_WARNING, LOG_ELS,
@@ -1338,9 +1341,7 @@ lpfc_issue_ct_rsp(struct lpfc_hba *phba, struct fc_bsg_job *job, uint32_t tag,
 			goto issue_ct_rsp_exit;
 		}
 
-		icmd->un.ulpWord[3] = ndlp->nlp_rpi;
-		if (phba->sli_rev == LPFC_SLI_REV4)
-			icmd->ulpContext =
+		icmd->un.ulpWord[3] =
 				phba->sli4_hba.rpi_ids[ndlp->nlp_rpi];
 
 		/* The exchange is done, mark the entry as invalid */
@@ -1352,8 +1353,8 @@ lpfc_issue_ct_rsp(struct lpfc_hba *phba, struct fc_bsg_job *job, uint32_t tag,
 
 	/* Xmit CT response on exchange <xid> */
 	lpfc_printf_log(phba, KERN_INFO, LOG_ELS,
-			"2722 Xmit CT response on exchange x%x Data: x%x x%x\n",
-			icmd->ulpContext, icmd->ulpIoTag, phba->link_state);
+		"2722 Xmit CT response on exchange x%x Data: x%x x%x x%x\n",
+		icmd->ulpContext, icmd->ulpIoTag, tag, phba->link_state);
 
 	ctiocb->iocb_cmpl = NULL;
 	ctiocb->iocb_flag |= LPFC_IO_LIBDFC;
@@ -1566,7 +1567,7 @@ lpfc_sli3_bsg_diag_loopback_mode(struct lpfc_hba *phba, struct fc_bsg_job *job)
 	uint32_t link_flags;
 	uint32_t timeout;
 	LPFC_MBOXQ_t *pmboxq;
-	int mbxstatus;
+	int mbxstatus = MBX_SUCCESS;
 	int i = 0;
 	int rc = 0;
 
@@ -1740,7 +1741,7 @@ lpfc_sli4_bsg_diag_loopback_mode(struct lpfc_hba *phba, struct fc_bsg_job *job)
 	uint32_t link_flags, timeout, req_len, alloc_len;
 	struct lpfc_mbx_set_link_diag_loopback *link_diag_loopback;
 	LPFC_MBOXQ_t *pmboxq = NULL;
-	int mbxstatus, i, rc = 0;
+	int mbxstatus = MBX_SUCCESS, i, rc = 0;
 
 	/* no data to return just the return code */
 	job->reply->reply_payload_rcv_len = 0;
@@ -1915,7 +1916,7 @@ lpfc_sli4_bsg_diag_mode_end(struct fc_bsg_job *job)
 	rc = lpfc_sli4_bsg_set_link_diag_state(phba, 0);
 
 	if (!rc)
-		rc = phba->lpfc_hba_init_link(phba);
+		rc = phba->lpfc_hba_init_link(phba, MBX_NOWAIT);
 
 	return rc;
 }
@@ -2470,7 +2471,7 @@ out:
  * @rxxri: Receive exchange id
  * @len: Number of data bytes
  *
- * This function allocates and posts a data buffer of sufficient size to recieve
+ * This function allocates and posts a data buffer of sufficient size to receive
  * an unsolicted CT command.
  **/
 static int lpfcdiag_loop_post_rxbufs(struct lpfc_hba *phba, uint16_t rxxri,
@@ -2969,7 +2970,7 @@ lpfc_bsg_issue_mbox_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 		return;
 	}
 
-	/* 
+	/*
 	 * The outgoing buffer is readily referred from the dma buffer,
 	 * just need to get header part from mailboxq structure.
 	 */
@@ -4173,6 +4174,13 @@ lpfc_bsg_issue_mbox(struct lpfc_hba *phba, struct fc_bsg_job *job,
 	/* in case no data is transferred */
 	job->reply->reply_payload_rcv_len = 0;
 
+	/* sanity check to protect driver */
+	if (job->reply_payload.payload_len > BSG_MBOX_SIZE ||
+	    job->request_payload.payload_len > BSG_MBOX_SIZE) {
+		rc = -ERANGE;
+		goto job_done;
+	}
+
 	/*
 	 * Don't allow mailbox commands to be sent when blocked or when in
 	 * the middle of discovery
@@ -4184,13 +4192,6 @@ lpfc_bsg_issue_mbox(struct lpfc_hba *phba, struct fc_bsg_job *job,
 
 	mbox_req =
 	    (struct dfc_mbox_req *)job->request->rqst_data.h_vendor.vendor_cmd;
-
-	/* sanity check to protect driver */
-	if (job->reply_payload.payload_len > BSG_MBOX_SIZE ||
-	    job->request_payload.payload_len > BSG_MBOX_SIZE) {
-		rc = -ERANGE;
-		goto job_done;
-	}
 
 	/* check if requested extended data lengths are valid */
 	if ((mbox_req->inExtWLen > BSG_MBOX_SIZE/sizeof(uint32_t)) ||

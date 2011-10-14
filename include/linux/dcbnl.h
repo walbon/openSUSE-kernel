@@ -22,14 +22,17 @@
 
 #include <linux/types.h>
 
-#define DCB_PROTO_VERSION 1
-
 /* IEEE 802.1Qaz std supported values */
 #define IEEE_8021QAZ_MAX_TCS	8
 
+#define IEEE_8021QAZ_TSA_STRICT		0
+#define IEEE_8021QAZ_TSA_CB_SHAPER	1
+#define IEEE_8021QAZ_TSA_ETS		2
+#define IEEE_8021QAZ_TSA_VENDOR		255
+
 /* This structure contains the IEEE 802.1Qaz ETS managed object
  *
- * @willing: willing bit in ETS configuratin TLV
+ * @willing: willing bit in ETS configuration TLV
  * @ets_cap: indicates supported capacity of ets feature
  * @cbs: credit based shaper ets algorithm supported
  * @tc_tx_bw: tc tx bandwidth indexed by traffic class
@@ -89,7 +92,7 @@ struct ieee_pfc {
 #define CEE_DCBX_MAX_PRIO	8
 
 /**
- * struct cee_pg - CEE Prioity-Group managed object
+ * struct cee_pg - CEE Priority-Group managed object
  *
  * @willing: willing bit in the PG tlv
  * @error: error bit in the PG tlv
@@ -122,6 +125,11 @@ struct cee_pfc {
 	__u8    tcs_supported;
 };
 
+/* IEEE 802.1Qaz std supported values */
+#define IEEE_8021QAZ_APP_SEL_ETHERTYPE	1
+#define IEEE_8021QAZ_APP_SEL_STREAM	2
+#define IEEE_8021QAZ_APP_SEL_DGRAM	3
+#define IEEE_8021QAZ_APP_SEL_ANY	4
 
 /* This structure contains the IEEE 802.1Qaz APP managed object. This
  * object is also used for the CEE std as well. There is no difference
@@ -142,8 +150,8 @@ struct cee_pfc {
  */
 struct dcb_app {
 	__u8	selector;
-	__u32	protocol;
 	__u8	priority;
+	__u16	protocol;
 };
 
 /**

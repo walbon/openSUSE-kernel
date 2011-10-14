@@ -115,7 +115,7 @@ struct iscsi_task {
 	/* copied values in case we need to send tmfs */
 	itt_t			hdr_itt;
 	__be32			cmdsn;
-	uint8_t			lun[8];
+	struct scsi_lun		lun;
 
 	int			itt;		/* this ITT */
 
@@ -335,7 +335,6 @@ extern int iscsi_change_queue_depth(struct scsi_device *sdev, int depth,
 extern int iscsi_eh_abort(struct scsi_cmnd *sc);
 extern int iscsi_eh_recover_target(struct scsi_cmnd *sc);
 extern int iscsi_eh_session_reset(struct scsi_cmnd *sc);
-extern int iscsi_eh_target_reset(struct scsi_cmnd *sc);
 extern int iscsi_eh_device_reset(struct scsi_cmnd *sc);
 extern int iscsi_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *sc);
 

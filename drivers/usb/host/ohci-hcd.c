@@ -164,7 +164,7 @@ static int ohci_urb_enqueue (
 		// case PIPE_INTERRUPT:
 		// case PIPE_BULK:
 		default:
-			/* one TD for every 4096 Bytes (can be upto 8K) */
+			/* one TD for every 4096 Bytes (can be up to 8K) */
 			size += urb->transfer_buffer_length / 4096;
 			/* ... and for any remaining bytes ... */
 			if ((urb->transfer_buffer_length % 4096) != 0)
@@ -896,7 +896,8 @@ static void ohci_stop (struct usb_hcd *hcd)
 
 	ohci_dump (ohci, 1);
 
-	flush_scheduled_work();
+	if (quirk_nec(ohci))
+		flush_work_sync(&ohci->nec_work);
 
 	ohci_usb_reset (ohci);
 	ohci_writel (ohci, OHCI_INTR_MIE, &ohci->regs->intrdisable);
@@ -988,73 +989,6 @@ static int ohci_restart (struct ohci_hcd *ohci)
 
 /*-------------------------------------------------------------------------*/
 
-#ifdef	CONFIG_KDB_USB
-
-int
-ohci_kdb_poll_char(struct urb *urb)
-{
-	struct ohci_hcd *ohci;
-	struct ohci_regs * regs;
-
-        /* just to make sure */
-        if (!urb || !urb->dev || !urb->dev->bus)
-                return -1;
-
-	ohci = (struct ohci_hcd *) hcd_to_ohci(bus_to_hcd(urb->dev->bus));
-
-        /* make sure */
-        if (!ohci || !ohci->hcca)
-                return -1;
-
-        if (!HC_IS_RUNNING (ohci_to_hcd(ohci)->state))
-                return -1;
-
-	/*
-	 * If ohci->lock is held coming into this routine, it could
-	 * mean KDB was entered while the HC driver was in the midst
-	 * of processing URBs. Therefore it could be dangerous to
-	 * processes URBs from this poll routine. And, we can't wait on
-	 * the lock since we are in KDB and kernel threads (including the
-	 * one holding the lock) are suspended.
-	 * So, we punt and return an error. Keyboards attached to this
-	 * HC will not be useable from KDB at this time.
-	 */
-	if (spin_is_locked(&ohci->lock))
-		return -EBUSY;
-
-	regs = ohci->regs;
-
-	/* if the urb is not currently in progress resubmit it */
-	if (urb->status != -EINPROGRESS) {
-
-		if (usb_submit_urb (urb, GFP_ATOMIC))
-			return -1;
-
-		/* make sure the HC registers are set correctly */
-		ohci_writel (ohci, OHCI_INTR_WDH, &regs->intrenable);
-		ohci_writel (ohci, OHCI_INTR_WDH, &regs->intrstatus);
-		ohci_writel (ohci, OHCI_INTR_MIE, &regs->intrenable);
-
-		// flush those pci writes
-		(void) ohci_readl (ohci, &ohci->regs->control);
-	}
-
-	if (ohci->hcca->done_head) {
-		dl_done_list_kdb (ohci, urb);
-		ohci_writel (ohci, OHCI_INTR_WDH, &regs->intrstatus);
-		// flush the pci write
-		(void) ohci_readl (ohci, &ohci->regs->control);
-
-		return 0;
-	}
-
-	return -1;
-}
-
-#endif /* CONFIG_KDB_USB */
-
-/*-------------------------------------------------------------------------*/
-
 MODULE_AUTHOR (DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE ("GPL");
@@ -1074,14 +1008,14 @@ MODULE_LICENSE ("GPL");
 #define PLATFORM_DRIVER		ohci_hcd_s3c2410_driver
 #endif
 
-#ifdef CONFIG_ARCH_OMAP
+#ifdef CONFIG_USB_OHCI_HCD_OMAP1
 #include "ohci-omap.c"
-#define PLATFORM_DRIVER		ohci_hcd_omap_driver
+#define OMAP1_PLATFORM_DRIVER	ohci_hcd_omap_driver
 #endif
 
-#ifdef CONFIG_ARCH_LH7A404
-#include "ohci-lh7a404.c"
-#define PLATFORM_DRIVER		ohci_hcd_lh7a404_driver
+#ifdef CONFIG_USB_OHCI_HCD_OMAP3
+#include "ohci-omap3.c"
+#define OMAP3_PLATFORM_DRIVER	ohci_hcd_omap3_driver
 #endif
 
 #if defined(CONFIG_PXA27x) || defined(CONFIG_PXA3xx)
@@ -1094,7 +1028,7 @@ MODULE_LICENSE ("GPL");
 #define PLATFORM_DRIVER		ohci_hcd_ep93xx_driver
 #endif
 
-#ifdef CONFIG_SOC_AU1X00
+#ifdef CONFIG_MIPS_ALCHEMY
 #include "ohci-au1xxx.c"
 #define PLATFORM_DRIVER		ohci_hcd_au1xxx_driver
 #endif
@@ -1119,10 +1053,12 @@ MODULE_LICENSE ("GPL");
 #define PLATFORM_DRIVER		usb_hcd_pnx4008_driver
 #endif
 
-#if defined(CONFIG_CPU_SUBTYPE_SH7720) || \
-    defined(CONFIG_CPU_SUBTYPE_SH7721) || \
-    defined(CONFIG_CPU_SUBTYPE_SH7763) || \
-    defined(CONFIG_CPU_SUBTYPE_SH7786)
+#ifdef CONFIG_ARCH_DAVINCI_DA8XX
+#include "ohci-da8xx.c"
+#define PLATFORM_DRIVER		ohci_hcd_da8xx_driver
+#endif
+
+#ifdef CONFIG_USB_OHCI_SH
 #include "ohci-sh.c"
 #define PLATFORM_DRIVER		ohci_hcd_sh_driver
 #endif
@@ -1131,6 +1067,11 @@ MODULE_LICENSE ("GPL");
 #ifdef CONFIG_USB_OHCI_HCD_PPC_OF
 #include "ohci-ppc-of.c"
 #define OF_PLATFORM_DRIVER	ohci_hcd_ppc_of_driver
+#endif
+
+#ifdef CONFIG_PLAT_SPEAR
+#include "ohci-spear.c"
+#define PLATFORM_DRIVER		spear_ohci_hcd_driver
 #endif
 
 #ifdef CONFIG_PPC_PS3
@@ -1153,8 +1094,30 @@ MODULE_LICENSE ("GPL");
 #define TMIO_OHCI_DRIVER	ohci_hcd_tmio_driver
 #endif
 
+#ifdef CONFIG_MACH_JZ4740
+#include "ohci-jz4740.c"
+#define PLATFORM_DRIVER	ohci_hcd_jz4740_driver
+#endif
+
+#ifdef CONFIG_USB_OCTEON_OHCI
+#include "ohci-octeon.c"
+#define PLATFORM_DRIVER		ohci_octeon_driver
+#endif
+
+#ifdef CONFIG_USB_CNS3XXX_OHCI
+#include "ohci-cns3xxx.c"
+#define PLATFORM_DRIVER		ohci_hcd_cns3xxx_driver
+#endif
+
+#ifdef CONFIG_USB_OHCI_ATH79
+#include "ohci-ath79.c"
+#define PLATFORM_DRIVER		ohci_hcd_ath79_driver
+#endif
+
 #if	!defined(PCI_DRIVER) &&		\
 	!defined(PLATFORM_DRIVER) &&	\
+	!defined(OMAP1_PLATFORM_DRIVER) &&	\
+	!defined(OMAP3_PLATFORM_DRIVER) &&	\
 	!defined(OF_PLATFORM_DRIVER) &&	\
 	!defined(SA1111_DRIVER) &&	\
 	!defined(PS3_SYSTEM_BUS_DRIVER) && \
@@ -1196,8 +1159,20 @@ static int __init ohci_hcd_mod_init(void)
 		goto error_platform;
 #endif
 
+#ifdef OMAP1_PLATFORM_DRIVER
+	retval = platform_driver_register(&OMAP1_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto error_omap1_platform;
+#endif
+
+#ifdef OMAP3_PLATFORM_DRIVER
+	retval = platform_driver_register(&OMAP3_PLATFORM_DRIVER);
+	if (retval < 0)
+		goto error_omap3_platform;
+#endif
+
 #ifdef OF_PLATFORM_DRIVER
-	retval = of_register_platform_driver(&OF_PLATFORM_DRIVER);
+	retval = platform_driver_register(&OF_PLATFORM_DRIVER);
 	if (retval < 0)
 		goto error_of_platform;
 #endif
@@ -1256,12 +1231,20 @@ static int __init ohci_hcd_mod_init(void)
  error_sa1111:
 #endif
 #ifdef OF_PLATFORM_DRIVER
-	of_unregister_platform_driver(&OF_PLATFORM_DRIVER);
+	platform_driver_unregister(&OF_PLATFORM_DRIVER);
  error_of_platform:
 #endif
 #ifdef PLATFORM_DRIVER
 	platform_driver_unregister(&PLATFORM_DRIVER);
  error_platform:
+#endif
+#ifdef OMAP1_PLATFORM_DRIVER
+	platform_driver_unregister(&OMAP1_PLATFORM_DRIVER);
+ error_omap1_platform:
+#endif
+#ifdef OMAP3_PLATFORM_DRIVER
+	platform_driver_unregister(&OMAP3_PLATFORM_DRIVER);
+ error_omap3_platform:
 #endif
 #ifdef PS3_SYSTEM_BUS_DRIVER
 	ps3_ohci_driver_unregister(&PS3_SYSTEM_BUS_DRIVER);
@@ -1296,7 +1279,7 @@ static void __exit ohci_hcd_mod_exit(void)
 	sa1111_driver_unregister(&SA1111_DRIVER);
 #endif
 #ifdef OF_PLATFORM_DRIVER
-	of_unregister_platform_driver(&OF_PLATFORM_DRIVER);
+	platform_driver_unregister(&OF_PLATFORM_DRIVER);
 #endif
 #ifdef PLATFORM_DRIVER
 	platform_driver_unregister(&PLATFORM_DRIVER);

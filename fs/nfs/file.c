@@ -24,7 +24,6 @@
 #include <linux/nfs_fs.h>
 #include <linux/nfs_mount.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/pagemap.h>
 #include <linux/aio.h>
 #include <linux/gfp.h>
@@ -37,6 +36,7 @@
 #include "internal.h"
 #include "iostat.h"
 #include "fscache.h"
+#include "pnfs.h"
 
 #define NFSDBG_FACILITY		NFSDBG_FILE
 
@@ -55,7 +55,7 @@ static ssize_t nfs_file_splice_write(struct pipe_inode_info *pipe,
 static ssize_t nfs_file_write(struct kiocb *, const struct iovec *iov,
 				unsigned long nr_segs, loff_t pos);
 static int  nfs_file_flush(struct file *, fl_owner_t id);
-static int  nfs_file_fsync(struct file *, struct dentry *dentry, int datasync);
+static int  nfs_file_fsync(struct file *, loff_t, loff_t, int datasync);
 static int nfs_check_flags(int flags);
 static int nfs_lock(struct file *filp, int cmd, struct file_lock *fl);
 static int nfs_flock(struct file *filp, int cmd, struct file_lock *fl);
@@ -125,11 +125,11 @@ nfs_file_open(struct inode *inode, struct file *filp)
 			filp->f_path.dentry->d_parent->d_name.name,
 			filp->f_path.dentry->d_name.name);
 
+	nfs_inc_stats(inode, NFSIOS_VFSOPEN);
 	res = nfs_check_flags(filp->f_flags);
 	if (res)
 		return res;
 
-	nfs_inc_stats(inode, NFSIOS_VFSOPEN);
 	res = nfs_open(inode, filp);
 	return res;
 }
@@ -163,14 +163,17 @@ static int nfs_revalidate_file_size(struct inode *inode, struct file *filp)
 	struct nfs_server *server = NFS_SERVER(inode);
 	struct nfs_inode *nfsi = NFS_I(inode);
 
-	if (server->flags & NFS_MOUNT_NOAC)
-		goto force_reval;
+	if (nfs_have_delegated_attributes(inode))
+		goto out_noreval;
+
 	if (filp->f_flags & O_DIRECT)
 		goto force_reval;
-	if (nfsi->npages != 0)
-		return 0;
-	if (!(nfsi->cache_validity & NFS_INO_REVAL_PAGECACHE) && !nfs_attribute_timeout(inode))
-		return 0;
+	if (nfsi->cache_validity & NFS_INO_REVAL_PAGECACHE)
+		goto force_reval;
+	if (nfs_attribute_timeout(inode))
+		goto force_reval;
+out_noreval:
+	return 0;
 force_reval:
 	return __nfs_revalidate_inode(server, inode);
 }
@@ -184,8 +187,11 @@ static loff_t nfs_file_llseek(struct file *filp, loff_t offset, int origin)
 			filp->f_path.dentry->d_name.name,
 			offset, origin);
 
-	/* origin == SEEK_END => we must revalidate the cached file length */
-	if (origin == SEEK_END) {
+	/*
+	 * origin == SEEK_END || SEEK_DATA || SEEK_HOLE => we must revalidate
+	 * the cached file length
+	 */
+	if (origin != SEEK_SET || origin != SEEK_CUR) {
 		struct inode *inode = filp->f_mapping->host;
 
 		int retval = nfs_revalidate_file_size(inode, filp);
@@ -201,37 +207,11 @@ static loff_t nfs_file_llseek(struct file *filp, loff_t offset, int origin)
 }
 
 /*
- * Helper for nfs_file_flush() and nfs_file_fsync()
- *
- * Notice that it clears the NFS_CONTEXT_ERROR_WRITE before synching to
- * disk, but it retrieves and clears ctx->error after synching, despite
- * the two being set at the same time in nfs_context_set_write_error().
- * This is because the former is used to notify the _next_ call to
- * nfs_file_write() that a write error occured, and hence cause it to
- * fall back to doing a synchronous write.
- */
-static int nfs_do_fsync(struct nfs_open_context *ctx, struct inode *inode)
-{
-	int have_error, status;
-	int ret = 0;
-
-	have_error = test_and_clear_bit(NFS_CONTEXT_ERROR_WRITE, &ctx->flags);
-	status = nfs_wb_all(inode);
-	have_error |= test_bit(NFS_CONTEXT_ERROR_WRITE, &ctx->flags);
-	if (have_error)
-		ret = xchg(&ctx->error, 0);
-	if (!ret && status < 0)
-		ret = status;
-	return ret;
-}
-
-/*
  * Flush all dirty pages, and check for write errors.
  */
 static int
 nfs_file_flush(struct file *file, fl_owner_t id)
 {
-	struct nfs_open_context *ctx = nfs_file_open_context(file);
 	struct dentry	*dentry = file->f_path.dentry;
 	struct inode	*inode = dentry->d_inode;
 
@@ -239,12 +219,12 @@ nfs_file_flush(struct file *file, fl_owner_t id)
 			dentry->d_parent->d_name.name,
 			dentry->d_name.name);
 
+	nfs_inc_stats(inode, NFSIOS_VFSFLUSH);
 	if ((file->f_mode & FMODE_WRITE) == 0)
 		return 0;
-	nfs_inc_stats(inode, NFSIOS_VFSFLUSH);
 
 	/* Flush writes to the server and return any errors */
-	return nfs_do_fsync(ctx, inode);
+	return vfs_fsync(file, 0);
 }
 
 static ssize_t
@@ -264,9 +244,11 @@ nfs_file_read(struct kiocb *iocb, const struct iovec *iov,
 		(unsigned long) count, (unsigned long) pos);
 
 	result = nfs_revalidate_mapping(inode, iocb->ki_filp->f_mapping);
-	nfs_add_stats(inode, NFSIOS_NORMALREADBYTES, count);
-	if (!result)
+	if (!result) {
 		result = generic_file_aio_read(iocb, iov, nr_segs, pos);
+		if (result > 0)
+			nfs_add_stats(inode, NFSIOS_NORMALREADBYTES, result);
+	}
 	return result;
 }
 
@@ -284,8 +266,11 @@ nfs_file_splice_read(struct file *filp, loff_t *ppos,
 		(unsigned long) count, (unsigned long long) *ppos);
 
 	res = nfs_revalidate_mapping(inode, filp->f_mapping);
-	if (!res)
+	if (!res) {
 		res = generic_file_splice_read(filp, ppos, pipe, count, flags);
+		if (res > 0)
+			nfs_add_stats(inode, NFSIOS_NORMALREADBYTES, res);
+	}
 	return res;
 }
 
@@ -314,19 +299,45 @@ nfs_file_mmap(struct file * file, struct vm_area_struct * vma)
  * Flush any dirty pages for this process, and check for write errors.
  * The return status from this call provides a reliable indication of
  * whether any write errors occurred for this process.
+ *
+ * Notice that it clears the NFS_CONTEXT_ERROR_WRITE before synching to
+ * disk, but it retrieves and clears ctx->error after synching, despite
+ * the two being set at the same time in nfs_context_set_write_error().
+ * This is because the former is used to notify the _next_ call to
+ * nfs_file_write() that a write error occurred, and hence cause it to
+ * fall back to doing a synchronous write.
  */
 static int
-nfs_file_fsync(struct file *file, struct dentry *dentry, int datasync)
+nfs_file_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
+	struct dentry *dentry = file->f_path.dentry;
 	struct nfs_open_context *ctx = nfs_file_open_context(file);
 	struct inode *inode = dentry->d_inode;
+	int have_error, status;
+	int ret = 0;
 
 	dprintk("NFS: fsync file(%s/%s) datasync %d\n",
 			dentry->d_parent->d_name.name, dentry->d_name.name,
 			datasync);
 
+	ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
+	if (ret)
+		return ret;
+	mutex_lock(&inode->i_mutex);
+
 	nfs_inc_stats(inode, NFSIOS_VFSFSYNC);
-	return nfs_do_fsync(ctx, inode);
+	have_error = test_and_clear_bit(NFS_CONTEXT_ERROR_WRITE, &ctx->flags);
+	status = nfs_commit_inode(inode, FLUSH_SYNC);
+	have_error |= test_bit(NFS_CONTEXT_ERROR_WRITE, &ctx->flags);
+	if (have_error)
+		ret = xchg(&ctx->error, 0);
+	if (!ret && status < 0)
+		ret = status;
+	if (!ret && !datasync)
+		/* application has asked for meta-data sync */
+		ret = pnfs_layoutcommit_inode(inode, true);
+	mutex_unlock(&inode->i_mutex);
+	return ret;
 }
 
 /*
@@ -526,28 +537,16 @@ static int nfs_launder_page(struct page *page)
 }
 
 #ifdef CONFIG_NFS_SWAP
-extern struct kmem_cache *nfs_page_cachep;
-extern struct mem_reserve nfs_page_reserve;
-
-static int nfs_swapon(struct file *file)
+static int nfs_swap_activate(struct swap_info_struct *sis, struct file *file,
+						sector_t *span)
 {
-	int ret;
-
-	/* Reserve nfs_page_cache for the maximum swapfile size */
-	ret = mem_reserve_kmem_cache_add(&nfs_page_reserve, nfs_page_cachep,
-		i_size_read(file->f_mapping->host) >> PAGE_SHIFT);
-	if (ret)
-		return ret;
-
+	*span = sis->pages;
 	return xs_swapper(NFS_CLIENT(file->f_mapping->host)->cl_xprt, 1);
 }
 
-static int nfs_swapoff(struct file *file)
+static void nfs_swap_deactivate(struct file *file)
 {
-	mem_reserve_kmem_cache_add(&nfs_page_reserve, nfs_page_cachep,
-		-(i_size_read(file->f_mapping->host) >> PAGE_SHIFT));
-
-	return xs_swapper(NFS_CLIENT(file->f_mapping->host)->cl_xprt, 0);
+	xs_swapper(NFS_CLIENT(file->f_mapping->host)->cl_xprt, 0);
 }
 #endif
 
@@ -566,10 +565,10 @@ const struct address_space_operations nfs_file_aops = {
 	.launder_page = nfs_launder_page,
 	.error_remove_page = generic_error_remove_page,
 #ifdef CONFIG_NFS_SWAP
-	.swapon = nfs_swapon,
-	.swapoff = nfs_swapoff,
-	.swap_out = nfs_swap_out,
-	.swap_in = nfs_readpage,
+	.swap_activate = nfs_swap_activate,
+	.swap_deactivate = nfs_swap_deactivate,
+	.swap_writepage = nfs_swap_writepage,
+	.swap_readpage = nfs_readpage,
 #endif
 };
 
@@ -625,7 +624,7 @@ static int nfs_need_sync_write(struct file *filp, struct inode *inode)
 {
 	struct nfs_open_context *ctx;
 
-	if (IS_SYNC(inode) || (filp->f_flags & O_SYNC))
+	if (IS_SYNC(inode) || (filp->f_flags & O_DSYNC))
 		return 1;
 	ctx = nfs_file_open_context(filp);
 	if (test_bit(NFS_CONTEXT_ERROR_WRITE, &ctx->flags))
@@ -638,6 +637,7 @@ static ssize_t nfs_file_write(struct kiocb *iocb, const struct iovec *iov,
 {
 	struct dentry * dentry = iocb->ki_filp->f_path.dentry;
 	struct inode * inode = dentry->d_inode;
+	unsigned long written = 0;
 	ssize_t result;
 	size_t count = iov_length(iov, nr_segs);
 
@@ -664,14 +664,18 @@ static ssize_t nfs_file_write(struct kiocb *iocb, const struct iovec *iov,
 	if (!count)
 		goto out;
 
-	nfs_add_stats(inode, NFSIOS_NORMALWRITTENBYTES, count);
 	result = generic_file_aio_write(iocb, iov, nr_segs, pos);
-	/* Return error values for O_SYNC and IS_SYNC() */
+	if (result > 0)
+		written = result;
+
+	/* Return error values for O_DSYNC and IS_SYNC() */
 	if (result >= 0 && nfs_need_sync_write(iocb->ki_filp, inode)) {
-		int err = nfs_do_fsync(nfs_file_open_context(iocb->ki_filp), inode);
+		int err = vfs_fsync(iocb->ki_filp, 0);
 		if (err < 0)
 			result = err;
 	}
+	if (result > 0)
+		nfs_add_stats(inode, NFSIOS_NORMALWRITTENBYTES, written);
 out:
 	return result;
 
@@ -686,6 +690,7 @@ static ssize_t nfs_file_splice_write(struct pipe_inode_info *pipe,
 {
 	struct dentry *dentry = filp->f_path.dentry;
 	struct inode *inode = dentry->d_inode;
+	unsigned long written = 0;
 	ssize_t ret;
 
 	dprintk("NFS splice_write(%s/%s, %lu@%llu)\n",
@@ -696,14 +701,17 @@ static ssize_t nfs_file_splice_write(struct pipe_inode_info *pipe,
 	 * The combination of splice and an O_APPEND destination is disallowed.
 	 */
 
-	nfs_add_stats(inode, NFSIOS_NORMALWRITTENBYTES, count);
-
 	ret = generic_file_splice_write(pipe, filp, ppos, count, flags);
+	if (ret > 0)
+		written = ret;
+
 	if (ret >= 0 && nfs_need_sync_write(filp, inode)) {
-		int err = nfs_do_fsync(nfs_file_open_context(filp), inode);
+		int err = vfs_fsync(filp, 0);
 		if (err < 0)
 			ret = err;
 	}
+	if (ret > 0)
+		nfs_add_stats(inode, NFSIOS_NORMALWRITTENBYTES, written);
 	return ret;
 }
 
@@ -749,10 +757,6 @@ static int do_vfs_lock(struct file *file, struct file_lock *fl)
 		default:
 			BUG();
 	}
-	if (res < 0)
-		dprintk(KERN_WARNING "%s: VFS is out of sync with lock manager"
-			" - error %d!\n",
-				__func__, res);
 	return res;
 }
 
@@ -784,6 +788,11 @@ do_unlk(struct file *filp, int cmd, struct file_lock *fl, int is_local)
 }
 
 static int
+is_time_granular(struct timespec *ts) {
+	return ((ts->tv_sec == 0) && (ts->tv_nsec <= 1000));
+}
+
+static int
 do_setlk(struct file *filp, int cmd, struct file_lock *fl, int is_local)
 {
 	struct inode *inode = filp->f_mapping->host;
@@ -807,13 +816,21 @@ do_setlk(struct file *filp, int cmd, struct file_lock *fl, int is_local)
 		status = do_vfs_lock(filp, fl);
 	if (status < 0)
 		goto out;
+
 	/*
-	 * Make sure we clear the cache whenever we try to get the lock.
+	 * Revalidate the cache if the server has time stamps granular
+	 * enough to detect subsecond changes.  Otherwise, clear the
+	 * cache to prevent missing any changes.
+	 *
 	 * This makes locking act as a cache coherency point.
 	 */
 	nfs_sync_mapping(filp->f_mapping);
-	if (!nfs_have_delegation(inode, FMODE_READ))
-		nfs_zap_caches(inode);
+	if (!nfs_have_delegation(inode, FMODE_READ)) {
+		if (is_time_granular(&NFS_SERVER(inode)->time_delta))
+			__nfs_revalidate_inode(NFS_SERVER(inode), inode);
+		else
+			nfs_zap_caches(inode);
+	}
 out:
 	return status;
 }
@@ -896,6 +913,5 @@ static int nfs_setlease(struct file *file, long arg, struct file_lock **fl)
 	dprintk("NFS: setlease(%s/%s, arg=%ld)\n",
 			file->f_path.dentry->d_parent->d_name.name,
 			file->f_path.dentry->d_name.name, arg);
-
 	return -EINVAL;
 }

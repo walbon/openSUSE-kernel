@@ -34,6 +34,7 @@
 #define ENIC_MAX_MTU			9000
 
 #define ENIC_MULTICAST_PERFECT_FILTERS	32
+#define ENIC_UNICAST_PERFECT_FILTERS	32
 
 #define ENIC_NON_TSO_MAX_DESC		16
 
@@ -132,7 +133,6 @@ static inline void enic_queue_rq_desc(struct vnic_rq *rq,
 struct enic;
 
 int enic_get_vnic_config(struct enic *);
-void enic_add_station_addr(struct enic *enic);
 int enic_add_vlan(struct enic *enic, u16 vlanid);
 int enic_del_vlan(struct enic *enic, u16 vlanid);
 int enic_set_nic_cfg(struct enic *enic, u8 rss_default_cpu, u8 rss_hash_type,

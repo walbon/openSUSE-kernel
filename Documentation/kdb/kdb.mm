@@ -355,7 +355,7 @@ Print a summary of the system, including the time (no timezone is
 applied), uname information and various critical system counters.
 .SH INITIAL KDB COMMANDS
 kdb/kdb_cmds is a plain text file where you can define kdb commands
-which are to be issued during kdb_init().  One command per line, blank
+which are to be issued during legacy_kdb_init().  One command per line, blank
 lines are ignored, lines starting with '#' are ignored.  kdb_cmds is
 intended for per user customization of kdb, you can use it to set
 environment variables to suit your hardware or to set standard
@@ -367,7 +367,7 @@ it with your local copy.  Sample kdb_cmds:
 .P
 .nf
 # Initial commands for kdb, alter to suit your needs.
-# These commands are executed in kdb_init() context, no SMP, no
+# These commands are executed in legacy_kdb_init() context, no SMP, no
 # processes.  Commands that require process data (including stack or
 # registers) are not reliable this early.  set and bp commands should
 # be safe.  Global breakpoint commands affect each cpu as it is booted.
@@ -423,7 +423,7 @@ a bad address.
 .SH DEBUGGING THE DEBUGGER
 kdb has limited support for debugging problems within kdb.  If you
 suspect that kdb is failing, you can set environment variable KDBDEBUG
-to a bit pattern which will activate kdb_printf statements within kdb.
+to a bit pattern which will activate lkdb_printf statements within kdb.
 See include/linux/kdb.h, KDB_DEBUG_FLAG_xxx defines.  For example
 .nf
   set KDBDEBUG=0x60

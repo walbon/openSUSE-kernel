@@ -24,6 +24,7 @@
 #include <linux/bootmem.h>
 #include <linux/pagemap.h>
 #include <linux/poison.h>
+#include <linux/gfp.h>
 
 #include <asm/sections.h>
 #include <asm/system.h>
@@ -35,8 +36,6 @@
 #include <asm/tlb.h>
 #include <asm/prom.h>
 #include <asm/leon.h>
-
-DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
 
 unsigned long *sparc_valid_addr_bitmap;
 EXPORT_SYMBOL(sparc_valid_addr_bitmap);
@@ -341,7 +340,7 @@ void __init paging_init(void)
 		prom_printf("paging_init: sparc_cpu_model = %d\n", sparc_cpu_model);
 		prom_printf("paging_init: Halting...\n");
 		prom_halt();
-	};
+	}
 
 	/* Initialize the protection map with non-constant, MMU dependent values. */
 	protection_map[0] = PAGE_NONE;

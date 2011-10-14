@@ -1,6 +1,8 @@
+#include <linux/gfp.h>
 #include <linux/initrd.h>
 #include <linux/ioport.h>
 #include <linux/swap.h>
+#include <linux/memblock.h>
 #include <linux/bootmem.h>
 
 #include <asm/cacheflush.h>
@@ -15,11 +17,9 @@
 #include <asm/tlb.h>
 #include <asm/proto.h>
 
-DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
-
-unsigned long __meminitdata e820_table_start;
-unsigned long __meminitdata e820_table_end;
-unsigned long __meminitdata e820_table_top;
+unsigned long __meminitdata pgt_buf_start;
+unsigned long __meminitdata pgt_buf_end;
+unsigned long __meminitdata pgt_buf_top;
 
 int after_bootmem;
 
@@ -70,21 +70,14 @@ static void __init find_early_table_space(unsigned long end, int use_pse,
 #ifdef CONFIG_X86_32
 	/* for fixmap */
 	tables += roundup(__end_of_fixed_addresses * sizeof(pte_t), PAGE_SIZE);
-#endif
 
-	/*
-	 * RED-PEN putting page tables only on node 0 could
-	 * cause a hotspot and fill up ZONE_DMA. The page tables
-	 * need roughly 0.5KB per GB.
-	 */
-#ifdef CONFIG_X86_32
-	e820_table_start = extend_init_mapping(tables);
-	e820_table_end = e820_table_start;
+	pgt_buf_start = extend_init_mapping(tables);
+	pgt_buf_end = pgt_buf_start;
 #else /* CONFIG_X86_64 */
-	if (!e820_table_top) {
-		e820_table_start = (__pa(xen_start_info->pt_base) >> PAGE_SHIFT) +
+	if (!pgt_buf_top) {
+		pgt_buf_start = (__pa(xen_start_info->pt_base) >> PAGE_SHIFT) +
 			xen_start_info->nr_pt_frames;
-		e820_table_end = e820_table_start;
+		pgt_buf_end = pgt_buf_start;
 	} else {
 		/*
 		 * [table_start, table_top) gets passed to reserve_early(),
@@ -92,16 +85,21 @@ static void __init find_early_table_space(unsigned long end, int use_pse,
 		 * to allocate from there. table_end possibly being below
 		 * table_start is otoh not a problem.
 		 */
-		e820_table_start = e820_table_top;
+		pgt_buf_start = pgt_buf_top;
 	}
 #endif
-	if (e820_table_start == -1UL)
+	if (pgt_buf_start == -1UL)
 		panic("Cannot find space for the kernel page tables");
 
-	e820_table_top = e820_table_start + (tables >> PAGE_SHIFT);
+	pgt_buf_top = pgt_buf_start + (tables >> PAGE_SHIFT);
 
 	printk(KERN_DEBUG "kernel direct mapping tables up to %lx @ %lx-%lx\n",
-		end, e820_table_start << PAGE_SHIFT, e820_table_top << PAGE_SHIFT);
+		end, pgt_buf_start << PAGE_SHIFT, pgt_buf_top << PAGE_SHIFT);
+}
+
+void __init xen_pagetable_reserve(u64 start, u64 end)
+{
+	memblock_x86_reserve_range(start, end, "PGTABLE");
 }
 
 struct map_range {
@@ -162,10 +160,6 @@ unsigned long __init_refok init_memory_mapping(unsigned long start,
 	use_pse = cpu_has_pse;
 	use_gbpages = direct_gbpages;
 #endif
-
-	set_nx();
-	if (nx_enabled)
-		printk(KERN_INFO "NX (Execute Disable) protection: active\n");
 
 	/* Enable PSE if available */
 	if (cpu_has_pse)
@@ -287,12 +281,7 @@ unsigned long __init_refok init_memory_mapping(unsigned long start,
 	if (!after_bootmem)
 		find_early_table_space(end, use_pse, use_gbpages);
 
-#ifdef CONFIG_X86_32
-	for (i = 0; i < nr_range; i++)
-		kernel_physical_mapping_init(mr[i].start, mr[i].end,
-					     mr[i].page_size_mask);
-	ret = end;
-#else /* CONFIG_X86_64 */
+#ifdef CONFIG_X86_64
 #define addr_to_page(addr)						\
 	((unsigned long *)						\
 	 ((mfn_to_pfn(((addr) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT)	\
@@ -310,7 +299,7 @@ unsigned long __init_refok init_memory_mapping(unsigned long start,
 		}
 
 		/* Blow away any spurious initial mappings. */
-		va = __START_KERNEL_map + (e820_table_start << PAGE_SHIFT);
+		va = __START_KERNEL_map + (pgt_buf_start << PAGE_SHIFT);
 
 		addr = page[pgd_index(va)];
 		page = addr_to_page(addr);
@@ -324,35 +313,50 @@ unsigned long __init_refok init_memory_mapping(unsigned long start,
 			va += PAGE_SIZE;
 		}
 	}
+#undef addr_to_page
+#endif
 
 	for (i = 0; i < nr_range; i++)
 		ret = kernel_physical_mapping_init(mr[i].start, mr[i].end,
 						   mr[i].page_size_mask);
-#undef addr_to_page
-#endif
 
 #ifdef CONFIG_X86_32
 	early_ioremap_page_table_range_init();
 #endif
 
 #ifdef CONFIG_X86_64
-	BUG_ON(e820_table_end > e820_table_top);
+	BUG_ON(pgt_buf_end > pgt_buf_top);
 	if (!start)
 		xen_finish_init_mapping();
 	else
 #endif
-	if (e820_table_end < e820_table_top)
+	if (pgt_buf_end < pgt_buf_top)
 		/* Disable the 'table_end' allocator. */
-		e820_table_top = e820_table_end;
+		pgt_buf_top = pgt_buf_end;
 
 	__flush_tlb_all();
 
-	if (!after_bootmem && e820_table_top > e820_table_start) {
+	/*
+	 * Reserve the kernel pagetable pages we used (pgt_buf_start -
+	 * pgt_buf_end) and free the other ones (pgt_buf_end - pgt_buf_top)
+	 * so that they can be reused for other purposes.
+	 *
+	 * On native it just means calling memblock_x86_reserve_range, on Xen it
+	 * also means marking RW the pagetable pages that we allocated before
+	 * but that haven't been used.
+	 *
+	 * In fact on xen we mark RO the whole range pgt_buf_start -
+	 * pgt_buf_top, because we have to make sure that when
+	 * init_memory_mapping reaches the pagetable pages area, it maps
+	 * RO all the pagetable pages, including the ones that are beyond
+	 * pgt_buf_end at that time.
+	 */
+	if (!after_bootmem && pgt_buf_top > pgt_buf_start) {
 #ifdef CONFIG_X86_64
 		reserve_pgtable_low();
 #endif
-		reserve_early(e820_table_start << PAGE_SHIFT,
-			      e820_table_top << PAGE_SHIFT, "PGTABLE");
+		x86_init.mapping.pagetable_reserve(PFN_PHYS(pgt_buf_start),
+				PFN_PHYS(pgt_buf_top));
 	}
 
 	if (!after_bootmem)
@@ -385,10 +389,22 @@ int devmem_is_allowed(unsigned long pagenr)
 
 void free_init_pages(char *what, unsigned long begin, unsigned long end)
 {
-	unsigned long addr = begin;
+	unsigned long addr;
+	unsigned long begin_aligned, end_aligned;
 
-	if (addr >= end)
+	/* Make sure boundaries are page aligned */
+	begin_aligned = PAGE_ALIGN(begin);
+	end_aligned   = end & PAGE_MASK;
+
+	if (WARN_ON(begin_aligned != begin || end_aligned != end)) {
+		begin = begin_aligned;
+		end   = end_aligned;
+	}
+
+	if (begin >= end)
 		return;
+
+	addr = begin;
 
 	/*
 	 * If debugging page accesses then do not free this memory but
@@ -397,14 +413,15 @@ void free_init_pages(char *what, unsigned long begin, unsigned long end)
 	 */
 #ifdef CONFIG_DEBUG_PAGEALLOC
 	printk(KERN_INFO "debug: unmapping init memory %08lx..%08lx\n",
-		begin, PAGE_ALIGN(end));
+		begin, end);
 	set_memory_np(begin, (end - begin) >> PAGE_SHIFT);
 #else
 	/*
 	 * We just marked the kernel text read only above, now that
 	 * we are going to free part of that, we need to make that
-	 * writeable first.
+	 * writeable and non-executable first.
 	 */
+	set_memory_nx(begin, (end - begin) >> PAGE_SHIFT);
 	set_memory_rw(begin, (end - begin) >> PAGE_SHIFT);
 
 	printk(KERN_INFO "Freeing %s: %luk freed\n", what, (end - begin) >> 10);
@@ -412,8 +429,7 @@ void free_init_pages(char *what, unsigned long begin, unsigned long end)
 	for (; addr < end; addr += PAGE_SIZE) {
 		ClearPageReserved(virt_to_page(addr));
 		init_page_count(virt_to_page(addr));
-		memset((void *)(addr & ~(PAGE_SIZE-1)),
-			POISON_FREE_INITMEM, PAGE_SIZE);
+		memset((void *)addr, POISON_FREE_INITMEM, PAGE_SIZE);
 #ifdef CONFIG_X86_64
 		if (addr >= __START_KERNEL_map) {
 			/* make_readonly() reports all kernel addresses. */
@@ -442,6 +458,15 @@ void free_initmem(void)
 #ifdef CONFIG_BLK_DEV_INITRD
 void free_initrd_mem(unsigned long start, unsigned long end)
 {
-	free_init_pages("initrd memory", start, end);
+	/*
+	 * end could be not aligned, and We can not align that,
+	 * decompresser could be confused by aligned initrd_end
+	 * We already reserve the end partial page before in
+	 *   - i386_start_kernel()
+	 *   - x86_64_start_kernel()
+	 *   - relocate_initrd()
+	 * So here We can do PAGE_ALIGN() safely to get partial page to be freed
+	 */
+	free_init_pages("initrd memory", start, PAGE_ALIGN(end));
 }
 #endif

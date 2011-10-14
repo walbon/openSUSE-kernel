@@ -26,7 +26,7 @@
  */
 
 #include <linux/acpi.h>
-/*#include <linux/acpi_io.h>*/
+#include <linux/acpi_io.h>
 #include <acpi/video.h>
 
 #include "drmP.h"

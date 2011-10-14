@@ -99,8 +99,7 @@ struct scsi_device {
 	void *hostdata;		/* available to low-level driver */
 	char type;
 	char scsi_level;
-	char inq_periph_qual;	/* PQ from INQUIRY data */
-	char tgps;		/* Target port group support */
+	char inq_periph_qual;	/* PQ from INQUIRY data */	
 	unsigned char inquiry_len;	/* valid bytes in 'inquiry' */
 	unsigned char * inquiry;	/* INQUIRY response data */
 	const char * vendor;		/* [back_compat] point into 'inquiry' ... */
@@ -169,7 +168,8 @@ struct scsi_device {
 	struct device		sdev_gendev,
 				sdev_dev;
 
-	struct execute_work	ew; /* used to get process context on put */
+	struct work_struct	release_work; /* for process context on put */
+	struct work_struct	requeue_work;
 
 	struct scsi_dh_data	*scsi_dh_data;
 	enum scsi_device_state sdev_state;
@@ -179,13 +179,13 @@ struct scsi_device {
 struct scsi_dh_devlist {
 	char *vendor;
 	char *model;
-	char tgps;
 };
 
 typedef void (*activate_complete)(void *, int);
 struct scsi_device_handler {
 	/* Used by the infrastructure */
 	struct list_head list; /* list of scsi_device_handlers */
+	int idx;
 
 	/* Filled by the hardware handler */
 	struct module *module;
@@ -197,6 +197,7 @@ struct scsi_device_handler {
 	int (*activate)(struct scsi_device *, activate_complete, void *);
 	int (*prep_fn)(struct scsi_device *, struct request *);
 	int (*set_params)(struct scsi_device *, const char *);
+	bool (*match)(struct scsi_device *);
 };
 
 struct scsi_dh_data {
@@ -260,7 +261,7 @@ struct scsi_target {
 #define SCSI_DEFAULT_TARGET_BLOCKED	3
 
 	char			scsi_level;
-	struct execute_work	ew;
+	struct work_struct	reap_work;
 	enum scsi_target_state	state;
 	void 			*hostdata; /* available to low-level driver */
 	unsigned long		starget_data[0]; /* for the transport */
@@ -277,6 +278,8 @@ static inline struct scsi_target *scsi_target(struct scsi_device *sdev)
 
 #define starget_printk(prefix, starget, fmt, a...)	\
 	dev_printk(prefix, &(starget)->dev, fmt, ##a)
+
+extern struct workqueue_struct *scsi_wq;
 
 extern struct scsi_device *__scsi_add_device(struct Scsi_Host *,
 		uint, uint, uint, void *hostdata);
@@ -386,6 +389,14 @@ extern int scsi_execute_req(struct scsi_device *sdev, const unsigned char *cmd,
 			    struct scsi_sense_hdr *, int timeout, int retries,
 			    int *resid);
 
+#ifdef CONFIG_PM_RUNTIME
+extern int scsi_autopm_get_device(struct scsi_device *);
+extern void scsi_autopm_put_device(struct scsi_device *);
+#else
+static inline int scsi_autopm_get_device(struct scsi_device *d) { return 0; }
+static inline void scsi_autopm_put_device(struct scsi_device *d) {}
+#endif /* CONFIG_PM_RUNTIME */
+
 static inline int __must_check scsi_device_reprobe(struct scsi_device *sdev)
 {
 	return device_reprobe(&sdev->sdev_gendev);
@@ -462,6 +473,11 @@ static inline int scsi_device_enclosure(struct scsi_device *sdev)
 static inline int scsi_device_protection(struct scsi_device *sdev)
 {
 	return sdev->scsi_level > SCSI_2 && sdev->inquiry[5] & (1<<0);
+}
+
+static inline int scsi_device_tpgs(struct scsi_device *sdev)
+{
+	return sdev->inquiry ? (sdev->inquiry[5] >> 4) & 0x3 : 0;
 }
 
 #define MODULE_ALIAS_SCSI_DEVICE(type) \

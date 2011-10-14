@@ -21,12 +21,6 @@
 #ifndef __KL_DUMP_H
 #define __KL_DUMP_H
 
-#if 0
-cpw: dont need:
-#include <klib.h>
-#include <asm/ioctl.h>
-#endif
-
 /*
  * DUMP_DEBUG: a debug level for the kernel dump code and
  *             the supporting lkcd libraries in user space.

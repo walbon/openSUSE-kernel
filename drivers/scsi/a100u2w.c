@@ -69,7 +69,6 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
-#include <linux/slab.h>
 #include <linux/dma-mapping.h>
 
 #include <asm/io.h>
@@ -417,7 +416,7 @@ static u8 orc_load_firmware(struct orc_host * host)
 	/* Go back and check they match */
 
 	outb(PRGMRST | DOWNLOAD, host->base + ORC_RISCCTL);	/* Reset program count 0 */
-	bios_addr -= 0x1000;	/* Reset the BIOS adddress      */
+	bios_addr -= 0x1000;	/* Reset the BIOS address */
 	for (i = 0, data32_ptr = (u8 *) & data32;	/* Check the code       */
 	     i < 0x1000;	/* Firmware code size = 4K      */
 	     i++, bios_addr++) {
@@ -492,7 +491,7 @@ static void init_alloc_map(struct orc_host * host)
  *	init_orchid		-	initialise the host adapter
  *	@host:host adapter to initialise
  *
- *	Initialise the controller and if neccessary load the firmware.
+ *	Initialise the controller and if necessary load the firmware.
  *
  *	Returns -1 if the initialisation fails.
  */

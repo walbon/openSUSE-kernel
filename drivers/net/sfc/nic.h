@@ -143,18 +143,16 @@ static inline struct falcon_board *falcon_board(struct efx_nic *efx)
 /**
  * struct siena_nic_data - Siena NIC state
  * @mcdi: Management-Controller-to-Driver Interface
- * @mcdi_smem: MCDI shared memory mapping. The mapping is always uncacheable.
  * @wol_filter_id: Wake-on-LAN packet filter id
  */
 struct siena_nic_data {
 	struct efx_mcdi_iface mcdi;
-	void __iomem *mcdi_smem;
 	int wol_filter_id;
 };
 
-extern struct efx_nic_type falcon_a1_nic_type;
-extern struct efx_nic_type falcon_b0_nic_type;
-extern struct efx_nic_type siena_a0_nic_type;
+extern const struct efx_nic_type falcon_a1_nic_type;
+extern const struct efx_nic_type falcon_b0_nic_type;
+extern const struct efx_nic_type siena_a0_nic_type;
 
 /**************************************************************************
  *
@@ -213,6 +211,7 @@ extern void falcon_stop_nic_stats(struct efx_nic *efx);
 extern void falcon_setup_xaui(struct efx_nic *efx);
 extern int falcon_reset_xaui(struct efx_nic *efx);
 extern void efx_nic_init_common(struct efx_nic *efx);
+extern void efx_nic_push_rx_indir_table(struct efx_nic *efx);
 
 int efx_nic_alloc_buffer(struct efx_nic *efx, struct efx_buffer *buffer,
 			 unsigned int len);

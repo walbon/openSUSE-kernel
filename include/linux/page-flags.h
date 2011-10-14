@@ -8,7 +8,7 @@
 #include <linux/types.h>
 #ifndef __GENERATING_BOUNDS_H
 #include <linux/mm_types.h>
-#include <linux/bounds.h>
+#include <generated/bounds.h>
 #endif /* !__GENERATING_BOUNDS_H */
 
 /*
@@ -97,7 +97,7 @@ enum pageflags {
 	PG_reclaim,		/* To be reclaimed asap */
 	PG_swapbacked,		/* Page is backed by RAM/swap */
 	PG_unevictable,		/* Page is "unevictable"  */
-#ifdef CONFIG_HAVE_MLOCKED_PAGE_BIT
+#ifdef CONFIG_MMU
 	PG_mlocked,		/* Page is vma mlocked */
 #endif
 #ifdef CONFIG_ARCH_USES_PG_UNCACHED
@@ -141,7 +141,6 @@ enum pageflags {
 
 	/* SLUB */
 	PG_slub_frozen = PG_active,
-	PG_slub_debug = PG_error,
 };
 
 #ifndef __GENERATING_BOUNDS_H
@@ -218,9 +217,9 @@ static inline int __TestClearPage##uname(struct page *page) { return 0; }
 
 struct page;	/* forward declaration */
 
-TESTPAGEFLAG(Locked, locked) TESTSETFLAG(Locked, locked)
+TESTPAGEFLAG(Locked, locked)
 PAGEFLAG(Waiters, waiters)
-PAGEFLAG(Error, error)
+PAGEFLAG(Error, error) TESTCLEARFLAG(Error, error)
 PAGEFLAG(Referenced, referenced) TESTCLEARFLAG(Referenced, referenced)
 PAGEFLAG(Dirty, dirty) TESTSCFLAG(Dirty, dirty) __CLEARPAGEFLAG(Dirty, dirty)
 PAGEFLAG(LRU, lru) __CLEARPAGEFLAG(LRU, lru)
@@ -240,7 +239,6 @@ PAGEFLAG(SwapBacked, swapbacked) __CLEARPAGEFLAG(SwapBacked, swapbacked)
 __PAGEFLAG(SlobFree, slob_free)
 
 __PAGEFLAG(SlubFrozen, slub_frozen)
-__PAGEFLAG(SlubDebug, slub_debug)
 
 /*
  * Private page markings that may be used by the filesystem that owns the page
@@ -283,12 +281,10 @@ PAGEFLAG_FALSE(SwapCache)
 PAGEFLAG(Unevictable, unevictable) __CLEARPAGEFLAG(Unevictable, unevictable)
 	TESTCLEARFLAG(Unevictable, unevictable)
 
-#ifdef CONFIG_HAVE_MLOCKED_PAGE_BIT
-#define MLOCK_PAGES 1
+#ifdef CONFIG_MMU
 PAGEFLAG(Mlocked, mlocked) __CLEARPAGEFLAG(Mlocked, mlocked)
 	TESTSCFLAG(Mlocked, mlocked) __TESTCLEARFLAG(Mlocked, mlocked)
 #else
-#define MLOCK_PAGES 0
 PAGEFLAG_FALSE(Mlocked) SETPAGEFLAG_NOOP(Mlocked)
 	TESTCLEARFLAG_FALSE(Mlocked) __TESTCLEARFLAG_FALSE(Mlocked)
 #endif
@@ -338,7 +334,7 @@ static inline void SetPageUptodate(struct page *page)
 {
 #ifdef CONFIG_S390
 	if (!test_and_set_bit(PG_uptodate, &page->flags))
-		page_clear_dirty(page);
+		page_set_storage_key(page_to_phys(page), PAGE_DEFAULT_KEY, 0);
 #else
 	/*
 	 * Memory barrier must be issued before setting the PG_uptodate bit,
@@ -495,7 +491,7 @@ static inline int PageTransCompound(struct page *page)
 }
 #endif
 
-#ifdef CONFIG_HAVE_MLOCKED_PAGE_BIT
+#ifdef CONFIG_MMU
 #define __PG_MLOCKED		(1 << PG_mlocked)
 #else
 #define __PG_MLOCKED		0
@@ -522,8 +518,8 @@ static inline int PageTransCompound(struct page *page)
 	 1 << PG_private | 1 << PG_private_2 | \
 	 1 << PG_writeback | 1 << PG_reserved | \
 	 1 << PG_slab	 | 1 << PG_swapcache | 1 << PG_active | \
-	 1 << PG_unevictable | __PG_MLOCKED | __PG_HWPOISON | 1 << PG_waiters | \
-	 __PG_COMPOUND_LOCK | __PG_XEN)
+	 1 << PG_unevictable | __PG_MLOCKED | __PG_HWPOISON | \
+	 1 << PG_waiters | __PG_COMPOUND_LOCK | __PG_XEN)
 
 /*
  * Flags checked when a page is prepped for return by the page allocator.

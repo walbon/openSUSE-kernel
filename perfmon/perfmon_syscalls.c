@@ -37,6 +37,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/fs.h>
+#include <linux/slab.h>
 #include <linux/ptrace.h>
 #include <linux/perfmon_kern.h>
 #include <linux/uaccess.h>

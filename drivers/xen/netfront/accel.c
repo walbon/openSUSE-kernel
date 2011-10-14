@@ -804,9 +804,9 @@ void netfront_accelerator_call_stop_napi_irq(struct netfront_info *np,
 /*
  * No lock pre-requisites.  Takes the vif_states_lock spinlock
  */
-int netfront_accelerator_call_get_stats(struct net_device *dev)
+int netfront_accelerator_call_get_stats(struct netfront_info *np,
+					struct net_device *dev)
 {
-	struct netfront_info *np = netdev_priv(dev);
 	struct netfront_accelerator *accelerator;
 	unsigned long flags;
 	int rc = 0;

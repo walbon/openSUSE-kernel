@@ -480,7 +480,7 @@ void pfm_arch_restore_pmds(struct pfm_context *ctx, struct pfm_event_set *set)
 	 *
 	 * XXX: should check PFM_IA64_FL_INSECURE==0 and use used_pmd instead
 	 */
-	for_each_bit(i, cast_ulp(mask), ctx->regs.max_pmd)
+	for_each_set_bit(i, cast_ulp(mask), ctx->regs.max_pmd)
 		pfm_arch_write_pmd(ctx, i, set->pmds[i].value);
 
 	ia64_srlz_d();
@@ -523,7 +523,7 @@ void pfm_arch_restore_pmcs(struct pfm_context *ctx, struct pfm_event_set *set)
 			mask2 = mask_pmcs & 0x1 ? plm : ~0;
 			val = set->pmcs[i] & mask2;
 			ia64_set_pmc(i, val);
-			PFM_DBG_ovfl("pmc%u=0x%lx", i, val);
+			PFM_DBG_ovfl("pmc%u=0x%llux", i, val);
 		}
 	}
 	/*
@@ -689,7 +689,7 @@ void pfm_arch_start(struct task_struct *task, struct pfm_context *ctx)
 	} else {
 		dcr_pp = psr_pp = 1;
 	}
-	PFM_DBG("dcr_pp=%lu psr_pp=%lu", dcr_pp, psr_pp);
+	PFM_DBG("dcr_pp=%llu psr_pp=%llu", dcr_pp, psr_pp);
 
 	/*
 	 * update dcr_pp and psr_pp

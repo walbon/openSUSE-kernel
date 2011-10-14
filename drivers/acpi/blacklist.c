@@ -111,22 +111,27 @@ static inline int blacklist_by_year(void)
 }
 #endif
 
-int __initdata apei_disable = -1;
+#ifdef CONFIG_ACPI_APEI
+static int __initdata apei_disable = -1;
 
-void __init acpi_apei_disable(void)
+static void __init acpi_apei_disable(void)
 {
 		apei_disable = 1;
 		hest_disable = 1;
 		erst_disable = 1;
+#ifdef CONFIG ACPI_APEI_GHES
 		ghes_disable = 1;
+#endif
 }
 
-void __init acpi_apei_enable(void)
+static void __init acpi_apei_enable(void)
 {
 		apei_disable = 0;
 		hest_disable = 0;
 		erst_disable = 0;
+#ifdef CONFIG ACPI_APEI_GHES
 		ghes_disable = 0;
+#endif
 }
 
 static int __init setup_apei_disable(char *str)
@@ -145,14 +150,24 @@ static int __init setup_apei_enable(char *str)
 }
 __setup("apei_enable", setup_apei_enable);
 
-void __init acpi_apei_blacklist(void)
+static void __init acpi_apei_blacklist(void)
 {
 	/* Already overwritten by boot param */
 	if (apei_disable != -1)
 		return;
 
 	acpi_apei_disable();
+
+	if (dmi_name_in_vendors("Dell")) {
+		printk (KERN_INFO "Dell detected: Enabling APEI HEST parsing"
+			" if available\n");
+		hest_disable = 0;
+	}
+
 }
+#else /* !CONFIG_ACPI_APEI */
+#define acpi_apei_blacklist() ((void)0)
+#endif
 
 int __init acpi_blacklisted(void)
 {
@@ -229,6 +244,8 @@ static int __init dmi_disable_osi_vista(const struct dmi_system_id *d)
 {
 	printk(KERN_NOTICE PREFIX "DMI detected: %s\n", d->ident);
 	acpi_osi_setup("!Windows 2006");
+	acpi_osi_setup("!Windows 2006 SP1");
+	acpi_osi_setup("!Windows 2006 SP2");
 	return 0;
 }
 static int __init dmi_disable_osi_win7(const struct dmi_system_id *d)
@@ -284,23 +301,7 @@ static struct dmi_system_id acpi_osi_dmi_table[] __initdata = {
 	.ident = "Sony VGN-SR290J",
 	.matches = {
 		     DMI_MATCH(DMI_SYS_VENDOR, "Sony Corporation"),
-		     DMI_MATCH(DMI_PRODUCT_NAME, "Sony VGN-SR290J"),
-		},
-	},
-	{
-	.callback = dmi_disable_osi_vista,
-	.ident = "Toshiba Satellite L355",
-	.matches = {
-		     DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-		     DMI_MATCH(DMI_PRODUCT_VERSION, "Satellite L355"),
-		},
-	},
-	{
-	.callback = dmi_disable_osi_vista,
-	.ident = "Toshiba Satellite L355",
-	.matches = {
-		     DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-		     DMI_MATCH(DMI_PRODUCT_VERSION, "Satellite L355"),
+		     DMI_MATCH(DMI_PRODUCT_NAME, "VGN-SR290J"),
 		},
 	},
 	{
@@ -325,14 +326,6 @@ static struct dmi_system_id acpi_osi_dmi_table[] __initdata = {
 	.matches = {
 		     DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK Computer Inc."),
 		     DMI_MATCH(DMI_PRODUCT_NAME, "K50IJ"),
-		},
-	},
-	{
-	.callback = dmi_disable_osi_vista,
-	.ident = "Toshiba P305D",
-	.matches = {
-		     DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-		     DMI_MATCH(DMI_PRODUCT_NAME, "Satellite P305D"),
 		},
 	},
 	{

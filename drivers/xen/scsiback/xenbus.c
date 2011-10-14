@@ -354,7 +354,7 @@ fail:
 }
 
 
-static struct xenbus_device_id scsiback_ids[] = {
+static const struct xenbus_device_id scsiback_ids[] = {
 	{ "vscsi" },
 	{ "" }
 };

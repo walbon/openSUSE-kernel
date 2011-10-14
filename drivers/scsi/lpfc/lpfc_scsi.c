@@ -577,7 +577,7 @@ lpfc_new_scsi_buf_s3(struct lpfc_vport *vport, int num_to_alloc)
 			iocb->un.fcpi64.bdl.addrHigh = 0;
 			iocb->ulpBdeCount = 0;
 			iocb->ulpLe = 0;
-			/* fill in responce BDE */
+			/* fill in response BDE */
 			iocb->unsli3.fcp_ext.rbde.tus.f.bdeFlags =
 							BUFF_TYPE_BDE_64;
 			iocb->unsli3.fcp_ext.rbde.tus.f.bdeSize =
@@ -1242,10 +1242,10 @@ lpfc_scsi_prep_dma_buf_s3(struct lpfc_hba *phba, struct lpfc_scsi_buf *lpfc_cmd)
 				     (2 * sizeof(struct ulp_bde64)));
 			data_bde->addrHigh = putPaddrHigh(physaddr);
 			data_bde->addrLow = putPaddrLow(physaddr);
-			/* ebde count includes the responce bde and data bpl */
+			/* ebde count includes the response bde and data bpl */
 			iocb_cmd->unsli3.fcp_ext.ebde_count = 2;
 		} else {
-			/* ebde count includes the responce bde and data bdes */
+			/* ebde count includes the response bde and data bdes */
 			iocb_cmd->unsli3.fcp_ext.ebde_count = (num_bde + 1);
 		}
 	} else {
@@ -2369,7 +2369,7 @@ lpfc_handle_fcp_err(struct lpfc_vport *vport, struct lpfc_scsi_buf *lpfc_cmd,
 		}
 		/*
 		 * The cmnd->underflow is the minimum number of bytes that must
-		 * be transfered for this command.  Provided a sense condition
+		 * be transferred for this command.  Provided a sense condition
 		 * is not present, make sure the actual amount transferred is at
 		 * least the underflow value or fail.
 		 */
@@ -2869,7 +2869,7 @@ lpfc_scsi_prep_task_mgmt_cmd(struct lpfc_vport *vport,
 }
 
 /**
- * lpfc_scsi_api_table_setup - Set up scsi api fucntion jump table
+ * lpfc_scsi_api_table_setup - Set up scsi api function jump table
  * @phba: The hba struct for which this call is being executed.
  * @dev_grp: The HBA PCI-Device group number.
  *
@@ -3056,8 +3056,9 @@ lpfc_queuecommand_lck(struct scsi_cmnd *cmnd, void (*done) (struct scsi_cmnd *))
 	}
 	ndlp = rdata->pnode;
 
-	if (!(phba->sli3_options & LPFC_SLI3_BG_ENABLED) &&
-		scsi_get_prot_op(cmnd) != SCSI_PROT_NORMAL) {
+	if ((scsi_get_prot_op(cmnd) != SCSI_PROT_NORMAL) &&
+		(!(phba->sli3_options & LPFC_SLI3_BG_ENABLED) ||
+		(phba->sli_rev == LPFC_SLI_REV4))) {
 
 		lpfc_printf_log(phba, KERN_ERR, LOG_BG,
 				"9058 BLKGRD: ERROR: rcvd protected cmd:%02x"
@@ -3224,7 +3225,7 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 	struct lpfc_iocbq *abtsiocb;
 	struct lpfc_scsi_buf *lpfc_cmd;
 	IOCB_t *cmd, *icmd;
-	int ret = SUCCESS;
+	int ret;
 	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(waitq);
 
 	ret = fc_block_scsi_eh(cmnd);
@@ -3235,9 +3236,8 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 	if (!lpfc_cmd) {
 		lpfc_printf_vlog(vport, KERN_WARNING, LOG_FCP,
 			 "2873 SCSI Layer I/O Abort Request IO CMPL Status "
-			 "x%x ID %d "
-			 "LUN %d snum %#lx\n", ret, cmnd->device->id,
-			 cmnd->device->lun, cmnd->serial_number);
+			 "x%x ID %d LUN %d\n",
+			 ret, cmnd->device->id, cmnd->device->lun);
 		return SUCCESS;
 	}
 
@@ -3315,16 +3315,15 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 		lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
 				 "0748 abort handler timed out waiting "
 				 "for abort to complete: ret %#x, ID %d, "
-				 "LUN %d, snum %#lx\n",
-				 ret, cmnd->device->id, cmnd->device->lun,
-				 cmnd->serial_number);
+				 "LUN %d\n",
+				 ret, cmnd->device->id, cmnd->device->lun);
 	}
 
  out:
 	lpfc_printf_vlog(vport, KERN_WARNING, LOG_FCP,
 			 "0749 SCSI Layer I/O Abort Request Status x%x ID %d "
-			 "LUN %d snum %#lx\n", ret, cmnd->device->id,
-			 cmnd->device->lun, cmnd->serial_number);
+			 "LUN %d\n", ret, cmnd->device->id,
+			 cmnd->device->lun);
 	return ret;
 }
 
@@ -3685,10 +3684,6 @@ lpfc_bus_reset_handler(struct scsi_cmnd *cmnd)
 	int match;
 	int ret = SUCCESS, status, i;
 
-	ret = fc_block_scsi_eh(cmnd);
-	if (ret != SUCCESS)
-		return ret;
-
 	scsi_event.event_type = FC_REG_SCSI_EVENT;
 	scsi_event.subcategory = LPFC_EVENT_BUSRESET;
 	scsi_event.lun = 0;
@@ -3697,6 +3692,10 @@ lpfc_bus_reset_handler(struct scsi_cmnd *cmnd)
 
 	fc_host_post_vendor_event(shost, fc_get_event_number(),
 		sizeof(scsi_event), (char *)&scsi_event, LPFC_NL_VENDOR_ID);
+
+	status = fc_block_scsi_eh(cmnd);
+	if (status != SUCCESS)
+		return status;
 
 	/*
 	 * Since the driver manages a single bus device, reset all
@@ -3827,7 +3826,6 @@ lpfc_slave_alloc(struct scsi_device *sdev)
  *
  * This routine configures following items
  *   - Tag command queuing support for @sdev if supported.
- *   - Dev loss time out value of fc_rport.
  *   - Enable SLI polling for fcp ring if ENABLE_FCP_RING_POLLING flag is set.
  *
  * Return codes:
@@ -3838,20 +3836,11 @@ lpfc_slave_configure(struct scsi_device *sdev)
 {
 	struct lpfc_vport *vport = (struct lpfc_vport *) sdev->host->hostdata;
 	struct lpfc_hba   *phba = vport->phba;
-	struct fc_rport   *rport = starget_to_rport(sdev->sdev_target);
 
 	if (sdev->tagged_supported)
 		scsi_activate_tcq(sdev, vport->cfg_lun_queue_depth);
 	else
 		scsi_deactivate_tcq(sdev, vport->cfg_lun_queue_depth);
-
-	/*
-	 * Initialize the fc transport attributes for the target
-	 * containing this scsi device.  Also note that the driver's
-	 * target pointer is stored in the starget_data for the
-	 * driver's sysfs entry point functions.
-	 */
-	rport->dev_loss_tmo = vport->cfg_devloss_tmo;
 
 	if (phba->cfg_poll & ENABLE_FCP_RING_POLLING) {
 		lpfc_sli_handle_fast_ring_event(phba,
@@ -3883,6 +3872,7 @@ lpfc_slave_destroy(struct scsi_device *sdev)
 struct scsi_host_template lpfc_template = {
 	.module			= THIS_MODULE,
 	.name			= LPFC_DRIVER_NAME,
+	.proc_name		= KBUILD_MODNAME,
 	.info			= lpfc_info,
 	.queuecommand		= lpfc_queuecommand,
 	.eh_abort_handler	= lpfc_abort_handler,
@@ -3906,6 +3896,7 @@ struct scsi_host_template lpfc_template = {
 struct scsi_host_template lpfc_vport_template = {
 	.module			= THIS_MODULE,
 	.name			= LPFC_DRIVER_NAME,
+	.proc_name		= KBUILD_MODNAME,
 	.info			= lpfc_info,
 	.queuecommand		= lpfc_queuecommand,
 	.eh_abort_handler	= lpfc_abort_handler,

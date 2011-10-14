@@ -28,19 +28,19 @@
  */
 
 #ifdef CONFIG_SMP
-#define LOCK_PREFIX \
+#define LOCK_PREFIX_HERE \
 		".section .smp_locks,\"a\"\n"	\
-		_ASM_ALIGN "\n"			\
-		_ASM_PTR "661f\n" /* address */	\
+		".balign 4\n"			\
+		".long 671f - .\n" /* offset */	\
 		".previous\n"			\
-		"661:\n\tlock; "
+		"671:"
+
+#define LOCK_PREFIX LOCK_PREFIX_HERE "\n\tlock; "
 
 #else /* ! CONFIG_SMP */
+#define LOCK_PREFIX_HERE ""
 #define LOCK_PREFIX ""
 #endif
-
-/* This must be included *after* the definition of LOCK_PREFIX */
-#include <asm/cpufeature.h>
 
 struct alt_instr {
 	u8 *instr;		/* original instruction */
@@ -64,12 +64,18 @@ extern void alternatives_smp_module_add(struct module *mod, char *name,
 					void *text, void *text_end);
 extern void alternatives_smp_module_del(struct module *mod);
 extern void alternatives_smp_switch(int smp);
+extern int alternatives_text_reserved(void *start, void *end);
+extern bool skip_smp_alternatives;
 #else
 static inline void alternatives_smp_module_add(struct module *mod, char *name,
 					       void *locks, void *locks_end,
 					       void *text, void *text_end) {}
 static inline void alternatives_smp_module_del(struct module *mod) {}
 static inline void alternatives_smp_switch(int smp) {}
+static inline int alternatives_text_reserved(void *start, void *end)
+{
+	return 0;
+}
 #endif	/* CONFIG_SMP */
 
 /* alternative assembly primitive: */
@@ -90,6 +96,12 @@ static inline void alternatives_smp_switch(int smp) {}
       ".section .altinstr_replacement, \"ax\"\n"			\
       "663:\n\t" newinstr "\n664:\n"		/* replacement     */	\
       ".previous"
+
+/*
+ * This must be included *after* the definition of ALTERNATIVE due to
+ * <asm/arch_hweight.h>
+ */
+#include <asm/cpufeature.h>
 
 /*
  * Alternative instructions for different CPU types or capabilities.
@@ -149,6 +161,8 @@ static inline void apply_paravirt(struct paravirt_patch_site *start,
 #define __parainstructions_end	NULL
 #endif
 
+extern void *text_poke_early(void *addr, const void *opcode, size_t len);
+
 /*
  * Clear and restore the kernel write-protection flag on the local CPU.
  * Allows the kernel to edit read-only pages.
@@ -161,10 +175,19 @@ static inline void apply_paravirt(struct paravirt_patch_site *start,
  * invalid instruction possible) or if the instructions are changed from a
  * consistent state to another consistent state atomically.
  * More care must be taken when modifying code in the SMP case because of
- * Intel's errata.
+ * Intel's errata. text_poke_smp() takes care that errata, but still
+ * doesn't support NMI/MCE handler code modifying.
  * On the local CPU you need to be protected again NMI or MCE handlers seeing an
  * inconsistent instruction while you patch.
  */
+struct text_poke_param {
+	void *addr;
+	const void *opcode;
+	size_t len;
+};
+
 extern void *text_poke(void *addr, const void *opcode, size_t len);
+extern void *text_poke_smp(void *addr, const void *opcode, size_t len);
+extern void text_poke_smp_batch(struct text_poke_param *params, int n);
 
 #endif /* _ASM_X86_ALTERNATIVE_H */

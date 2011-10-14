@@ -41,7 +41,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/dis-asm.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #define abort() BUG()
 #else	/* __KERNEL__ */
 #include "dis-asm.h"
@@ -207,7 +207,7 @@ fetch_data (struct disassemble_info *info, bfd_byte *addr)
       longjmp (priv->bailout, 1);
 #else	/* __KERNEL__ */
 	/* XXX - what to do? */
-	kdb_printf("Hmm. longjmp.\n");
+	lkdb_printf("Hmm. longjmp.\n");
 #endif	/* __KERNEL__ */
     }
   else

@@ -12,7 +12,7 @@
  *
  */
 
-/*  TRUE if it is user context */
+/* TRUE if it is user context */
 #define P9_IS_USER_CONTEXT (!segment_eq(get_fs(), KERNEL_DS))
 
 /**

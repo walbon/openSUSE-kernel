@@ -24,7 +24,7 @@
 
 #include <asm/uaccess.h>
 
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 
 /*
@@ -32,7 +32,7 @@
  */
 
 /*
- * kdbgetsymval
+ * lkdbgetsymval
  *
  *	Return the address of the given symbol.
  *
@@ -49,25 +49,25 @@
  */
 
 int
-kdbgetsymval(const char *symname, kdb_symtab_t *symtab)
+lkdbgetsymval(const char *symname, lkdb_symtab_t *symtab)
 {
 	if (KDB_DEBUG(AR))
-		kdb_printf("kdbgetsymval: symname=%s, symtab=%p\n", symname, symtab);
+		lkdb_printf("lkdbgetsymval: symname=%s, symtab=%p\n", symname, symtab);
 	memset(symtab, 0, sizeof(*symtab));
 
 	if ((symtab->sym_start = kallsyms_lookup_name(symname))) {
 		if (KDB_DEBUG(AR))
-			kdb_printf("kdbgetsymval: returns 1, symtab->sym_start=0x%lx\n", symtab->sym_start);
+			lkdb_printf("lkdbgetsymval: returns 1, symtab->sym_start=0x%lx\n", symtab->sym_start);
 		return 1;
 	}
 	if (KDB_DEBUG(AR))
-		kdb_printf("kdbgetsymval: returns 0\n");
+		lkdb_printf("lkdbgetsymval: returns 0\n");
 	return 0;
 }
-EXPORT_SYMBOL(kdbgetsymval);
+EXPORT_SYMBOL(lkdbgetsymval);
 
 /*
- * kdbnearsym
+ * lkdbnearsym
  *
  *	Return the name of the symbol with the nearest address
  *	less than 'addr'.
@@ -85,16 +85,16 @@ EXPORT_SYMBOL(kdbgetsymval);
  *	2.6 kallsyms has a "feature" where it unpacks the name into a string.
  *	If that string is reused before the caller expects it then the caller
  *	sees its string change without warning.  To avoid cluttering up the
- *	main kdb code with lots of kdb_strdup, tests and kfree calls, kdbnearsym
+ *	main kdb code with lots of lkdb_strdup, tests and kfree calls, lkdbnearsym
  *	maintains an LRU list of the last few unique strings.  The list is sized
- *	large enough to hold active strings, no kdb caller of kdbnearsym makes
+ *	large enough to hold active strings, no kdb caller of lkdbnearsym makes
  *	more than ~20 later calls before using a saved value.
  */
 
 static char *kdb_name_table[100];	/* arbitrary size */
 
 int
-kdbnearsym(unsigned long addr, kdb_symtab_t *symtab)
+lkdbnearsym(unsigned long addr, lkdb_symtab_t *symtab)
 {
 	int ret = 0;
 	unsigned long symbolsize;
@@ -103,14 +103,14 @@ kdbnearsym(unsigned long addr, kdb_symtab_t *symtab)
 	char *knt1 = NULL;
 
 	if (KDB_DEBUG(AR))
-		kdb_printf("kdbnearsym: addr=0x%lx, symtab=%p\n", addr, symtab);
+		lkdb_printf("lkdbnearsym: addr=0x%lx, symtab=%p\n", addr, symtab);
 	memset(symtab, 0, sizeof(*symtab));
 
 	if (addr < 4096)
 		goto out;
-	knt1 = debug_kmalloc(knt1_size, GFP_ATOMIC);
+	knt1 = ldebug_kmalloc(knt1_size, GFP_ATOMIC);
 	if (!knt1) {
-		kdb_printf("kdbnearsym: addr=0x%lx cannot kmalloc knt1\n", addr);
+		lkdb_printf("lkdbnearsym: addr=0x%lx cannot kmalloc knt1\n", addr);
 		goto out;
 	}
 	symtab->sym_name = kallsyms_lookup(addr, &symbolsize , &offset, (char **)(&symtab->mod_name), knt1);
@@ -140,11 +140,11 @@ kdbnearsym(unsigned long addr, kdb_symtab_t *symtab)
 				break;
 		}
 		if (i >= ARRAY_SIZE(kdb_name_table)) {
-			debug_kfree(kdb_name_table[0]);
+			ldebug_kfree(kdb_name_table[0]);
 			memcpy(kdb_name_table, kdb_name_table+1,
 			       sizeof(kdb_name_table[0])*(ARRAY_SIZE(kdb_name_table)-1));
 		} else {
-			debug_kfree(knt1);
+			ldebug_kfree(knt1);
 			knt1 = kdb_name_table[i];
 			memcpy(kdb_name_table+i, kdb_name_table+i+1,
 			       sizeof(kdb_name_table[0])*(ARRAY_SIZE(kdb_name_table)-i-1));
@@ -158,27 +158,27 @@ kdbnearsym(unsigned long addr, kdb_symtab_t *symtab)
 	if (symtab->mod_name == NULL)
 		symtab->mod_name = "kernel";
 	if (KDB_DEBUG(AR))
-		kdb_printf("kdbnearsym: returns %d symtab->sym_start=0x%lx, symtab->mod_name=%p, symtab->sym_name=%p (%s)\n", ret, symtab->sym_start, symtab->mod_name, symtab->sym_name, symtab->sym_name);
+		lkdb_printf("lkdbnearsym: returns %d symtab->sym_start=0x%lx, symtab->mod_name=%p, symtab->sym_name=%p (%s)\n", ret, symtab->sym_start, symtab->mod_name, symtab->sym_name, symtab->sym_name);
 
 out:
-	debug_kfree(knt1);
+	ldebug_kfree(knt1);
 	return ret;
 }
 
 void
-kdbnearsym_cleanup(void)
+lkdbnearsym_cleanup(void)
 {
 	int i;
 	for (i = 0; i < ARRAY_SIZE(kdb_name_table); ++i) {
 		if (kdb_name_table[i]) {
-			debug_kfree(kdb_name_table[i]);
+			ldebug_kfree(kdb_name_table[i]);
 			kdb_name_table[i] = NULL;
 		}
 	}
 }
 
 /*
- * kallsyms_symbol_complete
+ * lkallsyms_symbol_complete
  *
  * Parameters:
  *	prefix_name	prefix of a symbol name to lookup
@@ -192,7 +192,7 @@ kdbnearsym_cleanup(void)
 
 static char ks_namebuf[KSYM_NAME_LEN+1], ks_namebuf_prev[KSYM_NAME_LEN+1];
 
-int kallsyms_symbol_complete(char *prefix_name, int max_len)
+int lkallsyms_symbol_complete(char *prefix_name, int max_len)
 {
 	loff_t pos = 0;
 	int prefix_len = strlen(prefix_name), prev_len = 0;
@@ -222,7 +222,7 @@ int kallsyms_symbol_complete(char *prefix_name, int max_len)
 }
 
 /*
- * kallsyms_symbol_next
+ * lkallsyms_symbol_next
  *
  * Parameters:
  *	prefix_name	prefix of a symbol name to lookup
@@ -232,7 +232,7 @@ int kallsyms_symbol_complete(char *prefix_name, int max_len)
  *	0 if no string found
  */
 
-int kallsyms_symbol_next(char *prefix_name, int flag)
+int lkallsyms_symbol_next(char *prefix_name, int flag)
 {
 	int prefix_len = strlen(prefix_name);
 	static loff_t pos;
@@ -292,7 +292,7 @@ kdb_ipi(struct pt_regs *regs, void (*ack_interrupt)(void))
 			(*ack_interrupt)();	/* Acknowledge the interrupt */
 		KDB_STATE_CLEAR(WAIT_IPI);
 		KDB_DEBUG_STATE("kdb_ipi 1", 0);
-		kdb(KDB_REASON_SWITCH, 0, regs);	/* Spin in kdb() */
+		kdb(LKDB_REASON_SWITCH, 0, regs);	/* Spin in kdb() */
 		KDB_DEBUG_STATE("kdb_ipi 2", 0);
 		return 1;
 	}
@@ -301,7 +301,7 @@ kdb_ipi(struct pt_regs *regs, void (*ack_interrupt)(void))
 #endif	/* CONFIG_SMP */
 
 /*
- * kdb_symbol_print
+ * lkdb_symbol_print
  *
  *	Standard method for printing a symbol name and offset.
  * Inputs:
@@ -322,15 +322,15 @@ kdb_ipi(struct pt_regs *regs, void (*ack_interrupt)(void))
  */
 
 void
-kdb_symbol_print(kdb_machreg_t addr, const kdb_symtab_t *symtab_p, unsigned int punc)
+lkdb_symbol_print(kdb_machreg_t addr, const lkdb_symtab_t *symtab_p, unsigned int punc)
 {
-	kdb_symtab_t symtab, *symtab_p2;
+	lkdb_symtab_t symtab, *symtab_p2;
 	if (symtab_p) {
-		symtab_p2 = (kdb_symtab_t *)symtab_p;
+		symtab_p2 = (lkdb_symtab_t *)symtab_p;
 	}
 	else {
 		symtab_p2 = &symtab;
-		kdbnearsym(addr, symtab_p2);
+		lkdbnearsym(addr, symtab_p2);
 	}
 	if (symtab_p2->sym_name || (punc & KDB_SP_VALUE)) {
 		;	/* drop through */
@@ -339,42 +339,42 @@ kdb_symbol_print(kdb_machreg_t addr, const kdb_symtab_t *symtab_p, unsigned int 
 		return;
 	}
 	if (punc & KDB_SP_SPACEB) {
-		kdb_printf(" ");
+		lkdb_printf(" ");
 	}
 	if (punc & KDB_SP_VALUE) {
-		kdb_printf(kdb_machreg_fmt0, addr);
+		lkdb_printf(kdb_machreg_fmt0, addr);
 	}
 	if (symtab_p2->sym_name) {
 		if (punc & KDB_SP_VALUE) {
-			kdb_printf(" ");
+			lkdb_printf(" ");
 		}
 		if (punc & KDB_SP_PAREN) {
-			kdb_printf("(");
+			lkdb_printf("(");
 		}
 		if (strcmp(symtab_p2->mod_name, "kernel")) {
-			kdb_printf("[%s]", symtab_p2->mod_name);
+			lkdb_printf("[%s]", symtab_p2->mod_name);
 		}
-		kdb_printf("%s", symtab_p2->sym_name);
+		lkdb_printf("%s", symtab_p2->sym_name);
 		if (addr != symtab_p2->sym_start) {
-			kdb_printf("+0x%lx", addr - symtab_p2->sym_start);
+			lkdb_printf("+0x%lx", addr - symtab_p2->sym_start);
 		}
 		if (punc & KDB_SP_SYMSIZE) {
-			kdb_printf("/0x%lx", symtab_p2->sym_end - symtab_p2->sym_start);
+			lkdb_printf("/0x%lx", symtab_p2->sym_end - symtab_p2->sym_start);
 		}
 		if (punc & KDB_SP_PAREN) {
-			kdb_printf(")");
+			lkdb_printf(")");
 		}
 	}
 	if (punc & KDB_SP_SPACEA) {
-		kdb_printf(" ");
+		lkdb_printf(" ");
 	}
 	if (punc & KDB_SP_NEWLINE) {
-		kdb_printf("\n");
+		lkdb_printf("\n");
 	}
 }
 
 /*
- * kdb_strdup
+ * lkdb_strdup
  *
  *	kdb equivalent of strdup, for disasm code.
  * Inputs:
@@ -391,7 +391,7 @@ kdb_symbol_print(kdb_machreg_t addr, const kdb_symtab_t *symtab_p, unsigned int 
  *	available when string.o is used in boot loaders.
  */
 
-char *kdb_strdup(const char *str, gfp_t type)
+char *lkdb_strdup(const char *str, gfp_t type)
 {
 	int n = strlen(str)+1;
 	char *s = kmalloc(n, type);
@@ -400,7 +400,7 @@ char *kdb_strdup(const char *str, gfp_t type)
 }
 
 /*
- * kdb_getarea_size
+ * lkdb_getarea_size
  *
  *	Read an area of data.  The kdb equivalent of copy_from_user, with
  *	kdb messages for invalid addresses.
@@ -416,15 +416,15 @@ char *kdb_strdup(const char *str, gfp_t type)
  *	none.
  */
 
-int kdb_getarea_size(void *res, unsigned long addr, size_t size)
+int lkdb_getarea_size(void *res, unsigned long addr, size_t size)
 {
 	int ret = kdba_getarea_size(res, addr, size);
 	if (ret) {
 		if (!KDB_STATE(SUPPRESS)) {
-			kdb_printf("kdb_getarea: Bad address 0x%lx\n", addr);
+			lkdb_printf("lkdb_getarea: Bad address 0x%lx\n", addr);
 			KDB_STATE_SET(SUPPRESS);
 		}
-		ret = KDB_BADADDR;
+		ret = LKDB_BADADDR;
 	}
 	else {
 		KDB_STATE_CLEAR(SUPPRESS);
@@ -433,7 +433,7 @@ int kdb_getarea_size(void *res, unsigned long addr, size_t size)
 }
 
 /*
- * kdb_putarea_size
+ * lkdb_putarea_size
  *
  *	Write an area of data.  The kdb equivalent of copy_to_user, with
  *	kdb messages for invalid addresses.
@@ -449,15 +449,15 @@ int kdb_getarea_size(void *res, unsigned long addr, size_t size)
  *	none.
  */
 
-int kdb_putarea_size(unsigned long addr, void *res, size_t size)
+int lkdb_putarea_size(unsigned long addr, void *res, size_t size)
 {
 	int ret = kdba_putarea_size(addr, res, size);
 	if (ret) {
 		if (!KDB_STATE(SUPPRESS)) {
-			kdb_printf("kdb_putarea: Bad address 0x%lx\n", addr);
+			lkdb_printf("lkdb_putarea: Bad address 0x%lx\n", addr);
 			KDB_STATE_SET(SUPPRESS);
 		}
-		ret = KDB_BADADDR;
+		ret = LKDB_BADADDR;
 	}
 	else {
 		KDB_STATE_CLEAR(SUPPRESS);
@@ -471,7 +471,7 @@ int kdb_putarea_size(unsigned long addr, void *res, size_t size)
  * Read data from a physical address. Validate the address is in range,
  * use kmap_atomic() to get data
  *
- * Similar to kdb_getarea() - but for phys addresses
+ * Similar to lkdb_getarea() - but for phys addresses
  *
  * Inputs:
  * 	res	Pointer to the word to receive the result
@@ -502,7 +502,7 @@ static int kdb_getphys(void *res, unsigned long addr, size_t size)
 }
 
 /*
- * kdb_getphysword
+ * lkdb_getphysword
  *
  * Inputs:
  *	word	Pointer to the word to receive the result.
@@ -515,7 +515,7 @@ static int kdb_getphys(void *res, unsigned long addr, size_t size)
  * Locking:
  *	none.
  */
-int kdb_getphysword(unsigned long *word, unsigned long addr, size_t size)
+int lkdb_getphysword(unsigned long *word, unsigned long addr, size_t size)
 {
 	int diag;
 	__u8  w1;
@@ -545,16 +545,16 @@ int kdb_getphysword(unsigned long *word, unsigned long addr, size_t size)
 		}
 		/* drop through */
 	default:
-		diag = KDB_BADWIDTH;
-		kdb_printf("kdb_getphysword: bad width %ld\n", (long) size);
+		diag = LKDB_BADWIDTH;
+		lkdb_printf("lkdb_getphysword: bad width %ld\n", (long) size);
 	}
 	return(diag);
 }
 
 /*
- * kdb_getword
+ * lkdb_getword
  *
- *	Read a binary value.  Unlike kdb_getarea, this treats data as numbers.
+ *	Read a binary value.  Unlike lkdb_getarea, this treats data as numbers.
  * Inputs:
  *	word	Pointer to the word to receive the result.
  *	addr	Address of the area to copy.
@@ -567,7 +567,7 @@ int kdb_getphysword(unsigned long *word, unsigned long addr, size_t size)
  *	none.
  */
 
-int kdb_getword(unsigned long *word, unsigned long addr, size_t size)
+int lkdb_getword(unsigned long *word, unsigned long addr, size_t size)
 {
 	int diag;
 	__u8  w1;
@@ -577,35 +577,35 @@ int kdb_getword(unsigned long *word, unsigned long addr, size_t size)
 	*word = 0;	/* Default value if addr or size is invalid */
 	switch (size) {
 	case 1:
-		if (!(diag = kdb_getarea(w1, addr)))
+		if (!(diag = lkdb_getarea(w1, addr)))
 			*word = w1;
 		break;
 	case 2:
-		if (!(diag = kdb_getarea(w2, addr)))
+		if (!(diag = lkdb_getarea(w2, addr)))
 			*word = w2;
 		break;
 	case 4:
-		if (!(diag = kdb_getarea(w4, addr)))
+		if (!(diag = lkdb_getarea(w4, addr)))
 			*word = w4;
 		break;
 	case 8:
 		if (size <= sizeof(*word)) {
-			if (!(diag = kdb_getarea(w8, addr)))
+			if (!(diag = lkdb_getarea(w8, addr)))
 				*word = w8;
 			break;
 		}
 		/* drop through */
 	default:
-		diag = KDB_BADWIDTH;
-		kdb_printf("kdb_getword: bad width %ld\n", (long) size);
+		diag = LKDB_BADWIDTH;
+		lkdb_printf("lkdb_getword: bad width %ld\n", (long) size);
 	}
 	return(diag);
 }
 
 /*
- * kdb_putword
+ * lkdb_putword
  *
- *	Write a binary value.  Unlike kdb_putarea, this treats data as numbers.
+ *	Write a binary value.  Unlike lkdb_putarea, this treats data as numbers.
  * Inputs:
  *	addr	Address of the area to write to..
  *	word	The value to set.
@@ -618,7 +618,7 @@ int kdb_getword(unsigned long *word, unsigned long addr, size_t size)
  *	none.
  */
 
-int kdb_putword(unsigned long addr, unsigned long word, size_t size)
+int lkdb_putword(unsigned long addr, unsigned long word, size_t size)
 {
 	int diag;
 	__u8  w1;
@@ -628,32 +628,32 @@ int kdb_putword(unsigned long addr, unsigned long word, size_t size)
 	switch (size) {
 	case 1:
 		w1 = word;
-		diag = kdb_putarea(addr, w1);
+		diag = lkdb_putarea(addr, w1);
 		break;
 	case 2:
 		w2 = word;
-		diag = kdb_putarea(addr, w2);
+		diag = lkdb_putarea(addr, w2);
 		break;
 	case 4:
 		w4 = word;
-		diag = kdb_putarea(addr, w4);
+		diag = lkdb_putarea(addr, w4);
 		break;
 	case 8:
 		if (size <= sizeof(word)) {
 			w8 = word;
-			diag = kdb_putarea(addr, w8);
+			diag = lkdb_putarea(addr, w8);
 			break;
 		}
 		/* drop through */
 	default:
-		diag = KDB_BADWIDTH;
-		kdb_printf("kdb_putword: bad width %ld\n", (long) size);
+		diag = LKDB_BADWIDTH;
+		lkdb_printf("lkdb_putword: bad width %ld\n", (long) size);
 	}
 	return(diag);
 }
 
 /*
- * kdb_task_state_string
+ * lkdb_task_state_string
  *
  *	Convert a string containing any of the letters DRSTCZEUIMA to a mask
  *	for the process state field and return the value.  If no argument is
@@ -682,10 +682,10 @@ int kdb_putword(unsigned long addr, unsigned long word, size_t size)
 #define DAEMON		(1UL << (8*sizeof(unsigned long) - 4))
 
 unsigned long
-kdb_task_state_string(const char *s)
+lkdb_task_state_string(const char *s)
 {
 	long res = 0;
-	if (!s && !(s = kdbgetenv("PS"))) {
+	if (!s && !(s = lkdbgetenv("PS"))) {
 		s = "DRSTCZEU";	/* default value for ps */
 	}
 	while (*s) {
@@ -702,7 +702,7 @@ kdb_task_state_string(const char *s)
 		case 'M': res |= DAEMON; break;
 		case 'A': res = ~0UL; break;
 		default:
-			  kdb_printf("%s: unknown flag '%c' ignored\n", __FUNCTION__, *s);
+			  lkdb_printf("%s: unknown flag '%c' ignored\n", __FUNCTION__, *s);
 			  break;
 		}
 		++s;
@@ -711,7 +711,7 @@ kdb_task_state_string(const char *s)
 }
 
 /*
- * kdb_task_state_char
+ * lkdb_task_state_char
  *
  *	Return the character that represents the task state.
  * Inputs:
@@ -725,10 +725,10 @@ kdb_task_state_string(const char *s)
  */
 
 char
-kdb_task_state_char (const struct task_struct *p)
+lkdb_task_state_char (const struct task_struct *p)
 {
-	int cpu = kdb_process_cpu(p);
-	struct kdb_running_process *krp = kdb_running_process + cpu;
+	int cpu = lkdb_process_cpu(p);
+	struct lkdb_running_process *krp = lkdb_running_process + cpu;
 	char state = (p->state == 0) ? 'R' :
 		     (p->state < 0) ? 'U' :
 		     (p->state & TASK_UNINTERRUPTIBLE) ? 'D' :
@@ -738,31 +738,34 @@ kdb_task_state_char (const struct task_struct *p)
 		     (p->exit_state & EXIT_DEAD) ? 'E' :
 		     (p->state & TASK_INTERRUPTIBLE) ? 'S' : '?';
 	if (p->pid == 0) {
-		/* Idle task.  Is it really idle, apart from the kdb interrupt? */
-		if (!kdb_task_has_cpu(p) || krp->irq_depth == 1) {
+		/*
+		 * Idle task.  Is it really idle, apart from the kdb interrupt?
+		 * In 3.0 all the idle threads except the first are 'kworker's.
+		 */
+		if (!lkdb_task_has_cpu(p) || krp->irq_depth == 1) {
 			/* There is a corner case when the idle task takes an
 			 * interrupt and dies in the interrupt code.  It has an
 			 * interrupt count of 1 but that did not come from kdb.
 			 * This corner case can only occur on the initial cpu,
 			 * all the others were entered via the kdb IPI.
 			 */
-			if (cpu != kdb_initial_cpu || KDB_STATE_CPU(KEYBOARD, cpu))
+			if (cpu != lkdb_initial_cpu ||
+						KDB_STATE_CPU(KEYBOARD, cpu))
 				state = 'I';	/* idle task */
 		}
-	}
-	else if (!p->mm && state == 'S') {
+	} else if (!p->mm && state == 'S') {
 		state = 'M';	/* sleeping system daemon */
 	}
 	return state;
 }
 
 /*
- * kdb_task_state
+ * lkdb_task_state
  *
  *	Return true if a process has the desired state given by the mask.
  * Inputs:
  *	p	struct task for the process
- *	mask	mask from kdb_task_state_string to select processes
+ *	mask	mask from lkdb_task_state_string to select processes
  * Outputs:
  *	none.
  * Returns:
@@ -772,29 +775,29 @@ kdb_task_state_char (const struct task_struct *p)
  */
 
 unsigned long
-kdb_task_state(const struct task_struct *p, unsigned long mask)
+lkdb_task_state(const struct task_struct *p, unsigned long mask)
 {
-	char state[] = { kdb_task_state_char(p), '\0' };
-	return (mask & kdb_task_state_string(state)) != 0;
+	char state[] = { lkdb_task_state_char(p), '\0' };
+	return (mask & lkdb_task_state_string(state)) != 0;
 }
 
-struct kdb_running_process kdb_running_process[NR_CPUS];
+struct lkdb_running_process lkdb_running_process[NR_CPUS];
 
-/* Save the state of a running process and invoke kdb_main_loop.  This is
+/* Save the state of a running process and invoke lkdb_main_loop.  This is
  * invoked on the current process on each cpu (assuming the cpu is responding).
  */
 
 int
-kdb_save_running(struct pt_regs *regs, kdb_reason_t reason,
-		 kdb_reason_t reason2, int error, kdb_dbtrap_t db_result)
+kdb_save_running(struct pt_regs *regs, lkdb_reason_t reason,
+		 lkdb_reason_t reason2, int error, kdb_dbtrap_t db_result)
 {
-	struct kdb_running_process *krp = kdb_running_process + smp_processor_id();
+	struct lkdb_running_process *krp = lkdb_running_process + smp_processor_id();
 	krp->p = current;
 	krp->regs = regs;
-	krp->seqno = kdb_seqno;
+	krp->seqno = lkdb_seqno;
 	krp->irq_depth = hardirq_count() >> HARDIRQ_SHIFT;
 	kdba_save_running(&(krp->arch), regs);
-	return kdb_main_loop(reason, reason2, error, db_result, regs);
+	return lkdb_main_loop(reason, reason2, error, db_result, regs);
 }
 
 /*
@@ -804,7 +807,7 @@ kdb_save_running(struct pt_regs *regs, kdb_reason_t reason,
  * Inputs:
  *	regs	struct pt_regs for the process
  * Outputs:
- *	Updates kdb_running_process[] for this cpu.
+ *	Updates lkdb_running_process[] for this cpu.
  * Returns:
  *	none.
  * Locking:
@@ -814,14 +817,14 @@ kdb_save_running(struct pt_regs *regs, kdb_reason_t reason,
 void
 kdb_unsave_running(struct pt_regs *regs)
 {
-	struct kdb_running_process *krp = kdb_running_process + smp_processor_id();
+	struct lkdb_running_process *krp = lkdb_running_process + smp_processor_id();
 	kdba_unsave_running(&(krp->arch), regs);
 	krp->seqno = 0;
 }
 
 
 /*
- * kdb_print_nameval
+ * lkdb_print_nameval
  *
  *	Print a name and its value, converting the value to a symbol lookup
  *	if possible.
@@ -837,14 +840,14 @@ kdb_unsave_running(struct pt_regs *regs)
  */
 
 void
-kdb_print_nameval(const char *name, unsigned long val)
+lkdb_print_nameval(const char *name, unsigned long val)
 {
-	kdb_symtab_t symtab;
-	kdb_printf("  %-11.11s ", name);
-	if (kdbnearsym(val, &symtab))
-		kdb_symbol_print(val, &symtab, KDB_SP_VALUE|KDB_SP_SYMSIZE|KDB_SP_NEWLINE);
+	lkdb_symtab_t symtab;
+	lkdb_printf("  %-11.11s ", name);
+	if (lkdbnearsym(val, &symtab))
+		lkdb_symbol_print(val, &symtab, KDB_SP_VALUE|KDB_SP_SYMSIZE|KDB_SP_NEWLINE);
 	else
-		kdb_printf("0x%lx\n", val);
+		lkdb_printf("0x%lx\n", val);
 }
 
 static struct page * kdb_get_one_user_page(const struct task_struct *tsk, unsigned long start,
@@ -879,7 +882,7 @@ int kdb_getuserarea_size(void *to, unsigned long from, size_t size)
 	struct page *page;
 	void *vaddr;
 
-	page = kdb_get_one_user_page(kdb_current_task, from, size, 0);
+	page = kdb_get_one_user_page(lkdb_current_task, from, size, 0);
 	if (!page)
 		return size;
 
@@ -895,7 +898,7 @@ int kdb_putuserarea_size(unsigned long to, void *from, size_t size)
 	struct page *page;
 	void *vaddr;
 
-	page = kdb_get_one_user_page(kdb_current_task, to, size, 1);
+	page = kdb_get_one_user_page(lkdb_current_task, to, size, 1);
 	if (!page)
 		return size;
 
@@ -967,7 +970,7 @@ get_dap_lock(void)
 }
 
 void
-*debug_kmalloc(size_t size, gfp_t flags)
+*ldebug_kmalloc(size_t size, gfp_t flags)
 {
 	unsigned int rem, h_offset;
 	struct debug_alloc_header *best, *bestprev, *prev, *h;
@@ -1026,7 +1029,7 @@ out:
 }
 
 void
-debug_kfree(void *p)
+ldebug_kfree(void *p)
 {
 	struct debug_alloc_header *h;
 	unsigned int h_offset;
@@ -1085,17 +1088,17 @@ debug_kfree(void *p)
 }
 
 void
-debug_kusage(void)
+ldebug_kusage(void)
 {
 	struct debug_alloc_header *h_free, *h_used;
 #ifdef	CONFIG_IA64
 	/* FIXME: using dah for ia64 unwind always results in a memory leak.
-	 * Fix that memory leak first, then set debug_kusage_one_time = 1 for
+	 * Fix that memory leak first, then set ldebug_kusage_one_time = 1 for
 	 * all architectures.
 	 */
-	static int debug_kusage_one_time = 0;
+	static int ldebug_kusage_one_time = 0;
 #else
-	static int debug_kusage_one_time = 1;
+	static int ldebug_kusage_one_time = 1;
 #endif
 	if (!get_dap_lock()) {
 		__release(dap_lock);	/* we never actually got it */
@@ -1106,19 +1109,19 @@ debug_kusage(void)
 	    (h_free->size == sizeof(debug_alloc_pool_aligned) - dah_overhead ||
 	     dah_first_call))
 		goto out;
-	if (!debug_kusage_one_time)
+	if (!ldebug_kusage_one_time)
 		goto out;
-	debug_kusage_one_time = 0;
-	kdb_printf("%s: debug_kmalloc memory leak dah_first %d\n",
+	ldebug_kusage_one_time = 0;
+	lkdb_printf("%s: ldebug_kmalloc memory leak dah_first %d\n",
 		   __FUNCTION__, dah_first);
 	if (dah_first) {
 		h_used = (struct debug_alloc_header *)debug_alloc_pool;
-		kdb_printf("%s: h_used %p size %d\n", __FUNCTION__, h_used, h_used->size);
+		lkdb_printf("%s: h_used %p size %d\n", __FUNCTION__, h_used, h_used->size);
 	}
 	do {
 		h_used = (struct debug_alloc_header *)
 			  ((char *)h_free + dah_overhead + h_free->size);
-		kdb_printf("%s: h_used %p size %d caller %p\n",
+		lkdb_printf("%s: h_used %p size %d caller %p\n",
 			   __FUNCTION__, h_used, h_used->size, h_used->caller);
 		h_free = (struct debug_alloc_header *)
 			  (debug_alloc_pool + h_free->next);
@@ -1127,28 +1130,28 @@ debug_kusage(void)
 		  ((char *)h_free + dah_overhead + h_free->size);
 	if ((char *)h_used - debug_alloc_pool !=
 	    sizeof(debug_alloc_pool_aligned))
-		kdb_printf("%s: h_used %p size %d caller %p\n",
+		lkdb_printf("%s: h_used %p size %d caller %p\n",
 			   __FUNCTION__, h_used, h_used->size, h_used->caller);
 out:
 	spin_unlock(&dap_lock);
 }
 
-/* Maintain a small stack of kdb_flags to allow recursion without disturbing
+/* Maintain a small stack of lkdb_flags to allow recursion without disturbing
  * the global kdb state.
  */
 
-static int kdb_flags_stack[4], kdb_flags_index;
+static int lkdb_flags_stack[4], lkdb_flags_index;
 
 void
-kdb_save_flags(void)
+lkdb_save_flags(void)
 {
-	BUG_ON(kdb_flags_index >= ARRAY_SIZE(kdb_flags_stack));
-	kdb_flags_stack[kdb_flags_index++] = kdb_flags;
+	BUG_ON(lkdb_flags_index >= ARRAY_SIZE(lkdb_flags_stack));
+	lkdb_flags_stack[lkdb_flags_index++] = lkdb_flags;
 }
 
 void
-kdb_restore_flags(void)
+lkdb_restore_flags(void)
 {
-	BUG_ON(kdb_flags_index <= 0);
-	kdb_flags = kdb_flags_stack[--kdb_flags_index];
+	BUG_ON(lkdb_flags_index <= 0);
+	lkdb_flags = lkdb_flags_stack[--lkdb_flags_index];
 }

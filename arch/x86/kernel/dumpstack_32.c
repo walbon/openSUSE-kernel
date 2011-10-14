@@ -10,14 +10,11 @@
 #include <linux/module.h>
 #include <linux/ptrace.h>
 #include <linux/kexec.h>
+#include <linux/sysfs.h>
 #include <linux/bug.h>
 #include <linux/nmi.h>
-#include <linux/sysfs.h>
 
-#include <linux/unwind.h>
 #include <asm/stacktrace.h>
-
-#include "dumpstack.h"
 
 
 void dump_trace(struct task_struct *task, struct pt_regs *regs,
@@ -29,27 +26,20 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 	if (!task)
 		task = current;
 
-#ifdef CONFIG_FRAME_POINTER
-	if (!bp) {
-		if (task == current) {
-			/* Grab bp right from our regs */
-			get_bp(bp);
-		} else {
-			/* bp is the last reg pushed by switch_to */
-			bp = *(unsigned long *) task->thread.sp;
-		}
-	}
-#endif
-
+	bp = stack_frame(task, regs);
 	if (try_stack_unwind(task, regs, &stack, &bp, ops, data))
 		return;
 
 	if (!stack) {
 		unsigned long dummy;
+
 		stack = &dummy;
 		if (task && task != current)
 			stack = (unsigned long *)task->thread.sp;
 	}
+
+	if (!bp)
+		bp = stack_frame(task, regs);
 
 	for (;;) {
 		struct thread_info *context;
@@ -70,7 +60,7 @@ EXPORT_SYMBOL(dump_trace);
 
 void
 show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
-		unsigned long *sp, unsigned long bp, char *log_lvl)
+		   unsigned long *sp, unsigned long bp, char *log_lvl)
 {
 	unsigned long *stack;
 	int i;
@@ -87,11 +77,11 @@ show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 		if (kstack_end(stack))
 			break;
 		if (i && ((i % STACKSLOTS_PER_LINE) == 0))
-			printk("\n%s", log_lvl);
-		printk(" %08lx", *stack++);
+			printk(KERN_CONT "\n");
+		printk(KERN_CONT " %08lx", *stack++);
 		touch_nmi_watchdog();
 	}
-	printk("\n");
+	printk(KERN_CONT "\n");
 	show_trace_log_lvl(task, regs, sp, bp, log_lvl);
 }
 
@@ -117,8 +107,7 @@ void show_registers(struct pt_regs *regs)
 		u8 *ip;
 
 		printk(KERN_EMERG "Stack:\n");
-		show_stack_log_lvl(NULL, regs, &regs->sp,
-				0, KERN_EMERG);
+		show_stack_log_lvl(NULL, regs, &regs->sp, 0, KERN_EMERG);
 
 		printk(KERN_EMERG "Code: ");
 
@@ -154,4 +143,3 @@ int is_valid_bugaddr(unsigned long ip)
 
 	return ud2 == 0x0b0f;
 }
-

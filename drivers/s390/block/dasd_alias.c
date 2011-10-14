@@ -8,6 +8,7 @@
 #define KMSG_COMPONENT "dasd-eckd"
 
 #include <linux/list.h>
+#include <linux/slab.h>
 #include <asm/ebcdic.h>
 #include "dasd_int.h"
 #include "dasd_eckd.h"
@@ -219,7 +220,7 @@ int dasd_alias_make_device_known_to_lcu(struct dasd_device *device)
 		spin_unlock_irqrestore(&aliastree.lock, flags);
 		newlcu = _allocate_lcu(&uid);
 		if (IS_ERR(newlcu))
-			return PTR_ERR(lcu);
+			return PTR_ERR(newlcu);
 		spin_lock_irqsave(&aliastree.lock, flags);
 		lcu = _find_lcu(server, &uid);
 		if (!lcu) {
@@ -252,13 +253,11 @@ int dasd_alias_make_device_known_to_lcu(struct dasd_device *device)
  */
 void dasd_alias_lcu_setup_complete(struct dasd_device *device)
 {
-	struct dasd_eckd_private *private;
 	unsigned long flags;
 	struct alias_server *server;
 	struct alias_lcu *lcu;
 	struct dasd_uid uid;
 
-	private = (struct dasd_eckd_private *) device->private;
 	device->discipline->get_uid(device, &uid);
 	lcu = NULL;
 	spin_lock_irqsave(&aliastree.lock, flags);
@@ -278,13 +277,11 @@ void dasd_alias_lcu_setup_complete(struct dasd_device *device)
 
 void dasd_alias_wait_for_lcu_setup(struct dasd_device *device)
 {
-	struct dasd_eckd_private *private;
 	unsigned long flags;
 	struct alias_server *server;
 	struct alias_lcu *lcu;
 	struct dasd_uid uid;
 
-	private = (struct dasd_eckd_private *) device->private;
 	device->discipline->get_uid(device, &uid);
 	lcu = NULL;
 	spin_lock_irqsave(&aliastree.lock, flags);
@@ -314,14 +311,14 @@ void dasd_alias_disconnect_device_from_lcu(struct dasd_device *device)
 	struct alias_lcu *lcu;
 	struct alias_server *server;
 	int was_pending;
- 	struct dasd_uid uid;
+	struct dasd_uid uid;
 
 	private = (struct dasd_eckd_private *) device->private;
 	lcu = private->lcu;
 	/* nothing to do if already disconnected */
 	if (!lcu)
 		return;
- 	device->discipline->get_uid(device, &uid);
+	device->discipline->get_uid(device, &uid);
 	spin_lock_irqsave(&lcu->lock, flags);
 	list_del_init(&device->alias_list);
 	/* make sure that the workers don't use this device */

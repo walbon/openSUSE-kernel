@@ -1,7 +1,7 @@
 /*
  * Generic SCSI-3 ALUA SCSI Device Handler
  *
- * Copyright (C) 2007, 2008 Hannes Reinecke, SUSE Linux Products GmbH.
+ * Copyright (C) 2007-2010 Hannes Reinecke, SUSE Linux Products GmbH.
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -19,13 +19,14 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
  */
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_eh.h>
 #include <scsi/scsi_dh.h>
 
 #define ALUA_DH_NAME "alua"
-#define ALUA_DH_VER "1.2"
+#define ALUA_DH_VER "1.3"
 
 #define TPGS_STATE_OPTIMIZED		0x0
 #define TPGS_STATE_NONOPTIMIZED		0x1
@@ -238,7 +239,7 @@ static void stpg_endio(struct request *req, int error)
 			goto done;
 		}
 		err = alua_check_sense(h->sdev, &sense_hdr);
-		if (err == ADD_TO_MLQUEUE) {
+		if (err == ADD_TO_MLQUEUE || err == NEEDS_RETRY) {
 			err = SCSI_DH_RETRY;
 			goto done;
 		}
@@ -258,7 +259,6 @@ static void stpg_endio(struct request *req, int error)
 done:
 	req->end_io_data = NULL;
 	__blk_put_request(req->q, req);
-
 	if (h->callback_fn) {
 		h->callback_fn(h->callback_data, err);
 		h->callback_fn = h->callback_data = NULL;
@@ -310,19 +310,17 @@ static unsigned submit_stpg(struct alua_dh_data *h)
 }
 
 /*
- * alua_check_tgps - Evaluate TGPS setting
+ * alua_check_tpgs - Evaluate TPGS setting
  * @sdev: device to be checked
  *
- * Just examine the TPGS setting of the device to find out if ALUA
+ * Examine the TPGS setting of the sdev to find out if ALUA
  * is supported.
  */
-static int alua_check_tgps(struct scsi_device *sdev, struct alua_dh_data *h)
+static int alua_check_tpgs(struct scsi_device *sdev, struct alua_dh_data *h)
 {
 	int err = SCSI_DH_OK;
 
-	/* Check TPGS setting */
-	h->tpgs = sdev->tgps;
-
+	h->tpgs = scsi_device_tpgs(sdev);
 	switch (h->tpgs) {
 	case TPGS_MODE_EXPLICIT|TPGS_MODE_IMPLICIT:
 		sdev_printk(KERN_INFO, sdev,
@@ -453,7 +451,7 @@ static int alua_check_sense(struct scsi_device *sdev,
 			/*
 			 * LUN Not Accessible - ALUA state transition
 			 */
-			return ADD_TO_MLQUEUE;
+			return NEEDS_RETRY;
 		if (sense_hdr->asc == 0x04 && sense_hdr->ascq == 0x0b)
 			/*
 			 * LUN Not Accessible -- Target port in standby state
@@ -471,10 +469,33 @@ static int alua_check_sense(struct scsi_device *sdev,
 			return SUCCESS;
 		break;
 	case UNIT_ATTENTION:
-		/*
-		 * Just retry for UNIT_ATTENTION
-		 */
-		return ADD_TO_MLQUEUE;
+		if (sense_hdr->asc == 0x29 && sense_hdr->ascq == 0x00)
+			/*
+			 * Power On, Reset, or Bus Device Reset, just retry.
+			 */
+			return ADD_TO_MLQUEUE;
+		if (sense_hdr->asc == 0x2a && sense_hdr->ascq == 0x06) {
+			/*
+			 * ALUA state changed
+			 */
+			return ADD_TO_MLQUEUE;
+		}
+		if (sense_hdr->asc == 0x2a && sense_hdr->ascq == 0x07) {
+			/*
+			 * Implicit ALUA state transition failed
+			 */
+			return ADD_TO_MLQUEUE;
+		}
+		if (sense_hdr->asc == 0x3f && sense_hdr->ascq == 0x0e) {
+			/*
+			 * REPORTED_LUNS_DATA_HAS_CHANGED is reported
+			 * when switching controllers on targets like
+			 * Intel Multi-Flex. We can just retry.
+			 */
+			return ADD_TO_MLQUEUE;
+		}
+
+		break;
 	}
 
 	return SCSI_RETURN_NOT_HANDLED;
@@ -486,7 +507,7 @@ static int alua_check_sense(struct scsi_device *sdev,
  *
  * Evaluate the Target Port Group State.
  * Returns SCSI_DH_DEV_OFFLINED if the path is
- * found to be unuseable.
+ * found to be unusable.
  */
 static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 {
@@ -510,6 +531,11 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 			return SCSI_DH_IO;
 
 		err = alua_check_sense(sdev, &sense_hdr);
+		if (err == NEEDS_RETRY && time_before(jiffies, expiry)) {
+			interval *= 2;
+			msleep(interval);
+			goto retry;
+		}
 		if (err == ADD_TO_MLQUEUE && time_before(jiffies, expiry))
 			goto retry;
 		if (sense_hdr.sense_key == ILLEGAL_REQUEST &&
@@ -583,7 +609,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 		break;
 	case TPGS_STATE_OFFLINE:
 	case TPGS_STATE_UNAVAILABLE:
-		/* Path unuseable for unavailable/offline */
+		/* Path unusable for unavailable/offline */
 		err = SCSI_DH_DEV_OFFLINED;
 		break;
 	default:
@@ -605,7 +631,7 @@ static int alua_initialize(struct scsi_device *sdev, struct alua_dh_data *h)
 {
 	int err;
 
-	err = alua_check_tgps(sdev, h);
+	err = alua_check_tpgs(sdev, h);
 	if (err != SCSI_DH_OK)
 		goto out;
 
@@ -637,6 +663,7 @@ static int alua_activate(struct scsi_device *sdev,
 	struct alua_dh_data *h = get_alua_data(sdev);
 	int err = SCSI_DH_OK;
 
+retry:
 	err = alua_rtpg(sdev, h);
 	if (err != SCSI_DH_OK)
 		goto out;
@@ -650,6 +677,8 @@ static int alua_activate(struct scsi_device *sdev,
 		if (err == SCSI_DH_OK)
 			return 0;
 		h->callback_fn = h->callback_data = NULL;
+		if (err == SCSI_DH_RETRY)
+			goto retry;
 	}
 
 out:
@@ -681,10 +710,10 @@ static int alua_prep_fn(struct scsi_device *sdev, struct request *req)
 
 }
 
-static const struct scsi_dh_devlist alua_dev_list[] = {
-	{"", "", 3 },
-	{NULL, NULL, 0}
-};
+static bool alua_match(struct scsi_device *sdev)
+{
+	return (scsi_device_tpgs(sdev) != 0);
+}
 
 static int alua_bus_attach(struct scsi_device *sdev);
 static void alua_bus_detach(struct scsi_device *sdev);
@@ -692,12 +721,12 @@ static void alua_bus_detach(struct scsi_device *sdev);
 static struct scsi_device_handler alua_dh = {
 	.name = ALUA_DH_NAME,
 	.module = THIS_MODULE,
-	.devlist = alua_dev_list,
 	.attach = alua_bus_attach,
 	.detach = alua_bus_detach,
 	.prep_fn = alua_prep_fn,
 	.check_sense = alua_check_sense,
 	.activate = alua_activate,
+	.match = alua_match,
 };
 
 /*
@@ -711,7 +740,7 @@ static int alua_bus_attach(struct scsi_device *sdev)
 	unsigned long flags;
 	int err = SCSI_DH_OK;
 
-	scsi_dh_data = kzalloc(sizeof(struct scsi_device_handler *)
+	scsi_dh_data = kzalloc(sizeof(*scsi_dh_data)
 			       + sizeof(*h) , GFP_KERNEL);
 	if (!scsi_dh_data) {
 		sdev_printk(KERN_ERR, sdev, "%s: Attach failed\n",

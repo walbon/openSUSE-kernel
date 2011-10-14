@@ -24,7 +24,8 @@
 #include "../xen.h"
 #include "../trace.h"
 
-/* Get/set subcommands: extra argument == pointer to xen_hvm_param struct. */
+/* Get/set subcommands: the second argument of the hypercall is a
+ * pointer to a xen_hvm_param struct. */
 #define HVMOP_set_param           0
 #define HVMOP_get_param           1
 struct xen_hvm_param {
@@ -32,6 +33,7 @@ struct xen_hvm_param {
     uint32_t index;    /* IN */
     uint64_t value;    /* IN/OUT */
 };
+DEFINE_GUEST_HANDLE_STRUCT(xen_hvm_param);
 typedef struct xen_hvm_param xen_hvm_param_t;
 DEFINE_XEN_GUEST_HANDLE(xen_hvm_param_t);
 
@@ -132,7 +134,7 @@ DEFINE_XEN_GUEST_HANDLE(xen_hvm_set_mem_type_t);
 #endif /* defined(__XEN__) || defined(__XEN_TOOLS__) */
 
 /* Hint from PV drivers for pagetable destruction. */
-#define HVMOP_pagetable_dying        9
+#define HVMOP_pagetable_dying       9
 struct xen_hvm_pagetable_dying {
     /* Domain with a pagetable about to be destroyed. */
     domid_t  domid;
@@ -140,6 +142,7 @@ struct xen_hvm_pagetable_dying {
     /* guest physical address of the toplevel pagetable dying */
     uint64_t gpa;
 };
+DEFINE_GUEST_HANDLE_STRUCT(xen_hvm_pagetable_dying);
 typedef struct xen_hvm_pagetable_dying xen_hvm_pagetable_dying_t;
 DEFINE_XEN_GUEST_HANDLE(xen_hvm_pagetable_dying_t);
 

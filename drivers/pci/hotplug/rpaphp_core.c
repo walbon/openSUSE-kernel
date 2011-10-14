@@ -27,7 +27,6 @@
 #include <linux/moduleparam.h>
 #include <linux/pci.h>
 #include <linux/pci_hotplug.h>
-#include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/init.h>
 #include <linux/vmalloc.h>
@@ -131,10 +130,9 @@ static int get_adapter_status(struct hotplug_slot *hotplug_slot, u8 * value)
 	return 0;
 }
 
-static int get_max_bus_speed(struct hotplug_slot *hotplug_slot, enum pci_bus_speed *value)
+static enum pci_bus_speed get_max_bus_speed(struct slot *slot)
 {
-	struct slot *slot = (struct slot *)hotplug_slot->private;
-
+	enum pci_bus_speed speed;
 	switch (slot->type) {
 	case 1:
 	case 2:
@@ -142,30 +140,30 @@ static int get_max_bus_speed(struct hotplug_slot *hotplug_slot, enum pci_bus_spe
 	case 4:
 	case 5:
 	case 6:
-		*value = PCI_SPEED_33MHz;	/* speed for case 1-6 */
+		speed = PCI_SPEED_33MHz;	/* speed for case 1-6 */
 		break;
 	case 7:
 	case 8:
-		*value = PCI_SPEED_66MHz;
+		speed = PCI_SPEED_66MHz;
 		break;
 	case 11:
 	case 14:
-		*value = PCI_SPEED_66MHz_PCIX;
+		speed = PCI_SPEED_66MHz_PCIX;
 		break;
 	case 12:
 	case 15:
-		*value = PCI_SPEED_100MHz_PCIX;
+		speed = PCI_SPEED_100MHz_PCIX;
 		break;
 	case 13:
 	case 16:
-		*value = PCI_SPEED_133MHz_PCIX;
+		speed = PCI_SPEED_133MHz_PCIX;
 		break;
 	default:
-		*value = PCI_SPEED_UNKNOWN;
+		speed = PCI_SPEED_UNKNOWN;
 		break;
-
 	}
-	return 0;
+
+	return speed;
 }
 
 static int get_children_props(struct device_node *dn, const int **drc_indexes,
@@ -292,7 +290,7 @@ static int is_php_dn(struct device_node *dn, const int **indexes,
  * @dn: device node of slot
  *
  * This subroutine will register a hotplugable slot with the
- * PCI hotplug infrastructure. This routine is typicaly called
+ * PCI hotplug infrastructure. This routine is typically called
  * during boot time, if the hotplug slots are present at boot time,
  * or is called later, by the dlpar add code, if the slot is
  * being dynamically added during runtime.
@@ -409,6 +407,8 @@ static int enable_slot(struct hotplug_slot *hotplug_slot)
 		slot->state = NOT_VALID;
 		return -EINVAL;
 	}
+
+	slot->bus->max_bus_speed = get_max_bus_speed(slot);
 	return 0;
 }
 
@@ -432,7 +432,6 @@ struct hotplug_slot_ops rpaphp_hotplug_slot_ops = {
 	.get_power_status = get_power_status,
 	.get_attention_status = get_attention_status,
 	.get_adapter_status = get_adapter_status,
-	.get_max_bus_speed = get_max_bus_speed,
 };
 
 module_init(rpaphp_init);

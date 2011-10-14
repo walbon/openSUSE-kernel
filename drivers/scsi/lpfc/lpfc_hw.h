@@ -1006,7 +1006,7 @@ typedef struct _ELS_PKT {	/* Structure is in Big Endian format */
 #define  SLI_MGMT_GRPL     0x102	/* Get registered Port list */
 #define  SLI_MGMT_GPAT     0x110	/* Get Port attributes */
 #define  SLI_MGMT_RHBA     0x200	/* Register HBA */
-#define  SLI_MGMT_RHAT     0x201	/* Register HBA atttributes */
+#define  SLI_MGMT_RHAT     0x201	/* Register HBA attributes */
 #define  SLI_MGMT_RPRT     0x210	/* Register Port */
 #define  SLI_MGMT_RPA      0x211	/* Register Port attributes */
 #define  SLI_MGMT_DHBA     0x300	/* De-register HBA */
@@ -3470,11 +3470,16 @@ typedef struct {
    or CMD_IOCB_RCV_SEQ64_CX (0xB5) */
 
 struct rcv_sli3 {
-	uint32_t word8Rsvd;
 #ifdef __BIG_ENDIAN_BITFIELD
+	uint16_t ox_id;
+	uint16_t seq_cnt;
+
 	uint16_t vpi;
 	uint16_t word9Rsvd;
 #else  /*  __LITTLE_ENDIAN */
+	uint16_t seq_cnt;
+	uint16_t ox_id;
+
 	uint16_t word9Rsvd;
 	uint16_t vpi;
 #endif

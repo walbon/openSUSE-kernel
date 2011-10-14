@@ -67,11 +67,9 @@ static void lpfc_sli4_send_seq_to_ulp(struct lpfc_vport *,
 				      struct hbq_dmabuf *);
 static int lpfc_sli4_fp_handle_wcqe(struct lpfc_hba *, struct lpfc_queue *,
 				    struct lpfc_cqe *);
-static int lpfc_sli4_chk_avail_extnt_rsrc(struct lpfc_hba *, uint16_t);
-static uint16_t lpfc_sli4_xri_inrange(struct lpfc_hba *, uint16_t);
-static int lpfc_sli4_alloc_extent(struct lpfc_hba *, uint16_t);
-static int lpfc_sli4_dealloc_extent(struct lpfc_hba *, uint16_t);
-static IOCB_t *lpfc_get_iocb_from_iocbq(struct lpfc_iocbq *iocbq)
+
+static IOCB_t *
+lpfc_get_iocb_from_iocbq(struct lpfc_iocbq *iocbq)
 {
 	return &iocbq->iocb;
 }
@@ -562,7 +560,7 @@ __lpfc_set_rrq_active(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp,
 	rrq = mempool_alloc(phba->rrq_pool, GFP_KERNEL);
 	if (rrq) {
 		rrq->send_rrq = send_rrq;
-		rrq->xritag = phba->sli4_hba.xri_ids[xritag];
+		rrq->xritag = xritag;
 		rrq->rrq_stop_time = jiffies + HZ * (phba->fc_ratov + 1);
 		rrq->ndlp = ndlp;
 		rrq->nlp_DID = ndlp->nlp_DID;
@@ -2199,7 +2197,7 @@ lpfc_sli_handle_mb_event(struct lpfc_hba *phba)
 		 */
 		if (lpfc_sli_chk_mbx_command(pmbox->mbxCommand) ==
 		    MBX_SHUTDOWN) {
-			/* Unknow mailbox command compl */
+			/* Unknown mailbox command compl */
 			lpfc_printf_log(phba, KERN_ERR, LOG_MBOX | LOG_SLI,
 					"(%d):0323 Unknown Mailbox command "
 					"x%x (x%x) Cmpl\n",
@@ -2454,7 +2452,8 @@ lpfc_sli_process_unsol_iocb(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 
 		/* search continue save q for same XRI */
 		list_for_each_entry(iocbq, &pring->iocb_continue_saveq, clist) {
-			if (iocbq->iocb.ulpContext == saveq->iocb.ulpContext) {
+			if (iocbq->iocb.unsli3.rcvsli3.ox_id ==
+				saveq->iocb.unsli3.rcvsli3.ox_id) {
 				list_add_tail(&saveq->list, &iocbq->list);
 				found = 1;
 				break;
@@ -2806,7 +2805,7 @@ void lpfc_poll_eratt(unsigned long ptr)
  * This function is called from the interrupt context when there is a ring
  * event for the fcp ring. The caller does not hold any lock.
  * The function processes each response iocb in the response ring until it
- * finds an iocb with LE bit set and chains all the iocbs upto the iocb with
+ * finds an iocb with LE bit set and chains all the iocbs up to the iocb with
  * LE bit set. The function will call the completion handler of the command iocb
  * if the response iocb indicates a completion for a command iocb or it is
  * an abort completion. The function will call lpfc_sli_process_unsol_iocb
@@ -3029,7 +3028,7 @@ lpfc_sli_sp_handle_rspiocb(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 	list_add_tail(&rspiocbp->list, &(pring->iocb_continueq));
 	pring->iocb_continueq_cnt++;
 
-	/* Now, determine whetehr the list is completed for processing */
+	/* Now, determine whether the list is completed for processing */
 	irsp = &rspiocbp->iocb;
 	if (irsp->ulpLe) {
 		/*
@@ -4618,7 +4617,7 @@ lpfc_sli4_read_fcoe_params(struct lpfc_hba *phba,
  * addition, this routine gets the port vpd data.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	-ENOMEM - could not allocated memory.
  **/
 static int
@@ -5819,9 +5818,13 @@ lpfc_sli4_hba_setup(struct lpfc_hba *phba)
 	 * then turn off the global config parameters to disable the
 	 * feature in the driver.  This is not a fatal error.
 	 */
-	if ((phba->cfg_enable_bg) &&
-	    !(bf_get(lpfc_mbx_rq_ftr_rsp_dif, &mqe->un.req_ftrs)))
-		ftr_rsp++;
+	phba->sli3_options &= ~LPFC_SLI3_BG_ENABLED;
+	if (phba->cfg_enable_bg) {
+		if (bf_get(lpfc_mbx_rq_ftr_rsp_dif, &mqe->un.req_ftrs))
+			phba->sli3_options |= LPFC_SLI3_BG_ENABLED;
+		else
+			ftr_rsp++;
+	}
 
 	if (phba->max_vpi && phba->cfg_enable_npiv &&
 	    !(bf_get(lpfc_mbx_rq_ftr_rsp_npiv, &mqe->un.req_ftrs)))
@@ -6017,7 +6020,7 @@ lpfc_sli4_hba_setup(struct lpfc_hba *phba)
 	phba->link_state = LPFC_LINK_DOWN;
 	spin_unlock_irq(&phba->hbalock);
 	if (phba->cfg_suppress_link_up == LPFC_INITIALIZE_LINK)
-		rc = phba->lpfc_hba_init_link(phba);
+		rc = phba->lpfc_hba_init_link(phba, MBX_NOWAIT);
 out_unset_queue:
 	/* Unset all the queues set up in this routine when error out */
 	if (rc)
@@ -6103,7 +6106,7 @@ lpfc_mbox_timeout_handler(struct lpfc_hba *phba)
 
 	/* Setting state unknown so lpfc_sli_abort_iocb_ring
 	 * would get IOCB_ERROR from lpfc_sli_issue_iocb, allowing
-	 * it to fail all oustanding SCSI IO.
+	 * it to fail all outstanding SCSI IO.
 	 */
 	spin_lock_irq(&phba->pport->work_port_lock);
 	phba->pport->work_port_events &= ~WORKER_MBOX_TMO;
@@ -7025,7 +7028,7 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
 }
 
 /**
- * lpfc_mbox_api_table_setup - Set up mbox api fucntion jump table
+ * lpfc_mbox_api_table_setup - Set up mbox api function jump table
  * @phba: The hba struct for which this call is being executed.
  * @dev_grp: The HBA PCI-Device group number.
  *
@@ -7478,12 +7481,12 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 		bf_set(wqe_qosd, &wqe->els_req.wqe_com, 1);
 		bf_set(wqe_lenloc, &wqe->els_req.wqe_com, LPFC_WQE_LENLOC_NONE);
 		bf_set(wqe_ebde_cnt, &wqe->els_req.wqe_com, 0);
-	break;
+		break;
 	case CMD_XMIT_SEQUENCE64_CX:
 		bf_set(wqe_ctxt_tag, &wqe->xmit_sequence.wqe_com,
 		       iocbq->iocb.un.ulpWord[3]);
 		bf_set(wqe_rcvoxid, &wqe->xmit_sequence.wqe_com,
-		       iocbq->iocb.ulpContext);
+		       iocbq->iocb.unsli3.rcvsli3.ox_id);
 		/* The entire sequence is transmitted for this IOCB */
 		xmit_len = total_len;
 		cmnd = CMD_XMIT_SEQUENCE64_CR;
@@ -7501,7 +7504,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 		bf_set(wqe_ebde_cnt, &wqe->xmit_sequence.wqe_com, 0);
 		wqe->xmit_sequence.xmit_len = xmit_len;
 		command_type = OTHER_COMMAND;
-	break;
+		break;
 	case CMD_XMIT_BCAST64_CN:
 		/* word3 iocb=iotag32 wqe=seq_payload_len */
 		wqe->xmit_bcast64.seq_payload_len = xmit_len;
@@ -7515,7 +7518,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 		bf_set(wqe_lenloc, &wqe->xmit_bcast64.wqe_com,
 		       LPFC_WQE_LENLOC_WORD3);
 		bf_set(wqe_ebde_cnt, &wqe->xmit_bcast64.wqe_com, 0);
-	break;
+		break;
 	case CMD_FCP_IWRITE64_CR:
 		command_type = FCP_COMMAND_DATA_OUT;
 		/* word3 iocb=iotag wqe=payload_offset_len */
@@ -7535,7 +7538,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 		       LPFC_WQE_LENLOC_WORD4);
 		bf_set(wqe_ebde_cnt, &wqe->fcp_iwrite.wqe_com, 0);
 		bf_set(wqe_pu, &wqe->fcp_iwrite.wqe_com, iocbq->iocb.ulpPU);
-	break;
+		break;
 	case CMD_FCP_IREAD64_CR:
 		/* word3 iocb=iotag wqe=payload_offset_len */
 		/* Add the FCP_CMD and FCP_RSP sizes to get the offset */
@@ -7554,7 +7557,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 		       LPFC_WQE_LENLOC_WORD4);
 		bf_set(wqe_ebde_cnt, &wqe->fcp_iread.wqe_com, 0);
 		bf_set(wqe_pu, &wqe->fcp_iread.wqe_com, iocbq->iocb.ulpPU);
-	break;
+		break;
 	case CMD_FCP_ICMND64_CR:
 		/* word3 iocb=IO_TAG wqe=reserved */
 		wqe->fcp_icmd.rsrvd3 = 0;
@@ -7567,7 +7570,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 		bf_set(wqe_lenloc, &wqe->fcp_icmd.wqe_com,
 		       LPFC_WQE_LENLOC_NONE);
 		bf_set(wqe_ebde_cnt, &wqe->fcp_icmd.wqe_com, 0);
-	break;
+		break;
 	case CMD_GEN_REQUEST64_CR:
 		/* For this command calculate the xmit length of the
 		 * request bde.
@@ -7602,7 +7605,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 		bf_set(wqe_lenloc, &wqe->gen_req.wqe_com, LPFC_WQE_LENLOC_NONE);
 		bf_set(wqe_ebde_cnt, &wqe->gen_req.wqe_com, 0);
 		command_type = OTHER_COMMAND;
-	break;
+		break;
 	case CMD_XMIT_ELS_RSP64_CX:
 		ndlp = (struct lpfc_nodelist *)iocbq->context1;
 		/* words0-2 BDE memcpy */
@@ -7617,7 +7620,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 		       ((iocbq->iocb.ulpCt_h << 1) | iocbq->iocb.ulpCt_l));
 		bf_set(wqe_pu, &wqe->xmit_els_rsp.wqe_com, iocbq->iocb.ulpPU);
 		bf_set(wqe_rcvoxid, &wqe->xmit_els_rsp.wqe_com,
-		       iocbq->iocb.ulpContext);
+		       iocbq->iocb.unsli3.rcvsli3.ox_id);
 		if (!iocbq->iocb.ulpCt_h && iocbq->iocb.ulpCt_l)
 			bf_set(wqe_ctxt_tag, &wqe->xmit_els_rsp.wqe_com,
 			       phba->vpi_ids[iocbq->vport->vpi]);
@@ -7630,7 +7633,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 		bf_set(wqe_rsp_temp_rpi, &wqe->xmit_els_rsp,
 		       phba->sli4_hba.rpi_ids[ndlp->nlp_rpi]);
 		command_type = OTHER_COMMAND;
-	break;
+		break;
 	case CMD_CLOSE_XRI_CN:
 	case CMD_ABORT_XRI_CN:
 	case CMD_ABORT_XRI_CX:
@@ -7669,7 +7672,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 		cmnd = CMD_ABORT_XRI_CX;
 		command_type = OTHER_COMMAND;
 		xritag = 0;
-	break;
+		break;
 	case CMD_XMIT_BLS_RSP64_CX:
 		/* As BLS ABTS RSP WQE is very different from other WQEs,
 		 * we re-construct this WQE here based on information in
@@ -7713,7 +7716,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 			       bf_get(lpfc_rsn_code, &iocbq->iocb.un.bls_rsp));
 		}
 
-	break;
+		break;
 	case CMD_XRI_ABORTED_CX:
 	case CMD_CREATE_XRI_CR: /* Do we expect to use this? */
 	case CMD_IOCB_FCP_IBIDIR64_CR: /* bidirectional xfer */
@@ -7725,7 +7728,7 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
 				"2014 Invalid command 0x%x\n",
 				iocbq->iocb.ulpCommand);
 		return IOCB_ERROR;
-	break;
+		break;
 	}
 
 	bf_set(wqe_xri_tag, &wqe->generic.wqe_com, xritag);
@@ -7851,7 +7854,7 @@ __lpfc_sli_issue_iocb(struct lpfc_hba *phba, uint32_t ring_number,
 }
 
 /**
- * lpfc_sli_api_table_setup - Set up sli api fucntion jump table
+ * lpfc_sli_api_table_setup - Set up sli api function jump table
  * @phba: The hba struct for which this call is being executed.
  * @dev_grp: The HBA PCI-Device group number.
  *
@@ -8525,7 +8528,7 @@ lpfc_sli_ring_taggedbuf_get(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 	struct lpfc_dmabuf *mp, *next_mp;
 	struct list_head *slp = &pring->postbufq;
 
-	/* Search postbufq, from the begining, looking for a match on tag */
+	/* Search postbufq, from the beginning, looking for a match on tag */
 	spin_lock_irq(&phba->hbalock);
 	list_for_each_entry_safe(mp, next_mp, &pring->postbufq, list) {
 		if (mp->buffer_tag == tag) {
@@ -8569,7 +8572,7 @@ lpfc_sli_ringpostbuf_get(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 	struct lpfc_dmabuf *mp, *next_mp;
 	struct list_head *slp = &pring->postbufq;
 
-	/* Search postbufq, from the begining, looking for a match on phys */
+	/* Search postbufq, from the beginning, looking for a match on phys */
 	spin_lock_irq(&phba->hbalock);
 	list_for_each_entry_safe(mp, next_mp, &pring->postbufq, list) {
 		if (mp->phys == phys) {
@@ -9442,7 +9445,7 @@ lpfc_sli_mbox_sys_shutdown(struct lpfc_hba *phba)
  * for possible error attention events. The caller must hold the hostlock
  * with spin_lock_irq().
  *
- * This fucntion returns 1 when there is Error Attention in the Host Attention
+ * This function returns 1 when there is Error Attention in the Host Attention
  * Register and returns 0 otherwise.
  **/
 static int
@@ -9495,7 +9498,7 @@ unplug_err:
  * for possible error attention events. The caller must hold the hostlock
  * with spin_lock_irq().
  *
- * This fucntion returns 1 when there is Error Attention in the Host Attention
+ * This function returns 1 when there is Error Attention in the Host Attention
  * Register and returns 0 otherwise.
  **/
 static int
@@ -9585,7 +9588,7 @@ lpfc_sli4_eratt_read(struct lpfc_hba *phba)
  * This function is called from timer soft interrupt context to check HBA's
  * error attention register bit for error attention events.
  *
- * This fucntion returns 1 when there is Error Attention in the Host Attention
+ * This function returns 1 when there is Error Attention in the Host Attention
  * Register and returns 0 otherwise.
  **/
 int
@@ -10124,7 +10127,7 @@ lpfc_sli_intr_handler(int irq, void *dev_id)
 	 * If there is deferred error attention, do not check for any interrupt.
 	 */
 	if (unlikely(phba->hba_flag & DEFER_ERATT)) {
-		spin_unlock_irq(&phba->hbalock);
+		spin_unlock(&phba->hbalock);
 		return IRQ_NONE;
 	}
 
@@ -10692,7 +10695,7 @@ out:
  * @cq: Pointer to the completion queue.
  * @wcqe: Pointer to a completion queue entry.
  *
- * This routine process a slow-path work-queue or recieve queue completion queue
+ * This routine process a slow-path work-queue or receive queue completion queue
  * entry.
  *
  * Return: true if work posted to worker thread, otherwise false.
@@ -11726,14 +11729,13 @@ lpfc_mq_create(struct lpfc_hba *phba, struct lpfc_queue *mq,
 	       &mq_create_ext->u.request, 1);
 	bf_set(lpfc_mq_context_valid, &mq_create_ext->u.request.context, 1);
 	bf_set(lpfc_mbox_hdr_version, &shdr->request,
-		phba->sli4_hba.pc_sli4_params.mqv);
+	       phba->sli4_hba.pc_sli4_params.mqv);
 	if (phba->sli4_hba.pc_sli4_params.mqv == LPFC_Q_CREATE_VERSION_1)
 		bf_set(lpfc_mbx_mq_create_ext_cq_id, &mq_create_ext->u.request,
-			cq->queue_id);
+		       cq->queue_id);
 	else
 		bf_set(lpfc_mq_context_cq_id, &mq_create_ext->u.request.context,
-			cq->queue_id);
-
+		       cq->queue_id);
 	switch (mq->entry_count) {
 	default:
 		lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
@@ -11982,6 +11984,12 @@ lpfc_rq_create(struct lpfc_hba *phba, struct lpfc_queue *hrq,
 		       &rq_create->u.request.context,
 		       hrq->entry_count);
 		rq_create->u.request.context.buffer_size = LPFC_HDR_BUF_SIZE;
+		bf_set(lpfc_rq_context_rqe_size,
+		       &rq_create->u.request.context,
+		       LPFC_RQE_SIZE_8);
+		bf_set(lpfc_rq_context_page_size,
+		       &rq_create->u.request.context,
+		       (PAGE_SIZE/SLI4_PAGE_SIZE));
 	} else {
 		switch (hrq->entry_count) {
 		default:
@@ -12057,9 +12065,12 @@ lpfc_rq_create(struct lpfc_hba *phba, struct lpfc_queue *hrq,
 	       phba->sli4_hba.pc_sli4_params.rqv);
 	if (phba->sli4_hba.pc_sli4_params.rqv == LPFC_Q_CREATE_VERSION_1) {
 		bf_set(lpfc_rq_context_rqe_count_1,
-		       &rq_create->u.request.context,
-		       hrq->entry_count);
+		       &rq_create->u.request.context, hrq->entry_count);
 		rq_create->u.request.context.buffer_size = LPFC_DATA_BUF_SIZE;
+		bf_set(lpfc_rq_context_rqe_size, &rq_create->u.request.context,
+		       LPFC_RQE_SIZE_8);
+		bf_set(lpfc_rq_context_page_size, &rq_create->u.request.context,
+		       (PAGE_SIZE/SLI4_PAGE_SIZE));
 	} else {
 		switch (drq->entry_count) {
 		default:
@@ -12511,8 +12522,8 @@ lpfc_sli4_post_sgl(struct lpfc_hba *phba,
  * SLI4_PAGE_SIZE modulo 64 rpi context headers.
  *
  * Returns
- * 	A nonzero rpi defined as rpi_base <= rpi < max_rpi if successful
- * 	LPFC_RPI_ALLOC_ERROR if no rpis are available.
+ *	A nonzero rpi defined as rpi_base <= rpi < max_rpi if successful
+ *	LPFC_RPI_ALLOC_ERROR if no rpis are available.
  **/
 uint16_t
 lpfc_sli4_alloc_xri(struct lpfc_hba *phba)
@@ -12769,7 +12780,7 @@ lpfc_sli4_post_els_sgl_list_ext(struct lpfc_hba *phba)
 				"3014 Working ELS Extent start %d, cnt %d\n",
 				rsrc_start, rsrc_size);
 
-		loop_cnt=min(els_xri_cnt, rsrc_size);
+		loop_cnt = min(els_xri_cnt, rsrc_size);
 		if (ttl_cnt + loop_cnt >= els_xri_cnt) {
 			loop_cnt = els_xri_cnt - ttl_cnt;
 			ttl_cnt = els_xri_cnt;
@@ -13289,7 +13300,8 @@ lpfc_fc_frame_to_vport(struct lpfc_hba *phba, struct fc_frame_header *fc_hdr,
 	uint32_t did = (fc_hdr->fh_d_id[0] << 16 |
 			fc_hdr->fh_d_id[1] << 8 |
 			fc_hdr->fh_d_id[2]);
-
+	if (did == Fabric_DID)
+		return phba->pport;
 	vports = lpfc_create_vport_work_array(phba);
 	if (vports != NULL)
 		for (i = 0; i <= phba->max_vpi && vports[i] != NULL; i++) {
@@ -13562,7 +13574,7 @@ lpfc_sli4_seq_abort_rsp_cmpl(struct lpfc_hba *phba,
  * This function validates the xri maps to the known range of XRIs allocated an
  * used by the driver.
  **/
-static uint16_t
+uint16_t
 lpfc_sli4_xri_inrange(struct lpfc_hba *phba,
 		      uint16_t xri)
 {
@@ -13799,10 +13811,12 @@ lpfc_seq_complete(struct hbq_dmabuf *dmabuf)
 static struct lpfc_iocbq *
 lpfc_prep_seq(struct lpfc_vport *vport, struct hbq_dmabuf *seq_dmabuf)
 {
+	struct hbq_dmabuf *hbq_buf;
 	struct lpfc_dmabuf *d_buf, *n_buf;
 	struct lpfc_iocbq *first_iocbq, *iocbq;
 	struct fc_frame_header *fc_hdr;
 	uint32_t sid;
+	uint32_t len, tot_len;
 	struct ulp_bde64 *pbde;
 
 	fc_hdr = (struct fc_frame_header *)seq_dmabuf->hbuf.virt;
@@ -13811,6 +13825,7 @@ lpfc_prep_seq(struct lpfc_vport *vport, struct hbq_dmabuf *seq_dmabuf)
 	lpfc_update_rcv_time_stamp(vport);
 	/* get the Remote Port's SID */
 	sid = sli4_sid_from_fc_hdr(fc_hdr);
+	tot_len = 0;
 	/* Get an iocbq struct to fill in. */
 	first_iocbq = lpfc_sli_get_iocbq(vport->phba);
 	if (first_iocbq) {
@@ -13818,9 +13833,12 @@ lpfc_prep_seq(struct lpfc_vport *vport, struct hbq_dmabuf *seq_dmabuf)
 		first_iocbq->iocb.unsli3.rcvsli3.acc_len = 0;
 		first_iocbq->iocb.ulpStatus = IOSTAT_SUCCESS;
 		first_iocbq->iocb.ulpCommand = CMD_IOCB_RCV_SEQ64_CX;
-		first_iocbq->iocb.ulpContext = be16_to_cpu(fc_hdr->fh_ox_id);
-		/* iocbq is prepped for internal consumption.  Logical vpi. */
-		first_iocbq->iocb.unsli3.rcvsli3.vpi = vport->vpi;
+		first_iocbq->iocb.ulpContext = NO_XRI;
+		first_iocbq->iocb.unsli3.rcvsli3.ox_id =
+			be16_to_cpu(fc_hdr->fh_ox_id);
+		/* iocbq is prepped for internal consumption.  Physical vpi. */
+		first_iocbq->iocb.unsli3.rcvsli3.vpi =
+			vport->phba->vpi_ids[vport->vpi];
 		/* put the first buffer into the first IOCBq */
 		first_iocbq->context2 = &seq_dmabuf->dbuf;
 		first_iocbq->context3 = NULL;
@@ -13828,9 +13846,9 @@ lpfc_prep_seq(struct lpfc_vport *vport, struct hbq_dmabuf *seq_dmabuf)
 		first_iocbq->iocb.un.cont64[0].tus.f.bdeSize =
 							LPFC_DATA_BUF_SIZE;
 		first_iocbq->iocb.un.rcvels.remoteID = sid;
-		first_iocbq->iocb.unsli3.rcvsli3.acc_len +=
-				bf_get(lpfc_rcqe_length,
+		tot_len = bf_get(lpfc_rcqe_length,
 				       &seq_dmabuf->cq_event.cqe.rcqe_cmpl);
+		first_iocbq->iocb.unsli3.rcvsli3.acc_len = tot_len;
 	}
 	iocbq = first_iocbq;
 	/*
@@ -13848,9 +13866,13 @@ lpfc_prep_seq(struct lpfc_vport *vport, struct hbq_dmabuf *seq_dmabuf)
 			pbde = (struct ulp_bde64 *)
 					&iocbq->iocb.unsli3.sli3Words[4];
 			pbde->tus.f.bdeSize = LPFC_DATA_BUF_SIZE;
-			first_iocbq->iocb.unsli3.rcvsli3.acc_len +=
-				bf_get(lpfc_rcqe_length,
-				       &seq_dmabuf->cq_event.cqe.rcqe_cmpl);
+
+			/* We need to get the size out of the right CQE */
+			hbq_buf = container_of(d_buf, struct hbq_dmabuf, dbuf);
+			len = bf_get(lpfc_rcqe_length,
+				       &hbq_buf->cq_event.cqe.rcqe_cmpl);
+			iocbq->iocb.unsli3.rcvsli3.acc_len += len;
+			tot_len += len;
 		} else {
 			iocbq = lpfc_sli_get_iocbq(vport->phba);
 			if (!iocbq) {
@@ -13868,9 +13890,14 @@ lpfc_prep_seq(struct lpfc_vport *vport, struct hbq_dmabuf *seq_dmabuf)
 			iocbq->iocb.ulpBdeCount = 1;
 			iocbq->iocb.un.cont64[0].tus.f.bdeSize =
 							LPFC_DATA_BUF_SIZE;
-			first_iocbq->iocb.unsli3.rcvsli3.acc_len +=
-				bf_get(lpfc_rcqe_length,
-				       &seq_dmabuf->cq_event.cqe.rcqe_cmpl);
+
+			/* We need to get the size out of the right CQE */
+			hbq_buf = container_of(d_buf, struct hbq_dmabuf, dbuf);
+			len = bf_get(lpfc_rcqe_length,
+				       &hbq_buf->cq_event.cqe.rcqe_cmpl);
+			tot_len += len;
+			iocbq->iocb.unsli3.rcvsli3.acc_len = tot_len;
+
 			iocbq->iocb.un.rcvels.remoteID = sid;
 			list_add_tail(&iocbq->list, &first_iocbq->list);
 		}
@@ -13991,7 +14018,7 @@ lpfc_sli4_handle_received_buffer(struct lpfc_hba *phba,
  * sequential.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  *      -EIO - The mailbox failed to complete successfully.
  * 	When this error occurs, the driver is not guaranteed
  *	to have any rpi regions posted to the device and
@@ -14047,7 +14074,7 @@ lpfc_sli4_post_all_rpi_hdrs(struct lpfc_hba *phba)
  * maps up to 64 rpi context regions.
  *
  * Return codes
- * 	0 - sucessful
+ * 	0 - successful
  * 	-ENOMEM - No available memory
  *      -EIO - The mailbox failed to complete successfully.
  **/
@@ -14118,7 +14145,7 @@ lpfc_sli4_post_rpi_hdr(struct lpfc_hba *phba, struct lpfc_rpi_hdr *rpi_page)
  * SLI4_PAGE_SIZE modulo 64 rpi context headers.
  *
  * Returns
- * 	A nonzero rpi defined as rpi_base <= rpi < max_rpi if sucessful
+ * 	A nonzero rpi defined as rpi_base <= rpi < max_rpi if successful
  * 	LPFC_RPI_ALLOC_ERROR if no rpis are available.
  **/
 int
@@ -14467,7 +14494,7 @@ lpfc_sli4_build_dflt_fcf_record(struct lpfc_hba *phba,
  * record and processing it one at a time starting from the @fcf_index
  * for initial FCF discovery or fast FCF failover rediscovery.
  *
- * Return 0 if the mailbox command is submitted sucessfully, none 0
+ * Return 0 if the mailbox command is submitted successfully, none 0
  * otherwise.
  **/
 int
@@ -14528,7 +14555,7 @@ fail_fcf_scan:
  * This routine is invoked to read an FCF record indicated by @fcf_index
  * and to use it for FLOGI roundrobin FCF failover.
  *
- * Return 0 if the mailbox command is submitted sucessfully, none 0
+ * Return 0 if the mailbox command is submitted successfully, none 0
  * otherwise.
  **/
 int
@@ -14574,7 +14601,7 @@ fail_fcf_read:
  * This routine is invoked to read an FCF record indicated by @fcf_index to
  * determine whether it's eligible for FLOGI roundrobin failover list.
  *
- * Return 0 if the mailbox command is submitted sucessfully, none 0
+ * Return 0 if the mailbox command is submitted successfully, none 0
  * otherwise.
  **/
 int
@@ -14613,6 +14640,92 @@ fail_fcf_read:
 }
 
 /**
+ * lpfc_check_next_fcf_pri
+ * phba pointer to the lpfc_hba struct for this port.
+ * This routine is called from the lpfc_sli4_fcf_rr_next_index_get
+ * routine when the rr_bmask is empty. The FCF indecies are put into the
+ * rr_bmask based on their priority level. Starting from the highest priority
+ * to the lowest. The most likely FCF candidate will be in the highest
+ * priority group. When this routine is called it searches the fcf_pri list for
+ * next lowest priority group and repopulates the rr_bmask with only those
+ * fcf_indexes.
+ * returns:
+ * 1=success 0=failure
+ **/
+int
+lpfc_check_next_fcf_pri_level(struct lpfc_hba *phba)
+{
+	uint16_t next_fcf_pri;
+	uint16_t last_index;
+	struct lpfc_fcf_pri *fcf_pri;
+	int rc;
+	int ret = 0;
+
+	last_index = find_first_bit(phba->fcf.fcf_rr_bmask,
+			LPFC_SLI4_FCF_TBL_INDX_MAX);
+	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+			"3060 Last IDX %d\n", last_index);
+	if (list_empty(&phba->fcf.fcf_pri_list)) {
+		lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
+			"3061 Last IDX %d\n", last_index);
+		return 0; /* Empty rr list */
+	}
+	next_fcf_pri = 0;
+	/*
+	 * Clear the rr_bmask and set all of the bits that are at this
+	 * priority.
+	 */
+	memset(phba->fcf.fcf_rr_bmask, 0,
+			sizeof(*phba->fcf.fcf_rr_bmask));
+	spin_lock_irq(&phba->hbalock);
+	list_for_each_entry(fcf_pri, &phba->fcf.fcf_pri_list, list) {
+		if (fcf_pri->fcf_rec.flag & LPFC_FCF_FLOGI_FAILED)
+			continue;
+		/*
+		 * the 1st priority that has not FLOGI failed
+		 * will be the highest.
+		 */
+		if (!next_fcf_pri)
+			next_fcf_pri = fcf_pri->fcf_rec.priority;
+		spin_unlock_irq(&phba->hbalock);
+		if (fcf_pri->fcf_rec.priority == next_fcf_pri) {
+			rc = lpfc_sli4_fcf_rr_index_set(phba,
+						fcf_pri->fcf_rec.fcf_index);
+			if (rc)
+				return 0;
+		}
+		spin_lock_irq(&phba->hbalock);
+	}
+	/*
+	 * if next_fcf_pri was not set above and the list is not empty then
+	 * we have failed flogis on all of them. So reset flogi failed
+	 * and start at the begining.
+	 */
+	if (!next_fcf_pri && !list_empty(&phba->fcf.fcf_pri_list)) {
+		list_for_each_entry(fcf_pri, &phba->fcf.fcf_pri_list, list) {
+			fcf_pri->fcf_rec.flag &= ~LPFC_FCF_FLOGI_FAILED;
+			/*
+			 * the 1st priority that has not FLOGI failed
+			 * will be the highest.
+			 */
+			if (!next_fcf_pri)
+				next_fcf_pri = fcf_pri->fcf_rec.priority;
+			spin_unlock_irq(&phba->hbalock);
+			if (fcf_pri->fcf_rec.priority == next_fcf_pri) {
+				rc = lpfc_sli4_fcf_rr_index_set(phba,
+						fcf_pri->fcf_rec.fcf_index);
+				if (rc)
+					return 0;
+			}
+			spin_lock_irq(&phba->hbalock);
+		}
+	} else
+		ret = 1;
+	spin_unlock_irq(&phba->hbalock);
+
+	return ret;
+}
+/**
  * lpfc_sli4_fcf_rr_next_index_get - Get next eligible fcf record index
  * @phba: pointer to lpfc hba data structure.
  *
@@ -14628,6 +14741,7 @@ lpfc_sli4_fcf_rr_next_index_get(struct lpfc_hba *phba)
 	uint16_t next_fcf_index;
 
 	/* Search start from next bit of currently registered FCF index */
+next_priority:
 	next_fcf_index = (phba->fcf.current_rec.fcf_indx + 1) %
 					LPFC_SLI4_FCF_TBL_INDX_MAX;
 	next_fcf_index = find_next_bit(phba->fcf.fcf_rr_bmask,
@@ -14635,16 +14749,45 @@ lpfc_sli4_fcf_rr_next_index_get(struct lpfc_hba *phba)
 				       next_fcf_index);
 
 	/* Wrap around condition on phba->fcf.fcf_rr_bmask */
-	if (next_fcf_index >= LPFC_SLI4_FCF_TBL_INDX_MAX)
+	if (next_fcf_index >= LPFC_SLI4_FCF_TBL_INDX_MAX) {
+		/*
+		 * If we have wrapped then we need to clear the bits that
+		 * have been tested so that we can detect when we should
+		 * change the priority level.
+		 */
 		next_fcf_index = find_next_bit(phba->fcf.fcf_rr_bmask,
 					       LPFC_SLI4_FCF_TBL_INDX_MAX, 0);
+	}
+
 
 	/* Check roundrobin failover list empty condition */
-	if (next_fcf_index >= LPFC_SLI4_FCF_TBL_INDX_MAX) {
+	if (next_fcf_index >= LPFC_SLI4_FCF_TBL_INDX_MAX ||
+		next_fcf_index == phba->fcf.current_rec.fcf_indx) {
+		/*
+		 * If next fcf index is not found check if there are lower
+		 * Priority level fcf's in the fcf_priority list.
+		 * Set up the rr_bmask with all of the avaiable fcf bits
+		 * at that level and continue the selection process.
+		 */
+		if (lpfc_check_next_fcf_pri_level(phba))
+			goto next_priority;
 		lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
 				"2844 No roundrobin failover FCF available\n");
-		return LPFC_FCOE_FCF_NEXT_NONE;
+		if (next_fcf_index >= LPFC_SLI4_FCF_TBL_INDX_MAX)
+			return LPFC_FCOE_FCF_NEXT_NONE;
+		else {
+			lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
+				"3063 Only FCF available idx %d, flag %x\n",
+				next_fcf_index,
+			phba->fcf.fcf_pri[next_fcf_index].fcf_rec.flag);
+			return next_fcf_index;
+		}
 	}
+
+	if (next_fcf_index < LPFC_SLI4_FCF_TBL_INDX_MAX &&
+		phba->fcf.fcf_pri[next_fcf_index].fcf_rec.flag &
+		LPFC_FCF_FLOGI_FAILED)
+		goto next_priority;
 
 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
 			"2845 Get next roundrobin failover FCF (x%x)\n",
@@ -14697,6 +14840,7 @@ lpfc_sli4_fcf_rr_index_set(struct lpfc_hba *phba, uint16_t fcf_index)
 void
 lpfc_sli4_fcf_rr_index_clear(struct lpfc_hba *phba, uint16_t fcf_index)
 {
+	struct lpfc_fcf_pri *fcf_pri;
 	if (fcf_index >= LPFC_SLI4_FCF_TBL_INDX_MAX) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
 				"2762 FCF (x%x) reached driver's book "
@@ -14705,6 +14849,14 @@ lpfc_sli4_fcf_rr_index_clear(struct lpfc_hba *phba, uint16_t fcf_index)
 		return;
 	}
 	/* Clear the eligible FCF record index bmask */
+	spin_lock_irq(&phba->hbalock);
+	list_for_each_entry(fcf_pri, &phba->fcf.fcf_pri_list, list) {
+		if (fcf_pri->fcf_rec.fcf_index == fcf_index) {
+			list_del_init(&fcf_pri->list);
+			break;
+		}
+	}
+	spin_unlock_irq(&phba->hbalock);
 	clear_bit(fcf_index, phba->fcf.fcf_rr_bmask);
 
 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
@@ -15155,9 +15307,9 @@ lpfc_cleanup_pending_mbox(struct lpfc_vport *vport)
 			ndlp = (struct lpfc_nodelist *) mb->context2;
 			mb->context2 = NULL;
 			if (ndlp) {
-				spin_lock_irq(shost->host_lock);
+				spin_lock(shost->host_lock);
 				ndlp->nlp_flag &= ~NLP_IGNR_REG_CMPL;
-				spin_unlock_irq(shost->host_lock);
+				spin_unlock(shost->host_lock);
 				lpfc_nlp_put(ndlp);
 			}
 		}
@@ -15166,9 +15318,9 @@ lpfc_cleanup_pending_mbox(struct lpfc_vport *vport)
 
 	/* Release the ndlp with the cleaned-up active mailbox command */
 	if (act_mbx_ndlp) {
-		spin_lock_irq(shost->host_lock);
+		spin_lock(shost->host_lock);
 		act_mbx_ndlp->nlp_flag &= ~NLP_IGNR_REG_CMPL;
-		spin_unlock_irq(shost->host_lock);
+		spin_unlock(shost->host_lock);
 		lpfc_nlp_put(act_mbx_ndlp);
 	}
 }

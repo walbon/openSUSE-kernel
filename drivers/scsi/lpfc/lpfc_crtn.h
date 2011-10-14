@@ -235,9 +235,11 @@ int lpfc_sli4_redisc_fcf_table(struct lpfc_hba *);
 void lpfc_fcf_redisc_wait_start_timer(struct lpfc_hba *);
 void lpfc_sli4_fcf_dead_failthrough(struct lpfc_hba *);
 uint16_t lpfc_sli4_fcf_rr_next_index_get(struct lpfc_hba *);
+void lpfc_sli4_set_fcf_flogi_fail(struct lpfc_hba *, uint16_t);
 int lpfc_sli4_fcf_rr_index_set(struct lpfc_hba *, uint16_t);
 void lpfc_sli4_fcf_rr_index_clear(struct lpfc_hba *, uint16_t);
 int lpfc_sli4_fcf_rr_next_proc(struct lpfc_vport *, uint16_t);
+void lpfc_sli4_clear_fcf_rr_bmask(struct lpfc_hba *);
 
 int lpfc_mem_alloc(struct lpfc_hba *, int align);
 void lpfc_mem_free(struct lpfc_hba *);
@@ -436,6 +438,7 @@ void lpfc_handle_rrq_active(struct lpfc_hba *);
 int lpfc_send_rrq(struct lpfc_hba *, struct lpfc_node_rrq *);
 int lpfc_set_rrq_active(struct lpfc_hba *, struct lpfc_nodelist *,
 	uint16_t, uint16_t, uint16_t);
+uint16_t lpfc_sli4_xri_inrange(struct lpfc_hba *, uint16_t);
 void lpfc_cleanup_wt_rrqs(struct lpfc_hba *);
 void lpfc_cleanup_vports_rrqs(struct lpfc_vport *, struct lpfc_nodelist *);
 struct lpfc_node_rrq *lpfc_get_active_rrq(struct lpfc_vport *, uint16_t,

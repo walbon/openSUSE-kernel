@@ -1,8 +1,8 @@
 /*
- * QLogic Fibre Channel HBA Driver
+ * QLogic iSCSI HBA Driver
  * Copyright (c)  2003-2010 QLogic Corporation
  *
- * See LICENSE.qla2xxx for copyright and licensing details.
+ * See LICENSE.qla4xxx for copyright and licensing details.
  */
 #ifndef __QLA_NX_H
 #define __QLA_NX_H
@@ -774,20 +774,5 @@ struct crb_addr_pair {
 /* QLA82XX additions */
 #define MIU_TEST_AGT_WRDATA_UPPER_LO	(0x0b0)
 #define	MIU_TEST_AGT_WRDATA_UPPER_HI	(0x0b4)
-
-#ifndef readq
-static inline u64 readq(void __iomem *addr)
-{
-	return readl(addr) | (((u64) readl(addr + 4)) << 32LL);
-}
-#endif
-
-#ifndef writeq
-static inline void writeq(u64 val, void __iomem *addr)
-{
-	writel(((u32) (val)), (addr));
-	writel(((u32) (val >> 32)), (addr + 4));
-}
-#endif
 
 #endif

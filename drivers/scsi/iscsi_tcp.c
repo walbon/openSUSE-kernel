@@ -28,6 +28,7 @@
 
 #include <linux/types.h>
 #include <linux/inet.h>
+#include <linux/slab.h>
 #include <linux/file.h>
 #include <linux/blkdev.h>
 #include <linux/crypto.h>
@@ -318,7 +319,7 @@ static int iscsi_sw_tcp_xmit(struct iscsi_conn *conn)
 		rc = iscsi_sw_tcp_xmit_segment(tcp_conn, segment);
 		/*
 		 * We may not have been able to send data because the conn
-		 * is getting stopped. libiscsi will know so propogate err
+		 * is getting stopped. libiscsi will know so propagate err
 		 * for it to do the right thing.
 		 */
 		if (rc == -EAGAIN)
@@ -615,19 +616,9 @@ static void iscsi_sw_tcp_conn_stop(struct iscsi_cls_conn *cls_conn, int flag)
 	/* userspace may have goofed up and not bound us */
 	if (!sock)
 		return;
-	/*
-	 * Make sure our recv side is stopped.
-	 * Older tools called conn stop before ep_disconnect
-	 * so IO could still be coming in.
-	 */
-	write_lock_bh(&tcp_sw_conn->sock->sk->sk_callback_lock);
-	set_bit(ISCSI_SUSPEND_BIT, &conn->suspend_rx);
-	write_unlock_bh(&tcp_sw_conn->sock->sk->sk_callback_lock);
 
-	if (sock->sk->sk_sleep) {
-		sock->sk->sk_err = EIO;
-		wake_up_interruptible(sock->sk->sk_sleep);
-	}
+	sock->sk->sk_err = EIO;
+	wake_up_interruptible(sk_sleep(sock->sk));
 
 	/* stop xmit side */
 	iscsi_suspend_tx(conn);
@@ -881,6 +872,61 @@ static void iscsi_sw_tcp_session_destroy(struct iscsi_cls_session *cls_session)
 	iscsi_host_free(shost);
 }
 
+static mode_t iscsi_sw_tcp_attr_is_visible(int param_type, int param)
+{
+	switch (param_type) {
+	case ISCSI_HOST_PARAM:
+		switch (param) {
+		case ISCSI_HOST_PARAM_NETDEV_NAME:
+		case ISCSI_HOST_PARAM_HWADDRESS:
+		case ISCSI_HOST_PARAM_IPADDRESS:
+		case ISCSI_HOST_PARAM_INITIATOR_NAME:
+			return S_IRUGO;
+		default:
+			return 0;
+		}
+	case ISCSI_PARAM:
+		switch (param) {
+		case ISCSI_PARAM_MAX_RECV_DLENGTH:
+		case ISCSI_PARAM_MAX_XMIT_DLENGTH:
+		case ISCSI_PARAM_HDRDGST_EN:
+		case ISCSI_PARAM_DATADGST_EN:
+		case ISCSI_PARAM_CONN_ADDRESS:
+		case ISCSI_PARAM_CONN_PORT:
+		case ISCSI_PARAM_EXP_STATSN:
+		case ISCSI_PARAM_PERSISTENT_ADDRESS:
+		case ISCSI_PARAM_PERSISTENT_PORT:
+		case ISCSI_PARAM_PING_TMO:
+		case ISCSI_PARAM_RECV_TMO:
+		case ISCSI_PARAM_INITIAL_R2T_EN:
+		case ISCSI_PARAM_MAX_R2T:
+		case ISCSI_PARAM_IMM_DATA_EN:
+		case ISCSI_PARAM_FIRST_BURST:
+		case ISCSI_PARAM_MAX_BURST:
+		case ISCSI_PARAM_PDU_INORDER_EN:
+		case ISCSI_PARAM_DATASEQ_INORDER_EN:
+		case ISCSI_PARAM_ERL:
+		case ISCSI_PARAM_TARGET_NAME:
+		case ISCSI_PARAM_TPGT:
+		case ISCSI_PARAM_USERNAME:
+		case ISCSI_PARAM_PASSWORD:
+		case ISCSI_PARAM_USERNAME_IN:
+		case ISCSI_PARAM_PASSWORD_IN:
+		case ISCSI_PARAM_FAST_ABORT:
+		case ISCSI_PARAM_ABORT_TMO:
+		case ISCSI_PARAM_LU_RESET_TMO:
+		case ISCSI_PARAM_TGT_RESET_TMO:
+		case ISCSI_PARAM_IFACE_NAME:
+		case ISCSI_PARAM_INITIATOR_NAME:
+			return S_IRUGO;
+		default:
+			return 0;
+		}
+	}
+
+	return 0;
+}
+
 static int iscsi_sw_tcp_slave_alloc(struct scsi_device *sdev)
 {
 	set_bit(QUEUE_FLAG_BIDI, &sdev->request_queue->queue_flags);
@@ -905,7 +951,7 @@ static struct scsi_host_template iscsi_sw_tcp_sht = {
 	.cmd_per_lun		= ISCSI_DEF_CMD_PER_LUN,
 	.eh_abort_handler       = iscsi_eh_abort,
 	.eh_device_reset_handler= iscsi_eh_device_reset,
-	.eh_target_reset_handler= iscsi_eh_recover_target,
+	.eh_target_reset_handler = iscsi_eh_recover_target,
 	.use_clustering         = DISABLE_CLUSTERING,
 	.slave_alloc            = iscsi_sw_tcp_slave_alloc,
 	.slave_configure        = iscsi_sw_tcp_slave_configure,
@@ -919,33 +965,6 @@ static struct iscsi_transport iscsi_sw_tcp_transport = {
 	.name			= "tcp",
 	.caps			= CAP_RECOVERY_L0 | CAP_MULTI_R2T | CAP_HDRDGST
 				  | CAP_DATADGST,
-	.param_mask		= ISCSI_MAX_RECV_DLENGTH |
-				  ISCSI_MAX_XMIT_DLENGTH |
-				  ISCSI_HDRDGST_EN |
-				  ISCSI_DATADGST_EN |
-				  ISCSI_INITIAL_R2T_EN |
-				  ISCSI_MAX_R2T |
-				  ISCSI_IMM_DATA_EN |
-				  ISCSI_FIRST_BURST |
-				  ISCSI_MAX_BURST |
-				  ISCSI_PDU_INORDER_EN |
-				  ISCSI_DATASEQ_INORDER_EN |
-				  ISCSI_ERL |
-				  ISCSI_CONN_PORT |
-				  ISCSI_CONN_ADDRESS |
-				  ISCSI_EXP_STATSN |
-				  ISCSI_PERSISTENT_PORT |
-				  ISCSI_PERSISTENT_ADDRESS |
-				  ISCSI_TARGET_NAME | ISCSI_TPGT |
-				  ISCSI_USERNAME | ISCSI_PASSWORD |
-				  ISCSI_USERNAME_IN | ISCSI_PASSWORD_IN |
-				  ISCSI_FAST_ABORT | ISCSI_ABORT_TMO |
-				  ISCSI_LU_RESET_TMO | ISCSI_TGT_RESET_TMO |
-				  ISCSI_PING_TMO | ISCSI_RECV_TMO |
-				  ISCSI_IFACE_NAME | ISCSI_INITIATOR_NAME,
-	.host_param_mask	= ISCSI_HOST_HWADDRESS | ISCSI_HOST_IPADDRESS |
-				  ISCSI_HOST_INITIATOR_NAME |
-				  ISCSI_HOST_NETDEV_NAME,
 	/* session management */
 	.create_session		= iscsi_sw_tcp_session_create,
 	.destroy_session	= iscsi_sw_tcp_session_destroy,
@@ -953,6 +972,7 @@ static struct iscsi_transport iscsi_sw_tcp_transport = {
 	.create_conn		= iscsi_sw_tcp_conn_create,
 	.bind_conn		= iscsi_sw_tcp_conn_bind,
 	.destroy_conn		= iscsi_sw_tcp_conn_destroy,
+	.attr_is_visible	= iscsi_sw_tcp_attr_is_visible,
 	.set_param		= iscsi_sw_tcp_conn_set_param,
 	.get_conn_param		= iscsi_sw_tcp_conn_get_param,
 	.get_session_param	= iscsi_session_get_param,

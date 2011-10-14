@@ -24,6 +24,7 @@
 #include <linux/module.h>
 #include <linux/zlib.h>
 #include <linux/fs.h>
+#include <linux/slab.h>
 
 #include "squashfs3_fs.h"
 #include "squashfs3_fs_sb.h"

@@ -81,7 +81,6 @@
 # include <kl_mem_alpha.h>
 # include <kl_dump_alpha.h>
 #endif
-/* cpw: use the " " form: */
 #ifdef DUMP_ARCH_IA64
 # include "kl_mem_ia64.h"
 # include "kl_dump_ia64.h"

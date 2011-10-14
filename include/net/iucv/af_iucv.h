@@ -74,9 +74,9 @@ struct af_iucv_trans_hdr {
 	char destAppName[16];
 	char srcNodeID[8];
 	char srcUserID[8];
-	char srcAppName[16];             /* => 70 bytes */
-	struct iucv_message iucv_hdr;    /* => 33 bytes */
-	u8 pad;                          /* total 104 bytes */
+	char srcAppName[16];		 /* => 70 bytes */
+	struct iucv_message iucv_hdr;	 /* => 33 bytes */
+	u8 pad; 			 /* total 104 bytes */
 } __packed;
 
 enum iucv_tx_notify {
@@ -125,7 +125,7 @@ struct iucv_sock {
 	atomic_t		msg_recv;
 	atomic_t		pendings;
 	int			transport;
-	void                    (*sk_txnotify)(struct sk_buff *skb,
+	void			(*sk_txnotify)(struct sk_buff *skb,
 					       enum iucv_tx_notify n);
 };
 

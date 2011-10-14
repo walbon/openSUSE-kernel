@@ -131,6 +131,7 @@ alloc_pci_controller (int seg)
 }
 
 struct pci_root_info {
+	struct acpi_device *bridge;
 	struct pci_controller *controller;
 	char *name;
 };
@@ -297,9 +298,20 @@ static __devinit acpi_status add_window(struct acpi_resource *res, void *data)
 	window->offset = offset;
 
 	if (insert_resource(root, &window->resource)) {
-		printk(KERN_ERR "alloc 0x%llx-0x%llx from %s for %s failed\n",
-			window->resource.start, window->resource.end,
-			root->name, info->name);
+		dev_err(&info->bridge->dev,
+			"can't allocate host bridge window %pR\n",
+			&window->resource);
+	} else {
+		if (offset)
+			dev_info(&info->bridge->dev, "host bridge window %pR "
+				 "(PCI address [%#llx-%#llx])\n",
+				 &window->resource,
+				 window->resource.start - offset,
+				 window->resource.end - offset);
+		else
+			dev_info(&info->bridge->dev,
+				 "host bridge window %pR\n",
+				 &window->resource);
 	}
 
 	return AE_OK;
@@ -323,8 +335,11 @@ pcibios_setup_root_windows(struct pci_bus *bus, struct pci_controller *ctrl)
 }
 
 struct pci_bus * __devinit
-pci_acpi_scan_root(struct acpi_device *device, int domain, int bus)
+pci_acpi_scan_root(struct acpi_pci_root *root)
 {
+	struct acpi_device *device = root->device;
+	int domain = root->segment;
+	int bus = root->secondary.start;
 	struct pci_controller *controller;
 	unsigned int windows = 0;
 	struct pci_bus *pbus;
@@ -359,6 +374,7 @@ pci_acpi_scan_root(struct acpi_device *device, int domain, int bus)
 			goto out3;
 
 		sprintf(name, "PCI Bus %04x:%02x", domain, bus);
+		info.bridge = device;
 		info.controller = controller;
 		info.name = name;
 		acpi_walk_resources(device->handle, METHOD_NAME__CRS,
@@ -527,10 +543,11 @@ pcibios_disable_device (struct pci_dev *dev)
 		acpi_pci_irq_disable(dev);
 }
 
-void
-pcibios_align_resource (void *data, struct resource *res,
+resource_size_t
+pcibios_align_resource (void *data, const struct resource *res,
 		        resource_size_t size, resource_size_t align)
 {
+	return res->start;
 }
 
 /*
@@ -714,9 +731,6 @@ int ia64_pci_legacy_write(struct pci_bus *bus, u16 port, u32 val, u8 size)
 	return ret;
 }
 
-/* It's defined in drivers/pci/pci.c */
-extern u8 pci_cache_line_size;
-
 /**
  * set_pci_cacheline_size - determine cacheline size for PCI devices
  *
@@ -725,7 +739,7 @@ extern u8 pci_cache_line_size;
  *
  * Code mostly taken from arch/ia64/kernel/palinfo.c:cache_info().
  */
-static void __init set_pci_cacheline_size(void)
+static void __init set_pci_dfl_cacheline_size(void)
 {
 	unsigned long levels, unique_caches;
 	long status;
@@ -745,7 +759,7 @@ static void __init set_pci_cacheline_size(void)
 			"(status=%ld)\n", __func__, status);
 		return;
 	}
-	pci_cache_line_size = (1 << cci.pcci_line_size) / 4;
+	pci_dfl_cache_line_size = (1 << cci.pcci_line_size) / 4;
 }
 
 u64 ia64_dma_get_required_mask(struct device *dev)
@@ -776,7 +790,7 @@ EXPORT_SYMBOL_GPL(dma_get_required_mask);
 
 static int __init pcibios_init(void)
 {
-	set_pci_cacheline_size();
+	set_pci_dfl_cacheline_size();
 	return 0;
 }
 

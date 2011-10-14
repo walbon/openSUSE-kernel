@@ -85,19 +85,18 @@ MODULE_VERSION(my_VERSION);
 
 static int mpt_msi_enable_spi;
 module_param(mpt_msi_enable_spi, int, 0);
-MODULE_PARM_DESC(mpt_msi_enable_spi, " Enable MSI Support for SPI \
-		controllers (default=0)");
+MODULE_PARM_DESC(mpt_msi_enable_spi,
+		 " Enable MSI Support for SPI controllers (default=0)");
 
 static int mpt_msi_enable_fc;
 module_param(mpt_msi_enable_fc, int, 0);
-MODULE_PARM_DESC(mpt_msi_enable_fc, " Enable MSI Support for FC \
-		controllers (default=0)");
+MODULE_PARM_DESC(mpt_msi_enable_fc,
+		 " Enable MSI Support for FC controllers (default=0)");
 
 static int mpt_msi_enable_sas;
 module_param(mpt_msi_enable_sas, int, 0);
-MODULE_PARM_DESC(mpt_msi_enable_sas, " Enable MSI Support for SAS \
-		controllers (default=0)");
-
+MODULE_PARM_DESC(mpt_msi_enable_sas,
+		 " Enable MSI Support for SAS controllers (default=0)");
 
 static int mpt_channel_mapping;
 module_param(mpt_channel_mapping, int, 0);
@@ -107,17 +106,15 @@ int mpt_debug_level;
 static int mpt_set_debug_level(const char *val, struct kernel_param *kp);
 module_param_call(mpt_debug_level, mpt_set_debug_level, param_get_int,
 		  &mpt_debug_level, 0600);
-MODULE_PARM_DESC(mpt_debug_level, " debug level - refer to mptdebug.h \
-	- (default=0)");
+MODULE_PARM_DESC(mpt_debug_level,
+		 " debug level - refer to mptdebug.h - (default=0)");
 EXPORT_SYMBOL(mpt_debug_level);
 
 int mpt_fwfault_debug;
 EXPORT_SYMBOL(mpt_fwfault_debug);
-module_param_call(mpt_fwfault_debug, param_set_int, param_get_int,
-	  &mpt_fwfault_debug, 0600);
+module_param(mpt_fwfault_debug, int, 0600);
 MODULE_PARM_DESC(mpt_fwfault_debug, "Enable detection of Firmware fault"
 	" and halt Firmware on fault - (default=0)");
-
 
 static char	MptCallbacksName[MPT_MAX_PROTOCOL_DRIVERS][50];
 
@@ -1221,7 +1218,7 @@ mpt_send_handshake_request(u8 cb_idx, MPT_ADAPTER *ioc, int reqBytes, u32 *req, 
 	 * is in proper (pre-alloc'd) request buffer range...
 	 */
 	ii = MFPTR_2_MPT_INDEX(ioc,(MPT_FRAME_HDR*)req);
-	if (ii >= 0 && ii < ioc->req_depth) {
+	if (reqBytes >= 12 && ii >= 0 && ii < ioc->req_depth) {
 		MPT_FRAME_HDR *mf = (MPT_FRAME_HDR*)req;
 		mf->u.frame.hwhdr.msgctxu.fld.req_idx = cpu_to_le16(ii);
 		mf->u.frame.hwhdr.msgctxu.fld.cb_idx = cb_idx;
@@ -1881,7 +1878,7 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
 	ioc->sh = NULL;
 	ioc->cached_fw = NULL;
 
-	/* Initilize SCSI Config Data structure
+	/* Initialize SCSI Config Data structure
 	 */
 	memset(&ioc->spi_data, 0, sizeof(SpiCfgData));
 
@@ -2568,9 +2565,9 @@ mpt_do_ioc_recovery(MPT_ADAPTER *ioc, u32 reason, int sleepFlag)
 	if ((ret == 0) && (reason == MPT_HOSTEVENT_IOC_BRINGUP)) {
 
 		/*
-		 * Initalize link list for inactive raid volumes.
+		 * Initialize link list for inactive raid volumes.
 		 */
-		init_MUTEX(&ioc->raid_data.inactive_list_mutex);
+		mutex_init(&ioc->raid_data.inactive_list_mutex);
 		INIT_LIST_HEAD(&ioc->raid_data.inactive_list);
 
 		switch (ioc->bus_type) {
@@ -3539,7 +3536,7 @@ SendPortEnable(MPT_ADAPTER *ioc, int portnum, int sleepFlag)
  *	If memory has already been allocated, the same (cached) value
  *	is returned.
  *
- *	Return 0 if successfull, or non-zero for failure
+ *	Return 0 if successful, or non-zero for failure
  **/
 int
 mpt_alloc_fw_memory(MPT_ADAPTER *ioc, int size)
@@ -5183,8 +5180,7 @@ mptbase_sas_persist_operation(MPT_ADAPTER *ioc, u8 persist_opcode)
 		if (!timeleft) {
 			printk(KERN_DEBUG "%s: Issuing Reset from %s!!\n",
 			    ioc->name, __func__);
-			if (mpt_SoftResetHandler(ioc, CAN_SLEEP) != 0)
-				mpt_HardResetHandler(ioc, CAN_SLEEP);
+			mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 			mpt_free_msg_frame(ioc, mf);
 		}
 		goto out;
@@ -5752,13 +5748,13 @@ mpt_inactive_raid_list_free(MPT_ADAPTER *ioc)
 	if (list_empty(&ioc->raid_data.inactive_list))
 		return;
 
-	down(&ioc->raid_data.inactive_list_mutex);
+	mutex_lock(&ioc->raid_data.inactive_list_mutex);
 	list_for_each_entry_safe(component_info, pNext,
 	    &ioc->raid_data.inactive_list, list) {
 		list_del(&component_info->list);
 		kfree(component_info);
 	}
-	up(&ioc->raid_data.inactive_list_mutex);
+	mutex_unlock(&ioc->raid_data.inactive_list_mutex);
 }
 
 /**
@@ -5819,7 +5815,7 @@ mpt_inactive_raid_volumes(MPT_ADAPTER *ioc, u8 channel, u8 id)
 	if (!handle_inactive_volumes)
 		goto out;
 
-	down(&ioc->raid_data.inactive_list_mutex);
+	mutex_lock(&ioc->raid_data.inactive_list_mutex);
 	for (i = 0; i < buffer->NumPhysDisks; i++) {
 		if(mpt_raid_phys_disk_pg0(ioc,
 		    buffer->PhysDisk[i].PhysDiskNum, &phys_disk) != 0)
@@ -5862,7 +5858,7 @@ mpt_inactive_raid_volumes(MPT_ADAPTER *ioc, u8 channel, u8 id)
 		list_add_tail(&component_info->list,
 		    &ioc->raid_data.inactive_list);
 	}
-	up(&ioc->raid_data.inactive_list_mutex);
+	mutex_unlock(&ioc->raid_data.inactive_list_mutex);
 
  out:
 	if (buffer)
@@ -6703,10 +6699,8 @@ mpt_config(MPT_ADAPTER *ioc, CONFIGPARMS *pCfg)
 		printk(MYIOC_s_WARN_FMT "Issuing Reset from %s!!\n",
 		    ioc->name, __func__);
 		if (retry_count == 0) {
-			if (mpt_SoftResetHandler(ioc, CAN_SLEEP) != 0) {
-				mpt_HardResetHandler(ioc, CAN_SLEEP);
+			if (mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP) != 0)
 				retry_count++;
-			}
 		} else {
 			mpt_HardResetHandler(ioc, CAN_SLEEP);
 		}
@@ -7168,14 +7162,13 @@ mpt_halt_firmware(MPT_ADAPTER *ioc)
  *	mpt_SoftResetHandler - Issues a less expensive reset
  *	@ioc: Pointer to MPT_ADAPTER structure
  *	@sleepFlag: Indicates if sleep or schedule must be called.
-
  *
  *	Returns 0 for SUCCESS or -1 if FAILED.
  *
  *	Message Unit Reset - instructs the IOC to reset the Reply Post and
  *	Free FIFO's. All the Message Frames on Reply Free FIFO are discarded.
  *	All posted buffers are freed, and event notification is turned off.
- *	IOC doesnt reply to any outstanding request. This will transfer IOC
+ *	IOC doesn't reply to any outstanding request. This will transfer IOC
  *	to READY state.
  **/
 int
@@ -7189,14 +7182,16 @@ mpt_SoftResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 	unsigned long	 time_count;
 	int	i;
 
-	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT "SoftResetHandler Entered!\n", ioc->name));
+	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT "SoftResetHandler Entered!\n",
+		ioc->name));
 
 	ioc_state = mpt_GetIocState(ioc, 0) & MPI_IOC_STATE_MASK;
 
-	if(mpt_fwfault_debug)
+	if (mpt_fwfault_debug)
 		mpt_halt_firmware(ioc);
 
-	if (ioc_state == MPI_IOC_STATE_FAULT || ioc_state == MPI_IOC_STATE_RESET) {
+	if (ioc_state == MPI_IOC_STATE_FAULT ||
+	    ioc_state == MPI_IOC_STATE_RESET) {
 		dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT
 		    "skipping, either in FAULT or RESET state!\n", ioc->name));
 		return -1;
@@ -7313,6 +7308,27 @@ mpt_SoftResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 
 	return rc;
 }
+
+/**
+ *	mpt_Soft_Hard_ResetHandler - Try less expensive reset
+ *	@ioc: Pointer to MPT_ADAPTER structure
+ *	@sleepFlag: Indicates if sleep or schedule must be called.
+ *
+ *	Returns 0 for SUCCESS or -1 if FAILED.
+ *	Try for softreset first, only if it fails go for expensive
+ *	HardReset.
+ **/
+int
+mpt_Soft_Hard_ResetHandler(MPT_ADAPTER *ioc, int sleepFlag) {
+	int ret = -1;
+
+	ret = mpt_SoftResetHandler(ioc, sleepFlag);
+	if (ret == 0)
+		return ret;
+	ret = mpt_HardResetHandler(ioc, sleepFlag);
+	return ret;
+}
+EXPORT_SYMBOL(mpt_Soft_Hard_ResetHandler);
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 /**
@@ -8691,7 +8707,6 @@ EXPORT_SYMBOL(mpt_verify_adapter);
 EXPORT_SYMBOL(mpt_GetIocState);
 EXPORT_SYMBOL(mpt_print_ioc_summary);
 EXPORT_SYMBOL(mpt_HardResetHandler);
-EXPORT_SYMBOL(mpt_SoftResetHandler);
 EXPORT_SYMBOL(mpt_config);
 EXPORT_SYMBOL(mpt_findImVolumes);
 EXPORT_SYMBOL(mpt_alloc_fw_memory);

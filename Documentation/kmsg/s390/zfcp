@@ -159,7 +159,7 @@
  */
 
 /*?
- * Text: "%s: ERP failed for unit 0x%016Lx on port 0x%016Lx\n"
+ * Text: "%s: ERP failed for LUN 0x%016Lx on port 0x%016Lx\n"
  * Severity: Error
  * Parameter:
  *   @1: bus ID of the zfcp device
@@ -300,7 +300,7 @@
  */
 
 /*?
- * Text: "%s: Access denied to unit 0x%016Lx on port 0x%016Lx\n"
+ * Text: "%s: Access denied to LUN 0x%016Lx on port 0x%016Lx\n"
  * Severity: Warning
  * Parameter:
  *   @1: bus ID of the zfcp device
@@ -718,7 +718,14 @@
  * The FCP adapter can only open a limited number of SCSI devices. This limit
  * has been reached and the SCSI device at the indicated LUN cannot be opened.
  * User action:
- * Check all SCSI devices opened through the FCP adapter and close some of them.
+ * For FCP subchannels running in non-NPIV mode, check all SCSI
+ * devices opened through the FCP adapter and close some of them.  For
+ * FCP subchannels running in NPIV mode, verify the SAN zoning and
+ * host connections on the storage systems. Ensure that the zoning and
+ * host connections only allow access to the required LUNs. As a
+ * workaround, disable the automatic LUN scanning by setting the
+ * zfcp.allow_lun_scan kernel parameter or the allow_lun_scan module
+ * parameter to 0.
  */
 
 /*?
@@ -738,7 +745,7 @@
  */
 
 /*?
- * Text: "%s: Exclusive read-only access not supported (unit 0x%016Lx, port 0x%016Lx)\n"
+ * Text: "%s: Exclusive read-only access not supported (LUN 0x%016Lx, port 0x%016Lx)\n"
  * Severity: Error
  * Parameter:
  *   @1: bus ID of the zfcp device
@@ -753,7 +760,7 @@
  */
 
 /*?
- * Text: "%s: Shared read-write access not supported (unit 0x%016Lx, port 0x%016Lx)\n"
+ * Text: "%s: Shared read-write access not supported (LUN 0x%016Lx, port 0x%016Lx)\n"
  * Severity: Error
  * Parameter:
  *   @1: bus ID of the zfcp device
@@ -768,7 +775,7 @@
  */
 
 /*?
- * Text: "%s: Incorrect direction %d, unit 0x%016Lx on port 0x%016Lx closed\n"
+ * Text: "%s: Incorrect direction %d, LUN 0x%016Lx on port 0x%016Lx closed\n"
  * Severity: Error
  * Parameter:
  *   @1: bus ID of the zfcp device
@@ -783,7 +790,7 @@
  */
 
 /*?
- * Text: "%s: Incorrect CDB length %d, unit 0x%016Lx on port 0x%016Lx closed\n"
+ * Text: "%s: Incorrect CDB length %d, LUN 0x%016Lx on port 0x%016Lx closed\n"
  * Severity: Error
  * Parameter:
  *   @1: bus ID of the zfcp device
@@ -794,21 +801,6 @@
  * The control-data-block (CDB) length field in a SCSI request is not valid or
  * too large for the FCP adapter. The zfcp device driver closed down the SCSI
  * device at the indicated LUN.
- * User action:
- * Gather Linux debug data and report this problem to your support organization.
- */
-
-/*?
- * Text: "%s: Oversize data package, unit 0x%016Lx on port 0x%016Lx closed\n"
- * Severity: Error
- * Parameter:
- *   @1: bus ID of the zfcp device
- *   @2: LUN
- *   @3: WWPN
- * Description:
- * A SCSI request with too much data has been sent to the SCSI device at the
- * indicated LUN. The FCP adapter cannot handle data packets of this size and
- * the SCSI device driver closed down the SCSI device.
  * User action:
  * Gather Linux debug data and report this problem to your support organization.
  */

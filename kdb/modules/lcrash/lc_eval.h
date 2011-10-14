@@ -219,7 +219,6 @@ int unset_variable(vtab_t *, variable_t *);
 variable_t *find_variable(vtab_t *, char *, int);
 kltype_t *number_to_type(node_t *);
 void free_eval_memory(void);
-/* cpw: was int print_eval_results(node_t *, FILE *, int); */
 int print_eval_results(node_t *, int);
 
 #endif /* __LC_EVAL_H */

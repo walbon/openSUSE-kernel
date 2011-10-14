@@ -53,7 +53,7 @@ static int pfm_compat_update_pmd(struct pfm_context *ctx, u16 set_id, u16 cnum,
 {
 	struct pfm_event_set *set;
 	int is_counting;
-	unsigned long *impl_pmds;
+	u64 *impl_pmds;
 	u32 flags = 0;
 	u16 max_pmd;
 
@@ -86,8 +86,8 @@ static int pfm_compat_update_pmd(struct pfm_context *ctx, u16 set_id, u16 cnum,
 		/*
 		 * verify validity of smpl_pmds
 		 */
-		if (unlikely(bitmap_subset(smpl_pmds,
-					   impl_pmds, max_pmd) == 0)) {
+		if (unlikely(bitmap_subset((unsigned long *)smpl_pmds,
+					   (unsigned long *)impl_pmds, max_pmd) == 0)) {
 			PFM_DBG("invalid smpl_pmds=0x%llx for pmd%u",
 				  (unsigned long long)smpl_pmds[0], cnum);
 			return -EINVAL;
@@ -95,8 +95,8 @@ static int pfm_compat_update_pmd(struct pfm_context *ctx, u16 set_id, u16 cnum,
 		/*
 		 * verify validity of reset_pmds
 		 */
-		if (unlikely(bitmap_subset(reset_pmds,
-					   impl_pmds, max_pmd) == 0)) {
+		if (unlikely(bitmap_subset((unsigned long *)reset_pmds,
+					   (unsigned long *)impl_pmds, max_pmd) == 0)) {
 			PFM_DBG("invalid reset_pmds=0x%lx for pmd%u",
 				  reset_pmds[0], cnum);
 			return -EINVAL;
@@ -115,11 +115,11 @@ static int pfm_compat_update_pmd(struct pfm_context *ctx, u16 set_id, u16 cnum,
 	set->pmds[cnum].flags = flags;
 
 	if (is_counting) {
-		bitmap_copy(set->pmds[cnum].reset_pmds,
+		bitmap_copy((unsigned long *)set->pmds[cnum].reset_pmds,
 			    reset_pmds,
 			    max_pmd);
 
-		bitmap_copy(set->pmds[cnum].smpl_pmds,
+		bitmap_copy((unsigned long *)set->pmds[cnum].smpl_pmds,
 			    smpl_pmds,
 			    max_pmd);
 
@@ -134,7 +134,7 @@ static int pfm_compat_update_pmd(struct pfm_context *ctx, u16 set_id, u16 cnum,
 			__clear_bit(cnum, set->ovfl_notify);
 
 	}
-	PFM_DBG("pmd%u flags=0x%x eventid=0x%lx r_pmds=0x%lx s_pmds=0x%lx",
+	PFM_DBG("pmd%u flags=0x%x eventid=0x%llx r_pmds=0x%lx s_pmds=0x%lx",
 		  cnum, flags,
 		  eventid,
 		  reset_pmds[0],
@@ -675,7 +675,6 @@ int pfm_smpl_buf_alloc_compat(struct pfm_context *ctx, size_t rsize, int fd)
 		goto error_kmem;
 	}
 	memset(vma, 0, sizeof(*vma));
-	INIT_LIST_HEAD(&vma->anon_vma_chain);
 
 	/*
 	 * simulate effect of mmap()

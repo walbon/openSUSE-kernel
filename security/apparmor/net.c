@@ -4,7 +4,7 @@
  * This file contains AppArmor network mediation
  *
  * Copyright (C) 1998-2008 Novell/SUSE
- * Copyright 2009 Canonical Ltd.
+ * Copyright 2009-2010 Canonical Ltd.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -34,69 +34,97 @@ static const char *sock_type_names[] = {
 	"packet",
 };
 
-struct aa_audit_net {
-	struct aa_audit base;
-
-	int family, type, protocol;
-
-};
-
+/* audit callback for net specific fields */
 static void audit_cb(struct audit_buffer *ab, void *va)
 {
-	struct aa_audit_net *sa = va;
+	struct common_audit_data *sa = va;
 
-	if (sa->family || sa->type) {
-		if (address_family_names[sa->family])
-			audit_log_format(ab, " family=\"%s\"",
-					 address_family_names[sa->family]);
-		else
-			audit_log_format(ab, " family=\"unknown(%d)\"",
-					 sa->family);
-
-		if (sock_type_names[sa->type])
-			audit_log_format(ab, " sock_type=\"%s\"",
-					 sock_type_names[sa->type]);
-		else
-			audit_log_format(ab, " sock_type=\"unknown(%d)\"",
-					 sa->type);
-
-		audit_log_format(ab, " protocol=%d", sa->protocol);
+	audit_log_format(ab, " family=");
+	if (address_family_names[sa->u.net.family]) {
+		audit_log_string(ab, address_family_names[sa->u.net.family]);
+	} else {
+		audit_log_format(ab, " \"unknown(%d)\"", sa->u.net.family);
 	}
 
+	audit_log_format(ab, " sock_type=");
+	if (sock_type_names[sa->aad.net.type]) {
+		audit_log_string(ab, sock_type_names[sa->aad.net.type]);
+	} else {
+		audit_log_format(ab, "\"unknown(%d)\"", sa->aad.net.type);
+	}
+
+	audit_log_format(ab, " protocol=%d", sa->aad.net.protocol);
 }
 
-static int aa_audit_net(struct aa_profile *profile, struct aa_audit_net *sa)
+/**
+ * audit_net - audit network access
+ * @profile: profile being enforced  (NOT NULL)
+ * @op: operation being checked
+ * @family: network family
+ * @type:   network type
+ * @protocol: network protocol
+ * @sk: socket auditing is being applied to
+ * @error: error code for failure else 0
+ *
+ * Returns: %0 or sa->error else other errorcode on failure
+ */
+static int audit_net(struct aa_profile *profile, int op, u16 family, int type,
+		     int protocol, struct sock *sk, int error)
 {
-	int type = AUDIT_APPARMOR_AUTO;
-
-	if (likely(!sa->base.error)) {
-		u16 audit_mask = profile->net.audit[sa->family];
-		if (likely((PROFILE_AUDIT_MODE(profile) != AUDIT_ALL) &&
-			   !(1 << sa->type & audit_mask)))
-			return 0;
-		type = AUDIT_APPARMOR_AUDIT;
+	int audit_type = AUDIT_APPARMOR_AUTO;
+	struct common_audit_data sa;
+	if (sk) {
+		COMMON_AUDIT_DATA_INIT(&sa, NET);
 	} else {
-		u16 quiet_mask = profile->net.quiet[sa->family];
+		COMMON_AUDIT_DATA_INIT(&sa, NONE);
+	}
+	/* todo fill in socket addr info */
+
+	sa.aad.op = op,
+	sa.u.net.family = family;
+	sa.u.net.sk = sk;
+	sa.aad.net.type = type;
+	sa.aad.net.protocol = protocol;
+	sa.aad.error = error;
+
+	if (likely(!sa.aad.error)) {
+		u16 audit_mask = profile->net.audit[sa.u.net.family];
+		if (likely((AUDIT_MODE(profile) != AUDIT_ALL) &&
+			   !(1 << sa.aad.net.type & audit_mask)))
+			return 0;
+		audit_type = AUDIT_APPARMOR_AUDIT;
+	} else {
+		u16 quiet_mask = profile->net.quiet[sa.u.net.family];
 		u16 kill_mask = 0;
-		u16 denied = (1 << sa->type) & ~quiet_mask;
+		u16 denied = (1 << sa.aad.net.type) & ~quiet_mask;
 
 		if (denied & kill_mask)
-			type = AUDIT_APPARMOR_KILL;
+			audit_type = AUDIT_APPARMOR_KILL;
 
 		if ((denied & quiet_mask) &&
-		    PROFILE_AUDIT_MODE(profile) != AUDIT_NOQUIET &&
-		    PROFILE_AUDIT_MODE(profile) != AUDIT_ALL)
-			return PROFILE_COMPLAIN(profile) ? 0 : sa->base.error;
+		    AUDIT_MODE(profile) != AUDIT_NOQUIET &&
+		    AUDIT_MODE(profile) != AUDIT_ALL)
+			return COMPLAIN_MODE(profile) ? 0 : sa.aad.error;
 	}
 
-	return aa_audit(type, profile, &sa->base, audit_cb);
+	return aa_audit(audit_type, profile, GFP_KERNEL, &sa, audit_cb);
 }
 
-int aa_net_perm(struct aa_profile *profile, char *operation, int int_state,
-		int family, int type, int protocol)
+/**
+ * aa_net_perm - very course network access check
+ * @op: operation being checked
+ * @profile: profile being enforced  (NOT NULL)
+ * @family: network family
+ * @type:   network type
+ * @protocol: network protocol
+ *
+ * Returns: %0 else error if permission denied
+ */
+int aa_net_perm(int op, struct aa_profile *profile, u16 family, int type,
+		int protocol, struct sock *sk)
 {
-	struct aa_audit_net sa;
 	u16 family_mask;
+	int error;
 
 	if ((family < 0) || (family >= AF_MAX))
 		return -EINVAL;
@@ -108,31 +136,35 @@ int aa_net_perm(struct aa_profile *profile, char *operation, int int_state,
 	if (family == AF_UNIX || family == AF_NETLINK)
 		return 0;
 
-	family_mask = profile->net.allowed[family];
+	family_mask = profile->net.allow[family];
 
-	memset(&sa, 0, sizeof(sa));
-	sa.base.operation = operation;
-	sa.base.gfp_mask = int_state ? GFP_ATOMIC : GFP_KERNEL;
-	sa.base.error = (family_mask & (1 << type)) ? 0 : -EACCES;
-	sa.family = family;
-	sa.type = type;
-	sa.protocol = protocol;
+	error = (family_mask & (1 << type)) ? 0 : -EACCES;
 
-	return  aa_audit_net(profile, &sa);
+	return audit_net(profile, op, family, type, protocol, sk, error);
 }
 
-int aa_revalidate_sk(struct sock *sk, char *operation)
+/**
+ * aa_revalidate_sk - Revalidate access to a sock
+ * @op: operation being checked
+ * @sk: sock being revalidated  (NOT NULL)
+ *
+ * Returns: %0 else error if permission denied
+ */
+int aa_revalidate_sk(int op, struct sock *sk)
 {
 	struct aa_profile *profile;
-	struct cred *cred;
 	int error = 0;
 
-	cred = aa_get_task_policy(current, &profile);
-	if (profile)
-		error = aa_net_perm(profile, operation, in_interrupt(),
-				    sk->sk_family, sk->sk_type,
-				    sk->sk_protocol);
-	put_cred(cred);
+	/* aa_revalidate_sk should not be called from interrupt context
+	 * don't mediate these calls as they are not task related
+	 */
+	if (in_interrupt())
+		return 0;
+
+	profile = __aa_current_profile();
+	if (!unconfined(profile))
+		error = aa_net_perm(op, profile, sk->sk_family, sk->sk_type,
+				    sk->sk_protocol, sk);
 
 	return error;
 }

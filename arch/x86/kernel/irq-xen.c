@@ -4,9 +4,11 @@
 #include <linux/cpu.h>
 #include <linux/interrupt.h>
 #include <linux/kernel_stat.h>
+#include <linux/of.h>
 #include <linux/seq_file.h>
 #include <linux/smp.h>
 #include <linux/ftrace.h>
+#include <linux/delay.h>
 
 #include <asm/apic.h>
 #include <asm/io_apic.h>
@@ -19,7 +21,7 @@
 atomic_t irq_err_count;
 
 /* Function pointer for generic interrupt vector handling */
-void (*generic_interrupt_extension)(void) = NULL;
+void (*x86_platform_ipi_callback)(void) = NULL;
 #endif
 
 /*
@@ -47,9 +49,9 @@ void ack_bad_irq(unsigned int irq)
 
 #define irq_stats(x)		(&per_cpu(irq_stat, x))
 /*
- * /proc/interrupts printing:
+ * /proc/interrupts printing for arch specific interrupts
  */
-static int show_other_interrupts(struct seq_file *p, int prec)
+int arch_show_interrupts(struct seq_file *p, int prec)
 {
 	int j;
 
@@ -71,16 +73,16 @@ static int show_other_interrupts(struct seq_file *p, int prec)
 	for_each_online_cpu(j)
 		seq_printf(p, "%10u ", irq_stats(j)->apic_perf_irqs);
 	seq_printf(p, "  Performance monitoring interrupts\n");
-	seq_printf(p, "%*s: ", prec, "PND");
+	seq_printf(p, "%*s: ", prec, "IWI");
 	for_each_online_cpu(j)
-		seq_printf(p, "%10u ", irq_stats(j)->apic_pending_irqs);
-	seq_printf(p, "  Performance pending work\n");
+		seq_printf(p, "%10u ", irq_stats(j)->apic_irq_work_irqs);
+	seq_printf(p, "  IRQ work interrupts\n");
 #endif
 #ifndef CONFIG_XEN
-	if (generic_interrupt_extension) {
+	if (x86_platform_ipi_callback) {
 		seq_printf(p, "%*s: ", prec, "PLT");
 		for_each_online_cpu(j)
-			seq_printf(p, "%10u ", irq_stats(j)->generic_irqs);
+			seq_printf(p, "%10u ", irq_stats(j)->x86_platform_ipis);
 		seq_printf(p, "  Platform interrupts\n");
 	}
 #endif
@@ -136,59 +138,6 @@ static int show_other_interrupts(struct seq_file *p, int prec)
 	return 0;
 }
 
-int show_interrupts(struct seq_file *p, void *v)
-{
-	unsigned long flags, any_count = 0;
-	int i = *(loff_t *) v, j, prec;
-	struct irqaction *action;
-	struct irq_desc *desc;
-
-	if (i > nr_irqs)
-		return 0;
-
-	for (prec = 3, j = 1000; prec < 10 && j <= nr_irqs; ++prec)
-		j *= 10;
-
-	if (i == nr_irqs)
-		return show_other_interrupts(p, prec);
-
-	/* print header */
-	if (i == 0) {
-		seq_printf(p, "%*s", prec + 8, "");
-		for_each_online_cpu(j)
-			seq_printf(p, "CPU%-8d", j);
-		seq_putc(p, '\n');
-	}
-
-	desc = irq_to_desc(i);
-	if (!desc)
-		return 0;
-
-	spin_lock_irqsave(&desc->lock, flags);
-	for_each_online_cpu(j)
-		any_count |= kstat_irqs_cpu(i, j);
-	action = desc->action;
-	if (!action && !any_count)
-		goto out;
-
-	seq_printf(p, "%*d: ", prec, i);
-	for_each_online_cpu(j)
-		seq_printf(p, "%10u ", kstat_irqs_cpu(i, j));
-	seq_printf(p, " %8s", desc->chip->name);
-	seq_printf(p, "-%-8s", desc->name);
-
-	if (action) {
-		seq_printf(p, "  %s", action->name);
-		while ((action = action->next) != NULL)
-			seq_printf(p, ", %s", action->name);
-	}
-
-	seq_putc(p, '\n');
-out:
-	spin_unlock_irqrestore(&desc->lock, flags);
-	return 0;
-}
-
 /*
  * /proc/stat helpers
  */
@@ -200,11 +149,11 @@ u64 arch_irq_stat_cpu(unsigned int cpu)
 	sum += irq_stats(cpu)->apic_timer_irqs;
 	sum += irq_stats(cpu)->irq_spurious_count;
 	sum += irq_stats(cpu)->apic_perf_irqs;
-	sum += irq_stats(cpu)->apic_pending_irqs;
+	sum += irq_stats(cpu)->apic_irq_work_irqs;
 #endif
 #ifndef CONFIG_XEN
-	if (generic_interrupt_extension)
-		sum += irq_stats(cpu)->generic_irqs;
+	if (x86_platform_ipi_callback)
+		sum += irq_stats(cpu)->x86_platform_ipis;
 #endif
 #ifdef CONFIG_SMP
 	sum += irq_stats(cpu)->irq_resched_count;
@@ -260,7 +209,7 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 	exit_idle();
 	irq_enter();
 
-	irq = __get_cpu_var(vector_irq)[vector];
+	irq = __this_cpu_read(vector_irq[vector]);
 
 	if (!handle_irq(irq, regs)) {
 		ack_APIC_irq();
@@ -277,9 +226,9 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 }
 
 /*
- * Handler for GENERIC_INTERRUPT_VECTOR.
+ * Handler for X86_PLATFORM_IPI_VECTOR.
  */
-void smp_generic_interrupt(struct pt_regs *regs)
+void smp_x86_platform_ipi(struct pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
@@ -289,10 +238,10 @@ void smp_generic_interrupt(struct pt_regs *regs)
 
 	irq_enter();
 
-	inc_irq_stat(generic_irqs);
+	inc_irq_stat(x86_platform_ipis);
 
-	if (generic_interrupt_extension)
-		generic_interrupt_extension();
+	if (x86_platform_ipi_callback)
+		x86_platform_ipi_callback();
 
 	irq_exit();
 
@@ -308,6 +257,8 @@ void fixup_irqs(void)
 	unsigned int irq;
 	static int warned;
 	struct irq_desc *desc;
+	struct irq_data *data;
+	struct irq_chip *chip;
 	static DECLARE_BITMAP(irqs_used, NR_IRQS);
 
 	for_each_irq_desc(irq, desc) {
@@ -321,13 +272,13 @@ void fixup_irqs(void)
 			continue;
 
 		/* interrupt's are disabled at this point */
-		spin_lock(&desc->lock);
+		raw_spin_lock(&desc->lock);
 
-		affinity = desc->affinity;
-		if (!irq_has_action(irq) ||
-		    (desc->status & IRQ_PER_CPU) ||
+		data = irq_desc_get_irq_data(desc);
+		affinity = data->affinity;
+		if (!irq_has_action(irq) || irqd_is_per_cpu(data) ||
 		    cpumask_subset(affinity, cpu_online_mask)) {
-			spin_unlock(&desc->lock);
+			raw_spin_unlock(&desc->lock);
 			continue;
 		}
 
@@ -339,18 +290,20 @@ void fixup_irqs(void)
 			affinity = cpu_all_mask;
 		}
 
-		if (!(desc->status & IRQ_MOVE_PCNTXT) && desc->chip->mask)
-			desc->chip->mask(irq);
+		chip = irq_data_get_irq_chip(data);
+		if (!irqd_can_move_in_process_context(data) && chip->irq_mask)
+			chip->irq_mask(data);
 
-		if (desc->chip->set_affinity)
-			desc->chip->set_affinity(irq, affinity);
-		else if (desc->chip != &no_irq_chip && !(warned++))
+		if (chip->irq_set_affinity)
+			chip->irq_set_affinity(data, affinity, true);
+		else if (data->chip != &no_irq_chip && !(warned++))
 			set_affinity = 0;
 
-		if (!(desc->status & IRQ_MOVE_PCNTXT) && desc->chip->unmask)
-			desc->chip->unmask(irq);
+		if (!irqd_can_move_in_process_context(data) &&
+		    !irqd_irq_disabled(data) && chip->irq_unmask)
+			chip->irq_unmask(data);
 
-		spin_unlock(&desc->lock);
+		raw_spin_unlock(&desc->lock);
 
 		if (break_affinity && set_affinity)
 			/*printk("Broke affinity for irq %i\n", irq)*/;
@@ -374,10 +327,13 @@ void fixup_irqs(void)
 			continue;
 
 		if (xen_test_irq_pending(irq)) {
-			spin_lock(&desc->lock);
-			if (desc->chip->retrigger)
-				desc->chip->retrigger(irq);
-			spin_unlock(&desc->lock);
+			desc = irq_to_desc(irq);
+			data = irq_desc_get_irq_data(desc);
+			chip = irq_data_get_irq_chip(data);
+			raw_spin_lock(&desc->lock);
+			if (chip->irq_retrigger)
+				chip->irq_retrigger(data);
+			raw_spin_unlock(&desc->lock);
 		}
 	}
 }

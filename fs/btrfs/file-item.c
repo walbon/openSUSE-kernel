@@ -17,6 +17,7 @@
  */
 
 #include <linux/bio.h>
+#include <linux/slab.h>
 #include <linux/pagemap.h>
 #include <linux/highmem.h>
 #include "ctree.h"
@@ -176,6 +177,17 @@ static int __btrfs_lookup_bio_sums(struct btrfs_root *root,
 
 	WARN_ON(bio->bi_vcnt <= 0);
 
+	/*
+	 * the free space stuff is only read when it hasn't been
+	 * updated in the current transaction.  So, we can safely
+	 * read from the commit root and sidestep a nasty deadlock
+	 * between reading the free space cache and updating the csum tree.
+	 */
+	if (btrfs_is_free_space_inode(root, inode)) {
+		path->search_commit_root = 1;
+		path->skip_locking = 1;
+	}
+
 	disk_bytenr = (u64)bio->bi_sector << 9;
 	if (dio)
 		offset = logical_offset;
@@ -202,9 +214,10 @@ static int __btrfs_lookup_bio_sums(struct btrfs_root *root,
 				sum = 0;
 				if (BTRFS_I(inode)->root->root_key.objectid ==
 				    BTRFS_DATA_RELOC_TREE_OBJECTID) {
-					set_extent_bits(io_tree, offset,
+					ret = set_extent_bits(io_tree, offset,
 						offset + bvec->bv_len - 1,
 						EXTENT_NODATASUM, GFP_NOFS);
+					BUG_ON(ret < 0);
 				} else {
 					printk(KERN_INFO "btrfs no csum found "
 					       "for inode %llu start %llu\n",
@@ -274,6 +287,7 @@ int btrfs_lookup_csums_range(struct btrfs_root *root, u64 start, u64 end,
 	struct btrfs_ordered_sum *sums;
 	struct btrfs_sector_sum *sector_sum;
 	struct btrfs_csum_item *item;
+	LIST_HEAD(tmplist);
 	unsigned long offset;
 	int ret;
 	size_t size;
@@ -348,7 +362,10 @@ int btrfs_lookup_csums_range(struct btrfs_root *root, u64 start, u64 end,
 					MAX_ORDERED_SUM_BYTES(root));
 			sums = kzalloc(btrfs_ordered_sum_size(root, size),
 					GFP_NOFS);
-			BUG_ON(!sums);
+			if (!sums) {
+				ret = -ENOMEM;
+				goto fail;
+			}
 
 			sector_sum = sums->sums;
 			sums->bytenr = start;
@@ -370,12 +387,19 @@ int btrfs_lookup_csums_range(struct btrfs_root *root, u64 start, u64 end,
 				offset += csum_size;
 				sector_sum++;
 			}
-			list_add_tail(&sums->list, list);
+			list_add_tail(&sums->list, &tmplist);
 		}
 		path->slots[0]++;
 	}
 	ret = 0;
 fail:
+	while (ret < 0 && !list_empty(&tmplist)) {
+		sums = list_entry(&tmplist, struct btrfs_ordered_sum, list);
+		list_del(&sums->list);
+		kfree(sums);
+	}
+	list_splice_tail(&tmplist, list);
+
 	btrfs_free_path(path);
 	return ret;
 }

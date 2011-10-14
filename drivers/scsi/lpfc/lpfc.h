@@ -59,7 +59,6 @@ struct lpfc_sli2_slim;
 
 #define  LPFC_MAX_BUCKET_COUNT 20	/* Maximum no. of buckets for stat data
 					   collection. */
-
 /*
  * Following time intervals are used of adjusting SCSI device
  * queue depths when there are driver resource error or Firmware
@@ -471,9 +470,10 @@ enum intr_type_t {
 struct unsol_rcv_ct_ctx {
 	uint32_t ctxt_id;
 	uint32_t SID;
-	uint32_t oxid;
 	uint32_t flags;
 #define UNSOL_VALID	0x00000001
+	uint16_t oxid;
+	uint16_t rxid;
 };
 
 #define LPFC_USER_LINK_SPEED_AUTO	0	/* auto select (default)*/
@@ -579,9 +579,9 @@ struct lpfc_hba {
 	void (*lpfc_stop_port)
 		(struct lpfc_hba *);
 	int (*lpfc_hba_init_link)
-		(struct lpfc_hba *);
+		(struct lpfc_hba *, uint32_t);
 	int (*lpfc_hba_down_link)
-		(struct lpfc_hba *);
+		(struct lpfc_hba *, uint32_t);
 	int (*lpfc_selective_reset)
 		(struct lpfc_hba *);
 
@@ -621,11 +621,11 @@ struct lpfc_hba {
 #define ELS_XRI_ABORT_EVENT	0x40
 #define ASYNC_EVENT		0x80
 #define LINK_DISABLED		0x100 /* Link disabled by user */
-#define FCF_TS_INPROG		0x200 /* FCF table scan in progress */
-#define FCF_RR_INPROG		0x400 /* FCF roundrobin flogi in progress */
+#define FCF_TS_INPROG           0x200 /* FCF table scan in progress */
+#define FCF_RR_INPROG           0x400 /* FCF roundrobin flogi in progress */
 #define HBA_FIP_SUPPORT		0x800 /* FIP support in HBA */
 #define HBA_AER_ENABLED		0x1000 /* AER enabled with HBA */
-#define HBA_DEVLOSS_TMO		0x2000 /* HBA in devloss timeout */
+#define HBA_DEVLOSS_TMO         0x2000 /* HBA in devloss timeout */
 #define HBA_RRQ_ACTIVE		0x4000 /* process the rrq active list */
 	uint32_t fcp_ring_in_use; /* When polling test if intr-hndlr active*/
 	struct lpfc_dmabuf slim2p;
@@ -680,6 +680,9 @@ struct lpfc_hba {
 	uint32_t cfg_enable_rrq;
 	uint32_t cfg_topology;
 	uint32_t cfg_link_speed;
+#define LPFC_FCF_FOV 1		/* Fast fcf failover */
+#define LPFC_FCF_PRIORITY 2	/* Priority fcf failover */
+	uint32_t cfg_fcf_failover_policy;
 	uint32_t cfg_cr_delay;
 	uint32_t cfg_cr_count;
 	uint32_t cfg_multi_ring_support;

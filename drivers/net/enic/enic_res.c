@@ -46,7 +46,8 @@ int enic_get_vnic_config(struct enic *enic)
 
 	err = vnic_dev_mac_addr(enic->vdev, enic->mac_addr);
 	if (err) {
-		printk(KERN_ERR PFX "Error getting MAC addr, %d\n", err);
+		dev_err(enic_get_dev(enic),
+			"Error getting MAC addr, %d\n", err);
 		return err;
 	}
 
@@ -56,7 +57,7 @@ int enic_get_vnic_config(struct enic *enic)
 			offsetof(struct vnic_enet_config, m), \
 			sizeof(c->m), &c->m); \
 		if (err) { \
-			printk(KERN_ERR PFX \
+			dev_err(enic_get_dev(enic), \
 				"Error getting %s, %d\n", #m, err); \
 			return err; \
 		} \
@@ -96,30 +97,13 @@ int enic_get_vnic_config(struct enic *enic)
 	dev_info(enic_get_dev(enic),
 		"vNIC MAC addr %pM wq/rq %d/%d mtu %d\n",
 		enic->mac_addr, c->wq_desc_count, c->rq_desc_count, c->mtu);
-	dev_info(enic_get_dev(enic), "vNIC csum tx/rx %s/%s "
-		"tso/lro %s/%s rss %s intr mode %s type %s timer %d usec "
-		"loopback tag 0x%04x\n",
-		ENIC_SETTING(enic, TXCSUM) ? "yes" : "no",
-		ENIC_SETTING(enic, RXCSUM) ? "yes" : "no",
-		ENIC_SETTING(enic, TSO) ? "yes" : "no",
-		ENIC_SETTING(enic, LRO) ? "yes" : "no",
-		ENIC_SETTING(enic, RSS) ? "yes" : "no",
-		c->intr_mode == VENET_INTR_MODE_INTX ? "INTx" :
-		c->intr_mode == VENET_INTR_MODE_MSI ? "MSI" :
-		c->intr_mode == VENET_INTR_MODE_ANY ? "any" :
-		"unknown",
-		c->intr_timer_type == VENET_INTR_TYPE_MIN ? "min" :
-		c->intr_timer_type == VENET_INTR_TYPE_IDLE ? "idle" :
-		"unknown",
-		c->intr_timer_usec,
-		c->loop_tag);
+	dev_info(enic_get_dev(enic), "vNIC csum tx/rx %d/%d "
+		"tso %d intr timer %d usec rss %d\n",
+		ENIC_SETTING(enic, TXCSUM), ENIC_SETTING(enic, RXCSUM),
+		ENIC_SETTING(enic, TSO),
+		c->intr_timer_usec, ENIC_SETTING(enic, RSS));
 
 	return 0;
-}
-
-void enic_add_station_addr(struct enic *enic)
-{
-	vnic_dev_add_addr(enic->vdev, enic->mac_addr);
 }
 
 int enic_add_vlan(struct enic *enic, u16 vlanid)
@@ -130,7 +114,7 @@ int enic_add_vlan(struct enic *enic, u16 vlanid)
 
 	err = vnic_dev_cmd(enic->vdev, CMD_VLAN_ADD, &a0, &a1, wait);
 	if (err)
-		printk(KERN_ERR PFX "Can't add vlan id, %d\n", err);
+		dev_err(enic_get_dev(enic), "Can't add vlan id, %d\n", err);
 
 	return err;
 }
@@ -143,7 +127,7 @@ int enic_del_vlan(struct enic *enic, u16 vlanid)
 
 	err = vnic_dev_cmd(enic->vdev, CMD_VLAN_DEL, &a0, &a1, wait);
 	if (err)
-		printk(KERN_ERR PFX "Can't delete vlan id, %d\n", err);
+		dev_err(enic_get_dev(enic), "Can't delete vlan id, %d\n", err);
 
 	return err;
 }
@@ -204,8 +188,8 @@ void enic_get_res_counts(struct enic *enic)
 	enic->intr_count = vnic_dev_get_res_count(enic->vdev,
 		RES_TYPE_INTR_CTRL);
 
-	printk(KERN_INFO PFX "vNIC resources avail: "
-		"wq %d rq %d cq %d intr %d\n",
+	dev_info(enic_get_dev(enic),
+		"vNIC resources avail: wq %d rq %d cq %d intr %d\n",
 		enic->wq_count, enic->rq_count,
 		enic->cq_count, enic->intr_count);
 }
@@ -320,15 +304,14 @@ int enic_alloc_vnic_resources(struct enic *enic)
 
 	intr_mode = vnic_dev_get_intr_mode(enic->vdev);
 
-	printk(KERN_INFO PFX "vNIC resources used:  "
+	dev_info(enic_get_dev(enic), "vNIC resources used:  "
 		"wq %d rq %d cq %d intr %d intr mode %s\n",
 		enic->wq_count, enic->rq_count,
 		enic->cq_count, enic->intr_count,
 		intr_mode == VNIC_DEV_INTR_MODE_INTX ? "legacy PCI INTx" :
 		intr_mode == VNIC_DEV_INTR_MODE_MSI ? "MSI" :
 		intr_mode == VNIC_DEV_INTR_MODE_MSIX ? "MSI-X" :
-		"unknown"
-		);
+		"unknown");
 
 	/* Allocate queue resources
 	 */
@@ -374,7 +357,8 @@ int enic_alloc_vnic_resources(struct enic *enic)
 	enic->legacy_pba = vnic_dev_get_res(enic->vdev,
 		RES_TYPE_INTR_PBA_LEGACY, 0);
 	if (!enic->legacy_pba && intr_mode == VNIC_DEV_INTR_MODE_INTX) {
-		printk(KERN_ERR PFX "Failed to hook legacy pba resource\n");
+		dev_err(enic_get_dev(enic),
+			"Failed to hook legacy pba resource\n");
 		err = -ENODEV;
 		goto err_out_cleanup;
 	}

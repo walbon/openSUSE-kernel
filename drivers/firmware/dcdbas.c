@@ -23,6 +23,7 @@
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
 #include <linux/errno.h>
+#include <linux/gfp.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/mc146818rtc.h>
@@ -659,9 +660,6 @@ static void __exit dcdbas_exit(void)
 	 * before platform_device_unregister
 	 */
 	unregister_reboot_notifier(&dcdbas_reboot_nb);
-	smi_data_buf_free();
-	platform_device_unregister(dcdbas_pdev);
-	platform_driver_unregister(&dcdbas_driver);
 
 	/*
 	 * We have to free the buffer here instead of dcdbas_remove
@@ -670,6 +668,8 @@ static void __exit dcdbas_exit(void)
 	 * released.
 	 */
 	smi_data_buf_free();
+	platform_device_unregister(dcdbas_pdev);
+	platform_driver_unregister(&dcdbas_driver);
 }
 
 module_init(dcdbas_init);

@@ -533,7 +533,7 @@ mptsas_port_delete(MPT_ADAPTER *ioc, struct mptsas_portinfo_details * port_detai
 	    port_details->phy_bitmask));
 
 	for (i = 0; i < port_info->num_phys; i++, phy_info++) {
-		if(phy_info->port_details != port_details)
+		if (phy_info->port_details != port_details)
 			continue;
 		memset(&phy_info->attached, 0, sizeof(struct mptsas_devinfo));
 		mptsas_set_rphy(ioc, phy_info, NULL);
@@ -664,7 +664,7 @@ mptsas_add_device_component(MPT_ADAPTER *ioc, u8 channel, u8 id,
 	/*
 	 * Delete all matching devices out of the list
 	 */
-	down(&ioc->sas_device_info_mutex);
+	mutex_lock(&ioc->sas_device_info_mutex);
 	list_for_each_entry_safe(sas_info, next, &ioc->sas_device_info_list,
 	    list) {
 		if (!sas_info->is_logical_volume &&
@@ -706,7 +706,7 @@ mptsas_add_device_component(MPT_ADAPTER *ioc, u8 channel, u8 id,
 	}
 
  out:
-	up(&ioc->sas_device_info_mutex);
+	mutex_unlock(&ioc->sas_device_info_mutex);
 	return;
 }
 
@@ -728,7 +728,7 @@ mptsas_add_device_component_by_fw(MPT_ADAPTER *ioc, u8 channel, u8 id)
 	    (MPI_SAS_DEVICE_PGAD_FORM_BUS_TARGET_ID <<
 	     MPI_SAS_DEVICE_PGAD_FORM_SHIFT),
 	    (channel << 8) + id);
- 	/* TODO: determine if we need to add check for fw B_T mapping */
+	/* TODO: determine if we need to add check for fw B_T mapping */
 	if (rc)
 		return;
 
@@ -797,14 +797,14 @@ mptsas_add_device_component_starget_ir(MPT_ADAPTER *ioc, struct scsi_target *sta
 	 */
 	for (i = 0; i < buffer->NumPhysDisks; i++) {
 
-		if(mpt_raid_phys_disk_pg0(ioc,
+		if (mpt_raid_phys_disk_pg0(ioc,
 		    buffer->PhysDisk[i].PhysDiskNum, &phys_disk) != 0)
 			continue;
 
 		mptsas_add_device_component_by_fw(ioc, phys_disk.PhysDiskBus,
 		    phys_disk.PhysDiskID);
 
-		down(&ioc->sas_device_info_mutex);
+		mutex_lock(&ioc->sas_device_info_mutex);
 		list_for_each_entry(sas_info, &ioc->sas_device_info_list,
 		    list) {
 			if (!sas_info->is_logical_volume &&
@@ -814,13 +814,13 @@ mptsas_add_device_component_starget_ir(MPT_ADAPTER *ioc, struct scsi_target *sta
 				sas_info->volume_id = starget->id;
 			}
 		}
-		up(&ioc->sas_device_info_mutex);
+		mutex_unlock(&ioc->sas_device_info_mutex);
 	}
 
 	/*
 	 * Delete all matching devices out of the list
 	 */
-	down(&ioc->sas_device_info_mutex);
+	mutex_lock(&ioc->sas_device_info_mutex);
 	list_for_each_entry_safe(sas_info, next, &ioc->sas_device_info_list,
 	    list) {
 		if (sas_info->is_logical_volume && sas_info->fw.id ==
@@ -839,7 +839,7 @@ mptsas_add_device_component_starget_ir(MPT_ADAPTER *ioc, struct scsi_target *sta
 		INIT_LIST_HEAD(&sas_info->list);
 		list_add_tail(&sas_info->list, &ioc->sas_device_info_list);
 	}
-	up(&ioc->sas_device_info_mutex);
+	mutex_unlock(&ioc->sas_device_info_mutex);
 
  out:
 	if (buffer)
@@ -914,13 +914,13 @@ mptsas_del_device_components(MPT_ADAPTER *ioc)
 {
 	struct sas_device_info	*sas_info, *next;
 
-	down(&ioc->sas_device_info_mutex);
+	mutex_lock(&ioc->sas_device_info_mutex);
 	list_for_each_entry_safe(sas_info, next, &ioc->sas_device_info_list,
 		list) {
 		list_del(&sas_info->list);
 		kfree(sas_info);
 	}
-	up(&ioc->sas_device_info_mutex);
+	mutex_unlock(&ioc->sas_device_info_mutex);
 }
 
 
@@ -2027,7 +2027,7 @@ mptsas_test_unit_ready(MPT_ADAPTER *ioc, u8 channel, u8 id, u16 count)
 	}
  tur_done:
 	/* Try Sending START_STOP scsi command */
-	if(state == DEVICE_START_UNIT) {
+	if (state == DEVICE_START_UNIT) {
 		iocmd->cmd = START_STOP;
 		rc = mptscsih_do_cmd(hd, iocmd);
 		devtprintk(ioc, printk(MYIOC_s_DEBUG_FMT "%s: rc=0x%02x\n",
@@ -2583,8 +2583,7 @@ static int mptsas_phy_reset(struct sas_phy *phy, int hard_reset)
 		if (ioc->sas_mgmt.status & MPT_MGMT_STATUS_DID_IOCRESET)
 			goto out_unlock;
 		if (!timeleft) {
-			if (mpt_SoftResetHandler(ioc, CAN_SLEEP) != 0)
-				mpt_HardResetHandler(ioc, CAN_SLEEP);
+			mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 		}
 		goto out_unlock;
 	}
@@ -2789,8 +2788,7 @@ static int mptsas_smp_handler(struct Scsi_Host *shost, struct sas_rphy *rphy,
 		if (ioc->sas_mgmt.status & MPT_MGMT_STATUS_DID_IOCRESET)
 			goto out_unmap;
 		if (!timeleft) {
-			if (mpt_SoftResetHandler(ioc, CAN_SLEEP) != 0)
-				mpt_HardResetHandler(ioc, CAN_SLEEP);
+			mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 		}
 		goto out_unmap;
 	}
@@ -3448,8 +3446,7 @@ mptsas_exp_repmanufacture_info(MPT_ADAPTER *ioc,
 		if (ioc->sas_mgmt.status & MPT_MGMT_STATUS_DID_IOCRESET)
 			goto out_free;
 		if (!timeleft) {
-			if (mpt_SoftResetHandler(ioc, CAN_SLEEP) != 0)
-				mpt_HardResetHandler(ioc, CAN_SLEEP);
+			mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 		}
 		goto out_free;
 	}
@@ -4571,7 +4568,7 @@ mptsas_handle_queue_full_event(struct fw_event_work *fw_event)
 	current_depth = le16_to_cpu(qfull_data->CurrentDepth);
 
 	/* if hidden raid component, look for the volume id */
-	down(&ioc->sas_device_info_mutex);
+	mutex_lock(&ioc->sas_device_info_mutex);
 	if (mptscsih_is_phys_disk(ioc, fw_channel, fw_id)) {
 		list_for_each_entry(sas_info, &ioc->sas_device_info_list,
 		    list) {
@@ -4604,7 +4601,7 @@ mptsas_handle_queue_full_event(struct fw_event_work *fw_event)
 	}
 
  out:
-	up(&ioc->sas_device_info_mutex);
+	mutex_unlock(&ioc->sas_device_info_mutex);
 
 	if (id != -1) {
 		shost_for_each_device(sdev, ioc->sh) {
@@ -5519,8 +5516,7 @@ mptsas_broadcast_primative_work(struct fw_event_work *fw_event)
 	if (issue_reset) {
 		printk(MYIOC_s_WARN_FMT "Issuing Reset from %s!!\n",
 		    ioc->name, __FUNCTION__);
-		if (mpt_SoftResetHandler(ioc, CAN_SLEEP))
-			mpt_HardResetHandler(ioc, CAN_SLEEP);
+		mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 	}
 	mptsas_free_fw_event(ioc, fw_event);
 }
@@ -5864,11 +5860,11 @@ mptsas_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	if (mpt_loadtime_max_sectors) {
-		if(mpt_loadtime_max_sectors < 64 || 
+		if (mpt_loadtime_max_sectors < 64 ||
 			mpt_loadtime_max_sectors > 8192) {
 			printk("Invalid value passed for mpt_loadtime_max_sectors"
 				" %d. Range from 64 to 8192\n",
-		  		mpt_loadtime_max_sectors);
+				mpt_loadtime_max_sectors);
 		}
 		// Make sure it is even number value
 		mpt_loadtime_max_sectors &=  0xFFFFFFFE;
@@ -5904,7 +5900,7 @@ mptsas_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	INIT_LIST_HEAD(&hd->target_reset_list);
 	INIT_LIST_HEAD(&ioc->sas_device_info_list);
-	init_MUTEX(&ioc->sas_device_info_mutex);
+	mutex_init(&ioc->sas_device_info_mutex);
 
 	spin_unlock_irqrestore(&ioc->FreeQlock, flags);
 
@@ -5955,7 +5951,7 @@ mptsas_remove(struct pci_dev *pdev)
 	struct mptsas_portinfo *p, *n;
 	int i;
 
-	if(!ioc->sh) {
+	if (!ioc->sh) {
 		printk(MYIOC_s_INFO_FMT "IOC is in Target mode\n", ioc->name);
 		mpt_detach(pdev);
 		return;

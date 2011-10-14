@@ -21,6 +21,7 @@
 #include <linux/cache.h>
 #include <linux/interrupt.h>
 #include <linux/cpu.h>
+#include <linux/gfp.h>
 
 #include <asm/mtrr.h>
 #include <asm/tlbflush.h>
@@ -172,13 +173,12 @@ void xen_stop_other_cpus(int wait)
 }
 
 /*
- * Reschedule call back. Nothing to do,
- * all the work is done automatically when
- * we return from the interrupt.
+ * Reschedule call back.
  */
 void smp_reschedule_interrupt(struct pt_regs *regs)
 {
 	inc_irq_stat(irq_resched_count);
+	scheduler_ipi();
 }
 
 void smp_call_function_interrupt(struct pt_regs *regs)

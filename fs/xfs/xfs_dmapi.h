@@ -167,4 +167,69 @@ typedef enum {
 			DM_FLAGS_NDELAY : 0)
 #define AT_DELAY_FLAG(f) ((f & XFS_ATTR_NONBLOCK) ? DM_FLAGS_NDELAY : 0)
 
+/*
+ * Prototypes and functions for the Data Migration subsystem.
+ */
+
+typedef int	(*xfs_send_data_t)(int, struct xfs_inode *,
+			loff_t, size_t, int, int *);
+typedef int	(*xfs_send_mmap_t)(struct vm_area_struct *, uint);
+typedef int	(*xfs_send_destroy_t)(struct xfs_inode *, dm_right_t);
+typedef int	(*xfs_send_namesp_t)(dm_eventtype_t, struct xfs_mount *,
+			struct xfs_inode *, dm_right_t,
+			struct xfs_inode *, dm_right_t,
+			const unsigned char *, const unsigned char *,
+			mode_t, int, int);
+typedef int	(*xfs_send_mount_t)(struct xfs_mount *, dm_right_t,
+			char *, char *);
+typedef void	(*xfs_send_unmount_t)(struct xfs_mount *, struct xfs_inode *,
+			dm_right_t, mode_t, int, int);
+
+typedef struct xfs_dmops {
+	xfs_send_data_t		xfs_send_data;
+	xfs_send_mmap_t		xfs_send_mmap;
+	xfs_send_destroy_t	xfs_send_destroy;
+	xfs_send_namesp_t	xfs_send_namesp;
+	xfs_send_mount_t	xfs_send_mount;
+	xfs_send_unmount_t	xfs_send_unmount;
+} xfs_dmops_t;
+
+#define XFS_DMAPI_UNMOUNT_FLAGS(mp) \
+	(((mp)->m_dmevmask & (1 << DM_EVENT_UNMOUNT)) ? 0 : DM_FLAGS_UNWANTED)
+
+#define XFS_DMAPI_PREUNMOUNT_FLAGS(mp) \
+	(((mp)->m_dmevmask & (1 << DM_EVENT_PREUNMOUNT)) \
+		? 0 : DM_FLAGS_UNWANTED)
+
+#define XFS_SEND_DATA(mp, ev,ip,off,len,fl,lock) \
+	(*(mp)->m_dm_ops->xfs_send_data)(ev,ip,off,len,fl,lock)
+#define XFS_SEND_MMAP(mp, vma,fl) \
+	(*(mp)->m_dm_ops->xfs_send_mmap)(vma,fl)
+#define XFS_SEND_DESTROY(mp, ip,right) \
+	(*(mp)->m_dm_ops->xfs_send_destroy)(ip,right)
+#define XFS_SEND_NAMESP(mp, ev,b1,r1,b2,r2,n1,n2,mode,rval,fl) \
+	(*(mp)->m_dm_ops->xfs_send_namesp)(ev,NULL,b1,r1,b2,r2,n1,n2,mode,rval,fl)
+#define XFS_SEND_MOUNT(mp,right,path,name) \
+	(*(mp)->m_dm_ops->xfs_send_mount)(mp,right,path,name)
+#define XFS_SEND_PREUNMOUNT(mp) \
+do { \
+	if (mp->m_flags & XFS_MOUNT_DMAPI) { \
+		(*(mp)->m_dm_ops->xfs_send_namesp)(DM_EVENT_PREUNMOUNT, mp, \
+			(mp)->m_rootip, DM_RIGHT_NULL, \
+			(mp)->m_rootip, DM_RIGHT_NULL, \
+			NULL, NULL, 0, 0, XFS_DMAPI_PREUNMOUNT_FLAGS(mp)); \
+	} \
+} while (0)
+#define XFS_SEND_UNMOUNT(mp) \
+do { \
+	if (mp->m_flags & XFS_MOUNT_DMAPI) { \
+		(*(mp)->m_dm_ops->xfs_send_unmount)(mp, (mp)->m_rootip, \
+			DM_RIGHT_NULL, 0, 0, XFS_DMAPI_UNMOUNT_FLAGS(mp)); \
+	} \
+} while (0)
+
+
+
+
+
 #endif  /* __XFS_DMAPI_H__ */

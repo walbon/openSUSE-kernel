@@ -135,7 +135,7 @@
  */
 
 /*?
- * Text: "%s: cqr %p timed out (%lds), %i retries remaining\n"
+ * Text: "%s: cqr %p timed out (%lus), %i retries remaining\n"
  * Severity: Error
  * Parameter:
  *   @1: bus ID of the DASD
@@ -154,7 +154,7 @@
  */
 
 /*?
- * Text: "%s: cqr %p timed out (%lds) but cannot be ended, retrying in 5 s\n"
+ * Text: "%s: cqr %p timed out (%lus) but cannot be ended, retrying in 5 s\n"
  * Severity: Error
  * Parameter:
  *   @1: bus ID of the DASD

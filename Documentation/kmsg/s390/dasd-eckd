@@ -2023,20 +2023,3 @@
  * no action is required. I/O will resume when the device reservation is
  * surrendered by the other operating system instance.
  */
-
-/*?
- * Text: "%s: DASD raw track access not available\n"
- * Severity: Error
- * Parameter:
- *   @1: bus ID of the DASD
- * Description:
- * The DASD cannot be accessed in raw-track access mode because the storage
- * server does not have all required features for this access mode.
- * In raw-track access mode, the DASD device driver accesses complete ECKD
- * tracks.
- * By default, the DASD device driver accesses only the data fields of ECKD
- * devices and omits the count and key data fields.
- * User action:
- * Ensure that the raw_track_access sysfs attribute of the DASD has the value
- * 0 to access the device in default ECKD mode.
- */

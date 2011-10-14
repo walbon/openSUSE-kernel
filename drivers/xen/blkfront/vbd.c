@@ -472,10 +472,34 @@ xlvbd_del(struct blkfront_info *info)
 void
 xlvbd_flush(struct blkfront_info *info)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,37)
 	blk_queue_flush(info->rq, info->feature_flush);
-	pr_info("blkfront: %s: barriers %s\n",
+	pr_info("blkfront: %s: %s: %s\n",
 		info->gd->disk_name,
+		info->flush_op == BLKIF_OP_WRITE_BARRIER ?
+		"barrier" : (info->flush_op == BLKIF_OP_FLUSH_DISKCACHE ?
+			     "flush diskcache" : "barrier or flush"),
 		info->feature_flush ? "enabled" : "disabled");
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,16)
+	int err;
+	const char *barrier;
+
+	switch (info->feature_flush) {
+	case QUEUE_ORDERED_DRAIN:	barrier = "enabled (drain)"; break;
+	case QUEUE_ORDERED_TAG:		barrier = "enabled (tag)"; break;
+	case QUEUE_ORDERED_NONE:	barrier = "disabled"; break;
+	default:			return -EINVAL;
+	}
+
+	err = blk_queue_ordered(info->rq, info->feature_flush);
+	if (err)
+		return err;
+	pr_info("blkfront: %s: barriers %s\n",
+		info->gd->disk_name, barrier);
+#else
+	if (info->feature_flush)
+		pr_info("blkfront: %s: barriers disabled\n", info->gd->disk_name);
+#endif
 }
 
 #ifdef CONFIG_SYSFS

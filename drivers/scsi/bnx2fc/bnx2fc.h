@@ -19,7 +19,6 @@
 #include <linux/etherdevice.h>
 #include <linux/if_ether.h>
 #include <linux/if_vlan.h>
-#include <linux/rtnetlink.h>
 #include <linux/kthread.h>
 #include <linux/crc32.h>
 #include <linux/cpu.h>
@@ -62,12 +61,8 @@
 #include "../../net/cnic_if.h"
 #include "bnx2fc_constants.h"
 
-#ifndef USHRT_MAX
-#define USHRT_MAX	((u16)(~0U))
-#endif
-
 #define BNX2FC_NAME		"bnx2fc"
-#define BNX2FC_VERSION		"1.0.4"
+#define BNX2FC_VERSION		"1.0.8"
 
 #define PFX			"bnx2fc: "
 
@@ -229,6 +224,7 @@ struct bnx2fc_interface {
 	struct fcoe_ctlr ctlr;
 	u8 vlan_enabled;
 	int vlan_id;
+	bool enabled;
 };
 
 #define bnx2fc_from_ctlr(fip) container_of(fip, struct bnx2fc_interface, ctlr)

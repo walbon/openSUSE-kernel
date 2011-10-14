@@ -100,6 +100,7 @@ int ibm_partition(struct parsed_partitions *state)
 	Sector sect;
 	sector_t labelsect;
 	bool fake_cdl = false;
+	char tmp[64];
 
 	res = 0;
 	blocksize = bdev_logical_block_size(bdev);
@@ -189,13 +190,15 @@ int ibm_partition(struct parsed_partitions *state)
 			 */
 			blocksize = label->cms.block_size;
 			if (label->cms.disk_offset != 0) {
-				printk("CMS1/%8s(MDSK):", name);
+				snprintf(tmp, sizeof(tmp), "CMS1/%8s(MDSK):", name);
+				strlcat(state->pp_buf, tmp, PAGE_SIZE);
 				/* disk is reserved minidisk */
 				offset = label->cms.disk_offset;
 				size = (label->cms.block_count - 1)
 					* (blocksize >> 9);
 			} else {
-				printk("CMS1/%8s:", name);
+				snprintf(tmp, sizeof(tmp), "CMS1/%8s:", name);
+				strlcat(state->pp_buf, tmp, PAGE_SIZE);
 				offset = (info->label_block + 1);
 				size = label->cms.block_count
 					* (blocksize >> 9);
@@ -204,7 +207,8 @@ int ibm_partition(struct parsed_partitions *state)
 				      size-offset*(blocksize >> 9));
 		} else {
 			if (strncmp(type, "LNX1", 4) == 0) {
-				printk("LNX1/%8s:", name);
+				snprintf(tmp, sizeof(tmp), "LNX1/%8s:", name);
+				strlcat(state->pp_buf, tmp, PAGE_SIZE);
 				if (label->lnx.ldl_version == 0xf2) {
 					fmt_size = label->lnx.formatted_blocks
 						* (blocksize >> 9);
@@ -223,7 +227,7 @@ int ibm_partition(struct parsed_partitions *state)
 				offset = (info->label_block + 1);
 			} else {
 				/* unlabeled disk */
-				printk("(nonl)");
+				strlcat(state->pp_buf, "(nonl)", PAGE_SIZE);
 				size = i_size >> 9;
 				offset = (info->label_block + 1);
 			}
@@ -242,7 +246,8 @@ int ibm_partition(struct parsed_partitions *state)
 		 * if not, something is wrong, skipping partition detection
 		 */
 		if (strncmp(type, "VOL1",  4) == 0) {
-			printk("VOL1/%8s:", name);
+			snprintf(tmp, sizeof(tmp), "VOL1/%8s:", name);
+			strlcat(state->pp_buf, tmp, PAGE_SIZE);
 			/*
 			 * get block number and read then go through format1
 			 * labels
@@ -298,7 +303,7 @@ int ibm_partition(struct parsed_partitions *state)
 
 	}
 
-	printk("\n");
+	strlcat(state->pp_buf, "\n", PAGE_SIZE);
 	goto out_freeall;
 
 

@@ -9,7 +9,7 @@
  */
 
 #include <linux/types.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/module.h>
 #include <asm/sal.h>
@@ -31,9 +31,9 @@ kdba_fru(int argc, const char **argv)
 {
 	u64 ret;
 
-	kdb_printf("Capturing FRU data...");
+	lkdb_printf("Capturing FRU data...");
 	ret = ia64_sn_fru_capture();
-	kdb_printf("done.\n");
+	lkdb_printf("done.\n");
 	return ret;
 }
 

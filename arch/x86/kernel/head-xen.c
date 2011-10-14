@@ -1,5 +1,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/memblock.h>
+#include <linux/pci.h>
 
 #include <asm/setup.h>
 #ifndef CONFIG_XEN
@@ -52,7 +54,7 @@ void __init reserve_ebda_region(void)
 		lowmem = 0x9f000;
 
 	/* reserve all memory between lowmem and the 1MB mark */
-	reserve_early_overlap_ok(lowmem, 0x100000, "BIOS reserved");
+	memblock_x86_reserve_range(lowmem, 0x100000, "* BIOS reserved");
 }
 #else /* CONFIG_XEN */
 #include <linux/module.h>
@@ -95,10 +97,8 @@ void __init xen_start_kernel(void)
 	} else
 		machine_to_phys_nr = MACH2PHYS_NR_ENTRIES;
 #ifdef CONFIG_X86_32
-	if (machine_to_phys_mapping + machine_to_phys_nr
-	    < machine_to_phys_mapping)
-		machine_to_phys_nr = (unsigned long *)NULL
-				     - machine_to_phys_mapping;
+	WARN_ON(machine_to_phys_mapping + (machine_to_phys_nr - 1)
+		< machine_to_phys_mapping);
 #endif
 
 	if (!xen_feature(XENFEAT_auto_translated_physmap))
@@ -108,10 +108,12 @@ void __init xen_start_kernel(void)
 	WARN_ON(HYPERVISOR_vm_assist(VMASST_CMD_enable,
 				     VMASST_TYPE_writable_pagetables));
 
-	reserve_early(ALIGN(__pa_symbol(&_end), PAGE_SIZE),
-		      __pa(xen_start_info->pt_base)
-		      + (xen_start_info->nr_pt_frames << PAGE_SHIFT),
-		      "Xen provided");
+	memblock_init();
+	memblock_x86_reserve_range(ALIGN(__pa_symbol(&_end), PAGE_SIZE),
+				   __pa(xen_start_info->pt_base)
+				   + (xen_start_info->nr_pt_frames
+				      << PAGE_SHIFT),
+				   "Xen provided");
 
 #ifdef CONFIG_X86_32
 {
@@ -127,7 +129,7 @@ void __init xen_start_kernel(void)
 		__pmd(__pa_symbol(swapper_pg_fixmap) | _PAGE_TABLE));
 }
 #else
-	check_efer();
+	x86_configure_nx();
 	xen_init_pt();
 #endif
 
@@ -160,6 +162,8 @@ void __init xen_start_kernel(void)
 	if (is_initial_xendomain()) {
 		x86_platform.get_wallclock = mach_get_cmos_time;
 		x86_platform.set_wallclock = mach_set_rtc_mmss;
+
+		pci_request_acs();
 	} else
 		x86_init.resources.probe_roms = x86_init_noop;
 }

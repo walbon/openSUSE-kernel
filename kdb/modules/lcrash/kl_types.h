@@ -43,12 +43,7 @@ typedef uint64_t 	k_error_t;
  */
 #define UADDR(X) ((kaddr_t)X)
 #define UADDR64(X) ((kaddr_t)X))
-/* #define UADDR(X) ((uaddr_t)X) */
-/* #define UADDR64(X) ((uint64_t)((uaddr_t)X)) */
 
-
-/* cpw */
-/* was: #include <asm/kl_types.h> */
 #include "asm/kl_types.h"
 
 #endif /* __KL_TYPES_H */

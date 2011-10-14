@@ -77,7 +77,8 @@ union xen_domctl {
 	/*
 	 * v5: upstream: xen 3.1
 	 * v6: upstream: xen 4.0
-	 * v7: sle11 sp1: xen 4.0 + cpupools patches
+	 * v7: upstream: xen 4.1; sle11 sp1: xen 4.0 + cpupools patches
+	 * v8: upstream: xen 4.2
 	 */
 	struct {
 		uint32_t cmd;
@@ -89,7 +90,7 @@ union xen_domctl {
 			uint64_aligned_t                     dummy_align;
 			uint8_t                              dummy_pad[128];
 		};
-	} v5, v6, v7;
+	} v5, v6, v7, v8;
 };
 
 struct xen_sysctl_physinfo_v6 {
@@ -220,17 +221,20 @@ int xen_guest_address_size(int domid)
 	domctl.v##ver.domain = domid;					\
 	ret = hypervisor_domctl(&domctl) ?: domctl.v##ver.address_size.size; \
 	if (ret == 32 || ret == 64) {					\
-		printk("v" #ver " domctl worked ok: dom%d is %d-bit\n",	\
-		       domid, ret);					\
+		pr_info("v" #ver " domctl worked ok: dom%d is %d-bit\n",\
+			domid, ret);					\
 		return ret;						\
 	}								\
 } while (0)
 
-	BUILD_BUG_ON(XEN_DOMCTL_INTERFACE_VERSION > 7);
+	BUILD_BUG_ON(XEN_DOMCTL_INTERFACE_VERSION > 8);
+	guest_address_size(8);
+/* #if CONFIG_XEN_COMPAT < 0x040200 */
 	guest_address_size(7);
-/* #if CONFIG_XEN_COMPAT < 0x040100 */
-	guest_address_size(6);
 /* #endif */
+#if CONFIG_XEN_COMPAT < 0x040100
+	guest_address_size(6);
+#endif
 #if CONFIG_XEN_COMPAT < 0x040000
 	guest_address_size(5);
 #endif
@@ -239,8 +243,8 @@ int xen_guest_address_size(int domid)
 #endif
 
 	ret = BITS_PER_LONG;
-	printk("v%d...7 domctls failed, assuming dom%d is native: %d\n",
-	       low, domid, ret);
+	pr_warn("v%d...%d domctls failed, assuming dom%d is native: %d\n",
+		low, XEN_DOMCTL_INTERFACE_VERSION, domid, ret);
 
 	return ret;
 }
@@ -279,12 +283,16 @@ static inline int get_vcpuaffinity(unsigned int nr, void *mask)
 	union xen_domctl domctl;
 	int rc;
 
-	BUILD_BUG_ON(XEN_DOMCTL_INTERFACE_VERSION > 7);
-	rc = vcpuaffinity(get, 7);
-/* #if CONFIG_XEN_COMPAT < 0x040100 */
+	BUILD_BUG_ON(XEN_DOMCTL_INTERFACE_VERSION > 8);
+	rc = vcpuaffinity(get, 8);
+/* #if CONFIG_XEN_COMPAT < 0x040200 */
+	if (rc)
+		rc = vcpuaffinity(get, 7);
+/* #endif */
+#if CONFIG_XEN_COMPAT < 0x040100
 	if (rc)
 		rc = vcpuaffinity(get, 6);
-/* #endif */
+#endif
 #if CONFIG_XEN_COMPAT < 0x040000
 	if (rc)
 		rc = vcpuaffinity(get, 5);
@@ -301,12 +309,16 @@ static inline int set_vcpuaffinity(unsigned int nr, void *mask)
 	union xen_domctl domctl;
 	int rc;
 
-	BUILD_BUG_ON(XEN_DOMCTL_INTERFACE_VERSION > 7);
-	rc = vcpuaffinity(set, 7);
-/* #if CONFIG_XEN_COMPAT < 0x040100 */
+	BUILD_BUG_ON(XEN_DOMCTL_INTERFACE_VERSION > 8);
+	rc = vcpuaffinity(set, 8);
+/* #if CONFIG_XEN_COMPAT < 0x040200 */
+	if (rc)
+		rc = vcpuaffinity(set, 7);
+/* #endif */
+#if CONFIG_XEN_COMPAT < 0x040100
 	if (rc)
 		rc = vcpuaffinity(set, 6);
-/* #endif */
+#endif
 #if CONFIG_XEN_COMPAT < 0x040000
 	if (rc)
 		rc = vcpuaffinity(set, 5);

@@ -418,9 +418,6 @@ static int connect_rings(struct backend_info *be)
 		val = 0;
 	netif->csum = !val;
 
-	/* Set dev->features */
-	netif_set_features(netif);
-
 	/* Map the shared frame, irq etc. */
 	err = netif_map(be, tx_ring_ref, rx_ring_ref, evtchn);
 	if (err) {

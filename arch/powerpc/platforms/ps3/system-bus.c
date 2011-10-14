@@ -23,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/dma-mapping.h>
 #include <linux/err.h>
+#include <linux/slab.h>
 
 #include <asm/udbg.h>
 #include <asm/lv1call.h>
@@ -694,18 +695,12 @@ static int ps3_dma_supported(struct device *_dev, u64 mask)
 	return mask >= DMA_BIT_MASK(32);
 }
 
-static u64 ps3_dma_get_required_mask(struct device *_dev)
-{
-	return DMA_BIT_MASK(32);
-}
-
 static struct dma_map_ops ps3_sb_dma_ops = {
 	.alloc_coherent = ps3_alloc_coherent,
 	.free_coherent = ps3_free_coherent,
 	.map_sg = ps3_sb_map_sg,
 	.unmap_sg = ps3_sb_unmap_sg,
 	.dma_supported = ps3_dma_supported,
-	.get_required_mask = ps3_dma_get_required_mask,
 	.map_page = ps3_sb_map_page,
 	.unmap_page = ps3_unmap_page,
 };
@@ -716,7 +711,6 @@ static struct dma_map_ops ps3_ioc0_dma_ops = {
 	.map_sg = ps3_ioc0_map_sg,
 	.unmap_sg = ps3_ioc0_unmap_sg,
 	.dma_supported = ps3_dma_supported,
-	.get_required_mask = ps3_dma_get_required_mask,
 	.map_page = ps3_ioc0_map_page,
 	.unmap_page = ps3_unmap_page,
 };
@@ -772,7 +766,7 @@ int ps3_system_bus_device_register(struct ps3_system_bus_device *dev)
 		BUG();
 	};
 
-	dev->core.archdata.of_node = NULL;
+	dev->core.of_node = NULL;
 	set_dev_node(&dev->core, 0);
 
 	pr_debug("%s:%d add %s\n", __func__, __LINE__, dev_name(&dev->core));

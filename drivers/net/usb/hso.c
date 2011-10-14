@@ -210,7 +210,7 @@ struct hso_serial_state_notification {
 	u16 wIndex;
 	u16 wLength;
 	u16 UART_state_bitmap;
-} __attribute__((packed));
+} __packed;
 
 struct hso_tiocmget {
 	struct mutex mutex;
@@ -837,24 +837,13 @@ static netdev_tx_t hso_net_start_xmit(struct sk_buff *skb,
 	} else {
 		net->stats.tx_packets++;
 		net->stats.tx_bytes += skb->len;
-		/* And tell the kernel when the last transmit started. */
-		net->trans_start = jiffies;
 	}
 	dev_kfree_skb(skb);
 	/* we're done */
 	return NETDEV_TX_OK;
 }
 
-static void hso_get_drvinfo(struct net_device *net, struct ethtool_drvinfo *info)
-{
-	struct hso_net *odev = netdev_priv(net);
-
-	strncpy(info->driver, driver_name, ETHTOOL_BUSINFO_LEN);
-	usb_make_path(odev->parent->usb, info->bus_info, sizeof info->bus_info);
-}
-
 static const struct ethtool_ops ops = {
-	.get_drvinfo = hso_get_drvinfo,
 	.get_link = ethtool_op_get_link
 };
 
@@ -1464,7 +1453,6 @@ static void hso_serial_set_termios(struct tty_struct *tty, struct ktermios *old)
 	spin_unlock_irqrestore(&serial->serial_lock, flags);
 
 	/* done */
-	return;
 }
 
 /* how many characters in the buffer */
@@ -1981,7 +1969,6 @@ static void hso_std_serial_write_bulk_callback(struct urb *urb)
 	hso_kick_transmit(serial);
 
 	D1(" ");
-	return;
 }
 
 /* called for writing diag or CS serial port */

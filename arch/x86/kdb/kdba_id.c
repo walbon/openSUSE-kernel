@@ -13,7 +13,7 @@
 #include <linux/init.h>
 #include <linux/ctype.h>
 #include <linux/string.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 
 /*
@@ -59,16 +59,16 @@ kdba_dis_getsym(bfd_vma addr, disassemble_info *dip)
 static void
 kdba_printaddress(kdb_machreg_t addr, disassemble_info *dip, int flag)
 {
-	kdb_symtab_t symtab;
+	lkdb_symtab_t symtab;
 	int spaces = 5;
 	unsigned int offset;
 
 	/*
 	 * Print a symbol name or address as necessary.
 	 */
-	kdbnearsym(addr, &symtab);
+	lkdbnearsym(addr, &symtab);
 	if (symtab.sym_name) {
-		/* Do not use kdb_symbol_print here, it always does
+		/* Do not use lkdb_symbol_print here, it always does
 		 * kdb_printf but we want dip->fprintf_func.
 		 */
 		dip->fprintf_func(dip->stream,
@@ -140,7 +140,7 @@ kdba_dis_printaddr(bfd_vma addr, disassemble_info *dip)
 static int
 kdba_dis_getmem(bfd_vma addr, bfd_byte *buf, unsigned int length, disassemble_info *dip)
 {
-	return kdb_getarea_size(buf, addr, length);
+	return lkdb_getarea_size(buf, addr, length);
 }
 
 /*
@@ -170,7 +170,7 @@ kdba_id_parsemode(const char *mode, disassemble_info *dip)
 		} else if (strcmp(mode, "8086") == 0) {
 			dip->mach = bfd_mach_i386_i8086;
 		} else {
-			return KDB_BADMODE;
+			return LKDB_BADMODE;
 		}
 	}
 

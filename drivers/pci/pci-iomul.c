@@ -408,8 +408,11 @@ static int __init pci_iomul_init(void)
 {
 	int error;
 
+	if (!is_initial_xendomain())
+		return -ENODEV;
+
 	error = misc_register(&pci_iomul_miscdev);
-	if (error != 0) {
+	if (error) {
 		pr_alert("Couldn't register /dev/xen/pci_iomul");
 		return error;
 	}
@@ -431,6 +434,7 @@ module_exit(pci_iomul_cleanup);
  */
 late_initcall(pci_iomul_init);
 
+MODULE_ALIAS("devname:xen/pci_iomul");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Isaku Yamahata <yamahata@valinux.co.jp>");
 MODULE_DESCRIPTION("PCI IO space multiplexing driver");

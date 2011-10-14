@@ -110,12 +110,6 @@ void *_kl_alloc_block(int, int, void *);
 void *_kl_realloc_block(void *, int, int, void *);
 void *_kl_dup_block(void *, int, void *);
 void *_kl_str_to_block(char *, int, void *);
-#if 0
-cpw: we create a new wrappers for these:
-void kl_free_block(void *);
-
-#define kl_alloc_block(size, flags) _kl_alloc_block(size, flags, kl_get_ra())
-#endif
 #define kl_realloc_block(b, new_size, flags) \
 	_kl_realloc_block(b, new_size, flags, kl_get_ra())
 #define kl_dup_block(b, flags) _kl_dup_block(b, flags, kl_get_ra())

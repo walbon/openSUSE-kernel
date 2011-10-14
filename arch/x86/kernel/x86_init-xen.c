@@ -5,8 +5,13 @@
  */
 #include <linux/bitmap.h>
 #include <linux/init.h>
+#include <linux/ioport.h>
+#include <linux/list.h>
+#include <linux/module.h>
+#include <linux/spinlock_types.h>
 #include <linux/threads.h>
 
+#include <asm/pci_x86.h>
 #include <asm/mpspec.h>
 #include <asm/setup.h>
 #include <asm/apic.h>
@@ -14,10 +19,12 @@
 #include <asm/time.h>
 #include <asm/irq.h>
 #include <asm/pat.h>
+#include <asm/iommu.h>
 
 void __cpuinit x86_init_noop(void) { }
 void __init x86_init_uint_noop(unsigned int unused) { }
 void __init x86_init_pgd_noop(pgd_t *unused) { }
+int __init iommu_init_noop(void) { return 0; }
 
 /*
  * The platform setup functions are preset with the default functions
@@ -56,6 +63,10 @@ struct x86_init_ops x86_init __initdata = {
 		.banner			= x86_init_noop,
 	},
 
+	.mapping = {
+		.pagetable_reserve		= xen_pagetable_reserve,
+	},
+
 	.paging = {
 		.pagetable_setup_start	= x86_init_pgd_noop,
 		.pagetable_setup_done	= x86_init_pgd_noop,
@@ -65,12 +76,28 @@ struct x86_init_ops x86_init __initdata = {
 		.setup_percpu_clockev	= NULL,
 		.tsc_pre_init		= x86_init_noop,
 		.timer_init		= x86_init_noop,
+		.wallclock_init		= x86_init_noop,
+	},
+
+	.iommu = {
+		.iommu_init		= iommu_init_noop,
+	},
+
+	.pci = {
+		.init			= x86_default_pci_init,
+		.init_irq		= x86_default_pci_init_irq,
+		.fixup_irqs		= x86_default_pci_fixup_irqs,
 	},
 };
 
+static int default_i8042_detect(void) { return 1; };
+
 struct x86_platform_ops x86_platform = {
-	.is_untracked_pat_range		= default_is_untracked_pat_range,
 	.calibrate_tsc			= NULL,
 	.get_wallclock			= xen_read_wallclock,
 	.set_wallclock			= xen_write_wallclock,
+	.is_untracked_pat_range		= is_ISA_range,
+	.i8042_detect			= default_i8042_detect
 };
+
+EXPORT_SYMBOL_GPL(x86_platform);

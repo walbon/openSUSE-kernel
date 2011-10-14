@@ -24,6 +24,7 @@
 #include <linux/init.h>
 #include <linux/errno.h>
 #include <linux/device.h>
+#include <linux/slab.h>
 #include <net/iucv/iucv.h>
 #include <asm/cpcmd.h>
 #include <asm/ebcdic.h>
@@ -59,7 +60,7 @@ static struct iucv_handler smsg_handler = {
 static int smsg_path_pending(struct iucv_path *path, u8 ipvmid[8],
 			     u8 ipuser[16])
 {
-	if (strncmp(ipvmid, "*MSG    ", sizeof(ipvmid)) != 0)
+	if (strncmp(ipvmid, "*MSG    ", 8) != 0)
 		return -EINVAL;
 	/* Path pending from *MSG. */
 	return iucv_path_accept(path, &smsg_handler, "SMSGIUCV        ", NULL);

@@ -33,6 +33,7 @@
 #include <linux/kthread.h>
 #include <linux/spinlock.h>
 #include <linux/async.h>
+#include <linux/slab.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -241,6 +242,7 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 	int display_failure_msg = 1, ret;
 	struct Scsi_Host *shost = dev_to_shost(starget->dev.parent);
 	extern void scsi_evt_thread(struct work_struct *work);
+	extern void scsi_requeue_run_queue(struct work_struct *work);
 
 	sdev = kzalloc(sizeof(*sdev) + shost->transportt->device_size,
 		       GFP_ATOMIC);
@@ -263,6 +265,7 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 	INIT_LIST_HEAD(&sdev->event_list);
 	spin_lock_init(&sdev->list_lock);
 	INIT_WORK(&sdev->event_work, scsi_evt_thread);
+	INIT_WORK(&sdev->requeue_work, scsi_requeue_run_queue);
 
 	sdev->sdev_gendev.parent = get_device(&starget->dev);
 	sdev->sdev_target = starget;
@@ -361,6 +364,16 @@ int scsi_is_target_device(const struct device *dev)
 }
 EXPORT_SYMBOL(scsi_is_target_device);
 
+static void scsi_target_reap_usercontext(struct work_struct *work)
+{
+	struct scsi_target *starget =
+		container_of(work, struct scsi_target, reap_work);
+
+	transport_remove_device(&starget->dev);
+	device_del(&starget->dev);
+	scsi_target_destroy(starget);
+}
+
 static struct scsi_target *__scsi_find_target(struct device *parent,
 					      int channel, uint id)
 {
@@ -416,9 +429,7 @@ static struct scsi_target *scsi_alloc_target(struct device *parent,
 	starget->reap_ref = 1;
 	dev->parent = get_device(parent);
 	dev_set_name(dev, "target%d:%d:%d", shost->host_no, channel, id);
-#ifndef CONFIG_SYSFS_DEPRECATED
 	dev->bus = &scsi_bus_type;
-#endif
 	dev->type = &scsi_target_type;
 	starget->id = id;
 	starget->channel = channel;
@@ -428,6 +439,7 @@ static struct scsi_target *scsi_alloc_target(struct device *parent,
 	starget->state = STARGET_CREATED;
 	starget->scsi_level = SCSI_2;
 	starget->max_target_blocked = SCSI_DEFAULT_TARGET_BLOCKED;
+	INIT_WORK(&starget->reap_work, scsi_target_reap_usercontext);
  retry:
 	spin_lock_irqsave(shost->host_lock, flags);
 
@@ -463,19 +475,9 @@ static struct scsi_target *scsi_alloc_target(struct device *parent,
 	}
 	/* Unfortunately, we found a dying target; need to
 	 * wait until it's dead before we can get a new one */
+	flush_work(&found_target->reap_work);
 	put_device(&found_target->dev);
-	flush_scheduled_work();
 	goto retry;
-}
-
-static void scsi_target_reap_usercontext(struct work_struct *work)
-{
-	struct scsi_target *starget =
-		container_of(work, struct scsi_target, ew.work);
-
-	transport_remove_device(&starget->dev);
-	device_del(&starget->dev);
-	scsi_target_destroy(starget);
 }
 
 /**
@@ -508,8 +510,7 @@ void scsi_target_reap(struct scsi_target *starget)
 	if (state == STARGET_CREATED)
 		scsi_target_destroy(starget);
 	else
-		execute_in_process_context(scsi_target_reap_usercontext,
-					   &starget->ew);
+		queue_work(scsi_wq, &starget->reap_work);
 }
 
 /**
@@ -837,7 +838,6 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 	sdev->inq_periph_qual = (inq_result[0] >> 5) & 7;
 	sdev->lockable = sdev->removable;
 	sdev->soft_reset = (inq_result[7] & 1) && ((inq_result[3] & 7) == 2);
-	sdev->tgps = (inq_result[5] >> 4) & 3;
 
 	if (sdev->scsi_level >= SCSI_3 ||
 			(sdev->inquiry_len > 56 && inq_result[56] & 0x04))
@@ -1221,7 +1221,7 @@ static void scsi_sequential_lun_scan(struct scsi_target *starget,
 }
 
 /**
- * scsilun_to_int: convert a scsi_lun to an int
+ * scsilun_to_int - convert a scsi_lun to an int
  * @scsilun:	struct scsi_lun to be converted.
  *
  * Description:
@@ -1253,7 +1253,7 @@ int scsilun_to_int(struct scsi_lun *scsilun)
 EXPORT_SYMBOL(scsilun_to_int);
 
 /**
- * int_to_scsilun: reverts an int into a scsi_lun
+ * int_to_scsilun - reverts an int into a scsi_lun
  * @lun:        integer to be reverted
  * @scsilun:	struct scsi_lun to be set.
  *
@@ -1513,14 +1513,18 @@ struct scsi_device *__scsi_add_device(struct Scsi_Host *shost, uint channel,
 	starget = scsi_alloc_target(parent, channel, id);
 	if (!starget)
 		return ERR_PTR(-ENOMEM);
+	scsi_autopm_get_target(starget);
 
 	mutex_lock(&shost->scan_mutex);
 	if (!shost->async_scan)
 		scsi_complete_async_scans();
 
-	if (scsi_host_scan_allowed(shost))
+	if (scsi_host_scan_allowed(shost) && scsi_autopm_get_host(shost) == 0) {
 		scsi_probe_and_add_lun(starget, lun, NULL, &sdev, 1, hostdata);
+		scsi_autopm_put_host(shost);
+	}
 	mutex_unlock(&shost->scan_mutex);
+	scsi_autopm_put_target(starget);
 	scsi_target_reap(starget);
 	put_device(&starget->dev);
 
@@ -1574,6 +1578,7 @@ static void __scsi_scan_target(struct device *parent, unsigned int channel,
 	starget = scsi_alloc_target(parent, channel, id);
 	if (!starget)
 		return;
+	scsi_autopm_get_target(starget);
 
 	if (lun != SCAN_WILD_CARD) {
 		/*
@@ -1599,6 +1604,7 @@ static void __scsi_scan_target(struct device *parent, unsigned int channel,
 	}
 
  out_reap:
+	scsi_autopm_put_target(starget);
 	/* now determine if the target has any children at all
 	 * and if not, nuke it */
 	scsi_target_reap(starget);
@@ -1633,8 +1639,10 @@ void scsi_scan_target(struct device *parent, unsigned int channel,
 	if (!shost->async_scan)
 		scsi_complete_async_scans();
 
-	if (scsi_host_scan_allowed(shost))
+	if (scsi_host_scan_allowed(shost) && scsi_autopm_get_host(shost) == 0) {
 		__scsi_scan_target(parent, channel, id, lun, rescan);
+		scsi_autopm_put_host(shost);
+	}
 	mutex_unlock(&shost->scan_mutex);
 }
 EXPORT_SYMBOL(scsi_scan_target);
@@ -1686,7 +1694,7 @@ int scsi_scan_host_selected(struct Scsi_Host *shost, unsigned int channel,
 	if (!shost->async_scan)
 		scsi_complete_async_scans();
 
-	if (scsi_host_scan_allowed(shost)) {
+	if (scsi_host_scan_allowed(shost) && scsi_autopm_get_host(shost) == 0) {
 		if (channel == SCAN_WILD_CARD)
 			for (channel = 0; channel <= shost->max_channel;
 			     channel++)
@@ -1694,6 +1702,7 @@ int scsi_scan_host_selected(struct Scsi_Host *shost, unsigned int channel,
 						  rescan);
 		else
 			scsi_scan_channel(shost, channel, id, lun, rescan);
+		scsi_autopm_put_host(shost);
 	}
 	mutex_unlock(&shost->scan_mutex);
 
@@ -1831,8 +1840,11 @@ static void do_scsi_scan_host(struct Scsi_Host *shost)
 static int do_scan_async(void *_data)
 {
 	struct async_scan_data *data = _data;
-	do_scsi_scan_host(data->shost);
+	struct Scsi_Host *shost = data->shost;
+
+	do_scsi_scan_host(shost);
 	scsi_finish_async_scan(data);
+	scsi_autopm_put_host(shost);
 	return 0;
 }
 
@@ -1847,16 +1859,20 @@ void scsi_scan_host(struct Scsi_Host *shost)
 
 	if (strncmp(scsi_scan_type, "none", 4) == 0)
 		return;
+	if (scsi_autopm_get_host(shost) < 0)
+		return;
 
 	data = scsi_prep_async_scan(shost);
 	if (!data) {
 		do_scsi_scan_host(shost);
+		scsi_autopm_put_host(shost);
 		return;
 	}
 
 	p = kthread_run(do_scan_async, data, "scsi_scan_%d", shost->host_no);
 	if (IS_ERR(p))
 		do_scan_async(data);
+	/* scsi_autopm_put_host(shost) is called in do_scan_async() */
 }
 EXPORT_SYMBOL(scsi_scan_host);
 
@@ -1877,12 +1893,9 @@ void scsi_forget_host(struct Scsi_Host *shost)
 	spin_unlock_irqrestore(shost->host_lock, flags);
 }
 
-/*
- * Function:    scsi_get_host_dev()
- *
- * Purpose:     Create a scsi_device that points to the host adapter itself.
- *
- * Arguments:   SHpnt   - Host that needs a scsi_device
+/**
+ * scsi_get_host_dev - Create a scsi_device that points to the host adapter itself
+ * @shost: Host that needs a scsi_device
  *
  * Lock status: None assumed.
  *
@@ -1895,7 +1908,7 @@ void scsi_forget_host(struct Scsi_Host *shost)
  *
  *	Note - this device is not accessible from any high-level
  *	drivers (including generics), which is probably not
- *	optimal.  We can add hooks later to attach 
+ *	optimal.  We can add hooks later to attach.
  */
 struct scsi_device *scsi_get_host_dev(struct Scsi_Host *shost)
 {
@@ -1921,18 +1934,13 @@ struct scsi_device *scsi_get_host_dev(struct Scsi_Host *shost)
 }
 EXPORT_SYMBOL(scsi_get_host_dev);
 
-/*
- * Function:    scsi_free_host_dev()
- *
- * Purpose:     Free a scsi_device that points to the host adapter itself.
- *
- * Arguments:   SHpnt   - Host that needs a scsi_device
+/**
+ * scsi_free_host_dev - Free a scsi_device that points to the host adapter itself
+ * @sdev: Host device to be freed
  *
  * Lock status: None assumed.
  *
  * Returns:     Nothing
- *
- * Notes:
  */
 void scsi_free_host_dev(struct scsi_device *sdev)
 {

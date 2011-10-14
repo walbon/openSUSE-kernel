@@ -31,3 +31,5 @@
  * operating systems of the z/VM hypervisor. If the module has been
  * compiled into the kernel, ignore this message.
  */
+
+/*? Text: "netif_stop_queue() cannot be called before register_netdev()\n" */

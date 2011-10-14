@@ -16,7 +16,7 @@
 #include <asm/thread_info.h>
 #include <asm/cpufeature.h>
 #include <asm/alternative-asm.h>
- 
+
 /*
  * By placing feature2 after feature1 in altinstructions section, we logically
  * implement:
@@ -25,7 +25,6 @@
  * else jmp to orig is used.
  */
 	.macro ALTERNATIVE_JUMP feature1,feature2,orig,alt1,alt2
-
 0:
 	.byte 0xe9	/* 32bit jump */
 	.long \orig-1f	/* by default jump to orig */
@@ -36,6 +35,7 @@
 3:	.byte 0xe9			/* near jump with 32bit immediate */
 	.long \alt2-1b /* offset */   /* or alternatively to alt2 */
 	.previous
+
 	.section .altinstructions,"a"
 	altinstruction_entry 0b,2b,\feature1,5,5
 	altinstruction_entry 0b,3b,\feature2,5,5
@@ -72,7 +72,7 @@
 	.endm
 
 /* Standard copy_to_user with segment limit checking */
-ENTRY(copy_to_user)
+ENTRY(_copy_to_user)
 	CFI_STARTPROC
 	GET_THREAD_INFO(%rax)
 	movq %rdi,%rcx
@@ -84,10 +84,10 @@ ENTRY(copy_to_user)
 		copy_user_generic_unrolled,copy_user_generic_string,	\
 		copy_user_enhanced_fast_string
 	CFI_ENDPROC
-ENDPROC(copy_to_user)
+ENDPROC(_copy_to_user)
 
 /* Standard copy_from_user with segment limit checking */
-ENTRY(copy_from_user)
+ENTRY(_copy_from_user)
 	CFI_STARTPROC
 	GET_THREAD_INFO(%rax)
 	movq %rsi,%rcx
@@ -99,15 +99,7 @@ ENTRY(copy_from_user)
 		copy_user_generic_unrolled,copy_user_generic_string,	\
 		copy_user_enhanced_fast_string
 	CFI_ENDPROC
-ENDPROC(copy_from_user)
-
-ENTRY(__copy_from_user_inatomic)
-	CFI_STARTPROC
-	ALTERNATIVE_JUMP X86_FEATURE_REP_GOOD,X86_FEATURE_ERMS,	\
-		copy_user_generic_unrolled,copy_user_generic_string,	\
-		copy_user_enhanced_fast_string
-	CFI_ENDPROC
-ENDPROC(__copy_from_user_inatomic)
+ENDPROC(_copy_from_user)
 
 	.section .fixup,"ax"
 	/* must zero dest */
@@ -136,7 +128,7 @@ ENDPROC(bad_from_user)
  * rdx count
  *
  * Output:
- * eax uncopied bytes or 0 if successfull.
+ * eax uncopied bytes or 0 if successful.
  */
 ENTRY(copy_user_generic_unrolled)
 	CFI_STARTPROC

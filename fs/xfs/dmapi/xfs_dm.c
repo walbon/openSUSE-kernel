@@ -48,9 +48,11 @@
 #include "xfs_vnodeops.h"
 #include <dmapi.h>
 #include <dmapi_kern.h>
+#include "xfs_trace.h"
 #include "xfs_dm.h"
 
 #include <linux/mount.h>
+#include <linux/namei.h>
 
 #define MAXNAMLEN MAXNAMELEN
 
@@ -184,10 +186,10 @@ prohibited_mr_events(
 	if (!mapping_mapped(mapping))
 		return 0;
 
-	spin_lock(&mapping->i_mmap_lock);
+	mutex_lock(&mapping->i_mmap_mutex);
 	if (mapping_writably_mapped(mapping))
 		prohibited |= (1 << DM_EVENT_WRITE);
-	spin_unlock(&mapping->i_mmap_lock);
+	mutex_unlock(&mapping->i_mmap_mutex);
 
 	return prohibited;
 }
@@ -556,7 +558,8 @@ xfs_dm_bulkattr_iget_one(
 	dm_ip_to_handle(&ip->i_vnode, &handle);
 	xfs_dm_handle_to_stat(sbuf, stat_sz, &handle, sizeof(handle));
 
-	xfs_iput(ip, XFS_ILOCK_SHARED);
+	xfs_iunlock(ip, XFS_ILOCK_SHARED);
+	IRELE(ip);
 	return 0;
 }
 
@@ -703,13 +706,14 @@ xfs_dm_f_set_eventlist(
 		return(error);
 	}
 	xfs_ilock(ip, XFS_ILOCK_EXCL);
-	xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
+	xfs_trans_ijoin(tp, ip);
 
 	ip->i_d.di_dmevmask = (eventset & max_mask) | (ip->i_d.di_dmevmask & ~max_mask);
 
 	xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
-	igrab(&ip->i_vnode);
+//	igrab(&ip->i_vnode);
 	xfs_trans_commit(tp, 0);
+	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 
 	return(0);
 }
@@ -850,6 +854,8 @@ xfs_dm_rdwr(
 	ssize_t		xfer;
 	struct file	*file;
 	struct dentry	*dentry;
+	struct path	path;
+	struct xfs_mount *mp = ip->i_mount;
 
 	if ((off < 0) || (off > i_size_read(inode)) || !S_ISREG(inode->i_mode))
 		return EINVAL;
@@ -884,6 +890,23 @@ xfs_dm_rdwr(
 	if (dentry == NULL) {
 		iput(inode);
 		return ENOMEM;
+	}
+
+	/*
+	 * Ugh. This is not ideal, but we can't even keep a private vfsmount
+	 * for this. We'd run into problems with freeing the superblock as
+	 * well as AppArmor refusing access due to the pathnames not matching.
+	 */
+	if (!mp->m_vfsmount) {
+		error = kern_path(mp->m_mtpt, 0, &path);
+		if (error)
+			return -error;
+
+		spin_lock(&mp->m_vfsmount_lock);
+		if (!mp->m_vfsmount)
+			mp->m_vfsmount = path.mnt;
+		spin_unlock(&mp->m_vfsmount_lock);
+		path_put(&path);
 	}
 
 	file = dentry_open(dentry, mntget(ip->i_mount->m_vfsmount), oflags,
@@ -1037,7 +1060,7 @@ xfs_dm_get_allocinfo_rvp(
 		lock = xfs_ilock_map_shared(ip);
 
 		error = xfs_bmapi(NULL, ip, fsb_offset, fsb_length,
-			XFS_BMAPI_ENTIRE, NULL, 0, bmp, &num, NULL, NULL);
+			XFS_BMAPI_ENTIRE, NULL, 0, bmp, &num, NULL);
 
 		xfs_iunlock_map_shared(ip, lock);
 		xfs_iunlock(ip, XFS_IOLOCK_SHARED);
@@ -1720,7 +1743,7 @@ xfs_dm_get_dmattr(
 		alloc_size = XFS_BUG_KLUDGE;
 	if (alloc_size > ATTR_MAX_VALUELEN)
 		alloc_size = ATTR_MAX_VALUELEN;
-	value = kmem_alloc(alloc_size, KM_SLEEP | KM_LARGE);
+	value = kmem_alloc(alloc_size, KM_SLEEP);
 
 	/* Get the attribute's value. */
 
@@ -2584,13 +2607,14 @@ xfs_dm_set_region(
 		return(-error); /* Return negative error to DMAPI */
 	}
 	xfs_ilock(ip, XFS_ILOCK_EXCL);
-	xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
+	xfs_trans_ijoin(tp, ip);
 
 	ip->i_d.di_dmevmask = (ip->i_d.di_dmevmask & ~mr_mask) | new_mask;
 
 	xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
-	igrab(inode);
+//	igrab(inode);
 	xfs_trans_commit(tp, 0);
+	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 
 	/* Return the proper value for *exactflagp depending upon whether or not
 	   we "changed" the user's managed region.  In other words, if the user
@@ -2641,7 +2665,7 @@ xfs_dm_sync_by_handle(
 	/* We need to protect against concurrent writers.. */
 	ret = filemap_fdatawrite(inode->i_mapping);
 	down_rw_sems(inode, DM_FLAGS_IMUX);
-	err = -xfs_fsync(ip);
+	err = -xfs_fsync(ip, 0);
 	if (!ret)
 		ret = err;
 	up_rw_sems(inode, DM_FLAGS_IMUX);
@@ -2706,100 +2730,161 @@ xfs_dm_obj_ref_hold(
 }
 
 
-static fsys_function_vector_t	xfs_fsys_vector[DM_FSYS_MAX];
-
+static fsys_function_vector_t xfs_fsys_vector[DM_FSYS_MAX] = {
+	{
+	  .func_no = DM_FSYS_CLEAR_INHERIT,
+	  .u_fc.clear_inherit = xfs_dm_clear_inherit,
+	},
+	{
+	  .func_no = DM_FSYS_CREATE_BY_HANDLE,
+	  .u_fc.create_by_handle = xfs_dm_create_by_handle,
+	},
+	{
+	  .func_no = DM_FSYS_DOWNGRADE_RIGHT,
+	  .u_fc.downgrade_right = xfs_dm_downgrade_right,
+	},
+	{
+	  .func_no = DM_FSYS_GET_ALLOCINFO_RVP,
+	  .u_fc.get_allocinfo_rvp = xfs_dm_get_allocinfo_rvp,
+	},
+	{
+	  .func_no = DM_FSYS_GET_BULKALL_RVP,
+	  .u_fc.get_bulkall_rvp = xfs_dm_get_bulkall_rvp,
+	},
+	{
+	  .func_no = DM_FSYS_GET_BULKATTR_RVP,
+	  .u_fc.get_bulkattr_rvp = xfs_dm_get_bulkattr_rvp,
+	},
+	{
+	  .func_no = DM_FSYS_GET_CONFIG,
+	  .u_fc.get_config = xfs_dm_get_config,
+	},
+	{
+	  .func_no = DM_FSYS_GET_CONFIG_EVENTS,
+	  .u_fc.get_config_events = xfs_dm_get_config_events,
+	},
+	{
+	  .func_no = DM_FSYS_GET_DESTROY_DMATTR,
+	  .u_fc.get_destroy_dmattr = xfs_dm_get_destroy_dmattr,
+	},
+	{
+	  .func_no = DM_FSYS_GET_DIOINFO,
+	  .u_fc.get_dioinfo = xfs_dm_get_dioinfo,
+	},
+	{
+	  .func_no = DM_FSYS_GET_DIRATTRS_RVP,
+	  .u_fc.get_dirattrs_rvp = xfs_dm_get_dirattrs_rvp,
+	},
+	{
+	  .func_no = DM_FSYS_GET_DMATTR,
+	  .u_fc.get_dmattr = xfs_dm_get_dmattr,
+	},
+	{
+	  .func_no = DM_FSYS_GET_EVENTLIST,
+	  .u_fc.get_eventlist = xfs_dm_get_eventlist,
+	},
+	{
+	  .func_no = DM_FSYS_GET_FILEATTR,
+	  .u_fc.get_fileattr = xfs_dm_get_fileattr,
+	},
+	{
+	  .func_no = DM_FSYS_GET_REGION,
+	  .u_fc.get_region = xfs_dm_get_region,
+	},
+	{
+	  .func_no = DM_FSYS_GETALL_DMATTR,
+	  .u_fc.getall_dmattr = xfs_dm_getall_dmattr,
+	},
+	{
+	  .func_no = DM_FSYS_GETALL_INHERIT,
+	  .u_fc.getall_inherit = xfs_dm_getall_inherit,
+	},
+	{
+	  .func_no = DM_FSYS_INIT_ATTRLOC,
+	  .u_fc.init_attrloc = xfs_dm_init_attrloc,
+	},
+	{
+	  .func_no = DM_FSYS_MKDIR_BY_HANDLE,
+	  .u_fc.mkdir_by_handle = xfs_dm_mkdir_by_handle,
+	},
+	{
+	  .func_no = DM_FSYS_PROBE_HOLE,
+	  .u_fc.probe_hole = xfs_dm_probe_hole,
+	},
+	{
+	  .func_no = DM_FSYS_PUNCH_HOLE,
+	  .u_fc.punch_hole = xfs_dm_punch_hole,
+	},
+	{
+	  .func_no = DM_FSYS_READ_INVIS_RVP,
+	  .u_fc.read_invis_rvp = xfs_dm_read_invis_rvp,
+	},
+	{
+	  .func_no = DM_FSYS_RELEASE_RIGHT,
+	  .u_fc.release_right = xfs_dm_release_right,
+	},
+	{
+	  .func_no = DM_FSYS_REMOVE_DMATTR,
+	  .u_fc.remove_dmattr = xfs_dm_remove_dmattr,
+	},
+	{
+	  .func_no = DM_FSYS_REQUEST_RIGHT,
+	  .u_fc.request_right = xfs_dm_request_right,
+	},
+	{
+	  .func_no = DM_FSYS_SET_DMATTR,
+	  .u_fc.set_dmattr = xfs_dm_set_dmattr,
+	},
+	{
+	  .func_no = DM_FSYS_SET_EVENTLIST,
+	  .u_fc.set_eventlist = xfs_dm_set_eventlist,
+	},
+	{
+	  .func_no = DM_FSYS_SET_FILEATTR,
+	  .u_fc.set_fileattr = xfs_dm_set_fileattr,
+	},
+	{
+	  .func_no = DM_FSYS_SET_INHERIT,
+	  .u_fc.set_inherit = xfs_dm_set_inherit,
+	},
+	{
+	  .func_no = DM_FSYS_SET_REGION,
+	  .u_fc.set_region = xfs_dm_set_region,
+	},
+	{
+	  .func_no = DM_FSYS_SYMLINK_BY_HANDLE,
+	  .u_fc.symlink_by_handle = xfs_dm_symlink_by_handle,
+	},
+	{
+	  .func_no = DM_FSYS_SYNC_BY_HANDLE,
+	  .u_fc.sync_by_handle = xfs_dm_sync_by_handle,
+	},
+	{
+	  .func_no = DM_FSYS_UPGRADE_RIGHT,
+	  .u_fc.upgrade_right = xfs_dm_upgrade_right,
+	},
+	{
+	  .func_no = DM_FSYS_WRITE_INVIS_RVP,
+	  .u_fc.write_invis_rvp = xfs_dm_write_invis_rvp,
+	},
+	{
+	  .func_no = DM_FSYS_OBJ_REF_HOLD,
+	  .u_fc.obj_ref_hold = xfs_dm_obj_ref_hold,
+	},
+};
 
 STATIC int
 xfs_dm_get_dmapiops(
 	struct super_block	*sb,
 	void			*addr)
 {
-	static	int		initialized = 0;
-	dm_fcntl_vector_t	*vecrq;
-	fsys_function_vector_t	*vecp;
-	int			i = 0;
+	dm_fcntl_vector_t	*vecrq = (dm_fcntl_vector_t *)addr;
 
-	vecrq = (dm_fcntl_vector_t *)addr;
-	vecrq->count =
-		sizeof(xfs_fsys_vector) / sizeof(xfs_fsys_vector[0]);
-	vecrq->vecp = xfs_fsys_vector;
-	if (initialized)
-		return(0);
 	vecrq->code_level = DM_CLVL_XOPEN;
-	vecp = xfs_fsys_vector;
+	vecrq->count = ARRAY_SIZE(xfs_fsys_vector);
+	vecrq->vecp = xfs_fsys_vector;
 
-	vecp[i].func_no = DM_FSYS_CLEAR_INHERIT;
-	vecp[i++].u_fc.clear_inherit = xfs_dm_clear_inherit;
-	vecp[i].func_no = DM_FSYS_CREATE_BY_HANDLE;
-	vecp[i++].u_fc.create_by_handle = xfs_dm_create_by_handle;
-	vecp[i].func_no = DM_FSYS_DOWNGRADE_RIGHT;
-	vecp[i++].u_fc.downgrade_right = xfs_dm_downgrade_right;
-	vecp[i].func_no = DM_FSYS_GET_ALLOCINFO_RVP;
-	vecp[i++].u_fc.get_allocinfo_rvp = xfs_dm_get_allocinfo_rvp;
-	vecp[i].func_no = DM_FSYS_GET_BULKALL_RVP;
-	vecp[i++].u_fc.get_bulkall_rvp = xfs_dm_get_bulkall_rvp;
-	vecp[i].func_no = DM_FSYS_GET_BULKATTR_RVP;
-	vecp[i++].u_fc.get_bulkattr_rvp = xfs_dm_get_bulkattr_rvp;
-	vecp[i].func_no = DM_FSYS_GET_CONFIG;
-	vecp[i++].u_fc.get_config = xfs_dm_get_config;
-	vecp[i].func_no = DM_FSYS_GET_CONFIG_EVENTS;
-	vecp[i++].u_fc.get_config_events = xfs_dm_get_config_events;
-	vecp[i].func_no = DM_FSYS_GET_DESTROY_DMATTR;
-	vecp[i++].u_fc.get_destroy_dmattr = xfs_dm_get_destroy_dmattr;
-	vecp[i].func_no = DM_FSYS_GET_DIOINFO;
-	vecp[i++].u_fc.get_dioinfo = xfs_dm_get_dioinfo;
-	vecp[i].func_no = DM_FSYS_GET_DIRATTRS_RVP;
-	vecp[i++].u_fc.get_dirattrs_rvp = xfs_dm_get_dirattrs_rvp;
-	vecp[i].func_no = DM_FSYS_GET_DMATTR;
-	vecp[i++].u_fc.get_dmattr = xfs_dm_get_dmattr;
-	vecp[i].func_no = DM_FSYS_GET_EVENTLIST;
-	vecp[i++].u_fc.get_eventlist = xfs_dm_get_eventlist;
-	vecp[i].func_no = DM_FSYS_GET_FILEATTR;
-	vecp[i++].u_fc.get_fileattr = xfs_dm_get_fileattr;
-	vecp[i].func_no = DM_FSYS_GET_REGION;
-	vecp[i++].u_fc.get_region = xfs_dm_get_region;
-	vecp[i].func_no = DM_FSYS_GETALL_DMATTR;
-	vecp[i++].u_fc.getall_dmattr = xfs_dm_getall_dmattr;
-	vecp[i].func_no = DM_FSYS_GETALL_INHERIT;
-	vecp[i++].u_fc.getall_inherit = xfs_dm_getall_inherit;
-	vecp[i].func_no = DM_FSYS_INIT_ATTRLOC;
-	vecp[i++].u_fc.init_attrloc = xfs_dm_init_attrloc;
-	vecp[i].func_no = DM_FSYS_MKDIR_BY_HANDLE;
-	vecp[i++].u_fc.mkdir_by_handle = xfs_dm_mkdir_by_handle;
-	vecp[i].func_no = DM_FSYS_PROBE_HOLE;
-	vecp[i++].u_fc.probe_hole = xfs_dm_probe_hole;
-	vecp[i].func_no = DM_FSYS_PUNCH_HOLE;
-	vecp[i++].u_fc.punch_hole = xfs_dm_punch_hole;
-	vecp[i].func_no = DM_FSYS_READ_INVIS_RVP;
-	vecp[i++].u_fc.read_invis_rvp = xfs_dm_read_invis_rvp;
-	vecp[i].func_no = DM_FSYS_RELEASE_RIGHT;
-	vecp[i++].u_fc.release_right = xfs_dm_release_right;
-	vecp[i].func_no = DM_FSYS_REMOVE_DMATTR;
-	vecp[i++].u_fc.remove_dmattr = xfs_dm_remove_dmattr;
-	vecp[i].func_no = DM_FSYS_REQUEST_RIGHT;
-	vecp[i++].u_fc.request_right = xfs_dm_request_right;
-	vecp[i].func_no = DM_FSYS_SET_DMATTR;
-	vecp[i++].u_fc.set_dmattr = xfs_dm_set_dmattr;
-	vecp[i].func_no = DM_FSYS_SET_EVENTLIST;
-	vecp[i++].u_fc.set_eventlist = xfs_dm_set_eventlist;
-	vecp[i].func_no = DM_FSYS_SET_FILEATTR;
-	vecp[i++].u_fc.set_fileattr = xfs_dm_set_fileattr;
-	vecp[i].func_no = DM_FSYS_SET_INHERIT;
-	vecp[i++].u_fc.set_inherit = xfs_dm_set_inherit;
-	vecp[i].func_no = DM_FSYS_SET_REGION;
-	vecp[i++].u_fc.set_region = xfs_dm_set_region;
-	vecp[i].func_no = DM_FSYS_SYMLINK_BY_HANDLE;
-	vecp[i++].u_fc.symlink_by_handle = xfs_dm_symlink_by_handle;
-	vecp[i].func_no = DM_FSYS_SYNC_BY_HANDLE;
-	vecp[i++].u_fc.sync_by_handle = xfs_dm_sync_by_handle;
-	vecp[i].func_no = DM_FSYS_UPGRADE_RIGHT;
-	vecp[i++].u_fc.upgrade_right = xfs_dm_upgrade_right;
-	vecp[i].func_no = DM_FSYS_WRITE_INVIS_RVP;
-	vecp[i++].u_fc.write_invis_rvp = xfs_dm_write_invis_rvp;
-	vecp[i].func_no = DM_FSYS_OBJ_REF_HOLD;
-	vecp[i++].u_fc.obj_ref_hold = xfs_dm_obj_ref_hold;
-
-	return(0);
+	return 0 ;
 }
 
 
@@ -2916,12 +3001,12 @@ STATIC int
 xfs_dm_send_namesp_event(
 	dm_eventtype_t	event,
 	struct xfs_mount *mp,
-	xfs_inode_t	*ip1,
+	struct xfs_inode *ip1,
 	dm_right_t	vp1_right,
-	xfs_inode_t	*ip2,
+	struct xfs_inode *ip2,
 	dm_right_t	vp2_right,
-	const char	*name1,
-	const char	*name2,
+	const unsigned char	*name1,
+	const unsigned char	*name2,
 	mode_t		mode,
 	int		retcode,
 	int		flags)
@@ -3015,7 +3100,8 @@ xfs_dm_fh_to_inode(
 		return -EIO;
 
 	if (!ip->i_d.di_mode || ip->i_d.di_gen != igen) {
-		xfs_iput_new(ip, XFS_ILOCK_SHARED);
+		xfs_iunlock(ip, XFS_ILOCK_SHARED);
+		IRELE(ip);
 		return -ENOENT;
 	}
 

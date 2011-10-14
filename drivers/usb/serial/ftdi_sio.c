@@ -17,7 +17,7 @@
  * See Documentation/usb/usb-serial.txt for more information on using this
  * driver
  *
- * See http://ftdi-usb-sio.sourceforge.net for upto date testing info
+ * See http://ftdi-usb-sio.sourceforge.net for up to date testing info
  *	and extra documentation
  *
  * Change entries from 2004 and earlier can be found in versions of this
@@ -45,7 +45,6 @@
 #include <linux/usb.h>
 #include <linux/serial.h>
 #include <linux/usb/serial.h>
-#include <linux/kfifo.h>
 #include "ftdi_sio.h"
 #include "ftdi_sio_ids.h"
 
@@ -102,6 +101,7 @@ static int   ftdi_jtag_probe(struct usb_serial *serial);
 static int   ftdi_mtxorb_hack_setup(struct usb_serial *serial);
 static int   ftdi_NDI_device_setup(struct usb_serial *serial);
 static int   ftdi_stmclite_probe(struct usb_serial *serial);
+static int   ftdi_8u2232c_probe(struct usb_serial *serial);
 static void  ftdi_USB_UIRT_setup(struct ftdi_private *priv);
 static void  ftdi_HE_TIRA1_setup(struct ftdi_private *priv);
 
@@ -127,6 +127,10 @@ static struct ftdi_sio_quirk ftdi_HE_TIRA1_quirk = {
 
 static struct ftdi_sio_quirk ftdi_stmclite_quirk = {
 	.probe	= ftdi_stmclite_probe,
+};
+
+static struct ftdi_sio_quirk ftdi_8u2232c_quirk = {
+	.probe	= ftdi_8u2232c_probe,
 };
 
 /*
@@ -178,7 +182,8 @@ static struct usb_device_id id_table_combined [] = {
 	{ USB_DEVICE(FTDI_VID, FTDI_8U232AM_PID) },
 	{ USB_DEVICE(FTDI_VID, FTDI_8U232AM_ALT_PID) },
 	{ USB_DEVICE(FTDI_VID, FTDI_232RL_PID) },
-	{ USB_DEVICE(FTDI_VID, FTDI_8U2232C_PID) },
+	{ USB_DEVICE(FTDI_VID, FTDI_8U2232C_PID) ,
+		.driver_info = (kernel_ulong_t)&ftdi_8u2232c_quirk },
 	{ USB_DEVICE(FTDI_VID, FTDI_4232H_PID) },
 	{ USB_DEVICE(FTDI_VID, FTDI_232H_PID) },
 	{ USB_DEVICE(FTDI_VID, FTDI_MICRO_CHAMELEON_PID) },
@@ -1172,7 +1177,7 @@ static __u32 get_ftdi_divisor(struct tty_struct *tty,
 	case FT2232H: /* FT2232H chip */
 	case FT4232H: /* FT4232H chip */
 	case FT232H:  /* FT232H chip */
-		if ((baud <= 12000000) & (baud >= 1200)) {
+		if ((baud <= 12000000) && (baud >= 1200)) {
 			div_value = ftdi_2232h_baud_to_divisor(baud);
 		} else if (baud < 1200) {
 			div_value = ftdi_232bm_baud_to_divisor(baud);
@@ -1734,6 +1739,18 @@ static int ftdi_jtag_probe(struct usb_serial *serial)
 	return 0;
 }
 
+static int ftdi_8u2232c_probe(struct usb_serial *serial)
+{
+	struct usb_device *udev = serial->dev;
+
+	dbg("%s", __func__);
+
+	if (strcmp(udev->manufacturer, "CALAO Systems") == 0)
+		return ftdi_jtag_probe(serial);
+
+	return 0;
+}
+
 /*
  * First and second port on STMCLiteadaptors is reserved for JTAG interface
  * and the forth port for pio
@@ -1885,7 +1902,7 @@ static int ftdi_prepare_write_buffer(struct usb_serial_port *port,
 		spin_lock_irqsave(&port->lock, flags);
 		for (i = 0; i < size - 1; i += priv->max_packet_size) {
 			len = min_t(int, size - i, priv->max_packet_size) - 1;
-			c = kfifo_out(port->write_fifo, &buffer[i + 1], len);
+			c = kfifo_out(&port->write_fifo, &buffer[i + 1], len);
 			if (!c)
 				break;
 			buffer[i] = (c << 2) + 1;
@@ -1893,7 +1910,7 @@ static int ftdi_prepare_write_buffer(struct usb_serial_port *port,
 		}
 		spin_unlock_irqrestore(&port->lock, flags);
 	} else {
-		count = kfifo_out_locked(port->write_fifo, dest, size,
+		count = kfifo_out_locked(&port->write_fifo, dest, size,
 								&port->lock);
 	}
 
@@ -1958,7 +1975,7 @@ static int ftdi_process_packet(struct tty_struct *tty,
 
 	if (port->port.console && port->sysrq) {
 		for (i = 0; i < len; i++, ch++) {
-			if (!usb_serial_handle_sysrq_char(tty, port, *ch))
+			if (!usb_serial_handle_sysrq_char(port, *ch))
 				tty_insert_flip_char(tty, *ch, flag);
 		}
 	} else {
@@ -2144,8 +2161,6 @@ static void ftdi_set_termios(struct tty_struct *tty,
 				"urb failed to set to rts/cts flow control\n");
 		}
 
-		/* raise DTR/RTS */
-		set_mctrl(port, TIOCM_DTR | TIOCM_RTS);
 	} else {
 		/*
 		 * Xon/Xoff code
@@ -2193,8 +2208,6 @@ static void ftdi_set_termios(struct tty_struct *tty,
 			}
 		}
 
-		/* lower DTR/RTS */
-		clear_mctrl(port, TIOCM_DTR | TIOCM_RTS);
 	}
 }
 

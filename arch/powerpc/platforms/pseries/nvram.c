@@ -15,8 +15,8 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
 #include <linux/kmsg_dump.h>
 #include <asm/uaccess.h>
 #include <asm/nvram.h>
@@ -490,11 +490,11 @@ static void oops_to_nvram(struct kmsg_dumper *dumper,
 		/* These are almost always orderly shutdowns. */
 		return;
 	case KMSG_DUMP_OOPS:
+	case KMSG_DUMP_KEXEC:
 		break;
 	case KMSG_DUMP_PANIC:
 		panicking = true;
 		break;
-	case KMSG_DUMP_KEXEC:
 	case KMSG_DUMP_EMERG:
 		if (panicking)
 			/* Panic report already captured. */

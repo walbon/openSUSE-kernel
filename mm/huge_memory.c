@@ -256,7 +256,7 @@ static ssize_t single_flag_store(struct kobject *kobj,
 	unsigned long value;
 	int ret;
 
-	ret = strict_strtoul(buf, 10, &value);
+	ret = kstrtoul(buf, 10, &value);
 	if (ret < 0)
 		return ret;
 	if (value > 1)
@@ -1052,6 +1052,51 @@ int mincore_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 	return ret;
 }
 
+int move_huge_pmd(struct vm_area_struct *vma, struct vm_area_struct *new_vma,
+		  unsigned long old_addr,
+		  unsigned long new_addr, unsigned long old_end,
+		  pmd_t *old_pmd, pmd_t *new_pmd)
+{
+	int ret = 0;
+	pmd_t pmd;
+
+	struct mm_struct *mm = vma->vm_mm;
+
+	if ((old_addr & ~HPAGE_PMD_MASK) ||
+	    (new_addr & ~HPAGE_PMD_MASK) ||
+	    (old_addr + HPAGE_PMD_SIZE) > old_end ||
+	    (new_vma->vm_flags & VM_NOHUGEPAGE))
+		goto out;
+
+	/*
+	 * The destination pmd shouldn't be established, free_pgtables()
+	 * should have release it.
+	 */
+	if (WARN_ON(!pmd_none(*new_pmd))) {
+		VM_BUG_ON(pmd_trans_huge(*new_pmd));
+		goto out;
+	}
+
+	spin_lock(&mm->page_table_lock);
+	if (likely(pmd_trans_huge(*old_pmd))) {
+		if (pmd_trans_splitting(*old_pmd)) {
+			spin_unlock(&mm->page_table_lock);
+			wait_split_huge_page(vma->anon_vma, old_pmd);
+			ret = -1;
+		} else {
+			pmd = pmdp_get_and_clear(mm, old_addr, old_pmd);
+			VM_BUG_ON(!pmd_none(*new_pmd));
+			set_pmd_at(mm, new_addr, new_pmd, pmd);
+			spin_unlock(&mm->page_table_lock);
+			ret = 1;
+		}
+	} else {
+		spin_unlock(&mm->page_table_lock);
+	}
+out:
+	return ret;
+}
+
 int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 		unsigned long addr, pgprot_t newprot)
 {
@@ -1139,7 +1184,7 @@ static int __split_huge_page_splitting(struct page *page,
 		 * We can't temporarily set the pmd to null in order
 		 * to split it, the pmd must remain marked huge at all
 		 * times or the VM won't take the pmd_trans_huge paths
-		 * and it won't wait on the anon_vma->root->lock to
+		 * and it won't wait on the anon_vma->root->mutex to
 		 * serialize against split_huge_page*.
 		 */
 		pmdp_splitting_flush_notify(vma, address, pmd);
@@ -1173,7 +1218,12 @@ static void __split_huge_page_refcount(struct page *page)
 		/* after clearing PageTail the gup refcount can be released */
 		smp_mb();
 
-		page_tail->flags &= ~PAGE_FLAGS_CHECK_AT_PREP;
+		/*
+		 * retain hwpoison flag of the poisoned tail page:
+		 *   fix for the unsuitable process killed on Guest Machine(KVM)
+		 *   by the memory-failure.
+		 */
+		page_tail->flags &= ~PAGE_FLAGS_CHECK_AT_PREP | __PG_HWPOISON;
 		page_tail->flags |= (page->flags &
 				     ((1L << PG_referenced) |
 				      (1L << PG_swapbacked) |
@@ -1328,7 +1378,7 @@ static int __split_huge_page_map(struct page *page,
 	return ret;
 }
 
-/* must be called with anon_vma->root->lock hold */
+/* must be called with anon_vma->root->mutex hold */
 static void __split_huge_page(struct page *page,
 			      struct anon_vma *anon_vma)
 {
@@ -1591,14 +1641,13 @@ void __khugepaged_exit(struct mm_struct *mm)
 		list_del(&mm_slot->mm_node);
 		free = 1;
 	}
+	spin_unlock(&khugepaged_mm_lock);
 
 	if (free) {
-		spin_unlock(&khugepaged_mm_lock);
 		clear_bit(MMF_VM_HUGEPAGE, &mm->flags);
 		free_mm_slot(mm_slot);
 		mmdrop(mm);
 	} else if (mm_slot) {
-		spin_unlock(&khugepaged_mm_lock);
 		/*
 		 * This is required to serialize against
 		 * khugepaged_test_exit() (which is guaranteed to run
@@ -1609,8 +1658,7 @@ void __khugepaged_exit(struct mm_struct *mm)
 		 */
 		down_write(&mm->mmap_sem);
 		up_write(&mm->mmap_sem);
-	} else
-		spin_unlock(&khugepaged_mm_lock);
+	}
 }
 
 static void release_pte_page(struct page *page)
@@ -1872,7 +1920,6 @@ static void collapse_huge_page(struct mm_struct *mm,
 		set_pmd_at(mm, address, pmd, _pmd);
 		spin_unlock(&mm->page_table_lock);
 		anon_vma_unlock(vma->anon_vma);
-		mem_cgroup_uncharge_page(new_page);
 		goto out;
 	}
 
@@ -1918,6 +1965,7 @@ out_up_write:
 	return;
 
 out:
+	mem_cgroup_uncharge_page(new_page);
 #ifdef CONFIG_NUMA
 	put_page(new_page);
 #endif
@@ -2229,11 +2277,8 @@ static void khugepaged_loop(void)
 	while (likely(khugepaged_enabled())) {
 #ifndef CONFIG_NUMA
 		hpage = khugepaged_alloc_hugepage();
-		if (unlikely(!hpage)) {
-			count_vm_event(THP_COLLAPSE_ALLOC_FAILED);
+		if (unlikely(!hpage))
 			break;
-		}
-		count_vm_event(THP_COLLAPSE_ALLOC);
 #else
 		if (IS_ERR(hpage)) {
 			khugepaged_alloc_sleep();

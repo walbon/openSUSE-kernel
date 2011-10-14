@@ -11,10 +11,12 @@
 #include <linux/netdevice.h>
 #include <linux/ethtool.h>
 #include <linux/rtnetlink.h>
+#include <linux/in.h>
 #include "net_driver.h"
 #include "workarounds.h"
 #include "selftest.h"
 #include "efx.h"
+#include "filter.h"
 #include "nic.h"
 
 struct ethtool_string {
@@ -176,25 +178,33 @@ static struct efx_ethtool_stat efx_ethtool_stats[] = {
  */
 
 /* Identify device by flashing LEDs */
-static int efx_ethtool_phys_id(struct net_device *net_dev, u32 count)
+static int efx_ethtool_phys_id(struct net_device *net_dev,
+			       enum ethtool_phys_id_state state)
 {
 	struct efx_nic *efx = netdev_priv(net_dev);
+	enum efx_led_mode mode = EFX_LED_DEFAULT;
 
-	do {
-		efx->type->set_id_led(efx, EFX_LED_ON);
-		schedule_timeout_interruptible(HZ / 2);
+	switch (state) {
+	case ETHTOOL_ID_ON:
+		mode = EFX_LED_ON;
+		break;
+	case ETHTOOL_ID_OFF:
+		mode = EFX_LED_OFF;
+		break;
+	case ETHTOOL_ID_INACTIVE:
+		mode = EFX_LED_DEFAULT;
+		break;
+	case ETHTOOL_ID_ACTIVE:
+		return 1;	/* cycle on/off once per second */
+	}
 
-		efx->type->set_id_led(efx, EFX_LED_OFF);
-		schedule_timeout_interruptible(HZ / 2);
-	} while (!signal_pending(current) && --count != 0);
-
-	efx->type->set_id_led(efx, EFX_LED_DEFAULT);
+	efx->type->set_id_led(efx, mode);
 	return 0;
 }
 
 /* This must be called with rtnl_lock held. */
-int efx_ethtool_get_settings(struct net_device *net_dev,
-			     struct ethtool_cmd *ecmd)
+static int efx_ethtool_get_settings(struct net_device *net_dev,
+				    struct ethtool_cmd *ecmd)
 {
 	struct efx_nic *efx = netdev_priv(net_dev);
 	struct efx_link_state *link_state = &efx->link_state;
@@ -209,7 +219,7 @@ int efx_ethtool_get_settings(struct net_device *net_dev,
 	ecmd->supported |= SUPPORTED_Pause | SUPPORTED_Asym_Pause;
 
 	if (LOOPBACK_INTERNAL(efx)) {
-		ecmd->speed = link_state->speed;
+		ethtool_cmd_speed_set(ecmd, link_state->speed);
 		ecmd->duplex = link_state->fd ? DUPLEX_FULL : DUPLEX_HALF;
 	}
 
@@ -217,14 +227,15 @@ int efx_ethtool_get_settings(struct net_device *net_dev,
 }
 
 /* This must be called with rtnl_lock held. */
-int efx_ethtool_set_settings(struct net_device *net_dev,
-			     struct ethtool_cmd *ecmd)
+static int efx_ethtool_set_settings(struct net_device *net_dev,
+				    struct ethtool_cmd *ecmd)
 {
 	struct efx_nic *efx = netdev_priv(net_dev);
 	int rc;
 
 	/* GMAC does not support 1000Mbps HD */
-	if (ecmd->speed == SPEED_1000 && ecmd->duplex != DUPLEX_FULL) {
+	if ((ethtool_cmd_speed(ecmd) == SPEED_1000) &&
+	    (ecmd->duplex != DUPLEX_FULL)) {
 		netif_dbg(efx, drv, efx->net_dev,
 			  "rejecting unsupported 1000Mbps HD setting\n");
 		return -EINVAL;
@@ -478,12 +489,13 @@ static void efx_ethtool_get_stats(struct net_device *net_dev,
 	struct efx_ethtool_stat *stat;
 	struct efx_channel *channel;
 	struct efx_tx_queue *tx_queue;
+	struct rtnl_link_stats64 temp;
 	int i;
 
 	EFX_BUG_ON_PARANOID(stats->n_stats != EFX_ETHTOOL_NUM_STATS);
 
 	/* Update MAC and NIC statistics */
-	dev_get_stats(net_dev);
+	dev_get_stats(net_dev, &temp);
 
 	/* Fill detailed statistics buffer */
 	for (i = 0; i < EFX_ETHTOOL_NUM_STATS; i++) {
@@ -513,55 +525,6 @@ static void efx_ethtool_get_stats(struct net_device *net_dev,
 			break;
 		}
 	}
-}
-
-static int efx_ethtool_set_tso(struct net_device *net_dev, u32 enable)
-{
-	struct efx_nic *efx __attribute__ ((unused)) = netdev_priv(net_dev);
-	unsigned long features;
-
-	features = NETIF_F_TSO;
-	if (efx->type->offload_features & NETIF_F_V6_CSUM)
-		features |= NETIF_F_TSO6;
-
-	if (enable)
-		net_dev->features |= features;
-	else
-		net_dev->features &= ~features;
-
-	return 0;
-}
-
-static int efx_ethtool_set_tx_csum(struct net_device *net_dev, u32 enable)
-{
-	struct efx_nic *efx = netdev_priv(net_dev);
-	unsigned long features = efx->type->offload_features & NETIF_F_ALL_CSUM;
-
-	if (enable)
-		net_dev->features |= features;
-	else
-		net_dev->features &= ~features;
-
-	return 0;
-}
-
-static int efx_ethtool_set_rx_csum(struct net_device *net_dev, u32 enable)
-{
-	struct efx_nic *efx = netdev_priv(net_dev);
-
-	/* No way to stop the hardware doing the checks; we just
-	 * ignore the result.
-	 */
-	efx->rx_checksum_enabled = !!enable;
-
-	return 0;
-}
-
-static u32 efx_ethtool_get_rx_csum(struct net_device *net_dev)
-{
-	struct efx_nic *efx = netdev_priv(net_dev);
-
-	return efx->rx_checksum_enabled;
 }
 
 static void efx_ethtool_self_test(struct net_device *net_dev,
@@ -621,11 +584,6 @@ static int efx_ethtool_nway_reset(struct net_device *net_dev)
 	struct efx_nic *efx = netdev_priv(net_dev);
 
 	return mdio45_nway_restart(&efx->mdio);
-}
-
-static u32 efx_ethtool_get_link(struct net_device *net_dev)
-{
-	return netif_running(net_dev) && netif_carrier_ok(net_dev);
 }
 
 static int efx_ethtool_get_coalesce(struct net_device *net_dev,
@@ -740,7 +698,7 @@ static int efx_ethtool_set_pauseparam(struct net_device *net_dev,
 				      struct ethtool_pauseparam *pause)
 {
 	struct efx_nic *efx = netdev_priv(net_dev);
-	enum efx_fc_type wanted_fc, old_fc;
+	u8 wanted_fc, old_fc;
 	u32 old_adv;
 	bool reset;
 	int rc = 0;
@@ -835,6 +793,211 @@ static int efx_ethtool_set_wol(struct net_device *net_dev,
 	return efx->type->set_wol(efx, wol->wolopts);
 }
 
+static int efx_ethtool_reset(struct net_device *net_dev, u32 *flags)
+{
+	struct efx_nic *efx = netdev_priv(net_dev);
+	enum reset_type method;
+	enum {
+		ETH_RESET_EFX_INVISIBLE = (ETH_RESET_DMA | ETH_RESET_FILTER |
+					   ETH_RESET_OFFLOAD | ETH_RESET_MAC)
+	};
+
+	/* Check for minimal reset flags */
+	if ((*flags & ETH_RESET_EFX_INVISIBLE) != ETH_RESET_EFX_INVISIBLE)
+		return -EINVAL;
+	*flags ^= ETH_RESET_EFX_INVISIBLE;
+	method = RESET_TYPE_INVISIBLE;
+
+	if (*flags & ETH_RESET_PHY) {
+		*flags ^= ETH_RESET_PHY;
+		method = RESET_TYPE_ALL;
+	}
+
+	if ((*flags & efx->type->reset_world_flags) ==
+	    efx->type->reset_world_flags) {
+		*flags ^= efx->type->reset_world_flags;
+		method = RESET_TYPE_WORLD;
+	}
+
+	return efx_reset(efx, method);
+}
+
+static int
+efx_ethtool_get_rxnfc(struct net_device *net_dev,
+		      struct ethtool_rxnfc *info, void *rules __always_unused)
+{
+	struct efx_nic *efx = netdev_priv(net_dev);
+
+	switch (info->cmd) {
+	case ETHTOOL_GRXRINGS:
+		info->data = efx->n_rx_channels;
+		return 0;
+
+	case ETHTOOL_GRXFH: {
+		unsigned min_revision = 0;
+
+		info->data = 0;
+		switch (info->flow_type) {
+		case TCP_V4_FLOW:
+			info->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
+			/* fall through */
+		case UDP_V4_FLOW:
+		case SCTP_V4_FLOW:
+		case AH_ESP_V4_FLOW:
+		case IPV4_FLOW:
+			info->data |= RXH_IP_SRC | RXH_IP_DST;
+			min_revision = EFX_REV_FALCON_B0;
+			break;
+		case TCP_V6_FLOW:
+			info->data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
+			/* fall through */
+		case UDP_V6_FLOW:
+		case SCTP_V6_FLOW:
+		case AH_ESP_V6_FLOW:
+		case IPV6_FLOW:
+			info->data |= RXH_IP_SRC | RXH_IP_DST;
+			min_revision = EFX_REV_SIENA_A0;
+			break;
+		default:
+			break;
+		}
+		if (efx_nic_rev(efx) < min_revision)
+			info->data = 0;
+		return 0;
+	}
+
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static int efx_ethtool_set_rx_ntuple(struct net_device *net_dev,
+				     struct ethtool_rx_ntuple *ntuple)
+{
+	struct efx_nic *efx = netdev_priv(net_dev);
+	struct ethtool_tcpip4_spec *ip_entry = &ntuple->fs.h_u.tcp_ip4_spec;
+	struct ethtool_tcpip4_spec *ip_mask = &ntuple->fs.m_u.tcp_ip4_spec;
+	struct ethhdr *mac_entry = &ntuple->fs.h_u.ether_spec;
+	struct ethhdr *mac_mask = &ntuple->fs.m_u.ether_spec;
+	struct efx_filter_spec filter;
+	int rc;
+
+	/* Range-check action */
+	if (ntuple->fs.action < ETHTOOL_RXNTUPLE_ACTION_CLEAR ||
+	    ntuple->fs.action >= (s32)efx->n_rx_channels)
+		return -EINVAL;
+
+	if (~ntuple->fs.data_mask)
+		return -EINVAL;
+
+	efx_filter_init_rx(&filter, EFX_FILTER_PRI_MANUAL, 0,
+			   (ntuple->fs.action == ETHTOOL_RXNTUPLE_ACTION_DROP) ?
+			   0xfff : ntuple->fs.action);
+
+	switch (ntuple->fs.flow_type) {
+	case TCP_V4_FLOW:
+	case UDP_V4_FLOW: {
+		u8 proto = (ntuple->fs.flow_type == TCP_V4_FLOW ?
+			    IPPROTO_TCP : IPPROTO_UDP);
+
+		/* Must match all of destination, */
+		if (ip_mask->ip4dst | ip_mask->pdst)
+			return -EINVAL;
+		/* all or none of source, */
+		if ((ip_mask->ip4src | ip_mask->psrc) &&
+		    ((__force u32)~ip_mask->ip4src |
+		     (__force u16)~ip_mask->psrc))
+			return -EINVAL;
+		/* and nothing else */
+		if ((u8)~ip_mask->tos | (u16)~ntuple->fs.vlan_tag_mask)
+			return -EINVAL;
+
+		if (!ip_mask->ip4src)
+			rc = efx_filter_set_ipv4_full(&filter, proto,
+						      ip_entry->ip4dst,
+						      ip_entry->pdst,
+						      ip_entry->ip4src,
+						      ip_entry->psrc);
+		else
+			rc = efx_filter_set_ipv4_local(&filter, proto,
+						       ip_entry->ip4dst,
+						       ip_entry->pdst);
+		if (rc)
+			return rc;
+		break;
+	}
+
+	case ETHER_FLOW:
+		/* Must match all of destination, */
+		if (!is_zero_ether_addr(mac_mask->h_dest))
+			return -EINVAL;
+		/* all or none of VID, */
+		if (ntuple->fs.vlan_tag_mask != 0xf000 &&
+		    ntuple->fs.vlan_tag_mask != 0xffff)
+			return -EINVAL;
+		/* and nothing else */
+		if (!is_broadcast_ether_addr(mac_mask->h_source) ||
+		    mac_mask->h_proto != htons(0xffff))
+			return -EINVAL;
+
+		rc = efx_filter_set_eth_local(
+			&filter,
+			(ntuple->fs.vlan_tag_mask == 0xf000) ?
+			ntuple->fs.vlan_tag : EFX_FILTER_VID_UNSPEC,
+			mac_entry->h_dest);
+		if (rc)
+			return rc;
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
+	if (ntuple->fs.action == ETHTOOL_RXNTUPLE_ACTION_CLEAR)
+		return efx_filter_remove_filter(efx, &filter);
+
+	rc = efx_filter_insert_filter(efx, &filter, true);
+	return rc < 0 ? rc : 0;
+}
+
+static int efx_ethtool_get_rxfh_indir(struct net_device *net_dev,
+				      struct ethtool_rxfh_indir *indir)
+{
+	struct efx_nic *efx = netdev_priv(net_dev);
+	size_t copy_size =
+		min_t(size_t, indir->size, ARRAY_SIZE(efx->rx_indir_table));
+
+	if (efx_nic_rev(efx) < EFX_REV_FALCON_B0)
+		return -EOPNOTSUPP;
+
+	indir->size = ARRAY_SIZE(efx->rx_indir_table);
+	memcpy(indir->ring_index, efx->rx_indir_table,
+	       copy_size * sizeof(indir->ring_index[0]));
+	return 0;
+}
+
+static int efx_ethtool_set_rxfh_indir(struct net_device *net_dev,
+				      const struct ethtool_rxfh_indir *indir)
+{
+	struct efx_nic *efx = netdev_priv(net_dev);
+	size_t i;
+
+	if (efx_nic_rev(efx) < EFX_REV_FALCON_B0)
+		return -EOPNOTSUPP;
+
+	/* Validate size and indices */
+	if (indir->size != ARRAY_SIZE(efx->rx_indir_table))
+		return -EINVAL;
+	for (i = 0; i < ARRAY_SIZE(efx->rx_indir_table); i++)
+		if (indir->ring_index[i] >= efx->n_rx_channels)
+			return -EINVAL;
+
+	memcpy(efx->rx_indir_table, indir->ring_index,
+	       sizeof(efx->rx_indir_table));
+	efx_nic_push_rx_indir_table(efx);
+	return 0;
+}
+
 const struct ethtool_ops efx_ethtool_ops = {
 	.get_settings		= efx_ethtool_get_settings,
 	.set_settings		= efx_ethtool_set_settings,
@@ -844,29 +1007,23 @@ const struct ethtool_ops efx_ethtool_ops = {
 	.get_msglevel		= efx_ethtool_get_msglevel,
 	.set_msglevel		= efx_ethtool_set_msglevel,
 	.nway_reset		= efx_ethtool_nway_reset,
-	.get_link		= efx_ethtool_get_link,
+	.get_link		= ethtool_op_get_link,
 	.get_coalesce		= efx_ethtool_get_coalesce,
 	.set_coalesce		= efx_ethtool_set_coalesce,
 	.get_ringparam		= efx_ethtool_get_ringparam,
 	.set_ringparam		= efx_ethtool_set_ringparam,
 	.get_pauseparam         = efx_ethtool_get_pauseparam,
 	.set_pauseparam         = efx_ethtool_set_pauseparam,
-	.get_rx_csum		= efx_ethtool_get_rx_csum,
-	.set_rx_csum		= efx_ethtool_set_rx_csum,
-	.get_tx_csum		= ethtool_op_get_tx_csum,
-	/* Need to enable/disable IPv6 too */
-	.set_tx_csum		= efx_ethtool_set_tx_csum,
-	.get_sg			= ethtool_op_get_sg,
-	.set_sg			= ethtool_op_set_sg,
-	.get_tso		= ethtool_op_get_tso,
-	/* Need to enable/disable TSO-IPv6 too */
-	.set_tso		= efx_ethtool_set_tso,
-	.get_flags		= ethtool_op_get_flags,
 	.get_sset_count		= efx_ethtool_get_sset_count,
 	.self_test		= efx_ethtool_self_test,
 	.get_strings		= efx_ethtool_get_strings,
-	.phys_id		= efx_ethtool_phys_id,
+	.set_phys_id		= efx_ethtool_phys_id,
 	.get_ethtool_stats	= efx_ethtool_get_stats,
 	.get_wol                = efx_ethtool_get_wol,
 	.set_wol                = efx_ethtool_set_wol,
+	.reset			= efx_ethtool_reset,
+	.get_rxnfc		= efx_ethtool_get_rxnfc,
+	.set_rx_ntuple		= efx_ethtool_set_rx_ntuple,
+	.get_rxfh_indir		= efx_ethtool_get_rxfh_indir,
+	.set_rxfh_indir		= efx_ethtool_set_rxfh_indir,
 };

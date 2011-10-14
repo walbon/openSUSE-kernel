@@ -501,7 +501,7 @@ typedef struct _MPT_MGMT {
 	u8			 status;	/* current command status */
 	int			 completion_code;
 	u32			 msg_context;
-}MPT_MGMT;
+} MPT_MGMT;
 
 /*
  *  Event Structure and define
@@ -574,7 +574,7 @@ typedef	struct _RaidCfgData {
 	IOCPage2_t	*pIocPg2;		/* table of Raid Volumes */
 	IOCPage3_t	*pIocPg3;		/* table of physical disks */
 	IOCPage6_t	*pIocPg6;		/* table of IR static data */
-	struct semaphore	inactive_list_mutex;
+	struct mutex	inactive_list_mutex;
 	struct list_head	inactive_list; /* link list for physical
 						disk that belong in
 						inactive volumes */
@@ -634,7 +634,7 @@ typedef enum {
 typedef struct _MPT_SCSI_HOST {
 	struct _MPT_ADAPTER		 *ioc;
 	ushort			  sel_timeout[MPT_MAX_FC_DEVICES];
-	char 			  *info_kbuf;
+	char			  *info_kbuf;
 	long			  last_queue_full;
 	u16			  spi_pending;
 	struct list_head	  target_reset_list;
@@ -718,7 +718,7 @@ typedef struct _MPT_ADAPTER
 	dma_addr_t		 HostPageBuffer_dma;
 	int			 mtrr_reg;
 	struct pci_dev		*pcidev;	/* struct pci_dev pointer */
-	int			bars;	/* bitmask of BAR's that must be configured */
+	int			 bars;	/* bitmask of BAR's that must be configured */
 	int			 msi_enable;
 	u8			__iomem *memmap;	/* mmap address */
 	struct Scsi_Host	*sh;		/* Scsi Host pointer */
@@ -781,13 +781,13 @@ typedef struct _MPT_ADAPTER
 	struct list_head	 fw_event_list;
 	spinlock_t		 fw_event_lock;
 	u8			 fw_events_off; /* if '1', then ignore events */
-	char fw_event_q_name[MPT_KOBJ_NAME_LEN];
+	char			 fw_event_q_name[MPT_KOBJ_NAME_LEN];
 
 	struct mptsas_portinfo	*hba_port_info; /* port_info object for the host */
 	u64			 hba_port_sas_addr;
 	u16			 hba_port_num_phy;
 	struct list_head	 sas_device_info_list;
-	struct semaphore	 sas_device_info_mutex;
+	struct mutex		 sas_device_info_mutex;
 	u8			 old_sas_discovery_protocal;
 	u8			 sas_discovery_quiesce_io;
 	int			 sas_index; /* index refrencing */
@@ -949,7 +949,7 @@ extern int	 mpt_verify_adapter(int iocid, MPT_ADAPTER **iocpp);
 extern u32	 mpt_GetIocState(MPT_ADAPTER *ioc, int cooked);
 extern void	 mpt_print_ioc_summary(MPT_ADAPTER *ioc, char *buf, int *size, int len, int showlan);
 extern int	 mpt_HardResetHandler(MPT_ADAPTER *ioc, int sleepFlag);
-extern int	 mpt_SoftResetHandler(MPT_ADAPTER *ioc, int sleepFlag);
+extern int	 mpt_Soft_Hard_ResetHandler(MPT_ADAPTER *ioc, int sleepFlag);
 extern int	 mpt_config(MPT_ADAPTER *ioc, CONFIGPARMS *cfg);
 extern int	 mpt_alloc_fw_memory(MPT_ADAPTER *ioc, int size);
 extern void	 mpt_free_fw_memory(MPT_ADAPTER *ioc);

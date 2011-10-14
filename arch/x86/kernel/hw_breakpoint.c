@@ -122,7 +122,7 @@ int arch_install_hw_breakpoint(struct perf_event *bp)
 		return -EBUSY;
 
 	set_debugreg(info->address, i);
-	__get_cpu_var(cpu_debugreg[i]) = info->address;
+	__this_cpu_write(cpu_debugreg[i], info->address);
 
 	dr7 = &__get_cpu_var(cpu_dr7);
 	*dr7 |= encode_dr7(i, info->len, info->type);
@@ -203,28 +203,28 @@ int arch_check_bp_in_kernelspace(struct perf_event *bp)
 	return (va >= TASK_SIZE) && ((va + len - 1) >= TASK_SIZE);
 }
 
-/*
- * Store a breakpoint's encoded address, length, and type.
- */
-static int arch_store_info(struct perf_event *bp)
-{
-	struct arch_hw_breakpoint *info = counter_arch_bp(bp);
-	/*
-	 * For kernel-addresses, either the address or symbol name can be
-	 * specified.
-	 */
-	if (info->name)
-		info->address = (unsigned long)
-				kallsyms_lookup_name(info->name);
-	if (info->address)
-		return 0;
-
-	return -EINVAL;
-}
-
 int arch_bp_generic_fields(int x86_len, int x86_type,
 			   int *gen_len, int *gen_type)
 {
+	/* Type */
+	switch (x86_type) {
+	case X86_BREAKPOINT_EXECUTE:
+		if (x86_len != X86_BREAKPOINT_LEN_X)
+			return -EINVAL;
+
+		*gen_type = HW_BREAKPOINT_X;
+		*gen_len = sizeof(long);
+		return 0;
+	case X86_BREAKPOINT_WRITE:
+		*gen_type = HW_BREAKPOINT_W;
+		break;
+	case X86_BREAKPOINT_RW:
+		*gen_type = HW_BREAKPOINT_W | HW_BREAKPOINT_R;
+		break;
+	default:
+		return -EINVAL;
+	}
+
 	/* Len */
 	switch (x86_len) {
 	case X86_BREAKPOINT_LEN_1:
@@ -245,21 +245,6 @@ int arch_bp_generic_fields(int x86_len, int x86_type,
 		return -EINVAL;
 	}
 
-	/* Type */
-	switch (x86_type) {
-	case X86_BREAKPOINT_EXECUTE:
-		*gen_type = HW_BREAKPOINT_X;
-		break;
-	case X86_BREAKPOINT_WRITE:
-		*gen_type = HW_BREAKPOINT_W;
-		break;
-	case X86_BREAKPOINT_RW:
-		*gen_type = HW_BREAKPOINT_W | HW_BREAKPOINT_R;
-		break;
-	default:
-		return -EINVAL;
-	}
-
 	return 0;
 }
 
@@ -269,6 +254,29 @@ static int arch_build_bp_info(struct perf_event *bp)
 	struct arch_hw_breakpoint *info = counter_arch_bp(bp);
 
 	info->address = bp->attr.bp_addr;
+
+	/* Type */
+	switch (bp->attr.bp_type) {
+	case HW_BREAKPOINT_W:
+		info->type = X86_BREAKPOINT_WRITE;
+		break;
+	case HW_BREAKPOINT_W | HW_BREAKPOINT_R:
+		info->type = X86_BREAKPOINT_RW;
+		break;
+	case HW_BREAKPOINT_X:
+		info->type = X86_BREAKPOINT_EXECUTE;
+		/*
+		 * x86 inst breakpoints need to have a specific undefined len.
+		 * But we still need to check userspace is not trying to setup
+		 * an unsupported length, to get a range breakpoint for example.
+		 */
+		if (bp->attr.bp_len == sizeof(long)) {
+			info->len = X86_BREAKPOINT_LEN_X;
+			return 0;
+		}
+	default:
+		return -EINVAL;
+	}
 
 	/* Len */
 	switch (bp->attr.bp_len) {
@@ -286,21 +294,6 @@ static int arch_build_bp_info(struct perf_event *bp)
 		info->len = X86_BREAKPOINT_LEN_8;
 		break;
 #endif
-	default:
-		return -EINVAL;
-	}
-
-	/* Type */
-	switch (bp->attr.bp_type) {
-	case HW_BREAKPOINT_W:
-		info->type = X86_BREAKPOINT_WRITE;
-		break;
-	case HW_BREAKPOINT_W | HW_BREAKPOINT_R:
-		info->type = X86_BREAKPOINT_RW;
-		break;
-	case HW_BREAKPOINT_X:
-		info->type = X86_BREAKPOINT_EXECUTE;
-		break;
 	default:
 		return -EINVAL;
 	}
@@ -342,10 +335,6 @@ int arch_validate_hwbkpt_settings(struct perf_event *bp)
 		return ret;
 	}
 
-	ret = arch_store_info(bp);
-
-	if (ret < 0)
-		return ret;
 	/*
 	 * Check that the low-order bits of the address are appropriate
 	 * for the alignment implied by len.
@@ -408,12 +397,12 @@ void flush_ptrace_hw_breakpoint(struct task_struct *tsk)
 
 void hw_breakpoint_restore(void)
 {
-	set_debugreg(__get_cpu_var(cpu_debugreg[0]), 0);
-	set_debugreg(__get_cpu_var(cpu_debugreg[1]), 1);
-	set_debugreg(__get_cpu_var(cpu_debugreg[2]), 2);
-	set_debugreg(__get_cpu_var(cpu_debugreg[3]), 3);
+	set_debugreg(__this_cpu_read(cpu_debugreg[0]), 0);
+	set_debugreg(__this_cpu_read(cpu_debugreg[1]), 1);
+	set_debugreg(__this_cpu_read(cpu_debugreg[2]), 2);
+	set_debugreg(__this_cpu_read(cpu_debugreg[3]), 3);
 	set_debugreg(current->thread.debugreg6, 6);
-	set_debugreg(__get_cpu_var(cpu_dr7), 7);
+	set_debugreg(__this_cpu_read(cpu_dr7), 7);
 }
 EXPORT_SYMBOL_GPL(hw_breakpoint_restore);
 
@@ -444,6 +433,10 @@ static int __kprobes hw_breakpoint_handler(struct die_args *args)
 	dr6_p = (unsigned long *)ERR_PTR(args->err);
 	dr6 = *dr6_p;
 
+	/* If it's a single step, TRAP bits are random */
+	if (dr6 & DR_STEP)
+		return NOTIFY_DONE;
+
 	/* Do an early return if no trap bits are set in DR6 */
 	if ((dr6 & DR_TRAP_BITS) == 0)
 		return NOTIFY_DONE;
@@ -473,8 +466,6 @@ static int __kprobes hw_breakpoint_handler(struct die_args *args)
 		rcu_read_lock();
 
 		bp = per_cpu(bp_per_reg[i], cpu);
-		if (bp)
-			rc = NOTIFY_DONE;
 		/*
 		 * Reset the 'i'th TRAP bit in dr6 to denote completion of
 		 * exception handling
@@ -491,9 +482,22 @@ static int __kprobes hw_breakpoint_handler(struct die_args *args)
 
 		perf_bp_event(bp, args->regs);
 
+		/*
+		 * Set up resume flag to avoid breakpoint recursion when
+		 * returning back to origin.
+		 */
+		if (bp->hw.info.type == X86_BREAKPOINT_EXECUTE)
+			args->regs->flags |= X86_EFLAGS_RF;
+
 		rcu_read_unlock();
 	}
-	if (dr6 & (~DR_TRAP_BITS))
+	/*
+	 * Further processing in do_debug() is needed for a) user-space
+	 * breakpoints (to generate signals) and b) when the system has
+	 * taken exception due to multiple causes
+	 */
+	if ((current->thread.debugreg6 & DR_TRAP_BITS) ||
+	    (dr6 & (~DR_TRAP_BITS)))
 		rc = NOTIFY_DONE;
 
 	set_debugreg(dr7, 7);

@@ -18,7 +18,7 @@
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  *
  *  FILE: megaraid_sas_base.c
- *  Version : v00.00.05.38-SL1
+ *  Version : v00.00.05.38-rc1
  *
  *  Authors: LSI Corporation
  *           Sreenivas Bagalkote
@@ -5004,6 +5004,7 @@ static const struct file_operations megasas_mgmt_fops = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = megasas_mgmt_compat_ioctl,
 #endif
+	.llseek = noop_llseek,
 };
 
 /*

@@ -12,7 +12,7 @@
  *	Software Developer's Manual
  *	Order Number 253668 or free download from:
  *
- *	http://developer.intel.com/design/pentium4/manuals/253668.htm
+ *	http://developer.intel.com/Assets/PDF/manual/253668.pdf
  *
  *	For more information, go to http://www.urbanmyth.org/microcode
  *
@@ -21,10 +21,12 @@
  *	as published by the Free Software Foundation; either version
  *	2 of the License, or (at your option) any later version.
  */
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/platform_device.h>
 #include <linux/miscdevice.h>
 #include <linux/capability.h>
-#include <linux/smp_lock.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -86,10 +88,9 @@ static int do_microcode_update(const void __user *ubuf, size_t len)
 	return err;
 }
 
-static int microcode_open(struct inode *unused1, struct file *unused2)
+static int microcode_open(struct inode *inode, struct file *file)
 {
-	cycle_kernel_lock();
-	return capable(CAP_SYS_RAWIO) ? 0 : -EPERM;
+	return capable(CAP_SYS_RAWIO) ? nonseekable_open(inode, file) : -EPERM;
 }
 
 static ssize_t microcode_write(struct file *file, const char __user *buf,
@@ -98,7 +99,7 @@ static ssize_t microcode_write(struct file *file, const char __user *buf,
 	ssize_t ret = -EINVAL;
 
 	if ((len >> PAGE_SHIFT) > totalram_pages) {
-		pr_err("microcode: too much data (max %ld pages)\n", totalram_pages);
+		pr_err("too much data (max %ld pages)\n", totalram_pages);
 		return ret;
  	}
 
@@ -116,6 +117,7 @@ static const struct file_operations microcode_fops = {
 	.owner			= THIS_MODULE,
 	.write			= microcode_write,
 	.open			= microcode_open,
+	.llseek		= no_llseek,
 };
 
 static struct miscdevice microcode_dev = {
@@ -131,7 +133,7 @@ static int __init microcode_dev_init(void)
 
 	error = misc_register(&microcode_dev);
 	if (error) {
-		pr_err("microcode: can't misc_register on minor=%d\n", MICROCODE_MINOR);
+		pr_err("can't misc_register on minor=%d\n", MICROCODE_MINOR);
 		return error;
 	}
 
@@ -144,6 +146,7 @@ static void microcode_dev_exit(void)
 }
 
 MODULE_ALIAS_MISCDEV(MICROCODE_MINOR);
+MODULE_ALIAS("devname:cpu/microcode");
 #else
 #define microcode_dev_init()	0
 #define microcode_dev_exit()	do { } while (0)
@@ -190,7 +193,7 @@ static int __init microcode_init(void)
 	else if (c->x86_vendor == X86_VENDOR_AMD)
 		fw_name = "amd-ucode/microcode_amd.bin";
 	else {
-		pr_err("microcode: no support for this CPU vendor\n");
+		pr_err("no support for this CPU vendor\n");
 		return -ENODEV;
 	}
 
@@ -207,8 +210,7 @@ static int __init microcode_init(void)
 	request_microcode(fw_name);
 
 	pr_info("Microcode Update Driver: v" MICROCODE_VERSION
-	       " <tigran@aivazian.fsnet.co.uk>,"
-	       " Peter Oruba\n");
+		" <tigran@aivazian.fsnet.co.uk>, Peter Oruba\n");
 
 	return 0;
 }

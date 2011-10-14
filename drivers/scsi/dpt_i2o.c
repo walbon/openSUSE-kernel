@@ -49,7 +49,6 @@ MODULE_DESCRIPTION("Adaptec I2O RAID Driver");
 #include <linux/kernel.h>	/* for printk */
 #include <linux/sched.h>
 #include <linux/reboot.h>
-#include <linux/smp_lock.h>
 #include <linux/spinlock.h>
 #include <linux/dma-mapping.h>
 
@@ -76,6 +75,7 @@ MODULE_DESCRIPTION("Adaptec I2O RAID Driver");
  * Needed for our management apps
  *============================================================================
  */
+static DEFINE_MUTEX(adpt_mutex);
 static dpt_sig_S DPTI_sig = {
 	{'d', 'P', 't', 'S', 'i', 'G'}, SIG_VERSION,
 #ifdef __i386__
@@ -114,17 +114,19 @@ static int hba_count = 0;
 
 static struct class *adpt_sysfs_class;
 
+static long adpt_unlocked_ioctl(struct file *, unsigned int, unsigned long);
 #ifdef CONFIG_COMPAT
 static long compat_adpt_ioctl(struct file *, unsigned int, unsigned long);
 #endif
 
 static const struct file_operations adpt_fops = {
-	.ioctl		= adpt_ioctl,
+	.unlocked_ioctl	= adpt_unlocked_ioctl,
 	.open		= adpt_open,
 	.release	= adpt_close,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= compat_adpt_ioctl,
 #endif
+	.llseek		= noop_llseek,
 };
 
 /* Structures and definitions for synchronous message posting.
@@ -778,7 +780,7 @@ static int adpt_abort(struct scsi_cmnd * cmd)
 		return FAILED;
 	}
 	pHba = (adpt_hba*) cmd->device->host->hostdata[0];
-	printk(KERN_INFO"%s: Trying to Abort cmd=%ld\n",pHba->name, cmd->serial_number);
+	printk(KERN_INFO"%s: Trying to Abort\n",pHba->name);
 	if ((dptdevice = (void*) (cmd->device->hostdata)) == NULL) {
 		printk(KERN_ERR "%s: Unable to abort: No device in cmnd\n",pHba->name);
 		return FAILED;
@@ -800,10 +802,10 @@ static int adpt_abort(struct scsi_cmnd * cmd)
 			printk(KERN_INFO"%s: Abort cmd not supported\n",pHba->name);
 			return FAILED;
 		}
-		printk(KERN_INFO"%s: Abort cmd=%ld failed.\n",pHba->name, cmd->serial_number);
+		printk(KERN_INFO"%s: Abort failed.\n",pHba->name);
 		return FAILED;
 	} 
-	printk(KERN_INFO"%s: Abort cmd=%ld complete.\n",pHba->name, cmd->serial_number);
+	printk(KERN_INFO"%s: Abort complete.\n",pHba->name);
 	return SUCCESS;
 }
 
@@ -1733,12 +1735,12 @@ static int adpt_open(struct inode *inode, struct file *file)
 	int minor;
 	adpt_hba* pHba;
 
-	lock_kernel();
+	mutex_lock(&adpt_mutex);
 	//TODO check for root access
 	//
 	minor = iminor(inode);
 	if (minor >= hba_count) {
-		unlock_kernel();
+		mutex_unlock(&adpt_mutex);
 		return -ENXIO;
 	}
 	mutex_lock(&adpt_configuration_lock);
@@ -1749,7 +1751,7 @@ static int adpt_open(struct inode *inode, struct file *file)
 	}
 	if (pHba == NULL) {
 		mutex_unlock(&adpt_configuration_lock);
-		unlock_kernel();
+		mutex_unlock(&adpt_mutex);
 		return -ENXIO;
 	}
 
@@ -1760,7 +1762,7 @@ static int adpt_open(struct inode *inode, struct file *file)
 
 	pHba->in_use = 1;
 	mutex_unlock(&adpt_configuration_lock);
-	unlock_kernel();
+	mutex_unlock(&adpt_mutex);
 
 	return 0;
 }
@@ -2071,8 +2073,7 @@ static int adpt_system_info(void __user *buffer)
 	return 0;
 }
 
-static int adpt_ioctl(struct inode *inode, struct file *file, uint cmd,
-	      ulong arg)
+static int adpt_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 {
 	int minor;
 	int error = 0;
@@ -2155,6 +2156,20 @@ static int adpt_ioctl(struct inode *inode, struct file *file, uint cmd,
 	return error;
 }
 
+static long adpt_unlocked_ioctl(struct file *file, uint cmd, ulong arg)
+{
+	struct inode *inode;
+	long ret;
+ 
+	inode = file->f_dentry->d_inode;
+ 
+	mutex_lock(&adpt_mutex);
+	ret = adpt_ioctl(inode, file, cmd, arg);
+	mutex_unlock(&adpt_mutex);
+
+	return ret;
+}
+
 #ifdef CONFIG_COMPAT
 static long compat_adpt_ioctl(struct file *file,
 				unsigned int cmd, unsigned long arg)
@@ -2164,7 +2179,7 @@ static long compat_adpt_ioctl(struct file *file,
  
 	inode = file->f_dentry->d_inode;
  
-	lock_kernel();
+	mutex_lock(&adpt_mutex);
  
 	switch(cmd) {
 		case DPT_SIGNATURE:
@@ -2182,7 +2197,7 @@ static long compat_adpt_ioctl(struct file *file,
 			ret =  -ENOIOCTLCMD;
 	}
  
-	unlock_kernel();
+	mutex_unlock(&adpt_mutex);
  
 	return ret;
 }

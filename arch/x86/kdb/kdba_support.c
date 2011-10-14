@@ -18,7 +18,7 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/hardirq.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/interrupt.h>
 #include <linux/kdebug.h>
@@ -143,7 +143,7 @@ kdba_putdr7(kdb_machreg_t contents)
 }
 
 void
-kdba_installdbreg(kdb_bp_t *bp)
+kdba_installdbreg(lkdb_bp_t *bp)
 {
 	int cpu = smp_processor_id();
 
@@ -179,7 +179,7 @@ kdba_installdbreg(kdb_bp_t *bp)
 		DR7_G3SET(dr7);
 		break;
 	default:
-		kdb_printf("kdb: Bad debug register!! %ld\n",
+		lkdb_printf("kdb: Bad debug register!! %ld\n",
 			   bp->bp_hard[cpu]->bph_reg);
 		break;
 	}
@@ -189,7 +189,7 @@ kdba_installdbreg(kdb_bp_t *bp)
 }
 
 void
-kdba_removedbreg(kdb_bp_t *bp)
+kdba_removedbreg(lkdb_bp_t *bp)
 {
 	int regnum;
 	kdb_machreg_t dr7;
@@ -222,7 +222,7 @@ kdba_removedbreg(kdb_bp_t *bp)
 		DR7_L3CLR(dr7);
 		break;
 	default:
-		kdb_printf("kdb: Bad debug register!! %d\n", regnum);
+		lkdb_printf("kdb: Bad debug register!! %d\n", regnum);
 		break;
 	}
 
@@ -326,7 +326,7 @@ kdba_getregcontents(const char *regname,
 		/* User registers:  %%e[a-c]x, etc */
 		regname++;
 		regs = (struct pt_regs *)
-			(kdb_current_task->thread.sp0 - sizeof(struct pt_regs));
+			(lkdb_current_task->thread.sp0 - sizeof(struct pt_regs));
 	}
 
 	for (i=0; i<ndbreglist; i++) {
@@ -343,8 +343,8 @@ kdba_getregcontents(const char *regname,
 	}
 
 	if (!regs) {
-		kdb_printf("%s: pt_regs not available, use bt* or pid to select a different task\n", __FUNCTION__);
-		return KDB_BADREG;
+		lkdb_printf("%s: pt_regs not available, use bt* or pid to select a different task\n", __FUNCTION__);
+		return LKDB_BADREG;
 	}
 
 	if (strcmp(regname, "&regs") == 0) {
@@ -390,7 +390,7 @@ kdba_getregcontents(const char *regname,
 		return(0);
 	}
 
-	return KDB_BADREG;
+	return LKDB_BADREG;
 }
 
 /*
@@ -410,7 +410,7 @@ kdba_getregcontents(const char *regname,
  * Outputs:
  * Returns:
  *	0		Success
- *	KDB_BADREG	Invalid register name
+ *	LKDB_BADREG	Invalid register name
  * Locking:
  * 	None.
  * Remarks:
@@ -426,7 +426,7 @@ kdba_setregcontents(const char *regname,
 	if (regname[0] == '%') {
 		regname++;
 		regs = (struct pt_regs *)
-			(kdb_current_task->thread.sp0 - sizeof(struct pt_regs));
+			(lkdb_current_task->thread.sp0 - sizeof(struct pt_regs));
 	}
 
 	for (i=0; i<ndbreglist; i++) {
@@ -443,8 +443,8 @@ kdba_setregcontents(const char *regname,
 	}
 
 	if (!regs) {
-		kdb_printf("%s: pt_regs not available, use bt* or pid to select a different task\n", __FUNCTION__);
-		return KDB_BADREG;
+		lkdb_printf("%s: pt_regs not available, use bt* or pid to select a different task\n", __FUNCTION__);
+		return LKDB_BADREG;
 	}
 
 	for (i=0; i<nkdbreglist; i++) {
@@ -461,7 +461,7 @@ kdba_setregcontents(const char *regname,
 		return 0;
 	}
 
-	return KDB_BADREG;
+	return LKDB_BADREG;
 }
 
 /*
@@ -496,30 +496,30 @@ kdba_pt_regs(int argc, const char **argv)
 		addr = (kdb_machreg_t) get_irq_regs();
 	} else if (argc == 1) {
 		nextarg = 1;
-		diag = kdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL);
+		diag = lkdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL);
 		if (diag)
 			return diag;
 	} else {
-		return KDB_ARGCOUNT;
+		return LKDB_ARGCOUNT;
 	}
 
 	p = (struct pt_regs *) addr;
-	kdb_printf("struct pt_regs 0x%p-0x%p\n", p, (unsigned char *)p + sizeof(*p) - 1);
-	kdb_print_nameval("bx", p->bx);
-	kdb_print_nameval("cx", p->cx);
-	kdb_print_nameval("dx", p->dx);
-	kdb_print_nameval("si", p->si);
-	kdb_print_nameval("di", p->di);
-	kdb_print_nameval("bp", p->bp);
-	kdb_print_nameval("ax", p->ax);
-	kdb_printf(fmt, "ds", p->ds);
-	kdb_printf(fmt, "es", p->es);
-	kdb_print_nameval("orig_ax", p->orig_ax);
-	kdb_print_nameval("ip", p->ip);
-	kdb_printf(fmt, "cs", p->cs);
-	kdb_printf(fmt, "flags", p->flags);
-	kdb_printf(fmt, "sp", p->sp);
-	kdb_printf(fmt, "ss", p->ss);
+	lkdb_printf("struct pt_regs 0x%p-0x%p\n", p, (unsigned char *)p + sizeof(*p) - 1);
+	lkdb_print_nameval("bx", p->bx);
+	lkdb_print_nameval("cx", p->cx);
+	lkdb_print_nameval("dx", p->dx);
+	lkdb_print_nameval("si", p->si);
+	lkdb_print_nameval("di", p->di);
+	lkdb_print_nameval("bp", p->bp);
+	lkdb_print_nameval("ax", p->ax);
+	lkdb_printf(fmt, "ds", p->ds);
+	lkdb_printf(fmt, "es", p->es);
+	lkdb_print_nameval("orig_ax", p->orig_ax);
+	lkdb_print_nameval("ip", p->ip);
+	lkdb_printf(fmt, "cs", p->cs);
+	lkdb_printf(fmt, "flags", p->flags);
+	lkdb_printf(fmt, "sp", p->sp);
+	lkdb_printf(fmt, "ss", p->ss);
 	return 0;
 }
 
@@ -576,7 +576,7 @@ static const int nkdbreglist = sizeof(kdbreglist) / sizeof(struct kdbregs);
  *	*contents	Pointer to unsigned long to recieve register contents
  * Returns:
  *	0		Success
- *	KDB_BADREG	Invalid register name
+ *	LKDB_BADREG	Invalid register name
  * Locking:
  * 	None.
  * Remarks:
@@ -667,7 +667,7 @@ kdba_getregcontents(const char *regname,
 		*contents = kdba_getdr(dbreglist[i].reg_offset);
 		return 0;
 	}
-	return KDB_BADREG;
+	return LKDB_BADREG;
 }
 
 /*
@@ -687,7 +687,7 @@ kdba_getregcontents(const char *regname,
  * Outputs:
  * Returns:
  *	0		Success
- *	KDB_BADREG	Invalid register name
+ *	LKDB_BADREG	Invalid register name
  * Locking:
  * 	None.
  * Remarks:
@@ -733,7 +733,7 @@ kdba_setregcontents(const char *regname,
 		return 0;
 	}
 
-	return KDB_BADREG;
+	return LKDB_BADREG;
 }
 
 /*
@@ -769,41 +769,41 @@ kdba_pt_regs(int argc, const char **argv)
 		addr = (kdb_machreg_t) get_irq_regs();
 	} else if (argc == 1) {
 		nextarg = 1;
-		diag = kdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL);
+		diag = lkdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL);
 		if (diag)
 			return diag;
 	} else {
-		return KDB_ARGCOUNT;
+		return LKDB_ARGCOUNT;
 	}
 
 	p = (struct pt_regs *) addr;
 	if (first_time) {
 		first_time = 0;
-		kdb_printf("\n+++ Warning: x86_64 pt_regs are not always "
+		lkdb_printf("\n+++ Warning: x86_64 pt_regs are not always "
 			   "completely defined, r15-bx may be invalid\n\n");
 	}
-	kdb_printf("struct pt_regs 0x%p-0x%p\n", p, (unsigned char *)p + sizeof(*p) - 1);
-	kdb_print_nameval("r15", p->r15);
-	kdb_print_nameval("r14", p->r14);
-	kdb_print_nameval("r13", p->r13);
-	kdb_print_nameval("r12", p->r12);
-	kdb_print_nameval("bp", p->bp);
-	kdb_print_nameval("bx", p->bx);
-	kdb_print_nameval("r11", p->r11);
-	kdb_print_nameval("r10", p->r10);
-	kdb_print_nameval("r9", p->r9);
-	kdb_print_nameval("r8", p->r8);
-	kdb_print_nameval("ax", p->ax);
-	kdb_print_nameval("cx", p->cx);
-	kdb_print_nameval("dx", p->dx);
-	kdb_print_nameval("si", p->si);
-	kdb_print_nameval("di", p->di);
-	kdb_print_nameval("orig_ax", p->orig_ax);
-	kdb_print_nameval("ip", p->ip);
-	kdb_printf(fmt, "cs", p->cs);
-	kdb_printf(fmt, "flags", p->flags);
-	kdb_printf(fmt, "sp", p->sp);
-	kdb_printf(fmt, "ss", p->ss);
+	lkdb_printf("struct pt_regs 0x%p-0x%p\n", p, (unsigned char *)p + sizeof(*p) - 1);
+	lkdb_print_nameval("r15", p->r15);
+	lkdb_print_nameval("r14", p->r14);
+	lkdb_print_nameval("r13", p->r13);
+	lkdb_print_nameval("r12", p->r12);
+	lkdb_print_nameval("bp", p->bp);
+	lkdb_print_nameval("bx", p->bx);
+	lkdb_print_nameval("r11", p->r11);
+	lkdb_print_nameval("r10", p->r10);
+	lkdb_print_nameval("r9", p->r9);
+	lkdb_print_nameval("r8", p->r8);
+	lkdb_print_nameval("ax", p->ax);
+	lkdb_print_nameval("cx", p->cx);
+	lkdb_print_nameval("dx", p->dx);
+	lkdb_print_nameval("si", p->si);
+	lkdb_print_nameval("di", p->di);
+	lkdb_print_nameval("orig_ax", p->orig_ax);
+	lkdb_print_nameval("ip", p->ip);
+	lkdb_printf(fmt, "cs", p->cs);
+	lkdb_printf(fmt, "flags", p->flags);
+	lkdb_printf(fmt, "sp", p->sp);
+	lkdb_printf(fmt, "ss", p->ss);
 	return 0;
 }
 #endif /* CONFIG_X86_32 */
@@ -849,7 +849,7 @@ kdba_dumpregs(struct pt_regs *regs,
 	 && (type[0] == 'u')) {
 		type = NULL;
 		regs = (struct pt_regs *)
-			(kdb_current_task->thread.sp0 - sizeof(struct pt_regs));
+			(lkdb_current_task->thread.sp0 - sizeof(struct pt_regs));
 	}
 
 	if (type == NULL) {
@@ -857,29 +857,29 @@ kdba_dumpregs(struct pt_regs *regs,
 		kdb_machreg_t contents;
 
 		if (!regs) {
-			kdb_printf("%s: pt_regs not available, use bt* or pid to select a different task\n", __FUNCTION__);
-			return KDB_BADREG;
+			lkdb_printf("%s: pt_regs not available, use bt* or pid to select a different task\n", __FUNCTION__);
+			return LKDB_BADREG;
 		}
 
 #ifdef CONFIG_X86_32
 		for (i=0, rlp=kdbreglist; i<nkdbreglist; i++,rlp++) {
-			kdb_printf("%s = ", rlp->reg_name);
+			lkdb_printf("%s = ", rlp->reg_name);
 			kdba_getregcontents(rlp->reg_name, regs, &contents);
-			kdb_printf("0x%08lx ", contents);
+			lkdb_printf("0x%08lx ", contents);
 			if ((++count % 4) == 0)
-				kdb_printf("\n");
+				lkdb_printf("\n");
 		}
 #else
 		for (i=0, rlp=kdbreglist; i<nkdbreglist; i++,rlp++) {
-			kdb_printf("%8s = ", rlp->reg_name);
+			lkdb_printf("%8s = ", rlp->reg_name);
 			kdba_getregcontents(rlp->reg_name, regs, &contents);
-			kdb_printf("0x%016lx ", contents);
+			lkdb_printf("0x%016lx ", contents);
 			if ((++count % 2) == 0)
-				kdb_printf("\n");
+				lkdb_printf("\n");
 		}
 #endif
 
-		kdb_printf("&regs = 0x%p\n", regs);
+		lkdb_printf("&regs = 0x%p\n", regs);
 
 		return 0;
 	}
@@ -893,9 +893,9 @@ kdba_dumpregs(struct pt_regs *regs,
 			if ((i == 4) || (i == 5)) continue;
 			dr[i] = kdba_getdr(i);
 		}
-		kdb_printf("dr0 = 0x%08lx  dr1 = 0x%08lx  dr2 = 0x%08lx  dr3 = 0x%08lx\n",
+		lkdb_printf("dr0 = 0x%08lx  dr1 = 0x%08lx  dr2 = 0x%08lx  dr3 = 0x%08lx\n",
 			   dr[0], dr[1], dr[2], dr[3]);
-		kdb_printf("dr6 = 0x%08lx  dr7 = 0x%08lx\n",
+		lkdb_printf("dr6 = 0x%08lx  dr7 = 0x%08lx\n",
 			   dr[6], dr[7]);
 		return 0;
 	}
@@ -906,14 +906,14 @@ kdba_dumpregs(struct pt_regs *regs,
 		for (i=0; i<5; i++) {
 			cr[i] = kdba_getcr(i);
 		}
-		kdb_printf("cr0 = 0x%08lx  cr1 = 0x%08lx  cr2 = 0x%08lx  cr3 = 0x%08lx\ncr4 = 0x%08lx\n",
+		lkdb_printf("cr0 = 0x%08lx  cr1 = 0x%08lx  cr2 = 0x%08lx  cr3 = 0x%08lx\ncr4 = 0x%08lx\n",
 			   cr[0], cr[1], cr[2], cr[3], cr[4]);
 		return 0;
 	}
 	case 'r':
 		break;
 	default:
-		return KDB_BADREG;
+		return LKDB_BADREG;
 	}
 
 	/* NOTREACHED */
@@ -931,7 +931,7 @@ int
 kdba_setpc(struct pt_regs *regs, kdb_machreg_t newpc)
 {
 	if (KDB_NULL_REGS(regs))
-		return KDB_BADREG;
+		return LKDB_BADREG;
 	regs->ip = newpc;
 	KDB_STATE_SET(IP_ADJUSTED);
 	return 0;
@@ -967,7 +967,7 @@ kdba_setpc(struct pt_regs *regs, kdb_machreg_t newpc)
  */
 
 int
-kdba_main_loop(kdb_reason_t reason, kdb_reason_t reason2, int error,
+kdba_main_loop(lkdb_reason_t reason, lkdb_reason_t reason2, int error,
 	       kdb_dbtrap_t db_result, struct pt_regs *regs)
 {
 	int ret;
@@ -982,7 +982,7 @@ kdba_main_loop(kdb_reason_t reason, kdb_reason_t reason2, int error,
 }
 
 void
-kdba_disableint(kdb_intstate_t *state)
+kdba_disableint(lkdb_intstate_t *state)
 {
 	unsigned long *fp = (unsigned long *)state;
 	unsigned long flags;
@@ -992,7 +992,7 @@ kdba_disableint(kdb_intstate_t *state)
 }
 
 void
-kdba_restoreint(kdb_intstate_t *state)
+kdba_restoreint(lkdb_intstate_t *state)
 {
 	unsigned long flags = *(unsigned long *)state;
 	local_irq_restore(flags);
@@ -1132,18 +1132,25 @@ kdba_longjmp(kdb_jmp_buf *jb, int reason)
 
 #ifdef CONFIG_X86_32
 
-#ifdef  CONFIG_4KSTACKS
+#define XCS "xcs"
+#define RSP "esp"
+#define RIP "eip"
+#define ARCH_RSP esp
+#define ARCH_RIP eip
+#define ARCH_NORMAL_PADDING (19 * 4)
+
+#ifdef	CONFIG_4KSTACKS
 static struct thread_info **kdba_hardirq_ctx, **kdba_softirq_ctx;
-#endif  /* CONFIG_4KSTACKS */
+#endif	/* CONFIG_4KSTACKS */
 
 /* On a 4K stack kernel, hardirq_ctx and softirq_ctx are [NR_CPUS] arrays.  The
  * first element of each per-cpu stack is a struct thread_info.
  */
-static void 
+void
 kdba_get_stack_info_alternate(kdb_machreg_t addr, int cpu,
-                              struct kdb_activation_record *ar)
-{               
-#ifdef  CONFIG_4KSTACKS
+			      struct lkdb_activation_record *ar)
+{
+#ifdef	CONFIG_4KSTACKS
 	struct thread_info *tinfo;
 	tinfo = (struct thread_info *)(addr & -THREAD_SIZE);
 	if (cpu < 0) {
@@ -1174,10 +1181,8 @@ kdba_get_stack_info_alternate(kdb_machreg_t addr, int cpu,
 		else
 			ar->stack.id = "softirq_ctx";
 	}
-#endif  /* CONFIG_4KSTACKS */
+#endif	/* CONFIG_4KSTACKS */
 }
-
-
 /*
  * kdba_stackdepth
  *
@@ -1203,20 +1208,20 @@ kdba_stackdepth1(struct task_struct *p, unsigned long sp)
 	struct thread_info *tinfo;
 	int used;
 	const char *type;
-	kdb_ps1(p);
+	lkdb_ps1(p);
 	do {
 		tinfo = (struct thread_info *)(sp & -THREAD_SIZE);
 		used = sizeof(*tinfo) + THREAD_SIZE - (sp & (THREAD_SIZE-1));
 		type = NULL;
-		if (kdb_task_has_cpu(p)) {
-			struct kdb_activation_record ar;
+		if (lkdb_task_has_cpu(p)) {
+			struct lkdb_activation_record ar;
 			memset(&ar, 0, sizeof(ar));
 			kdba_get_stack_info_alternate(sp, -1, &ar);
 			type = ar.stack.id;
 		}
 		if (!type)
 			type = "process";
-		kdb_printf("  %s stack %p sp %lx used %d\n", type, tinfo, sp, used);
+		lkdb_printf("  %s stack %p sp %lx used %d\n", type, tinfo, sp, used);
 		sp = tinfo->previous_esp;
 	} while (sp);
 }
@@ -1230,27 +1235,27 @@ kdba_stackdepth(int argc, const char **argv)
 	long offset = 0;
 	int nextarg;
 	struct task_struct *p, *g;
-	struct kdb_running_process *krp;
+	struct lkdb_running_process *krp;
 	struct thread_info *tinfo;
 
 	if (argc == 0) {
 		percentage = 60;
 	} else if (argc == 1) {
 		nextarg = 1;
-		diag = kdbgetaddrarg(argc, argv, &nextarg, &percentage, &offset, NULL);
+		diag = lkdbgetaddrarg(argc, argv, &nextarg, &percentage, &offset, NULL);
 		if (diag)
 			return diag;
 	} else {
-		return KDB_ARGCOUNT;
+		return LKDB_ARGCOUNT;
 	}
 	percentage = max_t(int, percentage, 1);
 	percentage = min_t(int, percentage, 100);
 	threshold = ((2 * THREAD_SIZE * percentage) / 100 + 1) >> 1;
-	kdb_printf("stackdepth: processes using more than %ld%% (%d bytes) of stack\n",
+	lkdb_printf("stackdepth: processes using more than %ld%% (%d bytes) of stack\n",
 		percentage, threshold);
 
 	/* Run the active tasks first, they can have multiple stacks */
-	for (cpu = 0, krp = kdb_running_process; cpu < NR_CPUS; ++cpu, ++krp) {
+	for (cpu = 0, krp = lkdb_running_process; cpu < NR_CPUS; ++cpu, ++krp) {
 		if (!cpu_online(cpu))
 			continue;
 		p = krp->p;
@@ -1267,15 +1272,15 @@ kdba_stackdepth(int argc, const char **argv)
 			kdba_stackdepth1(p, krp->arch.sp);
 	}
 	/* Now the tasks that are not on cpus */
-	kdb_do_each_thread(g, p) {
-		if (kdb_task_has_cpu(p))
+	lkdb_do_each_thread(g, p) {
+		if (lkdb_task_has_cpu(p))
 			continue;
 		esp = p->thread.sp;
 		used = sizeof(*tinfo) + THREAD_SIZE - (esp & (THREAD_SIZE-1));
 		over = used >= threshold;
 		if (over)
 			kdba_stackdepth1(p, esp);
-	} kdb_while_each_thread(g, p);
+	} lkdb_while_each_thread(g, p);
 
 	return 0;
 }
@@ -1298,25 +1303,26 @@ static int kdba_entry( struct notifier_block *b, unsigned long val, void *v)
 	err  = args->err;
 	trap  = args->trapnr;
 	switch (val){
-#ifdef	CONFIG_SMP
+#if 0
+		// these two are not used in the 3.0 kernel
 		case DIE_NMI_IPI:
 			ret = kdb_ipi(regs, NULL);
 			break;
-#endif	/* CONFIG_SMP */
+		case DIE_NMIWATCHDOG:
+			ret = kdb(LKDB_REASON_NMI, err, regs);
+			break;
+#endif
 		case DIE_OOPS:
-			ret = kdb(KDB_REASON_OOPS, err, regs);
+			ret = kdb(LKDB_REASON_OOPS, err, regs);
 			break;
 		case DIE_CALL:
-			ret = kdb(KDB_REASON_ENTER, err, regs);
+			ret = kdb(LKDB_REASON_ENTER, err, regs);
 			break;
 		case DIE_DEBUG:
-			ret = kdb(KDB_REASON_DEBUG, err, regs);
-			break;
-		case DIE_NMIWATCHDOG:
-			ret = kdb(KDB_REASON_NMI, err, regs);
+			ret = kdb(LKDB_REASON_DEBUG, err, regs);
 			break;
 		case DIE_INT3:
-			 ret = kdb(KDB_REASON_BREAK, err, regs);
+			 ret = kdb(LKDB_REASON_BREAK, err, regs);
 			// falls thru
 		default:
 			break;
@@ -1368,9 +1374,9 @@ void __init
 kdba_init(void)
 {
 	kdba_arch_init();	/* Need to register KDBENTER_VECTOR early */
-	kdb_register("pt_regs", kdba_pt_regs, "address", "Format struct pt_regs", 0);
+	lkdb_register("pt_regs", kdba_pt_regs, "address", "Format struct pt_regs", 0);
 #ifdef CONFIG_X86_32
-	kdb_register("stackdepth", kdba_stackdepth, "[percentage]", "Print processes using >= stack percentage", 0);
+	lkdb_register("stackdepth", kdba_stackdepth, "[percentage]", "Print processes using >= stack percentage", 0);
 #else
 	register_die_notifier(&kdba_notifier);
 #endif
@@ -1398,7 +1404,7 @@ kdba_init(void)
  */
 
 void
-kdba_adjust_ip(kdb_reason_t reason, int error, struct pt_regs *regs)
+kdba_adjust_ip(lkdb_reason_t reason, int error, struct pt_regs *regs)
 {
 	return;
 }
@@ -1406,13 +1412,13 @@ kdba_adjust_ip(kdb_reason_t reason, int error, struct pt_regs *regs)
 void
 kdba_set_current_task(struct task_struct *p)
 {
-	kdb_current_task = p;
-	if (kdb_task_has_cpu(p)) {
-		struct kdb_running_process *krp = kdb_running_process + kdb_process_cpu(p);
-		kdb_current_regs = krp->regs;
+	lkdb_current_task = p;
+	if (lkdb_task_has_cpu(p)) {
+		struct lkdb_running_process *krp = lkdb_running_process + lkdb_process_cpu(p);
+		lkdb_current_regs = krp->regs;
 		return;
 	}
-	kdb_current_regs = NULL;
+	lkdb_current_regs = NULL;
 }
 
 #ifdef CONFIG_X86_32
@@ -1494,7 +1500,7 @@ gate_desc save_idt[NR_VECTORS];
 void kdba_takeover_vector(int vector)
 {
 	memcpy(&save_idt[vector], &idt_table[vector], sizeof(gate_desc));
-	set_intr_gate(KDB_VECTOR, kdb_interrupt);
+	set_intr_gate(LKDB_VECTOR, kdb_interrupt);
 	return;
 }
 
@@ -1510,9 +1516,9 @@ void kdba_giveback_vector(int vector)
 void
 smp_kdb_stop(void)
 {
-	if (!KDB_FLAG(NOIPI)) {
-		kdba_takeover_vector(KDB_VECTOR);
-		apic->send_IPI_allbutself(KDB_VECTOR);
+	if (!LKDB_FLAG(NOIPI)) {
+		kdba_takeover_vector(LKDB_VECTOR);
+		apic->send_IPI_allbutself(LKDB_VECTOR);
 	}
 }
 
@@ -1539,16 +1545,16 @@ void
 kdba_wait_for_cpus(void)
 {
 	int c;
-	if (KDB_FLAG(CATASTROPHIC))
+	if (LKDB_FLAG(CATASTROPHIC))
 		return;
-	kdb_printf("  Sending NMI to non-responding cpus: ");
+	lkdb_printf("  Sending NMI to non-responding cpus: ");
 	for_each_online_cpu(c) {
-		if (kdb_running_process[c].seqno < kdb_seqno - 1) {
-			kdb_printf(" %d", c);
+		if (lkdb_running_process[c].seqno < lkdb_seqno - 1) {
+			lkdb_printf(" %d", c);
 			apic->send_IPI_mask(cpumask_of(c), NMI_VECTOR);
 		}
 	}
-	kdb_printf(".\n");
+	lkdb_printf(".\n");
 }
 
 #endif	/* CONFIG_SMP */
@@ -1575,7 +1581,7 @@ extern void halt_current_cpu(struct pt_regs *);
 
 void kdba_kdump_shutdown_slave(struct pt_regs *regs)
 {
-#ifndef CONFIG_PARAVIRT_XEN
+#ifndef CONFIG_XEN
 	halt_current_cpu(regs);
 #endif /* CONFIG_XEN */
 }

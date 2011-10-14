@@ -25,7 +25,7 @@
 
 #include <linux/netdevice.h>
 #include <linux/delay.h>
-#include <linux/if_vlan.h>
+#include <linux/slab.h>
 #include "netxen_nic.h"
 #include "netxen_nic_hw.h"
 
@@ -214,13 +214,12 @@ int netxen_alloc_sw_resources(struct netxen_adapter *adapter)
 	tx_ring->num_desc = adapter->num_txd;
 	tx_ring->txq = netdev_get_tx_queue(netdev, 0);
 
-	cmd_buf_arr = vmalloc(TX_BUFF_RINGSIZE(tx_ring));
+	cmd_buf_arr = vzalloc(TX_BUFF_RINGSIZE(tx_ring));
 	if (cmd_buf_arr == NULL) {
 		dev_err(&pdev->dev, "%s: failed to allocate cmd buffer ring\n",
 		       netdev->name);
 		goto err_out;
 	}
-	memset(cmd_buf_arr, 0, TX_BUFF_RINGSIZE(tx_ring));
 	tx_ring->cmd_buf_arr = cmd_buf_arr;
 
 	recv_ctx = &adapter->recv_ctx;
@@ -279,8 +278,7 @@ int netxen_alloc_sw_resources(struct netxen_adapter *adapter)
 			break;
 
 		}
-		rds_ring->rx_buf_arr = (struct netxen_rx_buffer *)
-			vmalloc(RCV_BUFF_RINGSIZE(rds_ring));
+		rds_ring->rx_buf_arr = vzalloc(RCV_BUFF_RINGSIZE(rds_ring));
 		if (rds_ring->rx_buf_arr == NULL) {
 			printk(KERN_ERR "%s: Failed to allocate "
 				"rx buffer ring %d\n",
@@ -288,7 +286,6 @@ int netxen_alloc_sw_resources(struct netxen_adapter *adapter)
 			/* free whatever was already allocated */
 			goto err_out;
 		}
-		memset(rds_ring->rx_buf_arr, 0, RCV_BUFF_RINGSIZE(rds_ring));
 		INIT_LIST_HEAD(&rds_ring->free_list);
 		/*
 		 * Now go through all of them, set reference handles
@@ -1486,7 +1483,8 @@ static struct sk_buff *netxen_process_rxbuf(struct netxen_adapter *adapter,
 	if (!skb)
 		goto no_skb;
 
-	if (likely(adapter->rx_csum && cksum == STATUS_CKSUM_OK)) {
+	if (likely((adapter->netdev->features & NETIF_F_RXCSUM)
+	    && cksum == STATUS_CKSUM_OK)) {
 		adapter->stats.csummed++;
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 	} else
@@ -1510,9 +1508,7 @@ netxen_process_rcv(struct netxen_adapter *adapter,
 	struct netxen_rx_buffer *buffer;
 	struct sk_buff *skb;
 	struct nx_host_rds_ring *rds_ring;
-	struct ethhdr *eth_hdr;
 	int index, length, cksum, pkt_offset;
-	u16 vid = 0xffff;
 
 	if (unlikely(ring >= adapter->max_rds_rings))
 		return NULL;
@@ -1542,20 +1538,9 @@ netxen_process_rcv(struct netxen_adapter *adapter,
 	if (pkt_offset)
 		skb_pull(skb, pkt_offset);
 
-	if (adapter->vlgrp) {
-		if (!__vlan_get_tag(skb, &vid)) {
-			eth_hdr = (struct ethhdr *) skb->data;
-			memmove(skb->data + VLAN_HLEN, eth_hdr, ETH_ALEN * 2);
-			skb_pull(skb, VLAN_HLEN);
-		}
-	}
-
 	skb->protocol = eth_type_trans(skb, netdev);
 
-	if (vid != 0xffff)
-		vlan_gro_receive(&sds_ring->napi, adapter->vlgrp, vid, skb);
-	else
-		napi_gro_receive(&sds_ring->napi, skb);
+	napi_gro_receive(&sds_ring->napi, skb);
 
 	adapter->stats.rx_pkts++;
 	adapter->stats.rxbytes += length;
@@ -1579,13 +1564,11 @@ netxen_process_lro(struct netxen_adapter *adapter,
 	struct nx_host_rds_ring *rds_ring;
 	struct iphdr *iph;
 	struct tcphdr *th;
-	struct ethhdr *eth_hdr;
 	bool push, timestamp;
 	int l2_hdr_offset, l4_hdr_offset;
 	int index;
 	u16 lro_length, length, data_offset;
 	u32 seq_number;
-	u16 vid = 0xffff;
 
 	if (unlikely(ring > adapter->max_rds_rings))
 		return NULL;
@@ -1617,15 +1600,6 @@ netxen_process_lro(struct netxen_adapter *adapter,
 	skb_put(skb, lro_length + data_offset);
 
 	skb_pull(skb, l2_hdr_offset);
-
-	if (adapter->vlgrp) {
-		if (!__vlan_get_tag(skb, &vid)) {
-			eth_hdr = (struct ethhdr *) skb->data;
-			memmove(skb->data + VLAN_HLEN, eth_hdr, ETH_ALEN * 2);
-			skb_pull(skb, VLAN_HLEN);
-		}
-	}
-
 	skb->protocol = eth_type_trans(skb, netdev);
 
 	iph = (struct iphdr *)skb->data;
@@ -1640,10 +1614,7 @@ netxen_process_lro(struct netxen_adapter *adapter,
 
 	length = skb->len;
 
-	if ((vid != 0xffff))
-		vlan_hwaccel_receive_skb(skb, adapter->vlgrp, vid);
-	else
-		netif_receive_skb(skb);
+	netif_receive_skb(skb);
 
 	adapter->stats.lro_pkts++;
 	adapter->stats.rxbytes += length;

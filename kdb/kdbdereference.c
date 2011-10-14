@@ -19,7 +19,7 @@
 #define VMALLOC_START_IA64 0xa000000200000000
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/fs.h>
 #include <asm/processor.h>
@@ -105,7 +105,7 @@ invalid_address(kaddr_t addr, int count)
 	lcount = count;
 	/* FIXME: use kdb_verify_area */
 	while (count--) {
-		if (kdb_getarea(c, addr))
+		if (lkdb_getarea(c, addr))
 			return 1;
 	}
 	return 0;
@@ -121,7 +121,7 @@ kl_alloc_block(int size)
 
 	vp = kmalloc(size, GFP_KERNEL);
 	if (!vp) {
-		kdb_printf ("kmalloc of %d bytes failed\n", size);
+		lkdb_printf ("kmalloc of %d bytes failed\n", size);
 	}
 	/* important: the lcrash code sometimes assumes that the
 	 *            allocation is zeroed out
@@ -173,7 +173,7 @@ print_value(char *ldstr, uint64_t value, int width)
 	char fmtstr[12], f, s[2]="\000\000";
 
 	if (ldstr) {
-		kdb_printf("%s", ldstr);
+		lkdb_printf("%s", ldstr);
 	}
         s[0] = '#';
 	f = 'x';
@@ -189,7 +189,7 @@ print_value(char *ldstr, uint64_t value, int width)
 	} else {
 		sprintf(fmtstr, "%%%s"FMT64"%c", s, f);
 	}
-	kdb_printf(fmtstr, value);
+	lkdb_printf(fmtstr, value);
 }
 
 /*
@@ -199,7 +199,7 @@ void
 print_list_head(kaddr_t saddr)
 {
 	print_value("STRUCT ADDR: ", (uint64_t)saddr, 8);
-	kdb_printf("\n");
+	lkdb_printf("\n");
 }
 
 /*
@@ -209,7 +209,7 @@ void
 check_prev_ptr(kaddr_t ptr, kaddr_t prev)
 {
 	if(ptr != prev) {
-		kdb_printf("\nWARNING: Pointer broken. %#"FMTPTR"x,"
+		lkdb_printf("\nWARNING: Pointer broken. %#"FMTPTR"x,"
 			" SHOULD BE: %#"FMTPTR"x\n", prev, ptr);
 	}
 }
@@ -248,20 +248,20 @@ walk_structs(char *s, char *f, char *member, kaddr_t addr, int flags)
 
 	/* field name of link pointer, determine its offset in the struct.  */
 	if ((offset = kl_member_offset(s, f)) == -1) {
-		kdb_printf("Could not determine offset for member %s of %s.\n",
+		lkdb_printf("Could not determine offset for member %s of %s.\n",
 			f, s);
 		return 0;
 	}
 
 	/* Get the type of the enclosing structure */
 	if (!(klt = kl_find_type(s, (KLT_STRUCT|KLT_UNION)))) {
-		kdb_printf("Could not find the type of %s\n", s);
+		lkdb_printf("Could not find the type of %s\n", s);
 		return(1);
 	}
 
 	/* Get the struct size */
 	if ((size = kl_struct_len(s)) == 0) {
-		kdb_printf ("could not get the length of %s\n", s);
+		lkdb_printf ("could not get the length of %s\n", s);
 		return(1);
 	}
 
@@ -269,7 +269,7 @@ walk_structs(char *s, char *f, char *member, kaddr_t addr, int flags)
 	if (member) {
 		memklt = kl_get_member(klt, member);
 		if (!memklt) {
-			kdb_printf ("%s has no member %s\n", s, member);
+			lkdb_printf ("%s has no member %s\n", s, member);
 			return 1;
 		}
 		mem_offset = kl_get_member_offset(klt, member);
@@ -280,21 +280,21 @@ walk_structs(char *s, char *f, char *member, kaddr_t addr, int flags)
 		if (flags & C_LISTHEAD) {
 			head = next;
 			if (invalid_address(head, sizeof(head))) {
-				kdb_printf ("invalid address %#lx\n",
+				lkdb_printf ("invalid address %#lx\n",
 					head);
 				return 1;
 			}
 			/* get contents of addr  struct member */
 			head_next = kl_kaddr((void *)head, "list_head", "next");
 			if (invalid_address(head, sizeof(head_next))) {
-				kdb_printf ("invalid address %#lx\n",
+				lkdb_printf ("invalid address %#lx\n",
 					head_next);
 				return 1;
 			}
 			/* get prev field of anchor */
 			head_prev = kl_kaddr((void *)head, "list_head", "prev");
 			if (invalid_address(head, sizeof(head_prev))) {
-				kdb_printf ("invalid address %#lx\n",
+				lkdb_printf ("invalid address %#lx\n",
 					head_prev);
 				return 1;
 			}
@@ -305,8 +305,8 @@ walk_structs(char *s, char *f, char *member, kaddr_t addr, int flags)
 	while(next && counter < iter_threshold) {
 		counter++;
 		if (counter > iter_threshold) {
-                	kdb_printf("\nWARNING: Iteration threshold reached.\n");
-                        kdb_printf("Current threshold: %lld\n", iter_threshold);
+                	lkdb_printf("\nWARNING: Iteration threshold reached.\n");
+                        lkdb_printf("Current threshold: %lld\n", iter_threshold);
 			break;
 		}
 		if(flags & C_LISTHEAD) {
@@ -331,20 +331,20 @@ walk_structs(char *s, char *f, char *member, kaddr_t addr, int flags)
 			next = entry - offset; /* next structure */
 			/* check that the whole structure can be addressed */
 			if (invalid_address(next, size)) {
-				kdb_printf(
+				lkdb_printf(
 				"invalid struct address %#lx\n", next);
 				return 1;
 			}
 			/* and validate that it points to valid addresses */
 			entry_next = kl_kaddr((void *)entry,"list_head","next");
 			if (invalid_address(entry_next, sizeof(entry_next))) {
-				kdb_printf("invalid address %#lx\n",
+				lkdb_printf("invalid address %#lx\n",
 					entry_next);
 				return 1;
 			}
 			entry_prev = kl_kaddr((void *)entry,"list_head","prev");
 			if (invalid_address(entry_prev, sizeof(entry_prev))) {
-				kdb_printf("invalid address %#lx\n",
+				lkdb_printf("invalid address %#lx\n",
 					entry_prev);
 				return 1;
 			}
@@ -397,7 +397,7 @@ kdb_walk(int argc, const char **argv)
 	all_count=0;
 	deall_count=0;
 	if (!have_debug_file) {
-		kdb_printf("no debuginfo file\n");
+		lkdb_printf("no debuginfo file\n");
 		return 0;
 	}
 	/* If there is nothing to evaluate, just return */
@@ -406,7 +406,7 @@ kdb_walk(int argc, const char **argv)
 	}
 	cmd = (char *)*argv; /* s/b "walk" */
 	if (strcmp(cmd,"walk")) {
-		kdb_printf("got %s, not \"walk\"\n", cmd);
+		lkdb_printf("got %s, not \"walk\"\n", cmd);
 		return 0;
 	}
 
@@ -415,8 +415,8 @@ kdb_walk(int argc, const char **argv)
 		if (*arg == '-') {
 			optc++;
 			if (optc > 2) {
-				kdb_printf("too many options\n");
-				kdb_printf("see 'walkhelp'\n");
+				lkdb_printf("too many options\n");
+				lkdb_printf("see 'walkhelp'\n");
 				return 0;
 			}
 			if (*(arg+1) == 's') {
@@ -424,7 +424,7 @@ kdb_walk(int argc, const char **argv)
 			} else if (*(arg+1) == 'h') {
 				if ((init_len=kl_struct_len("list_head"))
 								== 0) {
-					kdb_printf(
+					lkdb_printf(
 						"could not find list_head\n");
 					return 0;
 				}
@@ -435,21 +435,21 @@ kdb_walk(int argc, const char **argv)
 					flags = C_LISTHEAD;
 					flags |= C_LISTHEAD_N;
 				} else {
-					kdb_printf("invalid -h option <%s>\n",
+					lkdb_printf("invalid -h option <%s>\n",
 						arg);
-					kdb_printf("see 'walkhelp'\n");
+					lkdb_printf("see 'walkhelp'\n");
 					return 0;
 				}
 			} else {
-				kdb_printf("invalid option <%s>\n", arg);
-				kdb_printf("see 'walkhelp'\n");
+				lkdb_printf("invalid option <%s>\n", arg);
+				lkdb_printf("see 'walkhelp'\n");
 				return 0;
 			}
 		}  else {
 			nonoptc++;
 			if (nonoptc > 4) {
-				kdb_printf("too many arguments\n");
-				kdb_printf("see 'walkhelp'\n");
+				lkdb_printf("too many arguments\n");
+				lkdb_printf("see 'walkhelp'\n");
 				return 0;
 			}
 			if (nonoptc == 1) {
@@ -464,32 +464,32 @@ kdb_walk(int argc, const char **argv)
 				memberp = addrp;
 				addrp = arg;
 			} else {
-				kdb_printf("invalid argument <%s>\n", arg);
-				kdb_printf("see 'walkhelp'\n");
+				lkdb_printf("invalid argument <%s>\n", arg);
+				lkdb_printf("see 'walkhelp'\n");
 				return 0;
 			}
 		}
 	}
 	if (nonoptc < 3) {
-		kdb_printf("too few arguments\n");
-		kdb_printf("see 'walkhelp'\n");
+		lkdb_printf("too few arguments\n");
+		lkdb_printf("see 'walkhelp'\n");
 		return 0;
 	}
 	if (!(flags & C_LISTHEAD)) {
 		if ((init_len=kl_struct_len(structp)) == 0) {
-			kdb_printf("could not find %s\n", structp);
+			lkdb_printf("could not find %s\n", structp);
 			return 0;
 		}
 	}
 
 	/* Get the start address of the structure */
 	if (get_value(addrp, &value)) {
-		kdb_printf ("address %s invalid\n", addrp);
+		lkdb_printf ("address %s invalid\n", addrp);
 		return 0;
 	}
 	start_addr = (kaddr_t)value;
 	if (invalid_address(start_addr, init_len)) {
-		kdb_printf ("address %#lx invalid\n", start_addr);
+		lkdb_printf ("address %#lx invalid\n", start_addr);
 		return 0;
 	}
 
@@ -497,10 +497,10 @@ kdb_walk(int argc, const char **argv)
 	}
 
 	if (walk_structs(structp, forwp, memberp, start_addr, flags)) {
-		kdb_printf ("walk_structs failed\n");
+		lkdb_printf ("walk_structs failed\n");
 		return 0;
 	}
-	/* kdb_printf("ptc allocated:%d deallocated:%d\n",
+	/* lkdb_printf("ptc allocated:%d deallocated:%d\n",
 		 all_count, deall_count); */
 	return 0;
 }
@@ -541,28 +541,28 @@ kdb_debuginfo_print(int argc, const char **argv)
 		flags |= C_HEX;
 	} else if (!strcmp(cmd, "whatis")) {
 		if (argc != 1) {
-			kdb_printf("usage: whatis <symbol | type>\n");
+			lkdb_printf("usage: whatis <symbol | type>\n");
 			return 0;
 		}
 		cp = (char *)*(argv+1);
 		single_type(cp);
-		/* kdb_printf("allocated:%d deallocated:%d\n",
+		/* lkdb_printf("allocated:%d deallocated:%d\n",
 			 all_count, deall_count); */
 		return 0;
 	} else if (!strcmp(cmd, "sizeof")) {
 		if (!have_debug_file) {
-			kdb_printf("no debuginfo file\n");
+			lkdb_printf("no debuginfo file\n");
 			return 0;
 		}
 		if (argc != 1) {
-			kdb_printf("usage: sizeof type\n");
+			lkdb_printf("usage: sizeof type\n");
 			return 0;
 		}
 		cp = (char *)*(argv+1);
 		sizeof_type(cp);
 		return 0;
 	} else {
-		kdb_printf("command error: %s\n", cmd);
+		lkdb_printf("command error: %s\n", cmd);
 		return 0;
 	}
 
@@ -637,16 +637,16 @@ kdb_debuginfo_print(int argc, const char **argv)
 
 		if (end) {
 			next = end + 1;
-			kdb_printf(" ");
+			lkdb_printf(" ");
 		} else {
 			next = (char*)NULL;
-			kdb_printf("\n");
+			lkdb_printf("\n");
 		}
 		free_nodes(np);
 	}
 	free_eval_memory();
 	kl_free_block(buf);
-	/* kdb_printf("allocated:%d deallocated:%d\n",
+	/* lkdb_printf("allocated:%d deallocated:%d\n",
 			 all_count, deall_count); */
 	return 0;
 }
@@ -658,22 +658,22 @@ int
 kdb_pxhelp(int argc, const char **argv)
 {
 	if (have_debug_file) {
- kdb_printf ("Some examples of using the px command:\n");
- kdb_printf (" the whole structure:\n");
- kdb_printf ("  px *(task_struct *)0xe0000...\n");
- kdb_printf (" one member:\n");
- kdb_printf ("  px (*(task_struct *)0xe0000...)->comm\n");
- kdb_printf (" the address of a member\n");
- kdb_printf ("  px &((task_struct *)0xe0000...)->children\n");
- kdb_printf (" a structure pointed to by a member:\n");
- kdb_printf ("  px ((*(class_device *)0xe0000...)->class)->name\n");
- kdb_printf (" array element:\n");
- kdb_printf ("  px (cache_sizes *)0xa0000...[0]\n");
- kdb_printf ("  px (task_struct *)(0xe0000...)->cpus_allowed.bits[0]\n");
+ lkdb_printf ("Some examples of using the px command:\n");
+ lkdb_printf (" the whole structure:\n");
+ lkdb_printf ("  px *(task_struct *)0xe0000...\n");
+ lkdb_printf (" one member:\n");
+ lkdb_printf ("  px (*(task_struct *)0xe0000...)->comm\n");
+ lkdb_printf (" the address of a member\n");
+ lkdb_printf ("  px &((task_struct *)0xe0000...)->children\n");
+ lkdb_printf (" a structure pointed to by a member:\n");
+ lkdb_printf ("  px ((*(class_device *)0xe0000...)->class)->name\n");
+ lkdb_printf (" array element:\n");
+ lkdb_printf ("  px (cache_sizes *)0xa0000...[0]\n");
+ lkdb_printf ("  px (task_struct *)(0xe0000...)->cpus_allowed.bits[0]\n");
 	} else {
- 		kdb_printf ("There is no debug info file.\n");
- 		kdb_printf ("The px/pd/print commands can only evaluate ");
- 		kdb_printf ("arithmetic expressions.\n");
+ 		lkdb_printf ("There is no debug info file.\n");
+ 		lkdb_printf ("The px/pd/print commands can only evaluate ");
+ 		lkdb_printf ("arithmetic expressions.\n");
 	}
  return 0;
 }
@@ -685,25 +685,25 @@ int
 kdb_walkhelp(int argc, const char **argv)
 {
 	if (!have_debug_file) {
-		kdb_printf("no debuginfo file\n");
+		lkdb_printf("no debuginfo file\n");
 		return 0;
 	}
- kdb_printf ("Using the walk command:\n");
- kdb_printf (" (only the -s (symbolic) form is supported, so -s is ignored)\n");
- kdb_printf ("\n");
- kdb_printf (" If the list is not linked with list_head structures:\n");
- kdb_printf ("  walk [-s] struct name-of-forward-pointer address\n");
- kdb_printf ("  example: walk xyz_struct next 0xe00....\n");
- kdb_printf ("\n");
- kdb_printf (" If the list is linked with list_head structures, use -hn\n");
- kdb_printf (" to walk the 'next' list, -hp for the 'prev' list\n");
- kdb_printf ("  walk -h[n|p] struct name-of-forward-pointer [member-to-show] address-of-list-head\n");
- kdb_printf ("  example, to show the entire task_struct:\n");
- kdb_printf ("   walk -hn task_struct tasks 0xe000....\n");
- kdb_printf ("  example, to show the task_struct member comm:\n");
- kdb_printf ("   walk -hn task_struct tasks comm 0xe000....\n");
- kdb_printf ("  (address is not the address of first member's list_head, ");
- kdb_printf     ("but of the anchoring list_head\n");
+ lkdb_printf ("Using the walk command:\n");
+ lkdb_printf (" (only the -s (symbolic) form is supported, so -s is ignored)\n");
+ lkdb_printf ("\n");
+ lkdb_printf (" If the list is not linked with list_head structures:\n");
+ lkdb_printf ("  walk [-s] struct name-of-forward-pointer address\n");
+ lkdb_printf ("  example: walk xyz_struct next 0xe00....\n");
+ lkdb_printf ("\n");
+ lkdb_printf (" If the list is linked with list_head structures, use -hn\n");
+ lkdb_printf (" to walk the 'next' list, -hp for the 'prev' list\n");
+ lkdb_printf ("  walk -h[n|p] struct name-of-forward-pointer [member-to-show] address-of-list-head\n");
+ lkdb_printf ("  example, to show the entire task_struct:\n");
+ lkdb_printf ("   walk -hn task_struct tasks 0xe000....\n");
+ lkdb_printf ("  example, to show the task_struct member comm:\n");
+ lkdb_printf ("   walk -hn task_struct tasks comm 0xe000....\n");
+ lkdb_printf ("  (address is not the address of first member's list_head, ");
+ lkdb_printf     ("but of the anchoring list_head\n");
  return 0;
 }
 
@@ -737,7 +737,7 @@ kl_reset_error(void)
  * a binary tree of them
  *
  * In this one, look up the symbol in the standard kdb way,
- * which fills in the kdb_symtab_t.
+ * which fills in the lkdb_symtab_t.
  * Then fill in the  global syment_t "lkup_syment" -- assuming
  * we'll only need one at a time!
  *
@@ -750,9 +750,9 @@ syment_t *
 kl_lkup_symname (char *cp)
 {
 	syment_t  *sp;
-	kdb_symtab_t kdb_symtab;
+	lkdb_symtab_t kdb_symtab;
 
-	if (kdbgetsymval(cp, &kdb_symtab)) {
+	if (lkdbgetsymval(cp, &kdb_symtab)) {
 		sp = (syment_t *)kl_alloc_block(sizeof(syment_t));
 		sp->s_addr = (kaddr_t)kdb_symtab.sym_start;
 		KL_ERROR = 0;
@@ -1183,7 +1183,7 @@ kl_find_type(char *name, int tnum)
 	kltype_t *kltp = (kltype_t *)NULL;
 
 	if (!have_debug_file) {
-		kdb_printf("no debuginfo file\n");
+		lkdb_printf("no debuginfo file\n");
 		return kltp;
 	}
 
@@ -1685,18 +1685,18 @@ kl_member_size(char *s, char *f)
 	if (!(flags & NO_INDENT)) { \
 		for (i = 0; i < level; i++) { \
 			for (j = 0; j < TAB_SPACES; j++) { \
-				kdb_printf(" "); \
+				lkdb_printf(" "); \
 			} \
 		}\
 	} \
 }
 #define PRINT_NL(flags) \
 	if (!(flags & SUPPRESS_NL)) { \
-		kdb_printf("\n"); \
+		lkdb_printf("\n"); \
 	}
 #define PRINT_SEMI_COLON(level, flags) \
 	if (level && (!(flags & SUPPRESS_SEMI_COLON))) { \
-		kdb_printf(";"); \
+		lkdb_printf(";"); \
 	}
 
 /*
@@ -1712,7 +1712,7 @@ print_realtype(kltype_t *kltp)
 			rkltp = rkltp->kl_realtype;
 		}
 		if (rkltp->kl_type == KLT_BASE) {
-			kdb_printf(" (%s)", rkltp->kl_name);
+			lkdb_printf(" (%s)", rkltp->kl_name);
 		}
 	}
 }
@@ -1731,17 +1731,17 @@ kl_print_uint16(void *ptr, int flags)
 	 *          * dump core)
 	 *                   */
 	if (align_chk && (uaddr_t)ptr % 16) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(unsigned long long *) ptr;
 	if (flags & C_HEX) {
-		kdb_printf("%#llx", a);
+		lkdb_printf("%#llx", a);
 	} else if (flags & C_BINARY) {
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(a);
 	} else {
-		kdb_printf("%llu", a);
+		lkdb_printf("%llu", a);
 	}
 }
 
@@ -1759,11 +1759,11 @@ kl_print_float16(void *ptr, int flags)
 	 *          * dump core)
 	 *                   */
 	if (align_chk && (uaddr_t)ptr % 16) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(double*) ptr;
-	kdb_printf("%f", a);
+	lkdb_printf("%f", a);
 }
 #endif
 
@@ -1780,17 +1780,17 @@ kl_print_int16(void *ptr, int flags)
 	 *          * dump core)
 	 *                   */
 	if (align_chk && (uaddr_t)ptr % 16) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(long long *) ptr;
 	if (flags & C_HEX) {
-		kdb_printf("%#llx", a);
+		lkdb_printf("%#llx", a);
 	} else if (flags & C_BINARY) {
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(a);
 	} else {
-		kdb_printf("%lld", a);
+		lkdb_printf("%lld", a);
 	}
 }
 
@@ -1806,17 +1806,17 @@ kl_print_int8(void *ptr, int flags)
 	 * dump core)
 	 */
 	if (align_chk && (uaddr_t)ptr % 8) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(long long *) ptr;
 	if (flags & C_HEX) {
-		kdb_printf("%#llx", a);
+		lkdb_printf("%#llx", a);
 	} else if (flags & C_BINARY) {
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(a);
 	} else {
-		kdb_printf("%lld", a);
+		lkdb_printf("%lld", a);
 	}
 }
 
@@ -1833,11 +1833,11 @@ kl_print_float8(void *ptr, int flags)
 	 * dump core)
 	 */
 	if (align_chk && (uaddr_t)ptr % 8) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(double*) ptr;
-	kdb_printf("%f", a);
+	lkdb_printf("%f", a);
 }
 #endif
 
@@ -1853,17 +1853,17 @@ kl_print_uint8(void *ptr, int flags)
 	 * dump core)
 	 */
 	if (align_chk && (uaddr_t)ptr % 8) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(unsigned long long *) ptr;
 	if (flags & C_HEX) {
-		kdb_printf("%#llx", a);
+		lkdb_printf("%#llx", a);
 	} else if (flags & C_BINARY) {
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(a);
 	} else {
-		kdb_printf("%llu", a);
+		lkdb_printf("%llu", a);
 	}
 }
 
@@ -1879,18 +1879,18 @@ kl_print_int4(void *ptr, int flags)
 	 * dump core
 	 */
 	if (align_chk && (uaddr_t)ptr % 4) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(int32_t*) ptr;
 	if (flags & C_HEX) {
-		kdb_printf("0x%x", a);
+		lkdb_printf("0x%x", a);
 	} else if (flags & C_BINARY) {
 		uint64_t value = a & 0xffffffff;
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(value);
 	} else {
-		kdb_printf("%d", a);
+		lkdb_printf("%d", a);
 	}
 }
 
@@ -1907,11 +1907,11 @@ kl_print_float4(void *ptr, int flags)
 	 * dump core)
 	 */
 	if (align_chk && (uaddr_t)ptr % 4) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(float*) ptr;
-	kdb_printf("%f", a);
+	lkdb_printf("%f", a);
 }
 #endif
 
@@ -1927,18 +1927,18 @@ kl_print_uint4(void *ptr, int flags)
 	 * dump core)
 	 */
 	if (align_chk && (uaddr_t)ptr % 4) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(uint32_t*) ptr;
 	if (flags & C_HEX) {
-		kdb_printf("0x%x", a);
+		lkdb_printf("0x%x", a);
 	} else if (flags & C_BINARY) {
 		uint64_t value = a & 0xffffffff;
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(value);
 	} else {
-		kdb_printf("%u", a);
+		lkdb_printf("%u", a);
 	}
 }
 
@@ -1954,18 +1954,18 @@ kl_print_int2(void *ptr, int flags)
 	 * dump core
 	 */
 	if (align_chk && (uaddr_t)ptr % 2) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(int16_t*) ptr;
 	if (flags & C_HEX) {
-		kdb_printf("0x%hx", a);
+		lkdb_printf("0x%hx", a);
 	} else if (flags & C_BINARY) {
 		uint64_t value = a & 0xffff;
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(value);
 	} else {
-		kdb_printf("%hd", a);
+		lkdb_printf("%hd", a);
 	}
 }
 
@@ -1981,18 +1981,18 @@ kl_print_uint2(void *ptr, int flags)
 	 * dump core
 	 */
 	if (align_chk && (uaddr_t)ptr % 2) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	a = *(uint16_t*) ptr;
 	if (flags & C_HEX) {
-		kdb_printf("0x%hx", a);
+		lkdb_printf("0x%hx", a);
 	} else if (flags & C_BINARY) {
 		uint64_t value = a & 0xffff;
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(value);
 	} else {
-		kdb_printf("%hu", a);
+		lkdb_printf("%hu", a);
 	}
 }
 
@@ -2005,40 +2005,40 @@ kl_print_char(void *ptr, int flags)
 	char c;
 
 	if (flags & C_HEX) {
-		kdb_printf("0x%x", (*(char *)ptr) & 0xff);
+		lkdb_printf("0x%x", (*(char *)ptr) & 0xff);
 	} else if (flags & C_BINARY) {
 		uint64_t value = (*(char *)ptr) & 0xff;
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(value);
 	} else {
 		c = *(char *)ptr;
 
-		kdb_printf("\'\\%03o\'", (unsigned char)c);
+		lkdb_printf("\'\\%03o\'", (unsigned char)c);
 		switch (c) {
 			case '\a' :
-				kdb_printf(" = \'\\a\'");
+				lkdb_printf(" = \'\\a\'");
 				break;
 			case '\b' :
-				kdb_printf(" = \'\\b\'");
+				lkdb_printf(" = \'\\b\'");
 				break;
 			case '\t' :
-				kdb_printf(" = \'\\t\'");
+				lkdb_printf(" = \'\\t\'");
 				break;
 			case '\n' :
-				kdb_printf(" = \'\\n\'");
+				lkdb_printf(" = \'\\n\'");
 				break;
 			case '\f' :
-				kdb_printf(" = \'\\f\'");
+				lkdb_printf(" = \'\\f\'");
 				break;
 			case '\r' :
-				kdb_printf(" = \'\\r\'");
+				lkdb_printf(" = \'\\r\'");
 				break;
 			case '\e' :
-				kdb_printf(" = \'\\e\'");
+				lkdb_printf(" = \'\\e\'");
 				break;
 			default :
 				if( !iscntrl((unsigned char) c) ) {
-					kdb_printf(" = \'%c\'", c);
+					lkdb_printf(" = \'%c\'", c);
 				}
 				break;
 		}
@@ -2052,13 +2052,13 @@ void
 kl_print_uchar(void *ptr, int flags)
 {
 	if (flags & C_HEX) {
-		kdb_printf("0x%x", *(unsigned char *)ptr);
+		lkdb_printf("0x%x", *(unsigned char *)ptr);
 	} else if (flags & C_BINARY) {
 		uint64_t value = (*(unsigned char *)ptr) & 0xff;
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(value);
 	} else {
-		kdb_printf("%u", *(unsigned char *)ptr);
+		lkdb_printf("%u", *(unsigned char *)ptr);
 	}
 }
 
@@ -2070,7 +2070,7 @@ kl_print_base(void *ptr, int size, int encoding, int flags)
 {
 	/* FIXME: untested */
 	if (invalid_address((kaddr_t)ptr, size)) {
-		kdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
+		lkdb_printf("ILLEGAL ADDRESS (%lx)", (uaddr_t)ptr);
 		return;
 	}
 	switch (size) {
@@ -2216,19 +2216,19 @@ kl_print_typedef_type(
 		}
 		if (!rkltp) {
 			if (SUPPRESS_NAME) {
-				kdb_printf("<UNKNOWN>");
+				lkdb_printf("<UNKNOWN>");
 			} else {
-				kdb_printf( "typedef <UNKNOWN>%s;",
+				lkdb_printf( "typedef <UNKNOWN>%s;",
 					kltp->kl_name);
 			}
 			return;
 		}
 		if (rkltp->kl_type == KLT_FUNCTION) {
 			if (kltp->kl_realtype->kl_type == KLT_POINTER) {
-				kdb_printf("typedef %s(*%s)();",
+				lkdb_printf("typedef %s(*%s)();",
 					kltp->kl_typestr, kltp->kl_name);
 			} else {
-				kdb_printf( "typedef %s(%s)();",
+				lkdb_printf( "typedef %s(%s)();",
 					kltp->kl_typestr, kltp->kl_name);
 			}
 		} else if (rkltp->kl_type == KLT_ARRAY) {
@@ -2239,9 +2239,9 @@ kl_print_typedef_type(
 			}
 
 			if (SUPPRESS_NAME) {
-				kdb_printf("%s", name);
+				lkdb_printf("%s", name);
 			} else {
-				kdb_printf("typedef %s%s;",
+				lkdb_printf("typedef %s%s;",
 					name, kltp->kl_name);
 			}
 			print_realtype(rkltp);
@@ -2282,7 +2282,7 @@ kl_print_pointer_type(
 			}
 		} else {
 			LEVEL_INDENT(level, flags);
-			kdb_printf("%s%s;\n",
+			lkdb_printf("%s%s;\n",
 				kltp->kl_typestr, kltp->kl_name);
 			return;
 		}
@@ -2295,28 +2295,28 @@ kl_print_pointer_type(
 		flags |= SUPPRESS_SEMI_COLON;
 		if(kltp->kl_name){
 			if (*(kaddr_t *)ptr) {
-				kdb_printf("%s = 0x%"FMTPTR"x",
+				lkdb_printf("%s = 0x%"FMTPTR"x",
 					kltp->kl_name, tmp);
 			} else {
-				kdb_printf("%s = (nil)", kltp->kl_name);
+				lkdb_printf("%s = (nil)", kltp->kl_name);
 			}
 		} else {
 			if (tmp != 0) {
-				kdb_printf("0x%"FMTPTR"x", tmp);
+				lkdb_printf("0x%"FMTPTR"x", tmp);
 			} else {
-				kdb_printf( "(nil)");
+				lkdb_printf( "(nil)");
 			}
 		}
 	} else {
 		if (kltp->kl_typestr) {
 			if (kltp->kl_name && !(flags & SUPPRESS_NAME)) {
-				kdb_printf("%s%s",
+				lkdb_printf("%s%s",
 					kltp->kl_typestr, kltp->kl_name);
 			} else {
-				kdb_printf("%s", kltp->kl_typestr);
+				lkdb_printf("%s", kltp->kl_typestr);
 			}
 		} else {
-			kdb_printf("<UNKNOWN>");
+			lkdb_printf("<UNKNOWN>");
 		}
 	}
 	PRINT_SEMI_COLON(level, flags);
@@ -2338,12 +2338,12 @@ kl_print_function_type(
 		kaddr_t a;
 
 		a = *(kaddr_t *)ptr;
-		kdb_printf("%s = 0x%"FMTPTR"x", kltp->kl_name, a);
+		lkdb_printf("%s = 0x%"FMTPTR"x", kltp->kl_name, a);
 	} else {
 		if (flags & SUPPRESS_NAME) {
-			kdb_printf("%s(*)()", kltp->kl_typestr);
+			lkdb_printf("%s(*)()", kltp->kl_typestr);
 		} else {
-			kdb_printf("%s(*%s)();",
+			lkdb_printf("%s(*%s)();",
 				kltp->kl_typestr, kltp->kl_name);
 		}
 	}
@@ -2370,7 +2370,7 @@ kl_print_array_type(void *ptr, kltype_t *kltp, int level, int flags)
 		}
 		if (!rkltp) {
 			LEVEL_INDENT(level, flags);
-			kdb_printf("<ARRAY_TYPE>");
+			lkdb_printf("<ARRAY_TYPE>");
 			PRINT_SEMI_COLON(level, flags);
 			PRINT_NL(flags);
 			return;
@@ -2382,7 +2382,7 @@ kl_print_array_type(void *ptr, kltype_t *kltp, int level, int flags)
 	etp = rkltp->kl_elementtype;
 	if (!etp) {
 		LEVEL_INDENT(level, flags);
-		kdb_printf("<BAD_ELEMENT_TYPE> %s", rkltp->kl_name);
+		lkdb_printf("<BAD_ELEMENT_TYPE> %s", rkltp->kl_name);
 		PRINT_SEMI_COLON(level, flags);
 		PRINT_NL(flags);
 		return;
@@ -2408,19 +2408,19 @@ kl_print_array_type(void *ptr, kltype_t *kltp, int level, int flags)
 				LEVEL_INDENT(level, flags);
 			}
 			if (flags & SUPPRESS_NAME) {
-				kdb_printf("\"");
+				lkdb_printf("\"");
 				flags &= ~SUPPRESS_NAME;
 			} else {
-				kdb_printf("%s = \"", kltp->kl_name);
+				lkdb_printf("%s = \"", kltp->kl_name);
 			}
 			for (i = 0; i < high; i++) {
 				if (*(char*)p == 0) {
 					break;
 				}
-				kdb_printf("%c", *(char *)p);
+				lkdb_printf("%c", *(char *)p);
 				p++;
 			}
-			kdb_printf("\"");
+			lkdb_printf("\"");
 			PRINT_NL(flags);
 		} else {
 			if (kltp->kl_type == KLT_MEMBER) {
@@ -2428,10 +2428,10 @@ kl_print_array_type(void *ptr, kltype_t *kltp, int level, int flags)
 			}
 
 			if (flags & SUPPRESS_NAME) {
-				kdb_printf("{\n");
+				lkdb_printf("{\n");
 				flags &= ~SUPPRESS_NAME;
 			} else {
-				kdb_printf("%s = {\n", kltp->kl_name);
+				lkdb_printf("%s = {\n", kltp->kl_name);
 			}
 
 			if (retp->kl_type == KLT_POINTER) {
@@ -2452,7 +2452,7 @@ kl_print_array_type(void *ptr, kltype_t *kltp, int level, int flags)
 			for (i = low; i <= high; i++) {
 
 				LEVEL_INDENT(level + 1, flags);
-				kdb_printf("[%d] ", i);
+				lkdb_printf("[%d] ", i);
 
 				switch (retp->kl_type) {
 					case KLT_POINTER :
@@ -2470,7 +2470,7 @@ kl_print_array_type(void *ptr, kltype_t *kltp, int level, int flags)
 					case KLT_BASE:
 						kl_print_base_value(p,
 							retp, flags|NO_INDENT);
-						kdb_printf("\n");
+						lkdb_printf("\n");
 						break;
 
 					case KLT_ARRAY:
@@ -2490,13 +2490,13 @@ kl_print_array_type(void *ptr, kltype_t *kltp, int level, int flags)
 						kl_print_base_value(
 							p, retp,
 							flags|NO_INDENT);
-						kdb_printf("\n");
+						lkdb_printf("\n");
 						break;
 				}
 				p = (void *)((uaddr_t)p + size);
 			}
 			LEVEL_INDENT(level, flags);
-			kdb_printf("}");
+			lkdb_printf("}");
 			PRINT_SEMI_COLON(level, flags);
 			PRINT_NL(flags);
 		}
@@ -2519,7 +2519,7 @@ next_dimension:
                         case KLT_STRUCT:
 				if (anon) {
 					if (multi) {
-						kdb_printf("[%d]", count);
+						lkdb_printf("[%d]", count);
 						break;
 					}
 					kl_print_struct_type(ptr, retp, level,
@@ -2527,10 +2527,10 @@ next_dimension:
 						SUPPRESS_NL|
 						SUPPRESS_SEMI_COLON);
 					if (kltp->kl_type == KLT_MEMBER) {
-						kdb_printf(" %s[%d]",
+						lkdb_printf(" %s[%d]",
 							kltp->kl_name, count);
 					} else {
-						kdb_printf(" [%d]", count);
+						lkdb_printf(" [%d]", count);
 					}
 					break;
 				}
@@ -2539,7 +2539,7 @@ next_dimension:
 			default:
 				LEVEL_INDENT(level, flags);
 				if (multi) {
-					kdb_printf("[%d]", count);
+					lkdb_printf("[%d]", count);
 					break;
 				}
 				name = kltp->kl_name;
@@ -2550,9 +2550,9 @@ next_dimension:
 					strcpy(typestr, retp->kl_typestr);
 				}
 				if (!name || (flags & SUPPRESS_NAME)) {
-					kdb_printf("%s[%d]", typestr, count);
+					lkdb_printf("%s[%d]", typestr, count);
 				} else {
-					kdb_printf("%s%s[%d]",
+					lkdb_printf("%s%s[%d]",
 						typestr, name, count);
 				}
 		}
@@ -2608,27 +2608,27 @@ kl_print_enumeration_type(
 		}
 		LEVEL_INDENT(level, flags);
 		if (mp) {
-			kdb_printf("%s = (%s=%lld)",
+			lkdb_printf("%s = (%s=%lld)",
 				kltp->kl_name, mp->kl_name, val);
 		} else {
-			kdb_printf("%s = %lld", kltp->kl_name, val);
+			lkdb_printf("%s = %lld", kltp->kl_name, val);
 		}
 		PRINT_NL(flags);
 	} else {
 		LEVEL_INDENT(level, flags);
-		kdb_printf ("%s {", kltp->kl_typestr);
+		lkdb_printf ("%s {", kltp->kl_typestr);
 		mp = rkltp->kl_member;
 		while (mp) {
-			kdb_printf("%s = %d", mp->kl_name, mp->kl_value);
+			lkdb_printf("%s = %d", mp->kl_name, mp->kl_value);
 			if ((mp = mp->kl_member)) {
-				kdb_printf(", ");
+				lkdb_printf(", ");
 			}
 		}
 		mp = kltp;
 		if (level) {
-			kdb_printf("} %s;", mp->kl_name);
+			lkdb_printf("} %s;", mp->kl_name);
 		} else {
-			kdb_printf("};");
+			lkdb_printf("};");
 		}
 		PRINT_NL(flags);
 	}
@@ -2644,18 +2644,18 @@ kl_binary_print(uint64_t num)
 
 	for (i = 63; i >= 0; i--) {
 		if (num & ((uint64_t)1 << i)) {
-			kdb_printf("1");
+			lkdb_printf("1");
 			if (pre) {
 				pre = 0;
 			}
 		} else {
 			if (!pre) {
-				kdb_printf("0");
+				lkdb_printf("0");
 			}
 		}
 	}
 	if (pre) {
-		kdb_printf("0");
+		lkdb_printf("0");
 	}
 }
 
@@ -2719,12 +2719,12 @@ kl_print_bit_value(void *ptr, int x, int y, int z, int flags)
 
 	value = kl_get_bit_value(ptr, x, y, z);
 	if (flags & C_HEX) {
-		kdb_printf("%#llx", value);
+		lkdb_printf("%#llx", value);
 	} else if (flags & C_BINARY) {
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(value);
 	} else {
-		kdb_printf("%lld", value);
+		lkdb_printf("%lld", value);
 	}
 }
 
@@ -2737,7 +2737,7 @@ kl_print_base_type(void *ptr, kltype_t *kltp, int level, int flags)
 	LEVEL_INDENT(level, flags);
 	if (ptr) {
 		if (!(flags & SUPPRESS_NAME))  {
-			kdb_printf ("%s = ", kltp->kl_name);
+			lkdb_printf ("%s = ", kltp->kl_name);
 		}
 	}
 	if (kltp->kl_type == KLT_MEMBER) {
@@ -2748,12 +2748,12 @@ kl_print_base_type(void *ptr, kltype_t *kltp, int level, int flags)
 					kltp->kl_bit_offset, flags);
 			} else {
 				if (kltp->kl_name) {
-					kdb_printf ("%s%s :%d;",
+					lkdb_printf ("%s%s :%d;",
 						kltp->kl_typestr,
 						kltp->kl_name,
 						kltp->kl_bit_size);
 				} else {
-					kdb_printf ("%s :%d;",
+					lkdb_printf ("%s :%d;",
 						kltp->kl_typestr,
 						kltp->kl_bit_size);
 				}
@@ -2769,7 +2769,7 @@ kl_print_base_type(void *ptr, kltype_t *kltp, int level, int flags)
 		if (rkltp->kl_encoding == ENC_UNDEFINED) {
 			/* This is a void value
 			 */
-			kdb_printf("<VOID>");
+			lkdb_printf("<VOID>");
 		} else {
 			kl_print_base(ptr, kltp->kl_size,
 				rkltp->kl_encoding, flags);
@@ -2777,22 +2777,22 @@ kl_print_base_type(void *ptr, kltype_t *kltp, int level, int flags)
 	} else {
 		if (kltp->kl_type == KLT_MEMBER) {
 			if (flags & SUPPRESS_NAME) {
-				kdb_printf ("%s", kltp->kl_typestr);
+				lkdb_printf ("%s", kltp->kl_typestr);
 			} else {
 				if (kltp->kl_name) {
-					kdb_printf("%s%s;", kltp->kl_typestr,
+					lkdb_printf("%s%s;", kltp->kl_typestr,
 						kltp->kl_name);
 				} else {
-					kdb_printf ("%s :%d;",
+					lkdb_printf ("%s :%d;",
 						kltp->kl_typestr,
 						kltp->kl_bit_size);
 				}
 			}
 		} else {
 			if (SUPPRESS_NAME) {
-				kdb_printf("%s", kltp->kl_name);
+				lkdb_printf("%s", kltp->kl_name);
 			} else {
-				kdb_printf("%s;", kltp->kl_name);
+				lkdb_printf("%s;", kltp->kl_name);
 			}
 		}
 	}
@@ -2809,7 +2809,7 @@ kl_print_member(void *ptr, kltype_t *mp, int level, int flags)
 	kltype_t *rkltp;
 
 	if (flags & C_SHOWOFFSET) {
-		kdb_printf("%#x ", mp->kl_offset);
+		lkdb_printf("%#x ", mp->kl_offset);
 	}
 
 	if ((rkltp = mp->kl_realtype)) {
@@ -2852,11 +2852,11 @@ kl_print_member(void *ptr, kltype_t *mp, int level, int flags)
 			if (flags & SUPPRESS_NAME) {
 				if (rkltp && (mp->kl_bit_size <
 						(rkltp->kl_size * 8))) {
-					kdb_printf ("%s :%d",
+					lkdb_printf ("%s :%d",
 						mp->kl_typestr,
 						mp->kl_bit_size);
 				} else {
-					kdb_printf("%s",
+					lkdb_printf("%s",
 						mp->kl_realtype->kl_name);
 				}
 				print_realtype(mp->kl_realtype);
@@ -2864,17 +2864,17 @@ kl_print_member(void *ptr, kltype_t *mp, int level, int flags)
 				if (rkltp && (mp->kl_bit_size <
 						(rkltp->kl_size * 8))) {
 					if (mp->kl_name) {
-						kdb_printf ("%s%s :%d;",
+						lkdb_printf ("%s%s :%d;",
 							mp->kl_typestr,
 							mp->kl_name,
 							mp->kl_bit_size);
 					} else {
-						kdb_printf ("%s :%d;",
+						lkdb_printf ("%s :%d;",
 							mp->kl_typestr,
 							mp->kl_bit_size);
 					}
 				} else {
-					kdb_printf("%s %s;",
+					lkdb_printf("%s %s;",
 						mp->kl_realtype->kl_name,
 						mp->kl_name);
 				}
@@ -2885,10 +2885,10 @@ kl_print_member(void *ptr, kltype_t *mp, int level, int flags)
 		default:
 			LEVEL_INDENT(level, flags);
 			if (mp->kl_typestr) {
-				kdb_printf("%s%s;",
+				lkdb_printf("%s%s;",
 					mp->kl_typestr, mp->kl_name);
 			} else {
-				kdb_printf("<\?\?\? kl_type:%d> %s;",
+				lkdb_printf("<\?\?\? kl_type:%d> %s;",
 					kl_type, mp->kl_name);
 			}
 			PRINT_NL(flags);
@@ -2915,21 +2915,21 @@ kl_print_struct_type(void *buf, kltype_t *kltp, int level, int flags)
 
 	LEVEL_INDENT(level, flags);
 	if ((level == 0) || (flags & NO_INDENT)) {
-		kdb_printf("%s{\n", kltp->kl_typestr);
+		lkdb_printf("%s{\n", kltp->kl_typestr);
 	} else {
 		if (buf) {
 			if (level && !(kltp->kl_flags & TYP_ANONYMOUS_FLG)) {
-				kdb_printf("%s = %s{\n",
+				lkdb_printf("%s = %s{\n",
 					kltp->kl_name, kltp->kl_typestr);
 			} else {
-				kdb_printf("%s{\n", kltp->kl_typestr);
+				lkdb_printf("%s{\n", kltp->kl_typestr);
 			}
 			flags &= (~SUPPRESS_NL);
 		} else {
 			if (kltp->kl_typestr) {
-				kdb_printf("%s{\n", kltp->kl_typestr);
+				lkdb_printf("%s{\n", kltp->kl_typestr);
 			} else {
-				kdb_printf("<UNKNOWN> {\n");
+				lkdb_printf("<UNKNOWN> {\n");
 			}
 		}
 	}
@@ -2968,7 +2968,7 @@ kl_print_struct_type(void *buf, kltype_t *kltp, int level, int flags)
 	} else {
 		if (kltp->kl_flags & TYP_INCOMPLETE_FLG) {
 			LEVEL_INDENT(level, flags);
-			kdb_printf("<INCOMPLETE TYPE>\n");
+			lkdb_printf("<INCOMPLETE TYPE>\n");
 		}
 	}
 	level--;
@@ -2976,13 +2976,13 @@ kl_print_struct_type(void *buf, kltype_t *kltp, int level, int flags)
 
 	/* kl_size = 0 for empty structs */
 	if (ptr || ((kltp->kl_size == 0) && buf)) {
-		kdb_printf("}");
+		lkdb_printf("}");
 	} else if ((kltp->kl_type == KLT_MEMBER) &&
 			!(orig_flags & SUPPRESS_NAME) &&
 			!(kltp->kl_flags & TYP_ANONYMOUS_FLG)) {
-		kdb_printf("} %s", kltp->kl_name);
+		lkdb_printf("} %s", kltp->kl_name);
 	} else {
-		kdb_printf("}");
+		lkdb_printf("}");
 	}
 	PRINT_SEMI_COLON(level, orig_flags);
 	PRINT_NL(orig_flags);
@@ -3051,9 +3051,9 @@ kl_print_type(void *buf, kltype_t *kltp, int level, int flags)
 		default:
 			LEVEL_INDENT(level, flags);
 			if (flags & SUPPRESS_NAME) {
-				kdb_printf ("%s", kltp->kl_name);
+				lkdb_printf ("%s", kltp->kl_name);
 			} else {
-				kdb_printf ("%s %s;",
+				lkdb_printf ("%s %s;",
 					kltp->kl_name, kltp->kl_name);
 			}
 			PRINT_NL(flags);
@@ -3796,7 +3796,7 @@ get_node_list(token_t *tp, int flags)
 		}
 		tp = tp->next;
 	}
-	last->next = (node_t *)NULL; /* cpw patch */
+	last->next = (node_t *)NULL;
 	last = (node_t *)NULL;
 	for (np = root; np; np = np->next) {
 		if (is_binary(np->operator)) {
@@ -5533,7 +5533,7 @@ replace(node_t *np, int flags)
 			type_t *tp;
 
 			if (!have_debug_file) {
-				kdb_printf("no debuginfo file\n");
+				lkdb_printf("no debuginfo file\n");
 				return 0;
 			}
 
@@ -6258,7 +6258,7 @@ type_to_number(node_t *np)
 	if (np->flags & ADDRESS_FLAG) {
 		/* FIXME: untested */
 		if (invalid_address(np->address, byte_size)) {
-			kdb_printf("ILLEGAL ADDRESS (%lx)",
+			lkdb_printf("ILLEGAL ADDRESS (%lx)",
 						(uaddr_t)np->address);
 			return (0);
 		}
@@ -6446,15 +6446,15 @@ print_number(node_t *np, int flags)
 		value = np->value;
 	}
 	if (flags & C_HEX) {
-		kdb_printf("0x%llx", value);
+		lkdb_printf("0x%llx", value);
 	} else if (flags & C_BINARY) {
-		kdb_printf("0b");
+		lkdb_printf("0b");
 		kl_binary_print(value);
 	} else {
 		if (np->flags & UNSIGNED_FLAG) {
-			kdb_printf("%llu", value);
+			lkdb_printf("%llu", value);
 		} else {
-			kdb_printf("%lld", np->value);
+			lkdb_printf("%lld", np->value);
 		}
 	}
 }
@@ -6478,16 +6478,16 @@ print_string(kaddr_t addr, int size)
 	}
 	str = (char*)kl_alloc_block(size);
 	kl_get_block(addr, size, (void *)str, (void *)0);
-	kdb_printf("\"%s", str);
+	lkdb_printf("\"%s", str);
 	for (i = 0; i < size; i++) {
 		if (!str[i]) {
 			break;
 		}
 	}
 	if (KL_ERROR || (i == size)) {
-		kdb_printf("...");
+		lkdb_printf("...");
 	}
-	kdb_printf("\"");
+	lkdb_printf("\"");
 	kl_free_block(str);
 }
 
@@ -6505,173 +6505,173 @@ kl_print_error(void)
 		/** General klib error codes
 		 **/
 		case KLE_NO_MEMORY:
-			kdb_printf("insufficient memory");
+			lkdb_printf("insufficient memory");
 			break;
 		case KLE_OPEN_ERROR:
-			kdb_printf("unable to open file");
+			lkdb_printf("unable to open file");
 			break;
 		case KLE_ZERO_BLOCK:
-			kdb_printf("tried to allocate a zero-sized block");
+			lkdb_printf("tried to allocate a zero-sized block");
 			break;
 		case KLE_INVALID_VALUE:
-			kdb_printf("invalid input value");
+			lkdb_printf("invalid input value");
 			break;
 		case KLE_NULL_BUFF:
-			kdb_printf( "NULL buffer pointer");
+			lkdb_printf( "NULL buffer pointer");
 			break;
 		case KLE_ZERO_SIZE:
-			kdb_printf("zero sized block requested");
+			lkdb_printf("zero sized block requested");
 			break;
 		case KLE_ACTIVE:
-			kdb_printf("operation not supported on a live system");
+			lkdb_printf("operation not supported on a live system");
 			break;
 		case KLE_UNSUPPORTED_ARCH:
-			kdb_printf("unsupported architecture");
+			lkdb_printf("unsupported architecture");
 			break;
 		case KLE_MISC_ERROR:
-			kdb_printf("KLIB error");
+			lkdb_printf("KLIB error");
 			break;
 		case KLE_NOT_SUPPORTED:
-			kdb_printf("operation not supported");
+			lkdb_printf("operation not supported");
 			break;
 		case KLE_UNKNOWN_ERROR:
-			kdb_printf("unknown error");
+			lkdb_printf("unknown error");
 			break;
 
 		/** memory error codes
 		 **/
 		case KLE_BAD_MAP_FILE:
-			kdb_printf("bad map file");
+			lkdb_printf("bad map file");
 			break;
 		case KLE_BAD_DUMP:
-			kdb_printf("bad dump file");
+			lkdb_printf("bad dump file");
 			break;
 		case KLE_BAD_DUMPTYPE:
-			kdb_printf("bad dumptype");
+			lkdb_printf("bad dumptype");
 			break;
 		case KLE_INVALID_LSEEK:
-			kdb_printf("lseek error");
+			lkdb_printf("lseek error");
 			break;
 		case KLE_INVALID_READ:
-			kdb_printf("not found in dump file");
+			lkdb_printf("not found in dump file");
 			break;
 		case KLE_BAD_KERNINFO:
-			kdb_printf("bad kerninfo struct");
+			lkdb_printf("bad kerninfo struct");
 			break;
 		case KLE_INVALID_PADDR:
-			kdb_printf("invalid physical address");
+			lkdb_printf("invalid physical address");
 			break;
 		case KLE_INVALID_VADDR:
-			kdb_printf("invalid virtual address");
+			lkdb_printf("invalid virtual address");
 			break;
 		case KLE_INVALID_VADDR_ALIGN:
-			kdb_printf("invalid vaddr alignment");
+			lkdb_printf("invalid vaddr alignment");
 			break;
 		case KLE_INVALID_MAPPING:
-			kdb_printf("invalid address mapping");
+			lkdb_printf("invalid address mapping");
 			break;
 		case KLE_PAGE_NOT_PRESENT:
-			kdb_printf("page not present");
+			lkdb_printf("page not present");
 			break;
 		case KLE_BAD_ELF_FILE:
-			kdb_printf("bad elf file");
+			lkdb_printf("bad elf file");
 			break;
 		case KLE_ARCHIVE_FILE:
-			kdb_printf("archive file");
+			lkdb_printf("archive file");
 			break;
 		case KLE_MAP_FILE_PRESENT:
-			kdb_printf("map file present");
+			lkdb_printf("map file present");
 			break;
 		case KLE_BAD_MAP_FILENAME:
-			kdb_printf("bad map filename");
+			lkdb_printf("bad map filename");
 			break;
 		case KLE_BAD_DUMP_FILENAME:
-			kdb_printf("bad dump filename");
+			lkdb_printf("bad dump filename");
 			break;
 		case KLE_BAD_NAMELIST_FILE:
-			kdb_printf("bad namelist file");
+			lkdb_printf("bad namelist file");
 			break;
 		case KLE_BAD_NAMELIST_FILENAME:
-			kdb_printf("bad namelist filename");
+			lkdb_printf("bad namelist filename");
 			break;
 
 		/** symbol error codes
 		 **/
 		case KLE_NO_SYMTAB:
-			kdb_printf("no symtab");
+			lkdb_printf("no symtab");
 			break;
 		case KLE_NO_SYMBOLS:
-			kdb_printf("no symbol information");
+			lkdb_printf("no symbol information");
 			break;
 		case KLE_NO_MODULE_LIST:
-			kdb_printf("kernel without module support");
+			lkdb_printf("kernel without module support");
 			break;
 
 		/** kernel data error codes
 		 **/
 		case KLE_INVALID_KERNELSTACK:
-			kdb_printf("invalid kernel stack");
+			lkdb_printf("invalid kernel stack");
 			break;
 		case KLE_INVALID_STRUCT_SIZE:
-			kdb_printf("invalid struct size");
+			lkdb_printf("invalid struct size");
 			break;
 		case KLE_BEFORE_RAM_OFFSET:
-			kdb_printf("physical address proceeds start of RAM");
+			lkdb_printf("physical address proceeds start of RAM");
 			break;
 		case KLE_AFTER_MAXPFN:
-			kdb_printf("PFN exceeds maximum PFN");
+			lkdb_printf("PFN exceeds maximum PFN");
 			break;
 		case KLE_AFTER_PHYSMEM:
-			kdb_printf("address exceeds physical memory");
+			lkdb_printf("address exceeds physical memory");
 			break;
 		case KLE_AFTER_MAXMEM:
-			kdb_printf("address exceeds maximum physical address");
+			lkdb_printf("address exceeds maximum physical address");
 			break;
 		case KLE_PHYSMEM_NOT_INSTALLED:
-			kdb_printf("physical memory not installed");
+			lkdb_printf("physical memory not installed");
 			break;
 		case KLE_NO_DEFTASK:
-			kdb_printf("default task not set");
+			lkdb_printf("default task not set");
 			break;
 		case KLE_PID_NOT_FOUND:
-			kdb_printf("PID not found");
+			lkdb_printf("PID not found");
 			break;
 		case KLE_DEFTASK_NOT_ON_CPU:
-			kdb_printf("default task not running on a cpu");
+			lkdb_printf("default task not running on a cpu");
 			break;
 		case KLE_NO_CURCPU:
-			kdb_printf("current cpu could not be determined");
+			lkdb_printf("current cpu could not be determined");
 			break;
 
 		case KLE_KERNEL_MAGIC_MISMATCH:
-			kdb_printf("kernel_magic mismatch "
+			lkdb_printf("kernel_magic mismatch "
 				"of map and memory image");
 			break;
 
 		case KLE_INVALID_DUMP_HEADER:
-			kdb_printf("invalid dump header in dump");
+			lkdb_printf("invalid dump header in dump");
 			break;
 
 		case KLE_DUMP_INDEX_CREATION:
-			kdb_printf("cannot create index file");
+			lkdb_printf("cannot create index file");
 			break;
 
 		case KLE_DUMP_HEADER_ONLY:
-			kdb_printf("dump only has a dump header");
+			lkdb_printf("dump only has a dump header");
 			break;
 
 		case KLE_NO_END_SYMBOL:
-			kdb_printf("no _end symbol in kernel");
+			lkdb_printf("no _end symbol in kernel");
 			break;
 
 		case KLE_NO_CPU:
-			kdb_printf("CPU not installed");
+			lkdb_printf("CPU not installed");
 			break;
 
 		default:
 			break;
 	}
-	kdb_printf("\n");
+	lkdb_printf("\n");
 }
 
 /*
@@ -6724,10 +6724,10 @@ kl_print_string(char *s)
 					*cp++ = 0;
 					break;
 			}
-			kdb_printf("%s", sp);
+			lkdb_printf("%s", sp);
 			sp = cp;
 		} else {
-			kdb_printf("%s", sp);
+			lkdb_printf("%s", sp);
 			sp = 0;
 		}
 	}
@@ -6768,7 +6768,7 @@ print_eval_results(node_t *np, int flags)
 				}
 			}
 			if (!rkltp) {
-				kdb_printf("Type information not available\n");
+				lkdb_printf("Type information not available\n");
 				return(1);
 			}
 
@@ -6790,35 +6790,35 @@ print_eval_results(node_t *np, int flags)
 					rkltp = rkltp->kl_realtype;
 				}
 				if (!rkltp) {
-					kdb_printf("Bad type information\n");
+					lkdb_printf("Bad type information\n");
 					return(1);
 				}
 				typestr = rkltp->kl_typestr;
 				if (rkltp->kl_type == KLT_FUNCTION) {
-					kdb_printf("%s(", typestr);
+					lkdb_printf("%s(", typestr);
 				} else if (rkltp->kl_type == KLT_ARRAY) {
-					kdb_printf("(%s(", typestr);
+					lkdb_printf("(%s(", typestr);
 				} else {
-					kdb_printf("(%s", typestr);
+					lkdb_printf("(%s", typestr);
 				}
 				for (i = 0; i < ptr_cnt; i++) {
-					kdb_printf("*");
+					lkdb_printf("*");
 				}
 				if (rkltp->kl_type == KLT_FUNCTION) {
-					kdb_printf(")(");
+					lkdb_printf(")(");
 				} else if (rkltp->kl_type == KLT_ARRAY) {
-					kdb_printf(")");
+					lkdb_printf(")");
 
 					nkltp = rkltp;
 					while (nkltp->kl_type == KLT_ARRAY) {
 						count = nkltp->kl_high_bounds -
 						  nkltp->kl_low_bounds + 1;
-						kdb_printf("[%d]", count);
+						lkdb_printf("[%d]", count);
 						nkltp = nkltp->kl_elementtype;
 					}
 				}
-				kdb_printf(") ");
-				kdb_printf("0x%llx", np->value);
+				lkdb_printf(") ");
+				lkdb_printf("0x%llx", np->value);
 
 				if (ptr_cnt > 1) {
 					break;
@@ -6826,7 +6826,7 @@ print_eval_results(node_t *np, int flags)
 
 				if ((rkltp->kl_type == KLT_BASE) &&
 					rkltp->kl_encoding == ENC_CHAR) {
-					kdb_printf(" = ");
+					lkdb_printf(" = ");
 					print_string(np->value, 0);
 				}
 				break;
@@ -6860,7 +6860,7 @@ print_eval_results(node_t *np, int flags)
 				}
 
 				if (rkltp->kl_type == KLT_POINTER) {
-					kdb_printf("0x%llx", np->value);
+					lkdb_printf("0x%llx", np->value);
 					break;
 				}
 				if((rkltp->kl_name != 0) &&
@@ -6868,7 +6868,7 @@ print_eval_results(node_t *np, int flags)
 					/* we are about to dereference
 					 * a void pointer.
 					 */
-					kdb_printf("Can't dereference a "
+					lkdb_printf("Can't dereference a "
 						"generic pointer.\n");
 					return(1);
 				}
@@ -6882,7 +6882,7 @@ print_eval_results(node_t *np, int flags)
 					size = rkltp->kl_high_bounds -
 						rkltp->kl_low_bounds + 1;
 					if(rkltp->kl_elementtype == NULL){
-						kdb_printf("Incomplete array"
+						lkdb_printf("Incomplete array"
 							" type.\n");
 							return(1);
 					}
@@ -6930,7 +6930,7 @@ print_eval_results(node_t *np, int flags)
 				if(size){
 					addr = np->address;
 					if (invalid_address(addr, size)) {
-						kdb_printf (
+						lkdb_printf (
 						 "invalid address %#lx\n",
 							 addr);
 						return 1;
@@ -6977,7 +6977,7 @@ print_eval_results(node_t *np, int flags)
 			 * would have returned an error). So, print out
 			 * the address.
 			 */
-			kdb_printf("0x%lx", np->address);
+			lkdb_printf("0x%lx", np->address);
 			break;
 
 		default:
@@ -6988,7 +6988,7 @@ print_eval_results(node_t *np, int flags)
 					return(1);
 				}
 			} else if (np->node_type == CHARACTER) {
-				kdb_printf("\'%c\'", (char)np->value);
+				lkdb_printf("\'%c\'", (char)np->value);
 			}
 			break;
 	}
@@ -7008,123 +7008,123 @@ print_eval_error(
 {
 	int i, cmd_len;
 
-	kdb_printf("%s %s\n", cmdname, s);
+	lkdb_printf("%s %s\n", cmdname, s);
 	cmd_len = strlen(cmdname);
 
 	if (!bad_ptr) {
 		for (i = 0; i < (strlen(s) + cmd_len); i++) {
-			kdb_printf(" ");
+			lkdb_printf(" ");
 		}
 	} else {
 		for (i = 0; i < (bad_ptr - s + 1 + cmd_len); i++) {
-			kdb_printf(" ");
+			lkdb_printf(" ");
 		}
 	}
-	kdb_printf("^ ");
+	lkdb_printf("^ ");
 	switch (error) {
 		case E_OPEN_PAREN :
-			kdb_printf("Too many open parenthesis\n");
+			lkdb_printf("Too many open parenthesis\n");
 			break;
 
 		case E_CLOSE_PAREN :
-			kdb_printf("Too many close parenthesis\n");
+			lkdb_printf("Too many close parenthesis\n");
 			break;
 
 		case E_BAD_STRUCTURE :
-			kdb_printf("Invalid structure\n");
+			lkdb_printf("Invalid structure\n");
 			break;
 
 		case E_MISSING_STRUCTURE :
-			kdb_printf("Missing structure\n");
+			lkdb_printf("Missing structure\n");
 			break;
 
 		case E_BAD_MEMBER :
-			kdb_printf("No such member\n");
+			lkdb_printf("No such member\n");
 			break;
 
 		case E_BAD_OPERATOR :
-			kdb_printf("Invalid operator\n");
+			lkdb_printf("Invalid operator\n");
 			break;
 
 		case E_MISSING_OPERAND :
-			kdb_printf("Missing operand\n");
+			lkdb_printf("Missing operand\n");
 			break;
 
 		case E_BAD_OPERAND :
-			kdb_printf("Invalid operand\n");
+			lkdb_printf("Invalid operand\n");
 			break;
 
 		case E_BAD_TYPE :
-			kdb_printf("Invalid type\n");
+			lkdb_printf("Invalid type\n");
 			if (!have_debug_file) {
-				kdb_printf("no debuginfo file\n");
+				lkdb_printf("no debuginfo file\n");
 				return;
 			}
 			break;
 
 		case E_NOTYPE :
-			kdb_printf("Could not find type information\n");
+			lkdb_printf("Could not find type information\n");
 			break;
 
 		case E_BAD_POINTER :
-			kdb_printf("Invalid pointer\n");
+			lkdb_printf("Invalid pointer\n");
 			break;
 
 		case E_BAD_INDEX :
-			kdb_printf("Invalid array index\n");
+			lkdb_printf("Invalid array index\n");
 			break;
 
 		case E_BAD_CHAR :
-			kdb_printf("Invalid character value\n");
+			lkdb_printf("Invalid character value\n");
 			break;
 
 		case E_BAD_STRING :
-			kdb_printf("Non-termining string\n");
+			lkdb_printf("Non-termining string\n");
 			break;
 
 		case E_END_EXPECTED :
-			kdb_printf(
+			lkdb_printf(
 				"Expected end of print statement\n");
 			break;
 
 		case E_BAD_EVAR :
-			kdb_printf("Invalid eval variable\n");
+			lkdb_printf("Invalid eval variable\n");
 			break;
 
 		case E_BAD_VALUE :
-			kdb_printf("Invalid value\n");
+			lkdb_printf("Invalid value\n");
 			break;
 
 		case E_NO_VALUE :
-			kdb_printf("No value supplied\n");
+			lkdb_printf("No value supplied\n");
 			break;
 
 		case E_DIVIDE_BY_ZERO :
-			kdb_printf("Divide by zero\n");
+			lkdb_printf("Divide by zero\n");
 			break;
 
 		case E_BAD_CAST :
-			kdb_printf("Invalid cast\n");
+			lkdb_printf("Invalid cast\n");
 			break;
 
 		case E_NO_ADDRESS :
-			kdb_printf("Not an address\n");
+			lkdb_printf("Not an address\n");
 			break;
 
 		case E_SINGLE_QUOTE :
-			kdb_printf("Missing single quote\n");
+			lkdb_printf("Missing single quote\n");
 			break;
 
 		case E_BAD_WHATIS :
-			kdb_printf("Invalid whatis Operation\n");
+			lkdb_printf("Invalid whatis Operation\n");
 			break;
 
 		case E_NOT_IMPLEMENTED :
-			kdb_printf("Not implemented\n");
+			lkdb_printf("Not implemented\n");
 			break;
 
 		default :
-			kdb_printf("Syntax error\n");
+			lkdb_printf("Syntax error\n");
 			break;
 	}
 }
@@ -7148,17 +7148,17 @@ single_type(char *str)
 			return;
 		}
 		if ((kltp = kl_find_type(type_name, KLT_TYPEDEF))) {
-			kdb_printf ("typedef %s:\n", type_name);
+			lkdb_printf ("typedef %s:\n", type_name);
 			kl_print_type((void *)NULL, kltp, 0, C_SHOWOFFSET);
 			return;
 		}
 	}
 	if ((sp = kl_lkup_symname(type_name))) {
-		kdb_printf ("symbol %s value: %#lx\n", str, sp->s_addr);
+		lkdb_printf ("symbol %s value: %#lx\n", str, sp->s_addr);
 		kl_free_block((void *)sp);
 		return;
 	}
-	kdb_printf("could not find type or symbol information for %s\n",
+	lkdb_printf("could not find type or symbol information for %s\n",
 		type_name);
 	return;
 }
@@ -7176,16 +7176,16 @@ sizeof_type(char *str)
 	strcpy(type_name, str);
 
 	if ((kltp = kl_find_type(type_name, KLT_TYPE))) {
-		kdb_printf ("%s %d %#x\n", kltp->kl_typestr,
+		lkdb_printf ("%s %d %#x\n", kltp->kl_typestr,
 				kltp->kl_size, kltp->kl_size);
 		return;
 	}
 	if ((kltp = kl_find_type(type_name, KLT_TYPEDEF))) {
-		kdb_printf ("%s %d %#x\n", kltp->kl_typestr,
+		lkdb_printf ("%s %d %#x\n", kltp->kl_typestr,
 				kltp->kl_size, kltp->kl_size);
 		return;
 	}
-	kdb_printf("could not find type information for %s\n", type_name);
+	lkdb_printf("could not find type information for %s\n", type_name);
 }
 
 EXPORT_SYMBOL(have_debug_file);

@@ -103,9 +103,8 @@ found:
 	return tap;
 }
 
-static int
-blktap_control_ioctl(struct inode *inode, struct file *filp,
-		     unsigned int cmd, unsigned long arg)
+static long
+blktap_control_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	unsigned long dev;
 	struct blktap *tap;
@@ -148,7 +147,7 @@ blktap_control_ioctl(struct inode *inode, struct file *filp,
 
 static const struct file_operations blktap_control_file_operations = {
 	.owner    = THIS_MODULE,
-	.ioctl    = blktap_control_ioctl,
+	.unlocked_ioctl = blktap_control_ioctl,
 };
 
 static struct miscdevice blktap_misc = {
@@ -283,3 +282,4 @@ fail:
 module_init(blktap_init);
 module_exit(blktap_exit);
 MODULE_LICENSE("Dual BSD/GPL");
+MODULE_ALIAS("devname:" BLKTAP2_DEV_DIR "control");

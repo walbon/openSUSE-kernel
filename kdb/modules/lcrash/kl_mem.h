@@ -21,12 +21,6 @@
 #ifndef __KL_MEM_H
 #define __KL_MEM_H
 
-#if 0
-cpw: skip:
-extern kaddr_t VMALLOC_START;
-extern kaddr_t VMALLOC_END;
-#endif
-
 /*
  * Function prototypes
  */

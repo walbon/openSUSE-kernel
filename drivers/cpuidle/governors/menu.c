@@ -80,7 +80,7 @@
  * Limiting Performance Impact
  * ---------------------------
  * C states, especially those with large exit latencies, can have a real
- * noticable impact on workloads, which is not acceptable for most sysadmins,
+ * noticeable impact on workloads, which is not acceptable for most sysadmins,
  * and in addition, less performance has a power price of its own.
  *
  * As a general rule of thumb, menu assumes that the following heuristic
@@ -143,7 +143,7 @@ static inline int which_bucket(unsigned int duration)
 	 * This allows us to calculate
 	 * E(duration)|iowait
 	 */
-	if (nr_iowait_cpu())
+	if (nr_iowait_cpu(smp_processor_id()))
 		bucket = BUCKETS/2;
 
 	if (duration < 10)
@@ -175,7 +175,7 @@ static inline int performance_multiplier(void)
 	mult += 2 * get_loadavg();
 
 	/* for IO wait tasks (per cpu!) we add 5x each */
-	mult += 10 * nr_iowait_cpu();
+	mult += 10 * nr_iowait_cpu(smp_processor_id());
 
 	return mult;
 }
@@ -233,7 +233,7 @@ static void detect_repeating_patterns(struct menu_device *data)
 static int menu_select(struct cpuidle_device *dev)
 {
 	struct menu_device *data = &__get_cpu_var(menu_devices);
-	int latency_req = pm_qos_requirement(PM_QOS_CPU_DMA_LATENCY);
+	int latency_req = pm_qos_request(PM_QOS_CPU_DMA_LATENCY);
 	unsigned int power_usage = -1;
 	int i;
 	int multiplier;

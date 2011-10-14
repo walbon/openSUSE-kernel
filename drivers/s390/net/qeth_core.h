@@ -40,11 +40,7 @@
  */
 enum qeth_dbf_names {
 	QETH_DBF_SETUP,
-	QETH_DBF_QERR,
-	QETH_DBF_TRACE,
 	QETH_DBF_MSG,
-	QETH_DBF_SENSE,
-	QETH_DBF_MISC,
 	QETH_DBF_CTRL,
 	QETH_DBF_INFOS	/* must be last element */
 };
@@ -71,7 +67,19 @@ struct qeth_dbf_info {
 	debug_sprintf_event(qeth_dbf[QETH_DBF_MSG].id, level, text)
 
 #define QETH_DBF_TEXT_(name, level, text...) \
-	qeth_dbf_longtext(QETH_DBF_##name, level, text)
+	qeth_dbf_longtext(qeth_dbf[QETH_DBF_##name].id, level, text)
+
+#define QETH_CARD_TEXT(card, level, text) \
+	debug_text_event(card->debug, level, text)
+
+#define QETH_CARD_HEX(card, level, addr, len) \
+	debug_event(card->debug, level, (void *)(addr), len)
+
+#define QETH_CARD_MESSAGE(card, text...) \
+	debug_sprintf_event(card->debug, level, text)
+
+#define QETH_CARD_TEXT_(card, level, text...) \
+	qeth_dbf_longtext(card->debug, level, text)
 
 #define SENSE_COMMAND_REJECT_BYTE 0
 #define SENSE_COMMAND_REJECT_FLAG 0x80
@@ -126,7 +134,6 @@ struct qeth_perf_stats {
 	__u64 outbound_do_qdio_start_time;
 	unsigned int outbound_do_qdio_cnt;
 	unsigned int outbound_do_qdio_time;
-	/* eddp data */
 	unsigned int large_send_bytes;
 	unsigned int large_send_cnt;
 	unsigned int sg_skbs_sent;
@@ -185,8 +192,7 @@ static inline int qeth_is_ipa_enabled(struct qeth_ipa_info *ipa,
 		qeth_is_enabled6(c, f) : qeth_is_enabled(c, f))
 
 #define QETH_IDX_FUNC_LEVEL_OSD		 0x0101
-#define QETH_IDX_FUNC_LEVEL_IQD_ENA_IPAT 0x4108
-#define QETH_IDX_FUNC_LEVEL_IQD_DIS_IPAT 0x5108
+#define QETH_IDX_FUNC_LEVEL_IQD		 0x4108
 
 #define QETH_MODELLIST_ARRAY \
 	{{0x1731, 0x01, 0x1732, QETH_CARD_TYPE_OSD, QETH_MAX_QUEUES, 0}, \
@@ -362,7 +368,7 @@ enum qeth_header_ids {
 
 static inline int qeth_is_last_sbale(struct qdio_buffer_element *sbale)
 {
-	return (sbale->flags & SBAL_FLAGS_LAST_ENTRY);
+	return (sbale->eflags & SBAL_EFLAGS_LAST_ENTRY);
 }
 
 enum qeth_qdio_buffer_states {
@@ -424,12 +430,6 @@ struct qeth_qdio_q {
 	int next_buf_to_init;
 } __attribute__ ((aligned(256)));
 
-/* possible types of qeth large_send support */
-enum qeth_large_send_types {
-	QETH_LARGE_SEND_NO,
-	QETH_LARGE_SEND_TSO,
-};
-
 struct qeth_qdio_out_buffer {
 	struct qdio_buffer *buffer;
 	atomic_t state;
@@ -462,7 +462,6 @@ struct qeth_qdio_out_q {
 	 * index of buffer to be filled by driver; state EMPTY or PACKING
 	 */
 	int next_buf_to_fill;
-	int sync_iqdio_error;
 	/*
 	 * number of buffers that are currently filled (PRIMED)
 	 * -> these buffers are hardware-owned
@@ -668,6 +667,8 @@ struct qeth_card_info {
 	__u32 csum_mask;
 	__u32 tx_csum_mask;
 	enum qeth_ipa_promisc_modes promisc_mode;
+	__u32 diagass_support;
+	__u32 hwtrap;
 };
 
 struct qeth_card_options {
@@ -676,13 +677,11 @@ struct qeth_card_options {
 	struct qeth_ipa_info adp; /*Adapter parameters*/
 	struct qeth_routing_info route6;
 	struct qeth_ipa_info ipa6;
-	enum qeth_checksum_types checksum_type;
 	int broadcast_mode;
 	int macaddr_mode;
 	int fake_broadcast;
 	int add_hhlen;
 	int layer2;
-	enum qeth_large_send_types large_send;
 	int performance_stats;
 	int rx_sg_cb;
 	enum qeth_ipa_isolation_modes isolation;
@@ -727,14 +726,6 @@ struct qeth_mc_mac {
 	unsigned char mc_addrlen;
 	int is_vmac;
 };
-
-struct qeth_skb_data {
-	__u32 magic;
-	int count;
-};
-
-#define QETH_SKB_MAGIC 0x71657468
-#define QETH_SIGA_CC2_RETRIES 3
 
 struct qeth_rx {
 	int b_count;
@@ -789,6 +780,7 @@ struct qeth_card {
 	atomic_t force_alloc_skb;
 	struct service_level qeth_service_level;
 	struct qdio_ssqd_desc ssqd;
+	debug_info_t *debug;
 	struct mutex conf_mutex;
 	struct mutex discipline_mutex;
 	struct napi_struct napi;
@@ -801,6 +793,14 @@ struct qeth_card_list_struct {
 	struct list_head list;
 	rwlock_t rwlock;
 };
+
+struct qeth_trap_id {
+	__u16 lparnr;
+	char vmname[8];
+	__u8 chpid;
+	__u8 ssid;
+	__u16 devno;
+} __packed;
 
 /*some helper functions*/
 #define QETH_CARD_IFNAME(card) (((card)->dev)? (card)->dev->name : "")
@@ -836,7 +836,12 @@ static inline void qeth_put_buffer_pool_entry(struct qeth_card *card,
 	list_add_tail(&entry->list, &card->qdio.in_buf_pool.entry_list);
 }
 
-struct qeth_eddp_context;
+static inline int qeth_is_diagass_supported(struct qeth_card *card,
+		enum qeth_diags_cmds cmd)
+{
+	return card->info.diagass_support & (__u32)cmd;
+}
+
 extern struct ccwgroup_driver qeth_l2_ccwgroup_driver;
 extern struct ccwgroup_driver qeth_l3_ccwgroup_driver;
 const char *qeth_get_cardname_short(struct qeth_card *);
@@ -914,15 +919,18 @@ int qeth_do_send_packet_fast(struct qeth_card *, struct qeth_qdio_out_q *,
 			struct sk_buff *, struct qeth_hdr *, int, int, int);
 int qeth_do_send_packet(struct qeth_card *, struct qeth_qdio_out_q *,
 		    struct sk_buff *, struct qeth_hdr *, int);
-int qeth_core_get_stats_count(struct net_device *);
+int qeth_core_get_sset_count(struct net_device *, int);
 void qeth_core_get_ethtool_stats(struct net_device *,
 				struct ethtool_stats *, u64 *);
 void qeth_core_get_strings(struct net_device *, u32, u8 *);
 void qeth_core_get_drvinfo(struct net_device *, struct ethtool_drvinfo *);
-void qeth_dbf_longtext(enum qeth_dbf_names dbf_nix, int level, char *text, ...);
+void qeth_dbf_longtext(debug_info_t *id, int level, char *text, ...);
 int qeth_core_ethtool_get_settings(struct net_device *, struct ethtool_cmd *);
 int qeth_set_access_ctrl_online(struct qeth_card *card);
+int qeth_hdr_chk_and_bounce(struct sk_buff *, int);
 int qeth_configure_cq(struct qeth_card *, enum qeth_cq);
+int qeth_hw_trap(struct qeth_card *, enum qeth_diags_trap_action);
+int qeth_query_ipassists(struct qeth_card *, enum qeth_prot_versions prot);
 
 /* exports for OSN */
 int qeth_osn_assist(struct net_device *, void *, int);

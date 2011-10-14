@@ -21,6 +21,8 @@
 #ifndef __PERFMON_PMU_H__
 #define __PERFMON_PMU_H__ 1
 
+#include <linux/kobject.h>
+
 /*
  * generic information about a PMC or PMD register
  *

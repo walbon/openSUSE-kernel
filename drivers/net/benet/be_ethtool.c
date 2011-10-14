@@ -501,7 +501,7 @@ be_set_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *ecmd)
 	int status;
 
 	if (ecmd->autoneg != 0)
-		return 1;	/* cycle on/off once per second */
+		return -EINVAL;
 	adapter->tx_fc = ecmd->tx_pause;
 	adapter->rx_fc = ecmd->rx_pause;
 
@@ -511,6 +511,36 @@ be_set_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *ecmd)
 		dev_warn(&adapter->pdev->dev, "Pause param set failed.\n");
 
 	return status;
+}
+
+static int
+be_set_phys_id(struct net_device *netdev,
+	       enum ethtool_phys_id_state state)
+{
+	struct be_adapter *adapter = netdev_priv(netdev);
+
+	switch (state) {
+	case ETHTOOL_ID_ACTIVE:
+		be_cmd_get_beacon_state(adapter, adapter->hba_port_num,
+					&adapter->beacon_state);
+		return 1;	/* cycle on/off once per second */
+
+	case ETHTOOL_ID_ON:
+		be_cmd_set_beacon_state(adapter, adapter->hba_port_num, 0, 0,
+					BEACON_STATE_ENABLED);
+		break;
+
+	case ETHTOOL_ID_OFF:
+		be_cmd_set_beacon_state(adapter, adapter->hba_port_num, 0, 0,
+					BEACON_STATE_DISABLED);
+		break;
+
+	case ETHTOOL_ID_INACTIVE:
+		be_cmd_set_beacon_state(adapter, adapter->hba_port_num, 0, 0,
+					adapter->beacon_state);
+	}
+
+	return 0;
 }
 
 static bool
@@ -705,6 +735,7 @@ const struct ethtool_ops be_ethtool_ops = {
 	.get_pauseparam = be_get_pauseparam,
 	.set_pauseparam = be_set_pauseparam,
 	.get_strings = be_get_stat_strings,
+	.set_phys_id = be_set_phys_id,
 	.get_sset_count = be_get_sset_count,
 	.get_ethtool_stats = be_get_ethtool_stats,
 	.get_regs_len = be_get_reg_len,

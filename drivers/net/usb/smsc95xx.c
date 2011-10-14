@@ -28,6 +28,7 @@
 #include <linux/usb.h>
 #include <linux/crc32.h>
 #include <linux/usb/usbnet.h>
+#include <linux/slab.h>
 #include "smsc95xx.h"
 
 #define SMSC_CHIPNAME			"smsc95xx"
@@ -51,8 +52,6 @@ struct smsc95xx_priv {
 	u32 hash_hi;
 	u32 hash_lo;
 	spinlock_t mac_cr_lock;
-	bool use_tx_csum;
-	bool use_rx_csum;
 };
 
 struct usb_context {
@@ -387,13 +386,13 @@ static void smsc95xx_set_multicast(struct net_device *netdev)
 		pdata->mac_cr |= MAC_CR_MCPAS_;
 		pdata->mac_cr &= ~(MAC_CR_PRMS_ | MAC_CR_HPFILT_);
 	} else if (!netdev_mc_empty(dev->net)) {
-		struct dev_mc_list *mc_list;
+		struct netdev_hw_addr *ha;
 
 		pdata->mac_cr |= MAC_CR_HPFILT_;
 		pdata->mac_cr &= ~(MAC_CR_PRMS_ | MAC_CR_MCPAS_);
 
-		netdev_for_each_mc_addr(mc_list, netdev) {
-			u32 bitnum = smsc95xx_hash(mc_list->dmi_addr);
+		netdev_for_each_mc_addr(ha, netdev) {
+			u32 bitnum = smsc95xx_hash(ha->addr);
 			u32 mask = 0x01 << (bitnum & 0x1F);
 			if (bitnum & 0x20)
 				pdata->hash_hi |= mask;
@@ -458,7 +457,7 @@ static int smsc95xx_link_reset(struct usbnet *dev)
 {
 	struct smsc95xx_priv *pdata = (struct smsc95xx_priv *)(dev->data[0]);
 	struct mii_if_info *mii = &dev->mii;
-	struct ethtool_cmd ecmd;
+	struct ethtool_cmd ecmd = { .cmd = ETHTOOL_GSET };
 	unsigned long flags;
 	u16 lcladv, rmtadv;
 	u32 intdata;
@@ -473,8 +472,9 @@ static int smsc95xx_link_reset(struct usbnet *dev)
 	lcladv = smsc95xx_mdio_read(dev->net, mii->phy_id, MII_ADVERTISE);
 	rmtadv = smsc95xx_mdio_read(dev->net, mii->phy_id, MII_LPA);
 
-	netif_dbg(dev, link, dev->net, "speed: %d duplex: %d lcladv: %04x rmtadv: %04x\n",
-		  ecmd.speed, ecmd.duplex, lcladv, rmtadv);
+	netif_dbg(dev, link, dev->net,
+		  "speed: %u duplex: %d lcladv: %04x rmtadv: %04x\n",
+		  ethtool_cmd_speed(&ecmd), ecmd.duplex, lcladv, rmtadv);
 
 	spin_lock_irqsave(&pdata->mac_cr_lock, flags);
 	if (ecmd.duplex != DUPLEX_FULL) {
@@ -516,22 +516,24 @@ static void smsc95xx_status(struct usbnet *dev, struct urb *urb)
 }
 
 /* Enable or disable Tx & Rx checksum offload engines */
-static int smsc95xx_set_csums(struct usbnet *dev)
+static int smsc95xx_set_features(struct net_device *netdev, u32 features)
 {
-	struct smsc95xx_priv *pdata = (struct smsc95xx_priv *)(dev->data[0]);
+	struct usbnet *dev = netdev_priv(netdev);
 	u32 read_buf;
-	int ret = smsc95xx_read_reg(dev, COE_CR, &read_buf);
+	int ret;
+
+	ret = smsc95xx_read_reg(dev, COE_CR, &read_buf);
 	if (ret < 0) {
 		netdev_warn(dev->net, "Failed to read COE_CR: %d\n", ret);
 		return ret;
 	}
 
-	if (pdata->use_tx_csum)
+	if (features & NETIF_F_HW_CSUM)
 		read_buf |= Tx_COE_EN_;
 	else
 		read_buf &= ~Tx_COE_EN_;
 
-	if (pdata->use_rx_csum)
+	if (features & NETIF_F_RXCSUM)
 		read_buf |= Rx_COE_EN_;
 	else
 		read_buf &= ~Rx_COE_EN_;
@@ -575,43 +577,6 @@ static int smsc95xx_ethtool_set_eeprom(struct net_device *netdev,
 	return smsc95xx_write_eeprom(dev, ee->offset, ee->len, data);
 }
 
-static u32 smsc95xx_ethtool_get_rx_csum(struct net_device *netdev)
-{
-	struct usbnet *dev = netdev_priv(netdev);
-	struct smsc95xx_priv *pdata = (struct smsc95xx_priv *)(dev->data[0]);
-
-	return pdata->use_rx_csum;
-}
-
-static int smsc95xx_ethtool_set_rx_csum(struct net_device *netdev, u32 val)
-{
-	struct usbnet *dev = netdev_priv(netdev);
-	struct smsc95xx_priv *pdata = (struct smsc95xx_priv *)(dev->data[0]);
-
-	pdata->use_rx_csum = !!val;
-
-	return smsc95xx_set_csums(dev);
-}
-
-static u32 smsc95xx_ethtool_get_tx_csum(struct net_device *netdev)
-{
-	struct usbnet *dev = netdev_priv(netdev);
-	struct smsc95xx_priv *pdata = (struct smsc95xx_priv *)(dev->data[0]);
-
-	return pdata->use_tx_csum;
-}
-
-static int smsc95xx_ethtool_set_tx_csum(struct net_device *netdev, u32 val)
-{
-	struct usbnet *dev = netdev_priv(netdev);
-	struct smsc95xx_priv *pdata = (struct smsc95xx_priv *)(dev->data[0]);
-
-	pdata->use_tx_csum = !!val;
-
-	ethtool_op_set_tx_hw_csum(netdev, pdata->use_tx_csum);
-	return smsc95xx_set_csums(dev);
-}
-
 static const struct ethtool_ops smsc95xx_ethtool_ops = {
 	.get_link	= usbnet_get_link,
 	.nway_reset	= usbnet_nway_reset,
@@ -623,10 +588,6 @@ static const struct ethtool_ops smsc95xx_ethtool_ops = {
 	.get_eeprom_len	= smsc95xx_ethtool_get_eeprom_len,
 	.get_eeprom	= smsc95xx_ethtool_get_eeprom,
 	.set_eeprom	= smsc95xx_ethtool_set_eeprom,
-	.get_tx_csum	= smsc95xx_ethtool_get_tx_csum,
-	.set_tx_csum	= smsc95xx_ethtool_set_tx_csum,
-	.get_rx_csum	= smsc95xx_ethtool_get_rx_csum,
-	.set_rx_csum	= smsc95xx_ethtool_set_rx_csum,
 };
 
 static int smsc95xx_ioctl(struct net_device *netdev, struct ifreq *rq, int cmd)
@@ -754,7 +715,6 @@ static int smsc95xx_phy_initialize(struct usbnet *dev)
 static int smsc95xx_reset(struct usbnet *dev)
 {
 	struct smsc95xx_priv *pdata = (struct smsc95xx_priv *)(dev->data[0]);
-	struct net_device *netdev = dev->net;
 	u32 read_buf, write_buf, burst_cap;
 	int ret = 0, timeout;
 
@@ -974,12 +934,7 @@ static int smsc95xx_reset(struct usbnet *dev)
 	}
 
 	/* Enable or disable checksum offload engines */
-	ethtool_op_set_tx_hw_csum(netdev, pdata->use_tx_csum);
-	ret = smsc95xx_set_csums(dev);
-	if (ret < 0) {
-		netdev_warn(dev->net, "Failed to set csum offload: %d\n", ret);
-		return ret;
-	}
+	smsc95xx_set_features(dev->net, dev->net->features);
 
 	smsc95xx_set_multicast(dev->net);
 
@@ -1018,6 +973,7 @@ static const struct net_device_ops smsc95xx_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_do_ioctl 		= smsc95xx_ioctl,
 	.ndo_set_multicast_list = smsc95xx_set_multicast,
+	.ndo_set_features	= smsc95xx_set_features,
 };
 
 static int smsc95xx_bind(struct usbnet *dev, struct usb_interface *intf)
@@ -1044,8 +1000,12 @@ static int smsc95xx_bind(struct usbnet *dev, struct usb_interface *intf)
 
 	spin_lock_init(&pdata->mac_cr_lock);
 
-	pdata->use_tx_csum = DEFAULT_TX_CSUM_ENABLE;
-	pdata->use_rx_csum = DEFAULT_RX_CSUM_ENABLE;
+	if (DEFAULT_TX_CSUM_ENABLE)
+		dev->net->features |= NETIF_F_HW_CSUM;
+	if (DEFAULT_RX_CSUM_ENABLE)
+		dev->net->features |= NETIF_F_RXCSUM;
+
+	dev->net->hw_features = NETIF_F_HW_CSUM | NETIF_F_RXCSUM;
 
 	smsc95xx_init_mac_address(dev);
 
@@ -1055,7 +1015,7 @@ static int smsc95xx_bind(struct usbnet *dev, struct usb_interface *intf)
 	dev->net->netdev_ops = &smsc95xx_netdev_ops;
 	dev->net->ethtool_ops = &smsc95xx_ethtool_ops;
 	dev->net->flags |= IFF_MULTICAST;
-	dev->net->hard_header_len += SMSC95XX_TX_OVERHEAD;
+	dev->net->hard_header_len += SMSC95XX_TX_OVERHEAD_CSUM;
 	return 0;
 }
 
@@ -1079,8 +1039,6 @@ static void smsc95xx_rx_csum_offload(struct sk_buff *skb)
 
 static int smsc95xx_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 {
-	struct smsc95xx_priv *pdata = (struct smsc95xx_priv *)(dev->data[0]);
-
 	while (skb->len > 0) {
 		u32 header, align_count;
 		struct sk_buff *ax_skb;
@@ -1122,7 +1080,7 @@ static int smsc95xx_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 
 			/* last frame in this batch */
 			if (skb->len == size) {
-				if (pdata->use_rx_csum)
+				if (dev->net->features & NETIF_F_RXCSUM)
 					smsc95xx_rx_csum_offload(skb);
 				skb_trim(skb, skb->len - 4); /* remove fcs */
 				skb->truesize = size + sizeof(struct sk_buff);
@@ -1140,7 +1098,7 @@ static int smsc95xx_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 			ax_skb->data = packet;
 			skb_set_tail_pointer(ax_skb, size);
 
-			if (pdata->use_rx_csum)
+			if (dev->net->features & NETIF_F_RXCSUM)
 				smsc95xx_rx_csum_offload(ax_skb);
 			skb_trim(ax_skb, ax_skb->len - 4); /* remove fcs */
 			ax_skb->truesize = size + sizeof(struct sk_buff);
@@ -1165,17 +1123,15 @@ static int smsc95xx_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 
 static u32 smsc95xx_calc_csum_preamble(struct sk_buff *skb)
 {
-	int len = skb->data - skb->head;
-	u16 high_16 = (u16)(skb->csum_offset + skb->csum_start - len);
-	u16 low_16 = (u16)(skb->csum_start - len);
+	u16 low_16 = (u16)skb_checksum_start_offset(skb);
+	u16 high_16 = low_16 + skb->csum_offset;
 	return (high_16 << 16) | low_16;
 }
 
 static struct sk_buff *smsc95xx_tx_fixup(struct usbnet *dev,
 					 struct sk_buff *skb, gfp_t flags)
 {
-	struct smsc95xx_priv *pdata = (struct smsc95xx_priv *)(dev->data[0]);
-	bool csum = pdata->use_tx_csum && (skb->ip_summed == CHECKSUM_PARTIAL);
+	bool csum = skb->ip_summed == CHECKSUM_PARTIAL;
 	int overhead = csum ? SMSC95XX_TX_OVERHEAD_CSUM : SMSC95XX_TX_OVERHEAD;
 	u32 tx_cmd_a, tx_cmd_b;
 
@@ -1195,7 +1151,7 @@ static struct sk_buff *smsc95xx_tx_fixup(struct usbnet *dev,
 		if (skb->len <= 45) {
 			/* workaround - hardware tx checksum does not work
 			 * properly with extremely small packets */
-			long csstart = skb->csum_start - skb_headroom(skb);
+			long csstart = skb_checksum_start_offset(skb);
 			__wsum calc = csum_partial(skb->data + csstart,
 				skb->len - csstart, 0);
 			*((__sum16 *)(skb->data + csstart

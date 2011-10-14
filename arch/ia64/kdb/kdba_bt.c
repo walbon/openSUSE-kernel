@@ -13,7 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/kallsyms.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <asm/system.h>
 #include <asm/sections.h>
@@ -39,7 +39,7 @@
 
 static void
 bt_print_one(kdb_machreg_t ip,
-	     const kdb_symtab_t *symtab, int argcount,
+	     const lkdb_symtab_t *symtab, int argcount,
 	     struct unw_frame_info *info)
 {
 	int btsymarg = 0;		/* Convert arguments to symbols */
@@ -48,21 +48,21 @@ bt_print_one(kdb_machreg_t ip,
 	int args;
 	kdb_machreg_t sp, bsp, cfm;
 
-	kdbgetintenv("BTSYMARG", &btsymarg);
-	kdbgetintenv("BTSP", &btsp);
-	kdbgetintenv("NOSECT", &nosect);
+	lkdbgetintenv("BTSYMARG", &btsymarg);
+	lkdbgetintenv("BTSP", &btsp);
+	lkdbgetintenv("NOSECT", &nosect);
 
 	unw_get_sp(info, &sp);
 	unw_get_bsp(info, &bsp);
 	unw_get_cfm(info, &cfm);
-	kdb_symbol_print(ip, symtab, KDB_SP_VALUE|KDB_SP_NEWLINE);
+	lkdb_symbol_print(ip, symtab, KDB_SP_VALUE|KDB_SP_NEWLINE);
 	args = (cfm >> 7) & 0x7f;	/* sol */
 	if (!args)
 		args = cfm & 0x7f;	/* no in/local, use sof instead */
 	if (argcount && args) {
 		int i, argc = args;
 
-		kdb_printf("        args (");
+		lkdb_printf("        args (");
 		if (argc > argcount)
 			argc = argcount;
 
@@ -73,45 +73,45 @@ bt_print_one(kdb_machreg_t ip,
 				arg = 0;
 
 			if (i)
-				kdb_printf(", ");
-			kdb_printf("0x%lx", arg);
+				lkdb_printf(", ");
+			lkdb_printf("0x%lx", arg);
 		}
-		kdb_printf(")\n");
+		lkdb_printf(")\n");
 		if (btsymarg) {
-			kdb_symtab_t	arg_symtab;
+			lkdb_symtab_t	arg_symtab;
 			kdb_machreg_t	arg;
 			for(i = 0; i < argc; i++){
 				char nat;
 				if (unw_access_gr(info, i+32, &arg, &nat, 0))
 					arg = 0;
-				if (kdbnearsym(arg, &arg_symtab)) {
-					kdb_printf("        arg %d ", i);
-					kdb_symbol_print(arg, &arg_symtab, KDB_SP_DEFAULT|KDB_SP_NEWLINE);
+				if (lkdbnearsym(arg, &arg_symtab)) {
+					lkdb_printf("        arg %d ", i);
+					lkdb_symbol_print(arg, &arg_symtab, KDB_SP_DEFAULT|KDB_SP_NEWLINE);
 				}
 			}
 		}
 	}
 	if (symtab->sym_name) {
 		if (!nosect) {
-			kdb_printf("        %s", symtab->mod_name);
+			lkdb_printf("        %s", symtab->mod_name);
 			if (symtab->sec_name)
-				kdb_printf(" %s 0x%lx", symtab->sec_name, symtab->sec_start);
-			kdb_printf(" 0x%lx", symtab->sym_start);
+				lkdb_printf(" %s 0x%lx", symtab->sec_name, symtab->sec_start);
+			lkdb_printf(" 0x%lx", symtab->sym_start);
 			if (symtab->sym_end)
-				kdb_printf(" 0x%lx", symtab->sym_end);
-			kdb_printf("\n");
+				lkdb_printf(" 0x%lx", symtab->sym_end);
+			lkdb_printf("\n");
 		}
 		if (strncmp(symtab->sym_name, "ia64_spinlock_contention", 24) == 0) {
 			kdb_machreg_t r31;
 			char nat;
-			kdb_printf("        r31 (spinlock address) ");
+			lkdb_printf("        r31 (spinlock address) ");
 			if (unw_access_gr(info, 31, &r31, &nat, 0))
 				r31 = 0;
-			kdb_symbol_print(r31, NULL, KDB_SP_VALUE|KDB_SP_NEWLINE);
+			lkdb_symbol_print(r31, NULL, KDB_SP_VALUE|KDB_SP_NEWLINE);
 		}
 	}
 	if (btsp)
-		kdb_printf("        sp 0x%016lx bsp 0x%016lx cfm 0x%016lx info->pfs_loc 0x%016lx 0x%016lx\n",
+		lkdb_printf("        sp 0x%016lx bsp 0x%016lx cfm 0x%016lx info->pfs_loc 0x%016lx 0x%016lx\n",
 				sp, bsp, cfm, (u64) info->pfs_loc, info->pfs_loc ? *(info->pfs_loc) : 0);
 }
 
@@ -136,7 +136,7 @@ bt_print_one(kdb_machreg_t ip,
 static int
 kdba_bt_stack(int argcount, const struct task_struct *p)
 {
-	kdb_symtab_t symtab;
+	lkdb_symtab_t symtab;
 	struct unw_frame_info info;
 	struct switch_stack *sw;
 	struct pt_regs *regs = NULL;
@@ -170,10 +170,10 @@ kdba_bt_stack(int argcount, const struct task_struct *p)
 	 * that pt_regs instead.
 	 */
 
-	kdbgetintenv("BTSP", &btsp);
+	lkdbgetintenv("BTSP", &btsp);
 
-	if (kdb_task_has_cpu(p)) {
-		struct kdb_running_process *krp = kdb_running_process + kdb_process_cpu(p);
+	if (lkdb_task_has_cpu(p)) {
+		struct lkdb_running_process *krp = lkdb_running_process + lkdb_process_cpu(p);
 		if (krp->seqno) {
 			sw = krp->arch.sw;
 			regs = krp->regs;
@@ -186,8 +186,8 @@ kdba_bt_stack(int argcount, const struct task_struct *p)
 		sw = (struct switch_stack *) (p->thread.ksp + 16);
 	}
 	if (!sw) {
-		kdb_printf("Process does not have a switch_stack, cannot backtrace\n");
-		kdb_ps1(p);
+		lkdb_printf("Process does not have a switch_stack, cannot backtrace\n");
+		lkdb_ps1(p);
 		return 0;
 	}
 
@@ -200,7 +200,7 @@ kdba_bt_stack(int argcount, const struct task_struct *p)
 	if (regs && !btsp) {
 		kdb_machreg_t sp;
 		if (user_mode(regs)) {
-			kdb_printf("Process was interrupted in user mode, no backtrace available\n");
+			lkdb_printf("Process was interrupted in user mode, no backtrace available\n");
 			return 0;
 		}
 		do {
@@ -241,16 +241,16 @@ kdba_bt_stack(int argcount, const struct task_struct *p)
 		if (ip == 0)
 			break;
 
-		kdbnearsym(ip, &symtab);
+		lkdbnearsym(ip, &symtab);
 		if (!symtab.sym_name) {
-			kdb_printf("0x%0*lx - No name.  May be an area that has no unwind data\n",
+			lkdb_printf("0x%0*lx - No name.  May be an area that has no unwind data\n",
 				(int)(2*sizeof(ip)), ip);
 			return 0;
 		}
 		bt_print_one(ip, &symtab, argcount, &info);
 	} while (unw_unwind(&info) >= 0 && count++ < 200);
 	if (count >= 200)
-		kdb_printf("bt truncated, count limit reached\n");
+		lkdb_printf("bt truncated, count limit reached\n");
 
 	return 0;
 }
@@ -258,8 +258,8 @@ kdba_bt_stack(int argcount, const struct task_struct *p)
 int
 kdba_bt_address(kdb_machreg_t addr, int argcount)
 {
-	kdb_printf("Backtrace from a stack address is not supported on ia64\n");
-	return KDB_NOTIMP;
+	lkdb_printf("Backtrace from a stack address is not supported on ia64\n");
+	return LKDB_NOTIMP;
 }
 
 /*

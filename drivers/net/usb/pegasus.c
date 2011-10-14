@@ -805,7 +805,7 @@ static void write_bulk_callback(struct urb *urb)
 		break;
 	}
 
-	net->trans_start = jiffies;
+	net->trans_start = jiffies; /* prevent tx timeout */
 	netif_wake_queue(net);
 }
 
@@ -906,7 +906,6 @@ static netdev_tx_t pegasus_start_xmit(struct sk_buff *skb,
 	} else {
 		pegasus->stats.tx_packets++;
 		pegasus->stats.tx_bytes += skb->len;
-		net->trans_start = jiffies;
 	}
 	dev_kfree_skb(skb);
 

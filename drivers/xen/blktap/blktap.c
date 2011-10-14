@@ -427,16 +427,17 @@ static tap_blkif_t *get_next_free_dev(void);
 static int blktap_open(struct inode *inode, struct file *filp);
 static int blktap_release(struct inode *inode, struct file *filp);
 static int blktap_mmap(struct file *filp, struct vm_area_struct *vma);
-static int blktap_ioctl(struct inode *inode, struct file *filp,
-                        unsigned int cmd, unsigned long arg);
+static long blktap_ioctl(struct file *filp, unsigned int cmd,
+			 unsigned long arg);
 static unsigned int blktap_poll(struct file *file, poll_table *wait);
 
 static const struct file_operations blktap_fops = {
 	.owner   = THIS_MODULE,
 	.poll    = blktap_poll,
-	.ioctl   = blktap_ioctl,
+	.unlocked_ioctl = blktap_ioctl,
 	.open    = blktap_open,
 	.release = blktap_release,
+	.llseek  = no_llseek,
 	.mmap    = blktap_mmap,
 };
 
@@ -569,6 +570,8 @@ static int blktap_open(struct inode *inode, struct file *filp)
 	tap_blkif_t *info;
 	int i;
 	
+	nonseekable_open(inode, filp);
+
 	/* ctrl device, treat differently */
 	if (!idx)
 		return 0;
@@ -753,8 +756,8 @@ static int blktap_mmap(struct file *filp, struct vm_area_struct *vma)
 }
 
 
-static int blktap_ioctl(struct inode *inode, struct file *filp,
-                        unsigned int cmd, unsigned long arg)
+static long blktap_ioctl(struct file *filp, unsigned int cmd,
+			 unsigned long arg)
 {
 	tap_blkif_t *info = filp->private_data;
 
@@ -1768,3 +1771,4 @@ static int __init blkif_init(void)
 module_init(blkif_init);
 
 MODULE_LICENSE("Dual BSD/GPL");
+MODULE_ALIAS("devname:xen/blktap0");

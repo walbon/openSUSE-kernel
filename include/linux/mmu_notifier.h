@@ -154,7 +154,7 @@ struct mmu_notifier_ops {
  * Therefore notifier chains can only be traversed when either
  *
  * 1. mmap_sem is held.
- * 2. One of the reverse map locks is held (i_mmap_lock or anon_vma->lock).
+ * 2. One of the reverse map locks is held (i_mmap_mutex or anon_vma->mutex).
  * 3. No other concurrent thread can access the list (release)
  */
 struct mmu_notifier {
@@ -251,7 +251,7 @@ static inline void mmu_notifier_mm_destroy(struct mm_struct *mm)
 
 /*
  * These two macros will sometime replace ptep_clear_flush.
- * ptep_clear_flush is impleemnted as macro itself, so this also is
+ * ptep_clear_flush is implemented as macro itself, so this also is
  * implemented as a macro until ptep_clear_flush will converted to an
  * inline function, to diminish the risk of compilation failure. The
  * invalidate_page method over time can be moved outside the PT lock

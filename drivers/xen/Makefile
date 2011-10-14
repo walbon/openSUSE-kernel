@@ -1,30 +1,50 @@
-obj-$(CONFIG_PARAVIRT_XEN)	+= grant-table.o features.o events.o manage.o
+obj-$(CONFIG_PARAVIRT_XEN)	+= grant-table.o features.o events.o manage.o balloon.o
+xen-biomerge-$(CONFIG_PARAVIRT_XEN) := biomerge.o
 xen-hotplug-$(CONFIG_PARAVIRT_XEN) := cpu_hotplug.o
-xen-balloon-$(CONFIG_PARAVIRT_XEN) := balloon.o
+xen-balloon_$(CONFIG_PARAVIRT_XEN) := xen-balloon.o
+xen-evtchn-name-$(CONFIG_PARAVIRT_XEN) := xen-evtchn
 
-xen-balloon-$(CONFIG_XEN)	:= balloon/
+xen-balloon_$(CONFIG_XEN)	:= balloon/
 obj-$(CONFIG_XEN)		+= core/
 obj-$(CONFIG_XEN)		+= console/
 obj-y				+= xenbus/
 obj-$(CONFIG_XEN)		+= char/
 
 xen-backend-$(CONFIG_XEN_BACKEND)	:= util.o
+xen-evtchn-name-$(CONFIG_XEN)		:= evtchn
 
 nostackp := $(call cc-option, -fno-stack-protector)
 ifeq ($(CONFIG_PARAVIRT_XEN),y)
 CFLAGS_features.o			:= $(nostackp)
 endif
 
+priv-$(CONFIG_PCI)			:= pci.o
+
 obj-$(CONFIG_XEN)			+= features.o $(xen-backend-y) $(xen-backend-m)
+obj-$(CONFIG_XEN_PRIVILEGED_GUEST)	+= $(priv-y)
+obj-$(CONFIG_BLOCK)			+= $(xen-biomerge-y)
 obj-$(CONFIG_HOTPLUG_CPU)		+= $(xen-hotplug-y)
 obj-$(CONFIG_XEN_XENCOMM)		+= xencomm.o
-obj-$(CONFIG_XEN_BALLOON)		+= $(xen-balloon-y)
-obj-$(CONFIG_XEN_DEV_EVTCHN)		+= evtchn.o
+obj-$(CONFIG_XEN_BALLOON)		+= $(xen-balloon_y)
+obj-$(CONFIG_XEN_DEV_EVTCHN)		+= $(xen-evtchn-name-y).o
+obj-$(CONFIG_XEN_GNTDEV)		+= xen-gntdev.o
 obj-$(CONFIG_XENFS)			+= xenfs/
+obj-$(CONFIG_XEN_GRANT_DEV_ALLOC)	+= xen-gntalloc.o
 obj-$(CONFIG_XEN_SYS_HYPERVISOR)	+= sys-hypervisor.o
+obj-$(CONFIG_XEN_PLATFORM_PCI)		+= xen-platform-pci.o
+obj-$(CONFIG_XEN_TMEM)			+= tmem.o
+obj-$(CONFIG_SWIOTLB_XEN)		+= swiotlb-xen.o
+obj-$(CONFIG_XEN_DOM0)			+= pci.o
+
+xen-evtchn-y				:= evtchn.o
+xen-gntdev-y				:= gntdev.o
+xen-gntalloc-y				:= gntalloc.o
+
+xen-platform-pci-y			:= platform-pci.o
+
 obj-$(CONFIG_XEN_BLKDEV_BACKEND)	+= blkback/
 obj-$(CONFIG_XEN_BLKDEV_TAP)		+= blktap/
-obj-$(CONFIG_XEN_BLKDEV_TAP2)           += blktap2/ blktap2-new/
+obj-$(CONFIG_XEN_BLKDEV_TAP2)		+= blktap2/ blktap2-new/
 obj-$(CONFIG_XEN_NETDEV_BACKEND)	+= netback/
 obj-$(CONFIG_XEN_TPMDEV_BACKEND)	+= tpmback/
 obj-$(CONFIG_XEN_BLKDEV_FRONTEND)	+= blkfront/

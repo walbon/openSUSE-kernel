@@ -375,27 +375,23 @@ void xencons_rx(char *buf, unsigned len)
 
 	for (i = 0; i < len; i++) {
 #ifdef CONFIG_MAGIC_SYSRQ
-		if (sysrq_on()) {
-			static unsigned long sysrq_requested;
+		static unsigned long sysrq_requested;
 
-			if (buf[i] == '\x0f') { /* ^O */
-				if (!sysrq_requested) {
-					sysrq_requested = jiffies;
-					continue; /* don't print sysrq key */
-				}
-				sysrq_requested = 0;
-			} else if (sysrq_requested) {
-				unsigned long sysrq_timeout =
-					sysrq_requested + HZ*2;
-				sysrq_requested = 0;
-				if (time_before(jiffies, sysrq_timeout)) {
-					spin_unlock_irqrestore(
-						&xencons_lock, flags);
-					handle_sysrq(buf[i], xencons_tty);
-					spin_lock_irqsave(
-						&xencons_lock, flags);
-					continue;
-				}
+		if (buf[i] == '\x0f') { /* ^O */
+			if (!sysrq_requested) {
+				sysrq_requested = jiffies;
+				continue; /* don't print sysrq key */
+			}
+			sysrq_requested = 0;
+		} else if (sysrq_requested) {
+			unsigned long sysrq_timeout = sysrq_requested + HZ*2;
+
+			sysrq_requested = 0;
+			if (time_before(jiffies, sysrq_timeout)) {
+				spin_unlock_irqrestore(&xencons_lock, flags);
+				handle_sysrq(buf[i]);
+				spin_lock_irqsave(&xencons_lock, flags);
+				continue;
 			}
 		}
 #endif

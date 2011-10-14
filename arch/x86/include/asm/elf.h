@@ -4,6 +4,7 @@
 /*
  * ELF register definitions..
  */
+#include <linux/thread_info.h>
 
 #include <asm/ptrace.h>
 #include <asm/user.h>
@@ -157,19 +158,6 @@ do {						\
 
 #define compat_elf_check_arch(x)	elf_check_arch_ia32(x)
 
-static inline void start_ia32_thread(struct pt_regs *regs, u32 ip, u32 sp)
-{
-	loadsegment(fs, 0);
-	loadsegment(ds, __USER32_DS);
-	loadsegment(es, __USER32_DS);
-	load_gs_index(0);
-	regs->ip = ip;
-	regs->sp = sp;
-	regs->flags = X86_EFLAGS_IF;
-	regs->cs = __USER32_CS;
-	regs->ss = __USER32_DS;
-}
-
 static inline void elf_common_init(struct thread_struct *t,
 				   struct pt_regs *regs, const u16 ds)
 {
@@ -183,19 +171,13 @@ static inline void elf_common_init(struct thread_struct *t,
 }
 
 #define ELF_PLAT_INIT(_r, load_addr)			\
-do {							\
-	elf_common_init(&current->thread, _r, 0);	\
-	clear_thread_flag(TIF_IA32);			\
-} while (0)
+	elf_common_init(&current->thread, _r, 0)
 
 #define	COMPAT_ELF_PLAT_INIT(regs, load_addr)		\
 	elf_common_init(&current->thread, regs, __USER_DS)
 
-#define	compat_start_thread(regs, ip, sp)		\
-do {							\
-	start_ia32_thread(regs, ip, sp);		\
-	set_fs(USER_DS);				\
-} while (0)
+void start_thread_ia32(struct pt_regs *regs, u32 new_ip, u32 new_sp);
+#define compat_start_thread start_thread_ia32
 
 void set_personality_ia32(void);
 #define COMPAT_SET_PERSONALITY(ex) set_personality_ia32()
@@ -249,7 +231,6 @@ extern int force_personality32;
 #endif /* !CONFIG_X86_32 */
 
 #define CORE_DUMP_USE_REGSET
-#define USE_ELF_CORE_DUMP
 #define ELF_EXEC_PAGESIZE	4096
 
 /* This is the location that an ET_DYN program is loaded if exec'ed.  Typical
@@ -340,4 +321,34 @@ extern int syscall32_setup_pages(struct linux_binprm *, int exstack);
 extern unsigned long arch_randomize_brk(struct mm_struct *mm);
 #define arch_randomize_brk arch_randomize_brk
 
+/*
+ * True on X86_32 or when emulating IA32 on X86_64
+ */
+static inline int mmap_is_ia32(void)
+{
+#ifdef CONFIG_X86_32
+	return 1;
+#endif
+#ifdef CONFIG_IA32_EMULATION
+	if (test_thread_flag(TIF_IA32))
+		return 1;
+#endif
+	return 0;
+}
+
+/* The first two values are special, do not change. See align_addr() */
+enum align_flags {
+	ALIGN_VA_32	= BIT(0),
+	ALIGN_VA_64	= BIT(1),
+	ALIGN_VDSO	= BIT(2),
+	ALIGN_TOPDOWN	= BIT(3),
+};
+
+struct va_alignment {
+	int flags;
+	unsigned long mask;
+} ____cacheline_aligned;
+
+extern struct va_alignment va_align;
+extern unsigned long align_addr(unsigned long, struct file *, enum align_flags);
 #endif /* _ASM_X86_ELF_H */

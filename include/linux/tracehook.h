@@ -142,6 +142,14 @@ static inline void tracehook_report_syscall_exit(struct pt_regs *regs, int step)
 {
 	if (task_utrace_flags(current) & UTRACE_EVENT(SYSCALL_EXIT))
 		utrace_report_syscall_exit(regs);
+
+	if (step) {
+		siginfo_t info;
+		user_single_step_siginfo(current, regs, &info);
+		force_sig_info(SIGTRAP, &info, current);
+		return;
+	}
+
 	ptrace_report_syscall(regs);
 }
 
@@ -151,7 +159,7 @@ static inline void tracehook_report_syscall_exit(struct pt_regs *regs, int step)
  *
  * Return %LSM_UNSAFE_* bits applied to an exec because of tracing.
  *
- * @task->cred_guard_mutex is held by the caller through the do_execve().
+ * @task->signal->cred_guard_mutex is held by the caller through the do_execve().
  */
 static inline int tracehook_unsafe_exec(struct task_struct *task)
 {
@@ -170,7 +178,7 @@ static inline int tracehook_unsafe_exec(struct task_struct *task)
  * tracehook_tracer_task - return the task that is tracing the given task
  * @tsk:		task to consider
  *
- * Returns NULL if noone is tracing @task, or the &struct task_struct
+ * Returns NULL if no one is tracing @task, or the &struct task_struct
  * pointer to its tracer.
  *
  * Must called under rcu_read_lock().  The pointer returned might be kept
@@ -227,6 +235,31 @@ static inline void tracehook_report_exit(long *exit_code)
 }
 
 /**
+ * tracehook_init_task - task_struct has just been copied
+ * @task:		new &struct task_struct just copied from parent
+ *
+ * Called from do_fork() when @task has just been duplicated.
+ * After this, @task will be passed to tracehook_free_task()
+ * even if the rest of its setup fails before it is fully created.
+ */
+static inline void tracehook_init_task(struct task_struct *task)
+{
+	utrace_init_task(task);
+}
+
+/**
+ * tracehook_free_task - task_struct is being freed
+ * @task:		dead &struct task_struct being freed
+ *
+ * Called from free_task() when @task is no longer in use.
+ */
+static inline void tracehook_free_task(struct task_struct *task)
+{
+	if (task_utrace_struct(task))
+		utrace_free_task(task);
+}
+
+/**
  * tracehook_prepare_clone - prepare for new child to be cloned
  * @clone_flags:	%CLONE_* flags from clone/fork/vfork system call
  *
@@ -266,7 +299,6 @@ static inline int tracehook_prepare_clone(unsigned clone_flags)
 static inline void tracehook_finish_clone(struct task_struct *child,
 					  unsigned long clone_flags, int trace)
 {
-	utrace_init_task(child);
 	ptrace_init_task(child, (clone_flags & CLONE_PTRACE) || trace);
 }
 
@@ -365,7 +397,7 @@ static inline void tracehook_prepare_release_task(struct task_struct *task)
 	/* see utrace_add_engine() about this barrier */
 	smp_mb();
 	if (task_utrace_flags(task))
-		utrace_release_task(task);
+		utrace_maybe_reap(task, task_utrace_struct(task), true);
 }
 
 /**
@@ -473,7 +505,7 @@ static inline int tracehook_force_sigpending(void)
  *
  * Return zero to check for a real pending signal normally.
  * Return -1 after releasing the siglock to repeat the check.
- * Return a signal number to induce an artifical signal delivery,
+ * Return a signal number to induce an artificial signal delivery,
  * setting *@info and *@return_ka to specify its details and behavior.
  *
  * The @return_ka->sa_handler value controls the disposition of the
@@ -496,35 +528,6 @@ static inline int tracehook_get_signal(struct task_struct *task,
 }
 
 /**
- * tracehook_notify_jctl - report about job control stop/continue
- * @notify:		zero, %CLD_STOPPED or %CLD_CONTINUED
- * @why:		%CLD_STOPPED or %CLD_CONTINUED
- *
- * This is called when we might call do_notify_parent_cldstop().
- *
- * @notify is zero if we would not ordinarily send a %SIGCHLD,
- * or is the %CLD_STOPPED or %CLD_CONTINUED .si_code for %SIGCHLD.
- *
- * @why is %CLD_STOPPED when about to stop for job control;
- * we are already in %TASK_STOPPED state, about to call schedule().
- * It might also be that we have just exited (check %PF_EXITING),
- * but need to report that a group-wide stop is complete.
- *
- * @why is %CLD_CONTINUED when waking up after job control stop and
- * ready to make a delayed @notify report.
- *
- * Return the %CLD_* value for %SIGCHLD, or zero to generate no signal.
- *
- * Called with the siglock held.
- */
-static inline int tracehook_notify_jctl(int notify, int why)
-{
-	if (task_utrace_flags(current) & UTRACE_EVENT(JCTL))
-		utrace_report_jctl(notify, why);
-	return notify ?: (current->ptrace & PT_PTRACED) ? why : 0;
-}
-
-/**
  * tracehook_finish_jctl - report about return from job control stop
  *
  * This is called by do_signal_stop() after wakeup.
@@ -532,7 +535,7 @@ static inline int tracehook_notify_jctl(int notify, int why)
 static inline void tracehook_finish_jctl(void)
 {
 	if (task_utrace_flags(current))
-		utrace_finish_jctl();
+		utrace_finish_stop();
 }
 
 #define DEATH_REAP			-1
@@ -594,17 +597,12 @@ static inline void tracehook_report_death(struct task_struct *task,
 					  int group_dead)
 {
 	/*
-	 * This barrier ensures that our caller's setting of
-	 * @task->exit_state precedes checking @task->utrace_flags here.
 	 * If utrace_set_events() was just called to enable
 	 * UTRACE_EVENT(DEATH), then we are obliged to call
 	 * utrace_report_death() and not miss it.  utrace_set_events()
-	 * uses tasklist_lock to synchronize enabling the bit with the
-	 * actual change to @task->exit_state, but we need this barrier
-	 * to be sure we see a flags change made just before our caller
-	 * took the tasklist_lock.
+	 * checks @task->exit_state under tasklist_lock to synchronize
+	 * with exit_notify(), the caller.
 	 */
-	smp_mb();
 	if (task_utrace_flags(task) & _UTRACE_DEATH_EVENTS)
 		utrace_report_death(task, death_cookie, group_dead, signal);
 }
@@ -643,11 +641,12 @@ static inline void tracehook_notify_resume(struct pt_regs *regs)
 {
 	struct task_struct *task = current;
 	/*
-	 * This pairs with the barrier implicit in set_notify_resume().
-	 * It ensures that we read the nonzero utrace_flags set before
-	 * set_notify_resume() was called by utrace setup.
+	 * Prevent the following store/load from getting ahead of the
+	 * caller which clears TIF_NOTIFY_RESUME. This pairs with the
+	 * implicit mb() before setting TIF_NOTIFY_RESUME in
+	 * set_notify_resume().
 	 */
-	smp_rmb();
+	smp_mb();
 	if (task_utrace_flags(task))
 		utrace_resume(task, regs);
 }

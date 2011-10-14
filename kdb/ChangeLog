@@ -1,3 +1,16 @@
+2011-09-20  Cliff Wickman  <cpw@sgi.com>
+
+	* ports KDB to the 3.0 kernel
+	*  kdb-v4.4-3.1-common-1
+	*  kdb-v4.4-3.1-x86-1
+	*  kdb-v4.4-3.1-ia64-1
+	* reset kdb_trap_printk for catastrophic events
+	* add registers of connected tasks to the backtrace
+	* allow kdb_help to display help for a single command
+	* add command pshelp to display help for process state flags
+	* added help when setting an breakpoint fails
+	* separate USB keyboard support into patch kdb-v4.4-3.1-usb-1
+
 2008-11-26 Jay Lan  <jlan@sgi.com>
 
 	* kdb-v4.4-2.6.28-rc6-common-1.
@@ -352,7 +365,7 @@
 
 2007-07-17 Keith Owens  <kaos@sgi.com>
 
-	* Make kdb_printf_lock an irq lock to keep lockdep happy.
+	* Make lkdb_printf_lock an irq lock to keep lockdep happy.
 	* kdb v4.4-2.6.22-common-3.
 
 2007-07-13 Keith Owens  <kaos@sgi.com>
@@ -806,7 +819,7 @@
 
 2005-11-15 Keith Owens  <kaos@sgi.com>
 
-	* Allow kdb_printf() to be used outside kdb, in preemptible context.
+	* Allow lkdb_printf() to be used outside kdb, in preemptible context.
 	* Build with CONFIG_SWAP=n.  Reported by Leo Yuriev.
 	* kdb v4.4-2.6.14-common-2.
 
@@ -1354,7 +1367,7 @@
 	* Add CONFIG_KDB_CONTINUE_CATASTROPHIC.
 	* Wait a short interval for cpus to join kdb before proceeding.
 	* Automatically enable sysrq for sr command.
-	* Correct double free of kdb_printf lock, spotted by Richard Sanders.
+	* Correct double free of lkdb_printf lock, spotted by Richard Sanders.
 	* Add optional cpu parameter to btc command.
 	* kdb v4.3-2.4.20-common-1.
 
@@ -1727,7 +1740,7 @@
 
 2000-10-13 Keith Owens  <kaos@melbourne.sgi.com>
 
-	* kdb/kdbmain.c: Reduce CMD_LEN to avoid overflowing kdb_printf buffer.
+	* kdb/kdbmain.c: Reduce CMD_LEN to avoid overflowing lkdb_printf buffer.
 
 2000-10-11 Keith Owens  <kaos@melbourne.sgi.com>
 
@@ -1923,7 +1936,7 @@
 
 	* kdb/kdbmain.c (kdb_parse): Allow watchdog in commands.
 
-	* kdb/kdb_io.c (kdb_printf): No watchdog during printing.  Clean up lock handling.
+	* kdb/kdb_io.c (lkdb_printf): No watchdog during printing.  Clean up lock handling.
 
 	* kdb/kdbmain.c (kdb_set): Clean up debug flag handling.
 
@@ -2023,7 +2036,7 @@
 
 	* kdb/kdbmain.c (kdb_init): add Keith Owens to kdb banner.
 
-	* kdb/kdb_io.c (kdb_printf): serialize kdb_printf output.
+	* kdb/kdb_io.c (lkdb_printf): serialize kdb_printf output.
 
 	* kdb/kdb_bt.c (kdb_bt): check environment variable BTAPROMPT.
 

@@ -355,9 +355,9 @@ i915_gem_execbuffer_relocate_entry(struct drm_i915_gem_object *obj,
 		uint32_t page_offset = reloc->offset & ~PAGE_MASK;
 		char *vaddr;
 
-		vaddr = kmap_atomic(obj->pages[reloc->offset >> PAGE_SHIFT], KM_USER0);
+		vaddr = kmap_atomic(obj->pages[reloc->offset >> PAGE_SHIFT]);
 		*(uint32_t *)(vaddr + page_offset) = reloc->delta;
-		kunmap_atomic(vaddr, KM_USER0);
+		kunmap_atomic(vaddr);
 	} else {
 		struct drm_i915_private *dev_priv = dev->dev_private;
 		uint32_t __iomem *reloc_entry;
@@ -374,12 +374,11 @@ i915_gem_execbuffer_relocate_entry(struct drm_i915_gem_object *obj,
 		/* Map the page containing the relocation we're going to perform.  */
 		reloc->offset += obj->gtt_offset;
 		reloc_page = io_mapping_map_atomic_wc(dev_priv->mm.gtt_mapping,
-						      reloc->offset & PAGE_MASK,
-						      KM_USER0);
+						      reloc->offset & PAGE_MASK);
 		reloc_entry = (uint32_t __iomem *)
 			(reloc_page + (reloc->offset & ~PAGE_MASK));
 		iowrite32(reloc->delta, reloc_entry);
-		io_mapping_unmap_atomic(reloc_page, KM_USER0);
+		io_mapping_unmap_atomic(reloc_page);
 	}
 
 	/* and update the user's relocation entry */

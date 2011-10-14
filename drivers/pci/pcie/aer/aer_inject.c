@@ -1,7 +1,7 @@
 /*
- * PCIE AER software error injection support.
+ * PCIe AER software error injection support.
  *
- * Debuging PCIE AER code is quite difficult because it is hard to
+ * Debuging PCIe AER code is quite difficult because it is hard to
  * trigger various real hardware errors. Software based error
  * injection can fake almost all kinds of errors with the help of a
  * user space helper tool aer-inject, which can be gotten from:
@@ -21,10 +21,15 @@
 #include <linux/init.h>
 #include <linux/miscdevice.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/stddef.h>
 #include "aerdrv.h"
+
+/* Override the existing corrected and uncorrected error masks */
+static int aer_mask_override;
+module_param(aer_mask_override, bool, 0);
 
 struct aer_error_inj {
 	u8 bus;
@@ -167,7 +172,7 @@ static u32 *find_pci_config_dword(struct aer_error *err, int where,
 		target = &err->root_status;
 		rw1cs = 1;
 		break;
-	case PCI_ERR_ROOT_COR_SRC:
+	case PCI_ERR_ROOT_ERR_SRC:
 		target = &err->source_id;
 		break;
 	}
@@ -281,7 +286,7 @@ out:
 static struct pci_dev *pcie_find_root_port(struct pci_dev *dev)
 {
 	while (1) {
-		if (!dev->is_pcie)
+		if (!pci_is_pcie(dev))
 			break;
 		if (dev->pcie_type == PCI_EXP_TYPE_ROOT_PORT)
 			return dev;
@@ -321,21 +326,21 @@ static int aer_inject(struct aer_error_inj *einj)
 	unsigned long flags;
 	unsigned int devfn = PCI_DEVFN(einj->dev, einj->fn);
 	int pos_cap_err, rp_pos_cap_err;
-	u32 sever, cor_mask, uncor_mask;
+	u32 sever, cor_mask, uncor_mask, cor_mask_orig = 0, uncor_mask_orig = 0;
 	int ret = 0;
 
 	dev = pci_get_domain_bus_and_slot((int)einj->domain, einj->bus, devfn);
 	if (!dev)
-		return -EINVAL;
+		return -ENODEV;
 	rpdev = pcie_find_root_port(dev);
 	if (!rpdev) {
-		ret = -EINVAL;
+		ret = -ENOTTY;
 		goto out_put;
 	}
 
 	pos_cap_err = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR);
 	if (!pos_cap_err) {
-		ret = -EIO;
+		ret = -ENOTTY;
 		goto out_put;
 	}
 	pci_read_config_dword(dev, pos_cap_err + PCI_ERR_UNCOR_SEVER, &sever);
@@ -345,7 +350,7 @@ static int aer_inject(struct aer_error_inj *einj)
 
 	rp_pos_cap_err = pci_find_ext_capability(rpdev, PCI_EXT_CAP_ID_ERR);
 	if (!rp_pos_cap_err) {
-		ret = -EIO;
+		ret = -ENOTTY;
 		goto out_put;
 	}
 
@@ -358,6 +363,18 @@ static int aer_inject(struct aer_error_inj *einj)
 	if (!rperr_alloc) {
 		ret = -ENOMEM;
 		goto out_put;
+	}
+
+	if (aer_mask_override) {
+		cor_mask_orig = cor_mask;
+		cor_mask &= !(einj->cor_status);
+		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_COR_MASK,
+				       cor_mask);
+
+		uncor_mask_orig = uncor_mask;
+		uncor_mask &= !(einj->uncor_status);
+		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_UNCOR_MASK,
+				       uncor_mask);
 	}
 
 	spin_lock_irqsave(&inject_lock, flags);
@@ -377,14 +394,16 @@ static int aer_inject(struct aer_error_inj *einj)
 	err->header_log2 = einj->header_log2;
 	err->header_log3 = einj->header_log3;
 
-	if (einj->cor_status && !(einj->cor_status & ~cor_mask)) {
+	if (!aer_mask_override && einj->cor_status &&
+	    !(einj->cor_status & ~cor_mask)) {
 		ret = -EINVAL;
 		printk(KERN_WARNING "The correctable error(s) is masked "
 				"by device\n");
 		spin_unlock_irqrestore(&inject_lock, flags);
 		goto out_put;
 	}
-	if (einj->uncor_status && !(einj->uncor_status & ~uncor_mask)) {
+	if (!aer_mask_override && einj->uncor_status &&
+	    !(einj->uncor_status & ~uncor_mask)) {
 		ret = -EINVAL;
 		printk(KERN_WARNING "The uncorrectable error(s) is masked "
 				"by device\n");
@@ -423,6 +442,13 @@ static int aer_inject(struct aer_error_inj *einj)
 		rperr->source_id |= ((einj->bus << 8) | devfn) << 16;
 	}
 	spin_unlock_irqrestore(&inject_lock, flags);
+
+	if (aer_mask_override) {
+		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_COR_MASK,
+				       cor_mask_orig);
+		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_UNCOR_MASK,
+				       uncor_mask_orig);
+	}
 
 	ret = pci_bus_set_aer_ops(dev->bus);
 	if (ret)
@@ -471,6 +497,7 @@ static ssize_t aer_inject_write(struct file *filp, const char __user *ubuf,
 static const struct file_operations aer_inject_fops = {
 	.write = aer_inject_write,
 	.owner = THIS_MODULE,
+	.llseek = noop_llseek,
 };
 
 static struct miscdevice aer_inject_device = {
@@ -498,7 +525,7 @@ static void __exit aer_inject_exit(void)
 	}
 
 	spin_lock_irqsave(&inject_lock, flags);
-	list_for_each_entry_safe(err, err_next, &pci_bus_ops_list, list) {
+	list_for_each_entry_safe(err, err_next, &einjected, list) {
 		list_del(&err->list);
 		kfree(err);
 	}
@@ -508,5 +535,5 @@ static void __exit aer_inject_exit(void)
 module_init(aer_inject_init);
 module_exit(aer_inject_exit);
 
-MODULE_DESCRIPTION("PCIE AER software error injector");
+MODULE_DESCRIPTION("PCIe AER software error injector");
 MODULE_LICENSE("GPL");

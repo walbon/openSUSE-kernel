@@ -330,10 +330,6 @@ struct vmxnet3_adapter {
 	u8			__iomem *hw_addr0; /* for BAR 0 */
 	u8			__iomem *hw_addr1; /* for BAR 1 */
 
-	/* feature control */
-	bool				rxcsum;
-	bool				lro;
-	bool				jumbo_frame;
 #ifdef VMXNET3_RSS
 	struct UPT1_RSSConf		*rss_conf;
 	bool				rss;
@@ -405,6 +401,9 @@ void
 vmxnet3_rq_destroy_all(struct vmxnet3_adapter *adapter);
 
 int
+vmxnet3_set_features(struct net_device *netdev, u32 features);
+
+int
 vmxnet3_create_queues(struct vmxnet3_adapter *adapter,
 		      u32 tx_ring_size, u32 rx_ring_size, u32 rx_ring2_size);
 
@@ -412,11 +411,4 @@ extern void vmxnet3_set_ethtool_ops(struct net_device *netdev);
 extern struct net_device_stats *vmxnet3_get_stats(struct net_device *netdev);
 
 extern char vmxnet3_driver_name[];
-
-/* compatibility stub */
-static inline int netif_set_real_num_rx_queues(struct net_device *dev, int num)
-{
-	return 0;
-}
-
 #endif

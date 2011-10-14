@@ -306,9 +306,15 @@ static void tx_queue_callback(unsigned long data)
 int netif_be_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	netif_t *netif = netdev_priv(dev);
+	unsigned int group = GET_GROUP_INDEX(netif);
 	struct xen_netbk *netbk;
 
 	BUG_ON(skb->dev != dev);
+
+	if (unlikely(group >= netbk_nr_groups)) {
+		BUG_ON(group != UINT_MAX);
+		goto drop;
+	}
 
 	/* Drop the packet if the target domain has no receive buffers. */
 	if (unlikely(!netif_schedulable(netif) || netbk_queue_full(netif)))
@@ -355,7 +361,7 @@ int netif_be_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		}
 	}
 
-	netbk = &xen_netbk[GET_GROUP_INDEX(netif)];
+	netbk = &xen_netbk[group];
 	skb_queue_tail(&netbk->rx_queue, skb);
 	netbk_schedule(netbk);
 
@@ -534,7 +540,7 @@ static int netbk_check_gop(int nr_frags, domid_t domid, struct netrx_pending_ope
 	multicall_entry_t *mcl;
 	gnttab_transfer_t *gop;
 	gnttab_copy_t     *copy_op;
-	int status = NETIF_RSP_OKAY;
+	int status = XEN_NETIF_RSP_OKAY;
 	int i;
 
 	for (i = 0; i <= nr_frags; i++) {
@@ -545,7 +551,7 @@ static int netbk_check_gop(int nr_frags, domid_t domid, struct netrx_pending_ope
 			if (unlikely(copy_op->status != GNTST_okay)) {
 				DPRINTK("Bad status %d from copy to DOM%d.\n",
 					copy_op->status, domid);
-				status = NETIF_RSP_ERROR;
+				status = XEN_NETIF_RSP_ERROR;
 			}
 		} else {
 			if (!xen_feature(XENFEAT_auto_translated_physmap)) {
@@ -565,7 +571,7 @@ static int netbk_check_gop(int nr_frags, domid_t domid, struct netrx_pending_ope
 				 * a fatal error anyway.
 				 */
 				BUG_ON(gop->status == GNTST_bad_page);
-				status = NETIF_RSP_ERROR;
+				status = XEN_NETIF_RSP_ERROR;
 			}
 		}
 	}
@@ -581,7 +587,7 @@ static void netbk_add_frag_responses(netif_t *netif, int status,
 
 	for (i = 0; i < nr_frags; i++) {
 		int id = meta[i].id;
-		int flags = (i == nr_frags - 1) ? 0 : NETRXF_more_data;
+		int flags = (i == nr_frags - 1) ? 0 : XEN_NETRXF_more_data;
 
 		if (meta[i].copy)
 			offset = 0;
@@ -720,14 +726,15 @@ static void net_rx_action(unsigned long group)
 		skb->dev->stats.tx_packets++;
 
 		id = netbk->meta[npo.meta_cons].id;
-		flags = nr_frags ? NETRXF_more_data : 0;
+		flags = nr_frags ? XEN_NETRXF_more_data : 0;
 
 		switch (skb->ip_summed) {
 		case CHECKSUM_PARTIAL: /* local packet? */
-			flags |= NETRXF_csum_blank | NETRXF_data_validated;
+			flags |= XEN_NETRXF_csum_blank |
+				 XEN_NETRXF_data_validated;
 			break;
 		case CHECKSUM_UNNECESSARY: /* remote but checksummed? */
-			flags |= NETRXF_data_validated;
+			flags |= XEN_NETRXF_data_validated;
 			break;
 		}
 
@@ -744,7 +751,7 @@ static void net_rx_action(unsigned long group)
 				RING_GET_RESPONSE(&netif->rx,
 						  netif->rx.rsp_prod_pvt++);
 
-			resp->flags |= NETRXF_extra_info;
+			resp->flags |= XEN_NETRXF_extra_info;
 
 			gso->u.gso.size = netbk->meta[npo.meta_cons].frag.size;
 			gso->u.gso.type = XEN_NETIF_GSO_TYPE_TCPV4;
@@ -1024,7 +1031,7 @@ inline static void net_tx_action_dealloc(struct xen_netbk *netbk)
 		netif = pending_tx_info[pending_idx].netif;
 
 		make_tx_response(netif, &pending_tx_info[pending_idx].req, 
-				 NETIF_RSP_OKAY);
+				 XEN_NETIF_RSP_OKAY);
 
 		/* Ready for next use. */
 		gnttab_reset_grant_page(netbk->mmap_pages[pending_idx]);
@@ -1043,7 +1050,7 @@ static void netbk_tx_err(netif_t *netif, netif_tx_request_t *txp, RING_IDX end)
 	RING_IDX cons = netif->tx.req_cons;
 
 	do {
-		make_tx_response(netif, txp, NETIF_RSP_ERROR);
+		make_tx_response(netif, txp, XEN_NETIF_RSP_ERROR);
 		if (cons >= end)
 			break;
 		txp = RING_GET_REQUEST(&netif->tx, cons++);
@@ -1059,7 +1066,7 @@ static int netbk_count_requests(netif_t *netif, netif_tx_request_t *first,
 	RING_IDX cons = netif->tx.req_cons;
 	int frags = 0;
 
-	if (!(first->flags & NETTXF_more_data))
+	if (!(first->flags & XEN_NETTXF_more_data))
 		return 0;
 
 	do {
@@ -1088,7 +1095,7 @@ static int netbk_count_requests(netif_t *netif, netif_tx_request_t *first,
 				txp->offset, txp->size);
 			return -frags;
 		}
-	} while ((txp++)->flags & NETTXF_more_data);
+	} while ((txp++)->flags & XEN_NETTXF_more_data);
 
 	return frags;
 }
@@ -1145,7 +1152,7 @@ static int netbk_tx_check_mop(struct xen_netbk *netbk, struct sk_buff *skb,
 		pending_ring_idx_t index = MASK_PEND_IDX(netbk->pending_prod++);
 
 		txp = &pending_tx_info[pending_idx].req;
-		make_tx_response(netif, txp, NETIF_RSP_ERROR);
+		make_tx_response(netif, txp, XEN_NETIF_RSP_ERROR);
 		netbk->pending_ring[index] = pending_idx;
 		netif_put(netif);
 	} else {
@@ -1177,7 +1184,7 @@ static int netbk_tx_check_mop(struct xen_netbk *netbk, struct sk_buff *skb,
 
 		/* Error on this fragment: respond to client with an error. */
 		txp = &pending_tx_info[pending_idx].req;
-		make_tx_response(netif, txp, NETIF_RSP_ERROR);
+		make_tx_response(netif, txp, XEN_NETIF_RSP_ERROR);
 		index = MASK_PEND_IDX(netbk->pending_prod++);
 		netbk->pending_ring[index] = pending_idx;
 		netif_put(netif);
@@ -1353,7 +1360,7 @@ static void net_tx_action(unsigned long group)
 		netif->tx.req_cons = ++i;
 
 		memset(extras, 0, sizeof(extras));
-		if (txreq.flags & NETTXF_extra_info) {
+		if (txreq.flags & XEN_NETTXF_extra_info) {
 			work_to_do = netbk_get_extras(netif, extras,
 						      work_to_do);
 			i = netif->tx.req_cons;
@@ -1493,9 +1500,9 @@ static void net_tx_action(unsigned long group)
 			netif_idx_release(netbk, pending_idx);
 		}
 
-		if (txp->flags & NETTXF_csum_blank)
+		if (txp->flags & XEN_NETTXF_csum_blank)
 			skb->ip_summed = CHECKSUM_PARTIAL;
-		else if (txp->flags & NETTXF_data_validated)
+		else if (txp->flags & XEN_NETTXF_data_validated)
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 		else
 			skb->ip_summed = CHECKSUM_NONE;
@@ -1610,8 +1617,8 @@ static void make_tx_response(netif_t *netif,
 	resp->id     = txp->id;
 	resp->status = st;
 
-	if (txp->flags & NETTXF_extra_info)
-		RING_GET_RESPONSE(&netif->tx, ++i)->status = NETIF_RSP_NULL;
+	if (txp->flags & XEN_NETTXF_extra_info)
+		RING_GET_RESPONSE(&netif->tx, ++i)->status = XEN_NETIF_RSP_NULL;
 
 	netif->tx.rsp_prod_pvt = ++i;
 	RING_PUSH_RESPONSES_AND_CHECK_NOTIFY(&netif->tx, notify);
@@ -1758,17 +1765,15 @@ static int __init netback_init(void)
 		netbk_nr_groups = MAX_GROUPS;
 
 	do {
-		xen_netbk = __vmalloc(netbk_nr_groups * sizeof(*xen_netbk),
-				      GFP_KERNEL|__GFP_HIGHMEM|__GFP_ZERO,
-				      PAGE_KERNEL);
+		xen_netbk = vzalloc(netbk_nr_groups * sizeof(*xen_netbk));
 	} while (!xen_netbk && (netbk_nr_groups >>= 1));
 	if (!xen_netbk) {
 		pr_err("%s: out of memory\n", __func__);
 		return -ENOMEM;
 	}
 	if (group && netbk_nr_groups != group)
-		pr_warning("netback: only using %u (instead of %u) groups\n",
-			   netbk_nr_groups, group);
+		pr_warn("netback: only using %u (instead of %u) groups\n",
+			netbk_nr_groups, group);
 
 	/* We can increase reservation by this much in net_rx_action(). */
 	balloon_update_driver_allowance(netbk_nr_groups * NET_RX_RING_SIZE);

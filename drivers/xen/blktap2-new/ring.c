@@ -376,9 +376,8 @@ fail:
 	return err;
 }
 
-static int
-blktap_ring_ioctl(struct inode *inode, struct file *filp,
-		  unsigned int cmd, unsigned long arg)
+static long
+blktap_ring_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct blktap *tap = filp->private_data;
 	struct blktap_ring *ring = &tap->ring;
@@ -444,7 +443,7 @@ static const struct file_operations blktap_ring_file_operations = {
 	.owner    = THIS_MODULE,
 	.open     = blktap_ring_open,
 	.release  = blktap_ring_release,
-	.ioctl    = blktap_ring_ioctl,
+	.unlocked_ioctl = blktap_ring_ioctl,
 	.mmap     = blktap_ring_mmap,
 	.poll     = blktap_ring_poll,
 };

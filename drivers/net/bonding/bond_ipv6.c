@@ -20,13 +20,15 @@
  *
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/types.h>
 #include <linux/if_vlan.h>
 #include <net/ipv6.h>
 #include <net/ndisc.h>
 #include <net/addrconf.h>
+#include <net/netns/generic.h>
 #include "bonding.h"
-#include "../bonding_ipv6_ops.h"
 
 /*
  * Assign bond->master_ipv6 to the next IPv6 address in the list, or
@@ -35,10 +37,6 @@
 static void bond_glean_dev_ipv6(struct net_device *dev, struct in6_addr *addr)
 {
 	struct inet6_dev *idev;
-	struct inet6_ifaddr *ifa;
-
-	if (!bonding_ipv6_ops->in6_dev_put)
-		return;
 
 	if (!dev)
 		return;
@@ -48,15 +46,17 @@ static void bond_glean_dev_ipv6(struct net_device *dev, struct in6_addr *addr)
 		return;
 
 	read_lock_bh(&idev->lock);
-	ifa = idev->addr_list;
-	if (ifa)
+	if (!list_empty(&idev->addr_list)) {
+		struct inet6_ifaddr *ifa
+			= list_first_entry(&idev->addr_list,
+					   struct inet6_ifaddr, if_list);
 		ipv6_addr_copy(addr, &ifa->addr);
-	else
+	} else
 		ipv6_addr_set(addr, 0, 0, 0, 0);
 
 	read_unlock_bh(&idev->lock);
 
-	bonding_ipv6_ops->in6_dev_put(idev);
+	in6_dev_put(idev);
 }
 
 static void bond_na_send(struct net_device *slave_dev,
@@ -70,13 +70,6 @@ static void bond_na_send(struct net_device *slave_dev,
 	};
 	struct sk_buff *skb;
 
-	/* The Ethernet header is built in ndisc_send_skb(), not
-	 * ndisc_build_skb(), so we cannot insert a VLAN tag.  Only an
-	 * out-of-line tag inserted by the hardware will work.
-	 */
-	if (vlan_id && !(slave_dev->features & NETIF_F_HW_VLAN_TX))
-		return;
-
 	icmp6h.icmp6_router = router;
 	icmp6h.icmp6_solicited = 0;
 	icmp6h.icmp6_override = 1;
@@ -84,25 +77,30 @@ static void bond_na_send(struct net_device *slave_dev,
 	addrconf_addr_solict_mult(daddr, &mcaddr);
 
 	pr_debug("ipv6 na on slave %s: dest %pI6, src %pI6\n",
-	       slave_dev->name, &mcaddr, daddr);
+		 slave_dev->name, &mcaddr, daddr);
 
-	skb = bonding_ipv6_ops->ndisc_build_skb(slave_dev, &mcaddr, daddr, &icmp6h, daddr,
+	skb = ndisc_build_skb(slave_dev, &mcaddr, daddr, &icmp6h, daddr,
 			      ND_OPT_TARGET_LL_ADDR);
 
 	if (!skb) {
-		pr_err(DRV_NAME ": NA packet allocation failed\n");
+		pr_err("NA packet allocation failed\n");
 		return;
 	}
 
 	if (vlan_id) {
+		/* The Ethernet header is not present yet, so it is
+		 * too early to insert a VLAN tag.  Force use of an
+		 * out-of-line tag here and let dev_hard_start_xmit()
+		 * insert it if the slave hardware can't.
+		 */
 		skb = __vlan_hwaccel_put_tag(skb, vlan_id);
 		if (!skb) {
-			pr_err(DRV_NAME ": failed to insert VLAN tag\n");
+			pr_err("failed to insert VLAN tag\n");
 			return;
 		}
 	}
 
-	bonding_ipv6_ops->ndisc_send_skb(skb, slave_dev, NULL, &mcaddr, daddr, &icmp6h);
+	ndisc_send_skb(skb, slave_dev, NULL, &mcaddr, daddr, &icmp6h);
 }
 
 /*
@@ -119,11 +117,8 @@ void bond_send_unsolicited_na(struct bonding *bond)
 	struct inet6_dev *idev;
 	int is_router;
 
-	if (!bonding_ipv6_ops->in6_dev_put)
-		return;
-
-	pr_debug("bond_send_unsol_na: bond %s slave %s\n", bond->dev->name,
-				slave ? slave->dev->name : "NULL");
+	pr_debug("%s: bond %s slave %s\n", bond->dev->name,
+		 __func__, slave ? slave->dev->name : "NULL");
 
 	if (!slave || !bond->send_unsol_na ||
 	    test_bit(__LINK_STATE_LINKWATCH_PENDING, &slave->dev->state))
@@ -131,14 +126,13 @@ void bond_send_unsolicited_na(struct bonding *bond)
 
 	bond->send_unsol_na--;
 
-
 	idev = in6_dev_get(bond->dev);
 	if (!idev)
 		return;
 
 	is_router = !!idev->cnf.forwarding;
 
-	bonding_ipv6_ops->in6_dev_put(idev);
+	in6_dev_put(idev);
 
 	if (!ipv6_addr_any(&bond->master_ipv6))
 		bond_na_send(slave->dev, &bond->master_ipv6, is_router, 0);
@@ -167,11 +161,9 @@ static int bond_inet6addr_event(struct notifier_block *this,
 	struct net_device *vlan_dev, *event_dev = ifa->idev->dev;
 	struct bonding *bond;
 	struct vlan_entry *vlan;
+	struct bond_net *bn = net_generic(dev_net(event_dev), bond_net_id);
 
-	if (dev_net(event_dev) != &init_net)
-		return NOTIFY_DONE;
-
-	list_for_each_entry(bond, &bond_dev_list, bond_list) {
+	list_for_each_entry(bond, &bn->dev_list, bond_list) {
 		if (bond->dev == event_dev) {
 			switch (event) {
 			case NETDEV_UP:
@@ -223,11 +215,11 @@ static struct notifier_block bond_inet6addr_notifier = {
 
 void bond_register_ipv6_notifier(void)
 {
-	bonding_ipv6_ops->register_inet6addr_notifier(&bond_inet6addr_notifier);
+	register_inet6addr_notifier(&bond_inet6addr_notifier);
 }
 
 void bond_unregister_ipv6_notifier(void)
 {
-	bonding_ipv6_ops->unregister_inet6addr_notifier(&bond_inet6addr_notifier);
+	unregister_inet6addr_notifier(&bond_inet6addr_notifier);
 }
 

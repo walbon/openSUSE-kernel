@@ -39,6 +39,7 @@
 #include <linux/ip.h>
 #include <linux/dma-mapping.h>
 #include <linux/jiffies.h>
+#include <linux/prefetch.h>
 #include <net/ipv6.h>
 #include <net/tcp.h>
 #include "cxgb4.h"
@@ -230,6 +231,7 @@ out_err:
 	return -ENOMEM;
 }
 
+#ifdef CONFIG_NEED_DMA_MAP_STATE
 static void unmap_skb(struct device *dev, const struct sk_buff *skb,
 		      const dma_addr_t *addr)
 {
@@ -256,25 +258,7 @@ static void deferred_unmap_destructor(struct sk_buff *skb)
 {
 	unmap_skb(skb->dev->dev.parent, skb, (dma_addr_t *)skb->head);
 }
-
-/**
- *	need_skb_unmap - does the platform need unmapping of sk_buffs?
- *
- *	Returns true if the platfrom needs sk_buff unmapping.  The compiler
- *	optimizes away unecessary code if this returns true.
- */
-static inline int need_skb_unmap(void)
-{
-	/*
-	 * This structure is used to tell if the platfrom needs buffer
-	 * unmapping by checking if DECLARE_PCI_UNMAP_ADDR defines anything.
-	 */
-	struct dummy {
-		DECLARE_PCI_UNMAP_ADDR(addr);
-	};
-
-	return sizeof(struct dummy) != 0;
-}
+#endif
 
 static void unmap_sgl(struct device *dev, const struct sk_buff *skb,
 		      const struct ulptx_sgl *sgl, const struct sge_txq *q)
@@ -352,12 +336,10 @@ static void free_tx_desc(struct adapter *adap, struct sge_txq *q,
 	unsigned int cidx = q->cidx;
 	struct device *dev = adap->pdev_dev;
 
-	const int need_unmap = need_skb_unmap() && unmap;
-
 	d = &q->sdesc[cidx];
 	while (n--) {
 		if (d->skb) {                       /* an SGL is present */
-			if (need_unmap)
+			if (unmap)
 				unmap_sgl(dev, d->skb, d->sgl, q);
 			kfree_skb(d->skb);
 			d->skb = NULL;
@@ -1301,12 +1283,10 @@ static void service_ofldq(struct sge_ofld_txq *q)
 			write_sgl(skb, &q->q, (void *)pos + hdr_len,
 				  pos + flits, hdr_len,
 				  (dma_addr_t *)skb->head);
-
-			if (need_skb_unmap()) {
-				skb->dev = q->adap->port[0];
-				skb->destructor = deferred_unmap_destructor;
-			}
-
+#ifdef CONFIG_NEED_DMA_MAP_STATE
+			skb->dev = q->adap->port[0];
+			skb->destructor = deferred_unmap_destructor;
+#endif
 			last_desc = q->q.pidx + ndesc - 1;
 			if (last_desc >= q->q.size)
 				last_desc -= q->q.size;
@@ -1548,20 +1528,15 @@ static void do_gro(struct sge_eth_rxq *rxq, const struct pkt_gl *gl,
 	skb->truesize += skb->data_len;
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
 	skb_record_rx_queue(skb, rxq->rspq.idx);
+	if (rxq->rspq.netdev->features & NETIF_F_RXHASH)
+		skb->rxhash = (__force u32)pkt->rsshdr.hash_val;
 
 	if (unlikely(pkt->vlan_ex)) {
-		struct port_info *pi = netdev_priv(rxq->rspq.netdev);
-		struct vlan_group *grp = pi->vlan_grp;
-
+		__vlan_hwaccel_put_tag(skb, ntohs(pkt->vlan));
 		rxq->stats.vlan_ex++;
-		if (likely(grp)) {
-			ret = vlan_gro_frags(&rxq->rspq.napi, grp,
-					     ntohs(pkt->vlan));
-			goto stats;
-		}
 	}
 	ret = napi_gro_frags(&rxq->rspq.napi);
-stats:	if (ret == GRO_HELD)
+	if (ret == GRO_HELD)
 		rxq->stats.lro_pkts++;
 	else if (ret == GRO_MERGED || ret == GRO_MERGED_FREE)
 		rxq->stats.lro_merged++;
@@ -1582,7 +1557,6 @@ int t4_ethrx_handler(struct sge_rspq *q, const __be64 *rsp,
 {
 	bool csum_ok;
 	struct sk_buff *skb;
-	struct port_info *pi;
 	const struct cpl_rx_pkt *pkt;
 	struct sge_eth_rxq *rxq = container_of(q, struct sge_eth_rxq, rspq);
 
@@ -1607,11 +1581,12 @@ int t4_ethrx_handler(struct sge_rspq *q, const __be64 *rsp,
 	__skb_pull(skb, RX_PKT_PAD);      /* remove ethernet header padding */
 	skb->protocol = eth_type_trans(skb, q->netdev);
 	skb_record_rx_queue(skb, q->idx);
+	if (skb->dev->features & NETIF_F_RXHASH)
+		skb->rxhash = (__force u32)pkt->rsshdr.hash_val;
 
-	pi = netdev_priv(skb->dev);
 	rxq->stats.pkts++;
 
-	if (csum_ok && (pi->rx_offload & RX_CSO) &&
+	if (csum_ok && (q->netdev->features & NETIF_F_RXCSUM) &&
 	    (pkt->l2info & htonl(RXF_UDP | RXF_TCP))) {
 		if (!pkt->ip_frag) {
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
@@ -1626,16 +1601,10 @@ int t4_ethrx_handler(struct sge_rspq *q, const __be64 *rsp,
 		skb_checksum_none_assert(skb);
 
 	if (unlikely(pkt->vlan_ex)) {
-		struct vlan_group *grp = pi->vlan_grp;
-
+		__vlan_hwaccel_put_tag(skb, ntohs(pkt->vlan));
 		rxq->stats.vlan_ex++;
-		if (likely(grp))
-			vlan_hwaccel_receive_skb(skb, grp, ntohs(pkt->vlan));
-		else
-			dev_kfree_skb_any(skb);
-	} else
-		netif_receive_skb(skb);
-
+	}
+	netif_receive_skb(skb);
 	return 0;
 }
 

@@ -190,7 +190,8 @@ s32 e1000_check_alt_mac_addr_generic(struct e1000_hw *hw)
 	/* Check for LOM (vs. NIC) or one of two valid mezzanine cards */
 	if (!((nvm_data & NVM_COMPAT_LOM) ||
 	      (hw->adapter->pdev->device == E1000_DEV_ID_82571EB_SERDES_DUAL) ||
-	      (hw->adapter->pdev->device == E1000_DEV_ID_82571EB_SERDES_QUAD)))
+	      (hw->adapter->pdev->device == E1000_DEV_ID_82571EB_SERDES_QUAD) ||
+	      (hw->adapter->pdev->device == E1000_DEV_ID_82571EB_SERDES)))
 		goto out;
 
 	ret_val = e1000_read_nvm(hw, NVM_ALT_MAC_ADDR_PTR, 1,
@@ -533,7 +534,7 @@ s32 e1000e_check_for_fiber_link(struct e1000_hw *hw)
 			mac->autoneg_failed = 1;
 			return 0;
 		}
-		e_dbg("NOT RXing /C/, disable AutoNeg and force link.\n");
+		e_dbg("NOT Rx'ing /C/, disable AutoNeg and force link.\n");
 
 		/* Disable auto-negotiation in the TXCW register */
 		ew32(TXCW, (mac->txcw & ~E1000_TXCW_ANE));
@@ -556,7 +557,7 @@ s32 e1000e_check_for_fiber_link(struct e1000_hw *hw)
 		 * and disable forced link in the Device Control register
 		 * in an attempt to auto-negotiate with our link partner.
 		 */
-		e_dbg("RXing /C/, enable AutoNeg and stop forcing link.\n");
+		e_dbg("Rx'ing /C/, enable AutoNeg and stop forcing link.\n");
 		ew32(TXCW, mac->txcw);
 		ew32(CTRL, (ctrl & ~E1000_CTRL_SLU));
 
@@ -598,7 +599,7 @@ s32 e1000e_check_for_serdes_link(struct e1000_hw *hw)
 			mac->autoneg_failed = 1;
 			return 0;
 		}
-		e_dbg("NOT RXing /C/, disable AutoNeg and force link.\n");
+		e_dbg("NOT Rx'ing /C/, disable AutoNeg and force link.\n");
 
 		/* Disable auto-negotiation in the TXCW register */
 		ew32(TXCW, (mac->txcw & ~E1000_TXCW_ANE));
@@ -621,7 +622,7 @@ s32 e1000e_check_for_serdes_link(struct e1000_hw *hw)
 		 * and disable forced link in the Device Control register
 		 * in an attempt to auto-negotiate with our link partner.
 		 */
-		e_dbg("RXing /C/, enable AutoNeg and stop forcing link.\n");
+		e_dbg("Rx'ing /C/, enable AutoNeg and stop forcing link.\n");
 		ew32(TXCW, mac->txcw);
 		ew32(CTRL, (ctrl & ~E1000_CTRL_SLU));
 
@@ -800,9 +801,9 @@ static s32 e1000_commit_fc_settings_generic(struct e1000_hw *hw)
 	 * The possible values of the "fc" parameter are:
 	 *      0:  Flow control is completely disabled
 	 *      1:  Rx flow control is enabled (we can receive pause frames,
-	 *	  but not send pause frames).
+	 *          but not send pause frames).
 	 *      2:  Tx flow control is enabled (we can send pause frames but we
-	 *	  do not support receiving pause frames).
+	 *          do not support receiving pause frames).
 	 *      3:  Both Rx and Tx flow control (symmetric) are enabled.
 	 */
 	switch (hw->fc.current_mode) {
@@ -868,7 +869,7 @@ static s32 e1000_poll_fiber_serdes_link_generic(struct e1000_hw *hw)
 	 * milliseconds even if the other end is doing it in SW).
 	 */
 	for (i = 0; i < FIBER_LINK_UP_LIMIT; i++) {
-		msleep(10);
+		usleep_range(10000, 20000);
 		status = er32(STATUS);
 		if (status & E1000_STATUS_LU)
 			break;
@@ -930,7 +931,7 @@ s32 e1000e_setup_fiber_serdes_link(struct e1000_hw *hw)
 
 	ew32(CTRL, ctrl);
 	e1e_flush();
-	msleep(1);
+	usleep_range(1000, 2000);
 
 	/*
 	 * For these adapters, the SW definable pin 1 is set when the optics
@@ -1031,9 +1032,9 @@ s32 e1000e_force_mac_fc(struct e1000_hw *hw)
 	 * The possible values of the "fc" parameter are:
 	 *      0:  Flow control is completely disabled
 	 *      1:  Rx flow control is enabled (we can receive pause
-	 *	  frames but not send pause frames).
+	 *          frames but not send pause frames).
 	 *      2:  Tx flow control is enabled (we can send pause frames
-	 *	  frames but we do not receive pause frames).
+	 *          frames but we do not receive pause frames).
 	 *      3:  Both Rx and Tx flow control (symmetric) is enabled.
 	 *  other:  No other values should be possible at this point.
 	 */
@@ -1189,7 +1190,7 @@ s32 e1000e_config_fc_after_link_up(struct e1000_hw *hw)
 			} else {
 				hw->fc.current_mode = e1000_fc_rx_pause;
 				e_dbg("Flow Control = "
-					 "RX PAUSE frames only.\r\n");
+				      "Rx PAUSE frames only.\r\n");
 			}
 		}
 		/*
@@ -1385,7 +1386,7 @@ s32 e1000e_get_auto_rd_done(struct e1000_hw *hw)
 	while (i < AUTO_READ_DONE_TIMEOUT) {
 		if (er32(EECD) & E1000_EECD_AUTO_RD)
 			break;
-		msleep(1);
+		usleep_range(1000, 2000);
 		i++;
 	}
 
@@ -1530,12 +1531,12 @@ s32 e1000e_cleanup_led_generic(struct e1000_hw *hw)
 }
 
 /**
- *  e1000e_blink_led - Blink LED
+ *  e1000e_blink_led_generic - Blink LED
  *  @hw: pointer to the HW structure
  *
  *  Blink the LEDs which are set to be on.
  **/
-s32 e1000e_blink_led(struct e1000_hw *hw)
+s32 e1000e_blink_led_generic(struct e1000_hw *hw)
 {
 	u32 ledctl_blink = 0;
 	u32 i;
@@ -2087,8 +2088,6 @@ s32 e1000e_write_nvm_spi(struct e1000_hw *hw, u16 offset, u16 words, u16 *data)
 	if (ret_val)
 		return ret_val;
 
-	msleep(10);
-
 	while (widx < words) {
 		u8 write_opcode = NVM_WRITE_OPCODE_SPI;
 
@@ -2132,7 +2131,7 @@ s32 e1000e_write_nvm_spi(struct e1000_hw *hw, u16 offset, u16 words, u16 *data)
 		}
 	}
 
-	msleep(10);
+	usleep_range(10000, 20000);
 	nvm->ops.release(hw);
 	return 0;
 }

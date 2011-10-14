@@ -23,7 +23,6 @@
 #include <linux/mm.h>
 #include <linux/stddef.h>
 #include <linux/unistd.h>
-#include <linux/slab.h>
 #include <linux/user.h>
 #include <linux/tty.h>
 #include <linux/major.h>
@@ -55,9 +54,9 @@
 #include <asm/irq.h>
 #include <asm/time.h>
 #include <asm/nvram.h>
-#include "xics.h"
 #include <asm/pmc.h>
 #include <asm/mpic.h>
+#include <asm/xics.h>
 #include <asm/ppc-pci.h>
 #include <asm/i8259.h>
 #include <asm/udbg.h>
@@ -116,10 +115,13 @@ static void __init fwnmi_init(void)
 
 static void pseries_8259_cascade(unsigned int irq, struct irq_desc *desc)
 {
+	struct irq_chip *chip = irq_desc_get_chip(desc);
 	unsigned int cascade_irq = i8259_irq();
+
 	if (cascade_irq != NO_IRQ)
 		generic_handle_irq(cascade_irq);
-	desc->chip->eoi(irq);
+
+	chip->irq_eoi(&desc->irq_data);
 }
 
 static void __init pseries_setup_i8259_cascade(void)
@@ -168,7 +170,7 @@ static void __init pseries_setup_i8259_cascade(void)
 		printk(KERN_DEBUG "pic: PCI 8259 intack at 0x%016lx\n", intack);
 	i8259_init(found, intack);
 	of_node_put(found);
-	set_irq_chained_handler(cascade, pseries_8259_cascade);
+	irq_set_chained_handler(cascade, pseries_8259_cascade);
 }
 
 static void __init pseries_mpic_init_IRQ(void)
@@ -204,6 +206,9 @@ static void __init pseries_mpic_init_IRQ(void)
 		mpic_assign_isu(mpic, n, isuaddr);
 	}
 
+	/* Setup top-level get_irq */
+	ppc_md.get_irq = mpic_get_irq;
+
 	/* All ISUs are setup, complete initialization */
 	mpic_init(mpic);
 
@@ -213,7 +218,7 @@ static void __init pseries_mpic_init_IRQ(void)
 
 static void __init pseries_xics_init_IRQ(void)
 {
-	xics_init_IRQ();
+	xics_init();
 	pseries_setup_i8259_cascade();
 }
 
@@ -237,7 +242,6 @@ static void __init pseries_discover_pic(void)
 		if (strstr(typep, "open-pic")) {
 			pSeries_mpic_node = of_node_get(np);
 			ppc_md.init_IRQ       = pseries_mpic_init_IRQ;
-			ppc_md.get_irq        = mpic_get_irq;
 			setup_kexec_cpu_down_mpic();
 			smp_init_pseries_mpic();
 			return;
@@ -275,6 +279,8 @@ static struct notifier_block pci_dn_reconfig_nb = {
 	.notifier_call = pci_dn_reconfig_notifier,
 };
 
+struct kmem_cache *dtl_cache;
+
 #ifdef CONFIG_VIRT_CPU_ACCOUNTING
 /*
  * Allocate space for the dispatch trace log for all possible cpus
@@ -286,26 +292,20 @@ static int alloc_dispatch_logs(void)
 	int cpu, ret;
 	struct paca_struct *pp;
 	struct dtl_entry *dtl;
-	struct kmem_cache *dtl_cache;
 
 	if (!firmware_has_feature(FW_FEATURE_SPLPAR))
 		return 0;
 
-	dtl_cache = kmem_cache_create("dtl", DISPATCH_LOG_BYTES,
-						DISPATCH_LOG_BYTES, 0, NULL); 
-	if (!dtl_cache) {
-		pr_warning("Failed to create dispatch trace log buffer cache\n");
-		pr_warning("Stolen time statistics will be unreliable\n");
+	if (!dtl_cache)
 		return 0;
-	}
 
 	for_each_possible_cpu(cpu) {
 		pp = &paca[cpu];
 		dtl = kmem_cache_alloc(dtl_cache, GFP_KERNEL);
 		if (!dtl) {
-			pr_warning("Failed to allocate dispatch trace log for cpu %d\n",
+			pr_warn("Failed to allocate dispatch trace log for cpu %d\n",
 				cpu);
-			pr_warning("Stolen time statistics will be unreliable\n");
+			pr_warn("Stolen time statistics will be unreliable\n");
 			break;
 		}
 
@@ -325,15 +325,32 @@ static int alloc_dispatch_logs(void)
 	dtl->enqueue_to_dispatch_time = DISPATCH_LOG_BYTES;
 	ret = register_dtl(hard_smp_processor_id(), __pa(dtl));
 	if (ret)
-		pr_warning("DTL registration failed for boot cpu %d (%d)\n",
-			   smp_processor_id(), ret);
+		pr_warn("DTL registration failed for boot cpu %d (%d)\n",
+			smp_processor_id(), ret);
 	get_paca()->lppaca_ptr->dtl_enable_mask = 2;
 
 	return 0;
 }
-
-early_initcall(alloc_dispatch_logs);
+#else /* !CONFIG_VIRT_CPU_ACCOUNTING */
+static inline int alloc_dispatch_logs(void)
+{
+	return 0;
+}
 #endif /* CONFIG_VIRT_CPU_ACCOUNTING */
+
+static int alloc_dispatch_log_kmem_cache(void)
+{
+	dtl_cache = kmem_cache_create("dtl", DISPATCH_LOG_BYTES,
+						DISPATCH_LOG_BYTES, 0, NULL);
+	if (!dtl_cache) {
+		pr_warn("Failed to create dispatch trace log buffer cache\n");
+		pr_warn("Stolen time statistics will be unreliable\n");
+		return 0;
+	}
+
+	return alloc_dispatch_logs();
+}
+early_initcall(alloc_dispatch_log_kmem_cache);
 
 static void __init pSeries_setup_arch(void)
 {
@@ -388,7 +405,7 @@ static int __init pSeries_init_panel(void)
 
 	return 0;
 }
-arch_initcall(pSeries_init_panel);
+machine_arch_initcall(pseries, pSeries_init_panel);
 
 static int pseries_set_dabr(unsigned long dabr)
 {
@@ -572,13 +589,14 @@ static int __init pSeries_probe(void)
 }
 
 
-DECLARE_PER_CPU(unsigned long, smt_snooze_delay);
+DECLARE_PER_CPU(long, smt_snooze_delay);
 
 static void pseries_dedicated_idle_sleep(void)
 { 
 	unsigned int cpu = smp_processor_id();
 	unsigned long start_snooze;
 	unsigned long in_purr, out_purr;
+	long snooze = __get_cpu_var(smt_snooze_delay);
 
 	/*
 	 * Indicate to the HV that we are idle. Now would be
@@ -593,13 +611,12 @@ static void pseries_dedicated_idle_sleep(void)
 	 * has been checked recently.  If we should poll for a little
 	 * while, do so.
 	 */
-	if (__get_cpu_var(smt_snooze_delay)) {
-		start_snooze = get_tb() +
-			__get_cpu_var(smt_snooze_delay) * tb_ticks_per_usec;
+	if (snooze) {
+		start_snooze = get_tb() + snooze * tb_ticks_per_usec;
 		local_irq_enable();
 		set_thread_flag(TIF_POLLING_NRFLAG);
 
-		while (get_tb() < start_snooze) {
+		while ((snooze < 0) || (get_tb() < start_snooze)) {
 			if (need_resched() || cpu_is_offline(cpu))
 				goto out;
 			ppc64_runlatch_off();

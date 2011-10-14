@@ -9,20 +9,6 @@
 #include <asm/diag.h>
 
 /*
- * Diagnose 10: Release pages
- */
-void diag10(unsigned long addr)
-{
-	asm volatile(
-		"0:	diag	%0,%0,0x10\n"
-		"1:\n"
-		EX_TABLE(0b, 1b)
-		EX_TABLE(1b, 1b)
-  		: : "a" (addr));
-}
-EXPORT_SYMBOL(diag10);
-
-/*
  * Diagnose 14: Input spool file manipulation
  */
 int diag14(unsigned long rx, unsigned long ry1, unsigned long subcode)

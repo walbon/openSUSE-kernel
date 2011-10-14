@@ -22,7 +22,7 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Fabrice Marie <fabrice@netfilter.org>");
 
 static bool
-match(const struct sk_buff *skb, const struct xt_match_param *par)
+match(const struct sk_buff *skb, struct xt_action_param *par)
 {
 	const struct ipt_ipv4options_info *info = par->matchinfo;   /* match info for rule */
 	const struct iphdr *iph = ip_hdr(skb);
@@ -98,7 +98,7 @@ match(const struct sk_buff *skb, const struct xt_match_param *par)
 	return 1;
 }
 
-static bool checkentry(const struct xt_mtchk_param *par)
+static int checkentry(const struct xt_mtchk_param *par)
 {
 	const struct ipt_ipv4options_info *info = par->matchinfo;   /* match info for rule */
 	/* Now check the coherence of the data ... */
@@ -108,7 +108,7 @@ static bool checkentry(const struct xt_mtchk_param *par)
 	     ((info->options & IPT_IPV4OPTION_DONT_MATCH_TIMESTAMP) == IPT_IPV4OPTION_DONT_MATCH_TIMESTAMP) ||
 	     ((info->options & IPT_IPV4OPTION_DONT_MATCH_ROUTER_ALERT) == IPT_IPV4OPTION_DONT_MATCH_ROUTER_ALERT) ||
 	     ((info->options & IPT_IPV4OPTION_DONT_MATCH_ANY_OPT) == IPT_IPV4OPTION_DONT_MATCH_ANY_OPT)))
-		return 0; /* opposites */
+		return -EINVAL; /* opposites */
 	if (((info->options & IPT_IPV4OPTION_DONT_MATCH_ANY_OPT) == IPT_IPV4OPTION_DONT_MATCH_ANY_OPT) &&
 	    (((info->options & IPT_IPV4OPTION_MATCH_LSRR) == IPT_IPV4OPTION_MATCH_LSRR) ||
 	     ((info->options & IPT_IPV4OPTION_MATCH_SSRR) == IPT_IPV4OPTION_MATCH_SSRR) ||
@@ -116,26 +116,26 @@ static bool checkentry(const struct xt_mtchk_param *par)
 	     ((info->options & IPT_IPV4OPTION_MATCH_TIMESTAMP) == IPT_IPV4OPTION_MATCH_TIMESTAMP) ||
 	     ((info->options & IPT_IPV4OPTION_MATCH_ROUTER_ALERT) == IPT_IPV4OPTION_MATCH_ROUTER_ALERT) ||
 	     ((info->options & IPT_IPV4OPTION_MATCH_ANY_OPT) == IPT_IPV4OPTION_MATCH_ANY_OPT)))
-		return 0; /* opposites */
+		return -EINVAL; /* opposites */
 	if (((info->options & IPT_IPV4OPTION_MATCH_SSRR) == IPT_IPV4OPTION_MATCH_SSRR) &&
 	    ((info->options & IPT_IPV4OPTION_MATCH_LSRR) == IPT_IPV4OPTION_MATCH_LSRR))
-		return 0; /* cannot match in the same time loose and strict source routing */
+		return -EINVAL; /* cannot match in the same time loose and strict source routing */
 	if ((((info->options & IPT_IPV4OPTION_MATCH_SSRR) == IPT_IPV4OPTION_MATCH_SSRR) ||
 	     ((info->options & IPT_IPV4OPTION_MATCH_LSRR) == IPT_IPV4OPTION_MATCH_LSRR)) &&
 	    ((info->options & IPT_IPV4OPTION_DONT_MATCH_SRR) == IPT_IPV4OPTION_DONT_MATCH_SRR))
-		return 0; /* opposites */
+		return -EINVAL; /* opposites */
 	if (((info->options & IPT_IPV4OPTION_MATCH_RR) == IPT_IPV4OPTION_MATCH_RR) &&
 	    ((info->options & IPT_IPV4OPTION_DONT_MATCH_RR) == IPT_IPV4OPTION_DONT_MATCH_RR))
-		return 0; /* opposites */
+		return -EINVAL; /* opposites */
 	if (((info->options & IPT_IPV4OPTION_MATCH_TIMESTAMP) == IPT_IPV4OPTION_MATCH_TIMESTAMP) &&
 	    ((info->options & IPT_IPV4OPTION_DONT_MATCH_TIMESTAMP) == IPT_IPV4OPTION_DONT_MATCH_TIMESTAMP))
-		return 0; /* opposites */
+		return -EINVAL; /* opposites */
 	if (((info->options & IPT_IPV4OPTION_MATCH_ROUTER_ALERT) == IPT_IPV4OPTION_MATCH_ROUTER_ALERT) &&
 	    ((info->options & IPT_IPV4OPTION_DONT_MATCH_ROUTER_ALERT) == IPT_IPV4OPTION_DONT_MATCH_ROUTER_ALERT))
-		return 0; /* opposites */
+		return -EINVAL; /* opposites */
 
 	/* everything looks ok. */
-	return 1;
+	return 0;
 }
 
 static struct xt_match ipv4options_match = {

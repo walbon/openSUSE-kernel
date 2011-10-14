@@ -4,7 +4,6 @@
 #include <linux/sunrpc/debug.h>
 #include <linux/string.h>
 #include <net/ip_vs.h>
-#include <xen/sysctl.h>
 
 struct trans_ctl_table {
 	int			ctl_name;
@@ -105,9 +104,7 @@ static const struct trans_ctl_table trans_kern_table[] = {
 	{ KERN_MAX_LOCK_DEPTH,		"max_lock_depth" },
 	{ KERN_NMI_WATCHDOG,		"nmi_watchdog" },
 	{ KERN_PANIC_ON_NMI,		"panic_on_unrecovered_nmi" },
-	{ KERN_PANIC_ON_IO_NMI,		"panic_on_io_nmi" },
-	{ KERN_SETUID_DUMPABLE,		"suid_dumpable" },
-	{ KERN_DUMP_AFTER_NOTIFIER,	"dump_after_notifier" },
+	{ KERN_KDB,			"kdb" },
 	{}
 };
 
@@ -204,7 +201,6 @@ static const struct trans_ctl_table trans_net_ipv4_conf_vars_table[] = {
 	{ NET_IPV4_CONF_MC_FORWARDING,		"mc_forwarding" },
 
 	{ NET_IPV4_CONF_PROXY_ARP,		"proxy_arp" },
-	{ NET_IPV4_CONF_PROXY_ARP_PVLAN,	"proxy_arp_pvlan" },
 	{ NET_IPV4_CONF_ACCEPT_REDIRECTS,	"accept_redirects" },
 	{ NET_IPV4_CONF_SECURE_REDIRECTS,	"secure_redirects" },
 	{ NET_IPV4_CONF_SEND_REDIRECTS,		"send_redirects" },
@@ -225,8 +221,6 @@ static const struct trans_ctl_table trans_net_ipv4_conf_vars_table[] = {
 	{ NET_IPV4_CONF_PROMOTE_SECONDARIES,	"promote_secondaries" },
 	{ NET_IPV4_CONF_ARP_ACCEPT,		"arp_accept" },
 	{ NET_IPV4_CONF_ARP_NOTIFY,		"arp_notify" },
-	{ NET_IPV4_CONF_SRC_VMARK,		"src_valid_mark" },
-	{ NET_IPV4_CONF_ACCEPT_LOCAL,		"accept_local" },
 	{}
 };
 
@@ -900,14 +894,6 @@ static const struct trans_ctl_table trans_bus_table[] = {
 	{}
 };
 
-#ifdef CONFIG_XEN
-static const struct trans_ctl_table trans_xen_table[] = {
-	{ CTL_XEN_INDEPENDENT_WALLCLOCK,	"independent_wallclock" },
-	{ CTL_XEN_PERMITTED_CLOCK_JITTER,	"permitted_clock_jitter" },
-	{}
-};
-#endif
-
 static const struct trans_ctl_table trans_arlan_conf_table0[] = {
 	{ 1,	"spreadingCode" },
 	{ 2,	"channelNumber" },
@@ -1243,9 +1229,6 @@ static const struct trans_ctl_table trans_root_table[] = {
 	{ CTL_BUS,	"bus",		trans_bus_table },
 	{ CTL_ABI,	"abi" },
 	/* CTL_CPU not used */
-#ifdef CONFIG_XEN
-	{ CTL_XEN,	"xen",		trans_xen_table },
-#endif
 	{ CTL_ARLAN,	"arlan",	trans_arlan_table },
 	{ CTL_S390DBF,	"s390dbf",	trans_s390dbf_table },
 	{ CTL_SUNRPC,	"sunrpc",	trans_sunrpc_table },
@@ -1279,47 +1262,6 @@ static struct ctl_table *sysctl_parent(struct ctl_table *table, int n)
 	return table;
 }
 
-static const struct trans_ctl_table *sysctl_binary_lookup(struct ctl_table *table)
-{
-	struct ctl_table *test;
-	const struct trans_ctl_table *ref;
-	int cur_depth;
-
-	cur_depth = sysctl_depth(table);
-
-	ref = trans_root_table;
-repeat:
-	test = sysctl_parent(table, cur_depth);
-	for (; ref->ctl_name || ref->procname || ref->child; ref++) {
-		int match = 0;
-
-		if (cur_depth && !ref->child)
-			continue;
-
-		if (test->procname && ref->procname &&
-			(strcmp(test->procname, ref->procname) == 0))
-			match++;
-
-		if (test->ctl_name && ref->ctl_name &&
-			(test->ctl_name == ref->ctl_name))
-			match++;
-
-		if (!ref->ctl_name && !ref->procname)
-			match++;
-
-		if (match) {
-			if (cur_depth != 0) {
-				cur_depth--;
-				ref = ref->child;
-				goto repeat;
-			}
-			goto out;
-		}
-	}
-	ref = NULL;
-out:
-	return ref;
-}
 
 static void sysctl_print_path(struct ctl_table *table)
 {
@@ -1333,26 +1275,6 @@ static void sysctl_print_path(struct ctl_table *table)
 		}
 	}
 	printk(" ");
-	if (table->ctl_name) {
-		for (i = depth; i >= 0; i--) {
-			tmp = sysctl_parent(table, i);
-			printk(".%d", tmp->ctl_name);
-		}
-	}
-}
-
-static void sysctl_repair_table(struct ctl_table *table)
-{
-	/* Don't complain about the classic default
-	 * sysctl strategy routine.  Maybe later we
-	 * can get the tables fixed and complain about
-	 * this.
-	 */
-	if (table->ctl_name && table->procname &&
-		(table->proc_handler == proc_dointvec) &&
-		(!table->strategy)) {
-		table->strategy = sysctl_data;
-	}
 }
 
 static struct ctl_table *sysctl_check_lookup(struct nsproxy *namespaces,
@@ -1370,7 +1292,7 @@ static struct ctl_table *sysctl_check_lookup(struct nsproxy *namespaces,
 		ref = head->ctl_table;
 repeat:
 		test = sysctl_parent(table, cur_depth);
-		for (; ref->ctl_name || ref->procname; ref++) {
+		for (; ref->procname; ref++) {
 			int match = 0;
 			if (cur_depth && !ref->child)
 				continue;
@@ -1378,10 +1300,6 @@ repeat:
 			if (test->procname && ref->procname &&
 			    (strcmp(test->procname, ref->procname) == 0))
 					match++;
-
-			if (test->ctl_name && ref->ctl_name &&
-			    (test->ctl_name == ref->ctl_name))
-				match++;
 
 			if (match) {
 				if (cur_depth != 0) {
@@ -1410,38 +1328,6 @@ static void set_fail(const char **fail, struct ctl_table *table, const char *str
 	*fail = str;
 }
 
-static int sysctl_check_dir(struct nsproxy *namespaces,
-				struct ctl_table *table)
-{
-	struct ctl_table *ref;
-	int error;
-
-	error = 0;
-	ref = sysctl_check_lookup(namespaces, table);
-	if (ref) {
-		int match = 0;
-		if ((!table->procname && !ref->procname) ||
-		    (table->procname && ref->procname &&
-		     (strcmp(table->procname, ref->procname) == 0)))
-			match++;
-
-		if ((!table->ctl_name && !ref->ctl_name) ||
-		    (table->ctl_name && ref->ctl_name &&
-		     (table->ctl_name == ref->ctl_name)))
-			match++;
-
-		if (match != 2) {
-			printk(KERN_ERR "%s: failed: ", __func__);
-			sysctl_print_path(table);
-			printk(" ref: ");
-			sysctl_print_path(ref);
-			printk("\n");
-			error = -EINVAL;
-		}
-	}
-	return error;
-}
-
 static void sysctl_check_leaf(struct nsproxy *namespaces,
 				struct ctl_table *table, const char **fail)
 {
@@ -1452,40 +1338,16 @@ static void sysctl_check_leaf(struct nsproxy *namespaces,
 		set_fail(fail, table, "Sysctl already exists");
 }
 
-static void sysctl_check_bin_path(struct ctl_table *table, const char **fail)
-{
-	const struct trans_ctl_table *ref;
-
-	ref = sysctl_binary_lookup(table);
-	if (table->ctl_name && !ref)
-		set_fail(fail, table, "Unknown sysctl binary path");
-	if (ref) {
-		if (ref->procname &&
-		    (!table->procname ||
-		     (strcmp(table->procname, ref->procname) != 0)))
-			set_fail(fail, table, "procname does not match binary path procname");
-
-		if (ref->ctl_name && table->ctl_name &&
-		    (table->ctl_name != ref->ctl_name))
-			set_fail(fail, table, "ctl_name does not match binary path ctl_name");
-	}
-}
-
 int sysctl_check_table(struct nsproxy *namespaces, struct ctl_table *table)
 {
 	int error = 0;
-	for (; table->ctl_name || table->procname; table++) {
+	for (; table->procname; table++) {
 		const char *fail = NULL;
 
-		sysctl_repair_table(table);
 		if (table->parent) {
-			if (table->procname && !table->parent->procname)
+			if (!table->parent->procname)
 				set_fail(&fail, table, "Parent without procname");
-			if (table->ctl_name && !table->parent->ctl_name)
-				set_fail(&fail, table, "Parent without ctl_name");
 		}
-		if (!table->procname)
-			set_fail(&fail, table, "No procname");
 		if (table->child) {
 			if (table->data)
 				set_fail(&fail, table, "Directory with data?");
@@ -1495,21 +1357,12 @@ int sysctl_check_table(struct nsproxy *namespaces, struct ctl_table *table)
 				set_fail(&fail, table, "Writable sysctl directory");
 			if (table->proc_handler)
 				set_fail(&fail, table, "Directory with proc_handler");
-			if (table->strategy)
-				set_fail(&fail, table, "Directory with strategy");
 			if (table->extra1)
 				set_fail(&fail, table, "Directory with extra1");
 			if (table->extra2)
 				set_fail(&fail, table, "Directory with extra2");
-			if (sysctl_check_dir(namespaces, table))
-				set_fail(&fail, table, "Inconsistent directory names");
 		} else {
-			if ((table->strategy == sysctl_data) ||
-			    (table->strategy == sysctl_string) ||
-			    (table->strategy == sysctl_intvec) ||
-			    (table->strategy == sysctl_jiffies) ||
-			    (table->strategy == sysctl_ms_jiffies) ||
-			    (table->proc_handler == proc_dostring) ||
+			if ((table->proc_handler == proc_dostring) ||
 			    (table->proc_handler == proc_dointvec) ||
 			    (table->proc_handler == proc_dointvec_minmax) ||
 			    (table->proc_handler == proc_dointvec_jiffies) ||
@@ -1522,34 +1375,12 @@ int sysctl_check_table(struct nsproxy *namespaces, struct ctl_table *table)
 				if (!table->maxlen)
 					set_fail(&fail, table, "No maxlen");
 			}
-			if ((table->proc_handler == proc_doulongvec_minmax) ||
-			    (table->proc_handler == proc_doulongvec_ms_jiffies_minmax)) {
-				if (table->maxlen > sizeof (unsigned long)) {
-					if (!table->extra1)
-						set_fail(&fail, table, "No min");
-					if (!table->extra2)
-						set_fail(&fail, table, "No max");
-				}
-			}
-#ifdef CONFIG_SYSCTL_SYSCALL
-			if (table->ctl_name && !table->strategy)
-				set_fail(&fail, table, "Missing strategy");
-#endif
-#if 0
-			if (!table->ctl_name && table->strategy)
-				set_fail(&fail, table, "Strategy without ctl_name");
-#endif
 #ifdef CONFIG_PROC_SYSCTL
-			if (table->procname && !table->proc_handler)
+			if (!table->proc_handler)
 				set_fail(&fail, table, "No proc_handler");
-#endif
-#if 0
-			if (!table->procname && table->proc_handler)
-				set_fail(&fail, table, "proc_handler without procname");
 #endif
 			sysctl_check_leaf(namespaces, table, &fail);
 		}
-		sysctl_check_bin_path(table, &fail);
 		if (table->mode > 0777)
 			set_fail(&fail, table, "bogus .mode");
 		if (fail) {

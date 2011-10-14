@@ -19,6 +19,7 @@
  */
 #define SD_TIMEOUT		(30 * HZ)
 #define SD_MOD_TIMEOUT		(75 * HZ)
+#define SD_FLUSH_TIMEOUT	(60 * HZ)
 
 /*
  * Number of allowed retries
@@ -56,7 +57,7 @@ struct scsi_disk {
 	struct scsi_device *device;
 	struct device	dev;
 	struct gendisk	*disk;
-	unsigned int	openers;	/* protected by BKL for now, yuck */
+	atomic_t	openers;
 	sector_t	capacity;	/* size in 512-byte sectors */
 	u32		max_ws_blocks;
 	u32		max_unmap_blocks;
@@ -68,7 +69,6 @@ struct scsi_disk {
 	u8		write_prot;
 	u8		protection_type;/* Data Integrity Field */
 	u8		provisioning_mode;
-	unsigned	previous_state : 1;
 	unsigned	ATO : 1;	/* state of disk ATO bit */
 	unsigned	WCE : 1;	/* state of disk WCE bit */
 	unsigned	RCD : 1;	/* state of disk RCD bit, unused */

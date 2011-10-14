@@ -43,11 +43,11 @@
 dm_session_t	*dm_sessions = NULL;	/* head of session list */
 u_int		dm_sessions_active = 0; /* # sessions currently active */
 dm_sessid_t	dm_next_sessid = 1;	/* next session ID to use */
-lock_t		dm_session_lock = SPIN_LOCK_UNLOCKED;/* lock for session list */
+DEFINE_SPINLOCK(dm_session_lock);/* lock for session list */
 
 dm_token_t	dm_next_token = 1;	/* next token ID to use */
 dm_sequence_t	dm_next_sequence = 1;	/* next sequence number to use */
-lock_t		dm_token_lock = SPIN_LOCK_UNLOCKED;/* dm_next_token/dm_next_sequence lock */
+DEFINE_SPINLOCK(dm_token_lock);/* dm_next_token/dm_next_sequence lock */
 
 int	dm_max_queued_msgs = 2048;	/* max # undelivered msgs/session */
 

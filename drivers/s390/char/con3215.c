@@ -762,8 +762,10 @@ static struct ccw_device_id raw3215_id[] = {
 };
 
 static struct ccw_driver raw3215_ccw_driver = {
-	.name		= "3215",
-	.owner		= THIS_MODULE,
+	.driver = {
+		.name	= "3215",
+		.owner	= THIS_MODULE,
+	},
 	.ids		= raw3215_id,
 	.probe		= &raw3215_probe,
 	.remove		= &raw3215_remove,
@@ -772,6 +774,7 @@ static struct ccw_driver raw3215_ccw_driver = {
 	.freeze		= &raw3215_pm_stop,
 	.thaw		= &raw3215_pm_start,
 	.restore	= &raw3215_pm_start,
+	.int_class	= IOINT_C15,
 };
 
 #ifdef CONFIG_TN3215_CONSOLE
@@ -857,7 +860,6 @@ static struct console con3215 = {
 
 /*
  * 3215 console initialization code called from console_init().
- * NOTE: This is called before kmalloc is available.
  */
 static int __init con3215_init(void)
 {
@@ -1038,22 +1040,6 @@ static void tty3215_flush_buffer(struct tty_struct *tty)
 }
 
 /*
- * Currently we don't have any io controls for 3215 ttys
- */
-static int tty3215_ioctl(struct tty_struct *tty, struct file * file,
-			 unsigned int cmd, unsigned long arg)
-{
-	if (tty->flags & (1 << TTY_IO_ERROR))
-		return -EIO;
-
-	switch (cmd) {
-	default:
-		return -ENOIOCTLCMD;
-	}
-	return 0;
-}
-
-/*
  * Disable reading from a 3215 tty
  */
 static void tty3215_throttle(struct tty_struct * tty)
@@ -1118,7 +1104,6 @@ static const struct tty_operations tty3215_ops = {
 	.write_room = tty3215_write_room,
 	.chars_in_buffer = tty3215_chars_in_buffer,
 	.flush_buffer = tty3215_flush_buffer,
-	.ioctl = tty3215_ioctl,
 	.throttle = tty3215_throttle,
 	.unthrottle = tty3215_unthrottle,
 	.stop = tty3215_stop,

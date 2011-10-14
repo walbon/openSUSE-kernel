@@ -25,35 +25,8 @@
 /* Include system header files
  */
 
-#if 0
-/* cpw: we don't need this userland stuff: */
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/time.h>
-#include <unistd.h>
-#include <time.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <sys/ioctl.h>
-#include <net/if.h>
-#include <sys/utsname.h>
-#include <fcntl.h>
-#include <string.h>
-#include <setjmp.h>
-#include <strings.h>
-#include <errno.h>
-#include <assert.h>
-#include <ctype.h>
-#endif
-
 /* Include lkcd library header files
  */
-/* cpw: change these from the < > form to the " " form: */
 #include "kl_types.h"
 #include "kl_alloc.h"
 #include "kl_libutil.h"

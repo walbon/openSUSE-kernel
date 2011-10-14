@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2008, Intel Corp.
+ * Copyright (C) 2000 - 2011, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -168,7 +168,7 @@ acpi_ev_pci_config_region_setup(acpi_handle handle,
 				void *handler_context, void **region_context)
 {
 	acpi_status status = AE_OK;
-	acpi_integer pci_value;
+	u64 pci_value;
 	struct acpi_pci_id *pci_id = *region_context;
 	union acpi_operand_object *handler_obj;
 	struct acpi_namespace_node *parent_node;
@@ -289,8 +289,8 @@ acpi_ev_pci_config_region_setup(acpi_handle handle,
 	}
 
 	/*
-	 * Get the PCI device and function numbers from the _ADR object contained
-	 * in the parent's scope.
+	 * Get the PCI device and function numbers from the _ADR object
+	 * contained in the parent's scope.
 	 */
 	status = acpi_ut_evaluate_numeric_object(METHOD_NAME__ADR,
 						 pci_device_node, &pci_value);
@@ -320,9 +320,15 @@ acpi_ev_pci_config_region_setup(acpi_handle handle,
 		pci_id->bus = ACPI_LOWORD(pci_value);
 	}
 
-	/* Complete this device's pci_id */
+	/* Complete/update the PCI ID for this device */
 
-	acpi_os_derive_pci_id(pci_root_node, region_obj->region.node, &pci_id);
+	status =
+	    acpi_hw_derive_pci_id(pci_id, pci_root_node,
+				  region_obj->region.node);
+	if (ACPI_FAILURE(status)) {
+		ACPI_FREE(pci_id);
+		return_ACPI_STATUS(status);
+	}
 
 	*region_context = pci_id;
 	return_ACPI_STATUS(AE_OK);
@@ -575,6 +581,21 @@ acpi_ev_initialize_region(union acpi_operand_object *region_obj,
 				handler_obj = obj_desc->thermal_zone.handler;
 				break;
 
+			case ACPI_TYPE_METHOD:
+				/*
+				 * If we are executing module level code, the original
+				 * Node's object was replaced by this Method object and we
+				 * saved the handler in the method object.
+				 *
+				 * See acpi_ns_exec_module_code
+				 */
+				if (obj_desc->method.
+				    info_flags & ACPI_METHOD_MODULE_LEVEL) {
+					handler_obj =
+					    obj_desc->method.dispatch.handler;
+				}
+				break;
+
 			default:
 				/* Ignore other objects */
 				break;
@@ -616,7 +637,7 @@ acpi_ev_initialize_region(union acpi_operand_object *region_obj,
 
 					status =
 					    acpi_ev_execute_reg_method
-					    (region_obj, 1);
+					    (region_obj, ACPI_REG_CONNECT);
 
 					if (acpi_ns_locked) {
 						status =

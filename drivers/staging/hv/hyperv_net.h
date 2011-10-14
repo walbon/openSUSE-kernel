@@ -369,11 +369,8 @@ struct nvsp_message {
 struct netvsc_device {
 	struct hv_device *dev;
 
-	int refcnt;
 	atomic_t num_outstanding_sends;
 	bool destroy;
-	bool drain_notify;
-	wait_queue_head_t waiting_to_drain;
 	/*
 	 * List of free preallocated hv_netvsc_packet to represent receive
 	 * packet
@@ -394,6 +391,8 @@ struct netvsc_device {
 
 	struct nvsp_message revoke_packet;
 	/* unsigned char HwMacAddr[HW_MACADDR_LEN]; */
+
+	struct net_device *ndev;
 
 	/* Holds rndis device info */
 	void *extension;
@@ -1053,14 +1052,6 @@ struct rndis_filter_packet {
 #define NDIS_PACKET_TYPE_ALL_FUNCTIONAL	0x00000200
 #define NDIS_PACKET_TYPE_FUNCTIONAL	0x00000400
 #define NDIS_PACKET_TYPE_MAC_FRAME	0x00000800
-
-static inline void netvsc_wait_to_drain(struct netvsc_device *dev)
-{
-	dev->drain_notify = true;
-	wait_event(dev->waiting_to_drain,
-		atomic_read(&dev->num_outstanding_sends) == 0);
-	dev->drain_notify = false;
-}
 
 
 

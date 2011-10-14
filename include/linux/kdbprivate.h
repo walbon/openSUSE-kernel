@@ -13,34 +13,13 @@
 
 
 #include <linux/dis-asm.h>
+#include <linux/swap.h>
 #include <asm/kdbprivate.h>
 #include <asm/bfd.h>
 
 	/*
 	 * Kernel Debugger Error codes.  Must not overlap with command codes.
 	 */
-
-#define KDB_NOTFOUND	(-1)
-#define KDB_ARGCOUNT	(-2)
-#define KDB_BADWIDTH	(-3)
-#define KDB_BADRADIX	(-4)
-#define KDB_NOTENV	(-5)
-#define KDB_NOENVVALUE	(-6)
-#define KDB_NOTIMP	(-7)
-#define KDB_ENVFULL	(-8)
-#define KDB_ENVBUFFULL	(-9 )
-#define KDB_TOOMANYBPT	(-10)
-#define KDB_TOOMANYDBREGS (-11)
-#define KDB_DUPBPT	(-12)
-#define KDB_BPTNOTFOUND	(-13)
-#define KDB_BADMODE	(-14)
-#define KDB_BADINT	(-15)
-#define KDB_INVADDRFMT  (-16)
-#define KDB_BADREG      (-17)
-#define KDB_BADCPUNUM   (-18)
-#define KDB_BADLENGTH	(-19)
-#define KDB_NOBP	(-20)
-#define KDB_BADADDR	(-21)
 
 	/*
 	 * Kernel Debugger Command codes.  Must not overlap with error codes.
@@ -63,16 +42,8 @@
 #define KDB_DEBUG_FLAG_MASK	0xffff		/* All debug flags */
 #define KDB_DEBUG_FLAG_SHIFT	16		/* Shift factor for dbflags */
 
-#define KDB_DEBUG(flag)		(kdb_flags & (KDB_DEBUG_FLAG_##flag << KDB_DEBUG_FLAG_SHIFT))
-#define KDB_DEBUG_STATE(text,value)	if (KDB_DEBUG(STATE)) kdb_print_state(text, value)
-
-typedef enum {
-	KDB_REPEAT_NONE = 0,		/* Do not repeat this command */
-	KDB_REPEAT_NO_ARGS,		/* Repeat the command without arguments */
-	KDB_REPEAT_WITH_ARGS,		/* Repeat the command including its arguments */
-} kdb_repeat_t;
-
-typedef int (*kdb_func_t)(int, const char **);
+#define KDB_DEBUG(flag)		(lkdb_flags & (KDB_DEBUG_FLAG_##flag << KDB_DEBUG_FLAG_SHIFT))
+#define KDB_DEBUG_STATE(text,value)	if (KDB_DEBUG(STATE)) lkdb_print_state(text, value)
 
 	/*
 	 * Symbol table format returned by kallsyms.
@@ -89,61 +60,61 @@ typedef struct __ksymtab {
 		const char *sym_name;		/* Full symbol name, including any version */
 		unsigned long sym_start;
 		unsigned long sym_end;
-		} kdb_symtab_t;
-extern int kallsyms_symbol_next(char *prefix_name, int flag);
-extern int kallsyms_symbol_complete(char *prefix_name, int max_len);
+		} lkdb_symtab_t;
+extern int lkallsyms_symbol_next(char *prefix_name, int flag);
+extern int lkallsyms_symbol_complete(char *prefix_name, int max_len);
 
 	/*
 	 * Exported Symbols for kernel loadable modules to use.
 	 */
-extern int kdb_register(char *, kdb_func_t, char *, char *, short);
-extern int kdb_register_repeat(char *, kdb_func_t, char *, char *, short, kdb_repeat_t);
-extern int kdb_unregister(char *);
+extern int lkdb_register(char *, lkdb_func_t, char *, char *, short);
+extern int lkdb_register_repeat(char *, lkdb_func_t, char *, char *, short, lkdb_repeat_t);
+extern int lkdb_unregister(char *);
 
-extern int kdb_getarea_size(void *, unsigned long, size_t);
-extern int kdb_putarea_size(unsigned long, void *, size_t);
+extern int lkdb_getarea_size(void *, unsigned long, size_t);
+extern int lkdb_putarea_size(unsigned long, void *, size_t);
 
 /* Like get_user and put_user, kdb_getarea and kdb_putarea take variable
  * names, not pointers.  The underlying *_size functions take pointers.
  */
-#define kdb_getarea(x,addr) kdb_getarea_size(&(x), addr, sizeof((x)))
-#define kdb_putarea(addr,x) kdb_putarea_size(addr, &(x), sizeof((x)))
+#define lkdb_getarea(x,addr) lkdb_getarea_size(&(x), addr, sizeof((x)))
+#define lkdb_putarea(addr,x) lkdb_putarea_size(addr, &(x), sizeof((x)))
 
-extern int kdb_getphysword(unsigned long *word,
+extern int lkdb_getphysword(unsigned long *word,
 			unsigned long addr, size_t size);
-extern int kdb_getword(unsigned long *, unsigned long, size_t);
-extern int kdb_putword(unsigned long, unsigned long, size_t);
+extern int lkdb_getword(unsigned long *, unsigned long, size_t);
+extern int lkdb_putword(unsigned long, unsigned long, size_t);
 
-extern int kdbgetularg(const char *, unsigned long *);
-extern char *kdbgetenv(const char *);
-extern int kdbgetintenv(const char *, int *);
-extern int kdbgetaddrarg(int, const char**, int*, unsigned long *,
+extern int lkdbgetularg(const char *, unsigned long *);
+extern char *lkdbgetenv(const char *);
+extern int lkdbgetintenv(const char *, int *);
+extern int lkdbgetaddrarg(int, const char**, int*, unsigned long *,
 			 long *, char **);
-extern int kdbgetsymval(const char *, kdb_symtab_t *);
-extern int kdbnearsym(unsigned long, kdb_symtab_t *);
-extern void kdbnearsym_cleanup(void);
-extern char *kdb_read(char *buffer, size_t bufsize);
-extern char *kdb_strdup(const char *str, gfp_t type);
-extern void kdb_symbol_print(kdb_machreg_t, const kdb_symtab_t *, unsigned int);
+extern int lkdbgetsymval(const char *, lkdb_symtab_t *);
+extern int lkdbnearsym(unsigned long, lkdb_symtab_t *);
+extern void lkdbnearsym_cleanup(void);
+extern char *lkdb_read(char *buffer, size_t bufsize);
+extern char *lkdb_strdup(const char *str, gfp_t type);
+extern void lkdb_symbol_print(kdb_machreg_t, const lkdb_symtab_t *, unsigned int);
 
 	 /*
 	  * Do we have a set of registers?
 	  */
 
 #define KDB_NULL_REGS(regs) \
-	(regs == (struct pt_regs *)NULL ? kdb_printf("%s: null regs - should never happen\n", __FUNCTION__), 1 : 0)
+	(regs == (struct pt_regs *)NULL ? lkdb_printf("%s: null regs - should never happen\n", __FUNCTION__), 1 : 0)
 
 	 /*
 	  * Routine for debugging the debugger state.
 	  */
 
-extern void kdb_print_state(const char *, int);
+extern void lkdb_print_state(const char *, int);
 
 	/*
 	 * Per cpu kdb state.  A cpu can be under kdb control but outside kdb,
 	 * for example when doing single step.
 	 */
-volatile extern int kdb_state[ /*NR_CPUS*/ ];
+volatile extern int lkdb_state[ /*NR_CPUS*/ ];
 #define KDB_STATE_KDB		0x00000001	/* Cpu is inside kdb */
 #define KDB_STATE_LEAVING	0x00000002	/* Cpu is leaving kdb */
 #define KDB_STATE_CMD		0x00000004	/* Running a kdb command */
@@ -156,31 +127,30 @@ volatile extern int kdb_state[ /*NR_CPUS*/ ];
 #define KDB_STATE_SUPPRESS	0x00000200	/* Suppress error messages */
 #define KDB_STATE_LONGJMP	0x00000400	/* longjmp() data is available */
 #define KDB_STATE_GO_SWITCH	0x00000800	/* go is switching back to initial cpu */
-#define KDB_STATE_PRINTF_LOCK	0x00001000	/* Holds kdb_printf lock */
+#define KDB_STATE_PRINTF_LOCK	0x00001000	/* Holds lkdb_printf lock */
 #define KDB_STATE_WAIT_IPI	0x00002000	/* Waiting for kdb_ipi() NMI */
 #define KDB_STATE_RECURSE	0x00004000	/* Recursive entry to kdb */
 #define KDB_STATE_IP_ADJUSTED	0x00008000	/* Restart IP has been adjusted */
 #define KDB_STATE_GO1		0x00010000	/* go only releases one cpu */
 #define KDB_STATE_KEYBOARD	0x00020000	/* kdb entered via keyboard on this cpu */
 #define KDB_STATE_KEXEC		0x00040000	/* kexec issued */
-#define KDB_STATE_PAGER		0x00080000	/* pager is available */
 #define KDB_STATE_ARCH		0xff000000	/* Reserved for arch specific use */
 
-#define KDB_STATE_CPU(flag,cpu)		(kdb_state[cpu] & KDB_STATE_##flag)
-#define KDB_STATE_SET_CPU(flag,cpu)	((void)(kdb_state[cpu] |= KDB_STATE_##flag))
-#define KDB_STATE_CLEAR_CPU(flag,cpu)	((void)(kdb_state[cpu] &= ~KDB_STATE_##flag))
+#define KDB_STATE_CPU(flag,cpu)		(lkdb_state[cpu] & KDB_STATE_##flag)
+#define KDB_STATE_SET_CPU(flag,cpu)	((void)(lkdb_state[cpu] |= KDB_STATE_##flag))
+#define KDB_STATE_CLEAR_CPU(flag,cpu)	((void)(lkdb_state[cpu] &= ~KDB_STATE_##flag))
 
 #define KDB_STATE(flag)		KDB_STATE_CPU(flag,smp_processor_id())
 #define KDB_STATE_SET(flag)	KDB_STATE_SET_CPU(flag,smp_processor_id())
 #define KDB_STATE_CLEAR(flag)	KDB_STATE_CLEAR_CPU(flag,smp_processor_id())
 
 	/*
-	 * kdb_nextline
+	 * lkdb_nextline
 	 *
 	 * 	Contains the current line number on the screen.  Used
 	 *	to handle the built-in pager (LINES env variable)
 	 */
-extern volatile int kdb_nextline;
+extern volatile int lkdb_nextline;
 
 	/*
 	 * Breakpoint state
@@ -208,22 +178,22 @@ typedef struct _kdb_bp {
 	kdbhard_bp_t	bp_template;	/* Hardware breakpoint template */
 	kdbhard_bp_t   *bp_hard[NR_CPUS]; /* Hardware breakpoint structure */
 	int		bp_adjust;	/* Adjustment to PC for real instruction */
-} kdb_bp_t;
+} lkdb_bp_t;
 
 	/*
 	 * Breakpoint handling subsystem global variables
 	 */
-extern kdb_bp_t kdb_breakpoints[/* KDB_MAXBPT */];
+extern lkdb_bp_t lkdb_breakpoints[/* KDB_MAXBPT */];
 
 	/*
 	 * Breakpoint architecture dependent functions.  Must be provided
 	 * in some form for all architectures.
 	 */
 extern void kdba_initbp(void);
-extern void kdba_printbp(kdb_bp_t *);
-extern void kdba_alloc_hwbp(kdb_bp_t *bp, int *diagp);
-extern void kdba_free_hwbp(kdb_bp_t *bp);
-extern int kdba_parsebp(int, const char**, int *, kdb_bp_t*);
+extern void kdba_printbp(lkdb_bp_t *);
+extern void kdba_alloc_hwbp(lkdb_bp_t *bp, int *diagp);
+extern void kdba_free_hwbp(lkdb_bp_t *bp);
+extern int kdba_parsebp(int, const char**, int *, lkdb_bp_t*);
 extern char *kdba_bptype(kdbhard_bp_t *);
 extern void kdba_setsinglestep(struct pt_regs *);
 extern void kdba_clearsinglestep(struct pt_regs *);
@@ -232,32 +202,31 @@ extern void kdba_clearsinglestep(struct pt_regs *);
 	 * Adjust instruction pointer architecture dependent function.  Must be
 	 * provided in some form for all architectures.
 	 */
-extern void kdba_adjust_ip(kdb_reason_t, int, struct pt_regs *);
+extern void kdba_adjust_ip(lkdb_reason_t, int, struct pt_regs *);
 
 	/*
 	 * KDB-only global function prototypes.
 	 */
-extern void kdb_id1(unsigned long);
-extern void kdb_id_init(void);
+extern void lkdb_id1(unsigned long);
+extern void lkdb_id_init(void);
 
 	/*
 	 * Initialization functions.
 	 */
 extern void kdba_init(void);
-extern void kdb_io_init(void);
+extern void lkdb_io_init(void);
 
 	/*
 	 * Architecture specific function to read a string.
 	 */
-typedef int (*get_char_func)(void);
-extern get_char_func poll_funcs[];
+extern lget_char_func poll_funcs[];
 
 #ifndef	CONFIG_IA64
 	/*
 	 * Data for a single activation record on stack.
 	 */
 
-struct kdb_stack_info {
+struct lkdb_stack_info {
 	kdb_machreg_t physical_start;
 	kdb_machreg_t physical_end;
 	kdb_machreg_t logical_start;
@@ -268,8 +237,8 @@ struct kdb_stack_info {
 
 typedef struct { DECLARE_BITMAP(bits, KDBA_MAXARGS); } valid_t;
 
-struct kdb_activation_record {
-	struct kdb_stack_info	stack;		/* information about current stack */
+struct lkdb_activation_record {
+	struct lkdb_stack_info	stack;		/* information about current stack */
 	int		args;			/* number of arguments detected */
 	kdb_machreg_t	arg[KDBA_MAXARGS];	/* -> arguments */
 	valid_t		valid;			/* is argument n valid? */
@@ -291,25 +260,25 @@ extern int kdba_bt_process(const struct task_struct *, int);
 
 typedef struct _kdbtab {
 	char    *cmd_name;		/* Command name */
-	kdb_func_t cmd_func;		/* Function to execute command */
+	lkdb_func_t cmd_func;		/* Function to execute command */
 	char    *cmd_usage;		/* Usage String for this command */
 	char    *cmd_help;		/* Help message for this command */
 	short    cmd_flags;		/* Parsing flags */
 	short    cmd_minlen;		/* Minimum legal # command chars required */
-	kdb_repeat_t cmd_repeat;	/* Does command auto repeat on enter? */
-} kdbtab_t;
+	lkdb_repeat_t cmd_repeat;	/* Does command auto repeat on enter? */
+} lkdbtab_t;
 
 	/*
 	 * External command function declarations
 	 */
 
-extern int kdb_id(int, const char **);
-extern int kdb_bt(int, const char **);
+extern int lkdb_id(int, const char **);
+extern int lkdb_bt(int, const char **);
 
 	/*
 	 * External utility function declarations
 	 */
-extern char* kdb_getstr(char *, size_t, char *);
+extern char* lkdb_getstr(char *, size_t, char *);
 
 	/*
 	 * Register contents manipulation
@@ -323,23 +292,23 @@ extern kdb_machreg_t kdba_getpc(struct pt_regs *);
 	/*
 	 * Debug register handling.
 	 */
-extern void kdba_installdbreg(kdb_bp_t*);
-extern void kdba_removedbreg(kdb_bp_t*);
+extern void kdba_installdbreg(lkdb_bp_t*);
+extern void kdba_removedbreg(lkdb_bp_t*);
 
 	/*
 	 * Breakpoint handling - External interfaces
 	 */
-extern void kdb_initbptab(void);
-extern void kdb_bp_install_global(struct pt_regs *);
-extern void kdb_bp_install_local(struct pt_regs *);
-extern void kdb_bp_remove_global(void);
-extern void kdb_bp_remove_local(void);
+extern void lkdb_initbptab(void);
+extern void lkdb_bp_install_global(struct pt_regs *);
+extern void lkdb_bp_install_local(struct pt_regs *);
+extern void lkdb_bp_remove_global(void);
+extern void lkdb_bp_remove_local(void);
 
 	/*
 	 * Breakpoint handling - Internal to kdb_bp.c/kdba_bp.c
 	 */
-extern int kdba_installbp(struct pt_regs *regs, kdb_bp_t *);
-extern int kdba_removebp(kdb_bp_t *);
+extern int kdba_installbp(struct pt_regs *regs, lkdb_bp_t *);
+extern int kdba_removebp(lkdb_bp_t *);
 
 
 typedef enum {
@@ -356,24 +325,24 @@ extern kdb_dbtrap_t kdba_bp_trap(struct pt_regs *, int);	/* Breakpoint trap/faul
 	/*
 	 * Interrupt Handling
 	 */
-typedef unsigned long kdb_intstate_t;
+typedef unsigned long lkdb_intstate_t;
 
-extern void kdba_disableint(kdb_intstate_t *);
-extern void kdba_restoreint(kdb_intstate_t *);
+extern void kdba_disableint(lkdb_intstate_t *);
+extern void kdba_restoreint(lkdb_intstate_t *);
 
 	/*
 	 * SMP and process stack manipulation routines.
 	 */
 extern int kdba_ipi(struct pt_regs *, void (*)(void));
-extern int kdba_main_loop(kdb_reason_t, kdb_reason_t, int, kdb_dbtrap_t, struct pt_regs *);
-extern int kdb_main_loop(kdb_reason_t, kdb_reason_t, int, kdb_dbtrap_t, struct pt_regs *);
+extern int kdba_main_loop(lkdb_reason_t, lkdb_reason_t, int, kdb_dbtrap_t, struct pt_regs *);
+extern int lkdb_main_loop(lkdb_reason_t, lkdb_reason_t, int, kdb_dbtrap_t, struct pt_regs *);
 
 	/*
 	 * General Disassembler interfaces
 	 */
 extern int kdb_dis_fprintf(PTR, const char *, ...) __attribute__ ((format (printf, 2, 3)));
 extern int kdb_dis_fprintf_dummy(PTR, const char *, ...) __attribute__ ((format (printf, 2, 3)));
-extern disassemble_info	kdb_di;
+extern disassemble_info	lkdb_di;
 
 	/*
 	 * Architecture Dependent Disassembler interfaces
@@ -386,22 +355,16 @@ extern void kdba_check_pc(kdb_machreg_t *);
 	/*
 	 * Miscellaneous functions and data areas
 	 */
-extern char *kdb_cmds[];
-extern void debugger_syslog_data(char *syslog_data[]);
-extern unsigned long kdb_task_state_string(const char *);
-extern char kdb_task_state_char (const struct task_struct *);
-extern unsigned long kdb_task_state(const struct task_struct *p, unsigned long mask);
-extern void kdb_ps_suppressed(void);
-extern void kdb_ps1(const struct task_struct *p);
-extern int kdb_parse(const char *cmdstr);
-extern void kdb_print_nameval(const char *name, unsigned long val);
-extern void kdb_send_sig_info(struct task_struct *p, struct siginfo *info, int seqno);
-#ifdef CONFIG_SWAP
-extern void kdb_si_swapinfo(struct sysinfo *);
-#else
-#include <linux/swap.h>
-#define kdb_si_swapinfo(x) si_swapinfo(x)
-#endif
+extern char *lkdb_cmds[];
+extern void kdb_syslog_data(char *syslog_data[]);
+extern unsigned long lkdb_task_state_string(const char *);
+extern char lkdb_task_state_char (const struct task_struct *);
+extern unsigned long lkdb_task_state(const struct task_struct *p, unsigned long mask);
+extern void lkdb_ps_suppressed(void);
+extern void lkdb_ps1(const struct task_struct *p);
+extern int lkdb_parse(const char *cmdstr);
+extern void lkdb_print_nameval(const char *name, unsigned long val);
+extern void lkdb_send_sig_info(struct task_struct *p, struct siginfo *info, int seqno);
 extern void kdb_meminfo_proc_show(void);
 #ifdef	CONFIG_HUGETLB_PAGE
 extern void kdb_hugetlb_report_meminfo(void);
@@ -415,7 +378,7 @@ extern void kdba_local_arch_setup(void);
 extern void kdba_local_arch_cleanup(void);
 
 	/*
-	 * Defines for kdb_symbol_print.
+	 * Defines for lkdb_symbol_print.
 	 */
 #define KDB_SP_SPACEB	0x0001		/* Space before string */
 #define KDB_SP_SPACEA	0x0002		/* Space after string */
@@ -427,7 +390,7 @@ extern void kdba_local_arch_cleanup(void);
 
 /* Save data about running processes */
 
-struct kdb_running_process {
+struct lkdb_running_process {
 	struct task_struct *p;
 	struct pt_regs *regs;
 	int seqno;				/* kdb sequence number */
@@ -435,33 +398,33 @@ struct kdb_running_process {
 	struct kdba_running_process arch;	/* arch dependent save data */
 };
 
-extern struct kdb_running_process kdb_running_process[/* NR_CPUS */];
+extern struct lkdb_running_process lkdb_running_process[/* NR_CPUS */];
 
-extern int kdb_save_running(struct pt_regs *, kdb_reason_t, kdb_reason_t, int, kdb_dbtrap_t);
+extern int kdb_save_running(struct pt_regs *, lkdb_reason_t, lkdb_reason_t, int, kdb_dbtrap_t);
 extern void kdb_unsave_running(struct pt_regs *);
-extern struct task_struct *kdb_curr_task(int);
+extern struct task_struct *lkdb_curr_task(int);
 
 /* 	Incremented each time the main kdb loop is entered on the initial cpu,
  * 	it gives some indication of how old the saved data is.
  */
-extern int kdb_seqno;
+extern int lkdb_seqno;
 
-#define kdb_task_has_cpu(p) (task_curr(p))
-extern void kdb_runqueue(unsigned long cpu, kdb_printf_t xxx_printf);
+#define lkdb_task_has_cpu(p) (task_curr(p))
+extern void lkdb_runqueue(unsigned long cpu, lkdb_printf_t xxx_printf);
 
 /* Simplify coexistence with NPTL */
-#define	kdb_do_each_thread(g, p) do_each_thread(g, p)
-#define	kdb_while_each_thread(g, p) while_each_thread(g, p)
+#define	lkdb_do_each_thread(g, p) do_each_thread(g, p)
+#define	lkdb_while_each_thread(g, p) while_each_thread(g, p)
 
 #define GFP_KDB (in_interrupt() ? GFP_ATOMIC : GFP_KERNEL)
 
-extern void *debug_kmalloc(size_t size, gfp_t flags);
-extern void debug_kfree(void *);
-extern void debug_kusage(void);
+extern void *ldebug_kmalloc(size_t size, gfp_t flags);
+extern void ldebug_kfree(void *);
+extern void ldebug_kusage(void);
 
 extern void kdba_set_current_task(struct task_struct *);
-extern struct task_struct *kdb_current_task;
-extern struct pt_regs *kdb_current_regs;
+extern struct task_struct *lkdb_current_task;
+extern struct pt_regs *lkdb_current_regs;
 
 /* Functions to safely read and write kernel areas.  The {to,from}_xxx
  * addresses are not necessarily valid, these functions must check for
@@ -475,42 +438,14 @@ extern int kdba_getarea_size(void *to, unsigned long from_xxx, size_t size);
 extern int kdba_verify_rw(unsigned long addr, size_t size);
 
 #ifndef KDB_RUNNING_PROCESS_ORIGINAL
-#define KDB_RUNNING_PROCESS_ORIGINAL kdb_running_process
+#define KDB_RUNNING_PROCESS_ORIGINAL lkdb_running_process
 #endif
 
-extern int kdb_wait_for_cpus_secs;
+extern int lkdb_wait_for_cpus_secs;
 extern void kdba_cpu_up(void);
-extern char kdb_prompt_str[];
+extern char lkdb_prompt_str[];
 
 #define	KDB_WORD_SIZE	((int)sizeof(kdb_machreg_t))
-
-#ifdef CONFIG_KDB_USB
-#include <linux/usb.h>
-
-/* support up to 8 USB keyboards (probably excessive, but...) */
-#define KDB_USB_NUM_KEYBOARDS   8
-
-struct kdb_usb_kbd_info {
-	struct urb *urb;		/* pointer to the URB */
-	unsigned char *buffer;		/* pointer to the kbd char buffer */
-	int (*poll_func)(struct urb *urb); /* poll function to retrieve chars */
-	int	poll_ret;	/* return val from poll_func */
-	int	caps_lock;	/* state of the caps lock for this keyboard */
-	struct uhci_qh *qh;
-	struct uhci_hcd *uhci;
-	int kdb_hid_event;
-	struct urb *hid_urb;    /* pointer to the HID URB */
-	/* USB Host Controller specific callbacks */
-	kdb_hc_keyboard_attach_t kdb_hc_keyboard_attach;
-	kdb_hc_keyboard_detach_t kdb_hc_keyboard_detach;
-	int (*kdb_hc_urb_complete)(struct urb *urb); /* called when URB int is
-							processed */
-
-};
-
-extern struct kdb_usb_kbd_info kdb_usb_kbds[KDB_USB_NUM_KEYBOARDS];
-
-#endif /* CONFIG_KDB_USB */
 
 #ifdef CONFIG_KDB_KDUMP
 #define KDUMP_REASON_RESET	0

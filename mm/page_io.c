@@ -12,28 +12,25 @@
 
 #include <linux/mm.h>
 #include <linux/kernel_stat.h>
+#include <linux/gfp.h>
 #include <linux/pagemap.h>
 #include <linux/swap.h>
 #include <linux/bio.h>
 #include <linux/swapops.h>
 #include <linux/buffer_head.h>
 #include <linux/writeback.h>
+#include <linux/frontswap.h>
 #include <asm/pgtable.h>
 
-static struct bio *get_swap_bio(gfp_t gfp_flags, pgoff_t index,
+static struct bio *get_swap_bio(gfp_t gfp_flags,
 				struct page *page, bio_end_io_t end_io)
 {
 	struct bio *bio;
 
 	bio = bio_alloc(gfp_flags, 1);
 	if (bio) {
-		struct swap_info_struct *sis;
-		swp_entry_t entry = { .val = index, };
-
-		sis = get_swap_info_struct(swp_type(entry));
-		bio->bi_sector = map_swap_page(sis, swp_offset(entry)) *
-					(PAGE_SIZE >> 9);
-		bio->bi_bdev = sis->bdev;
+		bio->bi_sector = map_swap_page(page, &bio->bi_bdev);
+		bio->bi_sector <<= PAGE_SHIFT - 9;
 		bio->bi_io_vec[0].bv_page = page;
 		bio->bi_io_vec[0].bv_len = PAGE_SIZE;
 		bio->bi_io_vec[0].bv_offset = 0;
@@ -90,122 +87,202 @@ void end_swap_bio_read(struct bio *bio, int err)
 	bio_put(bio);
 }
 
+int generic_swap_writepage(struct page *page, struct writeback_control *wbc)
+{
+	struct bio *bio;
+	int rw = WRITE;
+
+	bio = get_swap_bio(GFP_NOIO, page, end_swap_bio_write);
+	if (bio == NULL) {
+		set_page_dirty(page);
+		unlock_page(page);
+		return -ENOMEM;
+	}
+	if (wbc->sync_mode == WB_SYNC_ALL)
+		rw |= REQ_SYNC;
+	count_vm_event(PSWPOUT);
+	set_page_writeback(page);
+	unlock_page(page);
+	submit_bio(rw, bio);
+
+	return 0;
+}
+
+int generic_swap_readpage(struct page *page)
+{
+	struct bio *bio;
+	bio = get_swap_bio(GFP_KERNEL, page, end_swap_bio_read);
+	if (bio == NULL) {
+		unlock_page(page);
+		return -ENOMEM;
+	}
+	count_vm_event(PSWPIN);
+	submit_bio(READ, bio);
+
+	return 0;
+}
+
+int generic_swapfile_activate(struct swap_info_struct *sis,
+				struct file *swap_file,
+				sector_t *span)
+{
+	struct address_space *mapping = swap_file->f_mapping;
+	struct inode *inode = mapping->host;
+	unsigned blocks_per_page;
+	unsigned long page_no;
+	unsigned blkbits;
+	sector_t probe_block;
+	sector_t last_block;
+	sector_t lowest_block = -1;
+	sector_t highest_block = 0;
+	int nr_extents = 0;
+	int ret;
+
+	blkbits = inode->i_blkbits;
+	blocks_per_page = PAGE_SIZE >> blkbits;
+
+	/*
+	 * Map all the blocks into the extent list.  This code doesn't try
+	 * to be very smart.
+	 */
+	probe_block = 0;
+	page_no = 0;
+	last_block = i_size_read(inode) >> blkbits;
+	while ((probe_block + blocks_per_page) <= last_block &&
+			page_no < sis->max) {
+		unsigned block_in_page;
+		sector_t first_block;
+
+		first_block = bmap(inode, probe_block);
+		if (first_block == 0)
+			goto bad_bmap;
+
+		/*
+		 * It must be PAGE_SIZE aligned on-disk
+		 */
+		if (first_block & (blocks_per_page - 1)) {
+			probe_block++;
+			goto reprobe;
+		}
+
+		for (block_in_page = 1; block_in_page < blocks_per_page;
+					block_in_page++) {
+			sector_t block;
+
+			block = bmap(inode, probe_block + block_in_page);
+			if (block == 0)
+				goto bad_bmap;
+			if (block != first_block + block_in_page) {
+				/* Discontiguity */
+				probe_block++;
+				goto reprobe;
+			}
+		}
+
+		first_block >>= (PAGE_SHIFT - blkbits);
+		if (page_no) {	/* exclude the header page */
+			if (first_block < lowest_block)
+				lowest_block = first_block;
+			if (first_block > highest_block)
+				highest_block = first_block;
+		}
+
+		/*
+		 * We found a PAGE_SIZE-length, PAGE_SIZE-aligned run of blocks
+		 */
+		ret = add_swap_extent(sis, page_no, 1, first_block);
+		if (ret < 0)
+			goto out;
+		nr_extents += ret;
+		page_no++;
+		probe_block += blocks_per_page;
+reprobe:
+		continue;
+	}
+	ret = nr_extents;
+	*span = 1 + highest_block - lowest_block;
+	if (page_no == 0)
+		page_no = 1;	/* force Empty message */
+	sis->max = page_no;
+	sis->pages = page_no - 1;
+	sis->highest_bit = page_no - 1;
+out:
+	return ret;
+bad_bmap:
+	printk(KERN_ERR "swapon: swapfile has holes\n");
+	ret = -EINVAL;
+	goto out;
+}
 /*
  * We may have stale swap cache pages in memory: notice
  * them here and get rid of the unnecessary final write.
  */
 int swap_writepage(struct page *page, struct writeback_control *wbc)
 {
-	struct bio *bio;
-	int ret = 0, rw = WRITE;
+	int ret = 0;
 	struct swap_info_struct *sis = page_swap_info(page);
+	struct file *swap_file;
+	struct address_space *mapping;
 
 	if (try_to_free_swap(page)) {
 		unlock_page(page);
-		goto out;
+		return ret;
 	}
 
-	if (sis->flags & SWP_FILE) {
-		struct file *swap_file = sis->swap_file;
-		struct address_space *mapping = swap_file->f_mapping;
+	if (frontswap_put_page(page) == 0) {
+		set_page_writeback(page);
+		unlock_page(page);
+		end_page_writeback(page);
+		return 0;
+	}
 
-		ret = mapping->a_ops->swap_out(swap_file, page, wbc);
+	swap_file = sis->swap_file;
+	mapping = swap_file->f_mapping;
+	if (mapping->a_ops->swap_writepage) {
+		ret = mapping->a_ops->swap_writepage(swap_file, page, wbc);
 		if (!ret)
 			count_vm_event(PSWPOUT);
 		return ret;
 	}
 
-	if (preswap_put(page) == 1) {
-		set_page_writeback(page);
-		unlock_page(page);
-		end_page_writeback(page);
-		goto out;
-	}
-
-	bio = get_swap_bio(GFP_NOIO, page_private(page), page,
-				end_swap_bio_write);
-	if (bio == NULL) {
-		set_page_dirty(page);
-		unlock_page(page);
-		ret = -ENOMEM;
-		goto out;
-	}
-	if (wbc->sync_mode == WB_SYNC_ALL)
-		rw |= REQ_SYNC | REQ_UNPLUG;
-	count_vm_event(PSWPOUT);
-	set_page_writeback(page);
-	unlock_page(page);
-	submit_bio(rw, bio);
-out:
-	return ret;
-}
-
-/* this comment ensure the patch applies to swap_sync_page
- * and not swap_set_page_dirty by mistake
- */
-void swap_sync_page(struct page *page)
-{
-	struct swap_info_struct *sis = page_swap_info(page);
-
-	if (!sis)
-		return;
-	if (sis->flags & SWP_FILE) {
-		struct address_space *mapping = sis->swap_file->f_mapping;
-
-		if (mapping->a_ops->sync_page)
-			mapping->a_ops->sync_page(page);
-	} else {
-		block_sync_page(page);
-	}
-}
-
-int swap_set_page_dirty(struct page *page)
-{
-	struct swap_info_struct *sis = page_swap_info(page);
-
-	if (sis->flags & SWP_FILE) {
-		struct address_space *mapping = sis->swap_file->f_mapping;
-
-		return mapping->a_ops->set_page_dirty(page);
-	} else {
-		return __set_page_dirty_nobuffers(page);
-	}
+	return generic_swap_writepage(page, wbc);
 }
 
 int swap_readpage(struct page *page)
 {
-	struct bio *bio;
 	int ret = 0;
 	struct swap_info_struct *sis = page_swap_info(page);
+	struct file *swap_file;
+	struct address_space *mapping;
 
 	VM_BUG_ON(!PageLocked(page));
 	VM_BUG_ON(PageUptodate(page));
 
-	if (sis->flags & SWP_FILE) {
-		struct file *swap_file = sis->swap_file;
-		struct address_space *mapping = swap_file->f_mapping;
+	if (frontswap_get_page(page) == 0) {
+		SetPageUptodate(page);
+		unlock_page(page);
+		return 0;
+	}
 
-		ret = mapping->a_ops->swap_in(swap_file, page);
+	swap_file = sis->swap_file;
+	mapping = swap_file->f_mapping;
+	if (mapping->a_ops->swap_readpage) {
+		ret = mapping->a_ops->swap_readpage(swap_file, page);
 		if (!ret)
 			count_vm_event(PSWPIN);
 		return ret;
 	}
 
-	if (preswap_get(page) == 1) {
-		SetPageUptodate(page);
-		unlock_page(page);
-		goto out;
-	}
+	return generic_swap_readpage(page);
+}
 
-	bio = get_swap_bio(GFP_KERNEL, page_private(page), page,
-				end_swap_bio_read);
-	if (bio == NULL) {
-		unlock_page(page);
-		ret = -ENOMEM;
-		goto out;
-	}
-	count_vm_event(PSWPIN);
-	submit_bio(READ, bio);
-out:
-	return ret;
+int swap_set_page_dirty(struct page *page)
+{
+	struct swap_info_struct *sis = page_swap_info(page);
+	struct address_space *mapping = sis->swap_file->f_mapping;
+
+	if (mapping->a_ops->set_page_dirty)
+		return mapping->a_ops->set_page_dirty(page);
+	else
+		return __set_page_dirty_nobuffers(page);
 }

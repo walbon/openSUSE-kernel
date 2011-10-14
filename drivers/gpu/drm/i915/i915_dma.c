@@ -34,6 +34,7 @@
 #include "i915_drm.h"
 #include "i915_drv.h"
 #include "i915_trace.h"
+#include "../../../platform/x86/intel_ips.h"
 #include <linux/pci.h>
 #include <linux/vgaarb.h>
 #include <linux/acpi.h>
@@ -1857,6 +1858,26 @@ out_unlock:
 EXPORT_SYMBOL_GPL(i915_gpu_turbo_disable);
 
 /**
+ * Tells the intel_ips driver that the i915 driver is now loaded, if
+ * IPS got loaded first.
+ *
+ * This awkward dance is so that neither module has to depend on the
+ * other in order for IPS to do the appropriate communication of
+ * GPU turbo limits to i915.
+ */
+static void
+ips_ping_for_i915_load(void)
+{
+	void (*link)(void);
+
+	link = symbol_get(ips_link_to_i915_driver);
+	if (link) {
+		link();
+		symbol_put(ips_link_to_i915_driver);
+	}
+}
+
+/**
  * i915_driver_load - setup chip and create an initial config
  * @dev: DRM device
  * @flags: startup flags
@@ -2046,6 +2067,8 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 	dev_priv->mchdev_lock = &mchdev_lock;
 	spin_unlock(&mchdev_lock);
 
+	ips_ping_for_i915_load();
+
 	return 0;
 
 out_gem_unload:
@@ -2083,11 +2106,8 @@ int i915_driver_unload(struct drm_device *dev)
 	i915_mch_dev = NULL;
 	spin_unlock(&mchdev_lock);
 
-	if (dev_priv->mm.inactive_shrinker.shrink) {
-		extern struct shrinker *_i915_registered_shrinker;
+	if (dev_priv->mm.inactive_shrinker.shrink)
 		unregister_shrinker(&dev_priv->mm.inactive_shrinker);
-		_i915_registered_shrinker = NULL;
-	}
 
 	mutex_lock(&dev->struct_mutex);
 	ret = i915_gpu_idle(dev);

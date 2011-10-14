@@ -21,7 +21,6 @@
 #ifndef __KL_BFD_H
 #define __KL_BFD_H
 
-/* cpw:  " " form: */
 #include "klib.h"
 
 int kl_check_bfd_error(bfd_error_type);

@@ -2,6 +2,7 @@
 #include <linux/kernel.h>
 #include <linux/unistd.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/reboot.h>
 #include <linux/sched.h>
 #include <linux/sysrq.h>
@@ -239,7 +240,7 @@ static void sysrq_handler(struct xenbus_watch *watch, const char **vec,
 
 #ifdef CONFIG_MAGIC_SYSRQ
 	if (sysrq_key != '\0')
-		handle_sysrq(sysrq_key, NULL);
+		handle_sysrq(sysrq_key);
 #endif
 }
 

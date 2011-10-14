@@ -13,7 +13,7 @@
 #include <linux/init.h>
 #include <linux/ctype.h>
 #include <linux/string.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <asm/patch.h>
 
@@ -67,7 +67,7 @@ kdba_dis_getsym(bfd_vma addr, disassemble_info *dip)
 static void
 kdba_printaddress(kdb_machreg_t addr, disassemble_info *dip, int flag)
 {
-	kdb_symtab_t symtab;
+	lkdb_symtab_t symtab;
 	int spaces = 5;
 	unsigned int offset;
 	int slot;
@@ -84,10 +84,10 @@ kdba_printaddress(kdb_machreg_t addr, disassemble_info *dip, int flag)
 	 * Print a symbol name or address as necessary.
 	 */
 	dip->fprintf_func(dip->stream, "0x%0*lx ", (int)(2*sizeof(addr)), addr);
-	kdbnearsym(addr, &symtab);
+	lkdbnearsym(addr, &symtab);
 	if (symtab.sym_name) {
 		/* Do not use kdb_symbol_print here, it always does
-		 * kdb_printf but we want dip->fprintf_func.
+		 * lkdb_printf but we want dip->fprintf_func.
 		 */
 		dip->fprintf_func(dip->stream, "%s", symtab.sym_name);
 		if ((offset = addr - symtab.sym_start) == 0) {
@@ -341,7 +341,7 @@ is_plt(bfd_vma addr) {
 	int i, j;
 	u64 target;
 	struct plt_entry plt;
-	if (kdb_getarea_size(&plt, addr, sizeof(plt)))
+	if (lkdb_getarea_size(&plt, addr, sizeof(plt)))
 		return 0;
 	for (i = 0; i < PLT_BUNDLES; ++i) {
 		for (j = 0; j < 16; ++j) {
@@ -387,7 +387,7 @@ kdba_dis_printaddr(bfd_vma addr, disassemble_info *dip)
 		return;
 	if (!(target = is_plt(addr)))
 		return;
-	kdb_printf(" PLT --> ");
+	lkdb_printf(" PLT --> ");
 	kdba_printaddress(target, dip, 0);
 }
 
@@ -412,7 +412,7 @@ kdba_dis_printaddr(bfd_vma addr, disassemble_info *dip)
 static int
 kdba_dis_getmem(bfd_vma addr, bfd_byte *buf, unsigned int length, disassemble_info *dip)
 {
-	return kdb_getarea_size(buf, addr, length);
+	return lkdb_getarea_size(buf, addr, length);
 }
 
 /*
@@ -434,7 +434,7 @@ int
 kdba_id_parsemode(const char *mode, disassemble_info *dip)
 {
 	if (mode && strcmp(mode, "ia64"))
-		return KDB_BADMODE;
+		return LKDB_BADMODE;
 	return 0;
 }
 

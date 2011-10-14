@@ -99,6 +99,7 @@ enum fip_state {
  * @recv_work:	   &work_struct for receiving FIP frames.
  * @fip_recv_list: list of received FIP frames.
  * @flogi_req:	   clone of FLOGI request sent
+ * @rnd_state:	   state for pseudo-random number generator.
  * @port_id:	   proposed or selected local-port ID.
  * @user_mfs:	   configured maximum FC frame size, including FC header.
  * @flogi_oxid:    exchange ID of most recent fabric login.
@@ -136,6 +137,7 @@ struct fcoe_ctlr {
 	struct sk_buff_head fip_recv_list;
 	struct sk_buff *flogi_req;
 
+	struct rnd_state rnd_state;
 	u32 port_id;
 
 	u16 user_mfs;
@@ -227,6 +229,11 @@ int fcoe_libfc_config(struct fc_lport *, struct fcoe_ctlr *,
 		      const struct libfc_function_template *, int init_fcp);
 u32 fcoe_fc_crc(struct fc_frame *fp);
 int fcoe_start_io(struct sk_buff *skb);
+int fcoe_get_wwn(struct net_device *netdev, u64 *wwn, int type);
+void __fcoe_get_lesb(struct fc_lport *lport, struct fc_els_lesb *fc_lesb,
+		     struct net_device *netdev);
+void fcoe_wwn_to_str(u64 wwn, char *buf, int len);
+int fcoe_validate_vport_create(struct fc_vport *vport);
 
 /**
  * is_fip_mode() - returns true if FIP mode selected.

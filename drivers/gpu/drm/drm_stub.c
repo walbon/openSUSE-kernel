@@ -65,14 +65,16 @@ struct dentry *drm_debugfs_root;
 
 int drm_err(const char *func, const char *format, ...)
 {
+	struct va_format vaf;
 	va_list args;
 	int r;
 
-	printk(KERN_ERR "[" DRM_NAME ":%s] *ERROR* ", func);
-
 	va_start(args, format);
 
-	r = vprintk(format, args);
+	vaf.fmt = format;
+	vaf.va = &args;
+
+	r = printk(KERN_ERR "[" DRM_NAME ":%s] *ERROR* %pV", func, &vaf);
 
 	va_end(args);
 

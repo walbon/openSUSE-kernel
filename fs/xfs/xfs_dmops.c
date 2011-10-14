@@ -49,7 +49,7 @@ xfs_dmops_get(struct xfs_mount *mp)
 		}
 
 		if (!ops) {
-			cmn_err(CE_WARN, "XFS: no dmapi support available.");
+			xfs_warn(mp, "no dmapi support available.");
 			return EINVAL;
 		}
 		mp->m_dm_ops = ops;

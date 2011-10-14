@@ -8,6 +8,7 @@
  */
 #include <linux/module.h>
 #include <linux/mm.h>
+#include <linux/gfp.h>
 #include <linux/kernel_stat.h>
 #include <linux/swap.h>
 #include <linux/swapops.h>
@@ -23,12 +24,10 @@
 
 /*
  * swapper_space is a fiction, retained to simplify the path through
- * vmscan's shrink_page_list, to make sync_page look nicer, and to allow
- * future use of radix_tree tags in the swap cache.
+ * vmscan's shrink_page_list.
  */
 static const struct address_space_operations swap_aops = {
 	.writepage	= swap_writepage,
-	.sync_page	= swap_sync_page,
 	.set_page_dirty	= swap_set_page_dirty,
 	.migratepage	= migrate_page,
 };
@@ -36,7 +35,6 @@ static const struct address_space_operations swap_aops = {
 static struct backing_dev_info swap_backing_dev_info = {
 	.name		= "swap",
 	.capabilities	= BDI_CAP_NO_ACCT_AND_WRITEBACK | BDI_CAP_SWAP_BACKED,
-	.unplug_io_fn	= swap_unplug_io_fn,
 };
 
 struct address_space swapper_space = {

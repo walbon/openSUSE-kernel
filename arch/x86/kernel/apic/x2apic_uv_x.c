@@ -17,15 +17,14 @@
 #include <linux/ctype.h>
 #include <linux/sched.h>
 #include <linux/timer.h>
+#include <linux/slab.h>
 #include <linux/cpu.h>
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/pci.h>
 #include <linux/kdebug.h>
-#include <acpi/acpi.h>
-#ifdef CONFIG_KDB
-#include <linux/kdb.h>
-#endif
+#include <linux/delay.h>
+#include <linux/crash_dump.h>
 
 #include <asm/uv/uv_mmrs.h>
 #include <asm/uv/uv_hub.h>
@@ -37,6 +36,14 @@
 #include <asm/ipi.h>
 #include <asm/smp.h>
 #include <asm/x86_init.h>
+#include <asm/emergency-restart.h>
+#include <asm/nmi.h>
+
+/* BMC sets a bit this MMR non-zero before sending an NMI */
+#define UVH_NMI_MMR				UVH_SCRATCH5
+#define UVH_NMI_MMR_CLEAR			(UVH_NMI_MMR + 8)
+#define UV_NMI_PENDING_MASK			(1UL << 63)
+DEFINE_PER_CPU(unsigned long, cpu_last_nmi_count);
 
 DEFINE_PER_CPU(int, x2apic_extra_bits);
 
@@ -51,6 +58,8 @@ unsigned int uv_apicid_hibits;
 EXPORT_SYMBOL_GPL(uv_apicid_hibits);
 static DEFINE_SPINLOCK(uv_nmi_lock);
 
+static struct apic apic_x2apic_uv_x;
+
 static unsigned long __init uv_early_read_mmr(unsigned long addr)
 {
 	unsigned long val, *mmr;
@@ -61,12 +70,12 @@ static unsigned long __init uv_early_read_mmr(unsigned long addr)
 	return val;
 }
 
-static int is_GRU_range(u64 start, u64 end)
+static inline bool is_GRU_range(u64 start, u64 end)
 {
-	return start >= gru_start_paddr && end < gru_end_paddr;
+	return start >= gru_start_paddr && end <= gru_end_paddr;
 }
 
-static int uv_is_untracked_pat_range(u64 start, u64 end)
+static bool uv_is_untracked_pat_range(u64 start, u64 end)
 {
 	return is_ISA_range(start, end) || is_GRU_range(start, end);
 }
@@ -84,10 +93,22 @@ static int __init early_get_pnodeid(void)
 
 	if (node_id.s.part_number == UV2_HUB_PART_NUMBER)
 		uv_min_hub_revision_id += UV2_HUB_REVISION_BASE - 1;
+	if (node_id.s.part_number == UV2_HUB_PART_NUMBER_X)
+		uv_min_hub_revision_id += UV2_HUB_REVISION_BASE - 1;
 
 	uv_hub_info->hub_revision = uv_min_hub_revision_id;
 	pnode = (node_id.s.node_id >> 1) & ((1 << m_n_config.s.n_skt) - 1);
 	return pnode;
+}
+
+static void __init early_get_apic_pnode_shift(void)
+{
+	uvh_apicid.v = uv_early_read_mmr(UVH_APICID);
+	if (!uvh_apicid.v)
+		/*
+		 * Old bios, use default value
+		 */
+		uvh_apicid.s.pnode_shift = UV_APIC_PNODE_SHIFT;
 }
 
 /*
@@ -107,16 +128,6 @@ static void __init uv_set_apicid_hibit(void)
 	}
 }
 
-static void __init early_get_apic_pnode_shift(void)
-{
-	uvh_apicid.v = uv_early_read_mmr(UVH_APICID);
-	if (!uvh_apicid.v)
-		/*
-		 * Old bios, use default value
-		 */
-		uvh_apicid.s.pnode_shift = UV_APIC_PNODE_SHIFT;
-}
-
 static int __init uv_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 {
 	int pnodeid, is_uv1, is_uv2;
@@ -130,14 +141,13 @@ static int __init uv_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 		early_get_apic_pnode_shift();
 		x86_platform.is_untracked_pat_range =  uv_is_untracked_pat_range;
 		x86_platform.nmi_init = uv_nmi_init;
-		acpi_set_iomap_cacheable();
 		if (!strcmp(oem_table_id, "UVL"))
 			uv_system_type = UV_LEGACY_APIC;
 		else if (!strcmp(oem_table_id, "UVX"))
 			uv_system_type = UV_X2APIC;
 		else if (!strcmp(oem_table_id, "UVH")) {
-			__get_cpu_var(x2apic_extra_bits) =
-				pnodeid << uvh_apicid.s.pnode_shift;
+			__this_cpu_write(x2apic_extra_bits,
+				pnodeid << uvh_apicid.s.pnode_shift);
 			uv_system_type = UV_NON_UNIQUE_APIC;
 			uv_set_apicid_hibit();
 			return 1;
@@ -199,7 +209,6 @@ static int __cpuinit uv_wakeup_secondary(int phys_apicid, unsigned long start_ri
 	    ((start_rip << UVH_IPI_INT_VECTOR_SHFT) >> 12) |
 	    APIC_DM_INIT;
 	uv_write_global_mmr64(pnode, UVH_IPI_INT, val);
-	mdelay(10);
 
 	val = (1UL << UVH_IPI_INT_SEND_SHFT) |
 	    (phys_apicid << UVH_IPI_INT_APIC_ID_SHFT) |
@@ -294,10 +303,7 @@ uv_cpu_mask_to_apicid_and(const struct cpumask *cpumask,
 		if (cpumask_test_cpu(cpu, cpu_online_mask))
 			break;
 	}
-	if (cpu < nr_cpu_ids)
-		return per_cpu(x86_cpu_to_apicid, cpu) | uv_apicid_hibits;
-
-	return BAD_APICID;
+	return per_cpu(x86_cpu_to_apicid, cpu) | uv_apicid_hibits;
 }
 
 static unsigned int x2apic_get_apic_id(unsigned long x)
@@ -305,7 +311,7 @@ static unsigned int x2apic_get_apic_id(unsigned long x)
 	unsigned int id;
 
 	WARN_ON(preemptible() && num_online_cpus() > 1);
-	id = x | __get_cpu_var(x2apic_extra_bits);
+	id = x | __this_cpu_read(x2apic_extra_bits);
 
 	return id;
 }
@@ -335,10 +341,15 @@ static void uv_send_IPI_self(int vector)
 	apic_write(APIC_SELF_IPI, vector);
 }
 
-struct apic __refdata apic_x2apic_uv_x = {
+static int uv_probe(void)
+{
+	return apic == &apic_x2apic_uv_x;
+}
+
+static struct apic __refdata apic_x2apic_uv_x = {
 
 	.name				= "UV large system",
-	.probe				= NULL,
+	.probe				= uv_probe,
 	.acpi_madt_oem_check		= uv_acpi_madt_oem_check,
 	.apic_id_registered		= uv_apic_id_registered,
 
@@ -357,8 +368,6 @@ struct apic __refdata apic_x2apic_uv_x = {
 	.ioapic_phys_id_map		= NULL,
 	.setup_apic_routing		= NULL,
 	.multi_timer_check		= NULL,
-	.apicid_to_node			= NULL,
-	.cpu_to_logical_apicid		= NULL,
 	.cpu_present_to_apicid		= default_cpu_present_to_apicid,
 	.apicid_to_cpu_present		= NULL,
 	.setup_portio_remap		= NULL,
@@ -397,7 +406,7 @@ struct apic __refdata apic_x2apic_uv_x = {
 
 static __cpuinit void set_x2apic_extra_bits(int pnode)
 {
-	__get_cpu_var(x2apic_extra_bits) = (pnode << uvh_apicid.s.pnode_shift);
+	__this_cpu_write(x2apic_extra_bits, pnode << uvh_apicid.s.pnode_shift);
 }
 
 /*
@@ -552,7 +561,7 @@ static void uv_heartbeat(unsigned long ignored)
 
 static void __cpuinit uv_heartbeat_enable(int cpu)
 {
-	if (!uv_cpu_hub_info(cpu)->scir.enabled) {
+	while (!uv_cpu_hub_info(cpu)->scir.enabled) {
 		struct timer_list *timer = &uv_cpu_hub_info(cpu)->scir.timer;
 
 		uv_set_cpu_scir_bits(cpu, SCIR_CPU_HEARTBEAT|SCIR_CPU_ACTIVITY);
@@ -560,11 +569,10 @@ static void __cpuinit uv_heartbeat_enable(int cpu)
 		timer->expires = jiffies + SCIR_CPU_HB_INTERVAL;
 		add_timer_on(timer, cpu);
 		uv_cpu_hub_info(cpu)->scir.enabled = 1;
-	}
 
-	/* check boot cpu */
-	if (!uv_cpu_hub_info(0)->scir.enabled)
-		uv_heartbeat_enable(0);
+		/* also ensure that boot cpu is enabled */
+		cpu = 0;
+	}
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
@@ -668,46 +676,55 @@ void __cpuinit uv_cpu_init(void)
  */
 int uv_handle_nmi(struct notifier_block *self, unsigned long reason, void *data)
 {
-#ifdef CONFIG_KDB
-	struct die_args *args = data;
-	struct pt_regs *regs = args->regs;
-	static int controlling_cpu = -1;
-#endif
+	unsigned long real_uv_nmi;
+	int bid;
 
-	if (reason != DIE_NMI_IPI)
+	if (reason != DIE_NMIUNKNOWN)
 		return NOTIFY_OK;
 
 	if (in_crash_kexec)
 		/* do nothing if entering the crash kernel */
 		return NOTIFY_OK;
 
-#ifdef CONFIG_KDB
-	spin_lock(&uv_nmi_lock);
-	if (controlling_cpu == -1) {
-		controlling_cpu = smp_processor_id();
-		spin_unlock(&uv_nmi_lock);
-		(void)kdb(KDB_REASON_NMI, reason, regs);
-		controlling_cpu = -1;
-	} else {
-		spin_unlock(&uv_nmi_lock);
-		(void)kdb(KDB_REASON_ENTER_SLAVE, reason, regs);
-	}
-#else
 	/*
-	 * Use a lock so only one cpu prints at a time
-	 * to prevent intermixed output.
+	 * Each blade has an MMR that indicates when an NMI has been sent
+	 * to cpus on the blade. If an NMI is detected, atomically
+	 * clear the MMR and update a per-blade NMI count used to
+	 * cause each cpu on the blade to notice a new NMI.
+	 */
+	bid = uv_numa_blade_id();
+	real_uv_nmi = (uv_read_local_mmr(UVH_NMI_MMR) & UV_NMI_PENDING_MASK);
+
+	if (unlikely(real_uv_nmi)) {
+		spin_lock(&uv_blade_info[bid].nmi_lock);
+		real_uv_nmi = (uv_read_local_mmr(UVH_NMI_MMR) & UV_NMI_PENDING_MASK);
+		if (real_uv_nmi) {
+			uv_blade_info[bid].nmi_count++;
+			uv_write_local_mmr(UVH_NMI_MMR_CLEAR, UV_NMI_PENDING_MASK);
+		}
+		spin_unlock(&uv_blade_info[bid].nmi_lock);
+	}
+
+	if (likely(__get_cpu_var(cpu_last_nmi_count) == uv_blade_info[bid].nmi_count))
+		return NOTIFY_DONE;
+
+	__get_cpu_var(cpu_last_nmi_count) = uv_blade_info[bid].nmi_count;
+
+	/*
+	 * Use a lock so only one cpu prints at a time.
+	 * This prevents intermixed output.
 	 */
 	spin_lock(&uv_nmi_lock);
-	pr_info("NMI stack dump cpu %u:\n", smp_processor_id());
+	pr_info("UV NMI stack dump cpu %u:\n", smp_processor_id());
 	dump_stack();
 	spin_unlock(&uv_nmi_lock);
-#endif /* CONFIG_KDB */
 
 	return NOTIFY_STOP;
 }
 
 static struct notifier_block uv_dump_stack_nmi_nb = {
-	.notifier_call	= uv_handle_nmi
+	.notifier_call	= uv_handle_nmi,
+	.priority = NMI_LOCAL_LOW_PRIOR - 1,
 };
 
 void uv_register_nmi_notifier(void)
@@ -756,7 +773,7 @@ void __init uv_system_init(void)
 	node_id.v = uv_read_local_mmr(UVH_NODE_ID);
 	gnode_extra = (node_id.s.node_id & ~((1 << n_val) - 1)) >> 1;
 	gnode_upper = ((unsigned long)gnode_extra  << m_val);
-	printk(KERN_DEBUG "UV: N %d, M %d, N_IO: %d, gnode_upper 0x%lx, gnode_extra 0x%x, pnode_mask 0x%x, pnode_io_mask 0x%x\n",
+	printk(KERN_INFO "UV: N %d, M %d, N_IO: %d, gnode_upper 0x%lx, gnode_extra 0x%x, pnode_mask 0x%x, pnode_io_mask 0x%x\n",
 			n_val, m_val, n_io, gnode_upper, gnode_extra, pnode_mask, pnode_io_mask);
 
 	printk(KERN_DEBUG "UV: global MMR base 0x%lx\n", mmr_base);
@@ -767,8 +784,9 @@ void __init uv_system_init(void)
 	printk(KERN_DEBUG "UV: Found %d blades\n", uv_num_possible_blades());
 
 	bytes = sizeof(struct uv_blade_info) * uv_num_possible_blades();
-	uv_blade_info = kmalloc(bytes, GFP_KERNEL);
+	uv_blade_info = kzalloc(bytes, GFP_KERNEL);
 	BUG_ON(!uv_blade_info);
+
 	for (blade = 0; blade < uv_num_possible_blades(); blade++)
 		uv_blade_info[blade].memory_nid = -1;
 
@@ -794,6 +812,7 @@ void __init uv_system_init(void)
 			uv_blade_info[blade].pnode = pnode;
 			uv_blade_info[blade].nr_possible_cpus = 0;
 			uv_blade_info[blade].nr_online_cpus = 0;
+			spin_lock_init(&uv_blade_info[blade].nmi_lock);
 			max_pnode = max(pnode, max_pnode);
 			blade++;
 		}
@@ -814,6 +833,10 @@ void __init uv_system_init(void)
 		uv_cpu_hub_info(cpu)->pnode_mask = pnode_mask;
 		uv_cpu_hub_info(cpu)->apic_pnode_shift = uvh_apicid.s.pnode_shift;
 		uv_cpu_hub_info(cpu)->hub_revision = uv_hub_info->hub_revision;
+
+		uv_cpu_hub_info(cpu)->m_shift = 64 - m_val;
+		uv_cpu_hub_info(cpu)->n_lshift = is_uv2_1_hub() ?
+				(m_val == 40 ? 40 : 39) : m_val;
 
 		pnode = uv_apicid_to_pnode(apicid);
 		blade = boot_pnode_to_blade(pnode);
@@ -845,8 +868,7 @@ void __init uv_system_init(void)
 		if (uv_node_to_blade[nid] >= 0)
 			continue;
 		paddr = node_start_pfn(nid) << PAGE_SHIFT;
-		paddr = uv_soc_phys_ram_to_gpa(paddr);
-		pnode = (paddr >> m_val) & pnode_mask;
+		pnode = uv_gpa_to_pnode(uv_soc_phys_ram_to_gpa(paddr));
 		blade = boot_pnode_to_blade(pnode);
 		uv_node_to_blade[nid] = blade;
 	}
@@ -862,4 +884,13 @@ void __init uv_system_init(void)
 
 	/* register Legacy VGA I/O redirection handler */
 	pci_register_set_vga_state(uv_set_vga_state);
+
+	/*
+	 * For a kdump kernel the reset must be BOOT_ACPI, not BOOT_EFI, as
+	 * EFI is not enabled in the kdump kernel.
+	 */
+	if (is_kdump_kernel())
+		reboot_type = BOOT_ACPI;
 }
+
+apic_driver(apic_x2apic_uv_x);

@@ -11,7 +11,7 @@
 #include <linux/string.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/smp.h>
 #include <linux/sched.h>
@@ -19,9 +19,9 @@
 #include <asm/system.h>
 
 /*
- * Table of kdb_breakpoints
+ * Table of lkdb_breakpoints
  */
-kdb_bp_t kdb_breakpoints[KDB_MAXBPT];
+lkdb_bp_t lkdb_breakpoints[LKDB_MAXBPT];
 
 /*
  *	Predicate to test whether a breakpoint should be installed
@@ -32,14 +32,14 @@ kdb_bp_t kdb_breakpoints[KDB_MAXBPT];
  *	the assumption that the require per-cpu registers to be set.
  */
 
-static inline int kdb_is_installable_global_bp(const kdb_bp_t *bp)
+static inline int kdb_is_installable_global_bp(const lkdb_bp_t *bp)
 {
 	return (bp->bp_enabled &&
 		bp->bp_global &&
 		!bp->bp_forcehw);
 }
 
-static int kdb_is_installable_local_bp(const kdb_bp_t *bp)
+static int kdb_is_installable_local_bp(const lkdb_bp_t *bp)
 {
 	if (!bp->bp_enabled)
 		return 0;
@@ -55,10 +55,10 @@ static int kdb_is_installable_local_bp(const kdb_bp_t *bp)
 }
 
 /*
- * kdb_bp_install_global
+ * lkdb_bp_install_global
  *
- *	Install global kdb_breakpoints prior to returning from the
- *	kernel debugger.  This allows the kdb_breakpoints to be set
+ *	Install global lkdb_breakpoints prior to returning from the
+ *	kernel debugger.  This allows the lkdb_breakpoints to be set
  *	upon functions that are used internally by kdb, such as
  *	printk().
  *
@@ -76,28 +76,28 @@ static int kdb_is_installable_local_bp(const kdb_bp_t *bp)
  */
 
 void
-kdb_bp_install_global(struct pt_regs *regs)
+lkdb_bp_install_global(struct pt_regs *regs)
 {
 	int i;
 
-	for(i=0; i<KDB_MAXBPT; i++) {
-		kdb_bp_t *bp = &kdb_breakpoints[i];
+	for(i=0; i<LKDB_MAXBPT; i++) {
+		lkdb_bp_t *bp = &lkdb_breakpoints[i];
 
 		if (KDB_DEBUG(BP)) {
-			kdb_printf("kdb_bp_install_global bp %d bp_enabled %d bp_global %d\n",
+			lkdb_printf("lkdb_bp_install_global bp %d bp_enabled %d bp_global %d\n",
 				i, bp->bp_enabled, bp->bp_global);
 		}
-		/* HW BP local or global are installed in kdb_bp_install_local*/
+		/* HW BP local or global are installed in lkdb_bp_install_local*/
 		if (kdb_is_installable_global_bp(bp))
 			kdba_installbp(regs, bp);
 	}
 }
 
 /*
- * kdb_bp_install_local
+ * lkdb_bp_install_local
  *
- *	Install local kdb_breakpoints prior to returning from the
- *	kernel debugger.  This allows the kdb_breakpoints to be set
+ *	Install local lkdb_breakpoints prior to returning from the
+ *	kernel debugger.  This allows the lkdb_breakpoints to be set
  *	upon functions that are used internally by kdb, such as
  *	printk().
  *
@@ -115,15 +115,15 @@ kdb_bp_install_global(struct pt_regs *regs)
  */
 
 void
-kdb_bp_install_local(struct pt_regs *regs)
+lkdb_bp_install_local(struct pt_regs *regs)
 {
 	int i;
 
-	for(i=0; i<KDB_MAXBPT; i++) {
-		kdb_bp_t *bp = &kdb_breakpoints[i];
+	for(i=0; i<LKDB_MAXBPT; i++) {
+		lkdb_bp_t *bp = &lkdb_breakpoints[i];
 
 		if (KDB_DEBUG(BP)) {
-			kdb_printf("kdb_bp_install_local bp %d bp_enabled %d bp_global %d cpu %d bp_cpu %d\n",
+			lkdb_printf("lkdb_bp_install_local bp %d bp_enabled %d bp_global %d cpu %d bp_cpu %d\n",
 				i, bp->bp_enabled, bp->bp_global,
 				smp_processor_id(), bp->bp_cpu);
 		}
@@ -133,9 +133,9 @@ kdb_bp_install_local(struct pt_regs *regs)
 }
 
 /*
- * kdb_bp_remove_global
+ * lkdb_bp_remove_global
  *
- * 	Remove global kdb_breakpoints upon entry to the kernel debugger.
+ * 	Remove global lkdb_breakpoints upon entry to the kernel debugger.
  *
  * Parameters:
  *	None.
@@ -149,15 +149,15 @@ kdb_bp_install_local(struct pt_regs *regs)
  */
 
 void
-kdb_bp_remove_global(void)
+lkdb_bp_remove_global(void)
 {
 	int i;
 
-	for(i=KDB_MAXBPT-1; i>=0; i--) {
-		kdb_bp_t *bp = &kdb_breakpoints[i];
+	for(i=LKDB_MAXBPT-1; i>=0; i--) {
+		lkdb_bp_t *bp = &lkdb_breakpoints[i];
 
 		if (KDB_DEBUG(BP)) {
-			kdb_printf("kdb_bp_remove_global bp %d bp_enabled %d bp_global %d\n",
+			lkdb_printf("lkdb_bp_remove_global bp %d bp_enabled %d bp_global %d\n",
 				i, bp->bp_enabled, bp->bp_global);
 		}
 		if (kdb_is_installable_global_bp(bp))
@@ -167,9 +167,9 @@ kdb_bp_remove_global(void)
 
 
 /*
- * kdb_bp_remove_local
+ * lkdb_bp_remove_local
  *
- * 	Remove local kdb_breakpoints upon entry to the kernel debugger.
+ * 	Remove local lkdb_breakpoints upon entry to the kernel debugger.
  *
  * Parameters:
  *	None.
@@ -183,15 +183,15 @@ kdb_bp_remove_global(void)
  */
 
 void
-kdb_bp_remove_local(void)
+lkdb_bp_remove_local(void)
 {
 	int i;
 
-	for(i=KDB_MAXBPT-1; i>=0; i--) {
-		kdb_bp_t *bp = &kdb_breakpoints[i];
+	for(i=LKDB_MAXBPT-1; i>=0; i--) {
+		lkdb_bp_t *bp = &lkdb_breakpoints[i];
 
 		if (KDB_DEBUG(BP)) {
-			kdb_printf("kdb_bp_remove_local bp %d bp_enabled %d bp_global %d cpu %d bp_cpu %d\n",
+			lkdb_printf("lkdb_bp_remove_local bp %d bp_enabled %d bp_global %d cpu %d bp_cpu %d\n",
 				i, bp->bp_enabled, bp->bp_global,
 				smp_processor_id(), bp->bp_cpu);
 		}
@@ -217,38 +217,38 @@ kdb_bp_remove_local(void)
  */
 
 static void
-kdb_printbp(kdb_bp_t *bp, int i)
+kdb_printbp(lkdb_bp_t *bp, int i)
 {
 	if (bp->bp_forcehw) {
-		kdb_printf("Forced ");
+		lkdb_printf("Forced ");
 	}
 
 	if (!bp->bp_template.bph_free) {
-		kdb_printf("%s ", kdba_bptype(&bp->bp_template));
+		lkdb_printf("%s ", kdba_bptype(&bp->bp_template));
 	} else {
-		kdb_printf("Instruction(i) ");
+		lkdb_printf("Instruction(i) ");
 	}
 
-	kdb_printf("BP #%d at ", i);
-	kdb_symbol_print(bp->bp_addr, NULL, KDB_SP_DEFAULT);
+	lkdb_printf("BP #%d at ", i);
+	lkdb_symbol_print(bp->bp_addr, NULL, KDB_SP_DEFAULT);
 
 	if (bp->bp_enabled) {
 		kdba_printbp(bp);
 		if (bp->bp_global)
-			kdb_printf(" globally");
+			lkdb_printf(" globally");
 		else
-			kdb_printf(" on cpu %d", bp->bp_cpu);
+			lkdb_printf(" on cpu %d", bp->bp_cpu);
 		if (bp->bp_adjust)
-			kdb_printf(" adjust %d", bp->bp_adjust);
+			lkdb_printf(" adjust %d", bp->bp_adjust);
 	} else {
-		kdb_printf("\n    is disabled");
+		lkdb_printf("\n    is disabled");
 	}
 
-	kdb_printf("\taddr at %016lx, hardtype=%d, forcehw=%d, installed=%d, hard=%p\n",
+	lkdb_printf("\taddr at %016lx, hardtype=%d, forcehw=%d, installed=%d, hard=%p\n",
 		bp->bp_addr, bp->bp_hardtype, bp->bp_forcehw,
 		bp->bp_installed, bp->bp_hard);
 
-	kdb_printf("\n");
+	lkdb_printf("\n");
 }
 
 /*
@@ -279,19 +279,19 @@ static int
 kdb_bp(int argc, const char **argv)
 {
 	int i, bpno;
-	kdb_bp_t *bp, *bp_check;
+	lkdb_bp_t *bp, *bp_check;
 	int diag;
 	int free;
 	char *symname = NULL;
 	long offset = 0ul;
 	int nextarg;
-	static kdb_bp_t kdb_bp_template;
+	static lkdb_bp_t kdb_bp_template;
 
 	if (argc == 0) {
 		/*
 		 * Display breakpoint table
 		 */
-		for(bpno=0,bp=kdb_breakpoints; bpno<KDB_MAXBPT; bpno++, bp++) {
+		for(bpno=0,bp=lkdb_breakpoints; bpno<LKDB_MAXBPT; bpno++, bp++) {
 			if (bp->bp_free) continue;
 
 			kdb_printbp(bp, bpno);
@@ -312,25 +312,25 @@ kdb_bp(int argc, const char **argv)
 		kdb_bp_template.bp_global = 1;
 
 	nextarg = 1;
-	diag = kdbgetaddrarg(argc, argv, &nextarg, &kdb_bp_template.bp_addr,
+	diag = lkdbgetaddrarg(argc, argv, &nextarg, &kdb_bp_template.bp_addr,
 			     &offset, &symname);
 	if (diag)
 		return diag;
 	if (!kdb_bp_template.bp_addr)
-		return KDB_BADINT;
+		return LKDB_BADINT;
 
 	/*
 	 * Find an empty bp structure, to allocate
 	 */
-	free = KDB_MAXBPT;
-	for(bpno=0,bp=kdb_breakpoints; bpno<KDB_MAXBPT; bpno++,bp++) {
+	free = LKDB_MAXBPT;
+	for(bpno=0,bp=lkdb_breakpoints; bpno<LKDB_MAXBPT; bpno++,bp++) {
 		if (bp->bp_free) {
 			break;
 		}
 	}
 
-	if (bpno == KDB_MAXBPT)
-		return KDB_TOOMANYBPT;
+	if (bpno == LKDB_MAXBPT)
+		return LKDB_TOOMANYBPT;
 
 	/*
 	 * Handle architecture dependent parsing
@@ -348,14 +348,14 @@ kdb_bp(int argc, const char **argv)
 	 * enabled for both read and write on the same address, even
 	 * though ia64 allows this.
 	 */
-	for(i=0,bp_check=kdb_breakpoints; i<KDB_MAXBPT; i++,bp_check++) {
+	for(i=0,bp_check=lkdb_breakpoints; i<LKDB_MAXBPT; i++,bp_check++) {
 		if (!bp_check->bp_free &&
 		    bp_check->bp_addr == kdb_bp_template.bp_addr &&
 		    (bp_check->bp_global ||
 		     bp_check->bp_cpu == kdb_bp_template.bp_cpu)) {
-			kdb_printf("You already have a breakpoint at "
+			lkdb_printf("You already have a breakpoint at "
 				kdb_bfd_vma_fmt0 "\n", kdb_bp_template.bp_addr);
-			return KDB_DUPBPT;
+			return LKDB_DUPBPT;
 		}
 	}
 
@@ -420,8 +420,8 @@ static int
 kdb_bc(int argc, const char **argv)
 {
 	kdb_machreg_t addr;
-	kdb_bp_t *bp = NULL;
-	int lowbp = KDB_MAXBPT;
+	lkdb_bp_t *bp = NULL;
+	int lowbp = LKDB_MAXBPT;
 	int highbp = 0;
 	int done = 0;
 	int i;
@@ -436,13 +436,13 @@ kdb_bc(int argc, const char **argv)
 		cmd = KDBCMD_BC;
 
 	if (argc != 1)
-		return KDB_ARGCOUNT;
+		return LKDB_ARGCOUNT;
 
 	if (strcmp(argv[1], "*") == 0) {
 		lowbp = 0;
-		highbp = KDB_MAXBPT;
+		highbp = LKDB_MAXBPT;
 	} else {
-		diag = kdbgetularg(argv[1], &addr);
+		diag = lkdbgetularg(argv[1], &addr);
 		if (diag)
 			return diag;
 
@@ -450,12 +450,12 @@ kdb_bc(int argc, const char **argv)
 		 * For addresses less than the maximum breakpoint number,
 		 * assume that the breakpoint number is desired.
 		 */
-		if (addr < KDB_MAXBPT) {
-			bp = &kdb_breakpoints[addr];
+		if (addr < LKDB_MAXBPT) {
+			bp = &lkdb_breakpoints[addr];
 			lowbp = highbp = addr;
 			highbp++;
 		} else {
-			for(i=0, bp=kdb_breakpoints; i<KDB_MAXBPT; i++, bp++) {
+			for(i=0, bp=lkdb_breakpoints; i<LKDB_MAXBPT; i++, bp++) {
 				if (bp->bp_addr == addr) {
 					lowbp = highbp = i;
 					highbp++;
@@ -469,7 +469,7 @@ kdb_bc(int argc, const char **argv)
 	 * Now operate on the set of breakpoints matching the input
 	 * criteria (either '*' for all, or an individual breakpoint).
 	 */
-	for(bp=&kdb_breakpoints[lowbp], i=lowbp;
+	for(bp=&lkdb_breakpoints[lowbp], i=lowbp;
 	    i < highbp;
 	    i++, bp++) {
 		if (bp->bp_free)
@@ -485,7 +485,7 @@ kdb_bc(int argc, const char **argv)
 			bp->bp_enabled = 0;
 			bp->bp_global = 0;
 
-			kdb_printf("Breakpoint %d at " kdb_bfd_vma_fmt " cleared\n",
+			lkdb_printf("Breakpoint %d at " kdb_bfd_vma_fmt " cleared\n",
 				i, bp->bp_addr);
 
 			bp->bp_addr = 0;
@@ -510,10 +510,10 @@ kdb_bc(int argc, const char **argv)
 
 			bp->bp_enabled = 1;
 
-			kdb_printf("Breakpoint %d at " kdb_bfd_vma_fmt " enabled",
+			lkdb_printf("Breakpoint %d at " kdb_bfd_vma_fmt " enabled",
 				i, bp->bp_addr);
 
-			kdb_printf("\n");
+			lkdb_printf("\n");
 			break;
 		case KDBCMD_BD:
 			if (!bp->bp_enabled)
@@ -529,7 +529,7 @@ kdb_bc(int argc, const char **argv)
 
 			bp->bp_enabled = 0;
 
-			kdb_printf("Breakpoint %d at " kdb_bfd_vma_fmt " disabled\n",
+			lkdb_printf("Breakpoint %d at " kdb_bfd_vma_fmt " disabled\n",
 				i, bp->bp_addr);
 
 			break;
@@ -540,7 +540,7 @@ kdb_bc(int argc, const char **argv)
 		}
 	}
 
-	return (!done)?KDB_BPTNOTFOUND:0;
+	return (!done)?LKDB_BPTNOTFOUND:0;
 }
 
 /*
@@ -580,11 +580,11 @@ kdb_ss(int argc, const char **argv)
 
 	ssb = (strcmp(argv[0], "ssb") == 0);
 	if (argc != 0)
-		return KDB_ARGCOUNT;
+		return LKDB_ARGCOUNT;
 
 	if (!regs) {
-		kdb_printf("%s: pt_regs not available\n", __FUNCTION__);
-		return KDB_BADREG;
+		lkdb_printf("%s: pt_regs not available\n", __FUNCTION__);
+		return LKDB_BADREG;
 	}
 
 	/*
@@ -602,7 +602,7 @@ kdb_ss(int argc, const char **argv)
 }
 
 /*
- * kdb_initbptab
+ * lkdb_initbptab
  *
  *	Initialize the breakpoint table.  Register breakpoint commands.
  *
@@ -618,17 +618,17 @@ kdb_ss(int argc, const char **argv)
  */
 
 void __init
-kdb_initbptab(void)
+lkdb_initbptab(void)
 {
 	int i;
-	kdb_bp_t *bp;
+	lkdb_bp_t *bp;
 
 	/*
 	 * First time initialization.
 	 */
-	memset(&kdb_breakpoints, '\0', sizeof(kdb_breakpoints));
+	memset(&lkdb_breakpoints, '\0', sizeof(lkdb_breakpoints));
 
-	for (i=0, bp=kdb_breakpoints; i<KDB_MAXBPT; i++, bp++) {
+	for (i=0, bp=lkdb_breakpoints; i<LKDB_MAXBPT; i++, bp++) {
 		bp->bp_free = 1;
 		/*
 		 * The bph_free flag is architecturally required.  It
@@ -643,17 +643,17 @@ kdb_initbptab(void)
 		bp->bp_template.bph_free = 1;
 	}
 
-	kdb_register_repeat("bp", kdb_bp, "[<vaddr>]", "Set/Display breakpoints", 0, KDB_REPEAT_NO_ARGS);
-	kdb_register_repeat("bl", kdb_bp, "[<vaddr>]", "Display breakpoints", 0, KDB_REPEAT_NO_ARGS);
-	kdb_register_repeat("bpa", kdb_bp, "[<vaddr>]", "Set/Display global breakpoints", 0, KDB_REPEAT_NO_ARGS);
-	kdb_register_repeat("bph", kdb_bp, "[<vaddr>]", "Set hardware breakpoint", 0, KDB_REPEAT_NO_ARGS);
-	kdb_register_repeat("bpha", kdb_bp, "[<vaddr>]", "Set global hardware breakpoint", 0, KDB_REPEAT_NO_ARGS);
-	kdb_register_repeat("bc", kdb_bc, "<bpnum>",   "Clear Breakpoint", 0, KDB_REPEAT_NONE);
-	kdb_register_repeat("be", kdb_bc, "<bpnum>",   "Enable Breakpoint", 0, KDB_REPEAT_NONE);
-	kdb_register_repeat("bd", kdb_bc, "<bpnum>",   "Disable Breakpoint", 0, KDB_REPEAT_NONE);
+	lkdb_register_repeat("bp", kdb_bp, "[<vaddr>]", "Set/Display breakpoints", 0, LKDB_REPEAT_NO_ARGS);
+	lkdb_register_repeat("bl", kdb_bp, "[<vaddr>]", "Display breakpoints", 0, LKDB_REPEAT_NO_ARGS);
+	lkdb_register_repeat("bpa", kdb_bp, "[<vaddr>]", "Set/Display global breakpoints", 0, LKDB_REPEAT_NO_ARGS);
+	lkdb_register_repeat("bph", kdb_bp, "[<vaddr>]", "Set hardware breakpoint", 0, LKDB_REPEAT_NO_ARGS);
+	lkdb_register_repeat("bpha", kdb_bp, "[<vaddr>]", "Set global hardware breakpoint", 0, LKDB_REPEAT_NO_ARGS);
+	lkdb_register_repeat("bc", kdb_bc, "<bpnum>",   "Clear Breakpoint", 0, LKDB_REPEAT_NONE);
+	lkdb_register_repeat("be", kdb_bc, "<bpnum>",   "Enable Breakpoint", 0, LKDB_REPEAT_NONE);
+	lkdb_register_repeat("bd", kdb_bc, "<bpnum>",   "Disable Breakpoint", 0, LKDB_REPEAT_NONE);
 
-	kdb_register_repeat("ss", kdb_ss, "", "Single Step", 1, KDB_REPEAT_NO_ARGS);
-	kdb_register_repeat("ssb", kdb_ss, "", "Single step to branch/call", 0, KDB_REPEAT_NO_ARGS);
+	lkdb_register_repeat("ss", kdb_ss, "", "Single Step", 1, LKDB_REPEAT_NO_ARGS);
+	lkdb_register_repeat("ssb", kdb_ss, "", "Single step to branch/call", 0, LKDB_REPEAT_NO_ARGS);
 	/*
 	 * Architecture dependent initialization.
 	 */

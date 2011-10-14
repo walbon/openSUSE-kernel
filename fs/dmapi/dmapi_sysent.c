@@ -43,7 +43,6 @@
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/module.h>
-#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 
@@ -57,9 +56,8 @@ struct kmem_cache	*dm_session_cachep = NULL;
 struct kmem_cache	*dm_fsys_map_cachep = NULL;
 struct kmem_cache	*dm_fsys_vptr_cachep = NULL;
 
-static int
-dmapi_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
-	    unsigned long arg)
+static long
+dmapi_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	sys_dmapi_args_t kargs;
 	sys_dmapi_args_t *uap = &kargs;
@@ -73,8 +71,6 @@ dmapi_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 	if( copy_from_user( &kargs, (sys_dmapi_args_t __user *)arg,
 			   sizeof(sys_dmapi_args_t) ) )
 		return -EFAULT;
-
-	unlock_kernel();
 
 	switch (cmd) {
 	case DM_CLEAR_INHERIT:
@@ -584,8 +580,6 @@ dmapi_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 		break;
 	}
 
-	lock_kernel();
-
 	/* If it was an *_rvp() function, then
 		if error==0, return |rvp|
 	*/
@@ -629,7 +623,7 @@ dmapi_dump(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 
 static struct file_operations dmapi_fops = {
 	.open		= dmapi_open,
-	.ioctl		= dmapi_ioctl,
+	.unlocked_ioctl	= dmapi_ioctl,
 	.read		= dmapi_dump,
 	.release	= dmapi_release
 };

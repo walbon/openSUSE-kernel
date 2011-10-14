@@ -682,6 +682,16 @@ static void hpsa_scsi_replace_entry(struct ctlr_info *h, int hostno,
 	BUG_ON(entry < 0 || entry >= HPSA_MAX_SCSI_DEVS_PER_HBA);
 	removed[*nremoved] = h->dev[entry];
 	(*nremoved)++;
+
+	/*
+	 * New physical devices won't have target/lun assigned yet
+	 * so we need to preserve the values in the slot we are replacing.
+	 */
+	if (new_entry->target == -1) {
+		new_entry->target = h->dev[entry]->target;
+		new_entry->lun = h->dev[entry]->lun;
+	}
+
 	h->dev[entry] = new_entry;
 	added[*nadded] = new_entry;
 	(*nadded)++;
@@ -1043,6 +1053,7 @@ static void complete_scsi_command(struct CommandList *cp)
 	unsigned char sense_key;
 	unsigned char asc;      /* additional sense code */
 	unsigned char ascq;     /* additional sense code qualifier */
+	unsigned long sense_data_size;
 
 	ei = cp->err_info;
 	cmd = (struct scsi_cmnd *) cp->scsi_cmd;
@@ -1057,10 +1068,14 @@ static void complete_scsi_command(struct CommandList *cp)
 	cmd->result |= ei->ScsiStatus;
 
 	/* copy the sense data whether we need to or not. */
-	memcpy(cmd->sense_buffer, ei->SenseInfo,
-		ei->SenseLen > SCSI_SENSE_BUFFERSIZE ?
-			SCSI_SENSE_BUFFERSIZE :
-			ei->SenseLen);
+	if (SCSI_SENSE_BUFFERSIZE < sizeof(ei->SenseInfo))
+		sense_data_size = SCSI_SENSE_BUFFERSIZE;
+	else
+		sense_data_size = sizeof(ei->SenseInfo);
+	if (ei->SenseLen < sense_data_size)
+		sense_data_size = ei->SenseLen;
+
+	memcpy(cmd->sense_buffer, ei->SenseInfo, sense_data_size);
 	scsi_set_resid(cmd, ei->ResidualCnt);
 
 	if (ei->CommandStatus == 0) {
@@ -1549,10 +1564,17 @@ static inline void hpsa_set_bus_target_lun(struct hpsa_scsi_dev_t *device,
 }
 
 static int hpsa_update_device_info(struct ctlr_info *h,
-	unsigned char scsi3addr[], struct hpsa_scsi_dev_t *this_device)
+	unsigned char scsi3addr[], struct hpsa_scsi_dev_t *this_device,
+	unsigned char *is_OBDR_device)
 {
-#define OBDR_TAPE_INQ_SIZE 49
+
+#define OBDR_SIG_OFFSET 43
+#define OBDR_TAPE_SIG "$DR-10"
+#define OBDR_SIG_LEN (sizeof(OBDR_TAPE_SIG) - 1)
+#define OBDR_TAPE_INQ_SIZE (OBDR_SIG_OFFSET + OBDR_SIG_LEN)
+
 	unsigned char *inq_buff;
+	unsigned char *obdr_sig;
 
 	inq_buff = kzalloc(OBDR_TAPE_INQ_SIZE, GFP_KERNEL);
 	if (!inq_buff)
@@ -1583,6 +1605,16 @@ static int hpsa_update_device_info(struct ctlr_info *h,
 		hpsa_get_raid_level(h, scsi3addr, &this_device->raid_level);
 	else
 		this_device->raid_level = RAID_UNKNOWN;
+
+	if (is_OBDR_device) {
+		/* See if this is a One-Button-Disaster-Recovery device
+		 * by looking for "$DR-10" at offset 43 in inquiry data.
+		 */
+		obdr_sig = &inq_buff[OBDR_SIG_OFFSET];
+		*is_OBDR_device = (this_device->devtype == TYPE_ROM &&
+					strncmp(obdr_sig, OBDR_TAPE_SIG,
+						OBDR_SIG_LEN) == 0);
+	}
 
 	kfree(inq_buff);
 	return 0;
@@ -1717,7 +1749,7 @@ static int add_msa2xxx_enclosure_device(struct ctlr_info *h,
 		return 0;
 	}
 
-	if (hpsa_update_device_info(h, scsi3addr, this_device))
+	if (hpsa_update_device_info(h, scsi3addr, this_device, NULL))
 		return 0;
 	(*nmsa2xxx_enclosures)++;
 	hpsa_set_bus_target_lun(this_device, bus, target, 0);
@@ -1809,7 +1841,6 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 	 */
 	struct ReportLUNdata *physdev_list = NULL;
 	struct ReportLUNdata *logdev_list = NULL;
-	unsigned char *inq_buff = NULL;
 	u32 nphysicals = 0;
 	u32 nlogicals = 0;
 	u32 ndev_allocated = 0;
@@ -1825,11 +1856,9 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 		GFP_KERNEL);
 	physdev_list = kzalloc(reportlunsize, GFP_KERNEL);
 	logdev_list = kzalloc(reportlunsize, GFP_KERNEL);
-	inq_buff = kmalloc(OBDR_TAPE_INQ_SIZE, GFP_KERNEL);
 	tmpdevice = kzalloc(sizeof(*tmpdevice), GFP_KERNEL);
 
-	if (!currentsd || !physdev_list || !logdev_list ||
-		!inq_buff || !tmpdevice) {
+	if (!currentsd || !physdev_list || !logdev_list || !tmpdevice) {
 		dev_err(&h->pdev->dev, "out of memory\n");
 		goto out;
 	}
@@ -1864,7 +1893,7 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 	/* adjust our table of devices */
 	nmsa2xxx_enclosures = 0;
 	for (i = 0; i < nphysicals + nlogicals + 1; i++) {
-		u8 *lunaddrbytes;
+		u8 *lunaddrbytes, is_OBDR = 0;
 
 		/* Figure out where the LUN ID info is coming from */
 		lunaddrbytes = figure_lunaddrbytes(h, raid_ctlr_position,
@@ -1875,7 +1904,8 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 			continue;
 
 		/* Get device type, vendor, model, device id */
-		if (hpsa_update_device_info(h, lunaddrbytes, tmpdevice))
+		if (hpsa_update_device_info(h, lunaddrbytes, tmpdevice,
+							&is_OBDR))
 			continue; /* skip it if we can't talk to it. */
 		figure_bus_target_lun(h, lunaddrbytes, &bus, &target, &lun,
 			tmpdevice);
@@ -1900,26 +1930,15 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 
 		switch (this_device->devtype) {
 		case TYPE_ROM:
-
-			if (!h->software_raid) { /* Real Smart Array? */
-
 			/* We don't *really* support actual CD-ROM devices,
-			 * on real Smart Arrays, just "One Button Disaster
-			 * Recovery" tape drive which temporarily pretends to
-			 * be a CD-ROM drive.  So we check that the device is
-			 * really an OBDR tape device by checking for "$DR-10"
-			 * in bytes 43-48 of the inquiry data.  We do support
-			 * CD-ROMs on software RAID "Smart Arrays" though.
+			 * just "One Button Disaster Recovery" tape drive
+			 * which temporarily pretends to be a CD-ROM drive.
+			 * So we check that the device is really an OBDR tape
+			 * device by checking for "$DR-10" in bytes 43-48 of
+			 * the inquiry data.
 			 */
-				char obdr_sig[7];
-#define OBDR_TAPE_SIG "$DR-10"
-				strncpy(obdr_sig, &inq_buff[43], 6);
-				obdr_sig[6] = '\0';
-				if (strncmp(obdr_sig, OBDR_TAPE_SIG, 6) != 0)
-					/* Not OBDR device, ignore it. */
-					break;
-			} /* else, it's a software RAID "Smart Array" */
-			ncurrent++;
+			if (is_OBDR)
+				ncurrent++;
 			break;
 		case TYPE_DISK:
 			if (i < nphysicals)
@@ -1952,7 +1971,6 @@ out:
 	for (i = 0; i < ndev_allocated; i++)
 		kfree(currentsd[i]);
 	kfree(currentsd);
-	kfree(inq_buff);
 	kfree(physdev_list);
 	kfree(logdev_list);
 }
@@ -3847,7 +3865,7 @@ static void __devinit hpsa_wait_for_mode_change_ack(struct ctlr_info *h)
 		if (!(doorbell_value & CFGTBL_ChangeReq))
 			break;
 		/* delay and try again */
-		msleep(10);
+		usleep_range(10000, 20000);
 	}
 }
 
@@ -3874,7 +3892,7 @@ static int __devinit hpsa_enter_simple_mode(struct ctlr_info *h)
 	return 0;
 }
 
-static void __devexit hpsa_remove_one(struct pci_dev *pdev);
+static void hpsa_remove_one(struct pci_dev *pdev);
 
 static int __devinit hpsa_pci_init(struct ctlr_info *h)
 {
@@ -4117,7 +4135,7 @@ static void hpsa_undo_allocations_after_kdump_soft_reset(struct ctlr_info *h)
 	kfree(h);
 }
 
-int hpsa_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+int __devinit hpsa_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	int dac, rc;
 	struct ctlr_info *h;
@@ -4329,7 +4347,7 @@ static void hpsa_shutdown(struct pci_dev *pdev)
 #endif				/* CONFIG_PCI_MSI */
 }
 
-static void __devexit hpsa_remove_one(struct pci_dev *pdev)
+static void hpsa_remove_one(struct pci_dev *pdev)
 {
 	struct ctlr_info *h;
 

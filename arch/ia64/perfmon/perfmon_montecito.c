@@ -305,8 +305,8 @@ static int pfm_mont_pmc_check(struct pfm_context *ctx,
 		     && ((((val38>>1) & 0x3) == 0x2 || ((val38>>1) & 0x3) == 0)
 		     || (((val38>>4) & 0x3) == 0x2 || ((val38>>4) & 0x3) == 0));
 		if (ret) {
-			PFM_DBG("perfmon: invalid config pmc38=0x%lx "
-				"pmc41=0x%lx pmc32=0x%lx",
+			PFM_DBG("perfmon: invalid config pmc38=0x%llx "
+				"pmc41=0x%llx pmc32=0x%llx",
 				val38, val41, val32);
 			return -EINVAL;
 		}
@@ -331,7 +331,7 @@ static int pfm_mont_pmc_check(struct pfm_context *ctx,
 	    && (tmpval & 0x1e00000000000)
 		&& (tmpval & 0x18181818) != 0x18181818
 		&& ctx_arch->flags.use_dbr == 0) {
-		PFM_DBG("pmc41=0x%lx active, clearing dbr", tmpval);
+		PFM_DBG("pmc41=0x%llx active, clearing dbr", tmpval);
 		ret = pfm_ia64_mark_dbregs_used(ctx, set);
 		if (ret)
 			return ret;
@@ -344,7 +344,7 @@ static int pfm_mont_pmc_check(struct pfm_context *ctx,
 	 */
 	if (cnum == 38 && ((tmpval & 0x492) != 0x492)
 		&& ctx_arch->flags.use_dbr == 0) {
-		PFM_DBG("pmc38=0x%lx active pmc38, clearing ibr", tmpval);
+		PFM_DBG("pmc38=0x%llx active pmc38, clearing ibr", tmpval);
 		ret = pfm_ia64_mark_dbregs_used(ctx, set);
 		if (ret)
 			return ret;

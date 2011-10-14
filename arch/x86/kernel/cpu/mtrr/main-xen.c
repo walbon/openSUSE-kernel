@@ -25,12 +25,12 @@ void generic_get_mtrr(unsigned int reg, unsigned long *base,
 	*type = op.u.read_memtype.type;
 }
 
-struct mtrr_ops generic_mtrr_ops = {
+const struct mtrr_ops generic_mtrr_ops = {
 	.use_intel_if      = 1,
 	.get               = generic_get_mtrr,
 };
 
-struct mtrr_ops *mtrr_if = &generic_mtrr_ops;
+const struct mtrr_ops *mtrr_if = &generic_mtrr_ops;
 unsigned int num_var_ranges;
 unsigned int mtrr_usage_table[MTRR_MAX_VAR_RANGES];
 

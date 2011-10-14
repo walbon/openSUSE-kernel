@@ -262,9 +262,9 @@ struct cxgbi_skb_tx_cb {
 enum cxgbi_skcb_flags {
 	SKCBF_TX_NEED_HDR,	/* packet needs a header */
 	SKCBF_RX_COALESCED,	/* received whole pdu */
-	SKCBF_RX_HDR,		/* recieved pdu header */
-	SKCBF_RX_DATA,		/* recieved pdu payload */
-	SKCBF_RX_STATUS,	/* recieved ddp status */
+	SKCBF_RX_HDR,		/* received pdu header */
+	SKCBF_RX_DATA,		/* received pdu payload */
+	SKCBF_RX_STATUS,	/* received ddp status */
 	SKCBF_RX_DATA_DDPD,	/* pdu payload ddp'd */
 	SKCBF_RX_HCRC_ERR,	/* header digest error */
 	SKCBF_RX_DCRC_ERR,	/* data digest error */
@@ -709,6 +709,7 @@ int cxgbi_conn_xmit_pdu(struct iscsi_task *);
 
 void cxgbi_cleanup_task(struct iscsi_task *task);
 
+mode_t cxgbi_attr_is_visible(int param_type, int param);
 void cxgbi_get_conn_stats(struct iscsi_cls_conn *, struct iscsi_stats *);
 int cxgbi_set_conn_param(struct iscsi_cls_conn *,
 			enum iscsi_param, char *, int);

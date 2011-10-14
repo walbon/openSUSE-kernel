@@ -28,10 +28,10 @@
 #include <linux/vfs.h>
 #include <linux/vmalloc.h>
 #include <linux/spinlock.h>
-#include <linux/smp_lock.h>
 #include <linux/exportfs.h>
 #include <linux/sched.h>
 #include <linux/magic.h>
+#include <linux/slab.h>
 
 #include "squashfs3_fs.h"
 #include "squashfs3_fs_sb.h"
@@ -55,8 +55,8 @@ static struct dentry *squashfs3_lookup(struct inode *, struct dentry *,
 				struct nameidata *);
 static int squashfs3_remount(struct super_block *s, int *flags, char *data);
 static void squashfs3_put_super(struct super_block *);
-static int squashfs3_get_sb(struct file_system_type *,int, const char *, void *,
-				struct vfsmount *);
+static struct dentry *squashfs3_mount(struct file_system_type *fs_type,
+				int flags, const char *dev_name, void *data);
 static struct inode *squashfs3_alloc_inode(struct super_block *sb);
 static void squashfs3_destroy_inode(struct inode *inode);
 static int init_inodecache(void);
@@ -65,7 +65,7 @@ static void destroy_inodecache(void);
 static struct file_system_type squashfs3_fs_type = {
 	.owner = THIS_MODULE,
 	.name = "squashfs3",
-	.get_sb = squashfs3_get_sb,
+	.mount = squashfs3_mount,
 	.kill_sb = kill_block_super,
 	.fs_flags = FS_REQUIRES_DEV
 };
@@ -2082,11 +2082,10 @@ static void squashfs3_put_super(struct super_block *s)
 }
 
 
-static int squashfs3_get_sb(struct file_system_type *fs_type, int flags,
-				const char *dev_name, void *data, struct vfsmount *mnt)
+static struct dentry *squashfs3_mount(struct file_system_type *fs_type,
+				int flags, const char *dev_name, void *data)
 {
-	return get_sb_bdev(fs_type, flags, dev_name, data, squashfs3_fill_super,
-				mnt);
+	return mount_bdev(fs_type, flags, dev_name, data, squashfs3_fill_super);
 }
 
 

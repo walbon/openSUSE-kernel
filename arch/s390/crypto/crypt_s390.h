@@ -361,26 +361,16 @@ static inline int crypt_s390_kmctr(long func, void *param, u8 *dest,
  * Returns 1 if func available; 0 if func or op in general not available
  */
 static inline int crypt_s390_func_available(int func,
-					unsigned int facility_mask)
+					    unsigned int facility_mask)
 {
-	unsigned long long facility_bits[2];
 	unsigned char status[16];
 	int ret;
 
-	if (facility_mask & CRYPT_S390_MSA &&
-	    !(stfl() & 1ULL << (31 - 17)))
+	if (facility_mask & CRYPT_S390_MSA && !test_facility(17))
 		return 0;
-
-	if (facility_mask & CRYPT_S390_MSA3 ||
-	    facility_mask & CRYPT_S390_MSA4)
-		if (stfle(facility_bits, 2) <= 0)
-			return 0;
-
-	if (facility_mask & CRYPT_S390_MSA3 &&
-	    !(facility_bits[1] & (1ULL << (63 - (76 - 64)))))
+	if (facility_mask & CRYPT_S390_MSA3 && !test_facility(76))
 		return 0;
-	if (facility_mask & CRYPT_S390_MSA4 &&
-	    !(facility_bits[1] & (1ULL << (63 - (77 - 64)))))
+	if (facility_mask & CRYPT_S390_MSA4 && !test_facility(77))
 		return 0;
 
 	switch (func & CRYPT_S390_OP_MASK) {

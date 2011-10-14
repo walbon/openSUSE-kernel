@@ -205,8 +205,8 @@ static int pfm_mck_pmc_check(struct pfm_context *ctx,
 			|| (((val14>>4) & 0x3) == 0x2 || ((val14>>4) & 0x3) == 0x0));
 
 		if (ret) {
-			PFM_DBG("perfmon: invalid config pmc8=0x%lx "
-				"pmc13=0x%lx pmc14=0x%lx",
+			PFM_DBG("perfmon: invalid config pmc8=0x%llx "
+				"pmc13=0x%llx pmc14=0x%llx",
 				val8, val13, val14);
 			return -EINVAL;
 		}
@@ -231,7 +231,7 @@ static int pfm_mck_pmc_check(struct pfm_context *ctx,
 	if (cnum == 13 && (tmpval & 0x1e00000000000UL)
 	    && (tmpval & 0x18181818UL) != 0x18181818UL
 		&& ctx_arch->flags.use_dbr == 0) {
-		PFM_DBG("pmc13=0x%lx active", tmpval);
+		PFM_DBG("pmc13=0x%llx active", tmpval);
 		ret = pfm_ia64_mark_dbregs_used(ctx, set);
 		if (ret)
 			return ret;
@@ -242,7 +242,7 @@ static int pfm_mck_pmc_check(struct pfm_context *ctx,
 	 */
 	if (cnum == 14 && ((tmpval & 0x2222UL) != 0x2222UL)
 		&& ctx_arch->flags.use_dbr == 0) {
-		PFM_DBG("pmc14=0x%lx active", tmpval);
+		PFM_DBG("pmc14=0x%llx active", tmpval);
 		ret = pfm_ia64_mark_dbregs_used(ctx, set);
 		if (ret)
 			return ret;

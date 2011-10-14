@@ -124,21 +124,33 @@ static void dec_rt_migration(struct sched_rt_entity *rt_se, struct rt_rq *rt_rq)
 	update_rt_migration(rt_rq);
 }
 
+static inline int has_pushable_tasks(struct rq *rq)
+{
+	return !plist_head_empty(&rq->rt.pushable_tasks);
+}
+
 static void enqueue_pushable_task(struct rq *rq, struct task_struct *p)
 {
 	plist_del(&p->pushable_tasks, &rq->rt.pushable_tasks);
 	plist_node_init(&p->pushable_tasks, p->prio);
 	plist_add(&p->pushable_tasks, &rq->rt.pushable_tasks);
+
+	/* Update the highest prio pushable task */
+	if (p->prio < rq->rt.highest_prio.next)
+		rq->rt.highest_prio.next = p->prio;
 }
 
 static void dequeue_pushable_task(struct rq *rq, struct task_struct *p)
 {
 	plist_del(&p->pushable_tasks, &rq->rt.pushable_tasks);
-}
 
-static inline int has_pushable_tasks(struct rq *rq)
-{
-	return !plist_head_empty(&rq->rt.pushable_tasks);
+	/* Update the new highest prio pushable task */
+	if (has_pushable_tasks(rq)) {
+		p = plist_first_entry(&rq->rt.pushable_tasks,
+				      struct task_struct, pushable_tasks);
+		rq->rt.highest_prio.next = p->prio;
+	} else
+		rq->rt.highest_prio.next = MAX_RT_PRIO;
 }
 
 #else
@@ -366,7 +378,7 @@ static int do_balance_runtime(struct rt_rq *rt_rq)
 
 	weight = cpumask_weight(rd->span);
 
-	spin_lock(&rt_b->rt_runtime_lock);
+	raw_spin_lock(&rt_b->rt_runtime_lock);
 	rt_period = ktime_to_ns(rt_b->rt_period);
 	for_each_cpu(i, rd->span) {
 		struct rt_rq *iter = sched_rt_period_rt_rq(rt_b, i);
@@ -375,7 +387,7 @@ static int do_balance_runtime(struct rt_rq *rt_rq)
 		if (iter == rt_rq)
 			continue;
 
-		spin_lock(&iter->rt_runtime_lock);
+		raw_spin_lock(&iter->rt_runtime_lock);
 		/*
 		 * Either all rqs have inf runtime and there's nothing to steal
 		 * or __disable_runtime() below sets a specific rq to inf to
@@ -397,14 +409,14 @@ static int do_balance_runtime(struct rt_rq *rt_rq)
 			rt_rq->rt_runtime += diff;
 			more = 1;
 			if (rt_rq->rt_runtime == rt_period) {
-				spin_unlock(&iter->rt_runtime_lock);
+				raw_spin_unlock(&iter->rt_runtime_lock);
 				break;
 			}
 		}
 next:
-		spin_unlock(&iter->rt_runtime_lock);
+		raw_spin_unlock(&iter->rt_runtime_lock);
 	}
-	spin_unlock(&rt_b->rt_runtime_lock);
+	raw_spin_unlock(&rt_b->rt_runtime_lock);
 
 	return more;
 }
@@ -426,8 +438,8 @@ static void __disable_runtime(struct rq *rq)
 		s64 want;
 		int i;
 
-		spin_lock(&rt_b->rt_runtime_lock);
-		spin_lock(&rt_rq->rt_runtime_lock);
+		raw_spin_lock(&rt_b->rt_runtime_lock);
+		raw_spin_lock(&rt_rq->rt_runtime_lock);
 		/*
 		 * Either we're all inf and nobody needs to borrow, or we're
 		 * already disabled and thus have nothing to do, or we have
@@ -436,7 +448,7 @@ static void __disable_runtime(struct rq *rq)
 		if (rt_rq->rt_runtime == RUNTIME_INF ||
 				rt_rq->rt_runtime == rt_b->rt_runtime)
 			goto balanced;
-		spin_unlock(&rt_rq->rt_runtime_lock);
+		raw_spin_unlock(&rt_rq->rt_runtime_lock);
 
 		/*
 		 * Calculate the difference between what we started out with
@@ -458,7 +470,7 @@ static void __disable_runtime(struct rq *rq)
 			if (iter == rt_rq || iter->rt_runtime == RUNTIME_INF)
 				continue;
 
-			spin_lock(&iter->rt_runtime_lock);
+			raw_spin_lock(&iter->rt_runtime_lock);
 			if (want > 0) {
 				diff = min_t(s64, iter->rt_runtime, want);
 				iter->rt_runtime -= diff;
@@ -467,13 +479,13 @@ static void __disable_runtime(struct rq *rq)
 				iter->rt_runtime -= want;
 				want -= want;
 			}
-			spin_unlock(&iter->rt_runtime_lock);
+			raw_spin_unlock(&iter->rt_runtime_lock);
 
 			if (!want)
 				break;
 		}
 
-		spin_lock(&rt_rq->rt_runtime_lock);
+		raw_spin_lock(&rt_rq->rt_runtime_lock);
 		/*
 		 * We cannot be left wanting - that would mean some runtime
 		 * leaked out of the system.
@@ -485,8 +497,8 @@ balanced:
 		 * runtime - in which case borrowing doesn't make sense.
 		 */
 		rt_rq->rt_runtime = RUNTIME_INF;
-		spin_unlock(&rt_rq->rt_runtime_lock);
-		spin_unlock(&rt_b->rt_runtime_lock);
+		raw_spin_unlock(&rt_rq->rt_runtime_lock);
+		raw_spin_unlock(&rt_b->rt_runtime_lock);
 	}
 }
 
@@ -494,9 +506,9 @@ static void disable_runtime(struct rq *rq)
 {
 	unsigned long flags;
 
-	spin_lock_irqsave(&rq->lock, flags);
+	raw_spin_lock_irqsave(&rq->lock, flags);
 	__disable_runtime(rq);
-	spin_unlock_irqrestore(&rq->lock, flags);
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
 }
 
 static void __enable_runtime(struct rq *rq)
@@ -513,13 +525,13 @@ static void __enable_runtime(struct rq *rq)
 	for_each_rt_rq(rt_rq, iter, rq) {
 		struct rt_bandwidth *rt_b = sched_rt_bandwidth(rt_rq);
 
-		spin_lock(&rt_b->rt_runtime_lock);
-		spin_lock(&rt_rq->rt_runtime_lock);
+		raw_spin_lock(&rt_b->rt_runtime_lock);
+		raw_spin_lock(&rt_rq->rt_runtime_lock);
 		rt_rq->rt_runtime = rt_b->rt_runtime;
 		rt_rq->rt_time = 0;
 		rt_rq->rt_throttled = 0;
-		spin_unlock(&rt_rq->rt_runtime_lock);
-		spin_unlock(&rt_b->rt_runtime_lock);
+		raw_spin_unlock(&rt_rq->rt_runtime_lock);
+		raw_spin_unlock(&rt_b->rt_runtime_lock);
 	}
 }
 
@@ -527,9 +539,9 @@ static void enable_runtime(struct rq *rq)
 {
 	unsigned long flags;
 
-	spin_lock_irqsave(&rq->lock, flags);
+	raw_spin_lock_irqsave(&rq->lock, flags);
 	__enable_runtime(rq);
-	spin_unlock_irqrestore(&rq->lock, flags);
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
 }
 
 static int balance_runtime(struct rt_rq *rt_rq)
@@ -562,9 +574,9 @@ static int balance_runtime(struct rt_rq *rt_rq)
 		return 0;
 	}
 
-	spin_unlock(&rt_rq->rt_runtime_lock);
+	raw_spin_unlock(&rt_rq->rt_runtime_lock);
 	more = do_balance_runtime(rt_rq);
-	spin_lock(&rt_rq->rt_runtime_lock);
+	raw_spin_lock(&rt_rq->rt_runtime_lock);
 
 	return more;
 }
@@ -589,11 +601,11 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 		struct rt_rq *rt_rq = sched_rt_period_rt_rq(rt_b, i);
 		struct rq *rq = rq_of_rt_rq(rt_rq);
 
-		spin_lock(&rq->lock);
+		raw_spin_lock(&rq->lock);
 		if (rt_rq->rt_time) {
 			u64 runtime;
 
-			spin_lock(&rt_rq->rt_runtime_lock);
+			raw_spin_lock(&rt_rq->rt_runtime_lock);
 			if (rt_rq->rt_throttled)
 				balance_runtime(rt_rq);
 			runtime = rt_rq->rt_runtime;
@@ -601,10 +613,17 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 			if (rt_rq->rt_throttled && rt_rq->rt_time < runtime) {
 				rt_rq->rt_throttled = 0;
 				enqueue = 1;
+
+				/*
+				 * Force a clock update if the CPU was idle,
+				 * lest wakeup -> unthrottle time accumulate.
+				 */
+				if (rt_rq->rt_nr_running && rq->curr == rq->idle)
+					rq->skip_clock_update = -1;
 			}
 			if (rt_rq->rt_time || rt_rq->rt_nr_running)
 				idle = 0;
-			spin_unlock(&rt_rq->rt_runtime_lock);
+			raw_spin_unlock(&rt_rq->rt_runtime_lock);
 		} else if (rt_rq->rt_nr_running) {
 			idle = 0;
 			if (!rt_rq_throttled(rt_rq))
@@ -613,7 +632,7 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 
 		if (enqueue)
 			sched_rt_rq_enqueue(rt_rq);
-		spin_unlock(&rq->lock);
+		raw_spin_unlock(&rq->lock);
 	}
 
 	return idle;
@@ -692,67 +711,30 @@ static void update_curr_rt(struct rq *rq)
 		rt_rq = rt_rq_of_se(rt_se);
 
 		if (sched_rt_runtime(rt_rq) != RUNTIME_INF) {
-			spin_lock(&rt_rq->rt_runtime_lock);
+			raw_spin_lock(&rt_rq->rt_runtime_lock);
 			rt_rq->rt_time += delta_exec;
 			if (sched_rt_runtime_exceeded(rt_rq))
 				resched_task(curr);
-			spin_unlock(&rt_rq->rt_runtime_lock);
+			raw_spin_unlock(&rt_rq->rt_runtime_lock);
 		}
 	}
 }
 
 #if defined CONFIG_SMP
 
-static struct task_struct *pick_next_highest_task_rt(struct rq *rq, int cpu);
-
-static inline int next_prio(struct rq *rq)
-{
-	struct task_struct *next = pick_next_highest_task_rt(rq, rq->cpu);
-
-	if (next && rt_prio(next->prio))
-		return next->prio;
-	else
-		return MAX_RT_PRIO;
-}
-
 static void
 inc_rt_prio_smp(struct rt_rq *rt_rq, int prio, int prev_prio)
 {
 	struct rq *rq = rq_of_rt_rq(rt_rq);
 
-	if (prio < prev_prio) {
-
-		/*
-		 * If the new task is higher in priority than anything on the
-		 * run-queue, we know that the previous high becomes our
-		 * next-highest.
-		 */
-		rt_rq->highest_prio.next = prev_prio;
-
-		if (rq->online)
-			cpupri_set(&rq->rd->cpupri, rq->cpu, prio);
-
-	} else if (prio == rt_rq->highest_prio.curr)
-		/*
-		 * If the next task is equal in priority to the highest on
-		 * the run-queue, then we implicitly know that the next highest
-		 * task cannot be any lower than current
-		 */
-		rt_rq->highest_prio.next = prio;
-	else if (prio < rt_rq->highest_prio.next)
-		/*
-		 * Otherwise, we need to recompute next-highest
-		 */
-		rt_rq->highest_prio.next = next_prio(rq);
+	if (rq->online && prio < prev_prio)
+		cpupri_set(&rq->rd->cpupri, rq->cpu, prio);
 }
 
 static void
 dec_rt_prio_smp(struct rt_rq *rt_rq, int prio, int prev_prio)
 {
 	struct rq *rq = rq_of_rt_rq(rt_rq);
-
-	if (rt_rq->rt_nr_running && (prio <= rt_rq->highest_prio.next))
-		rt_rq->highest_prio.next = next_prio(rq);
 
 	if (rq->online && rt_rq->highest_prio.curr != prev_prio)
 		cpupri_set(&rq->rd->cpupri, rq->cpu, rt_rq->highest_prio.curr);
@@ -1020,13 +1002,25 @@ static void yield_task_rt(struct rq *rq)
 static int find_lowest_rq(struct task_struct *task);
 
 static int
-select_task_rq_rt(struct rq *rq, struct task_struct *p, int sd_flag, int flags)
+select_task_rq_rt(struct task_struct *p, int sd_flag, int flags)
 {
-	if (sd_flag != SD_BALANCE_WAKE)
-		return smp_processor_id();
+	struct task_struct *curr;
+	struct rq *rq;
+	int cpu;
+
+	cpu = task_cpu(p);
+
+	/* For anything but wake ups, just return the task_cpu */
+	if (sd_flag != SD_BALANCE_WAKE && sd_flag != SD_BALANCE_FORK)
+		goto out;
+
+	rq = cpu_rq(cpu);
+
+	rcu_read_lock();
+	curr = ACCESS_ONCE(rq->curr); /* unlocked access */
 
 	/*
-	 * If the current task is an RT task, then
+	 * If the current task on @p's runqueue is an RT task, then
 	 * try to see if we can wake this RT task up on another
 	 * runqueue. Otherwise simply start this RT task
 	 * on its current runqueue.
@@ -1040,21 +1034,26 @@ select_task_rq_rt(struct rq *rq, struct task_struct *p, int sd_flag, int flags)
 	 * lock?
 	 *
 	 * For equal prio tasks, we just let the scheduler sort it out.
-	 */
-	if (unlikely(rt_task(rq->curr)) &&
-	    (rq->curr->rt.nr_cpus_allowed < 2 ||
-	     rq->curr->prio < p->prio) &&
-	    (p->rt.nr_cpus_allowed > 1)) {
-		int cpu = find_lowest_rq(p);
-
-		return (cpu == -1) ? task_cpu(p) : cpu;
-	}
-
-	/*
+	 *
 	 * Otherwise, just let it ride on the affined RQ and the
 	 * post-schedule router will push the preempted task away
+	 *
+	 * This test is optimistic, if we get it wrong the load-balancer
+	 * will have to sort it out.
 	 */
-	return task_cpu(p);
+	if (curr && unlikely(rt_task(curr)) &&
+	    (curr->rt.nr_cpus_allowed < 2 ||
+	     curr->prio < p->prio) &&
+	    (p->rt.nr_cpus_allowed > 1)) {
+		int target = find_lowest_rq(p);
+
+		if (target != -1)
+			cpu = target;
+	}
+	rcu_read_unlock();
+
+out:
+	return cpu;
 }
 
 static void check_preempt_equal_prio(struct rq *rq, struct task_struct *p)
@@ -1103,7 +1102,7 @@ static void check_preempt_curr_rt(struct rq *rq, struct task_struct *p, int flag
 	 * to move current somewhere else, making room for our non-migratable
 	 * task.
 	 */
-	if (p->prio == rq->curr->prio && !need_resched())
+	if (p->prio == rq->curr->prio && !test_tsk_need_resched(rq->curr))
 		check_preempt_equal_prio(rq, p);
 #endif
 }
@@ -1173,13 +1172,12 @@ static struct task_struct *pick_next_task_rt(struct rq *rq)
 static void put_prev_task_rt(struct rq *rq, struct task_struct *p)
 {
 	update_curr_rt(rq);
-	p->se.exec_start = 0;
 
 	/*
 	 * The previous task needs to be made eligible for pushing
 	 * if it is still active
 	 */
-	if (p->se.on_rq && p->rt.nr_cpus_allowed > 1)
+	if (on_rt_rq(&p->rt) && p->rt.nr_cpus_allowed > 1)
 		enqueue_pushable_task(rq, p);
 }
 
@@ -1211,13 +1209,18 @@ static struct task_struct *pick_next_highest_task_rt(struct rq *rq, int cpu)
 	for_each_leaf_rt_rq(rt_rq, rq) {
 		array = &rt_rq->active;
 		idx = sched_find_first_bit(array->bitmap);
- next_idx:
+next_idx:
 		if (idx >= MAX_RT_PRIO)
 			continue;
 		if (next && next->prio < idx)
 			continue;
 		list_for_each_entry(rt_se, array->queue + idx, run_list) {
-			struct task_struct *p = rt_task_of(rt_se);
+			struct task_struct *p;
+
+			if (!rt_entity_is_task(rt_se))
+				continue;
+
+			p = rt_task_of(rt_se);
 			if (pick_rt_task(rq, p, cpu)) {
 				next = p;
 				break;
@@ -1240,6 +1243,10 @@ static int find_lowest_rq(struct task_struct *task)
 	struct cpumask *lowest_mask = __get_cpu_var(local_cpu_mask);
 	int this_cpu = smp_processor_id();
 	int cpu      = task_cpu(task);
+
+	/* Make sure the mask is initialized first */
+	if (unlikely(!lowest_mask))
+		return -1;
 
 	if (task->rt.nr_cpus_allowed == 1)
 		return -1; /* No other targets possible */
@@ -1331,9 +1338,9 @@ static struct rq *find_lock_lowest_rq(struct task_struct *task, struct rq *rq)
 				     !cpumask_test_cpu(lowest_rq->cpu,
 						       &task->cpus_allowed) ||
 				     task_running(rq, task) ||
-				     !task->se.on_rq)) {
+				     !task->on_rq)) {
 
-				spin_unlock(&lowest_rq->lock);
+				raw_spin_unlock(&lowest_rq->lock);
 				lowest_rq = NULL;
 				break;
 			}
@@ -1365,7 +1372,7 @@ static struct task_struct *pick_next_pushable_task(struct rq *rq)
 	BUG_ON(task_current(rq, p));
 	BUG_ON(p->rt.nr_cpus_allowed <= 1);
 
-	BUG_ON(!p->se.on_rq);
+	BUG_ON(!p->on_rq);
 	BUG_ON(!rt_task(p));
 
 	return p;
@@ -1380,6 +1387,7 @@ static int push_rt_task(struct rq *rq)
 {
 	struct task_struct *next_task;
 	struct rq *lowest_rq;
+	int ret = 0;
 
 	if (!rq->rt.overloaded)
 		return 0;
@@ -1388,7 +1396,7 @@ static int push_rt_task(struct rq *rq)
 	if (!next_task)
 		return 0;
 
- retry:
+retry:
 	if (unlikely(next_task == rq->curr)) {
 		WARN_ON(1);
 		return 0;
@@ -1412,7 +1420,7 @@ static int push_rt_task(struct rq *rq)
 	if (!lowest_rq) {
 		struct task_struct *task;
 		/*
-		 * find lock_lowest_rq releases rq->lock
+		 * find_lock_lowest_rq releases rq->lock
 		 * so it is possible that next_task has migrated.
 		 *
 		 * We need to make sure that the task is still on the same
@@ -1422,12 +1430,11 @@ static int push_rt_task(struct rq *rq)
 		task = pick_next_pushable_task(rq);
 		if (task_cpu(next_task) == rq->cpu && task == next_task) {
 			/*
-			 * If we get here, the task hasnt moved at all, but
-			 * it has failed to push.  We will not try again,
-			 * since the other cpus will pull from us when they
-			 * are ready.
+			 * The task hasn't migrated, and is still the next
+			 * eligible task, but we failed to find a run-queue
+			 * to push it to.  Do not retry in this case, since
+			 * other cpus will pull from us when ready.
 			 */
-			dequeue_pushable_task(rq, next_task);
 			goto out;
 		}
 
@@ -1446,6 +1453,7 @@ static int push_rt_task(struct rq *rq)
 	deactivate_task(rq, next_task, 0);
 	set_task_cpu(next_task, lowest_rq->cpu);
 	activate_task(lowest_rq, next_task, 0);
+	ret = 1;
 
 	resched_task(lowest_rq->curr);
 
@@ -1454,7 +1462,7 @@ static int push_rt_task(struct rq *rq)
 out:
 	put_task_struct(next_task);
 
-	return 1;
+	return ret;
 }
 
 static void push_rt_tasks(struct rq *rq)
@@ -1511,7 +1519,7 @@ static int pull_rt_task(struct rq *this_rq)
 		 */
 		if (p && (p->prio < this_rq->rt.highest_prio.curr)) {
 			WARN_ON(p == src_rq->curr);
-			WARN_ON(!p->se.on_rq);
+			WARN_ON(!p->on_rq);
 
 			/*
 			 * There's a chance that p is higher in priority
@@ -1532,11 +1540,11 @@ static int pull_rt_task(struct rq *this_rq)
 			/*
 			 * We continue with the search, just in
 			 * case there's an even higher prio task
-			 * in another runqueue. (low likelyhood
+			 * in another runqueue. (low likelihood
 			 * but possible)
 			 */
 		}
- skip:
+skip:
 		double_unlock_balance(this_rq, src_rq);
 	}
 
@@ -1582,7 +1590,7 @@ static void set_cpus_allowed_rt(struct task_struct *p,
 	 * Update the migration status of the RQ if we have an RT task
 	 * which is running AND changing its weight value.
 	 */
-	if (p->se.on_rq && (weight != p->rt.nr_cpus_allowed)) {
+	if (p->on_rq && (weight != p->rt.nr_cpus_allowed)) {
 		struct rq *rq = task_rq(p);
 
 		if (!task_current(rq, p)) {
@@ -1652,7 +1660,7 @@ static void switched_from_rt(struct rq *rq, struct task_struct *p)
 	 * we may need to handle the pulling of RT tasks
 	 * now.
 	 */
-	if (p->se.on_rq && !rq->rt.rt_nr_running)
+	if (p->on_rq && !rq->rt.rt_nr_running)
 		pull_rt_task(rq);
 }
 
@@ -1682,7 +1690,7 @@ static void switched_to_rt(struct rq *rq, struct task_struct *p)
 	 * If that current running task is also an RT task
 	 * then see if we can move to another run queue.
 	 */
-	if (p->se.on_rq && rq->curr != p) {
+	if (p->on_rq && rq->curr != p) {
 #ifdef CONFIG_SMP
 		if (rq->rt.overloaded && push_rt_task(rq) &&
 		    /* Don't resched if we changed runqueues */
@@ -1701,7 +1709,7 @@ static void switched_to_rt(struct rq *rq, struct task_struct *p)
 static void
 prio_changed_rt(struct rq *rq, struct task_struct *p, int oldprio)
 {
-	if (!p->se.on_rq)
+	if (!p->on_rq)
 		return;
 
 	if (rq->curr == p) {
@@ -1739,9 +1747,6 @@ prio_changed_rt(struct rq *rq, struct task_struct *p, int oldprio)
 static void watchdog(struct rq *rq, struct task_struct *p)
 {
 	unsigned long soft, hard;
-
-	if (!p->signal)
-		return;
 
 	/* max may change after cur was read, this will be fixed next tick */
 	soft = task_rlimit(p, RLIMIT_RTTIME);

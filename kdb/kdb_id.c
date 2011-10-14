@@ -13,13 +13,13 @@
 #include <linux/init.h>
 #include <linux/ctype.h>
 #include <linux/string.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 
 disassemble_info kdb_di;
 
 /*
- * kdb_id
+ * lkdb_id
  *
  * 	Handle the id (instruction display) command.
  *
@@ -38,7 +38,7 @@ disassemble_info kdb_di;
  */
 
 int
-kdb_id(int argc, const char **argv)
+lkdb_id(int argc, const char **argv)
 {
 	kdb_machreg_t pc;
 	int icount;
@@ -57,7 +57,7 @@ kdb_id(int argc, const char **argv)
 
 	if (argc != 1)  {
 		if (lastpc == 0) {
-			return KDB_ARGCOUNT;
+			return LKDB_ARGCOUNT;
 		} else {
 			sprintf(lastbuf, "0x%lx", lastpc);
 			argv[1] = lastbuf;
@@ -71,21 +71,21 @@ kdb_id(int argc, const char **argv)
 	 * try address.
 	 */
 	nextarg = 1;
-	diag = kdbgetaddrarg(argc, argv, &nextarg, &pc, &offset, NULL);
+	diag = lkdbgetaddrarg(argc, argv, &nextarg, &pc, &offset, NULL);
 	if (diag)
 		return diag;
 	kdba_check_pc(&pc);
-	if (kdb_getarea(word, pc))
+	if (lkdb_getarea(word, pc))
 		return(0);
 
 	/*
 	 * Number of lines to display
 	 */
-	diag = kdbgetintenv("IDCOUNT", &icount);
+	diag = lkdbgetintenv("IDCOUNT", &icount);
 	if (diag)
 		return diag;
 
-	mode = kdbgetenv("IDMODE");
+	mode = lkdbgetenv("IDMODE");
 	diag = kdba_id_parsemode(mode, dip);
 	if (diag) {
 		return diag;
@@ -93,7 +93,7 @@ kdb_id(int argc, const char **argv)
 
 	for(i=0; i<icount; i++) {
 		pc += kdba_id_printinsn(pc, &kdb_di);
-		kdb_printf("\n");
+		lkdb_printf("\n");
 	}
 
 	lastpc = pc;
@@ -102,7 +102,7 @@ kdb_id(int argc, const char **argv)
 }
 
 /*
- * kdb_id1
+ * lkdb_id1
  *
  * 	Disassemble a single instruction at 'pc'.
  *
@@ -118,7 +118,7 @@ kdb_id(int argc, const char **argv)
  */
 
 void
-kdb_id1(unsigned long pc)
+lkdb_id1(unsigned long pc)
 {
 	char *mode;
 	int diag;
@@ -131,14 +131,14 @@ kdb_id1(unsigned long pc)
 	 * should be treated differently.
 	 */
 
-	mode = kdbgetenv("IDMODE");
+	mode = lkdbgetenv("IDMODE");
 	diag = kdba_id_parsemode(mode, &kdb_di);
 	if (diag) {
-		kdb_printf("kdb_id: bad value in 'IDMODE' environment variable ignored\n");
+		lkdb_printf("lkdb_id: bad value in 'IDMODE' environment variable ignored\n");
 	}
 
 	(void) kdba_id_printinsn(pc, &kdb_di);
-	kdb_printf("\n");
+	lkdb_printf("\n");
 }
 
 /*
@@ -167,7 +167,7 @@ kdb_dis_fprintf(PTR file, const char *fmt, ...)
 	vsprintf(buffer, fmt, ap);
 	va_end(ap);
 
-	kdb_printf("%s", buffer);
+	lkdb_printf("%s", buffer);
 
 	return 0;
 }
@@ -214,7 +214,7 @@ kdb_dis_fprintf_dummy(PTR file, const char *fmt, ...)
  */
 
 void __init
-kdb_id_init(void)
+lkdb_id_init(void)
 {
 	kdb_di.stream		= NULL;
 	kdb_di.application_data = NULL;

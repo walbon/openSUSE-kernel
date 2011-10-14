@@ -4,7 +4,7 @@
  * This file contains AppArmor resource mediation and attachment
  *
  * Copyright (C) 1998-2008 Novell/SUSE
- * Copyright 2009 Canonical Ltd.
+ * Copyright 2009-2010 Canonical Ltd.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -18,56 +18,90 @@
 #include "include/resource.h"
 #include "include/policy.h"
 
-struct aa_audit_resource {
-	struct aa_audit base;
+/*
+ * Table of rlimit names: we generate it from resource.h.
+ */
+#include "rlim_names.h"
 
-	int rlimit;
-};
-
+/* audit callback for resource specific fields */
 static void audit_cb(struct audit_buffer *ab, void *va)
 {
-	struct aa_audit_resource *sa = va;
+	struct common_audit_data *sa = va;
 
-	if (sa->rlimit)
-		audit_log_format(ab, " rlimit=%d", sa->rlimit - 1);
+	audit_log_format(ab, " rlimit=%s value=%lu",
+			 rlim_names[sa->aad.rlim.rlim], sa->aad.rlim.max);
 }
 
-static int aa_audit_resource(struct aa_profile *profile,
-			     struct aa_audit_resource *sa)
+/**
+ * audit_resource - audit setting resource limit
+ * @profile: profile being enforced  (NOT NULL)
+ * @resoure: rlimit being auditing
+ * @value: value being set
+ * @error: error value
+ *
+ * Returns: 0 or sa->error else other error code on failure
+ */
+static int audit_resource(struct aa_profile *profile, unsigned int resource,
+			  unsigned long value, int error)
 {
-	return aa_audit(AUDIT_APPARMOR_AUTO, profile, (struct aa_audit *)sa,
+	struct common_audit_data sa;
+
+	COMMON_AUDIT_DATA_INIT(&sa, NONE);
+	sa.aad.op = OP_SETRLIMIT,
+	sa.aad.rlim.rlim = resource;
+	sa.aad.rlim.max = value;
+	sa.aad.error = error;
+	return aa_audit(AUDIT_APPARMOR_AUTO, profile, GFP_KERNEL, &sa,
 			audit_cb);
 }
 
 /**
- * aa_task_setrlimit - test permission to set an rlimit
- * @profile - profile confining the task
- * @resource - the resource being set
- * @new_rlim - the new resource limit
+ * aa_map_resouce - map compiled policy resource to internal #
+ * @resource: flattened policy resource number
  *
- * Control raising the processes hard limit.
+ * Returns: resource # for the current architecture.
+ *
+ * rlimit resource can vary based on architecture, map the compiled policy
+ * resource # to the internal representation for the architecture.
  */
-int aa_task_setrlimit(struct aa_profile *profile, unsigned int resource,
-		      struct rlimit *new_rlim)
+int aa_map_resource(int resource)
 {
-	struct aa_audit_resource sa;
-	int error = 0;
-
-	memset(&sa, 0, sizeof(sa));
-	sa.base.operation = "setrlimit";
-	sa.base.gfp_mask = GFP_KERNEL;
-	sa.rlimit = resource + 1;
-
-	if (profile->rlimits.mask & (1 << resource) &&
-	    new_rlim->rlim_max > profile->rlimits.limits[resource].rlim_max) {
-		sa.base.error = -EACCES;
-
-		error = aa_audit_resource(profile, &sa);
-	}
-
-	return error;
+	return rlim_map[resource];
 }
 
+/**
+ * aa_task_setrlimit - test permission to set an rlimit
+ * @profile - profile confining the task  (NOT NULL)
+ * @task - task the resource is being set on
+ * @resource - the resource being set
+ * @new_rlim - the new resource limit  (NOT NULL)
+ *
+ * Control raising the processes hard limit.
+ *
+ * Returns: 0 or error code if setting resource failed
+ */
+int aa_task_setrlimit(struct aa_profile *profile, struct task_struct *task,
+		      unsigned int resource, struct rlimit *new_rlim)
+{
+	int error = 0;
+
+	/* TODO: extend resource control to handle other (non current)
+	 * processes.  AppArmor rules currently have the implicit assumption
+	 * that the task is setting the resource of the current process
+	 */
+	if ((task != current->group_leader) ||
+	    (profile->rlimits.mask & (1 << resource) &&
+	     new_rlim->rlim_max > profile->rlimits.limits[resource].rlim_max))
+		error = -EACCES;
+
+	return audit_resource(profile, resource, new_rlim->rlim_max, error);
+}
+
+/**
+ * __aa_transition_rlimits - apply new profile rlimits
+ * @old: old profile on task  (NOT NULL)
+ * @new: new profile with rlimits to apply  (NOT NULL)
+ */
 void __aa_transition_rlimits(struct aa_profile *old, struct aa_profile *new)
 {
 	unsigned int mask = 0;
@@ -77,8 +111,8 @@ void __aa_transition_rlimits(struct aa_profile *old, struct aa_profile *new)
 	/* for any rlimits the profile controlled reset the soft limit
 	 * to the less of the tasks hard limit and the init tasks soft limit
 	 */
-	if (old && old->rlimits.mask) {
-		for (i = 0, mask = 1; i < RLIM_NLIMITS; i++, mask <<=1) {
+	if (old->rlimits.mask) {
+		for (i = 0, mask = 1; i < RLIM_NLIMITS; i++, mask <<= 1) {
 			if (old->rlimits.mask & mask) {
 				rlim = current->signal->rlim + i;
 				initrlim = init_task.signal->rlim + i;
@@ -89,9 +123,9 @@ void __aa_transition_rlimits(struct aa_profile *old, struct aa_profile *new)
 	}
 
 	/* set any new hard limits as dictated by the new profile */
-	if (!(new && new->rlimits.mask))
+	if (!new->rlimits.mask)
 		return;
-	for (i = 0, mask = 1; i < RLIM_NLIMITS; i++, mask <<=1) {
+	for (i = 0, mask = 1; i < RLIM_NLIMITS; i++, mask <<= 1) {
 		if (!(new->rlimits.mask & mask))
 			continue;
 

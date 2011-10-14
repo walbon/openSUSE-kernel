@@ -7,12 +7,14 @@
 #include <linux/sysrq.h>
 #include <linux/stringify.h>
 #include <linux/stop_machine.h>
+#include <linux/syscore_ops.h>
 #include <asm/irq.h>
 #include <asm/mmu_context.h>
 #include <xen/evtchn.h>
 #include <asm/hypervisor.h>
 #include <xen/xenbus.h>
 #include <linux/cpu.h>
+#include <xen/clock.h>
 #include <xen/gnttab.h>
 #include <xen/xencons.h>
 #include <xen/cpu_hotplug.h>
@@ -147,7 +149,7 @@ static int take_machine_down(void *_suspend)
 	BUG_ON(!irqs_disabled());
 
 	mm_pin_all();
-	suspend_cancelled = sysdev_suspend(PMSG_SUSPEND);
+	suspend_cancelled = syscore_suspend();
 	if (!suspend_cancelled) {
 		pre_suspend();
 
@@ -159,10 +161,12 @@ static int take_machine_down(void *_suspend)
 	} else
 		BUG_ON(suspend_cancelled > 0);
 	suspend->resume_notifier(suspend_cancelled);
-	if (suspend_cancelled >= 0) {
+	if (suspend_cancelled >= 0)
 		post_suspend(suspend_cancelled, suspend->fast_suspend);
-		sysdev_resume();
-	}
+	if (!suspend_cancelled)
+		xen_clockevents_resume();
+	if (suspend_cancelled >= 0)
+		syscore_resume();
 	if (!suspend_cancelled) {
 #ifdef __x86_64__
 		/*
@@ -203,18 +207,11 @@ int __xen_suspend(int fast_suspend, void (*resume_notifier)(int))
 	if (num_possible_cpus() == 1)
 		fast_suspend = 0;
 
-	if (fast_suspend && _check(stop_machine_create)) {
-		pr_err("%s() failed: %d\n", what, err);
-		return err;
-	}
-
 	suspend.fast_suspend = fast_suspend;
 	suspend.resume_notifier = resume_notifier;
 
 	if (_check(dpm_suspend_start, PMSG_SUSPEND)) {
 		dpm_resume_end(PMSG_RESUME);
-		if (fast_suspend)
-			stop_machine_destroy();
 		pr_err("%s() failed: %d\n", what, err);
 		return err;
 	}
@@ -225,7 +222,6 @@ int __xen_suspend(int fast_suspend, void (*resume_notifier)(int))
 		if (_check(dpm_suspend_noirq, PMSG_SUSPEND)) {
 			xenbus_suspend_cancel();
 			dpm_resume_end(PMSG_RESUME);
-			stop_machine_destroy();
 			pr_err("%s() failed: %d\n", what, err);
 			return err;
 		}
@@ -284,9 +280,6 @@ int __xen_suspend(int fast_suspend, void (*resume_notifier)(int))
 	}
 
 	dpm_resume_end(PMSG_RESUME);
-
-	if (fast_suspend)
-		stop_machine_destroy();
 
 	return err;
 }

@@ -46,7 +46,7 @@ struct blk_queue_tags;
 enum {
 	SCSI_QDEPTH_DEFAULT,	/* default requested change, e.g. from sysfs */
 	SCSI_QDEPTH_QFULL,	/* scsi-ml requested due to queue full */
-	SCSI_QDEPTH_RAMP_UP,	/* scsi-ml requested due to threshhold event */
+	SCSI_QDEPTH_RAMP_UP,	/* scsi-ml requested due to threshold event */
 };
 
 struct scsi_host_template {
@@ -354,6 +354,19 @@ struct scsi_host_template {
 	 * Status: OPTIONAL
 	 */
 	enum blk_eh_timer_return (*eh_timed_out)(struct scsi_cmnd *);
+
+	/* This is an optional routine that allows transport to initiate
+	 * LLD adapter or firmware reset using sysfs attribute.
+	 *
+	 * Return values: 0 on success, -ve value on failure.
+	 *
+	 * Status: OPTIONAL
+	 */
+
+	int (*host_reset)(struct Scsi_Host *shost, int reset_type);
+#define SCSI_ADAPTER_RESET	1
+#define SCSI_FIRMWARE_RESET	2
+
 
 	/*
 	 * Name of proc directory

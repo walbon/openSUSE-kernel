@@ -392,9 +392,10 @@ typedef struct _MPI2_CONFIG_REPLY
 #define MPI2_MFGPAGE_DEVID_SAS2108_3                (0x0077)
 #define MPI2_MFGPAGE_DEVID_SAS2116_1                (0x0064)
 #define MPI2_MFGPAGE_DEVID_SAS2116_2                (0x0065)
-#define MPI2_MFGPAGE_DEVID_SAS2208_1                (0x0080)
+
 #define MPI2_MFGPAGE_DEVID_SSS6200                  (0x007E)
 
+#define MPI2_MFGPAGE_DEVID_SAS2208_1                (0x0080)
 #define MPI2_MFGPAGE_DEVID_SAS2208_2                (0x0081)
 #define MPI2_MFGPAGE_DEVID_SAS2208_3                (0x0082)
 #define MPI2_MFGPAGE_DEVID_SAS2208_4                (0x0083)
@@ -619,7 +620,7 @@ typedef struct _MPI2_MANPAGE7_CONNECTOR_INFO
     U32                         Pinout;                 /* 0x00 */
     U8                          Connector[16];          /* 0x04 */
     U8                          Location;               /* 0x14 */
-    U8                          ReceptacleID;           /* 0x15 */
+	U8                          ReceptacleID;           /* 0x15 */
     U16                         Slot;                   /* 0x16 */
     U32                         Reserved2;              /* 0x18 */
 } MPI2_MANPAGE7_CONNECTOR_INFO, MPI2_POINTER PTR_MPI2_MANPAGE7_CONNECTOR_INFO,

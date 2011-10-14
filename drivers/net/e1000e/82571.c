@@ -52,7 +52,12 @@
 			      (ID_LED_DEF1_DEF2))
 
 #define E1000_GCR_L1_ACT_WITHOUT_L0S_RX 0x08000000
-#define AN_RETRY_COUNT		5 /* Autoneg Retry Count value */
+#define AN_RETRY_COUNT          5 /* Autoneg Retry Count value */
+#define E1000_BASE1000T_STATUS          10
+#define E1000_IDLE_ERROR_COUNT_MASK     0xFF
+#define E1000_RECEIVE_ERROR_COUNTER     21
+#define E1000_RECEIVE_ERROR_MAX         0xFFFF
+
 #define E1000_NVM_INIT_CTRL2_MNGM 0x6000 /* Manageability Operation Mode mask */
 
 static s32 e1000_get_phy_id_82571(struct e1000_hw *hw);
@@ -295,6 +300,7 @@ static s32 e1000_init_mac_params_82571(struct e1000_adapter *adapter)
 		func->set_lan_id = e1000_set_lan_id_single_port;
 		func->check_mng_mode = e1000e_check_mng_mode_generic;
 		func->led_on = e1000e_led_on_generic;
+		func->blink_led = e1000e_blink_led_generic;
 
 		/* FWSM register */
 		mac->has_fwsm = true;
@@ -315,6 +321,7 @@ static s32 e1000_init_mac_params_82571(struct e1000_adapter *adapter)
 	default:
 		func->check_mng_mode = e1000e_check_mng_mode_generic;
 		func->led_on = e1000e_led_on_generic;
+		func->blink_led = e1000e_blink_led_generic;
 
 		/* FWSM register */
 		mac->has_fwsm = true;
@@ -323,7 +330,7 @@ static s32 e1000_init_mac_params_82571(struct e1000_adapter *adapter)
 
 	/*
 	 * Ensure that the inter-port SWSM.SMBI lock bit is clear before
-	 * first NVM or PHY acess. This should be done for single-port
+	 * first NVM or PHY access. This should be done for single-port
 	 * devices, and for one port only on dual-port devices so that
 	 * for those devices we can still use the SMBI lock to synchronize
 	 * inter-port accesses to the PHY & NVM.
@@ -426,9 +433,6 @@ static s32 e1000_get_variants_82571(struct e1000_adapter *adapter)
 	case e1000_82573:
 	case e1000_82574:
 	case e1000_82583:
-		/* Disable ASPM L0s due to hardware errata */
-		e1000e_disable_aspm(adapter->pdev, PCIE_LINK_STATE_L0S);
-
 		if (pdev->device == E1000_DEV_ID_82573L) {
 			adapter->flags |= FLAG_HAS_JUMBO_FRAMES;
 			adapter->max_hw_frame_size = DEFAULT_JUMBO;
@@ -589,7 +593,7 @@ static s32 e1000_get_hw_semaphore_82573(struct e1000_hw *hw)
 
 		extcnf_ctrl |= E1000_EXTCNF_CTRL_MDIO_SW_OWNERSHIP;
 
-		msleep(2);
+		usleep_range(2000, 4000);
 		i++;
 	} while (i < MDIO_OWNERSHIP_TIMEOUT);
 
@@ -811,7 +815,7 @@ static s32 e1000_update_nvm_checksum_82571(struct e1000_hw *hw)
 
 	/* Check for pending operations. */
 	for (i = 0; i < E1000_FLASH_UPDATES; i++) {
-		msleep(1);
+		usleep_range(1000, 2000);
 		if ((er32(EECD) & E1000_EECD_FLUPD) == 0)
 			break;
 	}
@@ -835,7 +839,7 @@ static s32 e1000_update_nvm_checksum_82571(struct e1000_hw *hw)
 	ew32(EECD, eecd);
 
 	for (i = 0; i < E1000_FLASH_UPDATES; i++) {
-		msleep(1);
+		usleep_range(1000, 2000);
 		if ((er32(EECD) & E1000_EECD_FLUPD) == 0)
 			break;
 	}
@@ -925,7 +929,7 @@ static s32 e1000_get_cfg_done_82571(struct e1000_hw *hw)
 		if (er32(EEMNGCTL) &
 		    E1000_NVM_CFG_DONE_PORT_0)
 			break;
-		msleep(1);
+		usleep_range(1000, 2000);
 		timeout--;
 	}
 	if (!timeout) {
@@ -1032,7 +1036,7 @@ static s32 e1000_reset_hw_82571(struct e1000_hw *hw)
 	ew32(TCTL, E1000_TCTL_PSP);
 	e1e_flush();
 
-	msleep(10);
+	usleep_range(10000, 20000);
 
 	/*
 	 * Must acquire the MDIO ownership before MAC reset.
@@ -1305,7 +1309,7 @@ static void e1000_initialize_hw_bits_82571(struct e1000_hw *hw)
 		 * apply workaround for hardware errata documented in errata
 		 * docs Fixes issue where some error prone or unreliable PCIe
 		 * completions are occurring, particularly with ASPM enabled.
-		 * Without fix, issue can cause tx timeouts.
+		 * Without fix, issue can cause Tx timeouts.
 		 */
 		reg = er32(GCR2);
 		reg |= 1;
@@ -1404,6 +1408,39 @@ static s32 e1000_led_on_82574(struct e1000_hw *hw)
 	ew32(LEDCTL, ctrl);
 
 	return 0;
+}
+
+/**
+ *  e1000_check_phy_82574 - check 82574 phy hung state
+ *  @hw: pointer to the HW structure
+ *
+ *  Returns whether phy is hung or not
+ **/
+bool e1000_check_phy_82574(struct e1000_hw *hw)
+{
+	u16 status_1kbt = 0;
+	u16 receive_errors = 0;
+	bool phy_hung = false;
+	s32 ret_val = 0;
+
+	/*
+	 * Read PHY Receive Error counter first, if its is max - all F's then
+	 * read the Base1000T status register If both are max then PHY is hung.
+	 */
+	ret_val = e1e_rphy(hw, E1000_RECEIVE_ERROR_COUNTER, &receive_errors);
+
+	if (ret_val)
+		goto out;
+	if (receive_errors == E1000_RECEIVE_ERROR_MAX)  {
+		ret_val = e1e_rphy(hw, E1000_BASE1000T_STATUS, &status_1kbt);
+		if (ret_val)
+			goto out;
+		if ((status_1kbt & E1000_IDLE_ERROR_COUNT_MASK) ==
+		    E1000_IDLE_ERROR_COUNT_MASK)
+			phy_hung = true;
+	}
+out:
+	return phy_hung;
 }
 
 /**
@@ -2028,7 +2065,8 @@ struct e1000_info e1000_82573_info = {
 				  | FLAG_HAS_SMART_POWER_DOWN
 				  | FLAG_HAS_AMT
 				  | FLAG_HAS_SWSM_ON_LOAD,
-	.flags2			= FLAG2_DISABLE_ASPM_L1,
+	.flags2			= FLAG2_DISABLE_ASPM_L1
+				  | FLAG2_DISABLE_ASPM_L0S,
 	.pba			= 20,
 	.max_hw_frame_size	= ETH_FRAME_LEN + ETH_FCS_LEN,
 	.get_variants		= e1000_get_variants_82571,
@@ -2048,7 +2086,9 @@ struct e1000_info e1000_82574_info = {
 				  | FLAG_HAS_SMART_POWER_DOWN
 				  | FLAG_HAS_AMT
 				  | FLAG_HAS_CTRLEXT_ON_LOAD,
-	.pba			= 36,
+	.flags2			  = FLAG2_CHECK_PHY_HANG
+				  | FLAG2_DISABLE_ASPM_L0S,
+	.pba			= 32,
 	.max_hw_frame_size	= DEFAULT_JUMBO,
 	.get_variants		= e1000_get_variants_82571,
 	.mac_ops		= &e82571_mac_ops,
@@ -2065,7 +2105,8 @@ struct e1000_info e1000_82583_info = {
 				  | FLAG_HAS_SMART_POWER_DOWN
 				  | FLAG_HAS_AMT
 				  | FLAG_HAS_CTRLEXT_ON_LOAD,
-	.pba			= 36,
+	.flags2			= FLAG2_DISABLE_ASPM_L0S,
+	.pba			= 32,
 	.max_hw_frame_size	= ETH_FRAME_LEN + ETH_FCS_LEN,
 	.get_variants		= e1000_get_variants_82571,
 	.mac_ops		= &e82571_mac_ops,

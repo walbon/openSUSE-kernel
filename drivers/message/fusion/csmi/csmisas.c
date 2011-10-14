@@ -137,14 +137,14 @@ csmisas_is_phys_disk(MPT_ADAPTER *ioc, int channel, int id)
 	if (list_empty(&ioc->raid_data.inactive_list))
 		goto out;
 
-	down(&ioc->raid_data.inactive_list_mutex);
+	mutex_lock(&ioc->raid_data.inactive_list_mutex);
 	list_for_each_entry(component_info, &ioc->raid_data.inactive_list,
 	    list) {
 		if ((component_info->d.PhysDiskID == id) &&
 		    (component_info->d.PhysDiskBus == channel))
 			rc = 1;
 	}
-	up(&ioc->raid_data.inactive_list_mutex);
+	mutex_unlock(&ioc->raid_data.inactive_list_mutex);
 
  out:
 	return rc;
@@ -183,14 +183,14 @@ csmisas_raid_id_to_num(MPT_ADAPTER *ioc, u8 channel, u8 id)
 	if (list_empty(&ioc->raid_data.inactive_list))
 		goto out;
 
-	down(&ioc->raid_data.inactive_list_mutex);
+	mutex_lock(&ioc->raid_data.inactive_list_mutex);
 	list_for_each_entry(component_info, &ioc->raid_data.inactive_list,
 	    list) {
 		if ((component_info->d.PhysDiskID == id) &&
 		    (component_info->d.PhysDiskBus == channel))
 			rc = component_info->d.PhysDiskNum;
 	}
-	up(&ioc->raid_data.inactive_list_mutex);
+	mutex_unlock(&ioc->raid_data.inactive_list_mutex);
 
  out:
 	return rc;
@@ -213,7 +213,7 @@ csmisas_get_device_component_by_os(MPT_ADAPTER *ioc, u8 channel, u8 id)
 
 	sas_info = NULL;
 
-	down(&ioc->sas_device_info_mutex);
+	mutex_lock(&ioc->sas_device_info_mutex);
 	list_for_each_entry(p, &ioc->sas_device_info_list, list) {
 		if (p->os.channel == channel && p->os.id == id) {
 			sas_info = p;
@@ -222,7 +222,7 @@ csmisas_get_device_component_by_os(MPT_ADAPTER *ioc, u8 channel, u8 id)
 	}
 
  out:
-	up(&ioc->sas_device_info_mutex);
+	mutex_unlock(&ioc->sas_device_info_mutex);
 	return sas_info;
 }
 
@@ -243,7 +243,7 @@ csmisas_get_device_component_by_fw(MPT_ADAPTER *ioc, u8 channel, u8 id)
 
 	sas_info = NULL;
 
-	down(&ioc->sas_device_info_mutex);
+	mutex_lock(&ioc->sas_device_info_mutex);
 	list_for_each_entry(p, &ioc->sas_device_info_list, list) {
 		if (p->fw.channel == channel && p->fw.id == id) {
 			sas_info = p;
@@ -252,7 +252,7 @@ csmisas_get_device_component_by_fw(MPT_ADAPTER *ioc, u8 channel, u8 id)
 	}
 
  out:
-	up(&ioc->sas_device_info_mutex);
+	mutex_unlock(&ioc->sas_device_info_mutex);
 	return sas_info;
 }
 
@@ -274,7 +274,7 @@ csmisas_get_device_component_by_sas_addr(MPT_ADAPTER *ioc, u64 sas_address)
 
 	sas_info = NULL;
 
-	down(&ioc->sas_device_info_mutex);
+	mutex_lock(&ioc->sas_device_info_mutex);
 	list_for_each_entry(p, &ioc->sas_device_info_list, list) {
 		if (p->sas_address == sas_address) {
 			sas_info = p;
@@ -283,7 +283,7 @@ csmisas_get_device_component_by_sas_addr(MPT_ADAPTER *ioc, u64 sas_address)
 	}
 
  out:
-	up(&ioc->sas_device_info_mutex);
+	mutex_unlock(&ioc->sas_device_info_mutex);
 	return sas_info;
 }
 

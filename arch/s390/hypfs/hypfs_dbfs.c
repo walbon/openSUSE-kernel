@@ -83,6 +83,7 @@ static ssize_t dbfs_read(struct file *file, char __user *buf,
 
 static const struct file_operations dbfs_ops = {
 	.read		= dbfs_read,
+	.llseek		= no_llseek,
 };
 
 int hypfs_dbfs_create_file(struct hypfs_dbfs_file *df)

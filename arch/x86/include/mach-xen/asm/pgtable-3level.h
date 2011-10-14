@@ -92,7 +92,7 @@ static inline void __xen_pud_clear(pud_t *pudp)
 static inline pte_t xen_ptep_get_and_clear(pte_t *ptep, pte_t res)
 {
 	uint64_t val = __pte_val(res);
-	if (__cmpxchg64(ptep, val, 0) != val) {
+	if (__cmpxchg64(&ptep->pte, val, 0) != val) {
 		/* xchg acts as a barrier before the setting of the high bits */
 		res.pte_low = xchg(&ptep->pte_low, 0);
 		res.pte_high = ptep->pte_high;
@@ -106,6 +106,31 @@ static inline pte_t xen_ptep_get_and_clear(pte_t *ptep, pte_t res)
 
 #define __pte_mfn(_pte) (((_pte).pte_low >> PAGE_SHIFT) | \
 			 ((_pte).pte_high << (32-PAGE_SHIFT)))
+
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+#ifdef CONFIG_SMP
+union split_pmd {
+	struct {
+		u32 pmd_low;
+		u32 pmd_high;
+	};
+	pmd_t pmd;
+};
+static inline pmd_t xen_pmdp_get_and_clear(pmd_t *pmdp)
+{
+	union split_pmd res, *orig = (union split_pmd *)pmdp;
+
+	/* xchg acts as a barrier before setting of the high bits */
+	res.pmd_low = xchg(&orig->pmd_low, 0);
+	res.pmd_high = orig->pmd_high;
+	orig->pmd_high = 0;
+
+	return res.pmd;
+}
+#else
+#define xen_pmdp_get_and_clear(xp) xen_local_pmdp_get_and_clear(xp)
+#endif
+#endif
 
 /*
  * Bits 0, 6 and 7 are taken in the low part of the pte,

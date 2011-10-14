@@ -20,6 +20,8 @@
 #define AUDIT_ARCH_I386		(EM_386|__AUDIT_ARCH_LE)
 #define __AUDIT_ARCH_LE	   0x40000000
 
+	.section .entry.text, "ax"
+
 #define IA32_NR_syscalls ((ia32_syscall_end - ia32_sys_call_table)/8)
 
 	.macro IA32_ARG_FIXUP noebp=0
@@ -122,8 +124,7 @@ ENTRY(ia32_sysenter_target)
 	CFI_REL_OFFSET	rcx,0
 	movq	8(%rsp),%r11
 	CFI_RESTORE	r11
-	popq	%rcx
-	CFI_ADJUST_CFA_OFFSET -8
+	popq_cfi %rcx
 	CFI_RESTORE	rcx
  	movl	%ebp,%ebp		/* zero extension */
 	movl	%eax,%eax
@@ -293,8 +294,7 @@ ENTRY(ia32_syscall)
 	CFI_REL_OFFSET	rcx,0
 	movq 8(%rsp),%r11
 	CFI_RESTORE	r11
-	popq %rcx
-	CFI_ADJUST_CFA_OFFSET -8
+	popq_cfi %rcx
 	CFI_RESTORE	rcx
 	movl %eax,%eax
 	movq %rax,(%rsp)
@@ -450,7 +450,7 @@ ia32_sys_call_table:
 	.quad quiet_ni_syscall			/* old mpx syscall holder */
 	.quad sys_setpgid
 	.quad quiet_ni_syscall			/* old ulimit syscall holder */
-	.quad sys32_olduname
+	.quad sys_olduname
 	.quad sys_umask		/* 60 */
 	.quad sys_chroot
 	.quad compat_sys_ustat
@@ -473,7 +473,7 @@ ia32_sys_call_table:
 	.quad compat_sys_settimeofday
 	.quad sys_getgroups16	/* 80 */
 	.quad sys_setgroups16
-	.quad sys32_old_select
+	.quad compat_sys_old_select
 	.quad sys_symlink
 	.quad sys_lstat
 	.quad sys_readlink		/* 85 */
@@ -500,7 +500,7 @@ ia32_sys_call_table:
 	.quad compat_sys_newstat
 	.quad compat_sys_newlstat
 	.quad compat_sys_newfstat
-	.quad sys32_uname
+	.quad sys_uname
 	.quad stub32_iopl		/* 110 */
 	.quad sys_vhangup
 	.quad quiet_ni_syscall	/* old "idle" system call */
@@ -513,7 +513,7 @@ ia32_sys_call_table:
 	.quad stub32_sigreturn
 	.quad stub32_clone		/* 120 */
 	.quad sys_setdomainname
-	.quad sys_uname
+	.quad sys_newuname
 	.quad sys_modify_ldt
 	.quad compat_sys_adjtimex
 	.quad sys32_mprotect		/* 125 */
@@ -540,7 +540,7 @@ ia32_sys_call_table:
 	.quad compat_sys_writev
 	.quad sys_getsid
 	.quad sys_fdatasync
-	.quad sys32_sysctl	/* sysctl */
+	.quad compat_sys_sysctl	/* sysctl */
 	.quad sys_mlock		/* 150 */
 	.quad sys_munlock
 	.quad sys_mlockall
@@ -728,4 +728,14 @@ ia32_sys_call_table:
 	.quad compat_sys_pwritev
 	.quad compat_sys_rt_tgsigqueueinfo	/* 335 */
 	.quad sys_perf_event_open
+	.quad compat_sys_recvmmsg
+	.quad sys_fanotify_init
+	.quad sys32_fanotify_mark
+	.quad sys_prlimit64		/* 340 */
+	.quad sys_name_to_handle_at
+	.quad compat_sys_open_by_handle_at
+	.quad compat_sys_clock_adjtime
+	.quad sys_syncfs
+	.quad compat_sys_sendmmsg	/* 345 */
+	.quad sys_setns
 ia32_syscall_end:

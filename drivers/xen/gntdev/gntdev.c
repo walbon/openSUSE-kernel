@@ -23,6 +23,7 @@
 #include <linux/fs.h>
 #include <linux/device.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/mman.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
@@ -42,6 +43,9 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
+
+#define GNTDEV_NAME "gntdev"
+MODULE_ALIAS("devname:xen/" GNTDEV_NAME);
 
 #define MAX_GRANTS_LIMIT   1024
 #define DEFAULT_MAX_GRANTS 128
@@ -141,6 +145,7 @@ static long gntdev_ioctl(struct file *flip,
 static const struct file_operations gntdev_fops = {
 	.owner = THIS_MODULE,
 	.open = gntdev_open,
+	.llseek = no_llseek,
 	.release = gntdev_release,
 	.mmap = gntdev_mmap,
 	.unlocked_ioctl = gntdev_ioctl
@@ -160,8 +165,6 @@ static struct vm_operations_struct gntdev_vmops = {
 
 /* The driver major number, for use when unregistering the driver. */
 static int gntdev_major;
-
-#define GNTDEV_NAME "gntdev"
 
 /* Memory mapping functions
  * ------------------------
@@ -427,6 +430,8 @@ static void __exit gntdev_exit(void)
 static int gntdev_open(struct inode *inode, struct file *flip)
 {
 	gntdev_file_private_data_t *private_data;
+
+	nonseekable_open(inode, flip);
 
 	try_module_get(THIS_MODULE);
 

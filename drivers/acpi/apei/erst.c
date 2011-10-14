@@ -87,7 +87,7 @@ static struct erst_erange {
  * It is used to provide exclusive accessing for ERST Error Log
  * Address Range too.
  */
-static DEFINE_SPINLOCK(erst_lock);
+static DEFINE_RAW_SPINLOCK(erst_lock);
 
 static inline int erst_errno(int command_status)
 {
@@ -422,9 +422,9 @@ ssize_t erst_get_record_count(void)
 	if (erst_disable)
 		return -ENODEV;
 
-	spin_lock_irqsave(&erst_lock, flags);
+	raw_spin_lock_irqsave(&erst_lock, flags);
 	count = __erst_get_record_count();
-	spin_unlock_irqrestore(&erst_lock, flags);
+	raw_spin_unlock_irqrestore(&erst_lock, flags);
 
 	return count;
 }
@@ -489,9 +489,9 @@ static int __erst_record_id_cache_add_one(void)
 
 	id = prev_id = first_id = APEI_ERST_INVALID_RECORD_ID;
 retry:
-	spin_lock_irqsave(&erst_lock, flags);
+	raw_spin_lock_irqsave(&erst_lock, flags);
 	rc = __erst_get_next_record_id(&id);
-	spin_unlock_irqrestore(&erst_lock, flags);
+	raw_spin_unlock_irqrestore(&erst_lock, flags);
 	if (rc == -ENOENT)
 		return 0;
 	if (rc)
@@ -642,7 +642,7 @@ static int __erst_write_to_storage(u64 offset)
 	int rc;
 
 	erst_exec_ctx_init(&ctx);
-	rc = apei_exec_run(&ctx, ACPI_ERST_BEGIN_WRITE);
+	rc = apei_exec_run_optional(&ctx, ACPI_ERST_BEGIN_WRITE);
 	if (rc)
 		return rc;
 	apei_exec_ctx_set_input(&ctx, offset);
@@ -666,7 +666,7 @@ static int __erst_write_to_storage(u64 offset)
 	if (rc)
 		return rc;
 	val = apei_exec_ctx_get_output(&ctx);
-	rc = apei_exec_run(&ctx, ACPI_ERST_END);
+	rc = apei_exec_run_optional(&ctx, ACPI_ERST_END);
 	if (rc)
 		return rc;
 
@@ -681,7 +681,7 @@ static int __erst_read_from_storage(u64 record_id, u64 offset)
 	int rc;
 
 	erst_exec_ctx_init(&ctx);
-	rc = apei_exec_run(&ctx, ACPI_ERST_BEGIN_READ);
+	rc = apei_exec_run_optional(&ctx, ACPI_ERST_BEGIN_READ);
 	if (rc)
 		return rc;
 	apei_exec_ctx_set_input(&ctx, offset);
@@ -709,7 +709,7 @@ static int __erst_read_from_storage(u64 record_id, u64 offset)
 	if (rc)
 		return rc;
 	val = apei_exec_ctx_get_output(&ctx);
-	rc = apei_exec_run(&ctx, ACPI_ERST_END);
+	rc = apei_exec_run_optional(&ctx, ACPI_ERST_END);
 	if (rc)
 		return rc;
 
@@ -724,7 +724,7 @@ static int __erst_clear_from_storage(u64 record_id)
 	int rc;
 
 	erst_exec_ctx_init(&ctx);
-	rc = apei_exec_run(&ctx, ACPI_ERST_BEGIN_CLEAR);
+	rc = apei_exec_run_optional(&ctx, ACPI_ERST_BEGIN_CLEAR);
 	if (rc)
 		return rc;
 	apei_exec_ctx_set_input(&ctx, record_id);
@@ -748,7 +748,7 @@ static int __erst_clear_from_storage(u64 record_id)
 	if (rc)
 		return rc;
 	val = apei_exec_ctx_get_output(&ctx);
-	rc = apei_exec_run(&ctx, ACPI_ERST_END);
+	rc = apei_exec_run_optional(&ctx, ACPI_ERST_END);
 	if (rc)
 		return rc;
 
@@ -794,17 +794,17 @@ int erst_write(const struct cper_record_header *record)
 		return -EINVAL;
 
 	if (erst_erange.attr & ERST_RANGE_NVRAM) {
-		if (!spin_trylock_irqsave(&erst_lock, flags))
+		if (!raw_spin_trylock_irqsave(&erst_lock, flags))
 			return -EBUSY;
 		rc = __erst_write_to_nvram(record);
-		spin_unlock_irqrestore(&erst_lock, flags);
+		raw_spin_unlock_irqrestore(&erst_lock, flags);
 		return rc;
 	}
 
 	if (record->record_length > erst_erange.size)
 		return -EINVAL;
 
-	if (!spin_trylock_irqsave(&erst_lock, flags))
+	if (!raw_spin_trylock_irqsave(&erst_lock, flags))
 		return -EBUSY;
 	memcpy(erst_erange.vaddr, record, record->record_length);
 	rcd_erange = erst_erange.vaddr;
@@ -812,7 +812,7 @@ int erst_write(const struct cper_record_header *record)
 	memcpy(&rcd_erange->persistence_information, "ER", 2);
 
 	rc = __erst_write_to_storage(0);
-	spin_unlock_irqrestore(&erst_lock, flags);
+	raw_spin_unlock_irqrestore(&erst_lock, flags);
 
 	return rc;
 }
@@ -866,9 +866,9 @@ ssize_t erst_read(u64 record_id, struct cper_record_header *record,
 	if (erst_disable)
 		return -ENODEV;
 
-	spin_lock_irqsave(&erst_lock, flags);
+	raw_spin_lock_irqsave(&erst_lock, flags);
 	len = __erst_read(record_id, record, buflen);
-	spin_unlock_irqrestore(&erst_lock, flags);
+	raw_spin_unlock_irqrestore(&erst_lock, flags);
 	return len;
 }
 EXPORT_SYMBOL_GPL(erst_read);
@@ -885,12 +885,12 @@ int erst_clear(u64 record_id)
 	rc = mutex_lock_interruptible(&erst_record_id_cache.lock);
 	if (rc)
 		return rc;
-	spin_lock_irqsave(&erst_lock, flags);
+	raw_spin_lock_irqsave(&erst_lock, flags);
 	if (erst_erange.attr & ERST_RANGE_NVRAM)
 		rc = __erst_clear_from_nvram(record_id);
 	else
 		rc = __erst_clear_from_storage(record_id);
-	spin_unlock_irqrestore(&erst_lock, flags);
+	raw_spin_unlock_irqrestore(&erst_lock, flags);
 	if (rc)
 		goto out;
 	entries = erst_record_id_cache.entries;
@@ -913,6 +913,14 @@ static int __init setup_erst_disable(char *str)
 
 __setup("erst_disable", setup_erst_disable);
 
+static int __init setup_erst_enable(char *str)
+{
+	printk("Enabling erst parsing\n");
+	erst_disable = 0;
+	return 0;
+}
+__setup("erst_enable", setup_erst_enable);
+
 static int erst_check_table(struct acpi_table_erst *erst_tab)
 {
 	if ((erst_tab->header_length !=
@@ -932,8 +940,11 @@ static int erst_check_table(struct acpi_table_erst *erst_tab)
 static int erst_open_pstore(struct pstore_info *psi);
 static int erst_close_pstore(struct pstore_info *psi);
 static ssize_t erst_reader(u64 *id, enum pstore_type_id *type,
-		       struct timespec *time);
-static u64 erst_writer(enum pstore_type_id type, size_t size);
+			   struct timespec *time, struct pstore_info *psi);
+static u64 erst_writer(enum pstore_type_id type, unsigned int part,
+		       size_t size, struct pstore_info *psi);
+static int erst_clearer(enum pstore_type_id type, u64 id,
+			struct pstore_info *psi);
 
 static struct pstore_info erst_info = {
 	.owner		= THIS_MODULE,
@@ -942,7 +953,7 @@ static struct pstore_info erst_info = {
 	.close		= erst_close_pstore,
 	.read		= erst_reader,
 	.write		= erst_writer,
-	.erase		= erst_clear
+	.erase		= erst_clearer
 };
 
 #define CPER_CREATOR_PSTORE						\
@@ -983,7 +994,7 @@ static int erst_close_pstore(struct pstore_info *psi)
 }
 
 static ssize_t erst_reader(u64 *id, enum pstore_type_id *type,
-		       struct timespec *time)
+			   struct timespec *time, struct pstore_info *psi)
 {
 	int rc;
 	ssize_t len = 0;
@@ -1037,7 +1048,8 @@ out:
 	return (rc < 0) ? rc : (len - sizeof(*rcd));
 }
 
-static u64 erst_writer(enum pstore_type_id type, size_t size)
+static u64 erst_writer(enum pstore_type_id type, unsigned int part,
+		       size_t size, struct pstore_info *psi)
 {
 	struct cper_pstore_record *rcd = (struct cper_pstore_record *)
 					(erst_info.buf - sizeof(*rcd));
@@ -1078,6 +1090,12 @@ static u64 erst_writer(enum pstore_type_id type, size_t size)
 	erst_write(&rcd->hdr);
 
 	return rcd->hdr.record_id;
+}
+
+static int erst_clearer(enum pstore_type_id type, u64 id,
+			struct pstore_info *psi)
+{
+	return erst_clear(id);
 }
 
 static int __init erst_init(void)

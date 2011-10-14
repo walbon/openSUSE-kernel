@@ -10,6 +10,7 @@
 #include <linux/module.h>
 #include <linux/usb.h>
 #include <linux/usb/hcd.h>
+#include <linux/slab.h>
 #include <linux/notifier.h>
 #include <linux/mutex.h>
 

@@ -19,19 +19,8 @@
 # *******************************************************************/
 ######################################################################
 
-EXTRAVERSION = $(shell echo ${KERNELVERSION} | \
-sed -e 's/[0-9]*.[0-9]*.[0-9]*.\([0-9]*\).*/\1/')
-
-ifneq ($(GCOV),)
-  EXTRA_CFLAGS += -fprofile-arcs -ftest-coverage
-  EXTRA_CFLAGS += -O0
-endif
-
-ifeq ($(EXTRAVERSION),12)
-   EXTRA_CFLAGS += -DBUILD_SLES11_SP1
-else
-   EXTRA_CFLAGS += -DBUILD_RHEL6
-endif
+ccflags-$(GCOV) := -fprofile-arcs -ftest-coverage
+ccflags-$(GCOV) += -O0
 
 obj-$(CONFIG_SCSI_LPFC) := lpfc.o
 

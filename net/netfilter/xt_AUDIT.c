@@ -118,7 +118,7 @@ static void audit_ip6(struct audit_buffer *ab, struct sk_buff *skb)
 }
 
 static unsigned int
-audit_tg(struct sk_buff *skb, const struct xt_target_param *par)
+audit_tg(struct sk_buff *skb, const struct xt_action_param *par)
 {
 	const struct xt_audit_info *info = par->targinfo;
 	struct audit_buffer *ab;
@@ -170,23 +170,23 @@ errout:
 }
 
 static unsigned int
-audit_tg_ebt(struct sk_buff *skb, const struct xt_target_param *par)
+audit_tg_ebt(struct sk_buff *skb, const struct xt_action_param *par)
 {
 	audit_tg(skb, par);
 	return EBT_CONTINUE;
 }
 
-static bool audit_tg_check(const struct xt_tgchk_param *par)
+static int audit_tg_check(const struct xt_tgchk_param *par)
 {
 	const struct xt_audit_info *info = par->targinfo;
 
 	if (info->type > XT_AUDIT_TYPE_MAX) {
 		pr_info("Audit type out of range (valid range: 0..%hhu)\n",
 			XT_AUDIT_TYPE_MAX);
-		return false;
+		return -ERANGE;
 	}
 
-	return true;
+	return 0;
 }
 
 static struct xt_target audit_tg_reg[] __read_mostly = {

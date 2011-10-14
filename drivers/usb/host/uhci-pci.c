@@ -50,6 +50,10 @@ static void uhci_pci_configure_hc(struct uhci_hcd *uhci)
 
 	/* Enable PIRQ */
 	pci_write_config_word(pdev, USBLEGSUP, USBLEGSUP_DEFAULT);
+
+	/* Disable platform-specific non-PME# wakeup */
+	if (pdev->vendor == PCI_VENDOR_ID_INTEL)
+		pci_write_config_byte(pdev, USBRES_INTEL, 0);
 }
 
 static int uhci_pci_resume_detect_interrupts_are_broken(struct uhci_hcd *uhci)
@@ -158,9 +162,10 @@ static void uhci_shutdown(struct pci_dev *pdev)
 
 #ifdef CONFIG_PM
 
-static int uhci_pci_suspend(struct usb_hcd *hcd)
+static int uhci_pci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 {
 	struct uhci_hcd *uhci = hcd_to_uhci(hcd);
+	struct pci_dev *pdev = to_pci_dev(uhci_dev(uhci));
 	int rc = 0;
 
 	dev_dbg(uhci_dev(uhci), "%s\n", __func__);
@@ -178,11 +183,15 @@ static int uhci_pci_suspend(struct usb_hcd *hcd)
 	/* All PCI host controllers are required to disable IRQ generation
 	 * at the source, so we must turn off PIRQ.
 	 */
-	pci_write_config_word(to_pci_dev(uhci_dev(uhci)), USBLEGSUP, 0);
-	mb();
+	pci_write_config_word(pdev, USBLEGSUP, 0);
 	clear_bit(HCD_FLAG_POLL_RH, &hcd->flags);
 
-	/* FIXME: Enable non-PME# remote wakeup? */
+	/* Enable platform-specific non-PME# wakeup */
+	if (do_wakeup) {
+		if (pdev->vendor == PCI_VENDOR_ID_INTEL)
+			pci_write_config_byte(pdev, USBRES_INTEL,
+					USBPORT1EN | USBPORT2EN);
+	}
 
 done_okay:
 	clear_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
@@ -201,7 +210,6 @@ static int uhci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 	 * even if the controller was dead.
 	 */
 	set_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
-	mb();
 
 	spin_lock_irq(&uhci->lock);
 
@@ -213,29 +221,26 @@ static int uhci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 
 	/* The firmware may have changed the controller settings during
 	 * a system wakeup.  Check it and reconfigure to avoid problems.
- 	 */
+	 */
 	else {
 		check_and_reset_hc(uhci);
 	}
 	configure_hc(uhci);
 
-	if (uhci->rh_state == UHCI_RH_RESET) {
-
-		/* The controller had to be reset */
+	/* Tell the core if the controller had to be reset */
+	if (uhci->rh_state == UHCI_RH_RESET)
 		usb_root_hub_lost_power(hcd->self.root_hub);
-		suspend_rh(uhci, UHCI_RH_SUSPENDED);
-	}
 
 	spin_unlock_irq(&uhci->lock);
-	synchronize_irq(hcd->irq);
 
 	/* If interrupts don't work and remote wakeup is enabled then
 	 * the suspended root hub needs to be polled.
 	 */
-	if (!uhci->RD_enable && hcd->self.root_hub->do_remote_wakeup) {
+	if (!uhci->RD_enable && hcd->self.root_hub->do_remote_wakeup)
 		set_bit(HCD_FLAG_POLL_RH, &hcd->flags);
-		usb_hcd_poll_rh_status(hcd);
-	}
+
+	/* Does the root hub have a port wakeup pending? */
+	usb_hcd_poll_rh_status(hcd);
 	return 0;
 }
 
@@ -269,12 +274,6 @@ static const struct hc_driver uhci_driver = {
 
 	.hub_status_data =	uhci_hub_status_data,
 	.hub_control =		uhci_hub_control,
-#ifdef CONFIG_KDB_USB
-	.kdb_poll_char =        uhci_kdb_poll_char,
-	.kdb_completion =       kdb_uhci_urb_complete,
-	.kdb_hc_keyboard_attach =       kdb_uhci_keyboard_attach,
-	.kdb_hc_keyboard_detach =       kdb_uhci_keyboard_detach,
-#endif
 };
 
 static DEFINE_PCI_DEVICE_TABLE(uhci_pci_ids) = { {

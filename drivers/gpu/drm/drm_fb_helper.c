@@ -285,7 +285,7 @@ static void drm_fb_helper_restore_work_fn(struct work_struct *ignored)
 }
 static DECLARE_WORK(drm_fb_helper_restore_work, drm_fb_helper_restore_work_fn);
 
-static void drm_fb_helper_sysrq(int dummy1, struct tty_struct *dummy3)
+static void drm_fb_helper_sysrq(int dummy1)
 {
 	schedule_work(&drm_fb_helper_restore_work);
 }
@@ -1400,7 +1400,7 @@ int drm_fb_helper_hotplug_event(struct drm_fb_helper *fb_helper)
 	struct drm_device *dev = fb_helper->dev;
 	int count = 0;
 	u32 max_width, max_height, bpp_sel;
-	bool bound = false, others_bound = false;
+	bool bound = false, crtcs_bound = false;
 	struct drm_crtc *crtc;
 
 	if (!fb_helper->fb)
@@ -1408,15 +1408,13 @@ int drm_fb_helper_hotplug_event(struct drm_fb_helper *fb_helper)
 
 	mutex_lock(&dev->mode_config.mutex);
 	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
-		if (!crtc->fb)
-			continue;
+		if (crtc->fb)
+			crtcs_bound = true;
 		if (crtc->fb == fb_helper->fb)
 			bound = true;
-		else
-			others_bound = true;
 	}
 
-	if (!bound || others_bound) {
+	if (!bound && crtcs_bound) {
 		fb_helper->delayed_hotplug = true;
 		mutex_unlock(&dev->mode_config.mutex);
 		return 0;
@@ -1436,11 +1434,11 @@ int drm_fb_helper_hotplug_event(struct drm_fb_helper *fb_helper)
 }
 EXPORT_SYMBOL(drm_fb_helper_hotplug_event);
 
-/* The Kconfig DRM_KMS_HELPER selects FRAMEBUFFER_CONSOLE (if !EMBEDDED)
+/* The Kconfig DRM_KMS_HELPER selects FRAMEBUFFER_CONSOLE (if !EXPERT)
  * but the module doesn't depend on any fb console symbols.  At least
  * attempt to load fbcon to avoid leaving the system without a usable console.
  */
-#if defined(CONFIG_FRAMEBUFFER_CONSOLE_MODULE) && !defined(CONFIG_EMBEDDED)
+#if defined(CONFIG_FRAMEBUFFER_CONSOLE_MODULE) && !defined(CONFIG_EXPERT)
 static int __init drm_fb_helper_modinit(void)
 {
 	const char *name = "fbcon";

@@ -33,12 +33,6 @@
 
 #include "blockcheck.h"
 
-/* Mainline commit 4be929be34f9bdeffa40d815d32d7d60d2c7f03b */
-#ifndef USHRT_MAX
-# define USHRT_MAX	((u16)(~0U))
-# define SHRT_MAX	((s16)(USHRT_MAX>>1))
-# define SHRT_MIN	((s16)(-SHRT_MAX - 1))
-#endif
 
 /*
  * We use the following conventions:

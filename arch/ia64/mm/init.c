@@ -22,7 +22,6 @@
 #include <linux/kexec.h>
 
 #include <asm/dma.h>
-#include <asm/ia32.h>
 #include <asm/io.h>
 #include <asm/machvec.h>
 #include <asm/numa.h>
@@ -37,15 +36,13 @@
 #include <asm/mca.h>
 #include <asm/paravirt.h>
 
-DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
-
 extern void ia64_tlb_init (void);
 
 unsigned long MAX_DMA_ADDRESS = PAGE_OFFSET + 0x100000000UL;
 
 #ifdef CONFIG_VIRTUAL_MEM_MAP
-unsigned long vmalloc_end = VMALLOC_END_INIT;
-EXPORT_SYMBOL(vmalloc_end);
+unsigned long VMALLOC_END = VMALLOC_END_INIT;
+EXPORT_SYMBOL(VMALLOC_END);
 struct page *vmem_map;
 EXPORT_SYMBOL(vmem_map);
 #endif
@@ -670,10 +667,6 @@ mem_init (void)
 			fsyscall_table[i] = sys_call_table[i] | 1;
 	}
 	setup_gate();
-
-#ifdef CONFIG_IA32_SUPPORT
-	ia32_mem_init();
-#endif
 }
 
 #ifdef CONFIG_MEMORY_HOTPLUG

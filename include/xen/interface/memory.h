@@ -30,8 +30,8 @@
 #include "xen.h"
 
 /*
- * Increase or decrease the specified domain's memory reservation. Returns the
- * number of extents successfully allocated or freed.
+ * Increase or decrease the specified domain's memory reservation. Returns a
+ * -ve errcode on failure, or the # extents successfully allocated or freed.
  * arg == addr of struct xen_memory_reservation.
  */
 #define XENMEM_increase_reservation 0
@@ -132,6 +132,7 @@ struct xen_memory_exchange {
      */
     xen_ulong_t nr_exchanged;
 };
+DEFINE_GUEST_HANDLE_STRUCT(xen_memory_exchange);
 typedef struct xen_memory_exchange xen_memory_exchange_t;
 DEFINE_XEN_GUEST_HANDLE(xen_memory_exchange_t);
 
@@ -197,6 +198,7 @@ struct xen_machphys_mapping {
     xen_ulong_t v_start, v_end; /* Start and end virtual addresses.   */
     xen_ulong_t max_mfn;        /* Maximum MFN that can be looked up. */
 };
+DEFINE_GUEST_HANDLE_STRUCT(xen_machphys_mapping);
 typedef struct xen_machphys_mapping xen_machphys_mapping_t;
 DEFINE_XEN_GUEST_HANDLE(xen_machphys_mapping_t);
 
@@ -234,7 +236,7 @@ DEFINE_XEN_GUEST_HANDLE(xen_add_to_physmap_t);
 /*
  * Returns the pseudo-physical memory map as it was when the domain
  * was started (specified by XENMEM_set_memory_map).
- * arg == addr of xen_memory_map_t.
+ * arg == addr of struct xen_memory_map.
  */
 #define XENMEM_memory_map           9
 struct xen_memory_map {
@@ -251,13 +253,14 @@ struct xen_memory_map {
      */
     XEN_GUEST_HANDLE(void) buffer;
 };
+DEFINE_GUEST_HANDLE_STRUCT(xen_memory_map);
 typedef struct xen_memory_map xen_memory_map_t;
 DEFINE_XEN_GUEST_HANDLE(xen_memory_map_t);
 
 /*
  * Returns the real physical memory map. Passes the same structure as
  * XENMEM_memory_map.
- * arg == addr of xen_memory_map_t.
+ * arg == addr of struct xen_memory_map.
  */
 #define XENMEM_machine_memory_map   10
 
@@ -293,5 +296,15 @@ typedef struct xen_pod_target xen_pod_target_t;
  * The call never fails.
  */
 #define XENMEM_get_sharing_freed_pages    18
+
+#ifndef CONFIG_XEN
+#include <linux/spinlock.h>
+
+/*
+ * Prevent the balloon driver from changing the memory reservation
+ * during a driver critical region.
+ */
+extern spinlock_t xen_reservation_lock;
+#endif
 
 #endif /* __XEN_PUBLIC_MEMORY_H__ */

@@ -10,8 +10,28 @@
  */
 #define PERF_EFLAGS_EXACT	(1UL << 3)
 
-#endif
+#define perf_instruction_pointer(regs) instruction_pointer(regs)
 
-static inline void init_hw_perf_events(void) {}
+#define perf_misc_flags(regs) ({ \
+	struct pt_regs *_r_ = (regs); \
+	unsigned long _f_ = user_mode(_r_) ? PERF_RECORD_MISC_USER \
+					   : PERF_RECORD_MISC_KERNEL; \
+	_r_->flags & PERF_EFLAGS_EXACT ? _f_ | PERF_RECORD_MISC_EXACT_IP : _f_; \
+})
+
+#include <asm/stacktrace.h>
+
+/*
+ * We abuse bit 3 from flags to pass exact information, see perf_misc_flags
+ * and the comment with PERF_EFLAGS_EXACT.
+ */
+#define perf_arch_fetch_caller_regs(regs, __ip)		{	\
+	(regs)->ip = (__ip);					\
+	(regs)->bp = caller_frame_pointer();			\
+	(regs)->cs = __KERNEL_CS;				\
+	regs->flags = 0;					\
+}
+
+#endif
 
 #endif /* _ASM_X86_PERF_EVENT_H */

@@ -17,6 +17,7 @@
  */
 
 #include <linux/fs.h>
+#include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/writeback.h>
 #include <linux/pagemap.h>
@@ -215,17 +216,11 @@ static void wait_current_trans(struct btrfs_root *root)
 	spin_lock(&root->fs_info->trans_lock);
 	cur_trans = root->fs_info->running_transaction;
 	if (cur_trans && cur_trans->blocked) {
-		DEFINE_WAIT(wait);
 		atomic_inc(&cur_trans->use_count);
 		spin_unlock(&root->fs_info->trans_lock);
-		while (1) {
-			prepare_to_wait(&root->fs_info->transaction_wait, &wait,
-					TASK_UNINTERRUPTIBLE);
-			if (!cur_trans->blocked)
-				break;
-			schedule();
-		}
-		finish_wait(&root->fs_info->transaction_wait, &wait);
+
+		wait_event(root->fs_info->transaction_wait,
+			   !cur_trans->blocked);
 		put_transaction(cur_trans);
 	} else {
 		spin_unlock(&root->fs_info->trans_lock);
@@ -259,7 +254,7 @@ static struct btrfs_trans_handle *start_transaction(struct btrfs_root *root,
 {
 	struct btrfs_trans_handle *h;
 	struct btrfs_transaction *cur_trans;
-	int retries = 0;
+	u64 num_bytes = 0;
 	int ret;
 
 	if (root->fs_info->fs_state & BTRFS_SUPER_FLAG_ERROR)
@@ -272,6 +267,19 @@ static struct btrfs_trans_handle *start_transaction(struct btrfs_root *root,
 		h->orig_rsv = h->block_rsv;
 		h->block_rsv = NULL;
 		goto got_it;
+	}
+
+	/*
+	 * Do the reservation before we join the transaction so we can do all
+	 * the appropriate flushing if need be.
+	 */
+	if (num_items > 0 && root != root->fs_info->chunk_root) {
+		num_bytes = btrfs_calc_trans_metadata_size(root, num_items);
+		ret = btrfs_block_rsv_add(root,
+					  &root->fs_info->trans_block_rsv,
+					  num_bytes);
+		if (ret)
+			return ERR_PTR(ret);
 	}
 again:
 	h = kmem_cache_alloc(btrfs_trans_handle_cachep, GFP_NOFS);
@@ -309,24 +317,9 @@ again:
 		goto again;
 	}
 
-	if (num_items > 0) {
-		ret = btrfs_trans_reserve_metadata(h, root, num_items);
-		if (ret == -EAGAIN && !retries) {
-			retries++;
-			btrfs_commit_transaction(h, root);
-			goto again;
-		} else if (ret == -EAGAIN) {
-			/*
-			 * We have already retried and got EAGAIN, so really we
-			 * don't have space, so set ret to -ENOSPC.
-			 */
-			ret = -ENOSPC;
-		}
-
-		if (ret < 0) {
-			btrfs_end_transaction(h, root);
-			return ERR_PTR(ret);
-		}
+	if (num_bytes) {
+		h->block_rsv = &root->fs_info->trans_block_rsv;
+		h->bytes_reserved = num_bytes;
 	}
 
 got_it:
@@ -358,19 +351,10 @@ struct btrfs_trans_handle *btrfs_start_ioctl_transaction(struct btrfs_root *root
 }
 
 /* wait for a transaction commit to be fully complete */
-static noinline int wait_for_commit(struct btrfs_root *root,
+static noinline void wait_for_commit(struct btrfs_root *root,
 				    struct btrfs_transaction *commit)
 {
-	DEFINE_WAIT(wait);
-	while (!commit->commit_done) {
-		prepare_to_wait(&commit->commit_wait, &wait,
-				TASK_UNINTERRUPTIBLE);
-		if (commit->commit_done)
-			break;
-		schedule();
-	}
-	finish_wait(&commit->commit_wait, &wait);
-	return 0;
+	wait_event(commit->commit_wait, commit->commit_done);
 }
 
 int btrfs_wait_for_commit(struct btrfs_root *root, u64 transid)
@@ -434,8 +418,8 @@ static int should_end_transaction(struct btrfs_trans_handle *trans,
 				  struct btrfs_root *root)
 {
 	int ret;
-	ret = btrfs_block_rsv_check(trans, root,
-				    &root->fs_info->global_block_rsv, 0, 5);
+	ret = btrfs_block_rsv_check(root, &root->fs_info->global_block_rsv, 0,
+				    5, 0);
 	return ret ? 1 : 0;
 }
 
@@ -443,16 +427,25 @@ int btrfs_should_end_transaction(struct btrfs_trans_handle *trans,
 				 struct btrfs_root *root)
 {
 	struct btrfs_transaction *cur_trans = trans->transaction;
+	struct btrfs_block_rsv *rsv = trans->block_rsv;
 	int updates;
 
 	smp_mb();
 	if (cur_trans->blocked || cur_trans->delayed_refs.flushing)
 		return 1;
 
+	/*
+	 * We need to do this in case we're deleting csums so the global block
+	 * rsv get's used instead of the csum block rsv.
+	 */
+	trans->block_rsv = NULL;
+
 	updates = trans->delayed_ref_updates;
 	trans->delayed_ref_updates = 0;
 	if (updates)
 		btrfs_run_delayed_refs(trans, root, updates);
+
+	trans->block_rsv = rsv;
 
 	return should_end_transaction(trans, root);
 }
@@ -469,6 +462,7 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 		return 0;
 	}
 
+	trans->block_rsv = NULL;
 	while (count < 4) {
 		unsigned long cur = trans->delayed_ref_updates;
 		trans->delayed_ref_updates = 0;
@@ -498,10 +492,17 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 	}
 
 	if (lock && cur_trans->blocked && !cur_trans->in_commit) {
-		if (throttle)
+		if (throttle) {
+			/*
+			 * We may race with somebody else here so end up having
+			 * to call end_transaction on ourselves again, so inc
+			 * our use_count.
+			 */
+			trans->use_count++;
 			return btrfs_commit_transaction(trans, root);
-		else
+		} else {
 			wake_up_process(info->transaction_kthread);
+		}
 	}
 
 	WARN_ON(cur_trans != info->running_transaction);
@@ -571,50 +572,22 @@ int btrfs_end_transaction_dmeta(struct btrfs_trans_handle *trans,
 int btrfs_write_marked_extents(struct btrfs_root *root,
 			       struct extent_io_tree *dirty_pages, int mark)
 {
-	int ret;
 	int err = 0;
 	int werr = 0;
-	struct page *page;
-	struct inode *btree_inode = root->fs_info->btree_inode;
+	struct address_space *mapping = root->fs_info->btree_inode->i_mapping;
 	u64 start = 0;
 	u64 end;
-	unsigned long index;
 
-	while (1) {
-		ret = find_first_extent_bit(dirty_pages, start, &start, &end,
-					    mark);
-		if (ret)
-			break;
-		while (start <= end) {
-			cond_resched();
-
-			index = start >> PAGE_CACHE_SHIFT;
-			start = (u64)(index + 1) << PAGE_CACHE_SHIFT;
-			page = find_get_page(btree_inode->i_mapping, index);
-			if (!page)
-				continue;
-
-			btree_lock_page_hook(page);
-			if (!page->mapping) {
-				unlock_page(page);
-				page_cache_release(page);
-				continue;
-			}
-
-			if (PageWriteback(page)) {
-				if (PageDirty(page))
-					wait_on_page_writeback(page);
-				else {
-					unlock_page(page);
-					page_cache_release(page);
-					continue;
-				}
-			}
-			err = write_one_page(page, 0);
-			if (err)
-				werr = err;
-			page_cache_release(page);
-		}
+	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
+				      mark)) {
+		err = convert_extent_bit(dirty_pages, start, end, EXTENT_NEED_WAIT,
+				mark, GFP_NOFS);
+		BUG_ON(err < 0);
+		err = filemap_fdatawrite_range(mapping, start, end);
+		if (err)
+			werr = err;
+		cond_resched();
+		start = end + 1;
 	}
 	if (err)
 		werr = err;
@@ -630,39 +603,22 @@ int btrfs_write_marked_extents(struct btrfs_root *root,
 int btrfs_wait_marked_extents(struct btrfs_root *root,
 			      struct extent_io_tree *dirty_pages, int mark)
 {
-	int ret;
 	int err = 0;
 	int werr = 0;
-	struct page *page;
-	struct inode *btree_inode = root->fs_info->btree_inode;
+	struct address_space *mapping = root->fs_info->btree_inode->i_mapping;
 	u64 start = 0;
 	u64 end;
-	unsigned long index;
 
-	while (1) {
-		ret = find_first_extent_bit(dirty_pages, start, &start, &end,
-					    mark);
-		if (ret)
-			break;
-
-		clear_extent_bits(dirty_pages, start, end, mark, GFP_NOFS);
-		while (start <= end) {
-			index = start >> PAGE_CACHE_SHIFT;
-			start = (u64)(index + 1) << PAGE_CACHE_SHIFT;
-			page = find_get_page(btree_inode->i_mapping, index);
-			if (!page)
-				continue;
-			if (PageDirty(page)) {
-				btree_lock_page_hook(page);
-				wait_on_page_writeback(page);
-				err = write_one_page(page, 0);
-				if (err)
-					werr = err;
-			}
-			wait_on_page_writeback(page);
-			page_cache_release(page);
-			cond_resched();
-		}
+	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
+				      EXTENT_NEED_WAIT)) {
+		err = clear_extent_bits(dirty_pages, start, end,
+			EXTENT_NEED_WAIT, GFP_NOFS);
+		BUG_ON(err < 0);
+		err = filemap_fdatawait_range(mapping, start, end);
+		if (err)
+			werr = err;
+		cond_resched();
+		start = end + 1;
 	}
 	if (err)
 		werr = err;
@@ -893,6 +849,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	struct btrfs_root *tree_root = fs_info->tree_root;
 	struct btrfs_root *root = pending->root;
 	struct btrfs_root *parent_root;
+	struct btrfs_block_rsv *rsv;
 	struct inode *parent_inode;
 	struct dentry *parent;
 	struct dentry *dentry;
@@ -903,6 +860,8 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	u64 index = 0;
 	u64 objectid;
 	u64 root_flags;
+
+	rsv = trans->block_rsv;
 
 	new_root_item = kmalloc(sizeof(*new_root_item), GFP_NOFS);
 	if (!new_root_item) {
@@ -917,10 +876,9 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	}
 
 	btrfs_reloc_pre_snapshot(trans, pending, &to_reserve);
-	btrfs_orphan_pre_snapshot(trans, pending, &to_reserve);
 
 	if (to_reserve > 0) {
-		ret = btrfs_block_rsv_add(trans, root, &pending->block_rsv,
+		ret = btrfs_block_rsv_add(root, &pending->block_rsv,
 					  to_reserve);
 		if (ret) {
 			pending->error = ret;
@@ -1000,7 +958,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 				 parent_root->root_key.objectid,
 				 btrfs_ino(parent_inode), index,
 				 dentry->d_name.name, dentry->d_name.len);
-	BUG_ON(ret);
+	btrfs_std_error(fs_info, ret);
 	dput(parent);
 
 	key.offset = (u64)-1;
@@ -1008,9 +966,9 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	BUG_ON(IS_ERR(pending->snap));
 
 	btrfs_reloc_post_snapshot(trans, pending);
-	btrfs_orphan_post_snapshot(trans, pending);
 fail:
 	kfree(new_root_item);
+	trans->block_rsv = rsv;
 	btrfs_block_rsv_release(root, &pending->block_rsv, (u64)-1);
 	return 0;
 }
@@ -1079,22 +1037,7 @@ int btrfs_transaction_blocked(struct btrfs_fs_info *info)
 static void wait_current_trans_commit_start(struct btrfs_root *root,
 					    struct btrfs_transaction *trans)
 {
-	DEFINE_WAIT(wait);
-
-	if (trans->in_commit)
-		return;
-
-	while (1) {
-		prepare_to_wait(&root->fs_info->transaction_blocked_wait, &wait,
-				TASK_UNINTERRUPTIBLE);
-		if (trans->in_commit) {
-			finish_wait(&root->fs_info->transaction_blocked_wait,
-				    &wait);
-			break;
-		}
-		schedule();
-		finish_wait(&root->fs_info->transaction_blocked_wait, &wait);
-	}
+	wait_event(root->fs_info->transaction_blocked_wait, trans->in_commit);
 }
 
 /*
@@ -1104,24 +1047,8 @@ static void wait_current_trans_commit_start(struct btrfs_root *root,
 static void wait_current_trans_commit_start_and_unblock(struct btrfs_root *root,
 					 struct btrfs_transaction *trans)
 {
-	DEFINE_WAIT(wait);
-
-	if (trans->commit_done || (trans->in_commit && !trans->blocked))
-		return;
-
-	while (1) {
-		prepare_to_wait(&root->fs_info->transaction_wait, &wait,
-				TASK_UNINTERRUPTIBLE);
-		if (trans->commit_done ||
-		    (trans->in_commit && !trans->blocked)) {
-			finish_wait(&root->fs_info->transaction_wait,
-				    &wait);
-			break;
-		}
-		schedule();
-		finish_wait(&root->fs_info->transaction_wait,
-			    &wait);
-	}
+	wait_event(root->fs_info->transaction_wait,
+		   trans->commit_done || (trans->in_commit && !trans->blocked));
 }
 
 /*
@@ -1204,6 +1131,8 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 
 	btrfs_run_ordered_operations(root, 0);
 
+	trans->block_rsv = NULL;
+
 	/* make a pass through all the delayed refs we have so far
 	 * any runnings procs may add more while we are here
 	 */
@@ -1228,8 +1157,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 		atomic_inc(&cur_trans->use_count);
 		btrfs_end_transaction(trans, root);
 
-		ret = wait_for_commit(root, cur_trans);
-		BUG_ON(ret);
+		wait_for_commit(root, cur_trans);
 
 		put_transaction(cur_trans);
 
@@ -1439,6 +1367,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
  */
 int btrfs_clean_old_snapshots(struct btrfs_root *root)
 {
+	int ret;
 	LIST_HEAD(list);
 	struct btrfs_fs_info *fs_info = root->fs_info;
 
@@ -1454,9 +1383,10 @@ int btrfs_clean_old_snapshots(struct btrfs_root *root)
 
 		if (btrfs_header_backref_rev(root->node) <
 		    BTRFS_MIXED_BACKREF_REV)
-			btrfs_drop_snapshot(root, NULL, 0);
+			ret = btrfs_drop_snapshot(root, NULL, 0);
 		else
-			btrfs_drop_snapshot(root, NULL, 1);
+			ret = btrfs_drop_snapshot(root, NULL, 1);
+		BUG_ON(ret);
 	}
 	return 0;
 }

@@ -348,7 +348,7 @@ static void connect(struct blkfront_info *info)
 	unsigned long long sectors;
 	unsigned long sector_size;
 	unsigned int binfo;
-	int err, barrier;
+	int err, barrier, flush;
 
 	switch (info->connected) {
 	case BLKIF_STATE_CONNECTED:
@@ -360,6 +360,13 @@ static void connect(struct blkfront_info *info)
 				   "sectors", "%Lu", &sectors);
 		if (err != 1)
 			return;
+		err = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+				   "sector-size", "%lu", &sector_size);
+		if (err != 1)
+			sector_size = 0;
+		if (sector_size)
+			blk_queue_logical_block_size(info->gd->queue,
+						     sector_size);
 		pr_info("Setting capacity to %Lu\n", sectors);
 		set_capacity(info->gd, sectors);
 		revalidate_disk(info->gd);
@@ -383,6 +390,9 @@ static void connect(struct blkfront_info *info)
 		return;
 	}
 
+	info->feature_flush = 0;
+	info->flush_op = 0;
+
 	err = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
 			   "feature-barrier", "%d", &barrier);
 	/*
@@ -392,10 +402,29 @@ static void connect(struct blkfront_info *info)
 	 *
 	 * If there are barriers, then we use flush.
 	 */
-	if (err > 0 && barrier)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,37)
+	if (err > 0 && barrier) {
 		info->feature_flush = REQ_FLUSH | REQ_FUA;
+		info->flush_op = BLKIF_OP_WRITE_BARRIER;
+	}
+	/*
+	 * And if there is "feature-flush-cache" use that above
+	 * barriers.
+	 */
+	err = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+			   "feature-flush-cache", "%d", &flush);
+	if (err > 0 && flush) {
+		info->feature_flush = REQ_FLUSH;
+		info->flush_op = BLKIF_OP_FLUSH_DISKCACHE;
+	}
+#else
+	if (err <= 0)
+		info->feature_flush = QUEUE_ORDERED_DRAIN;
+	else if (barrier)
+		info->feature_flush = QUEUE_ORDERED_TAG;
 	else
-		info->feature_flush = 0;
+		info->feature_flush = QUEUE_ORDERED_NONE;
+#endif
 
 	err = xlvbd_add(sectors, info->vdevice, binfo, sector_size, info);
 	if (err) {
@@ -449,7 +478,7 @@ static void blkfront_closing(struct blkfront_info *info)
 	spin_unlock_irqrestore(&blkif_io_lock, flags);
 
 	/* Flush gnttab callback work. Must be done with no locks held. */
-	flush_scheduled_work();
+	flush_work_sync(&info->work);
 
 	xlvbd_sysfs_delif(info);
 
@@ -494,7 +523,7 @@ static inline void ADD_ID_TO_FREELIST(
 	struct blkfront_info *info, unsigned long id)
 {
 	info->shadow[id].req.id  = info->shadow_free;
-	info->shadow[id].request = 0;
+	info->shadow[id].request = NULL;
 	info->shadow_free = id;
 }
 
@@ -674,14 +703,10 @@ int blkif_getgeo(struct block_device *bd, struct hd_geometry *hg)
 
 
 /*
- * blkif_queue_request
+ * Generate a Xen blkfront IO request from a blk layer request.  Reads
+ * and writes are handled as expected.
  *
- * request block io
- *
- * id: for guest use only.
- * operation: BLKIF_OP_{READ,WRITE,PROBE}
- * buffer: buffer to read/write into. this should be a
- *   virtual address in the guest os.
+ * @req: a request struct
  */
 static int blkif_queue_request(struct request *req)
 {
@@ -710,7 +735,7 @@ static int blkif_queue_request(struct request *req)
 	/* Fill out a communications ring structure. */
 	ring_req = RING_GET_REQUEST(&info->ring, info->ring.req_prod_pvt);
 	id = GET_ID_FROM_FREELIST(info);
-	info->shadow[id].request = (unsigned long)req;
+	info->shadow[id].request = req;
 
 	ring_req->id = id;
 	ring_req->sector_number = (blkif_sector_t)blk_rq_pos(req);
@@ -718,8 +743,12 @@ static int blkif_queue_request(struct request *req)
 
 	ring_req->operation = rq_data_dir(req) ?
 		BLKIF_OP_WRITE : BLKIF_OP_READ;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,37)
 	if (req->cmd_flags & (REQ_FLUSH | REQ_FUA))
-		ring_req->operation = BLKIF_OP_WRITE_BARRIER;
+#else
+	if (req->cmd_flags & REQ_HARDBARRIER)
+#endif
+		ring_req->operation = info->flush_op;
 	if (req->cmd_type == REQ_TYPE_BLOCK_PC)
 		ring_req->operation = BLKIF_OP_PACKET;
 
@@ -779,8 +808,10 @@ void do_blkif_request(struct request_queue *rq)
 
 		blk_start_request(req);
 
-		if (req->cmd_type != REQ_TYPE_FS
-		    && req->cmd_type != REQ_TYPE_BLOCK_PC) {
+		if ((req->cmd_type != REQ_TYPE_FS
+		     && req->cmd_type != REQ_TYPE_BLOCK_PC) ||
+		    ((req->cmd_flags & (REQ_FLUSH | REQ_FUA)) &&
+		     !info->flush_op)) {
 			__blk_end_request_all(req, -EIO);
 			continue;
 		}
@@ -832,7 +863,7 @@ static irqreturn_t blkif_int(int irq, void *dev_id)
 
 		bret = RING_GET_RESPONSE(&info->ring, i);
 		id   = bret->id;
-		req  = (struct request *)info->shadow[id].request;
+		req  = info->shadow[id].request;
 
 		blkif_completion(&info->shadow[id]);
 
@@ -840,24 +871,31 @@ static irqreturn_t blkif_int(int irq, void *dev_id)
 
 		ret = bret->status == BLKIF_RSP_OKAY ? 0 : -EIO;
 		switch (bret->operation) {
+			const char *what;
+
+		case BLKIF_OP_FLUSH_DISKCACHE:
 		case BLKIF_OP_WRITE_BARRIER:
+			what = bret->operation == BLKIF_OP_WRITE_BARRIER ?
+			       "write barrier" : "flush disk cache";
 			if (unlikely(bret->status == BLKIF_RSP_EOPNOTSUPP)) {
-				pr_warning("blkfront: %s:"
-					   " write barrier op failed\n",
-					   info->gd->disk_name);
+				pr_warn("blkfront: %s: %s op failed\n",
+					what, info->gd->disk_name);
 				ret = -EOPNOTSUPP;
 			}
 			if (unlikely(bret->status == BLKIF_RSP_ERROR &&
 				     info->shadow[id].req.nr_segments == 0)) {
-				pr_warning("blkfront: %s:"
-					   " empty write barrier op failed\n",
-					   info->gd->disk_name);
+				pr_warn("blkfront: %s: empty %s op failed\n",
+					what, info->gd->disk_name);
 				ret = -EOPNOTSUPP;
 			}
 			if (unlikely(ret)) {
 				if (ret == -EOPNOTSUPP)
 					ret = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,37)
 				info->feature_flush = 0;
+#else
+				info->feature_flush = QUEUE_ORDERED_NONE;
+#endif
 			        xlvbd_flush(info);
 			}
 			/* fall through */
@@ -906,7 +944,7 @@ static void blkif_free(struct blkfront_info *info, int suspend)
 	spin_unlock_irq(&blkif_io_lock);
 
 	/* Flush gnttab callback work. Must be done with no locks held. */
-	flush_scheduled_work();
+	flush_work_sync(&info->work);
 
 	/* Free resources associated with old device channel. */
 	if (info->ring_ref != GRANT_INVALID_REF) {
@@ -950,7 +988,7 @@ static int blkif_recover(struct blkfront_info *info)
 	/* Stage 3: Find pending requests and requeue them. */
 	for (i = 0; i < BLK_RING_SIZE; i++) {
 		/* Not in use? */
-		if (copy[i].request == 0)
+		if (!copy[i].request)
 			continue;
 
 		/* Grab a request slot and copy shadow state into it. */
@@ -968,8 +1006,7 @@ static int blkif_recover(struct blkfront_info *info)
 				req->seg[j].gref,
 				info->xbdev->otherend_id,
 				pfn_to_mfn(info->shadow[req->id].frame[j]),
-				rq_data_dir((struct request *)
-					    info->shadow[req->id].request) ?
+				rq_data_dir(info->shadow[req->id].request) ?
 				GTF_readonly : 0);
 		info->shadow[req->id].req = *req;
 

@@ -433,7 +433,7 @@ static int uas_submit_urbs(struct scsi_cmnd *cmnd,
 	return 0;
 }
 
-static int uas_queuecommand(struct scsi_cmnd *cmnd,
+static int uas_queuecommand_lck(struct scsi_cmnd *cmnd,
 					void (*done)(struct scsi_cmnd *))
 {
 	struct scsi_device *sdev = cmnd->device;
@@ -490,6 +490,8 @@ static int uas_queuecommand(struct scsi_cmnd *cmnd,
 
 	return 0;
 }
+
+static DEF_SCSI_QCMD(uas_queuecommand)
 
 static int uas_eh_abort_handler(struct scsi_cmnd *cmnd)
 {
@@ -555,6 +557,7 @@ static int uas_slave_configure(struct scsi_device *sdev)
 static struct scsi_host_template uas_host_template = {
 	.module = THIS_MODULE,
 	.name = "uas",
+	.proc_name		= KBUILD_MODNAME,
 	.queuecommand = uas_queuecommand,
 	.slave_alloc = uas_slave_alloc,
 	.slave_configure = uas_slave_configure,

@@ -10,11 +10,13 @@
  *    Author(s): Christian Borntraeger <borntraeger@de.ibm.com>
  */
 
+#include <linux/kernel_stat.h>
 #include <linux/init.h>
 #include <linux/bootmem.h>
 #include <linux/err.h>
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
+#include <linux/slab.h>
 #include <linux/virtio_console.h>
 #include <linux/interrupt.h>
 #include <linux/virtio_ring.h>
@@ -23,7 +25,7 @@
 #include <asm/kvm_para.h>
 #include <asm/kvm_virtio.h>
 #include <asm/setup.h>
-#include <asm/s390_ext.h>
+#include <asm/irq.h>
 
 #define VIRTIO_SUBCODE_64 0x0D00
 
@@ -332,7 +334,6 @@ static void scan_devices(void)
  */
 static int match_desc(struct device *dev, void *data)
 {
-#define dev_to_virtio(dev) container_of(dev, struct virtio_device, dev)
 	if ((ulong)to_kvmdev(dev_to_virtio(dev))->desc == (ulong)data)
 		return 1;
 
@@ -372,21 +373,23 @@ static void hotplug_devices(struct work_struct *dummy)
 /*
  * we emulate the request_irq behaviour on top of s390 extints
  */
-static void kvm_extint_handler(u16 code)
+static void kvm_extint_handler(unsigned int ext_int_code,
+			       unsigned int param32, unsigned long param64)
 {
 	struct virtqueue *vq;
 	u16 subcode;
 	u32 param;
 
-	subcode = S390_lowcore.cpu_addr;
+	subcode = ext_int_code >> 16;
 	if ((subcode & 0xff00) != VIRTIO_SUBCODE_64)
 		return;
+	kstat_cpu(smp_processor_id()).irqs[EXTINT_VRT]++;
 
 	/* The LSB might be overloaded, we have to mask it */
-	vq = (struct virtqueue *) ((*(long *) __LC_PFAULT_INTPARM) & ~1UL);
+	vq = (struct virtqueue *)(param64 & ~1UL);
 
 	/* We use ext_params to decide what this interrupt means */
-	param = (*(int *)  __LC_EXT_PARAMS) & VIRTIO_PARAM_MASK;
+	param = param32 & VIRTIO_PARAM_MASK;
 
 	switch (param) {
 	case VIRTIO_PARAM_CONFIG_CHANGED:
@@ -437,7 +440,7 @@ static int __init kvm_devices_init(void)
 
 	INIT_WORK(&hotplug_work, hotplug_devices);
 
-	ctl_set_bit(0, 9);
+	service_subclass_irq_register();
 	register_external_interrupt(0x2603, kvm_extint_handler);
 
 	scan_devices();

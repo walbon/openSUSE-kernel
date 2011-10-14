@@ -69,7 +69,7 @@ static u16 pfm_intr_process_64bit_ovfls(struct pfm_context *ctx,
 
 	bitmap_zero(cast_ulp(set->reset_pmds), max_pmd);
 
-	for_each_bit(i, cast_ulp(set->povfl_pmds), max_pmd) {
+	for_each_set_bit(i, cast_ulp(set->povfl_pmds), max_pmd) {
 		/*
 		 * Update software value for counters ONLY
 		 *
@@ -184,7 +184,7 @@ static void pfm_intr_get_smpl_pmds_values(struct pfm_context *ctx,
 	ovfl_mask = pfm_pmu_conf->ovfl_mask;
 
 	k = 0;
-	for_each_bit(j, cast_ulp(smpl_pmds), ctx->regs.max_pmd) {
+	for_each_set_bit(j, cast_ulp(smpl_pmds), ctx->regs.max_pmd) {
 		new_val = pfm_read_pmd(ctx, j);
 
 		/* for counters, build 64-bit value */
@@ -233,7 +233,7 @@ static int pfm_intr_process_smpl_fmt(struct pfm_context *ctx,
 	/*
 	 * go over all 64-bit overflow
 	 */
-	for_each_bit(i, cast_ulp(set->ovfl_pmds), max_pmd) {
+	for_each_set_bit(i, cast_ulp(set->ovfl_pmds), max_pmd) {
 		/*
 		 * prepare argument to fmt_handler
 		 */

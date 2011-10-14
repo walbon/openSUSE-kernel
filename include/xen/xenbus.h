@@ -39,6 +39,7 @@
 #include <linux/mutex.h>
 #include <linux/completion.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/err.h>
 #include <xen/interface/xen.h>
 #include <xen/interface/grant_table.h>
@@ -104,10 +105,8 @@ struct xenbus_driver {
 	void (*otherend_changed)(struct xenbus_device *dev,
 				 enum xenbus_state backend_state);
 	int (*remove)(struct xenbus_device *dev);
-#if !defined(CONFIG_XEN) && !defined(HAVE_XEN_PLATFORM_COMPAT_H)
-	int (*suspend)(struct xenbus_device *dev, pm_message_t state);
-#else
 	int (*suspend)(struct xenbus_device *dev);
+#if defined(CONFIG_XEN) || defined(HAVE_XEN_PLATFORM_COMPAT_H)
 	int (*suspend_cancel)(struct xenbus_device *dev);
 #endif
 	int (*resume)(struct xenbus_device *dev);

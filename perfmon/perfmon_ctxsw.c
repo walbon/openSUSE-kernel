@@ -51,7 +51,7 @@ void pfm_save_pmds(struct pfm_context *ctx, struct pfm_event_set *set)
 	/*
 	 * save HW PMD, for counters, reconstruct 64-bit value
 	 */
-	for_each_bit(i, cast_ulp(set->used_pmds), ctx->regs.max_pmd) {
+	for_each_set_bit(i, cast_ulp(set->used_pmds), ctx->regs.max_pmd) {
 		val = pfm_read_pmd(ctx, i);
 		if (likely(test_bit(i, cast_ulp(cnt_pmds))))
 			val = (set->pmds[i].value & ~ovfl_mask) |

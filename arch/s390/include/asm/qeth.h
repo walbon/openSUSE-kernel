@@ -91,7 +91,7 @@ struct qeth_arp_qi_entry5_short_ipv6 {
  * -> saves a lot of space in user space buffer
  */
 #define QETH_QARP_STRIP_ENTRIES  0x8000
-#define QETH_QARP_WITH_IPV6      0x4000
+#define QETH_QARP_WITH_IPV6	 0x4000
 #define QETH_QARP_REQUEST_MASK   0x00ff
 
 /* data sent to user space as result of query arp ioctl */

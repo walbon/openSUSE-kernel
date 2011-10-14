@@ -35,7 +35,7 @@
  *
  *  Lonnie Mendez <dignome@gmail.com>
  *  04-10-2004
- *	Driver modified to support dynamic line settings.  Various improvments
+ *	Driver modified to support dynamic line settings.  Various improvements
  *      and features.
  *
  *  Neil Whelchel
@@ -152,7 +152,7 @@ struct cypress_private {
 	int isthrottled;		   /* if throttled, discard reads */
 	wait_queue_head_t delta_msr_wait;  /* used for TIOCMIWAIT */
 	char prev_status, diff_status;	   /* used for TIOCMIWAIT */
-	/* we pass a pointer to this as the arguement sent to
+	/* we pass a pointer to this as the argument sent to
 	   cypress_set_termios old_termios */
 	struct ktermios tmp_termios; 	   /* stores the old termios settings */
 };
@@ -1302,9 +1302,9 @@ static void cypress_read_int_callback(struct urb *urb)
 continue_read:
 	tty_kref_put(tty);
 
-	/* Continue trying to always read... unless the port has closed. */
+	/* Continue trying to always read */
 
-	if (port->port.count > 0 && priv->comm_is_ok) {
+	if (priv->comm_is_ok) {
 		usb_fill_int_urb(port->interrupt_in_urb, port->serial->dev,
 				usb_rcvintpipe(port->serial->dev,
 					port->interrupt_in_endpointAddress),
@@ -1313,7 +1313,7 @@ continue_read:
 				cypress_read_int_callback, port,
 				priv->read_urb_interval);
 		result = usb_submit_urb(port->interrupt_in_urb, GFP_ATOMIC);
-		if (result) {
+		if (result && result != -EPERM) {
 			dev_err(&urb->dev->dev, "%s - failed resubmitting "
 					"read urb, error %d\n", __func__,
 					result);

@@ -26,7 +26,6 @@
 #include <linux/pci.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/delay.h>
 #include <linux/major.h>
 #include <linux/fs.h>
@@ -69,13 +68,17 @@ MODULE_VERSION("4.6.28");
 MODULE_LICENSE("GPL");
 static int cciss_tape_cmds = 6;
 module_param(cciss_tape_cmds, int, 0644);
-MODULE_PARM_DESC(cciss_tape_cmds, "number of commands to allocate for tape devices (default: 6)");
+MODULE_PARM_DESC(cciss_tape_cmds,
+	"number of commands to allocate for tape devices (default: 6)");
 
 static int cciss_allow_hpsa;
 module_param(cciss_allow_hpsa, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(cciss_allow_hpsa,
 	"Prevent cciss driver from accessing hardware known to be "
 	" supported by the hpsa driver");
+
+static DEFINE_MUTEX(cciss_mutex);
+static struct proc_dir_entry *proc_cciss;
 
 /* define the PCI info for the cards we can control */
 static const struct pci_device_id cciss_pci_device_id[] = {
@@ -141,7 +144,7 @@ static struct board_type products[] = {
 #define MAX_CTLR	32
 
 /* Originally cciss driver only supports 8 major numbers */
-#define MAX_CTLR_ORIG 	8
+#define MAX_CTLR_ORIG	8
 
 static ctlr_info_t *hba[MAX_CTLR];
 
@@ -149,7 +152,10 @@ static void do_cciss_request(struct request_queue *q);
 static irqreturn_t do_cciss_intx(int irq, void *dev_id);
 static irqreturn_t do_cciss_msix_intr(int irq, void *dev_id);
 static int cciss_open(struct block_device *bdev, fmode_t mode);
+static int cciss_unlocked_open(struct block_device *bdev, fmode_t mode);
 static int cciss_release(struct gendisk *disk, fmode_t mode);
+static int do_ioctl(struct block_device *bdev, fmode_t mode,
+		    unsigned int cmd, unsigned long arg);
 static int cciss_ioctl(struct block_device *bdev, fmode_t mode,
 		       unsigned int cmd, unsigned long arg);
 static int cciss_getgeo(struct block_device *bdev, struct hd_geometry *geo);
@@ -216,9 +222,9 @@ static void cciss_sysfs_stat_inquiry(ctlr_info_t *h, int logvol,
 
 static const struct block_device_operations cciss_fops = {
 	.owner = THIS_MODULE,
-	.open = cciss_open,
+	.open = cciss_unlocked_open,
 	.release = cciss_release,
-	.locked_ioctl = cciss_ioctl,
+	.ioctl = do_ioctl,
 	.getgeo = cciss_getgeo,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = cciss_compat_ioctl,
@@ -354,7 +360,7 @@ static void cciss_map_sg_chain_block(ctlr_info_t *h, CommandList_struct *c,
 static const char *raid_label[] = { "0", "4", "1(1+0)", "5", "5+1", "ADG",
 	"UNKNOWN"
 };
-#define RAID_UNKNOWN (sizeof(raid_label) / sizeof(raid_label[0])-1)
+#define RAID_UNKNOWN (ARRAY_SIZE(raid_label)-1)
 
 #ifdef CONFIG_PROC_FS
 
@@ -364,8 +370,6 @@ static const char *raid_label[] = { "0", "4", "1(1+0)", "5", "5+1", "ADG",
 #define ENG_GIG 1000000000
 #define ENG_GIG_FACTOR (ENG_GIG/512)
 #define ENGAGE_SCSI	"engage scsi"
-
-static struct proc_dir_entry *proc_cciss;
 
 static void cciss_seq_show_header(struct seq_file *seq)
 {
@@ -821,8 +825,8 @@ static const struct attribute_group *cciss_host_attr_groups[] = {
 
 static struct device_type cciss_host_type = {
 	.name		= "cciss_host",
-	.release	= cciss_hba_release,
 	.groups		= cciss_host_attr_groups,
+	.release	= cciss_hba_release,
 };
 
 static struct attribute *cciss_dev_attrs[] = {
@@ -1038,9 +1042,9 @@ static void cmd_special_free(ctlr_info_t *h, CommandList_struct *c)
 	temp64.val32.lower = c->ErrDesc.Addr.lower;
 	temp64.val32.upper = c->ErrDesc.Addr.upper;
 	pci_free_consistent(h->pdev, sizeof(ErrorInfo_struct),
-		c->err_info, (dma_addr_t) temp64.val);
-	pci_free_consistent(h->pdev, sizeof(CommandList_struct),
-		c, (dma_addr_t) cciss_tag_discard_error_bits(h, (u32) c->busaddr));
+			    c->err_info, (dma_addr_t) temp64.val);
+	pci_free_consistent(h->pdev, sizeof(CommandList_struct), c,
+		(dma_addr_t) cciss_tag_discard_error_bits(h, (u32) c->busaddr));
 }
 
 static inline ctlr_info_t *get_host(struct gendisk *disk)
@@ -1091,30 +1095,46 @@ static int cciss_open(struct block_device *bdev, fmode_t mode)
 	return 0;
 }
 
+static int cciss_unlocked_open(struct block_device *bdev, fmode_t mode)
+{
+	int ret;
+
+	mutex_lock(&cciss_mutex);
+	ret = cciss_open(bdev, mode);
+	mutex_unlock(&cciss_mutex);
+
+	return ret;
+}
+
 /*
  * Close.  Sync first.
  */
 static int cciss_release(struct gendisk *disk, fmode_t mode)
 {
-	ctlr_info_t *h = get_host(disk);
-	drive_info_struct *drv = get_drv(disk);
+	ctlr_info_t *h;
+	drive_info_struct *drv;
+
+	mutex_lock(&cciss_mutex);
+	h = get_host(disk);
+	drv = get_drv(disk);
 	dev_dbg(&h->pdev->dev, "cciss_release %s\n", disk->disk_name);
 	drv->usage_count--;
 	h->usage_count--;
+	mutex_unlock(&cciss_mutex);
 	return 0;
 }
-
-#ifdef CONFIG_COMPAT
 
 static int do_ioctl(struct block_device *bdev, fmode_t mode,
 		    unsigned cmd, unsigned long arg)
 {
 	int ret;
-	lock_kernel();
+	mutex_lock(&cciss_mutex);
 	ret = cciss_ioctl(bdev, mode, cmd, arg);
-	unlock_kernel();
+	mutex_unlock(&cciss_mutex);
 	return ret;
 }
+
+#ifdef CONFIG_COMPAT
 
 static int cciss_ioctl32_passthru(struct block_device *bdev, fmode_t mode,
 				  unsigned cmd, unsigned long arg);
@@ -1428,6 +1448,7 @@ static int cciss_passthru(ctlr_info_t *h, void __user *argp)
 	CommandList_struct *c;
 	char *buff = NULL;
 	u64bit temp64;
+	int retval = -EFAULT;
 	DECLARE_COMPLETION_ONSTACK(wait);
 
 	if (!argp)
@@ -1451,7 +1472,7 @@ static int cciss_passthru(ctlr_info_t *h, void __user *argp)
 			kfree(buff);
 			return -EFAULT;
 		}
-	} else {
+	} else if (iocommand.buf_size > 0) {
 		memset(buff, 0, iocommand.buf_size);
 	}
 	c = cmd_special_alloc(h);
@@ -1459,7 +1480,8 @@ static int cciss_passthru(ctlr_info_t *h, void __user *argp)
 		kfree(buff);
 		return -ENOMEM;
 	}
-	c->cmd_type = CMD_IOCTL_PEND; /* Fill in the command type */
+	/* Fill in the command type */
+	c->cmd_type = CMD_IOCTL_PEND;
 	/* Fill in Command Header */
 	c->Header.ReplyQueue = 0;   /* unused in simple mode */
 	if (iocommand.buf_size > 0) { /* buffer to fill */
@@ -1470,8 +1492,11 @@ static int cciss_passthru(ctlr_info_t *h, void __user *argp)
 		c->Header.SGTotal = 0;
 	}
 	c->Header.LUN = iocommand.LUN_info;
-	c->Header.Tag.lower = c->busaddr; /* use bus addr for tag */
-	c->Request = iocommand.Request; /* Fill in Request block */
+	/* use the kernel address the cmd block for tag */
+	c->Header.Tag.lower = c->busaddr;
+
+	/* Fill in Request block */
+	c->Request = iocommand.Request;
 
 	/* Fill in the scatter gather information */
 	if (iocommand.buf_size > 0) {
@@ -1487,33 +1512,30 @@ static int cciss_passthru(ctlr_info_t *h, void __user *argp)
 	enqueue_cmd_and_start_io(h, c);
 	wait_for_completion(&wait);
 
-	/* unmap the DMA buffers */
-	temp64.val32.lower = c->SG[0].Addr.lower;
-	temp64.val32.upper = c->SG[0].Addr.upper;
-	pci_unmap_single(h->pdev, (dma_addr_t) temp64.val,
-			 iocommand.buf_size, PCI_DMA_BIDIRECTIONAL);
-
+	if (iocommand.buf_size > 0) {
+		/* unmap the DMA buffers */
+		temp64.val32.lower = c->SG[0].Addr.lower;
+		temp64.val32.upper = c->SG[0].Addr.upper;
+		pci_unmap_single(h->pdev, (dma_addr_t) temp64.val,
+				 iocommand.buf_size, PCI_DMA_BIDIRECTIONAL);
+	}
 	check_ioctl_unit_attention(h, c);
 
 	/* Copy the error information out */
 	iocommand.error_info = *(c->err_info);
-	if (copy_to_user(argp, &iocommand, sizeof(IOCTL_Command_struct))) {
-		kfree(buff);
-		cmd_special_free(h, c);
-		return -EFAULT;
-	}
+	if (copy_to_user(argp, &iocommand, sizeof(IOCTL_Command_struct)))
+		goto out;
 
 	if (iocommand.Request.Type.Direction == XFER_READ) {
 		/* Copy the data out of the buffer we created */
-		if (copy_to_user(iocommand.buf, buff, iocommand.buf_size)) {
-			kfree(buff);
-			cmd_special_free(h, c);
-			return -EFAULT;
-		}
+		if (copy_to_user(iocommand.buf, buff, iocommand.buf_size))
+			goto out;
 	}
+	retval = 0;
+out:
 	kfree(buff);
 	cmd_special_free(h, c);
-	return 0;
+	return retval;
 }
 
 static int cciss_bigpassthru(ctlr_info_t *h, void __user *argp)
@@ -2309,7 +2331,7 @@ static int rebuild_lun_table(ctlr_info_t *h, int first_time,
 		for (j = 0; j < num_luns; j++) {
 			memcpy(lunid, &ld_buff->LUN[j][0], sizeof(lunid));
 			if (memcmp(h->drv[i]->LunID, lunid,
-					sizeof(lunid)) == 0) {
+				sizeof(lunid)) == 0) {
 				drv_found = 1;
 				break;
 			}
@@ -2478,7 +2500,7 @@ static int deregister_disk(ctlr_info_t *h, int drv_index,
 
 	/* if it was the last disk, find the new hightest lun */
 	if (clear_all && recalculate_highest_lun) {
-		int i, newhighest = -1;
+		int newhighest = -1;
 		for (i = 0; i <= h->highest_lun; i++) {
 			/* if the disk has size > 0, it is available */
 			if (h->drv[i] && h->drv[i]->heads)
@@ -3260,12 +3282,6 @@ static void do_cciss_request(struct request_queue *q)
 	int sg_index = 0;
 	int chained = 0;
 
-	/* We call start_io here in case there is a command waiting on the
-	 * queue that has not been sent.
-	 */
-	if (blk_queue_plugged(q))
-		goto startio;
-
       queue:
 	creq = blk_peek_request(q);
 	if (!creq)
@@ -3779,7 +3795,7 @@ static void __devinit cciss_wait_for_mode_change_ack(ctlr_info_t *h)
 	for (i = 0; i < MAX_CONFIG_WAIT; i++) {
 		if (!(readl(h->vaddr + SA5_DOORBELL) & CFGTBL_ChangeReq))
 			break;
-		msleep(10);
+		usleep_range(10000, 20000);
 	}
 }
 

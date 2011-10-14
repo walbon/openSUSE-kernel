@@ -1,9 +1,6 @@
 #ifndef __NET_FRAG_H__
 #define __NET_FRAG_H__
 
-#include <linux/reserve.h>
-#include <linux/mutex.h>
-
 struct netns_frags {
 	int			nqueues;
 	atomic_t		mem;
@@ -13,10 +10,6 @@ struct netns_frags {
 	int			timeout;
 	int			high_thresh;
 	int			low_thresh;
-
-	/* reserves */
-	struct mutex		lock;
-	struct mem_reserve	reserve;
 };
 
 struct inet_frag_queue {
@@ -27,6 +20,7 @@ struct inet_frag_queue {
 	atomic_t		refcnt;
 	struct timer_list	timer;      /* when will this queue expire? */
 	struct sk_buff		*fragments; /* list of received fragments */
+	struct sk_buff		*fragments_tail;
 	ktime_t			stamp;
 	int			len;        /* total length of orig datagram */
 	int			meat;

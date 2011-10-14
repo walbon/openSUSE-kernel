@@ -50,7 +50,7 @@
 
 dm_fsreg_t	*dm_registers;	/* head of filesystem registration list */
 int		dm_fsys_cnt;	/* number of filesystems on dm_registers list */
-lock_t		dm_reg_lock = SPIN_LOCK_UNLOCKED;/* lock for dm_registers */
+DEFINE_SPINLOCK(dm_reg_lock);/* lock for dm_registers */
 
 
 
@@ -849,7 +849,7 @@ dm_clear_fsreg(
 
 int
 dm_path_to_hdl(
-	char		__user *path,	/* any path name */
+	char		__user *pathname,	/* any path name */
 	void		__user *hanp,	/* user's data buffer */
 	size_t		__user *hlenp)	/* set to size of data copied */
 {
@@ -859,14 +859,14 @@ dm_path_to_hdl(
 	size_t		hlen;
 	int		error;
 	unsigned long	lc;		/* lock cookie */
-	struct nameidata nd;
+	struct path path;
 	struct inode *inode;
 	size_t		len;
 	char		*name;
 	struct filesystem_dmapi_operations *dops;
 
 	/* XXX get things straightened out so getname() works here? */
-	if (!(len = strnlen_user(path, PATH_MAX)))
+	if (!(len = strnlen_user(pathname, PATH_MAX)))
 		return(-EFAULT);
 	if (len == 1)
 		return(-ENOENT);
@@ -877,20 +877,20 @@ dm_path_to_hdl(
 		printk("%s/%d: kmalloc returned NULL\n", __FUNCTION__, __LINE__);
 		return(-ENOMEM);
 	}
-	if (copy_from_user(name, path, len)) {
+	if (copy_from_user(name, pathname, len)) {
 		kfree(name);
 		return(-EFAULT);
 	}
 
-	error = path_lookup(name, LOOKUP_POSITIVE, &nd);
+	error = kern_path(name, LOOKUP_POSITIVE, &path);
 	kfree(name);
 	if (error)
 		return error;
 
-	ASSERT(nd.path.dentry);
-	ASSERT(nd.path.dentry->d_inode);
-	inode = igrab(nd.path.dentry->d_inode);
-	path_put(&nd.path);
+	ASSERT(path.dentry);
+	ASSERT(path.dentry->d_inode);
+	inode = igrab(path.dentry->d_inode);
+	path_put(&path);
 
 	dops = dm_fsys_ops(inode->i_sb);
 	if (dops == NULL) {
@@ -925,7 +925,7 @@ dm_path_to_hdl(
 
 int
 dm_path_to_fshdl(
-	char		__user *path,	/* any path name */
+	char		__user *pathname,	/* any path name */
 	void		__user *hanp,	/* user's data buffer */
 	size_t		__user *hlenp)	/* set to size of data copied */
 {
@@ -935,14 +935,14 @@ dm_path_to_fshdl(
 	size_t		hlen;
 	int		error;
 	unsigned long	lc;		/* lock cookie */
-	struct nameidata nd;
+	struct path path;
 	struct inode *inode;
 	size_t		len;
 	char		*name;
 	struct filesystem_dmapi_operations *dops;
 
 	/* XXX get things straightened out so getname() works here? */
-	if(!(len = strnlen_user(path, PATH_MAX)))
+	if(!(len = strnlen_user(pathname, PATH_MAX)))
 		return(-EFAULT);
 	if (len == 1)
 		return(-ENOENT);
@@ -953,21 +953,21 @@ dm_path_to_fshdl(
 		printk("%s/%d: kmalloc returned NULL\n", __FUNCTION__, __LINE__);
 		return(-ENOMEM);
 	}
-	if (copy_from_user(name, path, len)) {
+	if (copy_from_user(name, pathname, len)) {
 		kfree(name);
 		return(-EFAULT);
 	}
 
-	error = path_lookup(name, LOOKUP_POSITIVE|LOOKUP_FOLLOW, &nd);
+	error = kern_path(name, LOOKUP_POSITIVE|LOOKUP_FOLLOW, &path);
 	kfree(name);
 	if (error)
 		return error;
 
-	ASSERT(nd.path.dentry);
-	ASSERT(nd.path.dentry->d_inode);
+	ASSERT(path.dentry);
+	ASSERT(path.dentry->d_inode);
 
-	inode = igrab(nd.path.dentry->d_inode);
-	path_put(&nd.path);
+	inode = igrab(path.dentry->d_inode);
+	path_put(&path);
 
 	dops = dm_fsys_ops(inode->i_sb);
 	if (dops == NULL) {

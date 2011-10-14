@@ -12,7 +12,6 @@
 #include <asm/processor.h>
 #include <asm/pgtable.h>
 #include <asm/msr.h>
-#include <asm/ds.h>
 #include <asm/bugs.h>
 #include <asm/cpu.h>
 
@@ -192,7 +191,7 @@ static void __cpuinit intel_smp_check(struct cpuinfo_x86 *c)
 {
 #ifdef CONFIG_SMP
 	/* calling is from identify_secondary_cpu() ? */
-	if (c->cpu_index == boot_cpu_id)
+	if (!c->cpu_index)
 		return;
 
 	/*
@@ -300,23 +299,24 @@ static void __cpuinit intel_workarounds(struct cpuinfo_x86 *c)
 }
 #endif
 
+#ifndef CONFIG_XEN
 static void __cpuinit srat_detect_node(struct cpuinfo_x86 *c)
 {
-#if defined(CONFIG_NUMA) && defined(CONFIG_X86_64)
+#ifdef CONFIG_NUMA
 	unsigned node;
 	int cpu = smp_processor_id();
-	int apicid = cpu_has_apic ? hard_smp_processor_id() : c->apicid;
 
 	/* Don't do the funky fallback heuristics the AMD version employs
 	   for now. */
-	node = apicid_to_node[apicid];
-	if (node == NUMA_NO_NODE || !node_online(node))
-		node = first_node(node_online_map);
+	node = numa_cpu_node(cpu);
+	if (node == NUMA_NO_NODE || !node_online(node)) {
+		/* reuse the value from init_cpu_to_node() */
+		node = cpu_to_node(cpu);
+	}
 	numa_set_node(cpu, node);
 #endif
 }
 
-#ifndef CONFIG_XEN
 /*
  * find out the number of processor cores on the die
  */
@@ -334,7 +334,6 @@ static int __cpuinit intel_num_cpu_cores(struct cpuinfo_x86 *c)
 	else
 		return 1;
 }
-#endif
 
 static void __cpuinit detect_vmx_virtcap(struct cpuinfo_x86 *c)
 {
@@ -373,6 +372,7 @@ static void __cpuinit detect_vmx_virtcap(struct cpuinfo_x86 *c)
 			set_cpu_cap(c, X86_FEATURE_VPID);
 	}
 }
+#endif
 
 static void __cpuinit init_intel(struct cpuinfo_x86 *c)
 {
@@ -406,7 +406,6 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
 			set_cpu_cap(c, X86_FEATURE_BTS);
 		if (!(l1 & (1<<12)))
 			set_cpu_cap(c, X86_FEATURE_PEBS);
-		ds_init_intel(c);
 	}
 
 	if (c->x86 == 6 && c->x86_model == 29 && cpu_has_clflush)
@@ -428,12 +427,10 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
 
 		switch (c->x86_model) {
 		case 5:
-			if (c->x86_mask == 0) {
-				if (l2 == 0)
-					p = "Celeron (Covington)";
-				else if (l2 == 256)
-					p = "Mobile Pentium II (Dixon)";
-			}
+			if (l2 == 0)
+				p = "Celeron (Covington)";
+			else if (l2 == 256)
+				p = "Mobile Pentium II (Dixon)";
 			break;
 
 		case 6:
@@ -470,13 +467,13 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
 		detect_ht(c);
 #endif
 	}
-#endif
 
 	/* Work around errata */
 	srat_detect_node(c);
 
 	if (cpu_has(c, X86_FEATURE_VMX))
 		detect_vmx_virtcap(c);
+#endif
 
 	/*
 	 * Initialize MSR_IA32_ENERGY_PERF_BIAS if BIOS did not.
@@ -486,7 +483,11 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
 		u64 epb;
 
 		rdmsrl(MSR_IA32_ENERGY_PERF_BIAS, epb);
-		if ((epb & 0xF) == 0) {
+		if ((epb & 0xF) == ENERGY_PERF_BIAS_PERFORMANCE) {
+			printk_once(KERN_WARNING "ENERGY_PERF_BIAS:"
+				" Set to 'normal', was 'performance'\n"
+				"ENERGY_PERF_BIAS: View and update with"
+				" x86_energy_perf_policy(8)\n");
 			epb = (epb & ~0xF) | ENERGY_PERF_BIAS_NORMAL;
 			wrmsrl(MSR_IA32_ENERGY_PERF_BIAS, epb);
 		}

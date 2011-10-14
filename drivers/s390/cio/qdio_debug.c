@@ -33,7 +33,6 @@ void qdio_allocate_dbf(struct qdio_initialize *init_data,
 	DBF_HEX(&init_data->input_handler, sizeof(void *));
 	DBF_HEX(&init_data->output_handler, sizeof(void *));
 	DBF_HEX(&init_data->int_parm, sizeof(long));
-	DBF_HEX(&init_data->flags, sizeof(long));
 	DBF_HEX(&init_data->input_sbal_addr_array, sizeof(void *));
 	DBF_HEX(&init_data->output_sbal_addr_array, sizeof(void *));
 	DBF_EVENT("irq:%8lx", (unsigned long)irq_ptr);
@@ -155,6 +154,7 @@ static char *qperf_names[] = {
 	"Inbound queue full",
 	"Outbound calls",
 	"Outbound handler",
+	"Outbound queue full",
 	"Outbound fast_requeue",
 	"Outbound target_full",
 	"QEBSM eqbs",

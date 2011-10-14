@@ -26,17 +26,16 @@
 #include <xen/public/privcmd.h>
 #include <xen/compat_ioctl.h>
 
-int privcmd_ioctl_32(int fd, unsigned int cmd, unsigned long arg)
+int privcmd_ioctl_32(int fd, unsigned int cmd, void __user *arg)
 {
 	int ret;
 
 	switch (cmd) {
 	case IOCTL_PRIVCMD_MMAP_32: {
-		struct privcmd_mmap *p;
-		struct privcmd_mmap_32 *p32;
+		struct privcmd_mmap __user *p;
+		struct privcmd_mmap_32 __user *p32 = arg;
 		struct privcmd_mmap_32 n32;
 
-		p32 = compat_ptr(arg);
 		p = compat_alloc_user_space(sizeof(*p));
 		if (copy_from_user(&n32, p32, sizeof(n32)) ||
 		    put_user(n32.num, &p->num) ||
@@ -48,8 +47,8 @@ int privcmd_ioctl_32(int fd, unsigned int cmd, unsigned long arg)
 	}
 		break;
 	case IOCTL_PRIVCMD_MMAPBATCH_32: {
-		struct privcmd_mmapbatch *p;
-		struct privcmd_mmapbatch_32 *p32;
+		struct privcmd_mmapbatch __user *p;
+		struct privcmd_mmapbatch_32 __user *p32 = arg;
 		struct privcmd_mmapbatch_32 n32;
 #ifdef xen_pfn32_t
 		xen_pfn_t *__user arr;
@@ -57,7 +56,6 @@ int privcmd_ioctl_32(int fd, unsigned int cmd, unsigned long arg)
 		unsigned int i;
 #endif
 
-		p32 = compat_ptr(arg);
 		p = compat_alloc_user_space(sizeof(*p));
 		if (copy_from_user(&n32, p32, sizeof(n32)) ||
 		    put_user(n32.num, &p->num) ||
@@ -97,8 +95,8 @@ int privcmd_ioctl_32(int fd, unsigned int cmd, unsigned long arg)
 	}
 		break;
 	case IOCTL_PRIVCMD_MMAPBATCH_V2_32: {
-		struct privcmd_mmapbatch_v2 *p;
-		struct privcmd_mmapbatch_v2_32 *p32;
+		struct privcmd_mmapbatch_v2 __user *p;
+		struct privcmd_mmapbatch_v2_32 __user *p32 = arg;
 		struct privcmd_mmapbatch_v2_32 n32;
 #ifdef xen_pfn32_t
 		xen_pfn_t *__user arr;
@@ -106,7 +104,6 @@ int privcmd_ioctl_32(int fd, unsigned int cmd, unsigned long arg)
 		unsigned int i;
 #endif
 
-		p32 = compat_ptr(arg);
 		p = compat_alloc_user_space(sizeof(*p));
 		if (copy_from_user(&n32, p32, sizeof(n32)) ||
 		    put_user(n32.num, &p->num) ||

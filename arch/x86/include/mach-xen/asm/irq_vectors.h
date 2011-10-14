@@ -3,11 +3,9 @@
 
 #define MCE_VECTOR			0x12
 
+#define IA32_SYSCALL_VECTOR		0x80
 #ifdef CONFIG_X86_32
 # define SYSCALL_VECTOR			0x80
-# define IA32_SYSCALL_VECTOR		0x80
-#else
-# define IA32_SYSCALL_VECTOR		0x80
 #endif
 
 #define RESCHEDULE_VECTOR		0
@@ -15,7 +13,12 @@
 #define NMI_VECTOR			0x02
 #define CALL_FUNC_SINGLE_VECTOR		3
 #define REBOOT_VECTOR			4
+#ifdef CONFIG_IRQ_WORK
+#define IRQ_WORK_VECTOR			5
+#define NR_IPIS				6
+#else
 #define NR_IPIS				5
+#endif
 
 /*
  * The maximum number of vectors supported by i386 processors
@@ -57,13 +60,16 @@ static inline int invalid_vm86_irq(int irq)
  *     are bound using the provided bind/unbind functions.
  */
 #define PIRQ_BASE			0
+/* PHYSDEVOP_pirq_eoi_gmfn restriction: */
+#define PIRQ_MAX(n) ((n) < (1 << (PAGE_SHIFT + 3)) - NR_VECTORS \
+		   ? (n) : (1 << (PAGE_SHIFT + 3)) - NR_VECTORS)
 
-#define IO_APIC_VECTOR_LIMIT		( 32 * MAX_IO_APICS )
+#define IO_APIC_VECTOR_LIMIT		PIRQ_MAX(32 * MAX_IO_APICS)
 
 #ifdef CONFIG_SPARSE_IRQ
-# define CPU_VECTOR_LIMIT		(64 * NR_CPUS)
+# define CPU_VECTOR_LIMIT		PIRQ_MAX(64 * NR_CPUS)
 #else
-# define CPU_VECTOR_LIMIT		(32 * NR_CPUS)
+# define CPU_VECTOR_LIMIT		PIRQ_MAX(32 * NR_CPUS)
 #endif
 
 #if defined(CONFIG_X86_IO_APIC)

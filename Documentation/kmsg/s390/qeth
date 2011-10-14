@@ -642,4 +642,48 @@
 /*? Text: "%s: Adapter is dedicated. QDIO data connection isolation not supported\n" */
 /*? Text: "%s: TSO does not permit QDIO data connection isolation\n" */
 /*? Text: "%s: HW TX Checksumming enabled\n" */
+/*? Text: "netif_stop_queue() cannot be called before register_netdev()\n" */
 
+/*?
+ * Text: "%s: Failed to create completion queue\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The HiperSockets device could not be configured with a completion queue.
+ * A completion queue is required to operate AF_IUCV communication in an LPAR.
+ * User action:
+ * i) Investigate if you have the latest firmware level in place.
+ * ii) If the problem persists and is not caused by a version mismatch, contact IBM
+ * support.
+ */
+
+/*?
+ * Text: "%s: Completion Queueing supported\n"
+ * Severity: Informational
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The HiperSockets device supports completion queueing. This is required to
+ * set up AF_IUCV communication in an LPAR.
+ */
+
+/*?
+ * Text: "%s: Completion Queue support enabled"
+ * Severity: Informational
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The HiperSockets device is enabled for completion queueing. This is part of
+ * the process to set up AF_IUCV communication in an LPAR.
+ */
+
+/*?
+ * Text: "%s: Completion Queue support disabled"
+ * Severity: Informational
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The HiperSockets device is disabled for completion queueing. This device
+ * cannot or no longer be used to set up AF_IUCV communication in an LPAR.
+ */

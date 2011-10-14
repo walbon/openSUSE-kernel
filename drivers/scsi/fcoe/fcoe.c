@@ -31,6 +31,7 @@
 #include <linux/fs.h>
 #include <linux/sysfs.h>
 #include <linux/ctype.h>
+#include <linux/workqueue.h>
 #include <scsi/scsi_tcq.h>
 #include <scsi/scsicam.h>
 #include <scsi/scsi_transport.h>
@@ -56,11 +57,9 @@ module_param_named(ddp_min, fcoe_ddp_min, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ddp_min, "Minimum I/O size in bytes for "	\
 		 "Direct Data Placement (DDP).");
 
-static unsigned int fcoe_use_vlan_id = 0;
-module_param_named(use_vlan_id, fcoe_use_vlan_id, uint, S_IRUGO);
-MODULE_PARM_DESC(use_vlan_id, "Include VLAN ID in generated WWNN/WWPN.");
-
 DEFINE_MUTEX(fcoe_config_mutex);
+
+static struct workqueue_struct *fcoe_wq;
 
 /* fcoe_percpu_clean completion.  Waiter protected by fcoe_create_mutex */
 static DECLARE_COMPLETION(fcoe_flush_completion);
@@ -139,7 +138,6 @@ static int fcoe_vport_create(struct fc_vport *, bool disabled);
 static int fcoe_vport_disable(struct fc_vport *, bool disable);
 static void fcoe_set_vport_symbolic_name(struct fc_vport *);
 static void fcoe_set_port_id(struct fc_lport *, u32, struct fc_frame *);
-static int fcoe_validate_vport_create(struct fc_vport *);
 
 static struct libfc_function_template fcoe_libfc_fcn_templ = {
 	.frame_send = fcoe_xmit,
@@ -282,6 +280,7 @@ static int fcoe_interface_setup(struct fcoe_interface *fcoe,
 	 * use the first one for SPMA */
 	real_dev = (netdev->priv_flags & IFF_802_1Q_VLAN) ?
 		vlan_dev_real_dev(netdev) : netdev;
+	fcoe->realdev = real_dev;
 	rcu_read_lock();
 	for_each_dev_addr(real_dev, ha) {
 		if ((ha->type == NETDEV_HW_ADDR_T_SAN) &&
@@ -303,14 +302,14 @@ static int fcoe_interface_setup(struct fcoe_interface *fcoe,
 	 * for multiple unicast MACs.
 	 */
 	memcpy(flogi_maddr, (u8[6]) FC_FCOE_FLOGI_MAC, ETH_ALEN);
-	dev_unicast_add(netdev, flogi_maddr);
+	dev_uc_add(netdev, flogi_maddr);
 	if (fip->spma)
-		dev_unicast_add(netdev, fip->ctl_src_addr);
+		dev_uc_add(netdev, fip->ctl_src_addr);
 	if (fip->mode == FIP_MODE_VN2VN) {
-		dev_mc_add(netdev, FIP_ALL_VN2VN_MACS, ETH_ALEN, 0);
-		dev_mc_add(netdev, FIP_ALL_P2P_MACS, ETH_ALEN, 0);
+		dev_mc_add(netdev, FIP_ALL_VN2VN_MACS);
+		dev_mc_add(netdev, FIP_ALL_P2P_MACS);
 	} else
-		dev_mc_add(netdev, FIP_ALL_ENODE_MACS, ETH_ALEN, 0);
+		dev_mc_add(netdev, FIP_ALL_ENODE_MACS);
 
 	/*
 	 * setup the receive function from ethernet driver
@@ -432,21 +431,8 @@ void fcoe_interface_cleanup(struct fcoe_interface *fcoe)
 	struct fcoe_ctlr *fip = &fcoe->ctlr;
 	u8 flogi_maddr[ETH_ALEN];
 	const struct net_device_ops *ops;
-	struct fcoe_port *port = lport_priv(fcoe->ctlr.lp);
 
-	FCOE_NETDEV_DBG(netdev, "Destroying interface\n");
-
-	/* Logout of the fabric */
-	fc_fabric_logoff(fcoe->ctlr.lp);
-
-	/* Cleanup the fc_lport */
-	fc_lport_destroy(fcoe->ctlr.lp);
-
-	/* Stop the transmit retry timer */
-	del_timer_sync(&port->timer);
-
-	/* Free existing transmit skbs */
-	fcoe_clean_pending_queue(fcoe->ctlr.lp);
+	rtnl_lock();
 
 	/*
 	 * Don't listen for Ethernet packets anymore.
@@ -460,17 +446,14 @@ void fcoe_interface_cleanup(struct fcoe_interface *fcoe)
 
 	/* Delete secondary MAC addresses */
 	memcpy(flogi_maddr, (u8[6]) FC_FCOE_FLOGI_MAC, ETH_ALEN);
-	dev_unicast_delete(netdev, flogi_maddr);
+	dev_uc_del(netdev, flogi_maddr);
 	if (fip->spma)
-		dev_unicast_delete(netdev, fip->ctl_src_addr);
+		dev_uc_del(netdev, fip->ctl_src_addr);
 	if (fip->mode == FIP_MODE_VN2VN) {
-		dev_mc_delete(netdev, FIP_ALL_VN2VN_MACS, ETH_ALEN, 0);
-		dev_mc_delete(netdev, FIP_ALL_P2P_MACS, ETH_ALEN, 0);
+		dev_mc_del(netdev, FIP_ALL_VN2VN_MACS);
+		dev_mc_del(netdev, FIP_ALL_P2P_MACS);
 	} else
-		dev_mc_delete(netdev, FIP_ALL_ENODE_MACS, ETH_ALEN, 0);
-
-	if (!is_zero_ether_addr(port->data_src_addr))
-		dev_unicast_delete(netdev, port->data_src_addr);
+		dev_mc_del(netdev, FIP_ALL_ENODE_MACS);
 
 	/* Tell the LLD we are done w/ FCoE */
 	ops = netdev->netdev_ops;
@@ -479,6 +462,10 @@ void fcoe_interface_cleanup(struct fcoe_interface *fcoe)
 			FCOE_NETDEV_DBG(netdev, "Failed to disable FCoE"
 					" specific feature for LLD.\n");
 	}
+
+	rtnl_unlock();
+
+	/* Release the self-reference taken during fcoe_interface_create() */
 	fcoe_interface_put(fcoe);
 }
 
@@ -504,6 +491,19 @@ static int fcoe_fip_recv(struct sk_buff *skb, struct net_device *netdev,
 }
 
 /**
+ * fcoe_port_send() - Send an Ethernet-encapsulated FIP/FCoE frame
+ * @port: The FCoE port
+ * @skb: The FIP/FCoE packet to be sent
+ */
+static void fcoe_port_send(struct fcoe_port *port, struct sk_buff *skb)
+{
+	if (port->fcoe_pending_queue.qlen)
+		fcoe_check_wait_queue(port->lport, skb);
+	else if (fcoe_start_io(skb))
+		fcoe_check_wait_queue(port->lport, skb);
+}
+
+/**
  * fcoe_fip_send() - Send an Ethernet-encapsulated FIP frame
  * @fip: The FCoE controller
  * @skb: The FIP packet to be sent
@@ -511,7 +511,7 @@ static int fcoe_fip_recv(struct sk_buff *skb, struct net_device *netdev,
 static void fcoe_fip_send(struct fcoe_ctlr *fip, struct sk_buff *skb)
 {
 	skb->dev = fcoe_from_ctlr(fip)->netdev;
-	dev_queue_xmit(skb);
+	fcoe_port_send(lport_priv(fip->lp), skb);
 }
 
 /**
@@ -529,9 +529,9 @@ static void fcoe_update_src_mac(struct fc_lport *lport, u8 *addr)
 
 	rtnl_lock();
 	if (!is_zero_ether_addr(port->data_src_addr))
-		dev_unicast_delete(fcoe->netdev, port->data_src_addr);
+		dev_uc_del(fcoe->netdev, port->data_src_addr);
 	if (!is_zero_ether_addr(addr))
-		dev_unicast_add(fcoe->netdev, addr);
+		dev_uc_add(fcoe->netdev, addr);
 	memcpy(port->data_src_addr, addr, ETH_ALEN);
 	rtnl_unlock();
 }
@@ -578,23 +578,6 @@ static int fcoe_lport_config(struct fc_lport *lport)
 	lport->lso_max = 0;
 
 	return 0;
-}
-
-/**
- * fcoe_get_wwn() - Get the world wide name from LLD if it supports it
- * @netdev: the associated net device
- * @wwn: the output WWN
- * @type: the type of WWN (WWPN or WWNN)
- *
- * Returns: 0 for success
- */
-static int fcoe_get_wwn(struct net_device *netdev, u64 *wwn, int type)
-{
-	const struct net_device_ops *ops = netdev->netdev_ops;
-
-	if (ops->ndo_fcoe_get_wwn)
-		return ops->ndo_fcoe_get_wwn(netdev, wwn, type);
-	return -EINVAL;
 }
 
 /**
@@ -656,7 +639,6 @@ static int fcoe_netdev_config(struct fc_lport *lport, struct net_device *netdev)
 	u64 wwnn, wwpn;
 	struct fcoe_interface *fcoe;
 	struct fcoe_port *port;
-	int vid = 0;
 
 	/* Setup lport private data to point to fcoe softc */
 	port = lport_priv(lport);
@@ -686,21 +668,12 @@ static int fcoe_netdev_config(struct fc_lport *lport, struct net_device *netdev)
 	fcoe_link_speed_update(lport);
 
 	if (!lport->vport) {
-		/*
-		 * Use NAA 1&2 (FC-FS Rev. 2.0, Sec. 15) to generate WWNN/WWPN:
-		 * For WWNN, we use NAA 1 w/ bit 27-16 of word 0 as 0.
-		 * For WWPN, we use NAA 2 w/ bit 27-16 of word 0 from VLAN ID.
-		 * If use_vlan_id is 0 the VLAN ID is not used.
-		 */
-		if (fcoe_use_vlan_id && netdev->priv_flags & IFF_802_1Q_VLAN)
-			vid = vlan_dev_vlan_id(netdev);
-
 		if (fcoe_get_wwn(netdev, &wwnn, NETDEV_FCOE_WWNN))
 			wwnn = fcoe_wwn_from_mac(fcoe->ctlr.ctl_src_addr, 1, 0);
 		fc_set_wwnn(lport, wwnn);
 		if (fcoe_get_wwn(netdev, &wwpn, NETDEV_FCOE_WWPN))
 			wwpn = fcoe_wwn_from_mac(fcoe->ctlr.ctl_src_addr,
-						 2, vid);
+						 2, 0);
 		fc_set_wwpn(lport, wwpn);
 	}
 
@@ -740,7 +713,7 @@ static int fcoe_shost_config(struct fc_lport *lport, struct device *dev)
 	}
 
 	if (!lport->vport)
-		fc_host_max_npiv_vports(lport->host) = (u16)(~0U);
+		fc_host_max_npiv_vports(lport->host) = USHRT_MAX;
 
 	snprintf(fc_host_symbolic_name(lport->host), FC_SYMBOLIC_NAME_SIZE,
 		 "%s v%s over %s", FCOE_NAME, FCOE_VERSION,
@@ -872,6 +845,32 @@ skip_oem:
  */
 static void fcoe_if_destroy(struct fc_lport *lport)
 {
+	struct fcoe_port *port = lport_priv(lport);
+	struct fcoe_interface *fcoe = port->priv;
+	struct net_device *netdev = fcoe->netdev;
+
+	FCOE_NETDEV_DBG(netdev, "Destroying interface\n");
+
+	/* Logout of the fabric */
+	fc_fabric_logoff(lport);
+
+	/* Cleanup the fc_lport */
+	fc_lport_destroy(lport);
+
+	/* Stop the transmit retry timer */
+	del_timer_sync(&port->timer);
+
+	/* Free existing transmit skbs */
+	fcoe_clean_pending_queue(lport);
+
+	rtnl_lock();
+	if (!is_zero_ether_addr(port->data_src_addr))
+		dev_uc_del(netdev, port->data_src_addr);
+	rtnl_unlock();
+
+	/* Release reference held in fcoe_if_create() */
+	fcoe_interface_put(fcoe);
+
 	/* Free queued packets for the per-CPU receive threads */
 	fcoe_percpu_clean(lport);
 
@@ -926,13 +925,12 @@ static int fcoe_ddp_setup(struct fc_lport *lport, u16 xid,
 static int fcoe_ddp_target(struct fc_lport *lport, u16 xid,
 			   struct scatterlist *sgl, unsigned int sgc)
 {
-#ifdef CONFIG_TCM_FC
 	struct net_device *netdev = fcoe_netdev(lport);
 
 	if (netdev->netdev_ops->ndo_fcoe_ddp_target)
 		return netdev->netdev_ops->ndo_fcoe_ddp_target(netdev, xid,
 							       sgl, sgc);
-#endif
+
 	return 0;
 }
 
@@ -1259,30 +1257,20 @@ static int fcoe_cpu_callback(struct notifier_block *nfb,
 /**
  * fcoe_select_cpu() - Selects CPU to handle post-processing of incoming
  *			command.
- * @curr_cpu:   CPU which received request
  *
- * This routine selects next CPU based on cpumask.
+ * This routine selects next CPU based on cpumask to distribute
+ * incoming requests in round robin.
  *
- * Returns: int (CPU number). Caller to verify if returned CPU is online or not.
+ * Returns: int CPU number
  */
-static unsigned int fcoe_select_cpu(unsigned int curr_cpu)
+static inline unsigned int fcoe_select_cpu(void)
 {
 	static unsigned int selected_cpu;
 
-	if (num_online_cpus() == 1)
-		return curr_cpu;
-	/*
-	 * Doing following check, to skip "curr_cpu (smp_processor_id)"
-	 * from selection of CPU is intentional. This is to avoid same CPU
-	 * doing post-processing of command. "curr_cpu" to just receive
-	 * incoming request in case where rx_id is UNKNOWN and all other
-	 * CPU to actually process the command(s)
-	 */
-	do {
-		selected_cpu = cpumask_next(selected_cpu, cpu_online_mask);
-		if (selected_cpu >= nr_cpu_ids)
-			selected_cpu = cpumask_first(cpu_online_mask);
-	} while (selected_cpu == curr_cpu);
+	selected_cpu = cpumask_next(selected_cpu, cpu_online_mask);
+	if (selected_cpu >= nr_cpu_ids)
+		selected_cpu = cpumask_first(cpu_online_mask);
+
 	return selected_cpu;
 }
 
@@ -1352,30 +1340,26 @@ int fcoe_rcv(struct sk_buff *skb, struct net_device *netdev,
 
 	fr = fcoe_dev_from_skb(skb);
 	fr->fr_dev = lport;
-	fr->ptype = ptype;
 
 	/*
 	 * In case the incoming frame's exchange is originated from
 	 * the initiator, then received frame's exchange id is ANDed
 	 * with fc_cpu_mask bits to get the same cpu on which exchange
-	 * was originated, otherwise just use the current cpu.
+	 * was originated, otherwise select cpu using rx exchange id
+	 * or fcoe_select_cpu().
 	 */
 	if (ntoh24(fh->fh_f_ctl) & FC_FC_EX_CTX)
 		cpu = ntohs(fh->fh_ox_id) & fc_cpu_mask;
 	else {
-		cpu = smp_processor_id();
-
-		if ((fh->fh_type == FC_TYPE_FCP) &&
-		    (ntohs(fh->fh_rx_id) == FC_XID_UNKNOWN)) {
-			do {
-				cpu = fcoe_select_cpu(cpu);
-			} while (!cpu_online(cpu));
-		} else  if ((fh->fh_type == FC_TYPE_FCP) &&
-			    (ntohs(fh->fh_rx_id) != FC_XID_UNKNOWN)) {
+		if (ntohs(fh->fh_rx_id) == FC_XID_UNKNOWN)
+			cpu = fcoe_select_cpu();
+		else
 			cpu = ntohs(fh->fh_rx_id) & fc_cpu_mask;
-		} else
-			cpu = smp_processor_id();
 	}
+
+	if (cpu >= nr_cpu_ids)
+		goto err;
+
 	fps = &per_cpu(fcoe_percpu, cpu);
 	spin_lock_bh(&fps->fcoe_rx_list.lock);
 	if (unlikely(!fps->thread)) {
@@ -1538,7 +1522,13 @@ int fcoe_xmit(struct fc_lport *lport, struct fc_frame *fp)
 	skb_reset_network_header(skb);
 	skb->mac_len = elen;
 	skb->protocol = htons(ETH_P_FCOE);
-	skb->dev = fcoe->netdev;
+	if (fcoe->netdev->priv_flags & IFF_802_1Q_VLAN &&
+	    fcoe->realdev->features & NETIF_F_HW_VLAN_TX) {
+		skb->vlan_tci = VLAN_TAG_PRESENT |
+				vlan_dev_vlan_id(fcoe->netdev);
+		skb->dev = fcoe->realdev;
+	} else
+		skb->dev = fcoe->netdev;
 
 	/* fill up mac and fcoe headers */
 	eh = eth_hdr(skb);
@@ -1574,11 +1564,7 @@ int fcoe_xmit(struct fc_lport *lport, struct fc_frame *fp)
 
 	/* send down to lld */
 	fr_dev(fp) = lport;
-	if (port->fcoe_pending_queue.qlen)
-		fcoe_check_wait_queue(lport, skb);
-	else if (fcoe_start_io(skb))
-		fcoe_check_wait_queue(lport, skb);
-
+	fcoe_port_send(port, skb);
 	return 0;
 }
 
@@ -1825,8 +1811,7 @@ static int fcoe_device_notification(struct notifier_block *notifier,
 	case NETDEV_UNREGISTER:
 		list_del(&fcoe->list);
 		port = lport_priv(fcoe->ctlr.lp);
-		fcoe_interface_cleanup(fcoe);
-		schedule_work(&port->destroy_work);
+		queue_work(fcoe_wq, &port->destroy_work);
 		goto out;
 		break;
 	case NETDEV_FEAT_CHANGE:
@@ -1919,22 +1904,22 @@ static int fcoe_destroy(struct net_device *netdev)
 {
 	struct fcoe_interface *fcoe;
 	struct fc_lport *lport;
+	struct fcoe_port *port;
 	int rc = 0;
 
 	mutex_lock(&fcoe_config_mutex);
 	rtnl_lock();
 	fcoe = fcoe_hostlist_lookup_port(netdev);
 	if (!fcoe) {
-		rtnl_unlock();
 		rc = -ENODEV;
 		goto out_nodev;
 	}
 	lport = fcoe->ctlr.lp;
+	port = lport_priv(lport);
 	list_del(&fcoe->list);
-	fcoe_interface_cleanup(fcoe);
-	rtnl_unlock();
-	fcoe_if_destroy(lport);
+	queue_work(fcoe_wq, &port->destroy_work);
 out_nodev:
+	rtnl_unlock();
 	mutex_unlock(&fcoe_config_mutex);
 	return rc;
 }
@@ -1946,10 +1931,22 @@ out_nodev:
 static void fcoe_destroy_work(struct work_struct *work)
 {
 	struct fcoe_port *port;
+	struct fcoe_interface *fcoe;
+	int npiv = 0;
 
 	port = container_of(work, struct fcoe_port, destroy_work);
 	mutex_lock(&fcoe_config_mutex);
+
+	/* set if this is an NPIV port */
+	npiv = port->lport->vport ? 1 : 0;
+
+	fcoe = port->priv;
 	fcoe_if_destroy(port->lport);
+
+	/* Do not tear down the fcoe interface for NPIV port */
+	if (!npiv)
+		fcoe_interface_cleanup(fcoe);
+
 	mutex_unlock(&fcoe_config_mutex);
 }
 
@@ -1978,7 +1975,7 @@ static bool fcoe_match(struct net_device *netdev)
  */
 static int fcoe_create(struct net_device *netdev, enum fip_state fip_mode)
 {
-	int rc;
+	int rc = 0;
 	struct fcoe_interface *fcoe;
 	struct fc_lport *lport;
 
@@ -2002,8 +1999,9 @@ static int fcoe_create(struct net_device *netdev, enum fip_state fip_mode)
 		printk(KERN_ERR "fcoe: Failed to create interface (%s)\n",
 		       netdev->name);
 		rc = -EIO;
+		rtnl_unlock();
 		fcoe_interface_cleanup(fcoe);
-		goto out_free;
+		goto out_nortnl;
 	}
 
 	/* Make this the "master" N_Port */
@@ -2018,19 +2016,9 @@ static int fcoe_create(struct net_device *netdev, enum fip_state fip_mode)
 	if (!fcoe_link_ok(lport))
 		fcoe_ctlr_link_up(&fcoe->ctlr);
 
-	/*
-	 * Release from init in fcoe_interface_create(), on success lport
-	 * should be holding a reference taken in fcoe_if_create().
-	 */
-	fcoe_interface_put(fcoe);
-	rtnl_unlock();
-	mutex_unlock(&fcoe_config_mutex);
-
-	return 0;
-out_free:
-	fcoe_interface_put(fcoe);
 out_nodev:
 	rtnl_unlock();
+out_nortnl:
 	mutex_unlock(&fcoe_config_mutex);
 	return rc;
 }
@@ -2243,6 +2231,10 @@ static int __init fcoe_init(void)
 	unsigned int cpu;
 	int rc = 0;
 
+	fcoe_wq = alloc_workqueue("fcoe", 0, 0);
+	if (!fcoe_wq)
+		return -ENOMEM;
+
 	/* register as a fcoe transport */
 	rc = fcoe_transport_attach(&fcoe_sw_transport);
 	if (rc) {
@@ -2281,6 +2273,7 @@ out_free:
 		fcoe_percpu_thread_destroy(cpu);
 	}
 	mutex_unlock(&fcoe_config_mutex);
+	destroy_workqueue(fcoe_wq);
 	return rc;
 }
 module_init(fcoe_init);
@@ -2305,8 +2298,7 @@ static void __exit fcoe_exit(void)
 	list_for_each_entry_safe(fcoe, tmp, &fcoe_hostlist, list) {
 		list_del(&fcoe->list);
 		port = lport_priv(fcoe->ctlr.lp);
-		fcoe_interface_cleanup(fcoe);
-		schedule_work(&port->destroy_work);
+		queue_work(fcoe_wq, &port->destroy_work);
 	}
 	rtnl_unlock();
 
@@ -2317,15 +2309,17 @@ static void __exit fcoe_exit(void)
 
 	mutex_unlock(&fcoe_config_mutex);
 
-	/* flush any asyncronous interface destroys,
-	 * this should happen after the netdev notifier is unregistered */
-	flush_scheduled_work();
-	/* That will flush out all the N_Ports on the hostlist, but now we
-	 * may have NPIV VN_Ports scheduled for destruction */
-	flush_scheduled_work();
+	/*
+	 * destroy_work's may be chained but destroy_workqueue()
+	 * can take care of them. Just kill the fcoe_wq.
+	 */
+	destroy_workqueue(fcoe_wq);
 
-	/* detach from scsi transport
-	 * must happen after all destroys are done, therefor after the flush */
+	/*
+	 * Detaching from the scsi transport must happen after all
+	 * destroys are done on the fcoe_wq. destroy_workqueue will
+	 * enusre the fcoe_wq is flushed.
+	 */
 	fcoe_if_exit();
 
 	/* detach from fcoe transport */
@@ -2442,7 +2436,7 @@ static int fcoe_vport_create(struct fc_vport *vport, bool disabled)
 
 	rc = fcoe_validate_vport_create(vport);
 	if (rc) {
-		wwn_to_str(vport->port_name, buf, sizeof(buf));
+		fcoe_wwn_to_str(vport->port_name, buf, sizeof(buf));
 		printk(KERN_ERR "fcoe: Failed to create vport, "
 			"WWPN (0x%s) already exists\n",
 			buf);
@@ -2485,7 +2479,7 @@ static int fcoe_vport_destroy(struct fc_vport *vport)
 	mutex_lock(&n_port->lp_mutex);
 	list_del(&vn_port->list);
 	mutex_unlock(&n_port->lp_mutex);
-	schedule_work(&port->destroy_work);
+	queue_work(fcoe_wq, &port->destroy_work);
 	return 0;
 }
 
@@ -2549,27 +2543,9 @@ static void fcoe_set_vport_symbolic_name(struct fc_vport *vport)
 static void fcoe_get_lesb(struct fc_lport *lport,
 			 struct fc_els_lesb *fc_lesb)
 {
-	unsigned int cpu;
-	u32 lfc, vlfc, mdac;
-	struct fcoe_dev_stats *devst;
-	struct fcoe_fc_els_lesb *lesb;
 	struct net_device *netdev = fcoe_netdev(lport);
 
-	lfc = 0;
-	vlfc = 0;
-	mdac = 0;
-	lesb = (struct fcoe_fc_els_lesb *)fc_lesb;
-	memset(lesb, 0, sizeof(*lesb));
-	for_each_possible_cpu(cpu) {
-		devst = per_cpu_ptr(lport->dev_stats, cpu);
-		lfc += devst->LinkFailureCount;
-		vlfc += devst->VLinkFailureCount;
-		mdac += devst->MissDiscAdvCount;
-	}
-	lesb->lesb_link_fail = htonl(lfc);
-	lesb->lesb_vlink_fail = htonl(vlfc);
-	lesb->lesb_miss_fka = htonl(mdac);
-	lesb->lesb_fcs_error = htonl(dev_get_stats(netdev)->rx_crc_errors);
+	__fcoe_get_lesb(lport, fc_lesb, netdev);
 }
 
 /**
@@ -2592,50 +2568,4 @@ static void fcoe_set_port_id(struct fc_lport *lport,
 
 	if (fp && fc_frame_payload_op(fp) == ELS_FLOGI)
 		fcoe_ctlr_recv_flogi(&fcoe->ctlr, lport, fp);
-}
-
-/**
- * fcoe_validate_vport_create() - Validate a vport before creating it
- * @vport: NPIV port to be created
- *
- * This routine is meant to add validation for a vport before creating it
- * via fcoe_vport_create().
- * Current validations are:
- *      - WWPN supplied is unique for given lport
- *
- *
-*/
-static int fcoe_validate_vport_create(struct fc_vport *vport)
-{
-	struct Scsi_Host *shost = vport_to_shost(vport);
-	struct fc_lport *n_port = shost_priv(shost);
-	struct fc_lport *vn_port;
-	int rc = 0;
-	char buf[32];
-
-	mutex_lock(&n_port->lp_mutex);
-
-	wwn_to_str(vport->port_name, buf, sizeof(buf));
-	/* Check if the wwpn is not same as that of the lport */
-	if (!memcmp(&n_port->wwpn, &vport->port_name, sizeof(u64))) {
-		FCOE_DBG("vport WWPN 0x%s is same as that of the "
-			"base port WWPN\n", buf);
-		rc = -EINVAL;
-		goto out;
-	}
-
-	/* Check if there is any existing vport with same wwpn */
-	list_for_each_entry(vn_port, &n_port->vports, list) {
-		if (!memcmp(&vn_port->wwpn, &vport->port_name, sizeof(u64))) {
-			FCOE_DBG("vport with given WWPN 0x%s already "
-			"exists\n", buf);
-			rc = -EINVAL;
-			break;
-		}
-	}
-
-out:
-	mutex_unlock(&n_port->lp_mutex);
-
-	return rc;
 }

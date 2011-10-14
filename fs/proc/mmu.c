@@ -15,7 +15,7 @@
 #include "internal.h"
 
 #ifdef	CONFIG_KDB
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #endif
 
 void get_vmalloc_info(struct vmalloc_info *vmi)
@@ -24,7 +24,7 @@ void get_vmalloc_info(struct vmalloc_info *vmi)
 	unsigned long free_area_size;
 	unsigned long prev_end;
 #ifdef	CONFIG_KDB
-	int get_lock = !KDB_IS_RUNNING();
+	int get_lock = !LKDB_IS_RUNNING();
 #else
 #define	get_lock 1
 #endif

@@ -18,7 +18,7 @@
 #include <asm/system.h>
 #include <asm/mach-types.h>
 
-#include <mach/fpga.h>
+#include <plat/fpga.h>
 #include <mach/gpio.h>
 
 
@@ -39,7 +39,7 @@ static struct h2p2_dbg_fpga __iomem	*fpga;
 static u16				led_state, hw_led_state;
 
 
-#ifdef	CONFIG_LEDS_OMAP_DEBUG
+#ifdef	CONFIG_OMAP_DEBUG_LEDS
 #define new_led_api()	1
 #else
 #define new_led_api()	0

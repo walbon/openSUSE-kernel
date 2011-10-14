@@ -12,17 +12,6 @@
 #ifndef CNIC_H
 #define CNIC_H
 
-#ifndef rcu_dereference_protected
-
-#define rcu_dereference_protected(p, c) \
-	rcu_dereference((p))
-
-#endif
-
-#ifndef __rcu
-#define __rcu
-#endif
-
 #define HC_INDEX_ISCSI_EQ_CONS			6
 
 #define HC_INDEX_FCOE_EQ_CONS			3

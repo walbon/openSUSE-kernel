@@ -50,7 +50,7 @@
 #include <linux/err.h>
 #include <linux/kfifo.h>
 #include <linux/platform_device.h>
-#include <linux/smp_lock.h>
+#include <linux/gfp.h>
 
 #include <asm/uaccess.h>
 #include <asm/io.h>
@@ -905,14 +905,13 @@ static int sonypi_misc_release(struct inode *inode, struct file *file)
 
 static int sonypi_misc_open(struct inode *inode, struct file *file)
 {
-	lock_kernel();
 	mutex_lock(&sonypi_device.lock);
 	/* Flush input queue on first open */
 	if (!sonypi_device.open_count)
 		kfifo_reset(&sonypi_device.fifo);
 	sonypi_device.open_count++;
 	mutex_unlock(&sonypi_device.lock);
-	unlock_kernel();
+
 	return 0;
 }
 
@@ -955,10 +954,10 @@ static unsigned int sonypi_misc_poll(struct file *file, poll_table *wait)
 	return 0;
 }
 
-static int sonypi_misc_ioctl(struct inode *ip, struct file *fp,
+static long sonypi_misc_ioctl(struct file *fp,
 			     unsigned int cmd, unsigned long arg)
 {
-	int ret = 0;
+	long ret = 0;
 	void __user *argp = (void __user *)arg;
 	u8 val8;
 	u16 val16;
@@ -1074,7 +1073,8 @@ static const struct file_operations sonypi_misc_fops = {
 	.open		= sonypi_misc_open,
 	.release	= sonypi_misc_release,
 	.fasync		= sonypi_misc_fasync,
-	.ioctl		= sonypi_misc_ioctl,
+	.unlocked_ioctl	= sonypi_misc_ioctl,
+	.llseek		= no_llseek,
 };
 
 static struct miscdevice sonypi_misc_device = {
@@ -1241,7 +1241,7 @@ static int __devinit sonypi_setup_ioports(struct sonypi_device *dev,
 	while (check_ioport && check->port1) {
 		if (!request_region(check->port1,
 				   sonypi_device.region_size,
-				   "Sony Programable I/O Device Check")) {
+				   "Sony Programmable I/O Device Check")) {
 			printk(KERN_ERR "sonypi: ioport 0x%.4x busy, using sony-laptop? "
 					"if not use check_ioport=0\n",
 					check->port1);
@@ -1255,7 +1255,7 @@ static int __devinit sonypi_setup_ioports(struct sonypi_device *dev,
 
 		if (request_region(ioport_list->port1,
 				   sonypi_device.region_size,
-				   "Sony Programable I/O Device")) {
+				   "Sony Programmable I/O Device")) {
 			dev->ioport1 = ioport_list->port1;
 			dev->ioport2 = ioport_list->port2;
 			return 0;
@@ -1434,7 +1434,7 @@ static int __devexit sonypi_remove(struct platform_device *dev)
 	sonypi_disable();
 
 	synchronize_irq(sonypi_device.irq);
-	flush_scheduled_work();
+	flush_work_sync(&sonypi_device.input_work);
 
 	if (useinput) {
 		input_unregister_device(sonypi_device.input_key_dev);

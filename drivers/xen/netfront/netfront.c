@@ -132,17 +132,18 @@ static inline int skb_gso_ok(struct sk_buff *skb, int features)
         return (features & NETIF_F_TSO);
 }
 
-static inline int netif_needs_gso(struct net_device *dev, struct sk_buff *skb)
+#define netif_skb_features(skb) ((skb)->dev->features)
+static inline int netif_needs_gso(struct sk_buff *skb, int features)
 {
         return skb_is_gso(skb) &&
-               (!skb_gso_ok(skb, dev->features) ||
+               (!skb_gso_ok(skb, features) ||
                 unlikely(skb->ip_summed != CHECKSUM_PARTIAL));
 }
 #else
 #define HAVE_GSO			0
 #define HAVE_TSO			0
 #define HAVE_CSUM_OFFLOAD		0
-#define netif_needs_gso(dev, skb)	0
+#define netif_needs_gso(skb, feat)	0
 #define dev_disable_gso_features(dev)	((void)0)
 #define ethtool_op_set_tso(dev, data)	(-ENOSYS)
 #endif
@@ -236,7 +237,7 @@ static inline int xennet_can_sg(struct net_device *dev)
 }
 
 /*
- * Work around net.ipv4.conf.*.arp_notify not being enabled by default.
+ * Work around net.ipv4.conf.*.arp_notify no being enabled by default.
  */
 static void __devinit netfront_enable_arp_notify(struct netfront_info *info)
 {
@@ -532,8 +533,7 @@ static int setup_device(struct xenbus_device *dev, struct netfront_info *info)
 	memcpy(netdev->dev_addr, info->mac, ETH_ALEN);
 
 	err = bind_listening_port_to_irqhandler(
-		dev->otherend_id, netif_int, IRQF_SAMPLE_RANDOM, netdev->name,
-		netdev);
+		dev->otherend_id, netif_int, 0, netdev->name, netdev);
 	if (err < 0)
 		goto fail;
 	info->irq = err;
@@ -650,7 +650,7 @@ static void network_tx_buf_gc(struct net_device *dev)
 			struct netif_tx_response *txrsp;
 
 			txrsp = RING_GET_RESPONSE(&np->tx, cons);
-			if (txrsp->status == NETIF_RSP_NULL)
+			if (txrsp->status == XEN_NETIF_RSP_NULL)
 				continue;
 
 			id  = txrsp->id;
@@ -874,7 +874,7 @@ static void xennet_make_frags(struct sk_buff *skb, struct net_device *dev,
 
 	while (len > PAGE_SIZE - offset) {
 		tx->size = PAGE_SIZE - offset;
-		tx->flags |= NETTXF_more_data;
+		tx->flags |= XEN_NETTXF_more_data;
 		len -= tx->size;
 		data += tx->size;
 		offset = 0;
@@ -899,7 +899,7 @@ static void xennet_make_frags(struct sk_buff *skb, struct net_device *dev,
 	for (i = 0; i < frags; i++) {
 		skb_frag_t *frag = skb_shinfo(skb)->frags + i;
 
-		tx->flags |= NETTXF_more_data;
+		tx->flags |= XEN_NETTXF_more_data;
 
 		id = get_id_from_freelist(np->tx_skbs);
 		np->tx_skbs[id] = skb_get(skb);
@@ -954,7 +954,7 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	if (unlikely(!netfront_carrier_ok(np) ||
 		     (frags > 1 && !xennet_can_sg(dev)) ||
-		     netif_needs_gso(dev, skb))) {
+		     netif_needs_gso(skb, netif_skb_features(skb)))) {
 		spin_unlock_irq(&np->tx_lock);
 		goto drop;
 	}
@@ -980,9 +980,9 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	extra = NULL;
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL) /* local packet? */
-		tx->flags |= NETTXF_csum_blank | NETTXF_data_validated;
+		tx->flags |= XEN_NETTXF_csum_blank | XEN_NETTXF_data_validated;
 	else if (skb->ip_summed == CHECKSUM_UNNECESSARY)
-		tx->flags |= NETTXF_data_validated;
+		tx->flags |= XEN_NETTXF_data_validated;
 
 #if HAVE_TSO
 	if (skb_shinfo(skb)->gso_size) {
@@ -992,7 +992,7 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		if (extra)
 			extra->flags |= XEN_NETIF_EXTRA_FLAG_MORE;
 		else
-			tx->flags |= NETTXF_extra_info;
+			tx->flags |= XEN_NETTXF_extra_info;
 
 		gso->u.gso.size = skb_shinfo(skb)->gso_size;
 		gso->u.gso.type = XEN_NETIF_GSO_TYPE_TCPV4;
@@ -1130,7 +1130,7 @@ static int xennet_get_responses(struct netfront_info *np,
 	int err = 0;
 	unsigned long ret;
 
-	if (rx->flags & NETRXF_extra_info) {
+	if (rx->flags & XEN_NETRXF_extra_info) {
 		err = xennet_get_extras(np, extras, rp);
 		cons = np->rx.rsp_cons;
 	}
@@ -1205,7 +1205,7 @@ static int xennet_get_responses(struct netfront_info *np,
 		__skb_queue_tail(list, skb);
 
 next:
-		if (!(rx->flags & NETRXF_more_data))
+		if (!(rx->flags & XEN_NETRXF_more_data))
 			break;
 
 		if (cons + frags == rp) {
@@ -1407,9 +1407,9 @@ err:
 		skb->truesize += skb->data_len - (RX_COPY_THRESHOLD - len);
 		skb->len += skb->data_len;
 
-		if (rx->flags & NETRXF_csum_blank)
+		if (rx->flags & XEN_NETRXF_csum_blank)
 			skb->ip_summed = CHECKSUM_PARTIAL;
-		else if (rx->flags & NETRXF_data_validated)
+		else if (rx->flags & XEN_NETRXF_data_validated)
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 		else
 			skb->ip_summed = CHECKSUM_NONE;
@@ -1665,7 +1665,9 @@ static int network_close(struct net_device *dev)
 
 static struct net_device_stats *network_get_stats(struct net_device *dev)
 {
-	netfront_accelerator_call_get_stats(dev);
+	struct netfront_info *np = netdev_priv(dev);
+
+	netfront_accelerator_call_get_stats(np, dev);
 	return &dev->stats;
 }
 
@@ -1694,58 +1696,6 @@ static int xennet_change_mtu(struct net_device *dev, int mtu)
 		return -EINVAL;
 	dev->mtu = mtu;
 	return 0;
-}
-
-static int xennet_set_sg(struct net_device *dev, u32 data)
-{
-	if (data) {
-		struct netfront_info *np = netdev_priv(dev);
-		int val;
-
-		if (xenbus_scanf(XBT_NIL, np->xbdev->otherend, "feature-sg",
-				 "%d", &val) < 0)
-			val = 0;
-		if (!val)
-			return -ENOSYS;
-	} else if (dev->mtu > ETH_DATA_LEN)
-		dev->mtu = ETH_DATA_LEN;
-
-	return ethtool_op_set_sg(dev, data);
-}
-
-static int xennet_set_tso(struct net_device *dev, u32 data)
-{
-	if (data) {
-		struct netfront_info *np = netdev_priv(dev);
-		int val;
-
-		if (xenbus_scanf(XBT_NIL, np->xbdev->otherend,
-				 "feature-gso-tcpv4", "%d", &val) < 0)
-			val = 0;
-		if (!val)
-			return -ENOSYS;
-	}
-
-	return ethtool_op_set_tso(dev, data);
-}
-
-static void xennet_set_features(struct net_device *dev)
-{
-	dev_disable_gso_features(dev);
-	xennet_set_sg(dev, 0);
-
-	/* We need checksum offload to enable scatter/gather and TSO. */
-	if (!(dev->features & NETIF_F_IP_CSUM))
-		return;
-
-	if (xennet_set_sg(dev, 1))
-		return;
-
-	/* Before 2.6.9 TSO seems to be unreliable so do not enable it
-	 * on older kernels.
-	 */
-	if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,9))
-		xennet_set_tso(dev, 1);
 }
 
 static const struct xennet_stat {
@@ -1827,7 +1777,9 @@ static int network_connect(struct net_device *dev)
 	if (err)
 		return err;
 
-	xennet_set_features(dev);
+	rtnl_lock();
+	netdev_update_features(dev);
+	rtnl_unlock();
 
 	DPRINTK("device %s has %sing receive path.\n",
 		dev->name, np->copying_receiver ? "copy" : "flipp");
@@ -1906,14 +1858,6 @@ static void netif_uninit(struct net_device *dev)
 static const struct ethtool_ops network_ethtool_ops =
 {
 	.get_drvinfo = netfront_get_drvinfo,
-	.get_tx_csum = ethtool_op_get_tx_csum,
-	.set_tx_csum = ethtool_op_set_tx_csum,
-	.get_sg = ethtool_op_get_sg,
-	.set_sg = xennet_set_sg,
-#if HAVE_TSO
-	.get_tso = ethtool_op_get_tso,
-	.set_tso = xennet_set_tso,
-#endif
 	.get_link = ethtool_op_get_link,
 
 	.get_sset_count = xennet_get_sset_count,
@@ -2058,6 +2002,42 @@ static void network_set_multicast_list(struct net_device *dev)
 {
 }
 
+static u32 xennet_fix_features(struct net_device *dev, u32 features)
+{
+	struct netfront_info *np = netdev_priv(dev);
+	int val;
+
+	if (features & NETIF_F_SG) {
+		if (xenbus_scanf(XBT_NIL, np->xbdev->otherend, "feature-sg",
+				 "%d", &val) < 0)
+			val = 0;
+
+		if (!val)
+			features &= ~NETIF_F_SG;
+	}
+
+	if (features & NETIF_F_TSO) {
+		if (xenbus_scanf(XBT_NIL, np->xbdev->otherend,
+				 "feature-gso-tcpv4", "%d", &val) < 0)
+			val = 0;
+
+		if (!val)
+			features &= ~NETIF_F_TSO;
+	}
+
+	return features;
+}
+
+static int xennet_set_features(struct net_device *dev, u32 features)
+{
+	if (!(features & NETIF_F_SG) && dev->mtu > ETH_DATA_LEN) {
+		netdev_info(dev, "Reducing MTU because no SG offload");
+		dev->mtu = ETH_DATA_LEN;
+	}
+
+	return 0;
+}
+
 static const struct net_device_ops xennet_netdev_ops = {
 	.ndo_uninit             = netif_uninit,
 	.ndo_open               = network_open,
@@ -2066,6 +2046,8 @@ static const struct net_device_ops xennet_netdev_ops = {
 	.ndo_set_multicast_list = network_set_multicast_list,
 	.ndo_set_mac_address    = xennet_set_mac_address,
 	.ndo_validate_addr      = eth_validate_addr,
+	.ndo_fix_features       = xennet_fix_features,
+	.ndo_set_features       = xennet_set_features,
 	.ndo_change_mtu	        = xennet_change_mtu,
 	.ndo_get_stats          = network_get_stats,
 };
@@ -2127,7 +2109,17 @@ static struct net_device * __devinit create_netdev(struct xenbus_device *dev)
 
 	netdev->netdev_ops	= &xennet_netdev_ops;
 	netif_napi_add(netdev, &np->napi, netif_poll, 64);
-	netdev->features        = NETIF_F_IP_CSUM;
+	netdev->features        = NETIF_F_IP_CSUM | NETIF_F_RXCSUM |
+				  NETIF_F_GSO_ROBUST;
+	netdev->hw_features	= NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_TSO;
+
+	/*
+         * Assume that all hw features are available for now. This set
+         * will be adjusted by the call to netdev_update_features() in
+         * xennet_connect() which is the earliest point where we can
+         * negotiate with the backend regarding supported features.
+         */
+	netdev->features |= netdev->hw_features;
 
 	SET_ETHTOOL_OPS(netdev, &network_ethtool_ops);
 	SET_NETDEV_DEV(netdev, &dev->dev);

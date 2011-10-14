@@ -37,10 +37,8 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <xen/interface/xen.h>
-#include <xen/interface/platform.h>
 #include <xen/interface/sched.h>
 #include <xen/interface/vcpu.h>
-#include <xen/interface/arch-x86/xen-mca.h>
 #include <asm/percpu.h>
 #include <asm/ptrace.h>
 #include <asm/pgtable_types.h>
@@ -80,11 +78,10 @@ extern start_info_t *xen_start_info;
 #define is_initial_xendomain() 0
 #endif
 
-#define init_hypervisor(c) ((void)((c)->x86_hyper_vendor = X86_HYPER_VENDOR_XEN))
+#define init_hypervisor(c) ((void)(c))
 #define init_hypervisor_platform() init_hypervisor(&boot_cpu_data)
 
 DECLARE_PER_CPU(struct vcpu_runstate_info, runstate);
-struct vcpu_runstate_info *setup_runstate_area(unsigned int cpu);
 #define vcpu_running(cpu) (per_cpu(runstate.state, cpu) == RUNSTATE_running)
 
 /* arch/xen/kernel/evtchn.c */

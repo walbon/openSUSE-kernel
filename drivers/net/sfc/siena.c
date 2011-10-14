@@ -12,6 +12,7 @@
 #include <linux/delay.h>
 #include <linux/pci.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/random.h>
 #include "net_driver.h"
 #include "bitfield.h"
@@ -128,7 +129,7 @@ static int siena_probe_port(struct efx_nic *efx)
 	return 0;
 }
 
-void siena_remove_port(struct efx_nic *efx)
+static void siena_remove_port(struct efx_nic *efx)
 {
 	efx->phy_op->remove(efx);
 	efx_nic_free_buffer(efx, &efx->stats_buffer);
@@ -219,26 +220,12 @@ static int siena_probe_nic(struct efx_nic *efx)
 	efx_reado(efx, &reg, FR_AZ_CS_DEBUG);
 	efx->net_dev->dev_id = EFX_OWORD_FIELD(reg, FRF_CZ_CS_PORT_NUM) - 1;
 
-	/* Initialise MCDI */
-	nic_data->mcdi_smem = ioremap_nocache(efx->membase_phys +
-					      FR_CZ_MC_TREG_SMEM,
-					      FR_CZ_MC_TREG_SMEM_STEP *
-					      FR_CZ_MC_TREG_SMEM_ROWS);
-	if (!nic_data->mcdi_smem) {
-		netif_err(efx, probe, efx->net_dev,
-			  "could not map MCDI at %llx+%x\n",
-			  (unsigned long long)efx->membase_phys +
-			  FR_CZ_MC_TREG_SMEM,
-			  FR_CZ_MC_TREG_SMEM_STEP * FR_CZ_MC_TREG_SMEM_ROWS);
-		rc = -ENOMEM;
-		goto fail1;
-	}
 	efx_mcdi_init(efx);
 
 	/* Recover from a failed assertion before probing */
 	rc = efx_mcdi_handle_assertion(efx);
 	if (rc)
-		goto fail2;
+		goto fail1;
 
 	/* Let the BMC know that the driver is now in charge of link and
 	 * filter settings. We must do this before we reset the NIC */
@@ -293,7 +280,6 @@ fail4:
 fail3:
 	efx_mcdi_drv_attach(efx, false, NULL);
 fail2:
-	iounmap(nic_data->mcdi_smem);
 fail1:
 	kfree(efx->nic_data);
 	return rc;
@@ -329,7 +315,17 @@ static int siena_init_nic(struct efx_nic *efx)
 	efx_reado(efx, &temp, FR_AZ_RX_CFG);
 	EFX_SET_OWORD_FIELD(temp, FRF_BZ_RX_DESC_PUSH_EN, 0);
 	EFX_SET_OWORD_FIELD(temp, FRF_BZ_RX_INGR_EN, 1);
+	/* Enable hash insertion. This is broken for the 'Falcon' hash
+	 * if IPv6 hashing is also enabled, so also select Toeplitz
+	 * TCP/IPv4 and IPv4 hashes. */
+	EFX_SET_OWORD_FIELD(temp, FRF_BZ_RX_HASH_INSRT_HDR, 1);
+	EFX_SET_OWORD_FIELD(temp, FRF_BZ_RX_HASH_ALG, 1);
+	EFX_SET_OWORD_FIELD(temp, FRF_BZ_RX_IP_HASH, 1);
 	efx_writeo(efx, &temp, FR_AZ_RX_CFG);
+
+	/* Set hash key for IPv4 */
+	memcpy(&temp, efx->rx_hash_key, sizeof(temp));
+	efx_writeo(efx, &temp, FR_BZ_RX_RSS_TKEY);
 
 	/* Enable IPv6 RSS */
 	BUILD_BUG_ON(sizeof(efx->rx_hash_key) <
@@ -363,8 +359,6 @@ static int siena_init_nic(struct efx_nic *efx)
 
 static void siena_remove_nic(struct efx_nic *efx)
 {
-	struct siena_nic_data *nic_data = efx->nic_data;
-
 	efx_nic_free_buffer(efx, &efx->irq_status);
 
 	siena_reset_hw(efx, RESET_TYPE_ALL);
@@ -374,8 +368,7 @@ static void siena_remove_nic(struct efx_nic *efx)
 		efx_mcdi_drv_attach(efx, false, NULL);
 
 	/* Tear down the private nic state */
-	iounmap(nic_data->mcdi_smem);
-	kfree(nic_data);
+	kfree(efx->nic_data);
 	efx->nic_data = NULL;
 }
 
@@ -588,7 +581,7 @@ static void siena_init_wol(struct efx_nic *efx)
  **************************************************************************
  */
 
-struct efx_nic_type siena_a0_nic_type = {
+const struct efx_nic_type siena_a0_nic_type = {
 	.probe = siena_probe_nic,
 	.remove = siena_remove_nic,
 	.init = siena_init_nic,
@@ -613,13 +606,15 @@ struct efx_nic_type siena_a0_nic_type = {
 	.default_mac_ops = &efx_mcdi_mac_operations,
 
 	.revision = EFX_REV_SIENA_A0,
-	.mem_map_size = FR_CZ_MC_TREG_SMEM, /* MC_TREG_SMEM mapped separately */
+	.mem_map_size = (FR_CZ_MC_TREG_SMEM +
+			 FR_CZ_MC_TREG_SMEM_STEP * FR_CZ_MC_TREG_SMEM_ROWS),
 	.txd_ptr_tbl_base = FR_BZ_TX_DESC_PTR_TBL,
 	.rxd_ptr_tbl_base = FR_BZ_RX_DESC_PTR_TBL,
 	.buf_tbl_base = FR_BZ_BUF_FULL_TBL,
 	.evq_ptr_tbl_base = FR_BZ_EVQ_PTR_TBL,
 	.evq_rptr_tbl_base = FR_BZ_EVQ_RPTR,
 	.max_dma_mask = DMA_BIT_MASK(FSF_AZ_TX_KER_BUF_ADDR_WIDTH),
+	.rx_buffer_hash_size = 0x10,
 	.rx_buffer_padding = 0,
 	.max_interrupt_mode = EFX_INT_MODE_MSIX,
 	.phys_addr_channels = 32, /* Hardware limit is 64, but the legacy
@@ -627,5 +622,7 @@ struct efx_nic_type siena_a0_nic_type = {
 				   * channels */
 	.tx_dc_base = 0x88000,
 	.rx_dc_base = 0x68000,
-	.offload_features = NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM,
+	.offload_features = (NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
+			     NETIF_F_RXHASH | NETIF_F_NTUPLE),
+	.reset_world_flags = ETH_RESET_MGMT << ETH_RESET_SHARED_SHIFT,
 };

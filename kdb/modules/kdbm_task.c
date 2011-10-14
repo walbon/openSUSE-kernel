@@ -8,7 +8,7 @@
 
 #include <linux/blkdev.h>
 #include <linux/types.h>
-#include <linux/kdb.h>
+#include <linux/lkdb.h>
 #include <linux/kdbprivate.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -45,82 +45,81 @@ kdbm_task(int argc, const char **argv)
 	struct task_struct *tp = NULL, *tp1;
 
 	if (argc != 1)
-		return KDB_ARGCOUNT;
+		return LKDB_ARGCOUNT;
 
 	nextarg = 1;
-	if ((e = kdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL)) != 0)
+	if ((e = lkdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL)) != 0)
 		return(e);
 
 	if (!(tp = kmalloc(sizeof(*tp), GFP_ATOMIC))) {
-	    kdb_printf("%s: cannot kmalloc tp\n", __FUNCTION__);
+	    lkdb_printf("%s: cannot kmalloc tp\n", __FUNCTION__);
 	    goto out;
 	}
-	if ((e = kdb_getarea(*tp, addr))) {
-	    kdb_printf("%s: invalid task address\n", __FUNCTION__);
+	if ((e = lkdb_getarea(*tp, addr))) {
+	    lkdb_printf("%s: invalid task address\n", __FUNCTION__);
 	    goto out;
 	}
 
 	tp1 = (struct task_struct *)addr;
-	kdb_printf(
+	lkdb_printf(
 	    "struct task at 0x%lx, pid=%d flags=0x%x state=%ld comm=\"%s\"\n",
 	    addr, tp->pid, tp->flags, tp->state, tp->comm);
 
-	kdb_printf("  cpu=%d policy=%u ", kdb_process_cpu(tp), tp->policy);
-	kdb_printf(
+	lkdb_printf("  cpu=%d policy=%u ", lkdb_process_cpu(tp), tp->policy);
+	lkdb_printf(
 	    "prio=%d static_prio=%d cpus_allowed=",
 	    tp->prio, tp->static_prio);
 	{
-		/* The cpus allowed string may be longer than kdb_printf() can
+		/* The cpus allowed string may be longer than lkdb_printf() can
 		 * handle.  Print it in chunks.
 		 */
 		char c, *p;
 		p = kdb_cpus_allowed_string(tp);
 		while (1) {
 			if (strlen(p) < 100) {
-				kdb_printf("%s", p);
+				lkdb_printf("%s", p);
 				break;
 			}
 			c = p[100];
 			p[100] = '\0';
-			kdb_printf("%s", p);
+			lkdb_printf("%s", p);
 			p[100] = c;
 			p += 100;
 		}
 	}
-	kdb_printf(" &thread=0x%p\n", &tp1->thread);
+	lkdb_printf(" &thread=0x%p\n", &tp1->thread);
 
-	kdb_printf("  need_resched=%d ",
+	lkdb_printf("  need_resched=%d ",
 		test_tsk_thread_flag(tp, TIF_NEED_RESCHED));
-	kdb_printf(
-	    "time_slice=%u",
-	    tp->rt.time_slice);
-	kdb_printf(" lock_depth=%d\n", tp->lock_depth);
-
-	kdb_printf(
+	lkdb_printf("time_slice=%u\n", tp->rt.time_slice);
+#ifdef CONFIG_LOCKDEP
+	lkdb_printf(" lockdep_depth=%d\n", tp->lockdep_depth);
+#endif
+	lkdb_printf(
 	    "  fs=0x%p files=0x%p mm=0x%p\n",
 	    tp->fs, tp->files, tp->mm);
 
 	if (tp->sysvsem.undo_list)
-		kdb_printf(
+		lkdb_printf(
 		    "  sysvsem.sem_undo refcnt %d list_proc=0x%p\n",
 		    atomic_read(&tp->sysvsem.undo_list->refcnt),
 		    &tp->sysvsem.undo_list->list_proc);
 
-	kdb_printf(
+	lkdb_printf(
 	    "  signal=0x%p &blocked=0x%p &pending=0x%p\n",
 	    tp->signal, &tp1->blocked, &tp1->pending);
 
-	kdb_printf(
+	lkdb_printf(
 	    "  utime=%ld stime=%ld cutime=%ld cstime=%ld\n",
 	    tp->utime, tp->stime,
 	    tp->signal ? tp->signal->cutime : 0L,
 	    tp->signal ? tp->signal->cstime : 0L);
 
-	kdb_printf("  thread_info=0x%p\n", task_thread_info(tp));
-	kdb_printf("  ti flags=0x%lx\n", (unsigned long)task_thread_info(tp)->flags);
+	lkdb_printf("  thread_info=0x%p\n", task_thread_info(tp));
+	lkdb_printf("  ti flags=0x%lx\n", (unsigned long)task_thread_info(tp)->flags);
 
 #ifdef CONFIG_NUMA
-	kdb_printf(
+	lkdb_printf(
 	    "  mempolicy=0x%p il_next=%d\n",
 	    tp->mempolicy, tp->il_next);
 #endif
@@ -143,32 +142,32 @@ kdbm_sigset(int argc, const char **argv)
 	char fmt[32];
 
 	if (argc != 1)
-		return KDB_ARGCOUNT;
+		return LKDB_ARGCOUNT;
 
 #ifndef _NSIG_WORDS
-	kdb_printf("unavailable on this platform, _NSIG_WORDS not defined.\n");
+	lkdb_printf("unavailable on this platform, _NSIG_WORDS not defined.\n");
 #else
 	nextarg = 1;
-	if ((e = kdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL)) != 0)
+	if ((e = lkdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL)) != 0)
 		return(e);
 
 	if (!(sp = kmalloc(sizeof(*sp), GFP_ATOMIC))) {
-	    kdb_printf("%s: cannot kmalloc sp\n", __FUNCTION__);
+	    lkdb_printf("%s: cannot kmalloc sp\n", __FUNCTION__);
 	    goto out;
 	}
-	if ((e = kdb_getarea(*sp, addr))) {
-	    kdb_printf("%s: invalid sigset address\n", __FUNCTION__);
+	if ((e = lkdb_getarea(*sp, addr))) {
+	    lkdb_printf("%s: invalid sigset address\n", __FUNCTION__);
 	    goto out;
 	}
 
 	sprintf(fmt, "[%%d]=0x%%0%dlx ", (int)sizeof(sp->sig[0])*2);
-	kdb_printf("sigset at 0x%p : ", sp);
+	lkdb_printf("sigset at 0x%p : ", sp);
 	for (i=_NSIG_WORDS-1; i >= 0; i--) {
 	    if (i == 0 || sp->sig[i]) {
-		kdb_printf(fmt, i, sp->sig[i]);
+		lkdb_printf(fmt, i, sp->sig[i]);
 	    }
 	}
-	kdb_printf("\n");
+	lkdb_printf("\n");
 #endif /* _NSIG_WORDS */
 
 out:
@@ -179,16 +178,16 @@ out:
 
 static int __init kdbm_task_init(void)
 {
-	kdb_register("task", kdbm_task, "<vaddr>", "Display task_struct", 0);
-	kdb_register("sigset", kdbm_sigset, "<vaddr>", "Display sigset_t", 0);
+	lkdb_register("task", kdbm_task, "<vaddr>", "Display task_struct", 0);
+	lkdb_register("sigset", kdbm_sigset, "<vaddr>", "Display sigset_t", 0);
 
 	return 0;
 }
 
 static void __exit kdbm_task_exit(void)
 {
-	kdb_unregister("task");
-	kdb_unregister("sigset");
+	lkdb_unregister("task");
+	lkdb_unregister("sigset");
 }
 
 module_init(kdbm_task_init)

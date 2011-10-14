@@ -49,7 +49,6 @@
 #include "xfs_dir2_leaf.h"
 #include "xfs_dir2_block.h"
 #include "xfs_dir2_node.h"
-#include "xfs_dir2_trace.h"
 #include "xfs_acl.h"
 #include "xfs_attr.h"
 #include "xfs_attr_leaf.h"
@@ -63,7 +62,6 @@
 #include "xfs_iomap.h"
 #include "xfs_filestream.h"
 #include "xfs_vnodeops.h"
-#include "support/ktrace.h"
 
 EXPORT_SYMBOL(xfs_iunlock);
 EXPORT_SYMBOL(xfs_attr_remove);
@@ -84,11 +82,11 @@ EXPORT_SYMBOL(xfs_setattr);
 EXPORT_SYMBOL(xfs_trans_alloc);
 EXPORT_SYMBOL(xfs_trans_cancel);
 EXPORT_SYMBOL(xfs_fsync);
-EXPORT_SYMBOL(xfs_iput_new);
 EXPORT_SYMBOL(xfs_bulkstat);
 EXPORT_SYMBOL(xfs_ilock_map_shared);
-EXPORT_SYMBOL(xfs_iput);
 EXPORT_SYMBOL(xfs_trans_log_inode);
 EXPORT_SYMBOL(xfs_attr_list);
 EXPORT_SYMBOL(kmem_alloc);
 EXPORT_SYMBOL(xfs_change_file_space);
+EXPORT_SYMBOL(xfs_get_extsz_hint);
+EXPORT_SYMBOL(assfail);

@@ -1,4 +1,5 @@
 #include <linux/mm.h>
+#include <linux/gfp.h>
 #include <linux/module.h>
 #include <linux/smp.h>
 #include <xen/features.h>
@@ -409,23 +410,23 @@ void mm_unpin(struct mm_struct *mm)
 void mm_pin_all(void)
 {
 	struct page *page;
-	unsigned long flags;
 
 	if (xen_feature(XENFEAT_writable_page_tables))
 		return;
 
 	/*
 	 * Allow uninterrupted access to the pgd_list. Also protects
-	 * __pgd_pin() by disabling preemption.
+	 * __pgd_pin() by ensuring preemption is disabled.
 	 * All other CPUs must be at a safe point (e.g., in stop_machine
 	 * or offlined entirely).
 	 */
-	spin_lock_irqsave(&pgd_lock, flags);
+	BUG_ON(!irqs_disabled());
+	spin_lock(&pgd_lock);
 	list_for_each_entry(page, &pgd_list, lru) {
 		if (!PagePinned(page))
 			__pgd_pin((pgd_t *)page_address(page));
 	}
-	spin_unlock_irqrestore(&pgd_lock, flags);
+	spin_unlock(&pgd_lock);
 }
 
 void arch_dup_mmap(struct mm_struct *oldmm, struct mm_struct *mm)
@@ -496,7 +497,19 @@ static inline void pgd_list_del(pgd_t *pgd)
 #define UNSHARED_PTRS_PER_PGD				\
 	(SHARED_KERNEL_PMD ? KERNEL_PGD_BOUNDARY : PTRS_PER_PGD)
 
-static void pgd_ctor(pgd_t *pgd)
+
+static void pgd_set_mm(pgd_t *pgd, struct mm_struct *mm)
+{
+	BUILD_BUG_ON(sizeof(virt_to_page(pgd)->index) < sizeof(mm));
+	virt_to_page(pgd)->index = (pgoff_t)mm;
+}
+
+struct mm_struct *pgd_page_get_mm(struct page *page)
+{
+	return (struct mm_struct *)page->index;
+}
+
+static void pgd_ctor(struct mm_struct *mm, pgd_t *pgd)
 {
 	pgd_test_and_unpin(pgd);
 
@@ -509,10 +522,6 @@ static void pgd_ctor(pgd_t *pgd)
 		clone_pgd_range(pgd + KERNEL_PGD_BOUNDARY,
 				swapper_pg_dir + KERNEL_PGD_BOUNDARY,
 				KERNEL_PGD_PTRS);
-		paravirt_alloc_pmd_clone(__pa(pgd) >> PAGE_SHIFT,
-					 __pa(swapper_pg_dir) >> PAGE_SHIFT,
-					 KERNEL_PGD_BOUNDARY,
-					 KERNEL_PGD_PTRS);
 	}
 
 #ifdef CONFIG_X86_64
@@ -522,18 +531,18 @@ static void pgd_ctor(pgd_t *pgd)
 #endif
 
 	/* list required to sync kernel mapping updates */
-	if (!SHARED_KERNEL_PMD)
+	if (!SHARED_KERNEL_PMD) {
+		pgd_set_mm(pgd, mm);
 		pgd_list_add(pgd);
+	}
 }
 
 static void pgd_dtor(pgd_t *pgd)
 {
-	unsigned long flags; /* can be called from interrupt context */
-
 	if (!SHARED_KERNEL_PMD) {
-		spin_lock_irqsave(&pgd_lock, flags);
+		spin_lock(&pgd_lock);
 		pgd_list_del(pgd);
-		spin_unlock_irqrestore(&pgd_lock, flags);
+		spin_unlock(&pgd_lock);
 	}
 
 	pgd_test_and_unpin(pgd);
@@ -688,7 +697,8 @@ static inline pgd_t *user_pgd_alloc(pgd_t *pgd)
 		pgd_t *upgd = (void *)__get_free_page(PGALLOC_GFP);
 
 		if (upgd)
-			virt_to_page(pgd)->index = (long)upgd;
+			set_page_private(virt_to_page(pgd),
+					 (unsigned long)upgd);
 		else {
 			free_page((unsigned long)pgd);
 			pgd = NULL;
@@ -701,7 +711,7 @@ static inline pgd_t *user_pgd_alloc(pgd_t *pgd)
 static inline void user_pgd_free(pgd_t *pgd)
 {
 #ifdef CONFIG_X86_64
-	free_page(virt_to_page(pgd)->index);
+	free_page(page_private(virt_to_page(pgd)));
 #endif
 }
 
@@ -709,7 +719,6 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 {
 	pgd_t *pgd;
 	pmd_t *pmds[PREALLOCATED_PMDS];
-	unsigned long flags;
 
 	pgd = user_pgd_alloc((void *)__get_free_page(PGALLOC_GFP));
 
@@ -729,24 +738,21 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	 * respect to anything walking the pgd_list, so that they
 	 * never see a partially populated pgd.
 	 */
-	spin_lock_irqsave(&pgd_lock, flags);
+	spin_lock(&pgd_lock);
 
 #ifdef CONFIG_X86_PAE
 	/* Protect against save/restore: move below 4GB under pgd_lock. */
 	if (!xen_feature(XENFEAT_pae_pgdir_above_4gb)
 	    && xen_create_contiguous_region((unsigned long)pgd, 0, 32)) {
-		spin_unlock_irqrestore(&pgd_lock, flags);
+		spin_unlock(&pgd_lock);
 		goto out_free_pmds;
 	}
 #endif
 
-	pgd_ctor(pgd);
+	pgd_ctor(mm, pgd);
 	pgd_prepopulate_pmd(mm, pgd, pmds);
 
-	/* Store a back link for vmalloc_sync_all(). */
-	set_page_private(virt_to_page(pgd), (unsigned long)mm);
-
-	spin_unlock_irqrestore(&pgd_lock, flags);
+	spin_unlock(&pgd_lock);
 
 	return pgd;
 
@@ -808,6 +814,25 @@ int ptep_set_access_flags(struct vm_area_struct *vma,
 	return changed;
 }
 
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+int pmdp_set_access_flags(struct vm_area_struct *vma,
+			  unsigned long address, pmd_t *pmdp,
+			  pmd_t entry, int dirty)
+{
+	int changed = !pmd_same(*pmdp, entry);
+
+	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
+
+	if (changed && dirty) {
+		*pmdp = entry;
+		pmd_update_defer(vma->vm_mm, address, pmdp);
+		flush_tlb_range(vma, address, address + HPAGE_PMD_SIZE);
+	}
+
+	return changed;
+}
+#endif
+
 int ptep_test_and_clear_young(struct vm_area_struct *vma,
 			      unsigned long addr, pte_t *ptep)
 {
@@ -823,6 +848,23 @@ int ptep_test_and_clear_young(struct vm_area_struct *vma,
 	return ret;
 }
 
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+int pmdp_test_and_clear_young(struct vm_area_struct *vma,
+			      unsigned long addr, pmd_t *pmdp)
+{
+	int ret = 0;
+
+	if (pmd_young(*pmdp))
+		ret = test_and_clear_bit(_PAGE_BIT_ACCESSED,
+					 (unsigned long *)pmdp);
+
+	if (ret)
+		pmd_update(vma->vm_mm, addr, pmdp);
+
+	return ret;
+}
+#endif
+
 int ptep_clear_flush_young(struct vm_area_struct *vma,
 			   unsigned long address, pte_t *ptep)
 {
@@ -837,6 +879,36 @@ int ptep_clear_flush_young(struct vm_area_struct *vma,
 
 	return young;
 }
+
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+int pmdp_clear_flush_young(struct vm_area_struct *vma,
+			   unsigned long address, pmd_t *pmdp)
+{
+	int young;
+
+	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
+
+	young = pmdp_test_and_clear_young(vma, address, pmdp);
+	if (young)
+		flush_tlb_range(vma, address, address + HPAGE_PMD_SIZE);
+
+	return young;
+}
+
+void pmdp_splitting_flush(struct vm_area_struct *vma,
+			  unsigned long address, pmd_t *pmdp)
+{
+	int set;
+	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
+	set = !test_and_set_bit(_PAGE_BIT_SPLITTING,
+				(unsigned long *)pmdp);
+	if (set) {
+		pmd_update(vma->vm_mm, address, pmdp);
+		/* need tlb flush only to serialize against gup-fast */
+		flush_tlb_range(vma, address, address + HPAGE_PMD_SIZE);
+	}
+}
+#endif
 
 /**
  * reserve_top_address - reserves a hole in the top of kernel address space

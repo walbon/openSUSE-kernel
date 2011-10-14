@@ -13,8 +13,10 @@
 #include <asm/debug.h>
 #include "chsc.h"
 
-#define QDIO_BUSY_BIT_PATIENCE		100	/* 100 microseconds */
-#define QDIO_INPUT_THRESHOLD		500	/* 500 microseconds */
+#define QDIO_BUSY_BIT_PATIENCE		(100 << 12)	/* 100 microseconds */
+#define QDIO_BUSY_BIT_RETRY_DELAY	10		/* 10 milliseconds */
+#define QDIO_BUSY_BIT_RETRIES		1000		/* = 10s retry time */
+#define QDIO_INPUT_THRESHOLD		(500 << 12)	/* 500 microseconds */
 
 /*
  * if an asynchronous HiperSockets queue runs full, the 10 seconds timer wait
@@ -143,10 +145,9 @@ struct siga_flag {
 	u8 input:1;
 	u8 output:1;
 	u8 sync:1;
-	u8 no_sync_ti:1;
-	u8 no_sync_out_ti:1;
-	u8 no_sync_out_pci:1;
-	u8:2;
+	u8 sync_after_ai:1;
+	u8 sync_out_after_pci:1;
+	u8:3;
 } __attribute__ ((packed));
 
 struct chsc_ssqd_area {
@@ -203,6 +204,7 @@ struct qdio_dev_perf_stat {
 	unsigned int inbound_queue_full;
 	unsigned int outbound_call;
 	unsigned int outbound_handler;
+	unsigned int outbound_queue_full;
 	unsigned int fast_requeue;
 	unsigned int target_full;
 	unsigned int eqbs;
@@ -252,10 +254,10 @@ struct qdio_output_q {
 	struct qaob **aobs;
 	/* cq: sbal state related to asynchronous operation */
 	struct qdio_outbuf_state *sbal_state;
-	/* IQDIO: output multiple buffers (enhanced SIGA) */
-	int use_enh_siga;
 	/* timer to check for more outbound work */
 	struct timer_list timer;
+	/* used SBALs before tasklet schedule */
+	int scan_threshold;
 };
 
 /*
@@ -312,10 +314,8 @@ struct qdio_q {
 	struct qdio_irq *irq_ptr;
 	struct sl *sl;
 	/*
-	 * Warning: Leave this member at the end so it won't be cleared in
-	 * qdio_fill_qs. A page is allocated under this pointer and used for
-	 * slib and sl. slib is 2048 bytes big and sl points to offset
-	 * PAGE_SIZE / 2.
+	 * A page is allocated under this pointer and used for slib and sl.
+	 * slib is 2048 bytes big and sl points to offset PAGE_SIZE / 2.
 	 */
 	struct slib *slib;
 } __attribute__ ((aligned(256)));
@@ -388,21 +388,17 @@ static inline int multicast_outbound(struct qdio_q *q)
 	       (q->nr == q->irq_ptr->nr_output_qs - 1);
 }
 
-static inline unsigned long long get_usecs(void)
-{
-	return monotonic_clock() >> 12;
-}
-
 #define pci_out_supported(q) \
 	(q->irq_ptr->qib.ac & QIB_AC_OUTBOUND_PCI_SUPPORTED)
 #define is_qebsm(q)			(q->irq_ptr->sch_token != 0)
 
-#define need_siga_sync_thinint(q)	(!q->irq_ptr->siga_flag.no_sync_ti)
-#define need_siga_sync_out_thinint(q)	(!q->irq_ptr->siga_flag.no_sync_out_ti)
 #define need_siga_in(q)			(q->irq_ptr->siga_flag.input)
 #define need_siga_out(q)		(q->irq_ptr->siga_flag.output)
-#define need_siga_sync(q)		(q->irq_ptr->siga_flag.sync)
-#define siga_syncs_out_pci(q)		(q->irq_ptr->siga_flag.no_sync_out_pci)
+#define need_siga_sync(q)		(unlikely(q->irq_ptr->siga_flag.sync))
+#define need_siga_sync_after_ai(q)	\
+	(unlikely(q->irq_ptr->siga_flag.sync_after_ai))
+#define need_siga_sync_out_after_pci(q)	\
+	(unlikely(q->irq_ptr->siga_flag.sync_out_after_pci))
 
 #define for_each_input_queue(irq_ptr, q, i)	\
 	for (i = 0, q = irq_ptr->input_qs[0];	\

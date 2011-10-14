@@ -34,7 +34,9 @@ typedef struct {
 /*
  * Platform specific environment entries
  */
-#define KDB_PLATFORM_ENV	"IDMODE=ia64", "BYTESPERWORD=4", "IDCOUNT=8"
+#define LKDB_PLATFORM_ENV	"IDMODE=ia64", "BYTESPERWORD=4", "IDCOUNT=8"
+
+#define LKDB_MAXBPT  16
 
 /*
  * Support for IA64 debug registers
@@ -116,8 +118,8 @@ enum kdba_serial_console {
 
 extern enum kdba_serial_console kdba_serial_console;
 
-#define KDB_RUNNING_PROCESS_ORIGINAL kdb_running_process_save
-extern struct kdb_running_process *kdb_running_process_save; /* [NR_CPUS] */
+#define KDB_RUNNING_PROCESS_ORIGINAL lkdb_running_process_save
+extern struct lkdb_running_process *lkdb_running_process_save; /* [NR_CPUS] */
 
 extern void kdba_wait_for_cpus(void);
 

@@ -11,7 +11,6 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/kernel_stat.h>
-#include <linux/smp_lock.h>
 #include <linux/irq.h>
 #include <linux/bootmem.h>
 #include <linux/notifier.h>
@@ -19,6 +18,7 @@
 #include <linux/percpu.h>
 #include <asm/desc.h>
 #include <asm/pgalloc.h>
+#include <xen/clock.h>
 #include <xen/evtchn.h>
 #include <xen/interface/vcpu.h>
 #include <xen/cpu_hotplug.h>
@@ -34,7 +34,7 @@ extern void smp_trap_init(trap_info_t *);
 
 cpumask_var_t vcpu_initialized_mask;
 
-DEFINE_PER_CPU(struct cpuinfo_x86, cpu_info);
+DEFINE_PER_CPU_READ_MOSTLY(struct cpuinfo_x86, cpu_info);
 EXPORT_PER_CPU_SYMBOL(cpu_info);
 
 static int __read_mostly ipi_irq = -1;
@@ -66,11 +66,14 @@ void __init prefill_possible_map(void)
 
 static irqreturn_t ipi_interrupt(int irq, void *dev_id)
 {
-	static void(*const handlers[])(struct pt_regs *) = {
+	static void (*const handlers[])(struct pt_regs *) = {
 		[RESCHEDULE_VECTOR] = smp_reschedule_interrupt,
 		[CALL_FUNCTION_VECTOR] = smp_call_function_interrupt,
 		[CALL_FUNC_SINGLE_VECTOR] = smp_call_function_single_interrupt,
 		[REBOOT_VECTOR] = smp_reboot_interrupt,
+#ifdef CONFIG_IRQ_WORK
+		[IRQ_WORK_VECTOR] = smp_irq_work_interrupt,
+#endif
 	};
 	unsigned long *pending = __get_cpu_var(ipi_pending);
 	struct pt_regs *regs = get_irq_regs();
@@ -92,8 +95,6 @@ static irqreturn_t ipi_interrupt(int irq, void *dev_id)
 			ipi = find_next_bit(pending, NR_IPIS, ipi);
 		} while (ipi < NR_IPIS);
 	}
-
-	return ret;
 }
 
 static int __cpuinit xen_smp_intr_init(unsigned int cpu)
@@ -143,9 +144,10 @@ static void __cpuinit xen_smp_intr_exit(unsigned int cpu)
 static void __cpuinit cpu_bringup(void)
 {
 	cpu_init();
-	identify_secondary_cpu(&current_cpu_data);
+	identify_secondary_cpu(__this_cpu_ptr(&cpu_info));
 	touch_softlockup_watchdog();
 	preempt_disable();
+	xen_setup_cpu_clockevents();
 	local_irq_enable();
 }
 

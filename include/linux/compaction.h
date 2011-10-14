@@ -25,7 +25,7 @@ extern unsigned long try_to_compact_pages(struct zonelist *zonelist,
 			bool sync);
 extern unsigned long compaction_suitable(struct zone *zone, int order);
 extern unsigned long compact_zone_order(struct zone *zone, int order,
-						gfp_t gfp_mask, bool sync);
+					gfp_t gfp_mask, bool sync);
 
 /* Do not skip compaction more than 64 times */
 #define COMPACT_MAX_DEFER_SHIFT 6
@@ -70,9 +70,9 @@ static inline unsigned long compaction_suitable(struct zone *zone, int order)
 }
 
 static inline unsigned long compact_zone_order(struct zone *zone, int order,
-						gfp_t gfp_mask, bool sync)
+					       gfp_t gfp_mask, bool sync)
 {
-	return 0;
+	return COMPACT_CONTINUE;
 }
 
 static inline void defer_compaction(struct zone *zone)
@@ -85,5 +85,21 @@ static inline bool compaction_deferred(struct zone *zone)
 }
 
 #endif /* CONFIG_COMPACTION */
+
+#if defined(CONFIG_COMPACTION) && defined(CONFIG_SYSFS) && defined(CONFIG_NUMA)
+extern int compaction_register_node(struct node *node);
+extern void compaction_unregister_node(struct node *node);
+
+#else
+
+static inline int compaction_register_node(struct node *node)
+{
+	return 0;
+}
+
+static inline void compaction_unregister_node(struct node *node)
+{
+}
+#endif /* CONFIG_COMPACTION && CONFIG_SYSFS && CONFIG_NUMA */
 
 #endif /* _LINUX_COMPACTION_H */

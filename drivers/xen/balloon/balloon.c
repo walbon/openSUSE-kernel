@@ -39,11 +39,10 @@
 #include <linux/mm.h>
 #include <linux/swap.h>
 #include <linux/mman.h>
-#include <linux/smp_lock.h>
 #include <linux/pagemap.h>
 #include <linux/bootmem.h>
 #include <linux/highmem.h>
-#include <linux/vmalloc.h>
+#include <linux/slab.h>
 #include <linux/mutex.h>
 #include <xen/xen_proc.h>
 #include <asm/hypervisor.h>

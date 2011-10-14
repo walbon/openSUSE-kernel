@@ -215,7 +215,7 @@ static inline void ocfs2_checkpoint_inode(struct inode *inode)
 		/* WARNING: This only kicks off a single
 		 * checkpoint. If someone races you and adds more
 		 * metadata to the journal, you won't know, and will
-		 * wind up waiting *alot* longer than necessary. Right
+		 * wind up waiting *a lot* longer than necessary. Right
 		 * now we only use this in clear_inode so that's
 		 * OK. */
 		ocfs2_start_checkpoint(osb);
@@ -405,8 +405,8 @@ static inline int ocfs2_remove_extent_credits(struct super_block *sb)
 	       ocfs2_quota_trans_credits(sb);
 }
 
-/* data block for new dir/symlink, allocation of the data block,
- * dx_root update for free list */
+/* data block for new dir/symlink, allocation of directory block, dx_root
+ * update for free list */
 #define OCFS2_DIR_LINK_ADDITIONAL_CREDITS (1 + OCFS2_SUBALLOC_ALLOC + 1)
 
 static inline int ocfs2_add_dir_index_credits(struct super_block *sb)
@@ -560,6 +560,18 @@ static inline int ocfs2_calc_group_alloc_credits(struct super_block *sb,
 	   + bitmap blocks affected */
 	blocks = 1 + 1 + 1 + bitmap_blocks;
 	return blocks;
+}
+
+/*
+ * Allocating a discontiguous block group requires the credits from
+ * ocfs2_calc_group_alloc_credits() as well as enough credits to fill
+ * the group descriptor's extent list.  The caller already has started
+ * the transaction with ocfs2_calc_group_alloc_credits().  They extend
+ * it with these credits.
+ */
+static inline int ocfs2_calc_bg_discontig_credits(struct super_block *sb)
+{
+	return ocfs2_extent_recs_per_gd(sb);
 }
 
 static inline int ocfs2_calc_tree_trunc_credits(struct super_block *sb,

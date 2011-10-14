@@ -31,6 +31,7 @@
 #include <linux/swap.h>
 #include <linux/writeback.h>
 #include <linux/bit_spinlock.h>
+#include <linux/slab.h>
 #include "compat.h"
 #include "ctree.h"
 #include "disk-io.h"
@@ -337,6 +338,7 @@ int btrfs_submit_compressed_write(struct inode *inode, u64 start,
 	u64 first_byte = disk_start;
 	struct block_device *bdev;
 	int ret;
+	int skip_sum = BTRFS_I(inode)->flags & BTRFS_INODE_NODATASUM;
 
 	WARN_ON(start & ((u64)PAGE_CACHE_SIZE - 1));
 	cb = kmalloc(compressed_bio_size(root, compressed_len), GFP_NOFS);
@@ -391,8 +393,11 @@ int btrfs_submit_compressed_write(struct inode *inode, u64 start,
 			ret = btrfs_bio_wq_end_io(root->fs_info, bio, 0);
 			BUG_ON(ret);
 
-			ret = btrfs_csum_one_bio(root, inode, bio, start, 1);
-			BUG_ON(ret);
+			if (!skip_sum) {
+				ret = btrfs_csum_one_bio(root, inode, bio,
+							 start, 1);
+				BUG_ON(ret);
+			}
 
 			ret = btrfs_map_bio(root, WRITE, bio, 0, 1);
 			BUG_ON(ret);
@@ -417,8 +422,10 @@ int btrfs_submit_compressed_write(struct inode *inode, u64 start,
 	ret = btrfs_bio_wq_end_io(root->fs_info, bio, 0);
 	BUG_ON(ret);
 
-	ret = btrfs_csum_one_bio(root, inode, bio, start, 1);
-	BUG_ON(ret);
+	if (!skip_sum) {
+		ret = btrfs_csum_one_bio(root, inode, bio, start, 1);
+		BUG_ON(ret);
+	}
 
 	ret = btrfs_map_bio(root, WRITE, bio, 0, 1);
 	BUG_ON(ret);
@@ -489,7 +496,8 @@ static noinline int add_ra_bio_pages(struct inode *inode,
 		 * sure they map to this compressed extent on disk.
 		 */
 		set_page_extent_mapped(page);
-		lock_extent(tree, last_offset, end, GFP_NOFS);
+		ret = lock_extent(tree, last_offset, end, GFP_NOFS);
+		BUG_ON(ret < 0);
 		read_lock(&em_tree->lock);
 		em = lookup_extent_mapping(em_tree, last_offset,
 					   PAGE_CACHE_SIZE);
@@ -499,7 +507,8 @@ static noinline int add_ra_bio_pages(struct inode *inode,
 		    (last_offset + PAGE_CACHE_SIZE > extent_map_end(em)) ||
 		    (em->block_start >> 9) != cb->orig_bio->bi_sector) {
 			free_extent_map(em);
-			unlock_extent(tree, last_offset, end, GFP_NOFS);
+			ret = unlock_extent(tree, last_offset, end, GFP_NOFS);
+			BUG_ON(ret < 0);
 			unlock_page(page);
 			page_cache_release(page);
 			break;
@@ -527,7 +536,8 @@ static noinline int add_ra_bio_pages(struct inode *inode,
 			nr_pages++;
 			page_cache_release(page);
 		} else {
-			unlock_extent(tree, last_offset, end, GFP_NOFS);
+			ret = unlock_extent(tree, last_offset, end, GFP_NOFS);
+			BUG_ON(ret < 0);
 			unlock_page(page);
 			page_cache_release(page);
 			break;
@@ -724,7 +734,7 @@ struct btrfs_compress_op *btrfs_compress_op[] = {
 	&btrfs_lzo_compress,
 };
 
-int __init btrfs_init_compress(void)
+void __init btrfs_init_compress(void)
 {
 	int i;
 
@@ -734,7 +744,6 @@ int __init btrfs_init_compress(void)
 		atomic_set(&comp_alloc_workspace[i], 0);
 		init_waitqueue_head(&comp_workspace_wait[i]);
 	}
-	return 0;
 }
 
 /*

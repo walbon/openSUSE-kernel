@@ -97,8 +97,8 @@ static int pfm_default_fmt_init(struct pfm_context *ctx, void *buf,
 	hdr->hdr_overflows    = 0;
 	hdr->hdr_count        = 0;
 
-	PFM_DBG("buffer=%p buf_size=%lu hdr_size=%lu "
-		  "hdr_version=%u cur_offs=%lu",
+	PFM_DBG("buffer=%p buf_size=%llu hdr_size=%lu "
+		  "hdr_version=%u cur_offs=%llu",
 		  buf,
 		  hdr->hdr_buf_size,
 		  sizeof(*hdr),
@@ -142,11 +142,11 @@ static int pfm_default_fmt_handler(struct pfm_context *ctx,
 	entry_size = sizeof(*ent) + (npmds << 3);
 
 	/* position for first pmd */
-	e = (unsigned long *)(ent+1);
+	e = (u64 *)(ent+1);
 
 	hdr->hdr_count++;
 
-	PFM_DBG_ovfl("count=%lu cur=%p last=%p free_bytes=%lu "
+	PFM_DBG_ovfl("count=%llu cur=%p last=%p free_bytes=%lu "
 		       "ovfl_pmd=%d npmds=%u",
 		       hdr->hdr_count,
 		       cur, last,
@@ -205,7 +205,7 @@ static int pfm_default_fmt_handler(struct pfm_context *ctx,
 	arg->ovfl_ctrl = PFM_OVFL_CTRL_RESET;
 	return 0;
 full:
-	PFM_DBG_ovfl("smpl buffer full free=%lu, count=%lu",
+	PFM_DBG_ovfl("smpl buffer full free=%lu, count=%llu",
 		       last-cur, hdr->hdr_count);
 
 	/*

@@ -206,7 +206,7 @@ static void amd64_cleanup(void)
 		struct pci_dev *dev = node_to_amd_nb(i)->misc;
 		/* disable gart translation */
 		pci_read_config_dword(dev, AMD64_GARTAPERTURECTL, &tmp);
-		tmp &= ~AMD64_GARTEN;
+		tmp &= ~GARTEN;
 		pci_write_config_dword(dev, AMD64_GARTAPERTURECTL, tmp);
 	}
 }
@@ -320,7 +320,7 @@ static __devinit int fix_northbridge(struct pci_dev *nb, struct pci_dev *agp,
 	if (order < 0 || !agp_aperture_valid(aper, (32*1024*1024)<<order))
 		return -1;
 
-	pci_write_config_dword(nb, AMD64_GARTAPERTURECTL, order << 1);
+	gart_set_size_and_enable(nb, order);
 	pci_write_config_dword(nb, AMD64_GARTAPERTUREBASE, aper >> 25);
 
 	return 0;
@@ -773,18 +773,23 @@ int __init agp_amd64_init(void)
 #else
 			printk(KERN_INFO PFX "You can boot with agp=try_unsupported\n");
 #endif
+			pci_unregister_driver(&agp_amd64_pci_driver);
 			return -ENODEV;
 		}
 
 		/* First check that we have at least one AMD64 NB */
-		if (!pci_dev_present(amd_nb_misc_ids))
+		if (!pci_dev_present(amd_nb_misc_ids)) {
+			pci_unregister_driver(&agp_amd64_pci_driver);
 			return -ENODEV;
+		}
 
 		/* Look for any AGP bridge */
 		agp_amd64_pci_driver.id_table = agp_amd64_pci_promisc_table;
 		err = driver_attach(&agp_amd64_pci_driver.driver);
-		if (err == 0 && agp_bridges_found == 0)
+		if (err == 0 && agp_bridges_found == 0) {
+			pci_unregister_driver(&agp_amd64_pci_driver);
 			err = -ENODEV;
+		}
 	}
 	return err;
 }

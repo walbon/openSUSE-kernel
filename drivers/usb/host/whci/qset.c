@@ -17,6 +17,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/dma-mapping.h>
+#include <linux/slab.h>
 #include <linux/uwb/umc.h>
 #include <linux/usb.h>
 
@@ -738,7 +739,7 @@ static int get_urb_status_from_qtd(struct urb *urb, u32 status)
  * process_inactive_qtd - process an inactive (but not halted) qTD.
  *
  * Update the urb with the transfer bytes from the qTD, if the urb is
- * completely transfered or (in the case of an IN only) the LPF is
+ * completely transferred or (in the case of an IN only) the LPF is
  * set, then the transfer is complete and the urb should be returned
  * to the system.
  */

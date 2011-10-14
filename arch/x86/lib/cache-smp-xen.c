@@ -7,7 +7,7 @@ static void __wbinvd(void *dummy)
 	wbinvd();
 }
 
-#ifndef CONFIG_XEN /* XXX Needs hypervisor support. */
+#ifndef CONFIG_XEN
 void wbinvd_on_cpu(int cpu)
 {
 	smp_call_function_single(cpu, __wbinvd, NULL, 1);

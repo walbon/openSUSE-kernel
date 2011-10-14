@@ -21,20 +21,13 @@
  *               Mike Anderson <andmike@linux.vnet.ibm.com>
  */
 
+#include <linux/slab.h>
 #include <scsi/scsi_dh.h>
 #include "../scsi_priv.h"
 
-struct scsi_dh_devinfo_list {
-	struct list_head node;
-	char vendor[9];
-	char model[17];
-	char tgps;
-	struct scsi_device_handler *handler;
-};
-
 static DEFINE_SPINLOCK(list_lock);
 static LIST_HEAD(scsi_dh_list);
-static LIST_HEAD(scsi_dh_dev_list);
+static int scsi_dh_list_idx = 1;
 
 static struct scsi_device_handler *get_device_handler(const char *name)
 {
@@ -51,44 +44,59 @@ static struct scsi_device_handler *get_device_handler(const char *name)
 	return found;
 }
 
-
-static struct scsi_device_handler *
-scsi_dh_cache_lookup(struct scsi_device *sdev)
+static struct scsi_device_handler *get_device_handler_by_idx(int idx)
 {
-	struct scsi_dh_devinfo_list *tmp;
-	struct scsi_device_handler *found_dh = NULL;
+	struct scsi_device_handler *tmp, *found = NULL;
 
 	spin_lock(&list_lock);
-	list_for_each_entry(tmp, &scsi_dh_dev_list, node) {
-		if (!strncmp(sdev->vendor, tmp->vendor, strlen(tmp->vendor)) &&
-		    !strncmp(sdev->model, tmp->model, strlen(tmp->model)) &&
-		    (!tmp->tgps || (sdev->tgps & tmp->tgps) != 0)) {
-			found_dh = tmp->handler;
+	list_for_each_entry(tmp, &scsi_dh_list, list) {
+		if (tmp->idx == idx) {
+			found = tmp;
 			break;
 		}
 	}
 	spin_unlock(&list_lock);
-
-	return found_dh;
+	return found;
 }
 
-static int scsi_dh_handler_lookup(struct scsi_device_handler *scsi_dh,
-				  struct scsi_device *sdev)
+/*
+ * device_handler_match_function - Match a device handler to a device
+ * @sdev - SCSI device to be tested
+ *
+ * Tests @sdev against the match function of all registered device_handler.
+ * Returns the found device handler or NULL if not found.
+ */
+static struct scsi_device_handler *
+device_handler_match_function(struct scsi_device *sdev)
 {
-	int i, found = 0;
+	struct scsi_device_handler *tmp_dh, *found_dh = NULL;
 
-	for(i = 0; scsi_dh->devlist[i].vendor; i++) {
-		if (!strncmp(sdev->vendor, scsi_dh->devlist[i].vendor,
-			     strlen(scsi_dh->devlist[i].vendor)) &&
-		    !strncmp(sdev->model, scsi_dh->devlist[i].model,
-			     strlen(scsi_dh->devlist[i].model)) &&
-		    (!scsi_dh->devlist[i].tgps ||
-		     (sdev->tgps & scsi_dh->devlist[i].tgps) != 0)) {
-			found = 1;
+	spin_lock(&list_lock);
+	list_for_each_entry(tmp_dh, &scsi_dh_list, list) {
+		if (tmp_dh->match && tmp_dh->match(sdev)) {
+			found_dh = tmp_dh;
 			break;
 		}
 	}
-	return found;
+	spin_unlock(&list_lock);
+	return found_dh;
+}
+
+/*
+ * device_handler_match_devlist - Match a device handler to a device
+ * @sdev - SCSI device to be tested
+ *
+ * Tests @sdev against all device_handler registered in the devlist.
+ * Returns the found device handler or NULL if not found.
+ */
+static struct scsi_device_handler *
+device_handler_match_devlist(struct scsi_device *sdev)
+{
+	int idx;
+
+	idx = scsi_get_device_flags_keyed(sdev, sdev->vendor, sdev->model,
+					  SCSI_DEVINFO_DH);
+	return get_device_handler_by_idx(idx);
 }
 
 /*
@@ -104,43 +112,14 @@ static struct scsi_device_handler *
 device_handler_match(struct scsi_device_handler *scsi_dh,
 		     struct scsi_device *sdev)
 {
-	struct scsi_device_handler *found_dh = NULL;
-	struct scsi_dh_devinfo_list *tmp;
+	struct scsi_device_handler *found_dh;
 
-	found_dh = scsi_dh_cache_lookup(sdev);
-	if (found_dh)
-		return found_dh;
+	found_dh = device_handler_match_function(sdev);
+	if (!found_dh)
+		found_dh = device_handler_match_devlist(sdev);
 
-	if (scsi_dh) {
-		if (scsi_dh_handler_lookup(scsi_dh, sdev))
-			found_dh = scsi_dh;
-	} else {
-		struct scsi_device_handler *tmp_dh;
-
-		spin_lock(&list_lock);
-		list_for_each_entry(tmp_dh, &scsi_dh_list, list) {
-			if (scsi_dh_handler_lookup(tmp_dh, sdev))
-				found_dh = tmp_dh;
-		}
-		spin_unlock(&list_lock);
-	}
-
-	if (found_dh) { /* If device is found, add it to the cache */
-		tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
-		if (tmp) {
-			strncpy(tmp->vendor, sdev->vendor, 8);
-			strncpy(tmp->model, sdev->model, 16);
-			tmp->vendor[8] = '\0';
-			tmp->model[16] = '\0';
-			tmp->tgps = sdev->tgps;
-			tmp->handler = found_dh;
-			spin_lock(&list_lock);
-			list_add(&tmp->node, &scsi_dh_dev_list);
-			spin_unlock(&list_lock);
-		} else {
-			found_dh = NULL;
-		}
-	}
+	if (scsi_dh && found_dh != scsi_dh)
+		found_dh = NULL;
 
 	return found_dh;
 }
@@ -213,7 +192,7 @@ store_dh_state(struct device *dev, struct device_attribute *attr,
 
 	if (sdev->sdev_state == SDEV_CANCEL ||
 	    sdev->sdev_state == SDEV_DEL)
-	    return -EBUSY;
+		return -ENODEV;
 
 	if (!sdev->scsi_dh_data) {
 		/*
@@ -381,12 +360,25 @@ static int scsi_dh_notifier_remove(struct device *dev, void *data)
  */
 int scsi_register_device_handler(struct scsi_device_handler *scsi_dh)
 {
+	int i;
+
 	if (get_device_handler(scsi_dh->name))
 		return -EBUSY;
 
 	spin_lock(&list_lock);
+	scsi_dh->idx = scsi_dh_list_idx++;
 	list_add(&scsi_dh->list, &scsi_dh_list);
 	spin_unlock(&list_lock);
+
+	for (i = 0; scsi_dh->devlist && scsi_dh->devlist[i].vendor; i++) {
+		scsi_dev_info_list_add_keyed(0,
+					scsi_dh->devlist[i].vendor,
+					scsi_dh->devlist[i].model,
+					NULL,
+					scsi_dh->idx,
+					SCSI_DEVINFO_DH);
+	}
+
 	bus_for_each_dev(&scsi_bus_type, NULL, scsi_dh, scsi_dh_notifier_add);
 	printk(KERN_INFO "%s: device handler registered\n", scsi_dh->name);
 
@@ -403,7 +395,7 @@ EXPORT_SYMBOL_GPL(scsi_register_device_handler);
  */
 int scsi_unregister_device_handler(struct scsi_device_handler *scsi_dh)
 {
-	struct scsi_dh_devinfo_list *tmp, *pos;
+	int i;
 
 	if (!get_device_handler(scsi_dh->name))
 		return -ENODEV;
@@ -411,14 +403,14 @@ int scsi_unregister_device_handler(struct scsi_device_handler *scsi_dh)
 	bus_for_each_dev(&scsi_bus_type, NULL, scsi_dh,
 			 scsi_dh_notifier_remove);
 
+	for (i = 0; scsi_dh->devlist && scsi_dh->devlist[i].vendor; i++) {
+		scsi_dev_info_list_del_keyed(scsi_dh->devlist[i].vendor,
+					     scsi_dh->devlist[i].model,
+					     SCSI_DEVINFO_DH);
+	}
+
 	spin_lock(&list_lock);
 	list_del(&scsi_dh->list);
-	list_for_each_entry_safe(pos, tmp, &scsi_dh_dev_list, node) {
-		if (pos->handler == scsi_dh) {
-			list_del(&pos->node);
-			kfree(pos);
-		}
-	}
 	spin_unlock(&list_lock);
 	printk(KERN_INFO "%s: device handler unregistered\n", scsi_dh->name);
 
@@ -445,24 +437,31 @@ int scsi_dh_activate(struct request_queue *q, activate_complete fn, void *data)
 	unsigned long flags;
 	struct scsi_device *sdev;
 	struct scsi_device_handler *scsi_dh = NULL;
+	struct device *dev = NULL;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	sdev = scsi_device_from_queue(q);
+	sdev = q->queuedata;
 	if (sdev && sdev->scsi_dh_data)
 		scsi_dh = sdev->scsi_dh_data->scsi_dh;
-	if (!scsi_dh || !get_device(&sdev->sdev_gendev))
-		err = SCSI_DH_NOSYS;
-	if (sdev->sdev_state == SDEV_CANCEL ||
+	dev = get_device(&sdev->sdev_gendev);
+	if (!scsi_dh || !dev ||
+	    sdev->sdev_state == SDEV_CANCEL ||
 	    sdev->sdev_state == SDEV_DEL)
+		err = SCSI_DH_NOSYS;
+	if (sdev->sdev_state == SDEV_OFFLINE)
 		err = SCSI_DH_DEV_OFFLINED;
 	spin_unlock_irqrestore(q->queue_lock, flags);
 
-	if (err)
-		return err;
+	if (err) {
+		if (fn)
+			fn(data, err);
+		goto out;
+	}
 
 	if (scsi_dh->activate)
 		err = scsi_dh->activate(sdev, fn, data);
-	put_device(&sdev->sdev_gendev);
+out:
+	put_device(dev);
 	return err;
 }
 EXPORT_SYMBOL_GPL(scsi_dh_activate);
@@ -485,7 +484,7 @@ int scsi_dh_set_params(struct request_queue *q, const char *params)
 	struct scsi_device_handler *scsi_dh = NULL;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	sdev = q->queuedata;
+	sdev = scsi_device_from_queue(q);
 	if (sdev && sdev->scsi_dh_data)
 		scsi_dh = sdev->scsi_dh_data->scsi_dh;
 	if (scsi_dh && scsi_dh->set_params && get_device(&sdev->sdev_gendev))
@@ -580,6 +579,10 @@ static int __init scsi_dh_init(void)
 {
 	int r;
 
+	r = scsi_dev_info_add_list(SCSI_DEVINFO_DH, "SCSI Device Handler");
+	if (r)
+		return r;
+
 	r = bus_register_notifier(&scsi_bus_type, &scsi_dh_nb);
 
 	if (!r)
@@ -594,6 +597,7 @@ static void __exit scsi_dh_exit(void)
 	bus_for_each_dev(&scsi_bus_type, NULL, NULL,
 			 scsi_dh_sysfs_attr_remove);
 	bus_unregister_notifier(&scsi_bus_type, &scsi_dh_nb);
+	scsi_dev_info_remove_list(SCSI_DEVINFO_DH);
 }
 
 module_init(scsi_dh_init);

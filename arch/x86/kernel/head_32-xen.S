@@ -66,8 +66,8 @@ ENTRY(startup_32)
 	 * The linker can't handle this by relocation.  Manually set
 	 * base address in stack canary segment descriptor.
 	 */
-	movl $per_cpu__gdt_page,%eax
-	movl $per_cpu__stack_canary,%ecx
+	movl $gdt_page,%eax
+	movl $stack_canary,%ecx
 	movw %cx, 8 * GDT_ENTRY_STACK_CANARY + 2(%eax)
 	shrl $16, %ecx
 	movb %cl, 8 * GDT_ENTRY_STACK_CANARY + 4(%eax)
@@ -78,7 +78,7 @@ ENTRY(startup_32)
 	# need to be preserved.
 
 	movl XEN_START_mfn_list(%esi), %ebx
-	movl $(per_cpu__gdt_page - __PAGE_OFFSET), %eax
+	movl $(gdt_page - __PAGE_OFFSET), %eax
 	shrl $PAGE_SHIFT, %eax
 	movl (%ebx,%eax,4), %ecx
 	pushl %ecx			# frame number for set_gdt below
@@ -88,11 +88,11 @@ ENTRY(startup_32)
 	shldl $PAGE_SHIFT, %ecx, %edx
 	shll $PAGE_SHIFT, %ecx
 	orl $_PAGE_PRESENT|_PAGE_ACCESSED|_PAGE_DIRTY, %ecx
-	movl $per_cpu__gdt_page, %ebx
+	movl $gdt_page, %ebx
 	movl $__HYPERVISOR_update_va_mapping, %eax
 	int $0x82
 
-	movl $(PAGE_SIZE_asm / 8), %ecx
+	movl $(PAGE_SIZE / 8), %ecx
 	movl %esp, %ebx
 	movl $__HYPERVISOR_set_gdt, %eax
 	int $0x82
@@ -121,7 +121,7 @@ ENTRY(hypercall_page)
  * BSS section
  */
 __PAGE_ALIGNED_BSS
-	.align PAGE_SIZE_asm
+	.align PAGE_SIZE
 ENTRY(swapper_pg_fixmap)
 	.fill 1024,4,0
 ENTRY(empty_zero_page)
