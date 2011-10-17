@@ -527,7 +527,7 @@ static unsigned int refill_fl(struct adapter *adap, struct sge_fl *q, int n,
 #endif
 
 	while (n--) {
-		pg = __netdev_alloc_page(adap->port[0], gfp);
+		pg = __netdev_alloc_page(adap->port[0], gfp, NULL);
 		if (unlikely(!pg)) {
 			q->alloc_failed++;
 			break;

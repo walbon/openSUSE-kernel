@@ -654,7 +654,7 @@ static unsigned int refill_fl(struct adapter *adapter, struct sge_fl *fl,
 alloc_small_pages:
 	while (n--) {
 		page = __netdev_alloc_page(adapter->port[0],
-					   gfp | __GFP_NOWARN);
+					   gfp | __GFP_NOWARN, NULL);
 		if (unlikely(!page)) {
 			fl->alloc_failed++;
 			break;
