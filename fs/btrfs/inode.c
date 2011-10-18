@@ -2323,12 +2323,11 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 			goto out;
 		}
 
+		last_objectid = found_key.offset;
+
 		found_key.objectid = found_key.offset;
 		found_key.type = BTRFS_INODE_ITEM_KEY;
 		found_key.offset = 0;
-
-		last_objectid = found_key.offset;
-
 		inode = btrfs_iget(root->fs_info->sb, &found_key, root, NULL);
 		ret = PTR_RET(inode);
 		if (ret && ret != -ESTALE)

@@ -316,7 +316,7 @@ irqreturn_t blkif_be_int(int irq, void *dev_id)
  * DOWNWARD CALLS -- These interface with the block-device layer proper.
  */
 
-static int do_block_io_op(blkif_t *blkif)
+static int _do_block_io_op(blkif_t *blkif)
 {
 	blkif_back_rings_t *blk_rings = &blkif->blk_rings;
 	blkif_request_t req;
@@ -392,6 +392,23 @@ static int do_block_io_op(blkif_t *blkif)
 		/* Yield point for this unbounded loop. */
 		cond_resched();
 	}
+
+	return more_to_do;
+}
+
+static int
+do_block_io_op(blkif_t *blkif)
+{
+	blkif_back_rings_t *blk_rings = &blkif->blk_rings;
+	int more_to_do;
+
+	do {
+		more_to_do = _do_block_io_op(blkif);
+		if (more_to_do)
+			break;
+
+		RING_FINAL_CHECK_FOR_REQUESTS(&blk_rings->common, more_to_do);
+	} while (more_to_do);
 
 	return more_to_do;
 }
@@ -593,7 +610,6 @@ static void make_response(blkif_t *blkif, u64 id,
 	blkif_response_t  resp;
 	unsigned long     flags;
 	blkif_back_rings_t *blk_rings = &blkif->blk_rings;
-	int more_to_do = 0;
 	int notify;
 
 	resp.id        = id;
@@ -620,22 +636,8 @@ static void make_response(blkif_t *blkif, u64 id,
 	}
 	blk_rings->common.rsp_prod_pvt++;
 	RING_PUSH_RESPONSES_AND_CHECK_NOTIFY(&blk_rings->common, notify);
-	if (blk_rings->common.rsp_prod_pvt == blk_rings->common.req_cons) {
-		/*
-		 * Tail check for pending requests. Allows frontend to avoid
-		 * notifications if requests are already in flight (lower
-		 * overheads and promotes batching).
-		 */
-		RING_FINAL_CHECK_FOR_REQUESTS(&blk_rings->common, more_to_do);
-
-	} else if (RING_HAS_UNCONSUMED_REQUESTS(&blk_rings->common)) {
-		more_to_do = 1;
-	}
-
 	spin_unlock_irqrestore(&blkif->blk_ring_lock, flags);
 
-	if (more_to_do)
-		blkif_notify_work(blkif);
 	if (notify)
 		notify_remote_via_irq(blkif->irq);
 }

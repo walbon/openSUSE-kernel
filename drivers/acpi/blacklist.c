@@ -119,7 +119,7 @@ static void __init acpi_apei_disable(void)
 		apei_disable = 1;
 		hest_disable = 1;
 		erst_disable = 1;
-#ifdef CONFIG ACPI_APEI_GHES
+#ifdef CONFIG_ACPI_APEI_GHES
 		ghes_disable = 1;
 #endif
 }
@@ -129,7 +129,7 @@ static void __init acpi_apei_enable(void)
 		apei_disable = 0;
 		hest_disable = 0;
 		erst_disable = 0;
-#ifdef CONFIG ACPI_APEI_GHES
+#ifdef CONFIG_ACPI_APEI_GHES
 		ghes_disable = 0;
 #endif
 }
