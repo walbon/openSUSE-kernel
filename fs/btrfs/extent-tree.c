@@ -488,7 +488,8 @@ static int cache_block_group(struct btrfs_block_group_cache *cache,
 	 * we likely hold important locks.
 	 */
 	if (trans && (!trans->transaction->in_commit) &&
-	    (root && root != root->fs_info->tree_root)) {
+	    (root && root != root->fs_info->tree_root) &&
+	    btrfs_test_opt(root, SPACE_CACHE)) {
 		spin_lock(&cache->lock);
 		if (cache->cached != BTRFS_CACHE_NO) {
 			spin_unlock(&cache->lock);
@@ -2729,6 +2730,13 @@ again:
 		goto again;
 	}
 
+	/* We've already setup this transaction, go ahead and exit */
+	if (block_group->cache_generation == trans->transid &&
+	    i_size_read(inode)) {
+		dcs = BTRFS_DC_SETUP;
+		goto out_put;
+	}
+
 	/*
 	 * We want to set the generation to 0, that way if anything goes wrong
 	 * from here on out we know not to trust this cache when we load up next
@@ -2768,19 +2776,16 @@ again:
 	num_pages *= 16;
 	num_pages *= PAGE_CACHE_SIZE;
 
-	ret = btrfs_delalloc_reserve_space(inode, num_pages);
+	ret = btrfs_check_data_free_space(inode, num_pages);
 	if (ret)
 		goto out_put;
 
 	ret = btrfs_prealloc_file_range_trans(inode, trans, 0, 0, num_pages,
 					      num_pages, num_pages,
 					      &alloc_hint);
-	if (!ret) {
+	if (!ret)
 		dcs = BTRFS_DC_SETUP;
-		btrfs_free_reserved_data_space(inode, num_pages);
-	} else {
-		btrfs_delalloc_release_space(inode, num_pages);
-	}
+	btrfs_free_reserved_data_space(inode, num_pages);
 
 out_put:
 	iput(inode);
@@ -2788,6 +2793,8 @@ out_free:
 	btrfs_release_path(path);
 out:
 	spin_lock(&block_group->lock);
+	if (!ret)
+		block_group->cache_generation = trans->transid;
 	block_group->disk_cache_state = dcs;
 	spin_unlock(&block_group->lock);
 
@@ -3408,7 +3415,7 @@ static int shrink_delalloc(struct btrfs_trans_handle *trans,
 		}
 
 	}
-	if (reclaimed >= to_reclaim && !trans)
+	if (reclaimed < to_reclaim && !trans)
 		btrfs_wait_ordered_extents(root, 0, 0);
 	return reclaimed >= to_reclaim;
 }
@@ -4232,7 +4239,7 @@ static int update_block_group(struct btrfs_trans_handle *trans,
 		spin_lock(&cache->space_info->lock);
 		spin_lock(&cache->lock);
 
-		if (btrfs_super_cache_generation(&info->super_copy) != 0 &&
+		if (btrfs_test_opt(root, SPACE_CACHE) &&
 		    cache->disk_cache_state < BTRFS_DC_CLEAR)
 			cache->disk_cache_state = BTRFS_DC_CLEAR;
 
@@ -7076,13 +7083,11 @@ int btrfs_read_block_groups(struct btrfs_root *root)
 	path->reada = 1;
 
 	cache_gen = btrfs_super_cache_generation(&root->fs_info->super_copy);
-	if (cache_gen != 0 &&
+	if (btrfs_test_opt(root, SPACE_CACHE) &&
 	    btrfs_super_generation(&root->fs_info->super_copy) != cache_gen)
 		need_clear = 1;
 	if (btrfs_test_opt(root, CLEAR_CACHE))
 		need_clear = 1;
-	if (!btrfs_test_opt(root, SPACE_CACHE) && cache_gen)
-		printk(KERN_INFO "btrfs: disk space caching is enabled\n");
 
 	while (1) {
 		ret = find_first_block_group(root, path, &key);

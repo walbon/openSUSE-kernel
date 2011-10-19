@@ -1817,12 +1817,12 @@ static int btrfs_finish_ordered_io(struct inode *inode, u64 start, u64 end)
 	}
 	ret = 0;
 out:
-	btrfs_delalloc_release_metadata(inode, ordered_extent->len);
-	if (nolock) {
-		if (trans)
+	if (root != root->fs_info->tree_root)
+		btrfs_delalloc_release_metadata(inode, ordered_extent->len);
+	if (trans) {
+		if (nolock)
 			btrfs_end_transaction_nolock(trans, root);
-	} else {
-		if (trans)
+		else
 			btrfs_end_transaction(trans, root);
 	}
 
@@ -2801,7 +2801,16 @@ static struct btrfs_trans_handle *__unlink_start_trans(struct inode *dir,
 	u64 ino = btrfs_ino(inode);
 	u64 dir_ino = btrfs_ino(dir);
 
-	trans = btrfs_start_transaction(root, 10);
+	/*
+	 * 1 for the possible orphan item
+	 * 1 for the dir item
+	 * 1 for the dir index
+	 * 1 for the inode ref
+	 * 1 for the inode ref in the tree log
+	 * 2 for the dir entries in the log
+	 * 1 for the inode
+	 */
+	trans = btrfs_start_transaction(root, 8);
 	if (!IS_ERR(trans) || PTR_ERR(trans) != -ENOSPC)
 		return trans;
 
