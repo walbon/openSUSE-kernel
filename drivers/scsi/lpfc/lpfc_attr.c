@@ -25,7 +25,6 @@
 #include <linux/interrupt.h>
 #include <linux/aer.h>
 #include <linux/gfp.h>
-#include <linux/kernel.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_device.h>
@@ -510,10 +509,10 @@ lpfc_link_state_store(struct device *dev, struct device_attribute *attr,
 
 	if ((strncmp(buf, "up", sizeof("up") - 1) == 0) &&
 			(phba->link_state == LPFC_LINK_DOWN))
-		status = phba->lpfc_hba_init_link(phba, MBX_NOWAIT);
+		status = phba->lpfc_hba_init_link(phba);
 	else if ((strncmp(buf, "down", sizeof("down") - 1) == 0) &&
 			(phba->link_state >= LPFC_LINK_UP))
-		status = phba->lpfc_hba_down_link(phba, MBX_NOWAIT);
+		status = phba->lpfc_hba_down_link(phba);
 
 	if (status == 0)
 		return strlen(buf);
@@ -749,8 +748,10 @@ lpfc_issue_reset(struct device *dev, struct device_attribute *attr,
 	struct Scsi_Host  *shost = class_to_shost(dev);
 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
 	struct lpfc_hba   *phba = vport->phba;
-
 	int status = -EINVAL;
+
+	if (!phba->cfg_enable_hba_reset)
+		return -EACCES;
 
 	if (strncmp(buf, "selective", sizeof("selective") - 1) == 0)
 		status = phba->lpfc_selective_reset(phba);
@@ -772,7 +773,7 @@ lpfc_issue_reset(struct device *dev, struct device_attribute *attr,
  * Returns:
  * zero for success
  **/
-static int
+int
 lpfc_sli4_pdev_status_reg_wait(struct lpfc_hba *phba)
 {
 	struct lpfc_register portstat_reg = {0};
@@ -2058,11 +2059,12 @@ lpfc_soft_wwpn_store(struct device *dev, struct device_attribute *attr,
 
 	/* Validate and store the new name */
 	for (i=0, j=0; i < 16; i++) {
-		int value;
-
-		value = hex_to_bin(*buf++);
-		if (value >= 0)
-			j = (j << 4) | value;
+		if ((*buf >= 'a') && (*buf <= 'f'))
+			j = ((j << 4) | ((*buf++ -'a') + 10));
+		else if ((*buf >= 'A') && (*buf <= 'F'))
+			j = ((j << 4) | ((*buf++ -'A') + 10));
+		else if ((*buf >= '0') && (*buf <= '9'))
+			j = ((j << 4) | (*buf++ -'0'));
 		else
 			return -EINVAL;
 		if (i % 2) {
@@ -2154,11 +2156,12 @@ lpfc_soft_wwnn_store(struct device *dev, struct device_attribute *attr,
 
 	/* Validate and store the new name */
 	for (i=0, j=0; i < 16; i++) {
-		int value;
-
-		value = hex_to_bin(*buf++);
-		if (value >= 0)
-			j = (j << 4) | value;
+		if ((*buf >= 'a') && (*buf <= 'f'))
+			j = ((j << 4) | ((*buf++ -'a') + 10));
+		else if ((*buf >= 'A') && (*buf <= 'F'))
+			j = ((j << 4) | ((*buf++ -'A') + 10));
+		else if ((*buf >= '0') && (*buf <= '9'))
+			j = ((j << 4) | (*buf++ -'0'));
 		else
 			return -EINVAL;
 		if (i % 2) {
@@ -2395,11 +2398,6 @@ lpfc_nodev_tmo_set(struct lpfc_vport *vport, int val)
 	if (val >= LPFC_MIN_DEVLOSS_TMO && val <= LPFC_MAX_DEVLOSS_TMO) {
 		vport->cfg_nodev_tmo = val;
 		vport->cfg_devloss_tmo = val;
-		/*
-		 * For compat: set the fc_host dev loss so new rports
-		 * will get the value.
-		 */
-		fc_host_dev_loss_tmo(lpfc_shost_from_vport(vport)) = val;
 		lpfc_update_rport_devloss_tmo(vport);
 		return 0;
 	}
@@ -2449,7 +2447,6 @@ lpfc_devloss_tmo_set(struct lpfc_vport *vport, int val)
 		vport->cfg_nodev_tmo = val;
 		vport->cfg_devloss_tmo = val;
 		vport->dev_loss_tmo_changed = 1;
-		fc_host_dev_loss_tmo(lpfc_shost_from_vport(vport)) = val;
 		lpfc_update_rport_devloss_tmo(vport);
 		return 0;
 	}
@@ -4111,8 +4108,10 @@ sysfs_mbox_read(struct file *filp, struct kobject *kobj,
 	struct Scsi_Host  *shost = class_to_shost(dev);
 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
 	struct lpfc_hba   *phba = vport->phba;
-	int rc;
+	LPFC_MBOXQ_t *mboxq;
 	MAILBOX_t *pmb;
+	uint32_t mbox_tmo;
+	int rc;
 
 	if (off > MAILBOX_CMD_SIZE)
 		return -ERANGE;
@@ -4137,7 +4136,8 @@ sysfs_mbox_read(struct file *filp, struct kobject *kobj,
 	if (off == 0 &&
 	    phba->sysfs_mbox.state  == SMBOX_WRITING &&
 	    phba->sysfs_mbox.offset >= 2 * sizeof(uint32_t)) {
-		pmb = &phba->sysfs_mbox.mbox->u.mb;
+		mboxq = (LPFC_MBOXQ_t *)&phba->sysfs_mbox.mbox;
+		pmb = &mboxq->u.mb;
 		switch (pmb->mbxCommand) {
 			/* Offline only */
 		case MBX_INIT_LINK:
@@ -4247,9 +4247,8 @@ sysfs_mbox_read(struct file *filp, struct kobject *kobj,
 
 		} else {
 			spin_unlock_irq(&phba->hbalock);
-			rc = lpfc_sli_issue_mbox_wait (phba,
-						       phba->sysfs_mbox.mbox,
-				lpfc_mbox_tmo_val(phba, pmb->mbxCommand) * HZ);
+			mbox_tmo = lpfc_mbox_tmo_val(phba, mboxq);
+			rc = lpfc_sli_issue_mbox_wait(phba, mboxq, mbox_tmo);
 			spin_lock_irq(&phba->hbalock);
 		}
 
@@ -4494,9 +4493,10 @@ lpfc_get_host_fabric_name (struct Scsi_Host *shost)
 
 	spin_lock_irq(shost->host_lock);
 
-	if ((vport->fc_flag & FC_FABRIC) ||
-	    ((phba->fc_topology == LPFC_TOPOLOGY_LOOP) &&
-	     (vport->fc_flag & FC_PUBLIC_LOOP)))
+	if ((vport->port_state > LPFC_FLOGI) &&
+	    ((vport->fc_flag & FC_FABRIC) ||
+	     ((phba->fc_topology == LPFC_TOPOLOGY_LOOP) &&
+	      (vport->fc_flag & FC_PUBLIC_LOOP))))
 		node_name = wwn_to_u64(phba->fc_fabparam.nodeName.u.wwn);
 	else
 		/* fabric is local port if there is no F/FL_Port */
@@ -4569,9 +4569,17 @@ lpfc_get_stats(struct Scsi_Host *shost)
 	memset(hs, 0, sizeof (struct fc_host_statistics));
 
 	hs->tx_frames = pmb->un.varRdStatus.xmitFrameCnt;
-	hs->tx_words = (pmb->un.varRdStatus.xmitByteCnt * 256);
+	/*
+	 * The MBX_READ_STATUS returns tx_k_bytes which has to
+	 * converted to words
+	 */
+	hs->tx_words = (uint64_t)
+			((uint64_t)pmb->un.varRdStatus.xmitByteCnt
+			* (uint64_t)256);
 	hs->rx_frames = pmb->un.varRdStatus.rcvFrameCnt;
-	hs->rx_words = (pmb->un.varRdStatus.rcvByteCnt * 256);
+	hs->rx_words = (uint64_t)
+			((uint64_t)pmb->un.varRdStatus.rcvByteCnt
+			 * (uint64_t)256);
 
 	memset(pmboxq, 0, sizeof (LPFC_MBOXQ_t));
 	pmb->mbxCommand = MBX_READ_LNK_STAT;

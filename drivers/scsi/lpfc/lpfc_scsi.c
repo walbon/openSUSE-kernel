@@ -2325,8 +2325,9 @@ lpfc_handle_fcp_err(struct lpfc_vport *vport, struct lpfc_scsi_buf *lpfc_cmd,
 	}
 	lp = (uint32_t *)cmnd->sense_buffer;
 
-	if (!scsi_status && (resp_info & RESID_UNDER))
-		logit = LOG_FCP;
+	if (!scsi_status && (resp_info & RESID_UNDER) &&
+		vport->cfg_log_verbose & LOG_FCP_UNDER)
+		logit = LOG_FCP_UNDER;
 
 	lpfc_printf_vlog(vport, KERN_WARNING, logit,
 			 "9024 FCP command x%x failed: x%x SNS x%x x%x "
@@ -2342,7 +2343,7 @@ lpfc_handle_fcp_err(struct lpfc_vport *vport, struct lpfc_scsi_buf *lpfc_cmd,
 	if (resp_info & RESID_UNDER) {
 		scsi_set_resid(cmnd, be32_to_cpu(fcprsp->rspResId));
 
-		lpfc_printf_vlog(vport, KERN_INFO, LOG_FCP,
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_FCP_UNDER,
 				 "9025 FCP Read Underrun, expected %d, "
 				 "residual %d Data: x%x x%x x%x\n",
 				 be32_to_cpu(fcpcmd->fcpDl),
@@ -2449,6 +2450,7 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
 	struct lpfc_fast_path_event *fast_path_evt;
 	struct Scsi_Host *shost;
 	uint32_t queue_depth, scsi_id;
+	uint32_t logit = LOG_FCP;
 
 	/* Sanity check on return of outstanding command */
 	if (!(lpfc_cmd->pCmd))
@@ -2470,16 +2472,22 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
 			lpfc_cmd->status = IOSTAT_DRIVER_REJECT;
 		else if (lpfc_cmd->status >= IOSTAT_CNT)
 			lpfc_cmd->status = IOSTAT_DEFAULT;
-
-		lpfc_printf_vlog(vport, KERN_WARNING, LOG_FCP,
-				 "9030 FCP cmd x%x failed <%d/%d> "
-				 "status: x%x result: x%x Data: x%x x%x\n",
-				 cmd->cmnd[0],
-				 cmd->device ? cmd->device->id : 0xffff,
-				 cmd->device ? cmd->device->lun : 0xffff,
-				 lpfc_cmd->status, lpfc_cmd->result,
-				 pIocbOut->iocb.ulpContext,
-				 lpfc_cmd->cur_iocbq.iocb.ulpIoTag);
+		if (lpfc_cmd->status == IOSTAT_FCP_RSP_ERROR
+			&& !lpfc_cmd->fcp_rsp->rspStatus3
+			&& (lpfc_cmd->fcp_rsp->rspStatus2 & RESID_UNDER)
+			&& !(phba->cfg_log_verbose & LOG_FCP_UNDER))
+			logit = 0;
+		else
+			logit = LOG_FCP | LOG_FCP_UNDER;
+		lpfc_printf_vlog(vport, KERN_WARNING, logit,
+			 "9030 FCP cmd x%x failed <%d/%d> "
+			 "status: x%x result: x%x Data: x%x x%x\n",
+			 cmd->cmnd[0],
+			 cmd->device ? cmd->device->id : 0xffff,
+			 cmd->device ? cmd->device->lun : 0xffff,
+			 lpfc_cmd->status, lpfc_cmd->result,
+			 pIocbOut->iocb.ulpContext,
+			 lpfc_cmd->cur_iocbq.iocb.ulpIoTag);
 
 		switch (lpfc_cmd->status) {
 		case IOSTAT_FCP_RSP_ERROR:
@@ -3236,8 +3244,9 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 	if (!lpfc_cmd) {
 		lpfc_printf_vlog(vport, KERN_WARNING, LOG_FCP,
 			 "2873 SCSI Layer I/O Abort Request IO CMPL Status "
-			 "x%x ID %d LUN %d\n",
-			 ret, cmnd->device->id, cmnd->device->lun);
+			 "x%x ID %d "
+			 "LUN %d snum %#lx\n", ret, cmnd->device->id,
+			 cmnd->device->lun, cmnd->serial_number);
 		return SUCCESS;
 	}
 
@@ -3315,15 +3324,16 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 		lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
 				 "0748 abort handler timed out waiting "
 				 "for abort to complete: ret %#x, ID %d, "
-				 "LUN %d\n",
-				 ret, cmnd->device->id, cmnd->device->lun);
+				 "LUN %d, snum %#lx\n",
+				 ret, cmnd->device->id, cmnd->device->lun,
+				 cmnd->serial_number);
 	}
 
  out:
 	lpfc_printf_vlog(vport, KERN_WARNING, LOG_FCP,
 			 "0749 SCSI Layer I/O Abort Request Status x%x ID %d "
-			 "LUN %d\n", ret, cmnd->device->id,
-			 cmnd->device->lun);
+			 "LUN %d snum %#lx\n", ret, cmnd->device->id,
+			 cmnd->device->lun, cmnd->serial_number);
 	return ret;
 }
 
@@ -3682,7 +3692,7 @@ lpfc_bus_reset_handler(struct scsi_cmnd *cmnd)
 	struct lpfc_nodelist *ndlp = NULL;
 	struct lpfc_scsi_event_header scsi_event;
 	int match;
-	int ret = SUCCESS, status, i;
+	int ret = SUCCESS, status = SUCCESS, i;
 
 	scsi_event.event_type = FC_REG_SCSI_EVENT;
 	scsi_event.subcategory = LPFC_EVENT_BUSRESET;
@@ -3826,6 +3836,7 @@ lpfc_slave_alloc(struct scsi_device *sdev)
  *
  * This routine configures following items
  *   - Tag command queuing support for @sdev if supported.
+ *   - Dev loss time out value of fc_rport.
  *   - Enable SLI polling for fcp ring if ENABLE_FCP_RING_POLLING flag is set.
  *
  * Return codes:
@@ -3836,11 +3847,20 @@ lpfc_slave_configure(struct scsi_device *sdev)
 {
 	struct lpfc_vport *vport = (struct lpfc_vport *) sdev->host->hostdata;
 	struct lpfc_hba   *phba = vport->phba;
+	struct fc_rport   *rport = starget_to_rport(sdev->sdev_target);
 
 	if (sdev->tagged_supported)
 		scsi_activate_tcq(sdev, vport->cfg_lun_queue_depth);
 	else
 		scsi_deactivate_tcq(sdev, vport->cfg_lun_queue_depth);
+
+	/*
+	 * Initialize the fc transport attributes for the target
+	 * containing this scsi device.  Also note that the driver's
+	 * target pointer is stored in the starget_data for the
+	 * driver's sysfs entry point functions.
+	 */
+	rport->dev_loss_tmo = vport->cfg_devloss_tmo;
 
 	if (phba->cfg_poll & ENABLE_FCP_RING_POLLING) {
 		lpfc_sli_handle_fast_ring_event(phba,

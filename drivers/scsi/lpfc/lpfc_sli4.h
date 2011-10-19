@@ -388,6 +388,16 @@ struct lpfc_iov {
 	uint32_t vf_number;
 };
 
+struct lpfc_sli4_lnk_info {
+	uint8_t lnk_dv;
+#define LPFC_LNK_DAT_INVAL	0
+#define LPFC_LNK_DAT_VAL	1
+	uint8_t lnk_tp;
+#define LPFC_LNK_GE	0x0 /* FCoE */
+#define LPFC_LNK_FC	0x1 /* FC   */
+	uint8_t lnk_no;
+};
+
 /* SLI4 HBA data structure entries */
 struct lpfc_sli4_hba {
 	void __iomem *conf_regs_memmap_p; /* Kernel memory mapped address for
@@ -503,6 +513,10 @@ struct lpfc_sli4_hba {
 	struct list_head sp_els_xri_aborted_work_queue;
 	struct list_head sp_unsol_work_queue;
 	struct lpfc_sli4_link link_state;
+	struct lpfc_sli4_lnk_info lnk_info;
+	uint32_t pport_name_sta;
+#define LPFC_SLI4_PPNAME_NON	0
+#define LPFC_SLI4_PPNAME_GET	1
 	struct lpfc_iov iov;
 	spinlock_t abts_scsi_buf_list_lock; /* list of aborted SCSI IOs */
 	spinlock_t abts_sgl_list_lock; /* list of aborted els IOs */
@@ -553,6 +567,7 @@ struct lpfc_rsrc_blks {
  * SLI4 specific function prototypes
  */
 int lpfc_pci_function_reset(struct lpfc_hba *);
+int lpfc_sli4_pdev_status_reg_wait(struct lpfc_hba *);
 int lpfc_sli4_hba_setup(struct lpfc_hba *);
 int lpfc_sli4_config(struct lpfc_hba *, struct lpfcMboxq *, uint8_t,
 		     uint8_t, uint32_t, bool);
@@ -632,5 +647,5 @@ void lpfc_mbx_cmpl_fcf_rr_read_fcf_rec(struct lpfc_hba *, LPFC_MBOXQ_t *);
 void lpfc_mbx_cmpl_read_fcf_rec(struct lpfc_hba *, LPFC_MBOXQ_t *);
 int lpfc_sli4_unregister_fcf(struct lpfc_hba *);
 int lpfc_sli4_post_status_check(struct lpfc_hba *);
-uint8_t lpfc_sli4_mbox_opcode_get(struct lpfc_hba *, struct lpfcMboxq *);
-
+uint8_t lpfc_sli_config_mbox_subsys_get(struct lpfc_hba *, LPFC_MBOXQ_t *);
+uint8_t lpfc_sli_config_mbox_opcode_get(struct lpfc_hba *, LPFC_MBOXQ_t *);

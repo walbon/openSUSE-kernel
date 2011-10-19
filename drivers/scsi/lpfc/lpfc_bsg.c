@@ -1916,7 +1916,7 @@ lpfc_sli4_bsg_diag_mode_end(struct fc_bsg_job *job)
 	rc = lpfc_sli4_bsg_set_link_diag_state(phba, 0);
 
 	if (!rc)
-		rc = phba->lpfc_hba_init_link(phba, MBX_NOWAIT);
+		rc = phba->lpfc_hba_init_link(phba);
 
 	return rc;
 }
