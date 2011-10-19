@@ -2020,7 +2020,7 @@ int fc_eh_abort(struct scsi_cmnd *sc_cmd)
 	int rval;
 
 	rval = fc_block_scsi_eh(sc_cmd);
-	if (rval)
+	if (rval != SUCCESS)
 		return rval;
 
 	lport = shost_priv(sc_cmd->device->host);
@@ -2072,7 +2072,7 @@ int fc_eh_device_reset(struct scsi_cmnd *sc_cmd)
 	int rval;
 
 	rval = fc_block_scsi_eh(sc_cmd);
-	if (rval)
+	if (rval != SUCCESS)
 		return rval;
 
 	lport = shost_priv(sc_cmd->device->host);
