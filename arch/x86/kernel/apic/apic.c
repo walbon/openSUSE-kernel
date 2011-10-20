@@ -1439,40 +1439,33 @@ int __init enable_IR(void)
 #ifdef CONFIG_INTR_REMAP
 	if (!intr_remapping_supported()) {
 		pr_debug("intr-remapping not supported\n");
-		return 0;
+		return -1;
 	}
 
 	if (!x2apic_preenabled && skip_ioapic_setup) {
 		pr_info("Skipped enabling intr-remap because of skipping "
 			"io-apic setup\n");
-		return 0;
+		return -1;
 	}
 
-	if (enable_intr_remapping(x2apic_supported()))
-		return 0;
-
-	pr_info("Enabled Interrupt-remapping\n");
-
-	return 1;
-
+	return enable_intr_remapping();
 #endif
-	return 0;
+	return -1;
 }
 
 void __init enable_IR_x2apic(void)
 {
 	unsigned long flags;
-	int ret = 0, x2apic_enabled = 0;
+	int ret, x2apic_enabled = 0;
 	int dmar_table_init_ret;
 
 	dmar_table_init_ret = dmar_table_init();
-	if (dmar_table_init_ret && !cpu_has_x2apic)
+	if (dmar_table_init_ret && !x2apic_supported())
 		return;
 
 	ret = save_ioapic_entries();
 	if (ret) {
 		pr_info("Saving IO-APIC state failed: %d\n", ret);
-		ret = 0;
 		goto out;
 	}
 
@@ -1481,11 +1474,11 @@ void __init enable_IR_x2apic(void)
 	mask_ioapic_entries();
 
 	if (dmar_table_init_ret)
-		ret = 0;
+		ret = -1;
 	else
 		ret = enable_IR();
 
-	if (!ret) {
+	if (ret < 0) {
 		/* IR is required if there is APIC ID > 255 even when running
 		 * under KVM
 		 */
@@ -1499,8 +1492,10 @@ void __init enable_IR_x2apic(void)
 		x2apic_force_phys();
 	}
 
-	if (x2apic_supported())
-		x2apic_enabled = 1;
+	if (ret == IRQ_REMAP_XAPIC_MODE)
+		goto nox2apic;
+
+	x2apic_enabled = 1;
 
 	if (x2apic_supported() && !x2apic_mode) {
 		x2apic_mode = 1;
@@ -1509,25 +1504,21 @@ void __init enable_IR_x2apic(void)
 	}
 
 nox2apic:
-	if (!ret) /* IR enabling failed */
+	if (ret < 0) /* IR enabling failed */
 		restore_ioapic_entries();
 	legacy_pic->restore_mask();
 	local_irq_restore(flags);
 
 out:
-	if (x2apic_enabled)
+	if (x2apic_enabled || !x2apic_supported())
 		return;
 
 	if (x2apic_preenabled)
 		panic("x2apic: enabled by BIOS but kernel init failed.");
-	else if (!ret && cpu_has_x2apic) /* IR enabling failed */
-		pr_info("Not enabling x2apic, Intr-remapping init failed.\n");
-	else if (!x2apic_supported() && cpu_has_x2apic)
-		WARN(1, "Your BIOS is broken and requested that x2apic be "
-			"disabled.\n This will leave your machine vulnerable to"
-			" irq-injection attacks\n"
-			"Use 'intel_iommu=no_x2apic_optout' to override BIOS "
-			"request\n");
+	else if (ret == IRQ_REMAP_XAPIC_MODE)
+		pr_info("x2apic not enabled, IRQ remapping is in xapic mode\n");
+	else if (ret < 0)
+		pr_info("x2apic not enabled, IRQ remapping init failed\n");
 }
 
 #ifdef CONFIG_X86_64

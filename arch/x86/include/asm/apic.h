@@ -198,6 +198,7 @@ static inline int x2apic_enabled(void)
 	return 0;
 }
 
+#define x2apic_supported()	(cpu_has_x2apic)
 static inline void x2apic_force_phys(void)
 {
 	x2apic_phys = 1;
@@ -218,6 +219,7 @@ static inline void x2apic_force_phys(void)
 }
 
 #define	x2apic_preenabled 0
+#define	x2apic_supported()	0
 #endif
 
 extern void enable_IR_x2apic(void);

@@ -42,6 +42,5 @@ static inline int iommu_calculate_max_sagaw(struct intel_iommu *iommu)
 #endif
 
 extern int dmar_disabled;
-extern int no_x2apic_optout;
 
 #endif
