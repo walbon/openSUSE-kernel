@@ -285,6 +285,77 @@ out:
 static DEVICE_ATTR(canonical_macaddr, 0644, qeth_l3_dev_canonical_macaddr_show,
 		   qeth_l3_dev_canonical_macaddr_store);
 
+static ssize_t qeth_l3_dev_checksum_show(struct device *dev,
+			struct device_attribute *attr, char *buf)
+{
+	struct qeth_card *card = dev_get_drvdata(dev);
+	char sw[] = "sw checksumming\n";
+	char hw[] = "hw checksumming\n";
+	char *res;
+
+	if (!card)
+		return -EINVAL;
+
+	if (card->dev) {
+		if (card->dev->features & NETIF_F_RXCSUM)
+			res = hw;
+		else
+			res = sw;
+	} else {
+		if (card->options.rxcsum)
+			res = hw;
+		else
+			res = sw;
+	}
+	return sprintf(buf, res);
+}
+
+static ssize_t qeth_l3_dev_checksum_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct qeth_card *card = dev_get_drvdata(dev);
+	char *tmp;
+	int rc = 0;
+
+	if (!card)
+		return -EINVAL;
+
+	mutex_lock(&card->conf_mutex);
+	if ((card->state != CARD_STATE_DOWN) &&
+	    (card->state != CARD_STATE_RECOVER)) {
+		rc = -EPERM;
+		goto out;
+	}
+
+	tmp = strsep((char **) &buf, "\n");
+	if (!strcmp(tmp, "sw_checksumming")) {
+		if (!card->dev)
+			card->options.rxcsum = 0;
+		else {
+			rtnl_lock();
+			card->dev->wanted_features &= ~NETIF_F_RXCSUM;
+			netdev_update_features(card->dev);
+			rtnl_unlock();
+		}
+	} else if (!strcmp(tmp, "hw_checksumming")) {
+		if (!card->dev)
+			card->options.rxcsum = 1;
+		else {
+			rtnl_lock();
+			card->dev->wanted_features |= NETIF_F_RXCSUM;
+			netdev_update_features(card->dev);
+			rtnl_unlock();
+		}
+	} else
+		rc = -EINVAL;
+out:
+	mutex_unlock(&card->conf_mutex);
+	return rc ? rc : count;
+}
+
+static DEVICE_ATTR(checksumming, 0644, qeth_l3_dev_checksum_show,
+		qeth_l3_dev_checksum_store);
+
 static ssize_t qeth_l3_dev_sniffer_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -349,6 +420,73 @@ out:
 static DEVICE_ATTR(sniffer, 0644, qeth_l3_dev_sniffer_show,
 		qeth_l3_dev_sniffer_store);
 
+static ssize_t qeth_l3_dev_large_send_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct qeth_card *card = dev_get_drvdata(dev);
+	char tso[] = "TSO\n";
+	char no[] = "no\n";
+	char *res;
+
+	if (!card)
+		return -EINVAL;
+
+	if (card->dev) {
+		if (card->dev->features & NETIF_F_TSO)
+			res = tso;
+		else
+			res = no;
+	} else {
+		if (card->options.tso)
+			res = tso;
+		else
+			res = no;
+
+	}
+	return sprintf(buf, res);
+}
+
+static ssize_t qeth_l3_dev_large_send_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct qeth_card *card = dev_get_drvdata(dev);
+	int rc = 0;
+	char *tmp;
+
+	if (!card)
+		return -EINVAL;
+
+	mutex_lock(&card->conf_mutex);
+	tmp = strsep((char **) &buf, "\n");
+	if (!strcmp(tmp, "no")) {
+		if (!card->dev)
+			card->options.tso = 0;
+		else {
+			rtnl_lock();
+			card->dev->wanted_features &= ~(NETIF_F_TSO |
+				NETIF_F_SG | NETIF_F_IP_CSUM);
+			netdev_update_features(card->dev);
+			rtnl_unlock();
+		}
+	} else if (!strcmp(tmp, "TSO")) {
+		if (!card->dev)
+			card->options.tso = 1;
+		else {
+			rtnl_lock();
+			card->dev->wanted_features |= (NETIF_F_TSO |
+				NETIF_F_SG | NETIF_F_IP_CSUM);
+			netdev_update_features(card->dev);
+			rtnl_unlock();
+		}
+	} else
+		rc = -EINVAL;
+
+	mutex_unlock(&card->conf_mutex);
+	return rc ? rc : count;
+}
+
+static DEVICE_ATTR(large_send, 0644, qeth_l3_dev_large_send_show,
+		   qeth_l3_dev_large_send_store);
 
 static ssize_t qeth_l3_dev_hsuid_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -460,7 +598,9 @@ static struct attribute *qeth_l3_device_attrs[] = {
 	&dev_attr_fake_broadcast.attr,
 	&dev_attr_broadcast_mode.attr,
 	&dev_attr_canonical_macaddr.attr,
+	&dev_attr_checksumming.attr,
 	&dev_attr_sniffer.attr,
+	&dev_attr_large_send.attr,
 	&dev_attr_hsuid.attr,
 	NULL,
 };

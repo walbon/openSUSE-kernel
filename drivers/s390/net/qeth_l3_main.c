@@ -3324,7 +3324,11 @@ static int qeth_l3_setup_netdev(struct qeth_card *card)
 				card->dev->hw_features = NETIF_F_SG |
 					NETIF_F_RXCSUM | NETIF_F_IP_CSUM |
 					NETIF_F_TSO;
-				card->dev->features = NETIF_F_RXCSUM;
+				if (card->options.rxcsum)
+					card->dev->features |= NETIF_F_RXCSUM;
+				if (card->options.tso)
+					card->dev->features |= NETIF_F_TSO |
+						NETIF_F_IP_CSUM | NETIF_F_SG;
 			}
 		}
 	} else if (card->info.type == QETH_CARD_TYPE_IQD) {
@@ -3360,6 +3364,8 @@ static int qeth_l3_probe_device(struct ccwgroup_device *gdev)
 
 	qeth_l3_create_device_attributes(&gdev->dev);
 	card->options.layer2 = 0;
+	card->options.rxcsum = 1;
+	card->options.tso = 0;
 	card->info.hwtrap = 0;
 	card->discipline.start_poll = qeth_qdio_start_poll;
 	card->discipline.input_handler = (qdio_handler_t *)
