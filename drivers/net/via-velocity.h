@@ -1352,6 +1352,7 @@ enum velocity_msg_level {
  */
 
 #define     VELOCITY_FLAGS_TAGGING         0x00000001UL
+#define     VELOCITY_FLAGS_TX_CSUM         0x00000002UL
 #define     VELOCITY_FLAGS_RX_CSUM         0x00000004UL
 #define     VELOCITY_FLAGS_IP_ALIGN        0x00000008UL
 #define     VELOCITY_FLAGS_VAL_PKT_LEN     0x00000010UL

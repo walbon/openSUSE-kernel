@@ -297,6 +297,14 @@ VELOCITY_PARAM(DMA_length, "DMA length");
 */
 VELOCITY_PARAM(IP_byte_align, "Enable IP header dword aligned");
 
+#define TX_CSUM_DEF     1
+/* txcsum_offload[] is used for setting the checksum offload ability of NIC.
+   (We only support RX checksum offload now)
+   0: disable csum_offload[checksum offload
+   1: enable checksum offload. (Default)
+*/
+VELOCITY_PARAM(txcsum_offload, "Enable transmit packet checksum offload");
+
 #define FLOW_CNTL_DEF   1
 #define FLOW_CNTL_MIN   1
 #define FLOW_CNTL_MAX   5
@@ -487,6 +495,7 @@ static void __devinit velocity_get_options(struct velocity_opt *opts, int index,
 	velocity_set_int_opt(&opts->numrx, RxDescriptors[index], RX_DESC_MIN, RX_DESC_MAX, RX_DESC_DEF, "RxDescriptors", devname);
 	velocity_set_int_opt(&opts->numtx, TxDescriptors[index], TX_DESC_MIN, TX_DESC_MAX, TX_DESC_DEF, "TxDescriptors", devname);
 
+	velocity_set_bool_opt(&opts->flags, txcsum_offload[index], TX_CSUM_DEF, VELOCITY_FLAGS_TX_CSUM, "txcsum_offload", devname);
 	velocity_set_int_opt(&opts->flow_cntl, flow_control[index], FLOW_CNTL_MIN, FLOW_CNTL_MAX, FLOW_CNTL_DEF, "flow_control", devname);
 	velocity_set_bool_opt(&opts->flags, IP_byte_align[index], IP_ALIG_DEF, VELOCITY_FLAGS_IP_ALIGN, "IP_byte_align", devname);
 	velocity_set_bool_opt(&opts->flags, ValPktLen[index], VAL_PKT_LEN_DEF, VELOCITY_FLAGS_VAL_PKT_LEN, "ValPktLen", devname);
@@ -2844,9 +2853,14 @@ static int __devinit velocity_found1(struct pci_dev *pdev, const struct pci_devi
 	dev->ethtool_ops = &velocity_ethtool_ops;
 	netif_napi_add(dev, &vptr->napi, velocity_poll, VELOCITY_NAPI_WEIGHT);
 
-	dev->hw_features = NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_HW_VLAN_TX;
+	dev->hw_features = NETIF_F_SG | NETIF_F_HW_VLAN_TX;
 	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_FILTER |
-		NETIF_F_HW_VLAN_RX | NETIF_F_IP_CSUM;
+		NETIF_F_HW_VLAN_RX;
+
+	if (vptr->flags & VELOCITY_FLAGS_TX_CSUM) {
+		dev->hw_features |= NETIF_F_IP_CSUM;
+		dev->features |= NETIF_F_IP_CSUM;
+	}
 
 	ret = register_netdev(dev);
 	if (ret < 0)
