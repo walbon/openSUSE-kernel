@@ -346,6 +346,10 @@ VELOCITY_PARAM(ValPktLen, "Receiving or Drop invalid 802.3 frame");
 */
 VELOCITY_PARAM(wol_opts, "Wake On Lan options");
 
+static int int_works;
+module_param(int_works, int, 0);
+MODULE_PARM_DESC(int_works, "dummy option added for backwards compatibility");
+
 static int rx_copybreak = 200;
 module_param(rx_copybreak, int, 0644);
 MODULE_PARM_DESC(rx_copybreak, "Copy breakpoint for copy-only-tiny-frames");

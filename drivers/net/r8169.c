@@ -248,6 +248,7 @@ static DEFINE_PCI_DEVICE_TABLE(rtl8169_pci_tbl) = {
 
 MODULE_DEVICE_TABLE(pci, rtl8169_pci_tbl);
 
+static int rx_copybreak;
 static int rx_buf_sz = 16383;
 static int use_dac;
 static struct {
@@ -673,6 +674,8 @@ struct rtl8169_private {
 
 MODULE_AUTHOR("Realtek and the Linux r8169 crew <netdev@vger.kernel.org>");
 MODULE_DESCRIPTION("RealTek RTL-8169 Gigabit Ethernet driver");
+module_param(rx_copybreak, int, 0);
+MODULE_PARM_DESC(rx_copybreak, "dummy option added for backwards compatibility");
 module_param(use_dac, int, 0);
 MODULE_PARM_DESC(use_dac, "Enable PCI DAC. Unsafe on 32 bit PCI slot.");
 module_param_named(debug, debug.msg_enable, int, 0);
