@@ -52,7 +52,7 @@
 #include "hpsa.h"
 
 /* HPSA_DRIVER_VERSION must be 3 byte values (0-255) separated by '.' */
-#define HPSA_DRIVER_VERSION "110526.863-1"
+#define HPSA_DRIVER_VERSION "3.0.0"
 #define DRIVER_NAME "HP HPSA Driver (v " HPSA_DRIVER_VERSION ")"
 
 /* How long to wait (in milliseconds) for board to go into simple mode */
@@ -3660,16 +3660,6 @@ default_int_mode:
 	h->intr[h->intr_mode] = h->pdev->irq;
 }
 
-int (*hpsa_alternate_pci_init)(struct ctlr_info *h,
-	struct pci_dev *pdev, u32 board_id, void *intr, void *remove);
-/* ^^^ note, since pdev and board_id are already in h, look into
- * removing the pdev and board_id parameters.  However the Ibanez
- * hpsa_alternate_pci_init function does some funny things, so it's
- * not immediately clear to me that removing these is perfectly
- * straightforward.  Also I renamed this function hpsa_alternate_pci_init
- * (previously just alternate_pci_init) since we export it.
- */
-EXPORT_SYMBOL(hpsa_alternate_pci_init);
 static int __devinit hpsa_lookup_board_id(struct pci_dev *pdev, u32 *board_id)
 {
 	int i;
@@ -3687,16 +3677,10 @@ static int __devinit hpsa_lookup_board_id(struct pci_dev *pdev, u32 *board_id)
 	if ((subsystem_vendor_id != PCI_VENDOR_ID_HP &&
 		subsystem_vendor_id != PCI_VENDOR_ID_COMPAQ) ||
 		!hpsa_allow_any) {
-		/* Ibanez check */
-		if ((subsystem_vendor_id != 0x1000) &&
-		    (subsystem_vendor_id != 0x1590) &&
-		    (subsystem_vendor_id != 0x103c) &&
-		    (*board_id != 0x1783103c)) {
 			dev_warn(&pdev->dev, "unrecognized board ID: "
 				"0x%08x, ignoring.\n", *board_id);
 				return -ENODEV;
 		}
-	}
 	return ARRAY_SIZE(products) - 1; /* generic unknown smart array */
 }
 
@@ -3925,23 +3909,7 @@ static int __devinit hpsa_pci_init(struct ctlr_info *h)
 			"cannot obtain PCI resources, aborting\n");
 		return err;
 	}
-
-	if (hpsa_alternate_pci_init) {
-		h->intr_mode = SIMPLE_MODE_INT;
-		err = hpsa_alternate_pci_init(h, h->pdev, h->board_id,
-				do_hpsa_intr_msi, hpsa_remove_one);
-		if (err < 0)
-			goto err_out_free_res;
-		/* If 1 it's a real Smart Array HBA, we want to continue on. */
-		if (err != 1) {
-			/* init is done for this IBANEZ board (i.e. an ICH10) */
-			return err;
-		}
-
-	}
-
 	hpsa_interrupt_mode(h);
-
 	err = hpsa_pci_find_memory_BAR(h->pdev, &h->paddr);
 	if (err)
 		goto err_out_free_res;
