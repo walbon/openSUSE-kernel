@@ -1,13 +1,16 @@
 /*
+ * Disregards a certain amount of sleep time (sched_latency_ns) and
+ * considers the task to be running during that period. This gives it
+ * a service deficit on wakeup, allowing it to run sooner.
+ */
+SCHED_FEAT(FAIR_SLEEPERS, 1)
+
+/*
  * Only give sleepers 50% of their service deficit. This allows
  * them to run sooner, but does not allow tons of sleepers to
  * rip the spread apart.
  */
-#ifdef CONFIG_FAIR_SLEEPERS_ON_BY_DEFAULT
 SCHED_FEAT(GENTLE_FAIR_SLEEPERS, 1)
-#else
-SCHED_FEAT(GENTLE_FAIR_SLEEPERS, 0)
-#endif
 
 /*
  * Place new tasks ahead so that they do not starve already running

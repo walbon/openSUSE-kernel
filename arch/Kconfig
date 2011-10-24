@@ -180,6 +180,3 @@ config HAVE_RCU_TABLE_FREE
 
 source "kernel/gcov/Kconfig"
 
-config FAIR_SLEEPERS_ON_BY_DEFAULT
-	bool
-	default y if !S390
