@@ -260,7 +260,9 @@ do { \
 static inline struct rdac_dh_data *get_rdac_data(struct scsi_device *sdev)
 {
 	struct scsi_dh_data *scsi_dh_data = sdev->scsi_dh_data;
-	BUG_ON(scsi_dh_data == NULL);
+
+	if (!scsi_dh_data)
+		return NULL;
 	return ((struct rdac_dh_data *) scsi_dh_data->buf);
 }
 
@@ -577,7 +579,8 @@ static int mode_select_handle_sense(struct scsi_device *sdev,
 
 	RDAC_LOG(RDAC_LOG_FAILOVER, sdev, "array %s, ctlr %d, "
 		"MODE_SELECT returned with sense %02x/%02x/%02x",
-		(char *) h->ctlr->array_name, h->ctlr->index,
+		 h ? (char *) h->ctlr->array_name : "<unknown>",
+		 h ? h->ctlr->index : -1,
 		sense_hdr.sense_key, sense_hdr.asc, sense_hdr.ascq);
 
 done:
@@ -588,7 +591,7 @@ static void send_mode_select(struct work_struct *work)
 {
 	struct rdac_controller *ctlr =
 		container_of(work, struct rdac_controller, ms_work);
-	struct request *rq;
+	struct request *rq = NULL;
 	struct scsi_device *sdev = ctlr->ms_sdev;
 	struct rdac_dh_data *h = get_rdac_data(sdev);
 	struct request_queue *q = sdev->request_queue;
@@ -602,6 +605,10 @@ static void send_mode_select(struct work_struct *work)
 	ctlr->ms_sdev = NULL;
 	spin_unlock(&ctlr->ms_lock);
 
+	if (!h) {
+		err = SCSI_DH_NOSYS;
+		goto done;
+	}
 retry:
 	err = SCSI_DH_RES_TEMP_UNAVAIL;
 	rq = rdac_failover_get(sdev, h, &list);
@@ -650,6 +657,10 @@ static int queue_mode_select(struct scsi_device *sdev,
 		return SCSI_DH_RETRY;
 
 	qdata->h = get_rdac_data(sdev);
+	if (!qdata->h) {
+		kfree(qdata);
+		return SCSI_DH_NOSYS;
+	}
 	qdata->callback_fn = fn;
 	qdata->callback_data = data;
 
@@ -669,8 +680,11 @@ static int rdac_activate(struct scsi_device *sdev,
 			activate_complete fn, void *data)
 {
 	struct rdac_dh_data *h = get_rdac_data(sdev);
-	int err = SCSI_DH_OK;
+	int err = SCSI_DH_NOSYS;
 	int act = 0;
+
+	if (!h)
+		goto done;
 
 	err = check_ownership(sdev, h);
 	if (err != SCSI_DH_OK)
@@ -706,7 +720,7 @@ static int rdac_prep_fn(struct scsi_device *sdev, struct request *req)
 	struct rdac_dh_data *h = get_rdac_data(sdev);
 	int ret = BLKPREP_OK;
 
-	if (h->state != RDAC_STATE_ACTIVE) {
+	if (h && h->state != RDAC_STATE_ACTIVE) {
 		ret = BLKPREP_KILL;
 		req->cmd_flags |= REQ_QUIET;
 	}
@@ -720,9 +734,10 @@ static int rdac_check_sense(struct scsi_device *sdev,
 	struct rdac_dh_data *h = get_rdac_data(sdev);
 
 	RDAC_LOG(RDAC_LOG_SENSE, sdev, "array %s, ctlr %d, "
-			"I/O returned with sense %02x/%02x/%02x",
-			(char *) h->ctlr->array_name, h->ctlr->index,
-			sense_hdr->sense_key, sense_hdr->asc, sense_hdr->ascq);
+		 "I/O returned with sense %02x/%02x/%02x",
+		 h ? (char *) h->ctlr->array_name : "<unknown>",
+		 h ? h->ctlr->index : -1, sense_hdr->sense_key,
+		 sense_hdr->asc, sense_hdr->ascq);
 
 	switch (sense_hdr->sense_key) {
 	case NOT_READY:
@@ -758,7 +773,8 @@ static int rdac_check_sense(struct scsi_device *sdev,
 			 * Controller is not the current owner of the LUN,
 			 * Fail the path, so that the other path be used.
 			 */
-			h->state = RDAC_STATE_PASSIVE;
+			if (h)
+				h->state = RDAC_STATE_PASSIVE;
 			return SUCCESS;
 		}
 		break;
