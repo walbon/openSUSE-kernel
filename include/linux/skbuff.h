@@ -1631,7 +1631,7 @@ static inline struct page *__netdev_alloc_page(struct net_device *dev,
 static inline void propagate_pfmemalloc_skb(struct page *page,
 						struct sk_buff *skb)
 {
-	if (page->pfmemalloc)
+	if (page && page->pfmemalloc)
 		skb->pfmemalloc = true;
 }
 
