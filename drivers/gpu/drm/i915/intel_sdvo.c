@@ -1408,9 +1408,13 @@ intel_sdvo_detect(struct drm_connector *connector, bool force)
 			edid = intel_sdvo_get_analog_edid(connector);
 		if (edid != NULL) {
 			if (edid->input & DRM_EDID_INPUT_DIGITAL)
-				ret = connector_status_disconnected;
+				ret = IS_LVDS(intel_sdvo_connector) ?
+					connector_status_connected :
+					connector_status_disconnected;
 			else
-				ret = connector_status_connected;
+				ret = IS_LVDS(intel_sdvo_connector) ?
+					connector_status_disconnected :
+					connector_status_connected;
 			connector->display_info.raw_edid = NULL;
 			kfree(edid);
 		} else
