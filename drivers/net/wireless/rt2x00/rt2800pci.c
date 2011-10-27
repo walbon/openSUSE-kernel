@@ -200,13 +200,6 @@ static void rt2800pci_start_queue(struct data_queue *queue)
 		rt2x00pci_register_write(rt2x00dev, MAC_SYS_CTRL, reg);
 		break;
 	case QID_BEACON:
-		/*
-		 * Allow beacon tasklets to be scheduled for periodic
-		 * beacon updates.
-		 */
-		tasklet_enable(&rt2x00dev->tbtt_tasklet);
-		tasklet_enable(&rt2x00dev->pretbtt_tasklet);
-
 		rt2x00pci_register_read(rt2x00dev, BCN_TIME_CFG, &reg);
 		rt2x00_set_field32(&reg, BCN_TIME_CFG_TSF_TICKING, 1);
 		rt2x00_set_field32(&reg, BCN_TIME_CFG_TBTT_ENABLE, 1);
@@ -219,7 +212,7 @@ static void rt2800pci_start_queue(struct data_queue *queue)
 		break;
 	default:
 		break;
-	};
+	}
 }
 
 static void rt2800pci_kick_queue(struct data_queue *queue)
@@ -269,10 +262,13 @@ static void rt2800pci_stop_queue(struct data_queue *queue)
 		rt2x00pci_register_write(rt2x00dev, INT_TIMER_EN, reg);
 
 		/*
-		 * Wait for tbtt tasklets to finish.
+		 * Wait for current invocation to finish. The tasklet
+		 * won't be scheduled anymore afterwards since we disabled
+		 * the TBTT and PRE TBTT timer.
 		 */
-		tasklet_disable(&rt2x00dev->tbtt_tasklet);
-		tasklet_disable(&rt2x00dev->pretbtt_tasklet);
+		tasklet_kill(&rt2x00dev->tbtt_tasklet);
+		tasklet_kill(&rt2x00dev->pretbtt_tasklet);
+
 		break;
 	default:
 		break;
@@ -437,14 +433,6 @@ static void rt2800pci_toggle_irq(struct rt2x00_dev *rt2x00dev,
 	if (state == STATE_RADIO_IRQ_ON) {
 		rt2x00pci_register_read(rt2x00dev, INT_SOURCE_CSR, &reg);
 		rt2x00pci_register_write(rt2x00dev, INT_SOURCE_CSR, reg);
-
-		/*
-		 * Enable tasklets. The beacon related tasklets are
-		 * enabled when the beacon queue is started.
-		 */
-		tasklet_enable(&rt2x00dev->txstatus_tasklet);
-		tasklet_enable(&rt2x00dev->rxdone_tasklet);
-		tasklet_enable(&rt2x00dev->autowake_tasklet);
 	}
 
 	spin_lock_irqsave(&rt2x00dev->irqmask_lock, flags);
@@ -472,12 +460,13 @@ static void rt2800pci_toggle_irq(struct rt2x00_dev *rt2x00dev,
 
 	if (state == STATE_RADIO_IRQ_OFF) {
 		/*
-		 * Ensure that all tasklets are finished before
-		 * disabling the interrupts.
+		 * Wait for possibly running tasklets to finish.
 		 */
-		tasklet_disable(&rt2x00dev->txstatus_tasklet);
-		tasklet_disable(&rt2x00dev->rxdone_tasklet);
-		tasklet_disable(&rt2x00dev->autowake_tasklet);
+		tasklet_kill(&rt2x00dev->txstatus_tasklet);
+		tasklet_kill(&rt2x00dev->rxdone_tasklet);
+		tasklet_kill(&rt2x00dev->autowake_tasklet);
+		tasklet_kill(&rt2x00dev->tbtt_tasklet);
+		tasklet_kill(&rt2x00dev->pretbtt_tasklet);
 	}
 }
 
@@ -501,7 +490,9 @@ static int rt2800pci_init_registers(struct rt2x00_dev *rt2x00dev)
 	rt2x00pci_register_write(rt2x00dev, PBF_SYS_CTRL, 0x00000e1f);
 	rt2x00pci_register_write(rt2x00dev, PBF_SYS_CTRL, 0x00000e00);
 
-	if (rt2x00_rt(rt2x00dev, RT5390)) {
+	if (rt2x00_is_pcie(rt2x00dev) &&
+	    (rt2x00_rt(rt2x00dev, RT3572) ||
+	     rt2x00_rt(rt2x00dev, RT5390))) {
 		rt2x00pci_register_read(rt2x00dev, AUX_CTRL, &reg);
 		rt2x00_set_field32(&reg, AUX_CTRL_FORCE_PCIE_CLK, 1);
 		rt2x00_set_field32(&reg, AUX_CTRL_WAKE_PCIE_EN, 1);
@@ -811,14 +802,16 @@ static void rt2800pci_pretbtt_tasklet(unsigned long data)
 {
 	struct rt2x00_dev *rt2x00dev = (struct rt2x00_dev *)data;
 	rt2x00lib_pretbtt(rt2x00dev);
-	rt2800pci_enable_interrupt(rt2x00dev, INT_MASK_CSR_PRE_TBTT);
+	if (test_bit(DEVICE_STATE_ENABLED_RADIO, &rt2x00dev->flags))
+		rt2800pci_enable_interrupt(rt2x00dev, INT_MASK_CSR_PRE_TBTT);
 }
 
 static void rt2800pci_tbtt_tasklet(unsigned long data)
 {
 	struct rt2x00_dev *rt2x00dev = (struct rt2x00_dev *)data;
 	rt2x00lib_beacondone(rt2x00dev);
-	rt2800pci_enable_interrupt(rt2x00dev, INT_MASK_CSR_TBTT);
+	if (test_bit(DEVICE_STATE_ENABLED_RADIO, &rt2x00dev->flags))
+		rt2800pci_enable_interrupt(rt2x00dev, INT_MASK_CSR_TBTT);
 }
 
 static void rt2800pci_rxdone_tasklet(unsigned long data)
@@ -826,7 +819,7 @@ static void rt2800pci_rxdone_tasklet(unsigned long data)
 	struct rt2x00_dev *rt2x00dev = (struct rt2x00_dev *)data;
 	if (rt2x00pci_rxdone(rt2x00dev))
 		tasklet_schedule(&rt2x00dev->rxdone_tasklet);
-	else
+	else if (test_bit(DEVICE_STATE_ENABLED_RADIO, &rt2x00dev->flags))
 		rt2800pci_enable_interrupt(rt2x00dev, INT_MASK_CSR_RX_DONE);
 }
 
@@ -834,7 +827,8 @@ static void rt2800pci_autowake_tasklet(unsigned long data)
 {
 	struct rt2x00_dev *rt2x00dev = (struct rt2x00_dev *)data;
 	rt2800pci_wakeup(rt2x00dev);
-	rt2800pci_enable_interrupt(rt2x00dev, INT_MASK_CSR_AUTO_WAKEUP);
+	if (test_bit(DEVICE_STATE_ENABLED_RADIO, &rt2x00dev->flags))
+		rt2800pci_enable_interrupt(rt2x00dev, INT_MASK_CSR_AUTO_WAKEUP);
 }
 
 static void rt2800pci_txstatus_interrupt(struct rt2x00_dev *rt2x00dev)
@@ -1029,6 +1023,7 @@ static const struct ieee80211_ops rt2800pci_mac80211_ops = {
 	.flush			= rt2x00mac_flush,
 	.get_survey		= rt2800_get_survey,
 	.get_ringparam		= rt2x00mac_get_ringparam,
+	.tx_frames_pending	= rt2x00mac_tx_frames_pending,
 };
 
 static const struct rt2800_ops rt2800pci_rt2800_ops = {
@@ -1158,6 +1153,7 @@ static DEFINE_PCI_DEVICE_TABLE(rt2800pci_device_table) = {
 #endif
 #ifdef CONFIG_RT2800PCI_RT53XX
 	{ PCI_DEVICE(0x1814, 0x5390) },
+	{ PCI_DEVICE(0x1814, 0x539a) },
 	{ PCI_DEVICE(0x1814, 0x539f) },
 #endif
 	{ 0, }
