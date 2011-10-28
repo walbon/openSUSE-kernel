@@ -1318,6 +1318,11 @@ static int btrfs_unfreeze(struct super_block *sb)
 	return 0;
 }
 
+static dev_t btrfs_get_maps_dev(struct inode *inode)
+{
+	return BTRFS_I(inode)->root->anon_super.s_dev;
+}
+
 static const struct super_operations btrfs_super_ops = {
 	.drop_inode	= btrfs_drop_inode,
 	.evict_inode	= btrfs_evict_inode,
@@ -1332,6 +1337,7 @@ static const struct super_operations btrfs_super_ops = {
 	.remount_fs	= btrfs_remount,
 	.freeze_fs	= btrfs_freeze,
 	.unfreeze_fs	= btrfs_unfreeze,
+	.get_maps_dev	= btrfs_get_maps_dev,
 };
 
 static const struct file_operations btrfs_ctl_fops = {

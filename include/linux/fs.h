@@ -1664,7 +1664,19 @@ struct super_operations {
 	ssize_t (*quota_write)(struct super_block *, int, const char *, size_t, loff_t);
 #endif
 	int (*bdev_try_to_free_page)(struct super_block*, struct page*, gfp_t);
+	/*
+	 * Workaround for bnc#672923, used only by btrfs. Will be
+	 * replaced with an upstream solution once that is in place.
+	 */
+	dev_t (*get_maps_dev)(struct inode *);
 };
+
+static inline dev_t get_maps_dev(struct inode *inode)
+{
+	if (inode->i_sb->s_op->get_maps_dev)
+		return inode->i_sb->s_op->get_maps_dev(inode);
+	return inode->i_sb->s_dev;
+}
 
 /*
  * Inode state bits.  Protected by inode->i_lock
