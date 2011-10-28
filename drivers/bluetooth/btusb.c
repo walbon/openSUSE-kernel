@@ -90,6 +90,10 @@ static struct usb_device_id btusb_table[] = {
 	/* Ericsson with non-standard id */
 	{ USB_DEVICE(0x0bdb, 0x1002) },
 
+	/* Broadcom 20702 Bluetooth 4.0 Adapter */
+	/* Broadcom Valentine 802.11bgn 1x1 Combo HMC */
+	{ USB_DEVICE(0xa5c, 0x21e3) },
+
 	/* Canyon CN-BTU1 with HID interfaces */
 	{ USB_DEVICE(0x0c10, 0x0000) },
 
