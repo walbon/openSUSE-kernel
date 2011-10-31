@@ -469,6 +469,7 @@ static int fc_seq_send(struct fc_lport *lport, struct fc_seq *sp,
 	struct fc_frame_header *fh = fc_frame_header_get(fp);
 	int error;
 	u32 f_ctl;
+	u8 fh_type = fh->fh_type;
 
 	ep = fc_seq_exch(sp);
 	WARN_ON((ep->esb_stat & ESB_ST_SEQ_INIT) != ESB_ST_SEQ_INIT);
@@ -493,7 +494,7 @@ static int fc_seq_send(struct fc_lport *lport, struct fc_seq *sp,
 	 */
 	error = lport->tt.frame_send(lport, fp);
 
-	if (fh->fh_type == FC_TYPE_BLS)
+	if (fh_type == FC_TYPE_BLS)
 		return error;
 
 	/*
@@ -617,7 +618,6 @@ static int fc_exch_abort_locked(struct fc_exch *ep,
 	/*
 	 * Send an abort for the sequence that timed out.
 	 */
-	spin_unlock_bh(&ep->ex_lock);
 	fp = fc_frame_alloc(ep->lp, 0);
 	if (fp) {
 		fc_fill_fc_hdr(fp, FC_RCTL_BA_ABTS, ep->did, ep->sid,
@@ -625,7 +625,6 @@ static int fc_exch_abort_locked(struct fc_exch *ep,
 		error = fc_seq_send(ep->lp, sp, fp);
 	} else
 		error = -ENOBUFS;
-	spin_lock_bh(&ep->ex_lock);
 	return error;
 }
 
@@ -1794,6 +1793,9 @@ restart:
 			goto restart;
 		}
 	}
+	pool->next_index = 0;
+	pool->left = FC_XID_UNKNOWN;
+	pool->right = FC_XID_UNKNOWN;
 	spin_unlock_bh(&pool->lock);
 }
 
@@ -2282,6 +2284,7 @@ struct fc_exch_mgr *fc_exch_mgr_alloc(struct fc_lport *lport,
 		goto free_mempool;
 	for_each_possible_cpu(cpu) {
 		pool = per_cpu_ptr(mp->pool, cpu);
+		pool->next_index = 0;
 		pool->left = FC_XID_UNKNOWN;
 		pool->right = FC_XID_UNKNOWN;
 		spin_lock_init(&pool->lock);
