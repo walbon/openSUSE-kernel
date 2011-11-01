@@ -642,7 +642,7 @@ struct rq {
 
 	unsigned long cpu_power;
 
-	unsigned char idle_at_tick;
+	unsigned char idle_balance;
 	/* For active balancing */
 	int post_schedule;
 	int active_balance;
@@ -1416,6 +1416,18 @@ void wake_up_idle_cpu(int cpu)
 	smp_mb();
 	if (!tsk_is_polling(rq->idle))
 		smp_send_reschedule(cpu);
+}
+
+static inline bool got_nohz_idle_kick(void)
+{
+	return idle_cpu(smp_processor_id()) && this_rq()->nohz_balance_kick;
+}
+
+#else /* CONFIG_NO_HZ */
+
+static inline bool got_nohz_idle_kick(void)
+{
+	return false;
 }
 
 #endif /* CONFIG_NO_HZ */
@@ -2711,7 +2723,7 @@ void scheduler_ipi(void)
 	struct rq *rq = this_rq();
 	struct task_struct *list = xchg(&rq->wake_list, NULL);
 
-	if (!list)
+	if (!list && !got_nohz_idle_kick())
 		return;
 
 	/*
@@ -2728,7 +2740,16 @@ void scheduler_ipi(void)
 	 * somewhat pessimize the simple resched case.
 	 */
 	irq_enter();
-	sched_ttwu_do_pending(list);
+	if (list)
+		sched_ttwu_do_pending(list);
+
+	/*
+	 * Check if someone kicked us for doing the nohz idle load balance.
+	 */
+	if (unlikely(got_nohz_idle_kick() && !need_resched())) {
+		this_rq()->idle_balance = 1;
+		raise_softirq_irqoff(SCHED_SOFTIRQ);
+	}
 	irq_exit();
 }
 
@@ -4210,7 +4231,7 @@ void scheduler_tick(void)
 	perf_event_task_tick();
 
 #ifdef CONFIG_SMP
-	rq->idle_at_tick = idle_cpu(cpu);
+	rq->idle_balance = idle_cpu(cpu);
 	trigger_load_balance(rq, cpu);
 #endif
 }
@@ -5132,7 +5153,20 @@ EXPORT_SYMBOL(task_nice);
  */
 int idle_cpu(int cpu)
 {
-	return cpu_curr(cpu) == cpu_rq(cpu)->idle;
+	struct rq *rq = cpu_rq(cpu);
+
+	if (rq->curr != rq->idle)
+		return 0;
+
+	if (rq->nr_running)
+		return 0;
+
+#ifdef CONFIG_SMP
+	if (!rq->wake_list)
+		return 0;
+#endif
+
+	return 1;
 }
 
 /**
@@ -8269,7 +8303,6 @@ void __init sched_init(void)
 		rq_attach_root(rq, &def_root_domain);
 #ifdef CONFIG_NO_HZ
 		rq->nohz_balance_kick = 0;
-		init_sched_softirq_csd(&per_cpu(remote_sched_softirq_cb, i));
 #endif
 #endif
 		init_rq_hrtick(rq);
@@ -9832,7 +9865,7 @@ lkdb_runqueue(unsigned long cpu, lkdb_printf_t xxx_printf)
 
 #ifdef CONFIG_SMP
 	xxx_printf(" active_balance:%u ", rq->active_balance);
-	xxx_printf(" idle_at_tick:%u\n", rq->idle_at_tick);
+	xxx_printf(" idle_balance:%u\n", rq->idle_balance);
 
 	xxx_printf(" push_cpu:%u ", rq->push_cpu);
 	xxx_printf(" cpu:%u ", rq->cpu);
