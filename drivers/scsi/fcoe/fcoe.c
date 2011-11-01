@@ -240,7 +240,7 @@ static struct scsi_host_template fcoe_shost_template = {
 	.can_queue = FCOE_MAX_OUTSTANDING_COMMANDS,
 	.use_clustering = ENABLE_CLUSTERING,
 	.sg_tablesize = SG_ALL,
-	.max_sectors = 0xffff,
+	.max_sectors = 1024,
 };
 
 /**
@@ -2347,14 +2347,11 @@ static void fcoe_flogi_resp(struct fc_seq *seq, struct fc_frame *fp, void *arg)
 		goto done;
 
 	mac = fr_cb(fp)->granted_mac;
-	if (is_zero_ether_addr(mac)) {
-		/* pre-FIP */
-		if (fcoe_ctlr_recv_flogi(fip, lport, fp)) {
-			fc_frame_free(fp);
-			return;
-		}
-	}
-	fcoe_update_src_mac(lport, mac);
+	/* pre-FIP */
+	if (is_zero_ether_addr(mac))
+		fcoe_ctlr_recv_flogi(fip, lport, fp);
+	if (!is_zero_ether_addr(mac))
+		fcoe_update_src_mac(lport, mac);
 done:
 	fc_lport_flogi_resp(seq, fp, lport);
 }
