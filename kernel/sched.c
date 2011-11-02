@@ -5162,7 +5162,7 @@ int idle_cpu(int cpu)
 		return 0;
 
 #ifdef CONFIG_SMP
-	if (!rq->wake_list)
+	if (rq->wake_list)
 		return 0;
 #endif
 
