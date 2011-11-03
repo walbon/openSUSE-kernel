@@ -228,6 +228,14 @@ static int lis3lv02d_set_odr(int rate)
 	return -EINVAL;
 }
 
+static void lis3lv02d_power_delay(struct lis3lv02d *lis3)
+{
+	int odr = lis3lv02d_get_odr();
+	if (odr <= 0)
+		return;
+	msleep(lis3->pwron_delay / odr);
+}
+
 static int lis3lv02d_selftest(struct lis3lv02d *lis3, s16 results[3])
 {
 	u8 ctlreg, reg;
@@ -266,7 +274,7 @@ static int lis3lv02d_selftest(struct lis3lv02d *lis3, s16 results[3])
 
 	lis3->read(lis3, ctlreg, &reg);
 	lis3->write(lis3, ctlreg, (reg | selftest));
-	msleep(lis3->pwron_delay / lis3lv02d_get_odr());
+	lis3lv02d_power_delay(lis3);
 
 	/* Read directly to avoid axis remap */
 	x = lis3->read_data(lis3, OUTX);
@@ -275,7 +283,7 @@ static int lis3lv02d_selftest(struct lis3lv02d *lis3, s16 results[3])
 
 	/* back to normal settings */
 	lis3->write(lis3, ctlreg, reg);
-	msleep(lis3->pwron_delay / lis3lv02d_get_odr());
+	lis3lv02d_power_delay(lis3);
 
 	results[0] = x - lis3->read_data(lis3, OUTX);
 	results[1] = y - lis3->read_data(lis3, OUTY);
@@ -385,7 +393,7 @@ void lis3lv02d_poweron(struct lis3lv02d *lis3)
 	}
 
 	/* LIS3 power on delay is quite long */
-	msleep(lis3->pwron_delay / lis3lv02d_get_odr());
+	lis3lv02d_power_delay(lis3);
 
 	if (lis3->reg_ctrl)
 		lis3_context_restore(lis3);
