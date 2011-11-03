@@ -1157,7 +1157,7 @@ static int periodic_bytes (struct dummy *dum, struct dummy_ep *ep)
 		int	tmp;
 
 		/* high bandwidth mode */
-		tmp = le16_to_cpu(ep->desc->wMaxPacketSize);
+		tmp = usb_endpoint_maxp(ep->desc);
 		tmp = (tmp >> 11) & 0x03;
 		tmp *= 8 /* applies to entire frame */;
 		limit += limit * tmp;

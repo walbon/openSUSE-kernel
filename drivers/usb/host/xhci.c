@@ -945,8 +945,7 @@ static int xhci_check_args(struct usb_hcd *hcd, struct usb_device *udev,
 		return -ENODEV;
 
 	if (check_virt_dev) {
-		if (!udev->slot_id || !xhci->devs
-			|| !xhci->devs[udev->slot_id]) {
+		if (!udev->slot_id || !xhci->devs[udev->slot_id]) {
 			printk(KERN_DEBUG "xHCI %s called with unaddressed "
 						"device\n", func);
 			return -EINVAL;
@@ -987,7 +986,7 @@ static int xhci_check_maxpacket(struct xhci_hcd *xhci, unsigned int slot_id,
 	out_ctx = xhci->devs[slot_id]->out_ctx;
 	ep_ctx = xhci_get_ep_ctx(xhci, out_ctx, ep_index);
 	hw_max_packet_size = MAX_PACKET_DECODED(le32_to_cpu(ep_ctx->ep_info2));
-	max_packet_size = le16_to_cpu(urb->dev->ep0.desc.wMaxPacketSize);
+	max_packet_size = usb_endpoint_maxp(&urb->dev->ep0.desc);
 	if (hw_max_packet_size != max_packet_size) {
 		xhci_dbg(xhci, "Max Packet Size for ep 0 changed.\n");
 		xhci_dbg(xhci, "Max packet size in usb_device = %d\n",
@@ -1035,6 +1034,7 @@ static int xhci_check_maxpacket(struct xhci_hcd *xhci, unsigned int slot_id,
 int xhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags)
 {
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
+	struct xhci_td *buffer;
 	unsigned long flags;
 	int ret = 0;
 	unsigned int slot_id, ep_index;
@@ -1065,13 +1065,15 @@ int xhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags)
 	if (!urb_priv)
 		return -ENOMEM;
 
+	buffer = kzalloc(size * sizeof(struct xhci_td), mem_flags);
+	if (!buffer) {
+		kfree(urb_priv);
+		return -ENOMEM;
+	}
+
 	for (i = 0; i < size; i++) {
-		urb_priv->td[i] = kzalloc(sizeof(struct xhci_td), mem_flags);
-		if (!urb_priv->td[i]) {
-			urb_priv->length = i;
-			xhci_urb_free_priv(xhci, urb_priv);
-			return -ENOMEM;
-		}
+		urb_priv->td[i] = buffer;
+		buffer++;
 	}
 
 	urb_priv->length = size;
@@ -1747,6 +1749,505 @@ static void xhci_finish_resource_reservation(struct xhci_hcd *xhci,
 				xhci->num_active_eps);
 }
 
+unsigned int xhci_get_block_size(struct usb_device *udev)
+{
+	switch (udev->speed) {
+	case USB_SPEED_LOW:
+	case USB_SPEED_FULL:
+		return FS_BLOCK;
+	case USB_SPEED_HIGH:
+		return HS_BLOCK;
+	case USB_SPEED_SUPER:
+		return SS_BLOCK;
+	case USB_SPEED_UNKNOWN:
+	case USB_SPEED_WIRELESS:
+	default:
+		/* Should never happen */
+		return 1;
+	}
+}
+
+unsigned int xhci_get_largest_overhead(struct xhci_interval_bw *interval_bw)
+{
+	if (interval_bw->overhead[LS_OVERHEAD_TYPE])
+		return LS_OVERHEAD;
+	if (interval_bw->overhead[FS_OVERHEAD_TYPE])
+		return FS_OVERHEAD;
+	return HS_OVERHEAD;
+}
+
+/* If we are changing a LS/FS device under a HS hub,
+ * make sure (if we are activating a new TT) that the HS bus has enough
+ * bandwidth for this new TT.
+ */
+static int xhci_check_tt_bw_table(struct xhci_hcd *xhci,
+		struct xhci_virt_device *virt_dev,
+		int old_active_eps)
+{
+	struct xhci_interval_bw_table *bw_table;
+	struct xhci_tt_bw_info *tt_info;
+
+	/* Find the bandwidth table for the root port this TT is attached to. */
+	bw_table = &xhci->rh_bw[virt_dev->real_port - 1].bw_table;
+	tt_info = virt_dev->tt_info;
+	/* If this TT already had active endpoints, the bandwidth for this TT
+	 * has already been added.  Removing all periodic endpoints (and thus
+	 * making the TT enactive) will only decrease the bandwidth used.
+	 */
+	if (old_active_eps)
+		return 0;
+	if (old_active_eps == 0 && tt_info->active_eps != 0) {
+		if (bw_table->bw_used + TT_HS_OVERHEAD > HS_BW_LIMIT)
+			return -ENOMEM;
+		return 0;
+	}
+	/* Not sure why we would have no new active endpoints...
+	 *
+	 * Maybe because of an Evaluate Context change for a hub update or a
+	 * control endpoint 0 max packet size change?
+	 * FIXME: skip the bandwidth calculation in that case.
+	 */
+	return 0;
+}
+
+/*
+ * This algorithm is a very conservative estimate of the worst-case scheduling
+ * scenario for any one interval.  The hardware dynamically schedules the
+ * packets, so we can't tell which microframe could be the limiting factor in
+ * the bandwidth scheduling.  This only takes into account periodic endpoints.
+ *
+ * Obviously, we can't solve an NP complete problem to find the minimum worst
+ * case scenario.  Instead, we come up with an estimate that is no less than
+ * the worst case bandwidth used for any one microframe, but may be an
+ * over-estimate.
+ *
+ * We walk the requirements for each endpoint by interval, starting with the
+ * smallest interval, and place packets in the schedule where there is only one
+ * possible way to schedule packets for that interval.  In order to simplify
+ * this algorithm, we record the largest max packet size for each interval, and
+ * assume all packets will be that size.
+ *
+ * For interval 0, we obviously must schedule all packets for each interval.
+ * The bandwidth for interval 0 is just the amount of data to be transmitted
+ * (the sum of all max ESIT payload sizes, plus any overhead per packet times
+ * the number of packets).
+ *
+ * For interval 1, we have two possible microframes to schedule those packets
+ * in.  For this algorithm, if we can schedule the same number of packets for
+ * each possible scheduling opportunity (each microframe), we will do so.  The
+ * remaining number of packets will be saved to be transmitted in the gaps in
+ * the next interval's scheduling sequence.
+ *
+ * As we move those remaining packets to be scheduled with interval 2 packets,
+ * we have to double the number of remaining packets to transmit.  This is
+ * because the intervals are actually powers of 2, and we would be transmitting
+ * the previous interval's packets twice in this interval.  We also have to be
+ * sure that when we look at the largest max packet size for this interval, we
+ * also look at the largest max packet size for the remaining packets and take
+ * the greater of the two.
+ *
+ * The algorithm continues to evenly distribute packets in each scheduling
+ * opportunity, and push the remaining packets out, until we get to the last
+ * interval.  Then those packets and their associated overhead are just added
+ * to the bandwidth used.
+ */
+static int xhci_check_bw_table(struct xhci_hcd *xhci,
+		struct xhci_virt_device *virt_dev,
+		int old_active_eps)
+{
+	unsigned int bw_reserved;
+	unsigned int max_bandwidth;
+	unsigned int bw_used;
+	unsigned int block_size;
+	struct xhci_interval_bw_table *bw_table;
+	unsigned int packet_size = 0;
+	unsigned int overhead = 0;
+	unsigned int packets_transmitted = 0;
+	unsigned int packets_remaining = 0;
+	unsigned int i;
+
+	if (virt_dev->udev->speed == USB_SPEED_HIGH) {
+		max_bandwidth = HS_BW_LIMIT;
+		/* Convert percent of bus BW reserved to blocks reserved */
+		bw_reserved = DIV_ROUND_UP(HS_BW_RESERVED * max_bandwidth, 100);
+	} else {
+		max_bandwidth = FS_BW_LIMIT;
+		bw_reserved = DIV_ROUND_UP(FS_BW_RESERVED * max_bandwidth, 100);
+	}
+
+	bw_table = virt_dev->bw_table;
+	/* We need to translate the max packet size and max ESIT payloads into
+	 * the units the hardware uses.
+	 */
+	block_size = xhci_get_block_size(virt_dev->udev);
+
+	/* If we are manipulating a LS/FS device under a HS hub, double check
+	 * that the HS bus has enough bandwidth if we are activing a new TT.
+	 */
+	if (virt_dev->tt_info) {
+		xhci_dbg(xhci, "Recalculating BW for rootport %u\n",
+				virt_dev->real_port);
+		if (xhci_check_tt_bw_table(xhci, virt_dev, old_active_eps)) {
+			xhci_warn(xhci, "Not enough bandwidth on HS bus for "
+					"newly activated TT.\n");
+			return -ENOMEM;
+		}
+		xhci_dbg(xhci, "Recalculating BW for TT slot %u port %u\n",
+				virt_dev->tt_info->slot_id,
+				virt_dev->tt_info->ttport);
+	} else {
+		xhci_dbg(xhci, "Recalculating BW for rootport %u\n",
+				virt_dev->real_port);
+	}
+
+	/* Add in how much bandwidth will be used for interval zero, or the
+	 * rounded max ESIT payload + number of packets * largest overhead.
+	 */
+	bw_used = DIV_ROUND_UP(bw_table->interval0_esit_payload, block_size) +
+		bw_table->interval_bw[0].num_packets *
+		xhci_get_largest_overhead(&bw_table->interval_bw[0]);
+
+	for (i = 1; i < XHCI_MAX_INTERVAL; i++) {
+		unsigned int bw_added;
+		unsigned int largest_mps;
+		unsigned int interval_overhead;
+
+		/*
+		 * How many packets could we transmit in this interval?
+		 * If packets didn't fit in the previous interval, we will need
+		 * to transmit that many packets twice within this interval.
+		 */
+		packets_remaining = 2 * packets_remaining +
+			bw_table->interval_bw[i].num_packets;
+
+		/* Find the largest max packet size of this or the previous
+		 * interval.
+		 */
+		if (list_empty(&bw_table->interval_bw[i].endpoints))
+			largest_mps = 0;
+		else {
+			struct xhci_virt_ep *virt_ep;
+			struct list_head *ep_entry;
+
+			ep_entry = bw_table->interval_bw[i].endpoints.next;
+			virt_ep = list_entry(ep_entry,
+					struct xhci_virt_ep, bw_endpoint_list);
+			/* Convert to blocks, rounding up */
+			largest_mps = DIV_ROUND_UP(
+					virt_ep->bw_info.max_packet_size,
+					block_size);
+		}
+		if (largest_mps > packet_size)
+			packet_size = largest_mps;
+
+		/* Use the larger overhead of this or the previous interval. */
+		interval_overhead = xhci_get_largest_overhead(
+				&bw_table->interval_bw[i]);
+		if (interval_overhead > overhead)
+			overhead = interval_overhead;
+
+		/* How many packets can we evenly distribute across
+		 * (1 << (i + 1)) possible scheduling opportunities?
+		 */
+		packets_transmitted = packets_remaining >> (i + 1);
+
+		/* Add in the bandwidth used for those scheduled packets */
+		bw_added = packets_transmitted * (overhead + packet_size);
+
+		/* How many packets do we have remaining to transmit? */
+		packets_remaining = packets_remaining % (1 << (i + 1));
+
+		/* What largest max packet size should those packets have? */
+		/* If we've transmitted all packets, don't carry over the
+		 * largest packet size.
+		 */
+		if (packets_remaining == 0) {
+			packet_size = 0;
+			overhead = 0;
+		} else if (packets_transmitted > 0) {
+			/* Otherwise if we do have remaining packets, and we've
+			 * scheduled some packets in this interval, take the
+			 * largest max packet size from endpoints with this
+			 * interval.
+			 */
+			packet_size = largest_mps;
+			overhead = interval_overhead;
+		}
+		/* Otherwise carry over packet_size and overhead from the last
+		 * time we had a remainder.
+		 */
+		bw_used += bw_added;
+		if (bw_used > max_bandwidth) {
+			xhci_warn(xhci, "Not enough bandwidth. "
+					"Proposed: %u, Max: %u\n",
+				bw_used, max_bandwidth);
+			return -ENOMEM;
+		}
+	}
+	/*
+	 * Ok, we know we have some packets left over after even-handedly
+	 * scheduling interval 15.  We don't know which microframes they will
+	 * fit into, so we over-schedule and say they will be scheduled every
+	 * microframe.
+	 */
+	if (packets_remaining > 0)
+		bw_used += overhead + packet_size;
+
+	if (!virt_dev->tt_info && virt_dev->udev->speed == USB_SPEED_HIGH) {
+		unsigned int port_index = virt_dev->real_port - 1;
+
+		/* OK, we're manipulating a HS device attached to a
+		 * root port bandwidth domain.  Include the number of active TTs
+		 * in the bandwidth used.
+		 */
+		bw_used += TT_HS_OVERHEAD *
+			xhci->rh_bw[port_index].num_active_tts;
+	}
+
+	xhci_dbg(xhci, "Final bandwidth: %u, Limit: %u, Reserved: %u, "
+		"Available: %u " "percent\n",
+		bw_used, max_bandwidth, bw_reserved,
+		(max_bandwidth - bw_used - bw_reserved) * 100 /
+		max_bandwidth);
+
+	bw_used += bw_reserved;
+	if (bw_used > max_bandwidth) {
+		xhci_warn(xhci, "Not enough bandwidth. Proposed: %u, Max: %u\n",
+				bw_used, max_bandwidth);
+		return -ENOMEM;
+	}
+
+	bw_table->bw_used = bw_used;
+	return 0;
+}
+
+static bool xhci_is_async_ep(unsigned int ep_type)
+{
+	return (ep_type != ISOC_OUT_EP && ep_type != INT_OUT_EP &&
+					ep_type != ISOC_IN_EP &&
+					ep_type != INT_IN_EP);
+}
+
+void xhci_drop_ep_from_interval_table(struct xhci_hcd *xhci,
+		struct xhci_bw_info *ep_bw,
+		struct xhci_interval_bw_table *bw_table,
+		struct usb_device *udev,
+		struct xhci_virt_ep *virt_ep,
+		struct xhci_tt_bw_info *tt_info)
+{
+	struct xhci_interval_bw	*interval_bw;
+	int normalized_interval;
+
+	if (xhci_is_async_ep(ep_bw->type) ||
+			list_empty(&virt_ep->bw_endpoint_list))
+		return;
+
+	/* For LS/FS devices, we need to translate the interval expressed in
+	 * microframes to frames.
+	 */
+	if (udev->speed == USB_SPEED_HIGH)
+		normalized_interval = ep_bw->ep_interval;
+	else
+		normalized_interval = ep_bw->ep_interval - 3;
+
+	if (normalized_interval == 0)
+		bw_table->interval0_esit_payload -= ep_bw->max_esit_payload;
+	interval_bw = &bw_table->interval_bw[normalized_interval];
+	interval_bw->num_packets -= ep_bw->num_packets;
+	switch (udev->speed) {
+	case USB_SPEED_LOW:
+		interval_bw->overhead[LS_OVERHEAD_TYPE] -= 1;
+		break;
+	case USB_SPEED_FULL:
+		interval_bw->overhead[FS_OVERHEAD_TYPE] -= 1;
+		break;
+	case USB_SPEED_HIGH:
+		interval_bw->overhead[HS_OVERHEAD_TYPE] -= 1;
+		break;
+	case USB_SPEED_SUPER:
+	case USB_SPEED_UNKNOWN:
+	case USB_SPEED_WIRELESS:
+		/* Should never happen because only LS/FS/HS endpoints will get
+		 * added to the endpoint list.
+		 */
+		return;
+	}
+	if (tt_info)
+		tt_info->active_eps -= 1;
+	list_del_init(&virt_ep->bw_endpoint_list);
+}
+
+static void xhci_add_ep_to_interval_table(struct xhci_hcd *xhci,
+		struct xhci_bw_info *ep_bw,
+		struct xhci_interval_bw_table *bw_table,
+		struct usb_device *udev,
+		struct xhci_virt_ep *virt_ep,
+		struct xhci_tt_bw_info *tt_info)
+{
+	struct xhci_interval_bw	*interval_bw;
+	struct xhci_virt_ep *smaller_ep;
+	int normalized_interval;
+
+	if (xhci_is_async_ep(ep_bw->type))
+		return;
+
+	/* For LS/FS devices, we need to translate the interval expressed in
+	 * microframes to frames.
+	 */
+	if (udev->speed == USB_SPEED_HIGH)
+		normalized_interval = ep_bw->ep_interval;
+	else
+		normalized_interval = ep_bw->ep_interval - 3;
+
+	if (normalized_interval == 0)
+		bw_table->interval0_esit_payload += ep_bw->max_esit_payload;
+	interval_bw = &bw_table->interval_bw[normalized_interval];
+	interval_bw->num_packets += ep_bw->num_packets;
+	switch (udev->speed) {
+	case USB_SPEED_LOW:
+		interval_bw->overhead[LS_OVERHEAD_TYPE] += 1;
+		break;
+	case USB_SPEED_FULL:
+		interval_bw->overhead[FS_OVERHEAD_TYPE] += 1;
+		break;
+	case USB_SPEED_HIGH:
+		interval_bw->overhead[HS_OVERHEAD_TYPE] += 1;
+		break;
+	case USB_SPEED_SUPER:
+	case USB_SPEED_UNKNOWN:
+	case USB_SPEED_WIRELESS:
+		/* Should never happen because only LS/FS/HS endpoints will get
+		 * added to the endpoint list.
+		 */
+		return;
+	}
+
+	if (tt_info)
+		tt_info->active_eps += 1;
+	/* Insert the endpoint into the list, largest max packet size first. */
+	list_for_each_entry(smaller_ep, &interval_bw->endpoints,
+			bw_endpoint_list) {
+		if (ep_bw->max_packet_size >=
+				smaller_ep->bw_info.max_packet_size) {
+			/* Add the new ep before the smaller endpoint */
+			list_add_tail(&virt_ep->bw_endpoint_list,
+					&smaller_ep->bw_endpoint_list);
+			return;
+		}
+	}
+	/* Add the new endpoint at the end of the list. */
+	list_add_tail(&virt_ep->bw_endpoint_list,
+			&interval_bw->endpoints);
+}
+
+void xhci_update_tt_active_eps(struct xhci_hcd *xhci,
+		struct xhci_virt_device *virt_dev,
+		int old_active_eps)
+{
+	struct xhci_root_port_bw_info *rh_bw_info;
+	if (!virt_dev->tt_info)
+		return;
+
+	rh_bw_info = &xhci->rh_bw[virt_dev->real_port - 1];
+	if (old_active_eps == 0 &&
+				virt_dev->tt_info->active_eps != 0) {
+		rh_bw_info->num_active_tts += 1;
+		rh_bw_info->bw_table.bw_used += TT_HS_OVERHEAD;
+	} else if (old_active_eps != 0 &&
+				virt_dev->tt_info->active_eps == 0) {
+		rh_bw_info->num_active_tts -= 1;
+		rh_bw_info->bw_table.bw_used -= TT_HS_OVERHEAD;
+	}
+}
+
+static int xhci_reserve_bandwidth(struct xhci_hcd *xhci,
+		struct xhci_virt_device *virt_dev,
+		struct xhci_container_ctx *in_ctx)
+{
+	struct xhci_bw_info ep_bw_info[31];
+	int i;
+	struct xhci_input_control_ctx *ctrl_ctx;
+	int old_active_eps = 0;
+
+	if (virt_dev->udev->speed == USB_SPEED_SUPER)
+		return 0;
+
+	if (virt_dev->tt_info)
+		old_active_eps = virt_dev->tt_info->active_eps;
+
+	ctrl_ctx = xhci_get_input_control_ctx(xhci, in_ctx);
+
+	for (i = 0; i < 31; i++) {
+		if (!EP_IS_ADDED(ctrl_ctx, i) && !EP_IS_DROPPED(ctrl_ctx, i))
+			continue;
+
+		/* Make a copy of the BW info in case we need to revert this */
+		memcpy(&ep_bw_info[i], &virt_dev->eps[i].bw_info,
+				sizeof(ep_bw_info[i]));
+		/* Drop the endpoint from the interval table if the endpoint is
+		 * being dropped or changed.
+		 */
+		if (EP_IS_DROPPED(ctrl_ctx, i))
+			xhci_drop_ep_from_interval_table(xhci,
+					&virt_dev->eps[i].bw_info,
+					virt_dev->bw_table,
+					virt_dev->udev,
+					&virt_dev->eps[i],
+					virt_dev->tt_info);
+	}
+	/* Overwrite the information stored in the endpoints' bw_info */
+	xhci_update_bw_info(xhci, virt_dev->in_ctx, ctrl_ctx, virt_dev);
+	for (i = 0; i < 31; i++) {
+		/* Add any changed or added endpoints to the interval table */
+		if (EP_IS_ADDED(ctrl_ctx, i))
+			xhci_add_ep_to_interval_table(xhci,
+					&virt_dev->eps[i].bw_info,
+					virt_dev->bw_table,
+					virt_dev->udev,
+					&virt_dev->eps[i],
+					virt_dev->tt_info);
+	}
+
+	if (!xhci_check_bw_table(xhci, virt_dev, old_active_eps)) {
+		/* Ok, this fits in the bandwidth we have.
+		 * Update the number of active TTs.
+		 */
+		xhci_update_tt_active_eps(xhci, virt_dev, old_active_eps);
+		return 0;
+	}
+
+	/* We don't have enough bandwidth for this, revert the stored info. */
+	for (i = 0; i < 31; i++) {
+		if (!EP_IS_ADDED(ctrl_ctx, i) && !EP_IS_DROPPED(ctrl_ctx, i))
+			continue;
+
+		/* Drop the new copies of any added or changed endpoints from
+		 * the interval table.
+		 */
+		if (EP_IS_ADDED(ctrl_ctx, i)) {
+			xhci_drop_ep_from_interval_table(xhci,
+					&virt_dev->eps[i].bw_info,
+					virt_dev->bw_table,
+					virt_dev->udev,
+					&virt_dev->eps[i],
+					virt_dev->tt_info);
+		}
+		/* Revert the endpoint back to its old information */
+		memcpy(&virt_dev->eps[i].bw_info, &ep_bw_info[i],
+				sizeof(ep_bw_info[i]));
+		/* Add any changed or dropped endpoints back into the table */
+		if (EP_IS_DROPPED(ctrl_ctx, i))
+			xhci_add_ep_to_interval_table(xhci,
+					&virt_dev->eps[i].bw_info,
+					virt_dev->bw_table,
+					virt_dev->udev,
+					&virt_dev->eps[i],
+					virt_dev->tt_info);
+	}
+	return -ENOMEM;
+}
+
+
 /* Issue a configure endpoint command or evaluate context command
  * and wait for it to finish.
  */
@@ -1765,17 +2266,30 @@ static int xhci_configure_endpoint(struct xhci_hcd *xhci,
 
 	spin_lock_irqsave(&xhci->lock, flags);
 	virt_dev = xhci->devs[udev->slot_id];
-	if (command) {
-		in_ctx = command->in_ctx;
-		if ((xhci->quirks & XHCI_EP_LIMIT_QUIRK) &&
-				xhci_reserve_host_resources(xhci, in_ctx)) {
-			spin_unlock_irqrestore(&xhci->lock, flags);
-			xhci_warn(xhci, "Not enough host resources, "
-					"active endpoint contexts = %u\n",
-					xhci->num_active_eps);
-			return -ENOMEM;
-		}
 
+	if (command)
+		in_ctx = command->in_ctx;
+	else
+		in_ctx = virt_dev->in_ctx;
+
+	if ((xhci->quirks & XHCI_EP_LIMIT_QUIRK) &&
+			xhci_reserve_host_resources(xhci, in_ctx)) {
+		spin_unlock_irqrestore(&xhci->lock, flags);
+		xhci_warn(xhci, "Not enough host resources, "
+				"active endpoint contexts = %u\n",
+				xhci->num_active_eps);
+		return -ENOMEM;
+	}
+	if ((xhci->quirks & XHCI_SW_BW_CHECKING) &&
+			xhci_reserve_bandwidth(xhci, virt_dev, in_ctx)) {
+		if ((xhci->quirks & XHCI_EP_LIMIT_QUIRK))
+			xhci_free_host_resources(xhci, in_ctx);
+		spin_unlock_irqrestore(&xhci->lock, flags);
+		xhci_warn(xhci, "Not enough bandwidth\n");
+		return -ENOMEM;
+	}
+
+	if (command) {
 		cmd_completion = command->completion;
 		cmd_status = &command->status;
 		command->command_trb = xhci->cmd_ring->enqueue;
@@ -1789,15 +2303,6 @@ static int xhci_configure_endpoint(struct xhci_hcd *xhci,
 
 		list_add_tail(&command->cmd_list, &virt_dev->cmd_list);
 	} else {
-		in_ctx = virt_dev->in_ctx;
-		if ((xhci->quirks & XHCI_EP_LIMIT_QUIRK) &&
-				xhci_reserve_host_resources(xhci, in_ctx)) {
-			spin_unlock_irqrestore(&xhci->lock, flags);
-			xhci_warn(xhci, "Not enough host resources, "
-					"active endpoint contexts = %u\n",
-					xhci->num_active_eps);
-			return -ENOMEM;
-		}
 		cmd_completion = &virt_dev->cmd_completion;
 		cmd_status = &virt_dev->cmd_status;
 	}
@@ -1888,6 +2393,12 @@ int xhci_check_bandwidth(struct usb_hcd *hcd, struct usb_device *udev)
 	ctrl_ctx->add_flags |= cpu_to_le32(SLOT_FLAG);
 	ctrl_ctx->add_flags &= cpu_to_le32(~EP0_FLAG);
 	ctrl_ctx->drop_flags &= cpu_to_le32(~(SLOT_FLAG | EP0_FLAG));
+
+	/* Don't issue the command if there's no endpoints to update. */
+	if (ctrl_ctx->add_flags == cpu_to_le32(SLOT_FLAG) &&
+			ctrl_ctx->drop_flags == 0)
+		return 0;
+
 	xhci_dbg(xhci, "New Input Control Context:\n");
 	slot_ctx = xhci_get_slot_ctx(xhci, virt_dev->in_ctx);
 	xhci_dbg_ctx(xhci, virt_dev->in_ctx,
@@ -2525,6 +3036,7 @@ int xhci_discover_or_reset_device(struct usb_hcd *hcd, struct usb_device *udev)
 	int timeleft;
 	int last_freed_endpoint;
 	struct xhci_slot_ctx *slot_ctx;
+	int old_active_eps = 0;
 
 	ret = xhci_check_args(hcd, udev, NULL, 0, false, __func__);
 	if (ret <= 0)
@@ -2666,7 +3178,18 @@ int xhci_discover_or_reset_device(struct usb_hcd *hcd, struct usb_device *udev)
 			xhci_free_or_cache_endpoint_ring(xhci, virt_dev, i);
 			last_freed_endpoint = i;
 		}
+		if (!list_empty(&virt_dev->eps[i].bw_endpoint_list))
+			xhci_drop_ep_from_interval_table(xhci,
+					&virt_dev->eps[i].bw_info,
+					virt_dev->bw_table,
+					udev,
+					&virt_dev->eps[i],
+					virt_dev->tt_info);
+		xhci_clear_endpoint_bw_info(&virt_dev->eps[i].bw_info);
 	}
+	/* If necessary, update the number of active TTs on this root port */
+	xhci_update_tt_active_eps(xhci, virt_dev, old_active_eps);
+
 	xhci_dbg(xhci, "Output context after successful reset device cmd:\n");
 	xhci_dbg_ctx(xhci, virt_dev->out_ctx, last_freed_endpoint);
 	ret = 0;
@@ -2988,6 +3511,14 @@ int xhci_update_hub_device(struct usb_hcd *hcd, struct usb_device *hdev,
 	}
 
 	spin_lock_irqsave(&xhci->lock, flags);
+	if (hdev->speed == USB_SPEED_HIGH &&
+			xhci_alloc_tt_info(xhci, vdev, hdev, tt, GFP_ATOMIC)) {
+		xhci_dbg(xhci, "Could not allocate xHCI TT structure.\n");
+		xhci_free_command(xhci, config_cmd);
+		spin_unlock_irqrestore(&xhci->lock, flags);
+		return -ENOMEM;
+	}
+
 	xhci_slot_copy(xhci, config_cmd->in_ctx, vdev->out_ctx);
 	ctrl_ctx = xhci_get_input_control_ctx(xhci, config_cmd->in_ctx);
 	ctrl_ctx->add_flags |= cpu_to_le32(SLOT_FLAG);

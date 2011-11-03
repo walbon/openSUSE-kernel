@@ -691,11 +691,103 @@ static void xhci_init_endpoint_timer(struct xhci_hcd *xhci,
 	ep->xhci = xhci;
 }
 
-/* All the xhci_tds in the ring's TD list should be freed at this point */
+static void xhci_free_tt_info(struct xhci_hcd *xhci,
+		struct xhci_virt_device *virt_dev,
+		int slot_id)
+{
+	struct list_head *tt;
+	struct list_head *tt_list_head;
+	struct list_head *tt_next;
+	struct xhci_tt_bw_info *tt_info;
+
+	/* If the device never made it past the Set Address stage,
+	 * it may not have the real_port set correctly.
+	 */
+	if (virt_dev->real_port == 0 ||
+			virt_dev->real_port > HCS_MAX_PORTS(xhci->hcs_params1)) {
+		xhci_dbg(xhci, "Bad real port.\n");
+		return;
+	}
+
+	tt_list_head = &(xhci->rh_bw[virt_dev->real_port - 1].tts);
+	if (list_empty(tt_list_head))
+		return;
+
+	list_for_each(tt, tt_list_head) {
+		tt_info = list_entry(tt, struct xhci_tt_bw_info, tt_list);
+		if (tt_info->slot_id == slot_id)
+			break;
+	}
+	/* Cautionary measure in case the hub was disconnected before we
+	 * stored the TT information.
+	 */
+	if (tt_info->slot_id != slot_id)
+		return;
+
+	tt_next = tt->next;
+	tt_info = list_entry(tt, struct xhci_tt_bw_info,
+			tt_list);
+	/* Multi-TT hubs will have more than one entry */
+	do {
+		list_del(tt);
+		kfree(tt_info);
+		tt = tt_next;
+		if (list_empty(tt_list_head))
+			break;
+		tt_next = tt->next;
+		tt_info = list_entry(tt, struct xhci_tt_bw_info,
+				tt_list);
+	} while (tt_info->slot_id == slot_id);
+}
+
+int xhci_alloc_tt_info(struct xhci_hcd *xhci,
+		struct xhci_virt_device *virt_dev,
+		struct usb_device *hdev,
+		struct usb_tt *tt, gfp_t mem_flags)
+{
+	struct xhci_tt_bw_info		*tt_info;
+	unsigned int			num_ports;
+	int				i, j;
+
+	if (!tt->multi)
+		num_ports = 1;
+	else
+		num_ports = hdev->maxchild;
+
+	for (i = 0; i < num_ports; i++, tt_info++) {
+		struct xhci_interval_bw_table *bw_table;
+
+		tt_info = kzalloc(sizeof(*tt_info), mem_flags);
+		if (!tt_info)
+			goto free_tts;
+		INIT_LIST_HEAD(&tt_info->tt_list);
+		list_add(&tt_info->tt_list,
+				&xhci->rh_bw[virt_dev->real_port - 1].tts);
+		tt_info->slot_id = virt_dev->udev->slot_id;
+		if (tt->multi)
+			tt_info->ttport = i+1;
+		bw_table = &tt_info->bw_table;
+		for (j = 0; j < XHCI_MAX_INTERVAL; j++)
+			INIT_LIST_HEAD(&bw_table->interval_bw[j].endpoints);
+	}
+	return 0;
+
+free_tts:
+	xhci_free_tt_info(xhci, virt_dev, virt_dev->udev->slot_id);
+	return -ENOMEM;
+}
+
+
+/* All the xhci_tds in the ring's TD list should be freed at this point.
+ * Should be called with xhci->lock held if there is any chance the TT lists
+ * will be manipulated by the configure endpoint, allocate device, or update
+ * hub functions while this function is removing the TT entries from the list.
+ */
 void xhci_free_virt_device(struct xhci_hcd *xhci, int slot_id)
 {
 	struct xhci_virt_device *dev;
 	int i;
+	int old_active_eps = 0;
 
 	/* Slot ID 0 is reserved */
 	if (slot_id == 0 || !xhci->devs[slot_id])
@@ -706,13 +798,29 @@ void xhci_free_virt_device(struct xhci_hcd *xhci, int slot_id)
 	if (!dev)
 		return;
 
+	if (dev->tt_info)
+		old_active_eps = dev->tt_info->active_eps;
+
 	for (i = 0; i < 31; ++i) {
 		if (dev->eps[i].ring)
 			xhci_ring_free(xhci, dev->eps[i].ring);
 		if (dev->eps[i].stream_info)
 			xhci_free_stream_info(xhci,
 					dev->eps[i].stream_info);
+		/* Endpoints on the TT/root port lists should have been removed
+		 * when usb_disable_device() was called for the device.
+		 * We can't drop them anyway, because the udev might have gone
+		 * away by this point, and we can't tell what speed it was.
+		 */
+		if (!list_empty(&dev->eps[i].bw_endpoint_list))
+			xhci_warn(xhci, "Slot %u endpoint %u "
+					"not removed from BW list!\n",
+					slot_id, i);
 	}
+	/* If this is a hub, free the TT(s) from the TT list */
+	xhci_free_tt_info(xhci, dev, slot_id);
+	/* If necessary, update the number of active TTs on this root port */
+	xhci_update_tt_active_eps(xhci, dev, old_active_eps);
 
 	if (dev->ring_cache) {
 		for (i = 0; i < dev->num_rings_cached; i++)
@@ -766,6 +874,7 @@ int xhci_alloc_virt_device(struct xhci_hcd *xhci, int slot_id,
 	for (i = 0; i < 31; i++) {
 		xhci_init_endpoint_timer(xhci, &dev->eps[i]);
 		INIT_LIST_HEAD(&dev->eps[i].cancelled_td_list);
+		INIT_LIST_HEAD(&dev->eps[i].bw_endpoint_list);
 	}
 
 	/* Allocate endpoint 0 ring */
@@ -925,9 +1034,40 @@ int xhci_setup_addressable_virt_dev(struct xhci_hcd *xhci, struct usb_device *ud
 	for (top_dev = udev; top_dev->parent && top_dev->parent->parent;
 			top_dev = top_dev->parent)
 		/* Found device below root hub */;
-	dev->port = top_dev->portnum;
+	dev->fake_port = top_dev->portnum;
+	dev->real_port = port_num;
 	xhci_dbg(xhci, "Set root hub portnum to %d\n", port_num);
-	xhci_dbg(xhci, "Set fake root hub portnum to %d\n", dev->port);
+	xhci_dbg(xhci, "Set fake root hub portnum to %d\n", dev->fake_port);
+
+	/* Find the right bandwidth table that this device will be a part of.
+	 * If this is a full speed device attached directly to a root port (or a
+	 * decendent of one), it counts as a primary bandwidth domain, not a
+	 * secondary bandwidth domain under a TT.  An xhci_tt_info structure
+	 * will never be created for the HS root hub.
+	 */
+	if (!udev->tt || !udev->tt->hub->parent) {
+		dev->bw_table = &xhci->rh_bw[port_num - 1].bw_table;
+	} else {
+		struct xhci_root_port_bw_info *rh_bw;
+		struct xhci_tt_bw_info *tt_bw;
+
+		rh_bw = &xhci->rh_bw[port_num - 1];
+		/* Find the right TT. */
+		list_for_each_entry(tt_bw, &rh_bw->tts, tt_list) {
+			if (tt_bw->slot_id != udev->tt->hub->slot_id)
+				continue;
+
+			if (!dev->udev->tt->multi ||
+					(udev->tt->multi &&
+					 tt_bw->ttport == dev->udev->ttport)) {
+				dev->bw_table = &tt_bw->bw_table;
+				dev->tt_info = tt_bw;
+				break;
+			}
+		}
+		if (!dev->tt_info)
+			xhci_warn(xhci, "WARN: Didn't find a matching TT\n");
+	}
 
 	/* Is this a LS/FS device under an external HS hub? */
 	if (udev->tt && udev->tt->hub->parent) {
@@ -1145,8 +1285,8 @@ static u32 xhci_get_max_esit_payload(struct xhci_hcd *xhci,
 	if (udev->speed == USB_SPEED_SUPER)
 		return le16_to_cpu(ep->ss_ep_comp.wBytesPerInterval);
 
-	max_packet = GET_MAX_PACKET(le16_to_cpu(ep->desc.wMaxPacketSize));
-	max_burst = (le16_to_cpu(ep->desc.wMaxPacketSize) & 0x1800) >> 11;
+	max_packet = GET_MAX_PACKET(usb_endpoint_maxp(&ep->desc));
+	max_burst = (usb_endpoint_maxp(&ep->desc) & 0x1800) >> 11;
 	/* A 0 in max burst means 1 transfer per ESIT */
 	return max_packet * (max_burst + 1);
 }
@@ -1216,7 +1356,7 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 	/* Set the max packet size and max burst */
 	switch (udev->speed) {
 	case USB_SPEED_SUPER:
-		max_packet = le16_to_cpu(ep->desc.wMaxPacketSize);
+		max_packet = usb_endpoint_maxp(&ep->desc);
 		ep_ctx->ep_info2 |= cpu_to_le32(MAX_PACKET(max_packet));
 		/* dig out max burst from ep companion desc */
 		max_packet = ep->ss_ep_comp.bMaxBurst;
@@ -1228,14 +1368,14 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 		 */
 		if (usb_endpoint_xfer_isoc(&ep->desc) ||
 				usb_endpoint_xfer_int(&ep->desc)) {
-			max_burst = (le16_to_cpu(ep->desc.wMaxPacketSize)
+			max_burst = (usb_endpoint_maxp(&ep->desc)
 				     & 0x1800) >> 11;
 			ep_ctx->ep_info2 |= cpu_to_le32(MAX_BURST(max_burst));
 		}
 		/* Fall through */
 	case USB_SPEED_FULL:
 	case USB_SPEED_LOW:
-		max_packet = GET_MAX_PACKET(le16_to_cpu(ep->desc.wMaxPacketSize));
+		max_packet = GET_MAX_PACKET(usb_endpoint_maxp(&ep->desc));
 		ep_ctx->ep_info2 |= cpu_to_le32(MAX_PACKET(max_packet));
 		break;
 	default:
@@ -1289,6 +1429,69 @@ void xhci_endpoint_zero(struct xhci_hcd *xhci,
 	/* Don't free the endpoint ring until the set interface or configuration
 	 * request succeeds.
 	 */
+}
+
+void xhci_clear_endpoint_bw_info(struct xhci_bw_info *bw_info)
+{
+	bw_info->ep_interval = 0;
+	bw_info->mult = 0;
+	bw_info->num_packets = 0;
+	bw_info->max_packet_size = 0;
+	bw_info->type = 0;
+	bw_info->max_esit_payload = 0;
+}
+
+void xhci_update_bw_info(struct xhci_hcd *xhci,
+		struct xhci_container_ctx *in_ctx,
+		struct xhci_input_control_ctx *ctrl_ctx,
+		struct xhci_virt_device *virt_dev)
+{
+	struct xhci_bw_info *bw_info;
+	struct xhci_ep_ctx *ep_ctx;
+	unsigned int ep_type;
+	int i;
+
+	for (i = 1; i < 31; ++i) {
+		bw_info = &virt_dev->eps[i].bw_info;
+
+		/* We can't tell what endpoint type is being dropped, but
+		 * unconditionally clearing the bandwidth info for non-periodic
+		 * endpoints should be harmless because the info will never be
+		 * set in the first place.
+		 */
+		if (!EP_IS_ADDED(ctrl_ctx, i) && EP_IS_DROPPED(ctrl_ctx, i)) {
+			/* Dropped endpoint */
+			xhci_clear_endpoint_bw_info(bw_info);
+			continue;
+		}
+
+		if (EP_IS_ADDED(ctrl_ctx, i)) {
+			ep_ctx = xhci_get_ep_ctx(xhci, in_ctx, i);
+			ep_type = CTX_TO_EP_TYPE(le32_to_cpu(ep_ctx->ep_info2));
+
+			/* Ignore non-periodic endpoints */
+			if (ep_type != ISOC_OUT_EP && ep_type != INT_OUT_EP &&
+					ep_type != ISOC_IN_EP &&
+					ep_type != INT_IN_EP)
+				continue;
+
+			/* Added or changed endpoint */
+			bw_info->ep_interval = CTX_TO_EP_INTERVAL(
+					le32_to_cpu(ep_ctx->ep_info));
+			bw_info->mult = CTX_TO_EP_MULT(
+					le32_to_cpu(ep_ctx->ep_info));
+			/* Number of packets is zero-based in the input context,
+			 * but we want one-based for the interval table.
+			 */
+			bw_info->num_packets = CTX_TO_MAX_BURST(
+					le32_to_cpu(ep_ctx->ep_info2)) + 1;
+			bw_info->max_packet_size = MAX_PACKET_DECODED(
+					le32_to_cpu(ep_ctx->ep_info2));
+			bw_info->type = ep_type;
+			bw_info->max_esit_payload = CTX_TO_MAX_ESIT_PAYLOAD(
+					le32_to_cpu(ep_ctx->tx_info));
+		}
+	}
 }
 
 /* Copy output xhci_ep_ctx to the input xhci_ep_ctx copy.
@@ -1468,18 +1671,10 @@ struct xhci_command *xhci_alloc_command(struct xhci_hcd *xhci,
 
 void xhci_urb_free_priv(struct xhci_hcd *xhci, struct urb_priv *urb_priv)
 {
-	int last;
-
-	if (!urb_priv)
-		return;
-
-	last = urb_priv->length - 1;
-	if (last >= 0) {
-		int	i;
-		for (i = 0; i <= last; i++)
-			kfree(urb_priv->td[i]);
+	if (urb_priv) {
+		kfree(urb_priv->td[0]);
+		kfree(urb_priv);
 	}
-	kfree(urb_priv);
 }
 
 void xhci_free_command(struct xhci_hcd *xhci,
@@ -1556,6 +1751,7 @@ void xhci_mem_cleanup(struct xhci_hcd *xhci)
 	kfree(xhci->usb2_ports);
 	kfree(xhci->usb3_ports);
 	kfree(xhci->port_array);
+	kfree(xhci->rh_bw);
 
 	xhci->page_size = 0;
 	xhci->page_shift = 0;
@@ -1811,7 +2007,7 @@ static int xhci_setup_port_arrays(struct xhci_hcd *xhci, gfp_t flags)
 	__le32 __iomem *addr;
 	u32 offset;
 	unsigned int num_ports;
-	int i, port_index;
+	int i, j, port_index;
 
 	addr = &xhci->cap_regs->hcc_params;
 	offset = XHCI_HCC_EXT_CAPS(xhci_readl(xhci, addr));
@@ -1825,6 +2021,18 @@ static int xhci_setup_port_arrays(struct xhci_hcd *xhci, gfp_t flags)
 	xhci->port_array = kzalloc(sizeof(*xhci->port_array)*num_ports, flags);
 	if (!xhci->port_array)
 		return -ENOMEM;
+
+	xhci->rh_bw = kzalloc(sizeof(*xhci->rh_bw)*num_ports, flags);
+	if (!xhci->rh_bw)
+		return -ENOMEM;
+	for (i = 0; i < num_ports; i++) {
+		struct xhci_interval_bw_table *bw_table;
+
+		INIT_LIST_HEAD(&xhci->rh_bw[i].tts);
+		bw_table = &xhci->rh_bw[i].bw_table;
+		for (j = 0; j < XHCI_MAX_INTERVAL; j++)
+			INIT_LIST_HEAD(&bw_table->interval_bw[j].endpoints);
+	}
 
 	/*
 	 * For whatever reason, the first capability offset is from the
