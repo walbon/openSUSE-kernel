@@ -109,10 +109,11 @@ enum {
 
 	PIIX_FLAG_CHECKINTR	= (1 << 28), /* make sure PCI INTx enabled */
 	PIIX_FLAG_SIDPR		= (1 << 29), /* SATA idx/data pair regs */
-	PIIX_FLAG_PIO16		= (1 << 30), /* support 16-bit PIO */
 
 	PIIX_PATA_FLAGS		= ATA_FLAG_SLAVE_POSS,
 	PIIX_SATA_FLAGS		= ATA_FLAG_SATA | PIIX_FLAG_CHECKINTR,
+
+	PIIX_FLAG_PIO16		= (1 << 30), /*support 16bit PIO only*/
 
 	PIIX_80C_PRI		= (1 << 5) | (1 << 4),
 	PIIX_80C_SEC		= (1 << 7) | (1 << 6),
@@ -613,6 +614,10 @@ static struct ata_port_info piix_port_info[] = {
 		.port_ops	= &piix_vmw_ops,
 	},
 
+	/*
+	 * some Sandybridge chipsets have broken 32 mode up to now,
+	 * see https://bugzilla.kernel.org/show_bug.cgi?id=40592
+	 */
 	[ich8_sata_snb] =
 	{
 		.flags		= PIIX_SATA_FLAGS | PIIX_FLAG_SIDPR | PIIX_FLAG_PIO16,
@@ -621,6 +626,7 @@ static struct ata_port_info piix_port_info[] = {
 		.udma_mask	= ATA_UDMA6,
 		.port_ops	= &piix_sata_ops,
 	},
+
 };
 
 static struct pci_bits piix_enable_bits[] = {
@@ -687,7 +693,7 @@ static const struct ich_laptop ich_laptop[] = {
 static int piix_port_start(struct ata_port *ap)
 {
 	if (!(ap->flags & PIIX_FLAG_PIO16))
-		ap->flags |= ATA_PFLAG_PIO32 | ATA_PFLAG_PIO32CHANGE;
+		ap->pflags |= ATA_PFLAG_PIO32 | ATA_PFLAG_PIO32CHANGE;
 
 	return ata_bmdma_port_start(ap);
 }
