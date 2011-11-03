@@ -84,6 +84,12 @@ module_param(topspin_workarounds, int, 0444);
 MODULE_PARM_DESC(topspin_workarounds,
 		 "Enable workarounds for Topspin/Cisco SRP target bugs if != 0");
 
+/* mellanox_workarounds module option restored to maintain SLES11SP1 backward compatibility */
+static int dummy_mellanox_workarounds = 1;
+module_param_named(mellanox_workarounds, dummy_mellanox_workarounds, int, 0444);
+MODULE_PARM_DESC(mellanox_workarounds,
+		 "Enable workarounds for Mellanox SRP target bugs if != 0 - obsolete and unused");
+
 static void srp_add_one(struct ib_device *device);
 static void srp_remove_one(struct ib_device *device);
 static void srp_recv_completion(struct ib_cq *cq, void *target_ptr);

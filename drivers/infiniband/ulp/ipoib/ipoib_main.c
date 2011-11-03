@@ -60,6 +60,17 @@ MODULE_PARM_DESC(send_queue_size, "Number of descriptors in send queue");
 module_param_named(recv_queue_size, ipoib_recvq_size, int, 0444);
 MODULE_PARM_DESC(recv_queue_size, "Number of descriptors in receive queue");
 
+/* lro module option restored to maintain SLES11SP1 backward compatibility */
+static int dummy_lro;
+module_param_named(lro, dummy_lro, bool, 0444);
+MODULE_PARM_DESC(lro,  "Enable LRO (Large Receive Offload) - obsolete and non-functioning");
+
+/* lro_max_aggr module option restored to maintain SLES11SP1 backward compatibility */
+static int dummy_lro_max_aggr = 64;
+module_param_named(lro_max_aggr, dummy_lro_max_aggr, int, 0644);
+MODULE_PARM_DESC(lro_max_aggr, "LRO: Max packets to be aggregated "
+		"(default = 64) - obsolete and non-functioning");
+
 #ifdef CONFIG_INFINIBAND_IPOIB_DEBUG
 int ipoib_debug_level;
 
