@@ -776,6 +776,7 @@ static void __init sn_sal_switch_to_interrupts(struct sn_cons_port *port)
 			spin_lock_irqsave(&port->sc_port.lock, flags);
 			port->sc_port.irq = SGI_UART_VECTOR;
 			port->sc_ops = &intr_ops;
+			irq_set_handler(port->sc_port.irq, handle_level_irq);
 
 			/* turn on receive interrupts */
 			ia64_sn_console_intr_enable(SAL_CONSOLE_INTR_RECV);
@@ -1124,6 +1125,8 @@ static int __init sn_sal_serial_console_init(void)
 	}
 	return 0;
 }
+
+console_initcall(sn_sal_serial_console_init);
 
 #ifdef	CONFIG_KDB
 int
