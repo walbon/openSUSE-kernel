@@ -310,3 +310,4 @@ static void __exit dr_exit(void)
 module_init(dr_init);
 module_exit(dr_exit);
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("hid-drff");
