@@ -175,28 +175,19 @@ int xhci_reset(struct xhci_hcd *xhci)
 	return handshake(xhci, &xhci->op_regs->status, STS_CNR, 0, 250 * 1000);
 }
 
-/*
- * Free IRQs
- * free all IRQs request
- */
-static void xhci_free_irq(struct xhci_hcd *xhci)
+#ifdef CONFIG_PCI
+static int xhci_free_msi(struct xhci_hcd *xhci)
 {
 	int i;
-	struct pci_dev *pdev = to_pci_dev(xhci_to_hcd(xhci)->self.controller);
 
-	/* return if using legacy interrupt */
-	if (xhci_to_hcd(xhci)->irq >= 0)
-		return;
+	if (!xhci->msix_entries)
+		return -EINVAL;
 
-	if (xhci->msix_entries) {
-		for (i = 0; i < xhci->msix_count; i++)
-			if (xhci->msix_entries[i].vector)
-				free_irq(xhci->msix_entries[i].vector,
-						xhci_to_hcd(xhci));
-	} else if (pdev->irq >= 0)
-		free_irq(pdev->irq, xhci_to_hcd(xhci));
-
-	return;
+	for (i = 0; i < xhci->msix_count; i++)
+		if (xhci->msix_entries[i].vector)
+			free_irq(xhci->msix_entries[i].vector,
+					xhci_to_hcd(xhci));
+	return 0;
 }
 
 /*
@@ -221,6 +212,28 @@ static int xhci_setup_msi(struct xhci_hcd *xhci)
 	}
 
 	return ret;
+}
+
+/*
+ * Free IRQs
+ * free all IRQs request
+ */
+static void xhci_free_irq(struct xhci_hcd *xhci)
+{
+	struct pci_dev *pdev = to_pci_dev(xhci_to_hcd(xhci)->self.controller);
+	int ret;
+
+	/* return if using legacy interrupt */
+	if (xhci_to_hcd(xhci)->irq >= 0)
+		return;
+
+	ret = xhci_free_msi(xhci);
+	if (!ret)
+		return;
+	if (pdev->irq >= 0)
+		free_irq(pdev->irq, xhci_to_hcd(xhci));
+
+	return;
 }
 
 /*
@@ -302,6 +315,72 @@ static void xhci_cleanup_msix(struct xhci_hcd *xhci)
 	return;
 }
 
+static void xhci_msix_sync_irqs(struct xhci_hcd *xhci)
+{
+	int i;
+
+	if (xhci->msix_entries) {
+		for (i = 0; i < xhci->msix_count; i++)
+			synchronize_irq(xhci->msix_entries[i].vector);
+	}
+}
+
+static int xhci_try_enable_msi(struct usb_hcd *hcd)
+{
+	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
+	struct pci_dev  *pdev = to_pci_dev(xhci_to_hcd(xhci)->self.controller);
+	int ret;
+
+	/*
+	 * Some Fresco Logic host controllers advertise MSI, but fail to
+	 * generate interrupts.  Don't even try to enable MSI.
+	 */
+	if (xhci->quirks & XHCI_BROKEN_MSI)
+		return 0;
+
+	/* unregister the legacy interrupt */
+	if (hcd->irq)
+		free_irq(hcd->irq, hcd);
+	hcd->irq = -1;
+
+	ret = xhci_setup_msix(xhci);
+	if (ret)
+		/* fall back to msi*/
+		ret = xhci_setup_msi(xhci);
+
+	if (!ret)
+		/* hcd->irq is -1, we have MSI */
+		return 0;
+
+	/* fall back to legacy interrupt*/
+	ret = request_irq(pdev->irq, &usb_hcd_irq, IRQF_SHARED,
+			hcd->irq_descr, hcd);
+	if (ret) {
+		xhci_err(xhci, "request interrupt %d failed\n",
+				pdev->irq);
+		return ret;
+	}
+	hcd->irq = pdev->irq;
+	return 0;
+}
+
+#else
+
+static int xhci_try_enable_msi(struct usb_hcd *hcd)
+{
+	return 0;
+}
+
+static void xhci_cleanup_msix(struct xhci_hcd *xhci)
+{
+}
+
+static void xhci_msix_sync_irqs(struct xhci_hcd *xhci)
+{
+}
+
+#endif
+
 /*
  * Initialize memory for HCD and xHC (one-time init).
  *
@@ -316,7 +395,7 @@ int xhci_init(struct usb_hcd *hcd)
 
 	xhci_dbg(xhci, "xhci_init\n");
 	spin_lock_init(&xhci->lock);
-	if (link_quirk) {
+	if (xhci->hci_version == 0x95 && link_quirk) {
 		xhci_dbg(xhci, "QUIRK: Not clearing Link TRB chain bits.\n");
 		xhci->quirks |= XHCI_LINK_TRB_QUIRK;
 	} else {
@@ -413,9 +492,8 @@ int xhci_run(struct usb_hcd *hcd)
 {
 	u32 temp;
 	u64 temp_64;
-	u32 ret;
+	int ret;
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
-	struct pci_dev  *pdev = to_pci_dev(xhci_to_hcd(xhci)->self.controller);
 
 	/* Start the xHCI host controller running only after the USB 2.0 roothub
 	 * is setup.
@@ -426,34 +504,10 @@ int xhci_run(struct usb_hcd *hcd)
 		return xhci_run_finished(xhci);
 
 	xhci_dbg(xhci, "xhci_run\n");
-	/* unregister the legacy interrupt */
-	if (hcd->irq)
-		free_irq(hcd->irq, hcd);
-	hcd->irq = -1;
 
-	/* Some Fresco Logic host controllers advertise MSI, but fail to
-	 * generate interrupts.  Don't even try to enable MSI.
-	 */
-	if (xhci->quirks & XHCI_BROKEN_MSI)
-		goto legacy_irq;
-
-	ret = xhci_setup_msix(xhci);
+	ret = xhci_try_enable_msi(hcd);
 	if (ret)
-		/* fall back to msi*/
-		ret = xhci_setup_msi(xhci);
-
-	if (ret) {
-legacy_irq:
-		/* fall back to legacy interrupt*/
-		ret = request_irq(pdev->irq, &usb_hcd_irq, IRQF_SHARED,
-					hcd->irq_descr, hcd);
-		if (ret) {
-			xhci_err(xhci, "request interrupt %d failed\n",
-					pdev->irq);
-			return ret;
-		}
-		hcd->irq = pdev->irq;
-	}
+		return ret;
 
 #ifdef CONFIG_USB_XHCI_HCD_DEBUGGING
 	init_timer(&xhci->event_ring_timer);
@@ -694,7 +748,6 @@ int xhci_suspend(struct xhci_hcd *xhci)
 	int			rc = 0;
 	struct usb_hcd		*hcd = xhci_to_hcd(xhci);
 	u32			command;
-	int			i;
 
 	spin_lock_irq(&xhci->lock);
 	clear_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
@@ -730,10 +783,7 @@ int xhci_suspend(struct xhci_hcd *xhci)
 
 	/* step 5: remove core well power */
 	/* synchronize irq when using MSI-X */
-	if (xhci->msix_entries) {
-		for (i = 0; i < xhci->msix_count; i++)
-			synchronize_irq(xhci->msix_entries[i].vector);
-	}
+	xhci_msix_sync_irqs(xhci);
 
 	return rc;
 }
@@ -1810,6 +1860,22 @@ static int xhci_check_tt_bw_table(struct xhci_hcd *xhci,
 	return 0;
 }
 
+static int xhci_check_ss_bw(struct xhci_hcd *xhci,
+		struct xhci_virt_device *virt_dev)
+{
+	unsigned int bw_reserved;
+
+	bw_reserved = DIV_ROUND_UP(SS_BW_RESERVED*SS_BW_LIMIT_IN, 100);
+	if (virt_dev->bw_table->ss_bw_in > (SS_BW_LIMIT_IN - bw_reserved))
+		return -ENOMEM;
+
+	bw_reserved = DIV_ROUND_UP(SS_BW_RESERVED*SS_BW_LIMIT_OUT, 100);
+	if (virt_dev->bw_table->ss_bw_out > (SS_BW_LIMIT_OUT - bw_reserved))
+		return -ENOMEM;
+
+	return 0;
+}
+
 /*
  * This algorithm is a very conservative estimate of the worst-case scheduling
  * scenario for any one interval.  The hardware dynamically schedules the
@@ -1865,6 +1931,9 @@ static int xhci_check_bw_table(struct xhci_hcd *xhci,
 	unsigned int packets_transmitted = 0;
 	unsigned int packets_remaining = 0;
 	unsigned int i;
+
+	if (virt_dev->udev->speed == USB_SPEED_SUPER)
+		return xhci_check_ss_bw(xhci, virt_dev);
 
 	if (virt_dev->udev->speed == USB_SPEED_HIGH) {
 		max_bandwidth = HS_BW_LIMIT;
@@ -2028,6 +2097,25 @@ static bool xhci_is_async_ep(unsigned int ep_type)
 					ep_type != INT_IN_EP);
 }
 
+static bool xhci_is_sync_in_ep(unsigned int ep_type)
+{
+	return (ep_type == ISOC_IN_EP || ep_type != INT_IN_EP);
+}
+
+static unsigned int xhci_get_ss_bw_consumed(struct xhci_bw_info *ep_bw)
+{
+	unsigned int mps = DIV_ROUND_UP(ep_bw->max_packet_size, SS_BLOCK);
+
+	if (ep_bw->ep_interval == 0)
+		return SS_OVERHEAD_BURST +
+			(ep_bw->mult * ep_bw->num_packets *
+					(SS_OVERHEAD + mps));
+	return DIV_ROUND_UP(ep_bw->mult * ep_bw->num_packets *
+				(SS_OVERHEAD + mps + SS_OVERHEAD_BURST),
+				1 << ep_bw->ep_interval);
+
+}
+
 void xhci_drop_ep_from_interval_table(struct xhci_hcd *xhci,
 		struct xhci_bw_info *ep_bw,
 		struct xhci_interval_bw_table *bw_table,
@@ -2038,10 +2126,24 @@ void xhci_drop_ep_from_interval_table(struct xhci_hcd *xhci,
 	struct xhci_interval_bw	*interval_bw;
 	int normalized_interval;
 
-	if (xhci_is_async_ep(ep_bw->type) ||
-			list_empty(&virt_ep->bw_endpoint_list))
+	if (xhci_is_async_ep(ep_bw->type))
 		return;
 
+	if (udev->speed == USB_SPEED_SUPER) {
+		if (xhci_is_sync_in_ep(ep_bw->type))
+			xhci->devs[udev->slot_id]->bw_table->ss_bw_in -=
+				xhci_get_ss_bw_consumed(ep_bw);
+		else
+			xhci->devs[udev->slot_id]->bw_table->ss_bw_out -=
+				xhci_get_ss_bw_consumed(ep_bw);
+		return;
+	}
+
+	/* SuperSpeed endpoints never get added to intervals in the table, so
+	 * this check is only valid for HS/FS/LS devices.
+	 */
+	if (list_empty(&virt_ep->bw_endpoint_list))
+		return;
 	/* For LS/FS devices, we need to translate the interval expressed in
 	 * microframes to frames.
 	 */
@@ -2090,6 +2192,16 @@ static void xhci_add_ep_to_interval_table(struct xhci_hcd *xhci,
 
 	if (xhci_is_async_ep(ep_bw->type))
 		return;
+
+	if (udev->speed == USB_SPEED_SUPER) {
+		if (xhci_is_sync_in_ep(ep_bw->type))
+			xhci->devs[udev->slot_id]->bw_table->ss_bw_in +=
+				xhci_get_ss_bw_consumed(ep_bw);
+		else
+			xhci->devs[udev->slot_id]->bw_table->ss_bw_out +=
+				xhci_get_ss_bw_consumed(ep_bw);
+		return;
+	}
 
 	/* For LS/FS devices, we need to translate the interval expressed in
 	 * microframes to frames.
@@ -2168,9 +2280,6 @@ static int xhci_reserve_bandwidth(struct xhci_hcd *xhci,
 	int i;
 	struct xhci_input_control_ctx *ctrl_ctx;
 	int old_active_eps = 0;
-
-	if (virt_dev->udev->speed == USB_SPEED_SUPER)
-		return 0;
 
 	if (virt_dev->tt_info)
 		old_active_eps = virt_dev->tt_info->active_eps;
@@ -3227,6 +3336,11 @@ void xhci_free_dev(struct usb_hcd *hcd, struct usb_device *udev)
 		del_timer_sync(&virt_dev->eps[i].stop_cmd_timer);
 	}
 
+	if (udev->usb2_hw_lpm_enabled) {
+		xhci_set_usb2_hardware_lpm(hcd, udev, 0);
+		udev->usb2_hw_lpm_enabled = 0;
+	}
+
 	spin_lock_irqsave(&xhci->lock, flags);
 	/* Don't disable the slot if the host controller is dead. */
 	state = xhci_readl(xhci, &xhci->op_regs->status);
@@ -3412,7 +3526,7 @@ int xhci_address_device(struct usb_hcd *hcd, struct usb_device *udev)
 	 * command on a timeout.
 	 */
 	if (timeleft <= 0) {
-		xhci_warn(xhci, "%s while waiting for a slot\n",
+		xhci_warn(xhci, "%s while waiting for address device command\n",
 				timeleft == 0 ? "Timeout" : "Signal");
 		/* FIXME cancel the address device command */
 		return -ETIME;
@@ -3479,6 +3593,254 @@ int xhci_address_device(struct usb_hcd *hcd, struct usb_device *udev)
 
 	return 0;
 }
+
+#ifdef CONFIG_USB_SUSPEND
+
+/* BESL to HIRD Encoding array for USB2 LPM */
+static int xhci_besl_encoding[16] = {125, 150, 200, 300, 400, 500, 1000, 2000,
+	3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000};
+
+/* Calculate HIRD/BESL for USB2 PORTPMSC*/
+static int xhci_calculate_hird_besl(int u2del, bool use_besl)
+{
+	int hird;
+
+	if (use_besl) {
+		for (hird = 0; hird < 16; hird++) {
+			if (xhci_besl_encoding[hird] >= u2del)
+				break;
+		}
+	} else {
+		if (u2del <= 50)
+			hird = 0;
+		else
+			hird = (u2del - 51) / 75 + 1;
+
+		if (hird > 15)
+			hird = 15;
+	}
+
+	return hird;
+}
+
+static int xhci_usb2_software_lpm_test(struct usb_hcd *hcd,
+					struct usb_device *udev)
+{
+	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
+	struct dev_info	*dev_info;
+	__le32 __iomem	**port_array;
+	__le32 __iomem	*addr, *pm_addr;
+	u32		temp, dev_id;
+	unsigned int	port_num;
+	unsigned long	flags;
+	int		u2del, hird;
+	int		ret;
+
+	if (hcd->speed == HCD_USB3 || !xhci->sw_lpm_support ||
+			!udev->lpm_capable)
+		return -EINVAL;
+
+	/* we only support lpm for non-hub device connected to root hub yet */
+	if (!udev->parent || udev->parent->parent ||
+			udev->descriptor.bDeviceClass == USB_CLASS_HUB)
+		return -EINVAL;
+
+	spin_lock_irqsave(&xhci->lock, flags);
+
+	/* Look for devices in lpm_failed_devs list */
+	dev_id = le16_to_cpu(udev->descriptor.idVendor) << 16 |
+			le16_to_cpu(udev->descriptor.idProduct);
+	list_for_each_entry(dev_info, &xhci->lpm_failed_devs, list) {
+		if (dev_info->dev_id == dev_id) {
+			ret = -EINVAL;
+			goto finish;
+		}
+	}
+
+	port_array = xhci->usb2_ports;
+	port_num = udev->portnum - 1;
+
+	if (port_num > HCS_MAX_PORTS(xhci->hcs_params1)) {
+		xhci_dbg(xhci, "invalid port number %d\n", udev->portnum);
+		ret = -EINVAL;
+		goto finish;
+	}
+
+	/*
+	 * Test USB 2.0 software LPM.
+	 * FIXME: some xHCI 1.0 hosts may implement a new register to set up
+	 * hardware-controlled USB 2.0 LPM. See section 5.4.11 and 4.23.5.1.1.1
+	 * in the June 2011 errata release.
+	 */
+	xhci_dbg(xhci, "test port %d software LPM\n", port_num);
+	/*
+	 * Set L1 Device Slot and HIRD/BESL.
+	 * Check device's USB 2.0 extension descriptor to determine whether
+	 * HIRD or BESL shoule be used. See USB2.0 LPM errata.
+	 */
+	pm_addr = port_array[port_num] + 1;
+	u2del = HCS_U2_LATENCY(xhci->hcs_params3);
+	if (le32_to_cpu(udev->bos->ext_cap->bmAttributes) & (1 << 2))
+		hird = xhci_calculate_hird_besl(u2del, 1);
+	else
+		hird = xhci_calculate_hird_besl(u2del, 0);
+
+	temp = PORT_L1DS(udev->slot_id) | PORT_HIRD(hird);
+	xhci_writel(xhci, temp, pm_addr);
+
+	/* Set port link state to U2(L1) */
+	addr = port_array[port_num];
+	xhci_set_link_state(xhci, port_array, port_num, XDEV_U2);
+
+	/* wait for ACK */
+	spin_unlock_irqrestore(&xhci->lock, flags);
+	msleep(10);
+	spin_lock_irqsave(&xhci->lock, flags);
+
+	/* Check L1 Status */
+	ret = handshake(xhci, pm_addr, PORT_L1S_MASK, PORT_L1S_SUCCESS, 125);
+	if (ret != -ETIMEDOUT) {
+		/* enter L1 successfully */
+		temp = xhci_readl(xhci, addr);
+		xhci_dbg(xhci, "port %d entered L1 state, port status 0x%x\n",
+				port_num, temp);
+		ret = 0;
+	} else {
+		temp = xhci_readl(xhci, pm_addr);
+		xhci_dbg(xhci, "port %d software lpm failed, L1 status %d\n",
+				port_num, temp & PORT_L1S_MASK);
+		ret = -EINVAL;
+	}
+
+	/* Resume the port */
+	xhci_set_link_state(xhci, port_array, port_num, XDEV_U0);
+
+	spin_unlock_irqrestore(&xhci->lock, flags);
+	msleep(10);
+	spin_lock_irqsave(&xhci->lock, flags);
+
+	/* Clear PLC */
+	xhci_test_and_clear_bit(xhci, port_array, port_num, PORT_PLC);
+
+	/* Check PORTSC to make sure the device is in the right state */
+	if (!ret) {
+		temp = xhci_readl(xhci, addr);
+		xhci_dbg(xhci, "resumed port %d status 0x%x\n",	port_num, temp);
+		if (!(temp & PORT_CONNECT) || !(temp & PORT_PE) ||
+				(temp & PORT_PLS_MASK) != XDEV_U0) {
+			xhci_dbg(xhci, "port L1 resume fail\n");
+			ret = -EINVAL;
+		}
+	}
+
+	if (ret) {
+		/* Insert dev to lpm_failed_devs list */
+		xhci_warn(xhci, "device LPM test failed, may disconnect and "
+				"re-enumerate\n");
+		dev_info = kzalloc(sizeof(struct dev_info), GFP_ATOMIC);
+		if (!dev_info) {
+			ret = -ENOMEM;
+			goto finish;
+		}
+		dev_info->dev_id = dev_id;
+		INIT_LIST_HEAD(&dev_info->list);
+		list_add(&dev_info->list, &xhci->lpm_failed_devs);
+	} else {
+		xhci_ring_device(xhci, udev->slot_id);
+	}
+
+finish:
+	spin_unlock_irqrestore(&xhci->lock, flags);
+	return ret;
+}
+
+int xhci_set_usb2_hardware_lpm(struct usb_hcd *hcd,
+			struct usb_device *udev, int enable)
+{
+	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
+	__le32 __iomem	**port_array;
+	__le32 __iomem	*pm_addr;
+	u32		temp;
+	unsigned int	port_num;
+	unsigned long	flags;
+	int		u2del, hird;
+
+	if (hcd->speed == HCD_USB3 || !xhci->hw_lpm_support ||
+			!udev->lpm_capable)
+		return -EPERM;
+
+	if (!udev->parent || udev->parent->parent ||
+			udev->descriptor.bDeviceClass == USB_CLASS_HUB)
+		return -EPERM;
+
+	if (udev->usb2_hw_lpm_capable != 1)
+		return -EPERM;
+
+	spin_lock_irqsave(&xhci->lock, flags);
+
+	port_array = xhci->usb2_ports;
+	port_num = udev->portnum - 1;
+	pm_addr = port_array[port_num] + 1;
+	temp = xhci_readl(xhci, pm_addr);
+
+	xhci_dbg(xhci, "%s port %d USB2 hardware LPM\n",
+			enable ? "enable" : "disable", port_num);
+
+	u2del = HCS_U2_LATENCY(xhci->hcs_params3);
+	if (le32_to_cpu(udev->bos->ext_cap->bmAttributes) & (1 << 2))
+		hird = xhci_calculate_hird_besl(u2del, 1);
+	else
+		hird = xhci_calculate_hird_besl(u2del, 0);
+
+	if (enable) {
+		temp &= ~PORT_HIRD_MASK;
+		temp |= PORT_HIRD(hird) | PORT_RWE;
+		xhci_writel(xhci, temp, pm_addr);
+		temp = xhci_readl(xhci, pm_addr);
+		temp |= PORT_HLE;
+		xhci_writel(xhci, temp, pm_addr);
+	} else {
+		temp &= ~(PORT_HLE | PORT_RWE | PORT_HIRD_MASK);
+		xhci_writel(xhci, temp, pm_addr);
+	}
+
+	spin_unlock_irqrestore(&xhci->lock, flags);
+	return 0;
+}
+
+int xhci_update_device(struct usb_hcd *hcd, struct usb_device *udev)
+{
+	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
+	int		ret;
+
+	ret = xhci_usb2_software_lpm_test(hcd, udev);
+	if (!ret) {
+		xhci_dbg(xhci, "software LPM test succeed\n");
+		if (xhci->hw_lpm_support == 1) {
+			udev->usb2_hw_lpm_capable = 1;
+			ret = xhci_set_usb2_hardware_lpm(hcd, udev, 1);
+			if (!ret)
+				udev->usb2_hw_lpm_enabled = 1;
+		}
+	}
+
+	return 0;
+}
+
+#else
+
+int xhci_set_usb2_hardware_lpm(struct usb_hcd *hcd,
+				struct usb_device *udev, int enable)
+{
+	return 0;
+}
+
+int xhci_update_device(struct usb_hcd *hcd, struct usb_device *udev)
+{
+	return 0;
+}
+
+#endif /* CONFIG_USB_SUSPEND */
 
 /* Once a hub descriptor is fetched for a device, we need to update the xHC's
  * internal data structures for the device.
@@ -3582,22 +3944,108 @@ int xhci_get_frame(struct usb_hcd *hcd)
 	return xhci_readl(xhci, &xhci->run_regs->microframe_index) >> 3;
 }
 
+int xhci_gen_setup(struct usb_hcd *hcd, xhci_get_quirks_t get_quirks)
+{
+	struct xhci_hcd		*xhci;
+	struct device		*dev = hcd->self.controller;
+	int			retval;
+	u32			temp;
+
+	hcd->self.sg_tablesize = TRBS_PER_SEGMENT - 2;
+
+	if (usb_hcd_is_primary_hcd(hcd)) {
+		xhci = kzalloc(sizeof(struct xhci_hcd), GFP_KERNEL);
+		if (!xhci)
+			return -ENOMEM;
+		*((struct xhci_hcd **) hcd->hcd_priv) = xhci;
+		xhci->main_hcd = hcd;
+		/* Mark the first roothub as being USB 2.0.
+		 * The xHCI driver will register the USB 3.0 roothub.
+		 */
+		hcd->speed = HCD_USB2;
+		hcd->self.root_hub->speed = USB_SPEED_HIGH;
+		/*
+		 * USB 2.0 roothub under xHCI has an integrated TT,
+		 * (rate matching hub) as opposed to having an OHCI/UHCI
+		 * companion controller.
+		 */
+		hcd->has_tt = 1;
+	} else {
+		/* xHCI private pointer was set in xhci_pci_probe for the second
+		 * registered roothub.
+		 */
+		xhci = hcd_to_xhci(hcd);
+		temp = xhci_readl(xhci, &xhci->cap_regs->hcc_params);
+		if (HCC_64BIT_ADDR(temp)) {
+			xhci_dbg(xhci, "Enabling 64-bit DMA addresses.\n");
+			dma_set_mask(hcd->self.controller, DMA_BIT_MASK(64));
+		} else {
+			dma_set_mask(hcd->self.controller, DMA_BIT_MASK(32));
+		}
+		return 0;
+	}
+
+	xhci->cap_regs = hcd->regs;
+	xhci->op_regs = hcd->regs +
+		HC_LENGTH(xhci_readl(xhci, &xhci->cap_regs->hc_capbase));
+	xhci->run_regs = hcd->regs +
+		(xhci_readl(xhci, &xhci->cap_regs->run_regs_off) & RTSOFF_MASK);
+	/* Cache read-only capability registers */
+	xhci->hcs_params1 = xhci_readl(xhci, &xhci->cap_regs->hcs_params1);
+	xhci->hcs_params2 = xhci_readl(xhci, &xhci->cap_regs->hcs_params2);
+	xhci->hcs_params3 = xhci_readl(xhci, &xhci->cap_regs->hcs_params3);
+	xhci->hcc_params = xhci_readl(xhci, &xhci->cap_regs->hc_capbase);
+	xhci->hci_version = HC_VERSION(xhci->hcc_params);
+	xhci->hcc_params = xhci_readl(xhci, &xhci->cap_regs->hcc_params);
+	xhci_print_registers(xhci);
+
+	get_quirks(dev, xhci);
+
+	/* Make sure the HC is halted. */
+	retval = xhci_halt(xhci);
+	if (retval)
+		goto error;
+
+	xhci_dbg(xhci, "Resetting HCD\n");
+	/* Reset the internal HC memory state and registers. */
+	retval = xhci_reset(xhci);
+	if (retval)
+		goto error;
+	xhci_dbg(xhci, "Reset complete\n");
+
+	temp = xhci_readl(xhci, &xhci->cap_regs->hcc_params);
+	if (HCC_64BIT_ADDR(temp)) {
+		xhci_dbg(xhci, "Enabling 64-bit DMA addresses.\n");
+		dma_set_mask(hcd->self.controller, DMA_BIT_MASK(64));
+	} else {
+		dma_set_mask(hcd->self.controller, DMA_BIT_MASK(32));
+	}
+
+	xhci_dbg(xhci, "Calling HCD init\n");
+	/* Initialize HCD and host controller data structures. */
+	retval = xhci_init(hcd);
+	if (retval)
+		goto error;
+	xhci_dbg(xhci, "Called HCD init\n");
+	return 0;
+error:
+	kfree(xhci);
+	return retval;
+}
+
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_LICENSE("GPL");
 
 static int __init xhci_hcd_init(void)
 {
-#ifdef CONFIG_PCI
-	int retval = 0;
+	int retval;
 
 	retval = xhci_register_pci();
-
 	if (retval < 0) {
 		printk(KERN_DEBUG "Problem registering PCI driver.");
 		return retval;
 	}
-#endif
 	/*
 	 * Check the compiler generated sizes of structures that must be laid
 	 * out in specific ways for hardware access.
@@ -3622,8 +4070,6 @@ module_init(xhci_hcd_init);
 
 static void __exit xhci_hcd_cleanup(void)
 {
-#ifdef CONFIG_PCI
 	xhci_unregister_pci();
-#endif
 }
 module_exit(xhci_hcd_cleanup);

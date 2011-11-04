@@ -272,6 +272,7 @@ struct xhci_op_regs {
  */
 #define PORT_PLS_MASK	(0xf << 5)
 #define XDEV_U0		(0x0 << 5)
+#define XDEV_U2		(0x2 << 5)
 #define XDEV_U3		(0x3 << 5)
 #define XDEV_RESUME	(0xf << 5)
 /* true: port has power (see HCC_PPC) */
@@ -362,7 +363,13 @@ struct xhci_op_regs {
 /* Bits 24:31 for port testing */
 
 /* USB2 Protocol PORTSPMSC */
-#define PORT_RWE	(1 << 0x3)
+#define	PORT_L1S_MASK		7
+#define	PORT_L1S_SUCCESS	1
+#define	PORT_RWE		(1 << 3)
+#define	PORT_HIRD(p)		(((p) & 0xf) << 4)
+#define	PORT_HIRD_MASK		(0xf << 4)
+#define	PORT_L1DS(p)		(((p) & 0xff) << 8)
+#define	PORT_HLE		(1 << 16)
 
 /**
  * struct xhci_intr_reg - Interrupt Register Set
@@ -747,8 +754,9 @@ struct xhci_stream_info {
  * (DMI) also limits the total bandwidth (across all domains) that can be used.
  */
 struct xhci_bw_info {
+	/* ep_interval is zero-based */
 	unsigned int		ep_interval;
-	/* mult and num_packets are zero-based */
+	/* mult and num_packets are one-based */
 	unsigned int		mult;
 	unsigned int		num_packets;
 	unsigned int		max_packet_size;
@@ -798,6 +806,7 @@ struct xhci_bw_info {
 /* Percentage of bus bandwidth reserved for non-periodic transfers */
 #define FS_BW_RESERVED		10
 #define HS_BW_RESERVED		20
+#define SS_BW_RESERVED		10
 
 struct xhci_virt_ep {
 	struct xhci_ring		*ring;
@@ -868,6 +877,8 @@ struct xhci_interval_bw_table {
 	struct xhci_interval_bw	interval_bw[XHCI_MAX_INTERVAL];
 	/* Includes reserved bandwidth for async endpoints */
 	unsigned int		bw_used;
+	unsigned int		ss_bw_in;
+	unsigned int		ss_bw_out;
 };
 
 
@@ -1320,6 +1331,12 @@ struct s3_save {
 	u64	erst_dequeue;
 };
 
+/* Use for lpm */
+struct dev_info {
+	u32			dev_id;
+	struct	list_head	list;
+};
+
 struct xhci_bus_state {
 	unsigned long		bus_suspended;
 	unsigned long		next_statechange;
@@ -1383,6 +1400,8 @@ struct xhci_hcd {
 	struct xhci_erst	erst;
 	/* Scratchpad */
 	struct xhci_scratchpad  *scratchpad;
+	/* Store LPM test failed devices' information */
+	struct list_head	lpm_failed_devs;
 
 	/* slot enabling and address device helpers */
 	struct completion	addr_dev;
@@ -1456,6 +1475,10 @@ struct xhci_hcd {
 	/* Array of pointers to USB 2.0 PORTSC registers */
 	__le32 __iomem		**usb2_ports;
 	unsigned int		num_usb2_ports;
+	/* support xHCI 0.96 spec USB2 software LPM */
+	unsigned		sw_lpm_support:1;
+	/* support xHCI 1.0 spec USB2 hardware LPM */
+	unsigned		hw_lpm_support:1;
 };
 
 /* convert between an HCD pointer and the corresponding EHCI_HCD */
@@ -1527,9 +1550,7 @@ static inline void xhci_write_64(struct xhci_hcd *xhci,
 
 static inline int xhci_link_trb_quirk(struct xhci_hcd *xhci)
 {
-	u32 temp = xhci_readl(xhci, &xhci->cap_regs->hc_capbase);
-	return ((HC_VERSION(temp) == 0x95) &&
-			(xhci->quirks & XHCI_LINK_TRB_QUIRK));
+	return xhci->quirks & XHCI_LINK_TRB_QUIRK;
 }
 
 /* xHCI debugging */
@@ -1623,9 +1644,13 @@ void xhci_free_command(struct xhci_hcd *xhci,
 /* xHCI PCI glue */
 int xhci_register_pci(void);
 void xhci_unregister_pci(void);
+#else
+static inline int xhci_register_pci(void) { return 0; }
+static inline void xhci_unregister_pci(void) {}
 #endif
 
 /* xHCI host controller glue */
+typedef void (*xhci_get_quirks_t)(struct device *, struct xhci_hcd *);
 void xhci_quiesce(struct xhci_hcd *xhci);
 int xhci_halt(struct xhci_hcd *xhci);
 int xhci_reset(struct xhci_hcd *xhci);
@@ -1633,6 +1658,7 @@ int xhci_init(struct usb_hcd *hcd);
 int xhci_run(struct usb_hcd *hcd);
 void xhci_stop(struct usb_hcd *hcd);
 void xhci_shutdown(struct usb_hcd *hcd);
+int xhci_gen_setup(struct usb_hcd *hcd, xhci_get_quirks_t get_quirks);
 
 #ifdef	CONFIG_PM
 int xhci_suspend(struct xhci_hcd *xhci);
@@ -1658,6 +1684,9 @@ int xhci_free_streams(struct usb_hcd *hcd, struct usb_device *udev,
 		struct usb_host_endpoint **eps, unsigned int num_eps,
 		gfp_t mem_flags);
 int xhci_address_device(struct usb_hcd *hcd, struct usb_device *udev);
+int xhci_update_device(struct usb_hcd *hcd, struct usb_device *udev);
+int xhci_set_usb2_hardware_lpm(struct usb_hcd *hcd,
+				struct usb_device *udev, int enable);
 int xhci_update_hub_device(struct usb_hcd *hcd, struct usb_device *hdev,
 			struct usb_tt *tt, gfp_t mem_flags);
 int xhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags);
@@ -1716,6 +1745,10 @@ void xhci_ring_ep_doorbell(struct xhci_hcd *xhci, unsigned int slot_id,
 		unsigned int ep_index, unsigned int stream_id);
 
 /* xHCI roothub code */
+void xhci_set_link_state(struct xhci_hcd *xhci, __le32 __iomem **port_array,
+				int port_id, u32 link_state);
+void xhci_test_and_clear_bit(struct xhci_hcd *xhci, __le32 __iomem **port_array,
+				int port_id, u32 port_bit);
 int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue, u16 wIndex,
 		char *buf, u16 wLength);
 int xhci_hub_status_data(struct usb_hcd *hcd, char *buf);

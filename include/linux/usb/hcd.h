@@ -346,6 +346,7 @@ struct hc_driver {
 		 * address is set
 		 */
 	int	(*update_device)(struct usb_hcd *, struct usb_device *);
+	int	(*set_usb2_hw_lpm)(struct usb_hcd *, struct usb_device *, int);
 
 	/* To by used for SLE security fixes if we run into a KABI problem */
 	void *suse_kabi_padding;
