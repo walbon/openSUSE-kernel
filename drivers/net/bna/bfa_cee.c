@@ -232,7 +232,7 @@ static void
 bfa_cee_notify(void *arg, enum bfa_ioc_event event)
 {
 	struct bfa_cee *cee;
-	cee = (struct bfa_cee *) arg;
+	cee = arg;
 
 	switch (event) {
 	case BFA_IOC_E_DISABLED:
