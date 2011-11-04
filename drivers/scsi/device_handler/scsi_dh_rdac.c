@@ -622,11 +622,21 @@ retry:
 
 	err = blk_execute_rq(q, NULL, rq, 1);
 	blk_put_request(rq);
-	if (err != SCSI_DH_OK) {
-		err = mode_select_handle_sense(sdev, h->sense);
+	if (err == -EIO) {
+		if (driver_byte(rq->errors) & DRIVER_SENSE)
+			err = mode_select_handle_sense(sdev, h->sense);
+		else {
+			RDAC_LOG(RDAC_LOG_FAILOVER, sdev, "array %s, ctrl %d, "
+				 "MODE_SELECT failed with %x",
+				 (char *) h->ctlr->array_name, h->ctlr->index,
+				rq->errors);
+			err = SCSI_DH_IO;
+		}
 		if (err == SCSI_DH_RETRY && retry_cnt--)
 			goto retry;
-	}
+	} else
+		err = SCSI_DH_OK;
+
 	if (err == SCSI_DH_OK) {
 		h->state = RDAC_STATE_ACTIVE;
 		RDAC_LOG(RDAC_LOG_FAILOVER, sdev, "array %s, ctlr %d, "
@@ -643,6 +653,7 @@ done:
 			qdata->callback_fn(qdata->callback_data, err);
 		kfree(qdata);
 	}
+	scsi_device_put(sdev);
 	return;
 }
 
@@ -665,6 +676,10 @@ static int queue_mode_select(struct scsi_device *sdev,
 	qdata->callback_data = data;
 
 	ctlr = qdata->h->ctlr;
+	if (!ctlr->ms_queued && scsi_device_get(sdev)) {
+		kfree(qdata);
+		return SCSI_DH_NOSYS;
+	}
 	spin_lock(&ctlr->ms_lock);
 	list_add_tail(&qdata->entry, &ctlr->ms_head);
 	if (!ctlr->ms_queued) {
