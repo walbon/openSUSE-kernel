@@ -442,30 +442,33 @@ int scsi_dh_activate(struct request_queue *q, activate_complete fn, void *data)
 	spin_lock_irqsave(q->queue_lock, flags);
 	sdev = q->queuedata;
 	if (!sdev) {
+		spin_unlock_irqrestore(q->queue_lock, flags);
 		err = SCSI_DH_NOSYS;
-		goto out_unlock;
+		if (fn)
+			fn(data, err);
+		return err;
 	}
+
 	if (sdev->scsi_dh_data)
 		scsi_dh = sdev->scsi_dh_data->scsi_dh;
 	dev = get_device(&sdev->sdev_gendev);
-
-	if (!scsi_dh || !dev) {
+	if (!scsi_dh || !dev ||
+	    sdev->sdev_state == SDEV_CANCEL ||
+	    sdev->sdev_state == SDEV_DEL)
 		err = SCSI_DH_NOSYS;
-	} else if ( sdev->sdev_state == SDEV_CANCEL ||
-		    sdev->sdev_state == SDEV_DEL ||
-		    sdev->sdev_state == SDEV_OFFLINE) {
+	if (sdev->sdev_state == SDEV_OFFLINE)
 		err = SCSI_DH_DEV_OFFLINED;
-	}
-
-out_unlock:
 	spin_unlock_irqrestore(q->queue_lock, flags);
 
 	if (err) {
 		if (fn)
 			fn(data, err);
-	} else if (scsi_dh->activate)
-		err = scsi_dh->activate(sdev, fn, data);
+		goto out;
+	}
 
+	if (scsi_dh->activate)
+		err = scsi_dh->activate(sdev, fn, data);
+out:
 	put_device(dev);
 	return err;
 }
