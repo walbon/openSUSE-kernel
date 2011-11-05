@@ -15,6 +15,8 @@
  *
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/kernel.h>
@@ -350,17 +352,15 @@ static void bnx2x_dp_dmae(struct bnx2x *bp, struct dmae_command *dmae,
 	default:
 		if (src_type == DMAE_CMD_SRC_PCI)
 			DP(msglvl, "DMAE: opcode 0x%08x\n"
-			   DP_LEVEL "src_addr [%x:%08x]  len [%d * 4]  "
-				    "dst_addr [none]\n"
-			   DP_LEVEL "comp_addr [%x:%08x]  comp_val 0x%08x\n",
+			   "src_addr [%x:%08x]  len [%d * 4]  dst_addr [none]\n"
+			   "comp_addr [%x:%08x]  comp_val 0x%08x\n",
 			   dmae->opcode, dmae->src_addr_hi, dmae->src_addr_lo,
 			   dmae->len, dmae->comp_addr_hi, dmae->comp_addr_lo,
 			   dmae->comp_val);
 		else
 			DP(msglvl, "DMAE: opcode 0x%08x\n"
-			   DP_LEVEL "src_addr [%08x]  len [%d * 4]  "
-				    "dst_addr [none]\n"
-			   DP_LEVEL "comp_addr [%x:%08x]  comp_val 0x%08x\n",
+			   "src_addr [%08x]  len [%d * 4]  dst_addr [none]\n"
+			   "comp_addr [%x:%08x]  comp_val 0x%08x\n",
 			   dmae->opcode, dmae->src_addr_lo >> 2,
 			   dmae->len, dmae->comp_addr_hi, dmae->comp_addr_lo,
 			   dmae->comp_val);
@@ -789,18 +789,15 @@ void bnx2x_panic_dump(struct bnx2x *bp)
 	BNX2X_ERR("     def (");
 	for (i = 0; i < HC_SP_SB_MAX_INDICES; i++)
 		pr_cont("0x%x%s",
-		       bp->def_status_blk->sp_sb.index_values[i],
-		       (i == HC_SP_SB_MAX_INDICES - 1) ? ")  " : " ");
+			bp->def_status_blk->sp_sb.index_values[i],
+			(i == HC_SP_SB_MAX_INDICES - 1) ? ")  " : " ");
 
 	for (i = 0; i < sizeof(struct hc_sp_status_block_data)/sizeof(u32); i++)
 		*((u32 *)&sp_sb_data + i) = REG_RD(bp, BAR_CSTRORM_INTMEM +
 			CSTORM_SP_STATUS_BLOCK_DATA_OFFSET(func) +
 			i*sizeof(u32));
 
-	pr_cont("igu_sb_id(0x%x)  igu_seg_id(0x%x) "
-			 "pf_id(0x%x)  vnic_id(0x%x)  "
-			 "vf_id(0x%x)  vf_valid (0x%x) "
-			 "state(0x%x)\n",
+	pr_cont("igu_sb_id(0x%x)  igu_seg_id(0x%x) pf_id(0x%x)  vnic_id(0x%x)  vf_id(0x%x)  vf_valid (0x%x) state(0x%x)\n",
 	       sp_sb_data.igu_sb_id,
 	       sp_sb_data.igu_seg_id,
 	       sp_sb_data.p_func.pf_id,
@@ -3741,9 +3738,7 @@ static inline void bnx2x_clear_load_cnt(struct bnx2x *bp)
 
 static inline void _print_next_block(int idx, const char *blk)
 {
-	if (idx)
-		pr_cont(", ");
-	pr_cont("%s", blk);
+	pr_cont("%s%s", idx ? ", " : "", blk);
 }
 
 static inline int bnx2x_check_blocks_with_parity0(u32 sig, int par_num,
@@ -4408,7 +4403,7 @@ static inline void bnx2x_handle_rx_mode_eqe(struct bnx2x *bp)
 static inline struct bnx2x_queue_sp_obj *bnx2x_cid_to_q_obj(
 	struct bnx2x *bp, u32 cid)
 {
-	DP(BNX2X_MSG_SP, "retrieving fp from cid %d", cid);
+	DP(BNX2X_MSG_SP, "retrieving fp from cid %d\n", cid);
 #ifdef BCM_CNIC
 	if (cid == BNX2X_FCOE_ETH_CID)
 		return &bnx2x_fcoe(bp, q_obj);
@@ -7243,7 +7238,7 @@ static inline void bnx2x_pf_q_prep_init(struct bnx2x *bp,
 	/* set maximum number of COSs supported by this queue */
 	init_params->max_cos = fp->max_cos;
 
-	DP(BNX2X_MSG_SP, "fp: %d setting queue params max cos to: %d",
+	DP(BNX2X_MSG_SP, "fp: %d setting queue params max cos to: %d\n",
 	    fp->index, init_params->max_cos);
 
 	/* set the context pointers queue object */
@@ -7276,7 +7271,7 @@ int bnx2x_setup_tx_only(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 
 	DP(BNX2X_MSG_SP, "preparing to send tx-only ramrod for connection:"
 			 "cos %d, primary cid %d, cid %d, "
-			 "client id %d, sp-client id %d, flags %lx",
+			 "client id %d, sp-client id %d, flags %lx\n",
 	   tx_index, q_params->q_obj->cids[FIRST_TX_COS_INDEX],
 	   q_params->q_obj->cids[tx_index], q_params->q_obj->cl_id,
 	   tx_only_params->gen_params.spcl_id, tx_only_params->flags);
@@ -7308,7 +7303,7 @@ int bnx2x_setup_queue(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 	int rc;
 	u8 tx_index;
 
-	DP(BNX2X_MSG_SP, "setting up queue %d", fp->index);
+	DP(BNX2X_MSG_SP, "setting up queue %d\n", fp->index);
 
 	/* reset IGU state skip FCoE L2 queue */
 	if (!IS_FCOE_FP(fp))
@@ -7332,7 +7327,7 @@ int bnx2x_setup_queue(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 		return rc;
 	}
 
-	DP(BNX2X_MSG_SP, "init complete");
+	DP(BNX2X_MSG_SP, "init complete\n");
 
 
 	/* Now move the Queue to the SETUP state... */
@@ -7386,7 +7381,7 @@ static int bnx2x_stop_queue(struct bnx2x *bp, int index)
 	struct bnx2x_queue_state_params q_params = {0};
 	int rc, tx_index;
 
-	DP(BNX2X_MSG_SP, "stopping queue %d cid %d", index, fp->cid);
+	DP(BNX2X_MSG_SP, "stopping queue %d cid %d\n", index, fp->cid);
 
 	q_params.q_obj = &fp->q_obj;
 	/* We want to wait for completion in this context */
@@ -7401,7 +7396,7 @@ static int bnx2x_stop_queue(struct bnx2x *bp, int index)
 		/* ascertain this is a normal queue*/
 		txdata = &fp->txdata[tx_index];
 
-		DP(BNX2X_MSG_SP, "stopping tx-only queue %d",
+		DP(BNX2X_MSG_SP, "stopping tx-only queue %d\n",
 							txdata->txq_index);
 
 		/* send halt terminate on tx-only connection */
@@ -7627,8 +7622,11 @@ u32 bnx2x_send_unload_req(struct bnx2x *bp, int unload_mode)
 		u32 emac_base = port ? GRCBASE_EMAC1 : GRCBASE_EMAC0;
 		u8 *mac_addr = bp->dev->dev_addr;
 		u32 val;
+		u16 pmc;
+
 		/* The mac address is written to entries 1-4 to
-		   preserve entry 0 which is used by the PMF */
+		 * preserve entry 0 which is used by the PMF
+		 */
 		u8 entry = (BP_VN(bp) + 1)*8;
 
 		val = (mac_addr[0] << 8) | mac_addr[1];
@@ -7637,6 +7635,11 @@ u32 bnx2x_send_unload_req(struct bnx2x *bp, int unload_mode)
 		val = (mac_addr[2] << 24) | (mac_addr[3] << 16) |
 		      (mac_addr[4] << 8) | mac_addr[5];
 		EMAC_WR(bp, EMAC_REG_EMAC_MAC_MATCH + entry + 4, val);
+
+		/* Enable the PME and clear the status */
+		pci_read_config_word(bp->pdev, bp->pm_cap + PCI_PM_CTRL, &pmc);
+		pmc |= PCI_PM_CTRL_PME_ENABLE | PCI_PM_CTRL_PME_STATUS;
+		pci_write_config_word(bp->pdev, bp->pm_cap + PCI_PM_CTRL, pmc);
 
 		reset_code = DRV_MSG_CODE_UNLOAD_REQ_WOL_EN;
 
@@ -9383,9 +9386,8 @@ static void __devinit bnx2x_get_mac_hwinfo(struct bnx2x *bp)
 				val = MF_CFG_RD(bp, func_ext_config[func].
 						    iscsi_mac_addr_lower);
 				bnx2x_set_mac_buf(iscsi_mac, val, val2);
-				BNX2X_DEV_INFO("Read iSCSI MAC: "
-					       BNX2X_MAC_FMT"\n",
-					       BNX2X_MAC_PRN_LIST(iscsi_mac));
+				BNX2X_DEV_INFO("Read iSCSI MAC: %pM\n",
+					       iscsi_mac);
 			} else
 				bp->flags |= NO_ISCSI_OOO_FLAG | NO_ISCSI_FLAG;
 
@@ -9395,9 +9397,8 @@ static void __devinit bnx2x_get_mac_hwinfo(struct bnx2x *bp)
 				val = MF_CFG_RD(bp, func_ext_config[func].
 						    fcoe_mac_addr_lower);
 				bnx2x_set_mac_buf(fip_mac, val, val2);
-				BNX2X_DEV_INFO("Read FCoE L2 MAC to "
-					       BNX2X_MAC_FMT"\n",
-					       BNX2X_MAC_PRN_LIST(fip_mac));
+				BNX2X_DEV_INFO("Read FCoE L2 MAC to %pM\n",
+					       fip_mac);
 
 			} else
 				bp->flags |= NO_FCOE_FLAG;
@@ -9452,9 +9453,9 @@ static void __devinit bnx2x_get_mac_hwinfo(struct bnx2x *bp)
 	if (!is_valid_ether_addr(bp->dev->dev_addr))
 		dev_err(&bp->pdev->dev,
 			"bad Ethernet MAC address configuration: "
-			BNX2X_MAC_FMT", change it manually before bringing up "
+			"%pM, change it manually before bringing up "
 			"the appropriate network interface\n",
-			BNX2X_MAC_PRN_LIST(bp->dev->dev_addr));
+			bp->dev->dev_addr);
 }
 
 static int __devinit bnx2x_get_hwinfo(struct bnx2x *bp)
@@ -10359,8 +10360,8 @@ static int __devinit bnx2x_init_dev(struct pci_dev *pdev,
 	bnx2x_set_ethtool_ops(dev);
 
 	dev->hw_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
-		NETIF_F_TSO | NETIF_F_TSO_ECN | NETIF_F_TSO6 |
-		NETIF_F_RXCSUM | NETIF_F_LRO | NETIF_F_HW_VLAN_TX;
+		NETIF_F_TSO | NETIF_F_TSO_ECN | NETIF_F_TSO6 | NETIF_F_LRO |
+		NETIF_F_RXCSUM | NETIF_F_RXHASH | NETIF_F_HW_VLAN_TX;
 
 	dev->vlan_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
 		NETIF_F_TSO | NETIF_F_TSO_ECN | NETIF_F_TSO6 | NETIF_F_HIGHDMA;
@@ -10791,7 +10792,7 @@ static int __devinit bnx2x_init_one(struct pci_dev *pdev,
 		return rc;
 	}
 
-	DP(NETIF_MSG_DRV, "max_non_def_sbs %d", max_non_def_sbs);
+	DP(NETIF_MSG_DRV, "max_non_def_sbs %d\n", max_non_def_sbs);
 
 	rc = bnx2x_init_bp(bp);
 	if (rc)
@@ -10846,15 +10847,14 @@ static int __devinit bnx2x_init_one(struct pci_dev *pdev,
 
 	bnx2x_get_pcie_width_speed(bp, &pcie_width, &pcie_speed);
 
-	netdev_info(dev, "%s (%c%d) PCI-E x%d %s found at mem %lx,"
-	       " IRQ %d, ", board_info[ent->driver_data].name,
-	       (CHIP_REV(bp) >> 12) + 'A', (CHIP_METAL(bp) >> 4),
-	       pcie_width,
-	       ((!CHIP_IS_E2(bp) && pcie_speed == 2) ||
-		 (CHIP_IS_E2(bp) && pcie_speed == 1)) ?
-						"5GHz (Gen2)" : "2.5GHz",
-	       dev->base_addr, bp->pdev->irq);
-	pr_cont("node addr %pM\n", dev->dev_addr);
+	netdev_info(dev, "%s (%c%d) PCI-E x%d %s found at mem %lx, IRQ %d, node addr %pM\n",
+		    board_info[ent->driver_data].name,
+		    (CHIP_REV(bp) >> 12) + 'A', (CHIP_METAL(bp) >> 4),
+		    pcie_width,
+		    ((!CHIP_IS_E2(bp) && pcie_speed == 2) ||
+		     (CHIP_IS_E2(bp) && pcie_speed == 1)) ?
+		    "5GHz (Gen2)" : "2.5GHz",
+		    dev->base_addr, bp->pdev->irq, dev->dev_addr);
 
 	return 0;
 

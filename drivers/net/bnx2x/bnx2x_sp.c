@@ -16,6 +16,9 @@
  * Written by: Vladislav Zolotarov
  *
  */
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/version.h>
 #include <linux/module.h>
 #include <linux/crc32.h>
@@ -708,9 +711,8 @@ static void bnx2x_set_one_mac_e2(struct bnx2x *bp,
 	bnx2x_vlan_mac_set_cmd_hdr_e2(bp, o, add, CLASSIFY_RULE_OPCODE_MAC,
 				      &rule_entry->mac.header);
 
-	DP(BNX2X_MSG_SP, "About to %s MAC "BNX2X_MAC_FMT" for "
-			 "Queue %d\n", (add ? "add" : "delete"),
-			 BNX2X_MAC_PRN_LIST(mac), raw->cl_id);
+	DP(BNX2X_MSG_SP, "About to %s MAC %pM for Queue %d\n",
+			 add ? "add" : "delete", mac, raw->cl_id);
 
 	/* Set a MAC itself */
 	bnx2x_set_fw_mac_addr(&rule_entry->mac.mac_msb,
@@ -802,9 +804,9 @@ static inline void bnx2x_vlan_mac_set_rdata_e1x(struct bnx2x *bp,
 	bnx2x_vlan_mac_set_cfg_entry_e1x(bp, o, add, opcode, mac, vlan_id,
 					 cfg_entry);
 
-	DP(BNX2X_MSG_SP, "%s MAC "BNX2X_MAC_FMT" CLID %d CAM offset %d\n",
-			 (add ? "setting" : "clearing"),
-			 BNX2X_MAC_PRN_LIST(mac), raw->cl_id, cam_offset);
+	DP(BNX2X_MSG_SP, "%s MAC %pM CLID %d CAM offset %d\n",
+			 add ? "setting" : "clearing",
+			 mac, raw->cl_id, cam_offset);
 }
 
 /**
@@ -2580,9 +2582,8 @@ static inline void bnx2x_mcast_hdl_pending_add_e2(struct bnx2x *bp,
 
 		cnt++;
 
-		DP(BNX2X_MSG_SP, "About to configure "BNX2X_MAC_FMT
-				 " mcast MAC\n",
-				 BNX2X_MAC_PRN_LIST(pmac_pos->mac));
+		DP(BNX2X_MSG_SP, "About to configure %pM mcast MAC\n",
+				 pmac_pos->mac);
 
 		list_del(&pmac_pos->link);
 
@@ -2703,9 +2704,8 @@ static inline void bnx2x_mcast_hdl_add(struct bnx2x *bp,
 
 		cnt++;
 
-		DP(BNX2X_MSG_SP, "About to configure "BNX2X_MAC_FMT
-				 " mcast MAC\n",
-				 BNX2X_MAC_PRN_LIST(mlist_pos->mac));
+		DP(BNX2X_MSG_SP, "About to configure %pM mcast MAC\n",
+				 mlist_pos->mac);
 	}
 
 	*line_idx = cnt;
@@ -2999,9 +2999,8 @@ static inline void bnx2x_mcast_hdl_add_e1h(struct bnx2x *bp,
 		bit = bnx2x_mcast_bin_from_mac(mlist_pos->mac);
 		BNX2X_57711_SET_MC_FILTER(mc_filter, bit);
 
-		DP(BNX2X_MSG_SP, "About to configure "
-				 BNX2X_MAC_FMT" mcast MAC, bin %d\n",
-				 BNX2X_MAC_PRN_LIST(mlist_pos->mac), bit);
+		DP(BNX2X_MSG_SP, "About to configure %pM mcast MAC, bin %d\n",
+				 mlist_pos->mac, bit);
 
 		/* bookkeeping... */
 		BIT_VEC64_SET_BIT(o->registry.aprox_match.vec,
@@ -3050,8 +3049,8 @@ static int bnx2x_mcast_setup_e1h(struct bnx2x *bp,
 			break;
 
 		case BNX2X_MCAST_CMD_DEL:
-			DP(BNX2X_MSG_SP, "Invalidating multicast "
-					 "MACs configuration\n");
+			DP(BNX2X_MSG_SP,
+			   "Invalidating multicast MACs configuration\n");
 
 			/* clear the registry */
 			memset(o->registry.aprox_match.vec, 0,
@@ -3234,9 +3233,8 @@ static inline int bnx2x_mcast_handle_restore_cmd_e1(
 
 		i++;
 
-		  DP(BNX2X_MSG_SP, "About to configure "BNX2X_MAC_FMT
-				   " mcast MAC\n",
-				   BNX2X_MAC_PRN_LIST(cfg_data.mac));
+		  DP(BNX2X_MSG_SP, "About to configure %pM mcast MAC\n",
+				   cfg_data.mac);
 	}
 
 	*rdata_idx = i;
@@ -3271,9 +3269,8 @@ static inline int bnx2x_mcast_handle_pending_cmds_e1(
 
 			cnt++;
 
-			DP(BNX2X_MSG_SP, "About to configure "BNX2X_MAC_FMT
-					 " mcast MAC\n",
-					 BNX2X_MAC_PRN_LIST(pmac_pos->mac));
+			DP(BNX2X_MSG_SP, "About to configure %pM mcast MAC\n",
+					 pmac_pos->mac);
 		}
 		break;
 
@@ -3358,9 +3355,8 @@ static inline int bnx2x_mcast_refresh_registry_e1(struct bnx2x *bp,
 				&data->config_table[i].middle_mac_addr,
 				&data->config_table[i].lsb_mac_addr,
 				elem->mac);
-			DP(BNX2X_MSG_SP, "Adding registry entry for ["
-					 BNX2X_MAC_FMT"]\n",
-				   BNX2X_MAC_PRN_LIST(elem->mac));
+			DP(BNX2X_MSG_SP, "Adding registry entry for [%pM]\n",
+					 elem->mac);
 			list_add_tail(&elem->link,
 				      &o->registry.exact_match.macs);
 		}
@@ -4247,7 +4243,7 @@ static int bnx2x_queue_comp_cmd(struct bnx2x *bp,
 			 o->cids[BNX2X_PRIMARY_CID_INDEX], o->next_state);
 
 	if (o->next_tx_only)  /* print num tx-only if any exist */
-		DP(BNX2X_MSG_SP, "primary cid %d: num tx-only cons %d",
+		DP(BNX2X_MSG_SP, "primary cid %d: num tx-only cons %d\n",
 			   o->cids[BNX2X_PRIMARY_CID_INDEX], o->next_tx_only);
 
 	o->state = o->next_state;
@@ -4309,7 +4305,7 @@ static void bnx2x_q_fill_init_general_data(struct bnx2x *bp,
 		test_bit(BNX2X_Q_FLG_FCOE, flags) ?
 		LLFC_TRAFFIC_TYPE_FCOE : LLFC_TRAFFIC_TYPE_NW;
 
-	DP(BNX2X_MSG_SP, "flags: active %d, cos %d, stats en %d",
+	DP(BNX2X_MSG_SP, "flags: active %d, cos %d, stats en %d\n",
 	   gen_data->activate_flg, gen_data->cos, gen_data->statistics_en_flg);
 }
 
@@ -4462,7 +4458,7 @@ static void bnx2x_q_fill_setup_tx_only(struct bnx2x *bp,
 				  &data->tx,
 				  &cmd_params->params.tx_only.flags);
 
-	DP(BNX2X_MSG_SP, "cid %d, tx bd page lo %x hi %x",cmd_params->q_obj->cids[0],
+	DP(BNX2X_MSG_SP, "cid %d, tx bd page lo %x hi %x\n",cmd_params->q_obj->cids[0],
 	   data->tx.tx_bd_page_base.lo, data->tx.tx_bd_page_base.hi);
 }
 
@@ -4509,9 +4505,9 @@ static inline int bnx2x_q_init(struct bnx2x *bp,
 
 	/* Set CDU context validation values */
 	for (cos = 0; cos < o->max_cos; cos++) {
-		DP(BNX2X_MSG_SP, "setting context validation. cid %d, cos %d",
+		DP(BNX2X_MSG_SP, "setting context validation. cid %d, cos %d\n",
 				 o->cids[cos], cos);
-		DP(BNX2X_MSG_SP, "context pointer %p", init->cxts[cos]);
+		DP(BNX2X_MSG_SP, "context pointer %p\n", init->cxts[cos]);
 		bnx2x_set_ctx_validation(bp, init->cxts[cos], o->cids[cos]);
 	}
 
@@ -4600,7 +4596,7 @@ static inline int bnx2x_q_send_setup_tx_only(struct bnx2x *bp,
 		return -EINVAL;
 	}
 
-	DP(BNX2X_MSG_SP, "parameters received: cos: %d sp-id: %d",
+	DP(BNX2X_MSG_SP, "parameters received: cos: %d sp-id: %d\n",
 			 tx_only_params->gen_params.cos,
 			 tx_only_params->gen_params.spcl_id);
 
@@ -4611,7 +4607,7 @@ static inline int bnx2x_q_send_setup_tx_only(struct bnx2x *bp,
 	bnx2x_q_fill_setup_tx_only(bp, params, rdata);
 
 	DP(BNX2X_MSG_SP, "sending tx-only ramrod: cid %d, client-id %d,"
-			 "sp-client id %d, cos %d",
+			 "sp-client id %d, cos %d\n",
 			 o->cids[cid_index],
 			 rdata->general.client_id,
 			 rdata->general.sp_client_id, rdata->general.cos);
@@ -5168,8 +5164,9 @@ static inline int bnx2x_func_state_change_comp(struct bnx2x *bp,
 		return -EINVAL;
 	}
 
-	DP(BNX2X_MSG_SP, "Completing command %d for func %d, setting state to "
-			 "%d\n", cmd, BP_FUNC(bp), o->next_state);
+	DP(BNX2X_MSG_SP,
+	   "Completing command %d for func %d, setting state to %d\n",
+	   cmd, BP_FUNC(bp), o->next_state);
 
 	o->state = o->next_state;
 	o->next_state = BNX2X_F_STATE_MAX;
