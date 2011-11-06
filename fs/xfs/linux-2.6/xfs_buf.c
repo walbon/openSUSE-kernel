@@ -1889,7 +1889,7 @@ xfs_buf_terminate(void)
 	destroy_workqueue(xfslogd_workqueue);
 	kmem_zone_destroy(xfs_buf_zone);
 }
-
+/* Breaks build, probably not needed at all
 #ifdef CONFIG_KDB_MODULES
 struct list_head *
 xfs_get_buftarg_list(void)
@@ -1897,3 +1897,4 @@ xfs_get_buftarg_list(void)
 	return &xfs_buftarg_list;
 }
 #endif
+*/

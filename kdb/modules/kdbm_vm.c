@@ -824,7 +824,7 @@ kdbm_fl(int argc, const char **argv)
 	lkdb_printf(" lock_manager_operations");
 	if (fl.fl_lmops)
 		lkdb_printf("\n   lm_compare_owner = 0x%p lm_notify = 0x%p\n",
-			fl.fl_lmops->lm_compare_owner, fl.fl_lmops->lm_notify);
+			fl.fl_lmops->fl_compare_owner, fl.fl_lmops->fl_notify);
 	else
 		lkdb_printf("   empty\n");
 
