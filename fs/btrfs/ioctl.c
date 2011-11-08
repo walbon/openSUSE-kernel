@@ -51,6 +51,7 @@
 #include "volumes.h"
 #include "locking.h"
 #include "inode-map.h"
+#include "backref.h"
 
 /* Mask out flags that are inappropriate for the given type of inode. */
 static inline __u32 btrfs_mask_flags(umode_t mode, __u32 flags)
@@ -282,7 +283,7 @@ static noinline int btrfs_ioctl_fitrim(struct file *file, void __user *arg)
 	struct fstrim_range range;
 	u64 minlen = ULLONG_MAX;
 	u64 num_devices = 0;
-	u64 total_bytes = btrfs_super_total_bytes(&root->fs_info->super_copy);
+	u64 total_bytes = btrfs_super_total_bytes(root->fs_info->super_copy);
 	int ret;
 
 	if (!capable(CAP_SYS_ADMIN))
@@ -1180,7 +1181,7 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 		mutex_unlock(&inode->i_mutex);
 	}
 
-	disk_super = &root->fs_info->super_copy;
+	disk_super = root->fs_info->super_copy;
 	features = btrfs_super_incompat_flags(disk_super);
 	if (range->compress_type == BTRFS_COMPRESS_LZO) {
 		features |= BTRFS_FEATURE_INCOMPAT_COMPRESS_LZO;
@@ -2635,7 +2636,7 @@ static long btrfs_ioctl_default_subvol(struct file *file, void __user *argp)
 		return PTR_ERR(trans);
 	}
 
-	dir_id = btrfs_super_root_dir(&root->fs_info->super_copy);
+	dir_id = btrfs_super_root_dir(root->fs_info->super_copy);
 	di = btrfs_lookup_dir_item(trans, root->fs_info->tree_root, path,
 				   dir_id, "default", 7, 1);
 	if (IS_ERR_OR_NULL(di)) {
@@ -2651,7 +2652,7 @@ static long btrfs_ioctl_default_subvol(struct file *file, void __user *argp)
 	btrfs_mark_buffer_dirty(path->nodes[0]);
 	btrfs_free_path(path);
 
-	disk_super = &root->fs_info->super_copy;
+	disk_super = root->fs_info->super_copy;
 	features = btrfs_super_incompat_flags(disk_super);
 	if (!(features & BTRFS_FEATURE_INCOMPAT_DEFAULT_SUBVOL)) {
 		features |= BTRFS_FEATURE_INCOMPAT_DEFAULT_SUBVOL;
@@ -2912,6 +2913,144 @@ static long btrfs_ioctl_scrub_progress(struct btrfs_root *root,
 	return ret;
 }
 
+static long btrfs_ioctl_ino_to_path(struct btrfs_root *root, void __user *arg)
+{
+	int ret = 0;
+	int i;
+	u64 rel_ptr;
+	int size;
+	struct btrfs_ioctl_ino_path_args *ipa = NULL;
+	struct inode_fs_paths *ipath = NULL;
+	struct btrfs_path *path;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	path = btrfs_alloc_path();
+	if (!path) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	ipa = memdup_user(arg, sizeof(*ipa));
+	if (IS_ERR(ipa)) {
+		ret = PTR_ERR(ipa);
+		ipa = NULL;
+		goto out;
+	}
+
+	size = min_t(u32, ipa->size, 4096);
+	ipath = init_ipath(size, root, path);
+	if (IS_ERR(ipath)) {
+		ret = PTR_ERR(ipath);
+		ipath = NULL;
+		goto out;
+	}
+
+	ret = paths_from_inode(ipa->inum, ipath);
+	if (ret < 0)
+		goto out;
+
+	for (i = 0; i < ipath->fspath->elem_cnt; ++i) {
+		rel_ptr = ipath->fspath->val[i] - (u64)ipath->fspath->val;
+		ipath->fspath->val[i] = rel_ptr;
+	}
+
+	ret = copy_to_user((void *)ipa->fspath, (void *)ipath->fspath, size);
+	if (ret) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+out:
+	btrfs_free_path(path);
+	free_ipath(ipath);
+	kfree(ipa);
+
+	return ret;
+}
+
+static int build_ino_list(u64 inum, u64 offset, u64 root, void *ctx)
+{
+	struct btrfs_data_container *inodes = ctx;
+	const size_t c = 3 * sizeof(u64);
+
+	if (inodes->bytes_left >= c) {
+		inodes->bytes_left -= c;
+		inodes->val[inodes->elem_cnt] = inum;
+		inodes->val[inodes->elem_cnt + 1] = offset;
+		inodes->val[inodes->elem_cnt + 2] = root;
+		inodes->elem_cnt += 3;
+	} else {
+		inodes->bytes_missing += c - inodes->bytes_left;
+		inodes->bytes_left = 0;
+		inodes->elem_missed += 3;
+	}
+
+	return 0;
+}
+
+static long btrfs_ioctl_logical_to_ino(struct btrfs_root *root,
+					void __user *arg)
+{
+	int ret = 0;
+	int size;
+	u64 extent_offset;
+	struct btrfs_ioctl_logical_ino_args *loi;
+	struct btrfs_data_container *inodes = NULL;
+	struct btrfs_path *path = NULL;
+	struct btrfs_key key;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	loi = memdup_user(arg, sizeof(*loi));
+	if (IS_ERR(loi)) {
+		ret = PTR_ERR(loi);
+		loi = NULL;
+		goto out;
+	}
+
+	path = btrfs_alloc_path();
+	if (!path) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	size = min_t(u32, loi->size, 4096);
+	inodes = init_data_container(size);
+	if (IS_ERR(inodes)) {
+		ret = PTR_ERR(inodes);
+		inodes = NULL;
+		goto out;
+	}
+
+	ret = extent_from_logical(root->fs_info, loi->logical, path, &key);
+
+	if (ret & BTRFS_EXTENT_FLAG_TREE_BLOCK)
+		ret = -ENOENT;
+	if (ret < 0)
+		goto out;
+
+	extent_offset = loi->logical - key.objectid;
+	ret = iterate_extent_inodes(root->fs_info, path, key.objectid,
+					extent_offset, build_ino_list, inodes);
+
+	if (ret < 0)
+		goto out;
+
+	ret = copy_to_user((void *)loi->inodes, (void *)inodes, size);
+	if (ret)
+		ret = -EFAULT;
+
+out:
+	btrfs_free_path(path);
+	kfree(inodes);
+	kfree(loi);
+
+	return ret;
+}
+
 long btrfs_ioctl(struct file *file, unsigned int
 		cmd, unsigned long arg)
 {
@@ -2969,6 +3108,10 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_tree_search(file, argp);
 	case BTRFS_IOC_INO_LOOKUP:
 		return btrfs_ioctl_ino_lookup(file, argp);
+	case BTRFS_IOC_INO_PATHS:
+		return btrfs_ioctl_ino_to_path(root, argp);
+	case BTRFS_IOC_LOGICAL_INO:
+		return btrfs_ioctl_logical_to_ino(root, argp);
 	case BTRFS_IOC_SPACE_INFO:
 		return btrfs_ioctl_space_info(root, argp);
 	case BTRFS_IOC_SYNC:
