@@ -85,6 +85,7 @@ struct inode *lookup_free_space_inode(struct btrfs_root *root,
 				      *block_group, struct btrfs_path *path)
 {
 	struct inode *inode = NULL;
+	u32 flags = BTRFS_INODE_NODATASUM | BTRFS_INODE_NODATACOW;
 
 	spin_lock(&block_group->lock);
 	if (block_group->inode)
@@ -99,8 +100,7 @@ struct inode *lookup_free_space_inode(struct btrfs_root *root,
 		return inode;
 
 	spin_lock(&block_group->lock);
-	if (!(BTRFS_I(inode)->flags & (BTRFS_INODE_NODATASUM |
-				       BTRFS_INODE_NODATACOW))) {
+	if (!((BTRFS_I(inode)->flags & flags) == flags)) {
 		printk(KERN_INFO "Old style space inode found, converting.\n");
 		BTRFS_I(inode)->flags |= BTRFS_INODE_NODATASUM |
 			BTRFS_INODE_NODATACOW;
@@ -198,14 +198,24 @@ int btrfs_truncate_free_space_cache(struct btrfs_root *root,
 				    struct inode *inode)
 {
 	struct btrfs_block_rsv *rsv;
+	u64 needed_bytes;
 	loff_t oldsize;
 	int ret = 0;
 
 	rsv = trans->block_rsv;
-	trans->block_rsv = root->orphan_block_rsv;
-	ret = btrfs_block_rsv_check(root, root->orphan_block_rsv, 0, 5, 0);
-	if (ret)
-		return ret;
+	trans->block_rsv = &root->fs_info->global_block_rsv;
+
+	/* 1 for slack space, 1 for updating the inode */
+	needed_bytes = btrfs_calc_trunc_metadata_size(root, 1) +
+		btrfs_calc_trans_metadata_size(root, 1);
+
+	spin_lock(&trans->block_rsv->lock);
+	if (trans->block_rsv->reserved < needed_bytes) {
+		spin_unlock(&trans->block_rsv->lock);
+		trans->block_rsv = rsv;
+		return -ENOSPC;
+	}
+	spin_unlock(&trans->block_rsv->lock);
 
 	oldsize = i_size_read(inode);
 	btrfs_i_size_write(inode, 0);
@@ -218,13 +228,15 @@ int btrfs_truncate_free_space_cache(struct btrfs_root *root,
 	ret = btrfs_truncate_inode_items(trans, root, inode,
 					 0, BTRFS_EXTENT_DATA_KEY);
 
-	trans->block_rsv = rsv;
 	if (ret) {
+		trans->block_rsv = rsv;
 		WARN_ON(1);
 		return ret;
 	}
 
 	ret = btrfs_update_inode(trans, root, inode);
+	trans->block_rsv = rsv;
+
 	return ret;
 }
 
@@ -828,10 +840,6 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 
 	if (!i_size_read(inode))
 		return -1;
-
-	filemap_write_and_wait(inode->i_mapping);
-	btrfs_wait_ordered_range(inode, inode->i_size &
-				 ~(root->sectorsize - 1), (u64)-1);
 
 	io_ctl_init(&io_ctl, inode, root);
 
@@ -1877,6 +1885,7 @@ again:
 			ctl->total_bitmaps--;
 		}
 		kmem_cache_free(btrfs_free_space_cachep, info);
+		ret = 0;
 		goto out_lock;
 	}
 
@@ -1884,7 +1893,8 @@ again:
 		unlink_free_space(ctl, info);
 		info->offset += bytes;
 		info->bytes -= bytes;
-		link_free_space(ctl, info);
+		ret = link_free_space(ctl, info);
+		WARN_ON(ret);
 		goto out_lock;
 	}
 

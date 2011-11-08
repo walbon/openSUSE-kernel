@@ -194,7 +194,9 @@ enum {
 	Opt_notreelog, Opt_ratio, Opt_flushoncommit, Opt_discard,
 	Opt_space_cache, Opt_clear_cache, Opt_user_subvol_rm_allowed,
 	Opt_enospc_debug, Opt_subvolrootid, Opt_defrag,
-	Opt_inode_cache, Opt_no_space_cache, Opt_fatal_errors, Opt_err,
+	Opt_inode_cache, Opt_no_space_cache, Opt_recovery,
+	Opt_fatal_errors,
+	Opt_err,
 };
 
 static match_table_t tokens = {
@@ -228,6 +230,7 @@ static match_table_t tokens = {
 	{Opt_defrag, "autodefrag"},
 	{Opt_inode_cache, "inode_cache"},
 	{Opt_no_space_cache, "no_space_cache"},
+	{Opt_recovery, "recovery"},
 	{Opt_fatal_errors, "fatal_errors=%s"},
 	{Opt_err, NULL},
 };
@@ -247,7 +250,7 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 	char *compress_type;
 	bool compress_force = false;
 
-	cache_gen = btrfs_super_cache_generation(&root->fs_info->super_copy);
+	cache_gen = btrfs_super_cache_generation(root->fs_info->super_copy);
 	if (cache_gen)
 		btrfs_set_opt(info->mount_opt, SPACE_CACHE);
 
@@ -423,6 +426,10 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 			printk(KERN_INFO "btrfs: enabling auto defrag");
 			btrfs_set_opt(info->mount_opt, AUTO_DEFRAG);
 			break;
+		case Opt_recovery:
+			printk(KERN_INFO "btrfs: enabling auto recovery");
+			btrfs_set_opt(info->mount_opt, RECOVERY);
+			break;
 		case Opt_fatal_errors:
 			if (strcmp(args[0].from, "panic") == 0)
 				btrfs_set_opt(info->mount_opt,
@@ -567,7 +574,7 @@ static struct dentry *get_default_root(struct super_block *sb,
 	 * will mount by default if we haven't been given a specific subvolume
 	 * to mount.
 	 */
-	dir_id = btrfs_super_root_dir(&root->fs_info->super_copy);
+	dir_id = btrfs_super_root_dir(root->fs_info->super_copy);
 	di = btrfs_lookup_dir_item(NULL, root, path, dir_id, "default", 7, 0);
 	if (IS_ERR(di)) {
 		btrfs_free_path(path);
@@ -973,14 +980,25 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 	 * then open_ctree will properly initialize everything later.
 	 */
 	fs_info = kzalloc(sizeof(struct btrfs_fs_info), GFP_NOFS);
+	if (!fs_info) {
+		error = -ENOMEM;
+		goto error_close_devices;
+	}
 	tree_root = kzalloc(sizeof(struct btrfs_root), GFP_NOFS);
-	if (!fs_info || !tree_root) {
+	if (!tree_root) {
 		error = -ENOMEM;
 		goto error_close_devices;
 	}
 	fs_info->tree_root = tree_root;
 	fs_info->fs_devices = fs_devices;
 	tree_root->fs_info = fs_info;
+
+	fs_info->super_copy = kzalloc(BTRFS_SUPER_INFO_SIZE, GFP_NOFS);
+	fs_info->super_for_commit = kzalloc(BTRFS_SUPER_INFO_SIZE, GFP_NOFS);
+	if (!fs_info->super_copy || !fs_info->super_for_commit) {
+		error = -ENOMEM;
+		goto error_close_devices;
+	}
 
 	bdev = fs_devices->latest_bdev;
 	s = sget(fs_type, btrfs_test_super, btrfs_set_super, tree_root);
@@ -996,13 +1014,13 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 		}
 
 		btrfs_close_devices(fs_devices);
-		kfree(fs_info);
-		kfree(tree_root);
+		free_fs_info(fs_info);
 	} else {
 		char b[BDEVNAME_SIZE];
 
 		s->s_flags = flags | MS_NOSEC;
 		strlcpy(s->s_id, bdevname(bdev, b), sizeof(s->s_id));
+		btrfs_sb(s)->fs_info->bdev_holder = fs_type;
 		error = btrfs_fill_super(s, fs_devices, data,
 					 flags & MS_SILENT ? 1 : 0);
 		if (error) {
@@ -1010,7 +1028,6 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 			return ERR_PTR(error);
 		}
 
-		btrfs_sb(s)->fs_info->bdev_holder = fs_type;
 		s->s_flags |= MS_ACTIVE;
 	}
 
@@ -1024,8 +1041,7 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 
 error_close_devices:
 	btrfs_close_devices(fs_devices);
-	kfree(fs_info);
-	kfree(tree_root);
+	free_fs_info(fs_info);
 	return ERR_PTR(error);
 }
 
@@ -1050,7 +1066,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		if (root->fs_info->fs_devices->rw_devices == 0)
 			return -EACCES;
 
-		if (btrfs_super_log_root(&root->fs_info->super_copy) != 0)
+		if (btrfs_super_log_root(root->fs_info->super_copy) != 0)
 			return -EINVAL;
 
 		ret = btrfs_cleanup_fs_roots(root->fs_info);
@@ -1216,7 +1232,7 @@ static int btrfs_calc_avail_data_space(struct btrfs_root *root, u64 *free_bytes)
 static int btrfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct btrfs_root *root = btrfs_sb(dentry->d_sb);
-	struct btrfs_super_block *disk_super = &root->fs_info->super_copy;
+	struct btrfs_super_block *disk_super = root->fs_info->super_copy;
 	struct list_head *head = &root->fs_info->space_info;
 	struct btrfs_space_info *found;
 	u64 total_used = 0;

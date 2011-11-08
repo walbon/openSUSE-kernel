@@ -1851,15 +1851,20 @@ static loff_t btrfs_file_llseek(struct file *file, loff_t offset, int origin)
 		}
 
 		ret = find_desired_extent(inode, &offset, origin);
-		if (ret)
-			goto error;
+		if (ret) {
+			mutex_unlock(&inode->i_mutex);
+			return ret;
+		}
 	}
 
-	ret = -EINVAL;
-	if (offset < 0 && !(file->f_mode & FMODE_UNSIGNED_OFFSET))
-		goto error;
-	if (offset > inode->i_sb->s_maxbytes)
-		goto error;
+	if (offset < 0 && !(file->f_mode & FMODE_UNSIGNED_OFFSET)) {
+		offset = -EINVAL;
+		goto out;
+	}
+	if (offset > inode->i_sb->s_maxbytes) {
+		offset = -EINVAL;
+		goto out;
+	}
 
 	/* Special lock needed here? */
 	if (offset != file->f_pos) {
@@ -1869,9 +1874,6 @@ static loff_t btrfs_file_llseek(struct file *file, loff_t offset, int origin)
 out:
 	mutex_unlock(&inode->i_mutex);
 	return offset;
-error:
-	mutex_unlock(&inode->i_mutex);
-	return ret;
 }
 
 const struct file_operations btrfs_file_operations = {

@@ -275,8 +275,9 @@ static int process_one_buffer(struct btrfs_root *log,
 			      struct walk_control *wc, u64 gen)
 {
 	if (wc->pin) {
-		int ret = btrfs_pin_extent(log->fs_info->extent_root,
-					   eb->start, eb->len, 0);
+		int ret =btrfs_pin_extent_for_log_replay(wc->trans,
+						log->fs_info->extent_root,
+						eb->start, eb->len);
 		if (ret)
 			btrfs_panic(log->fs_info, ret, "Cannot pin extent in "
 				    "range %llu(%llu)\n", eb->start, eb->len);
@@ -1763,7 +1764,7 @@ static noinline int walk_down_log_tree(struct btrfs_trans_handle *trans,
 
 				WARN_ON(root_owner !=
 					BTRFS_TREE_LOG_OBJECTID);
-				ret = btrfs_free_reserved_extent(root,
+				ret = btrfs_free_and_pin_reserved_extent(root,
 							 bytenr, blocksize);
 				BUG_ON(ret);
 			}
@@ -1831,7 +1832,7 @@ static noinline int walk_up_log_tree(struct btrfs_trans_handle *trans,
 				btrfs_tree_unlock(next);
 
 				WARN_ON(root_owner != BTRFS_TREE_LOG_OBJECTID);
-				ret = btrfs_free_reserved_extent(root,
+				ret = btrfs_free_and_pin_reserved_extent(root,
 						path->nodes[*level]->start,
 						path->nodes[*level]->len);
 				BUG_ON(ret);
@@ -1900,7 +1901,7 @@ static int walk_log_tree(struct btrfs_trans_handle *trans,
 
 			WARN_ON(log->root_key.objectid !=
 				BTRFS_TREE_LOG_OBJECTID);
-			ret = btrfs_free_reserved_extent(log, next->start,
+			ret = btrfs_free_and_pin_reserved_extent(log, next->start,
 							 next->len);
 			BUG_ON(ret);
 		}
@@ -2015,10 +2016,10 @@ int btrfs_sync_log(struct btrfs_trans_handle *trans,
 	/* wait for previous tree log sync to complete */
 	if (atomic_read(&root->log_commit[(index1 + 1) % 2]))
 		wait_log_commit(trans, root, root->log_transid - 1);
-
 	while (1) {
 		unsigned long batch = root->log_batch;
-		if (root->log_multiple_pids) {
+		/* when we're on an ssd, just kick the log commit out */
+		if (!btrfs_test_opt(root, SSD) && root->log_multiple_pids) {
 			mutex_unlock(&root->log_mutex);
 			schedule_timeout_uninterruptible(1);
 			mutex_lock(&root->log_mutex);
@@ -2119,9 +2120,9 @@ int btrfs_sync_log(struct btrfs_trans_handle *trans,
 	BUG_ON(ret);
 	btrfs_wait_marked_extents(log, &log->dirty_log_pages, mark);
 
-	btrfs_set_super_log_root(&root->fs_info->super_for_commit,
+	btrfs_set_super_log_root(root->fs_info->super_for_commit,
 				log_root_tree->node->start);
-	btrfs_set_super_log_root_level(&root->fs_info->super_for_commit,
+	btrfs_set_super_log_root_level(root->fs_info->super_for_commit,
 				btrfs_header_level(log_root_tree->node));
 
 	log_root_tree->log_batch = 0;
