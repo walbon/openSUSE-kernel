@@ -138,7 +138,7 @@ extern u16 vlan_dev_vlan_id(const struct net_device *dev);
 
 extern int __vlan_hwaccel_rx(struct sk_buff *skb, struct vlan_group *grp,
 			     u16 vlan_tci, int polling);
-extern bool vlan_do_receive(struct sk_buff **skb);
+extern bool vlan_do_receive(struct sk_buff **skb, bool last_handler);
 extern struct sk_buff *vlan_untag(struct sk_buff *skb);
 extern gro_result_t
 vlan_gro_receive(struct napi_struct *napi, struct vlan_group *grp,
@@ -179,9 +179,9 @@ static inline int __vlan_hwaccel_rx(struct sk_buff *skb, struct vlan_group *grp,
 	return NET_XMIT_SUCCESS;
 }
 
-static inline bool vlan_do_receive(struct sk_buff **skb)
+static inline bool vlan_do_receive(struct sk_buff **skb, bool last_handler)
 {
-	if ((*skb)->vlan_tci & VLAN_VID_MASK)
+	if (((*skb)->vlan_tci & VLAN_VID_MASK) && last_handler)
 		(*skb)->pkt_type = PACKET_OTHERHOST;
 	return false;
 }
