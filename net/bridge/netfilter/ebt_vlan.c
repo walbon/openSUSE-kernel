@@ -28,6 +28,8 @@
 
 #define MODULE_VERS "0.6"
 
+static int debug;
+module_param(debug, int, 0); /* dummy parameter for backwards compatibility */
 MODULE_AUTHOR("Nick Fedchik <nick@fedchik.org.ua>");
 MODULE_DESCRIPTION("Ebtables: 802.1Q VLAN tag match");
 MODULE_LICENSE("GPL");
