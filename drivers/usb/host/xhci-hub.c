@@ -411,18 +411,6 @@ static int xhci_get_ports(struct usb_hcd *hcd, __le32 __iomem ***port_array)
 	return max_ports;
 }
 
-void xhci_set_link_state(struct xhci_hcd *xhci, __le32 __iomem **port_array,
-				int port_id, u32 link_state)
-{
-	u32 temp;
-
-	temp = xhci_readl(xhci, port_array[port_id]);
-	temp = xhci_port_state_to_neutral(temp);
-	temp &= ~PORT_PLS_MASK;
-	temp |= PORT_LINK_STROBE | link_state;
-	xhci_writel(xhci, temp, port_array[port_id]);
-}
-
 /* Test and clear port RWC bit */
 void xhci_test_and_clear_bit(struct xhci_hcd *xhci, __le32 __iomem **port_array,
 				int port_id, u32 port_bit)
@@ -435,6 +423,18 @@ void xhci_test_and_clear_bit(struct xhci_hcd *xhci, __le32 __iomem **port_array,
 		temp |= port_bit;
 		xhci_writel(xhci, temp, port_array[port_id]);
 	}
+}
+
+void xhci_set_link_state(struct xhci_hcd *xhci, __le32 __iomem **port_array,
+				int port_id, u32 link_state)
+{
+	u32 temp;
+
+	temp = xhci_readl(xhci, port_array[port_id]);
+	temp = xhci_port_state_to_neutral(temp);
+	temp &= ~PORT_PLS_MASK;
+	temp |= PORT_LINK_STROBE | link_state;
+	xhci_writel(xhci, temp, port_array[port_id]);
 }
 
 int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
