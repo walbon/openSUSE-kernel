@@ -408,6 +408,10 @@ again:
 	ret = btrfs_insert_empty_item(trans, tree_root, path, &key,
 				      sizeof(*ref) + name_len);
 	if (ret) {
+		/*
+		 * Mark the fs readonly on error here - we have a
+		 * duplicate entry which should not exist!
+		 */
 		btrfs_std_error(tree_root->fs_info, ret);
 		goto out_free;
 	}
