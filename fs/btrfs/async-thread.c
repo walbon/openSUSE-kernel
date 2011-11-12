@@ -175,7 +175,7 @@ out:
 }
 
 static noinline void run_ordered_completions(struct btrfs_workers *workers,
-					     struct btrfs_work *work)
+					    struct btrfs_work *work)
 {
 	if (!workers->ordered)
 		return;

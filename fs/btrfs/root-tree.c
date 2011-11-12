@@ -93,7 +93,9 @@ int btrfs_update_root(struct btrfs_trans_handle *trans, struct btrfs_root
 	unsigned long ptr;
 
 	path = btrfs_alloc_path();
-	BUG_ON(!path);
+	if (!path)
+		return -ENOMEM;
+
 	ret = btrfs_search_slot(trans, root, key, path, 0, 1);
 	if (ret < 0)
 		goto out;
@@ -116,13 +118,10 @@ out:
 	return ret;
 }
 
-int btrfs_insert_root(struct btrfs_trans_handle *trans, struct btrfs_root
-		      *root, struct btrfs_key *key, struct btrfs_root_item
-		      *item)
+int btrfs_insert_root(struct btrfs_trans_handle *trans, struct btrfs_root *root,
+		      struct btrfs_key *key, struct btrfs_root_item *item)
 {
-	int ret;
-	ret = btrfs_insert_item(trans, root, key, item, sizeof(*item));
-	return ret;
+	return btrfs_insert_item(trans, root, key, item, sizeof(*item));
 }
 
 /*

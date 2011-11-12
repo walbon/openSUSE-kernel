@@ -673,12 +673,11 @@ next_slot:
 			btrfs_mark_buffer_dirty(leaf);
 
 			if (disk_bytenr > 0) {
-				ret = btrfs_inc_extent_ref(trans, root,
-						disk_bytenr, num_bytes, 0,
-						root->root_key.objectid,
-						new_key.objectid,
-						start - extent_offset);
-				BUG_ON(ret);
+				btrfs_inc_extent_ref(trans, root,
+						     disk_bytenr, num_bytes, 0,
+						     root->root_key.objectid,
+						     new_key.objectid,
+						     start - extent_offset);
 				*hint_byte = disk_bytenr;
 			}
 			key.offset = start;
@@ -748,12 +747,11 @@ next_slot:
 				extent_end = ALIGN(extent_end,
 						   root->sectorsize);
 			} else if (disk_bytenr > 0) {
-				ret = btrfs_free_extent(trans, root,
-						disk_bytenr, num_bytes, 0,
-						root->root_key.objectid,
-						key.objectid, key.offset -
-						extent_offset);
-				BUG_ON(ret);
+				btrfs_free_extent(trans, root,
+						  disk_bytenr, num_bytes, 0,
+						  root->root_key.objectid,
+						  key.objectid, key.offset -
+						  extent_offset);
 				inode_sub_bytes(inode,
 						extent_end - key.offset);
 				*hint_byte = disk_bytenr;
@@ -959,10 +957,9 @@ again:
 						extent_end - split);
 		btrfs_mark_buffer_dirty(leaf);
 
-		ret = btrfs_inc_extent_ref(trans, root, bytenr, num_bytes, 0,
-					   root->root_key.objectid,
-					   ino, orig_offset);
-		BUG_ON(ret);
+		btrfs_inc_extent_ref(trans, root, bytenr, num_bytes, 0,
+				     root->root_key.objectid,
+				     ino, orig_offset);
 
 		if (split == start) {
 			key.offset = start;
@@ -986,10 +983,8 @@ again:
 		extent_end = other_end;
 		del_slot = path->slots[0] + 1;
 		del_nr++;
-		ret = btrfs_free_extent(trans, root, bytenr, num_bytes,
-					0, root->root_key.objectid,
-					ino, orig_offset);
-		BUG_ON(ret);
+		btrfs_free_extent(trans, root, bytenr, num_bytes, 0,
+				  root->root_key.objectid, ino, orig_offset);
 	}
 	other_start = 0;
 	other_end = start;
@@ -1003,10 +998,8 @@ again:
 		key.offset = other_start;
 		del_slot = path->slots[0];
 		del_nr++;
-		ret = btrfs_free_extent(trans, root, bytenr, num_bytes,
-					0, root->root_key.objectid,
-					ino, orig_offset);
-		BUG_ON(ret);
+		btrfs_free_extent(trans, root, bytenr, num_bytes, 0,
+				  root->root_key.objectid, ino, orig_offset);
 	}
 	if (del_nr == 0) {
 		fi = btrfs_item_ptr(leaf, path->slots[0],
@@ -1129,10 +1122,10 @@ again:
 			btrfs_put_ordered_extent(ordered);
 
 		err = clear_extent_bit(&BTRFS_I(inode)->io_tree, start_pos,
-				      last_pos - 1,
-				      EXTENT_DIRTY | EXTENT_DELALLOC |
-				      EXTENT_DO_ACCOUNTING, 0, 0,
-				      &cached_state, GFP_NOFS);
+				       last_pos - 1,
+				       EXTENT_DIRTY | EXTENT_DELALLOC |
+				       EXTENT_DO_ACCOUNTING, 0, 0,
+				       &cached_state, GFP_NOFS);
 		BUG_ON(err < 0);
 		err = unlock_extent_cached(&BTRFS_I(inode)->io_tree,
 					   start_pos, last_pos - 1,

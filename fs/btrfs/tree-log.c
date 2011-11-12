@@ -275,7 +275,7 @@ static int process_one_buffer(struct btrfs_root *log,
 			      struct walk_control *wc, u64 gen)
 {
 	if (wc->pin) {
-		int ret =btrfs_pin_extent_for_log_replay(wc->trans,
+		int ret = btrfs_pin_extent_for_log_replay(wc->trans,
 						log->fs_info->extent_root,
 						eb->start, eb->len);
 		if (ret)
@@ -381,12 +381,11 @@ insert:
 		u32 found_size;
 		found_size = btrfs_item_size_nr(path->nodes[0],
 						path->slots[0]);
-		if (found_size > item_size) {
+		if (found_size > item_size)
 			btrfs_truncate_item(trans, root, path, item_size, 1);
-		} else if (found_size < item_size) {
-			ret = btrfs_extend_item(trans, root, path,
-						item_size - found_size);
-		}
+		else if (found_size < item_size)
+			btrfs_extend_item(trans, root, path,
+					  item_size - found_size);
 	} else if (ret) {
 		return ret;
 	}
@@ -589,11 +588,10 @@ static noinline int replay_one_extent(struct btrfs_trans_handle *trans,
 			ret = btrfs_lookup_extent(root, ins.objectid,
 						ins.offset);
 			if (ret == 0) {
-				ret = btrfs_inc_extent_ref(trans, root,
-						ins.objectid, ins.offset,
-						0, root->root_key.objectid,
-						key->objectid, offset);
-				BUG_ON(ret);
+				btrfs_inc_extent_ref(trans, root, ins.objectid,
+						     ins.offset, 0,
+						     root->root_key.objectid,
+						     key->objectid, offset);
 			} else {
 				/*
 				 * insert the extent pointer in the extent
@@ -1966,7 +1964,7 @@ static int wait_log_commit(struct btrfs_trans_handle *trans,
 }
 
 static void wait_for_writer(struct btrfs_trans_handle *trans,
-			   struct btrfs_root *root)
+			    struct btrfs_root *root)
 {
 	DEFINE_WAIT(wait);
 	while (atomic_read(&root->log_writers)) {

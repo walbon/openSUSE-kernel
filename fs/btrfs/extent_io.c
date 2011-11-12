@@ -444,6 +444,13 @@ alloc_extent_state_atomic(struct extent_state *prealloc)
 	return prealloc;
 }
 
+NORET_TYPE void extent_io_tree_panic(struct extent_io_tree *tree, int err)
+{
+	btrfs_panic(tree_fs_info(tree), err, "Locking error: "
+		    "Extent tree was modified by another "
+		    "thread while locked.");
+}
+
 /*
  * clear some bits on a range in the tree.  This may require splitting
  * or inserting elements in the tree, so the gfp mask is used to
@@ -454,8 +461,7 @@ alloc_extent_state_atomic(struct extent_state *prealloc)
  *
  * the range [start, end] is inclusive.
  *
- * This takes the tree lock, and returns < 0 on error, > 0 if any of the
- * bits were already set, or zero if none of the bits were already set.
+ * This takes the tree lock, and returns 0 on success and < 0 on error.
  */
 int clear_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
 		     int bits, int wake, int delete,
@@ -469,7 +475,6 @@ int clear_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
 	struct rb_node *node;
 	u64 last_end;
 	int err;
-	int set = 0;
 	int clear = 0;
 
 	if (delete)
@@ -543,14 +548,13 @@ hit_next:
 
 		err = split_state(tree, state, prealloc, start);
 		if (err)
-			btrfs_panic(tree_fs_info(tree), err, "Locking error: "
-				    "Extent tree was modified by another "
-				    "thread while locked.");
+			extent_io_tree_panic(tree, err);
+
 		prealloc = NULL;
 		if (err)
 			goto out;
 		if (state->end <= end) {
-			set |= clear_state_bit(tree, state, &bits, wake);
+			clear_state_bit(tree, state, &bits, wake);
 			if (last_end == (u64)-1)
 				goto out;
 			start = last_end + 1;
@@ -572,13 +576,12 @@ hit_next:
 
 		err = split_state(tree, state, prealloc, end + 1);
 		if (err)
-			btrfs_panic(tree_fs_info(tree), err, "Locking error: "
-				    "Extent tree was modified by another "
-				    "thread while locked.");
+			extent_io_tree_panic(tree, err);
+
 		if (wake)
 			wake_up(&state->wq);
 
-		set |= clear_state_bit(tree, prealloc, &bits, wake);
+		clear_state_bit(tree, prealloc, &bits, wake);
 
 		prealloc = NULL;
 		goto out;
@@ -589,7 +592,7 @@ hit_next:
 	else
 		next_node = NULL;
 
-	set |= clear_state_bit(tree, state, &bits, wake);
+	clear_state_bit(tree, state, &bits, wake);
 	if (last_end == (u64)-1)
 		goto out;
 	start = last_end + 1;
@@ -606,7 +609,7 @@ out:
 	if (prealloc)
 		free_extent_state(prealloc);
 
-	return set;
+	return 0;
 
 search_again:
 	if (start > end)
@@ -764,9 +767,8 @@ again:
 
 		err = insert_state(tree, prealloc, start, end, &bits);
 		if (err)
-			btrfs_panic(tree_fs_info(tree), err, "Locking error: "
-				    "Extent tree was modified by another "
-				    "thread while locked.");
+			extent_io_tree_panic(tree, err);
+
 		prealloc = NULL;
 		goto out;
 	}
@@ -838,9 +840,8 @@ hit_next:
 
 		err = split_state(tree, state, prealloc, start);
 		if (err)
-			btrfs_panic(tree_fs_info(tree), err, "Locking error: "
-				    "Extent tree was modified by another "
-				    "thread while locked.");
+			extent_io_tree_panic(tree, err);
+
 		prealloc = NULL;
 		if (err)
 			goto out;
@@ -881,9 +882,7 @@ hit_next:
 		err = insert_state(tree, prealloc, start, this_end,
 				   &bits);
 		if (err)
-			btrfs_panic(tree_fs_info(tree), err, "Locking error: "
-				    "Extent tree was modified by another "
-				    "thread while locked.");
+			extent_io_tree_panic(tree, err);
 
 		cache_state(prealloc, cached_state);
 		prealloc = NULL;
@@ -911,9 +910,7 @@ hit_next:
 
 		err = split_state(tree, state, prealloc, end + 1);
 		if (err)
-			btrfs_panic(tree_fs_info(tree), err, "Locking error: "
-				    "Extent tree was modified by another "
-				    "thread while locked.");
+			extent_io_tree_panic(tree, err);
 
 		set_state_bits(tree, prealloc, &bits);
 		cache_state(prealloc, cached_state);
@@ -1179,9 +1176,9 @@ int set_extent_uptodate(struct extent_io_tree *tree, u64 start, u64 end,
 			      NULL, cached_state, mask);
 }
 
-static int clear_extent_uptodate(struct extent_io_tree *tree, u64 start,
-				 u64 end, struct extent_state **cached_state,
-				 gfp_t mask)
+static int __must_check
+clear_extent_uptodate(struct extent_io_tree *tree, u64 start, u64 end,
+		      struct extent_state **cached_state, gfp_t mask)
 {
 	return clear_extent_bit(tree, start, end, EXTENT_UPTODATE, 0, 0,
 				cached_state, mask);
@@ -1387,8 +1384,8 @@ out:
 }
 
 static noinline void __unlock_for_delalloc(struct inode *inode,
-					  struct page *locked_page,
-					  u64 start, u64 end)
+					   struct page *locked_page,
+					   u64 start, u64 end)
 {
 	int ret;
 	struct page *pages[16];
@@ -2417,8 +2414,8 @@ btrfs_bio_alloc(struct block_device *bdev, u64 first_sector, int nr_vecs,
 	return bio;
 }
 
-static int submit_one_bio(int rw, struct bio *bio, int mirror_num,
-			  unsigned long bio_flags)
+static int __must_check submit_one_bio(int rw, struct bio *bio,
+				       int mirror_num, unsigned long bio_flags)
 {
 	int ret = 0;
 	struct bio_vec *bvec = bio->bi_io_vec + bio->bi_vcnt - 1;
@@ -3332,8 +3329,8 @@ int try_release_extent_state(struct extent_map_tree *map,
 		 * locked bit and the nodatasum bit
 		 */
 		ret = clear_extent_bit(tree, start, end,
-				 ~(EXTENT_LOCKED | EXTENT_NODATASUM),
-				 0, 0, NULL, mask);
+				       ~(EXTENT_LOCKED | EXTENT_NODATASUM),
+				       0, 0, NULL, mask);
 
 		/* if clear_extent_bit failed for enomem reasons,
 		 * we can't allow the release to continue.

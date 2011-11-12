@@ -1102,8 +1102,8 @@ struct extent_buffer *read_tree_block(struct btrfs_root *root, u64 bytenr,
 
 }
 
-int clean_tree_block(struct btrfs_trans_handle *trans, struct btrfs_root *root,
-		     struct extent_buffer *buf)
+void clean_tree_block(struct btrfs_trans_handle *trans, struct btrfs_root *root,
+		      struct extent_buffer *buf)
 {
 	struct inode *btree_inode = root->fs_info->btree_inode;
 	if (btrfs_header_generation(buf) ==
@@ -1124,12 +1124,12 @@ int clean_tree_block(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 		clear_extent_buffer_dirty(&BTRFS_I(btree_inode)->io_tree,
 					  buf);
 	}
-	return 0;
 }
 
 static void __setup_root(u32 nodesize, u32 leafsize, u32 sectorsize,
 			 u32 stripesize, struct btrfs_root *root,
-			 struct btrfs_fs_info *fs_info, u64 objectid)
+			 struct btrfs_fs_info *fs_info,
+			 u64 objectid)
 {
 	root->node = NULL;
 	root->commit_root = NULL;
@@ -1189,10 +1189,10 @@ static void __setup_root(u32 nodesize, u32 leafsize, u32 sectorsize,
 
 }
 
-static int find_and_setup_root(struct btrfs_root *tree_root,
-			       struct btrfs_fs_info *fs_info,
-			       u64 objectid,
-			       struct btrfs_root *root)
+static int __must_check find_and_setup_root(struct btrfs_root *tree_root,
+					    struct btrfs_fs_info *fs_info,
+					    u64 objectid,
+					    struct btrfs_root *root)
 {
 	int ret;
 	u32 blocksize;
@@ -1205,7 +1205,7 @@ static int find_and_setup_root(struct btrfs_root *tree_root,
 				   &root->root_item, &root->root_key);
 	if (ret > 0)
 		return -ENOENT;
-	if (ret < 0)
+	else if (ret < 0)
 		return ret;
 
 	generation = btrfs_root_generation(&root->root_item);
@@ -3311,6 +3311,7 @@ static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 		ret = clear_extent_bits(dirty_pages, start, end, mark,
 					GFP_NOFS);
 		BUG_ON(ret < 0);
+		ret = 0;
 		while (start <= end) {
 			index = start >> PAGE_CACHE_SHIFT;
 			start = (u64)(index + 1) << PAGE_CACHE_SHIFT;

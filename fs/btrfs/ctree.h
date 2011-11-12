@@ -2258,11 +2258,12 @@ int btrfs_lookup_extent(struct btrfs_root *root, u64 start, u64 len);
 int btrfs_lookup_extent_info(struct btrfs_trans_handle *trans,
 			     struct btrfs_root *root, u64 bytenr,
 			     u64 num_bytes, u64 *refs, u64 *flags);
-int btrfs_pin_extent(struct btrfs_root *root,
-		     u64 bytenr, u64 num, int reserved);
-int btrfs_pin_extent_for_log_replay(struct btrfs_trans_handle *trans,
-				    struct btrfs_root *root,
-				    u64 bytenr, u64 num_bytes);
+int __must_check btrfs_pin_extent(struct btrfs_root *root, u64 bytenr,
+				  u64 num, int reserved);
+int __must_check btrfs_pin_extent_for_log_replay(
+					struct btrfs_trans_handle *trans,
+					struct btrfs_root *root,
+					u64 bytenr, u64 num_bytes);
 int btrfs_cross_ref_exist(struct btrfs_trans_handle *trans,
 			  struct btrfs_root *root,
 			  u64 objectid, u64 offset, u64 bytenr);
@@ -2285,10 +2286,10 @@ struct extent_buffer *btrfs_init_new_buffer(struct btrfs_trans_handle *trans,
 					    struct btrfs_root *root,
 					    u64 bytenr, u32 blocksize,
 					    int level);
-int btrfs_alloc_reserved_file_extent(struct btrfs_trans_handle *trans,
-				     struct btrfs_root *root,
-				     u64 root_objectid, u64 owner,
-				     u64 offset, struct btrfs_key *ins);
+void btrfs_alloc_reserved_file_extent(struct btrfs_trans_handle *trans,
+				      struct btrfs_root *root,
+				      u64 root_objectid, u64 owner,
+				      u64 offset, struct btrfs_key *ins);
 int btrfs_alloc_logged_file_extent(struct btrfs_trans_handle *trans,
 				   struct btrfs_root *root,
 				   u64 root_objectid, u64 owner, u64 offset,
@@ -2299,30 +2300,30 @@ int btrfs_reserve_extent(struct btrfs_trans_handle *trans,
 				  u64 empty_size, u64 hint_byte,
 				  u64 search_end, struct btrfs_key *ins,
 				  u64 data);
-int btrfs_inc_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
-		  struct extent_buffer *buf, int full_backref);
-int btrfs_dec_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
-		  struct extent_buffer *buf, int full_backref);
+void btrfs_inc_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
+		   struct extent_buffer *buf, int full_backref);
+void btrfs_dec_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
+		   struct extent_buffer *buf, int full_backref);
 int btrfs_set_disk_extent_flags(struct btrfs_trans_handle *trans,
 				struct btrfs_root *root,
 				u64 bytenr, u64 num_bytes, u64 flags,
 				int is_data);
-int btrfs_free_extent(struct btrfs_trans_handle *trans,
-		      struct btrfs_root *root,
-		      u64 bytenr, u64 num_bytes, u64 parent,
-		      u64 root_objectid, u64 owner, u64 offset);
+void btrfs_free_extent(struct btrfs_trans_handle *trans,
+		       struct btrfs_root *root,
+		       u64 bytenr, u64 num_bytes, u64 parent,
+		       u64 root_objectid, u64 owner, u64 offset);
 
 int btrfs_free_reserved_extent(struct btrfs_root *root, u64 start, u64 len);
 int btrfs_free_and_pin_reserved_extent(struct btrfs_root *root,
 				       u64 start, u64 len);
 void btrfs_prepare_extent_commit(struct btrfs_trans_handle *trans,
-				struct btrfs_root *root);
+				 struct btrfs_root *root);
 int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root);
-int btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
-			 struct btrfs_root *root,
-			 u64 bytenr, u64 num_bytes, u64 parent,
-			 u64 root_objectid, u64 owner, u64 offset);
+void btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
+			  struct btrfs_root *root,
+			  u64 bytenr, u64 num_bytes, u64 parent,
+			  u64 root_objectid, u64 owner, u64 offset);
 
 int btrfs_write_dirty_block_groups(struct btrfs_trans_handle *trans,
 				    struct btrfs_root *root);
@@ -2418,12 +2419,13 @@ int btrfs_copy_root(struct btrfs_trans_handle *trans,
 		      struct extent_buffer **cow_ret, u64 new_root_objectid);
 int btrfs_block_can_be_shared(struct btrfs_root *root,
 			      struct extent_buffer *buf);
-int btrfs_extend_item(struct btrfs_trans_handle *trans, struct btrfs_root
-		      *root, struct btrfs_path *path, u32 data_size);
-int btrfs_truncate_item(struct btrfs_trans_handle *trans,
-			struct btrfs_root *root,
-			struct btrfs_path *path,
-			u32 new_size, int from_end);
+void btrfs_extend_item(struct btrfs_trans_handle *trans,
+		       struct btrfs_root *root, struct btrfs_path *path,
+		       u32 data_size);
+void btrfs_truncate_item(struct btrfs_trans_handle *trans,
+			 struct btrfs_root *root,
+			 struct btrfs_path *path,
+			 u32 new_size, int from_end);
 int btrfs_split_item(struct btrfs_trans_handle *trans,
 		     struct btrfs_root *root,
 		     struct btrfs_path *path,
@@ -2480,8 +2482,9 @@ static inline int btrfs_insert_empty_item(struct btrfs_trans_handle *trans,
 int btrfs_next_leaf(struct btrfs_root *root, struct btrfs_path *path);
 int btrfs_prev_leaf(struct btrfs_root *root, struct btrfs_path *path);
 int btrfs_leaf_free_space(struct btrfs_root *root, struct extent_buffer *leaf);
-int btrfs_drop_snapshot(struct btrfs_root *root,
-			struct btrfs_block_rsv *block_rsv, int update_ref);
+int __must_check btrfs_drop_snapshot(struct btrfs_root *root,
+				     struct btrfs_block_rsv *block_rsv,
+				     int update_ref);
 int btrfs_drop_subtree(struct btrfs_trans_handle *trans,
 			struct btrfs_root *root,
 			struct extent_buffer *node,
@@ -2524,9 +2527,10 @@ int btrfs_del_root(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 int btrfs_insert_root(struct btrfs_trans_handle *trans, struct btrfs_root
 		      *root, struct btrfs_key *key, struct btrfs_root_item
 		      *item);
-int btrfs_update_root(struct btrfs_trans_handle *trans, struct btrfs_root
-		      *root, struct btrfs_key *key, struct btrfs_root_item
-		      *item);
+int __must_check btrfs_update_root(struct btrfs_trans_handle *trans,
+				   struct btrfs_root *root,
+				   struct btrfs_key *key,
+				   struct btrfs_root_item *item);
 int btrfs_find_last_root(struct btrfs_root *root, u64 objectid, struct
 			 btrfs_root_item *item, struct btrfs_key *key);
 int btrfs_find_dead_roots(struct btrfs_root *root, u64 objectid);
@@ -2675,8 +2679,9 @@ int btrfs_truncate_inode_items(struct btrfs_trans_handle *trans,
 			       u32 min_type);
 
 int btrfs_start_delalloc_inodes(struct btrfs_root *root, int delay_iput);
-int btrfs_set_extent_delalloc(struct inode *inode, u64 start, u64 end,
-			      struct extent_state **cached_state);
+int __must_check btrfs_set_extent_delalloc(struct inode *inode, u64 start,
+					   u64 end,
+					   struct extent_state **cached_state);
 int btrfs_writepages(struct address_space *mapping,
 		     struct writeback_control *wbc);
 int btrfs_create_subvol_root(struct btrfs_trans_handle *trans,

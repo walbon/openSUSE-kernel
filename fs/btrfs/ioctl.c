@@ -2445,12 +2445,11 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 								datal);
 				if (disko) {
 					inode_add_bytes(inode, datal);
-					ret = btrfs_inc_extent_ref(trans, root,
+					btrfs_inc_extent_ref(trans, root,
 							disko, diskl, 0,
 							root->root_key.objectid,
 							btrfs_ino(inode),
 							new_key.offset - datao);
-					BUG_ON(ret);
 				}
 			} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 				u64 skip = 0;

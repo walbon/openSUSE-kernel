@@ -582,8 +582,8 @@ int btrfs_write_marked_extents(struct btrfs_root *root,
 
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
 				      mark)) {
-		err = convert_extent_bit(dirty_pages, start, end, EXTENT_NEED_WAIT,
-				mark, GFP_NOFS);
+		err = convert_extent_bit(dirty_pages, start, end,
+					 EXTENT_NEED_WAIT, mark, GFP_NOFS);
 		BUG_ON(err < 0);
 		err = filemap_fdatawrite_range(mapping, start, end);
 		if (err)
@@ -614,7 +614,7 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
 				      EXTENT_NEED_WAIT)) {
 		err = clear_extent_bits(dirty_pages, start, end,
-			EXTENT_NEED_WAIT, GFP_NOFS);
+					EXTENT_NEED_WAIT, GFP_NOFS);
 		BUG_ON(err < 0);
 		err = filemap_fdatawait_range(mapping, start, end);
 		if (err)
@@ -1373,7 +1373,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
  */
 int btrfs_clean_old_snapshots(struct btrfs_root *root)
 {
-	int ret;
 	LIST_HEAD(list);
 	struct btrfs_fs_info *fs_info = root->fs_info;
 
@@ -1382,6 +1381,8 @@ int btrfs_clean_old_snapshots(struct btrfs_root *root)
 	spin_unlock(&fs_info->trans_lock);
 
 	while (!list_empty(&list)) {
+		int ret;
+
 		root = list_entry(list.next, struct btrfs_root, root_list);
 		list_del(&root->root_list);
 
@@ -1392,7 +1393,7 @@ int btrfs_clean_old_snapshots(struct btrfs_root *root)
 			ret = btrfs_drop_snapshot(root, NULL, 0);
 		else
 			ret = btrfs_drop_snapshot(root, NULL, 1);
-		BUG_ON(ret);
+		BUG_ON(ret < 0);
 	}
 	return 0;
 }

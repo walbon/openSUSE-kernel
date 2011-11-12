@@ -1712,10 +1712,8 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	ins.objectid = disk_bytenr;
 	ins.offset = disk_num_bytes;
 	ins.type = BTRFS_EXTENT_ITEM_KEY;
-	ret = btrfs_alloc_reserved_file_extent(trans, root,
-					root->root_key.objectid,
-					btrfs_ino(inode), file_pos, &ins);
-	BUG_ON(ret);
+	btrfs_alloc_reserved_file_extent(trans, root, root->root_key.objectid,
+					 btrfs_ino(inode), file_pos, &ins);
 	btrfs_free_path(path);
 
 	return 0;
@@ -3131,8 +3129,8 @@ search_again:
 				}
 				size =
 				    btrfs_file_extent_calc_inline_size(size);
-				ret = btrfs_truncate_item(trans, root, path,
-							  size, 1);
+				btrfs_truncate_item(trans, root, path,
+						    size, 1);
 			} else if (root->ref_cows) {
 				inode_sub_bytes(inode, item_end + 1 -
 						found_key.offset);
@@ -3158,11 +3156,10 @@ delete:
 		if (found_extent && (root->ref_cows ||
 				     root == root->fs_info->tree_root)) {
 			btrfs_set_path_blocking(path);
-			ret = btrfs_free_extent(trans, root, extent_start,
-						extent_num_bytes, 0,
-						btrfs_header_owner(leaf),
-						ino, extent_offset);
-			BUG_ON(ret);
+			btrfs_free_extent(trans, root, extent_start,
+					  extent_num_bytes, 0,
+					  btrfs_header_owner(leaf),
+					  ino, extent_offset);
 		}
 
 		if (found_type == BTRFS_INODE_ITEM_KEY)
@@ -6100,6 +6097,7 @@ static ssize_t btrfs_direct_IO(int rw, struct kiocb *iocb,
 	struct extent_state *cached_state = NULL;
 	u64 lockstart, lockend;
 	ssize_t ret;
+	ssize_t ret2;
 	int writing = rw & WRITE;
 	int write_bits = 0;
 	size_t count = iov_length(iov, nr_segs);
@@ -6150,7 +6148,6 @@ static ssize_t btrfs_direct_IO(int rw, struct kiocb *iocb,
 				     &cached_state, GFP_NOFS);
 		BUG_ON(ret < 0);
 		if (ret) {
-			int ret2;
 			ret2 = clear_extent_bit(&BTRFS_I(inode)->io_tree,
 						lockstart, lockend,
 						EXTENT_LOCKED | write_bits,
@@ -6169,14 +6166,12 @@ static ssize_t btrfs_direct_IO(int rw, struct kiocb *iocb,
 		   btrfs_submit_direct, 0);
 
 	if (ret < 0 && ret != -EIOCBQUEUED) {
-		int ret2;
 		ret2 = clear_extent_bit(&BTRFS_I(inode)->io_tree, offset,
 				       offset + iov_length(iov, nr_segs) - 1,
 				       EXTENT_LOCKED | write_bits, 1, 0,
 				       &cached_state, GFP_NOFS);
 		BUG_ON(ret2 < 0);
 	} else if (ret >= 0 && ret < iov_length(iov, nr_segs)) {
-		int ret2;
 		/*
 		 * We're falling back to buffered, unlock the section we didn't
 		 * do IO on.

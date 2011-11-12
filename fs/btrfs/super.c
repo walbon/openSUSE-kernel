@@ -155,11 +155,14 @@ void __btrfs_std_error(struct btrfs_fs_info *fs_info, const char *function,
 void __btrfs_panic(struct btrfs_fs_info *fs_info, const char *function,
 		   unsigned int line, int errno, const char *fmt, ...)
 {
-	struct super_block *sb = fs_info->sb;
 	char nbuf[16];
+	char *s_id = "<unknown>";
 	const char *errstr;
 	struct va_format vaf = { .fmt = fmt };
 	va_list args;
+
+	if (fs_info)
+		s_id = fs_info->sb->s_id;
 
 	va_start(args, fmt);
 	vaf.va = &args;
@@ -167,10 +170,10 @@ void __btrfs_panic(struct btrfs_fs_info *fs_info, const char *function,
 	errstr = btrfs_decode_error(fs_info, errno, nbuf);
 	if (fs_info->mount_opt & BTRFS_MOUNT_PANIC_ON_FATAL_ERROR)
 		panic(KERN_CRIT "BTRFS panic (device %s) in %s:%d: %pV (%s)\n",
-			sb->s_id, function, line, &vaf, errstr);
+			s_id, function, line, &vaf, errstr);
 
 	printk(KERN_CRIT "BTRFS panic (device %s) in %s:%d: %pV (%s)\n",
-	       sb->s_id, function, line, &vaf, errstr);
+	       s_id, function, line, &vaf, errstr);
 	va_end(args);
 	/* Caller calls BUG() */
 }
@@ -194,8 +197,7 @@ enum {
 	Opt_notreelog, Opt_ratio, Opt_flushoncommit, Opt_discard,
 	Opt_space_cache, Opt_clear_cache, Opt_user_subvol_rm_allowed,
 	Opt_enospc_debug, Opt_subvolrootid, Opt_defrag,
-	Opt_inode_cache, Opt_no_space_cache, Opt_recovery,
-	Opt_fatal_errors,
+	Opt_inode_cache, Opt_no_space_cache, Opt_recovery, Opt_fatal_errors,
 	Opt_err,
 };
 
@@ -1416,13 +1418,19 @@ static int __init init_btrfs_fs(void)
 	if (err)
 		goto free_delayed_inode;
 
-	err = register_filesystem(&btrfs_fs_type);
+	err = btrfs_create_delayed_ref_caches();
 	if (err)
 		goto unregister_ioctl;
+
+	err = register_filesystem(&btrfs_fs_type);
+	if (err)
+		goto free_delayed_ref_caches;
 
 	printk(KERN_INFO "%s loaded\n", BTRFS_BUILD_VERSION);
 	return 0;
 
+free_delayed_ref_caches:
+	btrfs_destroy_delayed_ref_caches();
 unregister_ioctl:
 	btrfs_interface_exit();
 free_delayed_inode:
@@ -1441,6 +1449,7 @@ free_compress:
 
 static void __exit exit_btrfs_fs(void)
 {
+	btrfs_destroy_delayed_ref_caches();
 	btrfs_destroy_cachep();
 	btrfs_delayed_inode_exit();
 	extent_map_exit();

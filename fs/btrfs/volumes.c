@@ -3293,8 +3293,8 @@ struct async_sched {
  * the work struct is scheduled.
  */
 static noinline void schedule_bio(struct btrfs_root *root,
-				  struct btrfs_device *device,
-				  int rw, struct bio *bio)
+				 struct btrfs_device *device,
+				 int rw, struct bio *bio)
 {
 	int should_queue = 1;
 	struct btrfs_pending_bios *pending_bios;
@@ -3539,8 +3539,8 @@ static int read_one_chunk(struct btrfs_root *root, struct btrfs_key *key,
 }
 
 static void fill_device_from_item(struct extent_buffer *leaf,
-				  struct btrfs_dev_item *dev_item,
-				  struct btrfs_device *device)
+				 struct btrfs_dev_item *dev_item,
+				 struct btrfs_device *device)
 {
 	unsigned long ptr;
 

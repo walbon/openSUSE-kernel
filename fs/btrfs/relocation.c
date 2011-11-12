@@ -326,6 +326,19 @@ static struct rb_node *tree_search(struct rb_root *root, u64 bytenr)
 	return NULL;
 }
 
+NORET_TYPE static void backref_tree_panic(struct rb_node *rb_node, int errno,
+					  u64 bytenr)
+{
+
+	struct btrfs_fs_info *fs_info = NULL;
+	struct backref_node *bnode = rb_entry(rb_node, struct backref_node,
+					      rb_node);
+	if (bnode->root)
+		fs_info = bnode->root->fs_info;
+	btrfs_panic(fs_info, errno, "Inconsistency in backref cache "
+		    "found at offset %llu\n", bytenr);
+}
+
 /*
  * walk up backref nodes until reach node presents tree root
  */
@@ -452,7 +465,8 @@ static void update_backref_node(struct backref_cache *cache,
 	rb_erase(&node->rb_node, &cache->rb_root);
 	node->bytenr = bytenr;
 	rb_node = tree_insert(&cache->rb_root, node->bytenr, &node->rb_node);
-	BUG_ON(rb_node);
+	if (rb_node)
+		backref_tree_panic(rb_node, -EEXIST, bytenr);
 }
 
 /*
@@ -999,7 +1013,8 @@ next:
 	if (!cowonly) {
 		rb_node = tree_insert(&cache->rb_root, node->bytenr,
 				      &node->rb_node);
-		BUG_ON(rb_node);
+		if (rb_node)
+			backref_tree_panic(rb_node, -EEXIST, node->bytenr);
 		list_add_tail(&node->lower, &cache->leaves);
 	}
 
@@ -1034,7 +1049,9 @@ next:
 		if (!cowonly) {
 			rb_node = tree_insert(&cache->rb_root, upper->bytenr,
 					      &upper->rb_node);
-			BUG_ON(rb_node);
+			if (rb_node)
+				backref_tree_panic(rb_node, -EEXIST,
+						   upper->bytenr);
 		}
 
 		list_add_tail(&edge->list[UPPER], &upper->lower);
@@ -1180,7 +1197,8 @@ static int clone_backref_node(struct btrfs_trans_handle *trans,
 
 	rb_node = tree_insert(&cache->rb_root, new_node->bytenr,
 			      &new_node->rb_node);
-	BUG_ON(rb_node);
+	if (rb_node)
+		backref_tree_panic(rb_node, -EEXIST, new_node->bytenr);
 
 	if (!new_node->lowest) {
 		list_for_each_entry(new_edge, &new_node->lower, list[UPPER]) {
@@ -1203,14 +1221,15 @@ fail:
 /*
  * helper to add 'address of tree root -> reloc tree' mapping
  */
-static int __add_reloc_root(struct btrfs_root *root)
+static int __must_check __add_reloc_root(struct btrfs_root *root)
 {
 	struct rb_node *rb_node;
 	struct mapping_node *node;
 	struct reloc_control *rc = root->fs_info->reloc_ctl;
 
 	node = kmalloc(sizeof(*node), GFP_NOFS);
-	BUG_ON(!node);
+	if (!node)
+		return -ENOMEM;
 
 	node->bytenr = root->node->start;
 	node->data = root;
@@ -1219,7 +1238,12 @@ static int __add_reloc_root(struct btrfs_root *root)
 	rb_node = tree_insert(&rc->reloc_root_tree.rb_root,
 			      node->bytenr, &node->rb_node);
 	spin_unlock(&rc->reloc_root_tree.lock);
-	BUG_ON(rb_node);
+	if (rb_node) {
+		kfree(node);
+		btrfs_panic(root->fs_info, -EEXIST, "Duplicate root found "
+			    "for start=%llu while inserting into relocation "
+			    "tree\n");
+	}
 
 	list_add_tail(&root->root_list, &rc->reloc_roots);
 	return 0;
@@ -1252,7 +1276,8 @@ static int __update_reloc_root(struct btrfs_root *root, int del)
 		rb_node = tree_insert(&rc->reloc_root_tree.rb_root,
 				      node->bytenr, &node->rb_node);
 		spin_unlock(&rc->reloc_root_tree.lock);
-		BUG_ON(rb_node);
+		if (rb_node)
+			backref_tree_panic(rb_node, -EEXIST, node->bytenr);
 	} else {
 		list_del_init(&root->root_list);
 		kfree(node);
@@ -1334,6 +1359,7 @@ int btrfs_init_reloc_root(struct btrfs_trans_handle *trans,
 	struct btrfs_root *reloc_root;
 	struct reloc_control *rc = root->fs_info->reloc_ctl;
 	int clear_rsv = 0;
+	int ret;
 
 	if (root->reloc_root) {
 		reloc_root = root->reloc_root;
@@ -1353,7 +1379,8 @@ int btrfs_init_reloc_root(struct btrfs_trans_handle *trans,
 	if (clear_rsv)
 		trans->block_rsv = NULL;
 
-	__add_reloc_root(reloc_root);
+	ret = __add_reloc_root(reloc_root);
+	BUG_ON(ret < 0);
 	root->reloc_root = reloc_root;
 	return 0;
 }
@@ -1603,16 +1630,14 @@ int replace_file_extents(struct btrfs_trans_handle *trans,
 		dirty = 1;
 
 		key.offset -= btrfs_file_extent_offset(leaf, fi);
-		ret = btrfs_inc_extent_ref(trans, root, new_bytenr,
-					   num_bytes, parent,
-					   btrfs_header_owner(leaf),
-					   key.objectid, key.offset);
-		BUG_ON(ret);
+		btrfs_inc_extent_ref(trans, root, new_bytenr,
+				     num_bytes, parent,
+				     btrfs_header_owner(leaf),
+				     key.objectid, key.offset);
 
-		ret = btrfs_free_extent(trans, root, bytenr, num_bytes,
-					parent, btrfs_header_owner(leaf),
-					key.objectid, key.offset);
-		BUG_ON(ret);
+		btrfs_free_extent(trans, root, bytenr, num_bytes,
+				  parent, btrfs_header_owner(leaf),
+				  key.objectid, key.offset);
 	}
 	if (dirty)
 		btrfs_mark_buffer_dirty(leaf);
@@ -1778,25 +1803,17 @@ again:
 					      path->slots[level], old_ptr_gen);
 		btrfs_mark_buffer_dirty(path->nodes[level]);
 
-		ret = btrfs_inc_extent_ref(trans, src, old_bytenr, blocksize,
-					path->nodes[level]->start,
-					src->root_key.objectid, level - 1, 0);
-		BUG_ON(ret);
-		ret = btrfs_inc_extent_ref(trans, dest, new_bytenr, blocksize,
-					0, dest->root_key.objectid, level - 1,
-					0);
-		BUG_ON(ret);
-
-		ret = btrfs_free_extent(trans, src, new_bytenr, blocksize,
-					path->nodes[level]->start,
-					src->root_key.objectid, level - 1, 0);
-		BUG_ON(ret);
-
-		ret = btrfs_free_extent(trans, dest, old_bytenr, blocksize,
-					0, dest->root_key.objectid, level - 1,
-					0);
-		BUG_ON(ret);
-
+		btrfs_inc_extent_ref(trans, src, old_bytenr, blocksize,
+				     path->nodes[level]->start,
+				     src->root_key.objectid, level - 1, 0);
+		btrfs_inc_extent_ref(trans, dest, new_bytenr, blocksize,
+				     0, dest->root_key.objectid, level - 1, 0);
+		btrfs_free_extent(trans, src, new_bytenr, blocksize,
+				  path->nodes[level]->start,
+				  src->root_key.objectid, level - 1, 0);
+		btrfs_free_extent(trans, dest, old_bytenr, blocksize,
+				  0, dest->root_key.objectid, level - 1,
+				  0);
 		btrfs_unlock_up_safe(path, 0);
 
 		ret = level;
@@ -2252,7 +2269,7 @@ again:
 			list_del_init(&reloc_root->root_list);
 		}
 		ret = btrfs_drop_snapshot(reloc_root, rc->block_rsv, 0);
-		BUG_ON(ret);
+		BUG_ON(ret < 0);
 	}
 
 	if (found) {
@@ -2562,12 +2579,11 @@ static int do_relocation(struct btrfs_trans_handle *trans,
 						      trans->transid);
 			btrfs_mark_buffer_dirty(upper->eb);
 
-			ret = btrfs_inc_extent_ref(trans, root,
-						node->eb->start, blocksize,
-						upper->eb->start,
-						btrfs_header_owner(upper->eb),
-						node->level, 0);
-			BUG_ON(ret);
+			btrfs_inc_extent_ref(trans, root,
+					     node->eb->start, blocksize,
+					     upper->eb->start,
+					     btrfs_header_owner(upper->eb),
+					     node->level, 0);
 
 			ret = btrfs_drop_subtree(trans, root, eb, upper->eb);
 			BUG_ON(ret);
@@ -2631,8 +2647,8 @@ static int finish_pending_nodes(struct btrfs_trans_handle *trans,
 	return err;
 }
 
-static int mark_block_processed(struct reloc_control *rc,
-				 u64 bytenr, u32 blocksize)
+static int __must_check mark_block_processed(struct reloc_control *rc,
+					     u64 bytenr, u32 blocksize)
 {
 	return set_extent_bits(&rc->processed_blocks, bytenr,
 			       bytenr + blocksize - 1, EXTENT_DIRTY, GFP_NOFS);
@@ -3174,7 +3190,8 @@ static int add_tree_block(struct reloc_control *rc,
 	block->key_ready = 0;
 
 	rb_node = tree_insert(blocks, block->bytenr, &block->rb_node);
-	BUG_ON(rb_node);
+	if (rb_node)
+		backref_tree_panic(rb_node, -EEXIST, block->bytenr);
 
 	return 0;
 }
@@ -3446,7 +3463,9 @@ static int find_data_references(struct reloc_control *rc,
 			block->key_ready = 1;
 			rb_node = tree_insert(blocks, block->bytenr,
 					      &block->rb_node);
-			BUG_ON(rb_node);
+			if (rb_node)
+				backref_tree_panic(rb_node, -EEXIST,
+						   block->bytenr);
 		}
 		if (counted)
 			added = 1;
@@ -4227,7 +4246,8 @@ int btrfs_recover_relocation(struct btrfs_root *root)
 				       reloc_root->root_key.offset);
 		BUG_ON(IS_ERR(fs_root));
 
-		__add_reloc_root(reloc_root);
+		err = __add_reloc_root(reloc_root);
+		BUG_ON(err < 0);
 		fs_root->reloc_root = reloc_root;
 	}
 
@@ -4429,7 +4449,8 @@ void btrfs_reloc_post_snapshot(struct btrfs_trans_handle *trans,
 	reloc_root = create_reloc_root(trans, root->reloc_root,
 				       new_root->root_key.objectid);
 
-	__add_reloc_root(reloc_root);
+	ret = __add_reloc_root(reloc_root);
+	BUG_ON(ret < 0);
 	new_root->reloc_root = reloc_root;
 
 	if (rc->create_reloc_tree) {
