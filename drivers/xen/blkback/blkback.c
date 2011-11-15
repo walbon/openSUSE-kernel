@@ -253,24 +253,43 @@ int blkif_schedule(void *arg)
 	return 0;
 }
 
+static void drain_io(blkif_t *blkif)
+{
+	atomic_set(&blkif->drain, 1);
+	do {
+		/* The initial value is one, and one refcnt taken at the
+		 * start of the blkif_schedule thread. */
+		if (atomic_read(&blkif->refcnt) <= 2)
+			break;
+
+		wait_for_completion_interruptible_timeout(
+				&blkif->drain_complete, HZ);
+
+		if (!atomic_read(&blkif->drain))
+			break;
+	} while (!kthread_should_stop());
+	atomic_set(&blkif->drain, 0);
+}
+
 /******************************************************************
  * COMPLETION CALLBACK -- Called as bh->b_end_io()
  */
 
 static void __end_block_io_op(pending_req_t *pending_req, int error)
 {
+	blkif_t *blkif = pending_req->blkif;
 	int status = BLKIF_RSP_OKAY;
 
 	/* An error fails the entire request. */
 	if ((pending_req->operation == BLKIF_OP_WRITE_BARRIER) &&
 	    (error == -EOPNOTSUPP)) {
 		DPRINTK("blkback: write barrier op failed, not supported\n");
-		blkback_barrier(XBT_NIL, pending_req->blkif->be, 0);
+		blkback_barrier(XBT_NIL, blkif->be, 0);
 		status = BLKIF_RSP_EOPNOTSUPP;
 	} else if ((pending_req->operation == BLKIF_OP_FLUSH_DISKCACHE) &&
 		   (error == -EOPNOTSUPP)) {
 		DPRINTK("blkback: flush diskcache op failed, not supported\n");
-		blkback_flush_diskcache(XBT_NIL, pending_req->blkif->be, 0);
+		blkback_flush_diskcache(XBT_NIL, blkif->be, 0);
 		status = BLKIF_RSP_EOPNOTSUPP;
 	} else if (error) {
 		DPRINTK("Buffer not up-to-date at end of operation, "
@@ -280,10 +299,13 @@ static void __end_block_io_op(pending_req_t *pending_req, int error)
 
 	if (atomic_dec_and_test(&pending_req->pendcnt)) {
 		fast_flush_area(pending_req);
-		make_response(pending_req->blkif, pending_req->id,
+		make_response(blkif, pending_req->id,
 			      pending_req->operation, status);
-		blkif_put(pending_req->blkif);
+		blkif_put(blkif);
 		free_req(pending_req);
+		if (atomic_read(&blkif->drain)
+		    && atomic_read(&blkif->refcnt) <= 2)
+			complete(&blkif->drain_complete);
 	}
 }
 
@@ -523,6 +545,12 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 			preq.sector_number + preq.nr_sects, preq.dev);
 		goto fail_flush;
 	}
+
+	/* Wait on all outstanding I/O's and once that has been completed
+	 * issue the WRITE_FLUSH.
+	 */
+	if (req->operation == BLKIF_OP_WRITE_BARRIER)
+		drain_io(blkif);
 
 	plug_queue(blkif, preq.bdev);
 	atomic_set(&pending_req->pendcnt, 1);

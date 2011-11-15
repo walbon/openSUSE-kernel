@@ -75,6 +75,9 @@ typedef struct blkif_st {
 	atomic_t         refcnt;
 
 	wait_queue_head_t   wq;
+	/* for barrier (drain) requests */
+	struct completion   drain_complete;
+	atomic_t            drain;
 	struct task_struct  *xenblkd;
 	unsigned int        waiting_reqs;
 	struct request_queue *plug;

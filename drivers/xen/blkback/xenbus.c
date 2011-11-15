@@ -472,7 +472,7 @@ again:
 	if (err)
 		goto abort;
 
-	err = blkback_barrier(xbt, be, 1);
+	err = blkback_barrier(xbt, be, be->blkif->vbd.flush_support);
 	if (err)
 		goto abort;
 
