@@ -3,6 +3,9 @@
 #include <linux/ioport.h>
 #include <linux/swap.h>
 #include <linux/memblock.h>
+/* for bnc#726850 */
+#include <linux/bootmem.h>
+#include <linux/kexec.h>
 
 #include <asm/cacheflush.h>
 #include <asm/e820.h>
@@ -27,6 +30,27 @@ int direct_gbpages
 				= 1
 #endif
 ;
+
+/* Is a hack for a large crashkernel (>= 512M) needed? (bnc#726850) */
+static bool need_crashkernel_hack(void)
+{
+#if defined(CONFIG_X86_64) && defined(CONFIG_KEXEC)
+	unsigned long long total_mem;
+	unsigned long long crash_size, crash_base;
+	total_mem = max_pfn - min_low_pfn;
+	total_mem <<= PAGE_SHIFT;
+	if (!parse_crashkernel(boot_command_line, total_mem,
+			       &crash_size, &crash_base) &&
+	    /* 448MB = 512MB - 64MB */
+	    crash_size >= 448 * 1024 * 1024) {
+		pr_info_once("Relocating page tables to higher address to "
+			     "make space for crashkernel memory; "
+			     "S4 might be broken\n");
+		return true;
+	}
+#endif
+	return false;
+}
 
 static void __init find_early_table_space(unsigned long end, int use_pse,
 					  int use_gbpages)
@@ -64,9 +88,8 @@ static void __init find_early_table_space(unsigned long end, int use_pse,
 	/* for fixmap */
 	tables += roundup(__end_of_fixed_addresses * sizeof(pte_t), PAGE_SIZE);
 #endif
-#if defined(CONFIG_X86_32) || defined(CONFIG_KERNEL_DESKTOP)
-	good_end = max_pfn_mapped << PAGE_SHIFT;
-#endif
+	if (!need_crashkernel_hack())
+		good_end = max_pfn_mapped << PAGE_SHIFT;
 
 	base = memblock_find_in_range(start, good_end, tables, PAGE_SIZE);
 	if (base == MEMBLOCK_ERROR)
