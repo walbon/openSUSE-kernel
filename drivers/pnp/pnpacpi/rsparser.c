@@ -106,6 +106,14 @@ static void pnpacpi_parse_allocated_irqresource(struct pnp_dev *dev,
 		return;
 	}
 
+#ifdef CONFIG_X86_IO_APIC
+	/*
+	 * Convert it back to real gsi
+	 */
+	if (acpi_irq_model == ACPI_IRQ_MODEL_IOAPIC)
+		acpi_isa_irq_to_gsi(gsi, &gsi);
+#endif
+
 	/*
 	 * in IO-APIC mode, use overrided attribute. Two reasons:
 	 * 1. BIOS bug in DSDT

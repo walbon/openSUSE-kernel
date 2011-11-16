@@ -3662,8 +3662,8 @@ int io_apic_set_pci_routing(struct device *dev, int irq,
 	int node;
 
 	if (!IO_APIC_IRQ(irq)) {
-		apic_printk(APIC_QUIET,KERN_ERR "IOAPIC[%d]: Invalid reference to IRQ 0\n",
-			    irq_attr->ioapic);
+		apic_printk(APIC_QUIET,KERN_ERR "IOAPIC[%d]: Invalid reference to IRQ %d\n",
+			    irq_attr->ioapic, irq);
 		return -EINVAL;
 	}
 
