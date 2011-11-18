@@ -314,12 +314,15 @@ int ccwgroup_create_from_string(struct device *root, unsigned int creator_id,
 
 	dev_set_name(&gdev->dev, "%s", dev_name(&gdev->cdev[0]->dev));
 	gdev->dev.groups = ccwgroup_attr_groups;
+	dev_set_uevent_suppress(&gdev->dev, 1);
 	rc = device_add(&gdev->dev);
 	if (rc)
 		goto error;
 	get_device(&gdev->dev);
 	rc = __ccwgroup_create_symlinks(gdev);
 	if (!rc) {
+		dev_set_uevent_suppress(&gdev->dev, 0);
+		kobject_uevent(&gdev->dev.kobj, KOBJ_ADD);
 		mutex_unlock(&gdev->reg_mutex);
 		put_device(&gdev->dev);
 		return 0;
