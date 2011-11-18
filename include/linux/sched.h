@@ -653,6 +653,7 @@ struct signal_struct {
 	struct mutex cred_guard_mutex;	/* guard against foreign influences on
 					 * credential calculations
 					 * (notably. ptrace) */
+	void *suse_kabi_padding;
 };
 
 /* Context switch must be unlocked if interrupts are to be enabled */
@@ -1191,6 +1192,7 @@ struct sched_entity {
 	/* rq "owned" by this entity/group: */
 	struct cfs_rq		*my_q;
 #endif
+	void *suse_kabi_padding;
 };
 
 struct sched_rt_entity {
@@ -1579,6 +1581,7 @@ struct task_struct {
 #ifdef CONFIG_PERFMON
 	struct pfm_context *pfm_context;
 #endif
+	void *suse_kabi_padding;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
