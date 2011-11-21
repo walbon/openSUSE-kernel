@@ -8,6 +8,7 @@
 #include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/iscsi_boot_sysfs.h>
+#include <linux/inet.h>
 
 #include <scsi/scsi_tcq.h>
 #include <scsi/scsicam.h>
@@ -31,14 +32,12 @@ static struct kmem_cache *srb_cachep;
 /*
  * Module parameter information and variables
  */
-int ql4xdisablesysfsboot;
+int ql4xdisablesysfsboot = 1;
 module_param(ql4xdisablesysfsboot, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ql4xdisablesysfsboot,
 		"Set to disable exporting boot targets to sysfs\n"
-		" 0 - Export boot targets (Default)"
-		" 1 - Do not export boot targets");
-
-/* TODO : bring back ql4xsess_recovery_tmo */
+		" 0 - Export boot targets\n"
+		" 1 - Do not export boot targets (Default)");
 
 int ql4xdontresethba = 0;
 module_param(ql4xdontresethba, int, S_IRUGO | S_IWUSR);
@@ -72,7 +71,7 @@ static int ql4xsess_recovery_tmo = QL4_SESS_RECOVERY_TMO;
 module_param(ql4xsess_recovery_tmo, int, S_IRUGO);
 MODULE_PARM_DESC(ql4xsess_recovery_tmo,
 		"Target Session Recovery Timeout.\n"
-		" Default: 30 sec.");
+		" Default: 120 sec.");
 
 static int qla4xxx_wait_for_hba_online(struct scsi_qla_host *ha);
 /*
@@ -801,7 +800,7 @@ static void qla4xxx_set_ipv4(struct scsi_qla_host *ha,
 			qla4xxx_destroy_ipv4_iface(ha);
 		}
 		break;
-	case ISCSI_NET_PARAM_VLAN_ID:
+	case ISCSI_NET_PARAM_VLAN_TAG:
 		if (iface_param->len != sizeof(init_fw_cb->ipv4_vlan_tag))
 			break;
 		init_fw_cb->ipv4_vlan_tag =
@@ -1023,10 +1022,44 @@ exit_get_ddb_index:
 	return ret;
 }
 
+static int qla4xxx_match_ipaddress(struct scsi_qla_host *ha,
+				   struct ddb_entry *ddb_entry,
+				   char *existing_ipaddr,
+				   char *user_ipaddr)
+{
+	uint8_t dst_ipaddr[IPv6_ADDR_LEN];
+	char formatted_ipaddr[DDB_IPADDR_LEN];
+	int status = QLA_SUCCESS, ret = 0;
+
+	if (ddb_entry->fw_ddb_entry.options & DDB_OPT_IPV6_DEVICE) {
+		ret = in6_pton(user_ipaddr, strlen(user_ipaddr), dst_ipaddr,
+			       '\0', NULL);
+		if (ret == 0) {
+			status = QLA_ERROR;
+			goto out_match;
+		}
+		ret = sprintf(formatted_ipaddr, "%pI6", dst_ipaddr);
+	} else {
+		ret = in4_pton(user_ipaddr, strlen(user_ipaddr), dst_ipaddr,
+			       '\0', NULL);
+		if (ret == 0) {
+			status = QLA_ERROR;
+			goto out_match;
+		}
+		ret = sprintf(formatted_ipaddr, "%pI4", dst_ipaddr);
+	}
+
+	if (strcmp(existing_ipaddr, formatted_ipaddr))
+		status = QLA_ERROR;
+
+out_match:
+	return status;
+}
+
 static int qla4xxx_match_fwdb_session(struct scsi_qla_host *ha,
 				      struct iscsi_cls_conn *cls_conn)
 {
-	int idx = 0, max_ddbs;
+	int idx = 0, max_ddbs, rval;
 	struct iscsi_cls_session *cls_sess = iscsi_conn_to_session(cls_conn);
 	struct iscsi_session *sess, *existing_sess;
 	struct iscsi_conn *conn, *existing_conn;
@@ -1076,8 +1109,11 @@ static int qla4xxx_match_fwdb_session(struct scsi_qla_host *ha,
 
 		if (strcmp(existing_sess->targetname, sess->targetname))
 			continue;
-		if (strcmp(existing_conn->persistent_address,
-			   conn->persistent_address))
+
+		rval = qla4xxx_match_ipaddress(ha, ddb_entry,
+					existing_conn->persistent_address,
+					conn->persistent_address);
+		if (rval == QLA_ERROR)
 			continue;
 		if (existing_conn->persistent_port != conn->persistent_port)
 			continue;
