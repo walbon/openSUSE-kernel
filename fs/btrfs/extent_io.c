@@ -2342,8 +2342,8 @@ static void end_bio_extent_readpage(struct bio *bio, int err)
 				clean_io_failure(start, page);
 		}
 		if (!uptodate) {
-			u64 failed_mirror;
-			failed_mirror = (unsigned long)bio->bi_bdev;
+			int failed_mirror;
+			failed_mirror = (int)(unsigned long)bio->bi_bdev;
 			if (tree->ops && tree->ops->readpage_io_failed_hook)
 				ret = tree->ops->readpage_io_failed_hook(
 						bio, page, start, end,
@@ -3462,6 +3462,9 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		return -ENOMEM;
 	path->leave_spinning = 1;
 
+	start = ALIGN(start, BTRFS_I(inode)->root->sectorsize);
+	len = ALIGN(len, BTRFS_I(inode)->root->sectorsize);
+
 	/*
 	 * lookup the last file extent.  We're not using i_size here
 	 * because there might be preallocation past i_size
@@ -3510,7 +3513,7 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			 &cached_state, GFP_NOFS);
 	BUG_ON(ret < 0);
 
-	em = get_extent_skip_holes(inode, off, last_for_get_extent,
+	em = get_extent_skip_holes(inode, start, last_for_get_extent,
 				   get_extent);
 	if (!em)
 		goto out;
