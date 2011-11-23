@@ -224,12 +224,12 @@ struct srb {
  * Asynchronous Event Queue structure
  */
 struct aen {
-        uint32_t mbox_sts[MBOX_AEN_REG_COUNT];
+	uint32_t mbox_sts[MBOX_AEN_REG_COUNT];
 };
 
 struct ql4_aen_log {
-        int count;
-        struct aen entry[MAX_AEN_ENTRIES];
+	int count;
+	struct aen entry[MAX_AEN_ENTRIES];
 };
 
 /*
@@ -669,7 +669,7 @@ struct scsi_qla_host {
 	uint16_t pri_ddb_idx;
 	uint16_t sec_ddb_idx;
 	struct completion disable_acb_comp;
-	int	is_reset;
+	int is_reset;
 };
 
 struct ql4_task_data {

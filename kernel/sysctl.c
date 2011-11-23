@@ -2415,7 +2415,7 @@ int pc_limit_proc_dointvec(struct ctl_table *table, int write,
 {
 	int ret = do_proc_dointvec(table,write,buffer,lenp,ppos,
 		    	    NULL,NULL);
-	if (!ret)
+	if (write && !ret)
 		printk(KERN_WARNING "pagecache limit set to %d."
 				"Feature is supported only for SLES for SAP appliance\n",
 				vm_pagecache_limit_mb);

@@ -572,8 +572,8 @@ static int qla4xxx_start_firmware_from_flash(struct scsi_qla_host *ha)
 		writel(set_rmask(NVR_WRITE_ENABLE),
 		       &ha->reg->u1.isp4022.nvram);
 
-        writel(2, &ha->reg->mailbox[6]);
-        readl(&ha->reg->mailbox[6]);
+	writel(2, &ha->reg->mailbox[6]);
+	readl(&ha->reg->mailbox[6]);
 
 	writel(set_rmask(CSR_BOOT_ENABLE), &ha->reg->ctrl_status);
 	readl(&ha->reg->ctrl_status);
@@ -787,8 +787,10 @@ void qla4xxx_free_ddb_index(struct scsi_qla_host *ha)
 		ret = qla4xxx_get_fwddb_entry(ha, idx, NULL, 0, NULL,
 					      &next_idx, &state, &conn_err,
 						NULL, NULL);
-		if (ret == QLA_ERROR)
+		if (ret == QLA_ERROR) {
+			next_idx++;
 			continue;
+		}
 		if (state == DDB_DS_NO_CONNECTION_ACTIVE ||
 		    state == DDB_DS_SESSION_FAILED) {
 			DEBUG2(ql4_printk(KERN_INFO, ha,
