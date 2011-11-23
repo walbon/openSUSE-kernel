@@ -72,7 +72,7 @@ bfa_cb_ioim_done(void *drv, struct bfad_ioim_s *dio,
 		break;
 
 	case BFI_IOIM_STS_ABORTED:
-		host_status = DID_ABORTED;
+		host_status = DID_ABORT;
 		cmnd->result = ScsiResult(host_status, 0);
 		break;
 	case BFI_IOIM_STS_TIMEDOUT:
