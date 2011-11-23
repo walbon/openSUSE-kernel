@@ -1175,10 +1175,13 @@ static noinline ssize_t __btrfs_buffered_write(struct file *file,
 		size_t write_bytes = min(iov_iter_count(i),
 					 nrptrs * (size_t)PAGE_CACHE_SIZE -
 					 offset);
-		size_t num_pages = (write_bytes + offset +
-				    PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
+		size_t num_pages;
 		size_t dirty_pages;
 		size_t copied;
+
+again:
+		num_pages = (write_bytes + offset +
+			     PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
 
 		WARN_ON(num_pages > nrptrs);
 
@@ -1193,6 +1196,17 @@ static noinline ssize_t __btrfs_buffered_write(struct file *file,
 
 		ret = btrfs_delalloc_reserve_space(inode,
 					num_pages << PAGE_CACHE_SHIFT);
+
+		/* try to reserve smaller space for write */
+		if (ret == -ENOSPC) {
+			if (num_pages > 1) {
+				write_bytes >>= 1;
+				goto again;
+			} else {
+				break;
+			}
+		}
+
 		if (ret)
 			break;
 
