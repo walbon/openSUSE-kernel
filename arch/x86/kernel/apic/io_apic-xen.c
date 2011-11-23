@@ -3749,15 +3749,12 @@ int io_apic_set_pci_routing(struct device *dev, int irq,
 	int node;
 
 #ifdef CONFIG_XEN
-	if (irq < PIRQ_BASE || irq >= PIRQ_BASE + nr_pirqs) {
+	if (irq < PIRQ_BASE || irq >= PIRQ_BASE + nr_pirqs || !IO_APIC_IRQ(irq)) {
+#else
+	if (!IO_APIC_IRQ(irq)) {
+#endif
 		apic_printk(APIC_QUIET,KERN_ERR "IOAPIC[%d]: Invalid reference to IRQ %d\n",
 			    irq_attr->ioapic, irq);
-		return -EINVAL;
-	}
-#endif
-	if (!IO_APIC_IRQ(irq)) {
-		apic_printk(APIC_QUIET,KERN_ERR "IOAPIC[%d]: Invalid reference to IRQ 0\n",
-			    irq_attr->ioapic);
 		return -EINVAL;
 	}
 
