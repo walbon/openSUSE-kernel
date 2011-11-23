@@ -71,7 +71,7 @@ module_param(cciss_tape_cmds, int, 0644);
 MODULE_PARM_DESC(cciss_tape_cmds,
 	"number of commands to allocate for tape devices (default: 6)");
 
-static int cciss_allow_hpsa;
+static int cciss_allow_hpsa = 1;
 module_param(cciss_allow_hpsa, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(cciss_allow_hpsa,
 	"Prevent cciss driver from accessing hardware known to be "
@@ -102,6 +102,13 @@ static const struct pci_device_id cciss_pci_device_id[] = {
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSD,     0x103C, 0x3215},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSC,     0x103C, 0x3237},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSC,     0x103C, 0x323D},
+	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3241},
+	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3243},
+	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3245},
+	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3247},
+	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3249},
+	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x324A},
+	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x324B},
 	{0,}
 };
 
@@ -131,7 +138,14 @@ static struct board_type products[] = {
 	{0x3214103C, "Smart Array E200i", &SA5_access},
 	{0x3215103C, "Smart Array E200i", &SA5_access},
 	{0x3237103C, "Smart Array E500", &SA5_access},
-	{0x323d103c, "Smart Array P700M", &SA5_access},
+	{0x323D103c, "Smart Array P700M", &SA5_access},
+	{0x3241103C, "Smart Array P212", &compat_SA5_access},
+	{0x3243103C, "Smart Array P410", &compat_SA5_access},
+	{0x3245103C, "Smart Array P410i", &compat_SA5_access},
+	{0x3247103C, "Smart Array P411", &compat_SA5_access},
+	{0x3249103C, "Smart Array P812", &compat_SA5_access},
+	{0x324A103C, "Smart Array P712m", &compat_SA5_access},
+	{0x324B103C, "Smart Array P711m", &compat_SA5_access},
 };
 
 /* How long to wait (in milliseconds) for board to go into simple mode */
@@ -4171,13 +4185,13 @@ static inline void cciss_p600_dma_prefetch_quirk(ctlr_info_t *h)
 	pci_write_config_dword(h->pdev, PCI_COMMAND_PARITY, dma_refetch);
 }
 
-static int __devinit cciss_pci_init(ctlr_info_t *h)
+static int __devinit cciss_pci_init(ctlr_info_t *h, int prod_index)
 {
-	int prod_index, err;
+	int err;
 
-	prod_index = cciss_lookup_board_id(h->pdev, &h->board_id);
 	if (prod_index < 0)
 		return -ENODEV;
+
 	h->product_name = products[prod_index].product_name;
 	h->access = *(products[prod_index].access);
 
@@ -4246,26 +4260,65 @@ err_out_free_res:
 	return err;
 }
 
+struct cciss_match_arg {
+	struct pci_dev *pdev;
+	int cciss_id;
+};
+
+static int cciss_match_dev(struct device *dev, void *data)
+{
+	struct cciss_match_arg *arg = data;
+	struct pci_device_id *dev_id = cciss_pci_device_id;
+	struct pci_dev *pdev = to_pci_dev(dev);
+
+	/* Skip non-HP devices */
+	if (pdev->vendor != PCI_VENDOR_ID_COMPAQ &&
+	    pdev->vendor != PCI_VENDOR_ID_HP)
+		return 0;
+
+	while (dev_id->vendor != 0) {
+		if (pdev == arg->pdev)
+			return arg->cciss_id;
+		if (pdev->vendor == dev_id->vendor &&
+		    pdev->device == dev_id->device)
+			arg->cciss_id++;
+		dev_id++;
+	}
+	return 0;
+}
+
 /* Function to find the first free pointer into our hba[] array
  * Returns -1 if no free entries are left.
  */
 static int alloc_cciss_hba(struct pci_dev *pdev)
 {
 	int i;
+	struct cciss_match_arg arg;
 
-	for (i = 0; i < MAX_CTLR; i++) {
-		if (!hba[i]) {
-			ctlr_info_t *h;
-
-			h = kzalloc(sizeof(ctlr_info_t), GFP_KERNEL);
-			if (!h)
-				goto Enomem;
-			hba[i] = h;
-			return i;
-		}
+	arg.pdev = pdev;
+	arg.cciss_id = 0;
+	i = bus_for_each_dev(pdev->dev.bus, NULL, &arg, cciss_match_dev);
+	if (i < 0) {
+		dev_warn(&pdev->dev, "No compatible boards found.\n");
+		return i;
 	}
-	dev_warn(&pdev->dev, "This driver supports a maximum"
-	       " of %d controllers.\n", MAX_CTLR);
+	if (i >= MAX_CTLR) {
+		dev_warn(&pdev->dev, "This driver supports a maximum"
+			 " of %d controllers.\n", MAX_CTLR);
+		return -E2BIG;
+	}
+	if (!hba[i]) {
+		ctlr_info_t *h;
+
+		h = kzalloc(sizeof(ctlr_info_t), GFP_KERNEL);
+		if (!h)
+			goto Enomem;
+		hba[i] = h;
+		h->ctlr = i;
+		sprintf(h->devname, "cciss%d", i);
+
+		return i;
+	}
 	return -1;
 Enomem:
 	dev_warn(&pdev->dev, "out of memory.\n");
@@ -4521,6 +4574,10 @@ static __devinit int cciss_kdump_hard_reset_controller(struct pci_dev *pdev)
 	 * likely not be happy.  Just forbid resetting this conjoined mess.
 	 */
 	cciss_lookup_board_id(pdev, &board_id);
+	if (cciss_allow_hpsa == 1 &&
+	    products[board_id].access == &compat_SA5_access)
+		return -ENOTSUPP;
+
 	if (!ctlr_is_resettable(board_id)) {
 		dev_warn(&pdev->dev, "Cannot reset Smart Array 640x "
 				"due to shared cache module.");
@@ -4813,7 +4870,7 @@ static void cciss_undo_allocations_after_kdump_soft_reset(ctlr_info_t *h)
 static int __devinit cciss_init_one(struct pci_dev *pdev,
 				    const struct pci_device_id *ent)
 {
-	int i;
+	int i, prod_idx;
 	int j = 0;
 	int rc;
 	int try_soft_reset = 0;
@@ -4824,8 +4881,10 @@ static int __devinit cciss_init_one(struct pci_dev *pdev,
 
 	rc = cciss_init_reset_devices(pdev);
 	if (rc) {
-		if (rc != -ENOTSUPP)
+		if (rc != -ENOTSUPP) {
+			dev_warn(&pdev->dev, "Board reset failed, skipping.\n");
 			return rc;
+		}
 		/* If the reset fails in a particular way (it has no way to do
 		 * a proper hard reset, so returns -ENOTSUPP) we can try to do
 		 * a soft reset once we get the controller configured up to the
@@ -4842,21 +4901,33 @@ reinit_after_soft_reset:
 		return -1;
 
 	h = hba[i];
+	prod_idx = cciss_lookup_board_id(pdev, &h->board_id);
+	if (prod_idx < 0) {
+		dev_warn(&pdev->dev, "Board not handled by cciss.\n");
+		free_hba(h);
+		return -ENODEV;
+	}
+	/*
+	 * When cciss_allow_hpsa is set we just need to allocate
+	 * a board ID so as not to change the controller enumeration.
+	 */
+	if (products[prod_idx].access == &compat_SA5_access &&
+	    cciss_allow_hpsa == 1) {
+		dev_warn(&pdev->dev, "Board handled by hpsa, skipping.\n");
+		return -ENODEV;
+	}
 	h->pdev = pdev;
 	h->busy_initializing = 1;
 	INIT_LIST_HEAD(&h->cmpQ);
 	INIT_LIST_HEAD(&h->reqQ);
 	mutex_init(&h->busy_shutting_down);
 
-	sprintf(h->devname, "cciss%d", i);
-	h->ctlr = i;
-
 	if (cciss_tape_cmds < 2)
 		cciss_tape_cmds = 2;
 	if (cciss_tape_cmds > 16)
 		cciss_tape_cmds = 16;
 
-	if (cciss_pci_init(h) != 0)
+	if (cciss_pci_init(h, prod_idx) != 0)
 		goto clean_no_release_regions;
 
 	if (cciss_create_hba_sysfs_entry(h))
@@ -5184,10 +5255,16 @@ static void __exit cciss_cleanup(void)
 	pci_unregister_driver(&cciss_pci_driver);
 	/* double check that all controller entrys have been removed */
 	for (i = 0; i < MAX_CTLR; i++) {
-		if (hba[i] != NULL) {
-			dev_warn(&hba[i]->pdev->dev,
-				"had to remove controller\n");
-			cciss_remove_one(hba[i]->pdev);
+		ctlr_info_t *h = hba[i];
+
+		if (h != NULL) {
+			if (!h->pdev)
+				free_hba(h);
+			else {
+				dev_warn(&h->pdev->dev,
+					 "had to remove controller\n");
+				cciss_remove_one(h->pdev);
+			}
 		}
 	}
 	if (proc_cciss)

@@ -425,6 +425,14 @@ static struct access_method SA5_performant_access = {
 	SA5_performant_completed,
 };
 
+static struct access_method compat_SA5_access = {
+	SA5_submit_command,
+	SA5_intr_mask,
+	SA5_fifo_full,
+	SA5_intr_pending,
+	SA5_completed,
+};
+
 struct board_type {
 	__u32	board_id;
 	char	*product_name;
