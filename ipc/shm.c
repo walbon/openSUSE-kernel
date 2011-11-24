@@ -567,8 +567,8 @@ static void shm_add_rss_swap(struct shmid_kernel *shp,
 #ifdef CONFIG_SHMEM
 		unsigned long rss, swap;
 		shmem_get_rss_swap(inode, &rss, &swap);
-		rss_add += rss;
-		swp_add += swap;
+		*rss_add += rss;
+		*swp_add += swap;
 #else
 		*rss_add += inode->i_mapping->nrpages;
 #endif
