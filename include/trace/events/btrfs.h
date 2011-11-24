@@ -6,6 +6,7 @@
 
 #include <linux/writeback.h>
 #include <linux/tracepoint.h>
+#include <trace/events/gfpflags.h>
 
 struct btrfs_root;
 struct btrfs_fs_info;
@@ -659,6 +660,49 @@ DEFINE_EVENT(btrfs__reserved_extent,  btrfs_reserved_extent_free,
 	TP_PROTO(struct btrfs_root *root, u64 start, u64 len),
 
 	TP_ARGS(root, start, len)
+);
+
+struct extent_state;
+TRACE_EVENT(alloc_extent_state,
+
+	TP_PROTO(struct extent_state *state, gfp_t mask, unsigned long IP),
+
+	TP_ARGS(state, mask, IP),
+
+	TP_STRUCT__entry(
+		__field(struct extent_state *, state)
+		__field(gfp_t, mask)
+		__field(unsigned long, ip)
+	),
+
+	TP_fast_assign(
+		__entry->state	= state,
+		__entry->mask	= mask,
+		__entry->ip	= IP
+	),
+
+	TP_printk("state=%p; mask = %s; caller = %pF", __entry->state,
+		  show_gfp_flags(__entry->mask), (void *)__entry->ip)
+);
+
+TRACE_EVENT(free_extent_state,
+
+	TP_PROTO(struct extent_state *state, unsigned long IP),
+
+	TP_ARGS(state, IP),
+
+	TP_STRUCT__entry(
+		__field(struct extent_state *, state)
+		__field(unsigned long, ip)
+	),
+
+	TP_fast_assign(
+		__entry->state	= state,
+		__entry->ip = IP
+	),
+
+	TP_printk(" state=%p; caller = %pF", __entry->state,
+		  (void *)__entry->ip)
 );
 
 #endif /* _TRACE_BTRFS_H */

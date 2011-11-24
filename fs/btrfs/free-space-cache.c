@@ -841,7 +841,7 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	u64 start, end, len;
 	int entries = 0;
 	int bitmaps = 0;
-	int ret, ret2;
+	int ret;
 	int err = -1;
 
 	INIT_LIST_HEAD(&bitmap_list);
@@ -866,10 +866,8 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	/* Lock all pages first so we can lock the extent safely. */
 	io_ctl_prepare_pages(&io_ctl, inode, 0);
 
-	ret = lock_extent_bits(&BTRFS_I(inode)->io_tree, 0,
-			       i_size_read(inode) - 1, 0, &cached_state,
-			       GFP_NOFS);
-	BUG_ON(ret < 0);
+	lock_extent_bits(&BTRFS_I(inode)->io_tree, 0, i_size_read(inode) - 1,
+			 0, &cached_state);
 
 	/*
 	 * When searching for pinned extents, we need to start at our start
@@ -963,10 +961,8 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	ret = btrfs_dirty_pages(root, inode, io_ctl.pages, io_ctl.num_pages,
 				0, i_size_read(inode), &cached_state);
 	io_ctl_drop_pages(&io_ctl);
-	ret2 = unlock_extent_cached(&BTRFS_I(inode)->io_tree, 0,
-				    i_size_read(inode) - 1, &cached_state,
-				    GFP_NOFS);
-	BUG_ON(ret2 < 0);
+	unlock_extent_cached(&BTRFS_I(inode)->io_tree, 0,
+			     i_size_read(inode) - 1, &cached_state);
 
 	if (ret)
 		goto out;
@@ -982,11 +978,8 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 
 	ret = btrfs_search_slot(trans, root, &key, path, 0, 1);
 	if (ret < 0) {
-		ret = clear_extent_bit(&BTRFS_I(inode)->io_tree, 0,
-				       inode->i_size - 1,
-				       EXTENT_DIRTY | EXTENT_DELALLOC,
-				       0, 0, NULL, GFP_NOFS);
-		BUG_ON(ret < 0);
+		clear_extent_bit(&BTRFS_I(inode)->io_tree, 0, inode->i_size - 1,
+				 EXTENT_DIRTY | EXTENT_DELALLOC, 0, 0, NULL);
 		goto out;
 	}
 	leaf = path->nodes[0];
@@ -997,11 +990,10 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 		btrfs_item_key_to_cpu(leaf, &found_key, path->slots[0]);
 		if (found_key.objectid != BTRFS_FREE_SPACE_OBJECTID ||
 		    found_key.offset != offset) {
-			ret = clear_extent_bit(&BTRFS_I(inode)->io_tree, 0,
-					       inode->i_size - 1,
-					       EXTENT_DIRTY | EXTENT_DELALLOC,
-					       0, 0, NULL, GFP_NOFS);
-			BUG_ON(ret < 0);
+			clear_extent_bit(&BTRFS_I(inode)->io_tree, 0,
+					 inode->i_size - 1,
+					 EXTENT_DIRTY | EXTENT_DELALLOC, 0, 0,
+					 NULL);
 			btrfs_release_path(path);
 			goto out;
 		}
@@ -1033,10 +1025,8 @@ out_nospc:
 		list_del_init(&entry->list);
 	}
 	io_ctl_drop_pages(&io_ctl);
-	ret2 = unlock_extent_cached(&BTRFS_I(inode)->io_tree, 0,
-				    i_size_read(inode) - 1, &cached_state,
-				    GFP_NOFS);
-	BUG_ON(ret2 < 0);
+	unlock_extent_cached(&BTRFS_I(inode)->io_tree, 0,
+			     i_size_read(inode) - 1, &cached_state);
 	goto out;
 }
 

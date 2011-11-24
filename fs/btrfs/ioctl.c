@@ -779,7 +779,7 @@ static int should_defrag_range(struct inode *inode, u64 start, u64 len,
 	struct extent_io_tree *io_tree = &BTRFS_I(inode)->io_tree;
 	struct extent_map *em = NULL;
 	struct extent_map_tree *em_tree = &BTRFS_I(inode)->extent_tree;
-	int ret = 1, err;
+	int ret = 1;
 
 	/*
 	 * make sure that once we start defragging an extent, we keep on
@@ -800,11 +800,9 @@ static int should_defrag_range(struct inode *inode, u64 start, u64 len,
 
 	if (!em) {
 		/* get the big lock and read metadata off disk */
-		err = lock_extent(io_tree, start, start + len - 1, GFP_NOFS);
-		BUG_ON(err < 0);
+		lock_extent(io_tree, start, start + len - 1);
 		em = btrfs_get_extent(inode, NULL, 0, start, len, 0);
-		err = unlock_extent(io_tree, start, start + len - 1, GFP_NOFS);
-		BUG_ON(err < 0);
+		unlock_extent(io_tree, start, start + len - 1);
 
 		if (IS_ERR(em))
 			return 0;
@@ -926,19 +924,16 @@ again:
 	page_start = page_offset(pages[0]);
 	page_end = page_offset(pages[i_done - 1]) + PAGE_CACHE_SIZE;
 
-	ret = lock_extent_bits(&BTRFS_I(inode)->io_tree,
-			       page_start, page_end - 1, 0, &cached_state,
-			       GFP_NOFS);
-	BUG_ON(ret < 0);
+	lock_extent_bits(&BTRFS_I(inode)->io_tree,
+			 page_start, page_end - 1, 0, &cached_state);
 	ordered = btrfs_lookup_first_ordered_extent(inode, page_end - 1);
 	if (ordered &&
 	    ordered->file_offset + ordered->len > page_start &&
 	    ordered->file_offset < page_end) {
 		btrfs_put_ordered_extent(ordered);
-		ret = unlock_extent_cached(&BTRFS_I(inode)->io_tree,
-					   page_start, page_end - 1,
-					   &cached_state, GFP_NOFS);
-		BUG_ON(ret < 0);
+		unlock_extent_cached(&BTRFS_I(inode)->io_tree,
+				     page_start, page_end - 1,
+				     &cached_state);
 		for (i = 0; i < i_done; i++) {
 			unlock_page(pages[i]);
 			page_cache_release(pages[i]);
@@ -950,11 +945,9 @@ again:
 	if (ordered)
 		btrfs_put_ordered_extent(ordered);
 
-	ret = clear_extent_bit(&BTRFS_I(inode)->io_tree, page_start,
-			       page_end - 1, EXTENT_DIRTY | EXTENT_DELALLOC |
-			       EXTENT_DO_ACCOUNTING, 0, 0, &cached_state,
-			       GFP_NOFS);
-	BUG_ON(ret < 0);
+	clear_extent_bit(&BTRFS_I(inode)->io_tree, page_start,
+			  page_end - 1, EXTENT_DIRTY | EXTENT_DELALLOC |
+			  EXTENT_DO_ACCOUNTING, 0, 0, &cached_state);
 
 	if (i_done != num_pages) {
 		spin_lock(&BTRFS_I(inode)->lock);
@@ -965,14 +958,11 @@ again:
 	}
 
 
-	ret = btrfs_set_extent_delalloc(inode, page_start, page_end - 1,
-					&cached_state);
-	BUG_ON(ret < 0);
+	btrfs_set_extent_delalloc(inode, page_start, page_end - 1,
+				  &cached_state);
 
-	ret = unlock_extent_cached(&BTRFS_I(inode)->io_tree,
-				   page_start, page_end - 1, &cached_state,
-				   GFP_NOFS);
-	BUG_ON(ret < 0);
+	unlock_extent_cached(&BTRFS_I(inode)->io_tree,
+			     page_start, page_end - 1, &cached_state);
 
 	for (i = 0; i < i_done; i++) {
 		clear_page_dirty_for_io(pages[i]);
@@ -2190,7 +2180,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	struct btrfs_key key;
 	u32 nritems;
 	int slot;
-	int ret, err;
+	int ret;
 	u64 len = olen;
 	u64 bs = root->fs_info->sb->s_blocksize;
 	u64 hint_byte;
@@ -2294,17 +2284,13 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	   another, and lock file content */
 	while (1) {
 		struct btrfs_ordered_extent *ordered;
-		ret = lock_extent(&BTRFS_I(src)->io_tree, off, off+len,
-				  GFP_NOFS);
-		BUG_ON(ret < 0);
+		lock_extent(&BTRFS_I(src)->io_tree, off, off+len);
 		ordered = btrfs_lookup_first_ordered_extent(src, off+len);
 		if (!ordered &&
 		    !test_range_bit(&BTRFS_I(src)->io_tree, off, off+len,
 				   EXTENT_DELALLOC, 0, NULL))
 			break;
-		ret = unlock_extent(&BTRFS_I(src)->io_tree, off,
-				    off+len, GFP_NOFS);
-		BUG_ON(ret < 0);
+		unlock_extent(&BTRFS_I(src)->io_tree, off, off+len);
 		if (ordered)
 			btrfs_put_ordered_extent(ordered);
 		btrfs_wait_ordered_range(src, off, len);
@@ -2522,8 +2508,7 @@ next:
 	ret = 0;
 out:
 	btrfs_release_path(path);
-	err = unlock_extent(&BTRFS_I(src)->io_tree, off, off+len, GFP_NOFS);
-	BUG_ON(err < 0);
+	unlock_extent(&BTRFS_I(src)->io_tree, off, off+len);
 out_unlock:
 	mutex_unlock(&src->i_mutex);
 	mutex_unlock(&inode->i_mutex);

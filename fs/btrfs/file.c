@@ -389,7 +389,6 @@ int btrfs_dirty_pages(struct btrfs_root *root, struct inode *inode,
 		      loff_t pos, size_t write_bytes,
 		      struct extent_state **cached)
 {
-	int err = 0;
 	int i;
 	u64 num_bytes;
 	u64 start_pos;
@@ -402,10 +401,7 @@ int btrfs_dirty_pages(struct btrfs_root *root, struct inode *inode,
 		    root->sectorsize - 1) & ~((u64)root->sectorsize - 1);
 
 	end_of_last_block = start_pos + num_bytes - 1;
-	err = btrfs_set_extent_delalloc(inode, start_pos, end_of_last_block,
-					cached);
-	if (err)
-		return err;
+	btrfs_set_extent_delalloc(inode, start_pos, end_of_last_block, cached);
 
 	for (i = 0; i < num_pages; i++) {
 		struct page *p = pages[i];
@@ -1096,20 +1092,17 @@ again:
 	err = 0;
 	if (start_pos < inode->i_size) {
 		struct btrfs_ordered_extent *ordered;
-		err = lock_extent_bits(&BTRFS_I(inode)->io_tree,
-				       start_pos, last_pos - 1, 0,
-				       &cached_state, GFP_NOFS);
-		BUG_ON(err < 0);
+		lock_extent_bits(&BTRFS_I(inode)->io_tree,
+				 start_pos, last_pos - 1, 0, &cached_state);
 		ordered = btrfs_lookup_first_ordered_extent(inode,
 							    last_pos - 1);
 		if (ordered &&
 		    ordered->file_offset + ordered->len > start_pos &&
 		    ordered->file_offset < last_pos) {
 			btrfs_put_ordered_extent(ordered);
-			err = unlock_extent_cached(&BTRFS_I(inode)->io_tree,
-						   start_pos, last_pos - 1,
-						   &cached_state, GFP_NOFS);
-			BUG_ON(err < 0);
+			unlock_extent_cached(&BTRFS_I(inode)->io_tree,
+					     start_pos, last_pos - 1,
+					     &cached_state);
 			for (i = 0; i < num_pages; i++) {
 				unlock_page(pages[i]);
 				page_cache_release(pages[i]);
@@ -1121,16 +1114,11 @@ again:
 		if (ordered)
 			btrfs_put_ordered_extent(ordered);
 
-		err = clear_extent_bit(&BTRFS_I(inode)->io_tree, start_pos,
-				       last_pos - 1,
-				       EXTENT_DIRTY | EXTENT_DELALLOC |
-				       EXTENT_DO_ACCOUNTING, 0, 0,
-				       &cached_state, GFP_NOFS);
-		BUG_ON(err < 0);
-		err = unlock_extent_cached(&BTRFS_I(inode)->io_tree,
-					   start_pos, last_pos - 1,
-					   &cached_state, GFP_NOFS);
-		BUG_ON(err < 0);
+		clear_extent_bit(&BTRFS_I(inode)->io_tree, start_pos,
+				  last_pos - 1, EXTENT_DIRTY | EXTENT_DELALLOC |
+				  EXTENT_DO_ACCOUNTING, 0, 0, &cached_state);
+		unlock_extent_cached(&BTRFS_I(inode)->io_tree,
+				     start_pos, last_pos - 1, &cached_state);
 	}
 	for (i = 0; i < num_pages; i++) {
 		clear_page_dirty_for_io(pages[i]);
@@ -1600,7 +1588,7 @@ static long btrfs_fallocate(struct file *file, int mode,
 	u64 locked_end;
 	u64 mask = BTRFS_I(inode)->root->sectorsize - 1;
 	struct extent_map *em;
-	int ret, err;
+	int ret;
 
 	alloc_start = offset & ~mask;
 	alloc_end =  (offset + len + mask) & ~mask;
@@ -1634,19 +1622,17 @@ static long btrfs_fallocate(struct file *file, int mode,
 		/* the extent lock is ordered inside the running
 		 * transaction
 		 */
-		ret = lock_extent_bits(&BTRFS_I(inode)->io_tree, alloc_start,
-				       locked_end, 0, &cached_state, GFP_NOFS);
-		BUG_ON(ret < 0);
+		lock_extent_bits(&BTRFS_I(inode)->io_tree, alloc_start,
+				 locked_end, 0, &cached_state);
 		ordered = btrfs_lookup_first_ordered_extent(inode,
 							    alloc_end - 1);
 		if (ordered &&
 		    ordered->file_offset + ordered->len > alloc_start &&
 		    ordered->file_offset < alloc_end) {
 			btrfs_put_ordered_extent(ordered);
-			ret = unlock_extent_cached(&BTRFS_I(inode)->io_tree,
-						   alloc_start, locked_end,
-						   &cached_state, GFP_NOFS);
-			BUG_ON(ret < 0);
+			unlock_extent_cached(&BTRFS_I(inode)->io_tree,
+					     alloc_start, locked_end,
+					     &cached_state);
 			/*
 			 * we can't wait on the range with the transaction
 			 * running or with the extent lock held
@@ -1718,9 +1704,8 @@ static long btrfs_fallocate(struct file *file, int mode,
 			break;
 		}
 	}
-	err = unlock_extent_cached(&BTRFS_I(inode)->io_tree, alloc_start,
-				   locked_end, &cached_state, GFP_NOFS);
-	BUG_ON(err < 0);
+	unlock_extent_cached(&BTRFS_I(inode)->io_tree, alloc_start,
+			     locked_end, &cached_state);
 out:
 	mutex_unlock(&inode->i_mutex);
 	return ret;
@@ -1737,7 +1722,7 @@ static int find_desired_extent(struct inode *inode, loff_t *offset, int origin)
 	u64 orig_start = *offset;
 	u64 len = i_size_read(inode);
 	u64 last_end = 0;
-	int ret = 0, err;
+	int ret = 0;
 
 	lockend = max_t(u64, root->sectorsize, lockend);
 	if (lockend <= lockstart)
@@ -1749,9 +1734,8 @@ static int find_desired_extent(struct inode *inode, loff_t *offset, int origin)
 	if (inode->i_size == 0)
 		return -ENXIO;
 
-	ret = lock_extent_bits(&BTRFS_I(inode)->io_tree, lockstart, lockend, 0,
-			       &cached_state, GFP_NOFS);
-	BUG_ON(ret < 0);
+	lock_extent_bits(&BTRFS_I(inode)->io_tree, lockstart, lockend, 0,
+			 &cached_state);
 
 	/*
 	 * Delalloc is such a pain.  If we have a hole and we have pending
@@ -1833,9 +1817,8 @@ static int find_desired_extent(struct inode *inode, loff_t *offset, int origin)
 	if (!ret)
 		*offset = min(*offset, inode->i_size);
 out:
-	err = unlock_extent_cached(&BTRFS_I(inode)->io_tree, lockstart, lockend,
-				   &cached_state, GFP_NOFS);
-	BUG_ON(err < 0);
+	unlock_extent_cached(&BTRFS_I(inode)->io_tree, lockstart, lockend,
+			     &cached_state);
 	return ret;
 }
 

@@ -206,35 +206,28 @@ block_group_cache_tree_search(struct btrfs_fs_info *info, u64 bytenr,
 	return ret;
 }
 
-static int add_excluded_extent(struct btrfs_root *root,
-			       u64 start, u64 num_bytes)
+static void add_excluded_extent(struct btrfs_root *root,
+				u64 start, u64 num_bytes)
 {
-	int ret;
 	u64 end = start + num_bytes - 1;
-	ret = set_extent_bits(&root->fs_info->freed_extents[0],
-			      start, end, EXTENT_UPTODATE, GFP_NOFS);
-	BUG_ON(ret < 0);
-	ret = set_extent_bits(&root->fs_info->freed_extents[1],
-			      start, end, EXTENT_UPTODATE, GFP_NOFS);
-	BUG_ON(ret < 0);
-	return 0;
+	set_extent_bits(&root->fs_info->freed_extents[0],
+			start, end, EXTENT_UPTODATE);
+	set_extent_bits(&root->fs_info->freed_extents[1],
+			start, end, EXTENT_UPTODATE);
 }
 
 static void free_excluded_extents(struct btrfs_root *root,
 				  struct btrfs_block_group_cache *cache)
 {
 	u64 start, end;
-	int ret;
 
 	start = cache->key.objectid;
 	end = start + cache->key.offset - 1;
 
-	ret = clear_extent_bits(&root->fs_info->freed_extents[0],
-				start, end, EXTENT_UPTODATE, GFP_NOFS);
-	BUG_ON(ret < 0);
-	ret = clear_extent_bits(&root->fs_info->freed_extents[1],
-				start, end, EXTENT_UPTODATE, GFP_NOFS);
-	BUG_ON(ret < 0);
+	clear_extent_bits(&root->fs_info->freed_extents[0],
+			  start, end, EXTENT_UPTODATE);
+	clear_extent_bits(&root->fs_info->freed_extents[1],
+			  start, end, EXTENT_UPTODATE);
 }
 
 static int exclude_super_stripes(struct btrfs_root *root,
@@ -248,9 +241,7 @@ static int exclude_super_stripes(struct btrfs_root *root,
 	if (cache->key.objectid < BTRFS_SUPER_INFO_OFFSET) {
 		stripe_len = BTRFS_SUPER_INFO_OFFSET - cache->key.objectid;
 		cache->bytes_super += stripe_len;
-		ret = add_excluded_extent(root, cache->key.objectid,
-					  stripe_len);
-		BUG_ON(ret);
+		add_excluded_extent(root, cache->key.objectid, stripe_len);
 	}
 
 	for (i = 0; i < BTRFS_SUPER_MIRROR_MAX; i++) {
@@ -262,9 +253,7 @@ static int exclude_super_stripes(struct btrfs_root *root,
 
 		while (nr--) {
 			cache->bytes_super += stripe_len;
-			ret = add_excluded_extent(root, logical[nr],
-						  stripe_len);
-			BUG_ON(ret);
+			add_excluded_extent(root, logical[nr], stripe_len);
 		}
 
 		kfree(logical);
@@ -4348,7 +4337,6 @@ static int update_block_group(struct btrfs_trans_handle *trans,
 	u64 old_val;
 	u64 byte_in_group;
 	int factor;
-	int ret;
 
 	/* block accounting for super block */
 	spin_lock(&info->delalloc_lock);
@@ -4411,10 +4399,8 @@ static int update_block_group(struct btrfs_trans_handle *trans,
 			spin_unlock(&cache->lock);
 			spin_unlock(&cache->space_info->lock);
 
-			ret = set_extent_dirty(info->pinned_extents, bytenr,
-					       bytenr + num_bytes - 1,
-					       GFP_NOFS | __GFP_NOFAIL);
-			BUG_ON(ret < 0); /* Can't return -ENOMEM */
+			set_extent_dirty(info->pinned_extents,
+					 bytenr, bytenr + num_bytes - 1);
 		}
 		btrfs_put_block_group(cache);
 		total -= num_bytes;
@@ -4442,8 +4428,6 @@ static void pin_down_extent(struct btrfs_root *root,
 			    struct btrfs_block_group_cache *cache,
 			    u64 bytenr, u64 num_bytes, int reserved)
 {
-	int ret;
-
 	spin_lock(&cache->space_info->lock);
 	spin_lock(&cache->lock);
 	cache->pinned += num_bytes;
@@ -4455,10 +4439,8 @@ static void pin_down_extent(struct btrfs_root *root,
 	spin_unlock(&cache->lock);
 	spin_unlock(&cache->space_info->lock);
 
-	ret = set_extent_dirty(root->fs_info->pinned_extents, bytenr,
-			       bytenr + num_bytes - 1,
-			       GFP_NOFS | __GFP_NOFAIL);
-	BUG_ON(ret < 0); /* __GFP_NOFAIL means it can't return -ENOMEM */
+	set_extent_dirty(root->fs_info->pinned_extents, bytenr,
+			 bytenr + num_bytes - 1);
 }
 
 /*
@@ -4656,8 +4638,7 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans,
 			ret = btrfs_discard_extent(root, start,
 						   end + 1 - start, NULL);
 
-		ret = clear_extent_dirty(unpin, start, end, GFP_NOFS);
-		BUG_ON(ret < 0);
+		clear_extent_dirty(unpin, start, end);
 		unpin_extent_range(root, start, end);
 		cond_resched();
 	}
@@ -5856,8 +5837,7 @@ int btrfs_alloc_logged_file_extent(struct btrfs_trans_handle *trans,
 		mutex_lock(&caching_ctl->mutex);
 
 		if (start >= caching_ctl->progress) {
-			ret = add_excluded_extent(root, start, num_bytes);
-			BUG_ON(ret);
+			add_excluded_extent(root, start, num_bytes);
 		} else if (start + num_bytes <= caching_ctl->progress) {
 			ret = btrfs_remove_free_space(block_group,
 						      start, num_bytes);
@@ -5871,8 +5851,7 @@ int btrfs_alloc_logged_file_extent(struct btrfs_trans_handle *trans,
 			start = caching_ctl->progress;
 			num_bytes = ins->objectid + ins->offset -
 				    caching_ctl->progress;
-			ret = add_excluded_extent(root, start, num_bytes);
-			BUG_ON(ret);
+			add_excluded_extent(root, start, num_bytes);
 		}
 
 		mutex_unlock(&caching_ctl->mutex);
@@ -5894,7 +5873,6 @@ struct extent_buffer *btrfs_init_new_buffer(struct btrfs_trans_handle *trans,
 					    int level)
 {
 	struct extent_buffer *buf;
-	int ret;
 
 	buf = btrfs_find_create_tree_block(root, bytenr, blocksize);
 	if (!buf)
@@ -5913,21 +5891,14 @@ struct extent_buffer *btrfs_init_new_buffer(struct btrfs_trans_handle *trans,
 		 * EXENT bit to differentiate dirty pages.
 		 */
 		if (root->log_transid % 2 == 0)
-			ret = set_extent_dirty(&root->dirty_log_pages,
-					       buf->start,
-					       buf->start + buf->len - 1,
-					       GFP_NOFS);
+			set_extent_dirty(&root->dirty_log_pages, buf->start,
+					buf->start + buf->len - 1);
 		else
-			ret = set_extent_new(&root->dirty_log_pages,
-					     buf->start,
-					     buf->start + buf->len - 1,
-					     GFP_NOFS);
-		BUG_ON(ret < 0);
+			set_extent_new(&root->dirty_log_pages, buf->start,
+					buf->start + buf->len - 1);
 	} else {
-		ret = set_extent_dirty(&trans->transaction->dirty_pages,
-				       buf->start, buf->start + buf->len - 1,
-				       GFP_NOFS);
-		BUG_ON(ret < 0);
+		set_extent_dirty(&trans->transaction->dirty_pages, buf->start,
+			 buf->start + buf->len - 1);
 	}
 	trans->blocks_used++;
 	/* this returns a buffer locked for blocking */

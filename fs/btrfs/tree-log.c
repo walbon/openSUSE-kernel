@@ -2179,9 +2179,8 @@ static void free_log_tree(struct btrfs_trans_handle *trans,
 		if (ret)
 			break;
 
-		ret = clear_extent_bits(&log->dirty_log_pages, start, end,
-					EXTENT_DIRTY | EXTENT_NEW, GFP_NOFS);
-		BUG_ON(ret < 0);
+		clear_extent_bits(&log->dirty_log_pages, start, end,
+				  EXTENT_DIRTY | EXTENT_NEW);
 	}
 
 	free_extent_buffer(log->node);

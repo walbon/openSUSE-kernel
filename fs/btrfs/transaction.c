@@ -582,9 +582,8 @@ int btrfs_write_marked_extents(struct btrfs_root *root,
 
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
 				      mark)) {
-		err = convert_extent_bit(dirty_pages, start, end,
-					 EXTENT_NEED_WAIT, mark, GFP_NOFS);
-		BUG_ON(err < 0);
+		convert_extent_bit(dirty_pages, start, end, EXTENT_NEED_WAIT, mark,
+				   GFP_NOFS);
 		err = filemap_fdatawrite_range(mapping, start, end);
 		if (err)
 			werr = err;
@@ -613,9 +612,7 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
 
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
 				      EXTENT_NEED_WAIT)) {
-		err = clear_extent_bits(dirty_pages, start, end,
-					EXTENT_NEED_WAIT, GFP_NOFS);
-		BUG_ON(err < 0);
+		clear_extent_bits(dirty_pages, start, end, EXTENT_NEED_WAIT);
 		err = filemap_fdatawait_range(mapping, start, end);
 		if (err)
 			werr = err;
@@ -1215,8 +1212,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 
 		if (flush_on_commit || snap_pending) {
 			btrfs_start_delalloc_inodes(root, 1);
-			ret = btrfs_wait_ordered_extents(root, 0, 1);
-			BUG_ON(ret);
+			btrfs_wait_ordered_extents(root, 0, 1);
 		}
 
 		ret = btrfs_run_delayed_items(trans, root);

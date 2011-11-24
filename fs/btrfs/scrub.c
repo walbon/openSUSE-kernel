@@ -366,7 +366,7 @@ static int scrub_fixup_readpage(u64 inum, u64 offset, u64 root, void *ctx)
 	struct page *page = NULL;
 	unsigned long index;
 	struct scrub_fixup_nodatasum *fixup = ctx;
-	int ret, ret2;
+	int ret;
 	int corrected = 0;
 	struct btrfs_key key;
 	struct inode *inode = NULL;
@@ -429,15 +429,8 @@ static int scrub_fixup_readpage(u64 inum, u64 offset, u64 root, void *ctx)
 		 * will call repair_io_failure for us, we just have to make
 		 * sure we read the bad mirror.
 		 */
-		ret = set_extent_bits(&BTRFS_I(inode)->io_tree, offset, end,
-					EXTENT_DAMAGED, GFP_NOFS);
-		if (ret) {
-			/* set_extent_bits should give proper error */
-			WARN_ON(ret > 0);
-			if (ret > 0)
-				ret = -EFAULT;
-			goto out;
-		}
+		set_extent_bits(&BTRFS_I(inode)->io_tree, offset, end,
+				EXTENT_DAMAGED);
 
 		ret = extent_read_full_page(&BTRFS_I(inode)->io_tree, page,
 						btrfs_get_extent,
@@ -446,12 +439,9 @@ static int scrub_fixup_readpage(u64 inum, u64 offset, u64 root, void *ctx)
 
 		corrected = !test_range_bit(&BTRFS_I(inode)->io_tree, offset,
 						end, EXTENT_DAMAGED, 0, NULL);
-		if (!corrected) {
-			ret2 = clear_extent_bits(&BTRFS_I(inode)->io_tree,
-						 offset, end, EXTENT_DAMAGED,
-						 GFP_NOFS);
-			BUG_ON(ret2 < 0);
-		}
+		if (!corrected)
+			clear_extent_bits(&BTRFS_I(inode)->io_tree, offset, end,
+					  EXTENT_DAMAGED);
 	}
 
 out:
