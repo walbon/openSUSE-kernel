@@ -809,7 +809,6 @@ early_param("reservelow", parse_reservelow);
 void __init setup_arch(char **cmdline_p)
 {
 #ifdef CONFIG_XEN
-	unsigned int i;
 	unsigned long p2m_pages;
 	struct physdev_set_iopl set_iopl;
 
@@ -1327,6 +1326,7 @@ void __init setup_arch(char **cmdline_p)
 							XENFEAT_writable_page_tables);
 						free_bootmem(pa, PMD_SIZE);
 					} else if (!pmd_none(*pmd)) {
+						unsigned int i;
 						pte_t *pte = pte_offset_kernel(pmd, va);
 
 						for (i = 0; i < PTRS_PER_PTE; ++i) {
@@ -1373,10 +1373,14 @@ void __init setup_arch(char **cmdline_p)
 			setup_pfn_to_mfn_frame_list(__alloc_bootmem);
 	}
 
+#ifdef CONFIG_ISA_DMA_API
+# define ch p2m_pages
 	/* Mark all ISA DMA channels in-use - using them wouldn't work. */
-	for (i = 0; i < MAX_DMA_CHANNELS; ++i)
-		if (i != 4 && request_dma(i, "xen") != 0)
+	for (ch = 0; ch < MAX_DMA_CHANNELS; ++ch)
+		if (ch != 4 && request_dma(ch, "xen") != 0)
 			BUG();
+# undef ch
+#endif
 #else /* CONFIG_XEN */
 	generic_apic_probe();
 
