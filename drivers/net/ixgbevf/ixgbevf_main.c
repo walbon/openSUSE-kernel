@@ -398,7 +398,7 @@ static void ixgbevf_alloc_rx_buffers(struct ixgbevf_adapter *adapter,
 			 */
 			skb_reserve(skb, NET_IP_ALIGN);
 
-			propagate_pfmemalloc_skb(bi->page_dma, skb);
+			propagate_pfmemalloc_skb(bi->page, skb);
 			bi->skb = skb;
 		}
 		if (!bi->dma) {
