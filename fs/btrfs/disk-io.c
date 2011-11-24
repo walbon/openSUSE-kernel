@@ -49,11 +49,11 @@ static void end_workqueue_fn(struct btrfs_work *work);
 static void free_fs_root(struct btrfs_root *root);
 static void btrfs_check_super_valid(struct btrfs_fs_info *fs_info,
 				    int read_only);
-static int btrfs_destroy_ordered_operations(struct btrfs_root *root);
-static int btrfs_destroy_ordered_extents(struct btrfs_root *root);
+static void btrfs_destroy_ordered_operations(struct btrfs_root *root);
+static void btrfs_destroy_ordered_extents(struct btrfs_root *root);
 static int btrfs_destroy_delayed_refs(struct btrfs_transaction *trans,
 				      struct btrfs_root *root);
-static int btrfs_destroy_pending_snapshots(struct btrfs_transaction *t);
+static void btrfs_destroy_pending_snapshots(struct btrfs_transaction *t);
 static void btrfs_destroy_delalloc_inodes(struct btrfs_root *root);
 static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 					struct extent_io_tree *dirty_pages,
@@ -325,14 +325,13 @@ static int verify_parent_transid(struct extent_io_tree *io_tree,
 				 struct extent_buffer *eb, u64 parent_transid)
 {
 	struct extent_state *cached_state = NULL;
-	int ret, err;
+	int ret;
 
 	if (!parent_transid || btrfs_header_generation(eb) == parent_transid)
 		return 0;
 
-	ret = lock_extent_bits(io_tree, eb->start, eb->start + eb->len - 1,
-			       0, &cached_state, GFP_NOFS);
-	BUG_ON(ret < 0);
+	lock_extent_bits(io_tree, eb->start, eb->start + eb->len - 1,
+			 0, &cached_state);
 	if (extent_buffer_uptodate(io_tree, eb, cached_state) &&
 	    btrfs_header_generation(eb) == parent_transid) {
 		ret = 0;
@@ -346,9 +345,8 @@ static int verify_parent_transid(struct extent_io_tree *io_tree,
 	ret = 1;
 	clear_extent_buffer_uptodate(io_tree, eb, &cached_state);
 out:
-	err = unlock_extent_cached(io_tree, eb->start, eb->start + eb->len - 1,
-				   &cached_state, GFP_NOFS);
-	BUG_ON(err < 0);
+	unlock_extent_cached(io_tree, eb->start, eb->start + eb->len - 1,
+			     &cached_state);
 	return ret;
 }
 
@@ -2844,7 +2842,7 @@ int write_ctree_super(struct btrfs_trans_handle *trans,
 	return ret;
 }
 
-int btrfs_free_fs_root(struct btrfs_fs_info *fs_info, struct btrfs_root *root)
+void btrfs_free_fs_root(struct btrfs_fs_info *fs_info, struct btrfs_root *root)
 {
 	spin_lock(&fs_info->fs_roots_radix_lock);
 	radix_tree_delete(&fs_info->fs_roots_radix,
@@ -2857,7 +2855,6 @@ int btrfs_free_fs_root(struct btrfs_fs_info *fs_info, struct btrfs_root *root)
 	__btrfs_remove_free_space_cache(root->free_ino_pinned);
 	__btrfs_remove_free_space_cache(root->free_ino_ctl);
 	free_fs_root(root);
-	return 0;
 }
 
 static void free_fs_root(struct btrfs_root *root)
@@ -2876,7 +2873,7 @@ static void free_fs_root(struct btrfs_root *root)
 	kfree(root);
 }
 
-static int del_fs_roots(struct btrfs_fs_info *fs_info)
+static void del_fs_roots(struct btrfs_fs_info *fs_info)
 {
 	int ret;
 	struct btrfs_root *gang[8];
@@ -2905,7 +2902,6 @@ static int del_fs_roots(struct btrfs_fs_info *fs_info)
 		for (i = 0; i < ret; i++)
 			btrfs_free_fs_root(fs_info, gang[i]);
 	}
-	return 0;
 }
 
 int btrfs_cleanup_fs_roots(struct btrfs_fs_info *fs_info)
@@ -3083,11 +3079,10 @@ int btrfs_buffer_uptodate(struct extent_buffer *buf, u64 parent_transid)
 	return !ret;
 }
 
-int btrfs_set_buffer_uptodate(struct extent_buffer *buf)
+void btrfs_set_buffer_uptodate(struct extent_buffer *buf)
 {
 	struct inode *btree_inode = buf->first_page->mapping->host;
-	return set_extent_buffer_uptodate(&BTRFS_I(btree_inode)->io_tree,
-					  buf);
+	set_extent_buffer_uptodate(&BTRFS_I(btree_inode)->io_tree, buf);
 }
 
 void btrfs_mark_buffer_dirty(struct extent_buffer *buf)
@@ -3242,7 +3237,7 @@ int btrfs_error_commit_super(struct btrfs_root *root)
 	return ret;
 }
 
-static int btrfs_destroy_ordered_operations(struct btrfs_root *root)
+static void btrfs_destroy_ordered_operations(struct btrfs_root *root)
 {
 	struct btrfs_inode *btrfs_inode;
 	struct list_head splice;
@@ -3264,11 +3259,9 @@ static int btrfs_destroy_ordered_operations(struct btrfs_root *root)
 
 	spin_unlock(&root->fs_info->ordered_extent_lock);
 	mutex_unlock(&root->fs_info->ordered_operations_mutex);
-
-	return 0;
 }
 
-static int btrfs_destroy_ordered_extents(struct btrfs_root *root)
+static void btrfs_destroy_ordered_extents(struct btrfs_root *root)
 {
 	struct list_head splice;
 	struct btrfs_ordered_extent *ordered;
@@ -3300,8 +3293,6 @@ static int btrfs_destroy_ordered_extents(struct btrfs_root *root)
 	}
 
 	spin_unlock(&root->fs_info->ordered_extent_lock);
-
-	return 0;
 }
 
 static int btrfs_destroy_delayed_refs(struct btrfs_transaction *trans,
@@ -3356,7 +3347,7 @@ static int btrfs_destroy_delayed_refs(struct btrfs_transaction *trans,
 	return ret;
 }
 
-static int btrfs_destroy_pending_snapshots(struct btrfs_transaction *t)
+static void btrfs_destroy_pending_snapshots(struct btrfs_transaction *t)
 {
 	struct btrfs_pending_snapshot *snapshot;
 	struct list_head splice;
@@ -3374,8 +3365,6 @@ static int btrfs_destroy_pending_snapshots(struct btrfs_transaction *t)
 
 		kfree(snapshot);
 	}
-
-	return 0;
 }
 
 static void btrfs_destroy_delalloc_inodes(struct btrfs_root *root)
@@ -3419,10 +3408,7 @@ static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 		if (ret)
 			break;
 
-		ret = clear_extent_bits(dirty_pages, start, end, mark,
-					GFP_NOFS);
-		BUG_ON(ret < 0);
-		ret = 0;
+		clear_extent_bits(dirty_pages, start, end, mark);
 		while (start <= end) {
 			index = start >> PAGE_CACHE_SHIFT;
 			start = (u64)(index + 1) << PAGE_CACHE_SHIFT;
@@ -3483,8 +3469,7 @@ static int btrfs_destroy_pinned_extent(struct btrfs_root *root,
 							 end + 1 - start,
 							 NULL);
 
-		ret = clear_extent_dirty(unpin, start, end, GFP_NOFS);
-		BUG_ON(ret < 0);
+		clear_extent_dirty(unpin, start, end);
 		btrfs_error_unpin_extent_range(root, start, end);
 		cond_resched();
 	}

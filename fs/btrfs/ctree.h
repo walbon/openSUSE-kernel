@@ -2372,6 +2372,9 @@ int btrfs_block_rsv_check(struct btrfs_root *root,
 int btrfs_block_rsv_refill(struct btrfs_root *root,
 			  struct btrfs_block_rsv *block_rsv,
 			  u64 min_reserved);
+int btrfs_block_rsv_refill_noflush(struct btrfs_root *root,
+				   struct btrfs_block_rsv *block_rsv,
+				   u64 min_reserved);
 int btrfs_block_rsv_migrate(struct btrfs_block_rsv *src_rsv,
 			    struct btrfs_block_rsv *dst_rsv,
 			    u64 num_bytes);
@@ -2682,9 +2685,8 @@ int btrfs_truncate_inode_items(struct btrfs_trans_handle *trans,
 			       u32 min_type);
 
 int btrfs_start_delalloc_inodes(struct btrfs_root *root, int delay_iput);
-int __must_check btrfs_set_extent_delalloc(struct inode *inode, u64 start,
-					   u64 end,
-					   struct extent_state **cached_state);
+void btrfs_set_extent_delalloc(struct inode *inode, u64 start, u64 end,
+			       struct extent_state **cached_state);
 int btrfs_writepages(struct address_space *mapping,
 		     struct writeback_control *wbc);
 int btrfs_create_subvol_root(struct btrfs_trans_handle *trans,

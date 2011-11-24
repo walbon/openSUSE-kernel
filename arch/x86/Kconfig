@@ -2088,7 +2088,7 @@ source "drivers/pci/Kconfig"
 
 # x86_64 have no ISA slots, but can have ISA-style DMA.
 config ISA_DMA_API
-	bool "ISA-style DMA support" if (X86_64 && EXPERT)
+	bool "ISA-style DMA support" if ((X86_64 || XEN) && EXPERT) || XEN_UNPRIVILEGED_GUEST
 	default y
 	help
 	  Enables ISA-style DMA support for devices requiring such controllers.

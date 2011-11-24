@@ -1197,7 +1197,7 @@ static int netbk_tx_check_mop(struct xen_netbk *netbk, struct sk_buff *skb,
 		pending_idx = *((u16 *)skb->data);
 		netif_idx_release(netbk, pending_idx);
 		for (j = start; j < i; j++) {
-			pending_idx = (unsigned long)shinfo->frags[i].page;
+			pending_idx = (unsigned long)shinfo->frags[j].page;
 			netif_idx_release(netbk, pending_idx);
 		}
 
