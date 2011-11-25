@@ -126,6 +126,9 @@ struct r1bio_s {
  * Record that bi_end_io was called with this flag...
  */
 #define	R1BIO_Returned 6
+/* failfast devices did receive failfast requests. */
+#define	R1BIO_FailFast 7
+#define	R1BIO_WriteError 8
 
 extern int md_raid1_congested(mddev_t *mddev, int bits);
 

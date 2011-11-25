@@ -77,6 +77,12 @@ struct mdk_rdev_s
 #define Blocked		8		/* An error occurred on an externally
 					 * managed array, don't allow writes
 					 * until it is cleared */
+#define	FailFast	9		/* Minimal retries should be attempted on
+					 * this device, so use REQ_FAILFAST_DEV.
+					 * Also don't try to repair failed reads.
+					 * It is expects that no bad block log
+					 * is present.
+					 */
 	wait_queue_head_t blocked_wait;
 
 	int desc_nr;			/* descriptor index in the superblock */

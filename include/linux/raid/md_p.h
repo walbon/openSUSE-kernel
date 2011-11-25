@@ -82,6 +82,10 @@
 				   * read requests will only be sent here in
 				   * dire need
 				   */
+#define	MD_DISK_FAILFAST	10 /* Send REQ_FAILFAST if there are multiple
+				    * devices available - and don't try to
+				    * correct read errors.
+				    */
 
 typedef struct mdp_device_descriptor_s {
 	__u32 number;		/* 0 Device number in the entire set	      */
@@ -245,6 +249,7 @@ struct mdp_superblock_1 {
 	__u8	device_uuid[16]; /* user-space setable, ignored by kernel */
 	__u8	devflags;	/* per-device flags.  Only one defined...*/
 #define	WriteMostly1	1	/* mask for writemostly flag in above */
+#define	FailFast1	2	/* Should avoid retries and fixups and just fail */
 	__u8	pad2[64-57];	/* set to 0 when writing */
 
 	/* array state information - 64 bytes */

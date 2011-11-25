@@ -119,4 +119,7 @@ struct r10bio_s {
 #define	R10BIO_IsSync	1
 #define	R10BIO_IsRecover 2
 #define	R10BIO_Degraded 3
+/* failfast devices did receive failfast requests. */
+#define	R10BIO_FailFast 4
+#define	R10BIO_WriteError 8
 #endif
