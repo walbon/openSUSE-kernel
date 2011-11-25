@@ -336,7 +336,7 @@ NORET_TYPE static void backref_tree_panic(struct rb_node *rb_node, int errno,
 	if (bnode->root)
 		fs_info = bnode->root->fs_info;
 	btrfs_panic(fs_info, errno, "Inconsistency in backref cache "
-		    "found at offset %llu\n", bytenr);
+		    "found at offset %llu\n", (unsigned long long)bytenr);
 }
 
 /*

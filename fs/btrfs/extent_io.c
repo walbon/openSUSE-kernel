@@ -1059,7 +1059,8 @@ again:
 			return -ENOMEM;
 		err = insert_state(tree, prealloc, start, end, &bits);
 		prealloc = NULL;
-		BUG_ON(err == -EEXIST);
+		if (err)
+			extent_io_tree_panic(tree, err);
 		goto out;
 	}
 	state = rb_entry(node, struct extent_state, rb_node);
@@ -1116,7 +1117,8 @@ hit_next:
 		if (!prealloc)
 			return -ENOMEM;
 		err = split_state(tree, state, prealloc, start);
-		BUG_ON(err == -EEXIST);
+		if (err)
+			extent_io_tree_panic(tree, err);
 		prealloc = NULL;
 		if (err)
 			goto out;
@@ -1155,12 +1157,8 @@ hit_next:
 		 */
 		err = insert_state(tree, prealloc, start, this_end,
 				   &bits);
-		BUG_ON(err == -EEXIST);
-		if (err) {
-			free_extent_state(prealloc);
-			prealloc = NULL;
-			goto out;
-		}
+		if (err)
+			extent_io_tree_panic(tree, err);
 		prealloc = NULL;
 		start = this_end + 1;
 		goto search_again;
@@ -1178,7 +1176,8 @@ hit_next:
 			return -ENOMEM;
 
 		err = split_state(tree, state, prealloc, end + 1);
-		BUG_ON(err == -EEXIST);
+		if (err)
+			extent_io_tree_panic(tree, err);
 
 		set_state_bits(tree, prealloc, &bits);
 		clear_state_bit(tree, prealloc, &clear_bits, 0);
@@ -3202,11 +3201,13 @@ retry:
 static void flush_epd_write_bio(struct extent_page_data *epd)
 {
 	if (epd->bio) {
+		int rw = WRITE;
 		int ret;
+
 		if (epd->sync_io)
-			ret = submit_one_bio(WRITE_SYNC, epd->bio, 0, 0);
-		else
-			ret = submit_one_bio(WRITE, epd->bio, 0, 0);
+			rw = WRITE_SYNC;
+
+		ret = submit_one_bio(rw, epd->bio, 0, 0);
 		BUG_ON(ret < 0);
 		epd->bio = NULL;
 	}
