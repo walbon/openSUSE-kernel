@@ -565,11 +565,10 @@ static void shm_add_rss_swap(struct shmid_kernel *shp,
 		*rss_add += pages_per_huge_page(h) * mapping->nrpages;
 	} else {
 #ifdef CONFIG_SHMEM
-		struct shmem_inode_info *info = SHMEM_I(inode);
-		spin_lock(&info->lock);
-		*rss_add += inode->i_mapping->nrpages;
-		*swp_add += info->swapped;
-		spin_unlock(&info->lock);
+		unsigned long rss, swap;
+		shmem_get_rss_swap(inode, &rss, &swap);
+		*rss_add += rss;
+		*swp_add += swap;
 #else
 		*rss_add += inode->i_mapping->nrpages;
 #endif
