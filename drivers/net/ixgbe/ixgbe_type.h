@@ -400,6 +400,8 @@
 #define IXGBE_WUPL_LENGTH_MASK 0xFFFF
 
 /* DCB registers */
+#define MAX_TRAFFIC_CLASS        8
+#define X540_TRAFFIC_CLASS       4
 #define IXGBE_RMCS      0x03D00
 #define IXGBE_DPMCS     0x07F40
 #define IXGBE_PDPMCS    0x0CD00
@@ -1118,6 +1120,27 @@
 #define IXGBE_GPIE_VTMODE_32     0x00008000 /* 32 VFs 4 queues per VF */
 #define IXGBE_GPIE_VTMODE_64     0x0000C000 /* 64 VFs 2 queues per VF */
 
+/* Packet Buffer Initialization */
+#define IXGBE_TXPBSIZE_20KB     0x00005000 /* 20KB Packet Buffer */
+#define IXGBE_TXPBSIZE_40KB     0x0000A000 /* 40KB Packet Buffer */
+#define IXGBE_RXPBSIZE_48KB     0x0000C000 /* 48KB Packet Buffer */
+#define IXGBE_RXPBSIZE_64KB     0x00010000 /* 64KB Packet Buffer */
+#define IXGBE_RXPBSIZE_80KB     0x00014000 /* 80KB Packet Buffer */
+#define IXGBE_RXPBSIZE_128KB    0x00020000 /* 128KB Packet Buffer */
+#define IXGBE_RXPBSIZE_MAX      0x00080000 /* 512KB Packet Buffer*/
+#define IXGBE_TXPBSIZE_MAX      0x00028000 /* 160KB Packet Buffer*/
+
+#define IXGBE_TXPKT_SIZE_MAX    0xA        /* Max Tx Packet size  */
+#define IXGBE_MAX_PB		8
+
+/* Packet buffer allocation strategies */
+enum {
+	PBA_STRATEGY_EQUAL	= 0,	/* Distribute PB space equally */
+#define PBA_STRATEGY_EQUAL	PBA_STRATEGY_EQUAL
+	PBA_STRATEGY_WEIGHTED	= 1,	/* Weight front half of TCs */
+#define PBA_STRATEGY_WEIGHTED	PBA_STRATEGY_WEIGHTED
+};
+
 /* Transmit Flow Control status */
 #define IXGBE_TFCS_TXOFF         0x00000001
 #define IXGBE_TFCS_TXOFF0        0x00000100
@@ -1810,6 +1833,7 @@
 #define IXGBE_MFLCN_DPF         0x00000002 /* Discard Pause Frame */
 #define IXGBE_MFLCN_RPFCE       0x00000004 /* Receive Priority FC Enable */
 #define IXGBE_MFLCN_RFCE        0x00000008 /* Receive FC Enable */
+#define IXGBE_MFLCN_RPFCE_MASK	0x00000FE0 /* Receive FC Mask */
 
 #define IXGBE_MFLCN_RPFCE_SHIFT		 4
 
@@ -1864,6 +1888,7 @@
 #define IXGBE_MTQC_32VF         0x8 /* 4 TX Queues per pool w/32VF's */
 #define IXGBE_MTQC_64VF         0x4 /* 2 TX Queues per pool w/64VF's */
 #define IXGBE_MTQC_8TC_8TQ      0xC /* 8 TC if RT_ENA or 8 TQ if VT_ENA */
+#define IXGBE_MTQC_4TC_4TQ	0x8 /* 4 TC if RT_ENA or 4 TQ if VT_ENA */
 
 /* Receive Descriptor bit definitions */
 #define IXGBE_RXD_STAT_DD       0x01    /* Descriptor Done */
@@ -2031,9 +2056,10 @@
 #define IXGBE_VFLREC(_i)                 (0x00700 + (_i * 4))
 
 enum ixgbe_fdir_pballoc_type {
-	IXGBE_FDIR_PBALLOC_64K = 0,
-	IXGBE_FDIR_PBALLOC_128K,
-	IXGBE_FDIR_PBALLOC_256K,
+	IXGBE_FDIR_PBALLOC_NONE = 0,
+	IXGBE_FDIR_PBALLOC_64K  = 1,
+	IXGBE_FDIR_PBALLOC_128K = 2,
+	IXGBE_FDIR_PBALLOC_256K = 3,
 };
 #define IXGBE_FDIR_PBALLOC_SIZE_SHIFT           16
 
@@ -2087,7 +2113,7 @@ enum ixgbe_fdir_pballoc_type {
 #define IXGBE_FDIRCMD_CMD_ADD_FLOW              0x00000001
 #define IXGBE_FDIRCMD_CMD_REMOVE_FLOW           0x00000002
 #define IXGBE_FDIRCMD_CMD_QUERY_REM_FILT        0x00000003
-#define IXGBE_FDIRCMD_CMD_QUERY_REM_HASH        0x00000007
+#define IXGBE_FDIRCMD_FILTER_VALID              0x00000004
 #define IXGBE_FDIRCMD_FILTER_UPDATE             0x00000008
 #define IXGBE_FDIRCMD_IPv6DMATCH                0x00000010
 #define IXGBE_FDIRCMD_L4TYPE_UDP                0x00000020
@@ -2105,6 +2131,8 @@ enum ixgbe_fdir_pballoc_type {
 #define IXGBE_FDIRCMD_VT_POOL_SHIFT             24
 #define IXGBE_FDIR_INIT_DONE_POLL               10
 #define IXGBE_FDIRCMD_CMD_POLL                  10
+
+#define IXGBE_FDIR_DROP_QUEUE                   127
 
 /* Transmit Descriptor - Advanced */
 union ixgbe_adv_tx_desc {
@@ -2247,13 +2275,60 @@ typedef u32 ixgbe_physical_layer;
 #define IXGBE_PHYSICAL_LAYER_10GBASE_XAUI 0x1000
 #define IXGBE_PHYSICAL_LAYER_SFP_ACTIVE_DA 0x2000
 
-/* Flow Control Macros */
-#define PAUSE_RTT	8
-#define PAUSE_MTU(MTU)	((MTU + 1024 - 1) / 1024)
+/* Flow Control Data Sheet defined values
+ * Calculation and defines taken from 802.1bb Annex O
+ */
 
-#define FC_HIGH_WATER(MTU) ((((PAUSE_RTT + PAUSE_MTU(MTU)) * 144) + 99) / 100 +\
-				PAUSE_MTU(MTU))
-#define FC_LOW_WATER(MTU)  (2 * (2 * PAUSE_MTU(MTU) + PAUSE_RTT))
+/* BitTimes (BT) conversion */
+#define IXGBE_BT2KB(BT) ((BT + 1023) / (8 * 1024))
+#define IXGBE_B2BT(BT) (BT * 8)
+
+/* Calculate Delay to respond to PFC */
+#define IXGBE_PFC_D	672
+
+/* Calculate Cable Delay */
+#define IXGBE_CABLE_DC	5556 /* Delay Copper */
+#define IXGBE_CABLE_DO	5000 /* Delay Optical */
+
+/* Calculate Interface Delay X540 */
+#define IXGBE_PHY_DC	25600	/* Delay 10G BASET */
+#define IXGBE_MAC_DC	8192	/* Delay Copper XAUI interface */
+#define IXGBE_XAUI_DC	(2 * 2048) /* Delay Copper Phy */
+
+#define IXGBE_ID_X540	(IXGBE_MAC_DC + IXGBE_XAUI_DC + IXGBE_PHY_DC)
+
+/* Calculate Interface Delay 82598, 82599 */
+#define IXGBE_PHY_D	12800
+#define IXGBE_MAC_D	4096
+#define IXGBE_XAUI_D	(2 * 1024)
+
+#define IXGBE_ID	(IXGBE_MAC_D + IXGBE_XAUI_D + IXGBE_PHY_D)
+
+/* Calculate Delay incurred from higher layer */
+#define IXGBE_HD	6144
+
+/* Calculate PCI Bus delay for low thresholds */
+#define IXGBE_PCI_DELAY	10000
+
+/* Calculate X540 delay value in bit times */
+#define IXGBE_FILL_RATE (36 / 25)
+
+#define IXGBE_DV_X540(LINK, TC) (IXGBE_FILL_RATE * \
+				 (IXGBE_B2BT(LINK) + IXGBE_PFC_D + \
+				 (2 * IXGBE_CABLE_DC) + \
+				 (2 * IXGBE_ID_X540) + \
+				 IXGBE_HD + IXGBE_B2BT(TC)))
+
+/* Calculate 82599, 82598 delay value in bit times */
+#define IXGBE_DV(LINK, TC) (IXGBE_FILL_RATE * \
+			    (IXGBE_B2BT(LINK) + IXGBE_PFC_D + \
+			    (2 * IXGBE_CABLE_DC) + (2 * IXGBE_ID) + \
+			    IXGBE_HD + IXGBE_B2BT(TC)))
+
+/* Calculate low threshold delay values */
+#define IXGBE_LOW_DV_X540(TC) (2 * IXGBE_B2BT(TC) + \
+			       (IXGBE_FILL_RATE * IXGBE_PCI_DELAY))
+#define IXGBE_LOW_DV(TC)      (2 * IXGBE_LOW_DV_X540(TC))
 
 /* Software ATR hash keys */
 #define IXGBE_ATR_BUCKET_HASH_KEY    0x3DAD14E2
@@ -2290,7 +2365,7 @@ union ixgbe_atr_input {
 	 * src_port   - 2 bytes
 	 * dst_port   - 2 bytes
 	 * flex_bytes - 2 bytes
-	 * rsvd0      - 2 bytes - space reserved must be 0.
+	 * bkt_hash   - 2 bytes
 	 */
 	struct {
 		u8     vm_pool;
@@ -2301,7 +2376,7 @@ union ixgbe_atr_input {
 		__be16 src_port;
 		__be16 dst_port;
 		__be16 flex_bytes;
-		__be16 rsvd0;
+		__be16 bkt_hash;
 	} formatted;
 	__be32 dword_stream[11];
 };
@@ -2320,16 +2395,6 @@ union ixgbe_atr_hash_dword {
 	} port;
 	__be16 flex_bytes;
 	__be32 dword;
-};
-
-struct ixgbe_atr_input_masks {
-	__be16 rsvd0;
-	__be16 vlan_id_mask;
-	__be32 dst_ip_mask[4];
-	__be32 src_ip_mask[4];
-	__be16 src_port_mask;
-	__be16 dst_port_mask;
-	__be16 flex_mask;
 };
 
 enum ixgbe_eeprom_type {
@@ -2482,7 +2547,7 @@ struct ixgbe_bus_info {
 
 /* Flow control parameters */
 struct ixgbe_fc_info {
-	u32 high_water; /* Flow Control High-water */
+	u32 high_water[MAX_TRAFFIC_CLASS]; /* Flow Control High-water */
 	u32 low_water; /* Flow Control Low-water */
 	u16 pause_time; /* Flow Control Pause timer */
 	bool send_xon; /* Flow control send XON */
@@ -2618,6 +2683,9 @@ struct ixgbe_mac_operations {
 	s32 (*check_link)(struct ixgbe_hw *, ixgbe_link_speed *, bool *, bool);
 	s32 (*get_link_capabilities)(struct ixgbe_hw *, ixgbe_link_speed *,
 	                             bool *);
+
+	/* Packet Buffer Manipulation */
+	void (*set_rxpba)(struct ixgbe_hw *, int, u32, int);
 
 	/* LED */
 	s32 (*led_on)(struct ixgbe_hw *, u32);
