@@ -1209,6 +1209,51 @@ dasd_expires_store(struct device *dev, struct device_attribute *attr,
 
 static DEVICE_ATTR(expires, 0644, dasd_expires_show, dasd_expires_store);
 
+/*
+ * expiration time for failfast requests
+ */
+static ssize_t
+dasd_failfast_expires_show(struct device *dev, struct device_attribute *attr,
+			   char *buf)
+{
+	struct dasd_device *device;
+	int len;
+
+	device = dasd_device_from_cdev(to_ccwdev(dev));
+	if (IS_ERR(device))
+		return -ENODEV;
+	len = snprintf(buf, PAGE_SIZE, "%lu\n", device->failfast_expires);
+	dasd_put_device(device);
+	return len;
+}
+
+static ssize_t
+dasd_failfast_expires_store(struct device *dev, struct device_attribute *attr,
+	       const char *buf, size_t count)
+{
+	struct dasd_device *device;
+	unsigned long val;
+
+	device = dasd_device_from_cdev(to_ccwdev(dev));
+	if (IS_ERR(device))
+		return -ENODEV;
+
+	if ((strict_strtoul(buf, 10, &val) != 0) ||
+	    (val > DASD_EXPIRES_MAX) || val == 0) {
+		dasd_put_device(device);
+		return -EINVAL;
+	}
+
+	if (val)
+		device->failfast_expires = val;
+
+	dasd_put_device(device);
+	return count;
+}
+
+static DEVICE_ATTR(failfast_expires, 0644,
+		   dasd_failfast_expires_show, dasd_failfast_expires_store);
+
 static ssize_t dasd_reservation_policy_show(struct device *dev,
 					    struct device_attribute *attr,
 					    char *buf)

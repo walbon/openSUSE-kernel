@@ -360,6 +360,7 @@ dasd_diag_check_device(struct dasd_device *device)
 	}
 
 	device->default_expires = DIAG_TIMEOUT;
+	device->failfast_expires = DIAG_TIMEOUT;
 
 	/* Figure out position of label block */
 	switch (private->rdc_data.vdev_class) {
@@ -564,7 +565,10 @@ static struct dasd_ccw_req *dasd_diag_build_cp(struct dasd_device *memdev,
 	cqr->startdev = memdev;
 	cqr->memdev = memdev;
 	cqr->block = block;
-	cqr->expires = memdev->default_expires * HZ;
+	if (req->cmd_flags & REQ_FAILFAST_DEV)
+		cqr->expires = memdev->failfast_expires * HZ;
+	else
+		cqr->expires = memdev->default_expires * HZ;
 	cqr->status = DASD_CQR_FILLED;
 	return cqr;
 }

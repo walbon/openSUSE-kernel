@@ -1434,6 +1434,7 @@ dasd_eckd_check_characteristics(struct dasd_device *device)
 		if (value != 0 && value <= DASD_EXPIRES_MAX)
 			device->default_expires = value;
 	}
+	device->failfast_expires = device->default_expires;
 
 	/* Generate device unique id */
 	rc = dasd_eckd_generate_uid(device);
@@ -2267,7 +2268,10 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_cmd_single(
 	cqr->startdev = startdev;
 	cqr->memdev = startdev;
 	cqr->block = block;
-	cqr->expires = startdev->default_expires * HZ;	/* default 5 minutes */
+	if (req->cmd_flags & REQ_FAILFAST_DEV)
+		cqr->expires = startdev->failfast_expires * HZ;
+	else
+		cqr->expires = startdev->default_expires * HZ;
 	cqr->lpm = startdev->path_data.ppm;
 	cqr->retries = 256;
 	cqr->buildclk = get_clock();
@@ -2442,7 +2446,10 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_cmd_track(
 	cqr->startdev = startdev;
 	cqr->memdev = startdev;
 	cqr->block = block;
-	cqr->expires = startdev->default_expires * HZ;	/* default 5 minutes */
+	if (req->cmd_flags & REQ_FAILFAST_DEV)
+		cqr->expires = startdev->failfast_expires * HZ;
+	else
+		cqr->expires = startdev->default_expires * HZ;
 	cqr->lpm = startdev->path_data.ppm;
 	cqr->retries = 256;
 	cqr->buildclk = get_clock();
@@ -2730,7 +2737,10 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_tpm_track(
 	cqr->startdev = startdev;
 	cqr->memdev = startdev;
 	cqr->block = block;
-	cqr->expires = startdev->default_expires * HZ;	/* default 5 minutes */
+	if (req->cmd_flags & REQ_FAILFAST_DEV)
+		cqr->expires = startdev->failfast_expires * HZ;
+	else
+		cqr->expires = startdev->default_expires * HZ;
 	cqr->lpm = startdev->path_data.ppm;
 	cqr->retries = 256;
 	cqr->buildclk = get_clock();
@@ -2930,7 +2940,10 @@ static struct dasd_ccw_req *dasd_raw_build_cp(struct dasd_device *startdev,
 	cqr->startdev = startdev;
 	cqr->memdev = startdev;
 	cqr->block = block;
-	cqr->expires = startdev->default_expires * HZ;
+	if (req->cmd_flags & REQ_FAILFAST_DEV)
+		cqr->expires = startdev->failfast_expires * HZ;
+	else
+		cqr->expires = startdev->default_expires * HZ;
 	cqr->lpm = startdev->path_data.ppm;
 	cqr->retries = 256;
 	cqr->buildclk = get_clock();

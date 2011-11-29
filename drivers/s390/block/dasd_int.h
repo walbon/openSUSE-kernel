@@ -431,6 +431,7 @@ struct dasd_device {
 
 	/* default expiration time in s */
 	unsigned long default_expires;
+	unsigned long failfast_expires;
 };
 
 struct dasd_block {
