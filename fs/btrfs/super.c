@@ -198,6 +198,7 @@ enum {
 	Opt_space_cache, Opt_clear_cache, Opt_user_subvol_rm_allowed,
 	Opt_enospc_debug, Opt_subvolrootid, Opt_defrag,
 	Opt_inode_cache, Opt_no_space_cache, Opt_recovery, Opt_fatal_errors,
+	Opt_skip_restripe,
 	Opt_err,
 };
 
@@ -234,6 +235,7 @@ static match_table_t tokens = {
 	{Opt_no_space_cache, "nospace_cache"},
 	{Opt_recovery, "recovery"},
 	{Opt_fatal_errors, "fatal_errors=%s"},
+	{Opt_skip_restripe, "skip_restripe"},
 	{Opt_err, NULL},
 };
 
@@ -443,6 +445,9 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 				ret = -EINVAL;
 				goto out;
 			}
+			break;
+		case Opt_skip_restripe:
+			btrfs_set_opt(info->mount_opt, SKIP_RESTRIPE);
 			break;
 		case Opt_err:
 			printk(KERN_INFO "btrfs: unrecognized mount option "
@@ -771,6 +776,8 @@ static int btrfs_show_options(struct seq_file *seq, struct vfsmount *vfs)
 		seq_puts(seq, ",inode_cache");
 	if (btrfs_test_opt(root, PANIC_ON_FATAL_ERROR))
 		seq_puts(seq, ",fatal_errors=panic");
+	if (btrfs_test_opt(root, SKIP_RESTRIPE))
+		seq_puts(seq, ",skip_restripe");
 	return 0;
 }
 

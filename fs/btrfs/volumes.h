@@ -186,6 +186,57 @@ struct map_lookup {
 #define map_lookup_size(n) (sizeof(struct map_lookup) + \
 			    (sizeof(struct btrfs_bio_stripe) * (n)))
 
+/*
+ * Restriper's general "type" filter.  Shares bits with chunk type for
+ * simplicity, RESTRIPE prefix is used to avoid confusion.
+ */
+#define BTRFS_RESTRIPE_DATA		(1ULL << 0)
+#define BTRFS_RESTRIPE_SYSTEM		(1ULL << 1)
+#define BTRFS_RESTRIPE_METADATA		(1ULL << 2)
+
+#define BTRFS_RESTRIPE_TYPE_MASK	(BTRFS_RESTRIPE_DATA |		    \
+					 BTRFS_RESTRIPE_SYSTEM |	    \
+					 BTRFS_RESTRIPE_METADATA)
+
+#define BTRFS_RESTRIPE_FORCE		(1ULL << 3)
+
+/*
+ * Restripe filters
+ */
+#define BTRFS_RESTRIPE_ARGS_PROFILES	(1ULL << 0)
+#define BTRFS_RESTRIPE_ARGS_USAGE	(1ULL << 1)
+#define BTRFS_RESTRIPE_ARGS_DEVID	(1ULL << 2)
+#define BTRFS_RESTRIPE_ARGS_DRANGE	(1ULL << 3)
+#define BTRFS_RESTRIPE_ARGS_VRANGE	(1ULL << 4)
+
+/*
+ * Profile changing flags.  When SOFT is set we won't relocate chunk if
+ * it already has the target profile (even though it may be
+ * half-filled).
+ */
+#define BTRFS_RESTRIPE_ARGS_CONVERT	(1ULL << 8)
+#define BTRFS_RESTRIPE_ARGS_SOFT	(1ULL << 9)
+
+/*
+ * Restripe state bits
+ */
+#define RESTRIPE_RUNNING	0
+#define RESTRIPE_CANCEL_REQ	1
+#define RESTRIPE_PAUSE_REQ	2
+
+struct btrfs_restripe_args;
+struct btrfs_restripe_progress;
+struct restripe_control {
+	struct btrfs_fs_info *fs_info;
+	u64 flags;
+
+	struct btrfs_restripe_args data;
+	struct btrfs_restripe_args sys;
+	struct btrfs_restripe_args meta;
+
+	struct btrfs_restripe_progress stat;
+};
+
 int btrfs_account_dev_extents_size(struct btrfs_device *device, u64 start,
 				   u64 end, u64 *length);
 
@@ -228,7 +279,11 @@ struct btrfs_device *btrfs_find_device(struct btrfs_root *root, u64 devid,
 				       u8 *uuid, u8 *fsid);
 int btrfs_shrink_device(struct btrfs_device *device, u64 new_size);
 int btrfs_init_new_device(struct btrfs_root *root, char *path);
-int btrfs_balance(struct btrfs_root *dev_root);
+int btrfs_restripe(struct restripe_control *rctl, int resume);
+int btrfs_recover_restripe(struct btrfs_root *tree_root);
+int btrfs_cancel_restripe(struct btrfs_fs_info *fs_info);
+int btrfs_pause_restripe(struct btrfs_fs_info *fs_info, int unset);
+int btrfs_resume_restripe(struct btrfs_fs_info *fs_info);
 int btrfs_chunk_readonly(struct btrfs_root *root, u64 chunk_offset);
 int find_free_dev_extent(struct btrfs_trans_handle *trans,
 			 struct btrfs_device *device, u64 num_bytes,

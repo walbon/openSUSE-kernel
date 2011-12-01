@@ -2006,6 +2006,12 @@ struct btrfs_root *open_ctree(struct super_block *sb,
 	init_rwsem(&fs_info->scrub_super_lock);
 	fs_info->scrub_workers_refcnt = 0;
 
+	spin_lock_init(&fs_info->restripe_lock);
+	mutex_init(&fs_info->restripe_mutex);
+	fs_info->restripe_ctl = NULL;
+	fs_info->restripe_state = 0;
+	init_waitqueue_head(&fs_info->restripe_wait);
+
 	sb->s_blocksize = 4096;
 	sb->s_blocksize_bits = blksize_bits(4096);
 	sb->s_bdi = &fs_info->bdi;
@@ -2317,9 +2323,6 @@ retry_root_backup:
 
 	fs_info->generation = generation;
 	fs_info->last_trans_committed = generation;
-	fs_info->data_alloc_profile = (u64)-1;
-	fs_info->metadata_alloc_profile = (u64)-1;
-	fs_info->system_alloc_profile = fs_info->metadata_alloc_profile;
 
 	ret = btrfs_init_space_info(fs_info);
 	if (ret) {
@@ -2422,6 +2425,10 @@ retry_root_backup:
 		if (!err)
 			err = btrfs_orphan_cleanup(fs_info->tree_root);
 		up_read(&fs_info->cleanup_work_sem);
+
+		if (!err)
+			err = btrfs_recover_restripe(fs_info->tree_root);
+
 		if (err) {
 			close_ctree(tree_root);
 			return ERR_PTR(err);
@@ -2970,6 +2977,9 @@ int close_ctree(struct btrfs_root *root)
 
 	fs_info->closing = 1;
 	smp_mb();
+
+	/* pause restriper and free restripe_ctl */
+	btrfs_pause_restripe(root->fs_info, 1);
 
 	btrfs_scrub_cancel(root);
 

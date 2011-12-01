@@ -23,6 +23,7 @@
 #include <linux/random.h>
 #include <linux/iocontext.h>
 #include <linux/capability.h>
+#include <linux/kthread.h>
 #include <asm/div64.h>
 #include "compat.h"
 #include "ctree.h"
@@ -1275,7 +1276,6 @@ int btrfs_rm_device(struct btrfs_root *root, char *device_path)
 	bool clear_super = false;
 
 	mutex_lock(&uuid_mutex);
-	mutex_lock(&root->fs_info->volume_mutex);
 
 	all_avail = root->fs_info->avail_data_alloc_bits |
 		root->fs_info->avail_system_alloc_bits |
@@ -1445,7 +1445,6 @@ error_close:
 	if (bdev)
 		blkdev_put(bdev, FMODE_READ | FMODE_EXCL);
 out:
-	mutex_unlock(&root->fs_info->volume_mutex);
 	mutex_unlock(&uuid_mutex);
 	return ret;
 error_undo:
@@ -1622,7 +1621,6 @@ int btrfs_init_new_device(struct btrfs_root *root, char *device_path)
 	}
 
 	filemap_write_and_wait(bdev->bd_inode->i_mapping);
-	mutex_lock(&root->fs_info->volume_mutex);
 
 	devices = &root->fs_info->fs_devices->devices;
 	/*
@@ -1750,8 +1748,7 @@ int btrfs_init_new_device(struct btrfs_root *root, char *device_path)
 		ret = btrfs_relocate_sys_chunks(root);
 		BUG_ON(ret);
 	}
-out:
-	mutex_unlock(&root->fs_info->volume_mutex);
+
 	return ret;
 error:
 	blkdev_put(bdev, FMODE_EXCL);
@@ -1759,7 +1756,7 @@ error:
 		mutex_unlock(&uuid_mutex);
 		up_write(&sb->s_umount);
 	}
-	goto out;
+	return ret;
 }
 
 static noinline int btrfs_update_device(struct btrfs_trans_handle *trans,
@@ -2071,6 +2068,357 @@ error:
 	return ret;
 }
 
+static int insert_restripe_item(struct btrfs_root *root,
+				struct restripe_control *rctl)
+{
+	struct btrfs_trans_handle *trans;
+	struct btrfs_restripe_item *item;
+	struct btrfs_disk_restripe_args disk_rargs;
+	struct btrfs_path *path;
+	struct extent_buffer *leaf;
+	struct btrfs_key key;
+	int ret, err;
+
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+
+	trans = btrfs_start_transaction(root, 0);
+	if (IS_ERR(trans)) {
+		btrfs_free_path(path);
+		return PTR_ERR(trans);
+	}
+
+	key.objectid = BTRFS_RESTRIPE_OBJECTID;
+	key.type = BTRFS_RESTRIPE_ITEM_KEY;
+	key.offset = 0;
+
+	ret = btrfs_insert_empty_item(trans, root, path, &key,
+				      sizeof(*item));
+	if (ret)
+		goto out;
+
+	leaf = path->nodes[0];
+	item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_restripe_item);
+
+	memset_extent_buffer(leaf, 0, (unsigned long)item, sizeof(*item));
+
+	btrfs_cpu_restripe_args_to_disk(&disk_rargs, &rctl->data);
+	btrfs_set_restripe_data(leaf, item, &disk_rargs);
+	btrfs_cpu_restripe_args_to_disk(&disk_rargs, &rctl->meta);
+	btrfs_set_restripe_meta(leaf, item, &disk_rargs);
+	btrfs_cpu_restripe_args_to_disk(&disk_rargs, &rctl->sys);
+	btrfs_set_restripe_sys(leaf, item, &disk_rargs);
+
+	btrfs_set_restripe_flags(leaf, item, rctl->flags);
+
+	btrfs_mark_buffer_dirty(leaf);
+out:
+	btrfs_free_path(path);
+	err = btrfs_commit_transaction(trans, root);
+	if (err && !ret)
+		ret = err;
+	return ret;
+}
+
+static int del_restripe_item(struct btrfs_root *root)
+{
+	struct btrfs_trans_handle *trans;
+	struct btrfs_path *path;
+	struct btrfs_key key;
+	int ret, err;
+
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+
+	trans = btrfs_start_transaction(root, 0);
+	if (IS_ERR(trans)) {
+		btrfs_free_path(path);
+		return PTR_ERR(trans);
+	}
+
+	key.objectid = BTRFS_RESTRIPE_OBJECTID;
+	key.type = BTRFS_RESTRIPE_ITEM_KEY;
+	key.offset = 0;
+
+	ret = btrfs_search_slot(trans, root, &key, path, -1, 1);
+	if (ret < 0)
+		goto out;
+	if (ret > 0) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	ret = btrfs_del_item(trans, root, path);
+out:
+	btrfs_free_path(path);
+	err = btrfs_commit_transaction(trans, root);
+	if (err && !ret)
+		ret = err;
+	return ret;
+}
+
+/*
+ * This is a heuristic used to reduce the number of chunks restriped on
+ * resume after balance was interrupted.
+ */
+static void update_restripe_args(struct restripe_control *rctl)
+{
+	/*
+	 * Turn on soft mode for chunk types that were being converted.
+	 */
+	if (rctl->data.flags & BTRFS_RESTRIPE_ARGS_CONVERT)
+		rctl->data.flags |= BTRFS_RESTRIPE_ARGS_SOFT;
+	if (rctl->sys.flags & BTRFS_RESTRIPE_ARGS_CONVERT)
+		rctl->sys.flags |= BTRFS_RESTRIPE_ARGS_SOFT;
+	if (rctl->meta.flags & BTRFS_RESTRIPE_ARGS_CONVERT)
+		rctl->meta.flags |= BTRFS_RESTRIPE_ARGS_SOFT;
+
+	/*
+	 * Turn on usage filter if is not already used.  The idea is
+	 * that chunks that we have already balanced should be
+	 * reasonably full.  Don't do it for chunks that are being
+	 * converted - that will keep us from relocating unconverted
+	 * (albeit full) chunks.
+	 */
+	if (!(rctl->data.flags & BTRFS_RESTRIPE_ARGS_USAGE) &&
+	    !(rctl->data.flags & BTRFS_RESTRIPE_ARGS_CONVERT)) {
+		rctl->data.flags |= BTRFS_RESTRIPE_ARGS_USAGE;
+		rctl->data.usage = 90;
+	}
+	if (!(rctl->sys.flags & BTRFS_RESTRIPE_ARGS_USAGE) &&
+	    !(rctl->sys.flags & BTRFS_RESTRIPE_ARGS_CONVERT)) {
+		rctl->sys.flags |= BTRFS_RESTRIPE_ARGS_USAGE;
+		rctl->sys.usage = 90;
+	}
+	if (!(rctl->meta.flags & BTRFS_RESTRIPE_ARGS_USAGE) &&
+	    !(rctl->meta.flags & BTRFS_RESTRIPE_ARGS_CONVERT)) {
+		rctl->meta.flags |= BTRFS_RESTRIPE_ARGS_USAGE;
+		rctl->meta.usage = 90;
+	}
+}
+
+/*
+ * Should be called with both restripe and volume mutexes held to
+ * serialize other volume operations (add_dev/rm_dev/resize) wrt
+ * restriper.  Same goes for unset_restripe_control().
+ */
+static void set_restripe_control(struct restripe_control *rctl, int update)
+{
+	struct btrfs_fs_info *fs_info = rctl->fs_info;
+
+	spin_lock(&fs_info->restripe_lock);
+	fs_info->restripe_ctl = rctl;
+	if (update) {
+		update_restripe_args(rctl);
+		memset(&rctl->stat, 0, sizeof(rctl->stat));
+	}
+	spin_unlock(&fs_info->restripe_lock);
+}
+
+static void unset_restripe_control(struct btrfs_fs_info *fs_info)
+{
+	struct restripe_control *rctl = fs_info->restripe_ctl;
+
+	spin_lock(&fs_info->restripe_lock);
+	fs_info->restripe_ctl = NULL;
+	spin_unlock(&fs_info->restripe_lock);
+
+	kfree(rctl);
+}
+
+/*
+ * Restripe filters.  Return 1 if chunk should be 'filtered out',
+ * ie should not be restriped.
+ */
+static int chunk_profiles_filter(u64 chunk_profile,
+				 struct btrfs_restripe_args *rargs)
+{
+	chunk_profile &= BTRFS_BLOCK_GROUP_PROFILE_MASK;
+
+	if (chunk_profile == 0)
+		chunk_profile = BTRFS_AVAIL_ALLOC_BIT_SINGLE;
+
+	if (rargs->profiles & chunk_profile)
+		return 0;
+
+	return 1;
+}
+
+static u64 div_factor_fine(u64 num, int factor)
+{
+	if (factor < 0 || factor >= 100)
+		return num;
+	num *= factor;
+	do_div(num, 100);
+	return num;
+}
+
+static int chunk_usage_filter(struct btrfs_fs_info *fs_info, u64 chunk_offset,
+			      struct btrfs_restripe_args *rargs)
+{
+	struct btrfs_block_group_cache *cache;
+	u64 chunk_used, user_thresh;
+	int ret = 1;
+
+	cache = btrfs_lookup_block_group(fs_info, chunk_offset);
+	chunk_used = btrfs_block_group_used(&cache->item);
+
+	user_thresh = div_factor_fine(cache->key.offset, rargs->usage);
+	if (chunk_used < user_thresh)
+		ret = 0;
+
+	btrfs_put_block_group(cache);
+	return ret;
+}
+
+static int chunk_devid_filter(struct extent_buffer *leaf,
+			      struct btrfs_chunk *chunk,
+			      struct btrfs_restripe_args *rargs)
+{
+	struct btrfs_stripe *stripe;
+	int num_stripes = btrfs_chunk_num_stripes(leaf, chunk);
+	int i;
+
+	for (i = 0; i < num_stripes; i++) {
+		stripe = btrfs_stripe_nr(chunk, i);
+		if (btrfs_stripe_devid(leaf, stripe) == rargs->devid)
+			return 0;
+	}
+
+	return 1;
+}
+
+/* [pstart, pend) */
+static int chunk_drange_filter(struct extent_buffer *leaf,
+			       struct btrfs_chunk *chunk,
+			       u64 chunk_offset,
+			       struct btrfs_restripe_args *rargs)
+{
+	struct btrfs_stripe *stripe;
+	int num_stripes = btrfs_chunk_num_stripes(leaf, chunk);
+	u64 stripe_offset;
+	u64 stripe_length;
+	int factor;
+	int i;
+
+	BUG_ON(!(rargs->flags & BTRFS_RESTRIPE_ARGS_DEVID));
+
+	if (btrfs_chunk_type(leaf, chunk) & (BTRFS_BLOCK_GROUP_DUP |
+	     BTRFS_BLOCK_GROUP_RAID1 | BTRFS_BLOCK_GROUP_RAID10))
+		factor = 2;
+	else
+		factor = 1;
+	factor = num_stripes / factor;
+
+	for (i = 0; i < num_stripes; i++) {
+		stripe = btrfs_stripe_nr(chunk, i);
+		if (btrfs_stripe_devid(leaf, stripe) != rargs->devid)
+			continue;
+
+		stripe_offset = btrfs_stripe_offset(leaf, stripe);
+		stripe_length = btrfs_chunk_length(leaf, chunk);
+		do_div(stripe_length, factor);
+
+		if (stripe_offset < rargs->pend &&
+		    stripe_offset + stripe_length > rargs->pstart)
+			return 0;
+	}
+
+	return 1;
+}
+
+/* [vstart, vend) */
+static int chunk_vrange_filter(struct extent_buffer *leaf,
+			       struct btrfs_chunk *chunk,
+			       u64 chunk_offset,
+			       struct btrfs_restripe_args *rargs)
+{
+	if (chunk_offset < rargs->vend &&
+	    chunk_offset + btrfs_chunk_length(leaf, chunk) > rargs->vstart)
+		/* at least part of the chunk is inside this vrange */
+		return 0;
+
+	return 1;
+}
+
+static int chunk_soft_convert_filter(u64 chunk_profile,
+				     struct btrfs_restripe_args *rargs)
+{
+	BUG_ON(!(rargs->flags & BTRFS_RESTRIPE_ARGS_CONVERT));
+
+	chunk_profile &= BTRFS_BLOCK_GROUP_PROFILE_MASK;
+
+	if (chunk_profile == 0)
+		chunk_profile = BTRFS_AVAIL_ALLOC_BIT_SINGLE;
+
+	if (rargs->target & chunk_profile)
+		return 1;
+
+	return 0;
+}
+
+static int should_restripe_chunk(struct btrfs_root *root,
+				 struct extent_buffer *leaf,
+				 struct btrfs_chunk *chunk, u64 chunk_offset)
+{
+	struct restripe_control *rctl = root->fs_info->restripe_ctl;
+	u64 chunk_type = btrfs_chunk_type(leaf, chunk);
+	struct btrfs_restripe_args *rargs = NULL;
+
+	/* type filter */
+	if (!((chunk_type & BTRFS_BLOCK_GROUP_TYPE_MASK) &
+	      (rctl->flags & BTRFS_RESTRIPE_TYPE_MASK))) {
+		return 0;
+	}
+
+	if (chunk_type & BTRFS_BLOCK_GROUP_DATA)
+		rargs = &rctl->data;
+	else if (chunk_type & BTRFS_BLOCK_GROUP_SYSTEM)
+		rargs = &rctl->sys;
+	else if (chunk_type & BTRFS_BLOCK_GROUP_METADATA)
+		rargs = &rctl->meta;
+
+	/* profiles filter */
+	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_PROFILES) &&
+	    chunk_profiles_filter(chunk_type, rargs)) {
+		return 0;
+	}
+
+	/* usage filter */
+	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_USAGE) &&
+	    chunk_usage_filter(rctl->fs_info, chunk_offset, rargs)) {
+		return 0;
+	}
+
+	/* devid filter */
+	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_DEVID) &&
+	    chunk_devid_filter(leaf, chunk, rargs)) {
+		return 0;
+	}
+
+	/* drange filter, makes sense only with devid filter */
+	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_DRANGE) &&
+	    chunk_drange_filter(leaf, chunk, chunk_offset, rargs)) {
+		return 0;
+	}
+
+	/* vrange filter */
+	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_VRANGE) &&
+	    chunk_vrange_filter(leaf, chunk, chunk_offset, rargs)) {
+		return 0;
+	}
+
+	/* soft profile changing mode */
+	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_SOFT) &&
+	    chunk_soft_convert_filter(chunk_type, rargs)) {
+		return 0;
+	}
+
+	return 1;
+}
+
 static u64 div_factor(u64 num, int factor)
 {
 	if (factor == 10)
@@ -2080,29 +2428,26 @@ static u64 div_factor(u64 num, int factor)
 	return num;
 }
 
-int btrfs_balance(struct btrfs_root *dev_root)
+static int __btrfs_restripe(struct btrfs_root *dev_root)
 {
-	int ret;
-	struct list_head *devices = &dev_root->fs_info->fs_devices->devices;
+	struct list_head *devices;
 	struct btrfs_device *device;
 	u64 old_size;
 	u64 size_to_free;
+	struct btrfs_root *chunk_root = dev_root->fs_info->chunk_root;
+	struct btrfs_chunk *chunk;
 	struct btrfs_path *path;
 	struct btrfs_key key;
-	struct btrfs_root *chunk_root = dev_root->fs_info->chunk_root;
-	struct btrfs_trans_handle *trans;
 	struct btrfs_key found_key;
-
-	if (dev_root->fs_info->sb->s_flags & MS_RDONLY)
-		return -EROFS;
-
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	mutex_lock(&dev_root->fs_info->volume_mutex);
-	dev_root = dev_root->fs_info->dev_root;
+	struct btrfs_trans_handle *trans;
+	struct extent_buffer *leaf;
+	int slot;
+	int ret;
+	int enospc_errors = 0;
+	bool counting_only = true;
 
 	/* step one make some room on all the devices */
+	devices = &dev_root->fs_info->fs_devices->devices;
 	list_for_each_entry(device, devices, dev_list) {
 		old_size = device->total_bytes;
 		size_to_free = div_factor(old_size, 1);
@@ -2131,11 +2476,22 @@ int btrfs_balance(struct btrfs_root *dev_root)
 		ret = -ENOMEM;
 		goto error;
 	}
+
+again:
 	key.objectid = BTRFS_FIRST_CHUNK_TREE_OBJECTID;
 	key.offset = (u64)-1;
 	key.type = BTRFS_CHUNK_ITEM_KEY;
 
 	while (1) {
+		struct btrfs_fs_info *fs_info = dev_root->fs_info;
+		struct restripe_control *rctl = fs_info->restripe_ctl;
+
+		if (test_bit(RESTRIPE_CANCEL_REQ, &fs_info->restripe_state) ||
+		    test_bit(RESTRIPE_PAUSE_REQ, &fs_info->restripe_state)) {
+			ret = -ECANCELED;
+			goto error;
+		}
+
 		ret = btrfs_search_slot(NULL, chunk_root, &key, path, 0, 0);
 		if (ret < 0)
 			goto error;
@@ -2145,15 +2501,17 @@ int btrfs_balance(struct btrfs_root *dev_root)
 		 * failed
 		 */
 		if (ret == 0)
-			break;
+			BUG(); /* DIS - break ? */
 
 		ret = btrfs_previous_item(chunk_root, path, 0,
 					  BTRFS_CHUNK_ITEM_KEY);
 		if (ret)
-			break;
+			BUG(); /* DIS - break ? */
 
-		btrfs_item_key_to_cpu(path->nodes[0], &found_key,
-				      path->slots[0]);
+		leaf = path->nodes[0];
+		slot = path->slots[0];
+		btrfs_item_key_to_cpu(leaf, &found_key, slot);
+
 		if (found_key.objectid != key.objectid)
 			break;
 
@@ -2161,19 +2519,372 @@ int btrfs_balance(struct btrfs_root *dev_root)
 		if (found_key.offset == 0)
 			break;
 
+		chunk = btrfs_item_ptr(leaf, slot, struct btrfs_chunk);
+
+		if (!counting_only) {
+			spin_lock(&fs_info->restripe_lock);
+			rctl->stat.considered++;
+			spin_unlock(&fs_info->restripe_lock);
+		}
+
+		ret = should_restripe_chunk(chunk_root, leaf, chunk,
+					    found_key.offset);
 		btrfs_release_path(path);
+		if (!ret)
+			goto loop;
+
+		if (counting_only) {
+			spin_lock(&fs_info->restripe_lock);
+			rctl->stat.expected++;
+			spin_unlock(&fs_info->restripe_lock);
+			goto loop;
+		}
+
 		ret = btrfs_relocate_chunk(chunk_root,
 					   chunk_root->root_key.objectid,
 					   found_key.objectid,
 					   found_key.offset);
 		if (ret && ret != -ENOSPC)
 			goto error;
+		if (ret == -ENOSPC) {
+			enospc_errors++;
+		} else {
+			spin_lock(&fs_info->restripe_lock);
+			rctl->stat.completed++;
+			spin_unlock(&fs_info->restripe_lock);
+		}
+loop:
 		key.offset = found_key.offset - 1;
 	}
-	ret = 0;
+
+	if (counting_only) {
+		btrfs_release_path(path);
+		counting_only = false;
+		goto again;
+	}
+
 error:
 	btrfs_free_path(path);
-	mutex_unlock(&dev_root->fs_info->volume_mutex);
+	if (enospc_errors) {
+		printk(KERN_INFO "btrfs: restripe finished with %d enospc "
+		       "error(s)\n", enospc_errors);
+		ret = -ENOSPC;
+	}
+
+	return ret;
+}
+
+/*
+ * Should be called with restripe_mutex held
+ */
+int btrfs_restripe(struct restripe_control *rctl, int resume)
+{
+	struct btrfs_fs_info *fs_info = rctl->fs_info;
+	u64 allowed;
+	int err;
+	int ret;
+
+	mutex_lock(&fs_info->volume_mutex);
+
+	/*
+	 * In case of mixed groups both data and meta should be picked,
+	 * and identical options should be given for both of them.
+	 */
+	allowed = btrfs_super_incompat_flags(fs_info->super_copy);
+	if ((allowed & BTRFS_FEATURE_INCOMPAT_MIXED_GROUPS) &&
+	    (rctl->flags & (BTRFS_RESTRIPE_DATA | BTRFS_RESTRIPE_METADATA))) {
+		if (!(rctl->flags & BTRFS_RESTRIPE_DATA) ||
+		    !(rctl->flags & BTRFS_RESTRIPE_METADATA) ||
+		    memcmp(&rctl->data, &rctl->meta, sizeof(rctl->data))) {
+			printk(KERN_ERR "btrfs: with mixed groups data and "
+			       "metadata restripe options must be the same\n");
+			ret = -EINVAL;
+			goto out;
+		}
+	}
+
+	/*
+	 * Profile changing sanity checks.  Skip them if a simple
+	 * balance is requested.
+	 */
+	if (!((rctl->data.flags | rctl->sys.flags | rctl->meta.flags) &
+	      BTRFS_RESTRIPE_ARGS_CONVERT))
+		goto do_restripe;
+
+	allowed = BTRFS_AVAIL_ALLOC_BIT_SINGLE;
+	if (fs_info->fs_devices->num_devices == 1)
+		allowed |= BTRFS_BLOCK_GROUP_DUP;
+	else if (fs_info->fs_devices->num_devices < 4)
+		allowed |= (BTRFS_BLOCK_GROUP_RAID0 | BTRFS_BLOCK_GROUP_RAID1);
+	else
+		allowed |= (BTRFS_BLOCK_GROUP_RAID0 | BTRFS_BLOCK_GROUP_RAID1 |
+				BTRFS_BLOCK_GROUP_RAID10);
+
+	if (rctl->data.target & ~allowed) {
+		printk(KERN_ERR "btrfs: unable to start restripe with target "
+		       "data profile %llu\n",
+		       (unsigned long long)rctl->data.target);
+		ret = -EINVAL;
+		goto out;
+	}
+	if (rctl->sys.target & ~allowed) {
+		printk(KERN_ERR "btrfs: unable to start restripe with target "
+		       "system profile %llu\n",
+		       (unsigned long long)rctl->sys.target);
+		ret = -EINVAL;
+		goto out;
+	}
+	if (rctl->meta.target & ~allowed) {
+		printk(KERN_ERR "btrfs: unable to start restripe with target "
+		       "metadata profile %llu\n",
+		       (unsigned long long)rctl->meta.target);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if (rctl->data.target & BTRFS_BLOCK_GROUP_DUP) {
+		printk(KERN_ERR "btrfs: dup for data is not allowed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	/* allow to reduce meta or sys integrity only if force set */
+	allowed = BTRFS_BLOCK_GROUP_DUP | BTRFS_BLOCK_GROUP_RAID1 |
+			BTRFS_BLOCK_GROUP_RAID10;
+	if (((rctl->sys.flags & BTRFS_RESTRIPE_ARGS_CONVERT) &&
+	     (fs_info->avail_system_alloc_bits & allowed) &&
+	     !(rctl->sys.target & allowed)) ||
+	    ((rctl->meta.flags & BTRFS_RESTRIPE_ARGS_CONVERT) &&
+	     (fs_info->avail_metadata_alloc_bits & allowed) &&
+	     !(rctl->meta.target & allowed))) {
+		if (rctl->flags & BTRFS_RESTRIPE_FORCE) {
+			printk(KERN_INFO "btrfs: force reducing metadata "
+			       "integrity\n");
+		} else {
+			printk(KERN_ERR "btrfs: can't reduce metadata "
+			       "integrity\n");
+			ret = -EINVAL;
+			goto out;
+		}
+	}
+
+do_restripe:
+	ret = insert_restripe_item(fs_info->tree_root, rctl);
+	if (ret && ret != -EEXIST)
+		goto out;
+	BUG_ON(ret == -EEXIST && !resume);
+
+	set_restripe_control(rctl, resume);
+	mutex_unlock(&fs_info->volume_mutex);
+
+	set_bit(RESTRIPE_RUNNING, &fs_info->restripe_state);
+	mutex_unlock(&fs_info->restripe_mutex);
+
+	err = __btrfs_restripe(fs_info->dev_root);
+
+	mutex_lock(&fs_info->restripe_mutex);
+	clear_bit(RESTRIPE_RUNNING, &fs_info->restripe_state);
+
+	if (test_bit(RESTRIPE_CANCEL_REQ, &fs_info->restripe_state) ||
+	    (!test_bit(RESTRIPE_PAUSE_REQ, &fs_info->restripe_state) &&
+	     !test_bit(RESTRIPE_CANCEL_REQ, &fs_info->restripe_state))) {
+		mutex_lock(&fs_info->volume_mutex);
+
+		unset_restripe_control(fs_info);
+		ret = del_restripe_item(fs_info->tree_root);
+		BUG_ON(ret);
+
+		mutex_unlock(&fs_info->volume_mutex);
+	}
+
+	wake_up(&fs_info->restripe_wait);
+	return err;
+
+out:
+	mutex_unlock(&fs_info->volume_mutex);
+	kfree(rctl);
+	return ret;
+}
+
+static int restriper_kthread(void *data)
+{
+	struct restripe_control *rctl = (struct restripe_control *)data;
+	struct btrfs_fs_info *fs_info = rctl->fs_info;
+	int ret = 0;
+
+	mutex_lock(&fs_info->restripe_mutex);
+
+	if (btrfs_test_opt(fs_info->tree_root, SKIP_RESTRIPE)) {
+		mutex_lock(&fs_info->volume_mutex);
+		set_restripe_control(rctl, 0);
+		mutex_unlock(&fs_info->volume_mutex);
+
+		printk(KERN_INFO "btrfs: force skipping restripe\n");
+		goto out;
+	} else {
+		printk(KERN_INFO "btrfs: continuing restripe\n");
+	}
+
+	ret = btrfs_restripe(rctl, 1);
+
+out:
+	mutex_unlock(&fs_info->restripe_mutex);
+	return ret;
+}
+
+int btrfs_recover_restripe(struct btrfs_root *tree_root)
+{
+	struct task_struct *tsk;
+	struct restripe_control *rctl;
+	struct btrfs_restripe_item *item;
+	struct btrfs_disk_restripe_args disk_rargs;
+	struct btrfs_path *path;
+	struct extent_buffer *leaf;
+	struct btrfs_key key;
+	int ret;
+
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+
+	rctl = kzalloc(sizeof(*rctl), GFP_NOFS);
+	if (!rctl) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	key.objectid = BTRFS_RESTRIPE_OBJECTID;
+	key.type = BTRFS_RESTRIPE_ITEM_KEY;
+	key.offset = 0;
+
+	ret = btrfs_search_slot(NULL, tree_root, &key, path, 0, 0);
+	if (ret < 0)
+		goto out_free;
+	if (ret > 0) { /* ret = -ENOENT; */
+		ret = 0;
+		goto out_free;
+	}
+
+	leaf = path->nodes[0];
+	item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_restripe_item);
+
+	rctl->fs_info = tree_root->fs_info;
+	rctl->flags = btrfs_restripe_flags(leaf, item);
+
+	btrfs_restripe_data(leaf, item, &disk_rargs);
+	btrfs_disk_restripe_args_to_cpu(&rctl->data, &disk_rargs);
+	btrfs_restripe_meta(leaf, item, &disk_rargs);
+	btrfs_disk_restripe_args_to_cpu(&rctl->meta, &disk_rargs);
+	btrfs_restripe_sys(leaf, item, &disk_rargs);
+	btrfs_disk_restripe_args_to_cpu(&rctl->sys, &disk_rargs);
+
+	tsk = kthread_run(restriper_kthread, rctl, "btrfs-restriper");
+	if (IS_ERR(tsk))
+		ret = PTR_ERR(tsk);
+	else
+		goto out;
+
+out_free:
+	kfree(rctl);
+out:
+	btrfs_free_path(path);
+	return ret;
+}
+
+int btrfs_cancel_restripe(struct btrfs_fs_info *fs_info)
+{
+	int ret = 0;
+
+	mutex_lock(&fs_info->restripe_mutex);
+	if (!fs_info->restripe_ctl) {
+		ret = -ENOTCONN;
+		goto out;
+	}
+
+	if (test_bit(RESTRIPE_RUNNING, &fs_info->restripe_state)) {
+		set_bit(RESTRIPE_CANCEL_REQ, &fs_info->restripe_state);
+		while (test_bit(RESTRIPE_RUNNING, &fs_info->restripe_state)) {
+			mutex_unlock(&fs_info->restripe_mutex);
+			wait_event(fs_info->restripe_wait,
+				   !test_bit(RESTRIPE_RUNNING,
+					     &fs_info->restripe_state));
+			mutex_lock(&fs_info->restripe_mutex);
+		}
+		clear_bit(RESTRIPE_CANCEL_REQ, &fs_info->restripe_state);
+	} else {
+		mutex_lock(&fs_info->volume_mutex);
+
+		unset_restripe_control(fs_info);
+		ret = del_restripe_item(fs_info->tree_root);
+		BUG_ON(ret);
+
+		mutex_unlock(&fs_info->volume_mutex);
+	}
+
+out:
+	mutex_unlock(&fs_info->restripe_mutex);
+	return ret;
+}
+
+int btrfs_pause_restripe(struct btrfs_fs_info *fs_info, int unset)
+{
+	int ret = 0;
+
+	mutex_lock(&fs_info->restripe_mutex);
+	if (!fs_info->restripe_ctl) {
+		ret = -ENOTCONN;
+		goto out;
+	}
+
+	/* only running restripe can be paused */
+	if (!test_bit(RESTRIPE_RUNNING, &fs_info->restripe_state)) {
+		ret = -ENOTCONN;
+		goto out_unset;
+	}
+
+	set_bit(RESTRIPE_PAUSE_REQ, &fs_info->restripe_state);
+	while (test_bit(RESTRIPE_RUNNING, &fs_info->restripe_state)) {
+		mutex_unlock(&fs_info->restripe_mutex);
+		wait_event(fs_info->restripe_wait,
+			   !test_bit(RESTRIPE_RUNNING,
+				     &fs_info->restripe_state));
+		mutex_lock(&fs_info->restripe_mutex);
+	}
+	clear_bit(RESTRIPE_PAUSE_REQ, &fs_info->restripe_state);
+
+out_unset:
+	if (unset) {
+		mutex_lock(&fs_info->volume_mutex);
+		unset_restripe_control(fs_info);
+		mutex_unlock(&fs_info->volume_mutex);
+	}
+out:
+	mutex_unlock(&fs_info->restripe_mutex);
+	return ret;
+}
+
+int btrfs_resume_restripe(struct btrfs_fs_info *fs_info)
+{
+	int ret;
+
+	if (fs_info->sb->s_flags & MS_RDONLY)
+		return -EROFS;
+
+	mutex_lock(&fs_info->restripe_mutex);
+	if (!fs_info->restripe_ctl) {
+		ret = -ENOTCONN;
+		goto out;
+	}
+
+	if (test_bit(RESTRIPE_RUNNING, &fs_info->restripe_state)) {
+		ret = -EINPROGRESS;
+		goto out;
+	}
+
+	ret = btrfs_restripe(fs_info->restripe_ctl, 1);
+
+out:
+	mutex_unlock(&fs_info->restripe_mutex);
 	return ret;
 }
 
@@ -2750,8 +3461,7 @@ static noinline int init_first_rw_device(struct btrfs_trans_handle *trans,
 		return ret;
 
 	alloc_profile = BTRFS_BLOCK_GROUP_METADATA |
-			(fs_info->metadata_alloc_profile &
-			 fs_info->avail_metadata_alloc_bits);
+				fs_info->avail_metadata_alloc_bits;
 	alloc_profile = btrfs_reduce_alloc_profile(root, alloc_profile);
 
 	ret = __btrfs_alloc_chunk(trans, extent_root, &map, &chunk_size,
@@ -2761,8 +3471,7 @@ static noinline int init_first_rw_device(struct btrfs_trans_handle *trans,
 	sys_chunk_offset = chunk_offset + chunk_size;
 
 	alloc_profile = BTRFS_BLOCK_GROUP_SYSTEM |
-			(fs_info->system_alloc_profile &
-			 fs_info->avail_system_alloc_bits);
+				fs_info->avail_system_alloc_bits;
 	alloc_profile = btrfs_reduce_alloc_profile(root, alloc_profile);
 
 	ret = __btrfs_alloc_chunk(trans, extent_root, &sys_map,
@@ -2949,12 +3658,8 @@ again:
 		}
 	}
 	if (rw & REQ_DISCARD) {
-		if (map->type & (BTRFS_BLOCK_GROUP_RAID0 |
-				 BTRFS_BLOCK_GROUP_RAID1 |
-				 BTRFS_BLOCK_GROUP_DUP |
-				 BTRFS_BLOCK_GROUP_RAID10)) {
+		if (map->type & BTRFS_BLOCK_GROUP_PROFILE_MASK)
 			stripes_required = map->num_stripes;
-		}
 	}
 	if (bbio_ret && (rw & (REQ_WRITE | REQ_DISCARD)) &&
 	    stripes_allocated < stripes_required) {
@@ -2978,10 +3683,7 @@ again:
 
 	if (rw & REQ_DISCARD)
 		*length = min_t(u64, em->len - offset, *length);
-	else if (map->type & (BTRFS_BLOCK_GROUP_RAID0 |
-			      BTRFS_BLOCK_GROUP_RAID1 |
-			      BTRFS_BLOCK_GROUP_RAID10 |
-			      BTRFS_BLOCK_GROUP_DUP)) {
+	else if (map->type & BTRFS_BLOCK_GROUP_PROFILE_MASK) {
 		/* we limit the length of each bio to what fits in a stripe */
 		*length = min_t(u64, em->len - offset,
 				map->stripe_len - stripe_offset);
