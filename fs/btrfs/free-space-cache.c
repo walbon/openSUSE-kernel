@@ -2319,6 +2319,7 @@ again:
 
 	if (!found) {
 		start = i;
+		cluster->max_size = 0;
 		found = true;
 	}
 
