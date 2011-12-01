@@ -3,7 +3,6 @@
 #include <linux/cdrom.h>
 #include <linux/hdreg.h>
 #include <linux/module.h>
-#include <linux/version.h>
 #include <asm/tlbflush.h>
 
 #include <scsi/scsi.h>
