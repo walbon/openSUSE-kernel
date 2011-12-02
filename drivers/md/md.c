@@ -780,6 +780,11 @@ static void super_written(struct bio *bio, int error)
 		       error, test_bit(BIO_UPTODATE, &bio->bi_flags));
 		WARN_ON(test_bit(BIO_UPTODATE, &bio->bi_flags));
 		md_error(mddev, rdev);
+		if (!test_bit(Faulty, &rdev->flags)
+		    && (bio->bi_rw & REQ_FAILFAST_DEV)) {
+			set_bit(MD_NEED_REWRITE, &mddev->flags);
+			set_bit(LastDev, &rdev->flags);
+		}
 	}
 
 	if (atomic_dec_and_test(&mddev->pending_writes))
@@ -796,7 +801,13 @@ void md_super_write(mddev_t *mddev, mdk_rdev_t *rdev,
 	 * if zero is reached.
 	 * If an error occurred, call md_error
 	 */
-	struct bio *bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
+	struct bio *bio;
+	int ff = 0;
+
+	if (test_bit(Faulty, &rdev->flags))
+		return;
+
+	bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
 
 	bio->bi_bdev = rdev->meta_bdev ? rdev->meta_bdev : rdev->bdev;
 	bio->bi_sector = sector;
@@ -804,11 +815,15 @@ void md_super_write(mddev_t *mddev, mdk_rdev_t *rdev,
 	bio->bi_private = rdev;
 	bio->bi_end_io = super_written;
 
+	if (test_bit(FailFast, &rdev->flags) &&
+	    !test_and_clear_bit(LastDev, &rdev->flags))
+		ff = REQ_FAILFAST_DEV;
+
 	atomic_inc(&mddev->pending_writes);
-	submit_bio(REQ_WRITE | REQ_SYNC | REQ_FLUSH | REQ_FUA, bio);
+	submit_bio(REQ_WRITE | REQ_SYNC | REQ_FLUSH | REQ_FUA | ff, bio);
 }
 
-void md_super_wait(mddev_t *mddev)
+int md_super_wait(mddev_t *mddev)
 {
 	/* wait for all superblock writes that were scheduled to complete */
 	DEFINE_WAIT(wq);
@@ -819,6 +834,9 @@ void md_super_wait(mddev_t *mddev)
 		schedule();
 	}
 	finish_wait(&mddev->sb_wait, &wq);
+	if (test_and_clear_bit(MD_NEED_REWRITE, &mddev->flags))
+		return -EAGAIN;
+	return 0;
 }
 
 static void bi_complete(struct bio *bio, int error)
@@ -1383,9 +1401,10 @@ super_90_rdev_size_change(mdk_rdev_t *rdev, sector_t num_sectors)
 	 */
 	if (num_sectors >= (2ULL << 32))
 		num_sectors = (2ULL << 32) - 2;
-	md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
+	do
+		md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
 		       rdev->sb_page);
-	md_super_wait(rdev->mddev);
+	while (md_super_wait(rdev->mddev) < 0);
 	return num_sectors;
 }
 
@@ -1756,9 +1775,10 @@ super_1_rdev_size_change(mdk_rdev_t *rdev, sector_t num_sectors)
 	sb->data_size = cpu_to_le64(num_sectors);
 	sb->super_offset = rdev->sb_start;
 	sb->sb_csum = calc_sb_1_csum(sb);
-	md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
-		       rdev->sb_page);
-	md_super_wait(rdev->mddev);
+	do
+		md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
+			       rdev->sb_page);
+	while (md_super_wait(rdev->mddev) < 0);
 	return num_sectors;
 }
 
@@ -2325,7 +2345,8 @@ repeat:
 			/* only need to write one superblock... */
 			break;
 	}
-	md_super_wait(mddev);
+	if (md_super_wait(mddev) < 0)
+		goto repeat;
 	/* if there was a failure, MD_CHANGE_DEVS was set, and we re-write super */
 
 	spin_lock_irq(&mddev->write_lock);
@@ -4807,8 +4828,9 @@ static void __md_stop_writes(mddev_t *mddev)
 
 	del_timer_sync(&mddev->safemode_timer);
 
-	bitmap_flush(mddev);
-	md_super_wait(mddev);
+	do
+		bitmap_flush(mddev);
+	while (md_super_wait(mddev) < 0);
 
 	if (!mddev->in_sync || mddev->flags) {
 		/* mark array as shutdown cleanly */

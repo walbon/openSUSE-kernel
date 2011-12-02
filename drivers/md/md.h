@@ -83,6 +83,10 @@ struct mdk_rdev_s
 					 * It is expects that no bad block log
 					 * is present.
 					 */
+#define LastDev		10		/* Seems to be the last working dev as
+					 * it didn't fail, so don't use FailFast
+					 * any more for metadata
+					 */
 	wait_queue_head_t blocked_wait;
 
 	int desc_nr;			/* descriptor index in the superblock */
@@ -131,6 +135,7 @@ struct mddev_s
 #define MD_CHANGE_CLEAN 1	/* transition to or from 'clean' */
 #define MD_CHANGE_PENDING 2	/* switch from 'clean' to 'active' in progress */
 #define MD_ARRAY_FIRST_USE 3    /* First use of array, needs initialization */
+#define MD_NEED_REWRITE 4	/* metadata write need to be repeated */
 
 	int				suspended;
 	atomic_t			active_io;
@@ -493,7 +498,7 @@ extern int mddev_congested(mddev_t *mddev, int bits);
 extern void md_flush_request(mddev_t *mddev, struct bio *bio);
 extern void md_super_write(mddev_t *mddev, mdk_rdev_t *rdev,
 			   sector_t sector, int size, struct page *page);
-extern void md_super_wait(mddev_t *mddev);
+extern int md_super_wait(mddev_t *mddev);
 extern int sync_page_io(mdk_rdev_t *rdev, sector_t sector, int size, 
 			struct page *page, int rw, bool metadata_op);
 extern void md_do_sync(mddev_t *mddev);
