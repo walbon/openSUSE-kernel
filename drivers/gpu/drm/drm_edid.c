@@ -155,6 +155,16 @@ drm_edid_block_valid(u8 *raw_edid)
 	u8 csum = 0;
 	struct edid *edid = (struct edid *)raw_edid;
 
+	if (raw_edid[0] == 0xff) {
+	  int cnt = 1;
+	  while (raw_edid[cnt] == 0xff)
+	    cnt++;
+	  if (raw_edid[cnt] == 0x00 && cnt >= 3) {
+	    for (i = EDID_LENGTH; i >= (7 - cnt); i--)
+	      raw_edid[i] = raw_edid[i - 7 + cnt];
+	    memcpy(raw_edid, edid_header, sizeof(edid_header));
+	  }
+	}
 	if (raw_edid[0] == 0x00) {
 		int score = drm_edid_header_is_valid(raw_edid);
 		if (score == 8) ;
