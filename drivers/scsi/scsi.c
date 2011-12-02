@@ -70,11 +70,6 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/scsi.h>
 
-/*
- * Utility multithreaded workqueue for SCSI.
- */
-struct workqueue_struct *scsi_wq;
-
 static void scsi_done(struct scsi_cmnd *cmd);
 
 /*
@@ -1311,14 +1306,11 @@ MODULE_PARM_DESC(scsi_logging_level, "a bit mask of logging levels");
 
 static int __init init_scsi(void)
 {
-	int error = -ENOMEM;
+	int error;
 
-	scsi_wq = alloc_workqueue("scsi", 0, 0);
-	if (!scsi_wq)
-		return error;
 	error = scsi_init_queue();
 	if (error)
-		goto cleanup_wq;
+		return error;
 	error = scsi_init_procfs();
 	if (error)
 		goto cleanup_queue;
@@ -1350,8 +1342,6 @@ cleanup_procfs:
 	scsi_exit_procfs();
 cleanup_queue:
 	scsi_exit_queue();
-cleanup_wq:
-	destroy_workqueue(scsi_wq);
 	printk(KERN_ERR "SCSI subsystem failed to initialize, error = %d\n",
 	       -error);
 	return error;
@@ -1366,7 +1356,6 @@ static void __exit exit_scsi(void)
 	scsi_exit_devinfo();
 	scsi_exit_procfs();
 	scsi_exit_queue();
-	destroy_workqueue(scsi_wq);
 }
 
 subsys_initcall(init_scsi);
