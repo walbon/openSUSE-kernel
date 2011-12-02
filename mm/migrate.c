@@ -797,6 +797,8 @@ move_newpage:
  		 * restored.
  		 */
  		list_del(&page->lru);
+		dec_zone_page_state(page, NR_ISOLATED_ANON +
+				page_is_file_cache(page));
 		if (PageMemError(page)) {
 			if (rc == 0)
 				/*
@@ -804,7 +806,7 @@ move_newpage:
 				 * been migrated will not be moved to
 				 * the LRU.
 				 */
-				goto move_newpage;
+				goto drop_ref;
 			else
 				/*
 				 * The page failed to migrate and will not
@@ -816,11 +818,10 @@ move_newpage:
 				ClearPageMemError(page);
 		}
 
-		dec_zone_page_state(page, NR_ISOLATED_ANON +
-				page_is_file_cache(page));
 		putback_lru_page(page);
 	}
 
+drop_ref:
 	/*
 	 * Move the new page to the LRU. If migration was not successful
 	 * then this will free the page.
