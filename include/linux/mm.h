@@ -1210,6 +1210,7 @@ struct shrink_control {
 struct shrinker {
 	int (*shrink)(struct shrinker *, struct shrink_control *sc);
 	int seeks;	/* seeks to recreate an obj */
+	long batch;	/* reclaim batch size, unused, KABI holder */
 
 	/* These are for internal use */
 	struct list_head list;
