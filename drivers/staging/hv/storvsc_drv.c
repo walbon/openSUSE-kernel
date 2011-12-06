@@ -728,19 +728,7 @@ static void storvsc_get_ide_info(struct hv_device *dev, int *target, int *path)
 
 static int storvsc_device_alloc(struct scsi_device *sdevice)
 {
-	/*
-	 * This enables luns to be located sparsely. Otherwise, we may not
-	 * discovered them.
-	 */
-	sdevice->sdev_bflags |= BLIST_SPARSELUN | BLIST_LARGELUN;
 	return 0;
-}
-
-static int storvsc_merge_bvec(struct request_queue *q,
-			      struct bvec_merge_data *bmd, struct bio_vec *bvec)
-{
-	/* checking done by caller. */
-	return bvec->bv_len;
 }
 
 static int storvsc_device_configure(struct scsi_device *sdevice)
@@ -749,8 +737,6 @@ static int storvsc_device_configure(struct scsi_device *sdevice)
 				STORVSC_MAX_IO_REQUESTS);
 
 	blk_queue_max_segment_size(sdevice->request_queue, PAGE_SIZE);
-
-	blk_queue_merge_bvec(sdevice->request_queue, storvsc_merge_bvec);
 
 	blk_queue_bounce_limit(sdevice->request_queue, BLK_BOUNCE_ANY);
 
@@ -832,7 +818,8 @@ cleanup:
 /* Assume the original sgl has enough room */
 static unsigned int copy_from_bounce_buffer(struct scatterlist *orig_sgl,
 					    struct scatterlist *bounce_sgl,
-					    unsigned int orig_sgl_count)
+					    unsigned int orig_sgl_count,
+					    unsigned int bounce_sgl_count)
 {
 	int i;
 	int j = 0;
@@ -872,6 +859,24 @@ static unsigned int copy_from_bounce_buffer(struct scatterlist *orig_sgl,
 				/* full */
 				kunmap_atomic((void *)bounce_addr, KM_IRQ0);
 				j++;
+
+				/*
+				 * It is possible that the number of elements
+				 * in the bounce buffer may not be equal to
+				 * the number of elements in the original
+				 * scatter list. Handle this correctly.
+				 */
+
+				if (j == bounce_sgl_count) {
+					/*
+					 * We are done; cleanup and return.
+					 */
+					kunmap_atomic((void *)(dest_addr -
+							orig_sgl[i].offset),
+							KM_IRQ0);
+					local_irq_restore(flags);
+					return total_copied;
+				}
 
 				/* if we need to use another bounce buffer */
 				if (destlen || i != orig_sgl_count - 1)
@@ -1083,13 +1088,13 @@ static void storvsc_command_completion(struct hv_storvsc_request *request)
 
 	vm_srb = &request->vstor_packet.vm_srb;
 	if (cmd_request->bounce_sgl_count) {
-		if (vm_srb->data_in == READ_TYPE) {
+		if (vm_srb->data_in == READ_TYPE)
 			copy_from_bounce_buffer(scsi_sglist(scmnd),
 					cmd_request->bounce_sgl,
-					scsi_sg_count(scmnd));
-			destroy_bounce_buffer(cmd_request->bounce_sgl,
+					scsi_sg_count(scmnd),
 					cmd_request->bounce_sgl_count);
-		}
+		destroy_bounce_buffer(cmd_request->bounce_sgl,
+					cmd_request->bounce_sgl_count);
 	}
 
 	/*
@@ -1308,14 +1313,7 @@ static struct scsi_host_template scsi_driver = {
 	/* no use setting to 0 since ll_blk_rw reset it to 1 */
 	/* currently 32 */
 	.sg_tablesize =		MAX_MULTIPAGE_BUFFER_COUNT,
-	/*
-	 * ENABLE_CLUSTERING allows mutiple physically contig bio_vecs to merge
-	 * into 1 sg element. If set, we must limit the max_segment_size to
-	 * PAGE_SIZE, otherwise we may get 1 sg element that represents
-	 * multiple
-	 */
-	/* physically contig pfns (ie sg[x].length > PAGE_SIZE). */
-	.use_clustering =	ENABLE_CLUSTERING,
+	.use_clustering =	DISABLE_CLUSTERING,
 	/* Make sure we dont get a sg segment crosses a page boundary */
 	.dma_boundary =		PAGE_SIZE-1,
 };
