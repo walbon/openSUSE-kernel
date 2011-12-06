@@ -72,6 +72,7 @@ struct dm_rq_target_io {
 	struct mapped_device *md;
 	struct dm_target *ti;
 	struct request *orig, clone;
+	unsigned int done_bytes;
 	int error;
 	union map_info info;
 };
@@ -728,23 +729,9 @@ static void end_clone_bio(struct bio *clone, int error)
 
 	/*
 	 * I/O for the bio successfully completed.
-	 * Notice the data completion to the upper layer.
 	 */
 
-	/*
-	 * bios are processed from the head of the list.
-	 * So the completing bio should always be rq->bio.
-	 * If it's not, something wrong is happening.
-	 */
-	if (tio->orig->bio != bio)
-		DMERR("bio completion is going in the middle of the request");
-
-	/*
-	 * Update the original request.
-	 * Do not use blk_end_request() here, because it may complete
-	 * the original request before the clone, and break the ordering.
-	 */
-	blk_update_request(tio->orig, 0, nr_bytes);
+	tio->done_bytes += nr_bytes;
 }
 
 /*
@@ -872,6 +859,16 @@ static void dm_done(struct request *clone, int error, bool mapped)
 	int r = error;
 	struct dm_rq_target_io *tio = clone->end_io_data;
 	dm_request_endio_fn rq_end_io = tio->ti->type->rq_end_io;
+
+	/*
+	 * Update the original request.
+	 * Do not use blk_end_request() here, because it may complete
+	 * the original request before the clone, and break the ordering.
+	 */
+	if (tio->done_bytes) {
+		blk_update_request(tio->orig, 0, tio->done_bytes);
+		tio->done_bytes = 0;
+	}
 
 	if (mapped && rq_end_io)
 		r = rq_end_io(tio->ti, clone, error, &tio->info);
@@ -1530,6 +1527,7 @@ static struct request *clone_rq(struct request *rq, struct mapped_device *md,
 	tio->md = md;
 	tio->ti = NULL;
 	tio->orig = rq;
+	tio->done_bytes = 0;
 	tio->error = 0;
 	memset(&tio->info, 0, sizeof(tio->info));
 
