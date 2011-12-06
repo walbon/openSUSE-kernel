@@ -170,16 +170,12 @@ static int uart_startup(struct tty_struct *tty, struct uart_state *state, int in
 
 	retval = uport->ops->startup(uport);
 	if (retval == 0) {
-		if (uart_console(uport) && uport->cons->cflag) {
-			tty->termios->c_cflag = uport->cons->cflag;
-			uport->cons->cflag = 0;
-		}
-		/*
-		 * Initialise the hardware port settings.
-		 */
-		uart_change_speed(tty, state, NULL);
-
 		if (init_hw) {
+			/*
+			 * Initialise the hardware port settings.
+			 */
+			uart_change_speed(tty, state, NULL);
+
 			/*
 			 * Setup the RTS and DTR signals once the
 			 * port is open and ready to respond.
@@ -1456,6 +1452,45 @@ static void uart_hangup(struct tty_struct *tty)
 	mutex_unlock(&port->mutex);
 }
 
+/**
+ *	uart_update_termios	-	update the terminal hw settings
+ *	@tty: tty associated with UART
+ *	@state: UART to update
+ *
+ *	Copy across the serial console cflag setting into the termios settings
+ *	for the initial open of the port.  This allows continuity between the
+ *	kernel settings, and the settings init adopts when it opens the port
+ *	for the first time.
+ */
+static void uart_update_termios(struct tty_struct *tty,
+						struct uart_state *state)
+{
+	struct uart_port *port = state->uart_port;
+
+	if (uart_console(port) && port->cons->cflag) {
+		tty->termios->c_cflag = port->cons->cflag;
+		port->cons->cflag = 0;
+	}
+
+	/*
+	 * If the device failed to grab its irq resources,
+	 * or some other error occurred, don't try to talk
+	 * to the port hardware.
+	 */
+	if (!(tty->flags & (1 << TTY_IO_ERROR))) {
+		/*
+		 * Make termios settings take effect.
+		 */
+		uart_change_speed(tty, state, NULL);
+
+		/*
+		 * And finally enable the RTS and DTR signals.
+		 */
+		if (tty->termios->c_cflag & CBAUD)
+			uart_set_mctrl(port, TIOCM_DTR | TIOCM_RTS);
+	}
+}
+
 static int uart_carrier_raised(struct tty_port *port)
 {
 	struct uart_state *state = container_of(port, struct uart_state, port);
@@ -1479,6 +1514,91 @@ static void uart_dtr_rts(struct tty_port *port, int onoff)
 		uart_set_mctrl(uport, TIOCM_DTR | TIOCM_RTS);
 	else
 		uart_clear_mctrl(uport, TIOCM_DTR | TIOCM_RTS);
+}
+
+/*
+ * Block the open until the port is ready.  We must be called with
+ * the per-port semaphore held.
+ */
+static int
+uart_block_til_ready(struct file *filp, struct uart_state *state)
+{
+	DECLARE_WAITQUEUE(wait, current);
+	struct tty_port *port = &state->port;
+	unsigned long flags;
+
+	spin_lock_irqsave(&port->lock, flags);
+	if (!tty_hung_up_p(filp))
+		port->count--;
+	port->blocked_open++;
+	spin_unlock_irqrestore(&port->lock, flags);
+
+	add_wait_queue(&port->open_wait, &wait);
+	while (1) {
+		set_current_state(TASK_INTERRUPTIBLE);
+
+		/*
+		 * If we have been hung up, tell userspace/restart open.
+		 */
+		if (tty_hung_up_p(filp) || port->tty == NULL)
+			break;
+
+		/*
+		 * If the port has been closed, tell userspace/restart open.
+		 */
+		if (!(port->flags & ASYNC_INITIALIZED))
+			break;
+
+		/*
+		 * If non-blocking mode is set, or CLOCAL mode is set,
+		 * we don't want to wait for the modem status lines to
+		 * indicate that the port is ready.
+		 *
+		 * Also, if the port is not enabled/configured, we want
+		 * to allow the open to succeed here.  Note that we will
+		 * have set TTY_IO_ERROR for a non-existant port.
+		 */
+		if ((filp->f_flags & O_NONBLOCK) ||
+		    (port->tty->termios->c_cflag & CLOCAL) ||
+		    (port->tty->flags & (1 << TTY_IO_ERROR)))
+			break;
+
+		/*
+		 * Set DTR to allow modem to know we're waiting.  Do
+		 * not set RTS here - we want to make sure we catch
+		 * the data from the modem.
+		 */
+		if (port->tty->termios->c_cflag & CBAUD)
+			tty_port_raise_dtr_rts(port);
+
+		/*
+		 * and wait for the carrier to indicate that the
+		 * modem is ready for us.
+		 */
+		if (tty_port_carrier_raised(port))
+			break;
+
+		schedule();
+
+		if (signal_pending(current))
+			break;
+	}
+	set_current_state(TASK_RUNNING);
+	remove_wait_queue(&port->open_wait, &wait);
+
+	spin_lock_irqsave(&port->lock, flags);
+	if (!tty_hung_up_p(filp))
+		port->count++;
+	port->blocked_open--;
+	spin_unlock_irqrestore(&port->lock, flags);
+
+	if (signal_pending(current))
+		return -ERESTARTSYS;
+
+	if (!port->tty || tty_hung_up_p(filp))
+		return -EAGAIN;
+
+	return 0;
 }
 
 static struct uart_state *uart_get(struct uart_driver *drv, int line)
@@ -1580,7 +1700,16 @@ static int uart_open(struct tty_struct *tty, struct file *filp)
 	 */
 	mutex_unlock(&port->mutex);
 	if (retval == 0)
-		retval = tty_port_block_til_ready(port, tty, filp);
+		retval = uart_block_til_ready(filp, state);
+
+	/*
+	 * If this is the first open to succeed, adjust things to suit.
+	 */
+	if (retval == 0 && !(port->flags & ASYNC_NORMAL_ACTIVE)) {
+		set_bit(ASYNCB_NORMAL_ACTIVE, &port->flags);
+
+		uart_update_termios(tty, state);
+	}
 
 fail:
 	return retval;
