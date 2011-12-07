@@ -153,7 +153,7 @@ static void freezer_destroy(struct cgroup_subsys *ss,
 	kfree(cgroup_freezer(cgroup));
 }
 
-/* Task is frozen or will freeze immediately when next it gets woken */
+/* task is frozen or will freeze immediately when next it gets woken */
 static bool is_task_frozen_enough(struct task_struct *task)
 {
 	return frozen(task) ||
