@@ -3189,6 +3189,9 @@ static void quirk_ioat_snb_local_iommu(struct pci_dev *pdev)
 	u32 vtbar;
 	int rc;
 
+	if (!iommu_detected)
+		return;
+
 	/* We know that this device on this chipset has its own IOMMU.
 	 * If we find it under a different IOMMU, then the BIOS is lying
 	 * to us. Hope that the IOMMU for this device is actually
