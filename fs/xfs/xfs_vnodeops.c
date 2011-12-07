@@ -671,7 +671,8 @@ xfs_free_eofblocks(
 		if (error) {
 			ASSERT(XFS_FORCED_SHUTDOWN(mp));
 			xfs_trans_cancel(tp, 0);
-			xfs_iunlock(ip, XFS_IOLOCK_EXCL);
+			if (!(flags & XFS_FREE_EOF_HASLOCK))
+				xfs_iunlock(ip, XFS_IOLOCK_EXCL);
 			return error;
 		}
 
@@ -694,7 +695,10 @@ xfs_free_eofblocks(
 			error = xfs_trans_commit(tp,
 						XFS_TRANS_RELEASE_LOG_RES);
 		}
-		xfs_iunlock(ip, XFS_IOLOCK_EXCL|XFS_ILOCK_EXCL);
+		if (!(flags & XFS_FREE_EOF_HASLOCK))
+			xfs_iunlock(ip, XFS_IOLOCK_EXCL|XFS_ILOCK_EXCL);
+		else
+			xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	}
 	return error;
 }
