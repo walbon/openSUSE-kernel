@@ -3010,6 +3010,62 @@ static int build_ino_list(u64 inum, u64 offset, u64 root, void *ctx)
 	return 0;
 }
 
+/*
+ * Returns the compressed size of an inode in 512 byte blocks.
+ * Count the on-disk space used by all of its extents, inline data are rounded
+ * up to sector, ie. 512.
+ */
+static long btrfs_ioctl_compsize(struct file *file, void __user *argp)
+{
+	struct inode *inode = fdentry(file)->d_inode;
+	struct extent_map *em;
+	u64 len;
+	u64 compressed_size = 0;
+	u64 offset = 0;
+
+	if (S_ISDIR(inode->i_mode))
+		return -EISDIR;
+
+	mutex_lock(&inode->i_mutex);
+
+	/*
+	 * do any pending delalloc/csum calc on inode, one way or
+	 * another, and lock file content
+	 */
+	btrfs_wait_ordered_range(inode, 0, (u64)-1);
+
+	len = inode->i_size;
+
+	while (offset < len) {
+		em = btrfs_get_extent(inode, NULL, 0, offset, 1, 0);
+		if (IS_ERR_OR_NULL(em))
+			goto error;
+		if (em->block_len != (u64)-1)
+			compressed_size += em->block_len;
+		else if (em->block_start == EXTENT_MAP_INLINE) {
+			compressed_size += ALIGN(em->len, 512);
+		}
+		offset += em->len;
+		free_extent_map(em);
+	}
+	mutex_unlock(&inode->i_mutex);
+
+	unlock_extent(&BTRFS_I(inode)->io_tree, 0, len);
+
+	compressed_size >>= 9;
+
+	if (copy_to_user(argp, &compressed_size, sizeof(compressed_size)))
+		return -EFAULT;
+
+	return 0;
+
+error:
+	mutex_unlock(&inode->i_mutex);
+	unlock_extent(&BTRFS_I(inode)->io_tree, 0, len);
+
+	return -EIO;
+}
+
 static long btrfs_ioctl_logical_to_ino(struct btrfs_root *root,
 					void __user *arg)
 {
@@ -3262,6 +3318,12 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_dev_info(root, argp);
 	case BTRFS_IOC_BALANCE:
 		return btrfs_ioctl_balance(root);
+ 	case BTRFS_IOC_RESTRIPE:
+ 		return btrfs_ioctl_restripe(root, argp);
+	case BTRFS_IOC_RESTRIPE_CTL:
+		return btrfs_ioctl_restripe_ctl(root, arg);
+	case BTRFS_IOC_RESTRIPE_PROGRESS:
+		return btrfs_ioctl_restripe_progress(root, argp);
 	case BTRFS_IOC_CLONE:
 		return btrfs_ioctl_clone(file, arg, 0, 0, 0);
 	case BTRFS_IOC_CLONE_RANGE:
@@ -3293,12 +3355,8 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_scrub_cancel(root, argp);
 	case BTRFS_IOC_SCRUB_PROGRESS:
 		return btrfs_ioctl_scrub_progress(root, argp);
-	case BTRFS_IOC_RESTRIPE:
-		return btrfs_ioctl_restripe(root, argp);
-	case BTRFS_IOC_RESTRIPE_CTL:
-		return btrfs_ioctl_restripe_ctl(root, arg);
-	case BTRFS_IOC_RESTRIPE_PROGRESS:
-		return btrfs_ioctl_restripe_progress(root, argp);
+	case BTRFS_IOC_COMPR_SIZE:
+		return btrfs_ioctl_compsize(file, argp);
 	}
 
 	return -ENOTTY;
