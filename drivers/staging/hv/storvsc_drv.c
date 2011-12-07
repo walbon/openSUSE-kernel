@@ -787,12 +787,14 @@ static int do_bounce_buffer(struct scatterlist *sgl, unsigned int sg_count)
 
 static struct scatterlist *create_bounce_buffer(struct scatterlist *sgl,
 						unsigned int sg_count,
-						unsigned int len)
+						unsigned int len,
+						int write)
 {
 	int i;
 	int num_pages;
 	struct scatterlist *bounce_sgl;
 	struct page *page_buf;
+	unsigned int buf_len = ((write == WRITE_TYPE) ? 0 : PAGE_SIZE);
 
 	num_pages = ALIGN(len, PAGE_SIZE) >> PAGE_SHIFT;
 
@@ -804,7 +806,7 @@ static struct scatterlist *create_bounce_buffer(struct scatterlist *sgl,
 		page_buf = alloc_page(GFP_ATOMIC);
 		if (!page_buf)
 			goto cleanup;
-		sg_set_page(&bounce_sgl[i], page_buf, 0, 0);
+		sg_set_page(&bounce_sgl[i], page_buf, buf_len, 0);
 	}
 
 	return bounce_sgl;
@@ -1235,7 +1237,8 @@ static int storvsc_queuecommand_lck(struct scsi_cmnd *scmnd,
 		if (do_bounce_buffer(sgl, scsi_sg_count(scmnd)) != -1) {
 			cmd_request->bounce_sgl =
 				create_bounce_buffer(sgl, scsi_sg_count(scmnd),
-						     scsi_bufflen(scmnd));
+						     scsi_bufflen(scmnd),
+						     vm_srb->data_in);
 			if (!cmd_request->bounce_sgl) {
 				scmnd->scsi_done = NULL;
 				scmnd->host_scribble = NULL;
