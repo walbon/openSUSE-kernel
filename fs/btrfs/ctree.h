@@ -517,12 +517,12 @@ struct btrfs_node {
  */
 struct btrfs_path {
 	struct extent_buffer *nodes[BTRFS_MAX_LEVEL];
-	int slots[BTRFS_MAX_LEVEL];
+	u16 slots[BTRFS_MAX_LEVEL];
 	/* if there is real range locking, this locks field will change */
-	int locks[BTRFS_MAX_LEVEL];
-	int reada;
+	u8 locks[BTRFS_MAX_LEVEL];
 	/* keep some upper locks as we walk down */
-	int lowest_level;
+	u8 lowest_level;
+	s8 reada;	/* sign represents direction  */
 
 	/*
 	 * set by btrfs_split_item, tells search_slot to keep all locks
@@ -2848,7 +2848,8 @@ int btrfs_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf);
 int btrfs_readpage(struct file *file, struct page *page);
 void btrfs_evict_inode(struct inode *inode);
 int btrfs_write_inode(struct inode *inode, struct writeback_control *wbc);
-void btrfs_dirty_inode(struct inode *inode, int flags);
+int btrfs_dirty_inode(struct inode *inode);
+int btrfs_update_time(struct file *file);
 struct inode *btrfs_alloc_inode(struct super_block *sb);
 void btrfs_destroy_inode(struct inode *inode);
 int btrfs_drop_inode(struct inode *inode);

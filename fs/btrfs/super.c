@@ -41,6 +41,7 @@
 #include <linux/slab.h>
 #include <linux/cleancache.h>
 #include <linux/mnt_namespace.h>
+#include <linux/ratelimit.h>
 #include "compat.h"
 #include "delayed-inode.h"
 #include "ctree.h"
@@ -1346,6 +1347,16 @@ static int btrfs_unfreeze(struct super_block *sb)
 	return 0;
 }
 
+static void btrfs_fs_dirty_inode(struct inode *inode, int flags)
+{
+	int ret;
+
+	ret = btrfs_dirty_inode(inode);
+	if (ret)
+		printk_ratelimited(KERN_ERR "btrfs: fail to dirty inode %Lu "
+				   "error %d\n", btrfs_ino(inode), ret);
+}
+
 static dev_t btrfs_get_maps_dev(struct inode *inode)
 {
 	return BTRFS_I(inode)->root->anon_super.s_dev;
@@ -1358,7 +1369,7 @@ static const struct super_operations btrfs_super_ops = {
 	.sync_fs	= btrfs_sync_fs,
 	.show_options	= btrfs_show_options,
 	.write_inode	= btrfs_write_inode,
-	.dirty_inode	= btrfs_dirty_inode,
+	.dirty_inode	= btrfs_fs_dirty_inode,
 	.alloc_inode	= btrfs_alloc_inode,
 	.destroy_inode	= btrfs_destroy_inode,
 	.statfs		= btrfs_statfs,
