@@ -617,8 +617,7 @@ struct address_space_operations {
 						void **, unsigned long *);
 	/*
 	 * migrate the contents of a page to the specified target. If sync
-	 * is false, it must not block. For now, this is a KABI holder and
-	 * the underlying implementation is not using the bool but it will
+	 * is false, it must not block.
 	 */
 	int (*migratepage) (struct address_space *,
 			struct page *, struct page *, enum migrate_mode);
