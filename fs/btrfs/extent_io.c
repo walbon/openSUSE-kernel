@@ -3930,6 +3930,7 @@ void clear_extent_buffer_dirty(struct extent_io_tree *tree,
 	unsigned long i;
 	unsigned long num_pages;
 	struct page *page;
+	unsigned long flags;
 
 	num_pages = num_extent_pages(eb->start, eb->len);
 
@@ -3946,13 +3947,13 @@ void clear_extent_buffer_dirty(struct extent_io_tree *tree,
 			set_page_extent_head(page, eb->len);
 
 		clear_page_dirty_for_io(page);
-		spin_lock_irq(&page->mapping->tree_lock);
+		spin_lock_irqsave(&page->mapping->tree_lock, flags);
 		if (!PageDirty(page)) {
 			radix_tree_tag_clear(&page->mapping->page_tree,
 						page_index(page),
 						PAGECACHE_TAG_DIRTY);
 		}
-		spin_unlock_irq(&page->mapping->tree_lock);
+		spin_unlock_irqrestore(&page->mapping->tree_lock, flags);
 		ClearPageError(page);
 		unlock_page(page);
 	}

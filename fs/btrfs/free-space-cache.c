@@ -2099,10 +2099,11 @@ u64 btrfs_find_space_for_alloc(struct btrfs_block_group_cache *block_group,
 {
 	struct btrfs_free_space_ctl *ctl = block_group->free_space_ctl;
 	struct btrfs_free_space *entry = NULL;
+	unsigned long flags;
 	u64 bytes_search = bytes + empty_size;
 	u64 ret = 0;
 
-	spin_lock_irq(&ctl->tree_lock);
+	spin_lock_irqsave(&ctl->tree_lock, flags);
 	entry = find_free_space(ctl, &offset, &bytes_search);
 	if (!entry)
 		goto out;
@@ -2123,7 +2124,7 @@ u64 btrfs_find_space_for_alloc(struct btrfs_block_group_cache *block_group,
 	}
 
 out:
-	spin_unlock_irq(&ctl->tree_lock);
+	spin_unlock_irqrestore(&ctl->tree_lock, flags);
 
 	return ret;
 }

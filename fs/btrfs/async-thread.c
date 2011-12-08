@@ -224,8 +224,9 @@ static void put_worker(struct btrfs_worker_thread *worker)
 static int try_worker_shutdown(struct btrfs_worker_thread *worker)
 {
 	int freeit = 0;
+	unsigned long flags;
 
-	spin_lock_irq(&worker->lock);
+	spin_lock_irqsave(&worker->lock, flags);
 	spin_lock(&worker->workers->lock);
 	if (worker->workers->num_workers > 1 &&
 	    worker->idle &&
@@ -239,7 +240,7 @@ static int try_worker_shutdown(struct btrfs_worker_thread *worker)
 		worker->workers->num_workers--;
 	}
 	spin_unlock(&worker->workers->lock);
-	spin_unlock_irq(&worker->lock);
+	spin_unlock_irqrestore(&worker->lock, flags);
 
 	if (freeit)
 		put_worker(worker);
@@ -252,6 +253,7 @@ static struct btrfs_work *get_next_work(struct btrfs_worker_thread *worker,
 {
 	struct btrfs_work *work = NULL;
 	struct list_head *cur = NULL;
+	unsigned long flags;
 
 	if(!list_empty(prio_head))
 		cur = prio_head->next;
@@ -267,7 +269,7 @@ static struct btrfs_work *get_next_work(struct btrfs_worker_thread *worker,
 		goto out;
 
 refill:
-	spin_lock_irq(&worker->lock);
+	spin_lock_irqsave(&worker->lock, flags);
 	list_splice_tail_init(&worker->prio_pending, prio_head);
 	list_splice_tail_init(&worker->pending, head);
 
@@ -275,7 +277,7 @@ refill:
 		cur = prio_head->next;
 	else if (!list_empty(head))
 		cur = head->next;
-	spin_unlock_irq(&worker->lock);
+	spin_unlock_irqrestore(&worker->lock, flags);
 
 	if (!cur)
 		goto out_fail;
@@ -296,6 +298,7 @@ static int worker_loop(void *arg)
 	struct list_head head;
 	struct list_head prio_head;
 	struct btrfs_work *work;
+	unsigned long flags;
 
 	INIT_LIST_HEAD(&head);
 	INIT_LIST_HEAD(&prio_head);
@@ -327,15 +330,15 @@ again:
 
 		}
 
-		spin_lock_irq(&worker->lock);
+		spin_lock_irqsave(&worker->lock, flags);
 		check_idle_worker(worker);
 
 		if (freezing(current)) {
 			worker->working = 0;
-			spin_unlock_irq(&worker->lock);
+			spin_unlock_irqrestore(&worker->lock, flags);
 			refrigerator();
 		} else {
-			spin_unlock_irq(&worker->lock);
+			spin_unlock_irqrestore(&worker->lock, flags);
 			if (!kthread_should_stop()) {
 				cpu_relax();
 				/*
@@ -365,7 +368,7 @@ again:
 					break;
 
 				/* still no more work?, sleep for real */
-				spin_lock_irq(&worker->lock);
+				spin_lock_irqsave(&worker->lock, flags);
 				set_current_state(TASK_INTERRUPTIBLE);
 				if (!list_empty(&worker->pending) ||
 				    !list_empty(&worker->prio_pending)) {
@@ -379,7 +382,7 @@ again:
 				 * adds something new to the queue
 				 */
 				worker->working = 0;
-				spin_unlock_irq(&worker->lock);
+				spin_unlock_irqrestore(&worker->lock, flags);
 
 				if (!kthread_should_stop()) {
 					schedule_timeout(HZ * 120);
@@ -403,8 +406,9 @@ void btrfs_stop_workers(struct btrfs_workers *workers)
 	struct list_head *cur;
 	struct btrfs_worker_thread *worker;
 	int can_stop;
+	unsigned long flags;
 
-	spin_lock_irq(&workers->lock);
+	spin_lock_irqsave(&workers->lock, flags);
 	list_splice_init(&workers->idle_list, &workers->worker_list);
 	while (!list_empty(&workers->worker_list)) {
 		cur = workers->worker_list.next;
@@ -419,13 +423,13 @@ void btrfs_stop_workers(struct btrfs_workers *workers)
 			can_stop = 1;
 		} else
 			can_stop = 0;
-		spin_unlock_irq(&workers->lock);
+		spin_unlock_irqrestore(&workers->lock, flags);
 		if (can_stop)
 			kthread_stop(worker->task);
-		spin_lock_irq(&workers->lock);
+		spin_lock_irqsave(&workers->lock, flags);
 		put_worker(worker);
 	}
-	spin_unlock_irq(&workers->lock);
+	spin_unlock_irqrestore(&workers->lock, flags);
 }
 
 /*
@@ -458,6 +462,7 @@ static int __btrfs_start_workers(struct btrfs_workers *workers)
 {
 	struct btrfs_worker_thread *worker;
 	int ret = 0;
+	unsigned long flags;
 
 	worker = kzalloc(sizeof(*worker), GFP_NOFS);
 	if (!worker) {
@@ -481,27 +486,29 @@ static int __btrfs_start_workers(struct btrfs_workers *workers)
 		kfree(worker);
 		goto fail;
 	}
-	spin_lock_irq(&workers->lock);
+	spin_lock_irqsave(&workers->lock, flags);
 	list_add_tail(&worker->worker_list, &workers->idle_list);
 	worker->idle = 1;
 	workers->num_workers++;
 	workers->num_workers_starting--;
 	WARN_ON(workers->num_workers_starting < 0);
-	spin_unlock_irq(&workers->lock);
+	spin_unlock_irqrestore(&workers->lock, flags);
 
 	return 0;
 fail:
-	spin_lock_irq(&workers->lock);
+	spin_lock_irqsave(&workers->lock, flags);
 	workers->num_workers_starting--;
-	spin_unlock_irq(&workers->lock);
+	spin_unlock_irqrestore(&workers->lock, flags);
 	return ret;
 }
 
 int btrfs_start_workers(struct btrfs_workers *workers)
 {
-	spin_lock_irq(&workers->lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&workers->lock, flags);
 	workers->num_workers_starting++;
-	spin_unlock_irq(&workers->lock);
+	spin_unlock_irqrestore(&workers->lock, flags);
 	return __btrfs_start_workers(workers);
 }
 

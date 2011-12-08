@@ -3456,12 +3456,14 @@ static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 
 			lock_page(page);
 			if (PageDirty(page)) {
+				unsigned long flags;
+
 				clear_page_dirty_for_io(page);
-				spin_lock_irq(&page->mapping->tree_lock);
+				spin_lock_irqsave(&page->mapping->tree_lock, flags);
 				radix_tree_tag_clear(&page->mapping->page_tree,
 							page_index(page),
 							PAGECACHE_TAG_DIRTY);
-				spin_unlock_irq(&page->mapping->tree_lock);
+				spin_unlock_irqrestore(&page->mapping->tree_lock, flags);
 			}
 
 			page->mapping->a_ops->invalidatepage(page, 0);
