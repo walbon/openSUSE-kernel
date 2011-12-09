@@ -3640,8 +3640,10 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		} else {
 			disko = em->block_start + offset_in_extent;
 		}
-		if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags))
+		if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags)) {
 			flags |= FIEMAP_EXTENT_ENCODED;
+			flags |= FIEMAP_EXTENT_DATA_COMPRESSED;
+		}
 
 		free_extent_map(em);
 		em = NULL;
@@ -4407,16 +4409,9 @@ static void move_pages(struct page *dst_page, struct page *src_page,
 		       unsigned long len)
 {
 	char *dst_kaddr = page_address(dst_page);
-	if (dst_page == src_page) {
-		memmove(dst_kaddr + dst_off, dst_kaddr + src_off, len);
-	} else {
-		char *src_kaddr = page_address(src_page);
-		char *p = dst_kaddr + dst_off + len;
-		char *s = src_kaddr + src_off + len;
+	char *src_kaddr = page_address(src_page);
 
-		while (len--)
-			*--p = *--s;
-	}
+	memmove(dst_kaddr + dst_off, src_kaddr + src_off, len);
 }
 
 static inline bool areas_overlap(unsigned long src, unsigned long dst, unsigned long len)
@@ -4430,14 +4425,10 @@ static void copy_pages(struct page *dst_page, struct page *src_page,
 		       unsigned long len)
 {
 	char *dst_kaddr = page_address(dst_page);
-	char *src_kaddr;
+	char *src_kaddr = page_address(src_page);
 
-	if (dst_page != src_page) {
-		src_kaddr = page_address(src_page);
-	} else {
-		src_kaddr = dst_kaddr;
+		if (dst_page == src_page)
 		BUG_ON(areas_overlap(src_off, dst_off, len));
-	}
 
 	memcpy(dst_kaddr + dst_off, src_kaddr + src_off, len);
 }

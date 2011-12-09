@@ -1990,7 +1990,10 @@ void btrfs_orphan_commit_root(struct btrfs_trans_handle *trans,
 	    btrfs_root_refs(&root->root_item) > 0) {
 		ret = btrfs_del_orphan_item(trans, root->fs_info->tree_root,
 					    root->root_key.objectid);
-		BUG_ON(ret);
+		if (ret) {
+			btrfs_std_error(root->fs_info, ret);
+			return;
+		}
 		root->orphan_item_inserted = 0;
 	}
 
@@ -3552,7 +3555,8 @@ void btrfs_evict_inode(struct inode *inode)
 	if (ret == 0) {
 		trans->block_rsv = root->orphan_block_rsv;
 		ret = btrfs_orphan_del(trans, inode);
-		BUG_ON(ret);
+		if (ret)
+			btrfs_std_error(root->fs_info, ret);
 	}
 
 	trans->block_rsv = &root->fs_info->trans_block_rsv;
