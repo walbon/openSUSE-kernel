@@ -1,5 +1,5 @@
 /*
- *	Intel CPU Microcode Update Driver for Linux
+ *	CPU Microcode Update Driver for Linux on Xen
  *
  *	Copyright (C) 2000-2006 Tigran Aivazian <tigran@aivazian.fsnet.co.uk>
  *		      2006	Shaohua Li <shaohua.li@intel.com>
@@ -131,6 +131,9 @@ static int __init microcode_dev_init(void)
 {
 	int error;
 
+	if (!is_initial_xendomain())
+		return -ENODEV;
+
 	error = misc_register(&microcode_dev);
 	if (error) {
 		pr_err("can't misc_register on minor=%d\n", MICROCODE_MINOR);
@@ -140,7 +143,7 @@ static int __init microcode_dev_init(void)
 	return 0;
 }
 
-static void microcode_dev_exit(void)
+static void __exit microcode_dev_exit(void)
 {
 	misc_deregister(&microcode_dev);
 }
@@ -199,15 +202,16 @@ static int __init microcode_init(void)
 
 	microcode_pdev = platform_device_register_simple("microcode", -1,
 							 NULL, 0);
-	if (IS_ERR(microcode_pdev)) {
+	if (IS_ERR(microcode_pdev))
 		return PTR_ERR(microcode_pdev);
-	}
-
-	error = microcode_dev_init();
-	if (error)
-		return error;
 
 	request_microcode(fw_name);
+
+	error = microcode_dev_init();
+	if (error) {
+		platform_device_unregister(microcode_pdev);
+		return error;
+	}
 
 	pr_info("Microcode Update Driver: v" MICROCODE_VERSION
 		" <tigran@aivazian.fsnet.co.uk>, Peter Oruba\n");

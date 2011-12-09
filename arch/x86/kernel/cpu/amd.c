@@ -640,6 +640,7 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 	if (c->x86 > 0x11)
 		set_cpu_cap(c, X86_FEATURE_ARAT);
 
+#ifndef CONFIG_XEN
 	/*
 	 * Disable GART TLB Walk Errors on Fam10h. We do this here
 	 * because this is always needed when GART is enabled, even in a
@@ -661,6 +662,7 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 			checking_wrmsrl(MSR_AMD64_MCx_MASK(4), mask);
 		}
 	}
+#endif
 }
 
 #ifdef CONFIG_X86_32

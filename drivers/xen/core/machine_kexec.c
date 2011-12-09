@@ -5,6 +5,7 @@
 
 #include <linux/kexec.h>
 #include <xen/interface/kexec.h>
+#include <xen/interface/platform.h>
 #include <linux/reboot.h>
 #include <linux/mm.h>
 #include <linux/bootmem.h>
@@ -18,7 +19,7 @@ extern void machine_kexec_register_resources(struct resource *res);
 
 static int __initdata xen_max_nr_phys_cpus;
 static struct resource xen_hypervisor_res;
-static struct resource *xen_phys_cpus;
+static struct resource *__initdata xen_phys_cpus;
 
 size_t vmcoreinfo_size_xen;
 unsigned long paddr_vmcoreinfo_xen;
@@ -26,8 +27,9 @@ unsigned long paddr_vmcoreinfo_xen;
 void __init xen_machine_kexec_setup_resources(void)
 {
 	xen_kexec_range_t range;
+	xen_platform_op_t op;
 	struct resource *res;
-	int k = 0;
+	unsigned int k = 0, nr = 0;
 	int rc;
 
 	if (strstr(boot_command_line, "crashkernel="))
@@ -37,9 +39,27 @@ void __init xen_machine_kexec_setup_resources(void)
 	if (!is_initial_xendomain())
 		return;
 
-	/* determine maximum number of physical cpus */
+	/* fill in crashk_res if range is reserved by hypervisor */
+	memset(&range, 0, sizeof(range));
+	range.range = KEXEC_RANGE_MA_CRASH;
 
-	while (1) {
+	if (HYPERVISOR_kexec_op(KEXEC_CMD_kexec_get_range, &range)
+	    || !range.size)
+		return;
+
+	crashk_res.start = range.start;
+	crashk_res.end = range.start + range.size - 1;
+#ifdef CONFIG_X86
+	insert_resource(&iomem_resource, &crashk_res);
+#endif
+
+	/* determine maximum number of physical cpus */
+	op.cmd = XENPF_get_cpuinfo;
+	op.u.pcpu_info.xen_cpuid = 0;
+	if (HYPERVISOR_platform_op(&op) == 0)
+		k = op.u.pcpu_info.max_present + 1;
+#if CONFIG_XEN_COMPAT < 0x040000
+	else while (1) {
 		memset(&range, 0, sizeof(range));
 		range.range = KEXEC_RANGE_MA_CPU;
 		range.nr = k;
@@ -49,6 +69,7 @@ void __init xen_machine_kexec_setup_resources(void)
 
 		k++;
 	}
+#endif
 
 	if (k == 0)
 		return;
@@ -66,17 +87,19 @@ void __init xen_machine_kexec_setup_resources(void)
 		range.range = KEXEC_RANGE_MA_CPU;
 		range.nr = k;
 
-		if (HYPERVISOR_kexec_op(KEXEC_CMD_kexec_get_range, &range))
-			goto err;
+		if (HYPERVISOR_kexec_op(KEXEC_CMD_kexec_get_range, &range)
+		    || range.size == 0)
+			continue;
 
-		res = xen_phys_cpus + k;
-
-		memset(res, 0, sizeof(*res));
+		res = xen_phys_cpus + nr++;
 		res->name = "Crash note";
 		res->start = range.start;
 		res->end = range.start + range.size - 1;
 		res->flags = IORESOURCE_BUSY | IORESOURCE_MEM;
 	}
+
+	if (nr == 0)
+		goto free;
 
 	/* fill in xen_hypervisor_res with hypervisor machine address range */
 
@@ -84,7 +107,7 @@ void __init xen_machine_kexec_setup_resources(void)
 	range.range = KEXEC_RANGE_MA_XEN;
 
 	if (HYPERVISOR_kexec_op(KEXEC_CMD_kexec_get_range, &range))
-		goto err;
+		goto free;
 
 	xen_hypervisor_res.name = "Hypervisor code and data";
 	xen_hypervisor_res.start = range.start;
@@ -93,22 +116,6 @@ void __init xen_machine_kexec_setup_resources(void)
 #ifdef CONFIG_X86
 	insert_resource(&iomem_resource, &xen_hypervisor_res);
 #endif
-
-	/* fill in crashk_res if range is reserved by hypervisor */
-
-	memset(&range, 0, sizeof(range));
-	range.range = KEXEC_RANGE_MA_CRASH;
-
-	if (HYPERVISOR_kexec_op(KEXEC_CMD_kexec_get_range, &range))
-		goto err;
-
-	if (range.size) {
-		crashk_res.start = range.start;
-		crashk_res.end = range.start + range.size - 1;
-#ifdef CONFIG_X86
-		insert_resource(&iomem_resource, &crashk_res);
-#endif
-	}
 
 	/* get physical address of vmcoreinfo */
 	memset(&range, 0, sizeof(range));
@@ -128,21 +135,32 @@ void __init xen_machine_kexec_setup_resources(void)
 		vmcoreinfo_size_xen = 0;
 		paddr_vmcoreinfo_xen = 0;
 		
+#if CONFIG_XEN_COMPAT < 0x030300
 		/* The KEXEC_CMD_kexec_get_range hypercall did not implement
 		 * KEXEC_RANGE_MA_VMCOREINFO until Xen 3.3.
 		 * Do not bail out if it fails for this reason.
 		 */
 		if (rc != -EINVAL)
-			return;
+#endif
+			goto free;
 	}
 
 	if (machine_kexec_setup_resources(&xen_hypervisor_res, xen_phys_cpus,
-					  xen_max_nr_phys_cpus))
+					  nr)) {
+		/*
+		 * It's too cumbersome to properly free xen_phys_cpus here.
+		 * Failure at this stage is unexpected and the amount of
+		 * memory is small therefore we tolerate the potential leak.
+		 */
 		goto err;
+	}
+
+	xen_max_nr_phys_cpus = nr;
 
 #ifdef CONFIG_X86
 	for (k = 0; k < xen_max_nr_phys_cpus; k++) {
-		res = xen_phys_cpus + k;
+		struct resource *res = xen_phys_cpus + k;
+
 		if (!res->parent) /* outside of xen_hypervisor_res range */
 			insert_resource(&iomem_resource, res);
 	}
@@ -155,14 +173,11 @@ void __init xen_machine_kexec_setup_resources(void)
 
 	return;
 
+ free:
+	free_bootmem(__pa(xen_phys_cpus),
+		     xen_max_nr_phys_cpus * sizeof(*xen_phys_cpus));
  err:
-	/*
-	 * It isn't possible to free xen_phys_cpus this early in the
-	 * boot. Failure at this stage is unexpected and the amount of
-	 * memory is small therefore we tolerate the potential leak.
-         */
 	xen_max_nr_phys_cpus = 0;
-	return;
 }
 
 #ifndef CONFIG_X86

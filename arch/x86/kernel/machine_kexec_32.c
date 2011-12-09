@@ -153,8 +153,6 @@ int __init machine_kexec_setup_resources(struct resource *hypervisor,
 	return 0;
 }
 
-void machine_kexec_register_resources(struct resource *res) { ; }
-
 #endif /* CONFIG_XEN */
 
 /*
