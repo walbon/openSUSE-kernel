@@ -31,6 +31,7 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/device.h>
+#include <linux/mempool.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_host.h>
@@ -42,6 +43,7 @@
 
 #include "hyperv.h"
 
+#define STORVSC_MIN_BUF_NR				64
 #define STORVSC_RING_BUFFER_SIZE			(20*PAGE_SIZE)
 static int storvsc_ringbuffer_size = STORVSC_RING_BUFFER_SIZE;
 
@@ -78,7 +80,7 @@ MODULE_PARM_DESC(storvsc_ringbuffer_size, "Ring buffer size (bytes)");
 /* V1 Beta                    0.1 */
 /* V1 RC < 2008/1/31          1.0 */
 /* V1 RC > 2008/1/31          2.0 */
-#define VMSTOR_PROTOCOL_VERSION_CURRENT VMSTOR_PROTOCOL_VERSION(2, 0)
+#define VMSTOR_PROTOCOL_VERSION_CURRENT VMSTOR_PROTOCOL_VERSION(4, 2)
 
 
 
@@ -104,7 +106,8 @@ enum vstor_packet_operation {
 	VSTOR_OPERATION_END_INITIALIZATION	= 8,
 	VSTOR_OPERATION_QUERY_PROTOCOL_VERSION	= 9,
 	VSTOR_OPERATION_QUERY_PROPERTIES	= 10,
-	VSTOR_OPERATION_MAXIMUM			= 10
+	VSTOR_OPERATION_ENUMERATE_BUS		= 11,
+	VSTOR_OPERATION_MAXIMUM			= 11
 };
 
 /*
@@ -234,8 +237,6 @@ struct vstor_packet {
 #define STORVSC_MAX_CHANNELS				1
 #define STORVSC_MAX_CMD_LEN				16
 
-struct hv_storvsc_request;
-
 /* Matches Windows-end */
 enum storvsc_request_type {
 	WRITE_TYPE,
@@ -284,9 +285,13 @@ struct storvsc_device {
 	struct hv_storvsc_request reset_request;
 };
 
+struct stor_mem_pools {
+	struct kmem_cache *request_pool;
+	mempool_t *request_mempool;
+};
+
 struct hv_host_device {
 	struct hv_device *dev;
-	struct kmem_cache *request_pool;
 	unsigned int port;
 	unsigned char path;
 	unsigned char target;
@@ -301,6 +306,51 @@ struct storvsc_cmd_request {
 
 	struct hv_storvsc_request request;
 };
+
+struct storvsc_scan_work {
+	struct work_struct work;
+	struct Scsi_Host *host;
+	uint lun;
+};
+
+static void storvsc_bus_scan(struct work_struct *work)
+{
+	struct storvsc_scan_work *wrk;
+	int id, order_id;
+
+	wrk = container_of(work, struct storvsc_scan_work, work);
+	for (id = 0; id < wrk->host->max_id; ++id) {
+		if (wrk->host->reverse_ordering)
+			order_id = wrk->host->max_id - id - 1;
+		else
+			order_id = id;
+
+		scsi_scan_target(&wrk->host->shost_gendev, 0,
+				order_id, SCAN_WILD_CARD, 1);
+	}
+	kfree(wrk);
+}
+
+static void storvsc_remove_lun(struct work_struct *work)
+{
+	struct storvsc_scan_work *wrk;
+	struct scsi_device *sdev;
+
+	wrk = container_of(work, struct storvsc_scan_work, work);
+	if (!scsi_host_get(wrk->host))
+		goto done;
+
+	sdev = scsi_device_lookup(wrk->host, 0, 0, wrk->lun);
+
+	if (sdev) {
+		scsi_remove_device(sdev);
+		scsi_device_put(sdev);
+	}
+	scsi_host_put(wrk->host);
+
+done:
+	kfree(wrk);
+}
 
 static inline struct storvsc_device *get_out_stor_device(
 					struct hv_device *device)
@@ -510,20 +560,21 @@ static void storvsc_on_io_completion(struct hv_device *device,
 
 	if (vstor_packet->vm_srb.scsi_status != 0 ||
 		vstor_packet->vm_srb.srb_status != 1){
-		DPRINT_WARN(STORVSC,
-			    "cmd 0x%x scsi status 0x%x srb status 0x%x\n",
-			    stor_pkt->vm_srb.cdb[0],
-			    vstor_packet->vm_srb.scsi_status,
-			    vstor_packet->vm_srb.srb_status);
+		dev_warn(&device->device,
+			 "cmd 0x%x scsi status 0x%x srb status 0x%x\n",
+			 stor_pkt->vm_srb.cdb[0],
+			 vstor_packet->vm_srb.scsi_status,
+			 vstor_packet->vm_srb.srb_status);
 	}
 
 	if ((vstor_packet->vm_srb.scsi_status & 0xFF) == 0x02) {
 		/* CHECK_CONDITION */
 		if (vstor_packet->vm_srb.srb_status & 0x80) {
 			/* autosense data available */
-			DPRINT_WARN(STORVSC, "storvsc pkt %p autosense data "
-				    "valid - len %d\n", request,
-				    vstor_packet->vm_srb.sense_info_length);
+			dev_warn(&device->device,
+				 "stor pkt %p autosense data valid - len %d\n",
+				 request,
+				 vstor_packet->vm_srb.sense_info_length);
 
 			memcpy(request->sense_buffer,
 			       vstor_packet->vm_srb.sense_data,
@@ -548,11 +599,25 @@ static void storvsc_on_receive(struct hv_device *device,
 			     struct vstor_packet *vstor_packet,
 			     struct hv_storvsc_request *request)
 {
+	struct storvsc_scan_work *work;
+	struct storvsc_device *stor_device;
+
 	switch (vstor_packet->operation) {
 	case VSTOR_OPERATION_COMPLETE_IO:
 		storvsc_on_io_completion(device, vstor_packet, request);
 		break;
+
 	case VSTOR_OPERATION_REMOVE_DEVICE:
+	case VSTOR_OPERATION_ENUMERATE_BUS:
+		stor_device = get_in_stor_device(device);
+		work = kmalloc(sizeof(struct storvsc_scan_work), GFP_ATOMIC);
+		if (!work)
+			return;
+
+		INIT_WORK(&work->work, storvsc_bus_scan);
+		work->host = stor_device->host;
+		schedule_work(&work->work);
+		break;
 
 	default:
 		break;
@@ -728,7 +793,48 @@ static void storvsc_get_ide_info(struct hv_device *dev, int *target, int *path)
 
 static int storvsc_device_alloc(struct scsi_device *sdevice)
 {
+	struct stor_mem_pools *memp;
+	int number = STORVSC_MIN_BUF_NR;
+
+	memp = kzalloc(sizeof(struct stor_mem_pools), GFP_KERNEL);
+	if (!memp)
+		return -ENOMEM;
+
+	memp->request_pool =
+		kmem_cache_create(dev_name(&sdevice->sdev_dev),
+				sizeof(struct storvsc_cmd_request), 0,
+				SLAB_HWCACHE_ALIGN, NULL);
+
+	if (!memp->request_pool)
+		goto err0;
+
+	memp->request_mempool = mempool_create(number, mempool_alloc_slab,
+						mempool_free_slab,
+						memp->request_pool);
+
+	if (!memp->request_mempool)
+		goto err1;
+
+	sdevice->hostdata = memp;
+
 	return 0;
+
+err1:
+	kmem_cache_destroy(memp->request_pool);
+
+err0:
+	kfree(memp);
+	return -ENOMEM;
+}
+
+static void storvsc_device_destroy(struct scsi_device *sdevice)
+{
+	struct stor_mem_pools *memp = sdevice->hostdata;
+
+	mempool_destroy(memp->request_mempool);
+	kmem_cache_destroy(memp->request_pool);
+	kfree(memp);
+	sdevice->hostdata = NULL;
 }
 
 static int storvsc_device_configure(struct scsi_device *sdevice)
@@ -971,18 +1077,13 @@ static int storvsc_remove(struct hv_device *dev)
 {
 	struct storvsc_device *stor_device = hv_get_drvdata(dev);
 	struct Scsi_Host *host = stor_device->host;
-	struct hv_host_device *host_dev =
-			(struct hv_host_device *)host->hostdata;
 
 	scsi_remove_host(host);
 
 	scsi_host_put(host);
 
 	storvsc_dev_remove(dev);
-	if (host_dev->request_pool) {
-		kmem_cache_destroy(host_dev->request_pool);
-		host_dev->request_pool = NULL;
-	}
+
 	return 0;
 }
 
@@ -1020,7 +1121,7 @@ static int storvsc_host_reset(struct hv_device *device)
 
 	stor_device = get_out_stor_device(device);
 	if (!stor_device)
-		return -ENODEV;
+		return FAILED;
 
 	request = &stor_device->reset_request;
 	vstor_packet = &request->vstor_packet;
@@ -1037,13 +1138,11 @@ static int storvsc_host_reset(struct hv_device *device)
 			       VM_PKT_DATA_INBAND,
 			       VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED);
 	if (ret != 0)
-		goto cleanup;
+		return FAILED;
 
 	t = wait_for_completion_timeout(&request->wait_event, 5*HZ);
-	if (t == 0) {
-		ret = -ETIMEDOUT;
-		goto cleanup;
-	}
+	if (t == 0)
+		return TIMEOUT_ERROR;
 
 
 	/*
@@ -1051,8 +1150,7 @@ static int storvsc_host_reset(struct hv_device *device)
 	 * should have been flushed out and return to us
 	 */
 
-cleanup:
-	return ret;
+	return SUCCESS;
 }
 
 
@@ -1061,16 +1159,10 @@ cleanup:
  */
 static int storvsc_host_reset_handler(struct scsi_cmnd *scmnd)
 {
-	int ret;
-	struct hv_host_device *host_dev =
-		(struct hv_host_device *)scmnd->device->host->hostdata;
+	struct hv_host_device *host_dev = shost_priv(scmnd->device->host);
 	struct hv_device *dev = host_dev->dev;
 
-	ret = storvsc_host_reset(dev);
-	if (ret != 0)
-		return ret;
-
-	return ret;
+	return storvsc_host_reset(dev);
 }
 
 
@@ -1082,11 +1174,12 @@ static void storvsc_command_completion(struct hv_storvsc_request *request)
 	struct storvsc_cmd_request *cmd_request =
 		(struct storvsc_cmd_request *)request->context;
 	struct scsi_cmnd *scmnd = cmd_request->cmd;
-	struct hv_host_device *host_dev =
-		(struct hv_host_device *)scmnd->device->host->hostdata;
+	struct hv_host_device *host_dev = shost_priv(scmnd->device->host);
 	void (*scsi_done_fn)(struct scsi_cmnd *);
 	struct scsi_sense_hdr sense_hdr;
 	struct vmscsi_request *vm_srb;
+	struct storvsc_scan_work *wrk;
+	struct stor_mem_pools *memp = scmnd->device->hostdata;
 
 	vm_srb = &request->vstor_packet.vm_srb;
 	if (cmd_request->bounce_sgl_count) {
@@ -1109,10 +1202,33 @@ static void storvsc_command_completion(struct hv_storvsc_request *request)
 	else
 		scmnd->result = vm_srb->scsi_status;
 
+	/*
+	 * If the LUN is invalid; remove the device.
+	 */
+	if (vm_srb->srb_status == 0x20) {
+		struct storvsc_device *stor_dev;
+		struct hv_device *dev = host_dev->dev;
+		struct Scsi_Host *host;
+
+		stor_dev = get_in_stor_device(dev);
+		host = stor_dev->host;
+
+		wrk = kmalloc(sizeof(struct storvsc_scan_work),
+				GFP_ATOMIC);
+		if (!wrk) {
+			scmnd->result = DID_TARGET_FAILURE << 16;
+		} else {
+			wrk->host = host;
+			wrk->lun = vm_srb->lun;
+			INIT_WORK(&wrk->work, storvsc_remove_lun);
+			schedule_work(&wrk->work);
+		}
+	}
+
 	if (scmnd->result) {
 		if (scsi_normalize_sense(scmnd->sense_buffer,
 				SCSI_SENSE_BUFFERSIZE, &sense_hdr))
-			scsi_print_sense_hdr(KBUILD_MODNAME, &sense_hdr);
+			scsi_print_sense_hdr("storvsc", &sense_hdr);
 	}
 
 	scsi_set_resid(scmnd,
@@ -1126,7 +1242,7 @@ static void storvsc_command_completion(struct hv_storvsc_request *request)
 
 	scsi_done_fn(scmnd);
 
-	kmem_cache_free(host_dev->request_pool, cmd_request);
+	mempool_free(cmd_request, memp->request_mempool);
 }
 
 static bool storvsc_check_scsi_cmd(struct scsi_cmnd *scmnd)
@@ -1135,13 +1251,13 @@ static bool storvsc_check_scsi_cmd(struct scsi_cmnd *scmnd)
 	u8 scsi_op = scmnd->cmnd[0];
 
 	switch (scsi_op) {
-		/* smartd sends this command, which will offline the device */
-		case SET_WINDOW:
-			scmnd->result = DID_ERROR << 16;
-			allowed = false;
-			break;
-		default:
-			break;
+	/* smartd sends this command, which will offline the device */
+	case SET_WINDOW:
+		scmnd->result = ILLEGAL_REQUEST << 16;
+		allowed = false;
+		break;
+	default:
+		break;
 	}
 	return allowed;
 }
@@ -1149,12 +1265,10 @@ static bool storvsc_check_scsi_cmd(struct scsi_cmnd *scmnd)
 /*
  * storvsc_queuecommand - Initiate command processing
  */
-static int storvsc_queuecommand_lck(struct scsi_cmnd *scmnd,
-				void (*done)(struct scsi_cmnd *))
+static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
 {
 	int ret;
-	struct hv_host_device *host_dev =
-		(struct hv_host_device *)scmnd->device->host->hostdata;
+	struct hv_host_device *host_dev = shost_priv(host);
 	struct hv_device *dev = host_dev->dev;
 	struct hv_storvsc_request *request;
 	struct storvsc_cmd_request *cmd_request;
@@ -1163,9 +1277,10 @@ static int storvsc_queuecommand_lck(struct scsi_cmnd *scmnd,
 	struct scatterlist *sgl;
 	unsigned int sg_count = 0;
 	struct vmscsi_request *vm_srb;
+	struct stor_mem_pools *memp = scmnd->device->hostdata;
 
 	if (storvsc_check_scsi_cmd(scmnd) == false) {
-		done(scmnd);
+		scmnd->scsi_done(scmnd);
 		return 0;
 	}
 
@@ -1178,16 +1293,14 @@ static int storvsc_queuecommand_lck(struct scsi_cmnd *scmnd,
 		goto retry_request;
 	}
 
-	scmnd->scsi_done = done;
-
 	request_size = sizeof(struct storvsc_cmd_request);
 
-	cmd_request = kmem_cache_zalloc(host_dev->request_pool,
+	cmd_request = mempool_alloc(memp->request_mempool,
 				       GFP_ATOMIC);
-	if (!cmd_request) {
-		scmnd->scsi_done = NULL;
+	if (!cmd_request)
 		return SCSI_MLQUEUE_DEVICE_BUSY;
-	}
+
+	memset(cmd_request, 0, sizeof(struct storvsc_cmd_request));
 
 	/* Setup the cmd request */
 	cmd_request->bounce_sgl_count = 0;
@@ -1240,10 +1353,9 @@ static int storvsc_queuecommand_lck(struct scsi_cmnd *scmnd,
 						     scsi_bufflen(scmnd),
 						     vm_srb->data_in);
 			if (!cmd_request->bounce_sgl) {
-				scmnd->scsi_done = NULL;
 				scmnd->host_scribble = NULL;
-				kmem_cache_free(host_dev->request_pool,
-						cmd_request);
+				mempool_free(cmd_request,
+						memp->request_mempool);
 
 				return SCSI_MLQUEUE_HOST_BUSY;
 			}
@@ -1285,9 +1397,8 @@ retry_request:
 			destroy_bounce_buffer(cmd_request->bounce_sgl,
 					cmd_request->bounce_sgl_count);
 
-		kmem_cache_free(host_dev->request_pool, cmd_request);
+		mempool_free(cmd_request, memp->request_mempool);
 
-		scmnd->scsi_done = NULL;
 		scmnd->host_scribble = NULL;
 
 		ret = SCSI_MLQUEUE_DEVICE_BUSY;
@@ -1295,9 +1406,6 @@ retry_request:
 
 	return ret;
 }
-
-static DEF_SCSI_QCMD(storvsc_queuecommand)
-
 
 /* Scsi driver */
 static struct scsi_host_template scsi_driver = {
@@ -1308,6 +1416,7 @@ static struct scsi_host_template scsi_driver = {
 	.queuecommand =		storvsc_queuecommand,
 	.eh_host_reset_handler =	storvsc_host_reset_handler,
 	.slave_alloc =		storvsc_device_alloc,
+	.slave_destroy =	storvsc_device_destroy,
 	.slave_configure =	storvsc_device_configure,
 	.cmd_per_lun =		1,
 	/* 64 max_queue * 1 target */
@@ -1361,27 +1470,17 @@ static int storvsc_probe(struct hv_device *device,
 	if (!host)
 		return -ENOMEM;
 
-	host_dev = (struct hv_host_device *)host->hostdata;
+	host_dev = shost_priv(host);
 	memset(host_dev, 0, sizeof(struct hv_host_device));
 
 	host_dev->port = host->host_no;
 	host_dev->dev = device;
 
-	host_dev->request_pool =
-				kmem_cache_create(dev_name(&device->device),
-					sizeof(struct storvsc_cmd_request), 0,
-					SLAB_HWCACHE_ALIGN, NULL);
-
-	if (!host_dev->request_pool) {
-		scsi_host_put(host);
-		return -ENOMEM;
-	}
 
 	stor_device = kzalloc(sizeof(struct storvsc_device), GFP_KERNEL);
 	if (!stor_device) {
-		kmem_cache_destroy(host_dev->request_pool);
-		scsi_host_put(host);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_out0;
 	}
 
 	stor_device->destroy = false;
@@ -1392,12 +1491,8 @@ static int storvsc_probe(struct hv_device *device,
 
 	stor_device->port_number = host->host_no;
 	ret = storvsc_connect_to_vsp(device, storvsc_ringbuffer_size);
-	if (ret) {
-		kmem_cache_destroy(host_dev->request_pool);
-		scsi_host_put(host);
-		kfree(stor_device);
-		return ret;
-	}
+	if (ret)
+		goto err_out1;
 
 	if (dev_is_ide)
 		storvsc_get_ide_info(device, &target, &path);
@@ -1417,7 +1512,7 @@ static int storvsc_probe(struct hv_device *device,
 	/* Register the HBA and start the scsi bus scan */
 	ret = scsi_add_host(host, &device->device);
 	if (ret != 0)
-		goto err_out;
+		goto err_out2;
 
 	if (!dev_is_ide) {
 		scsi_scan_host(host);
@@ -1426,15 +1521,26 @@ static int storvsc_probe(struct hv_device *device,
 	ret = scsi_add_device(host, 0, target, 0);
 	if (ret) {
 		scsi_remove_host(host);
-		goto err_out;
+		goto err_out2;
 	}
 	return 0;
 
-err_out:
+err_out2:
+	/*
+	 * Once we have connected with the host, we would need to
+	 * to invoke storvsc_dev_remove() to rollback this state and
+	 * this call also frees up the stor_device; hence the jump around
+	 * err_out1 label.
+	 */
 	storvsc_dev_remove(device);
-	kmem_cache_destroy(host_dev->request_pool);
+	goto err_out0;
+
+err_out1:
+	kfree(stor_device);
+
+err_out0:
 	scsi_host_put(host);
-	return -ENODEV;
+	return ret;
 }
 
 /* The one and only one */
