@@ -3200,9 +3200,10 @@ ncls:
 			ret = deliver_skb(skb, pt_prev, orig_dev);
 			pt_prev = NULL;
 		}
-		if (vlan_do_receive(&skb, !rx_handler))
+		if (vlan_do_receive(&skb, !rx_handler)) {
+			orig_dev = skb->dev;
 			goto another_round;
-		else if (unlikely(!skb))
+		} else if (unlikely(!skb))
 			goto unlock;
 	}
 
