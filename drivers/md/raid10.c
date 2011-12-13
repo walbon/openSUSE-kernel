@@ -1758,19 +1758,18 @@ static void raid10d(mddev_t *mddev)
 			 */
 			rdev = conf->mirrors[mirror].rdev;
 			bio = r10_bio->devs[slot].bio;
+			r10_bio->devs[slot].bio = NULL;
 			if (mddev->ro)
 				r10_bio->devs[slot].bio = IO_BLOCKED;
 			else if (!test_bit(FailFast, &rdev->flags)) {
 				freeze_array(conf);
 				fix_read_error(conf, mddev, r10_bio);
 				unfreeze_array(conf);
-				r10_bio->devs[slot].bio = NULL;
 			} else
 				md_error(mddev, rdev);
 
 			rdev_dec_pending(rdev, mddev);
 
-			bio = r10_bio->devs[slot].bio;
 			mirror = read_balance(conf, r10_bio);
 			if (mirror == -1) {
 				printk(KERN_ALERT "md/raid10:%s: %s: unrecoverable I/O"
