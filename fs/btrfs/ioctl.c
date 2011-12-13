@@ -870,8 +870,10 @@ static int cluster_pages_for_defrag(struct inode *inode,
 		return 0;
 	file_end = (isize - 1) >> PAGE_CACHE_SHIFT;
 
+	mutex_lock(&inode->i_mutex);
 	ret = btrfs_delalloc_reserve_space(inode,
 					   num_pages << PAGE_CACHE_SHIFT);
+	mutex_unlock(&inode->i_mutex);
 	if (ret)
 		return ret;
 again:
@@ -3012,13 +3014,18 @@ static int build_ino_list(u64 inum, u64 offset, u64 root, void *ctx)
 
 /*
  * Returns the compressed size of an inode in 512 byte blocks.
- * Count the on-disk space used by all of its extents, inline data are rounded
- * up to sector, ie. 512.
+ * Count the on-disk space used by extents starting in range [start, end),
+ * inline data are rounded up to sector, ie. 512.
+ *
+ * The range is start inclusive and end exclusive so it can be used to
+ * determine compressed size of a given extent by its start and start of the
+ * next extent easily, without counting length.
+ * Whole file is specified as start = 0, end = (u64)-1
  */
 static long btrfs_ioctl_compsize(struct file *file, void __user *argp)
 {
 	struct inode *inode = fdentry(file)->d_inode;
-	struct extent_map *em;
+	struct btrfs_ioctl_compr_size_args compr_args;
 	u64 len;
 	u64 compressed_size = 0;
 	u64 offset = 0;
@@ -3026,17 +3033,30 @@ static long btrfs_ioctl_compsize(struct file *file, void __user *argp)
 	if (S_ISDIR(inode->i_mode))
 		return -EISDIR;
 
+	if (copy_from_user(&compr_args, argp,
+				sizeof(struct btrfs_ioctl_compr_size_args)))
+		return -EFAULT;
+
+	if (compr_args.start < compr_args.end)
+		return -EINVAL;
+
 	mutex_lock(&inode->i_mutex);
+
+	offset = compr_args.start;
+	if (inode->i_size > compr_args.end)
+		len = compr_args.end;
+	else
+		len = inode->i_size;
 
 	/*
 	 * do any pending delalloc/csum calc on inode, one way or
 	 * another, and lock file content
 	 */
-	btrfs_wait_ordered_range(inode, 0, (u64)-1);
-
-	len = inode->i_size;
+	btrfs_wait_ordered_range(inode, compr_args.start, len);
 
 	while (offset < len) {
+		struct extent_map *em;
+
 		em = btrfs_get_extent(inode, NULL, 0, offset, 1, 0);
 		if (IS_ERR_OR_NULL(em))
 			goto error;
@@ -3050,18 +3070,19 @@ static long btrfs_ioctl_compsize(struct file *file, void __user *argp)
 	}
 	mutex_unlock(&inode->i_mutex);
 
-	unlock_extent(&BTRFS_I(inode)->io_tree, 0, len);
+	unlock_extent(&BTRFS_I(inode)->io_tree, compr_args.start, len);
 
-	compressed_size >>= 9;
+	compr_args.size = compressed_size >> 9;
 
-	if (copy_to_user(argp, &compressed_size, sizeof(compressed_size)))
+	if (copy_to_user(argp, &compr_args, sizeof(struct
+					btrfs_ioctl_compr_size_args)))
 		return -EFAULT;
 
 	return 0;
 
 error:
 	mutex_unlock(&inode->i_mutex);
-	unlock_extent(&BTRFS_I(inode)->io_tree, 0, len);
+	unlock_extent(&BTRFS_I(inode)->io_tree, compr_args.start, len);
 
 	return -EIO;
 }
