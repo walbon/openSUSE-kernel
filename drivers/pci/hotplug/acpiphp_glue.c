@@ -131,6 +131,18 @@ register_slot(acpi_handle handle, u32 lvl, void *context, void **rv)
 	if (!acpi_pci_check_ejectable(pbus, handle) && !is_dock_device(handle))
 		return AE_OK;
 
+	pdev = pbus->self;
+	if (pdev && pci_is_pcie(pdev)) {
+		tmp = acpi_find_root_bridge_handle(pdev);
+		if (tmp) {
+			struct acpi_pci_root *root = acpi_pci_find_root(tmp);
+
+			if (root && (root->osc_control_set &
+					OSC_PCI_EXPRESS_NATIVE_HP_CONTROL))
+				return AE_OK;
+		}
+	}
+
 	acpi_evaluate_integer(handle, "_ADR", NULL, &adr);
 	device = (adr >> 16) & 0xffff;
 	function = adr & 0xffff;
@@ -458,16 +470,7 @@ static int add_bridge(acpi_handle handle)
 {
 	acpi_status status;
 	unsigned long long tmp;
-	struct acpi_pci_root *root;
 	acpi_handle dummy_handle;
-
-	/*
-	 * We shouldn't use this bridge if PCIe native hotplug control has been
-	 * granted by the BIOS for it.
-	 */
-	root = acpi_pci_find_root(handle);
-	if (root && (root->osc_control_set & OSC_PCI_EXPRESS_NATIVE_HP_CONTROL))
-		return -ENODEV;
 
 	/* if the bridge doesn't have _STA, we assume it is always there */
 	status = acpi_get_handle(handle, "_STA", &dummy_handle);
@@ -1306,23 +1309,13 @@ static void handle_hotplug_event_func(acpi_handle handle, u32 type, void *contex
 static acpi_status
 find_root_bridges(acpi_handle handle, u32 lvl, void *context, void **rv)
 {
-	struct acpi_pci_root *root;
 	int *count = (int *)context;
 
-	if (!acpi_is_root_bridge(handle))
-		return AE_OK;
-
-	root = acpi_pci_find_root(handle);
-	if (!root)
-		return AE_OK;
-
-	if (root->osc_control_set & OSC_PCI_EXPRESS_NATIVE_HP_CONTROL)
-		return AE_OK;
-
-	(*count)++;
-	acpi_install_notify_handler(handle, ACPI_SYSTEM_NOTIFY,
-				    handle_hotplug_event_bridge, NULL);
-
+	if (acpi_is_root_bridge(handle)) {
+		acpi_install_notify_handler(handle, ACPI_SYSTEM_NOTIFY,
+				handle_hotplug_event_bridge, NULL);
+			(*count)++;
+	}
 	return AE_OK ;
 }
 

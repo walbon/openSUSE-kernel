@@ -983,6 +983,32 @@ static void status(struct seq_file *seq, mddev_t *mddev)
 	seq_printf(seq, "]");
 }
 
+/* check if there are enough drives for
+ * every block to appear on atleast one.
+ * Don't consider the device numbered 'ignore'
+ * as we might be about to remove it.
+ */
+static int enough(conf_t *conf, int ignore)
+{
+	int first = 0;
+
+	do {
+		int n = conf->copies;
+		int cnt = 0;
+		while (n--) {
+			mdk_rdev_t *rdev = conf->mirrors[first].rdev;
+			if (rdev &&
+			    test_bit(In_sync, &rdev->flags) &&
+			    first != ignore)
+				cnt++;
+			first = (first+1) % conf->raid_disks;
+		}
+		if (cnt == 0)
+			return 0;
+	} while (first != 0);
+	return 1;
+}
+
 static void error(mddev_t *mddev, mdk_rdev_t *rdev)
 {
 	char b[BDEVNAME_SIZE];
@@ -997,13 +1023,9 @@ static void error(mddev_t *mddev, mdk_rdev_t *rdev)
 	 */
 	spin_lock_irqsave(&conf->device_lock, flags);
 	if (test_bit(In_sync, &rdev->flags)
-	    && conf->raid_disks-mddev->degraded == 1) {
+	    && !enough(conf, rdev->raid_disk)) {
 		/*
 		 * Don't fail the drive, just return an IO error.
-		 * The test should really be more sophisticated than
-		 * "working_disks == 1", but it isn't critical, and
-		 * can wait until we do more sophisticated "is the drive
-		 * really dead" tests...
 		 */
 		spin_unlock_irqrestore(&conf->device_lock, flags);
 		return;
@@ -1056,30 +1078,6 @@ static void close_sync(conf_t *conf)
 
 	mempool_destroy(conf->r10buf_pool);
 	conf->r10buf_pool = NULL;
-}
-
-/* check if there are enough drives for
- * every block to appear on atleast one
- */
-static int enough(conf_t *conf, int ignore)
-{
-	int first = 0;
-
-	do {
-		int n = conf->copies;
-		int cnt = 0;
-		while (n--) {
-			mdk_rdev_t *rdev = conf->mirrors[first].rdev;
-			if (rdev &&
-			    test_bit(In_sync, &rdev->flags) &&
-			    first != ignore)
-				cnt++;
-			first = (first+1) % conf->raid_disks;
-		}
-		if (cnt == 0)
-			return 0;
-	} while (first != 0);
-	return 1;
 }
 
 static int raid10_spare_active(mddev_t *mddev)
@@ -1758,19 +1756,18 @@ static void raid10d(mddev_t *mddev)
 			 */
 			rdev = conf->mirrors[mirror].rdev;
 			bio = r10_bio->devs[slot].bio;
+			r10_bio->devs[slot].bio = NULL;
 			if (mddev->ro)
 				r10_bio->devs[slot].bio = IO_BLOCKED;
 			else if (!test_bit(FailFast, &rdev->flags)) {
 				freeze_array(conf);
 				fix_read_error(conf, mddev, r10_bio);
 				unfreeze_array(conf);
-				r10_bio->devs[slot].bio = NULL;
 			} else
 				md_error(mddev, rdev);
 
 			rdev_dec_pending(rdev, mddev);
 
-			bio = r10_bio->devs[slot].bio;
 			mirror = read_balance(conf, r10_bio);
 			if (mirror == -1) {
 				printk(KERN_ALERT "md/raid10:%s: %s: unrecoverable I/O"

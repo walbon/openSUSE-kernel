@@ -2064,7 +2064,7 @@ int btrfs_orphan_add(struct btrfs_trans_handle *trans, struct inode *inode)
 	/* insert an orphan item to track this unlinked/truncated file */
 	if (insert >= 1) {
 		ret = btrfs_insert_orphan_item(trans, root, btrfs_ino(inode));
-		BUG_ON(ret);
+		BUG_ON(ret && ret != -EEXIST);
 	}
 
 	/* insert an orphan item to track subvolume contains orphan files */
@@ -2224,7 +2224,14 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 				continue;
 			}
 			nr_truncate++;
+			/*
+			 * Need to hold the imutex for reservation purposes, not
+			 * a huge deal here but I have a WARN_ON in
+			 * btrfs_delalloc_reserve_space to catch offenders.
+			 */
+			mutex_lock(&inode->i_mutex);
 			ret = btrfs_truncate(inode);
+			mutex_unlock(&inode->i_mutex);
 		} else {
 			nr_unlink++;
 		}
@@ -3351,7 +3358,7 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
 			u64 hint_byte = 0;
 			hole_size = last_byte - cur_offset;
 
-			trans = btrfs_start_transaction(root, 2);
+			trans = btrfs_start_transaction(root, 3);
 			if (IS_ERR(trans)) {
 				err = PTR_ERR(trans);
 				break;
@@ -3361,6 +3368,7 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
 						 cur_offset + hole_size,
 						 &hint_byte, 1);
 			if (err) {
+				btrfs_update_inode(trans, root, inode);
 				btrfs_end_transaction(trans, root);
 				break;
 			}
@@ -3370,6 +3378,7 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
 					0, hole_size, 0, hole_size,
 					0, 0, 0);
 			if (err) {
+				btrfs_update_inode(trans, root, inode);
 				btrfs_end_transaction(trans, root);
 				break;
 			}
@@ -3377,6 +3386,7 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
 			btrfs_drop_extent_cache(inode, hole_start,
 					last_byte - 1, 0);
 
+			btrfs_update_inode(trans, root, inode);
 			btrfs_end_transaction(trans, root);
 		}
 		free_extent_map(em);
@@ -3393,6 +3403,8 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
 
 static int btrfs_setsize(struct inode *inode, loff_t newsize)
 {
+	struct btrfs_root *root = BTRFS_I(inode)->root;
+	struct btrfs_trans_handle *trans;
 	loff_t oldsize = i_size_read(inode);
 	int ret;
 
@@ -3400,16 +3412,22 @@ static int btrfs_setsize(struct inode *inode, loff_t newsize)
 		return 0;
 
 	if (newsize > oldsize) {
-		i_size_write(inode, newsize);
-		btrfs_ordered_update_i_size(inode, i_size_read(inode), NULL);
-		truncate_pagecache(inode, oldsize, newsize);
 		ret = btrfs_cont_expand(inode, oldsize, newsize);
-		if (ret) {
-			btrfs_setsize(inode, oldsize);
+		if (ret)
 			return ret;
+
+		truncate_setsize(inode, newsize);
+
+		trans = btrfs_start_transaction(root, 1);
+		if (IS_ERR(trans)) {
+			truncate_setsize(inode, oldsize);
+			return PTR_ERR(trans);
 		}
 
-		ret = btrfs_dirty_inode(inode);
+ 		btrfs_ordered_update_i_size(inode, i_size_read(inode), NULL);
+		ret = btrfs_update_inode(trans, root, inode);
+
+		btrfs_end_transaction_throttle(trans, root);
 	} else {
 
 		/*
@@ -3905,6 +3923,8 @@ struct inode *btrfs_lookup_dentry(struct inode *dir, struct dentry *dentry)
 		memcpy(&location, dentry->d_fsdata, sizeof(struct btrfs_key));
 		kfree(dentry->d_fsdata);
 		dentry->d_fsdata = NULL;
+		/* This thing is hashed, drop it for now */
+		d_drop(dentry);
 	} else {
 		ret = btrfs_inode_by_name(dir, dentry, &location);
 	}
@@ -3971,16 +3991,24 @@ static void btrfs_dentry_release(struct dentry *dentry)
 static struct dentry *btrfs_lookup(struct inode *dir, struct dentry *dentry,
 				   struct nameidata *nd)
 {
-	struct inode *inode = btrfs_lookup_dentry(dir, dentry);
+	struct inode *inode;
+	struct dentry *ret;
 
-	if (IS_ERR(inode)) {
-		if (PTR_ERR(inode) == -ENOENT)
-			inode = NULL;
-		else
-			return ERR_CAST(inode);
+	inode = btrfs_lookup_dentry(dir, dentry);
+ 	if (IS_ERR(inode)) {
+ 		if (PTR_ERR(inode) == -ENOENT)
+ 			inode = NULL;
+ 		else
+ 			return ERR_CAST(inode);
+ 	}
+
+	ret = d_splice_alias(inode, dentry);
+	if (unlikely(d_need_lookup(dentry))) {
+		spin_lock(&dentry->d_lock);
+		dentry->d_flags &= ~DCACHE_NEED_LOOKUP;
+		spin_unlock(&dentry->d_lock);
 	}
-
-	return d_splice_alias(inode, dentry);
+	return ret;
 }
 
 unsigned char btrfs_filetype_table[] = {
@@ -6352,7 +6380,10 @@ int btrfs_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 	u64 page_start;
 	u64 page_end;
 
+	/* Need this to keep space reservations serialized */
+	mutex_lock(&inode->i_mutex);
 	ret  = btrfs_delalloc_reserve_space(inode, PAGE_CACHE_SIZE);
+	mutex_unlock(&inode->i_mutex);
 	if (!ret)
 		ret = btrfs_update_time(vma->vm_file);
 	if (ret) {
@@ -6558,8 +6589,9 @@ static int btrfs_truncate(struct inode *inode)
 			/* Just need the 1 for updating the inode */
 			trans = btrfs_start_transaction(root, 1);
 			if (IS_ERR(trans)) {
-				err = PTR_ERR(trans);
-				goto out;
+				ret = err = PTR_ERR(trans);
+				trans = NULL;
+				break;
 			}
 		}
 
