@@ -252,11 +252,11 @@ static int btrfs_ioctl_setflags(struct file *file, void __user *arg)
 	trans = btrfs_join_transaction(root);
 	BUG_ON(IS_ERR(trans));
 
+	btrfs_update_iflags(inode);
+	inode->i_ctime = CURRENT_TIME;
 	ret = btrfs_update_inode(trans, root, inode);
 	BUG_ON(ret);
 
-	btrfs_update_iflags(inode);
-	inode->i_ctime = CURRENT_TIME;
 	btrfs_end_transaction(trans, root);
 
 	mnt_drop_write(file->f_path.mnt);
@@ -3037,7 +3037,7 @@ static long btrfs_ioctl_compsize(struct file *file, void __user *argp)
 				sizeof(struct btrfs_ioctl_compr_size_args)))
 		return -EFAULT;
 
-	if (compr_args.start < compr_args.end)
+	if (compr_args.start > compr_args.end)
 		return -EINVAL;
 
 	mutex_lock(&inode->i_mutex);

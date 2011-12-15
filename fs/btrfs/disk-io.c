@@ -1577,11 +1577,13 @@ static int cleaner_kthread(void *arg)
 		vfs_check_frozen(root->fs_info->sb, SB_FREEZE_WRITE);
 
 		if (!(root->fs_info->sb->s_flags & MS_RDONLY) &&
+			down_read_trylock(&root->fs_info->sb->s_umount) &&
 		    mutex_trylock(&root->fs_info->cleaner_mutex)) {
 			btrfs_run_delayed_iputs(root);
 			btrfs_clean_old_snapshots(root);
 			mutex_unlock(&root->fs_info->cleaner_mutex);
 			btrfs_run_defrag_inodes(root->fs_info);
+			up_read(&root->fs_info->sb->s_umount);
 		}
 
 		if (freezing(current)) {
@@ -2287,9 +2289,7 @@ struct btrfs_root *open_ctree(struct super_block *sb,
 	   (unsigned long)btrfs_header_chunk_tree_uuid(chunk_root->node),
 	   BTRFS_UUID_SIZE);
 
-	mutex_lock(&fs_info->chunk_mutex);
 	ret = btrfs_read_chunk_tree(chunk_root);
-	mutex_unlock(&fs_info->chunk_mutex);
 	if (ret) {
 		printk(KERN_WARNING "btrfs: failed to read chunk tree on %s\n",
 		       sb->s_id);

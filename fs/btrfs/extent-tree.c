@@ -2803,7 +2803,7 @@ out_free:
 	btrfs_release_path(path);
 out:
 	spin_lock(&block_group->lock);
-	if (!ret)
+	if (!ret && dcs == BTRFS_DC_SETUP)
 		block_group->cache_generation = trans->transid;
 	block_group->disk_cache_state = dcs;
 	spin_unlock(&block_group->lock);
@@ -4218,11 +4218,11 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	int flush = 1;
 	int ret;
 
-	/* Need to be holding the i_mutex here */
-	WARN_ON(!mutex_is_locked(&inode->i_mutex));
-
+	/* Need to be holding the i_mutex here if we aren't free space cache */
 	if (btrfs_is_free_space_inode(root, inode))
 		flush = 0;
+	else
+		WARN_ON(!mutex_is_locked(&inode->i_mutex));
 
 	if (flush && btrfs_transaction_in_commit(root->fs_info))
 		schedule_timeout(1);
@@ -7476,6 +7476,7 @@ int btrfs_make_block_group(struct btrfs_trans_handle *trans,
 	ret = update_space_info(root->fs_info, cache->flags, size, bytes_used,
 				&cache->space_info);
 	BUG_ON(ret);
+	update_global_block_rsv(root->fs_info);
 
 	spin_lock(&cache->space_info->lock);
 	cache->space_info->bytes_readonly += cache->bytes_super;
