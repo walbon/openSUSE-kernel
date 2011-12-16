@@ -476,6 +476,8 @@ struct xenpf_mem_hotadd
 };
 
 #define XENPF_get_cpu_freq        ('N' << 24)
+#define XENPF_get_cpu_freq_min    (XENPF_get_cpu_freq + 1)
+#define XENPF_get_cpu_freq_max    (XENPF_get_cpu_freq_min + 1)
 struct xenpf_get_cpu_freq {
     /* IN variables */
     uint32_t vcpu;
