@@ -71,7 +71,7 @@ module_param(cciss_tape_cmds, int, 0644);
 MODULE_PARM_DESC(cciss_tape_cmds,
 	"number of commands to allocate for tape devices (default: 6)");
 
-static int cciss_allow_hpsa = 1;
+static int cciss_allow_hpsa = 0;
 module_param(cciss_allow_hpsa, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(cciss_allow_hpsa,
 	"Prevent cciss driver from accessing hardware known to be "
