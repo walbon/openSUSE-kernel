@@ -49,19 +49,19 @@ module_param_named(panel_ignore_lid, i915_panel_ignore_lid, int, 0600);
 unsigned int i915_powersave = 1;
 module_param_named(powersave, i915_powersave, int, 0600);
 
-unsigned int i915_semaphores = 0;
+int i915_semaphores = -1;
 module_param_named(semaphores, i915_semaphores, int, 0600);
 
 int i915_enable_rc6 = -1;
 module_param_named(i915_enable_rc6, i915_enable_rc6, int, 0600);
 
-unsigned int i915_enable_fbc = 0;
+int i915_enable_fbc = -1;
 module_param_named(i915_enable_fbc, i915_enable_fbc, int, 0600);
 
 unsigned int i915_lvds_downclock = 0;
 module_param_named(lvds_downclock, i915_lvds_downclock, int, 0400);
 
-unsigned int i915_panel_use_ssc = 1;
+int i915_panel_use_ssc __read_mostly = -1;
 module_param_named(lvds_use_ssc, i915_panel_use_ssc, int, 0600);
 
 int i915_vbt_sdvo_panel_type = -1;
@@ -74,7 +74,7 @@ static struct drm_driver driver;
 extern int intel_agp_enabled;
 
 #define INTEL_VGA_DEVICE(id, info) {		\
-	.class = PCI_CLASS_DISPLAY_VGA << 8,	\
+	.class = PCI_BASE_CLASS_DISPLAY << 16,	\
 	.class_mask = 0xff0000,			\
 	.vendor = 0x8086,			\
 	.device = id,				\
@@ -367,12 +367,17 @@ void gen6_gt_force_wake_put(struct drm_i915_private *dev_priv)
 
 void __gen6_gt_wait_for_fifo(struct drm_i915_private *dev_priv)
 {
-	int loop = 500;
-	u32 fifo = I915_READ_NOTRACE(GT_FIFO_FREE_ENTRIES);
-	while (fifo < 20 && loop--) {
-		udelay(10);
-		fifo = I915_READ_NOTRACE(GT_FIFO_FREE_ENTRIES);
+	if (dev_priv->gt_fifo_count < GT_FIFO_NUM_RESERVED_ENTRIES ) {
+		int loop = 500;
+		u32 fifo = I915_READ_NOTRACE(GT_FIFO_FREE_ENTRIES);
+		while (fifo <= GT_FIFO_NUM_RESERVED_ENTRIES && loop--) {
+			udelay(10);
+			fifo = I915_READ_NOTRACE(GT_FIFO_FREE_ENTRIES);
+		}
+		WARN_ON(loop < 0 && fifo <= GT_FIFO_NUM_RESERVED_ENTRIES);
+		dev_priv->gt_fifo_count = fifo;
 	}
+	dev_priv->gt_fifo_count--;
 }
 
 static int i915_drm_freeze(struct drm_device *dev)
@@ -455,6 +460,9 @@ static int i915_drm_thaw(struct drm_device *dev)
 
 		error = i915_gem_init_ringbuffer(dev);
 		mutex_unlock(&dev->struct_mutex);
+
+		if (HAS_PCH_SPLIT(dev))
+			ironlake_init_pch_refclk(dev);
 
 		drm_mode_config_reset(dev);
 		drm_irq_install(dev);
