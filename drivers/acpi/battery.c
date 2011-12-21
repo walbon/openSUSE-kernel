@@ -101,6 +101,7 @@ enum {
 
 struct acpi_battery {
 	struct mutex lock;
+	struct mutex sysfs_lock;
 	struct power_supply bat;
 	struct acpi_device *device;
 	struct notifier_block pm_nb;
@@ -566,11 +567,16 @@ static int sysfs_add_battery(struct acpi_battery *battery)
 
 static void sysfs_remove_battery(struct acpi_battery *battery)
 {
-	if (!battery->bat.dev)
+	mutex_lock(&battery->sysfs_lock);
+	if (!battery->bat.dev) {
+		mutex_unlock(&battery->sysfs_lock);
 		return;
+	}
+
 	device_remove_file(battery->bat.dev, &alarm_attr);
 	power_supply_unregister(&battery->bat);
 	battery->bat.dev = NULL;
+	mutex_unlock(&battery->sysfs_lock);
 }
 
 static void acpi_battery_quirks(struct acpi_battery *battery)
@@ -626,8 +632,11 @@ static int acpi_battery_update(struct acpi_battery *battery)
 		acpi_battery_quirks(battery);
 		acpi_battery_init_alarm(battery);
 	}
-	if (!battery->bat.dev)
-		sysfs_add_battery(battery);
+	if (!battery->bat.dev) {
+		result = sysfs_add_battery(battery);
+		if (result)
+			return result;
+	}
 	result = acpi_battery_get_state(battery);
 	acpi_battery_quirks2(battery);
 	return result;
@@ -948,9 +957,12 @@ static int battery_notify(struct notifier_block *nb,
 	struct acpi_battery *battery = container_of(nb, struct acpi_battery,
 						    pm_nb);
 	switch (mode) {
+	case PM_POST_HIBERNATION:
 	case PM_POST_SUSPEND:
-		sysfs_remove_battery(battery);
-		sysfs_add_battery(battery);
+		if (battery->bat.dev) {
+			sysfs_remove_battery(battery);
+			sysfs_add_battery(battery);
+		}
 		break;
 	}
 
@@ -972,27 +984,37 @@ static int acpi_battery_add(struct acpi_device *device)
 	strcpy(acpi_device_class(device), ACPI_BATTERY_CLASS);
 	device->driver_data = battery;
 	mutex_init(&battery->lock);
+	mutex_init(&battery->sysfs_lock);
 	if (ACPI_SUCCESS(acpi_get_handle(battery->device->handle,
 			"_BIX", &handle)))
 		set_bit(ACPI_BATTERY_XINFO_PRESENT, &battery->flags);
-	acpi_battery_update(battery);
+	result = acpi_battery_update(battery);
+	if (result)
+		goto fail;
 #ifdef CONFIG_ACPI_PROCFS_POWER
 	result = acpi_battery_add_fs(device);
 #endif
-	if (!result) {
-		printk(KERN_INFO PREFIX "%s Slot [%s] (battery %s)\n",
-			ACPI_BATTERY_DEVICE_NAME, acpi_device_bid(device),
-			device->status.battery_present ? "present" : "absent");
-	} else {
+	if (result) {
 #ifdef CONFIG_ACPI_PROCFS_POWER
 		acpi_battery_remove_fs(device);
 #endif
-		kfree(battery);
+		goto fail;
 	}
+
+	printk(KERN_INFO PREFIX "%s Slot [%s] (battery %s)\n",
+		ACPI_BATTERY_DEVICE_NAME, acpi_device_bid(device),
+		device->status.battery_present ? "present" : "absent");
 
 	battery->pm_nb.notifier_call = battery_notify;
 	register_pm_notifier(&battery->pm_nb);
 
+	return result;
+
+fail:
+	sysfs_remove_battery(battery);
+	mutex_destroy(&battery->lock);
+	mutex_destroy(&battery->sysfs_lock);
+	kfree(battery);
 	return result;
 }
 
@@ -1009,6 +1031,7 @@ static int acpi_battery_remove(struct acpi_device *device, int type)
 #endif
 	sysfs_remove_battery(battery);
 	mutex_destroy(&battery->lock);
+	mutex_destroy(&battery->sysfs_lock);
 	kfree(battery);
 	return 0;
 }
