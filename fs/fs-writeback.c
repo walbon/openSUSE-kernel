@@ -730,6 +730,15 @@ static long wb_writeback(struct bdi_writeback *wb,
 		if (work->for_background && !over_bground_thresh())
 			break;
 
+		/*
+		 * We reset start time stamp for background writeback.
+		 * Livelock avoidance is done by background work yielding to
+		 * other works and we don't want to leave out some inodes when
+		 * background work is running for a long time.
+		 */
+		if (work->for_background)
+			wbc.wb_start = jiffies;
+
 		wbc.more_io = 0;
 		wbc.nr_to_write = write_chunk;
 		wbc.pages_skipped = 0;

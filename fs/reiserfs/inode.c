@@ -2441,14 +2441,7 @@ static int reiserfs_write_full_page(struct page *page,
 		/* from this point on, we know the buffer is mapped to a
 		 * real block and not a direct item
 		 */
-		if (wbc->sync_mode != WB_SYNC_NONE) {
-			lock_buffer(bh);
-		} else {
-			if (!trylock_buffer(bh)) {
-				redirty_page_for_writepage(wbc, page);
-				continue;
-			}
-		}
+		lock_buffer(bh);
 		if (test_clear_buffer_dirty(bh)) {
 			mark_buffer_async_write(bh);
 		} else {
