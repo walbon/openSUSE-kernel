@@ -760,6 +760,8 @@ static void put_core_offline(unsigned int cpu)
 		return;
 
 	pdata = platform_get_drvdata(pdev);
+	if (!pdata)
+		return;
 
 	if (xen_get_topology_info(cpu, &cpu_core_id, &phys_proc_id, NULL))
 		return;

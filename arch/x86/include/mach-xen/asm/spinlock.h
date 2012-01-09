@@ -83,15 +83,22 @@ void xen_spin_kick(arch_spinlock_t *, unsigned int token);
 	asm("1:\t" \
 	    "cmpb %h0, %b0\n\t" \
 	    "je 2f\n\t" \
+	    "cmpl %3, %4\n\t" \
+	    "jne 4f\n\t" \
 	    "decl %1\n\t" \
-	    "jz 2f\n\t" \
+	    "jz 2f\n" \
+	    "3:\t" \
 	    "rep ; nop\n\t" \
 	    "movb %2, %b0\n\t" \
 	    /* don't need lfence here, because loads are in-order */ \
 	    "jmp 1b\n" \
+	    "4:\t" \
+	    "shrl $1, %1\n\t" \
+	    "jnz 3b\n" \
 	    "2:" \
 	    : "+Q" (token), "+g" (count) \
-	    : "m" (lock->slock) \
+	    : "m" (lock->slock), "i" (RUNSTATE_running), \
+	      "m" (per_cpu(runstate.state, lock->owner)) \
 	    : "memory", "cc")
 #define __ticket_spin_unlock_body \
 	asm(UNLOCK_LOCK_PREFIX "incb %2\n\t" \
@@ -143,15 +150,22 @@ static __always_inline int __ticket_spin_trylock(arch_spinlock_t *lock)
 		    "1:\t" \
 		    "cmpw %w2, %w0\n\t" \
 		    "je 2f\n\t" \
+		    "cmpl %4, %5\n\t" \
+		    "jne 4f\n\t" \
 		    "decl %1\n\t" \
-		    "jz 2f\n\t" \
+		    "jz 2f\n" \
+		    "3:\t" \
 		    "rep ; nop\n\t" \
 		    "movw %3, %w0\n\t" \
 		    /* don't need lfence here, because loads are in-order */ \
 		    "jmp 1b\n" \
+		    "4:\t" \
+		    "shrl $1, %1\n\t" \
+		    "jnz 3b\n" \
 		    "2:" \
 		    : "+r" (token), "+g" (count), "=&g" (tmp) \
-		    : "m" (lock->slock) \
+		    : "m" (lock->slock), "i" (RUNSTATE_running), \
+		      "m" (per_cpu(runstate.state, lock->owner)) \
 		    : "memory", "cc"); \
 	} while (0)
 #define __ticket_spin_unlock_body \
@@ -194,8 +208,6 @@ static __always_inline int __ticket_spin_trylock(arch_spinlock_t *lock)
 }
 #endif
 
-#define __ticket_spin_count(lock) (vcpu_running((lock)->owner) ? 1 << 10 : 1)
-
 static inline int __ticket_spin_is_locked(arch_spinlock_t *lock)
 {
 	int tmp = ACCESS_ONCE(lock->slock);
@@ -222,7 +234,7 @@ static __always_inline void __ticket_spin_lock(arch_spinlock_t *lock)
 	else {
 		token = xen_spin_adjust(lock, token);
 		arch_local_irq_restore(flags);
-		count = __ticket_spin_count(lock);
+		count = 1 << 12;
 		do {
 			__ticket_spin_lock_body;
 		} while (unlikely(!count)
@@ -240,7 +252,7 @@ static __always_inline void __ticket_spin_lock_flags(arch_spinlock_t *lock,
 	__ticket_spin_lock_preamble;
 	if (unlikely(!free)) {
 		token = xen_spin_adjust(lock, token);
-		count = __ticket_spin_count(lock);
+		count = 1 << 12;
 		do {
 			__ticket_spin_lock_body;
 		} while (unlikely(!count)
@@ -263,7 +275,6 @@ static __always_inline void __ticket_spin_unlock(arch_spinlock_t *lock)
 #undef __ticket_spin_lock_preamble
 #undef __ticket_spin_lock_body
 #undef __ticket_spin_unlock_body
-#undef __ticket_spin_count
 #endif
 
 #define __arch_spin(n) __ticket_spin_##n

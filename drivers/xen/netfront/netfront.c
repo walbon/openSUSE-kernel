@@ -237,7 +237,7 @@ static inline int xennet_can_sg(struct net_device *dev)
 }
 
 /*
- * Work around net.ipv4.conf.*.arp_notify no being enabled by default.
+ * Work around net.ipv4.conf.*.arp_notify not being enabled by default.
  */
 static void __devinit netfront_enable_arp_notify(struct netfront_info *info)
 {
@@ -559,7 +559,6 @@ static void backend_changed(struct xenbus_device *dev,
 	switch (backend_state) {
 	case XenbusStateInitialising:
 	case XenbusStateInitialised:
-	case XenbusStateConnected:
 	case XenbusStateReconfiguring:
 	case XenbusStateReconfigured:
 	case XenbusStateUnknown:
@@ -572,6 +571,9 @@ static void backend_changed(struct xenbus_device *dev,
 		if (network_connect(netdev) != 0)
 			break;
 		xenbus_switch_state(dev, XenbusStateConnected);
+		break;
+
+	case XenbusStateConnected:
 		netif_notify_peers(netdev);
 		break;
 

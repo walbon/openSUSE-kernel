@@ -175,6 +175,7 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 					unsigned int token;
 					bool kick, free;
 
+					lock->owner = cpu;
 					other->ticket = -1;
 					__ticket_spin_unlock_body;
 					if (!kick)
@@ -191,21 +192,15 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 			}
 		}
 
-		/*
-		 * No need to use arch_local_irq_restore() here, as the
-		 * intended event processing will happen with the poll
-		 * call.
-		 */
-		vcpu_info_write(evtchn_upcall_mask,
-				nested ? upcall_mask : flags);
+		arch_local_irq_restore(nested ? upcall_mask : flags);
 
-		if (HYPERVISOR_poll_no_timeout(&__get_cpu_var(poll_evtchn), 1))
+		if ((rc = !test_evtchn(percpu_read(poll_evtchn))) &&
+		    HYPERVISOR_poll_no_timeout(&__get_cpu_var(poll_evtchn), 1))
 			BUG();
 
 		vcpu_info_write(evtchn_upcall_mask, upcall_mask);
 
-		rc = !test_evtchn(percpu_read(poll_evtchn));
-		if (!rc)
+		if (rc && !(rc = !test_evtchn(percpu_read(poll_evtchn))))
 			inc_irq_stat(irq_lock_count);
 	} while (spinning.prev || rc);
 
@@ -251,7 +246,7 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 	arch_local_irq_restore(upcall_mask);
 	*ptok = lock->cur | (spinning.ticket << TICKET_SHIFT);
 
-	return rc ? 0 : __ticket_spin_count(lock);
+	return rc ? 0 : 1 << 10;
 }
 
 void xen_spin_kick(arch_spinlock_t *lock, unsigned int token)

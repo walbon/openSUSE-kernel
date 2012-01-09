@@ -4,31 +4,181 @@
  */
 
 #include <linux/kexec.h>
+#include <linux/slab.h>
 #include <xen/interface/kexec.h>
 #include <xen/interface/platform.h>
 #include <linux/reboot.h>
 #include <linux/mm.h>
 #include <linux/bootmem.h>
+#include <xen/pcpu.h>
 
 extern void machine_kexec_setup_load_arg(xen_kexec_image_t *xki, 
 					 struct kimage *image);
 extern int machine_kexec_setup_resources(struct resource *hypervisor,
 					 struct resource *phys_cpus,
 					 int nr_phys_cpus);
+extern int machine_kexec_setup_resource(struct resource *hypervisor,
+					struct resource *phys_cpu);
 extern void machine_kexec_register_resources(struct resource *res);
 
-static int __initdata xen_max_nr_phys_cpus;
+static unsigned int xen_nr_phys_cpus, xen_max_nr_phys_cpus;
 static struct resource xen_hypervisor_res;
-static struct resource *__initdata xen_phys_cpus;
+static struct resource *xen_phys_cpus;
+static struct xen_phys_cpu_entry {
+	struct xen_phys_cpu_entry *next;
+	struct resource res;
+} *xen_phys_cpu_list;
 
 size_t vmcoreinfo_size_xen;
 unsigned long paddr_vmcoreinfo_xen;
+
+static int fill_crash_res(struct resource *res, unsigned int cpu)
+{
+	xen_kexec_range_t range = {
+		.range = KEXEC_RANGE_MA_CPU,
+		.nr = cpu
+	};
+	int rc = HYPERVISOR_kexec_op(KEXEC_CMD_kexec_get_range, &range);
+
+	if (!rc && !range.size)
+		rc = -ENODEV;
+	if (!rc) {
+		res->name = "Crash note";
+		res->start = range.start;
+		res->end = range.start + range.size - 1;
+		res->flags = IORESOURCE_BUSY | IORESOURCE_MEM;
+	}
+
+	return rc;
+}
+
+static struct resource *find_crash_res(const struct resource *r,
+				       unsigned int *idx)
+{
+	unsigned int i;
+	struct xen_phys_cpu_entry *ent;
+
+	for (i = 0; i < xen_max_nr_phys_cpus; ++i) {
+		struct resource *res = xen_phys_cpus + i;
+
+		if (res->parent && res->start == r->start
+		    && res->end == r->end) {
+			if (idx)
+				*idx = i;
+			return res;
+		}
+	}
+
+	for (ent = xen_phys_cpu_list; ent; ent = ent->next, ++i)
+		if (ent->res.parent && ent->res.start == r->start
+		    && ent->res.end == r->end) {
+			if (idx)
+				*idx = i;
+			return &ent->res;
+		}
+
+	return NULL;
+}
+
+static int kexec_cpu_callback(struct notifier_block *nfb,
+			      unsigned long action, void *hcpu)
+{
+	unsigned int i, cpu = (unsigned long)hcpu;
+	struct xen_phys_cpu_entry *ent;
+	struct resource *res = NULL, r;
+
+	if (xen_nr_phys_cpus < xen_max_nr_phys_cpus)
+		xen_nr_phys_cpus = xen_max_nr_phys_cpus;
+	switch (action) {
+	case CPU_ONLINE:
+		for (i = 0; i < xen_max_nr_phys_cpus; ++i)
+			if (!xen_phys_cpus[i].parent) {
+				res = xen_phys_cpus + i;
+				break;
+			}
+		if (!res)
+			for (ent = xen_phys_cpu_list; ent; ent = ent->next)
+				if (!ent->res.parent) {
+					res = &ent->res;
+					break;
+				}
+		if (!res) {
+			ent = kmalloc(sizeof(*ent), GFP_KERNEL);
+			res = ent ? &ent->res : NULL;
+		} else
+			ent = NULL;
+		if (res && !fill_crash_res(res, cpu)
+		    && !machine_kexec_setup_resource(&xen_hypervisor_res,
+						     res)) {
+			if (ent) {
+				ent->next = xen_phys_cpu_list;
+				xen_phys_cpu_list = ent;
+				++xen_nr_phys_cpus;
+			}
+		} else {
+			pr_warn("Could not set up crash note for pCPU#%u\n",
+				cpu);
+			kfree(ent);
+		}
+		break;
+
+	case CPU_DEAD:
+		if (!fill_crash_res(&r, cpu))
+			res = find_crash_res(&r, NULL);
+		if (!res) {
+			unsigned long *map;
+			xen_platform_op_t op;
+
+			map = kcalloc(BITS_TO_LONGS(xen_nr_phys_cpus),
+				      sizeof(long), GFP_KERNEL);
+			if (!map)
+				break;
+
+			op.cmd = XENPF_get_cpuinfo;
+			op.u.pcpu_info.xen_cpuid = 0;
+			if (HYPERVISOR_platform_op(&op) == 0)
+				i = op.u.pcpu_info.max_present + 1;
+			else
+				i = xen_nr_phys_cpus;
+
+			for (cpu = 0; cpu < i; ++cpu) {
+				unsigned int idx;
+
+				if (fill_crash_res(&r, cpu))
+					continue;
+				if (find_crash_res(&r, &idx)) {
+					BUG_ON(idx >= xen_nr_phys_cpus);
+					__set_bit(idx, map);
+				}
+			}
+
+			for (i = 0; i < xen_max_nr_phys_cpus; ++i)
+				if (xen_phys_cpus[i].parent && !test_bit(i, map)) {
+					res = xen_phys_cpus + i;
+					break;
+				}
+			for (ent = xen_phys_cpu_list; !res && ent;
+			     ent = ent->next, ++i)
+				if (ent->res.parent && !test_bit(i, map))
+					res = &ent->res;
+			kfree(map);
+		}
+		if (res)
+			release_resource(res);
+		break;
+	}
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block kexec_cpu_notifier = {
+	.notifier_call = kexec_cpu_callback
+};
 
 void __init xen_machine_kexec_setup_resources(void)
 {
 	xen_kexec_range_t range;
 	xen_platform_op_t op;
-	struct resource *res;
 	unsigned int k = 0, nr = 0;
 	int rc;
 
@@ -82,21 +232,9 @@ void __init xen_machine_kexec_setup_resources(void)
 
 	/* fill in xen_phys_cpus with per-cpu crash note information */
 
-	for (k = 0; k < xen_max_nr_phys_cpus; k++) {
-		memset(&range, 0, sizeof(range));
-		range.range = KEXEC_RANGE_MA_CPU;
-		range.nr = k;
-
-		if (HYPERVISOR_kexec_op(KEXEC_CMD_kexec_get_range, &range)
-		    || range.size == 0)
-			continue;
-
-		res = xen_phys_cpus + nr++;
-		res->name = "Crash note";
-		res->start = range.start;
-		res->end = range.start + range.size - 1;
-		res->flags = IORESOURCE_BUSY | IORESOURCE_MEM;
-	}
+	for (k = 0; k < xen_max_nr_phys_cpus; k++)
+		if (!fill_crash_res(xen_phys_cpus + nr, k))
+			++nr;
 
 	if (nr == 0)
 		goto free;
@@ -155,7 +293,7 @@ void __init xen_machine_kexec_setup_resources(void)
 		goto err;
 	}
 
-	xen_max_nr_phys_cpus = nr;
+	xen_nr_phys_cpus = nr;
 
 #ifdef CONFIG_X86
 	for (k = 0; k < xen_max_nr_phys_cpus; k++) {
@@ -171,13 +309,17 @@ void __init xen_machine_kexec_setup_resources(void)
 		goto err;
 #endif
 
+	rc = register_pcpu_notifier(&kexec_cpu_notifier);
+	if (rc)
+		pr_warn("kexec: pCPU notifier registration failed (%d)\n", rc);
+
 	return;
 
  free:
 	free_bootmem(__pa(xen_phys_cpus),
 		     xen_max_nr_phys_cpus * sizeof(*xen_phys_cpus));
  err:
-	xen_max_nr_phys_cpus = 0;
+	xen_nr_phys_cpus = 0;
 }
 
 #ifndef CONFIG_X86
@@ -187,7 +329,7 @@ void __init xen_machine_kexec_register_resources(struct resource *res)
 	struct resource *r;
 
 	request_resource(res, &xen_hypervisor_res);
-	for (k = 0; k < xen_max_nr_phys_cpus; k++) {
+	for (k = 0; k < xen_nr_phys_cpus; k++) {
 		r = xen_phys_cpus + k;
 		if (r->parent == NULL) /* out of xen_hypervisor_res range */
 			request_resource(res, r);

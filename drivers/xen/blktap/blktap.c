@@ -116,6 +116,7 @@ typedef struct tap_blkif {
 	struct pid_namespace *pid_ns; /*... and its corresponding namespace  */
 	enum { RUNNING, CLEANSHUTDOWN } status; /*Detect a clean userspace 
 						  shutdown                   */
+	spinlock_t map_lock;          /*protects idx_map                     */
 	struct idx_map {
 		u16 mem, req;
 	} *idx_map;                   /*Record the user ring id to kern
@@ -305,7 +306,7 @@ static pte_t blktap_clear_pte(struct vm_area_struct *vma,
 	pte_t copy;
 	tap_blkif_t *info = NULL;
 	unsigned int seg, usr_idx, pending_idx, mmap_idx, count = 0;
-	unsigned long offset, uvstart = 0;
+	unsigned long offset;
 	struct page *pg;
 	struct grant_handle_pair *khandle;
 	struct gnttab_unmap_grant_ref unmap[2];
@@ -314,24 +315,27 @@ static pte_t blktap_clear_pte(struct vm_area_struct *vma,
 	 * If the address is before the start of the grant mapped region or
 	 * if vm_file is NULL (meaning mmap failed and we have nothing to do)
 	 */
-	if (vma->vm_file != NULL) {
+	if (vma->vm_file != NULL)
 		info = vma->vm_file->private_data;
-		uvstart = info->rings_vstart + (RING_PAGES << PAGE_SHIFT);
-	}
-	if (vma->vm_file == NULL || uvaddr < uvstart)
+	if (info == NULL || uvaddr < info->user_vstart)
 		return xen_ptep_get_and_clear_full(vma, uvaddr, ptep,
 						   is_fullmm);
 
-	/* TODO Should these be changed to if statements? */
-	BUG_ON(!info);
-	BUG_ON(!info->idx_map);
-
-	offset = (uvaddr - uvstart) >> PAGE_SHIFT;
+	offset = (uvaddr - info->user_vstart) >> PAGE_SHIFT;
 	usr_idx = OFFSET_TO_USR_IDX(offset);
 	seg = OFFSET_TO_SEG(offset);
 
+	spin_lock(&info->map_lock);
+
 	pending_idx = info->idx_map[usr_idx].req;
 	mmap_idx = info->idx_map[usr_idx].mem;
+
+	/* fast_flush_area() may already have cleared this entry */
+	if (mmap_idx == INVALID_MIDX) {
+		spin_unlock(&info->map_lock);
+		return xen_ptep_get_and_clear_full(vma, uvaddr, ptep,
+						   is_fullmm);
+	}
 
 	pg = idx_to_page(mmap_idx, pending_idx, seg);
 	ClearPageReserved(pg);
@@ -374,6 +378,8 @@ static pte_t blktap_clear_pte(struct vm_area_struct *vma,
 					      unmap, count))
 			BUG();
 	}
+
+	spin_unlock(&info->map_lock);
 
 	return copy;
 }
@@ -499,6 +505,7 @@ found:
 		}
 
 		info->minor = minor;
+		spin_lock_init(&info->map_lock);
 		/*
 		 * Make sure that we have a minor before others can
 		 * see us.
@@ -640,6 +647,7 @@ static int blktap_release(struct inode *inode, struct file *filp)
 
 	info->ring_ok = 0;
 	smp_wmb();
+	info->rings_vstart = 0;
 
 	mm = xchg(&info->mm, NULL);
 	if (mm)
@@ -699,7 +707,13 @@ static int blktap_mmap(struct file *filp, struct vm_area_struct *vma)
 		WPRINTK("blktap: mmap, retrieving idx failed\n");
 		return -ENOMEM;
 	}
-	
+
+	if (info->rings_vstart) {
+		WPRINTK("mmap already called on filp %p (minor %d)\n",
+			filp, info->minor);
+		return -EPERM;
+	}
+
 	vma->vm_flags |= VM_RESERVED;
 	vma->vm_ops = &blktap_vm_ops;
 
@@ -751,6 +765,7 @@ static int blktap_mmap(struct file *filp, struct vm_area_struct *vma)
 	/* Clear any active mappings. */
 	zap_page_range(vma, vma->vm_start, 
 		       vma->vm_end - vma->vm_start, NULL);
+	info->rings_vstart = 0;
 
 	return -ENOMEM;
 }
@@ -1042,24 +1057,29 @@ static void fast_flush_area(pending_req_t *req, unsigned int k_idx,
 			     unsigned int u_idx, tap_blkif_t *info)
 {
 	struct gnttab_unmap_grant_ref unmap[BLKIF_MAX_SEGMENTS_PER_REQUEST*2];
-	unsigned int i, mmap_idx, invcount = 0, locked = 0;
+	unsigned int i, mmap_idx, invcount = 0;
 	struct grant_handle_pair *khandle;
 	uint64_t ptep;
 	int ret;
 	unsigned long uvaddr;
 	struct mm_struct *mm = info->mm;
 
+	if (mm != NULL)
+		down_read(&mm->mmap_sem);
+
 	if (mm != NULL && xen_feature(XENFEAT_auto_translated_physmap)) {
-		down_write(&mm->mmap_sem);
+ slow:
 		blktap_zap_page_range(mm,
 				      MMAP_VADDR(info->user_vstart, u_idx, 0),
 				      req->nr_pages);
 		info->idx_map[u_idx].mem = INVALID_MIDX;
-		up_write(&mm->mmap_sem);
+		up_read(&mm->mmap_sem);
 		return;
 	}
 
 	mmap_idx = req->mem_idx;
+
+	spin_lock(&info->map_lock);
 
 	for (i = 0; i < req->nr_pages; i++) {
 		uvaddr = MMAP_VADDR(info->user_vstart, u_idx, i);
@@ -1079,15 +1099,13 @@ static void fast_flush_area(pending_req_t *req, unsigned int k_idx,
 
 		if (mm != NULL && khandle->user != INVALID_GRANT_HANDLE) {
 			BUG_ON(xen_feature(XENFEAT_auto_translated_physmap));
-			if (!locked++)
-				down_write(&mm->mmap_sem);
 			if (create_lookup_pte_addr(
 				mm,
 				MMAP_VADDR(info->user_vstart, u_idx, i),
 				&ptep) !=0) {
-				up_write(&mm->mmap_sem);
+				spin_unlock(&info->map_lock);
 				WPRINTK("Couldn't get a pte addr!\n");
-				return;
+				goto slow;
 			}
 
 			gnttab_set_unmap_op(&unmap[invcount], ptep,
@@ -1104,19 +1122,11 @@ static void fast_flush_area(pending_req_t *req, unsigned int k_idx,
 		GNTTABOP_unmap_grant_ref, unmap, invcount);
 	BUG_ON(ret);
 	
-	if (mm != NULL && !xen_feature(XENFEAT_auto_translated_physmap)) {
-		if (!locked++)
-			down_write(&mm->mmap_sem);
-		blktap_zap_page_range(mm, 
-				      MMAP_VADDR(info->user_vstart, u_idx, 0), 
-				      req->nr_pages);
-	}
-
-	if (!locked && mm != NULL)
-		down_write(&mm->mmap_sem);
 	info->idx_map[u_idx].mem = INVALID_MIDX;
+
+	spin_unlock(&info->map_lock);
 	if (mm != NULL)
-		up_write(&mm->mmap_sem);
+		up_read(&mm->mmap_sem);
 }
 
 /******************************************************************
@@ -1428,7 +1438,9 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 		goto fail_response;
 
 	/* Check we have space on user ring - should never fail. */
+	spin_lock(&info->map_lock);
 	usr_idx = GET_NEXT_REQ(info->idx_map);
+	spin_unlock(&info->map_lock);
 	if (usr_idx >= MAX_PENDING_REQS) {
 		WARN_ON(1);
 		goto fail_response;
@@ -1472,7 +1484,7 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 	op = 0;
 	mm = info->mm;
 	if (!xen_feature(XENFEAT_auto_translated_physmap))
-		down_write(&mm->mmap_sem);
+		down_read(&mm->mmap_sem);
 	for (i = 0; i < nseg; i++) {
 		unsigned long uvaddr;
 		unsigned long kvaddr;
@@ -1489,9 +1501,9 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 			/* Now map it to user. */
 			ret = create_lookup_pte_addr(mm, uvaddr, &ptep);
 			if (ret) {
-				up_write(&mm->mmap_sem);
+				up_read(&mm->mmap_sem);
 				WPRINTK("Couldn't get a pte addr!\n");
-				goto fail_flush;
+				goto fail_response;
 			}
 
 			gnttab_set_map_op(&map[op], ptep,
@@ -1505,12 +1517,15 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 			     req->seg[i].first_sect + 1);
 	}
 
+	if (xen_feature(XENFEAT_auto_translated_physmap))
+		down_read(&mm->mmap_sem);
+
+	spin_lock(&info->map_lock);
+
 	ret = HYPERVISOR_grant_table_op(GNTTABOP_map_grant_ref, map, op);
 	BUG_ON(ret);
 
 	if (!xen_feature(XENFEAT_auto_translated_physmap)) {
-		up_write(&mm->mmap_sem);
-
 		for (i = 0; i < (nseg*2); i+=2) {
 			unsigned long uvaddr;
 			unsigned long offset;
@@ -1575,18 +1590,18 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 		}
 	}
 
+	/*record [mmap_idx,pending_idx] to [usr_idx] mapping*/
+	info->idx_map[usr_idx].mem = mmap_idx;
+	info->idx_map[usr_idx].req = pending_idx;
+
+	spin_unlock(&info->map_lock);
+
 	if (ret)
 		goto fail_flush;
 
-	if (xen_feature(XENFEAT_auto_translated_physmap))
-		down_write(&mm->mmap_sem);
-	/* Mark mapped pages as reserved: */
-	for (i = 0; i < req->nr_segments; i++) {
-		struct page *pg;
-
-		pg = idx_to_page(mmap_idx, pending_idx, i);
-		SetPageReserved(pg);
-		if (xen_feature(XENFEAT_auto_translated_physmap)) {
+	if (xen_feature(XENFEAT_auto_translated_physmap)) {
+		for (i = 0; i < nseg; i++) {
+			struct page *pg = idx_to_page(mmap_idx, pending_idx, i);
 			unsigned long uvaddr = MMAP_VADDR(info->user_vstart,
 							  usr_idx, i);
 			if (vma && uvaddr >= vma->vm_end) {
@@ -1604,18 +1619,12 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 					continue;
 			}
 			ret = vm_insert_page(vma, uvaddr, pg);
-			if (ret) {
-				up_write(&mm->mmap_sem);
+			if (ret)
 				goto fail_flush;
-			}
 		}
 	}
-	if (xen_feature(XENFEAT_auto_translated_physmap))
-		up_write(&mm->mmap_sem);
 	
-	/*record [mmap_idx,pending_idx] to [usr_idx] mapping*/
-	info->idx_map[usr_idx].mem = mmap_idx;
-	info->idx_map[usr_idx].req = pending_idx;
+	up_read(&mm->mmap_sem);
 
 	blkif_get(blkif);
 	/* Finally, write the request message to the user ring. */
@@ -1639,6 +1648,7 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 	return;
 
  fail_flush:
+	up_read(&mm->mmap_sem);
 	WPRINTK("Reached Fail_flush\n");
 	fast_flush_area(pending_req, pending_idx, usr_idx, info);
  fail_response:
