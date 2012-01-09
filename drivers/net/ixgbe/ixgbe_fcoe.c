@@ -625,10 +625,6 @@ void ixgbe_configure_fcoe(struct ixgbe_adapter *adapter)
 	struct ixgbe_hw *hw = &adapter->hw;
 	struct ixgbe_fcoe *fcoe = &adapter->fcoe;
 	struct ixgbe_ring_feature *f = &adapter->ring_feature[RING_F_FCOE];
-#ifdef CONFIG_IXGBE_DCB
-	u8 tc;
-	u32 up2tc;
-#endif
 
 	if (!fcoe->pool) {
 		spin_lock_init(&fcoe->lock);
@@ -694,20 +690,7 @@ void ixgbe_configure_fcoe(struct ixgbe_adapter *adapter)
 			IXGBE_FCRXCTRL_FCOELLI |
 			IXGBE_FCRXCTRL_FCCRCBO |
 			(FC_FCOE_VER << IXGBE_FCRXCTRL_FCOEVER_SHIFT));
-#ifdef CONFIG_IXGBE_DCB
-	up2tc = IXGBE_READ_REG(&adapter->hw, IXGBE_RTTUP2TC);
-	for (i = 0; i < MAX_USER_PRIORITY; i++) {
-		tc = (u8)(up2tc >> (i * IXGBE_RTTUP2TC_UP_SHIFT));
-		tc &= (MAX_TRAFFIC_CLASS - 1);
-		if (fcoe->tc == tc) {
-			fcoe->up = i;
-			break;
-		}
-	}
-#endif
-
 	return;
-
 out_extra_ddp_buffer:
 	kfree(fcoe->extra_ddp_buffer);
 out_ddp_pools:
