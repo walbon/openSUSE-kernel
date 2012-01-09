@@ -22,6 +22,7 @@
 #include <linux/jbd.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
+#include <linux/blkdev.h>
 
 /*
  * Unlink a buffer from a transaction checkpoint list.
