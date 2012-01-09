@@ -41,6 +41,15 @@
 #define RX_DC_ENTRIES 64
 #define RX_DC_ENTRIES_ORDER 3
 
+/*
+ * Dummy options for compatibility with SLE11-SP1
+ */
+static int dummy;
+module_param_named(rx_xoff_thresh_bytes, dummy, int, 0644);
+MODULE_PARM_DESC(rx_xoff_thresh_bytes, "dummy option");
+module_param_named(rx_xon_thresh_bytes, dummy, int, 0644);
+MODULE_PARM_DESC(rx_xon_thresh_bytes, "dummy option");
+
 /* If EFX_MAX_INT_ERRORS internal errors occur within
  * EFX_INT_ERROR_EXPIRE seconds, we consider the NIC broken and
  * disable it.
