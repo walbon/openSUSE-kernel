@@ -4268,7 +4268,7 @@ struct cciss_match_arg {
 static int cciss_match_dev(struct device *dev, void *data)
 {
 	struct cciss_match_arg *arg = data;
-	struct pci_device_id *dev_id = cciss_pci_device_id;
+	const struct pci_device_id *dev_id = cciss_pci_device_id;
 	struct pci_dev *pdev = to_pci_dev(dev);
 
 	/* Skip non-HP devices */
