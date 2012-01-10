@@ -1178,6 +1178,9 @@ const struct file_operations xfs_file_operations = {
 	.release	= xfs_file_release,
 	.fsync		= xfs_file_fsync,
 	.fallocate	= xfs_file_fallocate,
+#ifdef HAVE_FOP_OPEN_EXEC
+	.open_exec	= xfs_file_open_exec,
+#endif
 };
 
 const struct file_operations xfs_dir_file_operations = {
