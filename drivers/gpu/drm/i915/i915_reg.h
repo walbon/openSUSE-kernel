@@ -3582,4 +3582,16 @@
 #define CPT_AUD_CNTL_ST_A		0xE50B4
 #define CPT_AUD_CNTRL_ST2		0xE50C0
 
+#define IBX_AUD_CONFIG_A			0xe2000
+#define CPT_AUD_CONFIG_A			0xe5000
+#define   AUD_CONFIG_N_VALUE_INDEX		(1 << 29)
+#define   AUD_CONFIG_N_PROG_ENABLE		(1 << 28)
+#define   AUD_CONFIG_UPPER_N_SHIFT		20
+#define   AUD_CONFIG_UPPER_N_VALUE		(0xff << 20)
+#define   AUD_CONFIG_LOWER_N_SHIFT		4
+#define   AUD_CONFIG_LOWER_N_VALUE		(0xfff << 4)
+#define   AUD_CONFIG_PIXEL_CLOCK_HDMI_SHIFT	16
+#define   AUD_CONFIG_PIXEL_CLOCK_HDMI		(0xf << 16)
+#define   AUD_CONFIG_DISABLE_NCTS		(1 << 3)
+
 #endif /* _I915_REG_H_ */
