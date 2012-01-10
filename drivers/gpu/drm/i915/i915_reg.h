@@ -442,6 +442,7 @@
 #define   INSTPM_AGPBUSY_DIS (1<<11) /* gen3: when disabled, pending interrupts
 					will not assert AGPBUSY# and will only
 					be delivered when out of C3. */
+#define   INSTPM_FORCE_ORDERING				(1<<7) /* GEN6+ */
 #define ACTHD	        0x020c8
 #define FW_BLC		0x020d8
 #define FW_BLC2		0x020dc
@@ -2882,6 +2883,10 @@
 #define   ILK_DPFC_DIS1		(1<<8)
 #define   ILK_DPFC_DIS2		(1<<9)
 
+#define IVB_CHICKEN3	0x4200c
+# define CHICKEN3_DGMG_REQ_OUT_FIX_DISABLE	(1 << 5)
+# define CHICKEN3_DGMG_DONE_FIX_DISABLE		(1 << 2)
+
 #define DISP_ARB_CTL	0x45000
 #define  DISP_TILE_SURFACE_SWIZZLING	(1<<13)
 #define  DISP_FBC_WM_DIS		(1<<15)
@@ -3500,7 +3505,11 @@
 #define   GEN6_CAGF_MASK			(0x7f << GEN6_CAGF_SHIFT)
 #define GEN6_RP_CONTROL				0xA024
 #define   GEN6_RP_MEDIA_TURBO			(1<<11)
-#define   GEN6_RP_USE_NORMAL_FREQ		(1<<9)
+#define   GEN6_RP_MEDIA_MODE_MASK		(3<<9)
+#define   GEN6_RP_MEDIA_HW_TURBO_MODE		(3<<9)
+#define   GEN6_RP_MEDIA_HW_NORMAL_MODE		(2<<9)
+#define   GEN6_RP_MEDIA_HW_MODE			(1<<9)
+#define   GEN6_RP_MEDIA_SW_MODE			(0<<9)
 #define   GEN6_RP_MEDIA_IS_GFX			(1<<8)
 #define   GEN6_RP_ENABLE			(1<<7)
 #define   GEN6_RP_UP_IDLE_MIN			(0x1<<3)
@@ -3581,6 +3590,12 @@
 #define CPT_HDMIW_HDMIEDID_A		0xE5050
 #define CPT_AUD_CNTL_ST_A		0xE50B4
 #define CPT_AUD_CNTRL_ST2		0xE50C0
+
+/* These are the 4 32-bit write offset registers for each stream
+ * output buffer.  It determines the offset from the
+ * 3DSTATE_SO_BUFFERs that the next streamed vertex output goes to.
+ */
+#define GEN7_SO_WRITE_OFFSET(n)		(0x5280 + (n) * 4)
 
 #define IBX_AUD_CONFIG_A			0xe2000
 #define CPT_AUD_CONFIG_A			0xe5000

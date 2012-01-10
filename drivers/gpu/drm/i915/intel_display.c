@@ -1206,7 +1206,8 @@ static void intel_disable_pch_pll(struct drm_i915_private *dev_priv,
 				  enum pipe pipe)
 {
 	int reg;
-	u32 val;
+	u32 val, pll_mask = TRANSC_DPLL_ENABLE | TRANSC_DPLLB_SEL,
+		pll_sel = TRANSC_DPLL_ENABLE;
 
 	if (pipe > 1)
 		return;
@@ -1216,6 +1217,15 @@ static void intel_disable_pch_pll(struct drm_i915_private *dev_priv,
 
 	/* Make sure transcoder isn't still depending on us */
 	assert_transcoder_disabled(dev_priv, pipe);
+
+	if (pipe == 0)
+		pll_sel |= TRANSC_DPLLA_SEL;
+	else if (pipe == 1)
+		pll_sel |= TRANSC_DPLLB_SEL;
+
+
+	if ((I915_READ(PCH_DPLL_SEL) & pll_mask) == pll_sel)
+		return;
 
 	reg = PCH_DPLL(pipe);
 	val = I915_READ(reg);
@@ -5821,10 +5831,12 @@ static int intel_crtc_mode_set(struct drm_crtc *crtc,
 
 	ret = dev_priv->display.crtc_mode_set(crtc, mode, adjusted_mode,
 					      x, y, old_fb);
-
 	drm_vblank_post_modeset(dev, pipe);
 
-	intel_crtc->dpms_mode = DRM_MODE_DPMS_ON;
+	if (ret)
+		intel_crtc->dpms_mode = DRM_MODE_DPMS_OFF;
+	else
+		intel_crtc->dpms_mode = DRM_MODE_DPMS_ON;
 
 	return ret;
 }
@@ -8042,7 +8054,7 @@ void gen6_enable_rps(struct drm_i915_private *dev_priv)
 	I915_WRITE(GEN6_RP_IDLE_HYSTERSIS, 10);
 	I915_WRITE(GEN6_RP_CONTROL,
 		   GEN6_RP_MEDIA_TURBO |
-		   GEN6_RP_USE_NORMAL_FREQ |
+		   GEN6_RP_MEDIA_HW_MODE |
 		   GEN6_RP_MEDIA_IS_GFX |
 		   GEN6_RP_ENABLE |
 		   GEN6_RP_UP_BUSY_AVG |
@@ -8300,6 +8312,10 @@ static void ivybridge_init_clock_gating(struct drm_device *dev)
 	I915_WRITE(WM1_LP_ILK, 0);
 
 	I915_WRITE(ILK_DSPCLK_GATE, IVB_VRHUNIT_CLK_GATE);
+
+	I915_WRITE(IVB_CHICKEN3,
+		   CHICKEN3_DGMG_REQ_OUT_FIX_DISABLE |
+		   CHICKEN3_DGMG_DONE_FIX_DISABLE);
 
 	for_each_pipe(pipe) {
 		I915_WRITE(DSPCNTR(pipe),
@@ -8594,9 +8610,15 @@ static void intel_init_display(struct drm_device *dev)
 		if (IS_IVYBRIDGE(dev)) {
 			u32	ecobus;
 
+			/* A small trick here - if the bios hasn't configured MT forcewake,
+			 * and if the device is in RC6, then force_wake_mt_get will not wake
+			 * the device and the ECOBUS read will return zero. Which will be
+			 * (correctly) interpreted by the test below as MT forcewake being
+			 * disabled.
+			 */
 			mutex_lock(&dev->struct_mutex);
 			__gen6_gt_force_wake_mt_get(dev_priv);
-			ecobus = I915_READ(ECOBUS);
+			ecobus = I915_READ_NOTRACE(ECOBUS);
 			__gen6_gt_force_wake_mt_put(dev_priv);
 			mutex_unlock(&dev->struct_mutex);
 
