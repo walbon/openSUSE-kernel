@@ -2997,7 +2997,7 @@ static void set_avail_alloc_bits(struct btrfs_fs_info *fs_info, u64 flags)
 {
 	u64 extra_flags = flags & BTRFS_BLOCK_GROUP_PROFILE_MASK;
 
-	/* on-disk -> in-memory */
+	/* chunk -> extended profile */
 	if (extra_flags == 0)
 		extra_flags = BTRFS_AVAIL_ALLOC_BIT_SINGLE;
 
@@ -3009,6 +3009,13 @@ static void set_avail_alloc_bits(struct btrfs_fs_info *fs_info, u64 flags)
 		fs_info->avail_system_alloc_bits |= extra_flags;
 }
 
+/*
+ * @flags: available profiles in extended format (see ctree.h)
+ *
+ * Returns reduced profile in chunk format.  If profile changing is in
+ * progress (either running or paused) picks the target profile (if it's
+ * already available), otherwise falls back to plain reducing.
+ */
 u64 btrfs_reduce_alloc_profile(struct btrfs_root *root, u64 flags)
 {
 	/*
@@ -3020,32 +3027,32 @@ u64 btrfs_reduce_alloc_profile(struct btrfs_root *root, u64 flags)
 		root->fs_info->fs_devices->missing_devices;
 
 	/* pick restriper's target profile if it's available */
-	spin_lock(&root->fs_info->restripe_lock);
-	if (root->fs_info->restripe_ctl) {
-		struct restripe_control *rctl = root->fs_info->restripe_ctl;
-		u64 t = 0;
+	spin_lock(&root->fs_info->balance_lock);
+	if (root->fs_info->balance_ctl) {
+		struct btrfs_balance_control *bctl = root->fs_info->balance_ctl;
+		u64 tgt = 0;
 
 		if ((flags & BTRFS_BLOCK_GROUP_DATA) &&
-		    (rctl->data.flags & BTRFS_RESTRIPE_ARGS_CONVERT) &&
-		    (flags & rctl->data.target)) {
-			t = BTRFS_BLOCK_GROUP_DATA | rctl->data.target;
+		    (bctl->data.flags & BTRFS_BALANCE_ARGS_CONVERT) &&
+		    (flags & bctl->data.target)) {
+			tgt = BTRFS_BLOCK_GROUP_DATA | bctl->data.target;
 		} else if ((flags & BTRFS_BLOCK_GROUP_SYSTEM) &&
-			   (rctl->sys.flags & BTRFS_RESTRIPE_ARGS_CONVERT) &&
-			   (flags & rctl->sys.target)) {
-			t = BTRFS_BLOCK_GROUP_SYSTEM | rctl->sys.target;
+			   (bctl->sys.flags & BTRFS_BALANCE_ARGS_CONVERT) &&
+			   (flags & bctl->sys.target)) {
+			tgt = BTRFS_BLOCK_GROUP_SYSTEM | bctl->sys.target;
 		} else if ((flags & BTRFS_BLOCK_GROUP_METADATA) &&
-			   (rctl->meta.flags & BTRFS_RESTRIPE_ARGS_CONVERT) &&
-			   (flags & rctl->meta.target)) {
-			t = BTRFS_BLOCK_GROUP_METADATA | rctl->meta.target;
+			   (bctl->meta.flags & BTRFS_BALANCE_ARGS_CONVERT) &&
+			   (flags & bctl->meta.target)) {
+			tgt = BTRFS_BLOCK_GROUP_METADATA | bctl->meta.target;
 		}
 
-		if (t) {
-			spin_unlock(&root->fs_info->restripe_lock);
-			t &= ~BTRFS_AVAIL_ALLOC_BIT_SINGLE;
-			return t;
+		if (tgt) {
+			spin_unlock(&root->fs_info->balance_lock);
+			flags = tgt;
+			goto out;
 		}
 	}
-	spin_unlock(&root->fs_info->restripe_lock);
+	spin_unlock(&root->fs_info->balance_lock);
 
 	if (num_devices == 1)
 		flags &= ~(BTRFS_BLOCK_GROUP_RAID1 | BTRFS_BLOCK_GROUP_RAID0);
@@ -3070,7 +3077,8 @@ u64 btrfs_reduce_alloc_profile(struct btrfs_root *root, u64 flags)
 		flags &= ~BTRFS_BLOCK_GROUP_RAID0;
 	}
 
-	/* in-memory -> on-disk */
+out:
+	/* extended -> chunk profile */
 	flags &= ~BTRFS_AVAIL_ALLOC_BIT_SINGLE;
 	return flags;
 }
@@ -3300,7 +3308,7 @@ static int do_chunk_alloc(struct btrfs_trans_handle *trans,
 	int wait_for_alloc = 0;
 	int ret = 0;
 
-	flags = btrfs_reduce_alloc_profile(extent_root, flags);
+	BUG_ON(!profile_is_valid(flags, 0));
 
 	space_info = __find_space_info(extent_root->fs_info, flags);
 	if (!space_info) {
@@ -6799,26 +6807,26 @@ static u64 update_block_group_flags(struct btrfs_root *root, u64 flags)
 	u64 stripped = BTRFS_BLOCK_GROUP_RAID0 |
 		BTRFS_BLOCK_GROUP_RAID1 | BTRFS_BLOCK_GROUP_RAID10;
 
-	if (root->fs_info->restripe_ctl) {
-		struct restripe_control *rctl = root->fs_info->restripe_ctl;
-		u64 t = 0;
+	if (root->fs_info->balance_ctl) {
+		struct btrfs_balance_control *bctl = root->fs_info->balance_ctl;
+		u64 tgt = 0;
 
 		/* pick restriper's target profile and return */
 		if (flags & BTRFS_BLOCK_GROUP_DATA &&
-		    rctl->data.flags & BTRFS_RESTRIPE_ARGS_CONVERT) {
-			t = BTRFS_BLOCK_GROUP_DATA | rctl->data.target;
+		    bctl->data.flags & BTRFS_BALANCE_ARGS_CONVERT) {
+			tgt = BTRFS_BLOCK_GROUP_DATA | bctl->data.target;
 		} else if (flags & BTRFS_BLOCK_GROUP_SYSTEM &&
-			   rctl->sys.flags & BTRFS_RESTRIPE_ARGS_CONVERT) {
-			t = BTRFS_BLOCK_GROUP_SYSTEM | rctl->sys.target;
+			   bctl->sys.flags & BTRFS_BALANCE_ARGS_CONVERT) {
+			tgt = BTRFS_BLOCK_GROUP_SYSTEM | bctl->sys.target;
 		} else if (flags & BTRFS_BLOCK_GROUP_METADATA &&
-			   rctl->meta.flags & BTRFS_RESTRIPE_ARGS_CONVERT) {
-			t = BTRFS_BLOCK_GROUP_METADATA | rctl->meta.target;
+			   bctl->meta.flags & BTRFS_BALANCE_ARGS_CONVERT) {
+			tgt = BTRFS_BLOCK_GROUP_METADATA | bctl->meta.target;
 		}
 
-		if (t) {
-			/* in-memory -> on-disk */
-			t &= ~BTRFS_AVAIL_ALLOC_BIT_SINGLE;
-			return t;
+		if (tgt) {
+			/* extended -> chunk profile */
+			tgt &= ~BTRFS_AVAIL_ALLOC_BIT_SINGLE;
+			return tgt;
 		}
 	}
 
@@ -7500,7 +7508,7 @@ static void clear_avail_alloc_bits(struct btrfs_fs_info *fs_info, u64 flags)
 {
 	u64 extra_flags = flags & BTRFS_BLOCK_GROUP_PROFILE_MASK;
 
-	/* on-disk -> in-memory */
+	/* chunk -> extended profile */
 	if (extra_flags == 0)
 		extra_flags = BTRFS_AVAIL_ALLOC_BIT_SINGLE;
 

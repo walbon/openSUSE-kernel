@@ -2074,12 +2074,12 @@ error:
 	return ret;
 }
 
-static int insert_restripe_item(struct btrfs_root *root,
-				struct restripe_control *rctl)
+static int insert_balance_item(struct btrfs_root *root,
+			       struct btrfs_balance_control *bctl)
 {
 	struct btrfs_trans_handle *trans;
-	struct btrfs_restripe_item *item;
-	struct btrfs_disk_restripe_args disk_rargs;
+	struct btrfs_balance_item *item;
+	struct btrfs_disk_balance_args disk_bargs;
 	struct btrfs_path *path;
 	struct extent_buffer *leaf;
 	struct btrfs_key key;
@@ -2095,8 +2095,8 @@ static int insert_restripe_item(struct btrfs_root *root,
 		return PTR_ERR(trans);
 	}
 
-	key.objectid = BTRFS_RESTRIPE_OBJECTID;
-	key.type = BTRFS_RESTRIPE_ITEM_KEY;
+	key.objectid = BTRFS_BALANCE_OBJECTID;
+	key.type = BTRFS_BALANCE_ITEM_KEY;
 	key.offset = 0;
 
 	ret = btrfs_insert_empty_item(trans, root, path, &key,
@@ -2105,18 +2105,18 @@ static int insert_restripe_item(struct btrfs_root *root,
 		goto out;
 
 	leaf = path->nodes[0];
-	item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_restripe_item);
+	item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_balance_item);
 
 	memset_extent_buffer(leaf, 0, (unsigned long)item, sizeof(*item));
 
-	btrfs_cpu_restripe_args_to_disk(&disk_rargs, &rctl->data);
-	btrfs_set_restripe_data(leaf, item, &disk_rargs);
-	btrfs_cpu_restripe_args_to_disk(&disk_rargs, &rctl->meta);
-	btrfs_set_restripe_meta(leaf, item, &disk_rargs);
-	btrfs_cpu_restripe_args_to_disk(&disk_rargs, &rctl->sys);
-	btrfs_set_restripe_sys(leaf, item, &disk_rargs);
+	btrfs_cpu_balance_args_to_disk(&disk_bargs, &bctl->data);
+	btrfs_set_balance_data(leaf, item, &disk_bargs);
+	btrfs_cpu_balance_args_to_disk(&disk_bargs, &bctl->meta);
+	btrfs_set_balance_meta(leaf, item, &disk_bargs);
+	btrfs_cpu_balance_args_to_disk(&disk_bargs, &bctl->sys);
+	btrfs_set_balance_sys(leaf, item, &disk_bargs);
 
-	btrfs_set_restripe_flags(leaf, item, rctl->flags);
+	btrfs_set_balance_flags(leaf, item, bctl->flags);
 
 	btrfs_mark_buffer_dirty(leaf);
 out:
@@ -2127,7 +2127,7 @@ out:
 	return ret;
 }
 
-static int del_restripe_item(struct btrfs_root *root)
+static int del_balance_item(struct btrfs_root *root)
 {
 	struct btrfs_trans_handle *trans;
 	struct btrfs_path *path;
@@ -2144,8 +2144,8 @@ static int del_restripe_item(struct btrfs_root *root)
 		return PTR_ERR(trans);
 	}
 
-	key.objectid = BTRFS_RESTRIPE_OBJECTID;
-	key.type = BTRFS_RESTRIPE_ITEM_KEY;
+	key.objectid = BTRFS_BALANCE_OBJECTID;
+	key.type = BTRFS_BALANCE_ITEM_KEY;
 	key.offset = 0;
 
 	ret = btrfs_search_slot(trans, root, &key, path, -1, 1);
@@ -2166,20 +2166,20 @@ out:
 }
 
 /*
- * This is a heuristic used to reduce the number of chunks restriped on
+ * This is a heuristic used to reduce the number of chunks balanced on
  * resume after balance was interrupted.
  */
-static void update_restripe_args(struct restripe_control *rctl)
+static void update_balance_args(struct btrfs_balance_control *bctl)
 {
 	/*
 	 * Turn on soft mode for chunk types that were being converted.
 	 */
-	if (rctl->data.flags & BTRFS_RESTRIPE_ARGS_CONVERT)
-		rctl->data.flags |= BTRFS_RESTRIPE_ARGS_SOFT;
-	if (rctl->sys.flags & BTRFS_RESTRIPE_ARGS_CONVERT)
-		rctl->sys.flags |= BTRFS_RESTRIPE_ARGS_SOFT;
-	if (rctl->meta.flags & BTRFS_RESTRIPE_ARGS_CONVERT)
-		rctl->meta.flags |= BTRFS_RESTRIPE_ARGS_SOFT;
+	if (bctl->data.flags & BTRFS_BALANCE_ARGS_CONVERT)
+		bctl->data.flags |= BTRFS_BALANCE_ARGS_SOFT;
+	if (bctl->sys.flags & BTRFS_BALANCE_ARGS_CONVERT)
+		bctl->sys.flags |= BTRFS_BALANCE_ARGS_SOFT;
+	if (bctl->meta.flags & BTRFS_BALANCE_ARGS_CONVERT)
+		bctl->meta.flags |= BTRFS_BALANCE_ARGS_SOFT;
 
 	/*
 	 * Turn on usage filter if is not already used.  The idea is
@@ -2188,65 +2188,65 @@ static void update_restripe_args(struct restripe_control *rctl)
 	 * converted - that will keep us from relocating unconverted
 	 * (albeit full) chunks.
 	 */
-	if (!(rctl->data.flags & BTRFS_RESTRIPE_ARGS_USAGE) &&
-	    !(rctl->data.flags & BTRFS_RESTRIPE_ARGS_CONVERT)) {
-		rctl->data.flags |= BTRFS_RESTRIPE_ARGS_USAGE;
-		rctl->data.usage = 90;
+	if (!(bctl->data.flags & BTRFS_BALANCE_ARGS_USAGE) &&
+	    !(bctl->data.flags & BTRFS_BALANCE_ARGS_CONVERT)) {
+		bctl->data.flags |= BTRFS_BALANCE_ARGS_USAGE;
+		bctl->data.usage = 90;
 	}
-	if (!(rctl->sys.flags & BTRFS_RESTRIPE_ARGS_USAGE) &&
-	    !(rctl->sys.flags & BTRFS_RESTRIPE_ARGS_CONVERT)) {
-		rctl->sys.flags |= BTRFS_RESTRIPE_ARGS_USAGE;
-		rctl->sys.usage = 90;
+	if (!(bctl->sys.flags & BTRFS_BALANCE_ARGS_USAGE) &&
+	    !(bctl->sys.flags & BTRFS_BALANCE_ARGS_CONVERT)) {
+		bctl->sys.flags |= BTRFS_BALANCE_ARGS_USAGE;
+		bctl->sys.usage = 90;
 	}
-	if (!(rctl->meta.flags & BTRFS_RESTRIPE_ARGS_USAGE) &&
-	    !(rctl->meta.flags & BTRFS_RESTRIPE_ARGS_CONVERT)) {
-		rctl->meta.flags |= BTRFS_RESTRIPE_ARGS_USAGE;
-		rctl->meta.usage = 90;
+	if (!(bctl->meta.flags & BTRFS_BALANCE_ARGS_USAGE) &&
+	    !(bctl->meta.flags & BTRFS_BALANCE_ARGS_CONVERT)) {
+		bctl->meta.flags |= BTRFS_BALANCE_ARGS_USAGE;
+		bctl->meta.usage = 90;
 	}
 }
 
 /*
- * Should be called with both restripe and volume mutexes held to
- * serialize other volume operations (add_dev/rm_dev/resize) wrt
- * restriper.  Same goes for unset_restripe_control().
+ * Should be called with both balance and volume mutexes held to
+ * serialize other volume operations (add_dev/rm_dev/resize) with
+ * restriper.  Same goes for unset_balance_control.
  */
-static void set_restripe_control(struct restripe_control *rctl, int update)
+static void set_balance_control(struct btrfs_balance_control *bctl)
 {
-	struct btrfs_fs_info *fs_info = rctl->fs_info;
+	struct btrfs_fs_info *fs_info = bctl->fs_info;
 
-	spin_lock(&fs_info->restripe_lock);
-	fs_info->restripe_ctl = rctl;
-	if (update) {
-		update_restripe_args(rctl);
-		memset(&rctl->stat, 0, sizeof(rctl->stat));
-	}
-	spin_unlock(&fs_info->restripe_lock);
+	BUG_ON(fs_info->balance_ctl);
+
+	spin_lock(&fs_info->balance_lock);
+	fs_info->balance_ctl = bctl;
+	spin_unlock(&fs_info->balance_lock);
 }
 
-static void unset_restripe_control(struct btrfs_fs_info *fs_info)
+static void unset_balance_control(struct btrfs_fs_info *fs_info)
 {
-	struct restripe_control *rctl = fs_info->restripe_ctl;
+	struct btrfs_balance_control *bctl = fs_info->balance_ctl;
 
-	spin_lock(&fs_info->restripe_lock);
-	fs_info->restripe_ctl = NULL;
-	spin_unlock(&fs_info->restripe_lock);
+	BUG_ON(!fs_info->balance_ctl);
 
-	kfree(rctl);
+	spin_lock(&fs_info->balance_lock);
+	fs_info->balance_ctl = NULL;
+	spin_unlock(&fs_info->balance_lock);
+
+	kfree(bctl);
 }
 
 /*
- * Restripe filters.  Return 1 if chunk should be 'filtered out',
- * ie should not be restriped.
+ * Balance filters.  Return 1 if chunk should be filtered out
+ * (should not be balanced).
  */
 static int chunk_profiles_filter(u64 chunk_profile,
-				 struct btrfs_restripe_args *rargs)
+				 struct btrfs_balance_args *bargs)
 {
 	chunk_profile &= BTRFS_BLOCK_GROUP_PROFILE_MASK;
 
 	if (chunk_profile == 0)
 		chunk_profile = BTRFS_AVAIL_ALLOC_BIT_SINGLE;
 
-	if (rargs->profiles & chunk_profile)
+	if (bargs->profiles & chunk_profile)
 		return 0;
 
 	return 1;
@@ -2254,15 +2254,18 @@ static int chunk_profiles_filter(u64 chunk_profile,
 
 static u64 div_factor_fine(u64 num, int factor)
 {
-	if (factor < 0 || factor >= 100)
+	if (factor <= 0)
+		return 0;
+	if (factor >= 100)
 		return num;
+
 	num *= factor;
 	do_div(num, 100);
 	return num;
 }
 
 static int chunk_usage_filter(struct btrfs_fs_info *fs_info, u64 chunk_offset,
-			      struct btrfs_restripe_args *rargs)
+			      struct btrfs_balance_args *bargs)
 {
 	struct btrfs_block_group_cache *cache;
 	u64 chunk_used, user_thresh;
@@ -2271,7 +2274,7 @@ static int chunk_usage_filter(struct btrfs_fs_info *fs_info, u64 chunk_offset,
 	cache = btrfs_lookup_block_group(fs_info, chunk_offset);
 	chunk_used = btrfs_block_group_used(&cache->item);
 
-	user_thresh = div_factor_fine(cache->key.offset, rargs->usage);
+	user_thresh = div_factor_fine(cache->key.offset, bargs->usage);
 	if (chunk_used < user_thresh)
 		ret = 0;
 
@@ -2281,7 +2284,7 @@ static int chunk_usage_filter(struct btrfs_fs_info *fs_info, u64 chunk_offset,
 
 static int chunk_devid_filter(struct extent_buffer *leaf,
 			      struct btrfs_chunk *chunk,
-			      struct btrfs_restripe_args *rargs)
+			      struct btrfs_balance_args *bargs)
 {
 	struct btrfs_stripe *stripe;
 	int num_stripes = btrfs_chunk_num_stripes(leaf, chunk);
@@ -2289,7 +2292,7 @@ static int chunk_devid_filter(struct extent_buffer *leaf,
 
 	for (i = 0; i < num_stripes; i++) {
 		stripe = btrfs_stripe_nr(chunk, i);
-		if (btrfs_stripe_devid(leaf, stripe) == rargs->devid)
+		if (btrfs_stripe_devid(leaf, stripe) == bargs->devid)
 			return 0;
 	}
 
@@ -2300,7 +2303,7 @@ static int chunk_devid_filter(struct extent_buffer *leaf,
 static int chunk_drange_filter(struct extent_buffer *leaf,
 			       struct btrfs_chunk *chunk,
 			       u64 chunk_offset,
-			       struct btrfs_restripe_args *rargs)
+			       struct btrfs_balance_args *bargs)
 {
 	struct btrfs_stripe *stripe;
 	int num_stripes = btrfs_chunk_num_stripes(leaf, chunk);
@@ -2309,7 +2312,8 @@ static int chunk_drange_filter(struct extent_buffer *leaf,
 	int factor;
 	int i;
 
-	BUG_ON(!(rargs->flags & BTRFS_RESTRIPE_ARGS_DEVID));
+	if (!(bargs->flags & BTRFS_BALANCE_ARGS_DEVID))
+		return 0;
 
 	if (btrfs_chunk_type(leaf, chunk) & (BTRFS_BLOCK_GROUP_DUP |
 	     BTRFS_BLOCK_GROUP_RAID1 | BTRFS_BLOCK_GROUP_RAID10))
@@ -2320,15 +2324,15 @@ static int chunk_drange_filter(struct extent_buffer *leaf,
 
 	for (i = 0; i < num_stripes; i++) {
 		stripe = btrfs_stripe_nr(chunk, i);
-		if (btrfs_stripe_devid(leaf, stripe) != rargs->devid)
+		if (btrfs_stripe_devid(leaf, stripe) != bargs->devid)
 			continue;
 
 		stripe_offset = btrfs_stripe_offset(leaf, stripe);
 		stripe_length = btrfs_chunk_length(leaf, chunk);
 		do_div(stripe_length, factor);
 
-		if (stripe_offset < rargs->pend &&
-		    stripe_offset + stripe_length > rargs->pstart)
+		if (stripe_offset < bargs->pend &&
+		    stripe_offset + stripe_length > bargs->pstart)
 			return 0;
 	}
 
@@ -2339,10 +2343,10 @@ static int chunk_drange_filter(struct extent_buffer *leaf,
 static int chunk_vrange_filter(struct extent_buffer *leaf,
 			       struct btrfs_chunk *chunk,
 			       u64 chunk_offset,
-			       struct btrfs_restripe_args *rargs)
+			       struct btrfs_balance_args *bargs)
 {
-	if (chunk_offset < rargs->vend &&
-	    chunk_offset + btrfs_chunk_length(leaf, chunk) > rargs->vstart)
+	if (chunk_offset < bargs->vend &&
+	    chunk_offset + btrfs_chunk_length(leaf, chunk) > bargs->vstart)
 		/* at least part of the chunk is inside this vrange */
 		return 0;
 
@@ -2350,75 +2354,76 @@ static int chunk_vrange_filter(struct extent_buffer *leaf,
 }
 
 static int chunk_soft_convert_filter(u64 chunk_profile,
-				     struct btrfs_restripe_args *rargs)
+				     struct btrfs_balance_args *bargs)
 {
-	BUG_ON(!(rargs->flags & BTRFS_RESTRIPE_ARGS_CONVERT));
+	if (!(bargs->flags & BTRFS_BALANCE_ARGS_CONVERT))
+		return 0;
 
 	chunk_profile &= BTRFS_BLOCK_GROUP_PROFILE_MASK;
 
 	if (chunk_profile == 0)
 		chunk_profile = BTRFS_AVAIL_ALLOC_BIT_SINGLE;
 
-	if (rargs->target & chunk_profile)
+	if (bargs->target & chunk_profile)
 		return 1;
 
 	return 0;
 }
 
-static int should_restripe_chunk(struct btrfs_root *root,
-				 struct extent_buffer *leaf,
-				 struct btrfs_chunk *chunk, u64 chunk_offset)
+static int should_balance_chunk(struct btrfs_root *root,
+				struct extent_buffer *leaf,
+				struct btrfs_chunk *chunk, u64 chunk_offset)
 {
-	struct restripe_control *rctl = root->fs_info->restripe_ctl;
+	struct btrfs_balance_control *bctl = root->fs_info->balance_ctl;
+	struct btrfs_balance_args *bargs = NULL;
 	u64 chunk_type = btrfs_chunk_type(leaf, chunk);
-	struct btrfs_restripe_args *rargs = NULL;
 
 	/* type filter */
 	if (!((chunk_type & BTRFS_BLOCK_GROUP_TYPE_MASK) &
-	      (rctl->flags & BTRFS_RESTRIPE_TYPE_MASK))) {
+	      (bctl->flags & BTRFS_BALANCE_TYPE_MASK))) {
 		return 0;
 	}
 
 	if (chunk_type & BTRFS_BLOCK_GROUP_DATA)
-		rargs = &rctl->data;
+		bargs = &bctl->data;
 	else if (chunk_type & BTRFS_BLOCK_GROUP_SYSTEM)
-		rargs = &rctl->sys;
+		bargs = &bctl->sys;
 	else if (chunk_type & BTRFS_BLOCK_GROUP_METADATA)
-		rargs = &rctl->meta;
+		bargs = &bctl->meta;
 
 	/* profiles filter */
-	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_PROFILES) &&
-	    chunk_profiles_filter(chunk_type, rargs)) {
+	if ((bargs->flags & BTRFS_BALANCE_ARGS_PROFILES) &&
+	    chunk_profiles_filter(chunk_type, bargs)) {
 		return 0;
 	}
 
 	/* usage filter */
-	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_USAGE) &&
-	    chunk_usage_filter(rctl->fs_info, chunk_offset, rargs)) {
+	if ((bargs->flags & BTRFS_BALANCE_ARGS_USAGE) &&
+	    chunk_usage_filter(bctl->fs_info, chunk_offset, bargs)) {
 		return 0;
 	}
 
 	/* devid filter */
-	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_DEVID) &&
-	    chunk_devid_filter(leaf, chunk, rargs)) {
+	if ((bargs->flags & BTRFS_BALANCE_ARGS_DEVID) &&
+	    chunk_devid_filter(leaf, chunk, bargs)) {
 		return 0;
 	}
 
 	/* drange filter, makes sense only with devid filter */
-	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_DRANGE) &&
-	    chunk_drange_filter(leaf, chunk, chunk_offset, rargs)) {
+	if ((bargs->flags & BTRFS_BALANCE_ARGS_DRANGE) &&
+	    chunk_drange_filter(leaf, chunk, chunk_offset, bargs)) {
 		return 0;
 	}
 
 	/* vrange filter */
-	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_VRANGE) &&
-	    chunk_vrange_filter(leaf, chunk, chunk_offset, rargs)) {
+	if ((bargs->flags & BTRFS_BALANCE_ARGS_VRANGE) &&
+	    chunk_vrange_filter(leaf, chunk, chunk_offset, bargs)) {
 		return 0;
 	}
 
 	/* soft profile changing mode */
-	if ((rargs->flags & BTRFS_RESTRIPE_ARGS_SOFT) &&
-	    chunk_soft_convert_filter(chunk_type, rargs)) {
+	if ((bargs->flags & BTRFS_BALANCE_ARGS_SOFT) &&
+	    chunk_soft_convert_filter(chunk_type, bargs)) {
 		return 0;
 	}
 
@@ -2434,13 +2439,15 @@ static u64 div_factor(u64 num, int factor)
 	return num;
 }
 
-static int __btrfs_restripe(struct btrfs_root *dev_root)
+static int __btrfs_balance(struct btrfs_fs_info *fs_info)
 {
+	struct btrfs_balance_control *bctl = fs_info->balance_ctl;
+	struct btrfs_root *chunk_root = fs_info->chunk_root;
+	struct btrfs_root *dev_root = fs_info->dev_root;
 	struct list_head *devices;
 	struct btrfs_device *device;
 	u64 old_size;
 	u64 size_to_free;
-	struct btrfs_root *chunk_root = dev_root->fs_info->chunk_root;
 	struct btrfs_chunk *chunk;
 	struct btrfs_path *path;
 	struct btrfs_key key;
@@ -2450,10 +2457,10 @@ static int __btrfs_restripe(struct btrfs_root *dev_root)
 	int slot;
 	int ret;
 	int enospc_errors = 0;
-	bool counting_only = true;
+	bool counting = true;
 
 	/* step one make some room on all the devices */
-	devices = &dev_root->fs_info->fs_devices->devices;
+	devices = &fs_info->fs_devices->devices;
 	list_for_each_entry(device, devices, dev_list) {
 		old_size = device->total_bytes;
 		size_to_free = div_factor(old_size, 1);
@@ -2483,17 +2490,18 @@ static int __btrfs_restripe(struct btrfs_root *dev_root)
 		goto error;
 	}
 
+	/* zero out stat counters */
+	spin_lock(&fs_info->balance_lock);
+	memset(&bctl->stat, 0, sizeof(bctl->stat));
+	spin_unlock(&fs_info->balance_lock);
 again:
 	key.objectid = BTRFS_FIRST_CHUNK_TREE_OBJECTID;
 	key.offset = (u64)-1;
 	key.type = BTRFS_CHUNK_ITEM_KEY;
 
 	while (1) {
-		struct btrfs_fs_info *fs_info = dev_root->fs_info;
-		struct restripe_control *rctl = fs_info->restripe_ctl;
-
-		if (test_bit(RESTRIPE_CANCEL_REQ, &fs_info->restripe_state) ||
-		    test_bit(RESTRIPE_PAUSE_REQ, &fs_info->restripe_state)) {
+		if ((!counting && atomic_read(&fs_info->balance_pause_req)) ||
+		    atomic_read(&fs_info->balance_cancel_req)) {
 			ret = -ECANCELED;
 			goto error;
 		}
@@ -2507,12 +2515,12 @@ again:
 		 * failed
 		 */
 		if (ret == 0)
-			BUG(); /* DIS - break ? */
+			BUG(); /* FIXME break ? */
 
 		ret = btrfs_previous_item(chunk_root, path, 0,
 					  BTRFS_CHUNK_ITEM_KEY);
 		if (ret)
-			BUG(); /* DIS - break ? */
+			break;
 
 		leaf = path->nodes[0];
 		slot = path->slots[0];
@@ -2527,22 +2535,22 @@ again:
 
 		chunk = btrfs_item_ptr(leaf, slot, struct btrfs_chunk);
 
-		if (!counting_only) {
-			spin_lock(&fs_info->restripe_lock);
-			rctl->stat.considered++;
-			spin_unlock(&fs_info->restripe_lock);
+		if (!counting) {
+			spin_lock(&fs_info->balance_lock);
+			bctl->stat.considered++;
+			spin_unlock(&fs_info->balance_lock);
 		}
 
-		ret = should_restripe_chunk(chunk_root, leaf, chunk,
-					    found_key.offset);
+		ret = should_balance_chunk(chunk_root, leaf, chunk,
+					   found_key.offset);
 		btrfs_release_path(path);
 		if (!ret)
 			goto loop;
 
-		if (counting_only) {
-			spin_lock(&fs_info->restripe_lock);
-			rctl->stat.expected++;
-			spin_unlock(&fs_info->restripe_lock);
+		if (counting) {
+			spin_lock(&fs_info->balance_lock);
+			bctl->stat.expected++;
+			spin_unlock(&fs_info->balance_lock);
 			goto loop;
 		}
 
@@ -2555,42 +2563,63 @@ again:
 		if (ret == -ENOSPC) {
 			enospc_errors++;
 		} else {
-			spin_lock(&fs_info->restripe_lock);
-			rctl->stat.completed++;
-			spin_unlock(&fs_info->restripe_lock);
+			spin_lock(&fs_info->balance_lock);
+			bctl->stat.completed++;
+			spin_unlock(&fs_info->balance_lock);
 		}
 loop:
 		key.offset = found_key.offset - 1;
 	}
 
-	if (counting_only) {
+	if (counting) {
 		btrfs_release_path(path);
-		counting_only = false;
+		counting = false;
 		goto again;
 	}
-
 error:
 	btrfs_free_path(path);
 	if (enospc_errors) {
-		printk(KERN_INFO "btrfs: restripe finished with %d enospc "
-		       "error(s)\n", enospc_errors);
-		ret = -ENOSPC;
+		printk(KERN_INFO "btrfs: %d enospc errors during balance\n",
+		       enospc_errors);
+		if (!ret)
+			ret = -ENOSPC;
 	}
 
 	return ret;
 }
 
-/*
- * Should be called with restripe_mutex held
- */
-int btrfs_restripe(struct restripe_control *rctl, int resume)
+static inline int balance_need_close(struct btrfs_fs_info *fs_info)
 {
-	struct btrfs_fs_info *fs_info = rctl->fs_info;
-	u64 allowed;
-	int err;
+	/* cancel requested || normal exit path */
+	return atomic_read(&fs_info->balance_cancel_req) ||
+		(atomic_read(&fs_info->balance_pause_req) == 0 &&
+		 atomic_read(&fs_info->balance_cancel_req) == 0);
+}
+
+static void __cancel_balance(struct btrfs_fs_info *fs_info)
+{
 	int ret;
 
-	mutex_lock(&fs_info->volume_mutex);
+	unset_balance_control(fs_info);
+	ret = del_balance_item(fs_info->tree_root);
+	BUG_ON(ret);
+}
+
+/*
+ * Should be called with both balance and volume mutexes held
+ */
+int btrfs_balance(struct btrfs_balance_control *bctl, int resume)
+{
+	struct btrfs_fs_info *fs_info = bctl->fs_info;
+	u64 allowed;
+	int ret;
+
+	if (btrfs_fs_closing(fs_info) ||
+	    atomic_read(&fs_info->balance_pause_req) ||
+	    atomic_read(&fs_info->balance_cancel_req)) {
+		ret = -EINVAL;
+		goto out;
+	}
 
 	/*
 	 * In case of mixed groups both data and meta should be picked,
@@ -2598,12 +2627,12 @@ int btrfs_restripe(struct restripe_control *rctl, int resume)
 	 */
 	allowed = btrfs_super_incompat_flags(fs_info->super_copy);
 	if ((allowed & BTRFS_FEATURE_INCOMPAT_MIXED_GROUPS) &&
-	    (rctl->flags & (BTRFS_RESTRIPE_DATA | BTRFS_RESTRIPE_METADATA))) {
-		if (!(rctl->flags & BTRFS_RESTRIPE_DATA) ||
-		    !(rctl->flags & BTRFS_RESTRIPE_METADATA) ||
-		    memcmp(&rctl->data, &rctl->meta, sizeof(rctl->data))) {
+	    (bctl->flags & (BTRFS_BALANCE_DATA | BTRFS_BALANCE_METADATA))) {
+		if (!(bctl->flags & BTRFS_BALANCE_DATA) ||
+		    !(bctl->flags & BTRFS_BALANCE_METADATA) ||
+		    memcmp(&bctl->data, &bctl->meta, sizeof(bctl->data))) {
 			printk(KERN_ERR "btrfs: with mixed groups data and "
-			       "metadata restripe options must be the same\n");
+			       "metadata balance options must be the same\n");
 			ret = -EINVAL;
 			goto out;
 		}
@@ -2613,9 +2642,9 @@ int btrfs_restripe(struct restripe_control *rctl, int resume)
 	 * Profile changing sanity checks.  Skip them if a simple
 	 * balance is requested.
 	 */
-	if (!((rctl->data.flags | rctl->sys.flags | rctl->meta.flags) &
-	      BTRFS_RESTRIPE_ARGS_CONVERT))
-		goto do_restripe;
+	if (!((bctl->data.flags | bctl->sys.flags | bctl->meta.flags) &
+	      BTRFS_BALANCE_ARGS_CONVERT))
+		goto do_balance;
 
 	allowed = BTRFS_AVAIL_ALLOC_BIT_SINGLE;
 	if (fs_info->fs_devices->num_devices == 1)
@@ -2626,29 +2655,32 @@ int btrfs_restripe(struct restripe_control *rctl, int resume)
 		allowed |= (BTRFS_BLOCK_GROUP_RAID0 | BTRFS_BLOCK_GROUP_RAID1 |
 				BTRFS_BLOCK_GROUP_RAID10);
 
-	if (rctl->data.target & ~allowed) {
-		printk(KERN_ERR "btrfs: unable to start restripe with target "
+	if (!profile_is_valid(bctl->data.target, 1) ||
+	    bctl->data.target & ~allowed) {
+		printk(KERN_ERR "btrfs: unable to start balance with target "
 		       "data profile %llu\n",
-		       (unsigned long long)rctl->data.target);
+		       (unsigned long long)bctl->data.target);
 		ret = -EINVAL;
 		goto out;
 	}
-	if (rctl->sys.target & ~allowed) {
-		printk(KERN_ERR "btrfs: unable to start restripe with target "
-		       "system profile %llu\n",
-		       (unsigned long long)rctl->sys.target);
-		ret = -EINVAL;
-		goto out;
-	}
-	if (rctl->meta.target & ~allowed) {
-		printk(KERN_ERR "btrfs: unable to start restripe with target "
+	if (!profile_is_valid(bctl->meta.target, 1) ||
+	    bctl->meta.target & ~allowed) {
+		printk(KERN_ERR "btrfs: unable to start balance with target "
 		       "metadata profile %llu\n",
-		       (unsigned long long)rctl->meta.target);
+		       (unsigned long long)bctl->meta.target);
+		ret = -EINVAL;
+		goto out;
+	}
+	if (!profile_is_valid(bctl->sys.target, 1) ||
+	    bctl->sys.target & ~allowed) {
+		printk(KERN_ERR "btrfs: unable to start balance with target "
+		       "system profile %llu\n",
+		       (unsigned long long)bctl->sys.target);
 		ret = -EINVAL;
 		goto out;
 	}
 
-	if (rctl->data.target & BTRFS_BLOCK_GROUP_DUP) {
+	if (bctl->data.target & BTRFS_BLOCK_GROUP_DUP) {
 		printk(KERN_ERR "btrfs: dup for data is not allowed\n");
 		ret = -EINVAL;
 		goto out;
@@ -2657,93 +2689,91 @@ int btrfs_restripe(struct restripe_control *rctl, int resume)
 	/* allow to reduce meta or sys integrity only if force set */
 	allowed = BTRFS_BLOCK_GROUP_DUP | BTRFS_BLOCK_GROUP_RAID1 |
 			BTRFS_BLOCK_GROUP_RAID10;
-	if (((rctl->sys.flags & BTRFS_RESTRIPE_ARGS_CONVERT) &&
+	if (((bctl->sys.flags & BTRFS_BALANCE_ARGS_CONVERT) &&
 	     (fs_info->avail_system_alloc_bits & allowed) &&
-	     !(rctl->sys.target & allowed)) ||
-	    ((rctl->meta.flags & BTRFS_RESTRIPE_ARGS_CONVERT) &&
+	     !(bctl->sys.target & allowed)) ||
+	    ((bctl->meta.flags & BTRFS_BALANCE_ARGS_CONVERT) &&
 	     (fs_info->avail_metadata_alloc_bits & allowed) &&
-	     !(rctl->meta.target & allowed))) {
-		if (rctl->flags & BTRFS_RESTRIPE_FORCE) {
+	     !(bctl->meta.target & allowed))) {
+		if (bctl->flags & BTRFS_BALANCE_FORCE) {
 			printk(KERN_INFO "btrfs: force reducing metadata "
 			       "integrity\n");
 		} else {
-			printk(KERN_ERR "btrfs: can't reduce metadata "
-			       "integrity\n");
+			printk(KERN_ERR "btrfs: balance will reduce metadata "
+			       "integrity, use force if you want this\n");
 			ret = -EINVAL;
 			goto out;
 		}
 	}
 
-do_restripe:
-	ret = insert_restripe_item(fs_info->tree_root, rctl);
+do_balance:
+	ret = insert_balance_item(fs_info->tree_root, bctl);
 	if (ret && ret != -EEXIST)
 		goto out;
-	BUG_ON(ret == -EEXIST && !resume);
+	BUG_ON((ret == -EEXIST && !resume) || (ret != -EEXIST && resume));
 
-	set_restripe_control(rctl, resume);
-	mutex_unlock(&fs_info->volume_mutex);
-
-	set_bit(RESTRIPE_RUNNING, &fs_info->restripe_state);
-	mutex_unlock(&fs_info->restripe_mutex);
-
-	err = __btrfs_restripe(fs_info->dev_root);
-
-	mutex_lock(&fs_info->restripe_mutex);
-	clear_bit(RESTRIPE_RUNNING, &fs_info->restripe_state);
-
-	if (test_bit(RESTRIPE_CANCEL_REQ, &fs_info->restripe_state) ||
-	    (!test_bit(RESTRIPE_PAUSE_REQ, &fs_info->restripe_state) &&
-	     !test_bit(RESTRIPE_CANCEL_REQ, &fs_info->restripe_state))) {
-		mutex_lock(&fs_info->volume_mutex);
-
-		unset_restripe_control(fs_info);
-		ret = del_restripe_item(fs_info->tree_root);
-		BUG_ON(ret);
-
-		mutex_unlock(&fs_info->volume_mutex);
+	if (!resume) {
+		set_balance_control(bctl);
+	} else {
+		spin_lock(&fs_info->balance_lock);
+		update_balance_args(bctl);
+		spin_unlock(&fs_info->balance_lock);
 	}
 
-	wake_up(&fs_info->restripe_wait);
-	return err;
+	atomic_inc(&fs_info->balance_running);
+	mutex_unlock(&fs_info->balance_mutex);
 
+	ret = __btrfs_balance(fs_info);
+
+	mutex_lock(&fs_info->balance_mutex);
+	atomic_dec(&fs_info->balance_running);
+
+	if ((ret && ret != -ECANCELED && ret != -ENOSPC) ||
+	    balance_need_close(fs_info)) {
+		__cancel_balance(fs_info);
+	}
+
+	wake_up(&fs_info->balance_wait_q);
+
+	return ret;
 out:
-	mutex_unlock(&fs_info->volume_mutex);
-	kfree(rctl);
+	if (resume)
+		__cancel_balance(fs_info);
+	else
+		kfree(bctl);
 	return ret;
 }
 
 static int restriper_kthread(void *data)
 {
-	struct restripe_control *rctl = (struct restripe_control *)data;
-	struct btrfs_fs_info *fs_info = rctl->fs_info;
+	struct btrfs_balance_control *bctl =
+			(struct btrfs_balance_control *)data;
+	struct btrfs_fs_info *fs_info = bctl->fs_info;
 	int ret = 0;
 
-	mutex_lock(&fs_info->restripe_mutex);
+	mutex_lock(&fs_info->volume_mutex);
+	mutex_lock(&fs_info->balance_mutex);
 
-	if (btrfs_test_opt(fs_info->tree_root, SKIP_RESTRIPE)) {
-		mutex_lock(&fs_info->volume_mutex);
-		set_restripe_control(rctl, 0);
-		mutex_unlock(&fs_info->volume_mutex);
+	set_balance_control(bctl);
 
-		printk(KERN_INFO "btrfs: force skipping restripe\n");
-		goto out;
+	if (btrfs_test_opt(fs_info->tree_root, SKIP_BALANCE)) {
+		printk(KERN_INFO "btrfs: force skipping balance\n");
 	} else {
-		printk(KERN_INFO "btrfs: continuing restripe\n");
+		printk(KERN_INFO "btrfs: continuing balance\n");
+		ret = btrfs_balance(bctl, 1);
 	}
 
-	ret = btrfs_restripe(rctl, 1);
-
-out:
-	mutex_unlock(&fs_info->restripe_mutex);
+	mutex_unlock(&fs_info->balance_mutex);
+	mutex_unlock(&fs_info->volume_mutex);
 	return ret;
 }
 
-int btrfs_recover_restripe(struct btrfs_root *tree_root)
+int btrfs_recover_balance(struct btrfs_root *tree_root)
 {
 	struct task_struct *tsk;
-	struct restripe_control *rctl;
-	struct btrfs_restripe_item *item;
-	struct btrfs_disk_restripe_args disk_rargs;
+	struct btrfs_balance_control *bctl;
+	struct btrfs_balance_item *item;
+	struct btrfs_disk_balance_args disk_bargs;
 	struct btrfs_path *path;
 	struct extent_buffer *leaf;
 	struct btrfs_key key;
@@ -2753,144 +2783,139 @@ int btrfs_recover_restripe(struct btrfs_root *tree_root)
 	if (!path)
 		return -ENOMEM;
 
-	rctl = kzalloc(sizeof(*rctl), GFP_NOFS);
-	if (!rctl) {
+	bctl = kzalloc(sizeof(*bctl), GFP_NOFS);
+	if (!bctl) {
 		ret = -ENOMEM;
 		goto out;
 	}
 
-	key.objectid = BTRFS_RESTRIPE_OBJECTID;
-	key.type = BTRFS_RESTRIPE_ITEM_KEY;
+	key.objectid = BTRFS_BALANCE_OBJECTID;
+	key.type = BTRFS_BALANCE_ITEM_KEY;
 	key.offset = 0;
 
 	ret = btrfs_search_slot(NULL, tree_root, &key, path, 0, 0);
 	if (ret < 0)
-		goto out_free;
+		goto out_bctl;
 	if (ret > 0) { /* ret = -ENOENT; */
 		ret = 0;
-		goto out_free;
+		goto out_bctl;
 	}
 
 	leaf = path->nodes[0];
-	item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_restripe_item);
+	item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_balance_item);
 
-	rctl->fs_info = tree_root->fs_info;
-	rctl->flags = btrfs_restripe_flags(leaf, item);
+	bctl->fs_info = tree_root->fs_info;
+	bctl->flags = btrfs_balance_flags(leaf, item);
 
-	btrfs_restripe_data(leaf, item, &disk_rargs);
-	btrfs_disk_restripe_args_to_cpu(&rctl->data, &disk_rargs);
-	btrfs_restripe_meta(leaf, item, &disk_rargs);
-	btrfs_disk_restripe_args_to_cpu(&rctl->meta, &disk_rargs);
-	btrfs_restripe_sys(leaf, item, &disk_rargs);
-	btrfs_disk_restripe_args_to_cpu(&rctl->sys, &disk_rargs);
+	btrfs_balance_data(leaf, item, &disk_bargs);
+	btrfs_disk_balance_args_to_cpu(&bctl->data, &disk_bargs);
+	btrfs_balance_meta(leaf, item, &disk_bargs);
+	btrfs_disk_balance_args_to_cpu(&bctl->meta, &disk_bargs);
+	btrfs_balance_sys(leaf, item, &disk_bargs);
+	btrfs_disk_balance_args_to_cpu(&bctl->sys, &disk_bargs);
 
-	tsk = kthread_run(restriper_kthread, rctl, "btrfs-restriper");
+	tsk = kthread_run(restriper_kthread, bctl, "btrfs-restriper");
 	if (IS_ERR(tsk))
 		ret = PTR_ERR(tsk);
 	else
 		goto out;
 
-out_free:
-	kfree(rctl);
+out_bctl:
+	kfree(bctl);
 out:
 	btrfs_free_path(path);
 	return ret;
 }
 
-int btrfs_cancel_restripe(struct btrfs_fs_info *fs_info)
+int btrfs_pause_balance(struct btrfs_fs_info *fs_info)
 {
 	int ret = 0;
 
-	mutex_lock(&fs_info->restripe_mutex);
-	if (!fs_info->restripe_ctl) {
-		ret = -ENOTCONN;
-		goto out;
+	mutex_lock(&fs_info->balance_mutex);
+	if (!fs_info->balance_ctl) {
+		mutex_unlock(&fs_info->balance_mutex);
+		return -ENOTCONN;
 	}
 
-	if (test_bit(RESTRIPE_RUNNING, &fs_info->restripe_state)) {
-		set_bit(RESTRIPE_CANCEL_REQ, &fs_info->restripe_state);
-		while (test_bit(RESTRIPE_RUNNING, &fs_info->restripe_state)) {
-			mutex_unlock(&fs_info->restripe_mutex);
-			wait_event(fs_info->restripe_wait,
-				   !test_bit(RESTRIPE_RUNNING,
-					     &fs_info->restripe_state));
-			mutex_lock(&fs_info->restripe_mutex);
-		}
-		clear_bit(RESTRIPE_CANCEL_REQ, &fs_info->restripe_state);
+	if (atomic_read(&fs_info->balance_running)) {
+		atomic_inc(&fs_info->balance_pause_req);
+		mutex_unlock(&fs_info->balance_mutex);
+
+		wait_event(fs_info->balance_wait_q,
+			   atomic_read(&fs_info->balance_running) == 0);
+
+		mutex_lock(&fs_info->balance_mutex);
+		/* we are good with balance_ctl ripped off from under us */
+		BUG_ON(atomic_read(&fs_info->balance_running));
+		atomic_dec(&fs_info->balance_pause_req);
 	} else {
-		mutex_lock(&fs_info->volume_mutex);
-
-		unset_restripe_control(fs_info);
-		ret = del_restripe_item(fs_info->tree_root);
-		BUG_ON(ret);
-
-		mutex_unlock(&fs_info->volume_mutex);
+		ret = -ENOTCONN;
 	}
 
-out:
-	mutex_unlock(&fs_info->restripe_mutex);
+	mutex_unlock(&fs_info->balance_mutex);
 	return ret;
 }
 
-int btrfs_pause_restripe(struct btrfs_fs_info *fs_info, int unset)
+int btrfs_cancel_balance(struct btrfs_fs_info *fs_info)
 {
-	int ret = 0;
-
-	mutex_lock(&fs_info->restripe_mutex);
-	if (!fs_info->restripe_ctl) {
-		ret = -ENOTCONN;
-		goto out;
+	mutex_lock(&fs_info->balance_mutex);
+	if (!fs_info->balance_ctl) {
+		mutex_unlock(&fs_info->balance_mutex);
+		return -ENOTCONN;
 	}
 
-	/* only running restripe can be paused */
-	if (!test_bit(RESTRIPE_RUNNING, &fs_info->restripe_state)) {
-		ret = -ENOTCONN;
-		goto out_unset;
-	}
-
-	set_bit(RESTRIPE_PAUSE_REQ, &fs_info->restripe_state);
-	while (test_bit(RESTRIPE_RUNNING, &fs_info->restripe_state)) {
-		mutex_unlock(&fs_info->restripe_mutex);
-		wait_event(fs_info->restripe_wait,
-			   !test_bit(RESTRIPE_RUNNING,
-				     &fs_info->restripe_state));
-		mutex_lock(&fs_info->restripe_mutex);
-	}
-	clear_bit(RESTRIPE_PAUSE_REQ, &fs_info->restripe_state);
-
-out_unset:
-	if (unset) {
+	atomic_inc(&fs_info->balance_cancel_req);
+	/*
+	 * if we are running just wait and return, balance item is
+	 * deleted in btrfs_balance in this case
+	 */
+	if (atomic_read(&fs_info->balance_running)) {
+		mutex_unlock(&fs_info->balance_mutex);
+		wait_event(fs_info->balance_wait_q,
+			   atomic_read(&fs_info->balance_running) == 0);
+		mutex_lock(&fs_info->balance_mutex);
+	} else {
+		/* __cancel_balance needs volume_mutex */
+		mutex_unlock(&fs_info->balance_mutex);
 		mutex_lock(&fs_info->volume_mutex);
-		unset_restripe_control(fs_info);
+		mutex_lock(&fs_info->balance_mutex);
+
+		if (fs_info->balance_ctl)
+			__cancel_balance(fs_info);
+
 		mutex_unlock(&fs_info->volume_mutex);
 	}
-out:
-	mutex_unlock(&fs_info->restripe_mutex);
-	return ret;
+
+	BUG_ON(fs_info->balance_ctl || atomic_read(&fs_info->balance_running));
+	atomic_dec(&fs_info->balance_cancel_req);
+	mutex_unlock(&fs_info->balance_mutex);
+	return 0;
 }
 
-int btrfs_resume_restripe(struct btrfs_fs_info *fs_info)
+int btrfs_resume_balance(struct btrfs_fs_info *fs_info)
 {
 	int ret;
 
 	if (fs_info->sb->s_flags & MS_RDONLY)
 		return -EROFS;
 
-	mutex_lock(&fs_info->restripe_mutex);
-	if (!fs_info->restripe_ctl) {
+	mutex_lock(&fs_info->volume_mutex);
+	mutex_lock(&fs_info->balance_mutex);
+
+	if (!fs_info->balance_ctl) {
 		ret = -ENOTCONN;
 		goto out;
 	}
 
-	if (test_bit(RESTRIPE_RUNNING, &fs_info->restripe_state)) {
+	if (atomic_read(&fs_info->balance_running)) {
 		ret = -EINPROGRESS;
 		goto out;
 	}
 
-	ret = btrfs_restripe(fs_info->restripe_ctl, 1);
-
+	ret = btrfs_balance(fs_info->balance_ctl, 1);
 out:
-	mutex_unlock(&fs_info->restripe_mutex);
+	mutex_unlock(&fs_info->balance_mutex);
+	mutex_unlock(&fs_info->volume_mutex);
 	return ret;
 }
 

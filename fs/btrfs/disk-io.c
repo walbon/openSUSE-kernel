@@ -2009,11 +2009,13 @@ struct btrfs_root *open_ctree(struct super_block *sb,
 	init_rwsem(&fs_info->scrub_super_lock);
 	fs_info->scrub_workers_refcnt = 0;
 
-	spin_lock_init(&fs_info->restripe_lock);
-	mutex_init(&fs_info->restripe_mutex);
-	fs_info->restripe_ctl = NULL;
-	fs_info->restripe_state = 0;
-	init_waitqueue_head(&fs_info->restripe_wait);
+	spin_lock_init(&fs_info->balance_lock);
+	mutex_init(&fs_info->balance_mutex);
+	atomic_set(&fs_info->balance_running, 0);
+	atomic_set(&fs_info->balance_pause_req, 0);
+	atomic_set(&fs_info->balance_cancel_req, 0);
+	fs_info->balance_ctl = NULL;
+	init_waitqueue_head(&fs_info->balance_wait_q);
 
 	sb->s_blocksize = 4096;
 	sb->s_blocksize_bits = blksize_bits(4096);
@@ -2442,7 +2444,7 @@ retry_root_backup:
 		up_read(&fs_info->cleanup_work_sem);
 
 		if (!err)
-			err = btrfs_recover_restripe(fs_info->tree_root);
+			err = btrfs_recover_balance(fs_info->tree_root);
 
 		if (err) {
 			close_ctree(tree_root);
@@ -2993,8 +2995,8 @@ int close_ctree(struct btrfs_root *root)
 	fs_info->closing = 1;
 	smp_mb();
 
-	/* pause restriper and free restripe_ctl */
-	btrfs_pause_restripe(root->fs_info, 1);
+	/* pause restriper - we want to resume on mount */
+	btrfs_pause_balance(root->fs_info);
 
 	btrfs_scrub_cancel(root);
 
