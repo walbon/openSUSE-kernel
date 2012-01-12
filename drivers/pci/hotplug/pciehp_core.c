@@ -337,6 +337,18 @@ static struct pcie_port_service_driver hpdriver_portdrv = {
 #endif	/* PM */
 };
 
+/* Automatically load pciehp in VMware */
+static struct dmi_system_id __initdata pcieph_dmi_table[] = {
+	{
+		.ident = "VMware",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "VMware"),
+		},
+	},
+	{ },
+};
+MODULE_DEVICE_TABLE(dmi, pcieph_dmi_table);
+
 static int __init pcied_init(void)
 {
 	int retval = 0;

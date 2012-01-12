@@ -1206,7 +1206,8 @@ static void intel_disable_pch_pll(struct drm_i915_private *dev_priv,
 				  enum pipe pipe)
 {
 	int reg;
-	u32 val;
+	u32 val, pll_mask = TRANSC_DPLL_ENABLE | TRANSC_DPLLB_SEL,
+		pll_sel = TRANSC_DPLL_ENABLE;
 
 	if (pipe > 1)
 		return;
@@ -1216,6 +1217,15 @@ static void intel_disable_pch_pll(struct drm_i915_private *dev_priv,
 
 	/* Make sure transcoder isn't still depending on us */
 	assert_transcoder_disabled(dev_priv, pipe);
+
+	if (pipe == 0)
+		pll_sel |= TRANSC_DPLLA_SEL;
+	else if (pipe == 1)
+		pll_sel |= TRANSC_DPLLB_SEL;
+
+
+	if ((I915_READ(PCH_DPLL_SEL) & pll_mask) == pll_sel)
+		return;
 
 	reg = PCH_DPLL(pipe);
 	val = I915_READ(reg);
@@ -5821,10 +5831,12 @@ static int intel_crtc_mode_set(struct drm_crtc *crtc,
 
 	ret = dev_priv->display.crtc_mode_set(crtc, mode, adjusted_mode,
 					      x, y, old_fb);
-
 	drm_vblank_post_modeset(dev, pipe);
 
-	intel_crtc->dpms_mode = DRM_MODE_DPMS_ON;
+	if (ret)
+		intel_crtc->dpms_mode = DRM_MODE_DPMS_OFF;
+	else
+		intel_crtc->dpms_mode = DRM_MODE_DPMS_ON;
 
 	return ret;
 }
@@ -5907,15 +5919,18 @@ static void ironlake_write_eld(struct drm_connector *connector,
 	uint32_t i;
 	int len;
 	int hdmiw_hdmiedid;
+	int aud_config;
 	int aud_cntl_st;
 	int aud_cntrl_st2;
 
 	if (HAS_PCH_IBX(connector->dev)) {
 		hdmiw_hdmiedid = IBX_HDMIW_HDMIEDID_A;
+		aud_config = IBX_AUD_CONFIG_A;
 		aud_cntl_st = IBX_AUD_CNTL_ST_A;
 		aud_cntrl_st2 = IBX_AUD_CNTL_ST2;
 	} else {
 		hdmiw_hdmiedid = CPT_HDMIW_HDMIEDID_A;
+		aud_config = CPT_AUD_CONFIG_A;
 		aud_cntl_st = CPT_AUD_CNTL_ST_A;
 		aud_cntrl_st2 = CPT_AUD_CNTRL_ST2;
 	}
@@ -5923,6 +5938,7 @@ static void ironlake_write_eld(struct drm_connector *connector,
 	i = to_intel_crtc(crtc)->pipe;
 	hdmiw_hdmiedid += i * 0x100;
 	aud_cntl_st += i * 0x100;
+	aud_config += i * 0x100;
 
 	DRM_DEBUG_DRIVER("ELD on pipe %c\n", pipe_name(i));
 
@@ -5942,6 +5958,7 @@ static void ironlake_write_eld(struct drm_connector *connector,
 	if (intel_pipe_has_type(crtc, INTEL_OUTPUT_DISPLAYPORT)) {
 		DRM_DEBUG_DRIVER("ELD: DisplayPort detected\n");
 		eld[5] |= (1 << 2);	/* Conn_Type, 0x1 = DisplayPort */
+		I915_WRITE(aud_config, AUD_CONFIG_N_VALUE_INDEX); /* 0x1 = DP */
 	}
 
 	if (intel_eld_uptodate(connector,
@@ -8037,7 +8054,7 @@ void gen6_enable_rps(struct drm_i915_private *dev_priv)
 	I915_WRITE(GEN6_RP_IDLE_HYSTERSIS, 10);
 	I915_WRITE(GEN6_RP_CONTROL,
 		   GEN6_RP_MEDIA_TURBO |
-		   GEN6_RP_USE_NORMAL_FREQ |
+		   GEN6_RP_MEDIA_HW_MODE |
 		   GEN6_RP_MEDIA_IS_GFX |
 		   GEN6_RP_ENABLE |
 		   GEN6_RP_UP_BUSY_AVG |
@@ -8295,6 +8312,10 @@ static void ivybridge_init_clock_gating(struct drm_device *dev)
 	I915_WRITE(WM1_LP_ILK, 0);
 
 	I915_WRITE(ILK_DSPCLK_GATE, IVB_VRHUNIT_CLK_GATE);
+
+	I915_WRITE(IVB_CHICKEN3,
+		   CHICKEN3_DGMG_REQ_OUT_FIX_DISABLE |
+		   CHICKEN3_DGMG_DONE_FIX_DISABLE);
 
 	for_each_pipe(pipe) {
 		I915_WRITE(DSPCNTR(pipe),
@@ -8589,9 +8610,15 @@ static void intel_init_display(struct drm_device *dev)
 		if (IS_IVYBRIDGE(dev)) {
 			u32	ecobus;
 
+			/* A small trick here - if the bios hasn't configured MT forcewake,
+			 * and if the device is in RC6, then force_wake_mt_get will not wake
+			 * the device and the ECOBUS read will return zero. Which will be
+			 * (correctly) interpreted by the test below as MT forcewake being
+			 * disabled.
+			 */
 			mutex_lock(&dev->struct_mutex);
 			__gen6_gt_force_wake_mt_get(dev_priv);
-			ecobus = I915_READ(ECOBUS);
+			ecobus = I915_READ_NOTRACE(ECOBUS);
 			__gen6_gt_force_wake_mt_put(dev_priv);
 			mutex_unlock(&dev->struct_mutex);
 

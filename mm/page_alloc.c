@@ -1129,7 +1129,9 @@ void drain_local_pages(void *arg)
  */
 void drain_all_pages(void)
 {
+	get_online_cpus();
 	on_each_cpu(drain_local_pages, NULL, 1);
+	put_online_cpus();
 }
 
 #ifdef CONFIG_HIBERNATION
@@ -2025,11 +2027,17 @@ retry:
 					migratetype);
 
 	/*
-	 * If an allocation failed after direct reclaim, it could be because
-	 * pages are pinned on the per-cpu lists. Drain them and try again
+	 * If a high-order allocation failed after direct reclaim, there is a
+	 * possibility that it is because the necessary buddies have been
+	 * freed to the per-cpu list. Drain the local list and try again.
+	 * drain_all_pages is not used because it is unsafe to call
+	 * get_online_cpus from this context as it is possible that kthreadd
+	 * would block during thread creation and the cost of sending storms
+	 * of IPIs in low memory conditions is quite high.
 	 */
-	if (!page && !drained) {
-		drain_all_pages();
+	if (!page && order && !drained) {
+		drain_pages(get_cpu());
+		put_cpu();
 		drained = true;
 		goto retry;
 	}

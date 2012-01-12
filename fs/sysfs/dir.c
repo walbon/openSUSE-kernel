@@ -260,8 +260,8 @@ static int sysfs_dentry_revalidate(struct dentry *dentry, struct nameidata *nd)
 	if (strcmp(dentry->d_name.name, sd->s_name) != 0)
 		goto out_bad;
 
-	mutex_unlock(&sysfs_mutex);
 out_valid:
+	mutex_unlock(&sysfs_mutex);
 	return 1;
 out_bad:
 	/* Remove the dentry from the dcache hashes.
@@ -275,7 +275,6 @@ out_bad:
 	 * to the dcache hashes.
 	 */
 	is_dir = (sysfs_type(sd) == SYSFS_DIR);
-	mutex_unlock(&sysfs_mutex);
 	if (is_dir) {
 		/* If we have submounts we must allow the vfs caches
 		 * to lie about the state of the filesystem to prevent
@@ -286,6 +285,7 @@ out_bad:
 		shrink_dcache_parent(dentry);
 	}
 	d_drop(dentry);
+	mutex_unlock(&sysfs_mutex);
 	return 0;
 }
 
