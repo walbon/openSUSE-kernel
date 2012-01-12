@@ -1213,8 +1213,8 @@ static noinline int btrfs_ioctl_resize(struct btrfs_root *root,
 		return -EPERM;
 
 	mutex_lock(&root->fs_info->volume_mutex);
-	if (root->fs_info->restripe_ctl) {
-		printk(KERN_INFO "btrfs: restripe in progress\n");
+	if (root->fs_info->balance_ctl) {
+		printk(KERN_INFO "btrfs: balance in progress\n");
 		ret = -EINVAL;
 		goto out;
 	}
@@ -2071,8 +2071,8 @@ static long btrfs_ioctl_add_dev(struct btrfs_root *root, void __user *arg)
 		return -EPERM;
 
 	mutex_lock(&root->fs_info->volume_mutex);
-	if (root->fs_info->restripe_ctl) {
-		printk(KERN_INFO "btrfs: restripe in progress\n");
+	if (root->fs_info->balance_ctl) {
+		printk(KERN_INFO "btrfs: balance in progress\n");
 		ret = -EINVAL;
 		goto out;
 	}
@@ -2104,8 +2104,8 @@ static long btrfs_ioctl_rm_dev(struct btrfs_root *root, void __user *arg)
 		return -EROFS;
 
 	mutex_lock(&root->fs_info->volume_mutex);
-	if (root->fs_info->restripe_ctl) {
-		printk(KERN_INFO "btrfs: restripe in progress\n");
+	if (root->fs_info->balance_ctl) {
+		printk(KERN_INFO "btrfs: balance in progress\n");
 		ret = -EINVAL;
 		goto out;
 	}
@@ -3154,10 +3154,11 @@ out:
 	return ret;
 }
 
-static long btrfs_ioctl_balance(struct btrfs_root *root)
+static long btrfs_ioctl_balance(struct btrfs_root *root, void __user *arg)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
-	struct restripe_control *rctl;
+	struct btrfs_ioctl_balance_args *bargs = NULL;
+	struct btrfs_balance_control *bctl;
 	int ret;
 
 	if (!capable(CAP_SYS_ADMIN))
@@ -3166,136 +3167,114 @@ static long btrfs_ioctl_balance(struct btrfs_root *root)
 	if (fs_info->sb->s_flags & MS_RDONLY)
 		return -EROFS;
 
-	mutex_lock(&fs_info->restripe_mutex);
-	if (fs_info->restripe_ctl) {
+	mutex_lock(&fs_info->volume_mutex);
+	mutex_lock(&fs_info->balance_mutex);
+
+	if (fs_info->balance_ctl) {
 		ret = -EINPROGRESS;
 		goto out;
 	}
 
-	rctl = kzalloc(sizeof(*rctl), GFP_NOFS);
-	if (!rctl) {
+	bctl = kzalloc(sizeof(*bctl), GFP_NOFS);
+	if (!bctl) {
 		ret = -ENOMEM;
 		goto out;
 	}
 
-	rctl->fs_info = fs_info;
-	/* relocate everything - no filters */
-	rctl->flags |= BTRFS_RESTRIPE_TYPE_MASK;
+	bctl->fs_info = fs_info;
+	if (arg) {
+		bargs = memdup_user(arg, sizeof(*bargs));
+		if (IS_ERR(bargs)) {
+			kfree(bctl);
+			ret = PTR_ERR(bargs);
+			goto out;
+		}
 
-	ret = btrfs_restripe(rctl, 0);
+		memcpy(&bctl->data, &bargs->data, sizeof(bctl->data));
+		memcpy(&bctl->meta, &bargs->meta, sizeof(bctl->meta));
+		memcpy(&bctl->sys, &bargs->sys, sizeof(bctl->sys));
 
-	/* rctl freed in unset_restripe_control */
+		bctl->flags = bargs->flags;
+	} else {
+		/* balance everything - no filters */
+		bctl->flags |= BTRFS_BALANCE_TYPE_MASK;
+	}
+
+	ret = btrfs_balance(bctl, 0);
+	/*
+	 * bctl is freed in __cancel_balance or in free_fs_info if
+	 * restriper was paused all the way until unmount
+	 */
+	kfree(bargs);
 out:
-	mutex_unlock(&fs_info->restripe_mutex);
+	mutex_unlock(&fs_info->balance_mutex);
+	mutex_unlock(&fs_info->volume_mutex);
 	return ret;
 }
 
-static long btrfs_ioctl_restripe(struct btrfs_root *root, void __user *arg)
-{
-	struct btrfs_ioctl_restripe_args *rargs;
-	struct btrfs_fs_info *fs_info = root->fs_info;
-	struct restripe_control *rctl;
-	int ret;
-
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	if (fs_info->sb->s_flags & MS_RDONLY)
-		return -EROFS;
-
-	mutex_lock(&fs_info->restripe_mutex);
-	if (fs_info->restripe_ctl) {
-		ret = -EINPROGRESS;
-		goto out;
-	}
-
-	rargs = memdup_user(arg, sizeof(*rargs));
-	if (IS_ERR(rargs)) {
-		ret = PTR_ERR(rargs);
-		goto out;
-	}
-
-	rctl = kzalloc(sizeof(*rctl), GFP_NOFS);
-	if (!rctl) {
-		kfree(rargs);
-		ret = -ENOMEM;
-		goto out;
-	}
-
-	rctl->fs_info = fs_info;
-	rctl->flags = rargs->flags;
-
-	memcpy(&rctl->data, &rargs->data, sizeof(rctl->data));
-	memcpy(&rctl->meta, &rargs->meta, sizeof(rctl->meta));
-	memcpy(&rctl->sys, &rargs->sys, sizeof(rctl->sys));
-
-	ret = btrfs_restripe(rctl, 0);
-
-	/* rctl freed in unset_restripe_control */
-	kfree(rargs);
-out:
-	mutex_unlock(&fs_info->restripe_mutex);
-	return ret;
-}
-
-static long btrfs_ioctl_restripe_ctl(struct btrfs_root *root,
-				     int cmd)
+static long btrfs_ioctl_balance_ctl(struct btrfs_root *root, int cmd)
 {
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	switch (cmd) {
-	case BTRFS_RESTRIPE_CTL_CANCEL:
-		return btrfs_cancel_restripe(root->fs_info);
-	case BTRFS_RESTRIPE_CTL_PAUSE:
-		return btrfs_pause_restripe(root->fs_info, 0);
-	case BTRFS_RESTRIPE_CTL_RESUME:
-		return btrfs_resume_restripe(root->fs_info);
+	case BTRFS_BALANCE_CTL_PAUSE:
+		return btrfs_pause_balance(root->fs_info);
+	case BTRFS_BALANCE_CTL_CANCEL:
+		return btrfs_cancel_balance(root->fs_info);
+	case BTRFS_BALANCE_CTL_RESUME:
+		return btrfs_resume_balance(root->fs_info);
 	}
 
 	return -EINVAL;
 }
 
-static long btrfs_ioctl_restripe_progress(struct btrfs_root *root,
-					  void __user *arg)
+static long btrfs_ioctl_balance_progress(struct btrfs_root *root,
+					 void __user *arg)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
-	struct btrfs_ioctl_restripe_args *rargs;
-	struct restripe_control *rctl;
+	struct btrfs_ioctl_balance_args *bargs;
+	struct btrfs_balance_control *bctl;
 	int ret = 0;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	mutex_lock(&fs_info->restripe_mutex);
-	if (!(rctl = fs_info->restripe_ctl)) {
+	mutex_lock(&fs_info->balance_mutex);
+	if (!(bctl = fs_info->balance_ctl)) {
 		ret = -ENOTCONN;
 		goto out;
 	}
 
-	rargs = kzalloc(sizeof(*rargs), GFP_NOFS);
-	if (!rargs) {
+	bargs = kzalloc(sizeof(*bargs), GFP_NOFS);
+	if (!bargs) {
 		ret = -ENOMEM;
 		goto out;
 	}
 
-	rargs->flags = rctl->flags;
-	rargs->state = fs_info->restripe_state;
+	bargs->flags = bctl->flags;
 
-	memcpy(&rargs->data, &rctl->data, sizeof(rargs->data));
-	memcpy(&rargs->sys, &rctl->sys, sizeof(rargs->sys));
-	memcpy(&rargs->meta, &rctl->meta, sizeof(rargs->meta));
+	if (atomic_read(&fs_info->balance_running))
+		bargs->state |= BTRFS_BALANCE_STATE_RUNNING;
+	if (atomic_read(&fs_info->balance_cancel_req))
+		bargs->state |= BTRFS_BALANCE_STATE_CANCEL_REQ;
+	if (atomic_read(&fs_info->balance_pause_req))
+		bargs->state |= BTRFS_BALANCE_STATE_PAUSE_REQ;
 
-	spin_lock(&fs_info->restripe_lock);
-	memcpy(&rargs->stat, &rctl->stat, sizeof(rargs->stat));
-	spin_unlock(&fs_info->restripe_lock);
+	memcpy(&bargs->data, &bctl->data, sizeof(bargs->data));
+	memcpy(&bargs->meta, &bctl->meta, sizeof(bargs->meta));
+	memcpy(&bargs->sys, &bctl->sys, sizeof(bargs->sys));
 
-	if (copy_to_user(arg, rargs, sizeof(*rargs)))
+	spin_lock(&fs_info->balance_lock);
+	memcpy(&bargs->stat, &bctl->stat, sizeof(bargs->stat));
+	spin_unlock(&fs_info->balance_lock);
+
+	if (copy_to_user(arg, bargs, sizeof(*bargs)))
 		ret = -EFAULT;
 
-	kfree(rargs);
+	kfree(bargs);
 out:
-	mutex_unlock(&fs_info->restripe_mutex);
+	mutex_unlock(&fs_info->balance_mutex);
 	return ret;
 }
 
@@ -3343,13 +3322,7 @@ long btrfs_ioctl(struct file *file, unsigned int
 	case BTRFS_IOC_DEV_INFO:
 		return btrfs_ioctl_dev_info(root, argp);
 	case BTRFS_IOC_BALANCE:
-		return btrfs_ioctl_balance(root);
- 	case BTRFS_IOC_RESTRIPE:
- 		return btrfs_ioctl_restripe(root, argp);
-	case BTRFS_IOC_RESTRIPE_CTL:
-		return btrfs_ioctl_restripe_ctl(root, arg);
-	case BTRFS_IOC_RESTRIPE_PROGRESS:
-		return btrfs_ioctl_restripe_progress(root, argp);
+		return btrfs_ioctl_balance(root, NULL);
 	case BTRFS_IOC_CLONE:
 		return btrfs_ioctl_clone(file, arg, 0, 0, 0);
 	case BTRFS_IOC_CLONE_RANGE:
@@ -3381,6 +3354,12 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_scrub_cancel(root, argp);
 	case BTRFS_IOC_SCRUB_PROGRESS:
 		return btrfs_ioctl_scrub_progress(root, argp);
+	case BTRFS_IOC_BALANCE_V2:
+		return btrfs_ioctl_balance(root, argp);
+	case BTRFS_IOC_BALANCE_CTL:
+		return btrfs_ioctl_balance_ctl(root, arg);
+	case BTRFS_IOC_BALANCE_PROGRESS:
+		return btrfs_ioctl_balance_progress(root, argp);
 	case BTRFS_IOC_COMPR_SIZE:
 		return btrfs_ioctl_compr_size(file, argp);
 	}
