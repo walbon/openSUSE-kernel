@@ -419,6 +419,21 @@ config XEN_SMPBOOT
 	def_bool y
 	depends on SMP && !PPC_XEN
 
+config XEN_SPINLOCK_ACQUIRE_NESTING
+	int "maximum nesting level for acquiring spin locks" if BROKEN
+	# Xen versions prior to 3.2.x have a race condition with HYPERVISOR_poll().
+	depends on !XEN_COMPAT_030002_AND_LATER
+	depends on !XEN_COMPAT_030004_AND_LATER
+	depends on !XEN_COMPAT_030100_AND_LATER
+	range 0 3 if EXPERIMENTAL
+	range 0 1
+	default 0
+	help
+	  IRQ-safe spin lock acquire operations can re-enable interrupts
+	  before entering into polling mode, to reduce interrupt latencies.
+	  This option specifies how many times this can be done for each
+	  individual spin lock (0 disables this behavior).
+
 config XEN_DEVMEM
 	def_bool y
 
