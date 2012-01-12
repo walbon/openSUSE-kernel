@@ -271,7 +271,7 @@ static __always_inline void __ticket_spin_unlock(arch_spinlock_t *lock)
 		xen_spin_kick(lock, token);
 }
 
-#ifndef XEN_SPINLOCK_SOURCE
+#if !defined(XEN_SPINLOCK_SOURCE) || !CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
 #undef __ticket_spin_lock_preamble
 #undef __ticket_spin_lock_body
 #undef __ticket_spin_unlock_body

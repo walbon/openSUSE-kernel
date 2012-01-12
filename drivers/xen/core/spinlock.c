@@ -92,6 +92,7 @@ static unsigned int spin_adjust(struct spinning *spinning,
 				const arch_spinlock_t *lock,
 				unsigned int token)
 {
+#if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
 	for (; spinning; spinning = spinning->prev)
 		if (spinning->lock == lock) {
 			unsigned int ticket = spinning->ticket;
@@ -103,7 +104,7 @@ static unsigned int spin_adjust(struct spinning *spinning,
 				| (ticket << TICKET_SHIFT);
 			break;
 		}
-
+#endif
 	return token;
 }
 
@@ -133,7 +134,9 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 	upcall_mask = vcpu_info_read(evtchn_upcall_mask);
 
 	do {
-		bool nested = false;
+#if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
+		int nesting = CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING;
+#endif
 
 		clear_evtchn(percpu_read(poll_evtchn));
 
@@ -154,9 +157,10 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 			break;
 		}
 
+#if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
 		for (other = spinning.prev; other; other = other->prev) {
 			if (other->lock == lock)
-				nested = true;
+				--nesting;
 			else {
 				/*
 				 * Return the ticket if we now own the lock.
@@ -192,7 +196,8 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 			}
 		}
 
-		arch_local_irq_restore(nested ? upcall_mask : flags);
+		arch_local_irq_restore(nesting <= 0 ? upcall_mask : flags);
+#endif
 
 		if ((rc = !test_evtchn(percpu_read(poll_evtchn))) &&
 		    HYPERVISOR_poll_no_timeout(&__get_cpu_var(poll_evtchn), 1))
@@ -218,6 +223,7 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 	percpu_write(rm_seq.idx, rm_idx + 1);
 	smp_mb();
 
+#if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
 	/*
 	 * Obtain new tickets for (or acquire) all those locks where
 	 * above we avoided acquiring them.
@@ -239,6 +245,7 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 		} while ((other = other->prev) != NULL);
 		lock = spinning.lock;
 	}
+#endif
 
 	rm_idx &= 1;
 	while (percpu_read(rm_seq.ctr[rm_idx].counter))

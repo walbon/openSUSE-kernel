@@ -10,16 +10,15 @@
 typedef union {
 	unsigned int slock;
 	struct {
+#ifdef CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
 /*
- * Xen versions prior to 3.2.x have a race condition with HYPERVISOR_poll().
+ * On Xen we support CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING levels of
+ * interrupt re-enabling per lock. Hence we can have
+ * (CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING + 1) times as many outstanding
+ * tickets. Thus the cut-off for using byte register pairs must be at
+ * a sufficiently smaller number of CPUs.
  */
-#if CONFIG_XEN_COMPAT >= 0x030200
-/*
- * On Xen we support a single level of interrupt re-enabling per lock. Hence
- * we can have twice as many outstanding tickets. Thus the cut-off for using
- * byte register pairs must be at half the number of CPUs.
- */
-#if 2 * CONFIG_NR_CPUS < 256
+#if (CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING + 1) * CONFIG_NR_CPUS < 256
 # define TICKET_SHIFT 8
 		u8 cur, seq;
 #else
