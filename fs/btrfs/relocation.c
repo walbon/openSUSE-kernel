@@ -1628,13 +1628,13 @@ int replace_file_extents(struct btrfs_trans_handle *trans,
 
 		key.offset -= btrfs_file_extent_offset(leaf, fi);
 		btrfs_inc_extent_ref(trans, root, new_bytenr,
-				     num_bytes, parent,
-				     btrfs_header_owner(leaf),
-				     key.objectid, key.offset);
+					   num_bytes, parent,
+					   btrfs_header_owner(leaf),
+					   key.objectid, key.offset, 1);
 
 		btrfs_free_extent(trans, root, bytenr, num_bytes,
-				  parent, btrfs_header_owner(leaf),
-				  key.objectid, key.offset);
+					parent, btrfs_header_owner(leaf),
+					key.objectid, key.offset, 1);
 	}
 	if (dirty)
 		btrfs_mark_buffer_dirty(leaf);
@@ -1801,16 +1801,22 @@ again:
 		btrfs_mark_buffer_dirty(path->nodes[level]);
 
 		btrfs_inc_extent_ref(trans, src, old_bytenr, blocksize,
-				     path->nodes[level]->start,
-				     src->root_key.objectid, level - 1, 0);
+					path->nodes[level]->start,
+					src->root_key.objectid, level - 1, 0,
+					1);
 		btrfs_inc_extent_ref(trans, dest, new_bytenr, blocksize,
-				     0, dest->root_key.objectid, level - 1, 0);
+					0, dest->root_key.objectid, level - 1,
+					0, 1);
+
 		btrfs_free_extent(trans, src, new_bytenr, blocksize,
-				  path->nodes[level]->start,
-				  src->root_key.objectid, level - 1, 0);
+					path->nodes[level]->start,
+					src->root_key.objectid, level - 1, 0,
+					1);
+
 		btrfs_free_extent(trans, dest, old_bytenr, blocksize,
-				  0, dest->root_key.objectid, level - 1,
-				  0);
+					0, dest->root_key.objectid, level - 1,
+					0, 1);
+
 		btrfs_unlock_up_safe(path, 0);
 
 		ret = level;
@@ -2260,7 +2266,7 @@ again:
 		} else {
 			list_del_init(&reloc_root->root_list);
 		}
-		ret = btrfs_drop_snapshot(reloc_root, rc->block_rsv, 0);
+		ret = btrfs_drop_snapshot(reloc_root, rc->block_rsv, 0, 1);
 		BUG_ON(ret < 0);
 	}
 
@@ -2572,10 +2578,10 @@ static int do_relocation(struct btrfs_trans_handle *trans,
 			btrfs_mark_buffer_dirty(upper->eb);
 
 			btrfs_inc_extent_ref(trans, root,
-					     node->eb->start, blocksize,
-					     upper->eb->start,
-					     btrfs_header_owner(upper->eb),
-					     node->level, 0);
+						node->eb->start, blocksize,
+						upper->eb->start,
+						btrfs_header_owner(upper->eb),
+						node->level, 0, 1);
 
 			ret = btrfs_drop_subtree(trans, root, eb, upper->eb);
 			BUG_ON(ret);

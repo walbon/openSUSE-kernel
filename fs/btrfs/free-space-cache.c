@@ -319,9 +319,11 @@ static void io_ctl_drop_pages(struct io_ctl *io_ctl)
 	io_ctl_unmap_page(io_ctl);
 
 	for (i = 0; i < io_ctl->num_pages; i++) {
-		ClearPageChecked(io_ctl->pages[i]);
-		unlock_page(io_ctl->pages[i]);
-		page_cache_release(io_ctl->pages[i]);
+		if (io_ctl->pages[i]) {
+			ClearPageChecked(io_ctl->pages[i]);
+			unlock_page(io_ctl->pages[i]);
+			page_cache_release(io_ctl->pages[i]);
+		}
 	}
 }
 
@@ -635,7 +637,10 @@ int __load_free_space_cache(struct btrfs_root *root, struct inode *inode,
 	if (!num_entries)
 		return 0;
 
-	io_ctl_init(&io_ctl, inode, root);
+	ret = io_ctl_init(&io_ctl, inode, root);
+	if (ret)
+		return ret;
+
 	ret = readahead_cache(inode);
 	if (ret)
 		goto out;
@@ -838,7 +843,7 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	struct io_ctl io_ctl;
 	struct list_head bitmap_list;
 	struct btrfs_key key;
-	u64 start, end, len;
+	u64 start, extent_start, extent_end, len;
 	int entries = 0;
 	int bitmaps = 0;
 	int ret;
@@ -849,7 +854,9 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	if (!i_size_read(inode))
 		return -1;
 
-	io_ctl_init(&io_ctl, inode, root);
+	ret = io_ctl_init(&io_ctl, inode, root);
+	if (ret)
+		return -1;
 
 	/* Get the cluster for this block_group if it exists */
 	if (block_group && !list_empty(&block_group->cluster_list))
@@ -857,24 +864,11 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 				     struct btrfs_free_cluster,
 				     block_group_list);
 
-	/*
-	 * We shouldn't have switched the pinned extents yet so this is the
-	 * right one
-	 */
-	unpin = root->fs_info->pinned_extents;
-
 	/* Lock all pages first so we can lock the extent safely. */
 	io_ctl_prepare_pages(&io_ctl, inode, 0);
 
 	lock_extent_bits(&BTRFS_I(inode)->io_tree, 0, i_size_read(inode) - 1,
 			 0, &cached_state);
-
-	/*
-	 * When searching for pinned extents, we need to start at our start
-	 * offset.
-	 */
-	if (block_group)
-		start = block_group->key.objectid;
 
 	node = rb_first(&ctl->free_space_offset);
 	if (!node && cluster) {
@@ -918,9 +912,20 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	 * We want to add any pinned extents to our free space cache
 	 * so we don't leak the space
 	 */
+
+	/*
+	 * We shouldn't have switched the pinned extents yet so this is the
+	 * right one
+	 */
+	unpin = root->fs_info->pinned_extents;
+
+	if (block_group)
+		start = block_group->key.objectid;
+
 	while (block_group && (start < block_group->key.objectid +
 			       block_group->key.offset)) {
-		ret = find_first_extent_bit(unpin, start, &start, &end,
+		ret = find_first_extent_bit(unpin, start,
+					    &extent_start, &extent_end,
 					    EXTENT_DIRTY);
 		if (ret) {
 			ret = 0;
@@ -928,20 +933,21 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 		}
 
 		/* This pinned extent is out of our range */
-		if (start >= block_group->key.objectid +
+		if (extent_start >= block_group->key.objectid +
 		    block_group->key.offset)
 			break;
 
-		len = block_group->key.objectid +
-			block_group->key.offset - start;
-		len = min(len, end + 1 - start);
+		extent_start = max(extent_start, start);
+		extent_end = min(block_group->key.objectid +
+				 block_group->key.offset, extent_end + 1);
+		len = extent_end - extent_start;
 
 		entries++;
-		ret = io_ctl_add_entry(&io_ctl, start, len, NULL);
+		ret = io_ctl_add_entry(&io_ctl, extent_start, len, NULL);
 		if (ret)
 			goto out_nospc;
 
-		start = end + 1;
+		start = extent_end;
 	}
 
 	/* Write out the bitmaps */

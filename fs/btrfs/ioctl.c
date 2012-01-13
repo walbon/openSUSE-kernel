@@ -176,6 +176,8 @@ static int btrfs_ioctl_setflags(struct file *file, void __user *arg)
 	struct btrfs_trans_handle *trans;
 	unsigned int flags, oldflags;
 	int ret;
+	u64 ip_oldflags;
+	unsigned int i_oldflags;
 
 	if (btrfs_root_readonly(root))
 		return -EROFS;
@@ -191,6 +193,9 @@ static int btrfs_ioctl_setflags(struct file *file, void __user *arg)
 		return -EACCES;
 
 	mutex_lock(&inode->i_mutex);
+
+	ip_oldflags = ip->flags;
+	i_oldflags = inode->i_flags;
 
 	flags = btrfs_mask_flags(inode->i_mode, flags);
 	oldflags = btrfs_flags_to_ioctl(ip->flags);
@@ -249,19 +254,24 @@ static int btrfs_ioctl_setflags(struct file *file, void __user *arg)
 		ip->flags &= ~(BTRFS_INODE_COMPRESS | BTRFS_INODE_NOCOMPRESS);
 	}
 
-	trans = btrfs_join_transaction(root);
-	BUG_ON(IS_ERR(trans));
+	trans = btrfs_start_transaction(root, 1);
+	if (IS_ERR(trans)) {
+		ret = PTR_ERR(trans);
+		goto out_drop;
+	}
 
 	btrfs_update_iflags(inode);
 	inode->i_ctime = CURRENT_TIME;
 	ret = btrfs_update_inode(trans, root, inode);
-	BUG_ON(ret);
 
 	btrfs_end_transaction(trans, root);
+ out_drop:
+	if (ret) {
+		ip->flags = ip_oldflags;
+		inode->i_flags = i_oldflags;
+	}
 
 	mnt_drop_write(file->f_path.mnt);
-
-	ret = 0;
  out_unlock:
 	mutex_unlock(&inode->i_mutex);
 	return ret;
@@ -359,7 +369,7 @@ static noinline int create_subvol(struct btrfs_root *root,
 		return PTR_ERR(trans);
 
 	leaf = btrfs_alloc_free_block(trans, root, root->leafsize,
-				      0, objectid, NULL, 0, 0, 0);
+				      0, objectid, NULL, 0, 0, 0, 0);
 	if (IS_ERR(leaf)) {
 		ret = PTR_ERR(leaf);
 		goto fail;
@@ -2468,7 +2478,8 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 							disko, diskl, 0,
 							root->root_key.objectid,
 							btrfs_ino(inode),
-							new_key.offset - datao);
+							new_key.offset - datao,
+							0);
 				}
 			} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 				u64 skip = 0;
@@ -3097,7 +3108,7 @@ static long btrfs_ioctl_logical_to_ino(struct btrfs_root *root,
 {
 	int ret = 0;
 	int size;
-	u64 extent_offset;
+	u64 extent_item_pos;
 	struct btrfs_ioctl_logical_ino_args *loi;
 	struct btrfs_data_container *inodes = NULL;
 	struct btrfs_path *path = NULL;
@@ -3128,15 +3139,17 @@ static long btrfs_ioctl_logical_to_ino(struct btrfs_root *root,
 	}
 
 	ret = extent_from_logical(root->fs_info, loi->logical, path, &key);
+	btrfs_release_path(path);
 
 	if (ret & BTRFS_EXTENT_FLAG_TREE_BLOCK)
 		ret = -ENOENT;
 	if (ret < 0)
 		goto out;
 
-	extent_offset = loi->logical - key.objectid;
+	extent_item_pos = loi->logical - key.objectid;
 	ret = iterate_extent_inodes(root->fs_info, path, key.objectid,
-					extent_offset, build_ino_list, inodes);
+					extent_item_pos, build_ino_list,
+					inodes);
 
 	if (ret < 0)
 		goto out;

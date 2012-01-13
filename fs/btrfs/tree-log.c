@@ -588,10 +588,10 @@ static noinline int replay_one_extent(struct btrfs_trans_handle *trans,
 			ret = btrfs_lookup_extent(root, ins.objectid,
 						ins.offset);
 			if (ret == 0) {
-				btrfs_inc_extent_ref(trans, root, ins.objectid,
-						     ins.offset, 0,
-						     root->root_key.objectid,
-						     key->objectid, offset);
+				btrfs_inc_extent_ref(trans, root,
+						ins.objectid, ins.offset,
+						0, root->root_key.objectid,
+						key->objectid, offset, 0);
 			} else {
 				/*
 				 * insert the extent pointer in the extent
