@@ -2282,9 +2282,7 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 				BUG_ON(ret);
 				kfree(extent_op);
 
-				cond_resched();
-				spin_lock(&delayed_refs->lock);
-				continue;
+				goto next;
 			}
 
 			list_del_init(&locked_ref->cluster);
@@ -2309,7 +2307,11 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 		btrfs_put_delayed_ref(ref);
 		kfree(extent_op);
 		count++;
-
+next:
+		do_chunk_alloc(trans, root->fs_info->extent_root,
+			       2 * 1024 * 1024,
+			       btrfs_get_alloc_profile(root, 0),
+			       CHUNK_ALLOC_NO_FORCE);
 		cond_resched();
 		spin_lock(&delayed_refs->lock);
 	}
@@ -2356,6 +2358,10 @@ int btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
 
 	if (root == root->fs_info->extent_root)
 		root = root->fs_info->tree_root;
+
+	do_chunk_alloc(trans, root->fs_info->extent_root,
+		       2 * 1024 * 1024, btrfs_get_alloc_profile(root, 0),
+		       CHUNK_ALLOC_NO_FORCE);
 
 	delayed_refs = &trans->transaction->delayed_refs;
 	INIT_LIST_HEAD(&cluster);
@@ -3353,27 +3359,12 @@ static int should_alloc_chunk(struct btrfs_root *root,
 		if (num_bytes - num_allocated < thresh)
 			return 1;
 	}
-
-	/*
-	 * we have two similar checks here, one based on percentage
-	 * and once based on a hard number of 256MB.  The idea
-	 * is that if we have a good amount of free
-	 * room, don't allocate a chunk.  A good mount is
-	 * less than 80% utilized of the chunks we have allocated,
-	 * or more than 256MB free
-	 */
-	if (num_allocated + alloc_bytes + 256 * 1024 * 1024 < num_bytes)
-		return 0;
-
-	if (num_allocated + alloc_bytes < div_factor(num_bytes, 8))
-		return 0;
-
 	thresh = btrfs_super_total_bytes(root->fs_info->super_copy);
 
-	/* 256MB or 5% of the FS */
-	thresh = max_t(u64, 256 * 1024 * 1024, div_factor_fine(thresh, 5));
+	/* 256MB or 2% of the FS */
+	thresh = max_t(u64, 256 * 1024 * 1024, div_factor_fine(thresh, 2));
 
-	if (num_bytes > thresh && sinfo->bytes_used < div_factor(num_bytes, 3))
+	if (num_bytes > thresh && sinfo->bytes_used < div_factor(num_bytes, 8))
 		return 0;
 	return 1;
 }
