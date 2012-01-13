@@ -25,6 +25,7 @@
 #include <linux/bootmem.h>
 #include <linux/memblock.h>
 #include <linux/module.h>
+#include <linux/kexec.h>
 
 #include "numa_internal.h"
 
