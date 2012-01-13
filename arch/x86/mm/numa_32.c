@@ -269,5 +269,5 @@ void alloc_remap_save_vmcoreinfo(void)
 	VMCOREINFO_SYMBOL(node_remap_start_vaddr);
 	VMCOREINFO_SYMBOL(node_remap_end_vaddr);
 	VMCOREINFO_SYMBOL(node_remap_start_pfn);
-	VMCOREINFO_NUMBER(MAX_NUMNODES);
+	VMCOREINFO_LENGTH(node_remap_start_pfn, MAX_NUMNODES);
 }
