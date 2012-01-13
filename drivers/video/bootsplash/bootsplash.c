@@ -1899,6 +1899,8 @@ void splash_init(void)
 	    || !info
 	    || info->var.bits_per_pixel < 16) /* not supported */
 		return;
+	if (!strcmp(info->fix.id, "xen"))
+		return; /* no splash for Xen (bnc#739020) */
 #ifdef CONFIG_PROC_FS
 	splash_proc_register();
 #endif
