@@ -263,3 +263,11 @@ void __init initmem_init(void)
 
 	setup_bootmem_allocator();
 }
+
+void alloc_remap_save_vmcoreinfo(void)
+{
+	VMCOREINFO_SYMBOL(node_remap_start_vaddr);
+	VMCOREINFO_SYMBOL(node_remap_end_vaddr);
+	VMCOREINFO_SYMBOL(node_remap_start_pfn);
+	VMCOREINFO_LENGTH(node_remap_start_pfn, MAX_NUMNODES);
+}
