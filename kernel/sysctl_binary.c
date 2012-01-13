@@ -1367,7 +1367,7 @@ static ssize_t binary_sysctl(const int *name, int nlen,
 
 	fput(file);
 out_putname:
-	__putname(pathname);
+	putname(pathname);
 out:
 	return result;
 }
