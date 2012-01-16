@@ -161,30 +161,29 @@ struct btrfs_delayed_ref_root {
 	wait_queue_head_t seq_wait;
 };
 
-void btrfs_free_delayed_ref(struct btrfs_delayed_ref_node *ref);
 static inline void btrfs_put_delayed_ref(struct btrfs_delayed_ref_node *ref)
 {
 	WARN_ON(atomic_read(&ref->refs) == 0);
 	if (atomic_dec_and_test(&ref->refs)) {
 		WARN_ON(ref->in_tree);
-		btrfs_free_delayed_ref(ref);
+		kfree(ref);
 	}
 }
 
-void btrfs_add_delayed_tree_ref(struct btrfs_fs_info *fs_info,
+int btrfs_add_delayed_tree_ref(struct btrfs_fs_info *fs_info,
 			       struct btrfs_trans_handle *trans,
 			       u64 bytenr, u64 num_bytes, u64 parent,
 			       u64 ref_root, int level, int action,
 			       struct btrfs_delayed_extent_op *extent_op,
 			       int for_cow);
-void btrfs_add_delayed_data_ref(struct btrfs_fs_info *fs_info,
+int btrfs_add_delayed_data_ref(struct btrfs_fs_info *fs_info,
 			       struct btrfs_trans_handle *trans,
 			       u64 bytenr, u64 num_bytes,
 			       u64 parent, u64 ref_root,
 			       u64 owner, u64 offset, int action,
 			       struct btrfs_delayed_extent_op *extent_op,
 			       int for_cow);
-void btrfs_add_delayed_extent_op(struct btrfs_fs_info *fs_info,
+int btrfs_add_delayed_extent_op(struct btrfs_fs_info *fs_info,
 				struct btrfs_trans_handle *trans,
 				u64 bytenr, u64 num_bytes,
 				struct btrfs_delayed_extent_op *extent_op);
@@ -281,7 +280,4 @@ btrfs_delayed_node_to_head(struct btrfs_delayed_ref_node *node)
 	WARN_ON(!btrfs_delayed_ref_is_head(node));
 	return container_of(node, struct btrfs_delayed_ref_head, node);
 }
-
-int btrfs_create_delayed_ref_caches(void);
-void btrfs_destroy_delayed_ref_caches(void);
 #endif

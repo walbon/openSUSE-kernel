@@ -456,8 +456,8 @@ static noinline int create_subvol(struct btrfs_root *root,
 	ret = btrfs_add_root_ref(trans, root->fs_info->tree_root,
 				 objectid, root->root_key.objectid,
 				 btrfs_ino(dir), index, name, namelen);
-	if (ret)
-		goto fail;
+
+	BUG_ON(ret);
 
 	inode = btrfs_lookup_dentry(dir, dentry);
 	if (IS_ERR(inode)) {
@@ -943,7 +943,7 @@ again:
 		btrfs_put_ordered_extent(ordered);
 		unlock_extent_cached(&BTRFS_I(inode)->io_tree,
 				     page_start, page_end - 1,
-				     &cached_state);
+				     &cached_state, GFP_NOFS);
 		for (i = 0; i < i_done; i++) {
 			unlock_page(pages[i]);
 			page_cache_release(pages[i]);
@@ -957,7 +957,8 @@ again:
 
 	clear_extent_bit(&BTRFS_I(inode)->io_tree, page_start,
 			  page_end - 1, EXTENT_DIRTY | EXTENT_DELALLOC |
-			  EXTENT_DO_ACCOUNTING, 0, 0, &cached_state);
+			  EXTENT_DO_ACCOUNTING, 0, 0, &cached_state,
+			  GFP_NOFS);
 
 	if (i_done != num_pages) {
 		spin_lock(&BTRFS_I(inode)->lock);
@@ -972,7 +973,8 @@ again:
 				  &cached_state);
 
 	unlock_extent_cached(&BTRFS_I(inode)->io_tree,
-			     page_start, page_end - 1, &cached_state);
+			     page_start, page_end - 1, &cached_state,
+			     GFP_NOFS);
 
 	for (i = 0; i < i_done; i++) {
 		clear_page_dirty_for_io(pages[i]);
@@ -2472,12 +2474,13 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 								datal);
 				if (disko) {
 					inode_add_bytes(inode, datal);
-					btrfs_inc_extent_ref(trans, root,
+					ret = btrfs_inc_extent_ref(trans, root,
 							disko, diskl, 0,
 							root->root_key.objectid,
 							btrfs_ino(inode),
 							new_key.offset - datao,
 							0);
+					BUG_ON(ret);
 				}
 			} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 				u64 skip = 0;

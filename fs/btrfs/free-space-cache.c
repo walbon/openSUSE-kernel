@@ -230,11 +230,13 @@ int btrfs_truncate_free_space_cache(struct btrfs_root *root,
 
 	if (ret) {
 		trans->block_rsv = rsv;
-		WARN_ON(1);
+		btrfs_abort_transaction(trans, root, ret);
 		return ret;
 	}
 
 	ret = btrfs_update_inode(trans, root, inode);
+	if (ret)
+		btrfs_abort_transaction(trans, root, ret);
 	trans->block_rsv = rsv;
 
 	return ret;
@@ -968,7 +970,7 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 				0, i_size_read(inode), &cached_state);
 	io_ctl_drop_pages(&io_ctl);
 	unlock_extent_cached(&BTRFS_I(inode)->io_tree, 0,
-			     i_size_read(inode) - 1, &cached_state);
+			     i_size_read(inode) - 1, &cached_state, GFP_NOFS);
 
 	if (ret)
 		goto out;
@@ -985,7 +987,8 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 	ret = btrfs_search_slot(trans, root, &key, path, 0, 1);
 	if (ret < 0) {
 		clear_extent_bit(&BTRFS_I(inode)->io_tree, 0, inode->i_size - 1,
-				 EXTENT_DIRTY | EXTENT_DELALLOC, 0, 0, NULL);
+				 EXTENT_DIRTY | EXTENT_DELALLOC, 0, 0, NULL,
+				 GFP_NOFS);
 		goto out;
 	}
 	leaf = path->nodes[0];
@@ -999,7 +1002,7 @@ int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 			clear_extent_bit(&BTRFS_I(inode)->io_tree, 0,
 					 inode->i_size - 1,
 					 EXTENT_DIRTY | EXTENT_DELALLOC, 0, 0,
-					 NULL);
+					 NULL, GFP_NOFS);
 			btrfs_release_path(path);
 			goto out;
 		}
@@ -1032,7 +1035,7 @@ out_nospc:
 	}
 	io_ctl_drop_pages(&io_ctl);
 	unlock_extent_cached(&BTRFS_I(inode)->io_tree, 0,
-			     i_size_read(inode) - 1, &cached_state);
+			     i_size_read(inode) - 1, &cached_state, GFP_NOFS);
 	goto out;
 }
 
@@ -1946,14 +1949,14 @@ again:
 		 */
 		ret = btrfs_add_free_space(block_group, old_start,
 					   offset - old_start);
-		WARN_ON(ret);
+		WARN_ON(ret); /* -ENOMEM */
 		goto out;
 	}
 
 	ret = remove_from_bitmap(ctl, info, &offset, &bytes);
 	if (ret == -EAGAIN)
 		goto again;
-	BUG_ON(ret);
+	BUG_ON(ret); /* logic error */
 out_lock:
 	spin_unlock(&ctl->tree_lock);
 out:
@@ -2344,7 +2347,7 @@ again:
 	rb_erase(&entry->offset_index, &ctl->free_space_offset);
 	ret = tree_insert_offset(&cluster->root, entry->offset,
 				 &entry->offset_index, 1);
-	BUG_ON(ret);
+	BUG_ON(ret); /* -EEXIST; Logic error */
 
 	trace_btrfs_setup_cluster(block_group, cluster,
 				  total_found * block_group->sectorsize, 1);
@@ -2437,7 +2440,7 @@ setup_cluster_no_bitmap(struct btrfs_block_group_cache *block_group,
 		ret = tree_insert_offset(&cluster->root, entry->offset,
 					 &entry->offset_index, 0);
 		total_size += entry->bytes;
-		BUG_ON(ret);
+		BUG_ON(ret); /* -EEXIST; Logic error */
 	} while (node && entry != last);
 
 	cluster->max_size = max_extent;
@@ -2828,6 +2831,7 @@ u64 btrfs_find_ino_for_alloc(struct btrfs_root *fs_root)
 		int ret;
 
 		ret = search_bitmap(ctl, entry, &offset, &count);
+		/* Logic error; Should be empty if it can't find anything */
 		BUG_ON(ret);
 
 		ino = offset;
