@@ -69,7 +69,9 @@ struct splash_data {
 	int splash_sboxes_yoff;
 
 	bool color_set;
+#ifndef __GENKSYSM__
 	bool need_sync;
+#endif
 };
 #endif
 
