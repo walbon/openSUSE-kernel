@@ -24,6 +24,12 @@ static int __init set_use_crs(const struct dmi_system_id *id)
 	return 0;
 }
 
+static int __init set_no_crs(const struct dmi_system_id *id)
+{
+	pci_use_crs = false;
+	return 0;
+}
+
 static const struct dmi_system_id pci_use_crs_table[] __initconst = {
 	/* http://bugzilla.kernel.org/show_bug.cgi?id=14183 */
 	{
@@ -60,6 +66,14 @@ static const struct dmi_system_id pci_use_crs_table[] __initconst = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL980 G7"),
+		},
+	},
+	{
+		.callback = set_no_crs,
+		.ident = "IBM 3850 M2 / x3950 M2",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "IBM"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "IBM 3850 M2 / x3950 M2"),
 		},
 	},
 	{}
