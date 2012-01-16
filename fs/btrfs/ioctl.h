@@ -112,7 +112,6 @@ struct btrfs_ioctl_fs_info_args {
 /* balance control ioctl modes */
 #define BTRFS_BALANCE_CTL_PAUSE		1
 #define BTRFS_BALANCE_CTL_CANCEL	2
-#define BTRFS_BALANCE_CTL_RESUME	3
 
 /*
  * this is packed, because it should be exactly the same as its disk
@@ -143,8 +142,8 @@ struct btrfs_balance_progress {
 };
 
 #define BTRFS_BALANCE_STATE_RUNNING	(1ULL << 0)
-#define BTRFS_BALANCE_STATE_CANCEL_REQ	(1ULL << 1)
-#define BTRFS_BALANCE_STATE_PAUSE_REQ	(1ULL << 2)
+#define BTRFS_BALANCE_STATE_PAUSE_REQ	(1ULL << 1)
+#define BTRFS_BALANCE_STATE_CANCEL_REQ	(1ULL << 2)
 
 struct btrfs_ioctl_balance_args {
 	__u64 flags;				/* in/out */
@@ -332,8 +331,8 @@ struct btrfs_ioctl_compr_size_args {
 				 struct btrfs_ioctl_dev_info_args)
 #define BTRFS_IOC_FS_INFO _IOR(BTRFS_IOCTL_MAGIC, 31, \
 			       struct btrfs_ioctl_fs_info_args)
-#define BTRFS_IOC_BALANCE_V2 _IOW(BTRFS_IOCTL_MAGIC, 32, \
-				  struct btrfs_ioctl_balance_args)
+#define BTRFS_IOC_BALANCE_V2 _IOWR(BTRFS_IOCTL_MAGIC, 32, \
+				   struct btrfs_ioctl_balance_args)
 #define BTRFS_IOC_BALANCE_CTL _IOW(BTRFS_IOCTL_MAGIC, 33, int)
 #define BTRFS_IOC_BALANCE_PROGRESS _IOR(BTRFS_IOCTL_MAGIC, 34, \
 					struct btrfs_ioctl_balance_args)

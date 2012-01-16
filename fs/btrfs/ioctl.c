@@ -3168,10 +3168,37 @@ out:
 	return ret;
 }
 
+void update_ioctl_balance_args(struct btrfs_fs_info *fs_info, int lock,
+			       struct btrfs_ioctl_balance_args *bargs)
+{
+	struct btrfs_balance_control *bctl = fs_info->balance_ctl;
+
+	bargs->flags = bctl->flags;
+
+	if (atomic_read(&fs_info->balance_running))
+		bargs->state |= BTRFS_BALANCE_STATE_RUNNING;
+	if (atomic_read(&fs_info->balance_pause_req))
+		bargs->state |= BTRFS_BALANCE_STATE_PAUSE_REQ;
+	if (atomic_read(&fs_info->balance_cancel_req))
+		bargs->state |= BTRFS_BALANCE_STATE_CANCEL_REQ;
+
+	memcpy(&bargs->data, &bctl->data, sizeof(bargs->data));
+	memcpy(&bargs->meta, &bctl->meta, sizeof(bargs->meta));
+	memcpy(&bargs->sys, &bctl->sys, sizeof(bargs->sys));
+
+	if (lock) {
+		spin_lock(&fs_info->balance_lock);
+		memcpy(&bargs->stat, &bctl->stat, sizeof(bargs->stat));
+		spin_unlock(&fs_info->balance_lock);
+	} else {
+		memcpy(&bargs->stat, &bctl->stat, sizeof(bargs->stat));
+	}
+}
+
 static long btrfs_ioctl_balance(struct btrfs_root *root, void __user *arg)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
-	struct btrfs_ioctl_balance_args *bargs = NULL;
+	struct btrfs_ioctl_balance_args *bargs;
 	struct btrfs_balance_control *bctl;
 	int ret;
 
@@ -3184,26 +3211,43 @@ static long btrfs_ioctl_balance(struct btrfs_root *root, void __user *arg)
 	mutex_lock(&fs_info->volume_mutex);
 	mutex_lock(&fs_info->balance_mutex);
 
+	if (arg) {
+		bargs = memdup_user(arg, sizeof(*bargs));
+		if (IS_ERR(bargs)) {
+			ret = PTR_ERR(bargs);
+			goto out;
+		}
+
+		if (bargs->flags & BTRFS_BALANCE_RESUME) {
+			if (!fs_info->balance_ctl) {
+				ret = -ENOTCONN;
+				goto out_bargs;
+			}
+
+			bctl = fs_info->balance_ctl;
+			spin_lock(&fs_info->balance_lock);
+			bctl->flags |= BTRFS_BALANCE_RESUME;
+			spin_unlock(&fs_info->balance_lock);
+
+			goto do_balance;
+		}
+	} else {
+		bargs = NULL;
+	}
+
 	if (fs_info->balance_ctl) {
 		ret = -EINPROGRESS;
-		goto out;
+		goto out_bargs;
 	}
 
 	bctl = kzalloc(sizeof(*bctl), GFP_NOFS);
 	if (!bctl) {
 		ret = -ENOMEM;
-		goto out;
+		goto out_bargs;
 	}
 
 	bctl->fs_info = fs_info;
 	if (arg) {
-		bargs = memdup_user(arg, sizeof(*bargs));
-		if (IS_ERR(bargs)) {
-			kfree(bctl);
-			ret = PTR_ERR(bargs);
-			goto out;
-		}
-
 		memcpy(&bctl->data, &bargs->data, sizeof(bctl->data));
 		memcpy(&bctl->meta, &bargs->meta, sizeof(bctl->meta));
 		memcpy(&bctl->sys, &bargs->sys, sizeof(bctl->sys));
@@ -3214,11 +3258,18 @@ static long btrfs_ioctl_balance(struct btrfs_root *root, void __user *arg)
 		bctl->flags |= BTRFS_BALANCE_TYPE_MASK;
 	}
 
-	ret = btrfs_balance(bctl, 0);
+do_balance:
+	ret = btrfs_balance(bctl, bargs);
 	/*
 	 * bctl is freed in __cancel_balance or in free_fs_info if
 	 * restriper was paused all the way until unmount
 	 */
+	if (arg) {
+		if (copy_to_user(arg, bargs, sizeof(*bargs)))
+			ret = -EFAULT;
+	}
+
+out_bargs:
 	kfree(bargs);
 out:
 	mutex_unlock(&fs_info->balance_mutex);
@@ -3236,8 +3287,6 @@ static long btrfs_ioctl_balance_ctl(struct btrfs_root *root, int cmd)
 		return btrfs_pause_balance(root->fs_info);
 	case BTRFS_BALANCE_CTL_CANCEL:
 		return btrfs_cancel_balance(root->fs_info);
-	case BTRFS_BALANCE_CTL_RESUME:
-		return btrfs_resume_balance(root->fs_info);
 	}
 
 	return -EINVAL;
@@ -3248,14 +3297,13 @@ static long btrfs_ioctl_balance_progress(struct btrfs_root *root,
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_ioctl_balance_args *bargs;
-	struct btrfs_balance_control *bctl;
 	int ret = 0;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	mutex_lock(&fs_info->balance_mutex);
-	if (!(bctl = fs_info->balance_ctl)) {
+	if (!fs_info->balance_ctl) {
 		ret = -ENOTCONN;
 		goto out;
 	}
@@ -3266,22 +3314,7 @@ static long btrfs_ioctl_balance_progress(struct btrfs_root *root,
 		goto out;
 	}
 
-	bargs->flags = bctl->flags;
-
-	if (atomic_read(&fs_info->balance_running))
-		bargs->state |= BTRFS_BALANCE_STATE_RUNNING;
-	if (atomic_read(&fs_info->balance_cancel_req))
-		bargs->state |= BTRFS_BALANCE_STATE_CANCEL_REQ;
-	if (atomic_read(&fs_info->balance_pause_req))
-		bargs->state |= BTRFS_BALANCE_STATE_PAUSE_REQ;
-
-	memcpy(&bargs->data, &bctl->data, sizeof(bargs->data));
-	memcpy(&bargs->meta, &bctl->meta, sizeof(bargs->meta));
-	memcpy(&bargs->sys, &bctl->sys, sizeof(bargs->sys));
-
-	spin_lock(&fs_info->balance_lock);
-	memcpy(&bargs->stat, &bctl->stat, sizeof(bargs->stat));
-	spin_unlock(&fs_info->balance_lock);
+	update_ioctl_balance_args(fs_info, 1, bargs);
 
 	if (copy_to_user(arg, bargs, sizeof(*bargs)))
 		ret = -EFAULT;
