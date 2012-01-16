@@ -5238,8 +5238,6 @@ static noinline int find_free_extent(struct btrfs_trans_handle *trans,
 	ins->objectid = 0;
 	ins->offset = 0;
 
-	trace_find_free_extent(orig_root, num_bytes, empty_size, data);
-
 	space_info = __find_space_info(root->fs_info, data);
 	if (!space_info) {
 		printk(KERN_ERR "No space info for %llu\n", data);
@@ -5389,15 +5387,6 @@ alloc:
 		if (unlikely(block_group->ro))
 			goto loop;
 
-		spin_lock(&block_group->free_space_ctl->tree_lock);
-		if (cached &&
-		    block_group->free_space_ctl->free_space <
-		    num_bytes + empty_cluster + empty_size) {
-			spin_unlock(&block_group->free_space_ctl->tree_lock);
-			goto loop;
-		}
-		spin_unlock(&block_group->free_space_ctl->tree_lock);
-
 		/*
 		 * Ok we want to try and use the cluster allocator, so
 		 * lets look there
@@ -5425,8 +5414,6 @@ alloc:
 			if (offset) {
 				/* we have a block, we're done */
 				spin_unlock(&last_ptr->refill_lock);
-				trace_btrfs_reserve_extent_cluster(root,
-					block_group, search_start, num_bytes);
 				goto checks;
 			}
 
@@ -5445,8 +5432,15 @@ refill_cluster:
 			 * plenty of times and not have found
 			 * anything, so we are likely way too
 			 * fragmented for the clustering stuff to find
-			 * anything.  */
-			if (loop >= LOOP_NO_EMPTY_SIZE) {
+			 * anything.
+			 *
+			 * However, if the cluster is taken from the
+			 * current block group, release the cluster
+			 * first, so that we stand a better chance of
+			 * succeeding in the unclustered
+			 * allocation.  */
+			if (loop >= LOOP_NO_EMPTY_SIZE &&
+			    last_ptr->block_group != block_group) {
 				spin_unlock(&last_ptr->refill_lock);
 				goto unclustered_alloc;
 			}
@@ -5456,6 +5450,11 @@ refill_cluster:
 			 * start over
 			 */
 			btrfs_return_cluster_to_free_space(NULL, last_ptr);
+
+			if (loop >= LOOP_NO_EMPTY_SIZE) {
+				spin_unlock(&last_ptr->refill_lock);
+				goto unclustered_alloc;
+			}
 
 			/* allocate a cluster in this block group */
 			ret = btrfs_find_space_cluster(trans, root,
@@ -5473,9 +5472,6 @@ refill_cluster:
 				if (offset) {
 					/* we found one, proceed */
 					spin_unlock(&last_ptr->refill_lock);
-					trace_btrfs_reserve_extent_cluster(root,
-						block_group, search_start,
-						num_bytes);
 					goto checks;
 				}
 			} else if (!cached && loop > LOOP_CACHING_NOWAIT
@@ -5500,6 +5496,15 @@ refill_cluster:
 		}
 
 unclustered_alloc:
+		spin_lock(&block_group->free_space_ctl->tree_lock);
+		if (cached &&
+		    block_group->free_space_ctl->free_space <
+		    num_bytes + empty_cluster + empty_size) {
+			spin_unlock(&block_group->free_space_ctl->tree_lock);
+			goto loop;
+		}
+		spin_unlock(&block_group->free_space_ctl->tree_lock);
+
 		offset = btrfs_find_space_for_alloc(block_group, search_start,
 						    num_bytes, empty_size);
 		/*
@@ -5537,9 +5542,6 @@ checks:
 			goto loop;
 		}
 
-		ins->objectid = search_start;
-		ins->offset = num_bytes;
-
 		if (offset < search_start)
 			btrfs_add_free_space(used_block_group, offset,
 					     search_start - offset);
@@ -5556,8 +5558,6 @@ checks:
 		ins->objectid = search_start;
 		ins->offset = num_bytes;
 
-		trace_btrfs_reserve_extent(orig_root, block_group,
-					   search_start, num_bytes);
 		if (offset < search_start)
 			btrfs_add_free_space(used_block_group, offset,
 					     search_start - offset);
