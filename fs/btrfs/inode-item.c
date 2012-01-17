@@ -128,12 +128,14 @@ int btrfs_del_inode_ref(struct btrfs_trans_handle *trans,
 	item_start = btrfs_item_ptr_offset(leaf, path->slots[0]);
 	memmove_extent_buffer(leaf, ptr, ptr + sub_item_len,
 			      item_size - (ptr + sub_item_len - item_start));
-	btrfs_truncate_item(trans, root, path, item_size - sub_item_len, 1);
+	btrfs_truncate_item(trans, root, path,
+				  item_size - sub_item_len, 1);
 out:
 	btrfs_free_path(path);
 	return ret;
 }
 
+/* Will return 0, -ENOMEM, -EMLINK, or -EEXIST or anything from the CoW path */
 int btrfs_insert_inode_ref(struct btrfs_trans_handle *trans,
 			   struct btrfs_root *root,
 			   const char *name, int name_len,

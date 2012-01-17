@@ -309,7 +309,7 @@ static void scrub_print_warning(const char *errstr, struct scrub_bio *sbio,
 	u8 ref_level;
 	unsigned long ptr = 0;
 	const int bufsize = 4096;
-	u64 extent_offset;
+	u64 extent_item_pos;
 
 	path = btrfs_alloc_path();
 
@@ -329,12 +329,13 @@ static void scrub_print_warning(const char *errstr, struct scrub_bio *sbio,
 	if (ret < 0)
 		goto out;
 
-	extent_offset = swarn.logical - found_key.objectid;
+	extent_item_pos = swarn.logical - found_key.objectid;
 	swarn.extent_item_size = found_key.offset;
 
 	eb = path->nodes[0];
 	ei = btrfs_item_ptr(eb, path->slots[0], struct btrfs_extent_item);
 	item_size = btrfs_item_size_nr(eb, path->slots[0]);
+	btrfs_release_path(path);
 
 	if (ret & BTRFS_EXTENT_FLAG_TREE_BLOCK) {
 		do {
@@ -351,7 +352,7 @@ static void scrub_print_warning(const char *errstr, struct scrub_bio *sbio,
 	} else {
 		swarn.path = path;
 		iterate_extent_inodes(fs_info, path, found_key.objectid,
-					extent_offset,
+					extent_item_pos,
 					scrub_print_warning_inode, &swarn);
 	}
 
@@ -429,8 +430,15 @@ static int scrub_fixup_readpage(u64 inum, u64 offset, u64 root, void *ctx)
 		 * will call repair_io_failure for us, we just have to make
 		 * sure we read the bad mirror.
 		 */
-		set_extent_bits(&BTRFS_I(inode)->io_tree, offset, end,
-				EXTENT_DAMAGED);
+		ret = set_extent_bits(&BTRFS_I(inode)->io_tree, offset, end,
+					EXTENT_DAMAGED, GFP_NOFS);
+		if (ret) {
+			/* set_extent_bits should give proper error */
+			WARN_ON(ret > 0);
+			if (ret > 0)
+				ret = -EFAULT;
+			goto out;
+		}
 
 		ret = extent_read_full_page(&BTRFS_I(inode)->io_tree, page,
 						btrfs_get_extent,
@@ -441,7 +449,7 @@ static int scrub_fixup_readpage(u64 inum, u64 offset, u64 root, void *ctx)
 						end, EXTENT_DAMAGED, 0, NULL);
 		if (!corrected)
 			clear_extent_bits(&BTRFS_I(inode)->io_tree, offset, end,
-					  EXTENT_DAMAGED);
+						EXTENT_DAMAGED, GFP_NOFS);
 	}
 
 out:
@@ -939,12 +947,12 @@ static int scrub_checksum_super(struct scrub_bio *sbio, void *buffer)
 	return fail;
 }
 
-static int scrub_submit(struct scrub_dev *sdev)
+static void scrub_submit(struct scrub_dev *sdev)
 {
 	struct scrub_bio *sbio;
 
 	if (sdev->curr == -1)
-		return 0;
+		return;
 
 	sbio = sdev->bios[sdev->curr];
 	sbio->err = 0;
@@ -952,8 +960,6 @@ static int scrub_submit(struct scrub_dev *sdev)
 	atomic_inc(&sdev->in_flight);
 
 	submit_bio(READ, sbio->bio);
-
-	return 0;
 }
 
 static int scrub_page(struct scrub_dev *sdev, u64 logical, u64 len,
@@ -999,9 +1005,7 @@ again:
 		sbio->bio = bio;
 	} else if (sbio->physical + sbio->count * PAGE_SIZE != physical ||
 		   sbio->logical + sbio->count * PAGE_SIZE != logical) {
-		ret = scrub_submit(sdev);
-		if (ret)
-			return ret;
+		scrub_submit(sdev);
 		goto again;
 	}
 	sbio->spag[sbio->count].flags = flags;
@@ -1016,9 +1020,7 @@ again:
 	ret = bio_add_page(sbio->bio, page, PAGE_SIZE, 0);
 	if (!ret) {
 		__free_page(page);
-		ret = scrub_submit(sdev);
-		if (ret)
-			return ret;
+		scrub_submit(sdev);
 		goto again;
 	}
 
@@ -1027,13 +1029,8 @@ again:
 		memcpy(sbio->spag[sbio->count].csum, csum, sdev->csum_size);
 	}
 	++sbio->count;
-	if (sbio->count == SCRUB_PAGES_PER_BIO || force) {
-		int ret;
-
-		ret = scrub_submit(sdev);
-		if (ret)
-			return ret;
-	}
+	if (sbio->count == SCRUB_PAGES_PER_BIO || force)
+		scrub_submit(sdev);
 
 	return 0;
 }
@@ -1505,6 +1502,9 @@ static noinline_for_stack int scrub_supers(struct scrub_dev *sdev)
 	struct btrfs_device *device = sdev->dev;
 	struct btrfs_root *root = device->dev_root;
 
+	if (root->fs_info->fs_state & BTRFS_SUPER_FLAG_ERROR)
+		return -EIO;
+
 	gen = root->fs_info->last_trans_committed;
 
 	for (i = 0; i < BTRFS_SUPER_MIRROR_MAX; i++) {
@@ -1645,7 +1645,7 @@ int btrfs_scrub_dev(struct btrfs_root *root, u64 devid, u64 start, u64 end,
 	return ret;
 }
 
-int btrfs_scrub_pause(struct btrfs_root *root)
+void btrfs_scrub_pause(struct btrfs_root *root)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 
@@ -1660,34 +1660,28 @@ int btrfs_scrub_pause(struct btrfs_root *root)
 		mutex_lock(&fs_info->scrub_lock);
 	}
 	mutex_unlock(&fs_info->scrub_lock);
-
-	return 0;
 }
 
-int btrfs_scrub_continue(struct btrfs_root *root)
+void btrfs_scrub_continue(struct btrfs_root *root)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 
 	atomic_dec(&fs_info->scrub_pause_req);
 	wake_up(&fs_info->scrub_pause_wait);
-	return 0;
 }
 
-int btrfs_scrub_pause_super(struct btrfs_root *root)
+void btrfs_scrub_pause_super(struct btrfs_root *root)
 {
 	down_write(&root->fs_info->scrub_super_lock);
-	return 0;
 }
 
-int btrfs_scrub_continue_super(struct btrfs_root *root)
+void btrfs_scrub_continue_super(struct btrfs_root *root)
 {
 	up_write(&root->fs_info->scrub_super_lock);
-	return 0;
 }
 
-int btrfs_scrub_cancel(struct btrfs_root *root)
+int __btrfs_scrub_cancel(struct btrfs_fs_info *fs_info)
 {
-	struct btrfs_fs_info *fs_info = root->fs_info;
 
 	mutex_lock(&fs_info->scrub_lock);
 	if (!atomic_read(&fs_info->scrubs_running)) {
@@ -1706,6 +1700,11 @@ int btrfs_scrub_cancel(struct btrfs_root *root)
 	mutex_unlock(&fs_info->scrub_lock);
 
 	return 0;
+}
+
+int btrfs_scrub_cancel(struct btrfs_root *root)
+{
+	return __btrfs_scrub_cancel(root->fs_info);
 }
 
 int btrfs_scrub_cancel_dev(struct btrfs_root *root, struct btrfs_device *dev)

@@ -600,6 +600,9 @@ void scsi_log_completion(struct scsi_cmnd *cmd, int disposition)
 			case ADD_TO_MLQUEUE:
 				printk("MLQUEUE\n");
 				break;
+			case ADD_TO_MLQUEUE_DELAY:
+				printk("MLQUEUE_DELAY\n");
+				break;
 			case FAILED:
 				printk("FAILED\n");
 				break;
