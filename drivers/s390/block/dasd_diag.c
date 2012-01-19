@@ -361,6 +361,8 @@ dasd_diag_check_device(struct dasd_device *device)
 
 	device->default_expires = DIAG_TIMEOUT;
 	device->failfast_expires = DIAG_TIMEOUT;
+	device->default_retries = DIAG_MAX_RETRIES;
+	device->failfast_retries = DIAG_MAX_RETRIES;
 
 	/* Figure out position of label block */
 	switch (private->rdc_data.vdev_class) {
@@ -557,7 +559,6 @@ static struct dasd_ccw_req *dasd_diag_build_cp(struct dasd_device *memdev,
 			recid++;
 		}
 	}
-	cqr->retries = DIAG_MAX_RETRIES;
 	cqr->buildclk = get_clock();
 	if (blk_noretry_request(req) ||
 	    block->base->features & DASD_FEATURE_FAILFAST)
@@ -565,10 +566,13 @@ static struct dasd_ccw_req *dasd_diag_build_cp(struct dasd_device *memdev,
 	cqr->startdev = memdev;
 	cqr->memdev = memdev;
 	cqr->block = block;
-	if (req->cmd_flags & REQ_FAILFAST_DEV)
+	if (req->cmd_flags & REQ_FAILFAST_DEV) {
 		cqr->expires = memdev->failfast_expires * HZ;
-	else
+		cqr->retries = memdev->failfast_retries;
+	} else {
 		cqr->expires = memdev->default_expires * HZ;
+		cqr->retries = memdev->default_retries;
+	}
 	cqr->status = DASD_CQR_FILLED;
 	return cqr;
 }
