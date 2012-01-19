@@ -227,6 +227,8 @@ struct dasd_ccw_req {
 /* default expiration time*/
 #define DASD_EXPIRES	  300
 #define DASD_EXPIRES_MAX  40000000
+#define DASD_RETRIES	  256
+#define DASD_RETRIES_MAX  40000000
 
 /* per dasd_ccw_req flags */
 #define DASD_CQR_FLAGS_USE_ERP   0	/* use ERP for this request */
@@ -432,6 +434,8 @@ struct dasd_device {
 	/* default expiration time in s */
 	unsigned long default_expires;
 	unsigned long failfast_expires;
+	unsigned long default_retries;
+	unsigned long failfast_retries;
 };
 
 struct dasd_block {

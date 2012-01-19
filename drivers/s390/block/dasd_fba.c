@@ -169,6 +169,8 @@ dasd_fba_check_characteristics(struct dasd_device *device)
 
 	device->default_expires = DASD_EXPIRES;
 	device->failfast_expires = DASD_EXPIRES;
+	device->default_retries = 32;
+	device->failfast_retries = 32;
 	device->path_data.opm = LPM_ANYPATH;
 
 	readonly = dasd_device_is_ro(device);
@@ -370,11 +372,13 @@ static struct dasd_ccw_req *dasd_fba_build_cp(struct dasd_device * memdev,
 	cqr->startdev = memdev;
 	cqr->memdev = memdev;
 	cqr->block = block;
-	if (req->cmd_flags & REQ_FAILFAST_DEV)
+	if (req->cmd_flags & REQ_FAILFAST_DEV) {
 		cqr->expires = memdev->failfast_expires * HZ;
-	else
+		cqr->retries = memdev->failfast_retries;
+	} else {
 		cqr->expires = memdev->default_expires * HZ;
-	cqr->retries = 32;
+		cqr->retries = memdev->default_retries;
+	}
 	cqr->buildclk = get_clock();
 	cqr->status = DASD_CQR_FILLED;
 	return cqr;
