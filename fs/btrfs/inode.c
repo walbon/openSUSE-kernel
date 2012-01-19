@@ -842,8 +842,18 @@ static noinline int cow_file_range(struct inode *inode,
 
 	BUG_ON(btrfs_is_free_space_inode(root, inode));
 	trans = btrfs_join_transaction(root);
-	if (IS_ERR(trans))
+	if (IS_ERR(trans)) {
+		extent_clear_unlock_delalloc(inode,
+			     &BTRFS_I(inode)->io_tree,
+			     start, end, NULL,
+			     EXTENT_CLEAR_UNLOCK_PAGE |
+			     EXTENT_CLEAR_UNLOCK |
+			     EXTENT_CLEAR_DELALLOC |
+			     EXTENT_CLEAR_DIRTY |
+			     EXTENT_SET_WRITEBACK |
+			     EXTENT_END_WRITEBACK);
 		return PTR_ERR(trans);
+	}
 	trans->block_rsv = &root->fs_info->delalloc_block_rsv;
 
 	num_bytes = (end - start + blocksize) & ~(blocksize - 1);
@@ -861,7 +871,7 @@ static noinline int cow_file_range(struct inode *inode,
 		/* lets try to make an inline extent */
 		ret = cow_file_range_inline(trans, root, inode,
 					    start, end, 0, 0, NULL);
-		if (ret <= 0) {
+		if (ret == 0) {
 			extent_clear_unlock_delalloc(inode,
 				     &BTRFS_I(inode)->io_tree,
 				     start, end, NULL,
@@ -875,9 +885,10 @@ static noinline int cow_file_range(struct inode *inode,
 			*nr_written = *nr_written +
 			     (end - start + PAGE_CACHE_SIZE) / PAGE_CACHE_SIZE;
 			*page_started = 1;
-			if (ret < 0)
-				btrfs_abort_transaction(trans, root, ret);
 			goto out;
+		} else if (ret < 0) {
+			btrfs_abort_transaction(trans, root, ret);
+			goto out_unlock;
 		}
 	}
 
@@ -896,7 +907,7 @@ static noinline int cow_file_range(struct inode *inode,
 					   (u64)-1, &ins, 1);
 		if (ret < 0) {
 			btrfs_abort_transaction(trans, root, ret);
-			goto out;
+			goto out_unlock;
 		}
 
 		em = alloc_extent_map();
@@ -934,7 +945,7 @@ static noinline int cow_file_range(struct inode *inode,
 						      cur_alloc_size);
 			if (ret) {
 				btrfs_abort_transaction(trans, root, ret);
-				goto out;
+				goto out_unlock;
 			}
 		}
 
@@ -965,6 +976,18 @@ out:
 	btrfs_end_transaction(trans, root);
 
 	return ret;
+out_unlock:
+	extent_clear_unlock_delalloc(inode,
+		     &BTRFS_I(inode)->io_tree,
+		     start, end, NULL,
+		     EXTENT_CLEAR_UNLOCK_PAGE |
+		     EXTENT_CLEAR_UNLOCK |
+		     EXTENT_CLEAR_DELALLOC |
+		     EXTENT_CLEAR_DIRTY |
+		     EXTENT_SET_WRITEBACK |
+		     EXTENT_END_WRITEBACK);
+
+	goto out;
 }
 
 /*
