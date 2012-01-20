@@ -6716,3 +6716,10 @@ EXPORT_SYMBOL_GPL(ata_cable_80wire);
 EXPORT_SYMBOL_GPL(ata_cable_unknown);
 EXPORT_SYMBOL_GPL(ata_cable_ignore);
 EXPORT_SYMBOL_GPL(ata_cable_sata);
+
+
+/* Stub for kabi compatibility */
+void ata_scsi_unlock_native_capacity(struct scsi_device *sdev)
+{
+}
+EXPORT_SYMBOL_GPL(ata_scsi_unlock_native_capacity); 
