@@ -31,9 +31,15 @@
  */
 #include "iw_cxgb4.h"
 
-static int ocqp_support = 1;
+#ifdef CONFIG_PPC64
+#define IW_CXGB4_OCQP_SUPPORT_DEFAULT 0
+#else
+#define IW_CXGB4_OCQP_SUPPORT_DEFAULT 1
+#endif
+static int ocqp_support = IW_CXGB4_OCQP_SUPPORT_DEFAULT;
 module_param(ocqp_support, int, 0644);
-MODULE_PARM_DESC(ocqp_support, "Support on-chip SQs (default=1)");
+MODULE_PARM_DESC(ocqp_support, "Support on-chip SQs (default="
+		 __stringify(IW_CXGB4_OCQP_SUPPORT_DEFAULT) ")");
 
 static void set_state(struct c4iw_qp *qhp, enum c4iw_qp_state state)
 {
