@@ -1617,7 +1617,7 @@ static inline struct page *__netdev_alloc_page(struct net_device *dev,
 		gfp_mask |= __GFP_MEMALLOC;
 
 	page = alloc_pages_node(NUMA_NO_NODE, gfp_mask, 0);
-	if (skb && page->pfmemalloc)
+	if (skb && page && page->pfmemalloc)
 		skb->pfmemalloc = true;
 
 	return page;
