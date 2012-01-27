@@ -141,10 +141,13 @@ static int flush_smartset_responses(struct usb_device *dev)
 
 static int smartset_send_get(struct usb_device *dev, __u8 command, void *data)
 {
+	int pipe;
+
 	if (command != USB_SEND_SMARTSET_COMMAND && command != USB_GET_SMARTSET_RESPONSE)
 		return -1;
 
-	return usb_control_msg(dev, usb_sndctrlpipe(dev, 0), command,
+	pipe = (command == USB_GET_SMARTSET_RESPONSE ? usb_rcvctrlpipe(dev, 0) : usb_sndctrlpipe(dev, 0));
+	return usb_control_msg(dev, pipe, command,
 				(command == USB_GET_SMARTSET_RESPONSE ? USB_DIR_IN : USB_DIR_OUT)
 				| USB_TYPE_VENDOR | USB_RECIP_DEVICE,
 				0, 0, data, ELO_SMARTSET_PACKET_SIZE, SMARTSET_CMD_TIMEOUT);

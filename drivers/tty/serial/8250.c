@@ -312,13 +312,6 @@ static const struct serial8250_config uart_config[] = {
 		.fcr		= UART_FCR_ENABLE_FIFO | UART_FCR_R_TRIG_00,
 		.flags		= UART_CAP_FIFO | UART_CAP_AFE,
 	},
-	[PORT_U6_16550A] = {
-		.name		= "U6_16550A",
-		.fifo_size	= 64,
-		.tx_loadsz	= 64,
-		.fcr		= UART_FCR_ENABLE_FIFO | UART_FCR_R_TRIG_10,
-		.flags		= UART_CAP_FIFO | UART_CAP_AFE,
-	},
 	[PORT_TEGRA] = {
 		.name		= "Tegra",
 		.fifo_size	= 32,
@@ -1136,15 +1129,6 @@ static void autoconfig_16550a(struct uart_8250_port *up)
 		DEBUG_AUTOCONF("Couldn't force IER_UUE to 0 ");
 	}
 	serial_outp(up, UART_IER, iersave);
-
-	/*
-	 * We distinguish between 16550A and U6 16550A by counting
-	 * how many bytes are in the FIFO.
-	 */
-	if (up->port.type == PORT_16550A && size_fifo(up) == 64) {
-		up->port.type = PORT_U6_16550A;
-		up->capabilities |= UART_CAP_AFE;
-	}
 }
 
 /*
