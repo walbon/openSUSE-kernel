@@ -1662,6 +1662,7 @@ static void btrfs_writepage_fixup_worker(struct btrfs_work *work)
 	struct inode *inode;
 	u64 page_start;
 	u64 page_end;
+	int ret;
 
 	fixup = container_of(work, struct btrfs_writepage_fixup, work);
 	page = fixup->page;
@@ -1692,9 +1693,17 @@ again:
 		goto again;
 	}
 
-	BUG();
+	ret = btrfs_delalloc_reserve_space(inode, PAGE_CACHE_SIZE);
+	if (ret) {
+		mapping_set_error(page->mapping, ret);
+		end_extent_writepage(page, ret, page_start, page_end);
+		ClearPageChecked(page);
+		goto out;
+	 }
+
 	btrfs_set_extent_delalloc(inode, page_start, page_end, &cached_state);
 	ClearPageChecked(page);
+	set_page_dirty(page);
 out:
 	unlock_extent_cached(&BTRFS_I(inode)->io_tree, page_start, page_end,
 			     &cached_state, GFP_NOFS);
@@ -1737,7 +1746,7 @@ static int btrfs_writepage_start_hook(struct page *page, u64 start, u64 end)
 	fixup->work.func = btrfs_writepage_fixup_worker;
 	fixup->page = page;
 	btrfs_queue_worker(&root->fs_info->fixup_workers, &fixup->work);
-	return -EAGAIN;
+	return -EBUSY;
 }
 
 static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
