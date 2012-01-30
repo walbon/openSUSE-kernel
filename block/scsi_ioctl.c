@@ -722,7 +722,9 @@ int scsi_verify_blk_ioctl(struct block_device *bd, unsigned int cmd)
 	case FDGETPRM:
 	case RAID_VERSION:
 	case MTIOCGET:
+#ifdef CONFIG_COMPAT
 	case 0x801c6d02:	/* MTIOCGET32 */
+#endif
 		/* Keep this until we remove the printk below. udev/dd sends
 		 * these and we do not want to spam dmesg about it. CD-ROMs
 		 * & tapes do not have partitions, so we get here only for
