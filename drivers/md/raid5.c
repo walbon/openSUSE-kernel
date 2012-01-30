@@ -3078,9 +3078,17 @@ static void handle_stripe5(struct stripe_head *sh)
 			/* Not in-sync */;
 		else if (test_bit(In_sync, &rdev->flags))
 			set_bit(R5_Insync, &dev->flags);
-		else {
+		else if (!test_bit(Faulty, &rdev->flags)) {
 			/* could be in-sync depending on recovery/reshape status */
 			if (sh->sector + STRIPE_SECTORS <= rdev->recovery_offset)
+				set_bit(R5_Insync, &dev->flags);
+			else if (test_bit(R5_UPTODATE, &dev->flags) &&
+				 test_bit(R5_Expanded, &dev->flags))
+				/* If we've reshaped into here, we assume it is
+				 * Insync.
+				 * We will shortly update recovery_offset to make
+				 * it official.
+				 */
 				set_bit(R5_Insync, &dev->flags);
 		}
 		if (!test_bit(R5_Insync, &dev->flags)) {
@@ -3376,6 +3384,14 @@ static void handle_stripe6(struct stripe_head *sh)
 		else if (!test_bit(Faulty, &rdev->flags)) {
 			/* in sync if before recovery_offset */
 			if (sh->sector + STRIPE_SECTORS <= rdev->recovery_offset)
+				set_bit(R5_Insync, &dev->flags);
+			else if (test_bit(R5_UPTODATE, &dev->flags) &&
+				 test_bit(R5_Expanded, &dev->flags))
+				/* If we've reshaped into here, we assume it is
+				 * Insync.
+				 * We will shortly update recovery_offset to make
+				 * it official.
+				 */
 				set_bit(R5_Insync, &dev->flags);
 		}
 		if (!test_bit(R5_Insync, &dev->flags)) {
