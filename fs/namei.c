@@ -1460,6 +1460,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 			}
 		}
 
+		nd->last_type = type;
 		/* remove trailing slashes? */
 		if (!c)
 			goto last_component;
@@ -1486,7 +1487,6 @@ last_component:
 		/* Clear LOOKUP_CONTINUE iff it was previously unset */
 		nd->flags &= lookup_flags | ~LOOKUP_CONTINUE;
 		nd->last = this;
-		nd->last_type = type;
 		return 0;
 	}
 	terminate_walk(nd);

@@ -1138,6 +1138,15 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 	if (NFS_STALE(inode))
 		goto out_bad;
 
+	if (nd->last_type != LAST_NORM) {
+		/* name not relevant, just inode */
+		error = nfs_revalidate_inode(NFS_SERVER(inode), inode);
+		if (error)
+			goto out_bad;
+		else
+			goto out_valid;
+	}
+
 	error = -ENOMEM;
 	fhandle = nfs_alloc_fhandle();
 	fattr = nfs_alloc_fattr();
