@@ -658,8 +658,10 @@ int __devinit pci_scan_bridge(struct pci_bus *bus, struct pci_dev *dev, int max,
 		secondary, subordinate, pass);
 
 	/* some bridge primary bus is hard wired to 0 */
-	if (!primary && (primary != bus->number) && secondary && subordinate)
+	if (!primary && (primary != bus->number) && secondary && subordinate) {
+		dev_warn(&dev->dev, "Primary bus is hard wired to 0\n");
 		primary = bus->number;
+	}
 
 	/* Check if setup is sensible at all */
 	if (!pass &&
