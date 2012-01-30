@@ -657,6 +657,10 @@ int __devinit pci_scan_bridge(struct pci_bus *bus, struct pci_dev *dev, int max,
 	dev_dbg(&dev->dev, "scanning [bus %02x-%02x] behind bridge, pass %d\n",
 		secondary, subordinate, pass);
 
+	/* some bridge primary bus is hard wired to 0 */
+	if (!primary && (primary != bus->number) && secondary && subordinate)
+		primary = bus->number;
+
 	/* Check if setup is sensible at all */
 	if (!pass &&
 	    (primary != bus->number || secondary <= bus->number)) {
