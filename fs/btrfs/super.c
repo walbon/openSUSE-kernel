@@ -259,13 +259,13 @@ void __btrfs_panic(struct btrfs_fs_info *fs_info, const char *function,
 
 static void btrfs_put_super(struct super_block *sb)
 {
-	struct btrfs_root *root = btrfs_sb(sb);
-	int ret;
-
-	ret = close_ctree(root);
-	sb->s_fs_info = NULL;
-
-	(void)ret; /* FIXME: need to fix VFS to return error? */
+	(void)close_ctree(btrfs_sb(sb));
+	/* FIXME: need to fix VFS to return error? */
+	/* AV: return it _where_?  ->put_super() can be triggered by any number
+	 * of async events, up to and including delivery of SIGKILL to the
+	 * last process that kept it busy.  Or segfault in the aforementioned
+	 * process...  Whom would you report that to?
+	 */
 }
 
 enum {
@@ -721,6 +721,7 @@ static int btrfs_fill_super(struct super_block *sb,
 	struct inode *inode;
 	struct dentry *root_dentry;
 	struct btrfs_root *tree_root;
+	struct btrfs_fs_info *fs_info;
 	struct btrfs_key key;
 	int err;
 
@@ -741,12 +742,13 @@ static int btrfs_fill_super(struct super_block *sb,
 		printk("btrfs: open_ctree failed\n");
 		return PTR_ERR(tree_root);
 	}
+	fs_info = tree_root->fs_info;
 	sb->s_fs_info = tree_root;
 
 	key.objectid = BTRFS_FIRST_FREE_OBJECTID;
 	key.type = BTRFS_INODE_ITEM_KEY;
 	key.offset = 0;
-	inode = btrfs_iget(sb, &key, tree_root->fs_info->fs_root, NULL);
+	inode = btrfs_iget(sb, &key, fs_info->fs_root, NULL);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto fail_close;
@@ -767,6 +769,7 @@ static int btrfs_fill_super(struct super_block *sb,
 
 fail_close:
 	close_ctree(tree_root);
+	free_fs_info(fs_info);
 	return err;
 }
 
@@ -866,20 +869,15 @@ static int btrfs_test_super(struct super_block *s, void *data)
 	struct btrfs_root *test_root = data;
 	struct btrfs_root *root = btrfs_sb(s);
 
-	/*
-	 * If this super block is going away, return false as it
-	 * can't match as an existing super block.
-	 */
-	if (!atomic_read(&s->s_active))
-		return 0;
 	return root->fs_info->fs_devices == test_root->fs_info->fs_devices;
 }
 
 static int btrfs_set_super(struct super_block *s, void *data)
 {
-	s->s_fs_info = data;
-
-	return set_anon_super(s, data);
+	int err = set_anon_super(s, data);
+	if (!err)
+		s->s_fs_info = data;
+	return err;
 }
 
 /*
@@ -1411,11 +1409,21 @@ static int btrfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	return 0;
 }
 
+static void btrfs_kill_super(struct super_block *sb)
+{
+	struct btrfs_fs_info *fs_info = NULL;
+	if (sb->s_root)
+		fs_info = btrfs_sb(sb)->fs_info;
+	kill_anon_super(sb);
+	if (fs_info)
+		free_fs_info(fs_info);
+}
+
 static struct file_system_type btrfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "btrfs",
 	.mount		= btrfs_mount,
-	.kill_sb	= kill_anon_super,
+	.kill_sb	= btrfs_kill_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
 
