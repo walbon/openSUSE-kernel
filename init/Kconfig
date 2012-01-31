@@ -9,8 +9,8 @@ config ENTERPRISE_SUPPORT
 	  This feature enables the handling of the "supported" module flag.
 	  This flag can be used to report unsupported module loads or even
 	  refuse them entirely. It is useful when ensuring that the kernel
-	  remains in a state that Novell Technical Services, or its
-	  technical partners, is prepared to support.
+	  remains in a state that SUSE, or its technical partners, is
+	  prepared to support.
 
 	  Modules in the list of supported modules will be marked supported
 	  on build. The default enforcement mode is to report, but not

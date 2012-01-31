@@ -1596,7 +1596,7 @@ static int mod_sysfs_setup(struct module *mod,
 	else if (mod->taints == (1 << TAINT_NO_SUPPORT)) {
 		if (unsupported == 0) {
 			printk(KERN_WARNING "%s: module not supported by "
-			       "Novell, refusing to load. To override, echo "
+			       "SUSE, refusing to load. To override, echo "
 			       "1 > /proc/sys/kernel/unsupported\n", mod->name);
 			err = -ENOEXEC;
 			goto out_remove_attrs;
@@ -1604,9 +1604,9 @@ static int mod_sysfs_setup(struct module *mod,
 		add_nonfatal_taint(TAINT_NO_SUPPORT);
 		if (unsupported == 1) {
 			printk(KERN_WARNING "%s: module is not supported by "
-			       "Novell. Novell Technical Services may decline "
-			       "your support request if it involves a kernel "
-			       "fault.\n", mod->name);
+			       "SUSE. Our support organization may not be "
+			       "able to address your support request if it "
+			       "involves a kernel fault.\n", mod->name);
 		}
 	}
 #endif
