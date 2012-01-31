@@ -2969,7 +2969,6 @@ void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 
 #define btrfs_abort_transaction(trans, root, errno)		\
 do {								\
-	WARN_ON(1);						\
 	__btrfs_abort_transaction(trans, root, __func__,	\
 				  __LINE__, errno);		\
 } while (0)
