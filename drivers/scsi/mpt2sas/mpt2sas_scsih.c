@@ -3427,6 +3427,9 @@ _scsih_check_ir_config_unhide_events(struct MPT2SAS_ADAPTER *ioc,
 	/* Volume Resets for Deleted or Removed */
 	element = (Mpi2EventIrConfigElement_t *)&event_data->ConfigElement[0];
 	for (i = 0; i < event_data->NumElements; i++, element++) {
+		if (le32_to_cpu(event_data->Flags) &
+			MPI2_EVENT_IR_CHANGE_FLAGS_FOREIGN_CONFIG)
+			continue;
 		if (element->ReasonCode ==
 		    MPI2_EVENT_IR_CHANGE_RC_VOLUME_DELETED ||
 		    element->ReasonCode ==
@@ -5785,7 +5788,11 @@ _scsih_reprobe_lun(struct scsi_device *sdev, void *no_uld_attach)
 static void
 _scsih_reprobe_target(struct scsi_target *starget, int no_uld_attach)
 {
-	struct MPT2SAS_TARGET *sas_target_priv_data = starget->hostdata;
+	struct MPT2SAS_TARGET *sas_target_priv_data;
+ 
+	if (starget == NULL)
+		return;
+	sas_target_priv_data = starget->hostdata;
 
 	if (no_uld_attach)
 		sas_target_priv_data->flags |= MPT_TARGET_FLAGS_RAID_COMPONENT;
