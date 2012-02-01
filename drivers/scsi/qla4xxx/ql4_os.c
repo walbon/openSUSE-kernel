@@ -4293,12 +4293,17 @@ void qla4xxx_build_ddb_list(struct scsi_qla_host *ha, int is_reset)
 	}
 
 	/* Wait to ensure all sendtargets are done for min 12 sec wait */
-	tmo = ((ha->def_timeout < LOGIN_TOV) ? LOGIN_TOV : ha->def_timeout);
+	tmo = ((ha->def_timeout > LOGIN_TOV) &&
+	      (ha->def_timeout < LOGIN_TOV * 10) ?
+	      ha->def_timeout : LOGIN_TOV);
+
 	DEBUG2(ql4_printk(KERN_INFO, ha,
 			  "Default time to wait for build ddb %d\n", tmo));
 
 	wtime = jiffies + (HZ * tmo);
 	do {
+		if (list_empty(&list_st))
+			break;
 		qla4xxx_remove_failed_ddb(ha, &list_st);
 		schedule_timeout_uninterruptible(HZ / 10);
 	} while (time_after(wtime, jiffies));
