@@ -1690,6 +1690,7 @@ again:
 				     page_end, &cached_state, GFP_NOFS);
 		unlock_page(page);
 		btrfs_start_ordered_extent(inode, ordered, 1);
+		btrfs_put_ordered_extent(ordered);
 		goto again;
 	}
 
