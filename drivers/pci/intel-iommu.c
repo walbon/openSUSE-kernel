@@ -332,6 +332,11 @@ static int hw_pass_through = 1;
 /* si_domain contains mulitple devices */
 #define DOMAIN_FLAG_STATIC_IDENTITY	(1 << 2)
 
+/* FIXME ugly temporary build hack for IA64 */
+#ifndef MAX_IO_APICS
+#define MAX_IO_APICS 64
+#endif
+
 struct dmar_domain {
 	int	id;			/* domain id */
 	int	nid;			/* node id */

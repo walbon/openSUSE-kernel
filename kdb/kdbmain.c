@@ -44,9 +44,8 @@
 #ifdef CONFIG_KDB_KDUMP
 #include <linux/kexec.h>
 #endif
-#ifdef CONFIG_X86_UV
 #include <asm/uv/uv.h>
-#endif
+
 
 #include <acpi/acpi_bus.h>
 
