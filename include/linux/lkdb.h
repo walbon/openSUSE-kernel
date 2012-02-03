@@ -169,7 +169,7 @@ typedef enum {
 #ifdef CONFIG_KDB
 extern int kdb(lkdb_reason_t, int, struct pt_regs *);
 #else
-#define kdb(reason,error_code,frame) (0)
+static inline int kdb(lkdb_reason_t, int, struct pt_regs *) { return 0; }
 #endif
 
 #ifdef CONFIG_KDB
