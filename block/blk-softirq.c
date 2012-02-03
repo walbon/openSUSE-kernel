@@ -156,6 +156,7 @@ void blk_complete_request(struct request *req)
 {
 	if (unlikely(blk_should_fake_timeout(req->q)))
 		return;
+	WARN_ON(!(req->cmd_flags & REQ_STARTED));
 	if (!blk_mark_rq_complete(req))
 		__blk_complete_request(req);
 }
