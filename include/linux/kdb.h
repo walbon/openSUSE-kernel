@@ -119,9 +119,10 @@ typedef enum {
 	KDB_REASON_SILENT,	/* Silent entry/exit to kdb; regs invalid - internal only */
 } kdb_reason_t;
 
-#define kdb(reason,error_code,frame) (0)
+#ifndef CONFIG_KGDB
+static inline int kdb(lkdb_reason_t, int, struct pt_regs *) { return 0; }
 
-#ifdef CONFIG_KGDB
+#else /* CONFIG_KGDB */
 extern int kdb_trap_printk;
 typedef int (*kdb_printf_t)(const char *, ...)
              __attribute__ ((format (printf, 1, 2)));

@@ -44,6 +44,8 @@
 #ifdef CONFIG_KDB_KDUMP
 #include <linux/kexec.h>
 #endif
+#include <asm/uv/uv.h>
+
 
 #include <acpi/acpi_bus.h>
 
@@ -1922,8 +1924,11 @@ kdb(lkdb_reason_t reason, int error, struct pt_regs *regs)
 
 	switch(reason) {
 	case LKDB_REASON_OOPS:
+		LKDB_FLAG_SET(CATASTROPHIC); /* kernel state is dubious now */
+		break;
 	case LKDB_REASON_NMI:
-		LKDB_FLAG_SET(CATASTROPHIC);	/* kernel state is dubious now */
+		if (!is_uv_system())	/* NMI is NOT catastrophic on UV */
+			LKDB_FLAG_SET(CATASTROPHIC);
 		break;
 	default:
 		break;
@@ -3713,7 +3718,7 @@ kdb_summary(int argc, const char **argv)
 static int
 kdb_per_cpu(int argc, const char **argv)
 {
-	char buf[256], fmtstr[64];
+	char fmtstr[64];
 	lkdb_symtab_t symtab;
 	cpumask_t suppress;
 	int cpu, diag;
@@ -3723,8 +3728,7 @@ kdb_per_cpu(int argc, const char **argv)
 		return LKDB_ARGCOUNT;
 
 	cpus_clear(suppress);
-	snprintf(buf, sizeof(buf), "per_cpu__%s", argv[1]);
-	if (!lkdbgetsymval(buf, &symtab)) {
+	if (!lkdbgetsymval(argv[1], &symtab)) {
 		lkdb_printf("%s is not a per_cpu variable\n", argv[1]);
 		return LKDB_BADADDR;
 	}
