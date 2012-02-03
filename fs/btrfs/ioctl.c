@@ -434,6 +434,7 @@ static noinline int create_subvol(struct btrfs_root *root,
 	ret = btrfs_create_subvol_root(trans, new_root, new_dirid);
 	if (ret) {
 		/* We potentially lose an unused inode item here */
+		btrfs_abort_transation(trans, root, ret);
 		goto fail;
 	}
 
@@ -441,7 +442,10 @@ static noinline int create_subvol(struct btrfs_root *root,
 	 * insert the directory item
 	 */
 	ret = btrfs_set_inode_index(dir, &index);
-	BUG_ON(ret);
+	if (ret) {
+		btrfs_abort_transaction(trans, root, ret);
+		goto fail;
+	}
 
 	ret = btrfs_insert_dir_item(trans, root,
 				    name, namelen, dir, &key,
@@ -1967,7 +1971,11 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 				dest->root_key.objectid,
 				dentry->d_name.name,
 				dentry->d_name.len);
-	BUG_ON(ret);
+	if (ret) {
+		err = ret;
+		btrfs_abort_transaction(trans, root, ret);
+		goto out_end_trans;
+	}
 
 	btrfs_record_root_in_trans(trans, dest);
 
@@ -1980,11 +1988,16 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 		ret = btrfs_insert_orphan_item(trans,
 					root->fs_info->tree_root,
 					dest->root_key.objectid);
-		BUG_ON(ret);
+		if (ret) {
+			btrfs_abort_transaction(trans, root, ret);
+			err = ret;
+			goto out_end_trans;
+		}
 	}
-
+out_end_trans:
 	ret = btrfs_end_transaction(trans, root);
-	BUG_ON(ret);
+	if (ret && !err)
+		err = ret;
 	inode->i_flags |= S_DEAD;
 out_up_write:
 	up_write(&root->fs_info->subvol_sem);
@@ -2449,11 +2462,21 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 							 new_key.offset,
 							 new_key.offset + datal,
 							 &hint_byte, 1);
-				BUG_ON(ret);
+				if (ret) {
+					btrfs_abort_transaction(trans, root,
+								ret);
+					btrfs_end_transaction(trans, root);
+					goto out;
+				}
 
 				ret = btrfs_insert_empty_item(trans, root, path,
 							      &new_key, size);
-				BUG_ON(ret);
+				if (ret) {
+					btrfs_abort_transaction(trans, root,
+								ret);
+					btrfs_end_transaction(trans, root);
+					goto out;
+				}
 
 				leaf = path->nodes[0];
 				slot = path->slots[0];
@@ -2480,7 +2503,15 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 							btrfs_ino(inode),
 							new_key.offset - datao,
 							0);
-					BUG_ON(ret);
+					if (ret) {
+						btrfs_abort_transaction(trans,
+									root,
+									ret);
+						btrfs_end_transaction(trans,
+								      root);
+						goto out;
+
+					}
 				}
 			} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 				u64 skip = 0;
@@ -2505,11 +2536,21 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 							 new_key.offset,
 							 new_key.offset + datal,
 							 &hint_byte, 1);
-				BUG_ON(ret);
+				if (ret) {
+					btrfs_abort_transaction(trans, root,
+								ret);
+					btrfs_end_transaction(trans, root);
+					goto out;
+				}
 
 				ret = btrfs_insert_empty_item(trans, root, path,
 							      &new_key, size);
-				BUG_ON(ret);
+				if (ret) {
+					btrfs_abort_transaction(trans, root,
+								ret);
+					btrfs_end_transaction(trans, root);
+					goto out;
+				}
 
 				if (skip) {
 					u32 start =
@@ -2543,8 +2584,11 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 				btrfs_i_size_write(inode, endoff);
 
 			ret = btrfs_update_inode(trans, root, inode);
-			BUG_ON(ret);
-			btrfs_end_transaction(trans, root);
+			if (ret) {
+				btrfs_abort_transaction(trans, root, ret);
+				btrfs_end_transaction(trans, root);
+			}
+			ret = btrfs_end_transaction(trans, root);
 		}
 next:
 		btrfs_release_path(path);

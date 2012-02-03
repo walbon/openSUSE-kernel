@@ -7466,7 +7466,6 @@ static int __btrfs_prealloc_file_range(struct inode *inode, int mode,
 		ret = btrfs_reserve_extent(trans, root, num_bytes, min_size,
 					   0, *alloc_hint, (u64)-1, &ins, 1);
 		if (ret) {
-			btrfs_abort_transaction(trans, root, ret);
 			if (own_trans)
 				btrfs_end_transaction(trans, root);
 			break;
