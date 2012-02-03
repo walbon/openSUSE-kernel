@@ -872,7 +872,12 @@ static void __devinit quirk_usb_early_handoff(struct pci_dev *pdev)
 		quirk_usb_handoff_ohci(pdev);
 	else if (pdev->class == PCI_CLASS_SERIAL_USB_EHCI)
 		quirk_usb_disable_ehci(pdev);
-	else if (pdev->class == PCI_CLASS_SERIAL_USB_XHCI)
-		quirk_usb_handoff_xhci(pdev);
 }
 DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID, quirk_usb_early_handoff);
+
+static void __devinit quirk_xhci_early_handoff(struct pci_dev *pdev)
+{
+	 if (pdev->class == PCI_CLASS_SERIAL_USB_XHCI)
+                quirk_usb_handoff_xhci(pdev);
+}
+DECLARE_PCI_FIXUP_ENABLE(PCI_ANY_ID, PCI_ANY_ID, quirk_xhci_early_handoff);
