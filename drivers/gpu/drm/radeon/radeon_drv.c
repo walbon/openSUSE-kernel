@@ -37,6 +37,9 @@
 #include "drm_pciids.h"
 #include <linux/console.h>
 
+#ifdef CONFIG_X86
+#include <linux/dmi.h>
+#endif
 
 /*
  * KMS wrapper.
@@ -375,6 +378,27 @@ static struct pci_driver radeon_kms_pci_driver = {
 	.resume = radeon_pci_resume,
 };
 
+#ifdef CONFIG_X86
+static int __init disable_modeset(const struct dmi_system_id *id)
+{
+	printk(KERN_INFO "%s detected, force modeset off\n", id->ident);
+	radeon_modeset = 0;
+	return 0;
+}
+
+static const struct dmi_system_id x86_nomodeset_blacklist[] __initconst = {
+	{
+		.callback = disable_modeset,
+		.ident = "IBM 3850 M2 / x3950 M2",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "IBM"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "IBM 3850 M2 / x3950 M2"),
+		},
+	},
+	{}
+};
+#endif
+
 static int __init radeon_init(void)
 {
 	driver = &driver_old;
@@ -392,8 +416,17 @@ static int __init radeon_init(void)
 	/* if enabled by default */
 	if (radeon_modeset == -1) {
 #ifdef CONFIG_DRM_RADEON_KMS
+
+#ifdef CONFIG_X86
+		if (!dmi_check_system(x86_nomodeset_blacklist)) {
+			DRM_INFO("radeon defaulting to kernel modesetting.\n");
+			radeon_modeset = 1;
+		}
+#else
 		DRM_INFO("radeon defaulting to kernel modesetting.\n");
 		radeon_modeset = 1;
+#endif
+
 #else
 		DRM_INFO("radeon defaulting to userspace modesetting.\n");
 		radeon_modeset = 0;
