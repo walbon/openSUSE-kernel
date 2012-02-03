@@ -434,7 +434,7 @@ static noinline int create_subvol(struct btrfs_root *root,
 	ret = btrfs_create_subvol_root(trans, new_root, new_dirid);
 	if (ret) {
 		/* We potentially lose an unused inode item here */
-		btrfs_abort_transation(trans, root, ret);
+		btrfs_abort_transaction(trans, root, ret);
 		goto fail;
 	}
 
