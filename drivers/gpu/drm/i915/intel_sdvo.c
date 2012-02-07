@@ -1374,13 +1374,9 @@ intel_sdvo_detect(struct drm_connector *connector, bool force)
 		if (edid != NULL) {
 			if (intel_sdvo_connector_matches_edid(intel_sdvo_connector,
 							      edid))
-				ret = IS_LVDS(intel_sdvo_connector) ?
-					connector_status_disconnected :
-					connector_status_connected;
+				ret = connector_status_connected;
 			else
-				ret = IS_LVDS(intel_sdvo_connector) ?
-					connector_status_connected :
-					connector_status_disconnected;
+				ret = connector_status_disconnected;
 
 			connector->display_info.raw_edid = NULL;
 			kfree(edid);
