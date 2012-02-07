@@ -5962,7 +5962,8 @@ static void ironlake_write_eld(struct drm_connector *connector,
 		DRM_DEBUG_DRIVER("ELD: DisplayPort detected\n");
 		eld[5] |= (1 << 2);	/* Conn_Type, 0x1 = DisplayPort */
 		I915_WRITE(aud_config, AUD_CONFIG_N_VALUE_INDEX); /* 0x1 = DP */
-	}
+	} else
+		I915_WRITE(aud_config, 0);
 
 	if (intel_eld_uptodate(connector,
 			       aud_cntrl_st2, eldv,
