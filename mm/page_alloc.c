@@ -2035,7 +2035,7 @@ retry:
 	 * would block during thread creation and the cost of sending storms
 	 * of IPIs in low memory conditions is quite high.
 	 */
-	if (!page && order && !drained) {
+	if (!page && !drained) {
 		drain_pages(get_cpu());
 		put_cpu();
 		drained = true;
