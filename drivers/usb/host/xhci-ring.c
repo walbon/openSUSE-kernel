@@ -1215,6 +1215,7 @@ static void handle_vendor_event(struct xhci_hcd *xhci,
  *
  * Returns a zero-based port number, which is suitable for indexing into each of
  * the split roothubs' port arrays and bus state arrays.
+ * Add one to it in order to call xhci_find_slot_id_by_port.
  */
 static unsigned int find_faked_portnum_from_hw_portnum(struct usb_hcd *hcd,
 		struct xhci_hcd *xhci, u32 port_id)
@@ -1335,7 +1336,7 @@ static void handle_port_status(struct xhci_hcd *xhci,
 			xhci_set_link_state(xhci, port_array, faked_port_index,
 						XDEV_U0);
 			slot_id = xhci_find_slot_id_by_port(hcd, xhci,
-					faked_port_index);
+					faked_port_index + 1);
 			if (!slot_id) {
 				xhci_dbg(xhci, "slot_id is zero\n");
 				goto cleanup;
@@ -1643,7 +1644,6 @@ static int process_ctrl_td(struct xhci_hcd *xhci, struct xhci_td *td,
 		}
 		break;
 	case COMP_SHORT_TX:
-		xhci_warn(xhci, "WARN: short transfer on control ep\n");
 		if (td->urb->transfer_flags & URB_SHORT_NOT_OK)
 			*status = -EREMOTEIO;
 		else
@@ -1985,7 +1985,7 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 		xhci_dbg(xhci, "Stopped on No-op or Link TRB\n");
 		break;
 	case COMP_STALL:
-		xhci_warn(xhci, "WARN: Stalled endpoint\n");
+		xhci_dbg(xhci, "Stalled endpoint\n");
 		ep->ep_state |= EP_HALTED;
 		status = -EPIPE;
 		break;
@@ -1995,11 +1995,11 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 		break;
 	case COMP_SPLIT_ERR:
 	case COMP_TX_ERR:
-		xhci_warn(xhci, "WARN: transfer error on endpoint\n");
+		xhci_dbg(xhci, "Transfer error on endpoint\n");
 		status = -EPROTO;
 		break;
 	case COMP_BABBLE:
-		xhci_warn(xhci, "WARN: babble error on endpoint\n");
+		xhci_dbg(xhci, "Babble error on endpoint\n");
 		status = -EOVERFLOW;
 		break;
 	case COMP_DB_ERR:
