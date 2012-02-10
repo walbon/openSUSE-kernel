@@ -1484,6 +1484,7 @@ repeat:
 			set_page_dirty(page);
 
 	} else {
+		shmem_swp_unmap(entry);
 		spin_unlock(&info->lock);
 		error = -ENOMEM;
 		goto out;
