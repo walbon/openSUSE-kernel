@@ -892,7 +892,7 @@ static void assert_panel_unlocked(struct drm_i915_private *dev_priv,
 	int pp_reg, lvds_reg;
 	u32 val;
 	enum pipe panel_pipe = PIPE_A;
-	bool locked = locked;
+	bool locked = true;
 
 	if (HAS_PCH_SPLIT(dev_priv->dev)) {
 		pp_reg = PCH_PP_CONTROL;
@@ -2913,12 +2913,16 @@ static void ironlake_pch_enable(struct drm_crtc *crtc)
 
 		/* Be sure PCH DPLL SEL is set */
 		temp = I915_READ(PCH_DPLL_SEL);
-		if (pipe == 0 && (temp & TRANSA_DPLL_ENABLE) == 0)
+		if (pipe == 0) {
+			temp &= ~(TRANSA_DPLLB_SEL);
 			temp |= (TRANSA_DPLL_ENABLE | TRANSA_DPLLA_SEL);
-		else if (pipe == 1 && (temp & TRANSB_DPLL_ENABLE) == 0)
+		} else if (pipe == 1) {
+			temp &= ~(TRANSB_DPLLB_SEL);
 			temp |= (TRANSB_DPLL_ENABLE | TRANSB_DPLLB_SEL);
-		else if (pipe == 2 && (temp & TRANSC_DPLL_ENABLE) == 0)
+		} else if (pipe == 2) {
+			temp &= ~(TRANSC_DPLLB_SEL);
 			temp |= (TRANSC_DPLL_ENABLE | transc_sel);
+		}
 		I915_WRITE(PCH_DPLL_SEL, temp);
 	}
 
@@ -3103,14 +3107,14 @@ static void ironlake_crtc_disable(struct drm_crtc *crtc)
 		temp = I915_READ(PCH_DPLL_SEL);
 		switch (pipe) {
 		case 0:
-			temp &= ~(TRANSA_DPLL_ENABLE | TRANSA_DPLLA_SEL);
+			temp &= ~(TRANSA_DPLL_ENABLE | TRANSA_DPLLB_SEL);
 			break;
 		case 1:
 			temp &= ~(TRANSB_DPLL_ENABLE | TRANSB_DPLLB_SEL);
 			break;
 		case 2:
 			/* C shares PLL A or B */
-			temp &= ~(TRANSC_DPLL_ENABLE | TRANSB_DPLLB_SEL);
+			temp &= ~(TRANSC_DPLL_ENABLE | TRANSC_DPLLB_SEL);
 			break;
 		default:
 			BUG(); /* wtf */
@@ -5622,30 +5626,6 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 			DRM_DEBUG_KMS("no matching PLL configuration for pipe 2\n");
 			return -EINVAL;
 		}
-	}
-
-	/* enable transcoder DPLL */
-	if (HAS_PCH_CPT(dev)) {
-		u32 transc_sel = intel_crtc->use_pll_a ? TRANSC_DPLLA_SEL :
-			TRANSC_DPLLB_SEL;
-		temp = I915_READ(PCH_DPLL_SEL);
-		switch (pipe) {
-		case 0:
-			temp |= TRANSA_DPLL_ENABLE | TRANSA_DPLLA_SEL;
-			break;
-		case 1:
-			temp |=	TRANSB_DPLL_ENABLE | TRANSB_DPLLB_SEL;
-			break;
-		case 2:
-			temp |= TRANSC_DPLL_ENABLE | transc_sel;
-			break;
-		default:
-			BUG();
-		}
-		I915_WRITE(PCH_DPLL_SEL, temp);
-
-		POSTING_READ(PCH_DPLL_SEL);
-		udelay(150);
 	}
 
 	/* The LVDS pin pair needs to be on before the DPLLs are enabled.
