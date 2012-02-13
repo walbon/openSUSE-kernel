@@ -439,6 +439,7 @@ static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 	 * to an KDB requested IPI.  If so, kdb will handle it.
 	 */
 	if (kdb_ipi(regs, NULL)) {
+		raw_spin_unlock(&nmi_reason_lock);
 		return;
 	}
 #endif /* defined(CONFIG_SMP) && defined(CONFIG_KDB) */
