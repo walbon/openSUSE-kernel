@@ -44,7 +44,7 @@ static DEFINE_PCI_DEVICE_TABLE(be_dev_ids) = {
 };
 MODULE_DEVICE_TABLE(pci, be_dev_ids);
 /* UE Status Low CSR */
-static char *ue_status_low_desc[] = {
+static const char * const ue_status_low_desc[] = {
 	"CEV",
 	"CTX",
 	"DBUF",
@@ -79,7 +79,7 @@ static char *ue_status_low_desc[] = {
 	"MPU_INTPEND"
 };
 /* UE Status High CSR */
-static char *ue_status_hi_desc[] = {
+static const char * const ue_status_hi_desc[] = {
 	"LPCMEMHOST",
 	"MGMT_MAC",
 	"PCS0ONLINE",
@@ -103,7 +103,7 @@ static char *ue_status_hi_desc[] = {
 	"HOST7",
 	"HOST8",
 	"HOST9",
-	"NETC"
+	"NETC",
 	"Unknown",
 	"Unknown",
 	"Unknown",
@@ -1139,7 +1139,7 @@ static void be_rx_compl_process(struct be_adapter *adapter,
 		skb->rxhash = rxcp->rss_hash;
 
 
-	if (unlikely(rxcp->vlanf))
+	if (rxcp->vlanf)
 		__vlan_hwaccel_put_tag(skb, rxcp->vlan_tag);
 
 	netif_receive_skb(skb);
@@ -1196,7 +1196,7 @@ static void be_rx_compl_process_gro(struct be_adapter *adapter,
 	if (adapter->netdev->features & NETIF_F_RXHASH)
 		skb->rxhash = rxcp->rss_hash;
 
-	if (unlikely(rxcp->vlanf))
+	if (rxcp->vlanf)
 		__vlan_hwaccel_put_tag(skb, rxcp->vlan_tag);
 
 	napi_gro_frags(&eq_obj->napi);
