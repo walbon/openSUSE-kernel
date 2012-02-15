@@ -6865,7 +6865,7 @@ int btrfs_create_subvol_root(struct btrfs_trans_handle *trans,
 	struct inode *inode;
 	int err;
 	u64 index = 0;
-	int mode = 0755 & ~current_umask();
+	int mode = S_IRWXUGO & ~current_umask();
 
 	inode = btrfs_new_inode(trans, new_root, NULL, "..", 2, new_dirid,
 				new_dirid, S_IFDIR | mode, &index);
