@@ -1623,6 +1623,7 @@ static void handle_write_error(conf_t *conf, r1bio_t *r1_bio)
 		wbio->bi_idx = r1_bio->master_bio->bi_idx;
 
 		wbio->bi_size = r1_bio->sectors << 9;
+		wbio->bi_next = NULL;
 
 		rdev = conf->mirrors[m].rdev;
 		wbio->bi_sector += rdev->data_offset;
