@@ -127,8 +127,12 @@ char *tomoyo_realpath_from_path(struct path *path)
 		/* If we don't have a vfsmount, we can't calculate. */
 		if (!path->mnt)
 			break;
-		/* go to whatever namespace root we are under */
-		pos = d_absolute_path(path, buffer, buflen - 1);
+		pos = d_absolute_path(path, buf, buf_len - 1);
+		/* If path is disconnected, use "[unknown]" instead. */
+		if (pos == ERR_PTR(-EINVAL)) {
+			name = tomoyo_encode("[unknown]");
+			break;
+		}
 		/* Prepend "/proc" prefix if using internal proc vfs mount. */
 		if (!IS_ERR(pos) && (path->mnt->mnt_flags & MNT_INTERNAL) &&
 		    (path->mnt->mnt_sb->s_magic == PROC_SUPER_MAGIC)) {
