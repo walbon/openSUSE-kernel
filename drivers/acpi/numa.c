@@ -261,7 +261,7 @@ static int __init acpi_parse_srat(struct acpi_table_header *table)
 	if (!table)
 		return -EINVAL;
 
-  	srat = (struct acpi_table_srat *)table;
+	srat = (struct acpi_table_srat *)table;
 	acpi_srat_revision = srat->header.revision;
 
 	/* Real work done in acpi_table_parse_srat below. */

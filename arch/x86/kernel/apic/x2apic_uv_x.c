@@ -861,7 +861,7 @@ void __init uv_system_init(void)
 	/* uv_num_possible_blades() is really the hub count */
 	printk(KERN_INFO "UV: Found %d blades, %d hubs\n",
 			is_uv1_hub() ? uv_num_possible_blades() :
-				(uv_num_possible_blades() + 1) / 2,
+			(uv_num_possible_blades() + 1) / 2,
 			uv_num_possible_blades());
 
 	bytes = sizeof(struct uv_blade_info) * uv_num_possible_blades();
