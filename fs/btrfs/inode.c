@@ -468,6 +468,7 @@ cont:
 		trans = btrfs_join_transaction(root);
 		if (IS_ERR(trans)) {
 			ret = PTR_ERR(trans);
+			trans = NULL;
 			goto cleanup_and_out;
 		}
 		trans->block_rsv = &root->fs_info->delalloc_block_rsv;
@@ -487,7 +488,6 @@ cont:
 						    compress_type, pages);
 		}
 		if (ret <= 0) {
-cleanup_and_out:
 			/*
 			 * inline extent creation worked or returned error,
 			 * we don't need to create any more async work items.
@@ -499,8 +499,6 @@ cleanup_and_out:
 			     EXTENT_CLEAR_UNLOCK_PAGE | EXTENT_CLEAR_DIRTY |
 			     EXTENT_CLEAR_DELALLOC |
 			     EXTENT_SET_WRITEBACK | EXTENT_END_WRITEBACK);
-			if (ret < 0)
-				btrfs_abort_transaction(trans, root, ret);
 
 			btrfs_end_transaction(trans, root);
 			goto free_pages_out;
@@ -596,6 +594,20 @@ free_pages_out:
 	kfree(pages);
 
 	goto out;
+
+cleanup_and_out:
+	extent_clear_unlock_delalloc(inode, &BTRFS_I(inode)->io_tree,
+				     start, end, NULL,
+				     EXTENT_CLEAR_UNLOCK_PAGE |
+				     EXTENT_CLEAR_DIRTY |
+				     EXTENT_CLEAR_DELALLOC |
+				     EXTENT_SET_WRITEBACK |
+				     EXTENT_END_WRITEBACK);
+	if (!trans || IS_ERR(trans))
+		btrfs_error(root->fs_info, ret, "Failed to join transaction");
+	else
+		btrfs_abort_transaction(trans, root, ret);
+	goto free_pages_out;
 }
 
 /*
@@ -697,7 +709,7 @@ retry:
 				      async_extent->ram_size - 1);
 			if (ret == -ENOSPC)
 				goto retry;
-			goto out;
+			goto out_free; /* JDM: Requeue? */
 		}
 
 		/*
@@ -1881,6 +1893,7 @@ static int btrfs_finish_ordered_io(struct inode *inode, u64 start, u64 end)
 		trans = btrfs_join_transaction(root);
 	if (IS_ERR(trans)) {
 		ret = PTR_ERR(trans);
+		trans = NULL;
 		goto out_unlock;
 	}
 	trans->block_rsv = &root->fs_info->delalloc_block_rsv;

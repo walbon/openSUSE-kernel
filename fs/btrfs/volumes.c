@@ -1733,14 +1733,14 @@ int btrfs_init_new_device(struct btrfs_root *root, char *device_path)
 	if (seeding_dev) {
 		ret = init_first_rw_device(trans, root, device);
 		if (ret)
-			goto error;
+			goto error_trans;
 		ret = btrfs_finish_sprout(trans, root);
 		if (ret)
-			goto error;
+			goto error_trans;
 	} else {
 		ret = btrfs_add_device(trans, root, device);
 		if (ret)
-			goto error;
+			goto error_trans;
 	}
 
 	/*
@@ -3486,7 +3486,8 @@ int btrfs_alloc_chunk(struct btrfs_trans_handle *trans,
 
 	ret = __finish_chunk_alloc(trans, extent_root, map, chunk_offset,
 				   chunk_size, stripe_size);
-	BUG_ON(ret);
+	if (ret)
+		return ret;
 	return 0;
 }
 
