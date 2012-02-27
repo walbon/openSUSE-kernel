@@ -1379,7 +1379,8 @@ static void intel_flush_display_plane(struct drm_i915_private *dev_priv,
 				      enum plane plane)
 {
 	I915_WRITE(DSPADDR(plane), I915_READ(DSPADDR(plane)));
-	I915_WRITE(DSPSURF(plane), I915_READ(DSPSURF(plane)));
+	if (dev_priv->info->gen >= 5)
+		I915_WRITE(DSPSURF(plane), I915_READ(DSPSURF(plane)));
 }
 
 /**
