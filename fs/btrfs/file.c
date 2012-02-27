@@ -1717,7 +1717,6 @@ static long btrfs_fallocate(struct file *file, int mode,
 			break;
 		}
 	}
-out_unlock:
 	unlock_extent_cached(&BTRFS_I(inode)->io_tree, alloc_start, locked_end,
 			     &cached_state, GFP_NOFS);
 out:

@@ -126,7 +126,7 @@ static void intel_crt_mode_set(struct drm_encoder *encoder,
 	struct intel_crtc *intel_crtc = to_intel_crtc(crtc);
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	int dpll_md_reg;
-	u32 adpa, dpll_md;
+	u32 adpa;
 	u32 adpa_reg;
 
 	dpll_md_reg = DPLL_MD(intel_crtc->pipe);
@@ -135,16 +135,6 @@ static void intel_crt_mode_set(struct drm_encoder *encoder,
 		adpa_reg = PCH_ADPA;
 	else
 		adpa_reg = ADPA;
-
-	/*
-	 * Disable separate mode multiplier used when cloning SDVO to CRT
-	 * XXX this needs to be adjusted when we really are cloning
-	 */
-	if (INTEL_INFO(dev)->gen >= 4 && !HAS_PCH_SPLIT(dev)) {
-		dpll_md = I915_READ(dpll_md_reg);
-		I915_WRITE(dpll_md_reg,
-			   dpll_md & ~DPLL_MD_UDI_MULTIPLIER_MASK);
-	}
 
 	adpa = ADPA_HOTPLUG_BITS;
 	if (adjusted_mode->flags & DRM_MODE_FLAG_PHSYNC)
