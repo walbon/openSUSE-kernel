@@ -24,8 +24,6 @@
  * IN THE SOFTWARE.
  */
 
-#define REVISION "$Revision: 1.0 $"
-
 #include <linux/module.h>
 #include <linux/blkdev.h>
 #include <linux/list.h>
@@ -75,7 +73,7 @@ static void submit_message(struct blkfront_info *info, void *sp)
 	req->flags |= REQ_BLOCK_PC;
 #endif
 	req->__sector = 0;
-	req->__data_len = PAGE_SIZE;
+	req->cmd_len = 0;
 	req->timeout = 60*HZ;
 
 	blk_execute_rq(req->q, info->gd, req, 1);
@@ -89,7 +87,6 @@ static int submit_cdrom_cmd(struct blkfront_info *info,
 {
 	int ret = 0;
 	struct page *page;
-	size_t size;
 	union xen_block_packet *sp;
 	struct xen_cdrom_packet *xcp;
 	struct vcd_generic_command *vgc;
@@ -105,7 +102,6 @@ static int submit_cdrom_cmd(struct blkfront_info *info,
 		return -ENOMEM;
 	}
 
-	size = PAGE_SIZE;
 	sp = page_address(page);
 	xcp = &(sp->xcp);
 	xcp->type = XEN_TYPE_CDROM_PACKET;
@@ -393,9 +389,13 @@ static int xencdrom_block_ioctl(struct block_device *bd, fmode_t mode,
 	case CDROM_SET_OPTIONS:
 		ret = vcd->vcd_cdrom_info.options;
 		break;
-	case CDROM_SEND_PACKET:
-		ret = submit_cdrom_cmd(info, (struct packet_command *)arg);
+	case CDROM_SEND_PACKET: {
+		struct packet_command cgc;
+
+		ret = copy_from_user(&cgc, (void __user *)arg, sizeof(cgc))
+		      ? -EFAULT : submit_cdrom_cmd(info, &cgc);
 		break;
+	}
 	default:
 		spin_unlock(&vcd->vcd_cdrom_info_lock);
 out:
@@ -461,11 +461,12 @@ void register_vcd(struct blkfront_info *info)
 	}
 	spin_lock_init(&vcd->vcd_cdrom_info_lock);
 
-	vcd->vcd_cdrom_info.ops	= &xencdrom_dops;
+	vcd->vcd_cdrom_info.ops = &xencdrom_dops;
 	vcd->vcd_cdrom_info.speed = 4;
 	vcd->vcd_cdrom_info.capacity = 1;
-	vcd->vcd_cdrom_info.options	= 0;
-	strcpy(vcd->vcd_cdrom_info.name, gd->disk_name);
+	vcd->vcd_cdrom_info.options = 0;
+	strlcpy(vcd->vcd_cdrom_info.name, gd->disk_name,
+		ARRAY_SIZE(vcd->vcd_cdrom_info.name));
 	vcd->vcd_cdrom_info.mask = (CDC_CD_RW | CDC_DVD_R | CDC_DVD_RAM |
 			CDC_SELECT_DISC | CDC_SELECT_SPEED |
 			CDC_MRW | CDC_MRW_W | CDC_RAM);
@@ -504,4 +505,3 @@ void unregister_vcd(struct blkfront_info *info) {
 	}
 	spin_unlock(&vcd_disks_lock);
 }
-

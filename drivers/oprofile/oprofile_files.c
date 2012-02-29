@@ -278,6 +278,7 @@ static ssize_t adomain_read(struct file * file, char __user * buf,
 static const struct file_operations active_domain_ops = {
 	.read		= adomain_read,
 	.write		= adomain_write,
+	.llseek		= default_llseek,
 };
 
 static unsigned int pdomains = 0;
@@ -371,6 +372,7 @@ static ssize_t pdomain_read(struct file * file, char __user * buf,
 static const struct file_operations passive_domain_ops = {
 	.read		= pdomain_read,
 	.write		= pdomain_write,
+	.llseek		= default_llseek,
 };
 
 #endif /* CONFIG_XEN */

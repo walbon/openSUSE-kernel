@@ -20,13 +20,13 @@ blktap_sysfs_set_name(struct device *dev, struct device_attribute *attr, const c
 	if (!tap)
 		return 0;
 
-	if (size >= BLKTAP2_MAX_MESSAGE_LEN)
+	if (size > BLKTAP2_MAX_MESSAGE_LEN)
 		return -ENAMETOOLONG;
 
-	if (strnlen(buf, size) != size)
+	if (strnlen(buf, size) >= size)
 		return -EINVAL;
 
-	strcpy(tap->name, buf);
+	strlcpy(tap->name, buf, size);
 
 	return size;
 }

@@ -352,7 +352,10 @@ static void backend_changed(struct xenbus_watch *watch,
 		be->minor = minor;
 
 		err = vbd_create(be->blkif, handle, major, minor,
-				 (NULL == strchr(be->mode, 'w')), cdrom);
+				 FMODE_READ
+				 | (strchr(be->mode, 'w') ? FMODE_WRITE : 0)
+				 | (strchr(be->mode, '!') ? 0 : FMODE_EXCL),
+				 cdrom);
 		switch (err) {
 		case -ENOMEDIUM:
 			if (be->blkif->vbd.type
@@ -486,7 +489,7 @@ again:
 
 	/* FIXME: use a typename instead */
 	err = xenbus_printf(xbt, dev->nodename, "info", "%u",
-			    vbd_info(&be->blkif->vbd));
+			    be->blkif->vbd.type);
 	if (err) {
 		xenbus_dev_fatal(dev, err, "writing %s/info",
 				 dev->nodename);

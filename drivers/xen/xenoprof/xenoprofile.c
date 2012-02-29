@@ -107,6 +107,10 @@ static struct xenoprof_passive passive_domains[MAX_OPROF_DOMAINS];
 /* Check whether the given entry is an escape code */
 static int xenoprof_is_escape(xenoprof_buf_t * buf, int tail)
 {
+#if CONFIG_XEN_COMPAT < 0x040200 && !defined(CONFIG_64BIT)
+	if (buf->event_log[tail].eip == (unsigned long)XENOPROF_ESCAPE_CODE)
+		return 1;
+#endif
 	return (buf->event_log[tail].eip == XENOPROF_ESCAPE_CODE);
 }
 
@@ -538,9 +542,8 @@ int __init xenoprofile_init(struct oprofile_operations * ops)
 		xenoprof_arch_init_counter(&init);
 		xenoprof_is_primary = init.is_primary;
 
-		/*  cpu_type is detected by Xen */
-		cpu_type[XENOPROF_CPU_TYPE_SIZE-1] = 0;
-		strncpy(cpu_type, init.cpu_type, XENOPROF_CPU_TYPE_SIZE - 1);
+		/* cpu_type is detected by Xen */
+		strlcpy(cpu_type, init.cpu_type, XENOPROF_CPU_TYPE_SIZE);
 		xenoprof_ops.cpu_type = cpu_type;
 
 		init_driverfs();

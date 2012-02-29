@@ -13,7 +13,7 @@ typedef union {
 #ifdef CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
 /*
  * On Xen we support CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING levels of
- * interrupt re-enabling per lock. Hence we can have
+ * interrupt re-enabling per IRQ-safe lock. Hence we can have
  * (CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING + 1) times as many outstanding
  * tickets. Thus the cut-off for using byte register pairs must be at
  * a sufficiently smaller number of CPUs.

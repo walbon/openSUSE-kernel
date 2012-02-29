@@ -99,7 +99,12 @@ static unsigned int spin_adjust(struct spinning *spinning,
 
 			if (unlikely(!(ticket + 1)))
 				break;
+# if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING == 1
 			spinning->ticket = token >> TICKET_SHIFT;
+# else
+			spinning->ticket = spin_adjust(spinning->prev, lock,
+						       token) >> TICKET_SHIFT;
+# endif
 			token = (token & ((1 << TICKET_SHIFT) - 1))
 				| (ticket << TICKET_SHIFT);
 			break;

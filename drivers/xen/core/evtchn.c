@@ -841,8 +841,10 @@ done:
 	spin_unlock(&irq_mapping_update_lock);
 
 	if (free_action) {
+		cpumask_t *cpus = free_action->cpus;
+
 		free_irq(irq, free_action->action.dev_id);
-		free_percpu_irqaction(free_action);
+		free_cpumask_var(cpus);
 	}
 }
 EXPORT_SYMBOL_GPL(unbind_from_per_cpu_irq);
@@ -1749,8 +1751,10 @@ struct irq_cfg *alloc_irq_and_cfg_at(unsigned int at, int node)
 	}
 
 #ifdef CONFIG_SPARSE_IRQ
+#ifdef CONFIG_SMP
 	/* By default all event channels notify CPU#0. */
 	cpumask_copy(irq_get_irq_data(at)->affinity, cpumask_of(0));
+#endif
 
 	cfg = kzalloc(sizeof(*cfg), GFP_KERNEL);
 	if (cfg)
@@ -1765,6 +1769,10 @@ struct irq_cfg *alloc_irq_and_cfg_at(unsigned int at, int node)
 }
 
 #ifdef CONFIG_SPARSE_IRQ
+#ifdef CONFIG_X86_IO_APIC
+#include <asm/io_apic.h>
+#endif
+
 int nr_pirqs = NR_PIRQS;
 EXPORT_SYMBOL_GPL(nr_pirqs);
 

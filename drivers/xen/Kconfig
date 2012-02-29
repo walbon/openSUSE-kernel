@@ -430,7 +430,7 @@ config XEN_SPINLOCK_ACQUIRE_NESTING
 	default 0
 	help
 	  IRQ-safe spin lock acquire operations can re-enable interrupts
-	  before entering into polling mode, to reduce interrupt latencies.
+	  before entering polling mode, to reduce interrupt latencies.
 	  This option specifies how many times this can be done for each
 	  individual spin lock (0 disables this behavior).
 

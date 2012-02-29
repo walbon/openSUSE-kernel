@@ -706,6 +706,22 @@ int ttm_get_pages(struct list_head *pages, int flags,
 				return -ENOMEM;
 			}
 
+#ifdef CONFIG_XEN
+			if (flags & TTM_PAGE_FLAG_DMA32) {
+				int rc = xen_limit_pages_to_max_mfn(p, 0, 32);
+
+				if (rc) {
+					__free_page(p);
+					printk(KERN_ERR TTM_PFX
+					       "Unable to restrict page (%d).",
+					       rc);
+					return rc;
+				}
+				if (flags & TTM_PAGE_FLAG_ZERO_ALLOC)
+					clear_page(page_address(p));
+			}
+#endif
+
 			list_add(&p->lru, pages);
 		}
 		return 0;

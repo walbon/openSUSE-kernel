@@ -1746,7 +1746,8 @@ static void netfront_get_drvinfo(struct net_device *dev,
 				 struct ethtool_drvinfo *info)
 {
 	strcpy(info->driver, "netfront");
-	strcpy(info->bus_info, dev_name(dev->dev.parent));
+	strlcpy(info->bus_info, dev_name(dev->dev.parent),
+		ARRAY_SIZE(info->bus_info));
 }
 
 static int network_connect(struct net_device *dev)

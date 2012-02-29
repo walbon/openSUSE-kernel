@@ -489,8 +489,7 @@ blktap_device_create(struct blktap *tap, struct blktap_params *params)
 	blktap_device_configure(tap, params);
 	add_disk(gd);
 
-	if (params->name[0])
-		strncpy(tap->name, params->name, sizeof(tap->name)-1);
+	strlcpy(tap->name, params->name, ARRAY_SIZE(tap->name));
 
 	set_bit(BLKTAP_DEVICE, &tap->dev_inuse);
 

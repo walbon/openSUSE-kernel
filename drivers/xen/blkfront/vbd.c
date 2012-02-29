@@ -33,6 +33,7 @@
  */
 
 #include "block.h"
+#include <linux/bitmap.h>
 #include <linux/blkdev.h>
 #include <linux/list.h>
 
@@ -272,8 +273,7 @@ xlbd_reserve_minors(struct xlbd_major_info *mi, unsigned int minor,
 
 	spin_lock(&ms->lock);
 	if (find_next_bit(ms->bitmap, end, minor) >= end) {
-		for (; minor < end; ++minor)
-			__set_bit(minor, ms->bitmap);
+		bitmap_set(ms->bitmap, minor, nr_minors);
 		rc = 0;
 	} else
 		rc = -EBUSY;
@@ -287,12 +287,10 @@ xlbd_release_minors(struct xlbd_major_info *mi, unsigned int minor,
 		    unsigned int nr_minors)
 {
 	struct xlbd_minor_state *ms = mi->minors;
-	unsigned int end = minor + nr_minors;
 
-	BUG_ON(end > ms->nr);
+	BUG_ON(minor + nr_minors > ms->nr);
 	spin_lock(&ms->lock);
-	for (; minor < end; ++minor)
-		__clear_bit(minor, ms->bitmap);
+	bitmap_clear(ms->bitmap, minor, nr_minors);
 	spin_unlock(&ms->lock);
 }
 
