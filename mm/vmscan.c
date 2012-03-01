@@ -2360,7 +2360,7 @@ static void throttle_direct_reclaim(gfp_t gfp_mask, struct zonelist *zonelist,
 {
 	struct zone *zone;
 	int high_zoneidx = gfp_zone(gfp_mask);
-	DEFINE_WAIT(wait);
+	pg_data_t *pgdat;
 
 	/* Kernel threads such as kjournald should never stall */
 	if (current->flags & PF_KTHREAD)
@@ -2368,13 +2368,30 @@ static void throttle_direct_reclaim(gfp_t gfp_mask, struct zonelist *zonelist,
 
 	/* Check if the pfmemalloc reserves are ok */
 	first_zones_zonelist(zonelist, high_zoneidx, NULL, &zone);
-	if (pfmemalloc_watermark_ok(zone->zone_pgdat, high_zoneidx))
+	pgdat = zone->zone_pgdat;
+
+	if (pfmemalloc_watermark_ok(pgdat, high_zoneidx))
 		return;
 
-	/* Throttle */
+	/* Account for the throttling */
 	count_vm_event(PGSCAN_DIRECT_THROTTLE);
+ 
+	/*
+	 * If the caller cannot enter the filesystem, it's possible that it
+	 * is processing a journal transaction. In this case, it is not safe
+	 * to block on pfmemalloc_wait as kswapd could also be blocked waiting
+	 * to start a transaction. Instead, throttle for up to a second before
+	 * the reclaim must continue.
+	 */
+	if (!(gfp_mask & __GFP_FS)) {
+		wait_event_interruptible_timeout(pgdat->pfmemalloc_wait,
+			pfmemalloc_watermark_ok(pgdat, high_zoneidx), HZ);
+		return;
+	}
+
+	/* Throttle until kswapd wakes the process */
 	wait_event_killable(zone->zone_pgdat->pfmemalloc_wait,
-		pfmemalloc_watermark_ok(zone->zone_pgdat, high_zoneidx));
+		pfmemalloc_watermark_ok(pgdat, high_zoneidx));
 }
 
 unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
@@ -2546,6 +2563,20 @@ static bool sleeping_prematurely(pg_data_t *pgdat, int order, long remaining,
 	/* If a direct reclaimer woke kswapd within HZ/10, it's premature */
 	if (remaining)
 		return true;
+
+	/*
+	 * There is a potential race between when kswapd checks it watermarks
+	 * and a process gets throttled. There is also a potential race if
+	 * processes get throttled, kswapd wakes, a large process exits therby
+	 * balancing the zones that causes kswapd to miss a wakeup. If kswapd
+	 * is going to sleep, no process should be sleeping on pfmemalloc_wait
+	 * so wake them now if necessary. If necessary, processes will wake
+	 * kswapd and get throttled again
+	 */
+	if (waitqueue_active(&pgdat->pfmemalloc_wait)) {
+		wake_up(&pgdat->pfmemalloc_wait);
+		return true;
+	}
 
 	/* Check the watermark levels */
 	for (i = 0; i <= classzone_idx; i++) {
@@ -2921,19 +2952,6 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int order, int classzone_idx)
 	 */
 	if (!sleeping_prematurely(pgdat, order, remaining, classzone_idx)) {
 		trace_mm_vmscan_kswapd_sleep(pgdat->node_id);
-
-		/*
-		 * There is a potential race between when kswapd checks it
-		 * watermarks and a process gets throttled. There is also
-		 * a potential race if processes get throttled, kswapd wakes,
-		 * a large process exits therby balancing the zones that causes
-		 * kswapd to miss a wakeup. If kswapd is going to sleep, no
-		 * process should be sleeping on pfmemalloc_wait so wake them
-		 * now if necessary. If necessary, processes will wake kswapd
-		 * and get throttled again
-		 */
-		if (waitqueue_active(&pgdat->pfmemalloc_wait))
-			wake_up(&pgdat->pfmemalloc_wait);
 
 		/*
 		 * vmstat counters are not perfectly accurate and the estimated
