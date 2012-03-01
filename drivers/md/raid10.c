@@ -59,6 +59,7 @@
 
 static void allow_barrier(conf_t *conf);
 static void lower_barrier(conf_t *conf);
+static int enough(conf_t *conf, int ignore);
 
 static void * r10bio_pool_alloc(gfp_t gfp_flags, void *data)
 {
@@ -270,6 +271,19 @@ static void raid10_end_read_request(struct bio *bio, int error)
 		 * wait for the 'master' bio.
 		 */
 		set_bit(R10BIO_Uptodate, &r10_bio->state);
+	} else {
+		/* If all other devices that store this block have
+		 * failed, we want to return the error upwards rather
+		 * than fail the last device.  Here we redefine
+		 * "uptodate" to mean "Don't want to retry"
+		 */
+		unsigned long flags;
+		spin_lock_irqsave(&conf->device_lock, flags);
+		if (!enough(conf, dev))
+			uptodate = 1;
+		spin_unlock_irqrestore(&conf->device_lock, flags);
+	}
+	if (uptodate) {
 		raid_end_bio_io(r10_bio);
 		rdev_dec_pending(conf->mirrors[dev].rdev, conf->mddev);
 	} else {
@@ -1507,6 +1521,7 @@ static void fix_read_error(conf_t *conf, mddev_t *mddev, r10bio_t *r10_bio)
 		       "md/raid10:%s: %s: Failing raid device\n",
 		       mdname(mddev), b);
 		md_error(mddev, conf->mirrors[d].rdev);
+		r10_bio->devs[r10_bio->read_slot].bio = IO_BLOCKED;
 		return;
 	}
 
@@ -1547,6 +1562,7 @@ static void fix_read_error(conf_t *conf, mddev_t *mddev, r10bio_t *r10_bio)
 			/* Cannot read from anywhere -- bye bye array */
 			int dn = r10_bio->devs[r10_bio->read_slot].devnum;
 			md_error(mddev, conf->mirrors[dn].rdev);
+			r10_bio->devs[r10_bio->read_slot].bio = IO_BLOCKED;
 			break;
 		}
 
@@ -1763,8 +1779,10 @@ static void raid10d(mddev_t *mddev)
 				freeze_array(conf);
 				fix_read_error(conf, mddev, r10_bio);
 				unfreeze_array(conf);
-			} else
+			} else {
 				md_error(mddev, rdev);
+				r10_bio->devs[slot].bio = IO_BLOCKED;
+			}
 
 			rdev_dec_pending(rdev, mddev);
 
