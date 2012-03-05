@@ -993,6 +993,9 @@ struct file {
 #ifdef CONFIG_DEBUG_WRITECOUNT
 	unsigned long f_mnt_write_state;
 #endif
+#if defined(CONFIG_EPOLL) && !defined(__GENKSYMS__)
+	struct list_head	f_tfile_llink;
+#endif
 };
 
 struct file_handle {
