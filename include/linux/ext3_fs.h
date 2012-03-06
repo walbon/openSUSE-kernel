@@ -33,7 +33,7 @@
  */
 #define EXT3_DEFAULT_RESERVE_BLOCKS     8
 /*max window size: 1024(direct blocks) + 3([t,d]indirect blocks) */
-#define EXT3_MAX_RESERVE_BLOCKS         1027
+#define EXT3_MAX_RESERVE_BLOCKS         (4*1027)
 #define EXT3_RESERVE_WINDOW_NOT_ALLOCATED 0
 
 /*
