@@ -36,7 +36,7 @@
 #include "i915_drv.h"
 #include "drm_dp_helper.h"
 
-
+#define DP_RECEIVER_CAP_SIZE	0xf
 #define DP_LINK_STATUS_SIZE	6
 #define DP_LINK_CHECK_TIMEOUT	(10 * 1000)
 
@@ -53,7 +53,7 @@ struct intel_dp {
 	int dpms_mode;
 	uint8_t link_bw;
 	uint8_t lane_count;
-	uint8_t dpcd[4];
+	uint8_t dpcd[DP_RECEIVER_CAP_SIZE];
 	struct i2c_adapter adapter;
 	struct i2c_algo_dp_aux_data algo;
 	bool is_pch_edp;
@@ -207,15 +207,8 @@ intel_dp_link_clock(uint8_t link_bw)
  */
 
 static int
-intel_dp_link_required(struct intel_dp *intel_dp, int pixel_clock)
+intel_dp_link_required(int pixel_clock, int bpp)
 {
-	struct drm_crtc *crtc = intel_dp->base.base.crtc;
-	struct intel_crtc *intel_crtc = to_intel_crtc(crtc);
-	int bpp = 24;
-
-	if (intel_crtc)
-		bpp = intel_crtc->bpp;
-
 	return (pixel_clock * bpp + 9) / 10;
 }
 
@@ -232,6 +225,7 @@ intel_dp_mode_valid(struct drm_connector *connector,
 	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int max_link_clock = intel_dp_link_clock(intel_dp_max_link_bw(intel_dp));
 	int max_lanes = intel_dp_max_lane_count(intel_dp);
+	int max_rate, mode_rate;
 
 	if (is_edp(intel_dp) && intel_dp->panel_fixed_mode) {
 		if (mode->hdisplay > intel_dp->panel_fixed_mode->hdisplay)
@@ -241,9 +235,16 @@ intel_dp_mode_valid(struct drm_connector *connector,
 			return MODE_PANEL;
 	}
 
-	if (intel_dp_link_required(intel_dp, mode->clock)
-	    > intel_dp_max_data_rate(max_link_clock, max_lanes))
-		return MODE_CLOCK_HIGH;
+	mode_rate = intel_dp_link_required(mode->clock, 24);
+	max_rate = intel_dp_max_data_rate(max_link_clock, max_lanes);
+
+	if (mode_rate > max_rate) {
+			mode_rate = intel_dp_link_required(mode->clock, 18);
+			if (mode_rate > max_rate)
+				return MODE_CLOCK_HIGH;
+			else
+				mode->private_flags |= INTEL_MODE_DP_FORCE_6BPC;
+	}
 
 	if (mode->clock < 10000)
 		return MODE_CLOCK_LOW;
@@ -671,6 +672,7 @@ intel_dp_mode_fixup(struct drm_encoder *encoder, struct drm_display_mode *mode,
 	int lane_count, clock;
 	int max_lane_count = intel_dp_max_lane_count(intel_dp);
 	int max_clock = intel_dp_max_link_bw(intel_dp) == DP_LINK_BW_2_7 ? 1 : 0;
+	int bpp = mode->private_flags & INTEL_MODE_DP_FORCE_6BPC ? 18 : 24;
 	static int bws[2] = { DP_LINK_BW_1_62, DP_LINK_BW_2_7 };
 
 	if (is_edp(intel_dp) && intel_dp->panel_fixed_mode) {
@@ -688,7 +690,7 @@ intel_dp_mode_fixup(struct drm_encoder *encoder, struct drm_display_mode *mode,
 		for (clock = 0; clock <= max_clock; clock++) {
 			int link_avail = intel_dp_max_data_rate(intel_dp_link_clock(bws[clock]), lane_count);
 
-			if (intel_dp_link_required(intel_dp, mode->clock)
+			if (intel_dp_link_required(mode->clock, bpp)
 					<= link_avail) {
 				intel_dp->link_bw = bws[clock];
 				intel_dp->lane_count = lane_count;
