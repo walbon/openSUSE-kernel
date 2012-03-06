@@ -2302,7 +2302,7 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 				kfree(extent_op);
 
 				if (ret) {
-					printk("run_delayed_extent_op returned %d\n", ret);
+					printk(KERN_DEBUG "run_delayed_extent_op returned %d\n", ret);
 					return ret;
 				}
 
@@ -2332,7 +2332,7 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 		count++;
 
 		if (ret) {
-			printk("run_one_delayed_ref returned %d\n", ret);
+			printk(KERN_DEBUG "run_one_delayed_ref returned %d\n", ret);
 			return ret;
 		}
 
@@ -3720,7 +3720,7 @@ again:
 					       !space_info->flush);
 		/* Must have been interrupted, return */
 		if (ret) {
-			printk("%s returning -EINTR\n", __func__);
+			printk(KERN_DEBUG "%s returning -EINTR\n", __func__);
 			return -EINTR;
 		}
 
@@ -6248,11 +6248,10 @@ use_block_rsv(struct btrfs_trans_handle *trans,
 		return block_rsv;
 	if (ret) {
 		static DEFINE_RATELIMIT_STATE(_rs,
-				DEFAULT_RATELIMIT_INTERVAL,
-				/*DEFAULT_RATELIMIT_BURST*/ 2);
+				DEFAULT_RATELIMIT_INTERVAL * 10,
+				/*DEFAULT_RATELIMIT_BURST*/ 1);
 		if (__ratelimit(&_rs)) {
-			printk(KERN_DEBUG "btrfs: block rsv returned %d\n", ret);
-			WARN_ON(1);
+			WARN(1, KERN_DEBUG "btrfs: block rsv returned %d\n", ret);
 		}
 		ret = reserve_metadata_bytes(root, block_rsv, blocksize, 0);
 		if (!ret) {
