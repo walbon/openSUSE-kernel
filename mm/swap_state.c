@@ -392,7 +392,7 @@ struct page *swapin_readahead(swp_entry_t entry, gfp_t gfp_mask,
 		page = read_swap_cache_async(swp_entry(swp_type(entry), offset),
 						gfp_mask, vma, addr);
 		if (!page)
-			break;
+			continue;
 		page_cache_release(page);
 	}
 	lru_add_drain();	/* Push any new pages onto the LRU now */
