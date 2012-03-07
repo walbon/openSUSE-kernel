@@ -352,7 +352,7 @@ static void raid1_end_write_request(struct bio *bio, int error)
 	r1_bio->bios[mirror] = NULL;
 	to_put = bio;
 	if (!uptodate) {
-		md_error(r1_bio->mddev, conf->mirrors[mirror].rdev);
+		md_error(r1_bio->mddev, conf->mirrors[mirror].rdev, 0);
 		/* an I/O failed, we can't clear the bitmap */
 
 		if (test_bit(FailFast, &rdev->flags) &&
@@ -989,7 +989,7 @@ static void status(struct seq_file *seq, mddev_t *mddev)
 }
 
 
-static void error(mddev_t *mddev, mdk_rdev_t *rdev)
+static void error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
 {
 	char b[BDEVNAME_SIZE];
 	conf_t *conf = mddev->private;
@@ -1003,6 +1003,7 @@ static void error(mddev_t *mddev, mdk_rdev_t *rdev)
 	 */
 	spin_lock_irqsave(&conf->device_lock, flags);
 	if (test_bit(In_sync, &rdev->flags)
+	    && !force
 	    && (conf->raid_disks - mddev->degraded) == 1) {
 		/*
 		 * Don't fail the drive, act as though we were just a
@@ -1229,7 +1230,7 @@ static void end_sync_write(struct bio *bio, int error)
 			s += sync_blocks;
 			sectors_to_go -= sync_blocks;
 		} while (sectors_to_go > 0);
-		md_error(mddev, conf->mirrors[mirror].rdev);
+		md_error(mddev, conf->mirrors[mirror].rdev, 0);
 	}
 
 	update_head_pos(mirror, r1_bio);
@@ -1263,7 +1264,7 @@ static int fix_sync_read_error(r1bio_t *r1_bio)
 	if (test_bit(FailFast, &rdev->flags)) {
 		/* Don't try recovering from here - just fail it
 		 * ... unless it is the last working device of course */
-		md_error(mddev, rdev);
+		md_error(mddev, rdev, 0);
 		if (test_bit(Faulty, &rdev->flags))
 			/* Don't try to read from here, but make sure
 			 * put_buf does it's thing
@@ -1303,7 +1304,7 @@ static int fix_sync_read_error(r1bio_t *r1_bio)
 		if (!success) {
 			char b[BDEVNAME_SIZE];
 			/* Cannot read from anywhere, array is toast */
-			md_error(mddev, conf->mirrors[r1_bio->read_disk].rdev);
+			md_error(mddev, conf->mirrors[r1_bio->read_disk].rdev, 0);
 			printk(KERN_ALERT "md/raid1:%s: %s: unrecoverable I/O read error"
 			       " for block %llu\n",
 			       mdname(mddev),
@@ -1330,7 +1331,7 @@ static int fix_sync_read_error(r1bio_t *r1_bio)
 					 WRITE, false) == 0) {
 				r1_bio->bios[d]->bi_end_io = NULL;
 				rdev_dec_pending(rdev, mddev);
-				md_error(mddev, rdev);
+				md_error(mddev, rdev, 0);
 			} else
 				atomic_add(s, &rdev->corrected_errors);
 		}
@@ -1347,7 +1348,7 @@ static int fix_sync_read_error(r1bio_t *r1_bio)
 					 s<<9,
 					 bio->bi_io_vec[idx].bv_page,
 					 READ, false) == 0)
-				md_error(mddev, rdev);
+				md_error(mddev, rdev, 0);
 		}
 		sectors -= s;
 		sect += s;
@@ -1530,7 +1531,7 @@ static void fix_read_error(conf_t *conf, int read_disk,
 
 		if (!success) {
 			/* Cannot read from anywhere -- bye bye array */
-			md_error(mddev, conf->mirrors[read_disk].rdev);
+			md_error(mddev, conf->mirrors[read_disk].rdev, 0);
 			break;
 		}
 		/* write it back and re-read */
@@ -1546,7 +1547,7 @@ static void fix_read_error(conf_t *conf, int read_disk,
 						 conf->tmppage, WRITE, false)
 				    == 0)
 					/* Well, this device is dead */
-					md_error(mddev, rdev);
+					md_error(mddev, rdev, 0);
 			}
 		}
 		d = start;
@@ -1562,7 +1563,7 @@ static void fix_read_error(conf_t *conf, int read_disk,
 						 conf->tmppage, READ, false)
 				    == 0)
 					/* Well, this device is dead */
-					md_error(mddev, rdev);
+					md_error(mddev, rdev, 0);
 				else {
 					atomic_add(s, &rdev->corrected_errors);
 					printk(KERN_INFO
@@ -1696,7 +1697,7 @@ static void raid1d(mddev_t *mddev)
 				unfreeze_array(conf);
 			} else
 				md_error(mddev,
-					 conf->mirrors[r1_bio->read_disk].rdev);
+					 conf->mirrors[r1_bio->read_disk].rdev, 0);
 
 			bio = r1_bio->bios[r1_bio->read_disk];
 			r1_bio->bios[r1_bio->read_disk] =

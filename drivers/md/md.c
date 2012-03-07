@@ -779,7 +779,7 @@ static void super_written(struct bio *bio, int error)
 		printk("md: super_written gets error=%d, uptodate=%d\n",
 		       error, test_bit(BIO_UPTODATE, &bio->bi_flags));
 		WARN_ON(test_bit(BIO_UPTODATE, &bio->bi_flags));
-		md_error(mddev, rdev);
+		md_error(mddev, rdev, 1);
 		if (!test_bit(Faulty, &rdev->flags)
 		    && (bio->bi_rw & REQ_FAILFAST_DEV)) {
 			set_bit(MD_NEED_REWRITE, &mddev->flags);
@@ -2439,7 +2439,7 @@ state_store(mdk_rdev_t *rdev, const char *buf, size_t len)
 	 */
 	int err = -EINVAL;
 	if (cmd_match(buf, "faulty") && rdev->mddev->pers) {
-		md_error(rdev->mddev, rdev);
+		md_error(rdev->mddev, rdev, 1);
 		err = 0;
 	} else if (cmd_match(buf, "remove")) {
 		if (rdev->raid_disk >= 0)
@@ -5835,7 +5835,7 @@ static int set_disk_faulty(mddev_t *mddev, dev_t dev)
 	if (!rdev)
 		return -ENODEV;
 
-	md_error(mddev, rdev);
+	md_error(mddev, rdev, 1);
 	return 0;
 }
 
@@ -6281,7 +6281,7 @@ void md_unregister_thread(mdk_thread_t **threadp)
 	kfree(thread);
 }
 
-void md_error(mddev_t *mddev, mdk_rdev_t *rdev)
+void md_error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
 {
 	if (!mddev) {
 		MD_BUG();
@@ -6304,7 +6304,7 @@ void md_error(mddev_t *mddev, mdk_rdev_t *rdev)
 		return;
 	if (!mddev->pers->error_handler)
 		return;
-	mddev->pers->error_handler(mddev,rdev);
+	mddev->pers->error_handler(mddev, rdev, force);
 	if (mddev->degraded)
 		set_bit(MD_RECOVERY_RECOVER, &mddev->recovery);
 	sysfs_notify_dirent_safe(rdev->sysfs_state);

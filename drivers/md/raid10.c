@@ -320,7 +320,7 @@ static void raid10_end_write_request(struct bio *bio, int error)
 	 * this branch is our 'one mirror IO has finished' event handler:
 	 */
 	if (!uptodate) {
-		md_error(r10_bio->mddev, conf->mirrors[dev].rdev);
+		md_error(r10_bio->mddev, conf->mirrors[dev].rdev, 0);
 		/* an I/O failed, we can't clear the bitmap */
 		set_bit(R10BIO_Degraded, &r10_bio->state);
 
@@ -1023,7 +1023,7 @@ static int enough(conf_t *conf, int ignore)
 	return 1;
 }
 
-static void error(mddev_t *mddev, mdk_rdev_t *rdev)
+static void error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
 {
 	char b[BDEVNAME_SIZE];
 	conf_t *conf = mddev->private;
@@ -1037,6 +1037,7 @@ static void error(mddev_t *mddev, mdk_rdev_t *rdev)
 	 */
 	spin_lock_irqsave(&conf->device_lock, flags);
 	if (test_bit(In_sync, &rdev->flags)
+	    && !force
 	    && !enough(conf, rdev->raid_disk)) {
 		/*
 		 * Don't fail the drive, just return an IO error.
@@ -1138,7 +1139,7 @@ static int raid10_add_disk(mddev_t *mddev, mdk_rdev_t *rdev)
 		 * very different from resync
 		 */
 		return -EBUSY;
-	if (!enough(conf, -1))
+	if (rdev->saved_raid_disk < 0 && !enough(conf, -1))
 		return -EINVAL;
 
 	if (rdev->raid_disk >= 0)
@@ -1241,7 +1242,7 @@ static void end_sync_read(struct bio *bio, int error)
 			   &conf->mirrors[d].rdev->corrected_errors);
 		if (!test_bit(MD_RECOVERY_SYNC, &conf->mddev->recovery))
 			md_error(r10_bio->mddev,
-				 conf->mirrors[d].rdev);
+				 conf->mirrors[d].rdev, 0);
 	}
 
 	/* for reconstruct, we always reschedule after a read.
@@ -1271,7 +1272,7 @@ static void end_sync_write(struct bio *bio, int error)
 	d = r10_bio->devs[i].devnum;
 
 	if (!uptodate)
-		md_error(mddev, conf->mirrors[d].rdev);
+		md_error(mddev, conf->mirrors[d].rdev, 0);
 
 	update_head_pos(i, r10_bio);
 
@@ -1358,7 +1359,7 @@ static void sync_request_write(mddev_t *mddev, r10bio_t *r10_bio)
 				continue;
 		} else if (test_bit(FailFast, &rdev->flags)) {
 			/* Just give up on this device */
-			md_error(rdev->mddev, rdev);
+			md_error(rdev->mddev, rdev, 0);
 			continue;
 		}
 		/* Ok, we need to write this bio
@@ -1520,7 +1521,7 @@ static void fix_read_error(conf_t *conf, mddev_t *mddev, r10bio_t *r10_bio)
 		printk(KERN_NOTICE
 		       "md/raid10:%s: %s: Failing raid device\n",
 		       mdname(mddev), b);
-		md_error(mddev, conf->mirrors[d].rdev);
+		md_error(mddev, conf->mirrors[d].rdev, 0);
 		r10_bio->devs[r10_bio->read_slot].bio = IO_BLOCKED;
 		return;
 	}
@@ -1561,7 +1562,7 @@ static void fix_read_error(conf_t *conf, mddev_t *mddev, r10bio_t *r10_bio)
 		if (!success) {
 			/* Cannot read from anywhere -- bye bye array */
 			int dn = r10_bio->devs[r10_bio->read_slot].devnum;
-			md_error(mddev, conf->mirrors[dn].rdev);
+			md_error(mddev, conf->mirrors[dn].rdev, 0);
 			r10_bio->devs[r10_bio->read_slot].bio = IO_BLOCKED;
 			break;
 		}
@@ -1600,7 +1601,7 @@ static void fix_read_error(conf_t *conf, mddev_t *mddev, r10bio_t *r10_bio)
 					       "drive\n",
 					       mdname(mddev),
 					       bdevname(rdev->bdev, b));
-					md_error(mddev, rdev);
+					md_error(mddev, rdev, 0);
 				}
 				rdev_dec_pending(rdev, mddev);
 				rcu_read_lock();
@@ -1637,7 +1638,7 @@ static void fix_read_error(conf_t *conf, mddev_t *mddev, r10bio_t *r10_bio)
 					       mdname(mddev),
 					       bdevname(rdev->bdev, b));
 
-					md_error(mddev, rdev);
+					md_error(mddev, rdev, 0);
 				} else {
 					printk(KERN_INFO
 					       "md/raid10:%s: read error corrected"
@@ -1780,7 +1781,7 @@ static void raid10d(mddev_t *mddev)
 				fix_read_error(conf, mddev, r10_bio);
 				unfreeze_array(conf);
 			} else {
-				md_error(mddev, rdev);
+				md_error(mddev, rdev, 0);
 				r10_bio->devs[slot].bio = IO_BLOCKED;
 			}
 
