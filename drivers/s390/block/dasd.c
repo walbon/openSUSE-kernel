@@ -2252,12 +2252,14 @@ enum blk_eh_timer_return dasd_times_out(struct request *req)
 {
 	struct dasd_ccw_req *cqr = req->completion_data;
 	struct dasd_block *block = req->q->queuedata;
+	struct dasd_device *device;
 	int rc = 0;
 
 	if (!cqr)
 		return BLK_EH_NOT_HANDLED;
 	if (!(block->base->features & DASD_FEATURE_BLKTIMEOUT))
 		return BLK_EH_RESET_TIMER;
+	device = cqr->startdev ? cqr->startdev : block->base;
 	DBF_DEV_EVENT(DBF_WARNING, device,
 		      " dasd_times_out cqr %p status %x", cqr, cqr->status);
 	if (cqr->status >= DASD_CQR_QUEUED) {
