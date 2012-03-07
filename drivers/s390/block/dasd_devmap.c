@@ -718,11 +718,13 @@ static ssize_t dasd_ff_show(struct device *dev, struct device_attribute *attr,
 	int ff_flag;
 
 	devmap = dasd_find_busid(dev_name(dev));
-	if (!IS_ERR(devmap))
+	if (!IS_ERR(devmap)) {
 		ff_flag = (devmap->features & DASD_FEATURE_FAILFAST) != 0;
-	else
+		if (ff_flag && devmap->features & DASD_FEATURE_BLKTIMEOUT)
+			ff_flag = 2;
+	} else
 		ff_flag = (DASD_FEATURE_DEFAULT & DASD_FEATURE_FAILFAST) != 0;
-	return snprintf(buf, PAGE_SIZE, ff_flag ? "1\n" : "0\n");
+	return snprintf(buf, PAGE_SIZE, "%d\n", ff_flag);
 }
 
 static ssize_t dasd_ff_store(struct device *dev, struct device_attribute *attr,
@@ -737,14 +739,18 @@ static ssize_t dasd_ff_store(struct device *dev, struct device_attribute *attr,
 		return PTR_ERR(devmap);
 
 	val = simple_strtoul(buf, &endp, 0);
-	if (((endp + 1) < (buf + count)) || (val > 1))
+	if (((endp + 1) < (buf + count)) || (val > 2))
 		return -EINVAL;
 
 	spin_lock(&dasd_devmap_lock);
-	if (val)
+	if (val) {
+		if (val > 1)
+			devmap->features |= DASD_FEATURE_BLKTIMEOUT;
 		devmap->features |= DASD_FEATURE_FAILFAST;
-	else
+	} else {
 		devmap->features &= ~DASD_FEATURE_FAILFAST;
+		devmap->features &= ~DASD_FEATURE_BLKTIMEOUT;
+	}
 	if (devmap->device)
 		devmap->device->features = devmap->features;
 	spin_unlock(&dasd_devmap_lock);
@@ -1232,7 +1238,7 @@ dasd_failfast_expires_store(struct device *dev, struct device_attribute *attr,
 	       const char *buf, size_t count)
 {
 	struct dasd_device *device;
-	unsigned long val;
+	unsigned long val, timeout;
 
 	device = dasd_device_from_cdev(to_ccwdev(dev));
 	if (IS_ERR(device))
@@ -1244,8 +1250,11 @@ dasd_failfast_expires_store(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 	}
 
-	if (val)
+	if (val) {
 		device->failfast_expires = val;
+		timeout = val * device->failfast_retries;
+		blk_queue_rq_timeout(device->block->request_queue, timeout * HZ);
+	}
 
 	dasd_put_device(device);
 	return count;
@@ -1314,7 +1323,7 @@ dasd_failfast_retries_store(struct device *dev, struct device_attribute *attr,
 	       const char *buf, size_t count)
 {
 	struct dasd_device *device;
-	unsigned long val;
+	unsigned long val, timeout;
 
 	device = dasd_device_from_cdev(to_ccwdev(dev));
 	if (IS_ERR(device))
@@ -1326,8 +1335,11 @@ dasd_failfast_retries_store(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 	}
 
-	if (val)
+	if (val) {
 		device->failfast_retries = val;
+		timeout = val * device->failfast_expires;
+		blk_queue_rq_timeout(device->block->request_queue, timeout * HZ);
+	}
 
 	dasd_put_device(device);
 	return count;

@@ -1981,6 +1981,7 @@ static void __dasd_process_request_queue(struct dasd_block *block)
 		 */
 		cqr->callback_data = (void *) req;
 		cqr->status = DASD_CQR_FILLED;
+		req->completion_data = cqr;
 		blk_start_request(req);
 		list_add_tail(&cqr->blocklist, &block->ccw_queue);
 		dasd_profile_start(block, cqr, req);
@@ -2247,6 +2248,36 @@ static void do_dasd_request(struct request_queue *queue)
 	spin_unlock(&block->queue_lock);
 }
 
+enum blk_eh_timer_return dasd_times_out(struct request *req)
+{
+	struct dasd_ccw_req *cqr = req->completion_data;
+	struct dasd_block *block = req->q->queuedata;
+	int rc = 0;
+
+	if (!cqr)
+		return BLK_EH_NOT_HANDLED;
+	if (!(block->base->features & DASD_FEATURE_BLKTIMEOUT))
+		return BLK_EH_RESET_TIMER;
+	DBF_DEV_EVENT(DBF_WARNING, device,
+		      " dasd_times_out cqr %p status %x", cqr, cqr->status);
+	if (cqr->status >= DASD_CQR_QUEUED) {
+		rc = dasd_cancel_req(cqr);
+		if (rc)
+			return BLK_EH_RESET_TIMER;
+	}
+	/* Set final status */
+	cqr->endclk = get_clock();
+	cqr->status = DASD_CQR_FAILED;
+	cqr->intrc = -ETIME;
+	/* Un-thread from lists */
+	list_del_init(&cqr->blocklist);
+	list_del_init(&cqr->devlist);
+	/* cleanup cqr */
+	__dasd_cleanup_cqr(cqr);
+
+	return BLK_EH_NOT_HANDLED;
+}
+
 /*
  * Allocate and initialize request queue and default I/O scheduler.
  */
@@ -2277,6 +2308,7 @@ static int dasd_alloc_queue(struct dasd_block *block)
 static void dasd_setup_queue(struct dasd_block *block)
 {
 	int max;
+	unsigned int timeout;
 
 	if (block->base->features & DASD_FEATURE_USERAW) {
 		/*
@@ -2299,6 +2331,14 @@ static void dasd_setup_queue(struct dasd_block *block)
 	 */
 	blk_queue_max_segment_size(block->request_queue, PAGE_SIZE);
 	blk_queue_segment_boundary(block->request_queue, PAGE_SIZE - 1);
+	blk_queue_rq_timed_out(block->request_queue, dasd_times_out);
+	/*
+	 * We always set the failfast timeout;
+	 * dasd_times_out() will ignore requests when failfast
+	 * is not enabled.
+	 */
+	timeout = block->base->failfast_expires * block->base->failfast_retries;
+	blk_queue_rq_timeout(block->request_queue, timeout * HZ);
 }
 
 /*
