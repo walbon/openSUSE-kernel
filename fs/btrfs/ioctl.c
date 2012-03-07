@@ -2603,6 +2603,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 			if (ret) {
 				btrfs_abort_transaction(trans, root, ret);
 				btrfs_end_transaction(trans, root);
+				goto out;
 			}
 			ret = btrfs_end_transaction(trans, root);
 		}
