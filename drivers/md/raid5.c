@@ -1634,7 +1634,7 @@ static void raid5_end_read_request(struct bio * bi, int error)
 		else {
 			clear_bit(R5_ReadError, &sh->dev[i].flags);
 			clear_bit(R5_ReWrite, &sh->dev[i].flags);
-			md_error(conf->mddev, rdev, 0);
+			md_error(conf->mddev, rdev);
 		}
 	}
 	rdev_dec_pending(conf->disks[i].rdev, conf->mddev);
@@ -1663,7 +1663,7 @@ static void raid5_end_write_request(struct bio *bi, int error)
 	}
 
 	if (!uptodate)
-		md_error(conf->mddev, conf->disks[i].rdev, 0);
+		md_error(conf->mddev, conf->disks[i].rdev);
 
 	rdev_dec_pending(conf->disks[i].rdev, conf->mddev);
 	
@@ -1694,8 +1694,14 @@ static void raid5_build_block(struct stripe_head *sh, int i, int previous)
 	dev->sector = compute_blocknr(sh, i, previous);
 }
 
+#ifdef __GENKSYMS__
+static void error(mddev_t *mddev, mdk_rdev_t *rdev)
+{
+	int force = 0;
+#else
 static void error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
 {
+#endif
 	char b[BDEVNAME_SIZE];
 	raid5_conf_t *conf = mddev->private;
 	pr_debug("raid456: error called\n");
@@ -2239,7 +2245,7 @@ handle_failed_stripe(raid5_conf_t *conf, struct stripe_head *sh,
 			rdev = rcu_dereference(conf->disks[i].rdev);
 			if (rdev && test_bit(In_sync, &rdev->flags))
 				/* multiple read failures in one stripe */
-				md_error(conf->mddev, rdev, 0);
+				md_error(conf->mddev, rdev);
 			rcu_read_unlock();
 		}
 		spin_lock_irq(&conf->device_lock);

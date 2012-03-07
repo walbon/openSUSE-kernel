@@ -96,7 +96,7 @@ static void multipath_end_request(struct bio *bio, int error)
 		 * oops, IO error:
 		 */
 		char b[BDEVNAME_SIZE];
-		md_error (mp_bh->mddev, rdev, 0);
+		md_error (mp_bh->mddev, rdev);
 		printk(KERN_ERR "multipath: %s: rescheduling sector %llu\n", 
 		       bdevname(rdev->bdev,b), 
 		       (unsigned long long)bio->bi_sector);
@@ -183,8 +183,14 @@ static int multipath_congested(void *data, int bits)
 /*
  * Careful, this can execute in IRQ contexts as well!
  */
+#ifdef __GENKSYMS__
+static void multipath_error (mddev_t *mddev, mdk_rdev_t *rdev)
+{
+	int force = 0;
+#else
 static void multipath_error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
 {
+#endif
 	multipath_conf_t *conf = mddev->private;
 	char b[BDEVNAME_SIZE];
 

@@ -371,7 +371,11 @@ struct mdk_personality
 	/* error_handler must set ->faulty and clear ->in_sync
 	 * if appropriate, and should abort recovery if needed 
 	 */
+#ifdef __GENKSYMS__
+	void (*error_handler)(mddev_t *mddev, mdk_rdev_t *rdev);
+#else
 	void (*error_handler)(mddev_t *mddev, mdk_rdev_t *rdev, int force);
+#endif
 	int (*hot_add_disk) (mddev_t *mddev, mdk_rdev_t *rdev);
 	int (*hot_remove_disk) (mddev_t *mddev, int number);
 	int (*spare_active) (mddev_t *mddev);
@@ -492,7 +496,7 @@ extern void md_check_recovery(mddev_t *mddev);
 extern void md_write_start(mddev_t *mddev, struct bio *bi);
 extern void md_write_end(mddev_t *mddev);
 extern void md_done_sync(mddev_t *mddev, int blocks, int ok);
-extern void md_error(mddev_t *mddev, mdk_rdev_t *rdev, int force);
+extern void md_error(mddev_t *mddev, mdk_rdev_t *rdev);
 
 extern int mddev_congested(mddev_t *mddev, int bits);
 extern void md_flush_request(mddev_t *mddev, struct bio *bio);

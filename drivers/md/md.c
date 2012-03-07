@@ -769,6 +769,7 @@ static void free_disk_sb(mdk_rdev_t * rdev)
 	}
 }
 
+static void md_error_force(mddev_t *mddev, mdk_rdev_t *rdev);
 
 static void super_written(struct bio *bio, int error)
 {
@@ -779,7 +780,7 @@ static void super_written(struct bio *bio, int error)
 		printk("md: super_written gets error=%d, uptodate=%d\n",
 		       error, test_bit(BIO_UPTODATE, &bio->bi_flags));
 		WARN_ON(test_bit(BIO_UPTODATE, &bio->bi_flags));
-		md_error(mddev, rdev, 1);
+		md_error_force(mddev, rdev);
 		if (!test_bit(Faulty, &rdev->flags)
 		    && (bio->bi_rw & REQ_FAILFAST_DEV)) {
 			set_bit(MD_NEED_REWRITE, &mddev->flags);
@@ -2439,7 +2440,7 @@ state_store(mdk_rdev_t *rdev, const char *buf, size_t len)
 	 */
 	int err = -EINVAL;
 	if (cmd_match(buf, "faulty") && rdev->mddev->pers) {
-		md_error(rdev->mddev, rdev, 1);
+		md_error_force(rdev->mddev, rdev);
 		err = 0;
 	} else if (cmd_match(buf, "remove")) {
 		if (rdev->raid_disk >= 0)
@@ -5835,7 +5836,7 @@ static int set_disk_faulty(mddev_t *mddev, dev_t dev)
 	if (!rdev)
 		return -ENODEV;
 
-	md_error(mddev, rdev, 1);
+	md_error_force(mddev, rdev);
 	return 0;
 }
 
@@ -6281,7 +6282,7 @@ void md_unregister_thread(mdk_thread_t **threadp)
 	kfree(thread);
 }
 
-void md_error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
+static void __md_error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
 {
 	if (!mddev) {
 		MD_BUG();
@@ -6314,6 +6315,14 @@ void md_error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
 	if (mddev->event_work.func)
 		queue_work(md_misc_wq, &mddev->event_work);
 	md_new_event_inintr(mddev);
+}
+static void md_error_force(mddev_t *mddev, mdk_rdev_t *rdev)
+{
+	__md_error(mddev, rdev, 1);
+}
+void md_error(mddev_t *mddev, mdk_rdev_t *rdev)
+{
+	__md_error(mddev, rdev, 0);
 }
 
 /* seq_file implementation /proc/mdstat */
