@@ -3910,12 +3910,22 @@ int btrfs_rmap_block(struct btrfs_mapping_tree *map_tree,
 	u64 length;
 	u64 stripe_nr;
 	int i, j, nr = 0;
+	int ret = 0;
 
 	read_lock(&em_tree->lock);
 	em = lookup_extent_mapping(em_tree, chunk_start, 1);
 	read_unlock(&em_tree->lock);
 
-	BUG_ON(!em || em->start != chunk_start);
+	if (!em)
+		return -ENOENT;
+
+	if (em->start != chunk_start) {
+		printk(KERN_DEBUG "btrfs: rmap em->start %llu != %llu\n",
+				em->start, chunk_start);
+		ret = -EINVAL;
+		goto out_error;
+	}
+
 	map = (struct map_lookup *)em->bdev;
 
 	length = em->len;
@@ -3925,7 +3935,10 @@ int btrfs_rmap_block(struct btrfs_mapping_tree *map_tree,
 		do_div(length, map->num_stripes);
 
 	buf = kzalloc(sizeof(u64) * map->num_stripes, GFP_NOFS);
-	BUG_ON(!buf); /* -ENOMEM */
+	if (!buf) {
+		ret = -ENOMEM;
+		goto out_error;
+	}
 
 	for (i = 0; i < map->num_stripes; i++) {
 		if (devid && map->stripes[i].dev->devid != devid)
@@ -3959,8 +3972,9 @@ int btrfs_rmap_block(struct btrfs_mapping_tree *map_tree,
 	*naddrs = nr;
 	*stripe_len = map->stripe_len;
 
+out_error:
 	free_extent_map(em);
-	return 0;
+	return ret;
 }
 
 static void btrfs_end_bio(struct bio *bio, int err)
