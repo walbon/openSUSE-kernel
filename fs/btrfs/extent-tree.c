@@ -250,10 +250,17 @@ static int exclude_super_stripes(struct btrfs_root *root,
 
 	for (i = 0; i < BTRFS_SUPER_MIRROR_MAX; i++) {
 		bytenr = btrfs_sb_offset(i);
+		if (bytenr <= cache->key.objectid + cache->key.offset)
+			break;
+		logical = NULL;
 		ret = btrfs_rmap_block(&root->fs_info->mapping_tree,
 				       cache->key.objectid, bytenr,
 				       0, &logical, &nr, &stripe_len);
-		BUG_ON(ret); /* -ENOMEM */
+		if (ret < 0) {
+			kfree(logical);
+			free_excluded_extents(root, cache);
+			goto out;
+		}
 
 		while (nr--) {
 			cache->bytes_super += stripe_len;
@@ -264,7 +271,9 @@ static int exclude_super_stripes(struct btrfs_root *root,
 
 		kfree(logical);
 	}
-	return 0;
+
+out:
+	return ret;
 }
 
 static struct btrfs_caching_control *
@@ -7666,7 +7675,11 @@ int btrfs_read_block_groups(struct btrfs_root *root)
 		 * info has super bytes accounted for, otherwise we'll think
 		 * we have more space than we actually do.
 		 */
-		exclude_super_stripes(root, cache);
+		ret = exclude_super_stripes(root, cache);
+		if (ret < 0) {
+			kfree(cache);
+			goto error;
+		}
 
 		/*
 		 * check for two cases, either we are full, and therefore
