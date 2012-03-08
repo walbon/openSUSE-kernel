@@ -214,8 +214,8 @@ typedef struct xfs_mount {
 	struct shrinker		m_inode_shrink;	/* inode reclaim shrinker */
 	int64_t			m_low_space[XFS_LOWSP_MAX];
 						/* low free space thresholds */
-	struct vfsmount         *m_vfsmount;
-	spinlock_t		m_vfsmount_lock;
+	struct vfsmount         *m_vfsmount;	/* Unused */
+	spinlock_t		m_vfsmount_lock;	/* Unused */
 	const char		*m_mtpt;
 } xfs_mount_t;
 

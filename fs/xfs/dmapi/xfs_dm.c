@@ -892,26 +892,13 @@ xfs_dm_rdwr(
 		return ENOMEM;
 	}
 
-	/*
-	 * Ugh. This is not ideal, but we can't even keep a private vfsmount
-	 * for this. We'd run into problems with freeing the superblock as
-	 * well as AppArmor refusing access due to the pathnames not matching.
-	 */
-	if (!mp->m_vfsmount) {
-		error = kern_path(mp->m_mtpt, 0, &path);
-		if (error)
-			return -error;
+	error = kern_path(mp->m_mtpt, 0, &path);
+	if (error)
+		return -error;
 
-		spin_lock(&mp->m_vfsmount_lock);
-		if (!mp->m_vfsmount)
-			mp->m_vfsmount = path.mnt;
-		spin_unlock(&mp->m_vfsmount_lock);
-		path_put(&path);
-	}
-
-	file = dentry_open(dentry, mntget(ip->i_mount->m_vfsmount), oflags,
-			   cred);
+	file = dentry_open(dentry, mntget(path.mnt), oflags, cred);
 	if (IS_ERR(file)) {
+		path_put(&path);
 		return -PTR_ERR(file);
 	}
 	file->f_mode |= FMODE_NOCMTIME;
@@ -931,6 +918,7 @@ xfs_dm_rdwr(
 	}
 
 	fput(file);
+	path_put(&path);
 	return error;
 }
 
