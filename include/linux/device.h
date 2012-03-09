@@ -821,14 +821,22 @@ extern int dev_notice_hash(const struct device *dev, const char *fmt, ...)
 extern int _dev_info_hash(const struct device *dev, const char *fmt, ...)
 	__attribute__ ((format (printf, 2, 3)));
 
-#define dev_printk dev_printk_hash
-#define dev_emerg dev_emerg_hash
-#define dev_alert dev_alert_hash
-#define dev_crit dev_crit_hash
-#define dev_err dev_err_hash
-#define dev_warn dev_warn_hash
-#define dev_notice dev_notice_hash
-#define _dev_info _dev_info_hash
+#define dev_printk(level, dev, format, arg...)				\
+	dev_printk_hash(level, dev, "%s: " format, dev_name(dev), ## arg)
+#define dev_emerg(dev, format, arg...) \
+	dev_emerg_hash(dev, "%s: " format, dev_name(dev), ## arg)
+#define dev_alert(dev, format, arg...) \
+	dev_alert_hash(dev, "%s: " format, dev_name(dev), ## arg)
+#define dev_crit(dev, format, arg...) \
+	dev_crit_hash(dev, "%s: " format, dev_name(dev), ## arg)
+#define dev_err(dev, format, arg...) \
+	dev_err_hash(dev, "%s: " format, dev_name(dev), ## arg)
+#define dev_warn(dev, format, arg...) \
+	dev_warn_hash(dev, "%s: " format, dev_name(dev), ## arg)
+#define dev_notice(dev, format, arg...) \
+	dev_notice_hash(dev, "%s: " format, dev_name(dev), ## arg)
+#define _dev_info(dev, format, arg...) \
+	_dev_info_hash(dev, "%s: " format, dev_name(dev), ## arg)
 
 #else /* !defined(CONFIG_KMSG_IDS) */
 

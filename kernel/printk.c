@@ -46,12 +46,6 @@
 #include <linux/cpu.h>
 #include <linux/notifier.h>
 #include <linux/rculist.h>
-#include <linux/jhash.h>
-#include <linux/device.h>
-
-#if defined CONFIG_PRINTK && defined CONFIG_KMSG_IDS
-#include <linux/unaligned/le_byteshift.h>
-#endif
 
 #include <asm/uaccess.h>
 
@@ -1758,62 +1752,4 @@ void kmsg_dump(enum kmsg_dump_reason reason)
 		dumper->dump(dumper, reason, s1, l1, s2, l2);
 	rcu_read_unlock();
 }
-#endif
-
-#if defined CONFIG_PRINTK && defined CONFIG_KMSG_IDS
-
-static inline u32 __printk_jhash(const void *key, u32 length)
-{
-	u32 a, b, c, len;
-	const u8 *k;
-	u8 zpad[12];
-
-	a = b = 0x9e3779b9;
-	c = 0;
-	for (len = length + 12, k = key; len >= 12; len -= 12, k += 12) {
-		if (len >= 24) {
-			a += __get_unaligned_le32(k);
-			b += __get_unaligned_le32(k + 4);
-			c += __get_unaligned_le32(k + 8);
-		} else {
-			memset(zpad, 0, 12);
-			memcpy(zpad, k, len - 12);
-			a += __get_unaligned_le32(zpad);
-			b += __get_unaligned_le32(zpad + 4);
-			c += (u32) zpad[8] << 8;
-			c += (u32) zpad[9] << 16;
-			c += (u32) zpad[10] << 24;
-			c += length;
-		}
-		a -= b + c; a ^= (c>>13);
-		b -= a + c; b ^= (a<<8);
-		c -= a + b; c ^= (b>>13);
-		a -= b + c; a ^= (c>>12);
-		b -= a + c; b ^= (a<<16);
-		c -= a + b; c ^= (b>>5);
-		a -= b + c; a ^= (c>>3);
-		b -= a + c; b ^= (a<<10);
-		c -= a + b; c ^= (b>>15);
-	}
-	return c;
-}
-
-/**
- * printk_hash - print a kernel message include a hash over the message
- * @prefix: message prefix including the ".%06x" for the hash
- * @fmt: format string
- */
-asmlinkage int printk_hash(const char *prefix, const char *fmt, ...)
-{
-	va_list args;
-	int r;
-
-	r = printk(prefix, __printk_jhash(fmt, strlen(fmt)) & 0xffffff);
-	va_start(args, fmt);
-	r += vprintk(fmt, args);
-	va_end(args);
-
-	return r;
-}
-EXPORT_SYMBOL(printk_hash);
 #endif
