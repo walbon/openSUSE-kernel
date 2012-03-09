@@ -2252,32 +2252,26 @@ enum blk_eh_timer_return dasd_times_out(struct request *req)
 {
 	struct dasd_ccw_req *cqr = req->completion_data;
 	struct dasd_block *block = req->q->queuedata;
-	struct dasd_device *device;
 	int rc = 0;
 
 	if (!cqr)
 		return BLK_EH_NOT_HANDLED;
-	if (!(block->base->features & DASD_FEATURE_BLKTIMEOUT))
-		return BLK_EH_RESET_TIMER;
-	device = cqr->startdev ? cqr->startdev : block->base;
-	DBF_DEV_EVENT(DBF_WARNING, device,
-		      " dasd_times_out cqr %p status %x", cqr, cqr->status);
-	if (cqr->status >= DASD_CQR_QUEUED) {
-		rc = dasd_cancel_req(cqr);
-		if (rc)
-			return BLK_EH_RESET_TIMER;
-	}
-	/* Set final status */
-	cqr->endclk = get_clock();
-	cqr->status = DASD_CQR_FAILED;
-	cqr->intrc = -ETIME;
-	/* Un-thread from lists */
-	list_del_init(&cqr->blocklist);
-	list_del_init(&cqr->devlist);
-	/* cleanup cqr */
-	__dasd_cleanup_cqr(cqr);
 
-	return BLK_EH_NOT_HANDLED;
+	if ((block->base->features & DASD_FEATURE_BLKTIMEOUT)) {
+		struct dasd_device *device;
+
+		device = cqr->startdev ? cqr->startdev : block->base;
+		DBF_DEV_EVENT(DBF_WARNING, device,
+			      " dasd_times_out cqr %p status %x",
+			      cqr, cqr->status);
+		spin_lock(get_ccwdev_lock(device->cdev));
+		cqr->retries = -1;
+		spin_unlock(get_ccwdev_lock(device->cdev));
+		if (!dasd_cancel_req(cqr))
+			return BLK_EH_NOT_HANDLED;
+
+	}
+	return BLK_EH_RESET_TIMER;
 }
 
 /*
