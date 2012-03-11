@@ -30,26 +30,6 @@
 #include "hyperv_net.h"
 
 
-enum rndis_device_state {
-	RNDIS_DEV_UNINITIALIZED = 0,
-	RNDIS_DEV_INITIALIZING,
-	RNDIS_DEV_INITIALIZED,
-	RNDIS_DEV_DATAINITIALIZED,
-};
-
-struct rndis_device {
-	struct netvsc_device *net_dev;
-
-	enum rndis_device_state state;
-	bool link_state;
-	atomic_t new_req_id;
-
-	spinlock_t request_lock;
-	struct list_head req_list;
-
-	unsigned char hw_mac_adr[ETH_ALEN];
-};
-
 struct rndis_request {
 	struct list_head list_ent;
 	struct completion  wait_event;
@@ -329,7 +309,6 @@ static void rndis_filter_receive_data(struct rndis_device *dev,
 {
 	struct rndis_packet *rndis_pkt;
 	u32 data_offset;
-	int i;
 
 	rndis_pkt = &msg->msg.pkt;
 
@@ -342,17 +321,7 @@ static void rndis_filter_receive_data(struct rndis_device *dev,
 	data_offset = RNDIS_HEADER_SIZE + rndis_pkt->data_offset;
 
 	pkt->total_data_buflen -= data_offset;
-	pkt->page_buf[0].offset += data_offset;
-	pkt->page_buf[0].len -= data_offset;
-
-	/* Drop the 0th page, if rndis data go beyond page boundary */
-	if (pkt->page_buf[0].offset >= PAGE_SIZE) {
-		pkt->page_buf[1].offset = pkt->page_buf[0].offset - PAGE_SIZE;
-		pkt->page_buf[1].len -= pkt->page_buf[1].offset;
-		pkt->page_buf_cnt--;
-		for (i = 0; i < pkt->page_buf_cnt; i++)
-			pkt->page_buf[i] = pkt->page_buf[i+1];
-	}
+	pkt->data = (void *)((unsigned long)pkt->data + data_offset);
 
 	pkt->is_data_pkt = true;
 
@@ -387,11 +356,7 @@ int rndis_filter_receive(struct hv_device *dev,
 		return -ENODEV;
 	}
 
-	rndis_hdr = (struct rndis_message *)kmap_atomic(
-			pfn_to_page(pkt->page_buf[0].pfn), KM_IRQ0);
-
-	rndis_hdr = (void *)((unsigned long)rndis_hdr +
-			pkt->page_buf[0].offset);
+	rndis_hdr = pkt->data;
 
 	/* Make sure we got a valid rndis message */
 	if ((rndis_hdr->ndis_msg_type != REMOTE_NDIS_PACKET_MSG) &&
@@ -406,8 +371,6 @@ int rndis_filter_receive(struct hv_device *dev,
 		(rndis_hdr->msg_len > sizeof(struct rndis_message)) ?
 			sizeof(struct rndis_message) :
 			rndis_hdr->msg_len);
-
-	kunmap_atomic(rndis_hdr - pkt->page_buf[0].offset, KM_IRQ0);
 
 	dump_rndis_message(dev, &rndis_msg);
 
@@ -522,8 +485,7 @@ static int rndis_filter_query_device_link_status(struct rndis_device *dev)
 	return ret;
 }
 
-static int rndis_filter_set_packet_filter(struct rndis_device *dev,
-				      u32 new_filter)
+int rndis_filter_set_packet_filter(struct rndis_device *dev, u32 new_filter)
 {
 	struct rndis_request *request;
 	struct rndis_set_request *set;

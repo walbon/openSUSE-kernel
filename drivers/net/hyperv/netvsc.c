@@ -28,6 +28,7 @@
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/netdevice.h>
+#include <linux/if_ether.h>
 
 #include "hyperv_net.h"
 
@@ -41,7 +42,7 @@ static struct netvsc_device *alloc_net_device(struct hv_device *device)
 	if (!net_device)
 		return NULL;
 
-
+	net_device->start_remove = false;
 	net_device->destroy = false;
 	net_device->dev = device;
 	net_device->ndev = ndev;
@@ -230,18 +231,15 @@ static int netvsc_init_recv_buf(struct hv_device *device)
 	net_device->recv_section_cnt = init_packet->msg.
 		v1_msg.send_recv_buf_complete.num_sections;
 
-	net_device->recv_section = kmalloc(net_device->recv_section_cnt
-		* sizeof(struct nvsp_1_receive_buffer_section), GFP_KERNEL);
+	net_device->recv_section = kmemdup(
+		init_packet->msg.v1_msg.send_recv_buf_complete.sections,
+		net_device->recv_section_cnt *
+		sizeof(struct nvsp_1_receive_buffer_section),
+		GFP_KERNEL);
 	if (net_device->recv_section == NULL) {
 		ret = -EINVAL;
 		goto cleanup;
 	}
-
-	memcpy(net_device->recv_section,
-		init_packet->msg.v1_msg.
-	       send_recv_buf_complete.sections,
-		net_device->recv_section_cnt *
-	       sizeof(struct nvsp_1_receive_buffer_section));
 
 	/*
 	 * For 1st release, there should only be 1 section that represents the
@@ -263,9 +261,57 @@ exit:
 }
 
 
-static int netvsc_connect_vsp(struct hv_device *device)
+/* Negotiate NVSP protocol version */
+static int negotiate_nvsp_ver(struct hv_device *device,
+			      struct netvsc_device *net_device,
+			      struct nvsp_message *init_packet,
+			      u32 nvsp_ver)
 {
 	int ret, t;
+
+	memset(init_packet, 0, sizeof(struct nvsp_message));
+	init_packet->hdr.msg_type = NVSP_MSG_TYPE_INIT;
+	init_packet->msg.init_msg.init.min_protocol_ver = nvsp_ver;
+	init_packet->msg.init_msg.init.max_protocol_ver = nvsp_ver;
+
+	/* Send the init request */
+	ret = vmbus_sendpacket(device->channel, init_packet,
+			       sizeof(struct nvsp_message),
+			       (unsigned long)init_packet,
+			       VM_PKT_DATA_INBAND,
+			       VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED);
+
+	if (ret != 0)
+		return ret;
+
+	t = wait_for_completion_timeout(&net_device->channel_init_wait, 5*HZ);
+
+	if (t == 0)
+		return -ETIMEDOUT;
+
+	if (init_packet->msg.init_msg.init_complete.status !=
+	    NVSP_STAT_SUCCESS)
+		return -EINVAL;
+
+	if (nvsp_ver != NVSP_PROTOCOL_VERSION_2)
+		return 0;
+
+	/* NVSPv2 only: Send NDIS config */
+	memset(init_packet, 0, sizeof(struct nvsp_message));
+	init_packet->hdr.msg_type = NVSP_MSG2_TYPE_SEND_NDIS_CONFIG;
+	init_packet->msg.v2_msg.send_ndis_config.mtu = net_device->ndev->mtu;
+
+	ret = vmbus_sendpacket(device->channel, init_packet,
+				sizeof(struct nvsp_message),
+				(unsigned long)init_packet,
+				VM_PKT_DATA_INBAND, 0);
+
+	return ret;
+}
+
+static int netvsc_connect_vsp(struct hv_device *device)
+{
+	int ret;
 	struct netvsc_device *net_device;
 	struct nvsp_message *init_packet;
 	int ndis_version;
@@ -278,41 +324,20 @@ static int netvsc_connect_vsp(struct hv_device *device)
 
 	init_packet = &net_device->channel_init_pkt;
 
-	memset(init_packet, 0, sizeof(struct nvsp_message));
-	init_packet->hdr.msg_type = NVSP_MSG_TYPE_INIT;
-	init_packet->msg.init_msg.init.min_protocol_ver =
-		NVSP_MIN_PROTOCOL_VERSION;
-	init_packet->msg.init_msg.init.max_protocol_ver =
-		NVSP_MAX_PROTOCOL_VERSION;
-
-	/* Send the init request */
-	ret = vmbus_sendpacket(device->channel, init_packet,
-			       sizeof(struct nvsp_message),
-			       (unsigned long)init_packet,
-			       VM_PKT_DATA_INBAND,
-			       VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED);
-
-	if (ret != 0)
-		goto cleanup;
-
-	t = wait_for_completion_timeout(&net_device->channel_init_wait, 5*HZ);
-
-	if (t == 0) {
-		ret = -ETIMEDOUT;
-		goto cleanup;
-	}
-
-	if (init_packet->msg.init_msg.init_complete.status !=
-	    NVSP_STAT_SUCCESS) {
-		ret = -EINVAL;
-		goto cleanup;
-	}
-
-	if (init_packet->msg.init_msg.init_complete.
-	    negotiated_protocol_ver != NVSP_PROTOCOL_VERSION_1) {
+	/* Negotiate the latest NVSP protocol supported */
+	if (negotiate_nvsp_ver(device, net_device, init_packet,
+			       NVSP_PROTOCOL_VERSION_2) == 0) {
+		net_device->nvsp_version = NVSP_PROTOCOL_VERSION_2;
+	} else if (negotiate_nvsp_ver(device, net_device, init_packet,
+				    NVSP_PROTOCOL_VERSION_1) == 0) {
+		net_device->nvsp_version = NVSP_PROTOCOL_VERSION_1;
+	} else {
 		ret = -EPROTO;
 		goto cleanup;
 	}
+
+	pr_debug("Negotiated NVSP version:%x\n", net_device->nvsp_version);
+
 	/* Send the ndis version */
 	memset(init_packet, 0, sizeof(struct nvsp_message));
 
@@ -438,6 +463,9 @@ static void netvsc_send_completion(struct hv_device *device,
 			nvsc_packet->completion.send.send_completion_ctx);
 
 		atomic_dec(&net_device->num_outstanding_sends);
+
+		if (netif_queue_stopped(ndev) && !net_device->start_remove)
+			netif_wake_queue(ndev);
 	} else {
 		netdev_err(ndev, "Unknown send completion packet type- "
 			   "%d received!!\n", nvsp_packet->hdr.msg_type);
@@ -488,11 +516,16 @@ int netvsc_send(struct hv_device *device,
 
 	}
 
-	if (ret != 0)
+	if (ret == 0) {
+		atomic_inc(&net_device->num_outstanding_sends);
+	} else if (ret == -EAGAIN) {
+		netif_stop_queue(ndev);
+		if (atomic_read(&net_device->num_outstanding_sends) < 1)
+			netif_wake_queue(ndev);
+	} else {
 		netdev_err(ndev, "Unable to send packet %p ret %d\n",
 			   packet, ret);
-	else
-		atomic_inc(&net_device->num_outstanding_sends);
+	}
 
 	return ret;
 }
@@ -598,12 +631,10 @@ static void netvsc_receive(struct hv_device *device,
 	struct vmtransfer_page_packet_header *vmxferpage_packet;
 	struct nvsp_message *nvsp_packet;
 	struct hv_netvsc_packet *netvsc_packet = NULL;
-	unsigned long start;
-	unsigned long end, end_virtual;
 	/* struct netvsc_driver *netvscDriver; */
 	struct xferpage_packet *xferpage_packet = NULL;
-	int i, j;
-	int count = 0, bytes_remain = 0;
+	int i;
+	int count = 0;
 	unsigned long flags;
 	struct net_device *ndev;
 
@@ -712,53 +743,10 @@ static void netvsc_receive(struct hv_device *device,
 		netvsc_packet->completion.recv.recv_completion_tid =
 					vmxferpage_packet->d.trans_id;
 
+		netvsc_packet->data = (void *)((unsigned long)net_device->
+			recv_buf + vmxferpage_packet->ranges[i].byte_offset);
 		netvsc_packet->total_data_buflen =
 					vmxferpage_packet->ranges[i].byte_count;
-		netvsc_packet->page_buf_cnt = 1;
-
-		netvsc_packet->page_buf[0].len =
-					vmxferpage_packet->ranges[i].byte_count;
-
-		start = virt_to_phys((void *)((unsigned long)net_device->
-		recv_buf + vmxferpage_packet->ranges[i].byte_offset));
-
-		netvsc_packet->page_buf[0].pfn = start >> PAGE_SHIFT;
-		end_virtual = (unsigned long)net_device->recv_buf
-		    + vmxferpage_packet->ranges[i].byte_offset
-		    + vmxferpage_packet->ranges[i].byte_count - 1;
-		end = virt_to_phys((void *)end_virtual);
-
-		/* Calculate the page relative offset */
-		netvsc_packet->page_buf[0].offset =
-			vmxferpage_packet->ranges[i].byte_offset &
-			(PAGE_SIZE - 1);
-		if ((end >> PAGE_SHIFT) != (start >> PAGE_SHIFT)) {
-			/* Handle frame across multiple pages: */
-			netvsc_packet->page_buf[0].len =
-				(netvsc_packet->page_buf[0].pfn <<
-				 PAGE_SHIFT)
-				+ PAGE_SIZE - start;
-			bytes_remain = netvsc_packet->total_data_buflen -
-					netvsc_packet->page_buf[0].len;
-			for (j = 1; j < NETVSC_PACKET_MAXPAGE; j++) {
-				netvsc_packet->page_buf[j].offset = 0;
-				if (bytes_remain <= PAGE_SIZE) {
-					netvsc_packet->page_buf[j].len =
-						bytes_remain;
-					bytes_remain = 0;
-				} else {
-					netvsc_packet->page_buf[j].len =
-						PAGE_SIZE;
-					bytes_remain -= PAGE_SIZE;
-				}
-				netvsc_packet->page_buf[j].pfn =
-				    virt_to_phys((void *)(end_virtual -
-						bytes_remain)) >> PAGE_SHIFT;
-				netvsc_packet->page_buf_cnt++;
-				if (bytes_remain == 0)
-					break;
-			}
-		}
 
 		/* Pass it to the upper layer */
 		rndis_filter_receive(device, netvsc_packet);

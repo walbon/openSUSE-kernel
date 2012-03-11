@@ -29,8 +29,8 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
-
-#include "hyperv.h"
+#include <linux/hyperv.h>
+#include <asm/hyperv.h>
 #include "hyperv_vmbus.h"
 
 

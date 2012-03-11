@@ -35,10 +35,7 @@
 #include <linux/mod_devicetable.h>
 
 
-#include <asm/hyperv.h>
-
-
-#define MAX_PAGE_BUFFER_COUNT				16
+#define MAX_PAGE_BUFFER_COUNT				18
 #define MAX_MULTIPAGE_BUFFER_COUNT			32 /* 128K */
 
 #pragma pack(push, 1)
@@ -609,8 +606,6 @@ struct vmbus_channel {
 	void *channel_callback_context;
 };
 
-void free_channel(struct vmbus_channel *channel);
-
 void vmbus_onmessage(void *context);
 
 int vmbus_request_offers(void);
@@ -696,103 +691,12 @@ extern void vmbus_get_debug_info(struct vmbus_channel *channel,
 
 extern void vmbus_ontimer(unsigned long data);
 
-
-#define LOWORD(dw) ((unsigned short)(dw))
-#define HIWORD(dw) ((unsigned short)(((unsigned int) (dw) >> 16) & 0xFFFF))
-
-
-#define VMBUS				0x0001
-#define STORVSC				0x0002
-#define NETVSC				0x0004
-#define INPUTVSC			0x0008
-#define BLKVSC				0x0010
-#define VMBUS_DRV			0x0100
-#define STORVSC_DRV			0x0200
-#define NETVSC_DRV			0x0400
-#define INPUTVSC_DRV		0x0800
-#define BLKVSC_DRV			0x1000
-
-#define ALL_MODULES			(VMBUS		|\
-							STORVSC		|\
-							NETVSC		|\
-							INPUTVSC	|\
-							BLKVSC		|\
-							VMBUS_DRV	|\
-							STORVSC_DRV	|\
-							NETVSC_DRV	|\
-							INPUTVSC_DRV|\
-							BLKVSC_DRV)
-
-/* Logging Level */
-#define ERROR_LVL				3
-#define WARNING_LVL				4
-#define INFO_LVL				6
-#define DEBUG_LVL				7
-#define DEBUG_LVL_ENTEREXIT			8
-#define DEBUG_RING_LVL				9
-
-extern unsigned int vmbus_loglevel;
-
-#define DPRINT(mod, lvl, fmt, args...) do {\
-	if ((mod & (HIWORD(vmbus_loglevel))) &&	\
-	    (lvl <= LOWORD(vmbus_loglevel)))	\
-		printk(KERN_DEBUG #mod": %s() " fmt "\n", __func__, ## args);\
-	} while (0)
-
-#define DPRINT_DBG(mod, fmt, args...) do {\
-	if ((mod & (HIWORD(vmbus_loglevel))) &&		\
-	    (DEBUG_LVL <= LOWORD(vmbus_loglevel)))	\
-		printk(KERN_DEBUG #mod": %s() " fmt "\n", __func__, ## args);\
-	} while (0)
-
-#define DPRINT_INFO(mod, fmt, args...) do {\
-	if ((mod & (HIWORD(vmbus_loglevel))) &&		\
-	    (INFO_LVL <= LOWORD(vmbus_loglevel)))	\
-		printk(KERN_INFO #mod": " fmt "\n", ## args);\
-	} while (0)
-
-#define DPRINT_WARN(mod, fmt, args...) do {\
-	if ((mod & (HIWORD(vmbus_loglevel))) &&		\
-	    (WARNING_LVL <= LOWORD(vmbus_loglevel)))	\
-		printk(KERN_WARNING #mod": WARNING! " fmt "\n", ## args);\
-	} while (0)
-
-#define DPRINT_ERR(mod, fmt, args...) do {\
-	if ((mod & (HIWORD(vmbus_loglevel))) &&		\
-	    (ERROR_LVL <= LOWORD(vmbus_loglevel)))	\
-		printk(KERN_ERR #mod": %s() ERROR!! " fmt "\n",	\
-		       __func__, ## args);\
-	} while (0)
-
-
-
-struct hv_driver;
-struct hv_device;
-
 struct hv_dev_port_info {
 	u32 int_mask;
 	u32 read_idx;
 	u32 write_idx;
 	u32 bytes_avail_toread;
 	u32 bytes_avail_towrite;
-};
-
-struct hv_device_info {
-	u32 chn_id;
-	u32 chn_state;
-	uuid_le chn_type;
-	uuid_le chn_instance;
-
-	u32 monitor_id;
-	u32 server_monitor_pending;
-	u32 server_monitor_latency;
-	u32 server_monitor_conn_id;
-	u32 client_monitor_pending;
-	u32 client_monitor_latency;
-	u32 client_monitor_conn_id;
-
-	struct hv_dev_port_info inbound;
-	struct hv_dev_port_info outbound;
 };
 
 /* Base driver object */
@@ -963,7 +867,7 @@ struct hyperv_service_callback {
 	void (*callback) (void *context);
 };
 
-extern void prep_negotiate_resp(struct icmsg_hdr *,
-				struct icmsg_negotiate *, u8 *);
+extern void vmbus_prep_negotiate_resp(struct icmsg_hdr *,
+				      struct icmsg_negotiate *, u8 *);
 
 #endif /* _HYPERV_H */

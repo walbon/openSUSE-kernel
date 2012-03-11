@@ -28,8 +28,8 @@
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/completion.h>
+#include <linux/hyperv.h>
 
-#include "hyperv.h"
 #include "hyperv_vmbus.h"
 
 struct vmbus_channel_message_table_entry {
@@ -114,7 +114,7 @@ static const uuid_le
 
 
 /**
- * prep_negotiate_resp() - Create default response for Hyper-V Negotiate message
+ * vmbus_prep_negotiate_resp() - Create default response for Hyper-V Negotiate message
  * @icmsghdrp: Pointer to msg header structure
  * @icmsg_negotiate: Pointer to negotiate message structure
  * @buf: Raw buffer channel data
@@ -128,9 +128,8 @@ static const uuid_le
  *
  * Mainly used by Hyper-V drivers.
  */
-void prep_negotiate_resp(struct icmsg_hdr *icmsghdrp,
-			     struct icmsg_negotiate *negop,
-			     u8 *buf)
+void vmbus_prep_negotiate_resp(struct icmsg_hdr *icmsghdrp,
+			       struct icmsg_negotiate *negop, u8 *buf)
 {
 	if (icmsghdrp->icmsgtype == ICMSGTYPE_NEGOTIATE) {
 		icmsghdrp->icmsgsize = 0x10;
@@ -156,7 +155,7 @@ void prep_negotiate_resp(struct icmsg_hdr *icmsghdrp,
 		negop->icmsg_vercnt = 1;
 	}
 }
-EXPORT_SYMBOL(prep_negotiate_resp);
+EXPORT_SYMBOL_GPL(vmbus_prep_negotiate_resp);
 
 /*
  * alloc_channel - Allocate and initialize a vmbus channel object
@@ -197,7 +196,7 @@ static void release_channel(struct work_struct *work)
 /*
  * free_channel - Release the resources used by the vmbus channel object
  */
-void free_channel(struct vmbus_channel *channel)
+static void free_channel(struct vmbus_channel *channel)
 {
 
 	/*
@@ -222,6 +221,17 @@ static void vmbus_process_rescind_offer(struct work_struct *work)
 						     work);
 
 	vmbus_device_unregister(channel->device_obj);
+}
+
+void vmbus_free_channels(void)
+{
+	struct vmbus_channel *channel;
+
+	list_for_each_entry(channel, &vmbus_connection.chn_list, listentry) {
+		vmbus_device_unregister(channel->device_obj);
+		kfree(channel->device_obj);
+		free_channel(channel);
+	}
 }
 
 /*
@@ -288,6 +298,7 @@ static void vmbus_process_offer(struct work_struct *work)
 		spin_lock_irqsave(&vmbus_connection.channel_lock, flags);
 		list_del(&newchannel->listentry);
 		spin_unlock_irqrestore(&vmbus_connection.channel_lock, flags);
+		kfree(newchannel->device_obj);
 
 		free_channel(newchannel);
 	} else {

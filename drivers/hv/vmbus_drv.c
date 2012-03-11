@@ -32,8 +32,8 @@
 #include <linux/acpi.h>
 #include <acpi/acpi_bus.h>
 #include <linux/completion.h>
-
-#include "hyperv.h"
+#include <linux/hyperv.h>
+#include <asm/hyperv.h>
 #include "hyperv_vmbus.h"
 
 
@@ -41,12 +41,35 @@ static struct acpi_device  *hv_acpi_dev;
 
 static struct tasklet_struct msg_dpc;
 static struct tasklet_struct event_dpc;
-
-unsigned int vmbus_loglevel = (ALL_MODULES << 16 | INFO_LVL);
-EXPORT_SYMBOL(vmbus_loglevel);
-
 static struct completion probe_event;
 static int irq;
+
+struct hv_device_info {
+	u32 chn_id;
+	u32 chn_state;
+	uuid_le chn_type;
+	uuid_le chn_instance;
+
+	u32 monitor_id;
+	u32 server_monitor_pending;
+	u32 server_monitor_latency;
+	u32 server_monitor_conn_id;
+	u32 client_monitor_pending;
+	u32 client_monitor_latency;
+	u32 client_monitor_conn_id;
+
+	struct hv_dev_port_info inbound;
+	struct hv_dev_port_info outbound;
+};
+
+static int vmbus_exists(void)
+{
+	if (hv_acpi_dev == NULL)
+		return -ENODEV;
+
+	return 0;
+}
+
 
 static void get_channel_info(struct hv_device *device,
 			     struct hv_device_info *info)
@@ -575,6 +598,10 @@ int __vmbus_driver_register(struct hv_driver *hv_driver, struct module *owner, c
 
 	pr_info("registering driver %s\n", hv_driver->name);
 
+	ret = vmbus_exists();
+	if (ret < 0)
+		return ret;
+
 	hv_driver->driver.name = hv_driver->name;
 	hv_driver->driver.owner = owner;
 	hv_driver->driver.mod_name = mod_name;
@@ -599,8 +626,8 @@ void vmbus_driver_unregister(struct hv_driver *hv_driver)
 {
 	pr_info("unregistering driver %s\n", hv_driver->name);
 
-	driver_unregister(&hv_driver->driver);
-
+	if (!vmbus_exists())
+		driver_unregister(&hv_driver->driver);
 }
 EXPORT_SYMBOL_GPL(vmbus_driver_unregister);
 
@@ -761,12 +788,23 @@ static int __init hv_acpi_init(void)
 
 cleanup:
 	acpi_bus_unregister_driver(&vmbus_acpi_driver);
+	hv_acpi_dev = NULL;
 	return ret;
+}
+
+static void __exit vmbus_exit(void)
+{
+
+	free_irq(irq, hv_acpi_dev);
+	vmbus_free_channels();
+	bus_unregister(&hv_bus);
+	hv_cleanup();
+	acpi_bus_unregister_driver(&vmbus_acpi_driver);
 }
 
 
 MODULE_LICENSE("GPL");
 MODULE_VERSION(HV_DRV_VERSION);
-module_param(vmbus_loglevel, int, S_IRUGO|S_IWUSR);
 
-module_init(hv_acpi_init);
+subsys_initcall(hv_acpi_init);
+module_exit(vmbus_exit);

@@ -28,8 +28,7 @@
 #include <linux/list.h>
 #include <asm/sync_bitops.h>
 #include <linux/atomic.h>
-
-#include "hyperv.h"
+#include <linux/hyperv.h>
 
 /*
  * The below CPUID leaves are present if VersionAndFeatures.HypervisorPresent
@@ -530,8 +529,6 @@ int hv_ringbuffer_read(struct hv_ring_buffer_info *ring_info,
 
 u32 hv_get_ringbuffer_interrupt_mask(struct hv_ring_buffer_info *ring_info);
 
-void hv_dump_ring_info(struct hv_ring_buffer_info *ring_info, char *prefix);
-
 void hv_ringbuffer_get_debuginfo(struct hv_ring_buffer_info *ring_info,
 			    struct hv_ring_buffer_debug_info *debug_info);
 
@@ -614,6 +611,7 @@ void vmbus_device_unregister(struct hv_device *device_obj);
 
 struct vmbus_channel *relid2channel(u32 relid);
 
+void vmbus_free_channels(void);
 
 /* Connection interface */
 

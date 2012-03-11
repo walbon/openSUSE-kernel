@@ -26,7 +26,7 @@
 #define _HYPERV_NET_H
 
 #include <linux/list.h>
-#include "hyperv.h"
+#include <linux/hyperv.h>
 
 /* Fwd declaration */
 struct hv_netvsc_packet;
@@ -38,9 +38,6 @@ struct xferpage_packet {
 	/* # of netvsc packets this xfer packet contains */
 	u32 count;
 };
-
-/* The number of pages which are enough to cover jumbo frame buffer. */
-#define NETVSC_PACKET_MAXPAGE		4
 
 /*
  * Represent netvsc packet which contains 1 RNDIS and 1 ethernet frame
@@ -77,8 +74,9 @@ struct hv_netvsc_packet {
 
 	u32 total_data_buflen;
 	/* Points to the send/receive buffer where the ethernet frame is */
+	void *data;
 	u32 page_buf_cnt;
-	struct hv_page_buffer page_buf[NETVSC_PACKET_MAXPAGE];
+	struct hv_page_buffer page_buf[0];
 };
 
 struct netvsc_device_info {
@@ -86,6 +84,27 @@ struct netvsc_device_info {
 	bool link_state;	/* 0 - link up, 1 - link down */
 	int  ring_size;
 };
+
+enum rndis_device_state {
+	RNDIS_DEV_UNINITIALIZED = 0,
+	RNDIS_DEV_INITIALIZING,
+	RNDIS_DEV_INITIALIZED,
+	RNDIS_DEV_DATAINITIALIZED,
+};
+
+struct rndis_device {
+	struct netvsc_device *net_dev;
+
+	enum rndis_device_state state;
+	bool link_state;
+	atomic_t new_req_id;
+
+	spinlock_t request_lock;
+	struct list_head req_list;
+
+	unsigned char hw_mac_adr[ETH_ALEN];
+};
+
 
 /* Interface */
 int netvsc_device_add(struct hv_device *device, void *additional_info);
@@ -109,11 +128,13 @@ int rndis_filter_receive(struct hv_device *dev,
 int rndis_filter_send(struct hv_device *dev,
 			struct hv_netvsc_packet *pkt);
 
+int rndis_filter_set_packet_filter(struct rndis_device *dev, u32 new_filter);
+
+
 #define NVSP_INVALID_PROTOCOL_VERSION	((u32)0xFFFFFFFF)
 
 #define NVSP_PROTOCOL_VERSION_1		2
-#define NVSP_MIN_PROTOCOL_VERSION	NVSP_PROTOCOL_VERSION_1
-#define NVSP_MAX_PROTOCOL_VERSION	NVSP_PROTOCOL_VERSION_1
+#define NVSP_PROTOCOL_VERSION_2		0x30002
 
 enum {
 	NVSP_MSG_TYPE_NONE = 0,
@@ -138,11 +159,36 @@ enum {
 	NVSP_MSG1_TYPE_SEND_RNDIS_PKT,
 	NVSP_MSG1_TYPE_SEND_RNDIS_PKT_COMPLETE,
 
-	/*
-	 * This should be set to the number of messages for the version with
-	 * the maximum number of messages.
-	 */
-	NVSP_NUM_MSG_PER_VERSION		= 9,
+	/* Version 2 messages */
+	NVSP_MSG2_TYPE_SEND_CHIMNEY_DELEGATED_BUF,
+	NVSP_MSG2_TYPE_SEND_CHIMNEY_DELEGATED_BUF_COMP,
+	NVSP_MSG2_TYPE_REVOKE_CHIMNEY_DELEGATED_BUF,
+
+	NVSP_MSG2_TYPE_RESUME_CHIMNEY_RX_INDICATION,
+
+	NVSP_MSG2_TYPE_TERMINATE_CHIMNEY,
+	NVSP_MSG2_TYPE_TERMINATE_CHIMNEY_COMP,
+
+	NVSP_MSG2_TYPE_INDICATE_CHIMNEY_EVENT,
+
+	NVSP_MSG2_TYPE_SEND_CHIMNEY_PKT,
+	NVSP_MSG2_TYPE_SEND_CHIMNEY_PKT_COMP,
+
+	NVSP_MSG2_TYPE_POST_CHIMNEY_RECV_REQ,
+	NVSP_MSG2_TYPE_POST_CHIMNEY_RECV_REQ_COMP,
+
+	NVSP_MSG2_TYPE_ALLOC_RXBUF,
+	NVSP_MSG2_TYPE_ALLOC_RXBUF_COMP,
+
+	NVSP_MSG2_TYPE_FREE_RXBUF,
+
+	NVSP_MSG2_TYPE_SEND_VMQ_RNDIS_PKT,
+	NVSP_MSG2_TYPE_SEND_VMQ_RNDIS_PKT_COMP,
+
+	NVSP_MSG2_TYPE_SEND_NDIS_CONFIG,
+
+	NVSP_MSG2_TYPE_ALLOC_CHIMNEY_HANDLE,
+	NVSP_MSG2_TYPE_ALLOC_CHIMNEY_HANDLE_COMP,
 };
 
 enum {
@@ -153,6 +199,7 @@ enum {
 	NVSP_STAT_PROTOCOL_TOO_OLD,
 	NVSP_STAT_INVALID_RNDIS_PKT,
 	NVSP_STAT_BUSY,
+	NVSP_STAT_PROTOCOL_UNSUPPORTED,
 	NVSP_STAT_MAX,
 };
 
@@ -337,9 +384,69 @@ union nvsp_1_message_uber {
 						send_rndis_pkt_complete;
 } __packed;
 
+
+/*
+ * Network VSP protocol version 2 messages:
+ */
+struct nvsp_2_vsc_capability {
+	union {
+		u64 data;
+		struct {
+			u64 vmq:1;
+			u64 chimney:1;
+			u64 sriov:1;
+			u64 ieee8021q:1;
+			u64 correlation_id:1;
+		};
+	};
+} __packed;
+
+struct nvsp_2_send_ndis_config {
+	u32 mtu;
+	u32 reserved;
+	struct nvsp_2_vsc_capability capability;
+} __packed;
+
+/* Allocate receive buffer */
+struct nvsp_2_alloc_rxbuf {
+	/* Allocation ID to match the allocation request and response */
+	u32 alloc_id;
+
+	/* Length of the VM shared memory receive buffer that needs to
+	 * be allocated
+	 */
+	u32 len;
+} __packed;
+
+/* Allocate receive buffer complete */
+struct nvsp_2_alloc_rxbuf_comp {
+	/* The NDIS_STATUS code for buffer allocation */
+	u32 status;
+
+	u32 alloc_id;
+
+	/* GPADL handle for the allocated receive buffer */
+	u32 gpadl_handle;
+
+	/* Receive buffer ID */
+	u64 recv_buf_id;
+} __packed;
+
+struct nvsp_2_free_rxbuf {
+	u64 recv_buf_id;
+} __packed;
+
+union nvsp_2_message_uber {
+	struct nvsp_2_send_ndis_config send_ndis_config;
+	struct nvsp_2_alloc_rxbuf alloc_rxbuf;
+	struct nvsp_2_alloc_rxbuf_comp alloc_rxbuf_comp;
+	struct nvsp_2_free_rxbuf free_rxbuf;
+} __packed;
+
 union nvsp_all_messages {
 	union nvsp_message_init_uber init_msg;
 	union nvsp_1_message_uber v1_msg;
+	union nvsp_2_message_uber v2_msg;
 } __packed;
 
 /* ALL Messages */
@@ -349,12 +456,9 @@ struct nvsp_message {
 } __packed;
 
 
+#define NETVSC_MTU 65536
 
-
-/* #define NVSC_MIN_PROTOCOL_VERSION		1 */
-/* #define NVSC_MAX_PROTOCOL_VERSION		1 */
-
-#define NETVSC_RECEIVE_BUFFER_SIZE		(1024*1024)	/* 1MB */
+#define NETVSC_RECEIVE_BUFFER_SIZE		(1024*1024*2)	/* 2MB */
 
 #define NETVSC_RECEIVE_BUFFER_ID		0xcafe
 
@@ -369,7 +473,10 @@ struct nvsp_message {
 struct netvsc_device {
 	struct hv_device *dev;
 
+	u32 nvsp_version;
+
 	atomic_t num_outstanding_sends;
+	bool start_remove;
 	bool destroy;
 	/*
 	 * List of free preallocated hv_netvsc_packet to represent receive
