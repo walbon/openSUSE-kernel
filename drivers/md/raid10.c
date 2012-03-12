@@ -1207,6 +1207,7 @@ static int raid10_remove_disk(mddev_t *mddev, int number)
 		 * is not possible.
 		 */
 		if (!test_bit(Faulty, &rdev->flags) &&
+		    !mddev->recovery_disabled &&
 		    enough(conf, -1)) {
 			err = -EBUSY;
 			goto abort;
@@ -2083,6 +2084,7 @@ static sector_t sync_request(mddev_t *mddev, sector_t sector_nr,
 					printk(KERN_INFO "md/raid10:%s: insufficient "
 					       "working devices for recovery.\n",
 					       mdname(mddev));
+				mddev->recovery_disabled = 1;
 				break;
 			}
 			if (r10_bio->devs[0].bio->bi_rw & REQ_FAILFAST_DEV) {
