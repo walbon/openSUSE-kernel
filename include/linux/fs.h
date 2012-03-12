@@ -995,7 +995,7 @@ struct file {
 #endif
 #if defined(CONFIG_EPOLL) && !defined(__GENKSYMS__)
 	struct list_head	f_tfile_llink;
-#endif
+#endif /* #ifdef CONFIG_EPOLL */
 };
 
 struct file_handle {
