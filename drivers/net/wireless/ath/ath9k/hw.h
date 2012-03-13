@@ -763,7 +763,9 @@ struct ath_hw {
 	u32 *analogBank6Data;
 	u32 *analogBank6TPCData;
 	u32 *analogBank7Data;
+#ifdef __GENKSYMS__
 	u32 *addac5416_21;
+#endif
 	u32 *bank6Temp;
 
 	u8 txpower_limit;

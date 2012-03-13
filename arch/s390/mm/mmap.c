@@ -28,8 +28,12 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/random.h>
-#include <asm/pgalloc.h>
+#ifndef __GENKSYMS__
+#include <linux/compat.h>
+#else
 #include <asm/compat.h>
+#endif
+#include <asm/pgalloc.h>
 
 static unsigned long stack_maxrandom_size(void)
 {
