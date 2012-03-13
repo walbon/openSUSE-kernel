@@ -681,9 +681,9 @@ retry:
 			    async_extent->start + async_extent->ram_size - 1);
 
 		trans = btrfs_join_transaction(root);
-		if (IS_ERR(trans))
+		if (IS_ERR(trans)) {
 			ret = PTR_ERR(trans);
-		else {
+		} else {
 			trans->block_rsv = &root->fs_info->delalloc_block_rsv;
 			ret = btrfs_reserve_extent(trans, root,
 					   async_extent->compressed_size,
@@ -874,10 +874,8 @@ static noinline int cow_file_range(struct inode *inode,
 	ret = 0;
 
 	/* if this is a small write inside eof, kick off defrag */
-	if (end <= BTRFS_I(inode)->disk_i_size && num_bytes < 64 * 1024) {
-		ret = btrfs_add_inode_defrag(trans, inode);
-		BUG_ON(ret); /* -ENOMEM */
-	}
+	if (end <= BTRFS_I(inode)->disk_i_size && num_bytes < 64 * 1024)
+		btrfs_add_inode_defrag(trans, inode);
 
 	if (start == 0) {
 		/* lets try to make an inline extent */

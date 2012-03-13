@@ -6871,10 +6871,8 @@ int btrfs_drop_snapshot(struct btrfs_root *root,
 
 	trans = btrfs_start_transaction(tree_root, 0);
 	if (IS_ERR(trans)) {
-		kfree(wc);
-		btrfs_free_path(path);
 		err = PTR_ERR(trans);
-		goto out;
+		goto out_free;
 	}
 
 	if (block_rsv)
