@@ -345,6 +345,24 @@ xfs_file_aio_read(
 	 * proceeed concurrently without serialisation.
 	 */
 	xfs_rw_ilock(ip, XFS_IOLOCK_SHARED);
+
+	if (DM_EVENT_ENABLED(ip, DM_EVENT_READ) && !(ioflags & IO_INVIS)) {
+		int dmflags = FILP_DELAY_FLAG(file);
+		int iolock = XFS_IOLOCK_SHARED;
+
+		/*
+		 * no need to set DM_FLAGS_IMUX. xfs_rw_ilock() will not
+		 * enable the inode mutex for a XFS_IOLOCK_SHARED lock type
+		 */
+
+		ret = -XFS_SEND_DATA(mp, DM_EVENT_READ, ip, iocb->ki_pos, size,
+				     dmflags, &iolock);
+		if (ret) {
+			xfs_rw_iunlock(ip, XFS_IOLOCK_SHARED);
+			return ret;
+		}
+	}
+
 	if ((ioflags & IO_ISDIRECT) && inode->i_mapping->nrpages) {
 		xfs_rw_iunlock(ip, XFS_IOLOCK_SHARED);
 		xfs_rw_ilock(ip, XFS_IOLOCK_EXCL);
@@ -392,6 +410,20 @@ xfs_file_splice_read(
 		return -EIO;
 
 	xfs_rw_ilock(ip, XFS_IOLOCK_SHARED);
+
+	if (DM_EVENT_ENABLED(ip, DM_EVENT_READ) && !(ioflags & IO_INVIS)) {
+		struct xfs_mount	*mp = ip->i_mount;
+		int iolock = XFS_IOLOCK_SHARED;
+		int error;
+
+		error = XFS_SEND_DATA(mp, DM_EVENT_READ, ip, *ppos, count,
+					FILP_DELAY_FLAG(infilp), &iolock);
+		if (error) {
+			xfs_iunlock(ip, XFS_IOLOCK_SHARED);
+		return -error;
+		}
+	}
+  
 
 	trace_xfs_file_splice_read(ip, count, *ppos, ioflags);
 
@@ -477,6 +509,19 @@ xfs_file_splice_write(
 		return -EIO;
 
 	xfs_ilock(ip, XFS_IOLOCK_EXCL);
+
+	if (DM_EVENT_ENABLED(ip, DM_EVENT_WRITE) && !(ioflags & IO_INVIS)) {
+		int iolock = XFS_IOLOCK_EXCL;
+		struct xfs_mount	*mp = ip->i_mount;
+		int error;
+
+		error = XFS_SEND_DATA(mp, DM_EVENT_WRITE, ip, *ppos, count,
+					FILP_DELAY_FLAG(outfilp), &iolock);
+		if (error) {
+			xfs_iunlock(ip, XFS_IOLOCK_EXCL);
+			return -error;
+		}
+	}
 
 	new_size = *ppos + count;
 
@@ -687,7 +732,8 @@ xfs_file_aio_write_checks(
 	struct file		*file,
 	loff_t			*pos,
 	size_t			*count,
-	int			*iolock)
+	int			*iolock,
+	int			*eventsent)
 {
 	struct inode		*inode = file->f_mapping->host;
 	struct xfs_inode	*ip = XFS_I(inode);
@@ -695,11 +741,44 @@ xfs_file_aio_write_checks(
 	int			error = 0;
 
 	xfs_rw_ilock(ip, XFS_ILOCK_EXCL);
+start:
 	error = generic_write_checks(file, pos, count, S_ISBLK(inode->i_mode));
 	if (error) {
 		xfs_rw_iunlock(ip, XFS_ILOCK_EXCL | *iolock);
 		*iolock = 0;
 		return error;
+	}
+
+	if ((DM_EVENT_ENABLED(ip, DM_EVENT_WRITE) &&
+	    !(file->f_mode & FMODE_NOCMTIME) && !*eventsent)) {
+		int	dmflags = FILP_DELAY_FLAG(file);
+
+		if (*iolock & XFS_IOLOCK_EXCL)
+			 dmflags |= DM_FLAGS_IMUX; /* dmapi disable mutex flg */
+
+		xfs_rw_iunlock(ip, XFS_ILOCK_EXCL); /* does not disable mutex */
+		error = XFS_SEND_DATA(ip->i_mount, DM_EVENT_WRITE, ip,
+				      *pos, *count, dmflags, iolock);
+		if (error) {
+			xfs_rw_iunlock(ip, *iolock);
+			*iolock = 0;
+			return -error;
+		}
+		xfs_rw_ilock(ip, XFS_ILOCK_EXCL);
+
+	/* DMAPI NOSPACE will call this routine again. eventsent is retained
+	 * to ensure that DM event is only sent once.
+	 */
+		*eventsent = 1;
+		/*
+		 * The iolock was dropped and reacquired in XFS_SEND_DATA
+		 * so we have to recheck the size when appending.
+		 * We will only "goto start;" once, since having sent the
+		 * event prevents another call to XFS_SEND_DATA, which is
+		 * what allows the size to change in the first place.
+		 */
+		if ((file->f_flags & O_APPEND) && *pos != ip->i_size)
+			goto start;
 	}
 
 	new_size = *pos + *count;
@@ -762,7 +841,8 @@ xfs_file_dio_aio_write(
 	unsigned long		nr_segs,
 	loff_t			pos,
 	size_t			ocount,
-	int			*iolock)
+	int			*iolock,
+	int			*eventsent)
 {
 	struct file		*file = iocb->ki_filp;
 	struct address_space	*mapping = file->f_mapping;
@@ -788,7 +868,7 @@ xfs_file_dio_aio_write(
 		*iolock = XFS_IOLOCK_SHARED;
 	xfs_rw_ilock(ip, *iolock);
 
-	ret = xfs_file_aio_write_checks(file, &pos, &count, iolock);
+	ret = xfs_file_aio_write_checks(file, &pos, &count, iolock, eventsent);
 	if (ret)
 		return ret;
 
@@ -837,7 +917,8 @@ xfs_file_buffered_aio_write(
 	unsigned long		nr_segs,
 	loff_t			pos,
 	size_t			ocount,
-	int			*iolock)
+	int			*iolock,
+	int			*eventsent)
 {
 	struct file		*file = iocb->ki_filp;
 	struct address_space	*mapping = file->f_mapping;
@@ -850,7 +931,7 @@ xfs_file_buffered_aio_write(
 	*iolock = XFS_IOLOCK_EXCL;
 	xfs_rw_ilock(ip, *iolock);
 
-	ret = xfs_file_aio_write_checks(file, &pos, &count, iolock);
+	ret = xfs_file_aio_write_checks(file, &pos, &count, iolock, eventsent);
 	if (ret)
 		return ret;
 
@@ -890,6 +971,8 @@ xfs_file_aio_write(
 	ssize_t			ret;
 	int			iolock;
 	size_t			ocount = 0;
+	int			eventsent = 0;
+
 
 	XFS_STATS_INC(xs_write_calls);
 
@@ -904,18 +987,32 @@ xfs_file_aio_write(
 
 	xfs_wait_for_freeze(ip->i_mount, SB_FREEZE_WRITE);
 
+start:
 	if (XFS_FORCED_SHUTDOWN(ip->i_mount))
 		return -EIO;
 
 	if (unlikely(file->f_flags & O_DIRECT))
 		ret = xfs_file_dio_aio_write(iocb, iovp, nr_segs, pos,
-						ocount, &iolock);
+						ocount, &iolock, &eventsent);
 	else
 		ret = xfs_file_buffered_aio_write(iocb, iovp, nr_segs, pos,
-						ocount, &iolock);
+						ocount, &iolock, &eventsent);
 
 	xfs_aio_write_isize_update(inode, &iocb->ki_pos, ret);
 
+	if (ret == -ENOSPC &&
+	    DM_EVENT_ENABLED(ip, DM_EVENT_NOSPACE) &&
+	    !(file->f_mode & FMODE_NOCMTIME)) {
+		xfs_rw_iunlock(ip, iolock);	/* unlock and remove mutex */
+		ret = -XFS_SEND_NAMESP(ip->i_mount, DM_EVENT_NOSPACE, ip,
+				DM_RIGHT_NULL, ip, DM_RIGHT_NULL, NULL, NULL,
+				 0, 0, 0); /* Delay flag intentionally unused */
+
+		xfs_rw_ilock(ip, iolock);	/* restore lock and mutex */
+		if (!ret)
+			goto start;
+		/* error will goto out_unlock below */
+	}
 	if (ret <= 0)
 		goto out_unlock;
 
