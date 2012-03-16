@@ -330,6 +330,10 @@ void btrfs_print_tree(struct btrfs_root *root, struct extent_buffer *c)
 					btrfs_node_blockptr(c, i),
 					btrfs_level_size(root, level - 1),
 					btrfs_node_ptr_generation(c, i));
+		if (!next) {
+			printk(KERN_INFO "\tno tree block found!\n");
+			continue;
+		}
 		if (btrfs_is_leaf(next) &&
 		   level != 1)
 			BUG();

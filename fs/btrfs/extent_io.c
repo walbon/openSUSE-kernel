@@ -1976,6 +1976,8 @@ static int clean_io_failure(u64 start, struct page *page)
 		map_tree = &BTRFS_I(inode)->root->fs_info->mapping_tree;
 		num_copies = btrfs_num_copies(map_tree, failrec->logical,
 						failrec->len);
+		BUG_ON(num_copies < 0);
+
 		if (num_copies > 1)  {
 			ret = repair_io_failure(map_tree, start, failrec->len,
 						failrec->logical, page,
@@ -2089,6 +2091,8 @@ static int bio_readpage_error(struct bio *failed_bio, struct page *page,
 	num_copies = btrfs_num_copies(
 			      &BTRFS_I(inode)->root->fs_info->mapping_tree,
 			      failrec->logical, failrec->len);
+	BUG_ON(num_copies < 0);
+
 	if (num_copies == 1) {
 		/*
 		 * we only have a single copy of the data, so don't bother with

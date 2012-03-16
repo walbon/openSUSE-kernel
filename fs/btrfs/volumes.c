@@ -3642,9 +3642,17 @@ int btrfs_num_copies(struct btrfs_mapping_tree *map_tree, u64 logical, u64 len)
 	read_lock(&em_tree->lock);
 	em = lookup_extent_mapping(em_tree, logical, len);
 	read_unlock(&em_tree->lock);
-	BUG_ON(!em);
 
-	BUG_ON(em->start > logical || em->start + em->len < logical);
+	if (!em)
+		return -EIO;
+
+	if (em->start > logical || em->start + em->len < logical) {
+		printk(KERN_CRIT "btrfs: corrupted extent, logical %llu em %llu@%llu\n",
+				(unsigned long long)logical,
+				(unsigned long long)em->start,
+				(unsigned long long)em->len);
+		return -EIO;
+	}
 	map = (struct map_lookup *)em->bdev;
 	if (map->type & (BTRFS_BLOCK_GROUP_DUP | BTRFS_BLOCK_GROUP_RAID1))
 		ret = map->num_stripes;
@@ -3917,12 +3925,12 @@ int btrfs_rmap_block(struct btrfs_mapping_tree *map_tree,
 	read_unlock(&em_tree->lock);
 
 	if (!em)
-		return -ENOENT;
+		return -EIO;
 
 	if (em->start != chunk_start) {
 		printk(KERN_DEBUG "btrfs: rmap em->start %llu != %llu\n",
 				em->start, chunk_start);
-		ret = -EINVAL;
+		ret = -EIO;
 		goto out_error;
 	}
 
