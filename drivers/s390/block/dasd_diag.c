@@ -566,8 +566,13 @@ static struct dasd_ccw_req *dasd_diag_build_cp(struct dasd_device *memdev,
 	cqr->startdev = memdev;
 	cqr->memdev = memdev;
 	cqr->block = block;
-	cqr->expires = memdev->default_expires * HZ;
-	cqr->retries = memdev->default_retries;
+	if (req->cmd_flags & REQ_FAILFAST_DEV) {
+		cqr->expires = memdev->failfast_expires * HZ;
+		cqr->retries = memdev->failfast_retries;
+	} else {
+		cqr->expires = memdev->default_expires * HZ;
+		cqr->retries = memdev->default_retries;
+	}
 	cqr->status = DASD_CQR_FILLED;
 	return cqr;
 }

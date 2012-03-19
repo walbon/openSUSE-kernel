@@ -1672,6 +1672,7 @@ static int _dasd_sleep_on(struct dasd_ccw_req *maincqr, int interruptible)
 		    test_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags) &&
 		    (!dasd_eer_enabled(device))) {
 			cqr->status = DASD_CQR_FAILED;
+			cqr->intrc = -ENOLINK;
 			continue;
 		}
 		/* Don't try to start requests if device is stopped */
@@ -1984,6 +1985,7 @@ static void __dasd_process_request_queue(struct dasd_block *block)
 		req->completion_data = cqr;
 		blk_start_request(req);
 		list_add_tail(&cqr->blocklist, &block->ccw_queue);
+		INIT_LIST_HEAD(&cqr->devlist);
 		dasd_profile_start(block, cqr, req);
 	}
 }
@@ -1997,8 +1999,17 @@ static void __dasd_cleanup_cqr(struct dasd_ccw_req *cqr)
 	req = (struct request *) cqr->callback_data;
 	dasd_profile_end(cqr->block, cqr, req);
 	status = cqr->block->base->discipline->free_cp(cqr, req);
-	if (status <= 0)
-		error = status ? status : -EIO;
+	if (status < 0)
+		error = status;
+	else if (status == 0) {
+		if (cqr->intrc == -EPERM)
+			error = -EBADE;
+		else if (cqr->intrc == -ENOLINK ||
+			 cqr->intrc == -ETIMEDOUT)
+			error = cqr->intrc;
+		else
+			error = -EIO;
+	}
 	__blk_end_request_all(req, error);
 }
 
@@ -2099,6 +2110,7 @@ static void __dasd_block_start_head(struct dasd_block *block)
 		    test_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags) &&
 		    (!dasd_eer_enabled(block->base))) {
 			cqr->status = DASD_CQR_FAILED;
+			cqr->intrc = -ENOLINK;
 			dasd_schedule_block_bh(block);
 			continue;
 		}
@@ -2252,7 +2264,6 @@ enum blk_eh_timer_return dasd_times_out(struct request *req)
 {
 	struct dasd_ccw_req *cqr = req->completion_data;
 	struct dasd_block *block = req->q->queuedata;
-	int rc = 0;
 
 	if (!cqr)
 		return BLK_EH_NOT_HANDLED;
@@ -2266,7 +2277,23 @@ enum blk_eh_timer_return dasd_times_out(struct request *req)
 			      cqr, cqr->status);
 		spin_lock(get_ccwdev_lock(device->cdev));
 		cqr->retries = -1;
+		cqr->intrc = -ETIMEDOUT;
+		list_del(&cqr->devlist);
+		if (cqr->status != DASD_CQR_DONE ||
+		    cqr->status != DASD_CQR_IN_IO ||
+		    cqr->status != DASD_CQR_IN_ERP ||
+		    cqr->status != DASD_CQR_CLEAR_PENDING) {
+			cqr->status = DASD_CQR_FAILED;
+		} else if (!cqr->callback)
+			cqr->callback = dasd_return_cqr_cb;
 		spin_unlock(get_ccwdev_lock(device->cdev));
+		/* Short-circuit if not in I/O */
+		if (cqr->status == DASD_CQR_FAILED ||
+		    cqr->status == DASD_CQR_DONE) {
+			list_del(&cqr->blocklist);
+			__dasd_cleanup_cqr(cqr);
+			return BLK_EH_NOT_HANDLED;
+		}
 		if (!dasd_cancel_req(cqr))
 			return BLK_EH_NOT_HANDLED;
 

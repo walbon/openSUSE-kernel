@@ -2296,8 +2296,13 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_cmd_single(
 	cqr->startdev = startdev;
 	cqr->memdev = startdev;
 	cqr->block = block;
-	cqr->expires = startdev->default_expires * HZ;
-	cqr->retries = startdev->default_retries;
+	if (req->cmd_flags & REQ_FAILFAST_DEV) {
+		cqr->expires = startdev->failfast_expires * HZ;
+		cqr->retries = startdev->failfast_retries;
+	} else {
+		cqr->expires = startdev->default_expires * HZ;
+		cqr->retries = startdev->default_retries;
+	}
 	cqr->lpm = startdev->path_data.ppm;
 	cqr->buildclk = get_clock();
 	cqr->status = DASD_CQR_FILLED;
@@ -2471,8 +2476,13 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_cmd_track(
 	cqr->startdev = startdev;
 	cqr->memdev = startdev;
 	cqr->block = block;
-	cqr->expires = startdev->default_expires * HZ;
-	cqr->retries = startdev->default_retries;
+	if (req->cmd_flags & REQ_FAILFAST_DEV) {
+		cqr->expires = startdev->failfast_expires * HZ;
+		cqr->retries = startdev->failfast_retries;
+	} else {
+		cqr->expires = startdev->default_expires * HZ;
+		cqr->retries = startdev->default_retries;
+	}
 	cqr->lpm = startdev->path_data.ppm;
 	cqr->buildclk = get_clock();
 	cqr->status = DASD_CQR_FILLED;
@@ -2759,8 +2769,13 @@ static struct dasd_ccw_req *dasd_eckd_build_cp_tpm_track(
 	cqr->startdev = startdev;
 	cqr->memdev = startdev;
 	cqr->block = block;
-	cqr->expires = startdev->default_expires * HZ;
-	cqr->retries = startdev->default_retries;
+	if (req->cmd_flags & REQ_FAILFAST_DEV) {
+		cqr->expires = startdev->failfast_expires * HZ;
+		cqr->retries = startdev->failfast_retries;
+	} else {
+		cqr->expires = startdev->default_expires * HZ;
+		cqr->retries = startdev->default_retries;
+	}
 	cqr->lpm = startdev->path_data.ppm;
 	cqr->buildclk = get_clock();
 	cqr->status = DASD_CQR_FILLED;
@@ -2959,8 +2974,13 @@ static struct dasd_ccw_req *dasd_raw_build_cp(struct dasd_device *startdev,
 	cqr->startdev = startdev;
 	cqr->memdev = startdev;
 	cqr->block = block;
-	cqr->expires = startdev->default_expires * HZ;
-	cqr->retries = startdev->default_retries;
+	if (req->cmd_flags & REQ_FAILFAST_DEV) {
+		cqr->expires = startdev->failfast_expires * HZ;
+		cqr->retries = startdev->failfast_retries;
+	} else {
+		cqr->expires = startdev->default_expires * HZ;
+		cqr->retries = startdev->default_retries;
+	}
 	cqr->lpm = startdev->path_data.ppm;
 	cqr->buildclk = get_clock();
 	cqr->status = DASD_CQR_FILLED;
