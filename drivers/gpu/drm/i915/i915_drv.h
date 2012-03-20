@@ -369,6 +369,8 @@ typedef struct drm_i915_private {
 	unsigned int lvds_use_ssc:1;
 	unsigned int display_clock_mode:1;
 	int lvds_ssc_freq;
+	unsigned int bios_lvds_val; /* initial [PCH_]LVDS reg val in VBIOS */
+	unsigned int lvds_val; /* used for checking LVDS channel mode */
 	struct {
 		int rate;
 		int lanes;
@@ -1005,6 +1007,7 @@ extern int i915_panel_ignore_lid;
 extern unsigned int i915_powersave;
 extern int i915_semaphores;
 extern unsigned int i915_lvds_downclock;
+extern int i915_lvds_channel_mode __read_mostly;
 extern int i915_panel_use_ssc;
 extern int i915_vbt_sdvo_panel_type;
 extern int i915_enable_rc6;
