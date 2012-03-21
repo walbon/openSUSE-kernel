@@ -212,32 +212,26 @@ static int blkback_remove(struct xenbus_device *dev)
 	return 0;
 }
 
-int blkback_barrier(struct xenbus_transaction xbt,
-		    struct backend_info *be, int state)
+void blkback_barrier(struct xenbus_transaction xbt,
+		     struct backend_info *be, int state)
 {
 	struct xenbus_device *dev = be->dev;
-	int err;
+	int err = xenbus_printf(xbt, dev->nodename, "feature-barrier",
+				"%d", state);
 
-	err = xenbus_printf(xbt, dev->nodename, "feature-barrier",
-			    "%d", state);
 	if (err)
-		xenbus_dev_fatal(dev, err, "writing feature-barrier");
-
-	return err;
+		xenbus_dev_error(dev, err, "writing feature-barrier");
 }
 
-int blkback_flush_diskcache(struct xenbus_transaction xbt,
-			    struct backend_info *be, int state)
+void blkback_flush_diskcache(struct xenbus_transaction xbt,
+			     struct backend_info *be, int state)
 {
 	struct xenbus_device *dev = be->dev;
-	int err;
+	int err = xenbus_printf(xbt, dev->nodename, "feature-flush-cache",
+				"%d", state);
 
-	err = xenbus_printf(xbt, dev->nodename, "feature-flush-cache",
-			    "%d", state);
 	if (err)
-		xenbus_dev_fatal(dev, err, "writing feature-flush-cache");
-
-	return err;
+		xenbus_dev_error(dev, err, "writing feature-flush-cache");
 }
 
 /**
@@ -426,13 +420,11 @@ static void frontend_changed(struct xenbus_device *dev,
 		break;
 
 	case XenbusStateClosing:
-		blkif_disconnect(be->blkif);
-		xenbus_switch_state(dev, XenbusStateClosing);
-		break;
-
 	case XenbusStateClosed:
-		xenbus_switch_state(dev, XenbusStateClosed);
-		if (xenbus_dev_is_online(dev))
+		blkif_disconnect(be->blkif);
+		xenbus_switch_state(dev, frontend_state);
+		if (frontend_state != XenbusStateClosed ||
+		    xenbus_dev_is_online(dev))
 			break;
 		/* fall through if not online */
 	case XenbusStateUnknown:
@@ -471,13 +463,8 @@ again:
 		return;
 	}
 
-	err = blkback_flush_diskcache(xbt, be, be->blkif->vbd.flush_support);
-	if (err)
-		goto abort;
-
-	err = blkback_barrier(xbt, be, be->blkif->vbd.flush_support);
-	if (err)
-		goto abort;
+	blkback_flush_diskcache(xbt, be, be->blkif->vbd.flush_support);
+	blkback_barrier(xbt, be, be->blkif->vbd.flush_support);
 
 	err = xenbus_printf(xbt, dev->nodename, "sectors", "%llu",
 			    vbd_size(&be->blkif->vbd));

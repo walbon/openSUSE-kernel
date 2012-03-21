@@ -143,10 +143,10 @@ void blkif_xenbus_init(void);
 irqreturn_t blkif_be_int(int irq, void *dev_id);
 int blkif_schedule(void *arg);
 
-int blkback_barrier(struct xenbus_transaction xbt,
-		    struct backend_info *be, int state);
-int blkback_flush_diskcache(struct xenbus_transaction,
-			    struct backend_info *, int state);
+void blkback_barrier(struct xenbus_transaction, struct backend_info *,
+		     int state);
+void blkback_flush_diskcache(struct xenbus_transaction,
+			     struct backend_info *, int state);
 
 /* cdrom media change */
 void cdrom_add_media_watch(struct backend_info *be);
