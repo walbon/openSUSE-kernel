@@ -1710,6 +1710,7 @@ static void handle_write_error(conf_t *conf, r10bio_t *r10_bio)
 		       wbio->bi_vcnt *sizeof(struct bio_vec));
 		wbio->bi_idx = r10_bio->master_bio->bi_idx;
 		wbio->bi_size = r10_bio->sectors << 9;
+		wbio->bi_next = NULL;
 
 		d = r10_bio->devs[slot].devnum;
 		rdev = conf->mirrors[d].rdev;
