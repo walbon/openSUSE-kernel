@@ -1485,7 +1485,7 @@ ENTRY(cstar_ret_from_fork)
 	andl $~_TIF_CSTAR,TI_flags(%ebp)
 	jmp ret_from_fork
 	CFI_ENDPROC
-END(ret_from_fork)
+END(cstar_ret_from_fork)
 
 .section .rodata,"a"
 #include "syscall_table_32.S"
@@ -1509,14 +1509,14 @@ mask=0
  .endif
 .endr
 #define	sys_call_table cstar_call_table
-#define	sys_fork cstar_set_tif
-#define	sys_clone cstar_set_tif
-#define	sys_vfork cstar_set_tif
+#define	ptregs_fork cstar_set_tif
+#define	ptregs_clone cstar_set_tif
+#define	ptregs_vfork cstar_set_tif
 #include "syscall_table_32.S"
 #undef	sys_call_table
-#undef	sys_fork
-#undef	sys_clone
-#undef	sys_vfork
+#undef	ptregs_fork
+#undef	ptregs_clone
+#undef	ptregs_vfork
 
 /*
  * Some functions should be protected against kprobes

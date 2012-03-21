@@ -670,10 +670,15 @@ int blkif_ioctl(struct block_device *bd, fmode_t mode,
 				return scsi_cmd_ioctl(filep, info->rq,
 						      info->gd, command,
 						      (void __user *)argument);
-#else
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0) \
+   && (LINUX_VERSION_CODE >= KERNEL_VERSION(3,1,0) \
+       || LINUX_VERSION_CODE < KERNEL_VERSION(3,0,18))
 				return scsi_cmd_ioctl(info->rq, info->gd,
 						      mode, command,
 						      (void __user *)argument);
+#else
+				return scsi_cmd_blk_ioctl(bd, mode, command,
+							  (void __user *)argument);
 #endif
 			}
 		}
