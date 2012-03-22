@@ -238,7 +238,7 @@ static int exclude_super_stripes(struct btrfs_root *root,
 	u64 bytenr;
 	u64 *logical;
 	int stripe_len;
-	int i, nr, ret = -EIO;
+	int i, nr, ret = 0;
 
 	if (cache->key.objectid < BTRFS_SUPER_INFO_OFFSET) {
 		stripe_len = BTRFS_SUPER_INFO_OFFSET - cache->key.objectid;
