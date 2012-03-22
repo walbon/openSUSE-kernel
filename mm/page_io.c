@@ -284,5 +284,5 @@ int swap_set_page_dirty(struct page *page)
 	if (mapping->a_ops->set_page_dirty)
 		return mapping->a_ops->set_page_dirty(page);
 	else
-		return __set_page_dirty_nobuffers(page);
+		return __set_page_dirty_no_writeback(page);
 }
