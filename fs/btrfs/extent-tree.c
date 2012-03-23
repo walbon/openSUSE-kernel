@@ -250,8 +250,11 @@ static int exclude_super_stripes(struct btrfs_root *root,
 
 	for (i = 0; i < BTRFS_SUPER_MIRROR_MAX; i++) {
 		bytenr = btrfs_sb_offset(i);
-		if (bytenr <= cache->key.objectid + cache->key.offset)
+		if (cache->key.objectid + cache->key.offset <= bytenr)
 			break;
+		if (bytenr < cache->key.objectid)
+			continue;
+
 		logical = NULL;
 		ret = btrfs_rmap_block(&root->fs_info->mapping_tree,
 				       cache->key.objectid, bytenr,
