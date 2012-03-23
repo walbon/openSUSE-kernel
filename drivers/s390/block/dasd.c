@@ -2260,45 +2260,51 @@ static void do_dasd_request(struct request_queue *queue)
 	spin_unlock(&block->queue_lock);
 }
 
+/*
+ * Block timeout callback, called from the block layer
+ *
+ * request_queue lock is held on entry.
+ *
+ * Return values:
+ * BLK_EH_RESET_TIMER if the request should be left running
+ * BLK_EH_NOT_HANDLED if the request is handled or terminated
+ *                    by the driver.
+ * BLK_EH_HANDLED     if the request should be aborted by
+ *                    the block layer.
+ */
 enum blk_eh_timer_return dasd_times_out(struct request *req)
 {
 	struct dasd_ccw_req *cqr = req->completion_data;
 	struct dasd_block *block = req->q->queuedata;
+	struct dasd_device *device;
 
 	if (!cqr)
 		return BLK_EH_NOT_HANDLED;
 
-	if ((block->base->features & DASD_FEATURE_BLKTIMEOUT)) {
-		struct dasd_device *device;
+	if (!(block->base->features & DASD_FEATURE_BLKTIMEOUT))
+		return BLK_EH_RESET_TIMER;
 
-		device = cqr->startdev ? cqr->startdev : block->base;
-		DBF_DEV_EVENT(DBF_WARNING, device,
-			      " dasd_times_out cqr %p status %x",
-			      cqr, cqr->status);
-		spin_lock(get_ccwdev_lock(device->cdev));
-		cqr->retries = -1;
-		cqr->intrc = -ETIMEDOUT;
-		list_del(&cqr->devlist);
-		if (cqr->status != DASD_CQR_DONE ||
-		    cqr->status != DASD_CQR_IN_IO ||
-		    cqr->status != DASD_CQR_IN_ERP ||
-		    cqr->status != DASD_CQR_CLEAR_PENDING) {
-			cqr->status = DASD_CQR_FAILED;
-		} else if (!cqr->callback)
-			cqr->callback = dasd_return_cqr_cb;
-		spin_unlock(get_ccwdev_lock(device->cdev));
-		/* Short-circuit if not in I/O */
-		if (cqr->status == DASD_CQR_FAILED ||
-		    cqr->status == DASD_CQR_DONE) {
-			list_del(&cqr->blocklist);
-			__dasd_cleanup_cqr(cqr);
-			return BLK_EH_NOT_HANDLED;
-		}
-		if (!dasd_cancel_req(cqr))
-			return BLK_EH_NOT_HANDLED;
+	device = cqr->startdev ? cqr->startdev : block->base;
+	DBF_DEV_EVENT(DBF_WARNING, device,
+		      " dasd_times_out cqr %p status %x",
+		      cqr, cqr->status);
+	/* Wait for ERP to finish */
+	if (cqr->status == DASD_CQR_IN_ERP)
+		return BLK_EH_RESET_TIMER;
+	spin_lock(get_ccwdev_lock(device->cdev));
+	cqr->retries = -1;
+	cqr->intrc = -ETIMEDOUT;
+	list_del(&cqr->devlist);
+	spin_unlock(get_ccwdev_lock(device->cdev));
+	if (cqr->status >= DASD_CQR_QUEUED) {
+		if (dasd_cancel_req(cqr))
+			return BLK_EH_RESET_TIMER;
+	} else if (cqr->status == DASD_CQR_FILLED ||
+		   cqr->status == DASD_CQR_NEED_ERP)
+		cqr->status = DASD_CQR_TERMINATED;
 
-	}
-	return BLK_EH_RESET_TIMER;
+	dasd_schedule_block_bh(block);
+	return BLK_EH_NOT_HANDLED;
 }
 
 /*
