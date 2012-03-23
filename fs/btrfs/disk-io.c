@@ -2313,7 +2313,7 @@ struct btrfs_root *open_ctree(struct super_block *sb,
 	}
 
 	if ((features & BTRFS_FEATURE_INCOMPAT_MIXED_GROUPS) &&
-			(leafsize != nodesize && sectorsize != nodesize)) {
+			(leafsize != nodesize || sectorsize != nodesize)) {
 		printk(KERN_WARNING "btrfs: unequal leaf/node/sector sizes "
 				"are not allowed for mixed block groups on %s\n",
 				sb->s_id);
