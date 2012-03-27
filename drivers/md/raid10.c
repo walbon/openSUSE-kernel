@@ -1023,14 +1023,8 @@ static int enough(conf_t *conf, int ignore)
 	return 1;
 }
 
-#ifdef __GENKSYMS__
 static void error(mddev_t *mddev, mdk_rdev_t *rdev)
 {
-	int force = 0;
-#else
-static void error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
-{
-#endif
 	char b[BDEVNAME_SIZE];
 	conf_t *conf = mddev->private;
 	unsigned long flags;
@@ -1043,7 +1037,6 @@ static void error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
 	 */
 	spin_lock_irqsave(&conf->device_lock, flags);
 	if (test_bit(In_sync, &rdev->flags)
-	    && !force
 	    && !enough(conf, rdev->raid_disk)) {
 		/*
 		 * Don't fail the drive, just return an IO error.
@@ -1145,7 +1138,7 @@ static int raid10_add_disk(mddev_t *mddev, mdk_rdev_t *rdev)
 		 * very different from resync
 		 */
 		return -EBUSY;
-	if (rdev->saved_raid_disk < 0 && !enough(conf, -1))
+	if (!enough(conf, -1))
 		return -EINVAL;
 
 	if (rdev->raid_disk >= 0)

@@ -183,18 +183,12 @@ static int multipath_congested(void *data, int bits)
 /*
  * Careful, this can execute in IRQ contexts as well!
  */
-#ifdef __GENKSYMS__
 static void multipath_error (mddev_t *mddev, mdk_rdev_t *rdev)
 {
-	int force = 0;
-#else
-static void multipath_error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
-{
-#endif
 	multipath_conf_t *conf = mddev->private;
 	char b[BDEVNAME_SIZE];
 
-	if (conf->raid_disks - mddev->degraded <= 1 && !force) {
+	if (conf->raid_disks - mddev->degraded <= 1) {
 		/*
 		 * Uh oh, we can do nothing if this is our last path, but
 		 * first check if this is a queued request for a device

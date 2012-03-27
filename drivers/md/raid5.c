@@ -1694,14 +1694,8 @@ static void raid5_build_block(struct stripe_head *sh, int i, int previous)
 	dev->sector = compute_blocknr(sh, i, previous);
 }
 
-#ifdef __GENKSYMS__
 static void error(mddev_t *mddev, mdk_rdev_t *rdev)
 {
-	int force = 0;
-#else
-static void error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
-{
-#endif
 	char b[BDEVNAME_SIZE];
 	raid5_conf_t *conf = mddev->private;
 	pr_debug("raid456: error called\n");
@@ -5369,7 +5363,7 @@ static int raid5_add_disk(mddev_t *mddev, mdk_rdev_t *rdev)
 	int first = 0;
 	int last = conf->raid_disks - 1;
 
-	if (rdev->saved_raid_disk < 0 && has_failed(conf))
+	if (has_failed(conf))
 		/* no point adding a device */
 		return -EINVAL;
 

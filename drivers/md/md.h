@@ -371,11 +371,7 @@ struct mdk_personality
 	/* error_handler must set ->faulty and clear ->in_sync
 	 * if appropriate, and should abort recovery if needed 
 	 */
-#ifdef __GENKSYMS__
 	void (*error_handler)(mddev_t *mddev, mdk_rdev_t *rdev);
-#else
-	void (*error_handler)(mddev_t *mddev, mdk_rdev_t *rdev, int force);
-#endif
 	int (*hot_add_disk) (mddev_t *mddev, mdk_rdev_t *rdev);
 	int (*hot_remove_disk) (mddev_t *mddev, int number);
 	int (*spare_active) (mddev_t *mddev);

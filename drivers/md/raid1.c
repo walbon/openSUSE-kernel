@@ -989,14 +989,8 @@ static void status(struct seq_file *seq, mddev_t *mddev)
 }
 
 
-#ifdef __GENKSYMS__
 static void error(mddev_t *mddev, mdk_rdev_t *rdev)
 {
-	int force = 0;
-#else
-static void error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
-{
-#endif
 	char b[BDEVNAME_SIZE];
 	conf_t *conf = mddev->private;
 	unsigned long flags;
@@ -1009,7 +1003,6 @@ static void error(mddev_t *mddev, mdk_rdev_t *rdev, int force)
 	 */
 	spin_lock_irqsave(&conf->device_lock, flags);
 	if (test_bit(In_sync, &rdev->flags)
-	    && !force
 	    && (conf->raid_disks - mddev->degraded) == 1) {
 		/*
 		 * Don't fail the drive, act as though we were just a
