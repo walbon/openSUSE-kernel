@@ -786,7 +786,8 @@ static void super_written(struct bio *bio, int error)
 			set_bit(MD_NEED_REWRITE, &mddev->flags);
 			set_bit(LastDev, &rdev->flags);
 		}
-	}
+	} else
+		clear_bit(LastDev, &rdev->flags);
 
 	if (atomic_dec_and_test(&mddev->pending_writes))
 		wake_up(&mddev->sb_wait);
@@ -817,7 +818,7 @@ void md_super_write(mddev_t *mddev, mdk_rdev_t *rdev,
 	bio->bi_end_io = super_written;
 
 	if (test_bit(FailFast, &rdev->flags) &&
-	    !test_and_clear_bit(LastDev, &rdev->flags))
+	    !test_bit(LastDev, &rdev->flags))
 		ff = REQ_FAILFAST_DEV;
 
 	atomic_inc(&mddev->pending_writes);
@@ -2321,6 +2322,7 @@ repeat:
 		"md: updating %s RAID superblock on device (in sync %d)\n",
 		mdname(mddev),mddev->in_sync);
 
+rewrite:
 	bitmap_update_sb(mddev->bitmap);
 	list_for_each_entry(rdev, &mddev->disks, same_set) {
 		char b[BDEVNAME_SIZE];
@@ -2347,7 +2349,7 @@ repeat:
 			break;
 	}
 	if (md_super_wait(mddev) < 0)
-		goto repeat;
+		goto rewrite;
 	/* if there was a failure, MD_CHANGE_DEVS was set, and we re-write super */
 
 	spin_lock_irq(&mddev->write_lock);
@@ -4708,7 +4710,8 @@ int md_run(mddev_t *mddev)
 	
 	set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
 	
-	if (mddev->flags)
+	if (test_bit(MD_CHANGE_DEVS, &mddev->flags) ||
+	    test_bit(MD_CHANGE_CLEAN, &mddev->flags))
 		md_update_sb(mddev, 0);
 
 	md_new_event(mddev);
@@ -4850,7 +4853,9 @@ static void __md_stop_writes(mddev_t *mddev)
 		bitmap_flush(mddev);
 	while (md_super_wait(mddev) < 0);
 
-	if (!mddev->in_sync || mddev->flags) {
+	if (!mddev->in_sync ||
+	    test_bit(MD_CHANGE_DEVS, &mddev->flags) ||
+	    test_bit(MD_CHANGE_CLEAN, &mddev->flags)) {
 		/* mark array as shutdown cleanly */
 		mddev->in_sync = 1;
 		md_update_sb(mddev, 1);
@@ -7295,8 +7300,8 @@ void md_check_recovery(mddev_t *mddev)
 
 	if (mddev->ro && !test_bit(MD_RECOVERY_NEEDED, &mddev->recovery))
 		return;
-	if ( ! (
-		(mddev->flags & ~ (1<<MD_CHANGE_PENDING)) ||
+	if ( ! (test_bit(MD_CHANGE_DEVS, &mddev->flags) ||
+		test_bit(MD_CHANGE_CLEAN, &mddev->flags) ||
 		test_bit(MD_RECOVERY_NEEDED, &mddev->recovery) ||
 		test_bit(MD_RECOVERY_DONE, &mddev->recovery) ||
 		(mddev->external == 0 && mddev->safemode == 1) ||
@@ -7348,7 +7353,8 @@ void md_check_recovery(mddev_t *mddev)
 				sysfs_notify_dirent_safe(mddev->sysfs_state);
 		}
 
-		if (mddev->flags)
+		if (test_bit(MD_CHANGE_DEVS, &mddev->flags) ||
+		    test_bit(MD_CHANGE_CLEAN, &mddev->flags))
 			md_update_sb(mddev, 0);
 
 		if (test_bit(MD_RECOVERY_RUNNING, &mddev->recovery) &&
