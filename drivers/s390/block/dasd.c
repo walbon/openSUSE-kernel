@@ -2281,7 +2281,7 @@ enum blk_eh_timer_return dasd_times_out(struct request *req)
 	if (!cqr)
 		return BLK_EH_NOT_HANDLED;
 
-	if (!(block->base->features & DASD_FEATURE_BLKTIMEOUT))
+	if (!test_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags))
 		return BLK_EH_RESET_TIMER;
 
 	device = cqr->startdev ? cqr->startdev : block->base;
