@@ -1901,8 +1901,9 @@ setup_syscalls_segments(struct x86_emulate_ctxt *ctxt,
 	ss->p = 1;
 }
 
-static bool em_syscall_is_enabled(struct x86_emulate_ctxt *ctxt, struct x86_emulate_ops *ops)
+static bool em_syscall_is_enabled(struct x86_emulate_ctxt *ctxt)
 {
+	struct x86_emulate_ops *ops = ctxt->ops;
 	u32 eax, ebx, ecx, edx;
 
 	/*
@@ -1959,7 +1960,7 @@ emulate_syscall(struct x86_emulate_ctxt *ctxt, struct x86_emulate_ops *ops)
 	    ctxt->mode == X86EMUL_MODE_VM86)
 		return emulate_ud(ctxt);
 
-	if (!(em_syscall_is_enabled(ctxt, ops)))
+	if (!(em_syscall_is_enabled(ctxt)))
 		return emulate_ud(ctxt);
 
 	ops->get_msr(ctxt, MSR_EFER, &efer);
