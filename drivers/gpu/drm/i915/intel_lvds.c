@@ -398,6 +398,26 @@ out:
 	return true;
 }
 
+static int intel_disable_at_modeset_callback(const struct dmi_system_id *id)
+{
+	DRM_DEBUG_KMS("Disabling LVDS at modeset for %s\n", id->ident);
+	return 1;
+}
+
+/* Requires to disable LVDS for avoiding a broken screen at mode change */
+static const struct dmi_system_id intel_disable_at_modeset[] = {
+	{
+		.callback = intel_disable_at_modeset_callback,
+		.ident = "HP ProBook",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook"),
+		},
+	},
+
+	{ }	/* terminating entry */
+};
+
 static void intel_lvds_prepare(struct drm_encoder *encoder)
 {
 	struct intel_lvds *intel_lvds = to_intel_lvds(encoder);
@@ -407,7 +427,8 @@ static void intel_lvds_prepare(struct drm_encoder *encoder)
 	 * the panel fitter. However at all other times we can just reset
 	 * the registers regardless.
 	 */
-	if (!HAS_PCH_SPLIT(encoder->dev) && intel_lvds->pfit_dirty)
+	if ((!HAS_PCH_SPLIT(encoder->dev) && intel_lvds->pfit_dirty) ||
+	    dmi_check_system(intel_disable_at_modeset))
 		intel_lvds_disable(intel_lvds);
 }
 
