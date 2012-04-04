@@ -552,7 +552,8 @@ int pci_enable_msi_block(struct pci_dev *dev, unsigned int nvec)
 		int ret;
 
 		temp = dev->irq;
-		WARN_ON(nvec > 1); /* XXX */
+		if (nvec > 1) /* XXX */
+			return 1;
 		ret = pci_frontend_enable_msi(dev);
 		if (ret)
 			return ret;

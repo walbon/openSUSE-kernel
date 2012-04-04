@@ -247,8 +247,8 @@ static void gnttab_handle_deferred(unsigned long unused)
 			entry = NULL;
 		} else {
 			if (!--entry->warn_delay)
-				printk(KERN_INFO "g.e. %#x still pending\n",
-				       entry->ref);
+				pr_info("g.e. %#x still pending\n",
+					entry->ref);
 			if (!first)
 				first = entry;
 		}

@@ -63,7 +63,7 @@ int pciback_enable_msix(struct pciback_device *pdev,
 
 	op->value = result;
 
-	return result;
+	return result > 0 ? 0 : result;
 }
 
 int pciback_disable_msix(struct pciback_device *pdev,
