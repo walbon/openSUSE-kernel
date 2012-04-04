@@ -1396,7 +1396,8 @@ static noinline int reada_for_balance(struct btrfs_root *root,
  * if lowest_unlock is 1, level 0 won't be unlocked
  */
 static noinline void unlock_up(struct btrfs_path *path, int level,
-			       int lowest_unlock)
+			       int lowest_unlock, int min_write_lock_level,
+			       int *write_lock_level)
 {
 	int i;
 	int skip_level = level;
@@ -1428,6 +1429,11 @@ static noinline void unlock_up(struct btrfs_path *path, int level,
 		if (i >= lowest_unlock && i > skip_level && path->locks[i]) {
 			btrfs_tree_unlock_rw(t, path->locks[i]);
 			path->locks[i] = 0;
+			if (write_lock_level &&
+			    i > min_write_lock_level &&
+			    i <= *write_lock_level) {
+				*write_lock_level = i - 1;
+			}
 		}
 	}
 }
@@ -1651,6 +1657,7 @@ int btrfs_search_slot(struct btrfs_trans_handle *trans, struct btrfs_root
 	/* everything at write_lock_level or lower must be write locked */
 	int write_lock_level = 0;
 	u8 lowest_level = 0;
+	int min_write_lock_level;
 
 	lowest_level = p->lowest_level;
 	WARN_ON(lowest_level && ins_len > 0);
@@ -1677,6 +1684,8 @@ int btrfs_search_slot(struct btrfs_trans_handle *trans, struct btrfs_root
 
 	if (cow && (p->keep_locks || p->lowest_level))
 		write_lock_level = BTRFS_MAX_LEVEL;
+
+	min_write_lock_level = write_lock_level;
 
 again:
 	/*
@@ -1809,7 +1818,8 @@ cow_done:
 				goto again;
 			}
 
-			unlock_up(p, level, lowest_unlock);
+			unlock_up(p, level, lowest_unlock,
+				  min_write_lock_level, &write_lock_level);
 
 			if (level == lowest_level) {
 				if (dec)
@@ -1871,7 +1881,8 @@ cow_done:
 				}
 			}
 			if (!p->search_for_split)
-				unlock_up(p, level, lowest_unlock);
+				unlock_up(p, level, lowest_unlock,
+					  min_write_lock_level, &write_lock_level);
 			goto done;
 		}
 	}
@@ -4013,7 +4024,7 @@ find_next_key:
 		path->slots[level] = slot;
 		if (level == path->lowest_level) {
 			ret = 0;
-			unlock_up(path, level, 1);
+			unlock_up(path, level, 1, 0, NULL);
 			goto out;
 		}
 		btrfs_set_path_blocking(path);
@@ -4024,7 +4035,7 @@ find_next_key:
 
 		path->locks[level - 1] = BTRFS_READ_LOCK;
 		path->nodes[level - 1] = cur;
-		unlock_up(path, level, 1);
+		unlock_up(path, level, 1, 0, NULL);
 		btrfs_clear_path_blocking(path, NULL, 0);
 	}
 out:
@@ -4260,7 +4271,7 @@ again:
 	}
 	ret = 0;
 done:
-	unlock_up(path, 0, 1);
+	unlock_up(path, 0, 1, 0, NULL);
 	path->leave_spinning = old_spinning;
 	if (!old_spinning)
 		btrfs_set_path_blocking(path);
