@@ -183,27 +183,40 @@ static void acpi_post_unmap(phys_addr_t paddr, unsigned long size)
 
 /* In NMI handler, should set silent = 1 */
 static int acpi_check_gar(struct acpi_generic_address *reg,
-			  u64 *paddr, int silent)
+			  u64 *paddr, u32 *access_bit_width, int silent)
 {
-	u32 width, space_id;
+	u32 bit_width, bit_offset, access_size_code, space_id;
 
-	width = reg->bit_width;
+	bit_width = reg->bit_width;
+	bit_offset = reg->bit_offset;
+	access_size_code = reg->access_width;
 	space_id = reg->space_id;
 	/* Handle possible alignment issues */
 	memcpy(paddr, &reg->address, sizeof(*paddr));
 	if (!*paddr) {
 		if (!silent)
 			pr_warning(FW_BUG ACPI_PFX
-			"Invalid physical address in GAR [0x%llx/%u/%u]\n",
-				   *paddr, width, space_id);
+			   "Invalid physical address in GAR [0x%llx/%u/%u/%u/%u]\n",
+			   *paddr, bit_width, bit_offset, access_size_code,
+			   space_id);
 		return -EINVAL;
 	}
 
-	if ((width != 8) && (width != 16) && (width != 32) && (width != 64)) {
+	if (access_size_code < 1 || access_size_code > 4) {
 		if (!silent)
 			pr_warning(FW_BUG ACPI_PFX
-				   "Invalid bit width in GAR [0x%llx/%u/%u]\n",
-				   *paddr, width, space_id);
+			   "Invalid access size code in GAR [0x%llx/%u/%u/%u/%u]\n",
+			   *paddr, bit_width, bit_offset, access_size_code,
+			   space_id);
+		return -EINVAL;
+	}
+	*access_bit_width = 1UL << (access_size_code + 2);
+
+	if ((bit_width + bit_offset) > *access_bit_width) {
+		pr_warning(FW_BUG ACPI_PFX
+			   "Invalid bit width + offset in GAR [0x%llx/%u/%u/%u/%u]\n",
+			   *paddr, bit_width, bit_offset, access_size_code,
+			   space_id);
 		return -EINVAL;
 	}
 
@@ -211,8 +224,9 @@ static int acpi_check_gar(struct acpi_generic_address *reg,
 	    space_id != ACPI_ADR_SPACE_SYSTEM_IO) {
 		if (!silent)
 			pr_warning(FW_BUG ACPI_PFX
-			"Invalid address space type in GAR [0x%llx/%u/%u]\n",
-				   *paddr, width, space_id);
+			   "Invalid address space type in GAR [0x%llx/%u/%u/%u/%u]\n",
+			   *paddr, bit_width, bit_offset, access_size_code,
+			   space_id);
 		return -EINVAL;
 	}
 
@@ -225,15 +239,16 @@ int acpi_pre_map_gar(struct acpi_generic_address *reg)
 	u64 paddr;
 	void __iomem *vaddr;
 	int rc;
+	u32 access_bit_width;
 
 	if (reg->space_id != ACPI_ADR_SPACE_SYSTEM_MEMORY)
 		return 0;
 
-	rc = acpi_check_gar(reg, &paddr, 0);
+	rc = acpi_check_gar(reg, &paddr, &access_bit_width, 0);
 	if (rc)
 		return rc;
 
-	vaddr = acpi_pre_map(paddr, reg->bit_width / 8);
+	vaddr = acpi_pre_map(paddr, access_bit_width / 8);
 	if (!vaddr)
 		return -EIO;
 
@@ -246,15 +261,16 @@ int acpi_post_unmap_gar(struct acpi_generic_address *reg)
 {
 	u64 paddr;
 	int rc;
+	u32 access_bit_width;
 
 	if (reg->space_id != ACPI_ADR_SPACE_SYSTEM_MEMORY)
 		return 0;
 
-	rc = acpi_check_gar(reg, &paddr, 0);
+	rc = acpi_check_gar(reg, &paddr, &access_bit_width, 0);
 	if (rc)
 		return rc;
 
-	acpi_post_unmap(paddr, reg->bit_width / 8);
+	acpi_post_unmap(paddr, access_bit_width / 8);
 
 	return 0;
 }
@@ -327,17 +343,18 @@ int acpi_atomic_read(u64 *val, struct acpi_generic_address *reg)
 {
 	u64 paddr;
 	int rc;
+	u32 access_bit_width;
 
-	rc = acpi_check_gar(reg, &paddr, 1);
+	rc = acpi_check_gar(reg, &paddr, &access_bit_width, 1);
 	if (rc)
 		return rc;
 
 	*val = 0;
 	switch (reg->space_id) {
 	case ACPI_ADR_SPACE_SYSTEM_MEMORY:
-		return acpi_atomic_read_mem(paddr, val, reg->bit_width);
+		return acpi_atomic_read_mem(paddr, val, access_bit_width);
 	case ACPI_ADR_SPACE_SYSTEM_IO:
-		return acpi_os_read_port(paddr, (u32 *)val, reg->bit_width);
+		return acpi_os_read_port(paddr, (u32 *)val, access_bit_width);
 	default:
 		return -EINVAL;
 	}
@@ -348,16 +365,17 @@ int acpi_atomic_write(u64 val, struct acpi_generic_address *reg)
 {
 	u64 paddr;
 	int rc;
+	u32 access_bit_width;
 
-	rc = acpi_check_gar(reg, &paddr, 1);
+	rc = acpi_check_gar(reg, &paddr, &access_bit_width, 1);
 	if (rc)
 		return rc;
 
 	switch (reg->space_id) {
 	case ACPI_ADR_SPACE_SYSTEM_MEMORY:
-		return acpi_atomic_write_mem(paddr, val, reg->bit_width);
+		return acpi_atomic_write_mem(paddr, val, access_bit_width);
 	case ACPI_ADR_SPACE_SYSTEM_IO:
-		return acpi_os_write_port(paddr, val, reg->bit_width);
+		return acpi_os_write_port(paddr, val, access_bit_width);
 	default:
 		return -EINVAL;
 	}
