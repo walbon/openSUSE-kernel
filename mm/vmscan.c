@@ -3273,6 +3273,11 @@ static void __shrink_page_cache(gfp_t mask)
 	struct reclaim_state *old_rs = current->reclaim_state;
 	long nr_pages;
 
+	/* We might sleep during direct reclaim so make atomic context
+	 * is certainly a bug.
+	 */
+	BUG_ON(mask & GFP_NOWAIT);
+
 	/* How many pages are we over the limit?
 	 * But don't enforce limit if there's plenty of free mem */
 	nr_pages = pagecache_over_limit();
