@@ -86,8 +86,13 @@ static int hid_start_in(struct hid_device *hid)
 			!test_bit(HID_REPORTED_IDLE, &usbhid->iofl) &&
 			!test_and_set_bit(HID_IN_RUNNING, &usbhid->iofl)) {
 		rc = usb_submit_urb(usbhid->urbin, GFP_ATOMIC);
-		if (rc != 0)
+		if (rc != 0) {
 			clear_bit(HID_IN_RUNNING, &usbhid->iofl);
+			if (rc == -ENOSPC)
+				set_bit(HID_NO_BANDWIDTH, &usbhid->iofl);
+		} else {
+			clear_bit(HID_NO_BANDWIDTH, &usbhid->iofl);
+		}
 	}
 	spin_unlock_irqrestore(&usbhid->lock, flags);
 	return rc;
@@ -173,8 +178,10 @@ static void hid_io_error(struct hid_device *hid)
 
 	if (time_after(jiffies, usbhid->stop_retry)) {
 
-		/* Retries failed, so do a port reset */
-		if (!test_and_set_bit(HID_RESET_PENDING, &usbhid->iofl)) {
+		/* Retries failed, so do a port reset unless we lack bandwidth*/
+		if (test_bit(HID_NO_BANDWIDTH, &usbhid->iofl)
+		     && !test_and_set_bit(HID_RESET_PENDING, &usbhid->iofl)) {
+
 			schedule_work(&usbhid->reset_work);
 			goto done;
 		}

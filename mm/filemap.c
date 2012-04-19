@@ -495,7 +495,13 @@ int add_to_page_cache(struct page *page,
 {
 	int error;
 
-	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit() > 0)
+	/* 
+	 * Make sure we are not going into reclaim if we are requiring
+	 * atomicity (e.g. shmem_getpage). The caller has to handle pagecache
+	 * limiting on its own.
+	 */
+	if (unlikely(vm_pagecache_limit_mb) && !(gfp_mask & GFP_NOWAIT) &&
+			pagecache_over_limit() > 0)
 		shrink_page_cache(gfp_mask, page);
 	/* FIXME: If we add dirty pages to pagecache here, and we call
 	 * shrink_page_cache(), it might need to write out some pages to

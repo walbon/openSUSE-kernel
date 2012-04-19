@@ -1897,7 +1897,9 @@ int bitmap_load(mddev_t *mddev)
 			 * re-add of a missing device */
 			start = mddev->recovery_cp;
 
+		mutex_lock(&mddev->bitmap_info.mutex);
 		err = bitmap_init_from_disk(bitmap, start);
+		mutex_unlock(&mddev->bitmap_info.mutex);
 	}
 	if (err)
 		goto out;
@@ -1987,8 +1989,7 @@ location_store(mddev_t *mddev, const char *buf, size_t len)
 				if (rv) {
 					bitmap_destroy(mddev);
 					mddev->bitmap_info.offset = 0;
-				} else
-					bitmap_load(mddev);
+				}
 				mddev->pers->quiesce(mddev, 0);
 				if (rv)
 					return rv;
