@@ -473,6 +473,41 @@ intel_lvds_detect(struct drm_connector *connector, bool force)
 	return connector_status_connected;
 }
 
+static struct panel_size {
+	int width, height;
+} std_panel_sizes[] = {
+	{1600, 1200}, {1920, 1080}, {1680, 1050}, {1280, 1024},
+	{1600, 900}, {1440, 900}, {1280, 800},
+	{1366, 768}, {1360, 768}, {1280, 768},
+	{1024, 768}, {1280, 720}, {800, 600},
+	{0, 0}
+};
+
+static int add_standard_modes(struct drm_connector *connector,
+			      struct drm_display_mode *mode)
+{
+	struct drm_device *dev = connector->dev;
+	struct panel_size *p = std_panel_sizes;
+	int nums = 0;
+
+	for (; p->width; p++) {
+		struct drm_display_mode *newmode;
+		if (p->width > mode->hdisplay || p->height > mode->vdisplay ||
+		    (p->width == mode->hdisplay && p->height == mode->vdisplay))
+			continue;
+		newmode = drm_mode_duplicate(dev, mode);
+		if (newmode) {
+			newmode->hdisplay = p->width;
+			newmode->vdisplay = p->height;
+			newmode->type &= ~DRM_MODE_TYPE_PREFERRED;
+			drm_mode_set_name(newmode);
+			drm_mode_probed_add(connector, newmode);
+			nums++;
+		}
+	}
+	return nums;
+}
+
 /**
  * Return the list of DDC modes if available, or the BIOS fixed mode otherwise.
  */
@@ -482,15 +517,22 @@ static int intel_lvds_get_modes(struct drm_connector *connector)
 	struct drm_device *dev = connector->dev;
 	struct drm_display_mode *mode;
 
-	if (intel_lvds->edid)
-		return drm_add_edid_modes(connector, intel_lvds->edid);
+	if (intel_lvds->edid) {
+		int ret = drm_add_edid_modes(connector, intel_lvds->edid);
+		if (ret == 1) {
+			mode = list_first_entry(&connector->probed_modes,
+						struct drm_display_mode, head);
+			ret += add_standard_modes(connector, mode);
+		}
+		return ret;
+	}
 
 	mode = drm_mode_duplicate(dev, intel_lvds->fixed_mode);
 	if (mode == NULL)
 		return 0;
 
 	drm_mode_probed_add(connector, mode);
-	return 1;
+	return 1 + add_standard_modes(connector, mode);
 }
 
 static int intel_no_modeset_on_lid_dmi_callback(const struct dmi_system_id *id)
