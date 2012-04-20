@@ -484,26 +484,30 @@ static struct panel_size {
 };
 
 static int add_standard_modes(struct drm_connector *connector,
-			      struct drm_display_mode *mode)
+			      struct drm_display_mode *fixed)
 {
 	struct drm_device *dev = connector->dev;
 	struct panel_size *p = std_panel_sizes;
 	int nums = 0;
 
 	for (; p->width; p++) {
-		struct drm_display_mode *newmode;
-		if (p->width > mode->hdisplay || p->height > mode->vdisplay ||
-		    (p->width == mode->hdisplay && p->height == mode->vdisplay))
+		struct drm_display_mode *m;
+		if (p->width > fixed->hdisplay || p->height > fixed->vdisplay)
 			continue;
-		newmode = drm_mode_duplicate(dev, mode);
-		if (newmode) {
-			newmode->hdisplay = p->width;
-			newmode->vdisplay = p->height;
-			newmode->type &= ~DRM_MODE_TYPE_PREFERRED;
-			drm_mode_set_name(newmode);
-			drm_mode_probed_add(connector, newmode);
+		list_for_each_entry(m, &connector->probed_modes, head) {
+			if (p->width == m->hdisplay && p->height == m->vdisplay)
+				goto next;
+		}
+		m = drm_mode_duplicate(dev, fixed);
+		if (m) {
+			m->hdisplay = p->width;
+			m->vdisplay = p->height;
+			m->type &= ~DRM_MODE_TYPE_PREFERRED;
+			drm_mode_set_name(m);
+			drm_mode_probed_add(connector, m);
 			nums++;
 		}
+	next: ;
 	}
 	return nums;
 }
@@ -516,23 +520,19 @@ static int intel_lvds_get_modes(struct drm_connector *connector)
 	struct intel_lvds *intel_lvds = intel_attached_lvds(connector);
 	struct drm_device *dev = connector->dev;
 	struct drm_display_mode *mode;
+	int ret = 0;
 
-	if (intel_lvds->edid) {
-		int ret = drm_add_edid_modes(connector, intel_lvds->edid);
-		if (ret == 1) {
-			mode = list_first_entry(&connector->probed_modes,
-						struct drm_display_mode, head);
-			ret += add_standard_modes(connector, mode);
-		}
-		return ret;
+	if (intel_lvds->edid)
+		ret = drm_add_edid_modes(connector, intel_lvds->edid);
+	if (!ret) {
+		mode = drm_mode_duplicate(dev, intel_lvds->fixed_mode);
+		if (!mode)
+			return 0;
+		drm_mode_probed_add(connector, mode);
+		ret = 1;
 	}
-
-	mode = drm_mode_duplicate(dev, intel_lvds->fixed_mode);
-	if (mode == NULL)
-		return 0;
-
-	drm_mode_probed_add(connector, mode);
-	return 1 + add_standard_modes(connector, mode);
+	ret += add_standard_modes(connector, intel_lvds->fixed_mode);
+	return ret;
 }
 
 static int intel_no_modeset_on_lid_dmi_callback(const struct dmi_system_id *id)
