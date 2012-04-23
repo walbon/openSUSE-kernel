@@ -481,23 +481,47 @@ static void edid_fixup_preferred(struct drm_connector *connector,
 	preferred_mode->type |= DRM_MODE_TYPE_PREFERRED;
 }
 
-struct drm_display_mode *drm_mode_find_dmt(struct drm_device *dev,
-					   int hsize, int vsize, int fresh)
+static bool
+mode_is_rb(const struct drm_display_mode *mode)
 {
-	struct drm_display_mode *mode = NULL;
+	return (mode->htotal - mode->hdisplay == 160) &&
+	       (mode->hsync_end - mode->hdisplay == 80) &&
+	       (mode->hsync_end - mode->hsync_start == 32) &&
+	       (mode->vsync_start - mode->vdisplay == 3);
+}
+
+/*
+ * drm_mode_find_dmt - Create a copy of a mode if present in DMT
+ * @dev: Device to duplicate against
+ * @hsize: Mode width
+ * @vsize: Mode height
+ * @fresh: Mode refresh rate
+ * @rb: Mode reduced-blanking-ness
+ *
+ * Walk the DMT mode list looking for a match for the given parameters.
+ * Return a newly allocated copy of the mode, or NULL if not found.
+ */
+struct drm_display_mode *drm_mode_find_dmt(struct drm_device *dev,
+					   int hsize, int vsize, int fresh,
+					   bool rb)
+{
 	int i;
 
 	for (i = 0; i < drm_num_dmt_modes; i++) {
 		const struct drm_display_mode *ptr = &drm_dmt_modes[i];
-		if (hsize == ptr->hdisplay &&
-			vsize == ptr->vdisplay &&
-			fresh == drm_mode_vrefresh(ptr)) {
-			/* get the expected default mode */
-			mode = drm_mode_duplicate(dev, ptr);
-			break;
-		}
+		if (hsize != ptr->hdisplay)
+			continue;
+		if (vsize != ptr->vdisplay)
+			continue;
+		if (fresh != drm_mode_vrefresh(ptr))
+			continue;
+		if (rb != mode_is_rb(ptr))
+			continue;
+
+		return drm_mode_duplicate(dev, ptr);
 	}
-	return mode;
+
+	return NULL;
 }
 EXPORT_SYMBOL(drm_mode_find_dmt);
 
@@ -741,10 +765,17 @@ drm_mode_std(struct drm_connector *connector, struct edid *edid,
 	}
 
 	/* check whether it can be found in default mode table */
-	mode = drm_mode_find_dmt(dev, hsize, vsize, vrefresh_rate);
+	if (drm_monitor_supports_rb(edid)) {
+		mode = drm_mode_find_dmt(dev, hsize, vsize, vrefresh_rate,
+					 true);
+		if (mode)
+			return mode;
+	}
+	mode = drm_mode_find_dmt(dev, hsize, vsize, vrefresh_rate, false);
 	if (mode)
 		return mode;
 
+	/* okay, generate it */
 	switch (timing_level) {
 	case LEVEL_DMT:
 		break;
@@ -758,6 +789,8 @@ drm_mode_std(struct drm_connector *connector, struct edid *edid,
 		 * secondary GTF curve.  Please don't do that.
 		 */
 		mode = drm_gtf_mode(dev, hsize, vsize, vrefresh_rate, 0, 0);
+		if (!mode)
+			return NULL;
 		if (drm_mode_hsync(mode) > drm_gtf2_hbreak(edid)) {
 			kfree(mode);
 			mode = drm_gtf_mode_complex(dev, hsize, vsize,
@@ -919,15 +952,6 @@ static struct drm_display_mode *drm_mode_detailed(struct drm_device *dev,
 }
 
 static bool
-mode_is_rb(const struct drm_display_mode *mode)
-{
-	return (mode->htotal - mode->hdisplay == 160) &&
-	       (mode->hsync_end - mode->hdisplay == 80) &&
-	       (mode->hsync_end - mode->hsync_start == 32) &&
-	       (mode->vsync_start - mode->vdisplay == 3);
-}
-
-static bool
 mode_in_hsync_range(const struct drm_display_mode *mode,
 		    struct edid *edid, u8 *t)
 {
@@ -1004,12 +1028,8 @@ mode_in_range(const struct drm_display_mode *mode, struct edid *edid,
 	return true;
 }
 
-/*
- * XXX If drm_dmt_modes ever regrows the CVT-R modes (and it will) this will
- * need to account for them.
- */
 static int
-drm_gtf_modes_for_range(struct drm_connector *connector, struct edid *edid,
+drm_dmt_modes_for_range(struct drm_connector *connector, struct edid *edid,
 			struct detailed_timing *timing)
 {
 	int i, modes = 0;
@@ -1029,17 +1049,110 @@ drm_gtf_modes_for_range(struct drm_connector *connector, struct edid *edid,
 	return modes;
 }
 
+/* fix up 1366x768 mode from 1368x768;
+ * GFT/CVT can't express 1366 width which isn't dividable by 8
+ */
+static void fixup_mode_1366x768(struct drm_display_mode *mode)
+{
+	if (mode->hdisplay == 1368 && mode->vdisplay == 768) {
+		mode->hdisplay = 1366;
+		mode->hsync_start--;
+		mode->hsync_end--;
+		drm_mode_set_name(mode);
+	}
+}
+
+static int
+drm_gtf_modes_for_range(struct drm_connector *connector, struct edid *edid,
+			struct detailed_timing *timing)
+{
+	int i, modes = 0;
+	struct drm_display_mode *newmode;
+	struct drm_device *dev = connector->dev;
+
+	for (i = 0; i < num_extra_modes; i++) {
+		const struct minimode *m = &extra_modes[i];
+		newmode = drm_gtf_mode(dev, m->w, m->h, m->r, 0, 0);
+		if (!newmode)
+			return modes;
+
+		fixup_mode_1366x768(newmode);
+		if (!mode_in_range(newmode, edid, timing)) {
+			drm_mode_destroy(dev, newmode);
+			continue;
+		}
+
+		drm_mode_probed_add(connector, newmode);
+		modes++;
+	}
+
+	return modes;
+}
+
+static int
+drm_cvt_modes_for_range(struct drm_connector *connector, struct edid *edid,
+			struct detailed_timing *timing)
+{
+	int i, modes = 0;
+	struct drm_display_mode *newmode;
+	struct drm_device *dev = connector->dev;
+	bool rb = drm_monitor_supports_rb(edid);
+
+	for (i = 0; i < num_extra_modes; i++) {
+		const struct minimode *m = &extra_modes[i];
+		newmode = drm_cvt_mode(dev, m->w, m->h, m->r, rb, 0, 0);
+		if (!newmode)
+			return modes;
+
+		fixup_mode_1366x768(newmode);
+		if (!mode_in_range(newmode, edid, timing)) {
+			drm_mode_destroy(dev, newmode);
+			continue;
+		}
+
+		drm_mode_probed_add(connector, newmode);
+		modes++;
+	}
+
+	return modes;
+}
+
 static void
 do_inferred_modes(struct detailed_timing *timing, void *c)
 {
 	struct detailed_mode_closure *closure = c;
 	struct detailed_non_pixel *data = &timing->data.other_data;
-	int gtf = (closure->edid->features & DRM_EDID_FEATURE_DEFAULT_GTF);
+	struct detailed_data_monitor_range *range = &data->data.range;
 
-	if (gtf && data->type == EDID_DETAIL_MONITOR_RANGE)
+	if (data->type != EDID_DETAIL_MONITOR_RANGE)
+		return;
+
+	closure->modes += drm_dmt_modes_for_range(closure->connector,
+						  closure->edid,
+						  timing);
+	
+	if (!version_greater(closure->edid, 1, 1))
+		return; /* GTF not defined yet */
+
+	switch (range->flags) {
+	case 0x02: /* secondary gtf, XXX could do more */
+	case 0x00: /* default gtf */
 		closure->modes += drm_gtf_modes_for_range(closure->connector,
 							  closure->edid,
 							  timing);
+		break;
+	case 0x04: /* cvt, only in 1.4+ */
+		if (!version_greater(closure->edid, 1, 3))
+			break;
+
+		closure->modes += drm_cvt_modes_for_range(closure->connector,
+							  closure->edid,
+							  timing);
+		break;
+	case 0x01: /* just the ranges, no formula */
+	default:
+		break;
+	}
 }
 
 static int
@@ -1072,8 +1185,8 @@ drm_est3_modes(struct drm_connector *connector, struct detailed_timing *timing)
 				mode = drm_mode_find_dmt(connector->dev,
 							 est3_modes[m].w,
 							 est3_modes[m].h,
-							 est3_modes[m].r
-							 /*, est3_modes[m].rb */);
+							 est3_modes[m].r,
+							 est3_modes[m].rb);
 				if (mode) {
 					drm_mode_probed_add(connector, mode);
 					modes++;
@@ -1769,3 +1882,12 @@ int drm_add_modes_noedid(struct drm_connector *connector,
 	return num_modes;
 }
 EXPORT_SYMBOL(drm_add_modes_noedid);
+
+/* define the old function just for kABI compatibility */
+#undef drm_mode_find_dmt
+struct drm_display_mode *drm_mode_find_dmt(struct drm_device *dev,
+					   int hsize, int vsize, int fresh)
+{
+	return __drm_mode_find_dmt(dev, hsize, vsize, fresh, false);
+}
+EXPORT_SYMBOL(drm_mode_find_dmt);

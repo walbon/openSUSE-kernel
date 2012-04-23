@@ -813,8 +813,11 @@ extern int drm_add_modes_noedid(struct drm_connector *connector,
 
 extern int drm_edid_header_is_valid(const u8 *raw_edid);
 extern bool drm_edid_is_valid(struct edid *edid);
-struct drm_display_mode *drm_mode_find_dmt(struct drm_device *dev,
-					   int hsize, int vsize, int fresh);
+/* rename for kABI compatibility */
+struct drm_display_mode *__drm_mode_find_dmt(struct drm_device *dev,
+					   int hsize, int vsize, int fresh,
+					   bool rb);
+#define drm_mode_find_dmt	__drm_mode_find_dmt
 
 extern int drm_mode_create_dumb_ioctl(struct drm_device *dev,
 				      void *data, struct drm_file *file_priv);
