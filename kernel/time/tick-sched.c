@@ -765,7 +765,7 @@ static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
 	return HRTIMER_RESTART;
 }
 
-static int sched_skew_tick;
+static int sched_skew_tick = 1;
 
 /**
  * tick_setup_sched_timer - setup the tick emulation timer
