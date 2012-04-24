@@ -728,6 +728,8 @@ static int scrub_fixup_io(int rw, struct block_device *bdev, sector_t sector,
 	DECLARE_COMPLETION_ONSTACK(complete);
 
 	bio = bio_alloc(GFP_NOFS, 1);
+	if (!bio)
+		return -EIO;
 	bio->bi_bdev = bdev;
 	bio->bi_sector = sector;
 	bio_add_page(bio, page, PAGE_SIZE, 0);
