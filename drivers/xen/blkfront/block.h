@@ -103,6 +103,7 @@ struct blkfront_info
 	int connected;
 	int ring_ref;
 	blkif_front_ring_t ring;
+	spinlock_t io_lock;
 	struct scatterlist sg[BLKIF_MAX_SEGMENTS_PER_REQUEST];
 	unsigned int irq;
 	struct xlbd_major_info *mi;
@@ -113,6 +114,10 @@ struct blkfront_info
 	unsigned long shadow_free;
 	unsigned int feature_flush;
 	unsigned int flush_op;
+	bool feature_discard;
+	bool feature_secdiscard;
+	unsigned int discard_granularity;
+	unsigned int discard_alignment;
 	int is_ready;
 
 	/**
@@ -121,8 +126,6 @@ struct blkfront_info
 	 */
 	int users;
 };
-
-extern spinlock_t blkif_io_lock;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,28)
 extern int blkif_open(struct inode *inode, struct file *filep);
