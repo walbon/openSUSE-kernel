@@ -88,42 +88,49 @@ static int __init spinlock_register(void)
 core_initcall(spinlock_register);
 #endif
 
+#if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
 static unsigned int spin_adjust(struct spinning *spinning,
 				const arch_spinlock_t *lock,
-				unsigned int token)
+				unsigned int ticket)
 {
-#if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
-	for (; spinning; spinning = spinning->prev)
-		if (spinning->lock == lock) {
-			unsigned int ticket = spinning->ticket;
+	for (; spinning; spinning = spinning->prev) {
+		unsigned int old = spinning->ticket;
 
-			if (unlikely(!(ticket + 1)))
-				break;
-# if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING == 1
-			spinning->ticket = token >> TICKET_SHIFT;
-# else
-			spinning->ticket = spin_adjust(spinning->prev, lock,
-						       token) >> TICKET_SHIFT;
-# endif
-			token = (token & ((1 << TICKET_SHIFT) - 1))
-				| (ticket << TICKET_SHIFT);
-			break;
-		}
+		if (spinning->lock != lock)
+			continue;
+		while (likely(old + 1)) {
+			unsigned int cur;
+
+#if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING > 1
+			ticket = spin_adjust(spinning->prev, lock, ticket);
 #endif
-	return token;
+			cur = cmpxchg(&spinning->ticket, old, ticket);
+			if (cur == old)
+				return cur;
+			old = cur;
+		}
+#if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING == 1
+		break;
+#endif
+	}
+	return ticket;
 }
 
 unsigned int xen_spin_adjust(const arch_spinlock_t *lock, unsigned int token)
 {
-	return spin_adjust(percpu_read(_spinning), lock, token);
+	token = spin_adjust(percpu_read(_spinning), lock,
+			    token >> TICKET_SHIFT);
+	return (token << TICKET_SHIFT) | lock->cur;
 }
+#endif
 
 unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 			   unsigned int flags)
 {
 	unsigned int rm_idx, cpu = raw_smp_processor_id();
 	bool rc;
-	typeof(vcpu_info(0)->evtchn_upcall_mask) upcall_mask;
+	typeof(vcpu_info(0)->evtchn_upcall_mask) upcall_mask
+		= arch_local_save_flags();
 	struct spinning spinning, *other;
 
 	/* If kicker interrupt not initialized yet, just spin. */
@@ -136,7 +143,6 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 	spinning.prev = percpu_read(_spinning);
 	smp_wmb();
 	percpu_write(_spinning, &spinning);
-	upcall_mask = vcpu_info_read(evtchn_upcall_mask);
 
 	do {
 #if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
@@ -215,7 +221,7 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 	} while (spinning.prev || rc);
 
 	/*
-	 * Leave the irq pending so that any interrupted blocker will
+	 * Leave the event pending so that any interrupted blocker will
 	 * re-check.
 	 */
 
@@ -288,7 +294,7 @@ void xen_spin_kick(arch_spinlock_t *lock, unsigned int token)
 
 			rm_ctr = per_cpu(rm_seq.ctr, cpu) + (rm_idx & 1);
 			atomic_inc(rm_ctr);
-#ifdef CONFIG_X86 /* atomic ops are full barriers */
+#ifdef CONFIG_X86 /* atomic ops are full CPU barriers */
 			barrier();
 #else
 			smp_mb();

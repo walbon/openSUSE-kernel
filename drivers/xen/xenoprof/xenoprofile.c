@@ -53,8 +53,9 @@ extern unsigned long oprofile_backtrace_depth;
 
 /* Number of buffers in shared area (one per VCPU) */
 static int nbuf;
-/* Mappings of VIRQ_XENOPROF to irq number (per cpu) */
-static int ovf_irq[NR_CPUS];
+/* Mapping of VIRQ_XENOPROF to irq number */
+static int ovf_irq = -1;
+static cpumask_var_t ovf_irq_mapped;
 /* cpu model type string - copied from Xen on XENOPROF_init command */
 static char cpu_type[XENOPROF_CPU_TYPE_SIZE];
 
@@ -213,11 +214,10 @@ static void unbind_virq(void)
 	unsigned int i;
 
 	for_each_online_cpu(i) {
-		if (ovf_irq[i] >= 0) {
-			unbind_from_per_cpu_irq(ovf_irq[i], i, &ovf_action);
-			ovf_irq[i] = -1;
-		}
+		if (cpumask_test_and_clear_cpu(i, ovf_irq_mapped))
+			unbind_from_per_cpu_irq(ovf_irq, i, &ovf_action);
 	}
+	ovf_irq = -1;
 }
 
 
@@ -234,7 +234,15 @@ static int bind_virq(void)
 			return result;
 		}
 
-		ovf_irq[i] = result;
+		if (ovf_irq < 0)
+			ovf_irq = result;
+		else if (result != ovf_irq) {
+			unbind_virq();
+			pr_err("IRQ%d unexpected (should be %d)\n",
+			       result, ovf_irq);
+			return -ESTALE;
+		}
+		cpumask_set_cpu(i, ovf_irq_mapped);
 	}
 		
 	return 0;
@@ -534,8 +542,10 @@ static int using_xenoprof;
 int __init xenoprofile_init(struct oprofile_operations * ops)
 {
 	struct xenoprof_init init;
-	unsigned int i;
 	int ret;
+
+	if (!zalloc_cpumask_var(&ovf_irq_mapped, GFP_KERNEL))
+		return -ENOMEM;
 
 	ret = HYPERVISOR_xenoprof_op(XENOPROF_init, &init);
 	if (!ret) {
@@ -550,11 +560,9 @@ int __init xenoprofile_init(struct oprofile_operations * ops)
 		using_xenoprof = 1;
 		*ops = xenoprof_ops;
 
-		for (i=0; i<NR_CPUS; i++)
-			ovf_irq[i] = -1;
-
 		active_defined = 0;
-	}
+	} else
+		free_cpumask_var(ovf_irq_mapped);
 
 	pr_info("%s: ret %d, events %d, xenoprof_is_primary %d\n",
 		__func__, ret, init.num_events, xenoprof_is_primary);
@@ -572,4 +580,6 @@ void xenoprofile_exit(void)
 		unmap_passive_list();
 		WARN_ON(HYPERVISOR_xenoprof_op(XENOPROF_shutdown, NULL));
         }
+
+	free_cpumask_var(ovf_irq_mapped);
 }

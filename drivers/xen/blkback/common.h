@@ -43,11 +43,17 @@
 	pr_debug("(file=%s, line=%d) " _f,	\
 		 __FILE__ , __LINE__ , ## _a )
 
+enum blkif_backend_type {
+	BLKIF_BACKEND_PHY  = 1,
+	BLKIF_BACKEND_FILE = 2,
+};
+
 struct vbd {
 	blkif_vdev_t   handle;      /* what the domain refers to this vbd as */
 	fmode_t        mode;        /* FMODE_xxx */
 	unsigned char  type;        /* VDISK_xxx */
 	bool           flush_support;
+	bool           discard_secure;
 	u32            pdevice;     /* phys device that this vbd maps to */
 	struct block_device *bdev;
 	sector_t       size;        /* Cached size parameter */
@@ -63,6 +69,7 @@ typedef struct blkif_st {
 	unsigned int      irq;
 	/* Comms information. */
 	enum blkif_protocol blk_protocol;
+	enum blkif_backend_type blk_backend_type;
 	blkif_back_rings_t blk_rings;
 	struct vm_struct *blk_ring_area;
 	/* The VBD attached to this interface. */
@@ -88,6 +95,7 @@ typedef struct blkif_st {
 	int                 st_oo_req;
 	int                 st_br_req;
 	int                 st_fl_req;
+	int                 st_ds_req;
 	int                 st_pk_req;
 	int                 st_rd_sect;
 	int                 st_wr_sect;
@@ -129,7 +137,7 @@ unsigned long vbd_secsize(struct vbd *vbd);
 
 struct phys_req {
 	unsigned short       dev;
-	unsigned short       nr_sects;
+	blkif_sector_t       nr_sects;
 	struct block_device *bdev;
 	blkif_sector_t       sector_number;
 };
