@@ -83,7 +83,6 @@ typedef struct dasd_information2_t {
 #define DASD_FEATURE_FAILFAST	     0x10
 #define DASD_FEATURE_FAILONSLCK      0x20
 #define DASD_FEATURE_USERAW	     0x40
-#define DASD_FEATURE_BLKTIMEOUT     0x80
 
 #define DASD_PARTN_BITS 2
 

@@ -2269,14 +2269,13 @@ static void do_dasd_request(struct request_queue *queue)
  * BLK_EH_RESET_TIMER if the request should be left running
  * BLK_EH_NOT_HANDLED if the request is handled or terminated
  *                    by the driver.
- * BLK_EH_HANDLED     if the request should be aborted by
- *                    the block layer.
  */
 enum blk_eh_timer_return dasd_times_out(struct request *req)
 {
 	struct dasd_ccw_req *cqr = req->completion_data;
 	struct dasd_block *block = req->q->queuedata;
 	struct dasd_device *device;
+	int rc = 0;
 
 	if (!cqr)
 		return BLK_EH_NOT_HANDLED;
@@ -2288,23 +2287,52 @@ enum blk_eh_timer_return dasd_times_out(struct request *req)
 	DBF_DEV_EVENT(DBF_WARNING, device,
 		      " dasd_times_out cqr %p status %x",
 		      cqr, cqr->status);
-	/* Wait for ERP to finish */
-	if (cqr->status == DASD_CQR_IN_ERP)
-		return BLK_EH_RESET_TIMER;
+
+	spin_lock(&block->queue_lock);
 	spin_lock(get_ccwdev_lock(device->cdev));
 	cqr->retries = -1;
 	cqr->intrc = -ETIMEDOUT;
-	list_del(&cqr->devlist);
 	spin_unlock(get_ccwdev_lock(device->cdev));
 	if (cqr->status >= DASD_CQR_QUEUED) {
-		if (dasd_cancel_req(cqr))
-			return BLK_EH_RESET_TIMER;
+		rc = dasd_cancel_req(cqr);
 	} else if (cqr->status == DASD_CQR_FILLED ||
-		   cqr->status == DASD_CQR_NEED_ERP)
+		   cqr->status == DASD_CQR_NEED_ERP) {
 		cqr->status = DASD_CQR_TERMINATED;
+	} else if (cqr->status == DASD_CQR_IN_ERP) {
+		struct ccw_cqr_req *searchcqr, nextcqr, tmpcqr;
 
+		list_for_each_entry_safe(searchcqr, nextcqr,
+					 &block->ccw_queue) {
+			tmpcqr = searchcqr;
+			while (tmpcqr->refers)
+				tmpcqr = tmpcqr->refers;
+			if (tmpcqr != cqr)
+				continue;
+			/* searchcqr is an ERP request for cqr */
+			spin_lock(&get_ccwdev_lock(device->cdev));
+			searchcqr->retries = -1;
+			searchcqr->intrc = -ETIMEDOUT;
+			spin_unlock(&get_ccwdev_lock(device->cdev));
+			if (searchcqr->status >= DASD_CQR_QUEUED) {
+				rc = dasd_cancel_req(searchcqr);
+			} else if ((searchcqr->status == DASD_CQR_FILLED) ||
+				   (searchcqr->status == DASD_CQR_NEED_ERP)) {
+				searchcqr->status = DASD_CQR_TERMINATED;
+				rc = 0;
+			} else if (searchcqr->status == DASD_CQR_IN_ERP) {
+				/*
+				 * Shouldn't happen; most recent ERP
+				 * request is at the front of queue
+				 */
+				continue;
+			}
+			break;
+		}
+	}
 	dasd_schedule_block_bh(block);
-	return BLK_EH_NOT_HANDLED;
+	spin_unlock(&block->queue_lock);
+
+	return rc ? BLK_EH_RESET_TIMER : BLK_EH_NOT_HANDLED;
 }
 
 /*

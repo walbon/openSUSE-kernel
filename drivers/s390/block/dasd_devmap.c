@@ -214,8 +214,6 @@ dasd_feature_list(char *str, char **endp)
 			features |= DASD_FEATURE_ERPLOG;
 		else if (len == 8 && !strncmp(str, "failfast", 8))
 			features |= DASD_FEATURE_FAILFAST;
-		else if (len == 10 && !strncmp(str, "blktimeout", 10))
-			features |= DASD_FEATURE_BLKTIMEOUT;
 		else {
 			pr_warning("%*s is not a supported device option\n",
 				   len, str);
@@ -717,17 +715,14 @@ static ssize_t dasd_ff_show(struct device *dev, struct device_attribute *attr,
 			    char *buf)
 {
 	struct dasd_devmap *devmap;
-	int ff_flag = 0;
+	int ff_flag;
 
 	devmap = dasd_find_busid(dev_name(dev));
-	if (!IS_ERR(devmap)) {
-		if (devmap->features & DASD_FEATURE_FAILFAST)
-			ff_flag |= 1;
-		if (devmap->features & DASD_FEATURE_BLKTIMEOUT)
-			ff_flag |= 2;
-	} else
+	if (!IS_ERR(devmap))
+		ff_flag = (devmap->features & DASD_FEATURE_FAILFAST) != 0;
+	else
 		ff_flag = (DASD_FEATURE_DEFAULT & DASD_FEATURE_FAILFAST) != 0;
-	return snprintf(buf, PAGE_SIZE, "%d\n", ff_flag);
+	return snprintf(buf, PAGE_SIZE, ff_flag ? "1\n" : "0\n");
 }
 
 static ssize_t dasd_ff_store(struct device *dev, struct device_attribute *attr,
@@ -742,15 +737,11 @@ static ssize_t dasd_ff_store(struct device *dev, struct device_attribute *attr,
 		return PTR_ERR(devmap);
 
 	val = simple_strtoul(buf, &endp, 0);
-	if (((endp + 1) < (buf + count)) || (val > 3))
+	if (((endp + 1) < (buf + count)) || (val > 1))
 		return -EINVAL;
 
 	spin_lock(&dasd_devmap_lock);
-	if (val & 2)
-		devmap->features |= DASD_FEATURE_BLKTIMEOUT;
-	else
-		devmap->features &= ~DASD_FEATURE_BLKTIMEOUT;
-	if (val & 1)
+	if (val)
 		devmap->features |= DASD_FEATURE_FAILFAST;
 	else
 		devmap->features &= ~DASD_FEATURE_FAILFAST;
