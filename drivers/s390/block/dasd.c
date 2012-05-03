@@ -2299,20 +2299,20 @@ enum blk_eh_timer_return dasd_times_out(struct request *req)
 		   cqr->status == DASD_CQR_NEED_ERP) {
 		cqr->status = DASD_CQR_TERMINATED;
 	} else if (cqr->status == DASD_CQR_IN_ERP) {
-		struct ccw_cqr_req *searchcqr, nextcqr, tmpcqr;
+		struct dasd_ccw_req *searchcqr, *nextcqr, *tmpcqr;
 
 		list_for_each_entry_safe(searchcqr, nextcqr,
-					 &block->ccw_queue) {
+					 &block->ccw_queue, blocklist) {
 			tmpcqr = searchcqr;
 			while (tmpcqr->refers)
 				tmpcqr = tmpcqr->refers;
 			if (tmpcqr != cqr)
 				continue;
 			/* searchcqr is an ERP request for cqr */
-			spin_lock(&get_ccwdev_lock(device->cdev));
+			spin_lock(get_ccwdev_lock(device->cdev));
 			searchcqr->retries = -1;
 			searchcqr->intrc = -ETIMEDOUT;
-			spin_unlock(&get_ccwdev_lock(device->cdev));
+			spin_unlock(get_ccwdev_lock(device->cdev));
 			if (searchcqr->status >= DASD_CQR_QUEUED) {
 				rc = dasd_cancel_req(searchcqr);
 			} else if ((searchcqr->status == DASD_CQR_FILLED) ||
