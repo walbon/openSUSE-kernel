@@ -769,8 +769,8 @@ int amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
 	if (amd_filter_mce(m))
 		return NOTIFY_STOP;
 
-	pr_emerg(HW_ERR "MC%d_STATUS[%s|%s|%s|%s|%s",
-		m->bank,
+	pr_emerg(HW_ERR "CPU:%d\tMC%d_STATUS[%s|%s|%s|%s|%s",
+		m->extcpu, m->bank,
 		((m->status & MCI_STATUS_OVER)	? "Over"  : "-"),
 		((m->status & MCI_STATUS_UC)	? "UE"	  : "CE"),
 		((m->status & MCI_STATUS_MISCV)	? "MiscV" : "-"),
@@ -789,6 +789,8 @@ int amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
 
 	pr_cont("]: 0x%016llx\n", m->status);
 
+	if (m->status & MCI_STATUS_ADDRV)
+		pr_emerg(HW_ERR "\tMC%d_ADDR: 0x%016llx\n", m->bank, m->addr);
 
 	switch (m->bank) {
 	case 0:
@@ -844,9 +846,7 @@ static int __init mce_amd_init(void)
 	if (c->x86_vendor != X86_VENDOR_AMD)
 		return 0;
 
-	if ((c->x86 < 0xf || c->x86 > 0x12) &&
-	    (c->x86 != 0x14 || c->x86_model > 0xf) &&
-	    (c->x86 != 0x15 || c->x86_model > 0xf))
+	if (c->x86 < 0xf || c->x86 > 0x15)
 		return 0;
 
 	fam_ops = kzalloc(sizeof(struct amd_decoder_ops), GFP_KERNEL);
@@ -893,7 +893,7 @@ static int __init mce_amd_init(void)
 		break;
 
 	default:
-		printk(KERN_WARNING "Huh? What family is that: %d?!\n", c->x86);
+		printk(KERN_WARNING "Huh? What family is it: 0x%x?!\n", c->x86);
 		kfree(fam_ops);
 		return -EINVAL;
 	}
