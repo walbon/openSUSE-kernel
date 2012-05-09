@@ -34,6 +34,10 @@
 
 MODULE_LICENSE("GPL");
 
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+static int ctnl_net_id __read_mostly;
+#endif
+
 #ifdef CONFIG_PROC_FS
 int
 print_tuple(struct seq_file *s, const struct nf_conntrack_tuple *tuple,
@@ -569,14 +573,38 @@ static struct pernet_operations nf_conntrack_net_ops = {
 	.exit = nf_conntrack_net_exit,
 };
 
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+static struct pernet_operations ctnl_fix_ops = {
+	.init = NULL,
+	.exit = NULL,
+	.id   = &ctnl_net_id,
+	.size = sizeof(struct netns_ct_exp),
+};
+
+/* for net_generic(); including it on top would change print_tuple checksum */
+#include <net/netns/generic.h>
+
+struct netns_ct_exp *get_netns_ct_exp(struct net *net)
+{
+  return net_generic(net, ctnl_net_id);
+}
+EXPORT_SYMBOL(get_netns_ct_exp);
+#endif
+
 static int __init nf_conntrack_standalone_init(void)
 {
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+	register_pernet_subsys(&ctnl_fix_ops);
+#endif
 	return register_pernet_subsys(&nf_conntrack_net_ops);
 }
 
 static void __exit nf_conntrack_standalone_fini(void)
 {
 	unregister_pernet_subsys(&nf_conntrack_net_ops);
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+	unregister_pernet_subsys(&ctnl_fix_ops);
+#endif
 }
 
 module_init(nf_conntrack_standalone_init);
