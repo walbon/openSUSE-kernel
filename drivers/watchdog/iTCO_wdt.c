@@ -513,6 +513,11 @@ MODULE_PARM_DESC(nowayout,
 	"Watchdog cannot be stopped once started (default="
 				__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
 
+static int turn_SMI_watchdog_clear_off = 1;
+module_param(turn_SMI_watchdog_clear_off, int, 0);
+MODULE_PARM_DESC(turn_SMI_watchdog_clear_off,
+	"Turn off SMI clearing watchdog (depends on TCO-version)(default=1)");
+
 /*
  * Some TCO specific functions
  */
@@ -937,10 +942,12 @@ static int __devinit iTCO_wdt_init(struct pci_dev *pdev,
 		ret = -EIO;
 		goto out_unmap;
 	}
-	/* Bit 13: TCO_EN -> 0 = Disables TCO logic generating an SMI# */
-	val32 = inl(SMI_EN);
-	val32 &= 0xffffdfff;	/* Turn off SMI clearing watchdog */
-	outl(val32, SMI_EN);
+	if (turn_SMI_watchdog_clear_off >= iTCO_wdt_private.iTCO_version) {
+		/* Bit 13: TCO_EN -> 0 = Disables TCO logic generating an SMI# */
+		val32 = inl(SMI_EN);
+		val32 &= 0xffffdfff;	/* Turn off SMI clearing watchdog */
+		outl(val32, SMI_EN);
+	}
 
 	/* The TCO I/O registers reside in a 32-byte range pointed to
 	   by the TCOBASE value */
