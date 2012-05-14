@@ -2329,6 +2329,10 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 		goto out_drop_write;
 	}
 
+	ret = -EXDEV;
+	if (src_file->f_path.mnt != file->f_path.mnt)
+		goto out_fput;
+
 	src = src_file->f_dentry->d_inode;
 
 	ret = -EINVAL;
