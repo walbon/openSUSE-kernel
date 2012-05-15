@@ -545,8 +545,8 @@ edd_has_edd30(struct edd_device *edev)
 	}
 
 
-	/* We support only T13 spec */
-	if (info->params.device_path_info_length != 44)
+	/* EDD 3.0 specifies this to be 36 */
+	if (info->params.device_path_info_length != 36)
 		return 0;
 
 	for (i = 30; i < info->params.device_path_info_length + 30; i++)
