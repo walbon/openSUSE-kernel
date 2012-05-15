@@ -479,12 +479,13 @@ static int i915_drm_thaw(struct drm_device *dev)
 			ironlake_init_pch_refclk(dev);
 
 		drm_mode_config_reset(dev);
-		drm_irq_install(dev);
 
 		/* Resume the modeset for every activated CRTC */
 		mutex_lock(&dev->mode_config.mutex);
 		drm_helper_resume_force_mode(dev);
 		mutex_unlock(&dev->mode_config.mutex);
+
+		drm_irq_install(dev);
 
 		if (IS_IRONLAKE_M(dev))
 			ironlake_enable_rc6(dev);
