@@ -26,6 +26,14 @@
 
 static DEFINE_MUTEX(nf_ct_ecache_mutex);
 
+#ifdef __GENKSYMS__
+struct nf_ct_event_notifier __rcu *nf_conntrack_event_cb __read_mostly;
+EXPORT_SYMBOL_GPL(nf_conntrack_event_cb);
+
+struct nf_exp_event_notifier __rcu *nf_expect_event_cb __read_mostly;
+EXPORT_SYMBOL_GPL(nf_expect_event_cb);
+#endif
+
 /* deliver cached events and clear cache entry - must be called with locally
  * disabled softirqs */
 void nf_ct_deliver_cached_events(struct nf_conn *ct)
@@ -78,8 +86,12 @@ out_unlock:
 }
 EXPORT_SYMBOL_GPL(nf_ct_deliver_cached_events);
 
+#ifdef __GENKSYMS__
+int nf_conntrack_register_notifier(struct nf_ct_event_notifier *new)
+#else
 int nf_conntrack_register_notifier(struct net *net,
 				   struct nf_ct_event_notifier *new)
+#endif
 {
 	int ret = 0;
 	struct nf_ct_event_notifier *notify;
@@ -102,8 +114,12 @@ out_unlock:
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_register_notifier);
 
+#ifdef __GENKSYMS__
+void nf_conntrack_unregister_notifier(struct nf_ct_event_notifier *new)
+#else
 void nf_conntrack_unregister_notifier(struct net *net,
 				      struct nf_ct_event_notifier *new)
+#endif
 {
 	struct nf_ct_event_notifier *notify;
 	struct netns_ct_exp *net_ct = get_netns_ct_exp(net);
@@ -117,8 +133,12 @@ void nf_conntrack_unregister_notifier(struct net *net,
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_unregister_notifier);
 
+#ifdef __GENKSYMS__
+int nf_ct_expect_register_notifier(struct nf_exp_event_notifier *new)
+#else
 int nf_ct_expect_register_notifier(struct net *net,
 				   struct nf_exp_event_notifier *new)
+#endif
 {
 	int ret = 0;
 	struct nf_exp_event_notifier *notify;
@@ -141,8 +161,12 @@ out_unlock:
 }
 EXPORT_SYMBOL_GPL(nf_ct_expect_register_notifier);
 
+#ifdef __GENKSYMS__
+void nf_ct_expect_unregister_notifier(struct nf_exp_event_notifier *new)
+#else
 void nf_ct_expect_unregister_notifier(struct net *net,
 				      struct nf_exp_event_notifier *new)
+#endif
 {
 	struct nf_exp_event_notifier *notify;
 	struct netns_ct_exp *net_ct = get_netns_ct_exp(net);

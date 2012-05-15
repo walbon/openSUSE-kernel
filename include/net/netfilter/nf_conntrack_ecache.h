@@ -70,8 +70,14 @@ struct nf_ct_event_notifier {
 	int (*fcn)(unsigned int events, struct nf_ct_event *item);
 };
 
+#ifdef __GENKSYMS__
+extern struct nf_ct_event_notifier __rcu *nf_conntrack_event_cb;
+extern int nf_conntrack_register_notifier(struct nf_ct_event_notifier *nb);
+extern void nf_conntrack_unregister_notifier(struct nf_ct_event_notifier *nb);
+#else
 extern int nf_conntrack_register_notifier(struct net *net, struct nf_ct_event_notifier *nb);
 extern void nf_conntrack_unregister_notifier(struct net *net, struct nf_ct_event_notifier *nb);
+#endif
 
 extern void nf_ct_deliver_cached_events(struct nf_conn *ct);
 
@@ -170,8 +176,14 @@ struct nf_exp_event_notifier {
 	int (*fcn)(unsigned int events, struct nf_exp_event *item);
 };
 
+#ifdef __GENKSYMS__
+extern struct nf_exp_event_notifier __rcu *nf_expect_event_cb;
+extern int nf_ct_expect_register_notifier(struct nf_exp_event_notifier *nb);
+extern void nf_ct_expect_unregister_notifier(struct nf_exp_event_notifier *nb);
+#else
 extern int nf_ct_expect_register_notifier(struct net *net, struct nf_exp_event_notifier *nb);
 extern void nf_ct_expect_unregister_notifier(struct net *net, struct nf_exp_event_notifier *nb);
+#endif
 
 static inline void
 nf_ct_expect_event_report(enum ip_conntrack_expect_events event,

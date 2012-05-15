@@ -33,10 +33,13 @@ struct netns_ct {
 	char			*slabname;
 };
 
+#ifndef __GENKSYMS__
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 struct netns_ct_exp {
 	struct nf_ct_event_notifier __rcu *nf_conntrack_event_cb;
 	struct nf_exp_event_notifier __rcu *nf_expect_event_cb;
 };
 #endif
+#endif
+
 #endif

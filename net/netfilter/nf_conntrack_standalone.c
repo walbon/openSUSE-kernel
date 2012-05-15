@@ -17,6 +17,9 @@
 #include <linux/netdevice.h>
 #include <linux/security.h>
 #include <net/net_namespace.h>
+#ifndef __GENKSYMS__
+#include <net/netns/generic.h>
+#endif
 #ifdef CONFIG_SYSCTL
 #include <linux/sysctl.h>
 #endif
