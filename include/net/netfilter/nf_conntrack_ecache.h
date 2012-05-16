@@ -71,7 +71,6 @@ struct nf_ct_event_notifier {
 };
 
 #ifdef __GENKSYMS__
-extern struct nf_ct_event_notifier __rcu *nf_conntrack_event_cb;
 extern int nf_conntrack_register_notifier(struct nf_ct_event_notifier *nb);
 extern void nf_conntrack_unregister_notifier(struct nf_ct_event_notifier *nb);
 #else
@@ -177,7 +176,6 @@ struct nf_exp_event_notifier {
 };
 
 #ifdef __GENKSYMS__
-extern struct nf_exp_event_notifier __rcu *nf_expect_event_cb;
 extern int nf_ct_expect_register_notifier(struct nf_exp_event_notifier *nb);
 extern void nf_ct_expect_unregister_notifier(struct nf_exp_event_notifier *nb);
 #else

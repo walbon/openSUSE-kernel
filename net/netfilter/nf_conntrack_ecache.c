@@ -26,13 +26,12 @@
 
 static DEFINE_MUTEX(nf_ct_ecache_mutex);
 
-#ifdef __GENKSYMS__
+/* Preserved only for the sake of kABI stability */
 struct nf_ct_event_notifier __rcu *nf_conntrack_event_cb __read_mostly;
 EXPORT_SYMBOL_GPL(nf_conntrack_event_cb);
 
 struct nf_exp_event_notifier __rcu *nf_expect_event_cb __read_mostly;
 EXPORT_SYMBOL_GPL(nf_expect_event_cb);
-#endif
 
 /* deliver cached events and clear cache entry - must be called with locally
  * disabled softirqs */
