@@ -297,35 +297,27 @@ static void compress_free_list(gntdev_file_private_data_t *private_data)
 static int find_contiguous_free_range(gntdev_file_private_data_t *private_data,
 				      uint32_t num_slots) 
 {
-	uint32_t i, start_index = private_data->next_fit_index;
-	uint32_t range_start = 0, range_length;
+	/* First search from next_fit_index to the end of the array. */
+	uint32_t start_index = private_data->next_fit_index;
+	uint32_t end_index = private_data->grants_size;
 
-	/* First search from the start_index to the end of the array. */
-	range_length = 0;
-	for (i = start_index; i < private_data->grants_size; ++i) {
-		if (private_data->grants[i].state == GNTDEV_SLOT_INVALID) {
-			if (range_length == 0) {
-				range_start = i;
-			}
-			++range_length;
-			if (range_length == num_slots) {
-				return range_start;
-			}
+	for (;;) {
+		uint32_t i, range_start = 0, range_length = 0;
+
+		for (i = start_index; i < end_index; ++i) {
+			if (private_data->grants[i].state == GNTDEV_SLOT_INVALID) {
+				if (range_length == 0)
+					range_start = i;
+				if (++range_length == num_slots)
+					return range_start;
+			} else
+				range_length = 0;
 		}
-	}
-	
-	/* Now search from the start of the array to the start_index. */
-	range_length = 0;
-	for (i = 0; i < start_index; ++i) {
-		if (private_data->grants[i].state == GNTDEV_SLOT_INVALID) {
-			if (range_length == 0) {
-				range_start = i;
-			}
-			++range_length;
-			if (range_length == num_slots) {
-				return range_start;
-			}
-		}
+		/* Now search from the start of the array to next_fit_index. */
+		if (!start_index)
+			break;
+		end_index = start_index;
+		start_index = 0;
 	}
 	
 	return -ENOMEM;
@@ -495,6 +487,7 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 	int i;
 	struct page *page;
 	gntdev_file_private_data_t *private_data = flip->private_data;
+	struct vm_foreign_map *foreign_map;
 
 	if (unlikely(!private_data)) {
 		pr_err("file's private data is NULL\n");
@@ -523,6 +516,13 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 		return -EINVAL;
 	}
 
+	foreign_map = kmalloc(sizeof(*foreign_map), GFP_KERNEL);
+	if (!foreign_map) {
+		pr_err("couldn't allocate mapping structure for VM area\n");
+		return -ENOMEM;
+	}
+	foreign_map->map = &private_data->foreign_pages[slot_index];
+
 	/* Slots must be in the NOT_YET_MAPPED state. */
 	down_write(&private_data->grants_sem);
 	for (i = 0; i < size; ++i) {
@@ -532,6 +532,7 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 			       "state (%d)\n", slot_index + i,
 			       private_data->grants[slot_index + i].state);
 			up_write(&private_data->grants_sem);
+			kfree(foreign_map);
 			return -EINVAL;
 		}
 	}
@@ -540,13 +541,8 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 	vma->vm_ops = &gntdev_vmops;
     
 	/* The VM area contains pages from another VM. */
+	vma->vm_private_data = foreign_map;
 	vma->vm_flags |= VM_FOREIGN;
-	vma->vm_private_data = kzalloc(size * sizeof(struct page *),
-				       GFP_KERNEL);
-	if (vma->vm_private_data == NULL) {
-		pr_err("couldn't allocate mapping structure for VM area\n");
-		return -ENOMEM;
-	}
 
 	/* This flag prevents Bad PTE errors when the memory is unmapped. */
 	vma->vm_flags |= VM_RESERVED;
@@ -601,11 +597,6 @@ static int gntdev_mmap (struct file *flip, struct vm_area_struct *vma)
 				exit_ret = -EAGAIN;
 			goto undo_map_out;
 		}
-
-		/* Store a reference to the page that will be mapped into user
-		 * space.
-		 */
-		((struct page **) vma->vm_private_data)[i] = page;
 
 		/* Mark mapped page as reserved. */
 		SetPageReserved(page);
@@ -711,7 +702,8 @@ undo_map_out:
 	 * by do_mmap_pgoff(), which will eventually call gntdev_clear_pte().
 	 * All we need to do here is free the vma_private_data.
 	 */
-	kfree(vma->vm_private_data);
+	vma->vm_flags &= ~VM_FOREIGN;
+	kfree(foreign_map);
 
 	/* THIS IS VERY UNPLEASANT: do_mmap_pgoff() will set the vma->vm_file
 	 * to NULL on failure. However, we need this in gntdev_clear_pte() to
@@ -817,9 +809,8 @@ static pte_t gntdev_clear_pte(struct vm_area_struct *vma, unsigned long addr,
 /* "Destructor" for a VM area.
  */
 static void gntdev_vma_close(struct vm_area_struct *vma) {
-	if (vma->vm_private_data) {
+	if (vma->vm_flags & VM_FOREIGN)
 		kfree(vma->vm_private_data);
-	}
 }
 
 /* Called when an ioctl is made on the device.
