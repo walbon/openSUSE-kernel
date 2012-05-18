@@ -1146,6 +1146,7 @@ static DEFINE_PCI_DEVICE_TABLE(rt2800pci_device_table) = {
 #ifdef CONFIG_RT2800PCI_RT53XX
 	{ PCI_DEVICE(0x1814, 0x5390) },
 	{ PCI_DEVICE(0x1814, 0x539a) },
+	{ PCI_DEVICE(0x1814, 0x539b) },
 	{ PCI_DEVICE(0x1814, 0x539f) },
 #endif
 	{ 0, }
