@@ -48,6 +48,9 @@
 #include <linux/audit.h>
 #include <linux/memcontrol.h>
 #include <linux/ftrace.h>
+#ifndef __GENKSYMS__
+#include <linux/proc_fs.h>
+#endif
 #include <linux/profile.h>
 #include <linux/rmap.h>
 #include <linux/ksm.h>
