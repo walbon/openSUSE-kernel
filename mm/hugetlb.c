@@ -576,10 +576,6 @@ retry_cpuset:
 
 err:
 	mpol_cond_put(mpol);
-
-	/* No need to retry after a failed put_mems_allowed in the error path */
-	put_mems_allowed(cpuset_mems_cookie);
-
 	return NULL;
 }
 
