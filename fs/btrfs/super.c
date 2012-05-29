@@ -1149,6 +1149,11 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		ret = btrfs_commit_super(root);
 		if (ret)
 			goto restore;
+
+		/* clear out the rbtree of defraggable inodes */
+		btrfs_run_defrag_inodes(fs_info);
+
+		BUG_ON(atomic_read(&fs_info->defrag_running));
 	} else {
 		if (root->fs_info->fs_devices->rw_devices == 0) {
 			ret = -EACCES;

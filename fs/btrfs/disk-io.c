@@ -1619,16 +1619,19 @@ static int cleaner_kthread(void *arg)
 	do {
 		vfs_check_frozen(root->fs_info->sb, SB_FREEZE_WRITE);
 
+		if (!down_read_trylock(&root->fs_info->sb->s_umount))
+			goto skip;
+
 		if (!(root->fs_info->sb->s_flags & MS_RDONLY) &&
-			down_read_trylock(&root->fs_info->sb->s_umount) &&
 		    mutex_trylock(&root->fs_info->cleaner_mutex)) {
 			btrfs_run_delayed_iputs(root);
 			btrfs_clean_old_snapshots(root);
 			mutex_unlock(&root->fs_info->cleaner_mutex);
 			btrfs_run_defrag_inodes(root->fs_info);
-			up_read(&root->fs_info->sb->s_umount);
 		}
 
+		up_read(&root->fs_info->sb->s_umount);
+skip:
 		if (freezing(current)) {
 			refrigerator();
 		} else {
@@ -2090,7 +2093,8 @@ struct btrfs_root *open_ctree(struct super_block *sb,
 	BTRFS_I(fs_info->btree_inode)->root = tree_root;
 	memset(&BTRFS_I(fs_info->btree_inode)->location, 0,
 	       sizeof(struct btrfs_key));
-	BTRFS_I(fs_info->btree_inode)->dummy_inode = 1;
+	set_bit(BTRFS_INODE_DUMMY,
+		&BTRFS_I(fs_info->btree_inode)->runtime_flags);
 	insert_inode_hash(fs_info->btree_inode);
 
 	spin_lock_init(&fs_info->block_group_cache_lock);
@@ -3108,12 +3112,10 @@ int close_ctree(struct btrfs_root *root)
 
 	btrfs_scrub_cancel(root);
 
-	/* wait for any defraggers to finish */
-	wait_event(fs_info->transaction_wait,
-		   (atomic_read(&fs_info->defrag_running) == 0));
-
 	/* clear out the rbtree of defraggable inodes */
 	btrfs_run_defrag_inodes(root->fs_info);
+
+	BUG_ON(atomic_read(&fs_info->defrag_running));
 
 	/*
 	 * Here come 2 situations when btrfs is broken to flip readonly:
@@ -3602,8 +3604,10 @@ static int btrfs_destroy_pinned_extent(struct btrfs_root *root,
 	u64 start;
 	u64 end;
 	int ret;
+	bool loop = true;
 
 	unpin = pinned_extents;
+again:
 	while (1) {
 		ret = find_first_extent_bit(unpin, 0, &start, &end,
 					    EXTENT_DIRTY);
@@ -3619,6 +3623,15 @@ static int btrfs_destroy_pinned_extent(struct btrfs_root *root,
 		clear_extent_dirty(unpin, start, end, GFP_NOFS);
 		btrfs_error_unpin_extent_range(root, start, end);
 		cond_resched();
+	}
+
+	if (loop) {
+		if (unpin == &root->fs_info->freed_extents[0])
+			unpin = &root->fs_info->freed_extents[1];
+		else
+			unpin = &root->fs_info->freed_extents[0];
+		loop = false;
+		goto again;
 	}
 
 	return 0;
@@ -3645,10 +3658,15 @@ void btrfs_cleanup_one_transaction(struct btrfs_transaction *cur_trans,
 	if (waitqueue_active(&cur_trans->commit_wait))
 		wake_up(&cur_trans->commit_wait);
 
+	btrfs_destroy_delayed_inodes(root);
+	btrfs_assert_delayed_root_empty(root);
+
 	btrfs_destroy_pending_snapshots(cur_trans);
 
 	btrfs_destroy_marked_extents(root, &cur_trans->dirty_pages,
 				     EXTENT_DIRTY);
+	btrfs_destroy_pinned_extent(root,
+				    root->fs_info->pinned_extents);
 
 	/*
 	memset(cur_trans, 0, sizeof(*cur_trans));
@@ -3696,6 +3714,9 @@ int btrfs_cleanup_transaction(struct btrfs_root *root)
 		t->commit_done = 1;
 		if (waitqueue_active(&t->commit_wait))
 			wake_up(&t->commit_wait);
+
+		btrfs_destroy_delayed_inodes(root);
+		btrfs_assert_delayed_root_empty(root);
 
 		btrfs_destroy_pending_snapshots(t);
 

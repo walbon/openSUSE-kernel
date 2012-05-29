@@ -2159,7 +2159,6 @@ static int run_one_delayed_ref(struct btrfs_trans_handle *trans,
 						      node->num_bytes);
 			}
 		}
-		mutex_unlock(&head->mutex);
 		return ret;
 	}
 
@@ -2304,14 +2303,13 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 				if (ret) {
 					printk(KERN_DEBUG "run_delayed_extent_op returned %d\n", ret);
 					spin_lock(&delayed_refs->lock);
+					btrfs_delayed_ref_unlock(trans,
+								 locked_ref);
 					return ret;
 				}
 
 				goto next;
 			}
-
-			list_del_init(&locked_ref->cluster);
-			locked_ref = NULL;
 		}
 
 		ref->in_tree = 0;
@@ -2328,9 +2326,23 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 		ret = run_one_delayed_ref(trans, root, ref, extent_op,
 					  must_insert_reserved);
 
-		btrfs_put_delayed_ref(ref);
 		kfree(extent_op);
 		count++;
+
+		/*
+		 * If this node is a head, we will pick the next head to deal
+		 * with. If there is something wrong when we process the
+		 * delayed ref, we will end our operation. So in these two
+		 * cases, we have to unlock the head and drop it from the
+		 * cluster list before we release it though the code is ugly.
+		 */
+		if (btrfs_delayed_ref_is_head(ref) || ret) {
+			btrfs_delayed_ref_unlock(trans, locked_ref);
+			list_del_init(&locked_ref->cluster);
+			locked_ref = NULL;
+		}
+
+		btrfs_put_delayed_ref(ref);
 
 		if (ret) {
 			printk(KERN_DEBUG "run_one_delayed_ref returned %d\n", ret);
@@ -2452,6 +2464,7 @@ again:
 
 		ret = run_clustered_refs(trans, root, &cluster);
 		if (ret < 0) {
+			btrfs_release_ref_cluster(&cluster);
 			spin_unlock(&delayed_refs->lock);
 			btrfs_abort_transaction(trans, root, ret);
 			return ret;
@@ -4361,10 +4374,9 @@ static unsigned drop_outstanding_extent(struct inode *inode)
 	BTRFS_I(inode)->outstanding_extents--;
 
 	if (BTRFS_I(inode)->outstanding_extents == 0 &&
-	    BTRFS_I(inode)->delalloc_meta_reserved) {
+	    test_and_clear_bit(BTRFS_INODE_DELALLOC_META_RESERVED,
+			       &BTRFS_I(inode)->runtime_flags))
 		drop_inode_space = 1;
-		BTRFS_I(inode)->delalloc_meta_reserved = 0;
-	}
 
 	/*
 	 * If we have more or the same amount of outsanding extents than we have
@@ -4471,7 +4483,8 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	 * Add an item to reserve for updating the inode when we complete the
 	 * delalloc io.
 	 */
-	if (!BTRFS_I(inode)->delalloc_meta_reserved) {
+	if (!test_bit(BTRFS_INODE_DELALLOC_META_RESERVED,
+		      &BTRFS_I(inode)->runtime_flags)) {
 		nr_extents++;
 		extra_reserve = 1;
 	}
@@ -4517,7 +4530,8 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 
 	spin_lock(&BTRFS_I(inode)->lock);
 	if (extra_reserve) {
-		BTRFS_I(inode)->delalloc_meta_reserved = 1;
+		set_bit(BTRFS_INODE_DELALLOC_META_RESERVED,
+			&BTRFS_I(inode)->runtime_flags);
 		nr_extents--;
 	}
 	BTRFS_I(inode)->reserved_extents += nr_extents;
