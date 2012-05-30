@@ -776,6 +776,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 	unsigned long nr_dirty = 0;
 	unsigned long nr_congested = 0;
 	unsigned long nr_reclaimed = 0;
+	bool global_reclaim = scanning_global_lru(sc);
 
 	cond_resched();
 
@@ -824,8 +825,20 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 			    may_enter_fs)
 				wait_on_page_writeback(page);
 			else {
-				unlock_page(page);
-				goto keep_lumpy;
+				/*
+				 * memcg doesn't have any dirty pages
+				 * throttling so we could easily OOM just
+				 * because too many pages are in writeback
+				 * from reclaim and there is nothing else to
+				 * reclaim.
+				 */
+				if (!global_reclaim && may_enter_fs
+						&& PageReclaim(page))
+					wait_on_page_writeback(page);
+				else {
+					unlock_page(page);
+					goto keep_lumpy;
+				}
 			}
 		}
 
