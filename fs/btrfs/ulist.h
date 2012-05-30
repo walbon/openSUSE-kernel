@@ -67,8 +67,11 @@ struct ulist *ulist_alloc(unsigned long gfp_mask);
 void ulist_free(struct ulist *ulist);
 int ulist_add(struct ulist *ulist, u64 val, unsigned long aux,
 	      unsigned long gfp_mask);
-struct ulist_node *ulist_next(struct ulist *ulist,
+/* KABI-safe version */
+struct ulist_node *__ulist_next(struct ulist *ulist,
 			      struct ulist_iterator *uiter);
+struct ulist_node *ulist_next(struct ulist *ulist,
+			      struct ulist_node *uiter);
 
 #define ULIST_ITER_INIT(uiter) ((uiter)->i = 0)
 

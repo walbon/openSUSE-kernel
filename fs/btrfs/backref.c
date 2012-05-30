@@ -24,6 +24,9 @@
 #include "delayed-ref.h"
 #include "locking.h"
 
+/* KABI workaround */
+#define ulist_next __ulist_next
+
 /*
  * this structure records all encountered refs on the way up to the root
  */
@@ -1524,3 +1527,5 @@ void free_ipath(struct inode_fs_paths *ipath)
 	kfree(ipath->fspath);
 	kfree(ipath);
 }
+
+#undef ulist_next

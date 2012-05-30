@@ -201,7 +201,7 @@ EXPORT_SYMBOL(ulist_add);
  * It is allowed to call ulist_add during an enumeration. Newly added items
  * are guaranteed to show up in the running enumeration.
  */
-struct ulist_node *ulist_next(struct ulist *ulist, struct ulist_iterator *uiter)
+struct ulist_node *__ulist_next(struct ulist *ulist, struct ulist_iterator *uiter)
 {
 	if (ulist->nnodes == 0)
 		return NULL;
@@ -209,5 +209,11 @@ struct ulist_node *ulist_next(struct ulist *ulist, struct ulist_iterator *uiter)
 		return NULL;
 
 	return &ulist->nodes[uiter->i++];
+}
+
+struct ulist_node *ulist_next(struct ulist *ulist, struct ulist_node *uiter)
+{
+	/* KABI placeholder */
+	BUG();
 }
 EXPORT_SYMBOL(ulist_next);
