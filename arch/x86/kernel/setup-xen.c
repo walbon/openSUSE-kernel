@@ -188,19 +188,25 @@ static void __init
 setup_pfn_to_mfn_frame_list(typeof(__alloc_bootmem) *__alloc_bootmem)
 {
 	unsigned long i, j, size;
-	unsigned int k, fpp = PAGE_SIZE / sizeof(unsigned long);
+	unsigned int k, order, fpp = PAGE_SIZE / sizeof(unsigned long);
 
 	size = (max_pfn + fpp - 1) / fpp;
 	size = (size + fpp - 1) / fpp;
 	++size; /* include a zero terminator for crash tools */
 	size *= sizeof(unsigned long);
+	order = get_order(size);
 	if (__alloc_bootmem)
-		pfn_to_mfn_frame_list_list = alloc_bootmem_pages(size);
-	if (size > PAGE_SIZE
-	    && xen_create_contiguous_region((unsigned long)
-					    pfn_to_mfn_frame_list_list,
-					    get_order(size), 0))
-		BUG();
+		pfn_to_mfn_frame_list_list =
+			alloc_bootmem_pages(PAGE_SIZE << order);
+	if (order) {
+		if (xen_create_contiguous_region((unsigned long)
+						 pfn_to_mfn_frame_list_list,
+						 order, 0))
+			pr_err("List of P2M frame lists is not contiguous, %s will not work",
+			       is_initial_xendomain()
+			       ? "kdump" : "save/restore");
+		memset(pfn_to_mfn_frame_list_list, 0, size);
+	}
 	size -= sizeof(unsigned long);
 	if (__alloc_bootmem)
 		pfn_to_mfn_frame_list = alloc_bootmem(size);
@@ -1237,6 +1243,9 @@ void __init setup_arch(char **cmdline_p)
 #ifdef CONFIG_XEN
 #ifdef CONFIG_KEXEC
 	xen_machine_kexec_setup_resources();
+# define kexec_enabled() (crashk_res.start < crashk_res.end)
+#else
+# define kexec_enabled() 0
 #endif
 	p2m_pages = max_pfn;
 	if (xen_start_info->nr_pages > max_pfn) {
@@ -1367,9 +1376,7 @@ void __init setup_arch(char **cmdline_p)
 				PFN_PHYS(PFN_UP(xen_start_info->nr_pages *
 						sizeof(unsigned long))));
 
-#ifndef CONFIG_KEXEC
-		if (!is_initial_xendomain())
-#endif
+		if (!is_initial_xendomain() || kexec_enabled())
 			setup_pfn_to_mfn_frame_list(__alloc_bootmem);
 	}
 

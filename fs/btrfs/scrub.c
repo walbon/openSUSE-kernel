@@ -351,8 +351,8 @@ static void scrub_print_warning(const char *errstr, struct scrub_bio *sbio,
 		} while (ret != 1);
 	} else {
 		swarn.path = path;
-		iterate_extent_inodes(fs_info, path, found_key.objectid,
-					extent_item_pos,
+		iterate_extent_inodes(fs_info, found_key.objectid,
+					extent_item_pos, 1,
 					scrub_print_warning_inode, &swarn);
 	}
 
@@ -728,6 +728,8 @@ static int scrub_fixup_io(int rw, struct block_device *bdev, sector_t sector,
 	DECLARE_COMPLETION_ONSTACK(complete);
 
 	bio = bio_alloc(GFP_NOFS, 1);
+	if (!bio)
+		return -EIO;
 	bio->bi_bdev = bdev;
 	bio->bi_sector = sector;
 	bio_add_page(bio, page, PAGE_SIZE, 0);

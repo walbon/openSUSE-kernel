@@ -16,7 +16,44 @@
 #include <linux/kdbprivate.h>
 #include <linux/nmi.h>
 #include <asm/system.h>
+#include <linux/unwind.h>
 
+#ifdef CONFIG_X86_64
+static void
+kdb_dump_trace_unwind (struct unwind_frame_info *info)
+{
+	unsigned long sp = UNW_SP(info);
+
+	if (info && info->regs.ip) {
+		/* vsnprintf: %pS output the name of a symbol with offset */
+		lkdb_printf(" [<%p>] %pS\n",
+			(void *)info->regs.ip, (void *)info->regs.ip);
+	}
+	while (unwind(info) == 0 && UNW_PC(info)) {
+		lkdb_printf(" [<%p>] %pS\n",
+			(void *)UNW_PC(info), (void *)UNW_PC(info));
+		if ((sp & ~(PAGE_SIZE - 1)) == (UNW_SP(info) & ~(PAGE_SIZE - 1))
+		    && sp > UNW_SP(info))
+			break;
+		sp = UNW_SP(info);
+	}
+}
+
+static void
+kdb_stack_unwind(struct task_struct *task, struct pt_regs *regs)
+{
+	struct unwind_frame_info info;
+
+	if (regs) {
+		if (unwind_init_frame_info(&info, task, regs))
+			return;
+	} else {
+		if (unwind_init_blocked(&info, task))
+			return;
+	}
+	kdb_dump_trace_unwind(&info);
+}
+#endif
 
 /*
  * lkdb_bt
@@ -57,6 +94,23 @@ static int kdb_show_stack(struct task_struct *p, void *addr, int argcount)
 	/* Use KDB arch-specific backtraces for ia64 */
 #ifdef CONFIG_IA64
 	return kdba_bt_process(p, argcount);
+#elif defined(CONFIG_X86_64)
+	/* Use the in-kernel backtraces */
+	int old_lvl = console_loglevel;
+	console_loglevel = 15;
+	kdb_trap_printk++;
+	kdba_set_current_task(p);
+	if (addr)
+		show_stack((struct task_struct *)p, addr);
+	else
+		kdb_stack_unwind(p, lkdb_current_regs);
+
+	if (lkdb_current_regs && !KDB_STATE(BTNOREGS))
+		kdba_dumpregs(lkdb_current_regs, NULL, NULL);
+
+	console_loglevel = old_lvl;
+	kdb_trap_printk--;
+	return 0;
 #else
 	/* Use the in-kernel backtraces */
 	int old_lvl = console_loglevel;
@@ -121,7 +175,9 @@ lkdb_bt(int argc, const char **argv)
 	int nextarg;
 	unsigned long addr;
 	long offset;
+	int doregs = 1;
 
+	lkdbgetintenv("BTREGS", &doregs);	/* Show reg info during multiple BT's */
 	lkdbgetintenv("BTARGS", &argcount);	/* Arguments to print */
 	lkdbgetintenv("BTAPROMPT", &btaprompt);	/* Prompt after each proc in bta */
 
@@ -129,6 +185,8 @@ lkdb_bt(int argc, const char **argv)
 		struct task_struct *g, *p;
 		unsigned long cpu;
 		unsigned long mask = lkdb_task_state_string(argc ? argv[1] : NULL);
+		if (!doregs)
+			KDB_STATE_SET(BTNOREGS);
 		if (argc == 0)
 			lkdb_ps_suppressed();
 		/* Run the active tasks first */
@@ -136,19 +194,24 @@ lkdb_bt(int argc, const char **argv)
 			if (!cpu_online(cpu))
 				continue;
 			p = lkdb_curr_task(cpu);
-			if (lkdb_bt1(p, mask, argcount, btaprompt))
+			if (lkdb_bt1(p, mask, argcount, btaprompt)) {
+				KDB_STATE_CLEAR(BTNOREGS);
 				return 0;
+			}
 		}
 		/* Now the inactive tasks */
 		lkdb_do_each_thread(g, p) {
 			if (task_curr(p))
 				continue;
-			if (lkdb_bt1(p, mask, argcount, btaprompt))
+			if (lkdb_bt1(p, mask, argcount, btaprompt)) {
+				KDB_STATE_CLEAR(BTNOREGS);
 				return 0;
+			}
 		} lkdb_while_each_thread(g, p);
 	} else if (strcmp(argv[0], "btp") == 0) {
 		struct task_struct *p;
 		unsigned long pid;
+
 		if (argc != 1)
 			return LKDB_ARGCOUNT;
 		if ((diag = lkdbgetularg((char *)argv[1], &pid)))
@@ -187,6 +250,8 @@ lkdb_bt(int argc, const char **argv)
 			lkdb_parse(buf);
 			return 0;
 		}
+		if (!doregs)
+			KDB_STATE_SET(BTNOREGS);
 		lkdb_printf("btc: cpu status: ");
 		lkdb_parse("cpu\n");
 		for (cpu = 0, krp = lkdb_running_process; cpu < NR_CPUS; ++cpu, ++krp) {
@@ -197,6 +262,7 @@ lkdb_bt(int argc, const char **argv)
 			touch_nmi_watchdog();
 		}
 		kdba_set_current_task(save_current_task);
+		KDB_STATE_CLEAR(BTNOREGS);
 		return 0;
 	} else {
 		if (argc) {

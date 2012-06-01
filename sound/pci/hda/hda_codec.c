@@ -3166,6 +3166,10 @@ static void hda_call_codec_suspend(struct hda_codec *codec)
  */
 static void hda_call_codec_resume(struct hda_codec *codec)
 {
+	/* set as if powered on for avoiding re-entering the resume
+	 * in the resume / power-save sequence
+	 */
+	hda_keep_power_on(codec);
 	hda_set_power_state(codec,
 			    codec->afg ? codec->afg : codec->mfg,
 			    AC_PWRST_D0);
@@ -3180,6 +3184,7 @@ static void hda_call_codec_resume(struct hda_codec *codec)
 		snd_hda_codec_resume_amp(codec);
 		snd_hda_codec_resume_cache(codec);
 	}
+	snd_hda_power_down(codec); /* flag down before returning */
 }
 #endif /* CONFIG_PM */
 
@@ -3988,6 +3993,7 @@ void snd_hda_power_up(struct hda_codec *codec)
 	snd_hda_update_power_acct(codec);
 	codec->power_on = 1;
 	codec->power_jiffies = jiffies;
+	codec->power_transition = 1; /* avoid reentrance */
 	if (bus->ops.pm_notify)
 		bus->ops.pm_notify(bus);
 	hda_call_codec_resume(codec);
@@ -4927,10 +4933,6 @@ int snd_hda_suspend(struct hda_bus *bus)
 	list_for_each_entry(codec, &bus->codec_list, list) {
 		if (hda_codec_is_power_on(codec))
 			hda_call_codec_suspend(codec);
-		else /* forcibly change the power to D3 even if not used */
-			hda_set_power_state(codec,
-					    codec->afg ? codec->afg : codec->mfg,
-					    AC_PWRST_D3);
 		if (codec->patch_ops.post_suspend)
 			codec->patch_ops.post_suspend(codec);
 	}
@@ -4954,8 +4956,7 @@ int snd_hda_resume(struct hda_bus *bus)
 	list_for_each_entry(codec, &bus->codec_list, list) {
 		if (codec->patch_ops.pre_resume)
 			codec->patch_ops.pre_resume(codec);
-		if (snd_hda_codec_needs_resume(codec))
-			hda_call_codec_resume(codec);
+		hda_call_codec_resume(codec);
 	}
 	return 0;
 }

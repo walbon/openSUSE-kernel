@@ -772,8 +772,13 @@ static inline unsigned int tg3_has_work(struct tg3_napi *tnapi)
 		if (sblk->status & SD_STATUS_LINK_CHG)
 			work_exists = 1;
 	}
-	/* check for RX/TX work to do */
-	if (sblk->idx[0].tx_consumer != tnapi->tx_cons ||
+
+	/* check for TX work to do */
+	if (sblk->idx[0].tx_consumer != tnapi->tx_cons)
+		work_exists = 1;
+
+	/* check for RX work to do */
+	if (tnapi->rx_rcb_prod_idx &&
 	    *(tnapi->rx_rcb_prod_idx) != tnapi->rx_rcb_ptr)
 		work_exists = 1;
 
@@ -2520,7 +2525,9 @@ static void tg3_power_down_phy(struct tg3 *tp, bool do_low_power)
 	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5700 ||
 	    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5704 ||
 	    (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5780 &&
-	     (tp->phy_flags & TG3_PHYFLG_MII_SERDES)))
+	     (tp->phy_flags & TG3_PHYFLG_MII_SERDES)) ||
+	    (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5717 &&
+	     !tp->pci_fn))
 		return;
 
 	if (GET_CHIP_REV(tp->pci_chip_rev_id) == CHIPREV_5784_AX ||
@@ -5226,8 +5233,10 @@ next_pkt_nopost:
 		tpr->rx_std_prod_idx = std_prod_idx & tp->rx_std_ring_mask;
 		tpr->rx_jmb_prod_idx = jmb_prod_idx & tp->rx_jmb_ring_mask;
 
-		if (tnapi != &tp->napi[1])
+		if (tnapi != &tp->napi[1]) {
+			tp->rx_refill = true;
 			napi_schedule(&tp->napi[1].napi);
+		}
 	}
 
 	return received;
@@ -5394,6 +5403,9 @@ static int tg3_poll_work(struct tg3_napi *tnapi, int work_done, int budget)
 			return work_done;
 	}
 
+	if (!tnapi->rx_rcb_prod_idx)
+		return work_done;
+
 	/* run RX thread, within the bounds set by NAPI.
 	 * All RX "locking" is done by ensuring outside
 	 * code synchronizes with tg3->napi.poll()
@@ -5407,6 +5419,7 @@ static int tg3_poll_work(struct tg3_napi *tnapi, int work_done, int budget)
 		u32 std_prod_idx = dpr->rx_std_prod_idx;
 		u32 jmb_prod_idx = dpr->rx_jmb_prod_idx;
 
+		tp->rx_refill = false;
 		for (i = 1; i < tp->irq_cnt; i++)
 			err |= tg3_rx_prodring_xfer(tp, dpr,
 						    &tp->napi[i].prodring);
@@ -5457,9 +5470,25 @@ static int tg3_poll_msix(struct napi_struct *napi, int budget)
 		/* check for RX/TX work to do */
 		if (likely(sblk->idx[0].tx_consumer == tnapi->tx_cons &&
 			   *(tnapi->rx_rcb_prod_idx) == tnapi->rx_rcb_ptr)) {
+
+			/* This test here is not race free, but will reduce
+			 * the number of interrupts by looping again.
+			 */
+			if (tnapi == &tp->napi[1] && tp->rx_refill)
+				continue;
+
 			napi_complete(napi);
 			/* Reenable interrupts. */
 			tw32_mailbox(tnapi->int_mbox, tnapi->last_tag << 24);
+
+			/* This test here is synchronized by napi_schedule()
+			 * and napi_complete() to close the race condition.
+			 */
+			if (unlikely(tnapi == &tp->napi[1] && tp->rx_refill)) {
+				tw32(HOSTCC_MODE, tp->coalesce_mode |
+						  HOSTCC_MODE_ENABLE |
+						  tnapi->coal_now);
+			}
 			mmiowb();
 			break;
 		}
@@ -6180,14 +6209,9 @@ static netdev_tx_t tg3_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		iph = ip_hdr(skb);
 		tcp_opt_len = tcp_optlen(skb);
 
-		if (skb_is_gso_v6(skb)) {
-			hdr_len = skb_headlen(skb) - ETH_HLEN;
-		} else {
-			u32 ip_tcp_len;
+		hdr_len = skb_transport_offset(skb) + tcp_hdrlen(skb) - ETH_HLEN;
 
-			ip_tcp_len = ip_hdrlen(skb) + sizeof(struct tcphdr);
-			hdr_len = ip_tcp_len + tcp_opt_len;
-
+		if (!skb_is_gso_v6(skb)) {
 			iph->check = 0;
 			iph->tot_len = htons(mss + hdr_len);
 		}
@@ -6832,6 +6856,12 @@ static int tg3_alloc_consistent(struct tg3 *tp)
 		 */
 		switch (i) {
 		default:
+			if (tg3_flag(tp, ENABLE_RSS)) {
+				tnapi->rx_rcb_prod_idx = NULL;
+				break;
+			}
+			/* Fall through */
+		case 1:
 			tnapi->rx_rcb_prod_idx = &sblk->idx[0].rx_producer;
 			break;
 		case 2:
@@ -8652,9 +8682,11 @@ static int tg3_reset_hw(struct tg3 *tp, int reset_phy)
 	tw32_f(GRC_LOCAL_CTRL, tp->grc_local_ctrl);
 	udelay(100);
 
-	if (tg3_flag(tp, USING_MSIX) && tp->irq_cnt > 1) {
+	if (tg3_flag(tp, USING_MSIX)) {
 		val = tr32(MSGINT_MODE);
-		val |= MSGINT_MODE_MULTIVEC_EN | MSGINT_MODE_ENABLE;
+		val |= MSGINT_MODE_ENABLE;
+		if (tp->irq_cnt > 1)
+			val |= MSGINT_MODE_MULTIVEC_EN;
 		tw32(MSGINT_MODE, val);
 	}
 
@@ -9377,19 +9409,18 @@ static int tg3_request_firmware(struct tg3 *tp)
 
 static bool tg3_enable_msix(struct tg3 *tp)
 {
-	int i, rc, cpus = num_online_cpus();
+	int i, rc;
 	struct msix_entry msix_ent[tp->irq_max];
 
-	if (cpus == 1)
-		/* Just fallback to the simpler MSI mode. */
-		return false;
-
-	/*
-	 * We want as many rx rings enabled as there are cpus.
-	 * The first MSIX vector only deals with link interrupts, etc,
-	 * so we add one to the number of vectors we are requesting.
-	 */
-	tp->irq_cnt = min_t(unsigned, cpus + 1, tp->irq_max);
+	tp->irq_cnt = num_online_cpus();
+	if (tp->irq_cnt > 1) {
+		/* We want as many rx rings enabled as there are cpus.
+		 * In multiqueue MSI-X mode, the first MSI-X vector
+		 * only deals with link interrupts, etc, so we add
+		 * one to the number of vectors we are requesting.
+		 */
+		tp->irq_cnt = min_t(unsigned, tp->irq_cnt + 1, tp->irq_max);
+	}
 
 	for (i = 0; i < tp->irq_max; i++) {
 		msix_ent[i].entry  = i;

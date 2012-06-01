@@ -117,8 +117,6 @@ static const struct block_device_operations xlvbd_block_fops =
 #endif
 };
 
-DEFINE_SPINLOCK(blkif_io_lock);
-
 static struct xlbd_major_info *
 xlbd_alloc_major_info(int major, int minor, int index)
 {
@@ -295,17 +293,27 @@ xlbd_release_minors(struct xlbd_major_info *mi, unsigned int minor,
 }
 
 static int
-xlvbd_init_blk_queue(struct gendisk *gd, u16 sector_size)
+xlvbd_init_blk_queue(struct gendisk *gd, u16 sector_size,
+		     struct blkfront_info *info)
 {
 	struct request_queue *rq;
 
-	rq = blk_init_queue(do_blkif_request, &blkif_io_lock);
+	rq = blk_init_queue(do_blkif_request, &info->io_lock);
 	if (rq == NULL)
 		return -1;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29)
 	queue_flag_set_unlocked(QUEUE_FLAG_VIRT, rq);
 #endif
+
+	if (info->feature_discard) {
+		queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, rq);
+		blk_queue_max_discard_sectors(rq, get_capacity(gd));
+		rq->limits.discard_granularity = info->discard_granularity;
+		rq->limits.discard_alignment = info->discard_alignment;
+		if (info->feature_secdiscard)
+			queue_flag_set_unlocked(QUEUE_FLAG_SECDISCARD, rq);
+	}
 
 	/* Hard sector size and max sectors impersonate the equiv. hardware. */
 	blk_queue_logical_block_size(rq, sector_size);
@@ -325,6 +333,7 @@ xlvbd_init_blk_queue(struct gendisk *gd, u16 sector_size)
 	blk_queue_bounce_limit(rq, BLK_BOUNCE_ANY);
 
 	gd->queue = rq;
+	info->rq = rq;
 
 	return 0;
 }
@@ -365,22 +374,22 @@ xlvbd_add(blkif_sector_t capacity, int vdevice, u16 vdisk_info,
 		goto out;
 	info->mi = mi;
 
-	if (!(vdisk_info & VDISK_CDROM) &&
-	    (minor & ((1 << mi->type->partn_shift) - 1)) == 0)
+	if ((vdisk_info & VDISK_CDROM) ||
+	    !(minor & ((1 << mi->type->partn_shift) - 1)))
 		nr_minors = 1 << mi->type->partn_shift;
 
-	err = xlbd_reserve_minors(mi, minor, nr_minors);
+	err = xlbd_reserve_minors(mi, minor & ~(nr_minors - 1), nr_minors);
 	if (err)
 		goto out;
 	err = -ENODEV;
 
-	gd = alloc_disk(nr_minors);
+	gd = alloc_disk(vdisk_info & VDISK_CDROM ? 1 : nr_minors);
 	if (gd == NULL)
 		goto release;
 
 	offset =  mi->index * mi->type->disks_per_major +
 			(minor >> mi->type->partn_shift);
-	if (nr_minors > 1 || (vdisk_info & VDISK_CDROM)) {
+	if (nr_minors > 1) {
 		if (offset < 26) {
 			sprintf(gd->disk_name, "%s%c",
 				 mi->type->diskname, 'a' + offset );
@@ -413,12 +422,11 @@ xlvbd_add(blkif_sector_t capacity, int vdevice, u16 vdisk_info,
 	gd->driverfs_dev = &(info->xbdev->dev);
 	set_capacity(gd, capacity);
 
-	if (xlvbd_init_blk_queue(gd, sector_size)) {
+	if (xlvbd_init_blk_queue(gd, sector_size, info)) {
 		del_gendisk(gd);
 		goto release;
 	}
 
-	info->rq = gd->queue;
 	info->gd = gd;
 
 	xlvbd_flush(info);
@@ -453,12 +461,14 @@ xlvbd_del(struct blkfront_info *info)
 
 	BUG_ON(info->gd == NULL);
 	minor = info->gd->first_minor;
-	nr_minors = info->gd->minors;
+	nr_minors = (info->gd->flags & GENHD_FL_CD)
+		    || !(minor & ((1 << info->mi->type->partn_shift) - 1))
+		    ? 1 << info->mi->type->partn_shift : 1;
 	del_gendisk(info->gd);
 	put_disk(info->gd);
 	info->gd = NULL;
 
-	xlbd_release_minors(info->mi, minor, nr_minors);
+	xlbd_release_minors(info->mi, minor & ~(nr_minors - 1), nr_minors);
 	xlbd_put_major_info(info->mi);
 	info->mi = NULL;
 

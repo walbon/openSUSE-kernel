@@ -1313,6 +1313,18 @@ repeat:
 	radix_tree_preload_end();
 
 	if (sgp != SGP_READ && !prealloc_page) {
+		/* 
+		 * try to shrink the page cache proactively even though
+		 * we might already have the page in so the shrinking is
+		 * not necessary but this is much easier than dropping 
+		 * the lock before add_to_page_cache_lru.
+		 * GFP_NOWAIT makes sure that we do not shrink when adding
+		 * to page cache
+		 */
+		if (unlikely(vm_pagecache_limit_mb) &&
+				pagecache_over_limit() > 0)
+			shrink_page_cache(GFP_KERNEL, NULL);
+
 		prealloc_page = shmem_alloc_page(gfp, info, idx);
 		if (prealloc_page) {
 			SetPageSwapBacked(prealloc_page);

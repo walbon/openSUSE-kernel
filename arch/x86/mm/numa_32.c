@@ -47,15 +47,16 @@ EXPORT_SYMBOL(physnode_map);
 
 void memory_present(int nid, unsigned long start, unsigned long end)
 {
-	unsigned long pfn;
+	unsigned long elem, endelem;
 
 	printk(KERN_INFO "Node: %d, start_pfn: %lx, end_pfn: %lx\n",
 			nid, start, end);
 	printk(KERN_DEBUG "  Setting physnode_map array to node %d for pfns:\n", nid);
 	printk(KERN_DEBUG "  ");
-	for (pfn = start; pfn < end; pfn += PAGES_PER_ELEMENT) {
-		physnode_map[pfn / PAGES_PER_ELEMENT] = nid;
-		printk(KERN_CONT "%lx ", pfn);
+	endelem = (end-1) / PAGES_PER_ELEMENT;
+	for (elem = start / PAGES_PER_ELEMENT; elem <= endelem; ++elem) {
+		physnode_map[elem] = nid;
+		printk(KERN_CONT "%lx ", elem * PAGES_PER_ELEMENT);
 	}
 	printk(KERN_CONT "\n");
 }

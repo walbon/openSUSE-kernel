@@ -413,18 +413,6 @@ int rt2800_load_firmware(struct rt2x00_dev *rt2x00dev,
 	}
 
 	/*
-	 * Disable DMA, will be reenabled later when enabling
-	 * the radio.
-	 */
-	rt2800_register_read(rt2x00dev, WPDMA_GLO_CFG, &reg);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_ENABLE_TX_DMA, 0);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_TX_DMA_BUSY, 0);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_ENABLE_RX_DMA, 0);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_RX_DMA_BUSY, 0);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_TX_WRITEBACK_DONE, 1);
-	rt2800_register_write(rt2x00dev, WPDMA_GLO_CFG, reg);
-
-	/*
 	 * Write firmware to the device.
 	 */
 	rt2800_drv_write_firmware(rt2x00dev, data, len);
@@ -443,6 +431,15 @@ int rt2800_load_firmware(struct rt2x00_dev *rt2x00dev,
 		ERROR(rt2x00dev, "PBF system register not ready.\n");
 		return -EBUSY;
 	}
+
+	/*
+	 * Disable DMA, will be reenabled later when enabling
+	 * the radio.
+	 */
+	rt2800_register_read(rt2x00dev, WPDMA_GLO_CFG, &reg);
+	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_ENABLE_TX_DMA, 0);
+	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_ENABLE_RX_DMA, 0);
+	rt2800_register_write(rt2x00dev, WPDMA_GLO_CFG, reg);
 
 	/*
 	 * Initialize firmware.
@@ -494,7 +491,7 @@ void rt2800_write_tx_data(struct queue_entry *entry,
 	rt2x00_set_field32(&word, TXWI_W1_BW_WIN_SIZE, txdesc->u.ht.ba_size);
 	rt2x00_set_field32(&word, TXWI_W1_WIRELESS_CLI_ID,
 			   test_bit(ENTRY_TXD_ENCRYPT, &txdesc->flags) ?
-			   txdesc->key_idx : 0xff);
+			   txdesc->key_idx : txdesc->u.ht.wcid);
 	rt2x00_set_field32(&word, TXWI_W1_MPDU_TOTAL_BYTE_COUNT,
 			   txdesc->length);
 	rt2x00_set_field32(&word, TXWI_W1_PACKETID_QUEUE, entry->queue->qid);
@@ -1019,11 +1016,51 @@ static void rt2800_init_led(struct rt2x00_dev *rt2x00dev,
 /*
  * Configuration handlers.
  */
-static void rt2800_config_wcid_attr(struct rt2x00_dev *rt2x00dev,
-				    struct rt2x00lib_crypto *crypto,
-				    struct ieee80211_key_conf *key)
+static void rt2800_config_wcid(struct rt2x00_dev *rt2x00dev,
+			       const u8 *address,
+			       int wcid)
 {
 	struct mac_wcid_entry wcid_entry;
+	u32 offset;
+
+	offset = MAC_WCID_ENTRY(wcid);
+
+	memset(&wcid_entry, 0xff, sizeof(wcid_entry));
+	if (address)
+		memcpy(wcid_entry.mac, address, ETH_ALEN);
+
+	rt2800_register_multiwrite(rt2x00dev, offset,
+				      &wcid_entry, sizeof(wcid_entry));
+}
+
+static void rt2800_delete_wcid_attr(struct rt2x00_dev *rt2x00dev, int wcid)
+{
+	u32 offset;
+	offset = MAC_WCID_ATTR_ENTRY(wcid);
+	rt2800_register_write(rt2x00dev, offset, 0);
+}
+
+static void rt2800_config_wcid_attr_bssidx(struct rt2x00_dev *rt2x00dev,
+					   int wcid, u32 bssidx)
+{
+	u32 offset = MAC_WCID_ATTR_ENTRY(wcid);
+	u32 reg;
+
+	/*
+	 * The BSS Idx numbers is split in a main value of 3 bits,
+	 * and a extended field for adding one additional bit to the value.
+	 */
+	rt2800_register_read(rt2x00dev, offset, &reg);
+	rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_BSS_IDX, (bssidx & 0x7));
+	rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_BSS_IDX_EXT,
+			   (bssidx & 0x8) >> 3);
+	rt2800_register_write(rt2x00dev, offset, reg);
+}
+
+static void rt2800_config_wcid_attr_cipher(struct rt2x00_dev *rt2x00dev,
+					   struct rt2x00lib_crypto *crypto,
+					   struct ieee80211_key_conf *key)
+{
 	struct mac_iveiv_entry iveiv_entry;
 	u32 offset;
 	u32 reg;
@@ -1043,14 +1080,16 @@ static void rt2800_config_wcid_attr(struct rt2x00_dev *rt2x00dev,
 				   (crypto->cipher & 0x7));
 		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_CIPHER_EXT,
 				   (crypto->cipher & 0x8) >> 3);
-		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_BSS_IDX,
-				   (crypto->bssidx & 0x7));
-		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_BSS_IDX_EXT,
-				   (crypto->bssidx & 0x8) >> 3);
 		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_RX_WIUDF, crypto->cipher);
 		rt2800_register_write(rt2x00dev, offset, reg);
 	} else {
-		rt2800_register_write(rt2x00dev, offset, 0);
+		/* Delete the cipher without touching the bssidx */
+		rt2800_register_read(rt2x00dev, offset, &reg);
+		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_KEYTAB, 0);
+		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_CIPHER, 0);
+		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_CIPHER_EXT, 0);
+		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_RX_WIUDF, 0);
+		rt2800_register_write(rt2x00dev, offset, reg);
 	}
 
 	offset = MAC_IVEIV_ENTRY(key->hw_key_idx);
@@ -1063,14 +1102,6 @@ static void rt2800_config_wcid_attr(struct rt2x00_dev *rt2x00dev,
 	iveiv_entry.iv[3] |= key->keyidx << 6;
 	rt2800_register_multiwrite(rt2x00dev, offset,
 				      &iveiv_entry, sizeof(iveiv_entry));
-
-	offset = MAC_WCID_ENTRY(key->hw_key_idx);
-
-	memset(&wcid_entry, 0, sizeof(wcid_entry));
-	if (crypto->cmd == SET_KEY)
-		memcpy(wcid_entry.mac, crypto->address, ETH_ALEN);
-	rt2800_register_multiwrite(rt2x00dev, offset,
-				      &wcid_entry, sizeof(wcid_entry));
 }
 
 int rt2800_config_shared_key(struct rt2x00_dev *rt2x00dev,
@@ -1117,20 +1148,24 @@ int rt2800_config_shared_key(struct rt2x00_dev *rt2x00dev,
 	/*
 	 * Update WCID information
 	 */
-	rt2800_config_wcid_attr(rt2x00dev, crypto, key);
+	rt2800_config_wcid(rt2x00dev, crypto->address, key->hw_key_idx);
+	rt2800_config_wcid_attr_bssidx(rt2x00dev, key->hw_key_idx,
+				       crypto->bssidx);
+	rt2800_config_wcid_attr_cipher(rt2x00dev, crypto, key);
 
 	return 0;
 }
 EXPORT_SYMBOL_GPL(rt2800_config_shared_key);
 
-static inline int rt2800_find_pairwise_keyslot(struct rt2x00_dev *rt2x00dev)
+static inline int rt2800_find_wcid(struct rt2x00_dev *rt2x00dev)
 {
+	struct mac_wcid_entry wcid_entry;
 	int idx;
-	u32 offset, reg;
+	u32 offset;
 
 	/*
-	 * Search for the first free pairwise key entry and return the
-	 * corresponding index.
+	 * Search for the first free WCID entry and return the corresponding
+	 * index.
 	 *
 	 * Make sure the WCID starts _after_ the last possible shared key
 	 * entry (>32).
@@ -1140,11 +1175,17 @@ static inline int rt2800_find_pairwise_keyslot(struct rt2x00_dev *rt2x00dev)
 	 * first 222 entries.
 	 */
 	for (idx = 33; idx <= 222; idx++) {
-		offset = MAC_WCID_ATTR_ENTRY(idx);
-		rt2800_register_read(rt2x00dev, offset, &reg);
-		if (!reg)
+		offset = MAC_WCID_ENTRY(idx);
+		rt2800_register_multiread(rt2x00dev, offset, &wcid_entry,
+					  sizeof(wcid_entry));
+		if (is_broadcast_ether_addr(wcid_entry.mac))
 			return idx;
 	}
+
+	/*
+	 * Use -1 to indicate that we don't have any more space in the WCID
+	 * table.
+	 */
 	return -1;
 }
 
@@ -1154,13 +1195,15 @@ int rt2800_config_pairwise_key(struct rt2x00_dev *rt2x00dev,
 {
 	struct hw_key_entry key_entry;
 	u32 offset;
-	int idx;
 
 	if (crypto->cmd == SET_KEY) {
-		idx = rt2800_find_pairwise_keyslot(rt2x00dev);
-		if (idx < 0)
+		/*
+		 * Allow key configuration only for STAs that are
+		 * known by the hw.
+		 */
+		if (crypto->wcid < 0)
 			return -ENOSPC;
-		key->hw_key_idx = idx;
+		key->hw_key_idx = crypto->wcid;
 
 		memcpy(key_entry.key, crypto->key,
 		       sizeof(key_entry.key));
@@ -1177,11 +1220,58 @@ int rt2800_config_pairwise_key(struct rt2x00_dev *rt2x00dev,
 	/*
 	 * Update WCID information
 	 */
-	rt2800_config_wcid_attr(rt2x00dev, crypto, key);
+	rt2800_config_wcid_attr_cipher(rt2x00dev, crypto, key);
 
 	return 0;
 }
 EXPORT_SYMBOL_GPL(rt2800_config_pairwise_key);
+
+int rt2800_sta_add(struct rt2x00_dev *rt2x00dev, struct ieee80211_vif *vif,
+		   struct ieee80211_sta *sta)
+{
+	int wcid;
+	struct rt2x00_sta *sta_priv = sta_to_rt2x00_sta(sta);
+
+	/*
+	 * Find next free WCID.
+	 */
+	wcid = rt2800_find_wcid(rt2x00dev);
+
+	/*
+	 * Store selected wcid even if it is invalid so that we can
+	 * later decide if the STA is uploaded into the hw.
+	 */
+	sta_priv->wcid = wcid;
+
+	/*
+	 * No space left in the device, however, we can still communicate
+	 * with the STA -> No error.
+	 */
+	if (wcid < 0)
+		return 0;
+
+	/*
+	 * Clean up WCID attributes and write STA address to the device.
+	 */
+	rt2800_delete_wcid_attr(rt2x00dev, wcid);
+	rt2800_config_wcid(rt2x00dev, sta->addr, wcid);
+	rt2800_config_wcid_attr_bssidx(rt2x00dev, wcid,
+				       rt2x00lib_get_bssidx(rt2x00dev, vif));
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rt2800_sta_add);
+
+int rt2800_sta_remove(struct rt2x00_dev *rt2x00dev, int wcid)
+{
+	/*
+	 * Remove WCID entry, no need to clean the attributes as they will
+	 * get renewed when the WCID is reused.
+	 */
+	rt2800_config_wcid(rt2x00dev, NULL, wcid);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rt2800_sta_remove);
 
 void rt2800_config_filter(struct rt2x00_dev *rt2x00dev,
 			  const unsigned int filter_flags)
@@ -1660,10 +1750,13 @@ static void rt2800_config_channel_rf3xxx(struct rt2x00_dev *rt2x00dev,
 					 struct rf_channel *rf,
 					 struct channel_info *info)
 {
-	u8 rfcsr;
+	u8 rfcsr, calib_tx, calib_rx;
 
 	rt2800_rfcsr_write(rt2x00dev, 2, rf->rf1);
-	rt2800_rfcsr_write(rt2x00dev, 3, rf->rf3);
+
+	rt2800_rfcsr_read(rt2x00dev, 3, &rfcsr);
+	rt2x00_set_field8(&rfcsr, RFCSR3_K, rf->rf3);
+	rt2800_rfcsr_write(rt2x00dev, 3, rfcsr);
 
 	rt2800_rfcsr_read(rt2x00dev, 6, &rfcsr);
 	rt2x00_set_field8(&rfcsr, RFCSR6_R1, rf->rf2);
@@ -1677,16 +1770,78 @@ static void rt2800_config_channel_rf3xxx(struct rt2x00_dev *rt2x00dev,
 	rt2x00_set_field8(&rfcsr, RFCSR13_TX_POWER, info->default_power2);
 	rt2800_rfcsr_write(rt2x00dev, 13, rfcsr);
 
+	rt2800_rfcsr_read(rt2x00dev, 1, &rfcsr);
+	rt2x00_set_field8(&rfcsr, RFCSR1_RX0_PD, 0);
+	rt2x00_set_field8(&rfcsr, RFCSR1_TX0_PD, 0);
+	if (rt2x00_rt(rt2x00dev, RT3390)) {
+		rt2x00_set_field8(&rfcsr, RFCSR1_RX1_PD,
+				  rt2x00dev->default_ant.rx_chain_num == 1);
+		rt2x00_set_field8(&rfcsr, RFCSR1_TX1_PD,
+				  rt2x00dev->default_ant.tx_chain_num == 1);
+	} else {
+		rt2x00_set_field8(&rfcsr, RFCSR1_RX1_PD, 0);
+		rt2x00_set_field8(&rfcsr, RFCSR1_TX1_PD, 0);
+		rt2x00_set_field8(&rfcsr, RFCSR1_RX2_PD, 0);
+		rt2x00_set_field8(&rfcsr, RFCSR1_TX2_PD, 0);
+
+		switch (rt2x00dev->default_ant.tx_chain_num) {
+		case 1:
+			rt2x00_set_field8(&rfcsr, RFCSR1_TX1_PD, 1);
+			/* fall through */
+		case 2:
+			rt2x00_set_field8(&rfcsr, RFCSR1_TX2_PD, 1);
+			break;
+		}
+
+		switch (rt2x00dev->default_ant.rx_chain_num) {
+		case 1:
+			rt2x00_set_field8(&rfcsr, RFCSR1_RX1_PD, 1);
+			/* fall through */
+		case 2:
+			rt2x00_set_field8(&rfcsr, RFCSR1_RX2_PD, 1);
+			break;
+		}
+	}
+	rt2800_rfcsr_write(rt2x00dev, 1, rfcsr);
+
+	rt2800_rfcsr_read(rt2x00dev, 30, &rfcsr);
+	rt2x00_set_field8(&rfcsr, RFCSR30_RF_CALIBRATION, 1);
+	rt2800_rfcsr_write(rt2x00dev, 30, rfcsr);
+	msleep(1);
+	rt2x00_set_field8(&rfcsr, RFCSR30_RF_CALIBRATION, 0);
+	rt2800_rfcsr_write(rt2x00dev, 30, rfcsr);
+
 	rt2800_rfcsr_read(rt2x00dev, 23, &rfcsr);
 	rt2x00_set_field8(&rfcsr, RFCSR23_FREQ_OFFSET, rt2x00dev->freq_offset);
 	rt2800_rfcsr_write(rt2x00dev, 23, rfcsr);
 
-	rt2800_rfcsr_write(rt2x00dev, 24,
-			      rt2x00dev->calibration[conf_is_ht40(conf)]);
+	if (rt2x00_rt(rt2x00dev, RT3390)) {
+		calib_tx = conf_is_ht40(conf) ? 0x68 : 0x4f;
+		calib_rx = conf_is_ht40(conf) ? 0x6f : 0x4f;
+	} else {
+		calib_tx = rt2x00dev->calibration[conf_is_ht40(conf)];
+		calib_rx = rt2x00dev->calibration[conf_is_ht40(conf)];
+	}
+
+	rt2800_rfcsr_read(rt2x00dev, 24, &rfcsr);
+	rt2x00_set_field8(&rfcsr, RFCSR24_TX_CALIB, calib_tx);
+	rt2800_rfcsr_write(rt2x00dev, 24, rfcsr);
+
+	rt2800_rfcsr_read(rt2x00dev, 31, &rfcsr);
+	rt2x00_set_field8(&rfcsr, RFCSR31_RX_CALIB, calib_rx);
+	rt2800_rfcsr_write(rt2x00dev, 31, rfcsr);
 
 	rt2800_rfcsr_read(rt2x00dev, 7, &rfcsr);
 	rt2x00_set_field8(&rfcsr, RFCSR7_RF_TUNING, 1);
 	rt2800_rfcsr_write(rt2x00dev, 7, rfcsr);
+
+	rt2800_rfcsr_read(rt2x00dev, 30, &rfcsr);
+	rt2x00_set_field8(&rfcsr, RFCSR30_RF_CALIBRATION, 1);
+	rt2800_rfcsr_write(rt2x00dev, 30, rfcsr);
+	msleep(1);
+	rt2x00_set_field8(&rfcsr, RFCSR30_RF_CALIBRATION, 0);
+	rt2800_rfcsr_write(rt2x00dev, 30, rfcsr);
+
 }
 
 static void rt2800_config_channel_rf3052(struct rt2x00_dev *rt2x00dev,
@@ -4505,7 +4660,18 @@ int rt2800_ampdu_action(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 			struct ieee80211_sta *sta, u16 tid, u16 *ssn,
 			u8 buf_size)
 {
+	struct rt2x00_sta *sta_priv = (struct rt2x00_sta *)sta->drv_priv;
 	int ret = 0;
+
+	/*
+	 * Don't allow aggregation for stations the hardware isn't aware
+	 * of because tx status reports for frames to an unknown station
+	 * always contain wcid=255 and thus we can't distinguish between
+	 * multiple stations which leads to unwanted situations when the
+	 * hw reorders frames due to aggregation.
+	 */
+	if (sta_priv->wcid < 0)
+		return 1;
 
 	switch (action) {
 	case IEEE80211_AMPDU_RX_START:

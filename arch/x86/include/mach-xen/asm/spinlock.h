@@ -49,9 +49,14 @@
 
 int xen_spinlock_init(unsigned int cpu);
 void xen_spinlock_cleanup(unsigned int cpu);
+#if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
+unsigned int xen_spin_adjust(const arch_spinlock_t *, unsigned int token);
+#else
+#define xen_spin_adjust(lock, token) (token)
+#define xen_spin_wait(l, t, f) xen_spin_wait(l, t)
+#endif
 unsigned int xen_spin_wait(arch_spinlock_t *, unsigned int *token,
 			   unsigned int flags);
-unsigned int xen_spin_adjust(const arch_spinlock_t *, unsigned int token);
 void xen_spin_kick(arch_spinlock_t *, unsigned int token);
 
 /*
@@ -222,6 +227,7 @@ static inline int __ticket_spin_is_contended(arch_spinlock_t *lock)
 	return (((tmp >> TICKET_SHIFT) - tmp) & ((1 << TICKET_SHIFT) - 1)) > 1;
 }
 
+#if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
 static __always_inline void __ticket_spin_lock(arch_spinlock_t *lock)
 {
 	unsigned int token, count;
@@ -242,6 +248,9 @@ static __always_inline void __ticket_spin_lock(arch_spinlock_t *lock)
 	}
 	lock->owner = raw_smp_processor_id();
 }
+#else
+#define __ticket_spin_lock(lock) __ticket_spin_lock_flags(lock, -1)
+#endif
 
 static __always_inline void __ticket_spin_lock_flags(arch_spinlock_t *lock,
 						     unsigned long flags)

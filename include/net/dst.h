@@ -35,7 +35,15 @@ struct dst_entry {
 	struct net_device       *dev;
 	struct  dst_ops	        *ops;
 	unsigned long		_metrics;
+#ifdef __GENKSYMS__
 	unsigned long		expires;
+#else
+	union {
+		unsigned long           expires;
+		/* point to where the dst_entry copied from */
+		struct dst_entry        *from;
+	};
+#endif
 	struct dst_entry	*path;
 	struct neighbour	*neighbour;
 	struct hh_cache		*hh;

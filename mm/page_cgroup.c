@@ -88,7 +88,7 @@ static void disable_cgroup_if_low_lowmem(void)
 	 * disable memcg on x86 PAE boxes with more than 8G of memory in a node
 	 * memcg structures don't fit in the lowmem there
 	 */
-#if CONFIG_X86_32 && CONFIG_X86_PAE
+#if defined(CONFIG_X86_32) && defined(CONFIG_X86_PAE)
 	int nid;
 
 	for_each_online_node(nid) {

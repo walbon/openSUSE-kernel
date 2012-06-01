@@ -136,6 +136,12 @@ volatile extern int lkdb_state[ /*NR_CPUS*/ ];
 #define KDB_STATE_KEXEC		0x00040000	/* kexec issued */
 #define KDB_STATE_ARCH		0xff000000	/* Reserved for arch specific use */
 
+#ifdef	CONFIG_X86_64
+#define	KDB_STATE_BTNOREGS	0x01000000	/* suppress reg info doing multiple backtraces */
+#else
+#define	KDB_STATE_BTNOREGS	0x00000000
+#endif
+
 #define KDB_STATE_CPU(flag,cpu)		(lkdb_state[cpu] & KDB_STATE_##flag)
 #define KDB_STATE_SET_CPU(flag,cpu)	((void)(lkdb_state[cpu] |= KDB_STATE_##flag))
 #define KDB_STATE_CLEAR_CPU(flag,cpu)	((void)(lkdb_state[cpu] &= ~KDB_STATE_##flag))

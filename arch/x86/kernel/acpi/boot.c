@@ -246,7 +246,7 @@ acpi_parse_x2apic(struct acpi_subtable_header *header, const unsigned long end)
 	 */
 	acpi_register_lapic(processor->local_apic_id,	/* APIC ID */
 			    processor->lapic_flags & ACPI_MADT_ENABLED);
-#else
+#elif !defined(CONFIG_XEN)
 	printk(KERN_WARNING PREFIX "x2apic entry ignored\n");
 #endif
 

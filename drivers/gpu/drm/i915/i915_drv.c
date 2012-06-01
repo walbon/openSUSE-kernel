@@ -256,6 +256,7 @@ static const struct pci_device_id pciidlist[] = {		/* aka */
 	INTEL_VGA_DEVICE(0x0152, &intel_ivybridge_d_info), /* GT1 desktop */
 	INTEL_VGA_DEVICE(0x0162, &intel_ivybridge_d_info), /* GT2 desktop */
 	INTEL_VGA_DEVICE(0x015a, &intel_ivybridge_d_info), /* GT1 server */
+	INTEL_VGA_DEVICE(0x016a, &intel_ivybridge_d_info), /* GT2 server */
 	{0, 0, 0}
 };
 
@@ -478,10 +479,13 @@ static int i915_drm_thaw(struct drm_device *dev)
 			ironlake_init_pch_refclk(dev);
 
 		drm_mode_config_reset(dev);
-		drm_irq_install(dev);
 
 		/* Resume the modeset for every activated CRTC */
+		mutex_lock(&dev->mode_config.mutex);
 		drm_helper_resume_force_mode(dev);
+		mutex_unlock(&dev->mode_config.mutex);
+
+		drm_irq_install(dev);
 
 		if (IS_IRONLAKE_M(dev))
 			ironlake_enable_rc6(dev);
