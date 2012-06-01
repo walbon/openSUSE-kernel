@@ -2660,6 +2660,8 @@ static int drop_objectid_items(struct btrfs_trans_handle *trans,
 		btrfs_release_path(path);
 	}
 	btrfs_release_path(path);
+	if (ret > 0)
+		ret = 0;
 	return ret;
 }
 
@@ -3031,21 +3033,6 @@ out:
 	return ret;
 }
 
-static int inode_in_log(struct btrfs_trans_handle *trans,
-		 struct inode *inode)
-{
-	struct btrfs_root *root = BTRFS_I(inode)->root;
-	int ret = 0;
-
-	mutex_lock(&root->log_mutex);
-	if (BTRFS_I(inode)->logged_trans == trans->transid &&
-	    BTRFS_I(inode)->last_sub_trans <= root->last_log_commit)
-		ret = 1;
-	mutex_unlock(&root->log_mutex);
-	return ret;
-}
-
-
 /*
  * helper function around btrfs_log_inode to make sure newly created
  * parent directories also end up in the log.  A minimal inode and backref
@@ -3086,7 +3073,7 @@ int btrfs_log_inode_parent(struct btrfs_trans_handle *trans,
 	if (ret)
 		goto end_no_trans;
 
-	if (inode_in_log(trans, inode)) {
+	if (btrfs_inode_in_log(inode, trans->transid)) {
 		ret = BTRFS_NO_LOG_SYNC;
 		goto end_no_trans;
 	}

@@ -819,7 +819,9 @@ static noinline int commit_fs_roots(struct btrfs_trans_handle *trans,
 			btrfs_update_reloc_root(trans, root);
 			btrfs_orphan_commit_root(trans, root);
 
-			btrfs_save_ino_cache(root, trans);
+			err = btrfs_save_ino_cache(root, trans);
+			if (err)
+				goto out;
 
 			/* see comments in should_cow_block() */
 			root->force_cow = 0;
@@ -844,6 +846,7 @@ static noinline int commit_fs_roots(struct btrfs_trans_handle *trans,
 		}
 	}
 	spin_unlock(&fs_info->fs_roots_radix_lock);
+out:
 	return err;
 }
 
