@@ -414,6 +414,14 @@ static const struct dmi_system_id intel_disable_at_modeset[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook"),
 		},
 	},
+	{
+		.callback = intel_disable_at_modeset_callback,
+		.ident = "HP ProBook",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP EliteBook"),
+		},
+	},
 
 	{ }	/* terminating entry */
 };
