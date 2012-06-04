@@ -1976,7 +1976,7 @@ retry:
 			goto err_out;
 		if (ap->host->flags & ATA_HOST_IGNORE_ATA &&
 							ata_id_is_ata(id)) {
-			ata_dev_dbg(dev,
+			ata_dev_printk(dev, KERN_DEBUG,
 				"host indicates ignore ATA devices, ignored\n");
 			return -ENOENT;
 		}
