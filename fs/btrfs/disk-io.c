@@ -3449,7 +3449,6 @@ int btrfs_destroy_delayed_refs(struct btrfs_transaction *trans,
 
 	delayed_refs = &trans->delayed_refs;
 
-again:
 	spin_lock(&delayed_refs->lock);
 	if (delayed_refs->num_entries == 0) {
 		spin_unlock(&delayed_refs->lock);
@@ -3457,31 +3456,36 @@ again:
 		return ret;
 	}
 
-	node = rb_first(&delayed_refs->root);
-	while (node) {
+	while ((node = rb_first(&delayed_refs->root)) != NULL) {
 		ref = rb_entry(node, struct btrfs_delayed_ref_node, rb_node);
-		node = rb_next(node);
-
-		ref->in_tree = 0;
-		rb_erase(&ref->rb_node, &delayed_refs->root);
-		delayed_refs->num_entries--;
 
 		atomic_set(&ref->refs, 1);
 		if (btrfs_delayed_ref_is_head(ref)) {
 			struct btrfs_delayed_ref_head *head;
 
 			head = btrfs_delayed_node_to_head(ref);
-			spin_unlock(&delayed_refs->lock);
-			mutex_lock(&head->mutex);
+			if (!mutex_trylock(&head->mutex)) {
+				atomic_inc(&ref->refs);
+				spin_unlock(&delayed_refs->lock);
+
+				/* Need to wait for the delayed ref to run */
+				mutex_lock(&head->mutex);
+				mutex_unlock(&head->mutex);
+				btrfs_put_delayed_ref(ref);
+
+				continue;
+			}
+
 			kfree(head->extent_op);
 			delayed_refs->num_heads--;
 			if (list_empty(&head->cluster))
 				delayed_refs->num_heads_ready--;
 			list_del_init(&head->cluster);
-			mutex_unlock(&head->mutex);
-			btrfs_put_delayed_ref(ref);
-			goto again;
 		}
+		ref->in_tree = 0;
+		rb_erase(&ref->rb_node, &delayed_refs->root);
+		delayed_refs->num_entries--;
+
 		spin_unlock(&delayed_refs->lock);
 		btrfs_put_delayed_ref(ref);
 
@@ -3569,11 +3573,9 @@ static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 			     &(&BTRFS_I(page->mapping->host)->io_tree)->buffer,
 					       offset >> PAGE_CACHE_SHIFT);
 			spin_unlock(&dirty_pages->buffer_lock);
-			if (eb) {
+			if (eb)
 				ret = test_and_clear_bit(EXTENT_BUFFER_DIRTY,
 							 &eb->bflags);
-				atomic_set(&eb->refs, 1);
-			}
 			if (PageWriteback(page))
 				end_page_writeback(page);
 
@@ -3589,8 +3591,8 @@ static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 				spin_unlock_irqrestore(&page->mapping->tree_lock, flags);
 			}
 
-			page->mapping->a_ops->invalidatepage(page, 0);
 			unlock_page(page);
+			page_cache_release(page);
 		}
 	}
 
@@ -3647,16 +3649,13 @@ void btrfs_cleanup_one_transaction(struct btrfs_transaction *cur_trans,
 	/* FIXME: cleanup wait for commit */
 	cur_trans->in_commit = 1;
 	cur_trans->blocked = 1;
-	if (waitqueue_active(&root->fs_info->transaction_blocked_wait))
-		wake_up(&root->fs_info->transaction_blocked_wait);
+	wake_up(&root->fs_info->transaction_blocked_wait);
 
 	cur_trans->blocked = 0;
-	if (waitqueue_active(&root->fs_info->transaction_wait))
-		wake_up(&root->fs_info->transaction_wait);
+	wake_up(&root->fs_info->transaction_wait);
 
 	cur_trans->commit_done = 1;
-	if (waitqueue_active(&cur_trans->commit_wait))
-		wake_up(&cur_trans->commit_wait);
+	wake_up(&cur_trans->commit_wait);
 
 	btrfs_destroy_delayed_inodes(root);
 	btrfs_assert_delayed_root_empty(root);
