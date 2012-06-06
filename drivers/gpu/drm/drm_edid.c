@@ -304,6 +304,13 @@ drm_do_get_edid(struct drm_connector *connector, struct i2c_adapter *adapter)
 	if (i == 4)
 		goto carp;
 
+	if (block[0x7e] > 20) {
+		/* too many extensions -- something is wrong */
+		DRM_DEBUG_KMS("drm: %s: ignoring too many extensions %d\n",
+			      adapter->name, block[0x7e]);
+		block[0x7e] = 0;
+	}
+
 	/* if there's no extensions, we're done */
 	if (block[0x7e] == 0)
 		return block;
