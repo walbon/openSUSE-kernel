@@ -433,25 +433,25 @@ static int synaptics_led_event(struct input_dev *dev, unsigned int type,
 	return 0;
 }
 
-static void synaptics_check_clickpad(struct psmouse *psmouse)
+static void synaptics_check_led(struct psmouse *psmouse)
 {
 	struct synaptics_data *priv = psmouse->private;
-	unsigned char ncap[3];
 
+	if (!priv->ext_cap_0c)
+		return;
+	/* FIXME: LED is supposedly detectable in cap0c[1] 0x20, but it seems
+	 * not working on real machines.
+	 * So we check the product id to be sure.
+	 */
 	if (SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0xe4 &&
-	    (SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0x64 ||
-	     priv->capabilities != 0xd00073))
+	    SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0x64)
 		return;
-	if (synaptics_send_cmd(psmouse, 0x0c, ncap))
+	if (!(priv->ext_cap_0c & 0x2000) &&
+	    (priv->capabilities & 0xd00ff) != 0xd0073)
 		return;
-	printk(KERN_INFO "Synaptics: newcap: %02x:%02x:%02x\n",
-	       ncap[0], ncap[1], ncap[2]);
-	/* XXX: this should be ncap[1] 0x20, but it's not really... */
 	priv->has_led = 1;
-	if (priv->has_led) {
-		printk(KERN_INFO "Synaptics: support LED control\n");
-		INIT_WORK(&priv->led_work, synaptics_led_work);
-	}
+	printk(KERN_INFO "Synaptics: support LED control\n");
+	INIT_WORK(&priv->led_work, synaptics_led_work);
 }
 
 static int synaptics_parse_hw_state(const unsigned char buf[],
@@ -988,7 +988,7 @@ int synaptics_init(struct psmouse *psmouse)
 		SYN_ID_MAJOR(priv->identity), SYN_ID_MINOR(priv->identity),
 		priv->model_id, priv->capabilities, priv->ext_cap, priv->ext_cap_0c);
 
-	synaptics_check_clickpad(psmouse);
+	synaptics_check_led(psmouse);
 
 	set_input_params(psmouse->dev, priv);
 
