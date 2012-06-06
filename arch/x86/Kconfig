@@ -555,6 +555,18 @@ config KVM_CLOCK
 	  provides the guest with timing infrastructure such as time of day, and
 	  system time
 
+config KVM_MMU
+	bool "KVM PV MMU support"
+	select PARAVIRT_MMU
+	---help---
+	  This option enables the paravirtualized MMU for KVM. In most cases
+	  it's pretty useless and shouldn't be used.
+
+	  It will only cost you performance, because it drags in pv-ops for
+	  memory management.
+
+	  If in doubt, say N.
+
 config KVM_GUEST
 	bool "KVM Guest support"
 	select PARAVIRT
@@ -586,6 +598,9 @@ config PARAVIRT_SPINLOCKS
 	  If you are unsure how to answer this question, answer N.
 
 config PARAVIRT_CLOCK
+	bool
+
+config PARAVIRT_MMU
 	bool
 
 endif

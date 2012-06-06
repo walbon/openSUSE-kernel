@@ -312,8 +312,9 @@ static inline void native_wbinvd(void)
 
 #ifdef CONFIG_PARAVIRT
 #include <asm/paravirt.h>
-#else
+#endif
 
+#ifndef CONFIG_PARAVIRT
 static inline unsigned long read_cr0(void)
 {
 	return native_read_cr0();
@@ -323,7 +324,9 @@ static inline void write_cr0(unsigned long x)
 {
 	native_write_cr0(x);
 }
+#endif
 
+#ifndef CONFIG_PARAVIRT_MMU
 static inline unsigned long read_cr2(void)
 {
 	return native_read_cr2();
@@ -343,7 +346,9 @@ static inline void write_cr3(unsigned long x)
 {
 	native_write_cr3(x);
 }
+#endif /* CONFIG_PARAVIRT_MMU */
 
+#ifndef CONFIG_PARAVIRT
 static inline unsigned long read_cr4(void)
 {
 	return native_read_cr4();

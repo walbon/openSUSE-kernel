@@ -51,18 +51,20 @@ static int parse_no_kvmapf(char *arg)
 
 early_param("no-kvmapf", parse_no_kvmapf);
 
+#ifdef CONFIG_KVM_MMU
 struct kvm_para_state {
 	u8 mmu_queue[MMU_QUEUE_SIZE];
 	int mmu_queue_len;
 };
 
 static DEFINE_PER_CPU(struct kvm_para_state, para_state);
-static DEFINE_PER_CPU(struct kvm_vcpu_pv_apf_data, apf_reason) __aligned(64);
 
 static struct kvm_para_state *kvm_para_state(void)
 {
 	return &per_cpu(para_state, raw_smp_processor_id());
 }
+#endif
+static DEFINE_PER_CPU(struct kvm_vcpu_pv_apf_data, apf_reason) __aligned(64);
 
 /*
  * No need for any "IO delay" on KVM
@@ -260,6 +262,7 @@ do_async_page_fault(struct pt_regs *regs, unsigned long error_code)
 	}
 }
 
+#ifdef CONFIG_KVM_MMU
 static void kvm_mmu_op(void *buffer, unsigned len)
 {
 	int r;
@@ -340,9 +343,10 @@ static void kvm_set_pmd(pmd_t *pmdp, pmd_t pmd)
 {
 	kvm_mmu_write(pmdp, pmd_val(pmd));
 }
+#endif /* CONFIG_KVM_MMU */
 
 #if PAGETABLE_LEVELS >= 3
-#ifdef CONFIG_X86_PAE
+#if defined(CONFIG_X86_PAE) && defined(CONFIG_KVM_MMU)
 static void kvm_set_pte_atomic(pte_t *ptep, pte_t pte)
 {
 	kvm_mmu_write(ptep, pte_val(pte));
@@ -358,7 +362,6 @@ static void kvm_pmd_clear(pmd_t *pmdp)
 {
 	kvm_mmu_write(pmdp, 0);
 }
-#endif
 
 static void kvm_set_pud(pud_t *pudp, pud_t pud)
 {
@@ -371,8 +374,10 @@ static void kvm_set_pgd(pgd_t *pgdp, pgd_t pgd)
 	kvm_mmu_write(pgdp, pgd_val(pgd));
 }
 #endif
+#endif
 #endif /* PAGETABLE_LEVELS >= 3 */
 
+#ifdef CONFIG_KVM_MMU
 static void kvm_flush_tlb(void)
 {
 	struct kvm_mmu_op_flush_tlb ftlb = {
@@ -404,6 +409,7 @@ static void kvm_leave_lazy_mmu(void)
 	mmu_queue_flush(state);
 	paravirt_leave_lazy_mmu();
 }
+#endif /* CONFIG_KVM_MMU */
 
 static void __init paravirt_ops_setup(void)
 {
@@ -414,20 +420,26 @@ static void __init paravirt_ops_setup(void)
 		pv_cpu_ops.io_delay = kvm_io_delay;
 
 	if (kvm_para_has_feature(KVM_FEATURE_MMU_OP)) {
+#ifdef CONFIG_KVM_MMU
 		pv_mmu_ops.set_pte = kvm_set_pte;
 		pv_mmu_ops.set_pte_at = kvm_set_pte_at;
 		pv_mmu_ops.set_pmd = kvm_set_pmd;
+#endif /* CONFIG_KVM_MMU */
 #if PAGETABLE_LEVELS >= 3
+#ifdef CONFIG_KVM_MMU
 #ifdef CONFIG_X86_PAE
 		pv_mmu_ops.set_pte_atomic = kvm_set_pte_atomic;
 		pv_mmu_ops.pte_clear = kvm_pte_clear;
 		pv_mmu_ops.pmd_clear = kvm_pmd_clear;
 #endif
+
 		pv_mmu_ops.set_pud = kvm_set_pud;
 #if PAGETABLE_LEVELS == 4
 		pv_mmu_ops.set_pgd = kvm_set_pgd;
 #endif
 #endif
+#endif
+#ifdef CONFIG_KVM_MMU
 		pv_mmu_ops.flush_tlb_user = kvm_flush_tlb;
 		pv_mmu_ops.release_pte = kvm_release_pt;
 		pv_mmu_ops.release_pmd = kvm_release_pt;
@@ -435,6 +447,7 @@ static void __init paravirt_ops_setup(void)
 
 		pv_mmu_ops.lazy_mode.enter = kvm_enter_lazy_mmu;
 		pv_mmu_ops.lazy_mode.leave = kvm_leave_lazy_mmu;
+#endif /* CONFIG_KVM_MMU */
 	}
 #ifdef CONFIG_X86_IO_APIC
 	no_timer_check = 1;
