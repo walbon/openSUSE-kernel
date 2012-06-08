@@ -678,6 +678,32 @@ void end_page_writeback(struct page *page)
 }
 EXPORT_SYMBOL(end_page_writeback);
 
+enum trylock_page_status {
+	TRYLOCK_PAGE_SUCCESS,
+	TRYLOCK_PAGE_FAILURE,
+	TRYLOCK_PAGE_SCHEDULE
+};
+
+/*
+ * If a page is locked, clean and uptodate then in many cases the hold time
+ * of the lock will be very short. It is better particularly on large machines
+ * to briefly spin instead of going to sleep on a waitqueue and dealing with
+ * the resulting wakestorm.
+ */
+static enum trylock_page_status spin_trylock_page(struct page *page)
+{
+	if (!PageUptodate(page) || PageWriteback(page) || rt_task(current))
+		return TRYLOCK_PAGE_FAILURE;
+
+	while (PageUptodate(page) && !PageWriteback(page) && !need_resched()) {
+		cpu_relax();
+		if (!PageLocked(page) && trylock_page(page))
+			return TRYLOCK_PAGE_SUCCESS;
+	}
+
+	return TRYLOCK_PAGE_SCHEDULE;
+}
+
 /**
  * __lock_page - get a lock on the page, assuming we need to sleep to get it
  * @page: the page to lock
@@ -688,14 +714,8 @@ void __lock_page(struct page *page)
 	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
 
 	do {
-		if (!rt_task(current)) {
-			while (PageUptodate(page) && !PageWriteback(page) &&
-					!need_resched()) {
-				cpu_relax();
-				if (!PageLocked(page) && trylock_page(page))
-					goto done;
-			}
-		}
+		if (spin_trylock_page(page) == TRYLOCK_PAGE_SUCCESS)
+			goto done;
 
 		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
 		if (!PageWaiters(page))
@@ -715,6 +735,9 @@ int __lock_page_killable(struct page *page)
 	int err = 0;
 
 	do {
+		if (spin_trylock_page(page) == TRYLOCK_PAGE_SUCCESS)
+			goto done;
+
 		prepare_to_wait(wq, &wait.wait, TASK_KILLABLE);
 		if (!PageWaiters(page))
 			SetPageWaiters(page);
@@ -724,6 +747,7 @@ int __lock_page_killable(struct page *page)
 				break;
 		}
 	} while (!trylock_page(page));
+done:
 	finish_wait(wq, &wait.wait);
 
 	return err;
@@ -786,6 +810,21 @@ int __lock_page_or_retry(struct page *page, struct mm_struct *mm,
 		if (flags & FAULT_FLAG_RETRY_NOWAIT)
 			return 0;
 
+		/* Spin briefly if the hold time is likely to be short */
+		switch (spin_trylock_page(page)) {
+		case TRYLOCK_PAGE_SUCCESS:
+			return 1;
+		case TRYLOCK_PAGE_SCHEDULE:
+			/*
+			 * Spinned but still failed, fault retry will just
+			 * spin right round like a record so go to sleep
+			 */
+			goto force_lock;
+		case TRYLOCK_PAGE_FAILURE:
+			/* release mmap_sem and retry full fault */
+			;
+		}
+
 		up_read(&mm->mmap_sem);
 		if (flags & FAULT_FLAG_KILLABLE)
 			wait_on_page_locked_killable(page);
@@ -793,6 +832,7 @@ int __lock_page_or_retry(struct page *page, struct mm_struct *mm,
 			wait_on_page_locked(page);
 		return 0;
 	} else {
+force_lock:
 		if (flags & FAULT_FLAG_KILLABLE) {
 			int ret;
 
