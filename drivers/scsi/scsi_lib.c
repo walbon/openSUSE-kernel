@@ -1400,7 +1400,7 @@ static int scsi_lld_busy(struct request_queue *q)
 	 * multiple queues, congestion of host/starget needs to be handled
 	 * in SCSI layer.
 	 */
-	if (scsi_host_in_recovery(shost) || scsi_device_is_busy(sdev)) 
+	if (scsi_host_in_recovery(shost) || scsi_device_is_busy(sdev))
 		return 1;
 
 	return 0;
