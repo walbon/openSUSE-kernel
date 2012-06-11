@@ -2301,7 +2301,9 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 				kfree(extent_op);
 
 				if (ret) {
-					printk(KERN_DEBUG "run_delayed_extent_op returned %d\n", ret);
+					printk(KERN_DEBUG
+						"btrfs: run_delayed_extent_op returned %d\n",
+						ret);
 					spin_lock(&delayed_refs->lock);
 					btrfs_delayed_ref_unlock(trans,
 								 locked_ref);
@@ -2345,7 +2347,9 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 		btrfs_put_delayed_ref(ref);
 
 		if (ret) {
-			printk(KERN_DEBUG "run_one_delayed_ref returned %d\n", ret);
+			printk(KERN_DEBUG
+				"btrfs: run_one_delayed_ref returned %d\n",
+				ret);
 			spin_lock(&delayed_refs->lock);
 			return ret;
 		}
@@ -3491,7 +3495,7 @@ static void check_system_chunk(struct btrfs_trans_handle *trans,
 
 	thresh = get_system_chunk_thresh(root, type);
 	if (left < thresh && btrfs_test_opt(root, ENOSPC_DEBUG)) {
-		printk(KERN_INFO "left=%llu, need=%llu, flags=%llu\n",
+		printk(KERN_INFO "btrfs: left=%llu, need=%llu, flags=%llu\n",
 		       left, thresh, type);
 		dump_space_info(info, 0, 0);
 	}
@@ -3812,7 +3816,8 @@ again:
 		ret = wait_event_killable(space_info->wait, !space_info->flush);
 		/* Must have been interrupted, return */
 		if (ret) {
-			printk(KERN_DEBUG "%s returning -EINTR\n", __func__);
+			printk(KERN_DEBUG "btrfs: %s returning -EINTR\n",
+					__func__);
 			return -EINTR;
 		}
 
@@ -5467,7 +5472,7 @@ static noinline int find_free_extent(struct btrfs_trans_handle *trans,
 
 	space_info = __find_space_info(root->fs_info, data);
 	if (!space_info) {
-		printk(KERN_ERR "No space info for %llu\n", data);
+		printk(KERN_ERR "btrfs: No space info for %llu\n", data);
 		return -ENOSPC;
 	}
 
@@ -6019,7 +6024,7 @@ static int __btrfs_free_reserved_extent(struct btrfs_root *root,
 
 	cache = btrfs_lookup_block_group(root->fs_info, start);
 	if (!cache) {
-		printk(KERN_ERR "Unable to find block group for %llu\n",
+		printk(KERN_ERR "btrfs: Unable to find block group for %llu\n",
 		       (unsigned long long)start);
 		return -ENOSPC;
 	}

@@ -337,7 +337,7 @@ static int verify_parent_transid(struct extent_io_tree *io_tree,
 		ret = 0;
 		goto out;
 	}
-	printk_ratelimited("parent transid verify failed on %llu wanted %llu "
+	printk_ratelimited("btrfs: parent transid verify failed on %llu wanted %llu "
 		       "found %llu\n",
 		       (unsigned long long)eb->start,
 		       (unsigned long long)parent_transid,
@@ -2415,13 +2415,13 @@ retry_root_backup:
 
 	ret = btrfs_init_space_info(fs_info);
 	if (ret) {
-		printk(KERN_ERR "Failed to initial space info: %d\n", ret);
+		printk(KERN_ERR "btrfs: Failed to initial space info: %d\n", ret);
 		goto fail_block_groups;
 	}
 
 	ret = btrfs_read_block_groups(extent_root);
 	if (ret) {
-		printk(KERN_ERR "Failed to read block groups: %d\n", ret);
+		printk(KERN_ERR "btrfs: Failed to read block groups: %d\n", ret);
 		goto fail_block_groups;
 	}
 
@@ -2617,7 +2617,7 @@ static void btrfs_end_buffer_write_sync(struct buffer_head *bh, int uptodate)
 	if (uptodate) {
 		set_buffer_uptodate(bh);
 	} else {
-		printk_ratelimited(KERN_WARNING "lost page write due to "
+		printk_ratelimited(KERN_WARNING "btrfs: lost page write due to "
 					"I/O error on %s\n",
 				       bdevname(bh->b_bdev, b));
 		/* note, we dont' set_buffer_write_io_error because we have
@@ -3355,7 +3355,7 @@ static int btrfs_check_super_valid(struct btrfs_fs_info *fs_info,
 		return 0;
 
 	if (fs_info->fs_state & BTRFS_SUPER_FLAG_ERROR) {
-		printk(KERN_WARNING "warning: mount fs with errors, "
+		printk(KERN_WARNING "btrfs: warning: mount fs with errors, "
 		       "running btrfsck is recommended\n");
 	}
 
@@ -3452,7 +3452,7 @@ int btrfs_destroy_delayed_refs(struct btrfs_transaction *trans,
 	spin_lock(&delayed_refs->lock);
 	if (delayed_refs->num_entries == 0) {
 		spin_unlock(&delayed_refs->lock);
-		printk(KERN_INFO "delayed_refs has NO entry\n");
+		printk(KERN_INFO "btrfs: delayed_refs has NO entry\n");
 		return ret;
 	}
 
