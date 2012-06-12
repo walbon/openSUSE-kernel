@@ -275,8 +275,13 @@ extern cpumask_var_t nohz_cpu_mask;
 #if defined(CONFIG_SMP) && defined(CONFIG_NO_HZ)
 extern void select_nohz_load_balancer(int stop_tick);
 extern int get_nohz_timer_target(void);
+extern int sched_needs_cpu(int cpu);
 #else
 static inline void select_nohz_load_balancer(int stop_tick) { }
+static inline int sched_needs_cpu(int cpu)
+{
+	return 0;
+}
 #endif
 
 /*
@@ -955,6 +960,9 @@ struct sched_domain {
 	unsigned int smt_gain;
 	int flags;			/* See SD_* */
 	int level;
+#ifndef __GENKSYMS__
+	int idle_buddy;			/* cpu assigned to select_idle_sibling() */
+#endif
 
 	/* Runtime fields. */
 	unsigned long last_balance;	/* init to jiffies. units in jiffies */
