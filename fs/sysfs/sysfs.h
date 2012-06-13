@@ -71,6 +71,9 @@ struct sysfs_dirent {
 	unsigned short		s_mode;
 	ino_t			s_ino;
 	struct sysfs_inode_attrs *s_iattr;
+#ifndef __GENKSYMS__
+	unsigned long		subdirs;
+#endif
 };
 
 #define SD_DEACTIVATED_BIAS		INT_MIN
