@@ -128,7 +128,9 @@ static void *get_call_destination(u8 type)
 		.pv_cpu_ops = pv_cpu_ops,
 		.pv_irq_ops = pv_irq_ops,
 		.pv_apic_ops = pv_apic_ops,
+#ifdef CONFIG_PARAVIRT_MMU
 		.pv_mmu_ops = pv_mmu_ops,
+#endif
 #ifdef CONFIG_PARAVIRT_SPINLOCKS
 		.pv_lock_ops = pv_lock_ops,
 #endif
@@ -282,6 +284,7 @@ enum paravirt_lazy_mode paravirt_get_lazy_mode(void)
 	return percpu_read(paravirt_lazy_mode);
 }
 
+#ifdef CONFIG_PARAVIRT_MMU
 void arch_flush_lazy_mmu_mode(void)
 {
 	preempt_disable();
@@ -293,6 +296,7 @@ void arch_flush_lazy_mmu_mode(void)
 
 	preempt_enable();
 }
+#endif /* CONFIG_PARAVIRT_MMU */
 
 struct pv_info pv_info = {
 	.name = "bare hardware",

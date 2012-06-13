@@ -60,6 +60,9 @@ static struct usb_device_id btusb_table[] = {
 	/* Generic Bluetooth USB device */
 	{ USB_DEVICE_INFO(0xe0, 0x01, 0x01) },
 
+	/* Broadcom SoftSailing reporting vendor specific */
+	{ USB_DEVICE(0x0a5c, 0x21e1) },
+
 	/* Apple MacBookPro 7,1 */
 	{ USB_DEVICE(0x05ac, 0x8213) },
 
@@ -95,13 +98,22 @@ static struct usb_device_id btusb_table[] = {
 	{ USB_DEVICE(0x0bdb, 0x1002) },
 
 	/* Broadcom 20702 Bluetooth 4.0 Adapter */
-	/* Broadcom SoftSailing reporting vendor specific */
-	{ USB_DEVICE(0xa5c, 0x21e1) },
 	/* Broadcom Valentine 802.11bgn 1x1 Combo HMC */
 	{ USB_DEVICE(0xa5c, 0x21e3) },
 
 	/* Canyon CN-BTU1 with HID interfaces */
 	{ USB_DEVICE(0x0c10, 0x0000) },
+
+	/* Broadcom BCM20702A0 */
+	{ USB_DEVICE(0x0489, 0xe042) },
+	{ USB_DEVICE(0x0a5c, 0x21e3) },
+	{ USB_DEVICE(0x0a5c, 0x21e6) },
+	{ USB_DEVICE(0x0a5c, 0x21e8) },
+	{ USB_DEVICE(0x0a5c, 0x21f3) },
+	{ USB_DEVICE(0x413c, 0x8197) },
+
+	/* Foxconn - Hon Hai */
+	{ USB_DEVICE(0x0489, 0xe033) },
 
 	{ }	/* Terminating entry */
 };
@@ -133,7 +145,7 @@ static struct usb_device_id blacklist_table[] = {
 	/* Atheros AR5BBU12 with sflash firmware */
 	{ USB_DEVICE(0x0489, 0xe02c), .driver_info = BTUSB_IGNORE },
 
-	/* Atheros AR5BBU22 with sflash firmware */
+	/* Atheros AR5BBU12 with sflash firmware */
 	{ USB_DEVICE(0x0489, 0xe03c), .driver_info = BTUSB_ATH3012 },
 
 	/* Broadcom BCM2035 */

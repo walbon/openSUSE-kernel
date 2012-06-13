@@ -1518,7 +1518,7 @@ static int btrfs_interface_init(void)
 static void btrfs_interface_exit(void)
 {
 	if (misc_deregister(&btrfs_misc) < 0)
-		printk(KERN_INFO "misc_deregister failed for control device");
+		printk(KERN_INFO "btrfs: misc_deregister failed for control device");
 }
 
 static int __init init_btrfs_fs(void)

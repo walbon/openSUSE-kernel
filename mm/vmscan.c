@@ -708,7 +708,7 @@ static enum page_references page_check_references(struct page *page,
 		return PAGEREF_RECLAIM;
 
 	if (referenced_ptes) {
-		if (PageAnon(page))
+		if (PageSwapBacked(page))
 			return PAGEREF_ACTIVATE;
 		/*
 		 * All mapped pages start out with page table
@@ -776,6 +776,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 	unsigned long nr_dirty = 0;
 	unsigned long nr_congested = 0;
 	unsigned long nr_reclaimed = 0;
+	bool global_reclaim = scanning_global_lru(sc);
 
 	cond_resched();
 
@@ -824,8 +825,20 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 			    may_enter_fs)
 				wait_on_page_writeback(page);
 			else {
-				unlock_page(page);
-				goto keep_lumpy;
+				/*
+				 * memcg doesn't have any dirty pages
+				 * throttling so we could easily OOM just
+				 * because too many pages are in writeback
+				 * from reclaim and there is nothing else to
+				 * reclaim.
+				 */
+				if (!global_reclaim && may_enter_fs
+						&& PageReclaim(page))
+					wait_on_page_writeback(page);
+				else {
+					unlock_page(page);
+					goto keep_lumpy;
+				}
 			}
 		}
 
@@ -1928,10 +1941,10 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 	 * proportional to the fraction of recently scanned pages on
 	 * each list that were recently referenced and in active use.
 	 */
-	ap = (anon_prio + 1) * (reclaim_stat->recent_scanned[0] + 1);
+	ap = anon_prio * (reclaim_stat->recent_scanned[0] + 1);
 	ap /= reclaim_stat->recent_rotated[0] + 1;
 
-	fp = (file_prio + 1) * (reclaim_stat->recent_scanned[1] + 1);
+	fp = file_prio * (reclaim_stat->recent_scanned[1] + 1);
 	fp /= reclaim_stat->recent_rotated[1] + 1;
 	spin_unlock_irq(&zone->lru_lock);
 
@@ -1944,7 +1957,7 @@ out:
 		unsigned long scan;
 
 		scan = zone_nr_lru_pages(zone, sc, l);
-		if (priority || noswap) {
+		if (priority || noswap || !sc->swappiness) {
 			scan >>= priority;
 			if (!scan && force_scan)
 				scan = SWAP_CLUSTER_MAX;

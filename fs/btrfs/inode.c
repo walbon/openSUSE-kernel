@@ -3821,7 +3821,7 @@ void btrfs_evict_inode(struct inode *inode)
 			ret = btrfs_block_rsv_migrate(global_rsv, rsv, min_size);
 
 		if (ret) {
-			printk(KERN_WARNING "Could not get space for a "
+			printk(KERN_WARNING "btrfs: Could not get space for a "
 			       "delete, will truncate on mount %d\n", ret);
 			btrfs_orphan_del(NULL, inode);
 			btrfs_free_block_rsv(root, rsv);

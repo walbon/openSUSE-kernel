@@ -101,7 +101,8 @@ struct inode *lookup_free_space_inode(struct btrfs_root *root,
 
 	spin_lock(&block_group->lock);
 	if (!((BTRFS_I(inode)->flags & flags) == flags)) {
-		printk(KERN_INFO "Old style space inode found, converting.\n");
+		printk(KERN_INFO
+			"btrfs: Old style space inode found, converting.\n");
 		BTRFS_I(inode)->flags |= BTRFS_INODE_NODATASUM |
 			BTRFS_INODE_NODATACOW;
 		block_group->disk_cache_state = BTRFS_DC_CLEAR;
@@ -797,7 +798,7 @@ int load_free_space_cache(struct btrfs_fs_info *fs_info,
 
 	if (!matched) {
 		__btrfs_remove_free_space_cache(ctl);
-		printk(KERN_ERR "block group %llu has an wrong amount of free "
+		printk(KERN_ERR "btrfs: block group %llu has an wrong amount of free "
 		       "space\n", block_group->key.objectid);
 		ret = -1;
 	}
@@ -1884,7 +1885,7 @@ again:
 
 		if (next_info->bytes < bytes ||
 		    next_info->offset > offset || offset > end) {
-			printk(KERN_CRIT "Found free space at %llu, size %llu,"
+			printk(KERN_CRIT "btrfs: Found free space at %llu, size %llu,"
 			      " trying to use %llu\n",
 			      (unsigned long long)info->offset,
 			      (unsigned long long)info->bytes,

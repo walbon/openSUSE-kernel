@@ -618,7 +618,7 @@ static int __btrfs_open_devices(struct btrfs_fs_devices *fs_devices,
 
 		bdev = blkdev_get_by_path(device->name, flags, holder);
 		if (IS_ERR(bdev)) {
-			printk(KERN_INFO "open %s failed\n", device->name);
+			printk(KERN_INFO "btrfs: open %s failed\n", device->name);
 			goto error;
 		}
 		filemap_write_and_wait(bdev->bd_inode->i_mapping);
@@ -3726,7 +3726,7 @@ static int __btrfs_map_block(struct btrfs_mapping_tree *map_tree, int rw,
 	read_unlock(&em_tree->lock);
 
 	if (!em) {
-		printk(KERN_CRIT "unable to find logical %llu len %llu\n",
+		printk(KERN_CRIT "btrfs: unable to find logical %llu len %llu\n",
 		       (unsigned long long)logical,
 		       (unsigned long long)*length);
 		BUG();
@@ -4136,7 +4136,7 @@ int btrfs_map_bio(struct btrfs_root *root, int rw, struct bio *bio,
 
 	total_devs = bbio->num_stripes;
 	if (map_length < length) {
-		printk(KERN_CRIT "mapping failed logical %llu bio len %llu "
+		printk(KERN_CRIT "btrfs: mapping failed logical %llu bio len %llu "
 		       "len %llu\n", (unsigned long long)logical,
 		       (unsigned long long)length,
 		       (unsigned long long)map_length);
@@ -4408,7 +4408,7 @@ static int read_one_dev(struct btrfs_root *root,
 			return -EIO;
 
 		if (!device) {
-			printk(KERN_WARNING "warning devid %llu missing\n",
+			printk(KERN_WARNING "btrfs: warning devid %llu missing\n",
 			       (unsigned long long)devid);
 			device = add_missing_dev(root, devid, dev_uuid);
 			if (!device)
