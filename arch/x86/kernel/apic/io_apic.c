@@ -2347,8 +2347,11 @@ asmlinkage void smp_irq_move_cleanup_interrupt(void)
 		if (!desc)
 			continue;
 
-		cfg = irq_cfg(irq);
 		raw_spin_lock(&desc->lock);
+
+		cfg = irq_cfg(irq);
+		if (!cfg)
+			goto unlock;
 
 		/*
 		 * Check if the irq migration is in progress. If so, we
