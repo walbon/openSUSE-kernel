@@ -444,7 +444,8 @@ static void synaptics_check_led(struct psmouse *psmouse)
 	 * So we check the product id to be sure.
 	 */
 	if (SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0xe4 &&
-	    SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0x64)
+	    SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0x64 &&
+	    SYN_CAP_PRODUCT_ID(priv->ext_cap) != 0x84)
 		return;
 	if (!(priv->ext_cap_0c & 0x2000) &&
 	    (priv->capabilities & 0xd00ff) != 0xd0073)
