@@ -1406,6 +1406,7 @@ putback_lru_pages(struct zone *zone, struct scan_control *sc,
 		}
 		if (!pagevec_add(&pvec, page)) {
 			spin_unlock_irq(&zone->lru_lock);
+			cond_resched();
 			__pagevec_release(&pvec);
 			spin_lock_irq(&zone->lru_lock);
 		}
