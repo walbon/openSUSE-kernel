@@ -155,17 +155,19 @@ static int __scsi_queue_insert(struct scsi_cmnd *cmd, int reason, int unbusy)
 
 	/*
 	 * Requeue this command.  It will go before all other commands
-	 * that are already in the queue.
+	 * that are already in the queue. Schedule requeue work under
+	 * lock such that the kblockd_schedule_work() call happens
+	 * before blk_cleanup_queue() finishes.
 	 */
 	spin_lock_irqsave(q->queue_lock, flags);
 	blk_requeue_request(q, cmd->request);
-	spin_unlock_irqrestore(q->queue_lock, flags);
 
 	if (reason == SCSI_MLQUEUE_DELAYED_RETRY)
 		blk_delay_queue(q, 2000);
 	else
 		kblockd_schedule_work(q, &device->requeue_work);
 
+	spin_unlock_irqrestore(q->queue_lock, flags);
 	return 0;
 }
 
@@ -409,10 +411,7 @@ static void scsi_run_queue(struct request_queue *q)
 	LIST_HEAD(starved_list);
 	unsigned long flags;
 
-	/* if the device is dead, sdev will be NULL, so no queue to run */
-	if (!sdev)
-		return;
-
+	BUG_ON(!sdev);
 	shost = sdev->host;
 	if (scsi_target(sdev)->single_lun)
 		scsi_single_lun_run(sdev);
@@ -685,11 +684,11 @@ static int __scsi_error_from_host_byte(struct scsi_cmnd *cmd, int result)
 		error = -ENOLINK;
 		break;
 	case DID_TARGET_FAILURE:
-		cmd->result |= (DID_OK << 16);
+		set_host_byte(cmd, DID_OK);
 		error = -EREMOTEIO;
 		break;
 	case DID_NEXUS_FAILURE:
-		cmd->result |= (DID_OK << 16);
+		set_host_byte(cmd, DID_OK);
 		error = -EBADE;
 		break;
 	default:
@@ -1380,16 +1379,18 @@ static inline int scsi_host_queue_ready(struct request_queue *q,
  * may be changed after request stacking drivers call the function,
  * regardless of taking lock or not.
  *
- * When scsi can't dispatch I/Os anymore and needs to kill I/Os
- * (e.g. !sdev), scsi needs to return 'not busy'.
- * Otherwise, request stacking drivers may hold requests forever.
+ * When scsi can't dispatch I/Os anymore and needs to kill I/Os scsi
+ * needs to return 'not busy'. Otherwise, request stacking drivers
+ * may hold requests forever.
  */
 static int scsi_lld_busy(struct request_queue *q)
 {
 	struct scsi_device *sdev = q->queuedata;
 	struct Scsi_Host *shost;
 
-	if (!sdev)
+	BUG_ON(!sdev);
+
+	if (blk_queue_dead(q))
 		return 0;
 
 	shost = sdev->host;
@@ -1503,11 +1504,7 @@ static void scsi_request_fn(struct request_queue *q)
 	struct scsi_cmnd *cmd;
 	struct request *req;
 
-	if (!sdev) {
-		while ((req = blk_peek_request(q)) != NULL)
-			scsi_kill_request(req, q);
-		return;
-	}
+	BUG_ON(!sdev);
 
 	if(!get_device(&sdev->sdev_gendev))
 		/* We must be tearing the block queue down already */
@@ -1726,20 +1723,6 @@ struct request_queue *scsi_alloc_queue(struct scsi_device *sdev)
 	blk_queue_rq_timed_out(q, scsi_times_out);
 	blk_queue_lld_busy(q, scsi_lld_busy);
 	return q;
-}
-
-void scsi_free_queue(struct request_queue *q)
-{
-	unsigned long flags;
-
-	WARN_ON(q->queuedata);
-
-	/* cause scsi_request_fn() to kill all non-finished requests */
-	spin_lock_irqsave(q->queue_lock, flags);
-	q->request_fn(q);
-	spin_unlock_irqrestore(q->queue_lock, flags);
-
-	blk_cleanup_queue(q);
 }
 
 /*
