@@ -33,6 +33,7 @@
 #include "drm_crtc.h"
 #include "drm_crtc_helper.h"
 #include "drm_fb_helper.h"
+#include <linux/dmi.h>
 
 static bool drm_kms_helper_poll = true;
 module_param_named(poll, drm_kms_helper_poll, bool, 0600);
@@ -954,8 +955,29 @@ void drm_kms_helper_poll_enable(struct drm_device *dev)
 }
 EXPORT_SYMBOL(drm_kms_helper_poll_enable);
 
+static int drm_no_poll_callback(const struct dmi_system_id *id)
+{
+	DRM_INFO("Disabling poll option for %s\n", id->ident);
+	return 1;
+}
+
+static const struct dmi_system_id drm_no_poll_list[] = {
+	{
+		.callback = drm_no_poll_callback,
+		.ident = "Dell Latitude E5420",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Latitude E5420"),
+		},
+	},
+	{ }	/* terminating entry */
+};
+
 void drm_kms_helper_poll_init(struct drm_device *dev)
 {
+	if (dmi_check_system(drm_no_poll_list))
+		drm_kms_helper_poll = false;
+
 	INIT_DELAYED_WORK(&dev->mode_config.output_poll_work, output_poll_execute);
 	dev->mode_config.poll_enabled = true;
 
