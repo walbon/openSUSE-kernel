@@ -351,7 +351,11 @@ void force_evtchn_callback(void)
 /* Not a GPL symbol: used in ubiquitous macros, so too restrictive. */
 EXPORT_SYMBOL(force_evtchn_callback);
 
-static DEFINE_PER_CPU(unsigned int, upcall_count);
+#define UPC_INACTIVE 0
+#define UPC_ACTIVE 1
+#define UPC_NESTED_LATCH 2
+#define UPC_RESTART (UPC_ACTIVE|UPC_NESTED_LATCH)
+static DEFINE_PER_CPU(unsigned int, upcall_state);
 static DEFINE_PER_CPU(unsigned int, current_l1i);
 static DEFINE_PER_CPU(unsigned int, current_l2i);
 
@@ -362,22 +366,28 @@ static DEFINE_PER_CPU(unsigned int, current_l2i);
 /* NB. Interrupts are disabled on entry. */
 asmlinkage void __irq_entry evtchn_do_upcall(struct pt_regs *regs)
 {
-	struct pt_regs     *old_regs = set_irq_regs(regs);
 	unsigned long       l1, l2;
 	unsigned long       masked_l1, masked_l2;
 	unsigned int        l1i, l2i, start_l1i, start_l2i, port, i;
 	int                 irq;
+	struct pt_regs     *old_regs;
 
+	/* Nested invocations bail immediately. */
+	if (unlikely(__this_cpu_cmpxchg(upcall_state, UPC_INACTIVE,
+					UPC_ACTIVE) != UPC_INACTIVE)) {
+		__this_cpu_or(upcall_state, UPC_NESTED_LATCH);
+		/* Avoid a callback storm when we reenable delivery. */
+		vcpu_info_write(evtchn_upcall_pending, 0);
+		return;
+	}
+
+	old_regs = set_irq_regs(regs);
+	xen_spin_irq_enter();
 	exit_idle();
 	irq_enter();
 
 	do {
-		/* Avoid a callback storm when we reenable delivery. */
 		vcpu_info_write(evtchn_upcall_pending, 0);
-
-		/* Nested invocations bail immediately. */
-		if (unlikely(this_cpu_inc_return(upcall_count) != 1))
-			break;
 
 #ifndef CONFIG_X86 /* No need for a barrier -- XCHG is a barrier on x86. */
 		/* Clear master flag /before/ clearing selector flag. */
@@ -480,9 +490,12 @@ asmlinkage void __irq_entry evtchn_do_upcall(struct pt_regs *regs)
 		}
 
 		/* If there were nested callbacks then we have more to do. */
-	} while (unlikely(this_cpu_xchg(upcall_count, 0) != 1));
+	} while (unlikely(__this_cpu_cmpxchg(upcall_state, UPC_RESTART,
+					     UPC_ACTIVE) == UPC_RESTART));
 
+	__this_cpu_write(upcall_state, UPC_INACTIVE);
 	irq_exit();
+	xen_spin_irq_exit();
 	set_irq_regs(old_regs);
 }
 

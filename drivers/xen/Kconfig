@@ -420,7 +420,7 @@ config XEN_SMPBOOT
 	depends on SMP && !PPC_XEN
 
 config XEN_SPINLOCK_ACQUIRE_NESTING
-	int "maximum nesting level for acquiring spin locks" if BROKEN
+	int "maximum nesting level for acquiring spin locks"
 	# Xen versions prior to 3.2.x have a race condition with HYPERVISOR_poll().
 	depends on !XEN_COMPAT_030002_AND_LATER
 	depends on !XEN_COMPAT_030004_AND_LATER

@@ -4420,15 +4420,8 @@ static int btrfs_real_readdir(struct file *filp, void *dirent,
 			d_type = btrfs_filetype_table[btrfs_dir_type(leaf, di)];
 			btrfs_dir_item_key_to_cpu(leaf, di, &location);
 
-
 			/* is this a reference to our own snapshot? If so
-			 * skip it.
-			 *
-			 * In contrast to old kernels, we insert the snapshot's
-			 * dir item and dir index after it has been created, so
-			 * we won't find a reference to our own snapshot. We
-			 * still keep the following code for backward
-			 * compatibility.
+			 * skip it
 			 */
 			if (location.type == BTRFS_ROOT_ITEM_KEY &&
 			    location.objectid == root->root_key.objectid) {

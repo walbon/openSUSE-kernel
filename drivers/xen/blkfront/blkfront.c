@@ -936,13 +936,13 @@ static irqreturn_t blkif_int(int irq, void *dev_id)
 			       "write barrier" : "flush disk cache";
 			if (unlikely(bret->status == BLKIF_RSP_EOPNOTSUPP)) {
 				pr_warn("blkfront: %s: %s op failed\n",
-					what, info->gd->disk_name);
+					info->gd->disk_name, what);
 				ret = -EOPNOTSUPP;
 			}
 			if (unlikely(bret->status == BLKIF_RSP_ERROR &&
 				     info->shadow[id].req.nr_segments == 0)) {
 				pr_warn("blkfront: %s: empty %s op failed\n",
-					what, info->gd->disk_name);
+					info->gd->disk_name, what);
 				ret = -EOPNOTSUPP;
 			}
 			if (unlikely(ret)) {

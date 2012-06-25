@@ -1307,6 +1307,11 @@ static inline void init_rq_hrtick(struct rq *rq)
 static inline void init_hrtick(void)
 {
 }
+
+static inline int hrtick_enabled(struct rq *rq)
+{
+	return 0;
+}
 #endif	/* CONFIG_SCHED_HRTICK */
 
 /*
