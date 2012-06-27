@@ -32,6 +32,8 @@ u64				tick_length;
 static u64			tick_length_base;
 
 static struct hrtimer		leap_timer;
+long				leap_timer_set = 0;
+DEFINE_SPINLOCK(leap_timer_lock);
 
 #define MAX_TICKADJ		500LL		/* usecs */
 #define MAX_TICKADJ_SCALED \
@@ -513,7 +515,7 @@ static inline void ntp_start_leap_timer(struct timespec *ts)
 	if (time_status & STA_INS) {
 		time_state = TIME_INS;
 		now += 86400 - now % 86400;
-		hrtimer_start(&leap_timer, ktime_set(now, 0), HRTIMER_MODE_ABS);
+		leap_timer_set = now;
 
 		return;
 	}
@@ -521,7 +523,7 @@ static inline void ntp_start_leap_timer(struct timespec *ts)
 	if (time_status & STA_DEL) {
 		time_state = TIME_DEL;
 		now += 86400 - (now + 1) % 86400;
-		hrtimer_start(&leap_timer, ktime_set(now, 0), HRTIMER_MODE_ABS);
+		leap_timer_set = now;
 	}
 }
 
@@ -561,7 +563,7 @@ static inline void process_adj_status(struct timex *txc, struct timespec *ts)
 			time_state = TIME_OK;
 		break;
 	case TIME_OOP:
-		hrtimer_restart(&leap_timer);
+		leap_timer_set = -1;
 		break;
 	}
 }
@@ -665,7 +667,8 @@ int do_adjtimex(struct timex *txc)
 
 	getnstimeofday(&ts);
 
-	write_seqlock_irq(&xtime_lock);
+	spin_lock_irq(&leap_timer_lock);
+	write_seqlock(&xtime_lock);
 
 	if (txc->modes & ADJ_ADJTIME) {
 		long save_adjust = time_adjust;
@@ -707,7 +710,18 @@ int do_adjtimex(struct timex *txc)
 	/* fill PPS status fields */
 	pps_fill_timex(txc);
 
-	write_sequnlock_irq(&xtime_lock);
+	write_sequnlock(&xtime_lock);
+
+	/* hrtimer_(re)start must not be called with xtime_lock held */
+	if (leap_timer_set) {
+		if (leap_timer_set == -1)
+			hrtimer_restart(&leap_timer);
+		else
+			hrtimer_start(&leap_timer, ktime_set(leap_timer_set, 0), HRTIMER_MODE_ABS);
+		leap_timer_set = 0;
+	}
+	spin_unlock_irq(&leap_timer_lock);
+
 
 	txc->time.tv_sec = ts.tv_sec;
 	txc->time.tv_usec = ts.tv_nsec;
