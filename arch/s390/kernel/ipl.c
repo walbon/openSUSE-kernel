@@ -1703,6 +1703,7 @@ static struct kobj_attribute on_panic_attr =
 
 static void do_panic(void)
 {
+	lgr_info_log();
 	on_panic_trigger.action->fn(&on_panic_trigger);
 	stop_run(&on_panic_trigger);
 }
