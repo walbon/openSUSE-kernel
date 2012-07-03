@@ -456,6 +456,14 @@ static int link_mem_sections(int nid)
 		struct mem_section *mem_sect;
 		int ret;
 
+		/*
+		 * On machines with large amounts of memory it can take
+		 * a considerable amount of time to create all the sysfs
+		 * entries. Rescheduling actually slows boot slightly but
+		 * suppresses a soft lockup warning
+		 */
+		cond_resched();
+
 		if (!present_section_nr(section_nr))
 			continue;
 		mem_sect = __nr_to_section(section_nr);

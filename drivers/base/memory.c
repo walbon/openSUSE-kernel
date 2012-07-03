@@ -23,6 +23,7 @@
 #include <linux/mutex.h>
 #include <linux/stat.h>
 #include <linux/slab.h>
+#include <linux/sched.h>
 
 #include <asm/atomic.h>
 #include <asm/uaccess.h>
@@ -673,6 +674,14 @@ int __init memory_dev_init(void)
 	 * during boot and have been initialized
 	 */
 	for (i = 0; i < NR_MEM_SECTIONS; i++) {
+		/*
+		 * On machines with large amounts of memory it can take
+		 * a considerable amount of time to create all the sysfs
+		 * entries. Rescheduling actually slows boot slightly but
+		 * suppresses a soft lockup warning
+		 */
+		cond_resched();
+
 		if (!present_section_nr(i))
 			continue;
 		err = add_memory_section(0, __nr_to_section(i), MEM_ONLINE,
