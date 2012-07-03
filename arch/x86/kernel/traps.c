@@ -375,26 +375,10 @@ io_check_error(unsigned char reason, struct pt_regs *regs)
 static notrace __kprobes void
 unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 {
-#ifdef CONFIG_KDB
-	static int controlling_cpu = -1;
-	static DEFINE_SPINLOCK(kdb_nmi_lock);
-	unsigned long flags;
-
-	spin_lock_irqsave(&kdb_nmi_lock, flags);
-	if (controlling_cpu == -1) {
-		controlling_cpu = smp_processor_id();
-		spin_unlock_irqrestore(&kdb_nmi_lock, flags);
-		(void)kdb(LKDB_REASON_NMI, reason, regs);
-		controlling_cpu = -1;
-	} else {
-		spin_unlock_irqrestore(&kdb_nmi_lock, flags);
-		(void)kdb(LKDB_REASON_ENTER_SLAVE, reason, regs);
-	}
-#endif /* CONFIG_KDB */
-
 	if (notify_die(DIE_NMIUNKNOWN, "nmi", regs, reason, 2, SIGINT) ==
 			NOTIFY_STOP)
 		return;
+
 #ifdef CONFIG_MCA
 	/*
 	 * Might actually be able to figure out what the guilty party
@@ -405,6 +389,26 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 		return;
 	}
 #endif
+
+#ifdef CONFIG_KDB
+	if (kdb_on) {
+		static int controlling_cpu = -1;
+		static DEFINE_SPINLOCK(kdb_nmi_lock);
+		unsigned long flags;
+	
+		spin_lock_irqsave(&kdb_nmi_lock, flags);
+		if (controlling_cpu == -1) {
+			controlling_cpu = smp_processor_id();
+			spin_unlock_irqrestore(&kdb_nmi_lock, flags);
+			(void)kdb(LKDB_REASON_NMI, reason, regs);
+			controlling_cpu = -1;
+		} else {
+			spin_unlock_irqrestore(&kdb_nmi_lock, flags);
+			(void)kdb(LKDB_REASON_ENTER_SLAVE, reason, regs);
+		}
+	}
+#endif /* CONFIG_KDB */
+
 	pr_emerg("Uhhuh. NMI received for unknown reason %02x on CPU %d.\n",
 		 reason, smp_processor_id());
 

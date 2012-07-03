@@ -475,8 +475,8 @@ struct uv_blade_info {
 	unsigned short	nr_online_cpus;
 	unsigned short	pnode;
 	short		memory_nid;
-	spinlock_t	nmi_lock;
-	unsigned long	nmi_count;
+	spinlock_t	nmi_lock;	/* obsolete, see uv_hub_nmi */
+	unsigned long	nmi_count;	/* obsolete, see uv_hub_nmi */
 };
 extern struct uv_blade_info *uv_blade_info;
 extern short *uv_node_to_blade;
@@ -548,6 +548,20 @@ static inline int uv_num_possible_blades(void)
 {
 	return uv_possible_blades;
 }
+
+/*
+ * Support NMIs on a per hub basis
+ * This avoids excessive NUMA traffic when many NMIs are occurring.
+ */
+struct uv_hub_nmi {
+	spinlock_t	nmi_lock;	/* locks this structure */
+	atomic_t	in_nmi;		/* flag this node in UV NMI IRQ */
+	atomic_t	nmi_queries;	/* count of NMI queries of this hub */
+	atomic_t	read_mmr_count;	/* count of MMR reads */
+	atomic_t	nmi_count;	/* count of true UV NMIs */
+	unsigned long	nmi_value;	/* last value read from NMI MMR */
+	int		cpu_owner;	/* last locker of this struct */
+};
 
 /* Update SCIR state */
 static inline void uv_set_scir_bits(unsigned char value)
