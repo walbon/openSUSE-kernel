@@ -22,6 +22,7 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <scsi/scsi.h>
+#include <scsi/scsi_dbg.h>
 #include <scsi/scsi_eh.h>
 #include <scsi/scsi_dh.h>
 
@@ -140,11 +141,13 @@ static struct request *get_alua_req(struct scsi_device *sdev,
 static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 {
 	struct request *rq;
-	int err = SCSI_DH_RES_TEMP_UNAVAIL;
+	int err;
 
 	rq = get_alua_req(sdev, h->buff, h->bufflen, READ);
-	if (!rq)
+	if (!rq) {
+		err = DRIVER_BUSY << 24;
 		goto done;
+	}
 
 	/* Prepare the command. */
 	rq->cmd[0] = INQUIRY;
@@ -158,12 +161,12 @@ static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 	rq->sense_len = h->senselen = 0;
 
 	err = blk_execute_rq(rq->q, NULL, rq, 1);
-	if (err == -EIO) {
-		sdev_printk(KERN_INFO, sdev,
-			    "%s: evpd inquiry failed with %x\n",
-			    ALUA_DH_NAME, rq->errors);
+	if (err < 0) {
+		if (!rq->errors)
+			err = DID_ERROR << 16;
+		else
+			err = rq->errors;
 		h->senselen = rq->sense_len;
-		err = SCSI_DH_IO;
 	}
 	blk_put_request(rq);
 done:
@@ -177,11 +180,13 @@ done:
 static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 {
 	struct request *rq;
-	int err = SCSI_DH_RES_TEMP_UNAVAIL;
+	int err;
 
 	rq = get_alua_req(sdev, h->buff, h->bufflen, READ);
-	if (!rq)
+	if (!rq) {
+		err = DRIVER_BUSY << 24;
 		goto done;
+	}
 
 	/* Prepare the command. */
 	rq->cmd[0] = MAINTENANCE_IN;
@@ -203,12 +208,12 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 	rq->sense_len = h->senselen = 0;
 
 	err = blk_execute_rq(rq->q, NULL, rq, 1);
-	if (err == -EIO) {
-		sdev_printk(KERN_INFO, sdev,
-			    "%s: rtpg failed with %x\n",
-			    ALUA_DH_NAME, rq->errors);
+	if (err < 0) {
+		if (!rq->errors)
+			err = DID_ERROR << 16;
+		else
+			err = rq->errors;
 		h->senselen = rq->sense_len;
-		err = SCSI_DH_IO;
 	}
 	blk_put_request(rq);
 done:
@@ -237,21 +242,22 @@ static void stpg_endio(struct request *req, int error)
 	}
 
 	if (h->senselen > 0) {
-		err = scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
-					   &sense_hdr);
-		if (!err) {
-			err = SCSI_DH_IO;
-			goto done;
+		if (!scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
+					  &sense_hdr)) {
+		    err = SCSI_DH_IO;
+		    goto done;
 		}
 		err = alua_check_sense(h->sdev, &sense_hdr);
 		if (err == ADD_TO_MLQUEUE || err == ADD_TO_MLQUEUE_DELAY) {
 			err = SCSI_DH_RETRY;
 			goto done;
 		}
-		sdev_printk(KERN_INFO, h->sdev,
-			    "%s: stpg sense code: %02x/%02x/%02x\n",
-			    ALUA_DH_NAME, sense_hdr.sense_key,
-			    sense_hdr.asc, sense_hdr.ascq);
+		sdev_printk(KERN_INFO, h->sdev, "%s: stpg failed, ",
+			    ALUA_DH_NAME);
+		scsi_show_sense_hdr(&sense_hdr);
+		sdev_printk(KERN_INFO, h->sdev, "%s: stpg failed, ",
+			    ALUA_DH_NAME);
+		scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
 		err = SCSI_DH_IO;
 	}
 	if (err == SCSI_DH_OK) {
@@ -360,15 +366,46 @@ static int alua_check_tpgs(struct scsi_device *sdev, struct alua_dh_data *h)
  */
 static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 {
-	int len;
-	unsigned err;
+	int len, timeout = ALUA_FAILOVER_TIMEOUT;
+	struct scsi_sense_hdr sense_hdr;
+	unsigned retval;
 	unsigned char *d;
+	unsigned long expiry;
 
+	if (h->timeout > 0)
+		timeout = h->timeout;
+
+	expiry = round_jiffies_up(jiffies + timeout);
  retry:
-	err = submit_vpd_inquiry(sdev, h);
+	retval = submit_vpd_inquiry(sdev, h);
+	if (retval) {
+		unsigned err;
 
-	if (err != SCSI_DH_OK)
-		return err;
+		if (h->senselen == 0 ||
+		    !scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
+					  &sense_hdr)) {
+			sdev_printk(KERN_INFO, sdev,
+				    "%s: evpd inquiry failed, ", ALUA_DH_NAME);
+			scsi_show_result(retval);
+			if (driver_byte(retval) == DRIVER_BUSY)
+				err = SCSI_DH_DEV_TEMP_BUSY;
+			else
+				err = SCSI_DH_IO;
+			return err;
+		}
+		err = alua_check_sense(sdev, &sense_hdr);
+		if (err == ADD_TO_MLQUEUE && time_before(jiffies, expiry))
+			goto retry;
+		if (err != SUCCESS) {
+			sdev_printk(KERN_INFO, sdev,
+				    "%s: evpd inquiry failed, ", ALUA_DH_NAME);
+			scsi_show_sense_hdr(&sense_hdr);
+			sdev_printk(KERN_INFO, sdev,
+				    "%s: evpd inquiry failed, ", ALUA_DH_NAME);
+			scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
+			return SCSI_DH_IO;
+		}
+	}
 
 	/* Check if vpd page exceeds initial buffer */
 	len = (h->buff[2] << 8) + h->buff[3] + 4;
@@ -415,14 +452,13 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 			    ALUA_DH_NAME);
 		h->state = TPGS_STATE_OPTIMIZED;
 		h->tpgs = TPGS_MODE_NONE;
-		err = SCSI_DH_DEV_UNSUPP;
-	} else {
-		sdev_printk(KERN_INFO, sdev,
-			    "%s: port group %02x rel port %02x\n",
-			    ALUA_DH_NAME, h->group_id, h->rel_port);
+		return SCSI_DH_DEV_UNSUPP;
 	}
+	sdev_printk(KERN_INFO, sdev,
+		    "%s: port group %02x rel port %02x\n",
+		    ALUA_DH_NAME, h->group_id, h->rel_port);
 
-	return err;
+	return SCSI_DH_OK;
 }
 
 static char print_alua_state(int state)
@@ -520,7 +556,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 	struct scsi_sense_hdr sense_hdr;
 	int len, k, off, valid_states = 0, timeout = ALUA_FAILOVER_TIMEOUT;
 	unsigned char *ucp;
-	unsigned err;
+	unsigned err, retval;
 	unsigned long expiry, interval = 1000;
 
 	if (h->timeout > 0)
@@ -528,23 +564,44 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 
 	expiry = round_jiffies_up(jiffies + timeout);
  retry:
-	err = submit_rtpg(sdev, h);
+	retval = submit_rtpg(sdev, h);
 
-	if (err == SCSI_DH_IO && h->senselen > 0) {
-		err = scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
-					   &sense_hdr);
-		if (!err)
-			return SCSI_DH_IO;
+	if (retval) {
+		if (h->senselen == 0 ||
+		    !scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
+					  &sense_hdr)) {
+			sdev_printk(KERN_INFO, sdev, "%s: rtpg failed, ",
+				    ALUA_DH_NAME);
+			scsi_show_result(retval);
+			if (driver_byte(retval) == DRIVER_BUSY)
+				err = SCSI_DH_DEV_TEMP_BUSY;
+			else
+				err = SCSI_DH_IO;
+			return err;
+		}
 
 		err = alua_check_sense(sdev, &sense_hdr);
 		if (err == ADD_TO_MLQUEUE_DELAY &&
 		    time_before(jiffies, expiry)) {
 			interval *= 2;
+			sdev_printk(KERN_ERR, sdev, "%s: rtpg delayed retry, ",
+				    ALUA_DH_NAME);
+			scsi_show_sense_hdr(&sense_hdr);
+			sdev_printk(KERN_ERR, sdev, "%s: rtpg delayed retry, ",
+				    ALUA_DH_NAME);
+			scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
 			msleep(interval);
 			goto retry;
 		}
-		if (err == ADD_TO_MLQUEUE && time_before(jiffies, expiry))
+		if (err == ADD_TO_MLQUEUE && time_before(jiffies, expiry)) {
+			sdev_printk(KERN_ERR, sdev, "%s: rtpg retry, ",
+				    ALUA_DH_NAME);
+			scsi_show_sense_hdr(&sense_hdr);
+			sdev_printk(KERN_ERR, sdev, "%s: rtpg retry, ",
+				    ALUA_DH_NAME);
+			scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
 			goto retry;
+		}
 		if (sense_hdr.sense_key == ILLEGAL_REQUEST &&
 		    sense_hdr.asc == 0x24 && sense_hdr.ascq == 0 &&
 		    h->timeout < 0) {
@@ -554,14 +611,14 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 			h->timeout = ALUA_FAILOVER_TIMEOUT;
 			goto retry;
 		}
-		sdev_printk(KERN_INFO, sdev,
-			    "%s: rtpg sense code %02x/%02x/%02x\n",
-			    ALUA_DH_NAME, sense_hdr.sense_key,
-			    sense_hdr.asc, sense_hdr.ascq);
-		err = SCSI_DH_IO;
+		sdev_printk(KERN_INFO, sdev, "%s: rtpg failed, ",
+			    ALUA_DH_NAME);
+		scsi_show_sense_hdr(&sense_hdr);
+		sdev_printk(KERN_INFO, sdev, "%s: rtpg failed, ",
+			    ALUA_DH_NAME);
+		scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
+		return SCSI_DH_IO;
 	}
-	if (err != SCSI_DH_OK)
-		return err;
 
 	len = (h->buff[0] << 24) + (h->buff[1] << 16) +
 		(h->buff[2] << 8) + h->buff[3] + 4;
