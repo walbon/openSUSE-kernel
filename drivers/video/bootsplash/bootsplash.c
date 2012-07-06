@@ -396,8 +396,10 @@ static void box_offsets(unsigned char *buf, int num,
 
 	SPLASH_DEBUG();
 
-	if ((screen_w == pic_w && screen_h == pic_h) || num == 0)
+	if ((screen_w == pic_w && screen_h == pic_h) || num == 0) {
 		*x_off = *y_off = 0;
+		return;
+	}
 
 	bufend = buf + num * 12;
 	stin = 1;
@@ -493,35 +495,21 @@ static void box_offsets(unsigned char *buf, int num,
 		int x_center = (x_min + x_max) / 2;
 		int y_center = (y_min + y_max) / 2;
 
-		if (screen_w == pic_w)
-			*x_off = 0;
-		else {
+		*x_off = 0;
+		if (screen_w != pic_w) {
 			if (x_center < (pic_w + pic_w / 5) >> 1 &&
-			    x_center > (pic_w - pic_w / 5) >> 1) {
+			    x_center > (pic_w - pic_w / 5) >> 1)
 				*x_off = (screen_w - pic_w) >> 1;
-			} else {
-				int x = x_center * screen_w / pic_w;
-				*x_off = x - x_center;
-				if (x_min + *x_off < 0)
-					*x_off = 0;
-				if (x_max + *x_off > screen_w)
-					*x_off = screen_w - pic_w;
-			}
+			else if (x_center >= (pic_w + pic_w / 5) >> 1)
+				*x_off = screen_w - pic_w; /* align right */
 		}
-		if (screen_h == pic_h)
-			*y_off = 0;
-		else {
+		*y_off = 0;
+		if (screen_h != pic_h) {
 			if (y_center < (pic_h + pic_h / 5) >> 1 &&
 			    y_center > (pic_h - pic_h / 5) >> 1)
 				*y_off = (screen_h - pic_h) >> 1;
-			else {
-				int x = y_center * screen_h / pic_h;
-				*y_off = x - y_center;
-				if (y_min + *y_off < 0)
-					*y_off = 0;
-				if (y_max + *x_off > screen_h)
-					*y_off = screen_h - pic_h;
-			}
+			else if (y_center >= (pic_h + pic_h / 5) >> 1)
+				*y_off = screen_h - pic_h; /* align bottom */
 		}
 	}
 }
