@@ -88,6 +88,15 @@ static ssize_t zcrypt_online_store(struct device *dev,
 
 	if (sscanf(buf, "%d\n", &online) != 1 || online < 0 || online > 1)
 		return -EINVAL;
+	if (zdev->ops->rng) {
+		if (zdev->online == 0 && online == 1) {
+               		zcrypt_rng_device_add();
+		}
+		if (zdev->online == 1 && online == 0) {
+			zcrypt_rng_device_remove();
+		}
+
+	}
 	zdev->online = online;
 	if (!online)
 		ap_flush_queue(zdev->ap_dev);
@@ -1211,8 +1220,10 @@ static void zcrypt_rng_device_remove(void)
 	mutex_lock(&zcrypt_rng_mutex);
 	zcrypt_rng_device_count--;
 	if (zcrypt_rng_device_count == 0) {
-		if (zcrypt_hwrng_fill)
+		if (zcrypt_hwrng_fill) {
 			kthread_stop(zcrypt_hwrng_fill);
+			zcrypt_hwrng_fill = 0;
+		}
 		hwrng_unregister(&zcrypt_rng_dev);
 		free_page((unsigned long) zcrypt_rng_buffer);
 	}
