@@ -4216,7 +4216,7 @@ out_remove_devs:
 	remove_cdevs(tpnt);
 out_put_index:
 	spin_lock(&st_index_lock);
-	idr_remove(&st_index_idr, tpnt->index);
+	idr_remove(&st_index_idr, dev_num);
 	spin_unlock(&st_index_lock);
 out_put_disk:
 	put_disk(disk);
@@ -4231,6 +4231,7 @@ out:
 static int st_remove(struct device *dev)
 {
  	struct scsi_tape *tpnt = dev_get_drvdata(dev);
+	int index = tpnt->index;
 
 	remove_cdevs(tpnt);
 
@@ -4238,7 +4239,7 @@ static int st_remove(struct device *dev)
 	kref_put(&tpnt->kref, scsi_tape_release);
 	mutex_unlock(&st_ref_mutex);
 	spin_lock(&st_index_lock);
-	idr_remove(&st_index_idr, tpnt->index);
+	idr_remove(&st_index_idr, index);
 	spin_unlock(&st_index_lock);
 	return 0;
 }
