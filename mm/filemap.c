@@ -684,6 +684,21 @@ enum trylock_page_status {
 	TRYLOCK_PAGE_SCHEDULE
 };
 
+#ifndef CONFIG_PREEMPT_RT_FULL
+/* Returns true if spinning should continue */
+static bool continue_trylock_relax(unsigned long expires)
+{
+	cpu_relax();
+	return !(need_resched() || time_after(jiffies, expires));
+}
+#else
+static bool continue_trylock_relax(unsigned long expires)
+{
+	cpu_chill();
+	return false;
+}
+#endif
+
 /*
  * If a page is locked, clean and uptodate then in many cases the hold time
  * of the lock will be very short. It is better particularly on large machines
@@ -692,11 +707,14 @@ enum trylock_page_status {
  */
 static enum trylock_page_status spin_trylock_page(struct page *page)
 {
+	bool continue_spin = true;
+	unsigned long expires;
 	if (!PageUptodate(page) || PageWriteback(page) || rt_task(current))
 		return TRYLOCK_PAGE_FAILURE;
 
-	while (PageUptodate(page) && !PageWriteback(page) && !need_resched()) {
-		cpu_relax();
+	expires = jiffies + 2;
+	while (PageUptodate(page) && !PageWriteback(page) && continue_spin) {
+		continue_spin = continue_trylock_relax(expires);
 		if (!PageLocked(page) && trylock_page(page))
 			return TRYLOCK_PAGE_SUCCESS;
 	}
