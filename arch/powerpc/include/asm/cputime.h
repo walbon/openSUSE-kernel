@@ -128,6 +128,12 @@ static inline u64 cputime64_to_jiffies64(const cputime_t ct)
  */
 extern u64 __cputime_usec_factor;
 
+/*
+ * this one is deprecated and kept here only because of the kABI
+ * compatibility.
+ */
+extern u64 __cputime_msec_factor;
+
 static inline unsigned long cputime_to_usecs(const cputime_t ct)
 {
 	return mulhdu(ct, __cputime_usec_factor);
