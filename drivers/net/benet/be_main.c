@@ -686,6 +686,8 @@ static netdev_tx_t be_xmit(struct sk_buff *skb,
 
 	copied = make_tx_wrbs(adapter, txq, skb, wrb_cnt, dummy_wrb);
 	if (copied) {
+		int gso_segs = skb_shinfo(skb)->gso_segs;
+
 		/* record the sent skb in the sent_skb table */
 		BUG_ON(txo->sent_skb_list[start]);
 		txo->sent_skb_list[start] = skb;
@@ -703,8 +705,7 @@ static netdev_tx_t be_xmit(struct sk_buff *skb,
 
 		be_txq_notify(adapter, txq->id, wrb_cnt);
 
-		be_tx_stats_update(txo, wrb_cnt, copied,
-				skb_shinfo(skb)->gso_segs, stopped);
+		be_tx_stats_update(txo, wrb_cnt, copied, gso_segs, stopped);
 	} else {
 		txq->head = start;
 		dev_kfree_skb_any(skb);
@@ -3548,6 +3549,11 @@ static pci_ers_result_t be_eeh_err_detected(struct pci_dev *pdev,
 
 	pci_disable_device(pdev);
 
+	/* The error could cause the FW to trigger a flash debug dump.
+	 * Resetting the card while flash dump is in progress
+	 * can cause it not to recover; wait for it to finish
+	 */
+	ssleep(30);
 	return PCI_ERS_RESULT_NEED_RESET;
 }
 

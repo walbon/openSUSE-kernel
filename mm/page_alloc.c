@@ -2238,13 +2238,7 @@ rebalance:
 					&did_some_progress);
 	if (page)
 		goto got_pg;
-
-	/*
-	 * Do not use sync migration for transparent hugepage allocations as
-	 * it could stall writing back pages which is far worse than simply
-	 * failing to promote a page.
-	 */
-	sync_migration = !(gfp_mask & __GFP_NO_KSWAPD);
+	sync_migration = true;
 
 	/*
 	 * If compaction is deferred for high-order allocations, it is because

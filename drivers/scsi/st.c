@@ -4024,6 +4024,8 @@ static int create_one_cdev(struct scsi_tape *tape, int mode, int rew)
 		goto out_free;
 	}
 
+	STm->devs[rew] = dev;
+
 	return 0;
 out_free:
 	cdev_del(STm->cdevs[rew]);
@@ -4044,9 +4046,8 @@ static int create_cdevs(struct scsi_tape *tape)
 			return error;
 	}
 
-	error = sysfs_create_link(&tape->device->sdev_gendev.kobj,
-				  &tape->modes[0].cdevs[0]->kobj, "tape");
-	return 0;
+	return sysfs_create_link(&tape->device->sdev_gendev.kobj,
+				 &tape->modes[0].devs[0]->kobj, "tape");
 }
 
 static void remove_cdevs(struct scsi_tape *tape)
@@ -4056,11 +4057,10 @@ static void remove_cdevs(struct scsi_tape *tape)
 	for (mode=0; mode < ST_NBR_MODES; mode++) {
 		struct st_modedef *STm = &(tape->modes[mode]);
 		for (rew=0; rew < 2; rew++) {
-			if (STm->cdevs[rew]) {
-				dev_t devno = STm->cdevs[rew]->dev;
-				device_destroy(&st_sysfs_class, devno);
+			if (STm->cdevs[rew])
 				cdev_del(STm->cdevs[rew]);
-			}
+			if (STm->devs[rew])
+				device_unregister(STm->devs[rew]);
 		}
 	}
 }
@@ -4215,7 +4215,9 @@ static int st_probe(struct device *dev)
 out_remove_devs:
 	remove_cdevs(tpnt);
 out_put_index:
+	spin_lock(&st_index_lock);
 	idr_remove(&st_index_idr, dev_num);
+	spin_unlock(&st_index_lock);
 out_put_disk:
 	put_disk(disk);
 	kfree(tpnt);
@@ -4229,12 +4231,16 @@ out:
 static int st_remove(struct device *dev)
 {
  	struct scsi_tape *tpnt = dev_get_drvdata(dev);
+	int index = tpnt->index;
 
 	remove_cdevs(tpnt);
 
 	mutex_lock(&st_ref_mutex);
 	kref_put(&tpnt->kref, scsi_tape_release);
 	mutex_unlock(&st_ref_mutex);
+	spin_lock(&st_index_lock);
+	idr_remove(&st_index_idr, index);
+	spin_unlock(&st_index_lock);
 	return 0;
 }
 
