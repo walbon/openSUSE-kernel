@@ -132,7 +132,8 @@ static int __hugepte_alloc(struct mm_struct *mm, hugepd_t *hpdp,
 	return 0;
 }
 
-pte_t *huge_pte_alloc(struct mm_struct *mm, unsigned long addr, unsigned long sz)
+pte_t *huge_pte_alloc(struct mm_struct *mm, unsigned long addr, unsigned long sz,
+		      bool *shared)
 {
 	pgd_t *pg;
 	pud_t *pu;
