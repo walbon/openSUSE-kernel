@@ -1193,4 +1193,5 @@ void xtime_update(unsigned long ticks)
 	write_seqlock(&xtime_lock);
 	do_timer(ticks);
 	write_sequnlock(&xtime_lock);
+	check_leap_second_message();
 }
