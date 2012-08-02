@@ -746,6 +746,7 @@ asmlinkage void math_state_restore(void)
 	struct thread_info *thread = current_thread_info();
 	struct task_struct *tsk = thread->task;
 
+	/* NB. 'clts' is done for us by Xen during virtual trap. */
 	if (!tsk_used_math(tsk)) {
 		local_irq_enable();
 		/*
@@ -755,13 +756,14 @@ asmlinkage void math_state_restore(void)
 			/*
 			 * ran out of memory!
 			 */
+			stts();
 			do_group_exit(SIGKILL);
 			return;
 		}
 		local_irq_disable();
 	}
 
-	/* NB. 'clts' is done for us by Xen during virtual trap. */
+	/* clts();			Allow maths ops (or we recurse) */
 	__math_state_restore();
 }
 EXPORT_SYMBOL_GPL(math_state_restore);
