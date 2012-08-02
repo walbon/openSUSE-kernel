@@ -97,7 +97,7 @@ extern void cpuset_print_task_mems_allowed(struct task_struct *p);
  */
 static inline unsigned int read_mems_allowed_begin(void)
 {
-	return read_seqcount_begin((seqcount_t *)&current->mems_allowed_change_disable);
+	return read_seqcount_begin(&current->mems_allowed_seq);
 }
 
 /*
@@ -108,14 +108,15 @@ static inline unsigned int read_mems_allowed_begin(void)
  */
 static inline bool read_mems_allowed_retry(unsigned int seq)
 {
-	BUG_ON(sizeof(seqcount_t) != sizeof(int));
-	return read_seqcount_retry((seqcount_t *)&current->mems_allowed_change_disable, seq);
+	return read_seqcount_retry(&current->mems_allowed_seq, seq);
 }
 
 static inline void set_mems_allowed(nodemask_t nodemask)
 {
 	task_lock(current);
+	write_seqcount_begin(&current->mems_allowed_seq);
 	current->mems_allowed = nodemask;
+	write_seqcount_end(&current->mems_allowed_seq);
 	task_unlock(current);
 }
 

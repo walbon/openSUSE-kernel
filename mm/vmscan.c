@@ -250,13 +250,17 @@ unsigned long shrink_slab(struct shrink_control *shrink,
 
 	list_for_each_entry(shrinker, &shrinker_list, list) {
 		unsigned long long delta;
-		unsigned long total_scan;
-		unsigned long max_pass;
+		long total_scan;
+		long max_pass;
 		int shrink_ret = 0;
 		long nr;
 		long new_nr;
 		long batch_size = shrinker->batch ? shrinker->batch
 						  : SHRINK_BATCH;
+
+		max_pass = do_shrinker_shrink(shrinker, shrink, 0);
+		if (max_pass <= 0)
+			continue;
 
 		/*
 		 * copy the current shrinker scan count into a local variable
@@ -268,7 +272,6 @@ unsigned long shrink_slab(struct shrink_control *shrink,
 		} while (cmpxchg(&shrinker->nr, nr, 0) != nr);
 
 		total_scan = nr;
-		max_pass = do_shrinker_shrink(shrinker, shrink, 0);
 		delta = (4 * nr_pages_scanned) / shrinker->seeks;
 		delta *= max_pass;
 		do_div(delta, lru_pages + 1);
@@ -2163,8 +2166,8 @@ static inline bool compaction_ready(struct zone *zone, struct scan_control *sc)
  * scan then give up on it.
  *
  * This function returns true if a zone is being reclaimed for a costly
- * allocation and compaction is ready to begin. This indicates to the caller
- * that it should consider retrying the allocation instead of
+ * high-order allocation and compaction is ready to begin. This indicates to
+ * the caller that it should consider retrying the allocation instead of
  * further reclaim.
  */
 static bool shrink_zones(int priority, struct zonelist *zonelist,
@@ -3002,7 +3005,10 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int order, int classzone_idx)
 		 * them before going back to sleep.
 		 */
 		set_pgdat_percpu_threshold(pgdat, calculate_normal_threshold);
-		schedule();
+
+		if (!kthread_should_stop())
+			schedule();
+
 		set_pgdat_percpu_threshold(pgdat, calculate_pressure_threshold);
 	} else {
 		if (remaining)

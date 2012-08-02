@@ -524,7 +524,7 @@ int buffer_migrate_page(struct address_space *mapping,
 	/*
 	 * In the async case, migrate_page_move_mapping locked the buffers
 	 * with an IRQ-safe spinlock held. In the sync case, the buffers
-	 * need to be locked no
+	 * need to be locked now
 	 */
 	if (mode != MIGRATE_ASYNC)
 		BUG_ON(!buffer_migrate_lock_buffers(head, mode));
@@ -859,13 +859,13 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 	rc = __unmap_and_move(page, newpage, force, offlining, mode);
 out:
 	if (rc != -EAGAIN) {
- 		/*
- 		 * A page that has been migrated has all references
- 		 * removed and will be freed. A page that has not been
- 		 * migrated will have kepts its references and be
- 		 * restored.
- 		 */
- 		list_del(&page->lru);
+		/*
+		 * A page that has been migrated has all references
+		 * removed and will be freed. A page that has not been
+		 * migrated will have kepts its references and be
+		 * restored.
+		 */
+		list_del(&page->lru);
 		dec_zone_page_state(page, NR_ISOLATED_ANON +
 				page_is_file_cache(page));
 		if (PageMemError(page)) {
@@ -889,14 +889,12 @@ out:
 
 		putback_lru_page(page);
 	}
-
 drop_ref:
 	/*
 	 * Move the new page to the LRU. If migration was not successful
 	 * then this will free the page.
 	 */
 	putback_lru_page(newpage);
-
 	if (result) {
 		if (rc)
 			*result = rc;

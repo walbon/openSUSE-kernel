@@ -901,7 +901,7 @@ static int btree_submit_bio_hook(struct inode *inode, int rw, struct bio *bio,
 #ifdef CONFIG_MIGRATION
 static int btree_migratepage(struct address_space *mapping,
 			struct page *newpage, struct page *page,
-			enum migrate_mode sync)
+			enum migrate_mode mode)
 {
 	/*
 	 * we can't safely write a btree page from here,
@@ -916,7 +916,7 @@ static int btree_migratepage(struct address_space *mapping,
 	if (page_has_private(page) &&
 	    !try_to_release_page(page, GFP_KERNEL))
 		return -EAGAIN;
-	return migrate_page(mapping, newpage, page, sync);
+	return migrate_page(mapping, newpage, page, mode);
 }
 #endif
 

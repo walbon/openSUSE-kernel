@@ -1500,7 +1500,11 @@ struct task_struct {
 #endif
 #ifdef CONFIG_CPUSETS
 	nodemask_t mems_allowed;	/* Protected by alloc_lock */
+#ifdef __GENKSYMS__
 	int mems_allowed_change_disable;
+#else
+	seqcount_t mems_allowed_seq;	/* Seqence no to catch updates */
+#endif
 	int cpuset_mem_spread_rotor;
 	int cpuset_slab_spread_rotor;
 #endif

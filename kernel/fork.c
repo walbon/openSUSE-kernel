@@ -989,7 +989,7 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	init_rwsem(&sig->threadgroup_fork_lock);
 #endif
 #ifdef CONFIG_CPUSETS
-	seqcount_init((seqcount_t *)&current->mems_allowed_change_disable);
+	seqcount_init(&tsk->mems_allowed_seq);
 #endif
 
 	sig->oom_adj = current->signal->oom_adj;
