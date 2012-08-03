@@ -2824,31 +2824,48 @@ out:
 
 static int balance_kthread(void *data)
 {
-	struct btrfs_balance_control *bctl =
-			(struct btrfs_balance_control *)data;
-	struct btrfs_fs_info *fs_info = bctl->fs_info;
+	struct btrfs_fs_info *fs_info = data;
 	int ret = 0;
 
 	mutex_lock(&fs_info->volume_mutex);
 	mutex_lock(&fs_info->balance_mutex);
 
-	set_balance_control(bctl);
-
-	if (btrfs_test_opt(fs_info->tree_root, SKIP_BALANCE)) {
-		printk(KERN_INFO "btrfs: force skipping balance\n");
-	} else {
+	if (fs_info->balance_ctl) {
 		printk(KERN_INFO "btrfs: continuing balance\n");
-		ret = btrfs_balance(bctl, NULL);
+		ret = btrfs_balance(fs_info->balance_ctl, NULL);
 	}
 
 	mutex_unlock(&fs_info->balance_mutex);
 	mutex_unlock(&fs_info->volume_mutex);
+
 	return ret;
 }
 
-int btrfs_recover_balance(struct btrfs_root *tree_root)
+int btrfs_resume_balance_async(struct btrfs_fs_info *fs_info)
 {
 	struct task_struct *tsk;
+
+	spin_lock(&fs_info->balance_lock);
+	if (!fs_info->balance_ctl) {
+		spin_unlock(&fs_info->balance_lock);
+		return 0;
+	}
+	spin_unlock(&fs_info->balance_lock);
+
+	if (btrfs_test_opt(fs_info->tree_root, SKIP_BALANCE)) {
+		printk(KERN_INFO "btrfs: force skipping balance\n");
+		return 0;
+	}
+
+	tsk = kthread_run(balance_kthread, fs_info, "btrfs-balance");
+	if (IS_ERR(tsk))
+		return PTR_ERR(tsk);
+
+	return 0;
+}
+
+int btrfs_recover_balance(struct btrfs_fs_info *fs_info)
+{
 	struct btrfs_balance_control *bctl;
 	struct btrfs_balance_item *item;
 	struct btrfs_disk_balance_args disk_bargs;
@@ -2861,29 +2878,30 @@ int btrfs_recover_balance(struct btrfs_root *tree_root)
 	if (!path)
 		return -ENOMEM;
 
+	key.objectid = BTRFS_BALANCE_OBJECTID;
+	key.type = BTRFS_BALANCE_ITEM_KEY;
+	key.offset = 0;
+
+	ret = btrfs_search_slot(NULL, fs_info->tree_root, &key, path, 0, 0);
+	if (ret < 0)
+		goto out;
+	if (ret > 0) { /* ret = -ENOENT; */
+		ret = 0;
+		goto out;
+	}
+
 	bctl = kzalloc(sizeof(*bctl), GFP_NOFS);
 	if (!bctl) {
 		ret = -ENOMEM;
 		goto out;
 	}
 
-	key.objectid = BTRFS_BALANCE_OBJECTID;
-	key.type = BTRFS_BALANCE_ITEM_KEY;
-	key.offset = 0;
-
-	ret = btrfs_search_slot(NULL, tree_root, &key, path, 0, 0);
-	if (ret < 0)
-		goto out_bctl;
-	if (ret > 0) { /* ret = -ENOENT; */
-		ret = 0;
-		goto out_bctl;
-	}
-
 	leaf = path->nodes[0];
 	item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_balance_item);
 
-	bctl->fs_info = tree_root->fs_info;
-	bctl->flags = btrfs_balance_flags(leaf, item) | BTRFS_BALANCE_RESUME;
+	bctl->fs_info = fs_info;
+	bctl->flags = btrfs_balance_flags(leaf, item);
+	bctl->flags |= BTRFS_BALANCE_RESUME;
 
 	btrfs_balance_data(leaf, item, &disk_bargs);
 	btrfs_disk_balance_args_to_cpu(&bctl->data, &disk_bargs);
@@ -2892,14 +2910,13 @@ int btrfs_recover_balance(struct btrfs_root *tree_root)
 	btrfs_balance_sys(leaf, item, &disk_bargs);
 	btrfs_disk_balance_args_to_cpu(&bctl->sys, &disk_bargs);
 
-	tsk = kthread_run(balance_kthread, bctl, "btrfs-balance");
-	if (IS_ERR(tsk))
-		ret = PTR_ERR(tsk);
-	else
-		goto out;
+	mutex_lock(&fs_info->volume_mutex);
+	mutex_lock(&fs_info->balance_mutex);
 
-out_bctl:
-	kfree(bctl);
+	set_balance_control(bctl);
+
+	mutex_unlock(&fs_info->balance_mutex);
+	mutex_unlock(&fs_info->volume_mutex);
 out:
 	btrfs_free_path(path);
 	return ret;
