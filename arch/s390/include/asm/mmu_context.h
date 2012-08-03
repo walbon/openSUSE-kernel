@@ -94,8 +94,10 @@ static inline void activate_mm(struct mm_struct *prev,
 static inline void arch_dup_mmap(struct mm_struct *oldmm,
 				 struct mm_struct *mm)
 {
+#ifdef CONFIG_64BIT
 	if (oldmm->context.asce_limit < mm->context.asce_limit)
 		crst_table_downgrade(mm, oldmm->context.asce_limit);
+#endif
 }
 
 static inline void arch_exit_mmap(struct mm_struct *mm)
