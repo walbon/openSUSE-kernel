@@ -1580,10 +1580,13 @@ static struct dentry * d_find_any_alias(struct inode *inode)
  * To make it easier to use in export operations a %NULL or IS_ERR inode may
  * be passed in and will be the error will be propagate to the return value,
  * with a %NULL @inode replaced by ERR_PTR(-ESTALE).
+ *
+ * This alias can sometimes be seen by prepend_path, so make it look
+ * the same as a d_alloc_root alias.
  */
 struct dentry *d_obtain_alias(struct inode *inode)
 {
-	static const struct qstr anonstring = { .name = "" };
+	static const struct qstr anonstring = { .name = "/", .len = 1 };
 	struct dentry *tmp;
 	struct dentry *res;
 

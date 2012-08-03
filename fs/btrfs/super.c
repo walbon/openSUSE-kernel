@@ -1174,6 +1174,10 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		if (ret)
 			goto restore;
 
+		ret = btrfs_resume_balance_async(root->fs_info);
+		if (ret)
+			goto restore;
+
 		sb->s_flags &= ~MS_RDONLY;
 	}
 
