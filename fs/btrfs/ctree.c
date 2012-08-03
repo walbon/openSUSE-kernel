@@ -242,7 +242,7 @@ int btrfs_copy_root(struct btrfs_trans_handle *trans,
 
 	cow = btrfs_alloc_free_block(trans, root, buf->len, 0,
 				     new_root_objectid, &disk_key, level,
-				     buf->start, 0, 1);
+				     buf->start, 0);
 	if (IS_ERR(cow))
 		return PTR_ERR(cow);
 
@@ -454,7 +454,7 @@ static noinline int __btrfs_cow_block(struct btrfs_trans_handle *trans,
 
 	cow = btrfs_alloc_free_block(trans, root, buf->len, parent_start,
 				     root->root_key.objectid, &disk_key,
-				     level, search_start, empty_size, 1);
+				     level, search_start, empty_size);
 	if (IS_ERR(cow))
 		return PTR_ERR(cow);
 
@@ -496,7 +496,7 @@ static noinline int __btrfs_cow_block(struct btrfs_trans_handle *trans,
 		rcu_assign_pointer(root->node, cow);
 
 		btrfs_free_tree_block(trans, root, buf, parent_start,
-				      last_ref, 1);
+				      last_ref);
 		free_extent_buffer(buf);
 		add_root_to_dirty_list(root);
 	} else {
@@ -512,7 +512,7 @@ static noinline int __btrfs_cow_block(struct btrfs_trans_handle *trans,
 					      trans->transid);
 		btrfs_mark_buffer_dirty(parent);
 		btrfs_free_tree_block(trans, root, buf, parent_start,
-				      last_ref, 1);
+				      last_ref);
 	}
 	if (unlock_orig)
 		btrfs_tree_unlock(buf);
@@ -712,7 +712,7 @@ int btrfs_realloc_node(struct btrfs_trans_handle *trans,
 
 		cur = btrfs_find_tree_block(root, blocknr, blocksize);
 		if (cur)
-			uptodate = btrfs_buffer_uptodate(cur, gen);
+			uptodate = btrfs_buffer_uptodate(cur, gen, 0);
 		else
 			uptodate = 0;
 		if (!cur || !uptodate) {
@@ -974,7 +974,7 @@ static noinline int balance_level(struct btrfs_trans_handle *trans,
 		free_extent_buffer(mid);
 
 		root_sub_used(root, mid->len);
-		btrfs_free_tree_block(trans, root, mid, 0, 1, 0);
+		btrfs_free_tree_block(trans, root, mid, 0, 1);
 		/* once for the root ptr */
 		free_extent_buffer(mid);
 		return 0;
@@ -1029,7 +1029,7 @@ static noinline int balance_level(struct btrfs_trans_handle *trans,
 			btrfs_tree_unlock(right);
 			del_ptr(trans, root, path, level + 1, pslot + 1);
 			root_sub_used(root, right->len);
-			btrfs_free_tree_block(trans, root, right, 0, 1, 0);
+			btrfs_free_tree_block(trans, root, right, 0, 1);
 			free_extent_buffer(right);
 			right = NULL;
 		} else {
@@ -1071,7 +1071,7 @@ static noinline int balance_level(struct btrfs_trans_handle *trans,
 		btrfs_tree_unlock(mid);
 		del_ptr(trans, root, path, level + 1, pslot);
 		root_sub_used(root, mid->len);
-		btrfs_free_tree_block(trans, root, mid, 0, 1, 0);
+		btrfs_free_tree_block(trans, root, mid, 0, 1);
 		free_extent_buffer(mid);
 		mid = NULL;
 	} else {
@@ -1347,7 +1347,12 @@ static noinline int reada_for_balance(struct btrfs_root *root,
 		block1 = btrfs_node_blockptr(parent, slot - 1);
 		gen = btrfs_node_ptr_generation(parent, slot - 1);
 		eb = btrfs_find_tree_block(root, block1, blocksize);
-		if (eb && btrfs_buffer_uptodate(eb, gen))
+		/*
+		 * if we get -eagain from btrfs_buffer_uptodate, we
+		 * don't want to return eagain here.  That will loop
+		 * forever
+		 */
+		if (eb && btrfs_buffer_uptodate(eb, gen, 1) != 0)
 			block1 = 0;
 		free_extent_buffer(eb);
 	}
@@ -1355,7 +1360,7 @@ static noinline int reada_for_balance(struct btrfs_root *root,
 		block2 = btrfs_node_blockptr(parent, slot + 1);
 		gen = btrfs_node_ptr_generation(parent, slot + 1);
 		eb = btrfs_find_tree_block(root, block2, blocksize);
-		if (eb && btrfs_buffer_uptodate(eb, gen))
+		if (eb && btrfs_buffer_uptodate(eb, gen, 1) != 0)
 			block2 = 0;
 		free_extent_buffer(eb);
 	}
@@ -1493,8 +1498,9 @@ read_block_for_search(struct btrfs_trans_handle *trans,
 
 	tmp = btrfs_find_tree_block(root, blocknr, blocksize);
 	if (tmp) {
-		if (btrfs_buffer_uptodate(tmp, 0)) {
-			if (btrfs_buffer_uptodate(tmp, gen)) {
+		/* first we do an atomic uptodate check */
+		if (btrfs_buffer_uptodate(tmp, 0, 1) > 0) {
+			if (btrfs_buffer_uptodate(tmp, gen, 1) > 0) {
 				/*
 				 * we found an up to date block without
 				 * sleeping, return
@@ -1512,8 +1518,9 @@ read_block_for_search(struct btrfs_trans_handle *trans,
 			free_extent_buffer(tmp);
 			btrfs_set_path_blocking(p);
 
+			/* now we're allowed to do a blocking uptodate check */
 			tmp = read_tree_block(root, blocknr, blocksize, gen);
-			if (tmp && btrfs_buffer_uptodate(tmp, gen)) {
+			if (tmp && btrfs_buffer_uptodate(tmp, gen, 0) > 0) {
 				*eb_ret = tmp;
 				return 0;
 			}
@@ -1548,7 +1555,7 @@ read_block_for_search(struct btrfs_trans_handle *trans,
 		 * and give up so that our caller doesn't loop forever
 		 * on our EAGAINs.
 		 */
-		if (!btrfs_buffer_uptodate(tmp, 0))
+		if (!btrfs_buffer_uptodate(tmp, 0, 0))
 			ret = -EIO;
 		free_extent_buffer(tmp);
 	}
@@ -2109,7 +2116,7 @@ static noinline int insert_new_root(struct btrfs_trans_handle *trans,
 
 	c = btrfs_alloc_free_block(trans, root, root->nodesize, 0,
 				   root->root_key.objectid, &lower_key,
-				   level, root->node->start, 0, 0);
+				   level, root->node->start, 0);
 	if (IS_ERR(c))
 		return PTR_ERR(c);
 
@@ -2232,7 +2239,7 @@ static noinline int split_node(struct btrfs_trans_handle *trans,
 
 	split = btrfs_alloc_free_block(trans, root, root->nodesize, 0,
 					root->root_key.objectid,
-					&disk_key, level, c->start, 0, 0);
+					&disk_key, level, c->start, 0);
 	if (IS_ERR(split))
 		return PTR_ERR(split);
 
@@ -2972,7 +2979,7 @@ again:
 
 	right = btrfs_alloc_free_block(trans, root, root->leafsize, 0,
 					root->root_key.objectid,
-					&disk_key, 0, l->start, 0, 0);
+					&disk_key, 0, l->start, 0);
 	if (IS_ERR(right))
 		return PTR_ERR(right);
 
@@ -3753,7 +3760,7 @@ static noinline void btrfs_del_leaf(struct btrfs_trans_handle *trans,
 
 	root_sub_used(root, leaf->len);
 
-	btrfs_free_tree_block(trans, root, leaf, 0, 1, 0);
+	btrfs_free_tree_block(trans, root, leaf, 0, 1);
 }
 /*
  * delete the item at the leaf level in path.  If that empties
@@ -3996,7 +4003,7 @@ again:
 			tmp = btrfs_find_tree_block(root, blockptr,
 					    btrfs_level_size(root, level - 1));
 
-			if (tmp && btrfs_buffer_uptodate(tmp, gen)) {
+			if (tmp && btrfs_buffer_uptodate(tmp, gen, 1) > 0) {
 				free_extent_buffer(tmp);
 				break;
 			}
@@ -4119,7 +4126,8 @@ next:
 				struct extent_buffer *cur;
 				cur = btrfs_find_tree_block(root, blockptr,
 					    btrfs_level_size(root, level - 1));
-				if (!cur || !btrfs_buffer_uptodate(cur, gen)) {
+				if (!cur ||
+				    btrfs_buffer_uptodate(cur, gen, 1) <= 0) {
 					slot++;
 					if (cur)
 						free_extent_buffer(cur);

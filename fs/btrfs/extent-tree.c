@@ -4488,7 +4488,7 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	int ret;
 
 	/* Need to be holding the i_mutex here if we aren't free space cache */
-	if (btrfs_is_free_space_inode(root, inode))
+	if (btrfs_is_free_space_inode(inode))
 		flush = 0;
 
 	if (flush && btrfs_transaction_in_commit(root->fs_info))
@@ -5267,7 +5267,7 @@ out:
 void btrfs_free_tree_block(struct btrfs_trans_handle *trans,
 			   struct btrfs_root *root,
 			   struct extent_buffer *buf,
-			   u64 parent, int last_ref, int for_cow)
+			   u64 parent, int last_ref)
 {
 	struct btrfs_block_group_cache *cache = NULL;
 	int ret;
@@ -5277,7 +5277,7 @@ void btrfs_free_tree_block(struct btrfs_trans_handle *trans,
 					buf->start, buf->len,
 					parent, root->root_key.objectid,
 					btrfs_header_level(buf),
-					BTRFS_DROP_DELAYED_REF, NULL, for_cow);
+					BTRFS_DROP_DELAYED_REF, NULL, 0);
 		BUG_ON(ret); /* -ENOMEM */
 	}
 
@@ -6374,7 +6374,7 @@ struct extent_buffer *btrfs_alloc_free_block(struct btrfs_trans_handle *trans,
 					struct btrfs_root *root, u32 blocksize,
 					u64 parent, u64 root_objectid,
 					struct btrfs_disk_key *key, int level,
-					u64 hint, u64 empty_size, int for_cow)
+					u64 hint, u64 empty_size)
 {
 	struct btrfs_key ins;
 	struct btrfs_block_rsv *block_rsv;
@@ -6422,7 +6422,7 @@ struct extent_buffer *btrfs_alloc_free_block(struct btrfs_trans_handle *trans,
 					ins.objectid,
 					ins.offset, parent, root_objectid,
 					level, BTRFS_ADD_DELAYED_EXTENT,
-					extent_op, for_cow);
+					extent_op, 0);
 		BUG_ON(ret); /* -ENOMEM */
 	}
 	return buf;
@@ -6693,7 +6693,7 @@ static noinline int do_walk_down(struct btrfs_trans_handle *trans,
 			goto skip;
 	}
 
-	if (!btrfs_buffer_uptodate(next, generation)) {
+	if (!btrfs_buffer_uptodate(next, generation, 0)) {
 		btrfs_tree_unlock(next);
 		free_extent_buffer(next);
 		next = NULL;
@@ -6840,7 +6840,7 @@ static noinline int walk_up_proc(struct btrfs_trans_handle *trans,
 			       btrfs_header_owner(path->nodes[level + 1]));
 	}
 
-	btrfs_free_tree_block(trans, root, eb, parent, wc->refs[level] == 1, 0);
+	btrfs_free_tree_block(trans, root, eb, parent, wc->refs[level] == 1);
 out:
 	wc->refs[level] = 0;
 	wc->flags[level] = 0;
