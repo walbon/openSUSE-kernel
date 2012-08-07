@@ -25,8 +25,10 @@ static struct task_struct *pick_next_task_stop(struct rq *rq)
 {
 	struct task_struct *stop = rq->stop;
 
-	if (stop && stop->on_rq)
+	if (stop && stop->on_rq) {
+		stop->se.exec_start = rq->clock_task;
 		return stop;
+	}
 
 	return NULL;
 }
@@ -50,6 +52,24 @@ static void yield_task_stop(struct rq *rq)
 
 static void put_prev_task_stop(struct rq *rq, struct task_struct *prev)
 {
+	struct task_struct *stop = rq->stop;
+	u64 delta_exec;
+
+	if (unlikely(!stop))
+		return;
+
+	delta_exec = rq->clock_task - stop->se.exec_start;
+	if (unlikely((s64)delta_exec < 0))
+		delta_exec = 0;
+
+	schedstat_set(stop->se.statistics.exec_max,
+		      max(stop->se.statistics.exec_max, delta_exec));
+
+	stop->se.sum_exec_runtime += delta_exec;
+	account_group_exec_runtime(stop, delta_exec);
+
+	stop->se.exec_start = rq->clock_task;
+	cpuacct_charge(stop, delta_exec);
 }
 
 static void task_tick_stop(struct rq *rq, struct task_struct *curr, int queued)
@@ -58,6 +78,12 @@ static void task_tick_stop(struct rq *rq, struct task_struct *curr, int queued)
 
 static void set_curr_task_stop(struct rq *rq)
 {
+	struct task_struct *stop = rq->stop;
+
+	if (unlikely(!stop))
+		return;
+
+	stop->se.exec_start = rq->clock_task;
 }
 
 static void switched_to_stop(struct rq *rq, struct task_struct *p)
