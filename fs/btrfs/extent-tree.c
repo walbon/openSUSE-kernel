@@ -2317,6 +2317,23 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 		ref->in_tree = 0;
 		rb_erase(&ref->rb_node, &delayed_refs->root);
 		delayed_refs->num_entries--;
+		if (locked_ref) {
+			/*
+			 * when we play the delayed ref, also correct the
+			 * ref_mod on head
+			 */
+			switch (ref->action) {
+			case BTRFS_ADD_DELAYED_REF:
+			case BTRFS_ADD_DELAYED_EXTENT:
+				locked_ref->node.ref_mod -= ref->ref_mod;
+				break;
+			case BTRFS_DROP_DELAYED_REF:
+				locked_ref->node.ref_mod += ref->ref_mod;
+				break;
+			default:
+				WARN_ON(1);
+			}
+		}
 		/*
 		 * we modified num_entries, but as we're currently running
 		 * delayed refs, skip
@@ -2929,17 +2946,16 @@ again:
 	}
 	spin_unlock(&block_group->lock);
 
-	num_pages = (int)div64_u64(block_group->key.offset, 1024 * 1024 * 1024);
+	/*
+	 * Try to preallocate enough space based on how big the block group is.
+	 * Keep in mind this has to include any pinned space which could end up
+	 * taking up quite a bit since it's not folded into the other space
+	 * cache.
+	 */
+	num_pages = (int)div64_u64(block_group->key.offset, 256 * 1024 * 1024);
 	if (!num_pages)
 		num_pages = 1;
 
-	/*
-	 * Just to make absolutely sure we have enough space, we're going to
-	 * preallocate 12 pages worth of space for each block group.  In
-	 * practice we ought to use at most 8, but we need extra space so we can
-	 * add our header and have a terminator between the extents and the
-	 * bitmaps.
-	 */
 	num_pages *= 16;
 	num_pages *= PAGE_CACHE_SIZE;
 
