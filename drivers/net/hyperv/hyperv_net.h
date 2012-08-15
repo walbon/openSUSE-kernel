@@ -25,6 +25,9 @@
 #ifndef _HYPERV_NET_H
 #define _HYPERV_NET_H
 
+/* from include/linux/rndis.h via 8cdddc3f9d6692f5690841468a9f63c19fb734ed */
+#define RNDIS_OID_GEN_RNDIS_CONFIG_PARAMETER   0x0001021B
+
 #include <linux/list.h>
 #include <linux/hyperv.h>
 #include <linux/rndis.h>
@@ -131,6 +134,7 @@ int rndis_filter_send(struct hv_device *dev,
 			struct hv_netvsc_packet *pkt);
 
 int rndis_filter_set_packet_filter(struct rndis_device *dev, u32 new_filter);
+int rndis_filter_set_device_mac(struct hv_device *hdev, char *mac);
 
 
 #define NVSP_INVALID_PROTOCOL_VERSION	((u32)0xFFFFFFFF)
@@ -478,6 +482,7 @@ struct netvsc_device {
 	u32 nvsp_version;
 
 	atomic_t num_outstanding_sends;
+	wait_queue_head_t wait_drain;
 	bool start_remove;
 	bool destroy;
 	/*

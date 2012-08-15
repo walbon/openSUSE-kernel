@@ -507,11 +507,27 @@ static int rt2800pci_init_registers(struct rt2x00_dev *rt2x00dev)
 
 static int rt2800pci_enable_radio(struct rt2x00_dev *rt2x00dev)
 {
+	int retval;
+
 	if (unlikely(rt2800_wait_wpdma_ready(rt2x00dev) ||
 		     rt2800pci_init_queues(rt2x00dev)))
 		return -EIO;
 
-	return rt2800_enable_radio(rt2x00dev);
+	retval = rt2800_enable_radio(rt2x00dev);
+	if (retval)
+		return retval;
+
+	/* After resume MCU_BOOT_SIGNAL will trash these. */
+	rt2x00pci_register_write(rt2x00dev, H2M_MAILBOX_STATUS, ~0);
+	rt2x00pci_register_write(rt2x00dev, H2M_MAILBOX_CID, ~0);
+
+	rt2800_mcu_request(rt2x00dev, MCU_SLEEP, TOKEN_RADIO_OFF, 0xff, 0x02);
+	rt2800pci_mcu_status(rt2x00dev, TOKEN_RADIO_OFF);
+
+	rt2800_mcu_request(rt2x00dev, MCU_WAKEUP, TOKEN_WAKEUP, 0, 0);
+	rt2800pci_mcu_status(rt2x00dev, TOKEN_WAKEUP);
+
+	return retval;
 }
 
 static void rt2800pci_disable_radio(struct rt2x00_dev *rt2x00dev)
@@ -527,14 +543,16 @@ static int rt2800pci_set_state(struct rt2x00_dev *rt2x00dev,
 			       enum dev_state state)
 {
 	if (state == STATE_AWAKE) {
-		rt2800_mcu_request(rt2x00dev, MCU_WAKEUP, TOKEN_WAKUP, 0, 0x02);
-		rt2800pci_mcu_status(rt2x00dev, TOKEN_WAKUP);
+		rt2800_mcu_request(rt2x00dev, MCU_WAKEUP, TOKEN_WAKEUP,
+				   0, 0x02);
+		rt2800pci_mcu_status(rt2x00dev, TOKEN_WAKEUP);
 	} else if (state == STATE_SLEEP) {
 		rt2x00pci_register_write(rt2x00dev, H2M_MAILBOX_STATUS,
 					 0xffffffff);
 		rt2x00pci_register_write(rt2x00dev, H2M_MAILBOX_CID,
 					 0xffffffff);
-		rt2800_mcu_request(rt2x00dev, MCU_SLEEP, 0x01, 0xff, 0x01);
+		rt2800_mcu_request(rt2x00dev, MCU_SLEEP, TOKEN_SLEEP,
+				   0xff, 0x01);
 	}
 
 	return 0;
@@ -547,13 +565,6 @@ static int rt2800pci_set_device_state(struct rt2x00_dev *rt2x00dev,
 
 	switch (state) {
 	case STATE_RADIO_ON:
-		/*
-		 * Before the radio can be enabled, the device first has
-		 * to be woken up. After that it needs a bit of time
-		 * to be fully awake and then the radio can be enabled.
-		 */
-		rt2800pci_set_state(rt2x00dev, STATE_AWAKE);
-		msleep(1);
 		retval = rt2800pci_enable_radio(rt2x00dev);
 		break;
 	case STATE_RADIO_OFF:
@@ -938,66 +949,7 @@ static int rt2800pci_validate_eeprom(struct rt2x00_dev *rt2x00dev)
 	return rt2800_validate_eeprom(rt2x00dev);
 }
 
-static int rt2800_enable_wlan_rt3290(struct rt2x00_dev *rt2x00dev)
-{
-	u32 reg;
-	int i, count;
 
-	rt2800_register_read(rt2x00dev, WLAN_FUN_CTRL, &reg);
-	if ((rt2x00_get_field32(reg, WLAN_EN) == 1))
-		return 0;
-
-	rt2x00_set_field32(&reg, WLAN_GPIO_OUT_OE_BIT_ALL, 0xff);
-	rt2x00_set_field32(&reg, FRC_WL_ANT_SET, 1);
-	rt2x00_set_field32(&reg, WLAN_CLK_EN, 0);
-	rt2x00_set_field32(&reg, WLAN_EN, 1);
-	rt2800_register_write(rt2x00dev, WLAN_FUN_CTRL, reg);
-
-	udelay(REGISTER_BUSY_DELAY);
-
-	count = 0;
-	do {
-		/*
-		 * Check PLL_LD & XTAL_RDY.
-		 */
-		for (i = 0; i < REGISTER_BUSY_COUNT; i++) {
-			rt2800_register_read(rt2x00dev, CMB_CTRL, &reg);
-			if ((rt2x00_get_field32(reg, PLL_LD) == 1) &&
-				(rt2x00_get_field32(reg, XTAL_RDY) == 1))
-					break;
-			udelay(REGISTER_BUSY_DELAY);
-		}
-
-		if (i >= REGISTER_BUSY_COUNT) {
-
-			if (count >= 10)
-				return -EIO;
-
-			rt2800_register_write(rt2x00dev, 0x58, 0x018);
-			udelay(REGISTER_BUSY_DELAY);
-			rt2800_register_write(rt2x00dev, 0x58, 0x418);
-			udelay(REGISTER_BUSY_DELAY);
-			rt2800_register_write(rt2x00dev, 0x58, 0x618);
-			udelay(REGISTER_BUSY_DELAY);
-			count++;
-		} else {
-			count = 0;
-		}
-
-		rt2800_register_read(rt2x00dev, WLAN_FUN_CTRL, &reg);
-		rt2x00_set_field32(&reg, PCIE_APP0_CLK_REQ, 0);
-		rt2x00_set_field32(&reg, WLAN_CLK_EN, 1);
-		rt2x00_set_field32(&reg, WLAN_RESET, 1);
-		rt2800_register_write(rt2x00dev, WLAN_FUN_CTRL, reg);
-		udelay(10);
-		rt2x00_set_field32(&reg, WLAN_RESET, 0);
-		rt2800_register_write(rt2x00dev, WLAN_FUN_CTRL, reg);
-		udelay(10);
-		rt2800_register_write(rt2x00dev, INT_SOURCE_CSR, 0x7fffffff);
-	} while (count != 0);
-
-	return 0;
-}
 static int rt2800pci_probe_hw(struct rt2x00_dev *rt2x00dev)
 {
 	int retval;

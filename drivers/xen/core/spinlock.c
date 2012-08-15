@@ -38,12 +38,18 @@ struct rm_seq {
 };
 static DEFINE_PER_CPU(struct rm_seq, rm_seq);
 
+static int __read_mostly nopoll;
+module_param(nopoll, bool, 0);
+
 int __cpuinit xen_spinlock_init(unsigned int cpu)
 {
 	struct evtchn_bind_ipi bind_ipi;
 	int rc;
 
 	setup_runstate_area(cpu);
+
+	if (nopoll)
+		return 0;
 
  	WARN_ON(per_cpu(poll_evtchn, cpu));
 	bind_ipi.vcpu = cpu;
@@ -62,6 +68,8 @@ void __cpuinit xen_spinlock_cleanup(unsigned int cpu)
 	struct evtchn_close close;
 
 	close.port = per_cpu(poll_evtchn, cpu);
+	if (!close.port)
+		return;
  	per_cpu(poll_evtchn, cpu) = 0;
 	WARN_ON(HYPERVISOR_event_channel_op(EVTCHNOP_close, &close));
 }
@@ -200,7 +208,6 @@ void xen_spin_irq_enter(void)
 void xen_spin_irq_exit(void)
 {
 	struct spinning *spinning = percpu_read(_spinning);
-	unsigned int cpu = raw_smp_processor_id();
 	/*
 	 * Despite its counterpart being first in xen_spin_irq_enter() (to make
 	 * xen_spin_kick() properly handle locks that get owned after their
@@ -232,7 +239,7 @@ void xen_spin_irq_exit(void)
 			continue;
 		spinning->ticket = ticket_get(lock, spinning->prev);
 		if (ACCESS_ONCE(lock->cur) == spinning->ticket)
-			lock->owner = cpu;
+			lock->owner = raw_smp_processor_id();
 	}
 }
 #endif
@@ -338,6 +345,9 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 void xen_spin_kick(arch_spinlock_t *lock, unsigned int token)
 {
 	unsigned int cpu = raw_smp_processor_id(), anchor = cpu;
+
+	if (nopoll)
+		return;
 
 	if (unlikely(!cpu_online(cpu)))
 		cpu = -1, anchor = nr_cpu_ids;

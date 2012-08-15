@@ -387,6 +387,13 @@ int rt2800_load_firmware(struct rt2x00_dev *rt2x00dev,
 {
 	unsigned int i;
 	u32 reg;
+	int retval;
+
+	if (rt2x00_rt(rt2x00dev, RT3290)) {
+		retval = rt2800_enable_wlan_rt3290(rt2x00dev);
+		if (retval)
+			return -EBUSY;
+	}
 
 	/*
 	 * If driver doesn't wake up firmware here,
@@ -3471,6 +3478,13 @@ static int rt2800_init_bbp(struct rt2x00_dev *rt2x00dev)
 			rt2800_register_write(rt2x00dev, GPIO_CTRL_CFG, reg);
 		}
 
+		/* This chip has hardware antenna diversity*/
+		if (rt2x00_rt_rev_gte(rt2x00dev, RT5390, REV_RT5390R)) {
+			rt2800_bbp_write(rt2x00dev, 150, 0); /* Disable Antenna Software OFDM */
+			rt2800_bbp_write(rt2x00dev, 151, 0); /* Disable Antenna Software CCK */
+			rt2800_bbp_write(rt2x00dev, 154, 0); /* Clear previously selected antenna */
+		}
+
 		rt2800_bbp_read(rt2x00dev, 152, &value);
 		if (ant == 0)
 			rt2x00_set_field8(&value, BBP152_RX_DEFAULT_ANT, 1);
@@ -4400,6 +4414,11 @@ int rt2800_init_eeprom(struct rt2x00_dev *rt2x00dev)
 		rt2x00dev->default_ant.rx = ANTENNA_A;
 	}
 
+	if (rt2x00_rt_rev_gte(rt2x00dev, RT5390, REV_RT5390R)) {
+		rt2x00dev->default_ant.tx = ANTENNA_HW_DIVERSITY; /* Unused */
+		rt2x00dev->default_ant.rx = ANTENNA_HW_DIVERSITY; /* Unused */
+	}
+
 	/*
 	 * Determine external LNA informations.
 	 */
@@ -4961,6 +4980,68 @@ int rt2800_get_survey(struct ieee80211_hw *hw, int idx,
 
 }
 EXPORT_SYMBOL_GPL(rt2800_get_survey);
+
+int rt2800_enable_wlan_rt3290(struct rt2x00_dev *rt2x00dev)
+{
+	u32 reg;
+	int i, count;
+
+	rt2800_register_read(rt2x00dev, WLAN_FUN_CTRL, &reg);
+	if (rt2x00_get_field32(reg, WLAN_EN))
+		return 0;
+
+	rt2x00_set_field32(&reg, WLAN_GPIO_OUT_OE_BIT_ALL, 0xff);
+	rt2x00_set_field32(&reg, FRC_WL_ANT_SET, 1);
+	rt2x00_set_field32(&reg, WLAN_CLK_EN, 0);
+	rt2x00_set_field32(&reg, WLAN_EN, 1);
+	rt2800_register_write(rt2x00dev, WLAN_FUN_CTRL, reg);
+
+	udelay(REGISTER_BUSY_DELAY);
+
+	count = 0;
+	do {
+		/*
+		 * Check PLL_LD & XTAL_RDY.
+		 */
+		for (i = 0; i < REGISTER_BUSY_COUNT; i++) {
+			rt2800_register_read(rt2x00dev, CMB_CTRL, &reg);
+			if (rt2x00_get_field32(reg, PLL_LD) &&
+			    rt2x00_get_field32(reg, XTAL_RDY))
+					break;
+			udelay(REGISTER_BUSY_DELAY);
+		}
+
+		if (i >= REGISTER_BUSY_COUNT) {
+
+			if (count >= 10)
+				return -EIO;
+
+			rt2800_register_write(rt2x00dev, 0x58, 0x018);
+			udelay(REGISTER_BUSY_DELAY);
+			rt2800_register_write(rt2x00dev, 0x58, 0x418);
+			udelay(REGISTER_BUSY_DELAY);
+			rt2800_register_write(rt2x00dev, 0x58, 0x618);
+			udelay(REGISTER_BUSY_DELAY);
+			count++;
+		} else {
+			count = 0;
+		}
+
+		rt2800_register_read(rt2x00dev, WLAN_FUN_CTRL, &reg);
+		rt2x00_set_field32(&reg, PCIE_APP0_CLK_REQ, 0);
+		rt2x00_set_field32(&reg, WLAN_CLK_EN, 1);
+		rt2x00_set_field32(&reg, WLAN_RESET, 1);
+		rt2800_register_write(rt2x00dev, WLAN_FUN_CTRL, reg);
+		udelay(10);
+		rt2x00_set_field32(&reg, WLAN_RESET, 0);
+		rt2800_register_write(rt2x00dev, WLAN_FUN_CTRL, reg);
+		udelay(10);
+		rt2800_register_write(rt2x00dev, INT_SOURCE_CSR, 0x7fffffff);
+	} while (count != 0);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rt2800_enable_wlan_rt3290);
 
 MODULE_AUTHOR(DRV_PROJECT ", Bartlomiej Zolnierkiewicz");
 MODULE_VERSION(DRV_VERSION);

@@ -984,7 +984,7 @@ static void cpuset_change_task_nodemask(struct task_struct *tsk,
 			!nodes_intersects(*newmems, tsk->mems_allowed);
 
 	if (need_loop)
-		write_seqcount_begin((seqcount_t *)&tsk->mems_allowed_change_disable);
+		write_seqcount_begin(&tsk->mems_allowed_seq);
 
 	nodes_or(tsk->mems_allowed, tsk->mems_allowed, *newmems);
 	mpol_rebind_task(tsk, newmems, MPOL_REBIND_STEP1);
@@ -993,7 +993,7 @@ static void cpuset_change_task_nodemask(struct task_struct *tsk,
 	tsk->mems_allowed = *newmems;
 
 	if (need_loop)
-		write_seqcount_end((seqcount_t *)&tsk->mems_allowed_change_disable);
+		write_seqcount_end(&tsk->mems_allowed_seq);
 
 	task_unlock(tsk);
 }

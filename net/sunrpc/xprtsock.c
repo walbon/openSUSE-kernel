@@ -1882,6 +1882,8 @@ static void xs_local_setup_socket(struct work_struct *work)
 	if (xprt->shutdown)
 		goto out;
 
+	current->flags |= PF_FSTRANS;
+
 	clear_bit(XPRT_CONNECTION_ABORT, &xprt->state);
 	status = __sock_create(xprt->xprt_net, AF_LOCAL,
 					SOCK_STREAM, 0, &sock, 1);
@@ -1915,6 +1917,7 @@ static void xs_local_setup_socket(struct work_struct *work)
 out:
 	xprt_clear_connecting(xprt);
 	xprt_wake_pending_tasks(xprt, status);
+	current->flags &= ~PF_FSTRANS;
 }
 
 #ifdef CONFIG_SUNRPC_SWAP
@@ -2003,6 +2006,8 @@ static void xs_udp_setup_socket(struct work_struct *work)
 	if (xprt->shutdown)
 		goto out;
 
+	current->flags |= PF_FSTRANS;
+
 	if (xprt->swapper)
 		current->flags |= PF_MEMALLOC;
 
@@ -2025,6 +2030,7 @@ out:
 	xprt_clear_connecting(xprt);
 	xprt_wake_pending_tasks(xprt, status);
 	tsk_restore_flags(current, pflags, PF_MEMALLOC);
+	current->flags &= ~PF_FSTRANS;
 }
 
 /*
@@ -2153,6 +2159,8 @@ static void xs_tcp_setup_socket(struct work_struct *work)
 	if (xprt->shutdown)
 		goto out;
 
+	current->flags |= PF_FSTRANS;
+
 	if (xprt->swapper)
 		current->flags |= PF_MEMALLOC;
 
@@ -2205,6 +2213,7 @@ static void xs_tcp_setup_socket(struct work_struct *work)
 	case -EINPROGRESS:
 	case -EALREADY:
 		xprt_clear_connecting(xprt);
+		current->flags &= ~PF_FSTRANS;
 		return;
 	case -EINVAL:
 		/* Happens, for instance, if the user specified a link
@@ -2218,6 +2227,7 @@ out:
 	xprt_clear_connecting(xprt);
 	xprt_wake_pending_tasks(xprt, status);
 	tsk_restore_flags(current, pflags, PF_MEMALLOC);
+	current->flags &= ~PF_FSTRANS;
 }
 
 /**

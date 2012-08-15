@@ -250,13 +250,17 @@ unsigned long shrink_slab(struct shrink_control *shrink,
 
 	list_for_each_entry(shrinker, &shrinker_list, list) {
 		unsigned long long delta;
-		unsigned long total_scan;
-		unsigned long max_pass;
+		long total_scan;
+		long max_pass;
 		int shrink_ret = 0;
 		long nr;
 		long new_nr;
 		long batch_size = shrinker->batch ? shrinker->batch
 						  : SHRINK_BATCH;
+
+		max_pass = do_shrinker_shrink(shrinker, shrink, 0);
+		if (max_pass <= 0)
+			continue;
 
 		/*
 		 * copy the current shrinker scan count into a local variable
@@ -268,7 +272,6 @@ unsigned long shrink_slab(struct shrink_control *shrink,
 		} while (cmpxchg(&shrinker->nr, nr, 0) != nr);
 
 		total_scan = nr;
-		max_pass = do_shrinker_shrink(shrinker, shrink, 0);
 		delta = (4 * nr_pages_scanned) / shrinker->seeks;
 		delta *= max_pass;
 		do_div(delta, lru_pages + 1);
@@ -826,19 +829,40 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 				wait_on_page_writeback(page);
 			else {
 				/*
-				 * memcg doesn't have any dirty pages
-				 * throttling so we could easily OOM just
-				 * because too many pages are in writeback
-				 * from reclaim and there is nothing else to
-				 * reclaim.
+				 * memcg doesn't have any dirty pages throttling so we
+				 * could easily OOM just because too many pages are in
+				 * writeback and there is nothing else to reclaim.
+				 *
+				 * Check __GFP_IO, certainly because a loop driver
+				 * thread might enter reclaim, and deadlock if it waits
+				 * on a page for which it is needed to do the write
+				 * (loop masks off __GFP_IO|__GFP_FS for this reason);
+				 * but more thought would probably show more reasons.
+				 *
+				 * Don't require __GFP_FS, since we're not going into
+				 * the FS, just waiting on its writeback completion.
+				 * Worryingly, ext4 gfs2 and xfs allocate pages with
+				 * grab_cache_page_write_begin(,,AOP_FLAG_NOFS), so
+				 * testing may_enter_fs here is liable to OOM on them.
 				 */
-				if (!global_reclaim && may_enter_fs
-						&& PageReclaim(page))
-					wait_on_page_writeback(page);
-				else {
+				if (global_reclaim || 
+				    !PageReclaim(page) || !(sc->gfp_mask & __GFP_IO)) {
+					/*
+					 * This is slightly racy - end_page_writeback()
+					 * might have just cleared PageReclaim, then
+					 * setting PageReclaim here end up interpreted
+					 * as PageReadahead - but that does not matter
+					 * enough to care.  What we do want is for this
+					 * page to have PageReclaim set next time memcg
+					 * reclaim reaches the tests above, so it will
+					 * then wait_on_page_writeback() to avoid OOM;
+					 * and it's also appropriate in global reclaim.
+					 */
+					SetPageReclaim(page);
 					unlock_page(page);
 					goto keep_lumpy;
 				}
+				wait_on_page_writeback(page);
 			}
 		}
 
@@ -1879,6 +1903,9 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 	 * latencies, so it's better to scan a minimum amount there as
 	 * well.
 	 */
+	if (scanning_global_lru(sc) && current_is_kswapd() &&
+	    zone->all_unreclaimable)
+		force_scan = true;
 	if (!scanning_global_lru(sc))
 		force_scan = true;
 
@@ -2142,8 +2169,8 @@ static inline bool compaction_ready(struct zone *zone, struct scan_control *sc)
  * scan then give up on it.
  *
  * This function returns true if a zone is being reclaimed for a costly
- * allocation and compaction is ready to begin. This indicates to the caller
- * that it should consider retrying the allocation instead of
+ * high-order allocation and compaction is ready to begin. This indicates to
+ * the caller that it should consider retrying the allocation instead of
  * further reclaim.
  */
 static bool shrink_zones(int priority, struct zonelist *zonelist,
@@ -2981,7 +3008,10 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int order, int classzone_idx)
 		 * them before going back to sleep.
 		 */
 		set_pgdat_percpu_threshold(pgdat, calculate_normal_threshold);
-		schedule();
+
+		if (!kthread_should_stop())
+			schedule();
+
 		set_pgdat_percpu_threshold(pgdat, calculate_pressure_threshold);
 	} else {
 		if (remaining)
@@ -3414,14 +3444,17 @@ int kswapd_run(int nid)
 }
 
 /*
- * Called by memory hotplug when all memory in a node is offlined.
+ * Called by memory hotplug when all memory in a node is offlined.  Caller must
+ * hold lock_memory_hotplug().
  */
 void kswapd_stop(int nid)
 {
 	struct task_struct *kswapd = NODE_DATA(nid)->kswapd;
 
-	if (kswapd)
+	if (kswapd) {
 		kthread_stop(kswapd);
+		NODE_DATA(nid)->kswapd = NULL;
+	}
 }
 
 static int __init kswapd_init(void)

@@ -311,4 +311,13 @@ struct itimerval {
  */
 #define TIMER_ABSTIME			0x01
 
+extern char *leap_second_message;
+static inline void check_leap_second_message(void)
+{
+	if (unlikely(leap_second_message)) {
+		printk(leap_second_message);
+		leap_second_message = NULL;
+	}
+}
+
 #endif

@@ -18,6 +18,7 @@
 #include <linux/percpu.h>
 #include <linux/profile.h>
 #include <linux/sched.h>
+#include <linux/time.h>
 
 #include <asm/irq_regs.h>
 
@@ -70,6 +71,7 @@ static void tick_periodic(int cpu)
 
 		do_timer(1);
 		write_sequnlock(&xtime_lock);
+		check_leap_second_message();
 	}
 
 	update_process_times(user_mode(get_irq_regs()));

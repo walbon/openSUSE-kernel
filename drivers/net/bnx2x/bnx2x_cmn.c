@@ -219,7 +219,7 @@ int bnx2x_tx_int(struct bnx2x *bp, struct bnx2x_fp_txdata *txdata)
 
 		if ((netif_tx_queue_stopped(txq)) &&
 		    (bp->state == BNX2X_STATE_OPEN) &&
-		    (bnx2x_tx_avail(bp, txdata) >= MAX_SKB_FRAGS + 3))
+		    (bnx2x_tx_avail(bp, txdata) >= MAX_SKB_FRAGS + 4))
 			netif_tx_wake_queue(txq);
 
 		__netif_tx_unlock(txq);
@@ -522,18 +522,36 @@ static void bnx2x_tpa_stop(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 			dev_kfree_skb_any(skb);
 		}
 
-
 		/* put new skb in bin */
 		rx_buf->skb = new_skb;
 
 		return;
 	}
-
 drop:
 	/* drop the packet and keep the buffer in the bin */
 	DP(NETIF_MSG_RX_STATUS,
 	   "Failed to allocate or map a new skb - dropping packet!\n");
 	fp->eth_q_stats.rx_skb_alloc_failed++;
+}
+
+static void bnx2x_csum_validate(struct sk_buff *skb, union eth_rx_cqe *cqe,
+				struct bnx2x_fastpath *fp)
+{
+	/* Do nothing if no IP/L4 csum validation was done */
+
+	if (cqe->fast_path_cqe.status_flags &
+	    (ETH_FAST_PATH_RX_CQE_IP_XSUM_NO_VALIDATION_FLG |
+	     ETH_FAST_PATH_RX_CQE_L4_XSUM_NO_VALIDATION_FLG))
+		return;
+
+	/* If both IP/L4 validation were done, check if an error was found. */
+
+	if (cqe->fast_path_cqe.type_error_flags &
+	    (ETH_FAST_PATH_RX_CQE_IP_BAD_XSUM_FLG |
+	     ETH_FAST_PATH_RX_CQE_L4_BAD_XSUM_FLG))
+		fp->eth_q_stats.hw_csum_err++;
+	else
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
 }
 
 /* Set Toeplitz hash value in the skb using the value from the
@@ -745,13 +763,8 @@ reuse_rx:
 
 			skb_checksum_none_assert(skb);
 
-			if (bp->dev->features & NETIF_F_RXCSUM) {
-
-				if (likely(BNX2X_RX_CSUM_OK(cqe)))
-					skb->ip_summed = CHECKSUM_UNNECESSARY;
-				else
-					fp->eth_q_stats.hw_csum_err++;
-			}
+			if (bp->dev->features & NETIF_F_RXCSUM)
+				bnx2x_csum_validate(skb, cqe, fp);
 		}
 
 		skb_record_rx_queue(skb, fp->rx_queue);
@@ -1702,6 +1715,29 @@ static void bnx2x_squeeze_objects(struct bnx2x *bp)
 	} while (0)
 #endif
 
+bool bnx2x_test_firmware_version(struct bnx2x *bp, bool is_err)
+{
+	/* build FW version dword */
+	u32 my_fw = (BCM_5710_FW_MAJOR_VERSION) +
+		    (BCM_5710_FW_MINOR_VERSION << 8) +
+		    (BCM_5710_FW_REVISION_VERSION << 16) +
+		    (BCM_5710_FW_ENGINEERING_VERSION << 24);
+
+	/* read loaded FW from chip */
+	u32 loaded_fw = REG_RD(bp, XSEM_REG_PRAM);
+
+	DP(NETIF_MSG_IFUP, "loaded fw %x, my fw %x\n", loaded_fw, my_fw);
+
+	if (loaded_fw != my_fw) {
+		if (is_err)
+			BNX2X_ERR("bnx2x with FW %x was already loaded, which mismatches my %x FW. aborting\n",
+				  loaded_fw, my_fw);
+		return false;
+	}
+
+	return true;
+}
+
 /* must be called with rtnl_lock */
 int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 {
@@ -1775,6 +1811,14 @@ int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 			rc = -EBUSY; /* other port in diagnostic mode */
 			LOAD_ERROR_EXIT(bp, load_error1);
 		}
+		if (load_code != FW_MSG_CODE_DRV_LOAD_COMMON_CHIP &&
+		    load_code != FW_MSG_CODE_DRV_LOAD_COMMON) {
+			/* abort nic load if version mismatch */
+			if (!bnx2x_test_firmware_version(bp, true)) {
+				rc = -EBUSY;
+				LOAD_ERROR_EXIT(bp, load_error2);
+			}
+		}
 
 	} else {
 		int path = BP_PATH(bp);
@@ -1805,7 +1849,6 @@ int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 		 * bnx2x_periodic_task().
 		 */
 		smp_mb();
-		queue_delayed_work(bnx2x_wq, &bp->period_task, 0);
 	} else
 		bp->port.pmf = 0;
 
@@ -2239,8 +2282,6 @@ int bnx2x_poll(struct napi_struct *napi, int budget)
 /* we split the first BD into headers and data BDs
  * to ease the pain of our fellow microcode engineers
  * we use one mapping for both BDs
- * So far this has only been observed to happen
- * in Other Operating Systems(TM)
  */
 static noinline u16 bnx2x_tx_split(struct bnx2x *bp,
 				   struct bnx2x_fp_txdata *txdata,
@@ -2892,7 +2933,7 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	txdata->tx_bd_prod += nbd;
 
-	if (unlikely(bnx2x_tx_avail(bp, txdata) < MAX_SKB_FRAGS + 3)) {
+	if (unlikely(bnx2x_tx_avail(bp, txdata) < MAX_SKB_FRAGS + 4)) {
 		netif_tx_stop_queue(txq);
 
 		/* paired memory barrier is in bnx2x_tx_int(), we have to keep
@@ -2901,7 +2942,7 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		smp_mb();
 
 		fp->eth_q_stats.driver_xoff++;
-		if (bnx2x_tx_avail(bp, txdata) >= MAX_SKB_FRAGS + 3)
+		if (bnx2x_tx_avail(bp, txdata) >= MAX_SKB_FRAGS + 4)
 			netif_tx_wake_queue(txq);
 	}
 	txdata->tx_pkt++;
