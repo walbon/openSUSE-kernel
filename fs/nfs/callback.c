@@ -264,6 +264,10 @@ int nfs_callback_up(u32 minorversion, struct rpc_xprt *xprt)
 		ret = -ENOMEM;
 		goto out_err;
 	}
+	/* As there is only one thread we need to over-ride the
+	 * default maximum of 80 connections
+	 */
+	serv->sv_maxconn = 1024;
 
 	minorversion_setup =  nfs_minorversion_callback_svc_setup(minorversion,
 					serv, xprt, &rqstp, &callback_svc);
