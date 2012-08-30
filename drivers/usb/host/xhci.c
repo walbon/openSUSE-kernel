@@ -163,7 +163,7 @@ int xhci_reset(struct xhci_hcd *xhci)
 	xhci_writel(xhci, command, &xhci->op_regs->command);
 
 	ret = handshake(xhci, &xhci->op_regs->command,
-			CMD_RESET, 0, 250 * 1000);
+			CMD_RESET, 0, 10 * 1000 * 1000);
 	if (ret)
 		return ret;
 
@@ -172,7 +172,8 @@ int xhci_reset(struct xhci_hcd *xhci)
 	 * xHCI cannot write to any doorbells or operational registers other
 	 * than status until the "Controller Not Ready" flag is cleared.
 	 */
-	return handshake(xhci, &xhci->op_regs->status, STS_CNR, 0, 250 * 1000);
+	return handshake(xhci, &xhci->op_regs->status,
+			 STS_CNR, 0, 10 * 1000 * 1000);
 }
 
 #ifdef CONFIG_PCI
@@ -634,11 +635,6 @@ void xhci_stop(struct usb_hcd *hcd)
 		    xhci_readl(xhci, &xhci->op_regs->status));
 }
 
-static void usb_disable_xhci_ports(struct pci_dev *xhci_pdev)
-{
-	pci_write_config_dword(xhci_pdev, USB_INTEL_USB3_PSSEN, 0x0);
-	pci_write_config_dword(xhci_pdev, USB_INTEL_XUSB2PR, 0x0);
-}
 /*
  * Shutdown HC (not bus-specific)
  *
