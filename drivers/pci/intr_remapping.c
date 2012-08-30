@@ -553,8 +553,11 @@ int __init enable_intr_remapping(void)
 
 	if (x2apic_supported()) {
 		eim = !dmar_x2apic_optout();
-		printk(KERN_INFO "BIOS requests to not use x2apic\n"
-	       "Use 'intremap=no_x2apic_optout' to override BIOS request\n");
+		if (!eim) {
+			printk(KERN_INFO "BIOS requests to not use x2apic\n"
+			       "Use 'intremap=no_x2apic_optout' "
+			       "to override BIOS request\n");
+		}
 	}
 
 	for_each_drhd_unit(drhd) {
