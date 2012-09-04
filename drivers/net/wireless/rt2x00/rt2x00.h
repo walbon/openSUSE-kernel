@@ -193,6 +193,7 @@ struct rt2x00_chip {
 #define RT3593		0x3593	/* PCIe */
 #define RT3883		0x3883	/* WSOC */
 #define RT5390         0x5390  /* 2.4GHz */
+#define RT5392		0x5392  /* 2.4GHz */
 
 	u16 rf;
 	u16 rev;
@@ -356,6 +357,11 @@ struct link {
 	 * Work structure for scheduling periodic AGC adjustments.
 	 */
 	struct delayed_work agc_work;
+
+	/*
+	 * Work structure for scheduling periodic VCO calibration.
+	 */
+	struct delayed_work vco_work;
 };
 
 enum rt2x00_delayed_flags {
@@ -580,6 +586,7 @@ struct rt2x00lib_ops {
 	void (*link_tuner) (struct rt2x00_dev *rt2x00dev,
 			    struct link_qual *qual, const u32 count);
 	void (*gain_calibration) (struct rt2x00_dev *rt2x00dev);
+	void (*vco_calibration) (struct rt2x00_dev *rt2x00dev);
 
 	/*
 	 * Data queue handlers.
@@ -648,6 +655,7 @@ struct rt2x00lib_ops {
  */
 struct rt2x00_ops {
 	const char *name;
+	const unsigned int drv_data_size;
 	const unsigned int max_sta_intf;
 	const unsigned int max_ap_intf;
 	const unsigned int eeprom_size;
@@ -722,6 +730,7 @@ enum rt2x00_capability_flags {
 	CAPABILITY_EXTERNAL_LNA_BG,
 	CAPABILITY_DOUBLE_ANTENNA,
 	CAPABILITY_BT_COEXIST,
+	CAPABILITY_VCO_RECALIBRATION,
 };
 
 /*
@@ -741,6 +750,11 @@ struct rt2x00_dev {
 	 * Callback functions.
 	 */
 	const struct rt2x00_ops *ops;
+
+	/*
+	 * Driver data.
+	 */
+	void *drv_data;
 
 	/*
 	 * IEEE80211 control structure.
@@ -892,13 +906,6 @@ struct rt2x00_dev {
 	u8 freq_offset;
 
 	/*
-	 * Calibration information (for rt2800usb & rt2800pci).
-	 * [0] -> BW20
-	 * [1] -> BW40
-	 */
-	u8 calibration[2];
-
-	/*
 	 * Association id.
 	 */
 	u16 aid;
@@ -978,6 +985,11 @@ struct rt2x00_dev {
 	struct tasklet_struct tbtt_tasklet;
 	struct tasklet_struct rxdone_tasklet;
 	struct tasklet_struct autowake_tasklet;
+
+	/*
+	 * Used for VCO periodic calibration.
+	 */
+	int rf_channel;
 
 	/*
 	 * Protect the interrupt mask register.

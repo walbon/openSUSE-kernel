@@ -69,7 +69,9 @@
 #define RF3322				0x000c
 #define RF3853				0x000d
 #define RF5370				0x5370
+#define RF5372				0x5372
 #define RF5390				0x5390
+#define RF5392				0x5392
 
 /*
  * Chipset revisions.
@@ -1114,6 +1116,7 @@
  * TX_PIN_CFG:
  */
 #define TX_PIN_CFG			0x1328
+#define TX_PIN_CFG_PA_PE_DISABLE	0xfcfffff0
 #define TX_PIN_CFG_PA_PE_A0_EN		FIELD32(0x00000001)
 #define TX_PIN_CFG_PA_PE_G0_EN		FIELD32(0x00000002)
 #define TX_PIN_CFG_PA_PE_A1_EN		FIELD32(0x00000004)
@@ -1134,6 +1137,14 @@
 #define TX_PIN_CFG_RFTR_POL		FIELD32(0x00020000)
 #define TX_PIN_CFG_TRSW_EN		FIELD32(0x00040000)
 #define TX_PIN_CFG_TRSW_POL		FIELD32(0x00080000)
+#define TX_PIN_CFG_PA_PE_A2_EN		FIELD32(0x01000000)
+#define TX_PIN_CFG_PA_PE_G2_EN		FIELD32(0x02000000)
+#define TX_PIN_CFG_PA_PE_A2_POL		FIELD32(0x04000000)
+#define TX_PIN_CFG_PA_PE_G2_POL		FIELD32(0x08000000)
+#define TX_PIN_CFG_LNA_PE_A2_EN		FIELD32(0x10000000)
+#define TX_PIN_CFG_LNA_PE_G2_EN		FIELD32(0x20000000)
+#define TX_PIN_CFG_LNA_PE_A2_POL	FIELD32(0x40000000)
+#define TX_PIN_CFG_LNA_PE_G2_POL	FIELD32(0x80000000)
 
 /*
  * TX_BAND_CFG: 0x1 use upper 20MHz, 0x0 use lower 20MHz
@@ -1962,6 +1973,9 @@ struct mac_iveiv_entry {
  * RFCSR 3:
  */
 #define RFCSR3_K			FIELD8(0x0f)
+/* Bits [7-4] for RF3320 (RT3370/RT3390), on other chipsets reserved */
+#define RFCSR3_PA1_BIAS_CCK		FIELD8(0x70);
+#define RFCSR3_PA2_CASCODE_BIAS_CCKK	FIELD8(0x80);
 
 /*
  * FRCSR 5:
@@ -2088,6 +2102,11 @@ struct mac_iveiv_entry {
  * RFCSR 49:
  */
 #define RFCSR49_TX			FIELD8(0x3f)
+
+/*
+ * RFCSR 50:
+ */
+#define RFCSR50_TX			FIELD8(0x3f)
 
 /*
  * RF registers
@@ -2616,5 +2635,13 @@ struct mac_iveiv_entry {
  *  Board's maximun TX power limitation
  */
 #define EIRP_MAX_TX_POWER_LIMIT	0x50
+
+/*
+ * RT2800 driver data structure
+ */
+struct rt2800_drv_data {
+	u8 calibration_bw20;
+	u8 calibration_bw40;
+};
 
 #endif /* RT2800_H */
