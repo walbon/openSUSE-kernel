@@ -1283,8 +1283,8 @@ void __init setup_arch(char **cmdline_p)
 		       p2m_pages * sizeof(unsigned long));
 		memset(phys_to_machine_mapping + p2m_pages, ~0,
 		       (max_pfn - p2m_pages) * sizeof(unsigned long));
-#else /* We must not use memcpy() and memset() here, as they're
-         not capable of dealing with 4Gb or more at a time. */
+#else /* We must not use memcpy() here, as it's not capable
+         of dealing with 4Gb or more at a time. */
 		{
 			void *src = __va(__pa(xen_start_info->mfn_list));
 			unsigned long size, *dst = phys_to_machine_mapping;

@@ -109,7 +109,7 @@ struct cpuinfo_x86 {
 	u16			initial_apicid;
 #endif
 	u16			x86_clflush_size;
-#ifdef CONFIG_X86_HT
+#ifndef CONFIG_XEN
 	/* number of cores as seen by the OS: */
 	u16			booted_cores;
 	/* Physical processor id: */
@@ -119,10 +119,8 @@ struct cpuinfo_x86 {
 	/* Compute unit id */
 	u8			compute_unit_id;
 #endif
-#ifdef CONFIG_SMP
 	/* Index into per_cpu list: */
 	u16			cpu_index;
-#endif
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
 #define X86_VENDOR_INTEL	0
