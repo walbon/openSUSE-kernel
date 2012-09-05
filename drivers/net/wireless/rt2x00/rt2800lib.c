@@ -4121,7 +4121,7 @@ static int rt2800_init_rfcsr(struct rt2x00_dev *rt2x00dev)
 			rt2800_init_rx_filter(rt2x00dev, true, 0x27, 0x15);
 	}
 
-	if (!rt2x00_rt(rt2x00dev, RT5390) ||
+	if (!rt2x00_rt(rt2x00dev, RT5390) &&
 		!rt2x00_rt(rt2x00dev, RT5392)) {
 		/*
 		 * Set back to initial state
