@@ -3233,11 +3233,9 @@ static long btrfs_ioctl_logical_to_ino(struct btrfs_root *root,
 {
 	int ret = 0;
 	int size;
-	u64 extent_item_pos;
 	struct btrfs_ioctl_logical_ino_args *loi;
 	struct btrfs_data_container *inodes = NULL;
 	struct btrfs_path *path = NULL;
-	struct btrfs_key key;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -3255,7 +3253,7 @@ static long btrfs_ioctl_logical_to_ino(struct btrfs_root *root,
 		goto out;
 	}
 
-	size = min_t(u32, loi->size, 4096);
+	size = min_t(u32, loi->size, 64 * 1024);
 	inodes = init_data_container(size);
 	if (IS_ERR(inodes)) {
 		ret = PTR_ERR(inodes);
@@ -3263,19 +3261,10 @@ static long btrfs_ioctl_logical_to_ino(struct btrfs_root *root,
 		goto out;
 	}
 
-	ret = extent_from_logical(root->fs_info, loi->logical, path, &key);
-	btrfs_release_path(path);
-
-	if (ret & BTRFS_EXTENT_FLAG_TREE_BLOCK)
+	ret = iterate_inodes_from_logical(loi->logical, root->fs_info, path,
+					  build_ino_list, inodes);
+	if (ret == -EINVAL)
 		ret = -ENOENT;
-	if (ret < 0)
-		goto out;
-
-	extent_item_pos = loi->logical - key.objectid;
-	ret = iterate_extent_inodes(root->fs_info, key.objectid,
-					extent_item_pos, 0, build_ino_list,
-					inodes);
-
 	if (ret < 0)
 		goto out;
 
@@ -3286,7 +3275,7 @@ static long btrfs_ioctl_logical_to_ino(struct btrfs_root *root,
 
 out:
 	btrfs_free_path(path);
-	kfree(inodes);
+	vfree(inodes);
 	kfree(loi);
 
 	return ret;

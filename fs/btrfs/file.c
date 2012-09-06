@@ -936,12 +936,16 @@ again:
 			btrfs_set_item_key_safe(trans, root, path, &new_key);
 			fi = btrfs_item_ptr(leaf, path->slots[0],
 					    struct btrfs_file_extent_item);
+			btrfs_set_file_extent_generation(leaf, fi,
+							 trans->transid);
 			btrfs_set_file_extent_num_bytes(leaf, fi,
 							extent_end - end);
 			btrfs_set_file_extent_offset(leaf, fi,
 						     end - orig_offset);
 			fi = btrfs_item_ptr(leaf, path->slots[0] - 1,
 					    struct btrfs_file_extent_item);
+			btrfs_set_file_extent_generation(leaf, fi,
+							 trans->transid);
 			btrfs_set_file_extent_num_bytes(leaf, fi,
 							end - other_start);
 			btrfs_mark_buffer_dirty(leaf);
@@ -959,12 +963,16 @@ again:
 					    struct btrfs_file_extent_item);
 			btrfs_set_file_extent_num_bytes(leaf, fi,
 							start - key.offset);
+			btrfs_set_file_extent_generation(leaf, fi,
+							 trans->transid);
 			path->slots[0]++;
 			new_key.offset = start;
 			btrfs_set_item_key_safe(trans, root, path, &new_key);
 
 			fi = btrfs_item_ptr(leaf, path->slots[0],
 					    struct btrfs_file_extent_item);
+			btrfs_set_file_extent_generation(leaf, fi,
+							 trans->transid);
 			btrfs_set_file_extent_num_bytes(leaf, fi,
 							other_end - start);
 			btrfs_set_file_extent_offset(leaf, fi,
@@ -992,12 +1000,14 @@ again:
 		leaf = path->nodes[0];
 		fi = btrfs_item_ptr(leaf, path->slots[0] - 1,
 				    struct btrfs_file_extent_item);
+		btrfs_set_file_extent_generation(leaf, fi, trans->transid);
 		btrfs_set_file_extent_num_bytes(leaf, fi,
 						split - key.offset);
 
 		fi = btrfs_item_ptr(leaf, path->slots[0],
 				    struct btrfs_file_extent_item);
 
+		btrfs_set_file_extent_generation(leaf, fi, trans->transid);
 		btrfs_set_file_extent_offset(leaf, fi, split - orig_offset);
 		btrfs_set_file_extent_num_bytes(leaf, fi,
 						extent_end - split);
@@ -1057,12 +1067,14 @@ again:
 			   struct btrfs_file_extent_item);
 		btrfs_set_file_extent_type(leaf, fi,
 					   BTRFS_FILE_EXTENT_REG);
+		btrfs_set_file_extent_generation(leaf, fi, trans->transid);
 		btrfs_mark_buffer_dirty(leaf);
 	} else {
 		fi = btrfs_item_ptr(leaf, del_slot - 1,
 			   struct btrfs_file_extent_item);
 		btrfs_set_file_extent_type(leaf, fi,
 					   BTRFS_FILE_EXTENT_REG);
+		btrfs_set_file_extent_generation(leaf, fi, trans->transid);
 		btrfs_set_file_extent_num_bytes(leaf, fi,
 						extent_end - key.offset);
 		btrfs_mark_buffer_dirty(leaf);
@@ -1531,9 +1543,9 @@ int btrfs_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 	mutex_lock(&inode->i_mutex);
 
 	/* we wait first, since the writeback may change the inode */
-	root->log_batch++;
+	atomic_inc(&root->log_batch);
 	btrfs_wait_ordered_range(inode, 0, (u64)-1);
-	root->log_batch++;
+	atomic_inc(&root->log_batch);
 
 	/*
 	 * check the transaction that last modified this inode
@@ -1651,7 +1663,7 @@ static long btrfs_fallocate(struct file *file, int mode,
 	 * Make sure we have enough space before we do the
 	 * allocation.
 	 */
-	ret = btrfs_check_data_free_space(inode, len);
+	ret = btrfs_check_data_free_space(inode, alloc_end - alloc_start + 1);
 	if (ret)
 		return ret;
 
@@ -1758,7 +1770,7 @@ static long btrfs_fallocate(struct file *file, int mode,
 out:
 	mutex_unlock(&inode->i_mutex);
 	/* Let go of our reservation. */
-	btrfs_free_reserved_data_space(inode, len);
+	btrfs_free_reserved_data_space(inode, alloc_end - alloc_start + 1);
 	return ret;
 }
 

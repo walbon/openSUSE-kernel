@@ -1973,6 +1973,8 @@ static int btrfs_finish_ordered_io(struct inode *inode, u64 start, u64 end)
 			btrfs_abort_transaction(trans, root, ret);
 			goto out;
 		}
+	} else {
+		btrfs_set_inode_last_trans(trans, inode);
 	}
 	ret = 0;
 out:

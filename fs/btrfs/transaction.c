@@ -1148,6 +1148,8 @@ static void do_async_commit(struct work_struct *work)
 	struct btrfs_async_commit *ac =
 		container_of(work, struct btrfs_async_commit, work.work);
 
+	current->journal_info = ac->newtrans;
+
 	btrfs_commit_transaction(ac->newtrans, ac->root);
 	kfree(ac);
 }
