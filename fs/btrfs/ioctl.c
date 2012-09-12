@@ -512,7 +512,7 @@ static int create_snapshot(struct btrfs_root *root, struct dentry *dentry,
 	pending_snapshot->root = root;
 	pending_snapshot->readonly = readonly;
 
-	trans = btrfs_start_transaction(root->fs_info->extent_root, 5);
+	trans = btrfs_start_transaction(root->fs_info->extent_root, 6);
 	if (IS_ERR(trans)) {
 		ret = PTR_ERR(trans);
 		goto fail;
