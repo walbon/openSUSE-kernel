@@ -1604,6 +1604,6 @@ void free_ipath(struct inode_fs_paths *ipath)
 {
 	if (!ipath)
 		return;
-	kfree(ipath->fspath);
+	vfree(ipath->fspath);
 	kfree(ipath);
 }
