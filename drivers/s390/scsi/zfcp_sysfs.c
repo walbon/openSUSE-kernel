@@ -227,6 +227,8 @@ static ssize_t zfcp_sysfs_port_rescan_store(struct device *dev,
 static ZFCP_DEV_ATTR(adapter, port_rescan, S_IWUSR, NULL,
 		     zfcp_sysfs_port_rescan_store);
 
+DEFINE_MUTEX(zfcp_sysfs_port_units_mutex);
+
 static ssize_t zfcp_sysfs_port_remove_store(struct device *dev,
 					    struct device_attribute *attr,
 					    const char *buf, size_t count)
@@ -248,6 +250,16 @@ static ssize_t zfcp_sysfs_port_remove_store(struct device *dev,
 		goto out;
 	else
 		retval = 0;
+
+	mutex_lock(&zfcp_sysfs_port_units_mutex);
+	if (atomic_read(&port->units) > 0) {
+		retval = -ENXIO;
+		mutex_unlock(&zfcp_sysfs_port_units_mutex);
+		goto out;
+	}
+	/* port is about to be removed, so no more unit_add */
+	atomic_set(&port->units, -1);
+	mutex_unlock(&zfcp_sysfs_port_units_mutex);
 
 	write_lock_irq(&adapter->port_list_lock);
 	list_del(&port->list);
