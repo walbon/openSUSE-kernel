@@ -52,10 +52,10 @@
 #include <scsi/scsi_host.h>
 
 #include "megaraid_sas_fusion.h"
+#include "megaraid_sas.h"
 #include <asm/div64.h>
 
 #define ABS_DIFF(a, b)   (((a) > (b)) ? ((a) - (b)) : ((b) - (a)))
-#define MR_LD_STATE_OPTIMAL 3
 #define FALSE 0
 #define TRUE 1
 

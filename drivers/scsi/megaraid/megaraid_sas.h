@@ -332,6 +332,15 @@ enum MR_PD_STATE {
 	MR_PD_STATE_SYSTEM              = 0x40,
  };
 
+/*
+ * define the enum for logical drive states
+ */
+enum MR_LD_STATE {
+	MR_LD_STATE_OFFLINE             = 0,
+	MR_LD_STATE_PARTIALLY_DEGRADED  = 1,
+	MR_LD_STATE_DEGRADED            = 2,
+	MR_LD_STATE_OPTIMAL             = 3
+};
 
  /*
  * defines the physical drive address structure

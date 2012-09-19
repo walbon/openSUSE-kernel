@@ -1522,6 +1522,7 @@ static struct megasas_instance *megasas_lookup_instance(u16 host_no)
 static int megasas_slave_configure(struct scsi_device *sdev)
 {
 	u16             pd_index = 0;
+	u16             ld_index = 0;
 	struct  megasas_instance *instance ;
 
 	instance = megasas_lookup_instance(sdev->host->host_no);
@@ -1533,16 +1534,23 @@ static int megasas_slave_configure(struct scsi_device *sdev)
 	*        That will be fixed once LSI engineers have audited the
 	*        firmware for possible issues.
 	*/
-	if (sdev->channel < MEGASAS_MAX_PD_CHANNELS &&
-				sdev->type == TYPE_DISK) {
-		pd_index = (sdev->channel * MEGASAS_MAX_DEV_PER_CHANNEL) +
-								sdev->id;
-		if (instance->pd_list[pd_index].driveState ==
-						MR_PD_STATE_SYSTEM) {
-			blk_queue_rq_timeout(sdev->request_queue,
-				MEGASAS_DEFAULT_CMD_TIMEOUT * HZ);
-			return 0;
-		}
+	pd_index = (sdev->channel * MEGASAS_MAX_DEV_PER_CHANNEL) + sdev_id;
+
+	/* Skip for LD offline and PD which are not configured as
+	 * system pd.
+	 */
+	if ((sdev->channel < MEGASAS_MAX_PD_CHANNELS &&
+				sdev->type == TYPE_DISK) &&
+				(instance->pd_list[pd_index].driveState !=
+					MR_PD_STATE_SYSTEM)) {
+		return -ENXIO;
+	}
+
+	ld_index = ((sdev->channel - 2) * MEGASAS_MAX_DEV_PER_CHANNEL)
+								+ sdev_id;
+	/* Need to find out best value to detect LD */
+	if ((sdev->channel >= MEGASAS_MAX_LD_CHANNELS) &&
+		(instance->ld_ids[ld_index] == 0xFF)) {
 		return -ENXIO;
 	}
 
