@@ -2962,6 +2962,11 @@ void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root, const char *function,
 			       unsigned int line, int errno);
 
+/*
+ * Call btrfs_abort_transaction as early as possible when an error condition is
+ * detected, that way the exact line number is reported.
+ */
+
 #define btrfs_abort_transaction(trans, root, errno)		\
 do {								\
 	__btrfs_abort_transaction(trans, root, __func__,	\
