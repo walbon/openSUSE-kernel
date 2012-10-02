@@ -21,6 +21,10 @@
 #include <net/inetpeer.h>
 #include <net/secure_seq.h>
 
+#ifndef __GENKSYMS__
+#include <net/netns/generic.h>
+#endif
+
 /*
  *  Theory of operations.
  *  We keep one entry for each peer IP address.  The nodes contains long-living
@@ -81,22 +85,19 @@ static const struct inet_peer peer_fake_node = {
 };
 
 struct inet_peer_base {
-	struct inet_peer __rcu *root;
-	seqlock_t	lock;
-	int		total;
+	struct inet_peer __rcu	*root;
+	seqlock_t		lock;
+	struct list_head	unused_peers_list;
 };
 
-static struct inet_peer_base v4_peers = {
-	.root		= peer_avl_empty_rcu,
-	.lock		= __SEQLOCK_UNLOCKED(v4_peers.lock),
-	.total		= 0,
+struct netns_inetpeer {
+	struct inet_peer_base	*ipv4_peers;
+	struct inet_peer_base	*ipv6_peers;
 };
 
-static struct inet_peer_base v6_peers = {
-	.root		= peer_avl_empty_rcu,
-	.lock		= __SEQLOCK_UNLOCKED(v6_peers.lock),
-	.total		= 0,
-};
+static int inetpeer_net_id;
+atomic_t peers_total;
+DEFINE_SPINLOCK(unused_peers_lock);
 
 #define PEER_MAXDEPTH 40 /* sufficient for about 2^27 nodes */
 
@@ -108,17 +109,55 @@ int inet_peer_maxttl __read_mostly = 10 * 60 * HZ;	/* usual time to live: 10 min
 int inet_peer_gc_mintime __read_mostly = 10 * HZ;
 int inet_peer_gc_maxtime __read_mostly = 120 * HZ;
 
-static struct {
-	struct list_head	list;
-	spinlock_t		lock;
-} unused_peers = {
-	.list			= LIST_HEAD_INIT(unused_peers.list),
-	.lock			= __SPIN_LOCK_UNLOCKED(unused_peers.lock),
-};
-
 static void peer_check_expire(unsigned long dummy);
 static DEFINE_TIMER(peer_periodic_timer, peer_check_expire, 0, 0);
 
+
+static int __net_init inetpeer_net_init(struct net *net)
+{
+	struct netns_inetpeer* nsp = net_generic(net, inetpeer_net_id);
+
+	nsp->ipv4_peers = kzalloc(sizeof(struct inet_peer_base),
+				  GFP_KERNEL);
+	if (nsp->ipv4_peers == NULL)
+		return -ENOMEM;
+
+	nsp->ipv4_peers->root = peer_avl_empty_rcu;
+	INIT_LIST_HEAD(&nsp->ipv4_peers->unused_peers_list);
+	seqlock_init(&nsp->ipv4_peers->lock);
+
+	nsp->ipv6_peers = kzalloc(sizeof(struct inet_peer_base),
+				  GFP_KERNEL);
+	if (nsp->ipv6_peers == NULL)
+		goto out_ipv6;
+
+	nsp->ipv6_peers->root = peer_avl_empty_rcu;
+	INIT_LIST_HEAD(&nsp->ipv6_peers->unused_peers_list);
+	seqlock_init(&nsp->ipv6_peers->lock);
+
+	return 0;
+out_ipv6:
+	kfree(nsp->ipv4_peers);
+	return -ENOMEM;
+}
+
+static void __net_exit inetpeer_net_exit(struct net *net)
+{
+	struct netns_inetpeer* nsp = net_generic(net, inetpeer_net_id);
+
+	kfree(nsp->ipv4_peers);
+	nsp->ipv4_peers = NULL;
+
+	kfree(nsp->ipv6_peers);
+	nsp->ipv6_peers = NULL;
+}
+
+static struct pernet_operations inetpeer_ops = {
+	.init	= inetpeer_net_init,
+	.exit	= inetpeer_net_exit,
+	.id	= &inetpeer_net_id,
+	.size	= sizeof(struct netns_inetpeer),
+};
 
 /* Called from ip_output.c:ip_init  */
 void __init inet_initpeers(void)
@@ -150,14 +189,17 @@ void __init inet_initpeers(void)
 		+ net_random() % inet_peer_gc_maxtime
 		+ inet_peer_gc_maxtime;
 	add_timer(&peer_periodic_timer);
+	register_pernet_subsys(&inetpeer_ops);
 }
 
 /* Called with or without local BH being disabled. */
-static void unlink_from_unused(struct inet_peer *p)
+static void unlink_from_unused(struct inet_peer_base* base,
+			       struct inet_peer *p)
 {
-	spin_lock_bh(&unused_peers.lock);
-	list_del_init(&p->unused);
-	spin_unlock_bh(&unused_peers.lock);
+	spin_lock_bh(&unused_peers_lock);
+	list_del(&p->unused);
+	p->base = base;
+	spin_unlock_bh(&unused_peers_lock);
 }
 
 static int addr_compare(const struct inetpeer_addr *a,
@@ -407,7 +449,7 @@ static void unlink_from_pool(struct inet_peer *p, struct inet_peer_base *base,
 			delp[1] = &t->avl_left; /* was &p->avl_left */
 		}
 		peer_avl_rebalance(stack, stackptr, base);
-		base->total--;
+		atomic_dec(&peers_total);
 		do_free = 1;
 	}
 	write_sequnlock_bh(&base->lock);
@@ -425,42 +467,43 @@ static void unlink_from_pool(struct inet_peer *p, struct inet_peer_base *base,
 		inet_putpeer(p);
 }
 
-static struct inet_peer_base *family_to_base(int family)
+static struct inet_peer_base *family_to_base(struct net *net,
+					     int family)
 {
-	return (family == AF_INET ? &v4_peers : &v6_peers);
-}
+	struct netns_inetpeer* nsp = net_generic(net, inetpeer_net_id);
 
-static struct inet_peer_base *peer_to_base(struct inet_peer *p)
-{
-	return family_to_base(p->daddr.family);
+	return (family == AF_INET ? nsp->ipv4_peers : nsp->ipv6_peers);
 }
 
 /* May be called with local BH enabled. */
-static int cleanup_once(unsigned long ttl, struct inet_peer __rcu **stack[PEER_MAXDEPTH])
+static int cleanup_once(struct inet_peer_base *base,
+			unsigned long ttl,
+			struct inet_peer __rcu **stack[PEER_MAXDEPTH])
 {
 	struct inet_peer *p = NULL;
 
 	/* Remove the first entry from the list of unused nodes. */
-	spin_lock_bh(&unused_peers.lock);
-	if (!list_empty(&unused_peers.list)) {
+	spin_lock_bh(&unused_peers_lock);
+	if (!list_empty(&base->unused_peers_list)) {
 		__u32 delta;
 
-		p = list_first_entry(&unused_peers.list, struct inet_peer, unused);
+		p = list_first_entry(&base->unused_peers_list, struct inet_peer, unused);
 		delta = (__u32)jiffies - p->dtime;
 
 		if (delta < ttl) {
 			/* Do not prune fresh entries. */
-			spin_unlock_bh(&unused_peers.lock);
+			spin_unlock_bh(&unused_peers_lock);
 			return -1;
 		}
 
 		list_del_init(&p->unused);
+		p->base = base;
 
 		/* Grab an extra reference to prevent node disappearing
 		 * before unlink_from_pool() call. */
 		atomic_inc(&p->refcnt);
 	}
-	spin_unlock_bh(&unused_peers.lock);
+	spin_unlock_bh(&unused_peers_lock);
 
 	if (p == NULL)
 		/* It means that the total number of USED entries has
@@ -468,15 +511,17 @@ static int cleanup_once(unsigned long ttl, struct inet_peer __rcu **stack[PEER_M
 		 * happen because of entry limits in route cache. */
 		return -1;
 
-	unlink_from_pool(p, peer_to_base(p), stack);
+	unlink_from_pool(p, base, stack);
 	return 0;
 }
 
 /* Called with or without local BH being disabled. */
-struct inet_peer *inet_getpeer(struct inetpeer_addr *daddr, int create)
+struct inet_peer *inet_getpeer_ns(struct net *net,
+				  const struct inetpeer_addr *daddr,
+				  int create)
 {
 	struct inet_peer __rcu **stack[PEER_MAXDEPTH], ***stackptr;
-	struct inet_peer_base *base = family_to_base(daddr->family);
+	struct inet_peer_base *base = family_to_base(net, daddr->family);
 	struct inet_peer *p;
 	unsigned int sequence;
 	int invalidated, newrefcnt = 0;
@@ -495,7 +540,7 @@ found:		/* The existing node has been found.
 		 * Remove the entry from unused list if it was there.
 		 */
 		if (newrefcnt == 1)
-			unlink_from_unused(p);
+			unlink_from_unused(base, p);
 		return p;
 	}
 
@@ -526,25 +571,25 @@ found:		/* The existing node has been found.
 		p->pmtu_expires = 0;
 		p->pmtu_orig = 0;
 		memset(&p->redirect_learned, 0, sizeof(p->redirect_learned));
-		INIT_LIST_HEAD(&p->unused);
-
+		p->base = base;
 
 		/* Link the node. */
 		link_to_pool(p, base);
-		base->total++;
+		atomic_inc(&peers_total);
 	}
 	write_sequnlock_bh(&base->lock);
 
-	if (base->total >= inet_peer_threshold)
+	if (atomic_read(&peers_total) >= inet_peer_threshold)
 		/* Remove one less-recently-used entry. */
-		cleanup_once(0, stack);
+		cleanup_once(base, 0, stack);
 
 	return p;
 }
+EXPORT_SYMBOL_GPL(inet_getpeer_ns);
 
-static int compute_total(void)
+struct inet_peer *inet_getpeer(struct inetpeer_addr *daddr, int create)
 {
-	return v4_peers.total + v6_peers.total;
+	return inet_getpeer_ns(&init_net, daddr, create);
 }
 EXPORT_SYMBOL_GPL(inet_getpeer);
 
@@ -554,23 +599,32 @@ static void peer_check_expire(unsigned long dummy)
 	unsigned long now = jiffies;
 	int ttl, total;
 	struct inet_peer __rcu **stack[PEER_MAXDEPTH];
+	struct net *net;
 
-	total = compute_total();
+	total = atomic_read(&peers_total);
 	if (total >= inet_peer_threshold)
 		ttl = inet_peer_minttl;
 	else
 		ttl = inet_peer_maxttl
 				- (inet_peer_maxttl - inet_peer_minttl) / HZ *
 					total / inet_peer_threshold * HZ;
-	while (!cleanup_once(ttl, stack)) {
-		if (jiffies != now)
-			break;
+	for_each_net(net) {
+		struct netns_inetpeer* nsp = net_generic(net, inetpeer_net_id);
+		while (!cleanup_once(nsp->ipv4_peers, ttl, stack)) {
+			if (jiffies != now)
+				goto too_long;
+		}
+		while (!cleanup_once(nsp->ipv6_peers, ttl, stack)) {
+			if (jiffies != now)
+				goto too_long;
+		}
 	}
+too_long:
 
 	/* Trigger the timer after inet_peer_gc_mintime .. inet_peer_gc_maxtime
 	 * interval depending on the total number of entries (more entries,
 	 * less interval). */
-	total = compute_total();
+	total = atomic_read(&peers_total);
 	if (total >= inet_peer_threshold)
 		peer_periodic_timer.expires = jiffies + inet_peer_gc_mintime;
 	else
@@ -585,10 +639,11 @@ void inet_putpeer(struct inet_peer *p)
 {
 	local_bh_disable();
 
-	if (atomic_dec_and_lock(&p->refcnt, &unused_peers.lock)) {
-		list_add_tail(&p->unused, &unused_peers.list);
+	if (atomic_dec_and_lock(&p->refcnt, &unused_peers_lock)) {
+		struct inet_peer_base *base = p->base;
+		list_add_tail(&p->unused, &base->unused_peers_list);
 		p->dtime = (__u32)jiffies;
-		spin_unlock(&unused_peers.lock);
+		spin_unlock(&unused_peers_lock);
 	}
 
 	local_bh_enable();
