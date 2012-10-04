@@ -656,14 +656,14 @@ static pci_ers_result_t pciback_slot_reset(struct pci_dev *dev)
 		dev_err(&dev->dev, "pciback device is not connected or owned"
 			" by HVM, kill it\n");
 		kill_domain_by_device(psdev);
-		goto release;
+		goto end;
 	}
 
 	if ( !test_bit(_XEN_PCIB_AERHANDLER, 
 		(unsigned long *)&psdev->pdev->sh_info->flags) ) {
 		dev_err(&dev->dev, 
 			"guest with no AER driver should have been killed\n");
-		goto release;
+		goto end;
 	}
 	result = common_process(psdev, 1, XEN_PCI_OP_aer_slotreset, result);
 
@@ -673,9 +673,9 @@ static pci_ers_result_t pciback_slot_reset(struct pci_dev *dev)
 			"No AER slot_reset service or disconnected!\n");
 		kill_domain_by_device(psdev);
 	}
-release:
-	pcistub_device_put(psdev);
 end:
+	if (psdev)
+		pcistub_device_put(psdev);
 	up_write(&pcistub_sem);
 	return result;
 
@@ -716,14 +716,14 @@ static pci_ers_result_t pciback_mmio_enabled(struct pci_dev *dev)
 		dev_err(&dev->dev, "pciback device is not connected or owned"
 			" by HVM, kill it\n");
 		kill_domain_by_device(psdev);
-		goto release;
+		goto end;
 	}
 
 	if ( !test_bit(_XEN_PCIB_AERHANDLER, 
 		(unsigned long *)&psdev->pdev->sh_info->flags) ) {
 		dev_err(&dev->dev, 
 			"guest with no AER driver should have been killed\n");
-		goto release;
+		goto end;
 	}
 	result = common_process(psdev, 1, XEN_PCI_OP_aer_mmio, result);
 
@@ -733,9 +733,9 @@ static pci_ers_result_t pciback_mmio_enabled(struct pci_dev *dev)
 			"No AER mmio_enabled service or disconnected!\n");
 		kill_domain_by_device(psdev);
 	}
-release:
-	pcistub_device_put(psdev);
 end:
+	if (psdev)
+		pcistub_device_put(psdev);
 	up_write(&pcistub_sem);
 	return result;
 }
@@ -776,7 +776,7 @@ static pci_ers_result_t pciback_error_detected(struct pci_dev *dev,
 		dev_err(&dev->dev, "pciback device is not connected or owned"
 			" by HVM, kill it\n");
 		kill_domain_by_device(psdev);
-		goto release;
+		goto end;
 	}
 
 	/*Guest owns the device yet no aer handler regiested, kill guest*/
@@ -784,7 +784,7 @@ static pci_ers_result_t pciback_error_detected(struct pci_dev *dev,
 		(unsigned long *)&psdev->pdev->sh_info->flags) ) {
 		dev_dbg(&dev->dev, "guest may have no aer driver, kill it\n");
 		kill_domain_by_device(psdev);
-		goto release;
+		goto end;
 	}
 	result = common_process(psdev, error, XEN_PCI_OP_aer_detected, result);
 
@@ -794,9 +794,9 @@ static pci_ers_result_t pciback_error_detected(struct pci_dev *dev,
 			"No AER error_detected service or disconnected!\n");
 		kill_domain_by_device(psdev);
 	}
-release:
-	pcistub_device_put(psdev);
 end:
+	if (psdev)
+		pcistub_device_put(psdev);
 	up_write(&pcistub_sem);
 	return result;
 }
@@ -832,7 +832,7 @@ static void pciback_error_resume(struct pci_dev *dev)
 		dev_err(&dev->dev, "pciback device is not connected or owned"
 			" by HVM, kill it\n");
 		kill_domain_by_device(psdev);
-		goto release;
+		goto end;
 	}
 
 	if ( !test_bit(_XEN_PCIB_AERHANDLER, 
@@ -840,12 +840,12 @@ static void pciback_error_resume(struct pci_dev *dev)
 		dev_err(&dev->dev, 
 			"guest with no AER driver should have been killed\n");
 		kill_domain_by_device(psdev);
-		goto release;
+		goto end;
 	}
 	common_process(psdev, 1, XEN_PCI_OP_aer_resume, PCI_ERS_RESULT_RECOVERED);
-release:
-	pcistub_device_put(psdev);
 end:
+	if (psdev)
+		pcistub_device_put(psdev);
 	up_write(&pcistub_sem);
 	return;
 }
@@ -965,7 +965,7 @@ static int pcistub_reg_add(int domain, int bus, int slot, int func, int reg,
 	struct config_field *field;
 
 	psdev = pcistub_device_find(domain, bus, slot, func);
-	if (!psdev || !psdev->dev) {
+	if (!psdev) {
 		err = -ENODEV;
 		goto out;
 	}
@@ -989,6 +989,8 @@ static int pcistub_reg_add(int domain, int bus, int slot, int func, int reg,
 	if (err)
 		kfree(field);
       out:
+	if (psdev)
+		pcistub_device_put(psdev);
 	return err;
 }
 
@@ -1132,10 +1134,7 @@ static ssize_t permissive_add(struct device_driver *drv, const char *buf,
 		err = -ENODEV;
 		goto out;
 	}
-	if (!psdev->dev) {
-		err = -ENODEV;
-		goto release;
-	}
+
 	dev_data = pci_get_drvdata(psdev->dev);
 	/* the driver data for a device should never be null at this point */
 	if (!dev_data) {
@@ -1187,14 +1186,18 @@ static DRIVER_ATTR(permissive, S_IRUSR | S_IWUSR, permissive_show, permissive_ad
 int pciback_get_owner(struct pci_dev *dev)
 {
 	struct pcistub_device *psdev;
+	int rc;
 
 	psdev = pcistub_device_find(pci_domain_nr(dev->bus), dev->bus->number,
 			PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
 
-	if (!psdev || !psdev->pdev)
-		return -1;
+	if (!psdev)
+		return -ESRCH;
 
-	return psdev->pdev->xdev->otherend_id;
+	rc = psdev->pdev ? psdev->pdev->xdev->otherend_id : -EINVAL;
+
+	pcistub_device_put(psdev);
+	return rc;
 }
 #endif
 

@@ -298,13 +298,16 @@ static void backend_changed(struct xenbus_device *dev,
 	case XenbusStateReconfiguring:
 	case XenbusStateReconfigured:
 	case XenbusStateUnknown:
-	case XenbusStateClosed:
 		break;
 
 	case XenbusStateConnected:
 		connect(info);
 		break;
 
+	case XenbusStateClosed:
+		if (dev->state == XenbusStateClosed)
+			break;
+		/* Missed the backend's Closing state -- fallthrough */
 	case XenbusStateClosing:
 		if (!info->gd) {
 			xenbus_frontend_closed(dev);
@@ -638,9 +641,16 @@ int blkif_release(struct gendisk *disk, fmode_t mode)
 		if (!dev) {
 			blkfront_closing(info);
 			kfree(info);
-		} else if (xenbus_read_driver_state(dev->otherend)
-			   == XenbusStateClosing && info->is_ready)
-			blkfront_closing(info);
+		} else
+			switch (xenbus_read_driver_state(dev->otherend)) {
+			case XenbusStateClosing:
+			case XenbusStateClosed:
+				if (info->is_ready)
+					blkfront_closing(info);
+				break;
+			default:
+				break;
+			}
 	}
 	return 0;
 }
