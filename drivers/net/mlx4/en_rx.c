@@ -77,7 +77,7 @@ static int mlx4_en_alloc_frags(struct mlx4_en_priv *priv,
 						frag_info->frag_stride;
 		}
 	}
- 
+
 
 	for (i = 0; i < priv->num_frags; i++) {
 		frags[i] = ring_alloc[i];
@@ -562,7 +562,6 @@ static void mlx4_en_refill_rx_buffers(struct mlx4_en_priv *priv,
 int mlx4_en_process_rx_cq(struct net_device *dev, struct mlx4_en_cq *cq, int budget)
 {
 	struct mlx4_en_priv *priv = netdev_priv(dev);
-	struct mlx4_en_dev *mdev = priv->mdev;
 	struct mlx4_cqe *cqe;
 	struct mlx4_en_rx_ring *ring = &priv->rx_ring[cq->ring];
 	struct mlx4_en_rx_alloc *frags;
