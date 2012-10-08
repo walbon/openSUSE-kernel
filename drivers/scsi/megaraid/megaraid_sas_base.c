@@ -1534,7 +1534,7 @@ static int megasas_slave_configure(struct scsi_device *sdev)
 	*        That will be fixed once LSI engineers have audited the
 	*        firmware for possible issues.
 	*/
-	pd_index = (sdev->channel * MEGASAS_MAX_DEV_PER_CHANNEL) + sdev_id;
+	pd_index = (sdev->channel * MEGASAS_MAX_DEV_PER_CHANNEL) + sdev->id;
 
 	/* Skip for LD offline and PD which are not configured as
 	 * system pd.
@@ -1547,7 +1547,7 @@ static int megasas_slave_configure(struct scsi_device *sdev)
 	}
 
 	ld_index = ((sdev->channel - 2) * MEGASAS_MAX_DEV_PER_CHANNEL)
-								+ sdev_id;
+								+ sdev->id;
 	/* Need to find out best value to detect LD */
 	if ((sdev->channel >= MEGASAS_MAX_LD_CHANNELS) &&
 		(instance->ld_ids[ld_index] == 0xFF)) {
