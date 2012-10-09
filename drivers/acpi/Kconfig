@@ -52,7 +52,6 @@ config ACPI_PROCFS
 	  they have been replaced by functions in /sys.
 	  The deprecated files (and their replacements) include:
 
-	  /proc/acpi/sleep (/sys/power/state)
 	  /proc/acpi/info (/sys/module/acpi/parameters/acpica_version)
 	  /proc/acpi/dsdt (/sys/firmware/acpi/tables/DSDT)
 	  /proc/acpi/fadt (/sys/firmware/acpi/tables/FACP)
