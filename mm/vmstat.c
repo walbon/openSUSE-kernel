@@ -688,7 +688,6 @@ const char * const vmstat_text[] = {
 	"nr_active_anon",
 	"nr_inactive_file",
 	"nr_active_file",
-	"nr_immediate",
 	"nr_unevictable",
 	"nr_mlock",
 	"nr_anon_pages",
@@ -758,7 +757,6 @@ const char * const vmstat_text[] = {
 	"allocstall",
 
 	"pgrotated",
-	"pgrescued",
 
 #ifdef CONFIG_COMPACTION
 	"compact_blocks_moved",

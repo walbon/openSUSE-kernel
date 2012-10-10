@@ -32,9 +32,11 @@ enum mem_cgroup_page_stat_item {
 	MEMCG_NR_FILE_MAPPED, /* # of pages charged as file rss */
 };
 
+struct scan_control;
 extern unsigned long mem_cgroup_isolate_pages(unsigned long nr_to_scan,
 					struct list_head *dst,
-					unsigned long *scanned, int order,
+					unsigned long *scanned,
+					struct scan_control *sc,
 					isolate_mode_t mode,
 					struct zone *z,
 					struct mem_cgroup *mem_cont,

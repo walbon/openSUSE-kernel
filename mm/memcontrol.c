@@ -1253,7 +1253,8 @@ mem_cgroup_get_reclaim_stat_from_page(struct page *page)
 
 unsigned long mem_cgroup_isolate_pages(unsigned long nr_to_scan,
 					struct list_head *dst,
-					unsigned long *scanned, int order,
+					unsigned long *scanned,
+					struct scan_control *sc,
 					isolate_mode_t mode,
 					struct zone *z,
 					struct mem_cgroup *mem_cont,
@@ -1308,7 +1309,7 @@ unsigned long mem_cgroup_isolate_pages(unsigned long nr_to_scan,
 	*scanned = scan;
 
 	trace_mm_vmscan_memcg_isolate(0, nr_to_scan, scan, nr_taken,
-				      0, 0, 0, mode, file);
+				      mode, file);
 
 	return nr_taken;
 }
