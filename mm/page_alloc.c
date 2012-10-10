@@ -1297,16 +1297,11 @@ void split_page(struct page *page, unsigned int order)
 }
 
 /*
- * Similar to split_page except the page is already free. As this is only
- * being used for migration, the migratetype of the block also changes.
- * As this is called with interrupts disabled, the caller is responsible
- * for calling arch_alloc_page() and kernel_map_page() after interrupts
- * are enabled.
- *
- * Note: this is probably too low level an operation for use in drivers.
- * Please consult with lkml before using this in your driver.
+ * Similar to the split_page family of functions except that the page
+ * required at the given order and being isolated now to prevent races
+ * with parallel allocators
  */
-int split_free_page(struct page *page)
+int capture_free_page(struct page *page, int alloc_order, int migratetype)
 {
 	unsigned int order;
 	unsigned long watermark;
@@ -1328,17 +1323,46 @@ int split_free_page(struct page *page)
 	rmv_page_order(page);
 	__mod_zone_page_state(zone, NR_FREE_PAGES, -(1UL << order));
 
-	/* Split into individual pages */
-	set_page_refcounted(page);
-	split_page(page, order);
+	if (alloc_order != order)
+		expand(zone, page, alloc_order, order,
+			&zone->free_area[order], migratetype);
 
+	/* Set the pageblock if the captured page is at least a pageblock */
 	if (order >= pageblock_order - 1) {
 		struct page *endpage = page + (1 << order) - 1;
 		for (; page < endpage; page += pageblock_nr_pages)
 			set_pageblock_migratetype(page, MIGRATE_MOVABLE);
 	}
 
-	return 1 << order;
+	return 1UL << order;
+}
+
+/*
+ * Similar to split_page except the page is already free. As this is only
+ * being used for migration, the migratetype of the block also changes.
+ * As this is called with interrupts disabled, the caller is responsible
+ * for calling arch_alloc_page() and kernel_map_page() after interrupts
+ * are enabled.
+ *
+ * Note: this is probably too low level an operation for use in drivers.
+ * Please consult with lkml before using this in your driver.
+ */
+int split_free_page(struct page *page)
+{
+	unsigned int order;
+	int nr_pages;
+
+	BUG_ON(!PageBuddy(page));
+	order = page_order(page);
+
+	nr_pages = capture_free_page(page, order, 0);
+	if (!nr_pages)
+		return 0;
+
+	/* Split into individual pages */
+	set_page_refcounted(page);
+	split_page(page, order);
+	return nr_pages;
 }
 
 /*
@@ -1962,10 +1986,10 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	struct zonelist *zonelist, enum zone_type high_zoneidx,
 	nodemask_t *nodemask, int alloc_flags, struct zone *preferred_zone,
 	int migratetype, bool sync_migration,
-	bool *deferred_compaction,
+	bool *contended_compaction, bool *deferred_compaction,
 	unsigned long *did_some_progress)
 {
-	struct page *page;
+	struct page *page = NULL;
 
 	if (!order)
 		return NULL;
@@ -1977,10 +2001,17 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 
 	current->flags |= PF_MEMALLOC;
 	*did_some_progress = try_to_compact_pages(zonelist, order, gfp_mask,
-						nodemask, sync_migration);
+						nodemask, sync_migration,
+						contended_compaction, &page);
 	current->flags &= ~PF_MEMALLOC;
-	if (*did_some_progress != COMPACT_SKIPPED) {
 
+	/* If compaction captured a page, prep and use it */
+	if (page) {
+		prep_new_page(page, order, gfp_mask);
+		goto got_page;
+	}
+
+	if (*did_some_progress != COMPACT_SKIPPED) {
 		/* Page migration frees to the PCP lists but we want merging */
 		drain_pages(get_cpu());
 		put_cpu();
@@ -1990,6 +2021,8 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 				alloc_flags, preferred_zone,
 				migratetype);
 		if (page) {
+got_page:
+			preferred_zone->compact_blockskip_flush = false;
 			preferred_zone->compact_considered = 0;
 			preferred_zone->compact_defer_shift = 0;
 			if (order >= preferred_zone->compact_order_failed)
@@ -2023,7 +2056,7 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	struct zonelist *zonelist, enum zone_type high_zoneidx,
 	nodemask_t *nodemask, int alloc_flags, struct zone *preferred_zone,
 	int migratetype, bool sync_migration,
-	bool *deferred_compaction,
+	bool *contended_compaction, bool *deferred_compaction,
 	unsigned long *did_some_progress)
 {
 	return NULL;
@@ -2177,6 +2210,15 @@ bool gfp_pfmemalloc_allowed(gfp_t gfp_mask)
 	return !!(gfp_to_alloc_flags(gfp_mask) & ALLOC_NO_WATERMARKS);
 }
 
+/* Returns true if the allocation is likely for THP */
+static bool is_thp_alloc(gfp_t gfp_mask, unsigned int order)
+{
+	if (order == HPAGE_PMD_ORDER &&
+	    (gfp_mask & (__GFP_MOVABLE|__GFP_REPEAT)) == __GFP_MOVABLE)
+		return true;
+	return false;
+}
+
 static inline struct page *
 __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	struct zonelist *zonelist, enum zone_type high_zoneidx,
@@ -2190,7 +2232,7 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	unsigned long did_some_progress;
 	bool sync_migration = false;
 	bool deferred_compaction = false;
-	bool first_pass = true;
+	bool contended_compaction = false;
 
 	/*
 	 * In the slowpath, we sanity check order to avoid ever trying to
@@ -2215,9 +2257,16 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 		goto nopage;
 
 restart:
-	if (!(gfp_mask & __GFP_NO_KSWAPD))
+	/*
+	 * kswapd is woken except when this is a THP request and compactiono
+	 * is deferred. If we are backing off reclaim/compaction then kswapd
+	 * should not be awake aggressively reclaiming with no consumers of
+	 * the freed pages
+	 */
+	if (!(is_thp_alloc(gfp_mask, order) &&
+	      compaction_deferred(preferred_zone, order)))
 		wake_all_kswapd(order, zonelist, high_zoneidx,
-						zone_idx(preferred_zone));
+					zone_idx(preferred_zone));
 
 	/*
 	 * OK, we're below the kswapd watermark and have kicked background
@@ -2279,6 +2328,7 @@ rebalance:
 					nodemask,
 					alloc_flags, preferred_zone,
 					migratetype, sync_migration,
+					&contended_compaction,
 					&deferred_compaction,
 					&did_some_progress);
 	if (page)
@@ -2288,15 +2338,14 @@ rebalance:
 	/*
 	 * If compaction is deferred for high-order allocations, it is because
 	 * sync compaction recently failed. In this is the case and the caller
-	 * has requested the system not be heavily disrupted, fail the
-	 * allocation now instead of entering direct reclaim. If direct reclaim
-	 * is used, use it only once before bailing.
+	 * requested a movable allocation that does not heavily disrupt the
+	 * system then fail the allocation instead of entering direct reclaim.
 	 */
-	if ((first_pass || deferred_compaction) && (gfp_mask & __GFP_NO_KSWAPD))
+	if ((deferred_compaction || contended_compaction) &&
+	    is_thp_alloc(gfp_mask, order))
 		goto nopage;
 
 	/* Try direct reclaim and then allocating */
-	first_pass = false;
 	page = __alloc_pages_direct_reclaim(gfp_mask, order,
 					zonelist, high_zoneidx,
 					nodemask,
@@ -2359,6 +2408,7 @@ rebalance:
 					nodemask,
 					alloc_flags, preferred_zone,
 					migratetype, sync_migration,
+					&contended_compaction,
 					&deferred_compaction,
 					&did_some_progress);
 		if (page)

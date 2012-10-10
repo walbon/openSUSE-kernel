@@ -1832,6 +1832,32 @@ static bool in_reclaim_compaction(int priority, struct scan_control *sc)
 	return false;
 }
 
+#ifdef CONFIG_COMPACTION
+/*
+ * If compaction is deferred for sc->order then scale the number of pages
+ * reclaimed based on the number of consecutive allocation failures. This
+ * scaling only happens for direct reclaim as it is about to attempt
+ * compaction. If compaction fails, future allocations will be deferred
+ * and reclaim avoided. On the other hand, kswapd does not take compaction
+ * deferral into account so if it scaled, it could scan excessively even
+ * though allocations are temporarily not being attempted.
+ */
+static unsigned long scale_for_compaction(unsigned long pages_for_compaction,
+			struct zone *zone, struct scan_control *sc)
+{
+	if (zone->compact_order_failed <= sc->order &&
+	    !current_is_kswapd())
+		pages_for_compaction <<= zone->compact_defer_shift;
+	return pages_for_compaction;
+}
+#else
+static unsigned long scale_for_compaction(unsigned long pages_for_compaction,
+			struct zone *zone, struct scan_control *sc)
+{
+	return pages_for_compaction;
+}
+#endif
+
 /*
  * Reclaim/compaction is used for high-order allocation requests. It reclaims
  * order-0 pages before compacting the zone. should_continue_reclaim() returns
@@ -1880,6 +1906,9 @@ static inline bool should_continue_reclaim(struct zone *zone,
 	 * inactive lists are large enough, continue reclaiming
 	 */
 	pages_for_compaction = (2UL << sc->order);
+
+	pages_for_compaction = scale_for_compaction(pages_for_compaction,
+						    zone, sc);
 	inactive_lru_pages = zone_nr_lru_pages(zone, sc, LRU_INACTIVE_FILE);
 	if (nr_swap_pages > 0)
 		inactive_lru_pages += zone_nr_lru_pages(zone, sc, LRU_INACTIVE_ANON);
@@ -2297,10 +2326,6 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 	struct shrink_control shrink = {
 		.gfp_mask = sc.gfp_mask,
 	};
-
-	/* Do not write pages if reclaiming for THP */
-	if (gfp_mask & __GFP_NO_KSWAPD)
-		sc.may_writepage = 0;
 
 	throttle_direct_reclaim(gfp_mask, zonelist, nodemask);
 
@@ -2874,6 +2899,14 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int order, int classzone_idx)
 		 * them before going back to sleep.
 		 */
 		set_pgdat_percpu_threshold(pgdat, calculate_normal_threshold);
+
+		/*
+		 * Compaction records what page blocks it recently failed to
+		 * isolate pages from and skips them in the future scanning.
+		 * When kswapd is going to sleep, it is reasonable to assume
+		 * that pages and compaction may succeed so reset the cache.
+		 */
+		reset_isolation_suitable(pgdat);
 
 		if (!kthread_should_stop())
 			schedule();
