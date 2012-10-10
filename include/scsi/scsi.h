@@ -160,6 +160,8 @@ struct scsi_cmnd;
 #define MI_REPORT_PRIORITY   0x0e
 #define MI_REPORT_TIMESTAMP  0x0f
 #define MI_MANAGEMENT_PROTOCOL_IN 0x10
+/* value for MI_REPORT_TARGET_PGS ext header */
+#define MI_EXT_HDR_PARAM_FMT  0x20
 /* values for maintenance out */
 #define MO_SET_IDENTIFYING_INFORMATION 0x06
 #define MO_SET_TARGET_PGS     0x0a
@@ -469,7 +471,6 @@ static inline int scsi_is_wlun(unsigned int lun)
 #define SCSI_RETURN_NOT_HANDLED   0x2008
 #define FAST_IO_FAIL	0x2009
 #define TARGET_ERROR    0x200A
-#define ADD_TO_MLQUEUE_DELAY	0x200B
 
 /*
  * Midlevel queue return values.
@@ -478,7 +479,6 @@ static inline int scsi_is_wlun(unsigned int lun)
 #define SCSI_MLQUEUE_DEVICE_BUSY 0x1056
 #define SCSI_MLQUEUE_EH_RETRY    0x1057
 #define SCSI_MLQUEUE_TARGET_BUSY 0x1058
-#define SCSI_MLQUEUE_DELAYED_RETRY 0x1059
 
 /*
  *  Use these to separate status msg and our bytes

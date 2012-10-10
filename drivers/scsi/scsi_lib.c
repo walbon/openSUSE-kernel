@@ -138,7 +138,6 @@ static int __scsi_queue_insert(struct scsi_cmnd *cmd, int reason, int unbusy)
 		break;
 	case SCSI_MLQUEUE_DEVICE_BUSY:
 	case SCSI_MLQUEUE_EH_RETRY:
-	case SCSI_MLQUEUE_DELAYED_RETRY:
 		device->device_blocked = device->max_device_blocked;
 		break;
 	case SCSI_MLQUEUE_TARGET_BUSY:
@@ -161,13 +160,9 @@ static int __scsi_queue_insert(struct scsi_cmnd *cmd, int reason, int unbusy)
 	 */
 	spin_lock_irqsave(q->queue_lock, flags);
 	blk_requeue_request(q, cmd->request);
-
-	if (reason == SCSI_MLQUEUE_DELAYED_RETRY)
-		blk_delay_queue(q, 2000);
-	else
-		kblockd_schedule_work(q, &device->requeue_work);
-
+	kblockd_schedule_work(q, &device->requeue_work);
 	spin_unlock_irqrestore(q->queue_lock, flags);
+
 	return 0;
 }
 
@@ -1485,9 +1480,6 @@ static void scsi_softirq_done(struct request *rq)
 			break;
 		case ADD_TO_MLQUEUE:
 			scsi_queue_insert(cmd, SCSI_MLQUEUE_DEVICE_BUSY);
-			break;
-		case ADD_TO_MLQUEUE_DELAY:
-			scsi_queue_insert(cmd, SCSI_MLQUEUE_DELAYED_RETRY);
 			break;
 		default:
 			if (!scsi_eh_scmd_add(cmd, 0))

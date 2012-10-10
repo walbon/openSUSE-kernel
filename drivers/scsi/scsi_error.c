@@ -912,7 +912,6 @@ static int scsi_send_eh_cmnd(struct scsi_cmnd *scmd, unsigned char *cmnd,
 		case TARGET_ERROR:
 			break;
 		case ADD_TO_MLQUEUE:
-		case ADD_TO_MLQUEUE_DELAY:
 			rtn = NEEDS_RETRY;
 			break;
 		default:
