@@ -159,6 +159,8 @@ struct inodes_stat_t {
 #define READ			0
 #define WRITE			RW_MASK
 #define READA			RWA_MASK
+#define KERNEL_READ		(READ|REQ_KERNEL)
+#define KERNEL_WRITE		(WRITE|REQ_KERNEL)
 
 #define READ_SYNC		(READ | REQ_SYNC)
 #define READ_META		(READ | REQ_META)
@@ -412,6 +414,7 @@ struct kstatfs;
 struct vm_area_struct;
 struct vfsmount;
 struct cred;
+struct swap_info_struct;
 
 extern void __init inode_init(void);
 extern void __init inode_init_early(void);
@@ -584,8 +587,6 @@ typedef struct {
 typedef int (*read_actor_t)(read_descriptor_t *, struct page *,
 		unsigned long, unsigned long);
 
-struct swap_info_struct;
-
 struct address_space_operations {
 	int (*writepage)(struct page *page, struct writeback_control *wbc);
 	int (*readpage)(struct file *, struct page *);
@@ -630,9 +631,6 @@ struct address_space_operations {
 	int (*swap_activate)(struct swap_info_struct *sis, struct file *file,
 				sector_t *span);
 	void (*swap_deactivate)(struct file *file);
-	int (*swap_writepage)(struct file *file, struct page *page,
-			struct writeback_control *wbc);
-	int (*swap_readpage)(struct file *file, struct page *page);
 };
 
 extern const struct address_space_operations empty_aops;

@@ -5970,7 +5970,7 @@ void igb_alloc_rx_buffers_adv(struct igb_ring *rx_ring, int cleaned_count)
 
 		if ((bufsz < IGB_RXBUFFER_1024) && !buffer_info->page_dma) {
 			if (!buffer_info->page) {
-				buffer_info->page = netdev_alloc_page(netdev, NULL);
+				buffer_info->page = netdev_alloc_page(netdev);
 				if (unlikely(!buffer_info->page)) {
 					u64_stats_update_begin(&rx_ring->rx_syncp);
 					rx_ring->rx_stats.alloc_failed++;
@@ -6006,7 +6006,6 @@ void igb_alloc_rx_buffers_adv(struct igb_ring *rx_ring, int cleaned_count)
 				goto no_buffers;
 			}
 
-			propagate_pfmemalloc_skb(buffer_info->page, skb);
 			buffer_info->skb = skb;
 		}
 		if (!buffer_info->dma) {

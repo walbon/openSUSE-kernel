@@ -87,41 +87,6 @@ void end_swap_bio_read(struct bio *bio, int err)
 	bio_put(bio);
 }
 
-int generic_swap_writepage(struct page *page, struct writeback_control *wbc)
-{
-	struct bio *bio;
-	int rw = WRITE;
-
-	bio = get_swap_bio(GFP_NOIO, page, end_swap_bio_write);
-	if (bio == NULL) {
-		set_page_dirty(page);
-		unlock_page(page);
-		return -ENOMEM;
-	}
-	if (wbc->sync_mode == WB_SYNC_ALL)
-		rw |= REQ_SYNC;
-	count_vm_event(PSWPOUT);
-	set_page_writeback(page);
-	unlock_page(page);
-	submit_bio(rw, bio);
-
-	return 0;
-}
-
-int generic_swap_readpage(struct page *page)
-{
-	struct bio *bio;
-	bio = get_swap_bio(GFP_KERNEL, page, end_swap_bio_read);
-	if (bio == NULL) {
-		unlock_page(page);
-		return -ENOMEM;
-	}
-	count_vm_event(PSWPIN);
-	submit_bio(READ, bio);
-
-	return 0;
-}
-
 int generic_swapfile_activate(struct swap_info_struct *sis,
 				struct file *swap_file,
 				sector_t *span)
@@ -213,20 +178,20 @@ bad_bmap:
 	ret = -EINVAL;
 	goto out;
 }
+
 /*
  * We may have stale swap cache pages in memory: notice
  * them here and get rid of the unnecessary final write.
  */
 int swap_writepage(struct page *page, struct writeback_control *wbc)
 {
-	int ret = 0;
+	struct bio *bio;
+	int ret = 0, rw = WRITE;
 	struct swap_info_struct *sis = page_swap_info(page);
-	struct file *swap_file;
-	struct address_space *mapping;
 
 	if (try_to_free_swap(page)) {
 		unlock_page(page);
-		return ret;
+		goto out;
 	}
 
 	if (frontswap_put_page(page) == 0) {
@@ -236,24 +201,54 @@ int swap_writepage(struct page *page, struct writeback_control *wbc)
 		return 0;
 	}
 
-	swap_file = sis->swap_file;
-	mapping = swap_file->f_mapping;
-	if (mapping->a_ops->swap_writepage) {
-		ret = mapping->a_ops->swap_writepage(swap_file, page, wbc);
-		if (!ret)
+	if (sis->flags & SWP_FILE) {
+		struct kiocb kiocb;
+		struct file *swap_file = sis->swap_file;
+		struct address_space *mapping = swap_file->f_mapping;
+		struct iovec iov = {
+			.iov_base = kmap(page),
+			.iov_len  = PAGE_SIZE,
+		};
+
+		init_sync_kiocb(&kiocb, swap_file);
+		kiocb.ki_pos = page_file_offset(page);
+		kiocb.ki_left = PAGE_SIZE;
+		kiocb.ki_nbytes = PAGE_SIZE;
+
+		unlock_page(page);
+		ret = mapping->a_ops->direct_IO(KERNEL_WRITE,
+						&kiocb, &iov,
+						kiocb.ki_pos, 1);
+		kunmap(page);
+		if (ret == PAGE_SIZE) {
 			count_vm_event(PSWPOUT);
+			ret = 0;
+		}
 		return ret;
 	}
 
-	return generic_swap_writepage(page, wbc);
+	bio = get_swap_bio(GFP_NOIO, page, end_swap_bio_write);
+	if (bio == NULL) {
+		set_page_dirty(page);
+		unlock_page(page);
+		ret = -ENOMEM;
+		goto out;
+	}
+	if (wbc->sync_mode == WB_SYNC_ALL)
+		rw |= REQ_SYNC;
+	count_vm_event(PSWPOUT);
+	set_page_writeback(page);
+	unlock_page(page);
+	submit_bio(rw, bio);
+out:
+	return ret;
 }
 
 int swap_readpage(struct page *page)
 {
+	struct bio *bio;
 	int ret = 0;
 	struct swap_info_struct *sis = page_swap_info(page);
-	struct file *swap_file;
-	struct address_space *mapping;
 
 	VM_BUG_ON(!PageLocked(page));
 	VM_BUG_ON(PageUptodate(page));
@@ -264,25 +259,36 @@ int swap_readpage(struct page *page)
 		return 0;
 	}
 
-	swap_file = sis->swap_file;
-	mapping = swap_file->f_mapping;
-	if (mapping->a_ops->swap_readpage) {
-		ret = mapping->a_ops->swap_readpage(swap_file, page);
+	if (sis->flags & SWP_FILE) {
+		struct file *swap_file = sis->swap_file;
+		struct address_space *mapping = swap_file->f_mapping;
+
+		ret = mapping->a_ops->readpage(swap_file, page);
 		if (!ret)
 			count_vm_event(PSWPIN);
 		return ret;
 	}
 
-	return generic_swap_readpage(page);
+	bio = get_swap_bio(GFP_KERNEL, page, end_swap_bio_read);
+	if (bio == NULL) {
+		unlock_page(page);
+		ret = -ENOMEM;
+		goto out;
+	}
+	count_vm_event(PSWPIN);
+	submit_bio(READ, bio);
+out:
+	return ret;
 }
 
 int swap_set_page_dirty(struct page *page)
 {
 	struct swap_info_struct *sis = page_swap_info(page);
-	struct address_space *mapping = sis->swap_file->f_mapping;
 
-	if (mapping->a_ops->set_page_dirty)
+	if (sis->flags & SWP_FILE) {
+		struct address_space *mapping = sis->swap_file->f_mapping;
 		return mapping->a_ops->set_page_dirty(page);
-	else
+	} else {
 		return __set_page_dirty_no_writeback(page);
+	}
 }

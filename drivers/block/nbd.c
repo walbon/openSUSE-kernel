@@ -409,7 +409,6 @@ static int nbd_do_it(struct nbd_device *lo)
 	BUG_ON(lo->magic != LO_MAGIC);
 
 	sk_set_memalloc(lo->sock->sk);
-
 	lo->pid = current->pid;
 	ret = sysfs_create_file(&disk_to_dev(lo->disk)->kobj, &pid_attr.attr);
 	if (ret) {

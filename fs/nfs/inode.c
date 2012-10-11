@@ -876,9 +876,7 @@ int nfs_revalidate_mapping(struct inode *inode, struct address_space *mapping)
 	struct nfs_inode *nfsi = NFS_I(inode);
 	int ret = 0;
 
-	/*
-	 * swapfiles are not supposed to be shared.
-	 */
+	/* swapfiles are not supposed to be shared. */
 	if (IS_SWAPFILE(inode))
 		goto out;
 

@@ -203,8 +203,6 @@ prototypes:
 	int (*error_remove_page)(struct address_space *, struct page *);
 	int (*swap_activate)(struct file *);
 	int (*swap_deactivate)(struct file *);
-	int (*swap_out)(struct file *, struct page *, struct writeback_control *);
-	int (*swap_in)(struct file *, struct page *);
 
 locking rules:
 	All except set_page_dirty and freepage may block
@@ -230,8 +228,6 @@ is_partially_uptodate:	yes
 error_remove_page:	yes
 swap_activate:		no
 swap_deactivate:	no
-swap_out		no			yes, unlocks
-swap_in			no			yes, unlocks
 
 	->write_begin(), ->write_end(), ->sync_page() and ->readpage()
 may be called from the request handler (/dev/loop).
@@ -341,12 +337,6 @@ address space operations.
 
 	->swap_deactivate() will be called in the sys_swapoff()
 path after ->swap_activate() returned success.
-
-       ->swap_writepage() is usable after swap_activate() returned
-success. This method is used to write a swap page.
-
-       ->swap_readpage() is usable after swap_activate() returned
-success, this method is used to read a swap page.
 
 ----------------------- file_lock_operations ------------------------------
 prototypes:

@@ -237,7 +237,7 @@ nfs_file_read(struct kiocb *iocb, const struct iovec *iov,
 	size_t count = iov_length(iov, nr_segs);
 
 	if (iocb->ki_filp->f_flags & O_DIRECT)
-		return nfs_file_direct_read(iocb, iov, nr_segs, pos);
+		return nfs_file_direct_read(iocb, iov, nr_segs, pos, true);
 
 	dprintk("NFS: read(%s/%s, %lu@%lu)\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name,
@@ -570,8 +570,6 @@ const struct address_space_operations nfs_file_aops = {
 #ifdef CONFIG_NFS_SWAP
 	.swap_activate = nfs_swap_activate,
 	.swap_deactivate = nfs_swap_deactivate,
-	.swap_writepage = nfs_swap_writepage,
-	.swap_readpage = nfs_readpage,
 #endif
 };
 
@@ -645,7 +643,7 @@ static ssize_t nfs_file_write(struct kiocb *iocb, const struct iovec *iov,
 	size_t count = iov_length(iov, nr_segs);
 
 	if (iocb->ki_filp->f_flags & O_DIRECT)
-		return nfs_file_direct_write(iocb, iov, nr_segs, pos);
+		return nfs_file_direct_write(iocb, iov, nr_segs, pos, true);
 
 	dprintk("NFS: write(%s/%s, %lu@%Ld)\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name,

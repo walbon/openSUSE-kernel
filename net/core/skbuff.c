@@ -168,8 +168,8 @@ void *__kmalloc_reserve(size_t size, gfp_t flags, int node, unsigned long ip,
 	 * to the reserves, fail.
 	 */
 	obj = kmalloc_node_track_caller(size,
-				flags | __GFP_NOMEMALLOC | __GFP_NOWARN,
-				node);
+					flags | __GFP_NOMEMALLOC | __GFP_NOWARN,
+					node);
 	if (obj || !(gfp_pfmemalloc_allowed(flags)))
 		goto out;
 
@@ -241,8 +241,8 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	 * the tail pointer in struct sk_buff!
 	 */
 	memset(skb, 0, offsetof(struct sk_buff, tail));
-	skb->pfmemalloc = pfmemalloc;
 	skb->truesize = size + sizeof(struct sk_buff);
+	skb->pfmemalloc = pfmemalloc;
 	atomic_set(&skb->users, 1);
 	skb->head = data;
 	skb->data = data;
@@ -297,8 +297,11 @@ struct sk_buff *__netdev_alloc_skb(struct net_device *dev,
 {
 	struct sk_buff *skb;
 
+	if (sk_memalloc_socks())
+		gfp_mask |= __GFP_MEMALLOC;
+
 	skb = __alloc_skb(length + NET_SKB_PAD, gfp_mask,
-						SKB_ALLOC_RX, NUMA_NO_NODE);
+			  SKB_ALLOC_RX, NUMA_NO_NODE);
 	if (likely(skb)) {
 		skb_reserve(skb, NET_SKB_PAD);
 		skb->dev = dev;
@@ -710,7 +713,7 @@ static void copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 
 static inline int skb_alloc_rx_flag(const struct sk_buff *skb)
 {
-	if (skb_pfmemalloc((struct sk_buff *)skb))
+	if (skb_pfmemalloc(skb))
 		return SKB_ALLOC_RX;
 	return 0;
 }
@@ -866,7 +869,7 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
 	if (skb_pfmemalloc(skb))
 		gfp_mask |= __GFP_MEMALLOC;
 	data = kmalloc_reserve(size + sizeof(struct skb_shared_info), gfp_mask,
-			NUMA_NO_NODE, NULL);
+			       NUMA_NO_NODE, NULL);
 	if (!data)
 		goto nodata;
 
@@ -968,8 +971,8 @@ struct sk_buff *skb_copy_expand(const struct sk_buff *skb,
 	 *	Allocate the copy buffer
 	 */
 	struct sk_buff *n = __alloc_skb(newheadroom + skb->len + newtailroom,
-				      gfp_mask, skb_alloc_rx_flag(skb),
-				      NUMA_NO_NODE);
+					gfp_mask, skb_alloc_rx_flag(skb),
+					NUMA_NO_NODE);
 	int oldheadroom = skb_headroom(skb);
 	int head_copy_len, head_copy_off;
 	int off;
@@ -2510,6 +2513,18 @@ int skb_append_datato_frags(struct sock *sk, struct sk_buff *skb,
 		left = PAGE_SIZE - frag->page_offset;
 		copy = (length > left)? left : length;
 
+		/* 
+		 * Propagate page->pfmemalloc to the skb if we can. The problem is
+		 * that not all callers have unique ownership of the page. If
+		 * pfmemalloc is set, we check the mapping as a mapping implies
+		 * page->index is set (index and pfmemalloc share space).
+		 * If it's a valid mapping, we cannot use page->pfmemalloc but we
+		 * do not lose pfmemalloc information as the pages would not be
+		 * allocated using __GFP_MEMALLOC.
+		 */
+		if (frag->page->pfmemalloc && !frag->page->mapping)
+			skb->pfmemalloc = true;
+
 		ret = getfrag(from, (page_address(frag->page) +
 			    frag->page_offset + frag->size),
 			    offset, copy, 0, skb);
@@ -2617,8 +2632,8 @@ struct sk_buff *skb_segment(struct sk_buff *skb, u32 features)
 			__skb_push(nskb, doffset);
 		} else {
 			nskb = __alloc_skb(hsize + doffset + headroom,
-					 GFP_ATOMIC, skb_alloc_rx_flag(skb),
-					 NUMA_NO_NODE);
+					   GFP_ATOMIC, skb_alloc_rx_flag(skb),
+					   NUMA_NO_NODE);
 
 			if (unlikely(!nskb))
 				goto err;

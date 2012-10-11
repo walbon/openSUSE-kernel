@@ -608,8 +608,8 @@ static unsigned int refill_fl(struct adapter *adapter, struct sge_fl *fl,
 		goto alloc_small_pages;
 
 	while (n) {
-		page = alloc_pages(gfp | __GFP_COMP | __GFP_NOWARN,
-				   FL_PG_ORDER);
+		page = __netdev_alloc_pages(NULL, gfp | __GFP_COMP | __GFP_NOWARN,
+				   NULL, FL_PG_ORDER);
 		if (unlikely(!page)) {
 			/*
 			 * We've failed inour attempt to allocate a "large

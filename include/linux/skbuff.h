@@ -439,7 +439,7 @@ struct sk_buff {
 #define SKB_ALLOC_RX		0x02
 
 /* Returns true if the skb was allocated from PFMEMALLOC reserves */
-static inline bool skb_pfmemalloc(struct sk_buff *skb)
+static inline bool skb_pfmemalloc(const struct sk_buff *skb)
 {
 	return unlikely(skb->pfmemalloc);
 }
@@ -1124,21 +1124,6 @@ static inline void skb_fill_page_desc(struct sk_buff *skb, int i,
 {
 	skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
-	/*
-	 * Propagate page->pfmemalloc to the skb if we can. The problem is
-	 * that not all callers have unique ownership of the page. If
-	 * pfmemalloc is set, we check the mapping to see if it could be
-	 * because page->index is set (index and pfmemalloc share space).
-	 * If it's a valid mapping, we cannot use page->pfmemalloc but we
-	 * do not lose pfmemalloc information as the pages would not be
-	 * allocated using __GFP_MEMALLOC. We also have to check if the
-	 * outside possibility that the page has buffers (PagePrivate)
-	 * with a NULL mapping. This normally happens for invalidated
-	 * pages that should never be used for network RX but there is
-	 * no harm is guarding against the possibility.
-	 */
-	if (page->pfmemalloc && !page->mapping && !PagePrivate(page))
-		skb->pfmemalloc	= true;
 	frag->page		  = page;
 	frag->page_offset	  = off;
 	frag->size		  = size;
@@ -1567,8 +1552,7 @@ static inline void __skb_queue_purge(struct sk_buff_head *list)
 static inline struct sk_buff *__dev_alloc_skb(unsigned int length,
 					      gfp_t gfp_mask)
 {
-	struct sk_buff *skb = __alloc_skb(length + NET_SKB_PAD, gfp_mask,
-						SKB_ALLOC_RX, NUMA_NO_NODE);
+	struct sk_buff *skb = alloc_skb(length + NET_SKB_PAD, gfp_mask);
 	if (likely(skb))
 		skb_reserve(skb, NET_SKB_PAD);
 	return skb;
@@ -1606,58 +1590,6 @@ static inline struct sk_buff *netdev_alloc_skb_ip_align(struct net_device *dev,
 	if (NET_IP_ALIGN && skb)
 		skb_reserve(skb, NET_IP_ALIGN);
 	return skb;
-}
-
-/**
- *	__netdev_alloc_page - allocate a page for ps-rx on a specific device
- *	@dev: network device to receive on
- *	@gfp_mask: alloc_pages_node mask. Set __GFP_NOMEMALLOC if not for network packet RX
- *	@skb: skb to set pfmemalloc on if __GFP_MEMALLOC is used
- *
- * 	Allocate a new page. dev currently unused.
- *
- * 	%NULL is returned if there is no free memory.
- */
-static inline struct page *__netdev_alloc_page(struct net_device *dev,
-					gfp_t gfp_mask, struct sk_buff *skb)
-{
-	struct page *page;
-
-	if (!(gfp_mask & __GFP_NOMEMALLOC))
-		gfp_mask |= __GFP_MEMALLOC;
-
-	page = alloc_pages_node(NUMA_NO_NODE, gfp_mask, 0);
-	if (skb && page && page->pfmemalloc)
-		skb->pfmemalloc = true;
-
-	return page;
-}
-
-/**
- *	propagate_pfmemalloc_skb - Propagate pfmemalloc if skb is allocated after RX page
- *	@page: The page that was allocated from netdev_alloc_page
- *	@skb: The skb that may need pfmemalloc set
- */
-static inline void propagate_pfmemalloc_skb(struct page *page,
-						struct sk_buff *skb)
-{
-	if (page && page->pfmemalloc)
-		skb->pfmemalloc = true;
-}
-
-/**
- *	netdev_alloc_page - allocate a page for ps-rx on a specific device
- *	@dev: network device to receive on
- *	@skb: skb to set pfmemalloc on if __GFP_MEMALLOC is used
- *
- * 	Allocate a new page. dev currently unused.
- *
- * 	%NULL is returned if there is no free memory.
- */
-static inline struct page *netdev_alloc_page(struct net_device *dev,
-					struct sk_buff *skb)
-{
-	return __netdev_alloc_page(dev, GFP_ATOMIC, skb);
 }
 
 static inline void netdev_free_page(struct net_device *dev, struct page *page)
@@ -1791,6 +1723,76 @@ static inline int __skb_linearize(struct sk_buff *skb)
 static inline int skb_linearize(struct sk_buff *skb)
 {
 	return skb_is_nonlinear(skb) ? __skb_linearize(skb) : 0;
+}
+
+/*
+ *	__netdev_alloc_page - allocate a page for ps-rx on a specific device
+ *	@gfp_mask: alloc_pages_node mask. Set __GFP_NOMEMALLOC if not for network packet RX
+ *	@skb: skb to set pfmemalloc on if __GFP_MEMALLOC is used
+ *	@order: size of the allocation
+ *
+ * 	Allocate a new page. dev currently unused.
+ *
+ * 	%NULL is returned if there is no free memory.
+*/
+static inline struct page *__netdev_alloc_pages(struct net_device *dev,
+						gfp_t gfp_mask,
+						struct sk_buff *skb,
+						unsigned int order)
+{
+	struct page *page;
+
+	gfp_mask |= __GFP_COLD;
+
+	if (!(gfp_mask & __GFP_NOMEMALLOC))
+		gfp_mask |= __GFP_MEMALLOC;
+
+	page = alloc_pages_node(NUMA_NO_NODE, gfp_mask, order);
+	if (skb && page && page->pfmemalloc)
+		skb->pfmemalloc = true;
+
+	return page;
+}
+
+/**
+ *	__netdev_alloc_page - allocate a page for ps-rx on a specific device
+ *	@gfp_mask: alloc_pages_node mask. Set __GFP_NOMEMALLOC if not for network packet RX
+ *	@skb: skb to set pfmemalloc on if __GFP_MEMALLOC is used
+ *
+ * 	Allocate a new page. dev currently unused.
+ *
+ * 	%NULL is returned if there is no free memory.
+ */
+static inline struct page *__netdev_alloc_page(struct net_device *dev,
+						gfp_t gfp_mask,
+						struct sk_buff *skb)
+{
+	return __netdev_alloc_pages(NULL, gfp_mask, skb, 0);
+}
+
+/**
+ *	netdev_alloc_page - allocate a page for ps-rx on a specific device
+ *	@dev: network device to receive on
+ *
+ * 	Allocate a new page. dev currently unused.
+ *
+ * 	%NULL is returned if there is no free memory.
+ */
+static inline struct page *netdev_alloc_page(struct net_device *dev)
+{
+	return __netdev_alloc_page(dev, GFP_ATOMIC, NULL);
+}
+
+/**
+ *	propagate_pfmemalloc_skb - Propagate pfmemalloc if skb is allocated after RX page
+ *	@page: The page that was allocated from netdev_alloc_page
+ *	@skb: The skb that may need pfmemalloc set
+ */
+static inline void propagate_pfmemalloc_skb(struct page *page,
+						struct sk_buff *skb)
+{
+	if (page && page->pfmemalloc)
+		skb->pfmemalloc = true;
 }
 
 /**

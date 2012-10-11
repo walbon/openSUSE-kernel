@@ -364,7 +364,7 @@ static void ixgbevf_alloc_rx_buffers(struct ixgbevf_adapter *adapter,
 		if (!bi->page_dma &&
 		    (adapter->flags & IXGBE_FLAG_RX_PS_ENABLED)) {
 			if (!bi->page) {
-				bi->page = netdev_alloc_page(adapter->netdev, NULL);
+				bi->page = netdev_alloc_page(adapter->netdev);
 				if (!bi->page) {
 					adapter->alloc_rx_page_failed++;
 					goto no_buffers;
@@ -398,7 +398,6 @@ static void ixgbevf_alloc_rx_buffers(struct ixgbevf_adapter *adapter,
 			 */
 			skb_reserve(skb, NET_IP_ALIGN);
 
-			propagate_pfmemalloc_skb(bi->page, skb);
 			bi->skb = skb;
 		}
 		if (!bi->dma) {

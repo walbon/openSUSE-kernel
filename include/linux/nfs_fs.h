@@ -450,10 +450,10 @@ extern ssize_t nfs_direct_IO(int, struct kiocb *, const struct iovec *, loff_t,
 			unsigned long);
 extern ssize_t nfs_file_direct_read(struct kiocb *iocb,
 			const struct iovec *iov, unsigned long nr_segs,
-			loff_t pos);
+			loff_t pos, bool uio);
 extern ssize_t nfs_file_direct_write(struct kiocb *iocb,
 			const struct iovec *iov, unsigned long nr_segs,
-			loff_t pos);
+			loff_t pos, bool uio);
 
 /*
  * linux/fs/nfs/dir.c
@@ -511,8 +511,6 @@ extern int  nfs_writepages(struct address_space *, struct writeback_control *);
 extern int  nfs_flush_incompatible(struct file *file, struct page *page);
 extern int  nfs_updatepage(struct file *, struct page *, unsigned int, unsigned int);
 extern void nfs_writeback_done(struct rpc_task *, struct nfs_write_data *);
-extern int  nfs_swap_writepage(struct file *file, struct page *page,
-			 struct writeback_control *wbc);
 
 /*
  * Try to write back everything synchronously (but check the

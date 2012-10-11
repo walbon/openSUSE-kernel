@@ -129,7 +129,7 @@ static int rx_submit(struct usbpn_dev *pnd, struct urb *req, gfp_t gfp_flags)
 	struct page *page;
 	int err;
 
-	page = __netdev_alloc_page(dev, gfp_flags | __GFP_NOMEMALLOC, NULL);
+	page = __netdev_alloc_page(dev, gfp_flags, NULL);
 	if (!page)
 		return -ENOMEM;
 

@@ -1356,12 +1356,6 @@ sector_t map_swap_page(struct page *page, struct block_device **bdev)
  */
 static void destroy_swap_extents(struct swap_info_struct *sis)
 {
-	struct file *swap_file = sis->swap_file;
-	struct address_space *mapping = NULL;
-
-	if (swap_file)
-		mapping = swap_file->f_mapping;
-
 	while (!list_empty(&sis->first_swap_extent.list)) {
 		struct swap_extent *se;
 
@@ -1371,8 +1365,13 @@ static void destroy_swap_extents(struct swap_info_struct *sis)
 		kfree(se);
 	}
 
-	if (mapping && mapping->a_ops->swap_deactivate)
+	if (sis->flags & SWP_FILE) {
+		struct file *swap_file = sis->swap_file;
+		struct address_space *mapping = swap_file->f_mapping;
+
+		sis->flags &= ~SWP_FILE;
 		mapping->a_ops->swap_deactivate(swap_file);
+	}
 }
 
 /*
@@ -1468,6 +1467,7 @@ static int setup_swap_extents(struct swap_info_struct *sis, sector_t *span)
 	if (mapping->a_ops->swap_activate) {
 		ret = mapping->a_ops->swap_activate(sis, swap_file, span);
 		if (!ret) {
+			sis->flags |= SWP_FILE;
 			ret = add_swap_extent(sis, 0, sis->max, 0);
 			*span = sis->pages;
 		}
@@ -2282,7 +2282,6 @@ struct swap_info_struct *page_swap_info(struct page *page)
 /*
  * out-of-line __page_file_ methods to avoid include hell.
  */
-
 struct address_space *__page_file_mapping(struct page *page)
 {
 	VM_BUG_ON(!PageSwapCache(page));

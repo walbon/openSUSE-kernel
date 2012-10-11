@@ -80,8 +80,7 @@ struct nfs_write_data *nfs_writedata_alloc(unsigned int pagecount)
 		if (pagecount <= ARRAY_SIZE(p->page_array))
 			p->pagevec = p->page_array;
 		else {
-			p->pagevec = kcalloc(pagecount, sizeof(struct page *),
-					GFP_NOIO);
+			p->pagevec = kcalloc(pagecount, sizeof(struct page *), GFP_NOFS);
 			if (!p->pagevec) {
 				mempool_free(p, nfs_wdata_mempool);
 				p = NULL;
@@ -113,8 +112,7 @@ static void nfs_context_set_write_error(struct nfs_open_context *ctx, int error)
 }
 
 static struct nfs_page *
-__nfs_page_find_request_locked(struct nfs_inode *nfsi, struct page *page,
-		int get)
+nfs_page_find_request_locked(struct nfs_inode *nfsi, struct page *page)
 {
 	struct nfs_page *req = NULL;
 
@@ -122,45 +120,12 @@ __nfs_page_find_request_locked(struct nfs_inode *nfsi, struct page *page,
 		req = (struct nfs_page *)page_private(page);
 	else if (unlikely(PageSwapCache(page)))
 		req = radix_tree_lookup(&nfsi->nfs_page_tree,
-				page_file_index(page));
+					page_file_index(page));
 
-	if (get && req)
+	if (req)
 		kref_get(&req->wb_kref);
 
 	return req;
-}
-
-static inline struct nfs_page *
-nfs_page_find_request_locked(struct nfs_inode *nfsi, struct page *page)
-{
-	return __nfs_page_find_request_locked(nfsi, page, 1);
-}
-
-static int __nfs_page_has_request(struct page *page)
-{
-	struct inode *inode = page_file_mapping(page)->host;
-	struct nfs_page *req = NULL;
-
-	spin_lock(&inode->i_lock);
-	req = __nfs_page_find_request_locked(NFS_I(inode), page, 0);
-	spin_unlock(&inode->i_lock);
-
-	/*
-	 * hole here plugged by the caller holding onto PG_locked
-	 */
-
-	return req != NULL;
-}
-
-static inline int nfs_page_has_request(struct page *page)
-{
-	if (PagePrivate(page))
-		return 1;
-
-	if (unlikely(PageSwapCache(page)))
-		return __nfs_page_has_request(page);
-
-	return 0;
 }
 
 static struct nfs_page *nfs_page_find_request(struct page *page)
@@ -350,8 +315,7 @@ static int nfs_writepage_locked(struct page *page, struct writeback_control *wbc
 	struct nfs_pageio_descriptor pgio;
 	int err;
 
-	nfs_pageio_init_write(&pgio, page_file_mapping(page)->host,
-			wb_priority(wbc));
+	nfs_pageio_init_write(&pgio, page_file_mapping(page)->host, wb_priority(wbc));
 	err = nfs_do_writepage(page, wbc, &pgio);
 	nfs_pageio_complete(&pgio);
 	if (err < 0)
@@ -368,28 +332,6 @@ int nfs_writepage(struct page *page, struct writeback_control *wbc)
 	ret = nfs_writepage_locked(page, wbc);
 	unlock_page(page);
 	return ret;
-}
-
-static int nfs_writepage_setup(struct nfs_open_context *ctx, struct page *page,
-		unsigned int offset, unsigned int count);
-
-int nfs_swap_writepage(struct file *file, struct page *page,
-		 struct writeback_control *wbc)
-{
-	struct nfs_open_context *ctx = nfs_file_open_context(file);
-	int status;
-
-	status = nfs_writepage_setup(ctx, page, 0, nfs_page_length(page));
-	if (status < 0) {
-		nfs_set_pageerror(page);
-		goto out;
-	}
-
-	status = nfs_writepage_locked(page, wbc);
-
-out:
-	unlock_page(page);
-	return status;
 }
 
 static int nfs_writepages_callback(struct page *page, struct writeback_control *wbc, void *data)
@@ -520,8 +462,7 @@ nfs_mark_request_commit(struct nfs_page *req, struct pnfs_layout_segment *lseg)
 	spin_unlock(&inode->i_lock);
 	pnfs_mark_request_commit(req, lseg);
 	inc_zone_page_state(req->wb_page, NR_UNSTABLE_NFS);
-	inc_bdi_stat(page_file_mapping(req->wb_page)->backing_dev_info,
-			BDI_RECLAIMABLE);
+	inc_bdi_stat(page_file_mapping(req->wb_page)->backing_dev_info, BDI_RECLAIMABLE);
 	__mark_inode_dirty(inode, I_DIRTY_DATASYNC);
 }
 
@@ -532,8 +473,7 @@ nfs_clear_request_commit(struct nfs_page *req)
 
 	if (test_and_clear_bit(PG_CLEAN, &(req)->wb_flags)) {
 		dec_zone_page_state(page, NR_UNSTABLE_NFS);
-		dec_bdi_stat(page_file_mapping(page)->backing_dev_info,
-				BDI_RECLAIMABLE);
+		dec_bdi_stat(page_file_mapping(page)->backing_dev_info, BDI_RECLAIMABLE);
 		return 1;
 	}
 	return 0;
@@ -599,7 +539,7 @@ nfs_need_commit(struct nfs_inode *nfsi)
  * nfs_scan_commit - Scan an inode for commit requests
  * @inode: NFS inode to scan
  * @dst: destination list
- * @idx_start: lower bound of page_file_index(page) to scan.
+ * @idx_start: lower bound of page->index to scan.
  * @npages: idx_start + npages sets the upper bound to scan.
  *
  * Moves requests from the inode's 'commit' request list.
@@ -755,16 +695,7 @@ static int nfs_writepage_setup(struct nfs_open_context *ctx, struct page *page,
 	/* Update file length */
 	nfs_grow_file(page, offset, count);
 	nfs_mark_uptodate(page, req->wb_pgbase, req->wb_bytes);
-
-	/*
-	 * There is no need to mark swapfile requests as dirty like normal
-	 * writepage requests as page dirtying and cleaning is managed
-	 * from the mm. If a PageSwapCache page is marked dirty like this,
-	 * it will still be dirty after kswapd calls writepage and may
-	 * never be released
-	 */
-	if (!PageSwapCache(page))
-		nfs_mark_request_dirty(req);
+	nfs_mark_request_dirty(req);
 	nfs_clear_page_tag_locked(req);
 	return 0;
 }

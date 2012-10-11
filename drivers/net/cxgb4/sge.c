@@ -497,7 +497,7 @@ static unsigned int refill_fl(struct adapter *adap, struct sge_fl *q, int n,
 	 * Prefer large buffers
 	 */
 	while (n) {
-		pg = alloc_pages(gfp | __GFP_COMP, FL_PG_ORDER);
+		pg = __netdev_alloc_pages(NULL, gfp | __GFP_COMP, NULL, FL_PG_ORDER);
 		if (unlikely(!pg)) {
 			q->large_alloc_failed++;
 			break;       /* fall back to single pages */

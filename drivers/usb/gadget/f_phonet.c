@@ -311,7 +311,7 @@ pn_rx_submit(struct f_phonet *fp, struct usb_request *req, gfp_t gfp_flags)
 	struct page *page;
 	int err;
 
-	page = __netdev_alloc_page(dev, gfp_flags | __GFP_NOMEMALLOC, NULL);
+	page = __netdev_alloc_page(dev, NULL, gfp_flags);
 	if (!page)
 		return -ENOMEM;
 

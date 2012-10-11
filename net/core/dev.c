@@ -3139,7 +3139,7 @@ static int __netif_receive_skb(struct sk_buff *skb)
 	 * Use PF_MEMALLOC as this saves us from propagating the allocation
 	 * context down to all allocation sites.
 	 */
-	if (skb_pfmemalloc(skb))
+	if (sk_memalloc_socks() && skb_pfmemalloc(skb))
 		current->flags |= PF_MEMALLOC;
 
 	/* if we've gotten here through NAPI, check netpoll */
@@ -3175,7 +3175,7 @@ another_round:
 	}
 #endif
 
-	if (skb_pfmemalloc(skb))
+	if (sk_memalloc_socks() && skb_pfmemalloc(skb))
 		goto skip_taps;
 
 	list_for_each_entry_rcu(ptype, &ptype_all, list) {
@@ -3194,7 +3194,8 @@ skip_taps:
 ncls:
 #endif
 
-	if (skb_pfmemalloc(skb) && !skb_pfmemalloc_protocol(skb))
+	if (sk_memalloc_socks() && skb_pfmemalloc(skb)
+				&& !skb_pfmemalloc_protocol(skb))
 		goto drop;
 
 	rx_handler = rcu_dereference(skb->dev->rx_handler);

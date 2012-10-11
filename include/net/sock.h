@@ -588,15 +588,24 @@ static inline int sock_flag(struct sock *sk, enum sock_flags flag)
 	return test_bit(flag, &sk->sk_flags);
 }
 
+#ifdef CONFIG_NET
 extern atomic_t memalloc_socks;
 static inline int sk_memalloc_socks(void)
 {
 	return atomic_read(&memalloc_socks);
 }
+#else
 
-static inline gfp_t sk_allocation(struct sock *sk, gfp_t gfp_mask)
+static inline int sk_memalloc_socks(void)
 {
-	return gfp_mask | (sk->sk_allocation & __GFP_MEMALLOC);
+	return 0;
+}
+
+#endif
+
+static inline gfp_t sk_gfp_atomic(struct sock *sk, gfp_t gfp_mask)
+{
+	return GFP_ATOMIC | (sk->sk_allocation & __GFP_MEMALLOC);
 }
 
 static inline void sk_acceptq_removed(struct sock *sk)
@@ -674,7 +683,7 @@ extern int __sk_backlog_rcv(struct sock *sk, struct sk_buff *skb);
 
 static inline int sk_backlog_rcv(struct sock *sk, struct sk_buff *skb)
 {
-	if (skb_pfmemalloc(skb))
+	if (sk_memalloc_socks() && skb_pfmemalloc(skb))
 		return __sk_backlog_rcv(sk, skb);
 
 	return sk->sk_backlog_rcv(sk, skb);
@@ -981,12 +990,13 @@ static inline int sk_wmem_schedule(struct sock *sk, int size)
 		__sk_mem_schedule(sk, size, SK_MEM_SEND);
 }
 
-static inline int sk_rmem_schedule(struct sock *sk, struct sk_buff *skb)
+static inline int
+sk_rmem_schedule(struct sock *sk, struct sk_buff *skb, unsigned int size)
 {
 	if (!sk_has_account(sk))
 		return 1;
-	return skb->truesize <= sk->sk_forward_alloc ||
-		__sk_mem_schedule(sk, skb->truesize, SK_MEM_RECV) ||
+	return size<= sk->sk_forward_alloc ||
+		__sk_mem_schedule(sk, size, SK_MEM_RECV) ||
 		skb_pfmemalloc(skb);
 }
 
