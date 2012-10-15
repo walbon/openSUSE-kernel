@@ -416,7 +416,13 @@ static int rt_cache_seq_show(struct seq_file *seq, void *v)
 			   "HHUptod\tSpecDst");
 	else {
 		struct rtable *r = v;
-		int len;
+		struct neighbour *n;
+		int len, HHUptod;
+
+		rcu_read_lock();
+		n = dst_get_neighbour(&r->dst);
+		HHUptod = (n && (n->nud_state & NUD_CONNECTED)) ? 1 : 0;
+		rcu_read_unlock();
 
 		seq_printf(seq, "%s\t%08X\t%08X\t%8X\t%d\t%u\t%d\t"
 			      "%08X\t%d\t%u\t%u\t%02X\t%d\t%1d\t%08X%n",
@@ -431,8 +437,7 @@ static int rt_cache_seq_show(struct seq_file *seq, void *v)
 			      dst_metric(&r->dst, RTAX_RTTVAR)),
 			r->rt_key_tos,
 			r->dst.hh ? atomic_read(&r->dst.hh->hh_refcnt) : -1,
-			r->dst.hh ? (r->dst.hh->hh_output ==
-				       dev_queue_xmit) : 0,
+			HHUptod,
 			r->rt_spec_dst, &len);
 
 		seq_printf(seq, "%*s\n", 127 - len, "");
@@ -1291,10 +1296,9 @@ static u32 rt_peer_genid(void)
 
 void rt_bind_peer(struct rtable *rt, __be32 daddr, int create)
 {
-	struct net *net = dev_net(rt->dst.dev);
 	struct inet_peer *peer;
 
-	peer = inet_getpeer_v4(net, daddr, create);
+	peer = inet_getpeer_v4(daddr, create);
 
 	if (peer && cmpxchg(&rt->peer, NULL, peer) != NULL)
 		inet_putpeer(peer);
@@ -1369,23 +1373,25 @@ static int check_peer_redir(struct dst_entry *dst, struct inet_peer *peer)
 {
 	struct rtable *rt = (struct rtable *) dst;
 	__be32 orig_gw = rt->rt_gateway;
+	struct neighbour *n, *old_n;
 
 	dst_confirm(&rt->dst);
 
-	neigh_release(rt->dst.neighbour);
-	rt->dst.neighbour = NULL;
-
 	rt->rt_gateway = peer->redirect_learned.a4;
-	if (arp_bind_neighbour(&rt->dst) ||
-	    !(rt->dst.neighbour->nud_state & NUD_VALID)) {
-		if (rt->dst.neighbour)
-			neigh_event_send(rt->dst.neighbour, NULL);
+	n = __arp_bind_neighbour(&rt->dst, rt->rt_gateway);
+	if (IS_ERR(n))
+		return PTR_ERR(n);
+	old_n = xchg(&rt->dst._neighbour, n);
+	if (old_n)
+		neigh_release(old_n);
+	if (!n || !(n->nud_state & NUD_VALID)) {
+		if (n)
+			neigh_event_send(n, NULL);
 		rt->rt_gateway = orig_gw;
 		return -EAGAIN;
 	} else {
 		rt->rt_flags |= RTCF_REDIRECTED;
-		call_netevent_notifiers(NETEVENT_NEIGH_UPDATE,
-					rt->dst.neighbour);
+		call_netevent_notifiers(NETEVENT_NEIGH_UPDATE, n);
 	}
 	return 0;
 }
@@ -1659,7 +1665,7 @@ unsigned short ip_rt_frag_needed(struct net *net, const struct iphdr *iph,
 	unsigned short est_mtu = 0;
 	struct inet_peer *peer;
 
-	peer = inet_getpeer_v4(net, iph->daddr, 1);
+	peer = inet_getpeer_v4(iph->daddr, 1);
 	if (peer) {
 		unsigned short mtu = new_mtu;
 
@@ -1892,7 +1898,6 @@ static unsigned int ipv4_default_mtu(const struct dst_entry *dst)
 static void rt_init_metrics(struct rtable *rt, const struct flowi4 *fl4,
 			    struct fib_info *fi)
 {
-	struct net *net = dev_net(rt->dst.dev);
 	struct inet_peer *peer;
 	int create = 0;
 
@@ -1902,7 +1907,7 @@ static void rt_init_metrics(struct rtable *rt, const struct flowi4 *fl4,
 	if (fl4 && (fl4->flowi4_flags & FLOWI_FLAG_PRECOW_METRICS))
 		create = 1;
 
-	rt->peer = peer = inet_getpeer_v4(net, rt->rt_dst, create);
+	rt->peer = peer = inet_getpeer_v4(rt->rt_dst, create);
 	if (peer) {
 		rt->rt_peer_genid = rt_peer_genid();
 		if (inet_metrics_new(peer))

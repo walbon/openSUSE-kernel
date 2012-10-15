@@ -90,14 +90,6 @@ struct detailed_data_monitor_range {
 	u8 min_hfreq_khz;
 	u8 max_hfreq_khz;
 	u8 pixel_clock_mhz; /* need to multiply by 10 */
-#ifdef __GENKSYMS__
-	__le16 sec_gtf_toggle; /* A000=use above, 20=use below */
-	u8 hfreq_start_khz; /* need to multiply by 2 */
-	u8 c; /* need to divide by 2 */
-	__le16 m;
-	u8 k;
-	u8 j; /* need to divide by 2 */
-#else
 	u8 flags;
 	union {
 		struct {
@@ -118,7 +110,6 @@ struct detailed_data_monitor_range {
 			u8 preferred_refresh;
 		} __attribute__((packed)) cvt;
 	} formula;
-#endif
 } __attribute__((packed));
 
 struct detailed_data_wpindex {

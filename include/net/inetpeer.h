@@ -27,23 +27,12 @@ struct inetpeer_addr {
 	__u16				family;
 };
 
-#ifndef __GENKSYMS__
-struct inet_peer_base;
-#endif
-
 struct inet_peer {
 	/* group together avl_left,avl_right,v4daddr to speedup lookups */
 	struct inet_peer __rcu	*avl_left, *avl_right;
 	struct inetpeer_addr	daddr;
 	__u32			avl_height;
-#ifdef __GENKSYMS__
 	struct list_head	unused;
-#else
-	union {
-		struct list_head	unused;
-		struct inet_peer_base	*base;
-	};
-#endif
 	__u32			dtime;		/* the time of last use of not
 						 * referenced entries */
 	atomic_t		refcnt;
@@ -80,33 +69,24 @@ static inline bool inet_metrics_new(const struct inet_peer *p)
 }
 
 /* can be called with or without local BH being disabled */
-struct inet_peer *inet_getpeer_ns(struct net *net,
-				  const struct inetpeer_addr *daddr,
-				  int create);
+struct inet_peer	*inet_getpeer(struct inetpeer_addr *daddr, int create);
 
-/* not used in our code, left here to keep kABI */
-struct inet_peer *inet_getpeer(struct inetpeer_addr *daddr, int create);
-
-static inline struct inet_peer *inet_getpeer_v4(struct net *net,
-						__be32 v4daddr,
-						int create)
+static inline struct inet_peer *inet_getpeer_v4(__be32 v4daddr, int create)
 {
 	struct inetpeer_addr daddr;
 
 	daddr.addr.a4 = v4daddr;
 	daddr.family = AF_INET;
-	return inet_getpeer_ns(net, &daddr, create);
+	return inet_getpeer(&daddr, create);
 }
 
-static inline struct inet_peer *inet_getpeer_v6(struct net *net,
-						const struct in6_addr *v6daddr,
-						int create)
+static inline struct inet_peer *inet_getpeer_v6(const struct in6_addr *v6daddr, int create)
 {
 	struct inetpeer_addr daddr;
 
 	ipv6_addr_copy((struct in6_addr *)daddr.addr.a6, v6daddr);
 	daddr.family = AF_INET6;
-	return inet_getpeer_ns(net, &daddr, create);
+	return inet_getpeer(&daddr, create);
 }
 
 /* can be called from BH context or outside */

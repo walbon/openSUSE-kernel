@@ -19,6 +19,8 @@ struct sysfs_elem_dir {
 	struct kobject		*kobj;
 	/* children list starts here and goes through sd->s_sibling */
 	struct sysfs_dirent	*children;
+
+	unsigned long		subdirs;
 };
 
 struct sysfs_elem_symlink {
@@ -71,9 +73,6 @@ struct sysfs_dirent {
 	unsigned short		s_mode;
 	ino_t			s_ino;
 	struct sysfs_inode_attrs *s_iattr;
-#ifndef __GENKSYMS__
-	unsigned long		subdirs;
-#endif
 };
 
 #define SD_DEACTIVATED_BIAS		INT_MIN

@@ -149,11 +149,7 @@ struct us_data {
 	struct completion	cmnd_ready;	 /* to sleep thread on	    */
 	struct completion	notify;		 /* thread begin/end	    */
 	wait_queue_head_t	delay_wait;	 /* wait during reset	    */
-#ifdef __GENKSYMS__
-	struct completion	scanning_done;
-#else
 	struct delayed_work	scan_dwork;	 /* for async scanning      */
-#endif
 
 	/* subdriver information */
 	void			*extra;		 /* Any extra data          */

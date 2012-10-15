@@ -1904,12 +1904,3 @@ int drm_add_modes_noedid(struct drm_connector *connector,
 	return num_modes;
 }
 EXPORT_SYMBOL(drm_add_modes_noedid);
-
-/* define the old function just for kABI compatibility */
-#undef drm_mode_find_dmt
-struct drm_display_mode *drm_mode_find_dmt(struct drm_device *dev,
-					   int hsize, int vsize, int fresh)
-{
-	return __drm_mode_find_dmt(dev, hsize, vsize, fresh, false);
-}
-EXPORT_SYMBOL(drm_mode_find_dmt);

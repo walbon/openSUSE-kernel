@@ -1246,6 +1246,9 @@ struct task_struct {
 	const struct sched_class *sched_class;
 	struct sched_entity se;
 	struct sched_rt_entity rt;
+#ifdef CONFIG_CGROUP_SCHED
+	struct task_group *sched_task_group;
+#endif
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	/* list of struct preempt_notifier: */
@@ -1500,11 +1503,7 @@ struct task_struct {
 #endif
 #ifdef CONFIG_CPUSETS
 	nodemask_t mems_allowed;	/* Protected by alloc_lock */
-#ifdef __GENKSYMS__
-	int mems_allowed_change_disable;
-#else
 	seqcount_t mems_allowed_seq;	/* Seqence no to catch updates */
-#endif
 	int cpuset_mem_spread_rotor;
 	int cpuset_slab_spread_rotor;
 #endif
@@ -1593,13 +1592,7 @@ struct task_struct {
 #ifdef CONFIG_PERFMON
 	struct pfm_context *pfm_context;
 #endif
-#ifdef __GENKSYMS__
 	void *suse_kabi_padding;
-#else
-#ifdef CONFIG_CGROUP_SCHED
-	struct task_group *sched_task_group;
-#endif
-#endif
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

@@ -56,9 +56,6 @@ nf_ct_ecache_ext_add(struct nf_conn *ct, u16 ctmask, u16 expmask, gfp_t gfp)
 };
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
-
-extern struct netns_ct_exp *get_netns_ct_exp(struct net *net);
-
 /* This structure is passed to event handler */
 struct nf_ct_event {
 	struct nf_conn *ct;
@@ -70,13 +67,8 @@ struct nf_ct_event_notifier {
 	int (*fcn)(unsigned int events, struct nf_ct_event *item);
 };
 
-#ifdef __GENKSYMS__
-extern int nf_conntrack_register_notifier(struct nf_ct_event_notifier *nb);
-extern void nf_conntrack_unregister_notifier(struct nf_ct_event_notifier *nb);
-#else
 extern int nf_conntrack_register_notifier(struct net *net, struct nf_ct_event_notifier *nb);
 extern void nf_conntrack_unregister_notifier(struct net *net, struct nf_ct_event_notifier *nb);
-#endif
 
 extern void nf_ct_deliver_cached_events(struct nf_conn *ct);
 
@@ -84,10 +76,9 @@ static inline void
 nf_conntrack_event_cache(enum ip_conntrack_events event, struct nf_conn *ct)
 {
 	struct net *net = nf_ct_net(ct);
-	struct netns_ct_exp *net_ct = get_netns_ct_exp(net);
 	struct nf_conntrack_ecache *e;
 
-	if (net_ct->nf_conntrack_event_cb == NULL)
+	if (net->ct.nf_conntrack_event_cb == NULL)
 		return;
 
 	e = nf_ct_ecache_find(ct);
@@ -105,12 +96,11 @@ nf_conntrack_eventmask_report(unsigned int eventmask,
 {
 	int ret = 0;
 	struct net *net = nf_ct_net(ct);
-	struct netns_ct_exp *net_ct = get_netns_ct_exp(net);
 	struct nf_ct_event_notifier *notify;
 	struct nf_conntrack_ecache *e;
 
 	rcu_read_lock();
-	notify = rcu_dereference(net_ct->nf_conntrack_event_cb);
+	notify = rcu_dereference(net->ct.nf_conntrack_event_cb);
 	if (notify == NULL)
 		goto out_unlock;
 
@@ -175,13 +165,8 @@ struct nf_exp_event_notifier {
 	int (*fcn)(unsigned int events, struct nf_exp_event *item);
 };
 
-#ifdef __GENKSYMS__
-extern int nf_ct_expect_register_notifier(struct nf_exp_event_notifier *nb);
-extern void nf_ct_expect_unregister_notifier(struct nf_exp_event_notifier *nb);
-#else
 extern int nf_ct_expect_register_notifier(struct net *net, struct nf_exp_event_notifier *nb);
 extern void nf_ct_expect_unregister_notifier(struct net *net, struct nf_exp_event_notifier *nb);
-#endif
 
 static inline void
 nf_ct_expect_event_report(enum ip_conntrack_expect_events event,
@@ -190,12 +175,11 @@ nf_ct_expect_event_report(enum ip_conntrack_expect_events event,
 			  int report)
 {
 	struct net *net = nf_ct_exp_net(exp);
-	struct netns_ct_exp *net_ct = get_netns_ct_exp(net);
 	struct nf_exp_event_notifier *notify;
 	struct nf_conntrack_ecache *e;
 
 	rcu_read_lock();
-	notify = rcu_dereference(net_ct->nf_expect_event_cb);
+	notify = rcu_dereference(net->ct.nf_expect_event_cb);
 	if (notify == NULL)
 		goto out_unlock;
 
