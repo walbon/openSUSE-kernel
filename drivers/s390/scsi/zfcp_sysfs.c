@@ -253,7 +253,7 @@ static ssize_t zfcp_sysfs_port_remove_store(struct device *dev,
 
 	mutex_lock(&zfcp_sysfs_port_units_mutex);
 	if (atomic_read(&port->units) > 0) {
-		retval = -ENXIO;
+		retval = -EBUSY;
 		mutex_unlock(&zfcp_sysfs_port_units_mutex);
 		goto out;
 	}
@@ -301,12 +301,14 @@ static ssize_t zfcp_sysfs_unit_add_store(struct device *dev,
 {
 	struct zfcp_port *port = container_of(dev, struct zfcp_port, dev);
 	u64 fcp_lun;
+	int retval;
 
 	if (strict_strtoull(buf, 0, (unsigned long long *) &fcp_lun))
 		return -EINVAL;
 
-	if (zfcp_unit_add(port, fcp_lun))
-		return -EINVAL;
+	retval = zfcp_unit_add(port, fcp_lun);
+	if (retval)
+		return retval;
 
 	return count;
 }
