@@ -603,13 +603,15 @@ int btrfs_write_marked_extents(struct btrfs_root *root,
 	int err = 0;
 	int werr = 0;
 	struct address_space *mapping = root->fs_info->btree_inode->i_mapping;
+	struct extent_state *cached_state = NULL;
 	u64 start = 0;
 	u64 end;
 
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
-				      mark)) {
-		convert_extent_bit(dirty_pages, start, end, EXTENT_NEED_WAIT, mark,
-				   GFP_NOFS);
+				      mark, &cached_state)) {
+		convert_extent_bit(dirty_pages, start, end, EXTENT_NEED_WAIT,
+				   mark, &cached_state, GFP_NOFS);
+		cached_state = NULL;
 		err = filemap_fdatawrite_range(mapping, start, end);
 		if (err)
 			werr = err;
@@ -633,12 +635,14 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
 	int err = 0;
 	int werr = 0;
 	struct address_space *mapping = root->fs_info->btree_inode->i_mapping;
+	struct extent_state *cached_state = NULL;
 	u64 start = 0;
 	u64 end;
 
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
-				      EXTENT_NEED_WAIT)) {
-		clear_extent_bits(dirty_pages, start, end, EXTENT_NEED_WAIT, GFP_NOFS);
+				      EXTENT_NEED_WAIT, &cached_state)) {
+		clear_extent_bit(dirty_pages, start, end, EXTENT_NEED_WAIT,
+				 0, 0, &cached_state, GFP_NOFS);
 		err = filemap_fdatawait_range(mapping, start, end);
 		if (err)
 			werr = err;
@@ -1054,6 +1058,11 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
  	ret = btrfs_reloc_post_snapshot(trans, pending);
  	if (ret)
 		btrfs_abort_transaction(trans, root, ret);
+
+	ret = btrfs_run_delayed_refs(trans, root, (unsigned long)-1);
+	if (ret) {
+		btrfs_abort_transaction(trans, root, ret);
+	}
 fail:
 	dput(parent);
 	trans->block_rsv = rsv;
@@ -1329,7 +1338,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 
 		if (flush_on_commit || snap_pending) {
 			btrfs_start_delalloc_inodes(root, 1);
-			btrfs_wait_ordered_extents(root, 0, 1);
+			btrfs_wait_ordered_extents(root, 1);
 		}
 
 		ret = btrfs_run_delayed_items(trans, root);

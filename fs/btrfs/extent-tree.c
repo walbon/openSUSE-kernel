@@ -92,8 +92,8 @@ static int alloc_reserved_tree_block(struct btrfs_trans_handle *trans,
 				     u64 flags, struct btrfs_disk_key *key,
 				     int level, struct btrfs_key *ins);
 static int do_chunk_alloc(struct btrfs_trans_handle *trans,
-			  struct btrfs_root *extent_root, u64 alloc_bytes,
-			  u64 flags, int force);
+			  struct btrfs_root *extent_root, u64 flags,
+			  int force);
 static int find_next_key(struct btrfs_path *path, int level,
 			 struct btrfs_key *key);
 static void dump_space_info(struct btrfs_space_info *info, u64 bytes,
@@ -310,7 +310,8 @@ static u64 add_new_free_space(struct btrfs_block_group_cache *block_group,
 	while (start < end) {
 		ret = find_first_extent_bit(info->pinned_extents, start,
 					    &extent_start, &extent_end,
-					    EXTENT_DIRTY | EXTENT_UPTODATE);
+					    EXTENT_DIRTY | EXTENT_UPTODATE,
+					    NULL);
 		if (ret)
 			break;
 
@@ -2356,7 +2357,6 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 
 next:
 		do_chunk_alloc(trans, root->fs_info->extent_root,
-			       2 * 1024 * 1024,
 			       btrfs_get_alloc_profile(root, 0),
 			       CHUNK_ALLOC_NO_FORCE);
 		cond_resched();
@@ -2414,7 +2414,7 @@ int btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
 		root = root->fs_info->tree_root;
 
 	do_chunk_alloc(trans, root->fs_info->extent_root,
-		       2 * 1024 * 1024, btrfs_get_alloc_profile(root, 0),
+		       btrfs_get_alloc_profile(root, 0),
 		       CHUNK_ALLOC_NO_FORCE);
 
 	delayed_refs = &trans->transaction->delayed_refs;
@@ -3337,7 +3337,6 @@ alloc:
 				return PTR_ERR(trans);
 
 			ret = do_chunk_alloc(trans, root->fs_info->extent_root,
-					     bytes + 2 * 1024 * 1024,
 					     alloc_target,
 					     CHUNK_ALLOC_NO_FORCE);
 			btrfs_end_transaction(trans, root);
@@ -3420,8 +3419,7 @@ static void force_metadata_allocation(struct btrfs_fs_info *info)
 }
 
 static int should_alloc_chunk(struct btrfs_root *root,
-			      struct btrfs_space_info *sinfo, u64 alloc_bytes,
-			      int force)
+			      struct btrfs_space_info *sinfo, int force)
 {
 	struct btrfs_block_rsv *global_rsv = &root->fs_info->global_block_rsv;
 	u64 num_bytes = sinfo->total_bytes - sinfo->bytes_readonly;
@@ -3436,7 +3434,8 @@ static int should_alloc_chunk(struct btrfs_root *root,
 	 * and purposes it's used space.  Don't worry about locking the
 	 * global_rsv, it doesn't change except when the transaction commits.
 	 */
-	num_allocated += global_rsv->size;
+	if (sinfo->flags & BTRFS_BLOCK_GROUP_METADATA)
+		num_allocated += global_rsv->size;
 
 	/*
 	 * in limited mode, we want to have some free space up to
@@ -3450,15 +3449,8 @@ static int should_alloc_chunk(struct btrfs_root *root,
 		if (num_bytes - num_allocated < thresh)
 			return 1;
 	}
-	thresh = btrfs_super_total_bytes(root->fs_info->super_copy);
 
-	/* 256MB or 2% of the FS */
-	thresh = max_t(u64, 256 * 1024 * 1024, div_factor_fine(thresh, 2));
-	/* system chunks need a much small threshold */
-	if (sinfo->flags & BTRFS_BLOCK_GROUP_SYSTEM)
-		thresh = 32 * 1024 * 1024;
-
-	if (num_bytes > thresh && sinfo->bytes_used < div_factor(num_bytes, 8))
+	if (num_allocated + 2 * 1024 * 1024 < div_factor(num_bytes, 8))
 		return 0;
 	return 1;
 }
@@ -3508,8 +3500,7 @@ static void check_system_chunk(struct btrfs_trans_handle *trans,
 }
 
 static int do_chunk_alloc(struct btrfs_trans_handle *trans,
-			  struct btrfs_root *extent_root, u64 alloc_bytes,
-			  u64 flags, int force)
+			  struct btrfs_root *extent_root, u64 flags, int force)
 {
 	struct btrfs_space_info *space_info;
 	struct btrfs_fs_info *fs_info = extent_root->fs_info;
@@ -3533,7 +3524,7 @@ again:
 		return 0;
 	}
 
-	if (!should_alloc_chunk(extent_root, space_info, alloc_bytes, force)) {
+	if (!should_alloc_chunk(extent_root, space_info, force)) {
 		spin_unlock(&space_info->lock);
 		return 0;
 	} else if (space_info->chunk_alloc) {
@@ -3618,7 +3609,7 @@ void btrfs_writeback_inodes_sb_nr(struct btrfs_root *root,
 		 * the disk).
 		 */
 		btrfs_start_delalloc_inodes(root, 0);
-		btrfs_wait_ordered_extents(root, 0, 0);
+		btrfs_wait_ordered_extents(root, 0);
 	}
 }
 
@@ -3654,7 +3645,7 @@ static int shrink_delalloc(struct btrfs_root *root, u64 to_reclaim,
 	if (root->fs_info->delalloc_bytes == 0) {
 		if (trans)
 			return 0;
-		btrfs_wait_ordered_extents(root, 0, 0);
+		btrfs_wait_ordered_extents(root, 0);
 		return 0;
 	}
 
@@ -3669,6 +3660,13 @@ static int shrink_delalloc(struct btrfs_root *root, u64 to_reclaim,
 		nr_pages = min_t(unsigned long, nr_pages,
 		       root->fs_info->delalloc_bytes >> PAGE_CACHE_SHIFT);
 		btrfs_writeback_inodes_sb_nr(root, nr_pages);
+
+		/*
+		 * We need to wait for the async pages to actually start before
+		 * we do anything.
+		 */
+		wait_event(root->fs_info->async_submit_wait,
+				!atomic_read(&root->fs_info->async_delalloc_pages));
 
 		spin_lock(&space_info->lock);
 		if (reserved > space_info->bytes_may_use)
@@ -3685,7 +3683,7 @@ static int shrink_delalloc(struct btrfs_root *root, u64 to_reclaim,
 			return -EAGAIN;
 
 		if (wait_ordered && !trans) {
-			btrfs_wait_ordered_extents(root, 0, 0);
+			btrfs_wait_ordered_extents(root, 0);
 		} else {
 			time_left = schedule_timeout_interruptible(1);
 
@@ -3815,8 +3813,10 @@ again:
 		ret = wait_event_killable(space_info->wait, !space_info->flush);
 		/* Must have been interrupted, return */
 		if (ret) {
-			printk(KERN_DEBUG "btrfs: %s returning -EINTR\n",
-					__func__);
+			if (btrfs_test_opt(root, ENOSPC_DEBUG)) {
+				printk(KERN_DEBUG "btrfs: %s returning -EINTR\n",
+						__func__);
+			}
 			return -EINTR;
 		}
 
@@ -4961,7 +4961,7 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans,
 
 	while (1) {
 		ret = find_first_extent_bit(unpin, 0, &start, &end,
-					    EXTENT_DIRTY);
+					    EXTENT_DIRTY, NULL);
 		if (ret)
 			break;
 
@@ -5879,8 +5879,7 @@ loop:
 
 		if (loop == LOOP_ALLOC_CHUNK) {
 		       if (allowed_chunk_alloc) {
-				ret = do_chunk_alloc(trans, root, num_bytes +
-						     2 * 1024 * 1024, data,
+				ret = do_chunk_alloc(trans, root, data,
 						     CHUNK_ALLOC_LIMITED);
 				if (ret < 0) {
 					btrfs_abort_transaction(trans,
@@ -5982,8 +5981,7 @@ again:
 	 */
 	if (empty_size || root->ref_cows) {
 		ret = do_chunk_alloc(trans, root->fs_info->extent_root,
-				     num_bytes + 2 * 1024 * 1024, data,
-				     CHUNK_ALLOC_NO_FORCE);
+				     data, CHUNK_ALLOC_NO_FORCE);
 		if (ret < 0 && ret != -ENOSPC) {
 			btrfs_abort_transaction(trans, root, ret);
 			return ret;
@@ -6000,7 +5998,7 @@ again:
 			num_bytes = num_bytes & ~(root->sectorsize - 1);
 			num_bytes = max(num_bytes, min_alloc_size);
 			ret = do_chunk_alloc(trans, root->fs_info->extent_root,
-				       num_bytes, data, CHUNK_ALLOC_FORCE);
+				       data, CHUNK_ALLOC_FORCE);
 			if (ret < 0 && ret != -ENOSPC) {
 				btrfs_abort_transaction(trans, root, ret);
 				return ret;
@@ -6346,11 +6344,13 @@ use_block_rsv(struct btrfs_trans_handle *trans,
 	if (!ret)
 		return block_rsv;
 	if (ret) {
-		static DEFINE_RATELIMIT_STATE(_rs,
-				DEFAULT_RATELIMIT_INTERVAL * 10,
-				/*DEFAULT_RATELIMIT_BURST*/ 1);
-		if (__ratelimit(&_rs)) {
-			WARN(1, KERN_DEBUG "btrfs: block rsv returned %d\n", ret);
+		if (btrfs_test_opt(root, ENOSPC_DEBUG)) {
+			static DEFINE_RATELIMIT_STATE(_rs,
+					DEFAULT_RATELIMIT_INTERVAL * 10,
+					/*DEFAULT_RATELIMIT_BURST*/ 1);
+			if (__ratelimit(&_rs)) {
+				WARN(1, KERN_DEBUG "btrfs: block rsv returned %d\n", ret);
+			}
 		}
 		ret = reserve_metadata_bytes(root, block_rsv, blocksize, 0);
 		if (!ret) {
@@ -7309,7 +7309,7 @@ int btrfs_set_block_group_ro(struct btrfs_root *root,
 
 	alloc_flags = update_block_group_flags(root, cache->flags);
 	if (alloc_flags != cache->flags) {
-		ret = do_chunk_alloc(trans, root, 2 * 1024 * 1024, alloc_flags,
+		ret = do_chunk_alloc(trans, root, alloc_flags,
 				     CHUNK_ALLOC_FORCE);
 		if (ret < 0)
 			goto out;
@@ -7319,7 +7319,7 @@ int btrfs_set_block_group_ro(struct btrfs_root *root,
 	if (!ret)
 		goto out;
 	alloc_flags = get_alloc_profile(root, cache->space_info->flags);
-	ret = do_chunk_alloc(trans, root, 2 * 1024 * 1024, alloc_flags,
+	ret = do_chunk_alloc(trans, root, alloc_flags,
 			     CHUNK_ALLOC_FORCE);
 	if (ret < 0)
 		goto out;
@@ -7333,7 +7333,7 @@ int btrfs_force_chunk_alloc(struct btrfs_trans_handle *trans,
 			    struct btrfs_root *root, u64 type)
 {
 	u64 alloc_flags = get_alloc_profile(root, type);
-	return do_chunk_alloc(trans, root, 2 * 1024 * 1024, alloc_flags,
+	return do_chunk_alloc(trans, root, alloc_flags,
 			      CHUNK_ALLOC_FORCE);
 }
 
@@ -7664,11 +7664,13 @@ int btrfs_free_block_groups(struct btrfs_fs_info *info)
 		space_info = list_entry(info->space_info.next,
 					struct btrfs_space_info,
 					list);
-		if (space_info->bytes_pinned > 0 ||
-		    space_info->bytes_reserved > 0 ||
-		    space_info->bytes_may_use > 0) {
-			WARN_ON(1);
-			dump_space_info(space_info, 0, 0);
+		if (btrfs_test_opt(info->tree_root, ENOSPC_DEBUG)) {
+			if (space_info->bytes_pinned > 0 ||
+			    space_info->bytes_reserved > 0 ||
+			    space_info->bytes_may_use > 0) {
+				WARN_ON(1);
+				dump_space_info(space_info, 0, 0);
+			}
 		}
 		list_del(&space_info->list);
 		kfree(space_info);

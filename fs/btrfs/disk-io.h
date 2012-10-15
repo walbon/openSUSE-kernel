@@ -91,6 +91,9 @@ void btrfs_cleanup_one_transaction(struct btrfs_transaction *trans,
 				  struct btrfs_root *root);
 void btrfs_abort_devices(struct btrfs_root *root);
 
+int btrfs_calc_num_tolerated_disk_barrier_failures(
+		struct btrfs_fs_info *fs_info);
+
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 void btrfs_init_lockdep(void);
 void btrfs_set_buffer_lockdep_class(u64 objectid,
