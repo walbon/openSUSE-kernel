@@ -124,7 +124,7 @@ int zfcp_unit_add(struct zfcp_port *port, u64 fcp_lun)
 	mutex_lock(&zfcp_sysfs_port_units_mutex);
 	if (atomic_read(&port->units) == -1) {
 		/* port is already gone */
-		retval = -EBUSY;
+		retval = -ENODEV;
 		goto out;
 	}
 
