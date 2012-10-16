@@ -81,6 +81,7 @@ static int max_sg_segs;
 static int try_direct_io = TRY_DIRECT_IO;
 static int try_rdio = 1;
 static int try_wdio = 1;
+static int st_nowait_eof = 0;
 
 static struct class st_sysfs_class;
 static struct device_attribute st_dev_attrs[];
@@ -101,6 +102,8 @@ module_param_named(max_sg_segs, max_sg_segs, int, 0);
 MODULE_PARM_DESC(max_sg_segs, "Maximum number of scatter/gather segments to use (256)");
 module_param_named(try_direct_io, try_direct_io, int, 0);
 MODULE_PARM_DESC(try_direct_io, "Try direct I/O between user buffer and tape drive (1)");
+module_param_named(st_nowait_eof, st_nowait_eof, int, 0);
+MODULE_PARM_DESC(st_nowait_eof, "Do not wait when writing EOF (filemark) (0)");
 
 /* Extra parameters for testing */
 module_param_named(try_rdio, try_rdio, int, 0);
@@ -4131,7 +4134,7 @@ static int st_probe(struct device *dev)
 	tpnt->scsi2_logical = ST_SCSI2LOGICAL;
 	tpnt->sili = ST_SILI;
 	tpnt->immediate = ST_NOWAIT;
-	tpnt->immediate_filemark = 0;
+	tpnt->immediate_filemark = st_nowait_eof;
 	tpnt->default_drvbuffer = 0xff;		/* No forced buffering */
 	tpnt->partition = 0;
 	tpnt->new_partition = 0;
