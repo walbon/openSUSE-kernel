@@ -2546,7 +2546,7 @@ retry_root_backup:
 	}
 
 	if (sb->s_flags & MS_RDONLY)
-		return 0;
+		return tree_root;
 
 	down_read(&fs_info->cleanup_work_sem);
 	if ((ret = btrfs_orphan_cleanup(fs_info->fs_root)) ||
