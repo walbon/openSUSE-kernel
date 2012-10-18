@@ -438,21 +438,10 @@ static struct usb_driver ath3k_driver = {
 	.probe		= ath3k_probe,
 	.disconnect	= ath3k_disconnect,
 	.id_table	= ath3k_table,
+	.disable_hub_initiated_lpm = 1,
 };
 
-static int __init ath3k_init(void)
-{
-	BT_INFO("Atheros AR30xx firmware driver ver %s", VERSION);
-	return usb_register(&ath3k_driver);
-}
-
-static void __exit ath3k_exit(void)
-{
-	usb_deregister(&ath3k_driver);
-}
-
-module_init(ath3k_init);
-module_exit(ath3k_exit);
+module_usb_driver(ath3k_driver);
 
 MODULE_AUTHOR("Atheros Communications");
 MODULE_DESCRIPTION("Atheros AR30xx firmware driver");

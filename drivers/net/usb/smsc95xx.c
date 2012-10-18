@@ -1295,19 +1295,10 @@ static struct usb_driver smsc95xx_driver = {
 	.suspend	= usbnet_suspend,
 	.resume		= usbnet_resume,
 	.disconnect	= usbnet_disconnect,
+	.disable_hub_initiated_lpm = 1,
 };
 
-static int __init smsc95xx_init(void)
-{
-	return usb_register(&smsc95xx_driver);
-}
-module_init(smsc95xx_init);
-
-static void __exit smsc95xx_exit(void)
-{
-	usb_deregister(&smsc95xx_driver);
-}
-module_exit(smsc95xx_exit);
+module_usb_driver(smsc95xx_driver);
 
 MODULE_AUTHOR("Nancy Lin");
 MODULE_AUTHOR("Steve Glendinning <steve.glendinning@smsc.com>");

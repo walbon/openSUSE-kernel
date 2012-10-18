@@ -1080,17 +1080,7 @@ static struct usb_driver p54u_driver = {
 	.reset_resume = p54u_resume,
 #endif /* CONFIG_PM */
 	.soft_unbind = 1,
+	.disable_hub_initiated_lpm = 1,
 };
 
-static int __init p54u_init(void)
-{
-	return usb_register(&p54u_driver);
-}
-
-static void __exit p54u_exit(void)
-{
-	usb_deregister(&p54u_driver);
-}
-
-module_init(p54u_init);
-module_exit(p54u_exit);
+module_usb_driver(p54u_driver);

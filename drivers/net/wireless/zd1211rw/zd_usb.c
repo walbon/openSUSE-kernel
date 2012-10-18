@@ -1495,6 +1495,7 @@ static struct usb_driver driver = {
 	.disconnect	= disconnect,
 	.pre_reset	= pre_reset,
 	.post_reset	= post_reset,
+	.disable_hub_initiated_lpm = 1,
 };
 
 struct workqueue_struct *zd_workqueue;

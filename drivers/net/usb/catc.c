@@ -947,21 +947,7 @@ static struct usb_driver catc_driver = {
 	.probe =	catc_probe,
 	.disconnect =	catc_disconnect,
 	.id_table =	catc_id_table,
+	.disable_hub_initiated_lpm = 1,
 };
 
-static int __init catc_init(void)
-{
-	int result = usb_register(&catc_driver);
-	if (result == 0)
-		printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
-		       DRIVER_DESC "\n");
-	return result;
-}
-
-static void __exit catc_exit(void)
-{
-	usb_deregister(&catc_driver);
-}
-
-module_init(catc_init);
-module_exit(catc_exit);
+module_usb_driver(catc_driver);

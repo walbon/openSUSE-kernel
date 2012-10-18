@@ -347,6 +347,15 @@ struct hc_driver {
 		 */
 	int	(*update_device)(struct usb_hcd *, struct usb_device *);
 	int	(*set_usb2_hw_lpm)(struct usb_hcd *, struct usb_device *, int);
+	/* USB 3.0 Link Power Management */
+		/* Returns the USB3 hub-encoded value for the U1/U2 timeout. */
+	int     (*enable_usb3_lpm_timeout)(struct usb_hcd *,
+			struct usb_device *, enum usb3_link_state state);
+	/* The xHCI host controller can still fail the command to
+	* disable the LPM timeouts, so this can return an error code.
+	*/
+	int     (*disable_usb3_lpm_timeout)(struct usb_hcd *,
+		struct usb_device *, enum usb3_link_state state);
 
 	/* To by used for SLE security fixes if we run into a KABI problem */
 	void *suse_kabi_padding;

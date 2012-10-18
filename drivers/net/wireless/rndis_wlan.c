@@ -3754,19 +3754,10 @@ static struct usb_driver rndis_wlan_driver = {
 	.disconnect =	usbnet_disconnect,
 	.suspend =	usbnet_suspend,
 	.resume =	usbnet_resume,
+	.disable_hub_initiated_lpm = 1,
 };
 
-static int __init rndis_wlan_init(void)
-{
-	return usb_register(&rndis_wlan_driver);
-}
-module_init(rndis_wlan_init);
-
-static void __exit rndis_wlan_exit(void)
-{
-	usb_deregister(&rndis_wlan_driver);
-}
-module_exit(rndis_wlan_exit);
+module_usb_driver(rndis_wlan_driver);
 
 MODULE_AUTHOR("Bjorge Dijkstra");
 MODULE_AUTHOR("Jussi Kivilinna");

@@ -519,22 +519,10 @@ static struct usb_driver bpa10x_driver = {
 	.probe		= bpa10x_probe,
 	.disconnect	= bpa10x_disconnect,
 	.id_table	= bpa10x_table,
+	.disable_hub_initiated_lpm = 1,
 };
 
-static int __init bpa10x_init(void)
-{
-	BT_INFO("Digianswer Bluetooth USB driver ver %s", VERSION);
-
-	return usb_register(&bpa10x_driver);
-}
-
-static void __exit bpa10x_exit(void)
-{
-	usb_deregister(&bpa10x_driver);
-}
-
-module_init(bpa10x_init);
-module_exit(bpa10x_exit);
+module_usb_driver(bpa10x_driver);
 
 MODULE_AUTHOR("Marcel Holtmann <marcel@holtmann.org>");
 MODULE_DESCRIPTION("Digianswer Bluetooth USB driver ver " VERSION);

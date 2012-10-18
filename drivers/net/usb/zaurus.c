@@ -372,19 +372,10 @@ static struct usb_driver zaurus_driver = {
 	.disconnect =	usbnet_disconnect,
 	.suspend =	usbnet_suspend,
 	.resume =	usbnet_resume,
+	.disable_hub_initiated_lpm = 1,
 };
 
-static int __init zaurus_init(void)
-{
-	return usb_register(&zaurus_driver);
-}
-module_init(zaurus_init);
-
-static void __exit zaurus_exit(void)
-{
-	usb_deregister(&zaurus_driver);
-}
-module_exit(zaurus_exit);
+module_usb_driver(zaurus_driver);
 
 MODULE_AUTHOR("Pavel Machek, David Brownell");
 MODULE_DESCRIPTION("Sharp Zaurus PDA, and compatible products");
