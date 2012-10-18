@@ -46,9 +46,7 @@
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/rcupdate.h>
-#ifndef __GENKSYMS__
 #include <linux/interrupt.h>
-#endif
 
 #define PFX "IPMI message handler: "
 
@@ -367,6 +365,8 @@ struct ipmi_smi {
 	 */
 	spinlock_t       waiting_msgs_lock;
 	struct list_head waiting_msgs;
+	atomic_t	 watchdog_pretimeouts_to_deliver;
+	struct tasklet_struct recv_tasklet;
 
 	/*
 	 * The list of command receivers that are registered for commands
@@ -429,11 +429,6 @@ struct ipmi_smi {
 	 * parameters passed by "low" level IPMI code.
 	 */
 	int run_to_completion;
-
-#ifndef __GENKSYMS__
-	atomic_t	 watchdog_pretimeouts_to_deliver;
-	struct tasklet_struct recv_tasklet;
-#endif
 };
 #define to_si_intf_from_dev(device) container_of(device, struct ipmi_smi, dev)
 
