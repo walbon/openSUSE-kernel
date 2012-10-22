@@ -13965,8 +13965,9 @@ static int __devinit tg3_get_invariants(struct tg3 *tp)
 		}
 	}
 
-	if (tg3_flag(tp, 5755_PLUS))
-		tg3_flag_set(tp, SHORT_DMA_BUG);
+	if (tg3_flag(tp, 5755_PLUS) ||
+		GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5906)
+			tg3_flag_set(tp, SHORT_DMA_BUG);
 
 	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5719)
 		tg3_flag_set(tp, 4K_FIFO_LIMIT);
