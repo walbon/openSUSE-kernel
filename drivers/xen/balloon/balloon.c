@@ -36,10 +36,9 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/errno.h>
+#include <linux/list.h>
 #include <linux/mm.h>
 #include <linux/swap.h>
-#include <linux/mman.h>
-#include <linux/pagemap.h>
 #include <linux/bootmem.h>
 #include <linux/highmem.h>
 #include <linux/slab.h>
@@ -54,8 +53,6 @@
 #include <asm/pgtable.h>
 #include <asm/uaccess.h>
 #include <asm/tlb.h>
-#include <linux/highmem.h>
-#include <linux/list.h>
 #include <xen/xenbus.h>
 #include "common.h"
 
@@ -280,9 +277,7 @@ static int increase_reservation(unsigned long nr_pages)
 	long           rc;
 	int            need_zonelists_rebuild = 0;
 	struct xen_memory_reservation reservation = {
-		.address_bits = 0,
-		.extent_order = 0,
-		.domid        = DOMID_SELF
+		.domid = DOMID_SELF
 	};
 
 	if (nr_pages > ARRAY_SIZE(frame_list))
@@ -358,9 +353,7 @@ static int decrease_reservation(unsigned long nr_pages)
 	int            need_sleep = 0;
 	int ret;
 	struct xen_memory_reservation reservation = {
-		.address_bits = 0,
-		.extent_order = 0,
-		.domid        = DOMID_SELF
+		.domid = DOMID_SELF
 	};
 
 	if (nr_pages > ARRAY_SIZE(frame_list))

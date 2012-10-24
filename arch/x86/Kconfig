@@ -313,8 +313,6 @@ config X86_XEN
 	depends on X86_32
 	select XEN
 	select X86_PAE
-	select X86_UP_APIC if !SMP && XEN_PRIVILEGED_GUEST
-	select X86_UP_IOAPIC if !SMP && XEN_PRIVILEGED_GUEST
 	help
 	  Choose this option if you plan to run this kernel on top of the
 	  Xen Hypervisor.

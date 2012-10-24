@@ -41,6 +41,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/err.h>
+#include <linux/version.h>
 #include <xen/interface/xen.h>
 #include <xen/interface/grant_table.h>
 #include <xen/interface/io/xenbus.h>
@@ -98,7 +99,6 @@ struct xenbus_device_id
 
 /* A xenbus driver. */
 struct xenbus_driver {
-	const char *name;
 	const struct xenbus_device_id *ids;
 	int (*probe)(struct xenbus_device *dev,
 		     const struct xenbus_device_id *id);
@@ -116,30 +116,27 @@ struct xenbus_driver {
 	int (*is_ready)(struct xenbus_device *dev);
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,10)
+# define XENBUS_DRIVER_SET_OWNER(mod) .driver.owner = mod,
+#else
+# define XENBUS_DRIVER_SET_OWNER(mod)
+#endif
+
+#define DEFINE_XENBUS_DRIVER(var, drvname, methods...)		\
+struct xenbus_driver var ## _driver = {				\
+	.driver.name = drvname + 0 ?: var ## _ids->devicetype,	\
+	.driver.mod_name = KBUILD_MODNAME,			\
+	XENBUS_DRIVER_SET_OWNER(THIS_MODULE)			\
+	.ids = var ## _ids, ## methods				\
+}
+
 static inline struct xenbus_driver *to_xenbus_driver(struct device_driver *drv)
 {
 	return container_of(drv, struct xenbus_driver, driver);
 }
 
-int __must_check __xenbus_register_frontend(struct xenbus_driver *drv,
-					    struct module *owner,
-					    const char *mod_name);
-
-static inline int __must_check
-xenbus_register_frontend(struct xenbus_driver *drv)
-{
-	return __xenbus_register_frontend(drv, THIS_MODULE, KBUILD_MODNAME);
-}
-
-int __must_check __xenbus_register_backend(struct xenbus_driver *drv,
-					   struct module *owner,
-					   const char *mod_name);
-static inline int __must_check
-xenbus_register_backend(struct xenbus_driver *drv)
-{
-	return __xenbus_register_backend(drv, THIS_MODULE, KBUILD_MODNAME);
-}
-
+int __must_check xenbus_register_frontend(struct xenbus_driver *drv);
+int __must_check xenbus_register_backend(struct xenbus_driver *drv);
 void xenbus_unregister_driver(struct xenbus_driver *drv);
 
 struct xenbus_transaction
@@ -260,6 +257,9 @@ int xenbus_switch_state(struct xenbus_device *dev, enum xenbus_state new_state);
  */
 int xenbus_grant_ring(struct xenbus_device *dev, unsigned long ring_mfn);
 
+int xenbus_multi_grant_ring(struct xenbus_device *, unsigned int nr,
+			    struct page *[], grant_ref_t []);
+
 /**
  * Map a page of memory into this domain from another domain's grant table.
  * xenbus_map_ring_valloc allocates a page of virtual address space, maps the
@@ -269,7 +269,8 @@ int xenbus_grant_ring(struct xenbus_device *dev, unsigned long ring_mfn);
  * XenbusStateClosing and the error message will be saved in XenStore.
  */
 struct vm_struct *xenbus_map_ring_valloc(struct xenbus_device *dev,
-					 grant_ref_t ref);
+					 const grant_ref_t refs[],
+					 unsigned int nr_refs);
 int xenbus_map_ring(struct xenbus_device *dev, grant_ref_t gnt_ref,
 			   grant_handle_t *handle, void *vaddr);
 

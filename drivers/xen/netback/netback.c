@@ -664,29 +664,22 @@ static void net_rx_action(unsigned long group)
 		BUG_ON(mcl[-1].op != __HYPERVISOR_update_va_mapping);
 		mcl[-1].args[MULTI_UVMFLAGS_INDEX] = UVMF_TLB_FLUSH|UVMF_ALL;
 
-		mcl->op = __HYPERVISOR_mmu_update;
-		mcl->args[0] = (unsigned long)netbk->rx_mmu;
-		mcl->args[1] = npo.mmu_prod;
-		mcl->args[2] = 0;
-		mcl->args[3] = DOMID_SELF;
+		MULTI_mmu_update(mcl, netbk->rx_mmu, npo.mmu_prod, 0,
+				 DOMID_SELF);
 	}
 
 	if (npo.trans_prod) {
 		BUG_ON(npo.trans_prod > ARRAY_SIZE(netbk->grant_trans_op));
-		mcl = npo.mcl + npo.mcl_prod++;
-		mcl->op = __HYPERVISOR_grant_table_op;
-		mcl->args[0] = GNTTABOP_transfer;
-		mcl->args[1] = (unsigned long)netbk->grant_trans_op;
-		mcl->args[2] = npo.trans_prod;
+		MULTI_grant_table_op(npo.mcl + npo.mcl_prod++,
+				     GNTTABOP_transfer, netbk->grant_trans_op,
+				     npo.trans_prod);
 	}
 
 	if (npo.copy_prod) {
 		BUG_ON(npo.copy_prod > ARRAY_SIZE(netbk->grant_copy_op));
-		mcl = npo.mcl + npo.mcl_prod++;
-		mcl->op = __HYPERVISOR_grant_table_op;
-		mcl->args[0] = GNTTABOP_copy;
-		mcl->args[1] = (unsigned long)netbk->grant_copy_op;
-		mcl->args[2] = npo.copy_prod;
+		MULTI_grant_table_op(npo.mcl + npo.mcl_prod++,
+				     GNTTABOP_copy, netbk->grant_copy_op,
+				     npo.copy_prod);
 	}
 
 	/* Nothing to do? */
@@ -1767,10 +1760,8 @@ static int __init netback_init(void)
 	do {
 		xen_netbk = vzalloc(netbk_nr_groups * sizeof(*xen_netbk));
 	} while (!xen_netbk && (netbk_nr_groups >>= 1));
-	if (!xen_netbk) {
-		pr_err("%s: out of memory\n", __func__);
+	if (!xen_netbk)
 		return -ENOMEM;
-	}
 	if (group && netbk_nr_groups != group)
 		pr_warn("netback: only using %u (instead of %u) groups\n",
 			netbk_nr_groups, group);

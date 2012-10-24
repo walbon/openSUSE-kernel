@@ -45,8 +45,6 @@
 
 #include "usbfront.h"
 
-#define GRANT_INVALID_REF 0
-
 static void destroy_rings(struct usbfront_info *info)
 {
 	if (info->irq)
@@ -382,13 +380,11 @@ static const struct xenbus_device_id usbfront_ids[] = {
 };
 MODULE_ALIAS("xen:vusb");
 
-static struct xenbus_driver usbfront_driver = {
-	.name = "vusb",
-	.ids = usbfront_ids,
+static DEFINE_XENBUS_DRIVER(usbfront, ,
 	.probe = usbfront_probe,
 	.otherend_changed = backend_changed,
 	.remove = usbfront_remove,
-};
+);
 
 static int __init usbfront_init(void)
 {

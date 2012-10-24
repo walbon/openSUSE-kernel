@@ -85,9 +85,15 @@ int pciback_add_pci_dev(struct pciback_device *pdev, struct pci_dev *dev,
 
 	spin_lock_irqsave(&vpci_dev->lock, flags);
 
-	/* Keep multi-function devices together on the virtual PCI bus */
-	for (slot = 0; slot < PCI_SLOT_MAX; slot++) {
-		if (!list_empty(&vpci_dev->dev_list[slot])) {
+	/*
+	 * Keep multi-function devices together on the virtual PCI bus, except
+	 * virtual functions.
+	 */
+	if (!dev->is_virtfn) {
+		for (slot = 0; slot < PCI_SLOT_MAX; slot++) {
+			if (list_empty(&vpci_dev->dev_list[slot]))
+				continue;
+
 			t = list_entry(list_first(&vpci_dev->dev_list[slot]),
 				       struct pci_dev_entry, list);
 
@@ -112,7 +118,7 @@ int pciback_add_pci_dev(struct pciback_device *pdev, struct pci_dev *dev,
 				pci_name(dev), slot);
 			list_add_tail(&dev_entry->list,
 				      &vpci_dev->dev_list[slot]);
-			func = PCI_FUNC(dev->devfn);
+			func = dev->is_virtfn ? 0 : PCI_FUNC(dev->devfn);
 			goto unlock;
 		}
 	}

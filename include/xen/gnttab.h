@@ -44,6 +44,8 @@
 #include <xen/interface/grant_table.h>
 #include <xen/features.h>
 
+#define GRANT_INVALID_REF	0
+
 struct gnttab_free_callback {
 	struct gnttab_free_callback *next;
 	void (*fn)(void *);
@@ -69,6 +71,8 @@ int gnttab_end_foreign_access_ref(grant_ref_t ref);
  * some time later.  page may be 0, in which case no freeing will occur.
  */
 void gnttab_end_foreign_access(grant_ref_t ref, unsigned long page);
+void gnttab_multi_end_foreign_access(unsigned int nr, grant_ref_t [],
+				     struct page *[]);
 
 int gnttab_grant_foreign_transfer(domid_t domid, unsigned long pfn);
 

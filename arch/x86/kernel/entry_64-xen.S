@@ -1055,7 +1055,7 @@ ENTRY(failsafe_callback)
 	CFI_RESTORE r11
 	addq $0x30,%rsp
 	CFI_ADJUST_CFA_OFFSET -0x30
-	pushq_cfi $0
+	pushq_cfi $-1
 	SAVE_ALL
 	jmp error_exit
 	CFI_ENDPROC

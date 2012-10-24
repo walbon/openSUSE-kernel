@@ -34,6 +34,7 @@
 
 #include "xen.h"
 #include "grant_table.h"
+#include "hvm/save.h"
 
 #define XEN_DOMCTL_INTERFACE_VERSION 0x00000008
 
@@ -559,7 +560,7 @@ struct xen_domctl_ext_vcpucontext {
     uint32_t         vcpu;
     /*
      * SET: Size of struct (IN)
-     * GET: Size of struct (OUT)
+     * GET: Size of struct (OUT, up to 128 bytes)
      */
     uint32_t         size;
 #if defined(__i386__) || defined(__x86_64__)
@@ -571,6 +572,14 @@ struct xen_domctl_ext_vcpucontext {
     uint16_t         sysenter_callback_cs;
     uint8_t          syscall32_disables_events;
     uint8_t          sysenter_disables_events;
+#if defined(__GNUC__)
+    union {
+        uint64_aligned_t mcg_cap;
+        struct hvm_vmce_vcpu vmce;
+    };
+#else
+    struct hvm_vmce_vcpu vmce;
+#endif
 #endif
 };
 typedef struct xen_domctl_ext_vcpucontext xen_domctl_ext_vcpucontext_t;
@@ -710,44 +719,73 @@ struct xen_domctl_gdbsx_domstatus {
 /* XEN_DOMCTL_mem_event_op */
 
 /*
-* Domain memory paging
- * Page memory in and out. 
+ * Domain memory paging
+ * Page memory in and out.
+ * Domctl interface to set up and tear down the 
+ * pager<->hypervisor interface. Use XENMEM_paging_op*
+ * to perform per-page operations.
+ *
+ * The XEN_DOMCTL_MEM_EVENT_OP_PAGING_ENABLE domctl returns several
+ * non-standard error codes to indicate why paging could not be enabled:
+ * ENODEV - host lacks HAP support (EPT/NPT) or HAP is disabled in guest
+ * EMLINK - guest has iommu passthrough enabled
+ * EXDEV  - guest has PoD enabled
+ * EBUSY  - guest has or had paging enabled, ring buffer still active
  */
 #define XEN_DOMCTL_MEM_EVENT_OP_PAGING            1
 
 #define XEN_DOMCTL_MEM_EVENT_OP_PAGING_ENABLE     0
 #define XEN_DOMCTL_MEM_EVENT_OP_PAGING_DISABLE    1
-#define XEN_DOMCTL_MEM_EVENT_OP_PAGING_NOMINATE   2
-#define XEN_DOMCTL_MEM_EVENT_OP_PAGING_EVICT      3
-#define XEN_DOMCTL_MEM_EVENT_OP_PAGING_PREP       4
-#define XEN_DOMCTL_MEM_EVENT_OP_PAGING_RESUME     5
 
 /*
  * Access permissions.
  *
+ * As with paging, use the domctl for teardown/setup of the
+ * helper<->hypervisor interface.
+ *
  * There are HVM hypercalls to set the per-page access permissions of every
  * page in a domain.  When one of these permissions--independent, read, 
  * write, and execute--is violated, the VCPU is paused and a memory event 
- * is sent with what happened.  (See public/mem_event.h)  The memory event 
- * handler can then resume the VCPU and redo the access with an 
- * ACCESS_RESUME mode for the following domctl.
+ * is sent with what happened.  (See public/mem_event.h) .
+ *
+ * The memory event handler can then resume the VCPU and redo the access 
+ * with a XENMEM_access_op_resume hypercall.
+ *
+ * The XEN_DOMCTL_MEM_EVENT_OP_ACCESS_ENABLE domctl returns several
+ * non-standard error codes to indicate why access could not be enabled:
+ * ENODEV - host lacks HAP support (EPT/NPT) or HAP is disabled in guest
+ * EBUSY  - guest has or had access enabled, ring buffer still active
  */
 #define XEN_DOMCTL_MEM_EVENT_OP_ACCESS            2
 
 #define XEN_DOMCTL_MEM_EVENT_OP_ACCESS_ENABLE     0
 #define XEN_DOMCTL_MEM_EVENT_OP_ACCESS_DISABLE    1
-#define XEN_DOMCTL_MEM_EVENT_OP_ACCESS_RESUME     2
 
+/*
+ * Sharing ENOMEM helper.
+ *
+ * As with paging, use the domctl for teardown/setup of the
+ * helper<->hypervisor interface.
+ *
+ * If setup, this ring is used to communicate failed allocations
+ * in the unshare path. XENMEM_sharing_op_resume is used to wake up
+ * vcpus that could not unshare.
+ *
+ * Note that shring can be turned on (as per the domctl below)
+ * *without* this ring being setup.
+ */
+#define XEN_DOMCTL_MEM_EVENT_OP_SHARING           3
+
+#define XEN_DOMCTL_MEM_EVENT_OP_SHARING_ENABLE    0
+#define XEN_DOMCTL_MEM_EVENT_OP_SHARING_DISABLE   1
+
+/* Use for teardown/setup of helper<->hypervisor interface for paging, 
+ * access and sharing.*/
 struct xen_domctl_mem_event_op {
     uint32_t       op;           /* XEN_DOMCTL_MEM_EVENT_OP_*_* */
     uint32_t       mode;         /* XEN_DOMCTL_MEM_EVENT_OP_* */
 
-    /* OP_ENABLE */
-    uint64_aligned_t shared_addr;  /* IN:  Virtual address of shared page */
-    uint64_aligned_t ring_addr;    /* IN:  Virtual address of ring page */
-
-    /* Other OPs */
-    uint64_aligned_t gfn;          /* IN:  gfn of page being operated on */
+    uint32_t port;              /* OUT: event channel for ring */
 };
 typedef struct xen_domctl_mem_event_op xen_domctl_mem_event_op_t;
 DEFINE_XEN_GUEST_HANDLE(xen_domctl_mem_event_op_t);
@@ -755,50 +793,34 @@ DEFINE_XEN_GUEST_HANDLE(xen_domctl_mem_event_op_t);
 /*
  * Memory sharing operations
  */
-/* XEN_DOMCTL_mem_sharing_op */
-
-#define XEN_DOMCTL_MEM_EVENT_OP_SHARING                3
-
-#define XEN_DOMCTL_MEM_EVENT_OP_SHARING_CONTROL        0
-#define XEN_DOMCTL_MEM_EVENT_OP_SHARING_NOMINATE_GFN   1
-#define XEN_DOMCTL_MEM_EVENT_OP_SHARING_NOMINATE_GREF  2
-#define XEN_DOMCTL_MEM_EVENT_OP_SHARING_SHARE          3
-#define XEN_DOMCTL_MEM_EVENT_OP_SHARING_RESUME         4
-#define XEN_DOMCTL_MEM_EVENT_OP_SHARING_DEBUG_GFN      5
-#define XEN_DOMCTL_MEM_EVENT_OP_SHARING_DEBUG_MFN      6
-#define XEN_DOMCTL_MEM_EVENT_OP_SHARING_DEBUG_GREF     7
-
-#define XEN_DOMCTL_MEM_SHARING_S_HANDLE_INVALID  (-10)
-#define XEN_DOMCTL_MEM_SHARING_C_HANDLE_INVALID  (-9)
+/* XEN_DOMCTL_mem_sharing_op.
+ * The CONTROL sub-domctl is used for bringup/teardown. */
+#define XEN_DOMCTL_MEM_SHARING_CONTROL          0
 
 struct xen_domctl_mem_sharing_op {
-    uint8_t op; /* XEN_DOMCTL_MEM_EVENT_OP_* */
+    uint8_t op; /* XEN_DOMCTL_MEM_SHARING_* */
 
     union {
-        uint8_t enable;                   /* OP_CONTROL                */
-
-        struct mem_sharing_op_nominate {  /* OP_NOMINATE_xxx           */
-            union {
-                uint64_aligned_t gfn;     /* IN: gfn to nominate       */
-                uint32_t      grant_ref;  /* IN: grant ref to nominate */
-            } u;
-            uint64_aligned_t  handle;     /* OUT: the handle           */
-        } nominate;
-        struct mem_sharing_op_share {     /* OP_SHARE */
-            uint64_aligned_t source_handle; /* IN: handle to the source page */
-            uint64_aligned_t client_handle; /* IN: handle to the client page */
-        } share; 
-        struct mem_sharing_op_debug {     /* OP_DEBUG_xxx */
-            union {
-                uint64_aligned_t gfn;      /* IN: gfn to debug          */
-                uint64_aligned_t mfn;      /* IN: mfn to debug          */
-                grant_ref_t    gref;       /* IN: gref to debug         */
-            } u;
-        } debug;
+        uint8_t enable;                   /* CONTROL */
     } u;
 };
 typedef struct xen_domctl_mem_sharing_op xen_domctl_mem_sharing_op_t;
 DEFINE_XEN_GUEST_HANDLE(xen_domctl_mem_sharing_op_t);
+
+struct xen_domctl_audit_p2m {
+    /* OUT error counts */
+    uint64_t orphans;
+    uint64_t m2p_bad;
+    uint64_t p2m_bad;
+};
+typedef struct xen_domctl_audit_p2m xen_domctl_audit_p2m_t;
+DEFINE_XEN_GUEST_HANDLE(xen_domctl_audit_p2m_t);
+
+struct xen_domctl_set_virq_handler {
+    uint32_t virq; /* IN */
+};
+typedef struct xen_domctl_set_virq_handler xen_domctl_set_virq_handler_t;
+DEFINE_XEN_GUEST_HANDLE(xen_domctl_set_virq_handler_t);
 
 #if defined(__i386__) || defined(__x86_64__)
 /* XEN_DOMCTL_setvcpuextstate */
@@ -898,6 +920,8 @@ struct xen_domctl {
 #define XEN_DOMCTL_setvcpuextstate               62
 #define XEN_DOMCTL_getvcpuextstate               63
 #define XEN_DOMCTL_set_access_required           64
+#define XEN_DOMCTL_audit_p2m                     65
+#define XEN_DOMCTL_set_virq_handler              66
 #define XEN_DOMCTL_gdbsx_guestmemio            1000
 #define XEN_DOMCTL_gdbsx_pausevcpu             1001
 #define XEN_DOMCTL_gdbsx_unpausevcpu           1002
@@ -951,6 +975,8 @@ struct xen_domctl {
         struct xen_domctl_vcpuextstate      vcpuextstate;
 #endif
         struct xen_domctl_set_access_required access_required;
+        struct xen_domctl_audit_p2m         audit_p2m;
+        struct xen_domctl_set_virq_handler  set_virq_handler;
         struct xen_domctl_gdbsx_memio       gdbsx_guest_memio;
         struct xen_domctl_gdbsx_pauseunp_vcpu gdbsx_pauseunp_vcpu;
         struct xen_domctl_gdbsx_domstatus   gdbsx_domstatus;

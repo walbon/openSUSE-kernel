@@ -365,23 +365,14 @@ void xenbus_dev_shutdown(struct device *_dev)
 PARAVIRT_EXPORT_SYMBOL(xenbus_dev_shutdown);
 
 int xenbus_register_driver_common(struct xenbus_driver *drv,
-				  struct xen_bus_type *bus,
-				  struct module *owner,
-				  const char *mod_name)
+				  struct xen_bus_type *bus)
 {
 	int ret;
 
 	if (bus->error)
 		return bus->error;
 
-	drv->driver.name = drv->name;
 	drv->driver.bus = &bus->bus;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,10)
-	drv->driver.owner = owner;
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,21)
-	drv->driver.mod_name = mod_name;
-#endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,16)
 	drv->driver.probe = xenbus_dev_probe;
 	drv->driver.remove = xenbus_dev_remove;
@@ -681,15 +672,13 @@ static struct xen_bus_type xenbus_frontend = {
 	},
 };
 
-int __xenbus_register_frontend(struct xenbus_driver *drv,
-			       struct module *owner, const char *mod_name)
+int xenbus_register_frontend(struct xenbus_driver *drv)
 {
 	int ret;
 
 	drv->read_otherend_details = read_backend_details;
 
-	ret = xenbus_register_driver_common(drv, &xenbus_frontend,
-					    owner, mod_name);
+	ret = xenbus_register_driver_common(drv, &xenbus_frontend);
 	if (ret)
 		return ret;
 
@@ -698,7 +687,7 @@ int __xenbus_register_frontend(struct xenbus_driver *drv,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(__xenbus_register_frontend);
+EXPORT_SYMBOL_GPL(xenbus_register_frontend);
 
 #endif
 
@@ -823,7 +812,7 @@ static struct xenbus_watch fe_watch = {
 	.callback = frontend_changed,
 };
 
-static int suspend_dev(struct device *dev, void *data)
+static int __maybe_unused suspend_dev(struct device *dev, void *data)
 #else
 int xenbus_dev_suspend(struct device *dev)
 #endif
@@ -848,7 +837,7 @@ int xenbus_dev_suspend(struct device *dev)
 PARAVIRT_EXPORT_SYMBOL(xenbus_dev_suspend);
 
 #if defined(CONFIG_XEN) || defined(MODULE)
-static int suspend_cancel_dev(struct device *dev, void *data)
+static int __maybe_unused suspend_cancel_dev(struct device *dev, void *data)
 {
 	int err = 0;
 	struct xenbus_driver *drv;
@@ -868,7 +857,7 @@ static int suspend_cancel_dev(struct device *dev, void *data)
 	return 0;
 }
 
-static int resume_dev(struct device *dev, void *data)
+static int __maybe_unused resume_dev(struct device *dev, void *data)
 #else
 int xenbus_dev_resume(struct device *dev)
 #endif
@@ -920,7 +909,7 @@ int xenbus_dev_cancel(struct device *dev)
 	return 0;
 }
 PARAVIRT_EXPORT_SYMBOL(xenbus_dev_cancel);
-#else
+#elif defined(CONFIG_PM_SLEEP) || defined(MODULE)
 void xenbus_suspend(void)
 {
 	DPRINTK("");
@@ -947,7 +936,7 @@ void xenbus_suspend_cancel(void)
 		bus_for_each_dev(&xenbus_frontend.bus, NULL, NULL, suspend_cancel_dev);
 	xenbus_backend_resume(suspend_cancel_dev);
 }
-#endif
+#endif /* CONFIG_PM_SLEEP || MODULE */
 
 /* A flag to determine if xenstored is 'ready' (i.e. has started) */
 atomic_t xenbus_xsd_state = ATOMIC_INIT(XENBUS_XSD_UNCOMMITTED);

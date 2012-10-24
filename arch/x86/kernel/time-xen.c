@@ -18,7 +18,6 @@
 #include <linux/posix-timers.h>
 #include <linux/cpufreq.h>
 #include <linux/clocksource.h>
-#include <linux/sysdev.h>
 
 #include <asm/vsyscall.h>
 #include <asm/delay.h>
@@ -115,34 +114,6 @@ static inline u64 scale_delta(u64 delta, u32 mul_frac, int shift)
 #endif
 
 	return product;
-}
-
-static inline u64 get64(volatile u64 *ptr)
-{
-#ifndef CONFIG_64BIT
-	u64 res;
-	__asm__("movl %%ebx,%%eax\n"
-		"movl %%ecx,%%edx\n"
-		LOCK_PREFIX "cmpxchg8b %1"
-		: "=&A" (res) : "m" (*ptr));
-	return res;
-#else
-	return *ptr;
-#endif
-}
-
-static inline u64 get64_local(volatile u64 *ptr)
-{
-#ifndef CONFIG_64BIT
-	u64 res;
-	__asm__("movl %%ebx,%%eax\n"
-		"movl %%ecx,%%edx\n"
-		"cmpxchg8b %1"
-		: "=&A" (res) : "m" (*ptr));
-	return res;
-#else
-	return *ptr;
-#endif
 }
 
 static void init_cpu_khz(void)
@@ -368,7 +339,7 @@ int xen_write_wallclock(unsigned long now)
 /*
  * Runstate accounting
  */
-void get_runstate_snapshot(struct vcpu_runstate_info *res)
+static void get_runstate_snapshot(struct vcpu_runstate_info *res)
 {
 	u64 state_time;
 	struct vcpu_runstate_info *state;
@@ -378,9 +349,9 @@ void get_runstate_snapshot(struct vcpu_runstate_info *res)
 	state = &__get_cpu_var(runstate);
 
 	do {
-		state_time = get64_local(&state->state_entry_time);
+		state_time = get_64bit_local(&state->state_entry_time);
 		*res = *state;
-	} while (get64_local(&state->state_entry_time) != state_time);
+	} while (get_64bit_local(&state->state_entry_time) != state_time);
 
 	WARN_ON_ONCE(res->state != RUNSTATE_running);
 }
@@ -460,7 +431,7 @@ static cycle_t cs_last;
 static cycle_t xen_clocksource_read(struct clocksource *cs)
 {
 #ifdef CONFIG_SMP
-	cycle_t last = get64(&cs_last);
+	cycle_t last = get_64bit(&cs_last);
 	cycle_t ret = xen_local_clock();
 
 	if (unlikely((s64)(ret - last) < 0)) {
@@ -518,7 +489,7 @@ static struct clocksource clocksource_xen = {
 	.resume			= xen_clocksource_resume,
 };
 
-struct vcpu_runstate_info *setup_runstate_area(unsigned int cpu)
+void setup_runstate_area(unsigned int cpu)
 {
 	struct vcpu_register_runstate_memory_area area;
 	struct vcpu_runstate_info *rs = &per_cpu(runstate, cpu);
@@ -531,8 +502,6 @@ struct vcpu_runstate_info *setup_runstate_area(unsigned int cpu)
 		memset(rs, 0, sizeof(*rs));
 		WARN_ON(rc != -ENOSYS);
 	}
-
-	return rs;
 }
 
 static void __init _late_time_init(void)

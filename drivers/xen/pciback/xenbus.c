@@ -6,7 +6,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/list.h>
-#include <linux/vmalloc.h>
 #include <xen/xenbus.h>
 #include <xen/evtchn.h>
 #include "pciback.h"
@@ -90,7 +89,7 @@ static int pciback_do_attach(struct pciback_device *pdev, int gnt_ref,
 		"Attaching to frontend resources - gnt_ref=%d evtchn=%d\n",
 		gnt_ref, remote_evtchn);
 
-	area = xenbus_map_ring_valloc(pdev->xdev, gnt_ref);
+	area = xenbus_map_ring_valloc(pdev->xdev, &gnt_ref, 1);
 	if (IS_ERR(area)) {
 		err = PTR_ERR(area);
 		goto out;
@@ -676,18 +675,16 @@ static int pciback_xenbus_remove(struct xenbus_device *dev)
 	return 0;
 }
 
-static const struct xenbus_device_id xenpci_ids[] = {
+static const struct xenbus_device_id pciback_ids[] = {
 	{"pci"},
 	{{0}},
 };
 
-static struct xenbus_driver xenbus_pciback_driver = {
-	.name 			= "pciback",
-	.ids 			= xenpci_ids,
+static DEFINE_XENBUS_DRIVER(pciback, "pciback",
 	.probe 			= pciback_xenbus_probe,
 	.remove 		= pciback_xenbus_remove,
 	.otherend_changed 	= pciback_frontend_changed,
-};
+);
 
 int __init pciback_xenbus_register(void)
 {
@@ -698,11 +695,11 @@ int __init pciback_xenbus_register(void)
 		pr_err("pciback_xenbus_register: create workqueue failed\n");
 		return -EFAULT;
 	}
-	return xenbus_register_backend(&xenbus_pciback_driver);
+	return xenbus_register_backend(&pciback_driver);
 }
 
 void __exit pciback_xenbus_unregister(void)
 {
 	destroy_workqueue(pciback_wq);
-	xenbus_unregister_driver(&xenbus_pciback_driver);
+	xenbus_unregister_driver(&pciback_driver);
 }

@@ -1,6 +1,5 @@
 #include <linux/dma-mapping.h>
 #include <linux/dma-debug.h>
-#include <linux/dmar.h>
 #include <linux/bootmem.h>
 #include <linux/gfp.h>
 #include <linux/pci.h>
@@ -9,8 +8,6 @@
 #include <asm/proto.h>
 #include <asm/dma.h>
 #include <asm/iommu.h>
-#include <asm/gart.h>
-#include <asm/calgary.h>
 #include <asm/x86_init.h>
 #include <asm/iommu_table.h>
 
@@ -23,15 +20,16 @@ static int iommu_sac_force __read_mostly;
 
 #ifdef CONFIG_IOMMU_DEBUG
 int panic_on_overflow __read_mostly = 1;
-int force_iommu __read_mostly = 1;
+int force_iommu __initdata = 1;
 #else
 int panic_on_overflow __read_mostly = 0;
-int force_iommu __read_mostly = 0;
+int force_iommu __initdata = 0;
 #endif
 
-int iommu_merge __read_mostly = 0;
+int iommu_merge __initdata;
 
-int no_iommu __read_mostly;
+int no_iommu __initdata;
+#ifndef CONFIG_XEN
 /* Set this to 1 if there is a HW IOMMU in the system */
 int iommu_detected __read_mostly = 0;
 
@@ -43,6 +41,7 @@ int iommu_detected __read_mostly = 0;
  * guests and not for driver dma translation.
  */
 int iommu_pass_through __read_mostly;
+#endif
 
 extern struct iommu_table_entry __iommu_table[], __iommu_table_end[];
 
@@ -230,10 +229,12 @@ static __init int iommu_setup(char *p)
 		if (!strncmp(p, "soft", 4))
 			swiotlb = 1;
 #endif
+#ifndef CONFIG_XEN
 		if (!strncmp(p, "pt", 2))
 			iommu_pass_through = 1;
 
 		gart_parse_options(p);
+#endif
 
 #ifdef CONFIG_CALGARY_IOMMU
 		if (!strncmp(p, "calgary", 7))

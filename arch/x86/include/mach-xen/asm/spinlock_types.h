@@ -30,7 +30,7 @@ typedef union {
 #else
 		u16 owner;
 #endif
-#else
+#else /* ndef CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING */
 /*
  * This differs from the pre-2.6.24 spinlock by always using xchgb
  * rather than decb to take the lock; this allows it to use a
@@ -44,7 +44,7 @@ typedef union {
 #else
 # error NR_CPUS >= 256 not implemented
 #endif
-#endif
+#endif /* def CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING */
 	};
 } arch_spinlock_t;
 

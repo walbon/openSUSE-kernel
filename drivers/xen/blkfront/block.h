@@ -46,7 +46,9 @@
 #include <linux/hdreg.h>
 #include <linux/blkdev.h>
 #include <linux/major.h>
+#include <linux/mutex.h>
 #include <asm/hypervisor.h>
+#include <xen/barrier.h>
 #include <xen/xenbus.h>
 #include <xen/gnttab.h>
 #include <xen/interface/xen.h>
@@ -64,20 +66,12 @@
 #define DPRINTK_IOCTL(_f, _a...) ((void)0)
 #endif
 
-struct xlbd_type_info
-{
-	int partn_shift;
-	int disks_per_major;
-	char *devname;
-	char *diskname;
-};
-
 struct xlbd_major_info
 {
 	int major;
 	int index;
 	int usage;
-	struct xlbd_type_info *type;
+	const struct xlbd_type_info *type;
 	struct xlbd_minor_state *minors;
 };
 
@@ -87,7 +81,10 @@ struct blk_shadow {
 	unsigned long frame[BLKIF_MAX_SEGMENTS_PER_REQUEST];
 };
 
-#define BLK_RING_SIZE __CONST_RING_SIZE(blkif, PAGE_SIZE)
+#define BLK_MAX_RING_PAGE_ORDER 4U
+#define BLK_MAX_RING_PAGES (1U << BLK_MAX_RING_PAGE_ORDER)
+#define BLK_MAX_RING_SIZE __CONST_RING_SIZE(blkif, \
+					    BLK_MAX_RING_PAGES * PAGE_SIZE)
 
 /*
  * We have one of these per vbd, whether ide, scsi or 'other'.  They
@@ -98,10 +95,11 @@ struct blkfront_info
 {
 	struct xenbus_device *xbdev;
  	struct gendisk *gd;
+	struct mutex mutex;
 	int vdevice;
 	blkif_vdev_t handle;
 	int connected;
-	int ring_ref;
+	unsigned int ring_size;
 	blkif_front_ring_t ring;
 	spinlock_t io_lock;
 	struct scatterlist sg[BLKIF_MAX_SEGMENTS_PER_REQUEST];
@@ -110,7 +108,10 @@ struct blkfront_info
 	struct request_queue *rq;
 	struct work_struct work;
 	struct gnttab_free_callback callback;
-	struct blk_shadow shadow[BLK_RING_SIZE];
+	struct blk_shadow shadow[BLK_MAX_RING_SIZE];
+	struct list_head resume_list;
+	grant_ref_t ring_refs[BLK_MAX_RING_PAGES];
+	struct page *ring_pages[BLK_MAX_RING_PAGES];
 	unsigned long shadow_free;
 	unsigned int feature_flush;
 	unsigned int flush_op;
@@ -119,12 +120,6 @@ struct blkfront_info
 	unsigned int discard_granularity;
 	unsigned int discard_alignment;
 	int is_ready;
-
-	/**
-	 * The number of people holding this device open.  We won't allow a
-	 * hot-unplug unless this is 0.
-	 */
-	int users;
 };
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,28)
@@ -167,8 +162,15 @@ static inline void xlvbd_sysfs_delif(struct blkfront_info *info)
 }
 #endif
 
+void xlbd_release_major_info(void);
+
 /* Virtual cdrom block-device */
+#ifdef CONFIG_XEN
 extern void register_vcd(struct blkfront_info *info);
 extern void unregister_vcd(struct blkfront_info *info);
+#else
+static inline void register_vcd(struct blkfront_info *info) {}
+static inline void unregister_vcd(struct blkfront_info *info) {}
+#endif
 
 #endif /* __XEN_DRIVERS_BLOCK_H__ */

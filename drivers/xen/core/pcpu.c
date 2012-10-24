@@ -442,7 +442,7 @@ static int __init xen_pcpu_init(void)
 					      "pcpu", NULL);
 	if (err < 0)
 		pr_warn("xen_pcpu_init: "
-			"Failed to bind pcpu_state virq (%d)\n", err);
+			"Failed to bind virq (%d)\n", err);
 
 	return err;
 }

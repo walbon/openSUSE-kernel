@@ -1,6 +1,4 @@
 #include <linux/dma-mapping.h>
-#include <linux/dmar.h>
-#include <linux/bootmem.h>
 #include <linux/pci.h>
 
 #include <xen/gnttab.h>

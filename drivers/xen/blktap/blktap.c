@@ -707,7 +707,7 @@ static int blktap_mmap(struct file *filp, struct vm_area_struct *vma)
 	int ret;
 
 	if (info == NULL) {
-		WPRINTK("blktap: mmap, retrieving idx failed\n");
+		WPRINTK("mmap: no private data?\n");
 		return -ENOMEM;
 	}
 
@@ -796,8 +796,7 @@ static long blktap_ioctl(struct file *filp, unsigned int cmd,
 			if (BLKTAP_MODE_VALID(arg)) {
 				info->mode = arg;
 				/* XXX: may need to flush rings here. */
-				DPRINTK("blktap: set mode to %lx\n", 
-				       arg);
+				DPRINTK("set mode to %lx\n", arg);
 				return 0;
 			}
 		}
@@ -821,7 +820,7 @@ static long blktap_ioctl(struct file *filp, unsigned int cmd,
 		if (info) {
 			info->pid = (pid_t)arg;
 			info->pid_ns = current->nsproxy->pid_ns;
-			DPRINTK("blktap: pid received %p:%d\n",
+			DPRINTK("pid received %p:%d\n",
 			        info->pid_ns, info->pid);
 		}
 		return 0;
@@ -963,8 +962,7 @@ static int req_increase(void)
 	if (!pending_reqs[mmap_alloc] || !foreign_pages[mmap_alloc])
 		goto out_of_memory;
 
-	DPRINTK("%s: reqs=%lu, pages=%d\n",
-		__FUNCTION__, MAX_PENDING_REQS, mmap_pages);
+	DPRINTK("reqs=%lu, pages=%d\n", MAX_PENDING_REQS, mmap_pages);
 
 	for (i = 0; i < MAX_PENDING_REQS; i++) {
 		list_add_tail(&pending_reqs[mmap_alloc][i].free_list, 
@@ -1464,13 +1462,13 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 	
 	/* Make sure userspace is ready. */
 	if (!info->ring_ok) {
-		WPRINTK("blktap: ring not ready for requests!\n");
+		WPRINTK("ring not ready for requests!\n");
 		goto fail_response;
 	}
 	smp_rmb();
 
 	if (RING_FULL(&info->ufe_ring)) {
-		WPRINTK("blktap: fe_ring is full, can't add "
+		WPRINTK("fe_ring is full, "
 			"IO Request will be dropped. %d %d\n",
 			RING_SIZE(&info->ufe_ring),
 			RING_SIZE(&blkif->blk_rings.common));
@@ -1550,7 +1548,7 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 			}
 
 			if (unlikely(map[i+1].status != GNTST_okay)) {
-				WPRINTK("invalid kernel buffer -- could not remap it\n");
+				WPRINTK("invalid user buffer -- could not remap it\n");
 				ret = 1;
 				map[i+1].handle = INVALID_GRANT_HANDLE;
 			}
@@ -1778,7 +1776,7 @@ static int __init blkif_init(void)
 					"blktap0");
 	} else {
 		/* this is bad, but not fatal */
-		WPRINTK("blktap: sysfs xen_class not created\n");
+		WPRINTK("sysfs xen_class not created\n");
 	}
 
 	DPRINTK("Blktap device successfully created\n");

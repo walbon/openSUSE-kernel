@@ -8,7 +8,7 @@ config XEN
 if XEN
 config XEN_INTERFACE_VERSION
 	hex
-	default 0x00030207
+	default 0x00040200
 
 menu "XEN"
 
@@ -330,14 +330,6 @@ config XEN_DISABLE_SERIAL
 	  Disable serial port drivers, allowing the Xen console driver
 	  to provide a serial console at ttyS0.
 
-config XEN_SYSFS
-	tristate "Export Xen attributes in sysfs"
-	depends on SYSFS
-	select SYS_HYPERVISOR
-	default y
-	help
-	  Xen hypervisor attributes will show up under /sys/hypervisor/.
-
 config XEN_NR_GUEST_DEVICES
 	int "Number of guest devices"
 	range 0 4032 if 64BIT
@@ -376,6 +368,9 @@ choice
 	config XEN_COMPAT_040100_AND_LATER
 		bool "4.1.0 and later"
 
+	config XEN_COMPAT_040200_AND_LATER
+		bool "4.2.0 and later"
+
 	config XEN_COMPAT_LATEST_ONLY
 		bool "no compatibility code"
 
@@ -384,6 +379,7 @@ endchoice
 config XEN_COMPAT
 	hex
 	default 0xffffff if XEN_COMPAT_LATEST_ONLY
+	default 0x040200 if XEN_COMPAT_040200_AND_LATER
 	default 0x040100 if XEN_COMPAT_040100_AND_LATER
 	default 0x040000 if XEN_COMPAT_040000_AND_LATER
 	default 0x030400 if XEN_COMPAT_030400_AND_LATER
@@ -421,6 +417,7 @@ config XEN_SMPBOOT
 
 config XEN_SPINLOCK_ACQUIRE_NESTING
 	int "maximum nesting level for acquiring spin locks"
+	depends on SMP
 	# Xen versions prior to 3.2.x have a race condition with HYPERVISOR_poll().
 	depends on !XEN_COMPAT_030002_AND_LATER
 	depends on !XEN_COMPAT_030004_AND_LATER
@@ -506,7 +503,7 @@ config XEN_COMPAT_XENFS
 
 config XEN_SYS_HYPERVISOR
        bool "Create xen entries under /sys/hypervisor"
-       depends on PARAVIRT_XEN && SYSFS
+       depends on SYSFS
        select SYS_HYPERVISOR
        default y
        help

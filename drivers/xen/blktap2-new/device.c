@@ -245,6 +245,8 @@ blktap_device_run_queue(struct blktap *tap)
 			break;
 
 		if (rq->cmd_type != REQ_TYPE_FS) {
+			rq->errors = (DID_ERROR << 16) |
+				     (DRIVER_INVALID << 24);
 			__blktap_end_queued_rq(rq, -EOPNOTSUPP);
 			continue;
 		}

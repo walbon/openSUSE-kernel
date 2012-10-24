@@ -199,9 +199,6 @@ void __init xen_machine_kexec_setup_resources(void)
 
 	crashk_res.start = range.start;
 	crashk_res.end = range.start + range.size - 1;
-#ifdef CONFIG_X86
-	insert_resource(&iomem_resource, &crashk_res);
-#endif
 
 	/* determine maximum number of physical cpus */
 	op.cmd = XENPF_get_cpuinfo;
@@ -251,9 +248,6 @@ void __init xen_machine_kexec_setup_resources(void)
 	xen_hypervisor_res.start = range.start;
 	xen_hypervisor_res.end = range.start + range.size - 1;
 	xen_hypervisor_res.flags = IORESOURCE_BUSY | IORESOURCE_MEM;
-#ifdef CONFIG_X86
-	insert_resource(&iomem_resource, &xen_hypervisor_res);
-#endif
 
 	/* get physical address of vmcoreinfo */
 	memset(&range, 0, sizeof(range));
@@ -294,21 +288,6 @@ void __init xen_machine_kexec_setup_resources(void)
 	}
 
 	xen_nr_phys_cpus = nr;
-
-#ifdef CONFIG_X86
-	for (k = 0; k < xen_max_nr_phys_cpus; k++) {
-		struct resource *res = xen_phys_cpus + k;
-
-		if (!res->parent) /* outside of xen_hypervisor_res range */
-			insert_resource(&iomem_resource, res);
-	}
-
-	if (xen_create_contiguous_region((unsigned long)&vmcoreinfo_note,
-					 get_order(sizeof(vmcoreinfo_note)),
-					 BITS_PER_LONG))
-		goto err;
-#endif
-
 	rc = register_pcpu_notifier(&kexec_cpu_notifier);
 	if (rc)
 		pr_warn("kexec: pCPU notifier registration failed (%d)\n", rc);
@@ -385,7 +364,7 @@ void xen_machine_kexec_unload(struct kimage *image)
  * stop all CPUs and kexec. That is it combines machine_shutdown()
  * and machine_kexec() in Linux kexec terms.
  */
-NORET_TYPE void machine_kexec(struct kimage *image)
+void __noreturn machine_kexec(struct kimage *image)
 {
 	xen_kexec_exec_t xke;
 

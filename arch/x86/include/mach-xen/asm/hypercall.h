@@ -45,11 +45,6 @@
 # include <xen/interface/platform.h>
 # include <xen/interface/arch-x86/xen-mca.h>
 #endif
-#if CONFIG_XEN_COMPAT <= 0x030002
-# include <linux/string.h> /* memcpy() */
-# include <xen/interface/event_channel.h>
-# include <xen/interface/physdev.h>
-#endif
 
 #ifdef CONFIG_XEN
 #define HYPERCALL_ASM_OPERAND "%c"
@@ -164,6 +159,11 @@
 		: "memory" );					\
 	__res;							\
 })
+
+#if CONFIG_XEN_COMPAT <= 0x030002
+int __must_check HYPERVISOR_event_channel_op_compat(int, void *);
+int __must_check HYPERVISOR_physdev_op_compat(int, void *);
+#endif
 
 #ifdef CONFIG_X86_32
 # include "hypercall_32.h"
@@ -290,13 +290,8 @@ HYPERVISOR_event_channel_op(
 	int rc = _hypercall2(int, event_channel_op, cmd, arg);
 
 #if CONFIG_XEN_COMPAT <= 0x030002
-	if (unlikely(rc == -ENOSYS)) {
-		struct evtchn_op op;
-		op.cmd = cmd;
-		memcpy(&op.u, arg, sizeof(op.u));
-		rc = _hypercall1(int, event_channel_op_compat, &op);
-		memcpy(arg, &op.u, sizeof(op.u));
-	}
+	if (unlikely(rc == -ENOSYS))
+		rc = HYPERVISOR_event_channel_op_compat(cmd, arg);
 #endif
 
 	return rc;
@@ -323,13 +318,8 @@ HYPERVISOR_physdev_op(
 	int rc = _hypercall2(int, physdev_op, cmd, arg);
 
 #if CONFIG_XEN_COMPAT <= 0x030002
-	if (unlikely(rc == -ENOSYS)) {
-		struct physdev_op op;
-		op.cmd = cmd;
-		memcpy(&op.u, arg, sizeof(op.u));
-		rc = _hypercall1(int, physdev_op_compat, &op);
-		memcpy(arg, &op.u, sizeof(op.u));
-	}
+	if (unlikely(rc == -ENOSYS))
+		rc = HYPERVISOR_physdev_op_compat(cmd, arg);
 #endif
 
 	return rc;

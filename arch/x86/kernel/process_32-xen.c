@@ -217,8 +217,10 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 
 	memset(p->thread.ptrace_bps, 0, sizeof(p->thread.ptrace_bps));
 
+#ifdef TIF_CSTAR
 	if (test_tsk_thread_flag(tsk, TIF_CSTAR))
 		p->thread.ip = (unsigned long) cstar_ret_from_fork;
+#endif
 	if (unlikely(test_tsk_thread_flag(tsk, TIF_IO_BITMAP))) {
 		p->thread.io_bitmap_ptr = kmemdup(tsk->thread.io_bitmap_ptr,
 						IO_BITMAP_BYTES, GFP_KERNEL);
@@ -297,11 +299,11 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 {
 	struct thread_struct *prev = &prev_p->thread,
 				 *next = &next_p->thread;
-	int cpu = smp_processor_id();
+	int cpu = smp_processor_id(), cr0_ts;
 #ifndef CONFIG_X86_NO_TSS
 	struct tss_struct *tss = &per_cpu(init_tss, cpu);
 #endif
-	bool preload_fpu;
+	fpu_switch_t fpu;
 #if CONFIG_XEN_COMPAT > 0x030002
 	struct physdev_set_iopl iopl_op;
 	struct physdev_set_iobitmap iobmp_op;
@@ -314,29 +316,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 
 	/* XEN NOTE: FS/GS saved in switch_mm(), not here. */
 
-	/*
-	 * If the task has used fpu the last 5 timeslices, just do a full
-	 * restore of the math state immediately to avoid the trap; the
-	 * chances of needing FPU soon are obviously high now
-	 */
-	preload_fpu = tsk_used_math(next_p) && next_p->fpu_counter > 5;
-
-	/*
-	 * This is basically '__unlazy_fpu', except that we queue a
-	 * multicall to indicate FPU task switch, rather than
-	 * synchronously trapping to Xen.
-	 */
-	if (task_thread_info(prev_p)->status & TS_USEDFPU) {
-		__save_init_fpu(prev_p); /* _not_ save_init_fpu() */
-		if (!preload_fpu) {
-			mcl->op      = __HYPERVISOR_fpu_taskswitch;
-			mcl->args[0] = 1;
-			mcl++;
-		}
-	}
-#if 0 /* lazy fpu sanity check */
-	else BUG_ON(!(read_cr0() & 8));
-#endif
+	fpu = xen_switch_fpu_prepare(prev_p, next_p, &mcl);
 
 	/*
 	 * Reload sp0.
@@ -378,14 +358,6 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		mcl++;
 	}
 
-	/* If we're going to preload the fpu context, make sure clts
-	   is run while we're batching the cpu state updates. */
-	if (preload_fpu) {
-		mcl->op      = __HYPERVISOR_fpu_taskswitch;
-		mcl->args[0] = 0;
-		mcl++;
-	}
-
 	if (unlikely(prev->io_bitmap_ptr || next->io_bitmap_ptr)) {
 		set_xen_guest_handle(iobmp_op.bitmap,
 				     (char *)next->io_bitmap_ptr);
@@ -406,12 +378,20 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	BUG_ON(pdo > _pdo + ARRAY_SIZE(_pdo));
 #endif
 	BUG_ON(mcl > _mcl + ARRAY_SIZE(_mcl));
+	if (_mcl->op == __HYPERVISOR_fpu_taskswitch) {
+		percpu_write(xen_x86_cr0_upd, X86_CR0_TS);
+		cr0_ts = _mcl->args[0] ? 1 : -1;
+	} else
+		cr0_ts = 0;
 	if (unlikely(HYPERVISOR_multicall_check(_mcl, mcl - _mcl, NULL)))
 		BUG();
-
-	/* we're going to use this soon, after a few expensive things */
-	if (preload_fpu)
-		prefetch(next->fpu.state);
+	if (cr0_ts) {
+		if (cr0_ts > 0)
+			percpu_or(xen_x86_cr0, X86_CR0_TS);
+		else
+			percpu_and(xen_x86_cr0, ~X86_CR0_TS);
+		xen_clear_cr0_upd();
+	}
 
 	/*
 	 * Now maybe handle debug registers
@@ -429,14 +409,13 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 */
 	arch_end_context_switch(next_p);
 
-	if (preload_fpu)
-		__math_state_restore();
-
 	/*
 	 * Restore %gs if needed (which is common)
 	 */
 	if (prev->gs | next->gs)
 		lazy_load_gs(next->gs);
+
+	switch_fpu_finish(next_p, fpu);
 
 	percpu_write(current_task, next_p);
 

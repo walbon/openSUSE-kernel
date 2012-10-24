@@ -399,6 +399,7 @@ int do_settimeofday(const struct timespec *tv)
 	xtime = *tv;
 
 	timekeeping_update(true);
+
 #ifdef CONFIG_XEN_PRIVILEGED_GUEST
 	xen_update_wallclock(tv);
 #endif

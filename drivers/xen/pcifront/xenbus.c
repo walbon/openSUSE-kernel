@@ -11,7 +11,6 @@
 #include <xen/gnttab.h>
 #include "pcifront.h"
 
-#define INVALID_GRANT_REF (0)
 #define INVALID_EVTCHN    (-1)
 
 static struct pcifront_device *alloc_pdev(struct xenbus_device *xdev)
@@ -43,7 +42,7 @@ static struct pcifront_device *alloc_pdev(struct xenbus_device *xdev)
 	spin_lock_init(&pdev->sh_info_lock);
 
 	pdev->evtchn = INVALID_EVTCHN;
-	pdev->gnt_ref = INVALID_GRANT_REF;
+	pdev->gnt_ref = GRANT_INVALID_REF;
 	pdev->irq = -1;
 
 	INIT_WORK(&pdev->op_work, pcifront_do_aer);
@@ -69,7 +68,7 @@ static void free_pdev(struct pcifront_device *pdev)
 	if (pdev->evtchn != INVALID_EVTCHN)
 		xenbus_free_evtchn(pdev->xdev, pdev->evtchn);
 
-	if (pdev->gnt_ref != INVALID_GRANT_REF)
+	if (pdev->gnt_ref != GRANT_INVALID_REF)
 		gnttab_end_foreign_access(pdev->gnt_ref,
 					  (unsigned long)pdev->sh_info);
 	else
@@ -455,26 +454,24 @@ static int pcifront_xenbus_remove(struct xenbus_device *xdev)
 	return 0;
 }
 
-static const struct xenbus_device_id xenpci_ids[] = {
+static const struct xenbus_device_id pcifront_ids[] = {
 	{"pci"},
 	{{0}},
 };
 MODULE_ALIAS("xen:pci");
 
-static struct xenbus_driver xenbus_pcifront_driver = {
-	.name 			= "pcifront",
-	.ids 			= xenpci_ids,
+static DEFINE_XENBUS_DRIVER(pcifront, "pcifront",
 	.probe 			= pcifront_xenbus_probe,
 	.remove 		= pcifront_xenbus_remove,
 	.otherend_changed 	= pcifront_backend_changed,
-};
+);
 
 static int __init pcifront_init(void)
 {
 	if (!is_running_on_xen())
 		return -ENODEV;
 
-	return xenbus_register_frontend(&xenbus_pcifront_driver);
+	return xenbus_register_frontend(&pcifront_driver);
 }
 
 /* Initialize after the Xen PCI Frontend Stub is initialized */

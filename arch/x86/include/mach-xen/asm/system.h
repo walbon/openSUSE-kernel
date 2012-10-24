@@ -18,6 +18,25 @@
 # define AT_VECTOR_SIZE_ARCH 1
 #endif
 
+/*
+ * Force strict CPU ordering.
+ * And yes, this is required on UP too when we're talking
+ * to devices.
+ */
+#ifdef CONFIG_X86_32
+/*
+ * Some non-Intel clones support out of order store. wmb() ceases to be a
+ * nop for these.
+ */
+#define mb() alternative("lock; addl $0,0(%%esp)", "mfence", X86_FEATURE_XMM2)
+#define rmb() alternative("lock; addl $0,0(%%esp)", "lfence", X86_FEATURE_XMM2)
+#define wmb() alternative("lock; addl $0,0(%%esp)", "sfence", X86_FEATURE_XMM)
+#else
+#define mb() 	asm volatile("mfence":::"memory")
+#define rmb()	asm volatile("lfence":::"memory")
+#define wmb()	asm volatile("sfence" ::: "memory")
+#endif
+
 struct task_struct; /* one of the stranger aspects of C forward declarations */
 struct task_struct *__switch_to(struct task_struct *prev,
 				struct task_struct *next);
@@ -214,14 +233,44 @@ static inline unsigned long get_limit(unsigned long segment)
 	return __limit + 1;
 }
 
+DECLARE_PER_CPU(unsigned long, xen_x86_cr0);
+DECLARE_PER_CPU(unsigned long, xen_x86_cr0_upd);
+
+static inline unsigned long xen_read_cr0_upd(void)
+{
+	unsigned long upd = percpu_read(xen_x86_cr0_upd);
+	rmb();
+	return upd;
+}
+
+static inline void xen_clear_cr0_upd(void)
+{
+	wmb();
+	percpu_write(xen_x86_cr0_upd, 0);
+}
+
 static inline void xen_clts(void)
 {
-	HYPERVISOR_fpu_taskswitch(0);
+	if (unlikely(xen_read_cr0_upd()))
+		HYPERVISOR_fpu_taskswitch(0);
+	else if (percpu_read(xen_x86_cr0) & X86_CR0_TS) {
+		percpu_write(xen_x86_cr0_upd, X86_CR0_TS);
+		HYPERVISOR_fpu_taskswitch(0);
+		percpu_and(xen_x86_cr0, ~X86_CR0_TS);
+		xen_clear_cr0_upd();
+	}
 }
 
 static inline void xen_stts(void)
 {
-	HYPERVISOR_fpu_taskswitch(1);
+	if (unlikely(xen_read_cr0_upd()))
+		HYPERVISOR_fpu_taskswitch(1);
+	else if (!(percpu_read(xen_x86_cr0) & X86_CR0_TS)) {
+		percpu_write(xen_x86_cr0_upd, X86_CR0_TS);
+		HYPERVISOR_fpu_taskswitch(1);
+		percpu_or(xen_x86_cr0, X86_CR0_TS);
+		xen_clear_cr0_upd();
+	}
 }
 
 /*
@@ -231,18 +280,46 @@ static inline void xen_stts(void)
  * all loads stores around it, which can hurt performance. Solution is to
  * use a variable and mimic reads and writes to it to enforce serialization
  */
-static unsigned long __force_order;
+#define __force_order machine_to_phys_nr
 
-static inline unsigned long xen_read_cr0(void)
+static inline unsigned long native_read_cr0(void)
 {
 	unsigned long val;
 	asm volatile("mov %%cr0,%0\n\t" : "=r" (val), "=m" (__force_order));
 	return val;
 }
 
-static inline void xen_write_cr0(unsigned long val)
+static inline unsigned long xen_read_cr0(void)
+{
+	return likely(!xen_read_cr0_upd()) ?
+	       percpu_read(xen_x86_cr0) : native_read_cr0();
+}
+
+static inline void native_write_cr0(unsigned long val)
 {
 	asm volatile("mov %0,%%cr0": : "r" (val), "m" (__force_order));
+}
+
+static inline void xen_write_cr0(unsigned long val)
+{
+	unsigned long upd = val ^ percpu_read(xen_x86_cr0);
+
+	if (unlikely(percpu_cmpxchg_op(xen_x86_cr0_upd, 0, upd))) {
+		native_write_cr0(val);
+		return;
+	}
+	switch (upd) {
+	case 0:
+		return;
+	case X86_CR0_TS:
+		HYPERVISOR_fpu_taskswitch(!!(val & X86_CR0_TS));
+		break;
+	default:
+		native_write_cr0(val);
+		break;
+	}
+	percpu_write(xen_x86_cr0, val);
+	xen_clear_cr0_upd();
 }
 
 #define xen_read_cr2() vcpu_info_read(arch.cr2)
@@ -400,25 +477,6 @@ extern void free_init_pages(char *what, unsigned long begin, unsigned long end);
 void xen_idle(void);
 
 void stop_this_cpu(void *dummy);
-
-/*
- * Force strict CPU ordering.
- * And yes, this is required on UP too when we're talking
- * to devices.
- */
-#ifdef CONFIG_X86_32
-/*
- * Some non-Intel clones support out of order store. wmb() ceases to be a
- * nop for these.
- */
-#define mb() alternative("lock; addl $0,0(%%esp)", "mfence", X86_FEATURE_XMM2)
-#define rmb() alternative("lock; addl $0,0(%%esp)", "lfence", X86_FEATURE_XMM2)
-#define wmb() alternative("lock; addl $0,0(%%esp)", "sfence", X86_FEATURE_XMM)
-#else
-#define mb() 	asm volatile("mfence":::"memory")
-#define rmb()	asm volatile("lfence":::"memory")
-#define wmb()	asm volatile("sfence" ::: "memory")
-#endif
 
 /**
  * read_barrier_depends - Flush all pending reads that subsequents reads

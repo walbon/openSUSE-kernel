@@ -149,7 +149,7 @@ static struct attribute *tapstat_attrs[] = {
 	NULL
 };
 
-static struct attribute_group tapstat_group = {
+static const struct attribute_group tapstat_group = {
 	.name = "statistics",
 	.attrs = tapstat_attrs,
 };
@@ -463,19 +463,20 @@ static int connect_ring(struct backend_info *be)
 	}
 
 	be->blkif->blk_protocol = BLKIF_PROTOCOL_NATIVE;
-	err = xenbus_gather(XBT_NIL, dev->otherend, "protocol",
-			    NULL, &protocol, NULL);
-	if (err) {
+	protocol = xenbus_read(XBT_NIL, dev->otherend, "protocol", NULL);
+	if (IS_ERR(protocol)) {
 		protocol = NULL;
 		be->blkif->blk_protocol = xen_guest_blkif_protocol(be->blkif->domid);
 	}
-	else if (0 == strcmp(protocol, XEN_IO_PROTO_ABI_NATIVE))
-		be->blkif->blk_protocol = BLKIF_PROTOCOL_NATIVE;
+#ifndef CONFIG_X86_32
 	else if (0 == strcmp(protocol, XEN_IO_PROTO_ABI_X86_32))
 		be->blkif->blk_protocol = BLKIF_PROTOCOL_X86_32;
+#endif
+#ifndef CONFIG_X86_64
 	else if (0 == strcmp(protocol, XEN_IO_PROTO_ABI_X86_64))
 		be->blkif->blk_protocol = BLKIF_PROTOCOL_X86_64;
-	else {
+#endif
+	else if (0 != strcmp(protocol, XEN_IO_PROTO_ABI_NATIVE)) {
 		xenbus_dev_fatal(dev, err, "unknown fe protocol %s", protocol);
 		kfree(protocol);
 		return -1;
@@ -505,18 +506,14 @@ static const struct xenbus_device_id blktap_ids[] = {
 	{ "" }
 };
 
-
-static struct xenbus_driver blktap = {
-	.name = "tap",
-	.ids = blktap_ids,
+static DEFINE_XENBUS_DRIVER(blktap, ,
 	.probe = blktap_probe,
 	.remove = blktap_remove,
 	.otherend_changed = tap_frontend_changed
-};
+);
 
 
 void tap_blkif_xenbus_init(void)
 {
-	if (xenbus_register_backend(&blktap))
-		BUG();
+	WARN_ON(xenbus_register_backend(&blktap_driver));
 }

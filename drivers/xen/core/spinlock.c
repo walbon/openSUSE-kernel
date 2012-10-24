@@ -178,7 +178,7 @@ void xen_spin_irq_enter(void)
 	struct spinning *spinning = percpu_read(_spinning);
 	unsigned int cpu = raw_smp_processor_id();
 
-	percpu_add(_irq_count, 1);
+	percpu_inc(_irq_count);
 	smp_mb();
 	for (; spinning; spinning = spinning->prev) {
 		arch_spinlock_t *lock = spinning->lock;
@@ -254,7 +254,7 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 
 	/* If kicker interrupt not initialized yet, just spin. */
 	if (unlikely(!cpu_online(cpu))
-	    || unlikely(!this_cpu_read(poll_evtchn)))
+	    || unlikely(!percpu_read(poll_evtchn)))
 		return UINT_MAX;
 
 	/* announce we're spinning */
@@ -342,7 +342,7 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 	return 1 << 10;
 }
 
-void xen_spin_kick(arch_spinlock_t *lock, unsigned int token)
+void xen_spin_kick(const arch_spinlock_t *lock, unsigned int token)
 {
 	unsigned int cpu = raw_smp_processor_id(), anchor = cpu;
 

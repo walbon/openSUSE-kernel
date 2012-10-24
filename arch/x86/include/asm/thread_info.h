@@ -95,7 +95,7 @@ struct thread_info {
 #define TIF_BLOCKSTEP		25	/* set when we want DEBUGCTLMSR_BTF */
 #define TIF_LAZY_MMU_UPDATES	27	/* task is updating the mmu lazily */
 #define TIF_SYSCALL_TRACEPOINT	28	/* syscall tracepoint instrumentation */
-#ifdef CONFIG_X86_XEN
+#if defined(CONFIG_X86_XEN) && defined(CONFIG_CPU_SUP_AMD)
 #define TIF_CSTAR		31      /* cstar-based syscall (special handling) */
 #endif
 

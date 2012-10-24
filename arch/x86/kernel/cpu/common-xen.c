@@ -147,6 +147,13 @@ DEFINE_PER_CPU_PAGE_ALIGNED(struct gdt_page, gdt_page) = { .gdt = {
 } };
 EXPORT_PER_CPU_SYMBOL_GPL(gdt_page);
 
+#ifdef CONFIG_XEN
+DEFINE_PER_CPU(unsigned long, xen_x86_cr0);
+DEFINE_PER_CPU(unsigned long, xen_x86_cr0_upd) = ~0;
+EXPORT_PER_CPU_SYMBOL(xen_x86_cr0);
+EXPORT_PER_CPU_SYMBOL(xen_x86_cr0_upd);
+#endif
+
 static int __init x86_xsave_setup(char *s)
 {
 	setup_clear_cpu_cap(X86_FEATURE_XSAVE);
@@ -386,6 +393,10 @@ void __ref load_percpu_segment(int cpu)
 			(unsigned long)per_cpu(irq_stack_union.gs_base, cpu)))
 		BUG();
 #endif
+#endif
+#ifdef CONFIG_XEN
+	percpu_write(xen_x86_cr0, native_read_cr0());
+	xen_clear_cr0_upd();
 #endif
 	load_stack_canary_segment();
 }
@@ -643,6 +654,9 @@ void __cpuinit get_cpu_cap(struct cpuinfo_x86 *c)
 
 	if (c->extended_cpuid_level >= 0x80000007)
 		c->x86_power = cpuid_edx(0x80000007);
+#ifdef CONFIG_XEN /* hide Invariant TSC flag */
+	c->x86_power &= ~(1 << 8);
+#endif
 
 	init_scattered_cpuid_features(c);
 }
@@ -1134,13 +1148,16 @@ void __cpuinit syscall_init(void)
 #ifdef CONFIG_IA32_EMULATION
 	syscall32_cpu_init();
 #elif defined(CONFIG_XEN)
-	static const struct callback_register __cpuinitconst cstar = {
+	struct callback_register cb = {
 		.type = CALLBACKTYPE_syscall32,
 		.address = (unsigned long)ignore_sysret
 	};
 
-	if (HYPERVISOR_callback_op(CALLBACKOP_register, &cstar))
-		printk(KERN_WARNING "Unable to register CSTAR callback\n");
+	if (HYPERVISOR_callback_op(CALLBACKOP_register, &cb))
+		pr_warning("Unable to register CSTAR stub\n");
+	cb.type = CALLBACKTYPE_sysenter;
+	if (HYPERVISOR_callback_op(CALLBACKOP_register, &cb))
+		pr_warning("Unable to register SEP stub\n");
 #endif
 
 #ifndef CONFIG_XEN

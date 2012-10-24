@@ -34,7 +34,6 @@
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/slab.h>
-#include <linux/vmalloc.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
 #include <linux/kthread.h>
@@ -48,6 +47,7 @@
 #include <scsi/scsi_dbg.h>
 #include <scsi/scsi_eh.h>
 #include <asm/hypervisor.h>
+#include <xen/barrier.h>
 #include <xen/xenbus.h>
 #include <xen/interface/io/ring.h>
 #include <xen/interface/io/vscsiif.h>

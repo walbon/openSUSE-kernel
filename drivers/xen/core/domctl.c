@@ -232,9 +232,9 @@ int xen_guest_address_size(int domid)
 
 	BUILD_BUG_ON(XEN_DOMCTL_INTERFACE_VERSION > 8);
 	guest_address_size(8);
-/* #if CONFIG_XEN_COMPAT < 0x040200 */
+#if CONFIG_XEN_COMPAT < 0x040200
 	guest_address_size(7);
-/* #endif */
+#endif
 #if CONFIG_XEN_COMPAT < 0x040100
 	guest_address_size(6);
 #endif
@@ -424,10 +424,10 @@ int xen_get_topology_info(unsigned int cpu, u32 *core, u32 *sock, u32 *node)
 
 	BUILD_BUG_ON(XEN_SYSCTL_INTERFACE_VERSION > 9);
 	topologyinfo(9);
-/* #if CONFIG_XEN_COMPAT < 0x040200 */
+#if CONFIG_XEN_COMPAT < 0x040200
 	if (rc)
 		topologyinfo(8);
-/* #endif */
+#endif
 
 #if CONFIG_XEN_COMPAT < 0x040100
 #define pm_op_cputopo(ver) do {						\

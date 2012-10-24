@@ -148,8 +148,6 @@ static inline int netif_needs_gso(struct sk_buff *skb, int features)
 #define ethtool_op_set_tso(dev, data)	(-ENOSYS)
 #endif
 
-#define GRANT_INVALID_REF	0
-
 struct netfront_rx_info {
 	struct netif_rx_response rx;
 	struct netif_extra_info extras[XEN_NETIF_EXTRA_TYPE_MAX - 1];
@@ -710,7 +708,6 @@ static void network_alloc_rx_buffers(struct net_device *dev)
 	struct page *page;
 	int i, batch_target, notify;
 	RING_IDX req_prod = np->rx.req_prod_pvt;
-	struct xen_memory_reservation reservation;
 	grant_ref_t ref;
  	unsigned long pfn;
  	void *vaddr;
@@ -815,16 +812,17 @@ no_skb:
 		req->gref = ref;
 	}
 
-	if ( nr_flips != 0 ) {
+	if (nr_flips) {
+		struct xen_memory_reservation reservation = {
+			.nr_extents = nr_flips,
+			.domid      = DOMID_SELF,
+		};
+
 		/* Tell the ballon driver what is going on. */
 		balloon_update_driver_allowance(i);
 
 		set_xen_guest_handle(reservation.extent_start,
 				     np->rx_pfn_array);
-		reservation.nr_extents   = nr_flips;
-		reservation.extent_order = 0;
-		reservation.address_bits = 0;
-		reservation.domid        = DOMID_SELF;
 
 		if (!xen_feature(XENFEAT_auto_translated_physmap)) {
 			/* After all PTEs have been zapped, flush the TLB. */
@@ -832,9 +830,9 @@ no_skb:
 				UVMF_TLB_FLUSH|UVMF_ALL;
 
 			/* Give away a batch of pages. */
-			np->rx_mcl[i].op = __HYPERVISOR_memory_op;
-			np->rx_mcl[i].args[0] = XENMEM_decrease_reservation;
-			np->rx_mcl[i].args[1] = (unsigned long)&reservation;
+			MULTI_memory_op(np->rx_mcl + i,
+					XENMEM_decrease_reservation,
+					&reservation);
 
 			/* Zap PTEs and give away pages in one big
 			 * multicall. */
@@ -1314,7 +1312,6 @@ static int netif_poll(struct napi_struct *napi, int budget)
 	struct netif_rx_response *rx = &rinfo.rx;
 	struct netif_extra_info *extras = rinfo.extras;
 	RING_IDX i, rp;
-	struct multicall_entry *mcl;
 	int work_done, more_to_do = 1, accel_more_to_do = 1;
 	struct sk_buff_head rxq;
 	struct sk_buff_head errq;
@@ -1434,12 +1431,9 @@ err:
 
 		/* Do all the remapping work and M2P updates. */
 		if (!xen_feature(XENFEAT_auto_translated_physmap)) {
-			mcl = np->rx_mcl + pages_flipped;
-			mcl->op = __HYPERVISOR_mmu_update;
-			mcl->args[0] = (unsigned long)np->rx_mmu;
-			mcl->args[1] = pages_flipped;
-			mcl->args[2] = 0;
-			mcl->args[3] = DOMID_SELF;
+			MULTI_mmu_update(np->rx_mcl + pages_flipped,
+					 np->rx_mmu, pages_flipped, 0,
+					 DOMID_SELF);
 			err = HYPERVISOR_multicall_check(np->rx_mcl,
 							 pages_flipped + 1,
 							 NULL);
@@ -1604,14 +1598,10 @@ static void netif_release_rx_bufs_flip(struct netfront_info *np)
 
 		if (!xen_feature(XENFEAT_auto_translated_physmap)) {
 			/* Do all the remapping work and M2P updates. */
-			mcl->op = __HYPERVISOR_mmu_update;
-			mcl->args[0] = (unsigned long)np->rx_mmu;
-			mcl->args[1] = mmu - np->rx_mmu;
-			mcl->args[2] = 0;
-			mcl->args[3] = DOMID_SELF;
-			mcl++;
+			MULTI_mmu_update(mcl, np->rx_mmu, mmu - np->rx_mmu,
+					 0, DOMID_SELF);
 			rc = HYPERVISOR_multicall_check(
-				np->rx_mcl, mcl - np->rx_mcl, NULL);
+				np->rx_mcl, mcl + 1 - np->rx_mcl, NULL);
 			BUG_ON(rc);
 		}
 	}
@@ -2196,17 +2186,14 @@ static const struct xenbus_device_id netfront_ids[] = {
 };
 MODULE_ALIAS("xen:vif");
 
-
-static struct xenbus_driver netfront_driver = {
-	.name = "vif",
-	.ids = netfront_ids,
+static DEFINE_XENBUS_DRIVER(netfront, ,
 	.probe = netfront_probe,
 	.remove = __devexit_p(netfront_remove),
 	.suspend = netfront_suspend,
 	.suspend_cancel = netfront_suspend_cancel,
 	.resume = netfront_resume,
 	.otherend_changed = backend_changed,
-};
+);
 
 
 static int __init netif_init(void)

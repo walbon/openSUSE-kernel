@@ -3911,24 +3911,13 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 #else
 # include <linux/syscore_ops.h>
 # define NS_PER_TICK (1000000000 / HZ)
-# if defined(CONFIG_64BIT)
-#  define this_vcpu_read_8 __this_cpu_read_8
-# elif defined(CONFIG_X86_32)
-#  define this_vcpu_read_8(var) ({ \
-	u64 res__; \
-	__asm__ ("movl %%ebx,%%eax\n" \
-		 "movl %%ecx,%%edx\n" \
-		 "cmpxchg8b " __percpu_arg(1) \
-		 : "=&A" (res__) : "m" (var)); \
-	res__; })
-# endif
 
 static DEFINE_PER_CPU(u64, steal_snapshot);
 static DEFINE_PER_CPU(unsigned int, steal_residual);
 
 static cputime64_t cputime_adjust_to_64(cputime_t t)
 {
-	u64 s = this_vcpu_read_8(runstate.time[RUNSTATE_runnable]);
+	u64 s = this_vcpu_read(runstate.time[RUNSTATE_runnable]);
 	unsigned long adj = div_u64_rem(s - __this_cpu_read(steal_snapshot)
 					  + __this_cpu_read(steal_residual),
 					NS_PER_TICK,

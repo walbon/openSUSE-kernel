@@ -12,8 +12,12 @@
 #include <linux/module.h>
 #include <linux/kobject.h>
 
+#if defined(CONFIG_XEN) || defined(MODULE)
+#include <asm/hypervisor.h>
+#else
 #include <asm/xen/hypervisor.h>
 #include <asm/xen/hypercall.h>
+#endif
 
 #include <xen/xen.h>
 #include <xen/xenbus.h>
@@ -118,9 +122,14 @@ static void xen_sysfs_version_destroy(void)
 
 static ssize_t uuid_show(struct hyp_sysfs_attr *attr, char *buffer)
 {
+	xen_domain_handle_t uuid;
 	char *vm, *val;
-	int ret;
+	int ret = HYPERVISOR_xen_version(XENVER_guest_handle, uuid);
 
+	if (!ret)
+		return sprintf(buffer, "%pU\n", uuid);
+
+#if !defined(CONFIG_XEN) || CONFIG_XEN_COMPAT < 0x030100
 	if (!is_xenstored_ready())
 		return -EBUSY;
 
@@ -133,6 +142,11 @@ static ssize_t uuid_show(struct hyp_sysfs_attr *attr, char *buffer)
 		return PTR_ERR(val);
 	ret = sprintf(buffer, "%s\n", val);
 	kfree(val);
+#else /* prevent unused variable warnings */
+	asm("" : "=r" (vm), "=r" (val));
+	asm("" : : "r" (vm), "r" (val));
+#endif
+
 	return ret;
 }
 
@@ -356,6 +370,35 @@ static void xen_properties_destroy(void)
 	sysfs_remove_group(hypervisor_kobj, &xen_properties_group);
 }
 
+#if defined(CONFIG_XEN) && defined(CONFIG_KEXEC)
+extern size_t vmcoreinfo_size_xen;
+extern unsigned long paddr_vmcoreinfo_xen;
+
+static ssize_t vmcoreinfo_show(struct hyp_sysfs_attr *attr, char *page)
+{
+	return sprintf(page, "%lx %zx\n",
+		       paddr_vmcoreinfo_xen, vmcoreinfo_size_xen);
+}
+
+HYPERVISOR_ATTR_RO(vmcoreinfo);
+
+static int __init xen_sysfs_vmcoreinfo_init(void)
+{
+	if (!vmcoreinfo_size_xen)
+		return 0;
+	return sysfs_create_file(hypervisor_kobj, &vmcoreinfo_attr.attr);
+}
+
+static void xen_sysfs_vmcoreinfo_destroy(void)
+{
+	if (vmcoreinfo_size_xen)
+		sysfs_remove_file(hypervisor_kobj, &vmcoreinfo_attr.attr);
+}
+#else
+static inline int __init xen_sysfs_vmcoreinfo_init(void) { return 0; }
+static inline void xen_sysfs_vmcoreinfo_destroy(void) { }
+#endif
+
 static int __init hyper_sysfs_init(void)
 {
 	int ret;
@@ -378,9 +421,11 @@ static int __init hyper_sysfs_init(void)
 	ret = xen_properties_init();
 	if (ret)
 		goto prop_out;
+	ret = xen_sysfs_vmcoreinfo_init();
+	if (!ret)
+		goto out;
 
-	goto out;
-
+	xen_properties_destroy();
 prop_out:
 	xen_sysfs_uuid_destroy();
 uuid_out:
@@ -395,6 +440,7 @@ out:
 
 static void __exit hyper_sysfs_exit(void)
 {
+	xen_sysfs_vmcoreinfo_destroy();
 	xen_properties_destroy();
 	xen_compilation_destroy();
 	xen_sysfs_uuid_destroy();

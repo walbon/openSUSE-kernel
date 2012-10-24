@@ -535,6 +535,7 @@ ENTRY(system_call)
 	pushl_cfi %eax			# save orig_eax
 	SAVE_ALL
 	GET_THREAD_INFO(%ebp)
+					# system call tracing in operation / emulation
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%ebp)
 	jnz syscall_trace_entry
 	cmpl $(nr_syscalls), %eax
@@ -955,7 +956,7 @@ ENDPROC(name)
 # so we can simply throw away the new one.
 ENTRY(hypervisor_callback)
 	RING0_INT_FRAME
-	pushl_cfi %eax
+	pushl_cfi $-1
 	SAVE_ALL
 	movl PT_CS(%esp),%ecx
 	movl PT_EIP(%esp),%eax
@@ -1055,7 +1056,7 @@ ENTRY(failsafe_callback)
 	jmp iret_exc
 5:	addl $16,%esp		# EAX == 0 => Category 1 (Bad segment)
 	RING0_INT_FRAME
-	pushl $0
+	pushl $-1
 	SAVE_ALL
 	jmp ret_from_exception
 .section .fixup,"ax";		\
@@ -1388,6 +1389,7 @@ return_to_handler:
 	jmp *%ecx
 #endif
 
+#ifdef TIF_CSTAR
 #include <asm/alternative-asm.h>
 
 	# pv syscall call handler stub
@@ -1489,12 +1491,14 @@ ENTRY(cstar_ret_from_fork)
 	jmp ret_from_fork
 	CFI_ENDPROC
 END(cstar_ret_from_fork)
+#endif /* TIF_CSTAR */
 
 .section .rodata,"a"
 #include "syscall_table_32.S"
 
 syscall_table_size=(.-sys_call_table)
 
+#ifdef TIF_CSTAR
 #include <asm/unistd.h>
 cstar_special:
 nr=0
@@ -1520,6 +1524,7 @@ mask=0
 #undef	ptregs_fork
 #undef	ptregs_clone
 #undef	ptregs_vfork
+#endif /* TIF_CSTAR */
 
 /*
  * Some functions should be protected against kprobes

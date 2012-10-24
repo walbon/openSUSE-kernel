@@ -356,6 +356,30 @@ int xenbus_grant_ring(struct xenbus_device *dev, unsigned long ring_mfn)
 }
 EXPORT_SYMBOL_GPL(xenbus_grant_ring);
 
+int xenbus_multi_grant_ring(struct xenbus_device *dev, unsigned int nr,
+			    struct page *pages[], grant_ref_t refs[])
+{
+	unsigned int i;
+	int err = -EINVAL;
+
+	for (i = 0; i < nr; ++i) {
+		unsigned long pfn = page_to_pfn(pages[i]);
+
+		err = gnttab_grant_foreign_access(dev->otherend_id,
+						  pfn_to_mfn(pfn), 0);
+		if (err < 0) {
+			xenbus_dev_fatal(dev, err,
+					 "granting access to ring page #%u",
+					 i);
+			break;
+		}
+		refs[i] = err;
+	}
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(xenbus_multi_grant_ring);
+
 
 /**
  * Allocate an event channel for the given xenbus_device, assigning the newly

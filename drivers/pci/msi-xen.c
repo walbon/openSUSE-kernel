@@ -20,6 +20,7 @@
 #include <linux/io.h>
 #include <linux/slab.h>
 
+#include <xen/interface/physdev.h>
 #include <xen/evtchn.h>
 
 #include "pci.h"
@@ -39,7 +40,6 @@ struct msi_dev_list {
 	struct pci_dev *dev;
 	struct list_head list;
 	spinlock_t pirq_list_lock;
-	struct list_head pirq_list_head;
 	/* Store default pre-assigned irq */
 	unsigned int default_irq;
 };
@@ -114,7 +114,6 @@ static struct msi_dev_list *get_msi_dev_pirq_list(struct pci_dev *dev)
 
 	ret->dev = dev;
 	spin_lock_init(&ret->pirq_list_lock);
-	INIT_LIST_HEAD(&ret->pirq_list_head);
 	list_add_tail(&ret->list, &msi_dev_head);
 	spin_unlock_irqrestore(&msi_dev_lock, flags);
 	return ret;
@@ -131,7 +130,7 @@ static int attach_pirq_entry(int pirq, int entry_nr,
 	entry->pirq = pirq;
 	entry->entry_nr = entry_nr;
 	spin_lock_irqsave(&msi_dev_entry->pirq_list_lock, flags);
-	list_add_tail(&entry->list, &msi_dev_entry->pirq_list_head);
+	list_add_tail(&entry->list, &msi_dev_entry->dev->msi_list);
 	spin_unlock_irqrestore(&msi_dev_entry->pirq_list_lock, flags);
 	return 0;
 }
@@ -142,7 +141,7 @@ static void detach_pirq_entry(int entry_nr,
 	unsigned long flags;
 	struct msi_pirq_entry *pirq_entry;
 
-	list_for_each_entry(pirq_entry, &msi_dev_entry->pirq_list_head, list) {
+	list_for_each_entry(pirq_entry, &msi_dev_entry->dev->msi_list, list) {
 		if (pirq_entry->entry_nr == entry_nr) {
 			spin_lock_irqsave(&msi_dev_entry->pirq_list_lock, flags);
 			list_del(&pirq_entry->list);
@@ -364,7 +363,6 @@ static int msi_capability_init(struct pci_dev *dev, int nvec)
 
 	pci_read_config_word(dev, msi_control_reg(pos), &control);
 
-	WARN_ON(nvec > 1); /* XXX */
 	pirq = msi_map_vector(dev, 0, 0);
 	if (pirq < 0)
 		return -EBUSY;
@@ -423,7 +421,7 @@ static int msix_capability_init(struct pci_dev *dev,
 
 	for (i = 0; i < nvec; i++) {
 		mapped = 0;
-		list_for_each_entry(pirq_entry, &msi_dev_entry->pirq_list_head, list) {
+		list_for_each_entry(pirq_entry, &dev->msi_list, list) {
 			if (pirq_entry->entry_nr == entries[i].entry) {
 				dev_warn(&dev->dev,
 					 "msix entry %d was not freed\n",
@@ -539,7 +537,7 @@ int pci_enable_msi_block(struct pci_dev *dev, unsigned int nvec)
 	if (!pos)
 		return -EINVAL;
 	pci_read_config_word(dev, pos + PCI_MSI_FLAGS, &msgctl);
-	maxvec = 1 << ((msgctl & PCI_MSI_FLAGS_QMASK) >> 1);
+	maxvec = 1 /* XXX << ((msgctl & PCI_MSI_FLAGS_QMASK) >> 1) */;
 	if (nvec > maxvec)
 		return maxvec;
 
@@ -552,8 +550,6 @@ int pci_enable_msi_block(struct pci_dev *dev, unsigned int nvec)
 		int ret;
 
 		temp = dev->irq;
-		if (nvec > 1) /* XXX */
-			return 1;
 		ret = pci_frontend_enable_msi(dev);
 		if (ret)
 			return ret;
@@ -683,7 +679,7 @@ int pci_enable_msix(struct pci_dev *dev, struct msix_entry *entries, int nvec)
 		for (i = 0; i < nvec; i++) {
 			int mapped = 0;
 
-			list_for_each_entry(pirq_entry, &msi_dev_entry->pirq_list_head, list) {
+			list_for_each_entry(pirq_entry, &dev->msi_list, list) {
 				if (pirq_entry->entry_nr == entries[i].entry) {
 					irq = pirq_entry->pirq;
 					BUG_ON(entries[i].vector != evtchn_get_xen_pirq(irq));
@@ -789,16 +785,14 @@ void msi_remove_pci_irq_vectors(struct pci_dev *dev)
 	msi_dev_entry = get_msi_dev_pirq_list(dev);
 
 	spin_lock_irqsave(&msi_dev_entry->pirq_list_lock, flags);
-	if (!list_empty(&msi_dev_entry->pirq_list_head))
-		list_for_each_entry_safe(pirq_entry, tmp,
-		                         &msi_dev_entry->pirq_list_head, list) {
-			if (is_initial_xendomain())
-				msi_unmap_pirq(dev, pirq_entry->pirq);
-			else
-				evtchn_map_pirq(pirq_entry->pirq, 0);
-			list_del(&pirq_entry->list);
-			kfree(pirq_entry);
-		}
+	list_for_each_entry_safe(pirq_entry, tmp, &dev->msi_list, list) {
+		if (is_initial_xendomain())
+			msi_unmap_pirq(dev, pirq_entry->pirq);
+		else
+			evtchn_map_pirq(pirq_entry->pirq, 0);
+		list_del(&pirq_entry->list);
+		kfree(pirq_entry);
+	}
 	spin_unlock_irqrestore(&msi_dev_entry->pirq_list_lock, flags);
 	dev->irq = msi_dev_entry->default_irq;
 }
@@ -824,9 +818,7 @@ void pci_msi_init_pci_dev(struct pci_dev *dev)
 {
 	int pos;
 
-#ifndef CONFIG_XEN
 	INIT_LIST_HEAD(&dev->msi_list);
-#endif
 	/* Disable the msi hardware to avoid screaming interrupts
 	 * during boot.  This is the power on reset default so
 	 * usually this should be a noop.

@@ -27,4 +27,4 @@ obj-$(CONFIG_X86_LOCAL_APIC)	+= probe_$(BITS).o
 
 probe_64-$(CONFIG_XEN)		:= probe_32.o
 
-disabled-obj-$(CONFIG_XEN)	:= apic_flat_$(BITS).o apic_noop.o
+disabled-obj-$(CONFIG_XEN)	:= apic_%.o

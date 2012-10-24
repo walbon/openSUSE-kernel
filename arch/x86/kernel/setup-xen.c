@@ -1254,8 +1254,6 @@ void __init setup_arch(char **cmdline_p)
 		 * kernel parameter); shrink reservation with the HV
 		 */
 		struct xen_memory_reservation reservation = {
-			.address_bits = 0,
-			.extent_order = 0,
 			.domid = DOMID_SELF
 		};
 		unsigned int difference;
@@ -1269,8 +1267,7 @@ void __init setup_arch(char **cmdline_p)
 		ret = HYPERVISOR_memory_op(XENMEM_decrease_reservation,
 					   &reservation);
 		BUG_ON(ret != difference);
-	}
-	else if (max_pfn > xen_start_info->nr_pages)
+	} else if (max_pfn > xen_start_info->nr_pages)
 		p2m_pages = xen_start_info->nr_pages;
 
 	if (!xen_feature(XENFEAT_auto_translated_physmap)) {
@@ -1313,7 +1310,7 @@ void __init setup_arch(char **cmdline_p)
 
 			BUILD_BUG_ON(VMEMMAP_START & ~PGDIR_MASK);
 			xen_l4_entry_update(pgd, __pgd(0));
-			for(;;) {
+			do {
 				pud_t *pud = pud_page + pud_index(va);
 
 				if (pud_none(*pud))
@@ -1359,22 +1356,20 @@ void __init setup_arch(char **cmdline_p)
 						XENFEAT_writable_page_tables);
 					free_bootmem(__pa((unsigned long)pmd
 							  & PAGE_MASK),
-						PAGE_SIZE);
+						     PAGE_SIZE);
 				}
-				if (!pud_index(va))
-					break;
-			}
+			} while (pud_index(va));
 			ClearPagePinned(virt_to_page(pud_page));
 			make_page_writable(pud_page,
-				XENFEAT_writable_page_tables);
+					   XENFEAT_writable_page_tables);
 			free_bootmem(__pa((unsigned long)pud_page & PAGE_MASK),
-				PAGE_SIZE);
+				     PAGE_SIZE);
 		} else if (!WARN_ON(xen_start_info->mfn_list
 				    < __START_KERNEL_map))
 #endif
 			free_bootmem(__pa(xen_start_info->mfn_list),
-				PFN_PHYS(PFN_UP(xen_start_info->nr_pages *
-						sizeof(unsigned long))));
+				     PFN_PHYS(PFN_UP(xen_start_info->nr_pages *
+						     sizeof(unsigned long))));
 
 		if (!is_initial_xendomain() || kexec_enabled())
 			setup_pfn_to_mfn_frame_list(__alloc_bootmem);

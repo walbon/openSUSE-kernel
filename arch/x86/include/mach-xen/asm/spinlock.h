@@ -57,7 +57,7 @@ unsigned int xen_spin_adjust(const arch_spinlock_t *, unsigned int token);
 #endif
 unsigned int xen_spin_wait(arch_spinlock_t *, unsigned int *token,
 			   unsigned int flags);
-void xen_spin_kick(arch_spinlock_t *, unsigned int token);
+void xen_spin_kick(const arch_spinlock_t *, unsigned int token);
 
 /*
  * Ticket locks are conceptually two parts, one indicating the current head of
@@ -213,20 +213,6 @@ static __always_inline int __ticket_spin_trylock(arch_spinlock_t *lock)
 }
 #endif
 
-static inline int __ticket_spin_is_locked(arch_spinlock_t *lock)
-{
-	int tmp = ACCESS_ONCE(lock->slock);
-
-	return !!(((tmp >> TICKET_SHIFT) ^ tmp) & ((1 << TICKET_SHIFT) - 1));
-}
-
-static inline int __ticket_spin_is_contended(arch_spinlock_t *lock)
-{
-	int tmp = ACCESS_ONCE(lock->slock);
-
-	return (((tmp >> TICKET_SHIFT) - tmp) & ((1 << TICKET_SHIFT) - 1)) > 1;
-}
-
 #if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
 static __always_inline void __ticket_spin_lock(arch_spinlock_t *lock)
 {
@@ -285,6 +271,20 @@ static __always_inline void __ticket_spin_unlock(arch_spinlock_t *lock)
 #undef __ticket_spin_lock_body
 #undef __ticket_spin_unlock_body
 #endif
+
+static inline int __ticket_spin_is_locked(arch_spinlock_t *lock)
+{
+	int tmp = ACCESS_ONCE(lock->slock);
+
+	return !!(((tmp >> TICKET_SHIFT) ^ tmp) & ((1 << TICKET_SHIFT) - 1));
+}
+
+static inline int __ticket_spin_is_contended(arch_spinlock_t *lock)
+{
+	int tmp = ACCESS_ONCE(lock->slock);
+
+	return (((tmp >> TICKET_SHIFT) - tmp) & ((1 << TICKET_SHIFT) - 1)) > 1;
+}
 
 #define __arch_spin(n) __ticket_spin_##n
 

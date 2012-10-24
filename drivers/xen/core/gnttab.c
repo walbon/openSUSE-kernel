@@ -41,7 +41,7 @@
 #include <xen/gnttab.h>
 #include <asm/pgtable.h>
 #include <asm/uaccess.h>
-#include <asm/synch_bitops.h>
+#include <asm/cmpxchg.h>
 #include <asm/io.h>
 #include <xen/interface/memory.h>
 #include <asm/gnttab_dma.h>
@@ -53,7 +53,7 @@
 /* External tools reserve first few grant table entries. */
 #define NR_RESERVED_ENTRIES 8
 #define GNTTAB_LIST_END 0xffffffff
-#define ENTRIES_PER_GRANT_FRAME (PAGE_SIZE / sizeof(grant_entry_t))
+#define ENTRIES_PER_GRANT_FRAME (PAGE_SIZE / sizeof(grant_entry_v1_t))
 
 static grant_ref_t **gnttab_list;
 static unsigned int nr_grant_frames;
@@ -62,7 +62,7 @@ static int gnttab_free_count;
 static grant_ref_t gnttab_free_head;
 static DEFINE_SPINLOCK(gnttab_list_lock);
 
-static struct grant_entry *shared;
+static struct grant_entry_v1 *shared;
 
 static struct gnttab_free_callback *gnttab_free_callback_list;
 
@@ -192,7 +192,7 @@ static inline int _gnttab_end_foreign_access_ref(grant_ref_t ref)
 	do {
 		if ((flags = nflags) & (GTF_reading|GTF_writing))
 			return 0;
-	} while ((nflags = synch_cmpxchg_subword(&shared[ref].flags, flags, 0)) !=
+	} while ((nflags = sync_cmpxchg(&shared[ref].flags, flags, 0)) !=
 		 flags);
 
 	return 1;
@@ -300,6 +300,31 @@ void gnttab_end_foreign_access(grant_ref_t ref, unsigned long page)
 }
 EXPORT_SYMBOL_GPL(gnttab_end_foreign_access);
 
+void gnttab_multi_end_foreign_access(unsigned int nr, grant_ref_t refs[],
+				     struct page *pages[])
+{
+	for (; nr--; ++refs) {
+		if (*refs != GRANT_INVALID_REF) {
+			if (gnttab_end_foreign_access_ref(*refs))
+				put_free_entry(*refs);
+			else if (pages) {
+				gnttab_add_deferred(*refs, *pages);
+				*pages = NULL;
+			} else
+				gnttab_add_deferred(*refs, NULL);
+			*refs = GRANT_INVALID_REF;
+		}
+		if (pages) {
+			if (*pages) {
+				__free_page(*pages);
+				*pages = NULL;
+			}
+			++pages;
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(gnttab_multi_end_foreign_access);
+
 int gnttab_grant_foreign_transfer(domid_t domid, unsigned long pfn)
 {
 	int ref;
@@ -332,7 +357,7 @@ unsigned long gnttab_end_foreign_transfer_ref(grant_ref_t ref)
 	 * reference and return failure (== 0).
 	 */
 	while (!((flags = shared[ref].flags) & GTF_transfer_committed)) {
-		if (synch_cmpxchg_subword(&shared[ref].flags, flags, 0) == flags)
+		if (sync_cmpxchg(&shared[ref].flags, flags, 0) == flags)
 			return 0;
 		cpu_relax();
 	}
@@ -612,13 +637,9 @@ static void gnttab_page_free(struct page *page, unsigned int order)
 int gnttab_copy_grant_page(grant_ref_t ref, struct page **pagep)
 {
 	struct gnttab_unmap_and_replace unmap;
-	mmu_update_t mmu;
-	struct page *page;
-	struct page *new_page;
-	void *new_addr;
-	void *addr;
-	paddr_t pfn;
-	maddr_t mfn;
+	struct page *page, *new_page;
+	void *addr, *new_addr;
+	unsigned long pfn;
 	maddr_t new_mfn;
 	int err;
 
@@ -636,7 +657,6 @@ int gnttab_copy_grant_page(grant_ref_t ref, struct page **pagep)
 	copy_page(new_addr, addr);
 
 	pfn = page_to_pfn(page);
-	mfn = pfn_to_mfn(pfn);
 	new_mfn = virt_to_mfn(new_addr);
 
 	write_seqlock_bh(&gnttab_dma_lock);
@@ -652,27 +672,32 @@ int gnttab_copy_grant_page(grant_ref_t ref, struct page **pagep)
 		goto out;
 	}
 
-	if (!xen_feature(XENFEAT_auto_translated_physmap))
-		set_phys_to_machine(pfn, new_mfn);
-
 	gnttab_set_replace_op(&unmap, (unsigned long)addr,
 			      (unsigned long)new_addr, ref);
 
-	err = HYPERVISOR_grant_table_op(GNTTABOP_unmap_and_replace,
-					&unmap, 1);
+	if (!xen_feature(XENFEAT_auto_translated_physmap)) {
+		multicall_entry_t mc[2];
+		mmu_update_t mmu;
+
+		set_phys_to_machine(pfn, new_mfn);
+		set_phys_to_machine(page_to_pfn(new_page), INVALID_P2M_ENTRY);
+
+		MULTI_grant_table_op(&mc[0], GNTTABOP_unmap_and_replace,
+				     &unmap, 1);
+
+		mmu.ptr = (new_mfn << PAGE_SHIFT) | MMU_MACHPHYS_UPDATE;
+		mmu.val = pfn;
+		MULTI_mmu_update(&mc[1], &mmu, 1, NULL, DOMID_SELF);
+
+		err = HYPERVISOR_multicall_check(mc, 2, NULL);
+	} else
+		err = HYPERVISOR_grant_table_op(GNTTABOP_unmap_and_replace,
+						&unmap, 1);
+
 	BUG_ON(err);
 	BUG_ON(unmap.status != GNTST_okay);
 
 	write_sequnlock_bh(&gnttab_dma_lock);
-
-	if (!xen_feature(XENFEAT_auto_translated_physmap)) {
-		set_phys_to_machine(page_to_pfn(new_page), INVALID_P2M_ENTRY);
-
-		mmu.ptr = (new_mfn << PAGE_SHIFT) | MMU_MACHPHYS_UPDATE;
-		mmu.val = pfn;
-		err = HYPERVISOR_mmu_update(&mmu, 1, NULL, DOMID_SELF);
-		BUG_ON(err);
-	}
 
 	new_page->mapping = page->mapping;
 	new_page->index = page->index;
@@ -905,7 +930,7 @@ int __devinit
 #endif
 gnttab_init(void)
 {
-	int i;
+	int i, ret;
 	unsigned int max_nr_glist_frames, nr_glist_frames;
 	unsigned int nr_init_grefs;
 
@@ -928,12 +953,16 @@ gnttab_init(void)
 	nr_glist_frames = nr_freelist_frames(nr_grant_frames);
 	for (i = 0; i < nr_glist_frames; i++) {
 		gnttab_list[i] = (grant_ref_t *)__get_free_page(GFP_KERNEL);
-		if (gnttab_list[i] == NULL)
+		if (gnttab_list[i] == NULL) {
+			ret = -ENOMEM;
 			goto ini_nomem;
+		}
 	}
 
-	if (gnttab_resume() < 0)
-		return -ENODEV;
+	if (gnttab_resume() < 0) {
+		ret = -ENODEV;
+		goto ini_nomem;
+	}
 
 	nr_init_grefs = nr_grant_frames * ENTRIES_PER_GRANT_FRAME;
 
@@ -967,7 +996,7 @@ gnttab_init(void)
 	for (i--; i >= 0; i--)
 		free_page((unsigned long)gnttab_list[i]);
 	kfree(gnttab_list);
-	return -ENOMEM;
+	return ret;
 }
 
 #ifdef CONFIG_XEN
