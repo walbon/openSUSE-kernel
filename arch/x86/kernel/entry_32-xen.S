@@ -955,7 +955,7 @@ ENDPROC(name)
 # so we can simply throw away the new one.
 ENTRY(hypervisor_callback)
 	RING0_INT_FRAME
-	pushl_cfi %eax
+	pushl_cfi $-1
 	SAVE_ALL
 	movl PT_CS(%esp),%ecx
 	movl PT_EIP(%esp),%eax
@@ -1055,7 +1055,7 @@ ENTRY(failsafe_callback)
 	jmp iret_exc
 5:	addl $16,%esp		# EAX == 0 => Category 1 (Bad segment)
 	RING0_INT_FRAME
-	pushl $0
+	pushl_cfi $-1
 	SAVE_ALL
 	jmp ret_from_exception
 .section .fixup,"ax";		\
