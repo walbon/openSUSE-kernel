@@ -2222,7 +2222,7 @@ bool gfp_pfmemalloc_allowed(gfp_t gfp_mask)
 /* Returns true if the allocation is likely for THP */
 static bool is_thp_alloc(gfp_t gfp_mask, unsigned int order)
 {
-	if (order == HPAGE_PMD_ORDER &&
+	if (order == pageblock_order &&
 	    (gfp_mask & (__GFP_MOVABLE|__GFP_REPEAT)) == __GFP_MOVABLE)
 		return true;
 	return false;
