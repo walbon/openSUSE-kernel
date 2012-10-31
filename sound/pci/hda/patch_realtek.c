@@ -3483,6 +3483,21 @@ static void set_capture_mixer(struct hda_codec *codec)
 }
 
 /*
+ * standard auto-parser initializations
+ */
+static void alc_auto_init_std(struct hda_codec *codec)
+{
+	struct alc_spec *spec = codec->spec;
+	alc_auto_init_multi_out(codec);
+	alc_auto_init_extra_out(codec);
+	alc_auto_init_analog_input(codec);
+	alc_auto_init_input_src(codec);
+	alc_auto_init_digital(codec);
+	if (spec->unsol_event)
+		alc_inithook(codec);
+}
+
+/*
  * Digital-beep handlers
  */
 #ifdef CONFIG_SND_HDA_INPUT_BEEP
@@ -3561,19 +3576,6 @@ static int alc880_parse_auto_config(struct hda_codec *codec)
 	alc_auto_check_switches(codec);
 
 	return 1;
-}
-
-/* additional initialization for auto-configuration model */
-static void alc880_auto_init(struct hda_codec *codec)
-{
-	struct alc_spec *spec = codec->spec;
-	alc_auto_init_multi_out(codec);
-	alc_auto_init_extra_out(codec);
-	alc_auto_init_analog_input(codec);
-	alc_auto_init_input_src(codec);
-	alc_auto_init_digital(codec);
-	if (spec->unsol_event)
-		alc_inithook(codec);
 }
 
 #ifdef CONFIG_SND_HDA_POWER_SAVE
@@ -3669,7 +3671,7 @@ static int patch_alc880(struct hda_codec *codec)
 
 	codec->patch_ops = alc_patch_ops;
 	if (board_config == ALC_MODEL_AUTO)
-		spec->init_hook = alc880_auto_init;
+		spec->init_hook = alc_auto_init_std;
 #ifdef CONFIG_SND_HDA_POWER_SAVE
 	if (!spec->loopback.amplist)
 		spec->loopback.amplist = alc880_loopbacks;
@@ -4089,19 +4091,6 @@ static int alc882_parse_auto_config(struct hda_codec *codec)
 	return 1; /* config found */
 }
 
-/* additional initialization for auto-configuration model */
-static void alc882_auto_init(struct hda_codec *codec)
-{
-	struct alc_spec *spec = codec->spec;
-	alc_auto_init_multi_out(codec);
-	alc_auto_init_extra_out(codec);
-	alc_auto_init_analog_input(codec);
-	alc_auto_init_input_src(codec);
-	alc_auto_init_digital(codec);
-	if (spec->unsol_event)
-		alc_inithook(codec);
-}
-
 /*
  */
 #ifdef CONFIG_SND_HDA_ENABLE_REALTEK_QUIRKS
@@ -4196,7 +4185,7 @@ static int patch_alc882(struct hda_codec *codec)
 
 	codec->patch_ops = alc_patch_ops;
 	if (board_config == ALC_MODEL_AUTO)
-		spec->init_hook = alc882_auto_init;
+		spec->init_hook = alc_auto_init_std;
 
 	alc_init_jacks(codec);
 #ifdef CONFIG_SND_HDA_POWER_SAVE
@@ -4407,19 +4396,6 @@ static const struct snd_pci_quirk alc262_fixup_tbl[] = {
 #define alc262_loopbacks	alc880_loopbacks
 #endif
 
-/* init callback for auto-configuration model -- overriding the default init */
-static void alc262_auto_init(struct hda_codec *codec)
-{
-	struct alc_spec *spec = codec->spec;
-	alc_auto_init_multi_out(codec);
-	alc_auto_init_extra_out(codec);
-	alc_auto_init_analog_input(codec);
-	alc_auto_init_input_src(codec);
-	alc_auto_init_digital(codec);
-	if (spec->unsol_event)
-		alc_inithook(codec);
-}
-
 /*
  */
 #ifdef CONFIG_SND_HDA_ENABLE_REALTEK_QUIRKS
@@ -4514,7 +4490,7 @@ static int patch_alc262(struct hda_codec *codec)
 
 	codec->patch_ops = alc_patch_ops;
 	if (board_config == ALC_MODEL_AUTO)
-		spec->init_hook = alc262_auto_init;
+		spec->init_hook = alc_auto_init_std;
 	spec->shutup = alc_eapd_shutup;
 
 	alc_init_jacks(codec);
@@ -5953,19 +5929,6 @@ static int alc861vd_parse_auto_config(struct hda_codec *codec)
 	return 1;
 }
 
-/* additional initialization for auto-configuration model */
-static void alc861vd_auto_init(struct hda_codec *codec)
-{
-	struct alc_spec *spec = codec->spec;
-	alc_auto_init_multi_out(codec);
-	alc_auto_init_extra_out(codec);
-	alc_auto_init_analog_input(codec);
-	alc_auto_init_input_src(codec);
-	alc_auto_init_digital(codec);
-	if (spec->unsol_event)
-		alc_inithook(codec);
-}
-
 enum {
 	ALC660VD_FIX_ASUS_GPIO1
 };
@@ -6074,7 +6037,7 @@ static int patch_alc861vd(struct hda_codec *codec)
 	codec->patch_ops = alc_patch_ops;
 
 	if (board_config == ALC_MODEL_AUTO)
-		spec->init_hook = alc861vd_auto_init;
+		spec->init_hook = alc_auto_init_std;
 	spec->shutup = alc_eapd_shutup;
 #ifdef CONFIG_SND_HDA_POWER_SAVE
 	if (!spec->loopback.amplist)
@@ -6161,19 +6124,6 @@ static int alc662_parse_auto_config(struct hda_codec *codec)
 		return err;
 
 	return 1;
-}
-
-/* additional initialization for auto-configuration model */
-static void alc662_auto_init(struct hda_codec *codec)
-{
-	struct alc_spec *spec = codec->spec;
-	alc_auto_init_multi_out(codec);
-	alc_auto_init_extra_out(codec);
-	alc_auto_init_analog_input(codec);
-	alc_auto_init_input_src(codec);
-	alc_auto_init_digital(codec);
-	if (spec->unsol_event)
-		alc_inithook(codec);
 }
 
 static void alc272_fixup_mario(struct hda_codec *codec,
@@ -6361,7 +6311,7 @@ static int patch_alc662(struct hda_codec *codec)
 
 	codec->patch_ops = alc_patch_ops;
 	if (board_config == ALC_MODEL_AUTO)
-		spec->init_hook = alc662_auto_init;
+		spec->init_hook = alc_auto_init_std;
 	spec->shutup = alc_eapd_shutup;
 
 	alc_init_jacks(codec);
@@ -6463,19 +6413,6 @@ static int alc680_parse_auto_config(struct hda_codec *codec)
 	return 1;
 }
 
-/* init callback for auto-configuration model -- overriding the default init */
-static void alc680_auto_init(struct hda_codec *codec)
-{
-	struct alc_spec *spec = codec->spec;
-	alc_auto_init_multi_out(codec);
-	alc_auto_init_extra_out(codec);
-	alc_auto_init_analog_input(codec);
-	alc_auto_init_input_src(codec);
-	alc_auto_init_digital(codec);
-	if (spec->unsol_event)
-		alc_inithook(codec);
-}
-
 /*
  */
 #ifdef CONFIG_SND_HDA_ENABLE_REALTEK_QUIRKS
@@ -6542,7 +6479,7 @@ static int patch_alc680(struct hda_codec *codec)
 
 	codec->patch_ops = alc_patch_ops;
 	if (board_config == ALC_MODEL_AUTO)
-		spec->init_hook = alc680_auto_init;
+		spec->init_hook = alc_auto_init_std;
 
 	return 0;
 }
