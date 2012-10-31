@@ -1503,6 +1503,11 @@ static int via_build_controls(struct hda_codec *codec)
 	analog_low_current_mode(codec);
 
 	via_free_kctls(codec); /* no longer needed */
+
+	err = snd_hda_jack_add_kctls(codec, &spec->autocfg);
+	if (err < 0)
+		return err;
+
 	return 0;
 }
 
@@ -1726,6 +1731,7 @@ static void via_unsol_event(struct hda_codec *codec,
 		via_hp_automute(codec);
 	else if (res == VIA_GPIO_EVENT)
 		via_gpio_control(codec);
+	snd_hda_jack_report_sync(codec);
 }
 
 #ifdef CONFIG_PM
