@@ -1221,7 +1221,7 @@ static void snd_hda_codec_free(struct hda_codec *codec)
 static bool snd_hda_codec_get_supported_ps(struct hda_codec *codec,
 				hda_nid_t fg, unsigned int power_state);
 
-static unsigned int hda_set_power_state(struct hda_codec *codec, hda_nid_t fg,
+static unsigned int hda_set_power_state(struct hda_codec *codec,
 				unsigned int power_state);
 
 /**
@@ -1238,6 +1238,7 @@ int /*__devinit*/ snd_hda_codec_new(struct hda_bus *bus,
 {
 	struct hda_codec *codec;
 	char component[31];
+	hda_nid_t fg;
 	int err;
 
 	if (snd_BUG_ON(!bus))
@@ -1314,7 +1315,8 @@ int /*__devinit*/ snd_hda_codec_new(struct hda_bus *bus,
 		goto error;
 	}
 
-	err = read_widget_caps(codec, codec->afg ? codec->afg : codec->mfg);
+	fg = codec->afg ? codec->afg : codec->mfg;
+	err = read_widget_caps(codec, fg);
 	if (err < 0) {
 		snd_printk(KERN_ERR "hda_codec: cannot malloc\n");
 		goto error;
@@ -1324,28 +1326,23 @@ int /*__devinit*/ snd_hda_codec_new(struct hda_bus *bus,
 		goto error;
 
 	if (!codec->subsystem_id) {
-		hda_nid_t nid = codec->afg ? codec->afg : codec->mfg;
 		codec->subsystem_id =
-			snd_hda_codec_read(codec, nid, 0,
+			snd_hda_codec_read(codec, fg, 0,
 					   AC_VERB_GET_SUBSYSTEM_ID, 0);
 	}
 
 #ifdef CONFIG_PM
-	codec->d3_stop_clk = snd_hda_codec_get_supported_ps(codec,
-					codec->afg ? codec->afg : codec->mfg,
+	codec->d3_stop_clk = snd_hda_codec_get_supported_ps(codec, fg,
 					AC_PWRST_CLKSTOP);
 	if (!codec->d3_stop_clk)
 		bus->power_keep_link_on = 1;
 #endif
 
-	codec->epss = snd_hda_codec_get_supported_ps(codec,
-					codec->afg ? codec->afg : codec->mfg,
+	codec->epss = snd_hda_codec_get_supported_ps(codec, fg,
 					AC_PWRST_EPSS);
 
 	/* power-up all before initialization */
-	hda_set_power_state(codec,
-			    codec->afg ? codec->afg : codec->mfg,
-			    AC_PWRST_D0);
+	hda_set_power_state(codec, AC_PWRST_D0);
 
 	snd_hda_codec_proc_new(codec);
 
@@ -3573,9 +3570,10 @@ static unsigned int hda_sync_power_state(struct hda_codec *codec,
 /*
  * set power state of the codec, and return the power state
  */
-static unsigned int hda_set_power_state(struct hda_codec *codec, hda_nid_t fg,
+static unsigned int hda_set_power_state(struct hda_codec *codec,
 					unsigned int power_state)
 {
+	hda_nid_t fg = codec->afg ? codec->afg : codec->mfg;
 	int count;
 	unsigned int state;
 
@@ -3628,9 +3626,7 @@ static unsigned int hda_call_codec_suspend(struct hda_codec *codec)
 	if (codec->patch_ops.suspend)
 		codec->patch_ops.suspend(codec);
 	hda_cleanup_all_streams(codec);
-	state = hda_set_power_state(codec,
-			    codec->afg ? codec->afg : codec->mfg,
-			    AC_PWRST_D3);
+	state = hda_set_power_state(codec, AC_PWRST_D3);
 	cancel_delayed_work(&codec->power_work);
 	spin_lock(&codec->power_lock);
 	snd_hda_update_power_acct(codec);
@@ -3651,9 +3647,7 @@ static void hda_call_codec_resume(struct hda_codec *codec)
 	 * in the resume / power-save sequence
 	 */
 	hda_keep_power_on(codec);
-	hda_set_power_state(codec,
-			    codec->afg ? codec->afg : codec->mfg,
-			    AC_PWRST_D0);
+	hda_set_power_state(codec, AC_PWRST_D0);
 	restore_pincfgs(codec); /* restore all current pin configs */
 	restore_shutup_pins(codec);
 	hda_exec_init_verbs(codec);
