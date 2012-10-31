@@ -103,8 +103,6 @@ static int scatter_elem_sz_prev = SG_SCATTER_SZ;
 static int sg_add(struct device *, struct class_interface *);
 static void sg_remove(struct device *, struct class_interface *);
 
-static DEFINE_MUTEX(sg_mutex);
-
 static DEFINE_IDR(sg_index_idr);
 static DEFINE_RWLOCK(sg_index_lock);	/* Also used to lock
 							   file descriptor list for device */
@@ -231,7 +229,6 @@ sg_open(struct inode *inode, struct file *filp)
 	int res;
 	int retval;
 
-	mutex_lock(&sg_mutex);
 	nonseekable_open(inode, filp);
 	SCSI_LOG_TIMEOUT(3, printk("sg_open: dev=%d, flags=0x%x\n", dev, flags));
 	sdp = sg_get_dev(dev);
@@ -316,7 +313,6 @@ sdp_put:
 sg_put:
 	if (sdp)
 		sg_put_dev(sdp);
-	mutex_unlock(&sg_mutex);
 	return retval;
 }
 
@@ -769,7 +765,7 @@ sg_common_write(Sg_fd * sfp, Sg_request * srp,
 	return 0;
 }
 
-static int
+static long
 sg_ioctl(struct file *filp, unsigned int cmd_in, unsigned long arg)
 {
 	void __user *p = (void __user *)arg;
@@ -1089,18 +1085,6 @@ sg_ioctl(struct file *filp, unsigned int cmd_in, unsigned long arg)
 	}
 }
 
-static long
-sg_unlocked_ioctl(struct file *filp, unsigned int cmd_in, unsigned long arg)
-{
-	int ret;
-
-	mutex_lock(&sg_mutex);
-	ret = sg_ioctl(filp, cmd_in, arg);
-	mutex_unlock(&sg_mutex);
-
-	return ret;
-}
-
 #ifdef CONFIG_COMPAT
 static long sg_compat_ioctl(struct file *filp, unsigned int cmd_in, unsigned long arg)
 {
@@ -1345,7 +1329,7 @@ static const struct file_operations sg_fops = {
 	.read = sg_read,
 	.write = sg_write,
 	.poll = sg_poll,
-	.unlocked_ioctl = sg_unlocked_ioctl,
+	.unlocked_ioctl = sg_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = sg_compat_ioctl,
 #endif
