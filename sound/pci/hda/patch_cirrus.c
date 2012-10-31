@@ -25,6 +25,8 @@
 #include <sound/core.h>
 #include "hda_codec.h"
 #include "hda_local.h"
+#include "hda_jack.h"
+#include <sound/tlv.h>
 
 /*
  */
@@ -917,10 +919,8 @@ static void init_output(struct hda_codec *codec)
 				    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_HP);
 		if (!cfg->speaker_outs)
 			continue;
-		if (is_jack_detectable(codec, nid)) {
-			snd_hda_codec_write(codec, nid, 0,
-					    AC_VERB_SET_UNSOLICITED_ENABLE,
-					    AC_USRSP_EN | HP_EVENT);
+		if (get_wcaps(codec, nid) & AC_WCAP_UNSOL_CAP) {
+			snd_hda_jack_detect_enable(codec, nid, HP_EVENT);
 			spec->hp_detect = 1;
 		}
 	}
@@ -957,9 +957,7 @@ static void init_input(struct hda_codec *codec)
 				    AC_VERB_SET_AMP_GAIN_MUTE,
 				    AMP_IN_MUTE(spec->adc_idx[i]));
 		if (spec->mic_detect && spec->automic_idx == i)
-			snd_hda_codec_write(codec, pin, 0,
-					    AC_VERB_SET_UNSOLICITED_ENABLE,
-					    AC_USRSP_EN | MIC_EVENT);
+			snd_hda_jack_detect_enable(codec, pin, MIC_EVENT);
 	}
 	change_cur_input(codec, spec->cur_input, 1);
 	if (spec->mic_detect)
@@ -1109,6 +1107,8 @@ static void cs_free(struct hda_codec *codec)
 
 static void cs_unsol_event(struct hda_codec *codec, unsigned int res)
 {
+	snd_hda_jack_set_dirty_all(codec); /* FIXME: to be more fine-grained */
+
 	switch ((res >> 26) & 0x7f) {
 	case HP_EVENT:
 		cs_automute(codec);
