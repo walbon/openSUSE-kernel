@@ -1804,6 +1804,7 @@ static const char * const alc_slave_vols[] = {
 	"Speaker Playback Volume",
 	"Mono Playback Volume",
 	"Line-Out Playback Volume",
+	"PCM Playback Volume",
 	NULL,
 };
 
@@ -1818,6 +1819,7 @@ static const char * const alc_slave_sws[] = {
 	"Mono Playback Switch",
 	"IEC958 Playback Switch",
 	"Line-Out Playback Switch",
+	"PCM Playback Switch",
 	NULL,
 };
 
