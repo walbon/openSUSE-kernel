@@ -1921,7 +1921,7 @@ static int alc_build_controls(struct hda_codec *codec)
 				return err;
 		}
 	}
-	if (spec->cap_mixer) {
+	if (spec->cap_mixer && spec->adc_nids) {
 		const char *kname = kctl ? kctl->id.name : NULL;
 		for (knew = spec->cap_mixer; knew->name; knew++) {
 			if (kname && strcmp(knew->name, kname) == 0)
@@ -3691,7 +3691,7 @@ static int patch_alc880(struct hda_codec *codec)
 	if (board_config != ALC_MODEL_AUTO)
 		setup_preset(codec, &alc880_presets[board_config]);
 
-	if (!spec->no_analog && !spec->adc_nids && spec->input_mux) {
+	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
 		alc_rebuild_imux_for_auto_mic(codec);
 		alc_remove_invalid_adc_nids(codec);
@@ -3818,7 +3818,7 @@ static int patch_alc260(struct hda_codec *codec)
 	if (board_config != ALC_MODEL_AUTO)
 		setup_preset(codec, &alc260_presets[board_config]);
 
-	if (!spec->no_analog && !spec->adc_nids && spec->input_mux) {
+	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
 		alc_rebuild_imux_for_auto_mic(codec);
 		alc_remove_invalid_adc_nids(codec);
@@ -3997,7 +3997,7 @@ static int patch_alc882(struct hda_codec *codec)
 	if (board_config != ALC_MODEL_AUTO)
 		setup_preset(codec, &alc882_presets[board_config]);
 
-	if (!spec->no_analog && !spec->adc_nids && spec->input_mux) {
+	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
 		alc_rebuild_imux_for_auto_mic(codec);
 		alc_remove_invalid_adc_nids(codec);
@@ -4151,7 +4151,7 @@ static int patch_alc262(struct hda_codec *codec)
 	if (board_config != ALC_MODEL_AUTO)
 		setup_preset(codec, &alc262_presets[board_config]);
 
-	if (!spec->no_analog && !spec->adc_nids && spec->input_mux) {
+	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
 		alc_rebuild_imux_for_auto_mic(codec);
 		alc_remove_invalid_adc_nids(codec);
@@ -4307,7 +4307,7 @@ static int patch_alc268(struct hda_codec *codec)
 					  (0 << AC_AMPCAP_MUTE_SHIFT));
 	}
 
-	if (!spec->no_analog && !spec->adc_nids && spec->input_mux) {
+	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
 		alc_rebuild_imux_for_auto_mic(codec);
 		alc_remove_invalid_adc_nids(codec);
@@ -4723,7 +4723,7 @@ static int patch_alc269(struct hda_codec *codec)
 	if (board_config != ALC_MODEL_AUTO)
 		setup_preset(codec, &alc269_presets[board_config]);
 
-	if (!spec->no_analog && !spec->adc_nids && spec->input_mux) {
+	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
 		alc_rebuild_imux_for_auto_mic(codec);
 		alc_remove_invalid_adc_nids(codec);
@@ -4872,7 +4872,7 @@ static int patch_alc861(struct hda_codec *codec)
 	if (board_config != ALC_MODEL_AUTO)
 		setup_preset(codec, &alc861_presets[board_config]);
 
-	if (!spec->no_analog && !spec->adc_nids && spec->input_mux) {
+	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
 		alc_rebuild_imux_for_auto_mic(codec);
 		alc_remove_invalid_adc_nids(codec);
@@ -5013,7 +5013,7 @@ static int patch_alc861vd(struct hda_codec *codec)
 		add_verb(spec, alc660vd_eapd_verbs);
 	}
 
-	if (!spec->no_analog && !spec->adc_nids && spec->input_mux) {
+	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
 		alc_rebuild_imux_for_auto_mic(codec);
 		alc_remove_invalid_adc_nids(codec);
@@ -5229,7 +5229,7 @@ static int patch_alc662(struct hda_codec *codec)
 	if (board_config != ALC_MODEL_AUTO)
 		setup_preset(codec, &alc662_presets[board_config]);
 
-	if (!spec->no_analog && !spec->adc_nids && spec->input_mux) {
+	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
 		alc_rebuild_imux_for_auto_mic(codec);
 		alc_remove_invalid_adc_nids(codec);
@@ -5365,7 +5365,7 @@ static int patch_alc680(struct hda_codec *codec)
 #endif
 	}
 
-	if (!spec->no_analog && !spec->adc_nids && spec->input_mux) {
+	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
 		alc_rebuild_imux_for_auto_mic(codec);
 		alc_remove_invalid_adc_nids(codec);
