@@ -101,6 +101,7 @@ enum {
 	STAC_HP_DV7_4000,
 	STAC_HP_ZEPHYR,
 	STAC_92HD83XXX_HP_LED,
+	STAC_92HD83XXX_HP_INV_LED,
 	STAC_92HD83XXX_HP_MIC_LED,
 	STAC_92HD83XXX_MODELS
 };
@@ -1680,6 +1681,7 @@ static const char * const stac92hd83xxx_models[STAC_92HD83XXX_MODELS] = {
 	[STAC_HP_DV7_4000] = "hp-dv7-4000",
 	[STAC_HP_ZEPHYR] = "hp-zephyr",
 	[STAC_92HD83XXX_HP_LED] = "hp-led",
+	[STAC_92HD83XXX_HP_INV_LED] = "hp-inv-led",
 	[STAC_92HD83XXX_HP_MIC_LED] = "hp-mic-led",
 };
 
@@ -5614,6 +5616,9 @@ again:
 		spec->init = stac92hd83xxx_hp_zephyr_init;
 		break;
 	case STAC_92HD83XXX_HP_LED:
+		default_polarity = 0;
+		break;
+	case STAC_92HD83XXX_HP_INV_LED:
 		default_polarity = 1;
 		break;
 	case STAC_92HD83XXX_HP_MIC_LED:
