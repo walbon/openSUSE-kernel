@@ -3004,9 +3004,11 @@ static int alc_auto_fill_dac_nids(struct hda_codec *codec)
 		}
 	}
 
-	alc_auto_fill_extra_dacs(codec, cfg->hp_outs, cfg->hp_pins,
+	if (cfg->line_out_type != AUTO_PIN_HP_OUT)
+		alc_auto_fill_extra_dacs(codec, cfg->hp_outs, cfg->hp_pins,
 				 spec->multiout.hp_out_nid);
-	alc_auto_fill_extra_dacs(codec, cfg->speaker_outs, cfg->speaker_pins,
+	if (cfg->line_out_type != AUTO_PIN_SPEAKER_OUT)
+		alc_auto_fill_extra_dacs(codec, cfg->speaker_outs, cfg->speaker_pins,
 				 spec->multiout.extra_out_nid);
 
 	return 0;
@@ -3323,6 +3325,8 @@ static void alc_auto_init_extra_out(struct hda_codec *codec)
 	hda_nid_t pin, dac;
 
 	for (i = 0; i < spec->autocfg.hp_outs; i++) {
+		if (spec->autocfg.line_out_type == AUTO_PIN_HP_OUT)
+			break;
 		pin = spec->autocfg.hp_pins[i];
 		if (!pin)
 			break;
@@ -3336,6 +3340,8 @@ static void alc_auto_init_extra_out(struct hda_codec *codec)
 		alc_auto_set_output_and_unmute(codec, pin, PIN_HP, dac);
 	}
 	for (i = 0; i < spec->autocfg.speaker_outs; i++) {
+		if (spec->autocfg.line_out_type == AUTO_PIN_SPEAKER_OUT)
+			break;
 		pin = spec->autocfg.speaker_pins[i];
 		if (!pin)
 			break;
