@@ -84,7 +84,7 @@ struct ad198x_spec {
 	unsigned int analog_beep: 1;	/* analog beep input present */
 	unsigned int avoid_init_slave_vol:1;
 
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 	struct hda_loopback_check loopback;
 #endif
 	/* for virtual master */
@@ -268,7 +268,7 @@ static int ad198x_build_controls(struct hda_codec *codec)
 	return 0;
 }
 
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 static int ad198x_check_power_status(struct hda_codec *codec, hda_nid_t nid)
 {
 	struct ad198x_spec *spec = codec->spec;
@@ -653,10 +653,8 @@ static const struct hda_codec_ops ad198x_patch_ops = {
 	.build_pcms = ad198x_build_pcms,
 	.init = ad198x_init,
 	.free = ad198x_free,
-#ifdef CONFIG_SND_HDA_POWER_SAVE
-	.check_power_status = ad198x_check_power_status,
-#endif
 #ifdef CONFIG_PM
+	.check_power_status = ad198x_check_power_status,
 	.suspend = ad198x_suspend,
 #endif
 	.reboot_notify = ad198x_shutup,
@@ -1230,7 +1228,7 @@ static const struct snd_pci_quirk ad1986a_cfg_tbl[] = {
 	{}
 };
 
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 static const struct hda_amp_list ad1986a_loopbacks[] = {
 	{ 0x13, HDA_OUTPUT, 0 }, /* Mic */
 	{ 0x14, HDA_OUTPUT, 0 }, /* Phone */
@@ -1277,7 +1275,7 @@ static int patch_ad1986a(struct hda_codec *codec)
 	spec->mixers[0] = ad1986a_mixers;
 	spec->num_init_verbs = 1;
 	spec->init_verbs[0] = ad1986a_init_verbs;
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 	spec->loopback.amplist = ad1986a_loopbacks;
 #endif
 	spec->vmaster_nid = 0x1b;
@@ -1536,7 +1534,7 @@ static const struct hda_verb ad1983_init_verbs[] = {
 	{ } /* end */
 };
 
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 static const struct hda_amp_list ad1983_loopbacks[] = {
 	{ 0x12, HDA_OUTPUT, 0 }, /* Mic */
 	{ 0x13, HDA_OUTPUT, 0 }, /* Line */
@@ -1575,7 +1573,7 @@ static int patch_ad1983(struct hda_codec *codec)
 	spec->num_init_verbs = 1;
 	spec->init_verbs[0] = ad1983_init_verbs;
 	spec->spdif_route = 0;
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 	spec->loopback.amplist = ad1983_loopbacks;
 #endif
 	spec->vmaster_nid = 0x05;
@@ -1703,7 +1701,7 @@ static const struct hda_verb ad1981_init_verbs[] = {
 	{ } /* end */
 };
 
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 static const struct hda_amp_list ad1981_loopbacks[] = {
 	{ 0x12, HDA_OUTPUT, 0 }, /* Front Mic */
 	{ 0x13, HDA_OUTPUT, 0 }, /* Line */
@@ -1981,7 +1979,7 @@ static int patch_ad1981(struct hda_codec *codec)
 	spec->num_init_verbs = 1;
 	spec->init_verbs[0] = ad1981_init_verbs;
 	spec->spdif_route = 0;
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 	spec->loopback.amplist = ad1981_loopbacks;
 #endif
 	spec->vmaster_nid = 0x05;
@@ -2806,7 +2804,7 @@ static void ad1988_laptop_unsol_event(struct hda_codec *codec, unsigned int res)
 		snd_hda_sequence_write(codec, ad1988_laptop_hp_off);
 } 
 
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 static const struct hda_amp_list ad1988_loopbacks[] = {
 	{ 0x20, HDA_INPUT, 0 }, /* Front Mic */
 	{ 0x20, HDA_INPUT, 1 }, /* Line */
@@ -3398,7 +3396,7 @@ static int patch_ad1988(struct hda_codec *codec)
 		codec->patch_ops.unsol_event = ad1988_laptop_unsol_event;
 		break;
 	}
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 	spec->loopback.amplist = ad1988_loopbacks;
 #endif
 	spec->vmaster_nid = 0x04;
@@ -3554,7 +3552,7 @@ static const struct hda_verb ad1884_init_verbs[] = {
 	{ } /* end */
 };
 
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 static const struct hda_amp_list ad1884_loopbacks[] = {
 	{ 0x20, HDA_INPUT, 0 }, /* Front Mic */
 	{ 0x20, HDA_INPUT, 1 }, /* Mic */
@@ -3601,7 +3599,7 @@ static int patch_ad1884(struct hda_codec *codec)
 	spec->num_init_verbs = 1;
 	spec->init_verbs[0] = ad1884_init_verbs;
 	spec->spdif_route = 0;
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 	spec->loopback.amplist = ad1884_loopbacks;
 #endif
 	spec->vmaster_nid = 0x04;
@@ -3993,7 +3991,7 @@ static const struct hda_verb ad1884a_init_verbs[] = {
 	{ } /* end */
 };
 
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 static const struct hda_amp_list ad1884a_loopbacks[] = {
 	{ 0x20, HDA_INPUT, 0 }, /* Front Mic */
 	{ 0x20, HDA_INPUT, 1 }, /* Mic */
@@ -4601,7 +4599,7 @@ static int patch_ad1884a(struct hda_codec *codec)
 	spec->num_init_verbs = 1;
 	spec->init_verbs[0] = ad1884a_init_verbs;
 	spec->spdif_route = 0;
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 	spec->loopback.amplist = ad1884a_loopbacks;
 #endif
 	codec->patch_ops = ad198x_patch_ops;
@@ -4958,7 +4956,7 @@ static const struct hda_verb ad1882_3stack_automute_verbs[] = {
 	{ } /* end */
 };
 
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 static const struct hda_amp_list ad1882_loopbacks[] = {
 	{ 0x20, HDA_INPUT, 0 }, /* Front Mic */
 	{ 0x20, HDA_INPUT, 1 }, /* Mic */
@@ -5021,7 +5019,7 @@ static int patch_ad1882(struct hda_codec *codec)
 	spec->num_init_verbs = 1;
 	spec->init_verbs[0] = ad1882_init_verbs;
 	spec->spdif_route = 0;
-#ifdef CONFIG_SND_HDA_POWER_SAVE
+#ifdef CONFIG_PM
 	spec->loopback.amplist = ad1882_loopbacks;
 #endif
 	spec->vmaster_nid = 0x04;
