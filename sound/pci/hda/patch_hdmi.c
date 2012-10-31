@@ -805,7 +805,6 @@ static void hdmi_non_intrinsic_event(struct hda_codec *codec, unsigned int res)
 
 static void hdmi_unsol_event(struct hda_codec *codec, unsigned int res)
 {
-	struct hdmi_spec *spec = codec->spec;
 	int tag = res >> AC_UNSOL_RES_TAG_SHIFT;
 	int subtag = (res & AC_UNSOL_RES_SUBTAG) >> AC_UNSOL_RES_SUBTAG_SHIFT;
 
@@ -1273,7 +1272,7 @@ static int generic_hdmi_build_controls(struct hda_codec *codec)
 		if (err < 0)
 			return err;
 
-		hdmi_present_sense(per_pin, false);
+		hdmi_present_sense(per_pin, 0);
 	}
 
 	return 0;
