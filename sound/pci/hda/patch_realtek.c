@@ -2488,6 +2488,49 @@ static int alc_codec_rename(struct hda_codec *codec, const char *name)
 }
 
 /*
+ * Rename codecs appropriately from COEF value
+ */
+struct alc_codec_rename_table {
+	unsigned int vendor_id;
+	unsigned short coef_mask;
+	unsigned short coef_bits;
+	const char *name;
+};
+
+static struct alc_codec_rename_table rename_tbl[] = {
+	{ 0x10ec0269, 0xfff0, 0x3010, "ALC277" },
+	{ 0x10ec0269, 0xf0f0, 0x2010, "ALC259" },
+	{ 0x10ec0269, 0xf0f0, 0x3010, "ALC258" },
+	{ 0x10ec0269, 0x00f0, 0x0010, "ALC269VB" },
+	{ 0x10ec0269, 0xffff, 0xa023, "ALC259" },
+	{ 0x10ec0269, 0xffff, 0x6023, "ALC281X" },
+	{ 0x10ec0269, 0x00f0, 0x0020, "ALC269VC" },
+	{ 0x10ec0887, 0x00f0, 0x0030, "ALC887-VD" },
+	{ 0x10ec0888, 0x00f0, 0x0030, "ALC888-VD" },
+	{ 0x10ec0888, 0xf0f0, 0x3020, "ALC886" },
+	{ 0x10ec0899, 0x2000, 0x2000, "ALC899" },
+	{ 0x10ec0892, 0xffff, 0x8020, "ALC661" },
+	{ 0x10ec0892, 0xffff, 0x8011, "ALC661" },
+	{ 0x10ec0892, 0xffff, 0x4011, "ALC656" },
+	{ } /* terminator */
+};
+
+static int alc_codec_rename_from_preset(struct hda_codec *codec)
+{
+	const struct alc_codec_rename_table *p;
+	unsigned short coef;
+
+	for (p = rename_tbl; p->vendor_id; p++) {
+		if (p->vendor_id != codec->vendor_id)
+			continue;
+		coef = alc_read_coef_idx(codec, 0);
+		if ((coef & p->coef_mask) == p->coef_bits)
+			return alc_codec_rename(codec, p->name);
+	}
+	return 0;
+}
+
+/*
  * Automatic parse of I/O pins from the BIOS configuration
  */
 
@@ -3861,10 +3904,8 @@ static int patch_alc880(struct hda_codec *codec)
 	if (board_config == ALC_MODEL_AUTO) {
 		/* automatic parse from the BIOS config */
 		err = alc880_parse_auto_config(codec);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 #ifdef CONFIG_SND_HDA_ENABLE_REALTEK_QUIRKS
 		else if (!err) {
 			printk(KERN_INFO
@@ -3889,10 +3930,8 @@ static int patch_alc880(struct hda_codec *codec)
 
 	if (!spec->no_analog) {
 		err = snd_hda_attach_beep_device(codec, 0x1);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 		set_beep_amp(spec, 0x0b, 0x05, HDA_INPUT);
 	}
 
@@ -3907,6 +3946,10 @@ static int patch_alc880(struct hda_codec *codec)
 #endif
 
 	return 0;
+
+ error:
+	alc_free(codec);
+	return err;
 }
 
 
@@ -3988,10 +4031,8 @@ static int patch_alc260(struct hda_codec *codec)
 	if (board_config == ALC_MODEL_AUTO) {
 		/* automatic parse from the BIOS config */
 		err = alc260_parse_auto_config(codec);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 #ifdef CONFIG_SND_HDA_ENABLE_REALTEK_QUIRKS
 		else if (!err) {
 			printk(KERN_INFO
@@ -4016,10 +4057,8 @@ static int patch_alc260(struct hda_codec *codec)
 
 	if (!spec->no_analog) {
 		err = snd_hda_attach_beep_device(codec, 0x1);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 		set_beep_amp(spec, 0x07, 0x05, HDA_INPUT);
 	}
 
@@ -4037,6 +4076,10 @@ static int patch_alc260(struct hda_codec *codec)
 #endif
 
 	return 0;
+
+ error:
+	alc_free(codec);
+	return err;
 }
 
 
@@ -4144,6 +4187,10 @@ static int patch_alc882(struct hda_codec *codec)
 		break;
 	}
 
+	err = alc_codec_rename_from_preset(codec);
+	if (err < 0)
+		goto error;
+
 	board_config = alc_board_config(codec, ALC882_MODEL_LAST,
 					alc882_models, alc882_cfg_tbl);
 
@@ -4167,10 +4214,8 @@ static int patch_alc882(struct hda_codec *codec)
 	if (board_config == ALC_MODEL_AUTO) {
 		/* automatic parse from the BIOS config */
 		err = alc882_parse_auto_config(codec);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 #ifdef CONFIG_SND_HDA_ENABLE_REALTEK_QUIRKS
 		else if (!err) {
 			printk(KERN_INFO
@@ -4195,10 +4240,8 @@ static int patch_alc882(struct hda_codec *codec)
 
 	if (!spec->no_analog && has_cdefine_beep(codec)) {
 		err = snd_hda_attach_beep_device(codec, 0x1);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 		set_beep_amp(spec, 0x0b, 0x05, HDA_INPUT);
 	}
 
@@ -4217,6 +4260,10 @@ static int patch_alc882(struct hda_codec *codec)
 #endif
 
 	return 0;
+
+ error:
+	alc_free(codec);
+	return err;
 }
 
 
@@ -4321,10 +4368,8 @@ static int patch_alc262(struct hda_codec *codec)
 	if (board_config == ALC_MODEL_AUTO) {
 		/* automatic parse from the BIOS config */
 		err = alc262_parse_auto_config(codec);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 #ifdef CONFIG_SND_HDA_ENABLE_REALTEK_QUIRKS
 		else if (!err) {
 			printk(KERN_INFO
@@ -4349,10 +4394,8 @@ static int patch_alc262(struct hda_codec *codec)
 
 	if (!spec->no_analog && has_cdefine_beep(codec)) {
 		err = snd_hda_attach_beep_device(codec, 0x1);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 		set_beep_amp(spec, 0x0b, 0x05, HDA_INPUT);
 	}
 
@@ -4372,6 +4415,10 @@ static int patch_alc262(struct hda_codec *codec)
 #endif
 
 	return 0;
+
+ error:
+	alc_free(codec);
+	return err;
 }
 
 /*
@@ -4435,10 +4482,8 @@ static int patch_alc268(struct hda_codec *codec)
 
 	/* automatic parse from the BIOS config */
 	err = alc268_parse_auto_config(codec);
-	if (err < 0) {
-		alc_free(codec);
-		return err;
-	}
+	if (err < 0)
+		goto error;
 
 	has_beep = 0;
 	for (i = 0; i < spec->num_mixers; i++) {
@@ -4450,10 +4495,8 @@ static int patch_alc268(struct hda_codec *codec)
 
 	if (has_beep) {
 		err = snd_hda_attach_beep_device(codec, 0x1);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 		if (!query_amp_caps(codec, 0x1d, HDA_INPUT))
 			/* override the amp caps for beep generator */
 			snd_hda_override_amp_caps(codec, 0x1d, HDA_INPUT,
@@ -4481,6 +4524,10 @@ static int patch_alc268(struct hda_codec *codec)
 	alc_init_jacks(codec);
 
 	return 0;
+
+ error:
+	alc_free(codec);
+	return err;
 }
 
 /*
@@ -4974,41 +5021,28 @@ static int patch_alc269(struct hda_codec *codec)
 
 	alc_auto_parse_customize_define(codec);
 
+	err = alc_codec_rename_from_preset(codec);
+	if (err < 0)
+		goto error;
+
 	if (codec->vendor_id == 0x10ec0269) {
 		unsigned int coef;
 		spec->codec_variant = ALC269_TYPE_ALC269VA;
 		coef = alc_read_coef_idx(codec, 0);
 		if ((coef & 0x00f0) == 0x0010) {
 			if (codec->bus->pci->subsystem_vendor == 0x1025 &&
-			    spec->cdefine.platform_type == 1) {
+			    spec->cdefine.platform_type == 1)
 				err = alc_codec_rename(codec, "ALC271X");
-			} else if ((coef & 0xf000) == 0x2000) {
-				err = alc_codec_rename(codec, "ALC259");
-			} else if ((coef & 0xf000) == 0x3000) {
-				err = alc_codec_rename(codec, "ALC258");
-			} else if ((coef & 0xfff0) == 0x3010) {
-				err = alc_codec_rename(codec, "ALC277");
-			} else {
-				err = alc_codec_rename(codec, "ALC269VB");
-			}
 			spec->codec_variant = ALC269_TYPE_ALC269VB;
 		} else if ((coef & 0x00f0) == 0x0020) {
-			if (coef == 0xa023)
-				err = alc_codec_rename(codec, "ALC259");
-			else if (coef == 0x6023)
-				err = alc_codec_rename(codec, "ALC281X");
-			else if (codec->bus->pci->subsystem_vendor == 0x17aa &&
-				 codec->bus->pci->subsystem_device == 0x21f3)
+			if (codec->bus->pci->subsystem_vendor == 0x17aa &&
+			    codec->bus->pci->subsystem_device == 0x21f3)
 				err = alc_codec_rename(codec, "ALC3202");
-			else
-				err = alc_codec_rename(codec, "ALC269VC");
 			spec->codec_variant = ALC269_TYPE_ALC269VC;
 		} else
 			alc_fix_pll_init(codec, 0x20, 0x04, 15);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 		alc269_fill_coef(codec);
 	}
 
@@ -5018,10 +5052,8 @@ static int patch_alc269(struct hda_codec *codec)
 
 	/* automatic parse from the BIOS config */
 	err = alc269_parse_auto_config(codec);
-	if (err < 0) {
-		alc_free(codec);
-		return err;
-	}
+	if (err < 0)
+		goto error;
 
 	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
@@ -5034,10 +5066,8 @@ static int patch_alc269(struct hda_codec *codec)
 
 	if (!spec->no_analog && has_cdefine_beep(codec)) {
 		err = snd_hda_attach_beep_device(codec, 0x1);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 		set_beep_amp(spec, 0x0b, 0x04, HDA_INPUT);
 	}
 
@@ -5061,6 +5091,10 @@ static int patch_alc269(struct hda_codec *codec)
 #endif
 
 	return 0;
+
+ error:
+	alc_free(codec);
+	return err;
 }
 
 /*
@@ -5137,10 +5171,8 @@ static int patch_alc861(struct hda_codec *codec)
 
 	/* automatic parse from the BIOS config */
 	err = alc861_parse_auto_config(codec);
-	if (err < 0) {
-		alc_free(codec);
-		return err;
-	}
+	if (err < 0)
+		goto error;
 
 	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
@@ -5153,10 +5185,8 @@ static int patch_alc861(struct hda_codec *codec)
 
 	if (!spec->no_analog) {
 		err = snd_hda_attach_beep_device(codec, 0x23);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 		set_beep_amp(spec, 0x23, 0, HDA_OUTPUT);
 	}
 
@@ -5173,6 +5203,10 @@ static int patch_alc861(struct hda_codec *codec)
 #endif
 
 	return 0;
+
+ error:
+	alc_free(codec);
+	return err;
 }
 
 /*
@@ -5258,10 +5292,8 @@ static int patch_alc861vd(struct hda_codec *codec)
 
 	/* automatic parse from the BIOS config */
 	err = alc861vd_parse_auto_config(codec);
-	if (err < 0) {
-		alc_free(codec);
-		return err;
-	}
+	if (err < 0)
+		goto error;
 
 	if (codec->vendor_id == 0x10ec0660) {
 		/* always turn on EAPD */
@@ -5279,10 +5311,8 @@ static int patch_alc861vd(struct hda_codec *codec)
 
 	if (!spec->no_analog) {
 		err = snd_hda_attach_beep_device(codec, 0x23);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 		set_beep_amp(spec, 0x0b, 0x05, HDA_INPUT);
 	}
 
@@ -5300,6 +5330,10 @@ static int patch_alc861vd(struct hda_codec *codec)
 #endif
 
 	return 0;
+
+ error:
+	alc_free(codec);
+	return err;
 }
 
 /*
@@ -5621,18 +5655,16 @@ static int patch_alc662(struct hda_codec *codec)
 
 	alc_fix_pll_init(codec, 0x20, 0x04, 15);
 
+	err = alc_codec_rename_from_preset(codec);
+	if (err < 0)
+		goto error;
+
 	coef = alc_read_coef_idx(codec, 0);
-	if (coef == 0x8020 || coef == 0x8011)
-		err = alc_codec_rename(codec, "ALC661");
-	else if (coef & (1 << 14) &&
-		codec->bus->pci->subsystem_vendor == 0x1025 &&
-		spec->cdefine.platform_type == 1)
-		err = alc_codec_rename(codec, "ALC272X");
-	else if (coef == 0x4011)
-		err = alc_codec_rename(codec, "ALC656");
-	if (err < 0) {
-		alc_free(codec);
-		return err;
+	if (coef & (1 << 14) &&
+	    codec->bus->pci->subsystem_vendor == 0x1025 &&
+	    spec->cdefine.platform_type == 1) {
+		if (alc_codec_rename(codec, "ALC272X") < 0)
+			goto error;
 	}
 
 	alc_pick_fixup(codec, alc662_fixup_models,
@@ -5640,10 +5672,8 @@ static int patch_alc662(struct hda_codec *codec)
 	alc_apply_fixup(codec, ALC_FIXUP_ACT_PRE_PROBE);
 	/* automatic parse from the BIOS config */
 	err = alc662_parse_auto_config(codec);
-	if (err < 0) {
-		alc_free(codec);
-		return err;
-	}
+	if (err < 0)
+		goto error;
 
 	if (!spec->no_analog && !spec->adc_nids) {
 		alc_auto_fill_adc_caps(codec);
@@ -5656,10 +5686,8 @@ static int patch_alc662(struct hda_codec *codec)
 
 	if (!spec->no_analog && has_cdefine_beep(codec)) {
 		err = snd_hda_attach_beep_device(codec, 0x1);
-		if (err < 0) {
-			alc_free(codec);
-			return err;
-		}
+		if (err < 0)
+			goto error;
 		switch (codec->vendor_id) {
 		case 0x10ec0662:
 			set_beep_amp(spec, 0x0b, 0x05, HDA_INPUT);
@@ -5690,49 +5718,10 @@ static int patch_alc662(struct hda_codec *codec)
 #endif
 
 	return 0;
-}
 
-static int patch_alc888(struct hda_codec *codec)
-{
-	int coef;
-
-	coef = alc_read_coef_idx(codec, 0);
-	/* For ALC887-VD ALC888S-VD */
-	if ((coef & 0x00f0) == 0x0030) {
-		kfree(codec->chip_name);
-		if (codec->vendor_id == 0x10ec0887)
-			err = alc_codec_rename(codec, "ALC887-VD");
-		else
-			err = alc_codec_rename(codec, "ALC888-VD");
-		if (err < 0) {
-			alc_free(codec);
-			return -ENOMEM;
-		}
-		return patch_alc662(codec);
-	}
-
-	/* For ALC888S-VC */
-	if (codec->vendor_id == 0x10ec0888) {
-		if ((coef & 0xf0f0) == 0x3020) {
-			err = alc_codec_rename(codec, "ALC886");
-			if (err < 0) {
-				alc_free(codec);
-				return -ENOMEM;
-			}
-		}
-	}
-	return patch_alc882(codec);
-}
-
-static int patch_alc899(struct hda_codec *codec)
-{
-	if ((alc_read_coef_idx(codec, 0) & 0x2000) != 0x2000) {
-		if (alc_codec_rename(codec, "ALC898") < 0) {
-			alc_free(codec);
-			return -ENOMEM;
-		}
-	}
-	return patch_alc882(codec);
+ error:
+	alc_free(codec);
+	return err;
 }
 
 /*
@@ -5816,13 +5805,13 @@ static const struct hda_codec_preset snd_hda_preset_realtek[] = {
 	{ .id = 0x10ec0885, .rev = 0x100103, .name = "ALC889A",
 	  .patch = patch_alc882 },
 	{ .id = 0x10ec0885, .name = "ALC885", .patch = patch_alc882 },
-	{ .id = 0x10ec0887, .name = "ALC887", .patch = patch_alc888 },
+	{ .id = 0x10ec0887, .name = "ALC887", .patch = patch_alc882 },
 	{ .id = 0x10ec0888, .rev = 0x100101, .name = "ALC1200",
 	  .patch = patch_alc882 },
-	{ .id = 0x10ec0888, .name = "ALC888", .patch = patch_alc888 },
+	{ .id = 0x10ec0888, .name = "ALC888", .patch = patch_alc882 },
 	{ .id = 0x10ec0889, .name = "ALC889", .patch = patch_alc882 },
 	{ .id = 0x10ec0892, .name = "ALC892", .patch = patch_alc662 },
-	{ .id = 0x10ec0899, .name = "ALC899", .patch = patch_alc899 },
+	{ .id = 0x10ec0899, .name = "ALC898", .patch = patch_alc882 },
 	{} /* terminator */
 };
 
