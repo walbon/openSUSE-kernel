@@ -281,7 +281,7 @@ int swap_set_page_dirty(struct page *page)
 	struct swap_info_struct *sis = page_swap_info(page);
 	struct address_space *mapping = sis->swap_file->f_mapping;
 
-	if (mapping->a_ops->set_page_dirty)
+	if (mapping->a_ops->swap_activate)
 		return mapping->a_ops->set_page_dirty(page);
 	else
 		return __set_page_dirty_no_writeback(page);
