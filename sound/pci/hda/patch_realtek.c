@@ -3234,6 +3234,7 @@ static void alc_auto_init_multi_out(struct hda_codec *codec)
 static void alc_auto_init_extra_out(struct hda_codec *codec)
 {
 	struct alc_spec *spec = codec->spec;
+	int i;
 	hda_nid_t pin, dac;
 
 	pin = spec->autocfg.hp_pins[0];
@@ -3243,11 +3244,17 @@ static void alc_auto_init_extra_out(struct hda_codec *codec)
 			dac = spec->multiout.dac_nids[0];
 		alc_auto_set_output_and_unmute(codec, pin, PIN_HP, dac);
 	}
-	pin = spec->autocfg.speaker_pins[0];
-	if (pin) {
-		dac = spec->multiout.extra_out_nid[0];
-		if (!dac)
-			dac = spec->multiout.dac_nids[0];
+	for (i = 0; i < spec->autocfg.speaker_outs; i++) {
+		pin = spec->autocfg.speaker_pins[i];
+		if (!pin)
+			break;
+		dac = spec->multiout.extra_out_nid[i];
+		if (!dac) {
+			if (i > 0 && spec->multiout.extra_out_nid[0])
+				dac = spec->multiout.extra_out_nid[0];
+			else
+				dac = spec->multiout.dac_nids[0];
+		}
 		alc_auto_set_output_and_unmute(codec, pin, PIN_OUT, dac);
 	}
 }
