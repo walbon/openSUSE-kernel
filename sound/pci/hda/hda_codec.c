@@ -5139,6 +5139,8 @@ EXPORT_SYMBOL_HDA(snd_hda_resume);
  */
 void *snd_array_new(struct snd_array *array)
 {
+	if (snd_BUG_ON(!array->elem_size))
+		return NULL;
 	if (array->used >= array->alloced) {
 		int num = array->alloced + array->alloc_align;
 		void *nlist;
