@@ -684,8 +684,7 @@ static int stac_vrefout_set(struct hda_codec *codec,
 	pinctl &= ~AC_PINCTL_VREFEN;
 	pinctl |= (new_vref & AC_PINCTL_VREFEN);
 
-	error = snd_hda_codec_write_cache(codec, nid, 0,
-					AC_VERB_SET_PIN_WIDGET_CONTROL, pinctl);
+	error = snd_hda_set_pin_ctl_cache(codec, nid, pinctl);
 	if (error < 0)
 		return error;
 
@@ -709,8 +708,7 @@ static unsigned int stac92xx_vref_set(struct hda_codec *codec,
 	else
 		pincfg |= AC_PINCTL_IN_EN;
 
-	error = snd_hda_codec_write_cache(codec, nid, 0,
-					AC_VERB_SET_PIN_WIDGET_CONTROL, pincfg);
+	error = snd_hda_set_pin_ctl_cache(codec, nid, pincfg);
 	if (error < 0)
 		return error;
 	else
@@ -2530,8 +2528,7 @@ static unsigned int stac92xx_get_default_vref(struct hda_codec *codec,
 static void stac92xx_auto_set_pinctl(struct hda_codec *codec, hda_nid_t nid, int pin_type)
 
 {
-	snd_hda_codec_write_cache(codec, nid, 0,
-				  AC_VERB_SET_PIN_WIDGET_CONTROL, pin_type);
+	snd_hda_set_pin_ctl_cache(codec, nid, pin_type);
 }
 
 #define stac92xx_hp_switch_info		snd_ctl_boolean_mono_info
@@ -4506,8 +4503,7 @@ static void stac92xx_shutup_pins(struct hda_codec *codec)
 		struct hda_pincfg *pin = snd_array_elem(&codec->init_pins, i);
 		def_conf = snd_hda_codec_get_pincfg(codec, pin->nid);
 		if (get_defcfg_connect(def_conf) != AC_JACK_PORT_NONE)
-			snd_hda_codec_write(codec, pin->nid, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, 0);
+			snd_hda_set_pin_ctl(codec, pin->nid, 0);
 	}
 }
 
@@ -4563,9 +4559,7 @@ static void stac92xx_set_pinctl(struct hda_codec *codec, hda_nid_t nid,
 	
 	pin_ctl |= flag;
 	if (old_ctl != pin_ctl)
-		snd_hda_codec_write_cache(codec, nid, 0,
-					  AC_VERB_SET_PIN_WIDGET_CONTROL,
-					  pin_ctl);
+		snd_hda_set_pin_ctl_cache(codec, nid, pin_ctl);
 }
 
 static void stac92xx_reset_pinctl(struct hda_codec *codec, hda_nid_t nid,
@@ -4574,9 +4568,7 @@ static void stac92xx_reset_pinctl(struct hda_codec *codec, hda_nid_t nid,
 	unsigned int pin_ctl = snd_hda_codec_read(codec, nid,
 			0, AC_VERB_GET_PIN_WIDGET_CONTROL, 0x00);
 	if (pin_ctl & flag)
-		snd_hda_codec_write_cache(codec, nid, 0,
-					  AC_VERB_SET_PIN_WIDGET_CONTROL,
-					  pin_ctl & ~flag);
+		snd_hda_set_pin_ctl_cache(codec, nid, pin_ctl & ~flag);
 }
 
 static inline int get_pin_presence(struct hda_codec *codec, hda_nid_t nid)

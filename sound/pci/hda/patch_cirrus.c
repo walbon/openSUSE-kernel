@@ -859,8 +859,7 @@ static void cs_automute(struct hda_codec *codec)
 	}
 	for (i = 0; i < cfg->speaker_outs; i++) {
 		nid = cfg->speaker_pins[i];
-		snd_hda_codec_write(codec, nid, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL,
+		snd_hda_set_pin_ctl(codec, nid,
 				    hp_present ? 0 : PIN_OUT);
 	}
 	if (spec->board_config == CS420X_MBP53 ||
@@ -912,12 +911,10 @@ static void init_output(struct hda_codec *codec)
 
 	/* set appropriate pin controls */
 	for (i = 0; i < cfg->line_outs; i++)
-		snd_hda_codec_write(codec, cfg->line_out_pins[i], 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT);
+		snd_hda_set_pin_ctl(codec, cfg->line_out_pins[i], PIN_OUT);
 	for (i = 0; i < cfg->hp_outs; i++) {
 		hda_nid_t nid = cfg->hp_pins[i];
-		snd_hda_codec_write(codec, nid, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_HP);
+		snd_hda_set_pin_ctl(codec, nid, PIN_HP);
 		if (!cfg->speaker_outs)
 			continue;
 		if (get_wcaps(codec, nid) & AC_WCAP_UNSOL_CAP) {
@@ -926,8 +923,7 @@ static void init_output(struct hda_codec *codec)
 		}
 	}
 	for (i = 0; i < cfg->speaker_outs; i++)
-		snd_hda_codec_write(codec, cfg->speaker_pins[i], 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT);
+		snd_hda_set_pin_ctl(codec, cfg->speaker_pins[i], PIN_OUT);
 	if (spec->hp_detect)
 		cs_automute(codec);
 }
@@ -952,8 +948,7 @@ static void init_input(struct hda_codec *codec)
 			if (caps & AC_PINCAP_VREF_80)
 				ctl = PIN_VREF80;
 		}
-		snd_hda_codec_write(codec, pin, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, ctl);
+		snd_hda_set_pin_ctl(codec, pin, ctl);
 		snd_hda_codec_write(codec, spec->adc_nid[i], 0,
 				    AC_VERB_SET_AMP_GAIN_MUTE,
 				    AMP_IN_MUTE(spec->adc_idx[i]));

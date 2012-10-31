@@ -318,13 +318,16 @@ static int alc_mux_select(struct hda_codec *codec, unsigned int adc_idx,
 
 	/* for shared I/O, change the pin-control accordingly */
 	if (spec->shared_mic_hp) {
+		unsigned int val;
+		hda_nid_t pin = spec->autocfg.inputs[1].pin;
 		/* NOTE: this assumes that there are only two inputs, the
 		 * first is the real internal mic and the second is HP jack.
 		 */
-		snd_hda_codec_write(codec, spec->autocfg.inputs[1].pin, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL,
-				    spec->cur_mux[adc_idx] ?
-				    PIN_VREF80 : PIN_HP);
+		if (spec->cur_mux[adc_idx])
+			val = PIN_VREF80;
+		else
+			val = PIN_HP;
+		snd_hda_set_pin_ctl(codec, pin, val);
 		spec->automute_speaker = !spec->cur_mux[adc_idx];
 		call_update_outputs(codec);
 	}
@@ -393,7 +396,7 @@ static void alc_set_input_pin(struct hda_codec *codec, hda_nid_t nid,
 		else if (pincap & AC_PINCAP_VREF_GRD)
 			val = PIN_VREFGRD;
 	}
-	snd_hda_codec_write(codec, nid, 0, AC_VERB_SET_PIN_WIDGET_CONTROL, val);
+	snd_hda_set_pin_ctl(codec, nid, val);
 }
 
 /*
@@ -516,9 +519,7 @@ static void do_automute(struct hda_codec *codec, int num_pins, hda_nid_t *pins,
 			} else
 				val = 0;
 			val |= pin_bits;
-			snd_hda_codec_write(codec, nid, 0,
-					    AC_VERB_SET_PIN_WIDGET_CONTROL,
-					    val);
+			snd_hda_set_pin_ctl(codec, nid, val);
 			break;
 		case ALC_AUTOMUTE_AMP:
 			snd_hda_codec_amp_stereo(codec, nid, HDA_OUTPUT, 0,
@@ -1620,8 +1621,7 @@ static void alc_auto_init_digital(struct hda_codec *codec)
 		pin = spec->autocfg.dig_out_pins[i];
 		if (!pin)
 			continue;
-		snd_hda_codec_write(codec, pin, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT);
+		snd_hda_set_pin_ctl(codec, pin, PIN_OUT);
 		if (!i)
 			dac = spec->multiout.dig_out_nid;
 		else
@@ -1634,9 +1634,7 @@ static void alc_auto_init_digital(struct hda_codec *codec)
 	}
 	pin = spec->autocfg.dig_in_pin;
 	if (pin)
-		snd_hda_codec_write(codec, pin, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL,
-				    PIN_IN);
+		snd_hda_set_pin_ctl(codec, pin, PIN_IN);
 }
 
 /* parse digital I/Os and set up NIDs in BIOS auto-parse mode */
@@ -2855,8 +2853,7 @@ static int alc_auto_create_shared_input(struct hda_codec *codec)
 static void alc_set_pin_output(struct hda_codec *codec, hda_nid_t nid,
 			       unsigned int pin_type)
 {
-	snd_hda_codec_write(codec, nid, 0, AC_VERB_SET_PIN_WIDGET_CONTROL,
-			    pin_type);
+	snd_hda_set_pin_ctl(codec, nid, pin_type);
 	/* unmute pin */
 	if (nid_has_mute(codec, nid, HDA_OUTPUT))
 		snd_hda_codec_write(codec, nid, 0, AC_VERB_SET_AMP_GAIN_MUTE,
@@ -3997,9 +3994,7 @@ static int alc_set_multi_io(struct hda_codec *codec, int idx, bool output)
 			snd_hda_codec_read(codec, nid, 0,
 					   AC_VERB_GET_PIN_WIDGET_CONTROL, 0);
 	if (output) {
-		snd_hda_codec_update_cache(codec, nid, 0,
-					   AC_VERB_SET_PIN_WIDGET_CONTROL,
-					   PIN_OUT);
+		snd_hda_set_pin_ctl_cache(codec, nid, PIN_OUT);
 		if (get_wcaps(codec, nid) & AC_WCAP_OUT_AMP)
 			snd_hda_codec_amp_stereo(codec, nid, HDA_OUTPUT, 0,
 						 HDA_AMP_MUTE, 0);
@@ -4008,9 +4003,8 @@ static int alc_set_multi_io(struct hda_codec *codec, int idx, bool output)
 		if (get_wcaps(codec, nid) & AC_WCAP_OUT_AMP)
 			snd_hda_codec_amp_stereo(codec, nid, HDA_OUTPUT, 0,
 						 HDA_AMP_MUTE, HDA_AMP_MUTE);
-		snd_hda_codec_update_cache(codec, nid, 0,
-					   AC_VERB_SET_PIN_WIDGET_CONTROL,
-					   spec->multi_io[idx].ctl_in);
+		snd_hda_set_pin_ctl_cache(codec, nid,
+					  spec->multi_io[idx].ctl_in);
 	}
 	return 0;
 }
@@ -5170,8 +5164,7 @@ static void alc889_fixup_mbp_vref(struct hda_codec *codec,
 		val = snd_hda_codec_read(codec, nids[i], 0,
 					 AC_VERB_GET_PIN_WIDGET_CONTROL, 0);
 		val |= AC_PINCTL_VREF_80;
-		snd_hda_codec_write(codec, nids[i], 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, val);
+		snd_hda_set_pin_ctl(codec, nids[i], val);
 		spec->keep_vref_in_automute = 1;
 		break;
 	}
@@ -5192,8 +5185,7 @@ static void alc889_fixup_imac91_vref(struct hda_codec *codec,
 		val = snd_hda_codec_read(codec, nids[i], 0,
 					 AC_VERB_GET_PIN_WIDGET_CONTROL, 0);
 		val |= AC_PINCTL_VREF_50;
-		snd_hda_codec_write(codec, nids[i], 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, val);
+		snd_hda_set_pin_ctl(codec, nids[i], val);
 	}
 	spec->keep_vref_in_automute = 1;
 }
@@ -5945,9 +5937,7 @@ static void alc269_fixup_mic2_mute_hook(void *private_data, int enabled)
 {
 	struct hda_codec *codec = private_data;
 	unsigned int pinval = enabled ? 0x20 : 0x24;
-	snd_hda_codec_update_cache(codec, 0x19, 0,
-				   AC_VERB_SET_PIN_WIDGET_CONTROL,
-				   pinval);
+	snd_hda_set_pin_ctl_cache(codec, 0x19, pinval);
 }
 
 static void alc269_fixup_mic2_mute(struct hda_codec *codec,
@@ -6345,8 +6335,7 @@ static void alc861_fixup_asus_amp_vref_0f(struct hda_codec *codec,
 	if (!(val & (AC_PINCTL_IN_EN | AC_PINCTL_OUT_EN)))
 		val |= AC_PINCTL_IN_EN;
 	val |= AC_PINCTL_VREF_50;
-	snd_hda_codec_write(codec, 0x0f, 0,
-			    AC_VERB_SET_PIN_WIDGET_CONTROL, val);
+	snd_hda_set_pin_ctl(codec, 0x0f, val);
 	spec->keep_vref_in_automute = 1;
 }
 
