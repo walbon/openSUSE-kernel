@@ -992,7 +992,7 @@ static unsigned int azx_get_response(struct hda_bus *bus,
 }
 
 #ifdef CONFIG_SND_HDA_POWER_SAVE
-static void azx_power_notify(struct hda_bus *bus, struct hda_codec *codec);
+static void azx_power_notify(struct hda_bus *bus, bool power_up);
 #endif
 
 /* reset codec link */
@@ -2360,14 +2360,11 @@ static void azx_stop_chip(struct azx *chip)
 
 #ifdef CONFIG_SND_HDA_POWER_SAVE
 /* power-up/down the controller */
-static void azx_power_notify(struct hda_bus *bus, struct hda_codec *codec)
+static void azx_power_notify(struct hda_bus *bus, bool power_up)
 {
 	struct azx *chip = bus->private_data;
 
-	if (bus->power_keep_link_on || !codec->d3_stop_clk_ok)
-		return;
-
-	if (codec->power_on)
+	if (power_up)
 		pm_runtime_get_sync(&chip->pci->dev);
 	else
 		pm_runtime_put_sync(&chip->pci->dev);
@@ -3021,15 +3018,6 @@ static void power_down_all_codecs(struct azx *chip)
 #endif
 }
 
-static void rpm_get_all_codecs(struct azx *chip)
-{
-	struct hda_codec *codec;
-
-	list_for_each_entry(codec, &chip->bus->codec_list, list) {
-		pm_runtime_get_noresume(&chip->pci->dev);
-	}
-}
-
 static int __devinit azx_probe(struct pci_dev *pci,
 			       const struct pci_device_id *pci_id)
 {
@@ -3098,7 +3086,6 @@ static int __devinit azx_probe(struct pci_dev *pci,
 
 	pci_set_drvdata(pci, card);
 	chip->running = 1;
-	rpm_get_all_codecs(chip); /* all codecs are active */
 	power_down_all_codecs(chip);
 	azx_notifier_register(chip);
 	azx_add_card_list(chip);
