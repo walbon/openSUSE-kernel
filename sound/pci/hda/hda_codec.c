@@ -2398,6 +2398,7 @@ static int init_slave_unmute(void *data, struct snd_kcontrol *slave)
  * @slaves: slave control names (optional)
  * @suffix: suffix string to each slave name (optional)
  * @init_slave_vol: initialize slaves to unmute/0dB
+ * @ctl_ret: store the vmaster kcontrol in return
  *
  * Create a virtual master control with the given name.  The TLV data
  * must be either NULL or a valid data.
@@ -2410,10 +2411,14 @@ static int init_slave_unmute(void *data, struct snd_kcontrol *slave)
  */
 int __snd_hda_add_vmaster(struct hda_codec *codec, char *name,
 			unsigned int *tlv, const char * const *slaves,
-			const char *suffix, bool init_slave_vol)
+			  const char *suffix, bool init_slave_vol,
+			  struct snd_kcontrol **ctl_ret)
 {
 	struct snd_kcontrol *kctl;
 	int err;
+
+	if (ctl_ret)
+		*ctl_ret = NULL;
 
 	err = map_slaves(codec, slaves, suffix, check_slave_present, NULL);
 	if (err != 1) {
@@ -2438,6 +2443,8 @@ int __snd_hda_add_vmaster(struct hda_codec *codec, char *name,
 		map_slaves(codec, slaves, suffix,
 			   tlv ? init_slave_0dB : init_slave_unmute, kctl);
 
+	if (ctl_ret)
+		*ctl_ret = kctl;
 	return 0;
 }
 EXPORT_SYMBOL_HDA(__snd_hda_add_vmaster);
