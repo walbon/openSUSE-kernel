@@ -57,9 +57,7 @@
 #include <linux/mmu_notifier.h>
 #include <linux/migrate.h>
 #include <linux/hugetlb.h>
-#ifndef __GENKSYMS__
 #include <linux/backing-dev.h>
-#endif
 
 #include <asm/tlbflush.h>
 
