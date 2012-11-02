@@ -1166,6 +1166,15 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 			goto restore;
 		}
 
+		if (root->fs_info->fs_devices->missing_devices >
+				root->fs_info->num_tolerated_disk_barrier_failures &&
+				!(*flags & MS_RDONLY)) {
+			printk(KERN_WARNING
+				"Btrfs: too many missing devices, writeable remount is not allowed\n");
+			ret = -EACCES;
+			goto restore;
+		}
+
 		if (btrfs_super_log_root(root->fs_info->super_copy) != 0) {
 			ret = -EINVAL;
 			goto restore;
