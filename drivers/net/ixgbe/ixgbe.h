@@ -522,7 +522,7 @@ enum ixbge_state_t {
 
 struct ixgbe_rsc_cb {
 	dma_addr_t dma;
-	u16 skb_cnt;
+	u16 rsc_cnt;
 	bool delay_unmap;
 };
 #define IXGBE_RSC_CB(skb) ((struct ixgbe_rsc_cb *)(skb)->cb)

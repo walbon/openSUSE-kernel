@@ -1321,14 +1321,14 @@ static inline u16 ixgbe_get_hlen(union ixgbe_adv_rx_desc *rx_desc)
 static inline struct sk_buff *ixgbe_transform_rsc_queue(struct sk_buff *skb)
 {
 	unsigned int frag_list_size = 0;
-	unsigned int skb_cnt = 1;
+	unsigned short rsc_cnt = 0;
 
 	while (skb->prev) {
 		struct sk_buff *prev = skb->prev;
 		frag_list_size += skb->len;
 		skb->prev = NULL;
+		rsc_cnt += IXGBE_RSC_CB(skb)->rsc_cnt;
 		skb = prev;
-		skb_cnt++;
 	}
 
 	skb_shinfo(skb)->frag_list = skb->next;
@@ -1336,15 +1336,133 @@ static inline struct sk_buff *ixgbe_transform_rsc_queue(struct sk_buff *skb)
 	skb->len += frag_list_size;
 	skb->data_len += frag_list_size;
 	skb->truesize += frag_list_size;
-	IXGBE_RSC_CB(skb)->skb_cnt = skb_cnt;
+	IXGBE_RSC_CB(skb)->rsc_cnt += rsc_cnt;
 
 	return skb;
 }
 
-static inline bool ixgbe_get_rsc_state(union ixgbe_adv_rx_desc *rx_desc)
+static inline unsigned short ixgbe_get_rsc_cnt(union ixgbe_adv_rx_desc
+					       *rx_desc)
 {
-	return !!(le32_to_cpu(rx_desc->wb.lower.lo_dword.data) &
-		IXGBE_RXDADV_RSCCNT_MASK);
+	u32 rsc_cnt;
+
+	rsc_cnt = rx_desc->wb.lower.lo_dword.data &
+		cpu_to_le32(IXGBE_RXDADV_RSCCNT_MASK);
+	rsc_cnt = le32_to_cpu(rsc_cnt);
+	rsc_cnt >>= IXGBE_RXDADV_RSCCNT_SHIFT;
+
+	return rsc_cnt;
+}
+
+/**
+ * ixgbe_get_headlen - determine size of header for RSC/LRO/GRO/FCOE
+ * @data: pointer to the start of the headers
+ * @max_len: total length of section to find headers in
+ *
+ * This function is meant to determine the length of headers that will
+ * be recognized by hardware for LRO, GRO, and RSC offloads.  The main
+ * motivation of doing this is to only perform one pull for IPv4 TCP
+ * packets so that we can do basic things like calculating the gso_size
+ * based on the average data per packet.
+ **/
+static unsigned int ixgbe_get_headlen(unsigned char *data,
+				      unsigned int max_len)
+{
+	union {
+		unsigned char *network;
+		/* l2 headers */
+		struct ethhdr *eth;
+		struct vlan_hdr *vlan;
+		/* l3 headers */
+		struct iphdr *ipv4;
+	} hdr;
+	__be16 protocol;
+	u8 nexthdr = 0;	/* default to not TCP */
+	u8 hlen;
+
+	/* this should never happen, but better safe than sorry */
+	if (max_len < ETH_HLEN)
+		return max_len;
+
+	/* initialize network frame pointer */
+	hdr.network = data;
+
+	/* set first protocol and move network header forward */
+	protocol = hdr.eth->h_proto;
+	hdr.network += ETH_HLEN;
+
+	/* handle any vlan tag if present */
+	if (protocol == __constant_htons(ETH_P_8021Q)) {
+		if ((hdr.network - data) > (max_len - VLAN_HLEN))
+			return max_len;
+
+		protocol = hdr.vlan->h_vlan_encapsulated_proto;
+		hdr.network += VLAN_HLEN;
+	}
+
+	/* handle L3 protocols */
+	if (protocol == __constant_htons(ETH_P_IP)) {
+		if ((hdr.network - data) > (max_len - sizeof(struct iphdr)))
+			return max_len;
+
+		/* access ihl as a u8 to avoid unaligned access on ia64 */
+		hlen = (hdr.network[0] & 0x0F) << 2;
+
+		/* verify hlen meets minimum size requirements */
+		if (hlen < sizeof(struct iphdr))
+			return hdr.network - data;
+
+		/* record next protocol */
+		nexthdr = hdr.ipv4->protocol;
+		hdr.network += hlen;
+#ifdef CONFIG_FCOE
+	} else if (protocol == __constant_htons(ETH_P_FCOE)) {
+		if ((hdr.network - data) > (max_len - FCOE_HEADER_LEN))
+			return max_len;
+		hdr.network += FCOE_HEADER_LEN;
+#endif
+	} else {
+		return hdr.network - data;
+	}
+
+	/* finally sort out TCP */
+	if (nexthdr == IPPROTO_TCP) {
+		if ((hdr.network - data) > (max_len - sizeof(struct tcphdr)))
+			return max_len;
+
+		/* access doff as a u8 to avoid unaligned access on ia64 */
+		hlen = (hdr.network[12] & 0xF0) >> 2;
+
+		/* verify hlen meets minimum size requirements */
+		if (hlen < sizeof(struct tcphdr))
+			return hdr.network - data;
+
+		hdr.network += hlen;
+	}
+
+	/*
+	 * If everything has gone correctly hdr.network should be the
+	 * data section of the packet and will be the end of the header.
+	 * If not then it probably represents the end of the last recognized
+	 * header.
+	 */
+	if ((hdr.network - data) < max_len)
+		return hdr.network - data;
+	else
+		return max_len;
+}
+
+static void ixgbe_update_rsc_stats(struct ixgbe_ring *rx_ring,
+				   struct sk_buff *skb)
+{
+	u16 hdr_len = ixgbe_get_headlen(skb->data, skb_headlen(skb));
+
+	rx_ring->rx_stats.rsc_count += IXGBE_RSC_CB(skb)->rsc_cnt;
+	rx_ring->rx_stats.rsc_flush++;
+
+	/* set gso_size to avoid messing up TCP MSS */
+	skb_shinfo(skb)->gso_size = DIV_ROUND_UP((skb->len - hdr_len),
+						 IXGBE_RSC_CB(skb)->rsc_cnt);
 }
 
 static void ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
@@ -1363,7 +1481,7 @@ static void ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 	u32 staterr;
 	u16 i;
 	u16 cleaned_count = 0;
-	bool pkt_is_rsc = false;
+	unsigned short pkt_is_rsc = 0;
 
 	i = rx_ring->next_to_clean;
 	rx_desc = IXGBE_RX_DESC_ADV(rx_ring, i);
@@ -1380,8 +1498,11 @@ static void ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 		rx_buffer_info->skb = NULL;
 		prefetch(skb->data);
 
-		if (ring_is_rsc_enabled(rx_ring))
-			pkt_is_rsc = ixgbe_get_rsc_state(rx_desc);
+		if (ring_is_rsc_enabled(rx_ring)) {
+			pkt_is_rsc = ixgbe_get_rsc_cnt(rx_desc);
+			if (pkt_is_rsc)
+				IXGBE_RSC_CB(skb)->rsc_cnt = pkt_is_rsc - 1;
+		}
 
 		/* linear means we are building an skb from multiple pages */
 		if (!skb_is_nonlinear(skb)) {
@@ -1491,15 +1612,9 @@ static void ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 				IXGBE_RSC_CB(skb)->delay_unmap = false;
 			}
 		}
-		if (pkt_is_rsc) {
-			if (ring_is_ps_enabled(rx_ring))
-				rx_ring->rx_stats.rsc_count +=
-					skb_shinfo(skb)->nr_frags;
-			else
-				rx_ring->rx_stats.rsc_count +=
-					IXGBE_RSC_CB(skb)->skb_cnt;
-			rx_ring->rx_stats.rsc_flush++;
-		}
+
+		if (pkt_is_rsc)
+			ixgbe_update_rsc_stats(rx_ring, skb);
 
 		/* ERR_MASK will only have valid bits if EOP set */
 		if (staterr & IXGBE_RXDADV_ERR_FRAME_ERR_MASK) {
