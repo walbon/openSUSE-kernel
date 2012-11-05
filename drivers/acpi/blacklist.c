@@ -32,9 +32,7 @@
 #include <linux/init.h>
 #include <linux/acpi.h>
 #include <acpi/acpi_bus.h>
-#include <acpi/apei.h>
 #include <linux/dmi.h>
-#include <asm/processor.h>
 
 #include "internal.h"
 
@@ -111,71 +109,12 @@ static inline int blacklist_by_year(void)
 }
 #endif
 
-#ifdef CONFIG_ACPI_APEI
-static int __initdata apei_disable = -1;
-
-static void __init acpi_apei_disable(void)
-{
-		apei_disable = 1;
-		hest_disable = 1;
-		erst_disable = 1;
-#ifdef CONFIG_ACPI_APEI_GHES
-		ghes_disable = 1;
-#endif
-}
-
-static void __init acpi_apei_enable(void)
-{
-		apei_disable = 0;
-		hest_disable = 0;
-		erst_disable = 0;
-#ifdef CONFIG_ACPI_APEI_GHES
-		ghes_disable = 0;
-#endif
-}
-
-static int __init setup_apei_disable(char *str)
-{
-	acpi_apei_disable();
-	printk(KERN_INFO "APEI disabled by boot param\n");
-	return 0;
-}
-__setup("apei_disable", setup_apei_disable);
-
-static int __init setup_apei_enable(char *str)
-{
-	acpi_apei_enable();
-	printk(KERN_INFO "APEI enabled by boot param\n");
-	return 0;
-}
-__setup("apei_enable", setup_apei_enable);
-
-static void __init acpi_apei_blacklist(void)
-{
-	/* Already overwritten by boot param */
-	if (apei_disable != -1)
-		return;
-
-	acpi_apei_disable();
-
-	if (dmi_name_in_vendors("Dell")) {
-		printk (KERN_INFO "Dell detected: Enabling APEI HEST parsing"
-			" if available\n");
-		hest_disable = 0;
-	}
-
-}
-#else /* !CONFIG_ACPI_APEI */
-#define acpi_apei_blacklist() ((void)0)
-#endif
-
 int __init acpi_blacklisted(void)
 {
 	int i = 0;
 	int blacklisted = 0;
 	struct acpi_table_header table_header;
 
-	acpi_apei_blacklist();
 	while (acpi_blacklist[i].oem_id[0] != '\0') {
 		if (acpi_get_table_header(acpi_blacklist[i].table, 0, &table_header)) {
 			i++;

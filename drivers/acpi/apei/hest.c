@@ -205,22 +205,16 @@ static int __init setup_hest_disable(char *str)
 
 __setup("hest_disable", setup_hest_disable);
 
-static int __init setup_hest_enable(char *str)
-{
-	printk("Enabling hest parsing\n");
-	hest_disable = 0;
-	return 0;
-}
-__setup("hest_enable", setup_hest_enable);
-
 void __init acpi_hest_init(void)
 {
 	acpi_status status;
 	int rc = -ENODEV;
 	unsigned int ghes_count = 0;
 
-	if (hest_disable)
+	if (hest_disable) {
+		pr_info(HEST_PFX "Table parsing disabled.\n");
 		return;
+	}
 
 	if (acpi_disabled)
 		goto err;

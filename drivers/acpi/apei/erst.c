@@ -913,14 +913,6 @@ static int __init setup_erst_disable(char *str)
 
 __setup("erst_disable", setup_erst_disable);
 
-static int __init setup_erst_enable(char *str)
-{
-	printk("Enabling erst parsing\n");
-	erst_disable = 0;
-	return 0;
-}
-__setup("erst_enable", setup_erst_enable);
-
 static int erst_check_table(struct acpi_table_erst *erst_tab)
 {
 	if ((erst_tab->header_length !=
@@ -1127,8 +1119,11 @@ static int __init erst_init(void)
 	if (acpi_disabled)
 		goto err;
 
-	if (erst_disable)
-		return 0;
+	if (erst_disable) {
+		pr_info(ERST_PFX
+	"Error Record Serialization Table (ERST) support is disabled.\n");
+		goto err;
+	}
 
 	status = acpi_get_table(ACPI_SIG_ERST, 0,
 				(struct acpi_table_header **)&erst_tab);

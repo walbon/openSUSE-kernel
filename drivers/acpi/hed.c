@@ -28,7 +28,6 @@
 #include <acpi/acpi_bus.h>
 #include <acpi/acpi_drivers.h>
 #include <acpi/hed.h>
-#include <acpi/apei.h>
 
 static struct acpi_device_id acpi_hed_ids[] = {
 	{"PNP0C33", 0},
