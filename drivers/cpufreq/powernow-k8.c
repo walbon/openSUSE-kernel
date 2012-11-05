@@ -34,6 +34,7 @@
 #include <linux/cpumask.h>
 #include <linux/io.h>
 #include <linux/delay.h>
+#include <linux/dmi.h>
 
 #include <asm/msr.h>
 
@@ -1216,14 +1217,7 @@ static int powernowk8_target(struct cpufreq_policy *pol,
 	struct powernowk8_target_arg pta = { .pol = pol, .targfreq = targfreq,
 					     .relation = relation };
 
-	/*
-	 * Must run on @pol->cpu.  cpufreq core is responsible for ensuring
-	 * that we're bound to the current CPU and pol->cpu stays online.
-	 */
-	if (smp_processor_id() == pol->cpu)
-		return powernowk8_target_fn(&pta);
-	else
-		return work_on_cpu(pol->cpu, powernowk8_target_fn, &pta);
+	return work_on_cpu(pol->cpu, powernowk8_target_fn, &pta);
 }
 
 /* Driver entry point to verify the policy and range of frequencies */
@@ -1263,6 +1257,14 @@ static void __cpuinit powernowk8_cpu_init_on_cpu(void *_init_on_cpu)
 	init_on_cpu->rc = 0;
 }
 
+/*
+ * Latest HP ProLiant do cpufreq in BIOS by default and may not present
+ * P-state related ACPI information to the OS/driver on cpufreq capable
+ * machines on purpose.
+ * Do not throw a firmware bug exception for these.
+ */
+static int is_proliant = -1;
+
 /* per CPU init entry point to the driver */
 static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
 {
@@ -1273,6 +1275,9 @@ static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
 	struct init_on_cpu init_on_cpu;
 	int rc;
 	struct cpuinfo_x86 *c = &cpu_data(pol->cpu);
+
+	if (is_proliant == -1)
+		is_proliant = dmi_name_in_vendors("ProLiant");
 
 	if (!cpu_online(pol->cpu))
 		return -ENODEV;
@@ -1296,7 +1301,11 @@ static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
 		 * an UP version, and is deprecated by AMD.
 		 */
 		if (num_online_cpus() != 1) {
-			printk_once(ACPI_PSS_BIOS_BUG_MSG);
+			if (is_proliant)
+				printk_once(KERN_INFO FW_INFO PFX
+    "HP ProLiant without cpufreq info. Assume BIOS driven cpufreq scaling\n");
+			else
+				printk_once(ACPI_PSS_BIOS_BUG_MSG);
 			goto err_out;
 		}
 		if (pol->cpu != 0) {
