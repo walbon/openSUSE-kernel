@@ -783,17 +783,6 @@ void __noreturn cpu_die(void)
 
 #endif /* CONFIG_HOTPLUG_CPU */
 
-static void smp_call_os_info_init_fn(void)
-{
-	int (*init_fn)(void);
-	unsigned long size;
-
-	init_fn = os_info_old_entry(OS_INFO_INIT_FN, &size);
-	if (!init_fn)
-		return;
-	init_fn();
-}
-
 void __init smp_prepare_cpus(unsigned int max_cpus)
 {
 #ifndef CONFIG_64BIT
