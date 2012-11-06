@@ -6219,31 +6219,31 @@ static int md_ioctl(struct block_device *bdev, fmode_t mode,
 			mddev = mddev_get_safe(bdev->bd_disk->private_data);
 			err = -ENODEV;
 			if (!mddev)
-				goto done;
+				goto abort;
 			if (mddev->raid_disks || mddev->external)
 				err = get_array_info(mddev, argp);
 			mddev_put(mddev);
-			goto done;
+			goto abort;
 
 		case GET_BITMAP_FILE:
 			mddev = mddev_get_safe(bdev->bd_disk->private_data);
 			err = -ENODEV;
 			if (!mddev)
-				goto done;
+				goto abort;
 			if (mddev->raid_disks || mddev->external)
 				err = get_bitmap_file(mddev, argp);
 			mddev_put(mddev);
-			goto done;
+			goto abort;
 
 		case GET_DISK_INFO:
 			mddev = mddev_get_safe(bdev->bd_disk->private_data);
 			err = -ENODEV;
 			if (!mddev)
-				goto done;
+				goto abort;
 			if (mddev->raid_disks || mddev->external)
 				err = get_disk_info(mddev, argp);
 			mddev_put(mddev);
-			goto done;
+			goto abort;
 
 		default:;
 	}
