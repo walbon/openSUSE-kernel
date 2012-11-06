@@ -723,6 +723,7 @@ ext_int_handler:
 ext_no_vtime:
 	HANDLE_SIE_INTERCEPT
 	TRACE_IRQS_OFF
+	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	lghi	%r1,4096
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	llgf	%r3,__LC_CPU_ADDRESS	# get cpu address + interruption code
