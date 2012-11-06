@@ -109,8 +109,8 @@ static void __do_machine_kdump(void *image)
 #ifdef CONFIG_CRASH_DUMP
 	int (*start_kdump)(int) = (void *)((struct kimage *) image)->start;
 
-	__load_psw_mask(PSW_BASE_BITS | PSW_DEFAULT_KEY);
 	setup_regs();
+	__load_psw_mask(PSW_BASE_BITS | PSW_DEFAULT_KEY);
 	start_kdump(1);
 #endif
 }
@@ -243,6 +243,7 @@ static void __machine_kexec(void *data)
 {
 	struct kimage *image = data;
 
+	__arch_local_irq_stosm(0x04); /* enable DAT */
 	pfault_fini();
 	if (image->type == KEXEC_TYPE_CRASH)
 		s390_reset_system(__do_machine_kdump, data);

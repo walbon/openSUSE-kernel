@@ -1782,6 +1782,7 @@ static struct kobj_attribute on_halt_attr =
 
 static void do_machine_halt(void)
 {
+	__arch_local_irq_stosm(0x04); /* enable DAT */
 	smp_send_stop();
 	on_halt_trigger.action->fn(&on_halt_trigger);
 	stop_run(&on_halt_trigger);
