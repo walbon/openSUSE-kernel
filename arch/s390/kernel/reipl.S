@@ -6,14 +6,7 @@
  *    Author(s): Holger Smolinski (Holger.Smolinski@de.ibm.com)
  */
 
-#include <linux/linkage.h>
 #include <asm/asm-offsets.h>
-
-#
-# store_status: Empty implementation until kdump is supported on 31 bit
-#
-ENTRY(store_status)
-		br	%r14
 
 #
 # do_reipl_asm

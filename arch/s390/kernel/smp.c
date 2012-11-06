@@ -38,7 +38,6 @@
 #include <linux/timex.h>
 #include <linux/bootmem.h>
 #include <linux/slab.h>
-#include <linux/crash_dump.h>
 #include <asm/asm-offsets.h>
 #include <asm/ipl.h>
 #include <asm/setup.h>
@@ -54,7 +53,6 @@
 #include <asm/vdso.h>
 #include <asm/cpu.h>
 #include <asm/debug.h>
-#include <asm/os_info.h>
 #include "entry.h"
 
 /* logical cpu to cpu address */
@@ -100,29 +98,6 @@ static inline int cpu_stopped(int cpu)
 	return raw_cpu_stopped(cpu_logical_map(cpu));
 }
 
-/*
- * Ensure that PSW restart is done on an online CPU
- */
-void smp_restart_with_online_cpu(void)
-{
-	int cpu;
-
-	for_each_online_cpu(cpu) {
-		if (stap() == __cpu_logical_map[cpu]) {
-			/* We are online: Enable DAT again and return */
-			__load_psw_mask(psw_kernel_bits & ~PSW_MASK_MCHECK);
-			return;
-		}
-	}
-	/* We are not online: Do PSW restart on an online CPU */
-	while (sigp(cpu, sigp_restart) == sigp_busy)
-		cpu_relax();
-	/* And stop ourself */
-	while (raw_sigp(stap(), sigp_stop) == sigp_busy)
-		cpu_relax();
-	for (;;);
-}
-
 void smp_switch_to_ipl_cpu(void (*func)(void *), void *data)
 {
 	struct _lowcore *lc, *current_lc;
@@ -149,10 +124,10 @@ void smp_switch_to_ipl_cpu(void (*func)(void *), void *data)
 	sp -= sizeof(struct pt_regs);
 	regs = (struct pt_regs *) sp;
 	memcpy(&regs->gprs, &current_lc->gpregs_save_area, sizeof(regs->gprs));
-	regs->psw = current_lc->psw_save_area;
+	regs->psw = lc->psw_save_area;
 	sp -= STACK_FRAME_OVERHEAD;
 	sf = (struct stack_frame *) sp;
-	sf->back_chain = 0;
+	sf->back_chain = regs->gprs[15];
 	smp_switch_to_cpu(func, data, sp, stap(), __cpu_logical_map[0]);
 }
 
@@ -351,13 +326,11 @@ void smp_ctl_clear_bit(int cr, int bit)
 }
 EXPORT_SYMBOL(smp_ctl_clear_bit);
 
-#if defined(CONFIG_ZFCPDUMP) || defined(CONFIG_CRASH_DUMP)
+#ifdef CONFIG_ZFCPDUMP
 
 static void __init smp_get_save_area(unsigned int cpu, unsigned int phy_cpu)
 {
-	if (ipl_info.type != IPL_TYPE_FCP_DUMP && !OLDMEM_BASE)
-		return;
-	if (is_kdump_kernel())
+	if (ipl_info.type != IPL_TYPE_FCP_DUMP)
 		return;
 	if (cpu >= NR_CPUS) {
 		pr_warning("CPU %i exceeds the maximum %i and is excluded from "
@@ -475,18 +448,6 @@ static void __init smp_detect_cpus(void)
 	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		panic("smp_detect_cpus failed to allocate memory\n");
-#ifdef CONFIG_CRASH_DUMP
-	if (OLDMEM_BASE && !is_kdump_kernel()) {
-		struct save_area *save_area;
-
-		save_area = kmalloc(sizeof(*save_area), GFP_KERNEL);
-		if (!save_area)
-			panic("could not allocate memory for save area\n");
-		copy_oldmem_page(1, (void *) save_area, sizeof(*save_area),
-				 0x200, 0);
-		zfcpdump_save_areas[0] = save_area;
-	}
-#endif
 	/* Use sigp detection algorithm if sclp doesn't work. */
 	if (sclp_get_cpu_info(info)) {
 		smp_use_sigp_detection = 1;
@@ -552,11 +513,6 @@ int __cpuinit start_secondary(void *cpuvoid)
 	ipi_call_lock();
 	set_cpu_online(smp_processor_id(), true);
 	ipi_call_unlock();
-	__ctl_clear_bit(0, 28); /* Disable lowcore protection */
-	S390_lowcore.restart_psw.mask = PSW_BASE_BITS | PSW_DEFAULT_KEY;
-	S390_lowcore.restart_psw.addr =
-		PSW_ADDR_AMODE | (unsigned long) psw_restart_int_handler;
-	__ctl_set_bit(0, 28); /* Enable lowcore protection */
 	/* Switch on interrupts */
 	local_irq_enable();
 	/* cpu_idle will call schedule for us */
@@ -596,11 +552,7 @@ static int __cpuinit smp_alloc_lowcore(int cpu)
 	memset((char *)lowcore + 512, 0, sizeof(*lowcore) - 512);
 	lowcore->async_stack = async_stack + ASYNC_SIZE;
 	lowcore->panic_stack = panic_stack + PAGE_SIZE;
-	lowcore->restart_psw.mask = PSW_BASE_BITS | PSW_DEFAULT_KEY;
-	lowcore->restart_psw.addr =
-		PSW_ADDR_AMODE | (unsigned long) restart_int_handler;
-	if (user_mode != HOME_SPACE_MODE)
-		lowcore->restart_psw.mask |= PSW_ASC_HOME;
+
 #ifndef CONFIG_64BIT
 	if (MACHINE_HAS_IEEE) {
 		unsigned long save_area;
