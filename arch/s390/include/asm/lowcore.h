@@ -18,6 +18,7 @@ void system_call(void);
 void pgm_check_handler(void);
 void mcck_int_handler(void);
 void io_int_handler(void);
+void psw_restart_int_handler(void);
 
 #ifdef CONFIG_32BIT
 
@@ -150,7 +151,10 @@ struct _lowcore {
 	 */
 	__u32	ipib;				/* 0x0e00 */
 	__u32	ipib_checksum;			/* 0x0e04 */
-	__u8	pad_0x0e08[0x0f00-0x0e08];	/* 0x0e08 */
+	__u32	vmcore_info;			/* 0x0e08 */
+	__u8	pad_0x0e0c[0x0e18-0x0e0c];	/* 0x0e0c */
+	__u32	os_info;			/* 0x0e18 */
+	__u8	pad_0x0e1c[0x0f00-0x0e1c];	/* 0x0e1c */
 
 	/* Extended facility list */
 	__u64	stfle_fac_list[32];		/* 0x0f00 */
@@ -286,7 +290,15 @@ struct _lowcore {
 	 */
 	__u64	ipib;				/* 0x0e00 */
 	__u32	ipib_checksum;			/* 0x0e08 */
-	__u8	pad_0x0e0c[0x0f00-0x0e0c];	/* 0x0e0c */
+	/*
+	 * Because the vmcore_info pointer is not 8 byte aligned it never
+	 * should not be accessed directly. For accessing the pointer, first
+	 * copy it to a local pointer variable.
+	 */
+	__u8	vmcore_info[8];			/* 0x0e0c */
+	__u8	pad_0x0e14[0x0e18-0x0e14];	/* 0x0e14 */
+	__u64	os_info;			/* 0x0e18 */
+	__u8	pad_0x0e20[0x0f00-0x0e20];	/* 0x0e20 */
 
 	/* Extended facility list */
 	__u64	stfle_fac_list[32];		/* 0x0f00 */
