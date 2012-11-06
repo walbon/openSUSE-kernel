@@ -13,30 +13,37 @@ typedef struct r10bio_s r10bio_t;
 struct r10_private_data_s {
 	mddev_t			*mddev;
 	mirror_info_t		*mirrors;
-	int			raid_disks;
+	struct mirror_info	*mirrors_new, *mirrors_old;
 	spinlock_t		device_lock;
 
 	/* geometry */
-	int			near_copies;  /* number of copies laid out raid0 style */
-	int 			far_copies;   /* number of copies laid out
+	struct geom {
+		int		raid_disks;
+		int		near_copies;  /* number of copies laid out raid0 style */
+		int		far_copies;   /* number of copies laid out
 					       * at large strides across drives
 					       */
-	int			far_offset;   /* far_copies are offset by 1 stripe
+		int		far_offset;   /* far_copies are offset by 1 stripe
 					       * instead of many
 					       */
-	int			copies;	      /* near_copies * far_copies.
-					       * must be <= raid_disks
-					       */
-	sector_t		stride;	      /* distance between far copies.
+		sector_t	stride;	      /* distance between far copies.
 					       * This is size / far_copies unless
 					       * far_offset, in which case it is
 					       * 1 stripe.
 					       */
+		int		chunk_shift; /* shift from chunks to sectors */
+		sector_t	chunk_mask;
+	} prev, geo;
+	int copies;	      /* near_copies * far_copies.
+					       * must be <= raid_disks
+					       */
 
-	sector_t		dev_sectors;  /* temp copy of mddev->dev_sectors */
-
-	int chunk_shift; /* shift from chunks to sectors */
-	sector_t chunk_mask;
+	sector_t dev_sectors;  /* temp copy of
+					       * mddev->dev_sectors */
+	sector_t		reshape_progress;
+	sector_t		reshape_safe;
+	unsigned long		reshape_checkpoint;
+	sector_t		offset_diff;
 
 	struct list_head	retry_list;
 	/* queue pending writes and submit them on unplug */
@@ -100,10 +107,11 @@ struct r10bio_s {
 	 * When reconstructing, we use 2 bios, one for read, one for write.
 	 * We choose the number when they are allocated.
 	 */
-	struct {
+	struct r10dev {
 		struct bio		*bio;
 		sector_t addr;
 		int devnum;
+		int			error;
 	} devs[0];
 };
 
@@ -119,7 +127,13 @@ struct r10bio_s {
 #define	R10BIO_IsSync	1
 #define	R10BIO_IsRecover 2
 #define	R10BIO_Degraded 3
+#define	R10BIO_IsReshape 5
 /* failfast devices did receive failfast requests. */
 #define	R10BIO_FailFast 4
 #define	R10BIO_WriteError 8
+/* During a reshape we might be performing IO on the
+ * 'previous' part of the array, in which case this
+ * flag is set
+ */
+#define	R10BIO_Previous 9
 #endif

@@ -2177,7 +2177,7 @@ static int run(mddev_t *mddev)
 	 */
 	mddev->thread = conf->thread;
 	conf->thread = NULL;
-	mddev->private = conf;
+	rcu_assign_pointer(mddev->private, conf);
 
 	md_set_array_sectors(mddev, raid1_size(mddev, 0, 0));
 
@@ -2224,9 +2224,16 @@ static int raid1_resize(mddev_t *mddev, sector_t sectors)
 	 * any io in the removed space completes, but it hardly seems
 	 * worth it.
 	 */
-	md_set_array_sectors(mddev, raid1_size(mddev, sectors, 0));
-	if (mddev->array_sectors > raid1_size(mddev, sectors, 0))
+	sector_t newsize = raid1_size(mddev, sectors, 0);
+	if (mddev->external_size &&
+	    mddev->array_sectors > newsize)
 		return -EINVAL;
+	if (mddev->bitmap) {
+		int ret = bitmap_resize(mddev->bitmap, newsize, 0, 0);
+		if (ret)
+			return ret;
+	}
+	md_set_array_sectors(mddev, newsize);
 	set_capacity(mddev->gendisk, mddev->array_sectors);
 	revalidate_disk(mddev->gendisk);
 	if (sectors > mddev->dev_sectors &&

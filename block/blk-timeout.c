@@ -129,8 +129,10 @@ void blk_rq_timed_out_timer(unsigned long data)
 		}
 	}
 
+	if (!test_bit(QUEUE_FLAG_NO_ROUND, &q->queue_flags))
+		next = round_jiffies_up(next);
 	if (next_set)
-		mod_timer(&q->timeout, round_jiffies_up(next));
+		mod_timer(&q->timeout, next);
 
 	spin_unlock_irqrestore(q->queue_lock, flags);
 }
@@ -187,7 +189,10 @@ void blk_add_timer(struct request *req)
 	 * than an existing one, modify the timer. Round up to next nearest
 	 * second.
 	 */
-	expiry = round_jiffies_up(req->deadline);
+	if (test_bit(QUEUE_FLAG_NO_ROUND, &q->queue_flags))
+		expiry = req->deadline;
+	else
+		expiry = round_jiffies_up(req->deadline);
 
 	if (!timer_pending(&q->timeout) ||
 	    time_before(expiry, q->timeout.expires))

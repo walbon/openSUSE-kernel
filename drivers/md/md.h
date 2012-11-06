@@ -52,6 +52,7 @@ struct mdk_rdev_s
 	int		sb_loaded;
 	__u64		sb_events;
 	sector_t	data_offset;	/* start of data in array */
+	sector_t	new_data_offset;/* only relevant while reshaping */
 	sector_t 	sb_start;	/* offset of the super block (in 512byte sectors) */
 	int		sb_size;	/* bytes in the superblock */
 	int		preferred_minor;	/* autorun support */
@@ -73,6 +74,10 @@ struct mdk_rdev_s
 #define	Faulty		1		/* device is known to have a fault */
 #define	In_sync		2		/* device is in_sync with rest of array */
 #define	WriteMostly	4		/* Avoid reading if at all possible */
+#define	Unmerged	5		/* device is being added to array and should
+					 * be considerred for bvec_merge_fn but not
+					 * yet for actual IO
+					 */
 #define	AutoDetected	7		/* added by auto-detect */
 #define Blocked		8		/* An error occurred on an externally
 					 * managed array, don't allow writes
@@ -86,6 +91,14 @@ struct mdk_rdev_s
 #define LastDev		10		/* Seems to be the last working dev as
 					 * it didn't fail, so don't use FailFast
 					 * any more for metadata
+					 */
+#define Timeout		11		/* Device fault due to timeout.
+					 * 'Faulty' is required to be set.
+					 */
+#define	RemoveSynchronised 12		/* synchronize_rcu was called after
+					 * This device was known to be faulty,
+					 * so it is save to remove without
+					 * another call.
 					 */
 	wait_queue_head_t blocked_wait;
 
@@ -190,6 +203,7 @@ struct mddev_s
 	sector_t			reshape_position;
 	int				delta_disks, new_level, new_layout;
 	int				new_chunk_sectors;
+	int				reshape_backwards;
 
 	atomic_t			plug_cnt;	/* If device is expecting
 							 * more bios soon.
@@ -274,6 +288,10 @@ struct mddev_s
 	int				degraded;	/* whether md should consider
 							 * adding a spare
 							 */
+	int				merge_check_needed; /* at least one
+							     * member device
+							     * has a
+							     * merge_bvec_fn */
 
 	atomic_t			recovery_active; /* blocks scheduled, but not written */
 	wait_queue_head_t		recovery_wait;
@@ -311,15 +329,13 @@ struct mddev_s
 						 * For external metadata, offset
 						 * from start of device. 
 						 */
+		unsigned long		space; /* space available at this offset */
 		loff_t			default_offset; /* this is the offset to use when
 							 * hot-adding a bitmap.  It should
 							 * eventually be settable by sysfs.
 							 */
-		/* When md is serving under dm, it might use a
-		 * dirty_log to store the bits.
-		 */
-		struct dm_dirty_log *log;
-
+		unsigned long		default_space; /* space available at
+							* default offset */
 		struct mutex		mutex;
 		unsigned long		chunksize;
 		unsigned long		daemon_sleep; /* how many jiffies between updates? */
@@ -345,13 +361,6 @@ struct mddev_s
 	void (*sync_super)(mddev_t *mddev, mdk_rdev_t *rdev);
 };
 
-
-static inline void rdev_dec_pending(mdk_rdev_t *rdev, mddev_t *mddev)
-{
-	int faulty = test_bit(Faulty, &rdev->flags);
-	if (atomic_dec_and_test(&rdev->nr_pending) && faulty)
-		set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
-}
 
 static inline void md_sync_acct(struct block_device *bdev, unsigned long nr_sectors)
 {
@@ -493,6 +502,7 @@ extern void md_write_start(mddev_t *mddev, struct bio *bi);
 extern void md_write_end(mddev_t *mddev);
 extern void md_done_sync(mddev_t *mddev, int blocks, int ok);
 extern void md_error(mddev_t *mddev, mdk_rdev_t *rdev);
+extern void md_finish_reshape(mddev_t *mddev);
 
 extern int mddev_congested(mddev_t *mddev, int bits);
 extern void md_flush_request(mddev_t *mddev, struct bio *bio);
@@ -525,4 +535,14 @@ extern struct bio *bio_clone_mddev(struct bio *bio, gfp_t gfp_mask,
 extern struct bio *bio_alloc_mddev(gfp_t gfp_mask, int nr_iovecs,
 				   mddev_t *mddev);
 extern int mddev_check_plugged(mddev_t *mddev);
+
+static inline void rdev_dec_pending(mdk_rdev_t *rdev, mddev_t *mddev)
+{
+	int faulty = test_bit(Faulty, &rdev->flags);
+	if (atomic_dec_and_test(&rdev->nr_pending) && faulty) {
+		set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
+		md_wakeup_thread(mddev->thread);
+	}
+}
+
 #endif /* _MD_MD_H */

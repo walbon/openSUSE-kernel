@@ -1232,7 +1232,7 @@ dasd_failfast_expires_store(struct device *dev, struct device_attribute *attr,
 	       const char *buf, size_t count)
 {
 	struct dasd_device *device;
-	unsigned long val, timeout;
+	unsigned long val;
 
 	device = dasd_device_from_cdev(to_ccwdev(dev));
 	if (IS_ERR(device))
@@ -1244,11 +1244,10 @@ dasd_failfast_expires_store(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 	}
 
-	if (val) {
-		device->failfast_expires = val;
-		timeout = val * device->failfast_retries;
-		blk_queue_rq_timeout(device->block->request_queue, timeout * HZ);
-	}
+	device->failfast_expires = val;
+	device->blk_timeout = val * (device->failfast_retries + 1);
+	blk_queue_rq_timeout(device->block->request_queue,
+			     device->blk_timeout * HZ);
 
 	dasd_put_device(device);
 	return count;
@@ -1317,7 +1316,7 @@ dasd_failfast_retries_store(struct device *dev, struct device_attribute *attr,
 	       const char *buf, size_t count)
 {
 	struct dasd_device *device;
-	unsigned long val, timeout;
+	unsigned long val;
 
 	device = dasd_device_from_cdev(to_ccwdev(dev));
 	if (IS_ERR(device))
@@ -1329,11 +1328,10 @@ dasd_failfast_retries_store(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 	}
 
-	if (val) {
-		device->failfast_retries = val;
-		timeout = val * device->failfast_expires;
-		blk_queue_rq_timeout(device->block->request_queue, timeout * HZ);
-	}
+	device->failfast_retries = val;
+	device->blk_timeout = (val + 1) * device->failfast_expires;
+	blk_queue_rq_timeout(device->block->request_queue,
+			     device->blk_timeout * HZ);
 
 	dasd_put_device(device);
 	return count;
@@ -1341,6 +1339,55 @@ dasd_failfast_retries_store(struct device *dev, struct device_attribute *attr,
 
 static DEVICE_ATTR(failfast_retries, 0644,
 		   dasd_failfast_retries_show, dasd_failfast_retries_store);
+
+static ssize_t
+dasd_timeout_show(struct device *dev, struct device_attribute *attr,
+		  char *buf)
+{
+	struct dasd_device *device;
+	int len;
+
+	device = dasd_device_from_cdev(to_ccwdev(dev));
+	if (IS_ERR(device))
+		return -ENODEV;
+	len = snprintf(buf, PAGE_SIZE, "%lu\n", device->blk_timeout);
+	dasd_put_device(device);
+	return len;
+}
+
+static ssize_t
+dasd_timeout_store(struct device *dev, struct device_attribute *attr,
+		   const char *buf, size_t count)
+{
+	struct dasd_device *device;
+	unsigned long val;
+
+	device = dasd_device_from_cdev(to_ccwdev(dev));
+	if (IS_ERR(device))
+		return -ENODEV;
+
+	if ((strict_strtoul(buf, 10, &val) != 0) ||
+	    val > (device->default_retries * device->default_expires) ||
+	    val == 0) {
+		dasd_put_device(device);
+		return -EINVAL;
+	}
+
+	device->blk_timeout = val;
+	device->failfast_expires = val / (device->failfast_retries + 1);
+	/* Make failfast_expires an upper boundary */
+	if (val % device->failfast_retries)
+		device->failfast_expires++;
+
+	blk_queue_rq_timeout(device->block->request_queue,
+			     device->blk_timeout * HZ);
+
+	dasd_put_device(device);
+	return count;
+}
+
+static DEVICE_ATTR(timeout, 0644,
+		   dasd_timeout_show, dasd_timeout_store);
 
 static ssize_t dasd_reservation_policy_show(struct device *dev,
 					    struct device_attribute *attr,
@@ -1455,6 +1502,7 @@ static struct attribute * dasd_attrs[] = {
 	&dev_attr_failfast_expires.attr,
 	&dev_attr_retries.attr,
 	&dev_attr_failfast_retries.attr,
+	&dev_attr_timeout.attr,
 	&dev_attr_reservation_policy.attr,
 	&dev_attr_last_known_reservation_state.attr,
 	NULL,

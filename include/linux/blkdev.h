@@ -407,6 +407,7 @@ struct request_queue
 #define QUEUE_FLAG_NOXMERGES   15	/* No extended merges */
 #define QUEUE_FLAG_ADD_RANDOM  16	/* Contributes to random pool */
 #define QUEUE_FLAG_SECDISCARD  17	/* supports SECDISCARD */
+#define QUEUE_FLAG_NO_ROUND    18	/* Don't round timeout up to next second */
 
 #define QUEUE_FLAG_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_STACKABLE)	|	\

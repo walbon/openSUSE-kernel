@@ -262,6 +262,10 @@ struct dasd_snid_ioctl_data {
 #define BIODASDQUIESCE _IO(DASD_IOCTL_LETTER,6) 
 /* Resume IO on device */
 #define BIODASDRESUME  _IO(DASD_IOCTL_LETTER,7) 
+/* IO timeout on device */
+#define BIODASDTIMEOUT _IO(DASD_IOCTL_LETTER,240) 
+/* Resync IO on device */
+#define BIODASDRESYNC  _IO(DASD_IOCTL_LETTER,241) 
 
 
 /* retrieve API version number */
