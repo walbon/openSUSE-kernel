@@ -67,7 +67,7 @@ static void __init find_early_table_space(struct map_range *mr, int nr_range)
 {
 	int i;
 	unsigned long puds = 0, pmds = 0, ptes = 0, tables;
-	unsigned long start = 0, good_end;
+	unsigned long start = 0, good_end = end;
 	phys_addr_t base;
 
 	for (i = 0; i < nr_range; i++) {
