@@ -63,7 +63,8 @@ struct map_range {
  * mr[0].start to mr[nr_range - 1].end, while accounting for possible 2M and 1GB
  * pages. Then find enough contiguous space for those page tables.
  */
-static void __init find_early_table_space(struct map_range *mr, int nr_range)
+static void __init find_early_table_space(unsigned long end,
+		struct map_range *mr, int nr_range)
 {
 	int i;
 	unsigned long puds = 0, pmds = 0, ptes = 0, tables;
@@ -294,7 +295,7 @@ unsigned long __init_refok init_memory_mapping(unsigned long start,
 	 * nodes are discovered.
 	 */
 	if (!after_bootmem)
-		find_early_table_space(mr, nr_range);
+		find_early_table_space(end, mr, nr_range);
 
 	for (i = 0; i < nr_range; i++)
 		ret = kernel_physical_mapping_init(mr[i].start, mr[i].end,
