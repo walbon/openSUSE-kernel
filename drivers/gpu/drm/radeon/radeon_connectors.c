@@ -911,7 +911,7 @@ radeon_dvi_detect(struct drm_connector *connector, bool force)
 	struct drm_mode_object *obj;
 	int i;
 	enum drm_connector_status ret = connector_status_disconnected;
-	bool dret = false;
+	bool dret = false, broken_edid = false;
 
 	if (radeon_connector->ddc_bus)
 		dret = radeon_ddc_probe(radeon_connector,
@@ -933,6 +933,9 @@ radeon_dvi_detect(struct drm_connector *connector, bool force)
 				ret = connector_status_disconnected;
 				DRM_ERROR("%s: detected RS690 floating bus bug, stopping ddc detect\n", drm_get_connector_name(connector));
 				radeon_connector->ddc_bus = NULL;
+			} else {
+				ret = connector_status_connected;
+				broken_edid = true; /* defer use_digital to later */
 			}
 		} else {
 			radeon_connector->use_digital = !!(radeon_connector->edid->input & DRM_EDID_INPUT_DIGITAL);
@@ -1015,13 +1018,24 @@ radeon_dvi_detect(struct drm_connector *connector, bool force)
 
 			encoder_funcs = encoder->helper_private;
 			if (encoder_funcs->detect) {
-				if (ret != connector_status_connected) {
-					ret = encoder_funcs->detect(encoder, connector);
-					if (ret == connector_status_connected) {
-						radeon_connector->use_digital = false;
+				if (!broken_edid) {
+					if (ret != connector_status_connected) {
+						/* deal with analog monitors without DDC */
+						ret = encoder_funcs->detect(encoder, connector);
+						if (ret == connector_status_connected) {
+							radeon_connector->use_digital = false;
+						}
+						if (ret != connector_status_disconnected)
+							radeon_connector->detected_by_load = true;
 					}
-					if (ret != connector_status_disconnected)
-						radeon_connector->detected_by_load = true;
+				} else {
+					enum drm_connector_status lret;
+					/* assume digital unless load detected otherwise */
+					radeon_connector->use_digital = true;
+					lret = encoder_funcs->detect(encoder, connector);
+					DRM_DEBUG_KMS("load_detect %x returned: %x\n",encoder->encoder_type,lret);
+					if (lret == connector_status_connected)
+						radeon_connector->use_digital = false;
 				}
 				break;
 			}
