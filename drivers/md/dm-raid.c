@@ -466,7 +466,9 @@ static int raid_ctr(struct dm_target *ti, unsigned argc, char **argv)
 		goto bad;
 
 	INIT_WORK(&rs->md.event_work, do_table_event);
-	ti->split_io = rs->md.chunk_sectors;
+	ret = -EINVAL;
+	if (dm_set_target_max_io_len(rs->ti, rs->md.chunk_sectors))
+		goto bad;
 	ti->private = rs;
 	ti->num_flush_requests = 1;
 
