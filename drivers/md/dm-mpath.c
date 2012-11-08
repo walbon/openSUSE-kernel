@@ -553,7 +553,7 @@ static struct pgpath *parse_path(struct dm_arg_set *as, struct path_selector *ps
 {
 	int r;
 	struct pgpath *p;
-	char *path;
+	const char *path;
 	struct multipath *m = ti->private;
 
 	/* we need at least a path arg */
@@ -802,7 +802,7 @@ static int parse_features(struct dm_arg_set *as, struct multipath *m)
 			continue;
 		}
 
-		if (!strnicmp(param_name, MESG_STR("no_partitions"))) {
+		if (!strcasecmp(arg_name, "no_partitions")) {
 			m->features |= FEATURE_NO_PARTITIONS;
 			continue;
 		}
