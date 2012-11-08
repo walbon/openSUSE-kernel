@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/version.h>
+#include <linux/module.h>
 
 #define DM_MSG_PREFIX "bufio"
 
