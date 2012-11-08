@@ -36,6 +36,7 @@ struct node_header {
 	__le32 padding;
 } __packed;
 
+#define node __dm_node_
 struct node {
 	struct node_header header;
 	__le64 keys[0];
