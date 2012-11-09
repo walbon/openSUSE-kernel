@@ -1832,32 +1832,6 @@ static bool in_reclaim_compaction(int priority, struct scan_control *sc)
 	return false;
 }
 
-#ifdef CONFIG_COMPACTION
-/*
- * If compaction is deferred for sc->order then scale the number of pages
- * reclaimed based on the number of consecutive allocation failures. This
- * scaling only happens for direct reclaim as it is about to attempt
- * compaction. If compaction fails, future allocations will be deferred
- * and reclaim avoided. On the other hand, kswapd does not take compaction
- * deferral into account so if it scaled, it could scan excessively even
- * though allocations are temporarily not being attempted.
- */
-static unsigned long scale_for_compaction(unsigned long pages_for_compaction,
-			struct zone *zone, struct scan_control *sc)
-{
-	if (zone->compact_order_failed <= sc->order &&
-	    !current_is_kswapd())
-		pages_for_compaction <<= zone->compact_defer_shift;
-	return pages_for_compaction;
-}
-#else
-static unsigned long scale_for_compaction(unsigned long pages_for_compaction,
-			struct zone *zone, struct scan_control *sc)
-{
-	return pages_for_compaction;
-}
-#endif
-
 /*
  * Reclaim/compaction is used for high-order allocation requests. It reclaims
  * order-0 pages before compacting the zone. should_continue_reclaim() returns
@@ -1906,9 +1880,6 @@ static inline bool should_continue_reclaim(struct zone *zone,
 	 * inactive lists are large enough, continue reclaiming
 	 */
 	pages_for_compaction = (2UL << sc->order);
-
-	pages_for_compaction = scale_for_compaction(pages_for_compaction,
-						    zone, sc);
 	inactive_lru_pages = zone_nr_lru_pages(zone, sc, LRU_INACTIVE_FILE);
 	if (nr_swap_pages > 0)
 		inactive_lru_pages += zone_nr_lru_pages(zone, sc, LRU_INACTIVE_ANON);
