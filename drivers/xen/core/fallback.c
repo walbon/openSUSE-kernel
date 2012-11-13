@@ -1,4 +1,5 @@
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/string.h>
 #include <asm/bug.h>
 #include <asm/hypervisor.h>
@@ -45,6 +46,7 @@ int HYPERVISOR_event_channel_op_compat(int cmd, void *arg)
 
 	return rc;
 }
+EXPORT_SYMBOL(HYPERVISOR_event_channel_op_compat);
 
 int HYPERVISOR_physdev_op_compat(int cmd, void *arg)
 {

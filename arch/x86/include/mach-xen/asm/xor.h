@@ -18,6 +18,7 @@ do {						\
 	xor_speed(&xor_block_8regs_p);		\
 	xor_speed(&xor_block_32regs);		\
 	xor_speed(&xor_block_32regs_p);		\
+	AVX_XOR_SPEED;				\
 	xor_speed(&xor_block_sse);		\
 } while (0)
 
