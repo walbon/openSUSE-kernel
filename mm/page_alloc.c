@@ -2219,15 +2219,6 @@ bool gfp_pfmemalloc_allowed(gfp_t gfp_mask)
 	return !!(gfp_to_alloc_flags(gfp_mask) & ALLOC_NO_WATERMARKS);
 }
 
-/* Returns true if the allocation is likely for THP */
-static bool is_thp_alloc(gfp_t gfp_mask, unsigned int order)
-{
-	if (order == pageblock_order &&
-	    (gfp_mask & (__GFP_MOVABLE|__GFP_REPEAT)) == __GFP_MOVABLE)
-		return true;
-	return false;
-}
-
 static inline struct page *
 __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	struct zonelist *zonelist, enum zone_type high_zoneidx,
@@ -2266,16 +2257,9 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 		goto nopage;
 
 restart:
-	/*
-	 * kswapd is woken except when this is a THP request and compactiono
-	 * is deferred. If we are backing off reclaim/compaction then kswapd
-	 * should not be awake aggressively reclaiming with no consumers of
-	 * the freed pages
-	 */
-	if (!(is_thp_alloc(gfp_mask, order) &&
-	      compaction_deferred(preferred_zone, order)))
+	if (!(gfp_mask & __GFP_NO_KSWAPD))
 		wake_all_kswapd(order, zonelist, high_zoneidx,
-					zone_idx(preferred_zone));
+						zone_idx(preferred_zone));
 
 	/*
 	 * OK, we're below the kswapd watermark and have kicked background
@@ -2352,7 +2336,7 @@ rebalance:
 	 * system then fail the allocation instead of entering direct reclaim.
 	 */
 	if ((deferred_compaction || contended_compaction) &&
-	    is_thp_alloc(gfp_mask, order))
+							(gfp_mask & __GFP_NO_KSWAPD))
 		goto nopage;
 
 	/* Try direct reclaim and then allocating */
