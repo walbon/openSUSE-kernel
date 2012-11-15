@@ -70,6 +70,9 @@ static int snapshot_open(struct inode *inode, struct file *filp)
 	struct snapshot_data *data;
 	int error;
 
+	if (!capable(CAP_COMPROMISE_KERNEL))
+		return -EPERM;
+
 	mutex_lock(&pm_mutex);
 
 	if (!atomic_add_unless(&snapshot_device_available, -1, 0)) {

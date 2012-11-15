@@ -157,7 +157,9 @@ static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
 	}
 #endif
 #ifdef CONFIG_HIBERNATION
-	s += sprintf(s, "%s\n", "disk");
+	if (capable(CAP_COMPROMISE_KERNEL)) {
+		s += sprintf(s, "%s\n", "disk");
+	}
 #else
 	if (s != buf)
 		/* convert the last space to a newline */

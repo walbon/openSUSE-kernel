@@ -610,6 +610,10 @@ int hibernate(void)
 {
 	int error;
 
+	if (!capable(CAP_COMPROMISE_KERNEL)) {
+		return -EPERM;
+	}
+
 	mutex_lock(&pm_mutex);
 	/* The snapshot device should not be opened while we're running */
 	if (!atomic_add_unless(&snapshot_device_available, -1, 0)) {
@@ -706,7 +710,7 @@ static int software_resume(void)
 	/*
 	 * If the user said "noresume".. bail out early.
 	 */
-	if (noresume)
+	if (noresume || !capable(CAP_COMPROMISE_KERNEL))
 		return 0;
 
 	/*
@@ -861,6 +865,11 @@ static ssize_t disk_show(struct kobject *kobj, struct kobj_attribute *attr,
 	int i;
 	char *start = buf;
 
+	if (!capable(CAP_COMPROMISE_KERNEL)) {
+		buf += sprintf(buf, "[%s]\n", "disabled");
+		return buf-start;
+	}
+
 	for (i = HIBERNATION_FIRST; i <= HIBERNATION_MAX; i++) {
 		if (!hibernation_modes[i])
 			continue;
@@ -893,6 +902,9 @@ static ssize_t disk_store(struct kobject *kobj, struct kobj_attribute *attr,
 	int len;
 	char *p;
 	int mode = HIBERNATION_INVALID;
+
+	if (!capable(CAP_COMPROMISE_KERNEL))
+		return -EPERM;
 
 	p = memchr(buf, '\n', n);
 	len = p ? p - buf : n;
