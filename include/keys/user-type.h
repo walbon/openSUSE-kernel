@@ -34,6 +34,8 @@ struct user_key_payload {
 
 extern struct key_type key_type_user;
 
+struct key_preparsed_payload;
+
 extern int user_instantiate(struct key *key, const void *data, size_t datalen);
 extern int user_update(struct key *key, const void *data, size_t datalen);
 extern int user_match(const struct key *key, const void *criterion);

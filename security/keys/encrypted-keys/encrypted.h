@@ -2,6 +2,18 @@
 #define __ENCRYPTED_KEY_H
 
 #define ENCRYPTED_DEBUG 0
+#if defined(CONFIG_TRUSTED_KEYS) || \
+  (defined(CONFIG_TRUSTED_KEYS_MODULE) && defined(CONFIG_ENCRYPTED_KEYS_MODULE))
+extern struct key *request_trusted_key(const char *trusted_desc,
+				       u8 **master_key, size_t *master_keylen);
+#else
+static inline struct key *request_trusted_key(const char *trusted_desc,
+					      u8 **master_key,
+					      size_t *master_keylen)
+{
+	return ERR_PTR(-EOPNOTSUPP);
+}
+#endif
 
 #if ENCRYPTED_DEBUG
 static inline void dump_master_key(const u8 *master_key, size_t master_keylen)
