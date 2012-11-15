@@ -2057,7 +2057,7 @@ good:
 	return 0;
 
 zeroit:
-	printk_ratelimited(KERN_INFO "btrfs csum failed ino %llu off %llu csum %u "
+	printk_ratelimited(KERN_WARNING "btrfs csum failed ino %llu off %llu csum %u "
 		       "private %llu\n",
 		       (unsigned long long)btrfs_ino(page->mapping->host),
 		       (unsigned long long)start, csum,
@@ -2455,9 +2455,9 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 	}
 
 	if (nr_unlink)
-		printk(KERN_DEBUG "btrfs: unlinked %d orphans\n", nr_unlink);
+		pr_debug("btrfs: unlinked %d orphans\n", nr_unlink);
 	if (nr_truncate)
-		printk(KERN_DEBUG "btrfs: truncated %d orphans\n", nr_truncate);
+		pr_debug("btrfs: truncated %d orphans\n", nr_truncate);
 
 out:
 	if (ret)
@@ -3821,7 +3821,7 @@ void btrfs_evict_inode(struct inode *inode)
 			ret = btrfs_block_rsv_migrate(global_rsv, rsv, min_size);
 
 		if (ret) {
-			printk(KERN_WARNING "btrfs: Could not get space for a "
+			printk(KERN_INFO "btrfs: Could not get space for a "
 			       "delete, will truncate on mount %d\n", ret);
 			btrfs_orphan_del(NULL, inode);
 			btrfs_free_block_rsv(root, rsv);
