@@ -10,6 +10,7 @@
  */
 
 #include <crypto/public_key.h>
+#include <linux/time.h>
 
 struct x509_certificate {
 	struct x509_certificate *next;
