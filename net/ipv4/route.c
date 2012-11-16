@@ -1369,11 +1369,13 @@ static int check_peer_redir(struct dst_entry *dst, struct inet_peer *peer)
 {
 	struct rtable *rt = (struct rtable *) dst;
 	__be32 orig_gw = rt->rt_gateway;
+	struct neighbour *neigh;
 
 	dst_confirm(&rt->dst);
 
-	neigh_release(rt->dst.neighbour);
-	rt->dst.neighbour = NULL;
+	neigh = xchg(&rt->dst.neighbour, NULL);
+	if (neigh)
+		neigh_release(neigh);
 
 	rt->rt_gateway = peer->redirect_learned.a4;
 	if (arp_bind_neighbour(&rt->dst) ||

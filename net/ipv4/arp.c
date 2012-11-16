@@ -527,6 +527,8 @@ int arp_bind_neighbour(struct dst_entry *dst)
 		return -EINVAL;
 	if (n == NULL) {
 		__be32 nexthop = ((struct rtable *)dst)->rt_gateway;
+		struct neighbour *old_n;
+
 		if (dev->flags & (IFF_LOOPBACK | IFF_POINTOPOINT))
 			nexthop = 0;
 		n = __neigh_lookup_errno(
@@ -537,7 +539,9 @@ int arp_bind_neighbour(struct dst_entry *dst)
 					 &arp_tbl, &nexthop, dev);
 		if (IS_ERR(n))
 			return PTR_ERR(n);
-		dst->neighbour = n;
+		old_n = xchg(&dst->neighbour, n);
+		if (unlikely(old_n != NULL))
+			neigh_release(old_n);
 	}
 	return 0;
 }

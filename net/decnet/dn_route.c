@@ -834,10 +834,14 @@ static int dn_rt_set_next_hop(struct dn_route *rt, struct dn_fib_res *res)
 	rt->rt_type = res->type;
 
 	if (dev != NULL && rt->dst.neighbour == NULL) {
+		struct neighbour *old_n;
+
 		n = __neigh_lookup_errno(&dn_neigh_table, &rt->rt_gateway, dev);
 		if (IS_ERR(n))
 			return PTR_ERR(n);
-		rt->dst.neighbour = n;
+		old_n = xchg(&rt->dst.neighbour, n);
+		if (unlikely(old_n != NULL))
+			neigh_release(old_n);
 	}
 
 	if (dst_metric(&rt->dst, RTAX_MTU) > rt->dst.dev->mtu)
