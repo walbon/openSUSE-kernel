@@ -1894,9 +1894,9 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 	 */
 	struct bitmap_storage store;
 	struct bitmap_counts old_counts;
-	sector_t chunks;
+	unsigned long chunks;
 	sector_t block;
-	long old_blocks, new_blocks;
+	sector_t old_blocks, new_blocks;
 	int chunkshift;
 	int ret = 0;
 	long pages;
