@@ -1480,9 +1480,14 @@ static void btrfs_fs_dirty_inode(struct inode *inode, int flags)
 	int ret;
 
 	ret = btrfs_dirty_inode(inode);
-	if (ret)
-		printk_ratelimited(KERN_DEBUG "btrfs: fail to dirty inode %Lu "
-				   "error %d\n", btrfs_ino(inode), ret);
+	if (ret) {
+		static DEFINE_RATELIMIT_STATE(_rs,
+				DEFAULT_RATELIMIT_INTERVAL,
+				DEFAULT_RATELIMIT_BURST);
+		if (__ratelimit(&_rs))
+			pr_debug("btrfs: fail to dirty inode %llu error %d\n",
+				(unsigned long long)btrfs_ino(inode), ret);
+	}
 }
 
 static dev_t btrfs_get_maps_dev(struct inode *inode)
