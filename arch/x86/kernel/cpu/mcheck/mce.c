@@ -86,6 +86,7 @@ static int			mce_dont_log_ce		__read_mostly;
 int				mce_cmci_disabled	__read_mostly;
 int				mce_ignore_ce		__read_mostly;
 int				mce_ser			__read_mostly;
+int				mce_bios_cmci_threshold	__read_mostly;
 
 struct mce_bank                *mce_banks		__read_mostly;
 
@@ -1883,6 +1884,7 @@ static struct miscdevice mce_log_device = {
  *	check, or 0 to not wait
  * mce=bootlog Log MCEs from before booting. Disabled by default on AMD.
  * mce=nobootlog Don't log MCEs from before booting.
+ * mce=bios_cmci_threshold Don't program the CMCI threshold
  */
 static int __init mcheck_enable(char *str)
 {
@@ -1902,6 +1904,8 @@ static int __init mcheck_enable(char *str)
 		mce_ignore_ce = 1;
 	else if (!strcmp(str, "bootlog") || !strcmp(str, "nobootlog"))
 		mce_bootlog = (str[0] == 'b');
+	else if (!strcmp(str, "bios_cmci_threshold"))
+		mce_bios_cmci_threshold = 1;
 	else if (isdigit(str[0])) {
 		get_option(&str, &tolerant);
 		if (*str == ',') {
@@ -2139,6 +2143,11 @@ static struct sysdev_ext_attribute attr_cmci_disabled = {
 	&mce_cmci_disabled
 };
 
+static struct sysdev_ext_attribute attr_bios_cmci_threshold = {
+	_SYSDEV_ATTR(bios_cmci_threshold, 0444, sysdev_show_int, NULL),
+	&mce_bios_cmci_threshold
+};
+
 static struct sysdev_attribute *mce_attrs[] = {
 	&attr_tolerant.attr,
 	&attr_check_interval.attr,
@@ -2147,6 +2156,7 @@ static struct sysdev_attribute *mce_attrs[] = {
 	&attr_dont_log_ce.attr,
 	&attr_ignore_ce.attr,
 	&attr_cmci_disabled.attr,
+	&attr_bios_cmci_threshold.attr,
 	NULL
 };
 
