@@ -32,6 +32,7 @@
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/configfs.h>
+#include <linux/kernel.h>
 #include <linux/ctype.h>
 #include <asm/unaligned.h>
 #include <scsi/scsi.h>
@@ -41,12 +42,8 @@
 #include <scsi/libfc.h>
 
 #include <target/target_core_base.h>
-#include <target/target_core_transport.h>
-#include <target/target_core_fabric_ops.h>
+#include <target/target_core_fabric.h>
 #include <target/target_core_fabric_configfs.h>
-#include <target/target_core_fabric_lib.h>
-#include <target/target_core_device.h>
-#include <target/target_core_tpg.h>
 #include <target/target_core_configfs.h>
 #include <target/target_core_base.h>
 #include <target/configfs_macros.h>
@@ -72,10 +69,10 @@ static ssize_t ft_parse_wwn(const char *name, u64 *wwn, int strict)
 {
 	const char *cp;
 	char c;
-	u32 nibble;
 	u32 byte = 0;
 	u32 pos = 0;
 	u32 err;
+	int val;
 
 	*wwn = 0;
 	for (cp = name; cp < &name[FT_NAMELEN - 1]; cp++) {
@@ -96,13 +93,10 @@ static ssize_t ft_parse_wwn(const char *name, u64 *wwn, int strict)
 			return cp - name;
 		}
 		err = 3;
-		if (isdigit(c))
-			nibble = c - '0';
-		else if (isxdigit(c) && (islower(c) || !strict))
-			nibble = tolower(c) - 'a' + 10;
-		else
+		val = hex_to_bin(c);
+		if (val < 0 || (strict && isupper(c)))
 			goto fail;
-		*wwn = (*wwn << 4) | nibble;
+		*wwn = (*wwn << 4) | val;
 	}
 	err = 4;
 fail:
@@ -308,6 +302,7 @@ static struct se_portal_group *ft_add_tpg(
 {
 	struct ft_lport_acl *lacl;
 	struct ft_tpg *tpg;
+	struct workqueue_struct *wq;
 	unsigned long index;
 	int ret;
 
@@ -329,18 +324,20 @@ static struct se_portal_group *ft_add_tpg(
 	tpg->lport_acl = lacl;
 	INIT_LIST_HEAD(&tpg->lun_list);
 
-	ret = core_tpg_register(&ft_configfs->tf_ops, wwn, &tpg->se_tpg,
-				tpg, TRANSPORT_TPG_TYPE_NORMAL);
-	if (ret < 0) {
+	wq = alloc_workqueue("tcm_fc", 0, 1);
+	if (!wq) {
 		kfree(tpg);
 		return NULL;
 	}
 
-	tpg->workqueue = alloc_workqueue("tcm_fc", 0, 1);
-	if (!tpg->workqueue) {
+	ret = core_tpg_register(&ft_configfs->tf_ops, wwn, &tpg->se_tpg,
+				tpg, TRANSPORT_TPG_TYPE_NORMAL);
+	if (ret < 0) {
+		destroy_workqueue(wq);
 		kfree(tpg);
 		return NULL;
 	}
+	tpg->workqueue = wq;
 
 	mutex_lock(&ft_lport_lock);
 	list_add_tail(&tpg->list, &lacl->tpg_list);
@@ -440,8 +437,7 @@ static void ft_del_lport(struct se_wwn *wwn)
 	struct ft_lport_acl *lacl = container_of(wwn,
 				struct ft_lport_acl, fc_lport_wwn);
 
-	pr_debug("del lport %s\n",
-			config_item_name(&wwn->wwn_group.cg_item));
+	pr_debug("del lport %s\n", lacl->name);
 	mutex_lock(&ft_lport_lock);
 	list_del(&lacl->list);
 	mutex_unlock(&ft_lport_lock);
@@ -501,16 +497,6 @@ static void ft_set_default_node_attr(struct se_node_acl *se_nacl)
 {
 }
 
-static u16 ft_get_fabric_sense_len(void)
-{
-	return 0;
-}
-
-static u16 ft_set_fabric_sense_len(struct se_cmd *se_cmd, u32 sense_len)
-{
-	return 0;
-}
-
 static u32 ft_tpg_get_inst_index(struct se_portal_group *se_tpg)
 {
 	struct ft_tpg *tpg = se_tpg->se_tpg_fabric_ptr;
@@ -538,9 +524,6 @@ static struct target_core_fabric_ops ft_fabric_ops = {
 	.release_cmd =			ft_release_cmd,
 	.shutdown_session =		ft_sess_shutdown,
 	.close_session =		ft_sess_close,
-	.stop_session =			ft_sess_stop,
-	.fall_back_to_erl0 =		ft_sess_set_erl0,
-	.sess_logged_in =		ft_sess_logged_in,
 	.sess_get_index =		ft_sess_get_index,
 	.sess_get_initiator_sid =	NULL,
 	.write_pending =		ft_write_pending,
@@ -551,9 +534,6 @@ static struct target_core_fabric_ops ft_fabric_ops = {
 	.queue_data_in =		ft_queue_data_in,
 	.queue_status =			ft_queue_status,
 	.queue_tm_rsp =			ft_queue_tm_resp,
-	.get_fabric_sense_len =		ft_get_fabric_sense_len,
-	.set_fabric_sense_len =		ft_set_fabric_sense_len,
-	.is_state_remove =		ft_is_state_remove,
 	/*
 	 * Setup function pointers for generic logic in
 	 * target_core_fabric_configfs.c
@@ -585,9 +565,6 @@ int ft_register_configfs(void)
 		return PTR_ERR(fabric);
 	}
 	fabric->tf_ops = ft_fabric_ops;
-
-	/* Allowing support for task_sg_chaining */
-	fabric->tf_ops.task_sg_chaining = 1;
 
 	/*
 	 * Setup default attribute lists for various fabric->tf_cit_tmpl

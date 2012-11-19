@@ -334,6 +334,13 @@ int iscsi_create_default_params(struct iscsi_param_list **param_list_ptr)
 	if (!param)
 		goto out;
 
+	param = iscsi_set_default_param(pl, MAXXMITDATASEGMENTLENGTH,
+			INITIAL_MAXXMITDATASEGMENTLENGTH,
+			PHASE_OPERATIONAL, SCOPE_CONNECTION_ONLY, SENDER_BOTH,
+			TYPERANGE_512_TO_16777215, USE_ALL);
+	if (!param)
+		goto out;
+
 	param = iscsi_set_default_param(pl, MAXRECVDATASEGMENTLENGTH,
 			INITIAL_MAXRECVDATASEGMENTLENGTH,
 			PHASE_OPERATIONAL, SCOPE_CONNECTION_ONLY, SENDER_BOTH,
@@ -467,6 +474,8 @@ int iscsi_set_keys_to_negotiate(
 			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, MAXRECVDATASEGMENTLENGTH)) {
 			SET_PSTATE_NEGOTIATE(param);
+		} else if (!strcmp(param->name, MAXXMITDATASEGMENTLENGTH)) {
+			continue;
 		} else if (!strcmp(param->name, MAXBURSTLENGTH)) {
 			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, FIRSTBURSTLENGTH)) {
@@ -681,7 +690,7 @@ int iscsi_update_param_value(struct iscsi_param *param, char *value)
 	param->value = kzalloc(strlen(value) + 1, GFP_KERNEL);
 	if (!param->value) {
 		pr_err("Unable to allocate memory for value.\n");
-		return -1;
+		return -ENOMEM;
 	}
 
 	memcpy(param->value, value, strlen(value));
@@ -803,14 +812,6 @@ static int iscsi_check_numerical_value(struct iscsi_param *param, char *value_pt
 
 	value = simple_strtoul(value_ptr, &tmpptr, 0);
 
-/* #warning FIXME: Fix this */
-#if 0
-	if (strspn(endptr, WHITE_SPACE) != strlen(endptr)) {
-		pr_err("Illegal value \"%s\" for \"%s\".\n",
-			value, param->name);
-		return -1;
-	}
-#endif
 	if (IS_TYPERANGE_0_TO_2(param)) {
 		if ((value < 0) || (value > 2)) {
 			pr_err("Illegal value for \"%s\", must be"
@@ -874,8 +875,8 @@ static int iscsi_check_numerical_value(struct iscsi_param *param, char *value_pt
 static int iscsi_check_numerical_range_value(struct iscsi_param *param, char *value)
 {
 	char *left_val_ptr = NULL, *right_val_ptr = NULL;
-	char *tilde_ptr = NULL, *tmp_ptr = NULL;
-	u32 left_val, right_val, local_left_val, local_right_val;
+	char *tilde_ptr = NULL;
+	u32 left_val, right_val, local_left_val;
 
 	if (strcmp(param->name, IFMARKINT) &&
 	    strcmp(param->name, OFMARKINT)) {
@@ -903,8 +904,8 @@ static int iscsi_check_numerical_range_value(struct iscsi_param *param, char *va
 	if (iscsi_check_numerical_value(param, right_val_ptr) < 0)
 		return -1;
 
-	left_val = simple_strtoul(left_val_ptr, &tmp_ptr, 0);
-	right_val = simple_strtoul(right_val_ptr, &tmp_ptr, 0);
+	left_val = simple_strtoul(left_val_ptr, NULL, 0);
+	right_val = simple_strtoul(right_val_ptr, NULL, 0);
 	*tilde_ptr = '~';
 
 	if (right_val < left_val) {
@@ -928,8 +929,7 @@ static int iscsi_check_numerical_range_value(struct iscsi_param *param, char *va
 	left_val_ptr = param->value;
 	right_val_ptr = param->value + strlen(left_val_ptr) + 1;
 
-	local_left_val = simple_strtoul(left_val_ptr, &tmp_ptr, 0);
-	local_right_val = simple_strtoul(right_val_ptr, &tmp_ptr, 0);
+	local_left_val = simple_strtoul(left_val_ptr, NULL, 0);
 	*tilde_ptr = '~';
 
 	if (param->set_param) {
@@ -1046,13 +1046,6 @@ static char *iscsi_check_valuelist_for_support(
 			tmp2 = strchr(acceptor_values, ',');
 			if (tmp2)
 				*tmp2 = '\0';
-			if (!acceptor_values || !proposer_values) {
-				if (tmp1)
-					*tmp1 = ',';
-				if (tmp2)
-					*tmp2 = ',';
-				return NULL;
-			}
 			if (!strcmp(acceptor_values, proposer_values)) {
 				if (tmp2)
 					*tmp2 = ',';
@@ -1062,8 +1055,6 @@ static char *iscsi_check_valuelist_for_support(
 				*tmp2++ = ',';
 
 			acceptor_values = tmp2;
-			if (!acceptor_values)
-				break;
 		} while (acceptor_values);
 		if (tmp1)
 			*tmp1++ = ',';
@@ -1074,7 +1065,8 @@ out:
 	return proposer_values;
 }
 
-static int iscsi_check_acceptor_state(struct iscsi_param *param, char *value)
+static int iscsi_check_acceptor_state(struct iscsi_param *param, char *value,
+				struct iscsi_conn *conn)
 {
 	u8 acceptor_boolean_value = 0, proposer_boolean_value = 0;
 	char *negoitated_value = NULL;
@@ -1149,8 +1141,35 @@ static int iscsi_check_acceptor_state(struct iscsi_param *param, char *value)
 				return -1;
 		}
 
-		if (!strcmp(param->name, MAXRECVDATASEGMENTLENGTH))
-			SET_PSTATE_REPLY_OPTIONAL(param);
+		if (!strcmp(param->name, MAXRECVDATASEGMENTLENGTH)) {
+			struct iscsi_param *param_mxdsl;
+			unsigned long long tmp;
+			int rc;
+
+			rc = strict_strtoull(param->value, 0, &tmp);
+			if (rc < 0)
+				return -1;
+
+			conn->conn_ops->MaxRecvDataSegmentLength = tmp;
+			pr_debug("Saving op->MaxRecvDataSegmentLength from"
+				" original initiator received value: %u\n",
+				conn->conn_ops->MaxRecvDataSegmentLength);
+
+			param_mxdsl = iscsi_find_param_from_key(
+						MAXXMITDATASEGMENTLENGTH,
+						conn->param_list);
+			if (!param_mxdsl)
+				return -1;
+
+			rc = iscsi_update_param_value(param,
+						param_mxdsl->value);
+			if (rc < 0)
+				return -1;
+
+			pr_debug("Updated %s to target MXDSL value: %s\n",
+					param->name, param->value);
+		}
+
 	} else if (IS_TYPE_NUMBER_RANGE(param)) {
 		negoitated_value = iscsi_get_value_from_number_range(
 					param, value);
@@ -1189,7 +1208,7 @@ static int iscsi_check_proposer_state(struct iscsi_param *param, char *value)
 	if (IS_TYPE_NUMBER_RANGE(param)) {
 		u32 left_val = 0, right_val = 0, recieved_value = 0;
 		char *left_val_ptr = NULL, *right_val_ptr = NULL;
-		char *tilde_ptr = NULL, *tmp_ptr = NULL;
+		char *tilde_ptr = NULL;
 
 		if (!strcmp(value, IRRELEVANT) || !strcmp(value, REJECT)) {
 			if (iscsi_update_param_value(param, value) < 0)
@@ -1213,9 +1232,9 @@ static int iscsi_check_proposer_state(struct iscsi_param *param, char *value)
 
 		left_val_ptr = param->value;
 		right_val_ptr = param->value + strlen(left_val_ptr) + 1;
-		left_val = simple_strtoul(left_val_ptr, &tmp_ptr, 0);
-		right_val = simple_strtoul(right_val_ptr, &tmp_ptr, 0);
-		recieved_value = simple_strtoul(value, &tmp_ptr, 0);
+		left_val = simple_strtoul(left_val_ptr, NULL, 0);
+		right_val = simple_strtoul(right_val_ptr, NULL, 0);
+		recieved_value = simple_strtoul(value, NULL, 0);
 
 		*tilde_ptr = '~';
 
@@ -1544,8 +1563,9 @@ int iscsi_decode_text_input(
 	u8 sender,
 	char *textbuf,
 	u32 length,
-	struct iscsi_param_list *param_list)
+	struct iscsi_conn *conn)
 {
+	struct iscsi_param_list *param_list = conn->param_list;
 	char *tmpbuf, *start = NULL, *end = NULL;
 
 	tmpbuf = kzalloc(length + 1, GFP_KERNEL);
@@ -1603,7 +1623,7 @@ int iscsi_decode_text_input(
 			}
 			SET_PSTATE_RESPONSE_GOT(param);
 		} else {
-			if (iscsi_check_acceptor_state(param, value) < 0) {
+			if (iscsi_check_acceptor_state(param, value, conn) < 0) {
 				kfree(tmpbuf);
 				return -1;
 			}
@@ -1738,6 +1758,18 @@ void iscsi_set_connection_parameters(
 	pr_debug("---------------------------------------------------"
 			"---------------\n");
 	list_for_each_entry(param, &param_list->param_list, p_list) {
+		/*
+		 * Special case to set MAXXMITDATASEGMENTLENGTH from the
+		 * target requested MaxRecvDataSegmentLength, even though
+		 * this key is not sent over the wire.
+		 */
+		if (!strcmp(param->name, MAXXMITDATASEGMENTLENGTH)) {
+			ops->MaxXmitDataSegmentLength =
+				simple_strtoul(param->value, &tmpptr, 0);
+			pr_debug("MaxXmitDataSegmentLength:     %s\n",
+				param->value);
+		}
+
 		if (!IS_PSTATE_ACCEPTOR(param) && !IS_PSTATE_PROPOSER(param))
 			continue;
 		if (!strcmp(param->name, AUTHMETHOD)) {
@@ -1752,10 +1784,13 @@ void iscsi_set_connection_parameters(
 			pr_debug("DataDigest:                   %s\n",
 				param->value);
 		} else if (!strcmp(param->name, MAXRECVDATASEGMENTLENGTH)) {
-			ops->MaxRecvDataSegmentLength =
-				simple_strtoul(param->value, &tmpptr, 0);
-			pr_debug("MaxRecvDataSegmentLength:     %s\n",
-				param->value);
+			/*
+			 * At this point iscsi_check_acceptor_state() will have
+			 * set ops->MaxRecvDataSegmentLength from the original
+			 * initiator provided value.
+			 */
+			pr_debug("MaxRecvDataSegmentLength:     %u\n",
+				ops->MaxRecvDataSegmentLength);
 		} else if (!strcmp(param->name, OFMARKER)) {
 			ops->OFMarker = !strcmp(param->value, YES);
 			pr_debug("OFMarker:                     %s\n",
