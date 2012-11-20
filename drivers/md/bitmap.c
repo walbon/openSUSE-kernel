@@ -1913,7 +1913,7 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 			/* We don't know how much space there is, so limit
 			 * to current size.
 			 */
-			bytes = DIV_ROUND_UP(bitmap->counts.chunks, 8 * 512);
+			bytes = DIV_ROUND_UP(bitmap->counts.chunks, 8);
 			if (!bitmap->mddev->bitmap_info.external)
 				bytes += sizeof(bitmap_super_t);
 			space = DIV_ROUND_UP(bytes, 512);
