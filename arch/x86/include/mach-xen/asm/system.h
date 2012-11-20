@@ -92,12 +92,6 @@ do {									\
 			"memory");					\
 } while (0)
 
-#ifndef CONFIG_XEN
-/*
- * disable hlt during certain critical i/o operations
- */
-#define HAVE_DISABLE_HLT
-#endif
 #else
 
 /* frame pointer must be last for get_wchan */
@@ -388,9 +382,6 @@ static inline void clflush(volatile void *__p)
 }
 
 #define nop() asm volatile ("nop")
-
-void disable_hlt(void);
-void enable_hlt(void);
 
 void cpu_idle_wait(void);
 
