@@ -1056,8 +1056,10 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	}
 
  	ret = btrfs_reloc_post_snapshot(trans, pending);
- 	if (ret)
+ 	if (ret) {
 		btrfs_abort_transaction(trans, root, ret);
+		goto fail;
+	}
 
 	ret = btrfs_run_delayed_refs(trans, root, (unsigned long)-1);
 	if (ret) {
@@ -1155,13 +1157,13 @@ static void wait_current_trans_commit_start_and_unblock(struct btrfs_root *root,
 struct btrfs_async_commit {
 	struct btrfs_trans_handle *newtrans;
 	struct btrfs_root *root;
-	struct delayed_work work;
+	struct work_struct work;
 };
 
 static void do_async_commit(struct work_struct *work)
 {
 	struct btrfs_async_commit *ac =
-		container_of(work, struct btrfs_async_commit, work.work);
+		container_of(work, struct btrfs_async_commit, work);
 
 	current->journal_info = ac->newtrans;
 
@@ -1180,7 +1182,7 @@ int btrfs_commit_transaction_async(struct btrfs_trans_handle *trans,
 	if (!ac)
 		return -ENOMEM;
 
-	INIT_DELAYED_WORK(&ac->work, do_async_commit);
+	INIT_WORK(&ac->work, do_async_commit);
 	ac->root = root;
 	ac->newtrans = btrfs_join_transaction(root);
 	if (IS_ERR(ac->newtrans)) {
@@ -1194,7 +1196,7 @@ int btrfs_commit_transaction_async(struct btrfs_trans_handle *trans,
 	atomic_inc(&cur_trans->use_count);
 
 	btrfs_end_transaction(trans, root);
-	schedule_delayed_work(&ac->work, 0);
+	schedule_work(&ac->work);
 
 	/* wait for transaction to start and unblock */
 	if (wait_for_unblock)
