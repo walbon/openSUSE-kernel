@@ -1056,8 +1056,10 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	}
 
  	ret = btrfs_reloc_post_snapshot(trans, pending);
- 	if (ret)
+ 	if (ret) {
 		btrfs_abort_transaction(trans, root, ret);
+		goto fail;
+	}
 
 	ret = btrfs_run_delayed_refs(trans, root, (unsigned long)-1);
 	if (ret) {
