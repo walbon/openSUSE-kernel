@@ -141,6 +141,71 @@ static int dasd_ioctl_resume(struct dasd_block *block)
 }
 
 /*
+ * Timeout device.
+ */
+static int dasd_ioctl_timeout(struct dasd_block *block)
+{
+	unsigned long flags;
+	struct dasd_device *base;
+	struct dasd_ccw_req *cqr, *n;
+	struct request *req;
+
+	base = block->base;
+	if (!capable (CAP_SYS_ADMIN))
+		return -EACCES;
+
+	if (test_and_set_bit(DASD_FLAG_TIMEOUT, &base->flags))
+		return 0;
+
+	dev_err(&base->cdev->dev, "ioctl timeout flag set\n");
+
+	spin_lock_irqsave(&block->request_queue_lock, flags);
+	/*
+	 * We need to abort the first noretry requests as
+	 * there might be requests on the ccw_queue.
+	 * blk_abort_request() will take care of aborting
+	 * all other noretry requests.
+	 */
+	spin_lock(&block->queue_lock);
+	list_for_each_entry_safe(cqr, n, &block->ccw_queue, blocklist) {
+		if (cqr->callback_data &&
+		    cqr->callback_data != (void *)1 &&
+		    cqr->callback_data != (void *)2 )
+			req = cqr->callback_data;
+		else
+			req = NULL;
+		if (req && blk_noretry_request(req))
+			break;
+		req = NULL;
+	}
+	spin_unlock(&block->queue_lock);
+	if (req)
+		blk_abort_request(req);
+	spin_unlock_irqrestore(&block->request_queue_lock, flags);
+
+	dasd_schedule_block_bh(block);
+	return 0;
+}
+
+/*
+ * Resync a device
+ */
+static int dasd_ioctl_resync(struct dasd_block *block)
+{
+	unsigned long flags;
+	struct dasd_device *base;
+
+	base = block->base;
+	if (!capable (CAP_SYS_ADMIN))
+		return -EACCES;
+
+	if (test_and_clear_bit(DASD_FLAG_TIMEOUT, &base->flags))
+		dev_err(&base->cdev->dev, "ioctl timeout flag unset\n");
+
+	return 0;
+}
+
+/*
  * performs formatting of _device_ according to _fdata_
  * Note: The discipline's format_function is assumed to deliver formatting
  * commands to format a single unit of the device. In terms of the ECKD
@@ -432,6 +497,12 @@ int dasd_ioctl(struct block_device *bdev, fmode_t mode,
 		break;
 	case BIODASDRESUME:
 		rc = dasd_ioctl_resume(block);
+		break;
+	case BIODASDTIMEOUT:
+		rc = dasd_ioctl_timeout(block);
+		break;
+	case BIODASDRESYNC:
+		rc = dasd_ioctl_resync(block);
 		break;
 	case BIODASDFMT:
 		rc = dasd_ioctl_format(bdev, argp);

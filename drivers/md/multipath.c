@@ -140,7 +140,7 @@ static int multipath_make_request(mddev_t *mddev, struct bio * bio)
 	return 0;
 }
 
-static void multipath_status (struct seq_file *seq, mddev_t *mddev)
+static void multipath_status(struct seq_file *seq, mddev_t *mddev)
 {
 	multipath_conf_t *conf = mddev->private;
 	int i;
@@ -410,7 +410,6 @@ static int multipath_run (mddev_t *mddev)
 	 */
 
 	conf = kzalloc(sizeof(multipath_conf_t), GFP_KERNEL);
-	mddev->private = conf;
 	if (!conf) {
 		printk(KERN_ERR 
 			"multipath: couldn't allocate memory for %s\n",
@@ -491,12 +490,13 @@ static int multipath_run (mddev_t *mddev)
 	 */
 	md_set_array_sectors(mddev, multipath_size(mddev, 0, 0));
 
-	mddev->queue->backing_dev_info.congested_fn = multipath_congested;
-	mddev->queue->backing_dev_info.congested_data = mddev;
-
 	if (md_integrity_register(mddev))
 		goto out_free_conf;
 
+	mddev->queue->backing_dev_info.congested_fn = multipath_congested;
+	mddev->queue->backing_dev_info.congested_data = mddev;
+
+	rcu_assign_pointer(mddev->private, conf);
 	return 0;
 
 out_free_conf:
@@ -504,7 +504,6 @@ out_free_conf:
 		mempool_destroy(conf->pool);
 	kfree(conf->multipaths);
 	kfree(conf);
-	mddev->private = NULL;
 out:
 	return -EIO;
 }

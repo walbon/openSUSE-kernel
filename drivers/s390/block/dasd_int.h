@@ -438,6 +438,7 @@ struct dasd_device {
 	unsigned long failfast_expires;
 	unsigned long default_retries;
 	unsigned long failfast_retries;
+	unsigned long blk_timeout;
 };
 
 struct dasd_block {
@@ -486,6 +487,7 @@ struct dasd_block {
 					 */
 #define DASD_FLAG_IS_RESERVED	7	/* The device is reserved */
 #define DASD_FLAG_LOCK_STOLEN	8	/* The device lock was stolen */
+#define DASD_FLAG_TIMEOUT	9	/* Timeout, abort noretry requests */
 
 
 void dasd_put_device_wake(struct dasd_device *);
