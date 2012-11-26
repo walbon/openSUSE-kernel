@@ -145,6 +145,9 @@ struct snd_card {
 	struct snd_mixer_oss *mixer_oss;
 	int mixer_oss_change_count;
 #endif
+#ifndef __GENKSYMS__
+	atomic_t refcount;		/* refcount for disconnection */
+#endif
 };
 
 #ifdef CONFIG_PM
@@ -189,6 +192,9 @@ struct snd_minor {
 	const struct file_operations *f_ops;	/* file operations */
 	void *private_data;		/* private data for f_ops->open */
 	struct device *dev;		/* device for sysfs */
+#ifndef __GENKSYMS__
+	struct snd_card *card_ptr;	/* assigned card instance */
+#endif
 };
 
 /* return a device pointer linked to each sound device as a parent */
@@ -295,6 +301,7 @@ int snd_card_info_done(void);
 int snd_component_add(struct snd_card *card, const char *component);
 int snd_card_file_add(struct snd_card *card, struct file *file);
 int snd_card_file_remove(struct snd_card *card, struct file *file);
+void snd_card_unref(struct snd_card *card);
 
 #define snd_card_set_dev(card, devptr) ((card)->dev = (devptr))
 
