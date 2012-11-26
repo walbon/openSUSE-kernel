@@ -47,7 +47,7 @@ struct power_pmu {
  */
 #define PPMU_LIMITED_PMC5_6	1	/* PMC5/6 have limited function */
 #define PPMU_ALT_SIPR		2	/* uses alternate posn for SIPR/HV */
-
+#define PPMU_SIAR_VALID         16      /* Processor has SIAR Valid bit */
 /*
  * Values for flags to get_alternatives()
  */
