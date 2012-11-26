@@ -1319,7 +1319,7 @@ int capture_free_page(struct page *page, int alloc_order, int migratetype)
 	list_del(&page->lru);
 	zone->free_area[order].nr_free--;
 	rmv_page_order(page);
-	__mod_zone_page_state(zone, NR_FREE_PAGES, -(1UL << order));
+	__mod_zone_page_state(zone, NR_FREE_PAGES, -(1UL << alloc_order));
 
 	if (alloc_order != order)
 		expand(zone, page, alloc_order, order,
@@ -1332,7 +1332,7 @@ int capture_free_page(struct page *page, int alloc_order, int migratetype)
 			set_pageblock_migratetype(page, MIGRATE_MOVABLE);
 	}
 
-	return 1UL << order;
+	return 1UL << alloc_order;
 }
 
 /*
