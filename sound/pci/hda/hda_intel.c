@@ -131,6 +131,10 @@ MODULE_PARM_DESC(snoop, "Enable/disable snooping");
 #define azx_snoop(chip)		true
 #endif
 
+static int align_buffer_size = -1;
+module_param(align_buffer_size, int, 0644);
+MODULE_PARM_DESC(align_buffer_size,
+		"Force buffer and period sizes to be multiple of 128 bytes.");
 
 MODULE_LICENSE("GPL");
 MODULE_SUPPORTED_DEVICE("{{Intel, ICH6},"
@@ -143,6 +147,8 @@ MODULE_SUPPORTED_DEVICE("{{Intel, ICH6},"
 			 "{Intel, PCH},"
 			 "{Intel, CPT},"
 			 "{Intel, PPT},"
+			 "{Intel, LPT},"
+			 "{Intel, LPT_LP},"
 			 "{Intel, PBG},"
 			 "{Intel, SCH},"
 			 "{ATI, SB450},"
@@ -193,7 +199,8 @@ MODULE_DESCRIPTION("Intel HDA driver");
 #define ICH6_REG_INTCTL			0x20
 #define ICH6_REG_INTSTS			0x24
 #define ICH6_REG_WALLCLK		0x30	/* 24Mhz source */
-#define ICH6_REG_SYNC			0x34	
+#define ICH6_REG_OLD_SSYNC		0x34	/* SSYNC for old ICH */
+#define ICH6_REG_SSYNC			0x38
 #define ICH6_REG_CORBLBASE		0x40
 #define ICH6_REG_CORBUBASE		0x44
 #define ICH6_REG_CORBWP			0x48
@@ -455,6 +462,7 @@ struct azx {
 	unsigned int irq_pending_warned :1;
 	unsigned int probing :1; /* codec probing phase */
 	unsigned int snoop:1;
+	unsigned int align_buffer_size:1;
 
 	/* for debugging */
 	unsigned int last_cmd[AZX_MAX_CODECS];
@@ -499,6 +507,9 @@ enum {
 #define AZX_DCAPS_POSFIX_VIA	(1 << 17)	/* Use VIACOMBO as default */
 #define AZX_DCAPS_NO_64BIT	(1 << 18)	/* No 64bit address */
 #define AZX_DCAPS_SYNC_WRITE	(1 << 19)	/* sync each cmd write */
+#define AZX_DCAPS_OLD_SSYNC	(1 << 20)	/* Old SSYNC reg for ICH */
+#define AZX_DCAPS_BUFSIZE	(1 << 21)	/* no buffer size alignment */
+#define AZX_DCAPS_ALIGN_BUFSIZE	(1 << 22)	/* buffer size alignment */
 #define AZX_DCAPS_4K_BDLE_BOUNDARY (1 << 23)	/* BDLE in 4k boundary */
 
 /* quirks for ATI SB / AMD Hudson */
@@ -512,7 +523,8 @@ enum {
 
 /* quirks for Nvidia */
 #define AZX_DCAPS_PRESET_NVIDIA \
-	(AZX_DCAPS_NVIDIA_SNOOP | AZX_DCAPS_RIRB_DELAY | AZX_DCAPS_NO_MSI)
+	(AZX_DCAPS_NVIDIA_SNOOP | AZX_DCAPS_RIRB_DELAY | AZX_DCAPS_NO_MSI |\
+	 AZX_DCAPS_ALIGN_BUFSIZE)
 
 #define AZX_DCAPS_PRESET_CTHDA \
 	(AZX_DCAPS_NO_MSI | AZX_DCAPS_POSFIX_LPIB | AZX_DCAPS_4K_BDLE_BOUNDARY)
@@ -1688,6 +1700,7 @@ static int azx_pcm_open(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	unsigned long flags;
 	int err;
+	int buff_step;
 
 	mutex_lock(&chip->open_mutex);
 	azx_dev = azx_assign_device(chip, substream);
@@ -1702,10 +1715,25 @@ static int azx_pcm_open(struct snd_pcm_substream *substream)
 	runtime->hw.rates = hinfo->rates;
 	snd_pcm_limit_hw_rates(runtime);
 	snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
+	if (chip->align_buffer_size)
+		/* constrain buffer sizes to be multiple of 128
+		   bytes. This is more efficient in terms of memory
+		   access but isn't required by the HDA spec and
+		   prevents users from specifying exact period/buffer
+		   sizes. For example for 44.1kHz, a period size set
+		   to 20ms will be rounded to 19.59ms. */
+		buff_step = 128;
+	else
+		/* Don't enforce steps on buffer sizes, still need to
+		   be multiple of 4 bytes (HDA spec). Tested on Intel
+		   HDA controllers, may not work on all devices where
+		   option needs to be disabled */
+		buff_step = 4;
+
 	snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_BUFFER_BYTES,
-				   128);
+				   buff_step);
 	snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES,
-				   128);
+				   buff_step);
 	snd_hda_power_up(apcm->codec);
 	err = hinfo->ops.open(hinfo, apcm->codec, substream);
 	if (err < 0) {
@@ -1895,7 +1923,11 @@ static int azx_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 	spin_lock(&chip->reg_lock);
 	if (nsync > 1) {
 		/* first, set SYNC bits of corresponding streams */
-		azx_writel(chip, SYNC, azx_readl(chip, SYNC) | sbits);
+		if (chip->driver_caps & AZX_DCAPS_OLD_SSYNC)
+			azx_writel(chip, OLD_SSYNC,
+				   azx_readl(chip, OLD_SSYNC) | sbits);
+		else
+			azx_writel(chip, SSYNC, azx_readl(chip, SSYNC) | sbits);
 	}
 	snd_pcm_group_for_each_entry(s, substream) {
 		if (s->pcm->card != substream->pcm->card)
@@ -1951,7 +1983,11 @@ static int azx_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 	if (nsync > 1) {
 		spin_lock(&chip->reg_lock);
 		/* reset SYNC bits */
-		azx_writel(chip, SYNC, azx_readl(chip, SYNC) & ~sbits);
+		if (chip->driver_caps & AZX_DCAPS_OLD_SSYNC)
+			azx_writel(chip, OLD_SSYNC,
+				   azx_readl(chip, OLD_SSYNC) & ~sbits);
+		else
+			azx_writel(chip, SSYNC, azx_readl(chip, SSYNC) & ~sbits);
 		spin_unlock(&chip->reg_lock);
 	}
 	return 0;
@@ -2720,6 +2756,18 @@ static int __devinit azx_create(struct snd_card *card, struct pci_dev *pci,
 		gcap &= ~ICH6_GCAP_64OK;
 	}
 
+	/* disable buffer size rounding to 128-byte multiples if supported */
+	if (align_buffer_size >= 0)
+		chip->align_buffer_size = !!align_buffer_size;
+	else {
+		if (chip->driver_caps & AZX_DCAPS_BUFSIZE)
+			chip->align_buffer_size = 0;
+		else if (chip->driver_caps & AZX_DCAPS_ALIGN_BUFSIZE)
+			chip->align_buffer_size = 1;
+		else
+			chip->align_buffer_size = 1;
+	}
+
 	/* allow 64bit DMA address if supported by H/W */
 	if ((gcap & ICH6_GCAP_64OK) && !pci_set_dma_mask(pci, DMA_BIT_MASK(64)))
 		pci_set_consistent_dma_mask(pci, DMA_BIT_MASK(64));
@@ -2924,21 +2972,61 @@ static void __devexit azx_remove(struct pci_dev *pci)
 static DEFINE_PCI_DEVICE_TABLE(azx_ids) = {
 	/* CPT */
 	{ PCI_DEVICE(0x8086, 0x1c20),
-	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_SCH_SNOOP },
+	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_SCH_SNOOP |
+	  AZX_DCAPS_BUFSIZE },
 	/* PBG */
 	{ PCI_DEVICE(0x8086, 0x1d20),
-	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_SCH_SNOOP },
+	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_SCH_SNOOP |
+	  AZX_DCAPS_BUFSIZE},
 	/* Panther Point */
 	{ PCI_DEVICE(0x8086, 0x1e20),
-	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_SCH_SNOOP },
+	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_SCH_SNOOP |
+	  AZX_DCAPS_BUFSIZE},
+	/* Lynx Point */
+	{ PCI_DEVICE(0x8086, 0x8c20),
+	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_SCH_SNOOP |
+	  AZX_DCAPS_BUFSIZE},
+	/* Lynx Point-LP */
+	{ PCI_DEVICE(0x8086, 0x9c20),
+	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_SCH_SNOOP |
+	  AZX_DCAPS_BUFSIZE },
+	/* Lynx Point-LP */
+	{ PCI_DEVICE(0x8086, 0x9c21),
+	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_SCH_SNOOP |
+	  AZX_DCAPS_BUFSIZE },
 	/* SCH */
 	{ PCI_DEVICE(0x8086, 0x811b),
-	  .driver_data = AZX_DRIVER_SCH | AZX_DCAPS_SCH_SNOOP },
+	  .driver_data = AZX_DRIVER_SCH | AZX_DCAPS_SCH_SNOOP |
+	  AZX_DCAPS_BUFSIZE},
+	{ PCI_DEVICE(0x8086, 0x2668),
+	  .driver_data = AZX_DRIVER_ICH | AZX_DCAPS_OLD_SSYNC |
+	  AZX_DCAPS_BUFSIZE },  /* ICH6 */
+	{ PCI_DEVICE(0x8086, 0x27d8),
+	  .driver_data = AZX_DRIVER_ICH | AZX_DCAPS_OLD_SSYNC |
+	  AZX_DCAPS_BUFSIZE },  /* ICH7 */
+	{ PCI_DEVICE(0x8086, 0x269a),
+	  .driver_data = AZX_DRIVER_ICH | AZX_DCAPS_OLD_SSYNC |
+	  AZX_DCAPS_BUFSIZE },  /* ESB2 */
+	{ PCI_DEVICE(0x8086, 0x284b),
+	  .driver_data = AZX_DRIVER_ICH | AZX_DCAPS_OLD_SSYNC |
+	  AZX_DCAPS_BUFSIZE },  /* ICH8 */
+	{ PCI_DEVICE(0x8086, 0x293e),
+	  .driver_data = AZX_DRIVER_ICH | AZX_DCAPS_OLD_SSYNC |
+	  AZX_DCAPS_BUFSIZE },  /* ICH9 */
+	{ PCI_DEVICE(0x8086, 0x293f),
+	  .driver_data = AZX_DRIVER_ICH | AZX_DCAPS_OLD_SSYNC |
+	  AZX_DCAPS_BUFSIZE },  /* ICH9 */
+	{ PCI_DEVICE(0x8086, 0x3a3e),
+	  .driver_data = AZX_DRIVER_ICH | AZX_DCAPS_OLD_SSYNC |
+	  AZX_DCAPS_BUFSIZE },  /* ICH10 */
+	{ PCI_DEVICE(0x8086, 0x3a6e),
+	  .driver_data = AZX_DRIVER_ICH | AZX_DCAPS_OLD_SSYNC |
+	  AZX_DCAPS_BUFSIZE },  /* ICH10 */
 	/* Generic Intel */
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_ANY_ID),
 	  .class = PCI_CLASS_MULTIMEDIA_HD_AUDIO << 8,
 	  .class_mask = 0xffffff,
-	  .driver_data = AZX_DRIVER_ICH },
+	  .driver_data = AZX_DRIVER_ICH | AZX_DCAPS_BUFSIZE },
 	/* ATI SB 450/600/700/800/900 */
 	{ PCI_DEVICE(0x1002, 0x437b),
 	  .driver_data = AZX_DRIVER_ATI | AZX_DCAPS_PRESET_ATI_SB },
