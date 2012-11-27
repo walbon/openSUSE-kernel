@@ -39,6 +39,7 @@ module_param(gso, bool, 0444);
 #define GOOD_COPY_LEN	128
 
 #define VIRTNET_SEND_COMMAND_SG_MAX    2
+#define VIRTNET_DRIVER_VERSION "1.0.0"
 
 struct virtnet_info {
 	struct virtio_device *vdev;
@@ -340,7 +341,7 @@ static int add_recvbuf_small(struct virtnet_info *vi, gfp_t gfp)
 
 	skb_to_sgvec(skb, vi->rx_sg + 1, 0, skb->len);
 
-	err = virtqueue_add_buf_gfp(vi->rvq, vi->rx_sg, 0, 2, skb, gfp);
+	err = virtqueue_add_buf(vi->rvq, vi->rx_sg, 0, 2, skb, gfp);
 	if (err < 0)
 		dev_kfree_skb(skb);
 
@@ -385,8 +386,8 @@ static int add_recvbuf_big(struct virtnet_info *vi, gfp_t gfp)
 
 	/* chain first in list head */
 	first->private = (unsigned long)list;
-	err = virtqueue_add_buf_gfp(vi->rvq, vi->rx_sg, 0, MAX_SKB_FRAGS + 2,
-				    first, gfp);
+	err = virtqueue_add_buf(vi->rvq, vi->rx_sg, 0, MAX_SKB_FRAGS + 2,
+				first, gfp);
 	if (err < 0)
 		give_pages(vi, first);
 
@@ -404,7 +405,7 @@ static int add_recvbuf_mergeable(struct virtnet_info *vi, gfp_t gfp)
 
 	sg_init_one(vi->rx_sg, page_address(page), PAGE_SIZE);
 
-	err = virtqueue_add_buf_gfp(vi->rvq, vi->rx_sg, 0, 1, page, gfp);
+	err = virtqueue_add_buf(vi->rvq, vi->rx_sg, 0, 1, page, gfp);
 	if (err < 0)
 		give_pages(vi, page);
 
@@ -568,7 +569,7 @@ static int xmit_skb(struct virtnet_info *vi, struct sk_buff *skb)
 
 	hdr->num_sg = skb_to_sgvec(skb, vi->tx_sg + 1, 0, skb->len) + 1;
 	return virtqueue_add_buf(vi->svq, vi->tx_sg, hdr->num_sg,
-					0, skb);
+				 0, skb, GFP_ATOMIC);
 }
 
 static netdev_tx_t start_xmit(struct sk_buff *skb, struct net_device *dev)
@@ -687,7 +688,7 @@ static bool virtnet_send_command(struct virtnet_info *vi, u8 class, u8 cmd,
 		sg_set_buf(&sg[i + 1], sg_virt(s), s->length);
 	sg_set_buf(&sg[out + in - 1], &status, sizeof(status));
 
-	BUG_ON(virtqueue_add_buf(vi->cvq, sg, out, in, vi) < 0);
+	BUG_ON(virtqueue_add_buf(vi->cvq, sg, out, in, vi, GFP_ATOMIC) < 0);
 
 	virtqueue_kick(vi->cvq);
 
@@ -810,8 +811,35 @@ static void virtnet_vlan_rx_kill_vid(struct net_device *dev, u16 vid)
 		dev_warn(&dev->dev, "Failed to kill VLAN ID %d.\n", vid);
 }
 
+static void virtnet_get_ringparam(struct net_device *dev,
+				struct ethtool_ringparam *ring)
+{
+	struct virtnet_info *vi = netdev_priv(dev);
+
+	ring->rx_max_pending = virtqueue_get_vring_size(vi->rvq);
+	ring->tx_max_pending = virtqueue_get_vring_size(vi->svq);
+	ring->rx_pending = ring->rx_max_pending;
+	ring->tx_pending = ring->tx_max_pending;
+
+}
+
+
+static void virtnet_get_drvinfo(struct net_device *dev,
+				struct ethtool_drvinfo *info)
+{
+	struct virtnet_info *vi = netdev_priv(dev);
+	struct virtio_device *vdev = vi->vdev;
+
+	strlcpy(info->driver, KBUILD_MODNAME, sizeof(info->driver));
+	strlcpy(info->version, VIRTNET_DRIVER_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, virtio_bus_name(vdev), sizeof(info->bus_info));
+
+}
+
 static const struct ethtool_ops virtnet_ethtool_ops = {
+	.get_drvinfo = virtnet_get_drvinfo,
 	.get_link = ethtool_op_get_link,
+	.get_ringparam = virtnet_get_ringparam,
 };
 
 #define MIN_MTU 68

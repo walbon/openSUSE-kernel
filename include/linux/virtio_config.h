@@ -85,12 +85,16 @@
  * @reset: reset the device
  *	vdev: the virtio device
  *	After this, status and feature negotiation must be done again
+ *	Device must not be reset from its vq/config callbacks, or in
+ *	parallel with being added/removed.
  * @find_vqs: find virtqueues and instantiate them.
  *	vdev: the virtio_device
  *	nvqs: the number of virtqueues to find
  *	vqs: on success, includes new virtqueues
  *	callbacks: array of callbacks, for each virtqueue
+ *		include a NULL entry for vqs that do not need a callback
  *	names: array of virtqueue names (mainly for debugging)
+ *		include a NULL entry for vqs unused by driver
  *	Returns 0 on success or error status
  * @del_vqs: free virtqueues found by find_vqs().
  * @get_features: get the array of feature bits for this device.
@@ -100,6 +104,11 @@
  *	vdev: the virtio_device
  *	This gives the final feature bits for the device: it can change
  *	the dev->feature bits if it wants.
+ * @bus_name: return the bus name associated with the device
+ *	vdev: the virtio_device
+ *      This returns a pointer to the bus name a la pci_name from which
+ *      the caller can then copy.
+ * @set_vq_affinity: set the affinity for a virtqueue.
  */
 typedef void vq_callback_t(struct virtqueue *);
 struct virtio_config_ops {
@@ -117,6 +126,8 @@ struct virtio_config_ops {
 	void (*del_vqs)(struct virtio_device *);
 	u32 (*get_features)(struct virtio_device *vdev);
 	void (*finalize_features)(struct virtio_device *vdev);
+	const char *(*bus_name)(struct virtio_device *vdev);
+	int (*set_vq_affinity)(struct virtqueue *vq, int cpu);
 };
 
 /* If driver didn't advertise the feature, it will never appear. */
@@ -179,5 +190,33 @@ struct virtqueue *virtio_find_single_vq(struct virtio_device *vdev,
 		return ERR_PTR(err);
 	return vq;
 }
+
+static inline
+const char *virtio_bus_name(struct virtio_device *vdev)
+{
+	if (!vdev->config->bus_name)
+		return "virtio";
+	return vdev->config->bus_name(vdev);
+}
+
+/**
+ * virtqueue_set_affinity - setting affinity for a virtqueue
+ * @vq: the virtqueue
+ * @cpu: the cpu no.
+ *
+ * Pay attention the function are best-effort: the affinity hint may not be set
+ * due to config support, irq type and sharing.
+ *
+ */
+static inline
+int virtqueue_set_affinity(struct virtqueue *vq, int cpu)
+{
+	struct virtio_device *vdev = vq->vdev;
+	if (vdev->config->set_vq_affinity)
+		return vdev->config->set_vq_affinity(vq, cpu);
+	return 0;
+}
+
+
 #endif /* __KERNEL__ */
 #endif /* _LINUX_VIRTIO_CONFIG_H */
