@@ -448,6 +448,9 @@ int reiserfs_acl_chmod(struct inode *inode)
 	struct posix_acl *acl, *clone;
 	int error;
 
+	if (IS_PRIVATE(inode))
+		return 0;
+
 	if (S_ISLNK(inode->i_mode))
 		return -EOPNOTSUPP;
 

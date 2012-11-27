@@ -952,7 +952,7 @@ extern int blk_verify_command(unsigned char *cmd, fmode_t has_write_perm);
 enum blk_default_limits {
 	BLK_MAX_SEGMENTS	= 128,
 	BLK_SAFE_MAX_SECTORS	= 255,
-#ifndef CONFIG_KERNEL_DESKTO
+#ifndef CONFIG_KERNEL_DESKTOP
 	BLK_DEF_MAX_SECTORS	= 2048,
 #else
 	BLK_DEF_MAX_SECTORS	= 1024,
