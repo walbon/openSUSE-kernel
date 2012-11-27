@@ -10,6 +10,11 @@
 extern struct kmem_cache *blk_requestq_cachep;
 extern struct kobj_type blk_queue_ktype;
 
+static inline void __blk_get_queue(struct request_queue *q)
+{
+	kobject_get(&q->kobj);
+}
+
 void init_request_from_bio(struct request *req, struct bio *bio);
 void blk_rq_bio_prep(struct request_queue *q, struct request *rq,
 			struct bio *bio);
@@ -82,7 +87,7 @@ static inline struct request *__elv_next_request(struct request_queue *q)
 			q->flush_queue_delayed = 1;
 			return NULL;
 		}
-		if (test_bit(QUEUE_FLAG_DEAD, &q->queue_flags) ||
+		if (unlikely(blk_queue_dead(q)) ||
 		    !q->elevator->ops->elevator_dispatch_fn(q, 0))
 			return NULL;
 	}
