@@ -267,7 +267,7 @@ static inline void unmap_skb(struct sk_buff *skb, struct sge_txq *q,
 
 	while (frag_idx < nfrags && curflit < WR_FLITS) {
 		pci_unmap_page(pdev, be64_to_cpu(sgp->addr[j]),
-			       skb_shinfo(skb)->frags[frag_idx].size,
+			       skb_frag_size(&skb_shinfo(skb)->frags[frag_idx]),
 			       PCI_DMA_TODEVICE);
 		j ^= 1;
 		if (j == 0) {
@@ -990,11 +990,11 @@ static inline unsigned int make_sgl(const struct sk_buff *skb,
 
 	nfrags = skb_shinfo(skb)->nr_frags;
 	for (i = 0; i < nfrags; i++) {
-		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
-		mapping = pci_map_page(pdev, frag->page, frag->page_offset,
-				       frag->size, PCI_DMA_TODEVICE);
-		sgp->len[j] = cpu_to_be32(frag->size);
+		mapping = skb_frag_dma_map(&pdev->dev, frag, 0, skb_frag_size(frag),
+					   DMA_TO_DEVICE);
+		sgp->len[j] = cpu_to_be32(skb_frag_size(frag));
 		sgp->addr[j] = cpu_to_be64(mapping);
 		j ^= 1;
 		if (j == 0)
@@ -1577,7 +1577,7 @@ static void deferred_unmap_destructor(struct sk_buff *skb)
 
 	si = skb_shinfo(skb);
 	for (i = 0; i < si->nr_frags; i++)
-		pci_unmap_page(dui->pdev, *p++, si->frags[i].size,
+		pci_unmap_page(dui->pdev, *p++, skb_frag_size(&si->frags[i]),
 			       PCI_DMA_TODEVICE);
 }
 
@@ -2061,28 +2061,11 @@ static void rx_eth(struct adapter *adap, struct sge_rspq *rq,
 		skb_checksum_none_assert(skb);
 	skb_record_rx_queue(skb, qs - &adap->sge.qs[pi->first_qset]);
 
-	if (unlikely(p->vlan_valid)) {
-		struct vlan_group *grp = pi->vlan_grp;
-
+	if (p->vlan_valid) {
 		qs->port_stats[SGE_PSTAT_VLANEX]++;
-		if (likely(grp))
-			if (lro)
-				vlan_gro_receive(&qs->napi, grp,
-						 ntohs(p->vlan), skb);
-			else {
-				if (unlikely(pi->iscsic.flags)) {
-					unsigned short vtag = ntohs(p->vlan) &
-								VLAN_VID_MASK;
-					skb->dev = vlan_group_get_device(grp,
-									 vtag);
-					cxgb3_process_iscsi_prov_pack(pi, skb);
-				}
-				__vlan_hwaccel_rx(skb, grp, ntohs(p->vlan),
-					  	  rq->polling);
-			}
-		else
-			dev_kfree_skb_any(skb);
-	} else if (rq->polling) {
+		__vlan_hwaccel_put_tag(skb, ntohs(p->vlan));
+	}
+	if (rq->polling) {
 		if (lro)
 			napi_gro_receive(&qs->napi, skb);
 		else {
@@ -2166,9 +2149,9 @@ static void lro_add_page(struct adapter *adap, struct sge_qset *qs,
 	len -= offset;
 
 	rx_frag += nr_frags;
-	rx_frag->page = sd->pg_chunk.page;
+	__skb_frag_set_page(rx_frag, sd->pg_chunk.page);
 	rx_frag->page_offset = sd->pg_chunk.offset + offset;
-	rx_frag->size = len;
+	skb_frag_size_set(rx_frag, len);
 
 	skb->len += len;
 	skb->data_len += len;
@@ -2180,14 +2163,8 @@ static void lro_add_page(struct adapter *adap, struct sge_qset *qs,
 
 	skb_record_rx_queue(skb, qs - &adap->sge.qs[pi->first_qset]);
 
-	if (unlikely(cpl->vlan_valid)) {
-		struct vlan_group *grp = pi->vlan_grp;
-
-		if (likely(grp != NULL)) {
-			vlan_gro_frags(&qs->napi, grp, ntohs(cpl->vlan));
-			return;
-		}
-	}
+	if (cpl->vlan_valid)
+		__vlan_hwaccel_put_tag(skb, ntohs(cpl->vlan));
 	napi_gro_frags(&qs->napi);
 }
 
@@ -2960,7 +2937,7 @@ static void sge_timer_tx(unsigned long data)
 	mod_timer(&qs->tx_reclaim_timer, jiffies + next_period);
 }
 
-/*
+/**
  *	sge_timer_rx - perform periodic maintenance of an SGE qset
  *	@data: the SGE queue set to maintain
  *

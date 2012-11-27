@@ -429,7 +429,7 @@ static int fwevtq_handler(struct sge_rspq *rspq, const __be64 *rsp,
 		 * restart a TX Ethernet Queue which was stopped for lack of
 		 * free TX Queue Descriptors ...
 		 */
-		const struct cpl_sge_egr_update *p = (void *)cpl;
+		const struct cpl_sge_egr_update *p = cpl;
 		unsigned int qid = EGR_QID(be32_to_cpu(p->opcode_qid));
 		struct sge *s = &adapter->sge;
 		struct sge_txq *tq;
@@ -1113,7 +1113,7 @@ static int cxgb4vf_set_mac_addr(struct net_device *dev, void *_addr)
 	struct port_info *pi = netdev_priv(dev);
 
 	if (!is_valid_ether_addr(addr->sa_data))
-		return -EINVAL;
+		return -EADDRNOTAVAIL;
 
 	ret = t4vf_change_mac(pi->adapter, pi->viid, pi->xact_addr_filt,
 			      addr->sa_data, true);
@@ -1188,9 +1188,10 @@ static void cxgb4vf_get_drvinfo(struct net_device *dev,
 {
 	struct adapter *adapter = netdev2adap(dev);
 
-	strcpy(drvinfo->driver, KBUILD_MODNAME);
-	strcpy(drvinfo->version, DRV_VERSION);
-	strcpy(drvinfo->bus_info, pci_name(to_pci_dev(dev->dev.parent)));
+	strlcpy(drvinfo->driver, KBUILD_MODNAME, sizeof(drvinfo->driver));
+	strlcpy(drvinfo->version, DRV_VERSION, sizeof(drvinfo->version));
+	strlcpy(drvinfo->bus_info, pci_name(to_pci_dev(dev->dev.parent)),
+		sizeof(drvinfo->bus_info));
 	snprintf(drvinfo->fw_version, sizeof(drvinfo->fw_version),
 		 "%u.%u.%u.%u, TP %u.%u.%u.%u",
 		 FW_HDR_FW_VER_MAJOR_GET(adapter->params.dev.fwrev),

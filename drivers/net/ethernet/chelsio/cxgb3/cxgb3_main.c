@@ -1150,6 +1150,48 @@ release_tpsram:
 }
 
 /**
+ * t3_synchronize_rx - wait for current Rx processing on a port to complete
+ * @adap: the adapter
+ * @p: the port
+ *
+ * Ensures that current Rx processing on any of the queues associated with
+ * the given port completes before returning.  We do this by acquiring and
+ * releasing the locks of the response queues associated with the port.
+ */
+static void t3_synchronize_rx(struct adapter *adap, const struct port_info *p)
+{
+	int i;
+
+	for (i = p->first_qset; i < p->first_qset + p->nqsets; i++) {
+		struct sge_rspq *q = &adap->sge.qs[i].rspq;
+
+		spin_lock_irq(&q->lock);
+		spin_unlock_irq(&q->lock);
+	}
+}
+
+static void cxgb_vlan_mode(struct net_device *dev, u32 features)
+{
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
+
+	if (adapter->params.rev > 0) {
+		t3_set_vlan_accel(adapter, 1 << pi->port_id,
+				  features & NETIF_F_HW_VLAN_RX);
+	} else {
+		/* single control for all ports */
+		unsigned int i, have_vlans = features & NETIF_F_HW_VLAN_RX;
+
+		for_each_port(adapter, i)
+			have_vlans |=
+				adapter->port[i]->features & NETIF_F_HW_VLAN_RX;
+
+		t3_set_vlan_accel(adapter, 1, have_vlans);
+	}
+	t3_synchronize_rx(adapter, pi);
+}
+
+/**
  *	cxgb_up - enable the adapter
  *	@adapter: adapter being enabled
  *
@@ -1161,7 +1203,7 @@ release_tpsram:
  */
 static int cxgb_up(struct adapter *adap)
 {
-	int err;
+	int i, err;
 
 	if (!(adap->flags & FULL_INIT_DONE)) {
 		err = t3_check_fw_version(adap);
@@ -1197,6 +1239,9 @@ static int cxgb_up(struct adapter *adap)
 		err = setup_sge_qsets(adap);
 		if (err)
 			goto out;
+
+		for_each_port(adap, i)
+			cxgb_vlan_mode(adap->port[i], adap->port[i]->features);
 
 		setup_rss(adap);
 		if (!(adap->flags & NAPI_INIT))
@@ -1576,12 +1621,11 @@ static void get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 	t3_get_tp_version(adapter, &tp_vers);
 	spin_unlock(&adapter->stats_lock);
 
-	strcpy(info->driver, DRV_NAME);
-	strcpy(info->version, DRV_VERSION);
-	strcpy(info->bus_info, pci_name(adapter->pdev));
-	if (!fw_vers)
-		strcpy(info->fw_version, "N/A");
-	else {
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(adapter->pdev),
+		sizeof(info->bus_info));
+	if (fw_vers)
 		snprintf(info->fw_version, sizeof(info->fw_version),
 			 "%s %u.%u.%u TP %u.%u.%u",
 			 G_FW_VERSION_TYPE(fw_vers) ? "T" : "N",
@@ -1591,7 +1635,6 @@ static void get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 			 G_TP_VERSION_MAJOR(tp_vers),
 			 G_TP_VERSION_MINOR(tp_vers),
 			 G_TP_VERSION_MICRO(tp_vers));
-	}
 }
 
 static void get_strings(struct net_device *dev, u32 stringset, u8 * data)
@@ -1898,7 +1941,6 @@ static void get_sge_param(struct net_device *dev, struct ethtool_ringparam *e)
 	const struct qset_params *q = &adapter->params.sge.qset[pi->first_qset];
 
 	e->rx_max_pending = MAX_RX_BUFFERS;
-	e->rx_mini_max_pending = 0;
 	e->rx_jumbo_max_pending = MAX_RX_JUMBO_BUFFERS;
 	e->tx_max_pending = MAX_TXQ_ENTRIES;
 
@@ -2502,7 +2544,7 @@ static int cxgb_set_mac_addr(struct net_device *dev, void *p)
 	struct sockaddr *addr = p;
 
 	if (!is_valid_ether_addr(addr->sa_data))
-		return -EINVAL;
+		return -EADDRNOTAVAIL;
 
 	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 	t3_mac_set_address(&pi->mac, LAN_MAC_IDX, dev->dev_addr);
@@ -2511,44 +2553,28 @@ static int cxgb_set_mac_addr(struct net_device *dev, void *p)
 	return 0;
 }
 
-/**
- * t3_synchronize_rx - wait for current Rx processing on a port to complete
- * @adap: the adapter
- * @p: the port
- *
- * Ensures that current Rx processing on any of the queues associated with
- * the given port completes before returning.  We do this by acquiring and
- * releasing the locks of the response queues associated with the port.
- */
-static void t3_synchronize_rx(struct adapter *adap, const struct port_info *p)
+static u32 cxgb_fix_features(struct net_device *dev, u32 features)
 {
-	int i;
+	/*
+	 * Since there is no support for separate rx/tx vlan accel
+	 * enable/disable make sure tx flag is always in same state as rx.
+	 */
+	if (features & NETIF_F_HW_VLAN_RX)
+		features |= NETIF_F_HW_VLAN_TX;
+	else
+		features &= ~NETIF_F_HW_VLAN_TX;
 
-	for (i = p->first_qset; i < p->first_qset + p->nqsets; i++) {
-		struct sge_rspq *q = &adap->sge.qs[i].rspq;
-
-		spin_lock_irq(&q->lock);
-		spin_unlock_irq(&q->lock);
-	}
+	return features;
 }
 
-static void vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
+static int cxgb_set_features(struct net_device *dev, u32 features)
 {
-	struct port_info *pi = netdev_priv(dev);
-	struct adapter *adapter = pi->adapter;
+	u32 changed = dev->features ^ features;
 
-	pi->vlan_grp = grp;
-	if (adapter->params.rev > 0)
-		t3_set_vlan_accel(adapter, 1 << pi->port_id, grp != NULL);
-	else {
-		/* single control for all ports */
-		unsigned int i, have_vlans = 0;
-		for_each_port(adapter, i)
-		    have_vlans |= adap2pinfo(adapter, i)->vlan_grp != NULL;
+	if (changed & NETIF_F_HW_VLAN_RX)
+		cxgb_vlan_mode(dev, features);
 
-		t3_set_vlan_accel(adapter, 1, have_vlans);
-	}
-	t3_synchronize_rx(adapter, pi);
+	return 0;
 }
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -3009,7 +3035,7 @@ static void t3_io_resume(struct pci_dev *pdev)
 	t3_resume_ports(adapter);
 }
 
-static struct pci_error_handlers t3_err_handler = {
+static const struct pci_error_handlers t3_err_handler = {
 	.error_detected = t3_io_error_detected,
 	.slot_reset = t3_io_slot_reset,
 	.resume = t3_io_resume,
@@ -3023,7 +3049,7 @@ static struct pci_error_handlers t3_err_handler = {
 static void set_nqsets(struct adapter *adap)
 {
 	int i, j = 0;
-	int num_cpus = num_online_cpus();
+	int num_cpus = netif_get_num_default_rss_queues();
 	int hwports = adap->params.nports;
 	int nqsets = adap->msix_nvectors - 1;
 
@@ -3131,7 +3157,8 @@ static const struct net_device_ops cxgb_netdev_ops = {
 	.ndo_do_ioctl		= cxgb_ioctl,
 	.ndo_change_mtu		= cxgb_change_mtu,
 	.ndo_set_mac_address	= cxgb_set_mac_addr,
-	.ndo_vlan_rx_register	= vlan_rx_register,
+	.ndo_fix_features	= cxgb_fix_features,
+	.ndo_set_features	= cxgb_set_features,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= cxgb_netpoll,
 #endif
@@ -3266,9 +3293,8 @@ static int __devinit init_one(struct pci_dev *pdev,
 		netdev->mem_start = mmio_start;
 		netdev->mem_end = mmio_start + mmio_len - 1;
 		netdev->hw_features = NETIF_F_SG | NETIF_F_IP_CSUM |
-			NETIF_F_TSO | NETIF_F_RXCSUM;
-		netdev->features |= netdev->hw_features |
-			NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+			NETIF_F_TSO | NETIF_F_RXCSUM | NETIF_F_HW_VLAN_RX;
+		netdev->features |= netdev->hw_features | NETIF_F_HW_VLAN_TX;
 		netdev->vlan_features |= netdev->features & VLAN_FEAT;
 		if (pci_using_dac)
 			netdev->features |= NETIF_F_HIGHDMA;

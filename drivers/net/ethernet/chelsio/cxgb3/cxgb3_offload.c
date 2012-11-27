@@ -40,6 +40,7 @@
 #include <net/netevent.h>
 #include <linux/highmem.h>
 #include <linux/vmalloc.h>
+#include <linux/export.h>
 
 #include "common.h"
 #include "regs.h"
@@ -176,16 +177,13 @@ static struct net_device *get_iff_from_mac(struct adapter *adapter,
 	int i;
 
 	for_each_port(adapter, i) {
-		struct vlan_group *grp;
 		struct net_device *dev = adapter->port[i];
-		const struct port_info *p = netdev_priv(dev);
 
 		if (!memcmp(dev->dev_addr, mac, ETH_ALEN)) {
 			if (vlan && vlan != VLAN_VID_MASK) {
-				grp = p->vlan_grp;
-				dev = NULL;
-				if (grp)
-					dev = vlan_group_get_device(grp, vlan);
+				rcu_read_lock();
+				dev = __vlan_find_dev_deep(dev, vlan);
+				rcu_read_unlock();
 			} else if (netif_is_bond_slave(dev)) {
 				while (dev->master)
 					dev = dev->master;
@@ -567,7 +565,7 @@ static void t3_process_tid_release_list(struct work_struct *work)
 	while (td->tid_release_list) {
 		struct t3c_tid_entry *p = td->tid_release_list;
 
-		td->tid_release_list = (struct t3c_tid_entry *)p->ctx;
+		td->tid_release_list = p->ctx;
 		spin_unlock_bh(&td->tid_release_lock);
 
 		skb = alloc_skb(sizeof(struct cpl_tid_release),
@@ -577,7 +575,7 @@ static void t3_process_tid_release_list(struct work_struct *work)
 		if (!skb) {
 			spin_lock_bh(&td->tid_release_lock);
 			p->ctx = (void *)td->tid_release_list;
-			td->tid_release_list = (struct t3c_tid_entry *)p;
+			td->tid_release_list = p;
 			break;
 		}
 		mk_tid_release(skb, p - td->tid_maps.tid_tab);
@@ -1074,8 +1072,11 @@ static int is_offloading(struct net_device *dev)
 
 static void cxgb_neigh_update(struct neighbour *neigh)
 {
-	struct net_device *dev = neigh->dev;
+	struct net_device *dev;
 
+	if (!neigh)
+		return;
+	dev = neigh->dev;
 	if (dev && (is_offloading(dev))) {
 		struct t3cdev *tdev = dev2t3cdev(dev);
 
@@ -1109,6 +1110,7 @@ static void set_l2t_ix(struct t3cdev *tdev, u32 tid, struct l2t_entry *e)
 static void cxgb_redirect(struct dst_entry *old, struct dst_entry *new)
 {
 	struct net_device *olddev, *newdev;
+	struct neighbour *n;
 	struct tid_info *ti;
 	struct t3cdev *tdev;
 	u32 tid;
@@ -1116,8 +1118,16 @@ static void cxgb_redirect(struct dst_entry *old, struct dst_entry *new)
 	struct l2t_entry *e;
 	struct t3c_tid_entry *te;
 
-	olddev = dst_get_neighbour(old)->dev;
-	newdev = dst_get_neighbour(new)->dev;
+	n = dst_get_neighbour(old);
+	if (!n)
+		return;
+	olddev = n->dev;
+
+	n = dst_get_neighbour(new);
+	if (!n)
+		return;
+	newdev = n->dev;
+
 	if (!is_offloading(olddev))
 		return;
 	if (!is_offloading(newdev)) {
@@ -1134,7 +1144,7 @@ static void cxgb_redirect(struct dst_entry *old, struct dst_entry *new)
 	}
 
 	/* Add new L2T entry */
-	e = t3_l2t_get(tdev, dst_get_neighbour(new), newdev);
+	e = t3_l2t_get(tdev, new, newdev);
 	if (!e) {
 		printk(KERN_ERR "%s: couldn't allocate new l2t entry!\n",
 		       __func__);
@@ -1303,7 +1313,7 @@ int cxgb3_offload_activate(struct adapter *adapter)
 
 out_free_l2t:
 	t3_free_l2t(L2DATA(dev));
-	rcu_assign_pointer(dev->l2opt, NULL);
+	RCU_INIT_POINTER(dev->l2opt, NULL);
 out_free:
 	kfree(t);
 	return err;
@@ -1331,7 +1341,7 @@ void cxgb3_offload_deactivate(struct adapter *adapter)
 	rcu_read_lock();
 	d = L2DATA(tdev);
 	rcu_read_unlock();
-	rcu_assign_pointer(tdev->l2opt, NULL);
+	RCU_INIT_POINTER(tdev->l2opt, NULL);
 	call_rcu(&d->rcu_head, clean_l2_data);
 	if (t->nofail_skb)
 		kfree_skb(t->nofail_skb);

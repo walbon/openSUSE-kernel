@@ -1001,13 +1001,12 @@ static void get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 {
 	struct adapter *adapter = netdev2adap(dev);
 
-	strcpy(info->driver, KBUILD_MODNAME);
-	strcpy(info->version, DRV_VERSION);
-	strcpy(info->bus_info, pci_name(adapter->pdev));
+	strlcpy(info->driver, KBUILD_MODNAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(adapter->pdev),
+		sizeof(info->bus_info));
 
-	if (!adapter->params.fw_vers)
-		strcpy(info->fw_version, "N/A");
-	else
+	if (adapter->params.fw_vers)
 		snprintf(info->fw_version, sizeof(info->fw_version),
 			"%u.%u.%u.%u, TP %u.%u.%u.%u",
 			FW_HDR_FW_VER_MAJOR_GET(adapter->params.fw_vers),
@@ -2808,7 +2807,7 @@ static int cxgb_set_mac_addr(struct net_device *dev, void *p)
 	struct port_info *pi = netdev_priv(dev);
 
 	if (!is_valid_ether_addr(addr->sa_data))
-		return -EINVAL;
+		return -EADDRNOTAVAIL;
 
 	ret = t4_change_mac(pi->adapter, pi->adapter->fn, pi->viid,
 			    pi->xact_addr_filt, addr->sa_data, true, true);
@@ -3251,7 +3250,7 @@ static void eeh_resume(struct pci_dev *pdev)
 	rtnl_unlock();
 }
 
-static struct pci_error_handlers cxgb4_eeh = {
+static const struct pci_error_handlers cxgb4_eeh = {
 	.error_detected = eeh_err_detected,
 	.slot_reset     = eeh_slot_reset,
 	.resume         = eeh_resume,
