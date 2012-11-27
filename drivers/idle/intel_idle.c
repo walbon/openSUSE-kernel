@@ -173,6 +173,7 @@ static struct cpuidle_state ivb_cstates[MWAIT_MAX_NUM_CSTATES] = {
 	{ /* MWAIT C1 */
 		.name = "C1-IVB",
 		.desc = "MWAIT 0x00",
+		.driver_data = (void *) 0x00,
 		.flags = CPUIDLE_FLAG_TIME_VALID,
 		.exit_latency = 1,
 		.target_residency = 1,
@@ -180,6 +181,7 @@ static struct cpuidle_state ivb_cstates[MWAIT_MAX_NUM_CSTATES] = {
 	{ /* MWAIT C2 */
 		.name = "C3-IVB",
 		.desc = "MWAIT 0x10",
+		.driver_data = (void *) 0x10,
 		.flags = CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
 		.exit_latency = 59,
 		.target_residency = 156,
@@ -187,6 +189,7 @@ static struct cpuidle_state ivb_cstates[MWAIT_MAX_NUM_CSTATES] = {
 	{ /* MWAIT C3 */
 		.name = "C6-IVB",
 		.desc = "MWAIT 0x20",
+		.driver_data = (void *) 0x20,
 		.flags = CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
 		.exit_latency = 80,
 		.target_residency = 300,
@@ -194,6 +197,7 @@ static struct cpuidle_state ivb_cstates[MWAIT_MAX_NUM_CSTATES] = {
 	{ /* MWAIT C4 */
 		.name = "C7-IVB",
 		.desc = "MWAIT 0x30",
+		.driver_data = (void *) 0x30,
 		.flags = CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
 		.exit_latency = 87,
 		.target_residency = 300,
