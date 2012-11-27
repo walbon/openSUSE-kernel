@@ -880,7 +880,7 @@ static inline void cmd_frob(struct Command_Entry *cmd, struct scsi_cmnd *Cmnd,
 		cmd->control_flags |= CFLAG_WRITE;
 	else
 		cmd->control_flags |= CFLAG_READ;
-	cmd->time_out = 30;
+	cmd->time_out = Cmnd->request->timeout/HZ;
 	memcpy(cmd->cdb, Cmnd->cmnd, Cmnd->cmd_len);
 }
 
@@ -1295,18 +1295,11 @@ static struct scsi_host_template qpti_template = {
 static const struct of_device_id qpti_match[];
 static int __devinit qpti_sbus_probe(struct platform_device *op)
 {
-	const struct of_device_id *match;
-	struct scsi_host_template *tpnt;
 	struct device_node *dp = op->dev.of_node;
 	struct Scsi_Host *host;
 	struct qlogicpti *qpti;
 	static int nqptis;
 	const char *fcode;
-
-	match = of_match_device(qpti_match, &op->dev);
-	if (!match)
-		return -EINVAL;
-	tpnt = match->data;
 
 	/* Sometimes Antares cards come up not completely
 	 * setup, and we get a report of a zero IRQ.
@@ -1314,7 +1307,7 @@ static int __devinit qpti_sbus_probe(struct platform_device *op)
 	if (op->archdata.irqs[0] == 0)
 		return -ENODEV;
 
-	host = scsi_host_alloc(tpnt, sizeof(struct qlogicpti));
+	host = scsi_host_alloc(&qpti_template, sizeof(struct qlogicpti));
 	if (!host)
 		return -ENOMEM;
 
@@ -1446,19 +1439,15 @@ static int __devexit qpti_sbus_remove(struct platform_device *op)
 static const struct of_device_id qpti_match[] = {
 	{
 		.name = "ptisp",
-		.data = &qpti_template,
 	},
 	{
 		.name = "PTI,ptisp",
-		.data = &qpti_template,
 	},
 	{
 		.name = "QLGC,isp",
-		.data = &qpti_template,
 	},
 	{
 		.name = "SUNW,isp",
-		.data = &qpti_template,
 	},
 	{},
 };
