@@ -40,7 +40,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/jiffies.h>
 #include <linux/prefetch.h>
-#include <linux/export.h>
 #include <net/ipv6.h>
 #include <net/tcp.h>
 #include "cxgb4.h"
