@@ -20,6 +20,7 @@
 #include <linux/debugfs.h>
 #include <linux/device.h>
 #include <linux/slab.h>
+#include <linux/async.h>
 #include <linux/err.h>
 #include <linux/mutex.h>
 #include <linux/suspend.h>
@@ -2279,6 +2280,7 @@ EXPORT_SYMBOL_GPL(regulator_bulk_get);
 int regulator_bulk_enable(int num_consumers,
 			  struct regulator_bulk_data *consumers)
 {
+	ASYNC_DOMAIN_EXCLUSIVE(async_domain);
 	int i;
 	int ret;
 
