@@ -761,7 +761,10 @@ static struct domain_device *sas_ex_discover_end_dev(
  out_list_del:
 	sas_rphy_free(child->rphy);
 	child->rphy = NULL;
+
+	spin_lock_irq(&parent->port->dev_list_lock);
 	list_del(&child->dev_list_node);
+	spin_unlock_irq(&parent->port->dev_list_lock);
  out_free:
 	sas_port_delete(phy->port);
  out_err:
@@ -1751,7 +1754,7 @@ out:
 	return res;
 }
 
-static void sas_unregister_ex_tree(struct domain_device *dev)
+static void sas_unregister_ex_tree(struct asd_sas_port *port, struct domain_device *dev)
 {
 	struct expander_device *ex = &dev->ex_dev;
 	struct domain_device *child, *n;
@@ -1760,11 +1763,11 @@ static void sas_unregister_ex_tree(struct domain_device *dev)
 		child->gone = 1;
 		if (child->dev_type == EDGE_DEV ||
 		    child->dev_type == FANOUT_DEV)
-			sas_unregister_ex_tree(child);
+			sas_unregister_ex_tree(port, child);
 		else
-			sas_unregister_dev(child);
+			sas_unregister_dev(port, child);
 	}
-	sas_unregister_dev(dev);
+	sas_unregister_dev(port, dev);
 }
 
 static void sas_unregister_devs_sas_addr(struct domain_device *parent,
@@ -1781,9 +1784,9 @@ static void sas_unregister_devs_sas_addr(struct domain_device *parent,
 				child->gone = 1;
 				if (child->dev_type == EDGE_DEV ||
 				    child->dev_type == FANOUT_DEV)
-					sas_unregister_ex_tree(child);
+					sas_unregister_ex_tree(parent->port, child);
 				else
-					sas_unregister_dev(child);
+					sas_unregister_dev(parent->port, child);
 				break;
 			}
 		}
