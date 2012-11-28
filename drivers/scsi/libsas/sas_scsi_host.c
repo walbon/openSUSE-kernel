@@ -736,16 +736,10 @@ struct domain_device *sas_find_dev_by_rphy(struct sas_rphy *rphy)
 	return found_dev;
 }
 
-static inline struct domain_device *sas_find_target(struct scsi_target *starget)
-{
-	struct sas_rphy *rphy = dev_to_rphy(starget->dev.parent);
-
-	return sas_find_dev_by_rphy(rphy);
-}
-
 int sas_target_alloc(struct scsi_target *starget)
 {
-	struct domain_device *found_dev = sas_find_target(starget);
+	struct sas_rphy *rphy = dev_to_rphy(starget->dev.parent);
+	struct domain_device *found_dev = sas_find_dev_by_rphy(rphy);
 	int res;
 
 	if (!found_dev)
@@ -757,6 +751,7 @@ int sas_target_alloc(struct scsi_target *starget)
 			return res;
 	}
 
+	kref_get(&found_dev->kref);
 	starget->hostdata = found_dev;
 	return 0;
 }
@@ -1046,7 +1041,7 @@ int sas_slave_alloc(struct scsi_device *scsi_dev)
 
 void sas_target_destroy(struct scsi_target *starget)
 {
-	struct domain_device *found_dev = sas_find_target(starget);
+	struct domain_device *found_dev = starget->hostdata;
 
 	if (!found_dev)
 		return;
@@ -1054,7 +1049,8 @@ void sas_target_destroy(struct scsi_target *starget)
 	if (dev_is_sata(found_dev))
 		ata_sas_port_destroy(found_dev->sata_dev.ap);
 
-	return;
+	starget->hostdata = NULL;
+	sas_put_device(found_dev);
 }
 
 static void sas_parse_addr(u8 *sas_addr, const char *p)
