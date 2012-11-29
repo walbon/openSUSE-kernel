@@ -48,6 +48,7 @@ struct type50_hdr {
 } __attribute__((packed));
 
 #define TYPE50_TYPE_CODE	0x50
+#define MSGTYPE_ADJUSTMENT	0x08 /*type04 extension (not needed in type50)*/
 
 #define TYPE50_MEB1_FMT		0x0001
 #define TYPE50_MEB2_FMT		0x0002
