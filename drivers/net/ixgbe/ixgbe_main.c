@@ -53,6 +53,8 @@
 char ixgbe_driver_name[] = "ixgbe";
 static const char ixgbe_driver_string[] =
 			      "Intel(R) 10 Gigabit PCI Express Network Driver";
+char ixgbe_default_device_descr[] =
+			      "Intel(R) 10 Gigabit Network Connection";
 #define MAJ 3
 #define MIN 3
 #define BUILD 8
@@ -7535,6 +7537,7 @@ static const struct net_device_ops ixgbe_netdev_ops = {
 	.ndo_fcoe_enable = ixgbe_fcoe_enable,
 	.ndo_fcoe_disable = ixgbe_fcoe_disable,
 	.ndo_fcoe_get_wwn = ixgbe_fcoe_get_wwn,
+	.ndo_fcoe_get_hbainfo = ixgbe_fcoe_get_hbainfo,
 #endif /* IXGBE_FCOE */
 };
 
@@ -7924,6 +7927,10 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 	}
 	device_set_wakeup_enable(&adapter->pdev->dev, adapter->wol);
 
+	/* save off EEPROM version number */
+	hw->eeprom.ops.read(hw, 0x2e, &adapter->eeprom_verh);
+	hw->eeprom.ops.read(hw, 0x2d, &adapter->eeprom_verl);
+
 	/* pick up the PCI bus settings for reporting later */
 	hw->mac.ops.get_bus_info(hw);
 
@@ -7955,9 +7962,6 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 		e_dev_warn("For optimal performance a x8 PCI-Express slot "
 			   "is required.\n");
 	}
-
-	/* save off EEPROM version number */
-	hw->eeprom.ops.read(hw, 0x29, &adapter->eeprom_version);
 
 	/* reset the hardware with the new settings */
 	err = hw->mac.ops.start_hw(hw);
@@ -7994,7 +7998,7 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 	/* add san mac addr to netdev */
 	ixgbe_add_sanmac_netdev(netdev);
 
-	e_dev_info("Intel(R) 10 Gigabit Network Connection\n");
+	e_dev_info("%s\n", ixgbe_default_device_descr);
 	cards_found++;
 	return 0;
 
