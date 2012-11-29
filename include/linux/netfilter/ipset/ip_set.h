@@ -214,8 +214,14 @@ enum ip_set_feature {
 
 struct ip_set;
 
+#ifndef __GENKSYMS__
 typedef int (*ipset_adtfn)(struct ip_set *set, void *value,
 			   u32 timeout, u32 flags);
+#else
+typedef int (*ipset_adtfn)(struct ip_set *set, void *value,
+			   u32 timeout);
+#endif
+
 
 /* Set type, variant-specific part */
 struct ip_set_type_variant {
@@ -230,8 +236,13 @@ struct ip_set_type_variant {
 	 *		returns negative error code,
 	 *			zero for no match/success to add/delete
 	 *			positive for matching element */
+#ifndef __GENKSYMS__
 	int (*uadt)(struct ip_set *set, struct nlattr *tb[],
 		    enum ipset_adt adt, u32 *lineno, u32 flags, bool retried);
+#else
+	int (*uadt)(struct ip_set *set, struct nlattr *tb[],
+		    enum ipset_adt adt, u32 *lineno, u32 flags);
+#endif
 
 	/* Low level add/del/test functions */
 	ipset_adtfn adt[IPSET_ADT_MAX];
