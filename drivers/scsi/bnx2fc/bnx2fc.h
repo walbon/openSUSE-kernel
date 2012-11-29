@@ -59,7 +59,6 @@
 #include <scsi/fc/fc_fcp.h>
 
 #include "57xx_hsi_bnx2fc.h"
-#include "bnx2fc_debug.h"
 #include "../../net/cnic_if.h"
 #include "bnx2fc_constants.h"
 
@@ -556,5 +555,7 @@ void bnx2fc_process_seq_cleanup_compl(struct bnx2fc_cmd *seq_clnup_req,
 				      u8 rx_state);
 int bnx2fc_initiate_seq_cleanup(struct bnx2fc_cmd *orig_io_req, u32 offset,
 				enum fc_rctl r_ctl);
+
+#include "bnx2fc_debug.h"
 
 #endif
