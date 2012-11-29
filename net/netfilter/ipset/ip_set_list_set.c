@@ -192,7 +192,7 @@ list_set_del(struct list_set *map, u32 i)
 
 static int
 list_set_uadt(struct ip_set *set, struct nlattr *tb[],
-	      enum ipset_adt adt, u32 *lineno, u32 flags)
+	      enum ipset_adt adt, u32 *lineno, u32 flags, bool retried)
 {
 	struct list_set *map = set->data;
 	bool with_timeout = with_timeout(map->timeout);
