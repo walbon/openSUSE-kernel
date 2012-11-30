@@ -1408,7 +1408,8 @@ lpfc_handle_eratt_s4(struct lpfc_hba *phba)
 	uint32_t event_data;
 	struct Scsi_Host *shost;
 	uint32_t if_type;
-	struct lpfc_register portstat_reg;
+	struct lpfc_register portstat_reg = {0};
+	uint32_t reg_err1, reg_err2;
 	uint32_t uerrlo_reg, uemasklo_reg;
 	uint32_t pci_rd_rc1, pci_rd_rc2;
 	int rc;
@@ -1421,18 +1422,6 @@ lpfc_handle_eratt_s4(struct lpfc_hba *phba)
 	/* If resets are disabled then leave the HBA alone and return */
 	if (!phba->cfg_enable_hba_reset)
 		return;
-
-	/* Send an internal error event to mgmt application */
-	lpfc_board_errevt_to_mgmt(phba);
-
-	/* For now, the actual action for SLI4 device handling is not
-	 * specified yet, just treated it as adaptor hardware failure
-	 */
-	event_data = FC_REG_DUMP_EVENT;
-	shost = lpfc_shost_from_vport(vport);
-	fc_host_post_vendor_event(shost, fc_get_event_number(),
-				  sizeof(event_data), (char *) &event_data,
-				  SCSI_NL_VID_TYPE_PCI | PCI_VENDOR_ID_EMULEX);
 
 	if_type = bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf);
 	switch (if_type) {
@@ -1455,6 +1444,8 @@ lpfc_handle_eratt_s4(struct lpfc_hba *phba)
 		/* consider PCI bus read error as pci_channel_offline */
 		if (pci_rd_rc1 == -EIO)
 			return;
+		reg_err1 = readl(phba->sli4_hba.u.if_type2.ERR1regaddr);
+		reg_err2 = readl(phba->sli4_hba.u.if_type2.ERR2regaddr);
 		if (bf_get(lpfc_sliport_status_oti, &portstat_reg)) {
 			/* TODO: Register for Overtemp async events. */
 			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
@@ -1464,8 +1455,20 @@ lpfc_handle_eratt_s4(struct lpfc_hba *phba)
 			phba->over_temp_state = HBA_OVER_TEMP;
 			spin_unlock_irq(&phba->hbalock);
 			lpfc_sli4_offline_eratt(phba);
-			return;
+			break;
 		}
+		if (reg_err1 == SLIPORT_ERR1_REG_ERR_CODE_2 &&
+		    reg_err2 == SLIPORT_ERR2_REG_FW_RESTART)
+			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+					"3143 Port Down: Firmware Restarted\n");
+		else if (reg_err1 == SLIPORT_ERR1_REG_ERR_CODE_2 &&
+			 reg_err2 == SLIPORT_ERR2_REG_FORCED_DUMP)
+			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+					"3144 Port Down: Debug Dump\n");
+		else if (reg_err1 == SLIPORT_ERR1_REG_ERR_CODE_2 &&
+			 reg_err2 == SLIPORT_ERR2_REG_FUNC_PROVISON)
+			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+					"3145 Port Down: Provisioning\n");
 		/*
 		 * On error status condition, driver need to wait for port
 		 * ready before performing reset.
@@ -1474,14 +1477,19 @@ lpfc_handle_eratt_s4(struct lpfc_hba *phba)
 		if (!rc) {
 			/* need reset: attempt for port recovery */
 			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
-					"2887 Port Error: Attempting "
-					"Port Recovery\n");
+					"2887 Reset Needed: Attempting Port "
+					"Recovery...\n");
 			lpfc_offline_prep(phba);
 			lpfc_offline(phba);
 			lpfc_sli_brdrestart(phba);
 			if (lpfc_online(phba) == 0) {
 				lpfc_unblock_mgmt_io(phba);
-				return;
+				/* don't report event on forced debug dump */
+				if (reg_err1 == SLIPORT_ERR1_REG_ERR_CODE_2 &&
+				    reg_err2 == SLIPORT_ERR2_REG_FORCED_DUMP)
+					return;
+				else
+					break;
 			}
 			/* fall through for not able to recover */
 		}
@@ -1491,6 +1499,16 @@ lpfc_handle_eratt_s4(struct lpfc_hba *phba)
 	default:
 		break;
 	}
+	lpfc_printf_log(phba, KERN_WARNING, LOG_INIT,
+			"3123 Report dump event to upper layer\n");
+	/* Send an internal error event to mgmt application */
+	lpfc_board_errevt_to_mgmt(phba);
+
+	event_data = FC_REG_DUMP_EVENT;
+	shost = lpfc_shost_from_vport(vport);
+	fc_host_post_vendor_event(shost, fc_get_event_number(),
+				  sizeof(event_data), (char *) &event_data,
+				  SCSI_NL_VID_TYPE_PCI | PCI_VENDOR_ID_EMULEX);
 }
 
 /**
@@ -6538,8 +6556,10 @@ lpfc_sli4_queue_destroy(struct lpfc_hba *phba)
 	phba->sli4_hba.els_wq = NULL;
 
 	/* Release FCP work queue */
-	for (fcp_qidx = 0; fcp_qidx < phba->cfg_fcp_wq_count; fcp_qidx++)
-		lpfc_sli4_queue_free(phba->sli4_hba.fcp_wq[fcp_qidx]);
+	if (phba->sli4_hba.fcp_wq != NULL)
+		for (fcp_qidx = 0; fcp_qidx < phba->cfg_fcp_wq_count;
+		     fcp_qidx++)
+			lpfc_sli4_queue_free(phba->sli4_hba.fcp_wq[fcp_qidx]);
 	kfree(phba->sli4_hba.fcp_wq);
 	phba->sli4_hba.fcp_wq = NULL;
 
@@ -6559,15 +6579,18 @@ lpfc_sli4_queue_destroy(struct lpfc_hba *phba)
 
 	/* Release FCP response complete queue */
 	fcp_qidx = 0;
-	do
-		lpfc_sli4_queue_free(phba->sli4_hba.fcp_cq[fcp_qidx]);
-	while (++fcp_qidx < phba->cfg_fcp_eq_count);
+	if (phba->sli4_hba.fcp_cq != NULL)
+		do
+			lpfc_sli4_queue_free(phba->sli4_hba.fcp_cq[fcp_qidx]);
+		while (++fcp_qidx < phba->cfg_fcp_eq_count);
 	kfree(phba->sli4_hba.fcp_cq);
 	phba->sli4_hba.fcp_cq = NULL;
 
 	/* Release fast-path event queue */
-	for (fcp_qidx = 0; fcp_qidx < phba->cfg_fcp_eq_count; fcp_qidx++)
-		lpfc_sli4_queue_free(phba->sli4_hba.fp_eq[fcp_qidx]);
+	if (phba->sli4_hba.fp_eq != NULL)
+		for (fcp_qidx = 0; fcp_qidx < phba->cfg_fcp_eq_count;
+		     fcp_qidx++)
+			lpfc_sli4_queue_free(phba->sli4_hba.fp_eq[fcp_qidx]);
 	kfree(phba->sli4_hba.fp_eq);
 	phba->sli4_hba.fp_eq = NULL;
 
