@@ -624,7 +624,29 @@ lpfc_config_port_post(struct lpfc_hba *phba)
  *		Any other value - error
  **/
 int
-lpfc_hba_init_link(struct lpfc_hba *phba)
+lpfc_hba_init_link(struct lpfc_hba *phba, uint32_t flag)
+{
+	return lpfc_hba_init_link_fc_topology(phba, phba->cfg_topology, flag);
+}
+
+/**
+ * lpfc_hba_init_link_fc_topology - Initialize FC link with desired topology
+ * @phba: pointer to lpfc hba data structure.
+ * @fc_topology: desired fc topology.
+ * @flag: mailbox command issue mode - either MBX_POLL or MBX_NOWAIT
+ *
+ * This routine will issue the INIT_LINK mailbox command call.
+ * It is available to other drivers through the lpfc_hba data
+ * structure for use as a delayed link up mechanism with the
+ * module parameter lpfc_suppress_link_up.
+ *
+ * Return code
+ *              0 - success
+ *              Any other value - error
+ **/
+int
+lpfc_hba_init_link_fc_topology(struct lpfc_hba *phba, uint32_t fc_topology,
+			       uint32_t flag)
 {
 	struct lpfc_vport *vport = phba->pport;
 	LPFC_MBOXQ_t *pmb;
@@ -659,10 +681,11 @@ lpfc_hba_init_link(struct lpfc_hba *phba)
 			phba->cfg_link_speed);
 			phba->cfg_link_speed = LPFC_USER_LINK_SPEED_AUTO;
 	}
-	lpfc_init_link(phba, pmb, phba->cfg_topology, phba->cfg_link_speed);
+	lpfc_init_link(phba, pmb, fc_topology, phba->cfg_link_speed);
 	pmb->mbox_cmpl = lpfc_sli_def_mbox_cmpl;
-	lpfc_set_loopback_flag(phba);
-	rc = lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT);
+	if (phba->sli_rev < LPFC_SLI_REV4)
+		lpfc_set_loopback_flag(phba);
+	rc = lpfc_sli_issue_mbox(phba, pmb, flag);
 	if ((rc != MBX_BUSY) && (rc != MBX_SUCCESS)) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 			"0498 Adapter failed to init, mbxCmd x%x "
@@ -699,7 +722,7 @@ lpfc_hba_init_link(struct lpfc_hba *phba)
  *		Any other value - error
  **/
 int
-lpfc_hba_down_link(struct lpfc_hba *phba)
+lpfc_hba_down_link(struct lpfc_hba *phba, uint32_t flag)
 {
 	LPFC_MBOXQ_t *pmb;
 	int rc;
@@ -715,7 +738,7 @@ lpfc_hba_down_link(struct lpfc_hba *phba)
 		"0491 Adapter Link is disabled.\n");
 	lpfc_down_link(phba, pmb);
 	pmb->mbox_cmpl = lpfc_sli_def_mbox_cmpl;
-	rc = lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT);
+	rc = lpfc_sli_issue_mbox(phba, pmb, flag);
 	if ((rc != MBX_SUCCESS) && (rc != MBX_BUSY)) {
 		lpfc_printf_log(phba,
 		KERN_ERR, LOG_INIT,
@@ -6643,9 +6666,10 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 			phba->sli4_hba.sp_eq->queue_id);
 
 	/* Set up fast-path event queue */
-	if (!phba->sli4_hba.fp_eq) {
+	if (phba->cfg_fcp_eq_count && !phba->sli4_hba.fp_eq) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"3147 Fast-path EQs not allocated\n");
+		rc = -ENOMEM;
 		goto out_destroy_sp_eq;
 	}
 	for (fcp_eqidx = 0; fcp_eqidx < phba->cfg_fcp_eq_count; fcp_eqidx++) {
@@ -6653,6 +6677,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 					"0522 Fast-path EQ (%d) not "
 					"allocated\n", fcp_eqidx);
+			rc = -ENOMEM;
 			goto out_destroy_fp_eq;
 		}
 		rc = lpfc_eq_create(phba, phba->sli4_hba.fp_eq[fcp_eqidx],
@@ -6677,6 +6702,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 	if (!phba->sli4_hba.mbx_cq) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"0528 Mailbox CQ not allocated\n");
+		rc = -ENOMEM;
 		goto out_destroy_fp_eq;
 	}
 	rc = lpfc_cq_create(phba, phba->sli4_hba.mbx_cq, phba->sli4_hba.sp_eq,
@@ -6696,6 +6722,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 	if (!phba->sli4_hba.els_cq) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"0530 ELS CQ not allocated\n");
+		rc = -ENOMEM;
 		goto out_destroy_mbx_cq;
 	}
 	rc = lpfc_cq_create(phba, phba->sli4_hba.els_cq, phba->sli4_hba.sp_eq,
@@ -6716,6 +6743,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"3148 Fast-path FCP CQ array not "
 				"allocated\n");
+		rc = -ENOMEM;
 		goto out_destroy_els_cq;
 	}
 	fcp_cqidx = 0;
@@ -6724,6 +6752,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 					"0526 Fast-path FCP CQ (%d) not "
 					"allocated\n", fcp_cqidx);
+			rc = -ENOMEM;
 			goto out_destroy_fcp_cq;
 		}
 		if (phba->cfg_fcp_eq_count)
@@ -6762,6 +6791,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 	if (!phba->sli4_hba.mbx_wq) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"0538 Slow-path MQ not allocated\n");
+		rc = -ENOMEM;
 		goto out_destroy_fcp_cq;
 	}
 	rc = lpfc_mq_create(phba, phba->sli4_hba.mbx_wq,
@@ -6781,6 +6811,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 	if (!phba->sli4_hba.els_wq) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"0536 Slow-path ELS WQ not allocated\n");
+		rc = -ENOMEM;
 		goto out_destroy_mbx_wq;
 	}
 	rc = lpfc_wq_create(phba, phba->sli4_hba.els_wq,
@@ -6801,6 +6832,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"3149 Fast-path FCP WQ array not "
 				"allocated\n");
+		rc = -ENOMEM;
 		goto out_destroy_els_wq;
 	}
 	for (fcp_wqidx = 0; fcp_wqidx < phba->cfg_fcp_wq_count; fcp_wqidx++) {
@@ -6808,6 +6840,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 					"0534 Fast-path FCP WQ (%d) not "
 					"allocated\n", fcp_wqidx);
+			rc = -ENOMEM;
 			goto out_destroy_fcp_wq;
 		}
 		rc = lpfc_wq_create(phba, phba->sli4_hba.fcp_wq[fcp_wqidx],
@@ -6838,6 +6871,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 	if (!phba->sli4_hba.hdr_rq || !phba->sli4_hba.dat_rq) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"0540 Receive Queue not allocated\n");
+		rc = -ENOMEM;
 		goto out_destroy_fcp_wq;
 	}
 
