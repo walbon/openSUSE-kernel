@@ -137,6 +137,13 @@ nla_put_failure:
 #define HOST_MASK	32
 #include <linux/netfilter/ipset/ip_set_ahash.h>
 
+static inline void
+hash_netport4_data_next(struct ip_set_hash *h,
+			const struct hash_netport4_elem *d)
+{
+	h->next.port = ntohs(d->port);
+}
+
 static int
 hash_netport4_kadt(struct ip_set *set, const struct sk_buff *skb,
 		   enum ipset_adt adt, u8 pf, u8 dim, u8 flags)
@@ -159,12 +166,12 @@ hash_netport4_kadt(struct ip_set *set, const struct sk_buff *skb,
 	ip4addrptr(skb, flags & IPSET_DIM_ONE_SRC, &data.ip);
 	data.ip &= ip_set_netmask(data.cidr);
 
-	return adtfn(set, &data, h->timeout);
+	return adtfn(set, &data, h->timeout, flags);
 }
 
 static int
 hash_netport4_uadt(struct ip_set *set, struct nlattr *tb[],
-		   enum ipset_adt adt, u32 *lineno, u32 flags)
+		   enum ipset_adt adt, u32 *lineno, u32 flags, bool retried)
 {
 	const struct ip_set_hash *h = set->data;
 	ipset_adtfn adtfn = set->variant->adt[adt];
@@ -217,7 +224,7 @@ hash_netport4_uadt(struct ip_set *set, struct nlattr *tb[],
 	}
 
 	if (adt == IPSET_TEST || !with_ports || !tb[IPSET_ATTR_PORT_TO]) {
-		ret = adtfn(set, &data, timeout);
+		ret = adtfn(set, &data, timeout, flags);
 		return ip_set_eexist(ret, flags) ? 0 : ret;
 	}
 
@@ -226,9 +233,11 @@ hash_netport4_uadt(struct ip_set *set, struct nlattr *tb[],
 	if (port > port_to)
 		swap(port, port_to);
 
+	if (retried)
+		port = h->next.port;
 	for (; port <= port_to; port++) {
 		data.port = htons(port);
-		ret = adtfn(set, &data, timeout);
+		ret = adtfn(set, &data, timeout, flags);
 
 		if (ret && !ip_set_eexist(ret, flags))
 			return ret;
@@ -351,6 +360,13 @@ nla_put_failure:
 #define HOST_MASK	128
 #include <linux/netfilter/ipset/ip_set_ahash.h>
 
+static inline void
+hash_netport6_data_next(struct ip_set_hash *h,
+			const struct hash_netport6_elem *d)
+{
+	h->next.port = ntohs(d->port);
+}
+
 static int
 hash_netport6_kadt(struct ip_set *set, const struct sk_buff *skb,
 		   enum ipset_adt adt, u8 pf, u8 dim, u8 flags)
@@ -373,12 +389,12 @@ hash_netport6_kadt(struct ip_set *set, const struct sk_buff *skb,
 	ip6addrptr(skb, flags & IPSET_DIM_ONE_SRC, &data.ip.in6);
 	ip6_netmask(&data.ip, data.cidr);
 
-	return adtfn(set, &data, h->timeout);
+	return adtfn(set, &data, h->timeout, flags);
 }
 
 static int
 hash_netport6_uadt(struct ip_set *set, struct nlattr *tb[],
-		   enum ipset_adt adt, u32 *lineno, u32 flags)
+		   enum ipset_adt adt, u32 *lineno, u32 flags, bool retried)
 {
 	const struct ip_set_hash *h = set->data;
 	ipset_adtfn adtfn = set->variant->adt[adt];
@@ -431,7 +447,7 @@ hash_netport6_uadt(struct ip_set *set, struct nlattr *tb[],
 	}
 
 	if (adt == IPSET_TEST || !with_ports || !tb[IPSET_ATTR_PORT_TO]) {
-		ret = adtfn(set, &data, timeout);
+		ret = adtfn(set, &data, timeout, flags);
 		return ip_set_eexist(ret, flags) ? 0 : ret;
 	}
 
@@ -440,9 +456,11 @@ hash_netport6_uadt(struct ip_set *set, struct nlattr *tb[],
 	if (port > port_to)
 		swap(port, port_to);
 
+	if (retried)
+		port = h->next.port;
 	for (; port <= port_to; port++) {
 		data.port = htons(port);
-		ret = adtfn(set, &data, timeout);
+		ret = adtfn(set, &data, timeout, flags);
 
 		if (ret && !ip_set_eexist(ret, flags))
 			return ret;

@@ -125,6 +125,12 @@ nla_put_failure:
 #define HOST_MASK	32
 #include <linux/netfilter/ipset/ip_set_ahash.h>
 
+static inline void
+hash_net4_data_next(struct ip_set_hash *h,
+		    const struct hash_net4_elem *d)
+{
+}
+
 static int
 hash_net4_kadt(struct ip_set *set, const struct sk_buff *skb,
 	       enum ipset_adt adt, u8 pf, u8 dim, u8 flags)
@@ -143,12 +149,12 @@ hash_net4_kadt(struct ip_set *set, const struct sk_buff *skb,
 	ip4addrptr(skb, flags & IPSET_DIM_ONE_SRC, &data.ip);
 	data.ip &= ip_set_netmask(data.cidr);
 
-	return adtfn(set, &data, h->timeout);
+	return adtfn(set, &data, h->timeout, flags);
 }
 
 static int
 hash_net4_uadt(struct ip_set *set, struct nlattr *tb[],
-	       enum ipset_adt adt, u32 *lineno, u32 flags)
+	       enum ipset_adt adt, u32 *lineno, u32 flags, bool retried)
 {
 	const struct ip_set_hash *h = set->data;
 	ipset_adtfn adtfn = set->variant->adt[adt];
@@ -181,7 +187,7 @@ hash_net4_uadt(struct ip_set *set, struct nlattr *tb[],
 		timeout = ip_set_timeout_uget(tb[IPSET_ATTR_TIMEOUT]);
 	}
 
-	ret = adtfn(set, &data, timeout);
+	ret = adtfn(set, &data, timeout, flags);
 
 	return ip_set_eexist(ret, flags) ? 0 : ret;
 }
@@ -292,6 +298,12 @@ nla_put_failure:
 #define HOST_MASK	128
 #include <linux/netfilter/ipset/ip_set_ahash.h>
 
+static inline void
+hash_net6_data_next(struct ip_set_hash *h,
+		    const struct hash_net6_elem *d)
+{
+}
+
 static int
 hash_net6_kadt(struct ip_set *set, const struct sk_buff *skb,
 	       enum ipset_adt adt, u8 pf, u8 dim, u8 flags)
@@ -310,12 +322,12 @@ hash_net6_kadt(struct ip_set *set, const struct sk_buff *skb,
 	ip6addrptr(skb, flags & IPSET_DIM_ONE_SRC, &data.ip.in6);
 	ip6_netmask(&data.ip, data.cidr);
 
-	return adtfn(set, &data, h->timeout);
+	return adtfn(set, &data, h->timeout, flags);
 }
 
 static int
 hash_net6_uadt(struct ip_set *set, struct nlattr *tb[],
-	       enum ipset_adt adt, u32 *lineno, u32 flags)
+	       enum ipset_adt adt, u32 *lineno, u32 flags, bool retried)
 {
 	const struct ip_set_hash *h = set->data;
 	ipset_adtfn adtfn = set->variant->adt[adt];
@@ -348,7 +360,7 @@ hash_net6_uadt(struct ip_set *set, struct nlattr *tb[],
 		timeout = ip_set_timeout_uget(tb[IPSET_ATTR_TIMEOUT]);
 	}
 
-	ret = adtfn(set, &data, timeout);
+	ret = adtfn(set, &data, timeout, flags);
 
 	return ip_set_eexist(ret, flags) ? 0 : ret;
 }
