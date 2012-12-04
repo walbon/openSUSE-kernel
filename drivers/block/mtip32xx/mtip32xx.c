@@ -3482,17 +3482,17 @@ static int mtip_make_request(struct request_queue *queue, struct bio *bio)
 		if (unlikely(test_bit(MTIP_DDF_REMOVE_PENDING_BIT,
 							&dd->dd_flag))) {
 			bio_endio(bio, -ENXIO);
-			return;
+			return 0;
 		}
 		if (unlikely(test_bit(MTIP_DDF_OVER_TEMP_BIT, &dd->dd_flag))) {
 			bio_endio(bio, -ENODATA);
-			return;
+			return 0;
 		}
 		if (unlikely(test_bit(MTIP_DDF_WRITE_PROTECT_BIT,
 							&dd->dd_flag) &&
 				bio_data_dir(bio))) {
 			bio_endio(bio, -ENODATA);
-			return;
+			return 0;
 		}
 	}
 
