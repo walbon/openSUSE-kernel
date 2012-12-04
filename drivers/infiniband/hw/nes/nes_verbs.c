@@ -597,19 +597,9 @@ static int nes_query_port(struct ib_device *ibdev, u8 port, struct ib_port_attr 
 	props->pkey_tbl_len = 1;
 	props->qkey_viol_cntr = 0;
 	props->active_width = IB_WIDTH_4X;
-	props->active_speed = 1;
+	props->active_speed = IB_SPEED_SDR;
 	props->max_msg_sz = 0x80000000;
 
-	return 0;
-}
-
-
-/**
- * nes_modify_port
- */
-static int nes_modify_port(struct ib_device *ibdev, u8 port,
-		int port_modify_mask, struct ib_port_modify *props)
-{
 	return 0;
 }
 
@@ -3882,7 +3872,6 @@ struct nes_ib_device *nes_init_ofa_device(struct net_device *netdev)
 	nesibdev->ibdev.dev.parent = &nesdev->pcidev->dev;
 	nesibdev->ibdev.query_device = nes_query_device;
 	nesibdev->ibdev.query_port = nes_query_port;
-	nesibdev->ibdev.modify_port = nes_modify_port;
 	nesibdev->ibdev.query_pkey = nes_query_pkey;
 	nesibdev->ibdev.query_gid = nes_query_gid;
 	nesibdev->ibdev.alloc_ucontext = nes_alloc_ucontext;

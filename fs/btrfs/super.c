@@ -987,7 +987,6 @@ static struct dentry *mount_subvol(const char *subvol_name, int flags,
 
 	if (!is_subvolume_inode(nd.path.dentry->d_inode)) {
 		path_put(&nd.path);
-		mntput(mnt);
 		error = -EINVAL;
 		printk(KERN_ERR "btrfs: '%s' is not a valid subvolume\n",
 				subvol_name);

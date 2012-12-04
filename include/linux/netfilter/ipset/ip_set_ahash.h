@@ -5,6 +5,11 @@
 #include <linux/jhash.h>
 #include <linux/netfilter/ipset/ip_set_timeout.h>
 
+#define CONCAT(a, b, c)		a##b##c
+#define TOKEN(a, b, c)		CONCAT(a, b, c)
+
+#define type_pf_next		TOKEN(TYPE, PF, _elem)
+
 /* Hashing which uses arrays to resolve clashing. The hash table is resized
  * (doubled) when searching becomes too long.
  * Internally jhash is used with the assumption that the size of the
@@ -54,6 +59,7 @@ struct ip_set_hash {
 	u32 initval;		/* random jhash init value */
 	u32 timeout;		/* timeout value, if enabled */
 	struct timer_list gc;	/* garbage collection when timeout enabled */
+	struct type_pf_next next; /* temporary storage for uadd */
 #ifdef IP_SET_HASH_WITH_NETMASK
 	u8 netmask;		/* netmask value for subnets to store */
 #endif
@@ -217,6 +223,7 @@ ip_set_hash_destroy(struct ip_set *set)
 #define type_pf_data_netmask	TOKEN(TYPE, PF, _data_netmask)
 #define type_pf_data_list	TOKEN(TYPE, PF, _data_list)
 #define type_pf_data_tlist	TOKEN(TYPE, PF, _data_tlist)
+#define type_pf_data_next	TOKEN(TYPE, PF, _data_next)
 
 #define type_pf_elem		TOKEN(TYPE, PF, _elem)
 #define type_pf_telem		TOKEN(TYPE, PF, _telem)
@@ -346,10 +353,13 @@ retry:
 	return 0;
 }
 
+static inline void
+type_pf_data_next(struct ip_set_hash *h, const struct type_pf_elem *d);
+
 /* Add an element to a hash and update the internal counters when succeeded,
  * otherwise report the proper error code. */
 static int
-type_pf_add(struct ip_set *set, void *value, u32 timeout)
+type_pf_add(struct ip_set *set, void *value, u32 timeout, u32 flags)
 {
 	struct ip_set_hash *h = set->data;
 	struct htable *t;
@@ -372,8 +382,11 @@ type_pf_add(struct ip_set *set, void *value, u32 timeout)
 		}
 
 	ret = type_pf_elem_add(n, value);
-	if (ret != 0)
+	if (ret != 0) {
+		if (ret == -EAGAIN)
+			type_pf_data_next(h, d);
 		goto out;
+	}
 
 #ifdef IP_SET_HASH_WITH_NETS
 	add_cidr(h, d->cidr, HOST_MASK);
@@ -388,7 +401,7 @@ out:
  * and free up space if possible.
  */
 static int
-type_pf_del(struct ip_set *set, void *value, u32 timeout)
+type_pf_del(struct ip_set *set, void *value, u32 timeout, u32 flags)
 {
 	struct ip_set_hash *h = set->data;
 	struct htable *t = h->table;
@@ -463,7 +476,7 @@ type_pf_test_cidrs(struct ip_set *set, struct type_pf_elem *d, u32 timeout)
 
 /* Test whether the element is added to the set */
 static int
-type_pf_test(struct ip_set *set, void *value, u32 timeout)
+type_pf_test(struct ip_set *set, void *value, u32 timeout, u32 flags)
 {
 	struct ip_set_hash *h = set->data;
 	struct htable *t = h->table;
@@ -589,7 +602,7 @@ type_pf_kadt(struct ip_set *set, const struct sk_buff * skb,
 	     enum ipset_adt adt, u8 pf, u8 dim, u8 flags);
 static int
 type_pf_uadt(struct ip_set *set, struct nlattr *tb[],
-	     enum ipset_adt adt, u32 *lineno, u32 flags);
+	     enum ipset_adt adt, u32 *lineno, u32 flags, bool retried);
 
 static const struct ip_set_type_variant type_pf_variant = {
 	.kadt	= type_pf_kadt,
@@ -776,7 +789,7 @@ retry:
 }
 
 static int
-type_pf_tadd(struct ip_set *set, void *value, u32 timeout)
+type_pf_tadd(struct ip_set *set, void *value, u32 timeout, u32 flags)
 {
 	struct ip_set_hash *h = set->data;
 	struct htable *t = h->table;
@@ -784,6 +797,7 @@ type_pf_tadd(struct ip_set *set, void *value, u32 timeout)
 	struct hbucket *n;
 	struct type_pf_elem *data;
 	int ret = 0, i, j = AHASH_MAX_SIZE + 1;
+	bool flag_exist = flags & IPSET_FLAG_EXIST;
 	u32 key;
 
 	if (h->elements >= h->maxelem)
@@ -799,7 +813,7 @@ type_pf_tadd(struct ip_set *set, void *value, u32 timeout)
 	for (i = 0; i < n->pos; i++) {
 		data = ahash_tdata(n, i);
 		if (type_pf_data_equal(data, d)) {
-			if (type_pf_data_expired(data))
+			if (type_pf_data_expired(data) || flag_exist)
 				j = i;
 			else {
 				ret = -IPSET_ERR_EXIST;
@@ -820,8 +834,11 @@ type_pf_tadd(struct ip_set *set, void *value, u32 timeout)
 		goto out;
 	}
 	ret = type_pf_elem_tadd(n, d, timeout);
-	if (ret != 0)
+	if (ret != 0) {
+		if (ret == -EEXIST)
+			type_pf_data_next(h, d);
 		goto out;
+	}
 
 #ifdef IP_SET_HASH_WITH_NETS
 	add_cidr(h, d->cidr, HOST_MASK);
@@ -833,7 +850,7 @@ out:
 }
 
 static int
-type_pf_tdel(struct ip_set *set, void *value, u32 timeout)
+type_pf_tdel(struct ip_set *set, void *value, u32 timeout, u32 flags)
 {
 	struct ip_set_hash *h = set->data;
 	struct htable *t = h->table;
@@ -905,7 +922,7 @@ type_pf_ttest_cidrs(struct ip_set *set, struct type_pf_elem *d, u32 timeout)
 #endif
 
 static int
-type_pf_ttest(struct ip_set *set, void *value, u32 timeout)
+type_pf_ttest(struct ip_set *set, void *value, u32 timeout, u32 flags)
 {
 	struct ip_set_hash *h = set->data;
 	struct htable *t = h->table;

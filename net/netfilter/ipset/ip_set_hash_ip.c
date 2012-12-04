@@ -108,6 +108,12 @@ nla_put_failure:
 #define HOST_MASK	32
 #include <linux/netfilter/ipset/ip_set_ahash.h>
 
+static inline void
+hash_ip4_data_next(struct ip_set_hash *h, const struct hash_ip4_elem *d)
+{
+	h->next.ip = ntohl(d->ip);
+}
+
 static int
 hash_ip4_kadt(struct ip_set *set, const struct sk_buff *skb,
 	      enum ipset_adt adt, u8 pf, u8 dim, u8 flags)
@@ -121,12 +127,12 @@ hash_ip4_kadt(struct ip_set *set, const struct sk_buff *skb,
 	if (ip == 0)
 		return -EINVAL;
 
-	return adtfn(set, &ip, h->timeout);
+	return adtfn(set, &ip, h->timeout, flags);
 }
 
 static int
 hash_ip4_uadt(struct ip_set *set, struct nlattr *tb[],
-	      enum ipset_adt adt, u32 *lineno, u32 flags)
+	      enum ipset_adt adt, u32 *lineno, u32 flags, bool retried)
 {
 	const struct ip_set_hash *h = set->data;
 	ipset_adtfn adtfn = set->variant->adt[adt];
@@ -157,7 +163,7 @@ hash_ip4_uadt(struct ip_set *set, struct nlattr *tb[],
 		nip = htonl(ip);
 		if (nip == 0)
 			return -IPSET_ERR_HASH_ELEM;
-		return adtfn(set, &nip, timeout);
+		return adtfn(set, &nip, timeout, flags);
 	}
 
 	if (tb[IPSET_ATTR_IP_TO]) {
@@ -178,11 +184,13 @@ hash_ip4_uadt(struct ip_set *set, struct nlattr *tb[],
 
 	hosts = h->netmask == 32 ? 1 : 2 << (32 - h->netmask - 1);
 
+	if (retried)
+		ip = h->next.ip;
 	for (; !before(ip_to, ip); ip += hosts) {
 		nip = htonl(ip);
 		if (nip == 0)
 			return -IPSET_ERR_HASH_ELEM;
-		ret = adtfn(set, &nip, timeout);
+		ret = adtfn(set, &nip, timeout, flags);
 
 		if (ret && !ip_set_eexist(ret, flags))
 			return ret;
@@ -281,6 +289,11 @@ nla_put_failure:
 #define HOST_MASK	128
 #include <linux/netfilter/ipset/ip_set_ahash.h>
 
+static inline void
+hash_ip6_data_next(struct ip_set_hash *h, const struct hash_ip6_elem *d)
+{
+}
+
 static int
 hash_ip6_kadt(struct ip_set *set, const struct sk_buff *skb,
 	      enum ipset_adt adt, u8 pf, u8 dim, u8 flags)
@@ -294,7 +307,7 @@ hash_ip6_kadt(struct ip_set *set, const struct sk_buff *skb,
 	if (ipv6_addr_any(&ip.in6))
 		return -EINVAL;
 
-	return adtfn(set, &ip, h->timeout);
+	return adtfn(set, &ip, h->timeout, flags);
 }
 
 static const struct nla_policy hash_ip6_adt_policy[IPSET_ATTR_ADT_MAX + 1] = {
@@ -305,7 +318,7 @@ static const struct nla_policy hash_ip6_adt_policy[IPSET_ATTR_ADT_MAX + 1] = {
 
 static int
 hash_ip6_uadt(struct ip_set *set, struct nlattr *tb[],
-	      enum ipset_adt adt, u32 *lineno, u32 flags)
+	      enum ipset_adt adt, u32 *lineno, u32 flags, bool retried)
 {
 	const struct ip_set_hash *h = set->data;
 	ipset_adtfn adtfn = set->variant->adt[adt];
@@ -336,7 +349,7 @@ hash_ip6_uadt(struct ip_set *set, struct nlattr *tb[],
 		timeout = ip_set_timeout_uget(tb[IPSET_ATTR_TIMEOUT]);
 	}
 
-	ret = adtfn(set, &ip, timeout);
+	ret = adtfn(set, &ip, timeout, flags);
 
 	return ip_set_eexist(ret, flags) ? 0 : ret;
 }
