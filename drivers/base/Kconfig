@@ -141,6 +141,12 @@ config EXTRA_FIRMWARE_DIR
 	  the /lib/firmware/ directory or another separate directory
 	  containing firmware files.
 
+config FIRMWARE_SIG
+	bool "Firmware signature verification"
+	depends on FW_LOADER && MODULE_SIG
+	help
+	  Enable firmware signature check.
+
 config DEBUG_DRIVER
 	bool "Driver Core verbose debug messages"
 	depends on DEBUG_KERNEL

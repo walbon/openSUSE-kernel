@@ -743,6 +743,12 @@ mod_sign_cmd = true
 endif
 export mod_sign_cmd
 
+ifeq ($(CONFIG_FIRMWARE_SIG),y)
+fw_sign_cmd = perl $(srctree)/scripts/sign-file -f $(MODSECKEY) $(MODPUBKEY)
+else
+fw_sign_cmd = true
+endif
+export fw_sign_cmd
 
 ifeq ($(KBUILD_EXTMOD),)
 core-y		+= kernel/ mm/ fs/ ipc/ security/ crypto/ block/

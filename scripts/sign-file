@@ -4,38 +4,48 @@
 #
 # Format:
 #
-#	./scripts/sign-file [-v] <key> <x509> <module> [<dest>]
+#	./scripts/sign-file [-v] [-f] [-a algo] <key> <x509> <module> [<dest>]
 #
 #
 use strict;
 use FileHandle;
 use IPC::Open2;
+use Getopt::Long;
 
-my $verbose = 0;
-if ($#ARGV >= 0 && $ARGV[0] eq "-v") {
-    $verbose = 1;
-    shift;
+sub usage()
+{
+    print "Format: ./scripts/sign-file [options] <key> <x509> <module> [<dest>]
+    -v       verbose output
+    -f       create a firmware signature file
+    -a algo  specify hash algorithm
+";
+    exit;
 }
 
-die "Format: ./scripts/sign-file [-v] <key> <x509> <module> [<dest>]\n"
-    if ($#ARGV != 2 && $#ARGV != 3);
+my $verbose = 0;
+my $hashalgo = "";
+my $sign_fw = 0;
+
+GetOptions(
+    'v|verbose' => \$verbose,
+    'f|firmware' => \$sign_fw,
+    'a|algo=s' => \$hashalgo) || usage();
+usage() if ($#ARGV != 2 && $#ARGV != 3);
 
 my $private_key = $ARGV[0];
 my $x509 = $ARGV[1];
 my $module = $ARGV[2];
-my $dest = ($#ARGV == 3) ? $ARGV[3] : $ARGV[2] . "~";
+my $dest = $ARGV[3] ? $ARGV[3] : $ARGV[2] . ($sign_fw ? ".sig" : "~");
+my $mode_name = $sign_fw ? "firmware" : "module";
 
 die "Can't read private key\n" unless (-r $private_key);
 die "Can't read X.509 certificate\n" unless (-r $x509);
-die "Can't read module\n" unless (-r $module);
+die "Can't read $mode_name\n" unless (-r $module);
 
 #
 # Read the kernel configuration
 #
-my %config = (
-    CONFIG_MODULE_SIG_SHA512 => 1
-    );
-
+my %config;
 if (-r ".config") {
     open(FD, "<.config") || die ".config";
     while (<FD>) {
@@ -44,6 +54,22 @@ if (-r ".config") {
 	}
     }
     close(FD);
+}
+
+if ($hashalgo eq "") {
+    if (exists $config{"CONFIG_MODULE_SIG_SHA1"}) {
+	$hashalgo="sha1";
+    } elsif (exists $config{"CONFIG_MODULE_SIG_SHA224"}) {
+	$hashalgo="sha224";
+    } elsif (exists $config{"CONFIG_MODULE_SIG_SHA256"}) {
+	$hashalgo="sha256";
+    } elsif (exists $config{"CONFIG_MODULE_SIG_SHA384"}) {
+	$hashalgo="sha384";
+    } elsif (exists $config{"CONFIG_MODULE_SIG_SHA512"}) {
+	$hashalgo="sha512";
+    } else {
+	die "Can't determine hash algorithm";
+    }
 }
 
 #
@@ -322,35 +348,35 @@ my $id_type = 1;	# Identifier type: X.509
 # Digest the data
 #
 my ($dgst, $prologue) = ();
-if (exists $config{"CONFIG_MODULE_SIG_SHA1"}) {
+if ($hashalgo eq "sha1") {
     $prologue = pack("C*",
 		     0x30, 0x21, 0x30, 0x09, 0x06, 0x05,
 		     0x2B, 0x0E, 0x03, 0x02, 0x1A,
 		     0x05, 0x00, 0x04, 0x14);
     $dgst = "-sha1";
     $hash = 2;
-} elsif (exists $config{"CONFIG_MODULE_SIG_SHA224"}) {
+} elsif ($hashalgo eq "sha224") {
     $prologue = pack("C*",
 		     0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09,
 		     0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04,
 		     0x05, 0x00, 0x04, 0x1C);
     $dgst = "-sha224";
     $hash = 7;
-} elsif (exists $config{"CONFIG_MODULE_SIG_SHA256"}) {
+} elsif ($hashalgo eq "sha256") {
     $prologue = pack("C*",
 		     0x30, 0x31, 0x30, 0x0d, 0x06, 0x09,
 		     0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01,
 		     0x05, 0x00, 0x04, 0x20);
     $dgst = "-sha256";
     $hash = 4;
-} elsif (exists $config{"CONFIG_MODULE_SIG_SHA384"}) {
+} elsif ($hashalgo eq "sha384") {
     $prologue = pack("C*",
 		     0x30, 0x41, 0x30, 0x0d, 0x06, 0x09,
 		     0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02,
 		     0x05, 0x00, 0x04, 0x30);
     $dgst = "-sha384";
     $hash = 5;
-} elsif (exists $config{"CONFIG_MODULE_SIG_SHA512"}) {
+} elsif ($hashalgo eq "sha512") {
     $prologue = pack("C*",
 		     0x30, 0x51, 0x30, 0x0d, 0x06, 0x09,
 		     0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03,
@@ -358,7 +384,7 @@ if (exists $config{"CONFIG_MODULE_SIG_SHA1"}) {
     $dgst = "-sha512";
     $hash = 6;
 } else {
-    die "Can't determine hash algorithm";
+    die "Invalid hash algorithm $hashalgo";
 }
 
 #
@@ -393,7 +419,9 @@ die "openssl rsautl died: $?" if ($? >> 8);
 #
 my $unsigned_module = read_file($module);
 
-my $magic_number = "~Module signature appended~\n";
+my $magic_number = $sign_fw ?
+    "~Linux firmware signature~\n" :
+    "~Module signature appended~\n";
 
 my $info = pack("CCCCCxxxN",
 		$algo, $hash, $id_type,
@@ -402,7 +430,7 @@ my $info = pack("CCCCCxxxN",
 		length($signature));
 
 if ($verbose) {
-    print "Size of unsigned module: ", length($unsigned_module), "\n";
+    print "Size of unsigned $mode_name: ", length($unsigned_module), "\n";
     print "Size of signer's name  : ", length($signers_name), "\n";
     print "Size of key identifier : ", length($key_identifier), "\n";
     print "Size of signature      : ", length($signature), "\n";
@@ -414,7 +442,16 @@ if ($verbose) {
 
 open(FD, ">$dest") || die $dest;
 binmode FD;
-print FD
+if ($sign_fw) {
+    print FD
+    $magic_number,
+    $info,
+    $signers_name,
+    $key_identifier,
+    $signature
+    ;
+} else {
+    print FD
     $unsigned_module,
     $signers_name,
     $key_identifier,
@@ -422,8 +459,9 @@ print FD
     $info,
     $magic_number
     ;
+}
 close FD || die $dest;
 
-if ($#ARGV != 3) {
+if (!$sign_fw && $#ARGV != 3) {
     rename($dest, $module) || die $module;
 }
