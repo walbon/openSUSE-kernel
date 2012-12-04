@@ -2,8 +2,9 @@
 
 	.section ".init.data","aw"
 
-GLOBAL(modsign_certificate_list)
+	.globl modsign_certificate_list
+modsign_certificate_list:
 	.incbin "signing_key.x509"
 	.incbin "extra_certificates"
-END(modsign_certificate_list)
-GLOBAL(modsign_certificate_list_end)
+	.globl modsign_certificate_list_end
+modsign_certificate_list_end:
