@@ -79,4 +79,11 @@ static inline int uncache_firmware(const char *name)
 }
 #endif
 
+#ifdef CONFIG_FIRMWARE_SIG
+#define FIRMWARE_SIG_STRING "~Linux firmware signature~\n"
+/* defined in kernel/module_signing.c */
+int fw_verify_sig(const void *fw_data, size_t fw_size,
+		  const void *sig_data, size_t sig_size);
+#endif
+
 #endif
