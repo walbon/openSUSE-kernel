@@ -97,11 +97,6 @@ struct ctlr_info {
 	unsigned long  		*cmd_pool_bits;
 	int			nr_allocs;
 	int			nr_frees;
-	int			busy_initializing;
-#define BUSY_INIT_IDLE 0
-#define BUSY_INIT_BUSY 1
-#define BUSY_INIT_SHUTDOWN 2
-	int			busy_scanning;
 	int			scan_finished;
 	spinlock_t		scan_lock;
 	wait_queue_head_t	scan_wait_queue;
