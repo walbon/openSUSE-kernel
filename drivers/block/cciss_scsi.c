@@ -1710,5 +1710,6 @@ static int  cciss_eh_abort_handler(struct scsi_cmnd *scsicmd)
 
 #define cciss_scsi_setup(cntl_num)
 static void print_cmd(CommandList_struct *cp) {}
+#define cciss_engage_scsi(h)
 
 #endif /* CONFIG_CISS_SCSI_TAPE */
