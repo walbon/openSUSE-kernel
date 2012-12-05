@@ -35,8 +35,6 @@ struct access_method {
 	unsigned long (*fifo_full)(struct ctlr_info *h);
 	bool (*intr_pending)(struct ctlr_info *h);
 	unsigned long (*command_completed)(struct ctlr_info *h, u8 q);
-	unsigned long (*lock)(struct ctlr_info *h);
-	void (*unlock)(struct ctlr_info *h, unsigned long flags);
 };
 
 struct hpsa_scsi_dev_t {
@@ -248,9 +246,6 @@ static void SA5_submit_command(struct ctlr_info *h,
 		c->Header.Tag.lower);
 	writel(c->busaddr, h->vaddr + SA5_REQUEST_PORT_OFFSET);
 	(void) readl(h->vaddr + SA5_SCRATCHPAD_OFFSET);
-	h->commands_outstanding++;
-	if (h->commands_outstanding > h->max_outstanding)
-		h->max_outstanding = h->commands_outstanding;
 }
 
 /*
@@ -289,7 +284,7 @@ static void SA5_performant_intr_mask(struct ctlr_info *h, unsigned long val)
 static unsigned long SA5_performant_completed(struct ctlr_info *h, u8 q)
 {
 	struct reply_pool *rq = &h->reply_queue[q];
-	unsigned long register_value = FIFO_EMPTY;
+	unsigned long flags, register_value = FIFO_EMPTY;
 
 	/* msi auto clears the interrupt pending bit. */
 	if (!(h->msi_vector || h->msix_vector)) {
@@ -307,7 +302,9 @@ static unsigned long SA5_performant_completed(struct ctlr_info *h, u8 q)
 	if ((rq->head[rq->current_entry] & 1) == rq->wraparound) {
 		register_value = rq->head[rq->current_entry];
 		rq->current_entry++;
+		spin_lock_irqsave(&h->lock, flags);
 		h->commands_outstanding--;
+		spin_unlock_irqrestore(&h->lock, flags);
 	} else {
 		register_value = FIFO_EMPTY;
 	}
@@ -340,9 +337,13 @@ static unsigned long SA5_completed(struct ctlr_info *h,
 {
 	unsigned long register_value
 		= readl(h->vaddr + SA5_REPLY_PORT_OFFSET);
+	unsigned long flags;
 
-	if (register_value != FIFO_EMPTY)
+	if (register_value != FIFO_EMPTY) {
+		spin_lock_irqsave(&h->lock, flags);
 		h->commands_outstanding--;
+		spin_unlock_irqrestore(&h->lock, flags);
+	}
 
 #ifdef HPSA_DEBUG
 	if (register_value != FIFO_EMPTY)
@@ -355,21 +356,6 @@ static unsigned long SA5_completed(struct ctlr_info *h,
 	return register_value;
 }
 
-/*
- * Does controller specific locking for submits
- */
-static unsigned long SA5_lock(struct ctlr_info *h)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&h->lock, flags);
-	return flags;
-}
-
-static void SA5_unlock(struct ctlr_info *h, unsigned long flags)
-{
-	spin_unlock_irqrestore(&h->lock, flags);
-}
 /*
  *	Returns true if an interrupt is pending..
  */
@@ -402,8 +388,6 @@ static struct access_method SA5_access = {
 	SA5_fifo_full,
 	SA5_intr_pending,
 	SA5_completed,
-	SA5_lock,
-	SA5_unlock,
 };
 
 static struct access_method SA5_performant_access = {
@@ -412,8 +396,6 @@ static struct access_method SA5_performant_access = {
 	SA5_fifo_full,
 	SA5_performant_intr_pending,
 	SA5_performant_completed,
-	SA5_lock,
-	SA5_unlock,
 };
 
 struct board_type {
