@@ -1,7 +1,7 @@
 /*
  *
  * Intel Management Engine Interface (Intel MEI) Linux driver
- * Copyright (c) 2003-2011, Intel Corporation.
+ * Copyright (c) 2003-2012, Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -16,7 +16,7 @@
 
 #include <linux/pci.h>
 #include "mei_dev.h"
-#include "mei.h"
+#include <linux/mei.h>
 #include "interface.h"
 
 
@@ -58,15 +58,17 @@ void mei_disable_interrupts(struct mei_device *dev)
 }
 
 /**
- * _host_get_filled_slots - gets number of device filled buffer slots
+ * mei_hbuf_filled_slots - gets number of device filled buffer slots
  *
  * @device: the device structure
  *
  * returns number of filled slots
  */
-static unsigned char _host_get_filled_slots(const struct mei_device *dev)
+static unsigned char mei_hbuf_filled_slots(struct mei_device *dev)
 {
 	char read_ptr, write_ptr;
+
+	dev->host_hw_state = mei_hcsr_read(dev);
 
 	read_ptr = (char) ((dev->host_hw_state & H_CBRP) >> 8);
 	write_ptr = (char) ((dev->host_hw_state & H_CBWP) >> 16);
@@ -75,43 +77,33 @@ static unsigned char _host_get_filled_slots(const struct mei_device *dev)
 }
 
 /**
- * mei_host_buffer_is_empty - checks if host buffer is empty.
+ * mei_hbuf_is_empty - checks if host buffer is empty.
  *
  * @dev: the device structure
  *
- * returns 1 if empty, 0 - otherwise.
+ * returns true if empty, false - otherwise.
  */
-int mei_host_buffer_is_empty(struct mei_device *dev)
+bool mei_hbuf_is_empty(struct mei_device *dev)
 {
-	unsigned char filled_slots;
-
-	dev->host_hw_state = mei_hcsr_read(dev);
-	filled_slots = _host_get_filled_slots(dev);
-
-	if (filled_slots == 0)
-		return 1;
-
-	return 0;
+	return mei_hbuf_filled_slots(dev) == 0;
 }
 
 /**
- * mei_count_empty_write_slots - counts write empty slots.
+ * mei_hbuf_empty_slots - counts write empty slots.
  *
  * @dev: the device structure
  *
  * returns -1(ESLOTS_OVERFLOW) if overflow, otherwise empty slots count
  */
-int mei_count_empty_write_slots(struct mei_device *dev)
+int mei_hbuf_empty_slots(struct mei_device *dev)
 {
-	unsigned char buffer_depth, filled_slots, empty_slots;
+	unsigned char filled_slots, empty_slots;
 
-	dev->host_hw_state = mei_hcsr_read(dev);
-	buffer_depth = (unsigned char) ((dev->host_hw_state & H_CBD) >> 24);
-	filled_slots = _host_get_filled_slots(dev);
-	empty_slots = buffer_depth - filled_slots;
+	filled_slots = mei_hbuf_filled_slots(dev);
+	empty_slots = dev->hbuf_depth - filled_slots;
 
 	/* check for overflow */
-	if (filled_slots > buffer_depth)
+	if (filled_slots > dev->hbuf_depth)
 		return -EOVERFLOW;
 
 	return empty_slots;
@@ -125,62 +117,48 @@ int mei_count_empty_write_slots(struct mei_device *dev)
  * @write_buffer: message buffer will be written
  * @write_length: message size will be written
  *
- * returns 1 if success, 0 - otherwise.
+ * This function returns -EIO if write has failed
  */
-int mei_write_message(struct mei_device *dev,
-			     struct mei_msg_hdr *header,
-			     unsigned char *write_buffer,
-			     unsigned long write_length)
+int mei_write_message(struct mei_device *dev, struct mei_msg_hdr *header,
+		      unsigned char *buf, unsigned long length)
 {
-	u32 temp_msg = 0;
-	unsigned long bytes_written = 0;
-	unsigned char buffer_depth, filled_slots, empty_slots;
-	unsigned long dw_to_write;
+	unsigned long rem, dw_cnt;
+	u32 *reg_buf = (u32 *)buf;
+	int i;
+	int empty_slots;
 
-	dev->host_hw_state = mei_hcsr_read(dev);
-
-	dev_dbg(&dev->pdev->dev,
-			"host_hw_state = 0x%08x.\n",
-			dev->host_hw_state);
 
 	dev_dbg(&dev->pdev->dev,
 			"mei_write_message header=%08x.\n",
 			*((u32 *) header));
 
-	buffer_depth = (unsigned char) ((dev->host_hw_state & H_CBD) >> 24);
-	filled_slots = _host_get_filled_slots(dev);
-	empty_slots = buffer_depth - filled_slots;
-	dev_dbg(&dev->pdev->dev,
-			"filled = %hu, empty = %hu.\n",
-			filled_slots, empty_slots);
+	empty_slots = mei_hbuf_empty_slots(dev);
+	dev_dbg(&dev->pdev->dev, "empty slots = %hu.\n", empty_slots);
 
-	dw_to_write = ((write_length + 3) / 4);
-
-	if (dw_to_write > empty_slots)
-		return 0;
+	dw_cnt = mei_data2slots(length);
+	if (empty_slots < 0 || dw_cnt > empty_slots)
+		return -EIO;
 
 	mei_reg_write(dev, H_CB_WW, *((u32 *) header));
 
-	while (write_length >= 4) {
-		mei_reg_write(dev, H_CB_WW,
-				*(u32 *) (write_buffer + bytes_written));
-		bytes_written += 4;
-		write_length -= 4;
+	for (i = 0; i < length / 4; i++)
+		mei_reg_write(dev, H_CB_WW, reg_buf[i]);
+
+	rem = length & 0x3;
+	if (rem > 0) {
+		u32 reg = 0;
+		memcpy(&reg, &buf[length - rem], rem);
+		mei_reg_write(dev, H_CB_WW, reg);
 	}
 
-	if (write_length > 0) {
-		memcpy(&temp_msg, &write_buffer[bytes_written], write_length);
-		mei_reg_write(dev, H_CB_WW, temp_msg);
-	}
-
+	dev->host_hw_state = mei_hcsr_read(dev);
 	dev->host_hw_state |= H_IG;
 	mei_hcsr_set(dev);
 	dev->me_hw_state = mei_mecsr_read(dev);
 	if ((dev->me_hw_state & ME_RDY_HRA) != ME_RDY_HRA)
-		return 0;
+		return -EIO;
 
-	dev->write_hang = 0;
-	return 1;
+	return 0;
 }
 
 /**
@@ -216,26 +194,17 @@ int mei_count_full_read_slots(struct mei_device *dev)
  * @buffer: message buffer will be written
  * @buffer_length: message size will be read
  */
-void mei_read_slots(struct mei_device *dev,
-		     unsigned char *buffer, unsigned long buffer_length)
+void mei_read_slots(struct mei_device *dev, unsigned char *buffer,
+		    unsigned long buffer_length)
 {
-	u32 i = 0;
-	unsigned char temp_buf[sizeof(u32)];
+	u32 *reg_buf = (u32 *)buffer;
 
-	while (buffer_length >= sizeof(u32)) {
-		((u32 *) buffer)[i] = mei_mecbrw_read(dev);
-
-		dev_dbg(&dev->pdev->dev,
-				"buffer[%d]= %d\n",
-				i, ((u32 *) buffer)[i]);
-
-		i++;
-		buffer_length -= sizeof(u32);
-	}
+	for (; buffer_length >= sizeof(u32); buffer_length -= sizeof(u32))
+		*reg_buf++ = mei_mecbrw_read(dev);
 
 	if (buffer_length > 0) {
-		*((u32 *) &temp_buf) = mei_mecbrw_read(dev);
-		memcpy(&buffer[i * 4], temp_buf, buffer_length);
+		u32 reg = mei_mecbrw_read(dev);
+		memcpy(reg_buf, &reg, buffer_length);
 	}
 
 	dev->host_hw_state |= H_IG;
@@ -256,13 +225,13 @@ int mei_flow_ctrl_creds(struct mei_device *dev, struct mei_cl *cl)
 {
 	int i;
 
-	if (!dev->num_mei_me_clients)
+	if (!dev->me_clients_num)
 		return 0;
 
 	if (cl->mei_flow_ctrl_creds > 0)
 		return 1;
 
-	for (i = 0; i < dev->num_mei_me_clients; i++) {
+	for (i = 0; i < dev->me_clients_num; i++) {
 		struct mei_me_client  *me_cl = &dev->me_clients[i];
 		if (me_cl->client_id == cl->me_client_id) {
 			if (me_cl->mei_flow_ctrl_creds) {
@@ -285,16 +254,16 @@ int mei_flow_ctrl_creds(struct mei_device *dev, struct mei_cl *cl)
  * @returns
  *	0 on success
  *	-ENOENT when me client is not found
- *	-EINVAL wehn ctrl credits are <= 0
+ *	-EINVAL when ctrl credits are <= 0
  */
 int mei_flow_ctrl_reduce(struct mei_device *dev, struct mei_cl *cl)
 {
 	int i;
 
-	if (!dev->num_mei_me_clients)
+	if (!dev->me_clients_num)
 		return -ENOENT;
 
-	for (i = 0; i < dev->num_mei_me_clients; i++) {
+	for (i = 0; i < dev->me_clients_num; i++) {
 		struct mei_me_client  *me_cl = &dev->me_clients[i];
 		if (me_cl->client_id == cl->me_client_id) {
 			if (me_cl->props.single_recv_buf != 0) {
@@ -318,7 +287,7 @@ int mei_flow_ctrl_reduce(struct mei_device *dev, struct mei_cl *cl)
  * @dev: the device structure
  * @cl: private data of the file object
  *
- * returns 1 if success, 0 - otherwise.
+ * This function returns -EIO on write failure
  */
 int mei_send_flow_control(struct mei_device *dev, struct mei_cl *cl)
 {
@@ -333,21 +302,18 @@ int mei_send_flow_control(struct mei_device *dev, struct mei_cl *cl)
 	mei_hdr->reserved = 0;
 
 	mei_flow_control = (struct hbm_flow_control *) &dev->wr_msg_buf[1];
-	memset(mei_flow_control, 0, sizeof(mei_flow_control));
+	memset(mei_flow_control, 0, sizeof(*mei_flow_control));
 	mei_flow_control->host_addr = cl->host_client_id;
 	mei_flow_control->me_addr = cl->me_client_id;
-	mei_flow_control->cmd.cmd = MEI_FLOW_CONTROL_CMD;
+	mei_flow_control->hbm_cmd = MEI_FLOW_CONTROL_CMD;
 	memset(mei_flow_control->reserved, 0,
 			sizeof(mei_flow_control->reserved));
 	dev_dbg(&dev->pdev->dev, "sending flow control host client = %d, ME client = %d\n",
-	    cl->host_client_id, cl->me_client_id);
-	if (!mei_write_message(dev, mei_hdr,
+		cl->host_client_id, cl->me_client_id);
+
+	return mei_write_message(dev, mei_hdr,
 				(unsigned char *) mei_flow_control,
-				sizeof(struct hbm_flow_control)))
-		return 0;
-
-	return 1;
-
+				sizeof(struct hbm_flow_control));
 }
 
 /**
@@ -381,7 +347,7 @@ int mei_other_client_is_connecting(struct mei_device *dev,
  * @dev: the device structure
  * @cl: private data of the file object
  *
- * returns 1 if success, 0 - otherwise.
+ * This function returns -EIO on write failure
  */
 int mei_disconnect(struct mei_device *dev, struct mei_cl *cl)
 {
@@ -397,18 +363,15 @@ int mei_disconnect(struct mei_device *dev, struct mei_cl *cl)
 
 	mei_cli_disconnect =
 	    (struct hbm_client_disconnect_request *) &dev->wr_msg_buf[1];
-	memset(mei_cli_disconnect, 0, sizeof(mei_cli_disconnect));
+	memset(mei_cli_disconnect, 0, sizeof(*mei_cli_disconnect));
 	mei_cli_disconnect->host_addr = cl->host_client_id;
 	mei_cli_disconnect->me_addr = cl->me_client_id;
-	mei_cli_disconnect->cmd.cmd = CLIENT_DISCONNECT_REQ_CMD;
+	mei_cli_disconnect->hbm_cmd = CLIENT_DISCONNECT_REQ_CMD;
 	mei_cli_disconnect->reserved[0] = 0;
 
-	if (!mei_write_message(dev, mei_hdr,
+	return mei_write_message(dev, mei_hdr,
 				(unsigned char *) mei_cli_disconnect,
-				sizeof(struct hbm_client_disconnect_request)))
-		return 0;
-
-	return 1;
+				sizeof(struct hbm_client_disconnect_request));
 }
 
 /**
@@ -417,7 +380,7 @@ int mei_disconnect(struct mei_device *dev, struct mei_cl *cl)
  * @dev: the device structure
  * @cl: private data of the file object
  *
- * returns 1 if success, 0 - otherwise.
+ * This function returns -EIO on write failure
  */
 int mei_connect(struct mei_device *dev, struct mei_cl *cl)
 {
@@ -435,13 +398,10 @@ int mei_connect(struct mei_device *dev, struct mei_cl *cl)
 	    (struct hbm_client_connect_request *) &dev->wr_msg_buf[1];
 	mei_cli_connect->host_addr = cl->host_client_id;
 	mei_cli_connect->me_addr = cl->me_client_id;
-	mei_cli_connect->cmd.cmd = CLIENT_CONNECT_REQ_CMD;
+	mei_cli_connect->hbm_cmd = CLIENT_CONNECT_REQ_CMD;
 	mei_cli_connect->reserved = 0;
 
-	if (!mei_write_message(dev, mei_hdr,
+	return mei_write_message(dev, mei_hdr,
 				(unsigned char *) mei_cli_connect,
-				sizeof(struct hbm_client_connect_request)))
-		return 0;
-
-	return 1;
+				sizeof(struct hbm_client_connect_request));
 }

@@ -1,7 +1,7 @@
 /*
  *
  * Intel Management Engine Interface (Intel MEI) Linux driver
- * Copyright (c) 2003-2011, Intel Corporation.
+ * Copyright (c) 2003-2012, Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -35,11 +35,34 @@
 
 #include "mei_dev.h"
 #include "hw.h"
-#include "mei.h"
+#include <linux/mei.h>
 #include "interface.h"
-#include "mei_version.h"
 
+/**
+ * mei_me_cl_by_id return index to me_clients for client_id
+ *
+ * @dev: the device structure
+ * @client_id: me client id
+ *
+ * Locking: called under "dev->device_lock" lock
+ *
+ * returns index on success, -ENOENT on failure.
+ */
 
+int mei_me_cl_by_id(struct mei_device *dev, u8 client_id)
+{
+	int i;
+	for (i = 0; i < dev->me_clients_num; i++)
+		if (dev->me_clients[i].client_id == client_id)
+			break;
+	if (WARN_ON(dev->me_clients[i].client_id != client_id))
+		return -ENOENT;
+
+	if (i == dev->me_clients_num)
+		return -ENOENT;
+
+	return i;
+}
 
 /**
  * mei_ioctl_connect_client - the connect to fw client IOCTL function
@@ -85,7 +108,7 @@ int mei_ioctl_connect_client(struct file *file,
 
 	cb->major_file_operations = MEI_IOCTL;
 
-	if (dev->mei_state != MEI_ENABLED) {
+	if (dev->dev_state != MEI_DEV_ENABLED) {
 		rets = -ENODEV;
 		goto end;
 	}
@@ -96,7 +119,7 @@ int mei_ioctl_connect_client(struct file *file,
 	}
 
 	/* find ME client we're trying to connect to */
-	i = mei_find_me_client_index(dev, data->in_client_uuid);
+	i = mei_me_cl_by_uuid(dev, &data->in_client_uuid);
 	if (i >= 0 && !dev->me_clients[i].props.fixed_address) {
 		cl->me_client_id = dev->me_clients[i].client_id;
 		cl->state = MEI_FILE_CONNECTING;
@@ -109,8 +132,8 @@ int mei_ioctl_connect_client(struct file *file,
 	dev_dbg(&dev->pdev->dev, "FW Client - Max Msg Len = %d\n",
 			dev->me_clients[i].props.max_msg_length);
 
-	/* if we're connecting to amthi client so we will use the exist
-	 * connection
+	/* if we're connecting to amthi client then we will use the
+	 * existing connection
 	 */
 	if (uuid_le_cmp(data->in_client_uuid, mei_amthi_guid) == 0) {
 		dev_dbg(&dev->pdev->dev, "FW Client is amthi\n");
@@ -121,7 +144,7 @@ int mei_ioctl_connect_client(struct file *file,
 		clear_bit(cl->host_client_id, dev->host_clients_map);
 		list_for_each_entry_safe(cl_pos, cl_next,
 					 &dev->file_list, link) {
-			if (mei_fe_same_id(cl, cl_pos)) {
+			if (mei_cl_cmp_id(cl, cl_pos)) {
 				dev_dbg(&dev->pdev->dev,
 					"remove file private data node host"
 				    " client = %d, ME client = %d.\n",
@@ -161,8 +184,8 @@ int mei_ioctl_connect_client(struct file *file,
 	if (dev->mei_host_buffer_is_empty
 	    && !mei_other_client_is_connecting(dev, cl)) {
 		dev_dbg(&dev->pdev->dev, "Sending Connect Message\n");
-		dev->mei_host_buffer_is_empty = 0;
-		if (!mei_connect(dev, cl)) {
+		dev->mei_host_buffer_is_empty = false;
+		if (mei_connect(dev, cl)) {
 			dev_dbg(&dev->pdev->dev, "Sending connect message - failed\n");
 			rets = -ENODEV;
 			goto end;
@@ -204,8 +227,8 @@ int mei_ioctl_connect_client(struct file *file,
 		}
 		rets = -EFAULT;
 
-		mei_flush_list(&dev->ctrl_rd_list, cl);
-		mei_flush_list(&dev->ctrl_wr_list, cl);
+		mei_io_list_flush(&dev->ctrl_rd_list, cl);
+		mei_io_list_flush(&dev->ctrl_wr_list, cl);
 		goto end;
 	}
 	rets = 0;
@@ -228,18 +251,15 @@ struct mei_cl_cb *find_amthi_read_list_entry(
 		struct file *file)
 {
 	struct mei_cl *cl_temp;
-	struct mei_cl_cb *cb_pos = NULL;
-	struct mei_cl_cb *cb_next = NULL;
+	struct mei_cl_cb *pos = NULL;
+	struct mei_cl_cb *next = NULL;
 
-	if (!dev->amthi_read_complete_list.status &&
-	    !list_empty(&dev->amthi_read_complete_list.mei_cb.cb_list)) {
-		list_for_each_entry_safe(cb_pos, cb_next,
-		    &dev->amthi_read_complete_list.mei_cb.cb_list, cb_list) {
-			cl_temp = (struct mei_cl *)cb_pos->file_private;
-			if (cl_temp && cl_temp == &dev->iamthif_cl &&
-				cb_pos->file_object == file)
-				return cb_pos;
-		}
+	list_for_each_entry_safe(pos, next,
+	    &dev->amthi_read_complete_list.mei_cb.cb_list, cb_list) {
+		cl_temp = (struct mei_cl *)pos->file_private;
+		if (cl_temp && cl_temp == &dev->iamthif_cl &&
+			pos->file_object == file)
+			return pos;
 	}
 	return NULL;
 }
@@ -262,7 +282,7 @@ struct mei_cl_cb *find_amthi_read_list_entry(
  *  negative on failure.
  */
 int amthi_read(struct mei_device *dev, struct file *file,
-	      char __user *ubuf, size_t length, loff_t *offset)
+	       char __user *ubuf, size_t length, loff_t *offset)
 {
 	int rets;
 	int wait_ret;
@@ -277,19 +297,12 @@ int amthi_read(struct mei_device *dev, struct file *file,
 		return -ETIMEDOUT;
 	}
 
-	for (i = 0; i < dev->num_mei_me_clients; i++) {
-		if (dev->me_clients[i].client_id ==
-		    dev->iamthif_cl.me_client_id)
-			break;
-	}
+	i = mei_me_cl_by_id(dev, dev->iamthif_cl.me_client_id);
 
-	if (i == dev->num_mei_me_clients) {
+	if (i < 0) {
 		dev_dbg(&dev->pdev->dev, "amthi client not found.\n");
 		return -ENODEV;
 	}
-	if (WARN_ON(dev->me_clients[i].client_id != cl->me_client_id))
-		return -ENODEV;
-
 	dev_dbg(&dev->pdev->dev, "checking amthi data\n");
 	cb = find_amthi_read_list_entry(dev, file);
 
@@ -320,8 +333,7 @@ int amthi_read(struct mei_device *dev, struct file *file,
 	dev->iamthif_timer = 0;
 
 	if (cb) {
-		timeout = cb->read_time +
-					msecs_to_jiffies(IAMTHIF_READ_TIMER);
+		timeout = cb->read_time + msecs_to_jiffies(IAMTHIF_READ_TIMER);
 		dev_dbg(&dev->pdev->dev, "amthi timeout = %lud\n",
 				timeout);
 
@@ -334,8 +346,7 @@ int amthi_read(struct mei_device *dev, struct file *file,
 		}
 	}
 	/* if the whole message will fit remove it from the list */
-	if (cb->information >= *offset &&
-	    length >= (cb->information - *offset))
+	if (cb->information >= *offset && length >= (cb->information - *offset))
 		list_del(&cb->cb_list);
 	else if (cb->information > 0 && cb->information <= *offset) {
 		/* end of the message has been reached */
@@ -356,9 +367,7 @@ int amthi_read(struct mei_device *dev, struct file *file,
 	 * the information may be longer */
 	length = min_t(size_t, length, (cb->information - *offset));
 
-	if (copy_to_user(ubuf,
-			 cb->response_buffer.data + *offset,
-			 length))
+	if (copy_to_user(ubuf, cb->response_buffer.data + *offset, length))
 		rets = -EFAULT;
 	else {
 		rets = length;
@@ -393,7 +402,7 @@ int mei_start_read(struct mei_device *dev, struct mei_cl *cl)
 	if (cl->state != MEI_FILE_CONNECTED)
 		return -ENODEV;
 
-	if (dev->mei_state != MEI_ENABLED)
+	if (dev->dev_state != MEI_DEV_ENABLED)
 		return -ENODEV;
 
 	dev_dbg(&dev->pdev->dev, "check if read is pending.\n");
@@ -408,26 +417,15 @@ int mei_start_read(struct mei_device *dev, struct mei_cl *cl)
 
 	dev_dbg(&dev->pdev->dev, "allocation call back successful. host client = %d, ME client = %d\n",
 		cl->host_client_id, cl->me_client_id);
-
-	for (i = 0; i < dev->num_mei_me_clients; i++) {
-		if (dev->me_clients[i].client_id == cl->me_client_id)
-			break;
-
-	}
-
-	if (WARN_ON(dev->me_clients[i].client_id != cl->me_client_id)) {
-		rets = -ENODEV;
-		goto unlock;
-	}
-
-	if (i == dev->num_mei_me_clients) {
+	i = mei_me_cl_by_id(dev, cl->me_client_id);
+	if (i < 0) {
 		rets = -ENODEV;
 		goto unlock;
 	}
 
 	cb->response_buffer.size = dev->me_clients[i].props.max_msg_length;
 	cb->response_buffer.data =
-	    kmalloc(cb->response_buffer.size, GFP_KERNEL);
+			kmalloc(cb->response_buffer.size, GFP_KERNEL);
 	if (!cb->response_buffer.data) {
 		rets = -ENOMEM;
 		goto unlock;
@@ -439,17 +437,14 @@ int mei_start_read(struct mei_device *dev, struct mei_cl *cl)
 	cb->file_private = (void *) cl;
 	cl->read_cb = cb;
 	if (dev->mei_host_buffer_is_empty) {
-		dev->mei_host_buffer_is_empty = 0;
-		if (!mei_send_flow_control(dev, cl)) {
+		dev->mei_host_buffer_is_empty = false;
+		if (mei_send_flow_control(dev, cl)) {
 			rets = -ENODEV;
 			goto unlock;
-		} else {
-			list_add_tail(&cb->cb_list,
-				      &dev->read_list.mei_cb.cb_list);
 		}
+		list_add_tail(&cb->cb_list, &dev->read_list.mei_cb.cb_list);
 	} else {
-		list_add_tail(&cb->cb_list,
-			      &dev->ctrl_wr_list.mei_cb.cb_list);
+		list_add_tail(&cb->cb_list, &dev->ctrl_wr_list.mei_cb.cb_list);
 	}
 	return rets;
 unlock:
@@ -478,11 +473,11 @@ int amthi_write(struct mei_device *dev, struct mei_cl_cb *cb)
 	dev->iamthif_state = MEI_IAMTHIF_WRITING;
 	dev->iamthif_current_cb = cb;
 	dev->iamthif_file_object = cb->file_object;
-	dev->iamthif_canceled = 0;
-	dev->iamthif_ioctl = 1;
+	dev->iamthif_canceled = false;
+	dev->iamthif_ioctl = true;
 	dev->iamthif_msg_buf_size = cb->request_buffer.size;
 	memcpy(dev->iamthif_msg_buf, cb->request_buffer.data,
-	    cb->request_buffer.size);
+	       cb->request_buffer.size);
 
 	ret = mei_flow_ctrl_creds(dev, &dev->iamthif_cl);
 	if (ret < 0)
@@ -490,13 +485,9 @@ int amthi_write(struct mei_device *dev, struct mei_cl_cb *cb)
 
 	if (ret && dev->mei_host_buffer_is_empty) {
 		ret = 0;
-		dev->mei_host_buffer_is_empty = 0;
-		if (cb->request_buffer.size >
-			(((dev->host_hw_state & H_CBD) >> 24) * sizeof(u32))
-				-sizeof(struct mei_msg_hdr)) {
-			mei_hdr.length =
-			    (((dev->host_hw_state & H_CBD) >> 24) *
-			    sizeof(u32)) - sizeof(struct mei_msg_hdr);
+		dev->mei_host_buffer_is_empty = false;
+		if (cb->request_buffer.size > mei_hbuf_max_data(dev)) {
+			mei_hdr.length = mei_hbuf_max_data(dev);
 			mei_hdr.msg_complete = 0;
 		} else {
 			mei_hdr.length = cb->request_buffer.size;
@@ -507,7 +498,7 @@ int amthi_write(struct mei_device *dev, struct mei_cl_cb *cb)
 		mei_hdr.me_addr = dev->iamthif_cl.me_client_id;
 		mei_hdr.reserved = 0;
 		dev->iamthif_msg_buf_index += mei_hdr.length;
-		if (!mei_write_message(dev, &mei_hdr,
+		if (mei_write_message(dev, &mei_hdr,
 					(unsigned char *)(dev->iamthif_msg_buf),
 					mei_hdr.length))
 			return -ENODEV;
@@ -515,7 +506,7 @@ int amthi_write(struct mei_device *dev, struct mei_cl_cb *cb)
 		if (mei_hdr.msg_complete) {
 			if (mei_flow_ctrl_reduce(dev, &dev->iamthif_cl))
 				return -ENODEV;
-			dev->iamthif_flow_control_pending = 1;
+			dev->iamthif_flow_control_pending = true;
 			dev->iamthif_state = MEI_IAMTHIF_FLOW_CONTROL;
 			dev_dbg(&dev->pdev->dev, "add amthi cb to write waiting list\n");
 			dev->iamthif_current_cb = cb;
@@ -534,8 +525,7 @@ int amthi_write(struct mei_device *dev, struct mei_cl_cb *cb)
 
 		dev_dbg(&dev->pdev->dev, "No flow control credentials, "
 				"so add iamthif cb to write list.\n");
-		list_add_tail(&cb->cb_list,
-			      &dev->write_list.mei_cb.cb_list);
+		list_add_tail(&cb->cb_list, &dev->write_list.mei_cb.cb_list);
 	}
 	return 0;
 }
@@ -547,11 +537,11 @@ int amthi_write(struct mei_device *dev, struct mei_cl_cb *cb)
  *
  * returns 0 on success, <0 on failure.
  */
-void run_next_iamthif_cmd(struct mei_device *dev)
+void mei_run_next_iamthif_cmd(struct mei_device *dev)
 {
 	struct mei_cl *cl_tmp;
-	struct mei_cl_cb *cb_pos = NULL;
-	struct mei_cl_cb *cb_next = NULL;
+	struct mei_cl_cb *pos = NULL;
+	struct mei_cl_cb *next = NULL;
 	int status;
 
 	if (!dev)
@@ -559,31 +549,28 @@ void run_next_iamthif_cmd(struct mei_device *dev)
 
 	dev->iamthif_msg_buf_size = 0;
 	dev->iamthif_msg_buf_index = 0;
-	dev->iamthif_canceled = 0;
-	dev->iamthif_ioctl = 1;
+	dev->iamthif_canceled = false;
+	dev->iamthif_ioctl = true;
 	dev->iamthif_state = MEI_IAMTHIF_IDLE;
 	dev->iamthif_timer = 0;
 	dev->iamthif_file_object = NULL;
 
-	if (dev->amthi_cmd_list.status == 0 &&
-	    !list_empty(&dev->amthi_cmd_list.mei_cb.cb_list)) {
-		dev_dbg(&dev->pdev->dev, "complete amthi cmd_list cb.\n");
+	dev_dbg(&dev->pdev->dev, "complete amthi cmd_list cb.\n");
 
-		list_for_each_entry_safe(cb_pos, cb_next,
-		    &dev->amthi_cmd_list.mei_cb.cb_list, cb_list) {
-			list_del(&cb_pos->cb_list);
-			cl_tmp = (struct mei_cl *)cb_pos->file_private;
+	list_for_each_entry_safe(pos, next,
+			&dev->amthi_cmd_list.mei_cb.cb_list, cb_list) {
+		list_del(&pos->cb_list);
+		cl_tmp = (struct mei_cl *)pos->file_private;
 
-			if (cl_tmp && cl_tmp == &dev->iamthif_cl) {
-				status = amthi_write(dev, cb_pos);
-				if (status) {
-					dev_dbg(&dev->pdev->dev,
-						"amthi write failed status = %d\n",
-							status);
-					return;
-				}
-				break;
+		if (cl_tmp && cl_tmp == &dev->iamthif_cl) {
+			status = amthi_write(dev, pos);
+			if (status) {
+				dev_dbg(&dev->pdev->dev,
+					"amthi write failed status = %d\n",
+						status);
+				return;
 			}
+			break;
 		}
 	}
 }
