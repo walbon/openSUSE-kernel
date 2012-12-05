@@ -1999,13 +1999,6 @@ static const struct ethtool_ops cxgb_ethtool_ops = {
 /*
  * debugfs support
  */
-
-static int mem_open(struct inode *inode, struct file *file)
-{
-	file->private_data = inode->i_private;
-	return 0;
-}
-
 static ssize_t mem_read(struct file *file, char __user *buf, size_t count,
 			loff_t *ppos)
 {
@@ -2049,7 +2042,7 @@ static ssize_t mem_read(struct file *file, char __user *buf, size_t count,
 
 static const struct file_operations mem_debugfs_fops = {
 	.owner   = THIS_MODULE,
-	.open    = mem_open,
+	.open    = simple_open,
 	.read    = mem_read,
 	.llseek  = default_llseek,
 };
