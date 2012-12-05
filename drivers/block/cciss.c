@@ -656,6 +656,18 @@ static ssize_t host_store_rescan(struct device *dev,
 static DEVICE_ATTR(rescan, S_IWUSR, NULL, host_store_rescan);
 #endif /* mfm need to do something else in sysfs */
 
+static ssize_t host_show_transport_mode(struct device *dev,
+				 struct device_attribute *attr,
+				 char *buf)
+{
+	struct ctlr_info *h = to_hba(dev);
+
+	return snprintf(buf, 20, "%s\n",
+		h->transMethod & CFGTBL_Trans_Performant ?
+			"performant" : "simple");
+}
+static DEVICE_ATTR(transport_mode, S_IRUGO, host_show_transport_mode, NULL);
+
 static ssize_t dev_show_unique_id(struct device *dev,
 				 struct device_attribute *attr,
 				 char *buf)
@@ -830,6 +842,7 @@ static struct attribute *cciss_host_attrs[] = {
 	&dev_attr_rescan.attr,
 #endif
 	&dev_attr_resettable.attr,
+	&dev_attr_transport_mode.attr,
 	NULL
 };
 
