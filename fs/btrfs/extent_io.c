@@ -55,7 +55,7 @@ struct extent_page_data {
 static inline struct btrfs_fs_info *
 tree_fs_info(struct extent_io_tree *tree)
 {
-	return btrfs_sb(tree->mapping->host->i_sb)->fs_info;
+	return btrfs_sb(tree->mapping->host->i_sb);
 }
 
 int __init extent_io_init(void)
