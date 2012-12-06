@@ -64,7 +64,7 @@ static struct rb_node *tree_insert(struct rb_root *root, u64 file_offset,
 NORET_TYPE static void ordered_data_tree_panic(struct inode *inode, int errno,
 					       u64 offset)
 {
-	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb)->fs_info;
+	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	btrfs_panic(fs_info, errno, "Inconsistency in ordered tree at offset "
 		    "%llu\n", (unsigned long long)offset);
 }
