@@ -645,8 +645,7 @@ int i915_reset(struct drm_device *dev, u8 flags)
 	if (!i915_try_reset)
 		return 0;
 
-	if (!mutex_trylock(&dev->struct_mutex))
-		return -EBUSY;
+	mutex_lock(&dev->struct_mutex);
 
 	i915_gem_reset(dev);
 
@@ -699,10 +698,18 @@ int i915_reset(struct drm_device *dev, u8 flags)
 		if (HAS_BLT(dev))
 		    dev_priv->ring[BCS].init(&dev_priv->ring[BCS]);
 
+		/*
+		 * It would make sense to re-init all the other hw state, at
+		 * least the rps/rc6/emon init done within modeset_init_hw. For
+		 * some unknown reason, this blows up my ilk, so don't.
+		 */
+
 		mutex_unlock(&dev->struct_mutex);
+
 		drm_irq_uninstall(dev);
 		drm_mode_config_reset(dev);
 		drm_irq_install(dev);
+
 		mutex_lock(&dev->struct_mutex);
 	}
 
