@@ -600,7 +600,9 @@ _xfs_buf_read(
 			XBF_READ_AHEAD | _XBF_RUN_QUEUES);
 
 	status = xfs_buf_iorequest(bp);
-	if (status || XFS_BUF_ISERROR(bp) || (flags & XBF_ASYNC))
+	if (status ||
+	    (XFS_BUF_ISERROR(bp) && XFS_BUF_GETERROR(bp) != EWOULDBLOCK) ||
+	    (flags & XBF_ASYNC))
 		return status;
 	return xfs_buf_iowait(bp);
 }
