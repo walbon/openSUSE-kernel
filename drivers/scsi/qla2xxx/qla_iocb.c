@@ -356,14 +356,14 @@ qla2x00_start_scsi(srb_t *sp)
 
 	/* Check for room in outstanding command list. */
 	handle = req->current_outstanding_cmd;
-	for (index = 1; index < MAX_OUTSTANDING_COMMANDS; index++) {
+	for (index = 1; index < req->num_outstanding_cmds; index++) {
 		handle++;
-		if (handle == MAX_OUTSTANDING_COMMANDS)
+		if (handle == req->num_outstanding_cmds)
 			handle = 1;
 		if (!req->outstanding_cmds[handle])
 			break;
 	}
-	if (index == MAX_OUTSTANDING_COMMANDS)
+	if (index == req->num_outstanding_cmds)
 		goto queuing_error;
 
 	/* Map the sg table so we have an accurate count of sg entries needed */
@@ -1386,16 +1386,15 @@ qla24xx_start_scsi(srb_t *sp)
 
 	/* Check for room in outstanding command list. */
 	handle = req->current_outstanding_cmd;
-	for (index = 1; index < MAX_OUTSTANDING_COMMANDS; index++) {
+	for (index = 1; index < req->num_outstanding_cmds; index++) {
 		handle++;
-		if (handle == MAX_OUTSTANDING_COMMANDS)
+		if (handle == req->num_outstanding_cmds)
 			handle = 1;
 		if (!req->outstanding_cmds[handle])
 			break;
 	}
-	if (index == MAX_OUTSTANDING_COMMANDS) {
+	if (index == req->num_outstanding_cmds)
 		goto queuing_error;
-	}
 
 	/* Map the sg table so we have an accurate count of sg entries needed */
 	if (scsi_sg_count(cmd)) {
@@ -1560,15 +1559,15 @@ qla24xx_dif_start_scsi(srb_t *sp)
 
 	/* Check for room in outstanding command list. */
 	handle = req->current_outstanding_cmd;
-	for (index = 1; index < MAX_OUTSTANDING_COMMANDS; index++) {
+	for (index = 1; index < req->num_outstanding_cmds; index++) {
 		handle++;
-		if (handle == MAX_OUTSTANDING_COMMANDS)
+		if (handle == req->num_outstanding_cmds)
 			handle = 1;
 		if (!req->outstanding_cmds[handle])
 			break;
 	}
 
-	if (index == MAX_OUTSTANDING_COMMANDS)
+	if (index == req->num_outstanding_cmds)
 		goto queuing_error;
 
 	/* Compute number of required data segments */
@@ -1742,14 +1741,14 @@ qla2x00_alloc_iocbs(scsi_qla_host_t *vha, srb_t *sp)
 
 	/* Check for room in outstanding command list. */
 	handle = req->current_outstanding_cmd;
-	for (index = 1; index < MAX_OUTSTANDING_COMMANDS; index++) {
+	for (index = 1; index < req->num_outstanding_cmds; index++) {
 		handle++;
-		if (handle == MAX_OUTSTANDING_COMMANDS)
+		if (handle == req->num_outstanding_cmds)
 			handle = 1;
 		if (!req->outstanding_cmds[handle])
 			break;
 	}
-	if (index == MAX_OUTSTANDING_COMMANDS) {
+	if (index == req->num_outstanding_cmds) {
 		ql_log(ql_log_warn, vha, 0x700b,
 		    "No room on oustanding cmd array.\n");
 		goto queuing_error;

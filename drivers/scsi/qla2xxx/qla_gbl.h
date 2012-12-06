@@ -78,6 +78,10 @@ extern int qla24xx_update_fcport_fcp_prio(scsi_qla_host_t *, fc_port_t *);
 
 extern fc_port_t *
 qla2x00_alloc_fcport(scsi_qla_host_t *, gfp_t );
+
+extern int
+qla2x00_alloc_outstanding_cmds(struct qla_hw_data *, struct req_que *);
+
 /*
  * Global Data in qla_os.c source file.
  */
@@ -88,6 +92,7 @@ extern int qlport_down_retry;
 extern int ql2xplogiabsentdevice;
 extern int ql2xloginretrycount;
 extern int ql2xfdmienable;
+extern int ql2xmaxqdepth;
 extern int ql2xallocfwdump;
 extern int ql2xextended_error_logging;
 extern int ql2xiidmaenable;

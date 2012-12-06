@@ -11,10 +11,11 @@
  * ----------------------------------------------------------------------
  * |             Level            |   Last Value Used  |     Holes	|
  * ----------------------------------------------------------------------
- * | Module Init and Probe        |       0x0116       |  		|
+ * | Module Init and Probe        |       0x0122       | 0x0117-0x0121  |
  * | Mailbox commands             |       0x1129       |		|
  * | Device Discovery             |       0x2083       |		|
- * | Queue Command and IO tracing |       0x302e       |     0x3008     |
+ * | Queue Command and IO tracing |       0x3031       |     0x3008     |
+ * |                              |                    | 0x302f-0x3030  |
  * | DPC Thread                   |       0x401c       |		|
  * | Async Events                 |       0x5059       |		|
  * | Timer Routines               |       0x600d       |		|

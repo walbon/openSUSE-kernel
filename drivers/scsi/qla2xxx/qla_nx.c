@@ -2712,14 +2712,14 @@ qla82xx_start_scsi(srb_t *sp)
 
 	/* Check for room in outstanding command list. */
 	handle = req->current_outstanding_cmd;
-	for (index = 1; index < MAX_OUTSTANDING_COMMANDS; index++) {
+	for (index = 1; index < req->num_outstanding_cmds; index++) {
 		handle++;
-		if (handle == MAX_OUTSTANDING_COMMANDS)
+		if (handle == req->num_outstanding_cmds)
 			handle = 1;
 		if (!req->outstanding_cmds[handle])
 			break;
 	}
-	if (index == MAX_OUTSTANDING_COMMANDS)
+	if (index == req->num_outstanding_cmds)
 		goto queuing_error;
 
 	/* Map the sg table so we have an accurate count of sg entries needed */
@@ -4096,7 +4096,7 @@ qla82xx_chip_reset_cleanup(scsi_qla_host_t *vha)
 			req = ha->req_q_map[que];
 			if (!req)
 				continue;
-			for (cnt = 1; cnt < MAX_OUTSTANDING_COMMANDS; cnt++) {
+			for (cnt = 1; cnt < req->num_outstanding_cmds; cnt++) {
 				sp = req->outstanding_cmds[cnt];
 				if (sp) {
 					if (!sp->ctx ||

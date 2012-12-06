@@ -1694,7 +1694,7 @@ qla24xx_bsg_timeout(struct fc_bsg_job *bsg_job)
 		if (!req)
 			continue;
 
-		for (cnt = 1; cnt < MAX_OUTSTANDING_COMMANDS; cnt++) {
+		for (cnt = 1; cnt < req->num_outstanding_cmds; cnt++) {
 			sp = req->outstanding_cmds[cnt];
 			if (sp) {
 				sp_bsg = sp->ctx;

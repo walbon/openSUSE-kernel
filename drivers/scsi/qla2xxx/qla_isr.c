@@ -826,7 +826,7 @@ qla2x00_process_completed_request(struct scsi_qla_host *vha,
 	struct qla_hw_data *ha = vha->hw;
 
 	/* Validate handle. */
-	if (index >= MAX_OUTSTANDING_COMMANDS) {
+	if (index >= req->num_outstanding_cmds) {
 		ql_log(ql_log_warn, vha, 0x3014,
 		    "Invalid SCSI command index (%x).\n", index);
 
@@ -865,7 +865,7 @@ qla2x00_get_sp_from_handle(scsi_qla_host_t *vha, const char *func,
 	uint16_t index;
 
 	index = LSW(pkt->handle);
-	if (index >= MAX_OUTSTANDING_COMMANDS) {
+	if (index >= req->num_outstanding_cmds) {
 		ql_log(ql_log_warn, vha, 0x5031,
 		    "Invalid command index (%x).\n", index);
 		if (IS_QLA82XX(ha))
@@ -1598,13 +1598,14 @@ qla2x00_status_entry(scsi_qla_host_t *vha, struct rsp_que *rsp, void *pkt)
 
 	/* Fast path completion. */
 	if (comp_status == CS_COMPLETE && scsi_status == 0) {
+		qla2x00_do_host_ramp_up(vha);
 		qla2x00_process_completed_request(vha, req, handle);
 
 		return;
 	}
 
 	/* Validate handle. */
-	if (handle < MAX_OUTSTANDING_COMMANDS) {
+	if (handle < req->num_outstanding_cmds) {
 		sp = req->outstanding_cmds[handle];
 		req->outstanding_cmds[handle] = NULL;
 	} else
@@ -1844,6 +1845,9 @@ out:
 		    cp->cmnd[1], cp->cmnd[2], scsi_bufflen(cp), rsp_info_len,
 		    resid_len, fw_resid_len);
 
+	if (!cp->result)
+		qla2x00_do_host_ramp_up(vha);
+
 	if (rsp->status_srb == NULL)
 		qla2x00_sp_compl(ha, sp);
 }
@@ -1933,7 +1937,7 @@ qla2x00_error_entry(scsi_qla_host_t *vha, struct rsp_que *rsp, sts_entry_t *pkt)
 		    "UNKNOWN flag error.\n");
 
 	/* Validate handle. */
-	if (handle < MAX_OUTSTANDING_COMMANDS)
+	if (handle < req->num_outstanding_cmds)
 		sp = req->outstanding_cmds[handle];
 	else
 		sp = NULL;
