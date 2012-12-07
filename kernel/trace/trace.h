@@ -68,6 +68,10 @@ enum trace_type {
 #undef FTRACE_ENTRY_DUP
 #define FTRACE_ENTRY_DUP(name, name_struct, id, tstruct, printk)
 
+#undef FTRACE_ENTRY_REG
+#define FTRACE_ENTRY_REG(name, struct_name, id, tstruct, print, regfn) \
+	FTRACE_ENTRY(name, struct_name, id, PARAMS(tstruct), PARAMS(print))
+
 #include "trace_entries.h"
 
 /*
@@ -277,6 +281,31 @@ struct tracer {
 	int			use_max_tr;
 };
 
+
+/* Only current can touch trace_recursion */
+#define trace_recursion_inc() do { (current)->trace_recursion++; } while (0)
+#define trace_recursion_dec() do { (current)->trace_recursion--; } while (0)
+
+/* Ring buffer has the 10 LSB bits to count */
+#define trace_recursion_buffer() ((current)->trace_recursion & 0x3ff)
+
+/* for function tracing recursion */
+#define TRACE_INTERNAL_BIT		(1<<11)
+#define TRACE_GLOBAL_BIT		(1<<12)
+#define TRACE_CONTROL_BIT		(1<<13)
+
+/*
+ * Abuse of the trace_recursion.
+ * As we need a way to maintain state if we are tracing the function
+ * graph in irq because we want to trace a particular function that
+ * was called in irq context but we have irq tracing off. Since this
+ * can only be modified by current, we can reuse trace_recursion.
+ */
+#define TRACE_IRQ_BIT			(1<<13)
+
+#define trace_recursion_set(bit)	do { (current)->trace_recursion |= (bit); } while (0)
+#define trace_recursion_clear(bit)	do { (current)->trace_recursion &= ~(bit); } while (0)
+#define trace_recursion_test(bit)	((current)->trace_recursion & (bit))
 
 #define TRACE_PIPE_ALL_CPU	-1
 
@@ -507,8 +536,18 @@ static inline int ftrace_graph_addr(unsigned long addr)
 		return 1;
 
 	for (i = 0; i < ftrace_graph_count; i++) {
-		if (addr == ftrace_graph_funcs[i])
+		if (addr == ftrace_graph_funcs[i]) {
+			/*
+			 * If no irqs are to be traced, but a set_graph_function
+			 * is set, and called by an interrupt handler, we still
+			 * want to trace it.
+			 */
+			if (in_irq())
+				trace_recursion_set(TRACE_IRQ_BIT);
+			else
+				trace_recursion_clear(TRACE_IRQ_BIT);
 			return 1;
+		}
 	}
 
 	return 0;
@@ -543,6 +582,8 @@ static inline int ftrace_trace_task(struct task_struct *task)
 	return 1;
 }
 #endif
+
+int ftrace_event_is_function(struct ftrace_event_call *call);
 
 /*
  * struct trace_parser - servers for reading the user input separated by spaces
@@ -785,19 +826,13 @@ extern const char *__stop___trace_bprintk_fmt[];
 	FTRACE_ENTRY(call, struct_name, id, PARAMS(tstruct), PARAMS(print))
 #include "trace_entries.h"
 
-/* Only current can touch trace_recursion */
-#define trace_recursion_inc() do { (current)->trace_recursion++; } while (0)
-#define trace_recursion_dec() do { (current)->trace_recursion--; } while (0)
-
-/* Ring buffer has the 10 LSB bits to count */
-#define trace_recursion_buffer() ((current)->trace_recursion & 0x3ff)
-
-/* for function tracing recursion */
-#define TRACE_INTERNAL_BIT		(1<<11)
-#define TRACE_GLOBAL_BIT		(1<<12)
-
-#define trace_recursion_set(bit)	do { (current)->trace_recursion |= (bit); } while (0)
-#define trace_recursion_clear(bit)	do { (current)->trace_recursion &= ~(bit); } while (0)
-#define trace_recursion_test(bit)	((current)->trace_recursion & (bit))
+#ifdef CONFIG_PERF_EVENTS
+#ifdef CONFIG_FUNCTION_TRACER
+int perf_ftrace_event_register(struct ftrace_event_call *call,
+			       enum trace_reg type, void *data);
+#else
+#define perf_ftrace_event_register NULL
+#endif /* CONFIG_FUNCTION_TRACER */
+#endif /* CONFIG_PERF_EVENTS */
 
 #endif /* _LINUX_KERNEL_TRACE_H */

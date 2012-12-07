@@ -60,6 +60,8 @@
 #define FTRACE_HASH_DEFAULT_BITS 10
 #define FTRACE_HASH_MAX_BITS 12
 
+#define FL_GLOBAL_CONTROL_MASK (FTRACE_OPS_FL_GLOBAL | FTRACE_OPS_FL_CONTROL)
+
 /* ftrace_enabled is a method to turn ftrace on or off */
 int ftrace_enabled __read_mostly;
 static int last_ftrace_enabled;
@@ -88,11 +90,14 @@ static struct ftrace_ops ftrace_list_end __read_mostly =
 };
 
 static struct ftrace_ops *ftrace_global_list __read_mostly = &ftrace_list_end;
+static struct ftrace_ops *ftrace_control_list __read_mostly = &ftrace_list_end;
 static struct ftrace_ops *ftrace_ops_list __read_mostly = &ftrace_list_end;
 ftrace_func_t ftrace_trace_function __read_mostly = ftrace_stub;
+static ftrace_func_t __ftrace_trace_function_delay __read_mostly = ftrace_stub;
 ftrace_func_t __ftrace_trace_function __read_mostly = ftrace_stub;
 ftrace_func_t ftrace_pid_function __read_mostly = ftrace_stub;
 static struct ftrace_ops global_ops;
+static struct ftrace_ops control_ops;
 
 static void
 ftrace_ops_list_func(unsigned long ip, unsigned long parent_ip);
@@ -148,9 +153,11 @@ void clear_ftrace_function(void)
 {
 	ftrace_trace_function = ftrace_stub;
 	__ftrace_trace_function = ftrace_stub;
+	__ftrace_trace_function_delay = ftrace_stub;
 	ftrace_pid_function = ftrace_stub;
 }
 
+#undef CONFIG_HAVE_FUNCTION_TRACE_MCOUNT_TEST
 #ifndef CONFIG_HAVE_FUNCTION_TRACE_MCOUNT_TEST
 /*
  * For those archs that do not test ftrace_trace_stop in their
@@ -164,6 +171,32 @@ static void ftrace_test_stop_func(unsigned long ip, unsigned long parent_ip)
 	__ftrace_trace_function(ip, parent_ip);
 }
 #endif
+
+static void control_ops_disable_all(struct ftrace_ops *ops)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		*per_cpu_ptr(ops->disabled, cpu) = 1;
+}
+
+static int control_ops_alloc(struct ftrace_ops *ops)
+{
+	int __percpu *disabled;
+
+	disabled = alloc_percpu(int);
+	if (!disabled)
+		return -ENOMEM;
+
+	ops->disabled = disabled;
+	control_ops_disable_all(ops);
+	return 0;
+}
+
+static void control_ops_free(struct ftrace_ops *ops)
+{
+	free_percpu(ops->disabled);
+}
 
 static void update_global_ops(void)
 {
@@ -210,7 +243,12 @@ static void update_ftrace_function(void)
 #ifdef CONFIG_HAVE_FUNCTION_TRACE_MCOUNT_TEST
 	ftrace_trace_function = func;
 #else
+#ifdef CONFIG_DYNAMIC_FTRACE
+	/* do not update till all functions have been modified */
+	__ftrace_trace_function_delay = func;
+#else
 	__ftrace_trace_function = func;
+#endif
 	ftrace_trace_function = ftrace_test_stop_func;
 #endif
 }
@@ -251,6 +289,26 @@ static int remove_ftrace_ops(struct ftrace_ops **list, struct ftrace_ops *ops)
 	return 0;
 }
 
+static void add_ftrace_list_ops(struct ftrace_ops **list,
+				struct ftrace_ops *main_ops,
+				struct ftrace_ops *ops)
+{
+	int first = *list == &ftrace_list_end;
+	add_ftrace_ops(list, ops);
+	if (first)
+		add_ftrace_ops(&ftrace_ops_list, main_ops);
+}
+
+static int remove_ftrace_list_ops(struct ftrace_ops **list,
+				  struct ftrace_ops *main_ops,
+				  struct ftrace_ops *ops)
+{
+	int ret = remove_ftrace_ops(list, ops);
+	if (!ret && *list == &ftrace_list_end)
+		ret = remove_ftrace_ops(&ftrace_ops_list, main_ops);
+	return ret;
+}
+
 static int __register_ftrace_function(struct ftrace_ops *ops)
 {
 	if (ftrace_disabled)
@@ -262,15 +320,20 @@ static int __register_ftrace_function(struct ftrace_ops *ops)
 	if (WARN_ON(ops->flags & FTRACE_OPS_FL_ENABLED))
 		return -EBUSY;
 
+	/* We don't support both control and global flags set. */
+	if ((ops->flags & FL_GLOBAL_CONTROL_MASK) == FL_GLOBAL_CONTROL_MASK)
+		return -EINVAL;
+
 	if (!core_kernel_data((unsigned long)ops))
 		ops->flags |= FTRACE_OPS_FL_DYNAMIC;
 
 	if (ops->flags & FTRACE_OPS_FL_GLOBAL) {
-		int first = ftrace_global_list == &ftrace_list_end;
-		add_ftrace_ops(&ftrace_global_list, ops);
+		add_ftrace_list_ops(&ftrace_global_list, &global_ops, ops);
 		ops->flags |= FTRACE_OPS_FL_ENABLED;
-		if (first)
-			add_ftrace_ops(&ftrace_ops_list, &global_ops);
+	} else if (ops->flags & FTRACE_OPS_FL_CONTROL) {
+		if (control_ops_alloc(ops))
+			return -ENOMEM;
+		add_ftrace_list_ops(&ftrace_control_list, &control_ops, ops);
 	} else
 		add_ftrace_ops(&ftrace_ops_list, ops);
 
@@ -294,11 +357,23 @@ static int __unregister_ftrace_function(struct ftrace_ops *ops)
 		return -EINVAL;
 
 	if (ops->flags & FTRACE_OPS_FL_GLOBAL) {
-		ret = remove_ftrace_ops(&ftrace_global_list, ops);
-		if (!ret && ftrace_global_list == &ftrace_list_end)
-			ret = remove_ftrace_ops(&ftrace_ops_list, &global_ops);
+		ret = remove_ftrace_list_ops(&ftrace_global_list,
+					     &global_ops, ops);
 		if (!ret)
 			ops->flags &= ~FTRACE_OPS_FL_ENABLED;
+	} else if (ops->flags & FTRACE_OPS_FL_CONTROL) {
+		ret = remove_ftrace_list_ops(&ftrace_control_list,
+					     &control_ops, ops);
+		if (!ret) {
+			/*
+			 * The ftrace_ops is now removed from the list,
+			 * so there'll be no new users. We must ensure
+			 * all current users are done before we free
+			 * the control data.
+			 */
+			synchronize_sched();
+			control_ops_free(ops);
+		}
 	} else
 		ret = remove_ftrace_ops(&ftrace_ops_list, ops);
 
@@ -1619,6 +1694,12 @@ static int __ftrace_modify_code(void *data)
 {
 	int *command = data;
 
+	/*
+	 * Do not call function tracer while we update the code.
+	 * We are in stop machine, no worrying about races.
+	 */
+	function_trace_stop++;
+
 	if (*command & FTRACE_UPDATE_CALLS)
 		ftrace_replace_code(1);
 	else if (*command & FTRACE_DISABLE_CALLS)
@@ -1631,6 +1712,18 @@ static int __ftrace_modify_code(void *data)
 		ftrace_enable_ftrace_graph_caller();
 	else if (*command & FTRACE_STOP_FUNC_RET)
 		ftrace_disable_ftrace_graph_caller();
+
+#ifndef CONFIG_HAVE_FUNCTION_TRACE_MCOUNT_TEST
+	/*
+	 * For archs that call ftrace_test_stop_func(), we must
+	 * wait till after we update all the function callers
+	 * before we update the callback. This keeps different
+	 * ops that record different functions from corrupting
+	 * each other.
+	 */
+	__ftrace_trace_function = __ftrace_trace_function_delay;
+#endif
+	function_trace_stop--;
 
 	return 0;
 }
@@ -3537,6 +3630,36 @@ ftrace_ops_test(struct ftrace_ops *ops, unsigned long ip)
 }
 
 #endif /* CONFIG_DYNAMIC_FTRACE */
+
+static void
+ftrace_ops_control_func(unsigned long ip, unsigned long parent_ip)
+{
+	struct ftrace_ops *op;
+
+	if (unlikely(trace_recursion_test(TRACE_CONTROL_BIT)))
+		return;
+
+	/*
+	 * Some of the ops may be dynamically allocated,
+	 * they must be freed after a synchronize_sched().
+	 */
+	preempt_disable_notrace();
+	trace_recursion_set(TRACE_CONTROL_BIT);
+	op = rcu_dereference_raw(ftrace_control_list);
+	while (op != &ftrace_list_end) {
+		if (!ftrace_function_local_disabled(op) &&
+		    ftrace_ops_test(op, ip))
+			op->func(ip, parent_ip);
+
+		op = rcu_dereference_raw(op->next);
+	};
+	trace_recursion_clear(TRACE_CONTROL_BIT);
+	preempt_enable_notrace();
+}
+
+static struct ftrace_ops control_ops = {
+	.func = ftrace_ops_control_func,
+};
 
 static void
 ftrace_ops_list_func(unsigned long ip, unsigned long parent_ip)

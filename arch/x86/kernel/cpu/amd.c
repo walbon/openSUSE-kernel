@@ -657,7 +657,7 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 		err = rdmsrl_safe(MSR_AMD64_MCx_MASK(4), &mask);
 		if (err == 0) {
 			mask |= (1 << 10);
-			checking_wrmsrl(MSR_AMD64_MCx_MASK(4), mask);
+			wrmsrl_safe(MSR_AMD64_MCx_MASK(4), mask);
 		}
 	}
 #endif

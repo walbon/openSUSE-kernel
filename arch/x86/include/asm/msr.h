@@ -237,6 +237,8 @@ do {							\
 	(high) = (u32)(_l >> 32);			\
 } while (0)
 
+#define rdpmcl(counter, val) ((val) = native_read_pmc(counter))
+
 #define rdtscp(low, high, aux)					\
 do {                                                            \
 	unsigned long long _val = native_read_tscp(&(aux));     \
@@ -249,7 +251,7 @@ do {                                                            \
 #endif	/* !CONFIG_PARAVIRT */
 
 
-#define checking_wrmsrl(msr, val) wrmsr_safe((msr), (u32)(val),		\
+#define wrmsrl_safe(msr, val) wrmsr_safe((msr), (u32)(val),		\
 					     (u32)((val) >> 32))
 
 #define write_tsc(val1, val2) wrmsr(MSR_IA32_TSC, (val1), (val2))

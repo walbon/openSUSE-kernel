@@ -1222,6 +1222,11 @@ static int power_pmu_event_init(struct perf_event *event)
 	return err;
 }
 
+static int power_pmu_event_idx(struct perf_event *event)
+{
+	return event->hw.idx;
+}
+
 struct pmu power_pmu = {
 	.pmu_enable	= power_pmu_enable,
 	.pmu_disable	= power_pmu_disable,
@@ -1234,6 +1239,7 @@ struct pmu power_pmu = {
 	.start_txn	= power_pmu_start_txn,
 	.cancel_txn	= power_pmu_cancel_txn,
 	.commit_txn	= power_pmu_commit_txn,
+	.event_idx	= power_pmu_event_idx,
 };
 
 /*
@@ -1242,7 +1248,7 @@ struct pmu power_pmu = {
  * here so there is no possibility of being interrupted.
  */
 static void record_and_restart(struct perf_event *event, unsigned long val,
-			       struct pt_regs *regs, int nmi)
+			       struct pt_regs *regs)
 {
 	u64 period = event->hw.sample_period;
 	s64 prev, delta, left;
@@ -1287,13 +1293,12 @@ static void record_and_restart(struct perf_event *event, unsigned long val,
 	if (record) {
 		struct perf_sample_data data;
 
-		perf_sample_data_init(&data, ~0ULL);
-		data.period = event->hw.last_period;
+		perf_sample_data_init(&data, ~0ULL, event->hw.last_period);
 
 		if (event->attr.sample_type & PERF_SAMPLE_ADDR)
 			perf_get_data_addr(regs, &data.addr);
 
-		if (perf_event_overflow(event, nmi, &data, regs))
+		if (perf_event_overflow(event, &data, regs))
 			power_pmu_stop(event, 0);
 	}
 }
@@ -1386,7 +1391,7 @@ static void perf_event_interrupt(struct pt_regs *regs)
 		if ((int)val < 0) {
 			/* event has overflowed */
 			found = 1;
-			record_and_restart(event, val, regs, nmi);
+			record_and_restart(event, val, regs);
 		}
 	}
 
