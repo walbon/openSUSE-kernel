@@ -2011,7 +2011,7 @@ static int btrfs_writepage_end_io_hook(struct page *page, u64 start, u64 end,
  * extent_io.c will try to find good copies for us.
  */
 static int btrfs_readpage_end_io_hook(struct page *page, u64 start, u64 end,
-			       struct extent_state *state)
+			       struct extent_state *state, int mirror)
 {
 	size_t offset = start - ((u64)page->index << PAGE_CACHE_SHIFT);
 	struct inode *inode = page->mapping->host;
@@ -7004,6 +7004,8 @@ struct inode *btrfs_alloc_inode(struct super_block *sb)
 	extent_map_tree_init(&ei->extent_tree);
 	extent_io_tree_init(&ei->io_tree, &inode->i_data);
 	extent_io_tree_init(&ei->io_failure_tree, &inode->i_data);
+	ei->io_tree.track_uptodate = 1;
+	ei->io_failure_tree.track_uptodate = 1;
 	mutex_init(&ei->log_mutex);
 	mutex_init(&ei->delalloc_mutex);
 	btrfs_ordered_inode_tree_init(&ei->ordered_tree);

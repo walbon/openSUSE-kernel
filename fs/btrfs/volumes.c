@@ -33,6 +33,7 @@
 #include "print-tree.h"
 #include "volumes.h"
 #include "async-thread.h"
+#include "check-integrity.h"
 
 static int init_first_rw_device(struct btrfs_trans_handle *trans,
 				struct btrfs_root *root,
@@ -246,7 +247,7 @@ loop_lock:
 			sync_pending = 0;
 		}
 
-		submit_bio(cur->bi_rw, cur);
+		btrfsic_submit_bio(cur->bi_rw, cur);
 		num_run++;
 		batch_run++;
 		if (need_resched())
@@ -4132,7 +4133,7 @@ static noinline void schedule_bio(struct btrfs_root *root,
 	/* don't bother with additional async steps for reads, right now */
 	if (!(rw & REQ_WRITE)) {
 		bio_get(bio);
-		submit_bio(rw, bio);
+		btrfsic_submit_bio(rw, bio);
 		bio_put(bio);
 		return;
 	}
@@ -4227,7 +4228,7 @@ int btrfs_map_bio(struct btrfs_root *root, int rw, struct bio *bio,
 			if (async_submit)
 				schedule_bio(root, dev, rw, bio);
 			else
-				submit_bio(rw, bio);
+				btrfsic_submit_bio(rw, bio);
 		} else {
 			bio->bi_bdev = root->fs_info->fs_devices->latest_bdev;
 			bio->bi_sector = logical >> 9;
@@ -4539,7 +4540,7 @@ int btrfs_read_sys_array(struct btrfs_root *root)
 	 * to silence the warning eg. on PowerPC 64.
 	 */
 	if (PAGE_CACHE_SIZE > BTRFS_SUPER_INFO_SIZE)
-		SetPageUptodate(sb->first_page);
+		SetPageUptodate(sb->pages[0]);
 
 	write_extent_buffer(sb, super_copy, 0, BTRFS_SUPER_INFO_SIZE);
 	array_size = btrfs_super_sys_array_size(super_copy);

@@ -48,6 +48,8 @@ struct btrfs_ordered_sum;
 
 #define BTRFS_MAGIC "_BHRfS_M"
 
+#define BTRFS_MAX_MIRRORS 2
+
 #define BTRFS_MAX_LEVEL 8
 
 #define BTRFS_COMPAT_EXTENT_TREE_V0
@@ -136,6 +138,12 @@ struct btrfs_ordered_sum;
 #define BTRFS_BTREE_INODE_OBJECTID 1
 
 #define BTRFS_EMPTY_SUBVOL_DIR_OBJECTID 2
+
+/*
+ * the max metadata block size.  This limit is somewhat artificial,
+ * but the memmove costs go through the roof for larger blocks.
+ */
+#define BTRFS_MAX_METADATA_BLOCKSIZE 65536
 
 /*
  * we can actually store much bigger names, but lets not confuse the rest
@@ -464,6 +472,19 @@ struct btrfs_super_block {
 #define BTRFS_FEATURE_INCOMPAT_DEFAULT_SUBVOL	(1ULL << 1)
 #define BTRFS_FEATURE_INCOMPAT_MIXED_GROUPS	(1ULL << 2)
 #define BTRFS_FEATURE_INCOMPAT_COMPRESS_LZO	(1ULL << 3)
+/*
+ * some patches floated around with a second compression method
+ * lets save that incompat here for when they do get in
+ * Note we don't actually support it, we're just reserving the
+ * number
+ */
+#define BTRFS_FEATURE_INCOMPAT_COMPRESS_LZOv2	(1ULL << 4)
+
+/*
+ * older kernels tried to do bigger metadata blocks, but the
+ * code was pretty buggy.  Lets not let them try anymore.
+ */
+#define BTRFS_FEATURE_INCOMPAT_BIG_METADATA	(1ULL << 5)
 
 #define BTRFS_FEATURE_COMPAT_SUPP		0ULL
 #define BTRFS_FEATURE_COMPAT_RO_SUPP		0ULL
@@ -471,6 +492,7 @@ struct btrfs_super_block {
 	(BTRFS_FEATURE_INCOMPAT_MIXED_BACKREF |		\
 	 BTRFS_FEATURE_INCOMPAT_DEFAULT_SUBVOL |	\
 	 BTRFS_FEATURE_INCOMPAT_MIXED_GROUPS |		\
+	 BTRFS_FEATURE_INCOMPAT_BIG_METADATA |		\
 	 BTRFS_FEATURE_INCOMPAT_COMPRESS_LZO)
 
 /*
@@ -1250,6 +1272,10 @@ struct btrfs_fs_info {
 	int scrub_workers_refcnt;
 	struct btrfs_workers scrub_workers;
 
+#ifdef CONFIG_BTRFS_FS_CHECK_INTEGRITY
+	u32 check_integrity_print_mask;
+#endif
+
 	/* filesystem state */
 	u64 fs_state;
 
@@ -1514,7 +1540,9 @@ struct btrfs_ioctl_defrag_range_args {
 #define BTRFS_MOUNT_INODE_MAP_CACHE	(1 << 17)
 #define BTRFS_MOUNT_RECOVERY		(1 << 18)
 #define BTRFS_MOUNT_SKIP_BALANCE	(1 << 19)
-#define BTRFS_MOUNT_PANIC_ON_FATAL_ERROR	(1 << 20)
+#define BTRFS_MOUNT_CHECK_INTEGRITY	(1 << 20)
+#define BTRFS_MOUNT_CHECK_INTEGRITY_INCLUDING_EXTENT_DATA (1 << 21)
+#define BTRFS_MOUNT_PANIC_ON_FATAL_ERROR	(1 << 22)
 
 #define btrfs_clear_opt(o, opt)		((o) &= ~BTRFS_MOUNT_##opt)
 #define btrfs_set_opt(o, opt)		((o) |= BTRFS_MOUNT_##opt)
@@ -1537,6 +1565,17 @@ struct btrfs_ioctl_defrag_range_args {
 #define BTRFS_INODE_COMPRESS		(1 << 11)
 
 #define BTRFS_INODE_ROOT_ITEM_INIT	(1 << 31)
+
+struct btrfs_map_token {
+	struct extent_buffer *eb;
+	char *kaddr;
+	unsigned long offset;
+};
+
+static inline void btrfs_init_map_token (struct btrfs_map_token *token)
+{
+	memset(token, 0, sizeof(*token));
+}
 
 /* some macros to generate set/get funcs for the struct fields.  This
  * assumes there is a lefoo_to_cpu for every type, so lets make a simple
@@ -1561,20 +1600,22 @@ struct btrfs_ioctl_defrag_range_args {
 #ifndef BTRFS_SETGET_FUNCS
 #define BTRFS_SETGET_FUNCS(name, type, member, bits)			\
 u##bits btrfs_##name(struct extent_buffer *eb, type *s);		\
+u##bits btrfs_token_##name(struct extent_buffer *eb, type *s, struct btrfs_map_token *token);		\
+void btrfs_set_token_##name(struct extent_buffer *eb, type *s, u##bits val, struct btrfs_map_token *token);\
 void btrfs_set_##name(struct extent_buffer *eb, type *s, u##bits val);
 #endif
 
 #define BTRFS_SETGET_HEADER_FUNCS(name, type, member, bits)		\
 static inline u##bits btrfs_##name(struct extent_buffer *eb)		\
 {									\
-	type *p = page_address(eb->first_page);				\
+	type *p = page_address(eb->pages[0]);				\
 	u##bits res = le##bits##_to_cpu(p->member);			\
 	return res;							\
 }									\
 static inline void btrfs_set_##name(struct extent_buffer *eb,		\
 				    u##bits val)			\
 {									\
-	type *p = page_address(eb->first_page);				\
+	type *p = page_address(eb->pages[0]);				\
 	p->member = cpu_to_le##bits(val);				\
 }
 
