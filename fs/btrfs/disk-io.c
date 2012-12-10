@@ -898,6 +898,7 @@ static int btree_submit_bio_hook(struct inode *inode, int rw, struct bio *bio,
 			return ret;
 		return btrfs_map_bio(BTRFS_I(inode)->root, rw, bio,
 				mirror_num, 0);
+	}
 
 	/*
 	 * kthread helpers are used to submit writes so that checksumming
