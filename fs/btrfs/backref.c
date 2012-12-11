@@ -477,7 +477,7 @@ static int __add_delayed_refs(struct btrfs_delayed_ref_head *head, u64 seq,
 	struct btrfs_key key;
 	struct btrfs_key op_key = {0};
 	int sgn;
-	int ret;
+	int ret = 0;
 
 	if (extent_op && extent_op->update_key)
 		btrfs_disk_key_to_cpu(&op_key, &extent_op->key);
@@ -568,7 +568,7 @@ static int __add_inline_refs(struct btrfs_fs_info *fs_info,
 			     struct btrfs_path *path, u64 bytenr,
 			     int *info_level, struct list_head *prefs)
 {
-	int ret;
+	int ret = 0;
 	int slot;
 	struct extent_buffer *leaf;
 	struct btrfs_key key;
