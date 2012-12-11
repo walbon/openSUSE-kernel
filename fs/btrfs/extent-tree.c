@@ -3810,14 +3810,9 @@ again:
 		if (current->journal_info)
 			return -EAGAIN;
 		ret = wait_event_killable(space_info->wait, !space_info->flush);
-		/* Must have been interrupted, return */
-		if (ret) {
-			if (btrfs_test_opt(root, ENOSPC_DEBUG)) {
-				printk(KERN_DEBUG "btrfs: %s returning -EINTR\n",
-						__func__);
-			}
+		/* Must have been killed, return */
+		if (ret)
 			return -EINTR;
-		}
 
 		spin_lock(&space_info->lock);
 	}
