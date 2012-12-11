@@ -1911,6 +1911,7 @@ sys_setns_wrapper:
 	lgfr	%r3,%r3			# int
 	jg	sys_setns
 
+	.globl compat_sys_process_vm_readv_wrapper
 compat_sys_process_vm_readv_wrapper:
 	lgfr	%r2,%r2			# compat_pid_t
 	llgtr	%r3,%r3			# struct compat_iovec __user *
@@ -1921,6 +1922,7 @@ compat_sys_process_vm_readv_wrapper:
 	stg	%r0,160(%r15)
 	jg	compat_sys_process_vm_readv
 
+	.globl compat_sys_process_vm_writev_wrapper
 compat_sys_process_vm_writev_wrapper:
 	lgfr	%r2,%r2			# compat_pid_t
 	llgtr	%r3,%r3			# struct compat_iovec __user *
