@@ -1349,7 +1349,6 @@ static ssize_t __btrfs_direct_write(struct kiocb *iocb,
 				    loff_t *ppos, size_t count, size_t ocount)
 {
 	struct file *file = iocb->ki_filp;
-	struct inode *inode = fdentry(file)->d_inode;
 	struct iov_iter i;
 	ssize_t written;
 	ssize_t written_buffered;
@@ -1358,18 +1357,6 @@ static ssize_t __btrfs_direct_write(struct kiocb *iocb,
 
 	written = generic_file_direct_write(iocb, iov, &nr_segs, pos, ppos,
 					    count, ocount);
-
-	/*
-	 * the generic O_DIRECT will update in-memory i_size after the
-	 * DIOs are done.  But our endio handlers that update the on
-	 * disk i_size never update past the in memory i_size.  So we
-	 * need one more update here to catch any additions to the
-	 * file
-	 */
-	if (inode->i_size != BTRFS_I(inode)->disk_i_size) {
-		btrfs_ordered_update_i_size(inode, inode->i_size, NULL);
-		mark_inode_dirty(inode);
-	}
 
 	if (written < 0 || written == count)
 		return written;
@@ -1448,12 +1435,11 @@ static ssize_t btrfs_file_aio_write(struct kiocb *iocb,
 		goto out;
 	}
 
-	err = btrfs_update_time(file);
+	err = file_update_time(file);
 	if (err) {
 		mutex_unlock(&inode->i_mutex);
 		goto out;
 	}
-	BTRFS_I(inode)->sequence++;
 
 	start_pos = round_down(pos, root->sectorsize);
 	if (start_pos > i_size_read(inode)) {
@@ -1542,14 +1528,15 @@ int btrfs_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 
 	trace_btrfs_sync_file(file, datasync);
 
-	ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
-	if (ret)
-		return ret;
 	mutex_lock(&inode->i_mutex);
 
-	/* we wait first, since the writeback may change the inode */
+	/*
+	 * we wait first, since the writeback may change the inode, also wait
+	 * ordered range does a filemape_write_and_wait_range which is why we
+	 * don't do it above like other file systems.
+	 */
 	atomic_inc(&root->log_batch);
-	btrfs_wait_ordered_range(inode, 0, (u64)-1);
+	btrfs_wait_ordered_range(inode, start, end);
 	atomic_inc(&root->log_batch);
 
 	/*

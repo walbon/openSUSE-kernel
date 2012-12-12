@@ -52,6 +52,7 @@
 #include "locking.h"
 #include "inode-map.h"
 #include "backref.h"
+#include "rcu-string.h"
 
 /* Mask out flags that are inappropriate for the given type of inode. */
 static inline __u32 btrfs_mask_flags(umode_t mode, __u32 flags)
@@ -113,9 +114,6 @@ void btrfs_update_iflags(struct inode *inode)
 		inode->i_flags |= S_NOATIME;
 	if (ip->flags & BTRFS_INODE_DIRSYNC)
 		inode->i_flags |= S_DIRSYNC;
-
-	if (btrfs_root_readonly(ip->root))
-		inode->i_flags |= S_NOATIME;
 }
 
 /*
@@ -290,6 +288,7 @@ static int btrfs_ioctl_setflags(struct file *file, void __user *arg)
 	}
 
 	btrfs_update_iflags(inode);
+	inode_inc_iversion(inode);
 	inode->i_ctime = CURRENT_TIME;
 	ret = btrfs_update_inode(trans, root, inode);
 
@@ -1395,8 +1394,9 @@ static noinline int btrfs_ioctl_resize(struct btrfs_root *root,
 	do_div(new_size, root->sectorsize);
 	new_size *= root->sectorsize;
 
-	printk(KERN_INFO "btrfs: new size for %s is %llu\n",
-		device->name, (unsigned long long)new_size);
+	printk_in_rcu(KERN_INFO "btrfs: new size for %s is %llu\n",
+		      rcu_str_deref(device->name),
+		      (unsigned long long)new_size);
 
 	if (new_size > old_size) {
 		trans = btrfs_start_transaction(root, 0);
@@ -2314,7 +2314,12 @@ static long btrfs_ioctl_dev_info(struct btrfs_root *root, void __user *arg)
 	di_args->total_bytes = dev->total_bytes;
 	memcpy(di_args->uuid, dev->uuid, sizeof(di_args->uuid));
 	if (dev->name) {
-		strncpy(di_args->path, dev->name, sizeof(di_args->path));
+		struct rcu_string *name;
+
+		rcu_read_lock();
+		name = rcu_dereference(dev->name);
+		strncpy(di_args->path, name->str, sizeof(di_args->path));
+		rcu_read_unlock();
 		di_args->path[sizeof(di_args->path) - 1] = 0;
 	} else {
 		di_args->path[0] = '\0';
@@ -2680,6 +2685,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 			btrfs_mark_buffer_dirty(leaf);
 			btrfs_release_path(path);
 
+			inode_inc_iversion(inode);
 			inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 
 			/*
@@ -2972,7 +2978,7 @@ long btrfs_ioctl_space_info(struct btrfs_root *root, void __user *arg)
 		up_read(&info->groups_sem);
 	}
 
-	user_dest = (struct btrfs_ioctl_space_info *)
+	user_dest = (struct btrfs_ioctl_space_info __user *)
 		(arg + sizeof(struct btrfs_ioctl_space_args));
 
 	if (copy_to_user(user_dest, dest_orig, alloc_size))
@@ -3092,6 +3098,28 @@ static long btrfs_ioctl_scrub_progress(struct btrfs_root *root,
 		return PTR_ERR(sa);
 
 	ret = btrfs_scrub_progress(root, sa->devid, &sa->progress);
+
+	if (copy_to_user(arg, sa, sizeof(*sa)))
+		ret = -EFAULT;
+
+	kfree(sa);
+	return ret;
+}
+
+static long btrfs_ioctl_get_dev_stats(struct btrfs_root *root,
+				      void __user *arg, int reset_after_read)
+{
+	struct btrfs_ioctl_get_dev_stats *sa;
+	int ret;
+
+	if (reset_after_read && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	sa = memdup_user(arg, sizeof(*sa));
+	if (IS_ERR(sa))
+		return PTR_ERR(sa);
+
+	ret = btrfs_get_dev_stats(root, sa, reset_after_read);
 
 	if (copy_to_user(arg, sa, sizeof(*sa)))
 		ret = -EFAULT;
@@ -3557,6 +3585,10 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_balance_ctl(root, arg);
 	case BTRFS_IOC_BALANCE_PROGRESS:
 		return btrfs_ioctl_balance_progress(root, argp);
+	case BTRFS_IOC_GET_DEV_STATS:
+		return btrfs_ioctl_get_dev_stats(root, argp, 0);
+	case BTRFS_IOC_GET_AND_RESET_DEV_STATS:
+		return btrfs_ioctl_get_dev_stats(root, argp, 1);
 	case BTRFS_IOC_COMPR_SIZE:
 		return btrfs_ioctl_compr_size(file, argp);
 	}

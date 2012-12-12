@@ -55,6 +55,7 @@
 #include "version.h"
 #include "export.h"
 #include "compression.h"
+#include "rcu-string.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/btrfs.h>
@@ -443,11 +444,8 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 		case Opt_thread_pool:
 			intarg = 0;
 			match_int(&args[0], &intarg);
-			if (intarg) {
+			if (intarg)
 				info->thread_pool_size = intarg;
-				printk(KERN_INFO "btrfs: thread pool %d\n",
-				       info->thread_pool_size);
-			}
 			break;
 		case Opt_max_inline:
 			num = match_strdup(&args[0]);
@@ -778,7 +776,7 @@ static int btrfs_fill_super(struct super_block *sb,
 #ifdef CONFIG_BTRFS_FS_POSIX_ACL
 	sb->s_flags |= MS_POSIXACL;
 #endif
-
+	sb->s_flags |= MS_I_VERSION;
 	err = open_ctree(sb, fs_devices, (char *)data);
 	if (err) {
 		printk(KERN_ERR "btrfs: open_ctree failed\n");
@@ -1140,6 +1138,40 @@ error_fs_info:
 	return ERR_PTR(error);
 }
 
+static void btrfs_set_max_workers(struct btrfs_workers *workers, int new_limit)
+{
+	spin_lock_irq(&workers->lock);
+	workers->max_workers = new_limit;
+	spin_unlock_irq(&workers->lock);
+}
+
+static void btrfs_resize_thread_pool(struct btrfs_fs_info *fs_info,
+				     int new_pool_size, int old_pool_size)
+{
+	if (new_pool_size == old_pool_size)
+		return;
+
+	fs_info->thread_pool_size = new_pool_size;
+
+	printk(KERN_INFO "btrfs: resize thread pool %d -> %d\n",
+	       old_pool_size, new_pool_size);
+
+	btrfs_set_max_workers(&fs_info->generic_worker, new_pool_size);
+	btrfs_set_max_workers(&fs_info->workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->delalloc_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->submit_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->caching_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->fixup_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->endio_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->endio_meta_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->endio_meta_write_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->endio_write_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->endio_freespace_worker, new_pool_size);
+	btrfs_set_max_workers(&fs_info->delayed_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->readahead_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->scrub_workers, new_pool_size);
+}
+
 static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 {
 	struct btrfs_fs_info *fs_info = btrfs_sb(sb);
@@ -1158,6 +1190,9 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		ret = -EINVAL;
 		goto restore;
 	}
+
+	btrfs_resize_thread_pool(fs_info,
+		fs_info->thread_pool_size, old_thread_pool_size);
 
 	if ((*flags & MS_RDONLY) == (sb->s_flags & MS_RDONLY))
 		return 0;
@@ -1202,7 +1237,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		if (ret)
 			goto restore;
 
-		ret = btrfs_resume_balance_async(root->fs_info);
+		ret = btrfs_resume_balance_async(fs_info);
 		if (ret)
 			goto restore;
 
@@ -1220,7 +1255,8 @@ restore:
 	fs_info->compress_type = old_compress_type;
 	fs_info->max_inline = old_max_inline;
 	fs_info->alloc_start = old_alloc_start;
-	fs_info->thread_pool_size = old_thread_pool_size;
+	btrfs_resize_thread_pool(fs_info,
+		old_thread_pool_size, fs_info->thread_pool_size);
 	fs_info->metadata_ratio = old_metadata_ratio;
 	return ret;
 }
@@ -1500,6 +1536,37 @@ static void btrfs_fs_dirty_inode(struct inode *inode, int flags)
 	}
 }
 
+static int btrfs_show_devname(struct seq_file *m, struct vfsmount *vfs)
+{
+	struct btrfs_fs_info *fs_info = btrfs_sb(vfs->mnt_sb);
+	struct btrfs_fs_devices *cur_devices;
+	struct btrfs_device *dev, *first_dev = NULL;
+	struct list_head *head;
+	struct rcu_string *name;
+
+	mutex_lock(&fs_info->fs_devices->device_list_mutex);
+	cur_devices = fs_info->fs_devices;
+	while (cur_devices) {
+		head = &cur_devices->devices;
+		list_for_each_entry(dev, head, dev_list) {
+			if (!first_dev || dev->devid < first_dev->devid)
+				first_dev = dev;
+		}
+		cur_devices = cur_devices->seed;
+	}
+
+	if (first_dev) {
+		rcu_read_lock();
+		name = rcu_dereference(first_dev->name);
+		seq_escape(m, name->str, " \t\n\\");
+		rcu_read_unlock();
+	} else {
+		WARN_ON(1);
+	}
+	mutex_unlock(&fs_info->fs_devices->device_list_mutex);
+	return 0;
+}
+
 static dev_t btrfs_get_maps_dev(struct inode *inode)
 {
 	return BTRFS_I(inode)->root->anon_super.s_dev;
@@ -1511,6 +1578,7 @@ static const struct super_operations btrfs_super_ops = {
 	.put_super	= btrfs_put_super,
 	.sync_fs	= btrfs_sync_fs,
 	.show_options	= btrfs_show_options,
+	.show_devname	= btrfs_show_devname,
 	.write_inode	= btrfs_write_inode,
 	.dirty_inode	= btrfs_fs_dirty_inode,
 	.alloc_inode	= btrfs_alloc_inode,

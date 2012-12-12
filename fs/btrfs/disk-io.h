@@ -89,7 +89,6 @@ int btrfs_add_log_tree(struct btrfs_trans_handle *trans,
 int btrfs_cleanup_transaction(struct btrfs_root *root);
 void btrfs_cleanup_one_transaction(struct btrfs_transaction *trans,
 				  struct btrfs_root *root);
-void btrfs_abort_devices(struct btrfs_root *root);
 
 int btrfs_calc_num_tolerated_disk_barrier_failures(
 		struct btrfs_fs_info *fs_info);

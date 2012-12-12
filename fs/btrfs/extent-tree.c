@@ -2363,12 +2363,10 @@ next:
 	return count;
 }
 
-
 static void wait_for_more_refs(struct btrfs_delayed_ref_root *delayed_refs,
-			unsigned long num_refs)
+			       unsigned long num_refs,
+			       struct list_head *first_seq)
 {
-	struct list_head *first_seq = delayed_refs->seq_head.next;
-
 	spin_unlock(&delayed_refs->lock);
 	pr_debug("waiting for more refs (num %ld, first %p)\n",
 		 num_refs, first_seq);
@@ -2397,6 +2395,7 @@ int btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
 	struct btrfs_delayed_ref_root *delayed_refs;
 	struct btrfs_delayed_ref_node *ref;
 	struct list_head cluster;
+	struct list_head *first_seq = NULL;
 	int ret;
 	u64 delayed_start;
 	int run_all = count == (unsigned long)-1;
@@ -2452,8 +2451,10 @@ again:
 				 */
 				consider_waiting = 1;
 				num_refs = delayed_refs->num_entries;
+				first_seq = root->fs_info->tree_mod_seq_list.next;
 			} else {
-				wait_for_more_refs(delayed_refs, num_refs);
+				wait_for_more_refs(delayed_refs,
+						   num_refs, first_seq);
 				/*
 				 * after waiting, things have changed. we
 				 * dropped the lock and someone else might have
@@ -3585,7 +3586,7 @@ again:
 	space_info->chunk_alloc = 0;
 	spin_unlock(&space_info->lock);
 out:
-	mutex_unlock(&extent_root->fs_info->chunk_mutex);
+	mutex_unlock(&fs_info->chunk_mutex);
 	return ret;
 }
 
