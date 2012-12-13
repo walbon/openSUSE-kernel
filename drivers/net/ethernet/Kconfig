@@ -10,7 +10,6 @@ menuconfig ETHERNET
 	  This section contains all the Ethernet device drivers.
 
 if ETHERNET
-
 source "drivers/net/ethernet/chelsio/Kconfig"
 
 endif # ETHERNET

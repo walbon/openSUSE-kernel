@@ -193,6 +193,8 @@ source "drivers/net/phy/Kconfig"
 #	Ethernet
 #
 
+source "drivers/net/ethernet/Kconfig"
+
 menuconfig NET_ETHERNET
 	bool "Ethernet (10 or 100Mbit)"
 	depends on !UML
@@ -2843,8 +2845,6 @@ source "drivers/net/sfc/Kconfig"
 source "drivers/net/benet/Kconfig"
 
 endif # NETDEV_10000
-
-source "drivers/net/ethernet/Kconfig"
 
 source "drivers/net/tokenring/Kconfig"
 
