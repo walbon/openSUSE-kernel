@@ -403,15 +403,23 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 			    strcmp(args[0].from, "lzo") == 0) {
 				compress_type = "lzo";
 				info->compress_type = BTRFS_COMPRESS_LZO;
+				btrfs_set_opt(info->mount_opt, COMPRESS);
+				btrfs_set_fs_incompat(info, COMPRESS_LZO);
 			} else if (strcmp(args[0].from, "zlib") == 0) {
 				compress_type = "zlib";
 				info->compress_type = BTRFS_COMPRESS_ZLIB;
+				btrfs_set_opt(info->mount_opt, COMPRESS);
+			} else if (strncmp(args[0].from, "no", 2) == 0) {
+				compress_type = "no";
+				info->compress_type = BTRFS_COMPRESS_NONE;
+				btrfs_clear_opt(info->mount_opt, COMPRESS);
+				btrfs_clear_opt(info->mount_opt, FORCE_COMPRESS);
+				compress_force = false;
 			} else {
 				ret = -EINVAL;
 				goto out;
 			}
 
-			btrfs_set_opt(info->mount_opt, COMPRESS);
 			if (compress_force) {
 				btrfs_set_opt(info->mount_opt, FORCE_COMPRESS);
 				pr_info("btrfs: force %s compression\n",
@@ -816,7 +824,6 @@ int btrfs_sync_fs(struct super_block *sb, int wait)
 	struct btrfs_trans_handle *trans;
 	struct btrfs_fs_info *fs_info = btrfs_sb(sb);
 	struct btrfs_root *root = fs_info->tree_root;
-	int ret;
 
 	trace_btrfs_sync_fs(wait);
 
@@ -827,11 +834,17 @@ int btrfs_sync_fs(struct super_block *sb, int wait)
 
 	btrfs_wait_ordered_extents(root, 0);
 
-	trans = btrfs_start_transaction(root, 0);
+	spin_lock(&fs_info->trans_lock);
+	if (!fs_info->running_transaction) {
+		spin_unlock(&fs_info->trans_lock);
+		return 0;
+	}
+	spin_unlock(&fs_info->trans_lock);
+
+	trans = btrfs_join_transaction(root);
 	if (IS_ERR(trans))
 		return PTR_ERR(trans);
-	ret = btrfs_commit_transaction(trans, root);
-	return ret;
+	return btrfs_commit_transaction(trans, root);
 }
 
 static int btrfs_show_options(struct seq_file *seq, struct vfsmount *vfs)
@@ -1505,6 +1518,13 @@ static long btrfs_control_ioctl(struct file *file, unsigned int cmd,
 		ret = btrfs_scan_one_device(vol->name, FMODE_READ,
 					    &btrfs_fs_type, &fs_devices);
 		break;
+	case BTRFS_IOC_DEVICES_READY:
+		ret = btrfs_scan_one_device(vol->name, FMODE_READ,
+					    &btrfs_fs_type, &fs_devices);
+		if (ret)
+			break;
+		ret = !(fs_devices->num_devices == fs_devices->total_devices);
+		break;
 	}
 
 	kfree(vol);
@@ -1521,21 +1541,6 @@ static int btrfs_unfreeze(struct super_block *sb)
 	return 0;
 }
 
-static void btrfs_fs_dirty_inode(struct inode *inode, int flags)
-{
-	int ret;
-
-	ret = btrfs_dirty_inode(inode);
-	if (ret) {
-		static DEFINE_RATELIMIT_STATE(_rs,
-				DEFAULT_RATELIMIT_INTERVAL,
-				DEFAULT_RATELIMIT_BURST);
-		if (__ratelimit(&_rs))
-			pr_debug("btrfs: fail to dirty inode %llu error %d\n",
-				(unsigned long long)btrfs_ino(inode), ret);
-	}
-}
-
 static int btrfs_show_devname(struct seq_file *m, struct vfsmount *vfs)
 {
 	struct btrfs_fs_info *fs_info = btrfs_sb(vfs->mnt_sb);
@@ -1549,6 +1554,8 @@ static int btrfs_show_devname(struct seq_file *m, struct vfsmount *vfs)
 	while (cur_devices) {
 		head = &cur_devices->devices;
 		list_for_each_entry(dev, head, dev_list) {
+			if (dev->missing)
+				continue;
 			if (!first_dev || dev->devid < first_dev->devid)
 				first_dev = dev;
 		}
@@ -1580,7 +1587,6 @@ static const struct super_operations btrfs_super_ops = {
 	.show_options	= btrfs_show_options,
 	.show_devname	= btrfs_show_devname,
 	.write_inode	= btrfs_write_inode,
-	.dirty_inode	= btrfs_fs_dirty_inode,
 	.alloc_inode	= btrfs_alloc_inode,
 	.destroy_inode	= btrfs_destroy_inode,
 	.statfs		= btrfs_statfs,
