@@ -797,7 +797,7 @@ int xen_create_contiguous_region(
 
 	set_xen_guest_handle(exchange.out.extent_start, &out_frame);
 
-	scrub_pages((void *)vstart, 1 << order);
+	xen_scrub_pages((void *)vstart, 1 << order);
 
 	balloon_lock(flags);
 
@@ -905,7 +905,7 @@ void xen_destroy_contiguous_region(unsigned long vstart, unsigned int order)
 
 	set_xen_guest_handle(exchange.in.extent_start, &in_frame);
 
-	scrub_pages((void *)vstart, 1 << order);
+	xen_scrub_pages((void *)vstart, 1 << order);
 
 	balloon_lock(flags);
 
@@ -986,13 +986,13 @@ void xen_destroy_contiguous_region(unsigned long vstart, unsigned int order)
 		if (!PageHighMem(page)) {
 			void *v = __va(pfn << PAGE_SHIFT);
 
-			scrub_pages(v, 1);
+			xen_scrub_pages(v, 1);
 			MULTI_update_va_mapping(cr_mcl + j++, (unsigned long)v,
 						__pte_ma(0),
 						UVMF_INVLPG|UVMF_ALL);
 #ifdef CONFIG_XEN_SCRUB_PAGES
 		} else {
-			scrub_pages(kmap(page), 1);
+			xen_scrub_pages(kmap(page), 1);
 			kunmap(page);
 			kmap_flush_unused();
 #endif
@@ -1167,10 +1167,10 @@ int xen_limit_pages_to_max_mfn(
 		}
 
 		if (!PageHighMem(page))
-			scrub_pages(page_address(page), 1);
+			xen_scrub_pages(page_address(page), 1);
 #ifdef CONFIG_XEN_SCRUB_PAGES
 		else {
-			scrub_pages(kmap(page), 1);
+			xen_scrub_pages(kmap(page), 1);
 			kunmap(page);
 			++n;
 		}

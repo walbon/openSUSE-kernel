@@ -149,7 +149,8 @@ static efi_status_t xen_efi_get_variable(efi_char16_t *name,
 		return EFI_UNSUPPORTED;
 
 	*data_size = call.u.get_variable.size;
-	*attr = call.misc;
+	if (attr)
+		*attr = call.misc;
 
 	return call.status;
 }
@@ -401,6 +402,25 @@ static int __init rtc_init(void)
 	return 0;
 }
 arch_initcall(rtc_init);
+
+bool __init efi_get_secure_boot(void)
+{
+	u8 sb, setup;
+	unsigned long datasize = sizeof(sb);
+	static efi_guid_t __initdata var_guid = EFI_GLOBAL_VARIABLE_GUID;
+	efi_status_t status;
+
+	status = xen_efi_get_variable(L"SecureBoot", &var_guid, NULL,
+				      &datasize, &sb);
+
+	if (status != EFI_SUCCESS || !sb)
+		return false;
+
+	status = xen_efi_get_variable(L"SetupMode", &var_guid, NULL,
+				      &datasize, &setup);
+
+	return status == EFI_SUCCESS && !setup;
+}
 
 /*
  * Convenience functions to obtain memory types and attributes

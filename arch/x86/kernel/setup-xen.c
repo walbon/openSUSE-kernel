@@ -1210,6 +1210,13 @@ void __init setup_arch(char **cmdline_p)
 
 	io_delay_init();
 
+#ifndef CONFIG_XEN
+	if (boot_params.secure_boot)
+#else
+	if (efi_enabled && efi_get_secure_boot())
+#endif
+		secureboot_enable();
+
 #ifdef CONFIG_ACPI
 	if (!is_initial_xendomain()) {
 		printk(KERN_INFO "ACPI in unprivileged domain disabled\n");

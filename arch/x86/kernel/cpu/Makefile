@@ -42,11 +42,7 @@ obj-$(CONFIG_MTRR)			+= mtrr/
 obj-$(CONFIG_X86_LOCAL_APIC)		+= perfctr-watchdog.o
 
 disabled-obj-$(CONFIG_XEN) := hypervisor.o mshyperv.o perfctr-watchdog.o \
-			      perf_event.o perf_event_amd.o perf_event_p6.o \
-			      perf_event_p4.o perf_event_intel_lbr.o \
-			      perf_event_intel_ds.o perf_event_intel.o \
-			      perf_event_intel_uncore.o \
-			      sched.o vmware.o
+			      perf_event.o perf_event_%.o sched.o vmware.o
 
 quiet_cmd_mkcapflags = MKCAP   $@
       cmd_mkcapflags = $(PERL) $(srctree)/$(src)/mkcapflags.pl $< $@

@@ -229,9 +229,14 @@ static void print_mce(struct mce *m)
 	 * Note this output is parsed by external tools and old fields
 	 * should not be changed.
 	 */
+#ifndef CONFIG_XEN
 	pr_emerg(HW_ERR "PROCESSOR %u:%x TIME %llu SOCKET %u APIC %x microcode %u\n",
 		m->cpuvendor, m->cpuid, m->time, m->socketid, m->apicid,
 		cpu_data(m->extcpu).microcode);
+#else
+	pr_emerg(HW_ERR "PROCESSOR %u:%x TIME %llu SOCKET %u APIC %x\n",
+		m->cpuvendor, m->cpuid, m->time, m->socketid, m->apicid);
+#endif
 
 	/*
 	 * Print out human-readable details about the MCE error,

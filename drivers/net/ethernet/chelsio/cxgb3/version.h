@@ -36,6 +36,7 @@
 #define DRV_NAME "cxgb3"
 /* Driver version */
 #ifndef CONFIG_XEN
+#define DRV_VERSION "1.1.4-ko"
 #define DRV_VERSION "1.1.5-ko"
 #else
 #define DRV_VERSION "1.1.5-xen-ko"

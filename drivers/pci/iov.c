@@ -723,6 +723,7 @@ int pci_num_vf(struct pci_dev *dev)
 }
 EXPORT_SYMBOL_GPL(pci_num_vf);
 
+#ifndef CONFIG_XEN
 static int ats_alloc_one(struct pci_dev *dev, int ps)
 {
 	int pos;
@@ -864,3 +865,4 @@ int pci_ats_queue_depth(struct pci_dev *dev)
 	return PCI_ATS_CAP_QDEP(cap) ? PCI_ATS_CAP_QDEP(cap) :
 				       PCI_ATS_MAX_QDEP;
 }
+#endif /* !CONFIG_XEN */
