@@ -41,7 +41,7 @@ MODULE_PARM_DESC(ql4xdisablesysfsboot,
 
 /* TODO : bring back ql4xsess_recovery_tmo */
 
-int ql4xdontresethba = 0;
+int ql4xdontresethba;
 module_param(ql4xdontresethba, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ql4xdontresethba,
 		"Don't reset the HBA for driver recovery \n"
@@ -72,8 +72,8 @@ MODULE_PARM_DESC(ql4xmaxqdepth,
 static int ql4xsess_recovery_tmo = QL4_SESS_RECOVERY_TMO;
 module_param(ql4xsess_recovery_tmo, int, S_IRUGO);
 MODULE_PARM_DESC(ql4xsess_recovery_tmo,
-		"Target Session Recovery Timeout.\n"
-		" Default: 120 sec.");
+		" Target Session Recovery Timeout.\n"
+		"\t\t  Default: 120 sec.");
 
 static int qla4xxx_wait_for_hba_online(struct scsi_qla_host *ha);
 /*
@@ -5033,8 +5033,8 @@ static int __devinit qla4xxx_probe_adapter(struct pci_dev *pdev,
 	       ha->patch_number, ha->build_number);
 
 	if (qla4xxx_setup_boot_info(ha))
-		ql4_printk(KERN_ERR, ha, "%s:ISCSI boot info setup failed\n",
-			   __func__);
+		ql4_printk(KERN_ERR, ha,
+			   "%s: No iSCSI boot target configured\n", __func__);
 
 		/* Perform the build ddb list and login to each */
 	qla4xxx_build_ddb_list(ha, INIT_ADAPTER);
