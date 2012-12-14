@@ -203,9 +203,9 @@ static noinline int insert_inline_extent(struct btrfs_trans_handle *trans,
 	 * could end up racing with unlink.
 	 */
 	BTRFS_I(inode)->disk_i_size = inode->i_size;
-	btrfs_update_inode(trans, root, inode);
+	ret = btrfs_update_inode(trans, root, inode);
 
-	return 0;
+	return ret;
 fail:
 	btrfs_free_path(path);
 	return err;
@@ -4433,6 +4433,12 @@ static int btrfs_real_readdir(struct file *filp, void *dirent,
 
 			/* is this a reference to our own snapshot? If so
 			 * skip it
+                         *
+                         * In contrast to old kernels, we insert the snapshot's
+                         * dir item and dir index after it has been created, so
+                         * we won't find a reference to our own snapshot. We
+                         * still keep the following code for backward
+                         * compatibility.
 			 */
 			if (location.type == BTRFS_ROOT_ITEM_KEY &&
 			    location.objectid == root->root_key.objectid) {
@@ -4815,17 +4821,22 @@ int btrfs_add_link(struct btrfs_trans_handle *trans,
 					     parent_ino, index);
 	}
 
-	/* Nothing to clean up */
+	/* Nothing to clean up yet */
 	if (ret)
 		return ret;
 
 	ret = btrfs_insert_dir_item(trans, root, name, name_len,
 				    parent_inode, &key,
 				    btrfs_inode_type(inode), index);
-	if (ret)
+	if (ret == -EEXIST) {
 		goto fail_dir_item;
+	} else if (ret) {
+		btrfs_abort_transaction(trans, root, ret);
+		return ret;
+	}
 
-	btrfs_i_size_write(parent_inode, parent_inode->i_size + name_len * 2);
+	btrfs_i_size_write(parent_inode, parent_inode->i_size +
+			   name_len * 2);
 	inode_inc_iversion(parent_inode);
 	parent_inode->i_mtime = parent_inode->i_ctime = CURRENT_TIME;
 	ret = btrfs_update_inode(trans, root, parent_inode);
