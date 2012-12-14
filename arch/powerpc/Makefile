@@ -159,6 +159,7 @@ core-$(CONFIG_XMON)		+= arch/powerpc/xmon/
 core-$(CONFIG_KVM) 		+= arch/powerpc/kvm/
 
 drivers-$(CONFIG_OPROFILE)	+= arch/powerpc/oprofile/
+drivers-$(CONFIG_CRYPTO_DEV_NX)	+= drivers/crypto/nx/
 
 # Default to zImage, override when needed
 all: zImage
