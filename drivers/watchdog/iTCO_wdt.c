@@ -37,6 +37,7 @@
  *	document number TBD                   : DH89xxCC
  *	document number TBD                   : Panther Point
  *	document number TBD                   : Lynx Point
+ *	document number TBD                   : Lynx Point-LP
  */
 
 /*
@@ -128,6 +129,7 @@ enum iTCO_chipsets {
 	TCO_DH89XXCC,	/* DH89xxCC */
 	TCO_PPT,	/* Panther Point */
 	TCO_LPT,	/* Lynx Point */
+	TCO_LPT_LP,	/* Lynx Point-LP */
 };
 
 static struct {
@@ -192,6 +194,7 @@ static struct {
 	{"DH89xxCC", 2},
 	{"Panther Point", 2},
 	{"Lynx Point", 2},
+	{"Lynx Point_LP", 2},
 	{NULL, 0}
 };
 
@@ -366,6 +369,14 @@ static DEFINE_PCI_DEVICE_TABLE(iTCO_wdt_pci_tbl) = {
 	{ PCI_VDEVICE(INTEL, 0x8c5d), TCO_LPT},
 	{ PCI_VDEVICE(INTEL, 0x8c5e), TCO_LPT},
 	{ PCI_VDEVICE(INTEL, 0x8c5f), TCO_LPT},
+	{ PCI_VDEVICE(INTEL, 0x9c40), TCO_LPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9c41), TCO_LPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9c42), TCO_LPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9c43), TCO_LPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9c44), TCO_LPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9c45), TCO_LPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9c46), TCO_LPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9c47), TCO_LPT_LP},
 	{ 0, },			/* End of list */
 };
 MODULE_DEVICE_TABLE(pci, iTCO_wdt_pci_tbl);
