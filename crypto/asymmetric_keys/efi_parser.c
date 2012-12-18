@@ -61,7 +61,7 @@ int __init parse_efi_signature_list(const void *data, size_t size, struct key *k
 		    elsize < esize ||
 		    elsize % esize != 0) {
 			pr_devel("- bad size combo @%x\n", offs);
-			continue;
+			return -EBADMSG;
 		}
 
 		if (efi_guidcmp(list.signature_type, efi_cert_x509_guid) != 0) {
