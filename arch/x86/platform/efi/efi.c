@@ -51,6 +51,8 @@
 int efi_enabled;
 EXPORT_SYMBOL(efi_enabled);
 
+int secure_boot_enabled;
+
 struct efi efi;
 EXPORT_SYMBOL(efi);
 

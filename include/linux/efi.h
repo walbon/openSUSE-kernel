@@ -498,11 +498,14 @@ extern int __init efi_setup_pcdp_console(char *);
 #ifdef CONFIG_EFI
 # ifdef CONFIG_X86
    extern int efi_enabled;
+   extern int secure_boot_enabled;
 # else
 #  define efi_enabled 1
+#  define secure_boot_enabled 0
 # endif
 #else
 # define efi_enabled 0
+# define secure_boot_enabled 0
 #endif
 
 /*

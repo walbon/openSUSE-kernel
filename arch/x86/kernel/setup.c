@@ -972,8 +972,12 @@ void __init setup_arch(char **cmdline_p)
 
 	io_delay_init();
 
-	if (boot_params.secure_boot)
+	if (boot_params.secure_boot) {
 		secureboot_enable();
+#ifdef CONFIG_EFI
+		secure_boot_enabled = 1;
+#endif
+	}
 
 	/*
 	 * Parse the ACPI tables for possible boot-time SMP configuration.
