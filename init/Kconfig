@@ -1482,6 +1482,15 @@ config MODULE_SIG_BLACKLIST
 	  should not pass module signature verification.  If a module is
 	  signed with something in this keyring, the load will be rejected.
 
+config MODULE_SIG_UEFI
+	bool "Allow modules signed with certs stored in UEFI"
+	depends on MODULE_SIG && MODULE_SIG_BLACKLIST && EFI
+	select EFI_SIGNATURE_LIST_PARSER
+	help
+	  This will import certificates stored in UEFI and allow modules
+	  signed with those to be loaded.  It will also disallow loading
+	  of modules stored in the UEFI dbx variable.
+
 choice
 	prompt "Which hash algorithm should modules be signed with?"
 	depends on MODULE_SIG
