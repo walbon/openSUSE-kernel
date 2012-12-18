@@ -10,5 +10,8 @@
  */
 
 extern struct key *modsign_keyring;
+#ifdef CONFIG_MODULE_SIG_BLACKLIST
+extern struct key *modsign_blacklist;
+#endif
 
 extern int mod_verify_sig(const void *mod, unsigned long *_modlen);
