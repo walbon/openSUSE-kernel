@@ -437,10 +437,6 @@ static int csum_dirty_buffer(struct btrfs_root *root, struct page *page)
 		WARN_ON(1);
 		return 0;
 	}
-	if (eb->pages[0] != page) {
-		WARN_ON(1);
-		return 0;
-	}
 	if (!PageUptodate(page)) {
 		WARN_ON(1);
 		return 0;
@@ -869,6 +865,8 @@ static int __btree_submit_bio_done(struct inode *inode, int rw, struct bio *bio,
 
 static int check_async_write(struct inode *inode, unsigned long bio_flags)
 {
+	if (bio_flags & EXTENT_BIO_TREE_LOG)
+		return 0;
 #ifdef CONFIG_X86
 	if (cpu_has_xmm4_2)
 		return 0;
@@ -900,7 +898,7 @@ static int btree_submit_bio_hook(struct inode *inode, int rw, struct bio *bio,
 		if (ret)
 			return ret;
 		return btrfs_map_bio(BTRFS_I(inode)->root, rw, bio,
-				mirror_num, 0);
+				     mirror_num, 0);
 	}
 
 	/*
@@ -1182,8 +1180,8 @@ static void __setup_root(u32 nodesize, u32 leafsize, u32 sectorsize,
 	atomic_set(&root->log_commit[0], 0);
 	atomic_set(&root->log_commit[1], 0);
 	atomic_set(&root->log_writers, 0);
-	atomic_set(&root->orphan_inodes, 0);
 	atomic_set(&root->log_batch, 0);
+	atomic_set(&root->orphan_inodes, 0);
 	root->log_transid = 0;
 	root->last_log_commit = 0;
 	extent_io_tree_init(&root->dirty_log_pages,
@@ -2047,12 +2045,15 @@ int open_ctree(struct super_block *sb,
 	INIT_LIST_HEAD(&fs_info->space_info);
 	INIT_LIST_HEAD(&fs_info->tree_mod_seq_list);
 	btrfs_mapping_init(&fs_info->mapping_tree);
-	btrfs_init_block_rsv(&fs_info->global_block_rsv);
-	btrfs_init_block_rsv(&fs_info->delalloc_block_rsv);
-	btrfs_init_block_rsv(&fs_info->trans_block_rsv);
-	btrfs_init_block_rsv(&fs_info->chunk_block_rsv);
-	btrfs_init_block_rsv(&fs_info->empty_block_rsv);
-	btrfs_init_block_rsv(&fs_info->delayed_block_rsv);
+	btrfs_init_block_rsv(&fs_info->global_block_rsv,
+			     BTRFS_BLOCK_RSV_GLOBAL);
+	btrfs_init_block_rsv(&fs_info->delalloc_block_rsv,
+			     BTRFS_BLOCK_RSV_DELALLOC);
+	btrfs_init_block_rsv(&fs_info->trans_block_rsv, BTRFS_BLOCK_RSV_TRANS);
+	btrfs_init_block_rsv(&fs_info->chunk_block_rsv, BTRFS_BLOCK_RSV_CHUNK);
+	btrfs_init_block_rsv(&fs_info->empty_block_rsv, BTRFS_BLOCK_RSV_EMPTY);
+	btrfs_init_block_rsv(&fs_info->delayed_block_rsv,
+			     BTRFS_BLOCK_RSV_DELOPS);
 	atomic_set(&fs_info->nr_async_submits, 0);
 	atomic_set(&fs_info->async_delalloc_pages, 0);
 	atomic_set(&fs_info->async_submit_draining, 0);
@@ -2524,7 +2525,6 @@ retry_root_backup:
 		printk(KERN_ERR "btrfs: Failed to read block groups: %d\n", ret);
 		goto fail_block_groups;
 	}
-
 	fs_info->num_tolerated_disk_barrier_failures =
 		btrfs_calc_num_tolerated_disk_barrier_failures(fs_info);
 	if (fs_info->fs_devices->missing_devices >
@@ -3487,52 +3487,6 @@ int btrfs_read_buffer(struct extent_buffer *buf, u64 parent_transid)
 	return btree_read_extent_buffer_pages(root, buf, 0, parent_transid);
 }
 
-int btree_lock_page_hook(struct page *page, void *data,
-				void (*flush_fn)(void *))
-{
-	struct inode *inode = page->mapping->host;
-	struct btrfs_root *root = BTRFS_I(inode)->root;
-	struct extent_buffer *eb;
-
-	/*
-	 * We culled this eb but the page is still hanging out on the mapping,
-	 * carry on.
-	 */
-	if (!PagePrivate(page))
-		goto out;
-
-	eb = (struct extent_buffer *)page->private;
-	if (!eb) {
-		WARN_ON(1);
-		goto out;
-	}
-	if (page != eb->pages[0])
-		goto out;
-
-	if (!btrfs_try_tree_write_lock(eb)) {
-		flush_fn(data);
-		btrfs_tree_lock(eb);
-	}
-	btrfs_set_header_flag(eb, BTRFS_HEADER_FLAG_WRITTEN);
-
-	if (test_and_clear_bit(EXTENT_BUFFER_DIRTY, &eb->bflags)) {
-		spin_lock(&root->fs_info->delalloc_lock);
-		if (root->fs_info->dirty_metadata_bytes >= eb->len)
-			root->fs_info->dirty_metadata_bytes -= eb->len;
-		else
-			WARN_ON(1);
-		spin_unlock(&root->fs_info->delalloc_lock);
-	}
-
-	btrfs_tree_unlock(eb);
-out:
-	if (!trylock_page(page)) {
-		flush_fn(data);
-		lock_page(page);
-	}
-	return 0;
-}
-
 static int btrfs_check_super_valid(struct btrfs_fs_info *fs_info,
 			      int read_only)
 {
@@ -3929,7 +3883,6 @@ int btrfs_cleanup_transaction(struct btrfs_root *root)
 }
 
 static struct extent_io_ops btree_extent_io_ops = {
-	.write_cache_pages_lock_hook = btree_lock_page_hook,
 	.readpage_end_io_hook = btree_readpage_end_io_hook,
 	.readpage_io_failed_hook = btree_io_failed_hook,
 	.submit_bio_hook = btree_submit_bio_hook,

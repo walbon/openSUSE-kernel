@@ -4552,7 +4552,7 @@ static int read_one_dev(struct btrfs_root *root,
 			return -EIO;
 
 		if (!device) {
-			printk(KERN_WARNING "btrfs: warning devid %llu missing\n",
+			printk(KERN_WARNING "warning devid %llu missing\n",
 			       (unsigned long long)devid);
 			device = add_missing_dev(root, devid, dev_uuid);
 			if (!device)

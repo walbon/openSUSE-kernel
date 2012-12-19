@@ -221,7 +221,7 @@ void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root, const char *function,
 			       unsigned int line, int errno)
 {
-	WARN_ONCE(1, KERN_DEBUG "btrfs: Transaction aborted");
+	WARN_ONCE(1, KERN_DEBUG "btrfs: Transaction aborted\n");
 	trans->aborted = errno;
 	/* Nothing used. The other threads that have joined this
 	 * transaction may be able to continue. */
@@ -391,7 +391,15 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 			btrfs_set_opt(info->mount_opt, NODATASUM);
 			break;
 		case Opt_nodatacow:
-			printk(KERN_INFO "btrfs: setting nodatacow\n");
+			if (!btrfs_test_opt(root, COMPRESS) ||
+				!btrfs_test_opt(root, FORCE_COMPRESS)) {
+					printk(KERN_INFO "btrfs: setting nodatacow, compression disabled\n");
+			} else {
+				printk(KERN_INFO "btrfs: setting nodatacow\n");
+			}
+			info->compress_type = BTRFS_COMPRESS_NONE;
+			btrfs_clear_opt(info->mount_opt, COMPRESS);
+			btrfs_clear_opt(info->mount_opt, FORCE_COMPRESS);
 			btrfs_set_opt(info->mount_opt, NODATACOW);
 			btrfs_set_opt(info->mount_opt, NODATASUM);
 			break;
@@ -406,11 +414,15 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 				compress_type = "lzo";
 				info->compress_type = BTRFS_COMPRESS_LZO;
 				btrfs_set_opt(info->mount_opt, COMPRESS);
+				btrfs_clear_opt(info->mount_opt, NODATACOW);
+				btrfs_clear_opt(info->mount_opt, NODATASUM);
 				btrfs_set_fs_incompat(info, COMPRESS_LZO);
 			} else if (strcmp(args[0].from, "zlib") == 0) {
 				compress_type = "zlib";
 				info->compress_type = BTRFS_COMPRESS_ZLIB;
 				btrfs_set_opt(info->mount_opt, COMPRESS);
+				btrfs_clear_opt(info->mount_opt, NODATACOW);
+				btrfs_clear_opt(info->mount_opt, NODATASUM);
 			} else if (strncmp(args[0].from, "no", 2) == 0) {
 				compress_type = "no";
 				info->compress_type = BTRFS_COMPRESS_NONE;
@@ -789,7 +801,7 @@ static int btrfs_fill_super(struct super_block *sb,
 	sb->s_flags |= MS_I_VERSION;
 	err = open_ctree(sb, fs_devices, (char *)data);
 	if (err) {
-		printk(KERN_ERR "btrfs: open_ctree failed\n");
+		printk("btrfs: open_ctree failed\n");
 		return err;
 	}
 

@@ -550,7 +550,8 @@ static int create_snapshot(struct btrfs_root *root, struct dentry *dentry,
 	if (!pending_snapshot)
 		return -ENOMEM;
 
-	btrfs_init_block_rsv(&pending_snapshot->block_rsv);
+	btrfs_init_block_rsv(&pending_snapshot->block_rsv,
+			     BTRFS_BLOCK_RSV_TEMP);
 	pending_snapshot->dentry = dentry;
 	pending_snapshot->root = root;
 	pending_snapshot->readonly = readonly;
@@ -1061,8 +1062,8 @@ again:
 			 page_start, page_end - 1, 0, &cached_state);
 	clear_extent_bit(&BTRFS_I(inode)->io_tree, page_start,
 			  page_end - 1, EXTENT_DIRTY | EXTENT_DELALLOC |
-			  EXTENT_DO_ACCOUNTING, 0, 0, &cached_state,
-			  GFP_NOFS);
+			  EXTENT_DO_ACCOUNTING | EXTENT_DEFRAG, 0, 0,
+			  &cached_state, GFP_NOFS);
 
 	if (i_done != page_cnt) {
 		spin_lock(&BTRFS_I(inode)->lock);
@@ -1073,8 +1074,8 @@ again:
 	}
 
 
-	btrfs_set_extent_delalloc(inode, page_start, page_end - 1,
-				  &cached_state);
+	set_extent_defrag(&BTRFS_I(inode)->io_tree, page_start, page_end - 1,
+			  &cached_state, GFP_NOFS);
 
 	unlock_extent_cached(&BTRFS_I(inode)->io_tree,
 			     page_start, page_end - 1, &cached_state,
@@ -1461,7 +1462,8 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 				     NULL, transid, readonly, inherit);
 	} else {
 		struct inode *src_inode;
-		src_file = fget(fd);
+		int fput_needed;
+		src_file = fget_light(fd, &fput_needed);
 		if (!src_file) {
 			ret = -EINVAL;
 			goto out_drop_write;
@@ -1472,13 +1474,12 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 			printk(KERN_INFO "btrfs: Snapshot src from "
 			       "another FS\n");
 			ret = -EINVAL;
-			fput(src_file);
-			goto out_drop_write;
+		} else {
+			ret = btrfs_mksubvol(&file->f_path, name, namelen,
+					     BTRFS_I(src_inode)->root,
+					     transid, readonly, inherit);
 		}
-		ret = btrfs_mksubvol(&file->f_path, name, namelen,
-				     BTRFS_I(src_inode)->root,
-				     transid, readonly, inherit);
-		fput(src_file);
+		fput_light(src_file, fput_needed);
 	}
 out_drop_write:
 	mnt_drop_write_file(file);
@@ -2389,10 +2390,9 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	struct btrfs_key key;
 	u32 nritems;
 	int slot;
-	int ret;
+	int ret, fput_needed;
 	u64 len = olen;
 	u64 bs = root->fs_info->sb->s_blocksize;
-	u64 hint_byte;
 
 	/*
 	 * TODO:
@@ -2415,7 +2415,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	if (ret)
 		return ret;
 
-	src_file = fget(srcfd);
+	src_file = fget_light(srcfd, &fput_needed);
 	if (!src_file) {
 		ret = -EBADF;
 		goto out_drop_write;
@@ -2615,10 +2615,10 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 					datal -= off - key.offset;
 				}
 
-				ret = btrfs_drop_extents(trans, inode,
+				ret = btrfs_drop_extents(trans, root, inode,
 							 new_key.offset,
 							 new_key.offset + datal,
-							 &hint_byte, 1);
+							 1);
 				if (ret) {
 					btrfs_abort_transaction(trans, root,
 								ret);
@@ -2689,10 +2689,10 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 				size -= skip + trim;
 				datal -= skip + trim;
 
-				ret = btrfs_drop_extents(trans, inode,
+				ret = btrfs_drop_extents(trans, root, inode,
 							 new_key.offset,
 							 new_key.offset + datal,
-							 &hint_byte, 1);
+							 1);
 				if (ret) {
 					btrfs_abort_transaction(trans, root,
 								ret);
@@ -2763,7 +2763,7 @@ out_unlock:
 	vfree(buf);
 	btrfs_free_path(path);
 out_fput:
-	fput(src_file);
+	fput_light(src_file, fput_needed);
 out_drop_write:
 	mnt_drop_write_file(file);
 	return ret;
