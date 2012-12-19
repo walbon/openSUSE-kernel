@@ -1462,8 +1462,7 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 				     NULL, transid, readonly, inherit);
 	} else {
 		struct inode *src_inode;
-		int fput_needed;
-		src_file = fget_light(fd, &fput_needed);
+		src_file = fget(fd);
 		if (!src_file) {
 			ret = -EINVAL;
 			goto out_drop_write;
@@ -1474,12 +1473,13 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 			printk(KERN_INFO "btrfs: Snapshot src from "
 			       "another FS\n");
 			ret = -EINVAL;
-		} else {
-			ret = btrfs_mksubvol(&file->f_path, name, namelen,
-					     BTRFS_I(src_inode)->root,
-					     transid, readonly, inherit);
+			fput(src_file);
+			goto out_drop_write;
 		}
-		fput_light(src_file, fput_needed);
+		ret = btrfs_mksubvol(&file->f_path, name, namelen,
+				     BTRFS_I(src_inode)->root,
+				     transid, readonly, inherit);
+		fput(src_file);
 	}
 out_drop_write:
 	mnt_drop_write_file(file);
@@ -2390,7 +2390,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	struct btrfs_key key;
 	u32 nritems;
 	int slot;
-	int ret, fput_needed;
+	int ret;
 	u64 len = olen;
 	u64 bs = root->fs_info->sb->s_blocksize;
 
@@ -2415,7 +2415,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	if (ret)
 		return ret;
 
-	src_file = fget_light(srcfd, &fput_needed);
+	src_file = fget(srcfd);
 	if (!src_file) {
 		ret = -EBADF;
 		goto out_drop_write;
@@ -2763,7 +2763,7 @@ out_unlock:
 	vfree(buf);
 	btrfs_free_path(path);
 out_fput:
-	fput_light(src_file, fput_needed);
+	fput(src_file);
 out_drop_write:
 	mnt_drop_write_file(file);
 	return ret;
