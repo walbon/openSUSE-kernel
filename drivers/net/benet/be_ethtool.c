@@ -691,7 +691,7 @@ be_read_eeprom(struct net_device *netdev, struct ethtool_eeprom *eeprom,
 	status = be_cmd_get_seeprom_data(adapter, &eeprom_cmd);
 
 	if (!status) {
-		resp = (struct be_cmd_resp_seeprom_read *) eeprom_cmd.va;
+		resp = eeprom_cmd.va;
 		memcpy(data, resp->seeprom_data + eeprom->offset, eeprom->len);
 	}
 	dma_free_coherent(&adapter->pdev->dev, eeprom_cmd.size, eeprom_cmd.va,
