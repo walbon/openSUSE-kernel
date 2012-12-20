@@ -590,6 +590,14 @@ static bool guest_cpuid_has_smep(struct kvm_vcpu *vcpu)
 	return best && (best->ebx & bit(X86_FEATURE_SMEP));
 }
 
+static inline bool guest_cpuid_has_osvw(struct kvm_vcpu *vcpu)
+{
+	struct kvm_cpuid_entry2 *best;
+
+	best = kvm_find_cpuid_entry(vcpu, 0x80000001, 0);
+	return best && (best->ecx & bit(X86_FEATURE_OSVW));
+}
+
 static void update_cpuid(struct kvm_vcpu *vcpu)
 {
 	struct kvm_cpuid_entry2 *best;
@@ -1628,6 +1636,16 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 data)
 		 */
 		pr_unimpl(vcpu, "ignored wrmsr: 0x%x data %llx\n", msr, data);
 		break;
+	case MSR_AMD64_OSVW_ID_LENGTH:
+		if (!guest_cpuid_has_osvw(vcpu))
+			return 1;
+		vcpu->arch.osvw.length = data;
+		break;
+	case MSR_AMD64_OSVW_STATUS:
+		if (!guest_cpuid_has_osvw(vcpu))
+			return 1;
+		vcpu->arch.osvw.status = data;
+		break;
 	default:
 		if (msr && (msr == vcpu->kvm->arch.xen_hvm_config.msr))
 			return xen_hvm_config(vcpu, data);
@@ -1895,6 +1913,16 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata)
 		 * enabled, latency 0x1, configured
 		 */
 		data = 0xbe702111;
+		break;
+	case MSR_AMD64_OSVW_ID_LENGTH:
+		if (!guest_cpuid_has_osvw(vcpu))
+			return 1;
+		data = vcpu->arch.osvw.length;
+		break;
+	case MSR_AMD64_OSVW_STATUS:
+		if (!guest_cpuid_has_osvw(vcpu))
+			return 1;
+		data = vcpu->arch.osvw.status;
 		break;
 	default:
 		if (!ignore_msrs) {
@@ -2354,7 +2382,7 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 	const u32 kvm_supported_word6_x86_features =
 		F(LAHF_LM) | F(CMP_LEGACY) | 0 /*SVM*/ | 0 /* ExtApicSpace */ |
 		F(CR8_LEGACY) | F(ABM) | F(SSE4A) | F(MISALIGNSSE) |
-		F(3DNOWPREFETCH) | 0 /* OSVW */ | 0 /* IBS */ | F(XOP) |
+		F(3DNOWPREFETCH) | F(OSVW) | 0 /* IBS */ | F(XOP) |
 		0 /* SKINIT, WDT, LWP */ | F(FMA4) | F(TBM);
 
 	/* cpuid 0xC0000001.edx */
