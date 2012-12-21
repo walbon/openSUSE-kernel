@@ -881,11 +881,13 @@ static void bnx2fc_indicate_netevent(void *context, unsigned long event,
 			printk(KERN_ERR "indicate_netevent: "\
 					"hba is not UP!!\n");
 		break;
+
 	case NETDEV_DOWN:
 		clear_bit(ADAPTER_STATE_GOING_DOWN, &hba->adapter_state);
 		clear_bit(ADAPTER_STATE_UP, &hba->adapter_state);
 		link_possible = 0;
 		break;
+
 	case NETDEV_GOING_DOWN:
 		set_bit(ADAPTER_STATE_GOING_DOWN, &hba->adapter_state);
 		link_possible = 0;
