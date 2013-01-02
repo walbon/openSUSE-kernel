@@ -21,7 +21,7 @@
 
 #define RPC_MIN_SLOT_TABLE	(2U)
 #define RPC_DEF_SLOT_TABLE	(16U)
-#define RPC_MAX_SLOT_TABLE	(128U)
+#define RPC_MAX_SLOT_TABLE	(1024U)
 
 /*
  * This describes a timeout strategy
