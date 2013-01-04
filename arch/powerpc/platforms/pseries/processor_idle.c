@@ -54,11 +54,11 @@ static inline  s64 idle_loop_epilog(unsigned long in_purr, ktime_t kt_before)
 }
 
 static int snooze_loop(struct cpuidle_device *dev,
-			struct cpuidle_driver *drv,
-			int index)
+			struct cpuidle_state *state)
 {
 	unsigned long in_purr;
 	ktime_t kt_before;
+	s64 usec_delta;
 	int cpu = dev->cpu;
 
 	idle_loop_prolog(&in_purr, &kt_before);
@@ -75,17 +75,16 @@ static int snooze_loop(struct cpuidle_device *dev,
 	clear_thread_flag(TIF_POLLING_NRFLAG);
 	smp_mb();
 
-	dev->last_residency =
-		(int)idle_loop_epilog(in_purr, kt_before);
-	return index;
+	usec_delta = idle_loop_epilog(in_purr, kt_before);
+	return usec_delta;
 }
 
 static int dedicated_cede_loop(struct cpuidle_device *dev,
-				struct cpuidle_driver *drv,
-				int index)
+				struct cpuidle_state *state)
 {
 	unsigned long in_purr;
 	ktime_t kt_before;
+	s64 usec_delta;
 
 	idle_loop_prolog(&in_purr, &kt_before);
 	get_lppaca()->donate_dedicated_cpu = 1;
@@ -95,17 +94,16 @@ static int dedicated_cede_loop(struct cpuidle_device *dev,
 	cede_processor();
 
 	get_lppaca()->donate_dedicated_cpu = 0;
-	dev->last_residency =
-		(int)idle_loop_epilog(in_purr, kt_before);
-	return index;
+	usec_delta = idle_loop_epilog(in_purr, kt_before);
+	return usec_delta;
 }
 
 static int shared_cede_loop(struct cpuidle_device *dev,
-			struct cpuidle_driver *drv,
-			int index)
+			struct cpuidle_state *state)
 {
 	unsigned long in_purr;
 	ktime_t kt_before;
+	s64 usec_delta;
 
 	idle_loop_prolog(&in_purr, &kt_before);
 
@@ -118,9 +116,8 @@ static int shared_cede_loop(struct cpuidle_device *dev,
 	 */
 	cede_processor();
 
-	dev->last_residency =
-		(int)idle_loop_epilog(in_purr, kt_before);
-	return index;
+	usec_delta = idle_loop_epilog(in_purr, kt_before);
+	return usec_delta;
 }
 
 /*
@@ -158,19 +155,23 @@ static struct cpuidle_state shared_states[MAX_IDLE_STATE_COUNT] = {
 
 void update_smt_snooze_delay(int cpu, int residency)
 {
-	struct cpuidle_driver *drv = cpuidle_get_driver();
-	struct cpuidle_device *dev = per_cpu(cpuidle_devices, cpu);
+	struct cpuidle_device *dev;
 
 	if (cpuidle_state_table != dedicated_states)
 		return;
 
 	if (residency < 0) {
+		dev = per_cpu_ptr(pseries_cpuidle_devices, cpu);
 		/* Disable the Nap state on that cpu */
 		if (dev)
-			dev->states_usage[1].disable = 1;
-	} else
-		if (drv)
-			drv->states[1].target_residency = residency;
+			dev->states[1].flags |= CPUIDLE_FLAG_IGNORE;
+	} else {
+		dev = per_cpu_ptr(pseries_cpuidle_devices, cpu);
+		if (dev) {
+			dev->states[1].flags ^= CPUIDLE_FLAG_IGNORE;
+			dev->states[1].target_residency = residency;
+		}
+	}
 }
 
 static int pseries_cpuidle_add_cpu_notifier(struct notifier_block *n,
@@ -207,34 +208,6 @@ static struct notifier_block setup_hotplug_notifier = {
 	.notifier_call = pseries_cpuidle_add_cpu_notifier,
 };
 
-/*
- * pseries_cpuidle_driver_init()
- */
-static int pseries_cpuidle_driver_init(void)
-{
-	int idle_state;
-	struct cpuidle_driver *drv = &pseries_idle_driver;
-
-	drv->state_count = 0;
-
-	for (idle_state = 0; idle_state < MAX_IDLE_STATE_COUNT; ++idle_state) {
-
-		if (idle_state > max_idle_state)
-			break;
-
-		/* is the state not enabled? */
-		if (cpuidle_state_table[idle_state].enter == NULL)
-			continue;
-
-		drv->states[drv->state_count] =	/* structure copy */
-			cpuidle_state_table[idle_state];
-
-		drv->state_count += 1;
-	}
-
-	return 0;
-}
-
 /* pseries_idle_devices_uninit(void)
  * unregister cpuidle devices and de-allocate memory
  */
@@ -257,8 +230,7 @@ static void pseries_idle_devices_uninit(void)
  */
 static int pseries_idle_devices_init(void)
 {
-	int i;
-	struct cpuidle_driver *drv = &pseries_idle_driver;
+	int i, state;
 	struct cpuidle_device *dev;
 
 	pseries_cpuidle_devices = alloc_percpu(struct cpuidle_device);
@@ -267,7 +239,20 @@ static int pseries_idle_devices_init(void)
 
 	for_each_possible_cpu(i) {
 		dev = per_cpu_ptr(pseries_cpuidle_devices, i);
-		dev->state_count = drv->state_count;
+		dev->state_count = 0;
+		for (state = 0; state < MAX_IDLE_STATE_COUNT; ++state) {
+			if (state > max_idle_state)
+				break;
+
+			/* Is the state not enabled? */
+			if (cpuidle_state_table[state].enter == NULL)
+				continue;
+
+			dev->states[dev->state_count] = /* structure copy */
+					cpuidle_state_table[state];
+			dev->state_count += 1;
+		}
+
 		dev->cpu = i;
 		if (cpuidle_register_device(dev)) {
 			printk(KERN_DEBUG \
@@ -275,7 +260,6 @@ static int pseries_idle_devices_init(void)
 			return -EIO;
 		}
 	}
-
 	return 0;
 }
 
@@ -313,7 +297,6 @@ static int __init pseries_processor_idle_init(void)
 	if (retval)
 		return retval;
 
-	pseries_cpuidle_driver_init();
 	retval = cpuidle_register_driver(&pseries_idle_driver);
 	if (retval) {
 		printk(KERN_DEBUG "Registration of pseries driver failed.\n");

@@ -351,19 +351,25 @@ static int alloc_dispatch_log_kmem_cache(void)
 }
 early_initcall(alloc_dispatch_log_kmem_cache);
 
+void default_idle(void)
+{
+	HMT_low();
+	HMT_very_low();
+}
+EXPORT_SYMBOL(default_idle);
+
+void (*pm_idle)(void) = default_idle;
+EXPORT_SYMBOL(pm_idle);
+
 static void pSeries_idle(void)
 {
 	/* This would call on the cpuidle framework, and the back-end pseries
 	 * driver to  go to idle states
 	 */
-	if (cpuidle_idle_call()) {
-		/* On error, execute default handler
-		 * to go into low thread priority and possibly
-		 * low power mode.
-		 */
-		HMT_low();
-		HMT_very_low();
-	}
+	if (pm_idle)
+		pm_idle();
+	else
+		default_idle();
 }
 
 static void __init pSeries_setup_arch(void)
