@@ -52,7 +52,7 @@ static ssize_t store_smt_snooze_delay(struct sys_device *dev,
 		return -EINVAL;
 
 	per_cpu(smt_snooze_delay, cpu->sysdev.id) = snooze;
-	update_smt_snooze_delay(snooze);
+	update_smt_snooze_delay(cpu->sysdev.id, snooze);
 
 	return count;
 }

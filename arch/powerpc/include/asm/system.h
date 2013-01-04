@@ -225,9 +225,9 @@ extern int powersave_nap;	/* set if nap mode can be used in idle loop */
 void cpu_idle_wait(void);
 
 #ifdef CONFIG_PSERIES_IDLE
-extern void update_smt_snooze_delay(int snooze);
+extern void update_smt_snooze_delay(int cpu, int residency);
 #else
-static inline void update_smt_snooze_delay(int snooze) {}
+extern void update_smt_snooze_delay(int cpu, int residency) {}
 #endif
 
 /*
