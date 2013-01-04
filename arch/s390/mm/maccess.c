@@ -117,6 +117,30 @@ void copy_to_absolute_zero(void *dest, void *src, size_t count)
 }
 
 /*
+ * Copy memory in absolute mode (kernel to kernel)
+ */
+void memcpy_absolute(void *dest, void *src, size_t count)
+{
+	unsigned long cr0, flags, prefix;
+
+	flags = arch_local_irq_save();
+	__ctl_store(cr0, 0, 0);
+	__ctl_clear_bit(0, 28); /* disable lowcore protection */
+	prefix = store_prefix();
+	if (prefix) {
+		local_mcck_disable();
+		set_prefix(0);
+		memcpy(dest, src, count);
+		set_prefix(prefix);
+		local_mcck_enable();
+	} else {
+		memcpy(dest, src, count);
+	}
+	__ctl_load(cr0, 0, 0);
+	arch_local_irq_restore(flags);
+}
+
+/*
  * Copy memory from kernel (real) to user (virtual)
  */
 int copy_to_user_real(void __user *dest, void *src, size_t count)
@@ -188,20 +212,6 @@ static int is_swapped(unsigned long addr)
 }
 
 /*
- * Return swapped prefix or zero page address
- */
-static unsigned long get_swapped(unsigned long addr)
-{
-	unsigned long prefix = store_prefix();
-
-	if (addr < sizeof(struct _lowcore))
-		return addr + prefix;
-	if (addr >= prefix && addr < prefix + sizeof(struct _lowcore))
-		return addr - prefix;
-	return addr;
-}
-
-/*
  * Convert a physical pointer for /dev/mem access
  *
  * For swapped prefix pages a new buffer is returned that contains a copy of
@@ -218,7 +228,7 @@ void *xlate_dev_mem_ptr(phys_addr_t addr)
 		size = PAGE_SIZE - (addr & ~PAGE_MASK);
 		bounce = (void *) __get_free_page(GFP_ATOMIC);
 		if (bounce)
-			memcpy_real(bounce, (void *) get_swapped(addr), size);
+			memcpy_absolute(bounce, (void *) addr, size);
 	}
 	preempt_enable();
 	put_online_cpus();
