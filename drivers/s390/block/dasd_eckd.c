@@ -1028,7 +1028,7 @@ static int dasd_eckd_read_conf(struct dasd_device *device)
 {
 	void *conf_data;
 	int conf_len, conf_data_saved;
-	int rc;
+	int rc, path_err;
 	__u8 lpm, opm;
 	struct dasd_eckd_private *private, path_private;
 	struct dasd_path *path_data;
@@ -1039,6 +1039,7 @@ static int dasd_eckd_read_conf(struct dasd_device *device)
 	path_data = &device->path_data;
 	opm = ccw_device_get_path_mask(device->cdev);
 	conf_data_saved = 0;
+	path_err = 0;
 	/* get configuration data per operational path */
 	for (lpm = 0x80; lpm; lpm>>= 1) {
 		if (!(lpm & opm))
@@ -1124,7 +1125,8 @@ static int dasd_eckd_read_conf(struct dasd_device *device)
 					"the same device, path %02X leads to "
 					"device %s instead of %s\n", lpm,
 					print_path_uid, print_device_uid);
-				return -EINVAL;
+				path_err = -EINVAL;
+				continue;
 			}
 
 			path_private.conf_data = NULL;
@@ -1144,7 +1146,7 @@ static int dasd_eckd_read_conf(struct dasd_device *device)
 			kfree(conf_data);
 	}
 
-	return 0;
+	return path_err;
 }
 
 static int verify_fcx_max_data(struct dasd_device *device, __u8 lpm)
@@ -4163,9 +4165,7 @@ static int dasd_eckd_restore_device(struct dasd_device *device)
 	private = (struct dasd_eckd_private *) device->private;
 
 	/* Read Configuration Data */
-	rc = dasd_eckd_read_conf(device);
-	if (rc)
-		goto out_err;
+	dasd_eckd_read_conf(device);
 
 	dasd_eckd_get_uid(device, &temp_uid);
 	/* Generate device unique id */
@@ -4185,9 +4185,7 @@ static int dasd_eckd_restore_device(struct dasd_device *device)
 	dasd_eckd_validate_server(device, DASD_CQR_FLAGS_FAILFAST);
 
 	/* RE-Read Configuration Data */
-	rc = dasd_eckd_read_conf(device);
-	if (rc)
-		goto out_err;
+	dasd_eckd_read_conf(device);
 
 	/* Read Feature Codes */
 	dasd_eckd_read_features(device);
