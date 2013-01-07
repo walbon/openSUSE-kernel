@@ -2023,3 +2023,32 @@
  * no action is required. I/O will resume when the device reservation is
  * surrendered by the other operating system instance.
  */
+
+/*?
+ * Text: "%s: The newly added channel path %02X will not be used because it leads to a different device %s\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the DASD
+ *   @2: logical path mask
+ *   @3: UID
+ * Description:
+ * The newly added channel path has a different UID than the DASD device. This indicates
+ * an incorrect cabling. This path is not going to be used.
+ * User action:
+ * Check the cabling of the DASD device. Disconnect and reconnect the cable.
+ */
+
+/*?
+ * Text: "%s: Not all channel paths lead to the same device, path %02X leads to device %s instead of %s\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the DASD
+ *   @2: logical path mask
+ *   @3: UID
+ *   @4: UID
+ * Description:
+ * Some channel paths have a different UID than others. This indicates
+ * an incorrect cabling. The DASD device is not enabled.
+ * User action:
+ * Check cabling of the DASD device and retry to enable the device.
+ */
