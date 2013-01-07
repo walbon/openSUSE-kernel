@@ -72,13 +72,13 @@
 #define COPYRIGHT	"Copyright (c) 1999-2010 " MODULEAUTHOR
 #endif
 
-#define MPT_LINUX_VERSION_COMMON	"4.28.00.00suse"
-#define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-4.28.00.00"
+#define MPT_LINUX_VERSION_COMMON	"4.28.00.01suse"
+#define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-4.28.00.01"
 #define WHAT_MAGIC_STRING		"@" "(" "#" ")"
 #define MPT_LINUX_MAJOR_VERSION		4
 #define MPT_LINUX_MINOR_VERSION		28
 #define MPT_LINUX_BUILD_VERSION		00
-#define MPT_LINUX_RELEASE_VERSION	00
+#define MPT_LINUX_RELEASE_VERSION	01
 
 #define show_mptmod_ver(s,ver)  \
 	printk(KERN_INFO "%s %s\n", s, ver);
