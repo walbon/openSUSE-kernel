@@ -380,7 +380,6 @@ static struct bio *request_map_sg(pending_req_t *pending_req)
 
 			if (bio_add_pc_page(q, bio, page, bytes, off) !=
 						bytes) {
-				bio_put(bio);
 				err = -EINVAL;
 				goto free_bios;
 			}
@@ -415,6 +414,7 @@ void scsiback_cmd_exec(pending_req_t *pending_req)
 	int cmd_len  = (int)pending_req->cmd_len;
 	int data_dir = (int)pending_req->sc_data_direction;
 	unsigned int timeout;
+	struct bio *bio;
 	struct request *rq;
 	int write;
 
@@ -428,17 +428,21 @@ void scsiback_cmd_exec(pending_req_t *pending_req)
 
 	write = (data_dir == DMA_TO_DEVICE);
 	if (pending_req->nr_segments) {
-		struct bio *bio = request_map_sg(pending_req);
-
+		bio = request_map_sg(pending_req);
 		if (IS_ERR(bio)) {
-			pr_err("scsiback: SG Request Map Error\n");
+			pr_err("scsiback: SG Request Map Error %ld\n",
+			       PTR_ERR(bio));
 			return;
 		}
+	} else
+		bio = NULL;
 
+	if (bio) {
 		rq = blk_make_request(pending_req->sdev->request_queue, bio,
 				      GFP_KERNEL);
 		if (IS_ERR(rq)) {
-			pr_err("scsiback: Make Request Error\n");
+			pr_err("scsiback: Make Request Error %ld\n",
+			       PTR_ERR(rq));
 			return;
 		}
 
