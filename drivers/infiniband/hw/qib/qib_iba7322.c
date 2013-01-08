@@ -2854,9 +2854,8 @@ static irqreturn_t qib_7322intr(int irq, void *data)
 		for (i = 0; i < dd->first_user_ctxt; i++) {
 			if (ctxtrbits & rmask) {
 				ctxtrbits &= ~rmask;
-				if (dd->rcd[i]) {
+				if (dd->rcd[i])
 					qib_kreceive(dd->rcd[i], NULL, &npkts);
-				}
 			}
 			rmask <<= 1;
 		}
