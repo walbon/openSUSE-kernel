@@ -156,3 +156,31 @@
 
 /*? Text: "Linux is running under KVM in 64-bit mode\n" */
 
+/*?
+ * Text: "crashkernel reservation failed: %s\n"
+ * Severity: Informational
+ * Parameter:
+ *   @1: reason string
+ * Description:
+ * The memory reservation for the kdump "crashkernel" parameter was not
+ * successful. The Linux kernel was either not able to find a free memory
+ * area or an invalid area has been defined. The reason string describes the
+ * cause of the failure in more detail.
+ * User action:
+ * Increase the memory footprint of your virtual machine or adjust the values
+ * for the "crashkernel" kernel parameter. Then boot your Linux system again.
+ */
+
+/*?
+ * Text: "Reserving %lluMB of memory at %lluMB for crashkernel (System RAM: %luMB)\n"
+ * Severity: Informational
+ * Parameter:
+ *   @1: amount of reserved memory
+ *   @2: storage location of reserved memory
+ *   @3: amount of system RAM
+ * Description:
+ * The memory reservation for the kdump "crashkernel" parameter was successful
+ * and a kdump kernel can now be loaded with the kexec tool.
+ * User action:
+ * None.
+ */
