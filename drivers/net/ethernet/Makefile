@@ -3,3 +3,4 @@
 #
 
 obj-$(CONFIG_NET_VENDOR_CHELSIO) += chelsio/
+obj-$(CONFIG_NET_VENDOR_EMULEX) += emulex/
