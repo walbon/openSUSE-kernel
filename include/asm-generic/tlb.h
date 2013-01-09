@@ -102,9 +102,7 @@ struct mmu_gather {
 	struct mmu_gather_batch *active;
 	struct mmu_gather_batch	local;
 	struct page		*__pages[MMU_GATHER_BUNDLE];
-#ifndef __GENKSYMS__
 	unsigned int		batch_count;
-#endif
 };
 
 #define HAVE_GENERIC_MMU_GATHER
