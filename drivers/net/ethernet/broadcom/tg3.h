@@ -2991,6 +2991,7 @@ struct tg3 {
 	/* begin "tx thread" cacheline section */
 	void				(*write32_tx_mbox) (struct tg3 *, u32,
 							    u32);
+	u32				dma_limit;
 	u32				txq_req;
 	u32				txq_cnt;
 	u32				txq_max;
