@@ -3255,9 +3255,7 @@ struct tg3 {
 	const struct firmware		*fw;
 	u32				fw_len; /* includes BSS */
 
-#ifdef CONFIG_HWMON
 	struct device			*hwmon_dev;
-#endif
 };
 
 #endif /* !(_T3_H) */
