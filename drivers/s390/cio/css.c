@@ -405,6 +405,7 @@ static int css_evaluate_known_subchannel(struct subchannel *sch, int slow)
 	}
 	return ret;
 }
+EXPORT_SYMBOL_GPL(css_sched_sch_todo);
 
 static void css_evaluate_subchannel(struct subchannel_id schid, int slow)
 {
