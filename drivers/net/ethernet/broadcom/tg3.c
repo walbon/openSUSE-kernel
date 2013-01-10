@@ -8611,13 +8611,12 @@ static void __tg3_set_rx_mode(struct net_device *dev)
 	}
 }
 
-static void tg3_rss_init_dflt_indir_tbl(struct tg3 *tp)
+static void tg3_rss_init_dflt_indir_tbl(struct tg3 *tp, u32 qcnt)
 {
 	int i;
 
 	for (i = 0; i < TG3_RSS_INDIR_TBL_SIZE; i++)
-		tp->rss_ind_tbl[i] =
-			ethtool_rxfh_indir_default(i, tp->irq_cnt - 1);
+		tp->rss_ind_tbl[i] = ethtool_rxfh_indir_default(i, qcnt);
 }
 
 static void tg3_rss_check_indir_tbl(struct tg3 *tp)
@@ -8639,7 +8638,7 @@ static void tg3_rss_check_indir_tbl(struct tg3 *tp)
 	}
 
 	if (i != TG3_RSS_INDIR_TBL_SIZE)
-		tg3_rss_init_dflt_indir_tbl(tp);
+		tg3_rss_init_dflt_indir_tbl(tp, tp->rxq_cnt);
 }
 
 static void tg3_rss_write_indir_tbl(struct tg3 *tp)
@@ -14651,7 +14650,6 @@ static int __devinit tg3_get_invariants(struct tg3 *tp)
 		if (tg3_flag(tp, 57765_PLUS)) {
 			tg3_flag_set(tp, SUPPORT_MSIX);
 			tp->irq_max = TG3_IRQ_MAX_VECS;
-			tg3_rss_init_dflt_indir_tbl(tp);
 		}
 	}
 
@@ -14659,6 +14657,7 @@ static int __devinit tg3_get_invariants(struct tg3 *tp)
 	tp->rxq_max = 1;
 	if (tp->irq_max > 1) {
 		tp->rxq_max = TG3_RSS_MAX_NUM_QS;
+		tg3_rss_init_dflt_indir_tbl(tp, TG3_RSS_MAX_NUM_QS);
 
 		if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5719 ||
 		    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5720)
