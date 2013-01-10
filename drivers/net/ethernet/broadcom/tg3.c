@@ -10395,10 +10395,8 @@ static void tg3_stop(struct tg3 *tp)
 {
 	int i;
 
-	tg3_napi_disable(tp);
 	tg3_reset_task_cancel(tp);
-
-	netif_tx_stop_all_queues(tp->dev);
+	tg3_netif_stop(tp);
 
 	tg3_timer_stop(tp);
 
