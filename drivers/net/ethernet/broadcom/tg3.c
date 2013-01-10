@@ -203,6 +203,7 @@ MODULE_PARM_DESC(entropy, "Allow tg3 to populate the /dev/random entropy pool");
 
 /* minimum number of free TX descriptors required to wake up TX process */
 #define TG3_TX_WAKEUP_THRESH(tnapi)		((tnapi)->tx_pending / 4)
+#define TG3_TX_BD_DMA_MAX_2K		2048
 #define TG3_TX_BD_DMA_MAX_4K		4096
 
 #define TG3_RAW_IP_ALIGN 2
@@ -2163,7 +2164,7 @@ static void tg3_phy_eee_enable(struct tg3 *tp)
 	if (tp->link_config.active_speed == SPEED_1000 &&
 	    (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5717 ||
 	     GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5719 ||
-	     GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765) &&
+	     tg3_flag(tp, 57765_CLASS)) &&
 	    !TG3_PHY_AUXCTL_SMDSP_ENABLE(tp)) {
 		val = MII_TG3_DSP_TAP26_ALNOKO |
 		      MII_TG3_DSP_TAP26_RMRXSTO;
@@ -2682,8 +2683,7 @@ static void tg3_frob_aux_power(struct tg3 *tp, bool include_wol)
 	bool need_vaux = false;
 
 	/* The GPIOs do something completely different on 57765. */
-	if (!tg3_flag(tp, IS_NIC) ||
-	    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765)
+	if (!tg3_flag(tp, IS_NIC) || tg3_flag(tp, 57765_CLASS))
 		return;
 
 	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5717 ||
@@ -3642,6 +3642,7 @@ static int tg3_phy_autoneg_cfg(struct tg3 *tp, u32 advertise, u32 flowctrl)
 		switch (GET_ASIC_REV(tp->pci_chip_rev_id)) {
 		case ASIC_REV_5717:
 		case ASIC_REV_57765:
+		case ASIC_REV_57766:
 		case ASIC_REV_5719:
 			/* If we advertised any eee advertisements above... */
 			if (val)
@@ -8179,7 +8180,7 @@ static void tg3_rings_reset(struct tg3 *tp)
 		limit = NIC_SRAM_SEND_RCB + TG3_BDINFO_SIZE * 16;
 	else if (tg3_flag(tp, 5717_PLUS))
 		limit = NIC_SRAM_SEND_RCB + TG3_BDINFO_SIZE * 4;
-	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765)
+	else if (tg3_flag(tp, 57765_CLASS))
 		limit = NIC_SRAM_SEND_RCB + TG3_BDINFO_SIZE * 2;
 	else
 		limit = NIC_SRAM_SEND_RCB + TG3_BDINFO_SIZE;
@@ -8196,7 +8197,7 @@ static void tg3_rings_reset(struct tg3 *tp)
 	else if (!tg3_flag(tp, 5705_PLUS))
 		limit = NIC_SRAM_RCV_RET_RCB + TG3_BDINFO_SIZE * 16;
 	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5755 ||
-		 GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765)
+		 tg3_flag(tp, 57765_CLASS))
 		limit = NIC_SRAM_RCV_RET_RCB + TG3_BDINFO_SIZE * 4;
 	else
 		limit = NIC_SRAM_RCV_RET_RCB + TG3_BDINFO_SIZE;
@@ -8440,7 +8441,7 @@ static int tg3_reset_hw(struct tg3 *tp, int reset_phy)
 		tw32(GRC_MODE, grc_mode);
 	}
 
-	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765) {
+	if (tg3_flag(tp, 57765_CLASS)) {
 		if (tp->pci_chip_rev_id == CHIPREV_ID_57765_A0) {
 			u32 grc_mode = tr32(GRC_MODE);
 
@@ -8528,7 +8529,7 @@ static int tg3_reset_hw(struct tg3 *tp, int reset_phy)
 		      ~DMA_RWCTRL_DIS_CACHE_ALIGNMENT;
 		if (tp->pci_chip_rev_id == CHIPREV_ID_57765_A0)
 			val &= ~DMA_RWCTRL_CRDRDR_RDMA_MRRS_MSK;
-		if (GET_ASIC_REV(tp->pci_chip_rev_id) != ASIC_REV_57765 &&
+		if (!tg3_flag(tp, 57765_CLASS) &&
 		    GET_ASIC_REV(tp->pci_chip_rev_id) != ASIC_REV_5717)
 			val |= DMA_RWCTRL_TAGGED_STAT_WA;
 		tw32(TG3PCI_DMA_RW_CTRL, val | tp->dma_rwctrl);
@@ -8675,7 +8676,7 @@ static int tg3_reset_hw(struct tg3 *tp, int reset_phy)
 			tw32(RCVDBDI_JUMBO_BD + TG3_BDINFO_MAXLEN_FLAGS,
 			     val | BDINFO_FLAGS_USE_EXT_RECV);
 			if (!tg3_flag(tp, USE_JUMBO_BDFLAG) ||
-			    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765)
+			    tg3_flag(tp, 57765_CLASS))
 				tw32(RCVDBDI_JUMBO_BD + TG3_BDINFO_NIC_ADDR,
 				     NIC_SRAM_RX_JUMBO_BUFFER_DESC);
 		} else {
@@ -8760,6 +8761,9 @@ static int tg3_reset_hw(struct tg3 *tp, int reset_phy)
 
 	if (tg3_flag(tp, PCI_EXPRESS))
 		rdmac_mode |= RDMAC_MODE_FIFO_LONG_BURST;
+
+	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57766)
+		rdmac_mode |= RDMAC_MODE_JMB_2K_MMRR;
 
 	if (tg3_flag(tp, HW_TSO_1) ||
 	    tg3_flag(tp, HW_TSO_2) ||
@@ -9104,7 +9108,7 @@ static int tg3_reset_hw(struct tg3 *tp, int reset_phy)
 	/* Prevent chip from dropping frames when flow control
 	 * is enabled.
 	 */
-	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765)
+	if (tg3_flag(tp, 57765_CLASS))
 		val = 1;
 	else
 		val = 2;
@@ -9319,7 +9323,7 @@ static void tg3_timer(unsigned long __opaque)
 	spin_lock(&tp->lock);
 
 	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5717 ||
-	    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765)
+	    tg3_flag(tp, 57765_CLASS))
 		tg3_chk_missed_msi(tp);
 
 	if (!tg3_flag(tp, TAGGED_STATUS)) {
@@ -9804,8 +9808,8 @@ static int tg3_start(struct tg3 *tp, bool reset_phy, bool test_irq)
 		tg3_free_rings(tp);
 	} else {
 		if (tg3_flag(tp, TAGGED_STATUS) &&
-			GET_ASIC_REV(tp->pci_chip_rev_id) != ASIC_REV_5717 &&
-			GET_ASIC_REV(tp->pci_chip_rev_id) != ASIC_REV_57765)
+		    GET_ASIC_REV(tp->pci_chip_rev_id) != ASIC_REV_5717 &&
+		    !tg3_flag(tp, 57765_CLASS))
 			tp->timer_offset = HZ;
 		else
 			tp->timer_offset = HZ / 10;
@@ -11562,7 +11566,7 @@ static int tg3_test_memory(struct tg3 *tp)
 
 	if (tg3_flag(tp, 5717_PLUS))
 		mem_tbl = mem_tbl_5717;
-	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765)
+	else if (tg3_flag(tp, 57765_CLASS))
 		mem_tbl = mem_tbl_57765;
 	else if (tg3_flag(tp, 5755_PLUS))
 		mem_tbl = mem_tbl_5755;
@@ -12824,7 +12828,7 @@ static void __devinit tg3_nvram_init(struct tg3 *tp)
 		else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5906)
 			tg3_get_5906_nvram_info(tp);
 		else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57780 ||
-			 GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765)
+			 tg3_flag(tp, 57765_CLASS))
 			tg3_get_57780_nvram_info(tp);
 		else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5717 ||
 			 GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5719)
@@ -13668,6 +13672,17 @@ out_no_vpd:
 			strcpy(tp->board_part_number, "BCM57795");
 		else
 			goto nomatch;
+	} else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57766) {
+		if (tp->pdev->device == TG3PCI_DEVICE_TIGON3_57762)
+			strcpy(tp->board_part_number, "BCM57762");
+		else if (tp->pdev->device == TG3PCI_DEVICE_TIGON3_57766)
+			strcpy(tp->board_part_number, "BCM57766");
+		else if (tp->pdev->device == TG3PCI_DEVICE_TIGON3_57782)
+			strcpy(tp->board_part_number, "BCM57782");
+		else if (tp->pdev->device == TG3PCI_DEVICE_TIGON3_57786)
+			strcpy(tp->board_part_number, "BCM57786");
+		else
+			goto nomatch;
 	} else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5906) {
 		strcpy(tp->board_part_number, "BCM95906");
 	} else {
@@ -14006,7 +14021,11 @@ static int __devinit tg3_get_invariants(struct tg3 *tp)
 			 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57761 ||
 			 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57765 ||
 			 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57791 ||
-			 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57795)
+			 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57795 ||
+			 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57762 ||
+			 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57766 ||
+			 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57782 ||
+			 tp->pdev->device == TG3PCI_DEVICE_TIGON3_57786)
 			pci_read_config_dword(tp->pdev,
 					      TG3PCI_GEN15_PRODID_ASICREV,
 					      &prod_id_asic_rev);
@@ -14153,7 +14172,10 @@ static int __devinit tg3_get_invariants(struct tg3 *tp)
 		tg3_flag_set(tp, 5717_PLUS);
 
 	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765 ||
-	    tg3_flag(tp, 5717_PLUS))
+	    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57766)
+		tg3_flag_set(tp, 57765_CLASS);
+
+	if (tg3_flag(tp, 57765_CLASS) || tg3_flag(tp, 5717_PLUS))
 		tg3_flag_set(tp, 57765_PLUS);
 
 	/* Intentionally exclude ASIC_REV_5906 */
@@ -14258,6 +14280,8 @@ static int __devinit tg3_get_invariants(struct tg3 *tp)
 
 	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5719)
 		tp->dma_limit = TG3_TX_BD_DMA_MAX_4K;
+	else if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57766)
+		tp->dma_limit = TG3_TX_BD_DMA_MAX_2K;
 
 	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5717 ||
 	    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5719 ||
@@ -14541,7 +14565,7 @@ static int __devinit tg3_get_invariants(struct tg3 *tp)
 
 	if (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5755 ||
 	    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57780 ||
-	    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57765)
+	    tg3_flag(tp, 57765_CLASS))
 		tp->grc_local_ctrl |= GRC_LCLCTRL_GPIO_UART_SEL;
 
 	if (tp->pdev->device == PCI_DEVICE_ID_TIGON3_5761 ||
