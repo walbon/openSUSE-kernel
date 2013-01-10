@@ -3263,6 +3263,7 @@ struct tg3 {
 	u32				fw_len; /* includes BSS */
 
 	struct device			*hwmon_dev;
+	bool				link_up;
 };
 
 #endif /* !(_T3_H) */
