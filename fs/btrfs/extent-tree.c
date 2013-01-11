@@ -3608,7 +3608,6 @@ void btrfs_writeback_inodes_sb_nr(struct btrfs_root *root,
 		 * the disk).
 		 */
 		btrfs_start_delalloc_inodes(root, 0);
-		btrfs_wait_ordered_extents(root, 0);
 	}
 }
 
