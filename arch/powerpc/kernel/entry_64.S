@@ -61,6 +61,7 @@ system_call_common:
 	std	r12,_MSR(r1)
 	std	r0,GPR0(r1)
 	std	r10,GPR1(r1)
+	beq	2f			/* if from kernel mode */
 	ACCOUNT_CPU_USER_ENTRY(r10, r11)
 	/*
 	 * This "crclr so" clears CR0.SO, which is the error indication on
@@ -68,7 +69,7 @@ system_call_common:
 	 * between it and the "mfcr r9" below, otherwise if XER.SO is set,
 	 * CR0.SO will get set, causing all system calls to appear to fail.
 	 */
-	crclr	so
+2:	crclr	so
 	std	r2,GPR2(r1)
 	std	r3,GPR3(r1)
 	std	r4,GPR4(r1)
