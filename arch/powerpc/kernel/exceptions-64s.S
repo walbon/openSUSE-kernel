@@ -39,7 +39,7 @@ __start_interrupts:
 
 	.globl system_reset_pSeries;
 system_reset_pSeries:
-	HMT_MEDIUM;
+	HMT_MEDIUM_PPR_DISCARD
 	DO_KVM	0x100;
 	SET_SCRATCH0(r13)
 #ifdef CONFIG_PPC_P7_NAP
@@ -69,7 +69,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HVMODE_206)
 
 	. = 0x200
 _machine_check_pSeries:
-	HMT_MEDIUM
+	HMT_MEDIUM_PPR_DISCARD
 	DO_KVM	0x200
 	SET_SCRATCH0(r13)
 	EXCEPTION_PROLOG_PSERIES(PACA_EXMC, machine_check_common, EXC_STD)
@@ -77,12 +77,13 @@ _machine_check_pSeries:
 	. = 0x300
 	.globl data_access_pSeries
 data_access_pSeries:
-	HMT_MEDIUM
+	HMT_MEDIUM_PPR_DISCARD
 	DO_KVM	0x300
 	SET_SCRATCH0(r13)
 BEGIN_FTR_SECTION
 	GET_PACA(r13)
 	std	r9,PACA_EXSLB+EX_R9(r13)
+	HMT_MEDIUM_PPR_SAVE(PACA_EXGEN, r9)
 	std	r10,PACA_EXSLB+EX_R10(r13)
 	mfspr	r10,SPRN_DAR
 	mfspr	r9,SPRN_DSISR
@@ -107,11 +108,12 @@ ALT_MMU_FTR_SECTION_END_IFCLR(MMU_FTR_SLB)
 	. = 0x380
 	.globl data_access_slb_pSeries
 data_access_slb_pSeries:
-	HMT_MEDIUM
+	HMT_MEDIUM_PPR_DISCARD
 	DO_KVM	0x380
 	SET_SCRATCH0(r13)
 	GET_PACA(r13)
 	std	r3,PACA_EXSLB+EX_R3(r13)
+	HMT_MEDIUM_PPR_SAVE(PACA_EXSLB, r3)
 	mfspr	r3,SPRN_DAR
 	std	r9,PACA_EXSLB+EX_R9(r13)	/* save r9 - r12 */
 	mfcr	r9
@@ -146,11 +148,12 @@ data_access_slb_pSeries:
 	. = 0x480
 	.globl instruction_access_slb_pSeries
 instruction_access_slb_pSeries:
-	HMT_MEDIUM
+	HMT_MEDIUM_PPR_DISCARD
 	DO_KVM	0x480
 	SET_SCRATCH0(r13)
 	GET_PACA(r13)
 	std	r3,PACA_EXSLB+EX_R3(r13)
+	HMT_MEDIUM_PPR_SAVE(PACA_EXSLB, r3)
 	mfspr	r3,SPRN_SRR0		/* SRR0 is faulting address */
 	std	r9,PACA_EXSLB+EX_R9(r13)	/* save r9 - r12 */
 	mfcr	r9
@@ -332,14 +335,14 @@ do_stab_bolted_pSeries:
 	.globl system_reset_fwnmi
       .align 7
 system_reset_fwnmi:
-	HMT_MEDIUM
+	HMT_MEDIUM_PPR_DISCARD
 	SET_SCRATCH0(r13)		/* save r13 */
 	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, system_reset_common, EXC_STD)
 
 	.globl machine_check_fwnmi
       .align 7
 machine_check_fwnmi:
-	HMT_MEDIUM
+	HMT_MEDIUM_PPR_DISCARD
 	SET_SCRATCH0(r13)		/* save r13 */
 	EXCEPTION_PROLOG_PSERIES(PACA_EXMC, machine_check_common, EXC_STD)
 
@@ -648,6 +651,7 @@ BEGIN_FW_FTR_SECTION
 	mtspr	SPRN_SRR1,r12
 END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 #endif /* CONFIG_PPC_ISERIES */
+	RESTORE_PPR_PACA(PACA_EXSLB, r9)
 	ld	r9,PACA_EXSLB+EX_R9(r13)
 	ld	r10,PACA_EXSLB+EX_R10(r13)
 	ld	r11,PACA_EXSLB+EX_R11(r13)
@@ -805,14 +809,11 @@ fast_exception_return:
 	andi.	r3,r12,MSR_RI		/* check if RI is set */
 	beq-	unrecov_fer
 
-#ifdef CONFIG_VIRT_CPU_ACCOUNTING
 	andi.	r3,r12,MSR_PR
 	beq	2f
 	ACCOUNT_CPU_USER_EXIT(r3, r4)
-2:
-#endif
-
-	ld	r3,_CCR(r1)
+	RESTORE_PPR(r3, r4)
+2:	ld	r3,_CCR(r1)
 	ld	r4,_LINK(r1)
 	ld	r5,_CTR(r1)
 	ld	r6,_XER(r1)
