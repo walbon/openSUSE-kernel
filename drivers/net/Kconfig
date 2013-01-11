@@ -2353,16 +2353,6 @@ config VIA_VELOCITY
 	  To compile this driver as a module, choose M here. The module
 	  will be called via-velocity.
 
-config TIGON3
-	tristate "Broadcom Tigon3 support"
-	depends on PCI
-	select PHYLIB
-	help
-	  This driver supports Broadcom Tigon3 based gigabit Ethernet cards.
-
-	  To compile this driver as a module, choose M here: the module
-	  will be called tg3.  This is recommended.
-
 config BNX2
 	tristate "Broadcom NetXtremeII support"
 	depends on PCI

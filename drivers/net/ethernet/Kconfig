@@ -11,6 +11,7 @@ menuconfig ETHERNET
 
 if ETHERNET
 
+source "drivers/net/ethernet/broadcom/Kconfig"
 source "drivers/net/ethernet/chelsio/Kconfig"
 source "drivers/net/ethernet/emulex/Kconfig"
 

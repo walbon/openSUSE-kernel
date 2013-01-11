@@ -185,17 +185,14 @@ static ssize_t rate_show(struct ib_port *p, struct port_attribute *unused,
 	if (ret)
 		return ret;
 
+	rate = 25 * attr.active_speed;
+
 	switch (attr.active_speed) {
-	case IB_SPEED_SDR:
-		rate = 25;
-		break;
 	case IB_SPEED_DDR:
 		speed = " DDR";
-		rate = 50;
 		break;
 	case IB_SPEED_QDR:
 		speed = " QDR";
-		rate = 100;
 		break;
 	case IB_SPEED_FDR10:
 		speed = " FDR10";
@@ -211,12 +208,13 @@ static ssize_t rate_show(struct ib_port *p, struct port_attribute *unused,
 		break;
 	}
 
-	rate = 25 * ib_width_enum_to_int(attr.active_width) * attr.active_speed;
+	rate *= ib_width_enum_to_int(attr.active_width);
+	rate /= 10;
 	if (rate < 0)
 		return -EINVAL;
 
 	return sprintf(buf, "%d%s Gb/sec (%dX%s)\n",
-		       rate / 10, rate % 10 ? ".5" : "",
+		       rate, (attr.active_speed == 1) ? ".5" : "",
 		       ib_width_enum_to_int(attr.active_width), speed);
 }
 

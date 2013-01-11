@@ -227,7 +227,7 @@ void cpu_idle_wait(void);
 #ifdef CONFIG_PSERIES_IDLE
 extern void update_smt_snooze_delay(int cpu, int residency);
 #else
-extern void update_smt_snooze_delay(int cpu, int residency) {}
+static inline void update_smt_snooze_delay(int cpu, int residency) {}
 #endif
 
 /*
