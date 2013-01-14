@@ -34,6 +34,7 @@
 #include <asm/atomic.h>
 #include "ap_bus.h"
 #include <asm/zcrypt.h>
+#include <asm/debug.h>
 
 /* deprecated status calls */
 #define ICAZ90STATUS		_IOR(ZCRYPT_IOCTL_MAGIC, 0x10, struct ica_z90_status)
@@ -115,7 +116,12 @@ struct zcrypt_device {
 
 	struct ap_message reply;	/* Per-device reply structure. */
 	int max_exp_bit_length;
+
+	debug_info_t *dbf_area;		/* debugging */
 };
+
+/* transport layer rescanning */
+extern atomic_t zcrypt_rescan_req;
 
 struct zcrypt_device *zcrypt_device_alloc(size_t);
 void zcrypt_device_free(struct zcrypt_device *);
