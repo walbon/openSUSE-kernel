@@ -4327,10 +4327,6 @@ static int __devinit hpsa_pci_init(struct ctlr_info *h)
 	if (prod_index < 0)
 		return -ENODEV;
 
-	// Skip over sabine.
-	if ((h->board_id == 0x1783103c) || (h->board_id == 0x005f1590))
-		return -ENODEV;
-
 	h->product_name = products[prod_index].product_name;
 	h->access = *(products[prod_index].access);
 
@@ -4942,12 +4938,6 @@ static void __devexit hpsa_remove_one(struct pci_dev *pdev)
 		return;
 	}
 	h = pci_get_drvdata(pdev);
-
-	if ((h->board_id == 0x1783103c) || (h->board_id == 0x005f1590)) {
-		printk("%s: Not processing board 0x%02x\n", __func__, h->board_id);
-		return;
-	}
-
 	stop_controller_lockup_detector(h);
 	hpsa_unregister_scsi(h);	/* unhook from SCSI subsystem */
 	hpsa_shutdown(pdev);
