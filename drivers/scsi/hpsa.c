@@ -4185,7 +4185,7 @@ static int __devinit hpsa_find_cfgtables(struct ctlr_info *h)
 		return -ENOMEM;
 	rc = write_driver_ver_to_cfgtable(h->cfgtable);
 	if (rc)
-		return -ENOMEM;
+		return rc;
 	/* Find performant mode table. */
 	trans_offset = readl(&h->cfgtable->TransMethodOffset);
 	h->transtable = remap_pci_mem(pci_resource_start(h->pdev,
