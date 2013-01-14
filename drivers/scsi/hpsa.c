@@ -4879,7 +4879,6 @@ clean1:
 	kfree(h);
 	return rc;
 }
-EXPORT_SYMBOL(hpsa_init_one);
 
 static void hpsa_flush_cache(struct ctlr_info *h)
 {
