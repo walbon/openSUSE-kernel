@@ -3759,6 +3759,7 @@ static int hpsa_controller_hard_reset(struct pci_dev *pdev,
 	}
 	return 0;
 }
+
 static __devinit void init_driver_version(char *driver_version, int len)
 {
 	memset(driver_version, 0, len);
@@ -3794,6 +3795,7 @@ static __devinit void read_driver_ver_from_cfgtable(
 static __devinit int controller_reset_failed(
 	struct CfgTable __iomem *cfgtable)
 {
+
 	char *driver_ver, *old_driver_ver;
 	int rc, size = sizeof(cfgtable->driver_version);
 
@@ -4317,8 +4319,6 @@ static int __devinit hpsa_enter_simple_mode(struct ctlr_info *h)
 	return 0;
 }
 
-static void hpsa_remove_one(struct pci_dev *pdev);
-
 static int __devinit hpsa_pci_init(struct ctlr_info *h)
 {
 	int prod_index, err;
@@ -4326,7 +4326,6 @@ static int __devinit hpsa_pci_init(struct ctlr_info *h)
 	prod_index = hpsa_lookup_board_id(h->pdev, &h->board_id);
 	if (prod_index < 0)
 		return -ENODEV;
-
 	h->product_name = products[prod_index].product_name;
 	h->access = *(products[prod_index].access);
 
