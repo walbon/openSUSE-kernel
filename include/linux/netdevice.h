@@ -1160,7 +1160,8 @@ struct net_device {
 	const struct header_ops *header_ops;
 
 	unsigned int		flags;	/* interface flags (a la BSD)	*/
-	unsigned int		priv_flags; /* Like 'flags' but invisible to userspace. */
+	unsigned int		priv_flags; /* Like 'flags' but invisible to userspace.
+					     * See if.h for definitions. */
 	unsigned short		gflags;
 	unsigned short		padded;	/* How much padding added by alloc_netdev() */
 
@@ -1927,6 +1928,36 @@ static inline int netif_tx_queue_frozen_or_stopped(const struct netdev_queue *de
 	return dev_queue->state & QUEUE_STATE_XOFF_OR_FROZEN;
 }
 
+static inline void netdev_tx_sent_queue(struct netdev_queue *dev_queue,
+					unsigned int bytes)
+{
+}
+
+static inline void netdev_sent_queue(struct net_device *dev, unsigned int bytes)
+{
+	netdev_tx_sent_queue(netdev_get_tx_queue(dev, 0), bytes);
+}
+
+static inline void netdev_tx_completed_queue(struct netdev_queue *dev_queue,
+					     unsigned pkts, unsigned bytes)
+{
+}
+
+static inline void netdev_completed_queue(struct net_device *dev,
+					  unsigned pkts, unsigned bytes)
+{
+	netdev_tx_completed_queue(netdev_get_tx_queue(dev, 0), pkts, bytes);
+}
+
+static inline void netdev_tx_reset_queue(struct netdev_queue *q)
+{
+}
+
+static inline void netdev_reset_queue(struct net_device *dev_queue)
+{
+	netdev_tx_reset_queue(netdev_get_tx_queue(dev_queue, 0));
+}
+
 /**
  *	netif_running - test if up
  *	@dev: network device
@@ -2612,6 +2643,11 @@ static inline void netif_set_gso_max_size(struct net_device *dev,
 static inline int netif_is_bond_slave(struct net_device *dev)
 {
 	return dev->flags & IFF_SLAVE && dev->priv_flags & IFF_BONDING;
+}
+
+static inline bool netif_supports_nofcs(struct net_device *dev)
+{
+	return dev->priv_flags & IFF_SUPP_NOFCS;
 }
 
 extern struct pernet_operations __net_initdata loopback_net_ops;

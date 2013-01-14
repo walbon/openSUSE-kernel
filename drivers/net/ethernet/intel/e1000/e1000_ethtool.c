@@ -174,6 +174,20 @@ static int e1000_get_settings(struct net_device *netdev,
 
 	ecmd->autoneg = ((hw->media_type == e1000_media_type_fiber) ||
 			 hw->autoneg) ? AUTONEG_ENABLE : AUTONEG_DISABLE;
+
+	/* MDI-X => 1; MDI => 0 */
+	if ((hw->media_type == e1000_media_type_copper) &&
+	    netif_carrier_ok(netdev))
+		ecmd->eth_tp_mdix = (!!adapter->phy_info.mdix_mode ?
+							ETH_TP_MDI_X :
+							ETH_TP_MDI);
+	else
+		ecmd->eth_tp_mdix = ETH_TP_MDI_INVALID;
+
+	if (hw->mdix == AUTO_ALL_MODES)
+		ecmd->eth_tp_mdix_ctrl = ETH_TP_MDI_AUTO;
+	else
+		ecmd->eth_tp_mdix_ctrl = hw->mdix;
 	return 0;
 }
 
@@ -182,6 +196,22 @@ static int e1000_set_settings(struct net_device *netdev,
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
+
+	/*
+	 * MDI setting is only allowed when autoneg enabled because
+	 * some hardware doesn't allow MDI setting when speed or
+	 * duplex is forced.
+	 */
+	if (ecmd->eth_tp_mdix_ctrl) {
+		if (hw->media_type != e1000_media_type_copper)
+			return -EOPNOTSUPP;
+
+		if ((ecmd->eth_tp_mdix_ctrl != ETH_TP_MDI_AUTO) &&
+		    (ecmd->autoneg != AUTONEG_ENABLE)) {
+			e_err(drv, "forcing MDI/MDI-X state is not supported when link speed and/or duplex are forced\n");
+			return -EINVAL;
+		}
+	}
 
 	while (test_and_set_bit(__E1000_RESETTING, &adapter->flags))
 		msleep(1);
@@ -199,10 +229,19 @@ static int e1000_set_settings(struct net_device *netdev,
 		ecmd->advertising = hw->autoneg_advertised;
 	} else {
 		u32 speed = ethtool_cmd_speed(ecmd);
+		/* calling this overrides forced MDI setting */
 		if (e1000_set_spd_dplx(adapter, speed, ecmd->duplex)) {
 			clear_bit(__E1000_RESETTING, &adapter->flags);
 			return -EINVAL;
 		}
+	}
+
+	/* MDI-X => 2; MDI => 1; Auto => 3 */
+	if (ecmd->eth_tp_mdix_ctrl) {
+		if (ecmd->eth_tp_mdix_ctrl == ETH_TP_MDI_AUTO)
+			hw->mdix = AUTO_ALL_MODES;
+		else
+			hw->mdix = ecmd->eth_tp_mdix_ctrl;
 	}
 
 	/* reset the link */
@@ -288,69 +327,6 @@ static int e1000_set_pauseparam(struct net_device *netdev,
 
 	clear_bit(__E1000_RESETTING, &adapter->flags);
 	return retval;
-}
-
-static u32 e1000_get_rx_csum(struct net_device *netdev)
-{
-	struct e1000_adapter *adapter = netdev_priv(netdev);
-	return adapter->rx_csum;
-}
-
-static int e1000_set_rx_csum(struct net_device *netdev, u32 data)
-{
-	struct e1000_adapter *adapter = netdev_priv(netdev);
-	adapter->rx_csum = data;
-
-	if (netif_running(netdev))
-		e1000_reinit_locked(adapter);
-	else
-		e1000_reset(adapter);
-	return 0;
-}
-
-static u32 e1000_get_tx_csum(struct net_device *netdev)
-{
-	return (netdev->features & NETIF_F_HW_CSUM) != 0;
-}
-
-static int e1000_set_tx_csum(struct net_device *netdev, u32 data)
-{
-	struct e1000_adapter *adapter = netdev_priv(netdev);
-	struct e1000_hw *hw = &adapter->hw;
-
-	if (hw->mac_type < e1000_82543) {
-		if (!data)
-			return -EINVAL;
-		return 0;
-	}
-
-	if (data)
-		netdev->features |= NETIF_F_HW_CSUM;
-	else
-		netdev->features &= ~NETIF_F_HW_CSUM;
-
-	return 0;
-}
-
-static int e1000_set_tso(struct net_device *netdev, u32 data)
-{
-	struct e1000_adapter *adapter = netdev_priv(netdev);
-	struct e1000_hw *hw = &adapter->hw;
-
-	if ((hw->mac_type < e1000_82544) ||
-	    (hw->mac_type == e1000_82547))
-		return data ? -EINVAL : 0;
-
-	if (data)
-		netdev->features |= NETIF_F_TSO;
-	else
-		netdev->features &= ~NETIF_F_TSO;
-
-	netdev->features &= ~NETIF_F_TSO6;
-
-	e_info(probe, "TSO is %s\n", data ? "Enabled" : "Disabled");
-	adapter->tso_force = true;
-	return 0;
 }
 
 static u32 e1000_get_msglevel(struct net_device *netdev)
@@ -578,14 +554,14 @@ static void e1000_get_drvinfo(struct net_device *netdev,
 			      struct ethtool_drvinfo *drvinfo)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
-	char firmware_version[32];
 
-	strncpy(drvinfo->driver,  e1000_driver_name, 32);
-	strncpy(drvinfo->version, e1000_driver_version, 32);
+	strlcpy(drvinfo->driver,  e1000_driver_name,
+		sizeof(drvinfo->driver));
+	strlcpy(drvinfo->version, e1000_driver_version,
+		sizeof(drvinfo->version));
 
-	sprintf(firmware_version, "N/A");
-	strncpy(drvinfo->fw_version, firmware_version, 32);
-	strncpy(drvinfo->bus_info, pci_name(adapter->pdev), 32);
+	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev),
+		sizeof(drvinfo->bus_info));
 	drvinfo->regdump_len = e1000_get_regs_len(netdev);
 	drvinfo->eedump_len = e1000_get_eeprom_len(netdev);
 }
@@ -603,12 +579,8 @@ static void e1000_get_ringparam(struct net_device *netdev,
 		E1000_MAX_82544_RXD;
 	ring->tx_max_pending = (mac_type < e1000_82544) ? E1000_MAX_TXD :
 		E1000_MAX_82544_TXD;
-	ring->rx_mini_max_pending = 0;
-	ring->rx_jumbo_max_pending = 0;
 	ring->rx_pending = rxdr->count;
 	ring->tx_pending = txdr->count;
-	ring->rx_mini_pending = 0;
-	ring->rx_jumbo_pending = 0;
 }
 
 static int e1000_set_ringparam(struct net_device *netdev,
@@ -901,6 +873,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 
 	/* Disable all the interrupts */
 	ew32(IMC, 0xFFFFFFFF);
+	E1000_WRITE_FLUSH();
 	msleep(10);
 
 	/* Test each interrupt */
@@ -919,6 +892,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 			adapter->test_icr = 0;
 			ew32(IMC, mask);
 			ew32(ICS, mask);
+			E1000_WRITE_FLUSH();
 			msleep(10);
 
 			if (adapter->test_icr & mask) {
@@ -936,6 +910,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 		adapter->test_icr = 0;
 		ew32(IMS, mask);
 		ew32(ICS, mask);
+		E1000_WRITE_FLUSH();
 		msleep(10);
 
 		if (!(adapter->test_icr & mask)) {
@@ -953,6 +928,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 			adapter->test_icr = 0;
 			ew32(IMC, ~mask & 0x00007FFF);
 			ew32(ICS, ~mask & 0x00007FFF);
+			E1000_WRITE_FLUSH();
 			msleep(10);
 
 			if (adapter->test_icr) {
@@ -964,6 +940,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 
 	/* Disable all the interrupts */
 	ew32(IMC, 0xFFFFFFFF);
+	E1000_WRITE_FLUSH();
 	msleep(10);
 
 	/* Unhook test interrupt handler */
@@ -1457,6 +1434,7 @@ static int e1000_run_loopback_test(struct e1000_adapter *adapter)
 			if (unlikely(++k == txdr->count)) k = 0;
 		}
 		ew32(TDT, k);
+		E1000_WRITE_FLUSH();
 		msleep(200);
 		time = jiffies; /* set the start time for the receive */
 		good_cnt = 0;
@@ -1693,7 +1671,7 @@ static void e1000_get_wol(struct net_device *netdev,
 	/* apply any specific unsupported masks here */
 	switch (hw->device_id) {
 	case E1000_DEV_ID_82546GB_QUAD_COPPER_KSP3:
-		/* KSP3 does not suppport UCAST wake-ups */
+		/* KSP3 does not support UCAST wake-ups */
 		wol->supported &= ~WAKE_UCAST;
 
 		if (adapter->wol & E1000_WUFC_EX)
@@ -1905,12 +1883,6 @@ static const struct ethtool_ops e1000_ethtool_ops = {
 	.set_ringparam          = e1000_set_ringparam,
 	.get_pauseparam         = e1000_get_pauseparam,
 	.set_pauseparam         = e1000_set_pauseparam,
-	.get_rx_csum            = e1000_get_rx_csum,
-	.set_rx_csum            = e1000_set_rx_csum,
-	.get_tx_csum            = e1000_get_tx_csum,
-	.set_tx_csum            = e1000_set_tx_csum,
-	.set_sg                 = ethtool_op_set_sg,
-	.set_tso                = e1000_set_tso,
 	.self_test              = e1000_diag_test,
 	.get_strings            = e1000_get_strings,
 	.set_phys_id            = e1000_set_phys_id,
@@ -1918,6 +1890,7 @@ static const struct ethtool_ops e1000_ethtool_ops = {
 	.get_sset_count         = e1000_get_sset_count,
 	.get_coalesce           = e1000_get_coalesce,
 	.set_coalesce           = e1000_set_coalesce,
+	.get_ts_info		= ethtool_op_get_ts_info,
 };
 
 void e1000_set_ethtool_ops(struct net_device *netdev)

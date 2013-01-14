@@ -58,6 +58,10 @@
 
 #define SO_RXQ_OVFL             0x0024
 
+/* Instruct lower device to use last 4-bytes of skb data as FCS */
+#define SO_NOFCS		0x0027
+
+
 /* Security levels - as per NRL IPv6 - don't actually do anything */
 #define SO_SECURITY_AUTHENTICATION		0x5001
 #define SO_SECURITY_ENCRYPTION_TRANSPORT	0x5002
