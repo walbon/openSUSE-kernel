@@ -1624,7 +1624,7 @@ static int multipath_ioctl(struct dm_target *ti, unsigned int cmd,
 			   unsigned long arg)
 {
 	struct multipath *m = ti->private;
-	struct pgpath *pgpath;
+	struct pgpath *pgpath = NULL;
 	struct block_device *bdev;
 	fmode_t mode;
 	unsigned long flags;
