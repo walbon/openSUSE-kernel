@@ -144,9 +144,6 @@ struct ap_driver {
 	int (*probe)(struct ap_device *);
 	void (*remove)(struct ap_device *);
 	int request_timeout;		/* request timeout in jiffies */
-	/* receive is called from tasklet context */
-	void (*receive)(struct ap_device *, struct ap_message *,
-			struct ap_message *);
 };
 
 #define to_ap_drv(x) container_of((x), struct ap_driver, driver)
@@ -191,6 +188,9 @@ struct ap_message {
 
 	void *private;			/* ap driver private pointer. */
 	unsigned int special:1;		/* Used for special commands. */
+	/* receive is called from tasklet context */
+	void (*receive)(struct ap_device *, struct ap_message *,
+			struct ap_message *);
 };
 
 struct ap_config_info {

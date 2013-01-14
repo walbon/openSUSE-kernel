@@ -3,7 +3,7 @@
  *
  *  zcrypt 2.1.0
  *
- *  Copyright (C)  2001, 2006 IBM Corporation
+ *  Copyright IBM Corp. 2001, 2012
  *  Author(s): Robert Burroughs
  *	       Eric Rossman (edrossma@us.ibm.com)
  *	       Cornelia Huck <cornelia.huck@de.ibm.com>
@@ -11,6 +11,7 @@
  *  Hotplug & misc device support: Jochen Roehrig (roehrig@de.ibm.com)
  *  Major cleanup & driver split: Martin Schwidefsky <schwidefsky@de.ibm.com>
  *				  Ralph Wuerthner <rwuerthn@de.ibm.com>
+ *  MSGTYPE restruct:		  Holger Dengler <hd@linux.vnet.ibm.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,8 +49,8 @@
  * Module description.
  */
 MODULE_AUTHOR("IBM Corporation");
-MODULE_DESCRIPTION("Cryptographic Coprocessor interface, "
-		   "Copyright 2001, 2006 IBM Corporation");
+MODULE_DESCRIPTION("Cryptographic Coprocessor interface, " \
+		   "Copyright IBM Corp. 2001, 2012");
 MODULE_LICENSE("GPL");
 
 static DEFINE_SPINLOCK(zcrypt_device_lock);
@@ -59,6 +60,9 @@ static atomic_t zcrypt_open_count = ATOMIC_INIT(0);
 
 static int zcrypt_rng_device_add(void);
 static void zcrypt_rng_device_remove(void);
+
+static DEFINE_SPINLOCK(zcrypt_ops_list_lock);
+static LIST_HEAD(zcrypt_ops_list);
 
 /*
  * Device attributes common for all crypto devices.
@@ -88,15 +92,6 @@ static ssize_t zcrypt_online_store(struct device *dev,
 
 	if (sscanf(buf, "%d\n", &online) != 1 || online < 0 || online > 1)
 		return -EINVAL;
-	if (zdev->ops->rng) {
-		if (zdev->online == 0 && online == 1) {
-               		zcrypt_rng_device_add();
-		}
-		if (zdev->online == 1 && online == 0) {
-			zcrypt_rng_device_remove();
-		}
-
-	}
 	zdev->online = online;
 	if (!online)
 		ap_flush_queue(zdev->ap_dev);
@@ -227,11 +222,14 @@ EXPORT_SYMBOL(zcrypt_device_free);
 int zcrypt_device_register(struct zcrypt_device *zdev)
 {
 	int rc;
-
+	if (!zdev->ops) {
+		return -ENODEV;
+	}
 	rc = sysfs_create_group(&zdev->ap_dev->device.kobj,
 				&zcrypt_device_attr_group);
-	if (rc)
+	if (rc) {
 		goto out;
+	}
 	get_device(&zdev->ap_dev->device);
 	kref_init(&zdev->refcount);
 	spin_lock_bh(&zcrypt_device_lock);
@@ -281,6 +279,68 @@ void zcrypt_device_unregister(struct zcrypt_device *zdev)
 	zcrypt_device_put(zdev);
 }
 EXPORT_SYMBOL(zcrypt_device_unregister);
+
+void zcrypt_msgtype_register(struct zcrypt_ops *zops)
+{
+	if (zops->owner) {
+		spin_lock_bh(&zcrypt_ops_list_lock);
+		list_add_tail(&zops->list, &zcrypt_ops_list);
+		spin_unlock_bh(&zcrypt_ops_list_lock);
+	}
+}
+EXPORT_SYMBOL(zcrypt_msgtype_register);
+
+void zcrypt_msgtype_unregister(struct zcrypt_ops *zops)
+{
+	spin_lock_bh(&zcrypt_ops_list_lock);
+	list_del_init(&zops->list);
+	spin_unlock_bh(&zcrypt_ops_list_lock);
+}
+EXPORT_SYMBOL(zcrypt_msgtype_unregister);
+
+static inline
+struct zcrypt_ops *__ops_lookup(unsigned char *name, int variant)
+{
+	struct zcrypt_ops *zops;
+	int found = 0;
+
+	spin_lock_bh(&zcrypt_ops_list_lock);
+	list_for_each_entry(zops, &zcrypt_ops_list, list) {
+		if ((zops->variant == variant) &&
+		    (!strncmp(zops->owner->name, name, MODULE_NAME_LEN))) {
+			found = 1;
+			break;
+		}
+	}
+	spin_unlock_bh(&zcrypt_ops_list_lock);
+
+	if (!found) {
+		return NULL;
+	}
+	return zops;
+}
+
+struct zcrypt_ops *zcrypt_msgtype_request(unsigned char *name, int variant)
+{
+	struct zcrypt_ops *zops = NULL;
+
+	zops = __ops_lookup(name, variant);
+	if (!zops) {
+		request_module(name);
+		zops = __ops_lookup(name, variant);
+	}
+	if ((!zops) || (!try_module_get(zops->owner)))
+		return NULL;
+	return zops;
+}
+EXPORT_SYMBOL(zcrypt_msgtype_request);
+
+void zcrypt_msgtype_release(struct zcrypt_ops *zops)
+{
+	if (zops)
+		module_put(zops->owner);
+}
+EXPORT_SYMBOL(zcrypt_msgtype_release);
 
 /**
  * zcrypt_read (): Not supported beyond zcrypt 1.3.1.

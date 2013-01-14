@@ -1,6 +1,4 @@
 /*
- *  linux/drivers/s390/crypto/zcrypt_pcixcc.h
- *
  *  zcrypt 2.1.0
  *
  *  Copyright IBM Corp. 2001, 2012
@@ -26,10 +24,33 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#ifndef _ZCRYPT_PCIXCC_H_
-#define _ZCRYPT_PCIXCC_H_
+#ifndef _ZCRYPT_MSGTYPE50_H_
+#define _ZCRYPT_MSGTYPE50_H_
 
-int zcrypt_pcixcc_init(void);
-void zcrypt_pcixcc_exit(void);
+#define MSGTYPE50_NAME			"zcrypt_msgtype50"
+#define MSGTYPE50_VARIANT_DEFAULT	0
 
-#endif /* _ZCRYPT_PCIXCC_H_ */
+#define MSGTYPE50_CRB2_MAX_MSG_SIZE	0x390 /*sizeof(struct type50_crb2_msg)*/
+#define MSGTYPE50_CRB3_MAX_MSG_SIZE	0x710 /*sizeof(struct type50_crb3_msg)*/
+
+#define MSGTYPE_ADJUSTMENT	0x08 /*type04 extension (not needed in type50)*/
+
+int zcrypt_msgtype50_init(void);
+void zcrypt_msgtype50_exit(void);
+
+//static long zcrypt_cex2a_modexpo(struct zcrypt_device *zdev, struct ica_rsa_modexpo *mex);
+//static long zcrypt_cex2a_modexpo_crt(struct zcrypt_device *zdev, struct ica_rsa_modexpo_crt *crt);
+
+/**
+ * The crypto operations for message type 50.
+ */
+/*
+static struct zcrypt_ops zcrypt_msgtype50_ops = {
+        .rsa_modexpo = zcrypt_cex2a_modexpo,
+        .rsa_modexpo_crt = zcrypt_cex2a_modexpo_crt,
+        .owner = THIS_MODULE,
+        .variant = MSGTYPE50_VARIANT_DEFAULT,
+};
+*/
+
+#endif /* _ZCRYPT_MSGTYPE50_H_ */

@@ -3,7 +3,7 @@
  *
  *  zcrypt 2.1.0
  *
- *  Copyright (C)  2001, 2006 IBM Corporation
+ *  Copyright IBM Corp. 2001, 2012
  *  Author(s): Robert Burroughs
  *	       Eric Rossman (edrossma@us.ibm.com)
  *
@@ -56,8 +56,8 @@ static struct ap_device_id zcrypt_pcica_ids[] = {
 #ifndef CONFIG_ZCRYPT_MONOLITHIC
 MODULE_DEVICE_TABLE(ap, zcrypt_pcica_ids);
 MODULE_AUTHOR("IBM Corporation");
-MODULE_DESCRIPTION("PCICA Cryptographic Coprocessor device driver, "
-		   "Copyright 2001, 2006 IBM Corporation");
+MODULE_DESCRIPTION("PCICA Cryptographic Coprocessor device driver, " \
+		   "Copyright IBM Corp. 2001, 2012");
 MODULE_LICENSE("GPL");
 #endif
 
@@ -69,7 +69,6 @@ static void zcrypt_pcica_receive(struct ap_device *, struct ap_message *,
 static struct ap_driver zcrypt_pcica_driver = {
 	.probe = zcrypt_pcica_probe,
 	.remove = zcrypt_pcica_remove,
-	.receive = zcrypt_pcica_receive,
 	.ids = zcrypt_pcica_ids,
 	.request_timeout = PCICA_CLEANUP_TIME,
 };
@@ -286,6 +285,7 @@ static long zcrypt_pcica_modexpo(struct zcrypt_device *zdev,
 	ap_msg.message = kmalloc(PCICA_MAX_MESSAGE_SIZE, GFP_KERNEL);
 	if (!ap_msg.message)
 		return -ENOMEM;
+	ap_msg.receive = zcrypt_pcica_receive;
 	ap_msg.psmid = (((unsigned long long) current->pid) << 32) +
 				atomic_inc_return(&zcrypt_step);
 	ap_msg.private = &work;
@@ -324,6 +324,7 @@ static long zcrypt_pcica_modexpo_crt(struct zcrypt_device *zdev,
 	ap_msg.message = kmalloc(PCICA_MAX_MESSAGE_SIZE, GFP_KERNEL);
 	if (!ap_msg.message)
 		return -ENOMEM;
+	ap_msg.receive = zcrypt_pcica_receive;
 	ap_msg.psmid = (((unsigned long long) current->pid) << 32) +
 				atomic_inc_return(&zcrypt_step);
 	ap_msg.private = &work;

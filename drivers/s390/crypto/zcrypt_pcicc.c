@@ -3,7 +3,7 @@
  *
  *  zcrypt 2.1.0
  *
- *  Copyright (C)  2001, 2006 IBM Corporation
+ *  Copyright IBM Corp. 2001, 2012 IBM Corporation
  *  Author(s): Robert Burroughs
  *	       Eric Rossman (edrossma@us.ibm.com)
  *
@@ -38,6 +38,7 @@
 #include "zcrypt_error.h"
 #include "zcrypt_pcicc.h"
 #include "zcrypt_cca_key.h"
+#include "zcrypt_msgtype6.h"
 
 #define PCICC_MIN_MOD_SIZE	 64	/*  512 bits */
 #define PCICC_MAX_MOD_SIZE_OLD	128	/* 1024 bits */
@@ -68,8 +69,8 @@ static struct ap_device_id zcrypt_pcicc_ids[] = {
 #ifndef CONFIG_ZCRYPT_MONOLITHIC
 MODULE_DEVICE_TABLE(ap, zcrypt_pcicc_ids);
 MODULE_AUTHOR("IBM Corporation");
-MODULE_DESCRIPTION("PCICC Cryptographic Coprocessor device driver, "
-		   "Copyright 2001, 2006 IBM Corporation");
+MODULE_DESCRIPTION("PCICC Cryptographic Coprocessor device driver, " \
+		   "Copyright IBM Corp. 2001, 2012 IBM Corporation");
 MODULE_LICENSE("GPL");
 #endif
 
@@ -81,7 +82,6 @@ static void zcrypt_pcicc_receive(struct ap_device *, struct ap_message *,
 static struct ap_driver zcrypt_pcicc_driver = {
 	.probe = zcrypt_pcicc_probe,
 	.remove = zcrypt_pcicc_remove,
-	.receive = zcrypt_pcicc_receive,
 	.ids = zcrypt_pcicc_ids,
 	.request_timeout = PCICC_CLEANUP_TIME,
 };
@@ -490,6 +490,7 @@ static long zcrypt_pcicc_modexpo(struct zcrypt_device *zdev,
 	ap_msg.message = (void *) get_zeroed_page(GFP_KERNEL);
 	if (!ap_msg.message)
 		return -ENOMEM;
+	ap_msg.receive = zcrypt_pcicc_receive;
 	ap_msg.length = PAGE_SIZE;
 	ap_msg.psmid = (((unsigned long long) current->pid) << 32) +
 				atomic_inc_return(&zcrypt_step);
@@ -529,6 +530,7 @@ static long zcrypt_pcicc_modexpo_crt(struct zcrypt_device *zdev,
 	ap_msg.message = (void *) get_zeroed_page(GFP_KERNEL);
 	if (!ap_msg.message)
 		return -ENOMEM;
+	ap_msg.receive = zcrypt_pcicc_receive;
 	ap_msg.length = PAGE_SIZE;
 	ap_msg.psmid = (((unsigned long long) current->pid) << 32) +
 				atomic_inc_return(&zcrypt_step);
