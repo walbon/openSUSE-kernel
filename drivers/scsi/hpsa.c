@@ -4127,7 +4127,7 @@ static int __devinit hpsa_pci_find_memory_BAR(struct pci_dev *pdev,
 	return -ENODEV;
 }
 
-static int hpsa_wait_for_board_state(struct pci_dev *pdev,
+static int __devinit hpsa_wait_for_board_state(struct pci_dev *pdev,
 	void __iomem *vaddr, int wait_for_ready)
 {
 	int i, iterations;
