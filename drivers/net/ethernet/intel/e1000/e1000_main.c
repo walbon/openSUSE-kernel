@@ -1086,9 +1086,9 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
 		netdev->vlan_features |= NETIF_F_HIGHDMA;
 	}
 
-	netdev->vlan_features |= NETIF_F_TSO;
-	netdev->vlan_features |= NETIF_F_HW_CSUM;
-	netdev->vlan_features |= NETIF_F_SG;
+	netdev->vlan_features |= (NETIF_F_TSO |
+				  NETIF_F_HW_CSUM |
+				  NETIF_F_SG);
 
 	adapter->en_mng_pt = e1000_enable_mng_pass_thru(hw);
 
