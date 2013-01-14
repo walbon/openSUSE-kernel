@@ -1911,6 +1911,12 @@ sys_setns_wrapper:
 	lgfr	%r3,%r3			# int
 	jg	sys_setns
 
+	.globl sys_s390_runtime_instr_wrapper
+sys_s390_runtime_instr_wrapper:
+	lgfr	%r2,%r2			# int
+	lgfr	%r3,%r3			# int
+	jg	sys_s390_runtime_instr
+
 	.globl compat_sys_process_vm_readv_wrapper
 compat_sys_process_vm_readv_wrapper:
 	lgfr	%r2,%r2			# compat_pid_t
