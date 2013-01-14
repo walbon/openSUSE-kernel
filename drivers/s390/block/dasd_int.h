@@ -525,6 +525,8 @@ struct dasd_block {
 #define DASD_FLAG_IS_RESERVED	7	/* The device is reserved */
 #define DASD_FLAG_LOCK_STOLEN	8	/* The device lock was stolen */
 #define DASD_FLAG_SUSPENDED	9	/* The device was suspended */
+#define DASD_FLAG_SAFE_OFFLINE	10	/* safe offline processing requested*/
+#define DASD_FLAG_SAFE_OFFLINE_RUNNING	11	/* safe offline running */
 #define DASD_FLAG_TIMEOUT	12	/* Timeout, abort noretry requests */
 
 
