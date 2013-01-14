@@ -95,7 +95,12 @@ MODULE_LICENSE("GPL");
 MODULE_VERSION(EFIVARS_VERSION);
 
 #define DUMP_NAME_LEN 52
-#define GUID_LEN 37
+
+/*
+ * Length of a GUID string (strlen("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+ * not including trailing NUL
+ */
+#define GUID_LEN 36
 
 /*
  * The maximum size of VariableName + Data = 1024
@@ -648,6 +653,36 @@ static int efivarfs_file_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static int efi_status_to_err(efi_status_t status)
+{
+	int err;
+
+	switch (status) {
+	case EFI_INVALID_PARAMETER:
+		err = -EINVAL;
+		break;
+	case EFI_OUT_OF_RESOURCES:
+		err = -ENOSPC;
+		break;
+	case EFI_DEVICE_ERROR:
+		err = -EIO;
+		break;
+	case EFI_WRITE_PROTECTED:
+		err = -EROFS;
+		break;
+	case EFI_SECURITY_VIOLATION:
+		err = -EACCES;
+		break;
+	case EFI_NOT_FOUND:
+		err = -ENOENT;
+		break;
+	default:
+		err = -EINVAL;
+	}
+
+	return err;
+}
+
 static ssize_t efivarfs_file_write(struct file *file,
 		const char __user *userbuf, size_t count, loff_t *ppos)
 {
@@ -657,36 +692,60 @@ static ssize_t efivarfs_file_write(struct file *file,
 	void *data;
 	u32 attributes;
 	struct inode *inode = file->f_mapping->host;
-	int datasize = count - sizeof(attributes);
+	unsigned long datasize = count - sizeof(attributes);
 	unsigned long newdatasize;
+	u64 storage_size, remaining_size, max_size;
+	ssize_t bytes = 0;
 
 	if (count < sizeof(attributes))
 		return -EINVAL;
 
-	data = kmalloc(datasize, GFP_KERNEL);
+	if (copy_from_user(&attributes, userbuf, sizeof(attributes)))
+		return -EFAULT;
 
-	if (!data)
-		return -ENOMEM;
+	if (attributes & ~(EFI_VARIABLE_MASK))
+		return -EINVAL;
 
 	efivars = var->efivars;
 
-	if (copy_from_user(&attributes, userbuf, sizeof(attributes))) {
-		count = -EFAULT;
-		goto out;
+	/*
+	 * Ensure that the user can't allocate arbitrarily large
+	 * amounts of memory. Pick a default size of 64K if
+	 * QueryVariableInfo() isn't supported by the firmware.
+	 */
+	spin_lock(&efivars->lock);
+
+	if (!efivars->ops->query_variable_info)
+		status = EFI_UNSUPPORTED;
+	else {
+		const struct efivar_operations *fops = efivars->ops;
+		status = fops->query_variable_info(attributes, &storage_size,
+						   &remaining_size, &max_size);
 	}
 
-	if (attributes & ~(EFI_VARIABLE_MASK)) {
-		count = -EINVAL;
-		goto out;
+	spin_unlock(&efivars->lock);
+
+	if (status != EFI_SUCCESS) {
+		if (status != EFI_UNSUPPORTED)
+			return efi_status_to_err(status);
+
+		remaining_size = 65536;
 	}
+
+	if (datasize > remaining_size)
+		return -ENOSPC;
+
+	data = kmalloc(datasize, GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
 
 	if (copy_from_user(data, userbuf + sizeof(attributes), datasize)) {
-		count = -EFAULT;
+		bytes = -EFAULT;
 		goto out;
 	}
 
 	if (validate_var(&var->var, data, datasize) == false) {
-		count = -EINVAL;
+		bytes = -EINVAL;
 		goto out;
 	}
 
@@ -706,30 +765,10 @@ static ssize_t efivarfs_file_write(struct file *file,
 		spin_unlock(&efivars->lock);
 		kfree(data);
 
-		switch (status) {
-		case EFI_INVALID_PARAMETER:
-			count = -EINVAL;
-			break;
-		case EFI_OUT_OF_RESOURCES:
-			count = -ENOSPC;
-			break;
-		case EFI_DEVICE_ERROR:
-			count = -EIO;
-			break;
-		case EFI_WRITE_PROTECTED:
-			count = -EROFS;
-			break;
-		case EFI_SECURITY_VIOLATION:
-			count = -EACCES;
-			break;
-		case EFI_NOT_FOUND:
-			count = -ENOENT;
-			break;
-		default:
-			count = -EINVAL;
-		}
-		return count;
+		return efi_status_to_err(status);
 	}
+
+	bytes = count;
 
 	/*
 	 * Writing to the variable may have caused a change in size (which
@@ -765,7 +804,7 @@ static ssize_t efivarfs_file_write(struct file *file,
 out:
 	kfree(data);
 
-	return count;
+	return bytes;
 }
 
 static ssize_t efivarfs_file_read(struct file *file, char __user *userbuf,
@@ -786,26 +825,28 @@ static ssize_t efivarfs_file_read(struct file *file, char __user *userbuf,
 	spin_unlock(&efivars->lock);
 
 	if (status != EFI_BUFFER_TOO_SMALL)
-		return 0;
+		return efi_status_to_err(status);
 
-	data = kmalloc(datasize + 4, GFP_KERNEL);
+	data = kmalloc(datasize + sizeof(attributes), GFP_KERNEL);
 
 	if (!data)
-		return 0;
+		return -ENOMEM;
 
 	spin_lock(&efivars->lock);
 	status = efivars->ops->get_variable(var->var.VariableName,
 					    &var->var.VendorGuid,
 					    &attributes, &datasize,
-					    (data + 4));
+					    (data + sizeof(attributes)));
 	spin_unlock(&efivars->lock);
 
-	if (status != EFI_SUCCESS)
+	if (status != EFI_SUCCESS) {
+		size = efi_status_to_err(status);
 		goto out_free;
+	}
 
-	memcpy(data, &attributes, 4);
+	memcpy(data, &attributes, sizeof(attributes));
 	size = simple_read_from_buffer(userbuf, count, ppos,
-					data, datasize + 4);
+				       data, datasize + sizeof(attributes));
 out_free:
 	kfree(data);
 
@@ -887,12 +928,16 @@ static int efivarfs_create(struct inode *dir, struct dentry *dentry,
 	struct efivar_entry *var;
 	int namelen, i = 0, err = 0;
 
-	if (dentry->d_name.len < 38)
+	/*
+	 * We need a GUID, plus at least one letter for the variable name,
+	 * plus the '-' separator
+	 */
+	if (dentry->d_name.len < GUID_LEN + 2)
 		return -EINVAL;
 
 	inode = efivarfs_get_inode(dir->i_sb, dir, mode, 0);
 	if (!inode)
-		return -ENOSPC;
+		return -ENOMEM;
 
 	var = kzalloc(sizeof(struct efivar_entry), GFP_KERNEL);
 	if (!var) {
@@ -900,7 +945,8 @@ static int efivarfs_create(struct inode *dir, struct dentry *dentry,
 		goto out;
 	}
 
-	namelen = dentry->d_name.len - GUID_LEN;
+	/* length of the variable name itself: remove GUID and separator */
+	namelen = dentry->d_name.len - GUID_LEN - 1;
 
 	efivarfs_hex_to_guid(dentry->d_name.name + namelen + 1,
 			&var->var.VendorGuid);
@@ -958,7 +1004,7 @@ static int efivarfs_unlink(struct inode *dir, struct dentry *dentry)
 	return -EINVAL;
 };
 
-int efivarfs_fill_super(struct super_block *sb, void *data, int silent)
+static int efivarfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *inode = NULL;
 	struct dentry *root;
@@ -971,7 +1017,7 @@ int efivarfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_maxbytes          = MAX_LFS_FILESIZE;
 	sb->s_blocksize         = PAGE_CACHE_SIZE;
 	sb->s_blocksize_bits    = PAGE_CACHE_SHIFT;
-	sb->s_magic             = PSTOREFS_MAGIC;
+	sb->s_magic             = EFIVARFS_MAGIC;
 	sb->s_op                = &efivarfs_ops;
 	sb->s_time_gran         = 1;
 
@@ -994,8 +1040,8 @@ int efivarfs_fill_super(struct super_block *sb, void *data, int silent)
 
 		len = utf16_strlen(entry->var.VariableName);
 
-		/* GUID plus trailing NULL */
-		name = kmalloc(len + 38, GFP_ATOMIC);
+		/* name, plus '-', plus GUID, plus NUL*/
+		name = kmalloc(len + 1 + GUID_LEN + 1, GFP_ATOMIC);
 		if (!name)
 			goto fail;
 
@@ -1006,7 +1052,7 @@ int efivarfs_fill_super(struct super_block *sb, void *data, int silent)
 
 		efi_guid_unparse(&entry->var.VendorGuid, name + len + 1);
 
-		name[len+GUID_LEN] = '\0';
+		name[len+GUID_LEN+1] = '\0';
 
 		inode = efivarfs_get_inode(efivarfs_sb, root->d_inode,
 					  S_IFREG | 0644, 0);
@@ -1433,11 +1479,18 @@ efivar_create_sysfs_entry(struct efivars *efivars,
 			  efi_char16_t *variable_name,
 			  efi_guid_t *vendor_guid)
 {
-	int i, short_name_size = variable_name_size / sizeof(efi_char16_t) + 38;
+	int i, short_name_size;
 	char *short_name;
 	struct efivar_entry *new_efivar;
 
-	short_name = kzalloc(short_name_size + 1, GFP_KERNEL);
+	/*
+	 * Length of the variable bytes in ASCII, plus the '-' separator,
+	 * plus the GUID, plus trailing NUL
+	 */
+	short_name_size = variable_name_size / sizeof(efi_char16_t)
+				+ 1 + GUID_LEN + 1;
+
+	short_name = kzalloc(short_name_size, GFP_KERNEL);
 	new_efivar = kzalloc(sizeof(struct efivar_entry), GFP_KERNEL);
 
 	if (!short_name || !new_efivar)  {
@@ -1677,6 +1730,8 @@ efivars_init(void)
 	ops.get_variable = efi.get_variable;
 	ops.set_variable = efi.set_variable;
 	ops.get_next_variable = efi.get_next_variable;
+	ops.query_variable_info = efi.query_variable_info;
+
 	error = register_efivars(&__efivars, &ops, efi_kobj);
 	if (error)
 		goto err_put;
