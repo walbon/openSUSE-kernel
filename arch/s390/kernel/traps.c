@@ -64,6 +64,23 @@ static int kstack_depth_to_print = 12;
 static int kstack_depth_to_print = 20;
 #endif /* CONFIG_64BIT */
 
+static inline void __user *get_trap_ip(struct pt_regs *regs, long int_code)
+{
+#ifdef CONFIG_64BIT
+	unsigned long address;
+
+	if (int_code & 0x200)
+		address = *(unsigned long *)(current->thread.trap_tdb + 24);
+	else
+		address = regs->psw.addr;
+	return (void __user *)
+		((address - (int_code >> 16)) & PSW_ADDR_INSN);
+#else
+	return (void __user *)
+		((regs->psw.addr - (int_code >> 16)) & PSW_ADDR_INSN);
+#endif
+}
+
 /*
  * For show_trace we have tree different stack to consider:
  *   - the panic stack which is used if the kernel stack has overflown
@@ -293,19 +310,25 @@ int is_valid_bugaddr(unsigned long addr)
 	return 1;
 }
 
-static inline void __kprobes do_trap(long pgm_int_code, int signr, char *str,
-				     struct pt_regs *regs, siginfo_t *info)
+static void __kprobes inline do_trap(struct pt_regs *regs, long int_code,
+				     int si_signo, int si_code, char *str)
 {
-	if (notify_die(DIE_TRAP, str, regs, pgm_int_code,
-		       pgm_int_code, signr) == NOTIFY_STOP)
+	siginfo_t info;
+
+	if (notify_die(DIE_TRAP, str, regs, 0,
+				int_code, si_signo) == NOTIFY_STOP)
 		return;
 
         if (regs->psw.mask & PSW_MASK_PSTATE) {
                 struct task_struct *tsk = current;
 
-		tsk->thread.trap_no = pgm_int_code & 0xffff;
-		force_sig_info(signr, info, tsk);
-		report_user_fault(regs, pgm_int_code, signr);
+		tsk->thread.trap_no = int_code & 0xffff;
+		info.si_signo = si_signo;
+		info.si_errno = 0;
+		info.si_code = si_code;
+		info.si_addr = get_trap_ip(regs, int_code);
+		force_sig_info(si_signo, &info, tsk);
+		report_user_fault(regs, int_code, si_signo);
         } else {
                 const struct exception_table_entry *fixup;
                 fixup = search_exception_tables(regs->psw.addr & PSW_ADDR_INSN);
@@ -317,16 +340,9 @@ static inline void __kprobes do_trap(long pgm_int_code, int signr, char *str,
 			btt = report_bug(regs->psw.addr & PSW_ADDR_INSN, regs);
 			if (btt == BUG_TRAP_TYPE_WARN)
 				return;
-			die(str, regs, pgm_int_code);
+			die(str, regs, int_code);
 		}
         }
-}
-
-static inline void __user *get_psw_address(struct pt_regs *regs,
-					   long pgm_int_code)
-{
-	return (void __user *)
-		((regs->psw.addr - (pgm_int_code >> 16)) & PSW_ADDR_INSN);
 }
 
 void __kprobes do_per_trap(struct pt_regs *regs)
@@ -351,12 +367,7 @@ static void default_trap_handler(struct pt_regs *regs, long pgm_int_code,
 static void name(struct pt_regs *regs, long pgm_int_code, \
 		 unsigned long trans_exc_code) \
 { \
-        siginfo_t info; \
-        info.si_signo = signr; \
-        info.si_errno = 0; \
-        info.si_code = sicode; \
-	info.si_addr = get_psw_address(regs, pgm_int_code); \
-	do_trap(pgm_int_code, signr, str, regs, &info);	    \
+        do_trap(regs, pgm_int_code, signr, sicode, str); \
 }
 
 DO_ERROR_INFO(addressing_exception, SIGILL, ILL_ILLADR,
@@ -386,42 +397,40 @@ DO_ERROR_INFO(special_op_exception, SIGILL, ILL_ILLOPN,
 DO_ERROR_INFO(translation_exception, SIGILL, ILL_ILLOPN,
 	      "translation exception")
 
-static inline void do_fp_trap(struct pt_regs *regs, void __user *location,
-			      int fpc, long pgm_int_code)
-{
-	siginfo_t si;
+#ifdef CONFIG_64BIT
+DO_ERROR_INFO(transaction_exception, SIGILL, ILL_ILLOPN,
+	      "transaction constraint exception")
+#endif
 
-	si.si_signo = SIGFPE;
-	si.si_errno = 0;
-	si.si_addr = location;
-	si.si_code = 0;
+static inline void do_fp_trap(struct pt_regs *regs, int fpc, long pgm_int_code)
+{
+	int si_code = 0;
 	/* FPC[2] is Data Exception Code */
 	if ((fpc & 0x00000300) == 0) {
 		/* bits 6 and 7 of DXC are 0 iff IEEE exception */
 		if (fpc & 0x8000) /* invalid fp operation */
-			si.si_code = FPE_FLTINV;
+			si_code = FPE_FLTINV;
 		else if (fpc & 0x4000) /* div by 0 */
-			si.si_code = FPE_FLTDIV;
+			si_code = FPE_FLTDIV;
 		else if (fpc & 0x2000) /* overflow */
-			si.si_code = FPE_FLTOVF;
+			si_code = FPE_FLTOVF;
 		else if (fpc & 0x1000) /* underflow */
-			si.si_code = FPE_FLTUND;
+			si_code = FPE_FLTUND;
 		else if (fpc & 0x0800) /* inexact */
-			si.si_code = FPE_FLTRES;
+			si_code = FPE_FLTRES;
 	}
-	do_trap(pgm_int_code, SIGFPE,
-		"floating point exception", regs, &si);
+	do_trap(regs, pgm_int_code, SIGFPE, si_code,
+		"floating point exception");
 }
 
 static void __kprobes illegal_op(struct pt_regs *regs, long pgm_int_code,
 				 unsigned long trans_exc_code)
 {
-	siginfo_t info;
         __u8 opcode[6];
 	__u16 __user *location;
 	int signal = 0;
 
-	location = get_psw_address(regs, pgm_int_code);
+	location = get_trap_ip(regs, pgm_int_code);
 
 	if (regs->psw.mask & PSW_MASK_PSTATE) {
 		if (get_user(*((__u16 *) opcode), (__u16 __user *) location))
@@ -468,25 +477,15 @@ static void __kprobes illegal_op(struct pt_regs *regs, long pgm_int_code,
 
 #ifdef CONFIG_MATHEMU
         if (signal == SIGFPE)
-		do_fp_trap(regs, location,
-			   current->thread.fp_regs.fpc, pgm_int_code);
-        else if (signal == SIGSEGV) {
-		info.si_signo = signal;
-		info.si_errno = 0;
-		info.si_code = SEGV_MAPERR;
-		info.si_addr = (void __user *) location;
-		do_trap(pgm_int_code, signal,
-			"user address fault", regs, &info);
-	} else
+		do_fp_trap(regs, current->thread.fp_regs.fpc, pgm_int_code);
+        else if (signal == SIGSEGV)
+		do_trap(regs, pgm_int_code, signal, SEGV_MAPERR,
+			"user address fault");
+	else
 #endif
-        if (signal) {
-		info.si_signo = signal;
-		info.si_errno = 0;
-		info.si_code = ILL_ILLOPC;
-		info.si_addr = (void __user *) location;
-		do_trap(pgm_int_code, signal,
-			"illegal operation", regs, &info);
-	}
+        if (signal)
+		do_trap(regs, pgm_int_code, signal, ILL_ILLOPC,
+			"illegal operation");
 }
 
 
@@ -499,7 +498,7 @@ asmlinkage void specification_exception(struct pt_regs *regs,
 	__u16 __user *location = NULL;
 	int signal = 0;
 
-	location = (__u16 __user *) get_psw_address(regs, pgm_int_code);
+	location = (__u16 __user *) get_trap_ip(regs, pgm_int_code);
 
         if (regs->psw.mask & PSW_MASK_PSTATE) {
 		get_user(*((__u16 *) opcode), location);
@@ -534,17 +533,10 @@ asmlinkage void specification_exception(struct pt_regs *regs,
 		signal = SIGILL;
 
         if (signal == SIGFPE)
-		do_fp_trap(regs, location,
-			   current->thread.fp_regs.fpc, pgm_int_code);
-        else if (signal) {
-		siginfo_t info;
-		info.si_signo = signal;
-		info.si_errno = 0;
-		info.si_code = ILL_ILLOPN;
-		info.si_addr = location;
-		do_trap(pgm_int_code, signal,
-			"specification exception", regs, &info);
-	}
+		do_fp_trap(regs, current->thread.fp_regs.fpc, pgm_int_code);
+        else if (signal)
+		do_trap(regs, pgm_int_code, signal, ILL_ILLOPN,
+			"specification exception");
 }
 #else
 DO_ERROR_INFO(specification_exception, SIGILL, ILL_ILLOPN,
@@ -557,7 +549,7 @@ static void data_exception(struct pt_regs *regs, long pgm_int_code,
 	__u16 __user *location;
 	int signal = 0;
 
-	location = get_psw_address(regs, pgm_int_code);
+	location = get_trap_ip(regs, pgm_int_code);
 
 	if (MACHINE_HAS_IEEE)
 		asm volatile("stfpc %0" : "=m" (current->thread.fp_regs.fpc));
@@ -622,32 +614,20 @@ static void data_exception(struct pt_regs *regs, long pgm_int_code,
 	else
 		signal = SIGILL;
         if (signal == SIGFPE)
-		do_fp_trap(regs, location,
-			   current->thread.fp_regs.fpc, pgm_int_code);
-        else if (signal) {
-		siginfo_t info;
-		info.si_signo = signal;
-		info.si_errno = 0;
-		info.si_code = ILL_ILLOPN;
-		info.si_addr = location;
-		do_trap(pgm_int_code, signal, "data exception", regs, &info);
-	}
+		do_fp_trap(regs, current->thread.fp_regs.fpc, pgm_int_code);
+        else if (signal)
+		do_trap(regs, pgm_int_code, signal, ILL_ILLOPN,
+			"data exception");
 }
 
 static void space_switch_exception(struct pt_regs *regs, long pgm_int_code,
 				   unsigned long trans_exc_code)
 {
-        siginfo_t info;
-
 	/* Set user psw back to home space mode. */
 	if (regs->psw.mask & PSW_MASK_PSTATE)
 		regs->psw.mask |= PSW_ASC_HOME;
 	/* Send SIGILL. */
-        info.si_signo = SIGILL;
-        info.si_errno = 0;
-        info.si_code = ILL_PRVOPC;
-	info.si_addr = get_psw_address(regs, pgm_int_code);
-	do_trap(pgm_int_code, SIGILL, "space switch event", regs, &info);
+	do_trap(regs, pgm_int_code, SIGILL, ILL_PRVOPC, "space switch event");
 }
 
 asmlinkage void __kprobes kernel_stack_overflow(struct pt_regs * regs)
@@ -687,6 +667,7 @@ void __init trap_init(void)
         pgm_check_table[0x12] = &translation_exception;
         pgm_check_table[0x13] = &special_op_exception;
 #ifdef CONFIG_64BIT
+	pgm_check_table[0x18] = &transaction_exception;
 	pgm_check_table[0x38] = &do_asce_exception;
 	pgm_check_table[0x39] = &do_dat_exception;
 	pgm_check_table[0x3A] = &do_dat_exception;

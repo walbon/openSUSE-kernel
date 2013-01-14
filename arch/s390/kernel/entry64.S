@@ -471,6 +471,11 @@ pgm_check_handler:
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 	LAST_BREAK
+	lg	%r14,__TI_task(%r12)
+	lghi	%r13,__LC_PGM_TDB
+	tm	__LC_PGM_ILC+2,0x02	# check for transaction abort
+	jz	pgm_no_vtime
+	mvc	__THREAD_trap_tdb(256,%r14),0(%r13)
 pgm_no_vtime:
 	HANDLE_SIE_INTERCEPT
 	stg	%r11,SP_ARGS(%r15)
@@ -513,6 +518,11 @@ pgm_per_std:
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 	LAST_BREAK
+	lg	%r14,__TI_task(%r12)
+	lghi	%r13,__LC_PGM_TDB
+	tm	__LC_PGM_ILC+2,0x02	# check for transaction abort
+	jz	pgm_no_vtime2
+	mvc	__THREAD_trap_tdb(256,%r14),0(%r13)
 pgm_no_vtime2:
 	HANDLE_SIE_INTERCEPT
 	lg	%r1,__TI_task(%r12)

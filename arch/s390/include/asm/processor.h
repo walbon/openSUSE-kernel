@@ -82,10 +82,16 @@ struct thread_struct {
         unsigned int trap_no;
 	struct per_regs per_user;	/* User specified PER registers */
 	struct per_event per_event;	/* Cause of the last PER trap */
+	unsigned long per_flags;	/* Flags to control debug behavior */
         /* pfault_wait is used to block the process on a pfault event */
 	unsigned long pfault_wait;
 	struct list_head list;
+#ifdef CONFIG_64BIT
+	unsigned char trap_tdb[256];	/* Transaction abort diagnose block */
+#endif
 };
+
+#define PER_FLAG_NO_TE		1UL	/* Flag to disable transactions. */
 
 typedef struct thread_struct thread_struct;
 

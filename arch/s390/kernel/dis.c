@@ -318,6 +318,9 @@ enum {
 	LONG_INSN_POPCNT,
 	LONG_INSN_RISBHG,
 	LONG_INSN_RISBLG,
+	LONG_INSN_TABORT,
+	LONG_INSN_TBEGIN,
+	LONG_INSN_TBEGINC,
 };
 
 static char *long_insn_name[] = {
@@ -333,6 +336,9 @@ static char *long_insn_name[] = {
 	[LONG_INSN_POPCNT] = "popcnt",
 	[LONG_INSN_RISBHG] = "risbhg",
 	[LONG_INSN_RISBLG] = "risblk",
+	[LONG_INSN_TABORT] = "tabort",
+	[LONG_INSN_TBEGIN] = "tbegin",
+	[LONG_INSN_TBEGINC] = "tbeginc",
 };
 
 static struct insn opcode[] = {
@@ -597,6 +603,9 @@ static struct insn opcode_b2[] = {
 	{ "lpswe", 0xb2, INSTR_S_RD },
 	{ "srnmt", 0xb9, INSTR_S_RD },
 	{ "lfas", 0xbd, INSTR_S_RD },
+	{ "etndg", 0xec, INSTR_RRE_R0 },
+	{ { 0, LONG_INSN_TABORT }, 0xfc, INSTR_S_RD },
+	{ "tend", 0xf8, INSTR_S_RD },
 #endif
 	{ "stidp", 0x02, INSTR_S_RD },
 	{ "sck", 0x04, INSTR_S_RD },
@@ -1152,6 +1161,7 @@ static struct insn opcode_e3[] = {
 	{ "stfh", 0xcb, INSTR_RXY_RRRD },
 	{ "chf", 0xcd, INSTR_RXY_RRRD },
 	{ "clhf", 0xcf, INSTR_RXY_RRRD },
+	{ "ntstg", 0x25, INSTR_RXY_RRRD },
 #endif
 	{ "lrv", 0x1e, INSTR_RXY_RRRD },
 	{ "lrvh", 0x1f, INSTR_RXY_RRRD },
@@ -1175,6 +1185,8 @@ static struct insn opcode_e5[] = {
 	{ "mvhhi", 0x44, INSTR_SIL_RDI },
 	{ "mvhi", 0x4c, INSTR_SIL_RDI },
 	{ "mvghi", 0x48, INSTR_SIL_RDI },
+	{ { 0, LONG_INSN_TBEGIN }, 0x60, INSTR_SIL_RDU },
+	{ { 0, LONG_INSN_TBEGINC }, 0x61, INSTR_SIL_RDU },
 #endif
 	{ "lasp", 0x00, INSTR_SSE_RDRD },
 	{ "tprot", 0x01, INSTR_SSE_RDRD },

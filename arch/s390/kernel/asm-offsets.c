@@ -153,6 +153,8 @@ int main(void)
 	DEFINE(__LC_VDSO_PER_CPU, offsetof(struct _lowcore, vdso_per_cpu_data));
 	DEFINE(__LC_SIE_HOOK, offsetof(struct _lowcore, sie_hook));
 	DEFINE(__LC_CMF_HPP, offsetof(struct _lowcore, cmf_hpp));
+	DEFINE(__LC_PGM_TDB, offsetof(struct _lowcore, pgm_tdb));
+	DEFINE(__THREAD_trap_tdb, offsetof(struct task_struct, thread.trap_tdb));
 #endif /* CONFIG_32BIT */
 	return 0;
 }
