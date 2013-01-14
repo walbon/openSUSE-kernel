@@ -3759,32 +3759,6 @@ static int hpsa_controller_hard_reset(struct pci_dev *pdev,
 	}
 	return 0;
 }
-
-static int hpsa_wait_for_board_state(struct pci_dev *pdev,
-	void __iomem *vaddr, int wait_for_ready)
-{
-	int i, iterations;
-	u32 scratchpad;
-	if (wait_for_ready)
-		iterations = HPSA_BOARD_READY_ITERATIONS;
-	else
-		iterations = HPSA_BOARD_NOT_READY_ITERATIONS;
-
-	for (i = 0; i < iterations; i++) {
-		scratchpad = readl(vaddr + SA5_SCRATCHPAD_OFFSET);
-		if (wait_for_ready) {
-			if (scratchpad == HPSA_FIRMWARE_READY)
-				return 0;
-		} else {
-			if (scratchpad != HPSA_FIRMWARE_READY)
-				return 0;
-		}
-		msleep(HPSA_BOARD_READY_POLL_INTERVAL_MSECS);
-	}
-	dev_warn(&pdev->dev, "board not ready, timed out.\n");
-	return -ENODEV;
-}
-
 static __devinit void init_driver_version(char *driver_version, int len)
 {
 	memset(driver_version, 0, len);
@@ -4148,6 +4122,31 @@ static int __devinit hpsa_pci_find_memory_BAR(struct pci_dev *pdev,
 			return 0;
 		}
 	dev_warn(&pdev->dev, "no memory BAR found\n");
+	return -ENODEV;
+}
+
+static int hpsa_wait_for_board_state(struct pci_dev *pdev,
+	void __iomem *vaddr, int wait_for_ready)
+{
+	int i, iterations;
+	u32 scratchpad;
+	if (wait_for_ready)
+		iterations = HPSA_BOARD_READY_ITERATIONS;
+	else
+		iterations = HPSA_BOARD_NOT_READY_ITERATIONS;
+
+	for (i = 0; i < iterations; i++) {
+		scratchpad = readl(vaddr + SA5_SCRATCHPAD_OFFSET);
+		if (wait_for_ready) {
+			if (scratchpad == HPSA_FIRMWARE_READY)
+				return 0;
+		} else {
+			if (scratchpad != HPSA_FIRMWARE_READY)
+				return 0;
+		}
+		msleep(HPSA_BOARD_READY_POLL_INTERVAL_MSECS);
+	}
+	dev_warn(&pdev->dev, "board not ready, timed out.\n");
 	return -ENODEV;
 }
 
