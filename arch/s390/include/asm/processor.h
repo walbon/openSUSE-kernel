@@ -18,7 +18,6 @@
 #include <asm/page.h>
 #include <asm/ptrace.h>
 #include <asm/setup.h>
-#include <asm/runtime_instr.h>
 
 #ifdef __KERNEL__
 /*
@@ -89,9 +88,6 @@ struct thread_struct {
 	struct list_head list;
 #ifdef CONFIG_64BIT
 	unsigned char trap_tdb[256];	/* Transaction abort diagnose block */
-	/* cpu runtime instrumentation */
-	struct runtime_instr_cb *ri_cb;
-	int ri_signum;
 #endif
 };
 
