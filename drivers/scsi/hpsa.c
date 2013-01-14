@@ -631,13 +631,8 @@ static void enqueue_cmd_and_start_io(struct ctlr_info *h,
 
 static inline void removeQ(struct CommandList *c)
 {
-	int empty;
-
-	empty = list_empty(&c->list);
-	if (empty) {
-		WARN_ON(empty);
+	if (WARN_ON(list_empty(&c->list)))
 		return;
-	}
 	list_del_init(&c->list);
 }
 
