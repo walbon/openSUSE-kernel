@@ -2564,12 +2564,6 @@ config EHEA
 	  To compile the driver as a module, choose M here. The module
 	  will be called ehea.
 
-config ENIC
-	tristate "Cisco VIC Ethernet NIC Support"
-	depends on PCI && INET
-	help
-	  This enables the support for the Cisco VIC Ethernet card.
-
 config IXGBE
 	tristate "Intel(R) 10GbE PCI Express adapters support"
 	depends on PCI && INET
