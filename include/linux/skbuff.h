@@ -344,6 +344,7 @@ typedef unsigned char *sk_buff_data_t;
  *	@queue_mapping: Queue mapping for multiqueue devices
  *	@ndisc_nodetype: router type (from link layer)
  *	@ooo_okay: allow the mapping of a socket to a queue to be changed
+ *	@no_fcs:  Request NIC to treat last 4 bytes as Ethernet FCS
  *	@dma_cookie: a cookie to one of several possible DMA operations
  *		done by skb DMA functions
  *	@secmark: security marking
@@ -437,6 +438,7 @@ struct sk_buff {
 #endif
 	__u8			pfmemalloc:1;
 	__u8			ooo_okay:1;
+	__u8			no_fcs:1;
 	kmemcheck_bitfield_end(flags2);
 
 	/* 0/13 bit hole */

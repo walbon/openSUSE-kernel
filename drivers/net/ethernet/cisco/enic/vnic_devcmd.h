@@ -131,7 +131,7 @@ enum vnic_devcmd_cmd {
 	CMD_HANG_NOTIFY         = _CMDC(_CMD_DIR_NONE, _CMD_VTYPE_ALL, 8),
 
 	/* MAC address in (u48)a0 */
-	CMD_MAC_ADDR            = _CMDC(_CMD_DIR_READ,
+	CMD_GET_MAC_ADDR        = _CMDC(_CMD_DIR_READ,
 					_CMD_VTYPE_ENET | _CMD_VTYPE_FC, 9),
 
 	/* add addr from (u48)a0 */
@@ -318,6 +318,34 @@ enum vnic_devcmd_cmd {
 	 *             ERR_EINPROGRESS - command in a0 is still in progress
 	 */
 	CMD_STATUS = _CMDC(_CMD_DIR_RW, _CMD_VTYPE_ALL, 49),
+
+	/*
+	 * Returns interrupt coalescing timer conversion factors.
+	 * After calling this devcmd, ENIC driver can convert
+	 * interrupt coalescing timer in usec into CPU cycles as follows:
+	 *
+	 *   intr_timer_cycles = intr_timer_usec * multiplier / divisor
+	 *
+	 * Interrupt coalescing timer in usecs can be obtained from
+	 * CPU cycles as follows:
+	 *
+	 *   intr_timer_usec = intr_timer_cycles * divisor / multiplier
+	 *
+	 * in: none
+	 * out: (u32)a0 = multiplier
+	 *      (u32)a1 = divisor
+	 *      (u32)a2 = maximum timer value in usec
+	 */
+	CMD_INTR_COAL_CONVERT = _CMDC(_CMD_DIR_READ, _CMD_VTYPE_ALL, 50),
+
+	/*
+	 * cmd_set_mac_addr
+	 *	set mac address
+	 * in:
+	 *   (u48)a0 = mac addr
+	 *
+	 */
+	CMD_SET_MAC_ADDR = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 55),
 };
 
 /* CMD_ENABLE2 flags */

@@ -645,6 +645,72 @@
 /*? Text: "netif_stop_queue() cannot be called before register_netdev()\n" */
 
 /*?
+ * Text: "%s: Turning off reflective relay mode at the adjacent switch failed\n"
+ * Severity: Warning
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The policy for the QDIO data connection isolation was
+ * changed successfully, and communications are now handled according to the
+ * new policy. The ISOLATION_FORWARD policy is no longer used, but the qeth
+ * device driver could not turn off the reflective relay mode on the adjacent
+ * switch port.
+ * User action:
+ * Check the adjacent switch for errors and correct the problem.
+ */
+
+/*?
+ * Text: "%s: The adjacent switch port does not support reflective relay mode\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The 'isolation' sysfs attribute of the qeth device could not be set to 'forward'.
+ * This setting selects the ISOLATION_FORWARD policy for the QDIO data connection
+ * isolation. The ISOLATION_FORWARD policy requires a network adapter in Virtual
+ * Ethernet Port Aggregator (VEPA) mode with an adjacent switch port in reflective
+ * relay mode.
+ * User action:
+ * Use a switch port that supports reflective relay mode if you want to use the
+ * ISOLATION_FORWARD policy for the qeth device.
+ */
+
+/*?
+ * Text: "%s: The reflective relay mode cannot be enabled at the adjacent switch port"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ * Description:
+ * The 'isolation' sysfs attribute of the qeth device could not be set to 'forward'.
+ * This setting selects the ISOLATION_FORWARD policy for the QDIO data connection
+ * isolation. The ISOLATION_FORWARD policy requires a network adapter in Virtual
+ * Ethernet Port Aggregator (VEPA) mode with an adjacent switch port in reflective relay
+ * mode. The qeth device driver failed to enable the required reflective relay mode on
+ * the adjacent switch port although the switch port supports this mode.
+ * User action:
+ * Enable reflective relay mode on the switch for the adjacent port and try again.
+ */
+
+/*?
+ * Text: "%s: Interface %s is down because the adjacent port is no longer in reflective relay mode\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the qeth device
+ *   @2: interface name
+ * Description:
+ * The ISOLATION_FORWARD policy is active for the QDIO data connection isolation
+ * of the qeth device. This policy requires a network adapter in Virtual Ethernet
+ * Port Aggregator (VEPA) mode with an adjacent switch port in reflective relay mode.
+ * The reflective relay mode on the adjacent switch port was disabled. The qeth device
+ * was set offline and the interface was deactivated to prevent any unintended network traffic.
+ * User action:
+ * Enable the reflective relay mode again on the adjacent port or use the 'isolation'
+ * sysfs attribute of the qeth device to set a different policy for the QDIO data connection
+ * isolation. You can then resume operations by setting the qeth device back
+ * online and activating the interface.
+ */
+
+/*?
  * Text: "%s: Failed to create completion queue\n"
  * Severity: Error
  * Parameter:

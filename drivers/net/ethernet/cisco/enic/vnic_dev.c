@@ -32,12 +32,19 @@
 enum vnic_proxy_type {
 	PROXY_NONE,
 	PROXY_BY_BDF,
+	PROXY_BY_INDEX,
 };
 
 struct vnic_res {
 	void __iomem *vaddr;
 	dma_addr_t bus_addr;
 	unsigned int count;
+};
+
+struct vnic_intr_coal_timer_info {
+	u32 mul;
+	u32 div;
+	u32 max_usec;
 };
 
 struct vnic_dev {
@@ -58,6 +65,7 @@ struct vnic_dev {
 	enum vnic_proxy_type proxy;
 	u32 proxy_index;
 	u64 args[VNIC_DEVCMD_NARGS];
+	struct vnic_intr_coal_timer_info intr_coal_timer_info;
 };
 
 #define VNIC_MAX_RES_HDR_SIZE \
@@ -321,20 +329,21 @@ static int _vnic_dev_cmd(struct vnic_dev *vdev, enum vnic_devcmd_cmd cmd,
 	return -ETIMEDOUT;
 }
 
-static int vnic_dev_cmd_proxy_by_bdf(struct vnic_dev *vdev,
-	enum vnic_devcmd_cmd cmd, u64 *a0, u64 *a1, int wait)
+static int vnic_dev_cmd_proxy(struct vnic_dev *vdev,
+	enum vnic_devcmd_cmd proxy_cmd, enum vnic_devcmd_cmd cmd,
+	u64 *a0, u64 *a1, int wait)
 {
 	u32 status;
 	int err;
 
 	memset(vdev->args, 0, sizeof(vdev->args));
 
-	vdev->args[0] = vdev->proxy_index; /* bdf */
+	vdev->args[0] = vdev->proxy_index;
 	vdev->args[1] = cmd;
 	vdev->args[2] = *a0;
 	vdev->args[3] = *a1;
 
-	err = _vnic_dev_cmd(vdev, CMD_PROXY_BY_BDF, wait);
+	err = _vnic_dev_cmd(vdev, proxy_cmd, wait);
 	if (err)
 		return err;
 
@@ -369,14 +378,30 @@ static int vnic_dev_cmd_no_proxy(struct vnic_dev *vdev,
 	return err;
 }
 
+void vnic_dev_cmd_proxy_by_index_start(struct vnic_dev *vdev, u16 index)
+{
+	vdev->proxy = PROXY_BY_INDEX;
+	vdev->proxy_index = index;
+}
+
+void vnic_dev_cmd_proxy_end(struct vnic_dev *vdev)
+{
+	vdev->proxy = PROXY_NONE;
+	vdev->proxy_index = 0;
+}
+
 int vnic_dev_cmd(struct vnic_dev *vdev, enum vnic_devcmd_cmd cmd,
 	u64 *a0, u64 *a1, int wait)
 {
 	memset(vdev->args, 0, sizeof(vdev->args));
 
 	switch (vdev->proxy) {
+	case PROXY_BY_INDEX:
+		return vnic_dev_cmd_proxy(vdev, CMD_PROXY_BY_INDEX, cmd,
+				a0, a1, wait);
 	case PROXY_BY_BDF:
-		return vnic_dev_cmd_proxy_by_bdf(vdev, cmd, a0, a1, wait);
+		return vnic_dev_cmd_proxy(vdev, CMD_PROXY_BY_BDF, cmd,
+				a0, a1, wait);
 	case PROXY_NONE:
 	default:
 		return vnic_dev_cmd_no_proxy(vdev, cmd, a0, a1, wait);
@@ -414,11 +439,12 @@ int vnic_dev_fw_info(struct vnic_dev *vdev,
 		a1 = sizeof(struct vnic_devcmd_fw_info);
 
 		/* only get fw_info once and cache it */
-		err = vnic_dev_cmd(vdev, CMD_MCPU_FW_INFO, &a0, &a1, wait);
-		if (err == ERR_ECMDUNKNOWN) {
+		if (vnic_dev_capable(vdev, CMD_MCPU_FW_INFO))
+			err = vnic_dev_cmd(vdev, CMD_MCPU_FW_INFO,
+				&a0, &a1, wait);
+		else
 			err = vnic_dev_cmd(vdev, CMD_MCPU_FW_INFO_OLD,
 				&a0, &a1, wait);
-		}
 	}
 
 	*fw_info = vdev->fw_info;
@@ -479,13 +505,11 @@ int vnic_dev_enable_wait(struct vnic_dev *vdev)
 {
 	u64 a0 = 0, a1 = 0;
 	int wait = 1000;
-	int err;
 
-	err = vnic_dev_cmd(vdev, CMD_ENABLE_WAIT, &a0, &a1, wait);
-	if (err == ERR_ECMDUNKNOWN)
+	if (vnic_dev_capable(vdev, CMD_ENABLE_WAIT))
+		return vnic_dev_cmd(vdev, CMD_ENABLE_WAIT, &a0, &a1, wait);
+	else
 		return vnic_dev_cmd(vdev, CMD_ENABLE, &a0, &a1, wait);
-
-	return err;
 }
 
 int vnic_dev_disable(struct vnic_dev *vdev)
@@ -549,16 +573,15 @@ int vnic_dev_hang_reset(struct vnic_dev *vdev, int arg)
 	int wait = 1000;
 	int err;
 
-	err = vnic_dev_cmd(vdev, CMD_HANG_RESET, &a0, &a1, wait);
-	if (err == ERR_ECMDUNKNOWN) {
+	if (vnic_dev_capable(vdev, CMD_HANG_RESET)) {
+		return vnic_dev_cmd(vdev, CMD_HANG_RESET,
+				&a0, &a1, wait);
+	} else {
 		err = vnic_dev_soft_reset(vdev, arg);
 		if (err)
 			return err;
-
 		return vnic_dev_init(vdev, 0);
 	}
-
-	return err;
 }
 
 int vnic_dev_hang_reset_done(struct vnic_dev *vdev, int *done)
@@ -569,11 +592,13 @@ int vnic_dev_hang_reset_done(struct vnic_dev *vdev, int *done)
 
 	*done = 0;
 
-	err = vnic_dev_cmd(vdev, CMD_HANG_RESET_STATUS, &a0, &a1, wait);
-	if (err) {
-		if (err == ERR_ECMDUNKNOWN)
-			return vnic_dev_soft_reset_done(vdev, done);
-		return err;
+	if (vnic_dev_capable(vdev, CMD_HANG_RESET_STATUS)) {
+		err = vnic_dev_cmd(vdev, CMD_HANG_RESET_STATUS,
+				&a0, &a1, wait);
+		if (err)
+			return err;
+	} else {
+		return vnic_dev_soft_reset_done(vdev, done);
 	}
 
 	*done = (a0 == 0);
@@ -588,7 +613,7 @@ int vnic_dev_hang_notify(struct vnic_dev *vdev)
 	return vnic_dev_cmd(vdev, CMD_HANG_NOTIFY, &a0, &a1, wait);
 }
 
-int vnic_dev_mac_addr(struct vnic_dev *vdev, u8 *mac_addr)
+int vnic_dev_get_mac_addr(struct vnic_dev *vdev, u8 *mac_addr)
 {
 	u64 a0, a1;
 	int wait = 1000;
@@ -597,7 +622,7 @@ int vnic_dev_mac_addr(struct vnic_dev *vdev, u8 *mac_addr)
 	for (i = 0; i < ETH_ALEN; i++)
 		mac_addr[i] = 0;
 
-	err = vnic_dev_cmd(vdev, CMD_MAC_ADDR, &a0, &a1, wait);
+	err = vnic_dev_cmd(vdev, CMD_GET_MAC_ADDR, &a0, &a1, wait);
 	if (err)
 		return err;
 
@@ -666,13 +691,12 @@ int vnic_dev_set_ig_vlan_rewrite_mode(struct vnic_dev *vdev,
 {
 	u64 a0 = ig_vlan_rewrite_mode, a1 = 0;
 	int wait = 1000;
-	int err;
 
-	err = vnic_dev_cmd(vdev, CMD_IG_VLAN_REWRITE_MODE, &a0, &a1, wait);
-	if (err == ERR_ECMDUNKNOWN)
+	if (vnic_dev_capable(vdev, CMD_IG_VLAN_REWRITE_MODE))
+		return vnic_dev_cmd(vdev, CMD_IG_VLAN_REWRITE_MODE,
+				&a0, &a1, wait);
+	else
 		return 0;
-
-	return err;
 }
 
 static int vnic_dev_notify_setcmd(struct vnic_dev *vdev,
@@ -779,7 +803,7 @@ int vnic_dev_init(struct vnic_dev *vdev, int arg)
 			/* Emulate these for old CMD_INIT_v1 which
 			 * didn't pass a0 so no CMD_INITF_*.
 			 */
-			vnic_dev_cmd(vdev, CMD_MAC_ADDR, &a0, &a1, wait);
+			vnic_dev_cmd(vdev, CMD_GET_MAC_ADDR, &a0, &a1, wait);
 			vnic_dev_cmd(vdev, CMD_ADDR_ADD, &a0, &a1, wait);
 		}
 	}
@@ -794,12 +818,70 @@ int vnic_dev_deinit(struct vnic_dev *vdev)
 	return vnic_dev_cmd(vdev, CMD_DEINIT, &a0, &a1, wait);
 }
 
+void vnic_dev_intr_coal_timer_info_default(struct vnic_dev *vdev)
+{
+	/* Default: hardware intr coal timer is in units of 1.5 usecs */
+	vdev->intr_coal_timer_info.mul = 2;
+	vdev->intr_coal_timer_info.div = 3;
+	vdev->intr_coal_timer_info.max_usec =
+		vnic_dev_intr_coal_timer_hw_to_usec(vdev, 0xffff);
+}
+
+int vnic_dev_intr_coal_timer_info(struct vnic_dev *vdev)
+{
+	int wait = 1000;
+	int err;
+
+	memset(vdev->args, 0, sizeof(vdev->args));
+
+	if (vnic_dev_capable(vdev, CMD_INTR_COAL_CONVERT))
+		err = _vnic_dev_cmd(vdev, CMD_INTR_COAL_CONVERT, wait);
+	else
+		err = ERR_ECMDUNKNOWN;
+
+	/* Use defaults when firmware doesn't support the devcmd at all or
+	 * supports it for only specific hardware
+	 */
+	if ((err == ERR_ECMDUNKNOWN) ||
+		(!err && !(vdev->args[0] && vdev->args[1] && vdev->args[2]))) {
+		pr_warning("Using default conversion factor for "
+			"interrupt coalesce timer\n");
+		vnic_dev_intr_coal_timer_info_default(vdev);
+		return 0;
+	}
+
+	if (!err) {
+		vdev->intr_coal_timer_info.mul = (u32) vdev->args[0];
+		vdev->intr_coal_timer_info.div = (u32) vdev->args[1];
+		vdev->intr_coal_timer_info.max_usec = (u32) vdev->args[2];
+	}
+
+	return err;
+}
+
 int vnic_dev_link_status(struct vnic_dev *vdev)
 {
 	if (!vnic_dev_notify_ready(vdev))
 		return 0;
 
 	return vdev->notify_copy.link_state;
+}
+
+u32 vnic_dev_intr_coal_timer_usec_to_hw(struct vnic_dev *vdev, u32 usec)
+{
+	return (usec * vdev->intr_coal_timer_info.mul) /
+		vdev->intr_coal_timer_info.div;
+}
+
+u32 vnic_dev_intr_coal_timer_hw_to_usec(struct vnic_dev *vdev, u32 hw_cycles)
+{
+	return (hw_cycles * vdev->intr_coal_timer_info.div) /
+		vdev->intr_coal_timer_info.mul;
+}
+
+u32 vnic_dev_get_intr_coal_timer_max(struct vnic_dev *vdev)
+{
+	return vdev->intr_coal_timer_info.max_usec;
 }
 
 u32 vnic_dev_port_speed(struct vnic_dev *vdev)
@@ -940,4 +1022,16 @@ int vnic_dev_enable2_done(struct vnic_dev *vdev, int *status)
 int vnic_dev_deinit_done(struct vnic_dev *vdev, int *status)
 {
 	return vnic_dev_cmd_status(vdev, CMD_DEINIT, status);
+}
+
+int vnic_dev_set_mac_addr(struct vnic_dev *vdev, u8 *mac_addr)
+{
+	u64 a0, a1;
+	int wait = 1000;
+	int i;
+
+	for (i = 0; i < ETH_ALEN; i++)
+		((u8 *)&a0)[i] = mac_addr[i];
+
+	return vnic_dev_cmd(vdev, CMD_SET_MAC_ADDR, &a0, &a1, wait);
 }

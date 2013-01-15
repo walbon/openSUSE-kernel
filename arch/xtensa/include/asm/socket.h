@@ -73,4 +73,7 @@
 
 #define SO_RXQ_OVFL             40
 
+/* Instruct lower device to use last 4-bytes of skb data as FCS */
+#define SO_NOFCS		43
+
 #endif	/* _XTENSA_SOCKET_H */

@@ -365,17 +365,19 @@ struct per_struct_kernel {
 	unsigned char access_id;	/* PER trap access identification */
 };
 
-#define PER_EVENT_MASK			0xE9000000UL
+#define PER_EVENT_MASK			0xEB000000UL
 
 #define PER_EVENT_BRANCH		0x80000000UL
 #define PER_EVENT_IFETCH		0x40000000UL
 #define PER_EVENT_STORE			0x20000000UL
 #define PER_EVENT_STORE_REAL		0x08000000UL
+#define PER_EVENT_TRANSACTION_END	0x02000000UL
 #define PER_EVENT_NULLIFICATION		0x01000000UL
 
-#define PER_CONTROL_MASK		0x00a00000UL
+#define PER_CONTROL_MASK		0x00e00000UL
 
 #define PER_CONTROL_BRANCH_ADDRESS	0x00800000UL
+#define PER_CONTROL_SUSPENSION		0x00400000UL
 #define PER_CONTROL_ALTERATION		0x00200000UL
 
 #endif
@@ -391,7 +393,7 @@ typedef struct
 	unsigned long cr[NUM_CR_WORDS];
 } per_cr_words;
 
-#define PER_EM_MASK 0xE8000000UL
+#define PER_EM_MASK 0xEB000000UL
 
 typedef	struct
 {
@@ -407,9 +409,11 @@ typedef	struct
 	unsigned em_storage_alteration : 1;
 	unsigned em_gpr_alt_unused     : 1;
 	unsigned em_store_real_address : 1;
-	unsigned                       : 3;
-	unsigned branch_addr_ctl       : 1;
 	unsigned                       : 1;
+	unsigned em_transaction_end    : 1;
+	unsigned em_nullification      : 1;
+	unsigned branch_addr_ctl       : 1;
+	unsigned suspension_ctl        : 1;
 	unsigned storage_alt_space_ctl : 1;
 	unsigned                       : 21;
 	unsigned long starting_addr;
@@ -487,6 +491,8 @@ typedef struct
 #define PTRACE_POKETEXT_AREA	      0x5004
 #define PTRACE_POKEDATA_AREA 	      0x5005
 #define PTRACE_GET_LAST_BREAK	      0x5006
+#define PTRACE_ENABLE_TE	      0x5009
+#define PTRACE_DISABLE_TE	      0x5010
 
 /*
  * PT_PROT definition is loosely based on hppa bsd definition in
