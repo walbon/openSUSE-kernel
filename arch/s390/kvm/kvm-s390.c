@@ -130,6 +130,8 @@ int kvm_dev_ioctl_check_extension(long ext)
 	case KVM_CAP_SYNC_MMU:
 	case KVM_CAP_SYNC_REGS:
 	case KVM_CAP_ONE_REG:
+	case KVM_CAP_ENABLE_CAP:
+	case KVM_CAP_S390_CSS_SUPPORT:
 		r = 1;
 		break;
 	case KVM_CAP_NR_VCPUS:
@@ -203,6 +205,7 @@ int kvm_arch_init_vm(struct kvm *kvm)
 	debug_register_view(kvm->arch.dbf, &debug_sprintf_view);
 	VM_EVENT(kvm, 3, "%s", "vm created");
 
+	kvm->arch.css_support = 0;
 	return 0;
 out_nodbf:
 	free_page((unsigned long)(kvm->arch.sca));
@@ -584,6 +587,7 @@ rerun_vcpu:
 	case KVM_EXIT_UNKNOWN:
 	case KVM_EXIT_INTR:
 	case KVM_EXIT_S390_RESET:
+	case KVM_EXIT_S390_TSCH:
 		break;
 	default:
 		BUG();
@@ -720,6 +724,28 @@ int kvm_s390_vcpu_store_status(struct kvm_vcpu *vcpu, unsigned long addr)
 	return 0;
 }
 
+static int kvm_vcpu_ioctl_enable_cap(struct kvm_vcpu *vcpu,
+				     struct kvm_enable_cap *cap)
+{
+	int r;
+
+	if (cap->flags)
+		return -EINVAL;
+
+	switch (cap->cap) {
+	case KVM_CAP_S390_CSS_SUPPORT:
+		if (!vcpu->kvm->arch.css_support) {
+			vcpu->kvm->arch.css_support = 1;
+		}
+		r = 0;
+		break;
+	default:
+		r = -EINVAL;
+		break;
+	}
+	return r;
+}
+
 long kvm_arch_vcpu_ioctl(struct file *filp,
 			 unsigned int ioctl, unsigned long arg)
 {
@@ -762,6 +788,15 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 			r = kvm_arch_vcpu_ioctl_set_one_reg(vcpu, &reg);
 		else
 			r = kvm_arch_vcpu_ioctl_get_one_reg(vcpu, &reg);
+		break;
+	}
+	case KVM_ENABLE_CAP:
+	{
+		struct kvm_enable_cap cap;
+		r = -EFAULT;
+		if (copy_from_user(&cap, argp, sizeof(cap)))
+			break;
+		r = kvm_vcpu_ioctl_enable_cap(vcpu, &cap);
 		break;
 	}
 	default:

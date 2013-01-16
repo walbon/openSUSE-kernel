@@ -31,6 +31,7 @@ enum interruption_class {
 	IOINT_APB,
 	IOINT_ADM,
 	NMI_NMI,
+	IOINT_VIR,
 	NR_IRQS,
 };
 

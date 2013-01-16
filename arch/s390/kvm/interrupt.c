@@ -40,6 +40,11 @@ static int psw_ioint_disabled(struct kvm_vcpu *vcpu)
 	return !(vcpu->arch.sie_block->gpsw.mask & PSW_MASK_IO);
 }
 
+static int psw_mchk_disabled(struct kvm_vcpu *vcpu)
+{
+	return !(vcpu->arch.sie_block->gpsw.mask & PSW_MASK_MCHECK);
+}
+
 static int psw_interrupts_disabled(struct kvm_vcpu *vcpu)
 {
 	if ((vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PER) ||
@@ -81,6 +86,12 @@ static int __interrupt_is_deliverable(struct kvm_vcpu *vcpu,
 	case KVM_S390_SIGP_SET_PREFIX:
 	case KVM_S390_RESTART:
 		return 1;
+	case KVM_S390_MCHK:
+		if (psw_mchk_disabled(vcpu))
+			return 0;
+		if (vcpu->arch.sie_block->gcr[14] & inti->mchk.cr14)
+			return 1;
+		return 0;
 	case KVM_S390_INT_IO_MIN...KVM_S390_INT_IO_MAX:
 		if (psw_ioint_disabled(vcpu))
 			return 0;
@@ -115,6 +126,7 @@ static void __reset_intercept_indicators(struct kvm_vcpu *vcpu)
 		CPUSTAT_IO_INT | CPUSTAT_EXT_INT | CPUSTAT_STOP_INT,
 		&vcpu->arch.sie_block->cpuflags);
 	vcpu->arch.sie_block->lctl = 0x0000;
+	vcpu->arch.sie_block->ictl &= ~ICTL_LPSW;
 }
 
 static void __set_cpuflag(struct kvm_vcpu *vcpu, u32 flag)
@@ -137,6 +149,12 @@ static void __set_intercept_indicator(struct kvm_vcpu *vcpu,
 		break;
 	case KVM_S390_SIGP_STOP:
 		__set_cpuflag(vcpu, CPUSTAT_STOP_INT);
+		break;
+	case KVM_S390_MCHK:
+		if (psw_mchk_disabled(vcpu))
+			vcpu->arch.sie_block->ictl |= ICTL_LPSW;
+		else
+			vcpu->arch.sie_block->lctl |= LCTL_CR14;
 		break;
 	case KVM_S390_INT_IO_MIN...KVM_S390_INT_IO_MAX:
 		if (psw_ioint_disabled(vcpu))
@@ -308,6 +326,29 @@ static void __do_deliver_interrupt(struct kvm_vcpu *vcpu,
 			exception = 1;
 		break;
 
+	case KVM_S390_MCHK:
+		VCPU_EVENT(vcpu, 4, "interrupt: machine check mcic=%llx",
+			   inti->mchk.mcic);
+		rc = kvm_s390_vcpu_store_status(vcpu,
+						KVM_S390_STORE_STATUS_PREFIXED);
+		if (rc == -EFAULT)
+			exception = 1;
+
+		rc = put_guest_u64(vcpu, __LC_MCCK_CODE, inti->mchk.mcic);
+		if (rc == -EFAULT)
+			exception = 1;
+
+		rc = copy_to_guest(vcpu, __LC_MCK_OLD_PSW,
+				   &vcpu->arch.sie_block->gpsw, sizeof(psw_t));
+		if (rc == -EFAULT)
+			exception = 1;
+
+		rc = copy_from_guest(vcpu, &vcpu->arch.sie_block->gpsw,
+				     __LC_MCK_NEW_PSW, sizeof(psw_t));
+		if (rc == -EFAULT)
+			exception = 1;
+		break;
+
 	case KVM_S390_INT_IO_MIN...KVM_S390_INT_IO_MAX:
 	{
 		__u32 param0 = ((__u32)inti->io.subchannel_id << 16) |
@@ -316,8 +357,6 @@ static void __do_deliver_interrupt(struct kvm_vcpu *vcpu,
 			inti->io.io_int_word;
 		VCPU_EVENT(vcpu, 4, "interrupt: I/O %llx", inti->type);
 		vcpu->stat.deliver_io_int++;
-		trace_kvm_s390_deliver_interrupt(vcpu->vcpu_id, inti->type,
-						 param0, param1);
 		rc = put_guest_u16(vcpu, __LC_SUBCHANNEL_ID,
 				   inti->io.subchannel_id);
 		if (rc == -EFAULT)
@@ -570,6 +609,61 @@ void kvm_s390_deliver_pending_interrupts(struct kvm_vcpu *vcpu)
 	}
 }
 
+void kvm_s390_deliver_pending_machine_checks(struct kvm_vcpu *vcpu)
+{
+	struct kvm_s390_local_interrupt *li = &vcpu->arch.local_int;
+	struct kvm_s390_float_interrupt *fi = vcpu->arch.local_int.float_int;
+	struct kvm_s390_interrupt_info  *n, *inti = NULL;
+	int deliver;
+
+	__reset_intercept_indicators(vcpu);
+	if (atomic_read(&li->active)) {
+		do {
+			deliver = 0;
+			spin_lock_bh(&li->lock);
+			list_for_each_entry_safe(inti, n, &li->list, list) {
+				if ((inti->type == KVM_S390_MCHK) &&
+				    __interrupt_is_deliverable(vcpu, inti)) {
+					list_del(&inti->list);
+					deliver = 1;
+					break;
+				}
+				__set_intercept_indicator(vcpu, inti);
+			}
+			if (list_empty(&li->list))
+				atomic_set(&li->active, 0);
+			spin_unlock_bh(&li->lock);
+			if (deliver) {
+				__do_deliver_interrupt(vcpu, inti);
+				kfree(inti);
+			}
+		} while (deliver);
+	}
+
+	if (atomic_read(&fi->active)) {
+		do {
+			deliver = 0;
+			spin_lock(&fi->lock);
+			list_for_each_entry_safe(inti, n, &fi->list, list) {
+				if ((inti->type == KVM_S390_MCHK) &&
+				    __interrupt_is_deliverable(vcpu, inti)) {
+					list_del(&inti->list);
+					deliver = 1;
+					break;
+				}
+				__set_intercept_indicator(vcpu, inti);
+			}
+			if (list_empty(&fi->list))
+				atomic_set(&fi->active, 0);
+			spin_unlock(&fi->lock);
+			if (deliver) {
+				__do_deliver_interrupt(vcpu, inti);
+				kfree(inti);
+			}
+		} while (deliver);
+	}
+}
+
 int kvm_s390_inject_program_int(struct kvm_vcpu *vcpu, u16 code)
 {
 	struct kvm_s390_local_interrupt *li = &vcpu->arch.local_int;
@@ -589,6 +683,43 @@ int kvm_s390_inject_program_int(struct kvm_vcpu *vcpu, u16 code)
 	BUG_ON(waitqueue_active(&li->wq));
 	spin_unlock_bh(&li->lock);
 	return 0;
+}
+
+struct kvm_s390_interrupt_info *kvm_s390_get_io_int(struct kvm *kvm,
+						    u64 cr6, u64 schid)
+{
+	struct kvm_s390_float_interrupt *fi;
+	struct kvm_s390_interrupt_info *inti, *iter;
+
+	if ((!schid && !cr6) || (schid && cr6))
+		return NULL;
+	mutex_lock(&kvm->lock);
+	fi = &kvm->arch.float_int;
+	spin_lock(&fi->lock);
+	inti = NULL;
+	list_for_each_entry(iter, &fi->list, list) {
+		if (!is_ioint(iter->type))
+			continue;
+		if (cr6 && ((cr6 & iter->io.io_int_word) == 0))
+			continue;
+		if (schid) {
+			if (((schid & 0x00000000ffff0000) >> 16) !=
+			    iter->io.subchannel_id)
+				continue;
+			if ((schid & 0x000000000000ffff) !=
+			    iter->io.subchannel_nr)
+				continue;
+		}
+		inti = iter;
+		break;
+	}
+	if (inti)
+		list_del_init(&inti->list);
+	if (list_empty(&fi->list))
+		atomic_set(&fi->active, 0);
+	spin_unlock(&fi->lock);
+	mutex_unlock(&kvm->lock);
+	return inti;
 }
 
 int kvm_s390_inject_vm(struct kvm *kvm,
@@ -622,6 +753,13 @@ int kvm_s390_inject_vm(struct kvm *kvm,
 	case KVM_S390_INT_EMERGENCY:
 		kfree(inti);
 		return -EINVAL;
+	case KVM_S390_MCHK:
+		VM_EVENT(kvm, 5, "inject: machine check parm64:%llx",
+			 s390int->parm64);
+		inti->type = s390int->type;
+		inti->mchk.cr14 = s390int->parm; /* upper bits are not used */
+		inti->mchk.mcic = s390int->parm64;
+		break;
 	case KVM_S390_INT_IO_MIN...KVM_S390_INT_IO_MAX:
 		if (s390int->type & IOINT_AI_MASK)
 			VM_EVENT(kvm, 5, "%s", "inject: I/O (AI)");
@@ -727,6 +865,12 @@ int kvm_s390_inject_vcpu(struct kvm_vcpu *vcpu,
 		VCPU_EVENT(vcpu, 3, "inject: emergency %u\n", s390int->parm);
 		inti->type = s390int->type;
 		inti->emerg.code = s390int->parm;
+		break;
+	case KVM_S390_MCHK:
+		VCPU_EVENT(vcpu, 5, "inject: machine check parm64:%llx",
+			   s390int->parm64);
+		inti->type = s390int->type;
+		inti->mchk.mcic = s390int->parm64;
 		break;
 	case KVM_S390_INT_VIRTIO:
 	case KVM_S390_INT_SERVICE:
