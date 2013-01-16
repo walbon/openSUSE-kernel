@@ -46,6 +46,27 @@
 #define SIGP_STAT_INVALID_ORDER     0x00000002UL
 #define SIGP_STAT_RECEIVER_CHECK    0x00000001UL
 
+/* New defines for current code. Having these here too makes backports easier */
+/* SIGP order codes */
+#define SIGP_EMERGENCY_SIGNAL         3
+#define SIGP_STORE_STATUS_AT_ADDRESS 14
+#define SIGP_SET_ARCHITECTURE        18
+
+/* SIGP condition codes */
+#define SIGP_CC_ORDER_CODE_ACCEPTED 0
+#define SIGP_CC_STATUS_STORED       1
+#define SIGP_CC_BUSY                2
+#define SIGP_CC_NOT_OPERATIONAL     3
+
+/* SIGP cpu status bits */
+
+#define SIGP_STATUS_CHECK_STOP          0x00000010UL
+#define SIGP_STATUS_STOPPED             0x00000040UL
+#define SIGP_STATUS_EXT_CALL_PENDING    0x00000080UL
+#define SIGP_STATUS_INVALID_PARAMETER   0x00000100UL
+#define SIGP_STATUS_INCORRECT_STATE     0x00000200UL
+#define SIGP_STATUS_NOT_RUNNING         0x00000400UL
+
 
 static int __sigp_sense(struct kvm_vcpu *vcpu, u16 cpu_addr,
 			u64 *reg)
@@ -239,6 +260,7 @@ static int __sigp_set_prefix(struct kvm_vcpu *vcpu, u16 cpu_addr, u32 address,
 		(address + vcpu->arch.sie_block->gmsor) , 1)) ||
 	   (copy_from_user(&tmp, (void __user *)(address +
 			vcpu->arch.sie_block->gmsor + PAGE_SIZE), 1))) {
+		*reg &= 0xffffffff00000000UL;
 		*reg |= SIGP_STAT_INVALID_PARAMETER;
 		return 1; /* invalid parameter */
 	}
@@ -252,8 +274,9 @@ static int __sigp_set_prefix(struct kvm_vcpu *vcpu, u16 cpu_addr, u32 address,
 		li = fi->local_int[cpu_addr];
 
 	if (li == NULL) {
+		*reg &= 0xffffffff00000000UL;
+		*reg |= SIGP_STATUS_INCORRECT_STATE;
 		rc = 1; /* incorrect state */
-		*reg &= SIGP_STAT_INCORRECT_STATE;
 		kfree(inti);
 		goto out_fi;
 	}
@@ -261,8 +284,9 @@ static int __sigp_set_prefix(struct kvm_vcpu *vcpu, u16 cpu_addr, u32 address,
 	spin_lock_bh(&li->lock);
 	/* cpu must be in stopped state */
 	if (!(atomic_read(li->cpuflags) & CPUSTAT_STOPPED)) {
+		*reg &= 0xffffffff00000000UL;
+		*reg |= SIGP_STATUS_INCORRECT_STATE;
 		rc = 1; /* incorrect state */
-		*reg &= SIGP_STAT_INCORRECT_STATE;
 		kfree(inti);
 		goto out_li;
 	}
