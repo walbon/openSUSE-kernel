@@ -10,7 +10,7 @@
 #include "pciback.h"
 
 int verbose_request = 0;
-module_param(verbose_request, int, 0644);
+module_param(verbose_request, bool, 0644);
 
 /* Ensure a device is "turned off" and ready to be exported.
  * (Also see pciback_config_reset to ensure virtual configuration space is

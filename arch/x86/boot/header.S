@@ -393,6 +393,9 @@ setup_data:		.quad 0			# 64-bit physical pointer to
 
 pref_address:		.quad LOAD_PHYSICAL_ADDR	# preferred load addr
 
+#ifdef CONFIG_XEN
+#define ZO_startup_32 0
+#endif
 #define ZO_INIT_SIZE	(ZO__end - ZO_startup_32 + ZO_z_extract_offset)
 #define VO_INIT_SIZE	(VO__end - VO__text)
 #if ZO_INIT_SIZE > VO_INIT_SIZE
@@ -408,6 +411,7 @@ handover_offset:	.long 0x30		# offset to the handover
 
 	.section ".entrytext", "ax"
 start_of_setup:
+#ifndef CONFIG_XEN
 #ifdef SAFE_RESET_DISK_CONTROLLER
 # Reset the disk controller.
 	movw	$0x0000, %ax		# Reset disk controller
@@ -490,3 +494,4 @@ setup_corrupt:
 
 	.data
 dummy:	.long	0
+#endif /* CONFIG_XEN */

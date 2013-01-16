@@ -1211,11 +1211,15 @@ void __init setup_arch(char **cmdline_p)
 	io_delay_init();
 
 #ifndef CONFIG_XEN
-	if (boot_params.secure_boot)
+	if (boot_params.secure_boot) {
 #else
-	if (efi_enabled && efi_get_secure_boot())
+	if (efi_enabled && efi_get_secure_boot()) {
 #endif
 		secureboot_enable();
+#ifdef CONFIG_EFI
+		secure_boot_enabled = 1;
+#endif
+	}
 
 #ifdef CONFIG_ACPI
 	if (!is_initial_xendomain()) {

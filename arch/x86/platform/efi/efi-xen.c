@@ -48,6 +48,8 @@
 int __read_mostly efi_enabled;
 EXPORT_SYMBOL(efi_enabled);
 
+int __read_mostly secure_boot_enabled;
+
 #define call op.u.efi_runtime_call
 #define DECLARE_CALL(what) \
 	struct xen_platform_op op; \
