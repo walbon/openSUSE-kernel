@@ -55,6 +55,7 @@
 #include <asm/phyp_dump.h>
 #include <asm/kexec.h>
 #include <mm/mmu_decl.h>
+#include <asm/fadump.h>
 
 #ifdef DEBUG
 #define DBG(fmt...) printk(KERN_ERR fmt)
@@ -711,6 +712,11 @@ void __init early_init_devtree(void *params)
 	of_scan_flat_dt(early_init_dt_scan_phyp_dump, NULL);
 #endif
 
+#ifdef CONFIG_FA_DUMP
+	/* scan tree to see if dump is active during last boot */
+	of_scan_flat_dt(early_init_dt_scan_fw_dump, NULL);
+#endif
+
 	/* Retrieve various informations from the /chosen node of the
 	 * device-tree, including the platform type, initrd location and
 	 * size, TCE reserve, and more ...
@@ -734,7 +740,14 @@ void __init early_init_devtree(void *params)
 	if (PHYSICAL_START > MEMORY_START)
 		memblock_reserve(MEMORY_START, 0x8000);
 	reserve_kdump_trampoline();
-	reserve_crashkernel();
+#ifdef CONFIG_FA_DUMP
+	/*
+	 * If we fail to reserve memory for firmware-assisted dump then
+	 * fallback to kexec based kdump.
+	 */
+	if (fadump_reserve_mem() == 0)
+#endif
+		reserve_crashkernel();
 	early_reserve_mem();
 	phyp_dump_reserve_mem();
 
