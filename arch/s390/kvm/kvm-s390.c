@@ -673,7 +673,7 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 		r = kvm_arch_vcpu_ioctl_initial_reset(vcpu);
 		break;
 	default:
-		r = -EINVAL;
+		r = -ENOTTY;
 	}
 	return r;
 }
