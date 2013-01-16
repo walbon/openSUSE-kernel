@@ -29,7 +29,6 @@
 #include "bnx2x_cmn.h"
 #include "bnx2x_dcb.h"
 
-
 /* forward declarations of dcbx related functions */
 static int bnx2x_dcbx_stop_hw_tx(struct bnx2x *bp);
 static void bnx2x_pfc_set_pfc(struct bnx2x *bp);
@@ -763,7 +762,7 @@ void bnx2x_dcbx_set_params(struct bnx2x *bp, u32 state)
 		DP(NETIF_MSG_LINK, "BNX2X_DCBX_STATE_TX_RELEASED\n");
 		bnx2x_fw_command(bp, DRV_MSG_CODE_DCBX_PMF_DRV_OK, 0);
 #ifdef BCM_DCBNL
-		/**
+		/*
 		 * Send a notification for the new negotiated parameters
 		 */
 		dcbnl_cee_notify(bp->dev, RTM_GETDCB, DCB_CMD_CEE_GET, 0, 0);

@@ -3998,7 +3998,7 @@ void bnx2x_set_pf_load(struct bnx2x *bp)
 }
 
 /**
- * bnx2x_clear_pf_load - decrement the load counter
+ * bnx2x_clear_pf_load - clear pf load mark
  *
  * @bp:		driver handle
  *
@@ -4052,7 +4052,7 @@ static bool bnx2x_get_load_status(struct bnx2x *bp, int engine)
 
 	val = (val & mask) >> shift;
 
-	DP(NETIF_MSG_HW | NETIF_MSG_IFUP, "load mask for engine %d = %d\n",
+	DP(NETIF_MSG_HW | NETIF_MSG_IFUP, "load mask for engine %d = 0x%x\n",
 	   engine, val);
 
 	return val != 0;
@@ -4064,7 +4064,7 @@ static void _print_next_block(int idx, const char *blk)
 }
 
 static int bnx2x_check_blocks_with_parity0(u32 sig, int par_num,
-						  bool print)
+					   bool print)
 {
 	int i = 0;
 	u32 cur_bit = 0;
@@ -10579,8 +10579,8 @@ static void __devinit bnx2x_get_cnic_mac_hwinfo(struct bnx2x *bp)
 				val = MF_CFG_RD(bp, func_ext_config[func].
 						iscsi_mac_addr_lower);
 				bnx2x_set_mac_buf(iscsi_mac, val, val2);
-				BNX2X_DEV_INFO("Read iSCSI MAC: %pM\n",
-					       iscsi_mac);
+				BNX2X_DEV_INFO
+					("Read iSCSI MAC: %pM\n", iscsi_mac);
 			} else {
 				bp->flags |= NO_ISCSI_OOO_FLAG | NO_ISCSI_FLAG;
 			}
@@ -10589,10 +10589,10 @@ static void __devinit bnx2x_get_cnic_mac_hwinfo(struct bnx2x *bp)
 				val2 = MF_CFG_RD(bp, func_ext_config[func].
 						 fcoe_mac_addr_upper);
 				val = MF_CFG_RD(bp, func_ext_config[func].
-						 fcoe_mac_addr_lower);
+						fcoe_mac_addr_lower);
 				bnx2x_set_mac_buf(fip_mac, val, val2);
-				BNX2X_DEV_INFO("Read FCoE L2 MAC: %pM\n",
-					       fip_mac);
+				BNX2X_DEV_INFO
+					("Read FCoE L2 MAC: %pM\n", fip_mac);
 			} else {
 				bp->flags |= NO_FCOE_FLAG;
 			}
@@ -10623,6 +10623,7 @@ static void __devinit bnx2x_get_cnic_mac_hwinfo(struct bnx2x *bp)
 		if (IS_MF_FCOE_AFEX(bp))
 			/* use FIP MAC as primary MAC */
 			memcpy(bp->dev->dev_addr, fip_mac, ETH_ALEN);
+
 	} else {
 		val2 = SHMEM_RD(bp, dev_info.port_hw_config[port].
 				iscsi_mac_upper);
@@ -10637,7 +10638,7 @@ static void __devinit bnx2x_get_cnic_mac_hwinfo(struct bnx2x *bp)
 		bnx2x_set_mac_buf(fip_mac, val, val2);
 	}
 
-	/* Disable iSCSI if MAC configuration is invalid. */
+	/* Disable iSCSI OOO if MAC configuration is invalid. */
 	if (!is_valid_ether_addr(iscsi_mac)) {
 		bp->flags |= NO_ISCSI_OOO_FLAG | NO_ISCSI_FLAG;
 		memset(iscsi_mac, 0, ETH_ALEN);
@@ -10683,6 +10684,7 @@ static void __devinit bnx2x_get_mac_hwinfo(struct bnx2x *bp)
 
 	memcpy(bp->link_params.mac_addr, bp->dev->dev_addr, ETH_ALEN);
 	memcpy(bp->dev->perm_addr, bp->dev->dev_addr, ETH_ALEN);
+
 	if (!bnx2x_is_valid_ether_addr(bp, bp->dev->dev_addr))
 		dev_err(&bp->pdev->dev,
 			"bad Ethernet MAC address configuration: %pM\n"
@@ -11108,6 +11110,7 @@ static int __devinit bnx2x_init_bp(struct bnx2x *bp)
 
 		bnx2x_prev_unload(bp);
 	}
+
 
 	if (CHIP_REV_IS_FPGA(bp))
 		dev_err(&bp->pdev->dev, "FPGA detected\n");
@@ -11832,8 +11835,7 @@ static void bnx2x_prep_ops(const u8 *_source, u8 *_target, u32 n)
 	}
 }
 
-/**
- * IRO array is stored in the following format:
+/* IRO array is stored in the following format:
  * {base(24bit), m1(16bit), m2(16bit), m3(16bit), size(16bit) }
  */
 static void bnx2x_prep_iro(const u8 *_source, u8 *_target, u32 n)
@@ -12163,6 +12165,7 @@ static int __devinit bnx2x_init_one(struct pci_dev *pdev,
 	/* disable FCOE L2 queue for E1x*/
 	if (CHIP_IS_E1x(bp))
 		bp->flags |= NO_FCOE_FLAG;
+
 	/* disable FCOE for 57840 device, until FW supports it */
 	switch (ent->driver_data) {
 	case BCM57840_O:

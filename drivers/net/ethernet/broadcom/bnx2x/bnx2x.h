@@ -276,7 +276,6 @@ enum {
  * txdata for FWD (if exist) is one location after FCoE
  * txdata for OOO (if exist) is one location after FWD
  */
-
 enum {
 	FCOE_TXQ_IDX_OFFSET,
 	FWD_TXQ_IDX_OFFSET,
@@ -1438,7 +1437,7 @@ struct bnx2x {
 	int				fw_stats_req_sz;
 
 	/*
-	 * FW statistics data shortcut (points at the begining of
+	 * FW statistics data shortcut (points at the beginning of
 	 * fw_stats buffer + fw_stats_req_sz).
 	 */
 	struct bnx2x_fw_stats_data	*fw_stats_data;
@@ -1775,15 +1774,6 @@ struct bnx2x_func_init_params {
 int bnx2x_set_mac_one(struct bnx2x *bp, u8 *mac,
 		      struct bnx2x_vlan_mac_obj *obj, bool set,
 		      int mac_type, unsigned long *ramrod_flags);
-/**
- * Deletes all MACs configured for the specific MAC object.
- *
- * @param bp Function driver instance
- * @param mac_obj MAC object to cleanup
- *
- * @return zero if all MACs were cleaned
- */
-
 /**
  * bnx2x_del_all_macs - delete all MACs configured for the specific MAC object
  *

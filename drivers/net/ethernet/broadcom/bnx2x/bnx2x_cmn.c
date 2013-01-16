@@ -619,8 +619,8 @@ static int bnx2x_alloc_rx_skb(struct bnx2x *bp,
 
 static
 void bnx2x_csum_validate(struct sk_buff *skb, union eth_rx_cqe *cqe,
-				struct bnx2x_fastpath *fp,
-				struct bnx2x_eth_q_stats *qstats)
+				 struct bnx2x_fastpath *fp,
+				 struct bnx2x_eth_q_stats *qstats)
 {
 	/* Do nothing if no L4 csum validation was done.
 	 * We do not check whether IP csum was validated. For IPv4 we assume
@@ -1773,8 +1773,7 @@ static int bnx2x_init_rss_pf(struct bnx2x *bp)
 	int i;
 	u8 num_eth_queues = BNX2X_NUM_ETH_QUEUES(bp);
 
-	/*
-	 * Prepare the initial contents for the indirection table if RSS is
+	/* Prepare the initial contents fo the indirection table if RSS is
 	 * enabled
 	 */
 	for (i = 0; i < sizeof(bp->rss_conf_obj.ind_table); i++)
@@ -2039,8 +2038,8 @@ static void bnx2x_bz_fp(struct bnx2x *bp, int index)
 	 * minimal size so it must be set prior to queue memory allocation
 	 */
 	fp->disable_tpa = !(bp->flags & TPA_ENABLE_FLAG ||
-			   (bp->flags & GRO_ENABLE_FLAG &&
-			    bnx2x_mtu_allows_gro(bp->dev->mtu)));
+				  (bp->flags & GRO_ENABLE_FLAG &&
+				   bnx2x_mtu_allows_gro(bp->dev->mtu)));
 	if (bp->flags & TPA_ENABLE_FLAG)
 		fp->mode = TPA_MODE_LRO;
 	else if (bp->flags & GRO_ENABLE_FLAG)
@@ -2050,7 +2049,6 @@ static void bnx2x_bz_fp(struct bnx2x *bp, int index)
 	if (IS_FCOE_FP(fp))
 		fp->disable_tpa = 1;
 }
-
 
 int bnx2x_load_cnic(struct bnx2x *bp)
 {
@@ -2136,8 +2134,8 @@ load_error_cnic0:
 	bnx2x_free_mem_cnic(bp);
 	return rc;
 #endif /* ! BNX2X_STOP_ON_ERROR */
- }
- 
+}
+
 
 /* must be called with rtnl_lock */
 int bnx2x_nic_load(struct bnx2x *bp, int load_mode)

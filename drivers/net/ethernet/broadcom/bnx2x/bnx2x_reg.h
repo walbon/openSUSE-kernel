@@ -1,5 +1,5 @@
 /* bnx2x_reg.h: Broadcom Everest network driver.
-
+ *
  * Copyright (c) 2007-2012 Broadcom Corporation
  *
  * This program is free software; you can redistribute it and/or modify
@@ -7340,8 +7340,7 @@ Theotherbitsarereservedandshouldbezero*/
 #define CDU_REGION_NUMBER_UCM_AG 4
 
 
-/**
- * String-to-compress [31:8] = CID (all 24 bits)
+/* String-to-compress [31:8] = CID (all 24 bits)
  * String-to-compress [7:4] = Region
  * String-to-compress [3:0] = Type
  */

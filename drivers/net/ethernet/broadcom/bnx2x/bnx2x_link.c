@@ -3598,6 +3598,7 @@ static void bnx2x_ext_phy_update_adv_fc(struct bnx2x_phy *phy,
 			 MDIO_AN_REG_ADV_PAUSE_MASK) >> 10;
 	DP(NETIF_MSG_LINK, "Ext PHY pause result 0x%x\n", pause_result);
 	bnx2x_pause_resolve(vars, pause_result);
+
 }
 
 static u8 bnx2x_ext_phy_resolve_fc(struct bnx2x_phy *phy,
@@ -3605,18 +3606,16 @@ static u8 bnx2x_ext_phy_resolve_fc(struct bnx2x_phy *phy,
 				   struct link_vars *vars)
 {
 	u8 ret = 0;
-
 	vars->flow_ctrl = BNX2X_FLOW_CTRL_NONE;
-
 	if (phy->req_flow_ctrl != BNX2X_FLOW_CTRL_AUTO) {
 		/* Update the advertised flow-controled of LD/LP in AN */
 		if (phy->req_line_speed == SPEED_AUTO_NEG)
 			bnx2x_ext_phy_update_adv_fc(phy, params, vars);
 		/* But set the flow-control result as the requested one */
 		vars->flow_ctrl = phy->req_flow_ctrl;
-	} else if (phy->req_line_speed != SPEED_AUTO_NEG) {
+	} else if (phy->req_line_speed != SPEED_AUTO_NEG)
 		vars->flow_ctrl = params->req_fc_auto_adv;
-	} else if (vars->link_status & LINK_STATUS_AUTO_NEGOTIATE_COMPLETE) {
+	else if (vars->link_status & LINK_STATUS_AUTO_NEGOTIATE_COMPLETE) {
 		ret = 1;
 		bnx2x_ext_phy_update_adv_fc(phy, params, vars);
 	}
