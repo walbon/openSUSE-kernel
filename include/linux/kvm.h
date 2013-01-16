@@ -559,6 +559,7 @@ struct kvm_ppc_pvinfo {
 #define KVM_CAP_GET_TSC_KHZ 61
 #define KVM_CAP_PPC_BOOKE_SREGS 62
 #define KVM_CAP_MAX_VCPUS 66       /* returns max vcpus per vm */
+#define KVM_CAP_ONE_REG 70
 #define KVM_CAP_SYNC_REGS 74
 
 #ifdef KVM_CAP_IRQ_ROUTING
@@ -637,6 +638,37 @@ struct kvm_clock_data {
 	__u64 clock;
 	__u32 flags;
 	__u32 pad[9];
+};
+
+/* Available with KVM_CAP_ONE_REG */
+
+#define KVM_REG_ARCH_MASK	0xff00000000000000ULL
+#define KVM_REG_GENERIC		0x0000000000000000ULL
+
+/*
+ * Architecture specific registers are to be defined in arch headers and
+ * ORed with the arch identifier.
+ */
+#define KVM_REG_PPC		0x1000000000000000ULL
+#define KVM_REG_X86		0x2000000000000000ULL
+#define KVM_REG_IA64		0x3000000000000000ULL
+#define KVM_REG_ARM		0x4000000000000000ULL
+#define KVM_REG_S390		0x5000000000000000ULL
+
+#define KVM_REG_SIZE_SHIFT	52
+#define KVM_REG_SIZE_MASK	0x00f0000000000000ULL
+#define KVM_REG_SIZE_U8		0x0000000000000000ULL
+#define KVM_REG_SIZE_U16	0x0010000000000000ULL
+#define KVM_REG_SIZE_U32	0x0020000000000000ULL
+#define KVM_REG_SIZE_U64	0x0030000000000000ULL
+#define KVM_REG_SIZE_U128	0x0040000000000000ULL
+#define KVM_REG_SIZE_U256	0x0050000000000000ULL
+#define KVM_REG_SIZE_U512	0x0060000000000000ULL
+#define KVM_REG_SIZE_U1024	0x0070000000000000ULL
+
+struct kvm_one_reg {
+	__u64 id;
+	__u64 addr;
 };
 
 /*
@@ -762,6 +794,9 @@ struct kvm_clock_data {
 /* Available with KVM_CAP_XCRS */
 #define KVM_GET_XCRS		  _IOR(KVMIO,  0xa6, struct kvm_xcrs)
 #define KVM_SET_XCRS		  _IOW(KVMIO,  0xa7, struct kvm_xcrs)
+/* Available with KVM_CAP_ONE_REG */
+#define KVM_GET_ONE_REG		  _IOW(KVMIO,  0xab, struct kvm_one_reg)
+#define KVM_SET_ONE_REG		  _IOW(KVMIO,  0xac, struct kvm_one_reg)
 
 #define KVM_DEV_ASSIGN_ENABLE_IOMMU	(1 << 0)
 
