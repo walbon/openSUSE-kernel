@@ -4982,8 +4982,8 @@ static int __ipr_eh_dev_reset(struct scsi_cmnd *scsi_cmd)
 					ipr_cmd->qc->flags |= ATA_QCFLAG_FAILED;
 				}
 			}
-		spin_unlock(&hrrq->_lock);
 		}
+		spin_unlock(&hrrq->_lock);
 	}
 	res->resetting_device = 1;
 	scmd_printk(KERN_ERR, scsi_cmd, "Resetting device\n");
@@ -5003,8 +5003,8 @@ static int __ipr_eh_dev_reset(struct scsi_cmnd *scsi_cmd)
 					rc = -EIO;
 					break;
 				}
-			spin_unlock(&hrrq->_lock);
 			}
+			spin_unlock(&hrrq->_lock);
 		}
 	} else
 		rc = ipr_device_reset(ioa_cfg, res);
@@ -6660,6 +6660,7 @@ static unsigned int ipr_qc_issue(struct ata_queued_cmd *qc)
 
 	default:
 		WARN_ON(1);
+		spin_unlock(&ipr_cmd->hrrq->_lock);
 		return AC_ERR_INVALID;
 	}
 
