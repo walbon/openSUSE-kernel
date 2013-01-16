@@ -57,6 +57,7 @@
 #include <asm/kexec.h>
 #include <asm/ppc-opcode.h>
 #include <asm/rio.h>
+#include <asm/fadump.h>
 
 #if defined(CONFIG_DEBUGGER) || defined(CONFIG_KEXEC)
 int (*__debugger)(struct pt_regs *regs) __read_mostly;
@@ -159,6 +160,8 @@ int die(const char *str, struct pt_regs *regs, long err)
 	die.lock_owner = -1;
 	add_taint(TAINT_DIE);
 	raw_spin_unlock_irqrestore(&die.lock, flags);
+
+	crash_fadump(regs, "die oops");
 
 	if (kexec_should_crash(current) ||
 		kexec_sr_activated(smp_processor_id()))
