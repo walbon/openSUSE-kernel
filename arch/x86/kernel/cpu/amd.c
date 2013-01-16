@@ -583,7 +583,7 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 
 		if (!rdmsrl_safe(0xc0011021, &val) && !(val & 0x1E)) {
 			val |= 0x1E;
-			checking_wrmsrl(0xc0011021, val);
+			wrmsrl_safe(0xc0011021, val);
 		}
 	}
 
