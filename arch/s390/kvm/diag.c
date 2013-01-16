@@ -28,7 +28,7 @@ static int __diag_time_slice_end(struct kvm_vcpu *vcpu)
 static int __diag_ipl_functions(struct kvm_vcpu *vcpu)
 {
 	unsigned int reg = vcpu->arch.sie_block->ipa & 0xf;
-	unsigned long subcode = vcpu->arch.guest_gprs[reg] & 0xffff;
+	unsigned long subcode = vcpu->run->s.regs.gprs[reg] & 0xffff;
 
 	VCPU_EVENT(vcpu, 5, "diag ipl functions, subcode %lx", subcode);
 	switch (subcode) {
