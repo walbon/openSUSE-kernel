@@ -59,7 +59,7 @@
 #include <scsi/fc/fc_fcp.h>
 
 #include "57xx_hsi_bnx2fc.h"
-#include "../../net/cnic_if.h"
+#include "../../net/ethernet/broadcom/cnic_if.h"
 #include "bnx2fc_constants.h"
 
 #define BNX2FC_NAME		"bnx2fc"
