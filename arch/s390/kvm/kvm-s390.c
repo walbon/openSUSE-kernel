@@ -127,6 +127,7 @@ int kvm_dev_ioctl_check_extension(long ext)
 	switch (ext) {
 	case KVM_CAP_S390_PSW:
 	case KVM_CAP_SYNC_MMU:
+	case KVM_CAP_SYNC_REGS:
 		r = 1;
 		break;
 	default:
@@ -246,6 +247,7 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 /* Section: vcpu related */
 int kvm_arch_vcpu_init(struct kvm_vcpu *vcpu)
 {
+	vcpu->run->kvm_valid_regs = KVM_SYNC_PREFIX;
 	return 0;
 }
 
@@ -521,6 +523,10 @@ rerun_vcpu:
 
 	vcpu->arch.sie_block->gpsw.mask = kvm_run->psw_mask;
 	vcpu->arch.sie_block->gpsw.addr = kvm_run->psw_addr;
+	if (kvm_run->kvm_dirty_regs & KVM_SYNC_PREFIX) {
+		kvm_run->kvm_dirty_regs &= ~KVM_SYNC_PREFIX;
+		kvm_s390_set_prefix(vcpu, kvm_run->s.regs.prefix);
+	}
 
 	might_fault();
 
@@ -554,6 +560,7 @@ rerun_vcpu:
 
 	kvm_run->psw_mask     = vcpu->arch.sie_block->gpsw.mask;
 	kvm_run->psw_addr     = vcpu->arch.sie_block->gpsw.addr;
+	kvm_run->s.regs.prefix = vcpu->arch.sie_block->prefix;
 
 	if (vcpu->sigset_active)
 		sigprocmask(SIG_SETMASK, &sigsaved, NULL);
