@@ -133,7 +133,7 @@ static int mod_extract_mpi_array(struct public_key_signature *pks,
 static struct key *request_asymmetric_key(const char *signer, size_t signer_len,
 					  const u8 *key_id, size_t key_id_len)
 {
-	key_ref_t key, blacklist;
+	key_ref_t key;
 	size_t i;
 	char *id, *q;
 
@@ -159,17 +159,17 @@ static struct key *request_asymmetric_key(const char *signer, size_t signer_len,
 	pr_debug("Look up: \"%s\"\n", id);
 
 #ifdef CONFIG_MODULE_SIG_BLACKLIST
-	blacklist = keyring_search(make_key_ref(modsign_blacklist, 1),
+	key = keyring_search(make_key_ref(modsign_blacklist, 1),
 				   &key_type_asymmetric, id);
-	if (!IS_ERR(blacklist)) {
+	if (!IS_ERR(key)) {
 		/* module is signed with a cert in the blacklist.  reject */
 		pr_err("Module key '%s' is in blacklist\n", id);
-		key_ref_put(blacklist);
+		key_ref_put(key);
 		kfree(id);
 		return ERR_PTR(-EKEYREJECTED);
 	}
 #endif
-	
+
 	key = keyring_search(make_key_ref(modsign_keyring, 1),
 			     &key_type_asymmetric, id);
 	if (IS_ERR(key))
