@@ -18,6 +18,7 @@
 
 #include <linux/blkdev.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/buffer_head.h>
 #include <linux/fs.h>
 #include <linux/pagemap.h>
@@ -525,6 +526,11 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 			btrfs_clear_opt(info->mount_opt, SPACE_CACHE);
 			break;
 		case Opt_inode_cache:
+			if (!allow_unsupported) {
+				printk(KERN_WARNING "btrfs: inode_cache is not supported, load module with allow_unsupported=1\n");
+				ret = -EOPNOTSUPP;
+				break;
+			}
 			printk(KERN_INFO "btrfs: enabling inode map caching\n");
 			btrfs_set_opt(info->mount_opt, INODE_MAP_CACHE);
 			break;
@@ -539,6 +545,11 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 			btrfs_set_opt(info->mount_opt, ENOSPC_DEBUG);
 			break;
 		case Opt_defrag:
+			if (!allow_unsupported) {
+				printk(KERN_WARNING "btrfs: autodefrag is not supported, load module with allow_unsupported=1\n");
+				ret = -EOPNOTSUPP;
+				break;
+			}
 			printk(KERN_INFO "btrfs: enabling auto defrag\n");
 			btrfs_set_opt(info->mount_opt, AUTO_DEFRAG);
 			break;
@@ -1678,6 +1689,11 @@ static int __init init_btrfs_fs(void)
 	btrfs_init_lockdep();
 
 	printk(KERN_INFO "%s loaded\n", BTRFS_BUILD_VERSION);
+
+	if (allow_unsupported) {
+		add_taint(TAINT_NO_SUPPORT);
+		printk(KERN_INFO "btrfs: allow_unsupported=1 taints kernel\n");
+	}
 	return 0;
 
 unregister_ioctl:
@@ -1711,6 +1727,11 @@ static void __exit exit_btrfs_fs(void)
 	btrfs_cleanup_fs_uuids();
 	btrfs_exit_compress();
 }
+
+int allow_unsupported = 0;
+
+module_param(allow_unsupported, int, 0444);
+MODULE_PARM_DESC(allow_unsupported, "Allow using features that are out of supported scope");
 
 module_init(init_btrfs_fs)
 module_exit(exit_btrfs_fs)

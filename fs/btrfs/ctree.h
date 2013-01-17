@@ -3587,4 +3587,10 @@ static inline int is_fstree(u64 rootid)
 		return 1;
 	return 0;
 }
+
+/*
+ * Module parameter
+ */
+extern int allow_unsupported;
+
 #endif
