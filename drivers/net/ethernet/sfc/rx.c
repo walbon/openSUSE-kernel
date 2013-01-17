@@ -704,6 +704,7 @@ void efx_init_rx_queue(struct efx_rx_queue *rx_queue)
 	rx_queue->fast_fill_limit = limit;
 
 	/* Set up RX descriptor ring */
+	rx_queue->enabled = true;
 	efx_nic_init_rx(rx_queue);
 }
 
@@ -714,6 +715,9 @@ void efx_fini_rx_queue(struct efx_rx_queue *rx_queue)
 
 	netif_dbg(rx_queue->efx, drv, rx_queue->efx->net_dev,
 		  "shutting down RX queue %d\n", efx_rx_queue_index(rx_queue));
+
+	/* A flush failure might have left rx_queue->enabled */
+	rx_queue->enabled = false;
 
 	del_timer_sync(&rx_queue->slow_fill);
 	efx_nic_fini_rx(rx_queue);
