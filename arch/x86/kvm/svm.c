@@ -1560,10 +1560,13 @@ static void svm_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0)
 	update_cr0_intercept(svm);
 }
 
-static void svm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
+static int svm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 {
 	unsigned long host_cr4_mce = read_cr4() & X86_CR4_MCE;
 	unsigned long old_cr4 = to_svm(vcpu)->vmcb->save.cr4;
+
+	if (cr4 & X86_CR4_VMXE)
+		return 1;
 
 	if (npt_enabled && ((old_cr4 ^ cr4) & X86_CR4_PGE))
 		svm_flush_tlb(vcpu);
@@ -1574,6 +1577,7 @@ static void svm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 	cr4 |= host_cr4_mce;
 	to_svm(vcpu)->vmcb->save.cr4 = cr4;
 	mark_dirty(to_svm(vcpu)->vmcb, VMCB_CR);
+	return 0;
 }
 
 static void svm_set_segment(struct kvm_vcpu *vcpu,
@@ -2970,6 +2974,13 @@ static int cr8_write_interception(struct vcpu_svm *svm)
 	return 0;
 }
 
+u64 svm_read_l1_tsc(struct kvm_vcpu *vcpu)
+{
+	struct vmcb *vmcb = get_host_vmcb(to_svm(vcpu));
+	return vmcb->control.tsc_offset +
+		svm_scale_tsc(vcpu, native_read_tsc());
+}
+
 static int svm_get_msr(struct kvm_vcpu *vcpu, unsigned ecx, u64 *data)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -4321,6 +4332,7 @@ static struct kvm_x86_ops svm_x86_ops = {
 	.write_tsc_offset = svm_write_tsc_offset,
 	.adjust_tsc_offset = svm_adjust_tsc_offset,
 	.compute_tsc_offset = svm_compute_tsc_offset,
+	.read_l1_tsc = svm_read_l1_tsc,
 
 	.set_tdp_cr3 = set_tdp_cr3,
 

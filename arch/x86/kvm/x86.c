@@ -347,6 +347,7 @@ void kvm_inject_page_fault(struct kvm_vcpu *vcpu, struct x86_exception *fault)
 	vcpu->arch.cr2 = fault->address;
 	kvm_queue_exception_e(vcpu, PF_VECTOR, fault->error_code);
 }
+EXPORT_SYMBOL_GPL(kvm_inject_page_fault);
 
 void kvm_propagate_fault(struct kvm_vcpu *vcpu, struct x86_exception *fault)
 {
@@ -612,6 +613,7 @@ static inline bool guest_cpuid_has_pcid(struct kvm_vcpu *vcpu)
 static void update_cpuid(struct kvm_vcpu *vcpu)
 {
 	struct kvm_cpuid_entry2 *best;
+	struct kvm_lapic *apic = vcpu->arch.apic;
 
 	best = kvm_find_cpuid_entry(vcpu, 1, 0);
 	if (!best)
@@ -622,6 +624,13 @@ static void update_cpuid(struct kvm_vcpu *vcpu)
 		best->ecx &= ~(bit(X86_FEATURE_OSXSAVE));
 		if (kvm_read_cr4_bits(vcpu, X86_CR4_OSXSAVE))
 			best->ecx |= bit(X86_FEATURE_OSXSAVE);
+	}
+
+	if (apic) {
+		if (best->ecx & bit(X86_FEATURE_TSC_DEADLINE_TIMER))
+			apic->lapic_timer.timer_mode_mask = 3 << 17;
+		else
+			apic->lapic_timer.timer_mode_mask = 1 << 17;
 	}
 }
 
@@ -657,10 +666,8 @@ int kvm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 			return 1;
 	}
 
-	if (cr4 & X86_CR4_VMXE)
+	if (kvm_x86_ops->set_cr4(vcpu, cr4))
 		return 1;
-
-	kvm_x86_ops->set_cr4(vcpu, cr4);
 
 	if (((cr4 ^ old_cr4) & pdptr_bits) ||
 	    (!(cr4 & X86_CR4_PCIDE) && (old_cr4 & X86_CR4_PCIDE)))
@@ -851,6 +858,7 @@ static u32 msrs_to_save[] = {
 static unsigned num_msrs_to_save;
 
 static u32 emulated_msrs[] = {
+	MSR_IA32_TSCDEADLINE,
 	MSR_IA32_MISC_ENABLE,
 	MSR_IA32_MCG_STATUS,
 	MSR_IA32_MCG_CTL,
@@ -1030,7 +1038,7 @@ static inline int kvm_tsc_changes_freq(void)
 	return ret;
 }
 
-static u64 vcpu_tsc_khz(struct kvm_vcpu *vcpu)
+u64 vcpu_tsc_khz(struct kvm_vcpu *vcpu)
 {
 	if (vcpu->arch.virtual_tsc_khz)
 		return vcpu->arch.virtual_tsc_khz;
@@ -1128,7 +1136,7 @@ static int kvm_guest_time_update(struct kvm_vcpu *v)
 
 	/* Keep irq disabled to prevent changes to the clock */
 	local_irq_save(flags);
-	kvm_get_msr(v, MSR_IA32_TSC, &tsc_timestamp);
+	tsc_timestamp = kvm_x86_ops->read_l1_tsc(v);
 	kernel_ns = get_kernel_ns();
 	this_tsc_khz = vcpu_tsc_khz(v);
 	if (unlikely(this_tsc_khz == 0)) {
@@ -1566,6 +1574,9 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 data)
 		break;
 	case APIC_BASE_MSR ... APIC_BASE_MSR + 0x3ff:
 		return kvm_x2apic_msr_write(vcpu, msr, data);
+	case MSR_IA32_TSCDEADLINE:
+		kvm_set_lapic_tscdeadline_msr(vcpu, data);
+		break;
 	case MSR_IA32_MISC_ENABLE:
 		vcpu->arch.ia32_misc_enable_msr = data;
 		break;
@@ -1874,6 +1885,9 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata)
 	case APIC_BASE_MSR ... APIC_BASE_MSR + 0x3ff:
 		return kvm_x2apic_msr_read(vcpu, msr, pdata);
 		break;
+	case MSR_IA32_TSCDEADLINE:
+		data = kvm_get_lapic_tscdeadline_msr(vcpu);
+		break;
 	case MSR_IA32_MISC_ENABLE:
 		data = vcpu->arch.ia32_misc_enable_msr;
 		break;
@@ -2102,6 +2116,9 @@ int kvm_dev_ioctl_check_extension(long ext)
 	case KVM_CAP_TSC_CONTROL:
 		r = kvm_has_tsc_control;
 		break;
+	case KVM_CAP_TSC_DEADLINE_TIMER:
+		r = boot_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER);
+		break;
 	default:
 		r = 0;
 		break;
@@ -2206,7 +2223,7 @@ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		s64 tsc_delta;
 		u64 tsc;
 
-		kvm_get_msr(vcpu, MSR_IA32_TSC, &tsc);
+		tsc = kvm_x86_ops->read_l1_tsc(vcpu);
 		tsc_delta = !vcpu->arch.last_guest_tsc ? 0 :
 			     tsc - vcpu->arch.last_guest_tsc;
 
@@ -2227,7 +2244,7 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 {
 	kvm_x86_ops->vcpu_put(vcpu);
 	kvm_put_guest_fpu(vcpu);
-	kvm_get_msr(vcpu, MSR_IA32_TSC, &vcpu->arch.last_guest_tsc);
+	vcpu->arch.last_guest_tsc = kvm_x86_ops->read_l1_tsc(vcpu);
 }
 
 static int is_efer_nx(void)
@@ -2402,7 +2419,7 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		0 /* DTES64 */ |
 		0 /* DS-CPL, VMX, SMX, EST */ |
 		0 /* TM2 */ | F(SSSE3) | 0 /* CNXT-ID */ | 0 /* Reserved */ |
-		0 /* Reserved */ | F(CX16) | 0 /* xTPR Update, PDCM */ |
+		F(FMA) | F(CX16) | 0 /* xTPR Update, PDCM */ |
 		F(PCID) | 0 /* Reserved, DCA */ | F(XMM4_1) |
 		F(XMM4_2) | F(X2APIC) | F(MOVBE) | F(POPCNT) |
 		0 /* Reserved*/ | F(AES) | F(XSAVE) | 0 /* OSXSAVE */ | F(AVX) |
@@ -2422,7 +2439,7 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 
 	/* cpuid 7.0.ebx */
 	const u32 kvm_supported_word9_x86_features =
-		F(SMEP) |
+		F(BMI1) | F(HLE) | F(AVX2) | F(SMEP) | F(BMI2) | F(RTM) |
 		f_invpcid;
 
 	/* all calls to cpuid_count() should be made on the same cpu */
@@ -3917,7 +3934,7 @@ static int kvm_fetch_guest_virt(struct x86_emulate_ctxt *ctxt,
 					  exception);
 }
 
-static int kvm_read_guest_virt(struct x86_emulate_ctxt *ctxt,
+int kvm_read_guest_virt(struct x86_emulate_ctxt *ctxt,
 			       gva_t addr, void *val, unsigned int bytes,
 			       struct x86_exception *exception)
 {
@@ -3927,6 +3944,7 @@ static int kvm_read_guest_virt(struct x86_emulate_ctxt *ctxt,
 	return kvm_read_guest_virt_helper(addr, val, bytes, vcpu, access,
 					  exception);
 }
+EXPORT_SYMBOL_GPL(kvm_read_guest_virt);
 
 static int kvm_read_guest_virt_system(struct x86_emulate_ctxt *ctxt,
 				      gva_t addr, void *val, unsigned int bytes,
@@ -3936,7 +3954,7 @@ static int kvm_read_guest_virt_system(struct x86_emulate_ctxt *ctxt,
 	return kvm_read_guest_virt_helper(addr, val, bytes, vcpu, 0, exception);
 }
 
-static int kvm_write_guest_virt_system(struct x86_emulate_ctxt *ctxt,
+int kvm_write_guest_virt_system(struct x86_emulate_ctxt *ctxt,
 				       gva_t addr, void *val,
 				       unsigned int bytes,
 				       struct x86_exception *exception)
@@ -3968,6 +3986,7 @@ static int kvm_write_guest_virt_system(struct x86_emulate_ctxt *ctxt,
 out:
 	return r;
 }
+EXPORT_SYMBOL_GPL(kvm_write_guest_virt_system);
 
 static int emulator_read_emulated(struct x86_emulate_ctxt *ctxt,
 				  unsigned long addr,
@@ -5588,7 +5607,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	if (hw_breakpoint_active())
 		hw_breakpoint_restore();
 
-	kvm_get_msr(vcpu, MSR_IA32_TSC, &vcpu->arch.last_guest_tsc);
+	vcpu->arch.last_guest_tsc = kvm_x86_ops->read_l1_tsc(vcpu);
 
 	vcpu->mode = OUTSIDE_GUEST_MODE;
 	smp_wmb();

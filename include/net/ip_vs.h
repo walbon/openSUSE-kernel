@@ -22,6 +22,9 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>			/* for struct ipv6hdr */
 #include <net/ipv6.h>			/* for ipv6_addr_copy */
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#include <linux/netfilter_ipv6/ip6_tables.h>
+#endif
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
 #include <net/netfilter/nf_conntrack.h>
 #endif
@@ -105,28 +108,115 @@ extern int ip_vs_conn_tab_size;
 
 
 struct ip_vs_iphdr {
-	int len;
-	__u8 protocol;
+	__u32 len;	/* IPv4 simply where L4 starts
+			   IPv6 where L4 Transport Header starts */
+	__u32 thoff_reasm; /* Transport Header Offset in nfct_reasm skb */
+	__u16 fragoffs; /* IPv6 fragment offset, 0 if first frag (or not frag)*/
+	__s16 protocol;
+	__s32 flags;
 	union nf_inet_addr saddr;
 	union nf_inet_addr daddr;
 };
 
+/* Dependency to module: nf_defrag_ipv6 */
+#if defined(CONFIG_NF_DEFRAG_IPV6) || defined(CONFIG_NF_DEFRAG_IPV6_MODULE)
+static inline struct sk_buff *skb_nfct_reasm(const struct sk_buff *skb)
+{
+	return skb->nfct_reasm;
+}
+static inline void *frag_safe_skb_hp(const struct sk_buff *skb, int offset,
+				      int len, void *buffer,
+				      const struct ip_vs_iphdr *ipvsh)
+{
+	if (unlikely(ipvsh->fragoffs && skb_nfct_reasm(skb)))
+		return skb_header_pointer(skb_nfct_reasm(skb),
+					  ipvsh->thoff_reasm, len, buffer);
+
+	return skb_header_pointer(skb, offset, len, buffer);
+}
+#else
+static inline struct sk_buff *skb_nfct_reasm(const struct sk_buff *skb)
+{
+	return NULL;
+}
+static inline void *frag_safe_skb_hp(const struct sk_buff *skb, int offset,
+				      int len, void *buffer,
+				      const struct ip_vs_iphdr *ipvsh)
+{
+	return skb_header_pointer(skb, offset, len, buffer);
+}
+#endif
+
 static inline void
-ip_vs_fill_iphdr(int af, const void *nh, struct ip_vs_iphdr *iphdr)
+ip_vs_fill_ip4hdr(const void *nh, struct ip_vs_iphdr *iphdr)
+{
+	const struct iphdr *iph = nh;
+
+	iphdr->len	= iph->ihl * 4;
+	iphdr->fragoffs	= 0;
+	iphdr->protocol	= iph->protocol;
+	iphdr->saddr.ip	= iph->saddr;
+	iphdr->daddr.ip	= iph->daddr;
+}
+
+/* This function handles filling *ip_vs_iphdr, both for IPv4 and IPv6.
+ * IPv6 requires some extra work, as finding proper header position,
+ * depend on the IPv6 extension headers.
+ */
+static inline void
+ip_vs_fill_iph_skb(int af, const struct sk_buff *skb, struct ip_vs_iphdr *iphdr)
 {
 #ifdef CONFIG_IP_VS_IPV6
 	if (af == AF_INET6) {
-		const struct ipv6hdr *iph = nh;
-		iphdr->len = sizeof(struct ipv6hdr);
-		iphdr->protocol = iph->nexthdr;
+		const struct ipv6hdr *iph =
+			(struct ipv6hdr *)skb_network_header(skb);
 		ipv6_addr_copy(&iphdr->saddr.in6, &iph->saddr);
 		ipv6_addr_copy(&iphdr->daddr.in6, &iph->daddr);
+		/* ipv6_find_hdr() updates len, flags, thoff_reasm */
+		iphdr->thoff_reasm = 0;
+		iphdr->len	 = 0;
+		iphdr->flags	 = 0;
+		iphdr->protocol  = ipv6_find_hdr(skb, &iphdr->len, -1,
+						 &iphdr->fragoffs,
+						 &iphdr->flags);
+		/* get proto from re-assembled packet and it's offset */
+		if (skb_nfct_reasm(skb))
+			iphdr->protocol = ipv6_find_hdr(skb_nfct_reasm(skb),
+							&iphdr->thoff_reasm,
+							-1, NULL, NULL);
+
 	} else
 #endif
 	{
-		const struct iphdr *iph = nh;
-		iphdr->len = iph->ihl * 4;
-		iphdr->protocol = iph->protocol;
+		const struct iphdr *iph =
+			(struct iphdr *)skb_network_header(skb);
+		iphdr->len	= iph->ihl * 4;
+		iphdr->fragoffs	= 0;
+		iphdr->protocol	= iph->protocol;
+		iphdr->saddr.ip	= iph->saddr;
+		iphdr->daddr.ip	= iph->daddr;
+	}
+}
+
+/* This function is a faster version of ip_vs_fill_iph_skb().
+ * Where we only populate {s,d}addr (and avoid calling ipv6_find_hdr()).
+ * This is used by the some of the ip_vs_*_schedule() functions.
+ * (Mostly done to avoid ABI breakage of external schedulers)
+ */
+static inline void
+ip_vs_fill_iph_addr_only(int af, const struct sk_buff *skb,
+			 struct ip_vs_iphdr *iphdr)
+{
+#ifdef CONFIG_IP_VS_IPV6
+	if (af == AF_INET6) {
+		const struct ipv6hdr *iph =
+			(struct ipv6hdr *)skb_network_header(skb);
+		iphdr->saddr.in6 = iph->saddr;
+		iphdr->daddr.in6 = iph->daddr;
+	} else {
+#endif
+		const struct iphdr *iph =
+			(struct iphdr *)skb_network_header(skb);
 		iphdr->saddr.ip = iph->saddr;
 		iphdr->daddr.ip = iph->daddr;
 	}

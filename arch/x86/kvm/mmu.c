@@ -103,7 +103,7 @@ module_param(oos_shadow, bool, 0644);
 
 #define PTE_PREFETCH_NUM		8
 
-#define PT_FIRST_AVAIL_BITS_SHIFT 9
+#define PT_FIRST_AVAIL_BITS_SHIFT 10
 #define PT64_SECOND_AVAIL_BITS_SHIFT 52
 
 #define PT64_LEVEL_BITS 9
@@ -926,7 +926,8 @@ static int kvm_age_rmapp(struct kvm *kvm, unsigned long *rmapp,
 	int young = 0;
 
 	/*
-	 * Emulate the accessed bit for EPT, by checking if this page has
+	 * In case of absence of EPT Access and Dirty Bits supports,
+	 * emulate the accessed bit for EPT, by checking if this page has
 	 * an EPT mapping, and clearing it if it does. On the next access,
 	 * a new EPT mapping will be established.
 	 * This has some overhead, but not as much as the cost of swapping
@@ -939,8 +940,8 @@ static int kvm_age_rmapp(struct kvm *kvm, unsigned long *rmapp,
 	while (spte) {
 		int _young;
 		u64 _spte = *spte;
-		BUG_ON(!(_spte & PT_PRESENT_MASK));
-		_young = _spte & PT_ACCESSED_MASK;
+		BUG_ON(!is_shadow_present_pte(_spte));
+		_young = _spte & shadow_accessed_mask;
 		if (_young) {
 			young = 1;
 			clear_bit(PT_ACCESSED_SHIFT, (unsigned long *)spte);
@@ -967,8 +968,8 @@ static int kvm_test_age_rmapp(struct kvm *kvm, unsigned long *rmapp,
 	spte = rmap_next(kvm, rmapp, NULL);
 	while (spte) {
 		u64 _spte = *spte;
-		BUG_ON(!(_spte & PT_PRESENT_MASK));
-		young = _spte & PT_ACCESSED_MASK;
+		BUG_ON(!is_shadow_present_pte(_spte));
+		young = _spte & shadow_accessed_mask;
 		if (young) {
 			young = 1;
 			break;
