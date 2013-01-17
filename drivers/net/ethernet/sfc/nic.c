@@ -685,6 +685,7 @@ int efx_nic_flush_queues(struct efx_nic *efx)
 	struct efx_tx_queue *tx_queue;
 	int rc = 0;
 
+	efx->fc_disable++;
 	efx->type->prepare_flush(efx);
 
 	efx_for_each_channel(channel, efx) {
@@ -734,6 +735,8 @@ int efx_nic_flush_queues(struct efx_nic *efx)
 		atomic_set(&efx->rxq_flush_pending, 0);
 		atomic_set(&efx->rxq_flush_outstanding, 0);
 	}
+
+	efx->fc_disable--;
 
 	return rc;
 }
