@@ -27,7 +27,7 @@
 #include <asm/msr-index.h>
 
 #define KVM_MAX_VCPUS 254
-#define KVM_SOFT_MAX_VCPUS 64
+#define KVM_SOFT_MAX_VCPUS 160
 #define KVM_MEMORY_SLOTS 32
 /* memory slots that does not exposed to userspace */
 #define KVM_PRIVATE_MEM_SLOTS 4
@@ -567,7 +567,7 @@ struct kvm_x86_ops {
 	void (*decache_cr4_guest_bits)(struct kvm_vcpu *vcpu);
 	void (*set_cr0)(struct kvm_vcpu *vcpu, unsigned long cr0);
 	void (*set_cr3)(struct kvm_vcpu *vcpu, unsigned long cr3);
-	void (*set_cr4)(struct kvm_vcpu *vcpu, unsigned long cr4);
+	int (*set_cr4)(struct kvm_vcpu *vcpu, unsigned long cr4);
 	void (*set_efer)(struct kvm_vcpu *vcpu, u64 efer);
 	void (*get_idt)(struct kvm_vcpu *vcpu, struct desc_ptr *dt);
 	void (*set_idt)(struct kvm_vcpu *vcpu, struct desc_ptr *dt);
