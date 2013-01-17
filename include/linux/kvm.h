@@ -580,6 +580,7 @@ struct kvm_ppc_pvinfo {
 #define KVM_CAP_PPC_BOOKE_SREGS 62
 #define KVM_CAP_MAX_VCPUS 66       /* returns max vcpus per vm */
 #define KVM_CAP_ONE_REG 70
+#define KVM_CAP_TSC_DEADLINE_TIMER 72
 #define KVM_CAP_SYNC_REGS 74
 #define KVM_CAP_S390_CSS_SUPPORT 85
 

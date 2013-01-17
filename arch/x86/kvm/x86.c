@@ -613,6 +613,7 @@ static inline bool guest_cpuid_has_pcid(struct kvm_vcpu *vcpu)
 static void update_cpuid(struct kvm_vcpu *vcpu)
 {
 	struct kvm_cpuid_entry2 *best;
+	struct kvm_lapic *apic = vcpu->arch.apic;
 
 	best = kvm_find_cpuid_entry(vcpu, 1, 0);
 	if (!best)
@@ -623,6 +624,13 @@ static void update_cpuid(struct kvm_vcpu *vcpu)
 		best->ecx &= ~(bit(X86_FEATURE_OSXSAVE));
 		if (kvm_read_cr4_bits(vcpu, X86_CR4_OSXSAVE))
 			best->ecx |= bit(X86_FEATURE_OSXSAVE);
+	}
+
+	if (apic) {
+		if (best->ecx & bit(X86_FEATURE_TSC_DEADLINE_TIMER))
+			apic->lapic_timer.timer_mode_mask = 3 << 17;
+		else
+			apic->lapic_timer.timer_mode_mask = 1 << 17;
 	}
 }
 
@@ -850,6 +858,7 @@ static u32 msrs_to_save[] = {
 static unsigned num_msrs_to_save;
 
 static u32 emulated_msrs[] = {
+	MSR_IA32_TSCDEADLINE,
 	MSR_IA32_MISC_ENABLE,
 	MSR_IA32_MCG_STATUS,
 	MSR_IA32_MCG_CTL,
@@ -1029,7 +1038,7 @@ static inline int kvm_tsc_changes_freq(void)
 	return ret;
 }
 
-static u64 vcpu_tsc_khz(struct kvm_vcpu *vcpu)
+u64 vcpu_tsc_khz(struct kvm_vcpu *vcpu)
 {
 	if (vcpu->arch.virtual_tsc_khz)
 		return vcpu->arch.virtual_tsc_khz;
@@ -1127,7 +1136,7 @@ static int kvm_guest_time_update(struct kvm_vcpu *v)
 
 	/* Keep irq disabled to prevent changes to the clock */
 	local_irq_save(flags);
-	kvm_get_msr(v, MSR_IA32_TSC, &tsc_timestamp);
+	tsc_timestamp = kvm_x86_ops->read_l1_tsc(v);
 	kernel_ns = get_kernel_ns();
 	this_tsc_khz = vcpu_tsc_khz(v);
 	if (unlikely(this_tsc_khz == 0)) {
@@ -1565,6 +1574,9 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 data)
 		break;
 	case APIC_BASE_MSR ... APIC_BASE_MSR + 0x3ff:
 		return kvm_x2apic_msr_write(vcpu, msr, data);
+	case MSR_IA32_TSCDEADLINE:
+		kvm_set_lapic_tscdeadline_msr(vcpu, data);
+		break;
 	case MSR_IA32_MISC_ENABLE:
 		vcpu->arch.ia32_misc_enable_msr = data;
 		break;
@@ -1873,6 +1885,9 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata)
 	case APIC_BASE_MSR ... APIC_BASE_MSR + 0x3ff:
 		return kvm_x2apic_msr_read(vcpu, msr, pdata);
 		break;
+	case MSR_IA32_TSCDEADLINE:
+		data = kvm_get_lapic_tscdeadline_msr(vcpu);
+		break;
 	case MSR_IA32_MISC_ENABLE:
 		data = vcpu->arch.ia32_misc_enable_msr;
 		break;
@@ -2101,6 +2116,9 @@ int kvm_dev_ioctl_check_extension(long ext)
 	case KVM_CAP_TSC_CONTROL:
 		r = kvm_has_tsc_control;
 		break;
+	case KVM_CAP_TSC_DEADLINE_TIMER:
+		r = boot_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER);
+		break;
 	default:
 		r = 0;
 		break;
@@ -2205,7 +2223,7 @@ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		s64 tsc_delta;
 		u64 tsc;
 
-		kvm_get_msr(vcpu, MSR_IA32_TSC, &tsc);
+		tsc = kvm_x86_ops->read_l1_tsc(vcpu);
 		tsc_delta = !vcpu->arch.last_guest_tsc ? 0 :
 			     tsc - vcpu->arch.last_guest_tsc;
 
@@ -2226,7 +2244,7 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 {
 	kvm_x86_ops->vcpu_put(vcpu);
 	kvm_put_guest_fpu(vcpu);
-	kvm_get_msr(vcpu, MSR_IA32_TSC, &vcpu->arch.last_guest_tsc);
+	vcpu->arch.last_guest_tsc = kvm_x86_ops->read_l1_tsc(vcpu);
 }
 
 static int is_efer_nx(void)
@@ -5589,7 +5607,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	if (hw_breakpoint_active())
 		hw_breakpoint_restore();
 
-	kvm_get_msr(vcpu, MSR_IA32_TSC, &vcpu->arch.last_guest_tsc);
+	vcpu->arch.last_guest_tsc = kvm_x86_ops->read_l1_tsc(vcpu);
 
 	vcpu->mode = OUTSIDE_GUEST_MODE;
 	smp_wmb();
