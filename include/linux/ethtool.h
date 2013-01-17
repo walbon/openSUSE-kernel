@@ -446,7 +446,7 @@ struct ethtool_flow_ext {
 };
 
 /**
- * struct ethtool_rx_flow_spec - specification for RX flow filter
+ * struct ethtool_rx_flow_spec - classification rule for RX flows
  * @flow_type: Type of match to perform, e.g. %TCP_V4_FLOW
  * @h_u: Flow fields to match (dependent on @flow_type)
  * @h_ext: Additional fields to match
@@ -456,7 +456,9 @@ struct ethtool_flow_ext {
  *	includes the %FLOW_EXT flag.
  * @ring_cookie: RX ring/queue index to deliver to, or %RX_CLS_FLOW_DISC
  *	if packets should be discarded
- * @location: Index of filter in hardware table
+ * @location: Location of rule in the table.  Locations must be
+ *	numbered such that a flow matching multiple rules will be
+ *	classified according to the first (lowest numbered) rule.
  */
 struct ethtool_rx_flow_spec {
 	__u32		flow_type;
@@ -475,9 +477,9 @@ struct ethtool_rx_flow_spec {
  *	%ETHTOOL_GRXCLSRLALL, %ETHTOOL_SRXCLSRLDEL or %ETHTOOL_SRXCLSRLINS
  * @flow_type: Type of flow to be affected, e.g. %TCP_V4_FLOW
  * @data: Command-dependent value
- * @fs: Flow filter specification
+ * @fs: Flow classification rule
  * @rule_cnt: Number of rules to be affected
- * @rule_locs: Array of valid rule indices
+ * @rule_locs: Array of valid rule locations
  *
  * For %ETHTOOL_GRXFH and %ETHTOOL_SRXFH, @data is a bitmask indicating
  * the fields included in the flow hash, e.g. %RXH_IP_SRC.  The following
@@ -487,25 +489,38 @@ struct ethtool_rx_flow_spec {
  * on return.
  *
  * For %ETHTOOL_GRXCLSRLCNT, @rule_cnt is set to the number of defined
- * rules on return.
+ * rules on return.  If @data is non-zero on return then it is the
+ * size of the rule table, plus the flag %RX_CLS_LOC_SPECIAL if the
+ * driver supports any special location values.  If that flag is not
+ * set in @data then special location values should not be used.
  *
- * For %ETHTOOL_GRXCLSRULE, @fs.@location specifies the index of an
- * existing filter rule on entry and @fs contains the rule on return.
+ * For %ETHTOOL_GRXCLSRULE, @fs.@location specifies the location of an
+ * existing rule on entry and @fs contains the rule on return.
  *
  * For %ETHTOOL_GRXCLSRLALL, @rule_cnt specifies the array size of the
  * user buffer for @rule_locs on entry.  On return, @data is the size
- * of the filter table and @rule_locs contains the indices of the
- * defined rules.
+ * of the rule table, @rule_cnt is the number of defined rules, and
+ * @rule_locs contains the locations of the defined rules.  Drivers
+ * must use the second parameter to get_rxnfc() instead of @rule_locs.
  *
- * For %ETHTOOL_SRXCLSRLINS, @fs specifies the filter rule to add or
- * update.  @fs.@location specifies the index to use and must not be
- * ignored.
+ * For %ETHTOOL_SRXCLSRLINS, @fs specifies the rule to add or update.
+ * @fs.@location either specifies the location to use or is a special
+ * location value with %RX_CLS_LOC_SPECIAL flag set.  On return,
+ * @fs.@location is the actual rule location.
  *
- * For %ETHTOOL_SRXCLSRLDEL, @fs.@location specifies the index of an
- * existing filter rule on entry.
+ * For %ETHTOOL_SRXCLSRLDEL, @fs.@location specifies the location of an
+ * existing rule on entry.
  *
- * Implementation of indexed classification rules generally requires a
- * TCAM.
+ * A driver supporting the special location values for
+ * %ETHTOOL_SRXCLSRLINS may add the rule at any suitable unused
+ * location, and may remove a rule at a later location (lower
+ * priority) that matches exactly the same set of flows.  The special
+ * values are: %RX_CLS_LOC_ANY, selecting any location;
+ * %RX_CLS_LOC_FIRST, selecting the first suitable location (maximum
+ * priority); and %RX_CLS_LOC_LAST, selecting the last suitable
+ * location (minimum priority).  Additional special values may be
+ * defined in future and drivers must return -%EINVAL for any
+ * unrecognised value.
  */
 struct ethtool_rxnfc {
 	__u32				cmd;
@@ -1243,6 +1258,12 @@ struct ethtool_ops {
 #define	RXH_DISCARD	(1 << 31)
 
 #define	RX_CLS_FLOW_DISC	0xffffffffffffffffULL
+
+/* Special RX classification rule insert location values */
+#define RX_CLS_LOC_SPECIAL	0x80000000	/* flag */
+#define RX_CLS_LOC_ANY		0xffffffff
+#define RX_CLS_LOC_FIRST	0xfffffffe
+#define RX_CLS_LOC_LAST		0xfffffffd
 
 /* Reset flags */
 /* The reset() operation must clear the flags for the components which

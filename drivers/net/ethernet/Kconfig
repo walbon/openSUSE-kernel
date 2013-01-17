@@ -17,5 +17,6 @@ source "drivers/net/ethernet/cisco/Kconfig"
 source "drivers/net/ethernet/emulex/Kconfig"
 source "drivers/net/ethernet/intel/Kconfig"
 source "drivers/net/ethernet/qlogic/Kconfig"
+source "drivers/net/ethernet/sfc/Kconfig"
 
 endif # ETHERNET
