@@ -22,7 +22,7 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>			/* for struct ipv6hdr */
 #include <net/ipv6.h>			/* for ipv6_addr_copy */
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if defined(CONFIG_IP_VS_IPV6) || defined(CONFIG_IP_VS_IPV6_MODULE)
 #include <linux/netfilter_ipv6/ip6_tables.h>
 #endif
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
@@ -213,8 +213,9 @@ ip_vs_fill_iph_addr_only(int af, const struct sk_buff *skb,
 			(struct ipv6hdr *)skb_network_header(skb);
 		iphdr->saddr.in6 = iph->saddr;
 		iphdr->daddr.in6 = iph->daddr;
-	} else {
+	} else
 #endif
+	{
 		const struct iphdr *iph =
 			(struct iphdr *)skb_network_header(skb);
 		iphdr->saddr.ip = iph->saddr;
