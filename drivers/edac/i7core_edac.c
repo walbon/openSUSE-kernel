@@ -37,6 +37,7 @@
 #include <linux/edac_mce.h>
 #include <linux/smp.h>
 #include <asm/processor.h>
+#include <asm/div64.h>
 
 #include "edac_core.h"
 
@@ -1920,7 +1921,8 @@ static int set_sdram_scrub_rate(struct mem_ctl_info *mci, u32 new_bw)
  		 * program the corresponding register value.
 		 */
  		scrub_interval = (unsigned long long)freq_dclk_mhz *
- 			cache_line_size * 1000000 / new_bw;
+			cache_line_size * 1000000;
+		do_div(scrub_interval, new_bw);
  
  		if (!scrub_interval || scrub_interval > SCRUBINTERVAL_MASK)
  			return -EINVAL;
@@ -2077,7 +2079,8 @@ static int get_sdram_scrub_rate(struct mem_ctl_info *mci)
 
 	/* Calculate scrub rate value into byte/sec bandwidth */
 	scrub_rate =  (unsigned long long)freq_dclk_mhz *
-		1000000 * cache_line_size / scrubval;
+		1000000 * cache_line_size;
+	do_div(scrub_rate, scrubval);
 	return (int)scrub_rate;
 }
 
