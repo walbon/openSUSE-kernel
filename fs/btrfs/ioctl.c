@@ -719,6 +719,16 @@ static noinline int btrfs_mksubvol(struct path *parent,
 	if (error)
 		goto out_dput;
 
+	/*
+	 * even if this name doesn't exist, we may get hash collisions.
+	 * check for them now when we can safely fail
+	 */
+	error = btrfs_check_dir_item_collision(BTRFS_I(dir)->root,
+					       dir->i_ino, name,
+					       namelen);
+	if (error)
+		goto out_dput;
+
 	down_read(&BTRFS_I(dir)->root->fs_info->subvol_sem);
 
 	if (btrfs_root_refs(&BTRFS_I(dir)->root->root_item) == 0)
@@ -2081,12 +2091,12 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 		err = inode_permission(inode, MAY_WRITE | MAY_EXEC);
 		if (err)
 			goto out_dput;
-
-		/* check if subvolume may be deleted by a non-root user */
-		err = btrfs_may_delete(dir, dentry, 1);
-		if (err)
-			goto out_dput;
 	}
+
+	/* check if subvolume may be deleted by a user */
+	err = btrfs_may_delete(dir, dentry, 1);
+	if (err)
+		goto out_dput;
 
 	if (btrfs_ino(inode) != BTRFS_FIRST_FREE_OBJECTID) {
 		err = -EINVAL;
