@@ -586,6 +586,14 @@ static bool guest_cpuid_has_xsave(struct kvm_vcpu *vcpu)
 	return best && (best->ecx & bit(X86_FEATURE_XSAVE));
 }
 
+static inline bool guest_cpuid_has_tsc_adjust(struct kvm_vcpu *vcpu)
+{
+	struct kvm_cpuid_entry2 *best;
+
+	best = kvm_find_cpuid_entry(vcpu, 7, 0);
+	return best && (best->ebx & bit(X86_FEATURE_TSC_ADJUST));
+}
+
 static bool guest_cpuid_has_smep(struct kvm_vcpu *vcpu)
 {
 	struct kvm_cpuid_entry2 *best;
@@ -858,6 +866,7 @@ static u32 msrs_to_save[] = {
 static unsigned num_msrs_to_save;
 
 static u32 emulated_msrs[] = {
+	MSR_IA32_TSC_ADJUST,
 	MSR_IA32_TSCDEADLINE,
 	MSR_IA32_MISC_ENABLE,
 	MSR_IA32_MCG_STATUS,
@@ -1081,6 +1090,12 @@ static u64 compute_guest_tsc(struct kvm_vcpu *vcpu, s64 kernel_ns)
 	return tsc;
 }
 
+static void update_ia32_tsc_adjust_msr(struct kvm_vcpu *vcpu, s64 offset)
+{
+	u64 curr_offset = kvm_x86_ops->read_tsc_offset(vcpu);
+	vcpu->arch.ia32_tsc_adjust_msr += offset - curr_offset;
+}
+
 void kvm_write_tsc(struct kvm_vcpu *vcpu, struct msr_data *msr)
 {
 	struct kvm *kvm = vcpu->kvm;
@@ -1121,6 +1136,8 @@ void kvm_write_tsc(struct kvm_vcpu *vcpu, struct msr_data *msr)
 	kvm->arch.last_tsc_nsec = ns;
 	kvm->arch.last_tsc_write = data;
 	kvm->arch.last_tsc_offset = offset;
+	if (guest_cpuid_has_tsc_adjust(vcpu) && !msr->host_initiated)
+		update_ia32_tsc_adjust_msr(vcpu, offset);
 	kvm_x86_ops->write_tsc_offset(vcpu, offset);
 	raw_spin_unlock_irqrestore(&kvm->arch.tsc_write_lock, flags);
 
@@ -1586,6 +1603,15 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_IA32_TSCDEADLINE:
 		kvm_set_lapic_tscdeadline_msr(vcpu, data);
 		break;
+	case MSR_IA32_TSC_ADJUST:
+		if (guest_cpuid_has_tsc_adjust(vcpu)) {
+			if (!msr_info->host_initiated) {
+				u64 adj = data - vcpu->arch.ia32_tsc_adjust_msr;
+				kvm_x86_ops->adjust_tsc_offset(vcpu, adj);
+			}
+			vcpu->arch.ia32_tsc_adjust_msr = data;
+		}
+		break;
 	case MSR_IA32_MISC_ENABLE:
 		vcpu->arch.ia32_misc_enable_msr = data;
 		break;
@@ -1896,6 +1922,9 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata)
 		break;
 	case MSR_IA32_TSCDEADLINE:
 		data = kvm_get_lapic_tscdeadline_msr(vcpu);
+		break;
+	case MSR_IA32_TSC_ADJUST:
+		data = (u64)vcpu->arch.ia32_tsc_adjust_msr;
 		break;
 	case MSR_IA32_MISC_ENABLE:
 		data = vcpu->arch.ia32_misc_enable_msr;
@@ -2508,6 +2537,8 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		if (index == 0) {
 			entry->ebx &= kvm_supported_word9_x86_features;
 			cpuid_mask(&entry->ebx, 9);
+			// TSC_ADJUST is emulated
+			entry->ebx |= F(TSC_ADJUST);
 		} else
 			entry->ebx = 0;
 		entry->eax = 0;
@@ -6393,6 +6424,7 @@ int kvm_arch_vcpu_init(struct kvm_vcpu *vcpu)
 	if (!zalloc_cpumask_var(&vcpu->arch.wbinvd_dirty_mask, GFP_KERNEL))
 		goto fail_free_mce_banks;
 
+	vcpu->arch.ia32_tsc_adjust_msr = 0x0;
 	kvm_async_pf_hash_reset(vcpu);
 
 	return 0;

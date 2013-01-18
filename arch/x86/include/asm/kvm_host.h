@@ -400,6 +400,7 @@ struct kvm_vcpu_arch {
 	u64 last_tsc_nsec;
 	u64 last_tsc_write;
 	u32 virtual_tsc_khz;
+	s64 ia32_tsc_adjust_msr;
 	bool tsc_catchup;
 	u32  tsc_catchup_mult;
 	s8   tsc_catchup_shift;
@@ -623,6 +624,7 @@ struct kvm_x86_ops {
 	bool (*has_wbinvd_exit)(void);
 
 	void (*set_tsc_khz)(struct kvm_vcpu *vcpu, u32 user_tsc_khz);
+	u64 (*read_tsc_offset)(struct kvm_vcpu *vcpu);
 	void (*write_tsc_offset)(struct kvm_vcpu *vcpu, u64 offset);
 
 	u64 (*compute_tsc_offset)(struct kvm_vcpu *vcpu, u64 target_tsc);
