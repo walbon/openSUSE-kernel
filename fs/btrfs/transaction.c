@@ -958,8 +958,8 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 				dentry->d_name.name, dentry->d_name.len,
 				parent_inode, &key,
 				BTRFS_FT_DIR, index);
-	if (ret == -EEXIST) {
-		pending->error = -EEXIST;
+	if (ret == -EEXIST || ret == -EOVERFLOW) {
+		pending->error = ret;
 		/* goto abort_trans; */
 		goto fail;
 	} else if (ret) {

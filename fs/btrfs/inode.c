@@ -3510,11 +3510,11 @@ static int btrfs_truncate_page(struct address_space *mapping, loff_t from)
 	if (ret)
 		goto out;
 
-	ret = -ENOMEM;
 again:
 	page = find_or_create_page(mapping, index, mask);
 	if (!page) {
 		btrfs_delalloc_release_space(inode, PAGE_CACHE_SIZE);
+		ret = -ENOMEM;
 		goto out;
 	}
 
@@ -3562,7 +3562,6 @@ again:
 		goto out_unlock;
 	}
 
-	ret = 0;
 	if (offset != PAGE_CACHE_SIZE) {
 		kaddr = kmap(page);
 		memset(kaddr + offset, 0, PAGE_CACHE_SIZE - offset);
@@ -4839,7 +4838,7 @@ int btrfs_add_link(struct btrfs_trans_handle *trans,
 	ret = btrfs_insert_dir_item(trans, root, name, name_len,
 				    parent_inode, &key,
 				    btrfs_inode_type(inode), index);
-	if (ret == -EEXIST) {
+	if (ret == -EEXIST || ret == -EOVERFLOW) {
 		goto fail_dir_item;
 	} else if (ret) {
 		btrfs_abort_transaction(trans, root, ret);
@@ -4926,6 +4925,12 @@ static int btrfs_mknod(struct inode *dir, struct dentry *dentry,
 		goto out_unlock;
 	}
 
+	err = btrfs_update_inode(trans, root, inode);
+	if (err) {
+		drop_inode = 1;
+		goto out_unlock;
+	}
+
 	/*
 	* If the active LSM wants to access the inode during
 	* d_instantiate it needs these. Smack checks to see
@@ -4991,6 +4996,10 @@ static int btrfs_create(struct inode *dir, struct dentry *dentry,
 		drop_inode = 1;
 		goto out_unlock;
 	}
+
+	err = btrfs_update_inode(trans, root, inode);
+	if (err)
+		goto out_unlock;
 
 	/*
 	* If the active LSM wants to access the inode during
@@ -5668,9 +5677,6 @@ static struct extent_map *btrfs_new_extent_direct(struct inode *inode,
 	trans = btrfs_join_transaction(root);
 	if (IS_ERR(trans))
 		return ERR_CAST(trans);
-
-	if (start <= BTRFS_I(inode)->disk_i_size && len < 64 * 1024)
-		btrfs_add_inode_defrag(trans, inode);
 
 	trans->block_rsv = &root->fs_info->delalloc_block_rsv;
 
@@ -6533,9 +6539,17 @@ out:
 	return ret;
 }
 
+#define BTRFS_FIEMAP_FLAGS	(FIEMAP_FLAG_SYNC)
+
 static int btrfs_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		__u64 start, __u64 len)
 {
+	int	ret;
+
+	ret = fiemap_check_flags(fieinfo, BTRFS_FIEMAP_FLAGS);
+	if (ret)
+		return ret;
+
 	return extent_fiemap(inode, fieinfo, start, len, btrfs_get_extent_fiemap);
 }
 
@@ -7228,6 +7242,28 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	if (S_ISDIR(old_inode->i_mode) && new_inode &&
 	    new_inode->i_size > BTRFS_EMPTY_DIR_SIZE)
 		return -ENOTEMPTY;
+
+
+	/* check for collisions, even if the  name isn't there */
+	ret = btrfs_check_dir_item_collision(root, new_dir->i_ino,
+			     new_dentry->d_name.name,
+			     new_dentry->d_name.len);
+
+	if (ret) {
+		if (ret == -EEXIST) {
+			/* we shouldn't get
+			 * eexist without a new_inode */
+			if (!new_inode) {
+				WARN_ON(1);
+				return ret;
+			}
+		} else {
+			/* maybe -EOVERFLOW */
+			return ret;
+		}
+	}
+	ret = 0;
+
 	/*
 	 * we're using rename to replace one file with another.
 	 * and the replacement file is large.  Start IO on it now so

@@ -1653,12 +1653,12 @@ static long btrfs_fallocate(struct file *file, int mode,
 	u64 alloc_end;
 	u64 alloc_hint = 0;
 	u64 locked_end;
-	u64 mask = BTRFS_I(inode)->root->sectorsize - 1;
 	struct extent_map *em;
+	int blocksize = BTRFS_I(inode)->root->sectorsize;
 	int ret;
 
-	alloc_start = offset & ~mask;
-	alloc_end =  (offset + len + mask) & ~mask;
+	alloc_start = round_down(offset, blocksize);
+	alloc_end = round_up(offset + len, blocksize);
 
 	/* We only support the FALLOC_FL_KEEP_SIZE mode */
 	if (mode & ~FALLOC_FL_KEEP_SIZE)
@@ -1668,7 +1668,7 @@ static long btrfs_fallocate(struct file *file, int mode,
 	 * Make sure we have enough space before we do the
 	 * allocation.
 	 */
-	ret = btrfs_check_data_free_space(inode, alloc_end - alloc_start + 1);
+	ret = btrfs_check_data_free_space(inode, alloc_end - alloc_start);
 	if (ret)
 		return ret;
 
@@ -1736,7 +1736,7 @@ static long btrfs_fallocate(struct file *file, int mode,
 		}
 		last_byte = min(extent_map_end(em), alloc_end);
 		actual_end = min_t(u64, extent_map_end(em), offset + len);
-		last_byte = (last_byte + mask) & ~mask;
+		last_byte = ALIGN(last_byte, blocksize);
 
 		if (em->block_start == EXTENT_MAP_HOLE ||
 		    (cur_offset >= inode->i_size &&
@@ -1775,7 +1775,7 @@ static long btrfs_fallocate(struct file *file, int mode,
 out:
 	mutex_unlock(&inode->i_mutex);
 	/* Let go of our reservation. */
-	btrfs_free_reserved_data_space(inode, alloc_end - alloc_start + 1);
+	btrfs_free_reserved_data_space(inode, alloc_end - alloc_start);
 	return ret;
 }
 
