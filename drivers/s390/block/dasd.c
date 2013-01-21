@@ -1944,7 +1944,7 @@ static void __dasd_process_request_queue(struct dasd_block *block)
 			__blk_end_request_all(req, -EIO);
 			continue;
 		}
-		if (test_bit(DASD_FLAG_TIMEOUT, &basedev->flags) &&
+		if (test_bit(DASD_FLAG_ABORTALL, &basedev->flags) &&
 		    blk_noretry_request(req)) {
 			DBF_DEV_EVENT(DBF_ERR, basedev,
 				      "Rejecting failfast request %p",
@@ -2082,14 +2082,6 @@ restart:
 			__dasd_process_erp(base, cqr);
 			goto restart;
 		}
-
-		/*
-		 * Clear timeout flag once a request
-		 * has returned without error
-		 */
-		if (cqr->status == DASD_CQR_DONE &&
-		    test_and_clear_bit(DASD_FLAG_TIMEOUT, &base->flags))
-			dev_err(&base->cdev->dev, "blk timeout flag unset\n");
 
 		/* Rechain finished requests to final queue */
 		cqr->endclk = get_clock();
@@ -2290,62 +2282,65 @@ static void do_dasd_request(struct request_queue *queue)
 enum blk_eh_timer_return dasd_times_out(struct request *req)
 {
 	struct dasd_ccw_req *cqr = req->completion_data;
-	struct request_queue *queue = req->q;
-	struct dasd_block *block = queue->queuedata;
+	struct dasd_block *block = req->q->queuedata;
 	struct dasd_device *device;
-	struct dasd_ccw_req *searchcqr, *nextcqr;
 	int rc = 0;
 
 	if (!cqr)
 		return BLK_EH_NOT_HANDLED;
 
-	device = cqr->startdev ? cqr->startdev : block->base;
+	if (!blk_noretry_request(req))
+		return BLK_EH_RESET_TIMER;
 
-	if (!test_and_set_bit(DASD_FLAG_TIMEOUT, &device->flags))
-		dev_err(&device->cdev->dev, "blk timeout flag set\n");
+	device = cqr->startdev ? cqr->startdev : block->base;
+	if (!device->blk_timeout)
+		return BLK_EH_RESET_TIMER;
+	DBF_DEV_EVENT(DBF_WARNING, device,
+		      " dasd_times_out cqr %p status %x",
+		      cqr, cqr->status);
 
 	spin_lock(&block->queue_lock);
-
-	/* Abort all requests in the queue */
-	list_for_each_entry_safe(searchcqr, nextcqr,
-				 &block->ccw_queue, blocklist) {
-		/*
-		 * Ignore all requests with final status;
-		 * requests with DASD_CQR_NEED_ERP will
-		 * also be aborted as ERP shouldn't be invoked.
-		 */
-		if (searchcqr->status == DASD_CQR_DONE ||
-		    searchcqr->status == DASD_CQR_FAILED ||
-		    searchcqr->status == DASD_CQR_TERMINATED)
-			continue;
-		/*
-		 * Only abort requests with failfast set.
-		 */
-		if (searchcqr->callback_data &&
-		    searchcqr->callback_data != DASD_SLEEPON_END_TAG &&
-		    searchcqr->callback_data != DASD_SLEEPON_START_TAG)
-			req = searchcqr->callback_data;
-		if (!req || !blk_noretry_request(req))
-			continue;
-		DBF_DEV_EVENT(DBF_WARNING, device,
-			      "dasd_times_out cqr %p status %x",
-			      searchcqr, searchcqr->status);
-		spin_lock(get_ccwdev_lock(device->cdev));
-		searchcqr->retries = -1;
-		searchcqr->intrc = -ETIMEDOUT;
+	spin_lock(get_ccwdev_lock(device->cdev));
+	cqr->retries = -1;
+	cqr->intrc = -ETIMEDOUT;
+	if (cqr->status >= DASD_CQR_QUEUED) {
 		spin_unlock(get_ccwdev_lock(device->cdev));
-		if (searchcqr->status >= DASD_CQR_QUEUED) {
-			rc = dasd_cancel_req(searchcqr);
-		} else if ((searchcqr->status == DASD_CQR_FILLED) ||
-			   (searchcqr->status == DASD_CQR_NEED_ERP)) {
-			searchcqr->status = DASD_CQR_TERMINATED;
-			rc = 0;
-		} else if (searchcqr->status == DASD_CQR_IN_ERP) {
-			/*
-			 * Ignore, will be terminated once
-			 * the related cqrs are finished.
-			 */
+		rc = dasd_cancel_req(cqr);
+	} else if (cqr->status == DASD_CQR_FILLED ||
+		   cqr->status == DASD_CQR_NEED_ERP) {
+		cqr->status = DASD_CQR_TERMINATED;
+		spin_unlock(get_ccwdev_lock(device->cdev));
+	} else if (cqr->status == DASD_CQR_IN_ERP) {
+		struct dasd_ccw_req *searchcqr, *nextcqr, *tmpcqr;
+
+		list_for_each_entry_safe(searchcqr, nextcqr,
+					 &block->ccw_queue, blocklist) {
+			tmpcqr = searchcqr;
+			while (tmpcqr->refers)
+				tmpcqr = tmpcqr->refers;
+			if (tmpcqr != cqr)
+				continue;
+			/* searchcqr is an ERP request for cqr */
+			searchcqr->retries = -1;
+			searchcqr->intrc = -ETIMEDOUT;
+			if (searchcqr->status >= DASD_CQR_QUEUED) {
+				spin_unlock(get_ccwdev_lock(device->cdev));
+				rc = dasd_cancel_req(searchcqr);
+				spin_lock(get_ccwdev_lock(device->cdev));
+			} else if ((searchcqr->status == DASD_CQR_FILLED) ||
+				   (searchcqr->status == DASD_CQR_NEED_ERP)) {
+				searchcqr->status = DASD_CQR_TERMINATED;
+				rc = 0;
+			} else if (searchcqr->status == DASD_CQR_IN_ERP) {
+				/*
+				 * Shouldn't happen; most recent ERP
+				 * request is at the front of queue
+				 */
+				continue;
+			}
+			break;
 		}
+		spin_unlock(get_ccwdev_lock(device->cdev));
 	}
 	dasd_schedule_block_bh(block);
 	spin_unlock(&block->queue_lock);
@@ -2408,14 +2403,13 @@ static void dasd_setup_queue(struct dasd_block *block)
 	blk_queue_rq_timed_out(block->request_queue, dasd_times_out);
 	set_bit(QUEUE_FLAG_NO_ROUND, &block->request_queue->queue_flags);
 	/*
-	 * We always set the failfast timeout;
-	 * dasd_times_out() will ignore requests when failfast
-	 * is not enabled.
+	 * blk_timeout must be enabled via sysfs; set defaults to
+	 * expires * (retries + 1)
 	 */
-	block->base->blk_timeout = block->base->failfast_expires *
-	    (block->base->failfast_retries + 1);
 	blk_queue_rq_timeout(block->request_queue,
-			     block->base->blk_timeout * HZ);
+			     block->base->default_expires *
+			     (block->base->default_retries + 1));
+	block->base->blk_timeout = 0;
 }
 
 /*
