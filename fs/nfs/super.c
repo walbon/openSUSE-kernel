@@ -1585,15 +1585,25 @@ static int nfs_walk_authlist(struct nfs_parsed_mount_data *args,
 	 * AUTH_NULL first.  Our caller plants AUTH_SYS, the
 	 * preferred default, in args->auth_flavors[0] if user
 	 * didn't specify sec= mount option.
+	 *
+	 * By convention we treat AUTH_NULL in the returned list as
+	 * a wild card.  The server will map our requested flavor to
+	 * something else.
 	 */
-	for (i = 0; i < args->auth_flavor_len; i++)
-		for (j = 0; j < server_authlist_len; j++)
-			if (args->auth_flavors[i] == request->auth_flavs[j]) {
+	for (i = 0; i < server_authlist_len; i++) {
+		if (request->auth_flavs[i] == RPC_AUTH_NULL) {
+			dfprintk(MOUNT, "NFS: using default auth flavor %d\n",
+				 args->auth_flavors[0]);
+			return 0;
+		}
+		for (j = 0; j < args->auth_flavor_len; j++)
+			if (request->auth_flavs[i] == args->auth_flavors[j]) {
 				dfprintk(MOUNT, "NFS: using auth flavor %d\n",
-					request->auth_flavs[j]);
-				args->auth_flavors[0] = request->auth_flavs[j];
+					 request->auth_flavs[j]);
+				args->auth_flavors[0] = request->auth_flavs[i];
 				return 0;
 			}
+	}
 
 	dfprintk(MOUNT, "NFS: server does not support requested auth flavor\n");
 	nfs_umount(request);
