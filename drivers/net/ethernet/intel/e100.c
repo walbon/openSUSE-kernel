@@ -2789,8 +2789,7 @@ static const struct net_device_ops e100_netdev_ops = {
 #endif
 };
 
-static int e100_probe(struct pci_dev *pdev,
-	const struct pci_device_id *ent)
+static int e100_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *netdev;
 	struct nic *nic;
