@@ -296,7 +296,7 @@ extern long psw_user32_bits;
    is the condition code and the program mask bits.  */
 #define PSW_MASK_MERGE(CURRENT,NEW) \
 	(((CURRENT) & ~(PSW_MASK_CC|PSW_MASK_PM)) | \
-	 ((NEW) & (PSW_MASK_CC|PSW_MASK_PM)))
+	 ((NEW) & (PSW_MASK_CC|PSW_MASK_PM|PSW_MASK_RI)))
 
 /*
  * The s390_regs structure is used to define the elf_gregset_t.
