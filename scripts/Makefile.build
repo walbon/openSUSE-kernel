@@ -391,7 +391,7 @@ $(sort $(subdir-obj-y)): $(subdir-ym) ;
 # Rule to compile a set of .o files into one .o file
 #
 ifdef builtin-target
-cmd_recordlink = ; printf '%s\n' $(filter %.o, $(filter $(obj-y), $^)) >$@.parts
+cmd_recordlink = ; echo $(filter %.o, $(filter $(obj-y), $^)) >$@.parts
 quiet_cmd_link_o_target = LD      $@
 # If the list of objects to link is empty, just create an empty built-in.o
 cmd_link_o_target = $(if $(strip $(obj-y)),\
