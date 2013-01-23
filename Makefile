@@ -733,7 +733,7 @@ endif # INSTALL_MOD_STRIP
 export mod_strip_cmd
 
 
-ifeq ($(CONFIG_MODULE_SIG),y)
+ifdef CONFIG_MODULE_SIG_ALL
 MODSECKEY = ./signing_key.priv
 MODPUBKEY = ./signing_key.x509
 export MODPUBKEY
@@ -743,10 +743,11 @@ mod_sign_cmd = true
 endif
 export mod_sign_cmd
 
-ifeq ($(CONFIG_FIRMWARE_SIG),y)
-fw_sign_cmd = perl $(srctree)/scripts/sign-file -f $(MODSECKEY) $(MODPUBKEY)
-else
 fw_sign_cmd = true
+ifdef CONFIG_MODULE_SIG_ALL
+ifdef CONFIG_FIRMWARE_SIG
+fw_sign_cmd = perl $(srctree)/scripts/sign-file -f $(MODSECKEY) $(MODPUBKEY)
+endif
 endif
 export fw_sign_cmd
 

@@ -29,12 +29,13 @@ installed-mod-fw := $(addprefix $(INSTALL_FW_PATH)/,$(mod-fw))
 installed-fw := $(addprefix $(INSTALL_FW_PATH)/,$(fw-shipped-all))
 installed-fw-dirs := $(sort $(dir $(installed-fw))) $(INSTALL_FW_PATH)/.
 
-ifeq ($(CONFIG_FIRMWARE_SIG),y)
-installed-fw-sig := $(patsubst %,%.sig, $(installed-fw))
-installed-mod-fw-sig := $(patsubst %,%.sig, $(installed-mod-fw))
-else
 installed-fw-sig :=
 installed-mod-fw-sig :=
+ifdef CONFIG_MODULE_SIG_ALL
+ifdef CONFIG_FIRMWARE_SIG
+installed-fw-sig := $(patsubst %,%.sig, $(installed-fw))
+installed-mod-fw-sig := $(patsubst %,%.sig, $(installed-mod-fw))
+endif
 endif
 
 quiet_cmd_fwsig = FWSIG $@
