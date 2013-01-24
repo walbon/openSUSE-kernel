@@ -141,46 +141,41 @@ static int dasd_ioctl_resume(struct dasd_block *block)
 }
 
 /*
- * Timeout device.
+ * Abort all failfast I/O on a device
  */
-static int dasd_ioctl_timeout(struct dasd_block *block)
+static int dasd_ioctl_abortio(struct dasd_block *block)
 {
 	unsigned long flags;
 	struct dasd_device *base;
 	struct dasd_ccw_req *cqr, *n;
-	struct request *req;
 
 	base = block->base;
 	if (!capable (CAP_SYS_ADMIN))
 		return -EACCES;
 
-	if (test_and_set_bit(DASD_FLAG_TIMEOUT, &base->flags))
+	if (test_and_set_bit(DASD_FLAG_ABORTALL, &base->flags))
 		return 0;
 
 	dev_err(&base->cdev->dev, "ioctl timeout flag set\n");
 
 	spin_lock_irqsave(&block->request_queue_lock, flags);
 	/*
-	 * We need to abort the first noretry requests as
-	 * there might be requests on the ccw_queue.
-	 * blk_abort_request() will take care of aborting
-	 * all other noretry requests.
+	 * We need to abort all noretry requests.
+	 * As dasd_times_out() already checks for
+	 * eligible requests we can just call
+	 * blk_abort_request() for every queued request.
 	 */
 	spin_lock(&block->queue_lock);
 	list_for_each_entry_safe(cqr, n, &block->ccw_queue, blocklist) {
 		if (cqr->callback_data &&
 		    cqr->callback_data != (void *)1 &&
-		    cqr->callback_data != (void *)2 )
-			req = cqr->callback_data;
-		else
-			req = NULL;
-		if (req && blk_noretry_request(req))
-			break;
-		req = NULL;
+		    cqr->callback_data != (void *)2 ) {
+			spin_unlock(&block->queue_lock);
+			blk_abort_request(cqr->callback_data);
+			spin_lock(&block->queue_lock);
+		}
 	}
 	spin_unlock(&block->queue_lock);
-	if (req)
-		blk_abort_request(req);
 	spin_unlock_irqrestore(&block->request_queue_lock, flags);
 
 	dasd_schedule_block_bh(block);
@@ -188,9 +183,9 @@ static int dasd_ioctl_timeout(struct dasd_block *block)
 }
 
 /*
- * Resync a device
+ * Allow I/O on a device
  */
-static int dasd_ioctl_resync(struct dasd_block *block)
+static int dasd_ioctl_allowio(struct dasd_block *block)
 {
 	unsigned long flags;
 	struct dasd_device *base;
@@ -199,7 +194,7 @@ static int dasd_ioctl_resync(struct dasd_block *block)
 	if (!capable (CAP_SYS_ADMIN))
 		return -EACCES;
 
-	if (test_and_clear_bit(DASD_FLAG_TIMEOUT, &base->flags))
+	if (test_and_clear_bit(DASD_FLAG_ABORTALL, &base->flags))
 		dev_err(&base->cdev->dev, "ioctl timeout flag unset\n");
 
 	return 0;
@@ -532,11 +527,11 @@ int dasd_ioctl(struct block_device *bdev, fmode_t mode,
 	case BIODASDRESUME:
 		rc = dasd_ioctl_resume(block);
 		break;
-	case BIODASDTIMEOUT:
-		rc = dasd_ioctl_timeout(block);
+	case BIODASDABORTIO:
+		rc = dasd_ioctl_abortio(block);
 		break;
-	case BIODASDRESYNC:
-		rc = dasd_ioctl_resync(block);
+	case BIODASDALLOWIO:
+		rc = dasd_ioctl_allowio(block);
 		break;
 	case BIODASDFMT:
 		rc = dasd_ioctl_format(bdev, argp);
