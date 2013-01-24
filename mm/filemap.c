@@ -785,9 +785,9 @@ int  __wait_on_page_locked_killable(struct page *page)
 		if (!PageWaiters(page))
 			SetPageWaiters(page);
 		if (likely(PageLocked(page)))
-			ret = sleep_on_page(page);
+			ret = sleep_on_page_killable(page);
 		finish_wait(wq, &wait.wait);
-	} while (PageLocked(page));
+	} while (PageLocked(page) && !ret);
 
 	/* Clean up a potentially dangling PG_waiters */
 	if (unlikely(PageWaiters(page)))
