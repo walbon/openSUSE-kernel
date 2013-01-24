@@ -222,6 +222,7 @@ struct dentry_operations {
 	(DCACHE_MOUNTED|DCACHE_NEED_AUTOMOUNT|DCACHE_MANAGE_TRANSIT)
 
 #define DCACHE_DENTRY_KILLED	0x100000
+#define DCACHE_LUSTRE_INVALID	0x200000  /* Lustre invalidated */
 
 extern seqlock_t rename_lock;
 

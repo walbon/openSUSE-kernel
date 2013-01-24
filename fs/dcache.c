@@ -36,6 +36,7 @@
 #include <linux/bit_spinlock.h>
 #include <linux/rculist_bl.h>
 #include <linux/prefetch.h>
+#include <linux/magic.h>
 #include "internal.h"
 
 /*
@@ -493,6 +494,15 @@ int d_invalidate(struct dentry * dentry)
 		spin_unlock(&dentry->d_lock);
 		return 0;
 	}
+
+	/* network invalidation by Lustre */
+	if (dentry->d_flags & DCACHE_LUSTRE_INVALID &&
+	    (dentry->d_sb->s_magic == LUSTRE_SUPER_MAGIC ||
+	     dentry->d_sb->s_magic == LUSTRE_CLIENT_SUPER_MAGIC)) {
+		spin_unlock(&dentry->d_lock);
+		return 0;
+	}
+
 	/*
 	 * Check whether to do a partial shrink_dcache
 	 * to get rid of unused child entries.

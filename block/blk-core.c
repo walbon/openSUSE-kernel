@@ -1384,6 +1384,8 @@ static inline int should_fail_request(struct bio *bio)
 
 #endif /* CONFIG_FAIL_MAKE_REQUEST */
 
+int dev_check_rdonly(struct block_device *bdev);
+
 /*
  * Check whether this bio extends beyond the end of the device.
  */
@@ -1484,6 +1486,12 @@ static inline void __generic_make_request(struct bio *bio)
 
 		if (unlikely(blk_queue_dead(q)))
 			goto end_io;
+
+                /* this is lustre's dev_rdonly check */
+                if (bio_rw(bio) == WRITE && dev_check_rdonly(bio->bi_bdev)) {
+                        bio_endio(bio, 0);
+                        break;
+                }
 
 		if (should_fail_request(bio))
 			goto end_io;
@@ -2790,6 +2798,91 @@ void blk_finish_plug(struct blk_plug *plug)
 }
 EXPORT_SYMBOL(blk_finish_plug);
 
+ /*
+ * Debug code for turning block devices "read-only" (will discard writes
+ * silently).  This is for filesystem crash/recovery testing.
+ */
+struct deventry {
+	dev_t dev;
+	struct deventry *next;
+};
+
+static struct deventry *devlist = NULL;
+static DEFINE_SPINLOCK(devlock);
+
+int dev_check_rdonly(struct block_device *bdev)
+{
+	struct deventry *cur;
+	if (!bdev) return 0;
+	spin_lock(&devlock);
+	cur = devlist;
+	while(cur) {
+		if (bdev->bd_dev == cur->dev) {
+			spin_unlock(&devlock);
+			return 1;
+	}
+		cur = cur->next;
+	}
+	spin_unlock(&devlock);
+	return 0;
+}
+
+void dev_set_rdonly(struct block_device *bdev)
+{
+	struct deventry *newdev, *cur;
+
+	if (!bdev)
+		return;
+	newdev = kmalloc(sizeof(struct deventry), GFP_KERNEL);
+	if (!newdev)
+		return;
+
+	spin_lock(&devlock);
+	cur = devlist;
+	while(cur) {
+		if (bdev->bd_dev == cur->dev) {
+			spin_unlock(&devlock);
+			kfree(newdev);
+			return;
+		}
+		cur = cur->next;
+	}
+	newdev->dev = bdev->bd_dev;
+	newdev->next = devlist;
+	devlist = newdev;
+	spin_unlock(&devlock);
+	printk(KERN_WARNING "Turning device %s (%#x) read-only\n",
+	       bdev->bd_disk ? bdev->bd_disk->disk_name : "", bdev->bd_dev);
+}
+
+void dev_clear_rdonly(struct block_device *bdev)
+{
+	struct deventry *cur, *last = NULL;
+	if (!bdev) return;
+	spin_lock(&devlock);
+	cur = devlist;
+	while(cur) {
+		if (bdev->bd_dev == cur->dev) {
+			if (last)
+				last->next = cur->next;
+			else
+				devlist = cur->next;
+			spin_unlock(&devlock);
+			kfree(cur);
+			printk(KERN_WARNING "Removing read-only on %s (%#x)\n",
+			       bdev->bd_disk ? bdev->bd_disk->disk_name :
+					       "unknown block", bdev->bd_dev);
+			return;
+		}
+		last = cur;
+		cur = cur->next;
+	}
+	spin_unlock(&devlock);
+}
+
+EXPORT_SYMBOL(dev_set_rdonly);
+EXPORT_SYMBOL(dev_clear_rdonly);
+EXPORT_SYMBOL(dev_check_rdonly);
 int __init blk_dev_init(void)
 {
 	BUILD_BUG_ON(__REQ_NR_BITS > 8 *

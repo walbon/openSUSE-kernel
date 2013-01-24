@@ -2348,6 +2348,10 @@ extern void inode_sb_list_add(struct inode *inode);
 extern void submit_bio(int, struct bio *);
 extern int bdev_read_only(struct block_device *);
 #endif
+#define HAVE_CLEAR_RDONLY_ON_PUT
+extern void dev_set_rdonly(struct block_device *bdev);
+extern int dev_check_rdonly(struct block_device *bdev);
+extern void dev_clear_rdonly(struct block_device *bdev);
 extern int set_blocksize(struct block_device *, int);
 extern int sb_set_blocksize(struct super_block *, int);
 extern int sb_min_blocksize(struct super_block *, int);
