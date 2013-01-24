@@ -1690,10 +1690,12 @@ static int __init init_btrfs_fs(void)
 
 	printk(KERN_INFO "%s loaded\n", BTRFS_BUILD_VERSION);
 
+#ifdef CONFIG_ENTERPRISE_SUPPORT
 	if (allow_unsupported) {
 		add_taint(TAINT_NO_SUPPORT);
 		printk(KERN_INFO "btrfs: allow_unsupported=1 taints kernel\n");
 	}
+#endif
 	return 0;
 
 unregister_ioctl:
@@ -1728,7 +1730,11 @@ static void __exit exit_btrfs_fs(void)
 	btrfs_exit_compress();
 }
 
+#ifdef CONFIG_ENTERPRISE_SUPPORT
 int allow_unsupported = 0;
+#else
+int allow_unsupported = 1;
+#endif
 
 module_param(allow_unsupported, int, 0444);
 MODULE_PARM_DESC(allow_unsupported, "Allow using features that are out of supported scope");
