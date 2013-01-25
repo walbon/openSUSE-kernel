@@ -87,7 +87,7 @@ static unsigned char btrfs_type_by_mode[S_IFMT >> S_SHIFT] = {
 	[S_IFLNK >> S_SHIFT]	= BTRFS_FT_SYMLINK,
 };
 
-static int btrfs_setsize(struct inode *inode, loff_t newsize);
+static int btrfs_setsize(struct inode *inode, struct iattr *attr);
 static int btrfs_truncate(struct inode *inode, loff_t newsize);
 static int btrfs_finish_ordered_io(struct inode *inode, u64 start, u64 end);
 static noinline int cow_file_range(struct inode *inode,
@@ -3627,6 +3627,7 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
 				block_end - cur_offset, 0);
 		if (IS_ERR(em)) {
 			err = PTR_ERR(em);
+			em = NULL;
 			break;
 		}
 		last_byte = min(extent_map_end(em), block_end);
@@ -3679,15 +3680,26 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
 	return err;
 }
 
-static int btrfs_setsize(struct inode *inode, loff_t newsize)
+static int btrfs_setsize(struct inode *inode, struct iattr *attr)
 {
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct btrfs_trans_handle *trans;
 	loff_t oldsize = i_size_read(inode);
+	loff_t newsize = attr->ia_size;
+	int mask = attr->ia_valid;
 	int ret;
 
 	if (newsize == oldsize)
 		return 0;
+
+	/*
+	 * The regular truncate() case without ATTR_CTIME and ATTR_MTIME is a
+	 * special case where we need to update the times despite not having
+	 * these flags set.  For all other operations the VFS set these flags
+	 * explicitly if it wants a timestamp update.
+	 */
+	if (newsize != oldsize && (!(mask & (ATTR_CTIME | ATTR_MTIME))))
+		inode->i_ctime = inode->i_mtime = current_fs_time(inode->i_sb);
 
 	if (newsize > oldsize) {
 		truncate_pagecache(inode, oldsize, newsize);
@@ -3738,7 +3750,7 @@ static int btrfs_setattr(struct dentry *dentry, struct iattr *attr)
 		return err;
 
 	if (S_ISREG(inode->i_mode) && (attr->ia_valid & ATTR_SIZE)) {
-		err = btrfs_setsize(inode, attr->ia_size);
+		err = btrfs_setsize(inode, attr);
 		if (err)
 			return err;
 	}
@@ -4920,12 +4932,6 @@ static int btrfs_mknod(struct inode *dir, struct dentry *dentry,
 	}
 
 	err = btrfs_init_inode_security(trans, inode, dir, &dentry->d_name);
-	if (err) {
-		drop_inode = 1;
-		goto out_unlock;
-	}
-
-	err = btrfs_update_inode(trans, root, inode);
 	if (err) {
 		drop_inode = 1;
 		goto out_unlock;

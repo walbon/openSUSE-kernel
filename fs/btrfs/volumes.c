@@ -4235,7 +4235,7 @@ int btrfs_map_bio(struct btrfs_root *root, int rw, struct bio *bio,
 		bio->bi_sector = bbio->stripes[dev_nr].physical >> 9;
 		dev = bbio->stripes[dev_nr].dev;
 		if (dev && dev->bdev && (rw != WRITE || dev->writeable)) {
-			pr_debug("btrfs_map_bio: rw %d, secor=%llu, dev=%lu "
+			pr_debug("btrfs_map_bio: rw %d, sector=%llu, dev=%lu "
 				 "(%s id %llu), size=%u\n", rw,
 				 (u64)bio->bi_sector, (u_long)dev->bdev->bd_dev,
 				 dev->name, dev->devid, bio->bi_size);
