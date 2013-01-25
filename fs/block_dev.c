@@ -1467,7 +1467,9 @@ static int __blkdev_put(struct block_device *bdev, fmode_t mode, int for_part)
 		if (bdev != bdev->bd_contains)
 			victim = bdev->bd_contains;
 		bdev->bd_contains = NULL;
+#ifndef CONFIG_FAIL_MAKE_REQUEST
 		dev_clear_rdonly(bdev);
+endif
 
 		put_disk(disk);
 		module_put(owner);

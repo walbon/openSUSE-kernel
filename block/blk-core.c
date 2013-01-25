@@ -1384,8 +1384,6 @@ static inline int should_fail_request(struct bio *bio)
 
 #endif /* CONFIG_FAIL_MAKE_REQUEST */
 
-int dev_check_rdonly(struct block_device *bdev);
-
 /*
  * Check whether this bio extends beyond the end of the device.
  */
@@ -1487,12 +1485,18 @@ static inline void __generic_make_request(struct bio *bio)
 		if (unlikely(blk_queue_dead(q)))
 			goto end_io;
 
-                /* this is lustre's dev_rdonly check */
-                if (bio_rw(bio) == WRITE && dev_check_rdonly(bio->bi_bdev)) {
-                        bio_endio(bio, 0);
-                        break;
+#ifndef CONFIG_FAIL_MAKE_REQUEST
+                /*
+		 * this is lustre's dev_rdonly check
+		 * without CONFIG_FAIL_MAKE_REQUEST set, this will only
+		 * be set by dev_set_rdonly
+		 */
+                if (bio_rw(bio) == WRITE &&
+		    test_bit(QUEUE_FLAG_FAIL_IO, &q->queue_flags)) {
+			err = 0;
+			goto end_io;
                 }
-
+#endif
 		if (should_fail_request(bio))
 			goto end_io;
 
@@ -2798,91 +2802,69 @@ void blk_finish_plug(struct blk_plug *plug)
 }
 EXPORT_SYMBOL(blk_finish_plug);
 
- /*
- * Debug code for turning block devices "read-only" (will discard writes
- * silently).  This is for filesystem crash/recovery testing.
+/*
+ * This feature depends on CONFIG_FAIL_MAKE_REQUEST being disabled.
+ * It is in all non-debug flavors of the SLES kernel.
+ *
+ * It could be extended to work with FAIL_MAKE_REQUEST but we don't
+ * need it to work. Future versions of Lustre don't use it.
  */
-struct deventry {
-	dev_t dev;
-	struct deventry *next;
-};
+#ifndef CONFIG_FAIL_MAKE_REQUEST
 
-static struct deventry *devlist = NULL;
-static DEFINE_SPINLOCK(devlock);
+/*
+* Debug code for turning block devices "read-only" (will discard writes
+* silently).  This is for filesystem crash/recovery testing.
+*/
 
 int dev_check_rdonly(struct block_device *bdev)
 {
-	struct deventry *cur;
-	if (!bdev) return 0;
-	spin_lock(&devlock);
-	cur = devlist;
-	while(cur) {
-		if (bdev->bd_dev == cur->dev) {
-			spin_unlock(&devlock);
-			return 1;
-	}
-		cur = cur->next;
-	}
-	spin_unlock(&devlock);
+	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+
+	/*
+	 * We can't key this off of LUSTRE_SUPER_MAGIC or
+	 * LUSTRE_CLIENT_SUPER_MAGIC because Lustre's ldiskfs uses
+	 * it and it shares the ext2/3/4 sb->s_super magic
+	 */
+
+	if (q)
+		return test_bit(QUEUE_FLAG_FAIL_IO, &q->queue_flags);
 	return 0;
 }
 
 void dev_set_rdonly(struct block_device *bdev)
 {
-	struct deventry *newdev, *cur;
+	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
 
-	if (!bdev)
-		return;
-	newdev = kmalloc(sizeof(struct deventry), GFP_KERNEL);
-	if (!newdev)
-		return;
+	if (q) {
+		spin_lock_irq(&q->queue_lock);
+		queue_flag_set(QUEUE_FLAG_FAIL_IO, q);
+		spin_unlock_irq(&q->queue_lock);
 
-	spin_lock(&devlock);
-	cur = devlist;
-	while(cur) {
-		if (bdev->bd_dev == cur->dev) {
-			spin_unlock(&devlock);
-			kfree(newdev);
-			return;
-		}
-		cur = cur->next;
+		printk(KERN_WARNING "Turning device %s (%#x) read-only\n",
+		       bdev->bd_disk ? bdev->bd_disk->disk_name : "",
+		       bdev->bd_dev);
+	} else {
+		printk(KERN_WARNING "Couldn't turn device %s (%#x) read-only -- no queue?\n",
+		       bdev->bd_disk ? bdev->bd_disk->disk_name : "",
+		       bdev->bd_dev);
 	}
-	newdev->dev = bdev->bd_dev;
-	newdev->next = devlist;
-	devlist = newdev;
-	spin_unlock(&devlock);
-	printk(KERN_WARNING "Turning device %s (%#x) read-only\n",
-	       bdev->bd_disk ? bdev->bd_disk->disk_name : "", bdev->bd_dev);
 }
 
 void dev_clear_rdonly(struct block_device *bdev)
 {
-	struct deventry *cur, *last = NULL;
-	if (!bdev) return;
-	spin_lock(&devlock);
-	cur = devlist;
-	while(cur) {
-		if (bdev->bd_dev == cur->dev) {
-			if (last)
-				last->next = cur->next;
-			else
-				devlist = cur->next;
-			spin_unlock(&devlock);
-			kfree(cur);
-			printk(KERN_WARNING "Removing read-only on %s (%#x)\n",
-			       bdev->bd_disk ? bdev->bd_disk->disk_name :
-					       "unknown block", bdev->bd_dev);
-			return;
-		}
-		last = cur;
-		cur = cur->next;
+	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+	if (q) {
+		spin_lock_irq(&q->queue_lock);
+		queue_flag_clear(QUEUE_FLAG_FAIL_IO, q);
+		spin_unlock_irq(&q->queue_lock);
 	}
-	spin_unlock(&devlock);
 }
 
 EXPORT_SYMBOL(dev_set_rdonly);
 EXPORT_SYMBOL(dev_clear_rdonly);
 EXPORT_SYMBOL(dev_check_rdonly);
+#endif
+
 int __init blk_dev_init(void)
 {
 	BUILD_BUG_ON(__REQ_NR_BITS > 8 *
