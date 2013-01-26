@@ -2818,7 +2818,7 @@ EXPORT_SYMBOL(blk_finish_plug);
 
 int dev_check_rdonly(struct block_device *bdev)
 {
-	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+	struct request_queue *q = bdev_get_queue(bdev);
 
 	/*
 	 * We can't key this off of LUSTRE_SUPER_MAGIC or
@@ -2833,7 +2833,7 @@ int dev_check_rdonly(struct block_device *bdev)
 
 void dev_set_rdonly(struct block_device *bdev)
 {
-	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+	struct request_queue *q = bdev_get_queue(bdev);
 
 	if (q) {
 		spin_lock_irq(&q->queue_lock);
@@ -2852,7 +2852,7 @@ void dev_set_rdonly(struct block_device *bdev)
 
 void dev_clear_rdonly(struct block_device *bdev)
 {
-	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+	struct request_queue *q = bdev_get_queue(bdev);
 	if (q) {
 		spin_lock_irq(&q->queue_lock);
 		queue_flag_clear(QUEUE_FLAG_FAIL_IO, q);
