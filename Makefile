@@ -737,16 +737,16 @@ ifdef CONFIG_MODULE_SIG_ALL
 MODSECKEY = ./signing_key.priv
 MODPUBKEY = ./signing_key.x509
 export MODPUBKEY
-mod_sign_cmd = perl $(srctree)/scripts/sign-file $(MODSECKEY) $(MODPUBKEY)
+mod_sign_cmd = perl $(srctree)/scripts/sign-file $(CONFIG_MODULE_SIG_HASH) $(MODSECKEY) $(MODPUBKEY)
 else
 mod_sign_cmd = true
 endif
 export mod_sign_cmd
 
 fw_sign_cmd = true
+ifeq ($(CONFIG_FIRMWARE_SIG),y)
 ifdef CONFIG_MODULE_SIG_ALL
-ifdef CONFIG_FIRMWARE_SIG
-fw_sign_cmd = perl $(srctree)/scripts/sign-file -f $(MODSECKEY) $(MODPUBKEY)
+fw_sign_cmd = perl $(srctree)/scripts/sign-file -f $(CONFIG_MODULE_SIG_HASH) $(MODSECKEY) $(MODPUBKEY)
 endif
 endif
 export fw_sign_cmd
