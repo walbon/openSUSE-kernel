@@ -146,13 +146,40 @@ $(obj)/timeconst.h: $(src)/timeconst.pl FORCE
 	$(call if_changed,timeconst)
 
 ifeq ($(CONFIG_MODULE_SIG),y)
+###############################################################################
 #
-# Pull the signing certificate and any extra certificates into the kernel
+# Roll all the X.509 certificates that we can find together and pull
+# them into the kernel.
 #
-extra_certificates:
-	touch $@
+###############################################################################
+X509_CERTIFICATES-y := $(wildcard *.x509) $(wildcard $(srctree)/*.x509)
+X509_CERTIFICATES-$(CONFIG_MODULE_SIG) += signing_key.x509
+X509_CERTIFICATES := $(sort $(X509_CERTIFICATES-y))
 
-kernel/modsign_certificate.o: signing_key.x509 extra_certificates
+ifeq ($(X509_CERTIFICATES),)
+$(warning *** No X.509 certificates found ***)
+endif
+
+ifneq ($(wildcard $(obj)/.x509.list),)
+ifneq ($(shell cat $(obj)/.x509.list),$(X509_CERTIFICATES))
+$(info X.509 certificate list changed)
+$(shell rm $(obj)/.x509.list)
+endif
+endif
+
+kernel/modsign_certificate.o: $(obj)/x509_certificate_list
+
+quiet_cmd_x509certs  = CERTS   $@
+      cmd_x509certs  = cat $(X509_CERTIFICATES) /dev/null >$@
+targets += $(obj)/x509_certificate_list
+$(obj)/x509_certificate_list: $(X509_CERTIFICATES) $(obj)/.x509.list
+	$(call if_changed,x509certs)
+
+targets += $(obj)/.x509.list
+$(obj)/.x509.list:
+	@echo $(X509_CERTIFICATES) >$@
+
+clean-files := x509_certificate_list .x509.list
 
 ###############################################################################
 #
@@ -161,23 +188,7 @@ kernel/modsign_certificate.o: signing_key.x509 extra_certificates
 # fail and that the kernel may be used afterwards.
 #
 ###############################################################################
-sign_key_with_hash :=
-ifeq ($(CONFIG_MODULE_SIG_SHA1),y)
-sign_key_with_hash := -sha1
-endif
-ifeq ($(CONFIG_MODULE_SIG_SHA224),y)
-sign_key_with_hash := -sha224
-endif
-ifeq ($(CONFIG_MODULE_SIG_SHA256),y)
-sign_key_with_hash := -sha256
-endif
-ifeq ($(CONFIG_MODULE_SIG_SHA384),y)
-sign_key_with_hash := -sha384
-endif
-ifeq ($(CONFIG_MODULE_SIG_SHA512),y)
-sign_key_with_hash := -sha512
-endif
-ifeq ($(sign_key_with_hash),)
+ifndef CONFIG_MODULE_SIG_HASH
 $(error Could not determine digest type to use from kernel config)
 endif
 
@@ -192,8 +203,8 @@ signing_key.priv signing_key.x509: x509.genkey
 	@echo "###"
 	@echo "###     rngd -r /dev/hwrandom"
 	@echo "###"
-	openssl req -new -nodes -utf8 $(sign_key_with_hash) -days 36500 -batch \
-		-x509 -config x509.genkey \
+	openssl req -new -nodes -utf8 -$(CONFIG_MODULE_SIG_HASH) -days 36500 \
+		-batch -x509 -config x509.genkey \
 		-outform DER -out signing_key.x509 \
 		-keyout signing_key.priv
 	@echo "###"

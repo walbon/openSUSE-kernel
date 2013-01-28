@@ -1485,7 +1485,6 @@ config MODULE_SIG_ALL
 comment "Do not forget to sign required modules with scripts/sign-file"
 	depends on MODULE_SIG_FORCE && !MODULE_SIG_ALL
 
-
 config MODULE_SIG_BLACKLIST
 	bool "Support for blacklisting module signature certificates"
 	depends on MODULE_SIG
@@ -1534,6 +1533,15 @@ config MODULE_SIG_SHA512
 	select CRYPTO_SHA512
 
 endchoice
+
+config MODULE_SIG_HASH
+	string
+	depends on MODULE_SIG
+	default "sha1" if MODULE_SIG_SHA1
+	default "sha224" if MODULE_SIG_SHA224
+	default "sha256" if MODULE_SIG_SHA256
+	default "sha384" if MODULE_SIG_SHA384
+	default "sha512" if MODULE_SIG_SHA512
 
 endif # MODULES
 
