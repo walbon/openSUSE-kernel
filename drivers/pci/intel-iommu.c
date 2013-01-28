@@ -2438,7 +2438,7 @@ static int __init init_dmars(void)
 		if (g_num_of_iommus < IOMMU_UNITS_SUPPORTED)
 			g_num_of_iommus++;
 		else
-			printk_once(KERN_ERR, 
+			printk_once(KERN_ERR 
 			  "MAX number (%d) of IOMMUs supported exceeded\n",
 			  IOMMU_UNITS_SUPPORTED);
 	}
