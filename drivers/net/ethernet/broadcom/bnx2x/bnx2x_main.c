@@ -10562,9 +10562,6 @@ static void __devinit bnx2x_get_cnic_mac_hwinfo(struct bnx2x *bp)
 	u8 *iscsi_mac = bp->cnic_eth_dev.iscsi_mac;
 	u8 *fip_mac = bp->fip_mac;
 
-	/* Zero primary MAC configuration */
-	memset(bp->dev->dev_addr, 0, ETH_ALEN);
-
 	if (IS_MF(bp)) {
 		/* iSCSI and FCoE NPAR MACs: if there is no either iSCSI or
 		 * FCoE MAC then the appropriate feature should be disabled.
