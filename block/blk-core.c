@@ -2854,9 +2854,10 @@ void dev_clear_rdonly(struct block_device *bdev)
 {
 	struct request_queue *q = bdev_get_queue(bdev);
 	if (q) {
-		spin_lock_irq(q->queue_lock);
+		unsigned long flags;
+		spin_lock_irqsave(q->queue_lock, flags);
 		queue_flag_clear(QUEUE_FLAG_FAIL_IO, q);
-		spin_unlock_irq(q->queue_lock);
+		spin_unlock_irqrestore(q->queue_lock, flags);
 	}
 }
 
