@@ -2836,9 +2836,9 @@ void dev_set_rdonly(struct block_device *bdev)
 	struct request_queue *q = bdev_get_queue(bdev);
 
 	if (q) {
-		spin_lock_irq(&q->queue_lock);
+		spin_lock_irq(q->queue_lock);
 		queue_flag_set(QUEUE_FLAG_FAIL_IO, q);
-		spin_unlock_irq(&q->queue_lock);
+		spin_unlock_irq(q->queue_lock);
 
 		printk(KERN_WARNING "Turning device %s (%#x) read-only\n",
 		       bdev->bd_disk ? bdev->bd_disk->disk_name : "",
@@ -2854,9 +2854,9 @@ void dev_clear_rdonly(struct block_device *bdev)
 {
 	struct request_queue *q = bdev_get_queue(bdev);
 	if (q) {
-		spin_lock_irq(&q->queue_lock);
+		spin_lock_irq(q->queue_lock);
 		queue_flag_clear(QUEUE_FLAG_FAIL_IO, q);
-		spin_unlock_irq(&q->queue_lock);
+		spin_unlock_irq(q->queue_lock);
 	}
 }
 
