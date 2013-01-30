@@ -1885,8 +1885,7 @@ static void ixgbe_check_lsc(struct ixgbe_adapter *adapter)
 
 static irqreturn_t ixgbe_msix_lsc(int irq, void *data)
 {
-	struct net_device *netdev = data;
-	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+	struct ixgbe_adapter *adapter = data;
 	struct ixgbe_hw *hw = &adapter->hw;
 	u32 eicr;
 
@@ -2387,7 +2386,7 @@ static int ixgbe_request_msix_irqs(struct ixgbe_adapter *adapter)
 
 	sprintf(adapter->lsc_int_name, "%s:lsc", netdev->name);
 	err = request_irq(adapter->msix_entries[vector].vector,
-			  ixgbe_msix_lsc, 0, adapter->lsc_int_name, netdev);
+			  ixgbe_msix_lsc, 0, adapter->lsc_int_name, adapter);
 	if (err) {
 		e_err(probe, "request_irq for msix_lsc failed: %d\n", err);
 		goto free_queue_irqs;
@@ -2499,8 +2498,7 @@ static inline void ixgbe_irq_enable(struct ixgbe_adapter *adapter, bool queues,
  **/
 static irqreturn_t ixgbe_intr(int irq, void *data)
 {
-	struct net_device *netdev = data;
-	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+	struct ixgbe_adapter *adapter = data;
 	struct ixgbe_hw *hw = &adapter->hw;
 	struct ixgbe_q_vector *q_vector = adapter->q_vector[0];
 	u32 eicr;
@@ -2601,11 +2599,11 @@ static int ixgbe_request_irq(struct ixgbe_adapter *adapter)
 		err = ixgbe_request_msix_irqs(adapter);
 	} else if (adapter->flags & IXGBE_FLAG_MSI_ENABLED) {
 		err = request_irq(adapter->pdev->irq, ixgbe_intr, irq_flags,
-				  netdev->name, netdev);
+				  netdev->name, adapter);
 	} else {
 		irq_flags |= IRQF_SHARED;
 		err = request_irq(adapter->pdev->irq, ixgbe_intr, irq_flags,
-				  netdev->name, netdev);
+				  netdev->name, adapter);
 	}
 
 	if (err)
@@ -2616,15 +2614,13 @@ static int ixgbe_request_irq(struct ixgbe_adapter *adapter)
 
 static void ixgbe_free_irq(struct ixgbe_adapter *adapter)
 {
-	struct net_device *netdev = adapter->netdev;
-
 	if (adapter->flags & IXGBE_FLAG_MSIX_ENABLED) {
 		int i, q_vectors;
 
 		q_vectors = adapter->num_msix_vectors;
 
 		i = q_vectors - 1;
-		free_irq(adapter->msix_entries[i].vector, netdev);
+		free_irq(adapter->msix_entries[i].vector, adapter);
 
 		i--;
 		for (; i >= 0; i--) {
@@ -2639,7 +2635,7 @@ static void ixgbe_free_irq(struct ixgbe_adapter *adapter)
 
 		ixgbe_reset_q_vectors(adapter);
 	} else {
-		free_irq(adapter->pdev->irq, netdev);
+		free_irq(adapter->pdev->irq, adapter);
 	}
 }
 
