@@ -5222,8 +5222,6 @@ static int ixgbe_open(struct net_device *netdev)
 
 	ixgbe_up_complete(adapter);
 
-	netif_tx_start_all_queues(netdev);
-
 	return 0;
 
 err_req_irq:
