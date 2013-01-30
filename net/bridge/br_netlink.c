@@ -163,6 +163,7 @@ int br_setlink(struct net_device *dev, struct nlmsghdr *nlh)
 
 	p->state = new_state;
 	br_log_state(p);
+
 	return 0;
 }
 
