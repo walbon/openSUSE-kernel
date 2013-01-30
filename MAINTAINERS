@@ -3348,7 +3348,6 @@ F:	Documentation/networking/ixgbevf.txt
 F:	drivers/net/igb/
 F:	drivers/net/igbvf/
 F:	drivers/net/ixgb/
-F:	drivers/net/ixgbe/
 F:	drivers/net/ixgbevf/
 F:	drivers/net/ethernet/intel/
 
