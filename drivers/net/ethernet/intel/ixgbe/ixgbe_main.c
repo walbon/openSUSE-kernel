@@ -2324,6 +2324,9 @@ static irqreturn_t ixgbe_msix_other(int irq, void *data)
 	}
 
 	ixgbe_check_fan_failure(adapter, eicr);
+#ifdef CONFIG_IXGBE_PTP
+	ixgbe_ptp_check_pps_event(adapter, eicr);
+#endif
 
 	/* re-enable the original interrupt state, no lsc, no queues */
 	if (!test_bit(__IXGBE_DOWN, &adapter->state))
@@ -2522,6 +2525,9 @@ static irqreturn_t ixgbe_intr(int irq, void *data)
 	}
 
 	ixgbe_check_fan_failure(adapter, eicr);
+#ifdef CONFIG_IXGBE_PTP
+	ixgbe_ptp_check_pps_event(adapter, eicr);
+#endif
 
 	/* would disable interrupts here but EIAM disabled it */
 	napi_schedule(&q_vector->napi);
