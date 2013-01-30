@@ -266,7 +266,7 @@ struct i7core_pvt {
 	unsigned long	rdimm_ce_count[NUM_CHANS][MAX_DIMMS];
 	int		rdimm_last_ce_count[NUM_CHANS][MAX_DIMMS];
 
-	bool		is_registered, enable_scrub;
+	unsigned int	is_registered;
 
 	/* mcelog glue */
 	struct edac_mce		edac_mce;
@@ -1460,10 +1460,8 @@ static int mci_bind_devs(struct mem_ctl_info *mci,
 	struct i7core_pvt *pvt = mci->pvt_info;
 	struct pci_dev *pdev;
 	int i, func, slot;
-	char *family;
 
-	pvt->is_registered = false;
-	pvt->enable_scrub  = false;
+	pvt->is_registered = 0;
 	for (i = 0; i < i7core_dev->n_devs; i++) {
 		pdev = i7core_dev->pdev[i];
 		if (!pdev)
@@ -1479,37 +1477,9 @@ static int mci_bind_devs(struct mem_ctl_info *mci,
 			if (unlikely(func > MAX_CHAN_FUNC))
 				goto error;
 			pvt->pci_ch[slot - 4][func] = pdev;
-		} else if (!slot && !func) {
+		} else if (!slot && !func)
 			pvt->pci_noncore = pdev;
-
-			/* Detect the processor family */
-			switch (pdev->device) {
-			case PCI_DEVICE_ID_INTEL_I7_NONCORE:
-				family = "Xeon 35xx/ i7core";
-				pvt->enable_scrub = false;
-				break;
-			case PCI_DEVICE_ID_INTEL_LYNNFIELD_NONCORE_ALT:
-				family = "i7-800/i5-700";
-				pvt->enable_scrub = false;
-				break;
-			case PCI_DEVICE_ID_INTEL_LYNNFIELD_NONCORE:
-				family = "Xeon 34xx";
-				pvt->enable_scrub = false;
-				break;
-			case PCI_DEVICE_ID_INTEL_I7_NONCORE_ALT:
-				family = "Xeon 55xx";
-				pvt->enable_scrub = true;
-				break;
-			case PCI_DEVICE_ID_INTEL_LYNNFIELD_NONCORE_REV2:
-				family = "Xeon 56xx / i7-900";
-				pvt->enable_scrub = true;
-				break;
-			default:
-				family = "unknown";
-				pvt->enable_scrub = false;
-			}
-			debugf0("Detected a processor type %s\n", family);
-		} else
+		else
 			goto error;
 
 		debugf0("Associated fn %d.%d, dev = %p, socket %d\n",
@@ -1518,7 +1488,7 @@ static int mci_bind_devs(struct mem_ctl_info *mci,
 
 		if (PCI_SLOT(pdev->devfn) == 3 &&
 			PCI_FUNC(pdev->devfn) == 2)
-			pvt->is_registered = true;
+			pvt->is_registered = 1;
 	}
 
 	return 0;
@@ -2180,8 +2150,7 @@ static void i7core_unregister_mci(struct i7core_dev *i7core_dev)
 		__func__, mci, &i7core_dev->pdev[0]->dev);
 
 	/* Disable scrubrate setting */
-	if (pvt->enable_scrub)
-		disable_sdram_scrub_setting(mci);
+	disable_sdram_scrub_setting(mci);
 
 	/* Disable MCE NMI handler */
 	edac_mce_unregister(&pvt->edac_mce);
@@ -2257,8 +2226,7 @@ static int i7core_register_mci(struct i7core_dev *i7core_dev)
 	mci->edac_check = i7core_check_error;
 
 	/* Enable scrubrate setting */
-	if (pvt->enable_scrub)
-		enable_sdram_scrub_setting(mci);
+	enable_sdram_scrub_setting(mci);
 
 	/* add this new MC control structure to EDAC's list of MCs */
 	if (unlikely(edac_mc_add_mc(mci))) {
