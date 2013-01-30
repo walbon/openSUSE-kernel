@@ -357,6 +357,14 @@ static inline void mmc_set_disable_delay(struct mmc_host *host,
 /* Module parameter */
 extern int mmc_assume_removable;
 
+static inline int mmc_host_uhs(struct mmc_host *host)
+{
+	return host->caps &
+		(MMC_CAP_UHS_SDR12 | MMC_CAP_UHS_SDR25 |
+		 MMC_CAP_UHS_SDR50 | MMC_CAP_UHS_SDR104 |
+		 MMC_CAP_UHS_DDR50);
+}
+
 static inline int mmc_card_is_removable(struct mmc_host *host)
 {
 	return !(host->caps & MMC_CAP_NONREMOVABLE) && mmc_assume_removable;
