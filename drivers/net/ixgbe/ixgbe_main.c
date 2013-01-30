@@ -134,8 +134,6 @@ static DEFINE_PCI_DEVICE_TABLE(ixgbe_pci_tbl) = {
 	 board_82599 },
 	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_82599_LS),
 	 board_82599 },
-	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_X540T1),
-	 board_X540 },
 
 	/* required last entry */
 	{0, }
