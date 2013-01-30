@@ -129,6 +129,7 @@ struct request_sock;
 #define LSM_UNSAFE_SHARE	1
 #define LSM_UNSAFE_PTRACE	2
 #define LSM_UNSAFE_PTRACE_CAP	4
+#define LSM_UNSAFE_NO_NEW_PRIVS	8
 
 #ifdef CONFIG_MMU
 /*
@@ -1669,6 +1670,8 @@ int security_capset(struct cred *new, const struct cred *old,
 		    const kernel_cap_t *permitted);
 int security_capable(struct user_namespace *ns, const struct cred *cred,
 			int cap);
+int security_capable_noaudit(const struct cred *cred, struct user_namespace *ns,
+			     int cap);
 int security_real_capable(struct task_struct *tsk, struct user_namespace *ns,
 			int cap);
 int security_real_capable_noaudit(struct task_struct *tsk,
@@ -1869,6 +1872,11 @@ static inline int security_capable(struct user_namespace *ns,
 				   const struct cred *cred, int cap)
 {
 	return cap_capable(current, cred, ns, cap, SECURITY_CAP_AUDIT);
+}
+
+static inline int security_capable_noaudit(const struct cred *cred,
+					   struct user_namespace *ns, int cap) {
+	return cap_capable(current, cred, ns, cap, SECURITY_CAP_NOAUDIT);
 }
 
 static inline int security_real_capable(struct task_struct *tsk, struct user_namespace *ns, int cap)
