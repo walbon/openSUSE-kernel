@@ -6628,18 +6628,7 @@ static int igb_resume(struct device *dev)
 	pci_enable_wake(pdev, PCI_D3hot, 0);
 	pci_enable_wake(pdev, PCI_D3cold, 0);
 
-	if (!rtnl_is_locked()) {
-		/*
-		 * shut up ASSERT_RTNL() warning in
-		 * netif_set_real_num_tx/rx_queues.
-		 */
-		rtnl_lock();
-		err = igb_init_interrupt_scheme(adapter);
-		rtnl_unlock();
-	} else {
-		err = igb_init_interrupt_scheme(adapter);
-	}
-	if (err) {
+	if (igb_init_interrupt_scheme(adapter)) {
 		dev_err(&pdev->dev, "Unable to allocate memory for queues\n");
 		return -ENOMEM;
 	}
