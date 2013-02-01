@@ -83,7 +83,6 @@ static irqreturn_t qlcnic_msix_intr(int irq, void *data);
 static irqreturn_t qlcnic_msix_tx_intr(int irq, void *data);
 
 static struct net_device_stats *qlcnic_get_stats(struct net_device *netdev);
-static void qlcnic_restore_indev_addr(struct net_device *dev, unsigned long);
 static int qlcnic_start_firmware(struct qlcnic_adapter *);
 
 static void qlcnic_free_lb_filters_mem(struct qlcnic_adapter *adapter);
@@ -182,6 +181,7 @@ static const struct qlcnic_board_info qlcnic_boards[] = {
 };
 
 #define NUM_SUPPORTED_BOARDS ARRAY_SIZE(qlcnic_boards)
+#define QLC_MAX_SDS_RINGS	8
 
 static const
 struct qlcnic_legacy_intr_set legacy_intr[] = QLCNIC_LEGACY_INTR_CONFIG;
@@ -452,8 +452,7 @@ int qlcnic_82xx_setup_intr(struct qlcnic_adapter *adapter, u8 num_intr)
 	return 0;
 }
 
-static void
-qlcnic_teardown_intr(struct qlcnic_adapter *adapter)
+void qlcnic_teardown_intr(struct qlcnic_adapter *adapter)
 {
 	if (adapter->flags & QLCNIC_MSIX_ENABLED)
 		pci_disable_msix(adapter->pdev);
@@ -1243,8 +1242,7 @@ qlcnic_free_irq(struct qlcnic_adapter *adapter)
 	}
 }
 
-static int
-__qlcnic_up(struct qlcnic_adapter *adapter, struct net_device *netdev)
+int __qlcnic_up(struct qlcnic_adapter *adapter, struct net_device *netdev)
 {
 	int ring;
 	u32 capab2;
@@ -1309,8 +1307,7 @@ static int qlcnic_up(struct qlcnic_adapter *adapter, struct net_device *netdev)
 	return err;
 }
 
-static void
-__qlcnic_down(struct qlcnic_adapter *adapter, struct net_device *netdev)
+void __qlcnic_down(struct qlcnic_adapter *adapter, struct net_device *netdev)
 {
 	if (adapter->is_up != QLCNIC_ADAPTER_UP_MAGIC)
 		return;
@@ -1352,7 +1349,7 @@ qlcnic_down(struct qlcnic_adapter *adapter, struct net_device *netdev)
 
 }
 
-static int
+int
 qlcnic_attach(struct qlcnic_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
@@ -1398,8 +1395,7 @@ err_out_napi_del:
 	return err;
 }
 
-static void
-qlcnic_detach(struct qlcnic_adapter *adapter)
+void qlcnic_detach(struct qlcnic_adapter *adapter)
 {
 	if (adapter->is_up != QLCNIC_ADAPTER_UP_MAGIC)
 		return;
@@ -2054,13 +2050,7 @@ done:
 static int qlcnic_open(struct net_device *netdev)
 {
 	struct qlcnic_adapter *adapter = netdev_priv(netdev);
-	u32 state = QLCRD32(adapter, QLCNIC_CRB_DEV_STATE);
 	int err;
-
-	if (state == QLCNIC_DEV_FAILED || (state == QLCNIC_DEV_BADBAD)) {
-		netdev_err(netdev, "Device in FAILED state\n");
-		return -EIO;
-	}
 
 	netif_carrier_off(netdev);
 
@@ -3091,33 +3081,38 @@ qlcnicvf_start_firmware(struct qlcnic_adapter *adapter)
 	return err;
 }
 
-int qlcnic_validate_max_rss(struct net_device *netdev, u8 max_hw, u8 val)
+int qlcnic_validate_max_rss(u8 max_hw, u8 val)
 {
-	if (!qlcnic_use_msi_x && !qlcnic_use_msi) {
-		netdev_info(netdev, "no msix or msi support, hence no rss\n");
-		return -EINVAL;
+	u32 max_allowed;
+
+	if (max_hw > QLC_MAX_SDS_RINGS) {
+		max_hw = QLC_MAX_SDS_RINGS;
+		pr_info("max rss reset to %d\n", QLC_MAX_SDS_RINGS);
 	}
 
-	if ((val > max_hw) || (val <  2) || !is_power_of_2(val)) {
-		netdev_info(netdev, "rss_ring valid range [2 - %x] in "
-			" powers of 2\n", max_hw);
+	max_allowed = rounddown_pow_of_two(min_t(int, max_hw,
+						 num_online_cpus()));
+	if ((val > max_allowed) || (val < 2) || !is_power_of_2(val)) {
+		pr_info("rss_ring valid range [2 - %x] in powers of 2\n",
+			max_allowed);
 		return -EINVAL;
 	}
 	return 0;
-
 }
 
-int qlcnic_set_max_rss(struct qlcnic_adapter *adapter, u8 data)
+int qlcnic_set_max_rss(struct qlcnic_adapter *adapter, u8 data, size_t len)
 {
 	int err;
 	struct net_device *netdev = adapter->netdev;
 
-	rtnl_lock();
+	if (test_bit(__QLCNIC_RESETTING, &adapter->state))
+		return -EBUSY;
+
 	netif_device_detach(netdev);
 	if (netif_running(netdev))
 		__qlcnic_down(adapter, netdev);
 
-	if (qlcnic_83xx_check(adapter)) {
+	if (qlcnic_82xx_check(adapter)) {
 		if (adapter->flags & QLCNIC_MSIX_ENABLED)
 			qlcnic_83xx_config_intrpt(adapter, 0);
 		qlcnic_83xx_free_mbx_intr(adapter);
@@ -3125,7 +3120,7 @@ int qlcnic_set_max_rss(struct qlcnic_adapter *adapter, u8 data)
 
 	qlcnic_detach(adapter);
 	qlcnic_teardown_intr(adapter);
-	err = adapter->ahw->hw_ops->setup_intr(adapter, data);
+	err = qlcnic_setup_intr(adapter, data);
 	if (err)
 		dev_err(&adapter->pdev->dev,
 			"failed setting max_rss; rss disabled\n");
@@ -3148,10 +3143,10 @@ int qlcnic_set_max_rss(struct qlcnic_adapter *adapter, u8 data)
 			goto done;
 		qlcnic_restore_indev_addr(netdev, NETDEV_UP);
 	}
+	err = len;
  done:
 	netif_device_attach(netdev);
 	clear_bit(__QLCNIC_RESETTING, &adapter->state);
-	rtnl_unlock();
 	return err;
 }
 
@@ -3187,8 +3182,7 @@ qlcnic_config_indev_addr(struct qlcnic_adapter *adapter,
 	in_dev_put(indev);
 }
 
-static void
-qlcnic_restore_indev_addr(struct net_device *netdev, unsigned long event)
+void qlcnic_restore_indev_addr(struct net_device *netdev, unsigned long event)
 {
 	struct qlcnic_adapter *adapter = netdev_priv(netdev);
 	struct vlan_group *grp;
