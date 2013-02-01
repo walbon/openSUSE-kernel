@@ -909,7 +909,8 @@ u32 qlcnic_fix_features(struct net_device *netdev, u32 features)
 {
 	struct qlcnic_adapter *adapter = netdev_priv(netdev);
 
-	if ((adapter->flags & QLCNIC_ESWITCH_ENABLED)) {
+	if ((adapter->flags & QLCNIC_ESWITCH_ENABLED) &&
+	    qlcnic_82xx_check(adapter))  {
 		u32 changed = features ^ netdev->features;
 		features ^= changed & (NETIF_F_ALL_CSUM | NETIF_F_RXCSUM);
 	}
