@@ -46,10 +46,12 @@ static int usb_start_wait_urb(struct urb *urb, int timeout, int *actual_length)
 	struct api_context ctx;
 	unsigned long expire;
 	int retval;
+	struct usb_device *udev;
 
 	init_completion(&ctx.done);
 	urb->context = &ctx;
 	urb->actual_length = 0;
+	udev = urb->dev;
 	retval = usb_submit_urb(urb, GFP_NOIO);
 	if (unlikely(retval))
 		goto out;
@@ -73,6 +75,8 @@ out:
 		*actual_length = urb->actual_length;
 
 	usb_free_urb(urb);
+	if (udev->quirks & USB_QUIRK_LONG_DELAYS)
+		mdelay(20);
 	return retval;
 }
 
