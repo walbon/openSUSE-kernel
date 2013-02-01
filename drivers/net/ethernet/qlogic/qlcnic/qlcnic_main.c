@@ -3285,8 +3285,7 @@ static struct notifier_block qlcnic_inetaddr_cb = {
 	.notifier_call = qlcnic_inetaddr_event,
 };
 #else
-static void
-qlcnic_restore_indev_addr(struct net_device *dev, unsigned long event)
+void qlcnic_restore_indev_addr(struct net_device *dev, unsigned long event)
 { }
 #endif
 static const struct pci_error_handlers qlcnic_err_handler = {
