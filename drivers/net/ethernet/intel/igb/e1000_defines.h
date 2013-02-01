@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel(R) Gigabit Ethernet Linux driver
-  Copyright(c) 2007-2009 Intel Corporation.
+  Copyright(c) 2007-2012 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -85,6 +85,7 @@
 #define E1000_RXD_STAT_TCPCS    0x20    /* TCP xsum calculated */
 #define E1000_RXD_STAT_TS       0x10000 /* Pkt was time stamped */
 
+#define E1000_RXDEXT_STATERR_LB    0x00040000
 #define E1000_RXDEXT_STATERR_CE    0x01000000
 #define E1000_RXDEXT_STATERR_SE    0x02000000
 #define E1000_RXDEXT_STATERR_SEQ   0x04000000
@@ -298,6 +299,8 @@
 							* transactions */
 #define E1000_DMACR_DMAC_LX_SHIFT       28
 #define E1000_DMACR_DMAC_EN             0x80000000 /* Enable DMA Coalescing */
+/* DMA Coalescing BMC-to-OS Watchdog Enable */
+#define E1000_DMACR_DC_BMC2OSW_EN	0x00008000
 
 #define E1000_DMCTXTH_DMCTTHR_MASK      0x00000FFF /* DMA Coalescing Transmit
 							* Threshold */
@@ -316,6 +319,9 @@
 							* High val */
 #define E1000_FCRTC_RTH_COAL_SHIFT      4
 #define E1000_PCIEMISC_LX_DECISION      0x00000080 /* Lx power decision */
+
+/* Timestamp in Rx buffer */
+#define E1000_RXPBS_CFG_TS_EN           0x80000000
 
 /* SerDes Control */
 #define E1000_SCTL_DISABLE_SERDES_LOOPBACK 0x0400
@@ -355,6 +361,7 @@
 #define E1000_ICR_RXDMT0        0x00000010 /* rx desc min. threshold (0) */
 #define E1000_ICR_RXT0          0x00000080 /* rx timer intr (ring 0) */
 #define E1000_ICR_VMMB          0x00000100 /* VM MB event */
+#define E1000_ICR_TS            0x00080000 /* Time Sync Interrupt */
 #define E1000_ICR_DRSTA         0x40000000 /* Device Reset Asserted */
 /* If this bit asserted, the driver should claim the interrupt */
 #define E1000_ICR_INT_ASSERTED  0x80000000
@@ -394,6 +401,7 @@
 #define E1000_IMS_TXDW      E1000_ICR_TXDW      /* Transmit desc written back */
 #define E1000_IMS_LSC       E1000_ICR_LSC       /* Link Status Change */
 #define E1000_IMS_VMMB      E1000_ICR_VMMB      /* Mail box activity */
+#define E1000_IMS_TS        E1000_ICR_TS        /* Time Sync Interrupt */
 #define E1000_IMS_RXSEQ     E1000_ICR_RXSEQ     /* rx sequence error */
 #define E1000_IMS_RXDMT0    E1000_ICR_RXDMT0    /* rx desc min. threshold */
 #define E1000_IMS_RXT0      E1000_ICR_RXT0      /* rx timer intr */
@@ -409,6 +417,9 @@
 #define E1000_ICS_DRSTA     E1000_ICR_DRSTA     /* Device Reset Aserted */
 
 /* Extended Interrupt Cause Set */
+/* E1000_EITR_CNT_IGNR is only for 82576 and newer */
+#define E1000_EITR_CNT_IGNR     0x80000000 /* Don't reset counters on write */
+
 
 /* Transmit Descriptor Control */
 /* Enable the counting of descriptors still to be processed. */
@@ -417,6 +428,10 @@
 #define FLOW_CONTROL_ADDRESS_LOW  0x00C28001
 #define FLOW_CONTROL_ADDRESS_HIGH 0x00000100
 #define FLOW_CONTROL_TYPE         0x8808
+
+/* Transmit Config Word */
+#define E1000_TXCW_ASM_DIR	0x00000100 /* TXCW astm pause direction */
+#define E1000_TXCW_PAUSE	0x00000080 /* TXCW sym pause request */
 
 /* 802.1q VLAN Packet Size */
 #define VLAN_TAG_SIZE              4    /* 802.3ac tag (not DMA'd) */
@@ -437,6 +452,7 @@
 #define E1000_RAH_POOL_1 0x00040000
 
 /* Error Codes */
+#define E1000_SUCCESS      0
 #define E1000_ERR_NVM      1
 #define E1000_ERR_PHY      2
 #define E1000_ERR_CONFIG   3
@@ -451,6 +467,7 @@
 #define E1000_ERR_INVALID_ARGUMENT  16
 #define E1000_ERR_NO_SPACE          17
 #define E1000_ERR_NVM_PBA_SECTION   18
+#define E1000_ERR_INVM_VALUE_NOT_FOUND	19
 
 /* Loop limit on how long we wait for auto-negotiation to complete */
 #define COPPER_LINK_UP_LIMIT              10
@@ -500,6 +517,9 @@
 
 #define E1000_TIMINCA_16NS_SHIFT 24
 
+#define E1000_TSICR_TXTS 0x00000002
+#define E1000_TSIM_TXTS 0x00000002
+
 #define E1000_MDICNFG_EXT_MDIO    0x80000000      /* MDI ext/int destination */
 #define E1000_MDICNFG_COM_MDIO    0x40000000      /* MDI shared w/ lan 0 */
 #define E1000_MDICNFG_PHY_MASK    0x03E00000
@@ -510,6 +530,19 @@
 #define E1000_GCR_CMPL_TMOUT_10ms       0x00001000
 #define E1000_GCR_CMPL_TMOUT_RESEND     0x00010000
 #define E1000_GCR_CAP_VER2              0x00040000
+
+/* mPHY Address Control and Data Registers */
+#define E1000_MPHY_ADDR_CTL          0x0024 /* mPHY Address Control Register */
+#define E1000_MPHY_ADDR_CTL_OFFSET_MASK 0xFFFF0000
+#define E1000_MPHY_DATA                 0x0E10 /* mPHY Data Register */
+
+/* mPHY PCS CLK Register */
+#define E1000_MPHY_PCS_CLK_REG_OFFSET  0x0004 /* mPHY PCS CLK AFE CSR Offset */
+/* mPHY Near End Digital Loopback Override Bit */
+#define E1000_MPHY_PCS_CLK_REG_DIGINELBEN 0x10
+
+#define E1000_PCS_LCTL_FORCE_FCTRL	0x80
+#define E1000_PCS_LSTS_AN_COMPLETE	0x10000
 
 /* PHY Control Register */
 #define MII_CR_FULL_DUPLEX      0x0100  /* FDX =1, half duplex =0 */
@@ -578,6 +611,25 @@
 #define E1000_EECD_AUTO_RD          0x00000200  /* NVM Auto Read done */
 #define E1000_EECD_SIZE_EX_MASK     0x00007800  /* NVM Size */
 #define E1000_EECD_SIZE_EX_SHIFT     11
+#define E1000_EECD_FLUPD_I210		0x00800000 /* Update FLASH */
+#define E1000_EECD_FLUDONE_I210		0x04000000 /* Update FLASH done*/
+#define E1000_FLUDONE_ATTEMPTS		20000
+#define E1000_EERD_EEWR_MAX_COUNT	512 /* buffered EEPROM words rw */
+#define E1000_I210_FIFO_SEL_RX		0x00
+#define E1000_I210_FIFO_SEL_TX_QAV(_i)	(0x02 + (_i))
+#define E1000_I210_FIFO_SEL_TX_LEGACY	E1000_I210_FIFO_SEL_TX_QAV(0)
+#define E1000_I210_FIFO_SEL_BMC2OS_TX	0x06
+#define E1000_I210_FIFO_SEL_BMC2OS_RX	0x01
+#define E1000_EECD_FLUPD_I210		0x00800000 /* Update FLASH */
+#define E1000_EECD_FLUDONE_I210		0x04000000 /* Update FLASH done*/
+#define E1000_FLUDONE_ATTEMPTS		20000
+#define E1000_EERD_EEWR_MAX_COUNT	512 /* buffered EEPROM words rw */
+#define E1000_I210_FIFO_SEL_RX		0x00
+#define E1000_I210_FIFO_SEL_TX_QAV(_i)	(0x02 + (_i))
+#define E1000_I210_FIFO_SEL_TX_LEGACY	E1000_I210_FIFO_SEL_TX_QAV(0)
+#define E1000_I210_FIFO_SEL_BMC2OS_TX	0x06
+#define E1000_I210_FIFO_SEL_BMC2OS_RX	0x01
+
 
 /* Offset to data in NVM read/write registers */
 #define E1000_NVM_RW_REG_DATA   16
@@ -587,8 +639,9 @@
 #define E1000_NVM_POLL_READ     0    /* Flag for polling for read complete */
 
 /* NVM Word Offsets */
-#define NVM_ID_LED_SETTINGS        0x0004
-/* For SERDES output amplitude adjustment. */
+#define NVM_COMPAT                 0x0003
+#define NVM_ID_LED_SETTINGS        0x0004 /* SERDES output amplitude */
+#define NVM_VERSION                0x0005
 #define NVM_INIT_CONTROL2_REG      0x000F
 #define NVM_INIT_CONTROL3_PORT_B   0x0014
 #define NVM_INIT_CONTROL3_PORT_A   0x0024
@@ -596,6 +649,29 @@
 #define NVM_CHECKSUM_REG           0x003F
 #define NVM_COMPATIBILITY_REG_3    0x0003
 #define NVM_COMPATIBILITY_BIT_MASK 0x8000
+#define NVM_MAC_ADDR               0x0000
+#define NVM_SUB_DEV_ID             0x000B
+#define NVM_SUB_VEN_ID             0x000C
+#define NVM_DEV_ID                 0x000D
+#define NVM_VEN_ID                 0x000E
+#define NVM_INIT_CTRL_2            0x000F
+#define NVM_INIT_CTRL_4            0x0013
+#define NVM_LED_1_CFG              0x001C
+#define NVM_LED_0_2_CFG            0x001F
+
+/* NVM version defines */
+#define NVM_ETRACK_WORD            0x0042
+#define NVM_COMB_VER_OFF           0x0083
+#define NVM_COMB_VER_PTR           0x003d
+#define NVM_MAJOR_MASK             0xF000
+#define NVM_MINOR_MASK             0x0FF0
+#define NVM_BUILD_MASK             0x000F
+#define NVM_COMB_VER_MASK          0x00FF
+#define NVM_MAJOR_SHIFT                12
+#define NVM_MINOR_SHIFT                 4
+#define NVM_COMB_VER_SHFT               8
+#define NVM_VER_INVALID            0xFFFF
+#define NVM_ETRACK_SHIFT               16
 
 #define E1000_NVM_CFG_DONE_PORT_0  0x040000 /* MNG config cycle done */
 #define E1000_NVM_CFG_DONE_PORT_1  0x080000 /* ...for second port */
@@ -622,6 +698,7 @@
 
 #define NVM_PBA_OFFSET_0           8
 #define NVM_PBA_OFFSET_1           9
+#define NVM_RESERVED_WORD		0xFFFF
 #define NVM_PBA_PTR_GUARD          0xFAFA
 #define NVM_WORD_SIZE_BASE_SHIFT   6
 
@@ -679,6 +756,7 @@
 #define I82580_I_PHY_ID      0x015403A0
 #define I350_I_PHY_ID        0x015403B0
 #define M88_VENDOR           0x0141
+#define I210_I_PHY_ID        0x01410C00
 
 /* M88E1000 Specific Registers */
 #define M88E1000_PHY_SPEC_CTRL     0x10  /* PHY Specific Control Register */
@@ -798,7 +876,9 @@
 #define E1000_IPCNFG_EEE_100M_AN     0x00000004  /* EEE Enable 100M AN */
 #define E1000_EEER_TX_LPI_EN         0x00010000  /* EEE Tx LPI Enable */
 #define E1000_EEER_RX_LPI_EN         0x00020000  /* EEE Rx LPI Enable */
+#define E1000_EEER_FRC_AN            0x10000000  /* Enable EEE in loopback */
 #define E1000_EEER_LPI_FC            0x00040000  /* EEE Enable on FC */
+#define E1000_EEE_SU_LPI_CLK_STP     0X00800000  /* EEE LPI Clock Stop */
 
 /* SerDes Control */
 #define E1000_GEN_CTL_READY             0x80000000
