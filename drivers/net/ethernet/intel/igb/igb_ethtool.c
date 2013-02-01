@@ -2353,7 +2353,7 @@ static int igb_get_rss_hash_opts(struct igb_adapter *adapter,
 }
 
 static int igb_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd,
-			   u32 *rule_locs)
+			   void *rule_locs)
 {
 	struct igb_adapter *adapter = netdev_priv(dev);
 	int ret = -EOPNOTSUPP;
