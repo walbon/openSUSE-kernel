@@ -3903,11 +3903,6 @@ long btrfs_ioctl(struct file *file, unsigned int
 		}
 		return btrfs_ioctl_set_received_subvol(file, argp);
 	case BTRFS_IOC_SEND:
-		if (!allow_unsupported) {
-			printk(KERN_WARNING "btrfs: IOC_SEND is not supported, load module with allow_unsupported=1\n");
-			ret = -EOPNOTSUPP;
-			break;
-		}
 		return btrfs_ioctl_send(file, argp);
 	case BTRFS_IOC_GET_DEV_STATS:
 		return btrfs_ioctl_get_dev_stats(root, argp);

@@ -4595,6 +4595,16 @@ long btrfs_ioctl_send(struct file *mnt_file, void __user *arg_)
 		goto out;
 	}
 
+	if (arg->flags & ~BTRFS_SEND_FLAG_NO_FILE_DATA) {
+		ret = -EINVAL;
+		goto out;
+	}
+	if (!allow_unsupported || !(arg->flags & BTRFS_SEND_FLAG_NO_FILE_DATA)) {
+		printk(KERN_WARNING "btrfs: IOC_SEND supported in NO_FILE_DATA mode, load module with allow_unsupported=1\n");
+		ret = -EOPNOTSUPP;
+		goto out;
+	}
+
 	sctx = kzalloc(sizeof(struct send_ctx), GFP_NOFS);
 	if (!sctx) {
 		ret = -ENOMEM;
@@ -4605,9 +4615,6 @@ long btrfs_ioctl_send(struct file *mnt_file, void __user *arg_)
 	INIT_LIST_HEAD(&sctx->deleted_refs);
 	INIT_RADIX_TREE(&sctx->name_cache, GFP_NOFS);
 	INIT_LIST_HEAD(&sctx->name_cache_list);
-
-	if (arg->flags & ~BTRFS_SEND_FLAG_NO_FILE_DATA)
-		return -EINVAL;
 
 	sctx->flags = arg->flags;
 
