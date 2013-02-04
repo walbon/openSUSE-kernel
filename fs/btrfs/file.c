@@ -1685,7 +1685,6 @@ static int btrfs_file_mmap(struct file	*filp, struct vm_area_struct *vma)
 	return 0;
 }
 
-#if 0
 /* enable with hole punch */
 static int hole_mergeable(struct inode *inode, struct extent_buffer *leaf,
 			  int slot, u64 start, u64 end)
@@ -1813,15 +1812,51 @@ out:
 
 	return 0;
 }
-#endif
+
+/* inlined from 623e3db9f9b7d6e7b2a99180f9cf0825c936ab7a */
+
+/**
+ * truncate_pagecache_range - unmap and remove pagecache that is hole-punched
+ * @inode: inode
+ * @lstart: offset of beginning of hole
+ * @lend: offset of last byte of hole
+ *
+ * This function should typically be called before the filesystem
+ * releases resources associated with the freed range (eg. deallocates
+ * blocks). This way, pagecache will always stay logically coherent
+ * with on-disk format, and the filesystem would not have to deal with
+ * situations such as writepage being called for a page that has already
+ * had its underlying blocks deallocated.
+ */
+static void __truncate_pagecache_range(struct inode *inode, loff_t lstart, loff_t lend)
+{
+       struct address_space *mapping = inode->i_mapping;
+       loff_t unmap_start = round_up(lstart, PAGE_SIZE);
+       loff_t unmap_end = round_down(1 + lend, PAGE_SIZE) - 1;
+       /*
+        * This rounding is currently just for example: unmap_mapping_range
+        * expands its hole outwards, whereas we want it to contract the hole
+        * inwards.  However, existing callers of truncate_pagecache_range are
+        * doing their own page rounding first; and truncate_inode_pages_range
+        * currently BUGs if lend is not pagealigned-1 (it handles partial
+        * page at start of hole, but not partial page at end of hole).  Note
+        * unmap_mapping_range allows holelen 0 for all, and we allow lend -1.
+        */
+
+       /*
+        * Unlike in truncate_pagecache, unmap_mapping_range is called only
+        * once (before truncating pagecache), and without "even_cows" flag:
+        * hole-punching should not remove private COWed pages from the hole.
+        */
+       if ((u64)unmap_end > (u64)unmap_start)
+               unmap_mapping_range(mapping, unmap_start,
+                                   1 + unmap_end - unmap_start, 0);
+       truncate_inode_pages_range(mapping, lstart, lend);
+}
+
 
 static int btrfs_punch_hole(struct inode *inode, loff_t offset, loff_t len)
 {
-	/* Disable until truncate_pagecache_range
-	 * (623e3db9f9b7d6e7b2a99180f9cf0825c936ab7a) is backported */
-	return -EOPNOTSUPP;
-
-#if 0
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct extent_state *cached_state = NULL;
 	struct btrfs_path *path;
@@ -1879,7 +1914,7 @@ static int btrfs_punch_hole(struct inode *inode, loff_t offset, loff_t len)
 	while (1) {
 		struct btrfs_ordered_extent *ordered;
 
-		truncate_pagecache_range(inode, lockstart, lockend);
+		__truncate_pagecache_range(inode, lockstart, lockend);
 
 		lock_extent_bits(&BTRFS_I(inode)->io_tree, lockstart, lockend,
 				 0, &cached_state);
@@ -2009,7 +2044,6 @@ out:
 	if (ret && !err)
 		err = ret;
 	return err;
-#endif
 }
 
 static long btrfs_fallocate(struct file *file, int mode,
