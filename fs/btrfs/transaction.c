@@ -33,6 +33,10 @@
 
 #define BTRFS_ROOT_TRANS_TAG 0
 
+/* stubs */
+static inline void sb_start_intwrite(struct super_block *sb) { }
+static inline void sb_end_intwrite(struct super_block *sb) { }
+
 void put_transaction(struct btrfs_transaction *transaction)
 {
 	WARN_ON(atomic_read(&transaction->use_count) == 0);
@@ -53,7 +57,7 @@ static noinline void switch_commit_root(struct btrfs_root *root)
 /*
  * either allocate a new transaction or hop into the existing one
  */
-static noinline int join_transaction(struct btrfs_root *root, int nofail)
+static noinline int join_transaction(struct btrfs_root *root, int type)
 {
 	struct btrfs_transaction *cur_trans;
 	struct btrfs_fs_info *fs_info = root->fs_info;
@@ -67,7 +71,13 @@ loop:
 	}
 
 	if (fs_info->trans_no_join) {
-		if (!nofail) {
+		/* 
+		 * If we are JOIN_NOLOCK we're already committing a current
+		 * transaction, we just need a handle to deal with something
+		 * when committing the transaction, such as inode cache and
+		 * space cache. It is a special case.
+		 */
+		if (type != TRANS_JOIN_NOLOCK) {
 			spin_unlock(&fs_info->trans_lock);
 			return -EBUSY;
 		}
@@ -86,6 +96,13 @@ loop:
 		return 0;
 	}
 	spin_unlock(&fs_info->trans_lock);
+
+	/*
+	 * If we are ATTACH, we just want to catch the current transaction,
+	 * and commit it. If there is no transaction, just return ENOENT.
+	 */
+	if (type == TRANS_ATTACH)
+		return -ENOENT;
 
 	cur_trans = kmem_cache_alloc(btrfs_transaction_cachep, GFP_NOFS);
 	if (!cur_trans)
@@ -334,16 +351,34 @@ again:
 	if (!h)
 		return ERR_PTR(-ENOMEM);
 
+	/*
+	 * If we are JOIN_NOLOCK we're already committing a transaction and
+	 * waiting on this guy, so we don't need to do the sb_start_intwrite
+	 * because we're already holding a ref.  We need this because we could
+	 * have raced in and did an fsync() on a file which can kick a commit
+	 * and then we deadlock with somebody doing a freeze.
+	 *
+	 * If we are ATTACH, it means we just want to catch the current
+	 * transaction and commit it, so we needn't do sb_start_intwrite(). 
+	 */
+	if (type < TRANS_JOIN_NOLOCK)
+		sb_start_intwrite(root->fs_info->sb);
+ 
 	if (may_wait_transaction(root, type))
 		wait_current_trans(root);
 
 	do {
-		ret = join_transaction(root, type == TRANS_JOIN_NOLOCK);
+		ret = join_transaction(root, type);
 		if (ret == -EBUSY)
 			wait_current_trans(root);
 	} while (ret == -EBUSY);
 
 	if (ret < 0) {
+		/* We must get the transaction if we are JOIN_NOLOCK. */
+		BUG_ON(type == TRANS_JOIN_NOLOCK);
+
+		if (type < TRANS_JOIN_NOLOCK)
+			sb_end_intwrite(root->fs_info->sb);
 		kmem_cache_free(btrfs_trans_handle_cachep, h);
 		return ERR_PTR(ret);
 	}
@@ -413,6 +448,11 @@ struct btrfs_trans_handle *btrfs_join_transaction_nolock(struct btrfs_root *root
 struct btrfs_trans_handle *btrfs_start_ioctl_transaction(struct btrfs_root *root)
 {
 	return start_transaction(root, 0, TRANS_USERSPACE, 0);
+}
+
+struct btrfs_trans_handle *btrfs_attach_transaction(struct btrfs_root *root)
+{
+	return start_transaction(root, 0, TRANS_ATTACH, 0);
 }
 
 /* wait for a transaction commit to be fully complete */
@@ -580,6 +620,9 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 			wake_up_process(info->transaction_kthread);
 		}
 	}
+
+	if (trans->type < TRANS_JOIN_NOLOCK)
+		sb_end_intwrite(root->fs_info->sb);
 
 	WARN_ON(cur_trans != info->running_transaction);
 	WARN_ON(atomic_read(&cur_trans->num_writers) < 1);
@@ -1331,6 +1374,9 @@ static void cleanup_transaction(struct btrfs_trans_handle *trans,
 
 	put_transaction(cur_trans);
 	put_transaction(cur_trans);
+
+	if (trans->type < TRANS_JOIN_NOLOCK)
+		sb_end_intwrite(root->fs_info->sb);
 
 	trace_btrfs_transaction_commit(root);
 

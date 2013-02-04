@@ -2129,7 +2129,6 @@ void btrfs_run_delayed_iputs(struct btrfs_root *root)
 	if (empty)
 		return;
 
-	down_read(&root->fs_info->cleanup_work_sem);
 	spin_lock(&fs_info->delayed_iput_lock);
 	list_splice_init(&fs_info->delayed_iputs, &list);
 	spin_unlock(&fs_info->delayed_iput_lock);
@@ -2140,7 +2139,6 @@ void btrfs_run_delayed_iputs(struct btrfs_root *root)
 		iput(delayed->inode);
 		kfree(delayed);
 	}
-	up_read(&root->fs_info->cleanup_work_sem);
 }
 
 enum btrfs_orphan_cleanup_state {
