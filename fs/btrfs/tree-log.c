@@ -3151,7 +3151,6 @@ static int log_one_extent(struct btrfs_trans_handle *trans,
 			  struct btrfs_path *dst_path, struct log_args *args)
 {
 	struct btrfs_root *log = root->log_root;
-	struct btrfs_file_extent_item *fi;
 	struct btrfs_key key;
 	u64 start = em->mod_start;
 	u64 search_start = start;
@@ -3207,10 +3206,7 @@ again:
 				}
 			} while (key.offset > start);
 
-			fi = btrfs_item_ptr(path->nodes[0], path->slots[0],
-					    struct btrfs_file_extent_item);
-			num_bytes = btrfs_file_extent_num_bytes(path->nodes[0],
-								fi);
+			num_bytes = btrfs_file_extent_length(path);
 			if (key.offset + num_bytes <= start) {
 				btrfs_release_path(path);
 				return -ENOENT;
@@ -3219,8 +3215,7 @@ again:
 		args->src = path->nodes[0];
 next_slot:
 		btrfs_item_key_to_cpu(path->nodes[0], &key, path->slots[0]);
-		fi = btrfs_item_ptr(args->src, path->slots[0],
-				    struct btrfs_file_extent_item);
+		num_bytes = btrfs_file_extent_length(path);
 		if (args->nr &&
 		    args->start_slot + args->nr == path->slots[0]) {
 			args->nr++;
@@ -3238,7 +3233,6 @@ next_slot:
 		}
 		nritems = btrfs_header_nritems(path->nodes[0]);
 		path->slots[0]++;
-		num_bytes = btrfs_file_extent_num_bytes(args->src, fi);
 		if (len < num_bytes) {
 			/* I _think_ this is ok, envision we write to a
 			 * preallocated space that is adjacent to a previously
@@ -3408,7 +3402,10 @@ static int btrfs_log_inode(struct btrfs_trans_handle *trans,
 
 
 	/* today the code can only do partial logging of directories */
-	if (inode_only == LOG_INODE_EXISTS || S_ISDIR(inode->i_mode))
+	if (S_ISDIR(inode->i_mode) ||
+	    (!test_bit(BTRFS_INODE_NEEDS_FULL_SYNC,
+		       &BTRFS_I(inode)->runtime_flags) &&
+	     inode_only == LOG_INODE_EXISTS))
 		max_key.type = BTRFS_XATTR_ITEM_KEY;
 	else
 		max_key.type = (u8)-1;
@@ -3443,7 +3440,8 @@ static int btrfs_log_inode(struct btrfs_trans_handle *trans,
 			ret = btrfs_truncate_inode_items(trans, log,
 							 inode, 0, 0);
 		} else {
-			fast_search = true;
+			if (inode_only == LOG_INODE_ALL)
+				fast_search = true;
 			max_key.type = BTRFS_XATTR_ITEM_KEY;
 			ret = drop_objectid_items(trans, log, path, ino,
 						  BTRFS_XATTR_ITEM_KEY);
@@ -3539,8 +3537,10 @@ next_slot:
 		struct extent_map_tree *tree = &BTRFS_I(inode)->extent_tree;
 		struct extent_map *em, *n;
 
+		write_lock(&tree->lock);
 		list_for_each_entry_safe(em, n, &tree->modified_extents, list)
 			list_del_init(&em->list);
+		write_unlock(&tree->lock);
 	}
 
 	if (inode_only == LOG_INODE_ALL && S_ISDIR(inode->i_mode)) {

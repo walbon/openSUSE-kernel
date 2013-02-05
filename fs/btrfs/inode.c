@@ -71,6 +71,7 @@ static const struct file_operations btrfs_dir_file_operations;
 static struct extent_io_ops btrfs_extent_io_ops;
 
 static struct kmem_cache *btrfs_inode_cachep;
+static struct kmem_cache *btrfs_delalloc_work_cachep;
 struct kmem_cache *btrfs_trans_handle_cachep;
 struct kmem_cache *btrfs_transaction_cachep;
 struct kmem_cache *btrfs_path_cachep;
@@ -832,14 +833,14 @@ static u64 get_extent_allocation_hint(struct inode *inode, u64 start,
  * required to start IO on it.  It may be clean and already done with
  * IO when we return.
  */
-static noinline int cow_file_range(struct inode *inode,
-				   struct page *locked_page,
-				   u64 start, u64 end, int *page_started,
-				   unsigned long *nr_written,
-				   int unlock)
+static noinline int __cow_file_range(struct btrfs_trans_handle *trans,
+				     struct inode *inode,
+				     struct btrfs_root *root,
+				     struct page *locked_page,
+				     u64 start, u64 end, int *page_started,
+				     unsigned long *nr_written,
+				     int unlock)
 {
-	struct btrfs_root *root = BTRFS_I(inode)->root;
-	struct btrfs_trans_handle *trans;
 	u64 alloc_hint = 0;
 	u64 num_bytes;
 	unsigned long ram_size;
@@ -852,25 +853,10 @@ static noinline int cow_file_range(struct inode *inode,
 	int ret = 0;
 
 	BUG_ON(btrfs_is_free_space_inode(inode));
-	trans = btrfs_join_transaction(root);
-	if (IS_ERR(trans)) {
-		extent_clear_unlock_delalloc(inode,
-			     &BTRFS_I(inode)->io_tree,
-			     start, end, locked_page,
-			     EXTENT_CLEAR_UNLOCK_PAGE |
-			     EXTENT_CLEAR_UNLOCK |
-			     EXTENT_CLEAR_DELALLOC |
-			     EXTENT_CLEAR_DIRTY |
-			     EXTENT_SET_WRITEBACK |
-			     EXTENT_END_WRITEBACK);
-		return PTR_ERR(trans);
-	}
-	trans->block_rsv = &root->fs_info->delalloc_block_rsv;
 
 	num_bytes = (end - start + blocksize) & ~(blocksize - 1);
 	num_bytes = max(blocksize,  num_bytes);
 	disk_num_bytes = num_bytes;
-	ret = 0;
 
 	/* if this is a small write inside eof, kick off defrag */
 	if (num_bytes < 64 * 1024 &&
@@ -981,11 +967,9 @@ static noinline int cow_file_range(struct inode *inode,
 		alloc_hint = ins.objectid + ins.offset;
 		start += cur_alloc_size;
 	}
-	ret = 0;
 out:
-	btrfs_end_transaction(trans, root);
-
 	return ret;
+
 out_unlock:
 	extent_clear_unlock_delalloc(inode,
 		     &BTRFS_I(inode)->io_tree,
@@ -998,6 +982,39 @@ out_unlock:
 		     EXTENT_END_WRITEBACK);
 
 	goto out;
+}
+
+static noinline int cow_file_range(struct inode *inode,
+				   struct page *locked_page,
+				   u64 start, u64 end, int *page_started,
+				   unsigned long *nr_written,
+				   int unlock)
+{
+	struct btrfs_trans_handle *trans;
+	struct btrfs_root *root = BTRFS_I(inode)->root;
+	int ret;
+
+	trans = btrfs_join_transaction(root);
+	if (IS_ERR(trans)) {
+		extent_clear_unlock_delalloc(inode,
+			     &BTRFS_I(inode)->io_tree,
+			     start, end, locked_page,
+			     EXTENT_CLEAR_UNLOCK_PAGE |
+			     EXTENT_CLEAR_UNLOCK |
+			     EXTENT_CLEAR_DELALLOC |
+			     EXTENT_CLEAR_DIRTY |
+			     EXTENT_SET_WRITEBACK |
+			     EXTENT_END_WRITEBACK);
+		return PTR_ERR(trans);
+	}
+	trans->block_rsv = &root->fs_info->delalloc_block_rsv;
+
+	ret = __cow_file_range(trans, inode, root, locked_page, start, end,
+			       page_started, nr_written, unlock);
+
+	btrfs_end_transaction(trans, root);
+
+	return ret;
 }
 
 /*
@@ -1310,9 +1327,9 @@ out_check:
 
 		btrfs_release_path(path);
 		if (cow_start != (u64)-1) {
-			ret = cow_file_range(inode, locked_page, cow_start,
-					found_key.offset - 1, page_started,
-					nr_written, 1);
+			ret = __cow_file_range(trans, inode, root, locked_page,
+					       cow_start, found_key.offset - 1,
+					       page_started, nr_written, 1);
 			if (ret) {
 				btrfs_abort_transaction(trans, root, ret);
 				goto error;
@@ -1381,8 +1398,9 @@ out_check:
 	}
 
 	if (cow_start != (u64)-1) {
-		ret = cow_file_range(inode, locked_page, cow_start, end,
-				     page_started, nr_written, 1);
+		ret = __cow_file_range(trans, inode, root, locked_page,
+				       cow_start, end,
+				       page_started, nr_written, 1);
 		if (ret) {
 			btrfs_abort_transaction(trans, root, ret);
 			goto error;
@@ -1686,8 +1704,7 @@ static noinline int add_pending_csums(struct btrfs_trans_handle *trans,
 int btrfs_set_extent_delalloc(struct inode *inode, u64 start, u64 end,
 			      struct extent_state **cached_state)
 {
-	if ((end & (PAGE_CACHE_SIZE - 1)) == 0)
-		WARN_ON(1);
+	WARN_ON((end & (PAGE_CACHE_SIZE - 1)) == 0);
 	return set_extent_delalloc(&BTRFS_I(inode)->io_tree, start, end,
 				   cached_state, GFP_NOFS);
 }
@@ -3866,7 +3883,8 @@ void btrfs_evict_inode(struct inode *inode)
 	 * inode item when doing the truncate.
 	 */
 	while (1) {
-		ret = btrfs_block_rsv_refill_noflush(root, rsv, min_size);
+		ret = btrfs_block_rsv_refill(root, rsv, min_size,
+					     BTRFS_RESERVE_FLUSH_LIMIT);
 
 		/*
 		 * Try and steal from the global reserve since we will
@@ -3884,7 +3902,7 @@ void btrfs_evict_inode(struct inode *inode)
 			goto no_delete;
 		}
 
-		trans = btrfs_start_transaction_noflush(root, 1);
+		trans = btrfs_start_transaction_lflush(root, 1);
 		if (IS_ERR(trans)) {
 			btrfs_orphan_del(NULL, inode);
 			btrfs_free_block_rsv(root, rsv);
@@ -5488,8 +5506,7 @@ again:
 				    extent_map_end(em) - 1, NULL, GFP_NOFS);
 		goto insert;
 	} else {
-		printk(KERN_ERR "btrfs unknown found_type %d\n", found_type);
-		WARN_ON(1);
+		WARN(1, KERN_ERR "btrfs unknown found_type %d\n", found_type);
 	}
 not_found:
 	em->start = start;
@@ -7249,6 +7266,8 @@ void btrfs_destroy_cachep(void)
 		kmem_cache_destroy(btrfs_path_cachep);
 	if (btrfs_free_space_cachep)
 		kmem_cache_destroy(btrfs_free_space_cachep);
+	if (btrfs_delalloc_work_cachep)
+		kmem_cache_destroy(btrfs_delalloc_work_cachep);
 }
 
 int btrfs_init_cachep(void)
@@ -7281,6 +7300,13 @@ int btrfs_init_cachep(void)
 			sizeof(struct btrfs_free_space), 0,
 			SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD, NULL);
 	if (!btrfs_free_space_cachep)
+		goto fail;
+
+	btrfs_delalloc_work_cachep = kmem_cache_create("btrfs_delalloc_work",
+			sizeof(struct btrfs_delalloc_work), 0,
+			SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+			NULL);
+	if (!btrfs_delalloc_work_cachep)
 		goto fail;
 
 	return 0;
@@ -7515,6 +7541,49 @@ out_notrans:
 	return ret;
 }
 
+static void btrfs_run_delalloc_work(struct btrfs_work *work)
+{
+	struct btrfs_delalloc_work *delalloc_work;
+
+	delalloc_work = container_of(work, struct btrfs_delalloc_work,
+				     work);
+	if (delalloc_work->wait)
+		btrfs_wait_ordered_range(delalloc_work->inode, 0, (u64)-1);
+	else
+		filemap_flush(delalloc_work->inode->i_mapping);
+
+	if (delalloc_work->delay_iput)
+		btrfs_add_delayed_iput(delalloc_work->inode);
+	else
+		iput(delalloc_work->inode);
+	complete(&delalloc_work->completion);
+}
+
+struct btrfs_delalloc_work *btrfs_alloc_delalloc_work(struct inode *inode,
+						    int wait, int delay_iput)
+{
+	struct btrfs_delalloc_work *work;
+
+	work = kmem_cache_zalloc(btrfs_delalloc_work_cachep, GFP_NOFS);
+	if (!work)
+		return NULL;
+
+	init_completion(&work->completion);
+	INIT_LIST_HEAD(&work->list);
+	work->inode = inode;
+	work->wait = wait;
+	work->delay_iput = delay_iput;
+	work->work.func = btrfs_run_delalloc_work;
+
+	return work;
+}
+
+void btrfs_wait_and_free_delalloc_work(struct btrfs_delalloc_work *work)
+{
+	wait_for_completion(&work->completion);
+	kmem_cache_free(btrfs_delalloc_work_cachep, work);
+}
+
 /*
  * some fairly slow code that needs optimization. This walks the list
  * of all the inodes with pending delalloc and forces them to disk.
@@ -7524,9 +7593,14 @@ int btrfs_start_delalloc_inodes(struct btrfs_root *root, int delay_iput)
 	struct list_head *head = &root->fs_info->delalloc_inodes;
 	struct btrfs_inode *binode;
 	struct inode *inode;
+	struct btrfs_delalloc_work *work, *next;
+	struct list_head works;
+	int ret = 0;
 
 	if (root->fs_info->sb->s_flags & MS_RDONLY)
 		return -EROFS;
+
+	INIT_LIST_HEAD(&works);
 
 	spin_lock(&root->fs_info->delalloc_lock);
 	while (!list_empty(head)) {
@@ -7537,11 +7611,14 @@ int btrfs_start_delalloc_inodes(struct btrfs_root *root, int delay_iput)
 			list_del_init(&binode->delalloc_inodes);
 		spin_unlock(&root->fs_info->delalloc_lock);
 		if (inode) {
-			filemap_flush(inode->i_mapping);
-			if (delay_iput)
-				btrfs_add_delayed_iput(inode);
-			else
-				iput(inode);
+			work = btrfs_alloc_delalloc_work(inode, 0, delay_iput);
+			if (!work) {
+				ret = -ENOMEM;
+				goto out;
+			}
+			list_add_tail(&work->list, &works);
+			btrfs_queue_worker(&root->fs_info->flush_workers,
+					   &work->work);
 		}
 		cond_resched();
 		spin_lock(&root->fs_info->delalloc_lock);
@@ -7560,7 +7637,12 @@ int btrfs_start_delalloc_inodes(struct btrfs_root *root, int delay_iput)
 		    atomic_read(&root->fs_info->async_delalloc_pages) == 0));
 	}
 	atomic_dec(&root->fs_info->async_submit_draining);
-	return 0;
+out:
+	list_for_each_entry_safe(work, next, &works, list) {
+		list_del_init(&work->list);
+		btrfs_wait_and_free_delalloc_work(work);
+	}
+	return ret;
 }
 
 static int btrfs_symlink(struct inode *dir, struct dentry *dentry,

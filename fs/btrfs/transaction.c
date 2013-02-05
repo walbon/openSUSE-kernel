@@ -149,16 +149,12 @@ loop:
 	 * the log must never go across transaction boundaries.
 	 */
 	smp_mb();
-	if (!list_empty(&fs_info->tree_mod_seq_list)) {
-		printk(KERN_ERR "btrfs: tree_mod_seq_list not empty when "
+	if (!list_empty(&fs_info->tree_mod_seq_list))
+		WARN(1, KERN_ERR "btrfs: tree_mod_seq_list not empty when "
 			"creating a fresh transaction\n");
-		WARN_ON(1);
-	}
-	if (!RB_EMPTY_ROOT(&fs_info->tree_mod_log)) {
-		printk(KERN_ERR "btrfs: tree_mod_log rb tree not empty when "
+	if (!RB_EMPTY_ROOT(&fs_info->tree_mod_log))
+		WARN(1, KERN_ERR "btrfs: tree_mod_log rb tree not empty when "
 			"creating a fresh transaction\n");
-		WARN_ON(1);
-	}
 	atomic_set(&fs_info->tree_mod_seq, 0);
 
 	spin_lock_init(&cur_trans->commit_lock);
@@ -299,9 +295,9 @@ static int may_wait_transaction(struct btrfs_root *root, int type)
 	return 0;
 }
 
-static struct btrfs_trans_handle *start_transaction(struct btrfs_root *root,
-						    u64 num_items, int type,
-						    int noflush)
+static struct btrfs_trans_handle *
+start_transaction(struct btrfs_root *root, u64 num_items, int type,
+		  enum btrfs_reserve_flush_enum flush)
 {
 	struct btrfs_trans_handle *h;
 	struct btrfs_transaction *cur_trans;
@@ -316,6 +312,7 @@ static struct btrfs_trans_handle *start_transaction(struct btrfs_root *root,
 		WARN_ON(type != TRANS_JOIN && type != TRANS_JOIN_NOLOCK);
 		h = current->journal_info;
 		h->use_count++;
+		WARN_ON(h->use_count > 2);
 		h->orig_rsv = h->block_rsv;
 		h->block_rsv = NULL;
 		goto got_it;
@@ -335,14 +332,9 @@ static struct btrfs_trans_handle *start_transaction(struct btrfs_root *root,
 		}
 
 		num_bytes = btrfs_calc_trans_metadata_size(root, num_items);
-		if (noflush)
-			ret = btrfs_block_rsv_add_noflush(root,
-						&root->fs_info->trans_block_rsv,
-						num_bytes);
-		else
-			ret = btrfs_block_rsv_add(root,
-						&root->fs_info->trans_block_rsv,
-						num_bytes);
+		ret = btrfs_block_rsv_add(root,
+					  &root->fs_info->trans_block_rsv,
+					  num_bytes, flush);
 		if (ret)
 			return ERR_PTR(ret);
 	}
@@ -426,13 +418,15 @@ got_it:
 struct btrfs_trans_handle *btrfs_start_transaction(struct btrfs_root *root,
 						   int num_items)
 {
-	return start_transaction(root, num_items, TRANS_START, 0);
+	return start_transaction(root, num_items, TRANS_START,
+				 BTRFS_RESERVE_FLUSH_ALL);
 }
 
-struct btrfs_trans_handle *btrfs_start_transaction_noflush(
+struct btrfs_trans_handle *btrfs_start_transaction_lflush(
 					struct btrfs_root *root, int num_items)
 {
-	return start_transaction(root, num_items, TRANS_START, 1);
+	return start_transaction(root, num_items, TRANS_START,
+				 BTRFS_RESERVE_FLUSH_LIMIT);
 }
 
 struct btrfs_trans_handle *btrfs_join_transaction(struct btrfs_root *root)
@@ -1034,8 +1028,9 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	btrfs_reloc_pre_snapshot(trans, pending, &to_reserve);
 
 	if (to_reserve > 0) {
-		ret = btrfs_block_rsv_add_noflush(root, &pending->block_rsv,
-						  to_reserve);
+		ret = btrfs_block_rsv_add(root, &pending->block_rsv,
+					  to_reserve,
+					  BTRFS_RESERVE_NO_FLUSH);
 		if (ret) {
 			pending->error = ret;
 			goto no_free_objectid;
@@ -1388,6 +1383,48 @@ static void cleanup_transaction(struct btrfs_trans_handle *trans,
 	kmem_cache_free(btrfs_trans_handle_cachep, trans);
 }
 
+static int btrfs_flush_all_pending_stuffs(struct btrfs_trans_handle *trans,
+					  struct btrfs_root *root)
+{
+	int flush_on_commit = btrfs_test_opt(root, FLUSHONCOMMIT);
+	int snap_pending = 0;
+	int ret;
+
+	if (!flush_on_commit) {
+		spin_lock(&root->fs_info->trans_lock);
+		if (!list_empty(&trans->transaction->pending_snapshots))
+			snap_pending = 1;
+		spin_unlock(&root->fs_info->trans_lock);
+	}
+
+	if (flush_on_commit || snap_pending) {
+		btrfs_start_delalloc_inodes(root, 1);
+		btrfs_wait_ordered_extents(root, 1);
+	}
+
+	ret = btrfs_run_delayed_items(trans, root);
+	if (ret)
+		return ret;
+
+	/*
+	 * running the delayed items may have added new refs. account
+	 * them now so that they hinder processing of more delayed refs
+	 * as little as possible.
+	 */
+	btrfs_delayed_refs_qgroup_accounting(trans, root->fs_info);
+
+	/*
+	 * rename don't use btrfs_join_transaction, so, once we
+	 * set the transaction to blocked above, we aren't going
+	 * to get any new ordered operations.  We can safely run
+	 * it here and no for sure that nothing new will be added
+	 * to the list
+	 */
+	btrfs_run_ordered_operations(root, 1);
+
+	return 0;
+}
+
 /*
  * btrfs_transaction state sequence:
  *    in_commit = 0, blocked = 0  (initial)
@@ -1402,15 +1439,20 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	struct btrfs_transaction *cur_trans = trans->transaction;
 	struct btrfs_transaction *prev_trans = NULL;
 	DEFINE_WAIT(wait);
-	int ret = -EIO;
+	int ret;
 	int should_grow = 0;
 	unsigned long now = get_seconds();
-	int flush_on_commit = btrfs_test_opt(root, FLUSHONCOMMIT);
 
-	btrfs_run_ordered_operations(root, 0);
-
-	if (cur_trans->aborted)
+	ret = btrfs_run_ordered_operations(root, 0);
+	if (ret) {
+		btrfs_abort_transaction(trans, root, ret);
 		goto cleanup_transaction;
+	}
+
+	if (cur_trans->aborted) {
+		ret = cur_trans->aborted;
+		goto cleanup_transaction;
+	}
 
 	/* make a pass through all the delayed refs we have so far
 	 * any runnings procs may add more while we are here
@@ -1478,38 +1520,13 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 		should_grow = 1;
 
 	do {
-		int snap_pending = 0;
-
 		joined = cur_trans->num_joined;
-		if (!list_empty(&trans->transaction->pending_snapshots))
-			snap_pending = 1;
 
 		WARN_ON(cur_trans != trans->transaction);
 
-		if (flush_on_commit || snap_pending) {
-			btrfs_start_delalloc_inodes(root, 1);
-			btrfs_wait_ordered_extents(root, 1);
-		}
-
-		ret = btrfs_run_delayed_items(trans, root);
+		ret = btrfs_flush_all_pending_stuffs(trans, root);
 		if (ret)
 			goto cleanup_transaction;
-
-		/*
-		 * running the delayed items may have added new refs. account
-		 * them now so that they hinder processing of more delayed refs
-		 * as little as possible.
-		 */
-		btrfs_delayed_refs_qgroup_accounting(trans, root->fs_info);
-
-		/*
-		 * rename don't use btrfs_join_transaction, so, once we
-		 * set the transaction to blocked above, we aren't going
-		 * to get any new ordered operations.  We can safely run
-		 * it here and no for sure that nothing new will be added
-		 * to the list
-		 */
-		btrfs_run_ordered_operations(root, 1);
 
 		prepare_to_wait(&cur_trans->writer_wait, &wait,
 				TASK_UNINTERRUPTIBLE);
@@ -1522,6 +1539,10 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 		finish_wait(&cur_trans->writer_wait, &wait);
 	} while (atomic_read(&cur_trans->num_writers) > 1 ||
 		 (should_grow && cur_trans->num_joined != joined));
+
+	ret = btrfs_flush_all_pending_stuffs(trans, root);
+	if (ret)
+		goto cleanup_transaction;
 
 	/*
 	 * Ok now we need to make sure to block out any other joins while we

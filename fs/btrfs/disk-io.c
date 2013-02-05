@@ -2304,6 +2304,10 @@ int open_ctree(struct super_block *sb,
 			   fs_info->thread_pool_size,
 			   &fs_info->generic_worker);
 
+	btrfs_init_workers(&fs_info->flush_workers, "flush_delalloc",
+			   fs_info->thread_pool_size,
+			   &fs_info->generic_worker);
+
 	btrfs_init_workers(&fs_info->submit_workers, "submit",
 			   min_t(u64, fs_devices->num_devices,
 			   fs_info->thread_pool_size),
@@ -2375,6 +2379,7 @@ int open_ctree(struct super_block *sb,
 	ret |= btrfs_start_workers(&fs_info->delayed_workers);
 	ret |= btrfs_start_workers(&fs_info->caching_workers);
 	ret |= btrfs_start_workers(&fs_info->readahead_workers);
+	ret |= btrfs_start_workers(&fs_info->flush_workers);
 	if (ret) {
 		err = -ENOMEM;
 		goto fail_sb_buffer;
@@ -2529,10 +2534,10 @@ retry_root_backup:
 	fs_info->num_tolerated_disk_barrier_failures =
 		btrfs_calc_num_tolerated_disk_barrier_failures(fs_info);
 	if (fs_info->fs_devices->missing_devices >
-			fs_info->num_tolerated_disk_barrier_failures &&
-			!(sb->s_flags & MS_RDONLY)) {
+	     fs_info->num_tolerated_disk_barrier_failures &&
+	    !(sb->s_flags & MS_RDONLY)) {
 		printk(KERN_WARNING
-			"Btrfs: too many missing devices, writeable mount is not allowed\n");
+		       "Btrfs: too many missing devices, writeable mount is not allowed\n");
 		goto fail_block_groups;
 	}
 
@@ -2706,6 +2711,7 @@ fail_sb_buffer:
 	btrfs_stop_workers(&fs_info->submit_workers);
 	btrfs_stop_workers(&fs_info->delayed_workers);
 	btrfs_stop_workers(&fs_info->caching_workers);
+	btrfs_stop_workers(&fs_info->flush_workers);
 fail_alloc:
 fail_iput:
 	btrfs_mapping_tree_free(&fs_info->mapping_tree);
@@ -3378,6 +3384,7 @@ int close_ctree(struct btrfs_root *root)
 	btrfs_stop_workers(&fs_info->delayed_workers);
 	btrfs_stop_workers(&fs_info->caching_workers);
 	btrfs_stop_workers(&fs_info->readahead_workers);
+	btrfs_stop_workers(&fs_info->flush_workers);
 
 #ifdef CONFIG_BTRFS_FS_CHECK_INTEGRITY
 	if (btrfs_test_opt(root, CHECK_INTEGRITY))
@@ -3422,14 +3429,12 @@ void btrfs_mark_buffer_dirty(struct extent_buffer *buf)
 	int was_dirty;
 
 	btrfs_assert_tree_locked(buf);
-	if (transid != root->fs_info->generation) {
-		printk(KERN_CRIT "btrfs transid mismatch buffer %llu, "
+	if (transid != root->fs_info->generation)
+		WARN(1, KERN_CRIT "btrfs transid mismatch buffer %llu, "
 		       "found %llu running %llu\n",
 			(unsigned long long)buf->start,
 			(unsigned long long)transid,
 			(unsigned long long)root->fs_info->generation);
-		WARN_ON(1);
-	}
 	was_dirty = set_extent_buffer_dirty(buf);
 	if (!was_dirty) {
 		spin_lock(&root->fs_info->delalloc_lock);
