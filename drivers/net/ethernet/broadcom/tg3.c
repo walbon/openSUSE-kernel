@@ -97,7 +97,7 @@ MODULE_PARM_DESC(entropy, "Allow tg3 to populate the /dev/random entropy pool");
 #define TG3_MIN_NUM			129
 #define DRV_MODULE_VERSION	\
 	__stringify(TG3_MAJ_NUM) "." __stringify(TG3_MIN_NUM)
-+#define DRV_MODULE_RELDATE	"January 06, 2013"
+#define DRV_MODULE_RELDATE	"January 06, 2013"
 
 #define RESET_KIND_SHUTDOWN	0
 #define RESET_KIND_INIT		1
