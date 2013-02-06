@@ -3345,7 +3345,6 @@ F:	Documentation/networking/igbvf.txt
 F:	Documentation/networking/ixgb.txt
 F:	Documentation/networking/ixgbe.txt
 F:	Documentation/networking/ixgbevf.txt
-F:	drivers/net/ixgb/
 F:	drivers/net/ethernet/intel/
 
 INTEL PRO/WIRELESS 2100 NETWORK CONNECTION SUPPORT
