@@ -1097,7 +1097,7 @@ out:
  * igbvf_alloc_queues - Allocate memory for all rings
  * @adapter: board private structure to initialize
  **/
-static int __devinit igbvf_alloc_queues(struct igbvf_adapter *adapter)
+static int igbvf_alloc_queues(struct igbvf_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
 
@@ -1545,7 +1545,7 @@ void igbvf_reinit_locked(struct igbvf_adapter *adapter)
  * Fields are initialized based on PCI device information and
  * OS network device settings (MTU size).
  **/
-static int __devinit igbvf_sw_init(struct igbvf_adapter *adapter)
+static int igbvf_sw_init(struct igbvf_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
 	s32 rc;
@@ -2612,7 +2612,7 @@ static const struct net_device_ops igbvf_netdev_ops = {
  * The OS initialization, configuring of the adapter private structure,
  * and a hardware reset occur.
  **/
-static int __devinit igbvf_probe(struct pci_dev *pdev,
+static int igbvf_probe(struct pci_dev *pdev,
                                  const struct pci_device_id *ent)
 {
 	struct net_device *netdev;
@@ -2812,7 +2812,7 @@ err_dma:
  * Hot-Plug event, or because the driver is going to be removed from
  * memory.
  **/
-static void __devexit igbvf_remove(struct pci_dev *pdev)
+static void igbvf_remove(struct pci_dev *pdev)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct igbvf_adapter *adapter = netdev_priv(netdev);
@@ -2869,7 +2869,7 @@ static struct pci_driver igbvf_driver = {
 	.name     = igbvf_driver_name,
 	.id_table = igbvf_pci_tbl,
 	.probe    = igbvf_probe,
-	.remove   = __devexit_p(igbvf_remove),
+	.remove   = igbvf_remove,
 #ifdef CONFIG_PM
 	/* Power Management Hooks */
 	.suspend  = igbvf_suspend,
