@@ -1005,6 +1005,7 @@ static void btree_invalidatepage(struct page *page, unsigned long offset)
 
 static int btree_set_page_dirty(struct page *page)
 {
+#ifdef DEBUG
 	struct extent_buffer *eb;
 
 	BUG_ON(!PagePrivate(page));
@@ -1013,6 +1014,7 @@ static int btree_set_page_dirty(struct page *page)
 	BUG_ON(!test_bit(EXTENT_BUFFER_DIRTY, &eb->bflags));
 	BUG_ON(!atomic_read(&eb->refs));
 	btrfs_assert_tree_locked(eb);
+#endif
 	return __set_page_dirty_nobuffers(page);
 }
 
@@ -1144,11 +1146,11 @@ void clean_tree_block(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 					  root->fs_info->dirty_metadata_bytes);
 			}
 			spin_unlock(&root->fs_info->delalloc_lock);
-		}
 
-		/* ugh, clear_extent_buffer_dirty needs to lock the page */
-		btrfs_set_lock_blocking(buf);
-		clear_extent_buffer_dirty(buf);
+			/* ugh, clear_extent_buffer_dirty needs to lock the page */
+			btrfs_set_lock_blocking(buf);
+			clear_extent_buffer_dirty(buf);
+		}
 	}
 }
 
@@ -1212,7 +1214,7 @@ static void __setup_root(u32 nodesize, u32 leafsize, u32 sectorsize,
 	INIT_LIST_HEAD(&root->anon_super.s_instances);
 	init_rwsem(&root->anon_super.s_umount);
 
-	spin_lock_init(&root->root_times_lock);
+	spin_lock_init(&root->root_item_lock);
 }
 
 static int __must_check find_and_setup_root(struct btrfs_root *tree_root,
@@ -3359,7 +3361,7 @@ int close_ctree(struct btrfs_root *root)
 	btrfs_scrub_cancel(fs_info);
 
 	/* clear out the rbtree of defraggable inodes */
-	btrfs_run_defrag_inodes(fs_info);
+	btrfs_cleanup_defrag_inodes(fs_info);
 
 	BUG_ON(atomic_read(&fs_info->defrag_running));
 

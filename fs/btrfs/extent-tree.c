@@ -4548,16 +4548,25 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	int extra_reserve = 0;
 	enum btrfs_reserve_flush_enum flush = BTRFS_RESERVE_FLUSH_ALL;
 	int ret;
+	bool delalloc_lock = true;
 
-	/* Need to be holding the i_mutex here if we aren't free space cache */
-	if (btrfs_is_free_space_inode(inode))
+	/* If we are a free space inode we need to not flush since we will be in
+	 * the middle of a transaction commit.  We also don't need the delalloc
+	 * mutex since we won't race with anybody.  We need this mostly to make
+	 * lockdep shut its filthy mouth.
+	 */
+	if (btrfs_is_free_space_inode(inode)) {
 		flush = BTRFS_RESERVE_NO_FLUSH;
+		delalloc_lock = false;
+	}
 
 	if (flush != BTRFS_RESERVE_NO_FLUSH &&
 	    btrfs_transaction_in_commit(root->fs_info))
 		schedule_timeout(1);
 
-	mutex_lock(&BTRFS_I(inode)->delalloc_mutex);
+	if (delalloc_lock)
+		mutex_lock(&BTRFS_I(inode)->delalloc_mutex);
+
 	num_bytes = ALIGN(num_bytes, root->sectorsize);
 
 	spin_lock(&BTRFS_I(inode)->lock);
@@ -4587,7 +4596,11 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 		ret = btrfs_qgroup_reserve(root, num_bytes +
 					   nr_extents * root->leafsize);
 		if (ret) {
-			mutex_unlock(&BTRFS_I(inode)->delalloc_mutex);
+			spin_lock(&BTRFS_I(inode)->lock);
+			calc_csum_metadata_size(inode, num_bytes, 0);
+			spin_unlock(&BTRFS_I(inode)->lock);
+			if (delalloc_lock)
+				mutex_unlock(&BTRFS_I(inode)->delalloc_mutex);
 			return ret;
 		}
 	}
@@ -4622,7 +4635,12 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 						      btrfs_ino(inode),
 						      to_free, 0);
 		}
-		mutex_unlock(&BTRFS_I(inode)->delalloc_mutex);
+		if (root->fs_info->quota_enabled) {
+			btrfs_qgroup_free(root, num_bytes +
+						nr_extents * root->leafsize);
+		}
+		if (delalloc_lock)
+			mutex_unlock(&BTRFS_I(inode)->delalloc_mutex);
 		return ret;
 	}
 
@@ -4634,7 +4652,9 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	}
 	BTRFS_I(inode)->reserved_extents += nr_extents;
 	spin_unlock(&BTRFS_I(inode)->lock);
-	mutex_unlock(&BTRFS_I(inode)->delalloc_mutex);
+
+	if (delalloc_lock)
+		mutex_unlock(&BTRFS_I(inode)->delalloc_mutex);
 
 	if (to_reserve)
 		trace_btrfs_space_reservation(root->fs_info,"delalloc",
@@ -5500,7 +5520,7 @@ wait_block_group_cache_done(struct btrfs_block_group_cache *cache)
 	return 0;
 }
 
-static int __get_block_group_index(u64 flags)
+int __get_raid_index(u64 flags)
 {
 	int index;
 
@@ -5520,7 +5540,7 @@ static int __get_block_group_index(u64 flags)
 
 static int get_block_group_index(struct btrfs_block_group_cache *cache)
 {
-	return __get_block_group_index(cache->flags);
+	return __get_raid_index(cache->flags);
 }
 
 enum btrfs_loop_type {
@@ -7466,7 +7486,7 @@ int btrfs_can_relocate(struct btrfs_root *root, u64 bytenr)
 	 */
 	target = get_restripe_target(root->fs_info, block_group->flags);
 	if (target) {
-		index = __get_block_group_index(extended_to_chunk(target));
+		index = __get_raid_index(extended_to_chunk(target));
 	} else {
 		/*
 		 * this is just a balance, so if we were marked as full
