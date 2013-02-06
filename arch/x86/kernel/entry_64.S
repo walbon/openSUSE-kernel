@@ -1360,7 +1360,7 @@ apicinterrupt HYPERVISOR_CALLBACK_VECTOR \
 
 #endif /* CONFIG_PARAVIRT_XEN */
 
-#if IS_ENABLED(CONFIG_HYPERV)
+#ifdef CONFIG_HYPERV
 apicinterrupt HYPERVISOR_CALLBACK_VECTOR \
 	hyperv_callback_vector hyperv_vector_handler
 #endif /* CONFIG_HYPERV */
