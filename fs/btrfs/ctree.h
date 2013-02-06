@@ -48,7 +48,7 @@ struct btrfs_ordered_sum;
 
 #define BTRFS_MAGIC "_BHRfS_M"
 
-#define BTRFS_MAX_MIRRORS 2
+#define BTRFS_MAX_MIRRORS 3
 
 #define BTRFS_MAX_LEVEL 8
 
@@ -142,6 +142,8 @@ struct btrfs_ordered_sum;
 
 #define BTRFS_EMPTY_SUBVOL_DIR_OBJECTID 2
 
+#define BTRFS_DEV_REPLACE_DEVID 0
+
 /*
  * the max metadata block size.  This limit is somewhat artificial,
  * but the memmove costs go through the roof for larger blocks.
@@ -171,6 +173,9 @@ static int btrfs_csum_sizes[] = { 4, 0 };
 
 /* four bytes for CRC32 */
 #define BTRFS_EMPTY_DIR_SIZE 0
+
+/* spefic to btrfs_map_block(), therefore not in include/linux/blk_types.h */
+#define REQ_GET_READ_MIRRORS	(1 << 30)
 
 #define BTRFS_FT_UNKNOWN	0
 #define BTRFS_FT_REG_FILE	1
@@ -885,6 +890,59 @@ struct btrfs_dev_stats_item {
 	__le64 values[BTRFS_DEV_STAT_VALUES_MAX];
 } __attribute__ ((__packed__));
 
+#define BTRFS_DEV_REPLACE_ITEM_CONT_READING_FROM_SRCDEV_MODE_ALWAYS	0
+#define BTRFS_DEV_REPLACE_ITEM_CONT_READING_FROM_SRCDEV_MODE_AVOID	1
+#define BTRFS_DEV_REPLACE_ITEM_STATE_NEVER_STARTED	0
+#define BTRFS_DEV_REPLACE_ITEM_STATE_STARTED		1
+#define BTRFS_DEV_REPLACE_ITEM_STATE_SUSPENDED		2
+#define BTRFS_DEV_REPLACE_ITEM_STATE_FINISHED		3
+#define BTRFS_DEV_REPLACE_ITEM_STATE_CANCELED		4
+
+struct btrfs_dev_replace {
+	u64 replace_state;	/* see #define above */
+	u64 time_started;	/* seconds since 1-Jan-1970 */
+	u64 time_stopped;	/* seconds since 1-Jan-1970 */
+	atomic64_t num_write_errors;
+	atomic64_t num_uncorrectable_read_errors;
+
+	u64 cursor_left;
+	u64 committed_cursor_left;
+	u64 cursor_left_last_write_of_item;
+	u64 cursor_right;
+
+	u64 cont_reading_from_srcdev_mode;	/* see #define above */
+
+	int is_valid;
+	int item_needs_writeback;
+	struct btrfs_device *srcdev;
+	struct btrfs_device *tgtdev;
+
+	pid_t lock_owner;
+	atomic_t nesting_level;
+	struct mutex lock_finishing_cancel_unmount;
+	struct mutex lock_management_lock;
+	struct mutex lock;
+
+	struct btrfs_scrub_progress scrub_progress;
+};
+
+struct btrfs_dev_replace_item {
+	/*
+	 * grow this item struct at the end for future enhancements and keep
+	 * the existing values unchanged
+	 */
+	__le64 src_devid;
+	__le64 cursor_left;
+	__le64 cursor_right;
+	__le64 cont_reading_from_srcdev_mode;
+
+	__le64 replace_state;
+	__le64 time_started;
+	__le64 time_stopped;
+	__le64 num_write_errors;
+	__le64 num_uncorrectable_read_errors;
+} __attribute__ ((__packed__));
+
 /* different types of block groups (and chunks) */
 #define BTRFS_BLOCK_GROUP_DATA		(1ULL << 0)
 #define BTRFS_BLOCK_GROUP_SYSTEM	(1ULL << 1)
@@ -1430,6 +1488,8 @@ struct btrfs_fs_info {
 	struct rw_semaphore scrub_super_lock;
 	int scrub_workers_refcnt;
 	struct btrfs_workers scrub_workers;
+	struct btrfs_workers scrub_wr_completion_workers;
+	struct btrfs_workers scrub_nocow_workers;
 
 #ifdef CONFIG_BTRFS_FS_CHECK_INTEGRITY
 	u32 check_integrity_print_mask;
@@ -1472,6 +1532,11 @@ struct btrfs_fs_info {
 	int backup_root_index;
 
 	int num_tolerated_disk_barrier_failures;
+
+	/* device replace state */
+	struct btrfs_dev_replace dev_replace;
+
+	atomic_t mutually_exclusive_operation_running;
 };
 
 /*
@@ -1723,6 +1788,12 @@ struct btrfs_ioctl_defrag_range_args {
  * One key for all stats, (0, BTRFS_DEV_STATS_KEY, devid).
  */
 #define BTRFS_DEV_STATS_KEY	249
+
+/*
+ * Persistantly stores the device replace state in the device tree.
+ * The key is built like this: (0, BTRFS_DEV_REPLACE_KEY, 0).
+ */
+#define BTRFS_DEV_REPLACE_KEY	250
 
 /*
  * string items are for debugging.  They just store a short string of
@@ -2757,6 +2828,49 @@ BTRFS_SETGET_FUNCS(qgroup_limit_rsv_rfer, struct btrfs_qgroup_limit_item,
 BTRFS_SETGET_FUNCS(qgroup_limit_rsv_excl, struct btrfs_qgroup_limit_item,
 		   rsv_excl, 64);
 
+/* btrfs_dev_replace_item */
+BTRFS_SETGET_FUNCS(dev_replace_src_devid,
+		   struct btrfs_dev_replace_item, src_devid, 64);
+BTRFS_SETGET_FUNCS(dev_replace_cont_reading_from_srcdev_mode,
+		   struct btrfs_dev_replace_item, cont_reading_from_srcdev_mode,
+		   64);
+BTRFS_SETGET_FUNCS(dev_replace_replace_state, struct btrfs_dev_replace_item,
+		   replace_state, 64);
+BTRFS_SETGET_FUNCS(dev_replace_time_started, struct btrfs_dev_replace_item,
+		   time_started, 64);
+BTRFS_SETGET_FUNCS(dev_replace_time_stopped, struct btrfs_dev_replace_item,
+		   time_stopped, 64);
+BTRFS_SETGET_FUNCS(dev_replace_num_write_errors, struct btrfs_dev_replace_item,
+		   num_write_errors, 64);
+BTRFS_SETGET_FUNCS(dev_replace_num_uncorrectable_read_errors,
+		   struct btrfs_dev_replace_item, num_uncorrectable_read_errors,
+		   64);
+BTRFS_SETGET_FUNCS(dev_replace_cursor_left, struct btrfs_dev_replace_item,
+		   cursor_left, 64);
+BTRFS_SETGET_FUNCS(dev_replace_cursor_right, struct btrfs_dev_replace_item,
+		   cursor_right, 64);
+
+BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_src_devid,
+			 struct btrfs_dev_replace_item, src_devid, 64);
+BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_cont_reading_from_srcdev_mode,
+			 struct btrfs_dev_replace_item,
+			 cont_reading_from_srcdev_mode, 64);
+BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_replace_state,
+			 struct btrfs_dev_replace_item, replace_state, 64);
+BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_time_started,
+			 struct btrfs_dev_replace_item, time_started, 64);
+BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_time_stopped,
+			 struct btrfs_dev_replace_item, time_stopped, 64);
+BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_num_write_errors,
+			 struct btrfs_dev_replace_item, num_write_errors, 64);
+BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_num_uncorrectable_read_errors,
+			 struct btrfs_dev_replace_item,
+			 num_uncorrectable_read_errors, 64);
+BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_cursor_left,
+			 struct btrfs_dev_replace_item, cursor_left, 64);
+BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_cursor_right,
+			 struct btrfs_dev_replace_item, cursor_right, 64);
+
 static inline struct btrfs_fs_info *btrfs_sb(struct super_block *sb)
 {
 	return sb->s_fs_info;
@@ -3530,15 +3644,16 @@ int btrfs_reloc_post_snapshot(struct btrfs_trans_handle *trans,
 			      struct btrfs_pending_snapshot *pending);
 
 /* scrub.c */
-int btrfs_scrub_dev(struct btrfs_root *root, u64 devid, u64 start, u64 end,
-		    struct btrfs_scrub_progress *progress, int readonly);
+int btrfs_scrub_dev(struct btrfs_fs_info *fs_info, u64 devid, u64 start,
+		    u64 end, struct btrfs_scrub_progress *progress,
+		    int readonly, int is_dev_replace);
 void btrfs_scrub_pause(struct btrfs_root *root);
 void btrfs_scrub_pause_super(struct btrfs_root *root);
 void btrfs_scrub_continue(struct btrfs_root *root);
 void btrfs_scrub_continue_super(struct btrfs_root *root);
-int __btrfs_scrub_cancel(struct btrfs_fs_info *info);
-int btrfs_scrub_cancel(struct btrfs_root *root);
-int btrfs_scrub_cancel_dev(struct btrfs_root *root, struct btrfs_device *dev);
+int btrfs_scrub_cancel(struct btrfs_fs_info *info);
+int btrfs_scrub_cancel_dev(struct btrfs_fs_info *info,
+			   struct btrfs_device *dev);
 int btrfs_scrub_cancel_devid(struct btrfs_root *root, u64 devid);
 int btrfs_scrub_progress(struct btrfs_root *root, u64 devid,
 			 struct btrfs_scrub_progress *progress);

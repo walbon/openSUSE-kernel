@@ -55,6 +55,7 @@
 #include "backref.h"
 #include "rcu-string.h"
 #include "send.h"
+#include "dev-replace.h"
 
 /* Mask out flags that are inappropriate for the given type of inode. */
 static inline __u32 btrfs_mask_flags(umode_t mode, __u32 flags)
@@ -1337,13 +1338,13 @@ static noinline int btrfs_ioctl_resize(struct btrfs_root *root,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	mutex_lock(&root->fs_info->volume_mutex);
-	if (root->fs_info->balance_ctl) {
-		printk(KERN_INFO "btrfs: balance in progress\n");
-		ret = -EINVAL;
-		goto out;
+	if (atomic_xchg(&root->fs_info->mutually_exclusive_operation_running,
+			1)) {
+		pr_info("btrfs: dev add/delete/balance/replace/resize operation in progress\n");
+		return -EINPROGRESS;
 	}
 
+	mutex_lock(&root->fs_info->volume_mutex);
 	vol_args = memdup_user(arg, sizeof(*vol_args));
 	if (IS_ERR(vol_args)) {
 		ret = PTR_ERR(vol_args);
@@ -1363,7 +1364,7 @@ static noinline int btrfs_ioctl_resize(struct btrfs_root *root,
 		printk(KERN_INFO "btrfs: resizing devid %llu\n",
 		       (unsigned long long)devid);
 	}
-	device = btrfs_find_device(root, devid, NULL, NULL);
+	device = btrfs_find_device(root->fs_info, devid, NULL, NULL);
 	if (!device) {
 		printk(KERN_INFO "btrfs: resizer unable to find device %llu\n",
 		       (unsigned long long)devid);
@@ -1393,6 +1394,11 @@ static noinline int btrfs_ioctl_resize(struct btrfs_root *root,
 			ret = -EINVAL;
 			goto out_free;
 		}
+	}
+
+	if (device->is_tgtdev_for_dev_replace) {
+		ret = -EINVAL;
+		goto out_free;
 	}
 
 	old_size = device->total_bytes;
@@ -1439,6 +1445,7 @@ out_free:
 	kfree(vol_args);
 out:
 	mutex_unlock(&root->fs_info->volume_mutex);
+	atomic_set(&root->fs_info->mutually_exclusive_operation_running, 0);
 	return ret;
 }
 
@@ -2182,9 +2189,18 @@ static int btrfs_ioctl_defrag(struct file *file, void __user *argp)
 	if (btrfs_root_readonly(root))
 		return -EROFS;
 
+	if (atomic_xchg(&root->fs_info->mutually_exclusive_operation_running,
+			1)) {
+		pr_info("btrfs: dev add/delete/balance/replace/resize operation in progress\n");
+		return -EINPROGRESS;
+	}
+
 	ret = mnt_want_write(file->f_path.mnt);
-	if (ret)
+	if (ret) {
+		atomic_set(&root->fs_info->mutually_exclusive_operation_running,
+				0);
 		return ret;
+	}
 
 	switch (inode->i_mode & S_IFMT) {
 	case S_IFDIR:
@@ -2236,6 +2252,7 @@ static int btrfs_ioctl_defrag(struct file *file, void __user *argp)
 	}
 out:
 	mnt_drop_write_file(file);
+	atomic_set(&root->fs_info->mutually_exclusive_operation_running, 0);
 	return ret;
 }
 
@@ -2247,13 +2264,13 @@ static long btrfs_ioctl_add_dev(struct btrfs_root *root, void __user *arg)
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	mutex_lock(&root->fs_info->volume_mutex);
-	if (root->fs_info->balance_ctl) {
-		printk(KERN_INFO "btrfs: balance in progress\n");
-		ret = -EINVAL;
-		goto out;
+	if (atomic_xchg(&root->fs_info->mutually_exclusive_operation_running,
+			1)) {
+		pr_info("btrfs: dev add/delete/balance/replace/resize operation in progress\n");
+		return -EINPROGRESS;
 	}
 
+	mutex_lock(&root->fs_info->volume_mutex);
 	vol_args = memdup_user(arg, sizeof(*vol_args));
 	if (IS_ERR(vol_args)) {
 		ret = PTR_ERR(vol_args);
@@ -2266,6 +2283,7 @@ static long btrfs_ioctl_add_dev(struct btrfs_root *root, void __user *arg)
 	kfree(vol_args);
 out:
 	mutex_unlock(&root->fs_info->volume_mutex);
+	atomic_set(&root->fs_info->mutually_exclusive_operation_running, 0);
 	return ret;
 }
 
@@ -2280,13 +2298,13 @@ static long btrfs_ioctl_rm_dev(struct btrfs_root *root, void __user *arg)
 	if (root->fs_info->sb->s_flags & MS_RDONLY)
 		return -EROFS;
 
-	mutex_lock(&root->fs_info->volume_mutex);
-	if (root->fs_info->balance_ctl) {
-		printk(KERN_INFO "btrfs: balance in progress\n");
-		ret = -EINVAL;
-		goto out;
+	if (atomic_xchg(&root->fs_info->mutually_exclusive_operation_running,
+			1)) {
+		pr_info("btrfs: dev add/delete/balance/replace/resize operation in progress\n");
+		return -EINPROGRESS;
 	}
 
+	mutex_lock(&root->fs_info->volume_mutex);
 	vol_args = memdup_user(arg, sizeof(*vol_args));
 	if (IS_ERR(vol_args)) {
 		ret = PTR_ERR(vol_args);
@@ -2299,6 +2317,7 @@ static long btrfs_ioctl_rm_dev(struct btrfs_root *root, void __user *arg)
 	kfree(vol_args);
 out:
 	mutex_unlock(&root->fs_info->volume_mutex);
+	atomic_set(&root->fs_info->mutually_exclusive_operation_running, 0);
 	return ret;
 }
 
@@ -2354,7 +2373,7 @@ static long btrfs_ioctl_dev_info(struct btrfs_root *root, void __user *arg)
 		s_uuid = di_args->uuid;
 
 	mutex_lock(&fs_devices->device_list_mutex);
-	dev = btrfs_find_device(root, di_args->devid, s_uuid, NULL);
+	dev = btrfs_find_device(root->fs_info, di_args->devid, s_uuid, NULL);
 	mutex_unlock(&fs_devices->device_list_mutex);
 
 	if (!dev) {
@@ -3111,8 +3130,9 @@ static long btrfs_ioctl_scrub(struct btrfs_root *root, void __user *arg)
 	if (IS_ERR(sa))
 		return PTR_ERR(sa);
 
-	ret = btrfs_scrub_dev(root, sa->devid, sa->start, sa->end,
-			      &sa->progress, sa->flags & BTRFS_SCRUB_READONLY);
+	ret = btrfs_scrub_dev(root->fs_info, sa->devid, sa->start, sa->end,
+			      &sa->progress, sa->flags & BTRFS_SCRUB_READONLY,
+			      0);
 
 	if (copy_to_user(arg, sa, sizeof(*sa)))
 		ret = -EFAULT;
@@ -3126,7 +3146,7 @@ static long btrfs_ioctl_scrub_cancel(struct btrfs_root *root, void __user *arg)
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	return btrfs_scrub_cancel(root);
+	return btrfs_scrub_cancel(root->fs_info);
 }
 
 static long btrfs_ioctl_scrub_progress(struct btrfs_root *root,
@@ -3172,6 +3192,51 @@ static long btrfs_ioctl_get_dev_stats(struct btrfs_root *root,
 		ret = -EFAULT;
 
 	kfree(sa);
+	return ret;
+}
+
+static long btrfs_ioctl_dev_replace(struct btrfs_root *root, void __user *arg)
+{
+	struct btrfs_ioctl_dev_replace_args *p;
+	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	p = memdup_user(arg, sizeof(*p));
+	if (IS_ERR(p))
+		return PTR_ERR(p);
+
+	switch (p->cmd) {
+	case BTRFS_IOCTL_DEV_REPLACE_CMD_START:
+		if (atomic_xchg(
+			&root->fs_info->mutually_exclusive_operation_running,
+			1)) {
+			pr_info("btrfs: dev add/delete/balance/replace/resize operation in progress\n");
+			ret = -EINPROGRESS;
+		} else {
+			ret = btrfs_dev_replace_start(root, p);
+			atomic_set(
+			 &root->fs_info->mutually_exclusive_operation_running,
+			 0);
+		}
+		break;
+	case BTRFS_IOCTL_DEV_REPLACE_CMD_STATUS:
+		btrfs_dev_replace_status(root->fs_info, p);
+		ret = 0;
+		break;
+	case BTRFS_IOCTL_DEV_REPLACE_CMD_CANCEL:
+		ret = btrfs_dev_replace_cancel(root->fs_info, p);
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	if (copy_to_user(arg, p, sizeof(*p)))
+		ret = -EFAULT;
+
+	kfree(p);
 	return ret;
 }
 
@@ -3421,6 +3486,7 @@ static long btrfs_ioctl_balance(struct file *file, void __user *arg)
 	struct btrfs_ioctl_balance_args *bargs;
 	struct btrfs_balance_control *bctl;
 	int ret;
+	int need_to_clear_lock = 0;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -3456,10 +3522,13 @@ static long btrfs_ioctl_balance(struct file *file, void __user *arg)
 		bargs = NULL;
 	}
 
-	if (fs_info->balance_ctl) {
+	if (atomic_xchg(&root->fs_info->mutually_exclusive_operation_running,
+			1)) {
+		pr_info("btrfs: dev add/delete/balance/replace/resize operation in progress\n");
 		ret = -EINPROGRESS;
 		goto out_bargs;
 	}
+	need_to_clear_lock = 1;
 
 	bctl = kzalloc(sizeof(*bctl), GFP_NOFS);
 	if (!bctl) {
@@ -3493,6 +3562,9 @@ do_balance:
 out_bargs:
 	kfree(bargs);
 out:
+	if (need_to_clear_lock)
+		atomic_set(&root->fs_info->mutually_exclusive_operation_running,
+			   0);
 	mutex_unlock(&fs_info->balance_mutex);
 	mutex_unlock(&fs_info->volume_mutex);
 	mnt_drop_write_file(file);
@@ -3897,7 +3969,7 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_balance_progress(root, argp);
 	case BTRFS_IOC_SET_RECEIVED_SUBVOL:
 		if (!allow_unsupported) {
-			printk(KERN_WARNING "btrfs: IOC_SET_RECEWIVED_SUBVOL is not supported, load module with allow_unsupported=1\n");
+			printk(KERN_WARNING "btrfs: IOC_SET_RECEIVED_SUBVOL is not supported, load module with allow_unsupported=1\n");
 			ret = -EOPNOTSUPP;
 			break;
 		}
@@ -3914,6 +3986,13 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_qgroup_create(root, argp);
 	case BTRFS_IOC_QGROUP_LIMIT:
 		return btrfs_ioctl_qgroup_limit(root, argp);
+	case BTRFS_IOC_DEV_REPLACE:
+		if (!allow_unsupported) {
+			printk(KERN_WARNING "btrfs: IOC_DEV_REPLACE is not supported, load module with allow_unsupported=1\n");
+			ret = -EOPNOTSUPP;
+			break;
+		}
+		return btrfs_ioctl_dev_replace(root, argp);
 	case BTRFS_IOC_COMPR_SIZE:
 		return btrfs_ioctl_compr_size(file, argp);
 	}

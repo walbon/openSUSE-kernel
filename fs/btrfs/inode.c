@@ -1578,7 +1578,6 @@ int btrfs_merge_bio_hook(struct page *page, unsigned long offset,
 			 unsigned long bio_flags)
 {
 	struct btrfs_root *root = BTRFS_I(page->mapping->host)->root;
-	struct btrfs_mapping_tree *map_tree;
 	u64 logical = (u64)bio->bi_sector << 9;
 	u64 length = 0;
 	u64 map_length;
@@ -1588,11 +1587,10 @@ int btrfs_merge_bio_hook(struct page *page, unsigned long offset,
 		return 0;
 
 	length = bio->bi_size;
-	map_tree = &root->fs_info->mapping_tree;
 	map_length = length;
-	ret = btrfs_map_block(map_tree, READ, logical,
+	ret = btrfs_map_block(root->fs_info, READ, logical,
 			      &map_length, NULL, 0);
-	/* Will always return 0 or 1 with map_multi == NULL */
+	/* Will always return 0 with map_multi == NULL */
 	BUG_ON(ret < 0);
 	if (map_length < length + size)
 		return 1;
@@ -1633,7 +1631,12 @@ static int __btrfs_submit_bio_done(struct inode *inode, int rw, struct bio *bio,
 			  u64 bio_offset)
 {
 	struct btrfs_root *root = BTRFS_I(inode)->root;
-	return btrfs_map_bio(root, rw, bio, mirror_num, 1);
+	int ret;
+
+	ret = btrfs_map_bio(root, rw, bio, mirror_num, 1);
+	if (ret)
+		bio_endio(bio, ret);
+	return ret;
 }
 
 /*
@@ -1657,15 +1660,17 @@ static int btrfs_submit_bio_hook(struct inode *inode, int rw, struct bio *bio,
 	if (!(rw & REQ_WRITE)) {
 		ret = btrfs_bio_wq_end_io(root->fs_info, bio, metadata);
 		if (ret)
-			return ret;
+			goto out;
 
 		if (bio_flags & EXTENT_BIO_COMPRESSED) {
-			return btrfs_submit_compressed_read(inode, bio,
-						    mirror_num, bio_flags);
+			ret = btrfs_submit_compressed_read(inode, bio,
+							   mirror_num,
+							   bio_flags);
+			goto out;
 		} else if (!skip_sum) {
 			ret = btrfs_lookup_bio_sums(root, inode, bio, NULL);
 			if (ret)
-				return ret;
+				goto out;
 		}
 		goto mapit;
 	} else if (!skip_sum) {
@@ -1673,15 +1678,21 @@ static int btrfs_submit_bio_hook(struct inode *inode, int rw, struct bio *bio,
 		if (root->root_key.objectid == BTRFS_DATA_RELOC_TREE_OBJECTID)
 			goto mapit;
 		/* we're doing a write, do the async checksumming */
-		return btrfs_wq_submit_bio(BTRFS_I(inode)->root->fs_info,
+		ret = btrfs_wq_submit_bio(BTRFS_I(inode)->root->fs_info,
 				   inode, rw, bio, mirror_num,
 				   bio_flags, bio_offset,
 				   __btrfs_submit_bio_start,
 				   __btrfs_submit_bio_done);
+		goto out;
 	}
 
 mapit:
-	return btrfs_map_bio(root, rw, bio, mirror_num, 0);
+	ret = btrfs_map_bio(root, rw, bio, mirror_num, 0);
+
+out:
+	if (ret < 0)
+		bio_endio(bio, ret);
+	return ret;
 }
 
 /*
@@ -3117,7 +3128,6 @@ static int btrfs_unlink(struct inode *dir, struct dentry *dentry)
 	struct btrfs_trans_handle *trans;
 	struct inode *inode = dentry->d_inode;
 	int ret;
-	unsigned long nr = 0;
 
 	trans = __unlink_start_trans(dir, dentry);
 	if (IS_ERR(trans))
@@ -3137,9 +3147,8 @@ static int btrfs_unlink(struct inode *dir, struct dentry *dentry)
 	}
 
 out:
-	nr = trans->blocks_used;
 	__unlink_end_trans(trans, root);
-	btrfs_btree_balance_dirty(root, nr);
+	btrfs_btree_balance_dirty(root);
 	return ret;
 }
 
@@ -3229,7 +3238,6 @@ static int btrfs_rmdir(struct inode *dir, struct dentry *dentry)
 	int err = 0;
 	struct btrfs_root *root = BTRFS_I(dir)->root;
 	struct btrfs_trans_handle *trans;
-	unsigned long nr = 0;
 
 	if (inode->i_size > BTRFS_EMPTY_DIR_SIZE)
 		return -ENOTEMPTY;
@@ -3258,9 +3266,8 @@ static int btrfs_rmdir(struct inode *dir, struct dentry *dentry)
 	if (!err)
 		btrfs_i_size_write(inode, 0);
 out:
-	nr = trans->blocks_used;
 	__unlink_end_trans(trans, root);
-	btrfs_btree_balance_dirty(root, nr);
+	btrfs_btree_balance_dirty(root);
 
 	return err;
 }
@@ -3837,7 +3844,6 @@ void btrfs_evict_inode(struct inode *inode)
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct btrfs_block_rsv *rsv, *global_rsv;
 	u64 min_size = btrfs_calc_trunc_metadata_size(root, 1);
-	unsigned long nr;
 	int ret;
 
 	trace_btrfs_inode_evict(inode);
@@ -3919,10 +3925,9 @@ void btrfs_evict_inode(struct inode *inode)
 		ret = btrfs_update_inode(trans, root, inode);
 		BUG_ON(ret);
 
-		nr = trans->blocks_used;
 		btrfs_end_transaction(trans, root);
 		trans = NULL;
-		btrfs_btree_balance_dirty(root, nr);
+		btrfs_btree_balance_dirty(root);
 	}
 
 	btrfs_free_block_rsv(root, rsv);
@@ -3939,9 +3944,8 @@ void btrfs_evict_inode(struct inode *inode)
 	      root->root_key.objectid == BTRFS_TREE_RELOC_OBJECTID))
 		btrfs_return_ino(root, btrfs_ino(inode));
 
-	nr = trans->blocks_used;
 	btrfs_end_transaction(trans, root);
-	btrfs_btree_balance_dirty(root, nr);
+	btrfs_btree_balance_dirty(root);
 no_delete:
 	end_writeback(inode);
 	return;
@@ -4960,7 +4964,6 @@ static int btrfs_mknod(struct inode *dir, struct dentry *dentry,
 	int err;
 	int drop_inode = 0;
 	u64 objectid;
-	unsigned long nr = 0;
 	u64 index = 0;
 
 	if (!new_valid_dev(rdev))
@@ -5014,9 +5017,8 @@ static int btrfs_mknod(struct inode *dir, struct dentry *dentry,
 		d_instantiate(dentry, inode);
 	}
 out_unlock:
-	nr = trans->blocks_used;
 	btrfs_end_transaction(trans, root);
-	btrfs_btree_balance_dirty(root, nr);
+	btrfs_btree_balance_dirty(root);
 	if (drop_inode) {
 		inode_dec_link_count(inode);
 		iput(inode);
@@ -5032,7 +5034,6 @@ static int btrfs_create(struct inode *dir, struct dentry *dentry,
 	struct inode *inode = NULL;
 	int drop_inode = 0;
 	int err;
-	unsigned long nr = 0;
 	u64 objectid;
 	u64 index = 0;
 
@@ -5082,13 +5083,12 @@ static int btrfs_create(struct inode *dir, struct dentry *dentry,
 		d_instantiate(dentry, inode);
 	}
 out_unlock:
-	nr = trans->blocks_used;
 	btrfs_end_transaction(trans, root);
 	if (drop_inode) {
 		inode_dec_link_count(inode);
 		iput(inode);
 	}
-	btrfs_btree_balance_dirty(root, nr);
+	btrfs_btree_balance_dirty(root);
 	return err;
 }
 
@@ -5099,7 +5099,6 @@ static int btrfs_link(struct dentry *old_dentry, struct inode *dir,
 	struct btrfs_root *root = BTRFS_I(dir)->root;
 	struct inode *inode = old_dentry->d_inode;
 	u64 index;
-	unsigned long nr = 0;
 	int err;
 	int drop_inode = 0;
 
@@ -5143,14 +5142,13 @@ static int btrfs_link(struct dentry *old_dentry, struct inode *dir,
 		btrfs_log_new_name(trans, inode, NULL, parent);
 	}
 
-	nr = trans->blocks_used;
 	btrfs_end_transaction(trans, root);
 fail:
 	if (drop_inode) {
 		inode_dec_link_count(inode);
 		iput(inode);
 	}
-	btrfs_btree_balance_dirty(root, nr);
+	btrfs_btree_balance_dirty(root);
 	return err;
 }
 
@@ -5163,7 +5161,6 @@ static int btrfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	int drop_on_err = 0;
 	u64 objectid = 0;
 	u64 index = 0;
-	unsigned long nr = 1;
 
 	/*
 	 * 2 items for inode and ref
@@ -5209,11 +5206,10 @@ static int btrfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	drop_on_err = 0;
 
 out_fail:
-	nr = trans->blocks_used;
 	btrfs_end_transaction(trans, root);
 	if (drop_on_err)
 		iput(inode);
-	btrfs_btree_balance_dirty(root, nr);
+	btrfs_btree_balance_dirty(root);
 	return err;
 }
 
@@ -6425,7 +6421,6 @@ static int btrfs_submit_direct_hook(int rw, struct btrfs_dio_private *dip,
 {
 	struct inode *inode = dip->inode;
 	struct btrfs_root *root = BTRFS_I(inode)->root;
-	struct btrfs_mapping_tree *map_tree = &root->fs_info->mapping_tree;
 	struct bio *bio;
 	struct bio *orig_bio = dip->orig_bio;
 	struct bio_vec *bvec = orig_bio->bi_io_vec;
@@ -6438,7 +6433,7 @@ static int btrfs_submit_direct_hook(int rw, struct btrfs_dio_private *dip,
 	int async_submit = 0;
 
 	map_length = orig_bio->bi_size;
-	ret = btrfs_map_block(map_tree, READ, start_sector << 9,
+	ret = btrfs_map_block(root->fs_info, READ, start_sector << 9,
 			      &map_length, NULL, 0);
 	if (ret) {
 		bio_put(orig_bio);
@@ -6492,7 +6487,8 @@ static int btrfs_submit_direct_hook(int rw, struct btrfs_dio_private *dip,
 			bio->bi_end_io = btrfs_end_dio_bio;
 
 			map_length = orig_bio->bi_size;
-			ret = btrfs_map_block(map_tree, READ, start_sector << 9,
+			ret = btrfs_map_block(root->fs_info, READ,
+					      start_sector << 9,
 					      &map_length, NULL, 0);
 			if (ret) {
 				bio_put(bio);
@@ -6922,7 +6918,6 @@ static int btrfs_truncate(struct inode *inode)
 	int ret;
 	int err = 0;
 	struct btrfs_trans_handle *trans;
-	unsigned long nr;
 	u64 mask = root->sectorsize - 1;
 	u64 min_size = btrfs_calc_trunc_metadata_size(root, 1);
 
@@ -7045,9 +7040,8 @@ static int btrfs_truncate(struct inode *inode)
 			break;
 		}
 
-		nr = trans->blocks_used;
 		btrfs_end_transaction(trans, root);
-		btrfs_btree_balance_dirty(root, nr);
+		btrfs_btree_balance_dirty(root);
 
 		trans = btrfs_start_transaction(root, 2);
 		if (IS_ERR(trans)) {
@@ -7081,9 +7075,8 @@ static int btrfs_truncate(struct inode *inode)
 		if (ret && !err)
 			err = ret;
 
-		nr = trans->blocks_used;
 		ret = btrfs_end_transaction(trans, root);
-		btrfs_btree_balance_dirty(root, nr);
+		btrfs_btree_balance_dirty(root);
 	}
 
 out:
@@ -7662,7 +7655,6 @@ static int btrfs_symlink(struct inode *dir, struct dentry *dentry,
 	unsigned long ptr;
 	struct btrfs_file_extent_item *ei;
 	struct extent_buffer *leaf;
-	unsigned long nr = 0;
 
 	name_len = strlen(symname) + 1;
 	if (name_len > BTRFS_MAX_INLINE_DATA_SIZE(root))
@@ -7760,13 +7752,12 @@ static int btrfs_symlink(struct inode *dir, struct dentry *dentry,
 out_unlock:
 	if (!err)
 		d_instantiate(dentry, inode);
-	nr = trans->blocks_used;
 	btrfs_end_transaction(trans, root);
 	if (drop_inode) {
 		inode_dec_link_count(inode);
 		iput(inode);
 	}
-	btrfs_btree_balance_dirty(root, nr);
+	btrfs_btree_balance_dirty(root);
 	return err;
 }
 

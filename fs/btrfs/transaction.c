@@ -30,6 +30,7 @@
 #include "tree-log.h"
 #include "inode-map.h"
 #include "volumes.h"
+#include "dev-replace.h"
 
 #define BTRFS_ROOT_TRANS_TAG 0
 
@@ -847,7 +848,9 @@ static noinline int commit_cowonly_roots(struct btrfs_trans_handle *trans,
 		return ret;
 
 	ret = btrfs_run_dev_stats(trans, root->fs_info);
-	BUG_ON(ret);
+	WARN_ON(ret);
+	ret = btrfs_run_dev_replace(trans, root->fs_info);
+	WARN_ON(ret);
 
 	ret = btrfs_run_qgroups(trans, root->fs_info);
 	BUG_ON(ret);
@@ -869,6 +872,8 @@ static noinline int commit_cowonly_roots(struct btrfs_trans_handle *trans,
 	down_write(&fs_info->extent_commit_sem);
 	switch_commit_root(fs_info->extent_root);
 	up_write(&fs_info->extent_commit_sem);
+
+	btrfs_after_dev_replace_commit(fs_info);
 
 	return 0;
 }
@@ -954,7 +959,6 @@ int btrfs_defrag_root(struct btrfs_root *root, int cacheonly)
 	struct btrfs_fs_info *info = root->fs_info;
 	struct btrfs_trans_handle *trans;
 	int ret;
-	unsigned long nr;
 
 	if (xchg(&root->defrag_running, 1))
 		return 0;
@@ -966,9 +970,8 @@ int btrfs_defrag_root(struct btrfs_root *root, int cacheonly)
 
 		ret = btrfs_defrag_leaves(trans, root, cacheonly);
 
-		nr = trans->blocks_used;
 		btrfs_end_transaction(trans, root);
-		btrfs_btree_balance_dirty(info->tree_root, nr);
+		btrfs_btree_balance_dirty(info->tree_root);
 		cond_resched();
 
 		if (btrfs_fs_closing(root->fs_info) || ret != -EAGAIN)

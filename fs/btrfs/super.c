@@ -57,6 +57,7 @@
 #include "export.h"
 #include "compression.h"
 #include "rcu-string.h"
+#include "dev-replace.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/btrfs.h>
@@ -122,7 +123,16 @@ static void btrfs_handle_error(struct btrfs_fs_info *fs_info)
 	if (fs_info->fs_state & BTRFS_SUPER_FLAG_ERROR) {
 		sb->s_flags |= MS_RDONLY;
 		printk(KERN_INFO "btrfs is forced readonly\n");
-		__btrfs_scrub_cancel(fs_info);
+		/*
+		 * Note that a running device replace operation is not
+		 * canceled here although there is no way to update
+		 * the progress. It would add the risk of a deadlock,
+		 * therefore the canceling is ommited. The only penalty
+		 * is that some I/O remains active until the procedure
+		 * completes. The next time when the filesystem is
+		 * mounted writeable again, the device replace
+		 * operation continues.
+		 */
 //		WARN_ON(1);
 	}
 }
@@ -1204,7 +1214,8 @@ static void btrfs_resize_thread_pool(struct btrfs_fs_info *fs_info,
 	btrfs_set_max_workers(&fs_info->endio_freespace_worker, new_pool_size);
 	btrfs_set_max_workers(&fs_info->delayed_workers, new_pool_size);
 	btrfs_set_max_workers(&fs_info->readahead_workers, new_pool_size);
-	btrfs_set_max_workers(&fs_info->scrub_workers, new_pool_size);
+	btrfs_set_max_workers(&fs_info->scrub_wr_completion_workers,
+			      new_pool_size);
 }
 
 static int btrfs_remount(struct super_block *sb, int *flags, char *data)
@@ -1233,7 +1244,14 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		return 0;
 
 	if (*flags & MS_RDONLY) {
+		/*
+		 * this also happens on 'umount -rf' or on shutdown, when
+		 * the filesystem is busy.
+		 */
 		sb->s_flags |= MS_RDONLY;
+
+		btrfs_dev_replace_suspend_for_unmount(fs_info);
+		btrfs_scrub_cancel(fs_info);
 
 		ret = btrfs_commit_super(root);
 		if (ret)
@@ -1276,6 +1294,11 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		if (ret)
 			goto restore;
 
+		ret = btrfs_resume_dev_replace_async(fs_info);
+		if (ret) {
+			pr_warn("btrfs: failed to resume dev_replace\n");
+			goto restore;
+		}
 		sb->s_flags &= ~MS_RDONLY;
 	}
 
@@ -1368,7 +1391,8 @@ static int btrfs_calc_avail_data_space(struct btrfs_root *root, u64 *free_bytes)
 		min_stripe_size = BTRFS_STRIPE_LEN;
 
 	list_for_each_entry(device, &fs_devices->devices, dev_list) {
-		if (!device->in_fs_metadata || !device->bdev)
+		if (!device->in_fs_metadata || !device->bdev ||
+		    device->is_tgtdev_for_dev_replace)
 			continue;
 
 		avail_space = device->total_bytes - device->bytes_used;
