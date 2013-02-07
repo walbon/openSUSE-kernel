@@ -424,6 +424,7 @@ extern void qla2x00_free_irqs(scsi_qla_host_t *);
 
 extern int qla2x00_get_data_rate(scsi_qla_host_t *);
 extern const char *qla2x00_get_link_speed_str(struct qla_hw_data *, uint16_t);
+extern int qla2x00_is_a_vp_did(scsi_qla_host_t *, uint32_t);
 
 /*
  * Global Function Prototypes in qla_sup.c source file.
