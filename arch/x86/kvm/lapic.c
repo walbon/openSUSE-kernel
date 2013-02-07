@@ -1227,7 +1227,8 @@ int kvm_create_lapic(struct kvm_vcpu *vcpu)
 	apic->lapic_timer.kvm = vcpu->kvm;
 	apic->lapic_timer.vcpu = vcpu;
 
-	kvm_lapic_set_base(vcpu, APIC_DEFAULT_PHYS_BASE);
+	kvm_lapic_set_base(vcpu,
+			APIC_DEFAULT_PHYS_BASE | MSR_IA32_APICBASE_ENABLE);
 
 	kvm_lapic_reset(vcpu);
 	kvm_iodevice_init(&apic->dev, &apic_mmio_ops);
