@@ -291,7 +291,12 @@ int dlpar_detach_node(struct device_node *dn)
 #ifdef CONFIG_PROC_DEVICETREE
 	struct device_node *parent = dn->parent;
 	struct property *prop = dn->properties;
+#endif
 
+	blocking_notifier_call_chain(&pSeries_reconfig_chain,
+			    PSERIES_RECONFIG_REMOVE, dn);
+
+#ifdef CONFIG_PROC_DEVICETREE
 	while (prop) {
 		remove_proc_entry(prop->name, dn->pde);
 		prop = prop->next;
@@ -301,8 +306,6 @@ int dlpar_detach_node(struct device_node *dn)
 		remove_proc_entry(dn->pde->name, parent->pde);
 #endif
 
-	blocking_notifier_call_chain(&pSeries_reconfig_chain,
-			    PSERIES_RECONFIG_REMOVE, dn);
 	of_detach_node(dn);
 	of_node_put(dn); /* Must decrement the refcount */
 
