@@ -13,6 +13,10 @@ struct kvm_lapic {
 	u32 divide_count;
 	struct kvm_vcpu *vcpu;
 	bool irr_pending;
+	/* Number of bits set in ISR. */
+	s16 isr_count;
+	/* The highest vector set in ISR; if -1 - invalid, must scan ISR. */
+	int highest_isr_cache;
 	void *regs;
 	gpa_t vapic_addr;
 	struct page *vapic_page;
