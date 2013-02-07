@@ -835,7 +835,7 @@ static int create_ddw(struct pci_dev *dev, const u32 *ddw_avail,
 }
 
 static void restore_default_window(struct pci_dev *dev,
-				u32 ddw_restore_token, unsigned long liobn)
+					u32 ddw_restore_token)
 {
 	struct device_node *dn;
 	struct pci_dn *pcidn;
@@ -1050,7 +1050,7 @@ out_free_prop:
 
 out_restore_window:
 	if (ddw_restore_token)
-		restore_default_window(dev, ddw_restore_token, liobn);
+		restore_default_window(dev, ddw_restore_token);
 
 out_unlock:
 	mutex_unlock(&direct_window_init_mutex);
