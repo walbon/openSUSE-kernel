@@ -127,14 +127,45 @@ static inline void perf_get_data_addr(struct pt_regs *regs, u64 *addrp)
 		*addrp = mfspr(SPRN_SDAR);
 }
 
+static inline u32 perf_flags_from_msr(struct pt_regs *regs)
+{
+	if (regs->msr & MSR_PR)
+		return PERF_RECORD_MISC_USER;
+	if ((regs->msr & MSR_HV) && freeze_events_kernel != MMCR0_FCHV)
+		return PERF_RECORD_MISC_HYPERVISOR;
+	return PERF_RECORD_MISC_KERNEL;
+}
+
 static inline u32 perf_get_misc_flags(struct pt_regs *regs)
 {
 	unsigned long mmcra = regs->dsisr;
 	unsigned long sihv = MMCRA_SIHV;
 	unsigned long sipr = MMCRA_SIPR;
 
+	/* Not a PMU interrupt: Make up flags from regs->msr */
 	if (TRAP(regs) != 0xf00)
-		return 0;	/* not a PMU interrupt */
+		return perf_flags_from_msr(regs);
+
+	/*
+	 * If we don't support continuous sampling and this
+	 * is not a marked event, same deal
+	 */
+	if ((ppmu->flags & PPMU_NO_CONT_SAMPLING) &&
+			!(mmcra & MMCRA_SAMPLE_ENABLE))
+		return perf_flags_from_msr(regs);
+
+	/*
+	 * If we don't have flags in MMCRA, rather than using
+	 * the MSR, we intuit the flags from the address in
+	 * SIAR which should give slightly more reliable
+	 * results
+	 */
+	if (ppmu->flags & PPMU_NO_SIPR) {
+		unsigned long siar = mfspr(SPRN_SIAR);
+		if (siar >= PAGE_OFFSET)
+			return PERF_RECORD_MISC_KERNEL;
+		return PERF_RECORD_MISC_USER;
+	}
 
 	if (ppmu->flags & PPMU_ALT_SIPR) {
 		sihv = POWER6_MMCRA_SIHV;
@@ -1323,10 +1354,17 @@ unsigned long perf_misc_flags(struct pt_regs *regs)
  */
 unsigned long perf_instruction_pointer(struct pt_regs *regs)
 {
+	unsigned long mmcra = regs->dsisr;
 	unsigned long use_siar = regs->result;
 
+	/* Not a PMU interrupt */
 	if (TRAP(regs) != 0xf00)
-		return regs->nip;	/* not a PMU interrupt */
+		return regs->nip;
+
+	/* Processor doesn't support sampling non marked events */
+	if ((ppmu->flags & PPMU_NO_CONT_SAMPLING) &&
+			!(mmcra & MMCRA_SAMPLE_ENABLE))
+		return regs->nip;
 
 	if (use_siar && siar_valid(regs))
 		return mfspr(SPRN_SIAR) + perf_ip_adjust(regs);
