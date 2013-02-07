@@ -144,23 +144,6 @@ static inline int kvm_apic_id(struct kvm_lapic *apic)
 	return (apic_get_reg(apic, APIC_ID) >> 24) & 0xff;
 }
 
-static inline u16 apic_cluster_id(struct kvm_apic_map *map, u32 ldr)
-{
-	u16 cid;
-	ldr >>= 32 - map->ldr_bits;
-	cid = (ldr >> map->cid_shift) & map->cid_mask;
-
-	BUG_ON(cid >= ARRAY_SIZE(map->logical_map));
-
-	return cid;
-}
-
-static inline u16 apic_logical_id(struct kvm_apic_map *map, u32 ldr)
-{
-	ldr >>= (32 - map->ldr_bits);
-	return ldr & map->lid_mask;
-}
-
 static void recalculate_apic_map(struct kvm *kvm)
 {
 	struct kvm_apic_map *new, *old = NULL;
@@ -199,9 +182,9 @@ static void recalculate_apic_map(struct kvm *kvm)
 			new->ldr_bits = 32;
 			new->cid_shift = 16;
 			new->cid_mask = new->lid_mask = 0xffff;
-		} else if (kvm_apic_sw_enabled(apic) &&
+		} else if (apic_sw_enabled(apic) &&
 				!new->cid_mask /* flat mode */ &&
-				kvm_apic_get_reg(apic, APIC_DFR) == APIC_DFR_CLUSTER) {
+				apic_get_reg(apic, APIC_DFR) == APIC_DFR_CLUSTER) {
 			new->cid_shift = 4;
 			new->cid_mask = 0xf;
 			new->lid_mask = 0xf;
@@ -209,7 +192,7 @@ static void recalculate_apic_map(struct kvm *kvm)
 
 		new->phys_map[kvm_apic_id(apic)] = apic;
 
-		ldr = kvm_apic_get_reg(apic, APIC_LDR);
+		ldr = apic_get_reg(apic, APIC_LDR);
 		cid = apic_cluster_id(new, ldr);
 		lid = apic_logical_id(new, ldr);
 
@@ -236,6 +219,53 @@ static inline void kvm_apic_set_ldr(struct kvm_lapic *apic, u32 id)
 {
 	apic_set_reg(apic, APIC_LDR, id);
 	recalculate_apic_map(apic->vcpu->kvm);
+}
+
+void kvm_calculate_eoi_exitmap(struct kvm_vcpu *vcpu,
+				struct kvm_lapic_irq *irq,
+				u64 *eoi_exit_bitmap)
+{
+	struct kvm_lapic **dst;
+	struct kvm_apic_map *map;
+	unsigned long bitmap = 1;
+	int i;
+
+	rcu_read_lock();
+	map = rcu_dereference(vcpu->kvm->arch.apic_map);
+
+	if (unlikely(!map)) {
+		__set_bit(irq->vector, (unsigned long *)eoi_exit_bitmap);
+		goto out;
+	}
+
+	if (irq->dest_mode == 0) { /* physical mode */
+		if (irq->delivery_mode == APIC_DM_LOWEST ||
+				irq->dest_id == 0xff) {
+			__set_bit(irq->vector,
+				  (unsigned long *)eoi_exit_bitmap);
+			goto out;
+		}
+		dst = &map->phys_map[irq->dest_id & 0xff];
+	} else {
+		u32 mda = irq->dest_id << (32 - map->ldr_bits);
+
+		dst = map->logical_map[apic_cluster_id(map, mda)];
+
+		bitmap = apic_logical_id(map, mda);
+	}
+
+	for_each_set_bit(i, &bitmap, 16) {
+		if (!dst[i])
+			continue;
+		if (dst[i]->vcpu == vcpu) {
+			__set_bit(irq->vector,
+				  (unsigned long *)eoi_exit_bitmap);
+			break;
+		}
+	}
+
+out:
+	rcu_read_unlock();
 }
 
 static inline int apic_lvt_enabled(struct kvm_lapic *apic, int lvt_type)
@@ -285,11 +315,6 @@ void kvm_apic_set_version(struct kvm_vcpu *vcpu)
 	if (feat && (feat->ecx & (1 << (X86_FEATURE_X2APIC & 31))))
 		v |= APIC_LVR_DIRECTED_EOI;
 	apic_set_reg(apic, APIC_LVR, v);
-}
-
-static inline int apic_x2apic_mode(struct kvm_lapic *apic)
-{
-	return apic->vcpu->arch.apic_base & X2APIC_ENABLE;
 }
 
 static unsigned int apic_lvt_mask[APIC_LVT_NUM] = {
@@ -344,6 +369,10 @@ static inline int apic_find_highest_irr(struct kvm_lapic *apic)
 {
 	int result;
 
+	/*
+	 * Note that irr_pending is just a hint. It will be always
+	 * true with virtual interrupt delivery enabled.
+	 */
 	if (!apic->irr_pending)
 		return -1;
 
@@ -418,6 +447,8 @@ static inline int apic_find_highest_isr(struct kvm_lapic *apic)
 	if (likely(apic->highest_isr_cache != -1))
 		return apic->highest_isr_cache;
 
+
+	/* Note that isr_count is always 1 with vid enabled */
 	result = find_highest_vector(apic->regs + APIC_ISR);
 	ASSERT(result == -1 || result >= 16);
 
@@ -692,6 +723,19 @@ int kvm_apic_compare_prio(struct kvm_vcpu *vcpu1, struct kvm_vcpu *vcpu2)
 	return vcpu1->arch.apic_arb_prio - vcpu2->arch.apic_arb_prio;
 }
 
+static void kvm_ioapic_send_eoi(struct kvm_lapic *apic, int vector)
+{
+	if (!(apic_get_reg(apic, APIC_SPIV) & APIC_SPIV_DIRECTED_EOI) &&
+	    kvm_ioapic_handles_vector(apic->vcpu->kvm, vector)) {
+		int trigger_mode;
+		if (apic_test_vector(vector, apic->regs + APIC_TMR))
+			trigger_mode = IOAPIC_LEVEL_TRIG;
+		else
+			trigger_mode = IOAPIC_EDGE_TRIG;
+		kvm_ioapic_update_eoi(apic->vcpu->kvm, vector, trigger_mode);
+	}
+}
+
 static void apic_set_eoi(struct kvm_lapic *apic)
 {
 	int vector = apic_find_highest_isr(apic);
@@ -705,17 +749,22 @@ static void apic_set_eoi(struct kvm_lapic *apic)
 	apic_clear_isr(vector, apic);
 	apic_update_ppr(apic);
 
-	if (!(apic_get_reg(apic, APIC_SPIV) & APIC_SPIV_DIRECTED_EOI) &&
-	    kvm_ioapic_handles_vector(apic->vcpu->kvm, vector)) {
-		int trigger_mode;
-		if (apic_test_vector(vector, apic->regs + APIC_TMR))
-			trigger_mode = IOAPIC_LEVEL_TRIG;
-		else
-			trigger_mode = IOAPIC_EDGE_TRIG;
-		kvm_ioapic_update_eoi(apic->vcpu->kvm, vector, trigger_mode);
-	}
+	kvm_ioapic_send_eoi(apic, vector);
 	kvm_make_request(KVM_REQ_EVENT, apic->vcpu);
 }
+
+/*
+ * this interface assumes a trap-like exit, which has already finished
+ * desired side effect including vISR and vPPR update.
+ */
+void kvm_apic_set_eoi_accelerated(struct kvm_vcpu *vcpu, int vector)
+{
+	struct kvm_lapic *apic = vcpu->arch.apic;
+
+	kvm_ioapic_send_eoi(apic, vector);
+ 	kvm_make_request(KVM_REQ_EVENT, apic->vcpu);
+ }
+EXPORT_SYMBOL_GPL(kvm_apic_set_eoi_accelerated);
 
 static void apic_send_ipi(struct kvm_lapic *apic)
 {
@@ -1309,8 +1358,8 @@ void kvm_lapic_reset(struct kvm_vcpu *vcpu)
 		apic_set_reg(apic, APIC_ISR + 0x10 * i, 0);
 		apic_set_reg(apic, APIC_TMR + 0x10 * i, 0);
 	}
-	apic->irr_pending = false;
-	apic->isr_count = 0;
+	apic->irr_pending = kvm_apic_vid_enabled(vcpu->kvm);
+	apic->isr_count = kvm_apic_vid_enabled(vcpu->kvm);
 	apic->highest_isr_cache = -1;
 	update_divide_count(apic);
 	atomic_set(&apic->lapic_timer.pending, 0);
@@ -1501,7 +1550,9 @@ void kvm_apic_post_state_restore(struct kvm_vcpu *vcpu,
 	update_divide_count(apic);
 	start_apic_timer(apic);
 	apic->irr_pending = true;
-	apic->isr_count = count_vectors(apic->regs + APIC_ISR);
+	apic->isr_count = kvm_apic_vid_enabled(vcpu->kvm) ?
+				1 : count_vectors(apic->regs + APIC_ISR);
+	kvm_x86_ops->hwapic_isr_update(vcpu->kvm, apic_find_highest_isr(apic));
 	apic->highest_isr_cache = -1;
 	kvm_make_request(KVM_REQ_EVENT, vcpu);
 }
