@@ -6460,6 +6460,7 @@ int kvm_arch_init_vm(struct kvm *kvm)
 	set_bit(KVM_USERSPACE_IRQ_SOURCE_ID, &kvm->arch.irq_sources_bitmap);
 
 	raw_spin_lock_init(&kvm->arch.tsc_write_lock);
+	mutex_init(&kvm->arch.apic_map_lock);
 
 	return 0;
 }
@@ -6510,6 +6511,7 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 		put_page(kvm->arch.apic_access_page);
 	if (kvm->arch.ept_identity_pagetable)
 		put_page(kvm->arch.ept_identity_pagetable);
+	kfree(rcu_dereference_check(kvm->arch.apic_map, 1));
 }
 
 int kvm_arch_prepare_memory_region(struct kvm *kvm,
