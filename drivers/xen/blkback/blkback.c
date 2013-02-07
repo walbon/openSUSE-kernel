@@ -379,7 +379,6 @@ static void dispatch_discard(blkif_t *blkif, struct blkif_request_discard *req)
 
 	blkif->st_ds_req++;
 
-	preq.dev           = req->handle;
 	preq.sector_number = req->sector_number;
 	preq.nr_sects      = req->nr_sectors;
 
@@ -580,7 +579,6 @@ static void dispatch_rw_block_io(blkif_t *blkif,
 		goto fail_response;
 	}
 
-	preq.dev           = req->handle;
 	preq.sector_number = req->sector_number;
 	preq.nr_sects      = 0;
 

@@ -37,6 +37,7 @@
 #include <linux/sched.h>
 #include <linux/kernel_stat.h>
 #include <linux/ftrace.h>
+#include <linux/ratelimit.h>
 #include <linux/version.h>
 #include <asm/atomic.h>
 #include <asm/system.h>
@@ -482,10 +483,9 @@ asmlinkage void __irq_entry evtchn_do_upcall(struct pt_regs *regs)
 						clear_evtchn(port);
 					handled = handle_irq(irq, regs);
 				}
-				if (!handled && printk_ratelimit())
-					pr_emerg("No handler for irq %d"
-						 " (port %u)\n",
-						 irq, port);
+				if (!handled)
+					pr_emerg_ratelimited("No handler for irq %d (port %u)\n",
+							     irq, port);
 
 				l2i = (l2i + 1) % BITS_PER_LONG;
 

@@ -45,8 +45,6 @@
 #define DPRINTK(_f, _a...)			\
 	pr_debug("(file=%s, line=%d) " _f,	\
 		 __FILE__ , __LINE__ , ## _a )
-#define IPRINTK(fmt, args...) pr_info("xen_net: " fmt, ##args)
-#define WPRINTK(fmt, args...) pr_warning("xen_net: " fmt, ##args)
 
 typedef struct netif_st {
 	/* Unique identifier for this interface. */
@@ -199,6 +197,9 @@ void netif_deschedule_work(netif_t *netif);
 
 int netif_be_start_xmit(struct sk_buff *skb, struct net_device *dev);
 irqreturn_t netif_be_int(int irq, void *dev_id);
+
+/* Prevent the device from generating any further traffic. */
+void xenvif_carrier_off(netif_t *netif);
 
 static inline int netbk_can_queue(struct net_device *dev)
 {

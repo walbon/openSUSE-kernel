@@ -23,12 +23,6 @@
 #include <xen/xenbus.h>
 #include "common.h"
 
-#if 0
-#undef DPRINTK
-#define DPRINTK(fmt, args...) \
-    printk("netback/xenbus (%s:%d) " fmt ".\n", __FUNCTION__, __LINE__, ##args)
-#endif
-
 static DECLARE_RWSEM(teardown_sem);
 
 static int connect_rings(struct backend_info *);
@@ -311,7 +305,8 @@ static void xen_net_read_rate(struct xenbus_device *dev,
 	return;
 
  fail:
-	WPRINTK("Failed to parse network rate limit. Traffic unlimited.\n");
+	dev_warn(&dev->dev,
+		 "Failed to parse network rate limit. Traffic unlimited.\n");
 	kfree(ratestr);
 }
 
