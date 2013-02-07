@@ -36,7 +36,6 @@
 #include <linux/kernel_stat.h>
 #include <asm/hyperv.h>
 #include <asm/hypervisor.h>
-#include <asm/mshyperv.h>
 #include "hyperv_vmbus.h"
 
 
@@ -529,6 +528,7 @@ void vmbus_flow_handler(unsigned int irq, struct irq_desc *desc)
 static int vmbus_bus_init(int irq)
 {
 	int ret;
+	unsigned int vector;
 
 	/* Hypervisor initialization...setup hypercall page..etc */
 	ret = hv_init();
@@ -558,16 +558,13 @@ static int vmbus_bus_init(int irq)
 	 */
 	irq_set_handler(irq, vmbus_flow_handler);
 
-	/*
-	 * Register our interrupt handler.
-	 */
-	hv_register_vmbus_handler(irq, vmbus_isr);
+	vector = IRQ0_VECTOR + irq;
 
 	/*
-	 * Initialize the per-cpu interrupt state and
+	 * Notify the hypervisor of our irq and
 	 * connect to the host.
 	 */
-	on_each_cpu(hv_synic_init, NULL, 1);
+	on_each_cpu(hv_synic_init, (void *)&vector, 1);
 	ret = vmbus_connect();
 	if (ret)
 		goto err_irq;
