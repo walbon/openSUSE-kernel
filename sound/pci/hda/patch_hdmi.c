@@ -29,6 +29,7 @@
  */
 
 #include <linux/init.h>
+#include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/moduleparam.h>
@@ -1426,6 +1427,31 @@ static void intel_haswell_fixup_connect_list(struct hda_codec *codec,
 	snd_hda_override_conn_list(codec, nid, spec->num_cvts, spec->cvt_nids);
 }
 
+#define INTEL_VENDOR_NID 0x08
+#define INTEL_GET_VENDOR_VERB 0xf81
+#define INTEL_SET_VENDOR_VERB 0x781
+#define INTEL_EN_DP12			0x02 /* enable DP 1.2 features */
+#define INTEL_EN_ALL_PIN_CVTS	0x01 /* enable 2nd & 3rd pins and convertors */
+
+static void intel_haswell_enable_all_pins(struct hda_codec *codec)
+{
+	unsigned int vendor_param;
+
+	vendor_param = snd_hda_codec_read(codec, INTEL_VENDOR_NID, 0,
+				INTEL_GET_VENDOR_VERB, 0);
+	if (vendor_param == -1 || vendor_param & INTEL_EN_ALL_PIN_CVTS)
+		return;
+
+	vendor_param |= INTEL_EN_ALL_PIN_CVTS;
+	vendor_param = snd_hda_codec_read(codec, INTEL_VENDOR_NID, 0,
+				INTEL_SET_VENDOR_VERB, vendor_param);
+	if (vendor_param == -1)
+		return;
+
+	snd_hda_codec_update_widgets(codec);
+	return;
+}
+
 
 static int patch_generic_hdmi(struct hda_codec *codec)
 {
@@ -1436,6 +1462,9 @@ static int patch_generic_hdmi(struct hda_codec *codec)
 		return -ENOMEM;
 
 	codec->spec = spec;
+
+	if (codec->bus->pci->subsystem_device == 0x80862010)
+		intel_haswell_enable_all_pins(codec);
 
 	if (codec->vendor_id == 0x80862807)
 		intel_haswell_fixup_enable_dp12(codec);
