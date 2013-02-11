@@ -1167,7 +1167,7 @@ BUILD_INTERRUPT3(xen_hvm_callback_vector, HYPERVISOR_CALLBACK_VECTOR,
 
 #endif	/* CONFIG_PARAVIRT_XEN */
 
-#ifdef CONFIG_HYPERV
+#if defined(CONFIG_HYPERV) || defined(CONFIG_HYPERV_MODULE)
 
 BUILD_INTERRUPT3(hyperv_callback_vector, HYPERVISOR_CALLBACK_VECTOR,
 	hyperv_vector_handler)

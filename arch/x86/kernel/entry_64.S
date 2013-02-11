@@ -1360,7 +1360,7 @@ apicinterrupt HYPERVISOR_CALLBACK_VECTOR \
 
 #endif /* CONFIG_PARAVIRT_XEN */
 
-#ifdef CONFIG_HYPERV
+#if defined(CONFIG_HYPERV) || defined(CONFIG_HYPERV_MODULE)
 apicinterrupt HYPERVISOR_CALLBACK_VECTOR \
 	hyperv_callback_vector hyperv_vector_handler
 #endif /* CONFIG_HYPERV */
