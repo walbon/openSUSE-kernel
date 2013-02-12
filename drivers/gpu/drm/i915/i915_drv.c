@@ -110,6 +110,11 @@ MODULE_PARM_DESC(enable_hangcheck,
 		"WARNING: Disabling this can cause system wide hangs. "
 		"(default: true)");
 
+bool i915_enable_ppgtt __read_mostly = 1;
+module_param_named(i915_enable_ppgtt, i915_enable_ppgtt, bool, 0600);
+MODULE_PARM_DESC(i915_enable_ppgtt,
+		"Enable PPGTT (default: true)");
+
 static struct drm_driver driver;
 extern int intel_agp_enabled;
 
@@ -743,6 +748,8 @@ int i915_reset(struct drm_device *dev, u8 flags)
 		 * least the rps/rc6/emon init done within modeset_init_hw. For
 		 * some unknown reason, this blows up my ilk, so don't.
 		 */
+
+		i915_gem_init_ppgtt(dev);
 
 		mutex_unlock(&dev->struct_mutex);
 
