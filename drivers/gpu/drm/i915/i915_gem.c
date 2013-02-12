@@ -2460,6 +2460,8 @@ i915_gem_object_put_fence(struct drm_i915_gem_object *obj)
 
 	if (obj->fence_reg != I915_FENCE_REG_NONE) {
 		struct drm_i915_private *dev_priv = obj->base.dev->dev_private;
+
+		WARN_ON(dev_priv->fence_regs[obj->fence_reg].pin_count);
 		i915_gem_clear_fence_reg(obj->base.dev,
 					 &dev_priv->fence_regs[obj->fence_reg]);
 
@@ -2484,7 +2486,7 @@ i915_find_fence_reg(struct drm_device *dev,
 		if (!reg->obj)
 			return reg;
 
-		if (!reg->obj->pin_count)
+		if (!reg->pin_count)
 			avail = reg;
 	}
 
@@ -2494,7 +2496,7 @@ i915_find_fence_reg(struct drm_device *dev,
 	/* None available, try to steal one or wait for a user to finish */
 	avail = first = NULL;
 	list_for_each_entry(reg, &dev_priv->mm.fence_list, lru_list) {
-		if (reg->obj->pin_count)
+		if (reg->pin_count)
 			continue;
 
 		if (first == NULL)
@@ -2689,6 +2691,7 @@ i915_gem_clear_fence_reg(struct drm_device *dev,
 	list_del_init(&reg->lru_list);
 	reg->obj = NULL;
 	reg->setup_seqno = 0;
+	reg->pin_count = 0;
 }
 
 /**
