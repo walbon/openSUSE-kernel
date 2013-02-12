@@ -225,9 +225,9 @@ int radeon_crtc_cursor_move(struct drm_crtc *crtc,
 	DRM_DEBUG("x %d y %d c->x %d c->y %d\n", x, y, crtc->x, crtc->y);
 
 	if (x < 0)
-		xorigin = -x + 1;
+		xorigin = -x;
 	if (y < 0)
-		yorigin = -y + 1;
+		yorigin = -y;
 	if (xorigin >= CURSOR_WIDTH)
 		xorigin = CURSOR_WIDTH - 1;
 	if (yorigin >= CURSOR_HEIGHT)
