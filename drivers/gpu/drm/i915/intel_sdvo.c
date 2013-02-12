@@ -981,7 +981,6 @@ intel_sdvo_set_input_timings_for_mode(struct intel_sdvo *intel_sdvo,
 
 	intel_sdvo_get_mode_from_dtd(adjusted_mode, &intel_sdvo->input_dtd);
 
-	drm_mode_set_crtcinfo(adjusted_mode, 0);
 	return true;
 }
 
