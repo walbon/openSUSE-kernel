@@ -1131,7 +1131,7 @@ static int i915_ring_freq_table(struct seq_file *m, void *unused)
 	int ret;
 	int gpu_freq, ia_freq;
 
-	if (!IS_GEN6(dev)) {
+	if (!(IS_GEN6(dev) || IS_GEN7(dev))) {
 		seq_printf(m, "unsupported on this chipset\n");
 		return 0;
 	}
