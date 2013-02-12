@@ -1058,7 +1058,7 @@ static void ironlake_edp_panel_vdd_off(struct intel_dp *intel_dp, bool sync)
 
 	DRM_DEBUG_KMS("Turn eDP VDD off %d\n", intel_dp->want_panel_vdd);
 	WARN(!intel_dp->want_panel_vdd, "eDP VDD not forced on");
-	
+
 	intel_dp->want_panel_vdd = false;
 
 	if (sync) {
@@ -2461,7 +2461,7 @@ intel_dp_init(struct drm_device *dev, int output_reg)
 
 		cur.t8 = (pp_on & PANEL_LIGHT_ON_DELAY_MASK) >>
 			PANEL_LIGHT_ON_DELAY_SHIFT;
-		
+
 		cur.t9 = (pp_off & PANEL_LIGHT_OFF_DELAY_MASK) >>
 			PANEL_LIGHT_OFF_DELAY_SHIFT;
 
