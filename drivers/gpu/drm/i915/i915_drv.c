@@ -37,28 +37,28 @@
 #include <linux/console.h>
 #include "drm_crtc_helper.h"
 
-static int i915_modeset = -1;
+static int i915_modeset __read_mostly = -1;
 module_param_named(modeset, i915_modeset, int, 0400);
 
-unsigned int i915_fbpercrtc = 0;
+unsigned int i915_fbpercrtc __always_unused = 0;
 module_param_named(fbpercrtc, i915_fbpercrtc, int, 0400);
 
-int i915_panel_ignore_lid = 0;
+int i915_panel_ignore_lid __read_mostly = 0;
 module_param_named(panel_ignore_lid, i915_panel_ignore_lid, int, 0600);
 
-unsigned int i915_powersave = 1;
+unsigned int i915_powersave __read_mostly = 1;
 module_param_named(powersave, i915_powersave, int, 0600);
 
-int i915_semaphores = -1;
+int i915_semaphores __read_mostly = -1;
 module_param_named(semaphores, i915_semaphores, int, 0600);
 
-int i915_enable_rc6 = -1;
+int i915_enable_rc6 __read_mostly = -1;
 module_param_named(i915_enable_rc6, i915_enable_rc6, int, 0600);
 
-int i915_enable_fbc = 0;
+int i915_enable_fbc __read_mostly = 0;
 module_param_named(i915_enable_fbc, i915_enable_fbc, int, 0600);
 
-unsigned int i915_lvds_downclock = 0;
+unsigned int i915_lvds_downclock __read_mostly = 0;
 module_param_named(lvds_downclock, i915_lvds_downclock, int, 0400);
 
 int i915_lvds_channel_mode __read_mostly;
