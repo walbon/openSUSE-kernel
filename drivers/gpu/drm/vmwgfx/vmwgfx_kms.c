@@ -1085,7 +1085,7 @@ out_err1:
 
 static struct drm_framebuffer *vmw_kms_fb_create(struct drm_device *dev,
 						 struct drm_file *file_priv,
-						 struct drm_mode_fb_cmd *mode_cmd)
+						 struct drm_mode_fb_cmd2 *mode_cmd2)
 {
 	struct vmw_private *dev_priv = vmw_priv(dev);
 	struct ttm_object_file *tfile = vmw_fpriv(file_priv)->tfile;
@@ -1093,7 +1093,15 @@ static struct drm_framebuffer *vmw_kms_fb_create(struct drm_device *dev,
 	struct vmw_surface *surface = NULL;
 	struct vmw_dma_buffer *bo = NULL;
 	struct ttm_base_object *user_obj;
+	struct drm_mode_fb_cmd mode_cmd;
 	int ret;
+
+	mode_cmd.width = mode_cmd2->width;
+	mode_cmd.height = mode_cmd2->height;
+	mode_cmd.pitch = mode_cmd2->pitches[0];
+	mode_cmd.handle = mode_cmd2->handles[0];
+	drm_helper_get_fb_bpp_depth(mode_cmd2->pixel_format, &mode_cmd.depth,
+				    &mode_cmd.bpp);
 
 	/**
 	 * This code should be conditioned on Screen Objects not being used.
@@ -1102,8 +1110,8 @@ static struct drm_framebuffer *vmw_kms_fb_create(struct drm_device *dev,
 	 */
 
 	if (!vmw_kms_validate_mode_vram(dev_priv,
-					mode_cmd->pitch,
-					mode_cmd->height)) {
+					mode_cmd.pitch,
+					mode_cmd.height)) {
 		DRM_ERROR("VRAM size is too small for requested mode.\n");
 		return ERR_PTR(-ENOMEM);
 	}
@@ -1117,7 +1125,7 @@ static struct drm_framebuffer *vmw_kms_fb_create(struct drm_device *dev,
 	 * command stream using user-space handles.
 	 */
 
-	user_obj = ttm_base_object_lookup(tfile, mode_cmd->handle);
+	user_obj = ttm_base_object_lookup(tfile, mode_cmd.handle);
 	if (unlikely(user_obj == NULL)) {
 		DRM_ERROR("Could not locate requested kms frame buffer.\n");
 		return ERR_PTR(-ENOENT);
@@ -1125,7 +1133,7 @@ static struct drm_framebuffer *vmw_kms_fb_create(struct drm_device *dev,
 
 	/* returns either a dmabuf or surface */
 	ret = vmw_user_lookup_handle(dev_priv, tfile,
-				     mode_cmd->handle,
+				     mode_cmd.handle,
 				     &surface, &bo);
 	if (ret)
 		goto err_out;
@@ -1133,10 +1141,10 @@ static struct drm_framebuffer *vmw_kms_fb_create(struct drm_device *dev,
 	/* Create the new framebuffer depending one what we got back */
 	if (bo)
 		ret = vmw_kms_new_framebuffer_dmabuf(dev_priv, bo, &vfb,
-						     mode_cmd);
+						     &mode_cmd);
 	else if (surface)
 		ret = vmw_kms_new_framebuffer_surface(dev_priv, file_priv,
-						      surface, &vfb, mode_cmd);
+						      surface, &vfb, &mode_cmd);
 	else
 		BUG();
 
