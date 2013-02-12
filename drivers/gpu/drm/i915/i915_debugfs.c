@@ -1423,8 +1423,8 @@ static int i915_gen6_forcewake_count_info(struct seq_file *m, void *data)
 }
 
 static int
-i915_wedged_open(struct inode *inode,
-		 struct file *filp)
+i915_debugfs_common_open(struct inode *inode,
+			 struct file *filp)
 {
 	filp->private_data = inode->i_private;
 	return 0;
@@ -1480,19 +1480,11 @@ i915_wedged_write(struct file *filp,
 
 static const struct file_operations i915_wedged_fops = {
 	.owner = THIS_MODULE,
-	.open = i915_wedged_open,
+	.open = i915_debugfs_common_open,
 	.read = i915_wedged_read,
 	.write = i915_wedged_write,
 	.llseek = default_llseek,
 };
-
-static int
-i915_cache_sharing_open(struct inode *inode,
-		   struct file *filp)
-{
-	filp->private_data = inode->i_private;
-	return 0;
-}
 
 static ssize_t
 i915_cache_sharing_read(struct file *filp,
@@ -1559,19 +1551,11 @@ i915_cache_sharing_write(struct file *filp,
 
 static const struct file_operations i915_cache_sharing_fops = {
 	.owner = THIS_MODULE,
-	.open = i915_cache_sharing_open,
+	.open = i915_debugfs_common_open,
 	.read = i915_cache_sharing_read,
 	.write = i915_cache_sharing_write,
 	.llseek = default_llseek,
 };
-
-static int
-i915_max_freq_open(struct inode *inode,
-		   struct file *filp)
-{
-	filp->private_data = inode->i_private;
-	return 0;
-}
 
 static ssize_t
 i915_max_freq_read(struct file *filp,
@@ -1629,7 +1613,7 @@ i915_max_freq_write(struct file *filp,
 
 static const struct file_operations i915_max_freq_fops = {
 	.owner = THIS_MODULE,
-	.open = i915_max_freq_open,
+	.open = i915_debugfs_common_open,
 	.read = i915_max_freq_read,
 	.write = i915_max_freq_write,
 	.llseek = default_llseek,
