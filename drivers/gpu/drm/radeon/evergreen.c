@@ -3286,6 +3286,7 @@ int evergreen_init(struct radeon_device *rdev)
 	if (r) {
 		dev_err(rdev->dev, "IB initialization failed (%d).\n", r);
 		rdev->accel_working = false;
+		return r;
 	}
 
 	r = evergreen_startup(rdev);
