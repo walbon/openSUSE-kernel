@@ -64,6 +64,39 @@ static inline void *load_pointer(const struct sk_buff *skb, int k,
 }
 
 /**
+ *	skb_kfree_would_free_mem - would a call to kfree_skb
+ *	                           actually free some memory
+ *	@skb: buffer to check
+ *
+ *	Returns true if a call to kfree_skb at least would free a skb
+ *	to skbuff_fclone_cache or skbuff_head_cache
+ */
+static int skb_kfree_would_free_mem(const struct sk_buff *skb)
+{
+	unsigned int fclone_ref;
+
+	switch (skb->fclone) {
+	case SKB_FCLONE_UNAVAILABLE:
+		fclone_ref = 0;
+		break;
+	case SKB_FCLONE_ORIG:
+		fclone_ref = atomic_read((atomic_t *) (skb + 2));
+		break;
+	case SKB_FCLONE_CLONE:
+		fclone_ref = atomic_read((atomic_t *) (skb + 1));
+		break;
+	default:
+		WARN_ON(1);
+		fclone_ref = 0;
+		break;
+	}
+
+	return !skb_shared(skb) &&
+	       (skb->fclone == SKB_FCLONE_UNAVAILABLE ||
+		(fclone_ref == 1 && (skb->fclone == SKB_FCLONE_ORIG || skb->fclone == SKB_FCLONE_CLONE)));
+}
+
+/**
  *	sk_filter - run a packet through a socket filter
  *	@sk: sock associated with &sk_buff
  *	@skb: buffer to filter
@@ -85,8 +118,25 @@ int sk_filter(struct sock *sk, struct sk_buff *skb)
 	 * allow SOCK_MEMALLOC sockets to use it as this socket is
 	 * helping free memory
 	 */
-	if (skb_pfmemalloc(skb) && !sock_flag(sk, SOCK_MEMALLOC))
-		return -ENOMEM;
+	if (skb_pfmemalloc(skb) && !sock_flag(sk, SOCK_MEMALLOC)) {
+		/*
+		 * SLES: Unfortunately, GPFS is abusing PF_MEMALLOC to allocate
+		 * its buffers, likely in an effort to avoid recursing into the
+		 * filesystem during writeback and deadlocking instead of using
+		 * GFP_NOFS. Alternatively it may be using PF_MEMALLOC to avoid
+		 * a stack overflow from direct reclaim in their aops writepage
+		 * handler If that's the case it should make a check for direct
+		 * reclaim similar to what XFS does.
+		 *
+		 * Without this skb_kfree_would_free_kmem() check,  the packets
+		 * can be discarded so allow the packets to be received in some
+		 * cases. The risk is that GPFS can livelock the system due  to
+		 * memory exhaustion but the common case will be that processes
+		 * stall while writeback is in progress.
+		 */
+		if (skb_kfree_would_free_mem(skb))
+			return -ENOMEM;
+	}
 
 	err = security_sock_rcv_skb(sk, skb);
 	if (err)
