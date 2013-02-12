@@ -3319,6 +3319,9 @@ int r600_irq_process(struct radeon_device *rdev)
 	}
 
 restart_ih:
+	/* Order reading of wptr vs. reading of IH ring data */
+	rmb();
+
 	/* display interrupts */
 	r600_irq_ack(rdev);
 
