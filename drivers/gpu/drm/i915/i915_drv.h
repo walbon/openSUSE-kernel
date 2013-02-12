@@ -1186,13 +1186,14 @@ void i915_gem_do_init(struct drm_device *dev,
 		      unsigned long start,
 		      unsigned long mappable_end,
 		      unsigned long end);
-int __must_check i915_gpu_idle(struct drm_device *dev);
+int __must_check i915_gpu_idle(struct drm_device *dev, bool do_retire);
 int __must_check i915_gem_idle(struct drm_device *dev);
 int __must_check i915_add_request(struct intel_ring_buffer *ring,
 				  struct drm_file *file,
 				  struct drm_i915_gem_request *request);
 int __must_check i915_wait_request(struct intel_ring_buffer *ring,
-				   uint32_t seqno);
+				   uint32_t seqno,
+				   bool do_retire);
 #ifdef CONFIG_XEN
 int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma);
 #else
