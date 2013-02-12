@@ -481,45 +481,6 @@ intel_lvds_detect(struct drm_connector *connector, bool force)
 	return connector_status_connected;
 }
 
-static struct panel_size {
-	int width, height;
-} std_panel_sizes[] = {
-	{1600, 1200}, {1920, 1080}, {1680, 1050}, {1280, 1024},
-	{1600, 900}, {1440, 900}, {1280, 800},
-	{1366, 768}, {1360, 768}, {1280, 768},
-	{1024, 768}, {1280, 720}, {800, 600},
-	{0, 0}
-};
-
-static int add_standard_modes(struct drm_connector *connector,
-			      struct drm_display_mode *fixed)
-{
-	struct drm_device *dev = connector->dev;
-	struct panel_size *p = std_panel_sizes;
-	int nums = 0;
-
-	for (; p->width; p++) {
-		struct drm_display_mode *m;
-		if (p->width > fixed->hdisplay || p->height > fixed->vdisplay)
-			continue;
-		list_for_each_entry(m, &connector->probed_modes, head) {
-			if (p->width == m->hdisplay && p->height == m->vdisplay)
-				goto next;
-		}
-		m = drm_mode_duplicate(dev, fixed);
-		if (m) {
-			m->hdisplay = p->width;
-			m->vdisplay = p->height;
-			m->type &= ~DRM_MODE_TYPE_PREFERRED;
-			drm_mode_set_name(m);
-			drm_mode_probed_add(connector, m);
-			nums++;
-		}
-	next: ;
-	}
-	return nums;
-}
-
 /**
  * Return the list of DDC modes if available, or the BIOS fixed mode otherwise.
  */
@@ -528,19 +489,16 @@ static int intel_lvds_get_modes(struct drm_connector *connector)
 	struct intel_lvds *intel_lvds = intel_attached_lvds(connector);
 	struct drm_device *dev = connector->dev;
 	struct drm_display_mode *mode;
-	int ret = 0;
 
 	if (intel_lvds->edid)
-		ret = drm_add_edid_modes(connector, intel_lvds->edid);
-	if (!ret) {
-		mode = drm_mode_duplicate(dev, intel_lvds->fixed_mode);
-		if (!mode)
-			return 0;
-		drm_mode_probed_add(connector, mode);
-		ret = 1;
-	}
-	ret += add_standard_modes(connector, intel_lvds->fixed_mode);
-	return ret;
+		return drm_add_edid_modes(connector, intel_lvds->edid);
+
+	mode = drm_mode_duplicate(dev, intel_lvds->fixed_mode);
+	if (mode == NULL)
+		return 0;
+
+	drm_mode_probed_add(connector, mode);
+	return 1;
 }
 
 static int intel_no_modeset_on_lid_dmi_callback(const struct dmi_system_id *id)

@@ -359,7 +359,6 @@ typedef struct drm_i915_private {
 	/* LVDS info */
 	int backlight_level;  /* restore backlight to this value */
 	bool backlight_enabled;
-	bool backlight_polarity_reversed;
 	struct drm_display_mode *lfp_lvds_vbt_mode; /* if any */
 	struct drm_display_mode *sdvo_lvds_vbt_mode; /* if any */
 
@@ -897,7 +896,6 @@ struct drm_i915_gem_object {
 	 */
 	atomic_t pending_flip;
 };
-#define to_gem_object(obj) (&((struct drm_i915_gem_object *)(obj))->base)
 
 #define to_intel_bo(x) container_of(x, struct drm_i915_gem_object, base)
 
@@ -979,9 +977,6 @@ struct drm_i915_file_private {
 #define HAS_OVERLAY(dev)		(INTEL_INFO(dev)->has_overlay)
 #define OVERLAY_NEEDS_PHYSICAL(dev)	(INTEL_INFO(dev)->overlay_needs_physical)
 
-/* Early gen2 have a totally busted CS tlb and require pinned batches. */
-#define HAS_BROKEN_CS_TLB(dev)		(IS_I830(dev) || IS_845G(dev))
-
 /* With the 945 and later, Y tiling got adjusted so that it was 32 128-byte
  * rows, which changed the alignment requirements and fence programming.
  */
@@ -1008,28 +1003,6 @@ struct drm_i915_file_private {
 #define HAS_PCH_IBX(dev) (INTEL_PCH_TYPE(dev) == PCH_IBX)
 
 #include "i915_trace.h"
-
-/**
- * RC6 is a special power stage which allows the GPU to enter an very
- * low-voltage mode when idle, using down to 0V while at this stage.  This
- * stage is entered automatically when the GPU is idle when RC6 support is
- * enabled, and as soon as new workload arises GPU wakes up automatically as wel
-l.
-*
-* There are different RC6 modes available in Intel GPU, which differentiate
-* among each other with the latency required to enter and leave RC6 and
-* voltage consumed by the GPU in different states.
-*
-* The combination of the following flags define which states GPU is allowed
-* to enter, while RC6 is the normal RC6 state, RC6p is the deep RC6p
-* Their support by hardware varies according to the
-* GPU, BIOS, chipset and platform. RC6 is usually the safest one and the one
-* which brings the most power savings; deeper states save more power, but
-* require higher latency to switch to and wake up.
-*/
-
-#define INTEL_RC6_ENABLE                        (1<<0)
-#define INTEL_RC6p_ENABLE                       (1<<1)
 
 extern struct drm_ioctl_desc i915_ioctls[];
 extern int i915_max_ioctl;

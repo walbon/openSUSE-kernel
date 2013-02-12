@@ -8000,7 +8000,7 @@ void intel_init_emon(struct drm_device *dev)
 	dev_priv->corr = (lcfuse & LCFUSE_HIV_MASK);
 }
 
-static int intel_enable_rc6(struct drm_device *dev)
+static bool intel_enable_rc6(struct drm_device *dev)
 {
 	/*
 	 * Respect the kernel parameter if it is set
@@ -8018,11 +8018,11 @@ static int intel_enable_rc6(struct drm_device *dev)
 	 * Disable rc6 on Sandybridge
 	 */
 	if (INTEL_INFO(dev)->gen == 6) {
-		DRM_DEBUG_DRIVER("Sandybridge: deep RC6 disabled\n");
-		return INTEL_RC6_ENABLE;
+		DRM_DEBUG_DRIVER("Sandybridge: RC6 disabled\n");
+		return 0;
 	}
-	DRM_DEBUG_DRIVER("RC6 and deep RC6 enabled\n");
-	return (INTEL_RC6_ENABLE | INTEL_RC6p_ENABLE);
+	DRM_DEBUG_DRIVER("RC6 enabled\n");
+	return 1;
 }
 
 void gen6_enable_rps(struct drm_i915_private *dev_priv)
@@ -8031,7 +8031,6 @@ void gen6_enable_rps(struct drm_i915_private *dev_priv)
 	u32 gt_perf_status = I915_READ(GEN6_GT_PERF_STATUS);
 	u32 pcu_mbox, rc6_mask = 0;
 	int cur_freq, min_freq, max_freq;
-	int rc6_mode;
 	int i;
 
 	/* Here begins a magic sequence of register writes to enable
@@ -8062,11 +8061,9 @@ void gen6_enable_rps(struct drm_i915_private *dev_priv)
 	I915_WRITE(GEN6_RC6p_THRESHOLD, 100000);
 	I915_WRITE(GEN6_RC6pp_THRESHOLD, 64000); /* unused */
 
-	rc6_mode = intel_enable_rc6(dev_priv->dev);
-	if (rc6_mode & INTEL_RC6_ENABLE)
-		rc6_mask = GEN6_RC_CTL_RC6_ENABLE;
-	if (rc6_mode & INTEL_RC6p_ENABLE)
-		rc6_mask |= GEN6_RC_CTL_RC6p_ENABLE;
+	if (intel_enable_rc6(dev_priv->dev))
+		rc6_mask = GEN6_RC_CTL_RC6_ENABLE |
+			((IS_GEN7(dev_priv->dev)) ? GEN6_RC_CTL_RC6p_ENABLE : 0);
 
 	I915_WRITE(GEN6_RC_CONTROL,
 		   rc6_mask |

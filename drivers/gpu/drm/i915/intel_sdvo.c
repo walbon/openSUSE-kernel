@@ -1087,8 +1087,6 @@ static void intel_sdvo_mode_set(struct drm_encoder *encoder,
 	 * adjusted_mode.
 	 */
 	intel_sdvo_get_dtd_from_mode(&input_dtd, adjusted_mode);
-	if (intel_sdvo->is_tv || intel_sdvo->is_lvds)
-		input_dtd.part2.sdvo_flags = intel_sdvo->input_dtd.part2.sdvo_flags;
 	(void) intel_sdvo_set_input_timing(intel_sdvo, &input_dtd);
 
 	switch (pixel_multiplier) {
@@ -2188,7 +2186,8 @@ intel_sdvo_lvds_init(struct intel_sdvo *intel_sdvo, int device)
 		intel_sdvo_connector->output_flag = SDVO_OUTPUT_LVDS1;
 	}
 
-	intel_sdvo->base.clone_mask = (1 << INTEL_SDVO_LVDS_CLONE_BIT);
+	intel_sdvo->base.clone_mask = ((1 << INTEL_ANALOG_CLONE_BIT) |
+				       (1 << INTEL_SDVO_LVDS_CLONE_BIT));
 
 	intel_sdvo_connector_init(intel_sdvo_connector, intel_sdvo);
 	if (!intel_sdvo_create_enhance_property(intel_sdvo, intel_sdvo_connector))

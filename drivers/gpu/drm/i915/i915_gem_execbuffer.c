@@ -1031,7 +1031,6 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
 	u32 exec_start, exec_len;
 	u32 seqno;
 	u32 mask;
-	u32 flags;
 	int ret, mode, i;
 
 	if (!i915_gem_check_execbuffer(args)) {
@@ -1042,10 +1041,6 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
 	ret = validate_exec_list(exec, args->buffer_count);
 	if (ret)
 		return ret;
-
-	flags = 0;
-	if (args->flags & I915_EXEC_IS_PINNED)
-		flags |= I915_DISPATCH_PINNED;
 
 	switch (args->flags & I915_EXEC_RING_MASK) {
 	case I915_EXEC_DEFAULT:
@@ -1258,12 +1253,12 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
 				goto err;
 
 			ret = ring->dispatch_execbuffer(ring,
-							exec_start, exec_len, flags);
+							exec_start, exec_len);
 			if (ret)
 				goto err;
 		}
 	} else {
-		ret = ring->dispatch_execbuffer(ring, exec_start, exec_len, flags);
+		ret = ring->dispatch_execbuffer(ring, exec_start, exec_len);
 		if (ret)
 			goto err;
 	}

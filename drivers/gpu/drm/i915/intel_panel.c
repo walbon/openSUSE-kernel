@@ -28,7 +28,6 @@
  *      Chris Wilson <chris@chris-wilson.co.uk>
  */
 
-#include <linux/dmi.h>
 #include "intel_drv.h"
 
 #define PCI_LBPC 0xf4 /* legacy/combination backlight modes */
@@ -213,8 +212,6 @@ u32 intel_panel_get_backlight(struct drm_device *dev)
 	}
 
 	DRM_DEBUG_DRIVER("get backlight PWM = %d\n", val);
-	if (dev_priv->backlight_polarity_reversed)
-		val = intel_panel_get_max_backlight(dev) - val;
 	return val;
 }
 
@@ -231,9 +228,6 @@ static void intel_panel_actually_set_backlight(struct drm_device *dev, u32 level
 	u32 tmp;
 
 	DRM_DEBUG_DRIVER("set backlight PWM = %d\n", level);
-
-	if (dev_priv->backlight_polarity_reversed)
-		level = intel_panel_get_max_backlight(dev) - level;
 
 	if (HAS_PCH_SPLIT(dev))
 		return intel_pch_panel_set_backlight(dev, level);
@@ -282,33 +276,12 @@ void intel_panel_enable_backlight(struct drm_device *dev)
 	intel_panel_actually_set_backlight(dev, dev_priv->backlight_level);
 }
 
-static int intel_backlight_reversed_callback(const struct dmi_system_id *id)
-{
-	DRM_INFO("Backlight polarity reversed on %s\n", id->ident);
-	return 1;
-}
-
-static const struct dmi_system_id intel_backlight_reversed_list[] = {
-	{
-		.callback = intel_backlight_reversed_callback,
-		.ident = "",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "NCR Corporation"),
-			DMI_MATCH(DMI_PRODUCT_NAME, ""),
-		},
-	},
-
-	{ }     /* terminating entry */
-};
-
 static void intel_panel_init_backlight(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 
 	dev_priv->backlight_level = intel_panel_get_backlight(dev);
 	dev_priv->backlight_enabled = dev_priv->backlight_level != 0;
-	dev_priv->backlight_polarity_reversed =
-		(dmi_check_system(intel_backlight_reversed_list) != 0);
 }
 
 enum drm_connector_status
