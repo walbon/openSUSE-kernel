@@ -732,10 +732,8 @@ nouveau_gem_ioctl_pushbuf(struct drm_device *dev, void *data,
 		for (i = 0; i < req->nr_push; i++) {
 			struct nouveau_bo *nvbo = (void *)(unsigned long)
 				bo[push[i].bo_index].user_priv;
-			struct drm_mm_node *mem = nvbo->bo.mem.mm_node;
 
-			OUT_RING(chan, ((mem->start << PAGE_SHIFT) +
-					push[i].offset) | 2);
+			OUT_RING(chan, (nvbo->bo.offset + push[i].offset) | 2);
 			OUT_RING(chan, 0);
 		}
 	} else {
@@ -748,7 +746,6 @@ nouveau_gem_ioctl_pushbuf(struct drm_device *dev, void *data,
 		for (i = 0; i < req->nr_push; i++) {
 			struct nouveau_bo *nvbo = (void *)(unsigned long)
 				bo[push[i].bo_index].user_priv;
-			struct drm_mm_node *mem = nvbo->bo.mem.mm_node;
 			uint32_t cmd;
 
 			cmd = chan->pushbuf_base + ((chan->dma.cur + 2) << 2);
@@ -770,8 +767,8 @@ nouveau_gem_ioctl_pushbuf(struct drm_device *dev, void *data,
 						push[i].length - 8) / 4, cmd);
 			}
 
-			OUT_RING(chan, ((mem->start << PAGE_SHIFT) +
-					push[i].offset) | 0x20000000);
+			OUT_RING(chan, 0x20000000 |
+				      (nvbo->bo.offset + push[i].offset));
 			OUT_RING(chan, 0);
 			for (j = 0; j < NOUVEAU_DMA_SKIPS; j++)
 				OUT_RING(chan, 0);
