@@ -659,7 +659,7 @@ i915_disable_irq(drm_i915_private_t *dev_priv, u32 mask)
 }
 
 static bool
-render_ring_get_irq(struct intel_ring_buffer *ring)
+i9xx_ring_get_irq(struct intel_ring_buffer *ring)
 {
 	struct drm_device *dev = ring->dev;
 	drm_i915_private_t *dev_priv = dev->dev_private;
@@ -671,9 +671,9 @@ render_ring_get_irq(struct intel_ring_buffer *ring)
 	if (ring->irq_refcount++ == 0) {
 		if (INTEL_INFO(dev)->gen >= 5)
 			ironlake_enable_irq(dev_priv,
-					    GT_PIPE_NOTIFY | GT_USER_INTERRUPT);
+					    ring->irq_enable_mask);
 		else
-			i915_enable_irq(dev_priv, I915_USER_INTERRUPT);
+			i915_enable_irq(dev_priv, ring->irq_enable_mask);
 	}
 	spin_unlock(&ring->irq_lock);
 
@@ -681,7 +681,7 @@ render_ring_get_irq(struct intel_ring_buffer *ring)
 }
 
 static void
-render_ring_put_irq(struct intel_ring_buffer *ring)
+i9xx_ring_put_irq(struct intel_ring_buffer *ring)
 {
 	struct drm_device *dev = ring->dev;
 	drm_i915_private_t *dev_priv = dev->dev_private;
@@ -690,10 +690,9 @@ render_ring_put_irq(struct intel_ring_buffer *ring)
 	if (--ring->irq_refcount == 0) {
 		if (INTEL_INFO(dev)->gen >= 5)
 			ironlake_disable_irq(dev_priv,
-					     GT_USER_INTERRUPT |
-					     GT_PIPE_NOTIFY);
+					     ring->irq_enable_mask);
 		else
-			i915_disable_irq(dev_priv, I915_USER_INTERRUPT);
+			i915_disable_irq(dev_priv, ring->irq_enable_mask);
 	}
 	spin_unlock(&ring->irq_lock);
 }
@@ -807,42 +806,6 @@ gen6_ring_put_irq(struct intel_ring_buffer *ring)
 	spin_unlock(&ring->irq_lock);
 
 	gen6_gt_force_wake_put(dev_priv);
-}
-
-static bool
-bsd_ring_get_irq(struct intel_ring_buffer *ring)
-{
-	struct drm_device *dev = ring->dev;
-	drm_i915_private_t *dev_priv = dev->dev_private;
-
-	if (!dev->irq_enabled)
-		return false;
-
-	spin_lock(&ring->irq_lock);
-	if (ring->irq_refcount++ == 0) {
-		if (IS_G4X(dev))
-			i915_enable_irq(dev_priv, I915_BSD_USER_INTERRUPT);
-		else
-			ironlake_enable_irq(dev_priv, GT_BSD_USER_INTERRUPT);
-	}
-	spin_unlock(&ring->irq_lock);
-
-	return true;
-}
-static void
-bsd_ring_put_irq(struct intel_ring_buffer *ring)
-{
-	struct drm_device *dev = ring->dev;
-	drm_i915_private_t *dev_priv = dev->dev_private;
-
-	spin_lock(&ring->irq_lock);
-	if (--ring->irq_refcount == 0) {
-		if (IS_G4X(dev))
-			i915_disable_irq(dev_priv, I915_BSD_USER_INTERRUPT);
-		else
-			ironlake_disable_irq(dev_priv, GT_BSD_USER_INTERRUPT);
-	}
-	spin_unlock(&ring->irq_lock);
 }
 
 static int
@@ -1352,14 +1315,16 @@ int intel_init_render_ring_buffer(struct drm_device *dev)
 		ring->add_request = pc_render_add_request;
 		ring->flush = render_ring_flush;
 		ring->get_seqno = pc_render_get_seqno;
-		ring->irq_get = render_ring_get_irq;
-		ring->irq_put = render_ring_put_irq;
+		ring->irq_get = i9xx_ring_get_irq;
+		ring->irq_put = i9xx_ring_put_irq;
+		ring->irq_enable_mask = GT_USER_INTERRUPT | GT_PIPE_NOTIFY;
 	} else {
 		ring->add_request = render_ring_add_request;
 		ring->flush = render_ring_flush;
 		ring->get_seqno = ring_get_seqno;
-		ring->irq_get = render_ring_get_irq;
-		ring->irq_put = render_ring_put_irq;
+		ring->irq_get = i9xx_ring_get_irq;
+		ring->irq_put = i9xx_ring_put_irq;
+		ring->irq_enable_mask = I915_USER_INTERRUPT;
 	}
 	ring->write_tail = ring_write_tail;
 	ring->dispatch_execbuffer = render_ring_dispatch_execbuffer;
@@ -1391,14 +1356,16 @@ int intel_render_ring_init_dri(struct drm_device *dev, u64 start, u32 size)
 		ring->add_request = pc_render_add_request;
 		ring->flush = render_ring_flush;
 		ring->get_seqno = pc_render_get_seqno;
-		ring->irq_get = render_ring_get_irq;
-		ring->irq_put = render_ring_put_irq;
+		ring->irq_get = i9xx_ring_get_irq;
+		ring->irq_put = i9xx_ring_put_irq;
+		ring->irq_enable_mask = GT_USER_INTERRUPT | GT_PIPE_NOTIFY;
 	} else {
 		ring->add_request = render_ring_add_request;
 		ring->flush = render_ring_flush;
 		ring->get_seqno = ring_get_seqno;
-		ring->irq_get = render_ring_get_irq;
-		ring->irq_put = render_ring_put_irq;
+		ring->irq_get = i9xx_ring_get_irq;
+		ring->irq_put = i9xx_ring_put_irq;
+		ring->irq_enable_mask = I915_USER_INTERRUPT;
 	}
 	ring->write_tail = ring_write_tail;
 	ring->dispatch_execbuffer = render_ring_dispatch_execbuffer;
@@ -1465,8 +1432,12 @@ int intel_init_bsd_ring_buffer(struct drm_device *dev)
 		ring->flush = bsd_ring_flush;
 		ring->add_request = ring_add_request;
 		ring->get_seqno = ring_get_seqno;
-		ring->irq_get = bsd_ring_get_irq;
-		ring->irq_put = bsd_ring_put_irq;
+		ring->irq_get = i9xx_ring_get_irq;
+		ring->irq_put = i9xx_ring_put_irq;
+		if (IS_GEN5(dev))
+			ring->irq_enable_mask = GT_BSD_USER_INTERRUPT;
+		else
+			ring->irq_enable_mask = I915_BSD_USER_INTERRUPT;
 		ring->dispatch_execbuffer = ring_dispatch_execbuffer;
 	}
 	ring->init = init_ring_common;
