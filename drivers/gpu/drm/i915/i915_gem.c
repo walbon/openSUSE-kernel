@@ -1421,6 +1421,7 @@ out:
 	case -ENOMEM:
 		return VM_FAULT_OOM;
 	default:
+		WARN_ON_ONCE(ret);
 		return VM_FAULT_SIGBUS;
 	}
 }
