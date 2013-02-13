@@ -234,6 +234,7 @@ static const struct intel_device_info intel_sandybridge_d_info = {
 	.has_blt_ring = 1,
 	.has_llc = 1,
 	.has_pch_split = 1,
+	.has_force_wake = 1,
 };
 
 static const struct intel_device_info intel_sandybridge_m_info = {
@@ -244,6 +245,7 @@ static const struct intel_device_info intel_sandybridge_m_info = {
 	.has_blt_ring = 1,
 	.has_llc = 1,
 	.has_pch_split = 1,
+	.has_force_wake = 1,
 };
 
 static const struct intel_device_info intel_ivybridge_d_info = {
@@ -253,6 +255,7 @@ static const struct intel_device_info intel_ivybridge_d_info = {
 	.has_blt_ring = 1,
 	.has_llc = 1,
 	.has_pch_split = 1,
+	.has_force_wake = 1,
 };
 
 static const struct intel_device_info intel_ivybridge_m_info = {
@@ -263,6 +266,7 @@ static const struct intel_device_info intel_ivybridge_m_info = {
 	.has_blt_ring = 1,
 	.has_llc = 1,
 	.has_pch_split = 1,
+	.has_force_wake = 1,
 };
 
 static const struct intel_device_info intel_valleyview_m_info = {
@@ -290,6 +294,7 @@ static const struct intel_device_info intel_haswell_d_info = {
 	.has_blt_ring = 1,
 	.has_llc = 1,
 	.has_pch_split = 1,
+	.has_force_wake = 1,
 };
 
 static const struct intel_device_info intel_haswell_m_info = {
@@ -299,6 +304,7 @@ static const struct intel_device_info intel_haswell_m_info = {
 	.has_blt_ring = 1,
 	.has_llc = 1,
 	.has_pch_split = 1,
+	.has_force_wake = 1,
 };
 
 static const struct pci_device_id pciidlist[] = {		/* aka */
@@ -1143,10 +1149,9 @@ MODULE_LICENSE("GPL and additional rights");
 
 /* We give fast paths for the really cool registers */
 #define NEEDS_FORCE_WAKE(dev_priv, reg) \
-       (((dev_priv)->info->gen >= 6) && \
-        ((reg) < 0x40000) &&            \
-        ((reg) != FORCEWAKE)) && \
-       (!IS_VALLEYVIEW((dev_priv)->dev))
+	((HAS_FORCE_WAKE((dev_priv)->dev)) && \
+	 ((reg) < 0x40000) &&            \
+	 ((reg) != FORCEWAKE))
 
 #define __i915_read(x, y) \
 u##x i915_read##x(struct drm_i915_private *dev_priv, u32 reg) { \
