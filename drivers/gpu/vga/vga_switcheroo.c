@@ -87,7 +87,8 @@ static void vga_switcheroo_enable(void)
 	int i;
 	int ret;
 	/* call the handler to init */
-	vgasr_priv.handler->init();
+	if (vgasr_priv.handler->init)
+		vgasr_priv.handler->init();
 
 	for (i = 0; i < VGA_SWITCHEROO_MAX_CLIENTS; i++) {
 		ret = vgasr_priv.handler->get_client_id(vgasr_priv.clients[i].pdev);
