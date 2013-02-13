@@ -1922,7 +1922,6 @@ static int ironlake_irq_postinstall(struct drm_device *dev)
 	u32 render_irqs;
 	u32 hotplug_mask;
 
-	dev_priv->vblank_pipe = DRM_I915_VBLANK_PIPE_A | DRM_I915_VBLANK_PIPE_B;
 	dev_priv->irq_mask = ~display_mask;
 
 	/* should always can generate irq */
@@ -1991,7 +1990,6 @@ static int ivybridge_irq_postinstall(struct drm_device *dev)
 	u32 render_irqs;
 	u32 hotplug_mask;
 
-	dev_priv->vblank_pipe = DRM_I915_VBLANK_PIPE_A | DRM_I915_VBLANK_PIPE_B;
 	dev_priv->irq_mask = ~display_mask;
 
 	/* should always can generate irq */
@@ -2043,8 +2041,6 @@ static int valleyview_irq_postinstall(struct drm_device *dev)
 
 	dev_priv->pipestat[0] = 0;
 	dev_priv->pipestat[1] = 0;
-
-	dev_priv->vblank_pipe = DRM_I915_VBLANK_PIPE_A | DRM_I915_VBLANK_PIPE_B;
 
 	/* Hack for broken MSIs on VLV */
 	pci_write_config_dword(dev_priv->dev->pdev, 0x94, 0xfee00000);
@@ -2120,8 +2116,6 @@ static void valleyview_irq_uninstall(struct drm_device *dev)
 	if (!dev_priv)
 		return;
 
-	dev_priv->vblank_pipe = 0;
-
 	for_each_pipe(pipe)
 		I915_WRITE(PIPESTAT(pipe), 0xffff);
 
@@ -2142,8 +2136,6 @@ static void ironlake_irq_uninstall(struct drm_device *dev)
 
 	if (!dev_priv)
 		return;
-
-	dev_priv->vblank_pipe = 0;
 
 	I915_WRITE(HWSTAM, 0xffffffff);
 
@@ -2177,8 +2169,6 @@ static void i8xx_irq_preinstall(struct drm_device * dev)
 static int i8xx_irq_postinstall(struct drm_device *dev)
 {
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
-
-	dev_priv->vblank_pipe = DRM_I915_VBLANK_PIPE_A | DRM_I915_VBLANK_PIPE_B;
 
 	dev_priv->pipestat[0] = 0;
 	dev_priv->pipestat[1] = 0;
@@ -2294,8 +2284,6 @@ static void i8xx_irq_uninstall(struct drm_device * dev)
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
 	int pipe;
 
-	dev_priv->vblank_pipe = 0;
-
 	for_each_pipe(pipe) {
 		/* Clear enable bits; then clear status bits */
 		I915_WRITE(PIPESTAT(pipe), 0);
@@ -2330,8 +2318,6 @@ static int i915_irq_postinstall(struct drm_device *dev)
 {
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
 	u32 enable_mask;
-
-	dev_priv->vblank_pipe = DRM_I915_VBLANK_PIPE_A | DRM_I915_VBLANK_PIPE_B;
 
 	dev_priv->pipestat[0] = 0;
 	dev_priv->pipestat[1] = 0;
@@ -2518,8 +2504,6 @@ static void i915_irq_uninstall(struct drm_device * dev)
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
 	int pipe;
 
-	dev_priv->vblank_pipe = 0;
-
 	if (I915_HAS_HOTPLUG(dev)) {
 		I915_WRITE(PORT_HOTPLUG_EN, 0);
 		I915_WRITE(PORT_HOTPLUG_STAT, I915_READ(PORT_HOTPLUG_STAT));
@@ -2562,8 +2546,6 @@ static int i965_irq_postinstall(struct drm_device *dev)
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
 	u32 enable_mask;
 	u32 error_mask;
-
-	dev_priv->vblank_pipe = DRM_I915_VBLANK_PIPE_A | DRM_I915_VBLANK_PIPE_B;
 
 	/* Unmask the interrupts that we always want on. */
 	dev_priv->irq_mask = ~(I915_ASLE_INTERRUPT |
@@ -2774,8 +2756,6 @@ static void i965_irq_uninstall(struct drm_device * dev)
 
 	if (!dev_priv)
 		return;
-
-	dev_priv->vblank_pipe = 0;
 
 	if (I915_HAS_HOTPLUG(dev)) {
 		I915_WRITE(PORT_HOTPLUG_EN, 0);
