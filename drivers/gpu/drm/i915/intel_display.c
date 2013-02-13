@@ -4712,7 +4712,7 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 	int plane = intel_crtc->plane;
 	int refclk, num_connectors = 0;
 	intel_clock_t clock, reduced_clock;
-	u32 dpll, fp = 0, fp2 = 0, dspcntr;
+	u32 dpll, fp = 0, fp2 = 0;
 	bool ok, has_reduced_clock = false, is_sdvo = false;
 	bool is_crt = false, is_lvds = false, is_tv = false, is_dp = false;
 	struct intel_encoder *encoder, *edp_encoder = NULL;
@@ -4915,9 +4915,6 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 	else
 		dpll |= PLL_REF_INPUT_DREFCLK;
 
-	/* Set up the display plane register */
-	dspcntr = DISPPLANE_GAMMA_ENABLE;
-
 	DRM_DEBUG_KMS("Mode for pipe %d:\n", pipe);
 	drm_mode_debug_printmodeline(mode);
 
@@ -5061,7 +5058,8 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 
 	intel_wait_for_vblank(dev, pipe);
 
-	I915_WRITE(DSPCNTR(plane), dspcntr);
+	/* Set up the display plane register */
+	I915_WRITE(DSPCNTR(plane), DISPPLANE_GAMMA_ENABLE);
 	POSTING_READ(DSPCNTR(plane));
 
 	ret = intel_pipe_set_base(crtc, x, y, fb);
