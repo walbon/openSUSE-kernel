@@ -748,7 +748,7 @@ static int __devinit agp_intel_probe(struct pci_dev *pdev,
 
 	bridge->capndx = cap_ptr;
 
-	if (intel_gmch_probe(pdev, NULL, bridge))
+	if (__intel_gmch_probe(pdev, NULL, bridge))
 		goto found_gmch;
 
 	for (i = 0; intel_agp_chipsets[i].name != NULL; i++) {
@@ -825,7 +825,7 @@ static void __devexit agp_intel_remove(struct pci_dev *pdev)
 
 	agp_remove_bridge(bridge);
 
-	intel_gmch_remove();
+	__intel_gmch_remove();
 
 	agp_put_bridge(bridge);
 }
