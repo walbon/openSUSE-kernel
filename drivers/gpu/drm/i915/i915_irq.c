@@ -352,8 +352,7 @@ static void notify_ring(struct drm_device *dev,
 	if (i915_enable_hangcheck) {
 		dev_priv->hangcheck_count = 0;
 		mod_timer(&dev_priv->hangcheck_timer,
-			  jiffies +
-			  msecs_to_jiffies(DRM_I915_HANGCHECK_PERIOD));
+			  round_jiffies_up(jiffies + DRM_I915_HANGCHECK_JIFFIES));
 	}
 }
 
@@ -1751,7 +1750,7 @@ void i915_hangcheck_elapsed(unsigned long data)
 repeat:
 	/* Reset timer case chip hangs without another request being added */
 	mod_timer(&dev_priv->hangcheck_timer,
-		  jiffies + msecs_to_jiffies(DRM_I915_HANGCHECK_PERIOD));
+		  round_jiffies_up(jiffies + DRM_I915_HANGCHECK_JIFFIES));
 }
 
 /* drm_dma.h hooks
