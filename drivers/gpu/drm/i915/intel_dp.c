@@ -34,7 +34,6 @@
 #include "intel_drv.h"
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
-#include <drm/drm_dp_helper.h>
 
 #define DP_RECEIVER_CAP_SIZE	0xf
 #define DP_LINK_STATUS_SIZE	6

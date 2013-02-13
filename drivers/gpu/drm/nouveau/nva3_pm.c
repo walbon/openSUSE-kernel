@@ -22,7 +22,7 @@
  * Authors: Ben Skeggs
  */
 
-#include "drmP.h"
+#include <drm/drmP.h>
 #include "nouveau_drm.h"
 #include "nouveau_bios.h"
 #include "nouveau_pm.h"

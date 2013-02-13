@@ -23,7 +23,7 @@
 #ifndef __NOUVEAU_HW_H__
 #define __NOUVEAU_HW_H__
 
-#include "drmP.h"
+#include <drm/drmP.h>
 #include "nv04_display.h"
 
 #include <subdev/bios/pll.h>

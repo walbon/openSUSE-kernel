@@ -23,7 +23,7 @@
  */
 
 #include <drm/drmP.h>
-#include "drm_dp_helper.h"
+#include <drm/drm_dp_helper.h>
 
 #include "nouveau_drm.h"
 #include "nouveau_connector.h"

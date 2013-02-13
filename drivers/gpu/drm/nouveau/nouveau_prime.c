@@ -24,8 +24,7 @@
 
 #include <linux/dma-buf.h>
 
-#include "drmP.h"
-#include "drm.h"
+#include <drm/drmP.h>
 
 #include "nouveau_drm.h"
 #include "nouveau_gem.h"

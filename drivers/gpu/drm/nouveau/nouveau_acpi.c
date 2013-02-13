@@ -9,7 +9,7 @@
 
 #include <linux/vga_switcheroo.h>
 
-#include "drm_edid.h"
+#include <drm/drm_edid.h>
 
 #include "nouveau_drm.h"
 #include "nouveau_acpi.h"
