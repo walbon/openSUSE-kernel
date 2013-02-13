@@ -642,6 +642,9 @@ EXPORT_SYMBOL(drm_mode_create);
  */
 void drm_mode_destroy(struct drm_device *dev, struct drm_display_mode *mode)
 {
+	if (!mode)
+		return;
+
 	drm_mode_object_put(dev, &mode->base);
 
 	kfree(mode);
@@ -1811,6 +1814,11 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 		}
 
 		mode = drm_mode_create(dev);
+		if (!mode) {
+			ret = -ENOMEM;
+			goto out;
+		}
+
 		drm_crtc_convert_umode(mode, &crtc_req->mode);
 		drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V);
 	}
@@ -1880,6 +1888,7 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 
 out:
 	kfree(connector_set);
+	drm_mode_destroy(dev, mode);
 	mutex_unlock(&dev->mode_config.mutex);
 	return ret;
 }
