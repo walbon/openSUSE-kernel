@@ -388,11 +388,6 @@ int intel_setup_gmbus(struct drm_device *dev)
 	else
 		dev_priv->gpio_mmio_base = 0;
 
-	dev_priv->gmbus = kcalloc(GMBUS_NUM_PORTS, sizeof(struct intel_gmbus),
-				  GFP_KERNEL);
-	if (dev_priv->gmbus == NULL)
-		return -ENOMEM;
-
 	mutex_init(&dev_priv->gmbus_mutex);
 
 	for (i = 0; i < GMBUS_NUM_PORTS; i++) {
@@ -429,8 +424,6 @@ err:
 		struct intel_gmbus *bus = &dev_priv->gmbus[i];
 		i2c_del_adapter(&bus->adapter);
 	}
-	kfree(dev_priv->gmbus);
-	dev_priv->gmbus = NULL;
 	return ret;
 }
 
@@ -469,7 +462,4 @@ void intel_teardown_gmbus(struct drm_device *dev)
 		struct intel_gmbus *bus = &dev_priv->gmbus[i];
 		i2c_del_adapter(&bus->adapter);
 	}
-
-	kfree(dev_priv->gmbus);
-	dev_priv->gmbus = NULL;
 }
