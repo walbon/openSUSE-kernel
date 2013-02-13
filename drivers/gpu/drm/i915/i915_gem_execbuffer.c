@@ -1142,6 +1142,12 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
 				  args->num_cliprects);
 			return -EINVAL;
 		}
+
+		if (INTEL_INFO(dev)->gen >= 5) {
+			DRM_DEBUG("clip rectangles are only valid on pre-gen5\n");
+			return -EINVAL;
+		}
+
 		cliprects = kmalloc(args->num_cliprects * sizeof(*cliprects),
 				    GFP_KERNEL);
 		if (cliprects == NULL) {
