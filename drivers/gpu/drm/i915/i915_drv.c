@@ -916,6 +916,7 @@ int i915_reset(struct drm_device *dev)
 		 * some unknown reason, this blows up my ilk, so don't.
 		 */
 
+		i915_gem_context_init(dev);
 		i915_gem_init_ppgtt(dev);
 
 		mutex_unlock(&dev->struct_mutex);

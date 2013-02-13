@@ -1667,6 +1667,7 @@ int i915_driver_unload(struct drm_device *dev)
 	if (ret)
 		DRM_ERROR("failed to idle hardware: %d\n", ret);
 	i915_gem_retire_requests(dev);
+	i915_gem_context_fini(dev);
 	mutex_unlock(&dev->struct_mutex);
 
 	/* Cancel the retire work handler, which should be idle now. */
@@ -1756,6 +1757,8 @@ int i915_driver_open(struct drm_device *dev, struct drm_file *file)
 	spin_lock_init(&file_priv->mm.lock);
 	INIT_LIST_HEAD(&file_priv->mm.request_list);
 
+	i915_gem_context_open(dev, file);
+
 	return 0;
 }
 
@@ -1788,6 +1791,7 @@ void i915_driver_lastclose(struct drm_device * dev)
 
 void i915_driver_preclose(struct drm_device * dev, struct drm_file *file_priv)
 {
+	i915_gem_context_close(dev, file_priv);
 	i915_gem_release(dev, file_priv);
 }
 
