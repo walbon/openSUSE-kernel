@@ -1637,10 +1637,18 @@ i915_min_freq_read(struct file *filp, char __user *ubuf, size_t max,
 	struct drm_device *dev = filp->private_data;
 	drm_i915_private_t *dev_priv = dev->dev_private;
 	char buf[80];
-	int len;
+	int len, ret;
+
+	if (!(IS_GEN6(dev) || IS_GEN7(dev)))
+		return -ENODEV;
+
+	ret = mutex_lock_interruptible(&dev->struct_mutex);
+	if (ret)
+		return ret;
 
 	len = snprintf(buf, sizeof(buf),
 		       "min freq: %d\n", dev_priv->min_delay * 50);
+	mutex_unlock(&dev->struct_mutex);
 
 	if (len > sizeof(buf))
 		len = sizeof(buf);
@@ -1655,7 +1663,10 @@ i915_min_freq_write(struct file *filp, const char __user *ubuf, size_t cnt,
 	struct drm_device *dev = filp->private_data;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	char buf[20];
-	int val = 1;
+	int val = 1, ret;
+
+	if (!(IS_GEN6(dev) || IS_GEN7(dev)))
+		return -ENODEV;
 
 	if (cnt > 0) {
 		if (cnt > sizeof(buf) - 1)
@@ -1670,12 +1681,17 @@ i915_min_freq_write(struct file *filp, const char __user *ubuf, size_t cnt,
 
 	DRM_DEBUG_DRIVER("Manually setting min freq to %d\n", val);
 
+	ret = mutex_lock_interruptible(&dev->struct_mutex);
+	if (ret)
+		return ret;
+
 	/*
 	 * Turbo will still be enabled, but won't go below the set value.
 	 */
 	dev_priv->min_delay = val / 50;
 
 	gen6_set_rps(dev, val / 50);
+	mutex_unlock(&dev->struct_mutex);
 
 	return cnt;
 }
@@ -1699,6 +1715,9 @@ i915_cache_sharing_read(struct file *filp,
 	char buf[80];
 	u32 snpcr;
 	int len;
+
+	if (!(IS_GEN6(dev) || IS_GEN7(dev)))
+		return -ENODEV;
 
 	mutex_lock(&dev_priv->dev->struct_mutex);
 	snpcr = I915_READ(GEN6_MBCUNIT_SNPCR);
@@ -1827,10 +1846,18 @@ i915_max_freq_read(struct file *filp,
 	struct drm_device *dev = filp->private_data;
 	drm_i915_private_t *dev_priv = dev->dev_private;
 	char buf[80];
-	int len;
+	int len, ret;
+
+	if (!(IS_GEN6(dev) || IS_GEN7(dev)))
+		return -ENODEV;
+
+	ret = mutex_lock_interruptible(&dev->struct_mutex);
+	if (ret)
+		return ret;
 
 	len = snprintf(buf, sizeof(buf),
 		       "max freq: %d\n", dev_priv->max_delay * 50);
+	mutex_unlock(&dev->struct_mutex);
 
 	if (len > sizeof(buf))
 		len = sizeof(buf);
@@ -1847,7 +1874,10 @@ i915_max_freq_write(struct file *filp,
 	struct drm_device *dev = filp->private_data;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	char buf[20];
-	int val = 1;
+	int val = 1, ret;
+
+	if (!(IS_GEN6(dev) || IS_GEN7(dev)))
+		return -ENODEV;
 
 	if (cnt > 0) {
 		if (cnt > sizeof(buf) - 1)
@@ -1862,12 +1892,17 @@ i915_max_freq_write(struct file *filp,
 
 	DRM_DEBUG_DRIVER("Manually setting max freq to %d\n", val);
 
+	ret = mutex_lock_interruptible(&dev->struct_mutex);
+	if (ret)
+		return ret;
+
 	/*
 	 * Turbo will still be enabled, but won't go above the set value.
 	 */
 	dev_priv->max_delay = val / 50;
 
 	gen6_set_rps(dev, val / 50);
+	mutex_unlock(&dev->struct_mutex);
 
 	return cnt;
 }
@@ -2051,6 +2086,7 @@ int i915_debugfs_init(struct drm_minor *minor)
 				  &i915_cache_sharing_fops);
 	if (ret)
 		return ret;
+
 	ret = i915_debugfs_create(minor->debugfs_root, minor,
 				  "i915_ring_stop",
 				  &i915_ring_stop_fops);
