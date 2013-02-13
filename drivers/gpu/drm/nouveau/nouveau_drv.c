@@ -32,6 +32,7 @@
 #include "nouveau_hw.h"
 #include "nouveau_fb.h"
 #include "nouveau_fbcon.h"
+#include "nouveau_fence.h"
 #include "nouveau_pm.h"
 #include <engine/fifo.h>
 #include "nv50_display.h"
@@ -148,6 +149,7 @@ nouveau_pci_suspend(struct pci_dev *pdev, pm_message_t pm_state)
 	struct drm_device *dev = pci_get_drvdata(pdev);
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct nouveau_fifo_priv *pfifo = nv_engine(dev, NVOBJ_ENGINE_FIFO);
+	struct nouveau_fence_priv *fence = dev_priv->fence.func;
 	struct nouveau_channel *chan;
 	struct drm_crtc *crtc;
 	int ret, i, e;
@@ -187,6 +189,11 @@ nouveau_pci_suspend(struct pci_dev *pdev, pm_message_t pm_state)
 			nouveau_channel_idle(chan);
 	}
 
+	if (fence->suspend) {
+		if (!fence->suspend(dev))
+			return -ENOMEM;
+	}
+
 	for (e = NVOBJ_ENGINE_NR - 1; e >= 0; e--) {
 		if (!dev_priv->eng[e])
 			continue;
@@ -215,6 +222,7 @@ nouveau_pci_resume(struct pci_dev *pdev)
 	struct drm_device *dev = pci_get_drvdata(pdev);
 	struct nouveau_fifo_priv *pfifo = nv_engine(dev, NVOBJ_ENGINE_FIFO);
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
+	struct nouveau_fence_priv *fence = dev_priv->fence.func;
 	struct nouveau_engine *engine = &dev_priv->engine;
 	struct drm_crtc *crtc;
 	int ret, i;
@@ -232,6 +240,9 @@ nouveau_pci_resume(struct pci_dev *pdev)
 		if (dev_priv->eng[i])
 			dev_priv->eng[i]->init(dev, i);
 	}
+
+	if (fence->resume)
+		fence->resume(dev);
 
 	nouveau_irq_postinstall(dev);
 
