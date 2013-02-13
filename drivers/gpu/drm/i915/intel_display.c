@@ -6591,8 +6591,6 @@ static void intel_crtc_reset(struct drm_crtc *crtc)
 }
 
 static struct drm_crtc_helper_funcs intel_helper_funcs = {
-	.mode_fixup = intel_crtc_mode_fixup,
-	.mode_set = intel_crtc_mode_set,
 	.mode_set_base_atomic = intel_pipe_set_base_atomic,
 	.load_lut = intel_crtc_load_lut,
 	.disable = intel_crtc_disable,
@@ -6661,8 +6659,8 @@ bool intel_set_mode(struct drm_crtc *crtc,
 		    int x, int y, struct drm_framebuffer *old_fb)
 {
 	struct drm_device *dev = crtc->dev;
+	drm_i915_private_t *dev_priv = dev->dev_private;
 	struct drm_display_mode *adjusted_mode, saved_mode, saved_hwmode;
-	struct drm_crtc_helper_funcs *crtc_funcs = crtc->helper_private;
 	struct drm_encoder_helper_funcs *encoder_funcs;
 	int saved_x, saved_y;
 	struct drm_encoder *encoder;
@@ -6704,7 +6702,7 @@ bool intel_set_mode(struct drm_crtc *crtc,
 		}
 	}
 
-	if (!(ret = crtc_funcs->mode_fixup(crtc, mode, adjusted_mode))) {
+	if (!(ret = intel_crtc_mode_fixup(crtc, mode, adjusted_mode))) {
 		DRM_DEBUG_KMS("CRTC fixup failed\n");
 		goto done;
 	}
@@ -6712,12 +6710,12 @@ bool intel_set_mode(struct drm_crtc *crtc,
 
 	intel_crtc_prepare_encoders(dev);
 
-	crtc_funcs->prepare(crtc);
+	dev_priv->display.crtc_disable(crtc);
 
 	/* Set up the DPLL and any encoders state that needs to adjust or depend
 	 * on the DPLL.
 	 */
-	ret = !crtc_funcs->mode_set(crtc, mode, adjusted_mode, x, y, old_fb);
+	ret = !intel_crtc_mode_set(crtc, mode, adjusted_mode, x, y, old_fb);
 	if (!ret)
 	    goto done;
 
@@ -6734,7 +6732,7 @@ bool intel_set_mode(struct drm_crtc *crtc,
 	}
 
 	/* Now enable the clocks, plane, pipe, and connectors that we set up. */
-	crtc_funcs->commit(crtc);
+	dev_priv->display.crtc_enable(crtc);
 
 	/* Store real post-adjustment hardware mode. */
 	crtc->hwmode = *adjusted_mode;
@@ -7067,9 +7065,6 @@ static void intel_crtc_init(struct drm_device *dev, int pipe)
 	intel_crtc_reset(&intel_crtc->base);
 	intel_crtc->active = true; /* force the pipe off on setup_init_config */
 	intel_crtc->bpp = 24; /* default for pre-Ironlake */
-
-	intel_helper_funcs.prepare = dev_priv->display.crtc_disable;
-	intel_helper_funcs.commit = dev_priv->display.crtc_enable;
 
 	drm_crtc_helper_add(&intel_crtc->base, &intel_helper_funcs);
 }
