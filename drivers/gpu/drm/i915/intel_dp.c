@@ -2283,6 +2283,7 @@ intel_dp_detect(struct drm_connector *connector, bool force)
 	struct drm_device *dev = intel_dp->base.base.dev;
 	enum drm_connector_status status;
 	struct edid *edid = NULL;
+	char dpcd_hex_dump[sizeof(intel_dp->dpcd) * 3];
 
 	intel_dp->has_audio = false;
 
@@ -2290,6 +2291,11 @@ intel_dp_detect(struct drm_connector *connector, bool force)
 		status = ironlake_dp_detect(intel_dp);
 	else
 		status = g4x_dp_detect(intel_dp);
+
+	hex_dump_to_buffer(intel_dp->dpcd, sizeof(intel_dp->dpcd),
+			   32, 1, dpcd_hex_dump, sizeof(dpcd_hex_dump), false);
+	DRM_DEBUG_KMS("DPCD: %s\n", dpcd_hex_dump);
+
 	if (status != connector_status_connected)
 		return status;
 
