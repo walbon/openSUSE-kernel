@@ -1366,7 +1366,6 @@ intel_sdvo_tmds_sink_detect(struct drm_connector *connector)
 			}
 		} else
 			status = connector_status_disconnected;
-		connector->display_info.raw_edid = NULL;
 		kfree(edid);
 	}
 
@@ -1440,7 +1439,6 @@ intel_sdvo_detect(struct drm_connector *connector, bool force)
 			else
 				ret = connector_status_disconnected;
 
-			connector->display_info.raw_edid = NULL;
 			kfree(edid);
 		} else
 			ret = connector_status_connected;
@@ -1486,7 +1484,6 @@ static void intel_sdvo_get_ddc_modes(struct drm_connector *connector)
 			drm_add_edid_modes(connector, edid);
 		}
 
-		connector->display_info.raw_edid = NULL;
 		kfree(edid);
 	}
 }
