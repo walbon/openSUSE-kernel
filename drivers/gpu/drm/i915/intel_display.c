@@ -7160,6 +7160,8 @@ static void i915_disable_vga(struct drm_device *dev)
 
 void intel_modeset_init_hw(struct drm_device *dev)
 {
+	intel_prepare_ddi(dev);
+
 	intel_init_clock_gating(dev);
 
 	mutex_lock(&dev->struct_mutex);
@@ -7185,8 +7187,6 @@ void intel_modeset_init(struct drm_device *dev)
 	intel_init_quirks(dev);
 
 	intel_init_pm(dev);
-
-	intel_prepare_ddi(dev);
 
 	intel_init_display(dev);
 
