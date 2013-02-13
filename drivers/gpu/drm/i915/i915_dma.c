@@ -1496,19 +1496,9 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 		goto free_priv;
 	}
 
-	ret = intel_gmch_probe(dev_priv->bridge_dev, dev->pdev, NULL);
-	if (!ret) {
-		DRM_ERROR("failed to set up gmch\n");
-		ret = -EIO;
-		goto out_rmmap;
-	}
-
-	dev_priv->mm.gtt = intel_gtt_get();
-	if (!dev_priv->mm.gtt) {
-		DRM_ERROR("Failed to initialize GTT\n");
-		ret = -ENODEV;
-		goto put_gmch;
-	}
+	ret = i915_gem_gtt_init(dev);
+	if (ret)
+		goto put_bridge;
 
 	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		i915_kick_out_firmware_fb(dev_priv);
@@ -1679,10 +1669,10 @@ out_mtrrfree:
 		dev_priv->mm.gtt_mtrr = -1;
 	}
 	io_mapping_free(dev_priv->mm.gtt_mapping);
-put_gmch:
-	intel_gmch_remove();
 out_rmmap:
 	pci_iounmap(dev->pdev, dev_priv->regs);
+put_gmch:
+	i915_gem_gtt_fini(dev);
 put_bridge:
 	pci_dev_put(dev_priv->bridge_dev);
 free_priv:
