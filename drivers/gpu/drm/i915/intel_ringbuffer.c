@@ -425,7 +425,7 @@ static int init_render_ring(struct intel_ring_buffer *ring)
 		 *  policy is not supported."
 		 */
 		I915_WRITE(CACHE_MODE_0,
-			   CM0_STC_EVICT_DISABLE_LRA_SNB << CM0_MASK_SHIFT);
+			   _MASKED_BIT_DISABLE(CM0_STC_EVICT_DISABLE_LRA_SNB));
 	}
 
 	if (INTEL_INFO(dev)->gen >= 6)
