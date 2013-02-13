@@ -307,7 +307,7 @@ shmem_pread_fast(struct page *page, int shmem_page_offset, int page_length,
 	char *vaddr;
 	int ret;
 
-	if (page_do_bit17_swizzling)
+	if (unlikely(page_do_bit17_swizzling))
 		return -EINVAL;
 
 	vaddr = kmap_atomic(page);
@@ -326,7 +326,7 @@ static void
 shmem_clflush_swizzled_range(char *addr, unsigned long length,
 			     bool swizzled)
 {
-	if (swizzled) {
+	if (unlikely(swizzled)) {
 		unsigned long start = (unsigned long) addr;
 		unsigned long end = (unsigned long) addr + length;
 
@@ -638,7 +638,7 @@ shmem_pwrite_fast(struct page *page, int shmem_page_offset, int page_length,
 	char *vaddr;
 	int ret;
 
-	if (page_do_bit17_swizzling)
+	if (unlikely(page_do_bit17_swizzling))
 		return -EINVAL;
 
 	vaddr = kmap_atomic(page);
@@ -669,7 +669,7 @@ shmem_pwrite_slow(struct page *page, int shmem_page_offset, int page_length,
 	int ret;
 
 	vaddr = kmap(page);
-	if (needs_clflush_before || page_do_bit17_swizzling)
+	if (unlikely(needs_clflush_before || page_do_bit17_swizzling))
 		shmem_clflush_swizzled_range(vaddr + shmem_page_offset,
 					     page_length,
 					     page_do_bit17_swizzling);
