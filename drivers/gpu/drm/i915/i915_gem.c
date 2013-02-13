@@ -2383,6 +2383,10 @@ int i915_gpu_idle(struct drm_device *dev)
 
 	/* Flush everything onto the inactive list. */
 	for_each_ring(ring, dev_priv, i) {
+		ret = i915_switch_context(ring, NULL, DEFAULT_CONTEXT_ID);
+		if (ret)
+			return ret;
+
 		ret = i915_ring_idle(ring);
 		if (ret)
 			return ret;
@@ -2390,10 +2394,6 @@ int i915_gpu_idle(struct drm_device *dev)
 		/* Is the device fubar? */
 		if (WARN_ON(!list_empty(&ring->gpu_write_list)))
 			return -EBUSY;
-
-		ret = i915_switch_context(ring, NULL, DEFAULT_CONTEXT_ID);
-		if (ret)
-			return ret;
 	}
 
 	return 0;
