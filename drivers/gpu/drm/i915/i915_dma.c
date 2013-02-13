@@ -1505,7 +1505,8 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 		goto put_gmch;
 	}
 
-	i915_kick_out_firmware_fb(dev_priv);
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
+		i915_kick_out_firmware_fb(dev_priv);
 
 	/* overlay on gen2 is broken and can't address above 1G */
 	if (IS_GEN2(dev))
