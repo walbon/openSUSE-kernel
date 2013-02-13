@@ -605,38 +605,6 @@ pc_render_get_seqno(struct intel_ring_buffer *ring)
 	return pc->cpu_page[0];
 }
 
-static void
-ironlake_enable_irq(drm_i915_private_t *dev_priv, u32 mask)
-{
-	dev_priv->gt_irq_mask &= ~mask;
-	I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
-	POSTING_READ(GTIMR);
-}
-
-static void
-ironlake_disable_irq(drm_i915_private_t *dev_priv, u32 mask)
-{
-	dev_priv->gt_irq_mask |= mask;
-	I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
-	POSTING_READ(GTIMR);
-}
-
-static void
-i915_enable_irq(drm_i915_private_t *dev_priv, u32 mask)
-{
-	dev_priv->irq_mask &= ~mask;
-	I915_WRITE(IMR, dev_priv->irq_mask);
-	POSTING_READ(IMR);
-}
-
-static void
-i915_disable_irq(drm_i915_private_t *dev_priv, u32 mask)
-{
-	dev_priv->irq_mask |= mask;
-	I915_WRITE(IMR, dev_priv->irq_mask);
-	POSTING_READ(IMR);
-}
-
 static bool
 gen5_ring_get_irq(struct intel_ring_buffer *ring)
 {
@@ -647,8 +615,11 @@ gen5_ring_get_irq(struct intel_ring_buffer *ring)
 		return false;
 
 	spin_lock(&ring->irq_lock);
-	if (ring->irq_refcount++ == 0)
-		ironlake_enable_irq(dev_priv, ring->irq_enable_mask);
+	if (ring->irq_refcount++ == 0) {
+		dev_priv->gt_irq_mask &= ~ring->irq_enable_mask;
+		I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
+		POSTING_READ(GTIMR);
+	}
 	spin_unlock(&ring->irq_lock);
 
 	return true;
@@ -661,8 +632,11 @@ gen5_ring_put_irq(struct intel_ring_buffer *ring)
 	drm_i915_private_t *dev_priv = dev->dev_private;
 
 	spin_lock(&ring->irq_lock);
-	if (--ring->irq_refcount == 0)
-		ironlake_disable_irq(dev_priv, ring->irq_enable_mask);
+	if (--ring->irq_refcount == 0) {
+		dev_priv->gt_irq_mask |= ring->irq_enable_mask;
+		I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
+		POSTING_READ(GTIMR);
+	}
 	spin_unlock(&ring->irq_lock);
 }
 
@@ -676,8 +650,11 @@ i9xx_ring_get_irq(struct intel_ring_buffer *ring)
 		return false;
 
 	spin_lock(&ring->irq_lock);
-	if (ring->irq_refcount++ == 0)
-		i915_enable_irq(dev_priv, ring->irq_enable_mask);
+	if (ring->irq_refcount++ == 0) {
+		dev_priv->irq_mask &= ~ring->irq_enable_mask;
+		I915_WRITE(IMR, dev_priv->irq_mask);
+		POSTING_READ(IMR);
+	}
 	spin_unlock(&ring->irq_lock);
 
 	return true;
@@ -690,8 +667,11 @@ i9xx_ring_put_irq(struct intel_ring_buffer *ring)
 	drm_i915_private_t *dev_priv = dev->dev_private;
 
 	spin_lock(&ring->irq_lock);
-	if (--ring->irq_refcount == 0)
-		i915_disable_irq(dev_priv, ring->irq_enable_mask);
+	if (--ring->irq_refcount == 0) {
+		dev_priv->irq_mask |= ring->irq_enable_mask;
+		I915_WRITE(IMR, dev_priv->irq_mask);
+		POSTING_READ(IMR);
+	}
 	spin_unlock(&ring->irq_lock);
 }
 
@@ -783,7 +763,9 @@ gen6_ring_get_irq(struct intel_ring_buffer *ring)
 	spin_lock(&ring->irq_lock);
 	if (ring->irq_refcount++ == 0) {
 		I915_WRITE_IMR(ring, ~ring->irq_enable_mask);
-		ironlake_enable_irq(dev_priv, ring->irq_enable_mask);
+		dev_priv->gt_irq_mask &= ~ring->irq_enable_mask;
+		I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
+		POSTING_READ(GTIMR);
 	}
 	spin_unlock(&ring->irq_lock);
 
@@ -799,7 +781,9 @@ gen6_ring_put_irq(struct intel_ring_buffer *ring)
 	spin_lock(&ring->irq_lock);
 	if (--ring->irq_refcount == 0) {
 		I915_WRITE_IMR(ring, ~0);
-		ironlake_disable_irq(dev_priv, ring->irq_enable_mask);
+		dev_priv->gt_irq_mask |= ring->irq_enable_mask;
+		I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
+		POSTING_READ(GTIMR);
 	}
 	spin_unlock(&ring->irq_lock);
 
