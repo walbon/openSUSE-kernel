@@ -33,11 +33,11 @@
 #include "nouveau_drv.h"
 #include <drm/nouveau_drm.h>
 #include "nouveau_fbcon.h"
-#include "nouveau_ramht.h"
-#include "nouveau_gpio.h"
+#include <core/ramht.h>
+#include <subdev/gpio.h>
 #include "nouveau_pm.h"
 #include "nv50_display.h"
-#include "nouveau_fifo.h"
+#include <engine/fifo.h>
 #include "nouveau_fence.h"
 #include "nouveau_software.h"
 

@@ -34,7 +34,7 @@
 #include <drm/nouveau_drm.h>
 #include "nouveau_drv.h"
 #include "nouveau_reg.h"
-#include "nouveau_ramht.h"
+#include <core/ramht.h>
 #include "nouveau_util.h"
 
 void

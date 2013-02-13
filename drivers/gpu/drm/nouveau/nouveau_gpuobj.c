@@ -33,10 +33,10 @@
 #include <drm/drmP.h>
 #include "nouveau_drv.h"
 #include <drm/nouveau_drm.h>
-#include "nouveau_fifo.h"
-#include "nouveau_ramht.h"
+#include <engine/fifo.h>
+#include <core/ramht.h>
 #include "nouveau_software.h"
-#include "nouveau_vm.h"
+#include <subdev/vm.h>
 
 struct nouveau_gpuobj_method {
 	struct list_head head;
