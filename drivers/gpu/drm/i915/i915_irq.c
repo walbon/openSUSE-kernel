@@ -2012,7 +2012,6 @@ static irqreturn_t i8xx_irq_handler(DRM_IRQ_ARGS)
 {
 	struct drm_device *dev = (struct drm_device *) arg;
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
-	struct drm_i915_master_private *master_priv;
 	u16 iir, new_iir;
 	u32 pipe_stats[2];
 	unsigned long irqflags;
@@ -2058,12 +2057,7 @@ static irqreturn_t i8xx_irq_handler(DRM_IRQ_ARGS)
 		I915_WRITE16(IIR, iir & ~flip_mask);
 		new_iir = I915_READ16(IIR); /* Flush posted writes */
 
-		if (dev->primary->master) {
-			master_priv = dev->primary->master->driver_priv;
-			if (master_priv->sarea_priv)
-				master_priv->sarea_priv->last_dispatch =
-					READ_BREADCRUMB(dev_priv);
-		}
+		i915_update_dri1_breadcrumb(dev);
 
 		if (iir & I915_USER_INTERRUPT)
 			notify_ring(dev, &dev_priv->ring[RCS]);
@@ -2196,7 +2190,6 @@ static irqreturn_t i915_irq_handler(DRM_IRQ_ARGS)
 {
 	struct drm_device *dev = (struct drm_device *) arg;
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
-	struct drm_i915_master_private *master_priv;
 	u32 iir, new_iir, pipe_stats[I915_MAX_PIPES];
 	unsigned long irqflags;
 	u32 flip_mask =
@@ -2302,12 +2295,7 @@ static irqreturn_t i915_irq_handler(DRM_IRQ_ARGS)
 		iir = new_iir;
 	} while (iir & ~flip_mask);
 
-	if (dev->primary->master) {
-		master_priv = dev->primary->master->driver_priv;
-		if (master_priv->sarea_priv)
-			master_priv->sarea_priv->last_dispatch =
-				READ_BREADCRUMB(dev_priv);
-	}
+	i915_update_dri1_breadcrumb(dev);
 
 	return ret;
 }
@@ -2443,7 +2431,6 @@ static irqreturn_t i965_irq_handler(DRM_IRQ_ARGS)
 {
 	struct drm_device *dev = (struct drm_device *) arg;
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
-	struct drm_i915_master_private *master_priv;
 	u32 iir, new_iir;
 	u32 pipe_stats[I915_MAX_PIPES];
 	unsigned long irqflags;
@@ -2552,12 +2539,7 @@ static irqreturn_t i965_irq_handler(DRM_IRQ_ARGS)
 		iir = new_iir;
 	}
 
-	if (dev->primary->master) {
-		master_priv = dev->primary->master->driver_priv;
-		if (master_priv->sarea_priv)
-			master_priv->sarea_priv->last_dispatch =
-				READ_BREADCRUMB(dev_priv);
-	}
+	i915_update_dri1_breadcrumb(dev);
 
 	return ret;
 }
