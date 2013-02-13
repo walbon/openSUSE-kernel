@@ -4655,6 +4655,50 @@ static int ironlake_get_refclk(struct drm_crtc *crtc)
 	return 120000;
 }
 
+static void ironlake_set_pipeconf(struct drm_crtc *crtc,
+				  struct drm_display_mode *adjusted_mode,
+				  bool dither)
+{
+	struct drm_i915_private *dev_priv = crtc->dev->dev_private;
+	struct intel_crtc *intel_crtc = to_intel_crtc(crtc);
+	int pipe = intel_crtc->pipe;
+	uint32_t val;
+
+	val = I915_READ(PIPECONF(pipe));
+
+	val &= ~PIPE_BPC_MASK;
+	switch (intel_crtc->bpp) {
+	case 18:
+		val |= PIPE_6BPC;
+		break;
+	case 24:
+		val |= PIPE_8BPC;
+		break;
+	case 30:
+		val |= PIPE_10BPC;
+		break;
+	case 36:
+		val |= PIPE_12BPC;
+		break;
+	default:
+		val |= PIPE_8BPC;
+		break;
+	}
+
+	val &= ~(PIPECONF_DITHER_EN | PIPECONF_DITHER_TYPE_MASK);
+	if (dither)
+		val |= (PIPECONF_DITHER_EN | PIPECONF_DITHER_TYPE_SP);
+
+	val &= ~PIPECONF_INTERLACE_MASK;
+	if (adjusted_mode->flags & DRM_MODE_FLAG_INTERLACE)
+		val |= PIPECONF_INTERLACED_ILK;
+	else
+		val |= PIPECONF_PROGRESSIVE;
+
+	I915_WRITE(PIPECONF(pipe), val);
+	POSTING_READ(PIPECONF(pipe));
+}
+
 static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 				  struct drm_display_mode *mode,
 				  struct drm_display_mode *adjusted_mode,
@@ -4668,7 +4712,7 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 	int plane = intel_crtc->plane;
 	int refclk, num_connectors = 0;
 	intel_clock_t clock, reduced_clock;
-	u32 dpll, fp = 0, fp2 = 0, dspcntr, pipeconf;
+	u32 dpll, fp = 0, fp2 = 0, dspcntr;
 	bool ok, has_reduced_clock = false, is_sdvo = false;
 	bool is_crt = false, is_lvds = false, is_tv = false, is_dp = false;
 	struct intel_encoder *encoder, *edp_encoder = NULL;
@@ -4777,32 +4821,17 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 		target_clock = adjusted_mode->clock;
 
 	/* determine panel color depth */
-	temp = I915_READ(PIPECONF(pipe));
-	temp &= ~PIPE_BPC_MASK;
 	dither = intel_choose_pipe_bpp_dither(crtc, fb, &pipe_bpp, mode);
-	switch (pipe_bpp) {
-	case 18:
-		temp |= PIPE_6BPC;
-		break;
-	case 24:
-		temp |= PIPE_8BPC;
-		break;
-	case 30:
-		temp |= PIPE_10BPC;
-		break;
-	case 36:
-		temp |= PIPE_12BPC;
-		break;
-	default:
-		WARN(1, "intel_choose_pipe_bpp returned invalid value %d\n",
-			pipe_bpp);
-		temp |= PIPE_8BPC;
-		pipe_bpp = 24;
-		break;
-	}
+	if (is_lvds && dev_priv->lvds_dither)
+		dither = true;
 
+	if (pipe_bpp != 18 && pipe_bpp != 24 && pipe_bpp != 30 &&
+	    pipe_bpp != 36) {
+		WARN(1, "intel_choose_pipe_bpp returned invalid value %d\n",
+		     pipe_bpp);
+		pipe_bpp = 24;
+	}
 	intel_crtc->bpp = pipe_bpp;
-	I915_WRITE(PIPECONF(pipe), temp);
 
 	if (!lane) {
 		/*
@@ -4886,9 +4915,6 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 	else
 		dpll |= PLL_REF_INPUT_DREFCLK;
 
-	/* setup pipeconf */
-	pipeconf = I915_READ(PIPECONF(pipe));
-
 	/* Set up the display plane register */
 	dspcntr = DISPPLANE_GAMMA_ENABLE;
 
@@ -4951,12 +4977,6 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 		I915_WRITE(PCH_LVDS, temp);
 	}
 
-	pipeconf &= ~PIPECONF_DITHER_EN;
-	pipeconf &= ~PIPECONF_DITHER_TYPE_MASK;
-	if ((is_lvds && dev_priv->lvds_dither) || dither) {
-		pipeconf |= PIPECONF_DITHER_EN;
-		pipeconf |= PIPECONF_DITHER_TYPE_SP;
-	}
 	if (is_dp && !is_cpu_edp) {
 		intel_dp_set_m_n(crtc, mode, adjusted_mode);
 	} else {
@@ -4992,9 +5012,7 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 		}
 	}
 
-	pipeconf &= ~PIPECONF_INTERLACE_MASK;
 	if (adjusted_mode->flags & DRM_MODE_FLAG_INTERLACE) {
-		pipeconf |= PIPECONF_INTERLACED_ILK;
 		/* the chip adds 2 halflines automatically */
 		adjusted_mode->crtc_vtotal -= 1;
 		adjusted_mode->crtc_vblank_end -= 1;
@@ -5002,7 +5020,6 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 			   adjusted_mode->crtc_hsync_start
 			   - adjusted_mode->crtc_htotal/2);
 	} else {
-		pipeconf |= PIPECONF_PROGRESSIVE;
 		I915_WRITE(VSYNCSHIFT(pipe), 0);
 	}
 
@@ -5040,8 +5057,7 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 	if (is_cpu_edp)
 		ironlake_set_pll_edp(crtc, adjusted_mode->clock);
 
-	I915_WRITE(PIPECONF(pipe), pipeconf);
-	POSTING_READ(PIPECONF(pipe));
+	ironlake_set_pipeconf(crtc, adjusted_mode, dither);
 
 	intel_wait_for_vblank(dev, pipe);
 
