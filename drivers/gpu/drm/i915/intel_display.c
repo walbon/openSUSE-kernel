@@ -5476,8 +5476,6 @@ static int intel_crtc_cursor_set(struct drm_crtc *crtc,
 	uint32_t addr;
 	int ret;
 
-	DRM_DEBUG_KMS("\n");
-
 	/* if we want to turn off the cursor ignore width and height */
 	if (!handle) {
 		DRM_DEBUG_KMS("cursor off\n");
@@ -6933,16 +6931,9 @@ static int intel_crtc_set_config(struct drm_mode_set *set)
 	int ret;
 	int i;
 
-	DRM_DEBUG_KMS("\n");
-
-	if (!set)
-		return -EINVAL;
-
-	if (!set->crtc)
-		return -EINVAL;
-
-	if (!set->crtc->helper_private)
-		return -EINVAL;
+	BUG_ON(!set);
+	BUG_ON(!set->crtc);
+	BUG_ON(!set->crtc->helper_private);
 
 	if (!set->mode)
 		set->fb = NULL;
