@@ -801,6 +801,8 @@ int i915_reset(struct drm_device *dev, u8 flags)
 
 	mutex_lock(&dev->struct_mutex);
 
+	dev_priv->stop_rings = 0;
+
 	i915_gem_reset(dev);
 
 	ret = -ENODEV;
