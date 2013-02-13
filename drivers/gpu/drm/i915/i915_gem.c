@@ -1668,18 +1668,12 @@ i915_gem_object_is_purgeable(struct drm_i915_gem_object *obj)
 	return obj->madv == I915_MADV_DONTNEED;
 }
 
-static int
+static void
 i915_gem_object_put_pages_gtt(struct drm_i915_gem_object *obj)
 {
 	int page_count = obj->base.size / PAGE_SIZE;
 	int ret, i;
 
-	BUG_ON(obj->gtt_space);
-
-	if (obj->pages == NULL)
-		return 0;
-
-	BUG_ON(obj->gtt_space);
 	BUG_ON(obj->madv == __I915_MADV_PURGED);
 
 	ret = i915_gem_object_set_to_cpu_domain(obj, true);
@@ -1711,9 +1705,21 @@ i915_gem_object_put_pages_gtt(struct drm_i915_gem_object *obj)
 
 	drm_free_large(obj->pages);
 	obj->pages = NULL;
+}
+
+static int
+i915_gem_object_put_pages(struct drm_i915_gem_object *obj)
+{
+	const struct drm_i915_gem_object_ops *ops = obj->ops;
+
+	if (obj->sg_table || obj->pages == NULL)
+		return 0;
+
+	BUG_ON(obj->gtt_space);
+
+	ops->put_pages(obj);
 
 	list_del(&obj->gtt_list);
-
 	if (i915_gem_object_is_purgeable(obj))
 		i915_gem_object_truncate(obj);
 
@@ -1730,7 +1736,7 @@ i915_gem_purge(struct drm_i915_private *dev_priv, long target)
 				 &dev_priv->mm.unbound_list,
 				 gtt_list) {
 		if (i915_gem_object_is_purgeable(obj) &&
-		    i915_gem_object_put_pages_gtt(obj) == 0) {
+		    i915_gem_object_put_pages(obj) == 0) {
 			count += obj->base.size >> PAGE_SHIFT;
 			if (count >= target)
 				return count;
@@ -1742,7 +1748,7 @@ i915_gem_purge(struct drm_i915_private *dev_priv, long target)
 				 mm_list) {
 		if (i915_gem_object_is_purgeable(obj) &&
 		    i915_gem_object_unbind(obj) == 0 &&
-		    i915_gem_object_put_pages_gtt(obj) == 0) {
+		    i915_gem_object_put_pages(obj) == 0) {
 			count += obj->base.size >> PAGE_SHIFT;
 			if (count >= target)
 				return count;
@@ -1760,10 +1766,10 @@ i915_gem_shrink_all(struct drm_i915_private *dev_priv)
 	i915_gem_evict_everything(dev_priv->dev);
 
 	list_for_each_entry_safe(obj, next, &dev_priv->mm.unbound_list, gtt_list)
-		i915_gem_object_put_pages_gtt(obj);
+		i915_gem_object_put_pages(obj);
 }
 
-int
+static int
 i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_private *dev_priv = obj->base.dev->dev_private;
@@ -1771,9 +1777,6 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	struct address_space *mapping;
 	struct page *page;
 	gfp_t gfp;
-
-	if (obj->pages || obj->sg_table)
-		return 0;
 
 	/* Assert that the object is not currently in any GPU domain. As it
 	 * wasn't in the GTT, there shouldn't be any way it could have been in
@@ -1824,7 +1827,6 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	if (i915_gem_object_needs_bit17_swizzle(obj))
 		i915_gem_object_do_bit_17_swizzle(obj);
 
-	list_add_tail(&obj->gtt_list, &dev_priv->mm.unbound_list);
 	return 0;
 
 err_pages:
@@ -1834,6 +1836,31 @@ err_pages:
 	drm_free_large(obj->pages);
 	obj->pages = NULL;
 	return PTR_ERR(page);
+}
+
+/* Ensure that the associated pages are gathered from the backing storage
+ * and pinned into our object. i915_gem_object_get_pages() may be called
+ * multiple times before they are released by a single call to
+ * i915_gem_object_put_pages() - once the pages are no longer referenced
+ * either as a result of memory pressure (reaping pages under the shrinker)
+ * or as the object is itself released.
+ */
+int
+i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_private *dev_priv = obj->base.dev->dev_private;
+	const struct drm_i915_gem_object_ops *ops = obj->ops;
+	int ret;
+
+	if (obj->sg_table || obj->pages)
+		return 0;
+
+	ret = ops->get_pages(obj);
+	if (ret)
+		return ret;
+
+	list_add_tail(&obj->gtt_list, &dev_priv->mm.unbound_list);
+	return 0;
 }
 
 void
@@ -2088,7 +2115,6 @@ void i915_gem_reset(struct drm_device *dev)
 	{
 		obj->base.read_domains &= ~I915_GEM_GPU_DOMAINS;
 	}
-
 
 	/* The fence registers are invalidated so clear them out */
 	i915_gem_reset_fences(dev);
@@ -2889,7 +2915,7 @@ i915_gem_object_bind_to_gtt(struct drm_i915_gem_object *obj,
 		return -E2BIG;
 	}
 
-	ret = i915_gem_object_get_pages_gtt(obj);
+	ret = i915_gem_object_get_pages(obj);
 	if (ret)
 		return ret;
 
@@ -3629,14 +3655,15 @@ unlock:
 	return ret;
 }
 
-void i915_gem_object_init(struct drm_i915_gem_object *obj)
+void i915_gem_object_init(struct drm_i915_gem_object *obj,
+			  const struct drm_i915_gem_object_ops *ops)
 {
-	obj->base.driver_private = NULL;
-
 	INIT_LIST_HEAD(&obj->mm_list);
 	INIT_LIST_HEAD(&obj->gtt_list);
 	INIT_LIST_HEAD(&obj->ring_list);
 	INIT_LIST_HEAD(&obj->exec_list);
+
+	obj->ops = ops;
 
 	obj->fence_reg = I915_FENCE_REG_NONE;
 	obj->madv = I915_MADV_WILLNEED;
@@ -3645,6 +3672,11 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj)
 
 	i915_gem_info_add_obj(obj->base.dev->dev_private, obj->base.size);
 }
+
+static const struct drm_i915_gem_object_ops i915_gem_object_ops = {
+	.get_pages = i915_gem_object_get_pages_gtt,
+	.put_pages = i915_gem_object_put_pages_gtt,
+};
 
 struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
 						  size_t size)
@@ -3672,7 +3704,7 @@ struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
 	mapping = obj->base.filp->f_path.dentry->d_inode->i_mapping;
 	mapping_set_gfp_mask(mapping, mask);
 
-	i915_gem_object_init(obj);
+	i915_gem_object_init(obj, &i915_gem_object_ops);
 
 	obj->base.write_domain = I915_GEM_DOMAIN_CPU;
 	obj->base.read_domains = I915_GEM_DOMAIN_CPU;
@@ -3730,7 +3762,7 @@ void i915_gem_free_object(struct drm_gem_object *gem_obj)
 		dev_priv->mm.interruptible = was_interruptible;
 	}
 
-	i915_gem_object_put_pages_gtt(obj);
+	i915_gem_object_put_pages(obj);
 	i915_gem_object_free_mmap_offset(obj);
 
 	drm_gem_object_release(&obj->base);
