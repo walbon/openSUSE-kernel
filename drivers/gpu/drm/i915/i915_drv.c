@@ -565,7 +565,7 @@ static int __i915_drm_thaw(struct drm_device *dev)
 		mutex_unlock(&dev->struct_mutex);
 
 		intel_modeset_init_hw(dev);
-		intel_modeset_setup_hw_state(dev);
+		intel_modeset_setup_hw_state(dev, false);
 
 		/* Resume the modeset for every activated CRTC */
 		mutex_lock(&dev->mode_config.mutex);
