@@ -3598,7 +3598,14 @@ static void ivybridge_init_clock_gating(struct drm_device *dev)
 	I915_WRITE(GEN7_L3CNTLREG1,
 			GEN7_WA_FOR_GEN7_L3_CONTROL);
 	I915_WRITE(GEN7_L3_CHICKEN_MODE_REGISTER,
-			GEN7_WA_L3_CHICKEN_MODE);
+		   GEN7_WA_L3_CHICKEN_MODE);
+	if (IS_IVB_GT1(dev))
+		I915_WRITE(GEN7_ROW_CHICKEN2,
+			   _MASKED_BIT_ENABLE(DOP_CLOCK_GATING_DISABLE));
+	else
+		I915_WRITE(GEN7_ROW_CHICKEN2_GT2,
+			   _MASKED_BIT_ENABLE(DOP_CLOCK_GATING_DISABLE));
+
 
 	/* According to the BSpec vol1g, bit 12 (RCPBUNIT) clock
 	 * gating disable must be set.  Failure to set it results in
@@ -3673,6 +3680,10 @@ static void valleyview_init_clock_gating(struct drm_device *dev)
 	/* WaApplyL3ControlAndL3ChickenMode requires those two on Ivy Bridge */
 	I915_WRITE(GEN7_L3CNTLREG1, I915_READ(GEN7_L3CNTLREG1) | GEN7_L3AGDIS);
 	I915_WRITE(GEN7_L3_CHICKEN_MODE_REGISTER, GEN7_WA_L3_CHICKEN_MODE);
+
+	/* WaDisableDopClockGating */
+	I915_WRITE(GEN7_ROW_CHICKEN2,
+		   _MASKED_BIT_ENABLE(DOP_CLOCK_GATING_DISABLE));
 
 	/* This is required by WaCatErrorRejectionIssue */
 	I915_WRITE(GEN7_SQ_CHICKEN_MBCUNIT_CONFIG,
