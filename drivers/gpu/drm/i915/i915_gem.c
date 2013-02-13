@@ -3577,10 +3577,26 @@ unlock:
 	return ret;
 }
 
+void i915_gem_object_init(struct drm_i915_gem_object *obj)
+{
+	obj->base.driver_private = NULL;
+
+	INIT_LIST_HEAD(&obj->mm_list);
+	INIT_LIST_HEAD(&obj->gtt_list);
+	INIT_LIST_HEAD(&obj->ring_list);
+	INIT_LIST_HEAD(&obj->exec_list);
+
+	obj->fence_reg = I915_FENCE_REG_NONE;
+	obj->madv = I915_MADV_WILLNEED;
+	/* Avoid an unnecessary call to unbind on the first bind. */
+	obj->map_and_fenceable = true;
+
+	i915_gem_info_add_obj(obj->base.dev->dev_private, obj->base.size);
+}
+
 struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
 						  size_t size)
 {
-	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct drm_i915_gem_object *obj;
 	struct address_space *mapping;
 	u32 mask;
@@ -3604,7 +3620,7 @@ struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
 	mapping = obj->base.filp->f_path.dentry->d_inode->i_mapping;
 	mapping_set_gfp_mask(mapping, mask);
 
-	i915_gem_info_add_obj(dev_priv, size);
+	i915_gem_object_init(obj);
 
 	obj->base.write_domain = I915_GEM_DOMAIN_CPU;
 	obj->base.read_domains = I915_GEM_DOMAIN_CPU;
@@ -3625,16 +3641,6 @@ struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
 		obj->cache_level = I915_CACHE_LLC;
 	} else
 		obj->cache_level = I915_CACHE_NONE;
-
-	obj->base.driver_private = NULL;
-	obj->fence_reg = I915_FENCE_REG_NONE;
-	INIT_LIST_HEAD(&obj->mm_list);
-	INIT_LIST_HEAD(&obj->gtt_list);
-	INIT_LIST_HEAD(&obj->ring_list);
-	INIT_LIST_HEAD(&obj->exec_list);
-	obj->madv = I915_MADV_WILLNEED;
-	/* Avoid an unnecessary call to unbind on the first bind. */
-	obj->map_and_fenceable = true;
 
 	return obj;
 }
