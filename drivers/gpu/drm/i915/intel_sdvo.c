@@ -1713,6 +1713,7 @@ static bool intel_sdvo_detect_hdmi_audio(struct drm_connector *connector)
 	edid = intel_sdvo_get_edid(connector);
 	if (edid != NULL && edid->input & DRM_EDID_INPUT_DIGITAL)
 		has_audio = drm_detect_monitor_audio(edid);
+	kfree(edid);
 
 	return has_audio;
 }
