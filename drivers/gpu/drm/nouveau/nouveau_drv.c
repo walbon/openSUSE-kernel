@@ -36,6 +36,7 @@
 #include "nouveau_pm.h"
 #include "nv50_display.h"
 #include "nouveau_acpi.h"
+#include "nouveau_ioctl.h"
 
 #include <drm/drm_pciids.h>
 
