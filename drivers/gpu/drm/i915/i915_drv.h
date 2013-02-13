@@ -1534,6 +1534,8 @@ extern int intel_trans_dp_port_sel(struct drm_crtc *crtc);
 extern int intel_enable_rc6(const struct drm_device *dev);
 
 extern bool i915_semaphore_is_enabled(struct drm_device *dev);
+int i915_reg_read_ioctl(struct drm_device *dev, void *data,
+			struct drm_file *file);
 
 /* overlay */
 #ifdef CONFIG_DEBUG_FS
