@@ -89,6 +89,9 @@ struct drm_device;
 #include <drm/drm_hashtab.h>
 #include <drm/drm_mm.h>
 
+typedef uid_t kuid_t; /* XXX */
+#define from_kuid_munged(x,y) (y)
+
 #define DRM_UT_CORE 		0x01
 #define DRM_UT_DRIVER		0x02
 #define DRM_UT_KMS		0x04
