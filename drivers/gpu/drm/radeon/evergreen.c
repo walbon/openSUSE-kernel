@@ -1117,7 +1117,7 @@ void evergreen_pcie_gart_tlb_flush(struct radeon_device *rdev)
 	}
 }
 
-int evergreen_pcie_gart_enable(struct radeon_device *rdev)
+static int evergreen_pcie_gart_enable(struct radeon_device *rdev)
 {
 	u32 tmp;
 	int r;
@@ -1176,7 +1176,7 @@ int evergreen_pcie_gart_enable(struct radeon_device *rdev)
 	return 0;
 }
 
-void evergreen_pcie_gart_disable(struct radeon_device *rdev)
+static void evergreen_pcie_gart_disable(struct radeon_device *rdev)
 {
 	u32 tmp;
 
@@ -1201,7 +1201,7 @@ void evergreen_pcie_gart_disable(struct radeon_device *rdev)
 	radeon_gart_table_vram_unpin(rdev);
 }
 
-void evergreen_pcie_gart_fini(struct radeon_device *rdev)
+static void evergreen_pcie_gart_fini(struct radeon_device *rdev)
 {
 	evergreen_pcie_gart_disable(rdev);
 	radeon_gart_table_vram_free(rdev);
@@ -1209,7 +1209,7 @@ void evergreen_pcie_gart_fini(struct radeon_device *rdev)
 }
 
 
-void evergreen_agp_enable(struct radeon_device *rdev)
+static void evergreen_agp_enable(struct radeon_device *rdev)
 {
 	u32 tmp;
 
@@ -1552,7 +1552,7 @@ static int evergreen_cp_start(struct radeon_device *rdev)
 	return 0;
 }
 
-int evergreen_cp_resume(struct radeon_device *rdev)
+static int evergreen_cp_resume(struct radeon_device *rdev)
 {
 	struct radeon_ring *ring = &rdev->ring[RADEON_RING_TYPE_GFX_INDEX];
 	u32 tmp;
@@ -2705,7 +2705,7 @@ static void evergreen_irq_ack(struct radeon_device *rdev)
 	}
 }
 
-void evergreen_irq_disable(struct radeon_device *rdev)
+static void evergreen_irq_disable(struct radeon_device *rdev)
 {
 	r600_disable_interrupts(rdev);
 	/* Wait and acknowledge irq */
