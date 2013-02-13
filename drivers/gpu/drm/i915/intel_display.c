@@ -6657,7 +6657,7 @@ static int intel_crtc_set_config(struct drm_mode_set *set)
 	bool mode_changed = false; /* if true do a full mode set */
 	bool fb_changed = false; /* if true and !mode_changed just do a flip */
 	struct drm_connector *save_connectors, *connector;
-	int count = 0, ro, fail = 0;
+	int count = 0, ro;
 	struct drm_mode_set save_set;
 	int ret;
 	int i;
@@ -6672,7 +6672,6 @@ static int intel_crtc_set_config(struct drm_mode_set *set)
 
 	if (!set->crtc->helper_private)
 		return -EINVAL;
-
 
 	if (!set->mode)
 		set->fb = NULL;
@@ -6766,17 +6765,11 @@ static int intel_crtc_set_config(struct drm_mode_set *set)
 	/* a) traverse passed in connector list and get encoders for them */
 	count = 0;
 	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
-		struct drm_connector_helper_funcs *connector_funcs =
-			connector->helper_private;
 		new_encoder = connector->encoder;
 		for (ro = 0; ro < set->num_connectors; ro++) {
 			if (set->connectors[ro] == connector) {
-				new_encoder = connector_funcs->best_encoder(connector);
-				/* if we can't get an encoder for a connector
-				   we are setting now - then fail */
-				if (new_encoder == NULL)
-					/* don't break so fail path works correct */
-					fail = 1;
+				new_encoder =
+					&intel_attached_encoder(connector)->base;
 				break;
 			}
 		}
@@ -6791,11 +6784,6 @@ static int intel_crtc_set_config(struct drm_mode_set *set)
 				connector->encoder->crtc = NULL;
 			connector->encoder = new_encoder;
 		}
-	}
-
-	if (fail) {
-		ret = -EINVAL;
-		goto fail;
 	}
 
 	count = 0;
