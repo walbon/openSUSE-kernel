@@ -6663,6 +6663,7 @@ void intel_modeset_init_hw(struct drm_device *dev)
 
 	if (IS_IRONLAKE_M(dev)) {
 		ironlake_enable_drps(dev);
+		ironlake_enable_rc6(dev);
 		intel_init_emon(dev);
 	}
 
@@ -6724,8 +6725,6 @@ void intel_modeset_init(struct drm_device *dev)
 	i915_disable_vga(dev);
 	intel_setup_outputs(dev);
 
-	intel_modeset_init_hw(dev);
-
 	INIT_WORK(&dev_priv->idle_work, intel_idle_update);
 	setup_timer(&dev_priv->idle_timer, intel_gpu_idle_timer,
 		    (unsigned long)dev);
@@ -6733,8 +6732,7 @@ void intel_modeset_init(struct drm_device *dev)
 
 void intel_modeset_gem_init(struct drm_device *dev)
 {
-	if (IS_IRONLAKE_M(dev))
-		ironlake_enable_rc6(dev);
+	intel_modeset_init_hw(dev);
 
 	intel_setup_overlay(dev);
 }
