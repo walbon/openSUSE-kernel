@@ -5245,7 +5245,8 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 	intel_crtc_update_cursor(crtc, true);
 
 	/* determine panel color depth */
-	dither = intel_choose_pipe_bpp_dither(crtc, fb, &intel_crtc->bpp, mode);
+	dither = intel_choose_pipe_bpp_dither(crtc, fb, &intel_crtc->bpp,
+					      adjusted_mode);
 	if (is_lvds && dev_priv->lvds_dither)
 		dither = true;
 
@@ -5443,7 +5444,8 @@ static int haswell_crtc_mode_set(struct drm_crtc *crtc,
 	intel_crtc_update_cursor(crtc, true);
 
 	/* determine panel color depth */
-	dither = intel_choose_pipe_bpp_dither(crtc, fb, &intel_crtc->bpp, mode);
+	dither = intel_choose_pipe_bpp_dither(crtc, fb, &intel_crtc->bpp,
+					      adjusted_mode);
 	if (is_lvds && dev_priv->lvds_dither)
 		dither = true;
 
