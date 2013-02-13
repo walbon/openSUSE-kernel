@@ -27,6 +27,8 @@
 
 #define _PIPE(pipe, a, b) ((a) + (pipe)*((b)-(a)))
 
+#define _PORT(port, a, b) ((a) + (port)*((b)-(a)))
+
 #define _MASKED_BIT_ENABLE(a) (((a) << 16) | (a))
 
 /*
