@@ -2,7 +2,7 @@
 # Makefile for the drm device driver.  This driver provides support for the
 # Direct Rendering Infrastructure (DRI) in XFree86 4.1.0 and higher.
 
-ccflags-y := -Iinclude/drm
+ccflags-y := -Iinclude -Iinclude/drm -Iinclude/uapi -Iinclude/uapi/drm
 ccflags-y += -I$(src)/core/include
 ccflags-y += -I$(src)/core
 ccflags-y += -I$(src)

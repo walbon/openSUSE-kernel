@@ -1,4 +1,4 @@
-ccflags-y := -Iinclude/drm
+ccflags-y := -Iinclude -Iinclude/drm -Iinclude/uapi -Iinclude/uapi/drm
 mgag200-y   := mgag200_main.o mgag200_mode.o \
 	mgag200_drv.o mgag200_fb.o mgag200_i2c.o mgag200_ttm.o
 
