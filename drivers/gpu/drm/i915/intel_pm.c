@@ -3967,6 +3967,7 @@ static void __gen6_gt_force_wake_get(struct drm_i915_private *dev_priv)
 		DRM_ERROR("Force wake wait timed out\n");
 
 	I915_WRITE_NOTRACE(FORCEWAKE, 1);
+	POSTING_READ(FORCEWAKE);
 
 	if (wait_for_atomic_us((I915_READ_NOTRACE(forcewake_ack) & 1), 500))
 		DRM_ERROR("Force wake wait timed out\n");
@@ -3987,6 +3988,7 @@ static void __gen6_gt_force_wake_mt_get(struct drm_i915_private *dev_priv)
 		DRM_ERROR("Force wake wait timed out\n");
 
 	I915_WRITE_NOTRACE(FORCEWAKE_MT, _MASKED_BIT_ENABLE(1));
+	POSTING_READ(FORCEWAKE_MT);
 
 	if (wait_for_atomic_us((I915_READ_NOTRACE(forcewake_ack) & 1), 500))
 		DRM_ERROR("Force wake wait timed out\n");
@@ -4022,14 +4024,14 @@ void gen6_gt_check_fifodbg(struct drm_i915_private *dev_priv)
 static void __gen6_gt_force_wake_put(struct drm_i915_private *dev_priv)
 {
 	I915_WRITE_NOTRACE(FORCEWAKE, 0);
-	/* The below doubles as a POSTING_READ */
+	POSTING_READ(FORCEWAKE);
 	gen6_gt_check_fifodbg(dev_priv);
 }
 
 static void __gen6_gt_force_wake_mt_put(struct drm_i915_private *dev_priv)
 {
 	I915_WRITE_NOTRACE(FORCEWAKE_MT, _MASKED_BIT_DISABLE(1));
-	/* The below doubles as a POSTING_READ */
+	POSTING_READ(FORCEWAKE_MT);
 	gen6_gt_check_fifodbg(dev_priv);
 }
 
