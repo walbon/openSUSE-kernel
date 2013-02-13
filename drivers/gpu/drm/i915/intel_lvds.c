@@ -582,6 +582,7 @@ static void intel_lvds_destroy(struct drm_connector *connector)
 		acpi_lid_notifier_unregister(&lvds_connector->lid_notifier);
 
 	intel_panel_destroy_backlight(connector->dev);
+	intel_panel_fini(&lvds_connector->base.panel);
 
 	drm_sysfs_connector_remove(connector);
 	drm_connector_cleanup(connector);
@@ -1134,6 +1135,7 @@ out:
 	}
 	drm_sysfs_connector_add(connector);
 
+	intel_panel_init(&intel_connector->panel);
 	intel_panel_setup_backlight(connector);
 
 	return true;
