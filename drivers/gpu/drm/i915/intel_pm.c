@@ -3367,6 +3367,9 @@ static void gen6_init_clock_gating(struct drm_device *dev)
 		   ILK_DPARB_CLK_GATE  |
 		   ILK_DPFD_CLK_GATE);
 
+	I915_WRITE(GEN6_MBCTL, I915_READ(GEN6_MBCTL) |
+		   GEN6_MBCTL_ENABLE_BOOT_FETCH);
+
 	for_each_pipe(pipe) {
 		I915_WRITE(DSPCNTR(pipe),
 			   I915_READ(DSPCNTR(pipe)) |
@@ -3445,6 +3448,9 @@ static void ivybridge_init_clock_gating(struct drm_device *dev)
 		intel_flush_display_plane(dev_priv, pipe);
 	}
 
+	I915_WRITE(GEN6_MBCTL, I915_READ(GEN6_MBCTL) |
+		   GEN6_MBCTL_ENABLE_BOOT_FETCH);
+
 	gen7_setup_fixed_func_scheduler(dev_priv);
 
 	/* WaDisable4x2SubspanOptimization */
@@ -3487,6 +3493,9 @@ static void valleyview_init_clock_gating(struct drm_device *dev)
 	I915_WRITE(GEN7_SQ_CHICKEN_MBCUNIT_CONFIG,
 		   I915_READ(GEN7_SQ_CHICKEN_MBCUNIT_CONFIG) |
 		   GEN7_SQ_CHICKEN_MBCUNIT_SQINTMOB);
+
+	I915_WRITE(GEN6_MBCTL, I915_READ(GEN6_MBCTL) |
+		   GEN6_MBCTL_ENABLE_BOOT_FETCH);
 
 
 	/* According to the BSpec vol1g, bit 12 (RCPBUNIT) clock
