@@ -207,11 +207,11 @@ int mlx4_cq_alloc(struct mlx4_dev *dev, int nent, struct mlx4_mtt *mtt,
 	if (cq->cqn == -1)
 		return -ENOMEM;
 
-	err = mlx4_table_get(dev, &cq_table->table, cq->cqn);
+	err = mlx4_table_get(dev, &cq_table->table, cq->cqn, 0);
 	if (err)
 		goto err_out;
 
-	err = mlx4_table_get(dev, &cq_table->cmpt_table, cq->cqn);
+	err = mlx4_table_get(dev, &cq_table->cmpt_table, cq->cqn, 0);
 	if (err)
 		goto err_put;
 

@@ -172,7 +172,7 @@ void mlx4_qp_release_range(struct mlx4_dev *dev, int base_qpn, int cnt)
 }
 EXPORT_SYMBOL_GPL(mlx4_qp_release_range);
 
-int mlx4_qp_alloc(struct mlx4_dev *dev, int qpn, struct mlx4_qp *qp)
+int mlx4_qp_alloc(struct mlx4_dev *dev, int qpn, struct mlx4_qp *qp, int use_gfp_nofs)
 {
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	struct mlx4_qp_table *qp_table = &priv->qp_table;
@@ -183,23 +183,23 @@ int mlx4_qp_alloc(struct mlx4_dev *dev, int qpn, struct mlx4_qp *qp)
 
 	qp->qpn = qpn;
 
-	err = mlx4_table_get(dev, &qp_table->qp_table, qp->qpn);
+	err = mlx4_table_get(dev, &qp_table->qp_table, qp->qpn, use_gfp_nofs);
 	if (err)
 		goto err_out;
 
-	err = mlx4_table_get(dev, &qp_table->auxc_table, qp->qpn);
+	err = mlx4_table_get(dev, &qp_table->auxc_table, qp->qpn, use_gfp_nofs);
 	if (err)
 		goto err_put_qp;
 
-	err = mlx4_table_get(dev, &qp_table->altc_table, qp->qpn);
+	err = mlx4_table_get(dev, &qp_table->altc_table, qp->qpn, use_gfp_nofs);
 	if (err)
 		goto err_put_auxc;
 
-	err = mlx4_table_get(dev, &qp_table->rdmarc_table, qp->qpn);
+	err = mlx4_table_get(dev, &qp_table->rdmarc_table, qp->qpn, use_gfp_nofs);
 	if (err)
 		goto err_put_altc;
 
-	err = mlx4_table_get(dev, &qp_table->cmpt_table, qp->qpn);
+	err = mlx4_table_get(dev, &qp_table->cmpt_table, qp->qpn, use_gfp_nofs);
 	if (err)
 		goto err_put_rdmarc;
 

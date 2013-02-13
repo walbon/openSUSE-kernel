@@ -226,7 +226,7 @@ int mlx4_UNMAP_ICM_AUX(struct mlx4_dev *dev)
 	return mlx4_cmd(dev, 0, 0, 0, MLX4_CMD_UNMAP_ICM_AUX, MLX4_CMD_TIME_CLASS_B);
 }
 
-int mlx4_table_get(struct mlx4_dev *dev, struct mlx4_icm_table *table, int obj)
+int mlx4_table_get(struct mlx4_dev *dev, struct mlx4_icm_table *table, int obj, int use_gfp_nofs)
 {
 	int i = (obj & (table->num_obj - 1)) / (MLX4_TABLE_CHUNK_SIZE / table->obj_size);
 	int ret = 0;
@@ -239,7 +239,7 @@ int mlx4_table_get(struct mlx4_dev *dev, struct mlx4_icm_table *table, int obj)
 	}
 
 	table->icm[i] = mlx4_alloc_icm(dev, MLX4_TABLE_CHUNK_SIZE >> PAGE_SHIFT,
-				       (table->lowmem ? GFP_KERNEL : GFP_HIGHUSER) |
+				       (table->lowmem ? (use_gfp_nofs ? GFP_NOFS : GFP_KERNEL) : GFP_HIGHUSER) |
 				       __GFP_NOWARN, table->coherent);
 	if (!table->icm[i]) {
 		ret = -ENOMEM;
@@ -331,7 +331,7 @@ int mlx4_table_get_range(struct mlx4_dev *dev, struct mlx4_icm_table *table,
 	int i, err;
 
 	for (i = start; i <= end; i += inc) {
-		err = mlx4_table_get(dev, table, i);
+		err = mlx4_table_get(dev, table, i, 0);
 		if (err)
 			goto fail;
 	}

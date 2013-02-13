@@ -314,7 +314,7 @@ int mlx4_mr_enable(struct mlx4_dev *dev, struct mlx4_mr *mr)
 	struct mlx4_mpt_entry *mpt_entry;
 	int err;
 
-	err = mlx4_table_get(dev, &mr_table->dmpt_table, key_to_hw_index(mr->key));
+	err = mlx4_table_get(dev, &mr_table->dmpt_table, key_to_hw_index(mr->key), 0);
 	if (err)
 		return err;
 
@@ -436,13 +436,13 @@ int mlx4_write_mtt(struct mlx4_dev *dev, struct mlx4_mtt *mtt,
 EXPORT_SYMBOL_GPL(mlx4_write_mtt);
 
 int mlx4_buf_write_mtt(struct mlx4_dev *dev, struct mlx4_mtt *mtt,
-		       struct mlx4_buf *buf)
+		       struct mlx4_buf *buf, int use_gfp_nofs)
 {
 	u64 *page_list;
 	int err;
 	int i;
 
-	page_list = kmalloc(buf->npages * sizeof *page_list, GFP_KERNEL);
+	page_list = kmalloc(buf->npages * sizeof *page_list, use_gfp_nofs ? GFP_NOFS : GFP_KERNEL);
 	if (!page_list)
 		return -ENOMEM;
 
