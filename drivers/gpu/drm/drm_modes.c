@@ -33,7 +33,6 @@
 #include <linux/list.h>
 #include <linux/list_sort.h>
 #include "drmP.h"
-#include "drm.h"
 #include "drm_crtc.h"
 
 /**
