@@ -2294,6 +2294,9 @@ intel_sdvo_lvds_init(struct intel_sdvo *intel_sdvo, int device)
 		intel_sdvo_connector->output_flag = SDVO_OUTPUT_LVDS1;
 	}
 
+	/* SDVO LVDS is not cloneable because the input mode gets adjusted by the encoder */
+	intel_sdvo->base.cloneable = false;
+
 	intel_sdvo_connector_init(intel_sdvo_connector, intel_sdvo);
 	if (!intel_sdvo_create_enhance_property(intel_sdvo, intel_sdvo_connector))
 		goto err;
