@@ -259,10 +259,8 @@ struct sg_table *dma_buf_map_attachment(struct dma_buf_attachment *attach,
 	if (WARN_ON(!attach || !attach->dmabuf || !attach->dmabuf->ops))
 		return ERR_PTR(-EINVAL);
 
-	mutex_lock(&attach->dmabuf->lock);
 	if (attach->dmabuf->ops->map_dma_buf)
 		sg_table = attach->dmabuf->ops->map_dma_buf(attach, direction);
-	mutex_unlock(&attach->dmabuf->lock);
 
 	return sg_table;
 }
@@ -285,11 +283,9 @@ void dma_buf_unmap_attachment(struct dma_buf_attachment *attach,
 			    || !attach->dmabuf->ops))
 		return;
 
-	mutex_lock(&attach->dmabuf->lock);
 	if (attach->dmabuf->ops->unmap_dma_buf)
 		attach->dmabuf->ops->unmap_dma_buf(attach, sg_table,
 							direction);
-	mutex_unlock(&attach->dmabuf->lock);
 
 }
 EXPORT_SYMBOL_GPL(dma_buf_unmap_attachment);
