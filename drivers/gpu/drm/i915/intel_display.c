@@ -6760,10 +6760,10 @@ static void intel_setup_outputs(struct drm_device *dev)
 		dpd_is_edp = intel_dpd_is_edp(dev);
 
 		if (has_edp_a(dev))
-			intel_dp_init(dev, DP_A);
+			intel_dp_init(dev, DP_A, PORT_A);
 
 		if (dpd_is_edp && (I915_READ(PCH_DP_D) & DP_DETECTED))
-			intel_dp_init(dev, PCH_DP_D);
+			intel_dp_init(dev, PCH_DP_D, PORT_D);
 	}
 
 	intel_crt_init(dev);
@@ -6796,7 +6796,7 @@ static void intel_setup_outputs(struct drm_device *dev)
 			if (!found)
 				intel_hdmi_init(dev, HDMIB, PORT_B);
 			if (!found && (I915_READ(PCH_DP_B) & DP_DETECTED))
-				intel_dp_init(dev, PCH_DP_B);
+				intel_dp_init(dev, PCH_DP_B, PORT_B);
 		}
 
 		if (I915_READ(HDMIC) & PORT_DETECTED)
@@ -6806,10 +6806,10 @@ static void intel_setup_outputs(struct drm_device *dev)
 			intel_hdmi_init(dev, HDMID, PORT_D);
 
 		if (I915_READ(PCH_DP_C) & DP_DETECTED)
-			intel_dp_init(dev, PCH_DP_C);
+			intel_dp_init(dev, PCH_DP_C, PORT_C);
 
 		if (!dpd_is_edp && (I915_READ(PCH_DP_D) & DP_DETECTED))
-			intel_dp_init(dev, PCH_DP_D);
+			intel_dp_init(dev, PCH_DP_D, PORT_D);
 	} else if (IS_VALLEYVIEW(dev)) {
 		int found;
 
@@ -6819,7 +6819,7 @@ static void intel_setup_outputs(struct drm_device *dev)
 			if (!found)
 				intel_hdmi_init(dev, SDVOB, PORT_B);
 			if (!found && (I915_READ(DP_B) & DP_DETECTED))
-				intel_dp_init(dev, DP_B);
+				intel_dp_init(dev, DP_B, PORT_B);
 		}
 
 		if (I915_READ(SDVOC) & PORT_DETECTED)
@@ -6827,7 +6827,7 @@ static void intel_setup_outputs(struct drm_device *dev)
 
 		/* Shares lanes with HDMI on SDVOC */
 		if (I915_READ(DP_C) & DP_DETECTED)
-			intel_dp_init(dev, DP_C);
+			intel_dp_init(dev, DP_C, PORT_C);
 	} else if (SUPPORTS_DIGITAL_OUTPUTS(dev)) {
 		bool found = false;
 
@@ -6841,7 +6841,7 @@ static void intel_setup_outputs(struct drm_device *dev)
 
 			if (!found && SUPPORTS_INTEGRATED_DP(dev)) {
 				DRM_DEBUG_KMS("probing DP_B\n");
-				intel_dp_init(dev, DP_B);
+				intel_dp_init(dev, DP_B, PORT_B);
 			}
 		}
 
@@ -6860,14 +6860,14 @@ static void intel_setup_outputs(struct drm_device *dev)
 			}
 			if (SUPPORTS_INTEGRATED_DP(dev)) {
 				DRM_DEBUG_KMS("probing DP_C\n");
-				intel_dp_init(dev, DP_C);
+				intel_dp_init(dev, DP_C, PORT_C);
 			}
 		}
 
 		if (SUPPORTS_INTEGRATED_DP(dev) &&
 		    (I915_READ(DP_D) & DP_DETECTED)) {
 			DRM_DEBUG_KMS("probing DP_D\n");
-			intel_dp_init(dev, DP_D);
+			intel_dp_init(dev, DP_D, PORT_D);
 		}
 	} else if (IS_GEN2(dev))
 		intel_dvo_init(dev);
