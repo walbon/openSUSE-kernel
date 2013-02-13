@@ -35,6 +35,7 @@
 #include "nouveau_fbcon.h"
 #include <core/ramht.h>
 #include "nouveau_pm.h"
+#include "nv04_display.h"
 #include "nv50_display.h"
 #include <engine/fifo.h>
 #include "nouveau_fence.h"
