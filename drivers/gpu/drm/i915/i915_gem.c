@@ -1717,6 +1717,9 @@ i915_gem_object_put_pages(struct drm_i915_gem_object *obj)
 
 	BUG_ON(obj->gtt_space);
 
+	if (obj->pages_pin_count)
+		return -EBUSY;
+
 	ops->put_pages(obj);
 
 	list_del(&obj->gtt_list);
@@ -1854,6 +1857,8 @@ i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
 
 	if (obj->sg_table || obj->pages)
 		return 0;
+
+	BUG_ON(obj->pages_pin_count);
 
 	ret = ops->get_pages(obj);
 	if (ret)
@@ -3762,6 +3767,7 @@ void i915_gem_free_object(struct drm_gem_object *gem_obj)
 		dev_priv->mm.interruptible = was_interruptible;
 	}
 
+	obj->pages_pin_count = 0;
 	i915_gem_object_put_pages(obj);
 	i915_gem_object_free_mmap_offset(obj);
 
@@ -4421,9 +4427,10 @@ i915_gem_inactive_shrink(struct shrinker *shrinker, struct shrink_control *sc)
 
 	cnt = 0;
 	list_for_each_entry(obj, &dev_priv->mm.unbound_list, gtt_list)
-		cnt += obj->base.size >> PAGE_SHIFT;
+		if (obj->pages_pin_count == 0)
+			cnt += obj->base.size >> PAGE_SHIFT;
 	list_for_each_entry(obj, &dev_priv->mm.bound_list, gtt_list)
-		if (obj->pin_count == 0)
+		if (obj->pin_count == 0 && obj->pages_pin_count == 0)
 			cnt += obj->base.size >> PAGE_SHIFT;
 
 	mutex_unlock(&dev->struct_mutex);
