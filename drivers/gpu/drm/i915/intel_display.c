@@ -6811,6 +6811,8 @@ void intel_modeset_init(struct drm_device *dev)
 
 	intel_init_pm(dev);
 
+	intel_prepare_ddi(dev);
+
 	intel_init_display(dev);
 
 	if (IS_GEN2(dev)) {
