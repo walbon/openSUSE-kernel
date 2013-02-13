@@ -177,9 +177,6 @@ i915_gem_get_aperture_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_object *obj;
 	size_t pinned;
 
-	if (!(dev->driver->driver_features & DRIVER_GEM))
-		return -ENODEV;
-
 	pinned = 0;
 	mutex_lock(&dev->struct_mutex);
 	list_for_each_entry(obj, &dev_priv->mm.gtt_list, gtt_list)
@@ -255,6 +252,7 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 		      struct drm_file *file)
 {
 	struct drm_i915_gem_create *args = data;
+
 	return i915_gem_create(file, dev,
 			       args->size, &args->handle);
 }
@@ -940,9 +938,6 @@ i915_gem_set_domain_ioctl(struct drm_device *dev, void *data,
 	uint32_t write_domain = args->write_domain;
 	int ret;
 
-	if (!(dev->driver->driver_features & DRIVER_GEM))
-		return -ENODEV;
-
 	/* Only handle setting domains to types used by the CPU. */
 	if (write_domain & I915_GEM_GPU_DOMAINS)
 		return -EINVAL;
@@ -996,9 +991,6 @@ i915_gem_sw_finish_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_object *obj;
 	int ret = 0;
 
-	if (!(dev->driver->driver_features & DRIVER_GEM))
-		return -ENODEV;
-
 	ret = i915_mutex_lock_interruptible(dev);
 	if (ret)
 		return ret;
@@ -1033,9 +1025,6 @@ i915_gem_mmap_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_mmap *args = data;
 	struct drm_gem_object *obj;
 	unsigned long addr;
-
-	if (!(dev->driver->driver_features & DRIVER_GEM))
-		return -ENODEV;
 
 	obj = drm_gem_object_lookup(dev, file, args->handle);
 	if (obj == NULL)
@@ -1280,9 +1269,6 @@ i915_gem_mmap_gtt(struct drm_file *file,
 	struct drm_i915_gem_object *obj;
 	int ret;
 
-	if (!(dev->driver->driver_features & DRIVER_GEM))
-		return -ENODEV;
-
 	ret = i915_mutex_lock_interruptible(dev);
 	if (ret)
 		return ret;
@@ -1339,9 +1325,6 @@ i915_gem_mmap_gtt_ioctl(struct drm_device *dev, void *data,
 			struct drm_file *file)
 {
 	struct drm_i915_gem_mmap_gtt *args = data;
-
-	if (!(dev->driver->driver_features & DRIVER_GEM))
-		return -ENODEV;
 
 	return i915_gem_mmap_gtt(file, dev, args->handle, &args->offset);
 }
