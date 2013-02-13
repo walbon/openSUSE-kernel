@@ -1483,7 +1483,6 @@ i915_gem_object_move_to_inactive(struct drm_i915_gem_object *obj)
 
 	list_move_tail(&obj->mm_list, &dev_priv->mm.inactive_list);
 
-	BUG_ON(!list_empty(&obj->gpu_write_list));
 	BUG_ON(obj->base.write_domain & ~I915_GEM_GPU_DOMAINS);
 	BUG_ON(!obj->active);
 
@@ -1527,30 +1526,6 @@ static inline int
 i915_gem_object_is_purgeable(struct drm_i915_gem_object *obj)
 {
 	return obj->madv == I915_MADV_DONTNEED;
-}
-
-static void
-i915_gem_process_flushing_list(struct intel_ring_buffer *ring,
-			       uint32_t flush_domains)
-{
-	struct drm_i915_gem_object *obj, *next;
-
-	list_for_each_entry_safe(obj, next,
-				 &ring->gpu_write_list,
-				 gpu_write_list) {
-		if (obj->base.write_domain & flush_domains) {
-			uint32_t old_write_domain = obj->base.write_domain;
-
-			obj->base.write_domain = 0;
-			list_del_init(&obj->gpu_write_list);
-			i915_gem_object_move_to_active(obj, ring,
-						       i915_gem_next_request_seqno(ring));
-
-			trace_i915_gem_object_change_domain(obj,
-							    obj->base.read_domains,
-							    old_write_domain);
-		}
-	}
 }
 
 static u32
@@ -1655,8 +1630,6 @@ i915_add_request(struct intel_ring_buffer *ring,
 					   &dev_priv->mm.retire_work, HZ);
 	}
 
-	WARN_ON(!list_empty(&ring->gpu_write_list));
-
 	return 0;
 }
 
@@ -1698,7 +1671,6 @@ static void i915_gem_reset_ring_lists(struct drm_i915_private *dev_priv,
 				       struct drm_i915_gem_object,
 				       ring_list);
 
-		list_del_init(&obj->gpu_write_list);
 		i915_gem_object_move_to_inactive(obj);
 	}
 }
@@ -2029,11 +2001,6 @@ i915_gem_object_wait_rendering(struct drm_i915_gem_object *obj,
 	u32 seqno;
 	int ret;
 
-	/* This function only exists to support waiting for existing rendering,
-	 * not for emitting required flushes.
-	 */
-	BUG_ON((obj->base.write_domain & I915_GEM_GPU_DOMAINS) != 0);
-
 	/* If there is rendering queued on the buffer being evicted, wait for
 	 * it.
 	 */
@@ -2326,25 +2293,13 @@ i915_gem_flush_ring(struct intel_ring_buffer *ring,
 	if (ret)
 		return ret;
 
-	if (flush_domains & I915_GEM_GPU_DOMAINS)
-		i915_gem_process_flushing_list(ring, flush_domains);
-
 	return 0;
 }
 
 static int i915_ring_idle(struct intel_ring_buffer *ring)
 {
-	int ret;
-
-	if (list_empty(&ring->gpu_write_list) && list_empty(&ring->active_list))
+	if (list_empty(&ring->active_list))
 		return 0;
-
-	if (!list_empty(&ring->gpu_write_list)) {
-		ret = i915_gem_flush_ring(ring,
-				    I915_GEM_GPU_DOMAINS, I915_GEM_GPU_DOMAINS);
-		if (ret)
-			return ret;
-	}
 
 	return i915_wait_seqno(ring, i915_gem_next_request_seqno(ring));
 }
@@ -2364,10 +2319,6 @@ int i915_gpu_idle(struct drm_device *dev)
 		ret = i915_ring_idle(ring);
 		if (ret)
 			return ret;
-
-		/* Is the device fubar? */
-		if (WARN_ON(!list_empty(&ring->gpu_write_list)))
-			return -EBUSY;
 	}
 
 	return 0;
@@ -3510,7 +3461,6 @@ struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
 	INIT_LIST_HEAD(&obj->gtt_list);
 	INIT_LIST_HEAD(&obj->ring_list);
 	INIT_LIST_HEAD(&obj->exec_list);
-	INIT_LIST_HEAD(&obj->gpu_write_list);
 	obj->madv = I915_MADV_WILLNEED;
 	/* Avoid an unnecessary call to unbind on the first bind. */
 	obj->map_and_fenceable = true;
@@ -3931,7 +3881,6 @@ init_ring_lists(struct intel_ring_buffer *ring)
 {
 	INIT_LIST_HEAD(&ring->active_list);
 	INIT_LIST_HEAD(&ring->request_list);
-	INIT_LIST_HEAD(&ring->gpu_write_list);
 }
 
 void
