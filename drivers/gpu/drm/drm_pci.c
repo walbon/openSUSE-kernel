@@ -39,7 +39,7 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
-#include "drmP.h"
+#include <drm/drmP.h>
 
 /**********************************************************************/
 /** \name PCI memory */

@@ -48,8 +48,8 @@
 
 #include <linux/debugfs.h>
 #include <linux/slab.h>
-#include "drmP.h"
-#include "drm_core.h"
+#include <drm/drmP.h>
+#include <drm/drm_core.h>
 
 
 static int drm_version(struct drm_device *dev, void *data,

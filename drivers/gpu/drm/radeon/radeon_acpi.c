@@ -29,8 +29,8 @@
 #include <acpi/acpi_bus.h>
 #include <acpi/video.h>
 
-#include "drmP.h"
-#include "drm_crtc_helper.h"
+#include <drm/drmP.h>
+#include <drm/drm_crtc_helper.h>
 #include "radeon.h"
 #include "radeon_acpi.h"
 #include "atom.h"

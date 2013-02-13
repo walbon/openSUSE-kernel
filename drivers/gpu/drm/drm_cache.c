@@ -28,7 +28,7 @@
  * Authors: Thomas Hellström <thomas-at-tungstengraphics-dot-com>
  */
 
-#include "drmP.h"
+#include <drm/drmP.h>
 
 #if defined(CONFIG_X86)
 static void

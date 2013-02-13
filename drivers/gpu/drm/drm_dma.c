@@ -33,7 +33,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "drmP.h"
+#include <drm/drmP.h>
 
 /**
  * Initialize the DMA data.

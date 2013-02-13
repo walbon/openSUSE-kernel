@@ -17,9 +17,9 @@
 #include <linux/gfp.h>
 #include <linux/err.h>
 
-#include "drm_sysfs.h"
-#include "drm_core.h"
-#include "drmP.h"
+#include <drm/drm_sysfs.h>
+#include <drm/drm_core.h>
+#include <drm/drmP.h>
 
 #define to_drm_minor(d) container_of(d, struct drm_minor, kdev)
 #define to_drm_connector(d) container_of(d, struct drm_connector, kdev)

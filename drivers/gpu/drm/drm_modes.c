@@ -32,8 +32,8 @@
 
 #include <linux/list.h>
 #include <linux/list_sort.h>
-#include "drmP.h"
-#include "drm_crtc.h"
+#include <drm/drmP.h>
+#include <drm/drm_crtc.h>
 
 /**
  * drm_mode_debug_printmodeline - debug print a mode
