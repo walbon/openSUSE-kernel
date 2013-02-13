@@ -32,7 +32,7 @@
 
 #include <drm/drmP.h>
 #include "nouveau_drv.h"
-#include <drm/nouveau_drm.h>
+#include <nouveau_drm.h>
 #include <engine/fifo.h>
 #include <core/ramht.h>
 #include "nouveau_software.h"

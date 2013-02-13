@@ -664,6 +664,8 @@ struct drm_nouveau_private {
 	struct drm_device *dev;
 	bool noaccel;
 
+	void *newpriv;
+
 	/* the card type, takes NV_* as values */
 	enum nouveau_card_type card_type;
 	/* exact chipset, derived from NV_PMC_BOOT_0 */

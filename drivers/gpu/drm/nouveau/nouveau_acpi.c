@@ -10,7 +10,7 @@
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
 #include "nouveau_drv.h"
-#include <drm/nouveau_drm.h>
+#include <nouveau_drm.h>
 #include "nv50_display.h"
 #include "nouveau_connector.h"
 
