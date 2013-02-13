@@ -1099,7 +1099,7 @@ int i915_gem_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	if (!obj->has_global_gtt_mapping)
 		i915_gem_gtt_bind_object(obj, obj->cache_level);
 
-	ret = i915_gem_object_get_fence(obj, NULL);
+	ret = i915_gem_object_get_fence(obj);
 	if (ret)
 		goto unlock;
 
@@ -2478,7 +2478,6 @@ i915_find_fence_reg(struct drm_device *dev,
 /**
  * i915_gem_object_get_fence - set up fencing for an object
  * @obj: object to map through a fence reg
- * @pipelined: ring on which to queue the change, or NULL for CPU access
  *
  * When mapping objects through the GTT, userspace wants to be able to write
  * to them without having to worry about swizzling if the object is tiled.
@@ -2491,11 +2490,11 @@ i915_find_fence_reg(struct drm_device *dev,
  * For an untiled surface, this removes any existing fence.
  */
 int
-i915_gem_object_get_fence(struct drm_i915_gem_object *obj,
-			  struct intel_ring_buffer *pipelined)
+i915_gem_object_get_fence(struct drm_i915_gem_object *obj)
 {
 	struct drm_device *dev = obj->base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct intel_ring_buffer *pipelined;
 	struct drm_i915_fence_reg *reg;
 	int ret;
 
