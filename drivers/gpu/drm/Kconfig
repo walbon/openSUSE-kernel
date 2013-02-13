@@ -184,3 +184,6 @@ source "drivers/gpu/drm/exynos/Kconfig"
 source "drivers/gpu/drm/vmwgfx/Kconfig"
 
 source "drivers/gpu/drm/udl/Kconfig"
+
+source "drivers/gpu/drm/ast/Kconfig"
+

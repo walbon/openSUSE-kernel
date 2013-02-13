@@ -41,4 +41,5 @@ obj-$(CONFIG_DRM_VIA)	+=via/
 obj-$(CONFIG_DRM_NOUVEAU) +=nouveau/
 obj-$(CONFIG_DRM_EXYNOS) +=exynos/
 obj-$(CONFIG_DRM_UDL) += udl/
+obj-$(CONFIG_DRM_AST) += ast/
 obj-y			+= i2c/
