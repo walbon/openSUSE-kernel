@@ -4375,7 +4375,7 @@ static int i9xx_crtc_mode_set(struct drm_crtc *crtc,
 	/* default to 8bpc */
 	pipeconf &= ~(PIPECONF_BPP_MASK | PIPECONF_DITHER_EN);
 	if (is_dp) {
-		if (mode->private_flags & INTEL_MODE_DP_FORCE_6BPC) {
+		if (adjusted_mode->private_flags & INTEL_MODE_DP_FORCE_6BPC) {
 			pipeconf |= PIPECONF_BPP_6 |
 				    PIPECONF_DITHER_EN |
 				    PIPECONF_DITHER_TYPE_SP;
@@ -4807,7 +4807,8 @@ static int ironlake_crtc_mode_set(struct drm_crtc *crtc,
 		target_clock = adjusted_mode->clock;
 
 	/* determine panel color depth */
-	dither = intel_choose_pipe_bpp_dither(crtc, fb, &pipe_bpp, mode);
+	dither = intel_choose_pipe_bpp_dither(crtc, fb, &pipe_bpp,
+					      adjusted_mode);
 	if (is_lvds && dev_priv->lvds_dither)
 		dither = true;
 
