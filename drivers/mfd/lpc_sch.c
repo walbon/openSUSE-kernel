@@ -36,6 +36,7 @@
 
 #define GPIOBASE	0x44
 #define GPIO_IO_SIZE	64
+#define GPIO_IO_SIZE_CENTERTON	128
 
 static struct resource smbus_sch_resource = {
 		.flags = IORESOURCE_IO,
@@ -62,6 +63,7 @@ static struct mfd_cell lpc_sch_cells[] = {
 static struct pci_device_id lpc_sch_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_SCH_LPC) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ITC_LPC) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_CENTERTON_ILB) },
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, lpc_sch_ids);
@@ -99,7 +101,11 @@ static int __devinit lpc_sch_probe(struct pci_dev *dev,
 	}
 
 	gpio_sch_resource.start = base_addr;
-	gpio_sch_resource.end = base_addr + GPIO_IO_SIZE - 1;
+
+	if(id->device == PCI_DEVICE_ID_INTEL_CENTERTON_ILB)
+		gpio_sch_resource.end = base_addr + GPIO_IO_SIZE_CENTERTON - 1;
+	else
+		gpio_sch_resource.end = base_addr + GPIO_IO_SIZE - 1;
 
 	for (i=0; i < ARRAY_SIZE(lpc_sch_cells); i++)
 		lpc_sch_cells[i].id = id->device;
