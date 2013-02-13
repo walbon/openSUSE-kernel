@@ -1249,6 +1249,10 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
 		}
 	}
 
+	ret = i915_switch_context(ring, file, ctx_id);
+	if (ret)
+		goto err;
+
 	if (ring == &dev_priv->ring[RCS] &&
 	    mode != dev_priv->relative_constants_mode) {
 		ret = intel_ring_begin(ring, 4);
@@ -1269,10 +1273,6 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
 		if (ret)
 			goto err;
 	}
-
-	ret = i915_switch_context(ring, file, ctx_id);
-	if (ret)
-		goto err;
 
 	trace_i915_gem_ring_dispatch(ring, seqno);
 
