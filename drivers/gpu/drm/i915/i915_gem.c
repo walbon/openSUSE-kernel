@@ -1968,11 +1968,12 @@ i915_gem_next_request_seqno(struct intel_ring_buffer *ring)
 int
 i915_add_request(struct intel_ring_buffer *ring,
 		 struct drm_file *file,
-		 struct drm_i915_gem_request *request)
+		 u32 *out_seqno)
 {
 	drm_i915_private_t *dev_priv = ring->dev->dev_private;
-	uint32_t seqno;
+	struct drm_i915_gem_request *request;
 	u32 request_ring_position;
+	u32 seqno;
 	int was_empty;
 	int ret;
 
@@ -1987,11 +1988,9 @@ i915_add_request(struct intel_ring_buffer *ring,
 	if (ret)
 		return ret;
 
-	if (request == NULL) {
-		request = kmalloc(sizeof(*request), GFP_KERNEL);
-		if (request == NULL)
-			return -ENOMEM;
-	}
+	request = kmalloc(sizeof(*request), GFP_KERNEL);
+	if (request == NULL)
+		return -ENOMEM;
 
 	seqno = i915_gem_next_request_seqno(ring);
 
@@ -2043,6 +2042,8 @@ i915_add_request(struct intel_ring_buffer *ring,
 		}
 	}
 
+	if (out_seqno)
+		*out_seqno = seqno;
 	return 0;
 }
 
