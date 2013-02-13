@@ -1958,6 +1958,23 @@ intel_dp_get_dpcd(struct intel_dp *intel_dp)
 	return false;
 }
 
+static void
+intel_dp_probe_oui(struct intel_dp *intel_dp)
+{
+	u8 buf[3];
+
+	if (!(intel_dp->dpcd[DP_DOWN_STREAM_PORT_COUNT] & DP_OUI_SUPPORT))
+		return;
+
+	if (intel_dp_aux_native_read_retry(intel_dp, DP_SINK_OUI, buf, 3))
+		DRM_DEBUG_KMS("Sink OUI: %02hx%02hx%02hx\n",
+			      buf[0], buf[1], buf[2]);
+
+	if (intel_dp_aux_native_read_retry(intel_dp, DP_BRANCH_OUI, buf, 3))
+		DRM_DEBUG_KMS("Branch OUI: %02hx%02hx%02hx\n",
+			      buf[0], buf[1], buf[2]);
+}
+
 static bool
 intel_dp_get_sink_irq(struct intel_dp *intel_dp, u8 *sink_irq_vector)
 {
@@ -2134,6 +2151,8 @@ intel_dp_detect(struct drm_connector *connector, bool force)
 		status = g4x_dp_detect(intel_dp);
 	if (status != connector_status_connected)
 		return status;
+
+	intel_dp_probe_oui(intel_dp);
 
 	if (intel_dp->force_audio != HDMI_AUDIO_AUTO) {
 		intel_dp->has_audio = (intel_dp->force_audio == HDMI_AUDIO_ON);
