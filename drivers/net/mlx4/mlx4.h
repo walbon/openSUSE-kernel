@@ -324,6 +324,10 @@ enum {
 	MLX4_PCI_DEV_IS_VF		= 1 << 0,
 };
 
+enum {
+	MLX4_PCI_DEV_FORCE_SENSE_PORT   = 1 << 1,
+};
+
 struct mlx4_priv {
 	struct mlx4_dev		dev;
 

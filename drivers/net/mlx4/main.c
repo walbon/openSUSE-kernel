@@ -287,8 +287,8 @@ static int mlx4_dev_cap(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 	dev->caps.max_xrcds	     = (dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC) ?
 		dev_cap->max_xrcds : 0;
 
-	/* Sense port always allowed on supported devices for ConnectX1 and 2 */
-	if (dev->pdev->device != 0x1003)
+	/* Sense port always allowed on supported devices for ConnectX-1 and -2 */
+	if (mlx4_priv(dev)->pci_dev_data & MLX4_PCI_DEV_FORCE_SENSE_PORT)
 		dev->caps.flags |= MLX4_DEV_CAP_FLAG_SENSE_SUPPORT;
 
 	dev->caps.log_num_macs  = log_num_mac;
@@ -1479,34 +1479,50 @@ int mlx4_restart_one(struct pci_dev *pdev)
 }
 
 static DEFINE_PCI_DEVICE_TABLE(mlx4_pci_table) = {
-	{ PCI_VDEVICE(MELLANOX, 0x6340) }, /* MT25408 "Hermon" SDR */
-	{ PCI_VDEVICE(MELLANOX, 0x634a) }, /* MT25408 "Hermon" DDR */
-	{ PCI_VDEVICE(MELLANOX, 0x6354) }, /* MT25408 "Hermon" QDR */
-	{ PCI_VDEVICE(MELLANOX, 0x6732) }, /* MT25408 "Hermon" DDR PCIe gen2 */
-	{ PCI_VDEVICE(MELLANOX, 0x673c) }, /* MT25408 "Hermon" QDR PCIe gen2 */
-	{ PCI_VDEVICE(MELLANOX, 0x6368) }, /* MT25408 "Hermon" EN 10GigE */
-	{ PCI_VDEVICE(MELLANOX, 0x6750) }, /* MT25408 "Hermon" EN 10GigE PCIe gen2 */
-	{ PCI_VDEVICE(MELLANOX, 0x6372) }, /* MT25458 ConnectX EN 10GBASE-T 10GigE */
-	{ PCI_VDEVICE(MELLANOX, 0x675a) }, /* MT25458 ConnectX EN 10GBASE-T+Gen2 10GigE */
-	{ PCI_VDEVICE(MELLANOX, 0x6764) }, /* MT26468 ConnectX EN 10GigE PCIe gen2*/
-	{ PCI_VDEVICE(MELLANOX, 0x6746) }, /* MT26438 ConnectX EN 40GigE PCIe gen2 5GT/s */
-	{ PCI_VDEVICE(MELLANOX, 0x676e) }, /* MT26478 ConnectX2 40GigE PCIe gen2 */
-	{ PCI_VDEVICE(MELLANOX, 0x6778) }, /* MT26488 ConnectX VPI PCIe 2.0 5GT/s - IB DDR / 10GigE Virt+ */
-	{ PCI_VDEVICE(MELLANOX, 0x1002) }, /* MT25400 Family [ConnectX-2 Virtual Function] */
-	{ PCI_VDEVICE(MELLANOX, 0x1003) }, /* MT27500 Family [ConnectX-3] */
-	{ PCI_VDEVICE(MELLANOX, 0x1004) }, /* MT27500 Family [ConnectX-3 Virtual Function] */
-	{ PCI_VDEVICE(MELLANOX, 0x1005) }, /* MT27510 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x1006) }, /* MT27511 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x1007) }, /* MT27520 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x1008) }, /* MT27521 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x1009) }, /* MT27530 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100a) }, /* MT27531 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100b) }, /* MT27540 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100c) }, /* MT27541 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100d) }, /* MT27550 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100e) }, /* MT27551 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100f) }, /* MT27560 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x1010) }, /* MT27561 Family */
+	/* MT25408 "Hermon" SDR */
+	{ PCI_VDEVICE(MELLANOX, 0x6340), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT25408 "Hermon" DDR */
+	{ PCI_VDEVICE(MELLANOX, 0x634a), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT25408 "Hermon" QDR */
+	{ PCI_VDEVICE(MELLANOX, 0x6354), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT25408 "Hermon" DDR PCIe gen2 */
+	{ PCI_VDEVICE(MELLANOX, 0x6732), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT25408 "Hermon" QDR PCIe gen2 */
+	{ PCI_VDEVICE(MELLANOX, 0x673c), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT25408 "Hermon" EN 10GigE */
+	{ PCI_VDEVICE(MELLANOX, 0x6368), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT25408 "Hermon" EN 10GigE PCIe gen2 */
+	{ PCI_VDEVICE(MELLANOX, 0x6750), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT25458 ConnectX EN 10GBASE-T 10GigE */
+	{ PCI_VDEVICE(MELLANOX, 0x6372), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT25458 ConnectX EN 10GBASE-T+Gen2 10GigE */
+	{ PCI_VDEVICE(MELLANOX, 0x675a), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT26468 ConnectX EN 10GigE PCIe gen2*/
+	{ PCI_VDEVICE(MELLANOX, 0x6764), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT26438 ConnectX EN 40GigE PCIe gen2 5GT/s */
+	{ PCI_VDEVICE(MELLANOX, 0x6746), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT26478 ConnectX2 40GigE PCIe gen2 */
+	{ PCI_VDEVICE(MELLANOX, 0x676e), MLX4_PCI_DEV_FORCE_SENSE_PORT },
+	/* MT26488 ConnectX VPI PCIe 2.0 5GT/s - IB DDR / 10GigE Virt+ */
+	{ PCI_VDEVICE(MELLANOX, 0x6778), 0 },
+	/* MT25400 Family [ConnectX-2 Virtual Function] */
+	{ PCI_VDEVICE(MELLANOX, 0x1002), 0 },
+	/* MT27500 Family [ConnectX-3] */
+	{ PCI_VDEVICE(MELLANOX, 0x1003), 0 },
+	/* MT27500 Family [ConnectX-3 Virtual Function] */
+	{ PCI_VDEVICE(MELLANOX, 0x1004), 0 },
+	{ PCI_VDEVICE(MELLANOX, 0x1005), 0 }, /* MT27510 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x1006), 0 }, /* MT27511 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x1007), 0 }, /* MT27520 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x1008), 0 }, /* MT27521 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x1009), 0 }, /* MT27530 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x100a), 0 }, /* MT27531 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x100b), 0 }, /* MT27540 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x100c), 0 }, /* MT27541 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x100d), 0 }, /* MT27550 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x100e), 0 }, /* MT27551 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x100f), 0 }, /* MT27560 Family */
+	{ PCI_VDEVICE(MELLANOX, 0x1010), 0 }, /* MT27561 Family */
 	{ 0, }
 };
 
