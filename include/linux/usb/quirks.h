@@ -30,4 +30,7 @@
    descriptor */
 #define USB_QUIRK_DELAY_INIT		0x00000040
 
+/* truely broken firmware needs to be talked to really slowly */
+#define USB_QUIRK_LONG_DELAYS		0x0000800
+
 #endif /* __LINUX_USB_QUIRKS_H */

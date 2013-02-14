@@ -805,6 +805,24 @@ xfs_setup_devices(
 	return 0;
 }
 
+/*
+ * Flush all dirty data to disk. Must not be called while holding an XFS_ILOCK
+ * or a page lock. We use writeback_inodes_sb() so that we don't have to scan
+ * through all inodes waiting for IO. The function returns after all IO is
+ * submitted so delalloc conversion should be performed at that moment.
+ */
+void
+xfs_flush_inodes(
+	struct xfs_mount	*mp)
+{
+	struct super_block	*sb = mp->m_super;
+
+	if (down_read_trylock(&sb->s_umount)) {
+		writeback_inodes_sb(sb);
+		up_read(&sb->s_umount);
+	}
+}
+
 /* Catch misguided souls that try to use this interface on XFS */
 STATIC struct inode *
 xfs_fs_alloc_inode(
