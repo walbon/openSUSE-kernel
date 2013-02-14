@@ -287,6 +287,10 @@ static int mlx4_dev_cap(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 	dev->caps.max_xrcds	     = (dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC) ?
 		dev_cap->max_xrcds : 0;
 
+	/* Sense port always allowed on supported devices for ConnectX1 and 2 */
+	if (dev->pdev->device != 0x1003)
+		dev->caps.flags |= MLX4_DEV_CAP_FLAG_SENSE_SUPPORT;
+
 	dev->caps.log_num_macs  = log_num_mac;
 	dev->caps.log_num_vlans = log_num_vlan;
 	dev->caps.log_num_prios = use_prio ? 3 : 0;
@@ -298,7 +302,8 @@ static int mlx4_dev_cap(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 			dev->caps.port_type[i] = MLX4_PORT_TYPE_ETH;
 		dev->caps.possible_type[i] = dev->caps.port_type[i];
 		mlx4_priv(dev)->sense.sense_allowed[i] =
-			dev->caps.supported_type[i] == MLX4_PORT_TYPE_AUTO;
+			((dev->caps.supported_type[i] == MLX4_PORT_TYPE_AUTO) &&
+			 (dev->caps.flags & MLX4_DEV_CAP_FLAG_SENSE_SUPPORT));
 
 		if (dev->caps.log_num_macs > dev_cap->log_max_macs[i]) {
 			dev->caps.log_num_macs = dev_cap->log_max_macs[i];
@@ -427,7 +432,8 @@ static ssize_t set_port_type(struct device *dev,
 			types[i] = mdev->caps.port_type[i+1];
 	}
 
-	if (!(mdev->caps.flags & MLX4_DEV_CAP_FLAG_DPDP)) {
+	if (!(mdev->caps.flags & MLX4_DEV_CAP_FLAG_DPDP) &&
+	    !(mdev->caps.flags & MLX4_DEV_CAP_FLAG_SENSE_SUPPORT)) {
 		for (i = 1; i <= mdev->caps.num_ports; i++) {
 			if (mdev->caps.possible_type[i] == MLX4_PORT_TYPE_AUTO) {
 				mdev->caps.possible_type[i] = mdev->caps.port_type[i];
