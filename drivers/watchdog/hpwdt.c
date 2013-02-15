@@ -487,7 +487,9 @@ static int hpwdt_pretimeout(struct notifier_block *nb, unsigned long ulReason,
 	unsigned long rom_pl;
 	static int die_nmi_called;
 
-	if (ulReason != DIE_NMIUNKNOWN)
+	if (ulReason != DIE_NMIUNKNOWN &&
+	    ulReason != DIE_NMISERR &&
+	    ulReason != DIE_NMIIOCK)
 		goto out;
 
 	if (!hpwdt_nmi_decoding)

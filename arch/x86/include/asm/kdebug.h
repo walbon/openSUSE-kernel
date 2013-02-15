@@ -21,6 +21,8 @@ enum die_val {
 	DIE_CALL,
 	DIE_PAGE_FAULT,
 	DIE_NMIUNKNOWN,
+	DIE_NMISERR,
+	DIE_NMIIOCK,
 };
 
 extern void printk_address(unsigned long address, int reliable);
