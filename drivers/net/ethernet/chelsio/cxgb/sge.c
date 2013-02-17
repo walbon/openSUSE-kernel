@@ -369,17 +369,6 @@ void t1_sched_set_drain_bits_per_us(struct sge *sge, unsigned int port,
 
 
 /*
- * get_clock() implements a ns clock (see ktime_get)
- */
-static inline ktime_t get_clock(void)
-{
-	struct timespec ts;
-
-	ktime_get_ts(&ts);
-	return timespec_to_ktime(ts);
-}
-
-/*
  * tx_sched_init() allocates resources and does basic initialization.
  */
 static int tx_sched_init(struct sge *sge)
@@ -411,7 +400,7 @@ static int tx_sched_init(struct sge *sge)
 static inline int sched_update_avail(struct sge *sge)
 {
 	struct sched *s = sge->tx_sched;
-	ktime_t now = get_clock();
+	ktime_t now = ktime_get();
 	unsigned int i;
 	long long delta_time_ns;
 
