@@ -1491,6 +1491,18 @@ static inline void __generic_make_request(struct bio *bio)
 		if (unlikely(test_bit(QUEUE_FLAG_DEAD, &q->queue_flags)))
 			goto end_io;
 
+#ifndef CONFIG_FAIL_MAKE_REQUEST
+                /*
+		 * this is lustre's dev_rdonly check
+		 * without CONFIG_FAIL_MAKE_REQUEST set, this will only
+		 * be set by dev_set_rdonly
+		 */
+                if (bio_rw(bio) == WRITE &&
+		    test_bit(QUEUE_FLAG_FAIL_IO, &q->queue_flags)) {
+			err = 0;
+			goto end_io;
+                }
+#endif
 		if (should_fail_request(bio))
 			goto end_io;
 
@@ -2795,6 +2807,76 @@ void blk_finish_plug(struct blk_plug *plug)
 		current->plug = NULL;
 }
 EXPORT_SYMBOL(blk_finish_plug);
+
+/*
+ * This feature depends on CONFIG_FAIL_MAKE_REQUEST being disabled.
+ * It is in all non-debug flavors of the SLES kernel.
+ *
+ * It could be extended to work with FAIL_MAKE_REQUEST but we don't
+ * need it to work. Future versions of Lustre don't use it.
+ */
+#ifndef CONFIG_FAIL_MAKE_REQUEST
+
+/*
+* Debug code for turning block devices "read-only" (will discard writes
+* silently).  This is for filesystem crash/recovery testing.
+*/
+
+int dev_check_rdonly(struct block_device *bdev)
+{
+	struct request_queue *q = bdev_get_queue(bdev);
+
+	/*
+	 * We can't key this off of LUSTRE_SUPER_MAGIC or
+	 * LUSTRE_CLIENT_SUPER_MAGIC because Lustre's ldiskfs uses
+	 * it and it shares the ext2/3/4 sb->s_super magic
+	 */
+
+	if (q)
+		return test_bit(QUEUE_FLAG_FAIL_IO, &q->queue_flags);
+	return 0;
+}
+
+void dev_set_rdonly(struct block_device *bdev)
+{
+	struct request_queue *q = bdev_get_queue(bdev);
+
+	if (q) {
+		spin_lock_irq(q->queue_lock);
+		queue_flag_set(QUEUE_FLAG_FAIL_IO, q);
+		spin_unlock_irq(q->queue_lock);
+
+		pr_warn("Turning device %s (%#x) read-only\n",
+		       bdev->bd_disk ? bdev->bd_disk->disk_name : "",
+		       bdev->bd_dev);
+	} else {
+		pr_warn("Couldn't turn device %s (%#x) read-only -- NULL q\n",
+		       bdev->bd_disk ? bdev->bd_disk->disk_name : "",
+		       bdev->bd_dev);
+	}
+}
+
+void dev_clear_rdonly(struct block_device *bdev)
+{
+	struct request_queue *q = bdev_get_queue(bdev);
+	if (q) {
+		unsigned long flags;
+		int was_set;
+		spin_lock_irqsave(q->queue_lock, flags);
+		was_set = queue_flag_test_and_clear(QUEUE_FLAG_FAIL_IO, q);
+		spin_unlock_irqrestore(q->queue_lock, flags);
+
+		if (was_set)
+			pr_warn("Clearing device %s (%#x) read-only\n",
+			       bdev->bd_disk ? bdev->bd_disk->disk_name : "",
+			       bdev->bd_dev);
+	}
+}
+
+EXPORT_SYMBOL(dev_set_rdonly);
+EXPORT_SYMBOL(dev_clear_rdonly);
+EXPORT_SYMBOL(dev_check_rdonly);
+#endif
 
 int __init blk_dev_init(void)
 {

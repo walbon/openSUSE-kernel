@@ -292,6 +292,7 @@ typedef struct drm_i915_irq_wait {
 #define I915_PARAM_HAS_EXEC_CONSTANTS	 14
 #define I915_PARAM_HAS_RELAXED_DELTA	 15
 #define I915_PARAM_HAS_GEN7_SOL_RESET	 16
+#define I915_PARAM_HAS_PINNED_BATCHES	 24
 
 typedef struct drm_i915_getparam {
 	int param;
@@ -656,6 +657,15 @@ struct drm_i915_gem_execbuffer2 {
 
 /** Resets the SO write offset registers for transform feedback on gen7. */
 #define I915_EXEC_GEN7_SOL_RESET	(1<<8)
+
+/** Inform the kernel that the batch is and will always be pinned. This
+ * negates the requirement for a workaround to be performed to avoid
+ * an incoherent CS (such as can be found on 830/845). If this flag is
+ * not passed, the kernel will endeavour to make sure the batch is
+ * coherent with the CS before execution. If this flag is passed,
+ * userspace assumes the responsibility for ensuring the same.
+ */
+#define I915_EXEC_IS_PINNED             (1<<10)
 
 struct drm_i915_gem_pin {
 	/** Handle of the buffer to be pinned. */

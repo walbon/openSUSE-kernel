@@ -92,6 +92,9 @@ static const struct usb_device_id usb_quirk_list[] = {
 	/* Philips PSC805 audio device */
 	{ USB_DEVICE(0x0471, 0x0155), .driver_info = USB_QUIRK_RESET_RESUME },
 
+	/* IBM Retail USB 4820 Liquid Crystal Display with MSR(3-trck) */
+	{ USB_DEVICE(0x04b3, 0x4871), .driver_info = USB_QUIRK_LONG_DELAYS },
+
 	/* Artisman Watchdog Dongle */
 	{ USB_DEVICE(0x04b4, 0x0526), .driver_info =
 			USB_QUIRK_CONFIG_INTF_STRINGS },
@@ -99,6 +102,9 @@ static const struct usb_device_id usb_quirk_list[] = {
 	/* Microchip Joss Optical infrared touchboard device */
 	{ USB_DEVICE(0x04d8, 0x000c), .driver_info =
 			USB_QUIRK_CONFIG_INTF_STRINGS },
+
+        /* Elo TouchSystems 4500U CarrollTouch */
+        { USB_DEVICE(0x04e7, 0x0030), .driver_info = USB_QUIRK_LONG_DELAYS },
 
 	/* Samsung Android phone modem - ID conflict with SPH-I500 */
 	{ USB_DEVICE(0x04e8, 0x6601), .driver_info =

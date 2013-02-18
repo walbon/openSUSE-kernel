@@ -249,9 +249,23 @@ int __sk_backlog_rcv(struct sock *sk, struct sk_buff *skb)
 {
 	int ret;
 	unsigned long pflags = current->flags;
+	static bool warned = false;
 
-	/* these should have been dropped before queueing */
-	BUG_ON(!sock_flag(sk, SOCK_MEMALLOC));
+	/*
+	 * Ordinarily these should have been dropped before queueing but in
+	 * the case of GPFS the processes are abusing PF_MEMALLOC running
+	 * a risk of livelock due to memory exhaustion. Warn when this
+	 * happens. See https://bugzilla.novell.com/show_bug.cgi?id=786900
+	 */
+	if (!sock_flag(sk, SOCK_MEMALLOC) && !warned) {
+		pr_warning("Network buffers allocated using PF_MEMALLOC.\n");
+		pr_info("Use of PF_MEMALLOC reserves to allocate network buffers are\n");
+		pr_info("usually the result of a third-party module and should be updated.\n");
+		if (sk_memalloc_socks())
+			pr_info("Use of such a module in combination with swap-over-NFS is particularly risky.");
+		WARN_ON(1);
+		warned = true;
+	}
 
 	current->flags |= PF_MEMALLOC;
 	ret = sk->sk_backlog_rcv(sk, skb);

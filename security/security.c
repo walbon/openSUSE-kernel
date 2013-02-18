@@ -459,6 +459,7 @@ int security_inode_unlink(struct inode *dir, struct dentry *dentry)
 		return 0;
 	return security_ops->inode_unlink(dir, dentry);
 }
+EXPORT_SYMBOL(security_inode_unlink);
 
 int security_inode_symlink(struct inode *dir, struct dentry *dentry,
 			    const char *old_name)
