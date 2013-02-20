@@ -13,6 +13,10 @@ struct kvm_lapic {
 	u32 divide_count;
 	struct kvm_vcpu *vcpu;
 	bool irr_pending;
+	/* Number of bits set in ISR. */
+	s16 isr_count;
+	/* The highest vector set in ISR; if -1 - invalid, must scan ISR. */
+	int highest_isr_cache;
 	void *regs;
 	gpa_t vapic_addr;
 	struct page *vapic_page;
@@ -34,15 +38,22 @@ int kvm_apic_match_physical_addr(struct kvm_lapic *apic, u16 dest);
 int kvm_apic_match_logical_addr(struct kvm_lapic *apic, u8 mda);
 int kvm_apic_set_irq(struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq);
 
+bool kvm_irq_delivery_to_apic_fast(struct kvm *kvm, struct kvm_lapic *src,
+		struct kvm_lapic_irq *irq, int *r);
+
 u64 kvm_get_apic_base(struct kvm_vcpu *vcpu);
 void kvm_set_apic_base(struct kvm_vcpu *vcpu, u64 data);
-void kvm_apic_post_state_restore(struct kvm_vcpu *vcpu);
+void kvm_apic_post_state_restore(struct kvm_vcpu *vcpu,
+		struct kvm_lapic_state *s);
 int kvm_lapic_enabled(struct kvm_vcpu *vcpu);
 bool kvm_apic_present(struct kvm_vcpu *vcpu);
 int kvm_lapic_find_highest_irr(struct kvm_vcpu *vcpu);
 
 u64 kvm_get_lapic_tscdeadline_msr(struct kvm_vcpu *vcpu);
 void kvm_set_lapic_tscdeadline_msr(struct kvm_vcpu *vcpu, u64 data);
+
+void kvm_apic_write_nodecode(struct kvm_vcpu *vcpu, u32 offset);
+void kvm_apic_set_eoi_accelerated(struct kvm_vcpu *vcpu, int vector);
 
 void kvm_lapic_set_vapic_addr(struct kvm_vcpu *vcpu, gpa_t vapic_addr);
 void kvm_lapic_sync_from_vapic(struct kvm_vcpu *vcpu);
@@ -58,4 +69,36 @@ static inline bool kvm_hv_vapic_assist_page_enabled(struct kvm_vcpu *vcpu)
 {
 	return vcpu->arch.hv_vapic & HV_X64_MSR_APIC_ASSIST_PAGE_ENABLE;
 }
+
+static inline int apic_x2apic_mode(struct kvm_lapic *apic)
+{
+	return apic->vcpu->arch.apic_base & X2APIC_ENABLE;
+}
+
+static inline bool kvm_apic_vid_enabled(struct kvm *kvm)
+{
+	return kvm_x86_ops->vm_has_apicv(kvm);
+}
+
+static inline u16 apic_cluster_id(struct kvm_apic_map *map, u32 ldr)
+{
+	u16 cid;
+	ldr >>= 32 - map->ldr_bits;
+	cid = (ldr >> map->cid_shift) & map->cid_mask;
+
+	BUG_ON(cid >= ARRAY_SIZE(map->logical_map));
+
+	return cid;
+}
+
+static inline u16 apic_logical_id(struct kvm_apic_map *map, u32 ldr)
+{
+	ldr >>= (32 - map->ldr_bits);
+	return ldr & map->lid_mask;
+}
+
+void kvm_calculate_eoi_exitmap(struct kvm_vcpu *vcpu,
+				struct kvm_lapic_irq *irq,
+				u64 *eoi_bitmap);
+
 #endif

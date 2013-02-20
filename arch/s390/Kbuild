@@ -4,3 +4,4 @@ obj-y += crypto/
 obj-y += appldata/
 obj-y += hypfs/
 obj-y += kvm/
+obj-$(CONFIG_PCI) += pci/

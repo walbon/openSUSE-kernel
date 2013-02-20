@@ -36,6 +36,7 @@
 #include <linux/types.h>
 #include <linux/uio.h>
 #include <linux/kernel.h>
+#include <linux/ratelimit.h>
 #include <linux/string.h>
 #include <linux/err.h>
 #include <linux/slab.h>
@@ -280,10 +281,8 @@ static void *xs_talkv(struct xenbus_transaction t,
 	}
 
 	if (msg.type != type) {
-		if (printk_ratelimit())
-			pr_warning("XENBUS unexpected type [%d],"
-				   " expected [%d]\n",
-				   msg.type, type);
+		pr_warn_ratelimited("XENBUS unexpected type [%d], expected [%d]\n",
+				    msg.type, type);
 		kfree(ret);
 		return ERR_PTR(-EINVAL);
 	}

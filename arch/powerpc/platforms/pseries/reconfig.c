@@ -171,10 +171,11 @@ static int pSeries_reconfig_remove_node(struct device_node *np)
 		return -EBUSY;
 	}
 
-	remove_node_proc_entries(np);
-
 	blocking_notifier_call_chain(&pSeries_reconfig_chain,
 			    PSERIES_RECONFIG_REMOVE, np);
+
+	remove_node_proc_entries(np);
+
 	of_detach_node(np);
 
 	of_node_put(parent);

@@ -118,6 +118,10 @@ static unsigned log_start;	/* Index into log_buf: next char to be read by syslog
 static unsigned con_start;	/* Index into log_buf: next char to be sent to consoles */
 static unsigned log_end;	/* Index into log_buf: most-recently-written-char + 1 */
 
+/* Worker to print accumulated data to console when there's too much of it */
+static void printk_worker(struct work_struct *work);
+static DECLARE_WORK(printk_work, printk_worker);
+
 /*
  * If exclusive_console is non-NULL then only this console is to be printed to.
  */
@@ -1241,6 +1245,13 @@ void wake_up_klogd(void)
 		this_cpu_write(printk_pending, 1);
 }
 
+/*
+ * How much do we print at one go. We have this limit so that we don't lockup
+ * one CPU for too long when there a lot to write. We are conservative because
+ * we can be printing to a 9600 baud serial console...
+ */
+#define PRINT_LIMIT 1024
+
 /**
  * console_unlock - unlock the console system
  *
@@ -1249,39 +1260,54 @@ void wake_up_klogd(void)
  *
  * While the console_lock was held, console output may have been buffered
  * by printk().  If this is the case, console_unlock(); emits
- * the output prior to releasing the lock.
+ * the output prior to releasing the lock. We print at most PRINT_LIMIT
+ * characters. Function returns true, if there's more data that needs
+ * printing in the buffer.
  *
  * If there is output waiting for klogd, we wake it up.
  *
  * console_unlock(); may be called from any context.
  */
-void console_unlock(void)
+static bool __console_unlock(void)
 {
 	unsigned long flags;
 	unsigned _con_start, _log_end;
 	unsigned wake_klogd = 0;
+	bool more_work = false;
+	bool use_limit;
+	unsigned limit = PRINT_LIMIT;
 
 	if (console_suspended) {
 		up(&console_sem);
-		return;
+		return false;
 	}
 
 	console_may_schedule = 0;
 
-	for ( ; ; ) {
-		spin_lock_irqsave(&logbuf_lock, flags);
-		wake_klogd |= log_start - log_end;
+	spin_lock_irqsave(&logbuf_lock, flags);
+	do {
 		if (con_start == log_end)
 			break;			/* Nothing to print */
+		use_limit = !oops_in_progress && keventd_up();
 		_con_start = con_start;
-		_log_end = log_end;
-		con_start = log_end;		/* Flush */
+		if (use_limit && log_end - con_start > limit) {
+			_log_end = con_start + limit;
+			con_start += limit;
+		} else {
+			_log_end = log_end;
+			con_start = log_end;		/* Flush */
+		}
 		spin_unlock(&logbuf_lock);
 		stop_critical_timings();	/* don't trace print latency */
 		call_console_drivers(_con_start, _log_end);
 		start_critical_timings();
 		local_irq_restore(flags);
-	}
+		if (use_limit)
+			limit -= _log_end - _con_start;
+		spin_lock_irqsave(&logbuf_lock, flags);
+	} while (!use_limit || limit);
+	more_work = con_start != log_end;
+	wake_klogd |= log_start - log_end;
 	console_locked = 0;
 
 	/* Release the exclusive_console once it is used */
@@ -1292,8 +1318,32 @@ void console_unlock(void)
 	spin_unlock_irqrestore(&logbuf_lock, flags);
 	if (wake_klogd)
 		wake_up_klogd();
+	return more_work;
+}
+
+void console_unlock(void)
+{
+	if (__console_unlock()) {
+		/* Let worker do the rest of printing */
+		schedule_work(&printk_work);
+	}
 }
 EXPORT_SYMBOL(console_unlock);
+
+/*
+ * This is a worker function to print data from printk buffer when
+ * console_unlock() didn't write it all. The advantage of this function is that
+ * it does the printing in a well known context where we can reschedule to
+ * avoid locking up one CPU with printing.
+ */
+static void printk_worker(struct work_struct *work)
+{
+	console_lock();
+	while (__console_unlock()) {
+		cond_resched();
+		console_lock();
+	}
+}
 
 /**
  * console_conditional_schedule - yield the CPU if required

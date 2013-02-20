@@ -12,9 +12,6 @@ obj-$(CONFIG_TI_DAVINCI_MDIO) += davinci_mdio.o
 obj-$(CONFIG_TI_DAVINCI_CPDMA) += davinci_cpdma.o
 
 obj-$(CONFIG_IBM_NEW_EMAC) += ibm_newemac/
-obj-$(CONFIG_IGBVF) += igbvf/
-obj-$(CONFIG_IXGBEVF) += ixgbevf/
-obj-$(CONFIG_IXGB) += ixgb/
 obj-$(CONFIG_IP1000) += ipg.o
 obj-$(CONFIG_EHEA) += ehea/
 obj-$(CONFIG_CAN) += can/

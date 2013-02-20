@@ -446,6 +446,16 @@ struct kvm_vcpu_arch {
 	} osvw;
 };
 
+struct kvm_apic_map {
+	struct rcu_head rcu;
+	u8 ldr_bits;
+	/* fields bellow are used to decode ldr values in different modes */
+	u32 cid_shift, cid_mask, lid_mask;
+	struct kvm_lapic *phys_map[256];
+	/* first index is cluster id second is cpu id in a cluster */
+	struct kvm_lapic *logical_map[16][16];
+};
+
 struct kvm_arch {
 	unsigned int n_used_mmu_pages;
 	unsigned int n_requested_mmu_pages;
@@ -463,6 +473,8 @@ struct kvm_arch {
 	struct kvm_ioapic *vioapic;
 	struct kvm_pit *vpit;
 	int vapics_in_nmi_mode;
+	struct mutex apic_map_lock;
+	struct kvm_apic_map *apic_map;
 
 	unsigned int tss_addr;
 	struct page *apic_access_page;
@@ -609,6 +621,11 @@ struct kvm_x86_ops {
 	void (*enable_nmi_window)(struct kvm_vcpu *vcpu);
 	void (*enable_irq_window)(struct kvm_vcpu *vcpu);
 	void (*update_cr8_intercept)(struct kvm_vcpu *vcpu, int tpr, int irr);
+	int (*vm_has_apicv)(struct kvm *kvm);
+	void (*hwapic_irr_update)(struct kvm_vcpu *vcpu, int max_irr);
+	void (*hwapic_isr_update)(struct kvm *kvm, int isr);
+	void (*load_eoi_exitmap)(struct kvm_vcpu *vcpu, u64 *eoi_exit_bitmap);
+	void (*set_virtual_x2apic_mode)(struct kvm_vcpu *vcpu, bool set);
 	int (*set_tss_addr)(struct kvm *kvm, unsigned int addr);
 	int (*get_tdp_level)(void);
 	u64 (*get_mt_mask)(struct kvm_vcpu *vcpu, gfn_t gfn, bool is_mmio);
@@ -870,6 +887,7 @@ int kvm_age_hva(struct kvm *kvm, unsigned long hva);
 int kvm_test_age_hva(struct kvm *kvm, unsigned long hva);
 void kvm_set_spte_hva(struct kvm *kvm, unsigned long hva, pte_t pte);
 int cpuid_maxphyaddr(struct kvm_vcpu *vcpu);
+int kvm_cpu_has_injectable_intr(struct kvm_vcpu *v);
 int kvm_cpu_has_interrupt(struct kvm_vcpu *vcpu);
 int kvm_arch_interrupt_allowed(struct kvm_vcpu *vcpu);
 int kvm_cpu_get_interrupt(struct kvm_vcpu *v);

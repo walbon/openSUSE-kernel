@@ -2840,11 +2840,11 @@ void dev_set_rdonly(struct block_device *bdev)
 		queue_flag_set(QUEUE_FLAG_FAIL_IO, q);
 		spin_unlock_irq(q->queue_lock);
 
-		printk(KERN_WARNING "Turning device %s (%#x) read-only\n",
+		pr_warn("Turning device %s (%#x) read-only\n",
 		       bdev->bd_disk ? bdev->bd_disk->disk_name : "",
 		       bdev->bd_dev);
 	} else {
-		printk(KERN_WARNING "Couldn't turn device %s (%#x) read-only -- no queue?\n",
+		pr_warn("Couldn't turn device %s (%#x) read-only -- NULL q\n",
 		       bdev->bd_disk ? bdev->bd_disk->disk_name : "",
 		       bdev->bd_dev);
 	}
@@ -2855,9 +2855,15 @@ void dev_clear_rdonly(struct block_device *bdev)
 	struct request_queue *q = bdev_get_queue(bdev);
 	if (q) {
 		unsigned long flags;
+		int was_set;
 		spin_lock_irqsave(q->queue_lock, flags);
-		queue_flag_clear(QUEUE_FLAG_FAIL_IO, q);
+		was_set = queue_flag_test_and_clear(QUEUE_FLAG_FAIL_IO, q);
 		spin_unlock_irqrestore(q->queue_lock, flags);
+
+		if (was_set)
+			pr_warn("Clearing device %s (%#x) read-only\n",
+			       bdev->bd_disk ? bdev->bd_disk->disk_name : "",
+			       bdev->bd_dev);
 	}
 }
 

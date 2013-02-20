@@ -23,6 +23,7 @@
 #include <linux/errno.h>
 #include <linux/slab.h>
 #include <linux/blkdev.h>
+#include <trace/events/jbd.h>
 
 /*
  * Unlink a buffer from a transaction checkpoint list.
@@ -359,6 +360,7 @@ int log_do_checkpoint(journal_t *journal)
 	 * journal straight away.
 	 */
 	result = cleanup_journal_tail(journal);
+	trace_jbd_checkpoint(journal, result);
 	jbd_debug(1, "cleanup_journal_tail returned %d\n", result);
 	if (result <= 0)
 		return result;
@@ -504,6 +506,7 @@ int cleanup_journal_tail(journal_t *journal)
 	if (blocknr < journal->j_tail)
 		freed = freed + journal->j_last - journal->j_first;
 
+	trace_jbd_cleanup_journal_tail(journal, first_tid, blocknr, freed);
 	jbd_debug(1,
 		  "Cleaning journal tail from %d to %d (offset %u), "
 		  "freeing %u\n",
@@ -763,6 +766,7 @@ void __journal_drop_transaction(journal_t *journal, transaction_t *transaction)
 	J_ASSERT(journal->j_committing_transaction != transaction);
 	J_ASSERT(journal->j_running_transaction != transaction);
 
+	trace_jbd_drop_transaction(journal, transaction);
 	jbd_debug(1, "Dropping transaction %d, all done\n", transaction->t_tid);
 	kfree(transaction);
 }

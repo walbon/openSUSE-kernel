@@ -1,6 +1,6 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2012 QLogic Corporation
+ * Copyright (c)  2003-2013 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
@@ -282,6 +282,9 @@ extern int
 qla2x00_get_port_name(scsi_qla_host_t *, uint16_t, uint8_t *, uint8_t);
 
 extern int
+qla24xx_link_initialize(scsi_qla_host_t *);
+
+extern int
 qla2x00_lip_reset(scsi_qla_host_t *);
 
 extern int
@@ -421,6 +424,7 @@ extern void qla2x00_free_irqs(scsi_qla_host_t *);
 
 extern int qla2x00_get_data_rate(scsi_qla_host_t *);
 extern const char *qla2x00_get_link_speed_str(struct qla_hw_data *, uint16_t);
+extern int qla2x00_is_a_vp_did(scsi_qla_host_t *, uint32_t);
 
 /*
  * Global Function Prototypes in qla_sup.c source file.

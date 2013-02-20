@@ -573,6 +573,7 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 		}
 	}
 
+#ifndef CONFIG_XEN
 	/*
 	 * The way access filter has a performance penalty on some workloads.
 	 * Disable it on the affected CPUs.
@@ -600,6 +601,7 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
 			wrmsrl_safe(0xc0011021, val);
 		}
 	}
+#endif
 
 	cpu_detect_cache_sizes(c);
 

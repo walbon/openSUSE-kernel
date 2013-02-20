@@ -32,7 +32,7 @@
  * Pauli Nieminen <suokkos-at-gmail-dot-com>
  */
 
-#include "drm_buffer.h"
+#include <drm/drm_buffer.h>
 
 /**
  * Allocate the drm buffer object.

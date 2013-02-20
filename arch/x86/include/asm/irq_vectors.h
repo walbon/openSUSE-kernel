@@ -115,8 +115,8 @@
  */
 #define MCE_SELF_VECTOR			0xf4
 
-/* Xen vector callback to receive events in a HVM domain */
-#define XEN_HVM_EVTCHN_CALLBACK		0xf3
+/* Vector on which hypervisor callbacks will be delivered */
+#define HYPERVISOR_CALLBACK_VECTOR	0xf3
 
 /*
  * KDB_VECTOR will take over vector 0xfe when it is needed, as in theory

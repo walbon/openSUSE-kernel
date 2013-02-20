@@ -47,6 +47,13 @@ MODULE_PARM_DESC(max_nonsrq_conn_qp,
 		 "Max number of connected-mode QPs per interface "
 		 "(applied only if shared receive queue is not available)");
 
+int ipoib_use_gfp_nofs = 0;
+
+module_param_named(use_gfp_nofs, ipoib_use_gfp_nofs, int, 0444);
+MODULE_PARM_DESC(use_gfp_nofs,
+		 "Use GFP_NOFS flags when allocating memory during the TX "
+		 "path for CM.  This should be used when running NFS over IPoIB.");
+
 #ifdef CONFIG_INFINIBAND_IPOIB_DEBUG_DATA
 static int data_debug_level;
 
@@ -1021,7 +1028,8 @@ static struct ib_qp *ipoib_cm_create_tx_qp(struct net_device *dev, struct ipoib_
 		.cap.max_send_sge	= 1,
 		.sq_sig_type		= IB_SIGNAL_ALL_WR,
 		.qp_type		= IB_QPT_RC,
-		.qp_context		= tx
+		.qp_context		= tx,
+		.create_flags		= ipoib_use_gfp_nofs ? IB_QP_CREATE_USE_GFP_NOFS : 0
 	};
 
 	return ib_create_qp(priv->pd, &attr);
@@ -1095,12 +1103,15 @@ static int ipoib_cm_tx_init(struct ipoib_cm_tx *p, u32 qpn,
 	struct ipoib_dev_priv *priv = netdev_priv(p->dev);
 	int ret;
 
-	p->tx_ring = vzalloc(ipoib_sendq_size * sizeof *p->tx_ring);
+	p->tx_ring = __vmalloc(ipoib_sendq_size * sizeof *p->tx_ring, 
+				ipoib_use_gfp_nofs ? GFP_NOFS : GFP_KERNEL,
+				PAGE_KERNEL);
 	if (!p->tx_ring) {
 		ipoib_warn(priv, "failed to allocate tx ring\n");
 		ret = -ENOMEM;
 		goto err_tx;
 	}
+	memset(p->tx_ring, 0, ipoib_sendq_size * sizeof *p->tx_ring);
 
 	p->qp = ipoib_cm_create_tx_qp(p->dev, p);
 	if (IS_ERR(p->qp)) {

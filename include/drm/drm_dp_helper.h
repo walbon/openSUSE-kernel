@@ -25,6 +25,7 @@
 
 #include <linux/types.h>
 #include <linux/i2c.h>
+#include <linux/delay.h>
 
 /*
  * Unless otherwise noted, all values are from the DP 1.1a spec.  Note that
@@ -108,6 +109,14 @@
 #define DP_PSR_SUPPORT                      0x070   /* XXX 1.2? */
 # define DP_PSR_IS_SUPPORTED                1
 #define DP_PSR_CAPS                         0x071   /* XXX 1.2? */
+# define DP_PSR_NO_TRAIN_ON_EXIT            1
+# define DP_PSR_SETUP_TIME_330              (0 << 1)
+# define DP_PSR_SETUP_TIME_275              (1 << 1)
+# define DP_PSR_SETUP_TIME_220              (2 << 1)
+# define DP_PSR_SETUP_TIME_165              (3 << 1)
+# define DP_PSR_SETUP_TIME_110              (4 << 1)
+# define DP_PSR_SETUP_TIME_55               (5 << 1)
+# define DP_PSR_SETUP_TIME_0                (6 << 1)
 # define DP_PSR_SETUP_TIME_MASK             (7 << 1)
 # define DP_PSR_SETUP_TIME_SHIFT            1
 
@@ -274,9 +283,29 @@
 # define DP_TEST_NAK			    (1 << 1)
 # define DP_TEST_EDID_CHECKSUM_WRITE	    (1 << 2)
 
+#define DP_SOURCE_OUI			    0x300
+#define DP_SINK_OUI			    0x400
+#define DP_BRANCH_OUI			    0x500
+
 #define DP_SET_POWER                        0x600
 # define DP_SET_POWER_D0                    0x1
 # define DP_SET_POWER_D3                    0x2
+
+#define DP_PSR_ERROR_STATUS                 0x2006  /* XXX 1.2? */
+# define DP_PSR_LINK_CRC_ERROR              (1 << 0)
+# define DP_PSR_RFB_STORAGE_ERROR           (1 << 1)
+
+#define DP_PSR_ESI                          0x2007  /* XXX 1.2? */
+# define DP_PSR_CAPS_CHANGE                 (1 << 0)
+
+#define DP_PSR_STATUS                       0x2008  /* XXX 1.2? */
+# define DP_PSR_SINK_INACTIVE               0
+# define DP_PSR_SINK_ACTIVE_SRC_SYNCED      1
+# define DP_PSR_SINK_ACTIVE_RFB             2
+# define DP_PSR_SINK_ACTIVE_SINK_SYNCED     3
+# define DP_PSR_SINK_ACTIVE_RESYNC          4
+# define DP_PSR_SINK_INTERNAL_ERROR         7
+# define DP_PSR_SINK_STATE_MASK             0x07
 
 #define MODE_I2C_START	1
 #define MODE_I2C_WRITE	2
@@ -293,5 +322,35 @@ struct i2c_algo_dp_aux_data {
 
 int
 i2c_dp_aux_add_bus(struct i2c_adapter *adapter);
+
+
+#define DP_LINK_STATUS_SIZE	   6
+bool drm_dp_channel_eq_ok(u8 link_status[DP_LINK_STATUS_SIZE],
+			  int lane_count);
+bool drm_dp_clock_recovery_ok(u8 link_status[DP_LINK_STATUS_SIZE],
+			      int lane_count);
+u8 drm_dp_get_adjust_request_voltage(u8 link_status[DP_LINK_STATUS_SIZE],
+				     int lane);
+u8 drm_dp_get_adjust_request_pre_emphasis(u8 link_status[DP_LINK_STATUS_SIZE],
+					  int lane);
+
+#define DP_RECEIVER_CAP_SIZE	0xf
+void drm_dp_link_train_clock_recovery_delay(u8 dpcd[DP_RECEIVER_CAP_SIZE]);
+void drm_dp_link_train_channel_eq_delay(u8 dpcd[DP_RECEIVER_CAP_SIZE]);
+
+u8 drm_dp_link_rate_to_bw_code(int link_rate);
+int drm_dp_bw_code_to_link_rate(u8 link_bw);
+
+static inline int
+drm_dp_max_link_rate(u8 dpcd[DP_RECEIVER_CAP_SIZE])
+{
+	return drm_dp_bw_code_to_link_rate(dpcd[DP_MAX_LINK_RATE]);
+}
+
+static inline u8
+drm_dp_max_lane_count(u8 dpcd[DP_RECEIVER_CAP_SIZE])
+{
+	return dpcd[DP_MAX_LANE_COUNT] & DP_MAX_LANE_COUNT_MASK;
+}
 
 #endif /* _DRM_DP_HELPER_H_ */

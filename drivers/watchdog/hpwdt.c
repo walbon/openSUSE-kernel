@@ -143,7 +143,7 @@ struct cmn_registers {
 }  __attribute__((packed));
 
 static unsigned int hpwdt_nmi_decoding;
-static unsigned int allow_kdump;
+static unsigned int allow_kdump = 1;
 static unsigned int priority;		/* hpwdt at end of die_notify list */
 static unsigned int is_icru;
 static DEFINE_SPINLOCK(rom_lock);
@@ -487,7 +487,9 @@ static int hpwdt_pretimeout(struct notifier_block *nb, unsigned long ulReason,
 	unsigned long rom_pl;
 	static int die_nmi_called;
 
-	if (ulReason != DIE_NMIUNKNOWN)
+	if (ulReason != DIE_NMIUNKNOWN &&
+	    ulReason != DIE_NMISERR &&
+	    ulReason != DIE_NMIIOCK)
 		goto out;
 
 	if (!hpwdt_nmi_decoding)

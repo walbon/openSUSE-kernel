@@ -123,11 +123,11 @@ int mlx4_srq_alloc(struct mlx4_dev *dev, u32 pdn, u32 cqn, u16 xrcd,
 	if (srq->srqn == -1)
 		return -ENOMEM;
 
-	err = mlx4_table_get(dev, &srq_table->table, srq->srqn);
+	err = mlx4_table_get(dev, &srq_table->table, srq->srqn, 0);
 	if (err)
 		goto err_out;
 
-	err = mlx4_table_get(dev, &srq_table->cmpt_table, srq->srqn);
+	err = mlx4_table_get(dev, &srq_table->cmpt_table, srq->srqn, 0);
 	if (err)
 		goto err_put;
 

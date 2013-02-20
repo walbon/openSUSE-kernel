@@ -32,9 +32,7 @@ struct vga_switcheroo_client {
 	struct pci_dev *pdev;
 	struct fb_info *fb_info;
 	int pwr_state;
-	void (*set_gpu_state)(struct pci_dev *pdev, enum vga_switcheroo_state);
-	void (*reprobe)(struct pci_dev *pdev);
-	bool (*can_switch)(struct pci_dev *pdev);
+	const struct vga_switcheroo_client_ops *ops;
 	int id;
 	bool active;
 };
@@ -89,7 +87,8 @@ static void vga_switcheroo_enable(void)
 	int i;
 	int ret;
 	/* call the handler to init */
-	vgasr_priv.handler->init();
+	if (vgasr_priv.handler->init)
+		vgasr_priv.handler->init();
 
 	for (i = 0; i < VGA_SWITCHEROO_MAX_CLIENTS; i++) {
 		ret = vgasr_priv.handler->get_client_id(vgasr_priv.clients[i].pdev);
@@ -103,9 +102,7 @@ static void vga_switcheroo_enable(void)
 }
 
 int vga_switcheroo_register_client(struct pci_dev *pdev,
-				   void (*set_gpu_state)(struct pci_dev *pdev, enum vga_switcheroo_state),
-				   void (*reprobe)(struct pci_dev *pdev),
-				   bool (*can_switch)(struct pci_dev *pdev))
+				   const struct vga_switcheroo_client_ops *ops)
 {
 	int index;
 
@@ -118,9 +115,7 @@ int vga_switcheroo_register_client(struct pci_dev *pdev,
 
 	vgasr_priv.clients[index].pwr_state = VGA_SWITCHEROO_ON;
 	vgasr_priv.clients[index].pdev = pdev;
-	vgasr_priv.clients[index].set_gpu_state = set_gpu_state;
-	vgasr_priv.clients[index].reprobe = reprobe;
-	vgasr_priv.clients[index].can_switch = can_switch;
+	vgasr_priv.clients[index].ops = ops;
 	vgasr_priv.clients[index].id = -1;
 	if (pdev->resource[PCI_ROM_RESOURCE].flags & IORESOURCE_ROM_SHADOW)
 		vgasr_priv.clients[index].active = true;
@@ -197,7 +192,7 @@ static int vga_switchon(struct vga_switcheroo_client *client)
 	if (vgasr_priv.handler->power_state)
 		vgasr_priv.handler->power_state(client->id, VGA_SWITCHEROO_ON);
 	/* call the driver callback to turn on device */
-	client->set_gpu_state(client->pdev, VGA_SWITCHEROO_ON);
+	client->ops->set_gpu_state(client->pdev, VGA_SWITCHEROO_ON);
 	client->pwr_state = VGA_SWITCHEROO_ON;
 	return 0;
 }
@@ -205,7 +200,7 @@ static int vga_switchon(struct vga_switcheroo_client *client)
 static int vga_switchoff(struct vga_switcheroo_client *client)
 {
 	/* call the driver callback to turn off device */
-	client->set_gpu_state(client->pdev, VGA_SWITCHEROO_OFF);
+	client->ops->set_gpu_state(client->pdev, VGA_SWITCHEROO_OFF);
 	if (vgasr_priv.handler->power_state)
 		vgasr_priv.handler->power_state(client->id, VGA_SWITCHEROO_OFF);
 	client->pwr_state = VGA_SWITCHEROO_OFF;
@@ -264,8 +259,8 @@ static int vga_switchto_stage2(struct vga_switcheroo_client *new_client)
 	if (ret)
 		return ret;
 
-	if (new_client->reprobe)
-		new_client->reprobe(new_client->pdev);
+	if (new_client->ops->reprobe)
+		new_client->ops->reprobe(new_client->pdev);
 
 	if (active->pwr_state == VGA_SWITCHEROO_ON)
 		vga_switchoff(active);
@@ -369,7 +364,7 @@ vga_switcheroo_debugfs_write(struct file *filp, const char __user *ubuf,
 	/* okay we want a switch - test if devices are willing to switch */
 	can_switch = true;
 	for (i = 0; i < VGA_SWITCHEROO_MAX_CLIENTS; i++) {
-		can_switch = vgasr_priv.clients[i].can_switch(vgasr_priv.clients[i].pdev);
+		can_switch = vgasr_priv.clients[i].ops->can_switch(vgasr_priv.clients[i].pdev);
 		if (can_switch == false) {
 			printk(KERN_ERR "vga_switcheroo: client %d refused switch\n", i);
 			break;
@@ -467,7 +462,7 @@ int vga_switcheroo_process_delayed_switch(void)
 	for (i = 0; i < VGA_SWITCHEROO_MAX_CLIENTS; i++) {
 		if (vgasr_priv.clients[i].id == vgasr_priv.delayed_client_id)
 			client = &vgasr_priv.clients[i];
-		can_switch = vgasr_priv.clients[i].can_switch(vgasr_priv.clients[i].pdev);
+		can_switch = vgasr_priv.clients[i].ops->can_switch(vgasr_priv.clients[i].pdev);
 		if (can_switch == false) {
 			printk(KERN_ERR "vga_switcheroo: client %d refused switch\n", i);
 			break;

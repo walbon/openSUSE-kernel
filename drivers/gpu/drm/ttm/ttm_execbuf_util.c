@@ -25,9 +25,9 @@
  *
  **************************************************************************/
 
-#include "ttm/ttm_execbuf_util.h"
-#include "ttm/ttm_bo_driver.h"
-#include "ttm/ttm_placement.h"
+#include <drm/ttm/ttm_execbuf_util.h>
+#include <drm/ttm/ttm_bo_driver.h>
+#include <drm/ttm/ttm_placement.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
 #include <linux/module.h>
@@ -185,10 +185,7 @@ retry_this_bo:
 			ttm_eu_backoff_reservation_locked(list);
 			spin_unlock(&glob->lru_lock);
 			ttm_eu_list_ref_sub(list);
-			ret = ttm_bo_wait_cpu(bo, false);
-			if (ret)
-				return ret;
-			goto retry;
+			return -EBUSY;
 		}
 	}
 
@@ -223,7 +220,6 @@ void ttm_eu_fence_buffer_objects(struct list_head *list, void *sync_obj)
 		bo = entry->bo;
 		entry->old_sync_obj = bo->sync_obj;
 		bo->sync_obj = driver->sync_obj_ref(sync_obj);
-		bo->sync_obj_arg = entry->new_sync_obj_arg;
 		ttm_bo_unreserve_locked(bo);
 		entry->reserved = false;
 	}

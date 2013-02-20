@@ -728,7 +728,7 @@ config ELMC_II
 
 config VORTEX
 	tristate "3c590/3c900 series (592/595/597) \"Vortex/Boomerang\" support"
-	depends on NET_VENDOR_3COM && (PCI || EISA)
+	depends on NET_VENDOR_3COM && (PCI || EISA) && HAS_IOPORT
 	select MII
 	---help---
 	  This option enables driver support for a large number of 10Mbps and
@@ -2078,27 +2078,6 @@ config IP1000
 	  To compile this driver as a module, choose M here: the module
 	  will be called ipg.  This is recommended.
 
-config IGBVF
-	tristate "Intel(R) 82576 Virtual Function Ethernet support"
-	depends on PCI
-	---help---
-	  This driver supports Intel(R) 82576 virtual functions.  For more
-	  information on how to identify your adapter, go to the Adapter &
-	  Driver ID Guide at:
-
-	  <http://support.intel.com/support/network/adapter/pro100/21397.htm>
-
-	  For general information and support, go to the Intel support
-	  website at:
-
-	  <http://support.intel.com>
-
-	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/e1000.txt>.
-
-	  To compile this driver as a module, choose M here. The module
-	  will be called igbvf.
-
 source "drivers/net/ixp2000/Kconfig"
 
 config MYRI_SBUS
@@ -2454,50 +2433,6 @@ config EHEA
 
 	  To compile the driver as a module, choose M here. The module
 	  will be called ehea.
-
-config IXGBEVF
-	tristate "Intel(R) 82599 Virtual Function Ethernet support"
-	depends on PCI_MSI
-	---help---
-	  This driver supports Intel(R) 82599 virtual functions.  For more
-	  information on how to identify your adapter, go to the Adapter &
-	  Driver ID Guide at:
-
-	  <http://support.intel.com/support/network/sb/CS-008441.htm>
-
-	  For general information and support, go to the Intel support
-	  website at:
-
-	  <http://support.intel.com>
-
-	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/ixgbevf.txt>.
-
-	  To compile this driver as a module, choose M here. The module
-	  will be called ixgbevf.  MSI-X interrupt support is required
-	  for this driver to work correctly.
-
-config IXGB
-	tristate "Intel(R) PRO/10GbE support"
-	depends on PCI
-	---help---
-	  This driver supports Intel(R) PRO/10GbE family of adapters for
-	  PCI-X type cards. For PCI-E type cards, use the "ixgbe" driver
-	  instead. For more information on how to identify your adapter, go
-	  to the Adapter & Driver ID Guide at:
-
-	  <http://support.intel.com/support/network/adapter/pro100/21397.htm>
-
-	  For general information and support, go to the Intel support
-	  website at:
-
-	  <http://support.intel.com>
-
-	  More specific information on configuring the driver is in 
-	  <file:Documentation/networking/ixgb.txt>.
-
-	  To compile this driver as a module, choose M here. The module
-	  will be called ixgb.
 
 config S2IO
 	tristate "Exar Xframe 10Gb Ethernet Adapter"

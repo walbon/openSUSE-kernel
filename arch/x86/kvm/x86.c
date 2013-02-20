@@ -2723,8 +2723,7 @@ static int kvm_vcpu_ioctl_get_lapic(struct kvm_vcpu *vcpu,
 static int kvm_vcpu_ioctl_set_lapic(struct kvm_vcpu *vcpu,
 				    struct kvm_lapic_state *s)
 {
-	memcpy(vcpu->arch.apic->regs, s->regs, sizeof *s);
-	kvm_apic_post_state_restore(vcpu);
+	kvm_apic_post_state_restore(vcpu, s);
 	update_cr8_intercept(vcpu);
 
 	return 0;
@@ -5502,7 +5501,7 @@ static void inject_pending_event(struct kvm_vcpu *vcpu)
 			vcpu->arch.nmi_injected = true;
 			kvm_x86_ops->set_nmi(vcpu);
 		}
-	} else if (kvm_cpu_has_interrupt(vcpu)) {
+	} else if (kvm_cpu_has_injectable_intr(vcpu)) {
 		if (kvm_x86_ops->interrupt_allowed(vcpu)) {
 			kvm_queue_interrupt(vcpu, kvm_cpu_get_interrupt(vcpu),
 					    false);
@@ -5528,6 +5527,16 @@ static void kvm_put_guest_xcr0(struct kvm_vcpu *vcpu)
 			xsetbv(XCR_XFEATURE_ENABLED_MASK, host_xcr0);
 		vcpu->guest_xcr0_loaded = 0;
 	}
+}
+
+static void update_eoi_exitmap(struct kvm_vcpu *vcpu)
+{
+	u64 eoi_exit_bitmap[4];
+
+	memset(eoi_exit_bitmap, 0, 32);
+
+	kvm_ioapic_calculate_eoi_exitmap(vcpu, eoi_exit_bitmap);
+	kvm_x86_ops->load_eoi_exitmap(vcpu, eoi_exit_bitmap);
 }
 
 static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
@@ -5571,6 +5580,8 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 			r = 1;
 			goto out;
 		}
+		if (kvm_check_request(KVM_REQ_EOIBITMAP, vcpu))
+			update_eoi_exitmap(vcpu);
 	}
 
 	r = kvm_mmu_reload(vcpu);
@@ -5591,10 +5602,17 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		/* enable NMI/IRQ window open exits if needed */
 		if (nmi_pending)
 			kvm_x86_ops->enable_nmi_window(vcpu);
-		else if (kvm_cpu_has_interrupt(vcpu) || req_int_win)
+		else if (kvm_cpu_has_injectable_intr(vcpu) || req_int_win)
 			kvm_x86_ops->enable_irq_window(vcpu);
 
 		if (kvm_lapic_enabled(vcpu)) {
+			/*
+			 * Update architecture specific hints for APIC
+			 * virtual interrupt delivery.
+			 */
+			if (kvm_x86_ops->hwapic_irr_update)
+				kvm_x86_ops->hwapic_irr_update(vcpu,
+					kvm_lapic_find_highest_irr(vcpu));
 			update_cr8_intercept(vcpu);
 			kvm_lapic_sync_to_vapic(vcpu);
 		}
@@ -6461,6 +6479,7 @@ int kvm_arch_init_vm(struct kvm *kvm)
 	set_bit(KVM_USERSPACE_IRQ_SOURCE_ID, &kvm->arch.irq_sources_bitmap);
 
 	raw_spin_lock_init(&kvm->arch.tsc_write_lock);
+	mutex_init(&kvm->arch.apic_map_lock);
 
 	return 0;
 }
@@ -6511,6 +6530,7 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 		put_page(kvm->arch.apic_access_page);
 	if (kvm->arch.ept_identity_pagetable)
 		put_page(kvm->arch.ept_identity_pagetable);
+	kfree(rcu_dereference_check(kvm->arch.apic_map, 1));
 }
 
 int kvm_arch_prepare_memory_region(struct kvm *kvm,
