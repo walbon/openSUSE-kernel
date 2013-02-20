@@ -424,38 +424,37 @@ int x509_process_extension(void *context, size_t hdrlen,
 		if (unlikely(vlen == ASN1_INDEFINITE_LENGTH))
 			return -EBADMSG;
 
-		/* Short Form length */
-		if (vlen <= 127) {
-
+		if (vlen < ASN1_INDEFINITE_LENGTH) {
+			/* Short Form length */
 			if (v[1] != vlen - 2 ||
 			    v[2] != SEQ_TAG_KEYID ||
 			    v[3] != vlen - 4)
 				return -EBADMSG;
 
-			v += 4;
 			key_len = v[3];
+			v += 4;
 		} else {
 			/* Long Form length */
 			size_t seq_len = 0;
-			int sub = v[1] - 0x80;
+			size_t sub = v[1] - ASN1_INDEFINITE_LENGTH;
 
 			if (sub > 2)
 				return -EBADMSG;
 
-			/* calculate the length from subsequent octet */
+			/* calculate the length from subsequent octets */
+			v += 2;
 			for (i = 0; i < sub; i++) {
 				seq_len <<= 8;
-				seq_len |= v[2 + i];
+				seq_len |= v[i];
 			}
 
-			/* check vlen should not less then length of keyid */
 			if (seq_len != vlen - 2 - sub ||
-			    v[2 + sub] != SEQ_TAG_KEYID ||
-			    v[3 + sub] > vlen - 4 - sub)
+			    v[sub] != SEQ_TAG_KEYID ||
+			    v[sub + 1] > vlen - 4 - sub)
 				return -EBADMSG;
 
-			v += (4 + sub);
-			key_len = v[3 + sub];
+			key_len = v[sub + 1];
+			v += (sub + 2);
 		}
 
 		f = kmalloc(key_len * 2 + 1, GFP_KERNEL);
