@@ -24,10 +24,9 @@ struct intel_gtt {
 	phys_addr_t gma_bus_addr;
 } *intel_gtt_get(void);
 
-// XXX renamed for kABI compatibility
-int __intel_gmch_probe(struct pci_dev *bridge_pdev, struct pci_dev *gpu_pdev,
+int intel_gmch_probe(struct pci_dev *bridge_pdev, struct pci_dev *gpu_pdev,
 		     struct agp_bridge_data *bridge);
-void __intel_gmch_remove(void);
+void intel_gmch_remove(void);
 
 bool intel_enable_gtt(void);
 

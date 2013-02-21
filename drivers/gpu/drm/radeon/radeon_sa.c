@@ -388,7 +388,7 @@ void radeon_sa_bo_free(struct radeon_device *rdev, struct radeon_sa_bo **sa_bo,
 	} else {
 		radeon_sa_bo_remove_locked(*sa_bo);
 	}
-	// wake_up_all_locked(&sa_manager->wq);
+	wake_up_all_locked(&sa_manager->wq);
 	spin_unlock(&sa_manager->wq.lock);
 	*sa_bo = NULL;
 }

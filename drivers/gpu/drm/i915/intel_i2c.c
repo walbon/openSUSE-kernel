@@ -33,8 +33,6 @@
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
 
-#include "i2c-algo-bit.c"
-
 struct gmbus_port {
 	const char *name;
 	int reg;

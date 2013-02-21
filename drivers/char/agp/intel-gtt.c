@@ -1343,7 +1343,7 @@ static int find_gmch(u16 device)
 	return 1;
 }
 
-int __intel_gmch_probe(struct pci_dev *bridge_pdev, struct pci_dev *gpu_pdev,
+int intel_gmch_probe(struct pci_dev *bridge_pdev, struct pci_dev *gpu_pdev,
 		     struct agp_bridge_data *bridge)
 {
 	int i, mask;
@@ -1399,18 +1399,12 @@ int __intel_gmch_probe(struct pci_dev *bridge_pdev, struct pci_dev *gpu_pdev,
 					    DMA_BIT_MASK(mask));
 
 	if (intel_gtt_init() != 0) {
-		__intel_gmch_remove();
+		intel_gmch_remove();
 
 		return 0;
 	}
 
 	return 1;
-}
-EXPORT_SYMBOL(__intel_gmch_probe);
-
-int intel_gmch_probe(struct pci_dev *pdev, struct agp_bridge_data *bridge)
-{
-	return __intel_gmch_probe(pdev, NULL, bridge);
 }
 EXPORT_SYMBOL(intel_gmch_probe);
 
@@ -1427,7 +1421,7 @@ void intel_gtt_chipset_flush(void)
 }
 EXPORT_SYMBOL(intel_gtt_chipset_flush);
 
-void __intel_gmch_remove(void)
+void intel_gmch_remove(void)
 {
 	if (--intel_private.refcount)
 		return;
@@ -1437,12 +1431,6 @@ void __intel_gmch_remove(void)
 	if (intel_private.bridge_dev)
 		pci_dev_put(intel_private.bridge_dev);
 	intel_private.driver = NULL;
-}
-EXPORT_SYMBOL(__intel_gmch_remove);
-
-void intel_gmch_remove(struct pci_dev *pdev)
-{
-	__intel_gmch_remove();
 }
 EXPORT_SYMBOL(intel_gmch_remove);
 
