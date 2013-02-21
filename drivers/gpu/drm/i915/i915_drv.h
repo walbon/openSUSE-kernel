@@ -30,7 +30,7 @@
 #ifndef _I915_DRV_H_
 #define _I915_DRV_H_
 
-#include <uapi/drm/i915_drm.h>
+#include <drm/i915_drm.h>
 
 #include "i915_reg.h"
 #include "intel_bios.h"

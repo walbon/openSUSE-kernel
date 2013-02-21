@@ -1,4 +1,3 @@
-# UAPI Header export list
 header-y += drm.h
 header-y += drm_fourcc.h
 header-y += drm_mode.h
