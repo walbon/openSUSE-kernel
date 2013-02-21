@@ -1017,13 +1017,6 @@ static int mlx4_setup_hca(struct mlx4_dev *dev)
 				  "ib capabilities (%d). Continuing with "
 				  "caps = 0\n", port, err);
 		dev->caps.ib_port_def_cap[port] = ib_port_default_caps;
-
-		err = mlx4_check_ext_port_caps(dev, port);
-		if (err)
-			mlx4_warn(dev, "failed to get port %d extended "
-				  "port capabilities support info (%d)."
-				  " Assuming not supported\n", port, err);
-
 		err = mlx4_SET_PORT(dev, port);
 		if (err) {
 			mlx4_err(dev, "Failed to set port %d, aborting\n",
@@ -1500,33 +1493,11 @@ static DEFINE_PCI_DEVICE_TABLE(mlx4_pci_table) = {
 
 MODULE_DEVICE_TABLE(pci, mlx4_pci_table);
 
-static pci_ers_result_t mlx4_pci_err_detected(struct pci_dev *pdev,
-					      pci_channel_state_t state)
-{
-	mlx4_remove_one(pdev);
-
-	return state == pci_channel_io_perm_failure ?
-		PCI_ERS_RESULT_DISCONNECT : PCI_ERS_RESULT_NEED_RESET;
-}
-
-static pci_ers_result_t mlx4_pci_slot_reset(struct pci_dev *pdev)
-{
-	int ret = __mlx4_init_one(pdev, NULL);
-
-	return ret ? PCI_ERS_RESULT_DISCONNECT : PCI_ERS_RESULT_RECOVERED;
-}
-
-static struct pci_error_handlers mlx4_err_handler = {
-	.error_detected = mlx4_pci_err_detected,
-	.slot_reset     = mlx4_pci_slot_reset,
-};
-
 static struct pci_driver mlx4_driver = {
 	.name		= DRV_NAME,
 	.id_table	= mlx4_pci_table,
 	.probe		= mlx4_init_one,
-	.remove		= __devexit_p(mlx4_remove_one),
-	.err_handler    = &mlx4_err_handler,
+	.remove		= __devexit_p(mlx4_remove_one)
 };
 
 static int __init mlx4_verify_params(void)

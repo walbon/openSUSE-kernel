@@ -143,12 +143,7 @@ static int mlx4_status_to_errno(u8 status)
 
 static int cmd_pending(struct mlx4_dev *dev)
 {
-	u32 status;
-
-	if (pci_channel_offline(dev->pdev))
-		return -EIO;
-
-	status = readl(mlx4_priv(dev)->cmd.hcr + HCR_STATUS_OFFSET);
+	u32 status = readl(mlx4_priv(dev)->cmd.hcr + HCR_STATUS_OFFSET);
 
 	return (status & swab32(1 << HCR_GO_BIT)) ||
 		(mlx4_priv(dev)->cmd.toggle ==
@@ -166,29 +161,11 @@ static int mlx4_cmd_post(struct mlx4_dev *dev, u64 in_param, u64 out_param,
 
 	mutex_lock(&cmd->hcr_mutex);
 
-	if (pci_channel_offline(dev->pdev)) {
-		/*
-		 * Device is going through error recovery
-		 * and cannot accept commands.
-		 */
-		ret = -EIO;
-		goto out;
-	}
-
 	end = jiffies;
 	if (event)
 		end += msecs_to_jiffies(GO_BIT_TIMEOUT_MSECS);
 
 	while (cmd_pending(dev)) {
-		if (pci_channel_offline(dev->pdev)) {
-			/*
-			 * Device is going through error recovery
-			 * and cannot accept commands.
-			 */
-			ret = -EIO;
-			goto out;
-		}
-
 		if (time_after_eq(jiffies, end))
 			goto out;
 		cond_resched();
@@ -242,33 +219,14 @@ static int mlx4_cmd_poll(struct mlx4_dev *dev, u64 in_param, u64 *out_param,
 
 	down(&priv->cmd.poll_sem);
 
-	if (pci_channel_offline(dev->pdev)) {
-		/*
-		 * Device is going through error recovery
-		 * and cannot accept commands.
-		 */
-		err = -EIO;
-		goto out;
-	}
-
 	err = mlx4_cmd_post(dev, in_param, out_param ? *out_param : 0,
 			    in_modifier, op_modifier, op, CMD_POLL_TOKEN, 0);
 	if (err)
 		goto out;
 
 	end = msecs_to_jiffies(timeout) + jiffies;
-	while (cmd_pending(dev) && time_before(jiffies, end)) {
-		if (pci_channel_offline(dev->pdev)) {
-			/*
-			 * Device is going through error recovery
-			 * and cannot accept commands.
-			 */
-			err = -EIO;
-			goto out;
-		}
-
+	while (cmd_pending(dev) && time_before(jiffies, end))
 		cond_resched();
-	}
 
 	if (cmd_pending(dev)) {
 		err = -ETIMEDOUT;
@@ -354,9 +312,6 @@ int __mlx4_cmd(struct mlx4_dev *dev, u64 in_param, u64 *out_param,
 	       int out_is_imm, u32 in_modifier, u8 op_modifier,
 	       u16 op, unsigned long timeout)
 {
-	if (pci_channel_offline(dev->pdev))
-		return -EIO;
-
 	if (mlx4_priv(dev)->cmd.use_events)
 		return mlx4_cmd_wait(dev, in_param, out_param, out_is_imm,
 				     in_modifier, op_modifier, op, timeout);

@@ -67,21 +67,16 @@ static void poll_catas(unsigned long dev_ptr)
 	struct mlx4_priv *priv = mlx4_priv(dev);
 
 	if (readl(priv->catas_err.map)) {
-		/* If the device is off-line, we cannot try to recover it */
-		if (pci_channel_offline(dev->pdev))
-			mod_timer(&priv->catas_err.timer,
-				  round_jiffies(jiffies + MLX4_CATAS_POLL_INTERVAL));
-		else {
-			dump_err_buf(dev);
-			mlx4_dispatch_event(dev, MLX4_DEV_EVENT_CATASTROPHIC_ERROR, 0);
+		dump_err_buf(dev);
 
-			if (internal_err_reset) {
-				spin_lock(&catas_lock);
-				list_add(&priv->catas_err.list, &catas_list);
-				spin_unlock(&catas_lock);
+		mlx4_dispatch_event(dev, MLX4_DEV_EVENT_CATASTROPHIC_ERROR, 0);
 
-				queue_work(mlx4_wq, &catas_work);
-			}
+		if (internal_err_reset) {
+			spin_lock(&catas_lock);
+			list_add(&priv->catas_err.list, &catas_list);
+			spin_unlock(&catas_lock);
+
+			queue_work(mlx4_wq, &catas_work);
 		}
 	} else
 		mod_timer(&priv->catas_err.timer,
@@ -102,10 +97,6 @@ static void catas_reset(struct work_struct *work)
 
 	list_for_each_entry_safe(priv, tmppriv, &tlist, catas_err.list) {
 		struct pci_dev *pdev = priv->dev.pdev;
-
-		/* If the device is off-line, we cannot reset it */
-		if (pci_channel_offline(pdev))
-			continue;
 
 		ret = mlx4_restart_one(priv->dev.pdev);
 		/* 'priv' now is not valid */
