@@ -430,10 +430,9 @@ void mlx4_en_deactivate_rx_ring(struct mlx4_en_priv *priv,
 static int mlx4_en_complete_rx_desc(struct mlx4_en_priv *priv,
 				    struct mlx4_en_rx_desc *rx_desc,
 				    struct mlx4_en_rx_alloc *frags,
-				    struct sk_buff *skb,
+				    struct skb_frag_struct *skb_frags_rx,
 				    int length)
 {
-	struct skb_frag_struct *skb_frags_rx = skb_shinfo(skb)->frags;
 	struct mlx4_en_dev *mdev = priv->mdev;
 	struct mlx4_en_frag_info *frag_info;
 	int nr;
@@ -456,7 +455,6 @@ static int mlx4_en_complete_rx_desc(struct mlx4_en_priv *priv,
 		skb_frags_rx[nr].page = frags[nr].page;
 		skb_frags_rx[nr].size = frag_info->frag_size;
 		skb_frags_rx[nr].page_offset = frags[nr].offset;
-		skb->truesize += frag_info->frag_stride;
 	}
 	/* Adjust size of last fragment to match actual length */
 	if (nr > 0)
@@ -492,6 +490,7 @@ static struct sk_buff *mlx4_en_rx_skb(struct mlx4_en_priv *priv,
 	skb->dev = priv->dev;
 	skb_reserve(skb, NET_IP_ALIGN);
 	skb->len = length;
+	skb->truesize = length + sizeof(struct sk_buff);
 
 	/* Get pointer to first fragment so we could copy the headers into the
 	 * (linear part of the) skb */
@@ -509,7 +508,8 @@ static struct sk_buff *mlx4_en_rx_skb(struct mlx4_en_priv *priv,
 
 		/* Move relevant fragments to skb */
 		used_frags = mlx4_en_complete_rx_desc(priv, rx_desc, frags,
-						      skb, length);
+						      skb_shinfo(skb)->frags,
+						      length);
 		if (unlikely(!used_frags)) {
 			kfree_skb(skb);
 			return NULL;
@@ -631,7 +631,7 @@ int mlx4_en_process_rx_cq(struct net_device *dev, struct mlx4_en_cq *cq, int bud
 
 					nr = mlx4_en_complete_rx_desc(
 						priv, rx_desc,
-						frags, gro_skb,
+						frags, skb_shinfo(gro_skb)->frags,
 						length);
 					if (!nr)
 						goto next;
@@ -639,6 +639,7 @@ int mlx4_en_process_rx_cq(struct net_device *dev, struct mlx4_en_cq *cq, int bud
 					skb_shinfo(gro_skb)->nr_frags = nr;
 					gro_skb->len = length;
 					gro_skb->data_len = length;
+					gro_skb->truesize += length;
 					gro_skb->ip_summed = CHECKSUM_UNNECESSARY;
 
 					if (priv->vlgrp && (cqe->vlan_my_qpn &

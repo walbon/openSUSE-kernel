@@ -83,7 +83,7 @@ struct mlx4_dev_cap {
 	int vep_uc_steering;
 	int vep_mc_steering;
 	int wol;
-	u64 flags;
+	u32 flags;
 	int reserved_uars;
 	int uar_size;
 	int min_page_sz;
