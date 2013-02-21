@@ -907,7 +907,9 @@ void ixgbe_ptp_init(struct ixgbe_adapter *adapter)
 
 	spin_lock_init(&adapter->tmreg_lock);
 
-	adapter->ptp_clock = ptp_clock_register(&adapter->ptp_caps);
+	adapter->ptp_clock = ptp_clock_register(&adapter->ptp_caps,
+						&adapter->pdev->dev);
+
 	if (IS_ERR(adapter->ptp_clock)) {
 		adapter->ptp_clock = NULL;
 		e_dev_err("ptp_clock_register failed\n");

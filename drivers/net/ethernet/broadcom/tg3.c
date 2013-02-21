@@ -10794,7 +10794,8 @@ static int tg3_open(struct net_device *dev)
 	}
 
 	if (tg3_flag(tp, PTP_CAPABLE)) {
-		tp->ptp_clock = ptp_clock_register(&tp->ptp_info);
+		tp->ptp_clock = ptp_clock_register(&tp->ptp_info,
+						   &tp->pdev->dev);
 		if (IS_ERR(tp->ptp_clock))
 			tp->ptp_clock = NULL;
 	}

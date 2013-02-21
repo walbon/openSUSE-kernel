@@ -2387,6 +2387,7 @@ config PCH_GBE
 	tristate "Intel EG20T PCH/OKI SEMICONDUCTOR IOH(ML7223/ML7831) GbE"
 	depends on PCI
 	select MII
+	select PTP_1588_CLOCK_PCH
 	---help---
 	  This is a gigabit ethernet driver for EG20T PCH.
 	  EG20T PCH is the platform controller hub that is used in Intel's
