@@ -496,8 +496,7 @@ static int ttm_alloc_new_pages(struct list_head *pages, gfp_t gfp_flags,
 			r = xen_limit_pages_to_max_mfn(p, 0, 32);
 			if (r) {
 				__free_page(p);
-				printk(KERN_ERR TTM_PFX
-				       "Cannot restrict page (%d).", r);
+				pr_err("Cannot restrict page (%d)", r);
 				p = NULL;
 			} else if (gfp_flags & __GFP_ZERO)
 				clear_page(page_address(p));
@@ -742,6 +741,21 @@ static int ttm_get_pages(struct page **pages, unsigned npages, int flags,
 				pr_err("Unable to allocate page\n");
 				return -ENOMEM;
 			}
+
+#ifdef CONFIG_XEN
+			if (flags & TTM_PAGE_FLAG_DMA32) {
+				int rc = xen_limit_pages_to_max_mfn(p, 0, 32);
+
+				if (rc) {
+					__free_page(p);
+					pr_err("Unable to restrict page (%d)",
+					       rc);
+					return rc;
+				}
+				if (flags & TTM_PAGE_FLAG_ZERO_ALLOC)
+					clear_page(page_address(p));
+			}
+#endif
 
 			pages[r] = p;
 		}
