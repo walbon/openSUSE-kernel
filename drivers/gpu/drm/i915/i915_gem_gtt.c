@@ -643,7 +643,7 @@ int i915_gem_gtt_init(struct drm_device *dev)
 	 * hostbridge query stuff. Skip it entirely
 	 */
 	if (INTEL_INFO(dev)->gen < 6) {
-		ret = __intel_gmch_probe(dev_priv->bridge_dev, dev->pdev, NULL);
+		ret = intel_gmch_probe(dev_priv->bridge_dev, dev->pdev, NULL);
 		if (!ret) {
 			DRM_ERROR("failed to set up gmch\n");
 			return -EIO;
@@ -652,7 +652,7 @@ int i915_gem_gtt_init(struct drm_device *dev)
 		dev_priv->mm.gtt = intel_gtt_get();
 		if (!dev_priv->mm.gtt) {
 			DRM_ERROR("Failed to initialize GTT\n");
-			__intel_gmch_remove();
+			intel_gmch_remove();
 			return -ENODEV;
 		}
 		return 0;
@@ -715,7 +715,7 @@ int i915_gem_gtt_init(struct drm_device *dev)
 err_out:
 	kfree(dev_priv->mm.gtt);
 	if (INTEL_INFO(dev)->gen < 6)
-		__intel_gmch_remove();
+		intel_gmch_remove();
 	return ret;
 }
 
@@ -725,6 +725,6 @@ void i915_gem_gtt_fini(struct drm_device *dev)
 	iounmap(dev_priv->mm.gtt->gtt);
 	teardown_scratch_page(dev);
 	if (INTEL_INFO(dev)->gen < 6)
-		__intel_gmch_remove();
+		intel_gmch_remove();
 	kfree(dev_priv->mm.gtt);
 }

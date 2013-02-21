@@ -262,6 +262,10 @@ void add_taint(unsigned flag)
 	case TAINT_CRAP:
 	case TAINT_WARN:
 	case TAINT_FIRMWARE_WORKAROUND:
+#ifdef CONFIG_ENTERPRISE_SUPPORT
+	case TAINT_NO_SUPPORT:
+	case TAINT_EXTERNAL_SUPPORT:
+#endif
 		break;
 
 	default:

@@ -321,6 +321,10 @@ __setup("unknown_nmi_panic", setup_unknown_nmi_panic);
 static notrace __kprobes void
 pci_serr_error(unsigned char reason, struct pt_regs *regs)
 {
+	if (notify_die(DIE_NMISERR, "nmi_serr", regs, reason, 2, SIGINT) ==
+			NOTIFY_STOP)
+		return;
+
 	pr_emerg("NMI: PCI system error (SERR) for reason %02x on CPU %d.\n",
 		 reason, smp_processor_id());
 
@@ -347,6 +351,10 @@ pci_serr_error(unsigned char reason, struct pt_regs *regs)
 static notrace __kprobes void
 io_check_error(unsigned char reason, struct pt_regs *regs)
 {
+	if (notify_die(DIE_NMIIOCK, "nmi_iock", regs, reason, 2, SIGINT) ==
+			NOTIFY_STOP)
+		return;
+
 	pr_emerg(
 	"NMI: IOCK error (debug interrupt?) for reason %02x on CPU %d.\n",
 		 reason, smp_processor_id());

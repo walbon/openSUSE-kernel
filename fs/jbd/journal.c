@@ -38,6 +38,9 @@
 #include <linux/debugfs.h>
 #include <linux/ratelimit.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/jbd.h>
+
 #include <asm/uaccess.h>
 #include <asm/page.h>
 
@@ -558,6 +561,8 @@ int log_wait_commit(journal_t *journal, tid_t tid)
 	spin_unlock(&journal->j_state_lock);
 #endif
 	spin_lock(&journal->j_state_lock);
+	if (!tid_geq(journal->j_commit_waited, tid))
+		journal->j_commit_waited = tid;
 	while (tid_gt(tid, journal->j_commit_sequence)) {
 		jbd_debug(1, "JBD: want %d, j_commit_sequence=%d\n",
 				  tid, journal->j_commit_sequence);
@@ -1066,6 +1071,7 @@ void journal_update_superblock(journal_t *journal, int wait)
 	} else
 		write_dirty_buffer(bh, WRITE);
 
+	trace_jbd_update_superblock_end(journal, wait);
 out:
 	/* If we have just flushed the log (by marking s_start==0), then
 	 * any future commit will have to be careful to update the
