@@ -130,14 +130,12 @@ void nv17_ctv_update_rescaler(struct drm_encoder *encoder);
 static inline void nv_write_ptv(struct drm_device *dev, uint32_t reg,
 				uint32_t val)
 {
-	struct nouveau_device *device = nouveau_dev(dev);
-	nv_wr32(device, reg, val);
+	nv_wr32(dev, reg, val);
 }
 
 static inline uint32_t nv_read_ptv(struct drm_device *dev, uint32_t reg)
 {
-	struct nouveau_device *device = nouveau_dev(dev);
-	return nv_rd32(device, reg);
+	return nv_rd32(dev, reg);
 }
 
 static inline void nv_write_tv_enc(struct drm_device *dev, uint8_t reg,
