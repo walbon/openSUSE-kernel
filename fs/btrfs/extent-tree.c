@@ -3792,6 +3792,8 @@ static int can_overcommit(struct btrfs_root *root,
 static inline int writeback_inodes_sb_nr_if_idle_safe(struct super_block *sb,
 					       unsigned long nr_pages)
 {
+/* use try_to_writeback_inodes_sb_nr instead, it's equivalent but exported */
+#if 0
 	/* the flusher is dealing with the dirty inodes now. */
 	if (writeback_in_progress(sb->s_bdi))
 		return 1;
@@ -3802,6 +3804,7 @@ static inline int writeback_inodes_sb_nr_if_idle_safe(struct super_block *sb,
 		return 1;
 	}
 
+#endif
 	return 0;
 }
 
@@ -3812,6 +3815,7 @@ void btrfs_writeback_inodes_sb_nr(struct btrfs_root *root,
 	int started;
 
 	/* If we can not start writeback, just sync all the delalloc file. */
+	/* started = writeback_inodes_sb_nr_if_idle_safe(sb, nr_pages); */
 	started = writeback_inodes_sb_nr_if_idle_safe(sb, nr_pages);
 	if (!started) {
 		/*
