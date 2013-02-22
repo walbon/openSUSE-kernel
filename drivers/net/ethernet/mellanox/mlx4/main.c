@@ -1512,12 +1512,6 @@ static int mlx4_setup_hca(struct mlx4_dev *dev)
 				dev->caps.port_ib_mtu[port] = IB_MTU_2048;
 			else
 				dev->caps.port_ib_mtu[port] = IB_MTU_4096;
-			err = mlx4_check_ext_port_caps(dev, port);
-			if (err)
-				mlx4_warn(dev, "failed to get port %d extended "
-					  "port capabilities support info (%d)."
-					  " Assuming not supported\n",
-					  port, err);
 
 			err = mlx4_SET_PORT(dev, port);
 			if (err) {
