@@ -616,7 +616,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = NULL
+		.wrapper = mlx4_QUERY_FW_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_QUERY_HCA,
@@ -634,7 +634,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = NULL
+		.wrapper = mlx4_QUERY_DEV_CAP_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_QUERY_FUNC_CAP,
