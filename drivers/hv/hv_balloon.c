@@ -597,8 +597,6 @@ static void post_status(struct hv_dynmem_device *dm)
 
 }
 
-
-
 static void free_balloon_pages(struct hv_dynmem_device *dm,
 			 union dm_mem_page_range *range_array)
 {
