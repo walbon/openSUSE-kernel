@@ -43,6 +43,7 @@
 #include <linux/timer.h>
 #include <linux/semaphore.h>
 #include <linux/workqueue.h>
+#include <linux/cpu_rmap.h>
 
 #include <linux/mlx4/device.h>
 #include <linux/mlx4/driver.h>
