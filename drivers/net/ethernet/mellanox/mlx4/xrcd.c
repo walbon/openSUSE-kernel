@@ -36,7 +36,7 @@
 
 #include "mlx4.h"
 
-int mlx4_xrcd_alloc(struct mlx4_dev *dev, u32 *xrcdn)
+int __mlx4_xrcd_alloc(struct mlx4_dev *dev, u32 *xrcdn)
 {
 	struct mlx4_priv *priv = mlx4_priv(dev);
 
@@ -46,13 +46,13 @@ int mlx4_xrcd_alloc(struct mlx4_dev *dev, u32 *xrcdn)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(mlx4_xrcd_alloc);
+EXPORT_SYMBOL_GPL(__mlx4_xrcd_alloc);
 
-void mlx4_xrcd_free(struct mlx4_dev *dev, u32 xrcdn)
+void __mlx4_xrcd_free(struct mlx4_dev *dev, u32 xrcdn)
 {
 	mlx4_bitmap_free(&mlx4_priv(dev)->xrcd_bitmap, xrcdn);
 }
-EXPORT_SYMBOL_GPL(mlx4_xrcd_free);
+EXPORT_SYMBOL_GPL(__mlx4_xrcd_free);
 
 int mlx4_init_xrcd_table(struct mlx4_dev *dev)
 {
