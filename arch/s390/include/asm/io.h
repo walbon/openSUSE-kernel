@@ -14,6 +14,7 @@
 #ifdef __KERNEL__
 
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <asm/page.h>
 
 /*
