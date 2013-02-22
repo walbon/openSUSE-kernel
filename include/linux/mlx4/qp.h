@@ -100,7 +100,7 @@ struct mlx4_qp_path {
 	u8			fl;
 	u8			reserved1[2];
 	u8			pkey_index;
-	u8			reserved2;
+	u8			counter_index;
 	u8			grh_mylmc;
 	__be16			rlid;
 	u8			ackto;
@@ -112,8 +112,7 @@ struct mlx4_qp_path {
 	u8			sched_queue;
 	u8			vlan_index;
 	u8			reserved3[2];
-	u8			counter_index;
-	u8			reserved4;
+	u8			reserved4[2];
 	u8			dmac[6];
 };
 
