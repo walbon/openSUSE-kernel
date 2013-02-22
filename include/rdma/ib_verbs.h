@@ -599,6 +599,7 @@ enum ib_qp_type {
 	IB_QPT_XRC,
 	IB_QPT_RAW_IPV6,
 	IB_QPT_RAW_ETHERTYPE,
+	IB_QPT_RAW_PACKET = 8,
 	IB_QPT_MAX
 };
 
