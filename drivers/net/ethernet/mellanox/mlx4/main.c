@@ -318,6 +318,7 @@ static int mlx4_dev_cap(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 	dev->caps.max_msg_sz         = dev_cap->max_msg_sz;
 	dev->caps.page_size_cap	     = ~(u32) (dev_cap->min_page_sz - 1);
 	dev->caps.flags		     = dev_cap->flags;
+	dev->caps.flags2	     = dev_cap->flags2;
 	dev->caps.bmme_flags	     = dev_cap->bmme_flags;
 	dev->caps.reserved_lkey	     = dev_cap->reserved_lkey;
 	dev->caps.stat_rate_support  = dev_cap->stat_rate_support;
@@ -326,6 +327,7 @@ static int mlx4_dev_cap(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 		dev_cap->reserved_xrcds : 0;
 	dev->caps.max_xrcds	     = (dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC) ?
 		dev_cap->max_xrcds : 0;
+	dev->caps.max_rss_tbl_sz     = dev_cap->max_rss_tbl_sz;
 
 	/* Sense port always allowed on supported devices for ConnectX1 and 2 */
 	if (dev->pdev->device != 0x1003)
