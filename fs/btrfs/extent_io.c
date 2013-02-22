@@ -1829,7 +1829,7 @@ int test_range_bit(struct extent_io_tree *tree, u64 start, u64 end,
  */
 static void check_page_uptodate(struct extent_io_tree *tree, struct page *page)
 {
-	u64 start = (u64)page->index << PAGE_CACHE_SHIFT;
+	u64 start = page_offset(page);
 	u64 end = start + PAGE_CACHE_SIZE - 1;
 	if (test_range_bit(tree, start, end, EXTENT_UPTODATE, 1, NULL))
 		SetPageUptodate(page);
@@ -1841,7 +1841,7 @@ static void check_page_uptodate(struct extent_io_tree *tree, struct page *page)
  */
 static void check_page_locked(struct extent_io_tree *tree, struct page *page)
 {
-	u64 start = (u64)page->index << PAGE_CACHE_SHIFT;
+	u64 start = page_offset(page);
 	u64 end = start + PAGE_CACHE_SIZE - 1;
 	if (!test_range_bit(tree, start, end, EXTENT_LOCKED, 0, NULL))
 		unlock_page(page);
@@ -1955,7 +1955,7 @@ int repair_io_failure(struct btrfs_fs_info *fs_info, u64 start,
 		return -EIO;
 	}
 	bio->bi_bdev = dev->bdev;
-	bio_add_page(bio, page, length, start-page_offset(page));
+	bio_add_page(bio, page, length, start - page_offset(page));
 	btrfsic_submit_bio(WRITE_SYNC, bio);
 	wait_for_completion(&compl);
 
@@ -2292,8 +2292,7 @@ static void end_bio_extent_writepage(struct bio *bio, int err)
 		struct page *page = bvec->bv_page;
 		tree = &BTRFS_I(page->mapping->host)->io_tree;
 
-		start = ((u64)page->index << PAGE_CACHE_SHIFT) +
-			 bvec->bv_offset;
+		start = page_offset(page) + bvec->bv_offset;
 		end = start + bvec->bv_len - 1;
 
 		if (bvec->bv_offset == 0 && bvec->bv_len == PAGE_CACHE_SIZE)
@@ -2352,8 +2351,7 @@ static void end_bio_extent_readpage(struct bio *bio, int err)
 			 (long int)bio->bi_bdev);
 		tree = &BTRFS_I(page->mapping->host)->io_tree;
 
-		start = ((u64)page->index << PAGE_CACHE_SHIFT) +
-			bvec->bv_offset;
+		start = page_offset(page) + bvec->bv_offset;
 		end = start + bvec->bv_len - 1;
 
 		if (bvec->bv_offset == 0 && bvec->bv_len == PAGE_CACHE_SIZE)
@@ -2470,7 +2468,7 @@ static int __must_check submit_one_bio(int rw, struct bio *bio,
 	struct extent_io_tree *tree = bio->bi_private;
 	u64 start;
 
-	start = ((u64)page->index << PAGE_CACHE_SHIFT) + bvec->bv_offset;
+	start = page_offset(page) + bvec->bv_offset;
 
 	bio->bi_private = NULL;
 
@@ -2488,13 +2486,13 @@ static int __must_check submit_one_bio(int rw, struct bio *bio,
 	return ret;
 }
 
-static int merge_bio(struct extent_io_tree *tree, struct page *page,
+static int merge_bio(int rw, struct extent_io_tree *tree, struct page *page,
 		     unsigned long offset, size_t size, struct bio *bio,
 		     unsigned long bio_flags)
 {
 	int ret = 0;
 	if (tree->ops && tree->ops->merge_bio_hook)
-		ret = tree->ops->merge_bio_hook(page, offset, size, bio,
+		ret = tree->ops->merge_bio_hook(rw, page, offset, size, bio,
 						bio_flags);
 	BUG_ON(ret < 0);
 	return ret;
@@ -2529,7 +2527,7 @@ static int submit_extent_page(int rw, struct extent_io_tree *tree,
 				sector;
 
 		if (prev_bio_flags != bio_flags || !contig ||
-		    merge_bio(tree, page, offset, page_size, bio, bio_flags) ||
+		    merge_bio(rw, tree, page, offset, page_size, bio, bio_flags) ||
 		    bio_add_page(bio, page, page_size, offset) < page_size) {
 			ret = submit_one_bio(rw, bio, mirror_num,
 					     prev_bio_flags);
@@ -2594,7 +2592,7 @@ static int __extent_read_full_page(struct extent_io_tree *tree,
 				   unsigned long *bio_flags)
 {
 	struct inode *inode = page->mapping->host;
-	u64 start = (u64)page->index << PAGE_CACHE_SHIFT;
+	u64 start = page_offset(page);
 	u64 page_end = start + PAGE_CACHE_SIZE - 1;
 	u64 end;
 	u64 cur = start;
@@ -2647,6 +2645,8 @@ static int __extent_read_full_page(struct extent_io_tree *tree,
 		}
 	}
 	while (cur <= end) {
+		unsigned long pnr = (last_byte >> PAGE_CACHE_SHIFT) + 1;
+
 		if (cur >= last_byte) {
 			char *userpage;
 			struct extent_state *cached = NULL;
@@ -2734,26 +2734,17 @@ static int __extent_read_full_page(struct extent_io_tree *tree,
 			continue;
 		}
 
-		ret = 0;
-		if (tree->ops && tree->ops->readpage_io_hook) {
-			ret = tree->ops->readpage_io_hook(page, cur,
-							  cur + iosize - 1);
-		}
-		if (!ret) {
-			unsigned long pnr = (last_byte >> PAGE_CACHE_SHIFT) + 1;
-			pnr -= page->index;
-			ret = submit_extent_page(READ, tree, page,
+		pnr -= page->index;
+		ret = submit_extent_page(READ, tree, page,
 					 sector, disk_io_size, pg_offset,
 					 bdev, bio, pnr,
 					 end_bio_extent_readpage, mirror_num,
 					 *bio_flags,
 					 this_bio_flag);
-			if (!ret) {
-				nr++;
-				*bio_flags = this_bio_flag;
-			}
-		}
-		if (ret) {
+		if (!ret) {
+			nr++;
+			*bio_flags = this_bio_flag;
+		} else {
 			SetPageError(page);
 			unlock_extent(tree, cur, cur + iosize - 1);
 		}
@@ -2805,7 +2796,7 @@ static int __extent_writepage(struct page *page, struct writeback_control *wbc,
 	struct inode *inode = page->mapping->host;
 	struct extent_page_data *epd = data;
 	struct extent_io_tree *tree = epd->tree;
-	u64 start = (u64)page->index << PAGE_CACHE_SHIFT;
+	u64 start = page_offset(page);
 	u64 delalloc_start;
 	u64 page_end = start + PAGE_CACHE_SIZE - 1;
 	u64 end;
@@ -3123,12 +3114,9 @@ static int lock_extent_buffer_for_io(struct extent_buffer *eb,
 		set_bit(EXTENT_BUFFER_WRITEBACK, &eb->bflags);
 		spin_unlock(&eb->refs_lock);
 		btrfs_set_header_flag(eb, BTRFS_HEADER_FLAG_WRITTEN);
-		spin_lock(&fs_info->delalloc_lock);
-		if (fs_info->dirty_metadata_bytes >= eb->len)
-			fs_info->dirty_metadata_bytes -= eb->len;
-		else
-			WARN_ON(1);
-		spin_unlock(&fs_info->delalloc_lock);
+		__percpu_counter_add(&fs_info->dirty_metadata_bytes,
+				     -eb->len,
+				     fs_info->dirty_metadata_batch);
 		ret = 1;
 	} else {
 		spin_unlock(&eb->refs_lock);
@@ -3445,15 +3433,9 @@ retry:
 			 * swizzled back from swapper_space to tmpfs file
 			 * mapping
 			 */
-			if (tree->ops &&
-			    tree->ops->write_cache_pages_lock_hook) {
-				tree->ops->write_cache_pages_lock_hook(page,
-							       data, flush_fn);
-			} else {
-				if (!trylock_page(page)) {
-					flush_fn(data);
-					lock_page(page);
-				}
+			if (!trylock_page(page)) {
+				flush_fn(data);
+				lock_page(page);
 			}
 
 			if (unlikely(page->mapping != mapping)) {
@@ -3674,7 +3656,7 @@ int extent_invalidatepage(struct extent_io_tree *tree,
 			  struct page *page, unsigned long offset)
 {
 	struct extent_state *cached_state = NULL;
-	u64 start = ((u64)page->index << PAGE_CACHE_SHIFT);
+	u64 start = page_offset(page);
 	u64 end = start + PAGE_CACHE_SIZE - 1;
 	size_t blocksize = page->mapping->host->i_sb->s_blocksize;
 
@@ -3700,7 +3682,7 @@ int try_release_extent_state(struct extent_map_tree *map,
 			     struct extent_io_tree *tree, struct page *page,
 			     gfp_t mask)
 {
-	u64 start = (u64)page->index << PAGE_CACHE_SHIFT;
+	u64 start = page_offset(page);
 	u64 end = start + PAGE_CACHE_SIZE - 1;
 	int ret = 1;
 
@@ -3739,7 +3721,7 @@ int try_release_extent_mapping(struct extent_map_tree *map,
 			       gfp_t mask)
 {
 	struct extent_map *em;
-	u64 start = (u64)page->index << PAGE_CACHE_SHIFT;
+	u64 start = page_offset(page);
 	u64 end = start + PAGE_CACHE_SIZE - 1;
 
 	if ((mask & __GFP_WAIT) &&
@@ -4182,6 +4164,7 @@ static inline void btrfs_release_extent_buffer(struct extent_buffer *eb)
 
 static void check_buffer_tree_ref(struct extent_buffer *eb)
 {
+	int refs;
 	/* the ref bit is tricky.  We have to make sure it is set
 	 * if we have the buffer dirty.   Otherwise the
 	 * code to free a buffer can end up dropping a dirty
@@ -4202,6 +4185,10 @@ static void check_buffer_tree_ref(struct extent_buffer *eb)
 	 * So bump the ref count first, then set the bit.  If someone
 	 * beat us to it, drop the ref we added.
 	 */
+	refs = atomic_read(&eb->refs);
+	if (refs >= 2 && test_bit(EXTENT_BUFFER_TREE_REF, &eb->bflags))
+		return;
+
 	spin_lock(&eb->refs_lock);
 	if (!test_and_set_bit(EXTENT_BUFFER_TREE_REF, &eb->bflags))
 		atomic_inc(&eb->refs);
@@ -4403,8 +4390,19 @@ static int release_extent_buffer(struct extent_buffer *eb, gfp_t mask)
 
 void free_extent_buffer(struct extent_buffer *eb)
 {
+	int refs;
+	int old;
 	if (!eb)
 		return;
+
+	while (1) {
+		refs = atomic_read(&eb->refs);
+		if (refs <= 3)
+			break;
+		old = atomic_cmpxchg(&eb->refs, refs, refs - 1);
+		if (old == refs)
+			return;
+	}
 
 	spin_lock(&eb->refs_lock);
 	if (atomic_read(&eb->refs) == 2 &&

@@ -4570,7 +4570,6 @@ long btrfs_ioctl_send(struct file *mnt_file, void __user *arg_)
 	struct btrfs_fs_info *fs_info;
 	struct btrfs_ioctl_send_args *arg = NULL;
 	struct btrfs_key key;
-	struct file *filp = NULL;
 	struct send_ctx *sctx = NULL;
 	u32 i;
 	u64 *clone_sources_tmp = NULL;
@@ -4719,8 +4718,6 @@ long btrfs_ioctl_send(struct file *mnt_file, void __user *arg_)
 		goto out;
 
 out:
-	if (filp)
-		fput(filp);
 	kfree(arg);
 	vfree(clone_sources_tmp);
 
