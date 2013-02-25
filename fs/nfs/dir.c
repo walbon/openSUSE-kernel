@@ -1107,6 +1107,10 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 	if (nd && (nd->flags & LOOKUP_RCU))
 		return -ECHILD;
 
+	if (nd && (nd->flags & LOOKUP_UMOUNT))
+		/* on unmount, assume all dentries are correct */
+		return 1;
+
 	parent = dget_parent(dentry);
 	dir = parent->d_inode;
 	nfs_inc_stats(dir, NFSIOS_DENTRYREVALIDATE);
@@ -1138,7 +1142,8 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 	if (NFS_STALE(inode))
 		goto out_bad;
 
-	if (nd->last_type != LAST_NORM) {
+	if (nd && (nd->last_type != LAST_NORM ||
+		   (nd->flags & LOOKUP_JUMPED))) {
 		/* name not relevant, just inode */
 		error = nfs_revalidate_inode(NFS_SERVER(inode), inode);
 		if (error)
