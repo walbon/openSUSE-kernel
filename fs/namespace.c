@@ -1361,7 +1361,7 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 {
 	struct path path;
 	int retval;
-	int lookup_flags = 0;
+	int lookup_flags = LOOKUP_UMOUNT;
 
 	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
 		return -EINVAL;
