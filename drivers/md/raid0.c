@@ -292,7 +292,7 @@ abort:
 	kfree(conf->strip_zone);
 	kfree(conf->devlist);
 	kfree(conf);
-	*private_conf = NULL;
+	*private_conf = ERR_PTR(err);
 	return err;
 }
 
@@ -336,7 +336,8 @@ static sector_t raid0_size(mddev_t *mddev, sector_t sectors, int raid_disks)
 		  "%s does not support generic reshape\n", __func__);
 
 	list_for_each_entry(rdev, &mddev->disks, same_set)
-		array_sectors += rdev->sectors;
+		array_sectors += (rdev->sectors &
+				  ~(sector_t)(mddev->chunk_sectors-1));
 
 	return array_sectors;
 }
@@ -654,6 +655,7 @@ static void *raid0_takeover_raid10(mddev_t *mddev)
 static void *raid0_takeover_raid1(mddev_t *mddev)
 {
 	raid0_conf_t *priv_conf;
+	int chunksect;
 
 	/* Check layout:
 	 *  - (N - 1) mirror drives must be already faulty
@@ -664,10 +666,25 @@ static void *raid0_takeover_raid1(mddev_t *mddev)
 		return ERR_PTR(-EINVAL);
 	}
 
+	/*
+	 * a raid1 doesn't have the notion of chunk size, so
+	 * figure out the largest suitable size we can use.
+	 */
+	chunksect = 64 * 2; /* 64K by default */
+
+	/* The array must be an exact multiple of chunksize */
+	while (chunksect && (mddev->array_sectors & (chunksect - 1)))
+		chunksect >>= 1;
+
+	if ((chunksect << 9) < PAGE_SIZE)
+		/* array size does not allow a suitable chunk size */
+		return ERR_PTR(-EINVAL);
+
 	/* Set new parameters */
 	mddev->new_level = 0;
 	mddev->new_layout = 0;
-	mddev->new_chunk_sectors = 128; /* by default set chunk size to 64k */
+	mddev->new_chunk_sectors = chunksect;
+	mddev->chunk_sectors = chunksect;
 	mddev->delta_disks = 1 - mddev->raid_disks;
 	mddev->raid_disks = 1;
 	/* make sure it will be not marked as dirty */

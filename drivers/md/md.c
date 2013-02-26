@@ -2800,6 +2800,7 @@ offset_store(mdk_rdev_t *rdev, const char *buf, size_t len)
 		 * can be sane */
 		return -EBUSY;
 	rdev->data_offset = offset;
+	rdev->new_data_offset = offset;
 	return len;
 }
 
@@ -2918,6 +2919,9 @@ rdev_size_store(mdk_rdev_t *rdev, const char *buf, size_t len)
 		} else if (!sectors)
 			sectors = (i_size_read(rdev->bdev->bd_inode) >> 9) -
 				rdev->data_offset;
+		if (!my_mddev->pers->resize)
+			/* Cannot change size for RAID0 or Linear etc */
+			return -EINVAL;
 	}
 	if (sectors < my_mddev->dev_sectors)
 		return -EINVAL; /* component must fit device */
