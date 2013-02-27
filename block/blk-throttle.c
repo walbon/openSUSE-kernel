@@ -349,6 +349,7 @@ static struct throtl_grp * throtl_get_tg(struct throtl_data *td)
 
 	/* Make sure @q is still alive */
 	if (unlikely(blk_queue_dead(q))) {
+		spin_unlock_irq(q->queue_lock);
 		kfree(tg);
 		return NULL;
 	}

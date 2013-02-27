@@ -772,7 +772,7 @@ void elv_put_request(struct request_queue *q, struct request *rq)
 {
 	struct elevator_queue *e = q->elevator;
 
-	if (blk_queue_dead(q) &&
+	if (!blk_queue_dead(q) &&
 	    e->ops->elevator_put_req_fn)
 		e->ops->elevator_put_req_fn(rq);
 }
