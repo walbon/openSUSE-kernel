@@ -591,6 +591,14 @@ static struct ib_ucontext *mlx4_ib_alloc_ucontext(struct ib_device *ibdev,
 		kfree(context);
 		return ERR_PTR(err);
 	}
+	context->uar_mmap =
+		ioremap((phys_addr_t) context->uar.pfn << PAGE_SHIFT,
+			PAGE_SIZE);
+	if (!context->uar_mmap) {
+		mlx4_uar_free(to_mdev(ibdev)->dev, &context->uar);
+		kfree(context);
+		return ERR_PTR(-ENOMEM);
+	}
 
 	INIT_LIST_HEAD(&context->db_page_list);
 	mutex_init(&context->db_page_mutex);
@@ -601,6 +609,7 @@ static struct ib_ucontext *mlx4_ib_alloc_ucontext(struct ib_device *ibdev,
 		err = ib_copy_to_udata(udata, &resp, sizeof(resp));
 
 	if (err) {
+		iounmap(context->uar_mmap);
 		mlx4_uar_free(to_mdev(ibdev)->dev, &context->uar);
 		kfree(context);
 		return ERR_PTR(-EFAULT);
@@ -613,6 +622,7 @@ static int mlx4_ib_dealloc_ucontext(struct ib_ucontext *ibcontext)
 {
 	struct mlx4_ib_ucontext *context = to_mucontext(ibcontext);
 
+	iounmap(context->uar_mmap);
 	mlx4_uar_free(to_mdev(ibcontext->device)->dev, &context->uar);
 	kfree(context);
 
@@ -643,6 +653,48 @@ static int mlx4_ib_mmap(struct ib_ucontext *context, struct vm_area_struct *vma)
 			return -EAGAIN;
 	} else
 		return -EINVAL;
+
+	return 0;
+}
+
+int mlx4_ib_kwrite_mmio32(struct ib_ucontext *ibcontext, u64 offset, u32 value)
+{
+	struct mlx4_ib_ucontext *ctx = to_mucontext(ibcontext);
+
+	if ((offset + sizeof(value)) >= PAGE_SIZE)
+		return -EINVAL;
+
+	if (ctx->uar_mmap) {
+		wmb();
+		writel(value, ctx->uar_mmap + offset);
+		mmiowb();
+	} else
+		return -ENOMEM;
+
+	return 0;
+}
+
+int mlx4_ib_kwrite_mmio64(struct ib_ucontext *ibcontext, u64 offset, u64 value)
+{
+	struct mlx4_ib_ucontext *ctx = to_mucontext(ibcontext);
+
+	if ((offset + sizeof(value)) >= PAGE_SIZE)
+		return -EINVAL;
+
+	if (ctx->uar_mmap) {
+#ifdef CONFIG_64BIT
+		wmb();
+		writeq(value, ctx->uar_mmap + offset);
+#else
+		u64 buf = cpu_to_le64(value);
+
+		wmb();
+		__raw_writel(((u32 *)&buf)[0], ctx->uar_mmap + offset);
+		__raw_writel(((u32 *)&buf)[1], ctx->uar_mmap + offset + 4);
+#endif
+		mmiowb();
+	} else
+		return -ENOMEM;
 
 	return 0;
 }
@@ -1404,7 +1456,8 @@ static void *mlx4_ib_add(struct mlx4_dev *dev)
 		(1ull << IB_USER_VERBS_CMD_CREATE_SRQ)		|
 		(1ull << IB_USER_VERBS_CMD_MODIFY_SRQ)		|
 		(1ull << IB_USER_VERBS_CMD_QUERY_SRQ)		|
-		(1ull << IB_USER_VERBS_CMD_DESTROY_SRQ);
+		(1ull << IB_USER_VERBS_CMD_DESTROY_SRQ)         |
+		(1ull << IB_USER_VERBS_CMD_KWRITE_MMIO);
 
 	ibdev->ib_dev.query_device	= mlx4_ib_query_device;
 	ibdev->ib_dev.query_port	= mlx4_ib_query_port;
@@ -1447,6 +1500,8 @@ static void *mlx4_ib_add(struct mlx4_dev *dev)
 	ibdev->ib_dev.attach_mcast	= mlx4_ib_mcg_attach;
 	ibdev->ib_dev.detach_mcast	= mlx4_ib_mcg_detach;
 	ibdev->ib_dev.process_mad	= mlx4_ib_process_mad;
+	ibdev->ib_dev.kwrite_mmio32	= mlx4_ib_kwrite_mmio32;
+	ibdev->ib_dev.kwrite_mmio64	= mlx4_ib_kwrite_mmio64;
 
 	if (!mlx4_is_slave(ibdev->dev)) {
 		ibdev->ib_dev.alloc_fmr		= mlx4_ib_fmr_alloc;

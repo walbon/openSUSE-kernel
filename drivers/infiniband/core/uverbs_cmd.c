@@ -1460,6 +1460,48 @@ ssize_t ib_uverbs_destroy_qp(struct ib_uverbs_file *file,
 	return in_len;
 }
 
+ssize_t ib_uverbs_kwrite_mmio(struct ib_uverbs_file *file,
+			       const char __user *buf,
+			       int in_len,
+			       int out_len)
+{
+	struct ib_uverbs_kwrite_mmio	cmd;
+	ssize_t				ret = -EINVAL;
+
+	if (copy_from_user(&cmd, buf, sizeof(cmd)))
+		return -EFAULT;
+
+	if (in_len < sizeof(cmd))
+		return -EINVAL;
+
+	if (file->device->ib_dev->kwrite_mmio32 == NULL ||
+	    file->device->ib_dev->kwrite_mmio64 == NULL) {
+		dev_alert(file->device->dev,
+			"The verb %s is not supported by the driver.\n",
+			"IB_USER_VERBS_CMD_KWRITE_MMIO");
+		return -ENOSYS;
+	}
+
+	mutex_lock(&file->mutex);
+	switch (cmd.data_length) {
+	case 4:
+		ret = file->device->ib_dev->kwrite_mmio32(file->ucontext,
+							cmd.offset,
+							cmd.value.data32);
+		break;
+	case 8:
+		ret = file->device->ib_dev->kwrite_mmio64(file->ucontext,
+							cmd.offset,
+							cmd.value.data64);
+		break;
+	default:
+		ret = -EINVAL;
+	}
+	mutex_unlock(&file->mutex);
+
+	return ret;
+}
+
 ssize_t ib_uverbs_post_send(struct ib_uverbs_file *file,
 			    const char __user *buf, int in_len,
 			    int out_len)
