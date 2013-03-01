@@ -2239,8 +2239,8 @@ xfs_rtmount_init(
 	}
 	xfs_buf_relse(bp);
 	xfs_warn(mp, "Realtime volumes are an experimental feature. Please "
-		"contact SUSE Technical Services to discuss your specific use "
-		"case and needs.");
+		"contact SUSE Technical Services in case you encounter any "
+		"issues.");
 	return 0;
 }
 
