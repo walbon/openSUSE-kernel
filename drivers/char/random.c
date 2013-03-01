@@ -250,6 +250,7 @@
 #include <linux/interrupt.h>
 #include <linux/mm.h>
 #include <linux/spinlock.h>
+#include <linux/kthread.h>
 #include <linux/percpu.h>
 #include <linux/cryptohash.h>
 #include <linux/fips.h>
@@ -1495,9 +1496,10 @@ void add_hwgenerator_randomness(const char *buffer, size_t count)
 	struct entropy_store *poolp = &input_pool;
 
 	/* Suspend writing if we're above the trickle threshold.
-	 * We'll be woken up again once below random_write_wakeup_thresh.
+	 * We'll be woken up again once below random_write_wakeup_thresh,
+	 * or when the calling thread is about to terminate.
 	 */
-	wait_event_interruptible(random_write_wait,
+	wait_event_interruptible(random_write_wait, kthread_should_stop() ||
 				 input_pool.entropy_count <= trickle_thresh);
 	mix_pool_bytes(poolp, buffer, count, NULL);
 	credit_entropy_bits(poolp, count*8);
