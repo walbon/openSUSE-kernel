@@ -27,6 +27,7 @@
 /*
  * Version Information
  */
+static inline int usb_translate_errors(int error_code);
 #define DRIVER_VERSION "v0.03"
 #define DRIVER_AUTHOR "Oliver Neukum"
 #define DRIVER_DESC "USB Abstract Control Model driver for USB WCM Device Management"
@@ -353,6 +354,7 @@ static ssize_t wdm_write
 	r = usb_autopm_get_interface(desc->intf);
 	if (r < 0) {
 		kfree(buf);
+		rv = usb_translate_errors(r);
 		goto outnp;
 	}
 
@@ -364,6 +366,7 @@ static ssize_t wdm_write
 			r = -EAGAIN;
 	if (r < 0) {
 		kfree(buf);
+		rv = r;
 		goto out;
 	}
 
@@ -395,6 +398,7 @@ static ssize_t wdm_write
 		desc->outbuf = NULL;
 		clear_bit(WDM_IN_USE, &desc->flags);
 		dev_err(&desc->intf->dev, "Tx URB error: %d\n", rv);
+		rv = usb_translate_errors(rv);
 	} else {
 		dev_dbg(&desc->intf->dev, "Tx URB has been submitted index=%d",
 			req->wIndex);
@@ -520,7 +524,7 @@ static int wdm_flush(struct file *file, fl_owner_t id)
 		dev_err(&desc->intf->dev, "Error in flush path: %d\n",
 			desc->werr);
 
-	return desc->werr;
+	return usb_translate_errors(desc->werr);
 }
 
 static unsigned int wdm_poll(struct file *file, struct poll_table_struct *wait)
@@ -583,6 +587,7 @@ static int wdm_open(struct inode *inode, struct file *file)
 			desc->count--;
 			dev_err(&desc->intf->dev,
 				"Error submitting int urb - %d\n", rv);
+			rv = usb_translate_errors(rv);
 		}
 	} else {
 		rv = 0;
@@ -969,3 +974,17 @@ module_exit(wdm_exit);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
+
+/* translate USB error codes to codes user space understands */
+static inline int usb_translate_errors(int error_code)
+{
+	switch (error_code) {
+	case 0:
+	case -ENOMEM:
+	case -ENODEV:
+	case -EOPNOTSUPP:
+		return error_code;
+	default:
+		return -EIO;
+	}
+}
