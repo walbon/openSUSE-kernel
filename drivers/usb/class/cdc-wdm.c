@@ -27,7 +27,6 @@
 /*
  * Version Information
  */
-static inline int usb_translate_errors(int error_code);
 #define DRIVER_VERSION "v0.03"
 #define DRIVER_AUTHOR "Oliver Neukum"
 #define DRIVER_DESC "USB Abstract Control Model driver for USB WCM Device Management"
@@ -974,17 +973,3 @@ module_exit(wdm_exit);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
-
-/* translate USB error codes to codes user space understands */
-static inline int usb_translate_errors(int error_code)
-{
-	switch (error_code) {
-	case 0:
-	case -ENOMEM:
-	case -ENODEV:
-	case -EOPNOTSUPP:
-		return error_code;
-	default:
-		return -EIO;
-	}
-}
