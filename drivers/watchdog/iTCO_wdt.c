@@ -38,6 +38,7 @@
  *	document number TBD                   : Panther Point
  *	document number TBD                   : Lynx Point
  *	document number TBD                   : Lynx Point-LP
+ *	document number TBD		      : Wellsburg
  */
 
 /*
@@ -130,6 +131,7 @@ enum iTCO_chipsets {
 	TCO_PPT,	/* Panther Point */
 	TCO_LPT,	/* Lynx Point */
 	TCO_LPT_LP,	/* Lynx Point-LP */
+	TCO_WBG,        /* Wellsburg */
 };
 
 static struct {
@@ -195,6 +197,7 @@ static struct {
 	{"Panther Point", 2},
 	{"Lynx Point", 2},
 	{"Lynx Point_LP", 2},
+	{"Wellsburg", 2},
 	{NULL, 0}
 };
 
@@ -377,6 +380,38 @@ static DEFINE_PCI_DEVICE_TABLE(iTCO_wdt_pci_tbl) = {
 	{ PCI_VDEVICE(INTEL, 0x9c45), TCO_LPT_LP},
 	{ PCI_VDEVICE(INTEL, 0x9c46), TCO_LPT_LP},
 	{ PCI_VDEVICE(INTEL, 0x9c47), TCO_LPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x8d40), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d41), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d42), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d43), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d44), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d45), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d46), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d47), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d48), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d49), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d4a), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d4b), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d4c), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d4d), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d4e), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d4f), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d50), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d51), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d52), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d53), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d54), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d55), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d56), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d57), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d58), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d59), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d5a), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d5b), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d5c), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d5d), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d5e), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x8d5f), TCO_WBG},
 	{ 0, },			/* End of list */
 };
 MODULE_DEVICE_TABLE(pci, iTCO_wdt_pci_tbl);
