@@ -526,10 +526,8 @@ int fnic_fcoe_handle_fip_frame(struct fnic *fnic, struct sk_buff *skb)
 		/* pass it on to fcoe */
 		ret = 1;
 	}
-	return ret;
 drop:
-	dev_kfree_skb_irq(skb);
-	return -1;
+	return ret;
 }
 
 void fnic_handle_fip_frame(struct work_struct *work)
@@ -560,8 +558,10 @@ void fnic_handle_fip_frame(struct work_struct *work)
 		eh = (struct ethhdr *)skb->data;
 		if (eh->h_proto == htons(ETH_P_FIP)) {
 			skb_pull(skb, sizeof(*eh));
-			if (fnic_fcoe_handle_fip_frame(fnic, skb) <= 0)
+			if (fnic_fcoe_handle_fip_frame(fnic, skb) <= 0) {
+				dev_kfree_skb(skb);
 				continue;
+			}
 			/*
 			 * If there's FLOGI rejects - clear all
 			 * fcf's & restart from scratch
@@ -572,6 +572,7 @@ void fnic_handle_fip_frame(struct work_struct *work)
 				fcoe_ctlr_link_down(&fnic->ctlr);
 				/* start FCoE VLAN discovery */
 				fnic_fcoe_send_vlan_req(fnic);
+				dev_kfree_skb(skb);
 				continue;
 			}
 			fcoe_ctlr_recv(&fnic->ctlr, skb);
