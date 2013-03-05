@@ -84,11 +84,13 @@ struct btrfs_trans_handle {
 
 struct btrfs_pending_snapshot {
 	struct dentry *dentry;
+	struct inode *dir;
 	struct btrfs_root *root;
 	struct btrfs_root *snap;
 	struct btrfs_qgroup_inherit *inherit;
 	/* block reservation for the operation */
 	struct btrfs_block_rsv block_rsv;
+	u64 qgroup_reserved;
 	/* extra metadata reseration for relocation */
 	int error;
 	bool readonly;

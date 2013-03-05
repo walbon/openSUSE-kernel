@@ -363,7 +363,7 @@ static noinline int btrfs_ioctl_fitrim(struct file *file, void __user *arg)
 	return 0;
 }
 
-static noinline int create_subvol(struct btrfs_root *root,
+static noinline int create_subvol(struct inode *dir,
 				  struct dentry *dentry,
 				  char *name, int namelen,
 				  u64 *async_transid,
@@ -374,9 +374,9 @@ static noinline int create_subvol(struct btrfs_root *root,
 	struct btrfs_root_item root_item;
 	struct btrfs_inode_item *inode_item;
 	struct extent_buffer *leaf;
+	struct btrfs_root *root = BTRFS_I(dir)->root;
 	struct btrfs_root *new_root;
-	struct dentry *parent = dentry->d_parent;
-	struct inode *dir;
+	struct btrfs_block_rsv block_rsv;
 	struct inode *inode;
 	struct timespec cur_time = CURRENT_TIME;
 	int ret;
@@ -384,23 +384,30 @@ static noinline int create_subvol(struct btrfs_root *root,
 	u64 objectid;
 	u64 new_dirid = BTRFS_FIRST_FREE_OBJECTID;
 	u64 index = 0;
+	u64 qgroup_reserved;
 	uuid_le new_uuid;
 
 	ret = btrfs_find_free_objectid(root->fs_info->tree_root, &objectid);
 	if (ret)
 		return ret;
 
-	dir = parent->d_inode;
-
+	btrfs_init_block_rsv(&block_rsv, BTRFS_BLOCK_RSV_TEMP);
 	/*
-	 * 1 - inode item
-	 * 2 - refs
-	 * 1 - root item
-	 * 2 - dir items
+	 * The same as the snapshot creation, please see the comment
+	 * of create_snapshot().
 	 */
-	trans = btrfs_start_transaction(root, 6);
-	if (IS_ERR(trans))
-		return PTR_ERR(trans);
+	ret = btrfs_subvolume_reserve_metadata(root, &block_rsv,
+					       7, &qgroup_reserved);
+	if (ret)
+		return ret;
+
+	trans = btrfs_start_transaction(root, 0);
+	if (IS_ERR(trans)) {
+		ret = PTR_ERR(trans);
+		goto out;
+	}
+	trans->block_rsv = &block_rsv;
+	trans->bytes_reserved = block_rsv.size;
 
 	ret = btrfs_qgroup_inherit(trans, root->fs_info, 0, objectid, inherit);
 	if (ret)
@@ -516,9 +523,13 @@ static noinline int create_subvol(struct btrfs_root *root,
 	BUG_ON(ret);
 
 fail:
+	trans->block_rsv = NULL;
+	trans->bytes_reserved = 0;
 	if (async_transid) {
 		*async_transid = trans->transid;
 		err = btrfs_commit_transaction_async(trans, root, 1);
+		if (err)
+			err = btrfs_commit_transaction(trans, root);
 	} else {
 		err = btrfs_commit_transaction(trans, root);
 	}
@@ -534,12 +545,15 @@ fail:
 		}
 	}
 
+out:
+	btrfs_subvolume_release_metadata(root, &block_rsv, qgroup_reserved);
 	return ret;
 }
 
-static int create_snapshot(struct btrfs_root *root, struct dentry *dentry,
-			   char *name, int namelen, u64 *async_transid,
-			   bool readonly, struct btrfs_qgroup_inherit *inherit)
+static int create_snapshot(struct btrfs_root *root, struct inode *dir,
+			   struct dentry *dentry, char *name, int namelen,
+			   u64 *async_transid, bool readonly,
+			   struct btrfs_qgroup_inherit *inherit)
 {
 	struct inode *inode;
 	struct btrfs_pending_snapshot *pending_snapshot;
@@ -555,19 +569,30 @@ static int create_snapshot(struct btrfs_root *root, struct dentry *dentry,
 
 	btrfs_init_block_rsv(&pending_snapshot->block_rsv,
 			     BTRFS_BLOCK_RSV_TEMP);
+	/*
+	 * 1 - parent dir inode
+	 * 2 - dir entries
+	 * 1 - root item
+	 * 2 - root ref/backref
+	 * 1 - root of snapshot
+	 */
+	ret = btrfs_subvolume_reserve_metadata(BTRFS_I(dir)->root,
+					&pending_snapshot->block_rsv, 7,
+					&pending_snapshot->qgroup_reserved);
+	if (ret)
+		goto out;
+
 	pending_snapshot->dentry = dentry;
 	pending_snapshot->root = root;
 	pending_snapshot->readonly = readonly;
+	pending_snapshot->dir = dir;
 	pending_snapshot->inherit = inherit;
 
-	trans = btrfs_start_transaction(root->fs_info->extent_root, 6);
+	trans = btrfs_start_transaction(root, 0);
 	if (IS_ERR(trans)) {
 		ret = PTR_ERR(trans);
 		goto fail;
 	}
-
-	ret = btrfs_snap_reserve_metadata(trans, pending_snapshot);
-	BUG_ON(ret);
 
 	spin_lock(&root->fs_info->trans_lock);
 	list_add(&pending_snapshot->list,
@@ -577,16 +602,14 @@ static int create_snapshot(struct btrfs_root *root, struct dentry *dentry,
 		*async_transid = trans->transid;
 		ret = btrfs_commit_transaction_async(trans,
 				     root->fs_info->extent_root, 1);
+		if (ret)
+			ret = btrfs_commit_transaction(trans, root);
 	} else {
 		ret = btrfs_commit_transaction(trans,
 					       root->fs_info->extent_root);
 	}
-	if (ret) {
-		/* cleanup_transaction has freed this for us */
-		if (trans->aborted)
-			pending_snapshot = NULL;
+	if (ret)
 		goto fail;
-	}
 
 	ret = pending_snapshot->error;
 	if (ret)
@@ -605,6 +628,10 @@ static int create_snapshot(struct btrfs_root *root, struct dentry *dentry,
 	d_instantiate(dentry, inode);
 	ret = 0;
 fail:
+	btrfs_subvolume_release_metadata(BTRFS_I(dir)->root,
+					 &pending_snapshot->block_rsv,
+					 pending_snapshot->qgroup_reserved);
+out:
 	kfree(pending_snapshot);
 	return ret;
 }
@@ -735,11 +762,11 @@ static noinline int btrfs_mksubvol(struct path *parent,
 		goto out_up_read;
 
 	if (snap_src) {
-		error = create_snapshot(snap_src, dentry, name, namelen,
+		error = create_snapshot(snap_src, dir, dentry, name, namelen,
 					async_transid, readonly, inherit);
 	} else {
-		error = create_subvol(BTRFS_I(dir)->root, dentry,
-				      name, namelen, async_transid, inherit);
+		error = create_subvol(dir, dentry, name, namelen,
+				      async_transid, inherit);
 	}
 	if (!error)
 		fsnotify_mkdir(dir, dentry);
@@ -2047,6 +2074,8 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 	struct btrfs_root *dest = NULL;
 	struct btrfs_ioctl_vol_args *vol_args;
 	struct btrfs_trans_handle *trans;
+	struct btrfs_block_rsv block_rsv;
+	u64 qgroup_reserved;
 	int namelen;
 	int ret;
 	int err = 0;
@@ -2136,12 +2165,23 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 	if (err)
 		goto out_up_write;
 
+	btrfs_init_block_rsv(&block_rsv, BTRFS_BLOCK_RSV_TEMP);
+	/*
+	 * One for dir inode, two for dir entries, two for root
+	 * ref/backref.
+	 */
+	err = btrfs_subvolume_reserve_metadata(root, &block_rsv,
+					       5, &qgroup_reserved);
+	if (err)
+		goto out_up_write;
+
 	trans = btrfs_start_transaction(root, 0);
 	if (IS_ERR(trans)) {
 		err = PTR_ERR(trans);
-		goto out_up_write;
+		goto out_release;
 	}
-	trans->block_rsv = &root->fs_info->global_block_rsv;
+	trans->block_rsv = &block_rsv;
+	trans->bytes_reserved = block_rsv.size;
 
 	ret = btrfs_unlink_subvol(trans, root, dir,
 				dest->root_key.objectid,
@@ -2171,10 +2211,14 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 		}
 	}
 out_end_trans:
+	trans->block_rsv = NULL;
+	trans->bytes_reserved = 0;
 	ret = btrfs_end_transaction(trans, root);
 	if (ret && !err)
 		err = ret;
 	inode->i_flags |= S_DEAD;
+out_release:
+	btrfs_subvolume_release_metadata(root, &block_rsv, qgroup_reserved);
 out_up_write:
 	up_write(&root->fs_info->subvol_sem);
 out_unlock:
@@ -2210,13 +2254,6 @@ static int btrfs_ioctl_defrag(struct file *file, void __user *argp)
 	ret = mnt_want_write_file(file);
 	if (ret)
 		return ret;
-
-	if (atomic_xchg(&root->fs_info->mutually_exclusive_operation_running,
-			1)) {
-		pr_info("btrfs: dev add/delete/balance/replace/resize operation in progress\n");
-		mnt_drop_write_file(file);
-		return -EINVAL;
-	}
 
 	if (btrfs_root_readonly(root)) {
 		ret = -EROFS;
@@ -2272,7 +2309,6 @@ static int btrfs_ioctl_defrag(struct file *file, void __user *argp)
 		ret = -EINVAL;
 	}
 out:
-	atomic_set(&root->fs_info->mutually_exclusive_operation_running, 0);
 	mnt_drop_write_file(file);
 	return ret;
 }

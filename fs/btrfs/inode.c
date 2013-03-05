@@ -232,8 +232,7 @@ static noinline int cow_file_range_inline(struct btrfs_trans_handle *trans,
 	u64 isize = i_size_read(inode);
 	u64 actual_end = min(end + 1, isize);
 	u64 inline_len = actual_end - start;
-	u64 aligned_end = (end + root->sectorsize - 1) &
-			~((u64)root->sectorsize - 1);
+	u64 aligned_end = ALIGN(end, root->sectorsize);
 	u64 data_len = inline_len;
 	int ret;
 
@@ -266,6 +265,7 @@ static noinline int cow_file_range_inline(struct btrfs_trans_handle *trans,
 		return 1;
 	}
 
+	set_bit(BTRFS_INODE_NEEDS_FULL_SYNC, &BTRFS_I(inode)->runtime_flags);
 	btrfs_delalloc_release_metadata(inode, end + 1 - start);
 	btrfs_drop_extent_cache(inode, start, aligned_end - 1, 0);
 	return 0;
@@ -390,7 +390,7 @@ again:
 	 * a compressed extent to 128k.
 	 */
 	total_compressed = min(total_compressed, max_uncompressed);
-	num_bytes = (end - start + blocksize) & ~(blocksize - 1);
+	num_bytes = ALIGN(end - start + 1, blocksize);
 	num_bytes = max(blocksize,  num_bytes);
 	total_in = 0;
 	ret = 0;
@@ -518,15 +518,13 @@ cont:
 		 * up to a block size boundary so the allocator does sane
 		 * things
 		 */
-		total_compressed = (total_compressed + blocksize - 1) &
-			~(blocksize - 1);
+		total_compressed = ALIGN(total_compressed, blocksize);
 
 		/*
 		 * one last check to make sure the compression is really a
 		 * win, compare the page count read with the blocks on disk
 		 */
-		total_in = (total_in + PAGE_CACHE_SIZE - 1) &
-			~(PAGE_CACHE_SIZE - 1);
+		total_in = ALIGN(total_in, PAGE_CACHE_SIZE);
 		if (total_compressed >= total_in) {
 			will_compress = 0;
 		} else {
@@ -884,7 +882,7 @@ static noinline int __cow_file_range(struct btrfs_trans_handle *trans,
 
 	BUG_ON(btrfs_is_free_space_inode(inode));
 
-	num_bytes = (end - start + blocksize) & ~(blocksize - 1);
+	num_bytes = ALIGN(end - start + 1, blocksize);
 	num_bytes = max(blocksize,  num_bytes);
 	disk_num_bytes = num_bytes;
 
@@ -4046,7 +4044,6 @@ int btrfs_truncate_inode_items(struct btrfs_trans_handle *trans,
 	u64 extent_num_bytes = 0;
 	u64 extent_offset = 0;
 	u64 item_end = 0;
-	u64 mask = root->sectorsize - 1;
 	u32 found_type = (u8)-1;
 	int found_extent;
 	int del_item;
@@ -4070,7 +4067,8 @@ int btrfs_truncate_inode_items(struct btrfs_trans_handle *trans,
 	 * extent just the way it is.
 	 */
 	if (root->ref_cows || root == root->fs_info->tree_root)
-		btrfs_drop_extent_cache(inode, (new_size + mask) & (~mask), (u64)-1, 0);
+		btrfs_drop_extent_cache(inode, ALIGN(new_size,
+					root->sectorsize), (u64)-1, 0);
 
 	/*
 	 * This function is also used to drop the items in the log tree before
@@ -4149,10 +4147,9 @@ search_again:
 			if (!del_item) {
 				u64 orig_num_bytes =
 					btrfs_file_extent_num_bytes(leaf, fi);
-				extent_num_bytes = new_size -
-					found_key.offset + root->sectorsize - 1;
-				extent_num_bytes = extent_num_bytes &
-					~((u64)root->sectorsize - 1);
+				extent_num_bytes = ALIGN(new_size -
+						found_key.offset,
+						root->sectorsize);
 				btrfs_set_file_extent_num_bytes(leaf, fi,
 							 extent_num_bytes);
 				num_dec = (orig_num_bytes -
@@ -4388,9 +4385,8 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
 	struct extent_map *em = NULL;
 	struct extent_state *cached_state = NULL;
 	struct extent_map_tree *em_tree = &BTRFS_I(inode)->extent_tree;
-	u64 mask = root->sectorsize - 1;
-	u64 hole_start = (oldsize + mask) & ~mask;
-	u64 block_end = (size + mask) & ~mask;
+	u64 hole_start = ALIGN(oldsize, root->sectorsize);
+	u64 block_end = ALIGN(size, root->sectorsize);
 	u64 last_byte;
 	u64 cur_offset;
 	u64 hole_size;
@@ -4423,7 +4419,7 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
 			break;
 		}
 		last_byte = min(extent_map_end(em), block_end);
-		last_byte = (last_byte + mask) & ~mask;
+		last_byte = ALIGN(last_byte , root->sectorsize);
 		if (!test_bit(EXTENT_FLAG_PREALLOC, &em->flags)) {
 			struct extent_map *hole_em;
 			hole_size = last_byte - cur_offset;
@@ -5622,7 +5618,8 @@ static struct inode *btrfs_new_inode(struct btrfs_trans_handle *trans,
 		if (btrfs_test_opt(root, NODATASUM))
 			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATASUM;
 		if (btrfs_test_opt(root, NODATACOW))
-			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATACOW;
+			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATACOW |
+				BTRFS_INODE_NODATASUM;
 	}
 
 	insert_inode_hash(inode);
@@ -6158,8 +6155,7 @@ again:
 	} else if (found_type == BTRFS_FILE_EXTENT_INLINE) {
 		size_t size;
 		size = btrfs_file_extent_inline_len(leaf, item);
-		extent_end = (extent_start + size + root->sectorsize - 1) &
-			~((u64)root->sectorsize - 1);
+		extent_end = ALIGN(extent_start + size, root->sectorsize);
 	}
 
 	if (start >= extent_end) {
@@ -6231,8 +6227,7 @@ again:
 		copy_size = min_t(u64, PAGE_CACHE_SIZE - pg_offset,
 				size - extent_offset);
 		em->start = extent_start + extent_offset;
-		em->len = (copy_size + root->sectorsize - 1) &
-			~((u64)root->sectorsize - 1);
+		em->len = ALIGN(copy_size, root->sectorsize);
 		em->orig_block_len = em->len;
 		em->orig_start = em->start;
 		if (compress_type) {
@@ -8070,29 +8065,6 @@ static int btrfs_getattr(struct vfsmount *mnt,
 	return 0;
 }
 
-/*
- * If a file is moved, it will inherit the cow and compression flags of the new
- * directory.
- */
-static void fixup_inode_flags(struct inode *dir, struct inode *inode)
-{
-	struct btrfs_inode *b_dir = BTRFS_I(dir);
-	struct btrfs_inode *b_inode = BTRFS_I(inode);
-
-	if (b_dir->flags & BTRFS_INODE_NODATACOW)
-		b_inode->flags |= BTRFS_INODE_NODATACOW;
-	else
-		b_inode->flags &= ~BTRFS_INODE_NODATACOW;
-
-	if (b_dir->flags & BTRFS_INODE_COMPRESS) {
-		b_inode->flags |= BTRFS_INODE_COMPRESS;
-		b_inode->flags &= ~BTRFS_INODE_NOCOMPRESS;
-	} else {
-		b_inode->flags &= ~(BTRFS_INODE_COMPRESS |
-				    BTRFS_INODE_NOCOMPRESS);
-	}
-}
-
 static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 			   struct inode *new_dir, struct dentry *new_dentry)
 {
@@ -8257,8 +8229,6 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 			goto out_fail;
 		}
 	}
-
-	fixup_inode_flags(new_dir, old_inode);
 
 	ret = btrfs_add_link(trans, new_dir, old_inode,
 			     new_dentry->d_name.name,

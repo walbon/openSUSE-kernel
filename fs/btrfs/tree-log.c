@@ -484,7 +484,6 @@ static noinline int replay_one_extent(struct btrfs_trans_handle *trans,
 				      struct btrfs_key *key)
 {
 	int found_type;
-	u64 mask = root->sectorsize - 1;
 	u64 extent_end;
 	u64 start = key->offset;
 	u64 saved_nbytes;
@@ -501,7 +500,7 @@ static noinline int replay_one_extent(struct btrfs_trans_handle *trans,
 		extent_end = start + btrfs_file_extent_num_bytes(eb, item);
 	else if (found_type == BTRFS_FILE_EXTENT_INLINE) {
 		size = btrfs_file_extent_inline_len(eb, item);
-		extent_end = (start + size + mask) & ~mask;
+		extent_end = ALIGN(start + size, root->sectorsize);
 	} else {
 		ret = 0;
 		goto out;
@@ -2467,10 +2466,12 @@ static void free_log_tree(struct btrfs_trans_handle *trans,
 		.process_func = process_one_buffer
 	};
 
-	ret = walk_log_tree(trans, log, &wc);
-	if (ret) {
-		btrfs_std_error(log->fs_info, ret);
-		return;
+	if (trans) {
+		ret = walk_log_tree(trans, log, &wc);
+		if (ret) {
+			btrfs_std_error(log->fs_info, ret);
+			return;
+		}
 	}
 
 	while (1) {
@@ -3302,6 +3303,7 @@ static int log_one_extent(struct btrfs_trans_handle *trans,
 	int index = log->log_transid % 2;
 	bool skip_csum = BTRFS_I(inode)->flags & BTRFS_INODE_NODATASUM;
 
+insert:
 	INIT_LIST_HEAD(&ordered_sums);
 	btrfs_init_map_token(&token);
 	key.objectid = btrfs_ino(inode);
@@ -3317,6 +3319,23 @@ static int log_one_extent(struct btrfs_trans_handle *trans,
 	leaf = path->nodes[0];
 	fi = btrfs_item_ptr(leaf, path->slots[0],
 			    struct btrfs_file_extent_item);
+
+	/*
+	 * If we are overwriting an inline extent with a real one then we need
+	 * to just delete the inline extent as it may not be large enough to
+	 * have the entire file_extent_item.
+	 */
+	if (ret && btrfs_token_file_extent_type(leaf, fi, &token) ==
+	    BTRFS_FILE_EXTENT_INLINE) {
+		ret = btrfs_del_item(trans, log, path);
+		btrfs_release_path(path);
+		if (ret) {
+			path->really_keep_locks = 0;
+			return ret;
+		}
+		goto insert;
+	}
+
 	btrfs_set_token_file_extent_generation(leaf, fi, em->generation,
 					       &token);
 	if (test_bit(EXTENT_FLAG_PREALLOC, &em->flags)) {

@@ -3424,7 +3424,7 @@ int btrfs_check_data_free_space(struct inode *inode, u64 bytes)
 	int ret = 0, committed = 0, alloc_chunk = 1;
 
 	/* make sure bytes are sectorsize aligned */
-	bytes = (bytes + root->sectorsize - 1) & ~((u64)root->sectorsize - 1);
+	bytes = ALIGN(bytes, root->sectorsize);
 
 	if (root == root->fs_info->tree_root ||
 	    BTRFS_I(inode)->location.objectid == BTRFS_FREE_INO_OBJECTID) {
@@ -3519,7 +3519,7 @@ void btrfs_free_reserved_data_space(struct inode *inode, u64 bytes)
 	struct btrfs_space_info *data_sinfo;
 
 	/* make sure bytes are sectorsize aligned */
-	bytes = (bytes + root->sectorsize - 1) & ~((u64)root->sectorsize - 1);
+	bytes = ALIGN(bytes, root->sectorsize);
 
 	data_sinfo = root->fs_info->data_sinfo;
 	spin_lock(&data_sinfo->lock);
@@ -3706,19 +3706,19 @@ again:
 
 	ret = btrfs_alloc_chunk(trans, extent_root, flags);
 	trans->allocating_chunk = false;
-	if (ret < 0 && ret != -ENOSPC)
-		goto out;
 
 	spin_lock(&space_info->lock);
+	if (ret < 0 && ret != -ENOSPC)
+		goto out;
 	if (ret)
 		space_info->full = 1;
 	else
 		ret = 1;
 
 	space_info->force_alloc = CHUNK_ALLOC_NO_FORCE;
+out:
 	space_info->chunk_alloc = 0;
 	spin_unlock(&space_info->lock);
-out:
 	mutex_unlock(&fs_info->chunk_mutex);
 	return ret;
 }
@@ -4557,19 +4557,60 @@ void btrfs_orphan_release_metadata(struct inode *inode)
 	btrfs_block_rsv_release(root, root->orphan_block_rsv, num_bytes);
 }
 
-int btrfs_snap_reserve_metadata(struct btrfs_trans_handle *trans,
-				struct btrfs_pending_snapshot *pending)
+/*
+ * btrfs_subvolume_reserve_metadata() - reserve space for subvolume operation
+ * root: the root of the parent directory
+ * rsv: block reservation
+ * items: the number of items that we need do reservation
+ * qgroup_reserved: used to return the reserved size in qgroup
+ *
+ * This function is used to reserve the space for snapshot/subvolume
+ * creation and deletion. Those operations are different with the
+ * common file/directory operations, they change two fs/file trees
+ * and root tree, the number of items that the qgroup reserves is
+ * different with the free space reservation. So we can not use
+ * the space reseravtion mechanism in start_transaction().
+ */
+int btrfs_subvolume_reserve_metadata(struct btrfs_root *root,
+				     struct btrfs_block_rsv *rsv,
+				     int items,
+				     u64 *qgroup_reserved)
 {
-	struct btrfs_root *root = pending->root;
-	struct btrfs_block_rsv *src_rsv = get_block_rsv(trans, root);
-	struct btrfs_block_rsv *dst_rsv = &pending->block_rsv;
-	/*
-	 * two for root back/forward refs, two for directory entries,
-	 * one for root of the snapshot and one for parent inode.
-	 */
-	u64 num_bytes = btrfs_calc_trans_metadata_size(root, 6);
-	dst_rsv->space_info = src_rsv->space_info;
-	return block_rsv_migrate_bytes(src_rsv, dst_rsv, num_bytes);
+	u64 num_bytes;
+	int ret;
+
+	if (root->fs_info->quota_enabled) {
+		/* One for parent inode, two for dir entries */
+		num_bytes = 3 * root->leafsize;
+		ret = btrfs_qgroup_reserve(root, num_bytes);
+		if (ret)
+			return ret;
+	} else {
+		num_bytes = 0;
+	}
+
+	*qgroup_reserved = num_bytes;
+
+	num_bytes = btrfs_calc_trans_metadata_size(root, items);
+	rsv->space_info = __find_space_info(root->fs_info,
+					    BTRFS_BLOCK_GROUP_METADATA);
+	ret = btrfs_block_rsv_add(root, rsv, num_bytes,
+				  BTRFS_RESERVE_FLUSH_ALL);
+	if (ret) {
+		if (*qgroup_reserved)
+			btrfs_qgroup_free(root, *qgroup_reserved);
+	}
+
+	return ret;
+}
+
+void btrfs_subvolume_release_metadata(struct btrfs_root *root,
+				      struct btrfs_block_rsv *rsv,
+				      u64 qgroup_reserved)
+{
+	btrfs_block_rsv_release(root, rsv, (u64)-1);
+	if (qgroup_reserved)
+		btrfs_qgroup_free(root, qgroup_reserved);
 }
 
 /**
@@ -4677,6 +4718,8 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	enum btrfs_reserve_flush_enum flush = BTRFS_RESERVE_FLUSH_ALL;
 	int ret = 0;
 	bool delalloc_lock = true;
+	u64 to_free = 0;
+	unsigned dropped;
 
 	/* If we are a free space inode we need to not flush since we will be in
 	 * the middle of a transaction commit.  We also don't need the delalloc
@@ -4720,54 +4763,19 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	csum_bytes = BTRFS_I(inode)->csum_bytes;
 	spin_unlock(&BTRFS_I(inode)->lock);
 
-	if (root->fs_info->quota_enabled)
+	if (root->fs_info->quota_enabled) {
 		ret = btrfs_qgroup_reserve(root, num_bytes +
 					   nr_extents * root->leafsize);
+		if (ret)
+			goto out_fail;
+	}
 
-	/*
-	 * ret != 0 here means the qgroup reservation failed, we go straight to
-	 * the shared error handling then.
-	 */
-	if (ret == 0)
-		ret = reserve_metadata_bytes(root, block_rsv,
-					     to_reserve, flush);
-
-	if (ret) {
-		u64 to_free = 0;
-		unsigned dropped;
-
-		spin_lock(&BTRFS_I(inode)->lock);
-		dropped = drop_outstanding_extent(inode);
-		/*
-		 * If the inodes csum_bytes is the same as the original
-		 * csum_bytes then we know we haven't raced with any free()ers
-		 * so we can just reduce our inodes csum bytes and carry on.
-		 * Otherwise we have to do the normal free thing to account for
-		 * the case that the free side didn't free up its reserve
-		 * because of this outstanding reservation.
-		 */
-		if (BTRFS_I(inode)->csum_bytes == csum_bytes)
-			calc_csum_metadata_size(inode, num_bytes, 0);
-		else
-			to_free = calc_csum_metadata_size(inode, num_bytes, 0);
-		spin_unlock(&BTRFS_I(inode)->lock);
-		if (dropped)
-			to_free += btrfs_calc_trans_metadata_size(root, dropped);
-
-		if (to_free) {
-			btrfs_block_rsv_release(root, block_rsv, to_free);
-			trace_btrfs_space_reservation(root->fs_info,
-						      "delalloc",
-						      btrfs_ino(inode),
-						      to_free, 0);
-		}
-		if (root->fs_info->quota_enabled) {
+	ret = reserve_metadata_bytes(root, block_rsv, to_reserve, flush);
+	if (unlikely(ret)) {
+		if (root->fs_info->quota_enabled)
 			btrfs_qgroup_free(root, num_bytes +
 						nr_extents * root->leafsize);
-		}
-		if (delalloc_lock)
-			mutex_unlock(&BTRFS_I(inode)->delalloc_mutex);
-		return ret;
+		goto out_fail;
 	}
 
 	spin_lock(&BTRFS_I(inode)->lock);
@@ -4788,6 +4796,34 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	block_rsv_add_bytes(block_rsv, to_reserve, 1);
 
 	return 0;
+
+out_fail:
+	spin_lock(&BTRFS_I(inode)->lock);
+	dropped = drop_outstanding_extent(inode);
+	/*
+	 * If the inodes csum_bytes is the same as the original
+	 * csum_bytes then we know we haven't raced with any free()ers
+	 * so we can just reduce our inodes csum bytes and carry on.
+	 * Otherwise we have to do the normal free thing to account for
+	 * the case that the free side didn't free up its reserve
+	 * because of this outstanding reservation.
+	 */
+	if (BTRFS_I(inode)->csum_bytes == csum_bytes)
+		calc_csum_metadata_size(inode, num_bytes, 0);
+	else
+		to_free = calc_csum_metadata_size(inode, num_bytes, 0);
+	spin_unlock(&BTRFS_I(inode)->lock);
+	if (dropped)
+		to_free += btrfs_calc_trans_metadata_size(root, dropped);
+
+	if (to_free) {
+		btrfs_block_rsv_release(root, block_rsv, to_free);
+		trace_btrfs_space_reservation(root->fs_info, "delalloc",
+					      btrfs_ino(inode), to_free, 0);
+	}
+	if (delalloc_lock)
+		mutex_unlock(&BTRFS_I(inode)->delalloc_mutex);
+	return ret;
 }
 
 /**
@@ -5602,8 +5638,7 @@ int btrfs_free_extent(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 
 static u64 stripe_align(struct btrfs_root *root, u64 val)
 {
-	u64 mask = ((u64)root->stripesize - 1);
-	u64 ret = (val + mask) & ~mask;
+	u64 ret = ALIGN(val, root->stripesize);
 	return ret;
 }
 

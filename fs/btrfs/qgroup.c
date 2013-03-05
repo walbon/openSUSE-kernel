@@ -620,7 +620,9 @@ static int update_qgroup_limit_item(struct btrfs_trans_handle *trans,
 	key.offset = qgroupid;
 
 	path = btrfs_alloc_path();
-	BUG_ON(!path);
+	if (!path)
+		return -ENOMEM;
+
 	ret = btrfs_search_slot(trans, root, &key, path, 0, 1);
 	if (ret > 0)
 		ret = -ENOENT;
@@ -661,7 +663,9 @@ static int update_qgroup_info_item(struct btrfs_trans_handle *trans,
 	key.offset = qgroup->qgroupid;
 
 	path = btrfs_alloc_path();
-	BUG_ON(!path);
+	if (!path)
+		return -ENOMEM;
+
 	ret = btrfs_search_slot(trans, root, &key, path, 0, 1);
 	if (ret > 0)
 		ret = -ENOENT;
@@ -702,7 +706,9 @@ static int update_qgroup_status_item(struct btrfs_trans_handle *trans,
 	key.offset = 0;
 
 	path = btrfs_alloc_path();
-	BUG_ON(!path);
+	if (!path)
+		return -ENOMEM;
+
 	ret = btrfs_search_slot(trans, root, &key, path, 0, 1);
 	if (ret > 0)
 		ret = -ENOENT;
@@ -732,33 +738,38 @@ static int btrfs_clean_quota_tree(struct btrfs_trans_handle *trans,
 {
 	struct btrfs_path *path;
 	struct btrfs_key key;
+	struct extent_buffer *leaf = NULL;
 	int ret;
-
-	if (!root)
-		return -EINVAL;
+	int nr = 0;
 
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
 
+	path->leave_spinning = 1;
+
+	key.objectid = 0;
+	key.offset = 0;
+	key.type = 0;
+
 	while (1) {
-		key.objectid = 0;
-		key.offset = 0;
-		key.type = 0;
-
-		path->leave_spinning = 1;
 		ret = btrfs_search_slot(trans, root, &key, path, -1, 1);
-		if (ret > 0) {
-			if (path->slots[0] == 0)
-				break;
-			path->slots[0]--;
-		} else if (ret < 0) {
+		if (ret < 0)
+			goto out;
+		leaf = path->nodes[0];
+		nr = btrfs_header_nritems(leaf);
+		if (!nr)
 			break;
-		}
-
-		ret = btrfs_del_item(trans, root, path);
+		/*
+		 * delete the leaf one by one
+		 * since the whole tree is going
+		 * to be deleted.
+		 */
+		path->slots[0] = 0;
+		ret = btrfs_del_items(trans, root, path, 0, nr);
 		if (ret)
 			goto out;
+
 		btrfs_release_path(path);
 	}
 	ret = 0;
