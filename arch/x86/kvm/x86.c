@@ -602,6 +602,14 @@ static bool guest_cpuid_has_smep(struct kvm_vcpu *vcpu)
 	return best && (best->ebx & bit(X86_FEATURE_SMEP));
 }
 
+static bool guest_cpuid_has_fsgsbase(struct kvm_vcpu *vcpu)
+{
+	struct kvm_cpuid_entry2 *best;
+
+	best = kvm_find_cpuid_entry(vcpu, 7, 0);
+	return best && (best->ebx & bit(X86_FEATURE_FSGSBASE));
+}
+
 static inline bool guest_cpuid_has_osvw(struct kvm_vcpu *vcpu)
 {
 	struct kvm_cpuid_entry2 *best;
@@ -654,6 +662,9 @@ int kvm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 		return 1;
 
 	if (!guest_cpuid_has_smep(vcpu) && (cr4 & X86_CR4_SMEP))
+		return 1;
+
+	if (!guest_cpuid_has_fsgsbase(vcpu) && (cr4 & X86_CR4_RDWRGSFS))
 		return 1;
 
 	if (is_long_mode(vcpu)) {
@@ -2461,7 +2472,7 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		F(PCID) | 0 /* Reserved, DCA */ | F(XMM4_1) |
 		F(XMM4_2) | F(X2APIC) | F(MOVBE) | F(POPCNT) |
 		0 /* Reserved*/ | F(AES) | F(XSAVE) | 0 /* OSXSAVE */ | F(AVX) |
-		F(F16C);
+		F(F16C) | F(RDRAND);
 	/* cpuid 0x80000001.ecx */
 	const u32 kvm_supported_word6_x86_features =
 		F(LAHF_LM) | F(CMP_LEGACY) | 0 /*SVM*/ | 0 /* ExtApicSpace */ |
@@ -2477,7 +2488,7 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 
 	/* cpuid 7.0.ebx */
 	const u32 kvm_supported_word9_x86_features =
-		F(BMI1) | F(HLE) | F(AVX2) | F(SMEP) | F(BMI2) | F(RTM) |
+		F(BMI1) | F(HLE) | F(AVX2) | F(SMEP) | F(BMI2) | F(RTM) | F(FSGSBASE) | F(ERMS) |
 		f_invpcid;
 
 	/* all calls to cpuid_count() should be made on the same cpu */

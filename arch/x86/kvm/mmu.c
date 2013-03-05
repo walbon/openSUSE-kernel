@@ -944,7 +944,8 @@ static int kvm_age_rmapp(struct kvm *kvm, unsigned long *rmapp,
 		_young = _spte & shadow_accessed_mask;
 		if (_young) {
 			young = 1;
-			clear_bit(PT_ACCESSED_SHIFT, (unsigned long *)spte);
+			clear_bit((ffs(shadow_accessed_mask) - 1),
+				 (unsigned long *)spte);
 		}
 		spte = rmap_next(kvm, rmapp, spte);
 	}
