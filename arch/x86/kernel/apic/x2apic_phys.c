@@ -23,7 +23,7 @@ early_param("x2apic_phys", set_x2apic_phys_mode);
 static bool x2apic_fadt_phys(void)
 {
 	if ((acpi_gbl_FADT.header.revision >= FADT2_REVISION_ID) &&
-	    (acpi_gbl_FADT.flags & ACPI_FADT_APIC_PHYSICAL)) {
+		(acpi_gbl_FADT.flags & ACPI_FADT_APIC_PHYSICAL)) {
 		printk(KERN_DEBUG "System requires x2apic physical mode\n");
 		return true;
 	}
