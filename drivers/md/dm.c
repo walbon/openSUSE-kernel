@@ -1050,6 +1050,7 @@ static void __map_bio(struct dm_target *ti, struct bio *clone,
 		/*
 		 * Store bio_set for cleanup.
 		 */
+		clone->bi_end_io = NULL;
 		clone->bi_private = md->bs;
 		bio_put(clone);
 		free_tio(md, tio);
@@ -1222,7 +1223,8 @@ static int __clone_and_map_discard(struct clone_info *ci)
 
 		/*
 		 * Even though the device advertised discard support,
-		 * reconfiguration might have changed that since the
+		 * that does not mean every target supports it, and
+		 * reconfiguration might also have changed that since the
 		 * check was performed.
 		 */
 		if (!ti->num_discard_requests)
@@ -2333,7 +2335,6 @@ static int dm_wait_for_completion(struct mapped_device *md, int interruptible)
 	while (1) {
 		set_current_state(interruptible);
 
-		smp_mb();
 		if (!md_in_flight(md))
 			break;
 
@@ -2396,7 +2397,7 @@ static void dm_queue_flush(struct mapped_device *md)
  */
 struct dm_table *dm_swap_table(struct mapped_device *md, struct dm_table *table)
 {
-	struct dm_table *map = ERR_PTR(-EINVAL);
+	struct dm_table *live_map = NULL, *map = ERR_PTR(-EINVAL);
 	struct queue_limits limits;
 	int r;
 
@@ -2406,10 +2407,25 @@ struct dm_table *dm_swap_table(struct mapped_device *md, struct dm_table *table)
 	if (!dm_suspended_md(md))
 		goto out;
 
-	r = dm_calculate_queue_limits(table, &limits);
-	if (r) {
-		map = ERR_PTR(r);
-		goto out;
+	/*
+	 * If the new table has no data devices, retain the existing limits.
+	 * This helps multipath with queue_if_no_path if all paths disappear,
+	 * then new I/O is queued based on these limits, and then some paths
+	 * reappear.
+	 */
+	if (dm_table_has_no_data_devices(table)) {
+		live_map = dm_get_live_table(md);
+		if (live_map)
+			limits = md->queue->limits;
+		dm_table_put(live_map);
+	}
+
+	if (!live_map) {
+		r = dm_calculate_queue_limits(table, &limits);
+		if (r) {
+			map = ERR_PTR(r);
+			goto out;
+		}
 	}
 
 	map = __bind(md, table, &limits);
