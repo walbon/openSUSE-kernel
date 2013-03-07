@@ -2877,8 +2877,8 @@ int mlx4_ib_query_xrc_rcv_qp(struct ib_xrcd *ibxrcd, u32 qp_num,
 
 	if (qp->ibqp.qp_type == IB_QPT_RC || qp->ibqp.qp_type == IB_QPT_UC ||
 	    qp->ibqp.qp_type == IB_QPT_XRC) {
-		to_ib_ah_attr(dev->dev, &qp_attr->ah_attr, &context.pri_path);
-		to_ib_ah_attr(dev->dev, &qp_attr->alt_ah_attr,
+ 		to_ib_ah_attr(dev, &qp_attr->ah_attr, &context.pri_path);
+ 		to_ib_ah_attr(dev, &qp_attr->alt_ah_attr,
 			      &context.alt_path);
 		qp_attr->alt_pkey_index = context.alt_path.pkey_index & 0x7f;
 		qp_attr->alt_port_num	= qp_attr->alt_ah_attr.port_num;
