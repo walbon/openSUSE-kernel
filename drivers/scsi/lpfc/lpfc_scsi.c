@@ -3249,7 +3249,7 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(waitq);
 
 	status = fc_block_scsi_eh(cmnd);
-	if (status)
+	if (status != SUCCESS)
 		return status;
 
 	lpfc_cmd = (struct lpfc_scsi_buf *)cmnd->host_scribble;

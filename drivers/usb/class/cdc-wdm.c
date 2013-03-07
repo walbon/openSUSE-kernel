@@ -54,6 +54,7 @@ MODULE_DEVICE_TABLE (usb, wdm_ids);
 #define WDM_POLL_RUNNING	6
 #define WDM_RESPONDING		7
 #define WDM_SUSPENDING		8
+#define WDM_OVERFLOW		10
 
 #define WDM_MAX			16
 
@@ -118,6 +119,7 @@ static void wdm_in_callback(struct urb *urb)
 {
 	struct wdm_device *desc = urb->context;
 	int status = urb->status;
+	int length = urb->actual_length;
 
 	spin_lock(&desc->iuspin);
 	clear_bit(WDM_RESPONDING, &desc->flags);
@@ -148,9 +150,17 @@ static void wdm_in_callback(struct urb *urb)
 	}
 
 	desc->rerr = status;
-	desc->reslength = urb->actual_length;
-	memmove(desc->ubuf + desc->length, desc->inbuf, desc->reslength);
-	desc->length += desc->reslength;
+	if (length + desc->length > desc->wMaxCommand) {
+		/* The buffer would overflow */
+		set_bit(WDM_OVERFLOW, &desc->flags);
+	} else {
+		/* we may already be in overflow */
+		if (!test_bit(WDM_OVERFLOW, &desc->flags)) {
+			memmove(desc->ubuf + desc->length, desc->inbuf, length);
+			desc->length += length;
+			desc->reslength = length;
+		}
+	}
 skip_error:
 	wake_up(&desc->wait);
 
@@ -343,6 +353,7 @@ static ssize_t wdm_write
 	r = usb_autopm_get_interface(desc->intf);
 	if (r < 0) {
 		kfree(buf);
+		rv = usb_translate_errors(r);
 		goto outnp;
 	}
 
@@ -354,6 +365,7 @@ static ssize_t wdm_write
 			r = -EAGAIN;
 	if (r < 0) {
 		kfree(buf);
+		rv = r;
 		goto out;
 	}
 
@@ -385,6 +397,7 @@ static ssize_t wdm_write
 		desc->outbuf = NULL;
 		clear_bit(WDM_IN_USE, &desc->flags);
 		dev_err(&desc->intf->dev, "Tx URB error: %d\n", rv);
+		rv = usb_translate_errors(rv);
 	} else {
 		dev_dbg(&desc->intf->dev, "Tx URB has been submitted index=%d",
 			req->wIndex);
@@ -415,6 +428,11 @@ static ssize_t wdm_read
 retry:
 		if (test_bit(WDM_DISCONNECTING, &desc->flags)) {
 			rv = -ENODEV;
+			goto err;
+		}
+		if (test_bit(WDM_OVERFLOW, &desc->flags)) {
+			clear_bit(WDM_OVERFLOW, &desc->flags);
+			rv = -ENOBUFS;
 			goto err;
 		}
 		i++;
@@ -456,6 +474,7 @@ retry:
 			spin_unlock_irq(&desc->iuspin);
 			goto retry;
 		}
+
 		if (!desc->reslength) { /* zero length read */
 			dev_dbg(&desc->intf->dev, "%s: zero length - clearing WDM_READ\n", __func__);
 			clear_bit(WDM_READ, &desc->flags);
@@ -498,11 +517,13 @@ static int wdm_flush(struct file *file, fl_owner_t id)
 	struct wdm_device *desc = file->private_data;
 
 	wait_event(desc->wait, !test_bit(WDM_IN_USE, &desc->flags));
-	if (desc->werr < 0)
+
+	/* cannot dereference desc->intf if WDM_DISCONNECTING */
+	if (desc->werr < 0 && !test_bit(WDM_DISCONNECTING, &desc->flags))
 		dev_err(&desc->intf->dev, "Error in flush path: %d\n",
 			desc->werr);
 
-	return desc->werr;
+	return usb_translate_errors(desc->werr);
 }
 
 static unsigned int wdm_poll(struct file *file, struct poll_table_struct *wait)
@@ -565,6 +586,7 @@ static int wdm_open(struct inode *inode, struct file *file)
 			desc->count--;
 			dev_err(&desc->intf->dev,
 				"Error submitting int urb - %d\n", rv);
+			rv = usb_translate_errors(rv);
 		}
 	} else {
 		rv = 0;
@@ -588,10 +610,15 @@ static int wdm_release(struct inode *inode, struct file *file)
 	mutex_unlock(&desc->wlock);
 
 	if (!desc->count) {
-		dev_dbg(&desc->intf->dev, "wdm_release: cleanup");
-		kill_urbs(desc);
-		if (!test_bit(WDM_DISCONNECTING, &desc->flags))
+		if (!test_bit(WDM_DISCONNECTING, &desc->flags)) {
+			dev_dbg(&desc->intf->dev, "wdm_release: cleanup");
+			kill_urbs(desc);
 			desc->intf->needs_remote_wakeup = 0;
+		} else {
+			/* must avoid dev_printk here as desc->intf is invalid */
+			pr_debug(KBUILD_MODNAME " %s: device gone - cleaning up\n", __func__);
+			cleanup(desc);
+		}
 	}
 	mutex_unlock(&wdm_mutex);
 	return 0;
@@ -868,6 +895,7 @@ static int wdm_resume(struct usb_interface *intf)
 
 	dev_dbg(&desc->intf->dev, "wdm%d_resume\n", intf->minor);
 
+	clear_bit(WDM_OVERFLOW, &desc->flags);
 	clear_bit(WDM_SUSPENDING, &desc->flags);
 	rv = recover_from_urb_loss(desc);
 
