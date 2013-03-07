@@ -2543,6 +2543,7 @@ static void qla4_8xxx_process_fw_error(struct scsi_qla_host *ha)
 void qla4_8xxx_watchdog(struct scsi_qla_host *ha)
 {
 	uint32_t dev_state;
+	uint32_t idc_ctrl;
 
 	/* don't poll if reset is going on */
 	if (!(test_bit(DPC_RESET_ACTIVE, &ha->dpc_flags) ||
@@ -2561,10 +2562,23 @@ void qla4_8xxx_watchdog(struct scsi_qla_host *ha)
 			qla4xxx_wake_dpc(ha);
 		} else if (dev_state == QLA8XXX_DEV_NEED_RESET &&
 			   !test_bit(DPC_RESET_HA, &ha->dpc_flags)) {
+
+			ql4_printk(KERN_INFO, ha, "%s: HW State: NEED RESET!\n",
+				   __func__);
+
+			if (is_qla8032(ha)) {
+				idc_ctrl = qla4_83xx_rd_reg(ha,
+							QLA83XX_IDC_DRV_CTRL);
+				if (!(idc_ctrl & GRACEFUL_RESET_BIT1)) {
+					ql4_printk(KERN_INFO, ha, "%s: Graceful reset bit is not set\n",
+						   __func__);
+					qla4xxx_mailbox_premature_completion(
+									    ha);
+				}
+			}
+
 			if (is_qla8032(ha) ||
 			    (is_qla8022(ha) && !ql4xdontresethba)) {
-				ql4_printk(KERN_INFO, ha, "%s: HW State: "
-				    "NEED RESET!\n", __func__);
 				set_bit(DPC_RESET_HA, &ha->dpc_flags);
 				qla4xxx_wake_dpc(ha);
 			}
@@ -3737,8 +3751,8 @@ static struct isp_operations qla4_83xx_isp_ops = {
 	.reset_firmware		= qla4_8xxx_stop_firmware,
 	.queue_iocb		= qla4_83xx_queue_iocb,
 	.complete_iocb		= qla4_83xx_complete_iocb,
-	.rd_shdw_req_q_out	= qla4_83xx_rd_shdw_req_q_out,
-	.rd_shdw_rsp_q_in	= qla4_83xx_rd_shdw_rsp_q_in,
+	.rd_shdw_req_q_out	= qla4xxx_rd_shdw_req_q_out,
+	.rd_shdw_rsp_q_in	= qla4xxx_rd_shdw_rsp_q_in,
 	.get_sys_info		= qla4_8xxx_get_sys_info,
 	.rd_reg_direct		= qla4_83xx_rd_reg,
 	.wr_reg_direct		= qla4_83xx_wr_reg,
@@ -3761,11 +3775,6 @@ uint16_t qla4_82xx_rd_shdw_req_q_out(struct scsi_qla_host *ha)
 	return (uint16_t)le32_to_cpu(readl(&ha->qla4_82xx_reg->req_q_out));
 }
 
-uint16_t qla4_83xx_rd_shdw_req_q_out(struct scsi_qla_host *ha)
-{
-	return (uint16_t)le32_to_cpu(readl(&ha->qla4_83xx_reg->req_q_out));
-}
-
 uint16_t qla4xxx_rd_shdw_rsp_q_in(struct scsi_qla_host *ha)
 {
 	return (uint16_t)le32_to_cpu(ha->shadow_regs->rsp_q_in);
@@ -3774,11 +3783,6 @@ uint16_t qla4xxx_rd_shdw_rsp_q_in(struct scsi_qla_host *ha)
 uint16_t qla4_82xx_rd_shdw_rsp_q_in(struct scsi_qla_host *ha)
 {
 	return (uint16_t)le32_to_cpu(readl(&ha->qla4_82xx_reg->rsp_q_in));
-}
-
-uint16_t qla4_83xx_rd_shdw_rsp_q_in(struct scsi_qla_host *ha)
-{
-	return (uint16_t)le32_to_cpu(readl(&ha->qla4_83xx_reg->rsp_q_in));
 }
 
 static ssize_t qla4xxx_show_boot_eth_info(void *data, int type, char *buf)
@@ -4005,7 +4009,7 @@ static int get_fw_boot_info(struct scsi_qla_host *ha, uint16_t ddb_index[])
 		if (val & BIT_7)
 			ddb_index[1] = (val & 0x7f);
 
-	} else if (is_qla8022(ha)) {
+	} else if (is_qla80XX(ha)) {
 		buf = dma_alloc_coherent(&ha->pdev->dev, size,
 					 &buf_dma, GFP_KERNEL);
 		if (!buf) {
@@ -5669,7 +5673,6 @@ struct srb *qla4xxx_del_from_active_array(struct scsi_qla_host *ha,
 
 	/* update counters */
 	if (srb->flags & SRB_DMA_VALID) {
-		ha->req_q_count += srb->iocb_cnt;
 		ha->iocb_cnt -= srb->iocb_cnt;
 		if (srb->cmd)
 			srb->cmd->host_scribble =
@@ -6081,6 +6084,7 @@ static int qla4xxx_host_reset(struct Scsi_Host *shost, int reset_type)
 {
 	struct scsi_qla_host *ha = to_qla_host(shost);
 	int rval = QLA_SUCCESS;
+	uint32_t idc_ctrl;
 
 	if (ql4xdontresethba) {
 		DEBUG2(ql4_printk(KERN_INFO, ha, "%s: Don't Reset HBA\n",
@@ -6111,6 +6115,14 @@ static int qla4xxx_host_reset(struct Scsi_Host *shost, int reset_type)
 	}
 
 recover_adapter:
+	/* For ISP83XX set graceful reset bit in IDC_DRV_CTRL if
+	 * reset is issued by application */
+	if (is_qla8032(ha) && test_bit(DPC_RESET_HA, &ha->dpc_flags)) {
+		idc_ctrl = qla4_83xx_rd_reg(ha, QLA83XX_IDC_DRV_CTRL);
+		qla4_83xx_wr_reg(ha, QLA83XX_IDC_DRV_CTRL,
+				 (idc_ctrl | GRACEFUL_RESET_BIT1));
+	}
+
 	rval = qla4xxx_recover_adapter(ha);
 	if (rval != QLA_SUCCESS) {
 		DEBUG2(ql4_printk(KERN_INFO, ha, "%s: recover adapter fail\n",
