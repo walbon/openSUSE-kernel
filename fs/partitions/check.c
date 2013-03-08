@@ -578,7 +578,7 @@ rescan:
 		disk->fops->revalidate_disk(disk);
 	check_disk_size_change(disk, bdev);
 	bdev->bd_invalidated = 0;
-	if (disk->flags & GENHD_FL_NO_PARTITION_SCAN)
+	if (!disk_part_scan_enabled(disk))
 		return 0;
 	if (!get_capacity(disk) || !(state = check_partition(disk, bdev)))
 		return 0;
