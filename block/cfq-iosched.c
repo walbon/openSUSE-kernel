@@ -1505,11 +1505,16 @@ static void cfq_add_rq_rb(struct request *rq)
 {
 	struct cfq_queue *cfqq = RQ_CFQQ(rq);
 	struct cfq_data *cfqd = cfqq->cfqd;
-	struct request *prev;
+	struct request *__alias, *prev;
 
 	cfqq->queued[rq_is_sync(rq)]++;
 
-	elv_rb_add(&cfqq->sort_list, rq);
+	/*
+	 * looks a little odd, but the first insert might return an alias.
+	 * if that happens, put the alias on the dispatch list
+	 */
+	while ((__alias = elv_rb_add(&cfqq->sort_list, rq)) != NULL)
+		cfq_dispatch_insert(cfqd->queue, __alias);
 
 	if (!cfq_cfqq_on_rr(cfqq))
 		cfq_add_cfqq_rr(cfqd, cfqq);
@@ -1639,14 +1644,11 @@ cfq_merged_requests(struct request_queue *q, struct request *rq,
 		    struct request *next)
 {
 	struct cfq_queue *cfqq = RQ_CFQQ(rq);
-	struct cfq_data *cfqd = q->elevator->elevator_data;
-
 	/*
 	 * reposition in fifo if next is older than rq
 	 */
 	if (!list_empty(&rq->queuelist) && !list_empty(&next->queuelist) &&
-	    time_before(rq_fifo_time(next), rq_fifo_time(rq)) &&
-	    cfqq == RQ_CFQQ(next)) {
+	    time_before(rq_fifo_time(next), rq_fifo_time(rq))) {
 		list_move(&rq->queuelist, &next->queuelist);
 		rq_set_fifo_time(rq, rq_fifo_time(next));
 	}
@@ -1656,16 +1658,6 @@ cfq_merged_requests(struct request_queue *q, struct request *rq,
 	cfq_remove_request(next);
 	cfq_blkiocg_update_io_merged_stats(&(RQ_CFQG(rq))->blkg,
 					rq_data_dir(next), rq_is_sync(next));
-
-	cfqq = RQ_CFQQ(next);
-	/*
-	 * all requests of this queue are merged to other queues, delete it
-	 * from the service tree. If it's the active_queue,
-	 * cfq_dispatch_requests() will choose to expire it or do idle
-	 */
-	if (cfq_cfqq_on_rr(cfqq) && RB_EMPTY_ROOT(&cfqq->sort_list) &&
-	    cfqq != cfqd->active_queue)
-		cfq_del_cfqq_rr(cfqd, cfqq);
 }
 
 static int cfq_allow_merge(struct request_queue *q, struct request *rq,
@@ -1682,7 +1674,7 @@ static int cfq_allow_merge(struct request_queue *q, struct request *rq,
 		return false;
 
 	/*
-	 * Lookup the cfqq that this bio will be queued with and allow
+	 * Lookup the cfqq that this bio will be queued with. Allow
 	 * merge only if rq is queued there.
 	 */
 	cic = cfq_cic_lookup(cfqd, current->io_context);

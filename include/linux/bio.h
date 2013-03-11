@@ -269,6 +269,14 @@ extern void bvec_free_bs(struct bio_set *, struct bio_vec *, unsigned int);
 extern unsigned int bvec_nr_vecs(unsigned short idx);
 
 /*
+ * Allow queuer to specify a completion CPU for this bio
+ */
+static inline void bio_set_completion_cpu(struct bio *bio, unsigned int cpu)
+{
+	bio->bi_comp_cpu = cpu;
+}
+
+/*
  * bio_set is used to allow other portions of the IO system to
  * allocate their own private memory pools for bio and iovec structures.
  * These memory pools in turn all allocate from the bio_slab
@@ -358,28 +366,9 @@ static inline char *__bio_kmap_irq(struct bio *bio, unsigned short idx,
 /*
  * Check whether this bio carries any data or not. A NULL bio is allowed.
  */
-static inline bool bio_has_data(struct bio *bio)
+static inline int bio_has_data(struct bio *bio)
 {
-	if (bio && bio->bi_vcnt)
-		return true;
-
-	return false;
-}
-
-static inline bool bio_is_rw(struct bio *bio)
-{
-	if (!bio_has_data(bio))
-		return false;
-
-	return true;
-}
-
-static inline bool bio_mergeable(struct bio *bio)
-{
-	if (bio->bi_rw & REQ_NOMERGE_FLAGS)
-		return false;
-
-	return true;
+	return bio && bio->bi_io_vec != NULL;
 }
 
 /*

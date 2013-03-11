@@ -20,11 +20,8 @@ void blk_rq_bio_prep(struct request_queue *q, struct request *rq,
 			struct bio *bio);
 int blk_rq_append_bio(struct request_queue *q, struct request *rq,
 		      struct bio *bio);
-void __blk_drain_queue(struct request_queue *q, bool drain_all);
 void blk_dequeue_request(struct request *rq);
 void __blk_queue_free_tags(struct request_queue *q);
-bool __blk_end_bidi_request(struct request *rq, int error,
-			    unsigned int nr_bytes, unsigned int bidi_bytes);
 
 void blk_rq_timed_out_timer(unsigned long data);
 void blk_delete_timer(struct request *);
@@ -90,8 +87,8 @@ static inline struct request *__elv_next_request(struct request_queue *q)
 			q->flush_queue_delayed = 1;
 			return NULL;
 		}
-		if (unlikely(blk_queue_dying(q)) ||
-		    !q->elevator->type->ops.elevator_dispatch_fn(q, 0))
+		if (unlikely(blk_queue_dead(q)) ||
+		    !q->elevator->ops->elevator_dispatch_fn(q, 0))
 			return NULL;
 	}
 }
@@ -100,16 +97,16 @@ static inline void elv_activate_rq(struct request_queue *q, struct request *rq)
 {
 	struct elevator_queue *e = q->elevator;
 
-	if (e->type->ops.elevator_activate_req_fn)
-		e->type->ops.elevator_activate_req_fn(q, rq);
+	if (e->ops->elevator_activate_req_fn)
+		e->ops->elevator_activate_req_fn(q, rq);
 }
 
 static inline void elv_deactivate_rq(struct request_queue *q, struct request *rq)
 {
 	struct elevator_queue *e = q->elevator;
 
-	if (e->type->ops.elevator_deactivate_req_fn)
-		e->type->ops.elevator_deactivate_req_fn(q, rq);
+	if (e->ops->elevator_deactivate_req_fn)
+		e->ops->elevator_deactivate_req_fn(q, rq);
 }
 
 #ifdef CONFIG_FAIL_IO_TIMEOUT
@@ -136,12 +133,8 @@ int blk_attempt_req_merge(struct request_queue *q, struct request *rq,
 				struct request *next);
 void blk_recalc_rq_segments(struct request *rq);
 void blk_rq_set_mixed_merge(struct request *rq);
-bool blk_rq_merge_ok(struct request *rq, struct bio *bio);
-int blk_try_merge(struct request *rq, struct bio *bio);
 
 void blk_queue_congestion_threshold(struct request_queue *q);
-
-void __blk_run_queue_uncond(struct request_queue *q);
 
 int blk_dev_init(void);
 
@@ -188,30 +181,14 @@ static inline int blk_cpu_to_group(int cpu)
  *
  *	a) it's attached to a gendisk, and
  *	b) the queue had IO stats enabled when this request was started, and
- *	c) it's a file system request
+ *	c) it's a file system request or a discard request
  */
 static inline int blk_do_io_stat(struct request *rq)
 {
 	return rq->rq_disk &&
 	       (rq->cmd_flags & REQ_IO_STAT) &&
-		(rq->cmd_type == REQ_TYPE_FS);
+	       (rq->cmd_type == REQ_TYPE_FS ||
+	        (rq->cmd_flags & REQ_DISCARD));
 }
 
-#ifdef CONFIG_BLK_DEV_THROTTLING
-extern bool blk_throtl_bio(struct request_queue *q, struct bio *bio);
-extern void blk_throtl_drain(struct request_queue *q);
-extern int blk_throtl_init(struct request_queue *q);
-extern void blk_throtl_exit(struct request_queue *q);
-extern void blk_throtl_release(struct request_queue *q);
-#else /* CONFIG_BLK_DEV_THROTTLING */
-static inline bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
-{
-	return false;
-}
-static inline void blk_throtl_drain(struct request_queue *q) { }
-static inline int blk_throtl_init(struct request_queue *q) { return 0; }
-static inline void blk_throtl_exit(struct request_queue *q) { }
-static inline void blk_throtl_release(struct request_queue *q) { }
-#endif /* CONFIG_BLK_DEV_THROTTLING */
-
-#endif /* BLK_INTERNAL_H */
+#endif

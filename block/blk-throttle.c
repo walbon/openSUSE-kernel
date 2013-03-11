@@ -10,7 +10,6 @@
 #include <linux/bio.h>
 #include <linux/blktrace_api.h>
 #include "blk-cgroup.h"
-#include "blk.h"
 
 /* Max dispatch from a group in 1 round */
 static int throtl_grp_quantum = 8;
@@ -303,6 +302,10 @@ throtl_grp *throtl_find_tg(struct throtl_data *td, struct blkio_cgroup *blkcg)
 	return tg;
 }
 
+/*
+ * This function returns with queue lock unlocked in case of error, like
+ * request queue is no more
+ */
 static struct throtl_grp * throtl_get_tg(struct throtl_data *td)
 {
 	struct throtl_grp *tg = NULL, *__tg = NULL;
@@ -330,6 +333,16 @@ static struct throtl_grp * throtl_get_tg(struct throtl_data *td)
 	spin_unlock_irq(q->queue_lock);
 
 	tg = throtl_alloc_tg(td);
+	/*
+	 * We might have slept in group allocation. Make sure queue is not
+	 * dead
+	 */
+	if (unlikely(blk_queue_dead(q))) {
+		if (tg)
+			kfree(tg);
+
+		return ERR_PTR(-ENODEV);
+	}
 
 	/* Group allocated and queue is still alive. take the lock */
 	spin_lock_irq(q->queue_lock);
@@ -738,7 +751,7 @@ static bool tg_may_dispatch(struct throtl_data *td, struct throtl_grp *tg,
 static void throtl_charge_bio(struct throtl_grp *tg, struct bio *bio)
 {
 	bool rw = bio_data_dir(bio);
-	bool sync = rw_is_sync(bio->bi_rw);
+	bool sync = bio->bi_rw & REQ_SYNC;
 
 	/* Charge the bio to the group */
 	tg->bytes_disp[rw] += bio->bi_size;
@@ -1006,6 +1019,11 @@ static void throtl_release_tgs(struct throtl_data *td)
 	}
 }
 
+static void throtl_td_free(struct throtl_data *td)
+{
+	kfree(td);
+}
+
 /*
  * Blk cgroup controller notification saying that blkio_group object is being
  * delinked as associated cgroup object is going away. That also means that
@@ -1110,17 +1128,17 @@ static struct blkio_policy_type blkio_policy_throtl = {
 	.plid = BLKIO_POLICY_THROTL,
 };
 
-bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
+int blk_throtl_bio(struct request_queue *q, struct bio **biop)
 {
 	struct throtl_data *td = q->td;
 	struct throtl_grp *tg;
+	struct bio *bio = *biop;
 	bool rw = bio_data_dir(bio), update_disptime = true;
 	struct blkio_cgroup *blkcg;
-	bool throttled = false;
 
 	if (bio->bi_rw & REQ_THROTTLED) {
 		bio->bi_rw &= ~REQ_THROTTLED;
-		goto out;
+		return 0;
 	}
 
 	/*
@@ -1137,9 +1155,9 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 
 		if (tg_no_rule_group(tg, rw)) {
 			blkiocg_update_dispatch_stats(&tg->blkg, bio->bi_size,
-					rw, rw_is_sync(bio->bi_rw));
+					rw, bio->bi_rw & REQ_SYNC);
 			rcu_read_unlock();
-			goto out;
+			return 0;
 		}
 	}
 	rcu_read_unlock();
@@ -1148,10 +1166,18 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 	 * Either group has not been allocated yet or it is not an unlimited
 	 * IO group
 	 */
+
 	spin_lock_irq(q->queue_lock);
 	tg = throtl_get_tg(td);
-	if (unlikely(!tg))
-		goto out_unlock;
+
+	if (IS_ERR(tg)) {
+		if (PTR_ERR(tg)	== -ENODEV) {
+			/*
+			 * Queue is gone. No queue lock held here.
+			 */
+			return -ENODEV;
+		}
+	}
 
 	if (tg->nr_queued[rw]) {
 		/*
@@ -1179,7 +1205,7 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 		 * So keep on trimming slice even if bio is not queued.
 		 */
 		throtl_trim_slice(td, tg, rw);
-		goto out_unlock;
+		goto out;
 	}
 
 queue_bio:
@@ -1191,52 +1217,16 @@ queue_bio:
 			tg->nr_queued[READ], tg->nr_queued[WRITE]);
 
 	throtl_add_bio_tg(q->td, tg, bio);
-	throttled = true;
+	*biop = NULL;
 
 	if (update_disptime) {
 		tg_update_disptime(td, tg);
 		throtl_schedule_next_dispatch(td);
 	}
 
-out_unlock:
-	spin_unlock_irq(q->queue_lock);
 out:
-	return throttled;
-}
-
-/**
- * blk_throtl_drain - drain throttled bios
- * @q: request_queue to drain throttled bios for
- *
- * Dispatch all currently throttled bios on @q through ->make_request_fn().
- */
-void blk_throtl_drain(struct request_queue *q)
-	__releases(q->queue_lock) __acquires(q->queue_lock)
-{
-	struct throtl_data *td = q->td;
-	struct throtl_rb_root *st = &td->tg_service_tree;
-	struct throtl_grp *tg;
-	struct bio_list bl;
-	struct bio *bio;
-
-	WARN_ON_ONCE(!queue_is_locked(q));
-
-	bio_list_init(&bl);
-
-	while ((tg = throtl_rb_first(st))) {
-		throtl_dequeue_tg(td, tg);
-
-		while ((bio = bio_list_peek(&tg->bio_lists[READ])))
-			tg_dispatch_one_bio(td, tg, bio_data_dir(bio), &bl);
-		while ((bio = bio_list_peek(&tg->bio_lists[WRITE])))
-			tg_dispatch_one_bio(td, tg, bio_data_dir(bio), &bl);
-	}
 	spin_unlock_irq(q->queue_lock);
-
-	while ((bio = bio_list_pop(&bl)))
-		generic_make_request(bio);
-
-	spin_lock_irq(q->queue_lock);
+	return 0;
 }
 
 int blk_throtl_init(struct request_queue *q)
@@ -1311,11 +1301,7 @@ void blk_throtl_exit(struct request_queue *q)
 	 * it.
 	 */
 	throtl_shutdown_wq(q);
-}
-
-void blk_throtl_release(struct request_queue *q)
-{
-	kfree(q->td);
+	throtl_td_free(td);
 }
 
 static int __init throtl_init(void)
