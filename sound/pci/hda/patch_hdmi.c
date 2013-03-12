@@ -1033,7 +1033,7 @@ static int hdmi_add_cvt(struct hda_codec *codec, hda_nid_t cvt_nid)
 	if (err < 0)
 		return err;
 
-	spec->cvt_nids[spec->num_cvts++] = cvt_nid;
+	spec->cvt_nids[spec->num_cvts] = cvt_nid;
 	spec->num_cvts++;
 
 	return 0;
