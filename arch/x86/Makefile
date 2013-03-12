@@ -164,6 +164,20 @@ LINUXINCLUDE := -D__XEN_INTERFACE_VERSION__=$(CONFIG_XEN_INTERFACE_VERSION) \
 ifdef CONFIG_X86_64
 LDFLAGS_vmlinux := -e startup_64
 endif
+
+quiet_cmd_hypercalls = HYPERCALLS $(patsubst $(objtree)/%,%,$@)
+      cmd_hypercalls = $(CONFIG_SHELL) '$<' $@ $(filter %.h,$^)
+
+$(objtree)/arch/x86/include/generated/asm/%-hypercalls.h: $(srctree)/scripts/%-hypercalls.sh asm-generic
+	$(call if_changed,hypercalls)
+
+targets += $(objtree)/arch/x86/include/generated/asm/*-hypercalls.h
+
+$(objtree)/arch/x86/include/generated/asm/xen-hypercalls.h: \
+	$(srctree)/include/xen/interface/xen.h \
+	$(srctree)/include/xen/interface/arch-x86/xen*.h
+
+archprepare: $(objtree)/arch/x86/include/generated/asm/xen-hypercalls.h
 endif
 
 ifeq ($(CONFIG_XEN)-$(CONFIG_XEN_BZIMAGE),y-)
