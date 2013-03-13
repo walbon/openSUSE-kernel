@@ -54,7 +54,7 @@ void mlx4_xrcd_free(struct mlx4_dev *dev, u32 xrcdn)
 }
 EXPORT_SYMBOL_GPL(mlx4_xrcd_free);
 
-int __devinit mlx4_init_xrcd_table(struct mlx4_dev *dev)
+int mlx4_init_xrcd_table(struct mlx4_dev *dev)
 {
 	struct mlx4_priv *priv = mlx4_priv(dev);
 

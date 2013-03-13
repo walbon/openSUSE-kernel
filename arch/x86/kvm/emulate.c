@@ -585,7 +585,7 @@ static int __linearize(struct x86_emulate_ctxt *ctxt,
 	ulong la;
 	u32 lim;
 	u16 sel;
-	unsigned cpl, rpl;
+	unsigned cpl;
 
 	la = seg_base(ctxt, ctxt->ops, addr.seg) + addr.ea;
 	switch (ctxt->mode) {
@@ -620,8 +620,6 @@ static int __linearize(struct x86_emulate_ctxt *ctxt,
 				goto bad;
 		}
 		cpl = ctxt->ops->cpl(ctxt);
-		rpl = sel & 3;
-		cpl = max(cpl, rpl);
 		if (!(desc.type & 8)) {
 			/* data segment */
 			if (cpl > desc.dpl)
