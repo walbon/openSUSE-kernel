@@ -710,6 +710,7 @@ static void __init early_cmdline_parse(void)
 #define OV5_XCMO			0x00
 #endif
 #define OV5_TYPE1_AFFINITY	0x80	/* Type 1 NUMA affinity */
+#define OV5_PRRN		0x40	/* Platform Resource  Reassignment */
 #define OV5_PFO_HW_RNG		0x80	/* PFO Random Number Generator */
 #define OV5_PFO_HW_ENCR		0x20	/* PFO Encryption Accelerator */
 
@@ -766,7 +767,7 @@ static unsigned char ibm_architecture_vec[] = {
 	OV5_DONATE_DEDICATE_CPU | OV5_MSI,
 	0,
 	OV5_CMO | OV5_XCMO,
-	OV5_TYPE1_AFFINITY,
+	OV5_TYPE1_AFFINITY | OV5_PRRN,
 	0,
 	0,
 	0,
