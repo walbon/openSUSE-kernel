@@ -68,6 +68,57 @@
 
 #define PFX			"bnx2fc: "
 
+#define BCM_CHIP_LEN		16
+
+#ifndef PCI_DEVICE_ID_NX2_57710
+#define PCI_DEVICE_ID_NX2_57710		0x164e
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57711
+#define PCI_DEVICE_ID_NX2_57711		0x164f
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57712
+#define PCI_DEVICE_ID_NX2_57712		0x1662
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57712_MF
+#define PCI_DEVICE_ID_NX2_57712_MF	0x1663
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57712_VF
+#define PCI_DEVICE_ID_NX2_57712_VF	0x166f
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57800
+#define PCI_DEVICE_ID_NX2_57800		0x168a
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57800_MF
+#define PCI_DEVICE_ID_NX2_57800_MF	0x16a5
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57800_VF
+#define PCI_DEVICE_ID_NX2_57800_VF	0x16a9
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57810
+#define PCI_DEVICE_ID_NX2_57810		0x168e
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57810_MF
+#define PCI_DEVICE_ID_NX2_57810_MF	0x16ae
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57810_VF
+#define PCI_DEVICE_ID_NX2_57810_VF	0x16af
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57840
+#define PCI_DEVICE_ID_NX2_57840		0x168d
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57840_MF
+#define PCI_DEVICE_ID_NX2_57840_MF	0x16a4
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57840_VF
+#define PCI_DEVICE_ID_NX2_57840_VF	0x16ad
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57840_2_20
+#define PCI_DEVICE_ID_NX2_57840_2_20	0x16a2
+#endif
+#ifndef PCI_DEVICE_ID_NX2_57840_4_10
+#define PCI_DEVICE_ID_NX2_57840_4_10	0x16a1
+#endif
+
 #define BNX2X_DOORBELL_PCI_BAR		2
 
 #define BNX2FC_MAX_BD_LEN		0xffff
@@ -243,6 +294,8 @@ struct bnx2fc_hba {
 	int wait_for_link_down;
 	int num_ofld_sess;
 	struct list_head vports;
+
+	char chip_num[BCM_CHIP_LEN];
 };
 
 struct bnx2fc_interface {
