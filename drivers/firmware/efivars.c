@@ -1194,7 +1194,16 @@ static int efi_pstore_write(enum pstore_type_id type,
 	sprintf(stub_name, "dump-type%u-%u-", type, part);
 	sprintf(name, "%s%lu", stub_name, get_seconds());
 
-	spin_lock(&efivars->lock);
+	if (pstore_cannot_block_path(reason)) {
+		/*
+		 * If the lock is taken by another cpu in non-blocking path,
+		 * this driver returns without entering firmware to avoid
+		 * hanging up.
+		 */
+		if (!spin_trylock(&efivars->lock))
+			return -EBUSY;
+	} else
+		spin_lock(&efivars->lock);
 
 	/*
 	 * Check if there is a space enough to log.
