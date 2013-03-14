@@ -24,6 +24,7 @@
 #include <linux/freezer.h>
 #include <linux/gfp.h>
 #include <linux/syscore_ops.h>
+#include <linux/efi.h>
 
 #include "power.h"
 
@@ -858,7 +859,7 @@ static ssize_t disk_show(struct kobject *kobj, struct kobj_attribute *attr,
 	int i;
 	char *start = buf;
 
-	if (!capable(CAP_COMPROMISE_KERNEL)) {
+	if (secure_boot_enabled) {
 		buf += sprintf(buf, "[%s]\n", "disabled");
 		return buf-start;
 	}
