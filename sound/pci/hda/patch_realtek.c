@@ -389,6 +389,7 @@ struct alc_spec {
 	void (*power_hook)(struct hda_codec *codec);
 #endif
 	void (*shutup)(struct hda_codec *codec);
+	void (*capture_mute_hook)(struct hda_codec *codec, bool enabled);
 
 	/* for pin sensing */
 	unsigned int jack_present: 1;
@@ -426,6 +427,8 @@ struct alc_spec {
 	int fixup_id;
 	const struct alc_fixup *fixup_list;
 	const char *fixup_name;
+
+	unsigned int gpio_led;
 
 	/* multi-io */
 	int multi_ios;
@@ -2780,6 +2783,15 @@ static int alc_cap_sw_get(struct snd_kcontrol *kcontrol,
 static int alc_cap_sw_put(struct snd_kcontrol *kcontrol,
 			  struct snd_ctl_elem_value *ucontrol)
 {
+	struct hda_codec *codec = snd_kcontrol_chip(kcontrol);
+	struct alc_spec *spec = codec->spec;
+
+	if (spec->capture_mute_hook) {
+		bool enabled = ucontrol->value.integer.value[0] ||
+			ucontrol->value.integer.value[1];
+		spec->capture_mute_hook(codec, enabled);
+	}
+
 	return alc_cap_getput_caller(kcontrol, ucontrol,
 				     snd_hda_mixer_amp_switch_put, true);
 }
@@ -14733,6 +14745,32 @@ static int alc269_mic2_mute_check_ps(struct hda_codec *codec, hda_nid_t nid)
 	}
 	return alc_check_power_status(codec, nid);
 }
+
+static int alc269_hp_gpio_led(struct hda_codec *codec)
+{
+	switch (codec->subsystem_id) {
+	case 0x103c18e6:
+		return 1;
+	}
+	return 0;
+}
+
+static int alc269_hp_gpio_led_check_ps(struct hda_codec *codec, hda_nid_t nid)
+{
+	/* update mute-LED according to the speaker mute state */
+	if (nid == 0x01 || nid == 0x14) {
+		struct alc_spec *spec = codec->spec;
+		unsigned int oldval = spec->gpio_led;
+		if (snd_hda_codec_amp_read(codec, 0x14, 0, HDA_OUTPUT, 0) &
+		    HDA_AMP_MUTE)
+			spec->gpio_led |= 0x08;
+		else
+			spec->gpio_led &= ~0x08;
+		if (spec->gpio_led != oldval)
+			snd_hda_codec_write(codec, 0x01, 0, AC_VERB_SET_GPIO_DATA, spec->gpio_led);
+	}
+	return alc_check_power_status(codec, nid);
+}
 #endif /* CONFIG_SND_HDA_POWER_SAVE */
 
 static int alc275_setup_dual_adc(struct hda_codec *codec)
@@ -14922,6 +14960,40 @@ static void alc271_fixup_dmic(struct hda_codec *codec,
 		snd_hda_sequence_write(codec, verbs);
 }
 
+static void alc269_fixup_hp_gpio_mic_mute_hook(struct hda_codec *codec, bool enabled)
+{
+	struct alc_spec *spec = codec->spec;
+	int oldval = spec->gpio_led;
+
+	if (enabled)
+		spec->gpio_led &= ~0x10;
+	else
+		spec->gpio_led |= 0x10;
+	if (spec->gpio_led != oldval)
+		snd_hda_codec_write(codec, 0x01, 0, AC_VERB_SET_GPIO_DATA,
+				    spec->gpio_led);
+}
+
+static void alc269_fixup_hp_gpio_led(struct hda_codec *codec,
+				     const struct alc_fixup *fix, int action)
+{
+	struct alc_spec *spec = codec->spec;
+	switch (action) {
+	case ALC_FIXUP_ACT_PRE_PROBE:
+		spec->gpio_led = 0;
+		spec->capture_mute_hook = alc269_fixup_hp_gpio_mic_mute_hook;
+		snd_hda_codec_write_cache(codec, 0x01, 0, AC_VERB_SET_GPIO_MASK,
+					  0x18);
+		snd_hda_codec_write_cache(codec, 0x01, 0, AC_VERB_SET_GPIO_DIRECTION,
+					  0x18);
+		break;
+	case ALC_FIXUP_ACT_INIT:
+		snd_hda_codec_write(codec, 0x01, 0, AC_VERB_SET_GPIO_DATA,
+				    spec->gpio_led);
+		break;
+	}
+}
+
 enum {
 	ALC269_FIXUP_SONY_VAIO,
 	ALC275_FIXUP_SONY_VAIO_GPIO2,
@@ -14930,6 +15002,7 @@ enum {
 	ALC269_FIXUP_ASUS_G73JW,
 	ALC269_FIXUP_LENOVO_EAPD,
 	ALC275_FIXUP_SONY_HWEQ,
+	ALC269_FIXUP_HP_GPIO_LED,
 	ALC271_FIXUP_DMIC,
 };
 
@@ -14989,9 +15062,14 @@ static const struct alc_fixup alc269_fixups[] = {
 		.type = ALC_FIXUP_FUNC,
 		.v.func = alc271_fixup_dmic,
 	},
+	[ALC269_FIXUP_HP_GPIO_LED] = {
+		.type = ALC_FIXUP_FUNC,
+		.v.func = alc269_fixup_hp_gpio_led,
+	},
 };
 
 static const struct snd_pci_quirk alc269_fixup_tbl[] = {
+	SND_PCI_QUIRK(0x103c, 0x18e6, "HP", ALC269_FIXUP_HP_GPIO_LED),
 	SND_PCI_QUIRK(0x104d, 0x9073, "Sony VAIO", ALC275_FIXUP_SONY_VAIO_GPIO2),
 	SND_PCI_QUIRK(0x104d, 0x907b, "Sony VAIO", ALC275_FIXUP_SONY_HWEQ),
 	SND_PCI_QUIRK(0x104d, 0x9084, "Sony VAIO", ALC275_FIXUP_SONY_HWEQ),
@@ -15391,6 +15469,8 @@ static int patch_alc269(struct hda_codec *codec)
 		spec->loopback.amplist = alc269_loopbacks;
 	if (alc269_mic2_for_mute_led(codec))
 		codec->patch_ops.check_power_status = alc269_mic2_mute_check_ps;
+	if (alc269_hp_gpio_led(codec))
+		codec->patch_ops.check_power_status = alc269_hp_gpio_led_check_ps;
 #endif
 
 	return 0;
