@@ -583,6 +583,16 @@ static void hv_mem_hot_add(unsigned long start, unsigned long size,
 
 		if (ret) {
 			pr_info("hot_add memory failed error is %d\n", ret);
+			if (ret == -EEXIST) {
+				/*
+				 * This error indicates that the error
+				 * is not a transient failure. This is the
+				 * case where the guest's physical address map
+				 * precludes hot adding memory. Stop all further
+				 * memory hot-add.
+				 */
+				do_hot_add = false;
+			}
 			has->ha_end_pfn -= HA_CHUNK;
 			has->covered_end_pfn -=  processed_pfn;
 			break;
@@ -842,10 +852,13 @@ static void hot_add_req(struct work_struct *dummy)
 		rg_sz = region_size;
 	}
 
-	resp.page_count = process_hot_add(pg_start, pfn_cnt,
-					rg_start, rg_sz);
+	if (do_hot_add)
+		resp.page_count = process_hot_add(pg_start, pfn_cnt,
+						rg_start, rg_sz);
 #endif
 	if (resp.page_count > 0)
+		resp.result = 1;
+	else if (!do_hot_add)
 		resp.result = 1;
 	else
 		resp.result = 0;
