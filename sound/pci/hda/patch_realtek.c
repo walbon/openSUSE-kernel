@@ -178,6 +178,7 @@ struct alc_spec {
 #endif
 	void (*shutup)(struct hda_codec *codec);
 	void (*automute_hook)(struct hda_codec *codec);
+	void (*capture_mute_hook)(struct hda_codec *codec, bool enabled);
 
 	/* for pin sensing */
 	unsigned int hp_jack_present:1;
@@ -224,6 +225,8 @@ struct alc_spec {
 	hda_nid_t pll_nid;
 	unsigned int pll_coef_idx, pll_coef_bit;
 	unsigned int coef0;
+
+	unsigned int gpio_led;
 
 	/* multi-io */
 	int multi_ios;
@@ -1640,6 +1643,15 @@ static int alc_cap_sw_get(struct snd_kcontrol *kcontrol,
 static int alc_cap_sw_put(struct snd_kcontrol *kcontrol,
 			  struct snd_ctl_elem_value *ucontrol)
 {
+	struct hda_codec *codec = snd_kcontrol_chip(kcontrol);
+	struct alc_spec *spec = codec->spec;
+
+	if (spec->capture_mute_hook) {
+		bool enabled = ucontrol->value.integer.value[0] ||
+			ucontrol->value.integer.value[1];
+		spec->capture_mute_hook(codec, enabled);
+	}
+
 	return alc_cap_getput_caller(kcontrol, ucontrol,
 				     snd_hda_mixer_amp_switch_put, true);
 }
@@ -6034,6 +6046,58 @@ static void alc269_fixup_mic2_mute(struct hda_codec *codec,
 	}
 }
 
+/*
+ */
+static void alc269_fixup_hp_gpio_mute_hook(void *private_data, int enabled)
+{
+	struct hda_codec *codec = private_data;
+	struct alc_spec *spec = codec->spec;
+	int oldval = spec->gpio_led;
+
+	if (enabled)
+		spec->gpio_led &= ~0x08;
+	else
+		spec->gpio_led |= 0x08;
+	if (spec->gpio_led != oldval)
+		snd_hda_codec_write(codec, 0x01, 0, AC_VERB_SET_GPIO_DATA,
+				    spec->gpio_led);
+}
+
+static void alc269_fixup_hp_gpio_mic_mute_hook(struct hda_codec *codec, bool enabled)
+{
+	struct alc_spec *spec = codec->spec;
+	int oldval = spec->gpio_led;
+
+	if (enabled)
+		spec->gpio_led &= ~0x10;
+	else
+		spec->gpio_led |= 0x10;
+	if (spec->gpio_led != oldval)
+		snd_hda_codec_write(codec, 0x01, 0, AC_VERB_SET_GPIO_DATA,
+				    spec->gpio_led);
+}
+
+static void alc269_fixup_hp_gpio_led(struct hda_codec *codec,
+				     const struct alc_fixup *fix, int action)
+{
+	struct alc_spec *spec = codec->spec;
+	switch (action) {
+	case ALC_FIXUP_ACT_BUILD:
+		spec->vmaster_mute.hook = alc269_fixup_hp_gpio_mute_hook;
+		snd_hda_add_vmaster_hook(codec, &spec->vmaster_mute, true);
+		spec->capture_mute_hook = alc269_fixup_hp_gpio_mic_mute_hook;
+		spec->gpio_led = 0;
+		snd_hda_codec_write_cache(codec, 0x01, 0, AC_VERB_SET_GPIO_MASK,
+					  0x18);
+		snd_hda_codec_write_cache(codec, 0x01, 0, AC_VERB_SET_GPIO_DIRECTION,
+					  0x18);
+		/* fallthru */
+	case ALC_FIXUP_ACT_INIT:
+		snd_hda_sync_vmaster_hook(&spec->vmaster_mute);
+		break;
+	}
+}
+
 
 enum {
 	ALC269_FIXUP_SONY_VAIO,
@@ -6053,6 +6117,7 @@ enum {
 	ALC269VB_FIXUP_AMIC,
 	ALC269VB_FIXUP_DMIC,
 	ALC269_FIXUP_MIC2_MUTE_LED,
+	ALC269_FIXUP_HP_GPIO_LED,
 	ALC269_FIXUP_INV_DMIC,
 	ALC269_FIXUP_LENOVO_DOCK,
 	ALC269_FIXUP_PINCFG_NO_HP_TO_LINEOUT,
@@ -6182,6 +6247,10 @@ static const struct alc_fixup alc269_fixups[] = {
 		.type = ALC_FIXUP_FUNC,
 		.v.func = alc269_fixup_mic2_mute,
 	},
+	[ALC269_FIXUP_HP_GPIO_LED] = {
+		.type = ALC_FIXUP_FUNC,
+		.v.func = alc269_fixup_hp_gpio_led,
+	},
 	[ALC269_FIXUP_INV_DMIC] = {
 		.type = ALC_FIXUP_FUNC,
 		.v.func = alc_fixup_inv_dmic_0x12,
@@ -6206,6 +6275,7 @@ static const struct snd_pci_quirk alc269_fixup_tbl[] = {
 	SND_PCI_QUIRK(0x1025, 0x029b, "Acer 1810TZ", ALC269_FIXUP_INV_DMIC),
 	SND_PCI_QUIRK(0x1025, 0x0349, "Acer AOD260", ALC269_FIXUP_INV_DMIC),
 	SND_PCI_QUIRK(0x103c, 0x1586, "HP", ALC269_FIXUP_MIC2_MUTE_LED),
+	SND_PCI_QUIRK(0x103c, 0x18e6, "HP", ALC269_FIXUP_HP_GPIO_LED),
 	SND_PCI_QUIRK(0x1043, 0x1427, "Asus Zenbook UX31E", ALC269VB_FIXUP_DMIC),
 	SND_PCI_QUIRK(0x1043, 0x1517, "Asus Zenbook UX31A", ALC269VB_FIXUP_DMIC),
 	SND_PCI_QUIRK(0x1043, 0x1a13, "Asus G73Jw", ALC269_FIXUP_ASUS_G73JW),
@@ -6293,6 +6363,7 @@ static const struct alc_model_fixup alc269_fixup_models[] = {
 	{.id = ALC271_FIXUP_DMIC, .name = "alc271-dmic"},
 	{.id = ALC269_FIXUP_INV_DMIC, .name = "inv-dmic"},
 	{.id = ALC269_FIXUP_LENOVO_DOCK, .name = "lenovo-dock"},
+	{.id = ALC269_FIXUP_HP_GPIO_LED, .name = "hp-gpio-led"},
 	{}
 };
 

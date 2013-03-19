@@ -535,6 +535,8 @@ struct hv_dynmem_device {
 
 static struct hv_dynmem_device dm_device;
 
+#ifdef CONFIG_MEMORY_HOTPLUG
+
 void hv_bring_pgs_online(unsigned long start_pfn, unsigned long size)
 {
 	int i;
@@ -580,7 +582,17 @@ static void hv_mem_hot_add(unsigned long start, unsigned long size,
 				(HA_CHUNK << PAGE_SHIFT));
 
 		if (ret) {
-			pr_info("hot_add memory failed eror is %d\n", ret);
+			pr_info("hot_add memory failed error is %d\n", ret);
+			if (ret == -EEXIST) {
+				/*
+				 * This error indicates that the error
+				 * is not a transient failure. This is the
+				 * case where the guest's physical address map
+				 * precludes hot adding memory. Stop all further
+				 * memory hot-add.
+				 */
+				do_hot_add = false;
+			}
 			has->ha_end_pfn -= HA_CHUNK;
 			has->covered_end_pfn -=  processed_pfn;
 			break;
@@ -795,11 +807,15 @@ do_pg_range:
 	return handle_pg_range(pg_start, pfn_cnt);
 }
 
+#endif
+
 static void hot_add_req(struct work_struct *dummy)
 {
 	struct dm_hot_add_response resp;
+#ifdef CONFIG_MEMORY_HOTPLUG
 	unsigned long pg_start, pfn_cnt;
 	unsigned long rg_start, rg_sz;
+#endif
 	struct hv_dynmem_device *dm = &dm_device;
 
 	memset(&resp, 0, sizeof(struct dm_hot_add_response));
@@ -807,6 +823,7 @@ static void hot_add_req(struct work_struct *dummy)
 	resp.hdr.size = sizeof(struct dm_hot_add_response);
 	resp.hdr.trans_id = atomic_inc_return(&trans_id);
 
+#ifdef CONFIG_MEMORY_HOTPLUG
 	pg_start = dm->ha_wrk.ha_page_range.finfo.start_page;
 	pfn_cnt = dm->ha_wrk.ha_page_range.finfo.page_cnt;
 
@@ -835,9 +852,13 @@ static void hot_add_req(struct work_struct *dummy)
 		rg_sz = region_size;
 	}
 
-	resp.page_count = process_hot_add(pg_start, pfn_cnt,
-					rg_start, rg_sz);
+	if (do_hot_add)
+		resp.page_count = process_hot_add(pg_start, pfn_cnt,
+						rg_start, rg_sz);
+#endif
 	if (resp.page_count > 0)
+		resp.result = 1;
+	else if (!do_hot_add)
 		resp.result = 1;
 	else
 		resp.result = 0;
@@ -989,6 +1010,14 @@ static int  alloc_balloon_pages(struct hv_dynmem_device *dm, int num_pages,
 
 		dm->num_pages_ballooned += alloc_unit;
 
+		/*
+		 * If we allocatted 2M pages; split them so we
+		 * can free them in any order we get.
+		 */
+
+		if (alloc_unit != 1)
+			split_page(pg, get_order(alloc_unit << PAGE_SHIFT));
+
 		bl_resp->range_count++;
 		bl_resp->range_array[i].finfo.start_page =
 			page_to_pfn(pg);
@@ -1015,9 +1044,10 @@ static void balloon_up(struct work_struct *dummy)
 
 
 	/*
-	 * Currently, we only support 4k allocations.
+	 * We will attempt 2M allocations. However, if we fail to
+	 * allocate 2M chunks, we will go back to 4k allocations.
 	 */
-	alloc_unit = 1;
+	alloc_unit = 512;
 
 	while (!done) {
 		bl_resp = (struct dm_balloon_response *)send_buffer;
@@ -1032,6 +1062,11 @@ static void balloon_up(struct work_struct *dummy)
 		num_ballooned = alloc_balloon_pages(&dm_device, num_pages,
 						bl_resp, alloc_unit,
 						 &alloc_error);
+
+		if ((alloc_error) && (alloc_unit != 1)) {
+			alloc_unit = 1;
+			continue;
+		}
 
 		if ((alloc_error) || (num_ballooned == num_pages)) {
 			bl_resp->more_pages = 0;
@@ -1308,7 +1343,9 @@ static int balloon_probe(struct hv_device *dev,
 		goto probe_error1;
 	}
 
+#ifdef CONFIG_MEMORY_HOTPLUG
 	set_online_page_callback(&hv_online_page);
+#endif
 
 	hv_set_drvdata(dev, &dm_device);
 	/*
@@ -1391,6 +1428,9 @@ static int balloon_probe(struct hv_device *dev,
 	return 0;
 
 probe_error2:
+#ifdef CONFIG_MEMORY_HOTPLUG
+	restore_online_page_callback(&hv_online_page);
+#endif
 	kthread_stop(dm_device.thread);
 
 probe_error1:
@@ -1415,7 +1455,9 @@ static int balloon_remove(struct hv_device *dev)
 	vmbus_close(dev->channel);
 	kthread_stop(dm->thread);
 	kfree(send_buffer);
+#ifdef CONFIG_MEMORY_HOTPLUG
 	restore_online_page_callback(&hv_online_page);
+#endif
 	list_for_each_safe(cur, tmp, &dm->ha_region_list) {
 		has = list_entry(cur, struct hv_hotadd_state, list);
 		list_del(&has->list);

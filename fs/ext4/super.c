@@ -53,6 +53,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/ext4.h>
 
+static int allow_rw = 0;
+
 static struct proc_dir_entry *ext4_proc_root;
 static struct kset *ext4_kset;
 static struct ext4_lazy_init *ext4_li_info;
@@ -82,6 +84,8 @@ static int ext4_feature_set_ok(struct super_block *sb, int readonly);
 static void ext4_destroy_lazyinit_thread(void);
 static void ext4_unregister_li_request(struct super_block *sb);
 static void ext4_clear_request_list(void);
+static int ext4_handle_unsupported_rw(struct super_block *sb,
+				      unsigned long flags);
 
 #if !defined(CONFIG_EXT2_FS) && !defined(CONFIG_EXT2_FS_MODULE) && defined(CONFIG_EXT4_USE_FOR_EXT23)
 static struct file_system_type ext2_fs_type = {
@@ -3124,10 +3128,8 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		goto cantfind_ext4;
 	sbi->s_kbytes_written = le64_to_cpu(es->s_kbytes_written);
 
-#ifndef CONFIG_EXT4_FS_RW
-	sb->s_flags |= MS_RDONLY;
-	ext4_msg(sb, KERN_INFO, "ext4 is supported in read-only mode only");
-#endif
+	sb->s_flags |= ext4_handle_unsupported_rw(sb, sb->s_flags);
+
 	/* Set defaults before we parse the mount options */
 	def_mount_opts = le32_to_cpu(es->s_default_mount_opts);
 	set_opt(sb, INIT_INODE_TABLE);
@@ -4321,13 +4323,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 	if (sbi->s_journal && sbi->s_journal->j_task->io_context)
 		journal_ioprio = sbi->s_journal->j_task->io_context->ioprio;
 
-#ifndef CONFIG_EXT4_FS_RW
-	if (!(*flags & MS_RDONLY)) {
-		*flags |= MS_RDONLY;
-		ext4_msg(sb, KERN_INFO,
-			 "ext4 is supported in read-only mode only");
-	}
-#endif
+	*flags |= ext4_handle_unsupported_rw(sb, *flags);
 
 	/*
 	 * Allow the "check" option to be passed as a remount option.
@@ -5043,3 +5039,50 @@ MODULE_DESCRIPTION("Fourth Extended Filesystem");
 MODULE_LICENSE("GPL");
 module_init(ext4_init_fs)
 module_exit(ext4_exit_fs)
+
+/* Taint only if a read-write mount is actually used. */
+static int ext4_handle_unsupported_rw(struct super_block *sb,
+				      unsigned long flags)
+{
+	if (flags & MS_RDONLY)
+		return 0;
+
+	if (allow_rw) {
+		ext4_msg(sb, KERN_INFO,
+			 "allowing unsupported read-write mount.");
+		add_taint(TAINT_NO_SUPPORT);
+#ifdef CONFIG_EXT4_FS_MODULE
+		THIS_MODULE->taints |= (1 << TAINT_NO_SUPPORT);
+#endif
+		return 0;
+	}
+
+	ext4_msg(sb, KERN_INFO,
+		 "ext4 is supported in read-only mode only");
+	return MS_RDONLY;
+}
+
+static int ext4_set_rw(const char *buffer, struct kernel_param *kp)
+{
+	char *end;
+	long val = simple_strtoul(buffer, &end, 10);
+	if (end == buffer)
+		return -EINVAL;
+	if (val != 0 && val != 1)
+		return -EINVAL;
+	if (allow_rw && val == 0) {
+		pr_warn("ext4: can't set read-write ext4 module read-only\n");
+	} else if (!allow_rw && val == 1) {
+		pr_warn("ext4: setting module read-write (unsupported)\n");
+		allow_rw = 1;
+	}
+	return 0;
+}
+
+static int ext4_get_rw(char *buffer, struct kernel_param *kp)
+{
+	return sprintf(buffer, "%d", allow_rw);
+}
+
+module_param_call(rw, ext4_set_rw, ext4_get_rw, NULL, 0644);
+MODULE_PARM_DESC(allow_rw, "Allow read-write file systems (unsupported, taints kernel)");

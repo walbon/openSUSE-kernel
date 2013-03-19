@@ -628,8 +628,6 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 	 */
 	err = btrfs_delayed_refs_qgroup_accounting(trans, info);
 
-	WARN_ON(trans->root != root);
-
 	if (trans->qgroup_reserved) {
 		/*
 		 * the same root has to be passed here between start_transaction

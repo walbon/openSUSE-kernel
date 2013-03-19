@@ -1295,7 +1295,7 @@ static struct file_system_type efivarfs_type = {
  * Handle negative dentry.
  */
 static struct dentry *efivarfs_lookup(struct inode *dir, struct dentry *dentry,
-				      unsigned int flags)
+				      struct nameidata *nd)
 {
 	if (dentry->d_name.len > NAME_MAX)
 		return ERR_PTR(-ENAMETOOLONG);
