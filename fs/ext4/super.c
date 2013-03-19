@@ -5085,4 +5085,4 @@ static int ext4_get_rw(char *buffer, struct kernel_param *kp)
 }
 
 module_param_call(rw, ext4_set_rw, ext4_get_rw, NULL, 0644);
-MODULE_PARM_DESC(allow_rw, "Allow read-write file systems (unsupported, taints kernel)");
+MODULE_PARM_DESC(rw, "Allow read-write file systems (marks kernel as unsupported when mounted read-write)");
