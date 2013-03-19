@@ -20,6 +20,7 @@
 #include <net/ip.h>
 #include <net/ipv6.h>
 #include <net/ip6_route.h>
+#include <net/netns/generic.h>
 #if defined(CONFIG_IPV6_MIP6) || defined(CONFIG_IPV6_MIP6_MODULE)
 #include <net/mip6.h>
 #endif
@@ -304,7 +305,62 @@ static struct ctl_table xfrm6_policy_table[] = {
 	{ }
 };
 
-static struct ctl_table_header *sysctl_hdr;
+struct xfrm6_net_data {
+	struct ctl_table_header *sysctl_hdr;
+};
+
+static int xfrm6_net_id __read_mostly;
+
+static int __net_init xfrm6_net_init(struct net *net)
+{
+	struct ctl_table *table;
+	struct ctl_table_header *hdr;
+	struct xfrm6_net_data *net_data;
+
+	table = xfrm6_policy_table;
+	if (!net_eq(net, &init_net)) {
+		table = kmemdup(table, sizeof(xfrm6_policy_table), GFP_KERNEL);
+		if (!table)
+			goto err_alloc;
+
+		table[0].data = &net->xfrm.xfrm6_dst_ops.gc_thresh;
+	}
+
+	hdr = register_net_sysctl_table(net, net_ipv6_ctl_path, table);
+	if (!hdr)
+		goto err_reg;
+
+	net_data = net_generic(net, xfrm6_net_id);
+	net_data->sysctl_hdr = hdr;
+	return 0;
+
+err_reg:
+	if (!net_eq(net, &init_net))
+		kfree(table);
+err_alloc:
+	return -ENOMEM;
+}
+
+static void __net_exit xfrm6_net_exit(struct net *net)
+{
+	struct ctl_table *table;
+	struct xfrm6_net_data *net_data = net_generic(net, xfrm6_net_id);
+
+	if (net_data->sysctl_hdr == NULL)
+		return;
+
+	table = net_data->sysctl_hdr->ctl_table_arg;
+	unregister_net_sysctl_table(net_data->sysctl_hdr);
+	if (!net_eq(net, &init_net))
+		kfree(table);
+}
+
+static struct pernet_operations xfrm6_net_ops = {
+	.init	= xfrm6_net_init,
+	.exit	= xfrm6_net_exit,
+	.id	= &xfrm6_net_id,
+	.size	= sizeof(struct xfrm6_net_data),
+};
 #endif
 
 int __init xfrm6_init(void)
@@ -337,9 +393,9 @@ int __init xfrm6_init(void)
 		goto out_policy;
 
 #ifdef CONFIG_SYSCTL
-	sysctl_hdr = register_net_sysctl_table(&init_net, net_ipv6_ctl_path,
-						xfrm6_policy_table);
+	register_pernet_subsys(&xfrm6_net_ops);
 #endif
+
 out:
 	return ret;
 out_policy:
@@ -350,8 +406,7 @@ out_policy:
 void xfrm6_fini(void)
 {
 #ifdef CONFIG_SYSCTL
-	if (sysctl_hdr)
-		unregister_net_sysctl_table(sysctl_hdr);
+	unregister_pernet_subsys(&xfrm6_net_ops);
 #endif
 	//xfrm6_input_fini();
 	xfrm6_policy_fini();
