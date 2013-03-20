@@ -1542,15 +1542,13 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 data)
 
 		/* Check that the address is 32-byte aligned. */
 		if (gpa_offset & (sizeof(struct pvclock_vcpu_time_info) - 1))
-			return 1;
+			break;
 
 		if (kvm_gfn_to_hva_cache_init(vcpu->kvm,
-		     &vcpu->arch.pv_time, data & ~1ULL)) {
+		     &vcpu->arch.pv_time, data & ~1ULL))
 			vcpu->arch.pv_time_enabled = false;
-			return 1;
-		} else {
+		else
 			vcpu->arch.pv_time_enabled = true;
-		}
 		break;
 	}
 	case MSR_KVM_ASYNC_PF_EN:
