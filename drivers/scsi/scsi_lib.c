@@ -1395,10 +1395,11 @@ static int scsi_lld_busy(struct request_queue *q)
 	struct scsi_device *sdev = q->queuedata;
 	struct Scsi_Host *shost;
 
+	BUG_ON(!sdev);
+
 	if (blk_queue_dead(q))
 		return 0;
 
-	BUG_ON(!sdev);
 	shost = sdev->host;
 
 	/*
