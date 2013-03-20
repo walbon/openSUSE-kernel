@@ -20,7 +20,6 @@
 #include <net/ip.h>
 #include <net/ipv6.h>
 #include <net/ip6_route.h>
-#include <net/netns/generic.h>
 #if defined(CONFIG_IPV6_MIP6) || defined(CONFIG_IPV6_MIP6_MODULE)
 #include <net/mip6.h>
 #endif
@@ -305,17 +304,10 @@ static struct ctl_table xfrm6_policy_table[] = {
 	{ }
 };
 
-struct xfrm6_net_data {
-	struct ctl_table_header *sysctl_hdr;
-};
-
-static int xfrm6_net_id __read_mostly;
-
 static int __net_init xfrm6_net_init(struct net *net)
 {
 	struct ctl_table *table;
 	struct ctl_table_header *hdr;
-	struct xfrm6_net_data *net_data;
 
 	table = xfrm6_policy_table;
 	if (!net_eq(net, &init_net)) {
@@ -330,8 +322,7 @@ static int __net_init xfrm6_net_init(struct net *net)
 	if (!hdr)
 		goto err_reg;
 
-	net_data = net_generic(net, xfrm6_net_id);
-	net_data->sysctl_hdr = hdr;
+	net->ipv6.sysctl.xfrm6_hdr = hdr;
 	return 0;
 
 err_reg:
@@ -344,13 +335,12 @@ err_alloc:
 static void __net_exit xfrm6_net_exit(struct net *net)
 {
 	struct ctl_table *table;
-	struct xfrm6_net_data *net_data = net_generic(net, xfrm6_net_id);
 
-	if (net_data->sysctl_hdr == NULL)
+	if (net->ipv6.sysctl.xfrm6_hdr == NULL)
 		return;
 
-	table = net_data->sysctl_hdr->ctl_table_arg;
-	unregister_net_sysctl_table(net_data->sysctl_hdr);
+	table = net->ipv6.sysctl.xfrm6_hdr->ctl_table_arg;
+	unregister_net_sysctl_table(net->ipv6.sysctl.xfrm6_hdr);
 	if (!net_eq(net, &init_net))
 		kfree(table);
 }
@@ -358,8 +348,6 @@ static void __net_exit xfrm6_net_exit(struct net *net)
 static struct pernet_operations xfrm6_net_ops = {
 	.init	= xfrm6_net_init,
 	.exit	= xfrm6_net_exit,
-	.id	= &xfrm6_net_id,
-	.size	= sizeof(struct xfrm6_net_data),
 };
 #endif
 

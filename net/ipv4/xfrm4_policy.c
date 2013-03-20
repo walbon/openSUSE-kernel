@@ -15,7 +15,6 @@
 #include <net/dst.h>
 #include <net/xfrm.h>
 #include <net/ip.h>
-#include <net/netns/generic.h>
 
 static struct xfrm_policy_afinfo xfrm4_policy_afinfo;
 
@@ -264,17 +263,10 @@ static struct ctl_table xfrm4_policy_table[] = {
 	{ }
 };
 
-struct xfrm4_net_data {
-	struct ctl_table_header *sysctl_hdr;
-};
-
-static int xfrm4_net_id __read_mostly;
-
 static int __net_init xfrm4_net_init(struct net *net)
 {
 	struct ctl_table *table;
 	struct ctl_table_header *hdr;
-	struct xfrm4_net_data *net_data;
 
 	table = xfrm4_policy_table;
 	if (!net_eq(net, &init_net)) {
@@ -289,8 +281,7 @@ static int __net_init xfrm4_net_init(struct net *net)
 	if (!hdr)
 		goto err_reg;
 
-	net_data = net_generic(net, xfrm4_net_id);
-	net_data->sysctl_hdr = hdr;
+	net->ipv4.xfrm4_hdr = hdr;
 	return 0;
 
 err_reg:
@@ -303,13 +294,12 @@ err_alloc:
 static void __net_exit xfrm4_net_exit(struct net *net)
 {
 	struct ctl_table *table;
-	struct xfrm4_net_data *net_data = net_generic(net, xfrm4_net_id);
 
-	if (net_data->sysctl_hdr == NULL)
+	if (net->ipv4.xfrm4_hdr == NULL)
 		return;
 
-	table = net_data->sysctl_hdr->ctl_table_arg;
-	unregister_net_sysctl_table(net_data->sysctl_hdr);
+	table = net->ipv4.xfrm4_hdr->ctl_table_arg;
+	unregister_net_sysctl_table(net->ipv4.xfrm4_hdr);
 	if (!net_eq(net, &init_net))
 		kfree(table);
 }
@@ -317,8 +307,6 @@ static void __net_exit xfrm4_net_exit(struct net *net)
 static struct pernet_operations __net_initdata xfrm4_net_ops = {
 	.init	= xfrm4_net_init,
 	.exit	= xfrm4_net_exit,
-	.id	= &xfrm4_net_id,
-	.size	= sizeof(struct xfrm4_net_data),
 };
 #endif
 
