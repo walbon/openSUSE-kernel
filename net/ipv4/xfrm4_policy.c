@@ -15,6 +15,7 @@
 #include <net/dst.h>
 #include <net/xfrm.h>
 #include <net/ip.h>
+#include <net/netns/generic.h>
 
 static struct xfrm_policy_afinfo xfrm4_policy_afinfo;
 
@@ -263,21 +264,67 @@ static struct ctl_table xfrm4_policy_table[] = {
 	{ }
 };
 
-static struct ctl_table_header *sysctl_hdr;
+struct xfrm4_net_data {
+	struct ctl_table_header *sysctl_hdr;
+};
+
+static int xfrm4_net_id __read_mostly;
+
+static int __net_init xfrm4_net_init(struct net *net)
+{
+	struct ctl_table *table;
+	struct ctl_table_header *hdr;
+	struct xfrm4_net_data *net_data;
+
+	table = xfrm4_policy_table;
+	if (!net_eq(net, &init_net)) {
+		table = kmemdup(table, sizeof(xfrm4_policy_table), GFP_KERNEL);
+		if (!table)
+			goto err_alloc;
+
+		table[0].data = &net->xfrm.xfrm4_dst_ops.gc_thresh;
+	}
+
+	hdr = register_net_sysctl_table(net, net_ipv4_ctl_path, table);
+	if (!hdr)
+		goto err_reg;
+
+	net_data = net_generic(net, xfrm4_net_id);
+	net_data->sysctl_hdr = hdr;
+	return 0;
+
+err_reg:
+	if (!net_eq(net, &init_net))
+		kfree(table);
+err_alloc:
+	return -ENOMEM;
+}
+
+static void __net_exit xfrm4_net_exit(struct net *net)
+{
+	struct ctl_table *table;
+	struct xfrm4_net_data *net_data = net_generic(net, xfrm4_net_id);
+
+	if (net_data->sysctl_hdr == NULL)
+		return;
+
+	table = net_data->sysctl_hdr->ctl_table_arg;
+	unregister_net_sysctl_table(net_data->sysctl_hdr);
+	if (!net_eq(net, &init_net))
+		kfree(table);
+}
+
+static struct pernet_operations __net_initdata xfrm4_net_ops = {
+	.init	= xfrm4_net_init,
+	.exit	= xfrm4_net_exit,
+	.id	= &xfrm4_net_id,
+	.size	= sizeof(struct xfrm4_net_data),
+};
 #endif
 
 static void __init xfrm4_policy_init(void)
 {
 	xfrm_policy_register_afinfo(&xfrm4_policy_afinfo);
-}
-
-static void __exit xfrm4_policy_fini(void)
-{
-#ifdef CONFIG_SYSCTL
-	if (sysctl_hdr)
-		unregister_net_sysctl_table(sysctl_hdr);
-#endif
-	xfrm_policy_unregister_afinfo(&xfrm4_policy_afinfo);
 }
 
 void __init xfrm4_init(int rt_max_size)
@@ -298,8 +345,7 @@ void __init xfrm4_init(int rt_max_size)
 	xfrm4_state_init();
 	xfrm4_policy_init();
 #ifdef CONFIG_SYSCTL
-	sysctl_hdr = register_net_sysctl_table(&init_net, net_ipv4_ctl_path,
-						xfrm4_policy_table);
+	register_pernet_subsys(&xfrm4_net_ops);
 #endif
 }
 

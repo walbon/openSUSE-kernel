@@ -424,6 +424,8 @@ out:
 		ret = VM_FAULT_OOM;
 	else if (ret)
 		ret = VM_FAULT_SIGBUS;
+	else
+		wait_for_stable_page(page);
 	return ret;
 }
 

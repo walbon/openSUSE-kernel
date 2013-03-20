@@ -5965,7 +5965,7 @@ int ext4_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 	 * happened.
 	 */
 	lock_page(page);
-	wait_on_page_writeback(page);
+	wait_for_stable_page(page);
 	up_read(&inode->i_alloc_sem);
 	return VM_FAULT_LOCKED;
 out_unlock:
