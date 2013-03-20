@@ -218,6 +218,7 @@ DEFINE_XEN_GUEST_HANDLE(xenpf_efi_runtime_call_t);
 #define  XEN_FW_EFI_VENDOR         2
 #define  XEN_FW_EFI_MEM_INFO       3
 #define  XEN_FW_EFI_RT_VERSION     4
+#define  XEN_FW_EFI_PCI_ROM        5
 #define XEN_FW_KBD_SHIFT_FLAGS    5
 struct xenpf_firmware_info {
     /* IN variables. */
@@ -266,6 +267,17 @@ struct xenpf_firmware_info {
                 uint64_t attr;
                 uint32_t type;
             } mem;
+            struct {
+                /* IN variables */
+                uint16_t segment;
+                uint8_t bus;
+                uint8_t devfn;
+                uint16_t vendor;
+                uint16_t devid;
+                /* OUT variables */
+                uint64_t address;
+                xen_ulong_t size;
+            } pci_rom;
         } efi_info; /* XEN_FW_EFI_INFO */
 
         /* Int16, Fn02: Get keyboard shift flags. */
@@ -278,10 +290,16 @@ DEFINE_XEN_GUEST_HANDLE(xenpf_firmware_info_t);
 #define XENPF_enter_acpi_sleep    51
 struct xenpf_enter_acpi_sleep {
     /* IN variables */
+#if __XEN_INTERFACE_VERSION__ < 0x00040300
     uint16_t pm1a_cnt_val;      /* PM1a control value. */
     uint16_t pm1b_cnt_val;      /* PM1b control value. */
+#else
+    uint16_t val_a;             /* PM1a control / sleep type A. */
+    uint16_t val_b;             /* PM1b control / sleep type B. */
+#endif
     uint32_t sleep_state;       /* Which state to enter (Sn). */
-    uint32_t flags;             /* Must be zero. */
+#define XENPF_ACPI_SLEEP_EXTENDED 0x00000001
+    uint32_t flags;             /* XENPF_ACPI_SLEEP_*. */
 };
 typedef struct xenpf_enter_acpi_sleep xenpf_enter_acpi_sleep_t;
 DEFINE_XEN_GUEST_HANDLE(xenpf_enter_acpi_sleep_t);
@@ -556,7 +574,7 @@ DEFINE_XEN_GUEST_HANDLE(xen_platform_op_t);
 /*
  * Local variables:
  * mode: C
- * c-set-style: "BSD"
+ * c-file-style: "BSD"
  * c-basic-offset: 4
  * tab-width: 4
  * indent-tabs-mode: nil
