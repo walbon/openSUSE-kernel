@@ -240,16 +240,26 @@ void __cpuinit local_teardown_timer(unsigned int cpu)
 }
 #endif
 
-void xen_clockevents_resume(void)
+static void _clockevents_resume(void *unused)
+{
+	clockevents_notify(CLOCK_EVT_NOTIFY_RESUME, NULL);
+}
+
+void xen_clockevents_resume(bool late)
 {
 	unsigned int cpu;
 
-	if (percpu_read(xen_clock_event.set_mode) != vcpuop_set_mode)
+	if (late) {
+		smp_call_function(_clockevents_resume, NULL, 1);
 		return;
+	}
 
 	for_each_online_cpu(cpu) {
 		init_missing_ticks_accounting(cpu);
-		if (HYPERVISOR_vcpu_op(VCPUOP_stop_periodic_timer, cpu, NULL))
+
+		if ((percpu_read(xen_clock_event.set_mode) == vcpuop_set_mode)
+		    && HYPERVISOR_vcpu_op(VCPUOP_stop_periodic_timer, cpu,
+					  NULL))
 			BUG();
 	}
 }
