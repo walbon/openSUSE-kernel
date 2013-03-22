@@ -82,6 +82,7 @@ struct nf_ct_frag6_arg
 	__be32 id;
 	u32 user;
 	struct net *net;
+	int ifindex;
 	const struct in6_addr *src;
 	const struct in6_addr *dst;
 };
@@ -137,6 +138,7 @@ static int nf_ct_frag6_match(struct inet_frag_queue *q, void *a)
 	fq = container_of(q, struct nf_ct_frag6_queue, q);
 	return (fq->id == arg->id && fq->user == arg->user &&
 		fq->net == arg->net &&
+		(!arg->ifindex || fq->iif == arg->ifindex) &&
 		ipv6_addr_equal(&fq->saddr, arg->src) &&
 		ipv6_addr_equal(&fq->daddr, arg->dst));
 }
@@ -245,6 +247,10 @@ fq_find(__be32 id, u32 user, struct net_device *dev, struct in6_addr *src, struc
 	unsigned int hash;
 
 	arg.id = id;
+	if (ipv6_addr_type(dst) & (IPV6_ADDR_MULTICAST | IPV6_ADDR_LINKLOCAL))
+		arg.ifindex = dev->ifindex;
+	else
+		arg.ifindex = 0;
 	arg.user = user;
 	arg.net = dev_net(dev);
 	arg.src = src;
