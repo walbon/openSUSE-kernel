@@ -919,6 +919,9 @@ bfa_ioc_ct2_pll_init(void __iomem *rb, enum bfi_asic_mode mode)
 		}
 	}
 
+	r32 = readl(rb + CT2_CHIP_MISC_PRG);
+	writel((r32 & 0xfbffffff), (rb + CT2_CHIP_MISC_PRG));
+
 	/*
 	 * Mask the interrupts and clear any
 	 * pending interrupts left by BIOS/EFI
