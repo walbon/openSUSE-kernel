@@ -614,8 +614,8 @@ bnad_cq_process(struct bnad *bnad, struct bna_ccb *ccb, int budget)
 			struct bnad_rx_ctrl *rx_ctrl =
 				(struct bnad_rx_ctrl *)ccb->ctrl;
 			if (BNAD_RXBUF_IS_PAGE(unmap_q->type))
-				vlan_gro_receive(&rx_ctrl->napi, bnad->vlan_grp,
-						ntohs(cmpl->vlan_tag), skb);
+				vlan_gro_frags(&rx_ctrl->napi, bnad->vlan_grp,
+						ntohs(cmpl->vlan_tag));
 			else
 				vlan_hwaccel_receive_skb(skb,
 							 bnad->vlan_grp,
@@ -624,8 +624,8 @@ bnad_cq_process(struct bnad *bnad, struct bna_ccb *ccb, int budget)
 		} else { /* Not VLAN tagged/stripped */
 			struct bnad_rx_ctrl *rx_ctrl =
 				(struct bnad_rx_ctrl *)ccb->ctrl;
-			if (skb->ip_summed == CHECKSUM_UNNECESSARY)
-				napi_gro_receive(&rx_ctrl->napi, skb);
+			if (BNAD_RXBUF_IS_PAGE(unmap_q->type))
+				napi_gro_frags(&rx_ctrl->napi);
 			else
 				netif_receive_skb(skb);
 		}
