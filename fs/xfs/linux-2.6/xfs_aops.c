@@ -949,16 +949,20 @@ xfs_vm_writepage(
 	if ((current->flags & PF_FSTRANS) && (delalloc || unwritten))
 		goto redirty;
 
-	/* Is this page beyond the end of the file? */
+	/*
+	 * Is this page beyond the end of the file?  Skip the page if it is
+	 * fully outside i_size, e.g. due to a truncate operation that is in
+	 * progress. We must redirty the page so that reclaim stops reclaiming
+	 * it. Otherwise xfs_vm_releasepage() is called on it and gets
+	 * confused.
+	 */
 	offset = i_size_read(inode);
 	end_index = offset >> PAGE_CACHE_SHIFT;
 	last_index = (offset - 1) >> PAGE_CACHE_SHIFT;
 	if (page->index >= end_index) {
 		if ((page->index >= end_index + 1) ||
-		    !(i_size_read(inode) & (PAGE_CACHE_SIZE - 1))) {
-			unlock_page(page);
-			return 0;
-		}
+		    !(i_size_read(inode) & (PAGE_CACHE_SIZE - 1)))
+			goto redirty;
 	}
 
 	end_offset = min_t(unsigned long long,

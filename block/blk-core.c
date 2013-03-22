@@ -1224,6 +1224,11 @@ static int __make_request(struct request_queue *q, struct bio *bio)
 	 */
 	blk_queue_bounce(q, &bio);
 
+	if (bio_integrity_enabled(bio) && bio_integrity_prep(bio)) {
+		bio_endio(bio, -EIO);
+		return;
+	}
+
 	if (bio->bi_rw & (REQ_FLUSH | REQ_FUA)) {
 		spin_lock_irq(q->queue_lock);
 		where = ELEVATOR_INSERT_FLUSH;
@@ -1505,9 +1510,6 @@ static inline void __generic_make_request(struct bio *bio)
 		 * of partition p to block n+start(p) of the disk.
 		 */
 		blk_partition_remap(bio);
-
-		if (bio_integrity_enabled(bio) && bio_integrity_prep(bio))
-			goto end_io;
 
 		if (old_sector != -1)
 			trace_block_bio_remap(q, bio, old_dev, old_sector);

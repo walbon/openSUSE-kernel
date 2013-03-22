@@ -419,6 +419,11 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 			/* Fallthrough */
 		case Opt_compress:
 		case Opt_compress_type:
+			if (!allow_unsupported) {
+				printk(KERN_WARNING "btrfs: compression is not supported, load module with allow_unsupported=1\n");
+				ret = -EOPNOTSUPP;
+				break;
+			}
 			if (token == Opt_compress ||
 			    token == Opt_compress_force ||
 			    strcmp(args[0].from, "lzo") == 0) {

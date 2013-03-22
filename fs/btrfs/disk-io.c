@@ -2293,6 +2293,14 @@ int open_ctree(struct super_block *sb,
 	if (btrfs_super_flags(disk_super) & BTRFS_SUPER_FLAG_ERROR)
 		set_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state);
 
+	if (btrfs_super_flags(disk_super) & BTRFS_SUPER_FLAG_SEEDING) {
+		if (!allow_unsupported) {
+			printk(KERN_WARNING "btrfs: seeding mode is not supported, load module with allow_unsupported=1\n");
+			ret = -EOPNOTSUPP;
+			goto fail_alloc;
+		}
+	}
+
 	/*
 	 * run through our array of backup supers and setup
 	 * our ring pointer to the oldest one

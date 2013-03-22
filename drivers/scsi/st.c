@@ -4117,6 +4117,10 @@ static int st_probe(struct device *dev)
 	tpnt->disk = disk;
 	disk->private_data = &tpnt->driver;
 	disk->queue = SDp->request_queue;
+	/* SCSI tape doesn't register this gendisk via add_disk().  Manually
+	 * take queue reference that release_disk() expects. */
+	if (blk_get_queue(disk->queue))
+		goto out_put_disk;
 	tpnt->driver = &st_template;
 
 	tpnt->device = SDp;
@@ -4186,7 +4190,7 @@ static int st_probe(struct device *dev)
 	if (!idr_pre_get(&st_index_idr, GFP_KERNEL)) {
 		printk(KERN_WARNING "st: idr expansion failed\n");
 		error = -ENOMEM;
-		goto out_put_disk;
+		goto out_put_queue;
 	}
 
 	spin_lock(&st_index_lock);
@@ -4194,7 +4198,7 @@ static int st_probe(struct device *dev)
 	spin_unlock(&st_index_lock);
 	if (error) {
 		printk(KERN_WARNING "st: idr allocation failed: %d\n", error);
-		goto out_put_disk;
+		goto out_put_queue;
 	}
 
 	if (dev_num > ST_MAX_TAPES) {
@@ -4228,6 +4232,8 @@ out_put_index:
 	spin_lock(&st_index_lock);
 	idr_remove(&st_index_idr, dev_num);
 	spin_unlock(&st_index_lock);
+out_put_queue:
+	blk_put_queue(disk->queue);
 out_put_disk:
 	put_disk(disk);
 	kfree(tpnt);
