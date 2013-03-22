@@ -497,6 +497,11 @@ static inline struct rtable *skb_rtable(const struct sk_buff *skb)
 	return (struct rtable *)skb_dst(skb);
 }
 
+static inline struct rt6_info *skb_r6table(const struct sk_buff *skb)
+{
+	return (struct rt6_info *)skb_dst(skb);
+}
+
 extern void kfree_skb(struct sk_buff *skb);
 extern void consume_skb(struct sk_buff *skb);
 extern void	       __kfree_skb(struct sk_buff *skb);

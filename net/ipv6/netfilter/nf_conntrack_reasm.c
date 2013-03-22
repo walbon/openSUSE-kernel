@@ -28,6 +28,7 @@
 #include <linux/icmpv6.h>
 #include <linux/random.h>
 #include <linux/slab.h>
+#include <linux/ipv6_route.h>
 
 #include <net/sock.h>
 #include <net/snmp.h>
@@ -46,6 +47,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <net/netfilter/ipv6/nf_defrag_ipv6.h>
+#include <net/ip6_route.h>
 
 
 struct nf_ct_frag6_skb_cb
@@ -66,12 +68,23 @@ struct nf_ct_frag6_queue
 	struct in6_addr		saddr;
 	struct in6_addr		daddr;
 
+	struct net		*net;
+	int			iif;
 	unsigned int		csum;
 	__u16			nhoffset;
 };
 
 static struct inet_frags nf_frags;
 static struct netns_frags nf_init_frags;
+
+struct nf_ct_frag6_arg
+{
+	__be32 id;
+	u32 user;
+	struct net *net;
+	const struct in6_addr *src;
+	const struct in6_addr *dst;
+};
 
 #ifdef CONFIG_SYSCTL
 static struct ctl_table nf_ct_frag6_sysctl_table[] = {
@@ -116,11 +129,37 @@ static void nf_skb_free(struct sk_buff *skb)
 		kfree_skb(NFCT_FRAG6_CB(skb)->orig);
 }
 
+static int nf_ct_frag6_match(struct inet_frag_queue *q, void *a)
+{
+	struct nf_ct_frag6_queue *fq;
+	struct nf_ct_frag6_arg *arg = a;
+
+	fq = container_of(q, struct nf_ct_frag6_queue, q);
+	return (fq->id == arg->id && fq->user == arg->user &&
+		fq->net == arg->net &&
+		ipv6_addr_equal(&fq->saddr, arg->src) &&
+		ipv6_addr_equal(&fq->daddr, arg->dst));
+}
+
+static void nf_ct_frag6_init_fq(struct inet_frag_queue *q, void *a)
+{
+	struct nf_ct_frag6_queue *fq = container_of(q, struct nf_ct_frag6_queue, q);
+	struct nf_ct_frag6_arg *arg = a;
+
+	fq->id = arg->id;
+	fq->user = arg->user;
+	fq->net = get_net(arg->net);
+	ipv6_addr_copy(&fq->saddr, arg->src);
+	ipv6_addr_copy(&fq->daddr, arg->dst);
+}
+
 /* Destruction primitives. */
 
 static __inline__ void fq_put(struct nf_ct_frag6_queue *fq)
 {
-	inet_frag_put(&fq->q, &nf_frags);
+	struct net *net = fq->net;
+	if (inet_frag_put(&fq->q, &nf_frags))
+		put_net(net);
 }
 
 /* Kill fq entry. It is not destroyed immediately,
@@ -141,6 +180,7 @@ static void nf_ct_frag6_evictor(void)
 static void nf_ct_frag6_expire(unsigned long data)
 {
 	struct nf_ct_frag6_queue *fq;
+	struct net_device *dev = NULL;
 
 	fq = container_of((struct inet_frag_queue *)data,
 			struct nf_ct_frag6_queue, q);
@@ -151,8 +191,45 @@ static void nf_ct_frag6_expire(unsigned long data)
 		goto out;
 
 	fq_kill(fq);
+	dev = dev_get_by_index(fq->net, fq->iif);
+	if (!dev)
+		goto out;
+
+	rcu_read_lock();
+	IP6_INC_STATS_BH(fq->net, __in6_dev_get(dev), IPSTATS_MIB_REASMTIMEOUT);
+	IP6_INC_STATS_BH(fq->net, __in6_dev_get(dev), IPSTATS_MIB_REASMFAILS);
+	rcu_read_unlock();
+
+	/* Don't send error if the first segment did not arrive. */
+	if (!(fq->q.last_in & INET_FRAG_FIRST_IN) || !fq->q.fragments)
+		goto out;
+
+	/*
+	 * Only search router table for the head fragment,
+	 * when defraging timeout at PRE_ROUTING HOOK.
+	 */
+	if (fq->user == IP6_DEFRAG_CONNTRACK_IN) {
+		struct sk_buff *head = fq->q.fragments;
+
+		head->dev = dev;
+		ip6_route_input(head);
+		if (!skb_dst(head))
+			goto out;
+
+		/*
+		 * Only an end host needs to send an ICMP "Fragment Reassembly
+		 * Timeout" message, per section 4.5 of RFC2460.
+		 */
+		if (!(skb_r6table(head)->rt6i_flags & RTF_LOCAL))
+			goto out;
+
+		/* Send an ICMP "Fragment Reassembly Timeout" message. */
+		icmpv6_send(head, ICMPV6_TIME_EXCEED, ICMPV6_EXC_FRAGTIME, 0);
+	}
 
 out:
+	if (dev)
+		dev_put(dev);
 	spin_unlock(&fq->q.lock);
 	fq_put(fq);
 }
@@ -160,14 +237,16 @@ out:
 /* Creation primitives. */
 
 static __inline__ struct nf_ct_frag6_queue *
-fq_find(__be32 id, u32 user, struct in6_addr *src, struct in6_addr *dst)
+fq_find(__be32 id, u32 user, struct net_device *dev, struct in6_addr *src, struct
+	in6_addr *dst)
 {
 	struct inet_frag_queue *q;
-	struct ip6_create_arg arg;
+	struct nf_ct_frag6_arg arg;
 	unsigned int hash;
 
 	arg.id = id;
 	arg.user = user;
+	arg.net = dev_net(dev);
 	arg.src = src;
 	arg.dst = dst;
 
@@ -305,7 +384,11 @@ found:
 	else
 		fq->q.fragments = skb;
 
-	skb->dev = NULL;
+	if (skb->dev) {
+		fq->iif = skb->dev->ifindex;
+		skb->dev = NULL;
+	}
+
 	fq->q.stamp = skb->tstamp;
 	fq->q.meat += skb->len;
 	atomic_add(skb->truesize, &nf_init_frags.mem);
@@ -558,7 +641,8 @@ struct sk_buff *nf_ct_frag6_gather(struct sk_buff *skb, u32 user)
 	if (atomic_read(&nf_init_frags.mem) > nf_init_frags.high_thresh)
 		nf_ct_frag6_evictor();
 
-	fq = fq_find(fhdr->identification, user, &hdr->saddr, &hdr->daddr);
+	fq = fq_find(fhdr->identification, user, dev, &hdr->saddr,
+		     &hdr->daddr);
 	if (fq == NULL) {
 		pr_debug("Can't find and can't create new queue\n");
 		goto ret_orig;
@@ -613,11 +697,11 @@ void nf_ct_frag6_output(unsigned int hooknum, struct sk_buff *skb,
 int nf_ct_frag6_init(void)
 {
 	nf_frags.hashfn = nf_hashfn;
-	nf_frags.constructor = ip6_frag_init;
+	nf_frags.constructor = nf_ct_frag6_init_fq;
 	nf_frags.destructor = NULL;
 	nf_frags.skb_free = nf_skb_free;
 	nf_frags.qsize = sizeof(struct nf_ct_frag6_queue);
-	nf_frags.match = ip6_frag_match;
+	nf_frags.match = nf_ct_frag6_match;
 	nf_frags.frag_expire = nf_ct_frag6_expire;
 	nf_frags.secret_interval = 10 * 60 * HZ;
 	nf_init_frags.timeout = IPV6_FRAG_TIMEOUT;
