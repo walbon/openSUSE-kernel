@@ -380,6 +380,7 @@ enum ip6_defrag_users {
 struct ip6_create_arg {
 	__be32 id;
 	u32 user;
+	int ifindex;
 	const struct in6_addr *src;
 	const struct in6_addr *dst;
 };

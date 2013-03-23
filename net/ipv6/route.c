@@ -792,6 +792,7 @@ static struct rt6_info *rt6_alloc_clone(struct rt6_info *ort,
 	}
 	return rt;
 }
+EXPORT_SYMBOL(ip6_route_input);
 
 static struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table, int oif,
 				      struct flowi6 *fl6, int flags)

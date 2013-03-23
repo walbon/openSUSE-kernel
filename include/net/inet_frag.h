@@ -65,10 +65,13 @@ struct inet_frag_queue *inet_frag_find(struct netns_frags *nf,
 		struct inet_frags *f, void *key, unsigned int hash)
 	__releases(&f->lock);
 
-static inline void inet_frag_put(struct inet_frag_queue *q, struct inet_frags *f)
+static inline bool inet_frag_put(struct inet_frag_queue *q, struct inet_frags *f)
 {
-	if (atomic_dec_and_test(&q->refcnt))
+	if (atomic_dec_and_test(&q->refcnt)) {
 		inet_frag_destroy(q, f, NULL);
+		return true;
+	}
+	return false;
 }
 
 #endif
