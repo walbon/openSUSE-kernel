@@ -895,7 +895,6 @@ static int wdm_resume(struct usb_interface *intf)
 
 	dev_dbg(&desc->intf->dev, "wdm%d_resume\n", intf->minor);
 
-	clear_bit(WDM_OVERFLOW, &desc->flags);
 	clear_bit(WDM_SUSPENDING, &desc->flags);
 	rv = recover_from_urb_loss(desc);
 
@@ -929,6 +928,7 @@ static int wdm_post_reset(struct usb_interface *intf)
 	struct wdm_device *desc = usb_get_intfdata(intf);
 	int rv;
 
+	clear_bit(WDM_OVERFLOW, &desc->flags);
 	rv = recover_from_urb_loss(desc);
 	mutex_unlock(&desc->wlock);
 	mutex_unlock(&desc->rlock);
