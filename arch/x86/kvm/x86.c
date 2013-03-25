@@ -5593,10 +5593,6 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 			update_eoi_exitmap(vcpu);
 	}
 
-	r = kvm_mmu_reload(vcpu);
-	if (unlikely(r))
-		goto out;
-
 	/*
 	 * An NMI can be injected between local nmi_pending read and
 	 * vcpu->arch.nmi_pending read inside inject_pending_event().
@@ -5625,6 +5621,12 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 			update_cr8_intercept(vcpu);
 			kvm_lapic_sync_to_vapic(vcpu);
 		}
+	}
+
+	r = kvm_mmu_reload(vcpu);
+	if (unlikely(r)) {
+		kvm_x86_ops->cancel_injection(vcpu);
+		goto out;
 	}
 
 	preempt_disable();
