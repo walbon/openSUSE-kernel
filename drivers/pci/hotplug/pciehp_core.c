@@ -36,12 +36,14 @@
 #include "pciehp.h"
 #include <linux/interrupt.h>
 #include <linux/time.h>
+#include <linux/dmi.h>
 
 /* Global variables */
 int pciehp_debug;
 int pciehp_poll_mode;
 int pciehp_poll_time;
 int pciehp_force;
+bool pciehp_surprise = false;
 struct workqueue_struct *pciehp_wq;
 struct workqueue_struct *pciehp_ordered_wq;
 
@@ -349,9 +351,27 @@ static struct dmi_system_id __initdata pcieph_dmi_table[] = {
 };
 MODULE_DEVICE_TABLE(dmi, pcieph_dmi_table);
 
+static struct dmi_system_id __initdata pcieph_dmi_surprise_table[] = {
+	{
+		/* HP Probook 455 */
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 455 G1 Notebook PC"),
+		},
+		/* HP Probook 445 */
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 445 G1 Notebook PC"),
+		},
+	}
+};
+
 static int __init pcied_init(void)
 {
 	int retval = 0;
+
+	if (dmi_check_system(pcieph_dmi_surprise_table)) {
+		pciehp_surprise = true;
+		info(DRIVER_DESC "accepting unannounced surprise event\n");
+	}
 
 	pciehp_wq = alloc_workqueue("pciehp", 0, 0);
 	if (!pciehp_wq)
