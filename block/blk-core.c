@@ -1226,7 +1226,7 @@ static int __make_request(struct request_queue *q, struct bio *bio)
 
 	if (bio_integrity_enabled(bio) && bio_integrity_prep(bio)) {
 		bio_endio(bio, -EIO);
-		return;
+		return -EIO;
 	}
 
 	if (bio->bi_rw & (REQ_FLUSH | REQ_FUA)) {
