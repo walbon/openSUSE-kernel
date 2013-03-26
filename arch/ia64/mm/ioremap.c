@@ -24,6 +24,10 @@ __ioremap (unsigned long phys_addr)
 void __iomem *
 early_ioremap (unsigned long phys_addr, unsigned long size)
 {
+	u64 attr;
+	attr = kern_mem_attribute(phys_addr, size);
+	if (attr & EFI_MEMORY_WB)
+		return (void __iomem *) phys_to_virt(phys_addr);
 	return __ioremap(phys_addr);
 }
 
