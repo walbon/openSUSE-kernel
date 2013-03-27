@@ -348,10 +348,10 @@ static noinline int compress_file_range(struct inode *inode,
 	unsigned long total_in = 0;
 	unsigned long max_compressed = 128 * 1024;
 	unsigned long max_uncompressed = 128 * 1024;
-	unsigned long min_compress_threshold;
 	int i;
 	int will_compress;
 	int compress_type = root->fs_info->compress_type;
+	int redirty = 0;
 
 	/* if this is a small write inside eof, kick off a defrag */
 	if ((end - start + 1) < 16 * 1024 &&
@@ -405,44 +405,26 @@ again:
 	     (BTRFS_I(inode)->force_compress) ||
 	     (BTRFS_I(inode)->flags & BTRFS_INODE_COMPRESS))) {
 		WARN_ON(pages);
-
-		if (BTRFS_I(inode)->force_compress)
-			compress_type = BTRFS_I(inode)->force_compress;
-
-		/* experimentally found that for LZO:
-		 * 1 - highly incompressible data - does not matter
-		 * 2 - highly compressible data   - compression wins at < 32 bytes,
-		 *     ie. just header + some RLE/dictionary bytes
-		 * 3 - textual data               - c. wins at ~220 bytes
-		 * 4 - limited set of chars ~32   - c. wins at ~128 bytes
-		 *
-		 * for ZLIB:
-		 * 1 - does not matter
-		 * 2 - < 32
-		 * 3 - between 64 and 128
-		 * 4 - < 64
-		 *
-		 * Should save pointless processing of probably incompressible
-		 * data.
-		 */
-		switch (compress_type) {
-		case BTRFS_COMPRESS_LZO: min_compress_threshold = 256; break;
-		case BTRFS_COMPRESS_ZLIB: min_compress_threshold = 64; break;
-		default: min_compress_threshold = 0; break;
-		}
-
-		if (total_compressed < min_compress_threshold) {
-			trace_printk("btrfs: skip compression of %llu bytes\n",
-				(unsigned long long)total_compressed);
-			goto cont;
-		}
-
 		pages = kzalloc(sizeof(struct page *) * nr_pages, GFP_NOFS);
 		if (!pages) {
 			/* just bail out to the uncompressed code */
 			goto cont;
 		}
 
+		if (BTRFS_I(inode)->force_compress)
+			compress_type = BTRFS_I(inode)->force_compress;
+
+		/*
+		 * we need to call clear_page_dirty_for_io on each
+		 * page in the range.  Otherwise applications with the file
+		 * mmap'd can wander in and change the page contents while
+		 * we are compressing them.
+		 *
+		 * If the compression fails for any reason, we set the pages
+		 * dirty again later on.
+		 */
+		extent_range_clear_dirty_for_io(inode, start, end);
+		redirty = 1;
 		ret = btrfs_compress_pages(compress_type,
 					   inode->i_mapping, start,
 					   total_compressed, pages,
@@ -582,6 +564,8 @@ cleanup_and_bail_uncompressed:
 			__set_page_dirty_nobuffers(locked_page);
 			/* unlocked later on in the async handlers */
 		}
+		if (redirty)
+			extent_range_redirty_for_io(inode, start, end);
 		add_async_extent(async_cow, start, end - start + 1,
 				 0, NULL, 0, BTRFS_COMPRESS_NONE);
 		*num_added += 1;
