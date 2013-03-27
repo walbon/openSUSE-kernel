@@ -16,6 +16,7 @@
 #include <linux/wait.h>
 #include <asm/atomic.h>
 #include <xen/evtchn.h>
+#include <xen/interface/physdev.h>
 #include "pciback.h"
 #include "conf_space.h"
 #include "conf_space_quirks.h"
@@ -84,19 +85,35 @@ static struct pcistub_device *pcistub_device_alloc(struct pci_dev *dev)
 static void pcistub_device_release(struct kref *kref)
 {
 	struct pcistub_device *psdev;
+	struct pci_dev *dev;
 
 	psdev = container_of(kref, struct pcistub_device, kref);
+	dev = psdev->dev;
 
-	dev_dbg(&psdev->dev->dev, "pcistub_device_release\n");
+	dev_dbg(&dev->dev, "pcistub_device_release\n");
+
+	if (pci_find_capability(dev, PCI_CAP_ID_MSIX)) {
+		struct physdev_pci_device ppdev = {
+			.seg = pci_domain_nr(dev->bus),
+			.bus = dev->bus->number,
+			.devfn = dev->devfn
+		};
+		int err = HYPERVISOR_physdev_op(PHYSDEVOP_release_msix,
+						&ppdev);
+
+		if (err)
+			dev_warn(&dev->dev, "MSI-X release failed (%d)\n",
+				 err);
+	}
 
 	/* Clean-up the device */
-	pciback_reset_device(psdev->dev);
-	pciback_config_free_dyn_fields(psdev->dev);
-	pciback_config_free_dev(psdev->dev);
-	kfree(pci_get_drvdata(psdev->dev));
-	pci_set_drvdata(psdev->dev, NULL);
+	pciback_reset_device(dev);
+	pciback_config_free_dyn_fields(dev);
+	pciback_config_free_dev(dev);
+	kfree(pci_get_drvdata(dev));
+	pci_set_drvdata(dev, NULL);
 
-	pci_dev_put(psdev->dev);
+	pci_dev_put(dev);
 
 	kfree(psdev);
 }
@@ -314,6 +331,19 @@ static int __devinit pcistub_init_device(struct pci_dev *dev)
 	err = pci_enable_device(dev);
 	if (err)
 		goto config_release;
+
+	if (pci_find_capability(dev, PCI_CAP_ID_MSIX)) {
+		struct physdev_pci_device ppdev = {
+			.seg = pci_domain_nr(dev->bus),
+			.bus = dev->bus->number,
+			.devfn = dev->devfn
+		};
+
+		err = HYPERVISOR_physdev_op(PHYSDEVOP_prepare_msix, &ppdev);
+		if (err)
+			dev_err(&dev->dev, "MSI-X preparation failed (%d)\n",
+				err);
+	}
 
 	/* Now disable the device (this also ensures some private device
 	 * data is setup before we export)

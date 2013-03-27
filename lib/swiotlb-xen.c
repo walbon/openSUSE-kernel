@@ -38,7 +38,7 @@
 #define OFFSET(val,align) ((unsigned long)((val) & ( (align) - 1)))
 
 int swiotlb;
-int swiotlb_force;
+int __initdata swiotlb_force;
 
 /*
  * Used to do a quick range check in swiotlb_tbl_unmap_single and
