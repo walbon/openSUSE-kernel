@@ -353,15 +353,20 @@ MODULE_DEVICE_TABLE(dmi, pcieph_dmi_table);
 
 static struct dmi_system_id __initdata pcieph_dmi_surprise_table[] = {
 	{
-		/* HP Probook 455 */
-		.matches = {
-			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 455 G1 Notebook PC"),
-		},
 		/* HP Probook 445 */
+		.ident = "HP ProBook 445",
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 445 G1 Notebook PC"),
 		},
-	}
+	},
+	{
+		/* HP Probook 455 */
+		.ident = "HP ProBook 455",
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 455 G1 Notebook PC"),
+		},
+	},
+	{} /* terminating entry */
 };
 
 static int __init pcied_init(void)
@@ -370,7 +375,7 @@ static int __init pcied_init(void)
 
 	if (dmi_check_system(pcieph_dmi_surprise_table)) {
 		pciehp_surprise = true;
-		info(DRIVER_DESC "accepting unannounced surprise event\n");
+		info(DRIVER_DESC " accepting unannounced surprise event\n");
 	}
 
 	pciehp_wq = alloc_workqueue("pciehp", 0, 0);
