@@ -1674,7 +1674,7 @@ static int cfq_allow_merge(struct request_queue *q, struct request *rq,
 		return false;
 
 	/*
-	 * Lookup the cfqq that this bio will be queued with. Allow
+	 * Lookup the cfqq that this bio will be queued with and allow
 	 * merge only if rq is queued there.
 	 */
 	cic = cfq_cic_lookup(cfqd, current->io_context);
