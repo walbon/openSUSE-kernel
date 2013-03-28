@@ -2598,9 +2598,9 @@ int bnx2x_nic_unload(struct bnx2x *bp, int unload_mode, bool keep_link)
 		SHMEM2_WR(bp, drv_capabilities_flag[BP_FW_MB_IDX(bp)],
 			  val & ~DRV_FLAGS_CAPABILITIES_LOADED_L2);
 	}
-
-	if ((bp->state == BNX2X_STATE_CLOSED) ||
-	    (bp->state == BNX2X_STATE_ERROR)) {
+	if (bp->recovery_state != BNX2X_RECOVERY_DONE &&
+	    (bp->state == BNX2X_STATE_CLOSED ||
+	     bp->state == BNX2X_STATE_ERROR)) {
 		/* We can get here if the driver has been unloaded
 		 * during parity error recovery and is either waiting for a
 		 * leader to complete or for other functions to unload and
@@ -2618,8 +2618,16 @@ int bnx2x_nic_unload(struct bnx2x *bp, int unload_mode, bool keep_link)
 		return -EINVAL;
 	}
 
-	/*
-	 * It's important to set the bp->state to the value different from
+	/* Nothing to do during unload if previous bnx2x_nic_load()
+	 * have not completed succesfully - all resourses are released.
+	 *
+	 * we can get here only after unsuccessful ndo_* callback, during which
+	 * dev->IFF_UP flag is still on.
+	 */
+	if (bp->state == BNX2X_STATE_CLOSED || bp->state == BNX2X_STATE_ERROR)
+		return 0;
+
+	/* It's important to set the bp->state to the value different from
 	 * BNX2X_STATE_OPEN and only then stop the Tx. Otherwise bnx2x_tx_int()
 	 * may restart the Tx from the NAPI context (see bnx2x_tx_int()).
 	 */
