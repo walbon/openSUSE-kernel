@@ -18,6 +18,7 @@
 #include <linux/etherdevice.h>
 #include <linux/if_vlan.h>
 #include <linux/ip.h>
+#include <net/tcp.h>
 #include <net/ipv6.h>
 #include <net/ip6_checksum.h>
 #include <linux/prefetch.h>
@@ -469,7 +470,7 @@ static int bnx2x_fill_frag_skb(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 					tpa_info->parsing_flags, len_on_bd);
 
 		/* set for GRO */
-		if (fp->mode == TPA_MODE_GRO)
+		if (fp->mode == TPA_MODE_GRO && skb_shinfo(skb)->gso_size)
 			skb_shinfo(skb)->gso_type =
 			    (GET_FLAG(tpa_info->parsing_flags,
 				      PARSING_FLAGS_OVER_ETHERNET_PROTOCOL) ==
@@ -541,6 +542,123 @@ static int bnx2x_fill_frag_skb(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 	return 0;
 }
 
+#ifdef CONFIG_INET
+#ifndef _HAVE_ARCH_IPV6_CSUM
+static inline __sum16 csum_ipv6_magic(const struct in6_addr *saddr,
+					  const struct in6_addr *daddr,
+					  __u32 len, unsigned short proto,
+					  __wsum csum)
+{
+
+	int carry;
+	__u32 ulen;
+	__u32 uproto;
+	__u32 sum = (__force u32)csum;
+
+	sum += (__force u32)saddr->s6_addr32[0];
+	carry = (sum < (__force u32)saddr->s6_addr32[0]);
+	sum += carry;
+
+	sum += (__force u32)saddr->s6_addr32[1];
+	carry = (sum < (__force u32)saddr->s6_addr32[1]);
+	sum += carry;
+
+	sum += (__force u32)saddr->s6_addr32[2];
+	carry = (sum < (__force u32)saddr->s6_addr32[2]);
+	sum += carry;
+
+	sum += (__force u32)saddr->s6_addr32[3];
+	carry = (sum < (__force u32)saddr->s6_addr32[3]);
+	sum += carry;
+
+	sum += (__force u32)daddr->s6_addr32[0];
+	carry = (sum < (__force u32)daddr->s6_addr32[0]);
+	sum += carry;
+
+	sum += (__force u32)daddr->s6_addr32[1];
+	carry = (sum < (__force u32)daddr->s6_addr32[1]);
+	sum += carry;
+
+	sum += (__force u32)daddr->s6_addr32[2];
+	carry = (sum < (__force u32)daddr->s6_addr32[2]);
+	sum += carry;
+
+	sum += (__force u32)daddr->s6_addr32[3];
+	carry = (sum < (__force u32)daddr->s6_addr32[3]);
+	sum += carry;
+
+	ulen = (__force u32)htonl((__u32) len);
+	sum += ulen;
+	carry = (sum < ulen);
+	sum += carry;
+
+	uproto = (__force u32)htonl(proto);
+	sum += uproto;
+	carry = (sum < uproto);
+	sum += carry;
+
+	return csum_fold((__force __wsum)sum);
+}
+#endif
+
+static inline __sum16 tcp_v6_check(int len,
+					struct in6_addr *saddr,
+					struct in6_addr *daddr,
+					__wsum base)
+{
+	return csum_ipv6_magic(saddr, daddr, len, IPPROTO_TCP, base);
+}
+
+
+
+static void bnx2x_gro_ip_csum(struct bnx2x *bp, struct sk_buff *skb)
+{
+	const struct iphdr *iph = ip_hdr(skb);
+	struct tcphdr *th;
+
+	skb_set_transport_header(skb, sizeof(struct iphdr));
+	th = tcp_hdr(skb);
+
+	th->check = ~tcp_v4_check(skb->len - skb_transport_offset(skb),
+				  iph->saddr, iph->daddr, 0);
+}
+
+static void bnx2x_gro_ipv6_csum(struct bnx2x *bp, struct sk_buff *skb)
+{
+	struct ipv6hdr *iph = ipv6_hdr(skb);
+	struct tcphdr *th;
+
+	skb_set_transport_header(skb, sizeof(struct ipv6hdr));
+	th = tcp_hdr(skb);
+
+	th->check = ~tcp_v6_check(skb->len - skb_transport_offset(skb),
+				  &iph->saddr, &iph->daddr, 0);
+}
+#endif
+
+static void bnx2x_gro_receive(struct bnx2x *bp, struct bnx2x_fastpath *fp,
+			       struct sk_buff *skb)
+{
+#ifdef CONFIG_INET
+	if (fp->mode == TPA_MODE_GRO && skb_shinfo(skb)->gso_size) {
+		skb_set_network_header(skb, 0);
+		switch (be16_to_cpu(skb->protocol)) {
+		case ETH_P_IP:
+			bnx2x_gro_ip_csum(bp, skb);
+			break;
+		case ETH_P_IPV6:
+			bnx2x_gro_ipv6_csum(bp, skb);
+			break;
+		default:
+			BNX2X_ERR("FW GRO supports only IPv4/IPv6, not 0x%04x\n",
+				  be16_to_cpu(skb->protocol));
+		}
+		tcp_gro_complete(skb);
+	}
+#endif
+	napi_gro_receive(&fp->napi, skb);
+}
+
 static void bnx2x_tpa_stop(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 			   struct bnx2x_agg_info *tpa_info,
 			   u16 pages,
@@ -595,7 +713,7 @@ static void bnx2x_tpa_stop(struct bnx2x *bp, struct bnx2x_fastpath *fp,
 					 skb, cqe, cqe_idx)) {
 			if (tpa_info->parsing_flags & PARSING_FLAGS_VLAN)
 				__vlan_hwaccel_put_tag(skb, tpa_info->vlan_tag);
-			napi_gro_receive(&fp->napi, skb);
+			bnx2x_gro_receive(bp, fp, skb);
 		} else {
 			DP(NETIF_MSG_RX_STATUS,
 			   "Failed to allocate new pages - dropping packet!\n");
