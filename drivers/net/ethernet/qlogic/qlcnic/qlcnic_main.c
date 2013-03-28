@@ -1173,8 +1173,6 @@ qlcnic_set_mgmt_operations(struct qlcnic_adapter *adapter)
 
 	qlcnic_dev_set_npar_ready(adapter);
 
-	if (qlcnic_83xx_check(adapter))
-		qlcnic_83xx_register_nic_idc_func(adapter, 1);
 	return err;
 }
 
@@ -3062,6 +3060,8 @@ static int qlcnic_attach_func(struct pci_dev *pdev)
 	}
 
 	if (qlcnic_83xx_check(adapter)) {
+		/* register for NIC IDC AEN Events */
+		qlcnic_83xx_register_nic_idc_func(adapter, 1);
 		err = qlcnic_83xx_setup_mbx_intr(adapter);
 		if (err) {
 			dev_err(&adapter->pdev->dev,
@@ -3223,6 +3223,8 @@ int qlcnic_set_max_rss(struct qlcnic_adapter *adapter, u8 data, size_t len)
 	}
 
 	if (qlcnic_83xx_check(adapter)) {
+		/* register for NIC IDC AEN Events */
+		qlcnic_83xx_register_nic_idc_func(adapter, 1);
 		err = qlcnic_83xx_setup_mbx_intr(adapter);
 		if (err) {
 			dev_err(&adapter->pdev->dev,
