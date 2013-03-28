@@ -14,4 +14,4 @@ extern struct key *modsign_keyring;
 extern struct key *modsign_blacklist;
 #endif
 
-extern int mod_verify_sig(const void *mod, unsigned long *_modlen);
+extern int mod_verify_sig(const void *mod, unsigned long *_modlen, bool truncate_only);

@@ -129,6 +129,13 @@ struct list_head *kdb_modules = &modules; /* kdb needs the list of modules */
 #endif /* CONFIG_KGDB_KDB */
 
 #ifdef CONFIG_MODULE_SIG
+#ifdef CONFIG_MODULE_SIG_CHECK
+static bool sig_check = true;
+#else
+static bool sig_check = false;
+#endif
+module_param(sig_check, bool, 0644);
+
 #ifdef CONFIG_MODULE_SIG_FORCE
 bool sig_enforce = true;
 #else
@@ -164,6 +171,7 @@ static const struct kernel_param_ops param_ops_bool_enable_only = {
 
 module_param(sig_enforce, bool_enable_only, 0644);
 #endif /* !CONFIG_MODULE_SIG_FORCE */
+
 #endif /* CONFIG_MODULE_SIG */
 
 /* Block module loading/unloading? */
@@ -2428,7 +2436,7 @@ static int module_sig_check(struct load_info *info,
 	    memcmp(mod + len - markerlen, MODULE_SIG_STRING, markerlen) == 0) {
 		/* We truncate the module to discard the signature */
 		*_len -= markerlen;
-		err = mod_verify_sig(mod, _len);
+		err = mod_verify_sig(mod, _len, !sig_check && !sig_enforce);
 	}
 
 	if (!err) {

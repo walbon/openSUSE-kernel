@@ -196,7 +196,7 @@ static struct key *request_asymmetric_key(const char *signer, size_t signer_len,
 /*
  * Verify the signature on a module.
  */
-int mod_verify_sig(const void *mod, unsigned long *_modlen)
+int mod_verify_sig(const void *mod, unsigned long *_modlen, bool truncate_only)
 {
 	struct public_key_signature *pks;
 	struct module_signature ms;
@@ -222,6 +222,9 @@ int mod_verify_sig(const void *mod, unsigned long *_modlen)
 	modlen -= (size_t)ms.signer_len + ms.key_id_len;
 
 	*_modlen = modlen;
+	if (truncate_only)
+		return 0;
+
 	sig = mod + modlen;
 
 	/* For the moment, only support RSA and X.509 identifiers */
