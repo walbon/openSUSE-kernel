@@ -1890,10 +1890,7 @@ int btrfs_clean_old_snapshots(struct btrfs_root *root)
 			ret = btrfs_drop_snapshot(root, NULL, 0, 0);
 		else
 			ret =btrfs_drop_snapshot(root, NULL, 1, 0);
-		/*
-		 * Continue after a transaction abort during drop
-		 */
-		BUG_ON(ret < 0 && ret != -EROFS && ret != -ENOSPC);
+		BUG_ON(ret < 0);
 	}
 	return 0;
 }

@@ -1695,19 +1695,16 @@ static int cleaner_kthread(void *arg)
 	do {
 		vfs_check_frozen(root->fs_info->sb, SB_FREEZE_WRITE);
 
-		if (!down_read_trylock(&root->fs_info->sb->s_umount))
-			goto skip;
-
 		if (!(root->fs_info->sb->s_flags & MS_RDONLY) &&
+			down_read_trylock(&root->fs_info->sb->s_umount) &&
 		    mutex_trylock(&root->fs_info->cleaner_mutex)) {
 			btrfs_run_delayed_iputs(root);
 			btrfs_clean_old_snapshots(root);
 			mutex_unlock(&root->fs_info->cleaner_mutex);
 			btrfs_run_defrag_inodes(root->fs_info);
+			up_read(&root->fs_info->sb->s_umount);
 		}
 
-		up_read(&root->fs_info->sb->s_umount);
-skip:
 		if (freezing(current)) {
 			refrigerator();
 		} else {
@@ -3459,10 +3456,12 @@ int close_ctree(struct btrfs_root *root)
 
 	btrfs_scrub_cancel(fs_info);
 
+	/* wait for any defraggers to finish */
+	wait_event(fs_info->transaction_wait,
+		   (atomic_read(&fs_info->defrag_running) == 0));
+
 	/* clear out the rbtree of defraggable inodes */
 	btrfs_cleanup_defrag_inodes(fs_info);
-
-	BUG_ON(atomic_read(&fs_info->defrag_running));
 
 	if (!(fs_info->sb->s_flags & MS_RDONLY)) {
 		ret = btrfs_commit_super(root);
