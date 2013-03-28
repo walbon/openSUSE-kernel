@@ -428,7 +428,7 @@ int x509_process_extension(void *context, size_t hdrlen,
 			/* Short Form length */
 			if (v[1] != vlen - 2 ||
 			    v[2] != SEQ_TAG_KEYID ||
-			    v[3] != vlen - 4)
+			    v[3] > vlen - 4)
 				return -EBADMSG;
 
 			key_len = v[3];
