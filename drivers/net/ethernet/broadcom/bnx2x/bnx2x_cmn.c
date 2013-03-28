@@ -2866,11 +2866,11 @@ int bnx2x_poll(struct napi_struct *napi, int budget)
  * to ease the pain of our fellow microcode engineers
  * we use one mapping for both BDs
  */
-static noinline u16 bnx2x_tx_split(struct bnx2x *bp,
-				   struct bnx2x_fp_txdata *txdata,
-				   struct sw_tx_bd *tx_buf,
-				   struct eth_tx_start_bd **tx_bd, u16 hlen,
-				   u16 bd_prod, int nbd)
+static u16 bnx2x_tx_split(struct bnx2x *bp,
+			  struct bnx2x_fp_txdata *txdata,
+			  struct sw_tx_bd *tx_buf,
+			  struct eth_tx_start_bd **tx_bd, u16 hlen,
+			  u16 bd_prod)
 {
 	struct eth_tx_start_bd *h_tx_bd = *tx_bd;
 	struct eth_tx_bd *d_tx_bd;
@@ -2878,11 +2878,10 @@ static noinline u16 bnx2x_tx_split(struct bnx2x *bp,
 	int old_len = le16_to_cpu(h_tx_bd->nbytes);
 
 	/* first fix first BD */
-	h_tx_bd->nbd = cpu_to_le16(nbd);
 	h_tx_bd->nbytes = cpu_to_le16(hlen);
 
-	DP(NETIF_MSG_TX_QUEUED,	"TSO split header size is %d (%x:%x) nbd %d\n",
-	   h_tx_bd->nbytes, h_tx_bd->addr_hi, h_tx_bd->addr_lo, h_tx_bd->nbd);
+	DP(NETIF_MSG_TX_QUEUED,	"TSO split header size is %d (%x:%x)\n",
+	   h_tx_bd->nbytes, h_tx_bd->addr_hi, h_tx_bd->addr_lo);
 
 	/* now get a new data BD
 	 * (after the pbd) and fill it */
@@ -3030,8 +3029,8 @@ exit_lbl:
 }
 #endif
 
-static inline void bnx2x_set_pbd_gso_e2(struct sk_buff *skb, u32 *parsing_data,
-					u32 xmit_type)
+static void bnx2x_set_pbd_gso_e2(struct sk_buff *skb, u32 *parsing_data,
+				 u32 xmit_type)
 {
 	*parsing_data |= (skb_shinfo(skb)->gso_size <<
 			      ETH_TX_PARSE_BD_E2_LSO_MSS_SHIFT) &
@@ -3054,7 +3053,7 @@ static inline void bnx2x_set_pbd_gso(struct sk_buff *skb,
 {
 	pbd->lso_mss = cpu_to_le16(skb_shinfo(skb)->gso_size);
 	pbd->tcp_send_seq = swab32(tcp_hdr(skb)->seq);
-	pbd->tcp_flags = pbd_tcp_flags(skb);
+	pbd->tcp_flags = pbd_tcp_flags(tcp_hdr(skb));
 
 	if (xmit_type & XMIT_GSO_V4) {
 		pbd->ip_id = swab16(ip_hdr(skb)->id);
@@ -3080,15 +3079,15 @@ static inline void bnx2x_set_pbd_gso(struct sk_buff *skb,
  * @parsing_data:	data to be updated
  * @xmit_type:		xmit flags
  *
- * 57712 related
+ * 57712/578xx related
  */
 static inline  u8 bnx2x_set_pbd_csum_e2(struct bnx2x *bp, struct sk_buff *skb,
-	u32 *parsing_data, u32 xmit_type)
+					u32 *parsing_data, u32 xmit_type)
 {
 	*parsing_data |=
 			((((u8 *)skb_transport_header(skb) - skb->data) >> 1) <<
-			ETH_TX_PARSE_BD_E2_TCP_HDR_START_OFFSET_W_SHIFT) &
-			ETH_TX_PARSE_BD_E2_TCP_HDR_START_OFFSET_W;
+			ETH_TX_PARSE_BD_E2_L4_HDR_START_OFFSET_W_SHIFT) &
+			ETH_TX_PARSE_BD_E2_L4_HDR_START_OFFSET_W;
 
 	if (xmit_type & XMIT_CSUM_TCP) {
 		*parsing_data |= ((tcp_hdrlen(skb) / 4) <<
@@ -3105,16 +3104,13 @@ static inline  u8 bnx2x_set_pbd_csum_e2(struct bnx2x *bp, struct sk_buff *skb,
 }
 
 static inline void bnx2x_set_sbd_csum(struct bnx2x *bp, struct sk_buff *skb,
-	struct eth_tx_start_bd *tx_start_bd, u32 xmit_type)
+				      struct eth_tx_start_bd *tx_start_bd,
+				      u32 xmit_type)
 {
 	tx_start_bd->bd_flags.as_bitfield |= ETH_TX_BD_FLAGS_L4_CSUM;
 
-	if (xmit_type & XMIT_CSUM_V4)
-		tx_start_bd->bd_flags.as_bitfield |=
-					ETH_TX_BD_FLAGS_IP_CSUM;
-	else
-		tx_start_bd->bd_flags.as_bitfield |=
-					ETH_TX_BD_FLAGS_IPV6;
+	if (xmit_type & XMIT_CSUM_V6)
+		tx_start_bd->bd_flags.as_bitfield |= ETH_TX_BD_FLAGS_IPV6;
 
 	if (!(xmit_type & XMIT_CSUM_TCP))
 		tx_start_bd->bd_flags.as_bitfield |= ETH_TX_BD_FLAGS_IS_UDP;
@@ -3128,9 +3124,9 @@ static inline void bnx2x_set_sbd_csum(struct bnx2x *bp, struct sk_buff *skb,
  * @pbd:	parse BD to be updated
  * @xmit_type:	xmit flags
  */
-static inline u8 bnx2x_set_pbd_csum(struct bnx2x *bp, struct sk_buff *skb,
-	struct eth_tx_parse_bd_e1x *pbd,
-	u32 xmit_type)
+static u8 bnx2x_set_pbd_csum(struct bnx2x *bp, struct sk_buff *skb,
+			     struct eth_tx_parse_bd_e1x *pbd,
+			     u32 xmit_type)
 {
 	u8 hlen = (skb_network_header(skb) - skb->data) >> 1;
 
@@ -3256,7 +3252,7 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			mac_type = MULTICAST_ADDRESS;
 	}
 
-#if (MAX_SKB_FRAGS >= MAX_FETCH_BD - 3)
+#if (MAX_SKB_FRAGS >= MAX_FETCH_BD - BDS_PER_TX_PKT)
 	/* First, check if we need to linearize the skb (due to FW
 	   restrictions). No need to check fragmentation if page size > 8K
 	   (there will be no violation to FW restrictions) */
@@ -3304,12 +3300,9 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	first_bd = tx_start_bd;
 
 	tx_start_bd->bd_flags.as_bitfield = ETH_TX_BD_FLAGS_START_BD;
-	SET_FLAG(tx_start_bd->general_data,
-		 ETH_TX_START_BD_PARSE_NBDS,
-		 0);
 
-	/* header nbd */
-	SET_FLAG(tx_start_bd->general_data, ETH_TX_START_BD_HDR_NBDS, 1);
+	/* header nbd: indirectly zero other flags! */
+	tx_start_bd->general_data = 1 << ETH_TX_START_BD_HDR_NBDS_SHIFT;
 
 	/* remember the first BD of the packet */
 	tx_buf->first_bd = txdata->tx_bd_prod;
@@ -3328,6 +3321,8 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	} else
 		tx_start_bd->vlan_or_ethertype = cpu_to_le16(pkt_prod);
 
+	nbd = 2; /* start_bd + pbd + frags (updated when pages are mapped) */
+
 	/* turn on parsing and get a BD */
 	bd_prod = TX_BD(NEXT_TX_IDX(bd_prod));
 
@@ -3339,23 +3334,10 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		memset(pbd_e2, 0, sizeof(struct eth_tx_parse_bd_e2));
 		/* Set PBD in checksum offload case */
 		if (xmit_type & XMIT_CSUM)
+			/* Set PBD in checksum offload case w/o encapsulation */
 			hlen = bnx2x_set_pbd_csum_e2(bp, skb,
 						     &pbd_e2_parsing_data,
 						     xmit_type);
-		if (IS_MF_SI(bp)) {
-			/*
-			 * fill in the MAC addresses in the PBD - for local
-			 * switching
-			 */
-			bnx2x_set_fw_mac_addr(&pbd_e2->src_mac_addr_hi,
-					      &pbd_e2->src_mac_addr_mid,
-					      &pbd_e2->src_mac_addr_lo,
-					      eth->h_source);
-			bnx2x_set_fw_mac_addr(&pbd_e2->dst_mac_addr_hi,
-					      &pbd_e2->dst_mac_addr_mid,
-					      &pbd_e2->dst_mac_addr_lo,
-					      eth->h_dest);
-		}
 
 		SET_FLAG(pbd_e2_parsing_data,
 			 ETH_TX_PARSE_BD_E2_ETH_ADDR_TYPE, mac_type);
@@ -3375,14 +3357,13 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	/* Setup the data pointer of the first BD of the packet */
 	tx_start_bd->addr_hi = cpu_to_le32(U64_HI(mapping));
 	tx_start_bd->addr_lo = cpu_to_le32(U64_LO(mapping));
-	nbd = 2; /* start_bd + pbd + frags (updated when pages are mapped) */
 	tx_start_bd->nbytes = cpu_to_le16(skb_headlen(skb));
 	pkt_size = tx_start_bd->nbytes;
 
 	DP(NETIF_MSG_TX_QUEUED,
-	   "first bd @%p  addr (%x:%x)  nbd %d  nbytes %d  flags %x  vlan %x\n",
+	   "first bd @%p  addr (%x:%x)  nbytes %d  flags %x  vlan %x\n",
 	   tx_start_bd, tx_start_bd->addr_hi, tx_start_bd->addr_lo,
-	   le16_to_cpu(tx_start_bd->nbd), le16_to_cpu(tx_start_bd->nbytes),
+	   le16_to_cpu(tx_start_bd->nbytes),
 	   tx_start_bd->bd_flags.as_bitfield,
 	   le16_to_cpu(tx_start_bd->vlan_or_ethertype));
 
@@ -3395,10 +3376,12 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 		tx_start_bd->bd_flags.as_bitfield |= ETH_TX_BD_FLAGS_SW_LSO;
 
-		if (unlikely(skb_headlen(skb) > hlen))
+		if (unlikely(skb_headlen(skb) > hlen)) {
+			nbd++;
 			bd_prod = bnx2x_tx_split(bp, txdata, tx_buf,
 						 &tx_start_bd, hlen,
-						 bd_prod, ++nbd);
+						 bd_prod);
+		}
 		if (!CHIP_IS_E1x(bp))
 			bnx2x_set_pbd_gso_e2(skb, &pbd_e2_parsing_data,
 					     xmit_type);
@@ -3486,9 +3469,13 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (pbd_e2)
 		DP(NETIF_MSG_TX_QUEUED,
 		   "PBD (E2) @%p  dst %x %x %x src %x %x %x parsing_data %x\n",
-		   pbd_e2, pbd_e2->dst_mac_addr_hi, pbd_e2->dst_mac_addr_mid,
-		   pbd_e2->dst_mac_addr_lo, pbd_e2->src_mac_addr_hi,
-		   pbd_e2->src_mac_addr_mid, pbd_e2->src_mac_addr_lo,
+		   pbd_e2,
+		   pbd_e2->data.mac_addr.dst_hi,
+		   pbd_e2->data.mac_addr.dst_mid,
+		   pbd_e2->data.mac_addr.dst_lo,
+		   pbd_e2->data.mac_addr.src_hi,
+		   pbd_e2->data.mac_addr.src_mid,
+		   pbd_e2->data.mac_addr.src_lo,
 		   pbd_e2->parsing_data);
 	DP(NETIF_MSG_TX_QUEUED, "doorbell: nbd %d  bd %u\n", nbd, bd_prod);
 

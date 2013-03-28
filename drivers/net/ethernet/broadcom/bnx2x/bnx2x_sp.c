@@ -487,7 +487,8 @@ static int bnx2x_check_mac_add(struct bnx2x *bp,
 
 	/* Check if a requested MAC already exists */
 	list_for_each_entry(pos, &o->head, link)
-		if (!memcmp(data->mac.mac, pos->u.mac.mac, ETH_ALEN))
+		if (!memcmp(data->mac.mac, pos->u.mac.mac, ETH_ALEN) &&
+		    (data->mac.is_inner_mac == pos->u.mac.is_inner_mac))
 			return -EEXIST;
 
 	return 0;
@@ -520,7 +521,9 @@ static int bnx2x_check_vlan_mac_add(struct bnx2x *bp,
 	list_for_each_entry(pos, &o->head, link)
 		if ((data->vlan_mac.vlan == pos->u.vlan_mac.vlan) &&
 		    (!memcmp(data->vlan_mac.mac, pos->u.vlan_mac.mac,
-			     ETH_ALEN)))
+				  ETH_ALEN)) &&
+		    (data->vlan_mac.is_inner_mac ==
+		     pos->u.vlan_mac.is_inner_mac))
 			return -EEXIST;
 
 	return 0;
@@ -538,7 +541,8 @@ static struct bnx2x_vlan_mac_registry_elem *
 	DP(BNX2X_MSG_SP, "Checking MAC %pM for DEL command\n", data->mac.mac);
 
 	list_for_each_entry(pos, &o->head, link)
-		if (!memcmp(data->mac.mac, pos->u.mac.mac, ETH_ALEN))
+		if ((!memcmp(data->mac.mac, pos->u.mac.mac, ETH_ALEN)) &&
+		    (data->mac.is_inner_mac == pos->u.mac.is_inner_mac))
 			return pos;
 
 	return NULL;
@@ -573,7 +577,9 @@ static struct bnx2x_vlan_mac_registry_elem *
 	list_for_each_entry(pos, &o->head, link)
 		if ((data->vlan_mac.vlan == pos->u.vlan_mac.vlan) &&
 		    (!memcmp(data->vlan_mac.mac, pos->u.vlan_mac.mac,
-			     ETH_ALEN)))
+			     ETH_ALEN)) &&
+		    (data->vlan_mac.is_inner_mac ==
+		     pos->u.vlan_mac.is_inner_mac))
 			return pos;
 
 	return NULL;
@@ -769,6 +775,8 @@ static void bnx2x_set_one_mac_e2(struct bnx2x *bp,
 	bnx2x_set_fw_mac_addr(&rule_entry->mac.mac_msb,
 			      &rule_entry->mac.mac_mid,
 			      &rule_entry->mac.mac_lsb, mac);
+	rule_entry->mac.inner_mac =
+		cpu_to_le16(elem->cmd_data.vlan_mac.u.mac.is_inner_mac);
 
 	/* MOVE: Add a rule that will add this MAC to the target Queue */
 	if (cmd == BNX2X_VLAN_MAC_MOVE) {
@@ -785,6 +793,9 @@ static void bnx2x_set_one_mac_e2(struct bnx2x *bp,
 		bnx2x_set_fw_mac_addr(&rule_entry->mac.mac_msb,
 				      &rule_entry->mac.mac_mid,
 				      &rule_entry->mac.mac_lsb, mac);
+		rule_entry->mac.inner_mac =
+			cpu_to_le16(elem->cmd_data.vlan_mac.
+						u.mac.is_inner_mac);
 	}
 
 	/* Set the ramrod data header */
@@ -972,7 +983,8 @@ static void bnx2x_set_one_vlan_mac_e2(struct bnx2x *bp,
 	bnx2x_set_fw_mac_addr(&rule_entry->pair.mac_msb,
 			      &rule_entry->pair.mac_mid,
 			      &rule_entry->pair.mac_lsb, mac);
-
+	rule_entry->pair.inner_mac =
+		cpu_to_le16(elem->cmd_data.vlan_mac.u.vlan_mac.is_inner_mac);
 	/* MOVE: Add a rule that will add this MAC to the target Queue */
 	if (cmd == BNX2X_VLAN_MAC_MOVE) {
 		rule_entry++;
@@ -989,6 +1001,9 @@ static void bnx2x_set_one_vlan_mac_e2(struct bnx2x *bp,
 		bnx2x_set_fw_mac_addr(&rule_entry->pair.mac_msb,
 				      &rule_entry->pair.mac_mid,
 				      &rule_entry->pair.mac_lsb, mac);
+		rule_entry->pair.inner_mac =
+			cpu_to_le16(elem->cmd_data.vlan_mac.u.
+						vlan_mac.is_inner_mac);
 	}
 
 	/* Set the ramrod data header */
@@ -4412,6 +4427,10 @@ static void bnx2x_q_fill_init_tx_data(struct bnx2x_queue_sp_obj *o,
 		test_bit(BNX2X_Q_FLG_ANTI_SPOOF, flags);
 	tx_data->force_default_pri_flg =
 		test_bit(BNX2X_Q_FLG_FORCE_DEFAULT_PRI, flags);
+
+	tx_data->tunnel_non_lso_pcsum_location =
+		test_bit(BNX2X_Q_FLG_PCSUM_ON_PKT, flags) ? PCSUM_ON_PKT :
+								  PCSUM_ON_BD;
 
 	tx_data->tx_status_block_id = params->fw_sb_id;
 	tx_data->tx_sb_index_number = params->sb_cq_index;
