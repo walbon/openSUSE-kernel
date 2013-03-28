@@ -1473,10 +1473,6 @@
 /* [R 4] This field indicates the type of the device. '0' - 2 Ports; '1' - 1
    Port. */
 #define MISC_REG_BOND_ID					 0xa400
-/* [R 8] These bits indicate the metal revision of the chip. This value
-   starts at 0x00 for each all-layer tape-out and increments by one for each
-   tape-out. */
-#define MISC_REG_CHIP_METAL					 0xa404
 /* [R 16] These bits indicate the part number for the chip. */
 #define MISC_REG_CHIP_NUM					 0xa408
 /* [R 4] These bits indicate the base revision of the chip. This value
@@ -6308,6 +6304,7 @@
 #define PCI_PM_DATA_B					0x414
 #define PCI_ID_VAL1					0x434
 #define PCI_ID_VAL2					0x438
+#define PCI_ID_VAL3					0x43c
 
 #define PXPCS_TL_CONTROL_5		    0x814
 #define PXPCS_TL_CONTROL_5_UNKNOWNTYPE_ERR_ATTN    (1 << 29) /*WC*/
