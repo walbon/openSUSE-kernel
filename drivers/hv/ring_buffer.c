@@ -71,11 +71,10 @@ u32 hv_end_read(struct hv_ring_buffer_info *rbi)
 
 static bool hv_need_to_signal(u32 old_write, struct hv_ring_buffer_info *rbi)
 {
+	smp_mb();
 	if (rbi->ring_buffer->interrupt_mask)
 		return false;
 
-	/* Workaround */
-	return true;
 	/*
 	 * This is the only case we need to signal when the
 	 * ring transitions from being empty to non-empty.
