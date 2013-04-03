@@ -411,28 +411,12 @@ static int get_ucode_fw(void *to, const void *from, size_t n)
 	return 0;
 }
 
-/*
- * Pass microcode.firmware_request=1 to activate microcode loading via
- * firmware_request. In SLE11 the microcode.ctl service updates the microcode
- * via /sbin/microcode_ctl (/dev/cpu/microcode).
- * The request firmware is unused, but may cause false positive warnings like:
- * Cannot find  firmware file 'intel-ucode/06-2d-07' from udev's firmware.sh
- * script.
- * Therefore it is switched off by default, but can get activated via:
- * microcode.firmware_request=1 boot parameter
- */
-static unsigned int firmware_request;
-module_param(firmware_request, uint, 0444);
-
 static enum ucode_state request_microcode_fw(int cpu, struct device *device)
 {
 	char name[30];
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
 	const struct firmware *firmware;
 	enum ucode_state ret;
-
-	if (firmware_request == 0)
-		return UCODE_NFOUND;
 
 	sprintf(name, "intel-ucode/%02x-%02x-%02x",
 		c->x86, c->x86_model, c->x86_mask);
