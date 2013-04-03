@@ -43,7 +43,7 @@ void intel_gtt_clear_range(unsigned int first_entry, unsigned int num_entries);
 /* flag for GFDT type */
 #define AGP_USER_CACHED_MEMORY_GFDT (1 << 3)
 
-#ifdef CONFIG_INTEL_IOMMU
+#ifdef CONFIG_DMAR
 extern int intel_iommu_gfx_mapped;
 #endif
 

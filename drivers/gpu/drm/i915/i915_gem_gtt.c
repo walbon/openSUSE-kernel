@@ -585,7 +585,7 @@ static int setup_scratch_page(struct drm_device *dev)
 	get_page(page);
 	set_pages_uc(page, 1);
 
-#ifdef CONFIG_INTEL_IOMMU
+#ifdef CONFIG_DMAR
 	dma_addr = pci_map_page(dev->pdev, page, 0, PAGE_SIZE,
 				PCI_DMA_BIDIRECTIONAL);
 	if (pci_dma_mapping_error(dev->pdev, dma_addr))

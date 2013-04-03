@@ -585,7 +585,7 @@ static void intel_gtt_cleanup(void)
  */
 static inline int needs_ilk_vtd_wa(void)
 {
-#ifdef CONFIG_INTEL_IOMMU
+#ifdef CONFIG_DMAR
 	const unsigned short gpu_devid = intel_private.pcidev->device;
 
 	/* Query intel_iommu to see if we need the workaround. Presumably that
@@ -1127,7 +1127,7 @@ static void i965_write_entry(dma_addr_t addr,
  */
 static inline int needs_idle_maps(void)
 {
-#ifdef CONFIG_INTEL_IOMMU
+#ifdef CONFIG_DMAR
 	const unsigned short gpu_devid = intel_private.pcidev->device;
 
 	/* Query intel_iommu to see if we need the workaround. Presumably that
