@@ -695,7 +695,8 @@ static int efx_vfdi_fini_all_queues(struct efx_vf *vf)
 		return VFDI_RC_ENOMEM;
 
 	rtnl_lock();
-	siena_prepare_flush(efx);
+	if (efx->fc_disable++ == 0)
+		efx_mcdi_set_mac(efx);
 	rtnl_unlock();
 
 	/* Flush all the initialized queues */
@@ -732,7 +733,8 @@ static int efx_vfdi_fini_all_queues(struct efx_vf *vf)
 	}
 
 	rtnl_lock();
-	siena_finish_flush(efx);
+	if (--efx->fc_disable == 0)
+		efx_mcdi_set_mac(efx);
 	rtnl_unlock();
 
 	/* Irrespective of success/failure, fini the queues */
