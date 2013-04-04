@@ -3869,9 +3869,6 @@ static void shrink_delalloc(struct btrfs_root *root, u64 to_reclaim, u64 orig,
 	}
 
 	while (delalloc_bytes && loops < 3) {
-		if (btrfs_fs_closing(root->fs_info))
-			return;
-
 		max_reclaim = min(delalloc_bytes, to_reclaim);
 		nr_pages = max_reclaim >> PAGE_CACHE_SHIFT;
 		btrfs_writeback_inodes_sb_nr(root, nr_pages);
