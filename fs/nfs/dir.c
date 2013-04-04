@@ -2288,12 +2288,12 @@ static int nfs_open_permission_mask(int openflags)
 {
 	int mask = 0;
 
-	if (openflags & FMODE_READ)
-		mask |= MAY_READ;
 	if (openflags & FMODE_WRITE)
 		mask |= MAY_WRITE;
 	if (openflags & FMODE_EXEC)
 		mask |= MAY_EXEC;
+	else if (openflags & FMODE_READ)
+		mask |= MAY_READ;
 	return mask;
 }
 
