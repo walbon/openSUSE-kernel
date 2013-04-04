@@ -7134,6 +7134,8 @@ static noinline int walk_up_tree(struct btrfs_trans_handle *trans,
  * reference count by one. if update_ref is true, this function
  * also make sure backrefs for the shared block and all lower level
  * blocks are properly updated.
+ *
+ * If called with for_reloc == 0, may exit early with -EAGAIN
  */
 int btrfs_drop_snapshot(struct btrfs_root *root,
 			 struct btrfs_block_rsv *block_rsv, int update_ref,
@@ -7235,6 +7237,12 @@ int btrfs_drop_snapshot(struct btrfs_root *root,
 	wc->reada_count = BTRFS_NODEPTRS_PER_BLOCK(root);
 
 	while (1) {
+		if (!for_reloc && btrfs_fs_closing(root->fs_info)) {
+			pr_debug("btrfs: drop snapshot early exit\n");
+			err = -EAGAIN;
+			goto out_end_trans;
+		}
+
 		ret = walk_down_tree(trans, root, path, wc);
 		if (ret < 0) {
 			err = ret;
@@ -8014,19 +8022,32 @@ int btrfs_read_block_groups(struct btrfs_root *root)
 			free_excluded_extents(root, cache);
 		}
 
+		ret = btrfs_add_block_group_cache(root->fs_info, cache);
+		if (ret) {
+			btrfs_remove_free_space_cache(cache);
+			btrfs_put_block_group(cache);
+			goto error;
+		}
+
 		ret = update_space_info(info, cache->flags, found_key.offset,
 					btrfs_block_group_used(&cache->item),
 					&space_info);
-		BUG_ON(ret); /* -ENOMEM */
+		if (ret) {
+			btrfs_remove_free_space_cache(cache);
+			spin_lock(&info->block_group_cache_lock);
+			rb_erase(&cache->cache_node,
+				 &info->block_group_cache_tree);
+			spin_unlock(&info->block_group_cache_lock);
+			btrfs_put_block_group(cache);
+			goto error;
+		}
+
 		cache->space_info = space_info;
 		spin_lock(&cache->space_info->lock);
 		cache->space_info->bytes_readonly += cache->bytes_super;
 		spin_unlock(&cache->space_info->lock);
 
 		__link_block_group(space_info, cache);
-
-		ret = btrfs_add_block_group_cache(root->fs_info, cache);
-		BUG_ON(ret); /* Logic error */
 
 		set_avail_alloc_bits(root->fs_info, cache->flags);
 		if (btrfs_chunk_readonly(root, cache->key.objectid))
@@ -8145,9 +8166,24 @@ int btrfs_make_block_group(struct btrfs_trans_handle *trans,
 
 	free_excluded_extents(root, cache);
 
+	ret = btrfs_add_block_group_cache(root->fs_info, cache);
+	if (ret) {
+		btrfs_remove_free_space_cache(cache);
+		btrfs_put_block_group(cache);
+		return ret;
+	}
+
 	ret = update_space_info(root->fs_info, cache->flags, size, bytes_used,
 				&cache->space_info);
-	BUG_ON(ret); /* -ENOMEM */
+	if (ret) {
+		btrfs_remove_free_space_cache(cache);
+		spin_lock(&root->fs_info->block_group_cache_lock);
+		rb_erase(&cache->cache_node,
+			 &root->fs_info->block_group_cache_tree);
+		spin_unlock(&root->fs_info->block_group_cache_lock);
+		btrfs_put_block_group(cache);
+		return ret;
+	}
 	update_global_block_rsv(root->fs_info);
 
 	spin_lock(&cache->space_info->lock);
@@ -8155,9 +8191,6 @@ int btrfs_make_block_group(struct btrfs_trans_handle *trans,
 	spin_unlock(&cache->space_info->lock);
 
 	__link_block_group(cache->space_info, cache);
-
-	ret = btrfs_add_block_group_cache(root->fs_info, cache);
-	BUG_ON(ret); /* Logic error */
 
 	list_add_tail(&cache->new_bg_list, &trans->new_bgs);
 

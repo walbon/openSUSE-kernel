@@ -731,7 +731,9 @@ static noinline int btrfs_mksubvol(struct path *parent,
 	struct dentry *dentry;
 	int error;
 
-	mutex_lock_nested(&dir->i_mutex, I_MUTEX_PARENT);
+	error = mutex_lock_killable_nested(&dir->i_mutex, I_MUTEX_PARENT);
+	if (error == -EINTR)
+		return error;
 
 	dentry = lookup_one_len(name, parent->dentry, namelen);
 	error = PTR_ERR(dentry);
@@ -2096,7 +2098,9 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 	if (err)
 		goto out;
 
-	mutex_lock_nested(&dir->i_mutex, I_MUTEX_PARENT);
+	err = mutex_lock_killable_nested(&dir->i_mutex, I_MUTEX_PARENT);
+	if (err == -EINTR)
+		goto out;
 	dentry = lookup_one_len(vol_args->name, parent, namelen);
 	if (IS_ERR(dentry)) {
 		err = PTR_ERR(dentry);
@@ -3783,6 +3787,7 @@ static long btrfs_ioctl_quota_ctl(struct file *file, void __user *arg)
 		goto drop_write;
 	}
 
+	down_read(&root->fs_info->subvol_sem);
 	if (sa->cmd != BTRFS_QUOTA_CTL_RESCAN) {
 		trans = btrfs_start_transaction(root, 2);
 		if (IS_ERR(trans)) {
@@ -3816,6 +3821,7 @@ static long btrfs_ioctl_quota_ctl(struct file *file, void __user *arg)
 	}
 out:
 	kfree(sa);
+	up_read(&root->fs_info->subvol_sem);
 drop_write:
 	mnt_drop_write_file(file);
 	return ret;
