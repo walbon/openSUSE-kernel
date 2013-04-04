@@ -456,6 +456,8 @@ static int nx_register_algs(void)
 	if (rc)
 		goto out;
 
+	nx_driver.of.status = NX_OKAY;
+
 	rc = crypto_register_alg(&nx_ecb_aes_alg);
 	if (rc)
 		goto out;
@@ -499,8 +501,6 @@ static int nx_register_algs(void)
 	rc = crypto_register_shash(&nx_shash_aes_xcbc_alg);
 	if (rc)
 		goto out_unreg_s512;
-
-	nx_driver.of.status = NX_OKAY;
 
 	goto out;
 
