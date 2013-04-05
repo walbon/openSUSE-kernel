@@ -522,6 +522,7 @@ static void acpi_tb_validate_fadt(void)
 		 * legacy length field and the corresponding 64-bit X length field.
 		 */
 		if (address64->address &&
+		    ACPI_MUL_8(length) <= ACPI_UINT8_MAX &&
 		    (address64->bit_width != ACPI_MUL_8(length))) {
 			ACPI_WARNING((AE_INFO,
 				      "32/64X length mismatch in %s: %u/%u",
