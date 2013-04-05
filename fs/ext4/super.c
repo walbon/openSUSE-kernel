@@ -53,7 +53,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/ext4.h>
 
-static int allow_rw = 0;
+static bool allow_rw = false;
 
 static struct proc_dir_entry *ext4_proc_root;
 static struct kset *ext4_kset;
@@ -5050,10 +5050,7 @@ static int ext4_handle_unsupported_rw(struct super_block *sb,
 	if (allow_rw) {
 		ext4_msg(sb, KERN_INFO,
 			 "allowing unsupported read-write mount.");
-		add_taint(TAINT_NO_SUPPORT);
-#ifdef CONFIG_EXT4_FS_MODULE
-		THIS_MODULE->taints |= (1 << TAINT_NO_SUPPORT);
-#endif
+		taint_unsupported();
 		return 0;
 	}
 
@@ -5062,27 +5059,30 @@ static int ext4_handle_unsupported_rw(struct super_block *sb,
 	return MS_RDONLY;
 }
 
-static int ext4_set_rw(const char *buffer, struct kernel_param *kp)
+static int ext4_set_rw(const char *buffer, const struct kernel_param *kp)
 {
-	char *end;
-	long val = simple_strtoul(buffer, &end, 10);
-	if (end == buffer)
-		return -EINVAL;
-	if (val != 0 && val != 1)
-		return -EINVAL;
-	if (allow_rw && val == 0) {
+	int ret;
+	struct kernel_param dummy_kp = *kp;
+	bool newval;
+
+	dummy_kp.arg = &newval;
+
+	ret = param_set_bool(buffer, &dummy_kp);
+	if (ret)
+		return ret;
+
+	if (allow_rw && !newval) {
 		pr_warn("ext4: can't set read-write ext4 module read-only\n");
-	} else if (!allow_rw && val == 1) {
+	} else if (!allow_rw && newval) {
 		pr_warn("ext4: setting module read-write (unsupported)\n");
-		allow_rw = 1;
+		allow_rw = true;
 	}
 	return 0;
 }
 
-static int ext4_get_rw(char *buffer, struct kernel_param *kp)
-{
-	return sprintf(buffer, "%d", allow_rw);
-}
-
-module_param_call(rw, ext4_set_rw, ext4_get_rw, NULL, 0644);
+static struct kernel_param_ops ext4_rw_param_ops = {
+	.set = ext4_set_rw,
+	.get = param_get_bool,
+};
+module_param_cb(rw, &ext4_rw_param_ops, &allow_rw, 0644);
 MODULE_PARM_DESC(rw, "Allow read-write file systems (marks kernel as unsupported when mounted read-write)");

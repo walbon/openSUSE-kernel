@@ -754,4 +754,14 @@ static inline void module_bug_finalize(const Elf_Ehdr *hdr,
 static inline void module_bug_cleanup(struct module *mod) {}
 #endif	/* CONFIG_GENERIC_BUG */
 
+static inline void taint_unsupported(void)
+{
+#ifdef CONFIG_ENTERPRISE_SUPPORT
+	add_taint(TAINT_NO_SUPPORT);
+#ifdef MODULE
+	THIS_MODULE->taints |= (1U << TAINT_NO_SUPPORT);
+#endif
+#endif
+}
+
 #endif /* _LINUX_MODULE_H */
