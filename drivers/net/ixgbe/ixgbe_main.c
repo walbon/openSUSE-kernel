@@ -1507,7 +1507,7 @@ static void ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 		if (ring_is_rsc_enabled(rx_ring)) {
 			pkt_is_rsc = ixgbe_get_rsc_cnt(rx_desc);
 			if (pkt_is_rsc)
-				IXGBE_RSC_CB(skb)->rsc_cnt = pkt_is_rsc - 1;
+				IXGBE_RSC_CB(skb)->rsc_cnt += pkt_is_rsc - 1;
 		}
 
 		/* linear means we are building an skb from multiple pages */
