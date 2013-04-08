@@ -70,7 +70,7 @@ extern void splash_blank(struct vc_data *vc, struct fb_info *info,
 extern void con_remap_def_color(struct vc_data *vc, int new_color);
 
 # else
-#  define splash_init()
+#  define splash_init(x)
 #  define splash_verbose() 0
 #  define SPLASH_VERBOSE()
 #  define splash_blank(vc, info, blank)
