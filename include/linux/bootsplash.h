@@ -39,7 +39,7 @@ struct splash_data;
 
 /* splash.c */
 extern int splash_prepare(struct vc_data *, struct fb_info *);
-extern void splash_init(void);
+extern void splash_init(bool do_lock);
 extern int splash_verbose(void);
 
 /* splash_render.c */
