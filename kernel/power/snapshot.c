@@ -1085,10 +1085,7 @@ void swsusp_free(void)
 
 	for_each_populated_zone(zone) {
 		max_zone_pfn = zone->zone_start_pfn + zone->spanned_pages;
-		for (pfn = zone->zone_start_pfn; pfn < max_zone_pfn; pfn++) {
-			/* PFN walker on large machines can take a long time */
-			cond_resched();
-
+		for (pfn = zone->zone_start_pfn; pfn < max_zone_pfn; pfn++)
 			if (pfn_valid(pfn)) {
 				struct page *page = pfn_to_page(pfn);
 
@@ -1099,7 +1096,6 @@ void swsusp_free(void)
 					__free_page(page);
 				}
 			}
-		}
 	}
 	nr_copy_pages = 0;
 	nr_meta_pages = 0;
