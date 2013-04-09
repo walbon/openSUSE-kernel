@@ -820,6 +820,9 @@ static void setup_playback_multi_pcm(struct via_spec *spec)
 {
 	const struct auto_pin_cfg *cfg = &spec->autocfg;
 	spec->multiout.num_dacs = cfg->line_outs + spec->smart51_nums;
+	if (!spec->hp_dac_nid)
+		return;
+
 	spec->multiout.hp_nid = 0;
 	if (!spec->hp_independent_mode) {
 		if (!spec->hp_indep_shared)
@@ -2080,6 +2083,10 @@ static int via_auto_create_hp_ctls(struct hda_codec *codec, hda_nid_t pin)
 		copy_path_mixer_ctls(&spec->hp_path, path);
 	if (spec->hp_indep_path.depth)
 		copy_path_mixer_ctls(&spec->hp_indep_path, path);
+
+	if (!spec->hp_dac_nid && spec->multiout.dac_nids[0] != path->path[0])
+		spec->multiout.hp_nid = path->path[0];
+
 	return 0;
 }
 
