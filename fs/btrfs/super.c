@@ -1769,7 +1769,7 @@ static int __init init_btrfs_fs(void)
 
 #ifdef CONFIG_ENTERPRISE_SUPPORT
 	if (allow_unsupported) {
-		add_taint(TAINT_NO_SUPPORT);
+		taint_unsupported();
 		printk(KERN_INFO "btrfs: allow_unsupported=1 taints kernel\n");
 	}
 #endif
@@ -1814,12 +1814,41 @@ static void __exit exit_btrfs_fs(void)
 }
 
 #ifdef CONFIG_ENTERPRISE_SUPPORT
-int allow_unsupported = 0;
+bool allow_unsupported = false;
 #else
-int allow_unsupported = 1;
+bool allow_unsupported = true;
 #endif
 
-module_param(allow_unsupported, int, 0444);
+static int btrfs_set_allow_unsupported(const char *buffer, const struct kernel_param *kp)
+{
+	int ret;
+	struct kernel_param dummy_kp = *kp;
+	bool newval;
+
+	dummy_kp.arg = &newval;
+
+	ret = param_set_bool(buffer, &dummy_kp);
+	if (ret)
+		return ret;
+
+	if (allow_unsupported && !newval) {
+		printk(KERN_INFO "btrfs: disallowing unsupported features, kernel remains tainted\n");
+		allow_unsupported = false;
+	} else if (!allow_unsupported && newval) {
+		printk(KERN_INFO "btrfs: allowing unsupported features, kernel tainted\n");
+		taint_unsupported();
+		allow_unsupported = true;
+	}
+	return 0;
+}
+
+static struct kernel_param_ops btrfs_allow_unsupported_param_ops = {
+	.set = btrfs_set_allow_unsupported,
+	.get = param_get_bool,
+};
+
+module_param_cb(allow_unsupported, &btrfs_allow_unsupported_param_ops,
+		&allow_unsupported, 0644);
 MODULE_PARM_DESC(allow_unsupported, "Allow using features that are out of supported scope");
 
 module_init(init_btrfs_fs)

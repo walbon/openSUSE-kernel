@@ -3778,6 +3778,6 @@ static inline int btrfs_defrag_cancelled(struct btrfs_fs_info *fs_info)
 /*
  * Module parameter
  */
-extern int allow_unsupported;
+extern bool allow_unsupported;
 
 #endif
