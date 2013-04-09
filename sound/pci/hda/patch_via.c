@@ -488,9 +488,14 @@ static void activate_output_mix(struct hda_codec *codec, struct nid_path *path,
 		return;
 	num = snd_hda_get_num_conns(codec, mix_nid);
 	for (i = 0; i < num; i++) {
-		if (i == idx)
-			val = AMP_IN_UNMUTE(i);
-		else
+		if (i == idx) {
+			val = query_amp_caps(codec, mix_nid, HDA_INPUT);
+			if (val & AC_AMPCAP_NUM_STEPS)
+				val &= AC_AMPCAP_OFFSET;
+			else
+				val = 0;
+			val |= AMP_IN_UNMUTE(i);
+		} else
 			val = AMP_IN_MUTE(i);
 		snd_hda_codec_write(codec, mix_nid, 0,
 				    AC_VERB_SET_AMP_GAIN_MUTE, val);
