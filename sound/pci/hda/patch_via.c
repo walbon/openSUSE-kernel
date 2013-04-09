@@ -1495,7 +1495,7 @@ static int via_build_controls(struct hda_codec *codec)
 	/* if we have no master control, let's create it */
 	if (!snd_hda_find_mixer_ctl(codec, "Master Playback Volume")) {
 		unsigned int vmaster_tlv[4];
-		snd_hda_set_vmaster_tlv(codec, spec->multiout.dac_nids[0],
+		snd_hda_set_vmaster_tlv(codec, spec->out_path[0].vol_ctl,
 					HDA_OUTPUT, vmaster_tlv);
 		err = snd_hda_add_vmaster(codec, "Master Playback Volume",
 					  vmaster_tlv, via_slave_pfxs,
