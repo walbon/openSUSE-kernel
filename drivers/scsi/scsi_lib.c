@@ -434,11 +434,17 @@ static void scsi_run_queue(struct request_queue *q)
 			continue;
 		}
 
-		spin_unlock(shost->host_lock);
-		spin_lock(sdev->request_queue->queue_lock);
-		__blk_run_queue(sdev->request_queue);
-		spin_unlock(sdev->request_queue->queue_lock);
-		spin_lock(shost->host_lock);
+		/*
+		 * Obtain a reference before unlocking the host_lock such that
+		 * the sdev can't disappear before blk_run_queue() is invoked.
+		 */
+		get_device(&sdev->sdev_gendev);
+		spin_unlock_irqrestore(shost->host_lock, flags);
+
+		blk_run_queue(sdev->request_queue);
+		put_device(&sdev->sdev_gendev);
+
+		spin_lock_irqsave(shost->host_lock, flags);
 	}
 	/* put any unprocessed entries back */
 	list_splice(&starved_list, &shost->starved_list);
