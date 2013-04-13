@@ -4020,6 +4020,9 @@ static int __devinit cciss_lookup_board_id(struct pci_dev *pdev, u32 *board_id)
 			subsystem_vendor_id;
 
 	for (i = 0; i < ARRAY_SIZE(products); i++) {
+                /* Stand aside for hpsa driver on request */
+                if (cciss_allow_hpsa == 1)
+                        return -ENODEV;
 		if (*board_id == products[i].board_id)
 			return i;
 	}
@@ -4209,13 +4212,13 @@ static inline void cciss_p600_dma_prefetch_quirk(ctlr_info_t *h)
 	pci_write_config_dword(h->pdev, PCI_COMMAND_PARITY, dma_refetch);
 }
 
-static int __devinit cciss_pci_init(ctlr_info_t *h, int prod_index)
+static int __devinit cciss_pci_init(ctlr_info_t *h)
 {
-	int err;
+	int prod_index, err;
 
+	prod_index = cciss_lookup_board_id(h->pdev, &h->board_id);
 	if (prod_index < 0)
 		return -ENODEV;
-
 	h->product_name = products[prod_index].product_name;
 	h->access = *(products[prod_index].access);
 
@@ -4910,6 +4913,12 @@ static int __devinit cciss_init_one(struct pci_dev *pdev,
 	ctlr_info_t *h;
 	unsigned long flags;
 
+	/*
+	 * if this is the kdump kernel and the user has set the flags to
+	 * use hpsa rather than cciss just bail
+	 */ 
+	if ((reset_devices) && (cciss_allow_hpsa == 1))
+		return -ENODEV;
 	rc = cciss_init_reset_devices(pdev);
 	if (rc) {
 		if (rc != -ENOTSUPP) {
@@ -4959,7 +4968,7 @@ reinit_after_soft_reset:
 	if (cciss_tape_cmds > 16)
 		cciss_tape_cmds = 16;
 
-	if (cciss_pci_init(h, prod_idx) != 0)
+	if (cciss_pci_init(h) != 0)
 		goto clean_no_release_regions;
 
 	if (cciss_create_hba_sysfs_entry(h))
