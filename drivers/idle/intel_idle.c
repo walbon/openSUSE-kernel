@@ -439,6 +439,7 @@ static int intel_idle_probe(void)
 	case 0x3C:      /* HSW */
 	case 0x3F:      /* HSW */
 	case 0x45:      /* HSW */
+	case 0x46:      /* HSW */
 		cpuidle_state_table = hsw_cstates;
 		break;
 
