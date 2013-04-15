@@ -316,8 +316,9 @@ static bool is_aa_path_mute(struct hda_codec *codec);
 	(snd_hda_get_bool_hint(codec, "analog_loopback_hp_detect") == 1 && \
 	 !is_aa_path_mute(codec))
 
-static void vt1708_stop_hp_work(struct via_spec *spec)
+static void vt1708_stop_hp_work(struct hda_codec *codec)
 {
+	struct via_spec *spec = codec->spec;
 	if (spec->codec_type != VT1708 || spec->autocfg.hp_pins[0] == 0)
 		return;
 	if (spec->hp_work_active) {
@@ -327,12 +328,12 @@ static void vt1708_stop_hp_work(struct via_spec *spec)
 	}
 }
 
-static void vt1708_update_hp_work(struct via_spec *spec)
+static void vt1708_update_hp_work(struct hda_codec *codec)
 {
+	struct via_spec *spec = codec->spec;
 	if (spec->codec_type != VT1708 || spec->autocfg.hp_pins[0] == 0)
 		return;
-	if (spec->vt1708_jack_detect &&
-	    (spec->active_streams || hp_detect_with_aa(spec->codec))) {
+	if (spec->vt1708_jack_detect) {
 		if (!spec->hp_work_active) {
 			snd_hda_codec_write(spec->codec, 0x1, 0, 0xf81, 0);
 			schedule_delayed_work(&spec->vt1708_hp_work,
@@ -340,7 +341,7 @@ static void vt1708_update_hp_work(struct via_spec *spec)
 			spec->hp_work_active = 1;
 		}
 	} else if (!hp_detect_with_aa(spec->codec))
-		vt1708_stop_hp_work(spec);
+		vt1708_stop_hp_work(codec);
 }
 
 static void set_widgets_power_state(struct hda_codec *codec)
@@ -358,7 +359,7 @@ static int analog_input_switch_put(struct snd_kcontrol *kcontrol,
 
 	set_widgets_power_state(codec);
 	analog_low_current_mode(snd_kcontrol_chip(kcontrol));
-	vt1708_update_hp_work(codec->spec);
+	vt1708_update_hp_work(codec);
 	return change;
 }
 
@@ -1200,7 +1201,7 @@ static int via_playback_multi_pcm_prepare(struct hda_pcm_stream *hinfo,
 	spec->cur_dac_stream_tag = stream_tag;
 	spec->cur_dac_format = format;
 	mutex_unlock(&spec->config_mutex);
-	vt1708_update_hp_work(spec);
+	vt1708_update_hp_work(codec);
 	return 0;
 }
 
@@ -1220,7 +1221,7 @@ static int via_playback_hp_pcm_prepare(struct hda_pcm_stream *hinfo,
 	spec->cur_hp_stream_tag = stream_tag;
 	spec->cur_hp_format = format;
 	mutex_unlock(&spec->config_mutex);
-	vt1708_update_hp_work(spec);
+	vt1708_update_hp_work(codec);
 	return 0;
 }
 
@@ -1234,7 +1235,7 @@ static int via_playback_multi_pcm_cleanup(struct hda_pcm_stream *hinfo,
 	snd_hda_multi_out_analog_cleanup(codec, &spec->multiout);
 	spec->active_streams &= ~STREAM_MULTI_OUT;
 	mutex_unlock(&spec->config_mutex);
-	vt1708_update_hp_work(spec);
+	vt1708_update_hp_work(codec);
 	return 0;
 }
 
@@ -1249,7 +1250,7 @@ static int via_playback_hp_pcm_cleanup(struct hda_pcm_stream *hinfo,
 		snd_hda_codec_setup_stream(codec, spec->hp_dac_nid, 0, 0, 0);
 	spec->active_streams &= ~STREAM_INDEP_HP;
 	mutex_unlock(&spec->config_mutex);
-	vt1708_update_hp_work(spec);
+	vt1708_update_hp_work(codec);
 	return 0;
 }
 
@@ -1634,7 +1635,7 @@ static void via_free(struct hda_codec *codec)
 		return;
 
 	via_free_kctls(codec);
-	vt1708_stop_hp_work(spec);
+	vt1708_stop_hp_work(codec);
 	kfree(spec->bind_cap_vol);
 	kfree(spec->bind_cap_sw);
 	snd_hda_gen_free(&spec->gen);
@@ -1716,7 +1717,7 @@ static void via_unsol_event(struct hda_codec *codec,
 static int via_suspend(struct hda_codec *codec)
 {
 	struct via_spec *spec = codec->spec;
-	vt1708_stop_hp_work(spec);
+	vt1708_stop_hp_work(codec);
 
 	if (spec->codec_type == VT1802) {
 		/* Fix pop noise on headphones */
@@ -2634,13 +2635,14 @@ static int vt1708_jack_detect_put(struct snd_kcontrol *kcontrol,
 	if (spec->vt1708_jack_detect == val)
 		return 0;
 	spec->vt1708_jack_detect = val;
+	codec->jackpoll = val;
 	if (spec->vt1708_jack_detect &&
 	    snd_hda_get_bool_hint(codec, "analog_loopback_hp_detect") != 1) {
 		mute_aa_path(codec, 1);
 		notify_aa_path_ctls(codec);
 	}
 	via_hp_automute(codec);
-	vt1708_update_hp_work(spec);
+	vt1708_update_hp_work(codec);
 	return 1;
 }
 
@@ -2778,7 +2780,7 @@ static int via_init(struct hda_codec *codec)
 	via_auto_init_unsol_event(codec);
 
 	via_hp_automute(codec);
-	vt1708_update_hp_work(spec);
+	vt1708_update_hp_work(codec);
 
 	return 0;
 }
@@ -2839,6 +2841,9 @@ static int patch_vt1708(struct hda_codec *codec)
 		return -ENOMEM;
 
 	spec->aa_mix_nid = 0x17;
+
+	codec->jackpoll = 1;
+	spec->vt1708_jack_detect = 1;
 
 	/* Add HP and CD pin config connect bit re-config action */
 	vt1708_set_pinconfig_connect(codec, VT1708_HP_PIN_NID);

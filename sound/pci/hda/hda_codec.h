@@ -896,6 +896,7 @@ struct hda_codec {
 
 	/* jack detection */
 	struct snd_array jacktbl;
+	bool jackpoll;
 
 #ifdef CONFIG_SND_HDA_INPUT_JACK
 	/* jack detection */
