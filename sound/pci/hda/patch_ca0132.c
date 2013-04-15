@@ -4345,14 +4345,21 @@ static bool ca0132_download_dsp_images(struct hda_codec *codec)
 {
 	bool dsp_loaded = false;
 	const struct dsp_image_seg *dsp_os_image;
+	const struct firmware *fw_entry;
 
-	if (request_firmware_cached(&fw_efx, EFX_FILE,
-				    codec->bus->card->dev) != 0)
+	if (request_firmware(&fw_entry, EFX_FILE, codec->bus->card->dev) != 0)
 		return false;
 
-	dsp_os_image = (struct dsp_image_seg *)(fw_efx->data);
-	dspload_image(codec, dsp_os_image, 0, 0, true, 0);
+	dsp_os_image = (struct dsp_image_seg *)(fw_entry->data);
+	if (dspload_image(codec, dsp_os_image, 0, 0, true, 0)) {
+		pr_err("ca0132 dspload_image failed.\n");
+		goto exit_download;
+	}
+
 	dsp_loaded = dspload_wait_loaded(codec);
+
+exit_download:
+	release_firmware(fw_entry);
 
 	return dsp_loaded;
 }
