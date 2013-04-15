@@ -2907,6 +2907,9 @@ static void __devinit azx_check_snoop_available(struct azx *chip)
 		/* new ATI HDMI requires non-snoop */
 		snoop = false;
 		break;
+	case AZX_DRIVER_CTHDA:
+		snoop = false;
+		break;
 	}
 
 	if (snoop != chip->snoop) {
