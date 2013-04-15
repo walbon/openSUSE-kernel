@@ -2172,8 +2172,12 @@ static unsigned int azx_get_position(struct azx *chip,
 				     struct azx_dev *azx_dev,
 				     bool with_check)
 {
+	struct snd_pcm_substream *substream = azx_dev->substream;
+	struct azx_pcm *apcm = snd_pcm_substream_chip(substream);
 	unsigned int pos;
-	int stream = azx_dev->substream->stream;
+	int stream = substream->stream;
+	struct hda_pcm_stream *hinfo = apcm->hinfo[stream];
+	int delay = 0;
 
 	switch (chip->position_fix[stream]) {
 	case POS_FIX_LPIB:
@@ -2203,7 +2207,7 @@ static unsigned int azx_get_position(struct azx *chip,
 		pos = 0;
 
 	/* calculate runtime delay from LPIB */
-	if (azx_dev->substream->runtime &&
+	if (substream->runtime &&
 	    chip->position_fix[stream] == POS_FIX_POSBUF &&
 	    (chip->driver_caps & AZX_DCAPS_COUNT_LPIB_DELAY)) {
 		unsigned int lpib_pos = azx_sd_readl(azx_dev, SD_LPIB);
@@ -2222,9 +2226,16 @@ static unsigned int azx_get_position(struct azx *chip,
 			delay = 0;
 			chip->driver_caps &= ~AZX_DCAPS_COUNT_LPIB_DELAY;
 		}
-		azx_dev->substream->runtime->delay =
-			bytes_to_frames(azx_dev->substream->runtime, delay);
+		delay = bytes_to_frames(substream->runtime, delay);
 	}
+
+	if (substream->runtime) {
+		if (hinfo->ops.get_delay)
+			delay += hinfo->ops.get_delay(hinfo, apcm->codec,
+						      substream);
+		substream->runtime->delay = delay;
+	}
+
 	return pos;
 }
 
