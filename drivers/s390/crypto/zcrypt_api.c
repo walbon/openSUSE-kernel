@@ -1305,6 +1305,7 @@ static int zcrypt_hwrng_fillfn(void * unused)
 		}
 		add_hwgenerator_randomness((void*)zcrypt_rng_buffer, rc);
 	}
+	zcrypt_hwrng_fill = 0;
 	return 0;
 }
 
