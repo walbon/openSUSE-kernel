@@ -45,6 +45,8 @@ void intel_gtt_clear_range(unsigned int first_entry, unsigned int num_entries);
 
 #ifdef CONFIG_DMAR
 extern int intel_iommu_gfx_mapped;
+#elif defined(CONFIG_XEN)
+#define intel_iommu_gfx_mapped 1
 #endif
 
 #endif
