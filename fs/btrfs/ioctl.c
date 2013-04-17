@@ -1162,8 +1162,11 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 	u64 new_align = ~((u64)128 * 1024 - 1);
 	struct page **pages = NULL;
 
-	if (extent_thresh == 0)
-		extent_thresh = 256 * 1024;
+	if (isize == 0)
+		return 0;
+
+	if (range->start >= isize)
+		return -EINVAL;
 
 	if (range->flags & BTRFS_DEFRAG_RANGE_COMPRESS) {
 		if (range->compress_type > BTRFS_COMPRESS_TYPES)
@@ -1172,8 +1175,8 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 			compress_type = range->compress_type;
 	}
 
-	if (isize == 0)
-		return 0;
+	if (extent_thresh == 0)
+		extent_thresh = 256 * 1024;
 
 	/*
 	 * if we were not given a file, allocate a readahead
@@ -3789,7 +3792,7 @@ static long btrfs_ioctl_quota_ctl(struct file *file, void __user *arg)
 
 	down_read(&root->fs_info->subvol_sem);
 	if (sa->cmd != BTRFS_QUOTA_CTL_RESCAN) {
-		trans = btrfs_start_transaction(root, 2);
+		trans = btrfs_start_transaction(root->fs_info->tree_root, 2);
 		if (IS_ERR(trans)) {
 			ret = PTR_ERR(trans);
 			goto out;
@@ -3815,7 +3818,7 @@ static long btrfs_ioctl_quota_ctl(struct file *file, void __user *arg)
 		ret = -EFAULT;
 
 	if (trans) {
-		err = btrfs_commit_transaction(trans, root);
+		err = btrfs_commit_transaction(trans, root->fs_info->tree_root);
 		if (err && !ret)
 			ret = err;
 	}

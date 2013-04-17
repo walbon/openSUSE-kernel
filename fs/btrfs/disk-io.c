@@ -221,7 +221,7 @@ static struct extent_map *btree_get_extent(struct inode *inode,
 	em->bdev = BTRFS_I(inode)->root->fs_info->fs_devices->latest_bdev;
 
 	write_lock(&em_tree->lock);
-	ret = add_extent_mapping(em_tree, em);
+	ret = add_extent_mapping(em_tree, em, 0);
 	if (ret == -EEXIST) {
 		free_extent_map(em);
 		em = lookup_extent_mapping(em_tree, start, len);
@@ -3826,10 +3826,9 @@ static int btrfs_destroy_marked_extents(struct btrfs_root *root,
 			if (eb)
 				ret = test_and_clear_bit(EXTENT_BUFFER_DIRTY,
 							 &eb->bflags);
-			if (PageWriteback(page))
-				end_page_writeback(page);
-
 			lock_page(page);
+
+			wait_on_page_writeback(page);
 			if (PageDirty(page)) {
 				unsigned long flags;
 

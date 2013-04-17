@@ -352,6 +352,8 @@ static int __resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 		err = __resolve_indirect_ref(fs_info, search_commit_root,
 					     time_seq, ref, parents,
 					     extent_item_pos);
+		if (err == -ENOMEM)
+			goto out;
 		if (err)
 			continue;
 
@@ -367,7 +369,7 @@ static int __resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 			new_ref = kmalloc(sizeof(*new_ref), GFP_NOFS);
 			if (!new_ref) {
 				ret = -ENOMEM;
-				break;
+				goto out;
 			}
 			memcpy(new_ref, ref, sizeof(*ref));
 			new_ref->parent = node->val;
@@ -377,7 +379,7 @@ static int __resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 		}
 		ulist_reinit(parents);
 	}
-
+out:
 	ulist_free(parents);
 	return ret;
 }
@@ -582,7 +584,8 @@ static int __add_delayed_refs(struct btrfs_delayed_ref_head *head, u64 seq,
 		default:
 			WARN_ON(1);
 		}
-		BUG_ON(ret);
+		if (ret)
+			return ret;
 	}
 
 	return 0;
@@ -680,7 +683,8 @@ static int __add_inline_refs(struct btrfs_fs_info *fs_info,
 		default:
 			WARN_ON(1);
 		}
-		BUG_ON(ret);
+		if (ret)
+			return ret;
 		ptr += btrfs_extent_inline_ref_size(type);
 	}
 
@@ -762,7 +766,9 @@ static int __add_keyed_refs(struct btrfs_fs_info *fs_info,
 		default:
 			WARN_ON(1);
 		}
-		BUG_ON(ret);
+		if (ret)
+			return ret;
+
 	}
 
 	return ret;
