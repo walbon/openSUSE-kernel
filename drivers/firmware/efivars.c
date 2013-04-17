@@ -132,13 +132,13 @@ struct efivar_attribute {
 	ssize_t (*store)(struct efivar_entry *entry, const char *buf, size_t count);
 };
 
-static struct efivars __efivars;
-static struct efivar_operations ops;
-
 #define PSTORE_EFI_ATTRIBUTES \
 	(EFI_VARIABLE_NON_VOLATILE | \
 	 EFI_VARIABLE_BOOTSERVICE_ACCESS | \
 	 EFI_VARIABLE_RUNTIME_ACCESS)
+
+static struct efivars __efivars;
+static struct efivar_operations ops;
 
 #define EFIVAR_ATTR(_name, _mode, _show, _store) \
 struct efivar_attribute efivar_attr_##_name = { \
@@ -1669,6 +1669,53 @@ static bool variable_is_present(efi_char16_t *variable_name, efi_guid_t *vendor)
 	return found;
 }
 
+/*
+ * Returns the size of variable_name, in bytes, including the
+ * terminating NULL character, or variable_name_size if no NULL
+ * character is found among the first variable_name_size bytes.
+ */
+static unsigned long var_name_strnsize(efi_char16_t *variable_name,
+				       unsigned long variable_name_size)
+{
+	unsigned long len;
+	efi_char16_t c;
+
+	/*
+	 * The variable name is, by definition, a NULL-terminated
+	 * string, so make absolutely sure that variable_name_size is
+	 * the value we expect it to be. If not, return the real size.
+	 */
+	for (len = 2; len <= variable_name_size; len += sizeof(c)) {
+		c = variable_name[(len / sizeof(c)) - 1];
+		if (!c)
+			break;
+	}
+
+	return min(len, variable_name_size);
+}
+
+static bool variable_is_present(efi_char16_t *variable_name, efi_guid_t *vendor)
+{
+	struct efivar_entry *entry, *n;
+	struct efivars *efivars = &__efivars;
+	unsigned long strsize1, strsize2;
+	bool found = false;
+
+	strsize1 = utf16_strsize(variable_name, 1024);
+	list_for_each_entry_safe(entry, n, &efivars->list, list) {
+		strsize2 = utf16_strsize(entry->var.VariableName, 1024);
+		if (strsize1 == strsize2 &&
+			!memcmp(variable_name, &(entry->var.VariableName),
+				strsize2) &&
+			!efi_guidcmp(entry->var.VendorGuid,
+				*vendor)) {
+			found = true;
+			break;
+		}
+	}
+	return found;
+}
+
 static void efivar_update_sysfs_entries(struct work_struct *work)
 {
 	struct efivars *efivars = &__efivars;
@@ -1912,30 +1959,25 @@ void unregister_efivars(struct efivars *efivars)
 EXPORT_SYMBOL_GPL(unregister_efivars);
 
 /*
- * Sanity check size of a variable name.
+ * Print a warning when duplicate EFI variables are encountered and
+ * disable the sysfs workqueue since the firmware is buggy.
  */
-static unsigned long sanity_check_size(efi_char16_t *variable_name,
-				       unsigned long variable_name_size)
+static void dup_variable_bug(efi_char16_t *s16, efi_guid_t *vendor_guid,
+			     unsigned long len16)
 {
-	unsigned long len;
-	efi_char16_t c;
+	size_t i, len8 = len16 / sizeof(efi_char16_t);
+	char *s8;
 
-	/*
-	 * The variable name is, by definition, a NULL-terminated
-	 * string, so make absolutely sure that variable_name_size is
-	 * the value we expect it to be. If not, return the real size.
-	 */
-	for (len = 2; len <= variable_name_size; len += sizeof(c)) {
-		c = variable_name[(len / sizeof(c)) - 1];
-		if (!c)
-			break;
-	}
+	s8 = kzalloc(len8, GFP_KERNEL);
+	if (!s8)
+		return;
 
+	for (i = 0; i < len8; i++)
+		s8[i] = s16[i];
 
-	if (len != variable_name_size)
-		printk(KERN_WARNING "efivars: bogus variable_name_size: %lu %lu\n", len, variable_name_size);
-
-	return min(len, variable_name_size);
+	printk(KERN_WARNING "efivars: duplicate variable: %s-%pUl\n",
+	       s8, vendor_guid);
+	kfree(s8);
 }
 
 int register_efivars(struct efivars *efivars,
@@ -1984,11 +2026,26 @@ int register_efivars(struct efivars *efivars,
 		status = ops->get_next_variable(&variable_name_size,
 						variable_name,
 						&vendor_guid);
-
 		switch (status) {
 		case EFI_SUCCESS:
-			variable_name_size = sanity_check_size(variable_name,
+			variable_name_size = var_name_strnsize(variable_name,
 							       variable_name_size);
+
+			/*
+			 * Some firmware implementations return the
+			 * same variable name on multiple calls to
+			 * get_next_variable(). Terminate the loop
+			 * immediately as there is no guarantee that
+			 * we'll ever see a different variable name,
+			 * and may end up looping here forever.
+			 */
+			if (variable_is_present(variable_name, &vendor_guid)) {
+				dup_variable_bug(variable_name, &vendor_guid,
+						 variable_name_size);
+				status = EFI_NOT_FOUND;
+				break;
+			}
+
 			efivar_create_sysfs_entry(efivars,
 						  variable_name_size,
 						  variable_name,
