@@ -907,7 +907,7 @@ static void extract_buf(struct entropy_store *r, __u8 *out)
 	 * brute-forcing the feedback as hard as brute-forcing the
 	 * hash.
 	 */
-	mix_pool_bytes_extract(r, hash, sizeof(hash), extract);
+	mix_pool_bytes_extract(r, hash.w, sizeof(hash.w), extract);
 
 	/*
 	 * To avoid duplicates, we atomically extract a portion of the
