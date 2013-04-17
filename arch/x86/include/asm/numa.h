@@ -64,18 +64,12 @@ extern void __cpuinit numa_clear_node(int cpu);
 extern void __init init_cpu_to_node(void);
 extern void __cpuinit numa_add_cpu(int cpu);
 extern void __cpuinit numa_remove_cpu(int cpu);
-# ifdef CONFIG_X86_32
-extern void alloc_remap_save_vmcoreinfo(void);
-# else
-static inline void alloc_remap_save_vmcoreinfo(void)	{ }
-# endif
 #else	/* CONFIG_NUMA */
 static inline void numa_set_node(int cpu, int node)	{ }
 static inline void numa_clear_node(int cpu)		{ }
 static inline void init_cpu_to_node(void)		{ }
 static inline void numa_add_cpu(int cpu)		{ }
 static inline void numa_remove_cpu(int cpu)		{ }
-static inline void alloc_remap_save_vmcoreinfo(void)	{ }
 #endif	/* CONFIG_NUMA */
 
 #ifdef CONFIG_DEBUG_PER_CPU_MAPS

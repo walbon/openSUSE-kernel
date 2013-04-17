@@ -25,7 +25,6 @@
 #include <linux/bootmem.h>
 #include <linux/memblock.h>
 #include <linux/module.h>
-#include <linux/kexec.h>
 
 #include "numa_internal.h"
 
@@ -264,12 +263,4 @@ void __init initmem_init(void)
 			(ulong) pfn_to_kaddr(highstart_pfn));
 
 	setup_bootmem_allocator();
-}
-
-void alloc_remap_save_vmcoreinfo(void)
-{
-	VMCOREINFO_SYMBOL(node_remap_start_vaddr);
-	VMCOREINFO_SYMBOL(node_remap_end_vaddr);
-	VMCOREINFO_SYMBOL(node_remap_start_pfn);
-	VMCOREINFO_LENGTH(node_remap_start_pfn, MAX_NUMNODES);
 }

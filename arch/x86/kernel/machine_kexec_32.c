@@ -280,6 +280,5 @@ void arch_crash_save_vmcoreinfo(void)
 #ifdef CONFIG_X86_PAE
 	VMCOREINFO_CONFIG(X86_PAE);
 #endif
-	alloc_remap_save_vmcoreinfo();
 }
 
