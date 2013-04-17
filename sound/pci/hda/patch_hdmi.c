@@ -1305,7 +1305,8 @@ static int patch_generic_hdmi(struct hda_codec *codec)
 
 	codec->spec = spec;
 
-	if (codec->bus->pci->subsystem_device == 0x80862010)
+	if (codec->bus->pci->subsystem_vendor == 0x8086 &&
+	    codec->bus->pci->subsystem_device == 0x2010)
 		intel_haswell_enable_all_pins(codec);
 
 	if (codec->vendor_id == 0x80862807)
