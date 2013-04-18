@@ -147,6 +147,22 @@ static void kvm_rtc_eoi_tracking_restore_all(struct kvm_ioapic *ioapic)
 	    __rtc_irq_eoi_tracking_restore_one(vcpu);
 }
 
+static void rtc_irq_eoi(struct kvm_ioapic *ioapic, struct kvm_vcpu *vcpu)
+{
+	if (test_and_clear_bit(vcpu->vcpu_id, ioapic->rtc_status.dest_map))
+		--ioapic->rtc_status.pending_eoi;
+
+	WARN_ON(ioapic->rtc_status.pending_eoi < 0);
+}
+
+static bool rtc_irq_check_coalesced(struct kvm_ioapic *ioapic)
+{
+	if (ioapic->rtc_status.pending_eoi > 0)
+		return true; /* coalesced */
+
+	return false;
+}
+
 static int ioapic_service(struct kvm_ioapic *ioapic, unsigned int idx,
 		bool line_status)
 {
@@ -260,6 +276,7 @@ static int ioapic_deliver(struct kvm_ioapic *ioapic, int irq, bool line_status)
 {
 	union kvm_ioapic_redirect_entry *entry = &ioapic->redirtbl[irq];
 	struct kvm_lapic_irq irqe;
+	int ret;
 
 	ioapic_debug("dest=%x dest_mode=%x delivery_mode=%x "
 		     "vector=%x trig_mode=%x\n",
@@ -284,7 +301,15 @@ static int ioapic_deliver(struct kvm_ioapic *ioapic, int irq, bool line_status)
 		irqe.dest_id = ioapic->kvm->bsp_vcpu->vcpu_id;
 	}
 #endif
-	return kvm_irq_delivery_to_apic(ioapic->kvm, NULL, &irqe, NULL);
+	if (irq == RTC_GSI && line_status) {
+		BUG_ON(ioapic->rtc_status.pending_eoi != 0);
+		ret = kvm_irq_delivery_to_apic(ioapic->kvm, NULL, &irqe,
+				ioapic->rtc_status.dest_map);
+		ioapic->rtc_status.pending_eoi = ret;
+	} else
+		ret = kvm_irq_delivery_to_apic(ioapic->kvm, NULL, &irqe, NULL);
+
+	return ret;
 }
 
 int kvm_ioapic_set_irq(struct kvm_ioapic *ioapic, int irq, int level,
@@ -305,12 +330,19 @@ int kvm_ioapic_set_irq(struct kvm_ioapic *ioapic, int irq, int level,
 			ioapic->irr &= ~mask;
 		else {
 			int edge = (entry.fields.trig_mode == IOAPIC_EDGE_TRIG);
-			ioapic->irr |= mask;
-			if ((edge && old_irr != ioapic->irr) ||
-			    (!edge && !entry.fields.remote_irr))
-				ret = ioapic_service(ioapic, irq, line_status);
-			else
-				ret = 0; /* report coalesced interrupt */
+
+			if (irq == RTC_GSI && line_status &&
+				rtc_irq_check_coalesced(ioapic)) {
+				ret = 0; /* coalesced */
+			} else {
+				ioapic->irr |= mask;
+				if ((edge && old_irr != ioapic->irr) ||
+				    (!edge && !entry.fields.remote_irr))
+					ret = ioapic_service(ioapic, irq,
+							     line_status);
+				else
+					ret = 0; /* report coalesced interrupt */
+			}
 		}
 		trace_kvm_ioapic_set_irq(entry.bits, irq, ret == 0);
 	}
@@ -330,6 +362,8 @@ static void __kvm_ioapic_update_eoi(struct kvm_vcpu *vcpu,
 		if (ent->fields.vector != vector)
 			continue;
 
+		if (i == RTC_GSI)
+			rtc_irq_eoi(ioapic, vcpu);
 		/*
 		 * We are dropping lock while calling ack notifiers because ack
 		 * notifier callbacks for assigned devices call into IOAPIC
