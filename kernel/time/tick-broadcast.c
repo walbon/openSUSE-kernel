@@ -534,9 +534,6 @@ void tick_broadcast_setup_oneshot(struct clock_event_device *bc)
 		bc->event_handler = tick_handle_oneshot_broadcast;
 		clockevents_set_mode(bc, CLOCK_EVT_MODE_ONESHOT);
 
-		/* Take the do_timer update */
-		tick_do_timer_cpu = cpu;
-
 		/*
 		 * We must be careful here. There might be other CPUs
 		 * waiting for periodic broadcast. We need to set the
