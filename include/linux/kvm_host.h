@@ -47,7 +47,7 @@
 #define KVM_REQ_DEACTIVATE_FPU    10
 #define KVM_REQ_EVENT             11
 #define KVM_REQ_APF_HALT          12
-#define KVM_REQ_EOIBITMAP         22
+#define KVM_REQ_SCAN_IOAPIC       22
 
 #define KVM_USERSPACE_IRQ_SOURCE_ID	0
 
@@ -412,7 +412,7 @@ void kvm_put_guest_fpu(struct kvm_vcpu *vcpu);
 
 void kvm_flush_remote_tlbs(struct kvm *kvm);
 void kvm_reload_remote_mmus(struct kvm *kvm);
-void kvm_make_update_eoibitmap_request(struct kvm *kvm);
+void kvm_make_scan_ioapic_request(struct kvm *kvm);
 
 long kvm_arch_dev_ioctl(struct file *filp,
 			unsigned int ioctl, unsigned long arg);

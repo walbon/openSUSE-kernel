@@ -210,9 +210,9 @@ void kvm_reload_remote_mmus(struct kvm *kvm)
 	make_all_cpus_request(kvm, KVM_REQ_MMU_RELOAD);
 }
 
-void kvm_make_update_eoibitmap_request(struct kvm *kvm)
+void kvm_make_scan_ioapic_request(struct kvm *kvm)
 {
-	make_all_cpus_request(kvm, KVM_REQ_EOIBITMAP);
+	make_all_cpus_request(kvm, KVM_REQ_SCAN_IOAPIC);
 }
 
 int kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
