@@ -3657,9 +3657,7 @@ static int shrink_delalloc(struct btrfs_root *root, u64 to_reclaim,
 			 max_reclaim >> PAGE_CACHE_SHIFT);
 	while (loops < 1024) {
 		/* have the flusher threads jump in and do some IO */
-		if (btrfs_fs_closing(root->fs_info))
-			return -EAGAIN;
-
+		smp_mb();
 		nr_pages = min_t(unsigned long, nr_pages,
 		       root->fs_info->delalloc_bytes >> PAGE_CACHE_SHIFT);
 		btrfs_writeback_inodes_sb_nr(root, nr_pages);
