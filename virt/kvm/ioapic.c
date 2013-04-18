@@ -226,7 +226,7 @@ static int ioapic_deliver(struct kvm_ioapic *ioapic, int irq)
 		irqe.dest_id = ioapic->kvm->bsp_vcpu->vcpu_id;
 	}
 #endif
-	return kvm_irq_delivery_to_apic(ioapic->kvm, NULL, &irqe);
+	return kvm_irq_delivery_to_apic(ioapic->kvm, NULL, &irqe, NULL);
 }
 
 int kvm_ioapic_set_irq(struct kvm_ioapic *ioapic, int irq, int level)
