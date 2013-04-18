@@ -98,4 +98,6 @@ static inline u16 apic_logical_id(struct kvm_apic_map *map, u32 ldr)
 	return ldr & map->lid_mask;
 }
 
+bool kvm_apic_pending_eoi(struct kvm_vcpu *vcpu, int vector);
+
 #endif
