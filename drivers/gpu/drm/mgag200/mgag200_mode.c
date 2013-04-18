@@ -1403,6 +1403,16 @@ static int mga_vga_get_modes(struct drm_connector *connector)
 	return ret;
 }
 
+static int mga_pix_per_sec(const struct drm_display_mode *mode)
+{
+	int a_active, a_total;
+	a_active = mode->hdisplay * mode->vdisplay;
+	a_total = mode->htotal * mode->vtotal;
+
+	return ((a_active * 1000) / a_total) * mode->clock;
+
+}
+
 static int mga_vga_mode_valid(struct drm_connector *connector,
 				 struct drm_display_mode *mode)
 {
@@ -1413,13 +1423,46 @@ static int mga_vga_mode_valid(struct drm_connector *connector,
 	struct drm_fb_helper_connector *fb_helper_conn = NULL;
 	int bpp = 32;
 	int i = 0;
+	int lace = 1 + ((mode->flags & DRM_MODE_FLAG_INTERLACE) ? 1 : 0);
+	int bytes_pp = (bpp + 7) >> 3;
 
-	/* FIXME: Add bandwidth and g200se limitations */
-
+	switch (mdev->type) {
+	case G200_SE_A:
+		if (mdev->mc.vram_size < (2048 * 1024))
+			if (mode->hdisplay > 1024)
+				return MODE_VIRTUAL_X;
+		if (mdev->reg_1e24 == 0x01) {
+			DRM_DEBUG_KMS("A_1\n");
+			if (mga_pix_per_sec(mode) * bytes_pp > 244 * 1024 * 1024)
+				return MODE_BAD;
+		} else if (mdev->reg_1e24 >= 0x02) {
+			DRM_DEBUG_KMS("A_2\n");
+			if (mga_pix_per_sec(mode) * bytes_pp > 301 * 1024 * 1024)
+				return MODE_BAD;
+		}
+	case G200_SE_B:
+		break;
+	case G200_WB:
+		if (mga_pix_per_sec(mode) * bytes_pp > 334250000)
+			return MODE_BAD;
+		break;
+	case G200_EV:
+		if (mga_pix_per_sec(mode) * bytes_pp > 327 * 1024 * 1024)
+			return MODE_BAD;
+		break;
+	case G200_EH:
+		if (mga_pix_per_sec(mode) * bytes_pp > 375 * 1024 * 1024)
+			return MODE_BAD;
+		break;
+	case G200_ER:
+		if (mga_pix_per_sec(mode) * bytes_pp > 550 * 1024 * 1024)
+			return MODE_BAD;
+		break;
+	}
 	if (mode->crtc_hdisplay > 2048 || mode->crtc_hsync_start > 4096 ||
 	    mode->crtc_hsync_end > 4096 || mode->crtc_htotal > 4096 ||
-	    mode->crtc_vdisplay > 2048 || mode->crtc_vsync_start > 4096 ||
-	    mode->crtc_vsync_end > 4096 || mode->crtc_vtotal > 4096) {
+	    mode->crtc_vdisplay > 2048 * lace || mode->crtc_vsync_start > 4096 * lace ||
+	    mode->crtc_vsync_end > 4096 * lace || mode->crtc_vtotal > 4096 * lace) {
 		return MODE_BAD;
 	}
 
@@ -1496,6 +1539,7 @@ static struct drm_connector *mga_vga_init(struct drm_device *dev)
 {
 	struct drm_connector *connector;
 	struct mga_connector *mga_connector;
+	struct mga_device *mdev = dev->dev_private;
 
 	mga_connector = kzalloc(sizeof(struct mga_connector), GFP_KERNEL);
 	if (!mga_connector)
@@ -1512,6 +1556,9 @@ static struct drm_connector *mga_vga_init(struct drm_device *dev)
 	if (!mga_connector->i2c)
 		DRM_ERROR("failed to add ddc bus\n");
 
+	connector->interlace_allowed = true;
+	connector->doublescan_allowed = (mdev->type != G200_WB) ? true : false;
+
 	return connector;
 }
 
@@ -1526,7 +1573,23 @@ int mgag200_modeset_init(struct mga_device *mdev)
 
 	mdev->dev->mode_config.max_width = MGAG200_MAX_FB_WIDTH;
 	mdev->dev->mode_config.max_height = MGAG200_MAX_FB_HEIGHT;
-
+	switch (mdev->type) {
+	case G200_SE_A:
+		if (mdev->reg_1e24 == 0x01) {
+			mdev->dev->mode_config.max_width = 1600;
+			mdev->dev->mode_config.max_height = 1200;
+		} else if (mdev->reg_1e24 >= 0x02) {
+			mdev->dev->mode_config.max_width = 1920;
+			mdev->dev->mode_config.max_height = 1200;
+		}
+		break;
+#if 0 /* KVM stuff ?? */
+	case G200_WB:
+		break;
+#endif
+	default:
+		break;
+	}
 	mdev->dev->mode_config.fb_base = mdev->mc.vram_base;
 
 	mga_crtc_init(mdev->dev);
