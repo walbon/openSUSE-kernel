@@ -367,6 +367,23 @@ struct pi_desc {
 	u32 rsvd[7];
 } __aligned(64);
 
+static bool pi_test_and_set_on(struct pi_desc *pi_desc)
+{
+	return test_and_set_bit(POSTED_INTR_ON,
+			(unsigned long *)&pi_desc->control);
+}
+
+static bool pi_test_and_clear_on(struct pi_desc *pi_desc)
+{
+	return test_and_clear_bit(POSTED_INTR_ON,
+			(unsigned long *)&pi_desc->control);
+}
+
+static int pi_test_and_set_pir(int vector, struct pi_desc *pi_desc)
+{
+	return test_and_set_bit(vector, (unsigned long *)pi_desc->pir);
+}
+
 struct vcpu_vmx {
 	struct kvm_vcpu       vcpu;
 	unsigned long         host_rsp;
@@ -622,6 +639,7 @@ static void kvm_cpu_vmxon(u64 addr);
 static void kvm_cpu_vmxoff(void);
 static void vmx_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3);
 static int vmx_set_tss_addr(struct kvm *kvm, unsigned int addr);
+static void vmx_sync_pir_to_irr_dummy(struct kvm_vcpu *vcpu);
 
 static DEFINE_PER_CPU(struct vmcs *, vmxarea);
 static DEFINE_PER_CPU(struct vmcs *, current_vmcs);
@@ -2669,8 +2687,11 @@ static __init int hardware_setup(void)
 
 	if (enable_apicv)
 		kvm_x86_ops->update_cr8_intercept = NULL;
-	else
+	else {
 		kvm_x86_ops->hwapic_irr_update = NULL;
+		kvm_x86_ops->deliver_posted_interrupt = NULL;
+		kvm_x86_ops->sync_pir_to_irr = vmx_sync_pir_to_irr_dummy;
+	}
 
 	if (nested)
 		nested_vmx_setup_ctls_msrs();
@@ -3741,6 +3762,45 @@ static void vmx_disable_intercept_msr_write_x2apic(u32 msr)
 static int vmx_vm_has_apicv(struct kvm *kvm)
 {
 	return enable_apicv && irqchip_in_kernel(kvm);
+}
+
+/*
+ * Send interrupt to vcpu via posted interrupt way.
+ * 1. If target vcpu is running(non-root mode), send posted interrupt
+ * notification to vcpu and hardware will sync PIR to vIRR atomically.
+ * 2. If target vcpu isn't running(root mode), kick it to pick up the
+ * interrupt from PIR in next vmentry.
+ */
+static void vmx_deliver_posted_interrupt(struct kvm_vcpu *vcpu, int vector)
+{
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
+	int r;
+
+	if (pi_test_and_set_pir(vector, &vmx->pi_desc))
+		return;
+
+	r = pi_test_and_set_on(&vmx->pi_desc);
+	kvm_make_request(KVM_REQ_EVENT, vcpu);
+	if (!r && (vcpu->mode == IN_GUEST_MODE))
+		apic->send_IPI_mask(get_cpu_mask(vcpu->cpu),
+				POSTED_INTR_VECTOR);
+	else
+		kvm_vcpu_kick(vcpu);
+}
+
+static void vmx_sync_pir_to_irr(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
+
+	if (!pi_test_and_clear_on(&vmx->pi_desc))
+		return;
+
+	kvm_apic_update_irr(vcpu, vmx->pi_desc.pir);
+}
+
+static void vmx_sync_pir_to_irr_dummy(struct kvm_vcpu *vcpu)
+{
+	return;
 }
 
 /*
@@ -7462,6 +7522,8 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.load_eoi_exitmap = vmx_load_eoi_exitmap,
 	.hwapic_irr_update = vmx_hwapic_irr_update,
 	.hwapic_isr_update = vmx_hwapic_isr_update,
+	.sync_pir_to_irr = vmx_sync_pir_to_irr,
+	.deliver_posted_interrupt = vmx_deliver_posted_interrupt,
 
 	.set_tss_addr = vmx_set_tss_addr,
 	.get_tdp_level = get_ept_level,

@@ -626,6 +626,7 @@ static int kvm_create_dirty_bitmap(struct kvm_memory_slot *memslot)
 	memslot->dirty_bitmap_head = memslot->dirty_bitmap;
 	return 0;
 }
+EXPORT_SYMBOL_GPL(kvm_vcpu_kick);
 #endif /* !CONFIG_S390 */
 
 /*
