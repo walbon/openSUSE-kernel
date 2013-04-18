@@ -62,8 +62,7 @@
 static const struct super_operations btrfs_super_ops;
 static struct file_system_type btrfs_fs_type;
 
-static const char *btrfs_decode_error(struct btrfs_fs_info *fs_info, int errno,
-				      char nbuf[16])
+static const char *btrfs_decode_error(int errno, char nbuf[16])
 {
 	char *errstr = NULL;
 
@@ -135,8 +134,6 @@ void __btrfs_std_error(struct btrfs_fs_info *fs_info, const char *function,
 	struct super_block *sb = fs_info->sb;
 	char nbuf[16];
 	const char *errstr;
-	va_list args;
-	va_start(args, fmt);
 
 	/*
 	 * Special case: if the error is EROFS, and we're already
@@ -145,26 +142,27 @@ void __btrfs_std_error(struct btrfs_fs_info *fs_info, const char *function,
 	if (errno == -EROFS && (sb->s_flags & MS_RDONLY))
 		return;
 
-	errstr = btrfs_decode_error(fs_info, errno, nbuf);
+	errstr = btrfs_decode_error(errno, nbuf);
 	if (fmt) {
-		struct va_format vaf = {
-			.fmt = fmt,
-			.va = &args,
-		};
+		struct va_format vaf;
+		va_list args;
+
+		va_start(args, fmt);
+		vaf.fmt = fmt;
+		vaf.va = &args;
 
 		printk(KERN_CRIT "BTRFS error (device %s) in %s:%d: %s (%pV)\n",
 			sb->s_id, function, line, errstr, &vaf);
+		va_end(args);
 	} else {
 		printk(KERN_CRIT "BTRFS error (device %s) in %s:%d: %s\n",
 			sb->s_id, function, line, errstr);
 	}
 
 	/* Don't go through full error handling during mount */
-	if (sb->s_flags & MS_BORN) {
-		save_error_info(fs_info);
+	save_error_info(fs_info);
+	if (sb->s_flags & MS_BORN)
 		btrfs_handle_error(fs_info);
-	}
-	va_end(args);
 }
 
 static const char * const logtypes[] = {
@@ -228,7 +226,7 @@ void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 		char nbuf[16];
 		const char *errstr;
 
-		errstr = btrfs_decode_error(root->fs_info, errno, nbuf);
+		errstr = btrfs_decode_error(errno, nbuf);
 		btrfs_printk(root->fs_info,
 			     "%s:%d: Aborting unused transaction(%s).\n",
 			     function, line, errstr);
@@ -256,8 +254,8 @@ void __btrfs_panic(struct btrfs_fs_info *fs_info, const char *function,
 	va_start(args, fmt);
 	vaf.va = &args;
 
-	errstr = btrfs_decode_error(fs_info, errno, nbuf);
-	if (fs_info->mount_opt & BTRFS_MOUNT_PANIC_ON_FATAL_ERROR)
+	errstr = btrfs_decode_error(errno, nbuf);
+	if (fs_info && (fs_info->mount_opt & BTRFS_MOUNT_PANIC_ON_FATAL_ERROR))
 		panic(KERN_CRIT "BTRFS panic (device %s) in %s:%d: %pV (%s)\n",
 			s_id, function, line, &vaf, errstr);
 
