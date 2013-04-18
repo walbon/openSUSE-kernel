@@ -2812,6 +2812,8 @@ static int __btrfs_unlink_inode(struct btrfs_trans_handle *trans,
 					   dir, index);
 	if (ret == -ENOENT)
 		ret = 0;
+	else if (ret)
+		btrfs_abort_transaction(trans, root, ret);
 err:
 	btrfs_free_path(path);
 	if (ret)
@@ -4787,7 +4789,8 @@ static struct inode *btrfs_new_inode(struct btrfs_trans_handle *trans,
 		if (btrfs_test_opt(root, NODATASUM))
 			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATASUM;
 		if (btrfs_test_opt(root, NODATACOW))
-			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATACOW;
+			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATACOW |
+				BTRFS_INODE_NODATASUM;
 	}
 
 	insert_inode_hash(inode);
@@ -7587,6 +7590,7 @@ static int __btrfs_prealloc_file_range(struct inode *inode, int mode,
 	struct btrfs_key ins;
 	u64 cur_offset = start;
 	u64 i_size;
+	u64 cur_bytes;
 	int ret = 0;
 	bool own_trans = true;
 
@@ -7601,8 +7605,9 @@ static int __btrfs_prealloc_file_range(struct inode *inode, int mode,
 			}
 		}
 
-		ret = btrfs_reserve_extent(trans, root,
-					   min(num_bytes, 256ULL * 1024 * 1024),
+		cur_bytes = min(num_bytes, 256ULL * 1024 * 1024);
+		cur_bytes = max(cur_bytes, min_size);
+		ret = btrfs_reserve_extent(trans, root, cur_bytes,
 					   min_size, 0, *alloc_hint, &ins, 1);
 		if (ret) {
 			if (own_trans)

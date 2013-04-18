@@ -46,7 +46,7 @@ extern struct kmem_cache *btrfs_path_cachep;
 extern struct kmem_cache *btrfs_free_space_cachep;
 struct btrfs_ordered_sum;
 
-#define BTRFS_MAGIC "_BHRfS_M"
+#define BTRFS_MAGIC 0x4D5F53665248425FULL /* ascii _BHRfS_M, no null */
 
 #define BTRFS_MAX_LEVEL 8
 
@@ -3022,7 +3022,13 @@ static inline int btrfs_acl_chmod(struct inode *inode)
 {
 	return 0;
 }
+
 #endif
+
+static inline int btrfs_defrag_cancelled(struct btrfs_fs_info *fs_info)
+{
+	return signal_pending(current);
+}
 
 /* relocation.c */
 int btrfs_relocate_block_group(struct btrfs_root *root, u64 group_start);

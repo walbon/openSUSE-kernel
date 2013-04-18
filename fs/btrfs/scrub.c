@@ -337,7 +337,6 @@ static void scrub_print_warning(const char *errstr, struct scrub_bio *sbio,
 	eb = path->nodes[0];
 	ei = btrfs_item_ptr(eb, path->slots[0], struct btrfs_extent_item);
 	item_size = btrfs_item_size_nr(eb, path->slots[0]);
-	btrfs_release_path(path);
 
 	if (flags & BTRFS_EXTENT_FLAG_TREE_BLOCK) {
 		do {
@@ -351,7 +350,9 @@ static void scrub_print_warning(const char *errstr, struct scrub_bio *sbio,
 				ret < 0 ? -1 : ref_level,
 				ret < 0 ? -1 : ref_root);
 		} while (ret != 1);
+		btrfs_release_path(path);
 	} else {
+		btrfs_release_path(path);
 		swarn.path = path;
 		iterate_extent_inodes(fs_info, found_key.objectid,
 					extent_item_pos, 1,

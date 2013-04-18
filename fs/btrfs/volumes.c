@@ -1492,7 +1492,8 @@ int btrfs_rm_device(struct btrfs_root *root, char *device_path)
 	ret = 0;
 
 	/* Notify udev that device has changed */
-	btrfs_kobject_uevent(bdev, KOBJ_CHANGE);
+	if (bdev)
+		btrfs_kobject_uevent(bdev, KOBJ_CHANGE);
 
 error_brelse:
 	brelse(bh);
@@ -2026,7 +2027,11 @@ static int btrfs_relocate_chunk(struct btrfs_root *root,
 		return ret;
 
 	trans = btrfs_start_transaction(root, 0);
-	BUG_ON(IS_ERR(trans));
+	if (IS_ERR(trans)) {
+		ret = PTR_ERR(trans);
+		btrfs_std_error(root->fs_info, ret);
+		return ret;
+	}
 
 	lock_chunks(root);
 
@@ -2706,7 +2711,8 @@ static void __cancel_balance(struct btrfs_fs_info *fs_info)
 
 	unset_balance_control(fs_info);
 	ret = del_balance_item(fs_info->tree_root);
-	BUG_ON(ret);
+	if (ret)
+		btrfs_std_error(fs_info, ret);
 }
 
 void update_ioctl_balance_args(struct btrfs_fs_info *fs_info, int lock,
@@ -4042,7 +4048,18 @@ int btrfs_rmap_block(struct btrfs_mapping_tree *map_tree,
 	em = lookup_extent_mapping(em_tree, chunk_start, 1);
 	read_unlock(&em_tree->lock);
 
-	BUG_ON(!em || em->start != chunk_start);
+	if (!em) {
+		printk(KERN_ERR "btrfs: couldn't find em for chunk %Lu\n",
+		       chunk_start);
+		return -EIO;
+	}
+
+	if (em->start != chunk_start) {
+		printk(KERN_ERR "btrfs: bad chunk start, em=%Lu, wanted=%Lu\n",
+		       em->start, chunk_start);
+		free_extent_map(em);
+		return -EIO;
+	}
 	map = (struct map_lookup *)em->bdev;
 
 	length = em->len;
