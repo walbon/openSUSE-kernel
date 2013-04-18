@@ -991,6 +991,11 @@ apicinterrupt (INVALIDATE_TLB_VECTOR_START)+\idx \
 .endr
 #endif
 
+#ifdef CONFIG_HAVE_KVM
+apicinterrupt POSTED_INTR_VECTOR \
+	kvm_posted_intr_ipi smp_kvm_posted_intr_ipi
+#endif
+
 apicinterrupt THRESHOLD_APIC_VECTOR \
 	threshold_interrupt smp_threshold_interrupt
 apicinterrupt THERMAL_APIC_VECTOR \
