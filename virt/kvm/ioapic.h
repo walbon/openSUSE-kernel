@@ -88,7 +88,8 @@ void kvm_ioapic_update_eoi(struct kvm_vcpu *vcpu, int vector,
 bool kvm_ioapic_handles_vector(struct kvm *kvm, int vector);
 int kvm_ioapic_init(struct kvm *kvm);
 void kvm_ioapic_destroy(struct kvm *kvm);
-int kvm_ioapic_set_irq(struct kvm_ioapic *ioapic, int irq, int level);
+int kvm_ioapic_set_irq(struct kvm_ioapic *ioapic, int irq, int level,
+		       bool line_status);
 void kvm_ioapic_reset(struct kvm_ioapic *ioapic);
 int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
 		struct kvm_lapic_irq *irq, unsigned long *dest_map);

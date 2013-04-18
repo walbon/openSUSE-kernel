@@ -3636,7 +3636,8 @@ long kvm_arch_vm_ioctl(struct file *filp,
 		if (irqchip_in_kernel(kvm)) {
 			__s32 status;
 			status = kvm_set_irq(kvm, KVM_USERSPACE_IRQ_SOURCE_ID,
-					irq_event.irq, irq_event.level);
+					irq_event.irq, irq_event.level,
+					ioctl == KVM_IRQ_LINE_STATUS);
 			if (ioctl == KVM_IRQ_LINE_STATUS) {
 				r = -EFAULT;
 				irq_event.status = status;
