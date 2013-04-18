@@ -1694,28 +1694,6 @@ static unsigned long var_name_strnsize(efi_char16_t *variable_name,
 	return min(len, variable_name_size);
 }
 
-static bool variable_is_present(efi_char16_t *variable_name, efi_guid_t *vendor)
-{
-	struct efivar_entry *entry, *n;
-	struct efivars *efivars = &__efivars;
-	unsigned long strsize1, strsize2;
-	bool found = false;
-
-	strsize1 = utf16_strsize(variable_name, 1024);
-	list_for_each_entry_safe(entry, n, &efivars->list, list) {
-		strsize2 = utf16_strsize(entry->var.VariableName, 1024);
-		if (strsize1 == strsize2 &&
-			!memcmp(variable_name, &(entry->var.VariableName),
-				strsize2) &&
-			!efi_guidcmp(entry->var.VendorGuid,
-				*vendor)) {
-			found = true;
-			break;
-		}
-	}
-	return found;
-}
-
 static void efivar_update_sysfs_entries(struct work_struct *work)
 {
 	struct efivars *efivars = &__efivars;
