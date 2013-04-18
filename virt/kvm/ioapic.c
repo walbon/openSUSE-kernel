@@ -260,8 +260,8 @@ int kvm_ioapic_set_irq(struct kvm_ioapic *ioapic, int irq, int level)
 	return ret;
 }
 
-static void __kvm_ioapic_update_eoi(struct kvm_ioapic *ioapic, int vector,
-				     int trigger_mode)
+static void __kvm_ioapic_update_eoi(struct kvm_vcpu *vcpu,
+			struct kvm_ioapic *ioapic, int vector, int trigger_mode)
 {
 	int i;
 
@@ -300,12 +300,12 @@ bool kvm_ioapic_handles_vector(struct kvm *kvm, int vector)
 	return test_bit(vector, ioapic->handled_vectors);
 }
 
-void kvm_ioapic_update_eoi(struct kvm *kvm, int vector, int trigger_mode)
+void kvm_ioapic_update_eoi(struct kvm_vcpu *vcpu, int vector, int trigger_mode)
 {
-	struct kvm_ioapic *ioapic = kvm->arch.vioapic;
+	struct kvm_ioapic *ioapic = vcpu->kvm->arch.vioapic;
 
 	spin_lock(&ioapic->lock);
-	__kvm_ioapic_update_eoi(ioapic, vector, trigger_mode);
+	__kvm_ioapic_update_eoi(vcpu, ioapic, vector, trigger_mode);
 	spin_unlock(&ioapic->lock);
 }
 
@@ -394,7 +394,7 @@ static int ioapic_mmio_write(struct kvm_io_device *this, gpa_t addr, int len,
 		break;
 #ifdef	CONFIG_IA64
 	case IOAPIC_REG_EOI:
-		__kvm_ioapic_update_eoi(ioapic, data, IOAPIC_LEVEL_TRIG);
+		__kvm_ioapic_update_eoi(NULL, ioapic, data, IOAPIC_LEVEL_TRIG);
 		break;
 #endif
 
