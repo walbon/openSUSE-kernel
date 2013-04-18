@@ -97,8 +97,4 @@ static inline u16 apic_logical_id(struct kvm_apic_map *map, u32 ldr)
 	return ldr & map->lid_mask;
 }
 
-void kvm_calculate_eoi_exitmap(struct kvm_vcpu *vcpu,
-				struct kvm_lapic_irq *irq,
-				u64 *eoi_bitmap);
-
 #endif
