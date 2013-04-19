@@ -1531,7 +1531,7 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 	if (!dev_priv->regs) {
 		DRM_ERROR("failed to map registers\n");
 		ret = -EIO;
-		goto put_bridge;
+		goto put_gmch;
 	}
 
 	aperture_size = dev_priv->mm.gtt->gtt_mappable_entries << PAGE_SHIFT;
@@ -1542,7 +1542,7 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 				     aperture_size);
 	if (dev_priv->mm.gtt_mapping == NULL) {
 		ret = -EIO;
-		goto put_gmch;
+		goto out_rmmap;
 	}
 
 	i915_mtrr_setup(dev_priv, dev_priv->mm.gtt_base_addr,
