@@ -3967,12 +3967,13 @@ int __meminit __early_pfn_to_nid(unsigned long pfn)
 	for (i = 0; i < nr_nodemap_entries; i++) {
 		unsigned long start_pfn = early_node_map[i].start_pfn;
 		unsigned long end_pfn = early_node_map[i].end_pfn;
+		int nid = early_node_map[i].nid;
 
 		if (start_pfn <= pfn && pfn < end_pfn) {
 			last_start_pfn = start_pfn;
 			last_end_pfn = end_pfn;
 			last_nid = nid;
-			return early_node_map[i].nid;
+			return nid;
 		}
 	}
 	/* This is a memory hole */
