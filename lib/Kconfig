@@ -315,6 +315,9 @@ config AVERAGE
 
 	  If unsure, say N.
 
+config UCS2_STRING
+        tristate
+
 config MPILIB
 	tristate "Multiprecision maths library"
 	help
