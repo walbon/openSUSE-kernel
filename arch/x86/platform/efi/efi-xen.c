@@ -526,3 +526,9 @@ u64 efi_mem_attributes(unsigned long phys_addr)
 	info->mem.size = 0;
 	return HYPERVISOR_platform_op(&op) ? 0 : info->mem.attr;
 }
+
+efi_status_t efi_query_variable_store(u32 attributes, unsigned long size)
+{
+	return EFI_OUT_OF_RESOURCES;
+}
+EXPORT_SYMBOL_GPL(efi_query_variable_store);
