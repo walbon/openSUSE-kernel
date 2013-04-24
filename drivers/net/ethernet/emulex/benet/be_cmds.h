@@ -204,6 +204,7 @@ struct be_mcc_mailbox {
 #define OPCODE_COMMON_GET_FN_PRIVILEGES			170
 #define OPCODE_COMMON_READ_OBJECT			171
 #define OPCODE_COMMON_WRITE_OBJECT			172
+#define OPCODE_COMMON_GET_IFACE_LIST			194
 #define OPCODE_COMMON_ENABLE_DISABLE_VF			196
 
 #define OPCODE_ETH_RSS_CONFIG				1
@@ -1802,6 +1803,23 @@ static inline bool check_privilege(struct be_adapter *adapter, u32 flags)
 	return flags & adapter->cmd_privileges ? true : false;
 }
 
+/************** Get IFACE LIST *******************/
+struct be_if_desc {
+	u32 if_id;
+	u32 cap_flags;
+	u32 en_flags;
+};
+
+struct be_cmd_req_get_iface_list {
+	struct be_cmd_req_hdr hdr;
+};
+
+struct be_cmd_resp_get_iface_list {
+	struct be_cmd_req_hdr hdr;
+	u32 if_cnt;
+	struct be_if_desc if_desc;
+};
+
 extern int be_pci_fnum_get(struct be_adapter *adapter);
 extern int be_fw_wait_ready(struct be_adapter *adapter);
 extern int be_cmd_mac_addr_query(struct be_adapter *adapter, u8 *mac_addr,
@@ -1924,5 +1942,7 @@ extern int be_cmd_get_profile_config(struct be_adapter *adapter, u32 *cap_flags,
 
 extern int be_cmd_set_profile_config(struct be_adapter *adapter, u32 bps,
 				     u8 domain);
+extern int be_cmd_get_if_id(struct be_adapter *adapter,
+			    struct be_vf_cfg *vf_cfg, int vf_num);
 extern int be_cmd_enable_vf(struct be_adapter *adapter, u8 domain);
 extern int be_cmd_intr_set(struct be_adapter *adapter, bool intr_enable);
