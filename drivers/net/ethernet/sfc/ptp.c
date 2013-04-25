@@ -1195,6 +1195,30 @@ static int efx_ptp_ts_init(struct efx_nic *efx, struct hwtstamp_config *init)
 	return 0;
 }
 
+int
+efx_ptp_get_ts_info(struct net_device *net_dev, struct ethtool_ts_info *ts_info)
+{
+	struct efx_nic *efx = netdev_priv(net_dev);
+	struct efx_ptp_data *ptp = efx->ptp_data;
+
+	if (!ptp)
+		return -EOPNOTSUPP;
+
+	ts_info->so_timestamping = (SOF_TIMESTAMPING_TX_HARDWARE |
+				    SOF_TIMESTAMPING_RX_HARDWARE |
+				    SOF_TIMESTAMPING_RAW_HARDWARE);
+	ts_info->phc_index = ptp_clock_index(ptp->phc_clock);
+	ts_info->tx_types = 1 << HWTSTAMP_TX_OFF | 1 << HWTSTAMP_TX_ON;
+	ts_info->rx_filters = (1 << HWTSTAMP_FILTER_NONE |
+			       1 << HWTSTAMP_FILTER_PTP_V1_L4_EVENT |
+			       1 << HWTSTAMP_FILTER_PTP_V1_L4_SYNC |
+			       1 << HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ |
+			       1 << HWTSTAMP_FILTER_PTP_V2_L4_EVENT |
+			       1 << HWTSTAMP_FILTER_PTP_V2_L4_SYNC |
+			       1 << HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ);
+	return 0;
+}
+
 int efx_ptp_ioctl(struct efx_nic *efx, struct ifreq *ifr, int cmd)
 {
 	struct hwtstamp_config config;
@@ -1415,7 +1439,7 @@ static int efx_phc_settime(struct ptp_clock_info *ptp,
 
 	delta = timespec_sub(*e_ts, time_now);
 
-	efx_phc_adjtime(ptp, timespec_to_ns(&delta));
+	rc = efx_phc_adjtime(ptp, timespec_to_ns(&delta));
 	if (rc != 0)
 		return rc;
 
