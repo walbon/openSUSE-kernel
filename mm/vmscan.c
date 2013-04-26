@@ -700,12 +700,13 @@ static noinline_for_stack void free_page_list(struct list_head *free_pages)
 static unsigned long shrink_page_list(struct list_head *page_list,
 				      struct zone *zone,
 				      struct scan_control *sc,
-				      unsigned long *ret_nr_dirty,
+				      unsigned long *ret_nr_unqueued_dirty,
 				      unsigned long *ret_nr_writeback)
 {
 	LIST_HEAD(ret_pages);
 	LIST_HEAD(free_pages);
 	int pgactivate = 0;
+	unsigned long nr_unqueued_dirty = 0;
 	unsigned long nr_dirty = 0;
 	unsigned long nr_congested = 0;
 	unsigned long nr_reclaimed = 0;
@@ -746,27 +747,52 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		may_enter_fs = (sc->gfp_mask & __GFP_FS) ||
 			(PageSwapCache(page) && (sc->gfp_mask & __GFP_IO));
 
+		/*
+		 * If a page at the tail of the LRU is under writeback, there
+		 * are three cases to consider.
+		 *
+		 * 1) If reclaim is encountering an excessive number of pages
+		 *    under writeback and this page is both under writeback and
+		 *    PageReclaim then it indicates that pages are being queued
+		 *    for IO but are being recycled through the LRU before the
+		 *    IO can complete. In this case, wait on the IO to complete
+		 *    and then clear the ZONE_WRITEBACK flag to recheck if the
+		 *    condition exists.
+		 *
+		 * 2) Global reclaim encounters a page, memcg encounters a
+		 *    page that is not marked for immediate reclaim or
+		 *    the caller does not have __GFP_IO. In this case mark
+		 *    the page for immediate reclaim and continue scanning.
+		 *
+		 *    __GFP_IO is checked  because a loop driver thread might
+		 *    enter reclaim, and deadlock if it waits on a page for
+		 *    which it is needed to do the write (loop masks off
+		 *    __GFP_IO|__GFP_FS for this reason); but more thought
+		 *    would probably show more reasons.
+		 *
+		 *    Don't require __GFP_FS, since we're not going into the
+		 *    FS, just waiting on its writeback completion. Worryingly,
+		 *    ext4 gfs2 and xfs allocate pages with
+		 *    grab_cache_page_write_begin(,,AOP_FLAG_NOFS), so testing
+		 *    may_enter_fs here is liable to OOM on them.
+		 *
+		 * 3) memcg encounters a page that is not already marked
+		 *    PageReclaim. memcg does not have any dirty pages
+		 *    throttling so we could easily OOM just because too many
+		 *    pages are in writeback and there is nothing else to
+		 *    reclaim. Wait for the writeback to complete.
+		 */
 		if (PageWriteback(page)) {
-			nr_writeback++;
-			/*
-			 * memcg doesn't have any dirty pages throttling so we
-			 * could easily OOM just because too many pages are in
-			 * writeback and there is nothing else to reclaim.
-			 *
-			 * Check __GFP_IO, certainly because a loop driver
-			 * thread might enter reclaim, and deadlock if it waits
-			 * on a page for which it is needed to do the write
-			 * (loop masks off __GFP_IO|__GFP_FS for this reason);
-			 * but more thought would probably show more reasons.
-			 *
-			 * Don't require __GFP_FS, since we're not going into
-			 * the FS, just waiting on its writeback completion.
-			 * Worryingly, ext4 gfs2 and xfs allocate pages with
-			 * grab_cache_page_write_begin(,,AOP_FLAG_NOFS), so
-			 * testing may_enter_fs here is liable to OOM on them.
-			 */
-			if (global_reclaim ||
-			    !PageReclaim(page) || !(sc->gfp_mask & __GFP_IO)) {
+			/* Case 1 above */
+			if (current_is_kswapd() &&
+			    PageReclaim(page) &&
+			    zone_is_reclaim_writeback(zone)) {
+				wait_on_page_writeback(page);
+				zone_clear_flag(zone, ZONE_WRITEBACK);
+
+			/* Case 2 above */
+			} else if (global_reclaim ||
+				!PageReclaim(page) || !(sc->gfp_mask & __GFP_IO)) {
 				/*
 				 * This is slightly racy - end_page_writeback()
 				 * might have just cleared PageReclaim, then
@@ -778,11 +804,15 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 				 * then wait_on_page_writeback() to avoid OOM;
 				 * and it's also appropriate in global reclaim.
 				 */
+				nr_writeback++;
 				SetPageReclaim(page);
-				unlock_page(page);
-				goto keep;
+
+				goto keep_locked;
+
+			/* Case 3 above */
+			} else {
+				wait_on_page_writeback(page);
 			}
-			wait_on_page_writeback(page);
 		}
 
 		references = page_check_references(page, sc);
@@ -830,14 +860,17 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		if (PageDirty(page)) {
 			nr_dirty++;
 
+			if (!PageWriteback(page))
+				nr_unqueued_dirty++;
+
 			/*
 			 * Only kswapd can writeback filesystem pages to
-			 * avoid risk of stack overflow but do not writeback
-			 * unless under significant pressure.
+			 * avoid risk of stack overflow but only writeback
+			 * if many dirty pages have been encountered.
 			 */
 			if (page_is_file_cache(page) &&
 					(!current_is_kswapd() ||
-					 sc->priority >= DEF_PRIORITY - 2)) {
+					 !zone_is_reclaim_dirty(zone))) {
 				/*
 				 * Immediately reclaim when written back.
 				 * Similar in principal to deactivate_page()
@@ -981,7 +1014,7 @@ keep:
 
 	list_splice(&ret_pages, page_list);
 	count_vm_events(PGACTIVATE, pgactivate);
-	*ret_nr_dirty += nr_dirty;
+	*ret_nr_unqueued_dirty += nr_unqueued_dirty;
 	*ret_nr_writeback += nr_writeback;
 	return nr_reclaimed;
 }
@@ -1443,8 +1476,19 @@ shrink_inactive_list(unsigned long nr_to_scan, struct zone *zone,
 	 *                     isolated page is PageWriteback
 	 */
 	if (nr_writeback && nr_writeback >=
-			(nr_taken >> (DEF_PRIORITY - sc->priority)))
+			(nr_taken >> (DEF_PRIORITY - sc->priority))) {
 		wait_iff_congested(zone, BLK_RW_ASYNC, HZ/10);
+		zone_set_flag(zone, ZONE_WRITEBACK);
+	}
+
+	/*
+	 * Similarly, if many dirty pages are encountered that are not
+	 * currently being written then flag that kswapd should start
+	 * writing back pages.
+	 */
+	if (scanning_global_lru(sc) && nr_dirty &&
+			nr_dirty >= (nr_taken >> (DEF_PRIORITY - sc->priority)))
+		zone_set_flag(zone, ZONE_TAIL_LRU_DIRTY);
 
 	trace_mm_vmscan_lru_shrink_inactive(zone->zone_pgdat->node_id,
 		zone_idx(zone),
@@ -2611,12 +2655,20 @@ static void __shrink_page_cache(gfp_t mask);
 /*
  * kswapd shrinks the zone by the number of pages required to reach
  * the high watermark.
+ *
+ * Returns true if kswapd scanned at least the requested number of pages to
+ * reclaim or if the lack of progress was due to pages under writeback.
+ * This is used to determine if the scanning priority needs to be raised.
  */
-static void kswapd_shrink_zone(struct zone *zone,
+static bool kswapd_shrink_zone(struct zone *zone,
+			       int classzone_idx,
 			       struct scan_control *sc,
-			       unsigned long lru_pages)
+			       unsigned long lru_pages,
+			       unsigned long *nr_attempted)
 {
 	unsigned long nr_slab;
+	int testorder = sc->order;
+	unsigned long balance_gap;
 	struct reclaim_state *reclaim_state = current->reclaim_state;
 	struct shrink_control shrink = {
 		.gfp_mask = sc->gfp_mask,
@@ -2624,14 +2676,61 @@ static void kswapd_shrink_zone(struct zone *zone,
 
 	/* Reclaim above the high watermark. */
 	sc->nr_to_reclaim = max((unsigned long)SWAP_CLUSTER_MAX, high_wmark_pages(zone));
+
+#ifdef CONFIG_COMPACTION
+	/*
+	 * Kswapd reclaims only single pages with compaction enabled. Trying
+	 * too hard to reclaim until contiguous free pages have become
+	 * available can hurt performance by evicting too much useful data
+	 * from memory. Do not reclaim more than needed for compaction.
+	 */
+	if (sc->order && compaction_suitable(zone, sc->order) !=
+				COMPACT_SKIPPED)
+		testorder = 0;
+#endif
+
+	/*
+	 * We put equal pressure on every zone, unless one zone has way too
+	 * many pages free already. The "too many pages" is defined as the
+	 * high wmark plus a "gap" where the gap is either the low
+	 * watermark or 1% of the zone, whichever is smaller.
+	 */
+	balance_gap = min(low_wmark_pages(zone),
+		(zone->present_pages + KSWAPD_ZONE_BALANCE_GAP_RATIO-1) /
+		KSWAPD_ZONE_BALANCE_GAP_RATIO);
+
+	/* If the zone is balanced then no reclaim is necessary */
+	if (zone_watermark_ok_safe(zone, testorder,
+			high_wmark_pages(zone) + balance_gap, classzone_idx, 0))
+		return true;
+
 	shrink_zone(zone, sc);
 
 	reclaim_state->reclaimed_slab = 0;
 	nr_slab = shrink_slab(&shrink, sc->nr_scanned, lru_pages);
 	sc->nr_reclaimed += reclaim_state->reclaimed_slab;
 
+	/* Account for the number of pages attempted to reclaim */
+	*nr_attempted += sc->nr_to_reclaim;
+
 	if (nr_slab == 0 && !zone_reclaimable(zone))
 		zone->all_unreclaimable = 1;
+
+	zone_clear_flag(zone, ZONE_WRITEBACK);
+
+	/*
+	 * If a zone reaches its high watermark, consider it to be no longer
+	 * congested. It's possible there are dirty pages backed by congested
+	 * BDIs but as pressure is relieved, speculatively avoid congestion
+	 * waits.
+	 */
+	if (!zone->all_unreclaimable &&
+	    zone_watermark_ok_safe(zone, testorder, 0, classzone_idx, 0)) {
+		zone_clear_flag(zone, ZONE_CONGESTED);
+		zone_clear_flag(zone, ZONE_TAIL_LRU_DIRTY);
+	}
+
+	return sc->nr_scanned >= sc->nr_to_reclaim;
 }
 
 /*
@@ -2658,7 +2757,6 @@ static void kswapd_shrink_zone(struct zone *zone,
 static unsigned long balance_pgdat(pg_data_t *pgdat, int order,
 							int *classzone_idx)
 {
-	struct zone *unbalanced_zone;
 	unsigned long balanced;
 	int i;
 	int end_zone = 0;	/* Inclusive.  0 = ZONE_DMA */
@@ -2666,16 +2764,14 @@ static unsigned long balance_pgdat(pg_data_t *pgdat, int order,
 	unsigned long nr_soft_scanned;
 	struct scan_control sc = {
 		.gfp_mask = GFP_KERNEL,
+		.priority = DEF_PRIORITY,
 		.may_unmap = 1,
 		.may_swap = 1,
+		.may_writepage = !laptop_mode,
 		.swappiness = vm_swappiness,
 		.order = order,
 		.mem_cgroup = NULL,
 	};
-loop_again:
-	sc.priority = DEF_PRIORITY;
-	sc.nr_reclaimed = 0;
-	sc.may_writepage = !laptop_mode;
 	count_vm_event(PAGEOUTRUN);
 
 	/* this reclaims from all zones so don't count to sc.nr_reclaimed */
@@ -2685,8 +2781,12 @@ loop_again:
 	do {
 		unsigned long lru_pages = 0;
 		int has_under_min_watermark_zone = 0;
+		unsigned long nr_attempted = 0;
+		bool raise_priority = true;
+		bool pgdat_needs_compaction = (order > 0);
 
-		unbalanced_zone = NULL;
+		sc.nr_reclaimed = 0;
+
 		balanced = 0;
 
 		/*
@@ -2715,8 +2815,12 @@ loop_again:
 				end_zone = i;
 				break;
 			} else {
-				/* If balanced, clear the congested flag */
+				/*
+				 * If balanced, clear the dirty and congested
+				 * flags
+				 */
 				zone_clear_flag(zone, ZONE_CONGESTED);
+				zone_clear_flag(zone, ZONE_TAIL_LRU_DIRTY);
 			}
 		}
 		if (i < 0)
@@ -2725,8 +2829,29 @@ loop_again:
 		for (i = 0; i <= end_zone; i++) {
 			struct zone *zone = pgdat->node_zones + i;
 
+			if (!populated_zone(zone))
+				continue;
+
 			lru_pages += zone_reclaimable_pages(zone);
+
+			/*
+			 * If any zone is currently balanced then kswapd will
+			 * not call compaction as it is expected that the
+			 * necessary pages are already available.
+			 */
+			if (pgdat_needs_compaction &&
+					zone_watermark_ok(zone, order,
+						low_wmark_pages(zone),
+						*classzone_idx, 0))
+				pgdat_needs_compaction = false;
 		}
+
+		/*
+		 * If we're getting trouble reclaiming, start doing writepage
+		 * even in laptop mode.
+		 */
+		if (sc.priority < DEF_PRIORITY - 2)
+			sc.may_writepage = 1;
 
 		/*
 		 * Now scan the zone in the dma->highmem direction, stopping
@@ -2739,8 +2864,6 @@ loop_again:
 		 */
 		for (i = 0; i <= end_zone; i++) {
 			struct zone *zone = pgdat->node_zones + i;
-			int testorder;
-			unsigned long balance_gap;
 
 			if (!populated_zone(zone))
 				continue;
@@ -2760,42 +2883,9 @@ loop_again:
 							&nr_soft_scanned);
 			sc.nr_reclaimed += nr_soft_reclaimed;
 
-			/*
-			 * We put equal pressure on every zone, unless
-			 * one zone has way too many pages free
-			 * already. The "too many pages" is defined
-			 * as the high wmark plus a "gap" where the
-			 * gap is either the low watermark or 1%
-			 * of the zone, whichever is smaller.
-			 */
-			balance_gap = min(low_wmark_pages(zone),
-				(zone->present_pages +
-					KSWAPD_ZONE_BALANCE_GAP_RATIO-1) /
-				KSWAPD_ZONE_BALANCE_GAP_RATIO);
-			/*
-			 * Kswapd reclaims only single pages with compaction
-			 * enabled. Trying too hard to reclaim until contiguous
-			 * free pages have become available can hurt performance
-			 * by evicting too much useful data from memory.
-			 * Do not reclaim more than needed for compaction.
-			 */
-			testorder = order;
-			if (COMPACTION_BUILD && order &&
-					compaction_suitable(zone, order) !=
-						COMPACT_SKIPPED)
-				testorder = 0;
-
-			if (!zone_watermark_ok_safe(zone, testorder,
-					high_wmark_pages(zone) + balance_gap,
-					end_zone, 0))
-				kswapd_shrink_zone(zone, &sc, lru_pages);
-
-			/*
-			 * If we're getting trouble reclaiming, start doing
-			 * writepage even in laptop mode.
-			 */
-			if (sc.priority < DEF_PRIORITY - 2)
-				sc.may_writepage = 1;
+			if (kswapd_shrink_zone(zone, end_zone, &sc,
+						lru_pages, &nr_attempted))
+				raise_priority = false;
 
 			if (zone->all_unreclaimable) {
 				if (end_zone && end_zone == i)
@@ -2803,9 +2893,8 @@ loop_again:
 				continue;
 			}
 
-			if (!zone_watermark_ok_safe(zone, testorder,
+			if (!zone_watermark_ok_safe(zone, 0,
 					high_wmark_pages(zone), end_zone, 0)) {
-				unbalanced_zone = zone;
 				/*
 				 * We are still under min water mark.  This
 				 * means that we have a GFP_ATOMIC allocation
@@ -2821,8 +2910,10 @@ loop_again:
 				 * possible there are dirty pages backed by
 				 * congested BDIs but as pressure is relieved,
 				 * spectulatively avoid congestion waits
+				 * or writing pages from kswapd context.
 				 */
 				zone_clear_flag(zone, ZONE_CONGESTED);
+				zone_clear_flag(zone, ZONE_TAIL_LRU_DIRTY);
 				if (i <= *classzone_idx)
 					balanced += zone->present_pages;
 			}
@@ -2838,46 +2929,6 @@ loop_again:
 				pfmemalloc_watermark_ok(pgdat))
 			wake_up(&pgdat->pfmemalloc_wait);
 
-		if (!unbalanced_zone || (order && pgdat_balanced(pgdat, balanced, *classzone_idx)))
-			break;		/* kswapd: all done */
-		/*
-		 * OK, kswapd is getting into trouble.  Take a nap, then take
-		 * another pass across the zones.
-		 */
-		if (sc.nr_scanned && (sc.priority < DEF_PRIORITY - 2)) {
-			if (has_under_min_watermark_zone)
-				count_vm_event(KSWAPD_SKIP_CONGESTION_WAIT);
-			else
-				wait_iff_congested(unbalanced_zone, BLK_RW_ASYNC, HZ/10);
-		}
-
-		/*
-		 * We do this so kswapd doesn't build up large priorities for
-		 * example when it is freeing in parallel with allocators. It
-		 * matches the direct reclaim path behaviour in terms of impact
-		 * on zone->*_priority.
-		 */
-		if (sc.nr_reclaimed >= SWAP_CLUSTER_MAX)
-			break;
-	} while (--sc.priority >= 0);
-out:
-
-	/* We do not need to loop_again if we have not achieved our
-	 * pagecache target (i.e. && pagecache_over_limit(0) > 0) because
-	 * the limit will be checked next time a page is added to the page
-	 * cache. This might cause a short stall but we should rather not
-	 * keep kswapd awake.
-	 */
-	/*
-	 * order-0: All zones must meet high watermark for a balanced node
-	 * high-order: Balanced zones must make up at least 25% of the node
-	 *             for the node to be balanced
-	 */
-	if (unbalanced_zone && (!order || !pgdat_balanced(pgdat, balanced, *classzone_idx))) {
-		cond_resched();
-
-		try_to_freeze();
-
 		/*
 		 * Fragmentation may mean that the system cannot be
 		 * rebalanced for high-order allocations in all zones.
@@ -2886,62 +2937,37 @@ out:
 		 * not balanced. For high-order allocations, there is
 		 * little point trying all over again as kswapd may
 		 * infinite loop.
-		 *
-		 * Instead, recheck all watermarks at order-0 as they
-		 * are the most important. If watermarks are ok, kswapd will go
-		 * back to sleep. High-order users can still perform direct
-		 * reclaim if they wish.
 		 */
-		if (sc.nr_reclaimed < SWAP_CLUSTER_MAX)
+		if (order && sc.nr_reclaimed >= 2UL << order)
 			order = sc.order = 0;
 
-		goto loop_again;
-	}
+		/* Check if kswapd should be suspending */
+		if (try_to_freeze() || kthread_should_stop())
+			break;
 
-	/*
-	 * If kswapd was reclaiming at a higher order, it has the option of
-	 * sleeping without all zones being balanced. Before it does, it must
-	 * ensure that the watermarks for order-0 on *all* zones are met and
-	 * that the congestion flags are cleared. The congestion flag must
-	 * be cleared as kswapd is the only mechanism that clears the flag
-	 * and it is potentially going to sleep here.
-	 */
-	if (order) {
-		int zones_need_compaction = 1;
-
-		for (i = 0; i <= end_zone; i++) {
-			struct zone *zone = pgdat->node_zones + i;
-
-			if (!populated_zone(zone))
-				continue;
-
-			if (zone->all_unreclaimable &&
-			    sc.priority != DEF_PRIORITY)
-				continue;
-
-			/* Would compaction fail due to lack of free memory? */
-			if (compaction_suitable(zone, order) == COMPACT_SKIPPED)
-				goto loop_again;
-
-			/* Confirm the zone is balanced for order-0 */
-			if (!zone_watermark_ok(zone, 0,
-					high_wmark_pages(zone), 0, 0)) {
-				order = sc.order = 0;
-				goto loop_again;
-			}
-
-			/* Check if the memory needs to be defragmented. */
-			if (zone_watermark_ok(zone, order,
-				    low_wmark_pages(zone), *classzone_idx, 0))
-				zones_need_compaction = 0;
-
-			/* If balanced, clear the congested flag */
-			zone_clear_flag(zone, ZONE_CONGESTED);
-		}
-
-		if (zones_need_compaction)
+		/*
+		 * Compact if necessary and kswapd is reclaiming at least the
+		 * high watermark number of pages as requsted
+		 */
+		if (pgdat_needs_compaction && sc.nr_reclaimed > nr_attempted)
 			compact_pgdat(pgdat, order);
-	}
+
+		/*
+		 * Raise priority if scanning rate is too low or there was no
+		 * progress in reclaiming pages
+		 */
+		if (raise_priority || !sc.nr_reclaimed)
+			sc.priority--;
+	} while (sc.priority >= 1 &&
+		 !pgdat_balanced(pgdat, order, *classzone_idx));
+out:
+
+	/* We do not need to loop_again if we have not achieved our
+	 * pagecache target (i.e. && pagecache_over_limit(0) > 0) because
+	 * the limit will be checked next time a page is added to the page
+	 * cache. This might cause a short stall but we should rather not
+	 * keep kswapd awake.
+	 */
 
 	/*
 	 * Return the order we were reclaiming at so prepare_kswapd_sleep()
