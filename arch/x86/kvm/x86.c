@@ -1166,7 +1166,6 @@ static int kvm_guest_time_update(struct kvm_vcpu *v)
 	unsigned long this_tsc_khz;
 	s64 kernel_ns, max_kernel_ns;
 	u64 tsc_timestamp;
-	struct pvclock_vcpu_time_info guest_hv_clock;
 
 	/* Keep irq disabled to prevent changes to the clock */
 	local_irq_save(flags);
@@ -1257,14 +1256,10 @@ static int kvm_guest_time_update(struct kvm_vcpu *v)
 	 */
 	vcpu->hv_clock.version += 2;
 
-	if (unlikely(kvm_read_guest_cached(v->kvm, &vcpu->pv_time,
-		&guest_hv_clock, sizeof(guest_hv_clock)))) {
-		return -EFAULT;
-	}
-
-	return kvm_write_guest_cached(v->kvm, &vcpu->pv_time,
-					&vcpu->hv_clock,
-					sizeof(vcpu->hv_clock));
+	kvm_write_guest_cached(v->kvm, &vcpu->pv_time,
+				&vcpu->hv_clock,
+				sizeof(vcpu->hv_clock));
+	return 0;
 }
 
 static bool msr_mtrr_valid(unsigned msr)
@@ -1543,7 +1538,8 @@ static int kvm_pv_enable_async_pf(struct kvm_vcpu *vcpu, u64 data)
 		return 0;
 	}
 
-	if (kvm_gfn_to_hva_cache_init(vcpu->kvm, &vcpu->arch.apf.data, gpa))
+	if (kvm_gfn_to_hva_cache_init(vcpu->kvm, &vcpu->arch.apf.data, gpa,
+					sizeof(u32)))
 		return 1;
 
 	vcpu->arch.apf.send_user_only = !(data & KVM_ASYNC_PF_SEND_ALWAYS);
@@ -1641,12 +1637,9 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 
 		gpa_offset = data & ~(PAGE_MASK | 1);
 
-		/* Check that the address is 32-byte aligned. */
-		if (gpa_offset & (sizeof(struct pvclock_vcpu_time_info) - 1))
-			break;
-
 		if (kvm_gfn_to_hva_cache_init(vcpu->kvm,
-		     &vcpu->arch.pv_time, data & ~1ULL))
+		     &vcpu->arch.pv_time, data & ~1ULL,
+		     sizeof(struct pvclock_vcpu_time_info)))
 			vcpu->arch.pv_time_enabled = false;
 		else
 			vcpu->arch.pv_time_enabled = true;
