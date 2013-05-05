@@ -287,9 +287,10 @@ static void raid1_end_read_request(struct bio *bio, int error)
 		spin_unlock_irqrestore(&conf->device_lock, flags);
 	}
 
-	if (uptodate)
+	if (uptodate) {
 		raid_end_bio_io(r1_bio);
-	else {
+		rdev_dec_pending(conf->mirrors[mirror].rdev, conf->mddev);
+	} else {
 		/*
 		 * oops, read error:
 		 */
@@ -299,9 +300,8 @@ static void raid1_end_read_request(struct bio *bio, int error)
 			       mdname(conf->mddev),
 			       bdevname(conf->mirrors[mirror].rdev->bdev,b), (unsigned long long)r1_bio->sector);
 		reschedule_retry(r1_bio);
+		/* don't drop the reference on read_disk yet */
 	}
-
-	rdev_dec_pending(conf->mirrors[mirror].rdev, conf->mddev);
 }
 
 static void r1_bio_write_done(r1bio_t *r1_bio)
@@ -1710,6 +1710,7 @@ static void raid1d(mddev_t *mddev)
 			} else
 				md_error(mddev,
 					 conf->mirrors[r1_bio->read_disk].rdev);
+			rdev_dec_pending(conf->mirrors[r1_bio->read_disk].rdev, conf->mddev);
 
 			bio = r1_bio->bios[r1_bio->read_disk];
 			r1_bio->bios[r1_bio->read_disk] =
