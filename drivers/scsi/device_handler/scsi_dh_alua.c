@@ -142,12 +142,13 @@ static struct request *get_alua_req(struct scsi_device *sdev,
  * submit_vpd_inquiry - Issue an INQUIRY VPD page 0x83 command
  * @sdev: sdev the command should be sent to
  */
-static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+static int submit_vpd_inquiry(struct scsi_device *sdev, unsigned char *buff,
+			      int bufflen, unsigned char *sense)
 {
 	struct request *rq;
 	int err;
 
-	rq = get_alua_req(sdev, h->buff, h->bufflen, READ);
+	rq = get_alua_req(sdev, buff, bufflen, READ);
 	if (!rq) {
 		err = DRIVER_BUSY << 24;
 		goto done;
@@ -157,12 +158,12 @@ static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 	rq->cmd[0] = INQUIRY;
 	rq->cmd[1] = 1;
 	rq->cmd[2] = 0x83;
-	rq->cmd[4] = h->bufflen;
+	rq->cmd[4] = bufflen;
 	rq->cmd_len = COMMAND_SIZE(INQUIRY);
 
-	rq->sense = h->sense;
+	rq->sense = sense;
 	memset(rq->sense, 0, SCSI_SENSE_BUFFERSIZE);
-	rq->sense_len = h->senselen = 0;
+	rq->sense_len = 0;
 
 	err = blk_execute_rq(rq->q, NULL, rq, 1);
 	if (err < 0) {
@@ -170,7 +171,8 @@ static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 			err = DID_ERROR << 16;
 		else
 			err = rq->errors;
-		h->senselen = rq->sense_len;
+		if (rq->sense_len)
+			err |= (DRIVER_SENSE << 24);
 	}
 	blk_put_request(rq);
 done:
@@ -181,12 +183,13 @@ done:
  * submit_rtpg - Issue a REPORT TARGET GROUP STATES command
  * @sdev: sdev the command should be sent to
  */
-static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+static unsigned submit_rtpg(struct scsi_device *sdev, unsigned char *buff,
+			    int bufflen, unsigned char *sense, int flags)
 {
 	struct request *rq;
 	int err;
 
-	rq = get_alua_req(sdev, h->buff, h->bufflen, READ);
+	rq = get_alua_req(sdev, buff, bufflen, READ);
 	if (!rq) {
 		err = DRIVER_BUSY << 24;
 		goto done;
@@ -194,19 +197,19 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 
 	/* Prepare the command. */
 	rq->cmd[0] = MAINTENANCE_IN;
-	if (!(h->flags & ALUA_RTPG_EXT_HDR_UNSUPP))
+	if (!(flags & ALUA_RTPG_EXT_HDR_UNSUPP))
 		rq->cmd[1] = MI_REPORT_TARGET_PGS | MI_EXT_HDR_PARAM_FMT;
 	else
 		rq->cmd[1] = MI_REPORT_TARGET_PGS;
-	rq->cmd[6] = (h->bufflen >> 24) & 0xff;
-	rq->cmd[7] = (h->bufflen >> 16) & 0xff;
-	rq->cmd[8] = (h->bufflen >>  8) & 0xff;
-	rq->cmd[9] = h->bufflen & 0xff;
+	rq->cmd[6] = (bufflen >> 24) & 0xff;
+	rq->cmd[7] = (bufflen >> 16) & 0xff;
+	rq->cmd[8] = (bufflen >>  8) & 0xff;
+	rq->cmd[9] = bufflen & 0xff;
 	rq->cmd_len = COMMAND_SIZE(MAINTENANCE_IN);
 
-	rq->sense = h->sense;
+	rq->sense = sense;
 	memset(rq->sense, 0, SCSI_SENSE_BUFFERSIZE);
-	rq->sense_len = h->senselen = 0;
+	rq->sense_len = 0;
 
 	err = blk_execute_rq(rq->q, NULL, rq, 1);
 	if (err < 0) {
@@ -214,7 +217,8 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 			err = DID_ERROR << 16;
 		else
 			err = rq->errors;
-		h->senselen = rq->sense_len;
+		if (rq->sense_len)
+			err |= (DRIVER_SENSE << 24);
 	}
 	blk_put_request(rq);
 done:
@@ -240,8 +244,8 @@ static void stpg_endio(struct request *req, int error)
 		goto done;
 	}
 
-	if (h->senselen > 0) {
-		if (!scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
+	if (req->sense_len > 0) {
+		if (!scsi_normalize_sense(req->sense, SCSI_SENSE_BUFFERSIZE,
 					  &sense_hdr)) {
 			err = SCSI_DH_IO;
 			goto done;
@@ -371,11 +375,11 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 
 	expiry = round_jiffies_up(jiffies + timeout);
  retry:
-	retval = submit_vpd_inquiry(sdev, h);
+	retval = submit_vpd_inquiry(sdev, h->buff, h->bufflen, h->sense);
 	if (retval) {
 		unsigned err;
 
-		if (h->senselen == 0 ||
+		if (!(driver_byte(retval) & DRIVER_SENSE) ||
 		    !scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
 					  &sense_hdr)) {
 			sdev_printk(KERN_INFO, sdev,
@@ -566,10 +570,10 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 		expiry = round_jiffies_up(jiffies + h->transition_tmo * HZ);
 
  retry:
-	retval = submit_rtpg(sdev, h);
+	retval = submit_rtpg(sdev, h->buff, h->bufflen, h->sense, h->flags);
 
 	if (retval) {
-		if (h->senselen == 0 ||
+		if (!(driver_byte(retval) & DRIVER_SENSE) ||
 		    !scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
 					  &sense_hdr)) {
 			sdev_printk(KERN_INFO, sdev, "%s: rtpg failed, ",
