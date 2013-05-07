@@ -109,6 +109,7 @@ struct alua_queue_data {
 static char print_alua_state(int);
 static int alua_check_sense(struct scsi_device *, struct scsi_sense_hdr *);
 static void alua_rtpg_work(struct work_struct *work);
+static void alua_check(struct scsi_device *sdev);
 
 static inline struct alua_dh_data *get_alua_data(struct scsi_device *sdev)
 {
@@ -626,7 +627,9 @@ static int alua_check_sense(struct scsi_device *sdev,
 		if (sense_hdr->asc == 0x04 && sense_hdr->ascq == 0x0a)
 			/*
 			 * LUN Not Accessible - ALUA state transition
+			 * Kickoff worker to update internal state.
 			 */
+			alua_check(sdev);
 			return ADD_TO_MLQUEUE;
 		if (sense_hdr->asc == 0x04 && sense_hdr->ascq == 0x0b)
 			/*
@@ -1068,6 +1071,19 @@ static int alua_activate(struct scsi_device *sdev,
 
 	alua_rtpg_queue(h->pg, sdev, qdata);
 	return 0;
+}
+
+/*
+ * alua_check - check path status
+ * @sdev: device on the path to be checked
+ *
+ * Check the device status
+ */
+static void alua_check(struct scsi_device *sdev)
+{
+	struct alua_dh_data *h = get_alua_data(sdev);
+
+	alua_rtpg_queue(h->pg, sdev, NULL);
 }
 
 /*
