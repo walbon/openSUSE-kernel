@@ -505,6 +505,15 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 			strcpy(target_id_str, "emc.");
 			memcpy(target_id_str + 4, target_id, target_id_size);
 		}
+		/* Check for HP EVA extended inquiry */
+		if (!strncmp(sdev->vendor, "HP      ", 8) &&
+		    !strncmp(sdev->model, "HSV", 3) &&
+		    sdev->inquiry_len > 170) {
+			target_id_size = 16;
+			target_id = sdev->inquiry + 154;
+			strcpy(target_id_str, "naa.");
+			memcpy(target_id_str + 4, target_id, target_id_size);
+		}
 	}
 
 	spin_lock(&port_group_lock);
