@@ -165,6 +165,20 @@ struct smart_attr {
 	u8 res[3];
 } __packed;
 
+struct mtip_work {
+	struct work_struct work;
+	void *port;
+	int cpu_binding;
+	u32 completed;
+} ____cacheline_aligned_in_smp;
+
+#define DEFINE_HANDLER(group)                                  \
+	void mtip_workq_sdbf##group(struct work_struct *work)       \
+	{                                                      \
+		struct mtip_work *w = (struct mtip_work *) work;         \
+		mtip_workq_sdbfx(w->port, group, w->completed);     \
+	}
+
 /* Register Frame Information Structure (FIS), host to device. */
 struct host_to_dev_fis {
 	/*
@@ -425,7 +439,7 @@ struct mtip_port {
 	 */
 	struct semaphore cmd_slot;
 	/* Spinlock for working around command-issue bug. */
-	spinlock_t cmd_issue_lock;
+	spinlock_t cmd_issue_lock[MTIP_MAX_SLOT_GROUPS];
 };
 
 /*
@@ -448,9 +462,6 @@ struct driver_data {
 
 	struct mtip_port *port; /* Pointer to the port data structure. */
 
-	/* Tasklet used to process the bottom half of the ISR. */
-	struct tasklet_struct tasklet;
-
 	unsigned product_type; /* magic value declaring the product type */
 
 	unsigned slot_groups; /* number of slot groups the product supports */
@@ -462,6 +473,18 @@ struct driver_data {
 	struct task_struct *mtip_svc_handler; /* task_struct of svc thd */
 
 	struct dentry *dfs_node;
+
+	int numa_node; /* NUMA support */
+
+	char workq_name[32];
+
+	struct workqueue_struct *isr_workq;
+
+	struct mtip_work work[MTIP_MAX_SLOT_GROUPS];
+
+	atomic_t irq_workers_active;
+
+	int isr_binding;
 };
 
 #endif
