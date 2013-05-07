@@ -68,6 +68,8 @@ static DEFINE_SPINLOCK(port_group_lock);
 struct alua_port_group {
 	struct kref		kref;
 	struct list_head	node;
+	unsigned char		target_id[256];
+	int			target_id_size;
 	int			group_id;
 	int			tpgs;
 	int			state;
@@ -350,12 +352,14 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 	unsigned char bufflen = 36;
 	int len, timeout = ALUA_FAILOVER_TIMEOUT;
 	unsigned char sense[SCSI_SENSE_BUFFERSIZE];
+	char target_id_str[256], *target_id = NULL;
+	int target_id_size;
 	struct scsi_sense_hdr sense_hdr;
 	unsigned retval, err;
 	int group_id = -1;
 	unsigned char *d;
 	unsigned long expiry;
-	struct alua_port_group *pg = NULL;
+	struct alua_port_group *tmp_pg, *pg = NULL;
 
 	expiry = round_jiffies_up(jiffies + timeout);
  retry:
@@ -408,9 +412,54 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 	/*
 	 * Now look for the correct descriptor.
 	 */
+	memset(target_id_str, 0, 256);
+	target_id_size = 0;
 	d = buff + 4;
 	while (d < buff + len) {
 		switch (d[1] & 0xf) {
+		case 0x2:
+			/* EUI-64 */
+			if ((d[1] & 0x30) == 0x20) {
+				target_id_size = d[3];
+				target_id = d + 4;
+				switch (target_id_size) {
+				case 8:
+					sprintf(target_id_str,
+						"eui.%8phN", d + 4);
+					break;
+				case 12:
+					sprintf(target_id_str,
+						"eui.%12phN", d + 4);
+					break;
+				case 16:
+					sprintf(target_id_str,
+						"eui.%16phN", d + 4);
+					break;
+				default:
+					target_id_size = 0;
+					break;
+				}
+			}
+			break;
+		case 0x3:
+			/* NAA */
+			if ((d[1] & 0x30) == 0x20) {
+				target_id_size = d[3];
+				target_id = d + 4;
+				switch (target_id_size) {
+				case 8:
+					sprintf(target_id_str,
+						"naa.%8phN", d + 4);
+					break;
+				case 16:
+					sprintf(target_id_str,
+						"naa.%16phN", d + 4);
+					break;
+				default:
+					target_id_size = 0;
+					break;
+				}
+			}
 		case 0x4:
 			/* Relative target port */
 			h->rel_port = (d[6] << 8) + d[7];
@@ -418,6 +467,15 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 		case 0x5:
 			/* Target port group */
 			group_id = (d[6] << 8) + d[7];
+			break;
+		case 0x8:
+			/* SCSI name string */
+			if ((d[1] & 0x30) == 0x20) {
+				/* SCSI name */
+				target_id_size = d[3];
+				target_id = d + 4;
+				strncpy(target_id_str, d + 4, 256);
+			}
 			break;
 		default:
 			break;
@@ -439,10 +497,39 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 		goto out;
 	}
 
-	sdev_printk(KERN_INFO, sdev,
-		    "%s: port group %02x rel port %02x\n",
-		    ALUA_DH_NAME, group_id, h->rel_port);
 	spin_lock(&port_group_lock);
+	pg = NULL;
+	if (target_id_size) {
+		sdev_printk(KERN_INFO, sdev,
+			    "%s: target %s port group %02x "
+			    "rel port %02x\n", ALUA_DH_NAME,
+			    target_id_str, group_id, h->rel_port);
+		list_for_each_entry(tmp_pg, &port_group_list, node) {
+			if (tmp_pg->group_id != group_id)
+				continue;
+			if (tmp_pg->target_id_size != target_id_size)
+				continue;
+			if (memcmp(tmp_pg->target_id, target_id,
+				   target_id_size))
+				continue;
+			pg = tmp_pg;
+			break;
+		}
+	} else {
+		sdev_printk(KERN_INFO, sdev,
+			    "%s: port group %02x rel port %02x\n",
+			    ALUA_DH_NAME, group_id, h->rel_port);
+	}
+	if (pg) {
+		sdev_printk(KERN_WARNING, sdev,
+			    "%s: referencing existing pg\n",
+			    ALUA_DH_NAME);
+		h->pg = pg;
+		kref_get(&pg->kref);
+		spin_unlock(&port_group_lock);
+		err = SCSI_DH_OK;
+		goto out;
+	}
 	pg = kmalloc(sizeof(struct alua_port_group), GFP_ATOMIC);
 	if (!pg) {
 		sdev_printk(KERN_WARNING, sdev,
@@ -453,6 +540,12 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 		err = SCSI_DH_DEV_TEMP_BUSY;
 		goto out;
 	}
+	if (target_id_size) {
+		memcpy(pg->target_id, target_id, target_id_size);
+	} else {
+		memset(pg->target_id, 0, 256);
+	}
+	pg->target_id_size = target_id_size;
 	pg->group_id = group_id;
 	pg->buff = pg->inq;
 	pg->bufflen = ALUA_INQUIRY_SIZE;
