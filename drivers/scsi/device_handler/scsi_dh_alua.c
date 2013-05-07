@@ -496,6 +496,16 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 		err = SCSI_DH_DEV_UNSUPP;
 		goto out;
 	}
+	if (!target_id_size) {
+		/* Check for EMC Clariion extended inquiry */
+		if (!strncmp(sdev->vendor, "DGC     ", 8) &&
+		    sdev->inquiry_len > 160) {
+			target_id_size = sdev->inquiry[160];
+			target_id = sdev->inquiry + 161;
+			strcpy(target_id_str, "emc.");
+			memcpy(target_id_str + 4, target_id, target_id_size);
+		}
+	}
 
 	spin_lock(&port_group_lock);
 	pg = NULL;
