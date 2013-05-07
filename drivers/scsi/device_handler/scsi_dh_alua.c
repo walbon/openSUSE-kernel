@@ -321,16 +321,27 @@ static int alua_check_tpgs(struct scsi_device *sdev, struct alua_dh_data *h)
  */
 static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 {
+	unsigned char *buff;
+	unsigned char bufflen = 36;
 	int len, timeout = ALUA_FAILOVER_TIMEOUT;
 	unsigned char sense[SCSI_SENSE_BUFFERSIZE];
 	struct scsi_sense_hdr sense_hdr;
 	unsigned retval;
 	unsigned char *d;
 	unsigned long expiry;
+	int err;
 
 	expiry = round_jiffies_up(jiffies + timeout);
  retry:
-	retval = submit_vpd_inquiry(sdev, h->buff, h->bufflen, sense);
+	buff = kmalloc(bufflen, GFP_ATOMIC);
+	if (!buff) {
+		sdev_printk(KERN_WARNING, sdev,
+			    "%s: kmalloc buffer failed\n",
+			    ALUA_DH_NAME);
+		/* Temporary failure, bypass */
+		return SCSI_DH_DEV_TEMP_BUSY;
+	}
+	retval = submit_vpd_inquiry(sdev, buff, bufflen, sense);
 	if (retval) {
 		unsigned err;
 
@@ -344,6 +355,7 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 				err = SCSI_DH_DEV_TEMP_BUSY;
 			else
 				err = SCSI_DH_IO;
+			kfree(buff);
 			return err;
 		}
 		err = alua_check_sense(sdev, &sense_hdr);
@@ -361,24 +373,19 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 	}
 
 	/* Check if vpd page exceeds initial buffer */
-	len = (h->buff[2] << 8) + h->buff[3] + 4;
-	if (len > h->bufflen) {
+	len = (buff[2] << 8) + buff[3] + 4;
+	if (len > bufflen) {
 		/* Resubmit with the correct length */
-		if (realloc_buffer(h, len)) {
-			sdev_printk(KERN_WARNING, sdev,
-				    "%s: kmalloc buffer failed\n",
-				    ALUA_DH_NAME);
-			/* Temporary failure, bypass */
-			return SCSI_DH_DEV_TEMP_BUSY;
-		}
+		kfree(buff);
+		bufflen = len;
 		goto retry;
 	}
 
 	/*
 	 * Now look for the correct descriptor.
 	 */
-	d = h->buff + 4;
-	while (d < h->buff + len) {
+	d = buff + 4;
+	while (d < buff + len) {
 		switch (d[1] & 0xf) {
 		case 0x4:
 			/* Relative target port */
@@ -405,13 +412,15 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 			    ALUA_DH_NAME);
 		h->state = TPGS_STATE_OPTIMIZED;
 		h->tpgs = TPGS_MODE_NONE;
-		return SCSI_DH_DEV_UNSUPP;
+		err = SCSI_DH_DEV_UNSUPP;
+	} else {
+		sdev_printk(KERN_INFO, sdev,
+			    "%s: port group %02x rel port %02x\n",
+			    ALUA_DH_NAME, h->group_id, h->rel_port);
+		err = SCSI_DH_OK;
 	}
-	sdev_printk(KERN_INFO, sdev,
-		    "%s: port group %02x rel port %02x\n",
-		    ALUA_DH_NAME, h->group_id, h->rel_port);
-
-	return SCSI_DH_OK;
+	kfree(buff);
+	return err;
 }
 
 static char print_alua_state(int state)
