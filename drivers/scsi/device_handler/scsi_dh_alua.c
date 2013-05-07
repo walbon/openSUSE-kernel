@@ -660,14 +660,41 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
  * alua_stpg - Issue a SET TARGET GROUP STATES command
  *
  * Issue a SET TARGET GROUP STATES command and evaluate the
- * response.
+ * response. Returns SCSI_DH_RETRY per default to trigger
+ * a re-evaluation of the target group state.
  */
 static unsigned alua_stpg(struct scsi_device *sdev, struct alua_dh_data *h)
 {
-	int retval, err = SCSI_DH_OK;
+	int retval, err = SCSI_DH_RETRY;
 	unsigned char sense[SCSI_SENSE_BUFFERSIZE];
 	struct scsi_sense_hdr sense_hdr;
 
+	if (!(h->tpgs & TPGS_MODE_EXPLICIT)) {
+		/* Only implicit ALUA supported, retry */
+		return SCSI_DH_RETRY;
+	}
+	switch (h->state) {
+	case TPGS_STATE_NONOPTIMIZED:
+		if ((h->flags & ALUA_OPTIMIZE_STPG) &&
+		    (!h->pref) &&
+		    (h->tpgs & TPGS_MODE_IMPLICIT))
+			return SCSI_DH_OK;
+		break;
+	case TPGS_STATE_STANDBY:
+	case TPGS_STATE_UNAVAILABLE:
+		break;
+	case TPGS_STATE_OFFLINE:
+		return SCSI_DH_IO;
+		break;
+	case TPGS_STATE_TRANSITIONING:
+		return SCSI_DH_RETRY;
+		break;
+	default:
+		return SCSI_DH_NOSYS;
+		break;
+	}
+	/* Set state to transitioning */
+	h->state = TPGS_STATE_TRANSITIONING;
 	retval = submit_stpg(sdev, h->group_id, sense);
 
 	if (retval) {
@@ -677,24 +704,17 @@ static unsigned alua_stpg(struct scsi_device *sdev, struct alua_dh_data *h)
 			sdev_printk(KERN_INFO, sdev, "%s: stpg failed, ",
 				    ALUA_DH_NAME);
 			scsi_show_result(retval);
-			if (driver_byte(retval) == DRIVER_BUSY)
-				err = SCSI_DH_DEV_TEMP_BUSY;
-			else
-				err = SCSI_DH_IO;
+			/* Retry RTPG */
 			return err;
 		}
 		err = alua_check_sense(h->sdev, &sense_hdr);
-		if (err == ADD_TO_MLQUEUE) {
-			/* Port already transitioning */
-			return SCSI_DH_OK;
-		}
 		sdev_printk(KERN_INFO, h->sdev, "%s: stpg failed, ",
 			    ALUA_DH_NAME);
 		scsi_show_sense_hdr(&sense_hdr);
 		sdev_printk(KERN_INFO, h->sdev, "%s: stpg failed, ",
 			    ALUA_DH_NAME);
 		scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
-		err = SCSI_DH_IO;
+		err = SCSI_DH_RETRY;
 	}
 	return err;
 }
@@ -772,39 +792,14 @@ static int alua_activate(struct scsi_device *sdev,
 {
 	struct alua_dh_data *h = get_alua_data(sdev);
 	int err = SCSI_DH_OK;
-	int stpg = 0;
 
 	err = alua_rtpg(sdev, h);
 	if (err != SCSI_DH_OK)
 		goto out;
 
-	if (h->tpgs & TPGS_MODE_EXPLICIT) {
-		switch (h->state) {
-		case TPGS_STATE_NONOPTIMIZED:
-			stpg = 1;
-			if ((h->flags & ALUA_OPTIMIZE_STPG) &&
-			    (!h->pref) &&
-			    (h->tpgs & TPGS_MODE_IMPLICIT))
-				stpg = 0;
-			break;
-		case TPGS_STATE_STANDBY:
-		case TPGS_STATE_UNAVAILABLE:
-			stpg = 1;
-			break;
-		case TPGS_STATE_OFFLINE:
-			err = SCSI_DH_IO;
-			break;
-		case TPGS_STATE_TRANSITIONING:
-			err = SCSI_DH_RETRY;
-			break;
-		default:
-			break;
-		}
-	}
-
-	if (stpg)
-		err = alua_stpg(sdev, h);
-
+	err = alua_stpg(sdev, h);
+	if (err == SCSI_DH_RETRY)
+		err = alua_rtpg(sdev, h);
 out:
 	if (fn)
 		fn(data, err);
