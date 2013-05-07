@@ -73,8 +73,6 @@ struct alua_dh_data {
 	unsigned char		*buff;
 	int			bufflen;
 	unsigned char		transition_tmo;
-	unsigned char		sense[SCSI_SENSE_BUFFERSIZE];
-	int			senselen;
 	struct scsi_device	*sdev;
 	activate_complete	callback_fn;
 	void			*callback_data;
@@ -324,6 +322,7 @@ static int alua_check_tpgs(struct scsi_device *sdev, struct alua_dh_data *h)
 static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 {
 	int len, timeout = ALUA_FAILOVER_TIMEOUT;
+	unsigned char sense[SCSI_SENSE_BUFFERSIZE];
 	struct scsi_sense_hdr sense_hdr;
 	unsigned retval;
 	unsigned char *d;
@@ -331,12 +330,12 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 
 	expiry = round_jiffies_up(jiffies + timeout);
  retry:
-	retval = submit_vpd_inquiry(sdev, h->buff, h->bufflen, h->sense);
+	retval = submit_vpd_inquiry(sdev, h->buff, h->bufflen, sense);
 	if (retval) {
 		unsigned err;
 
 		if (!(driver_byte(retval) & DRIVER_SENSE) ||
-		    !scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
+		    !scsi_normalize_sense(sense, SCSI_SENSE_BUFFERSIZE,
 					  &sense_hdr)) {
 			sdev_printk(KERN_INFO, sdev,
 				    "%s: evpd inquiry failed, ", ALUA_DH_NAME);
@@ -512,6 +511,7 @@ static int alua_check_sense(struct scsi_device *sdev,
  */
 static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 {
+	unsigned char sense[SCSI_SENSE_BUFFERSIZE];
 	struct scsi_sense_hdr sense_hdr;
 	int len, k, off, valid_states = 0;
 	unsigned char *ucp;
@@ -526,11 +526,11 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 		expiry = round_jiffies_up(jiffies + h->transition_tmo * HZ);
 
  retry:
-	retval = submit_rtpg(sdev, h->buff, h->bufflen, h->sense, h->flags);
+	retval = submit_rtpg(sdev, h->buff, h->bufflen, sense, h->flags);
 
 	if (retval) {
 		if (!(driver_byte(retval) & DRIVER_SENSE) ||
-		    !scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
+		    !scsi_normalize_sense(sense, SCSI_SENSE_BUFFERSIZE,
 					  &sense_hdr)) {
 			sdev_printk(KERN_INFO, sdev, "%s: rtpg failed, ",
 				    ALUA_DH_NAME);
