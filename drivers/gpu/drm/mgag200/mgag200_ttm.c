@@ -314,12 +314,11 @@ int mgag200_bo_reserve(struct mgag200_bo *bo, bool no_wait)
 	int ret;
 
 	ret = ttm_bo_reserve(&bo->bo, true, no_wait, false, 0);
-	if (ret) {
-		if (ret != -ERESTARTSYS)
-			DRM_ERROR("reserve failed %p\n", bo);
-		return ret;
-	}
-	return 0;
+
+	if (ret && ret != -ERESTARTSYS)
+		DRM_ERROR("reserve failed %p\n", bo);
+
+	return ret;
 }
 
 void mgag200_bo_unreserve(struct mgag200_bo *bo)
@@ -340,10 +339,8 @@ int mgag200_bo_create(struct drm_device *dev, int size, int align,
 		return -ENOMEM;
 
 	ret = drm_gem_object_init(dev, &mgabo->gem, size);
-	if (ret) {
-		kfree(mgabo);
-		return ret;
-	}
+	if (ret)
+		goto err;
 
 	mgabo->gem.driver_private = NULL;
 	mgabo->bo.bdev = &mdev->ttm.bdev;
@@ -358,10 +355,13 @@ int mgag200_bo_create(struct drm_device *dev, int size, int align,
 			  align >> PAGE_SHIFT, false, NULL, acc_size,
 			  NULL, mgag200_bo_ttm_destroy);
 	if (ret)
-		return ret;
+		goto err;
 
 	*pmgabo = mgabo;
 	return 0;
+err:
+	kfree(mgabo);
+	return ret;
 }
 
 static inline u64 mgag200_bo_gpu_offset(struct mgag200_bo *bo)
@@ -373,20 +373,15 @@ int mgag200_bo_pin(struct mgag200_bo *bo, u32 pl_flag, u64 *gpu_addr)
 {
 	int i, ret;
 
-	if (bo->pin_count) {
-		bo->pin_count++;
-		if (gpu_addr)
-			*gpu_addr = mgag200_bo_gpu_offset(bo);
+	if (!bo->pin_count) {
+		mgag200_ttm_placement(bo, pl_flag);
+		for (i = 0; i < bo->placement.num_placement; i++)
+			bo->placements[i] |= TTM_PL_FLAG_NO_EVICT;
+		ret = ttm_bo_validate(&bo->bo, &bo->placement, false, false, false);
+		if (ret)
+			return ret;
 	}
-
-	mgag200_ttm_placement(bo, pl_flag);
-	for (i = 0; i < bo->placement.num_placement; i++)
-		bo->placements[i] |= TTM_PL_FLAG_NO_EVICT;
-	ret = ttm_bo_validate(&bo->bo, &bo->placement, false, false, false);
-	if (ret)
-		return ret;
-
-	bo->pin_count = 1;
+	bo->pin_count++;
 	if (gpu_addr)
 		*gpu_addr = mgag200_bo_gpu_offset(bo);
 	return 0;
@@ -394,7 +389,7 @@ int mgag200_bo_pin(struct mgag200_bo *bo, u32 pl_flag, u64 *gpu_addr)
 
 int mgag200_bo_unpin(struct mgag200_bo *bo)
 {
-	int i, ret;
+	int i;
 	if (!bo->pin_count) {
 		DRM_ERROR("unpin bad %p\n", bo);
 		return 0;
@@ -405,11 +400,8 @@ int mgag200_bo_unpin(struct mgag200_bo *bo)
 
 	for (i = 0; i < bo->placement.num_placement ; i++)
 		bo->placements[i] &= ~TTM_PL_FLAG_NO_EVICT;
-	ret = ttm_bo_validate(&bo->bo, &bo->placement, false, false, false);
-	if (ret)
-		return ret;
 
-	return 0;
+	return ttm_bo_validate(&bo->bo, &bo->placement, false, false, false);
 }
 
 int mgag200_bo_push_sysram(struct mgag200_bo *bo)

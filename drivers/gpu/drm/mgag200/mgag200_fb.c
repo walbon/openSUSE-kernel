@@ -126,13 +126,13 @@ static int mgag200fb_create(struct mga_fbdev *mfbdev,
 	struct drm_device *dev = mfbdev->helper.dev;
 	struct drm_mode_fb_cmd2 mode_cmd;
 	struct mga_device *mdev = dev->dev_private;
-	struct fb_info *info;
+	struct fb_info *info = NULL;
 	struct drm_framebuffer *fb;
 	struct drm_gem_object *gobj = NULL;
 	struct device *device = &dev->pdev->dev;
 	struct mgag200_bo *bo;
 	int ret;
-	void *sysram;
+	void *sysram = NULL;
 	int size;
 
 	mode_cmd.width = sizes->surface_width;
@@ -155,14 +155,16 @@ static int mgag200fb_create(struct mga_fbdev *mfbdev,
 		return -ENOMEM;
 
 	info = framebuffer_alloc(0, device);
-	if (info == NULL)
-		return -ENOMEM;
+	if (info == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
 
 	info->par = mfbdev;
 
 	ret = mgag200_framebuffer_init(dev, &mfbdev->mfb, &mode_cmd, gobj);
 	if (ret)
-		return ret;
+		goto out;
 
 	mfbdev->sysram = sysram;
 	mfbdev->size = size;
@@ -173,14 +175,14 @@ static int mgag200fb_create(struct mga_fbdev *mfbdev,
 	mfbdev->helper.fb = fb;
 	mfbdev->helper.fbdev = info;
 
+	strcpy(info->fix.id, "mgadrmfb");
+
 	ret = fb_alloc_cmap(&info->cmap, 256, 0);
 	if (ret) {
 		DRM_ERROR("%s: can't allocate color map\n", info->fix.id);
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	strcpy(info->fix.id, "mgadrmfb");
 
 	info->flags = FBINFO_DEFAULT | FBINFO_CAN_FORCE_OUTPUT;
 	info->fbops = &mgag200fb_ops;
@@ -193,6 +195,8 @@ static int mgag200fb_create(struct mga_fbdev *mfbdev,
 	}
 	info->apertures->ranges[0].base = mdev->dev->mode_config.fb_base;
 	info->apertures->ranges[0].size = mdev->mc.vram_size;
+	info->fix.smem_start = mdev->dev->mode_config.fb_base;
+	info->fix.smem_len = size;
 
 	drm_fb_helper_fill_fix(info, fb->pitches[0], fb->depth);
 	drm_fb_helper_fill_var(info, &mfbdev->helper, sizes->fb_width,
@@ -206,6 +210,15 @@ static int mgag200fb_create(struct mga_fbdev *mfbdev,
 		      fb->width, fb->height);
 	return 0;
 out:
+	mfbdev->mfb.obj = NULL;
+	vfree(sysram);
+	mfbdev->sysram = NULL;
+	if (info && info->cmap.len)
+		fb_dealloc_cmap(&info->cmap);
+	framebuffer_release(info);
+	mfbdev->helper.fb = NULL;
+	mfbdev->helper.fbdev = NULL;
+
 	return ret;
 }
 
