@@ -30,8 +30,8 @@
  *     particular descriptor type.
  */
 
-#ifndef __LINUX_USB_CH9_H
-#define __LINUX_USB_CH9_H
+#ifndef _UAPI__LINUX_USB_CH9_H
+#define _UAPI__LINUX_USB_CH9_H
 
 #include <linux/types.h>	/* __u8 etc */
 #include <asm/byteorder.h>	/* le16_to_cpu */
@@ -88,6 +88,8 @@
 #define USB_REQ_GET_INTERFACE		0x0A
 #define USB_REQ_SET_INTERFACE		0x0B
 #define USB_REQ_SYNCH_FRAME		0x0C
+#define USB_REQ_SET_SEL			0x30
+#define USB_REQ_SET_ISOCH_DELAY		0x31
 
 #define USB_REQ_SET_ENCRYPTION		0x0D	/* Wireless USB */
 #define USB_REQ_GET_ENCRYPTION		0x0E
@@ -151,10 +153,10 @@
 #define USB_INTRF_FUNC_SUSPEND_RW	(1 << (8 + 1))
 
 /*
-* Interface status, Figure 9-5 USB 3.0 spec
-*/
-#define USB_INTRF_STAT_FUNC_RW_CAP	1
-#define USB_INTRF_STAT_FUNC_RW		2
+ * Interface status, Figure 9-5 USB 3.0 spec
+ */
+#define USB_INTRF_STAT_FUNC_RW_CAP     1
+#define USB_INTRF_STAT_FUNC_RW         2
 
 #define USB_ENDPOINT_HALT		0	/* IN/OUT will STALL */
 
@@ -396,6 +398,11 @@ struct usb_endpoint_descriptor {
 #define USB_ENDPOINT_XFER_INT		3
 #define USB_ENDPOINT_MAX_ADJUSTABLE	0x80
 
+/* The USB 3.0 spec redefines bits 5:4 of bmAttributes as interrupt ep type. */
+#define USB_ENDPOINT_INTRTYPE		0x30
+#define USB_ENDPOINT_INTR_PERIODIC	(0 << 4)
+#define USB_ENDPOINT_INTR_NOTIFICATION	(1 << 4)
+
 #define USB_ENDPOINT_SYNCTYPE		0x0c
 #define USB_ENDPOINT_SYNC_NONE		(0 << 2)
 #define USB_ENDPOINT_SYNC_ASYNC		(1 << 2)
@@ -595,7 +602,13 @@ static inline int usb_endpoint_is_isoc_out(
  */
 static inline int usb_endpoint_maxp(const struct usb_endpoint_descriptor *epd)
 {
-	return le16_to_cpu(epd->wMaxPacketSize);
+	return __le16_to_cpu(epd->wMaxPacketSize);
+}
+
+static inline int usb_endpoint_interrupt_type(
+		const struct usb_endpoint_descriptor *epd)
+{
+	return epd->bmAttributes & USB_ENDPOINT_INTRTYPE;
 }
 
 /*-------------------------------------------------------------------------*/
@@ -795,6 +808,11 @@ struct usb_ext_cap_descriptor {		/* Link Power Management */
 	__u8  bDevCapabilityType;
 	__le32 bmAttributes;
 #define USB_LPM_SUPPORT			(1 << 1)	/* supports LPM */
+#define USB_BESL_SUPPORT		(1 << 2)	/* supports BESL */
+#define USB_BESL_BASELINE_VALID		(1 << 3)	/* Baseline BESL valid*/
+#define USB_BESL_DEEP_VALID		(1 << 4)	/* Deep BESL valid */
+#define USB_GET_BESL_BASELINE(p)	(((p) & (0xf << 8)) >> 8)
+#define USB_GET_BESL_DEEP(p)		(((p) & (0xf << 12)) >> 12)
 } __attribute__((packed));
 
 #define USB_DT_USB_EXT_CAP_SIZE	7
@@ -897,17 +915,6 @@ enum usb_device_speed {
 	USB_SPEED_SUPER,			/* usb 3.0 */
 };
 
-#ifdef __KERNEL__
-
-/**
- * usb_speed_string() - Returns human readable-name of the speed.
- * @speed: The speed to return human-readable name for.  If it's not
- *   any of the speeds defined in usb_device_speed enum, string for
- *   USB_SPEED_UNKNOWN will be returned.
- */
-extern const char *usb_speed_string(enum usb_device_speed speed);
-
-#endif
 
 enum usb_device_state {
 	/* NOTATTACHED isn't in the USB spec, and this state acts
@@ -934,6 +941,51 @@ enum usb_device_state {
 	 */
 };
 
+enum usb3_link_state {
+	USB3_LPM_U0 = 0,
+	USB3_LPM_U1,
+	USB3_LPM_U2,
+	USB3_LPM_U3
+};
+
+/*
+ * A U1 timeout of 0x0 means the parent hub will reject any transitions to U1.
+ * 0xff means the parent hub will accept transitions to U1, but will not
+ * initiate a transition.
+ *
+ * A U1 timeout of 0x1 to 0x7F also causes the hub to initiate a transition to
+ * U1 after that many microseconds.  Timeouts of 0x80 to 0xFE are reserved
+ * values.
+ *
+ * A U2 timeout of 0x0 means the parent hub will reject any transitions to U2.
+ * 0xff means the parent hub will accept transitions to U2, but will not
+ * initiate a transition.
+ *
+ * A U2 timeout of 0x1 to 0xFE also causes the hub to initiate a transition to
+ * U2 after N*256 microseconds.  Therefore a U2 timeout value of 0x1 means a U2
+ * idle timer of 256 microseconds, 0x2 means 512 microseconds, 0xFE means
+ * 65.024ms.
+ */
+#define USB3_LPM_DISABLED		0x0
+#define USB3_LPM_U1_MAX_TIMEOUT		0x7F
+#define USB3_LPM_U2_MAX_TIMEOUT		0xFE
+#define USB3_LPM_DEVICE_INITIATED	0xFF
+
+struct usb_set_sel_req {
+	__u8	u1_sel;
+	__u8	u1_pel;
+	__le16	u2_sel;
+	__le16	u2_pel;
+} __attribute__ ((packed));
+
+/*
+ * The Set System Exit Latency control transfer provides one byte each for
+ * U1 SEL and U1 PEL, so the max exit latency is 0xFF.  U2 SEL and U2 PEL each
+ * are two bytes long.
+ */
+#define USB3_LPM_MAX_U1_SEL_PEL		0xFF
+#define USB3_LPM_MAX_U2_SEL_PEL		0xFFFF
+
 /*-------------------------------------------------------------------------*/
 
 /*
@@ -944,4 +996,4 @@ enum usb_device_state {
  */
 #define USB_SELF_POWER_VBUS_MAX_DRAW		100
 
-#endif /* __LINUX_USB_CH9_H */
+#endif /* _UAPI__LINUX_USB_CH9_H */
