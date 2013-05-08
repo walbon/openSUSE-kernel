@@ -774,6 +774,41 @@ static void hdmi_unsol_event(struct hda_codec *codec, unsigned int res)
 		hdmi_non_intrinsic_event(codec, res);
 }
 
+static void haswell_verify_pin_D0(struct hda_codec *codec, hda_nid_t nid)
+{
+	int pwr, lamp, ramp;
+
+	pwr = snd_hda_codec_read(codec, nid, 0, AC_VERB_GET_POWER_STATE, 0);
+	pwr = (pwr & AC_PWRST_ACTUAL) >> AC_PWRST_ACTUAL_SHIFT;
+	if (pwr != AC_PWRST_D0) {
+		snd_hda_codec_write(codec, nid, 0, AC_VERB_SET_POWER_STATE,
+				    AC_PWRST_D0);
+		msleep(40);
+		pwr = snd_hda_codec_read(codec, nid, 0, AC_VERB_GET_POWER_STATE, 0);
+		pwr = (pwr & AC_PWRST_ACTUAL) >> AC_PWRST_ACTUAL_SHIFT;
+		snd_printd("Haswell HDMI audio: Power for pin 0x%x is now D%d\n", nid, pwr);
+	}
+
+	lamp = snd_hda_codec_read(codec, nid, 0,
+				  AC_VERB_GET_AMP_GAIN_MUTE,
+				  AC_AMP_GET_LEFT | AC_AMP_GET_OUTPUT);
+	ramp = snd_hda_codec_read(codec, nid, 0,
+				  AC_VERB_GET_AMP_GAIN_MUTE,
+				  AC_AMP_GET_RIGHT | AC_AMP_GET_OUTPUT);
+	if (lamp != ramp) {
+		snd_hda_codec_write(codec, nid, 0, AC_VERB_SET_AMP_GAIN_MUTE,
+				    AC_AMP_SET_RIGHT | AC_AMP_SET_OUTPUT | lamp);
+
+		lamp = snd_hda_codec_read(codec, nid, 0,
+				  AC_VERB_GET_AMP_GAIN_MUTE,
+				  AC_AMP_GET_LEFT | AC_AMP_GET_OUTPUT);
+		ramp = snd_hda_codec_read(codec, nid, 0,
+				  AC_VERB_GET_AMP_GAIN_MUTE,
+				  AC_AMP_GET_RIGHT | AC_AMP_GET_OUTPUT);
+		snd_printd("Haswell HDMI audio: Mute after set on pin 0x%x: [0x%x 0x%x]\n", nid, lamp, ramp);
+	}
+}
+
 /*
  * Callbacks
  */
@@ -787,6 +822,9 @@ static int hdmi_setup_stream(struct hda_codec *codec, hda_nid_t cvt_nid,
 {
 	int pinctl;
 	int new_pinctl = 0;
+
+	if (codec->vendor_id == 0x80862807)
+		haswell_verify_pin_D0(codec, pin_nid);
 
 	if (snd_hda_query_pin_caps(codec, pin_nid) & AC_PINCAP_HBR) {
 		pinctl = snd_hda_codec_read(codec, pin_nid, 0,
@@ -1275,7 +1313,8 @@ static void intel_haswell_fixup_connect_list(struct hda_codec *codec,
 #define INTEL_EN_DP12			0x02 /* enable DP 1.2 features */
 #define INTEL_EN_ALL_PIN_CVTS	0x01 /* enable 2nd & 3rd pins and convertors */
 
-static void intel_haswell_enable_all_pins(struct hda_codec *codec)
+static void intel_haswell_enable_all_pins(struct hda_codec *codec,
+					  bool update_tree)
 {
 	unsigned int vendor_param;
 
@@ -1290,10 +1329,24 @@ static void intel_haswell_enable_all_pins(struct hda_codec *codec)
 	if (vendor_param == -1)
 		return;
 
-	snd_hda_codec_update_widgets(codec);
-	return;
+	if (update_tree)
+		snd_hda_codec_update_widgets(codec);
 }
 
+/* Haswell needs to re-issue the vendor-specific verbs before turning to D0.
+ * Otherwise you may get severe h/w communication errors.
+ */
+static void haswell_set_power_state(struct hda_codec *codec, hda_nid_t fg,
+				    unsigned int power_state)
+{
+	if (power_state == AC_PWRST_D0) {
+		intel_haswell_enable_all_pins(codec, false);
+		intel_haswell_fixup_enable_dp12(codec);
+	}
+
+	snd_hda_codec_read(codec, fg, 0, AC_VERB_SET_POWER_STATE, power_state);
+	snd_hda_codec_set_power_to_all(codec, fg, power_state, false);
+}
 
 static int patch_generic_hdmi(struct hda_codec *codec)
 {
@@ -1305,12 +1358,10 @@ static int patch_generic_hdmi(struct hda_codec *codec)
 
 	codec->spec = spec;
 
-	if (codec->bus->pci->subsystem_vendor == 0x8086 &&
-	    codec->bus->pci->subsystem_device == 0x2010)
-		intel_haswell_enable_all_pins(codec);
-
-	if (codec->vendor_id == 0x80862807)
+	if (codec->vendor_id == 0x80862807) {
+		intel_haswell_enable_all_pins(codec, true);
 		intel_haswell_fixup_enable_dp12(codec);
+	}
 
 	if (hdmi_parse_codec(codec) < 0) {
 		codec->spec = NULL;
@@ -1318,6 +1369,8 @@ static int patch_generic_hdmi(struct hda_codec *codec)
 		return -EINVAL;
 	}
 	codec->patch_ops = generic_hdmi_patch_ops;
+	if (codec->vendor_id == 0x80862807)
+		codec->patch_ops.set_power_state = haswell_set_power_state;
 
 	init_channel_allocations();
 
