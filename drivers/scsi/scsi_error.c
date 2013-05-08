@@ -438,19 +438,19 @@ static int scsi_check_sense(struct scsi_cmnd *scmd)
 				    "threshold.\n");
 
 		if (sshdr.asc == 0x2a && sshdr.ascq == 0x00)
-			sdev_printk(KERN_WARNING, sdev,
+			scmd_printk(KERN_WARNING, scmd,
 				    "Warning! Received an indication that the "
 				    "parameters on this target have "
 				    "changed. The Linux SCSI layer does not "
 				    "automatically adjust these parameters.\n");
 		if (sshdr.asc == 0x2a && sshdr.ascq == 0x01)
-			sdev_printk(KERN_WARNING, sdev,
+			scmd_printk(KERN_WARNING, scmd,
 				    "Warning! Received an indication that the "
 				    "mode parameters on this target have "
 				    "changed. The Linux SCSI layer does not "
 				    "automatically adjust these parameters.\n");
 		if (sshdr.asc == 0x2a && sshdr.ascq == 0x09)
-			sdev_printk(KERN_WARNING, sdev,
+			scmd_printk(KERN_WARNING, scmd,
 				    "Warning! Received an indication that the "
 				    "capacity data on this target have "
 				    "changed. The Linux SCSI layer does not "
