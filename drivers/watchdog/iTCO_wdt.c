@@ -132,6 +132,7 @@ enum iTCO_chipsets {
 	TCO_LPT,	/* Lynx Point */
 	TCO_LPT_LP,	/* Lynx Point-LP */
 	TCO_WBG,        /* Wellsburg */
+	TCO_AVN,        /* Avoton SoC */
 };
 
 static struct {
@@ -198,6 +199,7 @@ static struct {
 	{"Lynx Point", 2},
 	{"Lynx Point_LP", 2},
 	{"Wellsburg", 2},
+	{"Avoton SoC", 1},
 	{NULL, 0}
 };
 
@@ -412,6 +414,10 @@ static DEFINE_PCI_DEVICE_TABLE(iTCO_wdt_pci_tbl) = {
 	{ PCI_VDEVICE(INTEL, 0x8d5d), TCO_WBG},
 	{ PCI_VDEVICE(INTEL, 0x8d5e), TCO_WBG},
 	{ PCI_VDEVICE(INTEL, 0x8d5f), TCO_WBG},
+	{ PCI_VDEVICE(INTEL, 0x1f38), TCO_AVN},
+	{ PCI_VDEVICE(INTEL, 0x1f39), TCO_AVN},
+	{ PCI_VDEVICE(INTEL, 0x1f3a), TCO_AVN},
+	{ PCI_VDEVICE(INTEL, 0x1f3b), TCO_AVN},
 	{ 0, },			/* End of list */
 };
 MODULE_DEVICE_TABLE(pci, iTCO_wdt_pci_tbl);
