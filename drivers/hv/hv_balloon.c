@@ -863,6 +863,22 @@ static void hot_add_req(struct work_struct *dummy)
 		resp.page_count = process_hot_add(pg_start, pfn_cnt,
 						rg_start, rg_sz);
 #endif
+	/*
+	 * The result field of the response structure has the
+	 * following semantics:
+	 *
+	 * 1. If all or some pages hot-added: Guest should return success.
+	 *
+	 * 2. If no pages could be hot-added:
+	 *
+	 * If the guest returns success, then the host
+	 * will not attempt any further hot-add operations. This
+	 * signifies a permanent failure.
+	 *
+	 * If the guest returns failure, then this failure will be
+	 * treated as a transient failure and the host may retry the
+	 * hot-add operation after some delay.
+	 */
 	if (resp.page_count > 0)
 		resp.result = 1;
 	else if (!do_hot_add)
