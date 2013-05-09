@@ -4152,23 +4152,20 @@ struct mcs_total_stat {
 	s64 stat[NR_MCS_STAT];
 };
 
-struct {
-	char *local_name;
-	char *total_name;
-} memcg_stat_strings[NR_MCS_STAT] = {
-	{"cache", "total_cache"},
-	{"rss", "total_rss"},
-	{"mapped_file", "total_mapped_file"},
-	{"pgpgin", "total_pgpgin"},
-	{"pgpgout", "total_pgpgout"},
-	{"swap", "total_swap"},
-	{"pgfault", "total_pgfault"},
-	{"pgmajfault", "total_pgmajfault"},
-	{"inactive_anon", "total_inactive_anon"},
-	{"active_anon", "total_active_anon"},
-	{"inactive_file", "total_inactive_file"},
-	{"active_file", "total_active_file"},
-	{"unevictable", "total_unevictable"}
+static const char *memcg_stat_strings[NR_MCS_STAT] = {
+	"cache",
+	"rss",
+	"mapped_file",
+	"pgpgin",
+	"pgpgout",
+	"swap",
+	"pgfault",
+	"pgmajfault",
+	"inactive_anon",
+	"active_anon",
+	"inactive_file",
+	"active_file",
+	"unevictable",
 };
 
 
@@ -4265,7 +4262,7 @@ static int mem_control_numa_stat_show(struct seq_file *m, void *arg)
 #endif /* CONFIG_NUMA */
 
 static int mem_control_stat_show(struct cgroup *cont, struct cftype *cft,
-				 struct cgroup_map_cb *cb)
+				 struct seq_file *m)
 {
 	struct mem_cgroup *mem_cont = mem_cgroup_from_cont(cont);
 	struct mcs_total_stat mystat;
@@ -4278,16 +4275,18 @@ static int mem_control_stat_show(struct cgroup *cont, struct cftype *cft,
 	for (i = 0; i < NR_MCS_STAT; i++) {
 		if (i == MCS_SWAP && !do_swap_account)
 			continue;
-		cb->fill(cb, memcg_stat_strings[i].local_name, mystat.stat[i]);
+		seq_printf(m, "%s %llu\n", memcg_stat_strings[i],
+			   (unsigned long long)mystat.stat[i]);
 	}
 
 	/* Hierarchical information */
 	{
 		unsigned long long limit, memsw_limit;
 		memcg_get_hierarchical_limit(mem_cont, &limit, &memsw_limit);
-		cb->fill(cb, "hierarchical_memory_limit", limit);
+		seq_printf(m, "hierarchical_memory_limit %llu\n", limit);
 		if (do_swap_account)
-			cb->fill(cb, "hierarchical_memsw_limit", memsw_limit);
+			seq_printf(m, "hierarchical_memsw_limit %llu\n",
+				   memsw_limit);
 	}
 
 	memset(&mystat, 0, sizeof(mystat));
@@ -4295,7 +4294,8 @@ static int mem_control_stat_show(struct cgroup *cont, struct cftype *cft,
 	for (i = 0; i < NR_MCS_STAT; i++) {
 		if (i == MCS_SWAP && !do_swap_account)
 			continue;
-		cb->fill(cb, memcg_stat_strings[i].total_name, mystat.stat[i]);
+		seq_printf(m, "total_%s %llu\n", memcg_stat_strings[i],
+			   (unsigned long long)mystat.stat[i]);
 	}
 
 #ifdef CONFIG_DEBUG_VM
@@ -4320,10 +4320,10 @@ static int mem_control_stat_show(struct cgroup *cont, struct cftype *cft,
 				recent_scanned[1] +=
 					mz->reclaim_stat.recent_scanned[1];
 			}
-		cb->fill(cb, "recent_rotated_anon", recent_rotated[0]);
-		cb->fill(cb, "recent_rotated_file", recent_rotated[1]);
-		cb->fill(cb, "recent_scanned_anon", recent_scanned[0]);
-		cb->fill(cb, "recent_scanned_file", recent_scanned[1]);
+		seq_printf(m, "recent_rotated_anon %lu\n", recent_rotated[0]);
+		seq_printf(m, "recent_rotated_file %lu\n", recent_rotated[1]);
+		seq_printf(m, "recent_scanned_anon %lu\n", recent_scanned[0]);
+		seq_printf(m, "recent_scanned_file %lu\n", recent_scanned[1]);
 	}
 #endif
 
@@ -4757,7 +4757,7 @@ static struct cftype mem_cgroup_files[] = {
 	},
 	{
 		.name = "stat",
-		.read_map = mem_control_stat_show,
+		.read_seq_string = mem_control_stat_show,
 	},
 	{
 		.name = "force_empty",
