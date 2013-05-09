@@ -4211,7 +4211,7 @@ static int mem_control_stat_show(struct cgroup *cont, struct cftype *cft,
 	}
 
 #ifdef CONFIG_DEBUG_VM
-	cb->fill(cb, "inactive_ratio", calc_inactive_ratio(memcg, NULL));
+	seq_printf(m, "inactive_ratio %d\n", calc_inactive_ratio(memcg, NULL));
 
 	{
 		int nid, zid;
