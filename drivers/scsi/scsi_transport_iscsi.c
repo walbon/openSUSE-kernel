@@ -2851,11 +2851,15 @@ static int iscsi_set_flashnode_param(struct iscsi_transport *transport,
 					iscsi_is_flashnode_conn_dev);
 	if (!dev) {
 		err = -ENODEV;
-		goto put_host;
+		goto put_sess;
 	}
 
 	fnode_conn = iscsi_dev_to_flash_conn(dev);
 	err = transport->set_flashnode_param(fnode_sess, fnode_conn, data, len);
+	put_device(dev);
+
+put_sess:
+	put_device(&fnode_sess->dev);
 
 put_host:
 	scsi_host_put(shost);
@@ -2931,6 +2935,7 @@ static int iscsi_del_flashnode(struct iscsi_transport *transport,
 	}
 
 	err = transport->del_flashnode(fnode_sess);
+	put_device(&fnode_sess->dev);
 
 put_host:
 	scsi_host_put(shost);
@@ -2976,11 +2981,15 @@ static int iscsi_login_flashnode(struct iscsi_transport *transport,
 					iscsi_is_flashnode_conn_dev);
 	if (!dev) {
 		err = -ENODEV;
-		goto put_host;
+		goto put_sess;
 	}
 
 	fnode_conn = iscsi_dev_to_flash_conn(dev);
 	err = transport->login_flashnode(fnode_sess, fnode_conn);
+	put_device(dev);
+
+put_sess:
+	put_device(&fnode_sess->dev);
 
 put_host:
 	scsi_host_put(shost);
@@ -3026,12 +3035,16 @@ static int iscsi_logout_flashnode(struct iscsi_transport *transport,
 					iscsi_is_flashnode_conn_dev);
 	if (!dev) {
 		err = -ENODEV;
-		goto put_host;
+		goto put_sess;
 	}
 
 	fnode_conn = iscsi_dev_to_flash_conn(dev);
 
 	err = transport->logout_flashnode(fnode_sess, fnode_conn);
+	put_device(dev);
+
+put_sess:
+	put_device(&fnode_sess->dev);
 
 put_host:
 	scsi_host_put(shost);
