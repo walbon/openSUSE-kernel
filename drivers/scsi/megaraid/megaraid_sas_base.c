@@ -3517,8 +3517,20 @@ static int megasas_init_fw(struct megasas_instance *instance)
 	}
 
 	/*
-	 * We expect the FW state to be READY
+ 	 * Below code change isr required for MFI based controllers
+ 	 * It will not do anything for MPT based controller, since adp_reset
+	 * does not have any logical code for fusion controller
 	 */
+	if(reset_devices) {
+		atomic_set(&instance->fw_reset_no_pci_access, 1);
+		instance->instancet->adp_reset(instance, instance->reg_set);
+		atomic_set(&instance->fw_reset_no_pci_access, 0 );
+		printk("megaraid_sas: FW was restarted successfully from Kdump..!\n");
+
+		/*waitting for about 30 second before start the second init*/
+		ssleep(30);
+	}
+
 	if (megasas_transition_to_ready(instance, 0))
 		goto fail_ready_state;
 
