@@ -5606,6 +5606,7 @@ static int qla4xxx_sysfs_ddb_add(struct Scsi_Host *shost, const char *buf,
 		ql4_printk(KERN_ERR, ha,
 			   "%s: A non-persistent entry %s found\n",
 			   __func__, dev->kobj.name);
+		put_device(dev);
 		goto exit_ddb_add;
 	}
 
@@ -6348,6 +6349,8 @@ qla4xxx_sysfs_ddb_get_param(struct iscsi_bus_flash_session *fnode_sess,
 		rc = -ENOSYS;
 		break;
 	}
+
+	put_device(dev);
 	return rc;
 }
 
