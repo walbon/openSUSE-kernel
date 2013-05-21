@@ -23,6 +23,7 @@
 #include <linux/mutex.h>
 #include <linux/stat.h>
 #include <linux/slab.h>
+#include <linux/nmi.h>
 
 #include <asm/atomic.h>
 #include <asm/uaccess.h>
@@ -698,6 +699,7 @@ int __init memory_dev_init(void)
 				 (sections_per_block == 1) ? NULL : &mem,
 					 MEM_ONLINE,
 					 BOOT);
+		touch_nmi_watchdog();
 		if (!ret)
 			ret = err;
 	}
