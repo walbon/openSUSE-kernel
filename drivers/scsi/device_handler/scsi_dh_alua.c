@@ -798,7 +798,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 				   pg->target_id_size))
 				continue;
 			if (tmp_pg->group_id == (ucp[2] << 8) + ucp[3]) {
-				if (tmp_pg->state != ucp[0] & 0x0f) {
+				if (tmp_pg->state != (ucp[0] & 0x0f)) {
 					spin_lock(&tmp_pg->rtpg_lock);
 					tmp_pg->state = ucp[0] & 0x0f;
 					tmp_pg->pref = ucp[0] >> 7;
