@@ -798,21 +798,17 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 				   pg->target_id_size))
 				continue;
 			if (tmp_pg->group_id == (ucp[2] << 8) + ucp[3]) {
-				spin_lock(&tmp_pg->rtpg_lock);
-				tmp_pg->state = ucp[0] & 0x0f;
-				tmp_pg->pref = ucp[0] >> 7;
-				tmp_pg->valid = ucp[1];
-				spin_unlock(&tmp_pg->rtpg_lock);
+				if (tmp_pg->state != ucp[0] & 0x0f) {
+					spin_lock(&tmp_pg->rtpg_lock);
+					tmp_pg->state = ucp[0] & 0x0f;
+					tmp_pg->pref = ucp[0] >> 7;
+					tmp_pg->valid = ucp[1];
+					spin_unlock(&tmp_pg->rtpg_lock);
+				}
 			}
 		}
 		spin_unlock(&port_group_lock);
 		off = 8 + (ucp[7] * 4);
-	}
-	if (pg->state == -1) {
-		spin_lock(&pg->rtpg_lock);
-		pg->state = TPGS_STATE_OPTIMIZED;
-		pg->pref = 0;
-		spin_unlock(&pg->rtpg_lock);
 	}
 
 	printk(KERN_INFO "%s: target %s port group %02x state %c %s "
@@ -1089,12 +1085,10 @@ static int alua_prep_fn(struct scsi_device *sdev, struct request *req)
 	int state;
 	int ret = BLKPREP_OK;
 
-	if (!h->pg)
+	if (!h || !h->pg)
 		return ret;
 	kref_get(&h->pg->kref);
-	spin_lock(&h->pg->rtpg_lock);
 	state = h->pg->state;
-	spin_unlock(&h->pg->rtpg_lock);
 	kref_put(&h->pg->kref, release_port_group);
 	if (state == TPGS_STATE_TRANSITIONING)
 		ret = BLKPREP_DEFER;
@@ -1181,19 +1175,21 @@ static void alua_bus_detach(struct scsi_device *sdev)
 {
 	struct scsi_dh_data *scsi_dh_data;
 	struct alua_dh_data *h;
+	struct alua_port_group *pg = NULL;
 	unsigned long flags;
 
 	spin_lock_irqsave(sdev->request_queue->queue_lock, flags);
 	scsi_dh_data = sdev->scsi_dh_data;
 	sdev->scsi_dh_data = NULL;
+	h = (struct alua_dh_data *) scsi_dh_data->buf;
+	pg = h->pg;
+	h->pg = NULL;
 	spin_unlock_irqrestore(sdev->request_queue->queue_lock, flags);
 
-	h = (struct alua_dh_data *) scsi_dh_data->buf;
-	if (h->pg) {
-		if (h->pg->rtpg_sdev)
+	if (pg) {
+		if (pg->rtpg_sdev)
 			flush_workqueue(kmpath_aluad);
-		kref_put(&h->pg->kref, release_port_group);
-		h->pg = NULL;
+		kref_put(&pg->kref, release_port_group);
 	}
 	kfree(scsi_dh_data);
 	module_put(THIS_MODULE);
