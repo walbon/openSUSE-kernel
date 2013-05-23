@@ -812,7 +812,7 @@ void usb_enable_xhci_ports(struct pci_dev *xhci_pdev)
 
 	/* this needs to be done in a dirty way to preserve kABI */
 	if (dmi_check_system(bt_excepted_from_switch_table))
-		ports_available &= ~8;
+		ports_available &= ~(64 | 8);
 
 	/* Write XUSB2PR, the xHC USB 2.0 Port Routing Register, to
 	 * switch the USB 2.0 power and data lines over to the xHCI
