@@ -2021,6 +2021,36 @@ static void free_root_pointers(struct btrfs_fs_info *info, int chunk_root)
 	}
 }
 
+static void del_fs_roots(struct btrfs_fs_info *fs_info)
+{
+	int ret;
+	struct btrfs_root *gang[8];
+	int i;
+
+	while (!list_empty(&fs_info->dead_roots)) {
+		gang[0] = list_entry(fs_info->dead_roots.next,
+				     struct btrfs_root, root_list);
+		list_del(&gang[0]->root_list);
+
+		if (gang[0]->in_radix) {
+			btrfs_free_fs_root(fs_info, gang[0]);
+		} else {
+			free_extent_buffer(gang[0]->node);
+			free_extent_buffer(gang[0]->commit_root);
+			kfree(gang[0]);
+		}
+	}
+
+	while (1) {
+		ret = radix_tree_gang_lookup(&fs_info->fs_roots_radix,
+					     (void **)gang, 0,
+					     ARRAY_SIZE(gang));
+		if (!ret)
+			break;
+		for (i = 0; i < ret; i++)
+			btrfs_free_fs_root(fs_info, gang[i]);
+	}
+}
 
 int open_ctree(struct super_block *sb,
 	       struct btrfs_fs_devices *fs_devices,
@@ -2812,6 +2842,8 @@ fail_qgroup:
 	btrfs_free_qgroup_config(fs_info);
 fail_trans_kthread:
 	kthread_stop(fs_info->transaction_kthread);
+	del_fs_roots(fs_info);
+	btrfs_cleanup_transaction(fs_info->tree_root);
 fail_cleaner:
 	kthread_stop(fs_info->cleaner_kthread);
 
@@ -2822,6 +2854,7 @@ fail_cleaner:
 	filemap_write_and_wait(fs_info->btree_inode->i_mapping);
 
 fail_block_groups:
+	btrfs_put_block_group_cache(fs_info);
 	btrfs_free_block_groups(fs_info);
 
 fail_tree_roots:
@@ -3349,37 +3382,6 @@ static void free_fs_root(struct btrfs_root *root)
 	kfree(root);
 }
 
-static void del_fs_roots(struct btrfs_fs_info *fs_info)
-{
-	int ret;
-	struct btrfs_root *gang[8];
-	int i;
-
-	while (!list_empty(&fs_info->dead_roots)) {
-		gang[0] = list_entry(fs_info->dead_roots.next,
-				     struct btrfs_root, root_list);
-		list_del(&gang[0]->root_list);
-
-		if (gang[0]->in_radix) {
-			btrfs_free_fs_root(fs_info, gang[0]);
-		} else {
-			free_extent_buffer(gang[0]->node);
-			free_extent_buffer(gang[0]->commit_root);
-			kfree(gang[0]);
-		}
-	}
-
-	while (1) {
-		ret = radix_tree_gang_lookup(&fs_info->fs_roots_radix,
-					     (void **)gang, 0,
-					     ARRAY_SIZE(gang));
-		if (!ret)
-			break;
-		for (i = 0; i < ret; i++)
-			btrfs_free_fs_root(fs_info, gang[i]);
-	}
-}
-
 int btrfs_cleanup_fs_roots(struct btrfs_fs_info *fs_info)
 {
 	u64 root_objectid = 0;
@@ -3724,6 +3726,9 @@ int btrfs_destroy_delayed_refs(struct btrfs_transaction *trans,
 				continue;
 			}
 
+			if (head->must_insert_reserved)
+				btrfs_pin_extent(root, ref->bytenr,
+						 ref->num_bytes, 1);
 			btrfs_free_delayed_extent_op(head->extent_op);
 			delayed_refs->num_heads--;
 			if (list_empty(&head->cluster))
@@ -3942,10 +3947,6 @@ int btrfs_cleanup_transaction(struct btrfs_root *root)
 		btrfs_destroy_ordered_extents(root);
 
 		btrfs_destroy_delayed_refs(t, root);
-
-		btrfs_block_rsv_release(root,
-					&root->fs_info->trans_block_rsv,
-					t->dirty_pages.dirty_bytes);
 
 		/* FIXME: cleanup wait for commit */
 		t->in_commit = 1;
