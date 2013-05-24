@@ -1106,12 +1106,12 @@ lpfc_get_scsi_buf_s3(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
 static struct lpfc_scsi_buf*
 lpfc_get_scsi_buf_s4(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
 {
-	struct lpfc_scsi_buf *lpfc_cmd, *next_lpfc_cmd ;
+	struct lpfc_scsi_buf *lpfc_cmd, *lpfc_cmd_next;
 	unsigned long iflag = 0;
 	int found = 0;
 
 	spin_lock_irqsave(&phba->scsi_buf_list_lock, iflag);
-	list_for_each_entry_safe(lpfc_cmd, next_lpfc_cmd,
+	list_for_each_entry_safe(lpfc_cmd, lpfc_cmd_next,
 				 &phba->lpfc_scsi_buf_list, list) {
 		if (lpfc_test_rrq_active(phba, ndlp,
 					 lpfc_cmd->cur_iocbq.sli4_lxritag))
