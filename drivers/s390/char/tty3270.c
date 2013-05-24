@@ -690,6 +690,11 @@ tty3270_alloc_view(void)
 	if (!tp->freemem_pages)
 		goto out_tp;
 	INIT_LIST_HEAD(&tp->freemem);
+	INIT_LIST_HEAD(&tp->lines);
+	INIT_LIST_HEAD(&tp->update);
+	INIT_LIST_HEAD(&tp->rcl_lines);
+	tp->rcl_max = 20;
+
 	for (pages = 0; pages < TTY3270_STRING_PAGES; pages++) {
 		tp->freemem_pages[pages] = (void *)
 			__get_free_pages(GFP_KERNEL|GFP_DMA, 0);
@@ -710,6 +715,13 @@ tty3270_alloc_view(void)
 	tp->kbd = kbd_alloc();
 	if (!tp->kbd)
 		goto out_reset;
+
+	setup_timer(&tp->timer, (void (*)(unsigned long)) tty3270_update,
+		    (unsigned long) tp);
+	tasklet_init(&tp->readlet,
+		     (void (*)(unsigned long)) tty3270_read_tasklet,
+		     (unsigned long) tp->read);
+
 	return tp;
 
 out_reset:
@@ -878,16 +890,6 @@ tty3270_open(struct tty_struct *tty, struct file * filp)
 	tp = tty3270_alloc_view();
 	if (IS_ERR(tp))
 		return PTR_ERR(tp);
-
-	INIT_LIST_HEAD(&tp->lines);
-	INIT_LIST_HEAD(&tp->update);
-	INIT_LIST_HEAD(&tp->rcl_lines);
-	tp->rcl_max = 20;
-	setup_timer(&tp->timer, (void (*)(unsigned long)) tty3270_update,
-		    (unsigned long) tp);
-	tasklet_init(&tp->readlet, 
-		     (void (*)(unsigned long)) tty3270_read_tasklet,
-		     (unsigned long) tp->read);
 
 	rc = raw3270_add_view(&tp->view, &tty3270_fn,
 			      tty->index + RAW3270_FIRSTMINOR);
@@ -1766,6 +1768,23 @@ static const struct tty_operations tty3270_ops = {
 	.set_termios = tty3270_set_termios
 };
 
+void tty3270_create_cb(int minor)
+{
+	device_create(class3270, NULL, MKDEV(IBM_TTY3270_MAJOR, minor),
+		      NULL, "3270/tty%d", minor);
+}
+
+void tty3270_destroy_cb(int minor)
+{
+	device_destroy(class3270, MKDEV(IBM_TTY3270_MAJOR, minor));
+}
+
+struct raw3270_notifier tty3270_notifier =
+{
+	.create = tty3270_create_cb,
+	.destroy = tty3270_destroy_cb,
+};
+
 /*
  * 3270 tty registration code called from tty_init().
  * Most kernel services (incl. kmalloc) are available at this poimt.
@@ -1785,14 +1804,16 @@ static int __init tty3270_init(void)
 	 * proc_entry, set_termios, flush_buffer, set_ldisc, write_proc
 	 */
 	driver->owner = THIS_MODULE;
-	driver->driver_name = "ttyTUB";
-	driver->name = "ttyTUB";
+	driver->driver_name = "tty3270";
+	driver->name = "3270/tty";
 	driver->major = IBM_TTY3270_MAJOR;
 	driver->minor_start = RAW3270_FIRSTMINOR;
 	driver->type = TTY_DRIVER_TYPE_SYSTEM;
 	driver->subtype = SYSTEM_TYPE_TTY;
 	driver->init_termios = tty_std_termios;
-	driver->flags = TTY_DRIVER_RESET_TERMIOS | TTY_DRIVER_DYNAMIC_DEV;
+	driver->flags = TTY_DRIVER_REAL_RAW |
+		TTY_DRIVER_RESET_TERMIOS |
+		TTY_DRIVER_DYNAMIC_DEV;
 	tty_set_operations(driver, &tty3270_ops);
 	ret = tty_register_driver(driver);
 	if (ret) {
@@ -1800,6 +1821,7 @@ static int __init tty3270_init(void)
 		return ret;
 	}
 	tty3270_driver = driver;
+	raw3270_register_notifier(&tty3270_notifier);
 	return 0;
 }
 
@@ -1808,6 +1830,7 @@ tty3270_exit(void)
 {
 	struct tty_driver *driver;
 
+	raw3270_unregister_notifier(&tty3270_notifier);
 	driver = tty3270_driver;
 	tty3270_driver = NULL;
 	tty_unregister_driver(driver);
