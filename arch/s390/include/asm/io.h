@@ -40,6 +40,7 @@ static inline void * phys_to_virt(unsigned long address)
 }
 
 void *xlate_dev_mem_ptr(phys_addr_t phys);
+#define xlate_dev_mem_ptr xlate_dev_mem_ptr
 void unxlate_dev_mem_ptr(phys_addr_t phys, void *addr);
 
 /*
