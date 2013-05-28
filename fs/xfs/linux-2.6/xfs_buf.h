@@ -146,7 +146,9 @@ typedef struct xfs_buf {
 	 * bt_lru_lock and not by b_sema
 	 */
 	struct list_head	b_lru;		/* lru list */
+#ifndef __GENKSYMS__	/* Nobody outside xfs should use this structure */
 	xfs_buf_flags_t		b_lru_flags;	/* internal lru status flags */
+#endif
 	wait_queue_head_t	b_waiters;	/* unpin waiters */
 	struct list_head	b_list;
 	struct xfs_perag	*b_pag;		/* contains rbtree root */
