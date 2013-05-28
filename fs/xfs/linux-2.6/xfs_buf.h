@@ -65,6 +65,7 @@ typedef enum {
 #define	_XBF_RUN_QUEUES	(1 << 19)/* run block device task queue	*/
 #define	_XBF_KMEM	(1 << 20)/* backed by heap memory */
 #define _XBF_DELWRI_Q	(1 << 21)/* buffer on delwri queue */
+#define _XBF_LRU_DISPOSE (1 << 24)/* buffer being discarded */
 
 typedef unsigned int xfs_buf_flags_t;
 
@@ -84,7 +85,8 @@ typedef unsigned int xfs_buf_flags_t;
 	{ _XBF_PAGES,		"PAGES" }, \
 	{ _XBF_RUN_QUEUES,	"RUN_QUEUES" }, \
 	{ _XBF_KMEM,		"KMEM" }, \
-	{ _XBF_DELWRI_Q,	"DELWRI_Q" }
+	{ _XBF_DELWRI_Q,	"DELWRI_Q" }, \
+	{ _XBF_LRU_DISPOSE,	"LRU_DISPOSE" }
 
 typedef enum {
 	XBT_FORCE_SLEEP = 0,
@@ -139,7 +141,12 @@ typedef struct xfs_buf {
 	xfs_buf_flags_t		b_flags;	/* status flags */
 	struct semaphore	b_sema;		/* semaphore for lockables */
 
+	/*
+	 * concurrent access to b_lru and b_lru_flags are protected by
+	 * bt_lru_lock and not by b_sema
+	 */
 	struct list_head	b_lru;		/* lru list */
+	xfs_buf_flags_t		b_lru_flags;	/* internal lru status flags */
 	wait_queue_head_t	b_waiters;	/* unpin waiters */
 	struct list_head	b_list;
 	struct xfs_perag	*b_pag;		/* contains rbtree root */
