@@ -33,7 +33,7 @@
  * on the Intel IOMMU support (CONFIG_DMAR).
  * Only newer chipsets need to bother with this, of course.
  */
-#ifdef CONFIG_DMAR
+#if defined(CONFIG_DMAR) || defined(CONFIG_XEN)
 #define USE_PCI_DMA_API 1
 #else
 #define USE_PCI_DMA_API 0

@@ -1075,8 +1075,7 @@ static void netbk_tx_err(netif_t *netif, netif_tx_request_t *txp, RING_IDX end)
 
 static void netbk_fatal_tx_err(netif_t *netif)
 {
-	printk(KERN_ERR "%s: fatal error; disabling device\n",
-	       netif->dev->name);
+	pr_err("%s: fatal error; disabling device\n", netif->dev->name);
 	netif->busted = 1;
 	disable_irq(netif->irq);
 	netif_deschedule_work(netif);
@@ -1087,45 +1086,59 @@ static int netbk_count_requests(netif_t *netif, netif_tx_request_t *first,
 				netif_tx_request_t *txp, int work_to_do)
 {
 	RING_IDX cons = netif->tx.req_cons;
-	int frags = 0;
+	int frags = 0, drop_err = 0;
 
 	if (!(first->flags & XEN_NETTXF_more_data))
 		return 0;
 
 	do {
 		if (frags >= work_to_do) {
-			printk(KERN_ERR "%s: Need more frags\n",
-			       netif->dev->name);
+			pr_err("%s: Need more frags\n", netif->dev->name);
 			netbk_fatal_tx_err(netif);
 			return -ENODATA;
 		}
 
 		if (unlikely(frags >= MAX_SKB_FRAGS)) {
-			printk(KERN_ERR "%s: Too many frags\n",
-			       netif->dev->name);
+			pr_err("%s: Too many frags\n", netif->dev->name);
 			netbk_fatal_tx_err(netif);
 			return -E2BIG;
 		}
 
 		memcpy(txp, RING_GET_REQUEST(&netif->tx, cons + frags),
 		       sizeof(*txp));
-		if (txp->size > first->size) {
-			printk(KERN_ERR "%s: Frag is bigger than frame.\n",
-			       netif->dev->name);
-			netbk_fatal_tx_err(netif);
-			return -EIO;
+
+		/*
+		 * If the guest submitted a frame >= 64 KiB then first->size
+		 * overflowed and following slots will appear to be larger
+		 * than the frame. This cannot be fatal error as there are
+		 * buggy frontends that do this.
+		 *
+		 * Consume all slots and drop the packet.
+		 */
+		if (!drop_err && txp->size > first->size) {
+			if (net_ratelimit())
+				DPRINTK("%s: Invalid tx request"
+					" (slot size %u > remaining size %u)\n",
+					netif->dev->name,
+					txp->size, first->size);
+			drop_err = -EIO;
 		}
 
 		first->size -= txp->size;
 		frags++;
 
 		if (unlikely((txp->offset + txp->size) > PAGE_SIZE)) {
-			printk(KERN_ERR "%s: txp->offset: %x, size: %u\n",
+			pr_err("%s: txp->offset: %x, size: %u\n",
 			       netif->dev->name, txp->offset, txp->size);
 			netbk_fatal_tx_err(netif);
 			return -EINVAL;
 		}
 	} while ((txp++)->flags & XEN_NETTXF_more_data);
+
+	if (drop_err) {
+		netbk_tx_err(netif, first, cons + frags);
+		return drop_err;
+	}
 
 	return frags;
 }
@@ -1275,8 +1288,7 @@ int netbk_get_extras(netif_t *netif, struct netif_extra_info *extras,
 
 	do {
 		if (unlikely(work_to_do-- <= 0)) {
-			printk(KERN_ERR "%s: Missing extra info\n",
-			       netif->dev->name);
+			pr_err("%s: Missing extra info\n", netif->dev->name);
 			netbk_fatal_tx_err(netif);
 			return -EBADR;
 		}
@@ -1286,7 +1298,7 @@ int netbk_get_extras(netif_t *netif, struct netif_extra_info *extras,
 		if (unlikely(!extra.type ||
 			     extra.type >= XEN_NETIF_EXTRA_TYPE_MAX)) {
 			netif->tx.req_cons = ++cons;
-			printk(KERN_ERR "%s: Invalid extra type: %d\n",
+			pr_err("%s: Invalid extra type: %d\n",
 			       netif->dev->name, extra.type);
 			netbk_fatal_tx_err(netif);
 			return -EINVAL;
@@ -1303,15 +1315,14 @@ static int netbk_set_skb_gso(netif_t *netif, struct sk_buff *skb,
 			     struct netif_extra_info *gso)
 {
 	if (!gso->u.gso.size) {
-		printk(KERN_ERR "%s: GSO size must not be zero.\n",
-		       netif->dev->name);
+		pr_err("%s: GSO size must not be zero.\n", netif->dev->name);
 		netbk_fatal_tx_err(netif);
 		return -EINVAL;
 	}
 
 	/* Currently only TCPv4 S.O. is supported. */
 	if (gso->u.gso.type != XEN_NETIF_GSO_TYPE_TCPV4) {
-		printk(KERN_ERR "%s: Bad GSO type %d.\n",
+		pr_err("%s: Bad GSO type %d.\n",
 		       netif->dev->name, gso->u.gso.type);
 		netbk_fatal_tx_err(netif);
 		return -EINVAL;
@@ -1366,7 +1377,7 @@ static void net_tx_action(unsigned long group)
 
 		if (netif->tx.sring->req_prod - netif->tx.req_cons >
 		    NET_TX_RING_SIZE) {
-			printk(KERN_ERR "%s: Impossible number of requests. "
+			pr_err("%s: Impossible number of requests. "
 			       "req_prod %u, req_cons %u, size %lu\n",
 			       netif->dev->name, netif->tx.sring->req_prod,
 			       netif->tx.req_cons, NET_TX_RING_SIZE);
@@ -1442,7 +1453,7 @@ static void net_tx_action(unsigned long group)
 
 		/* No crossing a page as the payload mustn't fragment. */
 		if (unlikely((txreq.offset + txreq.size) > PAGE_SIZE)) {
-			printk(KERN_ERR "%s: txreq.offset: %x, size: %u, end: %lu\n",
+			pr_err("%s: txreq.offset: %x, size: %u, end: %lu\n",
 			       netif->dev->name, txreq.offset, txreq.size,
 			       (txreq.offset & ~PAGE_MASK) + txreq.size);
 			netbk_fatal_tx_err(netif);
