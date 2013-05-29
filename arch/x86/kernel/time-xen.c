@@ -18,7 +18,7 @@
 #include <linux/posix-timers.h>
 #include <linux/cpufreq.h>
 #include <linux/clocksource.h>
-#include <linux/sysdev.h>
+#include <linux/efi.h>
 
 #include <asm/vsyscall.h>
 #include <asm/delay.h>
@@ -361,6 +361,9 @@ int xen_write_wallclock(unsigned long now)
 #ifdef CONFIG_XEN_PRIVILEGED_GUEST
 	mod_timer(&sync_xen_wallclock_timer, jiffies + 1);
 #endif
+
+	if (efi_enabled)
+		return efi_set_rtc_mmss(now);
 
 	return mach_set_rtc_mmss(now);
 }

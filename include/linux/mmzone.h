@@ -375,6 +375,18 @@ struct zone {
 	 */
 	unsigned int inactive_ratio;
 
+#ifdef __GENKSYMS__
+	/* This is a hole in struct zone that the compaction fields fits in */
+#else
+#if defined CONFIG_COMPACTION || defined CONFIG_CMA
+	/* Set to true when the PG_migrate_skip bits should be cleared */
+	bool			compact_blockskip_flush;
+
+	/* pfns where compaction scanners should start */
+	unsigned long		compact_cached_free_pfn;
+	unsigned long		compact_cached_migrate_pfn;
+#endif
+#endif /* __GENKSYMS__ */
 
 	ZONE_PADDING(_pad2_)
 	/* Rarely used or read-mostly fields */

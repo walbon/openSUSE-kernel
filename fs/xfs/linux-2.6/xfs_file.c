@@ -852,6 +852,7 @@ xfs_file_dio_aio_write(
 	ssize_t			ret = 0;
 	size_t			count = ocount;
 	int			unaligned_io = 0;
+	int			appending_io = 0;
 	struct xfs_buftarg	*target = XFS_IS_REALTIME_INODE(ip) ?
 					mp->m_rtdev_targp : mp->m_ddev_targp;
 
@@ -862,7 +863,10 @@ xfs_file_dio_aio_write(
 	if ((pos & mp->m_blockmask) || ((pos + count) & mp->m_blockmask))
 		unaligned_io = 1;
 
-	if (unaligned_io || mapping->nrpages || pos > ip->i_size)
+	if (pos + count > ip->i_size)
+		appending_io = 1;
+
+	if (unaligned_io || mapping->nrpages || appending_io)
 		*iolock = XFS_IOLOCK_EXCL;
 	else
 		*iolock = XFS_IOLOCK_SHARED;
@@ -896,7 +900,7 @@ xfs_file_dio_aio_write(
 	 */
 	if (unaligned_io)
 		xfs_ioend_wait(ip);
-	else if (*iolock == XFS_IOLOCK_EXCL) {
+	else if (*iolock == XFS_IOLOCK_EXCL && !appending_io) {
 		xfs_rw_ilock_demote(ip, XFS_IOLOCK_EXCL);
 		*iolock = XFS_IOLOCK_SHARED;
 	}

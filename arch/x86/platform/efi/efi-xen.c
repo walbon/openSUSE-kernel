@@ -383,7 +383,6 @@ void __init efi_init(void)
 	early_iounmap(config_tables, info->cfg.nent * sizeof(efi_config_table_t));
 
 	x86_platform.get_wallclock = efi_get_time;
-	x86_platform.set_wallclock = efi_set_rtc_mmss;
 }
 
 void __init efi_enter_virtual_mode(void) { }

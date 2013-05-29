@@ -1963,6 +1963,7 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 				alloc_flags, preferred_zone,
 				migratetype);
 		if (page) {
+			preferred_zone->compact_blockskip_flush = false;
 			preferred_zone->compact_considered = 0;
 			preferred_zone->compact_defer_shift = 0;
 			count_vm_event(COMPACTSUCCESS);
@@ -2161,7 +2162,6 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	unsigned long did_some_progress;
 	bool sync_migration = false;
 	bool deferred_compaction = false;
-	bool first_pass = true;
 	bool contended_compaction = false;
 
 	/*
@@ -2265,12 +2265,11 @@ rebalance:
 	 * allocation now instead of entering direct reclaim. If direct reclaim
 	 * is used, use it only once before bailing.
 	 */
-	if ((first_pass || contended_compaction || deferred_compaction) &&
+	if ((contended_compaction || deferred_compaction) &&
 							(gfp_mask & __GFP_NO_KSWAPD))
 		goto nopage;
 
 	/* Try direct reclaim and then allocating */
-	first_pass = false;
 	page = __alloc_pages_direct_reclaim(gfp_mask, order,
 					zonelist, high_zoneidx,
 					nodemask,
