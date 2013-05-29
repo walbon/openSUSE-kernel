@@ -4106,22 +4106,9 @@ lpfc_sli4_async_fip_evt(struct lpfc_hba *phba,
 			break;
 		}
 
-		/* If FCF has been in discovered state, perform rediscovery
-		 * only if the FCF with the same index of the in-use FCF got
-		 * modified during normal operation. Otherwise, do nothing.
-		 */
-		if (phba->pport->port_state > LPFC_FLOGI) {
+		/* If the FCF has been in discovered state, do nothing. */
+		if (phba->fcf.fcf_flag & FCF_SCAN_DONE) {
 			spin_unlock_irq(&phba->hbalock);
-			if (phba->fcf.current_rec.fcf_indx ==
-			    acqe_fip->index) {
-				lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
-						"3300 In-use FCF (%d) "
-						"modified, perform FCF "
-						"rediscovery\n",
-						acqe_fip->index);
-				lpfc_sli4_perform_inuse_fcf_recovery(phba,
-								     acqe_fip);
-			}
 			break;
 		}
 		spin_unlock_irq(&phba->hbalock);
