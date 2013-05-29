@@ -944,10 +944,6 @@ tty3270_open(struct tty_struct *tty, struct file * filp)
 	if (tty3270_max_index < tty->index + 1)
 		tty3270_max_index = tty->index + 1;
 
-	/* Quick exit if there is no device for tty->index. */
-	if (PTR_ERR(tp) == -ENODEV)
-		return -ENODEV;
-
 	/* Allocate tty3270 structure on first open. */
 	tp = tty3270_alloc_view();
 	if (IS_ERR(tp))
