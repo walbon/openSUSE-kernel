@@ -327,19 +327,19 @@ static int alua_check_tpgs(struct scsi_device *sdev, struct alua_dh_data *h)
 {
 	int err = SCSI_DH_OK;
 
+	if (scsi_is_wlun(sdev->lun)) {
+		h->tpgs = TPGS_MODE_NONE;
+		sdev_printk(KERN_INFO, sdev,
+			    "%s: disable for WLUN\n",
+			    ALUA_DH_NAME);
+		return SCSI_DH_DEV_UNSUPP;
+	}
 	if (sdev->type == TYPE_RAID ||
 	    sdev->type == TYPE_ENCLOSURE ||
 	    sdev->type == 0x1F) {
 		h->tpgs = TPGS_MODE_NONE;
 		sdev_printk(KERN_INFO, sdev,
 			    "%s: disable for enclosure devices\n",
-			    ALUA_DH_NAME);
-		return SCSI_DH_DEV_UNSUPP;
-	}
-	if (scsi_is_wlun(sdev->lun)) {
-		h->tpgs = TPGS_MODE_NONE;
-		sdev_printk(KERN_INFO, sdev,
-			    "%s: disable for WLUN\n",
 			    ALUA_DH_NAME);
 		return SCSI_DH_DEV_UNSUPP;
 	}
