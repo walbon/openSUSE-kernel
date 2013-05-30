@@ -99,13 +99,6 @@ extern void efi_memblock_x86_reserve_range(void);
 extern void efi_call_phys_prelog(void);
 extern void efi_call_phys_epilog(void);
 
-struct efi_var_bootdata {
-	struct setup_data data;
-	u64 store_size;
-	u64 remaining_size;
-	u64 max_var_size;
-};
-
 #ifndef CONFIG_EFI
 /*
  * IF EFI is not configured, have the EFI calls return -ENOSYS.
