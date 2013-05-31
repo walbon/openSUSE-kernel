@@ -2567,7 +2567,6 @@ xfs_bmap_btalloc(
 	args.tp = ap->tp;
 	args.mp = mp;
 	args.fsbno = ap->rval;
-	args.stack_switch = ap->stack_switch;
 
 	/* Trim the allocation back to the maximum an AG can fit. */
 	args.maxlen = MIN(ap->alen, XFS_ALLOC_AG_MAX_USABLE(mp));
@@ -4306,7 +4305,7 @@ xfs_bmap_validate_ret(
  * blocks then the call will fail (return NULLFSBLOCK in "firstblock").
  */
 int					/* error */
-xfs_bmapi(
+__xfs_bmapi(
 	xfs_trans_t	*tp,		/* transaction pointer */
 	xfs_inode_t	*ip,		/* incore inode */
 	xfs_fileoff_t	bno,		/* starting file offs. mapped */
@@ -4606,9 +4605,6 @@ xfs_bmapi(
 				} else
 					bma.aeof = 0;
 
-				if (flags & XFS_BMAPI_STACK_SWITCH)
-					bma.stack_switch = 1;
-
 				/*
 				 * Call allocator.
 				 */
@@ -4893,6 +4889,64 @@ error0:
 		xfs_bmap_validate_ret(orig_bno, orig_len, orig_flags, orig_mval,
 			orig_nmap, *nmap);
 	return error;
+}
+
+static void
+xfs_bmapi_alloc_worker(
+struct work_struct      *work)
+{
+	struct xfs_bmw_wkr	*bw = container_of(work,
+						   struct xfs_bmw_wkr, work);
+	unsigned long		pflags;
+
+	/* we are in a transaction context here */
+	current_set_flags_nested(&pflags, PF_FSTRANS);
+
+	bw->result = __xfs_bmapi(bw->tp, bw->ip, bw->bno, bw->len,
+				       bw->flags, bw->firstblock, bw->total,
+				       bw->mval, bw->nmap, bw->flist);
+	complete(bw->done);
+
+	current_restore_flags_nested(&pflags, PF_FSTRANS);
+}
+
+int
+xfs_bmapi(
+	xfs_trans_t	*tp,		/* transaction pointer */
+	xfs_inode_t	*ip,		/* incore inode */
+	xfs_fileoff_t	bno,		/* starting file offs. mapped */
+	xfs_filblks_t	len,		/* length to map in file */
+	int		flags,		/* XFS_BMAPI_... */
+	xfs_fsblock_t	*firstblock,	/* first allocated block
+					   controls a.g. for allocs */
+	xfs_extlen_t	total,		/* total blocks needed */
+	xfs_bmbt_irec_t	*mval,		/* output: map values */
+	int		*nmap,		/* i/o: mval size/count */
+	xfs_bmap_free_t	*flist)		/* i/o: list extents to free */
+{
+	struct xfs_bmw_wkr	bw;
+	DECLARE_COMPLETION_ONSTACK(done);
+
+	if (!(flags & XFS_BMAPI_STACK_SWITCH)) {
+		return __xfs_bmapi(tp, ip, bno, len, flags, firstblock,
+				   total, mval, nmap, flist);
+	}
+	/* initialize the worker argument list structure */
+	bw.tp = tp;
+	bw.ip = ip;
+	bw.bno = bno;
+	bw.len = len;
+	bw.flags = flags;
+	bw.firstblock = firstblock;
+	bw.total = total;
+	bw.mval = mval;
+	bw.nmap = nmap;
+	bw.flist = flist;
+	bw.done = &done;
+	INIT_WORK_ONSTACK(&bw.work, xfs_bmapi_alloc_worker);
+	queue_work(xfs_alloc_wq, &bw.work);
+	wait_for_completion(&done);
+	return bw.result;
 }
 
 /*

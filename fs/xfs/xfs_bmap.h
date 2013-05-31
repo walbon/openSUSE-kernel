@@ -132,8 +132,23 @@ typedef struct xfs_bmalloca {
 	char			low;	/* low on space, using seq'l ags */
 	char			aeof;	/* allocated space at eof */
 	char			conv;	/* overwriting unwritten extents */
-	char			stack_switch;
 } xfs_bmalloca_t;
+
+struct xfs_bmw_wkr {
+	struct xfs_trans	*tp;		/* transaction pointer */
+	struct xfs_inode	*ip;		/* incore inode */
+	xfs_fileoff_t		bno;		/* starting file offs. mapped */
+	xfs_filblks_t		len;		/* length to map in file */
+	int			flags;		/* XFS_BMAPI_... */
+	xfs_fsblock_t		*firstblock;	/* first allocblock controls */
+	xfs_extlen_t		total;		/* total blocks needed */
+	struct xfs_bmbt_irec	*mval;		/* output: map values */
+	int			*nmap;		/* i/o: mval size/count */
+	struct xfs_bmap_free	*flist;		/* bmap freelist */
+	struct completion	*done;		/* worker completion ptr */
+	struct work_struct	work;		/* worker */
+	int			result;		/* worker function result */
+} ;
 
 /*
  * Flags for xfs_bmap_add_extent*.
