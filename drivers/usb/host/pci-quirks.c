@@ -556,6 +556,16 @@ static const struct dmi_system_id __devinitconst ehci_dmi_nohandoff_table[] = {
 	{ }
 };
 
+static const struct dmi_system_id bt_excepted_from_switch_table[] = {
+	{
+		/* HP ProBook 430 */
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 430 G1"),
+		},
+	},
+	{ }
+};
+
 static void __devinit ehci_bios_handoff(struct pci_dev *pdev,
 					void __iomem *op_reg_base,
 					u32 cap, u8 offset)
@@ -799,6 +809,10 @@ void usb_enable_xhci_ports(struct pci_dev *xhci_pdev)
 
 	dev_dbg(&xhci_pdev->dev, "Configurable USB 2.0 ports to hand over to xCHI: 0x%x\n",
 			ports_available);
+
+	/* this needs to be done in a dirty way to preserve kABI */
+	if (dmi_check_system(bt_excepted_from_switch_table))
+		ports_available &= ~(64 | 8);
 
 	/* Write XUSB2PR, the xHC USB 2.0 Port Routing Register, to
 	 * switch the USB 2.0 power and data lines over to the xHCI

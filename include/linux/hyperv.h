@@ -474,7 +474,7 @@ hv_get_ringbuffer_availbytes(struct hv_ring_buffer_info *rbi,
  *
  * 3.1 - Added completed hv_utils driver. Shutdown/Heartbeat/Timesync
  */
-#define HV_DRV_VERSION           "3.1"
+#define HV_DRV_VERSION           "3.4"
 
 /*
  * VMBUS version is 32 bit entity broken up into
