@@ -1701,12 +1701,28 @@ xfs_init_workqueues(void)
 	xfs_syncd_wq = alloc_workqueue("xfssyncd", WQ_CPU_INTENSIVE, 8);
 	if (!xfs_syncd_wq)
 		return -ENOMEM;
+
+	/*
+	 * The allocation workqueue can be used in memory reclaim situations
+	 * (writepage path), and parallelism is only limited by the number of
+	 * AGs in all the filesystems mounted. Hence use the default large
+	 * max_active value for this workqueue.
+	 */
+	xfs_alloc_wq = alloc_workqueue("xfsalloc", WQ_MEM_RECLAIM, 0);
+	if (!xfs_alloc_wq)
+		goto out_destroy_syncd;
+
 	return 0;
+
+out_destroy_syncd:
+	destroy_workqueue(xfs_syncd_wq);
+	return -ENOMEM;
 }
 
 STATIC void
 xfs_destroy_workqueues(void)
 {
+	destroy_workqueue(xfs_alloc_wq);
 	destroy_workqueue(xfs_syncd_wq);
 }
 
