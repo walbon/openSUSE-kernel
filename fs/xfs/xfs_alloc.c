@@ -35,6 +35,7 @@
 #include "xfs_error.h"
 #include "xfs_trace.h"
 
+struct workqueue_struct *xfs_alloc_wq;
 
 #define XFS_ABSDIFF(a,b)	(((a) <= (b)) ? ((b) - (a)) : ((a) - (b)))
 
@@ -1880,6 +1881,7 @@ xfs_alloc_fix_freelist(
 	/*
 	 * Initialize the args structure.
 	 */
+	memset(&targs, 0, sizeof(targs));
 	targs.tp = tp;
 	targs.mp = mp;
 	targs.agbp = agbp;

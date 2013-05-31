@@ -79,6 +79,7 @@ typedef	struct xfs_bmap_free
  * from written to unwritten, otherwise convert from unwritten to written.
  */
 #define XFS_BMAPI_CONVERT	0x200
+#define XFS_BMAPI_STACK_SWITCH	0x400
 
 #define XFS_BMAPI_FLAGS \
 	{ XFS_BMAPI_WRITE,	"WRITE" }, \
@@ -89,7 +90,8 @@ typedef	struct xfs_bmap_free
 	{ XFS_BMAPI_PREALLOC,	"PREALLOC" }, \
 	{ XFS_BMAPI_IGSTATE,	"IGSTATE" }, \
 	{ XFS_BMAPI_CONTIG,	"CONTIG" }, \
-	{ XFS_BMAPI_CONVERT,	"CONVERT" }
+	{ XFS_BMAPI_CONVERT,	"CONVERT" }, \
+	{ XFS_BMAPI_STACK_SWITCH, "STACK_SWITCH" }
 
 
 static inline int xfs_bmapi_aflag(int w)
@@ -131,6 +133,22 @@ typedef struct xfs_bmalloca {
 	char			aeof;	/* allocated space at eof */
 	char			conv;	/* overwriting unwritten extents */
 } xfs_bmalloca_t;
+
+struct xfs_bmw_wkr {
+	struct xfs_trans	*tp;		/* transaction pointer */
+	struct xfs_inode	*ip;		/* incore inode */
+	xfs_fileoff_t		bno;		/* starting file offs. mapped */
+	xfs_filblks_t		len;		/* length to map in file */
+	int			flags;		/* XFS_BMAPI_... */
+	xfs_fsblock_t		*firstblock;	/* first allocblock controls */
+	xfs_extlen_t		total;		/* total blocks needed */
+	struct xfs_bmbt_irec	*mval;		/* output: map values */
+	int			*nmap;		/* i/o: mval size/count */
+	struct xfs_bmap_free	*flist;		/* bmap freelist */
+	struct completion	*done;		/* worker completion ptr */
+	struct work_struct	work;		/* worker */
+	int			result;		/* worker function result */
+} ;
 
 /*
  * Flags for xfs_bmap_add_extent*.

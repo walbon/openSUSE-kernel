@@ -25,6 +25,8 @@ struct xfs_perag;
 struct xfs_trans;
 struct xfs_busy_extent;
 
+extern struct workqueue_struct *xfs_alloc_wq;
+
 /*
  * Freespace allocation types.  Argument to xfs_alloc_[v]extent.
  */
