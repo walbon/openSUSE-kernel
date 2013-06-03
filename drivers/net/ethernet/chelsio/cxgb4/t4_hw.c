@@ -867,6 +867,18 @@ int t4_check_fw_version(struct adapter *adapter)
 	memcpy(adapter->params.api_vers, api_vers,
 	       sizeof(adapter->params.api_vers));
 
+	if (major < FW_VERSION_MAJOR ||
+	    (major == FW_VERSION_MAJOR && minor < FW_VERSION_MINOR) ||
+	    (major == FW_VERSION_MAJOR && minor == FW_VERSION_MINOR &&
+	     micro < FW_VERSION_MICRO)) {
+		dev_err(adapter->pdev_dev,
+			"Card has fimrware version %u.%u.%u, minimum "
+			"supported firmware is %u.%u.%u.\n", major, minor,
+			micro, FW_VERSION_MAJOR, FW_VERSION_MINOR,
+			FW_VERSION_MICRO);
+		return -EFAULT;
+	}
+
 	if (major != FW_VERSION_MAJOR) {            /* major mismatch - fail */
 		dev_err(adapter->pdev_dev,
 			"card FW has major version %u, driver wants %u\n",
