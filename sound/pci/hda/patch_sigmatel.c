@@ -3161,7 +3161,8 @@ static int create_controls_idx(struct hda_codec *codec, const char *pfx,
 	char name[32];
 	int err;
 
-	if (!spec->check_volume_offset) {
+	if (!spec->check_volume_offset &&
+	    snd_hda_get_bool_hint(codec, "check_volume_offset") != 0) {
 		unsigned int caps, step, nums, db_scale;
 		caps = query_amp_caps(codec, nid, HDA_OUTPUT);
 		step = (caps & AC_AMPCAP_STEP_SIZE) >>
