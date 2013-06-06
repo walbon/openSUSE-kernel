@@ -5480,7 +5480,7 @@ static int get_bitmap_file(mddev_t * mddev, void __user * arg)
 	char *ptr, *buf = NULL;
 	int err = -ENOMEM;
 
-	if (md_allow_write(mddev))
+	if (mddev && md_allow_write(mddev))
 		file = kmalloc(sizeof(*file), GFP_NOIO);
 	else
 		file = kmalloc(sizeof(*file), GFP_KERNEL);
@@ -5489,7 +5489,7 @@ static int get_bitmap_file(mddev_t * mddev, void __user * arg)
 		goto out;
 
 	/* bitmap disabled, zero the first byte and copy out */
-	if (!mddev->bitmap || !mddev->bitmap->storage.file) {
+	if (!mddev || !mddev->bitmap || !mddev->bitmap->storage.file) {
 		file->pathname[0] = '\0';
 		goto copy_out;
 	}
@@ -6237,12 +6237,9 @@ static int md_ioctl(struct block_device *bdev, fmode_t mode,
 
 		case GET_BITMAP_FILE:
 			mddev = mddev_get_safe(bdev->bd_disk->private_data);
-			err = -ENODEV;
-			if (!mddev)
-				goto abort;
-			if (mddev->raid_disks || mddev->external)
-				err = get_bitmap_file(mddev, argp);
-			mddev_put(mddev);
+			err = get_bitmap_file(mddev, argp);
+			if (mddev)
+				mddev_put(mddev);
 			goto abort;
 
 		case GET_DISK_INFO:
