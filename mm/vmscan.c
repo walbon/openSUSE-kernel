@@ -1489,13 +1489,11 @@ shrink_inactive_list(unsigned long nr_to_scan, struct zone *zone,
 	/*
 	 * Similarly, if many dirty pages are encountered that are not
 	 * currently being written then flag that kswapd should start
-	 * writing back pages and stall to give a chance for flushers
-	 * to catch up.
+	 * writing back pages.
 	 */
-	if (scanning_global_lru(sc) && nr_dirty == nr_taken) {
-		congestion_wait(BLK_RW_ASYNC, HZ/10);
+	if (scanning_global_lru(sc) && nr_dirty &&
+			nr_dirty >= (nr_taken >> (DEF_PRIORITY - sc->priority)))
 		zone_set_flag(zone, ZONE_TAIL_LRU_DIRTY);
-	}
 
 	trace_mm_vmscan_lru_shrink_inactive(zone->zone_pgdat->node_id,
 		zone_idx(zone),
