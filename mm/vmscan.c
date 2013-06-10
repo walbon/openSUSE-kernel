@@ -720,7 +720,9 @@ static noinline_for_stack void free_page_list(struct list_head *free_pages)
 static unsigned long shrink_page_list(struct list_head *page_list,
 				      struct zone *zone,
 				      struct scan_control *sc,
+				      unsigned long *ret_nr_dirty,
 				      unsigned long *ret_nr_unqueued_dirty,
+				      unsigned long *ret_nr_congested,
 				      unsigned long *ret_nr_writeback,
 				      unsigned long *ret_nr_immediate)
 {
@@ -1039,19 +1041,12 @@ keep:
 		VM_BUG_ON(PageLRU(page) || PageUnevictable(page));
 	}
 
-	/*
-	 * Tag a zone as congested if all the dirty pages encountered were
-	 * backed by a congested BDI. In this case, reclaimers should just
-	 * back off and wait for congestion to clear because further reclaim
-	 * will encounter the same problem
-	 */
-	if (nr_dirty && nr_dirty == nr_congested && scanning_global_lru(sc))
-		zone_set_flag(zone, ZONE_CONGESTED);
-
 	free_page_list(&free_pages);
 
 	list_splice(&ret_pages, page_list);
 	count_vm_events(PGACTIVATE, pgactivate);
+	*ret_nr_dirty += nr_dirty;
+	*ret_nr_congested += nr_congested;
 	*ret_nr_unqueued_dirty += nr_unqueued_dirty;
 	*ret_nr_writeback += nr_writeback;
 	*ret_nr_immediate += nr_immediate;
@@ -1431,6 +1426,8 @@ shrink_inactive_list(unsigned long nr_to_scan, struct zone *zone,
 	unsigned long nr_taken;
 	unsigned long nr_anon;
 	unsigned long nr_file;
+	unsigned long nr_dirty = 0;
+	unsigned long nr_congested = 0;
 	unsigned long nr_unqueued_dirty = 0;
 	unsigned long nr_writeback = 0;
 	unsigned long nr_immediate = 0;
@@ -1483,8 +1480,9 @@ shrink_inactive_list(unsigned long nr_to_scan, struct zone *zone,
 	spin_unlock_irq(&zone->lru_lock);
 
 	nr_reclaimed = shrink_page_list(&page_list, zone, sc,
-			&nr_unqueued_dirty, &nr_writeback, &nr_immediate
-			);
+				&nr_dirty, &nr_unqueued_dirty, &nr_congested,
+				&nr_writeback, &nr_immediate
+				);
 
 	local_irq_disable();
 	if (current_is_kswapd())
@@ -1504,7 +1502,7 @@ shrink_inactive_list(unsigned long nr_to_scan, struct zone *zone,
 	 * same way balance_dirty_pages() manages.
 	 *
 	 * This scales the number of dirty pages that must be under writeback
-	 * before throttling depending on priority. It is a simple backoff
+	 * before a zone gets flagged ZONE_WRITEBACK. It is a simple backoff
 	 * function that has the most effect in the range DEF_PRIORITY to
 	 * DEF_PRIORITY-2 which is the priority reclaim is considered to be
 	 * in trouble and reclaim is considered to be in trouble.
@@ -1515,18 +1513,27 @@ shrink_inactive_list(unsigned long nr_to_scan, struct zone *zone,
 	 * ...
 	 * DEF_PRIORITY-6 For SWAP_CLUSTER_MAX isolated pages, throttle if any
 	 *                     isolated page is PageWriteback
+	 *
+	 * Once a zone is flagged ZONE_WRITEBACK, kswapd will count the number
+	 * of pages under pages flagged for immediate reclaim and stall if any
+	 * are encountered in the nr_immediate check below.
 	 */
 	if (nr_writeback && nr_writeback >=
-			(nr_taken >> (DEF_PRIORITY - sc->priority))) {
+			(nr_taken >> (DEF_PRIORITY - sc->priority)))
 		zone_set_flag(zone, ZONE_WRITEBACK);
-		wait_iff_congested(zone, BLK_RW_ASYNC, HZ/10);
-	}
 
 	/*
 	 * memcg will stall in page writeback so only consider forcibly
 	 * stalling for global reclaim
 	 */
 	if (scanning_global_lru(sc)) {
+		/*
+		 * Tag a zone as congested if all the dirty pages scanned were
+		 * backed by a congested BDI and wait_iff_congested will stall.
+		 */
+		if (nr_dirty && nr_dirty == nr_congested)
+			zone_set_flag(zone, ZONE_CONGESTED);
+
 		/*
 		 * If dirty pages are scanned that are not queued for IO, it
 		 * implies that flushers are not keeping up. In this case, flag
@@ -1546,6 +1553,14 @@ shrink_inactive_list(unsigned long nr_to_scan, struct zone *zone,
 		if (nr_unqueued_dirty == nr_taken || nr_immediate)
 			congestion_wait(BLK_RW_ASYNC, HZ/10);
 	}
+
+	/*
+	 * Stall direct reclaim for IO completions if underlying BDIs or zone
+	 * is congested. Allow kswapd to continue until it starts encountering
+	 * unqueued dirty pages or cycling through the LRU too quickly.
+	 */
+	if (!sc->hibernation_mode && !current_is_kswapd())
+		wait_iff_congested(zone, BLK_RW_ASYNC, HZ/10);
 
 	trace_mm_vmscan_lru_shrink_inactive(zone->zone_pgdat->node_id,
 		zone_idx(zone),
@@ -2351,17 +2366,6 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 		if (total_scanned > writeback_threshold) {
 			wakeup_flusher_threads(laptop_mode ? 0 : total_scanned);
 			sc->may_writepage = 1;
-		}
-
-		/* Take a nap, wait for some writeback to complete */
-		if (!sc->hibernation_mode && sc->nr_scanned &&
-		    sc->priority < DEF_PRIORITY - 2) {
-			struct zone *preferred_zone;
-
-			first_zones_zonelist(zonelist, gfp_zone(sc->gfp_mask),
-						&cpuset_current_mems_allowed,
-						&preferred_zone);
-			wait_iff_congested(preferred_zone, BLK_RW_ASYNC, HZ/10);
 		}
 	} while (--sc->priority >= 0);
 
