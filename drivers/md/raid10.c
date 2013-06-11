@@ -63,7 +63,7 @@
 
 static void allow_barrier(conf_t *conf);
 static void lower_barrier(conf_t *conf);
-static int enough(conf_t *conf, int ignore);
+static int _enough(conf_t *conf, struct geom *geo, int ignore);
 static sector_t reshape_request(mddev_t *mddev, sector_t sector_nr,
 				int *skipped);
 static void reshape_request_write(mddev_t *mddev, struct r10bio_s *r10_bio);
@@ -302,7 +302,10 @@ static void raid10_end_read_request(struct bio *bio, int error)
 		 */
 		unsigned long flags;
 		spin_lock_irqsave(&conf->device_lock, flags);
-		if (!enough(conf, dev))
+		if (!_enough(conf,
+			     test_bit(R10BIO_Previous, &r10_bio->state)
+			     ? &conf->prev : &conf->geo,
+			     dev))
 			uptodate = 1;
 		spin_unlock_irqrestore(&conf->device_lock, flags);
 	}
@@ -897,7 +900,6 @@ static sector_t choose_data_offset(r10bio_t *r10_bio,
 		return rdev->new_data_offset;
 }
 
-static int enough(conf_t *conf, int ignore);
 static int make_request(mddev_t *mddev, struct bio * bio)
 {
 	conf_t *conf = mddev->private;
@@ -1121,7 +1123,10 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 		mbio->bi_end_io	= raid10_end_write_request;
 		mbio->bi_rw = WRITE | do_sync | do_fua;
 		if (test_bit(FailFast, &conf->mirrors[d].rdev->flags) &&
-		    enough(conf, d))
+		    _enough(conf,
+			    test_bit(R10BIO_Previous, &r10_bio->state)
+			    ? &conf->prev : &conf->geo,
+			    d))
 			mbio->bi_rw |= REQ_FAILFAST_DEV;
 		mbio->bi_private = r10_bio;
 
@@ -1187,20 +1192,24 @@ static int _enough(conf_t *conf, struct geom *geo, int ignore)
 {
 	int first = 0;
 
+	rcu_read_lock();
 	do {
 		int n = conf->copies;
 		int cnt = 0;
 		while (n--) {
-			mdk_rdev_t *rdev = conf->mirrors[first].rdev;
+			mdk_rdev_t *rdev = rcu_dereference(conf->mirrors[first].rdev);
 			if (rdev &&
 			    test_bit(In_sync, &rdev->flags) &&
 			    first != ignore)
 				cnt++;
 			first = (first+1) % geo->raid_disks;
 		}
-		if (cnt == 0)
+		if (cnt == 0) {
+			rcu_read_unlock();
 			return 0;
+		}
 	} while (first != 0);
+	rcu_read_unlock();
 	return 1;
 }
 static int enough(conf_t *conf, int ignore)
