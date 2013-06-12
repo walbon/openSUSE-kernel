@@ -222,7 +222,7 @@ static efi_status_t xen_efi_get_next_variable(unsigned long *name_size,
 	}
 
 	if (boot_used_size && !finished) {
-		unsigned long size;
+		unsigned long size = 0;
 		u32 attr;
 		efi_status_t s;
 		void *tmp;
@@ -565,7 +565,6 @@ void __init efi_init(void)
 	boot_used_size = efi_var_store_size - efi_var_remaining_size;
 
 	x86_platform.get_wallclock = efi_get_time;
-	x86_platform.set_wallclock = efi_set_rtc_mmss;
 }
 
 #undef DECLARE_CALL

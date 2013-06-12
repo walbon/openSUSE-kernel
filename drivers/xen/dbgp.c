@@ -46,7 +46,7 @@ int xen_dbgp_external_startup(struct usb_hcd *hcd)
 }
 
 #ifndef CONFIG_EARLY_PRINTK_DBGP
-#include <linux/export.h>
+#include <linux/module.h>
 EXPORT_SYMBOL_GPL(xen_dbgp_reset_prep);
 EXPORT_SYMBOL_GPL(xen_dbgp_external_startup);
 #endif
