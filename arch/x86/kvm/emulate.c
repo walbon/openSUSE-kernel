@@ -91,12 +91,12 @@
 #define Priv        (1<<27) /* instruction generates #GP if current CPL != 0 */
 #define No64	    (1<<28)
 /* Source 2 operand type */
-#define Src2None    (0<<29)
-#define Src2CL      (1<<29)
-#define Src2ImmByte (2<<29)
-#define Src2One     (3<<29)
-#define Src2Imm     (4<<29)
-#define Src2Mask    (7<<29)
+#define Src2None    (0u<<29)
+#define Src2CL      (1u<<29)
+#define Src2ImmByte (2u<<29)
+#define Src2One     (3u<<29)
+#define Src2Imm     (4u<<29)
+#define Src2Mask    (7u<<29)
 
 #define X2(x...) x, x
 #define X3(x...) X2(x), x
@@ -108,8 +108,8 @@
 #define X16(x...) X8(x), X8(x)
 
 struct opcode {
-	u32 flags;
-	u8 intercept;
+	u64 flags : 56;
+	u64 intercept : 8;
 	union {
 		int (*execute)(struct x86_emulate_ctxt *ctxt);
 		struct opcode *group;
@@ -3550,7 +3550,7 @@ done_prefixes:
 			return X86EMUL_UNHANDLEABLE;
 		}
 
-		c->d &= ~GroupMask;
+		c->d &= ~(u64)GroupMask;
 		c->d |= opcode.flags;
 	}
 
