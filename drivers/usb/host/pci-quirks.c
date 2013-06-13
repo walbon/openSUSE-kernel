@@ -562,6 +562,14 @@ static const struct dmi_system_id bt_excepted_from_switch_table[] = {
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 430 G1"),
 		},
+		.driver_data = (void *)(64 | 8),
+	},
+	{
+		/* HP EliteBook 840 */
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP EliteBook 840 G1"),
+		},
+		.driver_data = (void *)64,
 	},
 	{ }
 };
@@ -778,6 +786,7 @@ void usb_enable_xhci_ports(struct pci_dev *xhci_pdev)
 {
 #if defined(CONFIG_USB_XHCI_HCD) || defined(CONFIG_USB_XHCI_HCD_MODULE)
 	u32		ports_available;
+	const struct dmi_system_id	*id;
 
 	/* Read USB3PRM, the USB 3.0 Port Routing Mask Register
 	 * Indicate the ports that can be changed from OS.
@@ -811,8 +820,11 @@ void usb_enable_xhci_ports(struct pci_dev *xhci_pdev)
 			ports_available);
 
 	/* this needs to be done in a dirty way to preserve kABI */
-	if (dmi_check_system(bt_excepted_from_switch_table))
-		ports_available &= ~(64 | 8);
+	id = dmi_first_match(bt_excepted_from_switch_table);
+	if (id) {
+		long  expected = (long)id->driver_data;
+		ports_available &= ~expected;
+	}
 
 	/* Write XUSB2PR, the xHC USB 2.0 Port Routing Register, to
 	 * switch the USB 2.0 power and data lines over to the xHCI
