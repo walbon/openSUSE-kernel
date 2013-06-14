@@ -184,6 +184,12 @@ int pstore_register(struct pstore_info *psi)
 		return -EBUSY;
 	}
 
+	if (!backend && !strcmp(psi->name, "erst")) {
+		pr_info("ERST pstore disabled, enforce via pstore.backend=erst");
+		spin_unlock(&pstore_lock);
+		return -EINVAL;
+	}
+
 	if (!backend && !strcmp(psi->name, "efi")) {
 		pr_info("Efi pstore disabled, enforce via pstore.backend=efi");
 		spin_unlock(&pstore_lock);
