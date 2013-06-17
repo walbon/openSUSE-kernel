@@ -571,6 +571,13 @@ static const struct dmi_system_id bt_excepted_from_switch_table[] = {
 		},
 		.driver_data = (void *)64,
 	},
+	{
+		/* HP EliteBook 8580 */
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP EliteBook 8580w"),
+		},
+		.driver_data = (void *)64,
+	},
 	{ }
 };
 
