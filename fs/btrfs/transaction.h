@@ -58,6 +58,7 @@ struct btrfs_trans_handle {
 	struct btrfs_block_rsv *orig_rsv;
 	int aborted;
 	bool allocating_chunk;
+	struct list_head new_bgs;
 };
 
 struct btrfs_pending_snapshot {

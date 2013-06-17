@@ -998,8 +998,17 @@ struct btrfs_block_group_cache {
 	 * Today it will only have one thing on it, but that may change
 	 */
 	struct list_head cluster_list;
+
+	/* For delayed block group creation */
+	struct list_head new_bg_list;
 };
 
+enum btrfs_orphan_cleanup_state {
+	ORPHAN_CLEANUP_STARTED	= 1,
+	ORPHAN_CLEANUP_DONE	= 2,
+};
+
+/* fs_info */
 struct reloc_control;
 struct btrfs_device;
 struct btrfs_fs_devices;
@@ -1180,7 +1189,6 @@ struct btrfs_fs_info {
 	int do_barriers;
 	int closing;
 	int log_root_recovering;
-	int enospc_unlink;
 	int trans_no_join;
 
 	u64 total_pinned;
@@ -2516,6 +2524,8 @@ int btrfs_make_block_group(struct btrfs_trans_handle *trans,
 			   u64 size);
 int btrfs_remove_block_group(struct btrfs_trans_handle *trans,
 			     struct btrfs_root *root, u64 group_start);
+void btrfs_create_pending_block_groups(struct btrfs_trans_handle *trans,
+				       struct btrfs_root *root);
 u64 btrfs_reduce_alloc_profile(struct btrfs_root *root, u64 flags);
 u64 btrfs_get_alloc_profile(struct btrfs_root *root, int data);
 void btrfs_set_inode_space_info(struct btrfs_root *root, struct inode *ionde);
@@ -2554,6 +2564,9 @@ int btrfs_block_rsv_refill_noflush(struct btrfs_root *root,
 int btrfs_block_rsv_migrate(struct btrfs_block_rsv *src_rsv,
 			    struct btrfs_block_rsv *dst_rsv,
 			    u64 num_bytes);
+int btrfs_cond_migrate_bytes(struct btrfs_fs_info *fs_info,
+			     struct btrfs_block_rsv *dest, u64 num_bytes,
+			     int min_factor);
 void btrfs_block_rsv_release(struct btrfs_root *root,
 			     struct btrfs_block_rsv *block_rsv,
 			     u64 num_bytes);
