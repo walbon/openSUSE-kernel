@@ -876,6 +876,8 @@ static unsigned alua_stpg(struct scsi_device *sdev, struct alua_port_group *pg)
 		return SCSI_DH_RETRY;
 	}
 	switch (pg->state) {
+	case TPGS_STATE_OPTIMIZED:
+		return SCSI_DH_OK;
 	case TPGS_STATE_NONOPTIMIZED:
 		if ((pg->flags & ALUA_OPTIMIZE_STPG) &&
 		    (!pg->pref) &&
@@ -890,10 +892,11 @@ static unsigned alua_stpg(struct scsi_device *sdev, struct alua_port_group *pg)
 		break;
 	case TPGS_STATE_TRANSITIONING:
 		return SCSI_DH_RETRY;
-		break;
 	default:
+		sdev_printk(KERN_INFO, sdev,
+			    "%s: stpg failed, unhandled TPGS state %d",
+			    ALUA_DH_NAME, pg->state);
 		return SCSI_DH_NOSYS;
-		break;
 	}
 	retval = submit_stpg(sdev, pg->group_id, sense);
 
