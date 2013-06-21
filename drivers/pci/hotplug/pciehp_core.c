@@ -356,14 +356,14 @@ static struct dmi_system_id __initdata pcieph_dmi_surprise_table[] = {
 		/* HP Probook 445 */
 		.ident = "HP ProBook 445",
 		.matches = {
-			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 445 G1 Notebook PC"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 445 G1"),
 		},
 	},
 	{
 		/* HP Probook 455 */
 		.ident = "HP ProBook 455",
 		.matches = {
-			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 455 G1 Notebook PC"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 455 G1"),
 		},
 	},
 	{} /* terminating entry */
