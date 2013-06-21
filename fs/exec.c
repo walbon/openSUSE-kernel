@@ -56,6 +56,8 @@
 #include <linux/oom.h>
 #include <linux/compat.h>
 
+#include <trace/events/fs-open.h>
+
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
 #include <asm/tlb.h>
@@ -139,6 +141,8 @@ SYSCALL_DEFINE1(uselib, const char __user *, library)
 		goto exit;
 
 	fsnotify_open(file);
+
+	trace_uselib(file);
 
 	error = -ENOEXEC;
 	if(file->f_op) {
@@ -788,6 +792,8 @@ struct file *open_exec(const char *name)
 		goto exit;
 
 	fsnotify_open(file);
+
+	trace_open_exec(file);
 
 	if (file->f_op && file->f_op->open_exec) {
 		err = file->f_op->open_exec(file->f_path.dentry->d_inode);
