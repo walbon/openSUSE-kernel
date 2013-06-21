@@ -217,6 +217,7 @@ struct via_spec {
 	int hp_work_active;
 	int vt1708_jack_detect;
 	int vt1708_hp_present;
+	bool mute_via_amp;
 
 	void (*set_widgets_power_state)(struct hda_codec *codec);
 
@@ -1643,7 +1644,7 @@ static void via_free(struct hda_codec *codec)
 }
 
 /* mute/unmute outputs */
-static void toggle_output_mutes(struct hda_codec *codec, int num_pins,
+static void toggle_output_mutes_via_pin(struct hda_codec *codec, int num_pins,
 				hda_nid_t *pins, bool mute)
 {
 	int i;
@@ -1658,6 +1659,30 @@ static void toggle_output_mutes(struct hda_codec *codec, int num_pins,
 			parm |= AC_PINCTL_OUT_EN;
 		snd_hda_set_pin_ctl(codec, pins[i], parm);
 	}
+}
+
+static void toggle_output_mutes_via_amp(struct hda_codec *codec, int num_pins,
+				hda_nid_t *pins, bool mute)
+{
+	int i, ch;
+	for (i = 0; i < num_pins; i++) {
+		for (ch = 0; ch < 2; ch++) {
+			snd_hda_codec_amp_update(codec, pins[i], ch,
+						 HDA_OUTPUT, 0, 0x80,
+						 mute ? 0x80 : 0x00);
+		}
+	}
+}
+
+static void toggle_output_mutes(struct hda_codec *codec, int num_pins,
+				hda_nid_t *pins, bool mute)
+{
+	struct via_spec *spec = codec->spec;
+
+	if (spec->mute_via_amp)
+		toggle_output_mutes_via_amp(codec, num_pins, pins, mute);
+	else
+		toggle_output_mutes_via_pin(codec, num_pins, pins, mute);
 }
 
 /* mute internal speaker if line-out is plugged */
@@ -1860,7 +1885,8 @@ static int via_auto_fill_dac_nids(struct hda_codec *codec)
 }
 
 static int create_ch_ctls(struct hda_codec *codec, const char *pfx,
-			  int chs, bool check_dac, struct nid_path *path)
+			  int chs, bool check_dac, struct nid_path *path,
+			  bool check_mute_via_amp)
 {
 	struct via_spec *spec = codec->spec;
 	char name[32];
@@ -1887,6 +1913,9 @@ static int create_ch_ctls(struct hda_codec *codec, const char *pfx,
 			return err;
 		path->vol_ctl = nid;
 	}
+
+	if (check_mute_via_amp && spec->mute_via_amp)
+		return 0; /* no mute */
 
 	if (dac && check_amp_caps(codec, dac, HDA_OUTPUT, AC_AMPCAP_MUTE))
 		nid = dac;
@@ -1985,10 +2014,10 @@ static int via_auto_create_multi_out_ctls(struct hda_codec *codec)
 			continue;
 		path = spec->out_path + i;
 		if (i == HDA_CLFE) {
-			err = create_ch_ctls(codec, "Center", 1, true, path);
+			err = create_ch_ctls(codec, "Center", 1, true, path, true);
 			if (err < 0)
 				return err;
-			err = create_ch_ctls(codec, "LFE", 2, true, path);
+			err = create_ch_ctls(codec, "LFE", 2, true, path, true);
 			if (err < 0)
 				return err;
 		} else {
@@ -1996,7 +2025,7 @@ static int via_auto_create_multi_out_ctls(struct hda_codec *codec)
 			if (cfg->line_out_type == AUTO_PIN_SPEAKER_OUT &&
 			    cfg->line_outs == 1)
 				pfx = "Speaker";
-			err = create_ch_ctls(codec, pfx, 3, true, path);
+			err = create_ch_ctls(codec, pfx, 3, true, path, true);
 			if (err < 0)
 				return err;
 		}
@@ -2075,7 +2104,7 @@ static int via_auto_create_hp_ctls(struct hda_codec *codec, hda_nid_t pin)
 		path = &spec->hp_mix_path;
 		check_dac = false;
 	}
-	err = create_ch_ctls(codec, "Headphone", 3, check_dac, path);
+	err = create_ch_ctls(codec, "Headphone", 3, check_dac, path, false);
 	if (err < 0)
 		return err;
 	if (check_dac)
@@ -2126,7 +2155,7 @@ static int via_auto_create_speaker_ctls(struct hda_codec *codec)
 		path = &spec->speaker_mix_path;
 		check_dac = false;
 	}
-	err = create_ch_ctls(codec, "Speaker", 3, check_dac, path);
+	err = create_ch_ctls(codec, "Speaker", 3, check_dac, path, true);
 	if (err < 0)
 		return err;
 	if (check_dac)
@@ -2844,6 +2873,7 @@ static int patch_vt1708(struct hda_codec *codec)
 
 	codec->jackpoll = 1;
 	spec->vt1708_jack_detect = 1;
+	spec->mute_via_amp = 1;
 
 	/* Add HP and CD pin config connect bit re-config action */
 	vt1708_set_pinconfig_connect(codec, VT1708_HP_PIN_NID);
