@@ -53,6 +53,9 @@
 #undef __string
 #define __string(item, src) __dynamic_array(char, item, -1)
 
+#undef __file_p
+#define __file_p(item, src) __dynamic_array(char, item, -1)
+
 #undef TP_STRUCT__entry
 #define TP_STRUCT__entry(args...) args
 
@@ -119,6 +122,10 @@
 
 #undef __string
 #define __string(item, src) __dynamic_array(char, item, -1)
+
+#undef __file_p
+#define __file_p(item, src)			int item; \
+						int item##__size;
 
 #undef DECLARE_EVENT_CLASS
 #define DECLARE_EVENT_CLASS(call, proto, args, tstruct, assign, print)	\
@@ -333,6 +340,9 @@ static struct trace_event_functions ftrace_event_type_funcs_##call = {	\
 #undef __string
 #define __string(item, src) __dynamic_array(char, item, -1)
 
+#undef __file_p
+#define __file_p(item, src) __dynamic_array(char, item, -1)
+
 #undef DECLARE_EVENT_CLASS
 #define DECLARE_EVENT_CLASS(call, proto, args, tstruct, func, print)	\
 static int notrace							\
@@ -380,6 +390,13 @@ ftrace_define_fields_##call(struct ftrace_event_call *event_call)	\
 
 #undef __string
 #define __string(item, src) __dynamic_array(char, item, strlen(src) + 1)
+
+#undef __file_p
+#define __file_p(item, src)						\
+	__data_offsets->item = __data_size +				\
+			       offsetof(typeof(*entry), __data);	\
+	__data_offsets->item##__size = ftrace_file_name_len(src);	\
+	__data_size += __data_offsets->item##__size;
 
 #undef DECLARE_EVENT_CLASS
 #define DECLARE_EVENT_CLASS(call, proto, args, tstruct, assign, print)	\
@@ -502,9 +519,16 @@ static inline notrace int ftrace_get_offsets_##call(			\
 #undef __string
 #define __string(item, src) __dynamic_array(char, item, -1)       	\
 
+#undef __file_p
+#define __file_p(item, src) __dynamic_array(char, item, -1)       	\
+
 #undef __assign_str
 #define __assign_str(dst, src)						\
 	strcpy(__get_str(dst), src);
+
+#undef __assign_file_p
+#define __assign_file_p(dst, src)					\
+	ftrace_assign_file(__get_str (dst), __data_offsets.dst##__size, src);
 
 #undef TP_fast_assign
 #define TP_fast_assign(args...) args
