@@ -305,7 +305,14 @@ static void queue_io(struct bdi_writeback *wb, unsigned long *older_than_this)
 {
 	assert_spin_locked(&wb->list_lock);
 	list_splice_init(&wb->b_more_io, &wb->b_io);
-	move_expired_inodes(&wb->b_dirty, &wb->b_io, older_than_this);
+	/*
+	 * If we want all inodes and we don't have to sort superblocks, just
+	 * splice the list
+	 */
+	if (!older_than_this && !test_bit(BDI_multiple_sb, &wb->bdi->state))
+		list_splice_init(&wb->b_dirty, &wb->b_io);
+	else
+		move_expired_inodes(&wb->b_dirty, &wb->b_io, older_than_this);
 }
 
 static int write_inode(struct inode *inode, struct writeback_control *wbc)
@@ -521,6 +528,15 @@ static int writeback_sb_inodes(struct super_block *sb, struct bdi_writeback *wb,
 		struct inode *inode = wb_inode(wb->b_io.prev);
 
 		if (inode->i_sb != sb) {
+			/*
+			 * Really two different filesystem superblocks? Mark
+			 * the bdi as such so that we sort inodes by sb from
+			 * now on.
+			 */
+			if (inode->i_sb != blockdev_superblock &&
+			    sb != blockdev_superblock &&
+			    !test_bit(BDI_multiple_sb, &wb->bdi->state))
+				set_bit(BDI_multiple_sb, &wb->bdi->state);
 			if (only_this_sb) {
 				/*
 				 * We only want to write back data for this

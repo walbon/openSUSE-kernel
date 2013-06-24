@@ -32,6 +32,7 @@ enum bdi_state {
 	BDI_sync_congested,	/* The sync queue is getting full */
 	BDI_registered,		/* bdi_register() was done */
 	BDI_writeback_running,	/* Writeback is in progress */
+	BDI_multiple_sb,	/* Multiple superblocks belong to this bdi */
 	BDI_unused,		/* Available bits start here */
 };
 
