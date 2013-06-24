@@ -245,6 +245,8 @@ static bool inode_dirtied_after(struct inode *inode, unsigned long t)
 	return ret;
 }
 
+extern struct super_block *blockdev_superblock;
+
 /*
  * Move expired dirty inodes from @delaying_queue to @dispatch_queue.
  */
@@ -263,10 +265,12 @@ static void move_expired_inodes(struct list_head *delaying_queue,
 		if (older_than_this &&
 		    inode_dirtied_after(inode, *older_than_this))
 			break;
+		list_move(&inode->i_wb_list, &tmp);
+		if (inode->i_sb == blockdev_superblock)
+			continue;
 		if (sb && sb != inode->i_sb)
 			do_sb_sort = 1;
 		sb = inode->i_sb;
-		list_move(&inode->i_wb_list, &tmp);
 	}
 
 	/* just one sb in list, splice to dispatch_queue and we're done */
