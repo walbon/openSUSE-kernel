@@ -292,6 +292,19 @@ struct zone_reclaim_stat {
 	unsigned long		recent_scanned[2];
 };
 
+struct compact_cached {
+	/* Set to true when the PG_migrate_skip bits should be cleared */
+	bool			blockskip_flush;
+
+	/* pfns where compaction scanners should start */
+	unsigned long		free_pfn;
+	unsigned long		migrate_pfn;
+};
+
+struct zone_kabi_workaround {
+	struct compact_cached compact_cached;
+};
+
 struct zone {
 	/* Fields commonly accessed by the page allocator */
 
@@ -375,19 +388,6 @@ struct zone {
 	 */
 	unsigned int inactive_ratio;
 
-#ifdef __GENKSYMS__
-	/* This is a hole in struct zone that the compaction fields fits in */
-#else
-#if defined CONFIG_COMPACTION || defined CONFIG_CMA
-	/* Set to true when the PG_migrate_skip bits should be cleared */
-	bool			compact_blockskip_flush;
-
-	/* pfns where compaction scanners should start */
-	unsigned long		compact_cached_free_pfn;
-	unsigned long		compact_cached_migrate_pfn;
-#endif
-#endif /* __GENKSYMS__ */
-
 	ZONE_PADDING(_pad2_)
 	/* Rarely used or read-mostly fields */
 
@@ -443,7 +443,17 @@ struct zone {
 	 * rarely used fields:
 	 */
 	const char		*name;
+#ifdef __GENKSYMS__
 	void *suse_kabi_padding;
+#else
+	/*
+	 * kabi padding is now in use for bnc#816451. Take special care if
+	 * expanding the structure that the layout of struct zone does not
+	 * change.
+	 */
+	struct zone_kabi_workaround *kabi_workaround;
+#endif
+
 } ____cacheline_internodealigned_in_smp;
 
 typedef enum {
