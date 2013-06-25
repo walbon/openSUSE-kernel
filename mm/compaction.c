@@ -93,9 +93,9 @@ static void __reset_isolation_suitable(struct zone *zone)
 	unsigned long end_pfn = zone->zone_start_pfn + zone->spanned_pages;
 	unsigned long pfn;
 
-	zone->compact_cached_migrate_pfn = start_pfn;
-	zone->compact_cached_free_pfn = end_pfn;
-	zone->compact_blockskip_flush = false;
+	zone->kabi_workaround->compact_cached.migrate_pfn = start_pfn;
+	zone->kabi_workaround->compact_cached.free_pfn = end_pfn;
+	zone->kabi_workaround->compact_cached.blockskip_flush = false;
 
 	/* Walk the zone and mark every pageblock as suitable for isolation */
 	for (pfn = start_pfn; pfn < end_pfn; pfn += pageblock_nr_pages) {
@@ -120,11 +120,11 @@ void reset_isolation_suitable(pg_data_t *pgdat)
 
 	for (zoneid = 0; zoneid < MAX_NR_ZONES; zoneid++) {
 		struct zone *zone = &pgdat->node_zones[zoneid];
-		if (!populated_zone(zone))
+		if (!populated_zone(zone) || !zone->kabi_workaround)
 			continue;
 
 		/* Only flush if a full compaction finished recently */
-		if (zone->compact_blockskip_flush)
+		if (zone->kabi_workaround->compact_cached.blockskip_flush)
 			__reset_isolation_suitable(zone);
 	}
 }
@@ -148,12 +148,12 @@ static void update_pageblock_skip(struct compact_control *cc,
 		/* Update where compaction should restart */
 		if (migrate_scanner) {
 			if (!cc->finished_update_migrate &&
-			    pfn > zone->compact_cached_migrate_pfn)
-				zone->compact_cached_migrate_pfn = pfn;
+			    pfn > zone->kabi_workaround->compact_cached.migrate_pfn)
+				zone->kabi_workaround->compact_cached.migrate_pfn = pfn;
 		} else {
 			if (!cc->finished_update_free &&
-			    pfn < zone->compact_cached_free_pfn)
-				zone->compact_cached_free_pfn = pfn;
+			    pfn < zone->kabi_workaround->compact_cached.free_pfn)
+				zone->kabi_workaround->compact_cached.free_pfn = pfn;
 		}
 	}
 }
@@ -686,7 +686,7 @@ static int compact_finished(struct zone *zone,
 		 * based on an allocation request.
 		 */
 		if (!current_is_kswapd())
-			zone->compact_blockskip_flush = true;
+			zone->kabi_workaround->compact_cached.blockskip_flush = true;
 
 		return COMPACT_COMPLETE;
 	}
@@ -775,6 +775,9 @@ static int compact_zone(struct zone *zone, struct compact_control *cc)
 	unsigned long start_pfn = zone->zone_start_pfn;
 	unsigned long end_pfn = zone->zone_start_pfn + zone->spanned_pages;
 
+	if (WARN_ON_ONCE(!zone->kabi_workaround))
+		return COMPACT_SKIPPED;
+
 	ret = compaction_suitable(zone, cc->order);
 	switch (ret) {
 	case COMPACT_PARTIAL:
@@ -791,15 +794,15 @@ static int compact_zone(struct zone *zone, struct compact_control *cc)
 	 * information on where the scanners should start but check that it
 	 * is initialised by ensuring the values are within zone boundaries.
 	 */
-	cc->migrate_pfn = zone->compact_cached_migrate_pfn;
-	cc->free_pfn = zone->compact_cached_free_pfn;
+	cc->migrate_pfn = zone->kabi_workaround->compact_cached.migrate_pfn;
+	cc->free_pfn = zone->kabi_workaround->compact_cached.free_pfn;
 	if (cc->free_pfn < start_pfn || cc->free_pfn > end_pfn) {
 		cc->free_pfn = end_pfn & ~(pageblock_nr_pages-1);
-		zone->compact_cached_free_pfn = cc->free_pfn;
+		zone->kabi_workaround->compact_cached.free_pfn = cc->free_pfn;
 	}
 	if (cc->migrate_pfn < start_pfn || cc->migrate_pfn > end_pfn) {
 		cc->migrate_pfn = start_pfn;
-		zone->compact_cached_migrate_pfn = cc->migrate_pfn;
+		zone->kabi_workaround->compact_cached.migrate_pfn = cc->migrate_pfn;
 	}
 
 	/*
@@ -924,6 +927,7 @@ unsigned long try_to_compact_pages(struct zonelist *zonelist,
 								nodemask) {
 		int status;
 
+		zone_init_compact_cached(zone, gfp_mask);
 		status = compact_zone_order(zone, order, gfp_mask, sync,
 						contended);
 		rc = max(status, rc);

@@ -1927,6 +1927,22 @@ out:
 	return page;
 }
 
+void __init_refok zone_init_compact_cached(struct zone *zone, gfp_t gfp_mask)
+{
+	pg_data_t *pgdat;
+
+	if (likely(zone->kabi_workaround))
+		return;
+
+	pgdat = zone->zone_pgdat;
+	if (slab_is_available())
+		zone->kabi_workaround = kzalloc_node(sizeof(struct zone_kabi_workaround),
+				gfp_mask, pgdat->node_id);
+	else
+		zone->kabi_workaround = alloc_bootmem_node(pgdat,
+					sizeof(struct zone_kabi_workaround));
+}
+
 #ifdef CONFIG_COMPACTION
 /* Try memory compaction for high-order allocations before reclaim */
 static struct page *
@@ -1963,7 +1979,7 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 				alloc_flags, preferred_zone,
 				migratetype);
 		if (page) {
-			preferred_zone->compact_blockskip_flush = false;
+			preferred_zone->kabi_workaround->compact_cached.blockskip_flush = false;
 			preferred_zone->compact_considered = 0;
 			preferred_zone->compact_defer_shift = 0;
 			count_vm_event(COMPACTSUCCESS);
@@ -4506,6 +4522,7 @@ static void __paginginit free_area_init_core(struct pglist_data *pgdat,
 
 		set_pageblock_order(pageblock_default_order());
 		setup_usemap(pgdat, zone, zone_start_pfn, size);
+		zone_init_compact_cached(zone, GFP_KERNEL);
 		ret = init_currently_empty_zone(zone, zone_start_pfn,
 						size, MEMMAP_EARLY);
 		BUG_ON(ret);
