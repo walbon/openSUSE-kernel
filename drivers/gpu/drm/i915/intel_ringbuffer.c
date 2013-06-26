@@ -307,9 +307,9 @@ static int init_ring_common(struct intel_ring_buffer *ring)
 			| RING_REPORT_64K | RING_VALID);
 
 	/* If the head is still not zero, the ring is dead */
-	if ((I915_READ_CTL(ring) & RING_VALID) == 0 ||
-	    I915_READ_START(ring) != obj->gtt_offset ||
-	    (I915_READ_HEAD(ring) & HEAD_ADDR) != 0) {
+	if (wait_for((I915_READ_CTL(ring) & RING_VALID) != 0 &&
+		     I915_READ_START(ring) == obj->gtt_offset &&
+		     (I915_READ_HEAD(ring) & HEAD_ADDR) == 0, 50)) {
 		DRM_ERROR("%s initialization failed "
 				"ctl %08x head %08x tail %08x start %08x\n",
 				ring->name,
@@ -1080,6 +1080,10 @@ int intel_init_ring_buffer(struct drm_device *dev,
 	ring->map.type = 0;
 	ring->map.flags = 0;
 	ring->map.mtrr = 0;
+
+	ret = i915_gem_object_set_to_gtt_domain(obj, true);
+	if (ret)
+		goto err_unpin;
 
 	drm_core_ioremap_wc(&ring->map, dev);
 	if (ring->map.handle == NULL) {
