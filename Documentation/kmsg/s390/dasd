@@ -65,6 +65,30 @@
  * code and contact your support organization.
  */
 
+/*?
+ * Text: "%s: ioctl timeout flag set\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the DASD
+ * Description:
+ * While the timeout flag is set, all I/O requests for this
+ * device are immediately returned as timed out.
+ * User action:
+ * None.
+ */
+
+/*?
+ * Text: "%s: ioctl timeout flag unset\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the DASD
+ * Description:
+ * While the timeout flag was set, all I/O requests for this device
+ * were immediately returned as timed out.
+ * Regular processing of requests is now restored for this device.
+ * User action:
+ * None.
+ */
 
 /* dasd */
 
@@ -617,3 +641,50 @@
  */
 
 ------------------------------------------------------------------------------------
+/* dasd_erp */
+
+/*?
+ * Text: "%s: cqr %p timeout error"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the DASD
+ *   @2: pointer to request
+ * Description:
+ * A channel queued request (cqr) failed because it timed out.
+ * One possible reason for this error is that a request did not
+ * complete within the timeout interval specified in the 'timeout'
+ * sysfs attribute of the DASD.
+ * The timeout function can be used; for example, by mirroring setups;
+ * to quickly process a request queue for a DASD that has become unavailable.
+ * User action:
+ * Check the message log for previous related error messages.  Verify
+ * that the storage server and the connection from host to storage
+ * server are operational. Ensure that the sysfs attribute 'timeout' of the
+ * DASD device has been is set to a value sufficiently large,
+ * such that regular latency does not lead to timeouts.
+ */
+
+/*?
+ * Text: "%s: cqr %p transport error"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the DASD
+ *   @2: pointer to request
+ * Description:
+ * A channel queued request (cqr) failed because the connection to the
+ * device was lost and the 'failfast' flag is set for the request.
+ * This flag can result from, for example:
+ *
+ * - A software layer above the DASD device driver; for example, in a host based mirroring setup.
+ *
+ * - Value 1 for the 'failfast' sysfs attribute of the DASD. This setting applies to all requests on the DASD.
+ *
+ * User action:
+ * Ensure that each channel path to the device has been set up
+ * correctly and that the related physical cable connections are in
+ * place. If the 'failfast' attribute of the DASD is set to 1, verify that this setting is
+ * intentional and change it to 0 if required.
+ */
+
+
+
