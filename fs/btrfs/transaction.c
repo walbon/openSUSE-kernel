@@ -331,6 +331,7 @@ again:
 	h->bytes_reserved = 0;
 	h->delayed_ref_updates = 0;
 	h->use_count = 1;
+	h->adding_csums = 0;
 	h->block_rsv = NULL;
 	h->orig_rsv = NULL;
 	h->aborted = 0;
@@ -455,19 +456,12 @@ int btrfs_should_end_transaction(struct btrfs_trans_handle *trans,
 				 struct btrfs_root *root)
 {
 	struct btrfs_transaction *cur_trans = trans->transaction;
-	struct btrfs_block_rsv *rsv = trans->block_rsv;
 	int updates;
 	int err;
 
 	smp_mb();
 	if (cur_trans->blocked || cur_trans->delayed_refs.flushing)
 		return 1;
-
-	/*
-	 * We need to do this in case we're deleting csums so the global block
-	 * rsv get's used instead of the csum block rsv.
-	 */
-	trans->block_rsv = NULL;
 
 	updates = trans->delayed_ref_updates;
 	trans->delayed_ref_updates = 0;
@@ -476,8 +470,6 @@ int btrfs_should_end_transaction(struct btrfs_trans_handle *trans,
 		if (err) /* Error code will also eval true */
 			return err;
 	}
-
-	trans->block_rsv = rsv;
 
 	return should_end_transaction(trans, root);
 }
@@ -495,9 +487,6 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 		return 0;
 	}
 
-	btrfs_trans_release_metadata(trans, root);
-	trans->block_rsv = NULL;
-
 	if (!list_empty(&trans->new_bgs))
 		btrfs_create_pending_block_groups(trans, root);
 
@@ -513,6 +502,8 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 		}
 		count++;
 	}
+	btrfs_trans_release_metadata(trans, root);
+	trans->block_rsv = NULL;
 
 	if (!list_empty(&trans->new_bgs))
 		btrfs_create_pending_block_groups(trans, root);
@@ -1292,9 +1283,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 
 	btrfs_run_ordered_operations(root, 0);
 
-	btrfs_trans_release_metadata(trans, root);
-	trans->block_rsv = NULL;
-
 	if (cur_trans->aborted)
 		goto cleanup_transaction;
 
@@ -1304,6 +1292,9 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	ret = btrfs_run_delayed_refs(trans, root, 0);
 	if (ret)
 		goto cleanup_transaction;
+
+	btrfs_trans_release_metadata(trans, root);
+	trans->block_rsv = NULL;
 
 	cur_trans = trans->transaction;
 
@@ -1558,6 +1549,8 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	return ret;
 
 cleanup_transaction:
+	btrfs_trans_release_metadata(trans, root);
+	trans->block_rsv = NULL;
 	btrfs_printk(root->fs_info, "Skipping commit of aborted transaction.\n");
 //	WARN_ON(1);
 	if (current->journal_info == trans)
