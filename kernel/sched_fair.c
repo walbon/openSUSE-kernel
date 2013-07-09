@@ -3307,9 +3307,10 @@ unsigned long scale_rt_power(int cpu)
 	total >>= SCHED_POWER_SHIFT;
 
 	/* RT usage tracking looks fishy, report anomaly and restore sanity */
-	if (unlikely(avg > available || total > (u32)~0)) {
-		printk(KERN_ERR "scale_rt_power: clock:%Lx age:%Lx, avg:%Lx\n",
-		       clock, age_stamp, avg);
+	if (unlikely(total > (u32)~0)) {
+		if (printk_ratelimit())
+			printk(KERN_ERR "scale_rt_power: clock:%Lx age:%Lx, avg:%Lx\n",
+		               clock, age_stamp, avg);
 		return SCHED_LOAD_SCALE;
 	}
 
@@ -3322,8 +3323,11 @@ unsigned long scale_rt_power(int cpu)
 	if (unlikely(total < SCHED_LOAD_SCALE))
 		total = SCHED_POWER_SCALE;
 
-	/* We're fully RT bound */
-	if (unlikely(available < 2*total))
+	/*
+	 * We're fully RT bound.  Note: avg > available is possible given no
+	 * synchronization, especially in a heavily loaded -rt kernel, cast.
+	 */
+	if (unlikely((s64)available < 2*total))
 		return 1;
 
 	return div_u64(available, total);
