@@ -1789,7 +1789,9 @@ void kmsg_dump(enum kmsg_dump_reason reason)
 	unsigned long l1, l2;
 	unsigned long flags;
 
-	if ((reason > KMSG_DUMP_OOPS) && !always_kmsg_dump)
+	if ((reason != KMSG_DUMP_PANIC) &&
+	    (reason != KMSG_DUMP_OOPS) &&
+	    !always_kmsg_dump)
 		return;
 
 	/* Theoretically, the log could move on after we do this, but
