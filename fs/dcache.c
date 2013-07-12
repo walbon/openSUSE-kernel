@@ -1258,8 +1258,10 @@ void shrink_dcache_parent(struct dentry * parent)
 	struct super_block *sb = parent->d_sb;
 	int found;
 
-	while ((found = select_parent(parent)) != 0)
+	while ((found = select_parent(parent)) != 0) {
 		__shrink_dcache_sb(sb, &found, 0);
+		cond_resched();
+	}
 }
 EXPORT_SYMBOL(shrink_dcache_parent);
 
