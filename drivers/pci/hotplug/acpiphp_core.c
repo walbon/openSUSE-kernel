@@ -377,7 +377,6 @@ static struct dmi_system_id __initdata bochs_dmi_table[] = {
 		.ident = "Bochs",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Bochs"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Bochs"),
 		},
 	},
 	{}
