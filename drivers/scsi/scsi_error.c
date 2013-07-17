@@ -314,7 +314,7 @@ static inline void scsi_post_sense_event(struct scsi_device *sdev,
  * @scmd:	Cmd to have sense checked.
  *
  * Return value:
- *	SUCCESS or FAILED or NEEDS_RETRY or TARGET_ERROR
+ *	SUCCESS or FAILED or NEEDS_RETRY or TARGET_ERROR or ADD_TO_MLQUEUE
  *
  * Notes:
  *	When a deferred error is detected the current command has
@@ -381,6 +381,16 @@ static int scsi_check_sense(struct scsi_cmnd *scmd)
 		if (sshdr.asc == 0x10) /* DIF */
 			return SUCCESS;
 
+		if (!strncmp(scmd->device->vendor, "EMC", 3) &&
+		    !strncmp(scmd->device->model, "SYMMETRIX", 9) &&
+		    (sshdr.asc == 0x44) && (sshdr.ascq == 0x0)) {
+			/*
+			 * EMC Symmetrix returns 'Internal target failure'
+			 * for a variety of internal issues, all of which
+			 * can be recovered by retry.
+			 */
+			return ADD_TO_MLQUEUE;
+		}
 		return NEEDS_RETRY;
 	case NOT_READY:
 	case UNIT_ATTENTION:
@@ -1636,6 +1646,9 @@ int scsi_decide_disposition(struct scsi_cmnd *scmd)
 		rtn = scsi_check_sense(scmd);
 		if (rtn == NEEDS_RETRY)
 			goto maybe_retry;
+		else if (rtn == ADD_TO_MLQUEUE)
+			/* Always enforce a retry for ADD_TO_MLQUEUE */
+			rtn = NEEDS_RETRY;
 		else if (rtn == TARGET_ERROR) {
 			/*
 			 * Need to modify host byte to signal a
