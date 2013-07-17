@@ -4912,7 +4912,7 @@ lpfc_bsg_timeout(struct fc_bsg_job *job)
 	/* timeout and completion crossed paths if no dd_data */
 	if (!dd_data) {
 		spin_unlock_irqrestore(&phba->ct_ev_lock, flags);
-		return 0;
+		return -EAGAIN;
 	}
 
 	switch (dd_data->type) {
