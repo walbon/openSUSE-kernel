@@ -467,6 +467,16 @@ static int scsi_check_sense(struct scsi_cmnd *scmd)
 			return TARGET_ERROR;
 
 	case ILLEGAL_REQUEST:
+		if (!strncmp(scmd->device->vendor, "HITACHI", 7) &&
+		    !strncmp(scmd->device->model, "OPEN-V", 6) &&
+		    (sshdr.asc == 0x22)) {
+			/*
+			 * Hitachi USP-V returns 'Invalid function'
+			 * when an internal error occurred; this
+			 * error should not be retried on other paths
+			 */
+			return TARGET_ERROR;
+		}
 	default:
 		return SUCCESS;
 	}
