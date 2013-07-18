@@ -188,15 +188,10 @@ void smp_send_stop(void)
  * cpus are handled.
  */
 
-static void do_ext_call_interrupt(unsigned int ext_int_code,
-				  unsigned int param32, unsigned long param64)
+static void smp_handle_ext_call(void)
 {
 	unsigned long bits;
 
-	if ((ext_int_code &0xffff) == 0x1202)
-		kstat_cpu(smp_processor_id()).irqs[EXTINT_EXC]++;
-	else
-		kstat_cpu(smp_processor_id()).irqs[EXTINT_EMS]++;
 	/*
 	 * handle bit signal external calls
 	 */
@@ -213,6 +208,16 @@ static void do_ext_call_interrupt(unsigned int ext_int_code,
 
 	if (test_bit(ec_call_function_single, &bits))
 		generic_smp_call_function_single_interrupt();
+}
+
+static void do_ext_call_interrupt(unsigned int ext_int_code,
+				  unsigned int param32, unsigned long param64)
+{
+	if ((ext_int_code &0xffff) == 0x1202)
+		kstat_cpu(smp_processor_id()).irqs[EXTINT_EXC]++;
+	else
+		kstat_cpu(smp_processor_id()).irqs[EXTINT_EMS]++;
+	smp_handle_ext_call();
 }
 
 /*
@@ -688,6 +693,8 @@ int __cpu_disable(void)
 	struct ec_creg_mask_parms cr_parms;
 	int cpu = smp_processor_id();
 
+	/* Handle possible pending IPIs */
+	smp_handle_ext_call();
 	set_cpu_online(cpu, false);
 
 	/* Disable pfault pseudo page faults on this cpu. */
