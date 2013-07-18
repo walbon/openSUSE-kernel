@@ -483,11 +483,12 @@ static int i915_drm_freeze(struct drm_device *dev)
 		}
 
 		cancel_delayed_work_sync(&dev_priv->rps.delayed_resume_work);
+		dev_priv->enable_hotplug_processing = false;
+		cancel_work_sync(&dev_priv->hotplug_work);
 
 		intel_modeset_disable(dev);
 
 		drm_irq_uninstall(dev);
-		dev_priv->enable_hotplug_processing = false;
 	}
 
 	i915_save_state(dev);
