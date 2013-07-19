@@ -18,7 +18,10 @@
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <linux/dmi.h>
+
+#ifdef __GENKSYMS__
 #include <linux/mod_devicetable.h>
+#endif
 
 #include "rtc-core.h"
 
