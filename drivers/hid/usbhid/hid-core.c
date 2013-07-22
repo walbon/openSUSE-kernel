@@ -513,7 +513,7 @@ static void __usbhid_submit_report(struct hid_device *hid, struct hid_report *re
 			return;
 		}
 
-		usbhid->out[usbhid->outhead].raw_report = kmalloc(len, GFP_ATOMIC);
+		usbhid->out[usbhid->outhead].raw_report = hid_alloc_report_buf(report, GFP_ATOMIC);
 		if (!usbhid->out[usbhid->outhead].raw_report) {
 			hid_warn(hid, "output queueing failed\n");
 			return;
@@ -545,7 +545,7 @@ static void __usbhid_submit_report(struct hid_device *hid, struct hid_report *re
 	}
 
 	if (dir == USB_DIR_OUT) {
-		usbhid->ctrl[usbhid->ctrlhead].raw_report = kmalloc(len, GFP_ATOMIC);
+		usbhid->ctrl[usbhid->ctrlhead].raw_report = hid_alloc_report_buf(report, GFP_ATOMIC);
 		if (!usbhid->ctrl[usbhid->ctrlhead].raw_report) {
 			hid_warn(hid, "control queueing failed\n");
 			return;
