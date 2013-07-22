@@ -18,6 +18,7 @@
 #include <linux/device.h>
 #include <linux/swap.h>
 #include <linux/slab.h>
+#include <linux/nmi.h>
 
 static struct sysdev_class_attribute *node_state_attrs[];
 
@@ -473,6 +474,8 @@ static int link_mem_sections(int nid)
 			err = ret;
 
 		/* discard ref obtained in find_memory_block() */
+
+		touch_nmi_watchdog();
 	}
 
 	if (mem_blk)
