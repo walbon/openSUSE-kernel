@@ -5033,6 +5033,15 @@ xfs_bunmapi(
 	} else
 		cur = NULL;
 	extno = 0;
+
+	if (isrt) {
+		/*
+		 * Synchronize by locking the bitmap inode.
+		 */
+		xfs_ilock(mp->m_rbmip, XFS_ILOCK_EXCL);
+		xfs_trans_ijoin_ref(tp, mp->m_rbmip, XFS_ILOCK_EXCL);
+	}
+
 	while (bno != (xfs_fileoff_t)-1 && bno >= start && lastx >= 0 &&
 	       (nexts == 0 || extno < nexts)) {
 		/*
