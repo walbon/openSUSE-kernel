@@ -981,6 +981,14 @@ void hid_output_report(struct hid_report *report, __u8 *data)
 }
 EXPORT_SYMBOL_GPL(hid_output_report);
 
+u8 *hid_alloc_report_buf(struct hid_report *report, gfp_t flags)
+{
+	int len = ((report->size - 1) >> 3) + 1 + (report->id > 0) + 7;
+
+	return kmalloc(len, flags);
+}
+EXPORT_SYMBOL_GPL(hid_alloc_report_buf);
+
 /*
  * Set a field value. The report this field belongs to has to be
  * created and transferred to the device, to set this value in the
