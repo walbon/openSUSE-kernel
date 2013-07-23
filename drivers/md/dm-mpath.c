@@ -1621,7 +1621,6 @@ static int multipath_ioctl(struct dm_target *ti, unsigned int cmd,
 	unsigned long flags;
 	int r;
 
-again:
 	bdev = NULL;
 	mode = 0;
 	r = 0;
