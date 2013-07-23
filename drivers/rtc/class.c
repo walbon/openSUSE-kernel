@@ -17,9 +17,12 @@
 #include <linux/idr.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
+#ifndef __GENKSYMS__
 #include <linux/dmi.h>
+#endif
 
 #include "rtc-core.h"
+
 
 static DEFINE_IDR(rtc_idr);
 static DEFINE_MUTEX(idr_lock);
@@ -28,6 +31,9 @@ struct class *rtc_class;
 static int __init clear_disable_alarm(const struct dmi_system_id *id)
 {
 	rtc_disable_alarm = false;
+
+	pr_err("%s: Clear alarm disable\n", __func__);
+
 	return 0;
 }
 
