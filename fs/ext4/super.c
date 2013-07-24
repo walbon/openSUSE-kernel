@@ -53,7 +53,11 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/ext4.h>
 
+#ifdef CONFIG_EXT4_FS_RW
+static bool allow_rw = true;
+#else
 static bool allow_rw = false;
+#endif
 
 static struct proc_dir_entry *ext4_proc_root;
 static struct kset *ext4_kset;
