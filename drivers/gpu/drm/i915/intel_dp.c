@@ -2426,6 +2426,39 @@ intel_dp_detect(struct drm_connector *connector, bool force)
 	return connector_status_connected;
 }
 
+static struct panel_size {
+	int width, height;
+} std_panel_sizes[] = {
+	{1600, 1200}, {1920, 1080}, {1680, 1050}, {1280, 1024},
+	{1440, 900}, {1280, 800}, {1024, 768}, {1280, 720}, {800, 600},
+	{0, 0}
+};
+
+static int add_standard_modes(struct drm_connector *connector,
+			      struct drm_display_mode *mode)
+{
+	struct drm_device *dev = connector->dev;
+	struct panel_size *p = std_panel_sizes;
+	int nums = 0;
+
+	for (; p->width; p++) {
+		struct drm_display_mode *newmode;
+		if (p->width > mode->hdisplay || p->height > mode->vdisplay ||
+		    (p->width == mode->hdisplay && p->height == mode->vdisplay))
+			continue;
+		newmode = drm_mode_duplicate(dev, mode);
+		if (newmode) {
+			newmode->hdisplay = p->width;
+			newmode->vdisplay = p->height;
+			newmode->type &= ~DRM_MODE_TYPE_PREFERRED;
+			drm_mode_set_name(newmode);
+			drm_mode_probed_add(connector, newmode);
+			nums++;
+		}
+	}
+	return nums;
+}
+
 static int intel_dp_get_modes(struct drm_connector *connector)
 {
 	struct intel_dp *intel_dp = intel_attached_dp(connector);
@@ -2438,7 +2471,7 @@ static int intel_dp_get_modes(struct drm_connector *connector)
 
 	ret = intel_dp_get_edid_modes(connector, &intel_dp->adapter);
 	if (ret)
-		return ret;
+		goto add_std;
 
 	/* if eDP has no EDID, fall back to fixed mode */
 	if (is_edp(intel_dp) && intel_connector->panel.fixed_mode) {
@@ -2447,10 +2480,15 @@ static int intel_dp_get_modes(struct drm_connector *connector)
 					  intel_connector->panel.fixed_mode);
 		if (mode) {
 			drm_mode_probed_add(connector, mode);
-			return 1;
+			ret = 1;
 		}
 	}
-	return 0;
+
+ add_std:
+	if (ret && is_edp(intel_dp) && intel_connector->panel.fixed_mode)
+		ret += add_standard_modes(connector, intel_connector->panel.fixed_mode);
+
+	return ret;
 }
 
 static bool
