@@ -579,6 +579,20 @@ static const struct dmi_system_id bt_excepted_from_switch_table[] = {
 		.driver_data = (void *)64,
 	},
 	{
+		/* HP EliteBook 850 */
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP EliteBook 850 G1"),
+		},
+		.driver_data = (void *)64,
+	},
+	{
+		/* HP ZBook 14 */
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP ZBook 14"),
+		},
+		.driver_data = (void *)64,
+	},
+	{
 		/* HP EliteBook 8580 */
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "HP EliteBook 8580w"),
