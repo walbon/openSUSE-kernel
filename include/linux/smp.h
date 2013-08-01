@@ -148,6 +148,13 @@ static inline int up_smp_call_function(smp_call_func_t func, void *info)
 		local_irq_enable();		\
 		0;				\
 	})
+
+static inline void __smp_call_function_single(int cpuid,
+		struct call_single_data *data, int wait)
+{
+	on_each_cpu(data->func, data->info, wait);
+}
+
 /*
  * Note we still need to test the mask even for UP
  * because we actually can get an empty mask from
