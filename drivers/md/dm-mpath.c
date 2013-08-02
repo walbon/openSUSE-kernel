@@ -647,10 +647,10 @@ static struct pgpath *parse_path(struct arg_set *as, struct path_selector *ps,
 	}
 
 	if (p->path.dev) {
-		q = bdev_get_queue(p->path.dev->bdev);
+		struct request_queue *q = bdev_get_queue(p->path.dev->bdev);
 
 		if (m->retain_attached_hw_handler) {
-			attached_handler_name = scsi_dh_attached_handler_name(q, GFP_KERNEL);
+			const char *attached_handler_name = scsi_dh_attached_handler_name(q, GFP_KERNEL);
 			if (attached_handler_name) {
 				/*
 				 * Reset hw_handler_name to match the
@@ -892,7 +892,7 @@ static int parse_features(struct arg_set *as, struct multipath *m)
 			continue;
 		}
 
-		if (!strnicmp(param_name, "retain_attached_hw_handler")) {
+		if (!strnicmp(param_name, MESG_STR("retain_attached_hw_handler"))) {
 			m->retain_attached_hw_handler = 1;
 			continue;
 		}
