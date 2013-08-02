@@ -91,6 +91,7 @@ struct multipath {
 	unsigned pg_init_retries;	/* Number of times to retry pg_init */
 	unsigned pg_init_count;		/* Number of times pg_init called */
 	unsigned pg_init_delay_msecs;	/* Number of msecs before pg_init retry */
+	unsigned retain_attached_hw_handler; /* If there's already a hw_handler present, don't change it. */
 	unsigned features;		/* Additional selected features */
 
 	struct work_struct process_queued_ios;
@@ -646,9 +647,34 @@ static struct pgpath *parse_path(struct arg_set *as, struct path_selector *ps,
 	}
 
 	if (p->path.dev) {
-		struct request_queue *q = bdev_get_queue(p->path.dev->bdev);
+		q = bdev_get_queue(p->path.dev->bdev);
+
+		if (m->retain_attached_hw_handler) {
+			attached_handler_name = scsi_dh_attached_handler_name(q, GFP_KERNEL);
+			if (attached_handler_name) {
+				/*
+				 * Reset hw_handler_name to match the
+				 * attached handler and clear any
+				 * hw_handler_params associated with the
+				 * ignored handler.
+				 *
+				 * NB. This modifies the table line to
+				 * show the actual handler instead of
+				 * the original table passed in.
+				 */
+				kfree(m->hw_handler_name);
+				m->hw_handler_name = attached_handler_name;
+
+				kfree(m->hw_handler_params);
+				m->hw_handler_params = NULL;
+			}
+		}
 
 		if (m->hw_handler_name) {
+			/*
+			 * Increments scsi_dh reference, even when using an
+			 * already-attached handler.
+			 */
 			r = scsi_dh_attach(q, m->hw_handler_name);
 			if (r == -EBUSY) {
 				/*
@@ -835,7 +861,7 @@ static int parse_features(struct arg_set *as, struct multipath *m)
 	const char *param_name;
 
 	static struct param _params[] = {
-		{0, 5, "invalid number of feature args"},
+		{0, 6, "invalid number of feature args"},
 		{1, 50, "pg_init_retries must be between 1 and 50"},
 		{0, 60000, "pg_init_delay_msecs must be between 0 and 60000"},
 	};
@@ -865,6 +891,12 @@ static int parse_features(struct arg_set *as, struct multipath *m)
 			m->features |= FEATURE_NO_PARTITIONS;
 			continue;
 		}
+
+		if (!strnicmp(param_name, "retain_attached_hw_handler")) {
+			m->retain_attached_hw_handler = 1;
+			continue;
+		}
+
 		if (!strnicmp(param_name, MESG_STR("pg_init_retries")) &&
 		    (argc >= 1)) {
 			r = read_param(_params + 1, shift(as),
@@ -1466,13 +1498,16 @@ static int multipath_status(struct dm_target *ti, status_type_t type,
 		DMEMIT("%u ", m->queue_if_no_path +
 			      (m->pg_init_retries > 0) * 2 +
 			      (m->pg_init_delay_msecs != DM_PG_INIT_DELAY_DEFAULT) * 2 +
-			      (m->features & FEATURE_NO_PARTITIONS));
+			      (m->features & FEATURE_NO_PARTITIONS) +
+			      m->retain_attached_hw_handler);
 		if (m->queue_if_no_path)
 			DMEMIT("queue_if_no_path ");
 		if (m->pg_init_retries)
 			DMEMIT("pg_init_retries %u ", m->pg_init_retries);
 		if (m->pg_init_delay_msecs != DM_PG_INIT_DELAY_DEFAULT)
 			DMEMIT("pg_init_delay_msecs %u ", m->pg_init_delay_msecs);
+		if (m->retain_attached_hw_handler)
+			DMEMIT("retain_attached_hw_handler ");
 		if (m->features & FEATURE_NO_PARTITIONS)
 			DMEMIT("no_partitions ");
 	}
