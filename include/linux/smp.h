@@ -11,7 +11,20 @@
 #include <linux/list.h>
 #include <linux/cpumask.h>
 #include <linux/init.h>
+
+#ifndef CONFIG_SMP
+/*
+ * Not including this will break PPC but adding the include breaks IA64.
+ * The only reason we need this is local_irq_{enable,disable}. PPC is the
+ * only arch with UP configuration so hack it around.
+ *
+ * I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig
+ * I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig
+ * I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig
+ * I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig
+ */
 #include <linux/irqflags.h>
+#endif
 
 extern void cpu_idle(void);
 
