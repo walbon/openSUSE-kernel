@@ -162,6 +162,7 @@ static int finish_unfinished(struct super_block *s)
 	int done;
 	struct inode *inode;
 	int truncate;
+	int depth;
 #ifdef CONFIG_QUOTA
 	int i;
 	int ms_active_set;
@@ -264,9 +265,9 @@ static int finish_unfinished(struct super_block *s)
 			retval = remove_save_link_only(s, &save_link_key, 0);
 			continue;
 		}
-		reiserfs_write_unlock(s);
+		depth = reiserfs_write_unlock_nested(inode->i_sb);
 		dquot_initialize(inode);
-		reiserfs_write_lock(s);
+		reiserfs_write_lock_nested(inode->i_sb, depth);
 
 		if (truncate && S_ISDIR(inode->i_mode)) {
 			/* We got a truncate request for a dir which is impossible.
@@ -322,10 +323,12 @@ static int finish_unfinished(struct super_block *s)
 
 #ifdef CONFIG_QUOTA
 	/* Turn quotas off */
+	reiserfs_write_unlock(s);
 	for (i = 0; i < MAXQUOTAS; i++) {
 		if (sb_dqopt(s)->files[i] && quota_enabled[i])
 			dquot_quota_off(s, i);
 	}
+	reiserfs_write_lock(s);
 	if (ms_active_set)
 		/* Restore the flag back */
 		s->s_flags &= ~MS_ACTIVE;
@@ -589,7 +592,6 @@ static void reiserfs_dirty_inode(struct inode *inode, int flags)
 	struct reiserfs_transaction_handle th;
 
 	int err = 0;
-	int lock_depth;
 
 	if (inode->i_sb->s_flags & MS_RDONLY) {
 		reiserfs_warning(inode->i_sb, "clm-6006",
@@ -597,7 +599,7 @@ static void reiserfs_dirty_inode(struct inode *inode, int flags)
 				 inode->i_ino);
 		return;
 	}
-	lock_depth = reiserfs_write_lock_once(inode->i_sb);
+	reiserfs_write_lock(inode->i_sb);
 
 	/* this is really only used for atime updates, so they don't have
 	 ** to be included in O_SYNC or fsync
@@ -610,7 +612,7 @@ static void reiserfs_dirty_inode(struct inode *inode, int flags)
 	journal_end(&th, inode->i_sb, 1);
 
 out:
-	reiserfs_write_unlock_once(inode->i_sb, lock_depth);
+	reiserfs_write_unlock(inode->i_sb);
 }
 
 #ifdef CONFIG_QUOTA
@@ -1219,7 +1221,7 @@ static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
 				kfree(qf_names[i]);
 #endif
 		err = -EINVAL;
-		goto out_unlock;
+		goto out_err_unlock;
 	}
 #ifdef CONFIG_QUOTA
 	handle_quota_files(s, qf_names, &qfmt);
@@ -1262,35 +1264,32 @@ static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
 	if (blocks) {
 		err = reiserfs_resize(s, blocks);
 		if (err != 0)
-			goto out_unlock;
+			goto out_err_unlock;
 	}
 
 	if (*mount_flags & MS_RDONLY) {
+		reiserfs_write_unlock(s);
 		reiserfs_xattr_init(s, *mount_flags);
 		/* remount read-only */
 		if (s->s_flags & MS_RDONLY)
 			/* it is read-only already */
-			goto out_ok;
+			goto out_ok_unlocked;
 
-		/*
-		 * Drop write lock. Quota will retake it when needed and lock
-		 * ordering requires calling dquot_suspend() without it.
-		 */
-		reiserfs_write_unlock(s);
 		err = dquot_suspend(s, -1);
 		if (err < 0)
 			goto out_err;
-		reiserfs_write_lock(s);
 
 		/* try to remount file system with read-only permissions */
 		if (sb_umount_state(rs) == REISERFS_VALID_FS
 		    || REISERFS_SB(s)->s_mount_state != REISERFS_VALID_FS) {
-			goto out_ok;
+			goto out_ok_unlocked;
 		}
+
+		reiserfs_write_lock(s);
 
 		err = journal_begin(&th, s, 10);
 		if (err)
-			goto out_unlock;
+			goto out_err_unlock;
 
 		/* Mounting a rw partition read-only. */
 		reiserfs_prepare_for_journal(s, SB_BUFFER_WITH_SB(s), 1);
@@ -1299,13 +1298,14 @@ static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
 	} else {
 		/* remount read-write */
 		if (!(s->s_flags & MS_RDONLY)) {
+			reiserfs_write_unlock(s);
 			reiserfs_xattr_init(s, *mount_flags);
-			goto out_ok;	/* We are read-write already */
+			goto out_ok_unlocked;	/* We are read-write already */
 		}
 
 		if (reiserfs_is_journal_aborted(journal)) {
 			err = journal->j_errno;
-			goto out_unlock;
+			goto out_err_unlock;
 		}
 
 		handle_data_mode(s, mount_options);
@@ -1314,7 +1314,7 @@ static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
 		s->s_flags &= ~MS_RDONLY;	/* now it is safe to call journal_begin */
 		err = journal_begin(&th, s, 10);
 		if (err)
-			goto out_unlock;
+			goto out_err_unlock;
 
 		/* Mount a partition which is read-only, read-write */
 		reiserfs_prepare_for_journal(s, SB_BUFFER_WITH_SB(s), 1);
@@ -1331,27 +1331,23 @@ static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
 	SB_JOURNAL(s)->j_must_wait = 1;
 	err = journal_end(&th, s, 10);
 	if (err)
-		goto out_unlock;
+		goto out_err_unlock;
 	s->s_dirt = 0;
 
+	reiserfs_write_unlock(s);
 	if (!(*mount_flags & MS_RDONLY)) {
-		/*
-		 * Drop write lock. Quota will retake it when needed and lock
-		 * ordering requires calling dquot_resume() without it.
-		 */
-		reiserfs_write_unlock(s);
 		dquot_resume(s, -1);
 		reiserfs_write_lock(s);
 		finish_unfinished(s);
+		reiserfs_write_unlock(s);
 		reiserfs_xattr_init(s, *mount_flags);
 	}
 
-out_ok:
+out_ok_unlocked:
 	replace_mount_options(s, new_opts);
-	reiserfs_write_unlock(s);
 	return 0;
 
-out_unlock:
+out_err_unlock:
 	reiserfs_write_unlock(s);
 out_err:
 	kfree(new_opts);
@@ -1687,22 +1683,11 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 	mutex_init(&REISERFS_SB(s)->lock);
 	REISERFS_SB(s)->lock_depth = -1;
 
-	/*
-	 * This function is called with the bkl, which also was the old
-	 * locking used here.
-	 * do_journal_begin() will soon check if we hold the lock (ie: was the
-	 * bkl). This is likely because do_journal_begin() has several another
-	 * callers because at this time, it doesn't seem to be necessary to
-	 * protect against anything.
-	 * Anyway, let's be conservative and lock for now.
-	 */
-	reiserfs_write_lock(s);
-
 	jdev_name = NULL;
 	if (reiserfs_parse_options
 	    (s, (char *)data, &(sbi->s_mount_opt), &blocks, &jdev_name,
 	     &commit_max_age, qf_names, &qfmt) == 0) {
-		goto error;
+		goto error_unlocked;
 	}
 #ifdef CONFIG_QUOTA
 	handle_quota_files(s, qf_names, &qfmt);
@@ -1710,7 +1695,7 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 
 	if (blocks) {
 		SWARN(silent, s, "jmacd-7", "resize option for remount only");
-		goto error;
+		goto error_unlocked;
 	}
 
 	/* try old format (undistributed bitmap, super block in 8-th 1k block of a device) */
@@ -1720,7 +1705,7 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 	else if (read_super_block(s, REISERFS_DISK_OFFSET_IN_BYTES)) {
 		SWARN(silent, s, "sh-2021", "can not find reiserfs on %s",
 		      reiserfs_bdevname(s));
-		goto error;
+		goto error_unlocked;
 	}
 
 	rs = SB_DISK_SUPER_BLOCK(s);
@@ -1736,7 +1721,7 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 		      "or increase size of your LVM partition");
 		SWARN(silent, s, "", "Or may be you forgot to "
 		      "reboot after fdisk when it told you to");
-		goto error;
+		goto error_unlocked;
 	}
 
 	sbi->s_mount_state = SB_REISERFS_STATE(s);
@@ -1744,8 +1729,9 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 
 	if ((errval = reiserfs_init_bitmap_cache(s))) {
 		SWARN(silent, s, "jmacd-8", "unable to read bitmap");
-		goto error;
+		goto error_unlocked;
 	}
+
 	errval = -EINVAL;
 #ifdef CONFIG_REISERFS_CHECK
 	SWARN(silent, s, "", "CONFIG_REISERFS_CHECK is set ON");
@@ -1768,16 +1754,28 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 	if (reiserfs_barrier_flush(s)) {
 		printk("reiserfs: using flush barriers\n");
 	}
+
 	// set_device_ro(s->s_dev, 1) ;
 	if (journal_init(s, jdev_name, old_format, commit_max_age)) {
 		SWARN(silent, s, "sh-2022",
 		      "unable to initialize journal space");
-		goto error;
+		goto error_unlocked;
 	} else {
 		jinit_done = 1;	/* once this is set, journal_release must be called
 				 ** if we error out of the mount
 				 */
 	}
+
+	/*
+	 * This path assumed to be called with the BKL in the old times.
+	 * Now we have inherited the big reiserfs lock from it and many
+	 * reiserfs helpers called in the mount path and elsewhere require
+	 * this lock to be held even if it's not always necessary. Let's be
+	 * conservative and hold it early. The window can be reduced after
+	 * careful review of the code.
+	 */
+	reiserfs_write_lock(s);
+
 	if (reread_meta_blocks(s)) {
 		SWARN(silent, s, "jmacd-9",
 		      "unable to reread meta blocks after journal init");
@@ -1892,12 +1890,14 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 			goto error;
 		}
 
+		reiserfs_write_unlock(s);
 		if ((errval = reiserfs_lookup_privroot(s)) ||
 		    (errval = reiserfs_xattr_init(s, s->s_flags))) {
 			dput(s->s_root);
 			s->s_root = NULL;
-			goto error;
+			goto error_unlocked;
 		}
+		reiserfs_write_lock(s);
 
 		/* look for files which were to be removed in previous session */
 		finish_unfinished(s);
@@ -1906,12 +1906,14 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 			reiserfs_info(s, "using 3.5.x disk format\n");
 		}
 
+		reiserfs_write_unlock(s);
 		if ((errval = reiserfs_lookup_privroot(s)) ||
 		    (errval = reiserfs_xattr_init(s, s->s_flags))) {
 			dput(s->s_root);
 			s->s_root = NULL;
-			goto error;
+			goto error_unlocked;
 		}
+		reiserfs_write_lock(s);
 	}
 	// mark hash in super block: it could be unset. overwrite should be ok
 	set_sb_hash_function_code(rs, function2code(sbi->s_hash_function));
@@ -1928,11 +1930,15 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 	return (0);
 
 error:
-	if (jinit_done) {	/* kill the commit thread, free journal ram */
-		journal_release_error(NULL, s);
-	}
-
 	reiserfs_write_unlock(s);
+
+error_unlocked:
+	/* kill the commit thread, free journal ram */
+	if (jinit_done) {
+		reiserfs_write_lock(s);
+		journal_release_error(NULL, s);
+		reiserfs_write_unlock(s);
+	}
 
 	reiserfs_free_bitmap_cache(s);
 	if (SB_BUFFER_WITH_SB(s))
@@ -1972,7 +1978,7 @@ static int reiserfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 static int reiserfs_write_dquot(struct dquot *dquot)
 {
 	struct reiserfs_transaction_handle th;
-	int ret, err;
+	int ret, err, depth;
 
 	reiserfs_write_lock(dquot->dq_sb);
 	ret =
@@ -1980,9 +1986,9 @@ static int reiserfs_write_dquot(struct dquot *dquot)
 			  REISERFS_QUOTA_TRANS_BLOCKS(dquot->dq_sb));
 	if (ret)
 		goto out;
-	reiserfs_write_unlock(dquot->dq_sb);
+	depth = reiserfs_write_unlock_nested(dquot->dq_sb);
 	ret = dquot_commit(dquot);
-	reiserfs_write_lock(dquot->dq_sb);
+	reiserfs_write_lock_nested(dquot->dq_sb, depth);
 	err =
 	    journal_end(&th, dquot->dq_sb,
 			REISERFS_QUOTA_TRANS_BLOCKS(dquot->dq_sb));
@@ -1996,7 +2002,7 @@ out:
 static int reiserfs_acquire_dquot(struct dquot *dquot)
 {
 	struct reiserfs_transaction_handle th;
-	int ret, err;
+	int ret, err, depth;
 
 	reiserfs_write_lock(dquot->dq_sb);
 	ret =
@@ -2004,9 +2010,9 @@ static int reiserfs_acquire_dquot(struct dquot *dquot)
 			  REISERFS_QUOTA_INIT_BLOCKS(dquot->dq_sb));
 	if (ret)
 		goto out;
-	reiserfs_write_unlock(dquot->dq_sb);
+	depth = reiserfs_write_unlock_nested(dquot->dq_sb);
 	ret = dquot_acquire(dquot);
-	reiserfs_write_lock(dquot->dq_sb);
+	reiserfs_write_lock_nested(dquot->dq_sb, depth);
 	err =
 	    journal_end(&th, dquot->dq_sb,
 			REISERFS_QUOTA_INIT_BLOCKS(dquot->dq_sb));
@@ -2020,20 +2026,21 @@ out:
 static int reiserfs_release_dquot(struct dquot *dquot)
 {
 	struct reiserfs_transaction_handle th;
-	int ret, err;
+	int ret, err, depth;
 
 	reiserfs_write_lock(dquot->dq_sb);
 	ret =
 	    journal_begin(&th, dquot->dq_sb,
 			  REISERFS_QUOTA_DEL_BLOCKS(dquot->dq_sb));
-	reiserfs_write_unlock(dquot->dq_sb);
+	depth = reiserfs_write_unlock_nested(dquot->dq_sb);
 	if (ret) {
 		/* Release dquot anyway to avoid endless cycle in dqput() */
 		dquot_release(dquot);
+		reiserfs_write_lock_nested(dquot->dq_sb, depth);
 		goto out;
 	}
 	ret = dquot_release(dquot);
-	reiserfs_write_lock(dquot->dq_sb);
+	reiserfs_write_lock_nested(dquot->dq_sb, depth);
 	err =
 	    journal_end(&th, dquot->dq_sb,
 			REISERFS_QUOTA_DEL_BLOCKS(dquot->dq_sb));
@@ -2058,16 +2065,16 @@ static int reiserfs_mark_dquot_dirty(struct dquot *dquot)
 static int reiserfs_write_info(struct super_block *sb, int type)
 {
 	struct reiserfs_transaction_handle th;
-	int ret, err;
+	int ret, err, depth;
 
 	/* Data block + inode block */
 	reiserfs_write_lock(sb);
 	ret = journal_begin(&th, sb, 2);
 	if (ret)
 		goto out;
-	reiserfs_write_unlock(sb);
+	depth = reiserfs_write_unlock_nested(sb);
 	ret = dquot_commit_info(sb, type);
-	reiserfs_write_lock(sb);
+	reiserfs_write_lock_nested(sb, depth);
 	err = journal_end(&th, sb, 2);
 	if (!ret && err)
 		ret = err;
@@ -2081,8 +2088,14 @@ out:
  */
 static int reiserfs_quota_on_mount(struct super_block *sb, int type)
 {
-	return dquot_quota_on_mount(sb, REISERFS_SB(sb)->s_qf_names[type],
-					REISERFS_SB(sb)->s_jquota_fmt, type);
+	int ret, depth;
+
+	depth = reiserfs_write_unlock_nested(sb);
+	ret = dquot_quota_on_mount(sb, REISERFS_SB(sb)->s_qf_names[type],
+				   REISERFS_SB(sb)->s_jquota_fmt, type);
+	reiserfs_write_lock_nested(sb, depth);
+
+	return ret;
 }
 
 /*
