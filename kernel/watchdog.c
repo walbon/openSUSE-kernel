@@ -353,18 +353,33 @@ static int watchdog(void *unused)
 
 
 #ifdef CONFIG_HARDLOCKUP_DETECTOR
+static void watchdog_nmi_disable(int cpu)
+{
+	struct perf_event *event = per_cpu(watchdog_ev, cpu);
+
+	if (event) {
+		perf_event_disable(event);
+		per_cpu(watchdog_ev, cpu) = NULL;
+
+		/* should be in cleanup, but blocks oprofile */
+		perf_event_release_kernel(event);
+	}
+	return;
+}
+
 static int watchdog_nmi_enable(int cpu)
 {
 	struct perf_event_attr *wd_attr;
 	struct perf_event *event = per_cpu(watchdog_ev, cpu);
 
 	/* is it already setup and enabled? */
-	if (event && event->state > PERF_EVENT_STATE_OFF)
-		goto out;
-
-	/* it is setup but not enabled */
-	if (event != NULL)
-		goto out_enable;
+	if (event) {
+		if (event->state > PERF_EVENT_STATE_OFF)
+			watchdog_nmi_disable(cpu);
+		else
+			/* it is setup but not enabled */
+			goto out_enable;
+	}
 
 	wd_attr = &wd_hw_attr;
 	wd_attr->sample_period = hw_nmi_get_sample_period(watchdog_thresh);
@@ -391,22 +406,7 @@ out_save:
 	per_cpu(watchdog_ev, cpu) = event;
 out_enable:
 	perf_event_enable(per_cpu(watchdog_ev, cpu));
-out:
 	return 0;
-}
-
-static void watchdog_nmi_disable(int cpu)
-{
-	struct perf_event *event = per_cpu(watchdog_ev, cpu);
-
-	if (event) {
-		perf_event_disable(event);
-		per_cpu(watchdog_ev, cpu) = NULL;
-
-		/* should be in cleanup, but blocks oprofile */
-		perf_event_release_kernel(event);
-	}
-	return;
 }
 #else
 static int watchdog_nmi_enable(int cpu) { return 0; }
@@ -421,6 +421,35 @@ static void watchdog_prepare_cpu(int cpu)
 	WARN_ON(per_cpu(softlockup_watchdog, cpu));
 	hrtimer_init(hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	hrtimer->function = watchdog_timer_fn;
+}
+
+static void restart_watchdog_hrtimer(void *info)
+{
+	struct hrtimer *hrtimer = &__raw_get_cpu_var(watchdog_hrtimer);
+	int ret;
+
+	/*
+	 * No need to cancel and restart hrtimer if it is currently executing
+	 * because it will reprogram itself with the new period now.
+	 * We should never see it unqueued here because we are running per-cpu
+	 * with interrupts disabled.
+	 */
+	ret = hrtimer_try_to_cancel(hrtimer);
+	if (ret == 1)
+		hrtimer_start(hrtimer, ns_to_ktime(get_sample_period()),
+				HRTIMER_MODE_REL_PINNED);
+
+}
+
+static void update_watchdog_hrtimer(int cpu)
+{
+	struct call_single_data data = {.func = restart_watchdog_hrtimer};
+
+	/*
+	 * Hrtimer will adopt the new period on the next tick but this
+	 * might be late already so we have to restart the timer as well.
+	 */
+	__smp_call_function_single(cpu, &data, 1);
 }
 
 static int watchdog_enable(int cpu)
@@ -452,6 +481,8 @@ static int watchdog_enable(int cpu)
 		per_cpu(watchdog_touch_ts, cpu) = 0;
 		per_cpu(softlockup_watchdog, cpu) = p;
 		wake_up_process(p);
+	} else {
+		update_watchdog_hrtimer(cpu);
 	}
 
 out:
@@ -485,11 +516,14 @@ static void watchdog_enable_all_cpus(void)
 
 	watchdog_enabled = 0;
 
-	for_each_online_cpu(cpu)
+	for_each_online_cpu(cpu) {
+		preempt_disable();
 		if (!watchdog_enable(cpu))
 			/* if any cpu succeeds, watchdog is considered
 			   enabled for the system */
 			watchdog_enabled = 1;
+		preempt_enable();
+	}
 
 	if (!watchdog_enabled)
 		printk(KERN_ERR "watchdog: failed to be enabled on some cpus\n");
@@ -500,8 +534,11 @@ static void watchdog_disable_all_cpus(void)
 {
 	int cpu;
 
-	for_each_online_cpu(cpu)
+	for_each_online_cpu(cpu) {
+		preempt_disable();
 		watchdog_disable(cpu);
+		preempt_enable();
+	}
 
 	/* if all watchdogs are disabled, then they are disabled for the system */
 	watchdog_enabled = 0;
@@ -517,18 +554,23 @@ static void watchdog_disable_all_cpus(void)
 int proc_dowatchdog(struct ctl_table *table, int write,
 		    void __user *buffer, size_t *lenp, loff_t *ppos)
 {
+	static DEFINE_MUTEX(watchdog_thresh_mutex);
 	int ret;
 
+	mutex_lock(&watchdog_thresh_mutex);
 	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
 	if (ret || !write)
 		goto out;
 
+	get_online_cpus();
 	if (watchdog_enabled && watchdog_thresh)
 		watchdog_enable_all_cpus();
 	else
 		watchdog_disable_all_cpus();
+	put_online_cpus();
 
 out:
+	mutex_unlock(&watchdog_thresh_mutex);
 	return ret;
 }
 #endif /* CONFIG_SYSCTL */

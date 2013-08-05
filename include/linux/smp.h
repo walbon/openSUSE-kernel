@@ -12,6 +12,20 @@
 #include <linux/cpumask.h>
 #include <linux/init.h>
 
+#ifndef CONFIG_SMP
+/*
+ * Not including this will break PPC but adding the include breaks IA64.
+ * The only reason we need this is local_irq_{enable,disable}. PPC is the
+ * only arch with UP configuration so hack it around.
+ *
+ * I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig
+ * I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig
+ * I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig
+ * I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig, I am pig
+ */
+#include <linux/irqflags.h>
+#endif
+
 extern void cpu_idle(void);
 
 typedef void (*smp_call_func_t)(void *info);
@@ -148,6 +162,13 @@ static inline int up_smp_call_function(smp_call_func_t func, void *info)
 		local_irq_enable();		\
 		0;				\
 	})
+
+static inline void __smp_call_function_single(int cpuid,
+		struct call_single_data *data, int wait)
+{
+	on_each_cpu(data->func, data->info, wait);
+}
+
 /*
  * Note we still need to test the mask even for UP
  * because we actually can get an empty mask from
