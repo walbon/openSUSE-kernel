@@ -49,13 +49,15 @@ posix_acl_set(struct dentry *dentry, const char *name, const void *value,
 
 	reiserfs_write_lock(inode->i_sb);
 	error = journal_begin(&th, inode->i_sb, jcreate_blocks);
+	reiserfs_write_unlock(inode->i_sb);
 	if (error == 0) {
 		error = reiserfs_set_acl(&th, inode, type, acl);
+		reiserfs_write_lock(inode->i_sb);
 		error2 = journal_end(&th, inode->i_sb, jcreate_blocks);
+		reiserfs_write_unlock(inode->i_sb);
 		if (error2)
 			error = error2;
 	}
-	reiserfs_write_unlock(inode->i_sb);
 
       release_and_out:
 	posix_acl_release(acl);
@@ -443,6 +445,9 @@ int reiserfs_cache_default_acl(struct inode *inode)
 	return nblocks;
 }
 
+/*
+ * Called under i_mutex
+ */
 int reiserfs_acl_chmod(struct inode *inode)
 {
 	struct posix_acl *acl, *clone;
@@ -459,9 +464,7 @@ int reiserfs_acl_chmod(struct inode *inode)
 		return 0;
 	}
 
-	reiserfs_write_unlock(inode->i_sb);
 	acl = reiserfs_get_acl(inode, ACL_TYPE_ACCESS);
-	reiserfs_write_lock(inode->i_sb);
 	if (!acl)
 		return 0;
 	if (IS_ERR(acl))
@@ -475,19 +478,19 @@ int reiserfs_acl_chmod(struct inode *inode)
 		struct reiserfs_transaction_handle th;
 		size_t size = reiserfs_xattr_nblocks(inode,
 					     reiserfs_acl_size(clone->a_count));
-		int depth;
-
-		depth = reiserfs_write_lock_once(inode->i_sb);
+		reiserfs_write_lock(inode->i_sb);
 		error = journal_begin(&th, inode->i_sb, size * 2);
+		reiserfs_write_unlock(inode->i_sb);
 		if (!error) {
 			int error2;
 			error = reiserfs_set_acl(&th, inode, ACL_TYPE_ACCESS,
 						 clone);
+			reiserfs_write_lock(inode->i_sb);
 			error2 = journal_end(&th, inode->i_sb, size * 2);
+			reiserfs_write_unlock(inode->i_sb);
 			if (error2)
 				error = error2;
 		}
-		reiserfs_write_unlock_once(inode->i_sb, depth);
 	}
 	posix_acl_release(clone);
 	return error;
