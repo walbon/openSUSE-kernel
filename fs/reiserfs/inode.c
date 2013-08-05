@@ -3162,7 +3162,6 @@ int reiserfs_setattr(struct dentry *dentry, struct iattr *attr)
 	if ((((attr->ia_valid & ATTR_UID) && (attr->ia_uid & ~0xffff)) ||
 	     ((attr->ia_valid & ATTR_GID) && (attr->ia_gid & ~0xffff))) &&
 	    (get_inode_sd_version(inode) == STAT_DATA_V1)) {
-		reiserfs_write_unlock(inode->i_sb);
 		/* stat data of format v3.5 has 16 bit uid and gid */
 		error = -EINVAL;
 		goto out;
