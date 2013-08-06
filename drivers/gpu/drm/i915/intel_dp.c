@@ -659,7 +659,7 @@ intel_dp_i2c_aux_ch(struct i2c_adapter *adapter, int mode,
 		break;
 	}
 
-	for (retry = 0; retry < 5; retry++) {
+	for (retry = 0; retry < 10; retry++) {
 		ret = intel_dp_aux_ch(intel_dp,
 				      msg, msg_bytes,
 				      reply, reply_bytes);
