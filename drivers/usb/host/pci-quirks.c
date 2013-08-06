@@ -609,6 +609,14 @@ static const struct dmi_system_id bt_excepted_from_switch_table[] = {
 	{ }
 };
 
+static int xhci_disable_ports;
+static int __init xhci_disable_ports_setup(char *str)
+{
+	get_option(&str, &xhci_disable_ports);
+	return 1;
+}
+__setup("xhci_disable_ports=", xhci_disable_ports_setup);
+
 static void __devinit ehci_bios_handoff(struct pci_dev *pdev,
 					void __iomem *op_reg_base,
 					u32 cap, u8 offset)
@@ -854,11 +862,15 @@ void usb_enable_xhci_ports(struct pci_dev *xhci_pdev)
 	dev_dbg(&xhci_pdev->dev, "Configurable USB 2.0 ports to hand over to xCHI: 0x%x\n",
 			ports_available);
 
-	/* this needs to be done in a dirty way to preserve kABI */
-	id = dmi_first_match(bt_excepted_from_switch_table);
-	if (id) {
-		long  expected = (long)id->driver_data;
-		ports_available &= ~expected;
+	if (xhci_disable_ports) {
+		ports_available &= ~xhci_disable_ports;
+	} else {
+		/* this needs to be done in a dirty way to preserve kABI */
+		id = dmi_first_match(bt_excepted_from_switch_table);
+		if (id) {
+			long  expected = (long)id->driver_data;
+			ports_available &= ~expected;
+		}
 	}
 
 	/* Write XUSB2PR, the xHC USB 2.0 Port Routing Register, to
