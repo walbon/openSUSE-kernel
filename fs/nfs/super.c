@@ -85,6 +85,7 @@ enum {
 	Opt_acl, Opt_noacl,
 	Opt_rdirplus, Opt_nordirplus,
 	Opt_sharecache, Opt_nosharecache,
+	Opt_sharetransport, Opt_nosharetransport,
 	Opt_resvport, Opt_noresvport,
 	Opt_fscache, Opt_nofscache,
 
@@ -145,6 +146,8 @@ static const match_table_t nfs_mount_option_tokens = {
 	{ Opt_nordirplus, "nordirplus" },
 	{ Opt_sharecache, "sharecache" },
 	{ Opt_nosharecache, "nosharecache" },
+	{ Opt_sharetransport, "sharetransport"},
+	{ Opt_nosharetransport, "nosharetransport"},
 	{ Opt_resvport, "resvport" },
 	{ Opt_noresvport, "noresvport" },
 	{ Opt_fscache, "fsc" },
@@ -649,6 +652,7 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss,
 		{ NFS_MOUNT_NOACL, ",noacl", "" },
 		{ NFS_MOUNT_NORDIRPLUS, ",nordirplus", "" },
 		{ NFS_MOUNT_UNSHARED, ",nosharecache", "" },
+		{ NFS_MOUNT_NOSHARE_XPRT, ",nosharetransport", ""},
 		{ NFS_MOUNT_NORESVPORT, ",noresvport", "" },
 		{ 0, NULL, NULL }
 	};
@@ -1195,6 +1199,12 @@ static int nfs_parse_mount_options(char *raw,
 			break;
 		case Opt_nosharecache:
 			mnt->flags |= NFS_MOUNT_UNSHARED;
+			break;
+		case Opt_sharetransport:
+			mnt->flags &= ~NFS_MOUNT_NOSHARE_XPRT;
+			break;
+		case Opt_nosharetransport:
+			mnt->flags |= NFS_MOUNT_NOSHARE_XPRT;
 			break;
 		case Opt_resvport:
 			mnt->flags &= ~NFS_MOUNT_NORESVPORT;
@@ -2223,6 +2233,9 @@ static int nfs_bdi_register(struct nfs_server *server)
 	return bdi_register_dev(&server->backing_dev_info, server->s_dev);
 }
 
+static int always_nosharetransport = 0;
+module_param(always_nosharetransport, bool, 0644);
+
 static struct dentry *nfs_fs_mount(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *raw_data)
 {
@@ -2241,6 +2254,8 @@ static struct dentry *nfs_fs_mount(struct file_system_type *fs_type,
 	mntfh = nfs_alloc_fhandle();
 	if (data == NULL || mntfh == NULL)
 		goto out;
+	if (always_nosharetransport)
+		data->flags |= NFS_MOUNT_NOSHARE_XPRT;
 
 	/* Validate the mount data */
 	error = nfs_validate_mount_data(raw_data, data, mntfh, dev_name);
