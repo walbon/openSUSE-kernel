@@ -70,7 +70,10 @@
 
 #define RBD_SNAP_HEAD_NAME	"-"
 
+/* This allows a single page to hold an image name sent by OSD */
+#define RBD_IMAGE_NAME_LEN_MAX	(PAGE_SIZE - sizeof (__le32) - 1)
 #define RBD_IMAGE_ID_LEN_MAX	64
+
 #define RBD_OBJ_PREFIX_LEN_MAX	64
 
 /* Feature bits */
@@ -217,6 +220,9 @@ struct rbd_device {
 	struct ceph_osd_event   *watch_event;
 	struct ceph_osd_request *watch_request;
 
+	struct rbd_spec		*parent_spec;
+	u64			parent_overlap;
+
 	/* protects updating the header */
 	struct rw_semaphore     header_rwsem;
 
@@ -229,6 +235,7 @@ struct rbd_device {
 
 	/* sysfs related */
 	struct device		dev;
+	unsigned long		open_count;
 };
 
 static DEFINE_MUTEX(ctl_mutex);	  /* Serialize open/close/setup/teardown */
@@ -303,8 +310,11 @@ static int rbd_open(struct block_device *bdev, fmode_t mode)
 	if ((mode & FMODE_WRITE) && rbd_dev->mapping.read_only)
 		return -EROFS;
 
+	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
 	rbd_get_dev(rbd_dev);
 	set_device_ro(bdev, rbd_dev->mapping.read_only);
+	rbd_dev->open_count++;
+	mutex_unlock(&ctl_mutex);
 
 	return 0;
 }
@@ -313,7 +323,11 @@ static int rbd_release(struct gendisk *disk, fmode_t mode)
 {
 	struct rbd_device *rbd_dev = disk->private_data;
 
+	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
+	rbd_assert(rbd_dev->open_count > 0);
+	rbd_dev->open_count--;
 	rbd_put_dev(rbd_dev);
+	mutex_unlock(&ctl_mutex);
 
 	return 0;
 }
@@ -653,6 +667,20 @@ out_err:
 	header->object_prefix = NULL;
 
 	return -ENOMEM;
+}
+
+static const char *rbd_snap_name(struct rbd_device *rbd_dev, u64 snap_id)
+{
+	struct rbd_snap *snap;
+
+	if (snap_id == CEPH_NOSNAP)
+		return RBD_SNAP_HEAD_NAME;
+
+	list_for_each_entry(snap, &rbd_dev->snaps, node)
+		if (snap_id == snap->id)
+			return snap->name;
+
+	return NULL;
 }
 
 static int snap_by_name(struct rbd_device *rbd_dev, const char *snap_name)
@@ -2009,6 +2037,49 @@ static ssize_t rbd_snap_show(struct device *dev,
 	return sprintf(buf, "%s\n", rbd_dev->spec->snap_name);
 }
 
+/*
+ * For an rbd v2 image, shows the pool id, image id, and snapshot id
+ * for the parent image.  If there is no parent, simply shows
+ * "(no parent image)".
+ */
+static ssize_t rbd_parent_show(struct device *dev,
+			     struct device_attribute *attr,
+			     char *buf)
+{
+	struct rbd_device *rbd_dev = dev_to_rbd_dev(dev);
+	struct rbd_spec *spec = rbd_dev->parent_spec;
+	int count;
+	char *bufp = buf;
+
+	if (!spec)
+		return sprintf(buf, "(no parent image)\n");
+
+	count = sprintf(bufp, "pool_id %llu\npool_name %s\n",
+			(unsigned long long) spec->pool_id, spec->pool_name);
+	if (count < 0)
+		return count;
+	bufp += count;
+
+	count = sprintf(bufp, "image_id %s\nimage_name %s\n", spec->image_id,
+			spec->image_name ? spec->image_name : "(unknown)");
+	if (count < 0)
+		return count;
+	bufp += count;
+
+	count = sprintf(bufp, "snap_id %llu\nsnap_name %s\n",
+			(unsigned long long) spec->snap_id, spec->snap_name);
+	if (count < 0)
+		return count;
+	bufp += count;
+
+	count = sprintf(bufp, "overlap %llu\n", rbd_dev->parent_overlap);
+	if (count < 0)
+		return count;
+	bufp += count;
+
+	return (ssize_t) (bufp - buf);
+}
+
 static ssize_t rbd_image_refresh(struct device *dev,
 				 struct device_attribute *attr,
 				 const char *buf,
@@ -2032,6 +2103,7 @@ static DEVICE_ATTR(name, S_IRUGO, rbd_name_show, NULL);
 static DEVICE_ATTR(image_id, S_IRUGO, rbd_image_id_show, NULL);
 static DEVICE_ATTR(refresh, S_IWUSR, NULL, rbd_image_refresh);
 static DEVICE_ATTR(current_snap, S_IRUGO, rbd_snap_show, NULL);
+static DEVICE_ATTR(parent, S_IRUGO, rbd_parent_show, NULL);
 
 static struct attribute *rbd_attrs[] = {
 	&dev_attr_size.attr,
@@ -2043,6 +2115,7 @@ static struct attribute *rbd_attrs[] = {
 	&dev_attr_name.attr,
 	&dev_attr_image_id.attr,
 	&dev_attr_current_snap.attr,
+	&dev_attr_parent.attr,
 	&dev_attr_refresh.attr,
 	NULL
 };
@@ -2192,6 +2265,7 @@ struct rbd_device *rbd_dev_create(struct rbd_client *rbdc,
 
 static void rbd_dev_destroy(struct rbd_device *rbd_dev)
 {
+	rbd_spec_put(rbd_dev->parent_spec);
 	kfree(rbd_dev->header_name);
 	rbd_put_client(rbd_dev->rbd_client);
 	rbd_spec_put(rbd_dev->spec);
@@ -2398,6 +2472,183 @@ static int rbd_dev_v2_features(struct rbd_device *rbd_dev)
 {
 	return _rbd_dev_v2_snap_features(rbd_dev, CEPH_NOSNAP,
 						&rbd_dev->header.features);
+}
+
+static int rbd_dev_v2_parent_info(struct rbd_device *rbd_dev)
+{
+	struct rbd_spec *parent_spec;
+	size_t size;
+	void *reply_buf = NULL;
+	__le64 snapid;
+	void *p;
+	void *end;
+	char *image_id;
+	u64 overlap;
+	size_t len = 0;
+	int ret;
+
+	parent_spec = rbd_spec_alloc();
+	if (!parent_spec)
+		return -ENOMEM;
+
+	size = sizeof (__le64) +				/* pool_id */
+		sizeof (__le32) + RBD_IMAGE_ID_LEN_MAX +	/* image_id */
+		sizeof (__le64) +				/* snap_id */
+		sizeof (__le64);				/* overlap */
+	reply_buf = kmalloc(size, GFP_KERNEL);
+	if (!reply_buf) {
+		ret = -ENOMEM;
+		goto out_err;
+	}
+
+	snapid = cpu_to_le64(CEPH_NOSNAP);
+	ret = rbd_req_sync_exec(rbd_dev, rbd_dev->header_name,
+				"rbd", "get_parent",
+				(char *) &snapid, sizeof (snapid),
+				(char *) reply_buf, size,
+				CEPH_OSD_FLAG_READ, NULL);
+	dout("%s: rbd_req_sync_exec returned %d\n", __func__, ret);
+	if (ret < 0)
+		goto out_err;
+
+	ret = -ERANGE;
+	p = reply_buf;
+	end = (char *) reply_buf + size;
+	ceph_decode_64_safe(&p, end, parent_spec->pool_id, out_err);
+	if (parent_spec->pool_id == CEPH_NOPOOL)
+		goto out;	/* No parent?  No problem. */
+
+	image_id = ceph_extract_encoded_string(&p, end, &len, GFP_KERNEL);
+	if (IS_ERR(image_id)) {
+		ret = PTR_ERR(image_id);
+		goto out_err;
+	}
+	parent_spec->image_id = image_id;
+	parent_spec->image_id_len = len;
+	ceph_decode_64_safe(&p, end, parent_spec->snap_id, out_err);
+	ceph_decode_64_safe(&p, end, overlap, out_err);
+
+	rbd_dev->parent_overlap = overlap;
+	rbd_dev->parent_spec = parent_spec;
+	parent_spec = NULL;	/* rbd_dev now owns this */
+out:
+	ret = 0;
+out_err:
+	kfree(reply_buf);
+	rbd_spec_put(parent_spec);
+
+	return ret;
+}
+
+static char *rbd_dev_image_name(struct rbd_device *rbd_dev)
+{
+	size_t image_id_size;
+	char *image_id;
+	void *p;
+	void *end;
+	size_t size;
+	void *reply_buf = NULL;
+	size_t len = 0;
+	char *image_name = NULL;
+	int ret;
+
+	rbd_assert(!rbd_dev->spec->image_name);
+
+	image_id_size = sizeof (__le32) + rbd_dev->spec->image_id_len;
+	image_id = kmalloc(image_id_size, GFP_KERNEL);
+	if (!image_id)
+		return NULL;
+
+	p = image_id;
+	end = (char *) image_id + image_id_size;
+	ceph_encode_string(&p, end, rbd_dev->spec->image_id,
+				(u32) rbd_dev->spec->image_id_len);
+
+	size = sizeof (__le32) + RBD_IMAGE_NAME_LEN_MAX;
+	reply_buf = kmalloc(size, GFP_KERNEL);
+	if (!reply_buf)
+		goto out;
+
+	ret = rbd_req_sync_exec(rbd_dev, RBD_DIRECTORY,
+				"rbd", "dir_get_name",
+				image_id, image_id_size,
+				(char *) reply_buf, size,
+				CEPH_OSD_FLAG_READ, NULL);
+	if (ret < 0)
+		goto out;
+	p = reply_buf;
+	end = (char *) reply_buf + size;
+	image_name = ceph_extract_encoded_string(&p, end, &len, GFP_KERNEL);
+	if (IS_ERR(image_name))
+		image_name = NULL;
+	else
+		dout("%s: name is %s len is %zd\n", __func__, image_name, len);
+out:
+	kfree(reply_buf);
+	kfree(image_id);
+
+	return image_name;
+}
+
+/*
+ * When a parent image gets probed, we only have the pool, image,
+ * and snapshot ids but not the names of any of them.  This call
+ * is made later to fill in those names.  It has to be done after
+ * rbd_dev_snaps_update() has completed because some of the
+ * information (in particular, snapshot name) is not available
+ * until then.
+ */
+static int rbd_dev_probe_update_spec(struct rbd_device *rbd_dev)
+{
+	struct ceph_osd_client *osdc;
+	const char *name;
+	void *reply_buf = NULL;
+	int ret;
+
+	if (rbd_dev->spec->pool_name)
+		return 0;	/* Already have the names */
+
+	/* Look up the pool name */
+
+	osdc = &rbd_dev->rbd_client->client->osdc;
+	name = ceph_pg_pool_name_by_id(osdc->osdmap, rbd_dev->spec->pool_id);
+	if (!name)
+		return -EIO;	/* pool id too large (>= 2^31) */
+
+	rbd_dev->spec->pool_name = kstrdup(name, GFP_KERNEL);
+	if (!rbd_dev->spec->pool_name)
+		return -ENOMEM;
+
+	/* Fetch the image name; tolerate failure here */
+
+	name = rbd_dev_image_name(rbd_dev);
+	if (name) {
+		rbd_dev->spec->image_name_len = strlen(name);
+		rbd_dev->spec->image_name = (char *) name;
+	} else {
+		pr_warning(RBD_DRV_NAME "%d "
+			"unable to get image name for image id %s\n",
+			rbd_dev->major, rbd_dev->spec->image_id);
+	}
+
+	/* Look up the snapshot name. */
+
+	name = rbd_snap_name(rbd_dev, rbd_dev->spec->snap_id);
+	if (!name) {
+		ret = -EIO;
+		goto out_err;
+	}
+	rbd_dev->spec->snap_name = kstrdup(name, GFP_KERNEL);
+	if(!rbd_dev->spec->snap_name)
+		goto out_err;
+
+	return 0;
+out_err:
+	kfree(reply_buf);
+	kfree(rbd_dev->spec->pool_name);
+	rbd_dev->spec->pool_name = NULL;
+
+	return ret;
 }
 
 static int rbd_dev_v2_snap_context(struct rbd_device *rbd_dev, u64 *ver)
@@ -3154,6 +3405,12 @@ static int rbd_dev_v1_probe(struct rbd_device *rbd_dev)
 	ret = rbd_read_header(rbd_dev, &rbd_dev->header);
 	if (ret < 0)
 		goto out_err;
+
+	/* Version 1 images have no parent (no layering) */
+
+	rbd_dev->parent_spec = NULL;
+	rbd_dev->parent_overlap = 0;
+
 	rbd_dev->image_format = 1;
 
 	dout("discovered version 1 image, header name is %s\n",
@@ -3205,6 +3462,14 @@ static int rbd_dev_v2_probe(struct rbd_device *rbd_dev)
 	if (ret < 0)
 		goto out_err;
 
+	/* If the image supports layering, get the parent info */
+
+	if (rbd_dev->header.features & RBD_FEATURE_LAYERING) {
+		ret = rbd_dev_v2_parent_info(rbd_dev);
+		if (ret < 0)
+			goto out_err;
+	}
+
 	/* crypto and compression type aren't (yet) supported for v2 images */
 
 	rbd_dev->header.crypt_type = 0;
@@ -3224,6 +3489,9 @@ static int rbd_dev_v2_probe(struct rbd_device *rbd_dev)
 
 	return 0;
 out_err:
+	rbd_dev->parent_overlap = 0;
+	rbd_spec_put(rbd_dev->parent_spec);
+	rbd_dev->parent_spec = NULL;
 	kfree(rbd_dev->header_name);
 	rbd_dev->header_name = NULL;
 	kfree(rbd_dev->header.object_prefix);
@@ -3240,6 +3508,10 @@ static int rbd_dev_probe_finish(struct rbd_device *rbd_dev)
 	ret = rbd_dev_snaps_update(rbd_dev);
 	if (ret)
 		return ret;
+
+	ret = rbd_dev_probe_update_spec(rbd_dev);
+	if (ret)
+		goto err_out_snaps;
 
 	ret = rbd_dev_set_mapping(rbd_dev);
 	if (ret)
@@ -3478,6 +3750,11 @@ static ssize_t rbd_remove(struct bus_type *bus,
 	rbd_dev = __rbd_get_dev(target_id);
 	if (!rbd_dev) {
 		ret = -ENOENT;
+		goto done;
+	}
+
+	if (rbd_dev->open_count) {
+		ret = -EBUSY;
 		goto done;
 	}
 
