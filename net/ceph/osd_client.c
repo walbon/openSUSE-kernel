@@ -231,19 +231,6 @@ static void osd_req_encode_op(struct ceph_osd_request *req,
 		dst->extent.truncate_seq =
 			cpu_to_le32(src->extent.truncate_seq);
 		break;
-
-	case CEPH_OSD_OP_GETXATTR:
-	case CEPH_OSD_OP_SETXATTR:
-	case CEPH_OSD_OP_CMPXATTR:
-		dst->xattr.name_len = cpu_to_le32(src->xattr.name_len);
-		dst->xattr.value_len = cpu_to_le32(src->xattr.value_len);
-		dst->xattr.cmp_op = src->xattr.cmp_op;
-		dst->xattr.cmp_mode = src->xattr.cmp_mode;
-		ceph_pagelist_append(&req->r_trail, src->xattr.name,
-				     src->xattr.name_len);
-		ceph_pagelist_append(&req->r_trail, src->xattr.val,
-				     src->xattr.value_len);
-		break;
 	case CEPH_OSD_OP_CALL:
 		dst->cls.class_len = src->cls.class_len;
 		dst->cls.method_len = src->cls.method_len;
@@ -256,21 +243,8 @@ static void osd_req_encode_op(struct ceph_osd_request *req,
 		ceph_pagelist_append(&req->r_trail, src->cls.indata,
 				     src->cls.indata_len);
 		break;
-	case CEPH_OSD_OP_ROLLBACK:
-		dst->snap.snapid = cpu_to_le64(src->snap.snapid);
-		break;
 	case CEPH_OSD_OP_STARTSYNC:
 		break;
-	case CEPH_OSD_OP_NOTIFY:
-		{
-			__le32 prot_ver = cpu_to_le32(src->watch.prot_ver);
-			__le32 timeout = cpu_to_le32(src->watch.timeout);
-
-			ceph_pagelist_append(&req->r_trail,
-						&prot_ver, sizeof(prot_ver));
-			ceph_pagelist_append(&req->r_trail,
-						&timeout, sizeof(timeout));
-		}
 	case CEPH_OSD_OP_NOTIFY_ACK:
 	case CEPH_OSD_OP_WATCH:
 		dst->watch.cookie = cpu_to_le64(src->watch.cookie);
@@ -285,6 +259,7 @@ static void osd_req_encode_op(struct ceph_osd_request *req,
 	case CEPH_OSD_OP_MAPEXT:
 	case CEPH_OSD_OP_MASKTRUNC:
 	case CEPH_OSD_OP_SPARSE_READ:
+	case CEPH_OSD_OP_NOTIFY:
 	case CEPH_OSD_OP_ASSERT_VER:
 	case CEPH_OSD_OP_WRITEFULL:
 	case CEPH_OSD_OP_TRUNCATE:
@@ -297,6 +272,7 @@ static void osd_req_encode_op(struct ceph_osd_request *req,
 	case CEPH_OSD_OP_TMAPPUT:
 	case CEPH_OSD_OP_TMAPGET:
 	case CEPH_OSD_OP_CREATE:
+	case CEPH_OSD_OP_ROLLBACK:
 	case CEPH_OSD_OP_OMAPGETKEYS:
 	case CEPH_OSD_OP_OMAPGETVALS:
 	case CEPH_OSD_OP_OMAPGETHEADER:
@@ -310,7 +286,10 @@ static void osd_req_encode_op(struct ceph_osd_request *req,
 	case CEPH_OSD_OP_CLONERANGE:
 	case CEPH_OSD_OP_ASSERT_SRC_VERSION:
 	case CEPH_OSD_OP_SRC_CMPXATTR:
+	case CEPH_OSD_OP_GETXATTR:
 	case CEPH_OSD_OP_GETXATTRS:
+	case CEPH_OSD_OP_CMPXATTR:
+	case CEPH_OSD_OP_SETXATTR:
 	case CEPH_OSD_OP_SETXATTRS:
 	case CEPH_OSD_OP_RESETXATTRS:
 	case CEPH_OSD_OP_RMXATTR:
@@ -356,7 +335,7 @@ void ceph_osdc_build_request(struct ceph_osd_request *req,
 	void *p;
 	size_t msg_size = sizeof(*head) + num_op*sizeof(*op);
 	int flags = req->r_flags;
-	u64 data_len = 0;
+	u64 data_len;
 	int i;
 
 	WARN_ON((flags & (CEPH_OSD_FLAG_READ|CEPH_OSD_FLAG_WRITE)) == 0);
@@ -384,8 +363,6 @@ void ceph_osdc_build_request(struct ceph_osd_request *req,
 	while (num_op--)
 		osd_req_encode_op(req, op++, src_op++);
 
-	data_len += req->r_trail.length;
-
 	if (snapc) {
 		head->snap_seq = cpu_to_le64(snapc->seq);
 		head->num_snaps = cpu_to_le32(snapc->num_snaps);
@@ -395,14 +372,12 @@ void ceph_osdc_build_request(struct ceph_osd_request *req,
 		}
 	}
 
+	data_len = req->r_trail.length;
 	if (flags & CEPH_OSD_FLAG_WRITE) {
 		req->r_request->hdr.data_off = cpu_to_le16(off);
-		req->r_request->hdr.data_len = cpu_to_le32(len + data_len);
-	} else if (data_len) {
-		req->r_request->hdr.data_off = 0;
-		req->r_request->hdr.data_len = cpu_to_le32(data_len);
+		data_len += len;
 	}
-
+	req->r_request->hdr.data_len = cpu_to_le32(data_len);
 	req->r_request->page_alignment = req->r_page_alignment;
 
 	BUG_ON(p > msg->front.iov_base + msg->front.iov_len);
