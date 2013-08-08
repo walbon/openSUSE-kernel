@@ -272,7 +272,7 @@ struct rbd_device {
 	struct ceph_file_layout	layout;
 
 	struct ceph_osd_event   *watch_event;
-	struct ceph_osd_request *watch_request;
+	struct rbd_obj_request	*watch_request;
 
 	struct rbd_spec		*parent_spec;
 	u64			parent_overlap;
@@ -1063,22 +1063,29 @@ static void rbd_img_request_put(struct rbd_img_request *img_request)
 static inline void rbd_img_obj_request_add(struct rbd_img_request *img_request,
 					struct rbd_obj_request *obj_request)
 {
+	rbd_assert(obj_request->img_request == NULL);
+
 	rbd_obj_request_get(obj_request);
 	obj_request->img_request = img_request;
-	list_add_tail(&obj_request->links, &img_request->obj_requests);
-	obj_request->which = img_request->obj_request_count++;
+	obj_request->which = img_request->obj_request_count;
 	rbd_assert(obj_request->which != BAD_WHICH);
+	img_request->obj_request_count++;
+	list_add_tail(&obj_request->links, &img_request->obj_requests);
 }
 
 static inline void rbd_img_obj_request_del(struct rbd_img_request *img_request,
 					struct rbd_obj_request *obj_request)
 {
 	rbd_assert(obj_request->which != BAD_WHICH);
-	obj_request->which = BAD_WHICH;
+
 	list_del(&obj_request->links);
+	rbd_assert(img_request->obj_request_count > 0);
+	img_request->obj_request_count--;
+	rbd_assert(obj_request->which == img_request->obj_request_count);
+	obj_request->which = BAD_WHICH;
 	rbd_assert(obj_request->img_request == img_request);
-	obj_request->callback = NULL;
 	obj_request->img_request = NULL;
+	obj_request->callback = NULL;
 	rbd_obj_request_put(obj_request);
 }
 
@@ -1472,6 +1479,7 @@ static void rbd_img_request_destroy(struct kref *kref)
 
 	for_each_obj_request_safe(img_request, obj_request, next_obj_request)
 		rbd_img_obj_request_del(img_request, obj_request);
+	rbd_assert(img_request->obj_request_count == 0);
 
 	if (img_request->write_request)
 		ceph_put_snap_context(img_request->snapc);
@@ -1699,6 +1707,7 @@ static int rbd_dev_header_watch_sync(struct rbd_device *rbd_dev, int start)
 						&rbd_dev->watch_event);
 		if (ret < 0)
 			return ret;
+		rbd_assert(rbd_dev->watch_event != NULL);
 	}
 
 	ret = -ENOMEM;
@@ -1718,32 +1727,43 @@ static int rbd_dev_header_watch_sync(struct rbd_device *rbd_dev, int start)
 	if (!obj_request->osd_req)
 		goto out_cancel;
 
-	if (start) {
-		rbd_dev->watch_request = obj_request->osd_req;
-		ceph_osdc_set_request_linger(osdc, rbd_dev->watch_request);
-	} else {
+	if (start)
+		ceph_osdc_set_request_linger(osdc, obj_request->osd_req);
+	else
 		ceph_osdc_unregister_linger_request(osdc,
-						rbd_dev->watch_request);
-		rbd_dev->watch_request = NULL;
-	}
+					rbd_dev->watch_request->osd_req);
 	ret = rbd_obj_request_submit(osdc, obj_request);
 	if (ret)
 		goto out_cancel;
 	ret = rbd_obj_request_wait(obj_request);
 	if (ret)
 		goto out_cancel;
-
 	ret = obj_request->result;
 	if (ret)
 		goto out_cancel;
 
-	if (start)
-		goto done;	/* Done if setting up the watch request */
+	/*
+	 * A watch request is set to linger, so the underlying osd
+	 * request won't go away until we unregister it.  We retain
+	 * a pointer to the object request during that time (in
+	 * rbd_dev->watch_request), so we'll keep a reference to
+	 * it.  We'll drop that reference (below) after we've
+	 * unregistered it.
+	 */
+	if (start) {
+		rbd_dev->watch_request = obj_request;
+
+		return 0;
+	}
+
+	/* We have successfully torn down the watch request */
+
+	rbd_obj_request_put(rbd_dev->watch_request);
+	rbd_dev->watch_request = NULL;
 out_cancel:
 	/* Cancel the event if we're tearing down, or on error */
 	ceph_osdc_cancel_event(rbd_dev->watch_event);
 	rbd_dev->watch_event = NULL;
-done:
 	if (obj_request)
 		rbd_obj_request_put(obj_request);
 
