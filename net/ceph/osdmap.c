@@ -654,6 +654,24 @@ static int osdmap_set_max_osd(struct ceph_osdmap *map, int max)
 	return 0;
 }
 
+static int __decode_pgid(void **p, void *end, struct ceph_pg *pg)
+{
+	u8 v;
+
+	ceph_decode_need(p, end, 1+8+4+4, bad);
+	v = ceph_decode_8(p);
+	if (v != 1)
+		goto bad;
+	pg->pool = ceph_decode_64(p);
+	pg->seed = ceph_decode_32(p);
+	*p += 4; /* skip preferred */
+	return 0;
+
+bad:
+	dout("error decoding pgid\n");
+	return -EINVAL;
+}
+
 /*
  * decode a full map.
  */
@@ -745,13 +763,12 @@ struct ceph_osdmap *osdmap_decode(void **p, void *end)
 	for (i = 0; i < len; i++) {
 		int n, j;
 		struct ceph_pg pgid;
-		struct ceph_pg_v1 pgid_v1;
 		struct ceph_pg_mapping *pg;
 
-		ceph_decode_need(p, end, sizeof(u32) + sizeof(u64), bad);
-		ceph_decode_copy(p, &pgid_v1, sizeof(pgid_v1));
-		pgid.pool = le32_to_cpu(pgid_v1.pool);
-		pgid.seed = le16_to_cpu(pgid_v1.ps);
+		err = __decode_pgid(p, end, &pgid);
+		if (err)
+			goto bad;
+		ceph_decode_need(p, end, sizeof(u32), bad);
 		n = ceph_decode_32(p);
 		err = -EINVAL;
 		if (n > (UINT_MAX - sizeof(*pg)) / sizeof(u32))
@@ -818,8 +835,8 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 	u16 version;
 
 	ceph_decode_16_safe(p, end, version, bad);
-	if (version > 6) {
-		pr_warning("got unknown v %d > %d of inc osdmap\n", version, 6);
+	if (version != 6) {
+		pr_warning("got unknown v %d != 6 of inc osdmap\n", version);
 		goto bad;
 	}
 
@@ -963,15 +980,14 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 	while (len--) {
 		struct ceph_pg_mapping *pg;
 		int j;
-		struct ceph_pg_v1 pgid_v1;
 		struct ceph_pg pgid;
 		u32 pglen;
-		ceph_decode_need(p, end, sizeof(u64) + sizeof(u32), bad);
-		ceph_decode_copy(p, &pgid_v1, sizeof(pgid_v1));
-		pgid.pool = le32_to_cpu(pgid_v1.pool);
-		pgid.seed = le16_to_cpu(pgid_v1.ps);
-		pglen = ceph_decode_32(p);
 
+		err = __decode_pgid(p, end, &pgid);
+		if (err)
+			goto bad;
+		ceph_decode_need(p, end, sizeof(u32), bad);
+		pglen = ceph_decode_32(p);
 		if (pglen) {
 			ceph_decode_need(p, end, pglen*sizeof(u32), bad);
 
@@ -1127,18 +1143,16 @@ static int *calc_pg_raw(struct ceph_osdmap *osdmap, struct ceph_pg pgid,
 	struct ceph_pg_mapping *pg;
 	struct ceph_pg_pool_info *pool;
 	int ruleno;
-	unsigned int poolid, ps, pps, t, r;
+	int r;
+	u32 pps;
 
-	poolid = pgid.pool;
-	ps = pgid.seed;
-
-	pool = __lookup_pg_pool(&osdmap->pg_pools, poolid);
+	pool = __lookup_pg_pool(&osdmap->pg_pools, pgid.pool);
 	if (!pool)
 		return NULL;
 
 	/* pg_temp? */
-	t = ceph_stable_mod(ps, pool->pg_num, pool->pgp_num_mask);
-	pgid.seed = t;
+	pgid.seed = ceph_stable_mod(pgid.seed, pool->pg_num,
+				    pool->pgp_num_mask);
 	pg = __lookup_pg_mapping(&osdmap->pg_temp, pgid);
 	if (pg) {
 		*num = pg->len;
@@ -1149,20 +1163,35 @@ static int *calc_pg_raw(struct ceph_osdmap *osdmap, struct ceph_pg pgid,
 	ruleno = crush_find_rule(osdmap->crush, pool->crush_ruleset,
 				 pool->type, pool->size);
 	if (ruleno < 0) {
-		pr_err("no crush rule pool %d ruleset %d type %d size %d\n",
-		       poolid, pool->crush_ruleset, pool->type,
+		pr_err("no crush rule pool %lld ruleset %d type %d size %d\n",
+		       pgid.pool, pool->crush_ruleset, pool->type,
 		       pool->size);
 		return NULL;
 	}
 
-	pps = ceph_stable_mod(ps, pool->pgp_num, pool->pgp_num_mask);
-	pps += poolid;
+	if (pool->flags & CEPH_POOL_FLAG_HASHPSPOOL) {
+		/* hash pool id and seed sothat pool PGs do not overlap */
+		pps = crush_hash32_2(CRUSH_HASH_RJENKINS1,
+				     ceph_stable_mod(pgid.seed, pool->pgp_num,
+						     pool->pgp_num_mask),
+				     pgid.pool);
+	} else {
+		/*
+		 * legacy ehavior: add ps and pool together.  this is
+		 * not a great approach because the PGs from each pool
+		 * will overlap on top of each other: 0.5 == 1.4 ==
+		 * 2.3 == ...
+		 */
+		pps = ceph_stable_mod(pgid.seed, pool->pgp_num,
+				      pool->pgp_num_mask) +
+			(unsigned)pgid.pool;
+	}
 	r = crush_do_rule(osdmap->crush, ruleno, pps, osds,
 			  min_t(int, pool->size, *num),
 			  osdmap->osd_weight);
 	if (r < 0) {
-		pr_err("error %d from crush rule: pool %d ruleset %d type %d"
-		       " size %d\n", r, poolid, pool->crush_ruleset,
+		pr_err("error %d from crush rule: pool %lld ruleset %d type %d"
+		       " size %d\n", r, pgid.pool, pool->crush_ruleset,
 		       pool->type, pool->size);
 		return NULL;
 	}
