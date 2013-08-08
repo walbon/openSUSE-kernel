@@ -119,7 +119,26 @@ struct rbd_image_header {
  * An rbd image specification.
  *
  * The tuple (pool_id, image_id, snap_id) is sufficient to uniquely
- * identify an image.
+ * identify an image.  Each rbd_dev structure includes a pointer to
+ * an rbd_spec structure that encapsulates this identity.
+ *
+ * Each of the id's in an rbd_spec has an associated name.  For a
+ * user-mapped image, the names are supplied and the id's associated
+ * with them are looked up.  For a layered image, a parent image is
+ * defined by the tuple, and the names are looked up.
+ *
+ * An rbd_dev structure contains a parent_spec pointer which is
+ * non-null if the image it represents is a child in a layered
+ * image.  This pointer will refer to the rbd_spec structure used
+ * by the parent rbd_dev for its own identity (i.e., the structure
+ * is shared between the parent and child).
+ *
+ * Since these structures are populated once, during the discovery
+ * phase of image construction, they are effectively immutable so
+ * we make no effort to synchronize access to them.
+ *
+ * Note that code herein does not assume the image name is known (it
+ * could be a null pointer).
  */
 struct rbd_spec {
 	u64		pool_id;
@@ -290,16 +309,6 @@ static struct device rbd_root_dev = {
 #  define rbd_assert(expr)	((void) 0)
 #endif /* !RBD_DEBUG */
 
-static struct device *rbd_get_dev(struct rbd_device *rbd_dev)
-{
-	return get_device(&rbd_dev->dev);
-}
-
-static void rbd_put_dev(struct rbd_device *rbd_dev)
-{
-	put_device(&rbd_dev->dev);
-}
-
 static int rbd_dev_refresh(struct rbd_device *rbd_dev, u64 *hver);
 static int rbd_dev_v2_refresh(struct rbd_device *rbd_dev, u64 *hver);
 
@@ -311,7 +320,7 @@ static int rbd_open(struct block_device *bdev, fmode_t mode)
 		return -EROFS;
 
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
-	rbd_get_dev(rbd_dev);
+	(void) get_device(&rbd_dev->dev);
 	set_device_ro(bdev, rbd_dev->mapping.read_only);
 	rbd_dev->open_count++;
 	mutex_unlock(&ctl_mutex);
@@ -326,7 +335,7 @@ static int rbd_release(struct gendisk *disk, fmode_t mode)
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
 	rbd_assert(rbd_dev->open_count > 0);
 	rbd_dev->open_count--;
-	rbd_put_dev(rbd_dev);
+	put_device(&rbd_dev->dev);
 	mutex_unlock(&ctl_mutex);
 
 	return 0;
