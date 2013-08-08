@@ -53,6 +53,7 @@ struct ceph_osd {
 enum ceph_osd_data_type {
 	CEPH_OSD_DATA_TYPE_NONE,
 	CEPH_OSD_DATA_TYPE_PAGES,
+	CEPH_OSD_DATA_TYPE_PAGELIST,
 #ifdef CONFIG_BLOCK
 	CEPH_OSD_DATA_TYPE_BIO,
 #endif /* CONFIG_BLOCK */
@@ -68,8 +69,9 @@ struct ceph_osd_data {
 			bool		pages_from_pool;
 			bool		own_pages;
 		};
+		struct ceph_pagelist	*pagelist;
 #ifdef CONFIG_BLOCK
-		struct bio       *bio;
+		struct bio       	*bio;
 #endif /* CONFIG_BLOCK */
 	};
 };
@@ -132,7 +134,6 @@ struct ceph_osd_request {
 
 	struct ceph_osd_data r_data_in;
 	struct ceph_osd_data r_data_out;
-	struct ceph_pagelist r_trail;	      /* trailing part of data out */
 };
 
 struct ceph_osd_event {
