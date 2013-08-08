@@ -423,40 +423,39 @@ int ceph_encrypt2(struct ceph_crypto_key *secret, void *dst, size_t *dst_len,
 	}
 }
 
-static int ceph_key_instantiate(struct key *key,
-				struct key_preparsed_payload *prep)
+
+int ceph_key_instantiate(struct key *key, const void *data, size_t datalen)
 {
-	struct ceph_crypto_key *ckey;
-	size_t datalen = prep->datalen;
-	int ret;
-	void *p;
+        struct ceph_crypto_key *ckey;
+        int ret;
+        void *p;
 
-	ret = -EINVAL;
-	if (datalen <= 0 || datalen > 32767 || !prep->data)
-		goto err;
+        ret = -EINVAL;
+        if (datalen <= 0 || datalen > 32767 || !data)
+                goto err;
 
-	ret = key_payload_reserve(key, datalen);
-	if (ret < 0)
-		goto err;
+        ret = key_payload_reserve(key, datalen);
+        if (ret < 0)
+                goto err;
 
-	ret = -ENOMEM;
-	ckey = kmalloc(sizeof(*ckey), GFP_KERNEL);
-	if (!ckey)
-		goto err;
+        ret = -ENOMEM;
+        ckey = kmalloc(sizeof(*ckey), GFP_KERNEL);
+        if (!ckey)
+                goto err;
 
-	/* TODO ceph_crypto_key_decode should really take const input */
-	p = (void *)prep->data;
-	ret = ceph_crypto_key_decode(ckey, &p, (char*)prep->data+datalen);
-	if (ret < 0)
-		goto err_ckey;
+        /* TODO ceph_crypto_key_decode should really take const input */
+        p = (void*)data;
+        ret = ceph_crypto_key_decode(ckey, &p, (char*)data+datalen);
+        if (ret < 0)
+                goto err_ckey;
 
-	key->payload.data = ckey;
-	return 0;
+        key->payload.data = ckey;
+        return 0;
 
 err_ckey:
-	kfree(ckey);
+        kfree(ckey);
 err:
-	return ret;
+        return ret;
 }
 
 static int ceph_key_match(const struct key *key, const void *description)
