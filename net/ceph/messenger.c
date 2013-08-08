@@ -2002,7 +2002,6 @@ static void process_message(struct ceph_connection *con)
 	con->ops->dispatch(con, msg);
 
 	mutex_lock(&con->mutex);
-	prepare_read_tag(con);
 }
 
 
@@ -2212,6 +2211,8 @@ more:
 		if (con->in_tag == CEPH_MSGR_TAG_READY)
 			goto more;
 		process_message(con);
+		if (con->state == CON_STATE_OPEN)
+			prepare_read_tag(con);
 		goto more;
 	}
 	if (con->in_tag == CEPH_MSGR_TAG_ACK) {
@@ -2334,7 +2335,6 @@ done_unlocked:
 	return;
 
 fault:
-	mutex_unlock(&con->mutex);
 	ceph_fault(con);     /* error/fault path */
 	goto done_unlocked;
 }
@@ -2345,9 +2345,8 @@ fault:
  * exponential backoff
  */
 static void ceph_fault(struct ceph_connection *con)
+	__releases(con->mutex)
 {
-	mutex_lock(&con->mutex);
-
 	pr_err("%s%lld %s %s\n", ENTITY_NAME(con->peer_name),
 	       ceph_pr_addr(&con->peer_addr.in_addr), con->error_msg);
 	dout("fault %p state %lu to peer %s\n",
