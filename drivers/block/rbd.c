@@ -261,10 +261,10 @@ struct rbd_device {
 
 	char			name[DEV_NAME_LEN]; /* blkdev name, e.g. rbd3 */
 
-	spinlock_t		lock;		/* queue lock */
+	spinlock_t		lock;		/* queue, flags, open_count */
 
 	struct rbd_image_header	header;
-	atomic_t		exists;
+	unsigned long		flags;		/* possibly lock protected */
 	struct rbd_spec		*spec;
 
 	char			*header_name;
@@ -289,7 +289,19 @@ struct rbd_device {
 
 	/* sysfs related */
 	struct device		dev;
-	unsigned long		open_count;
+	unsigned long		open_count;	/* protected by lock */
+};
+
+/*
+ * Flag bits for rbd_dev->flags.  If atomicity is required,
+ * rbd_dev->lock is used to protect access.
+ *
+ * Currently, only the "removing" flag (which is coupled with the
+ * "open_count" field) requires atomic access.
+ */
+enum rbd_dev_flags {
+	RBD_DEV_FLAG_EXISTS,	/* mapped snapshot has not been deleted */
+	RBD_DEV_FLAG_REMOVING,	/* this mapping is being removed */
 };
 
 static DEFINE_MUTEX(ctl_mutex);	  /* Serialize open/close/setup/teardown */
@@ -377,14 +389,23 @@ static int rbd_dev_v2_refresh(struct rbd_device *rbd_dev, u64 *hver);
 static int rbd_open(struct block_device *bdev, fmode_t mode)
 {
 	struct rbd_device *rbd_dev = bdev->bd_disk->private_data;
+	bool removing = false;
 
 	if ((mode & FMODE_WRITE) && rbd_dev->mapping.read_only)
 		return -EROFS;
 
+	spin_lock(&rbd_dev->lock);
+	if (test_bit(RBD_DEV_FLAG_REMOVING, &rbd_dev->flags))
+		removing = true;
+	else
+		rbd_dev->open_count++;
+	spin_unlock(&rbd_dev->lock);
+	if (removing)
+		return -ENOENT;
+
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
 	(void) get_device(&rbd_dev->dev);
 	set_device_ro(bdev, rbd_dev->mapping.read_only);
-	rbd_dev->open_count++;
 	mutex_unlock(&ctl_mutex);
 
 	return 0;
@@ -393,10 +414,14 @@ static int rbd_open(struct block_device *bdev, fmode_t mode)
 static int rbd_release(struct gendisk *disk, fmode_t mode)
 {
 	struct rbd_device *rbd_dev = disk->private_data;
+	unsigned long open_count_before;
+
+	spin_lock(&rbd_dev->lock);
+	open_count_before = rbd_dev->open_count--;
+	spin_unlock(&rbd_dev->lock);
+	rbd_assert(open_count_before > 0);
 
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
-	rbd_assert(rbd_dev->open_count > 0);
-	rbd_dev->open_count--;
 	put_device(&rbd_dev->dev);
 	mutex_unlock(&ctl_mutex);
 
@@ -782,7 +807,8 @@ static int rbd_dev_set_mapping(struct rbd_device *rbd_dev)
 			goto done;
 		rbd_dev->mapping.read_only = true;
 	}
-	atomic_set(&rbd_dev->exists, 1);
+	set_bit(RBD_DEV_FLAG_EXISTS, &rbd_dev->flags);
+
 done:
 	return ret;
 }
@@ -1877,9 +1903,14 @@ static void rbd_request_fn(struct request_queue *q)
 			rbd_assert(rbd_dev->spec->snap_id == CEPH_NOSNAP);
 		}
 
-		/* Quit early if the snapshot has disappeared */
-
-		if (!atomic_read(&rbd_dev->exists)) {
+		/*
+		 * Quit early if the mapped snapshot no longer
+		 * exists.  It's still possible the snapshot will
+		 * have disappeared by the time our request arrives
+		 * at the osd, but there's no sense in sending it if
+		 * we already know.
+		 */
+		if (!test_bit(RBD_DEV_FLAG_EXISTS, &rbd_dev->flags)) {
 			dout("request for non-existent snapshot");
 			rbd_assert(rbd_dev->spec->snap_id != CEPH_NOSNAP);
 			result = -ENXIO;
@@ -2571,7 +2602,7 @@ struct rbd_device *rbd_dev_create(struct rbd_client *rbdc,
 		return NULL;
 
 	spin_lock_init(&rbd_dev->lock);
-	atomic_set(&rbd_dev->exists, 0);
+	rbd_dev->flags = 0;
 	INIT_LIST_HEAD(&rbd_dev->node);
 	INIT_LIST_HEAD(&rbd_dev->snaps);
 	init_rwsem(&rbd_dev->header_rwsem);
@@ -3200,10 +3231,17 @@ static int rbd_dev_snaps_update(struct rbd_device *rbd_dev)
 		if (snap_id == CEPH_NOSNAP || (snap && snap->id > snap_id)) {
 			struct list_head *next = links->next;
 
-			/* Existing snapshot not in the new snap context */
-
+			/*
+			 * A previously-existing snapshot is not in
+			 * the new snap context.
+			 *
+			 * If the now missing snapshot is the one the
+			 * image is mapped to, clear its exists flag
+			 * so we can avoid sending any more requests
+			 * to it.
+			 */
 			if (rbd_dev->spec->snap_id == snap->id)
-				atomic_set(&rbd_dev->exists, 0);
+				clear_bit(RBD_DEV_FLAG_EXISTS, &rbd_dev->flags);
 			rbd_remove_snap_dev(snap);
 			dout("%ssnap id %llu has been removed\n",
 				rbd_dev->spec->snap_id == snap->id ?
@@ -4064,10 +4102,14 @@ static ssize_t rbd_remove(struct bus_type *bus,
 		goto done;
 	}
 
-	if (rbd_dev->open_count) {
+	spin_lock(&rbd_dev->lock);
+	if (rbd_dev->open_count)
 		ret = -EBUSY;
+	else
+		set_bit(RBD_DEV_FLAG_REMOVING, &rbd_dev->flags);
+	spin_unlock(&rbd_dev->lock);
+	if (ret < 0)
 		goto done;
-	}
 
 	rbd_remove_all_snaps(rbd_dev);
 	rbd_bus_del_dev(rbd_dev);
