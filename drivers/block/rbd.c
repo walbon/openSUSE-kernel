@@ -1197,7 +1197,7 @@ static int rbd_req_sync_notify_ack(struct rbd_device *rbd_dev,
 	if (ret < 0)
 		return ret;
 
-	ops[0].watch.ver = cpu_to_le64(rbd_dev->header.obj_version);
+	ops[0].watch.ver = cpu_to_le64(ver);
 	ops[0].watch.cookie = notify_id;
 	ops[0].watch.flag = 0;
 
@@ -1216,6 +1216,7 @@ static int rbd_req_sync_notify_ack(struct rbd_device *rbd_dev,
 static void rbd_watch_cb(u64 ver, u64 notify_id, u8 opcode, void *data)
 {
 	struct rbd_device *rbd_dev = (struct rbd_device *)data;
+	u64 hver;
 	int rc;
 
 	if (!rbd_dev)
@@ -1225,12 +1226,13 @@ static void rbd_watch_cb(u64 ver, u64 notify_id, u8 opcode, void *data)
 		rbd_dev->header_name, notify_id, (int) opcode);
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
 	rc = __rbd_refresh_header(rbd_dev);
+	hver = rbd_dev->header.obj_version;
 	mutex_unlock(&ctl_mutex);
 	if (rc)
 		pr_warning(RBD_DRV_NAME "%d got notification but failed to "
 			   " update snaps: %d\n", rbd_dev->major, rc);
 
-	rbd_req_sync_notify_ack(rbd_dev, ver, notify_id, rbd_dev->header_name);
+	rbd_req_sync_notify_ack(rbd_dev, hver, notify_id, rbd_dev->header_name);
 }
 
 /*
@@ -1716,8 +1718,6 @@ static int __rbd_refresh_header(struct rbd_device *rbd_dev)
 {
 	int ret;
 	struct rbd_image_header h;
-	u64 snap_seq;
-	int follow_seq = 0;
 
 	ret = rbd_read_header(rbd_dev, &h);
 	if (ret < 0)
@@ -1733,19 +1733,13 @@ static int __rbd_refresh_header(struct rbd_device *rbd_dev)
 		set_capacity(rbd_dev->disk, size);
 	}
 
-	snap_seq = rbd_dev->header.snapc->seq;
-	if (rbd_dev->header.total_snaps &&
-	    rbd_dev->header.snapc->snaps[0] == snap_seq)
-		/* pointing at the head, will need to follow that
-		   if head moves */
-		follow_seq = 1;
-
 	/* rbd_dev->header.object_prefix shouldn't change */
 	kfree(rbd_dev->header.snap_sizes);
 	kfree(rbd_dev->header.snap_names);
 	/* osd requests may still refer to snapc */
 	ceph_put_snap_context(rbd_dev->header.snapc);
 
+	rbd_dev->header.obj_version = h.obj_version;
 	rbd_dev->header.image_size = h.image_size;
 	rbd_dev->header.total_snaps = h.total_snaps;
 	rbd_dev->header.snapc = h.snapc;
@@ -1755,11 +1749,6 @@ static int __rbd_refresh_header(struct rbd_device *rbd_dev)
 	/* Free the extra copy of the object prefix */
 	WARN_ON(strcmp(rbd_dev->header.object_prefix, h.object_prefix));
 	kfree(h.object_prefix);
-
-	if (follow_seq)
-		rbd_dev->header.snapc->seq = rbd_dev->header.snapc->snaps[0];
-	else
-		rbd_dev->header.snapc->seq = snap_seq;
 
 	ret = __rbd_init_snaps_header(rbd_dev);
 
