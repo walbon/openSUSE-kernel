@@ -4024,20 +4024,12 @@ static char *rbd_dev_snap_info(struct rbd_device *rbd_dev, u32 which,
 static int rbd_dev_v2_refresh(struct rbd_device *rbd_dev, u64 *hver)
 {
 	int ret;
-	__u8 obj_order;
 
 	down_write(&rbd_dev->header_rwsem);
 
-	/* Grab old order first, to see if it changes */
-
-	obj_order = rbd_dev->header.obj_order,
 	ret = rbd_dev_v2_image_size(rbd_dev);
 	if (ret)
 		goto out;
-	if (rbd_dev->header.obj_order != obj_order) {
-		ret = -EIO;
-		goto out;
-	}
 	rbd_update_mapping_size(rbd_dev);
 
 	ret = rbd_dev_v2_snap_context(rbd_dev, hver);
@@ -4592,18 +4584,6 @@ out:
 static int rbd_dev_v1_probe(struct rbd_device *rbd_dev)
 {
 	int ret;
-	size_t size;
-
-	/* Record the header object name for this rbd image. */
-
-	size = strlen(rbd_dev->spec->image_name) + sizeof (RBD_SUFFIX);
-	rbd_dev->header_name = kmalloc(size, GFP_KERNEL);
-	if (!rbd_dev->header_name) {
-		ret = -ENOMEM;
-		goto out_err;
-	}
-	sprintf(rbd_dev->header_name, "%s%s",
-		rbd_dev->spec->image_name, RBD_SUFFIX);
 
 	/* Populate rbd image metadata */
 
@@ -4632,22 +4612,9 @@ out_err:
 
 static int rbd_dev_v2_probe(struct rbd_device *rbd_dev)
 {
-	size_t size;
 	int ret;
 	u64 ver = 0;
 
-	/*
-	 * Image id was filled in by the caller.  Record the header
-	 * object name for this rbd image.
-	 */
-	size = sizeof (RBD_HEADER_PREFIX) + strlen(rbd_dev->spec->image_id);
-	rbd_dev->header_name = kmalloc(size, GFP_KERNEL);
-	if (!rbd_dev->header_name)
-		return -ENOMEM;
-	sprintf(rbd_dev->header_name, "%s%s",
-			RBD_HEADER_PREFIX, rbd_dev->spec->image_id);
-
-	/* Get the size and object order for the image */
 	ret = rbd_dev_v2_image_size(rbd_dev);
 	if (ret)
 		goto out_err;
@@ -4754,6 +4721,7 @@ out_err:
 static int rbd_dev_probe_finish(struct rbd_device *rbd_dev)
 {
 	int ret;
+	int tmp;
 
 	ret = rbd_dev_header_watch_sync(rbd_dev, 1);
 	if (ret)
@@ -4805,9 +4773,39 @@ err_out_blkdev:
 	unregister_blkdev(rbd_dev->major, rbd_dev->name);
 err_out_id:
 	rbd_dev_id_put(rbd_dev);
+	tmp = rbd_dev_header_watch_sync(rbd_dev, 0);
+	if (tmp)
+		rbd_warn(rbd_dev, "failed to cancel watch event (%d)\n", ret);
 	rbd_dev_mapping_clear(rbd_dev);
 
 	return ret;
+}
+
+static int rbd_dev_header_name(struct rbd_device *rbd_dev)
+{
+	struct rbd_spec *spec = rbd_dev->spec;
+	size_t size;
+
+	/* Record the header object name for this rbd image. */
+
+	rbd_assert(rbd_image_format_valid(rbd_dev->image_format));
+
+	if (rbd_dev->image_format == 1)
+		size = strlen(spec->image_name) + sizeof (RBD_SUFFIX);
+	else
+		size = sizeof (RBD_HEADER_PREFIX) + strlen(spec->image_id);
+
+	rbd_dev->header_name = kmalloc(size, GFP_KERNEL);
+	if (!rbd_dev->header_name)
+		return -ENOMEM;
+
+	if (rbd_dev->image_format == 1)
+		sprintf(rbd_dev->header_name, "%s%s",
+			spec->image_name, RBD_SUFFIX);
+	else
+		sprintf(rbd_dev->header_name, "%s%s",
+			RBD_HEADER_PREFIX, spec->image_id);
+	return 0;
 }
 
 /*
@@ -4830,16 +4828,20 @@ static int rbd_dev_image_probe(struct rbd_device *rbd_dev)
 	rbd_assert(rbd_dev->spec->image_id);
 	rbd_assert(rbd_image_format_valid(rbd_dev->image_format));
 
+	ret = rbd_dev_header_name(rbd_dev);
+	if (ret)
+		goto err_out_format;
+
 	if (rbd_dev->image_format == 1)
 		ret = rbd_dev_v1_probe(rbd_dev);
 	else
 		ret = rbd_dev_v2_probe(rbd_dev);
 	if (ret)
-		goto out_err;
+		goto out_header_name;
 
 	ret = rbd_dev_snaps_update(rbd_dev);
 	if (ret)
-		goto out_err;
+		goto out_header_name;
 
 	ret = rbd_dev_spec_update(rbd_dev);
 	if (ret)
@@ -4859,7 +4861,11 @@ err_out_parent:
 	rbd_header_free(&rbd_dev->header);
 err_out_snaps:
 	rbd_remove_all_snaps(rbd_dev);
-out_err:
+out_header_name:
+	kfree(rbd_dev->header_name);
+	rbd_dev->header_name = NULL;
+err_out_format:
+	rbd_dev->image_format = 0;
 	kfree(rbd_dev->spec->image_id);
 	rbd_dev->spec->image_id = NULL;
 
@@ -4965,9 +4971,6 @@ static void rbd_dev_release(struct device *dev)
 {
 	struct rbd_device *rbd_dev = dev_to_rbd_dev(dev);
 
-	if (rbd_dev->watch_event)
-		rbd_dev_header_watch_sync(rbd_dev, 0);
-
 	/* clean up and free blkdev */
 	rbd_free_disk(rbd_dev);
 	unregister_blkdev(rbd_dev->major, rbd_dev->name);
@@ -4993,6 +4996,7 @@ static void rbd_dev_remove_parent(struct rbd_device *rbd_dev)
 		struct rbd_device *first = rbd_dev;
 		struct rbd_device *second = first->parent;
 		struct rbd_device *third;
+		int ret;
 
 		/*
 		 * Follow to the parent with no grandparent and
@@ -5003,6 +5007,10 @@ static void rbd_dev_remove_parent(struct rbd_device *rbd_dev)
 			second = third;
 		}
 		rbd_assert(second);
+		ret = rbd_dev_header_watch_sync(rbd_dev, 0);
+		if (ret)
+			rbd_warn(rbd_dev,
+				"failed to cancel watch event (%d)\n", ret);
 		rbd_remove_all_snaps(second);
 		rbd_bus_del_dev(second);
 		first->parent = NULL;
@@ -5019,13 +5027,13 @@ static ssize_t rbd_remove(struct bus_type *bus,
 			  size_t count)
 {
 	struct rbd_device *rbd_dev = NULL;
-	int target_id, rc;
+	int target_id;
 	unsigned long ul;
-	int ret = count;
+	int ret;
 
-	rc = strict_strtoul(buf, 10, &ul);
-	if (rc)
-		return rc;
+	ret = strict_strtoul(buf, 10, &ul);
+	if (ret)
+		return ret;
 
 	/* convert to int; abort if we lost anything in the conversion */
 	target_id = (int) ul;
@@ -5048,6 +5056,15 @@ static ssize_t rbd_remove(struct bus_type *bus,
 	spin_unlock_irq(&rbd_dev->lock);
 	if (ret < 0)
 		goto done;
+
+	ret = rbd_dev_header_watch_sync(rbd_dev, 0);
+	if (ret) {
+		rbd_warn(rbd_dev, "failed to cancel watch event (%d)\n", ret);
+		clear_bit(RBD_DEV_FLAG_REMOVING, &rbd_dev->flags);
+		smp_mb();
+		return ret;
+	}
+	ret = count;
 
 	rbd_dev_remove_parent(rbd_dev);
 
