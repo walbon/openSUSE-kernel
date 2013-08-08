@@ -492,7 +492,7 @@ static int ceph_tcp_sendmsg(struct socket *sock, struct kvec *iov,
 }
 
 static int ceph_tcp_sendpage(struct socket *sock, struct page *page,
-		     int offset, size_t size, int more)
+		     int offset, size_t size, bool more)
 {
 	int flags = MSG_DONTWAIT | MSG_NOSIGNAL | (more ? MSG_MORE : MSG_EOR);
 	int ret;
@@ -1127,7 +1127,7 @@ static int write_partial_msg_pages(struct ceph_connection *con)
 		}
 		ret = ceph_tcp_sendpage(con->sock, page,
 				      con->out_msg_pos.page_pos + bio_offset,
-				      len, 1);
+				      len, true);
 		if (ret <= 0)
 			goto out;
 
@@ -1156,7 +1156,7 @@ static int write_partial_skip(struct ceph_connection *con)
 	while (con->out_skip > 0) {
 		size_t size = min(con->out_skip, (int) PAGE_CACHE_SIZE);
 
-		ret = ceph_tcp_sendpage(con->sock, zero_page, 0, size, 1);
+		ret = ceph_tcp_sendpage(con->sock, zero_page, 0, size, true);
 		if (ret <= 0)
 			goto out;
 		con->out_skip -= ret;
@@ -1814,14 +1814,16 @@ static int read_partial_message_pages(struct ceph_connection *con,
 
 #ifdef CONFIG_BLOCK
 static int read_partial_message_bio(struct ceph_connection *con,
-				    struct bio **bio_iter,
-				    unsigned int *bio_seg,
 				    unsigned int data_len, bool do_datacrc)
 {
-	struct bio_vec *bv = bio_iovec_idx(*bio_iter, *bio_seg);
+	struct ceph_msg *msg = con->in_msg;
+	struct bio_vec *bv;
 	void *p;
 	int ret, left;
 
+	BUG_ON(!msg);
+	BUG_ON(!msg->bio_iter);
+	bv = bio_iovec_idx(msg->bio_iter, msg->bio_seg);
 	left = min((int)(data_len - con->in_msg_pos.data_pos),
 		   (int)(bv->bv_len - con->in_msg_pos.page_pos));
 
@@ -1840,7 +1842,7 @@ static int read_partial_message_bio(struct ceph_connection *con,
 	con->in_msg_pos.page_pos += ret;
 	if (con->in_msg_pos.page_pos == bv->bv_len) {
 		con->in_msg_pos.page_pos = 0;
-		iter_bio_next(bio_iter, bio_seg);
+		iter_bio_next(&msg->bio_iter, &msg->bio_seg);
 	}
 
 	return ret;
@@ -1911,7 +1913,7 @@ static int read_partial_message(struct ceph_connection *con)
 		int skip = 0;
 
 		dout("got hdr type %d front %d data %d\n", con->in_hdr.type,
-		     con->in_hdr.front_len, con->in_hdr.data_len);
+		     front_len, data_len);
 		ret = ceph_con_in_msg_alloc(con, &skip);
 		if (ret < 0)
 			return ret;
@@ -1970,9 +1972,7 @@ static int read_partial_message(struct ceph_connection *con)
 				return ret;
 #ifdef CONFIG_BLOCK
 		} else if (m->bio) {
-			BUG_ON(!m->bio_iter);
 			ret = read_partial_message_bio(con,
-						 &m->bio_iter, &m->bio_seg,
 						 data_len, do_datacrc);
 			if (ret <= 0)
 				return ret;
