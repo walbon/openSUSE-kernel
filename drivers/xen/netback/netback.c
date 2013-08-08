@@ -103,19 +103,16 @@ static inline void netif_set_page_ext(struct page *pg, unsigned int group,
 	pg->mapping = ext.mapping;
 }
 
-static inline unsigned int netif_page_group(const struct page *pg)
-{
-	union page_ext ext = { .mapping = pg->mapping };
-
-	return ext.e.grp - 1;
-}
-
-static inline unsigned int netif_page_index(const struct page *pg)
-{
-	union page_ext ext = { .mapping = pg->mapping };
-
-	return ext.e.idx;
-}
+#define netif_get_page_ext(pg, netbk, index) do { \
+	/*const*/ struct page *pg__ = (pg); \
+	union page_ext ext__ = { .mapping = pg__->mapping }; \
+	unsigned int grp__ = ext__.e.grp - 1; \
+	unsigned int idx__ = index = ext__.e.idx; \
+	netbk = grp__ < netbk_nr_groups ? &xen_netbk[grp__] : NULL; \
+	if (!PageForeign(pg__) || idx__ >= MAX_PENDING_REQS || \
+	    (netbk && netbk->mmap_pages[idx__] != pg__)) \
+		netbk = NULL; \
+} while (0)
 
 /*
  * This is the amount of packet we copy rather than map, so that the
@@ -420,38 +417,31 @@ static u16 netbk_gop_frag(netif_t *netif, struct netbk_rx_meta *meta,
 	gnttab_copy_t *copy_gop;
 	multicall_entry_t *mcl;
 	netif_rx_request_t *req;
-	unsigned long old_mfn, new_mfn;
 	struct xen_netbk *netbk = &xen_netbk[GET_GROUP_INDEX(netif)];
-
-	old_mfn = virt_to_mfn(page_address(page));
 
 	req = RING_GET_REQUEST(&netif->rx, netif->rx.req_cons + i);
 	if (netif->copying_receiver) {
-		unsigned int group, idx;
+		unsigned int idx;
 
 		/* The fragment needs to be copied rather than
 		   flipped. */
 		meta->copy = 1;
 		copy_gop = npo->copy + npo->copy_prod++;
 		copy_gop->flags = GNTCOPY_dest_gref;
-		if (PageForeign(page) &&
-		    page->mapping != NULL &&
-		    (idx = netif_page_index(page)) < MAX_PENDING_REQS &&
-		    (group = netif_page_group(page)) < netbk_nr_groups) {
+		netif_get_page_ext(page, netbk, idx);
+		if (netbk) {
 			struct pending_tx_info *src_pend;
 			unsigned int grp;
 
-			netbk = &xen_netbk[group];
-			BUG_ON(netbk->mmap_pages[idx] != page);
 			src_pend = &netbk->pending_tx_info[idx];
 			grp = GET_GROUP_INDEX(src_pend->netif);
-			BUG_ON(group != grp && grp != UINT_MAX);
+			BUG_ON(netbk != &xen_netbk[grp] && grp != UINT_MAX);
 			copy_gop->source.domid = src_pend->netif->domid;
 			copy_gop->source.u.ref = src_pend->req.gref;
 			copy_gop->flags |= GNTCOPY_source_gref;
 		} else {
 			copy_gop->source.domid = DOMID_SELF;
-			copy_gop->source.u.gmfn = old_mfn;
+			copy_gop->source.u.gmfn = virt_to_mfn(page_address(page));
 		}
 		copy_gop->source.offset = offset;
 		copy_gop->dest.domid = netif->domid;
@@ -461,7 +451,7 @@ static u16 netbk_gop_frag(netif_t *netif, struct netbk_rx_meta *meta,
 	} else {
 		meta->copy = 0;
 		if (!xen_feature(XENFEAT_auto_translated_physmap)) {
-			new_mfn = alloc_mfn(netbk);
+			unsigned long new_mfn = alloc_mfn(netbk);
 
 			/*
 			 * Set the new P2M table entry before
@@ -483,7 +473,7 @@ static u16 netbk_gop_frag(netif_t *netif, struct netbk_rx_meta *meta,
 		}
 
 		gop = npo->trans + npo->trans_prod++;
-		gop->mfn = old_mfn;
+		gop->mfn = virt_to_mfn(page_address(page));
 		gop->domid = netif->domid;
 		gop->ref = req->gref;
 	}
@@ -1637,13 +1627,12 @@ static void netif_idx_release(struct xen_netbk *netbk, u16 pending_idx)
 
 static void netif_page_release(struct page *page, unsigned int order)
 {
-	unsigned int idx = netif_page_index(page);
-	unsigned int group = netif_page_group(page);
-	struct xen_netbk *netbk = &xen_netbk[group];
+	struct xen_netbk *netbk;
+	unsigned int idx;
 
 	BUG_ON(order);
-	BUG_ON(group >= netbk_nr_groups || idx >= MAX_PENDING_REQS);
-	BUG_ON(netbk->mmap_pages[idx] != page);
+	netif_get_page_ext(page, netbk, idx);
+	BUG_ON(!netbk);
 	netif_idx_release(netbk, idx);
 }
 
