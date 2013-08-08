@@ -171,7 +171,7 @@ struct rbd_client {
  */
 struct rbd_req_status {
 	int done;
-	int rc;
+	s32 rc;
 	u64 bytes;
 };
 
@@ -1053,13 +1053,13 @@ static void rbd_destroy_ops(struct ceph_osd_req_op *ops)
 static void rbd_coll_end_req_index(struct request *rq,
 				   struct rbd_req_coll *coll,
 				   int index,
-				   int ret, u64 len)
+				   s32 ret, u64 len)
 {
 	struct request_queue *q;
 	int min, max, i;
 
 	dout("rbd_coll_end_req_index %p index %d ret %d len %llu\n",
-	     coll, index, ret, (unsigned long long) len);
+	     coll, index, (int)ret, (unsigned long long)len);
 
 	if (!rq)
 		return;
@@ -1080,7 +1080,7 @@ static void rbd_coll_end_req_index(struct request *rq,
 		max++;
 
 	for (i = min; i<max; i++) {
-		__blk_end_request(rq, coll->status[i].rc,
+		__blk_end_request(rq, (int)coll->status[i].rc,
 				  coll->status[i].bytes);
 		coll->num_done++;
 		kref_put(&coll->kref, rbd_coll_release);
@@ -1089,7 +1089,7 @@ static void rbd_coll_end_req_index(struct request *rq,
 }
 
 static void rbd_coll_end_req(struct rbd_request *rbd_req,
-			     int ret, u64 len)
+			     s32 ret, u64 len)
 {
 	rbd_coll_end_req_index(rbd_req->rq,
 				rbd_req->coll, rbd_req->coll_index,
@@ -1129,7 +1129,7 @@ static int rbd_do_request(struct request *rq,
 	if (!rbd_req) {
 		if (coll)
 			rbd_coll_end_req_index(rq, coll, coll_index,
-					       -ENOMEM, len);
+					       (s32)-ENOMEM, len);
 		return -ENOMEM;
 	}
 
@@ -1206,7 +1206,7 @@ done_err:
 	bio_chain_put(rbd_req->bio);
 	ceph_osdc_put_request(osd_req);
 done_pages:
-	rbd_coll_end_req(rbd_req, ret, len);
+	rbd_coll_end_req(rbd_req, (s32)ret, len);
 	kfree(rbd_req);
 	return ret;
 }
@@ -1219,7 +1219,7 @@ static void rbd_req_cb(struct ceph_osd_request *osd_req, struct ceph_msg *msg)
 	struct rbd_request *rbd_req = osd_req->r_priv;
 	struct ceph_osd_reply_head *replyhead;
 	struct ceph_osd_op *op;
-	__s32 rc;
+	s32 rc;
 	u64 bytes;
 	int read_op;
 
@@ -1227,14 +1227,14 @@ static void rbd_req_cb(struct ceph_osd_request *osd_req, struct ceph_msg *msg)
 	replyhead = msg->front.iov_base;
 	WARN_ON(le32_to_cpu(replyhead->num_ops) == 0);
 	op = (void *)(replyhead + 1);
-	rc = le32_to_cpu(replyhead->result);
+	rc = (s32)le32_to_cpu(replyhead->result);
 	bytes = le64_to_cpu(op->extent.length);
 	read_op = (le16_to_cpu(op->op) == CEPH_OSD_OP_READ);
 
 	dout("rbd_req_cb bytes=%llu readop=%d rc=%d\n",
 		(unsigned long long) bytes, read_op, (int) rc);
 
-	if (rc == -ENOENT && read_op) {
+	if (rc == (s32)-ENOENT && read_op) {
 		zero_bio_chain(rbd_req->bio, 0);
 		rc = 0;
 	} else if (rc == 0 && read_op && bytes < rbd_req->len) {
@@ -1583,6 +1583,64 @@ static struct rbd_req_coll *rbd_alloc_coll(int num_reqs)
 	return coll;
 }
 
+static int rbd_dev_do_request(struct request *rq,
+				struct rbd_device *rbd_dev,
+				struct ceph_snap_context *snapc,
+				u64 ofs, unsigned int size,
+				struct bio *bio_chain)
+{
+	int num_segs;
+	struct rbd_req_coll *coll;
+	unsigned int bio_offset;
+	int cur_seg = 0;
+
+	dout("%s 0x%x bytes at 0x%llx\n",
+		rq_data_dir(rq) == WRITE ? "write" : "read",
+		size, (unsigned long long) blk_rq_pos(rq) * SECTOR_SIZE);
+
+	num_segs = rbd_get_num_segments(&rbd_dev->header, ofs, size);
+	if (num_segs <= 0)
+		return num_segs;
+
+	coll = rbd_alloc_coll(num_segs);
+	if (!coll)
+		return -ENOMEM;
+
+	bio_offset = 0;
+	do {
+		u64 limit = rbd_segment_length(rbd_dev, ofs, size);
+		unsigned int clone_size;
+		struct bio *bio_clone;
+
+		BUG_ON(limit > (u64)UINT_MAX);
+		clone_size = (unsigned int)limit;
+		dout("bio_chain->bi_vcnt=%hu\n", bio_chain->bi_vcnt);
+
+		kref_get(&coll->kref);
+
+		/* Pass a cloned bio chain via an osd request */
+
+		bio_clone = bio_chain_clone_range(&bio_chain,
+					&bio_offset, clone_size,
+					GFP_ATOMIC);
+		if (bio_clone)
+			(void)rbd_do_op(rq, rbd_dev, snapc,
+					ofs, clone_size,
+					bio_clone, coll, cur_seg);
+		else
+			rbd_coll_end_req_index(rq, coll, cur_seg,
+						(s32)-ENOMEM,
+						clone_size);
+		size -= clone_size;
+		ofs += clone_size;
+
+		cur_seg++;
+	} while (size > 0);
+	kref_put(&coll->kref, rbd_coll_release);
+
+	return 0;
+}
+
 /*
  * block device queue callback
  */
@@ -1596,10 +1654,8 @@ static void rbd_rq_fn(struct request_queue *q)
 		bool do_write;
 		unsigned int size;
 		u64 ofs;
-		int num_segs, cur_seg = 0;
-		struct rbd_req_coll *coll;
 		struct ceph_snap_context *snapc;
-		unsigned int bio_offset;
+		int result;
 
 		dout("fetched request\n");
 
@@ -1637,59 +1693,11 @@ static void rbd_rq_fn(struct request_queue *q)
 		ofs = blk_rq_pos(rq) * SECTOR_SIZE;
 		bio = rq->bio;
 
-		dout("%s 0x%x bytes at 0x%llx\n",
-		     do_write ? "write" : "read",
-		     size, (unsigned long long) blk_rq_pos(rq) * SECTOR_SIZE);
-
-		num_segs = rbd_get_num_segments(&rbd_dev->header, ofs, size);
-		if (num_segs <= 0) {
-			spin_lock_irq(q->queue_lock);
-			__blk_end_request_all(rq, num_segs);
-			ceph_put_snap_context(snapc);
-			continue;
-		}
-		coll = rbd_alloc_coll(num_segs);
-		if (!coll) {
-			spin_lock_irq(q->queue_lock);
-			__blk_end_request_all(rq, -ENOMEM);
-			ceph_put_snap_context(snapc);
-			continue;
-		}
-
-		bio_offset = 0;
-		do {
-			u64 limit = rbd_segment_length(rbd_dev, ofs, size);
-			unsigned int chain_size;
-			struct bio *bio_chain;
-
-			BUG_ON(limit > (u64) UINT_MAX);
-			chain_size = (unsigned int) limit;
-			dout("rq->bio->bi_vcnt=%hu\n", rq->bio->bi_vcnt);
-
-			kref_get(&coll->kref);
-
-			/* Pass a cloned bio chain via an osd request */
-
-			bio_chain = bio_chain_clone_range(&bio,
-						&bio_offset, chain_size,
-						GFP_ATOMIC);
-			if (bio_chain)
-				(void) rbd_do_op(rq, rbd_dev, snapc,
-						ofs, chain_size,
-						bio_chain, coll, cur_seg);
-			else
-				rbd_coll_end_req_index(rq, coll, cur_seg,
-						       -ENOMEM, chain_size);
-			size -= chain_size;
-			ofs += chain_size;
-
-			cur_seg++;
-		} while (size > 0);
-		kref_put(&coll->kref, rbd_coll_release);
-
-		spin_lock_irq(q->queue_lock);
-
+		result = rbd_dev_do_request(rq, rbd_dev, snapc, ofs, size, bio);
 		ceph_put_snap_context(snapc);
+		spin_lock_irq(q->queue_lock);
+		if (!size || result < 0)
+			__blk_end_request_all(rq, result);
 	}
 }
 
