@@ -1561,6 +1561,7 @@ static int process_connect(struct ceph_connection *con)
 			fail_protocol(con);
 			return -1;
 		}
+		clear_bit(NEGOTIATING, &con->state);
 		clear_bit(CONNECTING, &con->state);
 		con->peer_global_seq = le32_to_cpu(con->in_reply.global_seq);
 		con->connect_seq++;
@@ -1950,7 +1951,6 @@ more:
 
 	/* open the socket first? */
 	if (con->sock == NULL) {
-		clear_bit(NEGOTIATING, &con->state);
 		set_bit(CONNECTING, &con->state);
 
 		con_out_kvec_reset(con);
@@ -2189,10 +2189,12 @@ static void con_work(struct work_struct *work)
 	mutex_lock(&con->mutex);
 restart:
 	if (test_and_clear_bit(SOCK_CLOSED, &con->flags)) {
-		if (test_and_clear_bit(CONNECTING, &con->state))
+		if (test_and_clear_bit(CONNECTING, &con->state)) {
+			clear_bit(NEGOTIATING, &con->state);
 			con->error_msg = "connection failed";
-		else
+		} else {
 			con->error_msg = "socket closed";
+		}
 		goto fault;
 	}
 
