@@ -1246,6 +1246,24 @@ static void prepare_write_ack(struct ceph_connection *con)
 }
 
 /*
+ * Prepare to share the seq during handshake
+ */
+static void prepare_write_seq(struct ceph_connection *con)
+{
+	dout("prepare_write_seq %p %llu -> %llu\n", con,
+	     con->in_seq_acked, con->in_seq);
+	con->in_seq_acked = con->in_seq;
+
+	con_out_kvec_reset(con);
+
+	con->out_temp_ack = cpu_to_le64(con->in_seq_acked);
+	con_out_kvec_add(con, sizeof (con->out_temp_ack),
+			 &con->out_temp_ack);
+
+	con_flag_set(con, CON_FLAG_WRITE_PENDING);
+}
+
+/*
  * Prepare to write keepalive byte.
  */
 static void prepare_write_keepalive(struct ceph_connection *con)
@@ -1475,7 +1493,6 @@ static int write_partial_message_data(struct ceph_connection *con)
 	unsigned int data_len = le32_to_cpu(msg->hdr.data_len);
 	bool do_datacrc = !con->msgr->nocrc;
 	int ret;
-	int total_max_write;
 
 	dout("%s %p msg %p page %d offset %d\n", __func__,
 	     con, msg, msg_pos->page, msg_pos->page_pos);
@@ -1489,36 +1506,30 @@ static int write_partial_message_data(struct ceph_connection *con)
 	 * been revoked, so use the zero page.
 	 */
 	while (data_len > msg_pos->data_pos) {
-		struct page *page = NULL;
+		struct page *page;
 		size_t page_offset;
 		size_t length;
-		bool use_cursor = false;
-		bool last_piece = true;	/* preserve existing behavior */
-
-		total_max_write = data_len - msg_pos->data_pos;
+		bool last_piece;
 
 		if (ceph_msg_has_pages(msg)) {
-			use_cursor = true;
 			page = ceph_msg_data_next(&msg->p, &page_offset,
 							&length, &last_piece);
 		} else if (ceph_msg_has_pagelist(msg)) {
-			use_cursor = true;
 			page = ceph_msg_data_next(&msg->l, &page_offset,
 							&length, &last_piece);
 #ifdef CONFIG_BLOCK
 		} else if (ceph_msg_has_bio(msg)) {
-			use_cursor = true;
 			page = ceph_msg_data_next(&msg->b, &page_offset,
 							&length, &last_piece);
 #endif
 		} else {
-			page = zero_page;
-		}
-		if (!use_cursor) {
-			length = min_t(int, PAGE_SIZE - msg_pos->page_pos,
-					    total_max_write);
+			size_t resid = data_len - msg_pos->data_pos;
 
+			page = zero_page;
 			page_offset = msg_pos->page_pos;
+			length = PAGE_SIZE - page_offset;
+			length = min(resid, length);
+			last_piece = length == resid;
 		}
 		if (do_datacrc && !msg_pos->did_page_crc) {
 			u32 crc = le32_to_cpu(msg->footer.data_crc);
@@ -1586,6 +1597,13 @@ static void prepare_read_ack(struct ceph_connection *con)
 {
 	dout("prepare_read_ack %p\n", con);
 	con->in_base_pos = 0;
+}
+
+static void prepare_read_seq(struct ceph_connection *con)
+{
+	dout("prepare_read_seq %p\n", con);
+	con->in_base_pos = 0;
+	con->in_tag = CEPH_MSGR_TAG_SEQ;
 }
 
 static void prepare_read_tag(struct ceph_connection *con)
@@ -2065,6 +2083,7 @@ static int process_connect(struct ceph_connection *con)
 		prepare_read_connect(con);
 		break;
 
+	case CEPH_MSGR_TAG_SEQ:
 	case CEPH_MSGR_TAG_READY:
 		if (req_feat & ~server_feat) {
 			pr_err("%s%lld %s protocol feature mismatch,"
@@ -2095,7 +2114,12 @@ static int process_connect(struct ceph_connection *con)
 
 		con->delay = 0;      /* reset backoff memory */
 
-		prepare_read_tag(con);
+		if (con->in_reply.tag == CEPH_MSGR_TAG_SEQ) {
+			prepare_write_seq(con);
+			prepare_read_seq(con);
+		} else {
+			prepare_read_tag(con);
+		}
 		break;
 
 	case CEPH_MSGR_TAG_WAIT:
@@ -2129,7 +2153,6 @@ static int read_partial_ack(struct ceph_connection *con)
 	return read_partial(con, end, size, &con->in_temp_ack);
 }
 
-
 /*
  * We can finally discard anything that's been acked.
  */
@@ -2152,8 +2175,6 @@ static void process_ack(struct ceph_connection *con)
 	}
 	prepare_read_tag(con);
 }
-
-
 
 
 static int read_partial_message_section(struct ceph_connection *con,
@@ -2678,7 +2699,12 @@ more:
 			prepare_read_tag(con);
 		goto more;
 	}
-	if (con->in_tag == CEPH_MSGR_TAG_ACK) {
+	if (con->in_tag == CEPH_MSGR_TAG_ACK ||
+	    con->in_tag == CEPH_MSGR_TAG_SEQ) {
+		/*
+		 * the final handshake seq exchange is semantically
+		 * equivalent to an ACK
+		 */
 		ret = read_partial_ack(con);
 		if (ret <= 0)
 			goto out;
