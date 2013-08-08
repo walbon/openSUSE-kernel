@@ -69,7 +69,6 @@
 #define DEV_NAME_LEN		32
 #define MAX_INT_FORMAT_WIDTH	((5 * sizeof (int)) / 2 + 1)
 
-#define RBD_NOTIFY_TIMEOUT_DEFAULT	10
 #define RBD_READ_ONLY_DEFAULT		false
 
 /*
@@ -91,7 +90,6 @@ struct rbd_image_header {
 };
 
 struct rbd_options {
-	int	notify_timeout;
 	bool	read_only;
 };
 
@@ -348,7 +346,6 @@ static struct rbd_client *rbd_client_find(struct ceph_options *ceph_opts)
  * mount options
  */
 enum {
-	Opt_notify_timeout,
 	Opt_last_int,
 	/* int args above */
 	Opt_last_string,
@@ -360,7 +357,6 @@ enum {
 };
 
 static match_table_t rbd_opts_tokens = {
-	{Opt_notify_timeout, "notify_timeout=%d"},
 	/* int args above */
 	/* string args above */
 	{Opt_read_only, "read_only"},
@@ -399,9 +395,6 @@ static int parse_rbd_opts_token(char *c, void *private)
 	}
 
 	switch (token) {
-	case Opt_notify_timeout:
-		rbd_opts->notify_timeout = intval;
-		break;
 	case Opt_read_only:
 		rbd_opts->read_only = true;
 		break;
@@ -425,7 +418,6 @@ static int rbd_get_client(struct rbd_device *rbd_dev, const char *mon_addr,
 	struct ceph_options *ceph_opts;
 	struct rbd_client *rbdc;
 
-	rbd_opts->notify_timeout = RBD_NOTIFY_TIMEOUT_DEFAULT;
 	rbd_opts->read_only = RBD_READ_ONLY_DEFAULT;
 
 	ceph_opts = ceph_parse_options(options, mon_addr,
@@ -762,7 +754,9 @@ static struct bio *bio_chain_clone(struct bio **old, struct bio **next,
 				   struct bio_pair **bp,
 				   int len, gfp_t gfpmask)
 {
-	struct bio *tmp, *old_chain = *old, *new_chain = NULL, *tail = NULL;
+	struct bio *old_chain = *old;
+	struct bio *new_chain = NULL;
+	struct bio *tail;
 	int total = 0;
 
 	if (*bp) {
@@ -771,9 +765,12 @@ static struct bio *bio_chain_clone(struct bio **old, struct bio **next,
 	}
 
 	while (old_chain && (total < len)) {
+		struct bio *tmp;
+
 		tmp = bio_kmalloc(gfpmask, old_chain->bi_max_vecs);
 		if (!tmp)
 			goto err_out;
+		gfpmask &= ~__GFP_WAIT;	/* can't wait after the first */
 
 		if (total + old_chain->bi_size > len) {
 			struct bio_pair *bp;
@@ -801,24 +798,18 @@ static struct bio *bio_chain_clone(struct bio **old, struct bio **next,
 		}
 
 		tmp->bi_bdev = NULL;
-		gfpmask &= ~__GFP_WAIT;
 		tmp->bi_next = NULL;
-
-		if (!new_chain) {
-			new_chain = tail = tmp;
-		} else {
+		if (new_chain)
 			tail->bi_next = tmp;
-			tail = tmp;
-		}
+		else
+			new_chain = tmp;
+		tail = tmp;
 		old_chain = old_chain->bi_next;
 
 		total += tmp->bi_size;
 	}
 
 	BUG_ON(total < len);
-
-	if (tail)
-		tail->bi_next = NULL;
 
 	*old = old_chain;
 
@@ -1483,10 +1474,6 @@ static void rbd_rq_fn(struct request_queue *q)
 		int num_segs, cur_seg = 0;
 		struct rbd_req_coll *coll;
 		struct ceph_snap_context *snapc;
-
-		/* peek at request from block layer */
-		if (!rq)
-			break;
 
 		dout("fetched request\n");
 
