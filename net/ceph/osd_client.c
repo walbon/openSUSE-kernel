@@ -249,7 +249,7 @@ static void osd_req_encode_op(struct ceph_osd_request *req,
 		dst->watch.flag = src->watch.flag;
 		break;
 	default:
-		pr_err("unrecognized osd opcode %d\n", dst->op);
+		pr_err("unrecognized osd opcode %d\n", src->op);
 		WARN_ON(1);
 		break;
 	case CEPH_OSD_OP_MAPEXT:
@@ -307,7 +307,7 @@ static void osd_req_encode_op(struct ceph_osd_request *req,
 	case CEPH_OSD_OP_PGLS:
 	case CEPH_OSD_OP_PGLS_FILTER:
 		pr_err("unsupported osd opcode %s\n",
-			ceph_osd_op_name(dst->op));
+			ceph_osd_op_name(src->op));
 		WARN_ON(1);
 		break;
 	}
@@ -1174,6 +1174,7 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg,
 	u32 reassert_epoch;
 	u64 reassert_version;
 	u32 osdmap_epoch;
+	int already_completed;
 	int i;
 
 	tid = le64_to_cpu(msg->hdr.tid);
@@ -1282,7 +1283,11 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg,
 	    ((flags & CEPH_OSD_FLAG_WRITE) == 0))
 		__unregister_request(osdc, req);
 
+	already_completed = req->r_completed;
+	req->r_completed = 1;
 	mutex_unlock(&osdc->request_mutex);
+	if (already_completed)
+		goto done;
 
 	if (req->r_callback)
 		req->r_callback(req, msg);
