@@ -173,6 +173,8 @@ enum obj_request_type {
 enum obj_req_flags {
 	OBJ_REQ_DONE,		/* completion flag: not done = 0, done = 1 */
 	OBJ_REQ_IMG_DATA,	/* object usage: standalone = 0, image = 1 */
+	OBJ_REQ_KNOWN,		/* EXISTS flag valid: no = 0, yes = 1 */
+	OBJ_REQ_EXISTS,		/* target exists: no = 0, yes = 1 */
 };
 
 struct rbd_obj_request {
@@ -1094,13 +1096,30 @@ out_err:
  * each flag, once its value is set to 1 it is never reset to 0
  * again.
  */
+static void obj_request_img_data_set(struct rbd_obj_request *obj_request)
+{
+	if (test_and_set_bit(OBJ_REQ_IMG_DATA, &obj_request->flags)) {
+		struct rbd_device *rbd_dev;
+
+		rbd_dev = obj_request->img_request->rbd_dev;
+		rbd_warn(rbd_dev, "obj_request %p already marked img_data\n",
+			obj_request);
+	}
+}
+
+static bool obj_request_img_data_test(struct rbd_obj_request *obj_request)
+{
+	smp_mb();
+	return test_bit(OBJ_REQ_IMG_DATA, &obj_request->flags) != 0;
+}
+
 static void obj_request_done_set(struct rbd_obj_request *obj_request)
 {
 	if (test_and_set_bit(OBJ_REQ_DONE, &obj_request->flags)) {
-		struct rbd_img_request *img_request = obj_request->img_request;
-		struct rbd_device *rbd_dev;
+		struct rbd_device *rbd_dev = NULL;
 
-		rbd_dev = img_request ? img_request->rbd_dev : NULL;
+		if (obj_request_img_data_test(obj_request))
+			rbd_dev = obj_request->img_request->rbd_dev;
 		rbd_warn(rbd_dev, "obj_request %p already marked done\n",
 			obj_request);
 	}
@@ -1112,22 +1131,35 @@ static bool obj_request_done_test(struct rbd_obj_request *obj_request)
 	return test_bit(OBJ_REQ_DONE, &obj_request->flags) != 0;
 }
 
-static void obj_request_img_data_set(struct rbd_obj_request *obj_request)
+/*
+ * This sets the KNOWN flag after (possibly) setting the EXISTS
+ * flag.  The latter is set based on the "exists" value provided.
+ *
+ * Note that for our purposes once an object exists it never goes
+ * away again.  It's possible that the response from two existence
+ * checks are separated by the creation of the target object, and
+ * the first ("doesn't exist") response arrives *after* the second
+ * ("does exist").  In that case we ignore the second one.
+ */
+static void obj_request_existence_set(struct rbd_obj_request *obj_request,
+				bool exists)
 {
-	if (test_and_set_bit(OBJ_REQ_IMG_DATA, &obj_request->flags)) {
-		struct rbd_img_request *img_request = obj_request->img_request;
-		struct rbd_device *rbd_dev;
-
-		rbd_dev = img_request ? img_request->rbd_dev : NULL;
-		rbd_warn(rbd_dev, "obj_request %p already marked img_data\n",
-			obj_request);
-	}
+	if (exists)
+		set_bit(OBJ_REQ_EXISTS, &obj_request->flags);
+	set_bit(OBJ_REQ_KNOWN, &obj_request->flags);
+	smp_mb();
 }
 
-static bool obj_request_img_data_test(struct rbd_obj_request *obj_request)
+static bool obj_request_known_test(struct rbd_obj_request *obj_request)
 {
 	smp_mb();
-	return test_bit(OBJ_REQ_IMG_DATA, &obj_request->flags) != 0;
+	return test_bit(OBJ_REQ_KNOWN, &obj_request->flags) != 0;
+}
+
+static bool obj_request_exists_test(struct rbd_obj_request *obj_request)
+{
+	smp_mb();
+	return test_bit(OBJ_REQ_EXISTS, &obj_request->flags) != 0;
 }
 
 static void rbd_obj_request_get(struct rbd_obj_request *obj_request)
@@ -1338,8 +1370,16 @@ static void rbd_osd_trivial_callback(struct rbd_obj_request *obj_request)
 
 static void rbd_osd_read_callback(struct rbd_obj_request *obj_request)
 {
-	struct rbd_img_request *img_request = obj_request->img_request;
-	bool layered = img_request && img_request_layered_test(img_request);
+	struct rbd_img_request *img_request = NULL;
+	bool layered = false;
+
+	if (obj_request_img_data_test(obj_request)) {
+		img_request = obj_request->img_request;
+		layered = img_request && img_request_layered_test(img_request);
+	} else {
+		img_request = NULL;
+		layered = false;
+	}
 
 	dout("%s: obj %p img %p result %d %llu/%llu\n", __func__,
 		obj_request, img_request, obj_request->result,
@@ -1382,10 +1422,12 @@ static void rbd_osd_req_callback(struct ceph_osd_request *osd_req,
 
 	dout("%s: osd_req %p msg %p\n", __func__, osd_req, msg);
 	rbd_assert(osd_req == obj_request->osd_req);
-	rbd_assert(obj_request_img_data_test(obj_request) ^
-				!obj_request->img_request);
-	rbd_assert(obj_request_img_data_test(obj_request) ^
-				(obj_request->which == BAD_WHICH));
+	if (obj_request_img_data_test(obj_request)) {
+		rbd_assert(obj_request->img_request);
+		rbd_assert(obj_request->which != BAD_WHICH);
+	} else {
+		rbd_assert(obj_request->which == BAD_WHICH);
+	}
 
 	if (osd_req->r_result < 0)
 		obj_request->result = osd_req->r_result;
@@ -1613,6 +1655,10 @@ static struct rbd_img_request *rbd_img_request_create(
 	img_request->obj_request_count = 0;
 	INIT_LIST_HEAD(&img_request->obj_requests);
 	kref_init(&img_request->kref);
+
+	(void) obj_request_existence_set;
+	(void) obj_request_known_test;
+	(void) obj_request_exists_test;
 
 	rbd_img_request_get(img_request);	/* Avoid a warning */
 	rbd_img_request_put(img_request);	/* TEMPORARY */
