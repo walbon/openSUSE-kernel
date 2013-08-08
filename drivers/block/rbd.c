@@ -50,6 +50,10 @@
 #define	SECTOR_SHIFT	9
 #define	SECTOR_SIZE	(1ULL << SECTOR_SHIFT)
 
+/* It might be useful to have this defined elsewhere too */
+
+#define	U64_MAX	((u64) (~0ULL))
+
 #define RBD_DRV_NAME "rbd"
 #define RBD_DRV_NAME_LONG "rbd (rados block device)"
 
@@ -665,34 +669,63 @@ static void rbd_header_free(struct rbd_image_header *header)
 	header->snapc = NULL;
 }
 
-/*
- * get the actual striped segment name, offset and length
- */
-static u64 rbd_get_segment(struct rbd_image_header *header,
-			   const char *object_prefix,
-			   u64 ofs, u64 len,
-			   char *seg_name, u64 *segofs)
+static char *rbd_segment_name(struct rbd_device *rbd_dev, u64 offset)
 {
-	u64 seg = ofs >> header->obj_order;
+	char *name;
+	u64 segment;
+	int ret;
 
-	if (seg_name)
-		snprintf(seg_name, RBD_MAX_SEG_NAME_LEN,
-			 "%s.%012llx", object_prefix, seg);
+	name = kmalloc(RBD_MAX_SEG_NAME_LEN + 1, GFP_NOIO);
+	if (!name)
+		return NULL;
+	segment = offset >> rbd_dev->header.obj_order;
+	ret = snprintf(name, RBD_MAX_SEG_NAME_LEN, "%s.%012llx",
+			rbd_dev->header.object_prefix, segment);
+	if (ret < 0 || ret >= RBD_MAX_SEG_NAME_LEN) {
+		pr_err("error formatting segment name for #%llu (%d)\n",
+			segment, ret);
+		kfree(name);
+		name = NULL;
+	}
 
-	ofs = ofs & ((1 << header->obj_order) - 1);
-	len = min_t(u64, len, (1 << header->obj_order) - ofs);
+	return name;
+}
 
-	if (segofs)
-		*segofs = ofs;
+static u64 rbd_segment_offset(struct rbd_device *rbd_dev, u64 offset)
+{
+	u64 segment_size = (u64) 1 << rbd_dev->header.obj_order;
 
-	return len;
+	return offset & (segment_size - 1);
+}
+
+static u64 rbd_segment_length(struct rbd_device *rbd_dev,
+				u64 offset, u64 length)
+{
+	u64 segment_size = (u64) 1 << rbd_dev->header.obj_order;
+
+	offset &= segment_size - 1;
+
+	BUG_ON(length > U64_MAX - offset);
+	if (offset + length > segment_size)
+		length = segment_size - offset;
+
+	return length;
 }
 
 static int rbd_get_num_segments(struct rbd_image_header *header,
 				u64 ofs, u64 len)
 {
-	u64 start_seg = ofs >> header->obj_order;
-	u64 end_seg = (ofs + len - 1) >> header->obj_order;
+	u64 start_seg;
+	u64 end_seg;
+
+	if (!len)
+		return 0;
+	if (len - 1 > U64_MAX - ofs)
+		return -ERANGE;
+
+	start_seg = ofs >> header->obj_order;
+	end_seg = (ofs + len - 1) >> header->obj_order;
+
 	return end_seg - start_seg + 1;
 }
 
@@ -1114,14 +1147,11 @@ static int rbd_do_op(struct request *rq,
 	struct ceph_osd_req_op *ops;
 	u32 payload_len;
 
-	seg_name = kmalloc(RBD_MAX_SEG_NAME_LEN + 1, GFP_NOIO);
+	seg_name = rbd_segment_name(rbd_dev, ofs);
 	if (!seg_name)
 		return -ENOMEM;
-
-	seg_len = rbd_get_segment(&rbd_dev->header,
-				  rbd_dev->header.object_prefix,
-				  ofs, len,
-				  seg_name, &seg_ofs);
+	seg_len = rbd_segment_length(rbd_dev, ofs, len);
+	seg_ofs = rbd_segment_offset(rbd_dev, ofs);
 
 	payload_len = (flags & CEPH_OSD_FLAG_WRITE ? seg_len : 0);
 
@@ -1515,6 +1545,12 @@ static void rbd_rq_fn(struct request_queue *q)
 		     size, (unsigned long long) blk_rq_pos(rq) * SECTOR_SIZE);
 
 		num_segs = rbd_get_num_segments(&rbd_dev->header, ofs, size);
+		if (num_segs <= 0) {
+			spin_lock_irq(q->queue_lock);
+			__blk_end_request_all(rq, num_segs);
+			ceph_put_snap_context(snapc);
+			continue;
+		}
 		coll = rbd_alloc_coll(num_segs);
 		if (!coll) {
 			spin_lock_irq(q->queue_lock);
@@ -1526,10 +1562,7 @@ static void rbd_rq_fn(struct request_queue *q)
 		do {
 			/* a bio clone to be passed down to OSD req */
 			dout("rq->bio->bi_vcnt=%hu\n", rq->bio->bi_vcnt);
-			op_size = rbd_get_segment(&rbd_dev->header,
-						  rbd_dev->header.object_prefix,
-						  ofs, size,
-						  NULL, NULL);
+			op_size = rbd_segment_length(rbd_dev, ofs, size);
 			kref_get(&coll->kref);
 			bio = bio_chain_clone(&rq_bio, &next_bio, &bp,
 					      op_size, GFP_ATOMIC);
