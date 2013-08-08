@@ -41,6 +41,8 @@
 
 #include "rbd_types.h"
 
+#define RBD_DEBUG	/* Activate rbd_assert() calls */
+
 /*
  * The basic unit of block I/O is a sector.  It is interpreted in a
  * number of contexts in Linux (blk, bio, genhd), but the default is
@@ -232,6 +234,18 @@ static struct device rbd_root_dev = {
 	.release =      rbd_root_dev_release,
 };
 
+#ifdef RBD_DEBUG
+#define rbd_assert(expr)						\
+		if (unlikely(!(expr))) {				\
+			printk(KERN_ERR "\nAssertion failure in %s() "	\
+						"at line %d:\n\n"	\
+					"\trbd_assert(%s);\n\n",	\
+					__func__, __LINE__, #expr);	\
+			BUG();						\
+		}
+#else /* !RBD_DEBUG */
+#  define rbd_assert(expr)	((void) 0)
+#endif /* !RBD_DEBUG */
 
 static struct device *rbd_get_dev(struct rbd_device *rbd_dev)
 {
@@ -406,7 +420,8 @@ static int parse_rbd_opts_token(char *c, void *private)
 		rbd_opts->read_only = false;
 		break;
 	default:
-		BUG_ON(token);
+		rbd_assert(false);
+		break;
 	}
 	return 0;
 }
@@ -705,7 +720,7 @@ static u64 rbd_segment_length(struct rbd_device *rbd_dev,
 
 	offset &= segment_size - 1;
 
-	BUG_ON(length > U64_MAX - offset);
+	rbd_assert(length <= U64_MAX - offset);
 	if (offset + length > segment_size)
 		length = segment_size - offset;
 
@@ -842,7 +857,7 @@ static struct bio *bio_chain_clone(struct bio **old, struct bio **next,
 		total += tmp->bi_size;
 	}
 
-	BUG_ON(total < len);
+	rbd_assert(total == len);
 
 	*old = old_chain;
 
@@ -1101,7 +1116,7 @@ static int rbd_req_sync_op(struct rbd_device *rbd_dev,
 	struct page **pages;
 	int num_pages;
 
-	BUG_ON(ops == NULL);
+	rbd_assert(ops != NULL);
 
 	num_pages = calc_pages_for(ofs , len);
 	pages = ceph_alloc_page_vector(num_pages, GFP_KERNEL);
@@ -1163,7 +1178,7 @@ static int rbd_do_op(struct request *rq,
 	/* we've taken care of segment sizes earlier when we
 	   cloned the bios. We should never have a segment
 	   truncated at this point */
-	BUG_ON(seg_len < len);
+	rbd_assert(seg_len == len);
 
 	ret = rbd_do_request(rq, rbd_dev, snapc, snapid,
 			     seg_name, seg_ofs, seg_len,
@@ -2186,7 +2201,7 @@ static int __rbd_init_snaps_header(struct rbd_device *rbd_dev)
 					     : CEPH_NOSNAP;
 		snap = links != head ? list_entry(links, struct rbd_snap, node)
 				     : NULL;
-		BUG_ON(snap && snap->id == CEPH_NOSNAP);
+		rbd_assert(!snap || snap->id != CEPH_NOSNAP);
 
 		if (snap_id == CEPH_NOSNAP || (snap && snap->id > snap_id)) {
 			struct list_head *next = links->next;
@@ -2222,8 +2237,9 @@ static int __rbd_init_snaps_header(struct rbd_device *rbd_dev)
 		} else {
 			/* Already have this one */
 
-			BUG_ON(snap->size != rbd_dev->header.snap_sizes[index]);
-			BUG_ON(strcmp(snap->name, snap_name));
+			rbd_assert(snap->size ==
+					rbd_dev->header.snap_sizes[index]);
+			rbd_assert(!strcmp(snap->name, snap_name));
 
 			/* Done with this list entry; advance */
 
@@ -2288,33 +2304,37 @@ static int rbd_init_watch_dev(struct rbd_device *rbd_dev)
 	return ret;
 }
 
-static atomic64_t rbd_id_max = ATOMIC64_INIT(0);
+static atomic64_t rbd_dev_id_max = ATOMIC64_INIT(0);
 
 /*
  * Get a unique rbd identifier for the given new rbd_dev, and add
  * the rbd_dev to the global list.  The minimum rbd id is 1.
  */
-static void rbd_id_get(struct rbd_device *rbd_dev)
+static void rbd_dev_id_get(struct rbd_device *rbd_dev)
 {
-	rbd_dev->dev_id = atomic64_inc_return(&rbd_id_max);
+	rbd_dev->dev_id = atomic64_inc_return(&rbd_dev_id_max);
 
 	spin_lock(&rbd_dev_list_lock);
 	list_add_tail(&rbd_dev->node, &rbd_dev_list);
 	spin_unlock(&rbd_dev_list_lock);
+	dout("rbd_dev %p given dev id %llu\n", rbd_dev,
+		(unsigned long long) rbd_dev->dev_id);
 }
 
 /*
  * Remove an rbd_dev from the global list, and record that its
  * identifier is no longer in use.
  */
-static void rbd_id_put(struct rbd_device *rbd_dev)
+static void rbd_dev_id_put(struct rbd_device *rbd_dev)
 {
 	struct list_head *tmp;
 	int rbd_id = rbd_dev->dev_id;
 	int max_id;
 
-	BUG_ON(rbd_id < 1);
+	rbd_assert(rbd_id > 0);
 
+	dout("rbd_dev %p released dev id %llu\n", rbd_dev,
+		(unsigned long long) rbd_dev->dev_id);
 	spin_lock(&rbd_dev_list_lock);
 	list_del_init(&rbd_dev->node);
 
@@ -2322,7 +2342,7 @@ static void rbd_id_put(struct rbd_device *rbd_dev)
 	 * If the id being "put" is not the current maximum, there
 	 * is nothing special we need to do.
 	 */
-	if (rbd_id != atomic64_read(&rbd_id_max)) {
+	if (rbd_id != atomic64_read(&rbd_dev_id_max)) {
 		spin_unlock(&rbd_dev_list_lock);
 		return;
 	}
@@ -2343,12 +2363,13 @@ static void rbd_id_put(struct rbd_device *rbd_dev)
 	spin_unlock(&rbd_dev_list_lock);
 
 	/*
-	 * The max id could have been updated by rbd_id_get(), in
+	 * The max id could have been updated by rbd_dev_id_get(), in
 	 * which case it now accurately reflects the new maximum.
 	 * Be careful not to overwrite the maximum value in that
 	 * case.
 	 */
-	atomic64_cmpxchg(&rbd_id_max, rbd_id, max_id);
+	atomic64_cmpxchg(&rbd_dev_id_max, rbd_id, max_id);
+	dout("  max dev id has been reset\n");
 }
 
 /*
@@ -2547,7 +2568,7 @@ static ssize_t rbd_add(struct bus_type *bus,
 	init_rwsem(&rbd_dev->header_rwsem);
 
 	/* generate unique id: find highest unique id, add one */
-	rbd_id_get(rbd_dev);
+	rbd_dev_id_get(rbd_dev);
 
 	/* Fill in the device name, now that we have its id. */
 	BUILD_BUG_ON(DEV_NAME_LEN
@@ -2615,7 +2636,7 @@ err_put_id:
 		kfree(rbd_dev->image_name);
 		kfree(rbd_dev->pool_name);
 	}
-	rbd_id_put(rbd_dev);
+	rbd_dev_id_put(rbd_dev);
 err_nomem:
 	kfree(rbd_dev);
 	kfree(options);
@@ -2667,7 +2688,7 @@ static void rbd_dev_release(struct device *dev)
 	kfree(rbd_dev->header_name);
 	kfree(rbd_dev->pool_name);
 	kfree(rbd_dev->image_name);
-	rbd_id_put(rbd_dev);
+	rbd_dev_id_put(rbd_dev);
 	kfree(rbd_dev);
 
 	/* release module ref */
@@ -2705,6 +2726,7 @@ static ssize_t rbd_remove(struct bus_type *bus,
 
 done:
 	mutex_unlock(&ctl_mutex);
+
 	return ret;
 }
 
