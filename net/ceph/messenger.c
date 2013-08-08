@@ -165,7 +165,7 @@ static struct lock_class_key socket_class;
 
 static void queue_con(struct ceph_connection *con);
 static void con_work(struct work_struct *);
-static void ceph_fault(struct ceph_connection *con);
+static void con_fault(struct ceph_connection *con);
 
 /*
  * Nicely render a sockaddr as a string.  An array of formatted
@@ -2340,6 +2340,41 @@ static bool con_sock_closed(struct ceph_connection *con)
 	return true;
 }
 
+static bool con_backoff(struct ceph_connection *con)
+{
+	int ret;
+
+	if (!con_flag_test_and_clear(con, CON_FLAG_BACKOFF))
+		return false;
+
+	ret = queue_con_delay(con, round_jiffies_relative(con->delay));
+	if (ret) {
+		dout("%s: con %p FAILED to back off %lu\n", __func__,
+			con, con->delay);
+		BUG_ON(ret == -ENOENT);
+		con_flag_set(con, CON_FLAG_BACKOFF);
+	}
+
+	return true;
+}
+
+/* Finish fault handling; con->mutex must *not* be held here */
+
+static void con_fault_finish(struct ceph_connection *con)
+{
+	/*
+	 * in case we faulted due to authentication, invalidate our
+	 * current tickets so that we can get new ones.
+	 */
+	if (con->auth_retry && con->ops->invalidate_authorizer) {
+		dout("calling invalidate_authorizer()\n");
+		con->ops->invalidate_authorizer(con);
+	}
+
+	if (con->ops->fault)
+		con->ops->fault(con);
+}
+
 /*
  * Do some work on a connection.  Drop a connection ref when we're done.
  */
@@ -2351,21 +2386,14 @@ static void con_work(struct work_struct *work)
 
 	mutex_lock(&con->mutex);
 restart:
-	if (con_sock_closed(con))
+	if (con_sock_closed(con)) {
+		dout("%s: con %p SOCK_CLOSED\n", __func__, con);
 		goto fault;
-
-	if (con_flag_test_and_clear(con, CON_FLAG_BACKOFF)) {
-		dout("con_work %p backing off\n", con);
-		ret = queue_con_delay(con, round_jiffies_relative(con->delay));
-		if (ret) {
-			dout("con_work %p FAILED to back off %lu\n", con,
-			     con->delay);
-			BUG_ON(ret == -ENOENT);
-			con_flag_set(con, CON_FLAG_BACKOFF);
-		}
+	}
+	if (con_backoff(con)) {
+		dout("%s: con %p BACKOFF\n", __func__, con);
 		goto done;
 	}
-
 	if (con->state == CON_STATE_STANDBY) {
 		dout("con_work %p STANDBY\n", con);
 		goto done;
@@ -2376,7 +2404,7 @@ restart:
 		goto done;
 	}
 	if (con->state == CON_STATE_PREOPEN) {
-		dout("con_work OPENING\n");
+		dout("%s: con %p OPENING\n", __func__, con);
 		BUG_ON(con->sock);
 	}
 
@@ -2403,7 +2431,9 @@ done_unlocked:
 	return;
 
 fault:
-	ceph_fault(con);     /* error/fault path */
+	con_fault(con);
+	mutex_unlock(&con->mutex);
+	con_fault_finish(con);
 	goto done_unlocked;
 }
 
@@ -2412,8 +2442,7 @@ fault:
  * Generic error/fault handler.  A retry mechanism is used with
  * exponential backoff
  */
-static void ceph_fault(struct ceph_connection *con)
-	__releases(con->mutex)
+static void con_fault(struct ceph_connection *con)
 {
 	pr_warning("%s%lld %s %s\n", ENTITY_NAME(con->peer_name),
 	       ceph_pr_addr(&con->peer_addr.in_addr), con->error_msg);
@@ -2429,7 +2458,7 @@ static void ceph_fault(struct ceph_connection *con)
 	if (con_flag_test(con, CON_FLAG_LOSSYTX)) {
 		dout("fault on LOSSYTX channel, marking CLOSED\n");
 		con->state = CON_STATE_CLOSED;
-		goto out_unlock;
+		return;
 	}
 
 	if (con->in_msg) {
@@ -2460,20 +2489,6 @@ static void ceph_fault(struct ceph_connection *con)
 		con_flag_set(con, CON_FLAG_BACKOFF);
 		queue_con(con);
 	}
-
-out_unlock:
-	mutex_unlock(&con->mutex);
-	/*
-	 * in case we faulted due to authentication, invalidate our
-	 * current tickets so that we can get new ones.
-	 */
-	if (con->auth_retry && con->ops->invalidate_authorizer) {
-		dout("calling invalidate_authorizer()\n");
-		con->ops->invalidate_authorizer(con);
-	}
-
-	if (con->ops->fault)
-		con->ops->fault(con);
 }
 
 
