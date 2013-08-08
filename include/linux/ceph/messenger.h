@@ -90,6 +90,7 @@ static __inline__ bool ceph_msg_data_type_valid(enum ceph_msg_data_type type)
 }
 
 struct ceph_msg_data {
+	struct list_head		links;	/* ceph_msg->data */
 	enum ceph_msg_data_type		type;
 	union {
 #ifdef CONFIG_BLOCK
@@ -108,7 +109,10 @@ struct ceph_msg_data {
 };
 
 struct ceph_msg_data_cursor {
-	struct ceph_msg_data	*data;		/* data item this describes */
+	size_t			total_resid;	/* across all data items */
+	struct list_head	*data_head;	/* = &ceph_msg->data */
+
+	struct ceph_msg_data	*data;		/* current data item */
 	size_t			resid;		/* bytes not yet consumed */
 	bool			last_piece;	/* current is last piece */
 	bool			need_crc;	/* crc update needed */
@@ -144,7 +148,7 @@ struct ceph_msg {
 	struct ceph_buffer *middle;
 
 	size_t				data_length;
-	struct ceph_msg_data		*data;
+	struct list_head		data;
 	struct ceph_msg_data_cursor	cursor;
 
 	struct ceph_connection *con;
