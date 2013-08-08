@@ -69,7 +69,8 @@
 #define DEV_NAME_LEN		32
 #define MAX_INT_FORMAT_WIDTH	((5 * sizeof (int)) / 2 + 1)
 
-#define RBD_NOTIFY_TIMEOUT_DEFAULT 10
+#define RBD_NOTIFY_TIMEOUT_DEFAULT	10
+#define RBD_READ_ONLY_DEFAULT		false
 
 /*
  * block device image metadata (in-memory version)
@@ -91,6 +92,7 @@ struct rbd_image_header {
 
 struct rbd_options {
 	int	notify_timeout;
+	bool	read_only;
 };
 
 /*
@@ -98,7 +100,6 @@ struct rbd_options {
  */
 struct rbd_client {
 	struct ceph_client	*client;
-	struct rbd_options	*rbd_opts;
 	struct kref		kref;
 	struct list_head	node;
 };
@@ -152,6 +153,7 @@ struct rbd_device {
 	struct gendisk		*disk;		/* blkdev's gendisk and rq */
 	struct request_queue	*q;
 
+	struct rbd_options	rbd_opts;
 	struct rbd_client	*rbd_client;
 
 	char			name[DEV_NAME_LEN]; /* blkdev name, e.g. rbd3 */
@@ -176,7 +178,7 @@ struct rbd_device {
 	u64                     snap_id;	/* current snapshot id */
 	/* whether the snap_id this device reads from still exists */
 	bool                    snap_exists;
-	int                     read_only;
+	bool			read_only;
 
 	struct list_head	node;
 
@@ -273,8 +275,7 @@ static const struct block_device_operations rbd_bd_ops = {
  * Initialize an rbd client instance.
  * We own *ceph_opts.
  */
-static struct rbd_client *rbd_client_create(struct ceph_options *ceph_opts,
-					    struct rbd_options *rbd_opts)
+static struct rbd_client *rbd_client_create(struct ceph_options *ceph_opts)
 {
 	struct rbd_client *rbdc;
 	int ret = -ENOMEM;
@@ -297,8 +298,6 @@ static struct rbd_client *rbd_client_create(struct ceph_options *ceph_opts,
 	ret = ceph_open_session(rbdc->client);
 	if (ret < 0)
 		goto out_err;
-
-	rbdc->rbd_opts = rbd_opts;
 
 	spin_lock(&rbd_client_list_lock);
 	list_add_tail(&rbdc->node, &rbd_client_list);
@@ -354,12 +353,21 @@ enum {
 	/* int args above */
 	Opt_last_string,
 	/* string args above */
+	Opt_read_only,
+	Opt_read_write,
+	/* Boolean args above */
+	Opt_last_bool,
 };
 
 static match_table_t rbd_opts_tokens = {
 	{Opt_notify_timeout, "notify_timeout=%d"},
 	/* int args above */
 	/* string args above */
+	{Opt_read_only, "read_only"},
+	{Opt_read_only, "ro"},		/* Alternate spelling */
+	{Opt_read_write, "read_write"},
+	{Opt_read_write, "rw"},		/* Alternate spelling */
+	/* Boolean args above */
 	{-1, NULL}
 };
 
@@ -384,6 +392,8 @@ static int parse_rbd_opts_token(char *c, void *private)
 	} else if (token > Opt_last_int && token < Opt_last_string) {
 		dout("got string token %d val %s\n", token,
 		     argstr[0].from);
+	} else if (token > Opt_last_string && token < Opt_last_bool) {
+		dout("got Boolean token %d\n", token);
 	} else {
 		dout("got token %d\n", token);
 	}
@@ -391,6 +401,12 @@ static int parse_rbd_opts_token(char *c, void *private)
 	switch (token) {
 	case Opt_notify_timeout:
 		rbd_opts->notify_timeout = intval;
+		break;
+	case Opt_read_only:
+		rbd_opts->read_only = true;
+		break;
+	case Opt_read_write:
+		rbd_opts->read_only = false;
 		break;
 	default:
 		BUG_ON(token);
@@ -402,42 +418,34 @@ static int parse_rbd_opts_token(char *c, void *private)
  * Get a ceph client with specific addr and configuration, if one does
  * not exist create it.
  */
-static struct rbd_client *rbd_get_client(const char *mon_addr,
-					 size_t mon_addr_len,
-					 char *options)
+static int rbd_get_client(struct rbd_device *rbd_dev, const char *mon_addr,
+				size_t mon_addr_len, char *options)
 {
-	struct rbd_client *rbdc;
+	struct rbd_options *rbd_opts = &rbd_dev->rbd_opts;
 	struct ceph_options *ceph_opts;
-	struct rbd_options *rbd_opts;
-
-	rbd_opts = kzalloc(sizeof(*rbd_opts), GFP_KERNEL);
-	if (!rbd_opts)
-		return ERR_PTR(-ENOMEM);
+	struct rbd_client *rbdc;
 
 	rbd_opts->notify_timeout = RBD_NOTIFY_TIMEOUT_DEFAULT;
+	rbd_opts->read_only = RBD_READ_ONLY_DEFAULT;
 
 	ceph_opts = ceph_parse_options(options, mon_addr,
 					mon_addr + mon_addr_len,
 					parse_rbd_opts_token, rbd_opts);
-	if (IS_ERR(ceph_opts)) {
-		kfree(rbd_opts);
-		return ERR_CAST(ceph_opts);
-	}
+	if (IS_ERR(ceph_opts))
+		return PTR_ERR(ceph_opts);
 
 	rbdc = rbd_client_find(ceph_opts);
 	if (rbdc) {
 		/* using an existing client */
 		ceph_destroy_options(ceph_opts);
-		kfree(rbd_opts);
-
-		return rbdc;
+	} else {
+		rbdc = rbd_client_create(ceph_opts);
+		if (IS_ERR(rbdc))
+			return PTR_ERR(rbdc);
 	}
+	rbd_dev->rbd_client = rbdc;
 
-	rbdc = rbd_client_create(ceph_opts, rbd_opts);
-	if (IS_ERR(rbdc))
-		kfree(rbd_opts);
-
-	return rbdc;
+	return 0;
 }
 
 /*
@@ -455,7 +463,6 @@ static void rbd_client_release(struct kref *kref)
 	spin_unlock(&rbd_client_list_lock);
 
 	ceph_destroy_client(rbdc->client);
-	kfree(rbdc->rbd_opts);
 	kfree(rbdc);
 }
 
@@ -633,7 +640,7 @@ static int rbd_header_set_snap(struct rbd_device *rbd_dev, u64 *size)
 		    sizeof (RBD_SNAP_HEAD_NAME))) {
 		rbd_dev->snap_id = CEPH_NOSNAP;
 		rbd_dev->snap_exists = false;
-		rbd_dev->read_only = 0;
+		rbd_dev->read_only = rbd_dev->rbd_opts.read_only;
 		if (size)
 			*size = rbd_dev->header.image_size;
 	} else {
@@ -645,7 +652,7 @@ static int rbd_header_set_snap(struct rbd_device *rbd_dev, u64 *size)
 			goto done;
 		rbd_dev->snap_id = snap_id;
 		rbd_dev->snap_exists = true;
-		rbd_dev->read_only = 1;
+		rbd_dev->read_only = true;	/* No choice for snapshots */
 	}
 
 	ret = 0;
@@ -2533,13 +2540,9 @@ static ssize_t rbd_add(struct bus_type *bus,
 	if (rc)
 		goto err_put_id;
 
-	rbd_dev->rbd_client = rbd_get_client(mon_addrs, mon_addrs_size - 1,
-						options);
-	if (IS_ERR(rbd_dev->rbd_client)) {
-		rc = PTR_ERR(rbd_dev->rbd_client);
-		rbd_dev->rbd_client = NULL;
+	rc = rbd_get_client(rbd_dev, mon_addrs, mon_addrs_size - 1, options);
+	if (rc < 0)
 		goto err_put_id;
-	}
 
 	/* pick the pool */
 	osdc = &rbd_dev->rbd_client->client->osdc;
