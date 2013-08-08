@@ -79,16 +79,66 @@ static int calc_layout(struct ceph_file_layout *layout, u64 off, u64 *plen,
 	return 0;
 }
 
+static void ceph_osd_data_init(struct ceph_osd_data *osd_data)
+{
+	memset(osd_data, 0, sizeof (*osd_data));
+	osd_data->type = CEPH_OSD_DATA_TYPE_NONE;
+}
+
+void ceph_osd_data_pages_init(struct ceph_osd_data *osd_data,
+			struct page **pages, u64 length, u32 alignment,
+			bool pages_from_pool, bool own_pages)
+{
+	osd_data->type = CEPH_OSD_DATA_TYPE_PAGES;
+	osd_data->pages = pages;
+	osd_data->length = length;
+	osd_data->alignment = alignment;
+	osd_data->pages_from_pool = pages_from_pool;
+	osd_data->own_pages = own_pages;
+}
+EXPORT_SYMBOL(ceph_osd_data_pages_init);
+
+void ceph_osd_data_pagelist_init(struct ceph_osd_data *osd_data,
+			struct ceph_pagelist *pagelist)
+{
+	osd_data->type = CEPH_OSD_DATA_TYPE_PAGELIST;
+	osd_data->pagelist = pagelist;
+}
+EXPORT_SYMBOL(ceph_osd_data_pagelist_init);
+
+#ifdef CONFIG_BLOCK
+void ceph_osd_data_bio_init(struct ceph_osd_data *osd_data,
+			struct bio *bio, size_t bio_length)
+{
+	osd_data->type = CEPH_OSD_DATA_TYPE_BIO;
+	osd_data->bio = bio;
+	osd_data->bio_length = bio_length;
+}
+EXPORT_SYMBOL(ceph_osd_data_bio_init);
+#endif /* CONFIG_BLOCK */
+
+static void ceph_osd_data_release(struct ceph_osd_data *osd_data)
+{
+	if (osd_data->type != CEPH_OSD_DATA_TYPE_PAGES)
+		return;
+
+	if (osd_data->own_pages) {
+		int num_pages;
+
+		num_pages = calc_pages_for((u64)osd_data->alignment,
+						(u64)osd_data->length);
+		ceph_release_page_vector(osd_data->pages, num_pages);
+	}
+}
+
 /*
  * requests
  */
 void ceph_osdc_release_request(struct kref *kref)
 {
-	int num_pages;
-	struct ceph_osd_request *req = container_of(kref,
-						    struct ceph_osd_request,
-						    r_kref);
+	struct ceph_osd_request *req;
 
+	req = container_of(kref, struct ceph_osd_request, r_kref);
 	if (req->r_request)
 		ceph_msg_put(req->r_request);
 	if (req->r_reply) {
@@ -96,18 +146,8 @@ void ceph_osdc_release_request(struct kref *kref)
 		ceph_msg_put(req->r_reply);
 	}
 
-	if (req->r_data_in.type == CEPH_OSD_DATA_TYPE_PAGES &&
-			req->r_data_in.own_pages) {
-		num_pages = calc_pages_for((u64)req->r_data_in.alignment,
-						(u64)req->r_data_in.length);
-		ceph_release_page_vector(req->r_data_in.pages, num_pages);
-	}
-	if (req->r_data_out.type == CEPH_OSD_DATA_TYPE_PAGES &&
-			req->r_data_out.own_pages) {
-		num_pages = calc_pages_for((u64)req->r_data_out.alignment,
-						(u64)req->r_data_out.length);
-		ceph_release_page_vector(req->r_data_out.pages, num_pages);
-	}
+	ceph_osd_data_release(&req->r_data_in);
+	ceph_osd_data_release(&req->r_data_out);
 
 	ceph_put_snap_context(req->r_snapc);
 	if (req->r_mempool)
@@ -171,8 +211,8 @@ struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 	}
 	req->r_reply = msg;
 
-	req->r_data_in.type = CEPH_OSD_DATA_TYPE_NONE;
-	req->r_data_out.type = CEPH_OSD_DATA_TYPE_NONE;
+	ceph_osd_data_init(&req->r_data_in);
+	ceph_osd_data_init(&req->r_data_out);
 
 	/* create request message; allow space for oid */
 	if (use_mempool)
@@ -400,8 +440,7 @@ static u64 osd_req_encode_op(struct ceph_osd_request *req,
 		ceph_pagelist_append(pagelist, src->cls.indata,
 				     src->cls.indata_len);
 
-		req->r_data_out.type = CEPH_OSD_DATA_TYPE_PAGELIST;
-		req->r_data_out.pagelist = pagelist;
+		ceph_osd_data_pagelist_init(&req->r_data_out, pagelist);
 		out_data_len = pagelist->length;
 		break;
 	case CEPH_OSD_OP_STARTSYNC:
@@ -1293,6 +1332,7 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg,
 	u64 reassert_version;
 	u32 osdmap_epoch;
 	int already_completed;
+	u32 bytes;
 	int i;
 
 	tid = le64_to_cpu(msg->hdr.tid);
@@ -1347,9 +1387,10 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg,
 		payload_len += len;
 		p += sizeof(*op);
 	}
-	if (payload_len != le32_to_cpu(msg->hdr.data_len)) {
+	bytes = le32_to_cpu(msg->hdr.data_len);
+	if (payload_len != bytes) {
 		pr_warning("sum of op payload lens %d != data_len %d",
-			   payload_len, le32_to_cpu(msg->hdr.data_len));
+			   payload_len, bytes);
 		goto bad_put;
 	}
 
@@ -1359,10 +1400,8 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg,
 		req->r_reply_op_result[i] = ceph_decode_32(&p);
 
 	if (!req->r_got_reply) {
-		unsigned int bytes;
 
 		req->r_result = result;
-		bytes = le32_to_cpu(msg->hdr.data_len);
 		dout("handle_reply result %d bytes %d\n", req->r_result,
 		     bytes);
 		if (req->r_result == 0)
@@ -2056,7 +2095,6 @@ int ceph_osdc_readpages(struct ceph_osd_client *osdc,
 			struct page **pages, int num_pages, int page_align)
 {
 	struct ceph_osd_request *req;
-	struct ceph_osd_data *osd_data;
 	struct ceph_osd_req_op op;
 	int rc = 0;
 
@@ -2071,14 +2109,11 @@ int ceph_osdc_readpages(struct ceph_osd_client *osdc,
 
 	/* it may be a short read due to an object boundary */
 
-	osd_data = &req->r_data_in;
-	osd_data->type = CEPH_OSD_DATA_TYPE_PAGES;
-	osd_data->pages = pages;
-	osd_data->length = *plen;
-	osd_data->alignment = page_align;
+	ceph_osd_data_pages_init(&req->r_data_in, pages, *plen, page_align,
+				false, false);
 
 	dout("readpages  final extent is %llu~%llu (%llu bytes align %d)\n",
-	     off, *plen, osd_data->length, page_align);
+	     off, *plen, *plen, page_align);
 
 	ceph_osdc_build_request(req, off, 1, &op, NULL, vino.snap, NULL);
 
@@ -2104,7 +2139,6 @@ int ceph_osdc_writepages(struct ceph_osd_client *osdc, struct ceph_vino vino,
 			 struct page **pages, int num_pages)
 {
 	struct ceph_osd_request *req;
-	struct ceph_osd_data *osd_data;
 	struct ceph_osd_req_op op;
 	int rc = 0;
 	int page_align = off & ~PAGE_MASK;
@@ -2119,12 +2153,9 @@ int ceph_osdc_writepages(struct ceph_osd_client *osdc, struct ceph_vino vino,
 		return PTR_ERR(req);
 
 	/* it may be a short write due to an object boundary */
-	osd_data = &req->r_data_out;
-	osd_data->type = CEPH_OSD_DATA_TYPE_PAGES;
-	osd_data->pages = pages;
-	osd_data->length = len;
-	osd_data->alignment = page_align;
-	dout("writepages %llu~%llu (%llu bytes)\n", off, len, osd_data->length);
+	ceph_osd_data_pages_init(&req->r_data_out, pages, len, page_align,
+				false, false);
+	dout("writepages %llu~%llu (%llu bytes)\n", off, len, len);
 
 	ceph_osdc_build_request(req, off, 1, &op, snapc, CEPH_NOSNAP, mtime);
 
