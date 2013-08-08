@@ -176,6 +176,7 @@ struct rbd_obj_request {
 	u64			length;		/* bytes from offset */
 
 	struct rbd_img_request	*img_request;
+	u64			img_offset;	/* image relative offset */
 	struct list_head	links;		/* img_request->obj_requests */
 	u32			which;		/* posn image request list */
 
@@ -201,12 +202,16 @@ struct rbd_obj_request {
 	struct kref		kref;
 };
 
+enum img_req_flags {
+	IMG_REQ_WRITE,		/* read = 0, write = 1 */
+};
+
 struct rbd_img_request {
 	struct request		*rq;
 	struct rbd_device	*rbd_dev;
 	u64			offset;	/* starting image byte offset */
 	u64			length;	/* byte count from offset */
-	bool			write_request;	/* false for read */
+	unsigned long		flags;
 	union {
 		struct ceph_snap_context *snapc;	/* for writes */
 		u64		snap_id;		/* for reads */
@@ -214,6 +219,7 @@ struct rbd_img_request {
 	spinlock_t		completion_lock;/* protects next_completion */
 	u32			next_completion;
 	rbd_img_callback_t	callback;
+	u64			xferred;/* aggregate bytes transferred */
 	int			result;	/* first nonzero obj_request result */
 
 	u32			obj_request_count;
@@ -1148,7 +1154,24 @@ static int rbd_obj_request_submit(struct ceph_osd_client *osdc,
 
 static void rbd_img_request_complete(struct rbd_img_request *img_request)
 {
+
 	dout("%s: img %p\n", __func__, img_request);
+
+	/*
+	 * If no error occurred, compute the aggregate transfer
+	 * count for the image request.  We could instead use
+	 * atomic64_cmpxchg() to update it as each object request
+	 * completes; not clear which way is better off hand.
+	 */
+	if (!img_request->result) {
+		struct rbd_obj_request *obj_request;
+		u64 xferred = 0;
+
+		for_each_obj_request(img_request, obj_request)
+			xferred += obj_request->xferred;
+		img_request->xferred = xferred;
+	}
+
 	if (img_request->callback)
 		img_request->callback(img_request);
 	else
@@ -1189,6 +1212,23 @@ static bool obj_request_done_test(struct rbd_obj_request *obj_request)
 {
 	smp_mb();
 	return atomic_read(&obj_request->done) != 0;
+}
+
+/*
+ * The default/initial value for all image request flags is 0.  Each
+ * is conditionally set to 1 at image request initialization time
+ * and currently never change thereafter.
+ */
+static void img_request_write_set(struct rbd_img_request *img_request)
+{
+	set_bit(IMG_REQ_WRITE, &img_request->flags);
+	smp_mb();
+}
+
+static bool img_request_write_test(struct rbd_img_request *img_request)
+{
+	smp_mb();
+	return test_bit(IMG_REQ_WRITE, &img_request->flags) != 0;
 }
 
 static void
@@ -1350,8 +1390,9 @@ static struct ceph_osd_request *rbd_osd_req_create(
 	struct ceph_osd_request *osd_req;
 
 	if (img_request) {
-		rbd_assert(img_request->write_request == write_request);
-		if (img_request->write_request)
+		rbd_assert(write_request ==
+				img_request_write_test(img_request));
+		if (write_request)
 			snapc = img_request->snapc;
 	}
 
@@ -1475,17 +1516,20 @@ static struct rbd_img_request *rbd_img_request_create(
 			kfree(img_request);
 			return NULL;	/* Shouldn't happen */
 		}
+
 	}
 
 	img_request->rq = NULL;
 	img_request->rbd_dev = rbd_dev;
 	img_request->offset = offset;
 	img_request->length = length;
-	img_request->write_request = write_request;
-	if (write_request)
+	img_request->flags = 0;
+	if (write_request) {
+		img_request_write_set(img_request);
 		img_request->snapc = snapc;
-	else
+	} else {
 		img_request->snap_id = rbd_dev->spec->snap_id;
+	}
 	spin_lock_init(&img_request->completion_lock);
 	img_request->next_completion = 0;
 	img_request->callback = NULL;
@@ -1518,7 +1562,7 @@ static void rbd_img_request_destroy(struct kref *kref)
 		rbd_img_obj_request_del(img_request, obj_request);
 	rbd_assert(img_request->obj_request_count == 0);
 
-	if (img_request->write_request)
+	if (img_request_write_test(img_request))
 		ceph_put_snap_context(img_request->snapc);
 
 	kfree(img_request);
@@ -1558,8 +1602,14 @@ static void rbd_img_obj_callback(struct rbd_obj_request *obj_request)
 		xferred = (unsigned int)obj_request->xferred;
 		result = obj_request->result;
 		if (result) {
-			rbd_warn(NULL, "obj_request %s result %d xferred %u\n",
-				img_request->write_request ? "write" : "read",
+			struct rbd_device *rbd_dev = img_request->rbd_dev;
+
+			rbd_warn(rbd_dev, "%s %llx at %llx (%llx)\n",
+				img_request_write_test(img_request) ? "write"
+								    : "read",
+				obj_request->length, obj_request->img_offset,
+				obj_request->offset);
+			rbd_warn(rbd_dev, "  result %d xferred %x\n",
 				result, xferred);
 			if (!img_request->result)
 				img_request->result = result;
@@ -1584,9 +1634,9 @@ static int rbd_img_request_fill_bio(struct rbd_img_request *img_request,
 	struct rbd_device *rbd_dev = img_request->rbd_dev;
 	struct rbd_obj_request *obj_request = NULL;
 	struct rbd_obj_request *next_obj_request;
-	bool write_request = img_request->write_request;
+	bool write_request = img_request_write_test(img_request);
 	unsigned int bio_offset;
-	u64 image_offset;
+	u64 img_offset;
 	u64 resid;
 	u16 opcode;
 
@@ -1594,8 +1644,8 @@ static int rbd_img_request_fill_bio(struct rbd_img_request *img_request,
 
 	opcode = write_request ? CEPH_OSD_OP_WRITE : CEPH_OSD_OP_READ;
 	bio_offset = 0;
-	image_offset = img_request->offset;
-	rbd_assert(image_offset == bio_list->bi_sector << SECTOR_SHIFT);
+	img_offset = img_request->offset;
+	rbd_assert(img_offset == bio_list->bi_sector << SECTOR_SHIFT);
 	resid = img_request->length;
 	rbd_assert(resid > 0);
 	while (resid) {
@@ -1605,11 +1655,11 @@ static int rbd_img_request_fill_bio(struct rbd_img_request *img_request,
 		u64 offset;
 		u64 length;
 
-		object_name = rbd_segment_name(rbd_dev, image_offset);
+		object_name = rbd_segment_name(rbd_dev, img_offset);
 		if (!object_name)
 			goto out_unwind;
-		offset = rbd_segment_offset(rbd_dev, image_offset);
-		length = rbd_segment_length(rbd_dev, image_offset, resid);
+		offset = rbd_segment_offset(rbd_dev, img_offset);
+		length = rbd_segment_length(rbd_dev, img_offset, resid);
 		obj_request = rbd_obj_request_create(object_name,
 						offset, length,
 						OBJ_REQUEST_BIO);
@@ -1638,9 +1688,10 @@ static int rbd_img_request_fill_bio(struct rbd_img_request *img_request,
 				obj_request->bio_list, obj_request->length);
 		rbd_osd_req_format(obj_request, write_request);
 
+		obj_request->img_offset = img_offset;
 		rbd_img_obj_request_add(img_request, obj_request);
 
-		image_offset += length;
+		img_offset += length;
 		resid -= length;
 	}
 
@@ -1975,8 +2026,10 @@ static void rbd_request_fn(struct request_queue *q)
 end_request:
 		spin_lock_irq(q->queue_lock);
 		if (result < 0) {
-			rbd_warn(rbd_dev, "obj_request %s result %d\n",
-				write_request ? "write" : "read", result);
+			rbd_warn(rbd_dev, "%s %llx at %llx result %d\n",
+				write_request ? "write" : "read",
+				length, offset, result);
+
 			__blk_end_request_all(rq, result);
 		}
 	}
