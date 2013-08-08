@@ -224,6 +224,7 @@ struct rbd_obj_request {
 		};
 	};
 	struct page		**copyup_pages;
+	u32			copyup_page_count;
 
 	struct ceph_osd_request	*osd_req;
 
@@ -256,6 +257,7 @@ struct rbd_img_request {
 		struct rbd_obj_request	*obj_request;	/* obj req initiator */
 	};
 	struct page		**copyup_pages;
+	u32			copyup_page_count;
 	spinlock_t		completion_lock;/* protects next_completion */
 	u32			next_completion;
 	rbd_img_callback_t	callback;
@@ -1355,13 +1357,6 @@ static void rbd_obj_request_put(struct rbd_obj_request *obj_request)
 	kref_put(&obj_request->kref, rbd_obj_request_destroy);
 }
 
-static void rbd_img_request_get(struct rbd_img_request *img_request)
-{
-	dout("%s: img %p (was %d)\n", __func__, img_request,
-		atomic_read(&img_request->kref.refcount));
-	kref_get(&img_request->kref);
-}
-
 static void rbd_img_request_destroy(struct kref *kref);
 static void rbd_img_request_put(struct rbd_img_request *img_request)
 {
@@ -1886,9 +1881,6 @@ static struct rbd_img_request *rbd_img_request_create(
 	INIT_LIST_HEAD(&img_request->obj_requests);
 	kref_init(&img_request->kref);
 
-	rbd_img_request_get(img_request);	/* Avoid a warning */
-	rbd_img_request_put(img_request);	/* TEMPORARY */
-
 	dout("%s: rbd_dev %p %s %llu/%llu -> img %p\n", __func__, rbd_dev,
 		write_request ? "write" : "read", offset, length,
 		img_request);
@@ -2127,7 +2119,7 @@ rbd_img_obj_copyup_callback(struct rbd_obj_request *obj_request)
 {
 	struct rbd_img_request *img_request;
 	struct rbd_device *rbd_dev;
-	u64 length;
+	struct page **pages;
 	u32 page_count;
 
 	rbd_assert(obj_request->type == OBJ_REQUEST_BIO);
@@ -2137,12 +2129,14 @@ rbd_img_obj_copyup_callback(struct rbd_obj_request *obj_request)
 
 	rbd_dev = img_request->rbd_dev;
 	rbd_assert(rbd_dev);
-	length = (u64)1 << rbd_dev->header.obj_order;
-	page_count = (u32)calc_pages_for(0, length);
 
-	rbd_assert(obj_request->copyup_pages);
-	ceph_release_page_vector(obj_request->copyup_pages, page_count);
+	pages = obj_request->copyup_pages;
+	rbd_assert(pages != NULL);
 	obj_request->copyup_pages = NULL;
+	page_count = obj_request->copyup_page_count;
+	rbd_assert(page_count);
+	obj_request->copyup_page_count = 0;
+	ceph_release_page_vector(pages, page_count);
 
 	/*
 	 * We want the transfer count to reflect the size of the
@@ -2166,9 +2160,11 @@ rbd_img_obj_parent_read_full_callback(struct rbd_img_request *img_request)
 	struct ceph_osd_client *osdc;
 	struct rbd_device *rbd_dev;
 	struct page **pages;
+	u32 page_count;
 	int result;
-	u64 obj_size;
-	u64 xferred;
+	u64 parent_length;
+	u64 offset;
+	u64 length;
 
 	rbd_assert(img_request_child_test(img_request));
 
@@ -2177,19 +2173,21 @@ rbd_img_obj_parent_read_full_callback(struct rbd_img_request *img_request)
 	pages = img_request->copyup_pages;
 	rbd_assert(pages != NULL);
 	img_request->copyup_pages = NULL;
+	page_count = img_request->copyup_page_count;
+	rbd_assert(page_count);
+	img_request->copyup_page_count = 0;
 
 	orig_request = img_request->obj_request;
 	rbd_assert(orig_request != NULL);
-	rbd_assert(orig_request->type == OBJ_REQUEST_BIO);
+	rbd_assert(obj_request_type_valid(orig_request->type));
 	result = img_request->result;
-	obj_size = img_request->length;
-	xferred = img_request->xferred;
+	parent_length = img_request->length;
+	rbd_assert(parent_length == img_request->xferred);
 	rbd_img_request_put(img_request);
 
 	rbd_assert(orig_request->img_request);
 	rbd_dev = orig_request->img_request->rbd_dev;
 	rbd_assert(rbd_dev);
-	rbd_assert(obj_size == (u64)1 << rbd_dev->header.obj_order);
 
 	if (result)
 		goto out_err;
@@ -2203,20 +2201,27 @@ rbd_img_obj_parent_read_full_callback(struct rbd_img_request *img_request)
 		goto out_err;
 	orig_request->osd_req = osd_req;
 	orig_request->copyup_pages = pages;
+	orig_request->copyup_page_count = page_count;
 
 	/* Initialize the copyup op */
 
 	osd_req_op_cls_init(osd_req, 0, CEPH_OSD_OP_CALL, "rbd", "copyup");
-	osd_req_op_cls_request_data_pages(osd_req, 0, pages, obj_size, 0,
+	osd_req_op_cls_request_data_pages(osd_req, 0, pages, parent_length, 0,
 						false, false);
 
 	/* Then the original write request op */
 
+	offset = orig_request->offset;
+	length = orig_request->length;
 	osd_req_op_extent_init(osd_req, 1, CEPH_OSD_OP_WRITE,
-					orig_request->offset,
-					orig_request->length, 0, 0);
-	osd_req_op_extent_osd_data_bio(osd_req, 1, orig_request->bio_list,
-					orig_request->length);
+					offset, length, 0, 0);
+	if (orig_request->type == OBJ_REQUEST_BIO)
+		osd_req_op_extent_osd_data_bio(osd_req, 1,
+					orig_request->bio_list, length);
+	else
+		osd_req_op_extent_osd_data_pages(osd_req, 1,
+					orig_request->pages, length,
+					offset & ~PAGE_MASK, false, false);
 
 	rbd_osd_req_format_write(orig_request);
 
@@ -2262,7 +2267,7 @@ static int rbd_img_obj_parent_read_full(struct rbd_obj_request *obj_request)
 	int result;
 
 	rbd_assert(obj_request_img_data_test(obj_request));
-	rbd_assert(obj_request->type == OBJ_REQUEST_BIO);
+	rbd_assert(obj_request_type_valid(obj_request->type));
 
 	img_request = obj_request->img_request;
 	rbd_assert(img_request != NULL);
@@ -2320,6 +2325,7 @@ static int rbd_img_obj_parent_read_full(struct rbd_obj_request *obj_request)
 	if (result)
 		goto out_err;
 	parent_request->copyup_pages = pages;
+	parent_request->copyup_page_count = page_count;
 
 	parent_request->callback = rbd_img_obj_parent_read_full_callback;
 	result = rbd_img_request_submit(parent_request);
@@ -2327,6 +2333,7 @@ static int rbd_img_obj_parent_read_full(struct rbd_obj_request *obj_request)
 		return 0;
 
 	parent_request->copyup_pages = NULL;
+	parent_request->copyup_page_count = 0;
 	parent_request->obj_request = NULL;
 	rbd_obj_request_put(obj_request);
 out_err:
