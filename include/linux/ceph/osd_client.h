@@ -157,6 +157,7 @@ struct ceph_osd_client {
 
 struct ceph_osd_req_op {
 	u16 op;           /* CEPH_OSD_OP_* */
+	u32 payload_len;
 	union {
 		struct {
 			u64 offset, length;
@@ -165,23 +166,24 @@ struct ceph_osd_req_op {
 		} extent;
 		struct {
 			const char *name;
-			u32 name_len;
 			const char  *val;
+			u32 name_len;
 			u32 value_len;
 			__u8 cmp_op;       /* CEPH_OSD_CMPXATTR_OP_* */
 			__u8 cmp_mode;     /* CEPH_OSD_CMPXATTR_MODE_* */
 		} xattr;
 		struct {
 			const char *class_name;
-			__u8 class_len;
 			const char *method_name;
-			__u8 method_len;
-			__u8 argc;
 			const char *indata;
 			u32 indata_len;
+			__u8 class_len;
+			__u8 method_len;
+			__u8 argc;
 		} cls;
 		struct {
-			u64 cookie, count;
+			u64 cookie;
+			u64 count;
 		} pgls;
 	        struct {
 		        u64 snapid;
@@ -189,12 +191,11 @@ struct ceph_osd_req_op {
 		struct {
 			u64 cookie;
 			u64 ver;
-			__u8 flag;
 			u32 prot_ver;
 			u32 timeout;
+			__u8 flag;
 		} watch;
 	};
-	u32 payload_len;
 };
 
 extern int ceph_osdc_init(struct ceph_osd_client *osdc,
@@ -274,7 +275,7 @@ extern int ceph_osdc_writepages(struct ceph_osd_client *osdc,
 				u32 truncate_seq, u64 truncate_size,
 				struct timespec *mtime,
 				struct page **pages, int nr_pages,
-				int flags, int do_sync, bool nofail);
+				int flags, int do_sync);
 
 /* watch/notify events */
 extern int ceph_osdc_create_event(struct ceph_osd_client *osdc,
