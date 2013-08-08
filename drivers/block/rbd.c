@@ -2207,6 +2207,7 @@ static int rbd_dev_v2_object_prefix(struct rbd_device *rbd_dev)
 	dout("%s: rbd_req_sync_exec returned %d\n", __func__, ret);
 	if (ret < 0)
 		goto out;
+	ret = 0;    /* rbd_req_sync_exec() can return positive */
 
 	p = reply_buf;
 	rbd_dev->header.object_prefix = ceph_extract_encoded_string(&p,
@@ -2680,8 +2681,8 @@ static void rbd_dev_id_put(struct rbd_device *rbd_dev)
 		struct rbd_device *rbd_dev;
 
 		rbd_dev = list_entry(tmp, struct rbd_device, node);
-		if (rbd_id > max_id)
-			max_id = rbd_id;
+		if (rbd_dev->dev_id > max_id)
+			max_id = rbd_dev->dev_id;
 	}
 	spin_unlock(&rbd_dev_list_lock);
 
@@ -2900,6 +2901,7 @@ static int rbd_dev_image_id(struct rbd_device *rbd_dev)
 	dout("%s: rbd_req_sync_exec returned %d\n", __func__, ret);
 	if (ret < 0)
 		goto out;
+	ret = 0;    /* rbd_req_sync_exec() can return positive */
 
 	p = response;
 	rbd_dev->image_id = ceph_extract_encoded_string(&p,
