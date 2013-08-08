@@ -21,6 +21,7 @@
 
 #define OSD_OP_FRONT_LEN	4096
 #define OSD_OPREPLY_FRONT_LEN	512
+#define SIZE_MAX       (~(size_t)0)
 
 static struct kmem_cache	*ceph_osd_request_cache;
 
