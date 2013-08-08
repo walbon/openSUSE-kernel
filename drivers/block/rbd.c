@@ -272,7 +272,6 @@ struct rbd_img_request {
 	list_for_each_entry_safe_reverse(oreq, n, &(ireq)->obj_requests, links)
 
 struct rbd_snap {
-	struct	device		dev;
 	const char		*name;
 	u64			size;
 	struct list_head	node;
@@ -358,7 +357,6 @@ static DEFINE_SPINLOCK(rbd_client_list_lock);
 static int rbd_img_request_submit(struct rbd_img_request *img_request);
 
 static int rbd_dev_snaps_update(struct rbd_device *rbd_dev);
-static int rbd_dev_snaps_register(struct rbd_device *rbd_dev);
 
 static void rbd_dev_release(struct device *dev);
 static void rbd_remove_snap_dev(struct rbd_snap *snap);
@@ -2523,7 +2521,6 @@ static void rbd_watch_cb(u64 ver, u64 notify_id, u8 opcode, void *data)
 {
 	struct rbd_device *rbd_dev = (struct rbd_device *)data;
 	u64 hver;
-	int rc;
 
 	if (!rbd_dev)
 		return;
@@ -2531,10 +2528,7 @@ static void rbd_watch_cb(u64 ver, u64 notify_id, u8 opcode, void *data)
 	dout("%s: \"%s\" notify_id %llu opcode %u\n", __func__,
 		rbd_dev->header_name, (unsigned long long) notify_id,
 		(unsigned int) opcode);
-	rc = rbd_dev_refresh(rbd_dev, &hver);
-	if (rc)
-		rbd_warn(rbd_dev, "got notification but failed to "
-			   " update snaps: %d\n", rc);
+	(void)rbd_dev_refresh(rbd_dev, &hver);
 
 	rbd_obj_notify_ack(rbd_dev, hver, notify_id);
 }
@@ -3069,8 +3063,6 @@ static int rbd_dev_v1_refresh(struct rbd_device *rbd_dev, u64 *hver)
 	kfree(h.object_prefix);
 
 	ret = rbd_dev_snaps_update(rbd_dev);
-	if (!ret)
-		ret = rbd_dev_snaps_register(rbd_dev);
 
 	up_write(&rbd_dev->header_rwsem);
 
@@ -3089,6 +3081,9 @@ static int rbd_dev_refresh(struct rbd_device *rbd_dev, u64 *hver)
 		ret = rbd_dev_v2_refresh(rbd_dev, hver);
 	mutex_unlock(&ctl_mutex);
 	revalidate_disk(rbd_dev->disk);
+	if (ret)
+		rbd_warn(rbd_dev, "got notification but failed to "
+			   " update snaps: %d\n", ret);
 
 	return ret;
 }
@@ -3344,71 +3339,6 @@ static struct device_type rbd_device_type = {
 	.release	= rbd_sysfs_dev_release,
 };
 
-
-/*
-  sysfs - snapshots
-*/
-
-static ssize_t rbd_snap_size_show(struct device *dev,
-				  struct device_attribute *attr,
-				  char *buf)
-{
-	struct rbd_snap *snap = container_of(dev, struct rbd_snap, dev);
-
-	return sprintf(buf, "%llu\n", (unsigned long long)snap->size);
-}
-
-static ssize_t rbd_snap_id_show(struct device *dev,
-				struct device_attribute *attr,
-				char *buf)
-{
-	struct rbd_snap *snap = container_of(dev, struct rbd_snap, dev);
-
-	return sprintf(buf, "%llu\n", (unsigned long long)snap->id);
-}
-
-static ssize_t rbd_snap_features_show(struct device *dev,
-				struct device_attribute *attr,
-				char *buf)
-{
-	struct rbd_snap *snap = container_of(dev, struct rbd_snap, dev);
-
-	return sprintf(buf, "0x%016llx\n",
-			(unsigned long long) snap->features);
-}
-
-static DEVICE_ATTR(snap_size, S_IRUGO, rbd_snap_size_show, NULL);
-static DEVICE_ATTR(snap_id, S_IRUGO, rbd_snap_id_show, NULL);
-static DEVICE_ATTR(snap_features, S_IRUGO, rbd_snap_features_show, NULL);
-
-static struct attribute *rbd_snap_attrs[] = {
-	&dev_attr_snap_size.attr,
-	&dev_attr_snap_id.attr,
-	&dev_attr_snap_features.attr,
-	NULL,
-};
-
-static struct attribute_group rbd_snap_attr_group = {
-	.attrs = rbd_snap_attrs,
-};
-
-static void rbd_snap_dev_release(struct device *dev)
-{
-	struct rbd_snap *snap = container_of(dev, struct rbd_snap, dev);
-	kfree(snap->name);
-	kfree(snap);
-}
-
-static const struct attribute_group *rbd_snap_attr_groups[] = {
-	&rbd_snap_attr_group,
-	NULL
-};
-
-static struct device_type rbd_snap_device_type = {
-	.groups		= rbd_snap_attr_groups,
-	.release	= rbd_snap_dev_release,
-};
-
 static struct rbd_spec *rbd_spec_get(struct rbd_spec *spec)
 {
 	kref_get(&spec->kref);
@@ -3483,38 +3413,11 @@ static void rbd_dev_destroy(struct rbd_device *rbd_dev)
 	kfree(rbd_dev);
 }
 
-static bool rbd_snap_registered(struct rbd_snap *snap)
-{
-	bool ret = snap->dev.type == &rbd_snap_device_type;
-	bool reg = device_is_registered(&snap->dev);
-
-	rbd_assert(!ret ^ reg);
-
-	return ret;
-}
-
 static void rbd_remove_snap_dev(struct rbd_snap *snap)
 {
 	list_del(&snap->node);
-	if (device_is_registered(&snap->dev))
-		device_unregister(&snap->dev);
-}
-
-static int rbd_register_snap_dev(struct rbd_snap *snap,
-				  struct device *parent)
-{
-	struct device *dev = &snap->dev;
-	int ret;
-
-	dev->type = &rbd_snap_device_type;
-	dev->parent = parent;
-	dev->release = rbd_snap_dev_release;
-	dev_set_name(dev, "%s%s", RBD_SNAP_DEV_NAME_PREFIX, snap->name);
-	dout("%s: registering device for snapshot %s\n", __func__, snap->name);
-
-	ret = device_register(dev);
-
-	return ret;
+	kfree(snap->name);
+	kfree(snap);
 }
 
 static struct rbd_snap *__rbd_add_snap_dev(struct rbd_device *rbd_dev,
@@ -4089,8 +3992,6 @@ static int rbd_dev_v2_refresh(struct rbd_device *rbd_dev, u64 *hver)
 	dout("rbd_dev_snaps_update returned %d\n", ret);
 	if (ret)
 		goto out;
-	ret = rbd_dev_snaps_register(rbd_dev);
-	dout("rbd_dev_snaps_register returned %d\n", ret);
 out:
 	up_write(&rbd_dev->header_rwsem);
 
@@ -4108,6 +4009,11 @@ out:
  * Assumes the snapshots in the snapshot context are sorted by
  * snapshot id, highest id first.  (Snapshots in the rbd_dev's list
  * are also maintained in that order.)
+ *
+ * Note that any error occurs while updating the snapshot list
+ * aborts the update, and the entire list is cleared.  The snapshot
+ * list becomes inconsistent at that point anyway, so it might as
+ * well be empty.
  */
 static int rbd_dev_snaps_update(struct rbd_device *rbd_dev)
 {
@@ -4116,8 +4022,9 @@ static int rbd_dev_snaps_update(struct rbd_device *rbd_dev)
 	struct list_head *head = &rbd_dev->snaps;
 	struct list_head *links = head->next;
 	u32 index = 0;
+	int ret = 0;
 
-	dout("%s: snap count is %u\n", __func__, (unsigned int) snap_count);
+	dout("%s: snap count is %u\n", __func__, (unsigned int)snap_count);
 	while (index < snap_count || links != head) {
 		u64 snap_id;
 		struct rbd_snap *snap;
@@ -4138,18 +4045,18 @@ static int rbd_dev_snaps_update(struct rbd_device *rbd_dev)
 			 * A previously-existing snapshot is not in
 			 * the new snap context.
 			 *
-			 * If the now missing snapshot is the one the
-			 * image is mapped to, clear its exists flag
-			 * so we can avoid sending any more requests
-			 * to it.
+			 * If the now-missing snapshot is the one
+			 * the image represents, clear its existence
+			 * flag so we can avoid sending any more
+			 * requests to it.
 			 */
 			if (rbd_dev->spec->snap_id == snap->id)
 				clear_bit(RBD_DEV_FLAG_EXISTS, &rbd_dev->flags);
-			rbd_remove_snap_dev(snap);
-			dout("%ssnap id %llu has been removed\n",
+			dout("removing %ssnap id %llu\n",
 				rbd_dev->spec->snap_id == snap->id ?
 							"mapped " : "",
-				(unsigned long long) snap->id);
+				(unsigned long long)snap->id);
+			rbd_remove_snap_dev(snap);
 
 			/* Done with this list entry; advance */
 
@@ -4159,11 +4066,14 @@ static int rbd_dev_snaps_update(struct rbd_device *rbd_dev)
 
 		snap_name = rbd_dev_snap_info(rbd_dev, index,
 					&snap_size, &snap_features);
-		if (IS_ERR(snap_name))
-			return PTR_ERR(snap_name);
+		if (IS_ERR(snap_name)) {
+			ret = PTR_ERR(snap_name);
+			dout("failed to get snap info, error %d\n", ret);
+			goto out_err;
+		}
 
-		dout("entry %u: snap_id = %llu\n", (unsigned int) snap_count,
-			(unsigned long long) snap_id);
+		dout("entry %u: snap_id = %llu\n", (unsigned int)snap_count,
+			(unsigned long long)snap_id);
 		if (!snap || (snap_id != CEPH_NOSNAP && snap->id < snap_id)) {
 			struct rbd_snap *new_snap;
 
@@ -4172,11 +4082,9 @@ static int rbd_dev_snaps_update(struct rbd_device *rbd_dev)
 			new_snap = __rbd_add_snap_dev(rbd_dev, snap_name,
 					snap_id, snap_size, snap_features);
 			if (IS_ERR(new_snap)) {
-				int err = PTR_ERR(new_snap);
-
-				dout("  failed to add dev, error %d\n", err);
-
-				return err;
+				ret = PTR_ERR(new_snap);
+				dout("  failed to add dev, error %d\n", ret);
+				goto out_err;
 			}
 
 			/* New goes before existing, or at end of list */
@@ -4207,29 +4115,8 @@ static int rbd_dev_snaps_update(struct rbd_device *rbd_dev)
 	dout("%s: done\n", __func__);
 
 	return 0;
-}
-
-/*
- * Scan the list of snapshots and register the devices for any that
- * have not already been registered.
- */
-static int rbd_dev_snaps_register(struct rbd_device *rbd_dev)
-{
-	struct rbd_snap *snap;
-	int ret = 0;
-
-	dout("%s:\n", __func__);
-	if (WARN_ON(!device_is_registered(&rbd_dev->dev)))
-		return -EIO;
-
-	list_for_each_entry(snap, &rbd_dev->snaps, node) {
-		if (!rbd_snap_registered(snap)) {
-			ret = rbd_register_snap_dev(snap, &rbd_dev->dev);
-			if (ret < 0)
-				break;
-		}
-	}
-	dout("%s: returning %d\n", __func__, ret);
+out_err:
+	rbd_remove_all_snaps(rbd_dev);
 
 	return ret;
 }
@@ -4839,12 +4726,6 @@ static int rbd_dev_probe_finish(struct rbd_device *rbd_dev)
 			goto err_out_parent;
 		rbd_dev->parent = parent;
 	}
-
-	down_write(&rbd_dev->header_rwsem);
-	ret = rbd_dev_snaps_register(rbd_dev);
-	up_write(&rbd_dev->header_rwsem);
-	if (ret)
-		goto err_out_bus;
 
 	ret = rbd_dev_header_watch_sync(rbd_dev, 1);
 	if (ret)
