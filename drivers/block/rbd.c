@@ -934,19 +934,10 @@ static int rbd_snap_features(struct rbd_device *rbd_dev, u64 snap_id,
 
 static int rbd_dev_mapping_set(struct rbd_device *rbd_dev)
 {
-	const char *snap_name = rbd_dev->spec->snap_name;
-	u64 snap_id;
+	u64 snap_id = rbd_dev->spec->snap_id;
 	u64 size = 0;
 	u64 features = 0;
 	int ret;
-
-	if (strcmp(snap_name, RBD_SNAP_HEAD_NAME)) {
-		snap_id = rbd_snap_id_by_name(rbd_dev, snap_name);
-		if (snap_id == CEPH_NOSNAP)
-			return -ENOENT;
-	} else {
-		snap_id = CEPH_NOSNAP;
-	}
 
 	ret = rbd_snap_size(rbd_dev, snap_id, &size);
 	if (ret)
@@ -3116,15 +3107,6 @@ static int rbd_read_header(struct rbd_device *rbd_dev,
 	return ret;
 }
 
-static void rbd_update_mapping_size(struct rbd_device *rbd_dev)
-{
-	if (rbd_dev->spec->snap_id != CEPH_NOSNAP)
-		return;
-
-	if (rbd_dev->mapping.size != rbd_dev->header.image_size)
-		rbd_dev->mapping.size = rbd_dev->header.image_size;
-}
-
 /*
  * only read the first part of the ondisk header, without the snaps info
  */
@@ -3141,7 +3123,9 @@ static int rbd_dev_v1_refresh(struct rbd_device *rbd_dev)
 
 	/* Update image size, and check for resize of mapped image */
 	rbd_dev->header.image_size = h.image_size;
-	rbd_update_mapping_size(rbd_dev);
+	if (rbd_dev->spec->snap_id == CEPH_NOSNAP)
+		if (rbd_dev->mapping.size != rbd_dev->header.image_size)
+			rbd_dev->mapping.size = rbd_dev->header.image_size;
 
 	/* rbd_dev->header.object_prefix shouldn't change */
 	kfree(rbd_dev->header.snap_sizes);
@@ -4072,7 +4056,9 @@ static int rbd_dev_v2_refresh(struct rbd_device *rbd_dev)
 	ret = rbd_dev_v2_image_size(rbd_dev);
 	if (ret)
 		goto out;
-	rbd_update_mapping_size(rbd_dev);
+	if (rbd_dev->spec->snap_id == CEPH_NOSNAP)
+		if (rbd_dev->mapping.size != rbd_dev->header.image_size)
+			rbd_dev->mapping.size = rbd_dev->header.image_size;
 
 	ret = rbd_dev_v2_snap_context(rbd_dev);
 	dout("rbd_dev_v2_snap_context returned %d\n", ret);
@@ -4570,13 +4556,14 @@ static int rbd_dev_v2_probe(struct rbd_device *rbd_dev)
 		ret = rbd_dev_v2_parent_info(rbd_dev);
 		if (ret)
 			goto out_err;
-
 		/*
-		 * Don't print a warning for parent images.  We can
-		 * tell this point because we won't know its pool
-		 * name yet (just its pool id).
+		 * Print a warning if this image has a parent.
+		 * Don't print it if the image now being probed
+		 * is itself a parent.  We can tell at this point
+		 * because we won't know its pool name yet (just its
+		 * pool id).
 		 */
-		if (rbd_dev->spec->pool_name)
+		if (rbd_dev->parent_spec && rbd_dev->spec->pool_name)
 			rbd_warn(rbd_dev, "WARNING: kernel layering "
 					"is EXPERIMENTAL!");
 	}
