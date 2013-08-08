@@ -73,11 +73,14 @@
 
 /* Feature bits */
 
-#define RBD_FEATURE_LAYERING      1
+#define RBD_FEATURE_LAYERING	(1<<0)
+#define RBD_FEATURE_STRIPINGV2	(1<<1)
+#define RBD_FEATURES_ALL \
+	    (RBD_FEATURE_LAYERING | RBD_FEATURE_STRIPINGV2)
 
 /* Features supported by this (client software) implementation. */
 
-#define RBD_FEATURES_ALL          (0)
+#define RBD_FEATURES_SUPPORTED	(0)
 
 /*
  * An RBD device name will be "rbd#", where the "rbd" comes from
@@ -211,6 +214,7 @@ struct rbd_img_request {
 	spinlock_t		completion_lock;/* protects next_completion */
 	u32			next_completion;
 	rbd_img_callback_t	callback;
+	int			result;	/* first nonzero obj_request result */
 
 	u32			obj_request_count;
 	struct list_head	obj_requests;	/* rbd_obj_request structs */
@@ -1485,6 +1489,7 @@ static struct rbd_img_request *rbd_img_request_create(
 	spin_lock_init(&img_request->completion_lock);
 	img_request->next_completion = 0;
 	img_request->callback = NULL;
+	img_request->result = 0;
 	img_request->obj_request_count = 0;
 	INIT_LIST_HEAD(&img_request->obj_requests);
 	kref_init(&img_request->kref);
@@ -1549,13 +1554,16 @@ static void rbd_img_obj_callback(struct rbd_obj_request *obj_request)
 		if (!obj_request_done_test(obj_request))
 			break;
 
-		rbd_assert(obj_request->xferred <= (u64) UINT_MAX);
-		xferred = (unsigned int) obj_request->xferred;
-		result = (int) obj_request->result;
-		if (result)
+		rbd_assert(obj_request->xferred <= (u64)UINT_MAX);
+		xferred = (unsigned int)obj_request->xferred;
+		result = obj_request->result;
+		if (result) {
 			rbd_warn(NULL, "obj_request %s result %d xferred %u\n",
 				img_request->write_request ? "write" : "read",
 				result, xferred);
+			if (!img_request->result)
+				img_request->result = result;
+		}
 
 		more = blk_end_request(img_request->rq, result, xferred);
 		which++;
@@ -2843,7 +2851,7 @@ static int _rbd_dev_v2_snap_features(struct rbd_device *rbd_dev, u64 snap_id,
 		return ret;
 
 	incompat = le64_to_cpu(features_buf.incompat);
-	if (incompat & ~RBD_FEATURES_ALL)
+	if (incompat & ~RBD_FEATURES_SUPPORTED)
 		return -ENXIO;
 
 	*snap_features = le64_to_cpu(features_buf.features);
