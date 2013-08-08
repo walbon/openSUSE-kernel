@@ -1025,24 +1025,56 @@ out_err:
 	return NULL;
 }
 
-static struct ceph_osd_req_op *rbd_create_rw_op(int opcode, u32 payload_len)
+static struct ceph_osd_req_op *rbd_create_rw_op(int opcode, u64 ofs, u64 len)
 {
 	struct ceph_osd_req_op *op;
 
 	op = kzalloc(sizeof (*op), GFP_NOIO);
 	if (!op)
 		return NULL;
-	/*
-	 * op extent offset and length will be set later on
-	 * after ceph_calc_file_object_mapping().
-	 */
+
 	op->op = opcode;
-	op->payload_len = payload_len;
 
 	return op;
 }
 
 static void rbd_destroy_op(struct ceph_osd_req_op *op)
+{
+	kfree(op);
+}
+
+struct ceph_osd_req_op *rbd_osd_req_op_create(u16 opcode, ...)
+{
+	struct ceph_osd_req_op *op;
+	va_list args;
+
+	op = kzalloc(sizeof (*op), GFP_NOIO);
+	if (!op)
+		return NULL;
+	op->op = opcode;
+	va_start(args, opcode);
+	switch (opcode) {
+	case CEPH_OSD_OP_READ:
+	case CEPH_OSD_OP_WRITE:
+		/* rbd_osd_req_op_create(READ, offset, length) */
+		/* rbd_osd_req_op_create(WRITE, offset, length) */
+		op->extent.offset = va_arg(args, u64);
+		op->extent.length = va_arg(args, u64);
+		if (opcode == CEPH_OSD_OP_WRITE)
+			op->payload_len = op->extent.length;
+		break;
+	default:
+		rbd_warn(NULL, "unsupported opcode %hu\n", opcode);
+		kfree(op);
+		op = NULL;
+		break;
+	}
+	va_end(args);
+
+	return op;
+}
+
+static void rbd_osd_req_op_destroy(struct ceph_osd_req_op *op)
 {
 	kfree(op);
 }
@@ -1156,13 +1188,6 @@ static int rbd_do_request(struct request *rq,
 	osd_req->r_oid_len = strlen(osd_req->r_oid);
 
 	osd_req->r_file_layout = rbd_dev->layout;	/* struct */
-
-	if (op->op == CEPH_OSD_OP_READ || op->op == CEPH_OSD_OP_WRITE) {
-		op->extent.offset = ofs;
-		op->extent.length = len;
-		if (op->op == CEPH_OSD_OP_WRITE)
-			op->payload_len = len;
-	}
 	osd_req->r_num_pages = calc_pages_for(ofs, len);
 	osd_req->r_page_alignment = ofs & ~PAGE_MASK;
 
@@ -1304,7 +1329,6 @@ static int rbd_do_op(struct request *rq,
 	u64 seg_len;
 	int ret;
 	struct ceph_osd_req_op *op;
-	u32 payload_len;
 	int opcode;
 	int flags;
 	u64 snapid;
@@ -1319,17 +1343,15 @@ static int rbd_do_op(struct request *rq,
 		opcode = CEPH_OSD_OP_WRITE;
 		flags = CEPH_OSD_FLAG_WRITE|CEPH_OSD_FLAG_ONDISK;
 		snapid = CEPH_NOSNAP;
-		payload_len = seg_len;
 	} else {
 		opcode = CEPH_OSD_OP_READ;
 		flags = CEPH_OSD_FLAG_READ;
 		rbd_assert(!snapc);
 		snapid = rbd_dev->spec->snap_id;
-		payload_len = 0;
 	}
 
 	ret = -ENOMEM;
-	op = rbd_create_rw_op(opcode, payload_len);
+	op = rbd_osd_req_op_create(opcode, seg_ofs, seg_len);
 	if (!op)
 		goto done;
 
@@ -1349,7 +1371,7 @@ static int rbd_do_op(struct request *rq,
 	if (ret < 0)
 		rbd_coll_end_req_index(rq, coll, coll_index,
 					(s32)ret, seg_len);
-	rbd_destroy_op(op);
+	rbd_osd_req_op_destroy(op);
 done:
 	kfree(seg_name);
 	return ret;
@@ -1367,13 +1389,13 @@ static int rbd_req_sync_read(struct rbd_device *rbd_dev,
 	struct ceph_osd_req_op *op;
 	int ret;
 
-	op = rbd_create_rw_op(CEPH_OSD_OP_READ, 0);
+	op = rbd_osd_req_op_create(CEPH_OSD_OP_READ, ofs, len);
 	if (!op)
 		return -ENOMEM;
 
 	ret = rbd_req_sync_op(rbd_dev, CEPH_OSD_FLAG_READ,
 			       op, object_name, ofs, len, buf, NULL, ver);
-	rbd_destroy_op(op);
+	rbd_osd_req_op_destroy(op);
 
 	return ret;
 }
@@ -1388,7 +1410,7 @@ static int rbd_req_sync_notify_ack(struct rbd_device *rbd_dev,
 	struct ceph_osd_req_op *op;
 	int ret;
 
-	op = rbd_create_rw_op(CEPH_OSD_OP_NOTIFY_ACK, 0);
+	op = rbd_create_rw_op(CEPH_OSD_OP_NOTIFY_ACK, 0, 0);
 	if (!op)
 		return -ENOMEM;
 
@@ -1439,7 +1461,7 @@ static int rbd_req_sync_watch(struct rbd_device *rbd_dev, int start)
 	__le64 version = 0;
 	int ret;
 
-	op = rbd_create_rw_op(CEPH_OSD_OP_WATCH, 0);
+	op = rbd_create_rw_op(CEPH_OSD_OP_WATCH, 0, 0);
 	if (!op)
 		return -ENOMEM;
 
@@ -1502,9 +1524,10 @@ static int rbd_req_sync_exec(struct rbd_device *rbd_dev,
 	 * operation.
 	 */
 	payload_size = class_name_len + method_name_len + outbound_size;
-	op = rbd_create_rw_op(CEPH_OSD_OP_CALL, payload_size);
+	op = rbd_create_rw_op(CEPH_OSD_OP_CALL, 0, 0);
 	if (!op)
 		return -ENOMEM;
+	op->payload_len = payload_size;
 
 	op->cls.class_name = class_name;
 	op->cls.class_len = (__u8) class_name_len;
