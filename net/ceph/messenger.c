@@ -2382,61 +2382,62 @@ static void con_work(struct work_struct *work)
 {
 	struct ceph_connection *con = container_of(work, struct ceph_connection,
 						   work.work);
-	int ret;
+	bool fault;
 
 	mutex_lock(&con->mutex);
-restart:
-	if (con_sock_closed(con)) {
-		dout("%s: con %p SOCK_CLOSED\n", __func__, con);
-		goto fault;
-	}
-	if (con_backoff(con)) {
-		dout("%s: con %p BACKOFF\n", __func__, con);
-		goto done;
-	}
-	if (con->state == CON_STATE_STANDBY) {
-		dout("con_work %p STANDBY\n", con);
-		goto done;
-	}
-	if (con->state == CON_STATE_CLOSED) {
-		dout("con_work %p CLOSED\n", con);
-		BUG_ON(con->sock);
-		goto done;
-	}
-	if (con->state == CON_STATE_PREOPEN) {
-		dout("%s: con %p OPENING\n", __func__, con);
-		BUG_ON(con->sock);
-	}
+	while (true) {
+		int ret;
 
-	ret = try_read(con);
-	if (ret == -EAGAIN)
-		goto restart;
-	if (ret < 0) {
-		con->error_msg = "socket error on read";
-		goto fault;
-	}
+		if ((fault = con_sock_closed(con))) {
+			dout("%s: con %p SOCK_CLOSED\n", __func__, con);
+			break;
+		}
+		if (con_backoff(con)) {
+			dout("%s: con %p BACKOFF\n", __func__, con);
+			break;
+		}
+		if (con->state == CON_STATE_STANDBY) {
+			dout("%s: con %p STANDBY\n", __func__, con);
+			break;
+		}
+		if (con->state == CON_STATE_CLOSED) {
+			dout("%s: con %p CLOSED\n", __func__, con);
+			BUG_ON(con->sock);
+			break;
+		}
+		if (con->state == CON_STATE_PREOPEN) {
+			dout("%s: con %p PREOPEN\n", __func__, con);
+			BUG_ON(con->sock);
+		}
 
-	ret = try_write(con);
-	if (ret == -EAGAIN)
-		goto restart;
-	if (ret < 0) {
-		con->error_msg = "socket error on write";
-		goto fault;
-	}
+		ret = try_read(con);
+		if (ret < 0) {
+			if (ret == -EAGAIN)
+				continue;
+			con->error_msg = "socket error on read";
+			fault = true;
+			break;
+		}
 
-done:
+		ret = try_write(con);
+		if (ret < 0) {
+			if (ret == -EAGAIN)
+				continue;
+			con->error_msg = "socket error on write";
+			fault = true;
+		}
+
+		break;	/* If we make it to here, we're done */
+	}
+	if (fault)
+		con_fault(con);
 	mutex_unlock(&con->mutex);
-done_unlocked:
+
+	if (fault)
+		con_fault_finish(con);
+
 	con->ops->put(con);
-	return;
-
-fault:
-	con_fault(con);
-	mutex_unlock(&con->mutex);
-	con_fault_finish(con);
-	goto done_unlocked;
 }
-
 
 /*
  * Generic error/fault handler.  A retry mechanism is used with
