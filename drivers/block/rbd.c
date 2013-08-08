@@ -623,23 +623,18 @@ out_err:
 
 static int snap_by_name(struct rbd_device *rbd_dev, const char *snap_name)
 {
-	int i;
-	struct rbd_image_header *header = &rbd_dev->header;
-	char *p = header->snap_names;
 
-	rbd_assert(header->snapc != NULL);
-	for (i = 0; i < header->snapc->num_snaps; i++) {
-		if (!strcmp(snap_name, p)) {
+	struct rbd_snap *snap;
 
-			/* Found it.  Pass back its id and/or size */
+	list_for_each_entry(snap, &rbd_dev->snaps, node) {
+		if (!strcmp(snap_name, snap->name)) {
+			rbd_dev->mapping.snap_id = snap->id;
+			rbd_dev->mapping.size = snap->size;
 
-			rbd_dev->mapping.snap_id = header->snapc->snaps[i];
-			rbd_dev->mapping.size = header->snap_sizes[i];
-
-			return i;
+			return 0;
 		}
-		p += strlen(p) + 1;	/* Skip ahead to the next name */
 	}
+
 	return -ENOENT;
 }
 
@@ -653,6 +648,7 @@ static int rbd_header_set_snap(struct rbd_device *rbd_dev, char *snap_name)
 		rbd_dev->mapping.size = rbd_dev->header.image_size;
 		rbd_dev->mapping.snap_exists = false;
 		rbd_dev->mapping.read_only = rbd_dev->rbd_opts.read_only;
+		ret = 0;
 	} else {
 		ret = snap_by_name(rbd_dev, snap_name);
 		if (ret < 0)
@@ -661,8 +657,6 @@ static int rbd_header_set_snap(struct rbd_device *rbd_dev, char *snap_name)
 		rbd_dev->mapping.read_only = true;
 	}
 	rbd_dev->mapping.snap_name = snap_name;
-
-	ret = 0;
 done:
 	return ret;
 }
@@ -2244,29 +2238,21 @@ static int rbd_dev_snap_devs_update(struct rbd_device *rbd_dev)
 
 static int rbd_bus_add_dev(struct rbd_device *rbd_dev)
 {
-	int ret;
 	struct device *dev;
-	struct rbd_snap *snap;
+	int ret;
 
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
-	dev = &rbd_dev->dev;
 
+	dev = &rbd_dev->dev;
 	dev->bus = &rbd_bus_type;
 	dev->type = &rbd_device_type;
 	dev->parent = &rbd_root_dev;
 	dev->release = rbd_dev_release;
 	dev_set_name(dev, "%d", rbd_dev->dev_id);
 	ret = device_register(dev);
-	if (ret < 0)
-		goto out;
 
-	list_for_each_entry(snap, &rbd_dev->snaps, node) {
-		ret = rbd_register_snap_dev(snap, &rbd_dev->dev);
-		if (ret < 0)
-			break;
-	}
-out:
 	mutex_unlock(&ctl_mutex);
+
 	return ret;
 }
 
@@ -2488,15 +2474,6 @@ static char *rbd_add_parse_args(struct rbd_device *rbd_dev,
 	if (!rbd_dev->image_name)
 		goto out_err;
 
-	/* Create the name of the header object */
-
-	rbd_dev->header_name = kmalloc(rbd_dev->image_name_len
-						+ sizeof (RBD_SUFFIX),
-					GFP_KERNEL);
-	if (!rbd_dev->header_name)
-		goto out_err;
-	sprintf(rbd_dev->header_name, "%s%s", rbd_dev->image_name, RBD_SUFFIX);
-
 	/* Snapshot name is optional */
 	len = next_token(&buf);
 	if (!len) {
@@ -2514,8 +2491,6 @@ dout("    SNAP_NAME is <%s>, len is %zd\n", snap_name, len);
 	return snap_name;
 
 out_err:
-	kfree(rbd_dev->header_name);
-	rbd_dev->header_name = NULL;
 	kfree(rbd_dev->image_name);
 	rbd_dev->image_name = NULL;
 	rbd_dev->image_name_len = 0;
@@ -2580,6 +2555,15 @@ static ssize_t rbd_add(struct bus_type *bus,
 		goto err_out_client;
 	rbd_dev->pool_id = rc;
 
+	/* Create the name of the header object */
+
+	rbd_dev->header_name = kmalloc(rbd_dev->image_name_len
+						+ sizeof (RBD_SUFFIX),
+					GFP_KERNEL);
+	if (!rbd_dev->header_name)
+		goto err_out_client;
+	sprintf(rbd_dev->header_name, "%s%s", rbd_dev->image_name, RBD_SUFFIX);
+
 	/* register our block device */
 	rc = register_blkdev(0, rbd_dev->name);
 	if (rc < 0)
@@ -2640,11 +2624,11 @@ err_out_bus:
 err_out_blkdev:
 	unregister_blkdev(rbd_dev->major, rbd_dev->name);
 err_out_client:
+	kfree(rbd_dev->header_name);
 	rbd_put_client(rbd_dev);
 err_put_id:
 	if (rbd_dev->pool_name) {
 		kfree(rbd_dev->mapping.snap_name);
-		kfree(rbd_dev->header_name);
 		kfree(rbd_dev->image_name);
 		kfree(rbd_dev->pool_name);
 	}
