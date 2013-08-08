@@ -100,6 +100,8 @@
 #define CON_FLAG_SOCK_CLOSED	   3  /* socket state changed to closed */
 #define CON_FLAG_BACKOFF           4  /* need to retry queuing delayed work */
 
+#define SIZE_MAX       (~(size_t)0)
+
 static bool con_flag_valid(unsigned long con_flag)
 {
 	switch (con_flag) {

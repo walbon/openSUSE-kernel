@@ -44,6 +44,7 @@
 
 #include "rbd_types.h"
 
+#define SIZE_MAX       (~(size_t)0)
 #define RBD_DEBUG	/* Activate rbd_assert() calls */
 
 /*
