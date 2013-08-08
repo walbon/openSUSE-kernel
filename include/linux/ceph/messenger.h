@@ -89,6 +89,25 @@ static __inline__ bool ceph_msg_data_type_valid(enum ceph_msg_data_type type)
 	}
 }
 
+struct ceph_msg_data {
+	enum ceph_msg_data_type		type;
+	union {
+#ifdef CONFIG_BLOCK
+		struct {
+			struct bio	*bio;
+			size_t		bio_length;
+		};
+#endif /* CONFIG_BLOCK */
+		struct {
+			struct page	**pages;	/* NOT OWNER. */
+			size_t		length;		/* total # bytes */
+			unsigned int	alignment;	/* first page */
+		};
+		struct ceph_pagelist	*pagelist;
+	};
+	struct ceph_msg_data_cursor	*cursor;
+};
+
 struct ceph_msg_data_cursor {
 	size_t		resid;		/* bytes not yet consumed */
 	bool		last_piece;	/* now at last piece of data item */
@@ -113,22 +132,6 @@ struct ceph_msg_data_cursor {
 	};
 };
 
-struct ceph_msg_data {
-	enum ceph_msg_data_type		type;
-	union {
-#ifdef CONFIG_BLOCK
-		struct bio		*bio;
-#endif /* CONFIG_BLOCK */
-		struct {
-			struct page	**pages;	/* NOT OWNER. */
-			size_t		length;		/* total # bytes */
-			unsigned int	alignment;	/* first page */
-		};
-		struct ceph_pagelist	*pagelist;
-	};
-	struct ceph_msg_data_cursor	cursor;		/* pagelist only */
-};
-
 /*
  * a single message.  it contains a header (src, dest, message type, etc.),
  * footer (crc values, mainly), a "front" message body, and possibly a
@@ -140,8 +143,9 @@ struct ceph_msg {
 	struct kvec front;              /* unaligned blobs of message */
 	struct ceph_buffer *middle;
 
-	size_t			data_length;
-	struct ceph_msg_data	*data;	/* data payload */
+	size_t				data_length;
+	struct ceph_msg_data		*data;
+	struct ceph_msg_data_cursor	cursor;
 
 	struct ceph_connection *con;
 	struct list_head list_head;	/* links for connection lists */
@@ -272,8 +276,10 @@ extern void ceph_msg_data_set_pages(struct ceph_msg *msg, struct page **pages,
 				size_t length, size_t alignment);
 extern void ceph_msg_data_set_pagelist(struct ceph_msg *msg,
 				struct ceph_pagelist *pagelist);
+#ifdef CONFIG_BLOCK
 extern void ceph_msg_data_set_bio(struct ceph_msg *msg, struct bio *bio,
 				size_t length);
+#endif /* CONFIG_BLOCK */
 
 extern struct ceph_msg *ceph_msg_new(int type, int front_len, gfp_t flags,
 				     bool can_fail);
