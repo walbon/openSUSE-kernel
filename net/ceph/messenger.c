@@ -295,9 +295,6 @@ static void ceph_sock_state_change(struct sock *sk)
 	dout("%s %p state = %lu sk_state = %u\n", __func__,
 	     con, con->state, sk->sk_state);
 
-	if (test_bit(CLOSED, &con->state))
-		return;
-
 	switch (sk->sk_state) {
 	case TCP_CLOSE:
 		dout("%s TCP_CLOSE\n", __func__);
@@ -518,14 +515,8 @@ void ceph_con_close(struct ceph_connection *con)
 	reset_connection(con);
 	con->peer_global_seq = 0;
 	cancel_delayed_work(&con->work);
+	con_close_socket(con);
 	mutex_unlock(&con->mutex);
-
-	/*
-	 * We cannot close the socket directly from here because the
-	 * work threads use it without holding the mutex.  Instead, let
-	 * con_work() do it.
-	 */
-	queue_con(con);
 }
 EXPORT_SYMBOL(ceph_con_close);
 
@@ -2283,15 +2274,15 @@ restart:
 		dout("con_work %p STANDBY\n", con);
 		goto done;
 	}
-	if (test_bit(CLOSED, &con->state)) { /* e.g. if we are replaced */
-		dout("con_work CLOSED\n");
-		con_close_socket(con);
+	if (test_bit(CLOSED, &con->state)) {
+		dout("con_work %p CLOSED\n", con);
+		BUG_ON(con->sock);
 		goto done;
 	}
 	if (test_and_clear_bit(OPENING, &con->state)) {
 		/* reopen w/ new peer */
 		dout("con_work OPENING\n");
-		con_close_socket(con);
+		BUG_ON(con->sock);
 	}
 
 	ret = try_read(con);
@@ -2452,21 +2443,19 @@ static void clear_standby(struct ceph_connection *con)
  */
 void ceph_con_send(struct ceph_connection *con, struct ceph_msg *msg)
 {
+	/* set src+dst */
+	msg->hdr.src = con->msgr->inst.name;
+	BUG_ON(msg->front.iov_len != le32_to_cpu(msg->hdr.front_len));
+	msg->needs_out_seq = true;
+
+	mutex_lock(&con->mutex);
+
 	if (test_bit(CLOSED, &con->state)) {
 		dout("con_send %p closed, dropping %p\n", con, msg);
 		ceph_msg_put(msg);
+		mutex_unlock(&con->mutex);
 		return;
 	}
-
-	/* set src+dst */
-	msg->hdr.src = con->msgr->inst.name;
-
-	BUG_ON(msg->front.iov_len != le32_to_cpu(msg->hdr.front_len));
-
-	msg->needs_out_seq = true;
-
-	/* queue */
-	mutex_lock(&con->mutex);
 
 	BUG_ON(msg->con != NULL);
 	msg->con = con->ops->get(con);
