@@ -32,12 +32,6 @@ static void __unregister_linger_request(struct ceph_osd_client *osdc,
 static void __send_request(struct ceph_osd_client *osdc,
 			   struct ceph_osd_request *req);
 
-static int op_has_extent(int op)
-{
-	return (op == CEPH_OSD_OP_READ ||
-		op == CEPH_OSD_OP_WRITE);
-}
-
 /*
  * Implement client access to distributed object storage cluster.
  *
@@ -554,22 +548,15 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 {
 	struct ceph_osd_req_op ops[2];
 	struct ceph_osd_request *req;
-	unsigned int num_op = 1;
+	unsigned int num_op = do_sync ? 2 : 1;
 	u64 objnum = 0;
 	u64 objoff = 0;
 	u64 objlen = 0;
+	u32 object_size;
+	u64 object_base;
 	int r;
 
-	memset(&ops, 0, sizeof ops);
-
-	ops[0].op = opcode;
-	ops[0].extent.truncate_seq = truncate_seq;
-	ops[0].extent.truncate_size = truncate_size;
-
-	if (do_sync) {
-		ops[1].op = CEPH_OSD_OP_STARTSYNC;
-		num_op++;
-	}
+	BUG_ON(opcode != CEPH_OSD_OP_READ && opcode != CEPH_OSD_OP_WRITE);
 
 	req = ceph_osdc_alloc_request(osdc, snapc, num_op, use_mempool,
 					GFP_NOFS);
@@ -584,20 +571,20 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 		return ERR_PTR(r);
 	}
 
-	if (op_has_extent(ops[0].op)) {
-		u32 osize = le32_to_cpu(layout->fl_object_size);
-		ops[0].extent.offset = objoff;
-		ops[0].extent.length = objlen;
-		if (ops[0].extent.truncate_size <= off - objoff) {
-			ops[0].extent.truncate_size = 0;
-		} else {
-			ops[0].extent.truncate_size -= off - objoff;
-			if (ops[0].extent.truncate_size > osize)
-				ops[0].extent.truncate_size = osize;
-		}
+	object_size = le32_to_cpu(layout->fl_object_size);
+	object_base = off - objoff;
+	if (truncate_size <= object_base) {
+		truncate_size = 0;
+	} else {
+		truncate_size -= object_base;
+		if (truncate_size > object_size)
+			truncate_size = object_size;
 	}
-	if (ops[0].op == CEPH_OSD_OP_WRITE)
-		ops[0].payload_len = *plen;
+
+	osd_req_op_extent_init(&ops[0], opcode, objoff, objlen,
+				truncate_size, truncate_seq);
+	if (do_sync)
+		osd_req_op_init(&ops[1], CEPH_OSD_OP_STARTSYNC);
 
 	req->r_file_layout = *layout;  /* keep a copy */
 
@@ -1350,8 +1337,7 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg,
 	req = __lookup_request(osdc, tid);
 	if (req == NULL) {
 		dout("handle_reply tid %llu dne\n", tid);
-		mutex_unlock(&osdc->request_mutex);
-		return;
+		goto bad_mutex;
 	}
 	ceph_osdc_get_request(req);
 
@@ -1450,6 +1436,8 @@ done:
 
 bad_put:
 	ceph_osdc_put_request(req);
+bad_mutex:
+	mutex_unlock(&osdc->request_mutex);
 bad:
 	pr_err("corrupt osd_op_reply got %d %d\n",
 	       (int)msg->front.iov_len, le32_to_cpu(msg->hdr.front_len));
