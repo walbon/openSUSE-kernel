@@ -240,7 +240,7 @@ static void rbd_put_dev(struct rbd_device *rbd_dev)
 	put_device(&rbd_dev->dev);
 }
 
-static int __rbd_refresh_header(struct rbd_device *rbd_dev);
+static int __rbd_refresh_header(struct rbd_device *rbd_dev, u64 *hver);
 
 static int rbd_open(struct block_device *bdev, fmode_t mode)
 {
@@ -494,14 +494,14 @@ static int rbd_header_from_disk(struct rbd_image_header *header,
 				 struct rbd_image_header_ondisk *ondisk,
 				 u32 allocated_snaps)
 {
-	u32 i, snap_count;
+	u32 snap_count;
 
 	if (!rbd_dev_ondisk_valid(ondisk))
 		return -ENXIO;
 
 	snap_count = le32_to_cpu(ondisk->snap_count);
-	if (snap_count > (UINT_MAX - sizeof(struct ceph_snap_context))
-			 / sizeof (*ondisk))
+	if (snap_count > (SIZE_MAX - sizeof(struct ceph_snap_context))
+				 / sizeof (u64))
 		return -EINVAL;
 	header->snapc = kmalloc(sizeof(struct ceph_snap_context) +
 				snap_count * sizeof(u64),
@@ -509,8 +509,8 @@ static int rbd_header_from_disk(struct rbd_image_header *header,
 	if (!header->snapc)
 		return -ENOMEM;
 
-	header->snap_names_len = le64_to_cpu(ondisk->snap_names_len);
 	if (snap_count) {
+		header->snap_names_len = le64_to_cpu(ondisk->snap_names_len);
 		header->snap_names = kmalloc(header->snap_names_len,
 					     GFP_KERNEL);
 		if (!header->snap_names)
@@ -520,6 +520,8 @@ static int rbd_header_from_disk(struct rbd_image_header *header,
 		if (!header->snap_sizes)
 			goto err_names;
 	} else {
+		WARN_ON(ondisk->snap_names_len);
+		header->snap_names_len = 0;
 		header->snap_names = NULL;
 		header->snap_sizes = NULL;
 	}
@@ -544,6 +546,8 @@ static int rbd_header_from_disk(struct rbd_image_header *header,
 	header->total_snaps = snap_count;
 
 	if (snap_count && allocated_snaps == snap_count) {
+		int i;
+
 		for (i = 0; i < snap_count; i++) {
 			header->snapc->snaps[i] =
 				le64_to_cpu(ondisk->snaps[i].id);
@@ -552,7 +556,7 @@ static int rbd_header_from_disk(struct rbd_image_header *header,
 		}
 
 		/* copy snapshot names */
-		memcpy(header->snap_names, &ondisk->snaps[i],
+		memcpy(header->snap_names, &ondisk->snaps[snap_count],
 			header->snap_names_len);
 	}
 
@@ -560,10 +564,14 @@ static int rbd_header_from_disk(struct rbd_image_header *header,
 
 err_sizes:
 	kfree(header->snap_sizes);
+	header->snap_sizes = NULL;
 err_names:
 	kfree(header->snap_names);
+	header->snap_names = NULL;
 err_snapc:
 	kfree(header->snapc);
+	header->snapc = NULL;
+
 	return -ENOMEM;
 }
 
@@ -1218,8 +1226,7 @@ static void rbd_watch_cb(u64 ver, u64 notify_id, u8 opcode, void *data)
 		rbd_dev->header_name, (unsigned long long) notify_id,
 		(unsigned int) opcode);
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
-	rc = __rbd_refresh_header(rbd_dev);
-	hver = rbd_dev->header.obj_version;
+	rc = __rbd_refresh_header(rbd_dev, &hver);
 	mutex_unlock(&ctl_mutex);
 	if (rc)
 		pr_warning(RBD_DRV_NAME "%d got notification but failed to "
@@ -1699,7 +1706,7 @@ static void __rbd_remove_all_snaps(struct rbd_device *rbd_dev)
 /*
  * only read the first part of the ondisk header, without the snaps info
  */
-static int __rbd_refresh_header(struct rbd_device *rbd_dev)
+static int __rbd_refresh_header(struct rbd_device *rbd_dev, u64 *hver)
 {
 	int ret;
 	struct rbd_image_header h;
@@ -1724,6 +1731,8 @@ static int __rbd_refresh_header(struct rbd_device *rbd_dev)
 	/* osd requests may still refer to snapc */
 	ceph_put_snap_context(rbd_dev->header.snapc);
 
+	if (hver)
+		*hver = h.obj_version;
 	rbd_dev->header.obj_version = h.obj_version;
 	rbd_dev->header.image_size = h.image_size;
 	rbd_dev->header.total_snaps = h.total_snaps;
@@ -1893,17 +1902,13 @@ static ssize_t rbd_image_refresh(struct device *dev,
 				 size_t size)
 {
 	struct rbd_device *rbd_dev = dev_to_rbd_dev(dev);
-	int rc;
-	int ret = size;
+	int ret;
 
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
-
-	rc = __rbd_refresh_header(rbd_dev);
-	if (rc < 0)
-		ret = rc;
-
+	ret = __rbd_refresh_header(rbd_dev, NULL);
 	mutex_unlock(&ctl_mutex);
-	return ret;
+
+	return ret < 0 ? ret : size;
 }
 
 static DEVICE_ATTR(size, S_IRUGO, rbd_size_show, NULL);
@@ -2192,7 +2197,7 @@ static int rbd_init_watch_dev(struct rbd_device *rbd_dev)
 		ret = rbd_req_sync_watch(rbd_dev);
 		if (ret == -ERANGE) {
 			mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
-			rc = __rbd_refresh_header(rbd_dev);
+			rc = __rbd_refresh_header(rbd_dev, NULL);
 			mutex_unlock(&ctl_mutex);
 			if (rc < 0)
 				return rc;
@@ -2642,7 +2647,7 @@ static ssize_t rbd_snap_add(struct device *dev,
 	if (ret < 0)
 		goto err_unlock;
 
-	ret = __rbd_refresh_header(rbd_dev);
+	ret = __rbd_refresh_header(rbd_dev, NULL);
 	if (ret < 0)
 		goto err_unlock;
 
