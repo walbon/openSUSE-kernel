@@ -22,6 +22,8 @@
 #define OSD_OP_FRONT_LEN	4096
 #define OSD_OPREPLY_FRONT_LEN	512
 
+static struct kmem_cache	*ceph_osd_request_cache;
+
 static const struct ceph_connection_operations osd_con_ops;
 
 static void __send_queued(struct ceph_osd_client *osdc);
@@ -315,7 +317,8 @@ void ceph_osdc_release_request(struct kref *kref)
 	if (req->r_mempool)
 		mempool_free(req, req->r_osdc->req_mempool);
 	else
-		kfree(req);
+		kmem_cache_free(ceph_osd_request_cache, req);
+
 }
 EXPORT_SYMBOL(ceph_osdc_release_request);
 
@@ -346,7 +349,7 @@ struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 		req = mempool_alloc(osdc->req_mempool, gfp_flags);
 		memset(req, 0, sizeof(*req));
 	} else {
-		req = kzalloc(sizeof(*req), gfp_flags);
+		req = kmem_cache_zalloc(ceph_osd_request_cache, gfp_flags);
 	}
 	if (req == NULL)
 		return NULL;
@@ -1201,6 +1204,7 @@ void ceph_osdc_unregister_linger_request(struct ceph_osd_client *osdc,
 	mutex_lock(&osdc->request_mutex);
 	if (req->r_linger) {
 		__unregister_linger_request(osdc, req);
+		req->r_linger = 0;
 		ceph_osdc_put_request(req);
 	}
 	mutex_unlock(&osdc->request_mutex);
@@ -2117,7 +2121,9 @@ int ceph_osdc_start_request(struct ceph_osd_client *osdc,
 	down_read(&osdc->map_sem);
 	mutex_lock(&osdc->request_mutex);
 	__register_request(osdc, req);
-	WARN_ON(req->r_sent);
+	req->r_sent = 0;
+	req->r_got_reply = 0;
+	req->r_completed = 0;
 	rc = __map_request(osdc, req, 0);
 	if (rc < 0) {
 		if (nofail) {
@@ -2364,6 +2370,26 @@ int ceph_osdc_writepages(struct ceph_osd_client *osdc, struct ceph_vino vino,
 	return rc;
 }
 EXPORT_SYMBOL(ceph_osdc_writepages);
+
+int ceph_osdc_setup(void)
+{
+	BUG_ON(ceph_osd_request_cache);
+	ceph_osd_request_cache = kmem_cache_create("ceph_osd_request",
+					sizeof (struct ceph_osd_request),
+					__alignof__(struct ceph_osd_request),
+					0, NULL);
+
+	return ceph_osd_request_cache ? 0 : -ENOMEM;
+}
+EXPORT_SYMBOL(ceph_osdc_setup);
+
+void ceph_osdc_cleanup(void)
+{
+	BUG_ON(!ceph_osd_request_cache);
+	kmem_cache_destroy(ceph_osd_request_cache);
+	ceph_osd_request_cache = NULL;
+}
+EXPORT_SYMBOL(ceph_osdc_cleanup);
 
 /*
  * handle incoming message
