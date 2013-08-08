@@ -816,7 +816,7 @@ static bool ceph_msg_data_bio_advance(struct ceph_msg_data *data, size_t bytes)
 
 	return true;
 }
-#endif
+#endif /* CONFIG_BLOCK */
 
 /*
  * For a page array, a piece comes from the first page in the array
@@ -2206,10 +2206,18 @@ static int read_partial_message(struct ceph_connection *con)
 		ret = ceph_con_in_msg_alloc(con, &skip);
 		if (ret < 0)
 			return ret;
+
+		BUG_ON(!con->in_msg ^ skip);
+		if (con->in_msg && data_len > con->in_msg->data_length) {
+			pr_warning("%s skipping long message (%u > %zd)\n",
+				__func__, data_len, con->in_msg->data_length);
+			ceph_msg_put(con->in_msg);
+			con->in_msg = NULL;
+			skip = 1;
+		}
 		if (skip) {
 			/* skip this message */
 			dout("alloc_msg said skip message\n");
-			BUG_ON(con->in_msg);
 			con->in_base_pos = -front_len - middle_len - data_len -
 				sizeof(m->footer);
 			con->in_tag = CEPH_MSGR_TAG_READY;
@@ -3010,6 +3018,7 @@ void ceph_msg_data_set_pagelist(struct ceph_msg *msg,
 }
 EXPORT_SYMBOL(ceph_msg_data_set_pagelist);
 
+#ifdef	CONFIG_BLOCK
 void ceph_msg_data_set_bio(struct ceph_msg *msg, struct bio *bio,
 		size_t length)
 {
@@ -3027,6 +3036,7 @@ void ceph_msg_data_set_bio(struct ceph_msg *msg, struct bio *bio,
 	msg->data_length = length;
 }
 EXPORT_SYMBOL(ceph_msg_data_set_bio);
+#endif	/* CONFIG_BLOCK */
 
 /*
  * construct a new message with given type, size
