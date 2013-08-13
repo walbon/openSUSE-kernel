@@ -40,6 +40,7 @@ enum e1e_registers {
 	E1000_CTRL     = 0x00000, /* Device Control - RW */
 	E1000_STATUS   = 0x00008, /* Device Status - RO */
 	E1000_EECD     = 0x00010, /* EEPROM/Flash Control - RW */
+	E1000_FEXTNVM6 = 0x00010, /* Future Extended NVM 6 - RW */
 	E1000_EERD     = 0x00014, /* EEPROM Read - RW */
 	E1000_CTRL_EXT = 0x00018, /* Extended Device Control - RW */
 	E1000_FLA      = 0x0001C, /* Flash Access - RW */
