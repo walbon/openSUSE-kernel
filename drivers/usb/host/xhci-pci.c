@@ -23,6 +23,7 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
+#include <acpi/actypes.h>
 
 #include "xhci.h"
 
@@ -221,8 +222,11 @@ static int xhci_pci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 {
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
 	struct pci_dev          *pdev = to_pci_dev(hcd->self.controller);
+
+	#ifdef CONFIG_ACPI
 	acpi_handle handle = DEVICE_ACPI_HANDLE(&pdev->dev);
 	acpi_status status;
+	#endif
 
 	int	retval = 0;
 
@@ -231,10 +235,13 @@ static int xhci_pci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 		return -EINVAL;
 
 	retval = xhci_suspend(xhci);
+
+	#ifdef CONFIG_ACPI
 	dev_printk(KERN_INFO, &pdev->dev, "%s try to enter PS3\n", __FUNCTION__);
 	status = acpi_bus_set_power(handle, ACPI_STATE_D3);
 	if (ACPI_FAILURE(status))
-	    dev_printk(KERN_ERR, &pdev->dev, "%s FAILED to enter PS3\n", __FUNCTION__);		
+	    dev_printk(KERN_ERR, &pdev->dev, "%s FAILED to enter PS3\n", __FUNCTION__);
+	#endif
 
 	return retval;
 }
