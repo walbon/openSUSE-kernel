@@ -23,7 +23,10 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
+
+#ifdef CONFIG_ACPI
 #include <acpi/actypes.h>
+#endif
 
 #include "xhci.h"
 
@@ -221,9 +224,9 @@ static void xhci_pci_remove(struct pci_dev *dev)
 static int xhci_pci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 {
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
-	struct pci_dev          *pdev = to_pci_dev(hcd->self.controller);
 
 	#ifdef CONFIG_ACPI
+	struct pci_dev          *pdev = to_pci_dev(hcd->self.controller);
 	acpi_handle handle = DEVICE_ACPI_HANDLE(&pdev->dev);
 	acpi_status status;
 	#endif
