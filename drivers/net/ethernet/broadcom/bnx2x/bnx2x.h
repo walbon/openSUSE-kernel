@@ -1620,6 +1620,8 @@ struct bnx2x {
 	u8					prio_to_cos[8];
 
 	int fp_array_size;
+	bool					stats_started;
+	struct semaphore			stats_sema;
 };
 
 /* Tx queues may be less or equal to Rx queues */
