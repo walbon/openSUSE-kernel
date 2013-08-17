@@ -10082,6 +10082,7 @@ static int __devinit bnx2x_init_bp(struct bnx2x *bp)
 	mutex_init(&bp->port.phy_mutex);
 	mutex_init(&bp->fw_mb_mutex);
 	spin_lock_init(&bp->stats_lock);
+	sema_init(&bp->stats_sema, 1);
 #ifdef BCM_CNIC
 	mutex_init(&bp->cnic_mutex);
 #endif
