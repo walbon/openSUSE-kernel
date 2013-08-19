@@ -595,11 +595,6 @@ static int __i915_drm_thaw(struct drm_device *dev)
 		intel_modeset_init_hw(dev);
 		intel_modeset_setup_hw_state(dev, false);
 
-		/* Resume the modeset for every activated CRTC */
-		mutex_lock(&dev->mode_config.mutex);
-		drm_helper_resume_force_mode(dev);
-		mutex_unlock(&dev->mode_config.mutex);
-
 		/*
 		 * ... but also need to make sure that hotplug processing
 		 * doesn't cause havoc. Like in the driver load code we don't
