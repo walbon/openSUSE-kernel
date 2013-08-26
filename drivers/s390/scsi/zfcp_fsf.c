@@ -501,7 +501,7 @@ static int zfcp_fsf_exchange_config_evaluate(struct zfcp_fsf_req *req)
 
 	fc_host_port_id(shost) = ntoh24(bottom->s_id);
 	fc_host_speed(shost) =
-		zfcp_fsf_convert_portspeed(bottom->fc_link_speed);
+ 		zfcp_fsf_convert_portspeed(bottom->fc_link_speed);
 
 	adapter->hydra_version = bottom->adapter_type;
 
