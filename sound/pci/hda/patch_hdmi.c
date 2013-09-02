@@ -74,7 +74,6 @@ struct hdmi_spec_per_pin {
 	struct delayed_work work;
 	int repoll_count;
 	bool setup; /* the stream has been set up by prepare callback */
-	bool reconnect; /* need to reset pin amp and audio info frame */
 	int channels; /* current number of channels */
 	bool non_pcm;
 };
@@ -797,6 +796,8 @@ static void hdmi_present_sense(struct hdmi_spec_per_pin *per_pin, int repoll);
 static void hdmi_intrinsic_event(struct hda_codec *codec, unsigned int res)
 {
 	struct hdmi_spec *spec = codec->spec;
+	struct hdmi_spec_per_pin *per_pin;
+	bool old_eld_valid;
 	int tag = res >> AC_UNSOL_RES_TAG_SHIFT;
 	int pin_nid;
 	int pin_idx;
@@ -817,29 +818,22 @@ static void hdmi_intrinsic_event(struct hda_codec *codec, unsigned int res)
 	if (pin_idx < 0)
 		return;
 
+	per_pin = &spec->pins[pin_idx];
+	old_eld_valid = per_pin->sink_eld.eld_valid;
 	hdmi_present_sense(&spec->pins[pin_idx], true);
 	snd_hda_jack_report_sync(codec);
 
 	/* Haswell-specific workaround: re-setup when the transcoder is
 	 * changed during the stream playback
 	 */
-	if (codec->vendor_id == 0x80862807) {
-		struct hdmi_spec_per_pin *per_pin;
-
-		per_pin = &spec->pins[pin_idx];
-		if (!per_pin->setup)
-			return;
-		if (!(res & AC_UNSOL_RES_ELDV))
-			per_pin->reconnect = true;
-		else if (per_pin->reconnect) {
-			per_pin->reconnect = false;
-			if (res & AC_UNSOL_RES_ELDV) {
-				snd_hda_codec_write(codec, pin_nid, 0,
-						    AC_VERB_SET_AMP_GAIN_MUTE,
-						    AMP_OUT_UNMUTE);
-				hdmi_setup_audio_infoframe(codec, pin_idx,
-							   per_pin->non_pcm);
-			}
+	if (old_eld_valid != per_pin->sink_eld.eld_valid &&
+	    codec->vendor_id == 0x80862807) {
+		if (per_pin->setup && per_pin->sink_eld.eld_valid) {
+			snd_hda_codec_write(codec, pin_nid, 0,
+					    AC_VERB_SET_AMP_GAIN_MUTE,
+					    AMP_OUT_UNMUTE);
+			hdmi_setup_audio_infoframe(codec, pin_idx,
+						   per_pin->non_pcm);
 		}
 	}
 }
@@ -1166,6 +1160,7 @@ static void hdmi_present_sense(struct hdmi_spec_per_pin *per_pin, int repoll)
 		"HDMI status: Codec=%d Pin=%d Presence_Detect=%d ELD_Valid=%d\n",
 		codec->addr, pin_nid, eld->monitor_present, eld_valid);
 
+	eld->eld_valid = false;
 	if (eld_valid) {
 		if (!snd_hdmi_get_eld(eld, codec, pin_nid))
 			snd_hdmi_show_eld(eld);
@@ -1349,18 +1344,18 @@ static int generic_hdmi_playback_pcm_prepare(struct hda_pcm_stream *hinfo,
 	struct hdmi_spec *spec = codec->spec;
 	int pin_idx = hinfo_to_pin_index(spec, hinfo);
 	struct hdmi_spec_per_pin *per_pin = &spec->pins[pin_idx];
+	hda_nid_t pin_nid = per_pin->pin_nid;
 	bool non_pcm;
 
 	non_pcm = check_non_pcm_per_cvt(codec, cvt_nid);
 	per_pin->channels = substream->runtime->channels;
 	per_pin->setup = true;
-	per_pin->reconnect = false;
 
-	hdmi_set_channel_count(codec, cvt_nid, per_pin->channels);
+	hdmi_set_channel_count(codec, cvt_nid, substream->runtime->channels);
 
 	hdmi_setup_audio_infoframe(codec, pin_idx, non_pcm);
 
-	return hdmi_setup_stream(codec, cvt_nid, per_pin->pin_nid, stream_tag, format);
+	return hdmi_setup_stream(codec, cvt_nid, pin_nid, stream_tag, format);
 }
 
 static int generic_hdmi_playback_pcm_cleanup(struct hda_pcm_stream *hinfo,
@@ -1398,7 +1393,6 @@ static int hdmi_pcm_close(struct hda_pcm_stream *hinfo,
 		snd_hda_spdif_ctls_unassign(codec, pin_idx);
 
 		per_pin->setup = false;
-		per_pin->reconnect = false;
 		per_pin->channels = 0;
 	}
 	return 0;
