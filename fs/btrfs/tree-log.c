@@ -2206,7 +2206,6 @@ static int walk_log_tree(struct btrfs_trans_handle *trans,
 	int wret;
 	int level;
 	struct btrfs_path *path;
-	int i;
 	int orig_level;
 
 	path = btrfs_alloc_path();
@@ -2264,12 +2263,6 @@ static int walk_log_tree(struct btrfs_trans_handle *trans,
 	}
 
 out:
-	for (i = 0; i <= orig_level; i++) {
-		if (path->nodes[i]) {
-			free_extent_buffer(path->nodes[i]);
-			path->nodes[i] = NULL;
-		}
-	}
 	btrfs_free_path(path);
 	return ret;
 }
@@ -2553,10 +2546,10 @@ static void free_log_tree(struct btrfs_trans_handle *trans,
 
 	if (trans) {
 		ret = walk_log_tree(trans, log, &wc);
-		if (ret) {
-			btrfs_std_error(log->fs_info, ret);
-			return;
-		}
+
+		/* I don't think this can happen but just in case */
+		if (ret)
+			btrfs_abort_transaction(trans, log, ret);
 	}
 
 	while (1) {
@@ -3845,9 +3838,9 @@ out:
  * only logging is done of any parent directories that are older than
  * the last committed transaction
  */
-int btrfs_log_inode_parent(struct btrfs_trans_handle *trans,
-		    struct btrfs_root *root, struct inode *inode,
-		    struct dentry *parent, int exists_only)
+static int btrfs_log_inode_parent(struct btrfs_trans_handle *trans,
+			    	  struct btrfs_root *root, struct inode *inode,
+			    	  struct dentry *parent, int exists_only)
 {
 	int inode_only = exists_only ? LOG_INODE_EXISTS : LOG_INODE_ALL;
 	struct super_block *sb;

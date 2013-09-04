@@ -43,6 +43,7 @@ static int init_first_rw_device(struct btrfs_trans_handle *trans,
 				struct btrfs_device *device);
 static int btrfs_relocate_sys_chunks(struct btrfs_root *root);
 static void __btrfs_reset_dev_stats(struct btrfs_device *dev);
+static void btrfs_dev_stat_print_on_error(struct btrfs_device *dev);
 static void btrfs_dev_stat_print_on_load(struct btrfs_device *device);
 
 static DEFINE_MUTEX(uuid_mutex);
@@ -1196,10 +1197,10 @@ out:
 	return ret;
 }
 
-int btrfs_alloc_dev_extent(struct btrfs_trans_handle *trans,
-			   struct btrfs_device *device,
-			   u64 chunk_tree, u64 chunk_objectid,
-			   u64 chunk_offset, u64 start, u64 num_bytes)
+static int btrfs_alloc_dev_extent(struct btrfs_trans_handle *trans,
+				  struct btrfs_device *device,
+				  u64 chunk_tree, u64 chunk_objectid,
+				  u64 chunk_offset, u64 start, u64 num_bytes)
 {
 	int ret;
 	struct btrfs_path *path;
@@ -1326,9 +1327,9 @@ error:
  * the device information is stored in the chunk root
  * the btrfs_device struct should be fully filled in
  */
-int btrfs_add_device(struct btrfs_trans_handle *trans,
-		     struct btrfs_root *root,
-		     struct btrfs_device *device)
+static int btrfs_add_device(struct btrfs_trans_handle *trans,
+			    struct btrfs_root *root,
+			    struct btrfs_device *device)
 {
 	int ret;
 	struct btrfs_path *path;
@@ -1692,8 +1693,8 @@ void btrfs_destroy_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 	mutex_unlock(&fs_info->fs_devices->device_list_mutex);
 }
 
-int btrfs_find_device_by_path(struct btrfs_root *root, char *device_path,
-			      struct btrfs_device **device)
+static int btrfs_find_device_by_path(struct btrfs_root *root, char *device_path,
+				     struct btrfs_device **device)
 {
 	int ret = 0;
 	struct btrfs_super_block *disk_super;
@@ -3585,7 +3586,7 @@ static int btrfs_cmp_device_info(const void *a, const void *b)
 	return 0;
 }
 
-struct btrfs_raid_attr btrfs_raid_array[BTRFS_NR_RAID_TYPES] = {
+static struct btrfs_raid_attr btrfs_raid_array[BTRFS_NR_RAID_TYPES] = {
 	[BTRFS_RAID_RAID10] = {
 		.sub_stripes	= 2,
 		.dev_stripes	= 1,
@@ -4144,16 +4145,24 @@ int btrfs_num_copies(struct btrfs_fs_info *fs_info, u64 logical, u64 len)
 	em = lookup_extent_mapping(em_tree, logical, len);
 	read_unlock(&em_tree->lock);
 
-	if (!em)
-		return -EIO;
+	/*
+	 * We could return errors for these cases, but that could get ugly and
+	 * we'd probably do the same thing which is just not do anything else
+	 * and exit, so return 1 so the callers don't try to use other copies.
+	 */
+	if (!em) {
+		btrfs_emerg(fs_info, "No mapping for %Lu-%Lu\n", logical,
+			    logical+len);
+		return 1;
+	}
 
 	if (em->start > logical || em->start + em->len < logical) {
-		printk(KERN_CRIT "btrfs: corrupted extent, logical %llu em %llu@%llu\n",
-				(unsigned long long)logical,
-				(unsigned long long)em->start,
-				(unsigned long long)em->len);
-		return -EIO;
+		btrfs_emerg(fs_info, "Invalid mapping for %Lu-%Lu, got "
+			    "%Lu-%Lu\n", logical, logical+len, em->start,
+			    em->start + em->len);
+		return 1;
 	}
+
 	map = (struct map_lookup *)em->bdev;
 	if (map->type & (BTRFS_BLOCK_GROUP_DUP | BTRFS_BLOCK_GROUP_RAID1))
 		ret = map->num_stripes;
@@ -4243,10 +4252,16 @@ static int __btrfs_map_block(struct btrfs_fs_info *fs_info, int rw,
 		printk(KERN_CRIT "btrfs: unable to find logical %llu len %llu\n",
 		       (unsigned long long)logical,
 		       (unsigned long long)*length);
-		BUG();
+		return -EINVAL;
 	}
 
-	BUG_ON(em->start > logical || em->start + em->len < logical);
+	if (em->start > logical || em->start + em->len < logical) {
+		btrfs_crit(fs_info, "found a bad mapping, wanted %Lu, "
+			   "found %Lu-%Lu\n", logical, em->start,
+			   em->start + em->len);
+		return -EINVAL;
+	}
+
 	map = (struct map_lookup *)em->bdev;
 	offset = logical - em->start;
 
@@ -5624,7 +5639,7 @@ void btrfs_dev_stat_inc_and_print(struct btrfs_device *dev, int index)
 	btrfs_dev_stat_print_on_error(dev);
 }
 
-void btrfs_dev_stat_print_on_error(struct btrfs_device *dev)
+static void btrfs_dev_stat_print_on_error(struct btrfs_device *dev)
 {
 	if (!dev->dev_stats_valid)
 		return;
