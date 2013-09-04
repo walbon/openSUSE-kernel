@@ -978,7 +978,8 @@ struct ib_qp *mlx4_ib_create_qp(struct ib_pd *pd,
 	 */
 	if (init_attr->create_flags & ~(MLX4_IB_QP_LSO |
 					MLX4_IB_QP_BLOCK_MULTICAST_LOOPBACK |
-					MLX4_IB_SRIOV_TUNNEL_QP | MLX4_IB_SRIOV_SQP))
+					MLX4_IB_SRIOV_TUNNEL_QP | MLX4_IB_SRIOV_SQP |
+					IB_QP_CREATE_USE_GFP_NOFS))
 		return ERR_PTR(-EINVAL);
 
 	if ((init_attr->create_flags & ~IB_QP_CREATE_USE_GFP_NOFS) &&
