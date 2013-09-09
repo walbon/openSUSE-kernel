@@ -1549,6 +1549,8 @@ struct btrfs_fs_info {
 	struct mutex qgroup_rescan_lock; /* protects the progress item */
 	struct btrfs_key qgroup_rescan_progress;
 	struct btrfs_workers qgroup_rescan_workers;
+	struct completion qgroup_rescan_completion;
+	struct btrfs_work qgroup_rescan_work;
 
 	/* filesystem state */
 	unsigned long fs_state;
@@ -1714,7 +1716,6 @@ struct btrfs_ioctl_defrag_range_args {
 	/* spare for later */
 	__u32 unused[4];
 };
-
 
 /*
  * inode items have the data typically returned from stat and store other
@@ -2909,6 +2910,16 @@ BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_cursor_left,
 BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_cursor_right,
 			 struct btrfs_dev_replace_item, cursor_right, 64);
 
+#define btrfs_fs_incompat(fs_info, opt) \
+	        __btrfs_fs_incompat((fs_info), BTRFS_FEATURE_INCOMPAT_##opt)
+
+static inline int __btrfs_fs_incompat(struct btrfs_fs_info *fs_info, u64 flag)
+{
+	struct btrfs_super_block *disk_super;
+	disk_super = fs_info->super_copy;
+	return !!(btrfs_super_incompat_flags(disk_super) & flag);
+}
+
 static inline struct btrfs_fs_info *btrfs_sb(struct super_block *sb)
 {
 	return sb->s_fs_info;
@@ -2965,6 +2976,8 @@ static inline u64 btrfs_calc_trunc_metadata_size(struct btrfs_root *root,
 		num_items;
 }
 
+int btrfs_should_throttle_delayed_refs(struct btrfs_trans_handle *trans,
+				       struct btrfs_root *root);
 void btrfs_put_block_group(struct btrfs_block_group_cache *cache);
 int btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
 			   struct btrfs_root *root, unsigned long count);
@@ -2976,6 +2989,8 @@ int btrfs_pin_extent(struct btrfs_root *root,
 		     u64 bytenr, u64 num, int reserved);
 int btrfs_pin_extent_for_log_replay(struct btrfs_root *root,
 				    u64 bytenr, u64 num_bytes);
+int btrfs_exclude_logged_extents(struct btrfs_root *root,
+				 struct extent_buffer *eb);
 int btrfs_cross_ref_exist(struct btrfs_trans_handle *trans,
 			  struct btrfs_root *root,
 			  u64 objectid, u64 offset, u64 bytenr);
@@ -3439,6 +3454,10 @@ void btrfs_wait_and_free_delalloc_work(struct btrfs_delalloc_work *work);
 struct extent_map *btrfs_get_extent_fiemap(struct inode *inode, struct page *page,
 					   size_t pg_offset, u64 start, u64 len,
 					   int create);
+noinline int can_nocow_extent(struct btrfs_trans_handle *trans,
+			      struct inode *inode, u64 offset, u64 *len,
+			      u64 *orig_start, u64 *orig_block_len,
+			      u64 *ram_bytes);
 
 /* RHEL and EL kernels have a patch that renames PG_checked to FsMisc */
 #if defined(ClearPageFsMisc) && !defined(ClearPageChecked)
@@ -3729,6 +3748,8 @@ int btrfs_quota_enable(struct btrfs_trans_handle *trans,
 int btrfs_quota_disable(struct btrfs_trans_handle *trans,
 			struct btrfs_fs_info *fs_info);
 int btrfs_qgroup_rescan(struct btrfs_fs_info *fs_info);
+void btrfs_qgroup_rescan_resume(struct btrfs_fs_info *fs_info);
+int btrfs_qgroup_wait_for_completion(struct btrfs_fs_info *fs_info);
 int btrfs_add_qgroup_relation(struct btrfs_trans_handle *trans,
 			      struct btrfs_fs_info *fs_info, u64 src, u64 dst);
 int btrfs_del_qgroup_relation(struct btrfs_trans_handle *trans,

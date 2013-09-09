@@ -698,8 +698,12 @@ retry:
 			async_extent->nr_pages = 0;
 			async_extent->pages = NULL;
 
-			if (ret == -ENOSPC)
+			if (ret == -ENOSPC) {
+				unlock_extent(io_tree, async_extent->start,
+					      async_extent->start +
+					      async_extent->ram_size - 1);
 				goto retry;
+			}
 			goto out_free;
 		}
 
@@ -1601,7 +1605,7 @@ static void btrfs_clear_bit_hook(struct inode *inode,
 			btrfs_delalloc_release_metadata(inode, len);
 
 		if (root->root_key.objectid != BTRFS_DATA_RELOC_TREE_OBJECTID
-		    && do_list)
+		    && do_list && !(state->state & EXTENT_NORESERVE))
 			btrfs_free_reserved_data_space(inode, len);
 
 		__percpu_counter_add(&root->fs_info->delalloc_bytes, -len,
@@ -2132,16 +2136,23 @@ static noinline int record_one_backref(u64 inum, u64 offset, u64 root_id,
 		if (btrfs_file_extent_disk_bytenr(leaf, extent) != old->bytenr)
 			continue;
 
-		extent_offset = btrfs_file_extent_offset(leaf, extent);
-		if (key.offset - extent_offset != offset)
+		/*
+		 * 'offset' refers to the exact key.offset,
+		 * NOT the 'offset' field in btrfs_extent_data_ref, ie.
+		 * (key.offset - extent_offset).
+		 */
+		if (key.offset != offset)
 			continue;
 
+		extent_offset = btrfs_file_extent_offset(leaf, extent);
 		num_bytes = btrfs_file_extent_num_bytes(leaf, extent);
+
 		if (extent_offset >= old->extent_offset + old->offset +
 		    old->len || extent_offset + num_bytes <=
 		    old->extent_offset + old->offset)
 			continue;
 
+		ret = 0;
 		break;
 	}
 
@@ -2153,7 +2164,7 @@ static noinline int record_one_backref(u64 inum, u64 offset, u64 root_id,
 
 	backref->root_id = root_id;
 	backref->inum = inum;
-	backref->file_pos = offset + extent_offset;
+	backref->file_pos = offset;
 	backref->num_bytes = num_bytes;
 	backref->extent_offset = extent_offset;
 	backref->generation = btrfs_file_extent_generation(leaf, extent);
@@ -2176,7 +2187,8 @@ static noinline bool record_extent_backrefs(struct btrfs_path *path,
 	new->path = path;
 
 	list_for_each_entry_safe(old, tmp, &new->head, list) {
-		ret = iterate_inodes_from_logical(old->bytenr, fs_info,
+		ret = iterate_inodes_from_logical(old->bytenr +
+						  old->extent_offset, fs_info,
 						  path, record_one_backref,
 						  old);
 		BUG_ON(ret < 0 && ret != -ENOENT);
@@ -3213,13 +3225,16 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 			/* 1 for the orphan item deletion. */
 			trans = btrfs_start_transaction(root, 1);
 			if (IS_ERR(trans)) {
+				iput(inode);
 				ret = PTR_ERR(trans);
 				goto out;
 			}
 			ret = btrfs_orphan_add(trans, inode);
 			btrfs_end_transaction(trans, root);
-			if (ret)
+			if (ret) {
+				iput(inode);
 				goto out;
+			}
 
 			ret = btrfs_truncate(inode);
 			if (ret)
@@ -4339,9 +4354,6 @@ static int btrfs_setsize(struct inode *inode, struct iattr *attr)
 	int mask = attr->ia_valid;
 	int ret;
 
-	if (newsize == oldsize)
-		return 0;
-
 	/*
 	 * The regular truncate() case without ATTR_CTIME and ATTR_MTIME is a
 	 * special case where we need to update the times despite not having
@@ -4925,8 +4937,10 @@ struct inode *btrfs_lookup_dentry(struct inode *dir, struct dentry *dentry)
 		if (!(inode->i_sb->s_flags & MS_RDONLY))
 			ret = btrfs_orphan_cleanup(sub_root);
 		up_read(&root->fs_info->cleanup_work_sem);
-		if (ret)
+		if (ret) {
+			iput(inode);
 			inode = ERR_PTR(ret);
+		}
 	}
 
 	return inode;
@@ -6364,10 +6378,10 @@ out:
  * returns 1 when the nocow is safe, < 1 on error, 0 if the
  * block must be cow'd
  */
-static noinline int can_nocow_odirect(struct btrfs_trans_handle *trans,
-				      struct inode *inode, u64 offset, u64 *len,
-				      u64 *orig_start, u64 *orig_block_len,
-				      u64 *ram_bytes)
+noinline int can_nocow_extent(struct btrfs_trans_handle *trans,
+			      struct inode *inode, u64 offset, u64 *len,
+			      u64 *orig_start, u64 *orig_block_len,
+			      u64 *ram_bytes)
 {
 	struct btrfs_path *path;
 	int ret;
@@ -6381,7 +6395,7 @@ static noinline int can_nocow_odirect(struct btrfs_trans_handle *trans,
 	u64 num_bytes;
 	int slot;
 	int found_type;
-
+	bool nocow = (BTRFS_I(inode)->flags & BTRFS_INODE_NODATACOW);
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
@@ -6421,18 +6435,28 @@ static noinline int can_nocow_odirect(struct btrfs_trans_handle *trans,
 		/* not a regular extent, must cow */
 		goto out;
 	}
+
+	if (!nocow && found_type == BTRFS_FILE_EXTENT_REG)
+		goto out;
+
 	disk_bytenr = btrfs_file_extent_disk_bytenr(leaf, fi);
+	if (disk_bytenr == 0)
+		goto out;
+
+	if (btrfs_file_extent_compression(leaf, fi) ||
+	    btrfs_file_extent_encryption(leaf, fi) ||
+	    btrfs_file_extent_other_encoding(leaf, fi))
+		goto out;
+
 	backref_offset = btrfs_file_extent_offset(leaf, fi);
 
-	*orig_start = key.offset - backref_offset;
-	*orig_block_len = btrfs_file_extent_disk_num_bytes(leaf, fi);
-	*ram_bytes = btrfs_file_extent_ram_bytes(leaf, fi);
+	if (orig_start) {
+		*orig_start = key.offset - backref_offset;
+		*orig_block_len = btrfs_file_extent_disk_num_bytes(leaf, fi);
+		*ram_bytes = btrfs_file_extent_ram_bytes(leaf, fi);
+	}
 
 	extent_end = key.offset + btrfs_file_extent_num_bytes(leaf, fi);
-	if (extent_end < offset + *len) {
-		/* extent doesn't include our full range, must cow */
-		goto out;
-	}
 
 	if (btrfs_extent_readonly(root, disk_bytenr))
 		goto out;
@@ -6676,8 +6700,8 @@ static int btrfs_get_blocks_direct(struct inode *inode, sector_t iblock,
 		if (IS_ERR(trans))
 			goto must_cow;
 
-		if (can_nocow_odirect(trans, inode, start, &len, &orig_start,
-				      &orig_block_len, &ram_bytes) == 1) {
+		if (can_nocow_extent(trans, inode, start, &len, &orig_start,
+				     &orig_block_len, &ram_bytes) == 1) {
 			if (type == BTRFS_ORDERED_PREALLOC) {
 				free_extent_map(em);
 				em = create_pinned_em(inode, start, len,

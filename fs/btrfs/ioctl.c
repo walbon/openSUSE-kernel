@@ -2490,6 +2490,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	int ret;
 	u64 len = olen;
 	u64 bs = root->fs_info->sb->s_blocksize;
+	int same_inode = 0;
 
 	/*
 	 * TODO:
@@ -2526,7 +2527,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 
 	ret = -EINVAL;
 	if (src == inode)
-		goto out_fput;
+		same_inode = 1;
 
 	/* the src must be open for reading */
 	if (!(src_file->f_mode & FMODE_READ))
@@ -2557,12 +2558,16 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	}
 	path->reada = 2;
 
-	if (inode < src) {
-		mutex_lock_nested(&inode->i_mutex, I_MUTEX_PARENT);
-		mutex_lock_nested(&src->i_mutex, I_MUTEX_CHILD);
+	if (!same_inode) {
+		if (inode < src) {
+			mutex_lock_nested(&inode->i_mutex, I_MUTEX_PARENT);
+			mutex_lock_nested(&src->i_mutex, I_MUTEX_CHILD);
+		} else {
+			mutex_lock_nested(&src->i_mutex, I_MUTEX_PARENT);
+			mutex_lock_nested(&inode->i_mutex, I_MUTEX_CHILD);
+		}
 	} else {
-		mutex_lock_nested(&src->i_mutex, I_MUTEX_PARENT);
-		mutex_lock_nested(&inode->i_mutex, I_MUTEX_CHILD);
+		mutex_lock(&src->i_mutex);
 	}
 
 	/* determine range to clone */
@@ -2579,6 +2584,12 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	if (!IS_ALIGNED(off, bs) || !IS_ALIGNED(off + len, bs) ||
 	    !IS_ALIGNED(destoff, bs))
 		goto out_unlock;
+
+	/* verify if ranges are overlapped within the same file */
+	if (same_inode) {
+		if (destoff + len > off && destoff < off + len)
+			goto out_unlock;
+	}
 
 	if (destoff > inode->i_size) {
 		ret = btrfs_cont_expand(inode, inode->i_size, destoff);
@@ -2856,7 +2867,8 @@ out:
 	unlock_extent(&BTRFS_I(src)->io_tree, off, off + len - 1);
 out_unlock:
 	mutex_unlock(&src->i_mutex);
-	mutex_unlock(&inode->i_mutex);
+	if (!same_inode)
+		mutex_unlock(&inode->i_mutex);
 	vfree(buf);
 	btrfs_free_path(path);
 out_fput:
@@ -3809,9 +3821,6 @@ static long btrfs_ioctl_quota_ctl(struct file *file, void __user *arg)
 		break;
 	}
 
-	if (copy_to_user(arg, sa, sizeof(*sa)))
-		ret = -EFAULT;
-
 	err = btrfs_commit_transaction(trans, root->fs_info->tree_root);
 	if (err && !ret)
 		ret = err;
@@ -4025,6 +4034,16 @@ static long btrfs_ioctl_quota_rescan_status(struct file *file, void __user *arg)
 
 	kfree(qsa);
 	return ret;
+}
+
+static long btrfs_ioctl_quota_rescan_wait(struct file *file, void __user *arg)
+{
+	struct btrfs_root *root = BTRFS_I(fdentry(file)->d_inode)->root;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	return btrfs_qgroup_wait_for_completion(root->fs_info);
 }
 
 static long btrfs_ioctl_set_received_subvol(struct file *file,
@@ -4285,6 +4304,8 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_quota_rescan(file, argp);
 	case BTRFS_IOC_QUOTA_RESCAN_STATUS:
 		return btrfs_ioctl_quota_rescan_status(file, argp);
+	case BTRFS_IOC_QUOTA_RESCAN_WAIT:
+		return btrfs_ioctl_quota_rescan_wait(file, argp);
 	case BTRFS_IOC_DEV_REPLACE:
 		if (!allow_unsupported) {
 			printk(KERN_WARNING "btrfs: IOC_DEV_REPLACE is not supported, load module with allow_unsupported=1\n");

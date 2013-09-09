@@ -492,6 +492,9 @@ int clear_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
 	int err;
 	int clear = 0;
 
+	if (bits & EXTENT_DELALLOC)
+		bits |= EXTENT_NORESERVE;
+
 	if (delete)
 		bits |= ~EXTENT_CTLBITS;
 	bits |= EXTENT_FIRST_DELALLOC;
@@ -3956,7 +3959,7 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	}
 
 	while (!end) {
-		u64 offset_in_extent;
+		u64 offset_in_extent = 0;
 
 		/* break if the extent we found is outside the range */
 		if (em->start >= max || extent_map_end(em) < off)
@@ -3972,9 +3975,12 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 
 		/*
 		 * record the offset from the start of the extent
-		 * for adjusting the disk offset below
+		 * for adjusting the disk offset below.  Only do this if the
+		 * extent isn't compressed since our in ram offset may be past
+		 * what we have actually allocated on disk.
 		 */
-		offset_in_extent = em_start - em->start;
+		if (!test_bit(EXTENT_FLAG_COMPRESSED, &em->flags))
+			offset_in_extent = em_start - em->start;
 		em_end = extent_map_end(em);
 		em_len = em_end - em_start;
 		emflags = em->flags;

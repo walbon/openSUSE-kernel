@@ -279,11 +279,23 @@ static int process_one_buffer(struct btrfs_root *log,
 {
 	int ret = 0;
 
+	/*
+	 * If this fs is mixed then we need to be able to process the leaves to
+	 * pin down any logged extents, so we have to read the block.
+	 */
+	if (btrfs_fs_incompat(log->fs_info, MIXED_GROUPS)) {
+		ret = btrfs_read_buffer(eb, gen);
+		if (ret)
+			return ret;
+	}
+
 	if (wc->pin)
 		ret = btrfs_pin_extent_for_log_replay(log->fs_info->extent_root,
 						      eb->start, eb->len);
 
 	if (!ret && btrfs_buffer_uptodate(eb, gen, 0)) {
+		if (wc->pin && btrfs_header_level(eb) == 0)
+			ret = btrfs_exclude_logged_extents(log, eb);
 		if (wc->write)
 			btrfs_write_tree_block(eb);
 		if (wc->wait)
@@ -3727,8 +3739,9 @@ next_slot:
 	}
 
 log_extents:
+	btrfs_release_path(path);
+	btrfs_release_path(dst_path);
 	if (fast_search) {
-		btrfs_release_path(dst_path);
 		ret = btrfs_log_changed_extents(trans, root, inode, dst_path);
 		if (ret) {
 			err = ret;
@@ -3745,8 +3758,6 @@ log_extents:
 	}
 
 	if (inode_only == LOG_INODE_ALL && S_ISDIR(inode->i_mode)) {
-		btrfs_release_path(path);
-		btrfs_release_path(dst_path);
 		ret = log_directory_changes(trans, root, inode, path, dst_path);
 		if (ret) {
 			err = ret;
