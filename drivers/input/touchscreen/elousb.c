@@ -58,6 +58,9 @@ MODULE_LICENSE(DRIVER_LICENSE);
 #define ELO_SMARTSET_PACKET_SIZE	8
 
 struct workqueue_struct *elo_wq;
+static bool use_fw_quirk = true;
+module_param(use_fw_quirk, bool, true);
+MODULE_PARM_DESC(use_fw_quirk, "Do periodic pokes for broken M firmwares (default = true)");
 
 struct elousb {
 	char name[128];
@@ -218,7 +221,45 @@ static void elousb_close(struct input_dev *dev)
 /* not all Elo devices need the periodic HID descriptor reads, only
  * firmware version M needs this */
 static int has_broken_firmware(struct usb_device *dev) {
-	return le16_to_cpu(dev->descriptor.bcdDevice) == 0x10d;
+        struct usb_device *hub = dev->parent;
+        struct usb_device *child = NULL;
+        u16 fw_lvl = le16_to_cpu(dev->descriptor.bcdDevice);
+        u16 child_vid, child_pid;
+        int i;
+                    
+        if (!use_fw_quirk)
+                return 0;
+        if (!hub)
+                return 0;
+        if (fw_lvl != 0x10d)
+                return 0;
+        printk(KERN_INFO "elousb: touchscreen has FW Level: 0x10d\n");
+         /*iterate sibling devices of the touch controller*/
+        for (i=0; i<hub->maxchild; i++) {
+                child = hub->children[i];
+                if (!child)
+                        continue;
+                child_vid = le16_to_cpu(child->descriptor.idVendor);
+                child_pid = le16_to_cpu(child->descriptor.idProduct);
+                printk(KERN_INFO "elousb: sibling device %04x:%04x on port %d\n",
+                        child_vid, child_pid, i+1);
+                /* If one of the devices below is present attached as a sibling of 
+                    the touch controller then  this is a newer IBM 4820 monitor that 
+                    Does Not need the IBM-requested workaround if fw level is
+                    0x010d - aka 'M'.
+                    No other HW can have this combination.
+                */
+                if (child_vid==0x04b3) {
+                        switch (child_pid) {
+                        case 0x4676: /*4820 21x Video*/
+                        case 0x4677: /*4820 51x Video*/
+                        case 0x4678: /*4820 2Lx Video*/
+                        case 0x4679: /*4820 5Lx Video*/
+                                return 0;
+                         }
+                }
+        }
+        return 1;
 }
 
 static int elousb_probe(struct usb_interface *intf, const struct usb_device_id *id)
