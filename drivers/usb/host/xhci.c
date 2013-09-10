@@ -762,13 +762,19 @@ void xhci_shutdown(struct usb_hcd *hcd)
 	if (xhci->quirks & XHCI_SPURIOUS_REBOOT)
 		usb_disable_xhci_ports(pdev);
 
-	spin_lock_irq(&xhci->lock);
-	xhci_halt(xhci);
-	spin_unlock_irq(&xhci->lock);
-
-	xhci_cleanup_msix(xhci);
-
-	pci_set_power_state(pdev, PCI_D3cold);
+	if (xhci->quirks & XHCI_HSW_SPURIOUS_WAKEUP) {
+		/* Workaround for spurious wakeups at shutdown with HSW:
+		 * we must call xhci_stop() for clearing all wakeups, and
+		 * set the device to D3.
+		 */
+		xhci_stop(hcd);
+		pci_set_power_state(pdev, PCI_D3cold);
+	} else {
+		spin_lock_irq(&xhci->lock);
+		xhci_halt(xhci);
+		spin_unlock_irq(&xhci->lock);
+		xhci_cleanup_msix(xhci);
+	}
 
 	xhci_dbg(xhci, "xhci_shutdown completed - status = %x\n",
 		    xhci_readl(xhci, &xhci->op_regs->status));
