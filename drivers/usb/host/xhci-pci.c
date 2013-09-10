@@ -111,6 +111,15 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 		xhci->quirks |= XHCI_SPURIOUS_REBOOT;
 		xhci->quirks |= XHCI_AVOID_BEI;
 	}
+	if (pdev->vendor == PCI_VENDOR_ID_INTEL &&
+	    (pdev->device == PCI_DEVICE_ID_INTEL_LYNXPOINT_XHCI ||
+	     pdev->device == PCI_DEVICE_ID_INTEL_LYNXPOINT_LP_XHCI)) {
+		/* Workaround for occasional spurious wakeups from S5 (or
+		 * any other sleep) on Haswell machines with LPT and LPT-LP
+		 * with the new Intel BIOS
+		 */
+		xhci->quirks |= XHCI_HSW_SPURIOUS_WAKEUP;
+	}
 	if (pdev->vendor == PCI_VENDOR_ID_ETRON &&
 			pdev->device == PCI_DEVICE_ID_ASROCK_P67) {
 		xhci->quirks |= XHCI_RESET_ON_RESUME;
@@ -217,6 +226,11 @@ static void xhci_pci_remove(struct pci_dev *dev)
 		usb_put_hcd(xhci->shared_hcd);
 	}
 	usb_hcd_pci_remove(dev);
+
+	/* Workaround for spurious wakeups at shutdown with HSW */
+	if (xhci->quirks & XHCI_HSW_SPURIOUS_WAKEUP)
+		pci_set_power_state(dev, PCI_D3cold);
+
 	kfree(xhci);
 }
 
