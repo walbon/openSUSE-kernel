@@ -389,6 +389,9 @@ cifs_call_async(struct TCP_Server_Info *server, struct kvec *iov,
 	atomic_dec(&server->inSend);
 	mid->when_sent = jiffies;
 #endif
+
+	if (rc < 0)
+		server->sequence_number -= 2;
 	mutex_unlock(&server->srv_mutex);
 	if (rc)
 		goto out_err;
@@ -497,6 +500,9 @@ send_nt_cancel(struct TCP_Server_Info *server, struct smb_hdr *in_buf,
 	 */
 	--server->sequence_number;
 	rc = smb_send(server, in_buf, be32_to_cpu(in_buf->smb_buf_length));
+	if (rc < 0)
+		server->sequence_number--;
+
 	mutex_unlock(&server->srv_mutex);
 
 	cFYI(1, "issued NT_CANCEL for mid %u, rc = %d",
@@ -591,6 +597,8 @@ SendReceive2(const unsigned int xid, struct cifs_ses *ses,
 	midQ->when_sent = jiffies;
 #endif
 
+	if (rc < 0)
+		ses->server->sequence_number -= 2;
 	mutex_unlock(&ses->server->srv_mutex);
 
 	if (rc < 0) {
@@ -718,6 +726,10 @@ SendReceive(const unsigned int xid, struct cifs_ses *ses,
 	atomic_dec(&ses->server->inSend);
 	midQ->when_sent = jiffies;
 #endif
+
+	if (rc < 0)
+		ses->server->sequence_number -= 2;
+
 	mutex_unlock(&ses->server->srv_mutex);
 
 	if (rc < 0)
@@ -858,6 +870,10 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifs_tcon *tcon,
 	atomic_dec(&ses->server->inSend);
 	midQ->when_sent = jiffies;
 #endif
+
+	if (rc < 0)
+		ses->server->sequence_number -= 2;
+
 	mutex_unlock(&ses->server->srv_mutex);
 
 	if (rc < 0) {
