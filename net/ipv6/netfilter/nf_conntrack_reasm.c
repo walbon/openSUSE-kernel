@@ -254,7 +254,9 @@ fq_find(__be32 id, u32 user, struct net_device *dev, struct in6_addr *src, struc
 	else
 		arg.ifindex = 0;
 	arg.user = user;
-	arg.net = dev_net(dev);
+	arg.net = maybe_get_net(dev_net(dev));
+	if (!arg.net)
+		return NULL;
 	arg.src = src;
 	arg.dst = dst;
 
@@ -263,6 +265,7 @@ fq_find(__be32 id, u32 user, struct net_device *dev, struct in6_addr *src, struc
 
 	q = inet_frag_find(&nf_init_frags, &nf_frags, &arg, hash);
 	local_bh_enable();
+	put_net(arg.net);
 	if (IS_ERR_OR_NULL(q)) {
 		inet_frag_maybe_warn_overflow(q, pr_fmt());
 		return NULL;
