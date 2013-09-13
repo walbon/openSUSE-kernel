@@ -136,8 +136,7 @@ static inline int __need_auto_defrag(struct btrfs_root *root)
 	if (!btrfs_test_opt(root, AUTO_DEFRAG))
 		return 0;
 
-	if (btrfs_fs_closing(root->fs_info)
-	    || (root->fs_info->sb->s_flags & MS_RDONLY))
+	if (btrfs_fs_closing(root->fs_info))
 		return 0;
 
 	return 1;

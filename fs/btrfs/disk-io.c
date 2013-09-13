@@ -1665,25 +1665,38 @@ static void end_workqueue_fn(struct btrfs_work *work)
 static int cleaner_kthread(void *arg)
 {
 	struct btrfs_root *root = arg;
+	int again;
 
 	do {
-		int again = 0;
-
 		vfs_check_frozen(root->fs_info->sb, SB_FREEZE_WRITE);
+		again = 0;
 
-		if (!down_read_trylock(&root->fs_info->sb->s_umount))
-			goto skip;
+		/* Make the cleaner go to sleep early. */
+		if (btrfs_need_cleaner_sleep(root))
+			goto sleep;
 
-		if (!(root->fs_info->sb->s_flags & MS_RDONLY) &&
-		    mutex_trylock(&root->fs_info->cleaner_mutex)) {
-			btrfs_run_delayed_iputs(root);
-			again = btrfs_clean_one_deleted_snapshot(root);
+		if (!mutex_trylock(&root->fs_info->cleaner_mutex))
+			goto sleep;
+
+		/*
+		 * Avoid the problem that we change the status of the fs
+		 * during the above check and trylock.
+		 */
+		if (btrfs_need_cleaner_sleep(root)) {
 			mutex_unlock(&root->fs_info->cleaner_mutex);
-			btrfs_run_defrag_inodes(root->fs_info);
+			goto sleep;
 		}
 
-		up_read(&root->fs_info->sb->s_umount);
-skip:
+		btrfs_run_delayed_iputs(root);
+		again = btrfs_clean_one_deleted_snapshot(root);
+		mutex_unlock(&root->fs_info->cleaner_mutex);
+
+		/*
+		 * The defragger has dealt with the R/O remount and umount,
+		 * needn't do anything special here.
+		 */
+		btrfs_run_defrag_inodes(root->fs_info);
+sleep:
 		if (freezing(current)) {
 			refrigerator();
 		} else if (!again) {
@@ -3468,10 +3481,12 @@ int close_ctree(struct btrfs_root *root)
 
 	btrfs_scrub_cancel(fs_info);
 
+	/* wait for any defraggers to finish */
+	wait_event(fs_info->transaction_wait,
+		   (atomic_read(&fs_info->defrag_running) == 0));
+
 	/* clear out the rbtree of defraggable inodes */
 	btrfs_cleanup_defrag_inodes(fs_info);
-
-	BUG_ON(atomic_read(&fs_info->defrag_running));
 
 	if (!(fs_info->sb->s_flags & MS_RDONLY)) {
 		ret = btrfs_commit_super(root);
