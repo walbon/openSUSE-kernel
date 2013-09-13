@@ -708,7 +708,8 @@ static void page_check_dirty_writeback(struct page *page,
 		return;
 
 	mapping = page_mapping(page);
-	if (mapping && (mapping->a_ops->writepage == ext3_aops_writepage ||
+	if (mapping && mapping->a_ops->writepage &&
+			(mapping->a_ops->writepage == ext3_aops_writepage ||
 			 mapping->a_ops->writepage == blkdev_aops_writepage))
 		buffer_check_dirty_writeback(page, dirty, writeback);
 }
