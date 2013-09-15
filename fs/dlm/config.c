@@ -793,37 +793,6 @@ static void put_space(struct dlm_space *sp)
 	config_item_put(&sp->group.cg_item);
 }
 
-static struct dlm_comm *get_comm(int nodeid)
-{
-	struct config_item *i;
-	struct dlm_comm *cm = NULL;
-	int found = 0;
-
-	if (!comm_list)
-		return NULL;
-
-	mutex_lock(&clusters_root.subsys.su_mutex);
-
-	list_for_each_entry(i, &comm_list->cg_children, ci_entry) {
-		cm = config_item_to_comm(i);
-
-		if (cm->nodeid != nodeid)
-			continue;
-		found = 1;
-		config_item_get(i);
-		break;
-	}
-	mutex_unlock(&clusters_root.subsys.su_mutex);
-
-	if (!found)
-		cm = NULL;
-	return cm;
-}
-
-static void put_comm(struct dlm_comm *cm)
-{
-	config_item_put(&cm->item);
-}
 
 /* caller must free mem */
 int dlm_nodeid_list(char *lsname, int **ids_out, int *ids_count_out,
