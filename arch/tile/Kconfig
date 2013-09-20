@@ -340,6 +340,12 @@ config NO_IOPORT
 
 source "drivers/pci/Kconfig"
 
+# USB OHCI needs the bounce pool since tilegx will often have more
+# than 4GB of memory, but we don't currently use the IOTLB to present
+# a 32-bit address to OHCI.  So we need to use a bounce pool instead.
+config NEED_BOUNCE_POOL
+	def_bool USB_OHCI_HCD
+
 config HOTPLUG
 	bool "Support for hot-pluggable devices"
 	---help---
