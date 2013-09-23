@@ -107,8 +107,22 @@ static int console_locked, console_suspended;
  */
 static DEFINE_SPINLOCK(logbuf_lock);
 
+/*
+ * nmi_logbuf_lock protects nmi_log_buf, log_start and log_end from NNI context
+ * when logbuf_lock is held to synchronize NMI contexts which try to do printk
+ * at the same time. NEVER EVER take this lock outside of NMI context.
+ * non NMI consumer of nmi_log_buf has to take logbuf_lock and be careful about
+ * racing with NMI context (see handle_nmi_delayed_printk).
+ */
+static DEFINE_SPINLOCK(nmi_logbuf_lock);
+
 #define LOG_BUF_MASK (log_buf_len-1)
-#define LOG_BUF(idx) (log_buf[(idx) & LOG_BUF_MASK])
+#define __LOG_BUF(buf, len, idx) (buf[(idx) & ((len)-1)])
+#define LOG_BUF(idx) (__LOG_BUF(log_buf, log_buf_len, idx))
+
+/* Worker to print accumulated data to console when there's too much of it */
+static void printk_worker(struct work_struct *work);
+static DECLARE_WORK(printk_work, printk_worker);
 
 /*
  * The indices into log_buf are not constrained to log_buf_len - they
@@ -118,9 +132,8 @@ static unsigned log_start;	/* Index into log_buf: next char to be read by syslog
 static unsigned con_start;	/* Index into log_buf: next char to be sent to consoles */
 static unsigned log_end;	/* Index into log_buf: most-recently-written-char + 1 */
 
-/* Worker to print accumulated data to console when there's too much of it */
-static void printk_worker(struct work_struct *work);
-static DECLARE_WORK(printk_work, printk_worker);
+static unsigned nmi_log_start;	/* Index into nmi_log_buf: next char to be copied to printk ringbuf */
+static unsigned nmi_log_end;	/* Index into nmi_log_buf: most-recently-written-char + 1 */
 
 /*
  * If exclusive_console is non-NULL then only this console is to be printed to.
@@ -155,7 +168,9 @@ static int console_may_schedule;
 
 static char __log_buf[__LOG_BUF_LEN];
 static char *log_buf = __log_buf;
+static char *nmi_log_buf = NULL;
 static int log_buf_len = __LOG_BUF_LEN;
+static int nmi_log_buf_len = __LOG_BUF_LEN;
 static unsigned logged_chars; /* Number of chars produced since last read+clear operation */
 static int saved_console_loglevel = -1;
 
@@ -179,6 +194,7 @@ void log_buf_kexec_setup(void)
 
 /* requested log_buf_len from kernel cmdline */
 static unsigned long __initdata new_log_buf_len;
+static unsigned long __initdata new_nmi_log_buf_len;
 
 /* save requested log_buf_len since it's too early to process it */
 static int __init log_buf_len_setup(char *str)
@@ -194,6 +210,33 @@ static int __init log_buf_len_setup(char *str)
 }
 early_param("log_buf_len", log_buf_len_setup);
 
+static int __init nmi_log_buf_len_setup(char *str)
+{
+	unsigned size = memparse(str, &str);
+
+	if (size)
+		size = roundup_pow_of_two(size);
+	if (size > nmi_log_buf_len)
+		new_nmi_log_buf_len = size;
+
+	return 0;
+}
+early_param("nmi_log_buf_len", nmi_log_buf_len_setup);
+
+char * __init alloc_log_buf(int early, unsigned len)
+{
+	if (early) {
+		unsigned long mem;
+
+		mem = memblock_alloc(len, PAGE_SIZE);
+		if (mem == MEMBLOCK_ERROR)
+			return NULL;
+		return __va(mem);
+	}
+
+	return alloc_bootmem_nopanic(len);
+}
+
 void __init setup_log_buf(int early)
 {
 	unsigned long flags;
@@ -201,20 +244,26 @@ void __init setup_log_buf(int early)
 	char *new_log_buf;
 	int free;
 
+	if (!nmi_log_buf) {
+		unsigned len = (nmi_log_buf_len > new_nmi_log_buf_len) ?
+			nmi_log_buf_len: new_nmi_log_buf_len;
+
+		if (len) {
+			nmi_log_buf = alloc_log_buf(early, len);
+			if (!nmi_log_buf)
+				pr_err("%ld bytes not available for nmi ring buffer\n",
+					len);
+			else {
+				nmi_log_buf_len = len;
+				pr_info("nmi ring buffer: %d\n", len);
+			}
+		}
+	}
+
 	if (!new_log_buf_len)
 		return;
 
-	if (early) {
-		unsigned long mem;
-
-		mem = memblock_alloc(new_log_buf_len, PAGE_SIZE);
-		if (mem == MEMBLOCK_ERROR)
-			return;
-		new_log_buf = __va(mem);
-	} else {
-		new_log_buf = alloc_bootmem_nopanic(new_log_buf_len);
-	}
-
+	new_log_buf = alloc_log_buf(early, new_log_buf_len);
 	if (unlikely(!new_log_buf)) {
 		pr_err("log_buf_len: %ld bytes not available\n",
 			new_log_buf_len);
@@ -703,6 +752,18 @@ static void emit_log_char(char c)
 		logged_chars++;
 }
 
+static void emit_nmi_log_char(char c)
+{
+	__LOG_BUF(nmi_log_buf, nmi_log_buf_len, nmi_log_end) = c;
+	/*
+	 * Make sure that the buffer content is visible before nmi_log_end
+	 * for out of lock access so that we can be sure that the content
+	 * is up-to-date
+	 */
+	smp_wmb();
+	nmi_log_end++;
+}
+
 /*
  * Zap console related locks when oopsing. Only zap at most once
  * every 10 seconds, to leave time for slow consoles to print a
@@ -834,7 +895,6 @@ static int console_trylock_for_printk(unsigned int cpu)
 			retval = 0;
 		}
 	}
-	printk_cpu = UINT_MAX;
 	spin_unlock(&logbuf_lock);
 	return retval;
 }
@@ -843,6 +903,7 @@ static const char recursion_bug_msg [] =
 static int recursion_bug;
 static int new_text_line = 1;
 static char printk_buf[1024];
+static char nmi_printk_buf[1024];
 
 int printk_delay_msec __read_mostly;
 
@@ -858,15 +919,133 @@ static inline void printk_delay(void)
 	}
 }
 
+/*
+ * Called from non-NMI context to move nmi ring buffer into the regular printk
+ * ring buffer
+ */
+static void handle_nmi_delayed_printk(void)
+{
+	unsigned end_idx, start_idx, idx;
+
+	end_idx = ACCESS_ONCE(nmi_log_end);
+	start_idx = ACCESS_ONCE(nmi_log_start);
+
+	if (likely(end_idx == start_idx))
+		return;
+
+	spin_lock(&logbuf_lock);
+	for (idx = nmi_log_start; ; idx++) {
+		/*
+		 * nmi_log_end might be updated from NMI context. Make
+		 * sure we refetch a new value every loop invocation
+		 */
+		end_idx = ACCESS_ONCE(nmi_log_end);
+		if (idx == end_idx)
+			break;
+
+		/* Make sure the ring buffer doesn't overflow */
+		if (end_idx - idx > nmi_log_buf_len)
+			idx = end_idx - nmi_log_buf_len;
+
+		smp_rmb();
+		emit_log_char(__LOG_BUF(nmi_log_buf, nmi_log_buf_len, idx));
+	}
+	/* Nobody touches nmi_log_buf except for us and we are locked */
+	nmi_log_start = idx;
+	if (console_trylock_for_printk(smp_processor_id()))
+		console_unlock();
+}
+
+static int finish_printk(char *msg, int printed_len, bool nmi_ring)
+{
+	int current_log_level = default_message_loglevel;
+	char *msg_start = msg;
+	size_t plen;
+	char special;
+	void (*emit_char)(char c) = (nmi_ring) ? emit_nmi_log_char : emit_log_char;
+
+	/* TODO new_text_line needs a special handling for nmi_ring */
+
+	/* Read log level and handle special printk prefix */
+	plen = log_prefix(msg, &current_log_level, &special);
+	if (plen) {
+		msg += plen;
+
+		switch (special) {
+		case 'c': /* Strip <c> KERN_CONT, continue line */
+			plen = 0;
+			break;
+		case 'd': /* Strip <d> KERN_DEFAULT, start new line */
+			plen = 0;
+		default:
+			if (!new_text_line) {
+				emit_char('\n');
+				new_text_line = 1;
+			}
+		}
+	}
+
+	/*
+	 * Copy the output into log_buf. If the caller didn't provide
+	 * the appropriate log prefix, we insert them here
+	 */
+	for (; *msg; msg++) {
+		if (new_text_line) {
+			new_text_line = 0;
+
+			if (plen) {
+				/* Copy original log prefix */
+				int i;
+
+				for (i = 0; i < plen; i++)
+					emit_char(msg_start[i]);
+				printed_len += plen;
+			} else {
+				/* Add log prefix */
+				emit_char('<');
+				emit_char(current_log_level + '0');
+				emit_char('>');
+				printed_len += 3;
+			}
+
+			if (printk_time) {
+				/* Add the current time stamp */
+				char tbuf[50], *tp;
+				unsigned tlen;
+				unsigned long long t;
+				unsigned long nanosec_rem;
+
+				t = cpu_clock(smp_processor_id());
+				nanosec_rem = do_div(t, 1000000000);
+				tlen = sprintf(tbuf, "[%5lu.%06lu] ",
+						(unsigned long) t,
+						nanosec_rem / 1000);
+
+				for (tp = tbuf; tp < tbuf + tlen; tp++)
+					emit_char(*tp);
+				printed_len += tlen;
+			}
+
+			if (!*msg)
+				break;
+		}
+
+		emit_char(*msg);
+		if (*msg == '\n')
+			new_text_line = 1;
+	}
+
+	return printed_len;
+}
+
 asmlinkage int vprintk(const char *fmt, va_list args)
 {
 	int printed_len = 0;
-	int current_log_level = default_message_loglevel;
 	unsigned long flags;
 	int this_cpu;
-	char *p;
-	size_t plen;
-	char special;
+	char *buf = printk_buf;
+	unsigned buf_len = sizeof(printk_buf);
+	bool in_nmi_delayed_printk = false;
 
 	boot_delay_msec();
 	printk_delay();
@@ -879,7 +1058,7 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	/*
 	 * Ouch, printk recursed into itself!
 	 */
-	if (unlikely(printk_cpu == this_cpu)) {
+	if (!in_nmi() && unlikely(printk_cpu == this_cpu)) {
 		/*
 		 * If a crash is occurring during printk() on this CPU,
 		 * then try to get the crash message out but make sure
@@ -895,88 +1074,43 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	}
 
 	lockdep_off();
-	spin_lock(&logbuf_lock);
-	printk_cpu = this_cpu;
-
-	if (recursion_bug) {
-		recursion_bug = 0;
-		strcpy(printk_buf, recursion_bug_msg);
-		printed_len = strlen(recursion_bug_msg);
-	}
-	/* Emit the output into the temporary buffer */
-	printed_len += vscnprintf(printk_buf + printed_len,
-				  sizeof(printk_buf) - printed_len, fmt, args);
-
-	p = printk_buf;
-
-	/* Read log level and handle special printk prefix */
-	plen = log_prefix(p, &current_log_level, &special);
-	if (plen) {
-		p += plen;
-
-		switch (special) {
-		case 'c': /* Strip <c> KERN_CONT, continue line */
-			plen = 0;
-			break;
-		case 'd': /* Strip <d> KERN_DEFAULT, start new line */
-			plen = 0;
-		default:
-			if (!new_text_line) {
-				emit_log_char('\n');
-				new_text_line = 1;
-			}
-		}
-	}
-
 	/*
-	 * Copy the output into log_buf. If the caller didn't provide
-	 * the appropriate log prefix, we insert them here
+	 * Make sure we are not going to deadlock when we managed to preempt the
+	 * currently running printk from NMI. Copy the current message into nmi
+	 * ring buffer and let the current lock owner to print the message after
+	 * he is back on CPU.
 	 */
-	for (; *p; p++) {
-		if (new_text_line) {
-			new_text_line = 0;
-
-			if (plen) {
-				/* Copy original log prefix */
-				int i;
-
-				for (i = 0; i < plen; i++)
-					emit_log_char(printk_buf[i]);
-				printed_len += plen;
-			} else {
-				/* Add log prefix */
-				emit_log_char('<');
-				emit_log_char(current_log_level + '0');
-				emit_log_char('>');
-				printed_len += 3;
+	if (!spin_trylock(&logbuf_lock)) {
+		if (!in_nmi()) {
+			spin_lock(&logbuf_lock);
+		} else {
+			if (!nmi_log_buf) {
+				lockdep_on();
+				goto out_restore_irqs;
 			}
-
-			if (printk_time) {
-				/* Add the current time stamp */
-				char tbuf[50], *tp;
-				unsigned tlen;
-				unsigned long long t;
-				unsigned long nanosec_rem;
-
-				t = cpu_clock(printk_cpu);
-				nanosec_rem = do_div(t, 1000000000);
-				tlen = sprintf(tbuf, "[%5lu.%06lu] ",
-						(unsigned long) t,
-						nanosec_rem / 1000);
-
-				for (tp = tbuf; tp < tbuf + tlen; tp++)
-					emit_log_char(*tp);
-				printed_len += tlen;
-			}
-
-			if (!*p)
-				break;
+			/*
+			 * The lock is allowed to be taken only from NMI context
+			 * to synchronize NMI printk callers.
+			 */
+			spin_lock(&nmi_logbuf_lock);
+			buf = nmi_printk_buf;
+			buf_len = sizeof(nmi_printk_buf);
+			in_nmi_delayed_printk = true;
 		}
-
-		emit_log_char(*p);
-		if (*p == '\n')
-			new_text_line = 1;
 	}
+	if (!in_nmi_delayed_printk) {
+		printk_cpu = this_cpu;
+		if (recursion_bug) {
+			recursion_bug = 0;
+			strcpy(buf, recursion_bug_msg);
+			printed_len = strlen(recursion_bug_msg);
+		}
+	}
+
+	/* Emit the output into the temporary buffer */
+	printed_len += vscnprintf(buf + printed_len,
+				  buf_len - printed_len, fmt, args);
+	printed_len = finish_printk(buf, printed_len, in_nmi_delayed_printk);
 
 	/*
 	 * Try to acquire and then immediately release the
@@ -987,9 +1121,32 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	 * The console_trylock_for_printk() function
 	 * will release 'logbuf_lock' regardless of whether it
 	 * actually gets the semaphore or not.
+	 *
+	 * This whole magic is not allowed from nmi context as
+	 * console_unlock re-takes logbuf_lock and other locks
+	 * from follow-up paths.
 	 */
-	if (console_trylock_for_printk(this_cpu))
-		console_unlock();
+	if (!in_nmi_delayed_printk) {
+		printk_cpu = UINT_MAX;
+		if (in_nmi()) {
+			spin_unlock(&logbuf_lock);
+		} else {
+			if (console_trylock_for_printk(this_cpu))
+				console_unlock();
+
+			/*
+			 * We are calling this outside of the lock just to make
+			 * sure that the printk which raced with NMI had a
+			 * chance to do some progress since it has been
+			 * interrupted.
+			 * Do not try to handle pending NMI messages from NMI as
+			 * we would need to take logbuf_lock and we could
+			 * deadlock.
+			 */
+			handle_nmi_delayed_printk();
+		}
+	} else
+		spin_unlock(&nmi_logbuf_lock);
 
 	lockdep_on();
 out_restore_irqs:

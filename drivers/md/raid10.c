@@ -702,11 +702,17 @@ retry:
 	return disk;
 }
 
+static int max_queued = INT_MAX;
+
 static int raid10_congested(void *data, int bits)
 {
 	mddev_t *mddev = data;
 	conf_t *conf = mddev->private;
 	int i, ret = 0;
+
+	if ((bits & (1 << BDI_async_congested)) &&
+	    conf->pending_count >= max_queued)
+		return 1;
 
 	if (mddev_congested(mddev, bits))
 		return 1;
@@ -736,7 +742,9 @@ static void flush_pending_writes(conf_t *conf)
 	if (conf->pending_bio_list.head) {
 		struct bio *bio;
 		bio = bio_list_get(&conf->pending_bio_list);
+		conf->pending_count = 0;
 		spin_unlock_irq(&conf->device_lock);
+		wake_up(&conf->wait_barrier);
 		/* flush any pending bitmap writes to disk
 		 * before proceeding w/ I/O */
 		raid10_log(conf->mddev, "bitmap unplug");
@@ -1059,6 +1067,11 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 	/*
 	 * WRITE:
 	 */
+	if (conf->pending_count >= max_queued) {
+		md_wakeup_thread(mddev->thread);
+		wait_event(conf->wait_barrier,
+			   conf->pending_count < max_queued);
+	}
 	/* first select target devices under rcu_lock and
 	 * inc refcount on their rdev.  Record them by setting
 	 * bios[x] to bio
@@ -1138,6 +1151,7 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 				      r10_bio->sector);
 		mbio->bi_bdev = (void *)conf->mirrors[d].rdev;
 		bio_list_add(&conf->pending_bio_list, mbio);
+		conf->pending_count++;
 		spin_unlock_irqrestore(&conf->device_lock, flags);
 	}
 
@@ -2677,6 +2691,8 @@ static conf_t *setup_conf(mddev_t *mddev)
 
 	spin_lock_init(&conf->resync_lock);
 	init_waitqueue_head(&conf->wait_barrier);
+	bio_list_init(&conf->pending_bio_list);
+	conf->pending_count = 0;
 
 	conf->thread = md_register_thread(raid10d, mddev, NULL);
 	if (!conf->thread)
@@ -3796,3 +3812,5 @@ MODULE_DESCRIPTION("RAID10 (striped mirror) personality for MD");
 MODULE_ALIAS("md-personality-9"); /* RAID10 */
 MODULE_ALIAS("md-raid10");
 MODULE_ALIAS("md-level-10");
+
+module_param(max_queued, int, S_IRUGO|S_IWUSR);

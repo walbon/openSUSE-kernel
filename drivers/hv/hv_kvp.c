@@ -29,6 +29,16 @@
 #include <linux/hyperv.h>
 
 
+/*
+ * Pre win8 version numbers used in ws2008 and ws 2008 r2 (win7)
+ */
+#define WIN7_SRV_MAJOR   3
+#define WIN7_SRV_MINOR   0
+#define WIN7_SRV_MAJOR_MINOR     (WIN7_SRV_MAJOR << 16 | WIN7_SRV_MINOR)
+
+#define WIN8_SRV_MAJOR   4
+#define WIN8_SRV_MINOR   0
+#define WIN8_SRV_MAJOR_MINOR     (WIN8_SRV_MAJOR << 16 | WIN8_SRV_MINOR)
 
 /*
  * Global state maintained for transaction that is being processed.
@@ -574,7 +584,6 @@ void hv_kvp_onchannelcallback(void *context)
 	struct hv_kvp_msg *kvp_msg;
 
 	struct icmsg_hdr *icmsghdrp;
-	struct icmsg_negotiate *negop = NULL;
 
 	if (kvp_transaction.active) {
 		/*
@@ -593,8 +602,19 @@ void hv_kvp_onchannelcallback(void *context)
 			sizeof(struct vmbuspipe_hdr)];
 
 		if (icmsghdrp->icmsgtype == ICMSGTYPE_NEGOTIATE) {
-			vmbus_prep_negotiate_resp(icmsghdrp, negop,
-				 recv_buffer, MAX_SRV_VER, MAX_SRV_VER);
+			/*
+			 * We start with win8 version and if the host cannot
+			 * support that we use the previous version.
+			 */
+			if (vmbus_prep_negotiate_resp(icmsghdrp, recv_buffer,
+				 false, UTIL_FW_MAJOR_MINOR,
+				 WIN8_SRV_MAJOR_MINOR))
+				goto done;
+
+			vmbus_prep_negotiate_resp(icmsghdrp, recv_buffer,
+				 true, UTIL_FW_MAJOR_MINOR,
+				 WIN7_SRV_MAJOR_MINOR);
+
 		} else {
 			kvp_msg = (struct hv_kvp_msg *)&recv_buffer[
 				sizeof(struct vmbuspipe_hdr) +
@@ -626,6 +646,7 @@ void hv_kvp_onchannelcallback(void *context)
 			return;
 
 		}
+done:
 
 		icmsghdrp->icflags = ICMSGHDRFLAG_TRANSACTION
 			| ICMSGHDRFLAG_RESPONSE;

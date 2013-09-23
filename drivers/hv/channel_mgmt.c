@@ -41,37 +41,41 @@ struct vmbus_channel_message_table_entry {
 /**
  * vmbus_prep_negotiate_resp() - Create default response for Hyper-V Negotiate message
  * @icmsghdrp: Pointer to msg header structure
- * @icmsg_negotiate: Pointer to negotiate message structure
  * @buf: Raw buffer channel data
  *
  * @icmsghdrp is of type &struct icmsg_hdr.
- * @negop is of type &struct icmsg_negotiate.
+ * @final if true signifies that this the final version negotiated.
  * Set up and fill in default negotiate response message.
  *
- * The max_fw_version specifies the maximum framework version that
- * we can support and max _srv_version specifies the maximum service
- * version we can support. A special value MAX_SRV_VER can be
- * specified to indicate that we can handle the maximum version
- * exposed by the host.
+ * The fw_version specifies the  framework version that
+ * we can support and srv_version specifies the service
+ * version we can support.
  *
  * Mainly used by Hyper-V drivers.
  */
-void vmbus_prep_negotiate_resp(struct icmsg_hdr *icmsghdrp,
-				struct icmsg_negotiate *negop, u8 *buf,
-				int max_fw_version, int max_srv_version)
+bool vmbus_prep_negotiate_resp(struct icmsg_hdr *icmsghdrp,
+				u8 *buf, bool final,
+				int fw_version, int srv_version)
 {
-	int icframe_vercnt;
-	int icmsg_vercnt;
+	int icframe_major, icframe_minor;
+	int icmsg_major, icmsg_minor;
+	int fw_major, fw_minor;
+	int srv_major, srv_minor;
 	int i;
+	struct icmsg_negotiate *negop;
+	bool found_match = false;
 
-	icmsghdrp->icmsgsize = 0x10;
+	fw_major = (fw_version >> 16);
+	fw_minor = (fw_version & 0xFFFF);
+
+	srv_major = (srv_version >> 16);
+	srv_minor = (srv_version & 0xFFFF);
 
 	negop = (struct icmsg_negotiate *)&buf[
 		sizeof(struct vmbuspipe_hdr) +
 		sizeof(struct icmsg_hdr)];
 
-	icframe_vercnt = negop->icframe_vercnt;
-	icmsg_vercnt = negop->icmsg_vercnt;
+	icframe_major = icframe_minor = icmsg_major = icmsg_minor = 0;
 
 	/*
 	 * Select the framework version number we will
@@ -79,26 +83,50 @@ void vmbus_prep_negotiate_resp(struct icmsg_hdr *icmsghdrp,
 	 */
 
 	for (i = 0; i < negop->icframe_vercnt; i++) {
-		if (negop->icversion_data[i].major <= max_fw_version)
-			icframe_vercnt = negop->icversion_data[i].major;
+		if ((negop->icversion_data[i].major == fw_major) &&
+		   (negop->icversion_data[i].minor == fw_minor)) {
+			icframe_major = negop->icversion_data[i].major;
+			icframe_minor = negop->icversion_data[i].minor;
+			found_match = true;
+		}
 	}
+
+	if (!found_match)
+		goto fw_error;
+
+	found_match = false;
 
 	for (i = negop->icframe_vercnt;
 		 (i < negop->icframe_vercnt + negop->icmsg_vercnt); i++) {
-		if (negop->icversion_data[i].major <= max_srv_version)
-			icmsg_vercnt = negop->icversion_data[i].major;
+		if ((negop->icversion_data[i].major == srv_major) &&
+		   (negop->icversion_data[i].minor == srv_minor)) {
+			icmsg_major = negop->icversion_data[i].major;
+			icmsg_minor = negop->icversion_data[i].minor;
+			found_match = true;
+		}
 	}
 
 	/*
-	 * Respond with the maximum framework and service
+	 * Respond with the framework and service
 	 * version numbers we can support.
 	 */
-	negop->icframe_vercnt = 1;
-	negop->icmsg_vercnt = 1;
-	negop->icversion_data[0].major = icframe_vercnt;
-	negop->icversion_data[0].minor = 0;
-	negop->icversion_data[1].major = icmsg_vercnt;
-	negop->icversion_data[1].minor = 0;
+
+fw_error:
+	if (found_match) {
+		icmsghdrp->icmsgsize = 0x10;
+		negop->icframe_vercnt = 1;
+		negop->icmsg_vercnt = 1;
+		negop->icversion_data[0].major = icframe_major;
+		negop->icversion_data[0].minor = icframe_minor;
+		negop->icversion_data[1].major = icmsg_major;
+		negop->icversion_data[1].minor = icmsg_minor;
+	} else if (final) {
+		icmsghdrp->icmsgsize = 0x10;
+		negop->icframe_vercnt = 0;
+		negop->icmsg_vercnt = 0;
+	}
+
+	return found_match;
 }
 
 EXPORT_SYMBOL_GPL(vmbus_prep_negotiate_resp);

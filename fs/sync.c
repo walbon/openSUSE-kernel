@@ -28,7 +28,8 @@
  * wait == 1 case since in that case write_inode() functions do
  * sync_dirty_buffer() and thus effectively write one block at a time.
  */
-static int __sync_filesystem(struct super_block *sb, int wait)
+static int __sync_filesystem(struct super_block *sb, int wait,
+			     unsigned long start)
 {
 	/*
 	 * This should be safe, as we require bdi backing to actually
@@ -41,7 +42,7 @@ static int __sync_filesystem(struct super_block *sb, int wait)
 		sb->s_qcop->quota_sync(sb, -1, wait);
 
 	if (wait)
-		sync_inodes_sb(sb);
+		sync_inodes_sb_after(sb, start);
 	else
 		writeback_inodes_sb(sb);
 
@@ -58,6 +59,7 @@ static int __sync_filesystem(struct super_block *sb, int wait)
 int sync_filesystem(struct super_block *sb)
 {
 	int ret;
+	unsigned long sincejif = jiffies;
 
 	/*
 	 * We need to be protected against the filesystem going from
@@ -71,25 +73,36 @@ int sync_filesystem(struct super_block *sb)
 	if (sb->s_flags & MS_RDONLY)
 		return 0;
 
-	ret = __sync_filesystem(sb, 0);
+	ret = __sync_filesystem(sb, 0, sincejif);
 	if (ret < 0)
 		return ret;
-	return __sync_filesystem(sb, 1);
+	return __sync_filesystem(sb, 1, sincejif);
 }
 EXPORT_SYMBOL_GPL(sync_filesystem);
 
+struct sync_arg {
+	unsigned long sincejif;
+	int wait;
+};
+
 static void sync_one_sb(struct super_block *sb, void *arg)
 {
+	struct sync_arg *sarg = arg;
+
 	if (!(sb->s_flags & MS_RDONLY))
-		__sync_filesystem(sb, *(int *)arg);
+		__sync_filesystem(sb, sarg->wait, sarg->sincejif);
 }
 /*
  * Sync all the data for all the filesystems (called by sys_sync() and
  * emergency sync)
  */
-static void sync_filesystems(int wait)
+static void sync_filesystems(int wait, unsigned long sincejif)
 {
-	iterate_supers(sync_one_sb, &wait);
+	struct sync_arg arg = {
+		.sincejif = sincejif,
+		.wait = wait,
+	};
+	iterate_supers(sync_one_sb, &arg);
 }
 
 /*
@@ -98,9 +111,11 @@ static void sync_filesystems(int wait)
  */
 SYSCALL_DEFINE0(sync)
 {
+	unsigned long sincejif = jiffies;
+
 	wakeup_flusher_threads(0);
-	sync_filesystems(0);
-	sync_filesystems(1);
+	sync_filesystems(0, sincejif);
+	sync_filesystems(1, sincejif);
 	if (unlikely(laptop_mode))
 		laptop_sync_completion();
 	return 0;
@@ -112,8 +127,8 @@ static void do_sync_work(struct work_struct *work)
 	 * Sync twice to reduce the possibility we skipped some inodes / pages
 	 * because they were temporarily locked
 	 */
-	sync_filesystems(0);
-	sync_filesystems(0);
+	sync_filesystems(0, jiffies);
+	sync_filesystems(0, jiffies);
 	printk("Emergency Sync complete\n");
 	kfree(work);
 }

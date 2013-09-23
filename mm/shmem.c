@@ -1313,7 +1313,7 @@ repeat:
 	 * Try to preload while we can wait, to not make a habit of
 	 * draining atomic reserves; but don't latch on to this cpu.
 	 */
-	error = radix_tree_preload(gfp & GFP_RECLAIM_MASK);
+	error = radix_tree_maybe_preload(gfp & GFP_RECLAIM_MASK);
 	if (error)
 		goto out;
 	radix_tree_preload_end();
