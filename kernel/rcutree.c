@@ -629,15 +629,31 @@ static void check_cpu_stall(struct rcu_state *rsp, struct rcu_data *rdp)
 	rnp = rdp->mynode;
 	if (rcu_gp_in_progress(rsp) &&
 	    (ACCESS_ONCE(rnp->qsmask) & rdp->grpmask) && ULONG_CMP_GE(j, js)) {
+		unsigned long gp_start = ACCESS_ONCE(rsp->gp_start);
 
-		/* We haven't checked in, so go dump stack. */
-		print_cpu_stall(rsp);
+		/*
+		 * We have to recheck js > gp_start in both branches because we
+		 * are not holding rpn->lock and so we might race with
+		 * rcu_start_gp and see the new grace period which has started
+		 * right now but jiffies_stall has been fetched before it has
+		 * been updated or the update made visible. To be really sure
+		 * that we haven't missed record_gp_stall_check_time we have
+		 * to check that at least RCU_SECONDS_TILL_STALL_CHECK has
+		 * passed since the last update.
+		 */
+		if (ULONG_CMP_GE(js, gp_start) &&
+				(j - gp_start >= RCU_SECONDS_TILL_STALL_CHECK))
+			print_cpu_stall(rsp);
 
 	} else if (rcu_gp_in_progress(rsp) &&
 		   ULONG_CMP_GE(j, js + RCU_STALL_RAT_DELAY)) {
+		unsigned long gp_start = ACCESS_ONCE(rsp->gp_start);
 
 		/* They had a few time units to dump stack, so complain. */
-		print_other_cpu_stall(rsp);
+		if (ULONG_CMP_GE(js, gp_start) &&
+				(j - gp_start >= RCU_SECONDS_TILL_STALL_CHECK))
+			print_other_cpu_stall(rsp);
+
 	}
 }
 

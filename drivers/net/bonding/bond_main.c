@@ -504,7 +504,7 @@ static void bond_vlan_rx_kill_vid(struct net_device *bond_dev, uint16_t vid)
 		const struct net_device_ops *slave_ops = slave_dev->netdev_ops;
 
 		if ((slave_dev->features & NETIF_F_HW_VLAN_FILTER) &&
-		    slave_ops->ndo_vlan_rx_kill_vid) {
+		    slave_ops->ndo_vlan_rx_kill_vid && bond->vlgrp) {
 			/* Save and then restore vlan_dev in the grp array,
 			 * since the slave's driver might clear it.
 			 */

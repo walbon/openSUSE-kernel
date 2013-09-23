@@ -46,7 +46,6 @@
  * @bearer: ptr to associated "generic" bearer structure
  * @dev: ptr to associated Ethernet network device
  * @tipc_packet_type: used in binding TIPC to Ethernet driver
- * @setup: work item used when enabling bearer
  * @cleanup: work item used when disabling bearer
  */
 struct eth_bearer {

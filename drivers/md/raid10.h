@@ -48,7 +48,7 @@ struct r10_private_data_s {
 	struct list_head	retry_list;
 	/* queue pending writes and submit them on unplug */
 	struct bio_list		pending_bio_list;
-
+	int			pending_count;
 
 	spinlock_t		resync_lock;
 	int nr_pending;
