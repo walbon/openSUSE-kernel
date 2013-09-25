@@ -6,6 +6,7 @@
 #include <linux/blkdev.h>
 #include <linux/relay.h>
 #include <linux/compat.h>
+#include <linux/kref.h>
 #endif
 
 /*
@@ -162,6 +163,9 @@ struct blk_trace {
 	struct dentry *dropped_file;
 	struct dentry *msg_file;
 	atomic_t dropped;
+#ifndef __GENKSYMS__
+	struct kref kref;
+#endif
 };
 
 extern int blk_trace_ioctl(struct block_device *, unsigned, char __user *);
