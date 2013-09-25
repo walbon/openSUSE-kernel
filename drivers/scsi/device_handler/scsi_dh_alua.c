@@ -114,7 +114,7 @@ static void alua_check(struct scsi_device *sdev);
 static inline struct alua_dh_data *get_alua_data(struct scsi_device *sdev)
 {
 	struct scsi_dh_data *scsi_dh_data = sdev->scsi_dh_data;
-	BUG_ON(scsi_dh_data == NULL);
+
 	return ((struct alua_dh_data *) scsi_dh_data->buf);
 }
 
@@ -1019,6 +1019,9 @@ static int alua_set_params(struct scsi_device *sdev, const char *params)
 	const char *p = params;
 	int result = SCSI_DH_OK;
 
+	if (!h)
+		return -ENXIO;
+
 	if ((sscanf(params, "%u", &argc) != 1) || (argc != 1))
 		return -EINVAL;
 
@@ -1051,7 +1054,7 @@ static int alua_activate(struct scsi_device *sdev,
 	struct alua_dh_data *h = get_alua_data(sdev);
 	struct alua_queue_data *qdata;
 
-	if (!h->pg) {
+	if (!h || !h->pg) {
 		if (fn)
 			fn(data, SCSI_DH_NOSYS);
 		return 0;
@@ -1064,7 +1067,7 @@ static int alua_activate(struct scsi_device *sdev,
 		return 0;
 	}
 
-	qdata->h = get_alua_data(sdev);
+	qdata->h = h;
 	qdata->callback_fn = fn;
 	qdata->callback_data = data;
 
@@ -1082,7 +1085,8 @@ static void alua_check(struct scsi_device *sdev)
 {
 	struct alua_dh_data *h = get_alua_data(sdev);
 
-	alua_rtpg_queue(h->pg, sdev, NULL);
+	if (h && h->pg)
+		alua_rtpg_queue(h->pg, sdev, NULL);
 }
 
 /*
