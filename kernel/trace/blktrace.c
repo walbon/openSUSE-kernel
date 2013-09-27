@@ -275,32 +275,15 @@ record_it:
 static struct dentry *blk_tree_root;
 static DEFINE_MUTEX(blk_tree_mutex);
 
-/* This won't get called until relay_close is called */
-static void blk_trace_release(struct kref *kref)
+static void blk_trace_free(struct blk_trace *bt)
 {
-	struct blk_trace *bt = container_of(kref, struct blk_trace, kref);
 	debugfs_remove(bt->msg_file);
 	debugfs_remove(bt->dropped_file);
+	relay_close(bt->rchan);
 	debugfs_remove(bt->dir);
 	free_percpu(bt->sequence);
 	free_percpu(bt->msg_data);
 	kfree(bt);
-}
-
-static void blk_trace_free(struct blk_trace *bt)
-{
-	/*
-	 * The directory can't be removed until it's empty.
-	 * The debugfs files created directly can be removed while
-	 * they're open. The debugfs files created by relay won't
-	 * be removed until they've been released. This drops our
-	 * references to the files but the directory (and the rest
-	 * of the blk_trace structure) won't be cleaned up until
-	 * all of the relay files are closed by the user.
-	 */
-	relay_close(bt->rchan);
-	bt->rchan = NULL;
-	kref_put(&bt->kref, blk_trace_release);
 }
 
 static void blk_trace_cleanup(struct blk_trace *bt)
@@ -409,10 +392,8 @@ static int blk_subbuf_start_callback(struct rchan_buf *buf, void *subbuf,
 
 static int blk_remove_buf_file_callback(struct dentry *dentry)
 {
-	struct blk_trace *bt = dentry->d_parent->d_inode->i_private;
 	debugfs_remove(dentry);
 
-	kref_put(&bt->kref, blk_trace_release);
 	return 0;
 }
 
@@ -422,15 +403,8 @@ static struct dentry *blk_create_buf_file_callback(const char *filename,
 						   struct rchan_buf *buf,
 						   int *is_global)
 {
-	struct blk_trace *bt = parent->d_inode->i_private;
-	struct dentry *dentry;
-
-	dentry = debugfs_create_file(filename, mode, parent, buf,
-				     &relay_file_operations);
-	if (dentry)
-		kref_get(&bt->kref);
-
-	return dentry;
+	return debugfs_create_file(filename, mode, parent, buf,
+					&relay_file_operations);
 }
 
 static struct rchan_callbacks blk_relay_callbacks = {
@@ -485,8 +459,6 @@ int do_blk_trace_setup(struct request_queue *q, char *name, dev_t dev,
 	if (!bt)
 		return -ENOMEM;
 
-	kref_init(&bt->kref);
-
 	ret = -ENOMEM;
 	bt->sequence = alloc_percpu(unsigned long);
 	if (!bt->sequence)
@@ -512,8 +484,6 @@ int do_blk_trace_setup(struct request_queue *q, char *name, dev_t dev,
 
 	if (!dir)
 		goto err;
-
-	dir->d_inode->i_private = bt;
 
 	bt->dir = dir;
 	bt->dev = dev;
