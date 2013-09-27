@@ -1271,6 +1271,7 @@ restart:
 			 * have been a b-tree.
 			 */
 			xfs_da_state_free(state);
+			state = NULL;
 			xfs_bmap_init(args->flist, args->firstblock);
 			error = xfs_attr_leaf_to_node(args);
 			if (!error) {
@@ -2110,9 +2111,8 @@ xfs_attr_rmtval_set(xfs_da_args_t *args)
 
 		bp = xfs_buf_get(mp->m_ddev_targp, dblkno, blkcnt,
 				 XBF_LOCK | XBF_DONT_BLOCK);
-		ASSERT(bp);
-		ASSERT(!XFS_BUF_GETERROR(bp));
-
+		if (!bp)
+			return ENOMEM;
 		tmp = (valuelen < XFS_BUF_SIZE(bp)) ? valuelen :
 							XFS_BUF_SIZE(bp);
 		xfs_buf_iomove(bp, 0, tmp, src, XBRW_WRITE);
