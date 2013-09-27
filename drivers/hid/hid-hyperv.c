@@ -590,7 +590,6 @@ static void __exit mousevsc_exit(void)
 }
 
 MODULE_LICENSE("GPL");
-MODULE_VERSION(HV_DRV_VERSION);
 /* bind to old driver to simplify upgrade path */
 MODULE_ALIAS("hv_mouse");
 module_init(mousevsc_init);

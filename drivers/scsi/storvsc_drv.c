@@ -1878,7 +1878,6 @@ static void __exit storvsc_drv_exit(void)
 }
 
 MODULE_LICENSE("GPL");
-MODULE_VERSION(HV_DRV_VERSION);
 MODULE_DESCRIPTION("Microsoft Hyper-V virtual storage driver");
 /* bind to old driver to simplify upgrade path */
 MODULE_ALIAS("hv_blkvsc");
