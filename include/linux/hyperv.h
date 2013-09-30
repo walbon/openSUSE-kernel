@@ -30,10 +30,13 @@
 /*
  * Framework version for util services.
  */
+#define UTIL_FW_MINOR  0
+
+#define UTIL_WS2K8_FW_MAJOR  1
+#define UTIL_WS2K8_FW_VERSION     (UTIL_WS2K8_FW_MAJOR << 16 | UTIL_FW_MINOR)
 
 #define UTIL_FW_MAJOR  3
-#define UTIL_FW_MINOR  0
-#define UTIL_FW_MAJOR_MINOR     (UTIL_FW_MAJOR << 16 | UTIL_FW_MINOR)
+#define UTIL_FW_VERSION     (UTIL_FW_MAJOR << 16 | UTIL_FW_MINOR)
 
 /*
  * An implementation of HyperV key value pair (KVP) functionality for Linux.
@@ -1150,7 +1153,9 @@ struct hyperv_service_callback {
 };
 
 #define MAX_SRV_VER	0x7ffffff
-extern bool vmbus_prep_negotiate_resp(struct icmsg_hdr *, u8 *, bool, int, int);
+extern bool vmbus_prep_negotiate_resp(struct icmsg_hdr *,
+					struct icmsg_negotiate *, u8 *, int,
+					int);
 
 int hv_kvp_init(struct hv_util_service *);
 void hv_kvp_deinit(void);
