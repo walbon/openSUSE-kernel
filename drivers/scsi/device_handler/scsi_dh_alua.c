@@ -93,7 +93,9 @@ struct alua_dh_data {
 	struct alua_port_group	*pg;
 	int			rel_port;
 	int			tpgs;
+	int			error;
 	unsigned		flags; /* used for optimizing STPG */
+	struct completion       init_complete;
 };
 
 struct alua_queue_data {
@@ -359,10 +361,16 @@ static int alua_check_tpgs(struct scsi_device *sdev, struct alua_dh_data *h)
 		sdev_printk(KERN_INFO, sdev, "%s: supports implicit TPGS\n",
 			    ALUA_DH_NAME);
 		break;
-	default:
-		h->tpgs = TPGS_MODE_NONE;
+	case 0:
 		sdev_printk(KERN_INFO, sdev, "%s: not supported\n",
 			    ALUA_DH_NAME);
+		err = SCSI_DH_DEV_UNSUPP;
+		break;
+	default:
+		sdev_printk(KERN_INFO, sdev,
+			    "%s: unsupported TPGS setting %d\n",
+			    ALUA_DH_NAME, h->tpgs);
+		h->tpgs = TPGS_MODE_NONE;
 		err = SCSI_DH_DEV_UNSUPP;
 		break;
 	}
@@ -988,19 +996,21 @@ static void alua_rtpg_queue(struct alua_port_group *pg,
  */
 static int alua_initialize(struct scsi_device *sdev, struct alua_dh_data *h)
 {
-	int err;
-
-	err = alua_check_tpgs(sdev, h);
-	if (err != SCSI_DH_OK)
+	h->error = alua_check_tpgs(sdev, h);
+	if (h->error == SCSI_DH_OK) {
+		h->error = alua_vpd_inquiry(sdev, h);
+		if (!h->pg) {
+			h->tpgs = TPGS_MODE_NONE;
+			if (h->error == SCSI_DH_OK)
+				h->error = SCSI_DH_IO;
+		}
+	}
+	complete(&h->init_complete);
+	if (h->error != SCSI_DH_OK)
 		goto out;
-
-	err = alua_vpd_inquiry(sdev, h);
-	if (err != SCSI_DH_OK || !h->pg)
-		goto out;
-
 	alua_rtpg_queue(h->pg, sdev, NULL);
 out:
-	return err;
+	return h->error;
 }
 
 /*
@@ -1054,10 +1064,19 @@ static int alua_activate(struct scsi_device *sdev,
 	struct alua_dh_data *h = get_alua_data(sdev);
 	struct alua_queue_data *qdata;
 
-	if (!h || !h->pg) {
+	if (!h) {
 		if (fn)
 			fn(data, SCSI_DH_NOSYS);
 		return 0;
+	}
+
+	if (!h->pg) {
+		wait_for_completion(&h->init_complete);
+		if (!h->pg) {
+			if (fn)
+				fn(data, h->error);
+			return 0;
+		}
 	}
 
 	qdata = kzalloc(sizeof(*qdata), GFP_KERNEL);
@@ -1162,7 +1181,8 @@ static int alua_bus_attach(struct scsi_device *sdev)
 	h->tpgs = TPGS_MODE_UNINITIALIZED;
 	h->pg = NULL;
 	h->rel_port = -1;
-
+	h->error = SCSI_DH_OK;
+	init_completion(&h->init_complete);
 	err = alua_initialize(sdev, h);
 	if ((err != SCSI_DH_OK) && (err != SCSI_DH_DEV_OFFLINED))
 		goto failed;
