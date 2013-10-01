@@ -706,7 +706,6 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 {
 	unsigned char sense[SCSI_SENSE_BUFFERSIZE];
 	struct scsi_sense_hdr sense_hdr;
-	struct alua_port_group *tmp_pg;
 	int len, k, off;
 	unsigned char *ucp;
 	unsigned err, retval;
@@ -807,24 +806,13 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 	     k < len;
 	     k += off, ucp += off) {
 
-		spin_lock(&port_group_lock);
-		list_for_each_entry(tmp_pg, &port_group_list, node) {
-			if (tmp_pg->target_id_size != pg->target_id_size)
-				continue;
-			if (memcmp(tmp_pg->target_id, pg->target_id,
-				   pg->target_id_size))
-				continue;
-			if (tmp_pg->group_id == (ucp[2] << 8) + ucp[3]) {
-				if (tmp_pg->state != (ucp[0] & 0x0f)) {
-					spin_lock(&tmp_pg->rtpg_lock);
-					tmp_pg->state = ucp[0] & 0x0f;
-					tmp_pg->pref = ucp[0] >> 7;
-					tmp_pg->valid = ucp[1];
-					spin_unlock(&tmp_pg->rtpg_lock);
-				}
-			}
+		if (pg->group_id == (ucp[2] << 8) + ucp[3]) {
+			spin_lock(&pg->rtpg_lock);
+			pg->state = ucp[0] & 0x0f;
+			pg->pref = ucp[0] >> 7;
+			pg->valid = ucp[1];
+			spin_unlock(&pg->rtpg_lock);
 		}
-		spin_unlock(&port_group_lock);
 		off = 8 + (ucp[7] * 4);
 	}
 
