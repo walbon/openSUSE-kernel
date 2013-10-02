@@ -507,6 +507,17 @@ megasas_check_reset_ppc(struct megasas_instance *instance,
 	return 0;
 }
 
+/**
+ * megasas_adp_reset_ppc -  For controller reset
+ * @regs:                              MFI register set
+ */
+static int
+megasas_adp_reset_ppc(struct megasas_instance *instance,
+	struct megasas_register_set __iomem *regs)
+{
+	return 0;
+}
+
 static struct megasas_instance_template megasas_instance_template_ppc = {
 
 	.fire_cmd = megasas_fire_cmd_ppc,
@@ -514,7 +525,7 @@ static struct megasas_instance_template megasas_instance_template_ppc = {
 	.disable_intr = megasas_disable_intr_ppc,
 	.clear_intr = megasas_clear_intr_ppc,
 	.read_fw_status_reg = megasas_read_fw_status_reg_ppc,
-	.adp_reset = megasas_adp_reset_xscale,
+	.adp_reset = megasas_adp_reset_ppc,
 	.check_reset = megasas_check_reset_ppc,
 	.service_isr = megasas_isr,
 	.tasklet = megasas_complete_cmd_dpc,
