@@ -1066,7 +1066,11 @@ struct perf_cpu_context {
 	int				exclusive;
 	struct list_head		rotation_list;
 	int				jiffies_interval;
+#ifdef __GENKSYMS__
 	struct pmu			*active_pmu;
+#else
+	struct pmu			*unique_pmu;
+#endif
 	struct perf_cgroup		*cgrp;
 };
 
