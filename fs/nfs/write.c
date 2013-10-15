@@ -717,9 +717,17 @@ int nfs_flush_incompatible(struct file *file, struct page *page)
 		req = nfs_page_find_request(page);
 		if (req == NULL)
 			return 0;
-		do_flush = req->wb_page != page || req->wb_context != ctx ||
-			req->wb_lock_context->lockowner != current->files ||
-			req->wb_lock_context->pid != current->tgid;
+		do_flush = req->wb_page != page;
+		if (req->wb_context != ctx)
+			do_flush |=
+				(req->wb_context->path.mnt != ctx->path.mnt ||
+				 req->wb_context->path.dentry != ctx->path.dentry ||
+				 req->wb_context->cred != ctx->cred );
+		if (req->wb_context->state || ctx->state)
+			do_flush |=
+				(req->wb_lock_context->lockowner != current->files ||
+				 req->wb_lock_context->pid != current->tgid);
+
 		nfs_release_request(req);
 		if (!do_flush)
 			return 0;
