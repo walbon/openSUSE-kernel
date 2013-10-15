@@ -7,6 +7,7 @@
 #include <linux/relay.h>
 #include <linux/compat.h>
 #include <linux/kref.h>
+#include <linux/list.h>
 #endif
 
 /*
@@ -164,6 +165,7 @@ struct blk_trace {
 	struct dentry *msg_file;
 	atomic_t dropped;
 #ifndef __GENKSYMS__
+	struct list_head running_list;
 	struct kref kref;
 #endif
 };
