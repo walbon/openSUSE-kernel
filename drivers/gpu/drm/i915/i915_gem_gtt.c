@@ -354,7 +354,8 @@ static void undo_idling(struct drm_i915_private *dev_priv, bool interruptible)
 
 static void i915_ggtt_clear_range(struct drm_device *dev,
 				 unsigned first_entry,
-				 unsigned num_entries)
+				  unsigned num_entries,
+				  bool use_scratch)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	gtt_pte_t scratch_pte;
@@ -373,9 +374,57 @@ static void i915_ggtt_clear_range(struct drm_device *dev,
 		num_entries = max_entries;
 
 	scratch_pte = pte_encode(dev, dev_priv->mm.gtt->scratch_page_dma, I915_CACHE_LLC);
+	if (!use_scratch)
+		scratch_pte &= ~GEN6_PTE_VALID;
 	for (i = 0; i < num_entries; i++)
 		iowrite32(scratch_pte, &gtt_base[i]);
 	readl(gtt_base);
+}
+
+void i915_check_and_clear_faults(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct intel_ring_buffer *ring;
+	int i;
+
+	if (INTEL_INFO(dev)->gen < 6)
+		return;
+
+	for_each_ring(ring, dev_priv, i) {
+		u32 fault_reg;
+		fault_reg = I915_READ(RING_FAULT_REG(ring));
+		if (fault_reg & RING_FAULT_VALID) {
+			DRM_DEBUG_DRIVER("Unexpected fault\n"
+					 "\tAddr: 0x%08lx\\n"
+					 "\tAddress space: %s\n"
+					 "\tSource ID: %d\n"
+					 "\tType: %d\n",
+					 fault_reg & PAGE_MASK,
+					 fault_reg & RING_FAULT_GTTSEL_MASK ? "GGTT" : "PPGTT",
+					 RING_FAULT_SRCID(fault_reg),
+					 RING_FAULT_FAULT_TYPE(fault_reg));
+			I915_WRITE(RING_FAULT_REG(ring),
+				   fault_reg & ~RING_FAULT_VALID);
+		}
+	}
+	POSTING_READ(RING_FAULT_REG(&dev_priv->ring[RCS]));
+}
+
+void i915_gem_suspend_gtt_mappings(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	/* Don't bother messing with faults pre GEN6 as we have little
+	 * documentation supporting that it's a good idea.
+	 */
+	if (INTEL_INFO(dev)->gen < 6)
+		return;
+
+	i915_check_and_clear_faults(dev);
+
+	i915_ggtt_clear_range(dev, dev_priv->mm.gtt_start / PAGE_SIZE,
+			      (dev_priv->mm.gtt_end - dev_priv->mm.gtt_start) / PAGE_SIZE,
+			      false);
 }
 
 void i915_gem_restore_gtt_mappings(struct drm_device *dev)
@@ -383,9 +432,12 @@ void i915_gem_restore_gtt_mappings(struct drm_device *dev)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct drm_i915_gem_object *obj;
 
+	i915_check_and_clear_faults(dev);
+
 	/* First fill our portion of the GTT with scratch pages */
 	i915_ggtt_clear_range(dev, dev_priv->mm.gtt_start / PAGE_SIZE,
-			      (dev_priv->mm.gtt_end - dev_priv->mm.gtt_start) / PAGE_SIZE);
+			      (dev_priv->mm.gtt_end - dev_priv->mm.gtt_start) / PAGE_SIZE,
+			      true);
 
 	list_for_each_entry(obj, &dev_priv->mm.bound_list, gtt_list) {
 		i915_gem_clflush_object(obj);
@@ -478,7 +530,8 @@ void i915_gem_gtt_unbind_object(struct drm_i915_gem_object *obj)
 {
 	i915_ggtt_clear_range(obj->base.dev,
 			      obj->gtt_space->start >> PAGE_SHIFT,
-			      obj->base.size >> PAGE_SHIFT);
+			      obj->base.size >> PAGE_SHIFT,
+			      true);
 
 	obj->has_global_gtt_mapping = 0;
 }
@@ -557,11 +610,12 @@ void i915_gem_init_global_gtt(struct drm_device *dev,
 			      hole_start, hole_end);
 		i915_ggtt_clear_range(dev,
 				      hole_start / PAGE_SIZE,
-				      (hole_end-hole_start) / PAGE_SIZE);
+				      (hole_end-hole_start) / PAGE_SIZE,
+				      true);
 	}
 
 	/* And finally clear the reserved guard page */
-	i915_ggtt_clear_range(dev, end / PAGE_SIZE - 1, 1);
+	i915_ggtt_clear_range(dev, end / PAGE_SIZE - 1, 1, true);
 }
 
 static int setup_scratch_page(struct drm_device *dev)
