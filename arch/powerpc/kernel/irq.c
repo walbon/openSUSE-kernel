@@ -286,50 +286,6 @@ void migrate_irqs(void)
 }
 #endif
 
-static inline void handle_one_irq(unsigned int irq)
-{
-	struct thread_info *curtp, *irqtp;
-	unsigned long saved_sp_limit;
-	struct irq_desc *desc;
-
-	desc = irq_to_desc(irq);
-	if (!desc)
-		return;
-
-	/* Switch to the irq stack to handle this */
-	curtp = current_thread_info();
-	irqtp = hardirq_ctx[smp_processor_id()];
-
-	if (curtp == irqtp) {
-		/* We're already on the irq stack, just handle it */
-		desc->handle_irq(irq, desc);
-		return;
-	}
-
-	saved_sp_limit = current->thread.ksp_limit;
-
-	irqtp->task = curtp->task;
-	irqtp->flags = 0;
-
-	/* Copy the softirq bits in preempt_count so that the
-	 * softirq checks work in the hardirq context. */
-	irqtp->preempt_count = (irqtp->preempt_count & ~SOFTIRQ_MASK) |
-			       (curtp->preempt_count & SOFTIRQ_MASK);
-
-	current->thread.ksp_limit = (unsigned long)irqtp +
-		_ALIGN_UP(sizeof(struct thread_info), 16);
-
-	call_handle_irq(irq, desc, irqtp, desc->handle_irq);
-	current->thread.ksp_limit = saved_sp_limit;
-	irqtp->task = NULL;
-
-	/* Set any flag that may have been set on the
-	 * alternate stack
-	 */
-	if (irqtp->flags)
-		set_bits(irqtp->flags, &curtp->flags);
-}
-
 static inline void check_stack_overflow(void)
 {
 #ifdef CONFIG_DEBUG_STACKOVERFLOW
@@ -346,26 +302,25 @@ static inline void check_stack_overflow(void)
 #endif
 }
 
-void do_IRQ(struct pt_regs *regs)
+void __do_irq(struct pt_regs *regs)
 {
-	struct pt_regs *old_regs = set_irq_regs(regs);
+	struct irq_desc *desc;
 	unsigned int irq;
 
-	trace_irq_entry(regs);
-
 	irq_enter();
+
+	trace_irq_entry(regs);
 
 	check_stack_overflow();
 
 	irq = ppc_md.get_irq();
 
-	if (irq != NO_IRQ && irq != NO_IRQ_IGNORE)
-		handle_one_irq(irq);
-	else if (irq != NO_IRQ_IGNORE)
+	if (irq != NO_IRQ && irq != NO_IRQ_IGNORE) {
+		desc = irq_to_desc(irq);
+                if (likely(desc))
+                        desc->handle_irq(irq, desc);
+	} else if (irq != NO_IRQ_IGNORE)
 		__get_cpu_var(irq_stat).spurious_irqs++;
-
-	irq_exit();
-	set_irq_regs(old_regs);
 
 #ifdef CONFIG_PPC_ISERIES
 	if (firmware_has_feature(FW_FEATURE_ISERIES) &&
@@ -377,6 +332,45 @@ void do_IRQ(struct pt_regs *regs)
 #endif
 
 	trace_irq_exit(regs);
+
+	irq_exit();
+}
+
+void do_IRQ(struct pt_regs *regs)
+{
+        struct pt_regs *old_regs = set_irq_regs(regs);
+        struct thread_info *curtp, *irqtp, *sirqtp;
+
+        /* Switch to the irq stack to handle this */
+        curtp = current_thread_info();
+        irqtp = hardirq_ctx[raw_smp_processor_id()];
+        sirqtp = softirq_ctx[raw_smp_processor_id()];
+
+        /* Already there ? */
+        if (unlikely(curtp == irqtp || curtp == sirqtp)) {
+                __do_irq(regs);
+                set_irq_regs(old_regs);
+                return;
+        }
+
+        /* Prepare the thread_info in the irq stack */
+        irqtp->task = curtp->task;
+        irqtp->flags = 0;
+
+        /* Copy the preempt_count so that the [soft]irq checks work. */
+        irqtp->preempt_count = curtp->preempt_count;
+
+        /* Switch stack and call */
+        call_do_irq(regs, irqtp);
+
+        /* Restore stack limit */
+        irqtp->task = NULL;
+
+        /* Copy back updates to the thread_info */
+        if (irqtp->flags)
+                set_bits(irqtp->flags, &curtp->flags);
+
+        set_irq_regs(old_regs);
 }
 
 void __init init_IRQ(void)
@@ -437,12 +431,10 @@ void irq_ctx_init(void)
 		memset((void *)softirq_ctx[i], 0, THREAD_SIZE);
 		tp = softirq_ctx[i];
 		tp->cpu = i;
-		tp->preempt_count = 0;
 
 		memset((void *)hardirq_ctx[i], 0, THREAD_SIZE);
 		tp = hardirq_ctx[i];
 		tp->cpu = i;
-		tp->preempt_count = HARDIRQ_OFFSET;
 	}
 }
 
