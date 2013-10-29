@@ -602,7 +602,11 @@ static DEFINE_SPINLOCK(aer_recover_ring_lock);
 static DECLARE_WORK(aer_recover_work, aer_recover_work_func);
 
 void aer_recover_queue(int domain, unsigned int bus, unsigned int devfn,
-		       int severity, struct aer_capability_regs *aer_regs)
+		       int severity
+#ifndef __GENKSYMS__
+		       , struct aer_capability_regs *aer_regs
+#endif
+		       )
 {
 	unsigned long flags;
 	struct aer_recover_entry entry = {
