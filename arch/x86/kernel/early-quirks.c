@@ -192,6 +192,37 @@ static void __init ati_bugs_contd(int num, int slot, int func)
 }
 #endif
 
+#ifdef CONFIG_IRQ_REMAP
+extern void set_intr_remapping_broken(void);
+
+static void __init intel_remapping_check(int num, int slot, int func)
+{
+	u8 revision;
+	u16 device;
+
+	device = read_pci_config_16(num, slot, func, PCI_DEVICE_ID);
+	revision = read_pci_config_byte(num, slot, func, PCI_REVISION_ID);
+
+	/*
+ 	 * Revision 13 of all triggering devices id in this quirk have
+	 * a problem draining interrupts when irq remapping is enabled,
+	 * and should be flagged as broken.  Additionally revisions 0x12
+	 * and 0x22 of device id 0x3405 has this problem.
+	 */
+	if (revision == 0x13)
+		set_intr_remapping_broken();
+	else if ((device == 0x3405) &&
+	    ((revision == 0x12) ||
+	     (revision == 0x22)))
+		set_intr_remapping_broken();
+
+}
+#else  /* CONFIG_IRQ_REMAP */
+static void __init intel_remapping_check(int num, int slot, int func)
+{
+}
+#endif /* CONFIG_IRQ_REMAP */
+
 #define QFLAG_APPLY_ONCE 	0x1
 #define QFLAG_APPLIED		0x2
 #define QFLAG_DONE		(QFLAG_APPLY_ONCE|QFLAG_APPLIED)
@@ -221,6 +252,12 @@ static struct chipset early_qrk[] __initdata = {
 	  PCI_CLASS_SERIAL_SMBUS, PCI_ANY_ID, 0, ati_bugs },
 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_SBX00_SMBUS,
 	  PCI_CLASS_SERIAL_SMBUS, PCI_ANY_ID, 0, ati_bugs_contd },
+	{ PCI_VENDOR_ID_INTEL, 0x3403, PCI_CLASS_BRIDGE_HOST,
+	  PCI_BASE_CLASS_BRIDGE, 0, intel_remapping_check },
+	{ PCI_VENDOR_ID_INTEL, 0x3405, PCI_CLASS_BRIDGE_HOST,
+	  PCI_BASE_CLASS_BRIDGE, 0, intel_remapping_check },
+	{ PCI_VENDOR_ID_INTEL, 0x3406, PCI_CLASS_BRIDGE_HOST,
+	  PCI_BASE_CLASS_BRIDGE, 0, intel_remapping_check },
 	{}
 };
 
