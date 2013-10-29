@@ -251,7 +251,7 @@ void __init setup_log_buf(int early)
 		if (len) {
 			nmi_log_buf = alloc_log_buf(early, len);
 			if (!nmi_log_buf)
-				pr_err("%ld bytes not available for nmi ring buffer\n",
+				pr_err("%u bytes not available for nmi ring buffer\n",
 					len);
 			else {
 				nmi_log_buf_len = len;
