@@ -21,6 +21,7 @@ static int ir_ioapic_num, ir_hpet_num;
 int intr_remapping_enabled;
 
 static int disable_intremap;
+static int intremap_broken;
 static int disable_sourceid_checking;
 static int no_x2apic_optout;
 
@@ -520,12 +521,27 @@ static int __init dmar_x2apic_optout(void)
 	return dmar->flags & DMAR_X2APIC_OPT_OUT;
 }
 
+void set_intr_remapping_broken(void)
+{
+	intremap_broken = 1;
+}
+
 int __init intr_remapping_supported(void)
 {
 	struct dmar_drhd_unit *drhd;
 
 	if (disable_intremap)
 		return 0;
+	if (intremap_broken) {
+		printk(KERN_WARNING
+			"This system BIOS has enabled interrupt remapping\n"
+			"on a chipset that contains an erratum making that\n"
+			"feature unstable.  To maintain system stability\n"
+			"interrupt remapping should be disabled.  You can\n"
+			"do so by booting with parameter intremap=off.  Please\n"
+			"contact your BIOS vendor for an update\n");
+		add_taint(TAINT_FIRMWARE_WORKAROUND);
+	}
 
 	if (!dmar_ir_support())
 		return 0;
