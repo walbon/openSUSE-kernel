@@ -818,6 +818,8 @@ static void xs_close(struct rpc_xprt *xprt)
 
 	dprintk("RPC:       xs_close xprt %p\n", xprt);
 
+	cancel_delayed_work_sync(&transport->connect_worker);
+
 	xs_reset_transport(transport);
 	xprt->reestablish_timeout = 0;
 
@@ -844,11 +846,7 @@ static void xs_tcp_close(struct rpc_xprt *xprt)
  */
 static void xs_destroy(struct rpc_xprt *xprt)
 {
-	struct sock_xprt *transport = container_of(xprt, struct sock_xprt, xprt);
-
 	dprintk("RPC:       xs_destroy xprt %p\n", xprt);
-
-	cancel_delayed_work_sync(&transport->connect_worker);
 
 	xs_close(xprt);
 	xs_free_peer_addresses(xprt);
