@@ -57,10 +57,7 @@ extern void cper_print_aer(struct pci_dev *dev,
 			   int cper_severity, struct aer_capability_regs *aer);
 extern int cper_severity_to_aer(int cper_severity);
 extern void aer_recover_queue(int domain, unsigned int bus, unsigned int devfn,
-			      int severity
-#ifndef __GENKSYMS__
-			      , struct aer_capability_regs *aer_regs
-#endif
-			      );
+			      int severity,
+			      struct aer_capability_regs *aer_regs);
 #endif //_AER_H_
 
