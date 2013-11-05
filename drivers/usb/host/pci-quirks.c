@@ -830,6 +830,20 @@ void usb_enable_xhci_ports(struct pci_dev *xhci_pdev)
 #if defined(CONFIG_USB_XHCI_HCD) || defined(CONFIG_USB_XHCI_HCD_MODULE)
 	u32		ports_available;
 	const struct dmi_system_id	*id;
+	bool            ehci_found = false;
+	struct pci_dev  *companion = NULL;
+
+	/* make sure an intel EHCI controller exists */
+	for_each_pci_dev(companion) {
+		if (companion->class == PCI_CLASS_SERIAL_USB_EHCI &&
+		companion->vendor == PCI_VENDOR_ID_INTEL) {
+			ehci_found = true;
+			break;
+		}
+	}
+
+	if (!ehci_found)
+		return;
 
 	/* Read USB3PRM, the USB 3.0 Port Routing Mask Register
 	 * Indicate the ports that can be changed from OS.
@@ -978,7 +992,7 @@ static void __devinit quirk_usb_handoff_xhci(struct pci_dev *pdev)
 	writel(val, base + ext_cap_offset + XHCI_LEGACY_CONTROL_OFFSET);
 
 hc_init:
-	if (usb_is_intel_switchable_xhci(pdev))
+	if (pdev->vendor == PCI_VENDOR_ID_INTEL)
 		usb_enable_xhci_ports(pdev);
 
 	op_reg_base = base + XHCI_HC_LENGTH(readl(base));
