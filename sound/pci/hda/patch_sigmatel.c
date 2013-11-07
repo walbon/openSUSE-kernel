@@ -3307,7 +3307,7 @@ static int stac92xx_capture_sw_put_led(struct snd_kcontrol *kcontrol,
 	bool mute;
 
 	err = snd_hda_mixer_amp_switch_put(kcontrol, ucontrol);
-	if (err <= 0)
+	if (err < 0)
 		return err;
 	mute = !(ucontrol->value.integer.value[0] &&
 		 ucontrol->value.integer.value[1]);
