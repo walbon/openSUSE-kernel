@@ -73,6 +73,11 @@ struct hv_ops {
 	int (*notifier_add)(struct hvc_struct *hp, int irq);
 	void (*notifier_del)(struct hvc_struct *hp, int irq);
 	void (*notifier_hangup)(struct hvc_struct *hp, int irq);
+#ifdef CONFIG_HVC_IUCV
+
+	/* Callbacks to handle tty ports */
+	void (*dtr_rts)(struct hvc_struct *hp, int raise);
+#endif /* CONFIG_HVC_IUCV */
 };
 
 /* Register a vterm and a slot index for use as a console (console_init) */
