@@ -9,6 +9,9 @@
 #include <linux/pfn.h>
 #include <linux/suspend.h>
 #include <asm/system.h>
+#include <asm/ipl.h>
+#include <asm/cio.h>
+#include <asm/pci.h>
 
 unsigned long suspend_zero_pages;
 
@@ -93,4 +96,12 @@ void restore_processor_state(void)
 	/* Enable lowcore protection */
 	__ctl_set_bit(0,28);
 	local_mcck_enable();
+}
+
+/* Called at the end of swsusp_arch_resume */
+void s390_early_resume(void)
+{
+	lgr_info_log();
+	channel_subsystem_reinit();
+	zpci_rescan();
 }

@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <asm/page.h>
+#include <asm/pci_io.h>
 
 /*
  * Change virtual addresses to physical addresses and vv.
@@ -77,18 +78,18 @@ static inline void iounmap(volatile void __iomem *addr)
 #define pci_iomap pci_iomap
 #define pci_iounmap pci_iounmap
 
-#define memcpy_fromio(dst, src, count)	do { } while (0)
-#define memcpy_toio(dst, src, count)	do { } while (0)
-#define memset_io(dst, val, count)	do { } while (0)
+#define memcpy_fromio(dst, src, count)	zpci_memcpy_fromio(dst, src, count)
+#define memcpy_toio(dst, src, count)	zpci_memcpy_toio(dst, src, count)
+#define memset_io(dst, val, count)	zpci_memset_io(dst, val, count)
 
-#define __raw_readb(addr)	(0)
-#define __raw_readw(addr)	(0)
-#define __raw_readl(addr)	(0)
-#define __raw_readq(addr)	(0)
-#define __raw_writeb(addr,val)	do { } while (0)
-#define __raw_writew(addr,val)	do { } while (0)
-#define __raw_writel(addr,val)	do { } while (0)
-#define __raw_writeq(addr,val)	do { } while (0)
+#define __raw_readb	zpci_read_u8
+#define __raw_readw	zpci_read_u16
+#define __raw_readl	zpci_read_u32
+#define __raw_readq	zpci_read_u64
+#define __raw_writeb	zpci_write_u8
+#define __raw_writew	zpci_write_u16
+#define __raw_writel	zpci_write_u32
+#define __raw_writeq	zpci_write_u64
 
 #define readb_relaxed	readb
 #define readw_relaxed	readw

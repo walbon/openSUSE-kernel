@@ -55,6 +55,8 @@ static const struct irq_class intrclass_names[] = {
 	{.name = "CTC", .desc = "[I/O] CTC" },
 	{.name = "APB", .desc = "[I/O] AP Bus" },
 	{.name = "ADM", .desc = "[I/O] EADM Subchannel" },
+	{.name = "PCI", .desc = "[I/O] PCI Interrupt" },
+	{.name = "MSI", .desc = "[I/O] MSI Interrupt" },
 	{.name = "NMI", .desc = "[NMI] Machine Check" },
 	{.name = "VIR", .desc = "[I/O] Virtual I/O Devices"},
 };
