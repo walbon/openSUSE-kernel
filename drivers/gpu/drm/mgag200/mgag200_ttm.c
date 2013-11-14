@@ -373,15 +373,21 @@ int mgag200_bo_pin(struct mgag200_bo *bo, u32 pl_flag, u64 *gpu_addr)
 {
 	int i, ret;
 
-	if (!bo->pin_count) {
-		mgag200_ttm_placement(bo, pl_flag);
-		for (i = 0; i < bo->placement.num_placement; i++)
-			bo->placements[i] |= TTM_PL_FLAG_NO_EVICT;
-		ret = ttm_bo_validate(&bo->bo, &bo->placement, false, false, false);
-		if (ret)
-			return ret;
+	if (bo->pin_count) {
+		bo->pin_count++;
+		if (gpu_addr)
+			*gpu_addr = mgag200_bo_gpu_offset(bo);
+		return 0;
 	}
-	bo->pin_count++;
+
+	mgag200_ttm_placement(bo, pl_flag);
+	for (i = 0; i < bo->placement.num_placement; i++)
+		bo->placements[i] |= TTM_PL_FLAG_NO_EVICT;
+	ret = ttm_bo_validate(&bo->bo, &bo->placement, false, false, false);
+	if (ret)
+		return ret;
+
+	bo->pin_count = 1;
 	if (gpu_addr)
 		*gpu_addr = mgag200_bo_gpu_offset(bo);
 	return 0;
