@@ -37,13 +37,16 @@ struct cpuidle_state {
 	unsigned int	exit_latency; /* in US */
 	unsigned int	power_usage; /* in mW */
 	unsigned int	target_residency; /* in US */
-	unsigned int    disable;
 
 	unsigned long long	usage;
 	unsigned long long	time; /* in US */
 
 	int (*enter)	(struct cpuidle_device *dev,
 			 struct cpuidle_state *state);
+
+#ifndef __GENKSYMS__
+	unsigned int    disable;
+#endif
 };
 
 /* Idle State Flags */
