@@ -1113,6 +1113,20 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	printed_len = finish_printk(buf, printed_len, in_nmi_delayed_printk);
 
 	/*
+	 * Make sure to release the correct ringbuf lock from NMI context.
+	 * non-NMI context keeps the lock held for the console locking
+	 * magic.
+	 */
+	if (in_nmi()) {
+		if (!in_nmi_delayed_printk) {
+			printk_cpu = UINT_MAX;
+			spin_unlock(&logbuf_lock);
+		} else {
+			spin_unlock(&nmi_logbuf_lock);
+		}
+	}
+
+	/*
 	 * Try to acquire and then immediately release the
 	 * console semaphore. The release will do all the
 	 * actual magic (print out buffers, wake up klogd,
@@ -1125,29 +1139,41 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	 * This whole magic is not allowed from nmi context as
 	 * console_unlock re-takes logbuf_lock and other locks
 	 * from follow-up paths.
+	 *
+	 * However we have to be able to handle oopses from NMI context
+	 * as well so all the printk locks have to be forcefully dropped
+	 * just in case a holder was preempted by NMI and console magic
+	 * has to be done anyway otherwise we would loose the last messages.
 	 */
-	if (!in_nmi_delayed_printk) {
-		printk_cpu = UINT_MAX;
+	if (!in_nmi() || oops_in_progress) {
 		if (in_nmi()) {
-			spin_unlock(&logbuf_lock);
-		} else {
-			if (console_trylock_for_printk(this_cpu))
-				console_unlock();
-
+			zap_locks();
 			/*
-			 * We are calling this outside of the lock just to make
-			 * sure that the printk which raced with NMI had a
-			 * chance to do some progress since it has been
-			 * interrupted.
-			 * Do not try to handle pending NMI messages from NMI as
-			 * we would need to take logbuf_lock and we could
-			 * deadlock.
+			 * We managed to race with somebody so bail out
+			 * and hope it will flush the buffers properly
 			 */
-			handle_nmi_delayed_printk();
+			if (!spin_trylock(&logbuf_lock)) {
+				lockdep_on();
+				goto out_restore_irqs;
+			}
+		} else {
+			printk_cpu = UINT_MAX;
 		}
-	} else
-		spin_unlock(&nmi_logbuf_lock);
 
+		if (console_trylock_for_printk(this_cpu))
+			console_unlock();
+
+		/*
+		 * We are calling this outside of the lock just to make
+		 * sure that the printk which raced with NMI had a
+		 * chance to do some progress since it has been
+		 * interrupted.
+		 * Do not try to handle pending NMI messages from NMI as
+		 * we would need to take logbuf_lock and we could
+		 * deadlock.
+		 */
+		handle_nmi_delayed_printk();
+	}
 	lockdep_on();
 out_restore_irqs:
 	raw_local_irq_restore(flags);
