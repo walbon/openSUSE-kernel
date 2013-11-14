@@ -1266,6 +1266,24 @@ static void mga_crtc_destroy(struct drm_crtc *crtc)
 	kfree(mga_crtc);
 }
 
+static void mga_crtc_disable(struct drm_crtc *crtc)
+{
+	int ret;
+	DRM_DEBUG_KMS("\n");
+	mga_crtc_dpms(crtc, DRM_MODE_DPMS_OFF);
+	if (crtc->fb) {
+		struct mga_framebuffer *mga_fb = to_mga_framebuffer(crtc->fb);
+		struct drm_gem_object *obj = mga_fb->obj;
+		struct mgag200_bo *bo = gem_to_mga_bo(obj);
+		ret = mgag200_bo_reserve(bo, false);
+		if (ret)
+			return;
+		mgag200_bo_push_sysram(bo);
+		mgag200_bo_unreserve(bo);
+	}
+	crtc->fb = NULL;
+}
+
 /* These provide the minimum set of functions required to handle a CRTC */
 static const struct drm_crtc_funcs mga_crtc_funcs = {
 	.gamma_set = mga_crtc_gamma_set,
@@ -1274,6 +1292,7 @@ static const struct drm_crtc_funcs mga_crtc_funcs = {
 };
 
 static const struct drm_crtc_helper_funcs mga_helper_funcs = {
+	.disable = mga_crtc_disable,
 	.dpms = mga_crtc_dpms,
 	.mode_fixup = mga_crtc_mode_fixup,
 	.mode_set = mga_crtc_mode_set,
