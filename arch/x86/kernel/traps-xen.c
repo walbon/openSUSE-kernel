@@ -765,6 +765,7 @@ void math_state_restore(void)
 	/* NB. 'clts' is done for us by Xen during virtual trap. */
 	percpu_and(xen_x86_cr0, ~X86_CR0_TS);
 	if (!tsk_used_math(tsk)) {
+		stts();
 		local_irq_enable();
 		/*
 		 * does a slab alloc which can sleep
@@ -773,11 +774,11 @@ void math_state_restore(void)
 			/*
 			 * ran out of memory!
 			 */
-			stts();
 			do_group_exit(SIGKILL);
 			return;
 		}
 		local_irq_disable();
+		clts();
 	}
 
 	xen_thread_fpu_begin(tsk, NULL);
