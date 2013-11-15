@@ -245,9 +245,9 @@ static ssize_t store_state_##_name(struct cpuidle_state *state, \
 	if (err) \
 		return err; \
 	if (value) \
-		state->disable = 1; \
+		state->flags |= CPUIDLE_FLAG_DISABLE; \
 	else \
-		state->disable = 0; \
+		state->flags &= ~CPUIDLE_FLAG_DISABLE;	\
 	return size; \
 }
 
@@ -265,13 +265,18 @@ static ssize_t show_state_##_name(struct cpuidle_state *state, char *buf) \
 	return sprintf(buf, "%s\n", state->_name);\
 }
 
+/* Disable in SLE11 SP2/SP3 is done via flags, needs extra func */
+static ssize_t show_state_disable(struct cpuidle_state *state, char *buf)
+{
+        return sprintf(buf, "%u\n", !!(state->flags & CPUIDLE_FLAG_DISABLE));
+}
+
 define_show_state_function(exit_latency)
 define_show_state_function(power_usage)
 define_show_state_ull_function(usage)
 define_show_state_ull_function(time)
 define_show_state_str_function(name)
 define_show_state_str_function(desc)
-define_show_state_function(disable)
 define_store_state_function(disable)
 
 define_one_state_ro(name, show_state_name);

@@ -43,15 +43,15 @@ struct cpuidle_state {
 
 	int (*enter)	(struct cpuidle_device *dev,
 			 struct cpuidle_state *state);
-
-#ifndef __GENKSYMS__
-	unsigned int    disable;
-#endif
 };
 
 /* Idle State Flags */
 #define CPUIDLE_FLAG_TIME_VALID	(0x01) /* is residency time measurable? */
 #define CPUIDLE_FLAG_IGNORE	(0x100) /* ignore during this idle period */
+#define CPUIDLE_FLAG_DISABLE	(0x1000) /* State is disabled by user
+					    This is a SLE11 SP2,SP3 specific
+					    flag to avoid KABI breakage
+					 */
 
 #define CPUIDLE_DRIVER_FLAGS_MASK (0xFFFF0000)
 
