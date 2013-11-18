@@ -1485,9 +1485,6 @@ static int mga_vga_mode_valid(struct drm_connector *connector,
 	int i = 0;
 
 	if (IS_G200_SE(mdev)) {
-		if ((mdev->mc.vram_size < 2048 * 1024) &&
-		    (mode->hdisplay > 1024))
-			return MODE_VIRTUAL_X;
 		if (mdev->unique_rev_id == 0x01) {
 			if (mode->hdisplay > 1600)
 				return MODE_VIRTUAL_X;
