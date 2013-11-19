@@ -609,28 +609,53 @@ void hv_kvp_onchannelcallback(void *context)
 			sizeof(struct vmbuspipe_hdr)];
 
 		if (icmsghdrp->icmsgtype == ICMSGTYPE_NEGOTIATE) {
+			bool ret;
+			const char *ver;
 			/*
 			 * Based on the host, select appropriate
 			 * framework and service versions we will
 			 * negotiate.
 			 */
-			switch (vmbus_proto_version) {
-			case (VERSION_WS2008):
-				util_fw_version = UTIL_WS2K8_FW_VERSION;
-				kvp_srv_version = WS2008_SRV_VERSION;
-				break;
-			case (VERSION_WIN7):
-				util_fw_version = UTIL_FW_VERSION;
-				kvp_srv_version = WIN7_SRV_VERSION;
-				break;
-			default:
-				util_fw_version = UTIL_FW_VERSION;
-				kvp_srv_version = WIN8_SRV_VERSION;
-			}
-			vmbus_prep_negotiate_resp(icmsghdrp, negop,
+
+			util_fw_version = UTIL_FW_VERSION;
+			kvp_srv_version = WIN8_SRV_VERSION;
+			ver = "WIN8";
+			ret = vmbus_prep_negotiate_resp(icmsghdrp, negop,
 				 recv_buffer, util_fw_version,
 				 kvp_srv_version);
+			if (ret)
+				goto found;
 
+			util_fw_version = UTIL_FW_VERSION;
+			kvp_srv_version = WIN7_SRV_VERSION;
+			ver = "WIN7";
+			ret = vmbus_prep_negotiate_resp(icmsghdrp, negop,
+				 recv_buffer, util_fw_version,
+				 kvp_srv_version);
+			if (ret)
+				goto found;
+
+			util_fw_version = UTIL_WS2K8_FW_VERSION;
+			kvp_srv_version = WS2008_SRV_VERSION;
+			ver = "WS2008";
+			ret = vmbus_prep_negotiate_resp(icmsghdrp, negop,
+				 recv_buffer, util_fw_version,
+				 kvp_srv_version);
+			if (ret)
+				goto found;
+
+			ver = "nothing!";
+			negop = (struct icmsg_negotiate *)&recv_buffer[
+				sizeof(struct vmbuspipe_hdr) +
+				sizeof(struct icmsg_hdr)];
+			negop->icframe_vercnt = 0;
+			negop->icmsg_vercnt = 0;
+			negop->icversion_data[0].major = 0;
+			negop->icversion_data[0].minor = 0;
+			negop->icversion_data[1].major = 0;
+			negop->icversion_data[1].minor = 0;
+found:
+			pr_info("KVP negotiated for %s\n", ver);
 		} else {
 			kvp_msg = (struct hv_kvp_msg *)&recv_buffer[
 				sizeof(struct vmbuspipe_hdr) +
