@@ -64,6 +64,7 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/parser.h>
+#include <linux/workqueue.h>
 
 static const struct super_operations xfs_super_operations;
 static kmem_zone_t *xfs_ioend_zone;
@@ -823,6 +824,49 @@ xfs_flush_inodes(
 	}
 }
 
+STATIC int
+xfs_init_mount_workqueues(
+	struct xfs_mount	*mp)
+{
+	char *wqname = kasprintf(GFP_KERNEL, "xfs-data/%s", mp->m_fsname);
+	if (!wqname)
+		return -ENOMEM;
+
+	mp->m_data_workqueue_name = wqname;
+	mp->m_data_workqueue = alloc_workqueue(wqname, WQ_MEM_RECLAIM, 0);
+	if (!mp->m_data_workqueue)
+		goto out;
+
+	wqname = kasprintf(GFP_KERNEL, "xfs-conv/%s", mp->m_fsname);
+	if (!wqname)
+		goto out_destroy_data_iodone_queue;
+
+	mp->m_unwritten_workqueue_name = wqname;
+	mp->m_unwritten_workqueue = alloc_workqueue(wqname, WQ_MEM_RECLAIM, 0);
+	if (!mp->m_unwritten_workqueue)
+		goto out_free_data_conv_queue_name;
+
+	return 0;
+
+out_free_data_conv_queue_name:
+	kfree(mp->m_unwritten_workqueue_name);
+out_destroy_data_iodone_queue:
+	destroy_workqueue(mp->m_data_workqueue);
+out:
+	kfree(mp->m_data_workqueue_name);
+	return -ENOMEM;
+}
+
+STATIC void
+xfs_destroy_mount_workqueues(
+	struct xfs_mount	*mp)
+{
+	kfree(mp->m_data_workqueue_name);
+	destroy_workqueue(mp->m_data_workqueue);
+	kfree(mp->m_unwritten_workqueue_name);
+	destroy_workqueue(mp->m_unwritten_workqueue);
+}
+
 /* Catch misguided souls that try to use this interface on XFS */
 STATIC struct inode *
 xfs_fs_alloc_inode(
@@ -1067,6 +1111,7 @@ xfs_fs_put_super(
 	xfs_unmountfs(mp);
 	xfs_freesb(mp);
 	xfs_icsb_destroy_counters(mp);
+	xfs_destroy_mount_workqueues(mp);
 	xfs_close_devices(mp);
 	xfs_dmops_put(mp);
 	xfs_free_fsname(mp);
@@ -1409,9 +1454,13 @@ xfs_fs_fill_super(
 	if (error)
 		goto out_put_dmops;
 
-	error = xfs_icsb_init_counters(mp);
+	error = xfs_init_mount_workqueues(mp);
 	if (error)
 		goto out_close_devices;
+
+	error = xfs_icsb_init_counters(mp);
+	if (error)
+		goto out_destroy_workqueues;
 
 	error = xfs_readsb(mp, flags);
 	if (error)
@@ -1482,6 +1531,8 @@ xfs_fs_fill_super(
 	xfs_freesb(mp);
  out_destroy_counters:
 	xfs_icsb_destroy_counters(mp);
+out_destroy_workqueues:
+	xfs_destroy_mount_workqueues(mp);
  out_close_devices:
 	xfs_close_devices(mp);
  out_put_dmops:

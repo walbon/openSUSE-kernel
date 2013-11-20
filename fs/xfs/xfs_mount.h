@@ -217,6 +217,12 @@ typedef struct xfs_mount {
 	struct vfsmount         *m_vfsmount;	/* Unused */
 	spinlock_t		m_vfsmount_lock;	/* Unused */
 	const char		*m_mtpt;
+#ifndef __GENKSYMS__
+	const char		*m_data_workqueue_name;
+	struct workqueue_struct	*m_data_workqueue;
+	const char		*m_unwritten_workqueue_name;
+	struct workqueue_struct	*m_unwritten_workqueue;
+#endif
 } xfs_mount_t;
 
 /*
