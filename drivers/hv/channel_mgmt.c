@@ -110,25 +110,21 @@ bool vmbus_prep_negotiate_resp(struct icmsg_hdr *icmsghdrp,
 			found_match = true;
 		}
 	}
+	if (!found_match)
+		goto fw_error;
 
 	/*
 	 * Respond with the framework and service
 	 * version numbers we can support.
 	 */
 
-fw_error:
-	if (!found_match) {
-		negop->icframe_vercnt = 0;
-		negop->icmsg_vercnt = 0;
-	} else {
-		negop->icframe_vercnt = 1;
-		negop->icmsg_vercnt = 1;
-	}
-
+	negop->icframe_vercnt = 1;
+	negop->icmsg_vercnt = 1;
 	negop->icversion_data[0].major = icframe_major;
 	negop->icversion_data[0].minor = icframe_minor;
 	negop->icversion_data[1].major = icmsg_major;
 	negop->icversion_data[1].minor = icmsg_minor;
+fw_error:
 	return found_match;
 }
 
