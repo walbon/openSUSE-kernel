@@ -935,7 +935,7 @@ static void zpci_free_domain(struct zpci_dev *zdev)
 	spin_unlock(&zpci_domain_lock);
 }
 
-void pcibios_remove_bus(struct pci_bus *bus)
+void __pcibios_remove_bus(struct pci_bus *bus)
 {
 	struct zpci_dev *zdev = get_zdev_by_bus(bus);
 
