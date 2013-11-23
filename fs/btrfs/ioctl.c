@@ -377,7 +377,6 @@ static noinline int create_subvol(struct inode *dir,
 	struct btrfs_root *root = BTRFS_I(dir)->root;
 	struct btrfs_root *new_root;
 	struct btrfs_block_rsv block_rsv;
-	struct inode *inode;
 	struct timespec cur_time = CURRENT_TIME;
 	int ret;
 	int err;
@@ -537,14 +536,12 @@ fail:
 		ret = err;
 
 	if (!ret) {
-		inode = btrfs_lookup_dentry(dir, dentry);
-		if (IS_ERR(inode)) {
+		struct inode *inode = btrfs_lookup_dentry(dir, dentry);
+		if (IS_ERR(inode))
 			ret = PTR_ERR(inode);
-		} else {
+		else
 			d_instantiate(dentry, inode);
-		}
 	}
-
 out:
 	btrfs_subvolume_release_metadata(root, &block_rsv, qgroup_reserved);
 	return ret;
@@ -4152,9 +4149,9 @@ static int btrfs_ioctl_get_fslabel(struct file *file, void __user *arg)
 	int ret;
 	char label[BTRFS_LABEL_SIZE];
 
-	/* spin_lock(&root->fs_info->super_lock); */
+	spin_lock(&root->fs_info->super_lock);
 	memcpy(label, root->fs_info->super_copy->label, BTRFS_LABEL_SIZE);
-	/* spin_unlock(&root->fs_info->super_lock); */
+	spin_unlock(&root->fs_info->super_lock);
 
 	len = strnlen(label, BTRFS_LABEL_SIZE);
 
@@ -4198,9 +4195,9 @@ static int btrfs_ioctl_set_fslabel(struct file *file, void __user *arg)
 		goto out_unlock;
 	}
 
-	/* spin_lock(&root->fs_info->super_lock); */
+	spin_lock(&root->fs_info->super_lock);
 	strcpy(super_block->label, label);
-	/* spin_unlock(&root->fs_info->super_lock); */
+	spin_unlock(&root->fs_info->super_lock);
 	ret = btrfs_end_transaction(trans, root);
 
 out_unlock:
@@ -4335,12 +4332,12 @@ long btrfs_ioctl(struct file *file, unsigned int
 			break;
 		}
 		return btrfs_ioctl_dev_replace(root, argp);
-	case BTRFS_IOC_COMPR_SIZE:
-		return btrfs_ioctl_compr_size(file, argp);
 	case BTRFS_IOC_GET_FSLABEL:
 		return btrfs_ioctl_get_fslabel(file, argp);
 	case BTRFS_IOC_SET_FSLABEL:
 		return btrfs_ioctl_set_fslabel(file, argp);
+	case BTRFS_IOC_COMPR_SIZE:
+		return btrfs_ioctl_compr_size(file, argp);
 	}
 
 	return ret;

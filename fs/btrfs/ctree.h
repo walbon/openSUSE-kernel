@@ -1326,6 +1326,17 @@ struct btrfs_fs_info {
 	wait_queue_head_t transaction_blocked_wait;
 	wait_queue_head_t async_submit_wait;
 
+	/*
+	 * Used to protect the incompat_flags, compat_flags, compat_ro_flags
+	 * when they are updated.
+	 *
+	 * Because we do not clear the flags for ever, so we needn't use
+	 * the lock on the read side.
+	 *
+	 * We also needn't use the lock when we mount the fs, because
+	 * there is no other task which will update the flag.
+	 */
+	spinlock_t super_lock;
 	struct btrfs_super_block *super_copy;
 	struct btrfs_super_block *super_for_commit;
 	struct block_device *__bdev;
@@ -1717,6 +1728,7 @@ struct btrfs_ioctl_defrag_range_args {
 	/* spare for later */
 	__u32 unused[4];
 };
+
 
 /*
  * inode items have the data typically returned from stat and store other
@@ -2911,16 +2923,6 @@ BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_cursor_left,
 BTRFS_SETGET_STACK_FUNCS(stack_dev_replace_cursor_right,
 			 struct btrfs_dev_replace_item, cursor_right, 64);
 
-#define btrfs_fs_incompat(fs_info, opt) \
-	        __btrfs_fs_incompat((fs_info), BTRFS_FEATURE_INCOMPAT_##opt)
-
-static inline int __btrfs_fs_incompat(struct btrfs_fs_info *fs_info, u64 flag)
-{
-	struct btrfs_super_block *disk_super;
-	disk_super = fs_info->super_copy;
-	return !!(btrfs_super_incompat_flags(disk_super) & flag);
-}
-
 static inline struct btrfs_fs_info *btrfs_sb(struct super_block *sb)
 {
 	return sb->s_fs_info;
@@ -3020,7 +3022,7 @@ int btrfs_reserve_extent(struct btrfs_trans_handle *trans,
 				  struct btrfs_root *root,
 				  u64 num_bytes, u64 min_alloc_size,
 				  u64 empty_size, u64 hint_byte,
-				  struct btrfs_key *ins, u64 data);
+				  struct btrfs_key *ins, int is_data);
 int btrfs_inc_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 		  struct extent_buffer *buf, int full_backref, int for_cow);
 int btrfs_dec_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
@@ -3605,25 +3607,38 @@ ssize_t btrfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
 /* super.c */
 int btrfs_parse_options(struct btrfs_root *root, char *options);
 int btrfs_sync_fs(struct super_block *sb, int wait);
-void btrfs_printk(struct btrfs_fs_info *fs_info, const char *fmt, ...);
+
+#ifdef CONFIG_PRINTK
+__printf(2, 3)
+void btrfs_printk(const struct btrfs_fs_info *fs_info, const char *fmt, ...);
+#else
+static inline __printf(2, 3)
+void btrfs_printk(const struct btrfs_fs_info *fs_info, const char *fmt, ...)
+{
+}
+#endif
+
 #define btrfs_emerg(fs_info, fmt, args...) \
-	printk(KERN_EMERG "btrfs: " fmt "\n", ##args)
+	btrfs_printk(fs_info, KERN_EMERG fmt, ##args)
 #define btrfs_alert(fs_info, fmt, args...) \
-	printk(KERN_ALERT "btrfs: " fmt "\n", ##args)
+	btrfs_printk(fs_info, KERN_ALERT fmt, ##args)
 #define btrfs_crit(fs_info, fmt, args...) \
-	printk(KERN_CRIT "btrfs: " fmt "\n", ##args)
+	btrfs_printk(fs_info, KERN_CRIT fmt, ##args)
 #define btrfs_err(fs_info, fmt, args...) \
-	printk(KERN_ERR "btrfs: " fmt "\n", ##args)
+	btrfs_printk(fs_info, KERN_ERR fmt, ##args)
 #define btrfs_warn(fs_info, fmt, args...) \
-	printk(KERN_WARNING "btrfs: " fmt "\n", ##args)
+	btrfs_printk(fs_info, KERN_WARNING fmt, ##args)
 #define btrfs_notice(fs_info, fmt, args...) \
-	printk(KERN_NOTICE "btrfs: " fmt "\n", ##args)
+	btrfs_printk(fs_info, KERN_NOTICE fmt, ##args)
 #define btrfs_info(fs_info, fmt, args...) \
-	printk(KERN_INFO "btrfs: " fmt "\n", ##args)
+	btrfs_printk(fs_info, KERN_INFO fmt, ##args)
 #define btrfs_debug(fs_info, fmt, args...) \
-	printk(KERN_DEBUG "btrfs: " fmt "\n", ##args)
+	btrfs_printk(fs_info, KERN_DEBUG fmt, ##args)
+
+__printf(5, 6)
 void __btrfs_std_error(struct btrfs_fs_info *fs_info, const char *function,
 		     unsigned int line, int errno, const char *fmt, ...);
+
 
 void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root, const char *function,
@@ -3641,9 +3656,26 @@ static inline void __btrfs_set_fs_incompat(struct btrfs_fs_info *fs_info,
 	disk_super = fs_info->super_copy;
 	features = btrfs_super_incompat_flags(disk_super);
 	if (!(features & flag)) {
-		features |= flag;
-		btrfs_set_super_incompat_flags(disk_super, features);
+		spin_lock(&fs_info->super_lock);
+		features = btrfs_super_incompat_flags(disk_super);
+		if (!(features & flag)) {
+			features |= flag;
+			btrfs_set_super_incompat_flags(disk_super, features);
+			printk(KERN_INFO "btrfs: setting %llu feature flag\n",
+					 flag);
+		}
+		spin_unlock(&fs_info->super_lock);
 	}
+}
+
+#define btrfs_fs_incompat(fs_info, opt) \
+	__btrfs_fs_incompat((fs_info), BTRFS_FEATURE_INCOMPAT_##opt)
+
+static inline int __btrfs_fs_incompat(struct btrfs_fs_info *fs_info, u64 flag)
+{
+	struct btrfs_super_block *disk_super;
+	disk_super = fs_info->super_copy;
+	return !!(btrfs_super_incompat_flags(disk_super) & flag);
 }
 
 /*
@@ -3670,6 +3702,7 @@ do {								\
 			  (errno), fmt, ##args);		\
 } while (0)
 
+__printf(5, 6)
 void __btrfs_panic(struct btrfs_fs_info *fs_info, const char *function,
 		   unsigned int line, int errno, const char *fmt, ...);
 
