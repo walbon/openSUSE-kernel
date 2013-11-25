@@ -3042,96 +3042,6 @@ static int reset_intel_82599_sfp_virtfn(struct pci_dev *dev, int probe)
 	return 0;
 }
 
-static bool pcie_capability_reg_implemented(struct pci_dev *dev, int pos)
-{
-	if (!pci_is_pcie(dev))
-		return false;
-
-	switch (pos) {
-	case PCI_EXP_FLAGS:
-	case PCI_EXP_DEVCAP:
-	case PCI_EXP_DEVCTL:
-	case PCI_EXP_DEVSTA:
-		return true;
-	default:
-		return false;
-	}
-}
-
-/*
- * Note that these accessor functions are only for the "PCI Express
- * Capability" (see PCIe spec r3.0, sec 7.8).  They do not apply to the
- * other "PCI Express Extended Capabilities" (AER, VC, ACS, MFVC, etc.)
- */
-static int pcie_capability_read_word(struct pci_dev *dev, int pos, u16 *val)
-{
-	int ret;
-
-	*val = 0;
-	if (pos & 1)
-		return -EINVAL;
-
-	if (pcie_capability_reg_implemented(dev, pos)) {
-		ret = pci_read_config_word(dev, pci_pcie_cap(dev) + pos, val);
-		/*
-		 * Reset *val to 0 if pci_read_config_word() fails, it may
-		 * have been written as 0xFFFF if hardware error happens
-		 * during pci_read_config_word().
-		 */
-		if (ret)
-			*val = 0;
-		return ret;
-	}
-
-	/*
-	 * For Functions that do not implement the Slot Capabilities,
-	 * Slot Status, and Slot Control registers, these spaces must
-	 * be hardwired to 0b, with the exception of the Presence Detect
-	 * State bit in the Slot Status register of Downstream Ports,
-	 * which must be hardwired to 1b.  (PCIe Base Spec 3.0, sec 7.8)
-	 */
-	if (pci_is_pcie(dev) && pos == PCI_EXP_SLTSTA &&
-		 dev->pcie_type == PCI_EXP_TYPE_DOWNSTREAM) {
-		*val = PCI_EXP_SLTSTA_PDS;
-	}
-
-	return 0;
-}
-
-static int pcie_capability_write_word(struct pci_dev *dev, int pos, u16 val)
-{
-	if (pos & 1)
-		return -EINVAL;
-
-	if (!pcie_capability_reg_implemented(dev, pos))
-		return 0;
-
-	return pci_write_config_word(dev, pci_pcie_cap(dev) + pos, val);
-}
-
-static int pcie_capability_clear_and_set_word(struct pci_dev *dev, int pos,
-				       u16 clear, u16 set)
-{
-	int ret;
-	u16 val;
-
-	ret = pcie_capability_read_word(dev, pos, &val);
-	if (!ret) {
-		val &= ~clear;
-		val |= set;
-		ret = pcie_capability_write_word(dev, pos, val);
-	}
-
-	return ret;
-}
-
-
-
-static inline int pcie_capability_set_word (struct pci_dev *dev, int pos, u16 set)
-{
-	return pcie_capability_clear_and_set_word(dev, pos, 0, set);
-}
-
 /*
  * Device-specific reset method for Chelsio T4-based adapters.
  */
@@ -3139,7 +3049,7 @@ static int reset_chelsio_generic_dev(struct pci_dev *dev, int probe)
 {
 	u16 old_command;
 	u16 status, msix_flags;
-	int i, rc, msix_pos;
+	int i, msix_pos;
 
 	/*
 	 * If this isn't a Chelsio T4-based device, return -ENOTTY indicating
@@ -3156,9 +3066,10 @@ static int reset_chelsio_generic_dev(struct pci_dev *dev, int probe)
 		return 0;
 
 	/*
-	 * T4 can wedge if their are DMAs in flight within the chip and Bus
-	 * master has been disabled.  We need to have it on till the Function
-	 * Level Reset completes.
+	 * T4 can wedge if there are DMAs in flight within the chip and Bus
+	 * Master has been disabled.  We need to have it on till the Function
+	 * Level Reset completes.  (BUS_MASTER is disabled in
+	 * pci_reset_function()).
 	 */
 	pci_read_config_word(dev, PCI_COMMAND, &old_command);
 	pci_write_config_word(dev, PCI_COMMAND,
@@ -3186,8 +3097,8 @@ static int reset_chelsio_generic_dev(struct pci_dev *dev, int probe)
 				      PCI_MSIX_FLAGS_MASKALL);
 
 	/*
-	 * This reset code is a copy of the guts of pcie_flr() because that's
-	 * not an exported function.
+	 * Start of pcie_flr() code sequence.  This reset code is a copy of
+	 * the guts of pcie_flr() because that's not an exported function.
 	 */
 
 	/* Wait for Transaction Pending bit clean */
@@ -3210,15 +3121,14 @@ clear:
 	 * End of pcie_flr() code sequence.
 	 */
 
-	rc = 0;
-	pci_restore_state(dev);
-
 	/*
-	 * Restore the original PCI Configuration Space Command word (which
-	 * probably had Bus Master disabled).
+	 * Restore the configuration information (BAR values, etc.) including
+	 * the original PCI Configuration Space Command word, and return
+	 * success.
 	 */
+	pci_restore_state(dev);
 	pci_write_config_word(dev, PCI_COMMAND, old_command);
-	return rc;
+	return 0;
 }
 
 #define PCI_DEVICE_ID_INTEL_82599_SFP_VF   0x10ed
