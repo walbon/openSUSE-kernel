@@ -118,6 +118,33 @@ cifs_revalidate_cache(struct inode *inode, struct cifs_fattr *fattr)
 	cifs_i->invalid_mapping = true;
 }
 
+/*
+ * copy nlink to the inode, unless it wasn't provided.  Provide
+ * sane values if we don't have an existing one and none was provided
+ */
+static void
+cifs_nlink_fattr_to_inode(struct inode *inode, struct cifs_fattr *fattr)
+{
+	/*
+	 * if we're in a situation where we can't trust what we
+	 * got from the server (readdir, some non-unix cases)
+	 * fake reasonable values
+	 */
+	if (fattr->cf_flags & CIFS_FATTR_UNKNOWN_NLINK) {
+		/* only provide fake values on a new inode */
+		if (inode->i_state & I_NEW) {
+			if (fattr->cf_cifsattrs & ATTR_DIRECTORY)
+				inode->i_nlink = 2;
+			else
+				inode->i_nlink = 1;
+		}
+		return;
+	}
+
+	/* we trust the server, so update it */
+	inode->i_nlink = fattr->cf_nlink;
+}
+
 /* populate an inode with info from a cifs_fattr struct */
 void
 cifs_fattr_to_inode(struct inode *inode, struct cifs_fattr *fattr)
@@ -132,7 +159,7 @@ cifs_fattr_to_inode(struct inode *inode, struct cifs_fattr *fattr)
 	inode->i_mtime = fattr->cf_mtime;
 	inode->i_ctime = fattr->cf_ctime;
 	inode->i_rdev = fattr->cf_rdev;
-	inode->i_nlink = fattr->cf_nlink;
+	cifs_nlink_fattr_to_inode(inode, fattr);
 	inode->i_uid = fattr->cf_uid;
 	inode->i_gid = fattr->cf_gid;
 
@@ -532,9 +559,16 @@ cifs_all_info_to_fattr(struct cifs_fattr *fattr, FILE_ALL_INFO *info,
 	fattr->cf_bytes = le64_to_cpu(info->AllocationSize);
 	fattr->cf_createtime = le64_to_cpu(info->CreationTime);
 
+	fattr->cf_nlink = le32_to_cpu(info->NumberOfLinks);
 	if (fattr->cf_cifsattrs & ATTR_DIRECTORY) {
 		fattr->cf_mode = S_IFDIR | cifs_sb->mnt_dir_mode;
 		fattr->cf_dtype = DT_DIR;
+		/*
+		 * Server can return wrong NumberOfLinks value for directories
+		 * when Unix extensions are disabled - fake it.
+		 */
+		if (!tcon->unix_ext)
+			fattr->cf_flags |= CIFS_FATTR_UNKNOWN_NLINK;
 	} else {
 		fattr->cf_mode = S_IFREG | cifs_sb->mnt_file_mode;
 		fattr->cf_dtype = DT_REG;
@@ -542,9 +576,18 @@ cifs_all_info_to_fattr(struct cifs_fattr *fattr, FILE_ALL_INFO *info,
 		/* clear write bits if ATTR_READONLY is set */
 		if (fattr->cf_cifsattrs & ATTR_READONLY)
 			fattr->cf_mode &= ~(S_IWUGO);
-	}
 
-	fattr->cf_nlink = le32_to_cpu(info->NumberOfLinks);
+		/*
+		 * Don't accept zero nlink from non-unix servers unless
+		 * delete is pending.  Instead mark it as unknown.
+		 */
+		if ((fattr->cf_nlink < 1) && !tcon->unix_ext &&
+		    !info->DeletePending) {
+			cFYI(1, "bogus file nlink value %u\n",
+			     fattr->cf_nlink);
+			fattr->cf_flags |= CIFS_FATTR_UNKNOWN_NLINK;
+		}
+	}
 
 	fattr->cf_uid = cifs_sb->mnt_uid;
 	fattr->cf_gid = cifs_sb->mnt_gid;
@@ -1323,7 +1366,6 @@ int cifs_mkdir(struct inode *inode, struct dentry *direntry, int mode)
 			}
 /*BB check (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SET_UID ) to see if need
 	to set uid/gid */
-			inc_nlink(inode);
 
 			cifs_unix_basic_to_fattr(&fattr, pInfo, cifs_sb);
 			cifs_fill_uniqueid(inode->i_sb, &fattr);
@@ -1356,7 +1398,6 @@ mkdir_retry_old:
 		d_drop(direntry);
 	} else {
 mkdir_get_info:
-		inc_nlink(inode);
 		if (pTcon->unix_ext)
 			rc = cifs_get_inode_info_unix(&newinode, full_path,
 						      inode->i_sb, xid);
@@ -1437,6 +1478,11 @@ mkdir_get_info:
 		}
 	}
 mkdir_out:
+	/*
+	 * Force revalidate to get parent dir info when needed since cached
+	 * attributes are invalid now.
+	 */
+	CIFS_I(inode)->time = 0;
 	kfree(full_path);
 	FreeXid(xid);
 	cifs_put_tlink(tlink);
@@ -1476,7 +1522,6 @@ int cifs_rmdir(struct inode *inode, struct dentry *direntry)
 	cifs_put_tlink(tlink);
 
 	if (!rc) {
-		drop_nlink(inode);
 		spin_lock(&direntry->d_inode->i_lock);
 		i_size_write(direntry->d_inode, 0);
 		clear_nlink(direntry->d_inode);
@@ -1484,12 +1529,15 @@ int cifs_rmdir(struct inode *inode, struct dentry *direntry)
 	}
 
 	cifsInode = CIFS_I(direntry->d_inode);
-	cifsInode->time = 0;	/* force revalidate to go get info when
-				   needed */
+	/* force revalidate to go get info when needed */
+	cifsInode->time = 0;
 
 	cifsInode = CIFS_I(inode);
-	cifsInode->time = 0;	/* force revalidate to get parent dir info
-				   since cached search results now invalid */
+	/*
+	 * Force revalidate to get parent dir info when needed since cached
+	 * attributes are invalid now.
+	 */
+	cifsInode->time = 0;
 
 	direntry->d_inode->i_ctime = inode->i_ctime = inode->i_mtime =
 		current_fs_time(inode->i_sb);
