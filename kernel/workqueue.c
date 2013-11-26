@@ -1342,6 +1342,25 @@ static struct worker *alloc_worker(void)
 	return worker;
 }
 
+static struct sched_param fifo_param, normal_param;
+
+static inline void kworker_set_sched_params(struct task_struct *worker)
+{
+	int prio = fifo_param.sched_priority;
+	if (!prio)
+		return;
+	if (worker->policy == SCHED_FIFO && worker->rt_priority == prio)
+		return;
+	sched_setscheduler_nocheck(worker, SCHED_FIFO, &fifo_param);
+}
+
+static inline void kworker_clr_sched_params(struct task_struct *worker)
+{
+	if (!fifo_param.sched_priority || !rt_task(worker))
+		return;
+	sched_setscheduler_nocheck(worker, SCHED_NORMAL, &normal_param);
+}
+
 /**
  * create_worker - create a new workqueue worker
  * @gcwq: gcwq the new worker will belong to
@@ -1403,6 +1422,8 @@ static struct worker *create_worker(struct global_cwq *gcwq, bool bind)
 			worker->flags |= WORKER_UNBOUND;
 	}
 
+	kworker_set_sched_params(worker->task);
+
 	return worker;
 fail:
 	if (id >= 0) {
@@ -1459,6 +1480,7 @@ static void destroy_worker(struct worker *worker)
 
 	spin_unlock_irq(&gcwq->lock);
 
+	kworker_clr_sched_params(worker->task);
 	kthread_stop(worker->task);
 	kfree(worker);
 
@@ -3036,6 +3058,7 @@ struct workqueue_struct *__alloc_workqueue_key(const char *name,
 			goto err;
 
 		rescuer->task->flags |= PF_THREAD_BOUND;
+		kworker_set_sched_params(rescuer->task);
 		wake_up_process(rescuer->task);
 	}
 
@@ -3099,6 +3122,7 @@ void destroy_workqueue(struct workqueue_struct *wq)
 	}
 
 	if (wq->flags & WQ_RESCUER) {
+		kworker_clr_sched_params(wq->rescuer->task);
 		kthread_stop(wq->rescuer->task);
 		free_mayday_mask(wq->mayday_mask);
 		kfree(wq->rescuer);
@@ -3519,13 +3543,16 @@ static int __devinit workqueue_cpu_callback(struct notifier_block *nfb,
 		if (IS_ERR(new_trustee))
 			return notifier_from_errno(PTR_ERR(new_trustee));
 		kthread_bind(new_trustee, cpu);
+		kworker_set_sched_params(new_trustee);
 		/* fall through */
 	case CPU_UP_PREPARE:
 		BUG_ON(gcwq->first_idle);
 		new_worker = create_worker(gcwq, false);
 		if (!new_worker) {
-			if (new_trustee)
+			if (new_trustee) {
+				kworker_clr_sched_params(new_trustee);
 				kthread_stop(new_trustee);
+			}
 			return NOTIFY_BAD;
 		}
 	}
@@ -3870,3 +3897,17 @@ static int __init init_workqueues(void)
 	return 0;
 }
 early_initcall(init_workqueues);
+
+static int __init setup_rtworkqueues(char *str)
+{
+	int prio;
+
+	if (kstrtoint(str, 0, &prio) || prio < 1 || prio > 99) {
+		prio = 0;
+		pr_warn("Unable to set kworker default priority\n");
+	}
+	fifo_param.sched_priority = prio;
+
+        return 1;
+}
+__setup("rtworkqueues=", setup_rtworkqueues);
