@@ -292,5 +292,3 @@ MODULE_PARM_DESC(heartbeat,
 		 "Watchdog heartbeat period in seconds from 1 to "
 		 __MODULE_STRING(MAX_HEARTBEAT) ", default "
 		 __MODULE_STRING(DEFAULT_HEARTBEAT));
-
-MODULE_ALIAS_MISCDEV(WATCHDOG_MINOR);

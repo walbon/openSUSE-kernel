@@ -270,6 +270,5 @@ module_exit(twl4030_wdt_exit);
 
 MODULE_AUTHOR("Nokia Corporation");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS_MISCDEV(WATCHDOG_MINOR);
 MODULE_ALIAS("platform:twl4030_wdt");
 
