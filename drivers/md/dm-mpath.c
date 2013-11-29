@@ -167,8 +167,25 @@ static void free_pgpaths(struct list_head *pgpaths, struct dm_target *ti)
 
 	list_for_each_entry_safe(pgpath, tmp, pgpaths, list) {
 		list_del(&pgpath->list);
-		if (m->hw_handler_name && pgpath->path.dev)
-			scsi_dh_detach(bdev_get_queue(pgpath->path.dev->bdev));
+		if (pgpath->path.dev) {
+			struct request_queue *q;
+			const char *cur_hw_handler;
+
+			q = bdev_get_queue(pgpath->path.dev->bdev);
+			cur_hw_handler = scsi_dh_attached_handler_name(q, GFP_KERNEL);
+			/*
+			 * This is subtle.
+			 * scsi_dh_detach() will detach the currently
+			 * attached one, which might be different from
+			 * the one specified in m->hw_handler_name.
+			 * So if the names are different the hardware
+			 * handler was already detached in parse_path()
+			 * and we can skip this step.
+			 */
+			if (m->hw_handler_name &&
+			    !strcmp(m->hw_handler_name, cur_hw_handler))
+				scsi_dh_detach(q);
+		}
 		dm_put_device(ti, pgpath->path.dev);
 		free_pgpath(pgpath);
 	}
