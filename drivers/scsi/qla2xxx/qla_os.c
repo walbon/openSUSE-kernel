@@ -13,6 +13,8 @@
 #include <linux/mutex.h>
 #include <linux/kobject.h>
 #include <linux/slab.h>
+#include <linux/log2.h>
+
 #include <scsi/scsi_tcq.h>
 #include <scsi/scsicam.h>
 #include <scsi/scsi_transport.h>
@@ -225,6 +227,12 @@ MODULE_PARM_DESC(ql2xasynclogin,
 		"Enables asynchronous login to remote ports "
 		"Default is 1 - Use asynchronous login if possible.");
 
+
+int ql2xreq_que_size = 0;
+module_param(ql2xreq_que_size, int, S_IRUGO);
+MODULE_PARM_DESC(ql2xreq_que_size,
+		"Override the default request queue size. Valid values must be "
+		"a power of 2 and between 2048 and 16384 inclusive.");
 
 /*
  * SCSI host template entry points
@@ -2438,6 +2446,24 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		ha->flash_data_off = FARX_ACCESS_FLASH_DATA_81XX;
 		ha->nvram_conf_off = ~0;
 		ha->nvram_data_off = ~0;
+	}
+
+	/* Override the default request queue size if requested. */
+	if (ql2xreq_que_size >= req_length &&
+	    ql2xreq_que_size <= REQUEST_ENTRY_CNT_MAX &&
+	    is_power_of_2(ql2xreq_que_size) &&
+	    IS_FWI2_CAPABLE(ha) && !IS_QLA82XX(ha))
+		req_length = ql2xreq_que_size;
+	else if (ql2xreq_que_size > 0) {
+		if (!IS_FWI2_CAPABLE(ha) || IS_QLA82XX(ha))
+			ql_log_pci(ql_log_warn, pdev, 0x0127,
+			    "Cannot change the request queue size for this "
+			    "adapter.\n");
+		else
+			ql_log_pci(ql_log_warn, pdev, 0x128,
+			    "Changes in request queue size must be a power of "
+			    "2 between %d and %d, inclusive.\n", req_length,
+			    REQUEST_ENTRY_CNT_MAX);
 	}
 
 	ql_dbg_pci(ql_dbg_init, pdev, 0x001e,
