@@ -84,6 +84,7 @@ struct alua_port_group {
 	unsigned char		*buff;
 	int			bufflen;
 	unsigned char		transition_tmo;
+	unsigned long		expiry;
 	struct work_struct	rtpg_work;
 	spinlock_t		rtpg_lock;
 	struct list_head	rtpg_list;
@@ -714,15 +715,16 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 	int len, k, off;
 	unsigned char *ucp;
 	unsigned err, retval;
-	unsigned long expiry, interval = 0;
+	unsigned long interval = 0;
 	unsigned int tpg_desc_tbl_off;
 	unsigned char orig_transition_tmo;
 
-	if (!pg->transition_tmo)
-		expiry = round_jiffies_up(jiffies + ALUA_FAILOVER_TIMEOUT * HZ);
-	else
-		expiry = round_jiffies_up(jiffies + pg->transition_tmo * HZ);
-
+	if (!pg->expiry) {
+		if (!pg->transition_tmo)
+			pg->expiry = round_jiffies_up(jiffies + ALUA_FAILOVER_TIMEOUT * HZ);
+		else
+			pg->expiry = round_jiffies_up(jiffies + pg->transition_tmo * HZ);
+	}
  retry:
 	retval = submit_rtpg(sdev, pg->buff, pg->bufflen, sense, pg->flags);
 
@@ -737,6 +739,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 				err = SCSI_DH_DEV_TEMP_BUSY;
 			else
 				err = SCSI_DH_IO;
+			pg->expiry = 0;
 			return err;
 		}
 
@@ -758,7 +761,8 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 		err = alua_check_sense(sdev, &sense_hdr);
 		if (sense_hdr.sense_key == UNIT_ATTENTION)
 			err = ADD_TO_MLQUEUE;
-		if (err == ADD_TO_MLQUEUE && time_before(jiffies, expiry)) {
+		if (err == ADD_TO_MLQUEUE &&
+		    pg->expiry != 0 && time_before(jiffies, pg->expiry)) {
 			sdev_printk(KERN_ERR, sdev, "%s: rtpg retry, ",
 				    ALUA_DH_NAME);
 			scsi_show_sense_hdr(&sense_hdr);
@@ -773,6 +777,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 		sdev_printk(KERN_INFO, sdev, "%s: rtpg failed, ",
 			    ALUA_DH_NAME);
 		scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
+		pg->expiry = 0;
 		return SCSI_DH_IO;
 	}
 
@@ -785,6 +790,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 			sdev_printk(KERN_WARNING, sdev,
 				    "%s: kmalloc buffer failed\n",__func__);
 			/* Temporary failure, bypass */
+			pg->expiry = 0;
 			return SCSI_DH_DEV_TEMP_BUSY;
 		}
 		goto retry;
@@ -801,7 +807,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 		printk(KERN_INFO
 		       "%s: target %s transition timeout set to %d seconds\n",
 		       ALUA_DH_NAME, pg->target_id_str, pg->transition_tmo);
-		expiry = jiffies + pg->transition_tmo * HZ;
+		pg->expiry = jiffies + pg->transition_tmo * HZ;
 	}
 
 	if ((pg->buff[4] & RTPG_FMT_MASK) == RTPG_FMT_EXT_HDR)
@@ -835,7 +841,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 
 	switch (pg->state) {
 	case TPGS_STATE_TRANSITIONING:
-		if (time_before(jiffies, expiry)) {
+		if (time_before(jiffies, pg->expiry)) {
 			/* State transition, retry */
 			interval += 2000;
 			msleep(interval);
@@ -844,14 +850,17 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 		/* Transitioning time exceeded, set port to standby */
 		err = SCSI_DH_RETRY;
 		pg->state = TPGS_STATE_STANDBY;
+		pg->expiry = 0;
 		break;
 	case TPGS_STATE_OFFLINE:
 		/* Path unusable */
 		err = SCSI_DH_DEV_OFFLINED;
+		pg->expiry = 0;
 		break;
 	default:
 		/* Useable path if active */
 		err = SCSI_DH_OK;
+		pg->expiry = 0;
 		break;
 	}
 	return err;
@@ -1016,8 +1025,10 @@ static int alua_initialize(struct scsi_device *sdev, struct alua_dh_data *h)
 		}
 	}
 	complete(&h->init_complete);
-	if (pg)
+	if (pg) {
+		pg->expiry = 0;
 		alua_rtpg_queue(pg, sdev, NULL);
+	}
 	kref_put(&pg->kref, release_port_group);
 	return h->error;
 }
