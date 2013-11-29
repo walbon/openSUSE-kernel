@@ -426,6 +426,8 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 			goto out;
 		}
 		err = alua_check_sense(sdev, &sense_hdr);
+		if (sense_hdr.sense_key == UNIT_ATTENTION)
+			err = ADD_TO_MLQUEUE;
 		if (err == ADD_TO_MLQUEUE && time_before(jiffies, expiry))
 			goto retry;
 		if (err != SUCCESS) {
@@ -751,6 +753,8 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 		}
 
 		err = alua_check_sense(sdev, &sense_hdr);
+		if (sense_hdr.sense_key == UNIT_ATTENTION)
+			err = ADD_TO_MLQUEUE;
 		if (err == ADD_TO_MLQUEUE && time_before(jiffies, expiry)) {
 			sdev_printk(KERN_ERR, sdev, "%s: rtpg retry, ",
 				    ALUA_DH_NAME);
