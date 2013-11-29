@@ -496,7 +496,7 @@ lpfc_resp_iocb(struct lpfc_hba *phba, struct lpfc_sli_ring *pring)
  * allocation is successful, it returns pointer to the newly
  * allocated iocb object else it returns NULL.
  **/
-static struct lpfc_iocbq *
+struct lpfc_iocbq *
 __lpfc_sli_get_iocbq(struct lpfc_hba *phba)
 {
 	struct list_head *lpfc_iocb_list = &phba->lpfc_iocb_list;
@@ -1275,7 +1275,7 @@ lpfc_sli_ringtxcmpl_put(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 			struct lpfc_iocbq *piocb)
 {
 	list_add_tail(&piocb->list, &pring->txcmplq);
-	piocb->iocb_flag |= LPFC_IO_ON_Q;
+	piocb->iocb_flag |= LPFC_IO_ON_TXCMPLQ;
 	pring->txcmplq_cnt++;
 	if (pring->txcmplq_cnt > pring->txcmplq_max)
 		pring->txcmplq_max = pring->txcmplq_cnt;
@@ -2574,9 +2574,9 @@ lpfc_sli_iocbq_lookup(struct lpfc_hba *phba,
 	if (iotag != 0 && iotag <= phba->sli.last_iotag) {
 		cmd_iocb = phba->sli.iocbq_lookup[iotag];
 		list_del_init(&cmd_iocb->list);
-		if (cmd_iocb->iocb_flag & LPFC_IO_ON_Q) {
+		if (cmd_iocb->iocb_flag & LPFC_IO_ON_TXCMPLQ) {
 			pring->txcmplq_cnt--;
-			cmd_iocb->iocb_flag &= ~LPFC_IO_ON_Q;
+			cmd_iocb->iocb_flag &= ~LPFC_IO_ON_TXCMPLQ;
 		}
 		return cmd_iocb;
 	}
@@ -2609,14 +2609,14 @@ lpfc_sli_iocbq_lookup_by_tag(struct lpfc_hba *phba,
 
 	if (iotag != 0 && iotag <= phba->sli.last_iotag) {
 		cmd_iocb = phba->sli.iocbq_lookup[iotag];
-		list_del_init(&cmd_iocb->list);
-		if (cmd_iocb->iocb_flag & LPFC_IO_ON_Q) {
-			cmd_iocb->iocb_flag &= ~LPFC_IO_ON_Q;
+		if (cmd_iocb->iocb_flag & LPFC_IO_ON_TXCMPLQ) {
+			/* remove from txcmpl queue list */
+			list_del_init(&cmd_iocb->list);
+			cmd_iocb->iocb_flag &= ~LPFC_IO_ON_TXCMPLQ;
 			pring->txcmplq_cnt--;
+			return cmd_iocb;
 		}
-		return cmd_iocb;
 	}
-
 	lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
 			"0372 iotag x%x is out off range: max iotag (x%x)\n",
 			iotag, phba->sli.last_iotag);
@@ -3484,6 +3484,9 @@ lpfc_sli_flush_fcp_rings(struct lpfc_hba *phba)
 	/* Retrieve everything on the txcmplq */
 	list_splice_init(&pring->txcmplq, &txcmplq);
 	pring->txcmplq_cnt = 0;
+
+	/* Indicate the I/O queues are flushed */
+	phba->hba_flag |= HBA_FCP_IOQ_FLUSH;
 	spin_unlock_irq(&phba->hbalock);
 
 	/* Flush the txq */
@@ -5962,6 +5965,8 @@ lpfc_sli4_hba_setup(struct lpfc_hba *phba)
 		phba->hba_flag |= HBA_FIP_SUPPORT;
 	else
 		phba->hba_flag &= ~HBA_FIP_SUPPORT;
+
+	phba->hba_flag &= ~HBA_FCP_IOQ_FLUSH;
 
 	if (phba->sli_rev != LPFC_SLI_REV4) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_MBOX | LOG_SLI,
@@ -8872,12 +8877,14 @@ lpfc_sli_abort_els_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 {
 	IOCB_t *irsp = &rspiocb->iocb;
 	uint16_t abort_iotag, abort_context;
-	struct lpfc_iocbq *abort_iocb;
-	struct lpfc_sli_ring *pring = &phba->sli.ring[LPFC_ELS_RING];
-
-	abort_iocb = NULL;
+	struct lpfc_iocbq *abort_iocb = NULL;
 
 	if (irsp->ulpStatus) {
+
+		/*
+		 * Assume that the port already completed and returned, or
+		 * will return the iocb. Just Log the message.
+		 */
 		abort_context = cmdiocb->iocb.un.acxri.abortContextTag;
 		abort_iotag = cmdiocb->iocb.un.acxri.abortIoTag;
 
@@ -8895,68 +8902,15 @@ lpfc_sli_abort_els_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 			 */
 			abort_iocb = phba->sli.iocbq_lookup[abort_context];
 
-		/*
-		 *  If the iocb is not found in Firmware queue the iocb
-		 *  might have completed already. Do not free it again.
-		 */
-		if (irsp->ulpStatus == IOSTAT_LOCAL_REJECT) {
-			if (irsp->un.ulpWord[4] != IOERR_NO_XRI) {
-				spin_unlock_irq(&phba->hbalock);
-				lpfc_sli_release_iocbq(phba, cmdiocb);
-				return;
-			}
-			/* For SLI4 the ulpContext field for abort IOCB
-			 * holds the iotag of the IOCB being aborted so
-			 * the local abort_context needs to be reset to
-			 * match the aborted IOCBs ulpContext.
-			 */
-			if (abort_iocb && phba->sli_rev == LPFC_SLI_REV4)
-				abort_context = abort_iocb->iocb.ulpContext;
-		}
-
 		lpfc_printf_log(phba, KERN_WARNING, LOG_ELS | LOG_SLI,
 				"0327 Cannot abort els iocb %p "
 				"with tag %x context %x, abort status %x, "
 				"abort code %x\n",
 				abort_iocb, abort_iotag, abort_context,
 				irsp->ulpStatus, irsp->un.ulpWord[4]);
-		/*
-		 * make sure we have the right iocbq before taking it
-		 * off the txcmplq and try to call completion routine.
-		 */
-		if (!abort_iocb ||
-		    abort_iocb->iocb.ulpContext != abort_context ||
-		    (abort_iocb->iocb_flag & LPFC_DRIVER_ABORTED) == 0)
-			spin_unlock_irq(&phba->hbalock);
-		else if (phba->sli_rev < LPFC_SLI_REV4) {
-			/*
-			 * leave the SLI4 aborted command on the txcmplq
-			 * list and the command complete WCQE's XB bit
-			 * will tell whether the SGL (XRI) can be released
-			 * immediately or to the aborted SGL list for the
-			 * following abort XRI from the HBA.
-			 */
-			list_del_init(&abort_iocb->list);
-			if (abort_iocb->iocb_flag & LPFC_IO_ON_Q) {
-				abort_iocb->iocb_flag &= ~LPFC_IO_ON_Q;
-				pring->txcmplq_cnt--;
-			}
 
-			/* Firmware could still be in progress of DMAing
-			 * payload, so don't free data buffer till after
-			 * a hbeat.
-			 */
-			abort_iocb->iocb_flag |= LPFC_DELAY_MEM_FREE;
-			abort_iocb->iocb_flag &= ~LPFC_DRIVER_ABORTED;
-			spin_unlock_irq(&phba->hbalock);
-
-			abort_iocb->iocb.ulpStatus = IOSTAT_LOCAL_REJECT;
-			abort_iocb->iocb.un.ulpWord[4] = IOERR_ABORT_REQUESTED;
-			(abort_iocb->iocb_cmpl)(phba, abort_iocb, abort_iocb);
-		} else
-			spin_unlock_irq(&phba->hbalock);
+		spin_unlock_irq(&phba->hbalock);
 	}
-
 	lpfc_sli_release_iocbq(phba, cmdiocb);
 	return;
 }
