@@ -11,7 +11,7 @@
  * ----------------------------------------------------------------------
  * |             Level            |   Last Value Used  |     Holes	|
  * ----------------------------------------------------------------------
- * | Module Init and Probe        |       0x0122       | 0x0117-0x0121  |
+ * | Module Init and Probe        |       0x0128       | 0x0117-0x0121  |
  * | Mailbox commands             |       0x1129       |		|
  * | Device Discovery             |       0x2083       |		|
  * | Queue Command and IO tracing |       0x3031       |     0x3008     |
