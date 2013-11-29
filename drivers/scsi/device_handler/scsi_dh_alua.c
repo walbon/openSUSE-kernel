@@ -912,11 +912,12 @@ static void alua_rtpg_work(struct work_struct *work)
 	LIST_HEAD(qdata_list);
 	int err;
 	struct alua_queue_data *qdata, *tmp;
+	unsigned long flags;
 
-	spin_lock(&pg->rtpg_lock);
+	spin_lock_irqsave(&pg->rtpg_lock, flags);
 	pg->rtpg_sdev = NULL;
 	list_splice_init(&pg->rtpg_list, &qdata_list);
-	spin_unlock(&pg->rtpg_lock);
+	spin_unlock_irqrestore(&pg->rtpg_lock, flags);
 
 	err = alua_rtpg(sdev, pg);
 	if (err != SCSI_DH_OK || list_empty(&qdata_list))
@@ -940,12 +941,13 @@ static void alua_rtpg_queue(struct alua_port_group *pg,
 			    struct alua_queue_data *qdata)
 {
 	int start_queue = 0;
+	unsigned long flags;
 
 	if (!pg)
 		return;
 
 	kref_get(&pg->kref);
-	spin_lock(&pg->rtpg_lock);
+	spin_lock_irqsave(&pg->rtpg_lock, flags);
 	if (qdata)
 		list_add_tail(&qdata->entry, &pg->rtpg_list);
 	if (pg->rtpg_sdev == NULL) {
@@ -954,7 +956,7 @@ static void alua_rtpg_queue(struct alua_port_group *pg,
 		scsi_device_get(sdev);
 		start_queue = 1;
 	}
-	spin_unlock(&pg->rtpg_lock);
+	spin_unlock_irqrestore(&pg->rtpg_lock, flags);
 
 	if (start_queue)
 		queue_work(kmpath_aluad, &pg->rtpg_work);
