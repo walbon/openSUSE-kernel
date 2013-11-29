@@ -247,6 +247,24 @@ out:
 	return ret;
 }
 
+
+/**
+ * mei_hw_reset_release - release device from the reset
+ *
+ * @dev: the device structure
+ */
+void mei_hw_reset_release(struct mei_device *dev)
+{
+	u32 hcsr = mei_hcsr_read(dev);
+
+	hcsr |= H_IG;
+	hcsr &= ~H_RST;
+	hcsr &= ~H_IS;
+
+	mei_reg_write(dev, H_CSR, hcsr);
+	dev->host_hw_state = mei_hcsr_read(dev);
+}
+
 /**
  * mei_hw_reset - resets fw via mei csr register.
  *
@@ -261,6 +279,9 @@ static void mei_hw_reset(struct mei_device *dev, int interrupts_enabled)
 		mei_enable_interrupts(dev);
 	else
 		mei_disable_interrupts(dev);
+
+	if (dev->dev_state == MEI_DEV_POWER_DOWN)
+		mei_hw_reset_release(dev);
 }
 
 /**
@@ -293,11 +314,6 @@ void mei_reset(struct mei_device *dev, int interrupts_enabled)
 	    dev->host_hw_state);
 
 	mei_hw_reset(dev, interrupts_enabled);
-
-	dev->host_hw_state &= ~H_RST;
-	dev->host_hw_state |= H_IG;
-
-	mei_hcsr_set(dev);
 
 	dev_dbg(&dev->pdev->dev, "currently saved host_hw_state = 0x%08x.\n",
 	    dev->host_hw_state);

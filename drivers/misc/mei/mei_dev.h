@@ -437,4 +437,9 @@ void mei_csr_clear_his(struct mei_device *dev);
 void mei_enable_interrupts(struct mei_device *dev);
 void mei_disable_interrupts(struct mei_device *dev);
 
+/*
+ * mei hw reset function
+ */
+void mei_hw_reset_release(struct mei_device *dev);
+
 #endif

@@ -1497,7 +1497,8 @@ irqreturn_t mei_interrupt_thread_handler(int irq, void *dev_id)
 			mutex_unlock(&dev->device_lock);
 			return IRQ_HANDLED;
 		} else {
-			dev_dbg(&dev->pdev->dev, "FW not ready.\n");
+			dev_dbg(&dev->pdev->dev, "mei: F/W reset complete.\n");
+			mei_hw_reset_release(dev);
 			mutex_unlock(&dev->device_lock);
 			return IRQ_HANDLED;
 		}
