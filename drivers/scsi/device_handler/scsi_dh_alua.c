@@ -100,7 +100,6 @@ struct alua_dh_data {
 
 struct alua_queue_data {
 	struct list_head	entry;
-	struct alua_dh_data	*h;
 	activate_complete	callback_fn;
 	void			*callback_data;
 };
@@ -1065,7 +1064,6 @@ static int alua_activate(struct scsi_device *sdev,
 		return 0;
 	}
 
-	qdata->h = h;
 	qdata->callback_fn = fn;
 	qdata->callback_data = data;
 
