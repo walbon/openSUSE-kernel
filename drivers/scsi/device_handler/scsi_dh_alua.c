@@ -62,8 +62,13 @@
 #define ALUA_RTPG_DELAY_MSECS		5
 
 /* flags passed from user level */
-#define ALUA_OPTIMIZE_STPG		1
-#define ALUA_RTPG_EXT_HDR_UNSUPP	2
+#define ALUA_OPTIMIZE_STPG		0x01
+#define ALUA_RTPG_EXT_HDR_UNSUPP	0x02
+/* State machine flags */
+#define ALUA_PG_RUN_RTPG		0x10
+#define ALUA_PG_RUN_STPG		0x20
+#define ALUA_PG_STPG_DONE		0x40
+
 
 static LIST_HEAD(port_group_list);
 static DEFINE_SPINLOCK(port_group_lock);
@@ -937,33 +942,38 @@ static void alua_rtpg_work(struct work_struct *work)
 		container_of(work, struct alua_port_group, rtpg_work.work);
 	struct scsi_device *sdev = pg->rtpg_sdev;
 	LIST_HEAD(qdata_list);
-	int err;
+	int err = SCSI_DH_OK;
 	struct alua_queue_data *qdata, *tmp;
 	unsigned long flags;
 
-	pg->interval = 0;
-	err = alua_rtpg(sdev, pg);
-	if (err == SCSI_DH_RETRY) {
-		queue_delayed_work(kmpath_aluad, &pg->rtpg_work,
-				   pg->interval * HZ);
-		return;
-	}
-	pg->interval = 0;
-	if (err != SCSI_DH_OK)
-		goto done;
 	spin_lock_irqsave(&pg->rtpg_lock, flags);
-	if (list_empty(&pg->rtpg_list)) {
-		/* Check only, do not call stpg */
-		pg->rtpg_sdev = NULL;
+	if (pg->flags & ALUA_PG_RUN_RTPG) {
 		spin_unlock_irqrestore(&pg->rtpg_lock, flags);
-		goto out;
-	}
-	spin_unlock_irqrestore(&pg->rtpg_lock, flags);
-	err = alua_stpg(sdev, pg);
-	if (err == SCSI_DH_RETRY)
 		err = alua_rtpg(sdev, pg);
-done:
-	spin_lock_irqsave(&pg->rtpg_lock, flags);
+		if (err == SCSI_DH_RETRY) {
+			queue_delayed_work(kmpath_aluad, &pg->rtpg_work,
+					   pg->interval * HZ);
+			return;
+		}
+		spin_lock_irqsave(&pg->rtpg_lock, flags);
+		pg->flags &= ~ALUA_PG_RUN_RTPG;
+	}
+	if (pg->flags & ALUA_PG_RUN_STPG) {
+		spin_unlock_irqrestore(&pg->rtpg_lock, flags);
+		err = alua_stpg(sdev, pg);
+		spin_lock_irqsave(&pg->rtpg_lock, flags);
+		pg->flags &= ~ALUA_PG_RUN_STPG;
+		pg->flags |= ALUA_PG_STPG_DONE;
+		if (err == SCSI_DH_RETRY) {
+			pg->flags |= ALUA_PG_RUN_RTPG;
+			pg->interval = ALUA_RTPG_DELAY_MSECS * 1000;
+			spin_unlock_irqrestore(&pg->rtpg_lock, flags);
+			queue_delayed_work(kmpath_aluad, &pg->rtpg_work,
+					   pg->interval * HZ);
+			return;
+		}
+	}
+
 	list_splice_init(&pg->rtpg_list, &qdata_list);
 	pg->rtpg_sdev = NULL;
 	spin_unlock_irqrestore(&pg->rtpg_lock, flags);
@@ -974,7 +984,6 @@ done:
 			qdata->callback_fn(qdata->callback_data, err);
 		kfree(qdata);
 	}
-out:
 	kref_put(&pg->kref, release_port_group);
 	scsi_device_put(sdev);
 }
@@ -994,10 +1003,26 @@ static void alua_rtpg_queue(struct alua_port_group *pg,
 	if (qdata)
 		list_add_tail(&qdata->entry, &pg->rtpg_list);
 	if (pg->rtpg_sdev == NULL) {
+		pg->interval = 0;
+		pg->flags &= ~ALUA_PG_STPG_DONE;
+		pg->flags |= ALUA_PG_RUN_RTPG;
+		if (qdata)
+			pg->flags |= ALUA_PG_RUN_STPG;
+
 		kref_get(&pg->kref);
 		pg->rtpg_sdev = sdev;
 		scsi_device_get(sdev);
 		start_queue = 1;
+	} else {
+		/*
+		 * RTPG update is already queued.
+		 * Check if STPG is scheduled or done,
+		 * and set the STPG flag if not.
+		 */
+		if (qdata &&
+		    !(pg->flags & ALUA_PG_RUN_STPG) &&
+		    !(pg->flags & ALUA_PG_STPG_DONE))
+			pg->flags |= ALUA_PG_RUN_STPG;
 	}
 	spin_unlock_irqrestore(&pg->rtpg_lock, flags);
 
