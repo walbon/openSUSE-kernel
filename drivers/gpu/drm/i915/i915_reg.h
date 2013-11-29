@@ -1646,10 +1646,16 @@
 #define CRT_HOTPLUG_DETECT_VOLTAGE_475MV	(1 << 2)
 
 #define PORT_HOTPLUG_STAT	0x61114
-/* HDMI/DP bits are gen4+ */
-#define   DPB_HOTPLUG_LIVE_STATUS               (1 << 29)
+/*
+ * HDMI/DP bits are gen4+
+ *
+ * WARNING: Bspec for hpd status bits on gen4 seems to be completely confused.
+ * Please check the detailed lore in the commit message for for experimental
+ * evidence.
+ */
+#define   DPD_HOTPLUG_LIVE_STATUS               (1 << 29)
 #define   DPC_HOTPLUG_LIVE_STATUS               (1 << 28)
-#define   DPD_HOTPLUG_LIVE_STATUS               (1 << 27)
+#define   DPB_HOTPLUG_LIVE_STATUS               (1 << 27)
 #define   DPD_HOTPLUG_INT_STATUS		(3 << 21)
 #define   DPC_HOTPLUG_INT_STATUS		(3 << 19)
 #define   DPB_HOTPLUG_INT_STATUS		(3 << 17)
