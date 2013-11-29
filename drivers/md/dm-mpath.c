@@ -1243,8 +1243,8 @@ static void pg_init_done(void *data, int errors)
 			break;
 		}
 		DMERR("Could not failover device %s: Handler scsi_dh_%s "
-		      "Error %d.", pgpath->path.pdev,
-		      m->hw_handler_name, errors);
+		      "not attached.", pgpath->path.pdev,
+		      m->hw_handler_name);
 		/*
 		 * Fail path for now, so we do not ping pong
 		 */
@@ -1264,6 +1264,7 @@ static void pg_init_done(void *data, int errors)
 	case SCSI_DH_RETRY:
 		/* Wait before retrying. */
 		delay_retry = 1;
+		DMWARN("Device %s busy, retry.", pgpath->path.pdev);
 	case SCSI_DH_IMM_RETRY:
 	case SCSI_DH_RES_TEMP_UNAVAIL:
 		if (pg_init_limit_reached(m, pgpath))
@@ -1276,6 +1277,9 @@ static void pg_init_done(void *data, int errors)
 		 * error, but this is what the old dm did. In future
 		 * patches we can do more advanced handling.
 		 */
+		DMERR("Could not failover device %s: Handler scsi_dh_%s "
+		      "error %d.", pgpath->path.pdev,
+		      m->hw_handler_name, errors);
 		fail_path(pgpath);
 	}
 
