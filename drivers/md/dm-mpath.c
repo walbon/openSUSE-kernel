@@ -284,9 +284,6 @@ static void __pg_init_all_paths(struct multipath *m)
 		pg_init_delay = msecs_to_jiffies(m->pg_init_delay_msecs != DM_PG_INIT_DELAY_DEFAULT ?
 						 m->pg_init_delay_msecs : DM_PG_INIT_DELAY_MSECS);
 	list_for_each_entry(pgpath, &m->current_pg->pgpaths, list) {
-		/* Skip disabled paths or failed paths */
-		if (!pgpath->path.dev || !pgpath->is_active)
-			continue;
 		if (queue_delayed_work(kmpath_handlerd, &pgpath->activate_path,
 				       pg_init_delay))
 			m->pg_init_in_progress++;
@@ -1335,9 +1332,11 @@ static void activate_path(struct work_struct *work)
 	struct pgpath *pgpath =
 		container_of(work, struct pgpath, activate_path.work);
 
-	if (pgpath->path.dev)
+	if (pgpath->path.dev && pgpath->is_active)
 		scsi_dh_activate(bdev_get_queue(pgpath->path.dev->bdev),
 				 pg_init_done, pgpath);
+	else
+		pg_init_done(pgpath, SCSI_DH_IO);
 }
 
 /*
