@@ -914,24 +914,33 @@ static void alua_rtpg_work(struct work_struct *work)
 	struct alua_queue_data *qdata, *tmp;
 	unsigned long flags;
 
-	spin_lock_irqsave(&pg->rtpg_lock, flags);
-	pg->rtpg_sdev = NULL;
-	list_splice_init(&pg->rtpg_list, &qdata_list);
-	spin_unlock_irqrestore(&pg->rtpg_lock, flags);
-
 	err = alua_rtpg(sdev, pg);
-	if (err != SCSI_DH_OK || list_empty(&qdata_list))
+	if (err != SCSI_DH_OK)
 		goto done;
+	spin_lock_irqsave(&pg->rtpg_lock, flags);
+	if (list_empty(&pg->rtpg_list)) {
+		/* Check only, do not call stpg */
+		pg->rtpg_sdev = NULL;
+		spin_unlock_irqrestore(&pg->rtpg_lock, flags);
+		goto out;
+	}
+	spin_unlock_irqrestore(&pg->rtpg_lock, flags);
 	err = alua_stpg(sdev, pg);
 	if (err == SCSI_DH_RETRY)
 		err = alua_rtpg(sdev, pg);
 done:
+	spin_lock_irqsave(&pg->rtpg_lock, flags);
+	list_splice_init(&pg->rtpg_list, &qdata_list);
+	pg->rtpg_sdev = NULL;
+	spin_unlock_irqrestore(&pg->rtpg_lock, flags);
+
 	list_for_each_entry_safe(qdata, tmp, &qdata_list, entry) {
 		list_del(&qdata->entry);
 		if (qdata->callback_fn)
 			qdata->callback_fn(qdata->callback_data, err);
 		kfree(qdata);
 	}
+out:
 	kref_put(&pg->kref, release_port_group);
 	scsi_device_put(sdev);
 }
