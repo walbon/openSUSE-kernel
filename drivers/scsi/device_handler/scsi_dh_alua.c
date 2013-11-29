@@ -797,11 +797,9 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 	     k += off, ucp += off) {
 
 		if (pg->group_id == (ucp[2] << 8) + ucp[3]) {
-			spin_lock(&pg->rtpg_lock);
 			pg->state = ucp[0] & 0x0f;
 			pg->pref = ucp[0] >> 7;
 			pg->valid = ucp[1];
-			spin_unlock(&pg->rtpg_lock);
 		}
 		off = 8 + (ucp[7] * 4);
 	}
@@ -828,9 +826,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 		}
 		/* Transitioning time exceeded, set port to standby */
 		err = SCSI_DH_RETRY;
-		spin_lock(&pg->rtpg_lock);
 		pg->state = TPGS_STATE_STANDBY;
-		spin_unlock(&pg->rtpg_lock);
 		break;
 	case TPGS_STATE_OFFLINE:
 		/* Path unusable */
