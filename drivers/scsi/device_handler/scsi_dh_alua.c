@@ -517,6 +517,9 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
 				target_id_size = d[3];
 				target_id = d + 4;
 				strncpy(target_id_str, d + 4, 256);
+				if (target_id_size > 255)
+					target_id_size = 255;
+				target_id_str[target_id_size] = '\0';
 			}
 			break;
 		default:
