@@ -410,7 +410,7 @@ int scsi_dh_activate(struct request_queue *q, activate_complete fn, void *data)
 		err = SCSI_DH_DEV_OFFLINED;
 	spin_unlock_irqrestore(q->queue_lock, flags);
 
-	if (err != SCSI_DH_OK) {
+	if (err != SCSI_DH_OK || !scsi_dh->activate) {
 		if (fn)
 			fn(data, err);
 		goto out;
