@@ -452,7 +452,5 @@ unsigned int nfs_page_array_len(unsigned int base, size_t len)
  */
 static inline int nfs_restart_rpc(struct rpc_task *task, const struct nfs_client *clp)
 {
-	if (nfs4_has_session(clp))
-		return rpc_restart_call_prepare(task);
-	return rpc_restart_call(task);
+	return rpc_restart_call_prepare(task);
 }

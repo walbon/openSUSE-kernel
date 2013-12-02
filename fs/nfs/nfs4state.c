@@ -821,8 +821,10 @@ void nfs4_put_lock_state(struct nfs4_lock_state *lsp)
 	if (!atomic_dec_and_lock(&lsp->ls_count, &state->state_lock))
 		return;
 	list_del(&lsp->ls_locks);
-	if (list_empty(&state->lock_states))
+	if (list_empty(&state->lock_states)) {
 		clear_bit(LK_STATE_IN_USE, &state->flags);
+		clear_bit(LK_STATE_LOST, &state->flags);
+	}
 	spin_unlock(&state->state_lock);
 	if (lsp->ls_flags & NFS_LOCK_INITIALIZED)
 		nfs4_release_lockowner(lsp);
@@ -884,10 +886,33 @@ void nfs4_copy_stateid(nfs4_stateid *dst, struct nfs4_state *state, fl_owner_t f
 
 	spin_lock(&state->state_lock);
 	lsp = __nfs4_find_lock_state(state, fl_owner, fl_pid, NFS4_ANY_LOCK_TYPE);
-	if (lsp != NULL && (lsp->ls_flags & NFS_LOCK_INITIALIZED) != 0)
+	if (lsp != NULL &&
+	    (lsp->ls_flags & (NFS_LOCK_INITIALIZED | NFS_LOCK_LOST)) != 0)
 		memcpy(dst, &lsp->ls_stateid, sizeof(*dst));
 	spin_unlock(&state->state_lock);
 	nfs4_put_lock_state(lsp);
+}
+
+/* Check the lock access would try to use a lost lock stateid */
+int nfs4_lock_lost(const struct nfs_open_context *ctx,
+		   const struct nfs_lock_context *l_ctx)
+{
+	int ret = 0;
+	struct nfs4_state *state;
+	struct nfs4_lock_state *lsp;
+	if (!ctx || !ctx->state || !l_ctx)
+		return 0;
+	state = ctx->state;
+	if (!test_bit(LK_STATE_IN_USE, &state->flags) ||
+	    !test_bit(LK_STATE_LOST, &state->flags))
+		return 0;
+	spin_lock(&state->state_lock);
+	lsp = __nfs4_find_lock_state(state, l_ctx->lockowner, l_ctx->pid, NFS4_ANY_LOCK_TYPE);
+	if (lsp != NULL && (lsp->ls_flags & NFS_LOCK_LOST) != 0)
+		ret = 1;
+	spin_unlock(&state->state_lock);
+	nfs4_put_lock_state(lsp);
+	return ret;
 }
 
 struct nfs_seqid *nfs_alloc_seqid(struct nfs_seqid_counter *counter, gfp_t gfp_mask)
