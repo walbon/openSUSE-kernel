@@ -1121,23 +1121,25 @@ out:
 	nfs_writedata_release(calldata);
 }
 
-#if defined(CONFIG_NFS_V4_1)
 void nfs_write_prepare(struct rpc_task *task, void *calldata)
 {
 	struct nfs_write_data *data = calldata;
 
+#if defined(CONFIG_NFS_V4_1)
 	if (nfs4_setup_sequence(NFS_SERVER(data->inode),
 				&data->args.seq_args,
 				&data->res.seq_res, 1, task))
 		return;
-	rpc_call_start(task);
-}
 #endif /* CONFIG_NFS_V4_1 */
+	rpc_call_start(task);
+#if defined(CONFIG_NFS_V4)
+	if (nfs4_lock_lost(data->args.context, data->args.lock_context))
+		rpc_exit(task, -EIO);
+#endif
+}
 
 static const struct rpc_call_ops nfs_write_partial_ops = {
-#if defined(CONFIG_NFS_V4_1)
 	.rpc_call_prepare = nfs_write_prepare,
-#endif /* CONFIG_NFS_V4_1 */
 	.rpc_call_done = nfs_writeback_done_partial,
 	.rpc_release = nfs_writeback_release_partial,
 };
@@ -1199,9 +1201,7 @@ remove_request:
 }
 
 static const struct rpc_call_ops nfs_write_full_ops = {
-#if defined(CONFIG_NFS_V4_1)
 	.rpc_call_prepare = nfs_write_prepare,
-#endif /* CONFIG_NFS_V4_1 */
 	.rpc_call_done = nfs_writeback_done_full,
 	.rpc_release = nfs_writeback_release_full,
 };
@@ -1495,9 +1495,7 @@ static void nfs_commit_release(void *calldata)
 }
 
 static const struct rpc_call_ops nfs_commit_ops = {
-#if defined(CONFIG_NFS_V4_1)
 	.rpc_call_prepare = nfs_write_prepare,
-#endif /* CONFIG_NFS_V4_1 */
 	.rpc_call_done = nfs_commit_done,
 	.rpc_release = nfs_commit_release,
 };
