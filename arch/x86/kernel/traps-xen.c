@@ -748,6 +748,7 @@ asmlinkage void math_state_restore(void)
 
 	/* NB. 'clts' is done for us by Xen during virtual trap. */
 	if (!tsk_used_math(tsk)) {
+		stts();
 		local_irq_enable();
 		/*
 		 * does a slab alloc which can sleep
@@ -756,11 +757,11 @@ asmlinkage void math_state_restore(void)
 			/*
 			 * ran out of memory!
 			 */
-			stts();
 			do_group_exit(SIGKILL);
 			return;
 		}
 		local_irq_disable();
+		clts();
 	}
 
 	/* clts();			Allow maths ops (or we recurse) */
