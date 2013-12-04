@@ -1133,6 +1133,15 @@ UNUSUAL_DEV( 0x090a, 0x1200, 0x0000, 0x9999,
 		"MP3 player",
 		USB_SC_RBC, USB_PR_BULK, NULL,
 		0 ),
+/*
+ * Scott Barnum
+ * The key reports bogus sizes
+ */
+UNUSUAL_DEV(  0x090c, 0x1000, 0x0000, 0x9999,
+		"SMI Corporation",
+		"USB DISK",
+		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
+		US_FL_NO_READ_CAPACITY_16 ),
 
 /* aeb */
 UNUSUAL_DEV( 0x090c, 0x1132, 0x0000, 0xffff,
@@ -2028,7 +2037,6 @@ UNUSUAL_DEV(  0x4146, 0xba01, 0x0100, 0x0100,
 		"Iomega",
 		"Micro Mini 1GB",
 		USB_SC_DEVICE, USB_PR_DEVICE, NULL, US_FL_NOT_LOCKABLE ),
-
 /*
  * Nick Bowler <nbowler@elliptictech.com>
  * SCSI stack spams (otherwise harmless) error messages.
