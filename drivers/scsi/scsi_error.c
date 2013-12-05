@@ -438,6 +438,25 @@ static int scsi_check_sense(struct scsi_cmnd *scmd)
 				    "LUN reached a thin provisioning soft "
 				    "threshold.\n");
 
+		if (sshdr.asc == 0x2a && sshdr.ascq == 0x00)
+			scmd_printk(KERN_WARNING, scmd,
+				    "Warning! Received an indication that the "
+				    "parameters on this target have "
+				    "changed. The Linux SCSI layer does not "
+				    "automatically adjust these parameters.\n");
+		if (sshdr.asc == 0x2a && sshdr.ascq == 0x01)
+			scmd_printk(KERN_WARNING, scmd,
+				    "Warning! Received an indication that the "
+				    "mode parameters on this target have "
+				    "changed. The Linux SCSI layer does not "
+				    "automatically adjust these parameters.\n");
+		if (sshdr.asc == 0x2a && sshdr.ascq == 0x09)
+			scmd_printk(KERN_WARNING, scmd,
+				    "Warning! Received an indication that the "
+				    "capacity data on this target have "
+				    "changed. The Linux SCSI layer does not "
+				    "automatically adjust these parameters.\n");
+
 		/*
 		 * Pass the UA upwards for a determination in the completion
 		 * functions.

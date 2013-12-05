@@ -395,6 +395,16 @@ static struct scsi_driver sd_template = {
 };
 
 /*
+ * Dummy kobj_map->probe function.
+ * The default ->probe function will call modprobe, which is
+ * pointless as this module is already loaded.
+ */
+static struct kobject *sd_default_probe(dev_t devt, int *partno, void *data)
+{
+	return NULL;
+}
+
+/*
  * Device no to disk mapping:
  * 
  *       major         disc2     disc  p1
@@ -2711,8 +2721,10 @@ static int sd_probe(struct device *dev)
 static int sd_remove(struct device *dev)
 {
 	struct scsi_disk *sdkp;
+	dev_t devt;
 
 	sdkp = dev_get_drvdata(dev);
+	devt = disk_devt(sdkp->disk);
 	scsi_autopm_get_device(sdkp->device);
 
 	async_synchronize_full();
@@ -2721,6 +2733,9 @@ static int sd_remove(struct device *dev)
 	device_del(&sdkp->dev);
 	del_gendisk(sdkp->disk);
 	sd_shutdown(dev);
+
+	blk_register_region(devt, SD_MINORS, NULL,
+			    sd_default_probe, NULL, NULL);
 
 	mutex_lock(&sd_ref_mutex);
 	dev_set_drvdata(dev, NULL);
@@ -2913,8 +2928,16 @@ static int __init init_sd(void)
 	for (i = 0; i < SD_MAJORS; i++)
 	{
 		error[i] = register_blkdev(sd_major(i), "sd");
-		if (error[i] == 0)
-			majors++;
+		if (error[i] != 0)
+			continue;
+
+		majors++;
+
+		/*
+		 * pre-register ->probe in kobj_map to avoid deadlocks
+		 */
+		blk_register_region(sd_major(i), SD_MINORS, NULL,
+				    sd_default_probe, NULL, NULL);
 	}
 
 	if (!majors)
@@ -2980,8 +3003,10 @@ static void __exit exit_sd(void)
 
 	class_unregister(&sd_disk_class);
 
-	for (i = 0; i < SD_MAJORS; i++)
+	for (i = 0; i < SD_MAJORS; i++) {
+		blk_unregister_region(sd_major(i), SD_MINORS);
 		unregister_blkdev(sd_major(i), "sd");
+	}
 }
 
 module_init(init_sd);
