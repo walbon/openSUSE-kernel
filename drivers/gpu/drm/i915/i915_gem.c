@@ -3976,8 +3976,17 @@ i915_gem_init_hw(struct drm_device *dev)
 	i915_gem_context_init(dev);
 	i915_gem_init_ppgtt(dev);
 
+	if (HAS_VEBOX(dev)) {
+		ret = intel_init_vebox_ring_buffer(dev);
+		if (ret)
+			goto cleanup_vebox_ring;
+	}
+
+
 	return 0;
 
+cleanup_vebox_ring:
+	intel_cleanup_ring_buffer(&dev_priv->ring[VECS]);
 cleanup_bsd_ring:
 	intel_cleanup_ring_buffer(&dev_priv->ring[VCS]);
 cleanup_render_ring:
