@@ -1121,7 +1121,7 @@ struct se_device *transport_add_device_to_core_hba(
 	/*
 	 * Startup the struct se_device processing thread
 	 */
-	dev->tmr_wq = alloc_workqueue("tmr-%s", WQ_MEM_RECLAIM | WQ_UNBOUND, 1);
+	dev->tmr_wq = alloc_workqueue("tmr", WQ_MEM_RECLAIM | WQ_UNBOUND, 1);
 	if (!dev->tmr_wq) {
 		pr_err("Unable to create tmr workqueue for %s\n",
 			dev->transport->name);
