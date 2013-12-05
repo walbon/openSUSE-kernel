@@ -295,6 +295,7 @@ static const struct intel_device_info intel_haswell_d_info = {
 	.has_blt_ring = 1,
 	.has_llc = 1,
 	.has_force_wake = 1,
+	.has_vebox_ring = 1,
 };
 
 static const struct intel_device_info intel_haswell_m_info = {
@@ -304,6 +305,7 @@ static const struct intel_device_info intel_haswell_m_info = {
 	.has_blt_ring = 1,
 	.has_llc = 1,
 	.has_force_wake = 1,
+	.has_vebox_ring = 1,
 };
 
 static const struct pci_device_id pciidlist[] = {		/* aka */
