@@ -439,7 +439,7 @@ static void ivybridge_parity_work(struct work_struct *work)
 	I915_WRITE(GEN7_MISCCPCTL, misccpctl);
 
 	spin_lock_irqsave(&dev_priv->irq_lock, flags);
-	dev_priv->gt_irq_mask &= ~GT_GEN7_L3_PARITY_ERROR_INTERRUPT;
+	dev_priv->gt_irq_mask &= ~GT_RENDER_L3_PARITY_ERROR_INTERRUPT;
 	I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
 	spin_unlock_irqrestore(&dev_priv->irq_lock, flags);
 
@@ -471,7 +471,7 @@ static void ivybridge_handle_parity_error(struct drm_device *dev)
 		return;
 
 	spin_lock_irqsave(&dev_priv->irq_lock, flags);
-	dev_priv->gt_irq_mask |= GT_GEN7_L3_PARITY_ERROR_INTERRUPT;
+	dev_priv->gt_irq_mask |= GT_RENDER_L3_PARITY_ERROR_INTERRUPT;
 	I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
 	spin_unlock_irqrestore(&dev_priv->irq_lock, flags);
 
@@ -483,22 +483,22 @@ static void snb_gt_irq_handler(struct drm_device *dev,
 			       u32 gt_iir)
 {
 
-	if (gt_iir & (GEN6_RENDER_USER_INTERRUPT |
-		      GEN6_RENDER_PIPE_CONTROL_NOTIFY_INTERRUPT))
+	if (gt_iir &
+	    (GT_RENDER_USER_INTERRUPT | GT_RENDER_PIPECTL_NOTIFY_INTERRUPT))
 		notify_ring(dev, &dev_priv->ring[RCS]);
-	if (gt_iir & GEN6_BSD_USER_INTERRUPT)
+	if (gt_iir & GT_BSD_USER_INTERRUPT)
 		notify_ring(dev, &dev_priv->ring[VCS]);
-	if (gt_iir & GEN6_BLITTER_USER_INTERRUPT)
+	if (gt_iir & GT_BLT_USER_INTERRUPT)
 		notify_ring(dev, &dev_priv->ring[BCS]);
 
-	if (gt_iir & (GT_GEN6_BLT_CS_ERROR_INTERRUPT |
-		      GT_GEN6_BSD_CS_ERROR_INTERRUPT |
-		      GT_RENDER_CS_ERROR_INTERRUPT)) {
+	if (gt_iir & (GT_BLT_CS_ERROR_INTERRUPT |
+		      GT_BSD_CS_ERROR_INTERRUPT |
+		      GT_RENDER_CS_MASTER_ERROR_INTERRUPT)) {
 		DRM_ERROR("GT error interrupt 0x%08x\n", gt_iir);
 		i915_handle_error(dev, false);
 	}
 
-	if (gt_iir & GT_GEN7_L3_PARITY_ERROR_INTERRUPT)
+	if (gt_iir & GT_RENDER_L3_PARITY_ERROR_INTERRUPT)
 		ivybridge_handle_parity_error(dev);
 }
 
@@ -807,9 +807,10 @@ static void ilk_gt_irq_handler(struct drm_device *dev,
 			       struct drm_i915_private *dev_priv,
 			       u32 gt_iir)
 {
-	if (gt_iir & (GT_USER_INTERRUPT | GT_PIPE_NOTIFY))
+	if (gt_iir &
+	    (GT_RENDER_USER_INTERRUPT | GT_RENDER_PIPECTL_NOTIFY_INTERRUPT))
 		notify_ring(dev, &dev_priv->ring[RCS]);
-	if (gt_iir & GT_BSD_USER_INTERRUPT)
+	if (gt_iir & ILK_BSD_USER_INTERRUPT)
 		notify_ring(dev, &dev_priv->ring[VCS]);
 }
 
@@ -2015,7 +2016,7 @@ static int ironlake_irq_postinstall(struct drm_device *dev)
 	u32 display_mask = DE_MASTER_IRQ_CONTROL | DE_GSE | DE_PCH_EVENT |
 			   DE_PLANEA_FLIP_DONE | DE_PLANEB_FLIP_DONE |
 			   DE_AUX_CHANNEL_A;
-	u32 render_irqs;
+	u32 gt_irqs;
 	u32 hotplug_mask;
 
 	dev_priv->irq_mask = ~display_mask;
@@ -2031,17 +2032,15 @@ static int ironlake_irq_postinstall(struct drm_device *dev)
 	I915_WRITE(GTIIR, I915_READ(GTIIR));
 	I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
 
+	gt_irqs = GT_RENDER_USER_INTERRUPT;
+
 	if (IS_GEN6(dev))
-		render_irqs =
-			GT_USER_INTERRUPT |
-			GEN6_BSD_USER_INTERRUPT |
-			GEN6_BLITTER_USER_INTERRUPT;
+		gt_irqs |= GT_BLT_USER_INTERRUPT | GT_BSD_USER_INTERRUPT;
 	else
-		render_irqs =
-			GT_USER_INTERRUPT |
-			GT_PIPE_NOTIFY |
-			GT_BSD_USER_INTERRUPT;
-	I915_WRITE(GTIER, render_irqs);
+		gt_irqs |= GT_RENDER_PIPECTL_NOTIFY_INTERRUPT |
+			   ILK_BSD_USER_INTERRUPT;
+
+	I915_WRITE(GTIER, gt_irqs);
 	POSTING_READ(GTIER);
 
 	if (HAS_PCH_CPT(dev)) {
@@ -2089,7 +2088,7 @@ static int ivybridge_irq_postinstall(struct drm_device *dev)
 		DE_PLANEB_FLIP_DONE_IVB |
 		DE_PLANEA_FLIP_DONE_IVB |
 		DE_AUX_CHANNEL_A_IVB;
-	u32 render_irqs;
+	u32 gt_irqs;
 	u32 hotplug_mask;
 
 	dev_priv->irq_mask = ~display_mask;
@@ -2104,14 +2103,14 @@ static int ivybridge_irq_postinstall(struct drm_device *dev)
 		   DE_PIPEA_VBLANK_IVB);
 	POSTING_READ(DEIER);
 
-	dev_priv->gt_irq_mask = ~GT_GEN7_L3_PARITY_ERROR_INTERRUPT;
+	dev_priv->gt_irq_mask = ~GT_RENDER_L3_PARITY_ERROR_INTERRUPT;
 
 	I915_WRITE(GTIIR, I915_READ(GTIIR));
 	I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
 
-	render_irqs = GT_USER_INTERRUPT | GEN6_BSD_USER_INTERRUPT |
-		GEN6_BLITTER_USER_INTERRUPT | GT_GEN7_L3_PARITY_ERROR_INTERRUPT;
-	I915_WRITE(GTIER, render_irqs);
+	gt_irqs = GT_RENDER_USER_INTERRUPT | GT_BSD_USER_INTERRUPT |
+		  GT_BLT_USER_INTERRUPT | GT_RENDER_L3_PARITY_ERROR_INTERRUPT;
+	I915_WRITE(GTIER, gt_irqs);
 	POSTING_READ(GTIER);
 
 	/* Power management */
@@ -2140,9 +2139,9 @@ static int ivybridge_irq_postinstall(struct drm_device *dev)
 static int valleyview_irq_postinstall(struct drm_device *dev)
 {
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
+	u32 gt_irqs;
 	u32 enable_mask;
 	u32 pipestat_enable = PLANE_FLIP_DONE_INT_EN_VLV;
-	u32 render_irqs;
 	u16 msid;
 
 	enable_mask = I915_DISPLAY_PORT_INTERRUPT;
@@ -2189,9 +2188,9 @@ static int valleyview_irq_postinstall(struct drm_device *dev)
 	I915_WRITE(GTIIR, I915_READ(GTIIR));
 	I915_WRITE(GTIMR, dev_priv->gt_irq_mask);
 
-	render_irqs = GT_USER_INTERRUPT | GEN6_BSD_USER_INTERRUPT |
-		GEN6_BLITTER_USER_INTERRUPT;
-	I915_WRITE(GTIER, render_irqs);
+	gt_irqs = GT_RENDER_USER_INTERRUPT | GT_BSD_USER_INTERRUPT |
+		GT_BLT_USER_INTERRUPT;
+	I915_WRITE(GTIER, gt_irqs);
 	POSTING_READ(GTIER);
 
 	/* ack & enable invalid PTE error interrupts */
