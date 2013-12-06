@@ -647,6 +647,12 @@ FTR_SECTION_ELSE
 	ldarx	r4,0,r1
 ALT_FTR_SECTION_END_IFCLR(CPU_FTR_STCX_CHECKS_ADDRESS)
 
+	/* Load PPR from thread struct before we clear MSR:RI */
+BEGIN_FTR_SECTION
+	ld	r2,PACACURRENT(r13)
+	ld	r2,TASKTHREADPPR(r2)
+END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
+
 	/*
 	 * Clear RI before restoring r13.  If we are returning to
 	 * userspace and we take an exception after restoring r13,
@@ -662,8 +668,10 @@ ALT_FTR_SECTION_END_IFCLR(CPU_FTR_STCX_CHECKS_ADDRESS)
 	 */
 	andi.	r0,r3,MSR_PR
 	beq	1f
+BEGIN_FTR_SECTION
+	mtspr	SPRN_PPR,r2	/* Restore PPR */
+END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	ACCOUNT_CPU_USER_EXIT(r2, r4)
-	RESTORE_PPR(r2, r4)
 	REST_GPR(13, r1)
 1:
 	mtspr	SPRN_SRR1,r3
