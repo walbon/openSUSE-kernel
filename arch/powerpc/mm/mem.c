@@ -34,6 +34,7 @@
 #include <linux/suspend.h>
 #include <linux/memblock.h>
 #include <linux/hugetlb.h>
+#include <linux/slab.h>
 
 #include <asm/pgalloc.h>
 #include <asm/prom.h>
@@ -521,3 +522,32 @@ void update_mmu_cache(struct vm_area_struct *vma, unsigned long address,
 	hash_preload(vma->vm_mm, address, access, trap);
 #endif /* CONFIG_PPC_STD_MMU */
 }
+
+/*
+ * System memory should not be in /proc/iomem but various tools expect it
+ * (eg kdump).
+ */
+static int add_system_ram_resources(void)
+{
+	struct memblock_region *reg;
+
+	for_each_memblock(memory, reg) {
+		struct resource *res;
+		unsigned long base = reg->base;
+		unsigned long size = reg->size;
+
+		res = kzalloc(sizeof(struct resource), GFP_KERNEL);
+		WARN_ON(!res);
+
+		if (res) {
+			res->name = "System RAM";
+			res->start = base;
+			res->end = base + size - 1;
+			res->flags = IORESOURCE_MEM;
+			WARN_ON(request_resource(&iomem_resource, res) < 0);
+		}
+	}
+
+	return 0;
+}
+subsys_initcall(add_system_ram_resources);
