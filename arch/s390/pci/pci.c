@@ -1079,6 +1079,7 @@ static void zpci_mem_exit(void)
 }
 
 static unsigned int s390_pci_probe;
+static unsigned int s390_pci_initialized;
 
 char * __init pcibios_setup(char *str)
 {
@@ -1087,6 +1088,11 @@ char * __init pcibios_setup(char *str)
 		return NULL;
 	}
 	return str;
+}
+
+bool zpci_is_enabled(void)
+{
+	return s390_pci_initialized;
 }
 
 static int __init pci_base_init(void)
@@ -1124,6 +1130,7 @@ static int __init pci_base_init(void)
 	if (rc)
 		goto out_find;
 
+	s390_pci_initialized = 1;
 	return 0;
 
 out_find:
@@ -1142,5 +1149,6 @@ subsys_initcall_sync(pci_base_init);
 
 void zpci_rescan(void)
 {
-	clp_rescan_pci_devices_simple();
+	if (zpci_is_enabled())
+		clp_rescan_pci_devices_simple();
 }
