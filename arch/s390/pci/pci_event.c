@@ -116,6 +116,8 @@ static void __devinit __zpci_event_availability(struct zpci_ccdf_avail *ccdf)
 		 * Remove the pci root bus. Note that pcibios_remove_bus
 		 * isn't called by common code here, so we call it ourselves.
 		 */
+		if (!zdev)
+			break;
 		device_unregister(zdev->bus->bridge);
 		__pcibios_remove_bus(zdev->bus);
 		pci_remove_bus(zdev->bus);
