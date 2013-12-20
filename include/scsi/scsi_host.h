@@ -596,7 +596,9 @@ struct Scsi_Host {
 	unsigned int host_eh_scheduled;    /* EH scheduled without command */
     
 	unsigned int host_no;  /* Used for IOCTL_GET_IDLUN, /proc/scsi et al. */
-	int resetting; /* if set, it means that last_reset is a valid value */
+
+	/* next two fields are used to bound the time spent in error handling */
+	int resetting;
 	unsigned long last_reset;
 
 	/*
