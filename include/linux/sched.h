@@ -971,7 +971,9 @@ struct sched_domain {
 
 	u64 last_update;
 #ifndef __GENKSYMS__
+	/* idle_balance() stats */
 	u64 max_newidle_lb_cost;
+	unsigned long next_decay_max_lb_cost;
 #endif
 
 #ifdef CONFIG_SCHEDSTATS

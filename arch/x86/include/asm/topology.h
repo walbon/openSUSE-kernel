@@ -129,6 +129,7 @@ extern void setup_node_to_cpumask_map(void);
 	.last_balance		= jiffies,				\
 	.balance_interval	= 1,					\
 	.max_newidle_lb_cost	= 0,					\
+	.next_decay_max_lb_cost	= jiffies,				\
 }
 
 #ifdef CONFIG_X86_64
