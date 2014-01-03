@@ -970,6 +970,9 @@ struct sched_domain {
 	unsigned int nr_balance_failed; /* initialise to 0 */
 
 	u64 last_update;
+#ifndef __GENKSYMS__
+	u64 max_newidle_lb_cost;
+#endif
 
 #ifdef CONFIG_SCHEDSTATS
 	/* load_balance() stats */
