@@ -268,6 +268,9 @@ extern struct bio_vec *bvec_alloc_bs(gfp_t, int, unsigned long *, struct bio_set
 extern void bvec_free_bs(struct bio_set *, struct bio_vec *, unsigned int);
 extern unsigned int bvec_nr_vecs(unsigned short idx);
 
+extern bool bvec_mergeable(struct request_queue *q, struct bio_vec *lastbv,
+			   struct bio_vec *newbv, unsigned int seg_size);
+
 /*
  * Allow queuer to specify a completion CPU for this bio
  */
