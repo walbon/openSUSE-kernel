@@ -133,6 +133,7 @@
 #include <linux/pci.h>
 #include <linux/inetdevice.h>
 #include <linux/cpu_rmap.h>
+#include <linux/if_macvlan.h>
 
 #include "net-sysfs.h"
 
@@ -1323,6 +1324,10 @@ void dev_disable_lro(struct net_device *dev)
 	 */
 	if (is_vlan_dev(dev))
 		dev = vlan_dev_real_dev(dev);
+
+	/* the same for macvlan devices */
+	if (netif_is_macvlan(dev))
+		dev = macvlan_dev_real_dev(dev);
 
 	if (dev->ethtool_ops && dev->ethtool_ops->get_flags)
 		flags = dev->ethtool_ops->get_flags(dev);

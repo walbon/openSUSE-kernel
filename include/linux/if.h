@@ -78,6 +78,8 @@
 					 * datapath port */
 #define IFF_TX_SKB_SHARING	0x10000	/* The interface supports sharing
 					 * skbs on transmit */
+#define IFF_MACVLAN 0x200000		/* Macvlan device */
+
 
 #define IF_GET_IFACE	0x0001		/* for querying only */
 #define IF_GET_PROTO	0x0002
