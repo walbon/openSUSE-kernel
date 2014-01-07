@@ -39,9 +39,10 @@ struct dst_entry {
 	unsigned long		expires;
 #else
 	union {
-		unsigned long           expires;
-		/* point to where the dst_entry copied from */
-		struct dst_entry        *from;
+		unsigned long           expires /* must be 0 or odd number */;
+		/* point to where the dst_entry copied from, treated as
+		   a dst_entry* when the value is an even number */
+		unsigned long		__from;
 	};
 #endif
 	struct dst_entry	*path;
@@ -416,8 +417,7 @@ static inline void dst_set_expires(struct dst_entry *dst, int timeout)
 {
 	unsigned long expires = jiffies + timeout;
 
-	if (expires == 0)
-		expires = 1;
+	expires |= 1UL;
 
 	if (dst->expires == 0 || time_before(expires, dst->expires))
 		dst->expires = expires;

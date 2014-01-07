@@ -259,8 +259,7 @@ static void ip6_dst_destroy(struct dst_entry *dst)
 		in6_dev_put(idev);
 	}
 
-	if (!(rt->rt6i_flags & RTF_EXPIRES) && dst->from)
-		dst_release(dst->from);
+	rt6_release_from(rt);
 
 	if (peer) {
 		rt->rt6i_peer = NULL;
@@ -307,13 +306,12 @@ static void ip6_dst_ifdown(struct dst_entry *dst, struct net_device *dev,
 
 static __inline__ int rt6_check_expired(const struct rt6_info *rt)
 {
-	struct rt6_info *ort = NULL;
+	struct rt6_info *ort = rt6_get_from(rt);
 
 	if (rt->rt6i_flags & RTF_EXPIRES) {
 		if (time_after(jiffies, rt->dst.expires))
 			return 1;
-	} else if (rt->dst.from) {
-		ort = (struct rt6_info *) rt->dst.from;
+	} else if (ort) {
 		return (ort->rt6i_flags & RTF_EXPIRES) &&
 			time_after(jiffies, ort->dst.expires);
 	}
