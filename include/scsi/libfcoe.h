@@ -90,7 +90,6 @@ enum fip_state {
  * @lp:		   &fc_lport: libfc local port.
  * @sel_fcf:	   currently selected FCF, or NULL.
  * @fcfs:	   list of discovered FCFs.
- * @cdev:          (Optional) pointer to sysfs fcoe_ctlr_device.
  * @fcf_count:	   number of discovered FCF entries.
  * @sol_time:	   time when a multicast solicitation was last sent.
  * @sel_time:	   time after which to select an FCF.
@@ -103,7 +102,8 @@ enum fip_state {
  * @flogi_req:	   clone of FLOGI request sent
  * @rnd_state:	   state for pseudo-random number generator.
  * @port_id:	   proposed or selected local-port ID.
- * @user_mfs:	   configured maximum FC frame size, including FC header.
+ * @user_mfs:	   configured maximum FC frame size, including FC header. Highest bit means
+ *                 this structure is allocated in line with the fcoe_ctlr_device.
  * @flogi_oxid:    exchange ID of most recent fabric login.
  * @flogi_req_send: send of FLOGI requested
  * @flogi_count:   number of FLOGI attempts in AUTO mode.
@@ -128,7 +128,6 @@ struct fcoe_ctlr {
 	struct fc_lport *lp;
 	struct fcoe_fcf *sel_fcf;
 	struct list_head fcfs;
-	struct fcoe_ctlr_device *cdev;
 	u16 fcf_count;
 	unsigned long sol_time;
 	unsigned long sel_time;
@@ -171,10 +170,16 @@ static inline void *fcoe_ctlr_priv(const struct fcoe_ctlr *ctlr)
 }
 
 /*
+ * Flag for user_mfs to say that fcoe_ctlr is allocated in line with the
+ * fcoe_ctlr_device.
+ */
+#define FCOE_CTLR_LIES_AFTER_DEV (1 << 15)
+/*
  * This assumes that the fcoe_ctlr (x) is allocated with the fcoe_ctlr_device.
  */
-#define fcoe_ctlr_to_ctlr_dev(x)					\
-	(x)->cdev
+#define fcoe_ctlr_to_ctlr_dev(x)\
+		((x->user_mfs & FCOE_CTLR_LIES_AFTER_DEV)?\
+		(struct fcoe_ctlr_device *)(((struct fcoe_ctlr_device *)(x)) - 1):NULL)
 
 /**
  * struct fcoe_fcf - Fibre-Channel Forwarder
