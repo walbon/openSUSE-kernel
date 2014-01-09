@@ -52,8 +52,11 @@ void inet_get_local_port_range(int *low, int *high)
 }
 EXPORT_SYMBOL(inet_get_local_port_range);
 
-int inet_csk_bind_conflict(const struct sock *sk,
-			   const struct inet_bind_bucket *tb)
+LIST_HEAD(bind_conflict_rule_list);
+DEFINE_RWLOCK(bind_conflict_rule_lock);
+
+int inet_csk_bind_conflict_ext(const struct sock *sk,
+			       const struct inet_bind_bucket *tb, bool relax)
 {
 	struct sock *sk2;
 	struct hlist_node *node;
@@ -79,11 +82,65 @@ int inet_csk_bind_conflict(const struct sock *sk,
 				    sk2_rcv_saddr == sk_rcv_saddr(sk))
 					break;
 			}
+			if (!relax && reuse && sk2->sk_reuse &&
+			    sk2->sk_state != TCP_LISTEN) {
+				const __be32 sk2_rcv_saddr = sk_rcv_saddr(sk2);
+
+				if (!sk2_rcv_saddr || !sk_rcv_saddr(sk) ||
+				    sk2_rcv_saddr == sk_rcv_saddr(sk))
+					break;
+			}
 		}
 	}
 	return node != NULL;
 }
+
+EXPORT_SYMBOL_GPL(inet_csk_bind_conflict_ext);
+
+int inet_csk_bind_conflict(const struct sock *sk,
+			   const struct inet_bind_bucket *tb)
+{
+	return inet_csk_bind_conflict_ext(sk, tb, true);
+}
+
 EXPORT_SYMBOL_GPL(inet_csk_bind_conflict);
+
+void inet_csk_register_bind_conflict(struct inet_csk_bind_conflict_rule *rule)
+{
+	write_lock(&bind_conflict_rule_lock);
+	list_add_tail(&rule->list, &bind_conflict_rule_list);
+	write_unlock(&bind_conflict_rule_lock);
+}
+
+EXPORT_SYMBOL(inet_csk_register_bind_conflict);
+
+void inet_csk_unregister_bind_conflict(struct inet_csk_bind_conflict_rule *rule)
+{
+	write_lock(&bind_conflict_rule_lock);
+	list_del_init(&rule->list);
+	write_unlock(&bind_conflict_rule_lock);
+}
+
+EXPORT_SYMBOL(inet_csk_unregister_bind_conflict);
+
+inet_csk_bind_conflict_ext_t inet_csk_get_bind_conflict_ext(inet_csk_bind_conflict_t old)
+{
+	struct inet_csk_bind_conflict_rule *rule;
+	inet_csk_bind_conflict_ext_t ret = NULL;
+
+	read_lock(&bind_conflict_rule_lock);
+	list_for_each_entry(rule, &bind_conflict_rule_list, list) {
+		if (rule->old == old) {
+			ret = rule->new;
+			break;
+		}
+	}
+	read_unlock(&bind_conflict_rule_lock);
+
+	return ret;
+}
+
+EXPORT_SYMBOL(inet_csk_get_bind_conflict_ext);
 
 /* Obtain a reference to a local port for the given sock,
  * if snum is zero it means select any available local port.
@@ -97,6 +154,8 @@ int inet_csk_get_port(struct sock *sk, unsigned short snum)
 	int ret, attempts = 5;
 	struct net *net = sock_net(sk);
 	int smallest_size = -1, smallest_rover;
+	inet_csk_bind_conflict_ext_t conflict_cb =
+		inet_csk_get_bind_conflict_ext(inet_csk(sk)->icsk_af_ops->bind_conflict);
 
 	local_bh_disable();
 	if (!snum) {
@@ -122,11 +181,17 @@ again:
 					    (tb->num_owners < smallest_size || smallest_size == -1)) {
 						smallest_size = tb->num_owners;
 						smallest_rover = rover;
-						if (atomic_read(&hashinfo->bsockets) > (high - low) + 1) {
+						if (atomic_read(&hashinfo->bsockets) > (high - low) + 1 &&
+						    !inet_csk_call_bind_conflict(sk, tb, conflict_cb, false)) {
 							spin_unlock(&head->lock);
 							snum = smallest_rover;
 							goto have_snum;
 						}
+					}
+					if (!inet_csk_call_bind_conflict(sk, tb, conflict_cb, false)) {
+						spin_unlock(&head->lock);
+						snum = rover;
+						goto have_snum;
 					}
 					goto next;
 				}
@@ -175,12 +240,13 @@ tb_found:
 			goto success;
 		} else {
 			ret = 1;
-			if (inet_csk(sk)->icsk_af_ops->bind_conflict(sk, tb)) {
+			if (inet_csk_call_bind_conflict(sk, tb, conflict_cb, true)) {
 				if (sk->sk_reuse && sk->sk_state != TCP_LISTEN &&
 				    smallest_size != -1 && --attempts >= 0) {
 					spin_unlock(&head->lock);
 					goto again;
 				}
+
 				goto fail_unlock;
 			}
 		}

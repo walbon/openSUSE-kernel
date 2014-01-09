@@ -22,6 +22,10 @@ struct sk_buff;
 struct sock;
 struct sockaddr;
 
+extern int inet6_csk_bind_conflict_ext(const struct sock *sk,
+				       const struct inet_bind_bucket *tb,
+				       bool relax);
+
 extern int inet6_csk_bind_conflict(const struct sock *sk,
 				   const struct inet_bind_bucket *tb);
 
