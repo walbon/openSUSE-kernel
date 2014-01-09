@@ -318,6 +318,12 @@ static void scsi_host_dev_release(struct device *dev)
 	kfree(shost);
 }
 
+static unsigned int shost_eh_timeout;
+
+module_param_named(eh_timeout, shost_eh_timeout, uint, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(eh_timeout,
+		 "SCSI EH timeout in seconds (should be between 1 and 2^32-1)");
+
 static struct device_type scsi_host_type = {
 	.name =		"scsi_host",
 	.release =	scsi_host_dev_release,
@@ -390,6 +396,7 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	shost->unchecked_isa_dma = sht->unchecked_isa_dma;
 	shost->use_clustering = sht->use_clustering;
 	shost->ordered_tag = sht->ordered_tag;
+	shost->resetting = shost_eh_timeout;
 
 	if (sht->supported_mode == MODE_UNKNOWN)
 		/* means we didn't set it ... default to INITIATOR */
