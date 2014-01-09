@@ -237,6 +237,18 @@ static inline void inet_csk_reset_xmit_timer(struct sock *sk, const int what,
 #endif
 }
 
+typedef int (*inet_csk_bind_conflict_t)(const struct sock *,
+					const struct inet_bind_bucket *);
+typedef int (*inet_csk_bind_conflict_ext_t)(const struct sock *,
+					    const struct inet_bind_bucket *,
+					    bool);
+
+struct inet_csk_bind_conflict_rule {
+	struct list_head		list;
+	inet_csk_bind_conflict_t	old;
+	inet_csk_bind_conflict_ext_t	new;
+};
+
 extern struct sock *inet_csk_accept(struct sock *sk, int flags, int *err);
 
 extern struct request_sock *inet_csk_search_req(const struct sock *sk,
@@ -244,8 +256,25 @@ extern struct request_sock *inet_csk_search_req(const struct sock *sk,
 						const __be16 rport,
 						const __be32 raddr,
 						const __be32 laddr);
+extern int inet_csk_bind_conflict_ext(const struct sock *sk,
+				      const struct inet_bind_bucket *tb,
+				      bool relax);
 extern int inet_csk_bind_conflict(const struct sock *sk,
 				  const struct inet_bind_bucket *tb);
+extern void inet_csk_register_bind_conflict(struct inet_csk_bind_conflict_rule *rule);
+extern void inet_csk_unregister_bind_conflict(struct inet_csk_bind_conflict_rule *rule);
+extern inet_csk_bind_conflict_ext_t inet_csk_get_bind_conflict_ext(inet_csk_bind_conflict_t old);
+
+static inline int inet_csk_call_bind_conflict(const struct sock *sk,
+					      const struct inet_bind_bucket *tb,
+					      inet_csk_bind_conflict_ext_t ext_cb,
+					      bool relax)
+{
+	if (ext_cb)
+		return (*ext_cb)(sk, tb, relax);
+	return inet_csk(sk)->icsk_af_ops->bind_conflict(sk, tb);
+}
+
 extern int inet_csk_get_port(struct sock *sk, unsigned short snum);
 
 extern struct dst_entry* inet_csk_route_req(struct sock *sk,
