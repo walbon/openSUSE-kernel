@@ -205,6 +205,7 @@ scsi_varlen_cdb_length(const void *hdr)
 	return ((struct scsi_varlen_cdb_hdr *)hdr)->additional_cdb_length + 8;
 }
 
+#ifdef __KERNEL__
 extern const unsigned char scsi_command_size_tbl[8];
 #define COMMAND_SIZE(opcode) scsi_command_size_tbl[((opcode) >> 5) & 7]
 
@@ -214,6 +215,7 @@ scsi_command_size(const unsigned char *cmnd)
 	return (cmnd[0] == VARIABLE_LENGTH_CMD) ?
 		scsi_varlen_cdb_length(cmnd) : COMMAND_SIZE(cmnd[0]);
 }
+#endif
 
 /*
  *  SCSI Architecture Model (SAM) Status codes. Taken from SAM-3 draft
@@ -330,8 +332,10 @@ enum scsi_protocol {
 	SCSI_PROTOCOL_UNSPEC = 0xf, /* No specific protocol */
 };
 
+#ifdef __KERNEL__
 /* Returns a human-readable name for the device */
 extern const char * scsi_device_type(unsigned type);
+#endif
 
 /*
  * standard mode-select header prepended to all mode-select commands
@@ -502,6 +506,7 @@ static inline int scsi_is_wlun(unsigned int lun)
 /*
  * default timeouts
 */
+#define SCSI_DEFAULT_EH_TIMEOUT		(30 * HZ)
 #define FORMAT_UNIT_TIMEOUT		(2 * 60 * 60 * HZ)
 #define START_STOP_TIMEOUT		(60 * HZ)
 #define MOVE_MEDIUM_TIMEOUT		(5 * 60 * HZ)

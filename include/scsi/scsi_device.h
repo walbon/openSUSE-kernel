@@ -92,8 +92,12 @@ struct scsi_device {
 
 	unsigned int id, lun, channel;
 
+#ifndef __GENKSYMS__
+	unsigned int eh_timeout; /* Error handling timeout */
+#else
 	unsigned int manufacturer;	/* Manufacturer of device, for using 
 					 * vendor-specific cmd's */
+#endif
 	unsigned sector_size;	/* size in bytes */
 
 	void *hostdata;		/* available to low-level driver */
