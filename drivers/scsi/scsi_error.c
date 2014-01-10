@@ -47,9 +47,6 @@
 
 static void scsi_eh_done(struct scsi_cmnd *scmd);
 
-#define SENSE_TIMEOUT		(10*HZ)
-#define TEST_UNIT_READY_TIMEOUT	(30*HZ)
-
 /*
  * These should *probably* be handled by the host itself.
  * Since it is allowed to sleep, it probably should.
@@ -610,6 +607,9 @@ static int scsi_eh_completed_normally(struct scsi_cmnd *scmd)
 		 */
 		return scsi_check_sense(scmd);
 	}
+	if ((host_byte(scmd->result) == DID_TRANSPORT_DISRUPTED) ||
+	    (host_byte(scmd->result) == DID_TRANSPORT_FAILFAST))
+		return NEEDS_RETRY;
 	if (host_byte(scmd->result) != DID_OK)
 		return FAILED;
 
@@ -1020,7 +1020,7 @@ retry:
  */
 static int scsi_request_sense(struct scsi_cmnd *scmd)
 {
-	return scsi_send_eh_cmnd(scmd, NULL, 0, SENSE_TIMEOUT, ~0);
+	return scsi_send_eh_cmnd(scmd, NULL, 0, scmd->device->eh_timeout, ~0);
 }
 
 /**
@@ -1134,7 +1134,7 @@ static int scsi_eh_tur(struct scsi_cmnd *scmd)
 	int retry_cnt = 1, rtn;
 
 retry_tur:
-	rtn = scsi_send_eh_cmnd(scmd, tur_command, 6, TEST_UNIT_READY_TIMEOUT, 0);
+	rtn = scsi_send_eh_cmnd(scmd, tur_command, 6, scmd->device->eh_timeout, 0);
 
 	SCSI_LOG_ERROR_RECOVERY(3, printk("%s: scmd %p rtn %x\n",
 		__func__, scmd, rtn));
@@ -2025,6 +2025,7 @@ void scsi_eh_flush_done_q(struct list_head *done_q)
 
 	list_for_each_entry_safe(scmd, next, done_q, eh_entry) {
 		list_del_init(&scmd->eh_entry);
+		scmd->host_scribble = NULL;
 		if (scsi_device_online(scmd->device) &&
 		    !scsi_noretry_cmd(scmd) &&
 		    (++scmd->retries <= scmd->allowed)) {
