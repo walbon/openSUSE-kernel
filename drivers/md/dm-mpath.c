@@ -1059,6 +1059,9 @@ static int fail_path(struct pgpath *pgpath)
 	if (pgpath == m->current_pgpath)
 		m->current_pgpath = NULL;
 
+	if (pgpath->path.dev)
+		blk_abort_queue(bdev_get_queue(pgpath->path.dev->bdev));
+
 	dm_path_uevent(DM_UEVENT_PATH_FAILED, m->ti,
 		       pgpath->path.pdev, m->nr_valid_paths);
 
