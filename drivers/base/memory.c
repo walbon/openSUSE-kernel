@@ -702,6 +702,7 @@ int __init memory_dev_init(void)
 					 MEM_ONLINE,
 					 BOOT);
 		touch_nmi_watchdog();
+		cond_resched();
 		if (!ret)
 			ret = err;
 	}
