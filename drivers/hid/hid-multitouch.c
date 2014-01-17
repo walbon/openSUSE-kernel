@@ -755,6 +755,11 @@ static const struct hid_device_id mt_devices[] = {
 		HID_USB_DEVICE(USB_VENDOR_ID_TURBOX,
 			USB_DEVICE_ID_TURBOX_TOUCHSCREEN_MOSART) },
 
+	/* NextWindow panels */
+	{ .driver_data = MT_CLS_WIN_8,
+		HID_USB_DEVICE(USB_VENDOR_ID_NEXTWINDOW,
+			USB_DEVICE_ID_NEXTWINDOW_TS2) },
+
 	/* PenMount panels */
 	{ .driver_data = MT_CLS_CONFIDENCE,
 		HID_USB_DEVICE(USB_VENDOR_ID_PENMOUNT,
