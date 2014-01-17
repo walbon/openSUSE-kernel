@@ -393,7 +393,6 @@ static void zpci_irq_handler(struct airq_struct *airq)
 	struct zdev_irq_map *imap;
 	int irqs_on = 0;
 
-	kstat_cpu(smp_processor_id()).irqs[IOINT_PCI]++;
 	for (si = 0;;) {
 		/* Scan adapter summary indicator bit vector */
 		si = airq_iv_scan(zpci_aisb_iv, si, airq_iv_end(zpci_aisb_iv));
@@ -413,7 +412,6 @@ static void zpci_irq_handler(struct airq_struct *airq)
 			ai = airq_iv_scan(imap->aibv, ai, imap->msi_vecs);
 			if (ai == -1UL)
 				break;
-			kstat_cpu(smp_processor_id()).irqs[IOINT_MSI]++;
 			airq_iv_lock(imap->aibv, ai);
 			if (imap->cb[ai].handler)
 				imap->cb[ai].handler(ai, imap->cb[ai].data);
