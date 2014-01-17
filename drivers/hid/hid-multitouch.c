@@ -52,6 +52,7 @@ MODULE_LICENSE("GPL");
 #define MT_QUIRK_VALID_IS_CONFIDENCE	(1 << 6)
 #define MT_QUIRK_EGALAX_XYZ_FIXUP	(1 << 7)
 #define MT_QUIRK_SLOT_IS_CONTACTID_MINUS_ONE	(1 << 8)
+#define MT_QUIRK_WIN_8			(1 << 9)
 
 struct mt_slot {
 	__s32 x, y, p, w, h;
@@ -93,6 +94,7 @@ struct mt_class {
 #define MT_CLS_DUAL_INRANGE_CONTACTID		0x0005
 #define MT_CLS_DUAL_INRANGE_CONTACTNUMBER	0x0006
 #define MT_CLS_DUAL_NSMU_CONTACTID		0x0007
+#define MT_CLS_WIN_8				0x0012
 
 /* vendor specific classes */
 #define MT_CLS_3M				0x0101
@@ -155,6 +157,9 @@ struct mt_class mt_classes[] = {
 		.quirks = MT_QUIRK_NOT_SEEN_MEANS_UP |
 			MT_QUIRK_SLOT_IS_CONTACTID,
 		.maxcontacts = 2 },
+	{ .name = MT_CLS_WIN_8,
+		.quirks = MT_QUIRK_ALWAYS_VALID |
+			MT_QUIRK_WIN_8 },
 
 	/*
 	 * vendor specific classes
@@ -216,6 +221,11 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 	struct mt_device *td = hid_get_drvdata(hdev);
 	struct mt_class *cls = td->mtclass;
 	__s32 quirks = cls->quirks;
+	struct hid_usage *prev_usage = NULL;
+	int usage_index = usage - field->usage;
+
+	if ((quirks & MT_QUIRK_WIN_8) && usage_index)
+		prev_usage = &field->usage[usage_index - 1];
 
 	switch (usage->hid & HID_USAGE_PAGE) {
 
@@ -224,12 +234,17 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 		case HID_GD_X:
 			if (quirks & MT_QUIRK_EGALAX_XYZ_FIXUP)
 				field->logical_maximum = 32760;
-			hid_map_usage(hi, usage, bit, max,
+			if (prev_usage && prev_usage->hid == usage->hid) {
+				/* ABS_MT_TOOL_X: skip */
+			} else {
+				hid_map_usage(hi, usage, bit, max,
 					EV_ABS, ABS_MT_POSITION_X);
-			set_abs(hi->input, ABS_MT_POSITION_X, field,
-				cls->sn_move);
-			/* touchscreen emulation */
-			set_abs(hi->input, ABS_X, field, cls->sn_move);
+				set_abs(hi->input, ABS_MT_POSITION_X, field,
+					cls->sn_move);
+				/* touchscreen emulation */
+				set_abs(hi->input, ABS_X, field, cls->sn_move);
+			}
+
 			if (td->last_mt_collection == usage->collection_index) {
 				td->last_slot_field = usage->hid;
 				td->last_field_index = field->index;
@@ -238,12 +253,17 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 		case HID_GD_Y:
 			if (quirks & MT_QUIRK_EGALAX_XYZ_FIXUP)
 				field->logical_maximum = 32760;
-			hid_map_usage(hi, usage, bit, max,
+			if (prev_usage && prev_usage->hid == usage->hid) {
+				/* ABS_MT_TOOL_Y: skip */
+			} else {
+				hid_map_usage(hi, usage, bit, max,
 					EV_ABS, ABS_MT_POSITION_Y);
-			set_abs(hi->input, ABS_MT_POSITION_Y, field,
-				cls->sn_move);
-			/* touchscreen emulation */
-			set_abs(hi->input, ABS_Y, field, cls->sn_move);
+				set_abs(hi->input, ABS_MT_POSITION_Y, field,
+					cls->sn_move);
+				/* touchscreen emulation */
+				set_abs(hi->input, ABS_Y, field, cls->sn_move);
+			}
+
 			if (td->last_mt_collection == usage->collection_index) {
 				td->last_slot_field = usage->hid;
 				td->last_field_index = field->index;
@@ -435,6 +455,7 @@ static int mt_event(struct hid_device *hid, struct hid_field *field,
 {
 	struct mt_device *td = hid_get_drvdata(hid);
 	__s32 quirks = td->mtclass->quirks;
+	int usage_index = usage - field->usage;
 
 	if (hid->claimed & HID_CLAIMED_INPUT && td->slots) {
 		switch (usage->hid) {
@@ -458,10 +479,14 @@ static int mt_event(struct hid_device *hid, struct hid_field *field,
 			td->curdata.p = value;
 			break;
 		case HID_GD_X:
-			td->curdata.x = value;
+			if (!(quirks & MT_QUIRK_WIN_8) ||
+			    usage->code == ABS_MT_POSITION_X)
+				td->curdata.x = value;
 			break;
 		case HID_GD_Y:
-			td->curdata.y = value;
+			if (!(quirks & MT_QUIRK_WIN_8) ||
+			    usage->code == ABS_MT_POSITION_Y)
+				td->curdata.y = value;
 			break;
 		case HID_DG_WIDTH:
 			td->curdata.w = value;
@@ -483,8 +508,10 @@ static int mt_event(struct hid_device *hid, struct hid_field *field,
 			return 0;
 		}
 
-		if (usage->hid == td->last_slot_field) {
-			mt_complete_slot(td);
+		if (!(quirks & MT_QUIRK_WIN_8) ||
+		    usage_index + 1 == field->report_count) {
+			if (usage->hid == td->last_slot_field)
+				mt_complete_slot(td);
 		}
 
 		if (field->index == td->last_field_index
@@ -552,6 +579,12 @@ static int mt_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
 	if (ret)
 		goto fail;
+
+	if ((hdev->quirks & HID_QUIRK_MULTI_INPUT) && !td->maxcontacts) {
+		dev_dbg(&hdev->dev, "No maxcontacts, ignoring this device\n");
+		ret = -EINVAL;
+		goto fail;
+	}
 
 	td->slots = kzalloc(td->maxcontacts * sizeof(struct mt_slot),
 				GFP_KERNEL);
