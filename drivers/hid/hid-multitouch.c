@@ -47,10 +47,11 @@ MODULE_LICENSE("GPL");
 #define MT_QUIRK_SLOT_IS_CONTACTID	(1 << 1)
 #define MT_QUIRK_CYPRESS		(1 << 2)
 #define MT_QUIRK_SLOT_IS_CONTACTNUMBER	(1 << 3)
-#define MT_QUIRK_VALID_IS_INRANGE	(1 << 4)
-#define MT_QUIRK_VALID_IS_CONFIDENCE	(1 << 5)
-#define MT_QUIRK_EGALAX_XYZ_FIXUP	(1 << 6)
-#define MT_QUIRK_SLOT_IS_CONTACTID_MINUS_ONE	(1 << 7)
+#define MT_QUIRK_ALWAYS_VALID		(1 << 4)
+#define MT_QUIRK_VALID_IS_INRANGE	(1 << 5)
+#define MT_QUIRK_VALID_IS_CONFIDENCE	(1 << 6)
+#define MT_QUIRK_EGALAX_XYZ_FIXUP	(1 << 7)
+#define MT_QUIRK_SLOT_IS_CONTACTID_MINUS_ONE	(1 << 8)
 
 struct mt_slot {
 	__s32 x, y, p, w, h;
@@ -86,11 +87,12 @@ struct mt_class {
 /* classes of device behavior */
 #define MT_CLS_DEFAULT				0x0001
 
-#define MT_CLS_CONFIDENCE			0x0002
-#define MT_CLS_CONFIDENCE_MINUS_ONE		0x0003
-#define MT_CLS_DUAL_INRANGE_CONTACTID		0x0004
-#define MT_CLS_DUAL_INRANGE_CONTACTNUMBER	0x0005
-#define MT_CLS_DUAL_NSMU_CONTACTID		0x0006
+#define MT_CLS_SERIAL				0x0002
+#define MT_CLS_CONFIDENCE			0x0003
+#define MT_CLS_CONFIDENCE_MINUS_ONE		0x0004
+#define MT_CLS_DUAL_INRANGE_CONTACTID		0x0005
+#define MT_CLS_DUAL_INRANGE_CONTACTNUMBER	0x0006
+#define MT_CLS_DUAL_NSMU_CONTACTID		0x0007
 
 /* vendor specific classes */
 #define MT_CLS_3M				0x0101
@@ -134,6 +136,8 @@ static int find_slot_from_contactid(struct mt_device *td)
 struct mt_class mt_classes[] = {
 	{ .name = MT_CLS_DEFAULT,
 		.quirks = MT_QUIRK_NOT_SEEN_MEANS_UP },
+	{ .name = MT_CLS_SERIAL,
+		.quirks = MT_QUIRK_ALWAYS_VALID},
 	{ .name = MT_CLS_CONFIDENCE,
 		.quirks = MT_QUIRK_VALID_IS_CONFIDENCE },
 	{ .name = MT_CLS_CONFIDENCE_MINUS_ONE,
@@ -373,7 +377,7 @@ static int mt_compute_slot(struct mt_device *td)
 static void mt_complete_slot(struct mt_device *td)
 {
 	td->curdata.seen_in_this_frame = true;
-	if (td->curvalid) {
+	if (td->curvalid || (td->mtclass->quirks & MT_QUIRK_ALWAYS_VALID)) {
 		int slotnum = mt_compute_slot(td);
 
 		if (slotnum >= 0 && slotnum < td->maxcontacts)
@@ -673,6 +677,11 @@ static const struct hid_device_id mt_devices[] = {
 	{ .driver_data = MT_CLS_DEFAULT,
 		HID_USB_DEVICE(USB_VENDOR_ID_GOODTOUCH,
 			USB_DEVICE_ID_GOODTOUCH_000f) },
+
+	/* Ideacom panel */
+	{ .driver_data = MT_CLS_SERIAL,
+		HID_USB_DEVICE(USB_VENDOR_ID_IDEACOM,
+			USB_DEVICE_ID_IDEACOM_IDC6650) },
 
 	/* Ilitek dual touch panel */
 	{  .driver_data = MT_CLS_DEFAULT,
