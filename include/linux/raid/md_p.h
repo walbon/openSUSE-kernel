@@ -281,7 +281,10 @@ struct mdp_superblock_1 {
 #define	MD_FEATURE_RESHAPE_ACTIVE	4
 #define	MD_FEATURE_RESHAPE_BACKWARDS	32
 #define	MD_FEATURE_NEW_OFFSET		64 /* new_offset must be honoured */
-#define	MD_FEATURE_ALL			(1|2|4|32|64)
+#define	MD_FEATURE_RECOVERY_BITMAP	128 /* recovery that is happening
+					     * is guided by bitmap.
+					     */
+#define	MD_FEATURE_ALL			(1|2|4|32|64|128)
 
 #endif 
 

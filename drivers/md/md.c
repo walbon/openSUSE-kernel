@@ -1283,6 +1283,7 @@ static int super_90_validate(mddev_t *mddev, mdk_rdev_t *rdev)
 			    desc->raid_disk < mddev->raid_disks */) {
 			set_bit(In_sync, &rdev->flags);
 			rdev->raid_disk = desc->raid_disk;
+			rdev->saved_raid_disk = desc->raid_disk;
 		} else if (desc->state & (1<<MD_DISK_ACTIVE)) {
 			/* active but not in sync implies recovery up to
 			 * reshape position.  We don't know exactly where
@@ -1747,10 +1748,14 @@ static int super_1_validate(mddev_t *mddev, mdk_rdev_t *rdev)
 			set_bit(Timeout, &rdev->flags);
 			break;
 		default:
+			rdev->saved_raid_disk = role;
 			if ((le32_to_cpu(sb->feature_map) &
-			     MD_FEATURE_RECOVERY_OFFSET))
+			     MD_FEATURE_RECOVERY_OFFSET)) {
 				rdev->recovery_offset = le64_to_cpu(sb->recovery_offset);
-			else
+				if (!(le32_to_cpu(sb->feature_map) &
+				      MD_FEATURE_RECOVERY_BITMAP))
+					rdev->saved_raid_disk = -1;
+			} else
 				set_bit(In_sync, &rdev->flags);
 			rdev->raid_disk = role;
 			break;
@@ -1817,6 +1822,9 @@ static void super_1_sync(mddev_t *mddev, mdk_rdev_t *rdev)
 			cpu_to_le32(MD_FEATURE_RECOVERY_OFFSET);
 		sb->recovery_offset =
 			cpu_to_le64(rdev->recovery_offset);
+		if (rdev->saved_raid_disk >= 0 && mddev->bitmap)
+			sb->feature_map |=
+				cpu_to_le32(MD_FEATURE_RECOVERY_BITMAP);
 	}
 
 	if (mddev->reshape_position != MaxSector) {
@@ -2493,8 +2501,7 @@ rewrite:
 
 		if (rdev->sb_loaded != 1)
 			continue; /* no noise on spare devices */
-		if (!test_bit(Faulty, &rdev->flags) &&
-		    rdev->saved_raid_disk == -1) {
+		if (!test_bit(Faulty, &rdev->flags)) {
 			md_super_write(mddev,rdev,
 				       rdev->sb_start, rdev->sb_size,
 				       rdev->sb_page);
@@ -2503,11 +2510,8 @@ rewrite:
 				(unsigned long long)rdev->sb_start);
 			rdev->sb_events = mddev->events;
 
-		} else if (test_bit(Faulty, &rdev->flags))
+		} else
 			dprintk("md: %s (skipping faulty)\n",
-				bdevname(rdev->bdev, b));
-		else
-			dprintk("md: %s (skipping incremental s/r)\n",
 				bdevname(rdev->bdev, b));
 
 		if (mddev->level == LEVEL_MULTIPATH)
@@ -2608,6 +2612,8 @@ state_store(mdk_rdev_t *rdev, const char *buf, size_t len)
 	 *  blocked - sets the Blocked flag
 	 *  -blocked - clears the Blocked flag
 	 *  insync - sets Insync providing device isn't active
+	 *  -insync - clear Insync for a device with a slot assigned,
+	 *            so that it gets rebuilt based on bitmap
 	 *  {,-}failfast - set/clear FailFast
 	 */
 	int err = -EINVAL;
@@ -2650,6 +2656,11 @@ state_store(mdk_rdev_t *rdev, const char *buf, size_t len)
 		err = 0;
 	} else if (cmd_match(buf, "insync") && rdev->raid_disk == -1) {
 		set_bit(In_sync, &rdev->flags);
+		err = 0;
+	} else if (cmd_match(buf, "-insync") && rdev->raid_disk >= 0) {
+		clear_bit(In_sync, &rdev->flags);
+		rdev->saved_raid_disk = rdev->raid_disk;
+		rdev->raid_disk = -1;
 		err = 0;
 	} else if (cmd_match(buf, "failfast")) {
 		set_bit(FailFast, &rdev->flags);
@@ -5626,6 +5637,7 @@ static int add_new_disk(mddev_t * mddev, mdu_disk_info_t *info)
 				set_bit(In_sync, &rdev->flags);
 			} else
 				rdev->raid_disk = -1;
+			rdev->saved_raid_disk = rdev->raid_disk;
 		} else
 			super_types[mddev->major_version].
 				validate_super(mddev, rdev);
@@ -5637,11 +5649,6 @@ static int add_new_disk(mddev_t * mddev, mdu_disk_info_t *info)
 			export_rdev(rdev);
 			return -EINVAL;
 		}
-
-		if (test_bit(In_sync, &rdev->flags))
-			rdev->saved_raid_disk = rdev->raid_disk;
-		else
-			rdev->saved_raid_disk = -1;
 
 		clear_bit(In_sync, &rdev->flags); /* just to be sure */
 		if (info->state & (1<<MD_DISK_WRITEMOSTLY))
@@ -7614,14 +7621,10 @@ static void reap_sync_thread(mddev_t *mddev)
 		mddev->pers->finish_reshape(mddev);
 
 	/* If array is no-longer degraded, then any saved_raid_disk
-	 * information must be scrapped.  Also if any device is now
-	 * In_sync we must scrape the saved_raid_disk for that device
-	 * do the superblock for an incrementally recovered device
-	 * written out.
+	 * information must be scrapped.
 	 */
-	list_for_each_entry(rdev, &mddev->disks, same_set)
-		if (!mddev->degraded ||
-		    test_bit(In_sync, &rdev->flags))
+	if (!mddev->degraded)
+		list_for_each_entry(rdev, &mddev->disks, same_set)
 			rdev->saved_raid_disk = -1;
 
 	md_update_sb(mddev, 1);
