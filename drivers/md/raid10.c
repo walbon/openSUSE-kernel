@@ -2825,7 +2825,8 @@ static int run(mddev_t *mddev)
 		    !test_bit(In_sync, &disk->rdev->flags)) {
 			disk->head_position = 0;
 			mddev->degraded++;
-			if (disk->rdev)
+			if (disk->rdev &&
+				disk->rdev->saved_raid_disk < 0)
 				conf->fullsync = 1;
 		}
 	}
