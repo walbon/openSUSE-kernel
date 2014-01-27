@@ -108,6 +108,7 @@ static ktime_t tick_init_jiffy_update(void)
  * NO HZ enabled ?
  */
 static int tick_nohz_enabled __read_mostly  = 1;
+int tick_nohz_active  __read_mostly;
 
 /*
  * Enable / Disable tickless mode
@@ -216,7 +217,7 @@ u64 get_cpu_idle_time_us(int cpu, u64 *last_update_time)
 	struct tick_sched *ts = &per_cpu(tick_cpu_sched, cpu);
 	ktime_t now, idle;
 
-	if (!tick_nohz_enabled)
+	if (!tick_nohz_active)
 		return -1;
 
 	now = ktime_get();
@@ -257,7 +258,7 @@ u64 get_cpu_iowait_time_us(int cpu, u64 *last_update_time)
 	struct tick_sched *ts = &per_cpu(tick_cpu_sched, cpu);
 	ktime_t now, iowait;
 
-	if (!tick_nohz_enabled)
+	if (!tick_nohz_active)
 		return -1;
 
 	now = ktime_get();
@@ -328,8 +329,10 @@ void tick_nohz_stop_sched_tick(int inidle)
 			tick_do_timer_cpu = TICK_DO_TIMER_NONE;
 	}
 
-	if (unlikely(ts->nohz_mode == NOHZ_MODE_INACTIVE))
+	if (unlikely(ts->nohz_mode == NOHZ_MODE_INACTIVE)) {
+		ts->sleep_length = (ktime_t) { .tv64 = NSEC_PER_SEC/HZ };
 		goto end;
+	}
 
 	if (need_resched())
 		goto end;
@@ -645,7 +648,7 @@ static void tick_nohz_switch_to_nohz(void)
 	struct tick_sched *ts = &__get_cpu_var(tick_cpu_sched);
 	ktime_t next;
 
-	if (!tick_nohz_enabled)
+	if (!tick_nohz_active)
 		return;
 
 	local_irq_disable();
@@ -653,7 +656,7 @@ static void tick_nohz_switch_to_nohz(void)
 		local_irq_enable();
 		return;
 	}
-
+	tick_nohz_active = 1;
 	ts->nohz_mode = NOHZ_MODE_LOWRES;
 
 	/*
@@ -832,8 +835,10 @@ void tick_setup_sched_timer(void)
 	}
 
 #ifdef CONFIG_NO_HZ
-	if (tick_nohz_enabled)
+	if (tick_nohz_enabled) {
 		ts->nohz_mode = NOHZ_MODE_HIGHRES;
+		tick_nohz_active = 1;
+	}
 #endif
 }
 #endif /* HIGH_RES_TIMERS */
