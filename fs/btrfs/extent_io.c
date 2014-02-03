@@ -60,6 +60,8 @@ struct extent_page_data {
 static inline struct btrfs_fs_info *
 tree_fs_info(struct extent_io_tree *tree)
 {
+	if (!tree->mapping)
+		return NULL;
 	return btrfs_sb(tree->mapping->host->i_sb);
 }
 
