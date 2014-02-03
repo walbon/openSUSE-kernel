@@ -681,10 +681,10 @@ int btrfs_lock_ref(struct btrfs_fs_info *fs_info, u64 root_objectid,
 		return 0;
 
 	cache = btrfs_lookup_block_group(fs_info, bytenr);
-	ASSERT(cache);
-	ASSERT(cache->key.objectid <= bytenr &&
+	BUG_ON(!cache);
+	BUG_ON(!(cache->key.objectid <= bytenr &&
 	       (cache->key.objectid + cache->key.offset >=
-		bytenr + num_bytes));
+		bytenr + num_bytes)));
 	ret = lock_extent_bits(&cache->ref_lock, bytenr,
 			       bytenr + num_bytes - 1, 0, cached_state);
 	if (!ret)
