@@ -92,6 +92,7 @@ typedef __s32 sctp_assoc_t;
 #define SCTP_LOCAL_AUTH_CHUNKS	27	/* Read only */
 #define SCTP_GET_ASSOC_NUMBER	28	/* Read only */
 #define SCTP_GET_ASSOC_ID_LIST	29	/* Read only */
+#define SCTP_PEER_ADDR_THLDS	31
 
 /* Internal Socket Options. Some of the sctp library functions are
  * implemented using these socket options.
@@ -648,6 +649,7 @@ struct sctp_paddrinfo {
  */
 enum sctp_spinfo_state {
 	SCTP_INACTIVE,
+	SCTP_PF,
 	SCTP_ACTIVE,
 	SCTP_UNCONFIRMED,
 	SCTP_UNKNOWN = 0xffff  /* Value used for transport state unknown */
@@ -740,4 +742,13 @@ typedef struct {
 	int sd;
 } sctp_peeloff_arg_t;
 
+/*
+ *  Peer Address Thresholds socket option
+ */
+struct sctp_paddrthlds {
+	sctp_assoc_t spt_assoc_id;
+	struct sockaddr_storage spt_address;
+	__u16 spt_pathmaxrxt;
+	__u16 spt_pathpfthld;
+};
 #endif /* __net_sctp_user_h__ */

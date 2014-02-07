@@ -239,6 +239,12 @@ extern struct sctp_globals {
 
 	/* Threshold for autoclose timeout, in seconds. */
 	unsigned long max_autoclose;
+
+	/* Potentially-Failed.Max.Retrans sysctl value
+	 * taken from:
+	 * http://tools.ietf.org/html/draft-nishida-tsvwg-sctp-failover-05
+	 */
+	int pf_retrans;
 } sctp_globals;
 
 #define sctp_rto_initial		(sctp_globals.rto_initial)
@@ -253,6 +259,7 @@ extern struct sctp_globals {
 #define sctp_sndbuf_policy	 	(sctp_globals.sndbuf_policy)
 #define sctp_rcvbuf_policy	 	(sctp_globals.rcvbuf_policy)
 #define sctp_max_retrans_path		(sctp_globals.max_retrans_path)
+#define sctp_pf_retrans			(sctp_globals.pf_retrans)
 #define sctp_max_retrans_init		(sctp_globals.max_retrans_init)
 #define sctp_sack_timeout		(sctp_globals.sack_timeout)
 #define sctp_hb_interval		(sctp_globals.hb_interval)
@@ -973,7 +980,7 @@ struct sctp_transport {
 
 	/* This is the max_retrans value for the transport and will
 	 * be initialized from the assocs value.  This can be changed
-	 * using SCTP_SET_PEER_ADDR_PARAMS socket option.
+	 * using the SCTP_SET_PEER_ADDR_PARAMS socket option.
 	 */
 	__u16 pathmaxrxt;
 
@@ -1054,6 +1061,12 @@ struct sctp_transport {
 
 	/* 64-bit random number sent with heartbeat. */
 	__u64 hb_nonce;
+
+	/* This is the partially failed retrans value for the transport
+	 * and will be initialized from the assocs value.  This can be changed
+	 * using the SCTP_PEER_ADDR_THLDS socket option
+	 */
+	int pf_retrans;
 };
 
 struct sctp_transport *sctp_transport_new(const union sctp_addr *,
@@ -1923,6 +1936,12 @@ struct sctp_association {
 
 	__u8 need_ecne:1,	/* Need to send an ECNE Chunk? */
 	     temp:1;		/* Is it a temporary association? */
+
+	/* This is the partially failed retrans value for the transport
+	 * and will be initialized from the assocs value.  This can be
+	 * changed using the SCTP_PEER_ADDR_THLDS socket option
+	 */
+	int pf_retrans;
 };
 
 
