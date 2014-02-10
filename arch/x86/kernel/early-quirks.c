@@ -192,7 +192,7 @@ static void __init ati_bugs_contd(int num, int slot, int func)
 }
 #endif
 
-#ifdef CONFIG_IRQ_REMAP
+#ifdef CONFIG_INTR_REMAP
 extern void set_intr_remapping_broken(void);
 
 static void __init intel_remapping_check(int num, int slot, int func)
@@ -217,11 +217,11 @@ static void __init intel_remapping_check(int num, int slot, int func)
 		set_intr_remapping_broken();
 
 }
-#else  /* CONFIG_IRQ_REMAP */
+#else  /* CONFIG_INTR_REMAP */
 static void __init intel_remapping_check(int num, int slot, int func)
 {
 }
-#endif /* CONFIG_IRQ_REMAP */
+#endif /* CONFIG_INTR_REMAP */
 
 #define QFLAG_APPLY_ONCE 	0x1
 #define QFLAG_APPLIED		0x2
