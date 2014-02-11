@@ -883,6 +883,8 @@ void nfs4_copy_stateid(nfs4_stateid *dst, struct nfs4_state *state, fl_owner_t f
 	} while (read_seqretry(&state->seqlock, seq));
 	if (test_bit(LK_STATE_IN_USE, &state->flags) == 0)
 		return;
+	if (test_bit(NFS_DELEGATED_STATE, &state->flags) != 0)
+		return;
 
 	spin_lock(&state->state_lock);
 	lsp = __nfs4_find_lock_state(state, fl_owner, fl_pid, NFS4_ANY_LOCK_TYPE);
