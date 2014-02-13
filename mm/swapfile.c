@@ -427,7 +427,7 @@ swp_entry_t get_swap_page(void)
 		goto noswap;
 	nr_swap_pages--;
 
-	for (type = swap_list.next; type >= 0 && wrapped < 2; type = next) {
+	for (type = swap_list.head; type >= 0 && wrapped < 2; type = next) {
 		si = swap_info[type];
 		next = si->next;
 		if (next < 0 ||
