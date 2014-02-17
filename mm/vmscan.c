@@ -130,7 +130,7 @@ struct scan_control {
 int vm_swappiness __read_mostly = 60;
 unsigned int vm_pagecache_limit_mb __read_mostly = 0;
 unsigned int vm_pagecache_ignore_dirty __read_mostly = 1;
-long vm_total_pages __read_mostly;	/* The total number of pages which the VM controls */
+unsigned long vm_total_pages __read_mostly;	/* The total number of pages which the VM controls */
 
 static LIST_HEAD(shrinker_list);
 static DECLARE_RWSEM(shrinker_rwsem);

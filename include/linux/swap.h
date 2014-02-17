@@ -269,7 +269,7 @@ extern void shrink_page_cache(gfp_t mask, struct page *page);
 extern unsigned int vm_pagecache_limit_mb;
 extern unsigned int vm_pagecache_ignore_dirty;
 extern int remove_mapping(struct address_space *mapping, struct page *page);
-extern long vm_total_pages;
+extern unsigned long vm_total_pages;
 
 #ifdef CONFIG_NUMA
 extern int zone_reclaim_mode;
