@@ -541,7 +541,7 @@ static int p9_virtio_probe(struct virtio_device *vdev)
 	init_waitqueue_head(chan->vc_wq);
 	chan->ring_bufs_avail = 1;
 	/* Ceiling limit to avoid denial of service attacks */
-	chan->p9_max_pages = nr_free_buffer_pages()/4;
+	chan->p9_max_pages = nr_free_buffer_pages2()/4;
 
 	mutex_lock(&virtio_9p_lock);
 	list_add_tail(&chan->chan_list, &virtio_chan_list);

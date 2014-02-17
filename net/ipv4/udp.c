@@ -2213,7 +2213,7 @@ void __init udp_init(void)
 	unsigned long limit;
 
 	udp_table_init(&udp_table, "UDP");
-	limit = nr_free_buffer_pages() / 8;
+	limit = nr_free_buffer_pages2() / 8;
 	limit = max(limit, 128UL);
 	sysctl_udp_mem[0] = limit / 4 * 3;
 	sysctl_udp_mem[1] = limit;

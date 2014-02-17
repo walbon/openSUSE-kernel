@@ -3442,7 +3442,7 @@ void __init buffer_init(void)
 	/*
 	 * Limit the bh occupancy to 10% of ZONE_NORMAL
 	 */
-	nrpages = (nr_free_buffer_pages() * 10) / 100;
+	nrpages = (nr_free_buffer_pages2() * 10) / 100;
 	max_buffer_heads = nrpages * (PAGE_SIZE / sizeof(struct buffer_head));
 	hotcpu_notifier(buffer_cpu_notify, 0);
 }
