@@ -78,6 +78,9 @@ void fscache_objlist_add(struct fscache_object *obj)
  */
 void fscache_object_destroy(struct fscache_object *obj)
 {
+	if (RB_EMPTY_NODE(&obj->objlist_link))
+		return;
+
 	write_lock(&fscache_object_list_lock);
 
 	BUG_ON(RB_EMPTY_ROOT(&fscache_object_list));
