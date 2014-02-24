@@ -379,7 +379,14 @@ static DEFINE_PER_CPU(unsigned int, current_l2i);
 #endif
 
 /* NB. Interrupts are disabled on entry. */
-asmlinkage void __irq_entry evtchn_do_upcall(struct pt_regs *regs)
+asmlinkage
+#ifdef CONFIG_PREEMPT
+void
+#define return(x) return
+#else
+bool
+#endif
+__irq_entry evtchn_do_upcall(struct pt_regs *regs)
 {
 	unsigned long       l1, l2;
 	unsigned long       masked_l1, masked_l2;
@@ -393,7 +400,7 @@ asmlinkage void __irq_entry evtchn_do_upcall(struct pt_regs *regs)
 		__this_cpu_or(upcall_state, UPC_NESTED_LATCH);
 		/* Avoid a callback storm when we reenable delivery. */
 		vcpu_info_write(evtchn_upcall_pending, 0);
-		return;
+		return(false);
 	}
 
 	old_regs = set_irq_regs(regs);
@@ -511,6 +518,9 @@ asmlinkage void __irq_entry evtchn_do_upcall(struct pt_regs *regs)
 	irq_exit();
 	xen_spin_irq_exit();
 	set_irq_regs(old_regs);
+
+	return(__this_cpu_read(privcmd_hcall) && in_hypercall(regs));
+#undef return
 }
 
 static int find_unbound_irq(unsigned int node, struct irq_cfg **pcfg,
