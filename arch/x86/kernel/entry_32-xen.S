@@ -980,6 +980,20 @@ ENTRY(hypervisor_callback)
 	call evtchn_do_upcall
 	add  $4,%esp
 	CFI_ADJUST_CFA_OFFSET -4
+#ifndef CONFIG_PREEMPT
+	test %al,%al
+	jz   ret_from_intr
+	GET_THREAD_INFO(%edx)
+	cmpl $0,TI_preempt_count(%edx)
+	jnz  ret_from_intr
+	testl $_TIF_NEED_RESCHED,TI_flags(%edx)
+	jz   ret_from_intr
+	testl $X86_EFLAGS_IF,PT_EFLAGS(%esp)
+	jz   ret_from_intr
+	movb $0,PER_CPU_VAR(privcmd_hcall)
+	call preempt_schedule_irq
+	movb $1,PER_CPU_VAR(privcmd_hcall)
+#endif
 	jmp  ret_from_intr
 	CFI_ENDPROC
 

@@ -23,6 +23,18 @@
 #include <xen/interface/xen.h>
 #include <xen/xen_proc.h>
 #include <xen/features.h>
+#include <xen/evtchn.h>
+
+#ifndef CONFIG_PREEMPT
+DEFINE_PER_CPU(bool, privcmd_hcall);
+#endif
+
+static inline void _privcmd_hcall(bool state)
+{
+#ifndef CONFIG_PREEMPT
+	this_cpu_write(privcmd_hcall, state);
+#endif
+}
 
 static struct proc_dir_entry *privcmd_intf;
 static struct proc_dir_entry *capabilities_intf;
@@ -74,6 +86,7 @@ static long privcmd_ioctl(struct file *file,
 		ret = -ENOSYS;
 		if (hypercall.op >= (PAGE_SIZE >> 5))
 			break;
+		_privcmd_hcall(true);
 		ret = _hypercall(long, (unsigned int)hypercall.op,
 				 (unsigned long)hypercall.arg[0],
 				 (unsigned long)hypercall.arg[1],
@@ -81,8 +94,10 @@ static long privcmd_ioctl(struct file *file,
 				 (unsigned long)hypercall.arg[3],
 				 (unsigned long)hypercall.arg[4]);
 #else
+		_privcmd_hcall(true);
 		ret = privcmd_hypercall(&hypercall);
 #endif
+		_privcmd_hcall(false);
 	}
 	break;
 
