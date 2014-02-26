@@ -49,6 +49,7 @@
 #ifdef CONFIG_PPC64
 #include <asm/paca.h>
 #endif
+#include <asm/vdso.h>
 
 #ifdef DEBUG
 #include <asm/udbg.h>
@@ -606,6 +607,8 @@ void __devinit start_secondary(void *unused)
 #ifdef CONFIG_PPC64
 	if (system_state == SYSTEM_RUNNING)
 		vdso_data->processorCount++;
+
+	vdso_getcpu_init();
 #endif
 	ipi_call_lock();
 	notify_cpu_starting(cpu);

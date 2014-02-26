@@ -446,6 +446,8 @@ int main(void)
 					scratch0));
 	DEFINE(SVCPU_SCRATCH1, offsetof(struct kvmppc_book3s_shadow_vcpu,
 					scratch1));
+	DEFINE(SVCPU_SPRG3, offsetof(struct kvmppc_book3s_shadow_vcpu,
+				     sprg3));
 	DEFINE(SVCPU_IN_GUEST, offsetof(struct kvmppc_book3s_shadow_vcpu,
 					in_guest));
 	DEFINE(SVCPU_FAULT_DSISR, offsetof(struct kvmppc_book3s_shadow_vcpu,
