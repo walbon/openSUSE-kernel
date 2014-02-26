@@ -1666,19 +1666,12 @@ static int multipath_ioctl(struct dm_target *ti, unsigned int cmd,
 	/*
 	 * Only pass ioctls through if the device sizes match exactly.
 	 */
-	if (bdev &&
-	    ti->len != i_size_read(bdev->bd_inode) >> SECTOR_SHIFT)
-		r = -ENOTTY;
+	if (!bdev || ti->len != i_size_read(bdev->bd_inode) >> SECTOR_SHIFT) {
+		int err;
 
-	/*
-	 * Check if the ioctl is supported.
-	 */
-	if (!r || r == -ENOTCONN) {
-		int s;
-
-		s = scsi_verify_blk_ioctl(NULL, cmd);
-		if (s)
-			r = s;
+		err = scsi_verify_blk_ioctl(NULL, cmd);
+		if (err)
+			r = err;
 	}
 
 	if (r == -ENOTCONN && !fatal_signal_pending(current))
