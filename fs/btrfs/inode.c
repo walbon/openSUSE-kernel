@@ -6411,6 +6411,7 @@ noinline int can_nocow_extent(struct btrfs_trans_handle *trans,
 	int slot;
 	int found_type;
 	bool nocow = (BTRFS_I(inode)->flags & BTRFS_INODE_NODATACOW);
+
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
@@ -6454,6 +6455,10 @@ noinline int can_nocow_extent(struct btrfs_trans_handle *trans,
 	if (!nocow && found_type == BTRFS_FILE_EXTENT_REG)
 		goto out;
 
+	extent_end = key.offset + btrfs_file_extent_num_bytes(leaf, fi);
+	if (extent_end <= offset)
+		goto out;
+
 	disk_bytenr = btrfs_file_extent_disk_bytenr(leaf, fi);
 	if (disk_bytenr == 0)
 		goto out;
@@ -6470,8 +6475,6 @@ noinline int can_nocow_extent(struct btrfs_trans_handle *trans,
 		*orig_block_len = btrfs_file_extent_disk_num_bytes(leaf, fi);
 		*ram_bytes = btrfs_file_extent_ram_bytes(leaf, fi);
 	}
-
-	extent_end = key.offset + btrfs_file_extent_num_bytes(leaf, fi);
 
 	if (btrfs_extent_readonly(root, disk_bytenr))
 		goto out;
