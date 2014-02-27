@@ -16,11 +16,6 @@
 #include <linux/log2.h>
 #include <linux/workqueue.h>
 
-/*
- * Do not disable RTC alarm on shutdown - workaround for b0rked BIOSes.
- */
-bool rtc_disable_alarm = true;
-
 static int rtc_timer_enqueue(struct rtc_device *rtc, struct rtc_timer *timer);
 static void rtc_timer_remove(struct rtc_device *rtc, struct rtc_timer *timer);
 
@@ -770,9 +765,6 @@ static int rtc_timer_enqueue(struct rtc_device *rtc, struct rtc_timer *timer)
 static void rtc_alarm_disable(struct rtc_device *rtc)
 {
 	if (!rtc->ops || !rtc->ops->alarm_irq_enable)
-		return;
-
-	if (!rtc_disable_alarm)
 		return;
 
 	rtc->ops->alarm_irq_enable(rtc->dev.parent, false);

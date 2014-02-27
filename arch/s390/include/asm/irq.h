@@ -30,8 +30,6 @@ enum interruption_class {
 	IOINT_CTC,
 	IOINT_APB,
 	IOINT_ADM,
-	IOINT_PCI,
-	IOINT_MSI,
 	NMI_NMI,
 	IOINT_VIR,
 	NR_IRQS,

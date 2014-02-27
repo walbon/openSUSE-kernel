@@ -706,6 +706,8 @@ static noinline void add_delayed_data_ref(struct btrfs_fs_info *fs_info,
 	ref->action = action;
 	ref->is_head = 0;
 	ref->in_tree = 1;
+	ref->for_cow = for_cow;
+	ref->for_cow = for_cow;
 
 	if (need_ref_seq(for_cow, ref_root))
 		seq = btrfs_get_tree_mod_seq(fs_info, &trans->delayed_ref_elem);

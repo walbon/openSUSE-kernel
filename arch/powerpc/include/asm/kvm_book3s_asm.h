@@ -79,6 +79,7 @@ struct kvmppc_book3s_shadow_vcpu {
 	ulong scratch0;
 	ulong scratch1;
 	ulong vmhandler;
+	ulong sprg3;
 	u8 in_guest;
 
 #ifdef CONFIG_PPC_BOOK3S_32

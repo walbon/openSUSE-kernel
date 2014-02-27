@@ -266,7 +266,6 @@ int rtc_timer_start(struct rtc_device *rtc, struct rtc_timer* timer,
 			ktime_t expires, ktime_t period);
 int rtc_timer_cancel(struct rtc_device *rtc, struct rtc_timer* timer);
 void rtc_timer_do_work(struct work_struct *work);
-extern bool rtc_disable_alarm;
 
 static inline bool is_leap_year(unsigned int year)
 {

@@ -47,10 +47,12 @@ MODULE_LICENSE("GPL");
 #define MT_QUIRK_SLOT_IS_CONTACTID	(1 << 1)
 #define MT_QUIRK_CYPRESS		(1 << 2)
 #define MT_QUIRK_SLOT_IS_CONTACTNUMBER	(1 << 3)
-#define MT_QUIRK_VALID_IS_INRANGE	(1 << 4)
-#define MT_QUIRK_VALID_IS_CONFIDENCE	(1 << 5)
-#define MT_QUIRK_EGALAX_XYZ_FIXUP	(1 << 6)
-#define MT_QUIRK_SLOT_IS_CONTACTID_MINUS_ONE	(1 << 7)
+#define MT_QUIRK_ALWAYS_VALID		(1 << 4)
+#define MT_QUIRK_VALID_IS_INRANGE	(1 << 5)
+#define MT_QUIRK_VALID_IS_CONFIDENCE	(1 << 6)
+#define MT_QUIRK_EGALAX_XYZ_FIXUP	(1 << 7)
+#define MT_QUIRK_SLOT_IS_CONTACTID_MINUS_ONE	(1 << 8)
+#define MT_QUIRK_WIN_8			(1 << 9)
 
 struct mt_slot {
 	__s32 x, y, p, w, h;
@@ -86,11 +88,13 @@ struct mt_class {
 /* classes of device behavior */
 #define MT_CLS_DEFAULT				0x0001
 
-#define MT_CLS_CONFIDENCE			0x0002
-#define MT_CLS_CONFIDENCE_MINUS_ONE		0x0003
-#define MT_CLS_DUAL_INRANGE_CONTACTID		0x0004
-#define MT_CLS_DUAL_INRANGE_CONTACTNUMBER	0x0005
-#define MT_CLS_DUAL_NSMU_CONTACTID		0x0006
+#define MT_CLS_SERIAL				0x0002
+#define MT_CLS_CONFIDENCE			0x0003
+#define MT_CLS_CONFIDENCE_MINUS_ONE		0x0004
+#define MT_CLS_DUAL_INRANGE_CONTACTID		0x0005
+#define MT_CLS_DUAL_INRANGE_CONTACTNUMBER	0x0006
+#define MT_CLS_DUAL_NSMU_CONTACTID		0x0007
+#define MT_CLS_WIN_8				0x0012
 
 /* vendor specific classes */
 #define MT_CLS_3M				0x0101
@@ -134,6 +138,8 @@ static int find_slot_from_contactid(struct mt_device *td)
 struct mt_class mt_classes[] = {
 	{ .name = MT_CLS_DEFAULT,
 		.quirks = MT_QUIRK_NOT_SEEN_MEANS_UP },
+	{ .name = MT_CLS_SERIAL,
+		.quirks = MT_QUIRK_ALWAYS_VALID},
 	{ .name = MT_CLS_CONFIDENCE,
 		.quirks = MT_QUIRK_VALID_IS_CONFIDENCE },
 	{ .name = MT_CLS_CONFIDENCE_MINUS_ONE,
@@ -151,6 +157,9 @@ struct mt_class mt_classes[] = {
 		.quirks = MT_QUIRK_NOT_SEEN_MEANS_UP |
 			MT_QUIRK_SLOT_IS_CONTACTID,
 		.maxcontacts = 2 },
+	{ .name = MT_CLS_WIN_8,
+		.quirks = MT_QUIRK_ALWAYS_VALID |
+			MT_QUIRK_WIN_8 },
 
 	/*
 	 * vendor specific classes
@@ -212,6 +221,11 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 	struct mt_device *td = hid_get_drvdata(hdev);
 	struct mt_class *cls = td->mtclass;
 	__s32 quirks = cls->quirks;
+	struct hid_usage *prev_usage = NULL;
+	int usage_index = usage - field->usage;
+
+	if ((quirks & MT_QUIRK_WIN_8) && usage_index)
+		prev_usage = &field->usage[usage_index - 1];
 
 	switch (usage->hid & HID_USAGE_PAGE) {
 
@@ -220,12 +234,17 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 		case HID_GD_X:
 			if (quirks & MT_QUIRK_EGALAX_XYZ_FIXUP)
 				field->logical_maximum = 32760;
-			hid_map_usage(hi, usage, bit, max,
+			if (prev_usage && prev_usage->hid == usage->hid) {
+				/* ABS_MT_TOOL_X: skip */
+			} else {
+				hid_map_usage(hi, usage, bit, max,
 					EV_ABS, ABS_MT_POSITION_X);
-			set_abs(hi->input, ABS_MT_POSITION_X, field,
-				cls->sn_move);
-			/* touchscreen emulation */
-			set_abs(hi->input, ABS_X, field, cls->sn_move);
+				set_abs(hi->input, ABS_MT_POSITION_X, field,
+					cls->sn_move);
+				/* touchscreen emulation */
+				set_abs(hi->input, ABS_X, field, cls->sn_move);
+			}
+
 			if (td->last_mt_collection == usage->collection_index) {
 				td->last_slot_field = usage->hid;
 				td->last_field_index = field->index;
@@ -234,12 +253,17 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 		case HID_GD_Y:
 			if (quirks & MT_QUIRK_EGALAX_XYZ_FIXUP)
 				field->logical_maximum = 32760;
-			hid_map_usage(hi, usage, bit, max,
+			if (prev_usage && prev_usage->hid == usage->hid) {
+				/* ABS_MT_TOOL_Y: skip */
+			} else {
+				hid_map_usage(hi, usage, bit, max,
 					EV_ABS, ABS_MT_POSITION_Y);
-			set_abs(hi->input, ABS_MT_POSITION_Y, field,
-				cls->sn_move);
-			/* touchscreen emulation */
-			set_abs(hi->input, ABS_Y, field, cls->sn_move);
+				set_abs(hi->input, ABS_MT_POSITION_Y, field,
+					cls->sn_move);
+				/* touchscreen emulation */
+				set_abs(hi->input, ABS_Y, field, cls->sn_move);
+			}
+
 			if (td->last_mt_collection == usage->collection_index) {
 				td->last_slot_field = usage->hid;
 				td->last_field_index = field->index;
@@ -373,7 +397,7 @@ static int mt_compute_slot(struct mt_device *td)
 static void mt_complete_slot(struct mt_device *td)
 {
 	td->curdata.seen_in_this_frame = true;
-	if (td->curvalid) {
+	if (td->curvalid || (td->mtclass->quirks & MT_QUIRK_ALWAYS_VALID)) {
 		int slotnum = mt_compute_slot(td);
 
 		if (slotnum >= 0 && slotnum < td->maxcontacts)
@@ -431,6 +455,7 @@ static int mt_event(struct hid_device *hid, struct hid_field *field,
 {
 	struct mt_device *td = hid_get_drvdata(hid);
 	__s32 quirks = td->mtclass->quirks;
+	int usage_index = usage - field->usage;
 
 	if (hid->claimed & HID_CLAIMED_INPUT && td->slots) {
 		switch (usage->hid) {
@@ -454,10 +479,14 @@ static int mt_event(struct hid_device *hid, struct hid_field *field,
 			td->curdata.p = value;
 			break;
 		case HID_GD_X:
-			td->curdata.x = value;
+			if (!(quirks & MT_QUIRK_WIN_8) ||
+			    usage->code == ABS_MT_POSITION_X)
+				td->curdata.x = value;
 			break;
 		case HID_GD_Y:
-			td->curdata.y = value;
+			if (!(quirks & MT_QUIRK_WIN_8) ||
+			    usage->code == ABS_MT_POSITION_Y)
+				td->curdata.y = value;
 			break;
 		case HID_DG_WIDTH:
 			td->curdata.w = value;
@@ -479,8 +508,10 @@ static int mt_event(struct hid_device *hid, struct hid_field *field,
 			return 0;
 		}
 
-		if (usage->hid == td->last_slot_field) {
-			mt_complete_slot(td);
+		if (!(quirks & MT_QUIRK_WIN_8) ||
+		    usage_index + 1 == field->report_count) {
+			if (usage->hid == td->last_slot_field)
+				mt_complete_slot(td);
 		}
 
 		if (field->index == td->last_field_index
@@ -549,6 +580,12 @@ static int mt_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	if (ret)
 		goto fail;
 
+	if ((hdev->quirks & HID_QUIRK_MULTI_INPUT) && !td->maxcontacts) {
+		dev_dbg(&hdev->dev, "No maxcontacts, ignoring this device\n");
+		ret = -EINVAL;
+		goto fail;
+	}
+
 	td->slots = kzalloc(td->maxcontacts * sizeof(struct mt_slot),
 				GFP_KERNEL);
 	if (!td->slots) {
@@ -601,6 +638,11 @@ static const struct hid_device_id mt_devices[] = {
 	{ .driver_data = MT_CLS_DEFAULT,
 		HID_USB_DEVICE(USB_VENDOR_ID_ACTIONSTAR,
 			USB_DEVICE_ID_ACTIONSTAR_1011) },
+
+	/* Atmel panels */
+	{ .driver_data = MT_CLS_WIN_8,
+		HID_USB_DEVICE(USB_VENDOR_ID_ATMEL,
+			USB_DEVICE_ID_ATMEL_MXT_DIG2) },
 
 	/* Cando panels */
 	{ .driver_data = MT_CLS_DUAL_INRANGE_CONTACTNUMBER,
@@ -674,6 +716,11 @@ static const struct hid_device_id mt_devices[] = {
 		HID_USB_DEVICE(USB_VENDOR_ID_GOODTOUCH,
 			USB_DEVICE_ID_GOODTOUCH_000f) },
 
+	/* Ideacom panel */
+	{ .driver_data = MT_CLS_SERIAL,
+		HID_USB_DEVICE(USB_VENDOR_ID_IDEACOM,
+			USB_DEVICE_ID_IDEACOM_IDC6650) },
+
 	/* Ilitek dual touch panel */
 	{  .driver_data = MT_CLS_DEFAULT,
 		HID_USB_DEVICE(USB_VENDOR_ID_ILITEK,
@@ -720,6 +767,11 @@ static const struct hid_device_id mt_devices[] = {
 	{ .driver_data = MT_CLS_DUAL_INRANGE_CONTACTID,
 		HID_USB_DEVICE(USB_VENDOR_ID_CANDO,
 			USB_DEVICE_ID_CANDO_PIXCIR_MULTI_TOUCH) },
+
+	/* Quanta panels */
+	{ .driver_data = MT_CLS_WIN_8,
+		HID_USB_DEVICE(USB_VENDOR_ID_QUANTA,
+			USB_DEVICE_ID_QUANTA_TQH_FS) },
 
 	/* Stantum panels */
 	{ .driver_data = MT_CLS_CONFIDENCE,

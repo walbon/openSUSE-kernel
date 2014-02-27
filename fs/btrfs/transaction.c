@@ -30,13 +30,10 @@
 #include "tree-log.h"
 #include "inode-map.h"
 #include "volumes.h"
+#include "compat.h"
 #include "dev-replace.h"
 
 #define BTRFS_ROOT_TRANS_TAG 0
-
-/* stubs */
-static inline void sb_start_intwrite(struct super_block *sb) { }
-static inline void sb_end_intwrite(struct super_block *sb) { }
 
 static void put_transaction(struct btrfs_transaction *transaction)
 {
@@ -79,7 +76,7 @@ loop:
 	}
 
 	if (fs_info->trans_no_join) {
-		/* 
+		/*
 		 * If we are JOIN_NOLOCK we're already committing a current
 		 * transaction, we just need a handle to deal with something
 		 * when committing the transaction, such as inode cache and
@@ -369,11 +366,11 @@ again:
 	 * and then we deadlock with somebody doing a freeze.
 	 *
 	 * If we are ATTACH, it means we just want to catch the current
-	 * transaction and commit it, so we needn't do sb_start_intwrite(). 
+	 * transaction and commit it, so we needn't do sb_start_intwrite().
 	 */
 	if (type < TRANS_JOIN_NOLOCK)
 		sb_start_intwrite(root->fs_info->sb);
- 
+
 	if (may_wait_transaction(root, type))
 		wait_current_trans(root);
 
@@ -1240,7 +1237,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 		goto fail;
 	}
 
- 	ret = btrfs_reloc_post_snapshot(trans, pending);
+	ret = btrfs_reloc_post_snapshot(trans, pending);
  	if (ret) {
 		btrfs_abort_transaction(trans, root, ret);
  		goto fail;
@@ -1860,7 +1857,7 @@ cleanup_transaction:
 		btrfs_qgroup_free(root, trans->qgroup_reserved);
 		trans->qgroup_reserved = 0;
 	}
-	btrfs_printk(root->fs_info, "Skipping commit of aborted transaction\n");
+	btrfs_warn(root->fs_info, "Skipping commit of aborted transaction.");
 	if (current->journal_info == trans)
 		current->journal_info = NULL;
 	cleanup_transaction(trans, root, ret);

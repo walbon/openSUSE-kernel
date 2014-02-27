@@ -660,7 +660,8 @@ static int lockspace_busy(struct dlm_ls *ls)
 			lkb_found = 1;
 			list_for_each_entry(lkb, &ls->ls_lkbtbl[i].list,
 					    lkb_idtbl_list) {
-				if (!lkb->lkb_nodeid) {
+				if (!lkb->lkb_nodeid &&
+					  lkb->lkb_grmode != DLM_LOCK_IV) {
 					read_unlock(&ls->ls_lkbtbl[i].lock);
 					return 2;
 				}

@@ -88,7 +88,7 @@ unsigned int sysctl_sched_compat_yield __read_mostly;
 unsigned int sysctl_sched_wakeup_granularity = 2500000UL;
 unsigned int normalized_sysctl_sched_wakeup_granularity = 2500000UL;
 
-const_debug unsigned int sysctl_sched_migration_cost = 500000UL;
+unsigned int __read_mostly sysctl_sched_migration_cost = 500000UL;
 
 /*
  * The exponential sliding  window over which load is averaged for shares
@@ -441,7 +441,6 @@ static struct sched_entity *__pick_next_entity(struct sched_entity *se)
 	return rb_entry(next, struct sched_entity, run_node);
 }
 
-#ifdef CONFIG_SCHED_DEBUG
 static struct sched_entity *__pick_last_entity(struct cfs_rq *cfs_rq)
 {
 	struct rb_node *last = rb_last(&cfs_rq->tasks_timeline);
@@ -452,6 +451,7 @@ static struct sched_entity *__pick_last_entity(struct cfs_rq *cfs_rq)
 	return rb_entry(last, struct sched_entity, run_node);
 }
 
+#ifdef CONFIG_SCHED_DEBUG
 /**************************************************************
  * Scheduling class statistics methods:
  */

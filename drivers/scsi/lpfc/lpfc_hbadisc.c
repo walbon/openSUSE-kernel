@@ -5577,6 +5577,7 @@ lpfc_nlp_init(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 					      GFP_KERNEL);
 	}
 
+
 	lpfc_debugfs_disc_trc(vport, LPFC_DISC_TRC_NODE,
 		"node init:       did:x%x",
 		ndlp->nlp_DID, 0, 0);

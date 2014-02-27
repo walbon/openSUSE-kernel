@@ -537,10 +537,11 @@ int __init intr_remapping_supported(void)
 			"This system BIOS has enabled interrupt remapping\n"
 			"on a chipset that contains an erratum making that\n"
 			"feature unstable.  To maintain system stability\n"
-			"interrupt remapping should be disabled.  You can\n"
-			"do so by booting with parameter intremap=off.  Please\n"
+			"interrupt remapping is being disabled.  Please\n"
 			"contact your BIOS vendor for an update\n");
 		add_taint(TAINT_FIRMWARE_WORKAROUND);
+		disable_intremap = 1;
+		return 0;
 	}
 
 	if (!dmar_ir_support())

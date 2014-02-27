@@ -152,12 +152,11 @@ ifeq ($(CONFIG_MODULE_SIG),y)
 # them into the kernel.
 #
 ###############################################################################
-X509_CERTIFICATES-y := $(wildcard *.x509)
-ifneq ($(shell /bin/pwd), $(srctree))
-X509_CERTIFICATES-y += $(wildcard $(srctree)/*.x509)
-endif
-X509_CERTIFICATES-$(CONFIG_MODULE_SIG) += signing_key.x509
-X509_CERTIFICATES := $(sort $(X509_CERTIFICATES-y))
+X509_CERTIFICATES-y := $(wildcard *.x509) $(wildcard $(srctree)/*.x509)
+X509_CERTIFICATES-$(CONFIG_MODULE_SIG) += $(objtree)/signing_key.x509
+X509_CERTIFICATES-raw := $(sort $(foreach CERT,$(X509_CERTIFICATES-y), \
+                                $(or $(realpath $(CERT)),$(CERT))))
+X509_CERTIFICATES := $(subst $(realpath $(objtree))/,,$(X509_CERTIFICATES-raw))
 
 ifeq ($(X509_CERTIFICATES),)
 $(warning *** No X.509 certificates found ***)

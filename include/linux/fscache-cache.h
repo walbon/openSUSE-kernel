@@ -419,6 +419,9 @@ void fscache_object_init(struct fscache_object *object,
 	object->cache = cache;
 	object->cookie = cookie;
 	object->parent = NULL;
+#ifdef CONFIG_FSCACHE_OBJECT_LIST
+	rb_init_node(&object->objlist_link);
+#endif
 }
 
 extern void fscache_object_lookup_negative(struct fscache_object *object);

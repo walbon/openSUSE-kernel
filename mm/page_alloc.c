@@ -3192,6 +3192,7 @@ static void build_zonelists(pg_data_t *pgdat)
 	int local_node, prev_node;
 	struct zonelist *zonelist;
 	int order = current_zonelist_order;
+	bool memory_less;
 
 	/* initialize zonelists */
 	for (i = 0; i < MAX_ZONELISTS; i++) {
@@ -3205,6 +3206,7 @@ static void build_zonelists(pg_data_t *pgdat)
 	load = nr_online_nodes;
 	prev_node = local_node;
 	nodes_clear(used_mask);
+	memory_less = !node_state(local_node, N_HIGH_MEMORY);
 
 	memset(node_order, 0, sizeof(node_order));
 	j = 0;
@@ -3214,9 +3216,11 @@ static void build_zonelists(pg_data_t *pgdat)
 
 		/*
 		 * If another node is sufficiently far away then it is better
-		 * to reclaim pages in a zone before going off node.
+		 * to reclaim pages in a zone before going off node but do
+		 * not enable zone_reclaim_mode if the local_node is memory
+		 * less.
 		 */
-		if (distance > RECLAIM_DISTANCE)
+		if (!memory_less && distance > RECLAIM_DISTANCE)
 			zone_reclaim_mode = 1;
 
 		/*

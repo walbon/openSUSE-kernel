@@ -377,7 +377,6 @@ static noinline int create_subvol(struct inode *dir,
 	struct btrfs_root *root = BTRFS_I(dir)->root;
 	struct btrfs_root *new_root;
 	struct btrfs_block_rsv block_rsv;
-	struct inode *inode;
 	struct timespec cur_time = CURRENT_TIME;
 	int ret;
 	int err;
@@ -537,14 +536,12 @@ fail:
 		ret = err;
 
 	if (!ret) {
-		inode = btrfs_lookup_dentry(dir, dentry);
-		if (IS_ERR(inode)) {
+		struct inode *inode = btrfs_lookup_dentry(dir, dentry);
+		if (IS_ERR(inode))
 			ret = PTR_ERR(inode);
-		} else {
+		else
 			d_instantiate(dentry, inode);
-		}
 	}
-
 out:
 	btrfs_subvolume_release_metadata(root, &block_rsv, qgroup_reserved);
 	return ret;
@@ -1000,7 +997,7 @@ out:
 static int cluster_pages_for_defrag(struct inode *inode,
 				    struct page **pages,
 				    unsigned long start_index,
-				    int num_pages)
+				    unsigned long num_pages)
 {
 	unsigned long file_end;
 	u64 isize = i_size_read(inode);
@@ -1158,8 +1155,8 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 	int defrag_count = 0;
 	int compress_type = BTRFS_COMPRESS_ZLIB;
 	int extent_thresh = range->extent_thresh;
-	int max_cluster = (256 * 1024) >> PAGE_CACHE_SHIFT;
-	int cluster = max_cluster;
+	unsigned long max_cluster = (256 * 1024) >> PAGE_CACHE_SHIFT;
+	unsigned long cluster = max_cluster;
 	u64 new_align = ~((u64)128 * 1024 - 1);
 	struct page **pages = NULL;
 
@@ -1457,6 +1454,10 @@ static noinline int btrfs_ioctl_resize(struct file *file,
 		}
 		new_size = old_size - new_size;
 	} else if (mod > 0) {
+		if (new_size > ULLONG_MAX - old_size) {
+			ret = -EINVAL;
+			goto out_free;
+		}
 		new_size = old_size + new_size;
 	}
 
@@ -1538,6 +1539,15 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 			printk(KERN_INFO "btrfs: Snapshot src from "
 			       "another FS\n");
 			ret = -EINVAL;
+			fput(src_file);
+			goto out_drop_write;
+		} else if (!inode_owner_or_capable(src_inode)) {
+			/*
+			 * Subvolume creation is not restricted, but snapshots
+			 * are limited to own subvolumes only
+			 */
+			ret = -EPERM;
+
 			fput(src_file);
 			goto out_drop_write;
 		}
@@ -4152,9 +4162,9 @@ static int btrfs_ioctl_get_fslabel(struct file *file, void __user *arg)
 	int ret;
 	char label[BTRFS_LABEL_SIZE];
 
-	/* spin_lock(&root->fs_info->super_lock); */
+	spin_lock(&root->fs_info->super_lock);
 	memcpy(label, root->fs_info->super_copy->label, BTRFS_LABEL_SIZE);
-	/* spin_unlock(&root->fs_info->super_lock); */
+	spin_unlock(&root->fs_info->super_lock);
 
 	len = strnlen(label, BTRFS_LABEL_SIZE);
 
@@ -4198,9 +4208,9 @@ static int btrfs_ioctl_set_fslabel(struct file *file, void __user *arg)
 		goto out_unlock;
 	}
 
-	/* spin_lock(&root->fs_info->super_lock); */
+	spin_lock(&root->fs_info->super_lock);
 	strcpy(super_block->label, label);
-	/* spin_unlock(&root->fs_info->super_lock); */
+	spin_unlock(&root->fs_info->super_lock);
 	ret = btrfs_end_transaction(trans, root);
 
 out_unlock:
@@ -4335,12 +4345,12 @@ long btrfs_ioctl(struct file *file, unsigned int
 			break;
 		}
 		return btrfs_ioctl_dev_replace(root, argp);
-	case BTRFS_IOC_COMPR_SIZE:
-		return btrfs_ioctl_compr_size(file, argp);
 	case BTRFS_IOC_GET_FSLABEL:
 		return btrfs_ioctl_get_fslabel(file, argp);
 	case BTRFS_IOC_SET_FSLABEL:
 		return btrfs_ioctl_set_fslabel(file, argp);
+	case BTRFS_IOC_COMPR_SIZE:
+		return btrfs_ioctl_compr_size(file, argp);
 	}
 
 	return ret;

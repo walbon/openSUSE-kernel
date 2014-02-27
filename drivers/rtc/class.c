@@ -17,9 +17,6 @@
 #include <linux/idr.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
-#ifndef __GENKSYMS__
-#include <linux/dmi.h>
-#endif
 
 #include "rtc-core.h"
 
@@ -27,28 +24,6 @@
 static DEFINE_IDR(rtc_idr);
 static DEFINE_MUTEX(idr_lock);
 struct class *rtc_class;
-
-static int __init clear_disable_alarm(const struct dmi_system_id *id)
-{
-	rtc_disable_alarm = false;
-
-	pr_err("%s: Clear alarm disable\n", __func__);
-
-	return 0;
-}
-
-static const struct dmi_system_id rtc_quirks[] __initconst = {
-	/* https://bugzilla.novell.com/show_bug.cgi?id=805740 */
-	{
-		.callback = clear_disable_alarm,
-		.ident    = "IBM Truman",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "4852570"),
-		},
-	},
-	{}
-};
 
 static void rtc_device_release(struct device *dev)
 {
@@ -263,9 +238,6 @@ static int __init rtc_init(void)
 	rtc_class->resume = rtc_resume;
 	rtc_dev_init();
 	rtc_sysfs_init(rtc_class);
-
-	dmi_check_system(rtc_quirks);
-
 	return 0;
 }
 

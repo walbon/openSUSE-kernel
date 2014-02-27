@@ -2264,9 +2264,6 @@ void free_reloc_roots(struct list_head *list)
 		reloc_root = list_entry(list->next, struct btrfs_root,
 					root_list);
 		__update_reloc_root(reloc_root, 1);
-		free_extent_buffer(reloc_root->node);
-		free_extent_buffer(reloc_root->commit_root);
-		kfree(reloc_root);
 	}
 }
 
@@ -2308,10 +2305,9 @@ again:
 
 			ret = merge_reloc_root(rc, root);
 			if (ret) {
-				__update_reloc_root(reloc_root, 1);
-				free_extent_buffer(reloc_root->node);
-				free_extent_buffer(reloc_root->commit_root);
-				kfree(reloc_root);
+				if (list_empty(&reloc_root->root_list))
+					list_add_tail(&reloc_root->root_list,
+						      &reloc_roots);
 				goto out;
 			}
 		} else {
@@ -3922,6 +3918,12 @@ restart:
 		if (!RB_EMPTY_ROOT(&blocks)) {
 			ret = relocate_tree_blocks(trans, rc, &blocks);
 			if (ret < 0) {
+				/*
+				 * if we fail to relocate tree blocks, force to update
+				 * backref cache when committing transaction.
+				 */
+				rc->backref_cache.last_trans = trans->transid - 1;
+
 				if (ret != -EAGAIN) {
 					err = ret;
 					break;
