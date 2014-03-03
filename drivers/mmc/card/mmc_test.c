@@ -301,7 +301,7 @@ static struct mmc_test_mem *mmc_test_alloc_mem(unsigned long min_sz,
 	unsigned long min_page_cnt = DIV_ROUND_UP(min_sz, PAGE_SIZE);
 	unsigned long max_seg_page_cnt = DIV_ROUND_UP(max_seg_sz, PAGE_SIZE);
 	unsigned long page_cnt = 0;
-	unsigned long limit = nr_free_buffer_pages() >> 4;
+	unsigned long limit = nr_free_buffer_pages2() >> 4;
 	struct mmc_test_mem *mem;
 
 	if (max_page_cnt > limit)
