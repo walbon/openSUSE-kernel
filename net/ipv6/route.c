@@ -399,6 +399,11 @@ static void rt6_probe(struct rt6_info *rt)
 
 		neigh->updated = jiffies;
 		read_unlock_bh(&neigh->lock);
+		if (neigh->nud_state & NUD_FAILED) {
+			write_lock_bh(&neigh->lock);
+			neigh->nud_state = NUD_NONE;
+			write_unlock_bh(&neigh->lock);
+		}
 
 		target = (struct in6_addr *)&neigh->primary_key;
 		addrconf_addr_solict_mult(target, &mcaddr);
@@ -469,7 +474,7 @@ static int rt6_score_route(struct rt6_info *rt, int oif,
 #endif
 	n = rt6_check_neigh(rt);
 	if (!n && (strict & RT6_LOOKUP_F_REACHABLE))
-		return -1;
+		return -2;
 	return m;
 }
 
@@ -482,8 +487,11 @@ static struct rt6_info *find_match(struct rt6_info *rt, int oif, int strict,
 		goto out;
 
 	m = rt6_score_route(rt, oif, strict);
-	if (m < 0)
+	if (m < 0) {
+		if (m == -2 && (strict & RT6_LOOKUP_F_REACHABLE))
+			rt6_probe(rt);
 		goto out;
+	}
 
 	if (m > *mpri) {
 		if (strict & RT6_LOOKUP_F_REACHABLE)
