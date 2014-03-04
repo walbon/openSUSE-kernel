@@ -3319,7 +3319,7 @@ unsigned long __weak arch_scale_smt_power(struct sched_domain *sd, int cpu)
 unsigned long scale_rt_power(int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
-	u64 total, available, age_stamp, avg, clock;
+	u64 total, available, age_stamp, avg;
 
 	/*
 	 * Since we're reading these variables without serialization make sure
@@ -3327,34 +3327,20 @@ unsigned long scale_rt_power(int cpu)
 	 */
 	age_stamp = ACCESS_ONCE(rq->age_stamp);
 	avg = ACCESS_ONCE(rq->rt_avg);
-	clock = ACCESS_ONCE(rq->clock);
 
-	total = available = sched_avg_period() + (clock - age_stamp);
-	total >>= SCHED_POWER_SHIFT;
+	total = sched_avg_period() + (rq->clock - age_stamp);
 
-	/* RT usage tracking looks fishy, report anomaly and restore sanity */
-	if (unlikely(total > (u32)~0)) {
-		if (printk_ratelimit())
-			printk(KERN_ERR "scale_rt_power: clock:%Lx age:%Lx, avg:%Lx\n",
-		               clock, age_stamp, avg);
-		return SCHED_LOAD_SCALE;
+	if (unlikely(total < avg)) {
+		/* Ensures that power won't end up being negative */
+		available = 0;
+	} else {
+		available = total - avg;
 	}
 
-	/* Our RT usage is minimal, don't bother */
-	if (avg < total)
-		return SCHED_LOAD_SCALE;
-
-	available -= avg;
-
-	if (unlikely(total < SCHED_LOAD_SCALE))
+	if (unlikely((s64)total < SCHED_POWER_SCALE))
 		total = SCHED_POWER_SCALE;
 
-	/*
-	 * We're fully RT bound.  Note: avg > available is possible given no
-	 * synchronization, especially in a heavily loaded -rt kernel, cast.
-	 */
-	if (unlikely((s64)available < 2*total))
-		return 1;
+	total >>= SCHED_POWER_SHIFT;
 
 	return div_u64(available, total);
 }

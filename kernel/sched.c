@@ -3845,13 +3845,6 @@ static void update_cpu_load(struct rq *this_rq)
 	}
 
 	sched_avg_update(this_rq);
-
-#ifdef CONFIG_SMP
-	if (unlikely(this_rq->clock - this_rq->age_stamp > sched_avg_period())) {
-		this_rq->age_stamp = this_rq->clock;
-		this_rq->rt_avg = 0;
-	}
-#endif
 }
 
 static void update_cpu_load_active(struct rq *this_rq)
