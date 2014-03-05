@@ -6485,6 +6485,7 @@ noinline int can_nocow_extent(struct btrfs_trans_handle *trans,
 
 	if (btrfs_extent_readonly(root, disk_bytenr))
 		goto out;
+	btrfs_release_path(path);
 
 	/*
 	 * look for other files referencing this extent, if we
@@ -7982,7 +7983,7 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 
 
 	/* check for collisions, even if the  name isn't there */
-	ret = btrfs_check_dir_item_collision(root, new_dir->i_ino,
+	ret = btrfs_check_dir_item_collision(dest, new_dir->i_ino,
 			     new_dentry->d_name.name,
 			     new_dentry->d_name.len);
 
@@ -8219,6 +8220,10 @@ int btrfs_start_delalloc_inodes(struct btrfs_root *root, int delay_iput)
 
 		work = btrfs_alloc_delalloc_work(inode, 0, delay_iput);
 		if (unlikely(!work)) {
+			if (delay_iput)
+				btrfs_add_delayed_iput(inode);
+			else
+				iput(inode);
 			ret = -ENOMEM;
 			goto out;
 		}
@@ -8554,10 +8559,12 @@ static const struct inode_operations btrfs_dir_inode_operations = {
 	.listxattr	= btrfs_listxattr,
 	.removexattr	= btrfs_removexattr,
 	.permission	= btrfs_permission,
+	.update_time	= btrfs_update_time,
 };
 static const struct inode_operations btrfs_dir_ro_inode_operations = {
 	.lookup		= btrfs_lookup,
 	.permission	= btrfs_permission,
+	.update_time	= btrfs_update_time,
 };
 
 static const struct file_operations btrfs_dir_file_operations = {

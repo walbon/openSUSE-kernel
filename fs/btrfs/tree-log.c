@@ -92,7 +92,8 @@
  */
 #define LOG_WALK_PIN_ONLY 0
 #define LOG_WALK_REPLAY_INODES 1
-#define LOG_WALK_REPLAY_ALL 2
+#define LOG_WALK_REPLAY_DIR_INDEX 2
+#define LOG_WALK_REPLAY_ALL 3
 
 static int btrfs_log_inode(struct btrfs_trans_handle *trans,
 			     struct btrfs_root *root, struct inode *inode,
@@ -392,6 +393,7 @@ static noinline int overwrite_item(struct btrfs_trans_handle *trans,
 		if (inode_item) {
 			struct btrfs_inode_item *item;
 			u64 nbytes;
+			u32 mode;
 
 			item = btrfs_item_ptr(path->nodes[0], path->slots[0],
 					      struct btrfs_inode_item);
@@ -399,9 +401,19 @@ static noinline int overwrite_item(struct btrfs_trans_handle *trans,
 			item = btrfs_item_ptr(eb, slot,
 					      struct btrfs_inode_item);
 			btrfs_set_inode_nbytes(eb, item, nbytes);
+
+			/*
+			 * If this is a directory we need to reset the i_size to
+			 * 0 so that we can set it up properly when replaying
+			 * the rest of the items in this log.
+			 */
+			mode = btrfs_inode_mode(eb, item);
+			if (S_ISDIR(mode))
+				btrfs_set_inode_size(eb, item, 0);
 		}
 	} else if (inode_item) {
 		struct btrfs_inode_item *item;
+		u32 mode;
 
 		/*
 		 * New inode, set nbytes to 0 so that the nbytes comes out
@@ -409,6 +421,15 @@ static noinline int overwrite_item(struct btrfs_trans_handle *trans,
 		 */
 		item = btrfs_item_ptr(eb, slot, struct btrfs_inode_item);
 		btrfs_set_inode_nbytes(eb, item, 0);
+
+		/*
+		 * If this is a directory we need to reset the i_size to 0 so
+		 * that we can set it up properly when replaying the rest of
+		 * the items in this log.
+		 */
+		mode = btrfs_inode_mode(eb, item);
+		if (S_ISDIR(mode))
+			btrfs_set_inode_size(eb, item, 0);
 	}
 insert:
 	btrfs_release_path(path);
@@ -1492,6 +1513,7 @@ static noinline int insert_one_name(struct btrfs_trans_handle *trans,
 		iput(inode);
 		return -EIO;
 	}
+
 	ret = btrfs_add_link(trans, dir, inode, name, name_len, 1, index);
 
 	/* FIXME, put inode into FIXUP list */
@@ -1530,6 +1552,7 @@ static noinline int replay_one_name(struct btrfs_trans_handle *trans,
 	u8 log_type;
 	int exists;
 	int ret = 0;
+	bool update_size = (key->type == BTRFS_DIR_INDEX_KEY);
 
 	dir = read_one_inode(root, key->objectid);
 	if (!dir)
@@ -1600,6 +1623,10 @@ static noinline int replay_one_name(struct btrfs_trans_handle *trans,
 		goto insert;
 out:
 	btrfs_release_path(path);
+	if (!ret && update_size) {
+		btrfs_i_size_write(dir, dir->i_size + name_len * 2);
+		ret = btrfs_update_inode(trans, root, dir);
+	}
 	kfree(name);
 	iput(dir);
 	return ret;
@@ -1610,6 +1637,7 @@ insert:
 			      name, name_len, log_type, &log_key);
 	if (ret && ret != -ENOENT)
 		goto out;
+	update_size = false;
 	ret = 0;
 	goto out;
 }
@@ -2023,6 +2051,15 @@ static int replay_one_buffer(struct btrfs_root *log, struct extent_buffer *eb,
 			if (ret)
 				break;
 		}
+
+		if (key.type == BTRFS_DIR_INDEX_KEY &&
+		    wc->stage == LOG_WALK_REPLAY_DIR_INDEX) {
+			ret = replay_one_dir_item(wc->trans, root, path,
+						  eb, i, &key);
+			if (ret)
+				break;
+		}
+
 		if (wc->stage < LOG_WALK_REPLAY_ALL)
 			continue;
 
@@ -2049,8 +2086,7 @@ static int replay_one_buffer(struct btrfs_root *log, struct extent_buffer *eb,
 						eb, i, &key);
 			if (ret)
 				break;
-		} else if (key.type == BTRFS_DIR_ITEM_KEY ||
-			   key.type == BTRFS_DIR_INDEX_KEY) {
+		} else if (key.type == BTRFS_DIR_ITEM_KEY) {
 			ret = replay_one_dir_item(wc->trans, root, path,
 						  eb, i, &key);
 			if (ret)
@@ -3798,6 +3834,7 @@ static noinline int check_parent_dirs_for_sync(struct btrfs_trans_handle *trans,
 	int ret = 0;
 	struct btrfs_root *root;
 	struct dentry *old_parent = NULL;
+	struct inode *orig_inode = inode;
 
 	/*
 	 * for regular files, if its inode is already on disk, we don't
@@ -3817,7 +3854,14 @@ static noinline int check_parent_dirs_for_sync(struct btrfs_trans_handle *trans,
 	}
 
 	while (1) {
-		BTRFS_I(inode)->logged_trans = trans->transid;
+		/*
+		 * If we are logging a directory then we start with our inode,
+		 * not our parents inode, so we need to skipp setting the
+		 * logged_trans so that further down in the log code we don't
+		 * think this inode has already been logged.
+		 */
+		if (inode != orig_inode)
+			BTRFS_I(inode)->logged_trans = trans->transid;
 		smp_mb();
 
 		if (BTRFS_I(inode)->last_unlink_trans > last_committed) {
