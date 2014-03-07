@@ -1531,4 +1531,24 @@ static inline struct tcp_extend_values *tcp_xv(struct request_values *rvp)
 extern void tcp_v4_init(void);
 extern void tcp_init(void);
 
+#ifdef CONFIG_SYN_COOKIES
+#include <linux/ktime.h>
+
+/* Syncookies use a monotonic timer which increments every 64 seconds.
+ * This counter is used both as a hash input and partially encoded into
+ * the cookie value.  A cookie is only validated further if the delta
+ * between the current counter value and the encoded one is less than this,
+ * i.e. a sent cookie is valid only at most for 128 seconds (or less if
+ * the counter advances immediately after a cookie is generated).
+ */
+#define MAX_SYNCOOKIE_AGE 2
+
+static inline u32 tcp_cookie_time(void)
+{
+	struct timespec now;
+	getnstimeofday(&now);
+	return now.tv_sec >> 6; /* 64 seconds granularity */
+}
+#endif
+
 #endif	/* _TCP_H */
