@@ -1359,7 +1359,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 	} else {
 		if (test_bit(BTRFS_FS_STATE_ERROR, &root->fs_info->fs_state)) {
 			btrfs_err(fs_info,
-				"Remounting read-write after error is not allowed\n");
+				"Remounting read-write after error is not allowed");
 			ret = -EINVAL;
 			goto restore;
 		}
