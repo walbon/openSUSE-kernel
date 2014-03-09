@@ -367,7 +367,8 @@ static unsigned long highmem_dirtyable_memory(unsigned long total)
 			&NODE_DATA(node)->node_zones[ZONE_HIGHMEM];
 
 		x += zone_page_state(z, NR_FREE_PAGES) +
-		     zone_reclaimable_pages(z);
+		     zone_page_state(zone, NR_ACTIVE_FILE) +
+		     zone_page_state(zone, NR_INACTIVE_FILE);
 	}
 	/*
 	 * Make sure that the number of highmem pages is never larger
@@ -391,7 +392,9 @@ unsigned long determine_dirtyable_memory(void)
 {
 	unsigned long x;
 
-	x = global_page_state(NR_FREE_PAGES) + global_reclaimable_pages();
+	x = global_page_state(NR_FREE_PAGES) +
+		global_page_state(NR_ACTIVE_FILE) +
+		global_page_state(NR_INACTIVE_FILE);
 
 	if (!vm_highmem_is_dirtyable)
 		x -= highmem_dirtyable_memory(x);
