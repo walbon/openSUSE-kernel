@@ -1870,6 +1870,7 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 	enum lru_list l;
 	int noswap = 0;
 	bool force_scan = false;
+	bool lru_locked = false;
 
 	/*
 	 * If the zone or memcg is small, nr[l] can be 0.  This
@@ -1901,6 +1902,28 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 	file  = zone_nr_lru_pages(zone, sc, LRU_ACTIVE_FILE) +
 		zone_nr_lru_pages(zone, sc, LRU_INACTIVE_FILE);
 
+	/*
+	 * Because workloads change over time (and to avoid overflow)
+	 * we keep these statistics as a floating average, which ends
+	 * up weighing recent references more than old ones.
+	 *
+	 * anon in [0], file in [1]
+	 */
+	if (unlikely(reclaim_stat->recent_scanned[0] > anon / 4) ||
+	    unlikely(reclaim_stat->recent_scanned[1] > file / 4)) {
+		spin_lock_irq(&zone->lru_lock);
+		lru_locked = true;
+		if (reclaim_stat->recent_scanned[0] > anon / 4) {
+			reclaim_stat->recent_scanned[0] /= 2;
+			reclaim_stat->recent_rotated[0] /= 2;
+		}
+
+		if (reclaim_stat->recent_scanned[1] > file / 4) {
+			reclaim_stat->recent_scanned[1] /= 2;
+			reclaim_stat->recent_rotated[1] /= 2;
+		}
+	}
+
 	if (scanning_global_lru(sc)) {
 		free  = zone_page_state(zone, NR_FREE_PAGES);
 		if (unlikely(file + free <= high_wmark_pages(zone))) {
@@ -1911,7 +1934,7 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 			fraction[0] = 1;
 			fraction[1] = 0;
 			denominator = 1;
-			goto out;
+			goto out_unlock;
 		} else if (!inactive_file_is_low_global(zone)) {
 			/*
 			 * There is enough inactive page cache, do not
@@ -1920,7 +1943,7 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 			fraction[0] = 0;
 			fraction[1] = 1;
 			denominator = 1;
-			goto out;
+			goto out_unlock;
 		}
 	}
 
@@ -1931,29 +1954,17 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 	anon_prio = sc->swappiness;
 	file_prio = 200 - sc->swappiness;
 
+	/* lock only acquired if we updated rotation stats */
+	if (!lru_locked) {
+		spin_lock_irq(&zone->lru_lock);
+		lru_locked = true;
+	}
+
 	/*
 	 * OK, so we have swap space and a fair amount of page cache
 	 * pages.  We use the recently rotated / recently scanned
 	 * ratios to determine how valuable each cache is.
 	 *
-	 * Because workloads change over time (and to avoid overflow)
-	 * we keep these statistics as a floating average, which ends
-	 * up weighing recent references more than old ones.
-	 *
-	 * anon in [0], file in [1]
-	 */
-	spin_lock_irq(&zone->lru_lock);
-	if (unlikely(reclaim_stat->recent_scanned[0] > anon / 4)) {
-		reclaim_stat->recent_scanned[0] /= 2;
-		reclaim_stat->recent_rotated[0] /= 2;
-	}
-
-	if (unlikely(reclaim_stat->recent_scanned[1] > file / 4)) {
-		reclaim_stat->recent_scanned[1] /= 2;
-		reclaim_stat->recent_rotated[1] /= 2;
-	}
-
-	/*
 	 * The amount of pressure on anon vs file pages is inversely
 	 * proportional to the fraction of recently scanned pages on
 	 * each list that were recently referenced and in active use.
@@ -1963,11 +1974,13 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 
 	fp = file_prio * (reclaim_stat->recent_scanned[1] + 1);
 	fp /= reclaim_stat->recent_rotated[1] + 1;
-	spin_unlock_irq(&zone->lru_lock);
 
 	fraction[0] = ap;
 	fraction[1] = fp;
 	denominator = ap + fp + 1;
+out_unlock:
+	if (lru_locked)
+		spin_unlock_irq(&zone->lru_lock);
 out:
 	for_each_evictable_lru(l) {
 		int file = is_file_lru(l);
