@@ -2654,6 +2654,19 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *mem_cont,
 }
 #endif
 
+static bool zone_balanced(struct zone *zone, int order,
+			  unsigned long balance_gap, int classzone_idx)
+{
+	if (!zone_watermark_ok_safe(zone, order, high_wmark_pages(zone) +
+				   balance_gap, classzone_idx, 0))
+		return false;
+
+	if (COMPACTION_BUILD && order && !compaction_suitable(zone, order))
+		return false;
+
+	return true;
+}
+
 /*
  * pgdat_balanced is used when checking if a node is balanced for high-order
  * allocations. Only zones that meet watermarks and are in a zone allowed
@@ -2732,8 +2745,7 @@ static bool prepare_kswapd_sleep(pg_data_t *pgdat, int order, long remaining,
 			continue;
 		}
 
-		if (!zone_watermark_ok_safe(zone, order, high_wmark_pages(zone),
-							i, 0))
+		if (!zone_balanced(zone, order, 0, 0))
 			all_zones_ok = false;
 		else
 			balanced += zone->present_pages;
@@ -2766,6 +2778,7 @@ static bool kswapd_shrink_zone(struct zone *zone,
 			       unsigned long lru_pages,
 			       unsigned long *nr_attempted)
 {
+	bool lowmem_pressure;
 	unsigned long nr_slab;
 	int testorder = sc->order;
 	unsigned long balance_gap;
@@ -2800,8 +2813,9 @@ static bool kswapd_shrink_zone(struct zone *zone,
 		KSWAPD_ZONE_BALANCE_GAP_RATIO);
 
 	/* If the zone is balanced then no reclaim is necessary */
-	if (zone_watermark_ok_safe(zone, testorder,
-			high_wmark_pages(zone) + balance_gap, classzone_idx, 0))
+	lowmem_pressure = (buffer_heads_over_limit && is_highmem(zone));
+	if (!lowmem_pressure && zone_balanced(zone, testorder,
+						balance_gap, classzone_idx))
 		return true;
 
 	shrink_zone(zone, sc);
@@ -2824,8 +2838,8 @@ static bool kswapd_shrink_zone(struct zone *zone,
 	 * BDIs but as pressure is relieved, speculatively avoid congestion
 	 * waits.
 	 */
-	if (!zone->all_unreclaimable &&
-	    zone_watermark_ok_safe(zone, testorder, 0, classzone_idx, 0)) {
+	if (zone_reclaimable(zone) &&
+	    zone_balanced(zone, testorder, 0, classzone_idx)) {
 		zone_clear_flag(zone, ZONE_CONGESTED);
 		zone_clear_flag(zone, ZONE_TAIL_LRU_DIRTY);
 	}
@@ -2910,8 +2924,7 @@ static unsigned long balance_pgdat(pg_data_t *pgdat, int order,
 				shrink_active_list(SWAP_CLUSTER_MAX, zone,
 							&sc, 0);
 
-			if (!zone_watermark_ok_safe(zone, order,
-					high_wmark_pages(zone), 0, 0)) {
+			if (!zone_balanced(zone, order, 0, 0)) {
 				end_zone = i;
 				break;
 			} else {
