@@ -1863,6 +1863,7 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 					unsigned long *nr)
 {
 	unsigned long anon, file, free;
+	unsigned long inactive_file, active_file;
 	unsigned long anon_prio, file_prio;
 	unsigned long ap, fp;
 	struct zone_reclaim_stat *reclaim_stat = get_reclaim_stat(zone, sc);
@@ -1899,8 +1900,9 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 
 	anon  = zone_nr_lru_pages(zone, sc, LRU_ACTIVE_ANON) +
 		zone_nr_lru_pages(zone, sc, LRU_INACTIVE_ANON);
-	file  = zone_nr_lru_pages(zone, sc, LRU_ACTIVE_FILE) +
-		zone_nr_lru_pages(zone, sc, LRU_INACTIVE_FILE);
+	active_file   = zone_nr_lru_pages(zone, sc, LRU_ACTIVE_FILE);
+	inactive_file = zone_nr_lru_pages(zone, sc, LRU_INACTIVE_FILE);
+	file = active_file + inactive_file;
 
 	/*
 	 * Because workloads change over time (and to avoid overflow)
@@ -1935,7 +1937,7 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 			fraction[1] = 0;
 			denominator = 1;
 			goto out_unlock;
-		} else if (!inactive_file_is_low_global(zone)) {
+		} else if (!inactive_file_is_low_global(zone) && inactive_file > (anon << 1)) {
 			/*
 			 * There is enough inactive page cache, do not
 			 * reclaim anything from the working set right now.
