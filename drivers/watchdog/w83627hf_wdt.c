@@ -382,3 +382,4 @@ module_exit(wdt_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pádraig Brady <P@draigBrady.com>");
 MODULE_DESCRIPTION("w83627hf/thf WDT driver");
+MODULE_ALIAS_MISCDEV(WATCHDOG_MINOR);

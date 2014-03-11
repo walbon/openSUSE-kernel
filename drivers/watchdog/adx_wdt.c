@@ -352,3 +352,4 @@ module_exit(adx_wdt_exit);
 MODULE_DESCRIPTION("Avionic Design Xanthos Watchdog Driver");
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Thierry Reding <thierry.reding@avionic-design.de>");
+MODULE_ALIAS_MISCDEV(WATCHDOG_MINOR);

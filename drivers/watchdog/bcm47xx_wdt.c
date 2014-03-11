@@ -283,3 +283,4 @@ module_exit(bcm47xx_wdt_exit);
 MODULE_AUTHOR("Aleksandar Radovanovic");
 MODULE_DESCRIPTION("Watchdog driver for Broadcom BCM47xx");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS_MISCDEV(WATCHDOG_MINOR);
