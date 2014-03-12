@@ -367,8 +367,8 @@ static unsigned long highmem_dirtyable_memory(unsigned long total)
 			&NODE_DATA(node)->node_zones[ZONE_HIGHMEM];
 
 		x += zone_page_state(z, NR_FREE_PAGES) +
-		     zone_page_state(zone, NR_ACTIVE_FILE) +
-		     zone_page_state(zone, NR_INACTIVE_FILE);
+		     zone_page_state(z, NR_ACTIVE_FILE) +
+		     zone_page_state(z, NR_INACTIVE_FILE);
 	}
 	/*
 	 * Make sure that the number of highmem pages is never larger
