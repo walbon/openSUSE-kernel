@@ -108,10 +108,10 @@ static u32 *ipv6_cow_metrics(struct dst_entry *dst, unsigned long old)
 	if (!(rt->dst.flags & DST_HOST))
 		return NULL;
 
-	if (!rt->rt6i_peer)
+	if (!rt6_has_peer(rt))
 		rt6_bind_peer(rt, 1);
 
-	peer = rt->rt6i_peer;
+	peer = rt6_peer_ptr(rt);
 	if (peer) {
 		u32 *old_p = __DST_METRICS_PTR(old);
 		unsigned long prev, new;
@@ -232,15 +232,19 @@ static struct rt6_info ip6_blk_hole_entry_template = {
 #endif
 
 /* allocate dst with ip6_dst_ops */
-static inline struct rt6_info *ip6_dst_alloc(struct dst_ops *ops,
+static inline struct rt6_info *ip6_dst_alloc(struct net *net,
 					     struct net_device *dev,
 					     int flags)
 {
-	struct rt6_info *rt = dst_alloc(ops, dev, 0, 0, flags);
+	struct rt6_info *rt = dst_alloc(&net->ipv6.ip6_dst_ops, dev,
+					0, 0, flags);
 
-	if (rt != NULL)
+	if (rt != NULL) {
 		memset(&rt->rt6i_table, 0,
 			sizeof(*rt) - sizeof(struct dst_entry));
+
+		rt6_init_peer(rt, net->ipv6.peers);
+	}
 
 	return rt;
 }
@@ -249,7 +253,6 @@ static void ip6_dst_destroy(struct dst_entry *dst)
 {
 	struct rt6_info *rt = (struct rt6_info *)dst;
 	struct inet6_dev *idev = rt->rt6i_idev;
-	struct inet_peer *peer = rt->rt6i_peer;
 
 	if (!(rt->dst.flags & DST_HOST))
 		dst_destroy_metrics_generic(dst);
@@ -261,8 +264,8 @@ static void ip6_dst_destroy(struct dst_entry *dst)
 
 	rt6_release_from(rt);
 
-	if (peer) {
-		rt->rt6i_peer = NULL;
+	if (rt6_has_peer(rt)) {
+		struct inet_peer *peer = rt6_peer_ptr(rt);
 		inet_putpeer(peer);
 	}
 }
@@ -276,11 +279,15 @@ static u32 rt6_peer_genid(void)
 
 void rt6_bind_peer(struct rt6_info *rt, int create)
 {
-	struct net *net = dev_net(rt->dst.dev);
+	struct inet_peer_base *base;
 	struct inet_peer *peer;
 
-	peer = inet_getpeer_v6(net->ipv6.peers, &rt->rt6i_dst.addr, create);
-	if (peer && cmpxchg(&rt->rt6i_peer, NULL, peer) != NULL)
+	base = inetpeer_base_ptr(rt->_rt6i_peer);
+	if (!base)
+		return;
+
+	peer = inet_getpeer_v6(base, &rt->rt6i_dst.addr, create);
+	if (!rt6_set_peer(rt, peer))
 		inet_putpeer(peer);
 	else
 		rt->rt6i_peer_genid = rt6_peer_genid();
@@ -929,6 +936,7 @@ struct dst_entry *ip6_blackhole_route(struct net *net, struct dst_entry *dst_ori
 	rt = dst_alloc(&ip6_dst_blackhole_ops, ort->dst.dev, 1, 0, 0);
 	if (rt) {
 		memset(&rt->rt6i_table, 0, sizeof(*rt) - sizeof(struct dst_entry));
+		rt6_init_peer(rt, net->ipv6.peers);
 
 		new = &rt->dst;
 
@@ -973,7 +981,7 @@ static struct dst_entry *ip6_dst_check(struct dst_entry *dst, u32 cookie)
 
 	if (rt->rt6i_node && (rt->rt6i_node->fn_sernum == cookie)) {
 		if (rt->rt6i_peer_genid != rt6_peer_genid()) {
-			if (!rt->rt6i_peer)
+			if (!rt6_has_peer(rt))
 				rt6_bind_peer(rt, 0);
 			rt->rt6i_peer_genid = rt6_peer_genid();
 		}
@@ -1081,7 +1089,7 @@ struct dst_entry *icmp6_dst_alloc(struct net_device *dev,
 	if (unlikely(idev == NULL))
 		return NULL;
 
-	rt = ip6_dst_alloc(&net->ipv6.ip6_dst_ops, dev, 0);
+	rt = ip6_dst_alloc(net, dev, 0);
 	if (unlikely(rt == NULL)) {
 		in6_dev_put(idev);
 		goto out;
@@ -1247,7 +1255,7 @@ int ip6_route_add(struct fib6_config *cfg)
 		goto out;
 	}
 
-	rt = ip6_dst_alloc(&net->ipv6.ip6_dst_ops, NULL, DST_NOCOUNT);
+	rt = ip6_dst_alloc(net, NULL, DST_NOCOUNT);
 
 	if (rt == NULL) {
 		err = -ENOMEM;
@@ -1774,8 +1782,7 @@ static struct rt6_info *ip6_rt_copy(struct rt6_info *ort,
 				    const struct in6_addr *dest)
 {
 	struct net *net = dev_net(ort->rt6i_dev);
-	struct rt6_info *rt = ip6_dst_alloc(&net->ipv6.ip6_dst_ops,
-					    ort->dst.dev, 0);
+	struct rt6_info *rt = ip6_dst_alloc(net, ort->dst.dev, 0);
 
 	if (rt) {
 		rt->dst.input = ort->dst.input;
@@ -2060,8 +2067,7 @@ struct rt6_info *addrconf_dst_alloc(struct inet6_dev *idev,
 				    int anycast)
 {
 	struct net *net = dev_net(idev->dev);
-	struct rt6_info *rt = ip6_dst_alloc(&net->ipv6.ip6_dst_ops,
-					    net->loopback_dev, 0);
+	struct rt6_info *rt = ip6_dst_alloc(net, net->loopback_dev, 0);
 	struct neighbour *neigh;
 
 	if (rt == NULL) {

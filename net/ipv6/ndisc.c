@@ -1581,9 +1581,9 @@ void ndisc_send_redirect(struct sk_buff *skb, struct neighbour *neigh,
 			   "ICMPv6 Redirect: destination is not a neighbour.\n");
 		goto release;
 	}
-	if (!rt->rt6i_peer)
+	if (!rt6_has_peer(rt))
 		rt6_bind_peer(rt, 1);
-	if (inet_peer_xrlim_allow(rt->rt6i_peer, 1*HZ))
+	if (inet_peer_xrlim_allow(rt6_peer_ptr(rt), 1*HZ))
 		goto release;
 
 	if (dev->addr_len) {
