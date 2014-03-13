@@ -111,7 +111,11 @@ struct rt6_info {
 	u32				rt6i_peer_genid;
 
 	struct inet6_dev		*rt6i_idev;
+#ifdef __GENKSYMS__
+	struct inet_peer		*rt6i_peer;
+#else
 	unsigned long			_rt6i_peer;
+#endif
 
 #ifdef CONFIG_XFRM
 	u32				rt6i_flow_cache_genid;
