@@ -236,8 +236,10 @@ void xen_spin_irq_exit(void)
 		if (spinning->ticket + 1)
 			continue;
 		spinning->ticket = ticket_get(lock, spinning->prev);
-		if (ACCESS_ONCE(lock->cur) == spinning->ticket)
+		if (lock->cur == spinning->ticket) {
 			lock->owner = raw_smp_processor_id();
+			set_evtchn(percpu_read(poll_evtchn));
+		}
 	}
 }
 #endif
