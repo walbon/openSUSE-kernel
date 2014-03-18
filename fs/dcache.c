@@ -2863,6 +2863,7 @@ char *dentry_path(struct dentry *dentry, char *buf, int buflen)
 		*p = '/';	/* restore '/' overriden with '\0' */
 	return retval;
 Elong:
+	write_sequnlock(&rename_lock);
 	return ERR_PTR(-ENAMETOOLONG);
 }
 
