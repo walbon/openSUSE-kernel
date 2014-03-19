@@ -775,7 +775,6 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 	const unsigned long do_discard = (bio->bi_rw
 					  & (REQ_DISCARD | REQ_SECURE));
 	mdk_rdev_t *blocked_rdev;
-	int plugged;
 
 	/*
 	 * Register the new request and wait if the reconstruction
@@ -875,7 +874,6 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 	 * inc refcount on their rdev.  Record them by setting
 	 * bios[x] to bio
 	 */
-	plugged = mddev_check_plugged(mddev);
 
 	disks = conf->raid_disks;
  retry_write:
@@ -979,14 +977,13 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 		bio_list_add(&conf->pending_bio_list, mbio);
 		conf->pending_count++;
 		spin_unlock_irqrestore(&conf->device_lock, flags);
+		if (!mddev_check_plugged(mddev))
+			md_wakeup_thread(mddev->thread);
 	}
 	r1_bio_write_done(r1_bio);
 
 	/* In case raid1d snuck in to freeze_array */
 	wake_up(&conf->wait_barrier);
-
-	if (do_sync || !bitmap || !plugged)
-		md_wakeup_thread(mddev->thread);
 
 	return 0;
 }

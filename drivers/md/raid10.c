@@ -928,7 +928,6 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 					  & (REQ_DISCARD | REQ_SECURE));
 	unsigned long flags;
 	mdk_rdev_t *blocked_rdev;
-	int plugged = 1;
 	int sectors;
 
 	if (unlikely(bio->bi_rw & REQ_FLUSH)) {
@@ -1149,7 +1148,6 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 			mbio->bi_rw |= REQ_FAILFAST_DEV;
 		mbio->bi_private = r10_bio;
 
-		plugged = mddev_check_plugged(mddev);
 		atomic_inc(&r10_bio->remaining);
 		spin_lock_irqsave(&conf->device_lock, flags);
 		trace_block_bio_remap(bdev_get_queue(mbio->bi_bdev),
@@ -1159,6 +1157,8 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 		bio_list_add(&conf->pending_bio_list, mbio);
 		conf->pending_count++;
 		spin_unlock_irqrestore(&conf->device_lock, flags);
+		if (!mddev_check_plugged(mddev))
+			md_wakeup_thread(mddev->thread);
 	}
 
 	if (atomic_dec_and_test(&r10_bio->remaining)) {
@@ -1173,9 +1173,6 @@ static int make_request(mddev_t *mddev, struct bio * bio)
 
 	/* In case raid10d snuck in to freeze_array */
 	wake_up(&conf->wait_barrier);
-
-	if (do_sync || !mddev->bitmap || !plugged)
-		md_wakeup_thread(mddev->thread);
 	return 0;
 }
 
@@ -2008,7 +2005,8 @@ static void raid10d(mddev_t *mddev)
 	for (;;) {
 		char b[BDEVNAME_SIZE];
 
-		flush_pending_writes(conf);
+		if (atomic_read(&mddev->plug_cnt) == 0)
+			flush_pending_writes(conf);
 
 		spin_lock_irqsave(&conf->device_lock, flags);
 		if (list_empty(head)) {
