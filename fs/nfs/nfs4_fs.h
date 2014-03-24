@@ -228,9 +228,12 @@ struct nfs4_state_recovery_ops {
 };
 
 struct nfs4_state_maintenance_ops {
-	int (*sched_state_renewal)(struct nfs_client *, struct rpc_cred *, unsigned);
+	int (*sched_state_renewal)(struct nfs_client *, struct rpc_cred *);
 	struct rpc_cred * (*get_state_renewal_cred_locked)(struct nfs_client *);
 	int (*renew_lease)(struct nfs_client *, struct rpc_cred *);
+#ifndef __GENKSYMS__
+	int (*sched_state_renewal_flags)(struct nfs_client *, struct rpc_cred *, unsigned);
+#endif
 };
 
 extern const struct dentry_operations nfs4_dentry_operations;

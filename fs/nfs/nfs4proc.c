@@ -3400,7 +3400,7 @@ static const struct rpc_call_ops nfs4_renew_ops = {
 	.rpc_release = nfs4_renew_release,
 };
 
-static int nfs4_proc_async_renew(struct nfs_client *clp, struct rpc_cred *cred, unsigned renew_flags)
+static int nfs4_proc_async_renew_flags(struct nfs_client *clp, struct rpc_cred *cred, unsigned renew_flags)
 {
 	struct rpc_message msg = {
 		.rpc_proc	= &nfs4_procedures[NFSPROC4_CLNT_RENEW],
@@ -3421,6 +3421,12 @@ static int nfs4_proc_async_renew(struct nfs_client *clp, struct rpc_cred *cred, 
 	return rpc_call_async(clp->cl_rpcclient, &msg, RPC_TASK_SOFT,
 			&nfs4_renew_ops, data);
 }
+#ifdef __GENKSYMS__
+static int nfs4_proc_async_renew(struct nfs_client *clp, struct rpc_cred *cred)
+{
+	return nfs4_proc_async_renew_flags(clp, cred, NFS4_RENEW_TIMEOUT);
+}
+#endif
 
 static int nfs4_proc_renew(struct nfs_client *clp, struct rpc_cred *cred)
 {
@@ -5531,7 +5537,7 @@ static struct rpc_task *_nfs41_proc_sequence(struct nfs_client *clp, struct rpc_
 	return rpc_run_task(&task_setup_data);
 }
 
-static int nfs41_proc_async_sequence(struct nfs_client *clp, struct rpc_cred *cred, unsigned renew_flags)
+static int nfs41_proc_async_sequence_flags(struct nfs_client *clp, struct rpc_cred *cred, unsigned renew_flags)
 {
 	struct rpc_task *task;
 	int ret = 0;
@@ -5546,6 +5552,12 @@ static int nfs41_proc_async_sequence(struct nfs_client *clp, struct rpc_cred *cr
 	dprintk("<-- %s status=%d\n", __func__, ret);
 	return ret;
 }
+#ifdef __GENKSYMS__
+static int nfs41_proc_async_sequence(struct nfs_client *clp, struct rpc_cred *cred)
+{
+	return nfs41_proc_async_sequence_flags(clp, cred, NFS4_RENEW_TIMEOUT);
+}
+#endif
 
 static int nfs4_proc_sequence(struct nfs_client *clp, struct rpc_cred *cred)
 {
@@ -6041,14 +6053,22 @@ struct nfs4_state_recovery_ops nfs41_nograce_recovery_ops = {
 #endif /* CONFIG_NFS_V4_1 */
 
 struct nfs4_state_maintenance_ops nfs40_state_renewal_ops = {
+#ifndef __GENKSYMS__
+	.sched_state_renewal_flags = nfs4_proc_async_renew_flags,
+#else
 	.sched_state_renewal = nfs4_proc_async_renew,
+#endif
 	.get_state_renewal_cred_locked = nfs4_get_renew_cred_locked,
 	.renew_lease = nfs4_proc_renew,
 };
 
 #if defined(CONFIG_NFS_V4_1)
 struct nfs4_state_maintenance_ops nfs41_state_renewal_ops = {
+#ifndef __GENKSYMS__
+	.sched_state_renewal_flags = nfs41_proc_async_sequence_flags,
+#else
 	.sched_state_renewal = nfs41_proc_async_sequence,
+#endif
 	.get_state_renewal_cred_locked = nfs4_get_machine_cred_locked,
 	.renew_lease = nfs4_proc_sequence,
 };

@@ -89,7 +89,14 @@ nfs4_renew_state(struct work_struct *work)
 			nfs_expire_all_delegations(clp);
 		} else {
 			/* Queue an asynchronous RENEW. */
-			ops->sched_state_renewal(clp, cred, renew_flags);
+			if (ops->sched_state_renewal) {
+				if (renew_flags & NFS4_RENEW_TIMEOUT)
+					ops->sched_state_renewal(clp, cred);
+			}
+#ifndef __GENKSYMS__
+			else
+				ops->sched_state_renewal_flags(clp, cred, renew_flags);
+#endif
 			put_rpccred(cred);
 			goto out_exp;
 		}
