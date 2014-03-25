@@ -5007,7 +5007,7 @@ static struct dentry *btrfs_lookup(struct inode *dir, struct dentry *dentry,
  			return ERR_CAST(inode);
  	}
 
-	ret = d_splice_alias(inode, dentry);
+	ret = d_materialise_unique(dentry, inode);
 	if (unlikely(d_need_lookup(dentry))) {
 		spin_lock(&dentry->d_lock);
 		dentry->d_flags &= ~DCACHE_NEED_LOOKUP;
