@@ -102,7 +102,6 @@ static struct rt6_info *rt6_get_route_info(struct net *net,
 static u32 *ipv6_cow_metrics(struct dst_entry *dst, unsigned long old)
 {
 	struct rt6_info *rt = (struct rt6_info *) dst;
-	struct inet_peer *peer;
 	u32 *p = NULL;
 
 	if (!(rt->dst.flags & DST_HOST))
@@ -111,8 +110,8 @@ static u32 *ipv6_cow_metrics(struct dst_entry *dst, unsigned long old)
 	if (!rt6_has_peer(rt))
 		rt6_bind_peer(rt, 1);
 
-	peer = rt6_peer_ptr(rt);
-	if (peer) {
+	if (rt6_has_peer(rt)) {
+		struct inet_peer *peer = rt6_peer_ptr(rt);
 		u32 *old_p = __DST_METRICS_PTR(old);
 		unsigned long prev, new;
 

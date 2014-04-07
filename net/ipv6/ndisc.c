@@ -1583,7 +1583,7 @@ void ndisc_send_redirect(struct sk_buff *skb, struct neighbour *neigh,
 	}
 	if (!rt6_has_peer(rt))
 		rt6_bind_peer(rt, 1);
-	if (inet_peer_xrlim_allow(rt6_peer_ptr(rt), 1*HZ))
+	if (inet_peer_xrlim_allow(rt6_peer_ptr_compat(rt), 1*HZ))
 		goto release;
 
 	if (dev->addr_len) {

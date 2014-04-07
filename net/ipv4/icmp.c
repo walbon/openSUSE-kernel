@@ -254,7 +254,7 @@ static inline bool icmpv4_xrlim_allow(struct net *net, struct rtable *rt,
 	if ((1 << type) & net->ipv4.sysctl_icmp_ratemask) {
 		if (!rt_has_peer(rt))
 			rt_bind_peer(rt, fl4->daddr, 1);
-		rc = inet_peer_xrlim_allow(rt_peer_ptr(rt),
+		rc = inet_peer_xrlim_allow(rt_peer_ptr_compat(rt),
 					   net->ipv4.sysctl_icmp_ratelimit);
 	}
 out:

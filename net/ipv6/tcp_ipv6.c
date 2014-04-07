@@ -1876,7 +1876,7 @@ static struct inet_peer *tcp_v6_get_peer(struct sock *sk, bool *release_it)
 	} else {
 		if (!rt6_has_peer(rt))
 			rt6_bind_peer(rt, 1);
-		peer = rt6_peer_ptr(rt);
+		peer = rt6_peer_ptr_compat(rt);
 		*release_it = false;
 	}
 
