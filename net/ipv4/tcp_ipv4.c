@@ -1798,7 +1798,7 @@ struct inet_peer *tcp_v4_get_peer(struct sock *sk, bool *release_it)
 	} else {
 		if (!rt_has_peer(rt))
 			rt_bind_peer(rt, inet->inet_daddr, 1);
-		peer = rt_peer_ptr(rt);
+		peer = rt_peer_ptr_compat(rt);
 		*release_it = false;
 	}
 

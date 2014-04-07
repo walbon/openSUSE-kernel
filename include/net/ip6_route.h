@@ -62,7 +62,7 @@ static inline struct inet_peer *rt6_get_peer(struct rt6_info *rt)
 		return rt6_peer_ptr(rt);
 
 	rt6_bind_peer(rt, 0);
-	return rt6_peer_ptr(rt);
+	return rt6_peer_ptr_compat(rt);
 }
 
 extern void			ip6_route_input(struct sk_buff *skb);

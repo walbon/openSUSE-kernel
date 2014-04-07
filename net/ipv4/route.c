@@ -157,14 +157,13 @@ static void ipv4_dst_ifdown(struct dst_entry *dst, struct net_device *dev,
 static u32 *ipv4_cow_metrics(struct dst_entry *dst, unsigned long old)
 {
 	struct rtable *rt = (struct rtable *) dst;
-	struct inet_peer *peer;
 	u32 *p = NULL;
 
 	if (!rt_has_peer(rt))
 		rt_bind_peer(rt, rt->rt_dst, 1);
 
-	peer = rt_peer_ptr(rt);
-	if (peer) {
+	if (rt_has_peer(rt)) {
+		struct inet_peer *peer = rt_peer_ptr(rt);
 		u32 *old_p = __DST_METRICS_PTR(old);
 		unsigned long prev, new;
 
@@ -1414,7 +1413,6 @@ void ip_rt_redirect(__be32 old_gw, __be32 daddr, __be32 new_gw,
 	struct in_device *in_dev = __in_dev_get_rcu(dev);
 	__be32 skeys[2] = { saddr, 0 };
 	int    ikeys[2] = { dev->ifindex, 0 };
-	struct inet_peer *peer;
 	struct net *net;
 
 	if (!in_dev)
@@ -1463,8 +1461,9 @@ void ip_rt_redirect(__be32 old_gw, __be32 daddr, __be32 new_gw,
 				if (!rt_has_peer(rt))
 					rt_bind_peer(rt, rt->rt_dst, 1);
 
-				peer = rt_peer_ptr(rt);
-				if (peer) {
+				if (rt_has_peer(rt)) {
+					struct inet_peer *peer = rt_peer_ptr(rt);
+
 					if (peer->redirect_learned.a4 != new_gw) {
 						peer->redirect_learned.a4 = new_gw;
 						atomic_inc(&__rt_peer_genid);
@@ -1562,7 +1561,7 @@ void ip_rt_send_redirect(struct sk_buff *skb)
 
 	if (!rt_has_peer(rt))
 		rt_bind_peer(rt, rt->rt_dst, 1);
-	peer = rt_peer_ptr(rt);
+	peer = rt_peer_ptr_compat(rt);
 	if (!peer) {
 		icmp_send(skb, ICMP_REDIRECT, ICMP_REDIR_HOST, rt->rt_gateway);
 		return;
@@ -1606,7 +1605,6 @@ void ip_rt_send_redirect(struct sk_buff *skb)
 static int ip_error(struct sk_buff *skb)
 {
 	struct rtable *rt = skb_rtable(skb);
-	struct inet_peer *peer;
 	unsigned long now;
 	bool send;
 	int code;
@@ -1630,10 +1628,11 @@ static int ip_error(struct sk_buff *skb)
 
 	if (!rt_has_peer(rt))
 		rt_bind_peer(rt, rt->rt_dst, 1);
-	peer = rt_peer_ptr(rt);
 
 	send = true;
-	if (peer) {
+	if (rt_has_peer(rt)) {
+		struct inet_peer *peer = rt_peer_ptr(rt);
+
 		now = jiffies;
 		peer->rate_tokens += now - peer->rate_last;
 		if (peer->rate_tokens > ip_rt_error_burst)
@@ -1733,14 +1732,13 @@ static void check_peer_pmtu(struct dst_entry *dst, struct inet_peer *peer)
 static void ip_rt_update_pmtu(struct dst_entry *dst, u32 mtu)
 {
 	struct rtable *rt = (struct rtable *) dst;
-	struct inet_peer *peer;
 
 	dst_confirm(dst);
 
 	if (!rt_has_peer(rt))
 		rt_bind_peer(rt, rt->rt_dst, 1);
-	peer = rt_peer_ptr(rt);
-	if (peer) {
+	if (rt_has_peer(rt)) {
+		struct inet_peer *peer = rt_peer_ptr(rt);
 		unsigned long pmtu_expires = ACCESS_ONCE(peer->pmtu_expires);
 
 		if (mtu < ip_rt_min_pmtu)
@@ -1768,13 +1766,12 @@ static struct dst_entry *ipv4_dst_check(struct dst_entry *dst, u32 cookie)
 	if (rt_is_expired(rt))
 		return NULL;
 	if (rt->rt_peer_genid != rt_peer_genid()) {
-		struct inet_peer *peer;
 
 		if (!rt_has_peer(rt))
 			rt_bind_peer(rt, rt->rt_dst, 0);
 
-		peer = rt_peer_ptr(rt);
-		if (peer) {
+		if (rt_has_peer(rt)) {
+			struct inet_peer *peer = rt_peer_ptr(rt);
 			check_peer_pmtu(dst, peer);
 
 			if (peer->redirect_learned.a4 &&

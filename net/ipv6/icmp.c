@@ -194,7 +194,7 @@ static inline bool icmpv6_xrlim_allow(struct sock *sk, u8 type,
 
 		if (!rt6_has_peer(rt))
 			rt6_bind_peer(rt, 1);
-		res = inet_peer_xrlim_allow(rt6_peer_ptr(rt), tmo);
+		res = inet_peer_xrlim_allow(rt6_peer_ptr_compat(rt), tmo);
 	}
 	dst_release(dst);
 	return res;

@@ -85,6 +85,11 @@ static inline bool rt_has_peer(struct rtable *rt)
 	return inetpeer_ptr_is_peer(rt->_peer);
 }
 
+static inline struct inet_peer *rt_peer_ptr_compat(struct rtable *rt)
+{
+	return rt_has_peer(rt) ? rt_peer_ptr(rt) : NULL;
+}
+
 static inline void __rt_set_peer(struct rtable *rt, struct inet_peer *peer)
 {
 	__inetpeer_ptr_set_peer(&rt->_peer, peer);
@@ -340,7 +345,7 @@ static inline struct inet_peer *rt_get_peer(struct rtable *rt, __be32 daddr)
 		return rt_peer_ptr(rt);
 
 	rt_bind_peer(rt, daddr, 0);
-	return rt_peer_ptr(rt);
+	return rt_peer_ptr_compat(rt);
 }
 
 static inline int inet_iif(const struct sk_buff *skb)

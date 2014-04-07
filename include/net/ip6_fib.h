@@ -136,6 +136,11 @@ static inline bool rt6_has_peer(struct rt6_info *rt)
 	return inetpeer_ptr_is_peer(rt->_rt6i_peer);
 }
 
+static inline struct inet_peer *rt6_peer_ptr_compat(struct rt6_info *rt)
+{
+	return rt6_has_peer(rt) ? rt6_peer_ptr(rt) : NULL;
+}
+
 static inline void __rt6_set_peer(struct rt6_info *rt, struct inet_peer *peer)
 {
 	__inetpeer_ptr_set_peer(&rt->_rt6i_peer, peer);
