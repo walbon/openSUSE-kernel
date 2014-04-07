@@ -1871,7 +1871,7 @@ static struct inet_peer *tcp_v6_get_peer(struct sock *sk, bool *release_it)
 
 	if (!rt ||
 	    !ipv6_addr_equal(&np->daddr, &rt->rt6i_dst.addr)) {
-		peer = inet_getpeer_v6(net, &np->daddr, 1);
+		peer = inet_getpeer_v6(net->ipv6.peers, &np->daddr, 1);
 		*release_it = true;
 	} else {
 		if (!rt6_has_peer(rt))
@@ -1892,7 +1892,7 @@ static void *tcp_v6_tw_get_peer(struct sock *sk)
 	if (tw->tw_family == AF_INET)
 		return tcp_v4_tw_get_peer(sk);
 
-	return inet_getpeer_v6(net, &tw6->tw_v6_daddr, 1);
+	return inet_getpeer_v6(net->ipv6.peers, &tw6->tw_v6_daddr, 1);
 }
 
 static struct timewait_sock_ops tcp6_timewait_sock_ops = {

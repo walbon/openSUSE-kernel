@@ -1793,7 +1793,7 @@ struct inet_peer *tcp_v4_get_peer(struct sock *sk, bool *release_it)
 
 	if (!rt ||
 	    inet->cork.fl.u.ip4.daddr != inet->inet_daddr) {
-		peer = inet_getpeer_v4(net, inet->inet_daddr, 1);
+		peer = inet_getpeer_v4(net->ipv4.peers, inet->inet_daddr, 1);
 		*release_it = true;
 	} else {
 		if (!rt_has_peer(rt))
@@ -1811,7 +1811,7 @@ void *tcp_v4_tw_get_peer(struct sock *sk)
 	struct inet_timewait_sock *tw = inet_twsk(sk);
 	struct net *net = sock_net(sk);
 
-	return inet_getpeer_v4(net, tw->tw_daddr, 1);
+	return inet_getpeer_v4(net->ipv4.peers, tw->tw_daddr, 1);
 }
 EXPORT_SYMBOL(tcp_v4_tw_get_peer);
 
