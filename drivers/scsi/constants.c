@@ -641,6 +641,7 @@ static const struct error_info additional[] =
 	{0x2408, "Invalid XCDB"},
 
 	{0x2500, "Logical unit not supported"},
+	{0x2501, "Access to inactive snapshot"},
 
 	{0x2600, "Invalid field in parameter list"},
 	{0x2601, "Parameter not supported"},

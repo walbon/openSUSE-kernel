@@ -517,6 +517,13 @@ static int scsi_check_sense(struct scsi_cmnd *scmd)
 		    sshdr.asc == 0x26) { /* Parameter value invalid */
 			return TARGET_ERROR;
 		}
+		if (sshdr.asc == 0x25 && sshdr.ascq == 0x1) {
+			/*
+			 * Inactive Snapshot on EMC Symmetrix or Clariion.
+			 * No Access possible, and retry pointless.
+			 */
+			return TARGET_ERROR;
+		}
 		return SUCCESS;
 
 	default:
