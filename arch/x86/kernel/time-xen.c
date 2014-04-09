@@ -136,11 +136,6 @@ static u64 get_nsec_offset(struct shadow_time_info *shadow)
 	return scale_delta(delta, shadow->tsc_to_nsec_mul, shadow->tsc_shift);
 }
 
-static inline u64 processed_system_time(u64 jiffies_64)
-{
-	return (jiffies_64 - jiffies_bias) * NS_PER_TICK + system_time_bias;
-}
-
 static void update_wallclock(void)
 {
 	static DEFINE_SPINLOCK(uwc_lock);
@@ -167,7 +162,7 @@ static void _update_wallclock(struct work_struct *unused)
 
 	update_wallclock();
 
-	stamp = processed_system_time(get_jiffies_64());
+	stamp = xen_local_clock();
 	nsec = do_div(stamp, NSEC_PER_SEC);
 	set_normalized_timespec(&tv, shadow_tv.tv_sec + stamp,
 				shadow_tv.tv_nsec + nsec);
@@ -274,7 +269,7 @@ static void sync_xen_wallclock(unsigned long dummy)
 	op.cmd = XENPF_settime;
 	op.u.settime.secs        = now.tv_sec;
 	op.u.settime.nsecs       = now.tv_nsec;
-	op.u.settime.system_time = processed_system_time(get_jiffies_64());
+	op.u.settime.system_time = xen_local_clock();
 	WARN_ON(HYPERVISOR_platform_op(&op));
 
 	update_wallclock();
@@ -541,19 +536,20 @@ void __init time_init(void)
 u64 jiffies_to_st(unsigned long j)
 {
 	u64 j64 = get_jiffies_64();
+	u64 st = (j64 - jiffies_bias) * NS_PER_TICK + system_time_bias;
 	long delta = j - (unsigned long)j64;
 
 	if (delta < 1)
 		/* Triggers in some wrap-around cases, but that's okay:
 		 * we just end up with a shorter timeout. */
-		return processed_system_time(j64) + NS_PER_TICK;
+		return st + NS_PER_TICK;
 
 	if (((unsigned long)delta >> (BITS_PER_LONG-3)) != 0)
 		/* Very long timeout means there is no pending timer.
 		 * We indicate this to Xen by passing zero timeout. */
 		return 0;
 
-	return processed_system_time(j64) + delta * (u64)NS_PER_TICK;
+	return st + delta * (u64)NS_PER_TICK;
 }
 EXPORT_SYMBOL(jiffies_to_st);
 

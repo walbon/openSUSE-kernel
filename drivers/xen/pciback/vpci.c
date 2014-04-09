@@ -130,9 +130,11 @@ int pciback_add_pci_dev(struct pciback_device *pdev, struct pci_dev *dev,
       unlock:
 	spin_unlock_irqrestore(&vpci_dev->lock, flags);
 
-	/* Publish this device. */
-	if(!err)
+	if (!err) {
+		/* Publish this device. */
 		err = publish_cb(pdev, 0, 0, PCI_DEVFN(slot, func), devid);
+	} else
+		kfree(dev_entry);
 
       out:
 	return err;
