@@ -54,6 +54,10 @@ extern int tracepoint_probe_unregister_noupdate(const char *name, void *probe,
 						void *data);
 extern void tracepoint_probe_update_all(void);
 
+#ifdef CONFIG_MODULES
+bool trace_module_has_bad_taint(struct module *mod);
+#endif
+
 struct tracepoint_iter {
 	struct module *module;
 	struct tracepoint * const *tracepoint;

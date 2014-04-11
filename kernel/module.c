@@ -3650,7 +3650,7 @@ void module_update_tracepoints(void)
 
 	mutex_lock(&module_mutex);
 	list_for_each_entry(mod, &modules, list)
-		if (!mod->taints)
+		if (!trace_module_has_bad_taint(mod))
 			tracepoint_update_probe_range(mod->tracepoints_ptrs,
 				mod->tracepoints_ptrs + mod->num_tracepoints);
 	mutex_unlock(&module_mutex);
@@ -3667,7 +3667,7 @@ int module_get_iter_tracepoints(struct tracepoint_iter *iter)
 
 	mutex_lock(&module_mutex);
 	list_for_each_entry(iter_mod, &modules, list) {
-		if (!iter_mod->taints) {
+		if (!trace_module_has_bad_taint(iter_mod)) {
 			/*
 			 * Sorted module list
 			 */
