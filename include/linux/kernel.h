@@ -384,6 +384,7 @@ extern enum system_states {
 #define TAINT_WARN			9
 #define TAINT_CRAP			10
 #define TAINT_FIRMWARE_WORKAROUND	11
+#define TAINT_UNSIGNED_MODULE		13
 
 #ifdef CONFIG_ENTERPRISE_SUPPORT
 /*
