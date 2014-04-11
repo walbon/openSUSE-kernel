@@ -506,6 +506,8 @@ can be ORed together:
         instead of using the one provided by the hardware.
  512 - A kernel warning has occurred.
 1024 - A module from drivers/staging was loaded.
+8192 - An unsigned module has been loaded in a kernel supporting module
+       signature.
  0x40000000 - An unsupported kernel module was loaded.
  0x80000000 - An kernel module with external support was loaded.
 

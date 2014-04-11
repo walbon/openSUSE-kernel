@@ -2952,7 +2952,7 @@ static struct module *load_module(void __user *umod,
 #ifdef CONFIG_MODULE_SIG
 	mod->sig_ok = info.sig_ok;
 	if (!mod->sig_ok)
-		add_taint_module(mod, TAINT_FORCED_MODULE);
+		add_taint_module(mod, TAINT_UNSIGNED_MODULE);
 #endif
 
 	/* Now module is in final location, initialize linked lists, etc. */
@@ -3405,6 +3405,8 @@ static char *module_flags(struct module *mod, char *buf)
 			buf[bx++] = 'F';
 		if (mod->taints & (1 << TAINT_CRAP))
 			buf[bx++] = 'C';
+		if (mod->taints & (1 << TAINT_UNSIGNED_MODULE))
+			buf[bx++] = 'E';
 #ifdef CONFIG_ENTERPRISE_SUPPORT
 		if (mod->taints & (1 << TAINT_NO_SUPPORT))
 			buf[bx++] = 'N';
@@ -3648,7 +3650,7 @@ void module_update_tracepoints(void)
 
 	mutex_lock(&module_mutex);
 	list_for_each_entry(mod, &modules, list)
-		if (!mod->taints)
+		if (!trace_module_has_bad_taint(mod))
 			tracepoint_update_probe_range(mod->tracepoints_ptrs,
 				mod->tracepoints_ptrs + mod->num_tracepoints);
 	mutex_unlock(&module_mutex);
@@ -3665,7 +3667,7 @@ int module_get_iter_tracepoints(struct tracepoint_iter *iter)
 
 	mutex_lock(&module_mutex);
 	list_for_each_entry(iter_mod, &modules, list) {
-		if (!iter_mod->taints) {
+		if (!trace_module_has_bad_taint(iter_mod)) {
 			/*
 			 * Sorted module list
 			 */

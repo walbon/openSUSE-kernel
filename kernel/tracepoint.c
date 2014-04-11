@@ -572,6 +572,15 @@ void tracepoint_iter_reset(struct tracepoint_iter *iter)
 EXPORT_SYMBOL_GPL(tracepoint_iter_reset);
 
 #ifdef CONFIG_MODULES
+bool trace_module_has_bad_taint(struct module *mod)
+{
+	return mod->taints & ~((1 << TAINT_CRAP) | (1 << TAINT_UNSIGNED_MODULE)
+#ifdef CONFIG_ENTERPRISE_SUPPORT
+			     | (1 << TAINT_EXTERNAL_SUPPORT)
+			     | (1 << TAINT_NO_SUPPORT)
+#endif
+			     );
+}
 
 int tracepoint_module_notify(struct notifier_block *self,
 			     unsigned long val, void *data)
