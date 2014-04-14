@@ -617,12 +617,41 @@ insert_above:
 	return ln;
 }
 
+static int fib6_commit_metrics(struct dst_entry *dst,
+			       struct nlattr *mx, int mx_len)
+{
+	struct nlattr *nla;
+	int remaining;
+	u32 *mp;
+
+	if (dst->flags & DST_HOST) {
+		mp = dst_metrics_write_ptr(dst);
+	} else {
+		mp = kzalloc(sizeof(u32) * RTAX_MAX, GFP_KERNEL);
+		if (!mp)
+			return -ENOMEM;
+		dst_init_metrics(dst, mp, 0);
+	}
+
+	nla_for_each_attr(nla, mx, mx_len, remaining) {
+		int type = nla_type(nla);
+
+		if (type) {
+			if (type > RTAX_MAX)
+				return -EINVAL;
+
+			mp[type - 1] = nla_get_u32(nla);
+		}
+	}
+	return 0;
+}
+
 /*
  *	Insert routing information in a node.
  */
 
 static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
-			    struct nl_info *info)
+			    struct nl_info *info, struct nlattr *mx, int mx_len)
 {
 	struct rt6_info *iter = NULL;
 	struct rt6_info **ins;
@@ -632,6 +661,7 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
 	int add = ((NULL == info || NULL == info->nlh) ||
 	    (info->nlh->nlmsg_flags&NLM_F_CREATE));
 	int found = 0;
+	int err;
 
 	ins = &fn->leaf;
 
@@ -683,6 +713,11 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
 		if (!add)
 			printk(KERN_WARNING "IPv6: NLM_F_CREATE should be set when creating new route\n");
 
+		if (mx) {
+			err = fib6_commit_metrics(&rt->dst, mx, mx_len);
+			if (err)
+				return err;
+		}
 		rt->dst.rt6_next = iter;
 		*ins = rt;
 		rt->rt6i_node = fn;
@@ -696,6 +731,11 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
 		}
 
 	} else {
+		if (mx) {
+			err = fib6_commit_metrics(&rt->dst, mx, mx_len);
+			if (err)
+				return err;
+		}
 		*ins = rt;
 		rt->rt6i_node = fn;
 		rt->dst.rt6_next = iter->dst.rt6_next;
@@ -732,7 +772,8 @@ void fib6_force_start_gc(struct net *net)
  *	with source addr info in sub-trees
  */
 
-int fib6_add(struct fib6_node *root, struct rt6_info *rt, struct nl_info *info)
+int fib6_add(struct fib6_node *root, struct rt6_info *rt, struct nl_info *info,
+	     struct nlattr *mx, int mx_len)
 {
 	struct fib6_node *fn, *pn = NULL;
 	int err = -ENOMEM;
@@ -829,7 +870,7 @@ int fib6_add(struct fib6_node *root, struct rt6_info *rt, struct nl_info *info)
 	}
 #endif
 
-	err = fib6_add_rt2node(fn, rt, info);
+	err = fib6_add_rt2node(fn, rt, info, mx, mx_len);
 
 	if (err == 0) {
 		fib6_start_gc(info->nl_net, rt);
