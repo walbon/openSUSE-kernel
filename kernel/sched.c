@@ -816,11 +816,6 @@ static void update_rq_clock(struct rq *rq)
 {
 	s64 delta;
 
-	/*
-	 * Set during wakeup to indicate we are on the way to schedule().
-	 * Decrement to ensure that a very large latency is not accounted
-	 * to the wrong task.
-	 */
 	if (rq->skip_clock_update-- > 0)
 		return;
 
