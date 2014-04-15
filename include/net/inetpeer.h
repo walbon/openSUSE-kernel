@@ -36,7 +36,14 @@ struct inet_peer {
 	__u32			avl_height;
 	union {
 		struct list_head	unused;
+#ifdef __GENKSYMS__
 		struct inet_peer_base	*base;
+#else
+		struct {
+			struct inet_peer_base	*base;
+			void			*base_padding;
+		};
+#endif
 	};
 	__u32			dtime;		/* the time of last use of not
 						 * referenced entries */

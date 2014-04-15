@@ -181,8 +181,11 @@ static void unlink_from_unused(struct inet_peer_base *base,
 			       struct inet_peer *p)
 {
 	spin_lock_bh(&unused_peers_lock);
-	list_del(&p->unused);
-	p->base = base;
+	if (p->base_padding) {
+		list_del(&p->unused);
+		p->base = base;
+		p->base_padding = NULL;
+	}
 	spin_unlock_bh(&unused_peers_lock);
 }
 
@@ -477,8 +480,11 @@ static int cleanup_once(struct inet_peer_base *base,
 			return -1;
 		}
 
-		list_del_init(&p->unused);
-		p->base = base;
+		if (p->base_padding) {
+			list_del(&p->unused);
+			p->base = base;
+			p->base_padding = NULL;
+		}
 
 		/* Grab an extra reference to prevent node disappearing
 		 * before unlink_from_pool() call. */
@@ -552,6 +558,7 @@ found:		/* The existing node has been found.
 		p->pmtu_orig = 0;
 		memset(&p->redirect_learned, 0, sizeof(p->redirect_learned));
 		p->base = base;
+		p->base_padding = NULL;
 
 		/* Link the node. */
 		link_to_pool(p, base);
@@ -624,6 +631,9 @@ void inet_putpeer(struct inet_peer *p)
 
 	if (atomic_dec_and_lock(&p->refcnt, &unused_peers_lock)) {
 		struct inet_peer_base *base = p->base;
+
+		/* If base_padding is not null, base doesn't make sense */
+		BUG_ON(p->base_padding);
 		list_add_tail(&p->unused, &base->unused_peers_list);
 		p->dtime = (__u32)jiffies;
 		spin_unlock(&unused_peers_lock);
