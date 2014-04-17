@@ -651,7 +651,8 @@ nfqnl_recv_verdict(struct sock *ctnl, struct sk_buff *skb,
 	vhdr = nla_data(nfqa[NFQA_VERDICT_HDR]);
 	verdict = ntohl(vhdr->verdict);
 
-	if ((verdict & NF_VERDICT_MASK) > NF_MAX_VERDICT) {
+	if ((verdict & NF_VERDICT_MASK) > NF_MAX_VERDICT ||
+	    (verdict & NF_VERDICT_MASK) == NF_STOLEN) {
 		err = -EINVAL;
 		goto err_out_unlock;
 	}
