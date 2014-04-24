@@ -1803,6 +1803,7 @@ static struct nfs4_state *nfs4_do_open(struct inode *dir, struct path *path, fmo
 	struct nfs4_state *res;
 	int status;
 
+	fmode &= FMODE_READ|FMODE_WRITE;
 	do {
 		status = _nfs4_do_open(dir, path, fmode, flags, sattr, cred, &res);
 		if (status == 0)
