@@ -1466,10 +1466,12 @@ static int create_proc_exports_entry(void)
 }
 #endif
 
+int nfsd_md5_mod_init(void);
 static int __init init_nfsd(void)
 {
 	int retval;
 	printk(KERN_INFO "Installing knfsd (copyright (C) 1996 okir@monad.swb.de).\n");
+	nfsd_md5_mod_init();
 
 	retval = nfs4_state_init(); /* nfs4 locking state */
 	if (retval)

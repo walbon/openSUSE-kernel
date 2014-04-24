@@ -82,6 +82,11 @@ md5_to_hex(char *out, char *md5)
 	*out = '\0';
 }
 
+#include <crypto/hash.h>
+extern struct shash_alg md5_alg;
+struct crypto_tfm *__crypto_alloc_tfm(struct crypto_alg *alg, u32 type,
+				      u32 mask);
+
 __be32
 nfs4_make_rec_clidname(char *dname, struct xdr_netobj *clname)
 {
@@ -93,7 +98,10 @@ nfs4_make_rec_clidname(char *dname, struct xdr_netobj *clname)
 	dprintk("NFSD: nfs4_make_rec_clidname for %.*s\n",
 			clname->len, clname->data);
 	desc.flags = CRYPTO_TFM_REQ_MAY_SLEEP;
-	desc.tfm = crypto_alloc_hash("md5", 0, CRYPTO_ALG_ASYNC);
+	desc.tfm = __crypto_hash_cast(
+		__crypto_alloc_tfm(
+			&md5_alg.base, CRYPTO_ALG_TYPE_HASH,
+			CRYPTO_ALG_TYPE_HASH_MASK));
 	if (IS_ERR(desc.tfm))
 		goto out_no_tfm;
 	cksum.len = crypto_hash_digestsize(desc.tfm);
