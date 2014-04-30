@@ -897,6 +897,8 @@ static int nfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 	desc->dir_cookie = &dir_ctx->dir_cookie;
 	desc->decode = NFS_PROTO(inode)->decode_dirent;
 	desc->plus = nfs_use_readdirplus(inode, filp) ? 1 : 0;
+	if (desc->plus && filp->f_pos == 0)
+		clear_bit(NFS_INO_DID_FLUSH, &NFS_I(inode)->flags);
 
 	nfs_block_sillyrename(dentry);
 	res = nfs_revalidate_mapping(inode, filp->f_mapping);
@@ -1157,6 +1159,15 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 
 	/* Force a full look up iff the parent directory has changed */
 	if (!nfs_is_exclusive_create(dir, nd) && nfs_check_verifier(dir, dentry)) {
+		if (nfs_server_capable(dir, NFS_CAP_READDIRPLUS)
+		    && ((NFS_I(inode)->cache_validity & NFS_INO_INVALID_ATTR)
+			|| nfs_attribute_cache_expired(inode))
+		    && !test_and_set_bit(NFS_INO_DID_FLUSH, &NFS_I(dir)->flags)
+			) {
+			nfs_advise_use_readdirplus(dir);
+			goto out_zap_parent;
+		}
+
 		if (nfs_lookup_verify_inode(inode, nd))
 			goto out_zap_parent;
 		goto out_valid;
