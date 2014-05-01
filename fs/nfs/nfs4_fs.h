@@ -128,6 +128,7 @@ struct nfs4_state_owner {
 	struct nfs_seqid_counter so_seqid;
 	struct rpc_sequence  so_sequence;
 	seqcount_t	     so_reclaim_seqcount;
+	struct mutex	     so_delegreturn_mutex;
 };
 
 enum {
