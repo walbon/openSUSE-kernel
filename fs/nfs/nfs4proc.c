@@ -224,7 +224,7 @@ static void nfs4_setup_readdir(u64 cookie, __be32 *verifier, struct dentry *dent
 	kunmap_atomic(start, KM_USER0);
 }
 
-static int nfs4_wait_clnt_recover(struct nfs_client *clp)
+int nfs4_wait_clnt_recover(struct nfs_client *clp)
 {
 	int res;
 
@@ -918,6 +918,8 @@ static int can_open_delegated(struct nfs_delegation *delegation, fmode_t fmode)
 		return 0;
 	if (test_bit(NFS_DELEGATION_NEED_RECLAIM, &delegation->flags))
 		return 0;
+	if (test_bit(NFS_DELEGATION_RETURNING, &delegation->flags))
+		return 0;
 	nfs_mark_delegation_referenced(delegation);
 	return 1;
 }
@@ -995,6 +997,7 @@ static int update_open_stateid(struct nfs4_state *state, nfs4_stateid *open_stat
 
 	spin_lock(&deleg_cur->lock);
 	if (nfsi->delegation != deleg_cur ||
+	   test_bit(NFS_DELEGATION_RETURNING, &deleg_cur->flags) ||
 	    (deleg_cur->type & fmode) != fmode)
 		goto no_delegation_unlock;
 
