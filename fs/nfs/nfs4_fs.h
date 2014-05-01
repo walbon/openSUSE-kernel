@@ -11,6 +11,8 @@
 
 #ifdef CONFIG_NFS_V4
 
+#include <linux/seqlock.h>
+
 struct idmap;
 
 /*
@@ -125,6 +127,7 @@ struct nfs4_state_owner {
 	struct list_head     so_states;
 	struct nfs_seqid_counter so_seqid;
 	struct rpc_sequence  so_sequence;
+	seqcount_t	     so_reclaim_seqcount;
 };
 
 enum {
