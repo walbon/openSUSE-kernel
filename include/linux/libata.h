@@ -726,6 +726,13 @@ struct ata_link {
 #define ATA_LINK_CLEAR_BEGIN		offsetof(struct ata_link, active_tag)
 #define ATA_LINK_CLEAR_END		offsetof(struct ata_link, device[0])
 
+#define ATA_GET_LAST_TAG(ap) (((ap)->cbl >> 16) & 0xFFFF)
+#define ATA_SET_LAST_TAG(ap, tag) ((ap)->cbl = ((ap)->cbl & 0xFFFF) | \
+				  ((tag) & 0xFFFF) << 16)
+#define ATA_PORT_GET_CBL(ap) ((ap)->cbl & 0xFFFF)
+#define ATA_PORT_SET_CBL(ap, fe_cbl) ((ap)->cbl = ((ap)->cbl & 0xFFFF0000) | \
+				     ((fe_cbl) & 0xFFFF))
+
 struct ata_port {
 	struct Scsi_Host	*scsi_host; /* our co-allocated scsi host */
 	struct ata_port_operations *ops;
