@@ -7715,6 +7715,10 @@ void md_check_recovery(mddev_t *mddev)
 					}
 				}
 			clear_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
+			clear_bit(MD_CHANGE_DEVS, &mddev->recovery);
+			clear_bit(MD_CHANGE_CLEAN, &mddev->recovery);
+			mddev->safemode = 0;
+			clear_bit(MD_RECOVERY_DONE, &mddev->recovery);
 			goto unlock;
 		}
 
@@ -7864,7 +7868,7 @@ static int md_notify_reboot(struct notifier_block *this,
 		if (mddev_trylock(mddev)) {
 			if (mddev->pers)
 				__md_stop_writes(mddev);
-			mddev->safemode = 2;
+			mddev->safemode = mddev->external ? 1 : 2;
 			mddev_unlock(mddev);
 		}
 	/*
