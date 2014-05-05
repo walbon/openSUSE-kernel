@@ -412,7 +412,7 @@ static u8 *fnic_get_mac(struct fc_lport *lport)
 	return fnic->data_src_addr;
 }
 
-void fnic_set_vlan(struct fnic *fnic, u16 vlan_id)
+static void fnic_set_vlan(struct fnic *fnic, u16 vlan_id)
 {
 	u16 old_vlan;
 	old_vlan = vnic_dev_set_default_vlan(fnic->vdev, vlan_id);

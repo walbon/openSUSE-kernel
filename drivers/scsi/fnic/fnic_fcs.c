@@ -35,7 +35,7 @@
 #include "cq_enet_desc.h"
 #include "cq_exch_desc.h"
 
-static u8 fcoe_all_fcfs[ETH_ALEN] = FIP_ALL_FCF_MACS;
+static u8 fcoe_all_fcfs[ETH_ALEN];
 struct workqueue_struct *fnic_fip_queue;
 struct workqueue_struct *fnic_event_queue;
 
@@ -381,7 +381,7 @@ static void fnic_fcoe_process_vlan_resp(struct fnic *fnic, struct sk_buff *skb)
 			vid = ntohs(((struct fip_vlan_desc *)desc)->fd_vlan);
 			shost_printk(KERN_INFO, fnic->lport->host,
 				  "process_vlan_resp: FIP VLAN %d\n", vid);
-			vlan = (struct fcoe_vlan *) kmalloc(sizeof(*vlan),
+			vlan = kmalloc(sizeof(*vlan),
 							GFP_ATOMIC);
 			if (!vlan) {
 				/* retry from timer */
@@ -469,12 +469,12 @@ static int fnic_fcoe_vlan_check(struct fnic *fnic, u16 flag)
 	return -EINVAL;
 }
 
-void fnic_event_enq(struct fnic *fnic, enum fnic_evt ev)
+static void fnic_event_enq(struct fnic *fnic, enum fnic_evt ev)
 {
 	struct fnic_event *fevt;
 	unsigned long flags;
 
-	fevt = (struct fnic_event *) kmalloc(sizeof(*fevt), GFP_ATOMIC);
+	fevt = kmalloc(sizeof(*fevt), GFP_ATOMIC);
 	if (!fevt)
 		return;
 
@@ -488,7 +488,7 @@ void fnic_event_enq(struct fnic *fnic, enum fnic_evt ev)
 	schedule_work(&fnic->event_work);
 }
 
-int fnic_fcoe_handle_fip_frame(struct fnic *fnic, struct sk_buff *skb)
+static int fnic_fcoe_handle_fip_frame(struct fnic *fnic, struct sk_buff *skb)
 {
 	struct fip_header *fiph;
 	int ret = 1;
