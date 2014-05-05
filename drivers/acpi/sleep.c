@@ -505,10 +505,8 @@ static void acpi_hibernation_leave(void)
 	/* Reprogram control registers and execute _BFS */
 	acpi_leave_sleep_state_prep(ACPI_STATE_S4);
 	/* Check the hardware signature */
-	if (facs && s4_hardware_signature != facs->hardware_signature) {
-		printk(KERN_CRIT "ACPI: Hardware changed while hibernated, "
-			"success doubtful!\n");
-	}
+	if (facs && s4_hardware_signature != facs->hardware_signature)
+		pr_crit("ACPI: Hardware changed while hibernated, success doubtful!\n");
 	/* Restore the NVS memory area */
 	suspend_nvs_restore();
 	/* Allow EC transactions to happen. */
