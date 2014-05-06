@@ -472,9 +472,21 @@ static struct cpu_spec __initdata cpu_specs[] = {
 		.cpu_restore		= __restore_cpu_power7,
 		.platform		= "power7+",
 	},
-	{	/* Power8 */
+	{	/* Power8E */
 		.pvr_mask		= 0xffff0000,
 		.pvr_value		= 0x004b0000,
+		.cpu_name		= "POWER8E (raw)",
+		.icache_bsize		= 128,
+		.dcache_bsize		= 128,
+		.num_pmcs		= 6,
+		.pmc_type		= PPC_PMC_IBM,
+		.oprofile_cpu_type	= "ppc64/power8",
+		.oprofile_type		= PPC_OPROFILE_INVALID,
+		.platform		= "power8",
+	},
+	{	/* Power8 */
+		.pvr_mask		= 0xffff0000,
+		.pvr_value		= 0x004d0000,
 		.cpu_name		= "POWER8 (raw)",
 		.icache_bsize		= 128,
 		.dcache_bsize		= 128,
