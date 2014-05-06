@@ -3652,6 +3652,17 @@ static const struct snd_kcontrol_new cx_auto_capture_mixers[] = {
 	{}
 };
 
+static const struct snd_kcontrol_new cx_auto_capture_mixers2[] = {
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Input Source",
+		.info = cx_auto_mux_enum_info,
+		.get = cx_auto_mux_enum_get,
+		.put = cx_auto_mux_enum_put
+	},
+	{}
+};
+
 static bool select_automic(struct hda_codec *codec, int idx, bool detect)
 {
 	struct conexant_spec *spec = codec->spec;
@@ -4345,7 +4356,10 @@ static int cx_auto_build_input_controls(struct hda_codec *codec)
 	}
 
 	if (spec->private_imux.num_items > 1 && !spec->auto_mic) {
-		err = snd_hda_add_new_ctls(codec, cx_auto_capture_mixers);
+		if (multi_connection)
+			err = snd_hda_add_new_ctls(codec, cx_auto_capture_mixers2);
+		else
+			err = snd_hda_add_new_ctls(codec, cx_auto_capture_mixers);
 		if (err < 0)
 			return err;
 	}
