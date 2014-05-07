@@ -3462,7 +3462,7 @@ static int cx_automute_mode_get(struct snd_kcontrol *kcontrol,
 	unsigned int val;
 	if (!spec->auto_mute)
 		val = 0;
-	else if (!spec->automute_lines)
+	else if (!spec->automute_lines || !spec->automute_hp_lo)
 		val = 1;
 	else
 		val = 2;
