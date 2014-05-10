@@ -167,6 +167,12 @@ struct conexant_spec {
 	/* extra EAPD pins */
 	unsigned int num_eapds;
 	hda_nid_t eapds[4];
+
+	/* bind capture */
+	struct hda_bind_ctls bind_cap_vol;
+	unsigned long bind_cap_vol_vals[HDA_MAX_NUM_INPUTS];
+	struct hda_bind_ctls bind_cap_sw;
+	unsigned long bind_cap_sw_vals[HDA_MAX_NUM_INPUTS];
 };
 
 static int conexant_playback_pcm_open(struct hda_pcm_stream *hinfo,
@@ -4290,6 +4296,40 @@ static int cx_auto_add_boost_volume(struct hda_codec *codec, int idx,
 	return 0;
 }
 
+static int add_bind_ctl(struct hda_codec *codec,
+			const struct snd_kcontrol_new *knew,
+			struct hda_bind_ctls *bind)
+{
+	struct snd_kcontrol *kctl = snd_ctl_new1(knew, codec);
+	if (!kctl)
+		return -ENOMEM;
+	kctl->private_value = (long)bind;
+	return snd_hda_ctl_add(codec, 0, kctl);
+}
+
+static int get_input_value(struct hda_codec *codec, hda_nid_t nid,
+			   hda_nid_t *adc, int *idx)
+{
+	struct conexant_spec *spec = codec->spec;
+	int i;
+
+	for (i = 0; i < spec->num_adc_nids; i++) {
+		*adc = spec->adc_nids[i];
+		*idx = get_input_connection(codec, *adc, nid);
+		if (*idx < 0)
+			continue;
+		if (codec->single_adc_amp)
+			*idx = 0;
+		return 0;
+	}
+	return -ENOENT;
+}
+
+static struct snd_kcontrol_new bind_capture_vol =
+	HDA_BIND_VOL("Capture Volume", 0);
+static struct snd_kcontrol_new bind_capture_sw =
+	HDA_BIND_VOL("Capture Switch", 0);
+
 static int cx_auto_build_input_controls(struct hda_codec *codec)
 {
 	struct conexant_spec *spec = codec->spec;
@@ -4297,6 +4337,7 @@ static int cx_auto_build_input_controls(struct hda_codec *codec)
 	const char *prev_label;
 	int input_conn[HDA_MAX_NUM_INPUTS];
 	int i, j, err, cidx;
+	int nvols, nsws;
 	int multi_connection;
 
 	if (!imux->num_items)
@@ -4317,6 +4358,7 @@ static int cx_auto_build_input_controls(struct hda_codec *codec)
 
 	prev_label = NULL;
 	cidx = 0;
+	nvols = nsws = 0;
 	for (i = 0; i < imux->num_items; i++) {
 		hda_nid_t nid = spec->imux_info[i].pin;
 		const char *label;
@@ -4333,13 +4375,10 @@ static int cx_auto_build_input_controls(struct hda_codec *codec)
 		if (err < 0)
 			return err;
 
-		if (!multi_connection) {
-			if (i > 0)
-				continue;
-			err = cx_auto_add_capture_volume(codec, nid,
-							 "Capture", "", cidx);
-		} else {
+		if (multi_connection) {
 			bool dup_found = false;
+			hda_nid_t adc;
+			unsigned int idx;
 			for (j = 0; j < i; j++) {
 				if (input_conn[j] == input_conn[i]) {
 					dup_found = true;
@@ -4348,11 +4387,37 @@ static int cx_auto_build_input_controls(struct hda_codec *codec)
 			}
 			if (dup_found)
 				continue;
-			err = cx_auto_add_capture_volume(codec, nid,
-							 label, " Capture", cidx);
+			if (get_input_value(codec, nid, &adc, &idx))
+				continue;
+			spec->bind_cap_vol_vals[nvols++] =
+				HDA_COMPOSE_AMP_VAL(adc, 3, idx, HDA_INPUT);
+			if (query_amp_caps(codec, adc, HDA_INPUT) &
+			    (AC_AMPCAP_MUTE | AC_AMPCAP_MIN_MUTE))
+				spec->bind_cap_sw_vals[nsws++] =
+					HDA_COMPOSE_AMP_VAL(adc, 3, idx, HDA_INPUT);
 		}
+	}
+
+	if (!multi_connection) {
+		err = cx_auto_add_capture_volume(codec, spec->imux_info[0].pin,
+						 "Capture", "", cidx);
 		if (err < 0)
 			return err;
+	} else {
+		if (nvols) {
+			spec->bind_cap_vol.ops = &snd_hda_bind_vol;
+			err = add_bind_ctl(codec, &bind_capture_vol,
+					   &spec->bind_cap_vol);
+			if (err < 0)
+				return err;
+		}
+		if (nsws) {
+			spec->bind_cap_sw.ops = &snd_hda_bind_sw;
+			err = add_bind_ctl(codec, &bind_capture_sw,
+					   &spec->bind_cap_sw);
+			if (err < 0)
+				return err;
+		}
 	}
 
 	if (spec->private_imux.num_items > 1 && !spec->auto_mic) {
