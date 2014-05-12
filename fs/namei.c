@@ -2629,8 +2629,10 @@ SYSCALL_DEFINE3(mkdirat, int, dfd, const char __user *, pathname, int, mode)
 	char * tmp;
 	struct dentry *dentry;
 	struct nameidata nd;
+	unsigned int lookup_flags = 0;
 
-	error = user_path_parent(dfd, pathname, &nd, &tmp, 0);
+retry:
+	error = user_path_parent(dfd, pathname, &nd, &tmp, lookup_flags);
 	if (error)
 		goto out_err;
 
@@ -2657,6 +2659,10 @@ out_unlock:
 	path_put(&nd.path);
 	putname(tmp);
 out_err:
+	if (retry_estale(error, lookup_flags)) {
+		lookup_flags |= LOOKUP_REVAL;
+		goto retry;
+	}
 	return error;
 }
 
