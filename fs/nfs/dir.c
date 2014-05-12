@@ -1104,6 +1104,9 @@ int nfs_neg_need_reval(struct inode *dir, struct dentry *dentry,
 	/* Don't revalidate a negative dentry if we're creating a new file */
 	if (nd != NULL && nfs_lookup_check_intent(nd, LOOKUP_CREATE) != 0)
 		return 0;
+	if (nfs_lookup_check_intent(nd, LOOKUP_OPEN) != 0 &&
+	    !(NFS_SERVER(dir)->flags & NFS_MOUNT_NOCTO))
+		return 1;
 	if (NFS_SERVER(dir)->flags & NFS_MOUNT_LOOKUP_CACHE_NONEG)
 		return 1;
 	return !nfs_check_verifier(dir, dentry);
