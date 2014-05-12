@@ -66,6 +66,7 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 
 static long do_sys_truncate(const char __user *pathname, loff_t length)
 {
+	unsigned int lookup_flags = LOOKUP_FOLLOW;
 	struct path path;
 	struct inode *inode;
 	int error;
@@ -74,7 +75,8 @@ static long do_sys_truncate(const char __user *pathname, loff_t length)
 	if (length < 0)	/* sorry, but loff_t says... */
 		goto out;
 
-	error = user_path(pathname, &path);
+retry:
+	error = user_path_at(AT_FDCWD, pathname, lookup_flags, &path);
 	if (error)
 		goto out;
 	inode = path.dentry->d_inode;
@@ -125,6 +127,10 @@ mnt_drop_write_and_out:
 dput_and_out:
 	path_put(&path);
 out:
+	if (retry_estale(error, lookup_flags)) {
+		lookup_flags |= LOOKUP_REVAL;
+		goto retry;
+	}
 	return error;
 }
 
