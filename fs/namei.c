@@ -3046,12 +3046,13 @@ SYSCALL_DEFINE5(linkat, int, olddfd, const char __user *, oldname,
 
 	if (flags & AT_SYMLINK_FOLLOW)
 		how |= LOOKUP_FOLLOW;
-
+retry:
 	error = user_path_at(olddfd, oldname, how, &old_path);
 	if (error)
 		return error;
 
-	error = user_path_parent(newdfd, newname, &nd, &to, 0);
+	error = user_path_parent(newdfd, newname, &nd, &to,
+					(how & LOOKUP_REVAL));
 	if (error)
 		goto out;
 	error = -EXDEV;
@@ -3077,6 +3078,11 @@ out_unlock:
 out_release:
 	path_put(&nd.path);
 	putname(to);
+	if (retry_estale(error, how)) {
+		path_put(&old_path);
+		how |= LOOKUP_REVAL;
+		goto retry;
+	}
 out:
 	path_put(&old_path);
 
