@@ -2840,8 +2840,9 @@ static long do_unlinkat(int dfd, const char __user *pathname)
 	struct dentry *dentry;
 	struct nameidata nd;
 	struct inode *inode = NULL;
-
-	error = user_path_parent(dfd, pathname, &nd, &name, 0);
+	unsigned int lookup_flags = 0;
+retry:
+	error = user_path_parent(dfd, pathname, &nd, &name, lookup_flags);
 	if (error)
 		return error;
 
@@ -2880,6 +2881,11 @@ exit3:
 exit1:
 	path_put(&nd.path);
 	putname(name);
+	if (retry_estale(error, lookup_flags)) {
+		lookup_flags |= LOOKUP_REVAL;
+		inode = NULL;
+		goto retry;
+	}
 	return error;
 
 slashes:
