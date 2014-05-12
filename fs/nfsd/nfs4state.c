@@ -127,6 +127,10 @@ get_nfs4_file(struct nfs4_file *fi)
 
 static int num_delegations;
 unsigned long max_delegations;
+static bool allow_delegations = true;
+module_param(allow_delegations, bool, 0644);
+MODULE_PARM_DESC(allow_delegations,
+		 "Allow NFS server to give (read) delegations to clients.");
 
 /*
  * Open owner state (share locks)
@@ -215,6 +219,8 @@ alloc_init_deleg(struct nfs4_client *clp, struct nfs4_stateid *stp, struct svc_f
 	 * calbacks on stat) will be required before we can support
 	 * write delegations properly.
 	 */
+	if (!allow_delegations)
+		return NULL;
 	if (type != NFS4_OPEN_DELEGATE_READ)
 		return NULL;
 	if (fp->fi_had_conflict)
