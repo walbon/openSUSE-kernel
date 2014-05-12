@@ -3260,13 +3260,15 @@ SYSCALL_DEFINE4(renameat, int, olddfd, const char __user *, oldname,
 	struct nameidata oldnd, newnd;
 	char *from;
 	char *to;
+	unsigned int lookup_flags = 0;
+	bool should_retry = false;
 	int error;
-
-	error = user_path_parent(olddfd, oldname, &oldnd, &from, 0);
+retry:
+	error = user_path_parent(olddfd, oldname, &oldnd, &from, lookup_flags);
 	if (error)
 		goto exit;
 
-	error = user_path_parent(newdfd, newname, &newnd, &to, 0);
+	error = user_path_parent(newdfd, newname, &newnd, &to, lookup_flags);
 	if (error)
 		goto exit1;
 
@@ -3336,11 +3338,18 @@ exit4:
 exit3:
 	unlock_rename(new_dir, old_dir);
 exit2:
+	if (retry_estale(error, lookup_flags))
+		should_retry = true;
 	path_put(&newnd.path);
 	putname(to);
 exit1:
 	path_put(&oldnd.path);
 	putname(from);
+	if (should_retry) {
+		should_retry = false;
+		lookup_flags |= LOOKUP_REVAL;
+		goto retry;
+	}
 exit:
 	return error;
 }
