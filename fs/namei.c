@@ -1673,7 +1673,7 @@ static int do_path_lookup(int dfd, const char *name,
 	int retval = path_lookupat(dfd, name, flags | LOOKUP_RCU, nd);
 	if (unlikely(retval == -ECHILD))
 		retval = path_lookupat(dfd, name, flags, nd);
-	if (unlikely(retval == -ESTALE))
+	if (unlikely(retval == -ESTALE && !(flags & LOOKUP_REVAL)))
 		retval = path_lookupat(dfd, name, flags | LOOKUP_REVAL, nd);
 
 	if (likely(!retval)) {
@@ -1834,7 +1834,8 @@ int user_path_at(int dfd, const char __user *name, unsigned flags,
 }
 
 static int user_path_parent(int dfd, const char __user *path,
-			struct nameidata *nd, char **name)
+			    struct nameidata *nd, char **name,
+			    unsigned int lookup_flags)
 {
 	char *s = getname(path);
 	int error;
@@ -1842,7 +1843,13 @@ static int user_path_parent(int dfd, const char __user *path,
 	if (IS_ERR(s))
 		return PTR_ERR(s);
 
-	error = do_path_lookup(dfd, s, LOOKUP_PARENT, nd);
+	/*
+	 * Note that only LOOKUP_REVAL matters here. Any
+	 * other flags passed in are ignored!
+	 */
+	lookup_flags &= LOOKUP_REVAL;
+
+	error = do_path_lookup(dfd, s, lookup_flags | LOOKUP_PARENT, nd);
 	if (error)
 		putname(s);
 	else
@@ -2541,7 +2548,7 @@ SYSCALL_DEFINE4(mknodat, int, dfd, const char __user *, filename, int, mode,
 	if (S_ISDIR(mode))
 		return -EPERM;
 
-	error = user_path_parent(dfd, filename, &nd, &tmp);
+	error = user_path_parent(dfd, filename, &nd, &tmp, 0);
 	if (error)
 		return error;
 
@@ -2618,7 +2625,7 @@ SYSCALL_DEFINE3(mkdirat, int, dfd, const char __user *, pathname, int, mode)
 	struct dentry *dentry;
 	struct nameidata nd;
 
-	error = user_path_parent(dfd, pathname, &nd, &tmp);
+	error = user_path_parent(dfd, pathname, &nd, &tmp, 0);
 	if (error)
 		goto out_err;
 
@@ -2721,7 +2728,7 @@ static long do_rmdir(int dfd, const char __user *pathname)
 	struct dentry *dentry;
 	struct nameidata nd;
 
-	error = user_path_parent(dfd, pathname, &nd, &name);
+	error = user_path_parent(dfd, pathname, &nd, &name, 0);
 	if (error)
 		return error;
 
@@ -2818,7 +2825,7 @@ static long do_unlinkat(int dfd, const char __user *pathname)
 	struct nameidata nd;
 	struct inode *inode = NULL;
 
-	error = user_path_parent(dfd, pathname, &nd, &name);
+	error = user_path_parent(dfd, pathname, &nd, &name, 0);
 	if (error)
 		return error;
 
@@ -2914,7 +2921,7 @@ SYSCALL_DEFINE3(symlinkat, const char __user *, oldname,
 	if (IS_ERR(from))
 		return PTR_ERR(from);
 
-	error = user_path_parent(newdfd, newname, &nd, &to);
+	error = user_path_parent(newdfd, newname, &nd, &to, 0);
 	if (error)
 		goto out_putname;
 
@@ -3028,7 +3035,7 @@ SYSCALL_DEFINE5(linkat, int, olddfd, const char __user *, oldname,
 	if (error)
 		return error;
 
-	error = user_path_parent(newdfd, newname, &nd, &to);
+	error = user_path_parent(newdfd, newname, &nd, &to, 0);
 	if (error)
 		goto out;
 	error = -EXDEV;
@@ -3222,11 +3229,11 @@ SYSCALL_DEFINE4(renameat, int, olddfd, const char __user *, oldname,
 	char *to;
 	int error;
 
-	error = user_path_parent(olddfd, oldname, &oldnd, &from);
+	error = user_path_parent(olddfd, oldname, &oldnd, &from, 0);
 	if (error)
 		goto exit;
 
-	error = user_path_parent(newdfd, newname, &newnd, &to);
+	error = user_path_parent(newdfd, newname, &newnd, &to, 0);
 	if (error)
 		goto exit1;
 
