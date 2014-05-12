@@ -2927,12 +2927,13 @@ SYSCALL_DEFINE3(symlinkat, const char __user *, oldname,
 	char *to;
 	struct dentry *dentry;
 	struct nameidata nd;
+	unsigned int lookup_flags = 0;
 
 	from = getname(oldname);
 	if (IS_ERR(from))
 		return PTR_ERR(from);
-
-	error = user_path_parent(newdfd, newname, &nd, &to, 0);
+retry:
+	error = user_path_parent(newdfd, newname, &nd, &to, lookup_flags);
 	if (error)
 		goto out_putname;
 
@@ -2956,6 +2957,10 @@ out_unlock:
 	mutex_unlock(&nd.path.dentry->d_inode->i_mutex);
 	path_put(&nd.path);
 	putname(to);
+	if (retry_estale(error, lookup_flags)) {
+		lookup_flags |= LOOKUP_REVAL;
+		goto retry;
+	}
 out_putname:
 	putname(from);
 	return error;
