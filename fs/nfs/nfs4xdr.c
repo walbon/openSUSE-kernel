@@ -2157,7 +2157,8 @@ static void nfs4_xdr_enc_open(struct rpc_rqst *req, struct xdr_stream *xdr,
 	encode_savefh(xdr, &hdr);
 	encode_open(xdr, args, &hdr);
 	encode_getfh(xdr, &hdr);
-	encode_access(xdr, args->access, &hdr);
+	if (args->access)
+		encode_access(xdr, args->access, &hdr);
 	encode_getfattr(xdr, args->bitmask, &hdr);
 	encode_restorefh(xdr, &hdr);
 	encode_getfattr(xdr, args->bitmask, &hdr);
@@ -2196,7 +2197,8 @@ static void nfs4_xdr_enc_open_noattr(struct rpc_rqst *req,
 	encode_sequence(xdr, &args->seq_args, &hdr);
 	encode_putfh(xdr, args->fh, &hdr);
 	encode_open(xdr, args, &hdr);
-	encode_access(xdr, args->access, &hdr);
+	if (args->access)
+		encode_access(xdr, args->access, &hdr);
 	encode_getfattr(xdr, args->bitmask, &hdr);
 	encode_nops(&hdr);
 }
@@ -5776,7 +5778,8 @@ static int nfs4_xdr_dec_open(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	status = decode_getfh(xdr, &res->fh);
 	if (status)
 		goto out;
-	decode_access(xdr, &res->access_supported, &res->access_result);
+	if (res->access_request)
+		decode_access(xdr, &res->access_supported, &res->access_result);
 	if (decode_getfattr(xdr, res->f_attr, res->server,
 				!RPC_IS_ASYNC(rqstp->rq_task)) != 0)
 		goto out;
@@ -5831,7 +5834,8 @@ static int nfs4_xdr_dec_open_noattr(struct rpc_rqst *rqstp,
 	status = decode_open(xdr, res);
 	if (status)
 		goto out;
-	decode_access(xdr, &res->access_supported, &res->access_result);
+	if (res->access_request)
+		decode_access(xdr, &res->access_supported, &res->access_result);
 	decode_getfattr(xdr, res->f_attr, res->server,
 			!RPC_IS_ASYNC(rqstp->rq_task));
 out:

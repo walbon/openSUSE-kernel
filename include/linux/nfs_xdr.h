@@ -330,6 +330,7 @@ struct nfs_openres {
 	__u64			maxsize;
 	__u32			attrset[NFS4_BITMAP_SIZE];
 	struct nfs4_sequence_res	seq_res;
+	__u32			access_request;
 	__u32			access_supported;
 	__u32			access_result;
 };
