@@ -30,6 +30,7 @@
 #include <linux/list.h>
 #include <net/sock.h>
 #include <net/netfilter/nf_queue.h>
+#include <net/netns/generic.h>
 
 #include <asm/atomic.h>
 
@@ -65,10 +66,18 @@ struct nfqnl_instance {
 
 typedef int (*nfqnl_cmpfn)(struct nf_queue_entry *, unsigned long);
 
-static DEFINE_SPINLOCK(instances_lock);
+static int nfnl_queue_net_id __read_mostly;
 
 #define INSTANCE_BUCKETS	16
-static struct hlist_head instance_table[INSTANCE_BUCKETS] __read_mostly;
+struct nfnl_queue_net {
+	spinlock_t instances_lock;
+	struct hlist_head instance_table[INSTANCE_BUCKETS];
+};
+
+static struct nfnl_queue_net *nfnl_queue_pernet(struct net *net)
+{
+	return net_generic(net, nfnl_queue_net_id);
+}
 
 static inline u_int8_t instance_hashfn(u_int16_t queue_num)
 {
@@ -76,13 +85,13 @@ static inline u_int8_t instance_hashfn(u_int16_t queue_num)
 }
 
 static struct nfqnl_instance *
-instance_lookup(u_int16_t queue_num)
+instance_lookup(struct nfnl_queue_net *q, u_int16_t queue_num)
 {
 	struct hlist_head *head;
 	struct hlist_node *pos;
 	struct nfqnl_instance *inst;
 
-	head = &instance_table[instance_hashfn(queue_num)];
+	head = &q->instance_table[instance_hashfn(queue_num)];
 	hlist_for_each_entry_rcu(inst, pos, head, hlist) {
 		if (inst->queue_num == queue_num)
 			return inst;
@@ -91,14 +100,14 @@ instance_lookup(u_int16_t queue_num)
 }
 
 static struct nfqnl_instance *
-instance_create(u_int16_t queue_num, int pid)
+instance_create(struct nfnl_queue_net *q, u_int16_t queue_num, int pid)
 {
 	struct nfqnl_instance *inst;
 	unsigned int h;
 	int err;
 
-	spin_lock(&instances_lock);
-	if (instance_lookup(queue_num)) {
+	spin_lock(&q->instances_lock);
+	if (instance_lookup(q, queue_num)) {
 		err = -EEXIST;
 		goto out_unlock;
 	}
@@ -123,16 +132,16 @@ instance_create(u_int16_t queue_num, int pid)
 	}
 
 	h = instance_hashfn(queue_num);
-	hlist_add_head_rcu(&inst->hlist, &instance_table[h]);
+	hlist_add_head_rcu(&inst->hlist, &q->instance_table[h]);
 
-	spin_unlock(&instances_lock);
+	spin_unlock(&q->instances_lock);
 
 	return inst;
 
 out_free:
 	kfree(inst);
 out_unlock:
-	spin_unlock(&instances_lock);
+	spin_unlock(&q->instances_lock);
 	return ERR_PTR(err);
 }
 
@@ -158,11 +167,11 @@ __instance_destroy(struct nfqnl_instance *inst)
 }
 
 static void
-instance_destroy(struct nfqnl_instance *inst)
+instance_destroy(struct nfnl_queue_net *q, struct nfqnl_instance *inst)
 {
-	spin_lock(&instances_lock);
+	spin_lock(&q->instances_lock);
 	__instance_destroy(inst);
-	spin_unlock(&instances_lock);
+	spin_unlock(&q->instances_lock);
 }
 
 static inline void
@@ -391,9 +400,12 @@ nfqnl_enqueue_packet(struct nf_queue_entry *entry, unsigned int queuenum)
 	struct nfqnl_instance *queue;
 	int err = -ENOBUFS;
 	int failopen = 0;
+	struct net *net = dev_net(entry->indev ?
+				  entry->indev : entry->outdev);
+	struct nfnl_queue_net *q = nfnl_queue_pernet(net);
 
 	/* rcu_read_lock()ed by nf_hook_slow() */
-	queue = instance_lookup(queuenum);
+	queue = instance_lookup(q, queuenum);
 	if (!queue) {
 		err = -ESRCH;
 		goto err_out;
@@ -430,7 +442,7 @@ nfqnl_enqueue_packet(struct nf_queue_entry *entry, unsigned int queuenum)
 	}
 
 	/* nfnetlink_unicast will either free the nskb or add it to a socket */
-	err = nfnetlink_unicast(nskb, &init_net, queue->peer_pid, MSG_DONTWAIT);
+	err = nfnetlink_unicast(nskb, net, queue->peer_pid, MSG_DONTWAIT);
 	if (err < 0) {
 		queue->queue_user_dropped++;
 		goto err_out_unlock;
@@ -541,16 +553,17 @@ dev_cmp(struct nf_queue_entry *entry, unsigned long ifindex)
 /* drop all packets with either indev or outdev == ifindex from all queue
  * instances */
 static void
-nfqnl_dev_drop(int ifindex)
+nfqnl_dev_drop(struct net *net, int ifindex)
 {
 	int i;
+	struct nfnl_queue_net *q = nfnl_queue_pernet(net);
 
 	rcu_read_lock();
 
 	for (i = 0; i < INSTANCE_BUCKETS; i++) {
 		struct hlist_node *tmp;
 		struct nfqnl_instance *inst;
-		struct hlist_head *head = &instance_table[i];
+		struct hlist_head *head = &q->instance_table[i];
 
 		hlist_for_each_entry_rcu(inst, tmp, head, hlist)
 			nfqnl_flush(inst, dev_cmp, ifindex);
@@ -567,12 +580,9 @@ nfqnl_rcv_dev_event(struct notifier_block *this,
 {
 	struct net_device *dev = ptr;
 
-	if (!net_eq(dev_net(dev), &init_net))
-		return NOTIFY_DONE;
-
 	/* Drop any packets associated with the downed device */
 	if (event == NETDEV_DOWN)
-		nfqnl_dev_drop(dev->ifindex);
+		nfqnl_dev_drop(dev_net(dev), dev->ifindex);
 	return NOTIFY_DONE;
 }
 
@@ -585,24 +595,24 @@ nfqnl_rcv_nl_event(struct notifier_block *this,
 		   unsigned long event, void *ptr)
 {
 	struct netlink_notify *n = ptr;
+	struct nfnl_queue_net *q = nfnl_queue_pernet(n->net);
 
 	if (event == NETLINK_URELEASE && n->protocol == NETLINK_NETFILTER) {
 		int i;
 
 		/* destroy all instances for this pid */
-		spin_lock(&instances_lock);
+		spin_lock(&q->instances_lock);
 		for (i = 0; i < INSTANCE_BUCKETS; i++) {
 			struct hlist_node *tmp, *t2;
 			struct nfqnl_instance *inst;
-			struct hlist_head *head = &instance_table[i];
+			struct hlist_head *head = &q->instance_table[i];
 
 			hlist_for_each_entry_safe(inst, tmp, t2, head, hlist) {
-				if ((n->net == &init_net) &&
-				    (n->pid == inst->peer_pid))
+				if (n->pid == inst->peer_pid)
 					__instance_destroy(inst);
 			}
 		}
-		spin_unlock(&instances_lock);
+		spin_unlock(&q->instances_lock);
 	}
 	return NOTIFY_DONE;
 }
@@ -629,10 +639,12 @@ nfqnl_recv_verdict(struct sock *ctnl, struct sk_buff *skb,
 	struct nfqnl_instance *queue;
 	unsigned int verdict;
 	struct nf_queue_entry *entry;
+	struct net *net = sock_net(ctnl);
+	struct nfnl_queue_net *q = nfnl_queue_pernet(net);
 	int err;
 
 	rcu_read_lock();
-	queue = instance_lookup(queue_num);
+	queue = instance_lookup(q, queue_num);
 	if (!queue) {
 		err = -ENODEV;
 		goto err_out_unlock;
@@ -708,6 +720,8 @@ nfqnl_recv_config(struct sock *ctnl, struct sk_buff *skb,
 	u_int16_t queue_num = ntohs(nfmsg->res_id);
 	struct nfqnl_instance *queue;
 	struct nfqnl_msg_config_cmd *cmd = NULL;
+	struct net *net = sock_net(ctnl);
+	struct nfnl_queue_net *q = nfnl_queue_pernet(net);
 	int ret = 0;
 
 	if (nfqa[NFQA_CFG_CMD]) {
@@ -725,7 +739,7 @@ nfqnl_recv_config(struct sock *ctnl, struct sk_buff *skb,
 	}
 
 	rcu_read_lock();
-	queue = instance_lookup(queue_num);
+	queue = instance_lookup(q, queue_num);
 	if (queue && queue->peer_pid != NETLINK_CB(skb).pid) {
 		ret = -EPERM;
 		goto err_out_unlock;
@@ -738,7 +752,8 @@ nfqnl_recv_config(struct sock *ctnl, struct sk_buff *skb,
 				ret = -EBUSY;
 				goto err_out_unlock;
 			}
-			queue = instance_create(queue_num, NETLINK_CB(skb).pid);
+			queue = instance_create(q, queue_num,
+						NETLINK_CB(skb).pid);
 			if (IS_ERR(queue)) {
 				ret = PTR_ERR(queue);
 				goto err_out_unlock;
@@ -749,7 +764,7 @@ nfqnl_recv_config(struct sock *ctnl, struct sk_buff *skb,
 				ret = -ENODEV;
 				goto err_out_unlock;
 			}
-			instance_destroy(queue);
+			instance_destroy(q, queue);
 			break;
 		case NFQNL_CFG_CMD_PF_BIND:
 		case NFQNL_CFG_CMD_PF_UNBIND:
@@ -840,19 +855,24 @@ static const struct nfnetlink_subsystem nfqnl_subsys = {
 
 #ifdef CONFIG_PROC_FS
 struct iter_state {
+	struct seq_net_private p;
 	unsigned int bucket;
 };
 
 static struct hlist_node *get_first(struct seq_file *seq)
 {
 	struct iter_state *st = seq->private;
+	struct net *net;
+	struct nfnl_queue_net *q;
 
 	if (!st)
 		return NULL;
 
+	net = seq_file_net(seq);
+	q = nfnl_queue_pernet(net);
 	for (st->bucket = 0; st->bucket < INSTANCE_BUCKETS; st->bucket++) {
-		if (!hlist_empty(&instance_table[st->bucket]))
-			return instance_table[st->bucket].first;
+		if (!hlist_empty(&q->instance_table[st->bucket]))
+			return q->instance_table[st->bucket].first;
 	}
 	return NULL;
 }
@@ -860,13 +880,17 @@ static struct hlist_node *get_first(struct seq_file *seq)
 static struct hlist_node *get_next(struct seq_file *seq, struct hlist_node *h)
 {
 	struct iter_state *st = seq->private;
+	struct net *net = seq_file_net(seq);
 
 	h = h->next;
 	while (!h) {
+		struct nfnl_queue_net *q;
+
 		if (++st->bucket >= INSTANCE_BUCKETS)
 			return NULL;
 
-		h = instance_table[st->bucket].first;
+		q = nfnl_queue_pernet(net);
+		h = q->instance_table[st->bucket].first;
 	}
 	return h;
 }
@@ -882,11 +906,11 @@ static struct hlist_node *get_idx(struct seq_file *seq, loff_t pos)
 	return pos ? NULL : head;
 }
 
-static void *seq_start(struct seq_file *seq, loff_t *pos)
-	__acquires(instances_lock)
+static void *seq_start(struct seq_file *s, loff_t *pos)
+	__acquires(nfnl_queue_pernet(seq_file_net(s))->instances_lock)
 {
-	spin_lock(&instances_lock);
-	return get_idx(seq, *pos);
+	spin_lock(&nfnl_queue_pernet(seq_file_net(s))->instances_lock);
+	return get_idx(s, *pos);
 }
 
 static void *seq_next(struct seq_file *s, void *v, loff_t *pos)
@@ -896,9 +920,9 @@ static void *seq_next(struct seq_file *s, void *v, loff_t *pos)
 }
 
 static void seq_stop(struct seq_file *s, void *v)
-	__releases(instances_lock)
+	__releases(nfnl_queue_pernet(seq_file_net(s))->instances_lock)
 {
-	spin_unlock(&instances_lock);
+	spin_unlock(&nfnl_queue_pernet(seq_file_net(s))->instances_lock);
 }
 
 static int seq_show(struct seq_file *s, void *v)
@@ -922,7 +946,7 @@ static const struct seq_operations nfqnl_seq_ops = {
 
 static int nfqnl_open(struct inode *inode, struct file *file)
 {
-	return seq_open_private(file, &nfqnl_seq_ops,
+	return seq_open_net(inode, file, &nfqnl_seq_ops,
 			sizeof(struct iter_state));
 }
 
@@ -931,38 +955,62 @@ static const struct file_operations nfqnl_file_ops = {
 	.open	 = nfqnl_open,
 	.read	 = seq_read,
 	.llseek	 = seq_lseek,
-	.release = seq_release_private,
+	.release = seq_release_net,
 };
 
 #endif /* PROC_FS */
 
-static int __init nfnetlink_queue_init(void)
+static int __net_init nfnl_queue_net_init(struct net *net)
 {
-	int i, status = -ENOMEM;
+	unsigned int i;
+	struct nfnl_queue_net *q = nfnl_queue_pernet(net);
 
 	for (i = 0; i < INSTANCE_BUCKETS; i++)
-		INIT_HLIST_HEAD(&instance_table[i]);
+		INIT_HLIST_HEAD(&q->instance_table[i]);
+
+	spin_lock_init(&q->instances_lock);
+
+#ifdef CONFIG_PROC_FS
+	if (!proc_create("nfnetlink_queue", 0440,
+			 net->nf.proc_netfilter, &nfqnl_file_ops))
+		return -ENOMEM;
+#endif
+	return 0;
+}
+
+static void __net_exit nfnl_queue_net_exit(struct net *net)
+{
+	remove_proc_entry("nfnetlink_queue", net->nf.proc_netfilter);
+}
+
+static struct pernet_operations nfnl_queue_net_ops = {
+	.init	= nfnl_queue_net_init,
+	.exit	= nfnl_queue_net_exit,
+	.id	= &nfnl_queue_net_id,
+	.size	= sizeof(struct nfnl_queue_net),
+};
+
+static int __init nfnetlink_queue_init(void)
+{
+	int status = -ENOMEM;
 
 	netlink_register_notifier(&nfqnl_rtnl_notifier);
 	status = nfnetlink_subsys_register(&nfqnl_subsys);
 	if (status < 0) {
-		printk(KERN_ERR "nf_queue: failed to create netlink socket\n");
+		pr_err("nf_queue: failed to create netlink socket\n");
 		goto cleanup_netlink_notifier;
 	}
 
-#ifdef CONFIG_PROC_FS
-	if (!proc_create("nfnetlink_queue", 0440,
-			 proc_net_netfilter, &nfqnl_file_ops))
+	status = register_pernet_subsys(&nfnl_queue_net_ops);
+	if (status < 0) {
+		pr_err("nf_queue: failed to register pernet ops\n");
 		goto cleanup_subsys;
-#endif
-
+	}
 	register_netdevice_notifier(&nfqnl_dev_notifier);
 	return status;
 
-#ifdef CONFIG_PROC_FS
 cleanup_subsys:
 	nfnetlink_subsys_unregister(&nfqnl_subsys);
-#endif
 cleanup_netlink_notifier:
 	netlink_unregister_notifier(&nfqnl_rtnl_notifier);
 	return status;
@@ -972,9 +1020,7 @@ static void __exit nfnetlink_queue_fini(void)
 {
 	nf_unregister_queue_handlers(&nfqh);
 	unregister_netdevice_notifier(&nfqnl_dev_notifier);
-#ifdef CONFIG_PROC_FS
-	remove_proc_entry("nfnetlink_queue", proc_net_netfilter);
-#endif
+	unregister_pernet_subsys(&nfnl_queue_net_ops);
 	nfnetlink_subsys_unregister(&nfqnl_subsys);
 	netlink_unregister_notifier(&nfqnl_rtnl_notifier);
 
