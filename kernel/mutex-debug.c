@@ -37,7 +37,7 @@ void debug_mutex_lock_common(struct mutex *lock, struct mutex_waiter *waiter)
 void debug_mutex_wake_waiter(struct mutex *lock, struct mutex_waiter *waiter)
 {
 	SMP_DEBUG_LOCKS_WARN_ON(!spin_is_locked(&lock->wait_lock));
-	DEBUG_LOCKS_WARN_ON(list_empty(&lock->wait_list));
+	DEBUG_LOCKS_WARN_ON(MUTEX_LIST_EMPTY(&lock->wait_list));
 	DEBUG_LOCKS_WARN_ON(waiter->magic != waiter);
 	DEBUG_LOCKS_WARN_ON(list_empty(&waiter->list));
 }
@@ -76,7 +76,11 @@ void debug_mutex_unlock(struct mutex *lock)
 
 	DEBUG_LOCKS_WARN_ON(lock->magic != lock);
 	DEBUG_LOCKS_WARN_ON(lock->owner != current);
+#if defined(CONFIG_MUTEX_SPIN_USE_MCS_QUEUE)
+	DEBUG_LOCKS_WARN_ON(!lock->wait_list)
+#else
 	DEBUG_LOCKS_WARN_ON(!lock->wait_list.prev && !lock->wait_list.next);
+#endif
 	mutex_clear_owner(lock);
 }
 

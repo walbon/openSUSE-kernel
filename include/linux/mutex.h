@@ -49,7 +49,12 @@ struct mutex {
 	/* 1: unlocked, 0: locked, negative: locked, possible waiters */
 	atomic_t		count;
 	spinlock_t		wait_lock;
+#if defined(CONFIG_MUTEX_SPIN_USE_MCS_QUEUE)
+	struct list_head	*wait_list;
+	void *			*spin_mlock;
+#else
 	struct list_head	wait_list;
+#endif
 #if defined(CONFIG_DEBUG_MUTEXES) || defined(CONFIG_SMP)
 	struct task_struct	*owner;
 #endif
@@ -102,10 +107,20 @@ do {							\
 # define __DEP_MAP_MUTEX_INITIALIZER(lockname)
 #endif
 
+#if defined(CONFIG_MUTEX_SPIN_USE_MCS_QUEUE)
+# define MUTEX_WAIT_LIST_INIT(x)	(struct list_head *)&(x)
+# define MUTEX_INIT_WAIT_LIST(x)	*(x) = (struct list_head *)(x)
+# define MUTEX_LIST_EMPTY(x)		(*(x) == (struct list_head *)(x))
+#else
+# define MUTEX_WAIT_LIST_INIT(x)	LIST_HEAD_INIT(x)
+# define MUTEX_INIT_WAIT_LIST(x)	INIT_LIST_HEAD(x)
+# define MUTEX_LIST_EMPTY(x)		list_empty(x)
+#endif
+
 #define __MUTEX_INITIALIZER(lockname) \
 		{ .count = ATOMIC_INIT(1) \
 		, .wait_lock = __SPIN_LOCK_UNLOCKED(lockname.wait_lock) \
-		, .wait_list = LIST_HEAD_INIT(lockname.wait_list) \
+		, .wait_list = MUTEX_WAIT_LIST_INIT(lockname.wait_list) \
 		__DEBUG_MUTEX_INITIALIZER(lockname) \
 		__DEP_MAP_MUTEX_INITIALIZER(lockname) }
 
