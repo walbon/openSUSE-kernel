@@ -378,6 +378,9 @@ will be charged as a new owner of it.
   Because rmdir() moves all pages to parent, some out-of-use page caches can be
   moved to the parent. If you want to avoid that, force_empty will be useful.
 
+  Please note that this knob is considered deprecated and will be removed
+  in future.
+
 5.2 stat file
 
 memory.stat file includes following statistics
