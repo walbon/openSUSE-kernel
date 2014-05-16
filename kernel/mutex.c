@@ -236,6 +236,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 	struct task_struct *task = current;
 	struct mutex_waiter waiter;
 	unsigned long flags;
+#ifdef CONFIG_MUTEX_SPIN_USE_MCS_QUEUE
+	struct mspin_node node;
+#endif
 
 	preempt_disable();
 	mutex_acquire_nest(&lock->dep_map, subclass, 0, nest_lock, ip);
@@ -267,22 +270,17 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 	if (!mutex_can_spin_on_owner(lock))
 		goto slowpath;
 
+	mspin_lock(lock, &node);
 	for (;;) {
 		struct task_struct *owner;
-#ifdef CONFIG_MUTEX_SPIN_USE_MCS_QUEUE
-		struct mspin_node  node;
-#endif
 
 		/*
 		 * If there's an owner, wait for it to either
 		 * release the lock or go to sleep.
 		 */
-		mspin_lock(lock, &node);
 		owner = ACCESS_ONCE(lock->owner);
-		if (owner && !mutex_spin_on_owner(lock, owner)) {
-			mspin_unlock(lock, &node);
+		if (owner && !mutex_spin_on_owner(lock, owner))
 			break;
-		}
 
 		if ((atomic_read(&lock->count) == 1) &&
 		    (atomic_cmpxchg(&lock->count, 1, 0) == 1)) {
@@ -292,7 +290,6 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 			preempt_enable();
 			return 0;
 		}
-		mspin_unlock(lock, &node);
 
 		/*
 		 * When there's no owner, we might have preempted between the
@@ -311,6 +308,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 		 */
 		arch_mutex_cpu_relax();
 	}
+	mspin_unlock(lock, &node);
 slowpath:
 #endif
 	spin_lock_mutex(&lock->wait_lock, flags);
