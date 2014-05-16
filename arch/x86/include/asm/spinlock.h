@@ -158,6 +158,12 @@ static __always_inline void __ticket_spin_unlock(arch_spinlock_t *lock)
 }
 #endif
 
+static __always_inline int arch_spin_value_unlocked(arch_spinlock_t lock)
+{
+	return !(((lock.slock >> TICKET_SHIFT) ^ lock.slock) &
+		 ((1 << TICKET_SHIFT) - 1));
+}
+
 static inline int __ticket_spin_is_locked(arch_spinlock_t *lock)
 {
 	int tmp = ACCESS_ONCE(lock->slock);
