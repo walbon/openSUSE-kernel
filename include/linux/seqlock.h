@@ -3,15 +3,21 @@
 /*
  * Reader/writer consistent mechanism without starving writers. This type of
  * lock for data where the reader wants a consistent set of information
- * and is willing to retry if the information changes.  Readers never
- * block but they may have to retry if a writer is in
- * progress. Writers do not wait for readers. 
+ * and is willing to retry if the information changes. There are two types
+ * of readers:
+ * 1. Sequence readers which never block a writer but they may have to retry
+ *    if a writer is in progress by detecting change in sequence number.
+ *    Writers do not wait for a sequence reader.
+ * 2. Locking readers which will wait if a writer or another locking reader
+ *    is in progress. A locking reader in progress will also block a writer
+ *    from going forward. Unlike the regular rwlock, the read lock here is
+ *    exclusive so that only one locking reader can get it.
  *
- * This is not as cache friendly as brlock. Also, this will not work
+ * This is not as cache friendly as brlock. Also, this may not work well
  * for data that contains pointers, because any writer could
  * invalidate a pointer that a reader was following.
  *
- * Expected reader usage:
+ * Expected non-blocking reader usage:
  * 	do {
  *	    seq = read_seqbegin(&foo);
  * 	...
@@ -278,5 +284,20 @@ static inline void write_seqcount_barrier(seqcount_t *s)
 		local_irq_restore(flags);				\
 		ret;							\
 	})
+
+/*
+ * A locking reader exclusively locks out other writers and locking readers,
+ * but doesn't update the sequence number. Acts like a normal spin_lock/unlock.
+ * Don't need preempt_disable() because that is in the spin_lock already.
+ */
+static inline void read_seqlock_excl(seqlock_t *sl)
+{
+	spin_lock(&sl->lock);
+}
+
+static inline void read_sequnlock_excl(seqlock_t *sl)
+{
+	spin_unlock(&sl->lock);
+}
 
 #endif /* __LINUX_SEQLOCK_H */
