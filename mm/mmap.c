@@ -10,6 +10,7 @@
 #include <linux/slab.h>
 #include <linux/backing-dev.h>
 #include <linux/mm.h>
+#include <linux/vmacache.h>
 #include <linux/shm.h>
 #include <linux/mman.h>
 #include <linux/pagemap.h>
@@ -527,8 +528,13 @@ __vma_unlink(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (next)
 		next->vm_prev = prev;
 	rb_erase(&vma->vm_rb, &mm->mm_rb);
+#ifndef CONFIG_VMA_CACHE
 	if (mm->mmap_cache == vma)
 		mm->mmap_cache = prev;
+#else
+	/* Kill the cache */
+	vmacache_invalidate(mm);
+#endif
 }
 
 /*
@@ -1632,9 +1638,13 @@ EXPORT_SYMBOL(get_unmapped_area);
 /* Look up the first VMA which satisfies  addr < vm_end,  NULL if none. */
 struct vm_area_struct *find_vma(struct mm_struct *mm, unsigned long addr)
 {
+#ifdef CONFIG_VMA_CACHE
+	struct rb_node *rb_node;
+#endif
 	struct vm_area_struct *vma = NULL;
 
 	if (mm) {
+#ifndef CONFIG_VMA_CACHE
 		/* Check the cache first. */
 		/* (Cache hit rate is typically around 35%.) */
 		vma = ACCESS_ONCE(mm->mmap_cache);
@@ -1661,6 +1671,31 @@ struct vm_area_struct *find_vma(struct mm_struct *mm, unsigned long addr)
 			if (vma)
 				mm->mmap_cache = vma;
 		}
+#else
+		vma = vmacache_find(mm, addr);
+		if (likely(vma))
+			return vma;
+
+		rb_node = mm->mm_rb.rb_node;
+		vma = NULL;
+
+		while (rb_node) {
+			struct vm_area_struct *tmp;
+
+			tmp = rb_entry(rb_node, struct vm_area_struct, vm_rb);
+
+			if (tmp->vm_end > addr) {
+				vma = tmp;
+				if (tmp->vm_start <= addr)
+					break;
+				rb_node = rb_node->rb_left;
+			} else
+				rb_node = rb_node->rb_right;
+		}
+
+		if (vma)
+			vmacache_update(addr, vma);
+#endif
 	}
 	return vma;
 }
@@ -1991,7 +2026,13 @@ detach_vmas_to_be_unmapped(struct mm_struct *mm, struct vm_area_struct *vma,
 	else
 		addr = vma ?  vma->vm_start : mm->mmap_base;
 	mm->unmap_area(mm, addr);
+#ifndef CONFIG_VMA_CACHE
 	mm->mmap_cache = NULL;		/* Kill the cache. */
+#else
+
+	/* Kill the cache */
+	vmacache_invalidate(mm);
+#endif
 }
 
 /*
