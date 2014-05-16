@@ -103,7 +103,7 @@ static inline void read_seqbegin_or_lock(seqlock_t *lock, int *seq)
 		*seq = read_seqbegin(lock);
 		rcu_read_lock();
 	} else			/* Odd */
-		write_seqlock(lock);
+		read_seqlock_excl(lock);
 }
 
 /**
@@ -121,7 +121,7 @@ static inline int read_seqretry_or_unlock(seqlock_t *lock, int *seq)
 			return 1;
 		}
 	} else			/* Odd */
-		write_sequnlock(lock);
+		read_sequnlock_excl(lock);
 	return 0;
 }
 
