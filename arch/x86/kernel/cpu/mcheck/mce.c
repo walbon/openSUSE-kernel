@@ -69,6 +69,9 @@ atomic_t mce_entry;
 
 DEFINE_PER_CPU(unsigned, mce_exception_count);
 
+/* CMCI storm detection filter */
+static DEFINE_PER_CPU(unsigned long, mce_polled_error);
+
 /*
  * Tolerant levels:
  *   0: always panic on uncorrected errors, log corrected errors
@@ -599,6 +602,7 @@ void machine_check_poll(enum mcp_flags flags, mce_banks_t *b)
 {
 	struct mce m;
 	int i;
+	unsigned long *v;
 
 	percpu_inc(mce_poll_count);
 
@@ -619,6 +623,8 @@ void machine_check_poll(enum mcp_flags flags, mce_banks_t *b)
 		if (!(m.status & MCI_STATUS_VAL))
 			continue;
 
+		v = &get_cpu_var(mce_polled_error);
+		set_bit(0, v);
 		/*
 		 * Uncorrected or signalled events are handled by the exception
 		 * handler when it is enabled, so don't process those here.
@@ -1298,10 +1304,18 @@ static unsigned long mce_adjust_timer_default(unsigned long interval)
 static unsigned long (*mce_adjust_timer)(unsigned long interval) =
 	mce_adjust_timer_default;
 
+static int cmc_error_seen(void)
+{
+	unsigned long *v = &__get_cpu_var(mce_polled_error);
+
+	return test_and_clear_bit(0, v);
+}
+
 static void mce_timer_fn(unsigned long data)
 {
 	struct timer_list *t = &__get_cpu_var(mce_timer);
 	unsigned long iv;
+	int notify;
 
 	WARN_ON(smp_processor_id() != data);
 
@@ -1316,7 +1330,9 @@ static void mce_timer_fn(unsigned long data)
 	 * polling interval, otherwise increase the polling interval.
 	 */
 	iv = __this_cpu_read(mce_next_interval);
-	if (mce_notify_irq()) {
+	notify = mce_notify_irq();
+	notify |= cmc_error_seen();
+	if (notify) {
 		iv = max(iv / 2, (unsigned long) HZ/100);
 	} else {
 		iv = min(iv * 2, round_jiffies_relative(check_interval * HZ));
