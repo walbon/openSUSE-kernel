@@ -212,7 +212,9 @@ static void xfrm4_dst_destroy(struct dst_entry *dst)
 
 	if (rt_has_peer(&xdst->u.rt)) {
 		struct inet_peer *peer = rt_peer_ptr(&xdst->u.rt);
-		inet_putpeer(peer);
+
+		if (peer)
+			inet_putpeer(peer);
 	}
 
 	xfrm_dst_destroy(xdst);

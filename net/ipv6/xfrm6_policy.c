@@ -229,7 +229,9 @@ static void xfrm6_dst_destroy(struct dst_entry *dst)
 	dst_destroy_metrics_generic(dst);
 	if (rt6_has_peer(&xdst->u.rt6)) {
 		struct inet_peer *peer = rt6_peer_ptr(&xdst->u.rt6);
-		inet_putpeer(peer);
+
+		if (peer)
+			inet_putpeer(peer);
 	}
 	xfrm_dst_destroy(xdst);
 }
