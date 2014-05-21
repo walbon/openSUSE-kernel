@@ -1506,8 +1506,10 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 	struct ip_vs_conn *cp;
 	int ret, restart, pkts;
 	struct netns_ipvs *ipvs;
+#ifdef CONFIG_IP_VS_IPV6
 	struct sk_buff *nfct_reasm = skb_is_replayed_fragment(skb) ?
 				     skb_nfct_reasm(skb) : NULL;
+#endif
 
 	/* Already marked as IPVS request or reply? */
 	if (skb->ipvs_property)
@@ -1590,6 +1592,7 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 		if (!pp->conn_schedule(af, skb, pd, &v, &cp))
 			return v;
 
+#ifdef CONFIG_IP_VS_IPV6
 		/* If the new connection is for this packet only and this packet
 		 * is the first fragment of a reassembled packet then store the
 		 * connection for the coming replayed fragments
@@ -1600,14 +1603,17 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 			 */
 			skb_set_ipvs_cp(nfct_reasm, cp);
 		}
+#endif
 	}
 
+#ifdef CONFIG_IP_VS_IPV6
 	/* This is for second fragments of packets with one-packet connections
 	 * For these we read the stored connection from the reasm skb if any
 	 */
 	if (unlikely(!cp) && nfct_reasm && iph.fragoffs &&
 	    skb_nfct_reasm_is_ipvs(nfct_reasm))
 		cp = skb_ipvs_cp(nfct_reasm);
+#endif
 
 	if (unlikely(!cp)) {
 		/* sorry, all this trouble for a no-hit :) */
@@ -1630,9 +1636,11 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 	if (cp->dest && !(cp->dest->flags & IP_VS_DEST_F_AVAILABLE)) {
 		/* the destination server is not available */
 
+#ifdef CONFIG_IP_VS_IPV6
 		/* remove reference in the reasm skb to deleted cp if any */
 		if ((cp->flags & IP_VS_CONN_F_ONE_PACKET) && nfct_reasm)
 			skb_set_nfct_reasm(nfct_reasm, NULL);
+#endif
 		if (sysctl_expire_nodest_conn(ipvs)) {
 			/* try to expire the connection immediately */
 			ip_vs_conn_expire_now(cp);
@@ -1696,6 +1704,7 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 out:
 	cp->old_state = cp->state;
 
+#ifdef CONFIG_IP_VS_IPV6
 	/* The connection is for this packet only and the packet is fragmented
 	 * and reassembled. We have put the connection pointer in the reasm skb
 	 */
@@ -1710,6 +1719,9 @@ out:
 	} else {
 		ip_vs_conn_put(cp);
 	}
+#else
+	ip_vs_conn_put(cp);
+#endif
 
 	return ret;
 }
