@@ -1506,6 +1506,8 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 	struct ip_vs_conn *cp;
 	int ret, restart, pkts;
 	struct netns_ipvs *ipvs;
+	struct sk_buff *nfct_reasm = skb_is_replayed_fragment(skb) ?
+				     skb_nfct_reasm(skb) : NULL;
 
 	/* Already marked as IPVS request or reply? */
 	if (skb->ipvs_property)
@@ -1587,7 +1589,25 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 		/* Schedule and create new connection entry into &cp */
 		if (!pp->conn_schedule(af, skb, pd, &v, &cp))
 			return v;
+
+		/* If the new connection is for this packet only and this packet
+		 * is the first fragment of a reassembled packet then store the
+		 * connection for the coming replayed fragments
+		 */
+		if (cp && (cp->flags & IP_VS_CONN_F_ONE_PACKET) && nfct_reasm) {
+			/* The reasm packet has no reasm packet so let's use this
+			 * pointer.
+			 */
+			skb_set_ipvs_cp(nfct_reasm, cp);
+		}
 	}
+
+	/* This is for second fragments of packets with one-packet connections
+	 * For these we read the stored connection from the reasm skb if any
+	 */
+	if (unlikely(!cp) && nfct_reasm && iph.fragoffs &&
+	    skb_nfct_reasm_is_ipvs(nfct_reasm))
+		cp = skb_ipvs_cp(nfct_reasm);
 
 	if (unlikely(!cp)) {
 		/* sorry, all this trouble for a no-hit :) */
@@ -1610,6 +1630,9 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 	if (cp->dest && !(cp->dest->flags & IP_VS_DEST_F_AVAILABLE)) {
 		/* the destination server is not available */
 
+		/* remove reference in the reasm skb to deleted cp if any */
+		if ((cp->flags & IP_VS_CONN_F_ONE_PACKET) && nfct_reasm)
+			skb_set_nfct_reasm(nfct_reasm, NULL);
 		if (sysctl_expire_nodest_conn(ipvs)) {
 			/* try to expire the connection immediately */
 			ip_vs_conn_expire_now(cp);
@@ -1673,7 +1696,21 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 out:
 	cp->old_state = cp->state;
 
-	ip_vs_conn_put(cp);
+	/* The connection is for this packet only and the packet is fragmented
+	 * and reassembled. We have put the connection pointer in the reasm skb
+	 */
+	if ((cp->flags & IP_VS_CONN_F_ONE_PACKET) && nfct_reasm) {
+		/* If this is the last fragment then we can and should free the
+		 * connection but not earlier
+		 */
+		if (!(iph.flags & IP6T_FH_F_FRAG_MORE)) {
+			skb_set_nfct_reasm(nfct_reasm, NULL);
+			ip_vs_conn_put(cp);
+		}
+	} else {
+		ip_vs_conn_put(cp);
+	}
+
 	return ret;
 }
 
