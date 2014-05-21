@@ -412,7 +412,11 @@ struct sk_buff {
 	struct nf_conntrack	*nfct;
 #endif
 #ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
+#ifdef __GENKSYMS__
+	struct sk_buff		*nfct_reasm;
+#else
 	unsigned long		_nfct_reasm;
+#endif
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	struct nf_bridge_info	*nf_bridge;
