@@ -1120,7 +1120,7 @@ ip_vs_out(unsigned int hooknum, struct sk_buff *skb, int af)
 	ip_vs_fill_iph_skb(af, skb, &iph);
 #ifdef CONFIG_IP_VS_IPV6
 	if (af == AF_INET6) {
-		if (!iph.fragoffs && skb_nfct_reasm(skb)) {
+		if (!iph.fragoffs && skb_is_replayed_fragment(skb)) {
 			struct sk_buff *reasm = skb_nfct_reasm(skb);
 			/* Save fw mark for coming frags */
 			reasm->ipvs_property = 1;
@@ -1545,7 +1545,7 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 
 #ifdef CONFIG_IP_VS_IPV6
 	if (af == AF_INET6) {
-		if (!iph.fragoffs && skb_nfct_reasm(skb)) {
+		if (!iph.fragoffs && skb_is_replayed_fragment(skb)) {
 			struct sk_buff *reasm = skb_nfct_reasm(skb);
 			/* Save fw mark for coming frags. */
 			reasm->ipvs_property = 1;
@@ -1593,7 +1593,7 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 		/* sorry, all this trouble for a no-hit :) */
 		IP_VS_DBG_PKT(12, af, pp, skb, 0,
 			      "ip_vs_in: packet continues traversal as normal");
-		if (iph.fragoffs && !skb_nfct_reasm(skb)) {
+		if (iph.fragoffs && !skb_is_replayed_fragment(skb)) {
 			/* Fragment that couldn't be mapped to a conn entry
 			 * and don't have any pointer to a reasm skb
 			 * is missing module nf_defrag_ipv6
@@ -1720,7 +1720,8 @@ ip_vs_preroute_frag6(unsigned int hooknum, struct sk_buff *skb,
 		     const struct net_device *out,
 		     int (*okfn)(struct sk_buff *))
 {
-	struct sk_buff *reasm = skb_nfct_reasm(skb);
+	struct sk_buff *reasm = skb_is_replayed_fragment(skb) ?
+				skb_nfct_reasm(skb) : NULL;
 	struct net *net;
 
 	/* Skip if not a "replay" from nf_ct_frag6_output or first fragment.

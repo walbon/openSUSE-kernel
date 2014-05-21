@@ -141,10 +141,9 @@ static unsigned int __ipv6_conntrack_in(struct net *net,
 					struct sk_buff *skb,
 					int (*okfn)(struct sk_buff *))
 {
-	struct sk_buff *reasm = skb->nfct_reasm;
-
 	/* This packet is fragmented and has reassembled packet. */
-	if (reasm) {
+	if (skb_is_replayed_fragment(skb)) {
+		struct sk_buff *reasm = skb_nfct_reasm(skb);
 		/* Reassembled packet isn't parsed yet ? */
 		if (!reasm->nfct) {
 			unsigned int ret;
