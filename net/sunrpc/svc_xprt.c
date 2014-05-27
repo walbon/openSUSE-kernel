@@ -943,6 +943,8 @@ void svc_close_all(struct svc_serv *serv)
 		while (!list_empty(&pool->sp_sockets)) {
 			xprt = list_first_entry(&pool->sp_sockets, struct svc_xprt, xpt_ready);
 			list_del_init(&xprt->xpt_ready);
+			if (test_and_clear_bit(XPT_DETACHED, &xprt->xpt_flags))
+				list_add(&xprt->xpt_list, &serv->sv_tempsocks);
 		}
 		spin_unlock_bh(&pool->sp_lock);
 	}
