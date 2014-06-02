@@ -1912,6 +1912,7 @@ static int btrfs_set_allow_unsupported(const char *buffer, const struct kernel_p
 	if (ret)
 		return ret;
 
+#ifdef CONFIG_ENTERPRISE_SUPPORT
 	if (allow_unsupported && !newval) {
 		printk(KERN_INFO "btrfs: disallowing unsupported features, kernel remains tainted\n");
 		allow_unsupported = false;
@@ -1920,6 +1921,7 @@ static int btrfs_set_allow_unsupported(const char *buffer, const struct kernel_p
 		taint_unsupported();
 		allow_unsupported = true;
 	}
+#endif
 	return 0;
 }
 
