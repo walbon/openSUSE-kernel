@@ -272,6 +272,12 @@ static __always_inline void __ticket_spin_unlock(arch_spinlock_t *lock)
 #undef __ticket_spin_unlock_body
 #endif
 
+static __always_inline int __ticket_spin_value_unlocked(arch_spinlock_t lock)
+{
+	return !(((lock.slock >> TICKET_SHIFT) ^ lock.slock) &
+		 ((1 << TICKET_SHIFT) - 1));
+}
+
 static inline int __ticket_spin_is_locked(arch_spinlock_t *lock)
 {
 	int tmp = ACCESS_ONCE(lock->slock);
@@ -292,6 +298,11 @@ static inline int __ticket_spin_is_contended(arch_spinlock_t *lock)
 
 static inline int xen_spinlock_init(unsigned int cpu) { return 0; }
 static inline void xen_spinlock_cleanup(unsigned int cpu) {}
+
+static __always_inline int __byte_spin_value_unlocked(arch_spinlock_t lock)
+{
+	return lock.lock == 0;
+}
 
 static inline int __byte_spin_is_locked(arch_spinlock_t *lock)
 {
@@ -341,6 +352,11 @@ static inline void __byte_spin_unlock(arch_spinlock_t *lock)
 #define __arch_spin(n) __byte_spin_##n
 
 #endif /* TICKET_SHIFT */
+
+static __always_inline int arch_spin_value_unlocked(arch_spinlock_t lock)
+{
+	return __arch_spin(value_unlocked)(lock);
+}
 
 static inline int arch_spin_is_locked(arch_spinlock_t *lock)
 {

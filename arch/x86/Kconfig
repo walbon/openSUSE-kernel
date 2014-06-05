@@ -12,7 +12,7 @@ config X86_32
 
 config X86_64
 	def_bool 64BIT
-	select ARCH_USE_CMPXCHG_LOCKREF
+	select ARCH_USE_CMPXCHG_LOCKREF if !XEN
 
 ### Arch settings
 config X86
@@ -353,6 +353,8 @@ config X86_64_XEN
 	bool "Enable Xen compatible kernel"
 	depends on X86_64
 	select XEN
+	select ARCH_USE_CMPXCHG_LOCKREF if XEN_SPINLOCK_ACQUIRE_NESTING = ""
+#	select ARCH_USE_CMPXCHG_LOCKREF if (XEN_SPINLOCK_ACQUIRE_NESTING + 1) * NR_CPUS < 256
 	help
 	  This option will compile a kernel compatible with Xen hypervisor
 
