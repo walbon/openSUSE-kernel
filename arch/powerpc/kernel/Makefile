@@ -115,7 +115,8 @@ obj-$(CONFIG_PERF_EVENTS)	+= perf_callchain.o
 
 obj-$(CONFIG_PPC_PERF_CTRS)	+= perf_event.o
 obj64-$(CONFIG_PPC_PERF_CTRS)	+= power4-pmu.o ppc970-pmu.o power5-pmu.o \
-				   power5+-pmu.o power6-pmu.o power7-pmu.o
+				   power5+-pmu.o power6-pmu.o power7-pmu.o \
+				   power8-pmu.o
 obj32-$(CONFIG_PPC_PERF_CTRS)	+= mpc7450-pmu.o
 
 obj-$(CONFIG_FSL_EMB_PERF_EVENT) += perf_event_fsl_emb.o
