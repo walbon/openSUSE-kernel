@@ -149,6 +149,7 @@ static int astfb_create(struct ast_fbdev *afbdev,
 			struct drm_fb_helper_surface_size *sizes)
 {
 	struct drm_device *dev = afbdev->helper.dev;
+	struct ast_private *ast = dev->dev_private;
 	struct drm_mode_fb_cmd2 mode_cmd;
 	struct drm_framebuffer *fb;
 	struct fb_info *info = NULL;
@@ -213,6 +214,8 @@ static int astfb_create(struct ast_fbdev *afbdev,
 	}
 	info->apertures->ranges[0].base = pci_resource_start(dev->pdev, 0);
 	info->apertures->ranges[0].size = pci_resource_len(dev->pdev, 0);
+	info->fix.smem_start = info->apertures->ranges[0].base;
+	info->fix.smem_len = ast->vram_size;
 
 	drm_fb_helper_fill_fix(info, fb->pitches[0], fb->depth);
 	drm_fb_helper_fill_var(info, &afbdev->helper, sizes->fb_width, sizes->fb_height);
