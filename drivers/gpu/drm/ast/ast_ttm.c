@@ -396,7 +396,7 @@ int ast_bo_pin(struct ast_bo *bo, u32 pl_flag, u64 *gpu_addr)
 
 int ast_bo_unpin(struct ast_bo *bo)
 {
-	int i, ret;
+	int i;
 	if (!bo->pin_count) {
 		DRM_ERROR("unpin bad %p\n", bo);
 		return 0;
@@ -407,11 +407,8 @@ int ast_bo_unpin(struct ast_bo *bo)
 
 	for (i = 0; i < bo->placement.num_placement ; i++)
 		bo->placements[i] &= ~TTM_PL_FLAG_NO_EVICT;
-	ret = ttm_bo_validate(&bo->bo, &bo->placement, false, false, false);
-	if (ret)
-		return ret;
 
-	return 0;
+	return ttm_bo_validate(&bo->bo, &bo->placement, false, false, false);
 }
 
 int ast_bo_push_sysram(struct ast_bo *bo)
