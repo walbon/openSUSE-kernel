@@ -315,12 +315,10 @@ int ast_bo_reserve(struct ast_bo *bo, bool no_wait)
 	int ret;
 
 	ret = ttm_bo_reserve(&bo->bo, true, no_wait, false, 0);
-	if (ret) {
-		if (ret != -ERESTARTSYS)
-			DRM_ERROR("reserve failed %p\n", bo);
-		return ret;
-	}
-	return 0;
+	if (ret && ret != -ERESTARTSYS)
+		DRM_ERROR("reserve failed %p\n", bo);
+
+	return ret;
 }
 
 void ast_bo_unreserve(struct ast_bo *bo)
