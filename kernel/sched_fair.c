@@ -560,12 +560,12 @@ static void update_cfs_shares(struct cfs_rq *cfs_rq);
  */
 static inline void
 __update_curr(struct cfs_rq *cfs_rq, struct sched_entity *curr,
-	      unsigned long delta_exec)
+	      u64 delta_exec)
 {
-	unsigned long delta_exec_weighted;
+	u64 delta_exec_weighted;
 
 	schedstat_set(curr->statistics.exec_max,
-		      max((u64)delta_exec, curr->statistics.exec_max));
+		      max(delta_exec, curr->statistics.exec_max));
 
 	curr->sum_exec_runtime += delta_exec;
 	schedstat_add(cfs_rq, exec_clock, delta_exec);
@@ -583,7 +583,7 @@ static void update_curr(struct cfs_rq *cfs_rq)
 {
 	struct sched_entity *curr = cfs_rq->curr;
 	u64 now = rq_of(cfs_rq)->clock_task;
-	unsigned long delta_exec;
+	u64 delta_exec;
 
 	if (unlikely(!curr))
 		return;
@@ -593,8 +593,8 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	 * since the last time we changed load (this cannot
 	 * overflow on 32 bits):
 	 */
-	delta_exec = (unsigned long)(now - curr->exec_start);
-	if (!delta_exec)
+	delta_exec = now - curr->exec_start;
+	if (unlikely((s64)delta_exec <= 0))
 		return;
 
 	__update_curr(cfs_rq, curr, delta_exec);
