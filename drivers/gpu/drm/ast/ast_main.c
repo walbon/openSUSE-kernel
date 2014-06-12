@@ -71,7 +71,10 @@ static int ast_detect_chip(struct drm_device *dev)
 		ast->chip = AST1100;
 		DRM_INFO("AST 1180 detected\n");
 	} else {
-		if (dev->pdev->revision >= 0x20) {
+		if (dev->pdev->revision >= 0x30) {
+			ast->chip = AST2400;
+			DRM_INFO("AST 2400 detected\n");
+		} else if (dev->pdev->revision >= 0x20) {
 			ast->chip = AST2300;
 			DRM_INFO("AST 2300 detected\n");
 		} else if (dev->pdev->revision >= 0x10) {
@@ -129,7 +132,7 @@ static int ast_get_dram_info(struct drm_device *dev)
 	else
 		ast->dram_bus_width = 32;
 
-	if (ast->chip == AST2300) {
+	if (ast->chip == AST2300 || ast->chip == AST2400) {
 		switch (data & 0x03) {
 		case 0:
 			ast->dram_type = AST_DRAM_512Mx16;
@@ -371,6 +374,7 @@ int ast_driver_load(struct drm_device *dev, unsigned long flags)
 	if (ast->chip == AST2100 ||
 	    ast->chip == AST2200 ||
 	    ast->chip == AST2300 ||
+	    ast->chip == AST2400 ||
 	    ast->chip == AST1180) {
 		dev->mode_config.max_width = 1920;
 		dev->mode_config.max_height = 2048;

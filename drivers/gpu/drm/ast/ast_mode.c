@@ -389,7 +389,7 @@ static void ast_set_ext_reg(struct drm_crtc *crtc, struct drm_display_mode *mode
 	ast_set_index_reg_mask(ast, AST_IO_CRTC_PORT, 0xa8, 0xfd, jregA8);
 
 	/* Set Threshold */
-	if (ast->chip == AST2300) {
+	if (ast->chip == AST2300 || ast->chip == AST2400) {
 		ast_set_index_reg(ast, AST_IO_CRTC_PORT, 0xa7, 0x78);
 		ast_set_index_reg(ast, AST_IO_CRTC_PORT, 0xa6, 0x60);
 	} else if (ast->chip == AST2100 ||
