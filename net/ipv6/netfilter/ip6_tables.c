@@ -2361,8 +2361,6 @@ int ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
 			if (fp == NULL)
 				return -EBADMSG;
 
-			if (flags && ((*fp) & htons(IP6_MF)))
-				*flags |= IP6T_FH_F_FRAG_MORE;
 			_frag_off = ntohs(*fp) & ~0x7;
 			if (_frag_off) {
 				if (target < 0 &&

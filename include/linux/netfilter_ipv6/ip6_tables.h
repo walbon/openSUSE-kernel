@@ -290,7 +290,6 @@ extern unsigned int ip6t_do_table(struct sk_buff *skb,
 enum {
 	IP6T_FH_F_FRAG	= (1 << 0),
 	IP6T_FH_F_AUTH	= (1 << 1),
-	IP6T_FH_F_FRAG_MORE = (1 << 2)
 };
 
 extern int ip6t_ext_hdr(u8 nexthdr);

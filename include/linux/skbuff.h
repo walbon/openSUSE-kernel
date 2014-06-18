@@ -412,11 +412,7 @@ struct sk_buff {
 	struct nf_conntrack	*nfct;
 #endif
 #ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
-#ifdef __GENKSYMS__
 	struct sk_buff		*nfct_reasm;
-#else
-	unsigned long		_nfct_reasm;
-#endif
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	struct nf_bridge_info	*nf_bridge;
@@ -479,57 +475,6 @@ struct sk_buff {
 
 #define SKB_ALLOC_FCLONE	0x01
 #define SKB_ALLOC_RX		0x02
-
-#ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
-#define NFCT_REASM_MASK		0x1UL
-
-#define NFCT_REASM_REASM	0x0UL
-#define NFCT_REASM_IPVS		0x1UL
-
-static inline bool skb_nfct_reasm_is_reasm(const struct sk_buff *skb)
-{
-	return (skb->_nfct_reasm & NFCT_REASM_MASK) == NFCT_REASM_REASM;
-}
-
-static inline bool skb_nfct_reasm_is_ipvs(const struct sk_buff *skb)
-{
-	return (skb->_nfct_reasm & NFCT_REASM_MASK) == NFCT_REASM_IPVS;
-}
-
-static inline bool skb_is_replayed_fragment(const struct sk_buff *skb)
-{
-	return skb_nfct_reasm_is_reasm(skb) && skb->_nfct_reasm != 0;
-}
-
-static inline struct sk_buff *skb_nfct_reasm(const struct sk_buff *skb)
-{
-	BUG_ON(!skb_nfct_reasm_is_reasm(skb));
-	return (struct sk_buff *)(skb->_nfct_reasm & ~NFCT_REASM_MASK);
-}
-
-static inline void skb_set_nfct_reasm(struct sk_buff *skb,
-				      struct sk_buff *nfct_reasm)
-{
-	skb->_nfct_reasm = ((unsigned long)nfct_reasm | NFCT_REASM_REASM);
-}
-
-static inline struct ip_vs_conn *skb_ipvs_cp(const struct sk_buff *skb)
-{
-	BUG_ON(!skb_nfct_reasm_is_ipvs(skb));
-	return (struct ip_vs_conn *)(skb->_nfct_reasm & ~NFCT_REASM_MASK);
-}
-
-static inline void skb_set_ipvs_cp(struct sk_buff *skb,
-				   struct ip_vs_conn *cp)
-{
-	skb->_nfct_reasm = ((unsigned long)cp | NFCT_REASM_IPVS);
-}
-#else
-static inline struct sk_buff *skb_nfct_reasm(struct sk_buff *skb)
-{
-	return NULL;
-}
-#endif
 
 /* Returns true if the skb was allocated from PFMEMALLOC reserves */
 static inline bool skb_pfmemalloc(const struct sk_buff *skb)
@@ -2453,9 +2398,8 @@ static inline void nf_reset(struct sk_buff *skb)
 	skb->nfct = NULL;
 #endif
 #ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
-	if (skb_nfct_reasm_is_reasm(skb))
-		nf_conntrack_put_reasm(skb_nfct_reasm(skb));
-	skb->_nfct_reasm = 0;
+	nf_conntrack_put_reasm(skb->nfct_reasm);
+	skb->nfct_reasm = NULL;
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	nf_bridge_put(skb->nf_bridge);
@@ -2480,8 +2424,8 @@ static inline void __nf_copy(struct sk_buff *dst, const struct sk_buff *src)
 	dst->nfctinfo = src->nfctinfo;
 #endif
 #ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
-	dst->_nfct_reasm = src->_nfct_reasm;
-	nf_conntrack_get_reasm(skb_nfct_reasm(src));
+	dst->nfct_reasm = src->nfct_reasm;
+	nf_conntrack_get_reasm(src->nfct_reasm);
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	dst->nf_bridge  = src->nf_bridge;
@@ -2495,8 +2439,7 @@ static inline void nf_copy(struct sk_buff *dst, const struct sk_buff *src)
 	nf_conntrack_put(dst->nfct);
 #endif
 #ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
-	if (skb_nfct_reasm_is_reasm(dst))
-		nf_conntrack_put_reasm(skb_nfct_reasm(dst));
+	nf_conntrack_put_reasm(dst->nfct_reasm);
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	nf_bridge_put(dst->nf_bridge);

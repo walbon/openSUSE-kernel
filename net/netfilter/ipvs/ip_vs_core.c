@@ -1120,7 +1120,7 @@ ip_vs_out(unsigned int hooknum, struct sk_buff *skb, int af)
 	ip_vs_fill_iph_skb(af, skb, &iph);
 #ifdef CONFIG_IP_VS_IPV6
 	if (af == AF_INET6) {
-		if (!iph.fragoffs && skb_is_replayed_fragment(skb)) {
+		if (!iph.fragoffs && skb_nfct_reasm(skb)) {
 			struct sk_buff *reasm = skb_nfct_reasm(skb);
 			/* Save fw mark for coming frags */
 			reasm->ipvs_property = 1;
@@ -1506,10 +1506,6 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 	struct ip_vs_conn *cp;
 	int ret, restart, pkts;
 	struct netns_ipvs *ipvs;
-#ifdef CONFIG_IP_VS_IPV6
-	struct sk_buff *nfct_reasm = skb_is_replayed_fragment(skb) ?
-				     skb_nfct_reasm(skb) : NULL;
-#endif
 
 	/* Already marked as IPVS request or reply? */
 	if (skb->ipvs_property)
@@ -1549,7 +1545,7 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 
 #ifdef CONFIG_IP_VS_IPV6
 	if (af == AF_INET6) {
-		if (!iph.fragoffs && skb_is_replayed_fragment(skb)) {
+		if (!iph.fragoffs && skb_nfct_reasm(skb)) {
 			struct sk_buff *reasm = skb_nfct_reasm(skb);
 			/* Save fw mark for coming frags. */
 			reasm->ipvs_property = 1;
@@ -1591,35 +1587,13 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 		/* Schedule and create new connection entry into &cp */
 		if (!pp->conn_schedule(af, skb, pd, &v, &cp))
 			return v;
-
-#ifdef CONFIG_IP_VS_IPV6
-		/* If the new connection is for this packet only and this packet
-		 * is the first fragment of a reassembled packet then store the
-		 * connection for the coming replayed fragments
-		 */
-		if (cp && (cp->flags & IP_VS_CONN_F_ONE_PACKET) && nfct_reasm) {
-			/* The reasm packet has no reasm packet so let's use this
-			 * pointer.
-			 */
-			skb_set_ipvs_cp(nfct_reasm, cp);
-		}
-#endif
 	}
-
-#ifdef CONFIG_IP_VS_IPV6
-	/* This is for second fragments of packets with one-packet connections
-	 * For these we read the stored connection from the reasm skb if any
-	 */
-	if (unlikely(!cp) && nfct_reasm && iph.fragoffs &&
-	    skb_nfct_reasm_is_ipvs(nfct_reasm))
-		cp = skb_ipvs_cp(nfct_reasm);
-#endif
 
 	if (unlikely(!cp)) {
 		/* sorry, all this trouble for a no-hit :) */
 		IP_VS_DBG_PKT(12, af, pp, skb, 0,
 			      "ip_vs_in: packet continues traversal as normal");
-		if (iph.fragoffs && !skb_is_replayed_fragment(skb)) {
+		if (iph.fragoffs && !skb_nfct_reasm(skb)) {
 			/* Fragment that couldn't be mapped to a conn entry
 			 * and don't have any pointer to a reasm skb
 			 * is missing module nf_defrag_ipv6
@@ -1636,11 +1610,6 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 	if (cp->dest && !(cp->dest->flags & IP_VS_DEST_F_AVAILABLE)) {
 		/* the destination server is not available */
 
-#ifdef CONFIG_IP_VS_IPV6
-		/* remove reference in the reasm skb to deleted cp if any */
-		if ((cp->flags & IP_VS_CONN_F_ONE_PACKET) && nfct_reasm)
-			skb_set_nfct_reasm(nfct_reasm, NULL);
-#endif
 		if (sysctl_expire_nodest_conn(ipvs)) {
 			/* try to expire the connection immediately */
 			ip_vs_conn_expire_now(cp);
@@ -1704,25 +1673,7 @@ ip_vs_in(unsigned int hooknum, struct sk_buff *skb, int af)
 out:
 	cp->old_state = cp->state;
 
-#ifdef CONFIG_IP_VS_IPV6
-	/* The connection is for this packet only and the packet is fragmented
-	 * and reassembled. We have put the connection pointer in the reasm skb
-	 */
-	if ((cp->flags & IP_VS_CONN_F_ONE_PACKET) && nfct_reasm) {
-		/* If this is the last fragment then we can and should free the
-		 * connection but not earlier
-		 */
-		if (!(iph.flags & IP6T_FH_F_FRAG_MORE)) {
-			skb_set_nfct_reasm(nfct_reasm, NULL);
-			ip_vs_conn_put(cp);
-		}
-	} else {
-		ip_vs_conn_put(cp);
-	}
-#else
 	ip_vs_conn_put(cp);
-#endif
-
 	return ret;
 }
 
@@ -1769,8 +1720,7 @@ ip_vs_preroute_frag6(unsigned int hooknum, struct sk_buff *skb,
 		     const struct net_device *out,
 		     int (*okfn)(struct sk_buff *))
 {
-	struct sk_buff *reasm = skb_is_replayed_fragment(skb) ?
-				skb_nfct_reasm(skb) : NULL;
+	struct sk_buff *reasm = skb_nfct_reasm(skb);
 	struct net *net;
 
 	/* Skip if not a "replay" from nf_ct_frag6_output or first fragment.

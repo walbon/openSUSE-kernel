@@ -125,8 +125,7 @@ _decode_session6(struct sk_buff *skb, struct flowi *fl, int reverse)
 	struct flowi6 *fl6 = &fl->u.ip6;
 	int onlyproto = 0;
 	/* use the reassembled packet if conntrack has done the reassembly */
-	struct sk_buff *whole_skb = skb_is_replayed_fragment(skb) ?
-				    skb_nfct_reasm(skb) : skb;
+	struct sk_buff *whole_skb = (skb->nfct_reasm) ? skb->nfct_reasm : skb;
 	u16 offset = skb_network_header_len(whole_skb);
 	const struct ipv6hdr *hdr = ipv6_hdr(whole_skb);
 	struct ipv6_opt_hdr *exthdr;

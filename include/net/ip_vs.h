@@ -120,17 +120,25 @@ struct ip_vs_iphdr {
 
 /* Dependency to module: nf_defrag_ipv6 */
 #if defined(CONFIG_NF_DEFRAG_IPV6) || defined(CONFIG_NF_DEFRAG_IPV6_MODULE)
+static inline struct sk_buff *skb_nfct_reasm(const struct sk_buff *skb)
+{
+	return skb->nfct_reasm;
+}
 static inline void *frag_safe_skb_hp(const struct sk_buff *skb, int offset,
 				      int len, void *buffer,
 				      const struct ip_vs_iphdr *ipvsh)
 {
-	if (unlikely(ipvsh->fragoffs && skb_is_replayed_fragment(skb)))
+	if (unlikely(ipvsh->fragoffs && skb_nfct_reasm(skb)))
 		return skb_header_pointer(skb_nfct_reasm(skb),
 					  ipvsh->thoff_reasm, len, buffer);
 
 	return skb_header_pointer(skb, offset, len, buffer);
 }
 #else
+static inline struct sk_buff *skb_nfct_reasm(const struct sk_buff *skb)
+{
+	return NULL;
+}
 static inline void *frag_safe_skb_hp(const struct sk_buff *skb, int offset,
 				      int len, void *buffer,
 				      const struct ip_vs_iphdr *ipvsh)
@@ -172,7 +180,7 @@ ip_vs_fill_iph_skb(int af, const struct sk_buff *skb, struct ip_vs_iphdr *iphdr)
 						 &iphdr->fragoffs,
 						 &iphdr->flags);
 		/* get proto from re-assembled packet and it's offset */
-		if (skb_is_replayed_fragment(skb))
+		if (skb_nfct_reasm(skb))
 			iphdr->protocol = ipv6_find_hdr(skb_nfct_reasm(skb),
 							&iphdr->thoff_reasm,
 							-1, NULL, NULL);

@@ -446,8 +446,7 @@ static void skb_release_head_state(struct sk_buff *skb)
 	nf_conntrack_put(skb->nfct);
 #endif
 #ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
-	if (skb_nfct_reasm_is_reasm(skb))
-		nf_conntrack_put_reasm(skb_nfct_reasm(skb));
+	nf_conntrack_put_reasm(skb->nfct_reasm);
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	nf_bridge_put(skb->nf_bridge);

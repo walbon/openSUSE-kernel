@@ -689,10 +689,9 @@ void nf_ct_frag6_output(unsigned int hooknum, struct sk_buff *skb,
 	struct sk_buff *s, *s2;
 
 	for (s = NFCT_FRAG6_CB(skb)->orig; s;) {
-		if (skb_nfct_reasm_is_reasm(s))
-			nf_conntrack_put_reasm(skb_nfct_reasm(s));
+		nf_conntrack_put_reasm(s->nfct_reasm);
 		nf_conntrack_get_reasm(skb);
-		skb_set_nfct_reasm(s, skb);
+		s->nfct_reasm = skb;
 
 		s2 = s->next;
 		s->next = NULL;
