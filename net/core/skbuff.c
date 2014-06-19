@@ -2686,6 +2686,11 @@ struct sk_buff *skb_segment(struct sk_buff *skb, u32 features)
 	int i = 0;
 	int pos;
 
+	if (skb_shinfo(skb)->tx_flags & SKBTX_DEV_ZEROCOPY) {
+		if (skb_copy_ubufs(skb, GFP_ATOMIC))
+			goto err;
+	}
+
 	__skb_push(skb, doffset);
 	headroom = skb_headroom(skb);
 	pos = skb_headlen(skb);
