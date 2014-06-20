@@ -1538,7 +1538,7 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 		if (src_inode->i_sb != file->f_path.dentry->d_inode->i_sb) {
 			printk(KERN_INFO "btrfs: Snapshot src from "
 			       "another FS\n");
-			ret = -EINVAL;
+			ret = -EXDEV;
 			fput(src_file);
 			goto out_drop_write;
 		} else if (!inode_owner_or_capable(src_inode)) {
