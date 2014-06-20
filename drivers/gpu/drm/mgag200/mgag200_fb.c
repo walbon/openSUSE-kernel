@@ -275,11 +275,6 @@ int mgag200_fbdev_init(struct mga_device *mdev)
 {
 	struct mga_fbdev *mfbdev;
 	int ret;
-	int bpp_sel = 32;
-
-	/* prefer 16bpp on low end gpus with limited VRAM */
-	if (IS_G200_SE(mdev) && mdev->mc.vram_size < (2048*1024))
-		bpp_sel = 16;
 
 	mfbdev = kzalloc(sizeof(struct mga_fbdev), GFP_KERNEL);
 	if (!mfbdev)
@@ -295,7 +290,7 @@ int mgag200_fbdev_init(struct mga_device *mdev)
 		return ret;
 	}
 	drm_fb_helper_single_add_all_connectors(&mfbdev->helper);
-	drm_fb_helper_initial_config(&mfbdev->helper, bpp_sel);
+	drm_fb_helper_initial_config(&mfbdev->helper, mdev->preferred_bpp);
 
 	return 0;
 }
