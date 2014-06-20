@@ -170,6 +170,19 @@ tcp_base_mss - INTEGER
 	Path MTU discovery (MTU probing).  If MTU probing is enabled,
 	this is the initial MSS used by the connection.
 
+tcp_bnc879921_hack - BOOLEAN
+	Disables congestion window moderation when retransmitting lost
+	packets. When set to FALSE (default), cwnd is moderated in TCP_CA_Loss
+	state so that if some packets are lost, transmission is limited to
+	(usually) three packets per roundtrip until all lost packets are
+	retransmitted and acknowledged. In a "long fat network", this can
+	severely throttle the throughput for rather long time: in bnc#879921,
+	a short (0.3 s) drop took up to 40 seconds to recover from. The
+	moderation was removed in 3.10 mainline kernel as part of much bigger
+	change. While the tests show no problems related to cwnd moderation
+	removal, it is sysctl switchable with the original behaviour preserved
+	as default in order to avoid any risk of regressions.
+
 tcp_congestion_control - STRING
 	Set the congestion control algorithm to be used for new
 	connections. The algorithm "reno" is always available, but
