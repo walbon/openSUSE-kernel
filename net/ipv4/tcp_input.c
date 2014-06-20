@@ -101,6 +101,8 @@ int sysctl_tcp_thin_dupack __read_mostly;
 int sysctl_tcp_moderate_rcvbuf __read_mostly = 1;
 int sysctl_tcp_abc __read_mostly;
 
+int sysctl_tcp_bnc879921_hack __read_mostly = 0;
+
 #define FLAG_DATA		0x01 /* Incoming frame contained data.		*/
 #define FLAG_WIN_UPDATE		0x02 /* Incoming ACK was a window update.	*/
 #define FLAG_DATA_ACKED		0x04 /* This ACK acknowledged new data.		*/
@@ -3068,7 +3070,8 @@ static void tcp_fastretrans_alert(struct sock *sk, int pkts_acked, int flag)
 		if (tcp_is_reno(tp) && flag & FLAG_SND_UNA_ADVANCED)
 			tcp_reset_reno_sack(tp);
 		if (!tcp_try_undo_loss(sk)) {
-			tcp_moderate_cwnd(tp);
+			if (!sysctl_tcp_bnc879921_hack)
+				tcp_moderate_cwnd(tp);
 			tcp_xmit_retransmit_queue(sk);
 			return;
 		}

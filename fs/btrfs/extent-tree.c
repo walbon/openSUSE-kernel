@@ -3518,11 +3518,13 @@ static u64 btrfs_reduce_alloc_profile(struct btrfs_root *root, u64 flags)
 	return extended_to_chunk(flags);
 }
 
-static u64 get_alloc_profile(struct btrfs_root *root, u64 flags)
+static u64 get_alloc_profile(struct btrfs_root *root, u64 orig_flags)
 {
 	unsigned seq;
+	u64 flags;
 
 	do {
+		flags = orig_flags;
 		seq = read_seqbegin(&root->fs_info->profiles_lock);
 
 		if (flags & BTRFS_BLOCK_GROUP_DATA)
@@ -5640,6 +5642,8 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 			(unsigned long long)root_objectid,
 			(unsigned long long)owner_objectid,
 			(unsigned long long)owner_offset);
+		btrfs_abort_transaction(trans, extent_root, ret);
+		goto out;
 	} else {
 		btrfs_abort_transaction(trans, extent_root, ret);
 		goto out;
