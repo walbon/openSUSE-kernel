@@ -5640,6 +5640,8 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 			(unsigned long long)root_objectid,
 			(unsigned long long)owner_objectid,
 			(unsigned long long)owner_offset);
+		btrfs_abort_transaction(trans, extent_root, ret);
+		goto out;
 	} else {
 		btrfs_abort_transaction(trans, extent_root, ret);
 		goto out;
