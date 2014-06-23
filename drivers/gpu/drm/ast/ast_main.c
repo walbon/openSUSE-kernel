@@ -66,6 +66,7 @@ uint8_t ast_get_index_reg_mask(struct ast_private *ast,
 static int ast_detect_chip(struct drm_device *dev)
 {
 	struct ast_private *ast = dev->dev_private;
+	uint32_t data, jreg;
 
 	if (dev->pdev->device == PCI_CHIP_AST1180) {
 		ast->chip = AST1100;
@@ -107,6 +108,34 @@ static int ast_detect_chip(struct drm_device *dev)
 			DRM_INFO("AST 2000 detected\n");
 		}
 	}
+
+	switch (ast->chip) {
+	case AST1180:
+		ast->support_wide_screen = true;
+		break;
+	case AST2000:
+		ast->support_wide_screen = false;
+		break;
+	default:
+		jreg = ast_get_index_reg_mask(ast, AST_IO_CRTC_PORT, 0xd0, 0xff);
+		if (!(jreg & 0x80))
+			ast->support_wide_screen = true;
+		else if (jreg & 0x01)
+			ast->support_wide_screen = true;
+		else {
+			ast->support_wide_screen = false;
+			ast_write32(ast, 0xf004, 0x1e6e0000);
+			ast_write32(ast, 0xf000, 0x1);
+			data = ast_read32(ast, 0x1207c);
+			data &= 0x300;
+			if (ast->chip == AST2300 && data == 0x0) /* ast1300 */
+				ast->support_wide_screen = true;
+			if (ast->chip == AST2400 && data == 0x100) /* ast1400 */
+				ast->support_wide_screen = true;
+		}
+		break;
+	}
+
 	return 0;
 }
 
@@ -249,16 +278,8 @@ static void ast_user_framebuffer_destroy(struct drm_framebuffer *fb)
 	kfree(ast_fb);
 }
 
-static int ast_user_framebuffer_create_handle(struct drm_framebuffer *fb,
-					      struct drm_file *file,
-					      unsigned int *handle)
-{
-	return -EINVAL;
-}
-
 static const struct drm_framebuffer_funcs ast_fb_funcs = {
 	.destroy = ast_user_framebuffer_destroy,
-	.create_handle = ast_user_framebuffer_create_handle,
 };
 
 

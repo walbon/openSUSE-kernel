@@ -96,9 +96,7 @@ static int ast_drm_thaw(struct drm_device *dev)
 	ast_post_gpu(dev);
 
 	drm_mode_config_reset(dev);
-	mutex_lock(&dev->mode_config.mutex);
 	drm_helper_resume_force_mode(dev);
-	mutex_unlock(&dev->mode_config.mutex);
 
 	console_lock();
 	ast_fbdev_set_suspend(dev, 0);
