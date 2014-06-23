@@ -1527,8 +1527,8 @@ void bnx2x_int_disable_sync(struct bnx2x *bp, int disable_hw)
 		synchronize_irq(bp->pdev->irq);
 
 	/* make sure sp_task is not running */
-	cancel_delayed_work(&bp->sp_task);
-	cancel_delayed_work(&bp->period_task);
+	cancel_delayed_work_sync(&bp->sp_task);
+	cancel_delayed_work_sync(&bp->period_task);
 	flush_workqueue(bnx2x_wq);
 }
 
