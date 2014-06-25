@@ -3382,6 +3382,26 @@ unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
 }
 #endif /* CONFIG_HIBERNATION */
 
+/*
+ * Returns non-zero if the lock has been acquired, false if somebody
+ * else is holding the lock.
+ */
+static int pagecache_reclaim_lock_zone(struct zone *zone)
+{
+	return atomic_add_unless(&zone->pagecache_reclaim, 1, 1);
+}
+
+static void pagecache_reclaim_unlock_zone(struct zone *zone)
+{
+	BUG_ON(atomic_dec_return(&zone->pagecache_reclaim));
+}
+
+/*
+ * Potential page cache reclaimers who are not able to take
+ * reclaim lock on any zone are sleeping on this waitqueue.
+ * So this is basically a congestion wait queue for them.
+ */
+DECLARE_WAIT_QUEUE_HEAD(pagecache_reclaim_wq);
 
 /*
  * We had to resurect this function for __shrink_page_cache (upstream has
@@ -3391,18 +3411,39 @@ unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
  * pass and priority.
  *
  * For pass > 3 we also try to shrink the LRU lists that contain a few pages
+ *
+ * Returns the number of scanned zones.
  */
-static void shrink_all_zones(unsigned long nr_pages, int prio,
+static int shrink_all_zones(unsigned long nr_pages, int prio,
 				      int pass, struct scan_control *sc)
 {
 	struct zone *zone;
 	unsigned long nr_reclaimed = 0;
+	unsigned int nr_locked_zones = 0;
+	DEFINE_WAIT(wait);
+
+	prepare_to_wait(&pagecache_reclaim_wq, &wait, TASK_UNINTERRUPTIBLE);
 
 	for_each_populated_zone(zone) {
 		enum lru_list l;
 
 		if (zone->all_unreclaimable && prio != DEF_PRIORITY)
 			continue;
+
+		/*
+		 * Back off if somebody is already reclaiming this zone
+		 * for the pagecache reclaim.
+		 */
+		if (!pagecache_reclaim_lock_zone(zone))
+			continue;
+
+
+		/*
+		 * This reclaimer might scan a zone so it will never
+		 * sleep on pagecache_reclaim_wq
+		 */
+		finish_wait(&pagecache_reclaim_wq, &wait);
+		nr_locked_zones++;
 
 		for_each_evictable_lru(l) {
 			enum zone_stat_item ls = NR_LRU_BASE + l;
@@ -3433,13 +3474,30 @@ static void shrink_all_zones(unsigned long nr_pages, int prio,
 				nr_reclaimed += shrink_list(l, nr_to_scan, zone,
 								sc);
 				if (nr_reclaimed >= nr_pages) {
-					sc->nr_reclaimed += nr_reclaimed;
-					return;
+					pagecache_reclaim_unlock_zone(zone);
+					goto out_wakeup;
 				}
 			}
 		}
+		pagecache_reclaim_unlock_zone(zone);
 	}
+
+	/*
+	 * We have to go to sleep because all the zones are already reclaimed.
+	 * One of the reclaimer will wake us up or __shrink_page_cache will
+	 * do it if there is nothing to be done.
+	 */
+	if (!nr_locked_zones) {
+		schedule();
+		finish_wait(&pagecache_reclaim_wq, &wait);
+		goto out;
+	}
+
+out_wakeup:
+	wake_up_interruptible(&pagecache_reclaim_wq);
 	sc->nr_reclaimed += nr_reclaimed;
+out:
+	return nr_locked_zones;
 }
 
 /*
@@ -3458,7 +3516,7 @@ static void shrink_all_zones(unsigned long nr_pages, int prio,
 static void __shrink_page_cache(gfp_t mask)
 {
 	unsigned long ret = 0;
-	int pass;
+	int pass = 0;
 	struct reclaim_state reclaim_state;
 	struct scan_control sc = {
 		.gfp_mask = mask,
@@ -3478,6 +3536,7 @@ static void __shrink_page_cache(gfp_t mask)
 	 */
 	BUG_ON(!(mask & __GFP_WAIT));
 
+retry:
 	/* How many pages are we over the limit?
 	 * But don't enforce limit if there's plenty of free mem */
 	nr_pages = pagecache_over_limit();
@@ -3487,9 +3546,18 @@ static void __shrink_page_cache(gfp_t mask)
 	 * is still more than minimally needed. */
 	nr_pages /= 2;
 
-	/* Return early if there's no work to do */
-	if (nr_pages <= 0)
+	/*
+	 * Return early if there's no work to do.
+	 * Wake up reclaimers that couldn't scan any zone due to congestion.
+	 * There is apparently nothing to do so they do not have to sleep.
+	 * This makes sure that no sleeping reclaimer will stay behind.
+	 * Allow breaching the limit if the task is on the way out.
+	 */
+	if (nr_pages <= 0 || fatal_signal_pending(current)) {
+		wake_up_interruptible(&pagecache_reclaim_wq);
 		return;
+	}
+
 	/* But do a few at least */
 	nr_pages = max_t(unsigned long, nr_pages, 8*SWAP_CLUSTER_MAX);
 
@@ -3501,15 +3569,21 @@ static void __shrink_page_cache(gfp_t mask)
 	 * 1 = Reclaim from active list but don't reclaim mapped (not that fast)
 	 * 2 = Same as 1, but may_writepage = 1 (only done if we can and need it)
 	 */
-	for (pass = 0; pass < 3; pass++) {
+	for (; pass < 3; pass++) {
 		int prio;
 
 		for (prio = DEF_PRIORITY; prio >= 0; prio--) {
 			unsigned long nr_to_scan = nr_pages - ret;
 
 			sc.nr_scanned = 0;
-			/* sc.swap_cluster_max = nr_to_scan; */
-			shrink_all_zones(nr_to_scan, prio, pass, &sc);
+
+			/*
+			 * No zone reclaimed because of too many reclaimers. Retry whether
+			 * there is still something to do
+			 */
+			if (!shrink_all_zones(nr_to_scan, prio, pass, &sc))
+				goto retry;
+
 			ret += sc.nr_reclaimed;
 			if (ret >= nr_pages)
 				goto out;
@@ -3874,6 +3948,7 @@ int page_evictable(struct page *page, struct vm_area_struct *vma)
 static void check_move_unevictable_page(struct page *page, struct zone *zone)
 {
 	VM_BUG_ON(PageActive(page));
+
 
 retry:
 	ClearPageUnevictable(page);
