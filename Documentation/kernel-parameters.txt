@@ -1064,7 +1064,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	inport.irq=	[HW] Inport (ATI XL and Microsoft) busmouse driver
 			Format: <irq>
 
-	int_pln_enable  [x86] Enable power limit notification interrupt
+	int_pln_disable	[x86] Disable power limit notification interrupt
+			Note that this is the upstream default since kernel
+			3.11. Upstream has parameter int_pln_enable to enable
+			power limit notification interrupt.
 
 	intel_iommu=	[DMAR] Intel IOMMU driver (DMAR) option
 		on

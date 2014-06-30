@@ -211,14 +211,14 @@ static int thresh_event_valid(int event)
 	return 1;
 }
 
-static bool int_pln_enable;
+static bool int_pln_enable = true;
 static int __init int_pln_enable_setup(char *s)
 {
-	int_pln_enable = true;
+	int_pln_enable = false;
 
 	return 1;
 }
-__setup("int_pln_enable", int_pln_enable_setup);
+__setup("int_pln_disable", int_pln_enable_setup);
 
 #ifdef CONFIG_SYSFS
 /* Add/Remove thermal_throttle interface for CPU device: */
