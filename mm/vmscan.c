@@ -3422,7 +3422,7 @@ static int shrink_all_zones(unsigned long nr_pages, int prio,
 	unsigned int nr_locked_zones = 0;
 	DEFINE_WAIT(wait);
 
-	prepare_to_wait(&pagecache_reclaim_wq, &wait, TASK_UNINTERRUPTIBLE);
+	prepare_to_wait(&pagecache_reclaim_wq, &wait, TASK_INTERRUPTIBLE);
 
 	for_each_populated_zone(zone) {
 		enum lru_list l;
