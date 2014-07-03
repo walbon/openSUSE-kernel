@@ -1055,7 +1055,11 @@ static void x86_pmu_start(struct perf_event *event, int flags)
 		x86_perf_event_set_period(event);
 	}
 
-	event->hw.state = 0;
+	/* SUSE KABI: constraints are obtained before pmu is started so
+	 * PERF_HES_X86_PEBS_LDLAT may be set.
+	 */
+	event->hw.state = event->hw.state & PERF_HES_X86_PEBS_LDLAT ?
+				PERF_HES_X86_PEBS_LDLAT : 0;
 
 	cpuc->events[idx] = event;
 	__set_bit(idx, cpuc->active_mask);
@@ -1411,7 +1415,7 @@ static int __init init_hw_perf_events(void)
 
 	unconstrained = (struct event_constraint)
 		__EVENT_CONSTRAINT(0, (1ULL << x86_pmu.num_counters) - 1,
-				   0, x86_pmu.num_counters, 0);
+				   0, x86_pmu.num_counters, 0, 0);
 
 	x86_pmu.attr_rdpmc = 1; /* enable userspace RDPMC usage by default */
 	x86_pmu_format_group.attrs = x86_pmu.format_attrs;

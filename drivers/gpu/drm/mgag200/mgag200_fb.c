@@ -195,8 +195,6 @@ static int mgag200fb_create(struct mga_fbdev *mfbdev,
 	}
 	info->apertures->ranges[0].base = mdev->dev->mode_config.fb_base;
 	info->apertures->ranges[0].size = mdev->mc.vram_size;
-	info->fix.smem_start = mdev->dev->mode_config.fb_base;
-	info->fix.smem_len = size;
 
 	drm_fb_helper_fill_fix(info, fb->pitches[0], fb->depth);
 	drm_fb_helper_fill_var(info, &mfbdev->helper, sizes->fb_width,
@@ -303,4 +301,11 @@ void mgag200_fbdev_fini(struct mga_device *mdev)
 	mga_fbdev_destroy(mdev->dev, mdev->mfbdev);
 	kfree(mdev->mfbdev);
 	mdev->mfbdev = NULL;
+}
+
+void mgag200_fbdev_set_base(struct mga_device *mdev, unsigned long gpu_addr)
+{
+	mdev->mfbdev->helper.fbdev->fix.smem_start =
+		mdev->mfbdev->helper.fbdev->apertures->ranges[0].base + gpu_addr;
+	mdev->mfbdev->helper.fbdev->fix.smem_len = mdev->mc.vram_size - gpu_addr;
 }
