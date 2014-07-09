@@ -622,13 +622,12 @@ static void retry_failed_sctp_send(struct connection *recv_con,
 
 	log_print("Retry sending %d bytes to node id %d", len, nodeid);
 
-	con = nodeid2con(nodeid, 0);
-
 	if (!nodeid) {
 		log_print("Shouldn't resend data via listening connection.");
 		return;
 	}
 
+	con = nodeid2con(nodeid, 0);
 	if (!con) {
 		log_print("Could not look up con for nodeid %d\n",
 			  nodeid);
