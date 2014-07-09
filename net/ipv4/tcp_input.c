@@ -101,7 +101,7 @@ int sysctl_tcp_thin_dupack __read_mostly;
 int sysctl_tcp_moderate_rcvbuf __read_mostly = 1;
 int sysctl_tcp_abc __read_mostly;
 
-int sysctl_tcp_bnc879921_hack __read_mostly = 0;
+int sysctl_tcp_bnc879921_hack __read_mostly;
 
 #define FLAG_DATA		0x01 /* Incoming frame contained data.		*/
 #define FLAG_WIN_UPDATE		0x02 /* Incoming ACK was a window update.	*/
@@ -127,6 +127,16 @@ int sysctl_tcp_bnc879921_hack __read_mostly = 0;
 
 #define TCP_REMNANT (TCP_FLAG_FIN|TCP_FLAG_URG|TCP_FLAG_SYN|TCP_FLAG_PSH)
 #define TCP_HP_BITS (~(TCP_RESERVED_BITS|TCP_FLAG_PSH))
+
+static inline bool bnc879921_hack_cwnd(void)
+{
+	return unlikely(sysctl_tcp_bnc879921_hack >= 1);
+}
+
+static inline bool bnc879921_hack_frto(void)
+{
+	return unlikely(sysctl_tcp_bnc879921_hack >= 2);
+}
 
 /* Adapt the MSS value used to make delayed ack decision to the
  * real world.
@@ -2032,6 +2042,15 @@ int tcp_use_frto(struct sock *sk)
 	if (icsk->icsk_mtup.probe_size)
 		return 0;
 
+	/* if activated via sysctl, imitate RFC 5682 logic here: do not enter
+	 * F-RTO if recovery is already in progress except for repeated
+	 * timeouts with the same SND.UNA (bnc#879921)
+	 */
+	if (bnc879921_hack_frto() && icsk->icsk_ca_state > TCP_CA_Disorder &&
+	    after(tp->high_seq, tp->snd_una) && !icsk->icsk_retransmits &&
+	    icsk->icsk_ca_state != TCP_CA_Loss)
+		return 0;
+
 	if (tcp_is_sackfrto(tp))
 		return 1;
 
@@ -2086,8 +2105,9 @@ void tcp_enter_frto(struct sock *sk)
 		 * RFC4138 should be more specific on what to do, even though
 		 * RTO is quite unlikely to occur after the first Cumulative ACK
 		 * due to back-off and complexity of triggering events ...
+		 * If RFC 5682 bits are activated, always use the real value.
 		 */
-		if (tp->frto_counter) {
+		if (tp->frto_counter && !bnc879921_hack_frto()) {
 			u32 stored_cwnd;
 			stored_cwnd = tp->snd_cwnd;
 			tp->snd_cwnd = 2;
@@ -2131,7 +2151,11 @@ void tcp_enter_frto(struct sock *sk)
 	} else {
 		tp->frto_highmark = tp->snd_nxt;
 	}
-	tcp_set_ca_state(sk, TCP_CA_Disorder);
+	/* If parts of RFC 5682 logic are activated, do not return to Disorder
+	 * if already in CWR, Recovery or Loss (bnc#879921)
+	 */
+	if (!bnc879921_hack_frto() || icsk->icsk_ca_state == TCP_CA_Open)
+		tcp_set_ca_state(sk, TCP_CA_Disorder);
 	tp->high_seq = tp->snd_nxt;
 	tp->frto_counter = 1;
 }
@@ -2437,8 +2461,11 @@ static int tcp_time_to_recover(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	__u32 packets_out;
 
-	/* Do not perform any recovery during F-RTO algorithm */
-	if (tp->frto_counter)
+	/* Do not perform any recovery during F-RTO algorithm
+	 * unless parts of RFC 5682 logic are activated via sysctl
+	 * (bnc#879921)
+	 */
+	if (tp->frto_counter && !bnc879921_hack_frto())
 		return 0;
 
 	/* Trick#1: The loss is proven. */
@@ -2640,6 +2667,24 @@ static void tcp_cwnd_down(struct sock *sk, int flag)
 		tp->snd_cwnd = min(tp->snd_cwnd, tcp_packets_in_flight(tp) + 1);
 		tp->snd_cwnd_stamp = tcp_time_stamp;
 	}
+}
+
+/* Adapt (simplified version of) more efficient cwnd handling
+ * in TCP_CA_Recovery state from PRR implementation.
+ */
+static void bnc879921_tcp_cwnd_reduction(struct tcp_sock *tp,
+					 int prior_unsacked, int fast_rexmit)
+{
+	unsigned int in_flight = tcp_packets_in_flight(tp);
+	int sndcnt = 0;
+	int newly_acked_sacked = prior_unsacked -
+				 (tp->packets_out - tp->sacked_out);
+
+	if (in_flight <= tp->snd_ssthresh)
+		sndcnt = min_t(int, newly_acked_sacked + 1,
+			       tp->snd_ssthresh - in_flight);
+	sndcnt = max_t(int, sndcnt, (fast_rexmit ? 1 : 0));
+	tp->snd_cwnd = in_flight + sndcnt;
 }
 
 /* Nothing was retransmitted or returned timestamp is less
@@ -2977,7 +3022,8 @@ EXPORT_SYMBOL(tcp_simple_retransmit);
  * It does _not_ decide what to send, it is made in function
  * tcp_xmit_retransmit_queue().
  */
-static void tcp_fastretrans_alert(struct sock *sk, int pkts_acked, int flag)
+static void tcp_fastretrans_alert(struct sock *sk, int pkts_acked, int flag,
+				  const int prior_unsacked)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -3070,7 +3116,7 @@ static void tcp_fastretrans_alert(struct sock *sk, int pkts_acked, int flag)
 		if (tcp_is_reno(tp) && flag & FLAG_SND_UNA_ADVANCED)
 			tcp_reset_reno_sack(tp);
 		if (!tcp_try_undo_loss(sk)) {
-			if (!sysctl_tcp_bnc879921_hack)
+			if (!bnc879921_hack_cwnd())
 				tcp_moderate_cwnd(tp);
 			tcp_xmit_retransmit_queue(sk);
 			return;
@@ -3114,6 +3160,11 @@ static void tcp_fastretrans_alert(struct sock *sk, int pkts_acked, int flag)
 
 		NET_INC_STATS_BH(sock_net(sk), mib_idx);
 
+		/* If parts of RFC 5682 logic are activated via sysctl, make
+		 * sure we leave F-RTO before entering Recovery (bnc#879921)
+		 */
+		if (bnc879921_hack_frto())
+			tp->frto_counter = 0;
 		tp->high_seq = tp->snd_nxt;
 		tp->prior_ssthresh = 0;
 		tp->undo_marker = tp->snd_una;
@@ -3134,7 +3185,13 @@ static void tcp_fastretrans_alert(struct sock *sk, int pkts_acked, int flag)
 
 	if (do_lost || (tcp_is_fack(tp) && tcp_head_timedout(sk)))
 		tcp_update_scoreboard(sk, fast_rexmit);
-	tcp_cwnd_down(sk, flag);
+	/* If activated via sysctl, use more efficient cwnd handling in
+	 * Recovery (bnc#879921)
+	 */
+	if (bnc879921_hack_frto())
+		bnc879921_tcp_cwnd_reduction(tp, prior_unsacked, fast_rexmit);
+	else
+		tcp_cwnd_down(sk, flag);
 	tcp_xmit_retransmit_queue(sk);
 }
 
@@ -3692,6 +3749,7 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 	u32 prior_in_flight;
 	u32 prior_fackets;
 	int prior_packets;
+	const int prior_unsacked = tp->packets_out - tp->sacked_out;
 	int frto_cwnd = 0;
 
 	/* If the ack is older than previous acks
@@ -3787,7 +3845,7 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 		    tcp_may_raise_cwnd(sk, flag))
 			tcp_cong_avoid(sk, ack, prior_in_flight);
 		tcp_fastretrans_alert(sk, prior_packets - tp->packets_out,
-				      flag);
+				      flag, prior_unsacked);
 	} else {
 		if ((flag & FLAG_DATA_ACKED) && !frto_cwnd)
 			tcp_cong_avoid(sk, ack, prior_in_flight);
