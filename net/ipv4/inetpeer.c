@@ -556,6 +556,7 @@ found:		/* The existing node has been found.
 		p->rate_last = 0;
 		p->pmtu_expires = 0;
 		p->pmtu_orig = 0;
+		p->redirect_genid = 0;
 		memset(&p->redirect_learned, 0, sizeof(p->redirect_learned));
 		p->base = base;
 		p->base_padding = NULL;
