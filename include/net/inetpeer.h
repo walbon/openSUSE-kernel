@@ -17,7 +17,14 @@
 
 struct inetpeer_addr_base {
 	union {
+#ifdef __GENKSYMS__
 		__be32			a4;
+#else
+		struct {
+			__be32		a4;
+			int		redirect_genid;
+		};
+#endif
 		__be32			a6[4];
 	};
 };
@@ -61,7 +68,6 @@ struct inet_peer {
 			__u32				tcp_ts_stamp;
 			u32				metrics[RTAX_MAX];
 			u32				rate_tokens;	/* rate limiting for ICMP */
-			int				redirect_genid;
 			unsigned long			rate_last;
 			unsigned long			pmtu_expires;
 			u32				pmtu_orig;
