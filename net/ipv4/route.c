@@ -132,6 +132,7 @@ static int ip_rt_mtu_expires __read_mostly	= 10 * 60 * HZ;
 static int ip_rt_min_pmtu __read_mostly		= 512 + 20 + 20;
 static int ip_rt_min_advmss __read_mostly	= 256;
 static int rt_chain_length_max __read_mostly	= 20;
+static int redirect_genid;
 
 static struct delayed_work expires_work;
 static unsigned long expires_ljiffies;
@@ -932,6 +933,7 @@ static void rt_cache_invalidate(struct net *net)
 
 	get_random_bytes(&shuffle, sizeof(shuffle));
 	atomic_add(shuffle + 1U, &net->ipv4.rt_genid);
+	redirect_genid++;
 }
 
 /*
@@ -1464,8 +1466,10 @@ void ip_rt_redirect(__be32 old_gw, __be32 daddr, __be32 new_gw,
 				if (rt_has_peer(rt)) {
 					struct inet_peer *peer = rt_peer_ptr(rt);
 
-					if (peer->redirect_learned.a4 != new_gw) {
+					if (peer->redirect_learned.a4 != new_gw ||
+					    peer->redirect_genid != redirect_genid) {
 						peer->redirect_learned.a4 = new_gw;
+						peer->redirect_genid = redirect_genid;
 						atomic_inc(&__rt_peer_genid);
 					}
 					check_peer_redir(&rt->dst, peer);
@@ -1774,6 +1778,8 @@ static struct dst_entry *ipv4_dst_check(struct dst_entry *dst, u32 cookie)
 			struct inet_peer *peer = rt_peer_ptr(rt);
 			check_peer_pmtu(dst, peer);
 
+			if (peer->redirect_genid != redirect_genid)
+				peer->redirect_learned.a4 = 0;
 			if (peer->redirect_learned.a4 &&
 			    peer->redirect_learned.a4 != rt->rt_gateway) {
 				if (check_peer_redir(dst, peer))
@@ -1932,6 +1938,8 @@ static void rt_init_metrics(struct rtable *rt, const struct flowi4 *fl4,
 		dst_init_metrics(&rt->dst, peer->metrics, false);
 
 		check_peer_pmtu(&rt->dst, peer);
+		if (peer->redirect_genid != redirect_genid)
+			peer->redirect_learned.a4 = 0;
 		if (peer->redirect_learned.a4 &&
 		    peer->redirect_learned.a4 != rt->rt_gateway) {
 			rt->rt_gateway = peer->redirect_learned.a4;
