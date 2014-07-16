@@ -4,6 +4,8 @@
 #include <linux/mm_types.h>
 #include <linux/fs.h>
 #include <linux/hugetlb_inline.h>
+#include <linux/list.h>
+#include <linux/kref.h>
 
 struct ctl_table;
 struct user_struct;
@@ -19,6 +21,14 @@ struct hugepage_subpool {
 	long count;
 	long max_hpages, used_hpages;
 };
+
+struct resv_map {
+	struct kref refs;
+	spinlock_t lock;
+	struct list_head regions;
+};
+extern struct resv_map *resv_map_alloc(void);
+void resv_map_release(struct kref *ref);
 
 struct hugepage_subpool *hugepage_new_subpool(long nr_blocks);
 void hugepage_put_subpool(struct hugepage_subpool *spool);
