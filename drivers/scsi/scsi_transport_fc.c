@@ -883,6 +883,12 @@ static int fc_rport_set_dev_loss_tmo(struct fc_rport *rport,
 	if (rport->fast_io_fail_tmo == -1 &&
 	    val > SCSI_DEVICE_BLOCK_MAX_TIMEOUT)
 		return -EINVAL;
+	/*
+	 * Do not allow a value lower than fast_io_fail
+	 */
+	if (rport->fast_io_fail_tmo != -1 &&
+	    val < rport->fast_io_fail_tmo)
+		return -EINVAL;
 
 	i->f->set_rport_dev_loss_tmo(rport, val);
 	return 0;
