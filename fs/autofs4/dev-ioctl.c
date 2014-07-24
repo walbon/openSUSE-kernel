@@ -461,7 +461,7 @@ static int autofs_dev_ioctl_requester(struct file *fp,
 	ino = autofs4_dentry_ino(path.dentry);
 	if (ino) {
 		err = 0;
-		autofs4_expire_wait(path.dentry);
+		autofs4_expire_wait(path.dentry, 0);
 		spin_lock(&sbi->fs_lock);
 		param->requester.uid = ino->uid;
 		param->requester.gid = ino->gid;

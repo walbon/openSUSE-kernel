@@ -843,6 +843,14 @@ int nfs_revalidate_inode(struct nfs_server *server, struct inode *inode)
 	return __nfs_revalidate_inode(server, inode);
 }
 
+int nfs_revalidate_inode_rcu(struct nfs_server *server, struct inode *inode)
+{
+	if (!(NFS_I(inode)->cache_validity & NFS_INO_INVALID_ATTR)
+			&& !nfs_attribute_cache_expired(inode))
+		return NFS_STALE(inode) ? -ESTALE : 0;
+	return -ECHILD;
+}
+
 static int nfs_invalidate_mapping(struct inode *inode, struct address_space *mapping)
 {
 	struct nfs_inode *nfsi = NFS_I(inode);
