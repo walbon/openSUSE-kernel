@@ -219,6 +219,8 @@ static struct dentry *autofs4_lookup_expiring(struct dentry *dentry,
 	const unsigned char *str = name->name;
 	struct list_head *p, *head;
 
+	if (list_empty(&sbi->expiring_list))
+		return NULL;
 	spin_lock(&sbi->lookup_lock);
 	head = &sbi->expiring_list;
 	list_for_each(p, head) {
