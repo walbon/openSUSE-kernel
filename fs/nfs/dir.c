@@ -1095,6 +1095,8 @@ int nfs_lookup_verify_inode(struct inode *inode, struct nameidata *nd)
 	}
 	return nfs_revalidate_inode(server, inode);
 out_force:
+	if (nd && (nd->flags & LOOKUP_RCU))
+		return -ECHILD;
 	return __nfs_revalidate_inode(server, inode);
 }
 
@@ -1181,9 +1183,6 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 	if (!nfs_is_exclusive_create(dir, nd) &&
 	    nfs_check_verifier(dir, dentry, nd && (nd->flags & LOOKUP_RCU))) {
 
-		if (nd && (nd->flags & LOOKUP_RCU))
-			return -ECHILD;
-
 		if (nfs_server_capable(dir, NFS_CAP_READDIRPLUS)
 		    && ((NFS_I(inode)->cache_validity & NFS_INO_INVALID_ATTR)
 			|| nfs_attribute_cache_expired(inode))
@@ -1193,8 +1192,11 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 			goto out_zap_parent;
 		}
 
-		if (nfs_lookup_verify_inode(inode, nd))
+		if (nfs_lookup_verify_inode(inode, nd)) {
+			if (nd && (nd->flags & LOOKUP_RCU))
+				return -ECHILD;
 			goto out_zap_parent;
+		}
 		goto out_valid;
 	}
 
