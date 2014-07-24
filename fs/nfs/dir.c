@@ -1129,25 +1129,34 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 	struct nfs_fattr *fattr = NULL;
 	int error;
 
-	if (nd && (nd->flags & LOOKUP_RCU))
-		return -ECHILD;
-
 	if (nd && (nd->flags & LOOKUP_UMOUNT))
 		/* on unmount, assume all dentries are correct */
 		return 1;
 
-	parent = dget_parent(dentry);
-	dir = parent->d_inode;
+	if (nd && (nd->flags & LOOKUP_RCU)) {
+		parent = rcu_dereference(dentry->d_parent);
+		dir = ACCESS_ONCE(parent->d_inode);
+		if (!dir)
+			return -ECHILD;
+	} else {
+		parent = dget_parent(dentry);
+		dir = parent->d_inode;
+	}
 	nfs_inc_stats(dir, NFSIOS_DENTRYREVALIDATE);
 	inode = dentry->d_inode;
 
 	if (!inode) {
+		if (nd && (nd->flags & LOOKUP_RCU))
+			return -ECHILD;
+
 		if (nfs_neg_need_reval(dir, dentry, nd))
 			goto out_bad;
 		goto out_valid_noent;
 	}
 
 	if (is_bad_inode(inode)) {
+		if (nd && (nd->flags & LOOKUP_RCU))
+			return -ECHILD;
 		dfprintk(LOOKUPCACHE, "%s: %s/%s has dud inode\n",
 				__func__, dentry->d_parent->d_name.name,
 				dentry->d_name.name);
@@ -1156,6 +1165,9 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 
 	if (nfs_have_delegation(inode, FMODE_READ))
 		goto out_set_verifier;
+
+	if (nd && (nd->flags & LOOKUP_RCU))
+		return -ECHILD;
 
 	/* Force a full look up iff the parent directory has changed */
 	if (!nfs_is_exclusive_create(dir, nd) && nfs_check_verifier(dir, dentry)) {
@@ -1208,7 +1220,11 @@ out_set_verifier:
 	/* Success: notify readdir to use READDIRPLUS */
 	nfs_advise_use_readdirplus(dir);
  out_valid_noent:
-	dput(parent);
+	if (nd && (nd->flags & LOOKUP_RCU)) {
+		if (parent != rcu_dereference(dentry->d_parent))
+			return -ECHILD;
+	} else
+		dput(parent);
 	dfprintk(LOOKUPCACHE, "NFS: %s(%s/%s) is valid\n",
 			__func__, dentry->d_parent->d_name.name,
 			dentry->d_name.name);
@@ -1216,6 +1232,7 @@ out_set_verifier:
 out_zap_parent:
 	nfs_zap_caches(dir);
  out_bad:
+	WARN_ON(nd && (nd->flags & LOOKUP_RCU));
 	nfs_free_fattr(fattr);
 	nfs_free_fhandle(fhandle);
 	nfs_mark_for_revalidate(dir);
@@ -1236,6 +1253,7 @@ out_zap_parent:
 			dentry->d_name.name);
 	return 0;
 out_error:
+	WARN_ON(nd && (nd->flags & LOOKUP_RCU));
 	nfs_free_fattr(fattr);
 	nfs_free_fhandle(fhandle);
 	dput(parent);
@@ -1559,9 +1577,6 @@ static int nfs_open_revalidate(struct dentry *dentry, struct nameidata *nd)
 	struct nfs_open_context *ctx;
 	int openflags, ret = 0;
 
-	if (nd && (nd->flags & LOOKUP_RCU))
-		return -ECHILD;
-
 	inode = dentry->d_inode;
 	if (!is_atomic_open(nd) || d_mountpoint(dentry))
 		goto no_open;
@@ -1570,6 +1585,9 @@ static int nfs_open_revalidate(struct dentry *dentry, struct nameidata *nd)
 	 * optimize away revalidation of negative dentries.
 	 */
 	if (inode == NULL) {
+		if (nd && (nd->flags & LOOKUP_RCU))
+			return -ECHILD;
+
 		parent = dget_parent(dentry);
 		dir = parent->d_inode;
 
@@ -1588,6 +1606,8 @@ static int nfs_open_revalidate(struct dentry *dentry, struct nameidata *nd)
 	/* We can't create new files, or truncate existing ones here */
 	openflags &= ~(O_CREAT|O_EXCL|O_TRUNC);
 
+	if (nd && (nd->flags & LOOKUP_RCU))
+		return -ECHILD;
 	ctx = nameidata_to_nfs_open_context(dentry, nd);
 	ret = PTR_ERR(ctx);
 	if (IS_ERR(ctx))
@@ -2359,9 +2379,6 @@ int nfs_permission(struct inode *inode, int mask, unsigned int flags)
 	struct rpc_cred *cred;
 	int res = 0;
 
-	if (flags & IPERM_FLAG_RCU)
-		return -ECHILD;
-
 	nfs_inc_stats(inode, NFSIOS_VFSACCESS);
 
 	if ((mask & (MAY_READ | MAY_WRITE | MAY_EXEC)) == 0)
@@ -2393,6 +2410,9 @@ force_lookup:
 	if (!NFS_PROTO(inode)->access)
 		goto out_notsup;
 
+	if (flags & IPERM_FLAG_RCU)
+		return -ECHILD;
+
 	cred = rpc_lookup_cred();
 	if (!IS_ERR(cred)) {
 		res = nfs_do_access(inode, cred, mask);
@@ -2407,6 +2427,9 @@ out:
 		inode->i_sb->s_id, inode->i_ino, mask, res);
 	return res;
 out_notsup:
+	if (flags & IPERM_FLAG_RCU)
+		return -ECHILD;
+
 	res = nfs_revalidate_inode(NFS_SERVER(inode), inode);
 	if (res == 0)
 		res = generic_permission(inode, mask, flags, NULL);
