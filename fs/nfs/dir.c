@@ -2327,7 +2327,7 @@ void nfs_access_set_mask(struct nfs_access_entry *entry, u32 access_result)
 		entry->mask |= MAY_EXEC;
 }
 
-static int nfs_do_access(struct inode *inode, struct rpc_cred *cred, int mask)
+static int nfs_do_access(struct inode *inode, struct rpc_cred *cred, int mask, int flags)
 {
 	struct nfs_access_entry cache;
 	int status;
@@ -2335,6 +2335,9 @@ static int nfs_do_access(struct inode *inode, struct rpc_cred *cred, int mask)
 	status = nfs_access_get_cached(inode, cred, &cache);
 	if (status == 0)
 		goto out;
+
+	if (flags & IPERM_FLAG_RCU)
+		return -ECHILD;
 
 	/* Be clever: ask server to check for all possible rights */
 	cache.mask = MAY_EXEC | MAY_WRITE | MAY_READ;
@@ -2371,7 +2374,7 @@ static int nfs_open_permission_mask(int openflags)
 
 int nfs_may_open(struct inode *inode, struct rpc_cred *cred, int openflags)
 {
-	return nfs_do_access(inode, cred, nfs_open_permission_mask(openflags));
+	return nfs_do_access(inode, cred, nfs_open_permission_mask(openflags), 0);
 }
 
 int nfs_permission(struct inode *inode, int mask, unsigned int flags)
@@ -2410,15 +2413,23 @@ force_lookup:
 	if (!NFS_PROTO(inode)->access)
 		goto out_notsup;
 
-	if (flags & IPERM_FLAG_RCU)
-		return -ECHILD;
-
-	cred = rpc_lookup_cred();
-	if (!IS_ERR(cred)) {
-		res = nfs_do_access(inode, cred, mask);
-		put_rpccred(cred);
-	} else
+	/* Always try fast lookups first */
+	rcu_read_lock();
+	cred = rpc_lookup_cred_nonblock();
+	if (!IS_ERR(cred))
+		res = nfs_do_access(inode, cred, mask, IPERM_FLAG_RCU);
+	else
 		res = PTR_ERR(cred);
+	rcu_read_unlock();
+	if (res == -ECHILD && !(flags & IPERM_FLAG_RCU)) {
+		/* Fast lookup failed, try the slow way */
+		cred = rpc_lookup_cred();
+		if (!IS_ERR(cred)) {
+			res = nfs_do_access(inode, cred, mask, flags);
+			put_rpccred(cred);
+		} else
+			res = PTR_ERR(cred);
+	}
 out:
 	if (!res && (mask & MAY_EXEC) && !execute_ok(inode))
 		res = -EACCES;
