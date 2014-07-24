@@ -1188,6 +1188,8 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 			|| nfs_attribute_cache_expired(inode))
 		    && !test_and_set_bit(NFS_INO_DID_FLUSH, &NFS_I(dir)->flags)
 			) {
+			if (nd && (nd->flags & LOOKUP_RCU))
+				return -ECHILD;
 			nfs_advise_use_readdirplus(dir);
 			goto out_zap_parent;
 		}
