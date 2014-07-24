@@ -72,7 +72,13 @@ struct nfs_access_entry {
 	unsigned long		jiffies;
 	struct rpc_cred *	cred;
 	int			mask;
+#ifndef __GENKSYMS__
+	/* these structures are only allocated in fs/nfs/dir.c
+	 * So there is no need to export the full definition.
+	 * Some modules use the structure but only the early fields
+	 */
 	struct rcu_head		rcu_head;
+#endif
 };
 
 struct nfs_lock_context {
