@@ -1566,13 +1566,13 @@ static int nfs_open_revalidate(struct dentry *dentry, struct nameidata *nd)
 	if (!is_atomic_open(nd) || d_mountpoint(dentry))
 		goto no_open;
 
-	parent = dget_parent(dentry);
-	dir = parent->d_inode;
-
 	/* We can't create new files in nfs_open_revalidate(), so we
 	 * optimize away revalidation of negative dentries.
 	 */
 	if (inode == NULL) {
+		parent = dget_parent(dentry);
+		dir = parent->d_inode;
+
 		if (!nfs_neg_need_reval(dir, dentry, nd))
 			ret = 1;
 		goto out;
@@ -1580,23 +1580,25 @@ static int nfs_open_revalidate(struct dentry *dentry, struct nameidata *nd)
 
 	/* NFS only supports OPEN on regular files */
 	if (!S_ISREG(inode->i_mode))
-		goto no_open_dput;
+		goto no_open;
 	openflags = nd->intent.open.flags;
 	/* We cannot do exclusive creation on a positive dentry */
 	if ((openflags & (O_CREAT|O_EXCL)) == (O_CREAT|O_EXCL))
-		goto no_open_dput;
+		goto no_open;
 	/* We can't create new files, or truncate existing ones here */
 	openflags &= ~(O_CREAT|O_EXCL|O_TRUNC);
 
 	ctx = nameidata_to_nfs_open_context(dentry, nd);
 	ret = PTR_ERR(ctx);
 	if (IS_ERR(ctx))
-		goto out;
+		return ret;
 	/*
 	 * Note: we're not holding inode->i_mutex and so may be racing with
 	 * operations that change the directory. We therefore save the
 	 * change attribute *before* we do the RPC call.
 	 */
+	parent = dget_parent(dentry);
+	dir = parent->d_inode;
 	inode = NFS_PROTO(dir)->open_context(dir, ctx, openflags, NULL);
 	if (IS_ERR(inode)) {
 		ret = PTR_ERR(inode);
@@ -1629,8 +1631,6 @@ out_put_ctx:
 	put_nfs_open_context(ctx);
 	goto out;
 
-no_open_dput:
-	dput(parent);
 no_open:
 	return nfs_lookup_revalidate(dentry, nd);
 }
