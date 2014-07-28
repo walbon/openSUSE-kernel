@@ -183,7 +183,7 @@ static void free_pgpaths(struct list_head *pgpaths, struct dm_target *ti)
 			 * handler was already detached in parse_path()
 			 * and we can skip this step.
 			 */
-			if (m->hw_handler_name &&
+			if (m->hw_handler_name && cur_hw_handler &&
 			    !strcmp(m->hw_handler_name, cur_hw_handler))
 				scsi_dh_detach(q);
 		}
