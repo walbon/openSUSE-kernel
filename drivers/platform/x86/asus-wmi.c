@@ -1294,7 +1294,7 @@ static int show_dsts(struct seq_file *m, void *data)
 	int err;
 	u32 retval = -1;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
+	if (secure_modules())
 		return -EPERM;
 
 	err = asus_wmi_get_devstate(asus, asus->debug.dev_id, &retval);
@@ -1313,7 +1313,7 @@ static int show_devs(struct seq_file *m, void *data)
 	int err;
 	u32 retval = -1;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
+	if (secure_modules())
 		return -EPERM;
 
 	err = asus_wmi_set_devstate(asus->debug.dev_id, asus->debug.ctrl_param,
@@ -1340,7 +1340,7 @@ static int show_call(struct seq_file *m, void *data)
 	union acpi_object *obj;
 	acpi_status status;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
+	if (secure_modules())
 		return -EPERM;
 
 	status = wmi_evaluate_method(ASUS_WMI_MGMT_GUID,

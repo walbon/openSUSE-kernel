@@ -25,6 +25,7 @@
 #include <linux/gfp.h>
 #include <linux/syscore_ops.h>
 #include <linux/efi.h>
+#include <linux/module.h>
 
 #include "power.h"
 
@@ -610,7 +611,7 @@ int hibernate(void)
 {
 	int error;
 
-	if (!capable(CAP_COMPROMISE_KERNEL)) {
+	if (secure_modules()) {
 		return -EPERM;
 	}
 
@@ -710,7 +711,7 @@ static int software_resume(void)
 	/*
 	 * If the user said "noresume".. bail out early.
 	 */
-	if (noresume || !capable(CAP_COMPROMISE_KERNEL))
+	if (noresume || secure_modules())
 		return 0;
 
 	/*
@@ -897,7 +898,7 @@ static ssize_t disk_store(struct kobject *kobj, struct kobj_attribute *attr,
 	char *p;
 	int mode = HIBERNATION_INVALID;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
+	if (secure_modules())
 		return -EPERM;
 
 	p = memchr(buf, '\n', n);

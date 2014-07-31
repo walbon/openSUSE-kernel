@@ -23,6 +23,8 @@
 #include <linux/console.h>
 #include <linux/cpu.h>
 #include <linux/freezer.h>
+#include <linux/module.h>
+#include <linux/efi.h>
 
 #include <asm/uaccess.h>
 
@@ -69,7 +71,7 @@ static int snapshot_open(struct inode *inode, struct file *filp)
 	struct snapshot_data *data;
 	int error;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
+	if (secure_modules())
 		return -EPERM;
 
 	mutex_lock(&pm_mutex);

@@ -13,6 +13,7 @@
 #include <linux/fs.h>
 #include <linux/capability.h>
 #include <linux/ptrace.h>
+#include <linux/module.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 #include <asm/hypervisor.h>
@@ -120,7 +121,7 @@ static ssize_t write_mem(struct file *file, const char __user *buf,
 	if (p != *ppos)
 		return -EFBIG;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
+	if (secure_modules())
 		return -EPERM;
 
 	while (count > 0) {

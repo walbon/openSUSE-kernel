@@ -729,7 +729,7 @@ fail:
 	return status;
 }
 
-static int get_secure_boot(efi_system_table_t *_table)
+static int get_secure_boot(void)
 {
 	u8 sb, setup;
 	unsigned long datasize = sizeof(sb);
@@ -758,6 +758,7 @@ static int get_secure_boot(efi_system_table_t *_table)
 
 	return 1;
 }
+
 
 /*
  * Because the x86 boot code expects to be passed a boot_params we
@@ -1067,7 +1068,7 @@ struct boot_params *efi_main(void *handle, efi_system_table_t *_table,
 	if (sys_table->hdr.signature != EFI_SYSTEM_TABLE_SIGNATURE)
 		goto fail;
 
-	boot_params->secure_boot = get_secure_boot(sys_table);
+	boot_params->secure_boot = get_secure_boot();
 
 	setup_graphics(boot_params);
 

@@ -137,9 +137,9 @@ static bool sig_check = false;
 module_param(sig_check, bool, 0644);
 
 #ifdef CONFIG_MODULE_SIG_FORCE
-bool sig_enforce = true;
+static bool sig_enforce = true;
 #else
-bool sig_enforce = false;
+static bool sig_enforce = false;
 
 static int param_set_bool_enable_only(const char *val,
 				      const struct kernel_param *kp)
@@ -3689,3 +3689,20 @@ int module_get_iter_tracepoints(struct tracepoint_iter *iter)
 	return found;
 }
 #endif
+
+#ifdef CONFIG_MODULE_SIG
+void enforce_signed_modules(void)
+{
+	sig_enforce = true;
+}
+#endif
+
+bool secure_modules(void)
+{
+#ifdef CONFIG_MODULE_SIG
+	return (sig_enforce || modules_disabled);
+#else
+	return modules_disabled;
+#endif
+}
+EXPORT_SYMBOL(secure_modules);

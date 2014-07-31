@@ -204,6 +204,12 @@ const struct exception_table_entry *search_exception_tables(unsigned long add);
 
 struct notifier_block;
 
+#ifdef CONFIG_MODULE_SIG
+extern void enforce_signed_modules(void);
+#else
+static inline void enforce_signed_modules(void) {};
+#endif
+
 #ifdef CONFIG_MODULES
 
 extern int modules_disabled; /* for sysctl */
@@ -593,6 +599,8 @@ extern void print_modules(void);
 extern void module_update_tracepoints(void);
 extern int module_get_iter_tracepoints(struct tracepoint_iter *iter);
 
+extern bool secure_modules(void);
+
 #else /* !CONFIG_MODULES... */
 #define EXPORT_SYMBOL(sym)
 #define EXPORT_SYMBOL_GPL(sym)
@@ -716,6 +724,11 @@ static inline void module_update_tracepoints(void)
 static inline int module_get_iter_tracepoints(struct tracepoint_iter *iter)
 {
 	return 0;
+}
+
+static inline bool secure_modules(void)
+{
+	return false;
 }
 #endif /* CONFIG_MODULES */
 

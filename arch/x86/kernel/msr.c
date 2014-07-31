@@ -104,7 +104,7 @@ static ssize_t msr_write(struct file *file, const char __user *buf,
 	int err = 0;
 	ssize_t bytes = 0;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
+	if (secure_modules())
 		return -EPERM;
 
 	if (count % 8)
@@ -154,7 +154,7 @@ static long msr_ioctl(struct file *file, unsigned int ioc, unsigned long arg)
 			err = -EBADF;
 			break;
 		}
-		if (!capable(CAP_COMPROMISE_KERNEL)) {
+		if (secure_modules()) {
 			err = -EPERM;
 			break;
 		}

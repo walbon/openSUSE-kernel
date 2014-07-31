@@ -35,6 +35,7 @@
 #include <linux/kmsg_dump.h>
 #include <linux/syscore_ops.h>
 #include <linux/sysctl.h>
+#include <linux/module.h>
 
 #include <asm/page.h>
 #include <asm/uaccess.h>
@@ -993,7 +994,14 @@ SYSCALL_DEFINE4(kexec_load, unsigned long, entry, unsigned long, nr_segments,
 	int result;
 
 	/* We only trust the superuser with rebooting the system. */
-	if (!capable(CAP_SYS_BOOT) || !capable(CAP_COMPROMISE_KERNEL))
+	if (!capable(CAP_SYS_BOOT))
+		return -EPERM;
+
+	/*
+	 * kexec can be used to circumvent module loading restrictions, so
+	 * prevent loading in that case
+	 */
+	if (secure_modules())
 		return -EPERM;
 
 	/*

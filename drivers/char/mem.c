@@ -27,6 +27,7 @@
 #include <linux/splice.h>
 #include <linux/pfn.h>
 #include <linux/io.h>
+#include <linux/module.h>
 
 #include <asm/uaccess.h>
 
@@ -161,11 +162,11 @@ static ssize_t write_mem(struct file *file, const char __user *buf,
 	unsigned long copied;
 	void *ptr;
 
+	if (secure_modules())
+		return -EPERM;
+
 	if (p != *ppos)
 		return -EFBIG;
-
-	if (!capable(CAP_COMPROMISE_KERNEL))
-		return -EPERM;
 
 	if (!valid_phys_addr_range(p, count))
 		return -EFAULT;
@@ -550,7 +551,7 @@ static ssize_t write_kmem(struct file *file, const char __user *buf,
 	char * kbuf; /* k-addr because vwrite() takes vmlist_lock rwlock */
 	int err = 0;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
+	if (secure_modules())
 		return -EPERM;
 
 	if (p < (unsigned long) high_memory) {
@@ -620,7 +621,7 @@ static ssize_t write_port(struct file *file, const char __user *buf,
 	unsigned long i = *ppos;
 	const char __user * tmp = buf;
 
-	if (!capable(CAP_COMPROMISE_KERNEL))
+	if (secure_modules())
 		return -EPERM;
 
 	if (!access_ok(VERIFY_READ, buf, count))
