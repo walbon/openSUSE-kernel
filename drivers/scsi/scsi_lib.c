@@ -1651,7 +1651,7 @@ struct scsi_device *scsi_device_from_queue(struct request_queue *q)
 {
 	struct scsi_device *sdev = NULL;
 
-	if (q->request_fn == scsi_request_fn)
+	if (q && q->request_fn == scsi_request_fn)
 		sdev = q->queuedata;
 
 	return sdev;

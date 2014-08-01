@@ -548,7 +548,7 @@ const char *scsi_dh_attached_handler_name(struct request_queue *q, gfp_t gfp)
 	const char *handler_name = NULL;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	sdev = q->queuedata;
+	sdev = scsi_device_from_queue(q);
 	if (!sdev || !get_device(&sdev->sdev_gendev))
 		sdev = NULL;
 	spin_unlock_irqrestore(q->queue_lock, flags);
