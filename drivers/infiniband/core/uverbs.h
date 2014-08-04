@@ -215,6 +215,6 @@ IB_UVERBS_DECLARE_CMD(modify_xrc_rcv_qp);
 IB_UVERBS_DECLARE_CMD(query_xrc_rcv_qp);
 IB_UVERBS_DECLARE_CMD(reg_xrc_rcv_qp);
 IB_UVERBS_DECLARE_CMD(unreg_xrc_rcv_qp);
-
+IB_UVERBS_DECLARE_CMD(kwrite_mmio);
 
 #endif /* UVERBS_H */

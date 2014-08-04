@@ -90,6 +90,7 @@ enum {
 	IB_USER_VERBS_CMD_QUERY_XRC_RCV_QP,
 	IB_USER_VERBS_CMD_REG_XRC_RCV_QP,
 	IB_USER_VERBS_CMD_UNREG_XRC_RCV_QP,
+	IB_USER_VERBS_CMD_KWRITE_MMIO,
 };
 
 /*
@@ -795,6 +796,17 @@ struct ib_uverbs_unreg_xrc_rcv_qp {
 	__u32 xrc_domain_handle;
 	__u32 qp_num;
 	__u64 driver_data[0];
+};
+
+union ib_uverbs_kwrite_mmio_data {
+	__u32 data32;
+	__u64 data64;
+};
+
+struct ib_uverbs_kwrite_mmio {
+	__u64  offset;
+	__u8   data_length;
+	union ib_uverbs_kwrite_mmio_data value;
 };
 
 

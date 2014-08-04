@@ -73,6 +73,7 @@ struct mlx4_ib_ucontext {
 	struct mlx4_uar		uar;
 	struct list_head	db_page_list;
 	struct mutex		db_page_mutex;
+	void __iomem		*uar_mmap;
 };
 
 struct mlx4_ib_pd {
@@ -744,5 +745,12 @@ void mlx4_ib_device_unregister_sysfs(struct mlx4_ib_dev *device);
 
 __be64 mlx4_ib_gen_node_guid(void);
 
+
+int mlx4_ib_kwrite_mmio32(struct ib_ucontext *ibcontext,
+				u64 offset,
+				u32 value);
+int mlx4_ib_kwrite_mmio64(struct ib_ucontext *ibcontext,
+				u64 offset,
+				u64 value);
 
 #endif /* MLX4_IB_H */

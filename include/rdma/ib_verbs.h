@@ -1234,6 +1234,12 @@ struct ib_device {
 	int 			   (*unreg_xrc_rcv_qp)(struct ib_xrcd *xrcd,
 						       void *context,
 						       u32 qp_num);
+	int			(*kwrite_mmio32)(struct ib_ucontext *ibcontext,
+						u64 offset,
+						u32 value);
+	int			(*kwrite_mmio64)(struct ib_ucontext *ibcontext,
+						u64 offset,
+						u64 value);
 
 	struct ib_dma_mapping_ops   *dma_ops;
 
