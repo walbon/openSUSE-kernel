@@ -2724,7 +2724,10 @@ struct qla_hw_data {
 #define DT_ISP8021			BIT_14
 #define DT_ISP2031			BIT_15
 #define DT_ISP8031			BIT_16
-#define DT_ISP_LAST			(DT_ISP8031 << 1)
+#define DT_ISPFX00                      BIT_17
+#define DT_ISP_LAST			(DT_ISPFX00 << 1)
+
+#define QLAFX00_MAX_CANQUEUE		1024
 
 #define DT_T10_PI                       BIT_25
 #define DT_IIDMA                        BIT_26
@@ -2752,6 +2755,7 @@ struct qla_hw_data {
 #define IS_QLA82XX(ha)	(DT_MASK(ha) & DT_ISP8021)
 #define IS_QLA2031(ha)	(DT_MASK(ha) & DT_ISP2031)
 #define IS_QLA8031(ha)	(DT_MASK(ha) & DT_ISP8031)
+#define IS_QLAFX00(ha)  (DT_MASK(ha) & DT_ISPFX00)
 
 #define IS_QLA23XX(ha)  (IS_QLA2300(ha) || IS_QLA2312(ha) || IS_QLA2322(ha) || \
 			IS_QLA6312(ha) || IS_QLA6322(ha))
