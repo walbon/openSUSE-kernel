@@ -1862,7 +1862,7 @@ static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
 static void get_scan_count(struct zone *zone, struct scan_control *sc,
 					unsigned long *nr)
 {
-	unsigned long anon, file, free;
+	unsigned long anon, file;
 	unsigned long inactive_file, active_file;
 	unsigned long anon_prio, file_prio;
 	unsigned long ap, fp;
@@ -1927,8 +1927,14 @@ static void get_scan_count(struct zone *zone, struct scan_control *sc,
 	}
 
 	if (scanning_global_lru(sc)) {
-		free  = zone_page_state(zone, NR_FREE_PAGES);
-		if (unlikely(file + free <= high_wmark_pages(zone))) {
+		unsigned long zonefile;
+		unsigned long zonefree;
+
+		zonefree = zone_page_state(zone, NR_FREE_PAGES);
+		zonefile = zone_page_state(zone, NR_ACTIVE_FILE) +
+			   zone_page_state(zone, NR_INACTIVE_FILE);
+
+		if (unlikely(zonefile + zonefree <= high_wmark_pages(zone))) {
 			/*
 			 * If we have very few page cache pages, force-scan
 			 * anon pages.
