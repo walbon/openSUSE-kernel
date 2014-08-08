@@ -15,6 +15,7 @@
 #include <linux/thread_info.h>
 #include <linux/syscalls.h>
 #include <linux/bitmap.h>
+#include <linux/module.h>
 #include <asm/syscalls.h>
 #include <xen/interface/physdev.h>
 

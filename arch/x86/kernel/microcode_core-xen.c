@@ -92,8 +92,7 @@ static int do_microcode_update(const void __user *ubuf, size_t len)
 
 static int microcode_open(struct inode *inode, struct file *file)
 {
-	return (capable(CAP_SYS_RAWIO) && !secure_modules())
-		? nonseekable_open(inode, file) : -EPERM;
+	return capable(CAP_SYS_RAWIO) ? nonseekable_open(inode, file) : -EPERM;
 }
 
 static ssize_t microcode_write(struct file *file, const char __user *buf,

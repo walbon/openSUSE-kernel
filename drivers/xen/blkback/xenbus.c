@@ -20,6 +20,7 @@
 #include <stdarg.h>
 #include <linux/module.h>
 #include <linux/kthread.h>
+#include <linux/loop.h>
 #include "common.h"
 #include "../core/domctl.h"
 
@@ -247,7 +248,13 @@ static void blkback_discard(struct xenbus_transaction xbt,
 
 	if (!IS_ERR(type)) {
 		if (strncmp(type, "file", 4) == 0) {
-			state = 1;
+			const struct loop_device *lo
+				= blkif->vbd.bdev->bd_disk->private_data;
+			const struct file *file = lo->lo_backing_file;
+
+			if (file->f_op && file->f_op->fallocate
+			    && !lo->lo_encrypt_key_size)
+				state = 1;
 			blkif->blk_backend_type = BLKIF_BACKEND_FILE;
 		}
 		if (strncmp(type, "phy", 3) == 0) {

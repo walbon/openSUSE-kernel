@@ -392,10 +392,12 @@ static void dispatch_discard(blkif_t *blkif, struct blkif_request_discard *req)
 					   secure);
 	} else if (blkif->blk_backend_type == BLKIF_BACKEND_FILE) {
 		/* punch a hole in the backing file */
-		struct loop_device *lo = preq.bdev->bd_disk->private_data;
+		const struct loop_device *lo
+			= preq.bdev->bd_disk->private_data;
 		struct file *file = lo->lo_backing_file;
 
-		if (file->f_op && file->f_op->fallocate)
+		if (file->f_op && file->f_op->fallocate
+		    && !lo->lo_encrypt_key_size)
 			err = file->f_op->fallocate(file,
 				FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE,
 				lo->lo_offset + (preq.sector_number << 9),
