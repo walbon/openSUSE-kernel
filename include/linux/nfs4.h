@@ -151,7 +151,7 @@
 /* An NFS4 sessions server must support at least NFS4_MAX_OPS operations.
  * If a compound requires more operations, adjust NFS4_MAX_OPS accordingly.
  */
-#define NFS4_MAX_OPS   8
+#define NFS4_MAX_OPS   9
 
 /* Our NFS4 client back channel server only wants the cb_sequene and the
  * actual operation per compound
