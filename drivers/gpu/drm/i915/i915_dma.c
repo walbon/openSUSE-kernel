@@ -1450,6 +1450,22 @@ static void i915_dump_device_info(struct drm_i915_private *dev_priv)
 }
 
 /**
+ * intel_early_sanitize_regs - clean up BIOS state
+ * @dev: DRM device
+ *
+ * This function must be called before we do any I915_READ or I915_WRITE. Its
+ * purpose is to clean up any state left by the BIOS that may affect us when
+ * reading and/or writing registers.
+ */
+static void intel_early_sanitize_regs(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	if (IS_HASWELL(dev))
+		I915_WRITE_NOTRACE(FPGA_DBG, FPGA_DBG_RM_NOCLAIM);
+}
+
+/**
  * i915_driver_load - setup chip and create an initial config
  * @dev: DRM device
  * @flags: startup flags
@@ -1544,6 +1560,8 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 		ret = -EIO;
 		goto put_gmch;
 	}
+
+	intel_early_sanitize_regs(dev);
 
 	aperture_size = dev_priv->mm.gtt->gtt_mappable_entries << PAGE_SHIFT;
 	dev_priv->mm.gtt_base_addr = dev_priv->mm.gtt->gma_bus_addr;
