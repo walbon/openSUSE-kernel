@@ -1184,6 +1184,7 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 	    nfs_check_verifier(dir, dentry, nd && (nd->flags & LOOKUP_RCU))) {
 
 		if (nfs_server_capable(dir, NFS_CAP_READDIRPLUS)
+		    && !(nd && (nd->flags & LOOKUP_JUMPED))
 		    && ((NFS_I(inode)->cache_validity & NFS_INO_INVALID_ATTR)
 			|| nfs_attribute_cache_expired(inode))
 		    && !test_and_set_bit(NFS_INO_DID_FLUSH, &NFS_I(dir)->flags)
