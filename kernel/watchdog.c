@@ -516,14 +516,11 @@ static void watchdog_enable_all_cpus(void)
 
 	watchdog_enabled = 0;
 
-	for_each_online_cpu(cpu) {
-		preempt_disable();
+	for_each_online_cpu(cpu)
 		if (!watchdog_enable(cpu))
 			/* if any cpu succeeds, watchdog is considered
 			   enabled for the system */
 			watchdog_enabled = 1;
-		preempt_enable();
-	}
 
 	if (!watchdog_enabled)
 		printk(KERN_ERR "watchdog: failed to be enabled on some cpus\n");
@@ -534,11 +531,8 @@ static void watchdog_disable_all_cpus(void)
 {
 	int cpu;
 
-	for_each_online_cpu(cpu) {
-		preempt_disable();
+	for_each_online_cpu(cpu)
 		watchdog_disable(cpu);
-		preempt_enable();
-	}
 
 	/* if all watchdogs are disabled, then they are disabled for the system */
 	watchdog_enabled = 0;
@@ -562,12 +556,10 @@ int proc_dowatchdog(struct ctl_table *table, int write,
 	if (ret || !write)
 		goto out;
 
-	get_online_cpus();
 	if (watchdog_enabled && watchdog_thresh)
 		watchdog_enable_all_cpus();
 	else
 		watchdog_disable_all_cpus();
-	put_online_cpus();
 
 out:
 	mutex_unlock(&watchdog_thresh_mutex);
