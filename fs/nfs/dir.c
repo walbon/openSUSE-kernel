@@ -1192,7 +1192,7 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 			if (nd && (nd->flags & LOOKUP_RCU))
 				return -ECHILD;
 			nfs_advise_use_readdirplus(dir);
-			goto out_zap_parent;
+			nfs_zap_caches(dir);
 		}
 
 		if (nfs_lookup_verify_inode(inode, nd)) {
