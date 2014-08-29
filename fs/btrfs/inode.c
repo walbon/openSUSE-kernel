@@ -759,8 +759,12 @@ retry:
 						ins.offset,
 						BTRFS_ORDERED_COMPRESSED,
 						async_extent->compress_type);
-		if (ret)
+		if (ret) {
+			btrfs_drop_extent_cache(inode, async_extent->start,
+						async_extent->start +
+						async_extent->ram_size - 1, 0);
 			goto out_free_reserve;
+		}
 
 		/*
 		 * clear dirty, set writeback and unlock the pages.
@@ -963,7 +967,7 @@ static noinline int __cow_file_range(struct btrfs_trans_handle *trans,
 		ret = btrfs_add_ordered_extent(inode, start, ins.objectid,
 					       ram_size, cur_alloc_size, 0);
 		if (ret)
-			goto out_reserve;
+			goto out_drop_extent_cache;
 
 		if (root->root_key.objectid ==
 		    BTRFS_DATA_RELOC_TREE_OBJECTID) {
@@ -971,7 +975,7 @@ static noinline int __cow_file_range(struct btrfs_trans_handle *trans,
 						      cur_alloc_size);
 			if (ret) {
 				btrfs_abort_transaction(trans, root, ret);
-				goto out_reserve;
+				goto out_drop_extent_cache;
 			}
 		}
 
@@ -1000,6 +1004,8 @@ static noinline int __cow_file_range(struct btrfs_trans_handle *trans,
 out:
 	return ret;
 
+out_drop_extent_cache:
+	btrfs_drop_extent_cache(inode, start, start + ram_size - 1, 0);
 out_reserve:
 	btrfs_free_reserved_extent(root, ins.objectid, ins.offset);
 out_unlock:
