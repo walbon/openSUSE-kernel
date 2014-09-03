@@ -1956,8 +1956,9 @@ static int _nfs4_do_setattr(struct inode *inode, struct rpc_cred *cred,
 			.l_owner = current->files,
 			.l_pid = current->tgid,
 		};
-		nfs4_select_rw_stateid(&arg.stateid, state, FMODE_WRITE,
-				&lockowner);
+		if (nfs4_select_rw_stateid(&arg.stateid, state, FMODE_WRITE,
+					   &lockowner) == -EIO)
+			return -EBADF;
 	} else if (nfs4_copy_delegation_stateid(&arg.stateid, inode,
 				FMODE_WRITE)) {
 		/* Use that stateid */
@@ -3293,7 +3294,7 @@ static int nfs4_proc_pathconf(struct nfs_server *server, struct nfs_fh *fhandle,
 	return err;
 }
 
-void nfs4_set_rw_stateid(nfs4_stateid *stateid,
+int nfs4_set_rw_stateid(nfs4_stateid *stateid,
 		const struct nfs_open_context *ctx,
 		const struct nfs_lock_context *l_ctx,
 		fmode_t fmode)
@@ -3302,13 +3303,40 @@ void nfs4_set_rw_stateid(nfs4_stateid *stateid,
 
 	if (ctx->state == NULL) {
 		nfs4_stateid_copy(stateid, &zero_stateid);
-		return;
+		return 0;
 	}
 	if (l_ctx != NULL)
 		lockowner = &l_ctx->lockowner;
-	nfs4_select_rw_stateid(stateid, ctx->state, fmode, lockowner);
+	return nfs4_select_rw_stateid(stateid, ctx->state, fmode, lockowner);
 }
 EXPORT_SYMBOL_GPL(nfs4_set_rw_stateid);
+
+static bool nfs4_stateid_is_current(nfs4_stateid *stateid,
+		const struct nfs_open_context *ctx,
+		const struct nfs_lock_context *l_ctx,
+		fmode_t fmode)
+{
+	nfs4_stateid current_stateid;
+
+	if (nfs4_set_rw_stateid(&current_stateid, ctx, l_ctx, fmode))
+		return false;
+	return nfs4_stateid_match(stateid, &current_stateid);
+}
+
+static bool nfs4_error_stateid_expired(int err)
+{
+	switch (err) {
+	case -NFS4ERR_DELEG_REVOKED:
+	case -NFS4ERR_ADMIN_REVOKED:
+	case -NFS4ERR_BAD_STATEID:
+	case -NFS4ERR_STALE_STATEID:
+	case -NFS4ERR_OLD_STATEID:
+	case -NFS4ERR_OPENMODE:
+	case -NFS4ERR_EXPIRED:
+		return true;
+	}
+	return false;
+}
 
 void __nfs4_read_done_cb(struct nfs_read_data *data)
 {
@@ -3330,6 +3358,20 @@ static int nfs4_read_done_cb(struct rpc_task *task, struct nfs_read_data *data)
 	return 0;
 }
 
+static bool nfs4_read_stateid_changed(struct rpc_task *task,
+		struct nfs_readargs *args)
+{
+
+	if (!nfs4_error_stateid_expired(task->tk_status) ||
+		nfs4_stateid_is_current(&args->stateid,
+				args->context,
+				args->lock_context,
+				FMODE_READ))
+		return false;
+	rpc_restart_call_prepare(task);
+	return true;
+}
+
 static int nfs4_read_done(struct rpc_task *task, struct nfs_read_data *data)
 {
 
@@ -3337,7 +3379,8 @@ static int nfs4_read_done(struct rpc_task *task, struct nfs_read_data *data)
 
 	if (!nfs4_sequence_done(task, &data->res.seq_res))
 		return -EAGAIN;
-
+	if (nfs4_read_stateid_changed(task, &data->args))
+		return -EAGAIN;
 	return data->read_done_cb ? data->read_done_cb(task, data) :
 				    nfs4_read_done_cb(task, data);
 }
@@ -3380,9 +3423,25 @@ static int nfs4_write_done_cb(struct rpc_task *task, struct nfs_write_data *data
 	return 0;
 }
 
+static bool nfs4_write_stateid_changed(struct rpc_task *task,
+		struct nfs_writeargs *args)
+{
+
+	if (!nfs4_error_stateid_expired(task->tk_status) ||
+		nfs4_stateid_is_current(&args->stateid,
+				args->context,
+				args->lock_context,
+				FMODE_WRITE))
+		return false;
+	rpc_restart_call_prepare(task);
+	return true;
+}
+
 static int nfs4_write_done(struct rpc_task *task, struct nfs_write_data *data)
 {
 	if (!nfs4_sequence_done(task, &data->res.seq_res))
+		return -EAGAIN;
+	if (nfs4_write_stateid_changed(task, &data->args))
 		return -EAGAIN;
 	return data->write_done_cb ? data->write_done_cb(task, data) :
 		nfs4_write_done_cb(task, data);

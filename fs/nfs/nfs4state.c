@@ -870,7 +870,8 @@ int nfs4_set_lock_state(struct nfs4_state *state, struct file_lock *fl)
 	return 0;
 }
 
-static int nfs4_copy_lock_stateid(nfs4_stateid *dst, struct nfs4_state *state,
+static int nfs4_copy_lock_stateid(nfs4_stateid *dst,
+		struct nfs4_state *state,
 		const struct nfs_lockowner *lockowner)
 {
 	struct nfs4_lock_state *lsp;
@@ -895,6 +896,10 @@ static int nfs4_copy_lock_stateid(nfs4_stateid *dst, struct nfs4_state *state,
 	    (lsp->ls_flags & (NFS_LOCK_INITIALIZED | NFS_LOCK_LOST)) != 0) {
 		nfs4_stateid_copy(dst, &lsp->ls_stateid);
 		ret = 0;
+		smp_rmb();
+		if (lsp->ls_seqid.sequence &&
+		    !list_empty(&lsp->ls_seqid.sequence->list))
+			ret = -EWOULDBLOCK;
 	}
 	spin_unlock(&state->state_lock);
 	nfs4_put_lock_state(lsp);
@@ -902,32 +907,42 @@ out:
 	return ret;
 }
 
-static void nfs4_copy_open_stateid(nfs4_stateid *dst, struct nfs4_state *state)
+static int nfs4_copy_open_stateid(nfs4_stateid *dst, struct nfs4_state *state)
 {
+	int ret;
 	int seq;
 
 	do {
 		seq = read_seqbegin(&state->seqlock);
 		nfs4_stateid_copy(dst, &state->stateid);
+		ret = 0;
+		smp_rmb();
+		if (state->owner->so_seqid.sequence &&
+		    !list_empty(&state->owner->so_seqid.sequence->list))
+			ret = -EWOULDBLOCK;
 	} while (read_seqretry(&state->seqlock, seq));
+	return ret;
 }
 
 /*
  * Byte-range lock aware utility to initialize the stateid of read/write
  * requests.
  */
-void nfs4_select_rw_stateid(nfs4_stateid *dst, struct nfs4_state *state,
+int nfs4_select_rw_stateid(nfs4_stateid *dst, struct nfs4_state *state,
 		fmode_t fmode, const struct nfs_lockowner *lockowner)
 {
 	int ret = nfs4_copy_lock_stateid(dst, state, lockowner);
 	if (ret == -EIO)
 		/* A lost lock - don't even consider delegations */
 		goto out;
-	if (nfs4_copy_delegation_stateid(dst, state->inode, fmode))
-		return;
-out:
+	if (nfs4_copy_delegation_stateid(dst, state->inode, fmode)) {
+		ret = 0;
+		goto out;
+	}
 	if (ret)
-		nfs4_copy_open_stateid(dst, state);
+		ret = nfs4_copy_open_stateid(dst, state);
+out:
+	return ret;
 }
 
 /* Check the lock access would try to use a lost lock stateid */
