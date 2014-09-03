@@ -870,31 +870,56 @@ int nfs4_set_lock_state(struct nfs4_state *state, struct file_lock *fl)
 	return 0;
 }
 
-/*
- * Byte-range lock aware utility to initialize the stateid of read/write
- * requests.
- */
-void nfs4_select_rw_stateid(nfs4_stateid *dst, struct nfs4_state *state, fl_owner_t fl_owner, pid_t fl_pid)
+static int nfs4_copy_lock_stateid(nfs4_stateid *dst, struct nfs4_state *state,
+		fl_owner_t fl_owner, pid_t fl_pid)
 {
 	struct nfs4_lock_state *lsp;
+	int ret = -ENOENT;
+
+	if (test_bit(LK_STATE_IN_USE, &state->flags) == 0)
+		goto out;
+
+	spin_lock(&state->state_lock);
+	lsp = __nfs4_find_lock_state(state, fl_owner, fl_pid, NFS4_ANY_LOCK_TYPE);
+	if (lsp && (lsp->ls_flags & NFS_LOCK_LOST))
+		ret = -EIO;
+	else if (lsp != NULL &&
+	    (lsp->ls_flags & (NFS_LOCK_INITIALIZED | NFS_LOCK_LOST)) != 0) {
+		nfs4_stateid_copy(dst, &lsp->ls_stateid);
+		ret = 0;
+	}
+	spin_unlock(&state->state_lock);
+	nfs4_put_lock_state(lsp);
+out:
+	return ret;
+}
+
+static void nfs4_copy_open_stateid(nfs4_stateid *dst, struct nfs4_state *state)
+{
 	int seq;
 
 	do {
 		seq = read_seqbegin(&state->seqlock);
 		nfs4_stateid_copy(dst, &state->stateid);
 	} while (read_seqretry(&state->seqlock, seq));
-	if (test_bit(LK_STATE_IN_USE, &state->flags) == 0)
-		return;
-	if (test_bit(NFS_DELEGATED_STATE, &state->flags) != 0)
-		return;
+}
 
-	spin_lock(&state->state_lock);
-	lsp = __nfs4_find_lock_state(state, fl_owner, fl_pid, NFS4_ANY_LOCK_TYPE);
-	if (lsp != NULL &&
-	    (lsp->ls_flags & (NFS_LOCK_INITIALIZED | NFS_LOCK_LOST)) != 0)
-		nfs4_stateid_copy(dst, &lsp->ls_stateid);
-	spin_unlock(&state->state_lock);
-	nfs4_put_lock_state(lsp);
+/*
+ * Byte-range lock aware utility to initialize the stateid of read/write
+ * requests.
+ */
+void nfs4_select_rw_stateid(nfs4_stateid *dst, struct nfs4_state *state,
+		fmode_t fmode, fl_owner_t fl_owner, pid_t fl_pid)
+{
+	int ret = nfs4_copy_lock_stateid(dst, state, fl_owner, fl_pid);
+	if (ret == -EIO)
+		/* A lost lock - don't even consider delegations */
+		goto out;
+	if (nfs4_copy_delegation_stateid(dst, state->inode, fmode))
+		return;
+out:
+	if (ret)
+		nfs4_copy_open_stateid(dst, state);
 }
 
 /* Check the lock access would try to use a lost lock stateid */
