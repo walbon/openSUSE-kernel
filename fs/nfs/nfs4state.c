@@ -896,10 +896,6 @@ static int nfs4_copy_lock_stateid(nfs4_stateid *dst,
 	    (lsp->ls_flags & (NFS_LOCK_INITIALIZED | NFS_LOCK_LOST)) != 0) {
 		nfs4_stateid_copy(dst, &lsp->ls_stateid);
 		ret = 0;
-		smp_rmb();
-		if (lsp->ls_seqid.sequence &&
-		    !list_empty(&lsp->ls_seqid.sequence->list))
-			ret = -EWOULDBLOCK;
 	}
 	spin_unlock(&state->state_lock);
 	nfs4_put_lock_state(lsp);
@@ -907,21 +903,14 @@ out:
 	return ret;
 }
 
-static int nfs4_copy_open_stateid(nfs4_stateid *dst, struct nfs4_state *state)
+static void nfs4_copy_open_stateid(nfs4_stateid *dst, struct nfs4_state *state)
 {
-	int ret;
 	int seq;
 
 	do {
 		seq = read_seqbegin(&state->seqlock);
 		nfs4_stateid_copy(dst, &state->stateid);
-		ret = 0;
-		smp_rmb();
-		if (state->owner->so_seqid.sequence &&
-		    !list_empty(&state->owner->so_seqid.sequence->list))
-			ret = -EWOULDBLOCK;
 	} while (read_seqretry(&state->seqlock, seq));
-	return ret;
 }
 
 /*
@@ -940,7 +929,8 @@ int nfs4_select_rw_stateid(nfs4_stateid *dst, struct nfs4_state *state,
 		goto out;
 	}
 	if (ret)
-		ret = nfs4_copy_open_stateid(dst, state);
+		nfs4_copy_open_stateid(dst, state);
+	ret = 0;
 out:
 	return ret;
 }
