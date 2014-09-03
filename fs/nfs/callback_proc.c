@@ -100,8 +100,7 @@ out:
 
 int nfs4_validate_delegation_stateid(struct nfs_delegation *delegation, const nfs4_stateid *stateid)
 {
-	if (delegation == NULL || memcmp(delegation->stateid.data, stateid->data,
-					 sizeof(delegation->stateid.data)) != 0)
+	if (delegation == NULL || !nfs4_stateid_match(&delegation->stateid, stateid))
 		return 0;
 	return 1;
 }
@@ -293,10 +292,10 @@ int nfs41_validate_delegation_stateid(struct nfs_delegation *delegation, const n
 	if (delegation == NULL)
 		return 0;
 
-	if (stateid->stateid.seqid != 0)
+	if (stateid->seqid != 0)
 		return 0;
-	if (memcmp(&delegation->stateid.stateid.other,
-		   &stateid->stateid.other,
+	if (memcmp(&delegation->stateid.other,
+		   &stateid->other,
 		   NFS4_STATEID_OTHER_SIZE))
 		return 0;
 
