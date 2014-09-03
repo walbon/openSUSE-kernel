@@ -1446,28 +1446,6 @@ static void encode_putrootfh(struct xdr_stream *xdr, struct compound_hdr *hdr)
 	hdr->replen += decode_putrootfh_maxsz;
 }
 
-static void encode_stateid(struct xdr_stream *xdr,
-		const struct nfs_open_context *ctx,
-		const struct nfs_lock_context *l_ctx,
-		fmode_t fmode,
-		int zero_seqid)
-{
-	nfs4_stateid stateid;
-
-	if (ctx->state != NULL) {
-		const struct nfs_lockowner *lockowner = NULL;
-
-		if (l_ctx != NULL)
-			lockowner = &l_ctx->lockowner;
-		nfs4_select_rw_stateid(&stateid, ctx->state,
-				fmode, lockowner);
-		if (zero_seqid)
-			stateid.seqid = 0;
-		encode_nfs4_stateid(xdr, &stateid);
-	} else
-		encode_nfs4_stateid(xdr, &zero_stateid);
-}
-
 static void encode_read(struct xdr_stream *xdr, const struct nfs_readargs *args, struct compound_hdr *hdr)
 {
 	__be32 *p;
@@ -1475,8 +1453,7 @@ static void encode_read(struct xdr_stream *xdr, const struct nfs_readargs *args,
 	p = reserve_space(xdr, 4);
 	*p = cpu_to_be32(OP_READ);
 
-	encode_stateid(xdr, args->context, args->lock_context,
-			FMODE_READ, hdr->minorversion);
+	encode_nfs4_stateid(xdr, &args->stateid);
 
 	p = reserve_space(xdr, 12);
 	p = xdr_encode_hyper(p, args->offset);
@@ -1663,8 +1640,7 @@ static void encode_write(struct xdr_stream *xdr, const struct nfs_writeargs *arg
 	p = reserve_space(xdr, 4);
 	*p = cpu_to_be32(OP_WRITE);
 
-	encode_stateid(xdr, args->context, args->lock_context,
-			FMODE_WRITE, hdr->minorversion);
+	encode_nfs4_stateid(xdr, &args->stateid);
 
 	p = reserve_space(xdr, 16);
 	p = xdr_encode_hyper(p, args->offset);

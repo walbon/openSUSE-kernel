@@ -3293,6 +3293,23 @@ static int nfs4_proc_pathconf(struct nfs_server *server, struct nfs_fh *fhandle,
 	return err;
 }
 
+void nfs4_set_rw_stateid(nfs4_stateid *stateid,
+		const struct nfs_open_context *ctx,
+		const struct nfs_lock_context *l_ctx,
+		fmode_t fmode)
+{
+	const struct nfs_lockowner *lockowner = NULL;
+
+	if (ctx->state == NULL) {
+		nfs4_stateid_copy(stateid, &zero_stateid);
+		return;
+	}
+	if (l_ctx != NULL)
+		lockowner = &l_ctx->lockowner;
+	nfs4_select_rw_stateid(stateid, ctx->state, fmode, lockowner);
+}
+EXPORT_SYMBOL_GPL(nfs4_set_rw_stateid);
+
 void __nfs4_read_done_cb(struct nfs_read_data *data)
 {
 	nfs_invalidate_atime(data->inode);

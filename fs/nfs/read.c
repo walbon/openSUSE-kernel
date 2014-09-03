@@ -459,6 +459,9 @@ void nfs_read_prepare(struct rpc_task *task, void *calldata)
 #if defined(CONFIG_NFS_V4)
 	if (nfs4_lock_lost(data->args.context, data->args.lock_context))
 		rpc_exit(task, -EIO);
+	else
+		nfs4_set_rw_stateid(&data->args.stateid, data->args.context,
+				    data->args.lock_context, FMODE_READ);
 #endif
 }
 
