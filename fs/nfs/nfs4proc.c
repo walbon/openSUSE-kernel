@@ -802,6 +802,7 @@ static void nfs4_init_opendata_res(struct nfs4_opendata *p)
 	p->o_res.seqid = p->o_arg.seqid;
 	p->c_res.seqid = p->c_arg.seqid;
 	p->o_res.server = p->o_arg.server;
+	p->o_res.access_request = p->o_arg.access;
 	nfs_fattr_init(&p->f_attr);
 	nfs_fattr_init(&p->dir_attr);
 }
@@ -837,7 +838,6 @@ static struct nfs4_opendata *nfs4_opendata_alloc(struct path *path,
 		 * are cached */
 		p->o_arg.access = NFS4_ACCESS_READ | NFS4_ACCESS_MODIFY |
 				  NFS4_ACCESS_EXTEND | NFS4_ACCESS_EXECUTE;
-		p->o_res.access_request = p->o_arg.access;
 	}
 	p->o_arg.clientid = server->nfs_client->cl_clientid;
 	p->o_arg.id = sp->so_owner_id.id;
