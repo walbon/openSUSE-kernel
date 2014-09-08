@@ -4876,7 +4876,17 @@ int btrfs_prev_leaf(struct btrfs_root *root, struct btrfs_path *path)
 		return ret;
 	btrfs_item_key(path->nodes[0], &found_key, 0);
 	ret = comp_keys(&found_key, &key);
-	if (ret < 0)
+	/*
+	 * We might have had an item with the previous key in the tree right
+	 * before we released our path. And after we released our path, that
+	 * item might have been pushed to the first slot (0) of the leaf we
+	 * were holding due to a tree balance. Alternatively, an item with the
+	 * previous key can exist as the only element of a leaf (big fat item).
+	 * Therefore account for these 2 cases, so that our callers (like
+	 * btrfs_previous_item) don't miss an existing item with a key matching
+	 * the previous key we computed above.
+	 */
+	if (ret <= 0)
 		return 0;
 	return 1;
 }
@@ -5134,6 +5144,8 @@ int btrfs_compare_trees(struct btrfs_root *left_root,
 	int advance_right;
 	u64 left_blockptr;
 	u64 right_blockptr;
+	u64 left_gen;
+	u64 right_gen;
 	u64 left_start_ctransid;
 	u64 right_start_ctransid;
 	u64 ctransid;
@@ -5397,7 +5409,14 @@ int btrfs_compare_trees(struct btrfs_root *left_root,
 				right_blockptr = btrfs_node_blockptr(
 						right_path->nodes[right_level],
 						right_path->slots[right_level]);
-				if (left_blockptr == right_blockptr) {
+				left_gen = btrfs_node_ptr_generation(
+						left_path->nodes[left_level],
+						left_path->slots[left_level]);
+				right_gen = btrfs_node_ptr_generation(
+						right_path->nodes[right_level],
+						right_path->slots[right_level]);
+				if (left_blockptr == right_blockptr &&
+				    left_gen == right_gen) {
 					/*
 					 * As we're on a shared block, don't
 					 * allow to go deeper.
@@ -5563,6 +5582,24 @@ again:
 	if (nritems > 0 && path->slots[0] < nritems - 1) {
 		if (ret == 0)
 			path->slots[0]++;
+		ret = 0;
+		goto done;
+	}
+	/*
+	 * So the above check misses one case:
+	 * - after releasing the path above, someone has removed the item that
+	 *   used to be at the very end of the block, and balance between leafs
+	 *   gets another one with bigger key.offset to replace it.
+	 *
+	 * This one should be returned as well, or we can get leaf corruption
+	 * later(esp. in __btrfs_drop_extents()).
+	 *
+	 * And a bit more explanation about this check,
+	 * with ret > 0, the key isn't found, the path points to the slot
+	 * where it should be inserted, so the path->slots[0] item must be the
+	 * bigger one.
+	 */
+	if (nritems > 0 && ret > 0 && path->slots[0] == nritems - 1) {
 		ret = 0;
 		goto done;
 	}
