@@ -35,6 +35,7 @@
 struct wb_writeback_work {
 	long nr_pages;
 	struct super_block *sb;
+	unsigned long start_jif;
 	enum writeback_sync_modes sync_mode;
 	unsigned int tagged_writepages:1;
 	unsigned int for_kupdate:1;
@@ -204,8 +205,10 @@ static void redirty_tail(struct inode *inode, struct bdi_writeback *wb)
 		struct inode *tail;
 
 		tail = wb_inode(wb->b_dirty.next);
-		if (time_before(inode->dirtied_when, tail->dirtied_when))
+		if (time_before(inode->dirtied_when, tail->dirtied_when)) {
+			wb->last_move_tail = jiffies;
 			inode->dirtied_when = jiffies;
+		}
 	}
 	list_move(&inode->i_wb_list, &wb->b_dirty);
 }
@@ -690,6 +693,7 @@ static long wb_writeback(struct bdi_writeback *wb,
 		.sync_mode		= work->sync_mode,
 		.tagged_writepages	= work->tagged_writepages,
 		.older_than_this	= NULL,
+		.wb_start		= work->start_jif,
 		.for_kupdate		= work->for_kupdate,
 		.for_background		= work->for_background,
 		.range_cyclic		= work->range_cyclic,
@@ -725,7 +729,23 @@ static long wb_writeback(struct bdi_writeback *wb,
 	if (wbc.sync_mode == WB_SYNC_ALL || wbc.tagged_writepages)
 		write_chunk = LONG_MAX;
 
-	wbc.wb_start = jiffies; /* livelock avoidance */
+	if (!wbc.wb_start)
+		wbc.wb_start = jiffies; /* livelock avoidance */
+	else if (wbc.sync_mode == WB_SYNC_ALL) {
+		/*
+		 * last_move_tail is overflowing? Move it to current
+		 * time.
+		 */
+		if (time_is_after_jiffies(wb->last_move_tail))
+			wb->last_move_tail = jiffies;
+		/*
+		 * If we did redirty_tail() after desired inode start
+		 * time, we have move the start time as well so that
+		 * WB_SYNC_ALL pass doesn't miss any inodes.
+		 */
+		if (time_before(wbc.wb_start, wb->last_move_tail))
+			wbc.wb_start = wb->last_move_tail;
+	}
 	for (;;) {
 		/*
 		 * Stop writeback when nr_pages has been consumed
@@ -1324,18 +1344,12 @@ int writeback_inodes_sb_nr_if_idle(struct super_block *sb,
 }
 EXPORT_SYMBOL(writeback_inodes_sb_nr_if_idle);
 
-/**
- * sync_inodes_sb	-	sync sb inode pages
- * @sb: the superblock
- *
- * This function writes and waits on any dirty inode belonging to this
- * super_block.
- */
-void sync_inodes_sb(struct super_block *sb)
+void sync_inodes_sb_after(struct super_block *sb, unsigned long start)
 {
 	DECLARE_COMPLETION_ONSTACK(done);
 	struct wb_writeback_work work = {
 		.sb		= sb,
+		.start_jif	= start,
 		.sync_mode	= WB_SYNC_ALL,
 		.nr_pages	= LONG_MAX,
 		.range_cyclic	= 0,
@@ -1349,7 +1363,20 @@ void sync_inodes_sb(struct super_block *sb)
 
 	wait_sb_inodes(sb);
 }
+
+/**
+ * sync_inodes_sb	-	sync sb inode pages
+ * @sb: the superblock
+ *
+ * This function writes and waits on any dirty inode belonging to this
+ * super_block.
+ */
+void sync_inodes_sb(struct super_block *sb)
+{
+	sync_inodes_sb_after(sb, jiffies);
+}
 EXPORT_SYMBOL(sync_inodes_sb);
+
 
 /**
  * write_inode_now	-	write an inode to disk

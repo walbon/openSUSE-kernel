@@ -48,8 +48,11 @@ enum bdi_stat_item {
 
 struct bdi_writeback {
 	struct backing_dev_info *bdi;	/* our parent bdi */
-	unsigned int nr;
-
+#ifndef __GENKSYMS__
+	unsigned long last_move_tail;
+#else
+ 	unsigned int nr;
+#endif
 	unsigned long last_old_flush;	/* last old data flush */
 	unsigned long last_active;	/* last time bdi thread was active */
 
