@@ -188,7 +188,18 @@ struct nfs_stateid4 {
 	char other[NFS4_STATEID_OTHER_SIZE];
 } __attribute__ ((packed));
 
+#ifndef __GENKSYMS__
 typedef struct nfs_stateid4 nfs4_stateid;
+#else
+struct nfs41_stateid {
+	__be32 seqid;
+	char other[NFS4_STATEID_OTHER_SIZE];
+} __attribute__ ((packed));
+typedef union {
+	char data[NFS4_STATEID_SIZE];
+	struct nfs41_stateid stateid;
+} nfs4_stateid;
+#endif
 
 enum nfs_opnum4 {
 	OP_ACCESS = 3,
