@@ -93,8 +93,8 @@ struct nfs_lock_context {
 #ifndef __GENKSYMS__
 	struct nfs_lockowner lockowner;
 #else
-	fl_owner_t l_owner;
-	pid_t l_pid;
+	fl_owner_t lockowner;
+	pid_t pid;
 #endif
 };
 
