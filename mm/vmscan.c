@@ -3471,11 +3471,16 @@ static int shrink_all_zones(unsigned long nr_pages, int prio,
 				/* shrink_list takes lru_lock with IRQ off so we
 				 * should be careful about really huge nr_to_scan
 				 */
-				nr_reclaimed += shrink_list(l, nr_to_scan, zone,
-								sc);
-				if (nr_reclaimed >= nr_pages) {
-					pagecache_reclaim_unlock_zone(zone);
-					goto out_wakeup;
+				while (nr_to_scan > 0) {
+					unsigned long batch = min_t(unsigned long, nr_to_scan, SWAP_CLUSTER_MAX);
+
+					nr_reclaimed += shrink_list(l, batch, zone,
+									sc);
+					if (nr_reclaimed >= nr_pages) {
+						pagecache_reclaim_unlock_zone(zone);
+						goto out_wakeup;
+					}
+					nr_to_scan -= batch;
 				}
 			}
 		}
