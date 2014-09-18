@@ -3566,7 +3566,7 @@ retry:
 	 */
 	if (nr_pages <= 0 || fatal_signal_pending(current)) {
 		wake_up_interruptible(&pagecache_reclaim_wq);
-		return;
+		goto out;
 	}
 
 	/* But do a few at least */
