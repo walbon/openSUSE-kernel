@@ -1111,8 +1111,8 @@ xfs_fs_put_super(
 	xfs_unmountfs(mp);
 	xfs_freesb(mp);
 	xfs_icsb_destroy_counters(mp);
-	xfs_destroy_mount_workqueues(mp);
 	xfs_close_devices(mp);
+	xfs_destroy_mount_workqueues(mp);
 	xfs_dmops_put(mp);
 	xfs_free_fsname(mp);
 	kfree(mp->m_mtpt);
@@ -1450,17 +1450,17 @@ xfs_fs_fill_super(
 	if (silent)
 		flags |= XFS_MFSI_QUIET;
 
-	error = xfs_open_devices(mp);
+	error = xfs_init_mount_workqueues(mp);
 	if (error)
 		goto out_put_dmops;
 
-	error = xfs_init_mount_workqueues(mp);
+	error = xfs_open_devices(mp);
 	if (error)
-		goto out_close_devices;
+		goto out_destroy_workqueues;
 
 	error = xfs_icsb_init_counters(mp);
 	if (error)
-		goto out_destroy_workqueues;
+		goto out_close_devices;
 
 	error = xfs_readsb(mp, flags);
 	if (error)
@@ -1531,10 +1531,10 @@ xfs_fs_fill_super(
 	xfs_freesb(mp);
  out_destroy_counters:
 	xfs_icsb_destroy_counters(mp);
-out_destroy_workqueues:
-	xfs_destroy_mount_workqueues(mp);
  out_close_devices:
 	xfs_close_devices(mp);
+ out_destroy_workqueues:
+	xfs_destroy_mount_workqueues(mp);
  out_put_dmops:
 	xfs_dmops_put(mp);
  out_free_fsname:
