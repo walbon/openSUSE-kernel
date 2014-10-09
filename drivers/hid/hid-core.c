@@ -89,6 +89,7 @@ EXPORT_SYMBOL_GPL(hid_register_report);
 static struct hid_field *hid_register_field(struct hid_report *report, unsigned usages, unsigned values)
 {
 	struct hid_field *field;
+	int i;
 
 	if (report->maxfield == HID_MAX_FIELDS) {
 		dbg_hid("too many fields in report\n");
@@ -106,6 +107,9 @@ static struct hid_field *hid_register_field(struct hid_report *report, unsigned 
 	field->usage = (struct hid_usage *)(field + 1);
 	field->value = (s32 *)(field->usage + usages);
 	field->report = report;
+
+	for (i = 0; i < usages; i++)
+		field->usage[i].usage_index = i;
 
 	return field;
 }
