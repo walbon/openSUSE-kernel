@@ -2223,6 +2223,8 @@ emulate_sysexit(struct x86_emulate_ctxt *ctxt, struct x86_emulate_ops *ops)
 		if ((msr_data & 0xfffc) == 0x0)
 			return emulate_gp(ctxt, 0);
 		ss_sel = (u16)(msr_data + 24);
+		rcx = (u32)rcx;
+		rdx = (u32)rdx;
 		break;
 	case X86EMUL_MODE_PROT64:
 		cs_sel = (u16)(msr_data + 32);
