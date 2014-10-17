@@ -100,6 +100,7 @@
 #define Aligned     ((u64)1 << 41)  /* Explicitly aligned (e.g. MOVDQA) */
 #define Unaligned   ((u64)1 << 42)  /* Explicitly unaligned (e.g. MOVDQU) */
 #define Avx         ((u64)1 << 43)  /* Advanced Vector Extensions */
+#define NearBranch  ((u64)1 << 52)  /* Near branches */
 
 #define X2(x...) x, x
 #define X3(x...) X2(x), x
@@ -3288,9 +3289,10 @@ static struct opcode group4[] = {
 
 static struct opcode group5[] = {
 	D(DstMem | SrcNone | ModRM | Lock), D(DstMem | SrcNone | ModRM | Lock),
-	D(SrcMem | ModRM | Stack),
+	I(SrcMem | ModRM | NearBranch, em_call_near_abs),
 	I(SrcMemFAddr | ModRM | ImplicitOps | Stack, em_call_far),
-	D(SrcMem | ModRM | Stack), D(SrcMemFAddr | ModRM | ImplicitOps),
+	I(SrcMem | ModRM | NearBranch, em_jmp_abs),
+	I(SrcMemFAddr | ModRM | ImplicitOps, em_jmp_far),
 	D(SrcMem | ModRM | Stack), N,
 };
 
@@ -3378,7 +3380,7 @@ static struct opcode opcode_table[256] = {
 	D2bvIP(DstDI | SrcDX | Mov | String, ins, check_perm_in), /* insb, insw/insd */
 	D2bvIP(SrcSI | DstDX | String, outs, check_perm_out), /* outsb, outsw/outsd */
 	/* 0x70 - 0x7F */
-	X16(D(SrcImmByte)),
+	X16(D(SrcImmByte | NearBranch)),
 	/* 0x80 - 0x87 */
 	G(ByteOp | DstMem | SrcImm | ModRM | Group, group1),
 	G(DstMem | SrcImm | ModRM | Group, group1),
@@ -3413,8 +3415,8 @@ static struct opcode opcode_table[256] = {
 	X8(I(DstReg | SrcImm | Mov, em_mov)),
 	/* 0xC0 - 0xC7 */
 	D2bv(DstMem | SrcImmByte | ModRM),
-	I(ImplicitOps | Stack | SrcImmU16, em_ret_near_imm),
-	D(ImplicitOps | Stack),
+	I(ImplicitOps | NearBranch | SrcImmU16, em_ret_near_imm),
+	I(ImplicitOps | NearBranch, em_ret),
 	D(DstReg | SrcMemFAddr | ModRM | No64), D(DstReg | SrcMemFAddr | ModRM | No64),
 	G(ByteOp, group11), G(0, group11),
 	/* 0xC8 - 0xCF */
@@ -3427,11 +3429,12 @@ static struct opcode opcode_table[256] = {
 	/* 0xD8 - 0xDF */
 	N, N, N, N, N, N, N, N,
 	/* 0xE0 - 0xE7 */
-	X4(D(SrcImmByte)),
+	X3(I(SrcImmByte, em_loop)),
+	I(SrcImmByte | NearBranch, em_jcxz),
 	D2bvIP(SrcImmUByte | DstAcc, in,  check_perm_in),
 	D2bvIP(SrcAcc | DstImmUByte, out, check_perm_out),
 	/* 0xE8 - 0xEF */
-	D(SrcImm | Stack), D(SrcImm | ImplicitOps),
+	I(SrcImm | NearBranch, em_call), D(SrcImm | ImplicitOps),
 	D(SrcImmFAddr | No64), D(SrcImmByte | ImplicitOps),
 	D2bvIP(SrcDX | DstAcc, in,  check_perm_in),
 	D2bvIP(SrcAcc | DstDX, out, check_perm_out),
@@ -3735,8 +3738,12 @@ done_prefixes:
 	if (!(c->d & VendorSpecific) && ctxt->only_vendor_specific_insn)
 		return -1;
 
-	if (mode == X86EMUL_MODE_PROT64 && (c->d & Stack))
-		c->op_bytes = 8;
+	if (mode == X86EMUL_MODE_PROT64) {
+		if (c->op_bytes == 4 && (c->d & Stack))
+			c->op_bytes = 8;
+		else if (c->d & NearBranch)
+			c->op_bytes = 8;
+	}
 
 	if (c->d & Op3264) {
 		if (mode == X86EMUL_MODE_PROT64)
