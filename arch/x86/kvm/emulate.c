@@ -477,28 +477,6 @@ register_address_increment(struct decode_cache *c, unsigned long *reg, int inc)
 		*reg = (*reg & ~ad_mask(c)) | ((*reg + inc) & ad_mask(c));
 }
 
-static inline void assign_eip_near(struct decode_cache *c, ulong dst)
-{
-	switch (c->ad_bytes) {
-	case 2:
-		c->eip = (u16)dst;
-		break;
-	case 4:
-		c->eip = (u32)dst;
-		break;
-	case 8:
-		c->eip = dst;
-		break;
-	default:
-		WARN(1, "unsupported eip assignment size\n");
-	}
-}
-
-static inline void jmp_rel(struct decode_cache *c, int rel)
-{
-	assign_eip_near(c, c->eip + rel);
-}
-
 static u32 desc_limit_scaled(struct desc_struct *desc)
 {
 	u32 limit = get_desc_limit(desc);
@@ -572,6 +550,40 @@ static int emulate_de(struct x86_emulate_ctxt *ctxt)
 static int emulate_nm(struct x86_emulate_ctxt *ctxt)
 {
 	return emulate_exception(ctxt, NM_VECTOR, 0, false);
+}
+
+static inline int assign_eip_far(struct x86_emulate_ctxt *ctxt, ulong dst,
+				 int cs_l)
+{
+	struct decode_cache *c = &ctxt->decode;
+	switch (c->ad_bytes) {
+	case 2:
+		c->eip = (u16)dst;
+		break;
+	case 4:
+		c->eip = (u32)dst;
+		break;
+	case 8:
+		if ((cs_l && is_noncanonical_address(dst)) ||
+		    (!cs_l && (dst & ~(u32)-1)))
+			return emulate_gp(ctxt, 0);
+		c->eip = dst;
+		break;
+	default:
+		WARN(1, "unsupported eip assignment size\n");
+	}
+	return X86EMUL_CONTINUE;
+}
+
+static inline int assign_eip_near(struct x86_emulate_ctxt *ctxt, ulong dst)
+{
+	return assign_eip_far(ctxt, dst, ctxt->mode == X86EMUL_MODE_PROT64);
+}
+
+static inline int jmp_rel(struct x86_emulate_ctxt *ctxt, int rel)
+{
+	struct decode_cache *c = &ctxt->decode;
+	return assign_eip_near(ctxt, c->eip + rel);
 }
 
 static u16 get_segment_selector(struct x86_emulate_ctxt *ctxt, unsigned seg)
@@ -1840,13 +1852,15 @@ static int em_grp45(struct x86_emulate_ctxt *ctxt)
 	case 2: /* call near abs */ {
 		long int old_eip;
 		old_eip = c->eip;
-		c->eip = c->src.val;
+		rc = assign_eip_near(ctxt, c->src.val);
+		if (rc != X86EMUL_CONTINUE)
+			break;
 		c->src.val = old_eip;
 		rc = em_push(ctxt);
 		break;
 	}
 	case 4: /* jmp abs */
-		c->eip = c->src.val;
+		rc = assign_eip_near(ctxt, c->src.val);
 		break;
 	case 5: /* jmp far */
 		rc = em_jmp_far(ctxt);
@@ -2104,12 +2118,25 @@ emulate_sysenter(struct x86_emulate_ctxt *ctxt, struct x86_emulate_ops *ops)
 	return X86EMUL_CONTINUE;
 }
 
+ static int em_ret(struct x86_emulate_ctxt *ctxt)
+ {
+	int rc;
+	unsigned long eip;
+	struct decode_cache *c = &ctxt->decode;
+
+	rc = emulate_pop(ctxt, &eip, c->op_bytes);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
+	return assign_eip_near(ctxt, eip);
+}
+
 static int
 emulate_sysexit(struct x86_emulate_ctxt *ctxt, struct x86_emulate_ops *ops)
 {
 	struct decode_cache *c = &ctxt->decode;
 	struct desc_struct cs, ss;
-	u64 msr_data;
+	u64 msr_data, rcx, rdx;
 	int usermode;
 	u16 cs_sel, ss_sel;
 
@@ -2124,6 +2151,9 @@ emulate_sysexit(struct x86_emulate_ctxt *ctxt, struct x86_emulate_ops *ops)
 		usermode = X86EMUL_MODE_PROT64;
 	else
 		usermode = X86EMUL_MODE_PROT32;
+
+	rcx = c->regs[VCPU_REGS_RCX];
+	rdx = c->regs[VCPU_REGS_RDX];
 
 	cs.dpl = 3;
 	ss.dpl = 3;
@@ -2142,6 +2172,9 @@ emulate_sysexit(struct x86_emulate_ctxt *ctxt, struct x86_emulate_ops *ops)
 		ss_sel = cs_sel + 8;
 		cs.d = 0;
 		cs.l = 1;
+		if (is_noncanonical_address(rcx) ||
+		    is_noncanonical_address(rdx))
+			return emulate_gp(ctxt, 0);
 		break;
 	}
 	cs_sel |= SELECTOR_RPL_MASK;
@@ -2150,8 +2183,8 @@ emulate_sysexit(struct x86_emulate_ctxt *ctxt, struct x86_emulate_ops *ops)
 	ops->set_segment(ctxt, cs_sel, &cs, 0, VCPU_SREG_CS);
 	ops->set_segment(ctxt, ss_sel, &ss, 0, VCPU_SREG_SS);
 
-	c->eip = c->regs[VCPU_REGS_RDX];
-	c->regs[VCPU_REGS_RSP] = c->regs[VCPU_REGS_RCX];
+	c->eip = rdx;
+	c->regs[VCPU_REGS_RSP] = rcx;
 
 	return X86EMUL_CONTINUE;
 }
@@ -2648,17 +2681,32 @@ static int em_call_far(struct x86_emulate_ctxt *ctxt)
 	return em_push(ctxt);
 }
 
+static int em_call(struct x86_emulate_ctxt *ctxt)
+{
+	int rc;
+	struct decode_cache *c = &ctxt->decode;
+	long rel = c->src.val;
+
+	c->src.val = (unsigned long)ctxt->eip;
+	rc = jmp_rel(ctxt, rel);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	return em_push(ctxt);
+}
+
 static int em_ret_near_imm(struct x86_emulate_ctxt *ctxt)
 {
 	struct decode_cache *c = &ctxt->decode;
 	int rc;
+	unsigned long eip;
 
-	c->dst.type = OP_REG;
-	c->dst.addr.reg = &c->eip;
-	c->dst.bytes = c->op_bytes;
-	rc = emulate_pop(ctxt, &c->dst.val, c->op_bytes);
+	rc = emulate_pop(ctxt, &eip, c->op_bytes);
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
+	rc = assign_eip_near(ctxt, eip);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+
 	register_address_increment(c, &c->regs[VCPU_REGS_RSP], c->src.val);
 	return X86EMUL_CONTINUE;
 }
@@ -2879,6 +2927,30 @@ static int em_lmsw(struct x86_emulate_ctxt *ctxt)
 			  | (c->src.val & 0x0f));
 	c->dst.type = OP_NONE;
 	return X86EMUL_CONTINUE;
+}
+
+static int em_loop(struct x86_emulate_ctxt *ctxt)
+{
+	struct decode_cache *c = &ctxt->decode;
+	int rc = X86EMUL_CONTINUE;
+
+	register_address_increment(c, &c->regs[VCPU_REGS_RCX], -1);
+	if ((address_mask(c, c->regs[VCPU_REGS_RCX]) != 0) &&
+	    (c->b == 0xe2 || test_cc(c->b ^ 0x5, ctxt->eflags)))
+		rc = jmp_rel(ctxt, c->src.val);
+
+	return rc;
+}
+
+static int em_jcxz(struct x86_emulate_ctxt *ctxt)
+{
+	struct decode_cache *c = &ctxt->decode;
+	int rc = X86EMUL_CONTINUE;
+
+	if (address_mask(c, c->regs[VCPU_REGS_RCX]) == 0)
+		rc = jmp_rel(ctxt, c->src.val);
+
+	return rc;
 }
 
 static bool valid_cr(int nr)
@@ -3989,7 +4061,7 @@ special_insn:
 		break;
 	case 0x70 ... 0x7f: /* jcc (short) */
 		if (test_cc(c->b, ctxt->eflags))
-			jmp_rel(c, c->src.val);
+			rc = jmp_rel(ctxt, c->src.val);
 		break;
 	case 0x84 ... 0x85:
 	test:
@@ -4098,11 +4170,11 @@ special_insn:
 		register_address_increment(c, &c->regs[VCPU_REGS_RCX], -1);
 		if (address_mask(c, c->regs[VCPU_REGS_RCX]) != 0 &&
 		    (c->b == 0xe2 || test_cc(c->b ^ 0x5, ctxt->eflags)))
-			jmp_rel(c, c->src.val);
+			rc = jmp_rel(ctxt, c->src.val);
 		break;
 	case 0xe3:	/* jcxz/jecxz/jrcxz */
 		if (address_mask(c, c->regs[VCPU_REGS_RCX]) == 0)
-			jmp_rel(c, c->src.val);
+			rc = jmp_rel(ctxt, c->src.val);
 		break;
 	case 0xe4: 	/* inb */
 	case 0xe5: 	/* in */
@@ -4110,21 +4182,9 @@ special_insn:
 	case 0xe6: /* outb */
 	case 0xe7: /* out */
 		goto do_io_out;
-	case 0xe8: /* call (near) */ {
-		long int rel = c->src.val;
-		c->src.val = (unsigned long) c->eip;
-		jmp_rel(c, rel);
-		rc = em_push(ctxt);
-		break;
-	}
 	case 0xe9: /* jmp rel */
-		goto jmp;
-	case 0xea: /* jmp far */
-		rc = em_jmp_far(ctxt);
-		break;
-	case 0xeb:
-	      jmp:		/* jmp rel short */
-		jmp_rel(c, c->src.val);
+	case 0xeb: /* jmp rel short */
+		rc = jmp_rel(ctxt, c->src.val);
 		c->dst.type = OP_NONE; /* Disable writeback. */
 		break;
 	case 0xec: /* in al,dx */
@@ -4321,7 +4381,7 @@ twobyte_insn:
 		break;
 	case 0x80 ... 0x8f: /* jnz rel, etc*/
 		if (test_cc(c->b, ctxt->eflags))
-			jmp_rel(c, c->src.val);
+			rc = jmp_rel(ctxt, c->src.val);
 		break;
 	case 0x90 ... 0x9f:     /* setcc r/m8 */
 		c->dst.val = test_cc(c->b, ctxt->eflags);
