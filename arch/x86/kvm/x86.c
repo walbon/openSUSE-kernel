@@ -625,14 +625,14 @@ static inline bool guest_cpuid_has_pcid(struct kvm_vcpu *vcpu)
 	return best && (best->ecx & bit(X86_FEATURE_PCID));
 }
 
-static void update_cpuid(struct kvm_vcpu *vcpu)
+static int update_cpuid(struct kvm_vcpu *vcpu)
 {
 	struct kvm_cpuid_entry2 *best;
 	struct kvm_lapic *apic = vcpu->arch.apic;
 
 	best = kvm_find_cpuid_entry(vcpu, 1, 0);
 	if (!best)
-		return;
+		return 0;
 
 	/* Update OSXSAVE bit */
 	if (cpu_has_xsave && best->function == 0x1) {
@@ -647,6 +647,15 @@ static void update_cpuid(struct kvm_vcpu *vcpu)
 		else
 			apic->lapic_timer.timer_mode_mask = 1 << 17;
 	}
+
+	/* The existing code assumes virtual address is 48-bit in the canonical
+	 * address checks; exit if it is ever changed */
+	best = kvm_find_cpuid_entry(vcpu, 0x80000008, 0);
+	if (best && ((best->eax & 0xff00) >> 8) != 48 &&
+		((best->eax & 0xff00) >> 8) != 0)
+		return -EINVAL;
+
+	return 0;
 }
 
 int kvm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
@@ -2359,10 +2368,9 @@ static int kvm_vcpu_ioctl_set_cpuid(struct kvm_vcpu *vcpu,
 	}
 	vcpu->arch.cpuid_nent = cpuid->nent;
 	cpuid_fix_nx_cap(vcpu);
-	r = 0;
 	kvm_apic_set_version(vcpu);
 	kvm_x86_ops->cpuid_update(vcpu);
-	update_cpuid(vcpu);
+	r = update_cpuid(vcpu);
 
 out_free:
 	vfree(cpuid_entries);
@@ -2386,9 +2394,7 @@ static int kvm_vcpu_ioctl_set_cpuid2(struct kvm_vcpu *vcpu,
 	vcpu->arch.cpuid_nent = cpuid->nent;
 	kvm_apic_set_version(vcpu);
 	kvm_x86_ops->cpuid_update(vcpu);
-	update_cpuid(vcpu);
-	return 0;
-
+	r = update_cpuid(vcpu);
 out:
 	return r;
 }
