@@ -647,7 +647,7 @@ static int __linearize(struct x86_emulate_ctxt *ctxt,
 	case X86EMUL_MODE_REAL:
 		break;
 	case X86EMUL_MODE_PROT64:
-		if (((signed long)la << 16) >> 16 != la)
+		if (is_noncanonical_address(la))
 			return emulate_gp(ctxt, 0);
 		break;
 	default:
@@ -1852,6 +1852,28 @@ static int em_grp3(struct x86_emulate_ctxt *ctxt)
 		return emulate_de(ctxt);
 	return X86EMUL_CONTINUE;
 }
+
+static int em_jmp_abs(struct x86_emulate_ctxt *ctxt)
+ {
+	struct decode_cache *c = &ctxt->decode;
+
+	return assign_eip_near(ctxt, c->src.val);
+}
+
+static int em_call_near_abs(struct x86_emulate_ctxt *ctxt)
+{
+	int rc;
+	long int old_eip;
+	struct decode_cache *c = &ctxt->decode;
+
+	old_eip = c->eip;
+	rc = assign_eip_near(ctxt, c->src.val);
+	if (rc != X86EMUL_CONTINUE)
+		return rc;
+	c->src.val = old_eip;
+	rc = em_push(ctxt);
+	return rc;
+ }
 
 static int em_grp45(struct x86_emulate_ctxt *ctxt)
 {
