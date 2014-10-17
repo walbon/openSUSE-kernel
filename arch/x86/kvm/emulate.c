@@ -477,9 +477,26 @@ register_address_increment(struct decode_cache *c, unsigned long *reg, int inc)
 		*reg = (*reg & ~ad_mask(c)) | ((*reg + inc) & ad_mask(c));
 }
 
+static inline void assign_eip_near(struct decode_cache *c, ulong dst)
+{
+	switch (c->ad_bytes) {
+	case 2:
+		c->eip = (u16)dst;
+		break;
+	case 4:
+		c->eip = (u32)dst;
+		break;
+	case 8:
+		c->eip = dst;
+		break;
+	default:
+		WARN(1, "unsupported eip assignment size\n");
+	}
+}
+
 static inline void jmp_rel(struct decode_cache *c, int rel)
 {
-	register_address_increment(c, &c->eip, rel);
+	assign_eip_near(c, c->eip + rel);
 }
 
 static u32 desc_limit_scaled(struct desc_struct *desc)
