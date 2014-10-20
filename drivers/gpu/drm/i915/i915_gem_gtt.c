@@ -424,7 +424,7 @@ void i915_gem_suspend_gtt_mappings(struct drm_device *dev)
 
 	i915_ggtt_clear_range(dev, dev_priv->mm.gtt_start / PAGE_SIZE,
 			      (dev_priv->mm.gtt_end - dev_priv->mm.gtt_start) / PAGE_SIZE,
-			      false);
+			      true);
 }
 
 void i915_gem_restore_gtt_mappings(struct drm_device *dev)
