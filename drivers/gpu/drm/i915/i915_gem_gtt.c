@@ -410,6 +410,18 @@ void i915_check_and_clear_faults(struct drm_device *dev)
 	POSTING_READ(RING_FAULT_REG(&dev_priv->ring[RCS]));
 }
 
+static void i915_ggtt_flush(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	if (INTEL_INFO(dev_priv->dev)->gen < 6) {
+		i915_gem_chipset_flush(dev);
+	} else {
+		I915_WRITE(GFX_FLSH_CNTL_GEN6, GFX_FLSH_CNTL_EN);
+		POSTING_READ(GFX_FLSH_CNTL_GEN6);
+	}
+}
+
 void i915_gem_suspend_gtt_mappings(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -425,6 +437,7 @@ void i915_gem_suspend_gtt_mappings(struct drm_device *dev)
 	i915_ggtt_clear_range(dev, dev_priv->mm.gtt_start / PAGE_SIZE,
 			      (dev_priv->mm.gtt_end - dev_priv->mm.gtt_start) / PAGE_SIZE,
 			      true);
+	i915_ggtt_flush(dev);
 }
 
 void i915_gem_restore_gtt_mappings(struct drm_device *dev)
@@ -444,7 +457,7 @@ void i915_gem_restore_gtt_mappings(struct drm_device *dev)
 		i915_gem_gtt_bind_object(obj, obj->cache_level);
 	}
 
-	i915_gem_chipset_flush(dev);
+	i915_ggtt_flush(dev);
 }
 
 int i915_gem_gtt_prepare_object(struct drm_i915_gem_object *obj)
