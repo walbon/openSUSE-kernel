@@ -111,6 +111,8 @@ struct controller {
 #define INT_BUTTON_PRESS		7
 #define INT_BUTTON_RELEASE		8
 #define INT_BUTTON_CANCEL		9
+#define INT_LINK_UP			10
+#define INT_LINK_DOWN			11
 
 #define STATIC_STATE			0
 #define BLINKINGON_STATE		1
@@ -155,6 +157,7 @@ int pciehp_get_max_link_width(struct slot *slot, enum pcie_link_width *val);
 int pciehp_get_cur_link_speed(struct slot *slot, enum pci_bus_speed *speed);
 int pciehp_get_cur_link_width(struct slot *slot, enum pcie_link_width *val);
 int pciehp_query_power_fault(struct slot *slot);
+void pciehp_handle_linkstate_change(struct slot *p_slot);
 void pciehp_green_led_on(struct slot *slot);
 void pciehp_green_led_off(struct slot *slot);
 void pciehp_green_led_blink(struct slot *slot);
