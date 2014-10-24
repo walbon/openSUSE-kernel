@@ -160,6 +160,8 @@ void pciehp_green_led_on(struct slot *slot);
 void pciehp_green_led_off(struct slot *slot);
 void pciehp_green_led_blink(struct slot *slot);
 int pciehp_check_link_status(struct controller *ctrl);
+bool pciehp_check_link_active(struct controller *ctrl);
+
 void pciehp_release_ctrl(struct controller *ctrl);
 
 static inline const char *slot_name(struct slot *slot)
