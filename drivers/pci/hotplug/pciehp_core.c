@@ -45,7 +45,6 @@ int pciehp_poll_time;
 int pciehp_force;
 bool pciehp_surprise = false;
 struct workqueue_struct *pciehp_wq;
-struct workqueue_struct *pciehp_ordered_wq;
 
 #define DRIVER_VERSION	"0.4"
 #define DRIVER_AUTHOR	"Dan Zink <dan.zink@compaq.com>, Greg Kroah-Hartman <greg@kroah.com>, Dely Sy <dely.l.sy@intel.com>"
@@ -382,18 +381,11 @@ static int __init pcied_init(void)
 	if (!pciehp_wq)
 		return -ENOMEM;
 
-	pciehp_ordered_wq = alloc_ordered_workqueue("pciehp_ordered", 0);
-	if (!pciehp_ordered_wq) {
-		destroy_workqueue(pciehp_wq);
-		return -ENOMEM;
-	}
-
 	pciehp_firmware_init();
 	retval = pcie_port_service_register(&hpdriver_portdrv);
  	dbg("pcie_port_service_register = %d\n", retval);
   	info(DRIVER_DESC " version: " DRIVER_VERSION "\n");
  	if (retval) {
-		destroy_workqueue(pciehp_ordered_wq);
 		destroy_workqueue(pciehp_wq);
 		dbg("Failure to register service\n");
 	}
@@ -404,7 +396,6 @@ static void __exit pcied_cleanup(void)
 {
 	dbg("unload_pciehpd()\n");
 	pcie_port_service_unregister(&hpdriver_portdrv);
-	destroy_workqueue(pciehp_ordered_wq);
 	destroy_workqueue(pciehp_wq);
 	info(DRIVER_DESC " version: " DRIVER_VERSION " unloaded\n");
 }
