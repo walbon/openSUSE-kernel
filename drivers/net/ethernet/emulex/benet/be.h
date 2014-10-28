@@ -328,6 +328,7 @@ enum vf_state {
 #define BE_FLAGS_WORKER_SCHEDULED		(1 << 3)
 #define BE_UC_PMAC_COUNT		30
 #define BE_VF_UC_PMAC_COUNT		2
+#define BE_FLAGS_SETUP_DONE			(1 << 13)
 
 struct phy_info {
 	u8 transceiver;
