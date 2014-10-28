@@ -985,11 +985,6 @@ kernel_physical_mapping_init(unsigned long start,
 void __init initmem_init(void)
 {
 	memblock_x86_register_active_regions(0, 0, max_pfn);
-#ifdef CONFIG_XEN
-	if (max_pfn > xen_start_info->nr_pages)
-		memblock_x86_reserve_range(xen_start_info->nr_pages << PAGE_SHIFT,
-					   max_pfn << PAGE_SHIFT, "BALLOON");
-#endif
 }
 #endif
 

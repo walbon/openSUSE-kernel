@@ -696,12 +696,6 @@ static void __init zone_sizes_init(void)
 
 void __init setup_bootmem_allocator(void)
 {
-#ifdef CONFIG_XEN
-	if (max_low_pfn > xen_start_info->nr_pages)
-		memblock_x86_reserve_range(xen_start_info->nr_pages << PAGE_SHIFT,
-					   max_low_pfn << PAGE_SHIFT, "BALLOON");
-#endif
-
 	printk(KERN_INFO "  mapped low ram: 0 - %08lx\n",
 		 max_pfn_mapped<<PAGE_SHIFT);
 	printk(KERN_INFO "  low ram: 0 - %08lx\n", max_low_pfn<<PAGE_SHIFT);

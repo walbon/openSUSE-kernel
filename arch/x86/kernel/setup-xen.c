@@ -1126,6 +1126,10 @@ void __init setup_arch(char **cmdline_p)
 #ifndef CONFIG_XEN
 	if (mtrr_trim_uncached_memory(max_pfn))
 		max_pfn = e820_end_of_ram_pfn();
+#else
+	if (max_pfn > xen_start_info->nr_pages)
+		memblock_x86_reserve_range(PFN_PHYS(xen_start_info->nr_pages),
+					   PFN_PHYS(max_pfn), "BALLOON");
 #endif
 
 #ifdef CONFIG_X86_32
@@ -1462,7 +1466,7 @@ void __init setup_arch(char **cmdline_p)
 							  & PAGE_MASK),
 						     PAGE_SIZE);
 				}
-			} while (pud_index(va));
+			} while (pud_index(va) | pmd_index(va));
 			ClearPagePinned(virt_to_page(pud_page));
 			make_page_writable(pud_page,
 					   XENFEAT_writable_page_tables);

@@ -96,7 +96,7 @@ static int set_max_ring_order(const char *buf, struct kernel_param *kp)
 module_param_call(max_ring_page_order,
 		  set_max_ring_order, param_get_uint,
 		  &blkif_max_ring_page_order, 0644);
-MODULE_PARM_DESC(max_ring_order, "log2 of maximum ring size (in pages)");
+MODULE_PARM_DESC(max_ring_page_order, "log2 of maximum ring size (in pages)");
 
 /*
  * Each outstanding request that we've passed to the lower device layers has a 
