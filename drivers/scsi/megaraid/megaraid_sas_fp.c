@@ -370,7 +370,8 @@ MR_BuildRaidContext(struct megasas_instance *instance,
 					       fpReadAcrossStripe));
 		else
 			io_info->fpOkForIo = (raid->capability.fpWriteCapable &&
-					      ((num_strips == 1) ||
+					      ((num_strips == 1 &&
+						raid->level == 0) ||
 					       raid->capability.
 					       fpWriteAcrossStripe));
 	} else
