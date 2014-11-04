@@ -309,3 +309,8 @@ void mgag200_fbdev_set_base(struct mga_device *mdev, unsigned long gpu_addr)
 		mdev->mfbdev->helper.fbdev->apertures->ranges[0].base + gpu_addr;
 	mdev->mfbdev->helper.fbdev->fix.smem_len = mdev->mc.vram_size - gpu_addr;
 }
+
+void mgag200_fbdev_set_suspend(struct mga_device *mdev, int state)
+{
+	fb_set_suspend(mdev->mfbdev->helper.fbdev, state);
+}
