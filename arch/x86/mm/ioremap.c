@@ -71,6 +71,7 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 	pgprot_t prot;
 	int retval;
 	void __iomem *ret_addr;
+	int ram_region;
 
 	/* Don't allow wraparound or zero size */
 	last_addr = phys_addr + size - 1;
@@ -93,13 +94,22 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 	/*
 	 * Don't allow anybody to remap normal RAM that we're using..
 	 */
-	last_pfn = last_addr >> PAGE_SHIFT;
-	for (pfn = phys_addr >> PAGE_SHIFT; pfn <= last_pfn; pfn++) {
-		int is_ram = page_is_ram(pfn);
+	/* First check if whole region can be identified as RAM or not */
+	ram_region = region_is_ram(phys_addr, size);
 
-		if (is_ram && pfn_valid(pfn) && !PageReserved(pfn_to_page(pfn)))
-			return NULL;
-		WARN_ON_ONCE(is_ram);
+	/* If is RAM(1) or could not be identified(-1), check page by page */
+	if (ram_region) {
+		last_pfn = last_addr >> PAGE_SHIFT;
+		for (pfn = phys_addr >> PAGE_SHIFT; pfn <= last_pfn; pfn++) {
+			int is_ram = 1;
+
+			if (ram_region < 0)
+				is_ram = page_is_ram(pfn);
+			if (is_ram && pfn_valid(pfn) &&
+				!PageReserved(pfn_to_page(pfn)))
+				return NULL;
+			WARN_ON_ONCE(is_ram);
+		}
 	}
 
 	/*
