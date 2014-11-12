@@ -50,6 +50,21 @@ int ioremap_change_attr(unsigned long vaddr, unsigned long size,
 	return err;
 }
 
+static int __ioremap_check_ram(unsigned long start_pfn, unsigned long nr_pages,
+			       void *arg)
+{
+	unsigned long i;
+
+	for (i = 0; i < nr_pages; ++i)
+		if (pfn_valid(start_pfn + i) &&
+		    !PageReserved(pfn_to_page(start_pfn + i)))
+			return 1;
+
+	WARN_ONCE(1, "ioremap on RAM pfn 0x%lx\n", start_pfn);
+
+	return 0;
+}
+
 /*
  * Remap an arbitrary physical address space into the kernel virtual
  * address space. Needed when the kernel wants to access high addresses
@@ -96,22 +111,21 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 	 */
 	/* First check if whole region can be identified as RAM or not */
 	ram_region = region_is_ram(phys_addr, size);
-
-	/* If is RAM(1) or could not be identified(-1), check page by page */
-	if (ram_region) {
-		last_pfn = last_addr >> PAGE_SHIFT;
-		for (pfn = phys_addr >> PAGE_SHIFT; pfn <= last_pfn; pfn++) {
-			int is_ram = 1;
-
-			if (ram_region < 0)
-				is_ram = page_is_ram(pfn);
-			if (is_ram && pfn_valid(pfn) &&
-				!PageReserved(pfn_to_page(pfn)))
-				return NULL;
-			WARN_ON_ONCE(is_ram);
-		}
+	if (ram_region > 0) {
+		WARN_ONCE(1, "ioremap on RAM at 0x%lx - 0x%lx\n",
+				(unsigned long int)phys_addr,
+				(unsigned long int)last_addr);
+		return NULL;
 	}
 
+	/* If could not be identified(-1), check page by page */
+	if (ram_region < 0) {
+		pfn      = phys_addr >> PAGE_SHIFT;
+		last_pfn = last_addr >> PAGE_SHIFT;
+		if (walk_system_ram_range(pfn, last_pfn - pfn + 1, NULL,
+					  __ioremap_check_ram) == 1)
+			return NULL;
+	}
 	/*
 	 * Mappings have to be page-aligned
 	 */
