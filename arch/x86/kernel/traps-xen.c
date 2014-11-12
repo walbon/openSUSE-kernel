@@ -871,9 +871,8 @@ static const trap_info_t __cpuinitconst trap_table[] = {
 /* Set of traps needed for early debugging. */
 void __init early_trap_init(void)
 {
-	int ret;
+	int ret = HYPERVISOR_set_trap_table(early_trap_table);
 
-	ret = HYPERVISOR_set_trap_table(early_trap_table);
 	if (ret)
 		printk("early set_trap_table failed (%d)\n", ret);
 }
@@ -896,7 +895,7 @@ void __init trap_init(void)
 
 void __cpuinit smp_trap_init(trap_info_t *trap_ctxt)
 {
-	const trap_info_t *t = trap_table;
+	const trap_info_t *t;
 
 	for (t = trap_table; t->address; t++) {
 		trap_ctxt[t->vector].flags = t->flags;

@@ -55,7 +55,8 @@ static DEFINE_PER_CPU(struct shadow_time_info, shadow_time);
 static struct timespec shadow_tv;
 static u32 shadow_tv_version;
 
-static u64 jiffies_bias, system_time_bias;
+static u64 __read_mostly jiffies_bias;
+static u64 __read_mostly system_time_bias;
 
 /* Current runstate of each CPU (updated automatically by the hypervisor). */
 DEFINE_PER_CPU(struct vcpu_runstate_info, runstate);
@@ -140,6 +141,7 @@ static void update_wallclock(void)
 {
 	static DEFINE_SPINLOCK(uwc_lock);
 	shared_info_t *s = HYPERVISOR_shared_info;
+	u32 version;
 
 	spin_lock(&uwc_lock);
 
@@ -149,7 +151,8 @@ static void update_wallclock(void)
 		shadow_tv.tv_sec  = s->wc_sec;
 		shadow_tv.tv_nsec = s->wc_nsec;
 		rmb();
-	} while ((s->wc_version & 1) | (shadow_tv_version ^ s->wc_version));
+		version = s->wc_version;
+	} while ((version & 1) | (shadow_tv_version ^ version));
 
 	spin_unlock(&uwc_lock);
 }

@@ -33,9 +33,11 @@
 #include <linux/module.h>
 #include <linux/version.h>
 #include <linux/kernel.h>
+#include <linux/pfn.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/stringify.h>
 #include <linux/errno.h>
 #include <linux/netdevice.h>
 #include <linux/inetdevice.h>
@@ -101,7 +103,7 @@ static const int MODPARM_rx_flip = 0;
 #if defined(NETIF_F_GSO)
 #define HAVE_GSO			1
 #define HAVE_TSO			1 /* TSO is a subset of GSO */
-#define HAVE_CSUM_OFFLOAD		1
+#define NO_CSUM_OFFLOAD			0
 static inline void dev_disable_gso_features(struct net_device *dev)
 {
 	/* Turn off all GSO bits except ROBUST. */
@@ -117,7 +119,7 @@ static inline void dev_disable_gso_features(struct net_device *dev)
  * with the presence of NETIF_F_TSO but it appears to be a good first
  * approximiation.
  */
-#define HAVE_CSUM_OFFLOAD              0
+#define NO_CSUM_OFFLOAD			1
 
 #define gso_size tso_size
 #define gso_segs tso_segs
@@ -145,7 +147,7 @@ static inline int netif_needs_gso(struct sk_buff *skb, int features)
 #else
 #define HAVE_GSO			0
 #define HAVE_TSO			0
-#define HAVE_CSUM_OFFLOAD		0
+#define NO_CSUM_OFFLOAD			1
 #define netif_needs_gso(skb, feat)	0
 #define dev_disable_gso_features(dev)	((void)0)
 #define ethtool_op_set_tso(dev, data)	(-ENOSYS)
@@ -438,27 +440,27 @@ again:
 		goto abort_transaction;
 	}
 
-	err = xenbus_printf(xbt, dev->nodename, "feature-rx-notify", "%d", 1);
+	err = xenbus_write(xbt, dev->nodename, "feature-rx-notify", "1");
 	if (err) {
 		message = "writing feature-rx-notify";
 		goto abort_transaction;
 	}
 
-	err = xenbus_printf(xbt, dev->nodename, "feature-no-csum-offload",
-			    "%d", !HAVE_CSUM_OFFLOAD);
+	err = xenbus_write(xbt, dev->nodename, "feature-no-csum-offload",
+			   __stringify(NO_CSUM_OFFLOAD));
 	if (err) {
 		message = "writing feature-no-csum-offload";
 		goto abort_transaction;
 	}
 
-	err = xenbus_printf(xbt, dev->nodename, "feature-sg", "%d", 1);
+	err = xenbus_write(xbt, dev->nodename, "feature-sg", "1");
 	if (err) {
 		message = "writing feature-sg";
 		goto abort_transaction;
 	}
 
-	err = xenbus_printf(xbt, dev->nodename, "feature-gso-tcpv4", "%d",
-			    HAVE_TSO);
+	err = xenbus_write(xbt, dev->nodename, "feature-gso-tcpv4",
+			   __stringify(HAVE_TSO));
 	if (err) {
 		message = "writing feature-gso-tcpv4";
 		goto abort_transaction;
@@ -741,12 +743,13 @@ static void network_alloc_rx_buffers(struct net_device *dev)
 		if (!page) {
 			kfree_skb(skb);
 no_skb:
+			/* Could not allocate enough skbuffs. Try again later. */
+			mod_timer(&np->rx_refill_timer,
+				  jiffies + (HZ/10));
+
 			/* Any skbuffs queued for refill? Force them out. */
 			if (i != 0)
 				goto refill;
-			/* Could not allocate any skbuffs. Try again later. */
-			mod_timer(&np->rx_refill_timer,
-				  jiffies + (HZ/10));
 			break;
 		}
 
@@ -944,7 +947,7 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
  	if (np->accel_vif_state.hooks && 
  	    np->accel_vif_state.hooks->start_xmit(skb, dev)) { 
  		/* Fast path has sent this packet */ 
- 		return NETDEV_TX_OK;
+		return NETDEV_TX_OK;
  	} 
 
 	/*
@@ -957,7 +960,7 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		goto drop;
 	}
 
-	frags += DIV_ROUND_UP(offset + len, PAGE_SIZE);
+	frags += PFN_UP(offset + len);
 	if (unlikely(frags > MAX_SKB_FRAGS + 1)) {
 		pr_alert("xennet: skb rides the rocket: %d frags\n", frags);
 		dump_stack();
@@ -999,7 +1002,7 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		tx->flags |= XEN_NETTXF_data_validated;
 
 #if HAVE_TSO
-	if (skb_shinfo(skb)->gso_size) {
+	if (skb_is_gso(skb)) {
 		struct netif_extra_info *gso = (struct netif_extra_info *)
 			RING_GET_REQUEST(&np->tx, ++i);
 
@@ -1084,9 +1087,8 @@ static void xennet_move_rx_slot(struct netfront_info *np, struct sk_buff *skb,
 	np->rx.req_prod_pvt++;
 }
 
-int xennet_get_extras(struct netfront_info *np,
-		      struct netif_extra_info *extras, RING_IDX rp)
-
+static int xennet_get_extras(struct netfront_info *np,
+			     struct netif_extra_info *extras, RING_IDX rp)
 {
 	struct netif_extra_info *extra;
 	RING_IDX cons = np->rx.rsp_cons;
@@ -1434,9 +1436,6 @@ err:
 		else
 			skb->ip_summed = CHECKSUM_NONE;
 
-		dev->stats.rx_packets++;
-		dev->stats.rx_bytes += skb->len;
-
 		__skb_queue_tail(&rxq, skb);
 
 		np->rx.rsp_cons = ++i;
@@ -1476,8 +1475,13 @@ err:
 
 		if (skb_checksum_setup(skb, &np->rx_gso_csum_fixups)) {
 			kfree_skb(skb);
+			dev->stats.rx_errors++;
+			--work_done;
 			continue;
 		}
+
+		dev->stats.rx_packets++;
+		dev->stats.rx_bytes += skb->len;
 
 		/* Pass it up. */
 		netif_receive_skb(skb);
@@ -2134,8 +2138,7 @@ static struct net_device * __devinit create_netdev(struct xenbus_device *dev)
 
 	netdev->netdev_ops	= &xennet_netdev_ops;
 	netif_napi_add(netdev, &np->napi, netif_poll, 64);
-	netdev->features        = NETIF_F_IP_CSUM | NETIF_F_RXCSUM |
-				  NETIF_F_GSO_ROBUST;
+	netdev->features        = NETIF_F_RXCSUM | NETIF_F_GSO_ROBUST;
 	netdev->hw_features	= NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_TSO;
 
 	/*

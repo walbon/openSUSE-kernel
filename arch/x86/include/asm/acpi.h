@@ -133,16 +133,15 @@ extern void acpi_reserve_wakeup_memory(void);
 
 #ifdef CONFIG_XEN_PRIVILEGED_GUEST
 static inline int acpi_notify_hypervisor_state(u8 sleep_state,
-					       u32 pm1a_cnt_val,
-					       u32 pm1b_cnt_val)
+					       u32 val_a, u32 val_b)
 {
 	struct xen_platform_op op = {
 		.cmd = XENPF_enter_acpi_sleep,
 		.interface_version = XENPF_INTERFACE_VERSION,
 		.u = {
 			.enter_acpi_sleep = {
-				.pm1a_cnt_val = pm1a_cnt_val,
-				.pm1b_cnt_val = pm1b_cnt_val,
+				.val_a = val_a,
+				.val_b = val_b,
 				.sleep_state = sleep_state,
 			},
 		},

@@ -44,60 +44,79 @@ static int direct_remap_area_pte_fn(pte_t *pte,
 static int __direct_remap_pfn_range(struct mm_struct *mm,
 				    unsigned long address,
 				    unsigned long mfn,
+				    const unsigned long *mfns,
 				    unsigned long size,
 				    pgprot_t prot,
-				    domid_t  domid)
+				    domid_t  domid,
+				    void (*cb)(unsigned int idx, int rc,
+					       void *),
+				    void *ctxt)
 {
 	int rc = 0;
-	unsigned long i, start_address;
-	mmu_update_t *u, *v, *w;
+	unsigned int i, idx;
+	mmu_update_t *u, *v;
 
-	u = v = w = (mmu_update_t *)__get_free_page(GFP_KERNEL|__GFP_REPEAT);
+	u = (mmu_update_t *)__get_free_page(GFP_KERNEL|__GFP_REPEAT);
 	if (u == NULL)
 		return -ENOMEM;
 
-	start_address = address;
 	pgprot_val(prot) |= _PAGE_IOMAP;
 
 	flush_cache_all();
 
-	for (i = 0; i < size; i += PAGE_SIZE) {
-		if ((v - u) == (PAGE_SIZE / sizeof(mmu_update_t))) {
-			/* Flush a full batch after filling in the PTE ptrs. */
-			rc = apply_to_page_range(mm, start_address,
-						 address - start_address,
-						 direct_remap_area_pte_fn, &w);
-			if (rc)
-				goto out;
-			rc = HYPERVISOR_mmu_update(u, v - u, NULL, domid);
-			if (rc < 0)
-				goto out;
-			v = w = u;
-			start_address = address;
-		}
-
+	for (i = idx = 0, v = u; ; ) {
 		/*
 		 * Fill in the machine address: PTE ptr is done later by
 		 * apply_to_page_range().
 		 */
 		v->val = __pte_val(pte_mkspecial(pfn_pte_ma(mfn, prot)));
 
-		mfn++;
-		address += PAGE_SIZE;
+		i += PAGE_SIZE;
 		v++;
+
+		if (i >= size || v - u == PAGE_SIZE / sizeof(mmu_update_t)) {
+			mmu_update_t *w = u;
+			unsigned int nr = v - u;
+
+			/* Flush a full batch after filling in the PTE ptrs. */
+			rc = apply_to_page_range(mm, address, i,
+						 direct_remap_area_pte_fn, &w);
+			if (rc)
+				break;
+
+			v = u;
+			do {
+				unsigned int j, done;
+
+				rc = HYPERVISOR_mmu_update(v, nr, &done,
+							   domid);
+				if (!cb)
+					break;
+				for (j = 0; j < done; ++j)
+					cb(idx++, 0, ctxt);
+				if (!rc)
+					break;
+				cb(idx++, rc, ctxt);
+				rc = 0;
+				v += done + 1;
+				nr -= done + 1;
+			} while (nr);
+
+			if (rc || i >= size)
+				break;
+
+			size -= i;
+			address += i;
+			i = 0;
+			v = u;
+		}
+
+		if (mfns)
+			mfn = *++mfns;
+		else
+			++mfn;
 	}
 
-	if (v != u) {
-		/* Final batch. */
-		rc = apply_to_page_range(mm, start_address,
-					 address - start_address,
-					 direct_remap_area_pte_fn, &w);
-		if (rc)
-			goto out;
-		rc = HYPERVISOR_mmu_update(u, v - u, NULL, domid);
-	}
-
- out:
 	flush_tlb_all();
 
 	free_page((unsigned long)u);
@@ -122,8 +141,8 @@ int direct_remap_pfn_range(struct vm_area_struct *vma,
 
 	vma->vm_mm->context.has_foreign_mappings = 1;
 
-	return __direct_remap_pfn_range(
-		vma->vm_mm, address, mfn, size, prot, domid);
+	return __direct_remap_pfn_range(vma->vm_mm, address, mfn, NULL, size,
+					prot, domid, NULL, NULL);
 }
 EXPORT_SYMBOL(direct_remap_pfn_range);
 
@@ -133,10 +152,40 @@ int direct_kernel_remap_pfn_range(unsigned long address,
 				  pgprot_t prot,
 				  domid_t  domid)
 {
-	return __direct_remap_pfn_range(
-		&init_mm, address, mfn, size, prot, domid);
+	return __direct_remap_pfn_range(&init_mm, address, mfn, NULL, size,
+					prot, domid, NULL, NULL);
 }
 EXPORT_SYMBOL(direct_kernel_remap_pfn_range);
+
+int direct_remap_pfns_range(struct vm_area_struct *vma,
+			    unsigned long address,
+			    const unsigned long *mfns,
+			    unsigned long size,
+			    pgprot_t prot,
+			    domid_t  domid,
+			    void (*cb)(unsigned int idx, int rc, void *),
+			    void *ctxt)
+{
+	if (xen_feature(XENFEAT_auto_translated_physmap)) {
+		unsigned long offs;
+
+		for (offs = 0; offs < size; offs += PAGE_SIZE, ++mfns) {
+			int rc = remap_pfn_range(vma, address + offs, *mfns,
+						 PAGE_SIZE, prot);
+			cb(offs >> PAGE_SHIFT, rc, ctxt);
+		}
+		return 0;
+	}
+
+	if (domid == DOMID_SELF)
+		return -EINVAL;
+
+	vma->vm_flags |= VM_IO | VM_RESERVED | VM_PFNMAP;
+	vma->vm_mm->context.has_foreign_mappings = 1;
+
+	return __direct_remap_pfn_range(vma->vm_mm, address, *mfns, mfns,
+					size, prot, domid, cb, ctxt);
+}
 
 static int lookup_pte_fn(
 	pte_t *pte, struct page *pmd_page, unsigned long addr, void *data)
@@ -235,6 +284,7 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 	int retval;
 	domid_t domid = DOMID_IO;
 	void __iomem *ret_addr;
+	int ram_region;
 
 	/* Don't allow wraparound or zero size */
 	last_addr = phys_addr + size - 1;
@@ -257,14 +307,27 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 	/*
 	 * Don't allow anybody to remap normal RAM that we're using..
 	 */
-	last_mfn = PFN_DOWN(last_addr);
-	for (mfn = PFN_DOWN(phys_addr); mfn <= last_mfn; mfn++) {
-		unsigned long pfn = mfn_to_local_pfn(mfn);
+	/* First check if whole region can be identified as RAM or not */
+	ram_region = is_initial_xendomain() ? region_is_ram(phys_addr, size)
+					    : -1;
+	if (ram_region > 0) {
+		WARN_ONCE(1, "ioremap on RAM at %#Lx - %#Lx\n",
+			  (unsigned long long)phys_addr,
+			  (unsigned long long)last_addr);
+		return NULL;
+	}
 
-		if (pfn_valid(pfn)) {
-			if (!PageReserved(pfn_to_page(pfn)))
-				return NULL;
-			domid = DOMID_SELF;
+	/* If could not be identified(-1), check page by page */
+	if (ram_region < 0) {
+		last_mfn = PFN_DOWN(last_addr);
+		for (mfn = PFN_DOWN(phys_addr); mfn <= last_mfn; mfn++) {
+			unsigned long pfn = mfn_to_local_pfn(mfn);
+
+			if (pfn_valid(pfn)) {
+				if (!PageReserved(pfn_to_page(pfn)))
+					return NULL;
+				domid = DOMID_SELF;
+			}
 		}
 	}
 	WARN_ON_ONCE(domid == DOMID_SELF);
@@ -325,7 +388,7 @@ static void __iomem *__ioremap_caller(resource_size_t phys_addr,
 		goto err_free_area;
 
 	if (__direct_remap_pfn_range(&init_mm, vaddr, PFN_DOWN(phys_addr),
-				     size, prot, domid))
+				     NULL, size, prot, domid, NULL, NULL))
 		goto err_free_area;
 
 	ret_addr = (void __iomem *) (vaddr + offset);

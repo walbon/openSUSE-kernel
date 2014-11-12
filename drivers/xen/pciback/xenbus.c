@@ -145,7 +145,8 @@ static int pciback_attach(struct pciback_device *pdev)
 	}
 
 	if (magic == NULL || strcmp(magic, XEN_PCI_MAGIC) != 0) {
-		xenbus_dev_fatal(pdev->xdev, -EFAULT,
+		err = magic ? -EILSEQ : -ENODATA;
+		xenbus_dev_fatal(pdev->xdev, err,
 				 "version mismatch (%s/%s) with pcifront - "
 				 "halting pciback",
 				 magic, XEN_PCI_MAGIC);

@@ -14,7 +14,7 @@
 struct pci_sysdata {
 	int		domain;		/* PCI domain */
 	int		node;		/* NUMA node */
-#ifdef CONFIG_X86_64
+#if defined(CONFIG_X86_64) && !defined(CONFIG_XEN)
 	void		*iommu;		/* IOMMU private data */
 #endif
 #ifdef CONFIG_XEN_PCIDEV_FRONTEND
@@ -138,7 +138,7 @@ void default_teardown_msi_irqs(struct pci_dev *dev);
 #endif  /* __KERNEL__ */
 
 #ifdef CONFIG_X86_64
-#include "../../asm/pci_64.h"
+#include <asm/pci_64.h>
 #endif
 
 /* implement the pci_ DMA API in terms of the generic device dma_ one */

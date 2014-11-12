@@ -650,7 +650,7 @@ static struct device_attribute xenbus_dev_attrs[] = {
 /* Bus type for frontend drivers. */
 static struct xen_bus_type xenbus_frontend = {
 	.root = "device",
-	.levels = 2, 		/* device/type/<id> */
+	.levels = 2,		/* device/type/<id> */
 	.get_bus_id = frontend_bus_id,
 	.probe = xenbus_probe_frontend,
 	.error = -ENODEV,
@@ -1507,7 +1507,7 @@ static void wait_for_devices(struct xenbus_driver *xendrv)
 				pr_warning("XENBUS: Waiting for "
 					   "devices to initialise: ");
 			seconds_waited += 5;
-			printk("%us...", 300 - seconds_waited);
+			pr_cont("%us...", 300 - seconds_waited);
 			if (seconds_waited == 300)
 				break;
 		}
@@ -1516,7 +1516,7 @@ static void wait_for_devices(struct xenbus_driver *xendrv)
 	}
 
 	if (seconds_waited)
-		printk("\n");
+		pr_cont("\n");
 
 	bus_for_each_dev(&xenbus_frontend.bus, NULL, drv,
 			 print_device_status);

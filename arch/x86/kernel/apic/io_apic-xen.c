@@ -446,7 +446,6 @@ static struct IO_APIC_route_entry ioapic_read_entry(int apic, int pin)
 	raw_spin_unlock_irqrestore(&ioapic_lock, flags);
 	return eu.entry;
 }
-#endif
 
 /*
  * When we write a new IO APIC routing entry, we need to write the high
@@ -454,13 +453,18 @@ static struct IO_APIC_route_entry ioapic_read_entry(int apic, int pin)
  * the interrupt, and we need to make sure the entry is fully populated
  * before that happens.
  */
+#else
+/* On Xen we don't need to write the high half at all. */
+#endif
 static void
 __ioapic_write_entry(int apic, int pin, struct IO_APIC_route_entry e)
 {
 	union entry_union eu = {{0, 0}};
 
 	eu.entry = e;
+#ifndef CONFIG_XEN
 	io_apic_write(apic, 0x11 + 2*pin, eu.w2);
+#endif
 	io_apic_write(apic, 0x10 + 2*pin, eu.w1);
 }
 
@@ -656,7 +660,7 @@ static void clear_IO_APIC (void)
 #define __add_pin_to_irq_node(cfg, node, apic, pin) 0
 #endif /* !CONFIG_XEN */
 
-#ifdef CONFIG_X86_32
+#if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)
 /*
  * support for broken MP BIOSs, enables hand-redirection of PIRQ0-7 to
  * specific CPU-side IRQs.
@@ -1000,7 +1004,7 @@ static int pin_2_irq(int idx, int apic, int pin)
 			irq = gsi_top + gsi;
 	}
 
-#ifdef CONFIG_X86_32
+#if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)
 	/*
 	 * PCI IRQ command line redirection. Yes, limits are hardcoded.
 	 */
@@ -1153,10 +1157,6 @@ next:
 		if (test_bit(vector, used_vectors))
 			goto next;
 
-#ifdef CONFIG_KDB
-		if (vector == KDBENTER_VECTOR)
-			goto next;
-#endif	/* CONFIG_KDB */
 		for_each_cpu_and(new_cpu, tmp_mask, cpu_online_mask)
 			if (per_cpu(vector_irq, new_cpu)[vector] != -1)
 				goto next;

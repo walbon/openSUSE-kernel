@@ -146,6 +146,7 @@ config IOMMU_DEBUG
 
 config IOMMU_STRESS
 	bool "Enable IOMMU stress-test mode"
+	depends on !XEN
 	---help---
 	  This option disables various optimizations in IOMMU related
 	  code to do real stress testing of the IOMMU code. This option

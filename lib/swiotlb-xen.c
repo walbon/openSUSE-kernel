@@ -698,7 +698,7 @@ swiotlb_map_sg_attrs(struct device *hwdev, struct scatterlist *sgl, int nelems,
 		dma_addr_t dev_addr = gnttab_dma_map_page(sg_page(sg),
 							  sg->offset);
 		phys_addr_t paddr = page_to_pseudophys(sg_page(sg))
-				   + sg->offset;
+				    + sg->offset;
 
 		if (range_needs_mapping(paddr, sg->length) ||
 		    !dma_capable(hwdev, dev_addr, sg->length)) {

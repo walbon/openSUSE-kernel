@@ -98,10 +98,10 @@ static void __init find_early_table_space(struct map_range *mr, int nr_range)
 		pgt_buf_end = pgt_buf_start;
 	} else {
 		/*
-		 * [table_start, table_top) gets passed to reserve_early(),
-		 * so we must not use table_end here, despite continuing
-		 * to allocate from there. table_end possibly being below
-		 * table_start is otoh not a problem.
+		 * [table_start, table_top) gets passed to
+		 * memblock_x86_reserve_range(), so we must not use table_end
+		 * here, despite continuing to allocate from there. table_end
+		 * possibly being below table_start is otoh not a problem.
 		 */
 		pgt_buf_start = pgt_buf_top;
 	}
@@ -392,7 +392,7 @@ unsigned long __init_refok init_memory_mapping(unsigned long start,
 int devmem_is_allowed(unsigned long pagenr)
 {
 	if (pagenr <= 256)
-		return 1;
+		return is_initial_xendomain();
 	if (iomem_is_exclusive(pagenr << PAGE_SHIFT))
 		return 0;
 	if (mfn_to_local_pfn(pagenr) >= max_pfn)
@@ -445,9 +445,11 @@ void free_init_pages(char *what, unsigned long begin, unsigned long end)
 		memset((void *)addr, POISON_FREE_INITMEM, PAGE_SIZE);
 #ifdef CONFIG_X86_64
 		if (addr >= __START_KERNEL_map) {
+			paddr_t pa = __pa_symbol(addr);
+
 			/* make_readonly() reports all kernel addresses. */
-			if (HYPERVISOR_update_va_mapping((unsigned long)__va(__pa(addr)),
-							 pfn_pte(__pa(addr) >> PAGE_SHIFT,
+			if (HYPERVISOR_update_va_mapping((unsigned long)__va(pa),
+							 pfn_pte(pa >> PAGE_SHIFT,
 								 PAGE_KERNEL),
 							 0))
 				BUG();

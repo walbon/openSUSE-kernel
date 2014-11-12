@@ -341,6 +341,15 @@ static int blkback_probe(struct xenbus_device *dev,
 	if (err)
 		xenbus_dev_error(dev, err, "writing max-ring-page-order");
 
+	if (blkif_max_segs_per_req > BLKIF_MAX_SEGMENTS_PER_REQUEST) {
+		err = xenbus_printf(XBT_NIL, dev->nodename,
+				    "feature-max-indirect-segments", "%u",
+				    blkif_max_segs_per_req);
+		if (err)
+			xenbus_dev_error(dev, err,
+					 "writing feature-max-indirect-segments");
+	}
+
 	err = xenbus_switch_state(dev, XenbusStateInitWait);
 	if (err)
 		goto fail;
@@ -563,6 +572,12 @@ again:
 				 dev->nodename);
 		goto abort;
 	}
+
+	err = xenbus_printf(xbt, dev->nodename, "physical-sector-size", "%u",
+			    bdev_physical_block_size(be->blkif->vbd.bdev));
+	if (err)
+		xenbus_dev_error(dev, err, "writing %s/physical-sector-size",
+				 dev->nodename);
 
 	err = xenbus_transaction_end(xbt, 0);
 	if (err == -EAGAIN)

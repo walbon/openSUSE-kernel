@@ -152,7 +152,8 @@ static void _pin_lock(struct mm_struct *mm, int lock) {
 	if (lock)
 		spin_lock(&mm->page_table_lock);
 #if USE_SPLIT_PTLOCKS
-	/* While mm->page_table_lock protects us against insertions and
+	/*
+	 * While mm->page_table_lock protects us against insertions and
 	 * removals of higher level page table pages, it doesn't protect
 	 * against updates of pte-s. Such updates, however, require the
 	 * pte pages to be in consistent state (unpinned+writable or
@@ -676,7 +677,8 @@ static void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[])
 		return;
 
 	pud = pud_offset(pgd, 0);
- 	for (addr = i = 0; i < PREALLOCATED_PMDS;
+
+	for (addr = i = 0; i < PREALLOCATED_PMDS;
 	     i++, pud++, addr += PUD_SIZE) {
 		pmd_t *pmd = pmds[i];
 

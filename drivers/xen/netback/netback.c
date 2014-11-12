@@ -339,7 +339,7 @@ int netif_be_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	netif->rx_req_cons_peek += skb_shinfo(skb)->nr_frags + 1 +
-				   !!skb_shinfo(skb)->gso_size;
+				   !!skb_is_gso(skb);
 	netif_get(netif);
 
 	if (netbk_can_queue(dev) && netbk_queue_full(netif)) {
@@ -528,7 +528,8 @@ static inline void netbk_free_pages(int nr_frags, struct netbk_rx_meta *meta)
    used to set up the operations on the top of
    netrx_pending_operations, which have since been done.  Check that
    they didn't give any errors and advance over them. */
-static int netbk_check_gop(int nr_frags, netif_t *netif, struct netrx_pending_operations *npo)
+static int netbk_check_gop(unsigned int nr_frags, const netif_t *netif,
+			   struct netrx_pending_operations *npo)
 {
 	multicall_entry_t *mcl;
 	gnttab_transfer_t *gop;
@@ -1052,14 +1053,14 @@ static void netbk_tx_err(netif_t *netif, netif_tx_request_t *txp, RING_IDX end)
 		txp = RING_GET_REQUEST(&netif->tx, cons++);
 	} while (1);
 	netif->tx.req_cons = cons;
+	netif->dev->stats.rx_errors++;
 	netif_schedule_work(netif);
 	netif_put(netif);
 }
 
 static void netbk_fatal_tx_err(netif_t *netif)
 {
-	printk(KERN_ERR "%s: fatal error; disabling device\n",
-	       netif->dev->name);
+	netdev_err(netif->dev, "fatal error; disabling device\n");
 	netif->busted = 1;
 	disable_irq(netif->irq);
 	netif_deschedule_work(netif);
@@ -1359,10 +1360,11 @@ static void net_tx_action(unsigned long group)
 
 		if (netif->tx.sring->req_prod - netif->tx.req_cons >
 		    NET_TX_RING_SIZE) {
-			printk(KERN_ERR "%s: Impossible number of requests. "
-			       "req_prod %u, req_cons %u, size %lu\n",
-			       netif->dev->name, netif->tx.sring->req_prod,
-			       netif->tx.req_cons, NET_TX_RING_SIZE);
+			netdev_err(netif->dev,
+				   "Impossible number of requests"
+				   " (prod=%u cons=%u size=%lu)\n",
+				   netif->tx.sring->req_prod,
+				   netif->tx.req_cons, NET_TX_RING_SIZE);
 			netbk_fatal_tx_err(netif);
 			continue;
 		}
@@ -1379,9 +1381,8 @@ static void net_tx_action(unsigned long group)
 
 		/* Credit-based scheduling. */
 		if (txreq.size > netif->remaining_credit) {
-			unsigned long now = jiffies;
-			unsigned long next_credit = 
-				netif->credit_timeout.expires +
+			u64 now = get_jiffies_64();
+			u64 next_credit = netif->credit_window_start +
 				msecs_to_jiffies(netif->credit_usec / 1000);
 
 			/* Timer could already be pending in rare cases. */
@@ -1391,8 +1392,8 @@ static void net_tx_action(unsigned long group)
 			}
 
 			/* Passed the point where we can replenish credit? */
-			if (time_after_eq(now, next_credit)) {
-				netif->credit_timeout.expires = now;
+			if (time_after_eq64(now, next_credit)) {
+				netif->credit_window_start = now;
 				tx_add_credit(netif);
 			}
 
@@ -1403,6 +1404,7 @@ static void net_tx_action(unsigned long group)
 				netif->credit_timeout.function =
 					tx_credit_callback;
 				mod_timer(&netif->credit_timeout, next_credit);
+				netif->credit_window_start = next_credit;
 				netif_put(netif);
 				continue;
 			}
@@ -1534,10 +1536,10 @@ static void net_tx_action(unsigned long group)
 
 		/* Check the remap error code. */
 		if (unlikely(netbk_tx_check_mop(netbk, skb, &mop))) {
-			netdev_dbg(netif->dev, "netback grant failed.\n");
+			netdev_dbg(dev, "netback grant failed.\n");
 			skb_shinfo(skb)->nr_frags = 0;
 			kfree_skb(skb);
-			dev->stats.rx_dropped++;
+			dev->stats.rx_errors++;
 			continue;
 		}
 
@@ -1576,18 +1578,19 @@ static void net_tx_action(unsigned long group)
 		skb->protocol = eth_type_trans(skb, dev);
 
 		if (skb_checksum_setup(skb, &netif->rx_gso_csum_fixups)) {
-			netdev_dbg(netif->dev,
+			netdev_dbg(dev,
 				   "Can't setup checksum in net_tx_action\n");
 			kfree_skb(skb);
+			dev->stats.rx_dropped++;
 			continue;
 		}
 
 		if (unlikely(netbk_copy_skb_mode == NETBK_ALWAYS_COPY_SKB) &&
 		    unlikely(skb_linearize(skb))) {
-			netdev_dbg(netif->dev,
+			netdev_dbg(dev,
 			           "Can't linearize skb in net_tx_action.\n");
 			kfree_skb(skb);
-			dev->stats.rx_errors++;
+			dev->stats.rx_dropped++;
 			continue;
 		}
 
@@ -1893,10 +1896,12 @@ static int __init netback_init(void)
 
 	netbk_copy_skb_mode = NETBK_DONT_COPY_SKB;
 	if (MODPARM_copy_skb) {
+#if CONFIG_XEN_COMPAT < 0x030200
 		if (HYPERVISOR_grant_table_op(GNTTABOP_unmap_and_replace,
 					      NULL, 0))
 			netbk_copy_skb_mode = NETBK_ALWAYS_COPY_SKB;
 		else
+#endif
 			netbk_copy_skb_mode = NETBK_DELAYED_COPY_SKB;
 	}
 

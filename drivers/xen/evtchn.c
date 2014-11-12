@@ -238,7 +238,7 @@ static ssize_t evtchn_write(struct file *file, const char __user *buf,
 	for (i = 0; i < (count/sizeof(evtchn_port_t)); i++) {
 		unsigned port = kbuf[i];
 
-		if (port < NR_EVENT_CHANNELS &&
+		if (port < EVTCHN_2L_NR_CHANNELS &&
 		    get_port_user(port) == u &&
 		    !get_port_enabled(port)) {
 			set_port_enabled(port, true);
@@ -373,7 +373,7 @@ static long evtchn_ioctl(struct file *file,
 			break;
 
 		rc = -EINVAL;
-		if (unbind.port >= NR_EVENT_CHANNELS)
+		if (unbind.port >= EVTCHN_2L_NR_CHANNELS)
 			break;
 
 		rc = -ENOTCONN;
@@ -395,7 +395,7 @@ static long evtchn_ioctl(struct file *file,
 		if (copy_from_user(&notify, uarg, sizeof(notify)))
 			break;
 
-		if (notify.port >= NR_EVENT_CHANNELS) {
+		if (notify.port >= EVTCHN_2L_NR_CHANNELS) {
 			rc = -EINVAL;
 		} else if (get_port_user(notify.port) != u) {
 			rc = -ENOTCONN;
@@ -482,7 +482,7 @@ static int evtchn_release(struct inode *inode, struct file *filp)
 	int i;
 	struct per_user_data *u = filp->private_data;
 
-	for (i = 0; i < NR_EVENT_CHANNELS; i++) {
+	for (i = 0; i < EVTCHN_2L_NR_CHANNELS; i++) {
 		if (get_port_user(i) != u)
 			continue;
 
@@ -526,7 +526,7 @@ static int __init evtchn_init(void)
 	if (!xen_domain())
 		return -ENODEV;
 
-	port_user = kcalloc(NR_EVENT_CHANNELS, sizeof(*port_user), GFP_KERNEL);
+	port_user = kcalloc(EVTCHN_2L_NR_CHANNELS, sizeof(*port_user), GFP_KERNEL);
 	if (port_user == NULL)
 		return -ENOMEM;
 

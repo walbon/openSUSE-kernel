@@ -562,6 +562,13 @@ static int split_large_page(pte_t *kpte, unsigned long address)
 	}
 #endif
 
+	/*
+	 * Get the target mfn from the original entry:
+	 */
+	mfn = __pte_mfn(*kpte);
+	for (i = 0; i < PTRS_PER_PTE; i++, mfn += mfninc)
+		set_pte(&pbase[i], pfn_pte_ma(mfn, ref_prot));
+
 	if (address >= (unsigned long)__va(0) &&
 		address < (unsigned long)__va(max_low_pfn_mapped << PAGE_SHIFT))
 		split_page_count(level);
@@ -571,13 +578,6 @@ static int split_large_page(pte_t *kpte, unsigned long address)
 		address < (unsigned long)__va(max_pfn_mapped << PAGE_SHIFT))
 		split_page_count(level);
 #endif
-
-	/*
-	 * Get the target mfn from the original entry:
-	 */
-	mfn = __pte_mfn(*kpte);
-	for (i = 0; i < PTRS_PER_PTE; i++, mfn += mfninc)
-		set_pte(&pbase[i], pfn_pte_ma(mfn, ref_prot));
 
 	/*
 	 * Install the new, split up pagetable.

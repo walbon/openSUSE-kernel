@@ -416,6 +416,6 @@ static inline void set_system_intr_gate_ist(int n, void *addr, unsigned ist)
 	BUG_ON((unsigned)n > 0xFF);
 	_set_gate(n, GATE_INTERRUPT, addr, 0x3, ist, __KERNEL_CS);
 }
-#endif
+#endif /* !CONFIG_X86_NO_IDT */
 
 #endif /* _ASM_X86_DESC_H */

@@ -285,15 +285,15 @@ DEFINE_XEN_GUEST_HANDLE(xen_ulong_t);
  *  refer to Intel SDM 10.12. The PAT allows to set the caching attributes of
  *  pages instead of using MTRRs.
  *
- *  The PAT MSR is as follow (it is a 64-bit value, each entry is 8 bits):
- *             PAT4                 PAT0
- *   +---+----+----+----+-----+----+----+
- *    WC | WC | WB | UC | UC- | WC | WB |  <= Linux
- *   +---+----+----+----+-----+----+----+
- *    WC | WT | WB | UC | UC- | WT | WB |  <= BIOS (default when machine boots)
- *   +---+----+----+----+-----+----+----+
- *    WC | WP | WC | UC | UC- | WT | WB |  <= Xen
- *   +---+----+----+----+-----+----+----+
+ *  The PAT MSR is as follows (it is a 64-bit value, each entry is 8 bits):
+ *                    PAT4                 PAT0
+ *  +-----+-----+----+----+----+-----+----+----+
+ *  | UC  | UC- | WC | WB | UC | UC- | WC | WB |  <= Linux
+ *  +-----+-----+----+----+----+-----+----+----+
+ *  | UC  | UC- | WT | WB | UC | UC- | WT | WB |  <= BIOS (default when machine boots)
+ *  +-----+-----+----+----+----+-----+----+----+
+ *  | rsv | rsv | WP | WC | UC | UC- | WT | WB |  <= Xen
+ *  +-----+-----+----+----+----+-----+----+----+
  *
  *  The lookup of this index table translates to looking up
  *  Bit 7, Bit 4, and Bit 3 of val entry:
@@ -568,11 +568,13 @@ DEFINE_GUEST_HANDLE_STRUCT(multicall_entry);
 typedef struct multicall_entry multicall_entry_t;
 DEFINE_XEN_GUEST_HANDLE(multicall_entry_t);
 
+#if defined(CONFIG_PARAVIRT_XEN) || __XEN_INTERFACE_VERSION__ < 0x00040400
 /*
- * Event channel endpoints per domain:
+ * Event channel endpoints per domain (when using the 2-level ABI):
  *  1024 if a long is 32 bits; 4096 if a long is 64 bits.
  */
-#define NR_EVENT_CHANNELS (sizeof(xen_ulong_t) * sizeof(xen_ulong_t) * 64)
+#define NR_EVENT_CHANNELS EVTCHN_2L_NR_CHANNELS
+#endif
 
 struct vcpu_time_info {
 	/*
@@ -628,7 +630,11 @@ struct vcpu_info {
 	 * to block: this avoids wakeup-waiting races.
 	 */
 	uint8_t evtchn_upcall_pending;
+#ifdef XEN_HAVE_PV_UPCALL_MASK
 	uint8_t evtchn_upcall_mask;
+#else /* XEN_HAVE_PV_UPCALL_MASK */
+	uint8_t pad0;
+#endif /* XEN_HAVE_PV_UPCALL_MASK */
 	xen_ulong_t evtchn_pending_sel;
 	struct arch_vcpu_info arch;
 #ifdef CONFIG_PARAVIRT_XEN
@@ -642,6 +648,7 @@ typedef struct vcpu_info vcpu_info_t;
 #endif
 
 /*
+ * `incontents 200 startofday_shared Start-of-day shared data structure
  * Xen/kernel shared data -- pointer provided in start_info.
  *
  * This structure is defined to be both smaller than a page, and the
@@ -716,7 +723,7 @@ typedef struct shared_info shared_info_t;
  *      c. list of allocated page frames [mfn_list, nr_pages]
  *         (unless relocated due to XEN_ELFNOTE_INIT_P2M)
  *      d. start_info_t structure        [register ESI (x86)]
- *      e. bootstrap page tables         [pt_base, CR3 (x86)]
+ *      e. bootstrap page tables         [pt_base and CR3 (x86)]
  *      f. bootstrap stack               [register ESP (x86)]
  *  4. Bootstrap elements are packed together, but each is 4kB-aligned.
  *  5. The initial ram disk may be omitted.
@@ -728,9 +735,18 @@ typedef struct shared_info shared_info_t;
  *  8. There is guaranteed to be at least 512kB padding after the final
  *     bootstrap element. If necessary, the bootstrap virtual region is
  *     extended by an extra 4MB to ensure this.
+ *
+ * Note: Prior to 25833:bb85bbccb1c9. ("x86/32-on-64 adjust Dom0 initial page
+ * table layout") a bug caused the pt_base (3.e above) and cr3 to not point
+ * to the start of the guest page tables (it was offset by two pages).
+ * This only manifested itself on 32-on-64 dom0 kernels and not 32-on-64 domU
+ * or 64-bit kernels of any colour. The page tables for a 32-on-64 dom0 got
+ * allocated in the order: 'first L1','first L2', 'first L3', so the offset
+ * to the page table base is by two pages back. The initial domain if it is
+ * 32-bit and runs under a 64-bit hypervisor should _NOT_ use two of the
+ * pages preceding pt_base and mark them as reserved/unused.
  */
-
-#define MAX_GUEST_CMDLINE 1024
+#ifdef XEN_HAVE_PV_GUEST_ENTRY
 struct start_info {
 	/* THE FOLLOWING ARE FILLED IN BOTH ON INITIAL BOOT AND ON RESUME.    */
 	char magic[32];             /* "xen-<version>-<platform>".            */
@@ -755,6 +771,7 @@ struct start_info {
 	unsigned long mfn_list;     /* VIRTUAL address of page-frame list.    */
 	unsigned long mod_start;    /* VIRTUAL address of pre-loaded module.  */
 	unsigned long mod_len;      /* Size (bytes) of pre-loaded module.     */
+#define MAX_GUEST_CMDLINE 1024
 	int8_t cmd_line[MAX_GUEST_CMDLINE];
 	/* The pfn range here covers both page table and p->m table frames.   */
 	unsigned long first_p2m_pfn;/* 1st pfn forming initial P->M table.    */
@@ -767,6 +784,7 @@ typedef struct start_info start_info_t;
 #define console_mfn    console.domU.mfn
 #define console_evtchn console.domU.evtchn
 #endif
+#endif /* XEN_HAVE_PV_GUEST_ENTRY */
 
 /* These flags are passed in the 'flags' field of start_info_t. */
 #define SIF_PRIVILEGED    (1<<0)  /* Is the domain privileged? */
@@ -800,7 +818,14 @@ struct xen_multiboot_mod_list
     /* Unused, must be zero */
     uint32_t pad;
 };
-
+/*
+ * `incontents 200 startofday_dom0_console Dom0_console
+ *
+ * The console structure in start_info.console.dom0
+ *
+ * This structure includes a variety of information required to
+ * have a working VGA/VESA console.
+ */
 typedef struct dom0_vga_console_info {
     uint8_t video_type; /* DOM0_VGA_CONSOLE_??? */
 #define XEN_VGATYPE_TEXT_MODE_3 0x03
@@ -873,9 +898,9 @@ __DEFINE_XEN_GUEST_HANDLE(uint64, uint64_t);
 #endif
 
 #ifndef __ASSEMBLY__
-struct xenctl_cpumap {
+struct xenctl_bitmap {
     XEN_GUEST_HANDLE_64(uint8) bitmap;
-    uint32_t nr_cpus;
+    uint32_t nr_bits;
 };
 #endif
 

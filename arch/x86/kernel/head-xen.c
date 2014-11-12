@@ -76,6 +76,7 @@ void __init reserve_ebda_region(void)
 #include <asm/fixmap.h>
 #include <asm/mc146818rtc.h>
 #include <asm/pgtable.h>
+#include <asm/proto.h>
 #include <asm/sections.h>
 #include <xen/interface/callback.h>
 #include <xen/interface/memory.h>
@@ -124,11 +125,12 @@ void __init xen_start_kernel(void)
 				     VMASST_TYPE_writable_pagetables));
 
 	memblock_init();
-	memblock_x86_reserve_range(ALIGN(__pa_symbol(&_end), PAGE_SIZE),
+	memblock_x86_reserve_range(PAGE_ALIGN(__pa_symbol(&_end)),
 				   __pa(xen_start_info->pt_base)
-				   + (xen_start_info->nr_pt_frames
-				      << PAGE_SHIFT),
+				   + PFN_PHYS(xen_start_info->nr_pt_frames),
 				   "Xen provided");
+
+	x86_configure_nx();
 
 #ifdef CONFIG_X86_32
 {
@@ -144,7 +146,6 @@ void __init xen_start_kernel(void)
 		__pmd(__pa_symbol(swapper_pg_fixmap) | _PAGE_TABLE));
 }
 #else
-	x86_configure_nx();
 	xen_init_pt();
 #endif
 

@@ -578,9 +578,9 @@ static inline int __meminit make_readonly(unsigned long paddr)
 	 * page and descriptor tables embedded inside don't have writable
 	 * mappings. Exclude the vsyscall area here, allowing alternative
 	 * instruction patching to work. The range must be in sync with that
-	 * passed to reserve_early() (as "TEXT DATA BSS"), since all other
-	 * regions can be allocated from under CONFIG_NO_BOOTMEM and thus must
-	 * be writable.
+	 * passed to memblock_x86_reserve_range() (as "TEXT DATA BSS"), since
+	 * all other regions can be allocated from under CONFIG_NO_BOOTMEM and
+	 * thus must be writable.
 	 */
 	if ((paddr >= __pa_symbol(&_text))
             && (paddr < (__pa_symbol(__bss_stop) & PAGE_MASK))

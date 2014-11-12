@@ -189,7 +189,6 @@ u64 arch_irq_stat(void)
 #endif
 }
 
-
 #ifndef CONFIG_XEN
 /*
  * do_IRQ handles all normal device IRQ's (the special
@@ -245,6 +244,8 @@ void smp_x86_platform_ipi(struct pt_regs *regs)
 
 	set_irq_regs(old_regs);
 }
+
+EXPORT_SYMBOL_GPL(vector_used_by_percpu_irq);
 #endif
 
 #ifdef CONFIG_HOTPLUG_CPU

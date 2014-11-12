@@ -61,6 +61,29 @@ static inline int enforce_singleshot_mapping(struct vm_area_struct *vma,
 	privcmd_enforce_singleshot_mapping(vma)
 #endif
 
+#ifdef CONFIG_XEN_PRIVILEGED_GUEST
+struct mmapbatch_ctxt {
+	int *err;
+	xen_pfn_t *mfn;
+	int status;
+};
+
+static void mmapbatch_cb(unsigned int idx, int rc, void *data)
+{
+	struct mmapbatch_ctxt *ctxt = data;
+
+	if (ctxt->err)
+		ctxt->err[idx] = rc;
+	else if (rc == -ENOENT)
+		ctxt->mfn[idx] |= 0x80000000U;
+	else if (rc)
+		ctxt->mfn[idx] |= 0xf0000000U;
+
+	if (rc == -ENOENT || !ctxt->status)
+		ctxt->status = rc;
+}
+#endif
+
 static long privcmd_ioctl(struct file *file,
 			  unsigned int cmd, unsigned long data)
 {
@@ -68,7 +91,7 @@ static long privcmd_ioctl(struct file *file,
 	void __user *udata = (void __user *) data;
 #ifdef CONFIG_XEN_PRIVILEGED_GUEST
 	unsigned long i, addr, nr, nr_pages;
-	int paged_out;
+	struct mmapbatch_ctxt mbc;
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
 	LIST_HEAD(pagelist);
@@ -121,6 +144,9 @@ static long privcmd_ioctl(struct file *file,
 
 		p = mmapcmd.entry;
 		for (i = 0; i < mmapcmd.num;) {
+			if (i)
+				cond_resched();
+
 			nr = min(mmapcmd.num - i, MMAP_NR_PER_PAGE);
 
 			ret = -ENOMEM;
@@ -153,6 +179,9 @@ static long privcmd_ioctl(struct file *file,
 
 		i = 0;
 		list_for_each(l, &pagelist) {
+			if (i)
+				cond_resched();
+
 			nr = i + min(mmapcmd.num - i, MMAP_NR_PER_PAGE);
 
 			msg = (privcmd_mmap_entry_t*)(l + 1);
@@ -181,6 +210,9 @@ static long privcmd_ioctl(struct file *file,
 		addr = vma->vm_start;
 		i = 0;
 		list_for_each(l, &pagelist) {
+			if (i)
+				cond_resched();
+
 			nr = i + min(mmapcmd.num - i, MMAP_NR_PER_PAGE);
 
 			msg = (privcmd_mmap_entry_t*)(l + 1);
@@ -204,18 +236,21 @@ static long privcmd_ioctl(struct file *file,
 
 	mmap_out:
 		up_write(&mm->mmap_sem);
-		list_for_each_safe(l,l2,&pagelist)
+		i = 0;
+		list_for_each_safe(l, l2, &pagelist) {
+			if (!(++i & 7))
+				cond_resched();
 			free_page((unsigned long)l);
+		}
 	}
 #undef MMAP_NR_PER_PAGE
 	break;
 
 	case IOCTL_PRIVCMD_MMAPBATCH: {
 #define MMAPBATCH_NR_PER_PAGE \
-	(unsigned long)((PAGE_SIZE - sizeof(*l)) / sizeof(*mfn))
+	(unsigned long)((PAGE_SIZE - sizeof(*l)) / sizeof(*mbc.mfn))
 		privcmd_mmapbatch_t m;
 		xen_pfn_t __user *p;
-		xen_pfn_t *mfn;
 
 		if (!is_initial_xendomain())
 			return -EPERM;
@@ -231,6 +266,9 @@ static long privcmd_ioctl(struct file *file,
 
 		p = m.arr;
 		for (i=0; i<nr_pages; )	{
+			if (i)
+				cond_resched();
+
 			nr = min(nr_pages - i, MMAPBATCH_NR_PER_PAGE);
 
 			ret = -ENOMEM;
@@ -241,9 +279,9 @@ static long privcmd_ioctl(struct file *file,
 			INIT_LIST_HEAD(l);
 			list_add_tail(l, &pagelist);
 
-			mfn = (unsigned long*)(l + 1);
+			mbc.mfn = (void *)(l + 1);
 			ret = -EFAULT;
-			if (copy_from_user(mfn, p, nr*sizeof(*mfn)))
+			if (copy_from_user(mbc.mfn, p, nr * sizeof(*mbc.mfn)))
 				goto mmapbatch_out;
 
 			i += nr; p+= nr;
@@ -262,59 +300,58 @@ static long privcmd_ioctl(struct file *file,
 		}
 
 		i = 0;
-		ret = 0;
-		paged_out = 0;
+		mbc.status = 0;
+		mbc.err = NULL;
 		list_for_each(l, &pagelist) {
-			nr = i + min(nr_pages - i, MMAPBATCH_NR_PER_PAGE);
-			mfn = (unsigned long *)(l + 1);
+			if (i)
+				cond_resched();
 
-			while (i<nr) {
-				int rc;
+			nr = min(nr_pages - i, MMAPBATCH_NR_PER_PAGE);
+			mbc.mfn = (void *)(l + 1);
 
-				rc = direct_remap_pfn_range(vma, addr & PAGE_MASK,
-				                            *mfn, PAGE_SIZE,
-				                            vma->vm_page_prot, m.dom);
-				if(rc < 0) {
-					if (rc == -ENOENT)
-					{
-						*mfn |= 0x80000000U;
-						paged_out = 1;
-					}
-					else
-						*mfn |= 0xf0000000U;
-					ret++;
-				}
-				mfn++; i++; addr += PAGE_SIZE;
+			ret = direct_remap_pfns_range(vma, addr & PAGE_MASK,
+						      mbc.mfn, nr * PAGE_SIZE,
+						      vma->vm_page_prot, m.dom,
+						      mmapbatch_cb, &mbc);
+			if (ret) {
+				if (ret == -ENOENT)
+					ret = -EFAULT;
+				break;
 			}
+			i += nr;
+			addr += nr * PAGE_SIZE;
 		}
 
 		up_write(&mm->mmap_sem);
-		if (ret > 0) {
+
+		if (!ret && mbc.status) {
 			p = m.arr;
 			i = 0;
-			if (paged_out)
-				ret = -ENOENT;
-			else
-				ret = 0;
 			list_for_each(l, &pagelist) {
+				if (i)
+					cond_resched();
+
 				nr = min(nr_pages - i, MMAPBATCH_NR_PER_PAGE);
-				mfn = (unsigned long *)(l + 1);
-				if (copy_to_user(p, mfn, nr*sizeof(*mfn)))
+				if (copy_to_user(p, l + 1, nr * sizeof(*p)))
 					ret = -EFAULT;
 				i += nr; p += nr;
 			}
+			if (mbc.status == -ENOENT)
+				ret = -ENOENT;
 		}
 	mmapbatch_out:
-		list_for_each_safe(l,l2,&pagelist)
+		i = 0;
+		list_for_each_safe(l, l2, &pagelist) {
+			if (!(++i & 7))
+				cond_resched();
 			free_page((unsigned long)l);
+		}
 	}
 	break;
 
 	case IOCTL_PRIVCMD_MMAPBATCH_V2: {
 		privcmd_mmapbatch_v2_t m;
 		const xen_pfn_t __user *p;
-		xen_pfn_t *mfn;
-		int *err;
 
 		if (!is_initial_xendomain())
 			return -EPERM;
@@ -330,6 +367,9 @@ static long privcmd_ioctl(struct file *file,
 
 		p = m.arr;
 		for (i = 0; i < nr_pages; i += nr, p += nr) {
+			if (i)
+				cond_resched();
+
 			nr = min(nr_pages - i, MMAPBATCH_NR_PER_PAGE);
 
 			ret = -ENOMEM;
@@ -340,9 +380,9 @@ static long privcmd_ioctl(struct file *file,
 			INIT_LIST_HEAD(l);
 			list_add_tail(l, &pagelist);
 
-			mfn = (void *)(l + 1);
+			mbc.mfn = (void *)(l + 1);
 			ret = -EFAULT;
-			if (copy_from_user(mfn, p, nr * sizeof(*mfn)))
+			if (copy_from_user(mbc.mfn, p, nr * sizeof(*mbc.mfn)))
 				goto mmapbatch_v2_out;
 		}
 
@@ -359,51 +399,58 @@ static long privcmd_ioctl(struct file *file,
 		}
 
 		i = 0;
-		ret = 0;
-		paged_out = 0;
+		mbc.status = 0;
 		list_for_each(l, &pagelist) {
-			nr = i + min(nr_pages - i, MMAPBATCH_NR_PER_PAGE);
-			mfn = (void *)(l + 1);
-			err = (void *)(l + 1);
-			BUILD_BUG_ON(sizeof(*err) > sizeof(*mfn));
+			if (i)
+				cond_resched();
 
-			while (i < nr) {
-				int rc;
+			nr = min(nr_pages - i, MMAPBATCH_NR_PER_PAGE);
+			mbc.mfn = (void *)(l + 1);
+			mbc.err = (void *)(l + 1);
+			BUILD_BUG_ON(sizeof(*mbc.err) > sizeof(*mbc.mfn));
 
-				rc = direct_remap_pfn_range(vma, addr & PAGE_MASK,
-				                            *mfn, PAGE_SIZE,
-				                            vma->vm_page_prot, m.dom);
-				if (rc < 0) {
-					if (rc == -ENOENT)
-						paged_out = 1;
-					ret++;
-				} else
-					BUG_ON(rc > 0);
-				*err++ = rc;
-				mfn++; i++; addr += PAGE_SIZE;
+			ret = direct_remap_pfns_range(vma, addr & PAGE_MASK,
+						      mbc.mfn, nr * PAGE_SIZE,
+						      vma->vm_page_prot, m.dom,
+						      mmapbatch_cb, &mbc);
+			if (ret) {
+				if (ret == -ENOENT)
+					ret = -EFAULT;
+				break;
 			}
+			i += nr;
+			addr += nr * PAGE_SIZE;
 		}
 
 		up_write(&mm->mmap_sem);
 
-		if (ret > 0) {
+		if (ret)
+			;
+		else if (mbc.status) {
 			int __user *p = m.err;
 
-			ret = paged_out ? -ENOENT : 0;
 			i = 0;
 			list_for_each(l, &pagelist) {
+				if (i)
+					cond_resched();
+
 				nr = min(nr_pages - i, MMAPBATCH_NR_PER_PAGE);
-				err = (void *)(l + 1);
-				if (copy_to_user(p, err, nr * sizeof(*err)))
+				if (copy_to_user(p, l + 1, nr * sizeof(*p)))
 					ret = -EFAULT;
 				i += nr; p += nr;
 			}
+			if (mbc.status == -ENOENT)
+				ret = -ENOENT;
 		} else if (clear_user(m.err, nr_pages * sizeof(*m.err)))
 			ret = -EFAULT;
 
 	mmapbatch_v2_out:
-		list_for_each_safe(l, l2, &pagelist)
+		i = 0;
+		list_for_each_safe(l, l2, &pagelist) {
+			if (!(++i & 7))
+				cond_resched();
 			free_page((unsigned long)l);
+		}
 #undef MMAPBATCH_NR_PER_PAGE
 	}
 	break;

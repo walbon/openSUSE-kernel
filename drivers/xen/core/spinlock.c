@@ -50,11 +50,11 @@ int __cpuinit xen_spinlock_init(unsigned int cpu)
 	if (nopoll)
 		return 0;
 
- 	WARN_ON(per_cpu(poll_evtchn, cpu));
+	WARN_ON(per_cpu(poll_evtchn, cpu));
 	bind_ipi.vcpu = cpu;
 	rc = HYPERVISOR_event_channel_op(EVTCHNOP_bind_ipi, &bind_ipi);
 	if (!rc)
-	 	per_cpu(poll_evtchn, cpu) = bind_ipi.port;
+		per_cpu(poll_evtchn, cpu) = bind_ipi.port;
 	else
 		pr_warning("No spinlock poll event channel for CPU#%u (%d)\n",
 			   cpu, rc);
@@ -69,7 +69,7 @@ void __cpuinit xen_spinlock_cleanup(unsigned int cpu)
 	close.port = per_cpu(poll_evtchn, cpu);
 	if (!close.port)
 		return;
- 	per_cpu(poll_evtchn, cpu) = 0;
+	per_cpu(poll_evtchn, cpu) = 0;
 	WARN_ON(HYPERVISOR_event_channel_op(EVTCHNOP_close, &close));
 }
 
@@ -190,8 +190,7 @@ void xen_spin_irq_enter(void)
 		 * the current lock was released), but don't acquire the lock.
 		 */
 		while (lock->cur == spinning->ticket) {
-			unsigned int ticket = ticket_drop(spinning,
-							  spinning->ticket,
+			unsigned int ticket = ticket_drop(spinning, lock->cur,
 							  cpu);
 
 			if (!(ticket + 1))
@@ -403,8 +402,8 @@ void xen_spin_kick(const arch_spinlock_t *lock, unsigned int token)
 			    spinning->ticket == token) {
 #if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
 				token = spinning->irq_count
-					 < per_cpu(_irq_count, cpu)
-					 ? ticket_drop(spinning, token, cpu) : -2;
+					< per_cpu(_irq_count, cpu)
+					? ticket_drop(spinning, token, cpu) : -2;
 #endif
 				break;
 			}

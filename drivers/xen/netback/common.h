@@ -84,6 +84,7 @@ typedef struct netif_st {
 	unsigned long   credit_usec;
 	unsigned long   remaining_credit;
 	struct timer_list credit_timeout;
+	u64 credit_window_start;
 
 	/* Enforce draining of the transmit queue. */
 	struct timer_list tx_queue_timeout;
@@ -221,7 +222,7 @@ typedef unsigned int pending_ring_idx_t;
 
 struct netbk_rx_meta {
 	skb_frag_t frag;
-	int id;
+	u16 id;
 	u8 copy:1;
 };
 

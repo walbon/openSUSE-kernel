@@ -127,7 +127,8 @@
 
 static int xen_panic_event(struct notifier_block *, unsigned long, void *);
 static struct notifier_block xen_panic_block = {
-	xen_panic_event, NULL, 0 /* try to go last */
+	.notifier_call = xen_panic_event,
+	.priority = INT_MIN /* try to go last */
 };
 
 unsigned long *phys_to_machine_mapping;
@@ -617,12 +618,11 @@ static void __init memblock_x86_reserve_range_setup_data(void)
 #endif
 }
 
-#ifndef CONFIG_XEN
 /*
  * --------- Crashkernel reservation ------------------------------
  */
 
-#ifdef CONFIG_KEXEC
+#if defined(CONFIG_KEXEC) && !defined(CONFIG_XEN)
 
 static inline unsigned long long get_total_mem(void)
 {
@@ -699,7 +699,6 @@ static void __init reserve_crashkernel(void)
 {
 }
 #endif
-#endif /* CONFIG_XEN */
 
 static struct resource standard_io_resources[] = {
 	{ .name = "dma1", .start = 0x00, .end = 0x1f,
@@ -991,7 +990,7 @@ void __init setup_arch(char **cmdline_p)
 	*/
 	ROOT_DEV = MKDEV(UNNAMED_MAJOR,0);
 #else
- 	ROOT_DEV = MKDEV(RAMDISK_MAJOR,0);
+	ROOT_DEV = MKDEV(RAMDISK_MAJOR,0);
 #endif
 	if (is_initial_xendomain()) {
 		const struct dom0_vga_console_info *info =
@@ -1286,11 +1285,9 @@ void __init setup_arch(char **cmdline_p)
 
 	reserve_initrd();
 
-#ifndef CONFIG_XEN
 	reserve_crashkernel();
 
 	vsmp_init();
-#endif
 
 	io_delay_init();
 

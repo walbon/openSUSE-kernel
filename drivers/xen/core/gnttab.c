@@ -567,7 +567,7 @@ static int unmap_pte_fn(pte_t *pte, struct page *pmd_page,
 }
 #endif
 
-void *arch_gnttab_alloc_shared(unsigned long *frames)
+void *arch_gnttab_alloc_shared(xen_pfn_t *frames)
 {
 	struct vm_struct *area;
 	area = alloc_vm_area(PAGE_SIZE * max_nr_grant_frames());
@@ -579,11 +579,11 @@ void *arch_gnttab_alloc_shared(unsigned long *frames)
 static int gnttab_map(unsigned int start_idx, unsigned int end_idx)
 {
 	struct gnttab_setup_table setup;
-	unsigned long *frames;
+	xen_pfn_t *frames;
 	unsigned int nr_gframes = end_idx + 1;
 	int rc;
 
-	frames = kmalloc(nr_gframes * sizeof(unsigned long), GFP_ATOMIC);
+	frames = kmalloc(nr_gframes * sizeof(*frames), GFP_ATOMIC);
 	if (!frames)
 		return -ENOMEM;
 
@@ -980,7 +980,7 @@ gnttab_init(void)
 	    && xen_feature(XENFEAT_gnttab_map_avail_bits)) {
 #ifdef CONFIG_X86
 		GNTMAP_pte_special = (__pte_val(pte_mkspecial(__pte_ma(0)))
-				      >> _PAGE_BIT_UNUSED1) << _GNTMAP_guest_avail0;
+				      >> _PAGE_BIT_SPECIAL) << _GNTMAP_guest_avail0;
 #else
 #error Architecture not yet supported.
 #endif

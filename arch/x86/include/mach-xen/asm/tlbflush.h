@@ -10,8 +10,16 @@
 #define __flush_tlb() xen_tlb_flush()
 #define __flush_tlb_global() xen_tlb_flush()
 #define __flush_tlb_single(addr) xen_invlpg(addr)
-#define __flush_tlb_all() xen_tlb_flush()
-#define __flush_tlb_one(addr) xen_invlpg(addr)
+
+static inline void __flush_tlb_all(void)
+{
+	__flush_tlb_global();
+}
+
+static inline void __flush_tlb_one(unsigned long addr)
+{
+	__flush_tlb_single(addr);
+}
 
 #ifdef CONFIG_X86_32
 # define TLB_FLUSH_ALL	0xffffffff
