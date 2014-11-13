@@ -436,6 +436,9 @@ struct sk_buff {
 	__u8			pfmemalloc:1;
 	__u8			ooo_okay:1;
 	__u8			no_fcs:1;
+#ifndef __GENKSYMS__
+	__u8			l4_rxhash:1;
+#endif
 	kmemcheck_bitfield_end(flags2);
 
 	/* 0/13 bit hole */
