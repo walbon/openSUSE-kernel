@@ -616,7 +616,8 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 	int lock = (trans->type != TRANS_JOIN_NOLOCK);
 	int err = 0;
 
-	if (--trans->use_count) {
+	if (trans->use_count > 1) {
+		trans->use_count--;
 		trans->block_rsv = trans->orig_rsv;
 		return 0;
 	}
@@ -659,12 +660,6 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 
 	if (lock && cur_trans->blocked && !cur_trans->in_commit) {
 		if (throttle) {
-			/*
-			 * We may race with somebody else here so end up having
-			 * to call end_transaction on ourselves again, so inc
-			 * our use_count.
-			 */
-			trans->use_count++;
 			return btrfs_commit_transaction(trans, root);
 		} else {
 			wake_up_process(info->transaction_kthread);
