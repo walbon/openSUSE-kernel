@@ -2729,6 +2729,8 @@ static int btrfs_clone(struct inode *src, struct inode *inode,
 			} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 				u64 skip = 0;
 				u64 trim = 0;
+				u64 aligned_end = 0;
+
 				if (off > key.offset) {
 					skip = off - key.offset;
 					new_key.offset += skip;
@@ -2745,9 +2747,11 @@ static int btrfs_clone(struct inode *src, struct inode *inode,
 				size -= skip + trim;
 				datal -= skip + trim;
 
+				aligned_end = ALIGN(new_key.offset + datal,
+						    root->sectorsize);
 				ret = btrfs_drop_extents(trans, root, inode,
 							 new_key.offset,
-							 new_key.offset + datal,
+							 aligned_end,
 							 1);
 				if (ret) {
 					if (ret != -EOPNOTSUPP)
