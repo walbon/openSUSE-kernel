@@ -38,6 +38,7 @@
 #include <asm/traps.h>
 #include <asm/desc.h>
 #include <asm/tlbflush.h>
+#include <asm/hypervisor.h>
 
 #define MMU_QUEUE_SIZE 1024
 
@@ -568,3 +569,17 @@ void __init kvm_guest_init(void)
 	kvm_guest_cpu_init();
 #endif
 }
+
+static bool __init kvm_detect(void)
+{
+	if (!kvm_para_available())
+		return false;
+	return true;
+}
+
+const struct hypervisor_x86 x86_hyper_kvm __refconst = {
+	.name			= "KVM",
+	.detect			= kvm_detect,
+	.x2apic_available	= kvm_para_available,
+};
+EXPORT_SYMBOL_GPL(x86_hyper_kvm);

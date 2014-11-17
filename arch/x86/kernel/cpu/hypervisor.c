@@ -34,6 +34,7 @@ static const __initconst struct hypervisor_x86 * const hypervisors[] =
 {
 	&x86_hyper_vmware,
 	&x86_hyper_ms_hyperv,
+	&x86_hyper_kvm,
 #ifdef CONFIG_XEN_PVHVM
 	&x86_hyper_xen_hvm,
 #endif
@@ -75,4 +76,11 @@ void __init init_hypervisor_platform(void)
 
 	if (x86_hyper->init_platform)
 		x86_hyper->init_platform();
+}
+
+bool __init hypervisor_x2apic_available(void)
+{
+	return x86_hyper                   &&
+	       x86_hyper->x2apic_available &&
+	       x86_hyper->x2apic_available();
 }
