@@ -262,11 +262,16 @@ ssize_t part_stat_show(struct device *dev,
 		       struct device_attribute *attr, char *buf)
 {
 	struct hd_struct *p = dev_to_part(dev);
+	spinlock_t *queue_lock = part_to_disk(p)->queue->queue_lock;
 	int cpu;
 
+	if (queue_lock)	/* Some queues need not be initialized yet */
+		spin_lock_irq(queue_lock);
 	cpu = part_stat_lock();
 	part_round_stats(cpu, p);
 	part_stat_unlock();
+	if (queue_lock)
+		spin_unlock_irq(queue_lock);
 	return sprintf(buf,
 		"%8lu %8lu %8llu %8u "
 		"%8lu %8lu %8llu %8u "

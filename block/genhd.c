@@ -1195,6 +1195,7 @@ static int diskstats_show(struct seq_file *seqf, void *v)
 	struct gendisk *gp = v;
 	struct disk_part_iter piter;
 	struct hd_struct *hd;
+	spinlock_t *queue_lock;
 	char buf[BDEVNAME_SIZE];
 	int cpu;
 
@@ -1208,9 +1209,15 @@ static int diskstats_show(struct seq_file *seqf, void *v)
  
 	disk_part_iter_init(&piter, gp, DISK_PITER_INCL_EMPTY_PART0);
 	while ((hd = disk_part_iter_next(&piter))) {
+		queue_lock = part_to_disk(hd)->queue->queue_lock;
+
+		if (queue_lock)	/* Some queues need not be initialized yet... */
+			spin_lock_irq(queue_lock);
 		cpu = part_stat_lock();
 		part_round_stats(cpu, hd);
 		part_stat_unlock();
+		if (queue_lock)
+			spin_unlock_irq(queue_lock);
 		seq_printf(seqf, "%4d %7d %s %lu %lu %llu "
 			   "%u %lu %lu %llu %u %u %u %u\n",
 			   MAJOR(part_devt(hd)), MINOR(part_devt(hd)),
