@@ -370,10 +370,6 @@ config NEED_PER_CPU_KM
 	bool
 	default y
 
-config VMA_CACHE
-	bool "Enable per-thread caching of VMAs"
-	default n
-
 config CLEANCACHE
 	bool "Enable cleancache driver to cache clean pages if tmem is present"
 	default n

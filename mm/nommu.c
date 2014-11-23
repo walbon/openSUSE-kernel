@@ -766,20 +766,14 @@ static void delete_vma_from_mm(struct vm_area_struct *vma)
 {
 	struct address_space *mapping;
 	struct mm_struct *mm = vma->vm_mm;
-#ifdef CONFIG_VMA_CACHE
 	int i;
 	struct task_struct *curr = current;
-#endif
 
 	kenter("%p", vma);
 
 	protect_vma(vma, 0);
 
 	mm->map_count--;
-#ifndef CONFIG_VMA_CACHE
-	if (mm->mmap_cache == vma)
-		mm->mmap_cache = NULL;
-#else
 	for (i = 0; i < VMACACHE_SIZE; i++) {
 		/* if the vma is cached, invalidate the entire cache */
 		if (curr->vmacache[i] == vma) {
@@ -787,7 +781,6 @@ static void delete_vma_from_mm(struct vm_area_struct *vma)
 			break;
 		}
 	}
-#endif
 
 	/* remove the VMA from the mapping */
 	if (vma->vm_file) {
@@ -838,15 +831,9 @@ struct vm_area_struct *find_vma(struct mm_struct *mm, unsigned long addr)
 	struct vm_area_struct *vma;
 
 	/* check the cache first */
-#ifndef CONFIG_VMA_CACHE
-	vma = ACCESS_ONCE(mm->mmap_cache);
-	if (vma && vma->vm_start <= addr && vma->vm_end > addr)
-		return vma;
-#else
 	vma = vmacache_find(mm, addr);
 	if (likely(vma))
 		return vma;
-#endif
 
 	/* trawl the list (there may be multiple mappings in which addr
 	 * resides) */
@@ -854,11 +841,7 @@ struct vm_area_struct *find_vma(struct mm_struct *mm, unsigned long addr)
 		if (vma->vm_start > addr)
 			return NULL;
 		if (vma->vm_end > addr) {
-#ifndef CONFIG_VMA_CACHE
-			mm->mmap_cache = vma;
-#else
 			macache_update(addr, vma);
-#endif
 			return vma;
 		}
 	}
@@ -897,15 +880,9 @@ static struct vm_area_struct *find_vma_exact(struct mm_struct *mm,
 	unsigned long end = addr + len;
 
 	/* check the cache first */
-#ifndef CONFIG_VMA_CACHE
-	vma = mm->mmap_cache;
-	if (vma && vma->vm_start == addr && vma->vm_end == end)
-		return vma;
-#else
 	vma = vmacache_find_exact(mm, addr, end);
 	if (vma)
 		return vma;
-#endif
 
 	/* trawl the list (there may be multiple mappings in which addr
 	 * resides) */
@@ -915,11 +892,7 @@ static struct vm_area_struct *find_vma_exact(struct mm_struct *mm,
 		if (vma->vm_start > addr)
 			return NULL;
 		if (vma->vm_end == end) {
-#ifndef CONFIG_VMA_CACHE
-			mm->mmap_cache = vma;
-#else
 			vmacache_update(addr, vma);
-#endif
 			return vma;
 		}
 	}

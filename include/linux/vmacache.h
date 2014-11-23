@@ -1,8 +1,6 @@
 #ifndef __LINUX_VMACACHE_H
 #define __LINUX_VMACACHE_H
 
-#ifdef CONFIG_VMA_CACHE
-
 #include <linux/sched.h>
 #include <linux/mm.h>
 
@@ -36,7 +34,5 @@ static inline void vmacache_invalidate(struct mm_struct *mm)
 	if (unlikely(mm->vmacache_seqnum == 0))
 		vmacache_flush_all(mm);
 }
-
-#endif /* CONFIG_VMA_CACHE */
 
 #endif /* __LINUX_VMACACHE_H */

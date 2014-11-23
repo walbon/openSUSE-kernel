@@ -861,10 +861,8 @@ static int exec_mmap(struct mm_struct *mm)
 	tsk->mm = mm;
 	tsk->active_mm = mm;
 	activate_mm(active_mm, mm);
-#ifdef CONFIG_VMA_CACHE
 	tsk->mm->vmacache_seqnum = 0;
 	vmacache_flush(tsk);
-#endif
 	if (old_mm && tsk->signal->oom_score_adj == OOM_SCORE_ADJ_MIN) {
 		atomic_dec(&old_mm->oom_disable_count);
 		atomic_inc(&tsk->mm->oom_disable_count);

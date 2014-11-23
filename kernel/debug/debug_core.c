@@ -221,7 +221,6 @@ static void kgdb_flush_swbreak_addr(unsigned long addr)
 	if (!CACHE_FLUSH_IS_SAFE)
 		return;
 
-#ifdef CONFIG_VMA_CACHE
 	if (current->mm) {
 		int i;
 
@@ -232,12 +231,6 @@ static void kgdb_flush_swbreak_addr(unsigned long addr)
 					  addr, addr + BREAK_INSTR_SIZE);
 		}
 	}
-#else
-	if (current->mm && current->mm->mmap_cache) {
-		flush_cache_range(current->mm->mmap_cache,
-				  addr, addr + BREAK_INSTR_SIZE);
-	}
-#endif
 
 	/* Force flush instruction cache if it was outside the mm */
 	flush_icache_range(addr, addr + BREAK_INSTR_SIZE);
