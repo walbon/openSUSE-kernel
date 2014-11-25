@@ -45,6 +45,22 @@ struct anon_vma {
 	 * mm_take_all_locks() (mm_all_locks_mutex).
 	 */
 	struct list_head head;	/* Chain of private "related" vmas */
+
+	/*
+	 * Count of child anon_vmas and VMAs which points to this anon_vma.
+	 *
+	 * This counter is used for making decision about reusing old anon_vma
+	 * instead of forking new one. It allows to detect anon_vmas which have
+	 * just one direct descendant and no vmas. Reusing such anon_vma not
+	 * leads to significant preformance regression but prevents degradation
+	 * of anon_vma hierarchy to endless linear chain.
+	 *
+	 * Root anon_vma is never reused because it is its own parent and it has
+	 * at leat one vma or child, thus at fork it's degree is at least 2.
+	 */
+	unsigned degree;
+
+	struct anon_vma *parent;	/* Parent of this anon_vma */
 };
 
 /*
