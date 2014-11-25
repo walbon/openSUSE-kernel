@@ -81,6 +81,13 @@ extern unsigned int kobjsize(const void *objp);
 #define VM_GROWSDOWN	0x00000100	/* general info on the segment */
 #if defined(CONFIG_STACK_GROWSUP) || defined(CONFIG_IA64)
 #define VM_GROWSUP	0x00000200
+
+/*
+ * SLE: Not the same as upstream but there is no need to backport the VM flag
+ * modifications at this time. The cases where this is valid are also on arches
+ * that do not support transparent huge pages so this is ok. -mel
+ */
+#define VM_NOHUGEPAGE	0x00000000
 #else
 #define VM_GROWSUP	0x00000000
 #define VM_NOHUGEPAGE	0x00000200	/* MADV_NOHUGEPAGE marked this vma */
