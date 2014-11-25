@@ -184,6 +184,9 @@ static inline int is_pfn_mapping(struct vm_area_struct *vma)
 	return !!(vma->vm_flags & VM_PFNMAP);
 }
 
+/* This mask defines which mm->def_flags a process can inherit its parent */
+#define VM_INIT_DEF_MASK	VM_NOHUGEPAGE
+
 /*
  * vm_fault is filled by the the pagefault handler and passed to the vma's
  * ->fault function. The vma's ->fault is responsible for returning a bitmask
