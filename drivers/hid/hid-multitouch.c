@@ -813,6 +813,11 @@ static const struct hid_device_id mt_devices[] = {
 		HID_USB_DEVICE(USB_VENDOR_ID_UNITEC,
 			USB_DEVICE_ID_UNITEC_USB_TOUCH_0A19) },
 
+	/* Advanced Silicon panels */
+	{ .driver_data = MT_CLS_WIN_8,
+		HID_USB_DEVICE(USB_VENDOR_ID_ADVANCED_SILICON,
+			USB_DEVICE_ID_AS_TS_36B1) },
+
 	{ }
 };
 MODULE_DEVICE_TABLE(hid, mt_devices);
