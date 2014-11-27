@@ -1552,6 +1552,11 @@ static const struct dev_pm_ops dw_dev_pm_ops = {
 	.resume_noirq = dw_resume_noirq,
 };
 
+static const struct platform_device_id dw_dma_ids[] = {
+	{ "INTL9C60", 0 },
+	{ }
+};
+
 static struct platform_driver dw_driver = {
 	.remove		= __exit_p(dw_remove),
 	.shutdown	= dw_shutdown,
@@ -1559,6 +1564,7 @@ static struct platform_driver dw_driver = {
 		.name	= "dw_dmac",
 		.pm	= &dw_dev_pm_ops,
 	},
+	.id_table	= dw_dma_ids,
 };
 
 static int __init dw_init(void)
