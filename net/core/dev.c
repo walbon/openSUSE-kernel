@@ -270,6 +270,9 @@ static RAW_NOTIFIER_HEAD(netdev_chain);
 DEFINE_PER_CPU_ALIGNED(struct softnet_data, softnet_data);
 EXPORT_PER_CPU_SYMBOL(softnet_data);
 
+void (*bond_dev_disable_lro_cb)(struct net_device *);
+EXPORT_SYMBOL(bond_dev_disable_lro_cb);
+
 #ifdef CONFIG_LOCKDEP
 /*
  * register_netdevice() inits txq->_xmit_lock and sets lockdep class
@@ -1344,6 +1347,14 @@ void dev_disable_lro(struct net_device *dev)
 	__ethtool_set_flags(dev, flags & ~ETH_FLAG_LRO);
 	if (unlikely(dev->features & NETIF_F_LRO))
 		netdev_WARN(dev, "failed to disable LRO!\n");
+
+	if (netif_is_bond_master(dev)) {
+		if (bond_dev_disable_lro_cb)
+			bond_dev_disable_lro_cb(dev);
+		else
+			WARN(1, "bond callback null but device %s exists",
+			     dev->name);
+	}
 }
 EXPORT_SYMBOL(dev_disable_lro);
 
