@@ -28,6 +28,7 @@
 #define _I915_DRM_H_
 
 #include <drm/drm.h>
+#include <drm/i915_pciids.h>
 
 /* Please note that modifications to all structs defined here are
  * subject to backwards-compatibility constraints.
