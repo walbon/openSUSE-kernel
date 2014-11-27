@@ -1316,18 +1316,22 @@ EXPORT_SYMBOL(dev_close);
  */
 void dev_disable_lro(struct net_device *dev)
 {
+	struct net_device *prev_dev;
 	u32 flags;
 
-	/*
-	 * If we're trying to disable lro on a vlan device
-	 * use the underlying physical device instead
-	 */
-	if (is_vlan_dev(dev))
-		dev = vlan_dev_real_dev(dev);
+	do {
+		prev_dev = dev;
 
-	/* the same for macvlan devices */
-	if (netif_is_macvlan(dev))
-		dev = macvlan_dev_real_dev(dev);
+		/* If we're trying to disable lro on a vlan device
+		 * use the underlying physical device instead
+		 */
+		if (is_vlan_dev(dev))
+			dev = vlan_dev_real_dev(dev);
+
+		/* the same for macvlan devices */
+		if (netif_is_macvlan(dev))
+			dev = macvlan_dev_real_dev(dev);
+	} while (dev != prev_dev);
 
 	if (dev->ethtool_ops && dev->ethtool_ops->get_flags)
 		flags = dev->ethtool_ops->get_flags(dev);
