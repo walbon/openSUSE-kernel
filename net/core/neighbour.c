@@ -56,6 +56,7 @@
 #define PNEIGH_HASHMASK		0xF
 
 static void neigh_timer_handler(unsigned long arg);
+static void neigh_suspect(struct neighbour *neigh);
 static void __neigh_notify(struct neighbour *n, int type, int flags);
 static void neigh_update_notify(struct neighbour *neigh);
 static int pneigh_ifdown(struct neigh_table *tbl, struct net_device *dev);
@@ -251,10 +252,52 @@ static void neigh_flush_dev(struct neigh_table *tbl, struct net_device *dev)
 	}
 }
 
+/*
+ * ensure that all cached hardware headers of all neighbours
+ * are updated after the hardware address of dev has been changed
+ */
 void neigh_changeaddr(struct neigh_table *tbl, struct net_device *dev)
 {
+	int i;
+	struct neigh_hash_table *nht;
+
 	write_lock_bh(&tbl->lock);
-	neigh_flush_dev(tbl, dev);
+	nht = rcu_dereference_protected(tbl->nht,
+					lockdep_is_held(&tbl->lock));
+
+	for (i = 0; i <= nht->hash_mask; i++) {
+		struct neighbour *n;
+
+		n = rcu_dereference_protected(nht->hash_buckets[i],
+					      lockdep_is_held(&tbl->lock));
+
+		while (n) {
+			struct neighbour *next;
+			struct hh_cache *hh;
+			next = rcu_dereference_protected(n->next,
+						lockdep_is_held(&tbl->lock));
+
+			if (dev && n->dev != dev) {
+				n = next;
+				continue;
+			}
+			write_lock(&n->lock);
+
+			neigh_del_timer(n);
+			n->nud_state = NUD_STALE;
+
+			if (n->dev->header_ops && n->dev->header_ops->cache)
+			for (hh = n->hh; hh; hh = hh->hh_next) {
+				write_seqlock_bh(&hh->hh_lock);
+				n->dev->header_ops->cache(n, hh);
+				write_sequnlock_bh(&hh->hh_lock);
+			}
+			neigh_suspect(n);
+
+			write_unlock(&n->lock);
+			n = next;
+		}
+	}
 	write_unlock_bh(&tbl->lock);
 }
 EXPORT_SYMBOL(neigh_changeaddr);
