@@ -1977,6 +1977,9 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
 	if (res)
 		goto err_detach;
 
+	if (!(bond_dev->features & NETIF_F_LRO))
+		dev_disable_lro(slave_dev);
+
 	res = netdev_rx_handler_register(slave_dev, bond_handle_frame,
 					 new_slave);
 	if (res) {
@@ -4343,6 +4346,17 @@ static netdev_tx_t bond_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	return ret;
 }
 
+/* only called from dev_disable_lro() under RTNL */
+static void bond_dev_disable_lro(struct net_device *dev)
+{
+	struct bonding *bond = netdev_priv(dev);
+	struct slave *slave;
+	int i;
+
+	bond_for_each_slave(bond, slave, i)
+		dev_disable_lro(slave->dev);
+}
+
 /*
  * set bond mode specific net device operations
  */
@@ -5029,6 +5043,10 @@ static int __init bonding_init(void)
 
 	bond_create_debugfs();
 
+	rtnl_lock();
+	bond_dev_disable_lro_cb = bond_dev_disable_lro;
+	rtnl_unlock();
+
 	for (i = 0; i < max_bonds; i++) {
 		res = bond_create(&init_net, NULL);
 		if (res)
@@ -5043,6 +5061,7 @@ static int __init bonding_init(void)
 out:
 	return res;
 err:
+	bond_dev_disable_lro_cb = NULL;
 	rtnl_link_unregister(&bond_link_ops);
 err_link:
 	unregister_pernet_subsys(&bond_net_ops);
@@ -5056,6 +5075,10 @@ static void __exit bonding_exit(void)
 
 	bond_destroy_sysfs();
 	bond_destroy_debugfs();
+
+	rtnl_lock();
+	bond_dev_disable_lro_cb = NULL;
+	rtnl_unlock();
 
 	rtnl_link_unregister(&bond_link_ops);
 	unregister_pernet_subsys(&bond_net_ops);
