@@ -142,6 +142,7 @@ static unsigned int __ipv6_conntrack_in(struct net *net,
 					int (*okfn)(struct sk_buff *))
 {
 	struct sk_buff *reasm = skb->nfct_reasm;
+	struct nf_conntrack *old_nfct;
 
 	/* This packet is fragmented and has reassembled packet. */
 	if (reasm) {
@@ -154,7 +155,8 @@ static unsigned int __ipv6_conntrack_in(struct net *net,
 				return ret;
 		}
 		nf_conntrack_get(reasm->nfct);
-		skb->nfct = reasm->nfct;
+		old_nfct = xchg(&skb->nfct, reasm->nfct);
+		nf_conntrack_put(old_nfct);
 		skb->nfctinfo = reasm->nfctinfo;
 		return NF_ACCEPT;
 	}
