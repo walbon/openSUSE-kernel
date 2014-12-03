@@ -161,9 +161,15 @@ static void nf_ct_frag6_init_fq(struct inet_frag_queue *q, void *a)
 
 static __inline__ void fq_put(struct nf_ct_frag6_queue *fq)
 {
-	struct net *net = fq->net;
-	if (inet_frag_put(&fq->q, &nf_frags))
-		put_net(net);
+	inet_frag_put(&fq->q, &nf_frags);
+}
+
+static void nf_ct_frag6_fq_destructor(struct inet_frag_queue *q)
+{
+	struct nf_ct_frag6_queue *fq;
+
+	fq = container_of(q, struct nf_ct_frag6_queue, q);
+	put_net(fq->net);
 }
 
 /* Kill fq entry. It is not destroyed immediately,
@@ -707,7 +713,7 @@ int nf_ct_frag6_init(void)
 {
 	nf_frags.hashfn = nf_hashfn;
 	nf_frags.constructor = nf_ct_frag6_init_fq;
-	nf_frags.destructor = NULL;
+	nf_frags.destructor = nf_ct_frag6_fq_destructor;
 	nf_frags.skb_free = nf_skb_free;
 	nf_frags.qsize = sizeof(struct nf_ct_frag6_queue);
 	nf_frags.match = nf_ct_frag6_match;
