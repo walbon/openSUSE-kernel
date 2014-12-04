@@ -26,6 +26,7 @@
 #include <linux/scatterlist.h>
 #include <linux/if_vlan.h>
 #include <linux/slab.h>
+#include <net/dst.h>
 
 static int napi_weight = 128;
 module_param(napi_weight, int, 0444);
@@ -606,6 +607,7 @@ static netdev_tx_t start_xmit(struct sk_buff *skb, struct net_device *dev)
 	virtqueue_kick(vi->svq);
 
 	/* Don't wait up for transmitted skbs to be freed. */
+	skb_dst_drop(skb);
 	skb_orphan(skb);
 	nf_reset(skb);
 
