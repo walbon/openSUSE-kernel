@@ -3855,7 +3855,7 @@ static int xhci_usb2_software_lpm_test(struct usb_hcd *hcd,
 	 * Check device's USB 2.0 extension descriptor to determine whether
 	 * HIRD or BESL shoule be used. See USB2.0 LPM errata.
 	 */
-	pm_addr = port_array[port_num] + 1;
+	pm_addr = port_array[port_num] + PORTPMSC;
 	u2del = HCS_U2_LATENCY(xhci->hcs_params3);
 	if (le32_to_cpu(udev->bos->ext_cap->bmAttributes) & (1 << 2))
 		hird = xhci_calculate_hird_besl(u2del, 1);
@@ -3957,7 +3957,7 @@ int xhci_set_usb2_hardware_lpm(struct usb_hcd *hcd,
 
 	port_array = xhci->usb2_ports;
 	port_num = udev->portnum - 1;
-	pm_addr = port_array[port_num] + 1;
+	pm_addr = port_array[port_num] + PORTPMSC;
 	temp = xhci_readl(xhci, pm_addr);
 
 	xhci_dbg(xhci, "%s port %d USB2 hardware LPM\n",
