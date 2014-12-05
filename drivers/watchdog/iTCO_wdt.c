@@ -133,6 +133,7 @@ enum iTCO_chipsets {
 	TCO_LPT_LP,	/* Lynx Point-LP */
 	TCO_WBG,        /* Wellsburg */
 	TCO_AVN,        /* Avoton SoC */
+	TCO_BAYTRAIL,   /* Bay Trail SoC */
 };
 
 static struct {
@@ -200,6 +201,7 @@ static struct {
 	{"Lynx Point_LP", 2},
 	{"Wellsburg", 2},
 	{"Avoton SoC", 3},
+	{"Bay Trail SoC", 3},
 	{NULL, 0}
 };
 
@@ -418,6 +420,7 @@ static DEFINE_PCI_DEVICE_TABLE(iTCO_wdt_pci_tbl) = {
 	{ PCI_VDEVICE(INTEL, 0x1f39), TCO_AVN},
 	{ PCI_VDEVICE(INTEL, 0x1f3a), TCO_AVN},
 	{ PCI_VDEVICE(INTEL, 0x1f3b), TCO_AVN},
+	{ PCI_VDEVICE(INTEL, 0x0f1c), TCO_BAYTRAIL},
 	{ 0, },			/* End of list */
 };
 MODULE_DEVICE_TABLE(pci, iTCO_wdt_pci_tbl);
