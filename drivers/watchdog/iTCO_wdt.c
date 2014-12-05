@@ -199,7 +199,7 @@ static struct {
 	{"Lynx Point", 2},
 	{"Lynx Point_LP", 2},
 	{"Wellsburg", 2},
-	{"Avoton SoC", 1},
+	{"Avoton SoC", 3},
 	{NULL, 0}
 };
 
