@@ -3739,16 +3739,10 @@ static int hub_set_address(struct usb_device *udev, int devnum)
  */
 static void hub_set_initial_usb2_lpm_policy(struct usb_device *udev)
 {
-	int connect_type;
-
 	if (!udev->usb2_hw_lpm_capable)
 		return;
 
-	connect_type = usb_get_hub_port_connect_type(udev->parent,
-			udev->portnum);
-
-	if ((udev->bos->ext_cap->bmAttributes & USB_BESL_SUPPORT) ||
-			connect_type == USB_PORT_CONNECT_TYPE_HARD_WIRED) {
+	if ((udev->bos->ext_cap->bmAttributes & USB_BESL_SUPPORT)) {
 		udev->usb2_hw_lpm_allowed = 1;
 		usb_set_usb2_hardware_lpm(udev, 1);
 	}
