@@ -582,7 +582,7 @@ extern void usb_queue_reset_device(struct usb_interface *dev);
 
 
 /* USB autosuspend and autoresume */
-#ifdef CONFIG_USB_SUSPEND
+#ifdef CONFIG_PM_RUNTIME
 extern void usb_enable_autosuspend(struct usb_device *udev);
 extern void usb_disable_autosuspend(struct usb_device *udev);
 
