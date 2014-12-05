@@ -456,6 +456,8 @@ static struct {		/* this is private data for the iTCO_wdt device */
 	spinlock_t io_lock;
 	/* the PCI-device */
 	struct pci_dev *pdev;
+	/* Cached ACPI control or PMC base value */
+	int actrl_pbase_save;
 } iTCO_wdt_private;
 
 /* the watchdog platform device */
@@ -859,6 +861,28 @@ static struct miscdevice iTCO_wdt_miscdev = {
 	.fops =		&iTCO_wdt_fops,
 };
 
+#define ACPIBASE_PMC_OFF	0x08
+#define ACPIBASE_PMC_END	0x0c
+#define ACPICTRL_PMCBASE	0x44
+
+static void iTCO_enable_pmc_space(struct pci_dev *dev)
+{
+	u8 reg_save;
+
+	pci_read_config_byte(dev, ACPICTRL_PMCBASE, &reg_save);
+	pci_write_config_byte(dev, ACPICTRL_PMCBASE, reg_save | 0x2);
+
+	iTCO_wdt_private.actrl_pbase_save = reg_save;
+}
+
+static void iTCO_restore_config_space(struct pci_dev *dev)
+{
+	if (iTCO_wdt_private.iTCO_version == 3) {
+		pci_write_config_byte(dev, ACPICTRL_PMCBASE,
+				      iTCO_wdt_private.actrl_pbase_save);
+	}
+}
+
 /*
  *	Init & exit routines
  */
@@ -889,10 +913,17 @@ static int __devinit iTCO_wdt_init(struct pci_dev *pdev,
 	iTCO_wdt_private.ACPIBASE = base_address;
 	iTCO_wdt_private.pdev = pdev;
 
-	/* Get the Memory-Mapped GCS register, we need it for the
+	/* iTCO v2:
+	   Get the Memory-Mapped GCS register, we need it for the
 	   NO_REBOOT flag (TCO v2). To get access to it you have to
 	   read RCBA from PCI Config space 0xf0 and use it as base.
-	   GCS = RCBA + ICH6_GCS(0x3410). */
+	   GCS = RCBA + ICH6_GCS(0x3410).
+
+	   iTCO v3:
+	   Get the Power Management Configuration register.  To get access
+	   to it we have to read the PMC BASE from config space and address
+	   the register at offset 0x8.
+	 */
 	if (iTCO_wdt_private.iTCO_version == 2) {
 		pci_read_config_dword(pdev, 0xf0, &base_address);
 		if ((base_address & 1) == 0) {
@@ -903,6 +934,11 @@ static int __devinit iTCO_wdt_init(struct pci_dev *pdev,
 		}
 		RCBA = base_address & 0xffffc000;
 		iTCO_wdt_private.gcs_pmc = ioremap((RCBA + 0x3410), 4);
+	} else if (iTCO_wdt_private.iTCO_version == 3) {
+		iTCO_enable_pmc_space(pdev);
+		pci_read_config_dword(pdev, ACPICTRL_PMCBASE, &base_address);
+		base_address &= 0xfffffe00;
+		iTCO_wdt_private.gcs_pmc = ioremap(base_address + ACPIBASE_PMC_OFF, 4);
 	}
 
 	/* Check chipset's NO_REBOOT bit */
@@ -986,6 +1022,7 @@ unreg_smi_en:
 out_unmap:
 	if (iTCO_wdt_private.iTCO_version >= 2)
 		iounmap(iTCO_wdt_private.gcs_pmc);
+	iTCO_restore_config_space(pdev);
 out:
 	iTCO_wdt_private.ACPIBASE = 0;
 	return ret;
@@ -1003,6 +1040,7 @@ static void __devexit iTCO_wdt_cleanup(void)
 	release_region(SMI_EN, 4);
 	if (iTCO_wdt_private.iTCO_version >= 2)
 		iounmap(iTCO_wdt_private.gcs_pmc);
+	iTCO_restore_config_space(iTCO_wdt_private.pdev);
 	pci_dev_put(iTCO_wdt_private.pdev);
 	iTCO_wdt_private.ACPIBASE = 0;
 }
