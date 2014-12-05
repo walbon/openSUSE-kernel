@@ -3742,7 +3742,7 @@ static void hub_set_initial_usb2_lpm_policy(struct usb_device *udev)
 	if (!udev->usb2_hw_lpm_capable)
 		return;
 
-	if ((udev->bos->ext_cap->bmAttributes & USB_BESL_SUPPORT)) {
+	if ((udev->bos->ext_cap->bmAttributes & cpu_to_le32(USB_BESL_SUPPORT))) {
 		udev->usb2_hw_lpm_allowed = 1;
 		usb_set_usb2_hardware_lpm(udev, 1);
 	}
