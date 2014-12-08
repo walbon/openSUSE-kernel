@@ -25,9 +25,6 @@
 #define MAX_NUM_SDB 511
 #define MIN_NUM_SDB 1
 
-#define ALERT_REQ_MASK   0x4000000000000000ul
-#define BUFFER_FULL_MASK 0x8000000000000000ul
-
 DECLARE_PER_CPU(struct hws_cpu_buffer, sampler_cpu_buffer);
 
 struct hws_execute_parms {
@@ -64,43 +61,6 @@ static unsigned long interval;
 static unsigned long min_sampler_rate;
 static unsigned long max_sampler_rate;
 
-static int ssctl(void *buffer)
-{
-	int cc;
-
-	/* set in order to detect a program check */
-	cc = 1;
-
-	asm volatile(
-		"0: .insn s,0xB2870000,0(%1)\n"
-		"1: ipm %0\n"
-		"   srl %0,28\n"
-		"2:\n"
-		EX_TABLE(0b, 2b) EX_TABLE(1b, 2b)
-		: "+d" (cc), "+a" (buffer)
-		: "m" (*((struct hws_ssctl_request_block *)buffer))
-		: "cc", "memory");
-
-	return cc ? -EINVAL : 0 ;
-}
-
-static int qsi(void *buffer)
-{
-	int cc;
-	cc = 1;
-
-	asm volatile(
-		"0: .insn s,0xB2860000,0(%1)\n"
-		"1: lhi %0,0\n"
-		"2:\n"
-		EX_TABLE(0b, 2b) EX_TABLE(1b, 2b)
-		: "=d" (cc), "+a" (buffer)
-		: "m" (*((struct hws_qsi_info_block *)buffer))
-		: "cc", "memory");
-
-	return cc ? -EINVAL : 0;
-}
-
 static void execute_qsi(void *parms)
 {
 	struct hws_execute_parms *ep = parms;
@@ -112,7 +72,7 @@ static void execute_ssctl(void *parms)
 {
 	struct hws_execute_parms *ep = parms;
 
-	ep->rc = ssctl(ep->buffer);
+	ep->rc = lsctl(ep->buffer);
 }
 
 static int smp_ctl_ssctl_stop(int cpu)
@@ -213,17 +173,6 @@ static int smp_ctl_qsi(int cpu)
 	return ep.rc;
 }
 
-static inline unsigned long *trailer_entry_ptr(unsigned long v)
-{
-	void *ret;
-
-	ret = (void *)v;
-	ret += PAGE_SIZE;
-	ret -= sizeof(struct hws_trailer_entry);
-
-	return (unsigned long *) ret;
-}
-
 static void hws_ext_handler(unsigned int ext_int_code,
 			    unsigned int param32, unsigned long param64)
 {
@@ -253,16 +202,6 @@ static void init_all_cpu_buffers(void)
 		cb = &per_cpu(sampler_cpu_buffer, cpu);
 		memset(cb, 0, sizeof(struct hws_cpu_buffer));
 	}
-}
-
-static int is_link_entry(unsigned long *s)
-{
-	return *s & 0x1ul ? 1 : 0;
-}
-
-static unsigned long *get_next_sdbt(unsigned long *s)
-{
-	return (unsigned long *) (*s & ~0x1ul);
 }
 
 static int prepare_cpu_buffers(void)
@@ -352,7 +291,7 @@ static int allocate_sdbt(int cpu)
 			}
 			*sdbt = sdb;
 			trailer = trailer_entry_ptr(*sdbt);
-			*trailer = ALERT_REQ_MASK;
+			*trailer = SDB_TE_ALERT_REQ_MASK;
 			sdbt++;
 			mutex_unlock(&hws_sem_oom);
 		}
@@ -828,7 +767,7 @@ static void worker_on_interrupt(unsigned int cpu)
 
 		trailer = trailer_entry_ptr(*sdbt);
 		/* leave loop if no more work to do */
-		if (!(*trailer & BUFFER_FULL_MASK)) {
+		if (!(*trailer & SDB_TE_BUFFER_FULL_MASK)) {
 			done = 1;
 			if (!hws_flush_all)
 				continue;
