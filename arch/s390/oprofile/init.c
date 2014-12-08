@@ -11,6 +11,7 @@
  */
 
 #include <linux/oprofile.h>
+#include <linux/perf_event.h>
 #include <linux/init.h>
 #include <linux/errno.h>
 #include <linux/oprofile.h>
@@ -42,6 +43,21 @@ static int hwsampler_running;	/* start_mutex must be held to change */
 
 static struct oprofile_operations timer_ops;
 
+static int __oprofile_hwsampler_start(void)
+{
+	int retval;
+
+	retval = hwsampler_allocate(oprofile_sdbt_blocks, oprofile_sdb_blocks);
+	if (retval)
+		return retval;
+
+	retval = hwsampler_start_all(oprofile_hw_interval);
+	if (retval)
+		hwsampler_deallocate();
+
+	return retval;
+}
+
 static int oprofile_hwsampler_start(void)
 {
 	int retval;
@@ -51,13 +67,13 @@ static int oprofile_hwsampler_start(void)
 	if (!hwsampler_running)
 		return timer_ops.start();
 
-	retval = hwsampler_allocate(oprofile_sdbt_blocks, oprofile_sdb_blocks);
+	retval = perf_reserve_sampling();
 	if (retval)
 		return retval;
 
-	retval = hwsampler_start_all(oprofile_hw_interval);
+	retval = __oprofile_hwsampler_start();
 	if (retval)
-		hwsampler_deallocate();
+		perf_release_sampling();
 
 	return retval;
 }
@@ -71,6 +87,7 @@ static void oprofile_hwsampler_stop(void)
 
 	hwsampler_stop_all();
 	hwsampler_deallocate();
+	perf_release_sampling();
 	return;
 }
 
