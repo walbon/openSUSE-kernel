@@ -1104,6 +1104,7 @@ sie_loop:
 sie_done:
 	SPP	__LC_CMF_HPP			# set host id
 	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
+	.globl sie_exit
 sie_exit:
 	ni	__TI_flags+6(%r14),255-(_TIF_SIE>>8)
 	lg	%r14,__SF_EMPTY+8(%r15)		# load guest register save area
