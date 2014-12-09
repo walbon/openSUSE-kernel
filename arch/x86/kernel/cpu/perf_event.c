@@ -1055,11 +1055,7 @@ static void x86_pmu_start(struct perf_event *event, int flags)
 		x86_perf_event_set_period(event);
 	}
 
-	/* SUSE KABI: constraints are obtained before pmu is started so
-	 * PERF_HES_X86_PEBS_LDLAT may be set.
-	 */
-	event->hw.state = event->hw.state & PERF_HES_X86_PEBS_LDLAT ?
-				PERF_HES_X86_PEBS_LDLAT : 0;
+	event->hw.state = 0;
 
 	cpuc->events[idx] = event;
 	__set_bit(idx, cpuc->active_mask);

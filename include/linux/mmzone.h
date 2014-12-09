@@ -365,7 +365,6 @@ struct zone {
 	unsigned int		compact_defer_shift;
 	int			compact_order_failed;
 #endif
-#ifndef __GENKSYMS__
 	/*
 	 * This atomic counter is set when there is pagecache limit
 	 * reclaim going on on this particular zone. Other potential
@@ -373,7 +372,6 @@ struct zone {
 	 * bouncing.
 	 */
 	atomic_t		pagecache_reclaim;
-#endif
 
 	ZONE_PADDING(_pad1_)
 

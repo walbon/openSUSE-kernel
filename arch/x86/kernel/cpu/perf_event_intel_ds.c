@@ -517,8 +517,7 @@ struct event_constraint *intel_pebs_constraints(struct perf_event *event)
 	if (x86_pmu.pebs_constraints) {
 		for_each_event_constraint(c, x86_pmu.pebs_constraints) {
 			if ((event->hw.config & c->cmask) == c->code) {
-				if (c->flags & PERF_X86_EVENT_PEBS_LDLAT)
-					event->hw.state |= PERF_HES_X86_PEBS_LDLAT;
+				event->hw.flags |= c->flags;
 				return c;
 			}
 		}
@@ -536,7 +535,7 @@ void intel_pmu_pebs_enable(struct perf_event *event)
 
 	cpuc->pebs_enabled |= 1ULL << hwc->idx;
 
-	if (event->hw.state & PERF_HES_X86_PEBS_LDLAT)
+	if (event->hw.flags & PERF_X86_EVENT_PEBS_LDLAT)
 		cpuc->pebs_enabled |= 1ULL << (hwc->idx + 32);
 }
 
@@ -663,7 +662,7 @@ static void __intel_pmu_pebs_event(struct perf_event *event,
 	if (!intel_pmu_save_and_restart(event))
 		return;
 
-	fll = event->hw.state & PERF_HES_X86_PEBS_LDLAT;
+	fll = event->hw.flags & PERF_X86_EVENT_PEBS_LDLAT;
 
 	perf_sample_data_init(&data, 0, event->hw.last_period);
 

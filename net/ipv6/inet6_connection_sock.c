@@ -28,8 +28,8 @@
 #include <net/inet6_connection_sock.h>
 #include "ipv6_noinit.h"
 
-int inet6_csk_bind_conflict_ext(const struct sock *sk,
-				const struct inet_bind_bucket *tb, bool relax)
+int inet6_csk_bind_conflict(const struct sock *sk,
+			    const struct inet_bind_bucket *tb, bool relax)
 {
 	const struct sock *sk2;
 	const struct hlist_node *node;
@@ -56,14 +56,6 @@ int inet6_csk_bind_conflict_ext(const struct sock *sk,
 	}
 
 	return node != NULL;
-}
-
-EXPORT_SYMBOL_GPL(inet6_csk_bind_conflict_ext);
-
-int inet6_csk_bind_conflict(const struct sock *sk,
-			    const struct inet_bind_bucket *tb)
-{
-	return inet6_csk_bind_conflict_ext(sk, tb, true);
 }
 
 EXPORT_SYMBOL_GPL(inet6_csk_bind_conflict);

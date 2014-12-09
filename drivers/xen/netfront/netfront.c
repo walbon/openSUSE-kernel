@@ -53,9 +53,7 @@
 #include <net/sock.h>
 #include <net/pkt_sched.h>
 #include <net/route.h>
-#ifndef __GENKSYMS__
 #include <net/tcp.h>
-#endif
 #include <asm/uaccess.h>
 #include <xen/evtchn.h>
 #include <xen/xenbus.h>

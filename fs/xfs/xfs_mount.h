@@ -214,15 +214,14 @@ typedef struct xfs_mount {
 	struct shrinker		m_inode_shrink;	/* inode reclaim shrinker */
 	int64_t			m_low_space[XFS_LOWSP_MAX];
 						/* low free space thresholds */
-	struct vfsmount         *m_vfsmount;	/* Unused */
-	spinlock_t		m_vfsmount_lock;	/* Unused */
-	const char		*m_mtpt;
-#ifndef __GENKSYMS__
+
 	const char		*m_data_workqueue_name;
 	struct workqueue_struct	*m_data_workqueue;
 	const char		*m_unwritten_workqueue_name;
 	struct workqueue_struct	*m_unwritten_workqueue;
-#endif
+	struct vfsmount         *m_vfsmount;	/* Unused */
+	spinlock_t		m_vfsmount_lock;	/* Unused */
+	const char		*m_mtpt;
 } xfs_mount_t;
 
 /*

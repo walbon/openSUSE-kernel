@@ -1557,12 +1557,6 @@ static const struct net_protocol icmp_protocol = {
 	.netns_ok =	1,
 };
 
-static struct inet_csk_bind_conflict_rule ipv4_csk_bind_conflict_rule = {
-	.list =		LIST_HEAD_INIT(ipv4_csk_bind_conflict_rule.list),
-	.old =		inet_csk_bind_conflict,
-	.new =		inet_csk_bind_conflict_ext,
-};
-
 static __net_init int ipv4_mib_init_net(struct net *net)
 {
 	if (snmp_mib_init((void __percpu **)net->mib.tcp_statistics,
@@ -1732,9 +1726,6 @@ static int __init inet_init(void)
 
 	/* Add UDP-Lite (RFC 3828) */
 	udplite4_register();
-
-	/* Register bind_conflict callback translate rule */
-	inet_csk_register_bind_conflict(&ipv4_csk_bind_conflict_rule);
 
 	ping_init();
 

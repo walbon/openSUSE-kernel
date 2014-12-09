@@ -750,6 +750,7 @@ struct hw_perf_event {
 			int		event_base_rdpmc;
 			int		idx;
 			int		last_cpu;
+			int		flags;
 
 			struct hw_perf_event_extra extra_reg;
 			struct hw_perf_event_extra branch_reg;
@@ -789,7 +790,6 @@ struct hw_perf_event {
 #define PERF_HES_STOPPED	0x01 /* the counter is stopped */
 #define PERF_HES_UPTODATE	0x02 /* event->count up-to-date */
 #define PERF_HES_ARCH		0x04
-#define PERF_HES_X86_PEBS_LDLAT	0x08 /* [SUSE] for PEBS LL flags to maintain KABI */
 
 struct perf_event;
 
@@ -1136,11 +1136,7 @@ struct perf_cpu_context {
 	int				exclusive;
 	struct list_head		rotation_list;
 	int				jiffies_interval;
-#ifdef __GENKSYMS__
-	struct pmu			*active_pmu;
-#else
 	struct pmu			*unique_pmu;
-#endif
 	struct perf_cgroup		*cgrp;
 };
 
@@ -1205,13 +1201,11 @@ struct perf_sample_data {
 		u32	reserved;
 	}				cpu_entry;
 	u64				period;
+	union  perf_mem_data_src	data_src;
 	struct perf_callchain_entry	*callchain;
 	struct perf_raw_record		*raw;
 	struct perf_branch_stack	*br_stack;
-#ifndef __GENKSYMS__
-	union  perf_mem_data_src	data_src;
 	u64				weight;
-#endif
 };
 
 static inline void perf_sample_data_init(struct perf_sample_data *data,

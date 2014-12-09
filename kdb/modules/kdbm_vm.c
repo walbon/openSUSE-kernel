@@ -688,8 +688,8 @@ kdbm_print_dentry(unsigned long daddr)
 					d.d_name.len, d.d_name.name,
 					(int)(d.d_name.len), d.d_name.name);
 
-	lkdb_printf(" d_count = %d d_flags = 0x%x d_inode = 0x%p\n",
-					d.d_count, d.d_flags, d.d_inode);
+	lkdb_printf(" d_lockref.count = %d d_flags = 0x%x d_inode = 0x%p\n",
+					d.d_lockref.count, d.d_flags, d.d_inode);
 
 	lkdb_printf(" d_parent = 0x%p\n", d.d_parent);
 

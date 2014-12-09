@@ -1,10 +1,7 @@
 #ifndef _S390_ASM_PCI_DEBUG_H
 #define _S390_ASM_PCI_DEBUG_H
 
-#ifndef __GENKSYMS__
-/* Avoid changing kabi checksums due to newly visible structures */
 #include <asm/debug.h>
-#endif
 
 extern debug_info_t *pci_debug_msg_id;
 extern debug_info_t *pci_debug_err_id;

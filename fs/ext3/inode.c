@@ -1655,10 +1655,6 @@ static int ext3_writeback_writepage(struct page *page,
 	int ret = 0;
 	int err;
 
-	/* KABI hack for aops->is_dirty_writepage */
-	if (ext3_aops_writepage != ext3_ordered_writepage)
-		ext3_aops_writepage = ext3_ordered_writepage;
-
 	J_ASSERT(PageLocked(page));
 	/*
 	 * We don't want to warn for emergency remount. The condition is
@@ -1947,6 +1943,7 @@ static const struct address_space_operations ext3_writeback_aops = {
 	.direct_IO		= ext3_direct_IO,
 	.migratepage		= buffer_migrate_page,
 	.is_partially_uptodate  = block_is_partially_uptodate,
+	.is_dirty_writeback	= buffer_check_dirty_writeback,
 	.error_remove_page	= generic_error_remove_page,
 };
 

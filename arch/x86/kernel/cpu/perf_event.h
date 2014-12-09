@@ -60,9 +60,7 @@ struct event_constraint {
 	u64	cmask;
 	int	weight;
 	int	overlap;
-#ifndef __GENKSYMS__
 	int	flags;
-#endif
 };
 /*
  * struct event_constraint flags

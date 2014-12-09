@@ -454,11 +454,6 @@ static void unlink_from_pool(struct inet_peer *p, struct inet_peer_base *base,
 		inet_putpeer(p);
 }
 
-static inline struct inet_peer_base *family_to_base(struct net *net, int family)
-{
-	return family == AF_INET ? net->ipv4.peers : net->ipv6.peers;
-}
-
 /* May be called with local BH enabled. */
 static int cleanup_once(struct inet_peer_base *base,
 			unsigned long ttl,
@@ -503,7 +498,7 @@ static int cleanup_once(struct inet_peer_base *base,
 }
 
 /* Called with or without local BH being disabled. */
-struct inet_peer *inet_getpeer_base(struct inet_peer_base *base,
+struct inet_peer *inet_getpeer(struct inet_peer_base *base,
 			       const struct inetpeer_addr *daddr,
 			       int create)
 {
@@ -556,7 +551,7 @@ found:		/* The existing node has been found.
 		p->rate_last = 0;
 		p->pmtu_expires = 0;
 		p->pmtu_orig = 0;
-		/* p->redirect_learned.redirect_genid is set with the union */
+		p->redirect_genid = 0;
 		memset(&p->redirect_learned, 0, sizeof(p->redirect_learned));
 		p->base = base;
 		p->base_padding = NULL;
@@ -572,16 +567,6 @@ found:		/* The existing node has been found.
 		cleanup_once(base, 0, stack);
 
 	return p;
-}
-EXPORT_SYMBOL_GPL(inet_getpeer_base);
-
-/* old version to preserve kABI */
-struct inet_peer *inet_getpeer(struct net *net,
-			       const struct inetpeer_addr *daddr,
-			       int create)
-{
-	return inet_getpeer_base(family_to_base(net, daddr->family),
-				 daddr, create);
 }
 EXPORT_SYMBOL_GPL(inet_getpeer);
 

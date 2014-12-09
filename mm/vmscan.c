@@ -677,12 +677,6 @@ static enum page_references page_check_references(struct page *page,
 	return PAGEREF_RECLAIM;
 }
 
-/* KABI hack for aops->is_dirty_writeback */
-int (*ext3_aops_writepage)(struct page *, struct writeback_control *);
-int (*blkdev_aops_writepage)(struct page *, struct writeback_control *);
-EXPORT_SYMBOL_GPL(ext3_aops_writepage);
-EXPORT_SYMBOL_GPL(blkdev_aops_writepage);
-
 /* Check if a page is dirty or under writeback */
 static void page_check_dirty_writeback(struct page *page,
 				       bool *dirty, bool *writeback)
@@ -708,10 +702,8 @@ static void page_check_dirty_writeback(struct page *page,
 		return;
 
 	mapping = page_mapping(page);
-	if (mapping && mapping->a_ops->writepage &&
-			(mapping->a_ops->writepage == ext3_aops_writepage ||
-			 mapping->a_ops->writepage == blkdev_aops_writepage))
-		buffer_check_dirty_writeback(page, dirty, writeback);
+	if (mapping && mapping->a_ops->is_dirty_writeback)
+		mapping->a_ops->is_dirty_writeback(page, dirty, writeback);
 }
 
 static noinline_for_stack void free_page_list(struct list_head *free_pages)

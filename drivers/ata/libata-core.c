@@ -337,7 +337,7 @@ void ata_force_cbl(struct ata_port *ap)
 		if (fe->param.cbl == ATA_CBL_NONE)
 			continue;
 
-		ATA_PORT_SET_CBL(ap, fe->param.cbl);
+		ap->cbl = fe->param.cbl;
 		ata_port_printk(ap, KERN_NOTICE,
 				"FORCE: cable set to %s\n", fe->param.name);
 		return;
@@ -2095,8 +2095,7 @@ static inline u8 ata_dev_knobble(struct ata_device *dev)
 	if (ata_dev_blacklisted(dev) & ATA_HORKAGE_BRIDGE_OK)
 		return 0;
 
-	return ((ATA_PORT_GET_CBL(ap) == ATA_CBL_SATA) &&
-		(!ata_id_is_sata(dev->id)));
+	return ((ap->cbl == ATA_CBL_SATA) && (!ata_id_is_sata(dev->id)));
 }
 
 static int ata_dev_config_ncq(struct ata_device *dev,
@@ -2630,7 +2629,7 @@ int ata_bus_probe(struct ata_port *ap)
 
 	/* Now ask for the cable type as PDIAG- should have been released */
 	if (ap->ops->cable_detect)
-		ATA_PORT_SET_CBL(ap, ap->ops->cable_detect(ap));
+		ap->cbl = ap->ops->cable_detect(ap);
 
 	/* We may have SATA bridge glue hiding here irrespective of
 	 * the reported cable types and sensed types.  When SATA
@@ -2639,7 +2638,7 @@ int ata_bus_probe(struct ata_port *ap)
 	 */
 	ata_for_each_dev(dev, &ap->link, ENABLED)
 		if (ata_id_is_sata(dev->id))
-			ATA_PORT_SET_CBL(ap, ATA_CBL_SATA);
+			ap->cbl = ATA_CBL_SATA;
 
 	/* After the identify sequence we can now set up the devices. We do
 	   this in the normal order so that the user doesn't get confused */
@@ -4331,21 +4330,20 @@ static int cable_is_40wire(struct ata_port *ap)
 {
 	struct ata_link *link;
 	struct ata_device *dev;
-	int ata_cbl = ATA_PORT_GET_CBL(ap);
 
 	/* If the controller thinks we are 40 wire, we are. */
-	if (ata_cbl == ATA_CBL_PATA40)
+	if (ap->cbl == ATA_CBL_PATA40)
 		return 1;
 
 	/* If the controller thinks we are 80 wire, we are. */
-	if (ata_cbl == ATA_CBL_PATA80 || ata_cbl == ATA_CBL_SATA)
+	if (ap->cbl == ATA_CBL_PATA80 || ap->cbl == ATA_CBL_SATA)
 		return 0;
 
 	/* If the system is known to be 40 wire short cable (eg
 	 * laptop), then we allow 80 wire modes even if the drive
 	 * isn't sure.
 	 */
-	if (ata_cbl == ATA_CBL_PATA40_SHORT)
+	if (ap->cbl == ATA_CBL_PATA40_SHORT)
 		return 0;
 
 	/* If the controller doesn't know, we scan.
@@ -4751,7 +4749,7 @@ static struct ata_queued_cmd *ata_qc_new(struct ata_port *ap)
 		return NULL;
 
 	for (i = 0; i < ATA_MAX_QUEUE; i++) {
-		tag = (i + ATA_GET_LAST_TAG(ap) + 1) % ATA_MAX_QUEUE;
+		tag = (i + ap->last_tag + 1) % ATA_MAX_QUEUE;
 
 		/* the last tag is reserved for internal command. */
 		if (tag == ATA_TAG_INTERNAL)
@@ -4760,7 +4758,7 @@ static struct ata_queued_cmd *ata_qc_new(struct ata_port *ap)
 		if (!test_and_set_bit(tag, &ap->qc_allocated)) {
 			qc = __ata_qc_from_tag(ap, tag);
 			qc->tag = tag;
-			ATA_SET_LAST_TAG(ap, tag);
+			ap->last_tag = tag;
 			break;
 		}
 	}
@@ -5660,7 +5658,7 @@ struct ata_port *ata_port_alloc(struct ata_host *host)
 	ap->fastdrain_timer.function = ata_eh_fastdrain_timerfn;
 	ap->fastdrain_timer.data = (unsigned long)ap;
 
-	ATA_PORT_SET_CBL(ap, ATA_CBL_NONE);
+	ap->cbl = ATA_CBL_NONE;
 
 	ata_link_init(ap, &ap->link, 0);
 
@@ -6154,9 +6152,8 @@ int ata_host_register(struct ata_host *host, struct scsi_host_template *sht)
 		unsigned long xfer_mask;
 
 		/* set SATA cable type if still unset */
-		if (ATA_PORT_GET_CBL(ap) == ATA_CBL_NONE &&
-		    (ap->flags & ATA_FLAG_SATA))
-			ATA_PORT_SET_CBL(ap, ATA_CBL_SATA);
+		if (ap->cbl == ATA_CBL_NONE && (ap->flags & ATA_FLAG_SATA))
+			ap->cbl = ATA_CBL_SATA;
 
 		/* init sata_spd_limit to the current value */
 		sata_link_init_spd(&ap->link);

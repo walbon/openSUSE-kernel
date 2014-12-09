@@ -22,8 +22,8 @@ struct lockref {
 		aligned_u64 lock_count;
 #endif
 		struct {
-			unsigned int count;
 			spinlock_t lock;
+			unsigned int count;
 		};
 	};
 };

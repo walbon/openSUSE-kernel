@@ -972,7 +972,7 @@ static int __net_init nfnl_queue_net_init(struct net *net)
 
 #ifdef CONFIG_PROC_FS
 	if (!proc_create("nfnetlink_queue", 0440,
-			 net_nf(net)->proc_netfilter, &nfqnl_file_ops))
+			 net->nf.proc_netfilter, &nfqnl_file_ops))
 		return -ENOMEM;
 #endif
 	return 0;
@@ -980,7 +980,7 @@ static int __net_init nfnl_queue_net_init(struct net *net)
 
 static void __net_exit nfnl_queue_net_exit(struct net *net)
 {
-	remove_proc_entry("nfnetlink_queue", net_nf(net)->proc_netfilter);
+	remove_proc_entry("nfnetlink_queue", net->nf.proc_netfilter);
 }
 
 static struct pernet_operations nfnl_queue_net_ops = {

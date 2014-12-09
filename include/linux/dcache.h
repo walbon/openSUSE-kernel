@@ -114,6 +114,8 @@ full_name_hash(const unsigned char *name, unsigned int len)
 # endif
 #endif
 
+#define d_lock	d_lockref.lock
+
 struct dentry {
 	/* RCU lookup touched fields */
 	unsigned int d_flags;		/* protected by d_lock */
@@ -125,13 +127,8 @@ struct dentry {
 					 * negative */
 	unsigned char d_iname[DNAME_INLINE_LEN];	/* small names */
 
-#ifndef __GENKSYMS__
 	/* Ref lookup also touches following */
 	struct lockref d_lockref;	/* per-dentry lock and refcount */
-#else
-	unsigned int d_count;
-	spinlock_t d_lock;
-#endif
 	const struct dentry_operations *d_op;
 	struct super_block *d_sb;	/* The root of the dentry tree */
 	unsigned long d_time;		/* used by d_revalidate */
@@ -148,9 +145,6 @@ struct dentry {
 	struct list_head d_subdirs;	/* our children */
 	struct list_head d_alias;	/* inode alias list */
 };
-
-#define d_lock	d_lockref.lock
-#define d_count d_lockref.count
 
 /*
  * dentry->d_lock spinlock nesting subclasses:
@@ -324,6 +318,11 @@ extern struct dentry *d_hash_and_lookup(struct dentry *, struct qstr *);
 extern struct dentry *__d_lookup(struct dentry *, struct qstr *);
 extern struct dentry *__d_lookup_rcu(struct dentry *parent, struct qstr *name,
 				unsigned *seq, struct inode **inode);
+
+static inline unsigned d_count(const struct dentry *dentry)
+{
+	return dentry->d_lockref.count;
+}
 
 /* validate "insecure" dentry pointer */
 extern int d_validate(struct dentry *, struct dentry *);

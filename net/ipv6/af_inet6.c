@@ -58,8 +58,6 @@
 #ifdef CONFIG_IPV6_TUNNEL
 #include <net/ip6_tunnel.h>
 #endif
-#include <net/inet_connection_sock.h>
-#include <net/inet6_connection_sock.h>
 
 #include <asm/uaccess.h>
 #include <asm/system.h>
@@ -563,12 +561,6 @@ static const struct net_proto_family inet6_family_ops = {
 	.family = PF_INET6,
 	.create = inet6_create,
 	.owner	= THIS_MODULE,
-};
-
-static struct inet_csk_bind_conflict_rule ipv6_csk_bind_conflict_rule = {
-	.list =		LIST_HEAD_INIT(ipv6_csk_bind_conflict_rule.list),
-	.old =		inet6_csk_bind_conflict,
-	.new =		inet6_csk_bind_conflict_ext,
 };
 
 int inet6_register_protosw(struct inet_protosw *p)
@@ -1125,10 +1117,6 @@ int inet6_init_real(void)
 	if (err)
 		goto static_sysctl_fail;
 #endif
-
-	/* Register bind_conflict callback translate rule */
-	inet_csk_register_bind_conflict(&ipv6_csk_bind_conflict_rule);
-
 	/*
 	 *	ipngwg API draft makes clear that the correct semantics
 	 *	for TCP and UDP is to consider one TCP and UDP instance
@@ -1258,7 +1246,6 @@ ipmr_fail:
 icmp_fail:
 	unregister_pernet_subsys(&inet6_net_ops);
 register_pernet_fail:
-	inet_csk_unregister_bind_conflict(&ipv6_csk_bind_conflict_rule);
 #ifdef CONFIG_SYSCTL
 	ipv6_static_sysctl_unregister();
 static_sysctl_fail:
@@ -1325,7 +1312,6 @@ void inet6_exit_real(void)
 	rawv6_exit();
 
 	unregister_pernet_subsys(&inet6_net_ops);
-	inet_csk_unregister_bind_conflict(&ipv6_csk_bind_conflict_rule);
 #ifdef CONFIG_SYSCTL
 	ipv6_static_sysctl_unregister();
 #endif

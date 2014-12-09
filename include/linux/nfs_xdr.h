@@ -448,15 +448,12 @@ struct nfs_readargs {
 	struct nfs_fh *		fh;
 	struct nfs_open_context *context;
 	struct nfs_lock_context *lock_context;
+	nfs4_stateid		stateid;
 	__u64			offset;
 	__u32			count;
 	unsigned int		pgbase;
 	struct page **		pages;
 	struct nfs4_sequence_args	seq_args;
-#ifndef __GENKSYMS__
-	/* External modules do not need to see this */
-	nfs4_stateid		stateid;
-#endif
 };
 
 struct nfs_readres {
@@ -473,6 +470,7 @@ struct nfs_writeargs {
 	struct nfs_fh *		fh;
 	struct nfs_open_context *context;
 	struct nfs_lock_context *lock_context;
+	nfs4_stateid		stateid;
 	__u64			offset;
 	__u32			count;
 	enum nfs3_stable_how	stable;
@@ -480,10 +478,6 @@ struct nfs_writeargs {
 	struct page **		pages;
 	const u32 *		bitmask;
 	struct nfs4_sequence_args	seq_args;
-#ifndef __GENKSYMS__
-	/* External modules do not need to see this */
-	nfs4_stateid		stateid;
-#endif
 };
 
 struct nfs_writeverf {

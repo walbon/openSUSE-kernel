@@ -312,9 +312,7 @@ struct ucred {
 /* IPX options */
 #define IPX_TYPE	1
 
-/* to preserve kabi, call the latter in your code */
-extern void cred_to_ucred(struct pid *pid, const struct cred *cred, struct ucred *ucred);
-extern void cred_to_ucred_eff(struct pid *pid, const struct cred *cred, struct ucred *ucred,
+extern void cred_to_ucred(struct pid *pid, const struct cred *cred, struct ucred *ucred,
 			  bool use_effective);
 
 extern int memcpy_fromiovec(unsigned char *kdata, struct iovec *iov, int len);

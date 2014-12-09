@@ -179,7 +179,7 @@ static struct dentry *autofs4_lookup_active(struct dentry *dentry)
 		spin_lock(&active->d_lock);
 
 		/* Already gone? */
-		if ((int) active->d_count <= 0)
+		if ((int) d_count(active) <= 0)
 			goto next;
 
 		qstr = &active->d_name;

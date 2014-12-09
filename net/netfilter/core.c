@@ -21,9 +21,6 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <net/net_namespace.h>
-#ifndef __GENKSYMS__
-#include <net/netns/generic.h>
-#endif
 #include <net/sock.h>
 
 #include "nf_internals.h"
@@ -264,21 +261,17 @@ struct proc_dir_entry *proc_net_netfilter;
 EXPORT_SYMBOL(proc_net_netfilter);
 #endif
 
-static int netfilter_net_id;
-
 static int __net_init netfilter_net_init(struct net *net)
 {
 #ifdef CONFIG_PROC_FS
-	struct netns_nf *net_nfp = net_nf(net);
-
-	net_nfp->proc_netfilter = proc_net_mkdir(net, "netfilter",
-						 net->proc_net);
+	net->nf.proc_netfilter = proc_net_mkdir(net, "netfilter",
+						net->proc_net);
 	if (net_eq(net, &init_net)) {
-		if (!net_nfp->proc_netfilter)
+		if (!net->nf.proc_netfilter)
 			return -ENOMEM;
 		else
-			proc_net_netfilter = net_nfp->proc_netfilter;
-	} else if (!net_nfp->proc_netfilter) {
+			proc_net_netfilter = net->nf.proc_netfilter;
+	} else if (!net->nf.proc_netfilter) {
 		pr_err("cannot create netfilter proc entry");
 		return -ENOMEM;
 	}
@@ -294,15 +287,7 @@ static void __net_exit netfilter_net_exit(struct net *net)
 static struct pernet_operations netfilter_net_ops = {
 	.init = netfilter_net_init,
 	.exit = netfilter_net_exit,
-	.id   = &netfilter_net_id,
-	.size = sizeof(struct netns_nf),
 };
-
-struct netns_nf *net_nf(struct net *net)
-{
-	return net_generic(net, netfilter_net_id);
-}
-EXPORT_SYMBOL(net_nf);
 
 void __init netfilter_init(void)
 {

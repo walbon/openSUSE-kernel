@@ -1467,9 +1467,9 @@ void ip_rt_redirect(__be32 old_gw, __be32 daddr, __be32 new_gw,
 					struct inet_peer *peer = rt_peer_ptr(rt);
 
 					if (peer->redirect_learned.a4 != new_gw ||
-					    peer->redirect_learned.redirect_genid != redirect_genid) {
+					    peer->redirect_genid != redirect_genid) {
 						peer->redirect_learned.a4 = new_gw;
-						peer->redirect_learned.redirect_genid = redirect_genid;
+						peer->redirect_genid = redirect_genid;
 						atomic_inc(&__rt_peer_genid);
 					}
 					check_peer_redir(&rt->dst, peer);
@@ -1778,7 +1778,7 @@ static struct dst_entry *ipv4_dst_check(struct dst_entry *dst, u32 cookie)
 			struct inet_peer *peer = rt_peer_ptr(rt);
 			check_peer_pmtu(dst, peer);
 
-			if (peer->redirect_learned.redirect_genid != redirect_genid)
+			if (peer->redirect_genid != redirect_genid)
 				peer->redirect_learned.a4 = 0;
 			if (peer->redirect_learned.a4 &&
 			    peer->redirect_learned.a4 != rt->rt_gateway) {
@@ -1938,7 +1938,7 @@ static void rt_init_metrics(struct rtable *rt, const struct flowi4 *fl4,
 		dst_init_metrics(&rt->dst, peer->metrics, false);
 
 		check_peer_pmtu(&rt->dst, peer);
-		if (peer->redirect_learned.redirect_genid != redirect_genid)
+		if (peer->redirect_genid != redirect_genid)
 			peer->redirect_learned.a4 = 0;
 		if (peer->redirect_learned.a4 &&
 		    peer->redirect_learned.a4 != rt->rt_gateway) {

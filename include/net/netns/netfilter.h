@@ -8,6 +8,4 @@ struct netns_nf {
 	struct proc_dir_entry *proc_netfilter;
 #endif
 };
-
-struct netns_nf *net_nf(struct net *net);
 #endif

@@ -810,13 +810,8 @@ set_rcvbuf:
 }
 EXPORT_SYMBOL(sock_setsockopt);
 
-void cred_to_ucred(struct pid *pid, const struct cred *cred, struct ucred *ucred)
-{
-	cred_to_ucred_eff(pid, cred, ucred, true);
-}
-EXPORT_SYMBOL(cred_to_ucred);
 
-void cred_to_ucred_eff(struct pid *pid, const struct cred *cred,
+void cred_to_ucred(struct pid *pid, const struct cred *cred,
 		   struct ucred *ucred, bool use_effective)
 {
 	ucred->pid = pid_vnr(pid);
@@ -833,7 +828,7 @@ void cred_to_ucred_eff(struct pid *pid, const struct cred *cred,
 		}
 	}
 }
-EXPORT_SYMBOL_GPL(cred_to_ucred_eff);
+EXPORT_SYMBOL_GPL(cred_to_ucred);
 
 int sock_getsockopt(struct socket *sock, int level, int optname,
 		    char __user *optval, int __user *optlen)
@@ -991,7 +986,7 @@ int sock_getsockopt(struct socket *sock, int level, int optname,
 		struct ucred peercred;
 		if (len > sizeof(peercred))
 			len = sizeof(peercred);
-		cred_to_ucred_eff(sk->sk_peer_pid, sk->sk_peer_cred,
+		cred_to_ucred(sk->sk_peer_pid, sk->sk_peer_cred,
 			      &peercred, true);
 		if (copy_to_user(optval, &peercred, len))
 			return -EFAULT;

@@ -17,14 +17,7 @@
 
 struct inetpeer_addr_base {
 	union {
-#ifdef __GENKSYMS__
 		__be32			a4;
-#else
-		struct {
-			__be32		a4;
-			int		redirect_genid;
-		};
-#endif
 		__be32			a6[4];
 	};
 };
@@ -43,14 +36,10 @@ struct inet_peer {
 	__u32			avl_height;
 	union {
 		struct list_head	unused;
-#ifdef __GENKSYMS__
-		struct inet_peer_base	*base;
-#else
 		struct {
 			struct inet_peer_base	*base;
 			void			*base_padding;
 		};
-#endif
 	};
 	__u32			dtime;		/* the time of last use of not
 						 * referenced entries */
@@ -68,6 +57,7 @@ struct inet_peer {
 			__u32				tcp_ts_stamp;
 			u32				metrics[RTAX_MAX];
 			u32				rate_tokens;	/* rate limiting for ICMP */
+			int				redirect_genid;
 			unsigned long			rate_last;
 			unsigned long			pmtu_expires;
 			u32				pmtu_orig;
@@ -142,10 +132,7 @@ static inline bool inet_metrics_new(const struct inet_peer *p)
 }
 
 /* can be called with or without local BH being disabled */
-struct inet_peer *inet_getpeer_base(struct inet_peer_base *base,
-				    const struct inetpeer_addr *daddr,
-				    int create);
-struct inet_peer *inet_getpeer(struct net *net,
+struct inet_peer *inet_getpeer(struct inet_peer_base *base,
 			       const struct inetpeer_addr *daddr,
 			       int create);
 
@@ -157,7 +144,7 @@ static inline struct inet_peer *inet_getpeer_v4(struct inet_peer_base *base,
 
 	daddr.addr.a4 = v4daddr;
 	daddr.family = AF_INET;
-	return inet_getpeer_base(base, &daddr, create);
+	return inet_getpeer(base, &daddr, create);
 }
 
 static inline struct inet_peer *inet_getpeer_v6(struct inet_peer_base *base,
@@ -168,7 +155,7 @@ static inline struct inet_peer *inet_getpeer_v6(struct inet_peer_base *base,
 
 	ipv6_addr_copy((struct in6_addr *)daddr.addr.a6, v6daddr);
 	daddr.family = AF_INET6;
-	return inet_getpeer_base(base, &daddr, create);
+	return inet_getpeer(base, &daddr, create);
 }
 
 /* can be called from BH context or outside */

@@ -212,8 +212,7 @@ struct swap_list_t {
 /* linux/mm/page_alloc.c */
 extern unsigned long totalram_pages;
 extern unsigned long totalreserve_pages;
-extern unsigned int nr_free_buffer_pages(void);
-extern unsigned long nr_free_buffer_pages2(void);
+extern unsigned long nr_free_buffer_pages(void);
 extern unsigned long nr_free_pagecache_pages(void);
 
 /* Definition of global_page_state not available yet */

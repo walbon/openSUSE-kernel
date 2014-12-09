@@ -111,10 +111,8 @@ extern void mem_cgroup_end_migration(struct mem_cgroup *mem,
 int mem_cgroup_inactive_anon_is_low(struct mem_cgroup *memcg);
 int mem_cgroup_inactive_file_is_low(struct mem_cgroup *memcg);
 int mem_cgroup_select_victim_node(struct mem_cgroup *memcg);
-#ifndef __GENKSYMS__
 unsigned long mem_cgroup_zone_nr_lru_pages(struct mem_cgroup *memcg,
 					int nid, int zid, unsigned int lrumask);
-#endif
 struct zone_reclaim_stat *mem_cgroup_get_reclaim_stat(struct mem_cgroup *memcg,
 						      struct zone *zone);
 struct zone_reclaim_stat*
@@ -309,14 +307,12 @@ mem_cgroup_inactive_file_is_low(struct mem_cgroup *memcg)
 	return 1;
 }
 
-#ifndef __GENKSYMS__
 static inline unsigned long
 mem_cgroup_zone_nr_lru_pages(struct mem_cgroup *memcg, int nid, int zid,
 				unsigned int lru_mask)
 {
 	return 0;
 }
-#endif
 
 
 static inline struct zone_reclaim_stat*

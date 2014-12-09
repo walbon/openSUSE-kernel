@@ -103,7 +103,7 @@ cont:
 
 	spin_lock_nested(&q->d_lock, DENTRY_D_LOCK_NESTED);
 	/* Already gone or negative dentry (under construction) - try next */
-	if (q->d_count == 0 || !simple_positive(q)) {
+	if (!d_count(q) || !simple_positive(q)) {
 		spin_unlock(&q->d_lock);
 		next = q->d_u.d_child.next;
 		goto cont;
@@ -261,7 +261,7 @@ static int autofs4_tree_busy(struct vfsmount *mnt,
 			else
 				ino_count++;
 
-			if (p->d_count > ino_count) {
+			if (d_count(p) > ino_count) {
 				top_ino->last_used = jiffies;
 				dput(p);
 				return 1;
@@ -374,7 +374,7 @@ static struct dentry *should_expire(struct dentry *dentry,
 
 		/* Path walk currently on this dentry? */
 		ino_count = atomic_read(&ino->count) + 2;
-		if (dentry->d_count > ino_count)
+		if (d_count(dentry) > ino_count)
 			return NULL;
 
 		/* Can we umount this guy */
@@ -394,7 +394,7 @@ static struct dentry *should_expire(struct dentry *dentry,
 	if (!exp_leaves) {
 		/* Path walk currently on this dentry? */
 		ino_count = atomic_read(&ino->count) + 1;
-		if (dentry->d_count > ino_count)
+		if (d_count(dentry) > ino_count)
 			return NULL;
 
 		if (!autofs4_tree_busy(mnt, dentry, timeout, do_now))
@@ -407,7 +407,7 @@ static struct dentry *should_expire(struct dentry *dentry,
 		/* Path walk currently on this dentry? */
 		struct dentry *expired;
 		ino_count = atomic_read(&ino->count) + 1;
-		if (dentry->d_count > ino_count)
+		if (d_count(dentry) > ino_count)
 			return NULL;
 
 		expired = autofs4_check_leaves(mnt, dentry, timeout, do_now);
