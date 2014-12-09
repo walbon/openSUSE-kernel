@@ -181,6 +181,7 @@ struct netlink_skb_parms_long {
 
 extern void netlink_table_grab(void);
 extern void netlink_table_ungrab(void);
+extern int netlink_opener_capable(struct sk_buff *skb, int cap);
 
 extern struct sock *netlink_kernel_create(struct net *net,
 					  int unit,unsigned int groups,

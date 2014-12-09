@@ -952,6 +952,19 @@ retry:
 }
 EXPORT_SYMBOL(netlink_unicast);
 
+int netlink_opener_capable(struct sk_buff *skb, int cap)
+{
+	struct netlink_skb_parms_long *nspl = &NETLINK_CB_LONG(skb);
+
+	if (((nspl->flags & NETLINK_SKB_DST) == 0) &&
+	    nspl->sk &&
+	    nspl->sk->sk_socket &&
+	    nspl->sk->sk_socket->file &&
+	    security_capable(&init_user_ns, nspl->sk->sk_socket->file->f_cred, cap) != 0)
+			return -EPERM;
+	return 0;
+}
+
 int netlink_has_listeners(struct sock *sk, unsigned int group)
 {
 	int res = 0;
