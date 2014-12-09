@@ -90,12 +90,7 @@ struct nfs_lock_context {
 	atomic_t count;
 	struct list_head list;
 	struct nfs_open_context *open_context;
-#ifndef __GENKSYMS__
 	struct nfs_lockowner lockowner;
-#else
-	fl_owner_t lockowner;
-	pid_t pid;
-#endif
 };
 
 struct nfs4_state;
