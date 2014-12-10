@@ -40,6 +40,7 @@
  *	document number TBD                   : Lynx Point-LP
  *	document number TBD		      : Wellsburg
  *	document number TBD		      : Wildcat Point-LP
+ *	document number TBD                   : Coleto Creek
  */
 
 /*
@@ -136,6 +137,7 @@ enum iTCO_chipsets {
 	TCO_AVN,        /* Avoton SoC */
 	TCO_BAYTRAIL,   /* Bay Trail SoC */
 	TCO_WPT_LP,     /* Wildcat Point-LP */
+	TCO_COLETO,     /* Coleto Creek */
 };
 
 static struct {
@@ -205,6 +207,7 @@ static struct {
 	{"Avoton SoC", 3},
 	{"Bay Trail SoC", 3},
 	{"Lynx Point_LP", 2},
+	{"Coleto Creek", 2},
 	{NULL, 0}
 };
 
@@ -431,6 +434,7 @@ static DEFINE_PCI_DEVICE_TABLE(iTCO_wdt_pci_tbl) = {
 	{ PCI_VDEVICE(INTEL, 0x9cc6), TCO_WPT_LP},
 	{ PCI_VDEVICE(INTEL, 0x9cc7), TCO_WPT_LP},
 	{ PCI_VDEVICE(INTEL, 0x9cc9), TCO_WPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x2390), TCO_COLETO},
 	{ 0, },			/* End of list */
 };
 MODULE_DEVICE_TABLE(pci, iTCO_wdt_pci_tbl);
