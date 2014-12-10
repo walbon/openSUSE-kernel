@@ -345,6 +345,23 @@ static struct cpuidle_state bdw_cstates[MWAIT_MAX_NUM_CSTATES] = {
 		.enter = &intel_idle },
 };
 
+static struct cpuidle_state avn_cstates[CPUIDLE_STATE_MAX] = {
+	{
+		.name = "C1-AVN",
+		.desc = "MWAIT 0x00",
+		.flags = CPUIDLE_FLAG_TIME_VALID,
+		.exit_latency = 2,
+		.target_residency = 2,
+		.enter = &intel_idle },
+	{
+		.name = "C6-AVN",
+		.desc = "MWAIT 0x51",
+		.flags = CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
+		.exit_latency = 15,
+		.target_residency = 45,
+		.enter = &intel_idle },
+};
+
 /**
  * intel_idle
  * @dev: cpuidle_device
@@ -508,6 +525,10 @@ static int intel_idle_probe(void)
 	case 0x45:      /* HSW */
 	case 0x46:      /* HSW */
 		cpuidle_state_table = hsw_cstates;
+		break;
+
+	case 0x4d:	/* AVN */
+		cpuidle_state_table = avn_cstates;
 		break;
 
 	case 0x3d:	/* BDW */
