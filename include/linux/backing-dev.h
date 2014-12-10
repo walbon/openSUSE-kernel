@@ -51,7 +51,7 @@ struct bdi_writeback {
 #ifndef __GENKSYMS__
 	unsigned long last_move_tail;
 #else
- 	unsigned int nr;
+	unsigned int nr;
 #endif
 	unsigned long last_old_flush;	/* last old data flush */
 	unsigned long last_active;	/* last time bdi thread was active */
