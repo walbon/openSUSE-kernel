@@ -204,6 +204,7 @@ static struct {
 	{"Wellsburg", 2},
 	{"Avoton SoC", 3},
 	{"Bay Trail SoC", 3},
+	{"Lynx Point_LP", 2},
 	{NULL, 0}
 };
 
