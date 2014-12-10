@@ -39,6 +39,7 @@
  *	document number TBD                   : Lynx Point
  *	document number TBD                   : Lynx Point-LP
  *	document number TBD		      : Wellsburg
+ *	document number TBD		      : Wildcat Point-LP
  */
 
 /*
@@ -134,6 +135,7 @@ enum iTCO_chipsets {
 	TCO_WBG,        /* Wellsburg */
 	TCO_AVN,        /* Avoton SoC */
 	TCO_BAYTRAIL,   /* Bay Trail SoC */
+	TCO_WPT_LP,     /* Wildcat Point-LP */
 };
 
 static struct {
@@ -421,6 +423,13 @@ static DEFINE_PCI_DEVICE_TABLE(iTCO_wdt_pci_tbl) = {
 	{ PCI_VDEVICE(INTEL, 0x1f3a), TCO_AVN},
 	{ PCI_VDEVICE(INTEL, 0x1f3b), TCO_AVN},
 	{ PCI_VDEVICE(INTEL, 0x0f1c), TCO_BAYTRAIL},
+	{ PCI_VDEVICE(INTEL, 0x9cc1), TCO_WPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9cc2), TCO_WPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9cc3), TCO_WPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9cc5), TCO_WPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9cc6), TCO_WPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9cc7), TCO_WPT_LP},
+	{ PCI_VDEVICE(INTEL, 0x9cc9), TCO_WPT_LP},
 	{ 0, },			/* End of list */
 };
 MODULE_DEVICE_TABLE(pci, iTCO_wdt_pci_tbl);
