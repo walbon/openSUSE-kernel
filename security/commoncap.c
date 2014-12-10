@@ -59,6 +59,12 @@ int cap_netlink_send(struct sock *sk, struct sk_buff *skb)
 
 int cap_netlink_recv(struct sk_buff *skb, int cap)
 {
+	int ocap;
+
+	ocap = netlink_opener_capable(skb, cap);
+	if (ocap)
+		return ocap;
+
 	if (!cap_raised(current_cap(), cap))
 		return -EPERM;
 	return 0;

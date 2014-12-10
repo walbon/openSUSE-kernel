@@ -2700,6 +2700,11 @@ static inline bool netif_is_macvlan(struct net_device *dev)
 	return dev->priv_flags & IFF_MACVLAN;
 }
 
+static inline bool netif_is_bond_master(struct net_device *dev)
+{
+	return dev->flags & IFF_MASTER && dev->priv_flags & IFF_BONDING;
+}
+
 static inline int netif_is_bond_slave(struct net_device *dev)
 {
 	return dev->flags & IFF_SLAVE && dev->priv_flags & IFF_BONDING;
@@ -2730,6 +2735,8 @@ static inline u32 dev_ethtool_get_flags(struct net_device *dev)
 		return 0;
 	return dev->ethtool_ops->get_flags(dev);
 }
+
+extern void (*bond_dev_disable_lro_cb)(struct net_device *);
 
 /* Logging, debugging and troubleshooting/diagnostic helpers. */
 
