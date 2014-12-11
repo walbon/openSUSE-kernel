@@ -2553,16 +2553,6 @@ bool is_path_reachable(struct vfsmount *mnt, struct dentry *dentry,
 	return mnt == root->mnt && is_subdir(dentry, root->dentry);
 }
 
-int path_is_under(struct path *path1, struct path *path2)
-{
-	int res;
-	br_read_lock(vfsmount_lock);
-	res = is_path_reachable(path1->mnt, path1->dentry, path2);
-	br_read_unlock(vfsmount_lock);
-	return res;
-}
-EXPORT_SYMBOL(path_is_under);
-
 /*
  * pivot_root Semantics:
  * Moves the root file system of the current process to the directory put_old,
