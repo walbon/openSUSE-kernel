@@ -267,13 +267,13 @@ HYPERVISOR_get_debugreg(
 	return _hypercall1(unsigned long, get_debugreg, reg);
 }
 
-static inline int __must_check
+static inline long __must_check
 HYPERVISOR_memory_op(
 	unsigned int cmd, void *arg)
 {
 	if (arch_use_lazy_mmu_mode())
 		xen_multicall_flush();
-	return _hypercall2(int, memory_op, cmd, arg);
+	return _hypercall2(long, memory_op, cmd, arg);
 }
 
 static inline int __must_check

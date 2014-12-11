@@ -8,6 +8,8 @@
 #undef phys_to_dma
 #undef dma_to_phys
 
+#define ARCH_HAS_DMA_GET_REQUIRED_MASK
+
 static inline dma_addr_t phys_to_dma(struct device *dev, phys_addr_t paddr)
 {
 	return phys_to_machine(paddr);
