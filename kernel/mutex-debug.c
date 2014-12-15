@@ -78,7 +78,7 @@ void debug_mutex_unlock(struct mutex *lock)
 			DEBUG_LOCKS_WARN_ON(!lock->owner);
 		else
 			DEBUG_LOCKS_WARN_ON(lock->owner != current);
-#if defined(CONFIG_MUTEX_SPIN_USE_MCS_QUEUE)
+#if defined(CONFIG_MUTEX_SPIN_ON_OWNER)
 		DEBUG_LOCKS_WARN_ON(!lock->wait_list)
 #else
 		DEBUG_LOCKS_WARN_ON(!lock->wait_list.prev && !lock->wait_list.next);

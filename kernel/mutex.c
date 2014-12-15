@@ -57,7 +57,7 @@ __mutex_init(struct mutex *lock, const char *name, struct lock_class_key *key)
 	spin_lock_init(&lock->wait_lock);
 	MUTEX_INIT_WAIT_LIST(&lock->wait_list);
 	mutex_clear_owner(lock);
-#ifdef CONFIG_MUTEX_SPIN_USE_MCS_QUEUE
+#ifdef CONFIG_MUTEX_SPIN_ON_OWNER
 	lock->spin_mlock = NULL;
 #endif
 
@@ -111,7 +111,7 @@ void __sched mutex_lock(struct mutex *lock)
 EXPORT_SYMBOL(mutex_lock);
 #endif
 
-#ifdef CONFIG_MUTEX_SPIN_USE_MCS_QUEUE
+#ifdef CONFIG_MUTEX_SPIN_ON_OWNER
 /*
  * In order to avoid a stampede of mutex spinners from acquiring the mutex
  * more or less simultaneously, the spinners need to acquire a MCS lock
@@ -330,13 +330,13 @@ static inline int mutex_can_spin_on_owner(struct mutex *lock)
 	 */
 	return retval;
 }
-#else /* CONFIG_MUTEX_SPIN_USE_MCS_QUEUE */
+#else /* CONFIG_MUTEX_SPIN_ON_OWNER */
 
 #define osq_lock(mutex, node) (1)
 #define osq_unlock(mutex) do { } while(0)
 #define mutex_can_spin_on_owner(a) (1)
 
-#endif /* CONFIG_MUTEX_SPIN_USE_MCS_QUEUE */
+#endif /* CONFIG_MUTEX_SPIN_ON_OWNER */
 
 static __used noinline void __sched __mutex_unlock_slowpath(atomic_t *lock_count);
 

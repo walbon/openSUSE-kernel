@@ -200,15 +200,3 @@ config INLINE_WRITE_UNLOCK_IRQRESTORE
 
 config MUTEX_SPIN_ON_OWNER
 	def_bool SMP && !DEBUG_MUTEXES
-
-#
-# The following option has kABI impact and should only be enabled on special
-# kernel flavor with limited distribution.
-#
-config MUTEX_SPIN_USE_MCS_QUEUE
-	bool "mutex: spin using mcs queue"
-	depends on MUTEX_SPIN_ON_OWNER
-	help
-	  This option enables MCS locking but is kABI-incompatible with
-	  the non-MCS locking variant.
-	bool

@@ -49,7 +49,7 @@ struct mutex {
 	/* 1: unlocked, 0: locked, negative: locked, possible waiters */
 	atomic_t		count;
 	spinlock_t		wait_lock;
-#if defined(CONFIG_MUTEX_SPIN_USE_MCS_QUEUE)
+#if defined(CONFIG_MUTEX_SPIN_ON_OWNER)
 	struct list_head	*wait_list;
 	void *			*spin_mlock;
 #else
@@ -107,7 +107,7 @@ do {							\
 # define __DEP_MAP_MUTEX_INITIALIZER(lockname)
 #endif
 
-#if defined(CONFIG_MUTEX_SPIN_USE_MCS_QUEUE)
+#if defined(CONFIG_MUTEX_SPIN_ON_OWNER)
 # define MUTEX_WAIT_LIST_INIT(x)	(struct list_head *)&(x)
 # define MUTEX_INIT_WAIT_LIST(x)	*(x) = (struct list_head *)(x)
 # define MUTEX_LIST_EMPTY(x)		(*(x) == (struct list_head *)(x))

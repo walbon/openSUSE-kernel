@@ -14,7 +14,7 @@
 #define spin_unlock_mutex(lock, flags) \
 		do { spin_unlock(lock); (void)(flags); } while (0)
 
-#ifdef CONFIG_MUTEX_SPIN_USE_MCS_QUEUE
+#ifdef CONFIG_MUTEX_SPIN_ON_OWNER
 /*
  * If CONFIG_MUTEX_SPIN_ON_OWNER and CONFIG_USE_MCS_SPIN_WAIT_QUEUE are
  * enabled, the content of the double pointers in wait_list will be
@@ -73,13 +73,13 @@ __mutex_remove_waiter(struct mutex *lock, struct list_head *waiter)
 	}
 }
 
-#else /* MUTEX_SPIN_USE_MCS_QUEUE */
+#else /* MUTEX_SPIN_ON_OWNER */
 
 #define mutex_add_waiter(waiter, list)	list_add_tail(waiter, list)
 #define mutex_waitlist_head(lock)	(lock)->wait_list.next
 #define mutex_remove_waiter(lock, waiter, ti) \
 		__list_del((waiter)->list.prev, (waiter)->list.next)
-#endif /* MUTEX_SPIN_USE_MCS_QUEUE */
+#endif /* MUTEX_SPIN_ON_OWNER */
 
 #ifdef CONFIG_SMP
 static inline void mutex_set_owner(struct mutex *lock)
