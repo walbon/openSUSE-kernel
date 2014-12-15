@@ -380,6 +380,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 	struct task_struct *task = current;
 	struct mutex_waiter waiter;
 	unsigned long flags;
+	int ret;
 
 	preempt_disable();
 	mutex_acquire_nest(&lock->dep_map, subclass, 0, nest_lock, ip);
@@ -456,15 +457,16 @@ slowpath:
 #endif
 	spin_lock_mutex(&lock->wait_lock, flags);
 
+	/* once more, can we acquire the lock? */
+	if (MUTEX_SHOW_NO_WAITER(lock) && (atomic_xchg(&lock->count, 0) == 1))
+		goto skip_wait;
+
 	debug_mutex_lock_common(lock, &waiter);
 	debug_mutex_add_waiter(lock, &waiter, task_thread_info(task));
 
 	/* add waiting tasks to the end of the waitqueue (FIFO): */
 	mutex_add_waiter(&waiter.list, &lock->wait_list);
 	waiter.task = task;
-
-	if (MUTEX_SHOW_NO_WAITER(lock) && (atomic_xchg(&lock->count, -1) == 1))
-		goto done;
 
 	lock_contended(&lock->dep_map, ip);
 
@@ -487,14 +489,8 @@ slowpath:
 		 * TASK_UNINTERRUPTIBLE case.)
 		 */
 		if (unlikely(signal_pending_state(state, task))) {
-			mutex_remove_waiter(lock, &waiter,
-					    task_thread_info(task));
-			mutex_release(&lock->dep_map, 1, ip);
-			spin_unlock_mutex(&lock->wait_lock, flags);
-
-			debug_mutex_free_waiter(&waiter);
-			preempt_enable();
-			return -EINTR;
+			ret = -EINTR;
+			goto err;
 		}
 		__set_task_state(task, state);
 
@@ -505,23 +501,26 @@ slowpath:
 		preempt_disable();
 		spin_lock_mutex(&lock->wait_lock, flags);
 	}
-
-done:
-	lock_acquired(&lock->dep_map, ip);
-	/* got the lock - rejoice! */
 	mutex_remove_waiter(lock, &waiter, current_thread_info());
-	mutex_set_owner(lock);
-
 	/* set it to 0 if there are no waiters left: */
 	if (likely(MUTEX_LIST_EMPTY(&lock->wait_list)))
 		atomic_set(&lock->count, 0);
-
-	spin_unlock_mutex(&lock->wait_lock, flags);
-
 	debug_mutex_free_waiter(&waiter);
-	preempt_enable();
 
+skip_wait:
+	/* got the lock - cleanup and rejoice! */
+	lock_acquired(&lock->dep_map, ip);
+	mutex_set_owner(lock);
+	spin_unlock_mutex(&lock->wait_lock, flags);
+	preempt_enable();
 	return 0;
+err:
+	mutex_remove_waiter(lock, &waiter, task_thread_info(task));
+	spin_unlock_mutex(&lock->wait_lock, flags);
+	debug_mutex_free_waiter(&waiter);
+	mutex_release(&lock->dep_map, 1, ip);
+	preempt_enable();
+	return ret;
 }
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
