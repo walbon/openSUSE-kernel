@@ -38,7 +38,7 @@
 #include <linux/prefetch.h>
 #include <linux/magic.h>
 #include "internal.h"
-#include "pnode.h"
+#include "mount.h"
 
 /*
  * Usage:
@@ -3051,16 +3051,6 @@ int is_subdir(struct dentry *new_dentry, struct dentry *old_dentry)
 
 	return result;
 }
-
-int path_is_under(struct path *path1, struct path *path2)
-{
-	int res;
-	br_read_lock(vfsmount_lock);
-	res = is_path_reachable(path1->mnt, path1->dentry, path2);
-	br_read_unlock(vfsmount_lock);
-	return res;
-}
-EXPORT_SYMBOL(path_is_under);
 
 void d_genocide(struct dentry *root)
 {
