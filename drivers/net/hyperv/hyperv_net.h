@@ -27,6 +27,7 @@
 
 /* from include/linux/rndis.h via 8cdddc3f9d6692f5690841468a9f63c19fb734ed */
 #define RNDIS_OID_GEN_RNDIS_CONFIG_PARAMETER   0x0001021B
+#define RNDIS_OID_GEN_MAXIMUM_FRAME_SIZE	0x00010106
 
 #include <linux/list.h>
 #include <linux/hyperv.h>
