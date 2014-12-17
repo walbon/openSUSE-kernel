@@ -1244,6 +1244,7 @@ restart:
 		if (status >= 0) {
 			status = nfs4_reclaim_locks(state, ops);
 			if (status >= 0) {
+				spin_lock(&state->state_lock);
 				if (!test_bit(NFS_DELEGATED_STATE, &state->flags)) {
 					list_for_each_entry(lock, &state->lock_states, ls_locks) {
 						if (!(lock->ls_flags & NFS_LOCK_INITIALIZED))
@@ -1251,6 +1252,7 @@ restart:
 							       __func__);
 					}
 				}
+				spin_unlock(&state->state_lock);
 				nfs4_put_open_state(state);
 				spin_lock(&sp->so_lock);
 				goto restart;
@@ -1320,10 +1322,12 @@ static void nfs4_clear_open_state(struct nfs4_state *state)
 	clear_bit(NFS_O_RDONLY_STATE, &state->flags);
 	clear_bit(NFS_O_WRONLY_STATE, &state->flags);
 	clear_bit(NFS_O_RDWR_STATE, &state->flags);
+	spin_lock(&state->state_lock);
 	list_for_each_entry(lock, &state->lock_states, ls_locks) {
 		lock->ls_seqid.flags = 0;
 		lock->ls_flags &= ~NFS_LOCK_INITIALIZED;
 	}
+	spin_unlock(&state->state_lock);
 }
 
 static void nfs4_reset_seqids(struct nfs_server *server,
