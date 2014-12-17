@@ -1070,6 +1070,7 @@ static void nfs4_clear_state_manager_bit(struct nfs_client *clp)
 	wake_up_bit(&clp->cl_state, NFS4CLNT_MANAGER_RUNNING);
 	rpc_wake_up(&clp->cl_rpcwaitq);
 }
+EXPORT_SYMBOL_GPL(nfs4_schedule_lease_recovery);
 
 /*
  * Schedule the nfs_client asynchronous state management routine
@@ -1134,6 +1135,7 @@ void nfs4_schedule_stateid_recovery(const struct nfs_server *server, struct nfs4
 	nfs4_state_mark_reclaim_nograce(clp, state);
 	nfs4_schedule_state_manager(clp);
 }
+EXPORT_SYMBOL_GPL(nfs4_schedule_stateid_recovery);
 
 void nfs_inode_find_state_and_recover(struct inode *inode,
 		const nfs4_stateid *stateid)
