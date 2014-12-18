@@ -2078,6 +2078,7 @@ static void nfs4_close_prepare(struct rpc_task *task, void *data)
 {
 	struct nfs4_closedata *calldata = data;
 	struct nfs4_state *state = calldata->state;
+	struct inode *inode = calldata->inode;
 	int call_close = 0;
 
 	if (nfs_wait_on_sequence(calldata->arg.seqid, task) != 0)
@@ -2110,16 +2111,13 @@ static void nfs4_close_prepare(struct rpc_task *task, void *data)
 	if (calldata->arg.fmode == 0) {
 		task->tk_msg.rpc_proc = &nfs4_procedures[NFSPROC4_CLNT_CLOSE];
 		if (calldata->roc &&
-		    pnfs_roc_drain(calldata->inode, &calldata->roc_barrier)) {
-			rpc_sleep_on(&NFS_SERVER(calldata->inode)->roc_rpcwaitq,
-				     task, NULL);
+		    pnfs_roc_drain(inode, &calldata->roc_barrier, task))
 			return;
-		}
 	}
 
 	nfs_fattr_init(calldata->res.fattr);
 	calldata->timestamp = jiffies;
-	if (nfs4_setup_sequence(NFS_SERVER(calldata->inode),
+	if (nfs4_setup_sequence(NFS_SERVER(inode),
 				&calldata->arg.seq_args, &calldata->res.seq_res,
 				1, task))
 		nfs_release_seqid(calldata->arg.seqid);
