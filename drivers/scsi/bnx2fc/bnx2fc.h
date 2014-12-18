@@ -157,7 +157,7 @@
 #define BNX2FC_RQ_WQE_SIZE		(BNX2FC_RQ_BUF_SZ)
 #define BNX2FC_XFERQ_WQE_SIZE		(sizeof(struct fcoe_xfrqe))
 #define BNX2FC_CONFQ_WQE_SIZE		(sizeof(struct fcoe_confqe))
-#define BNX2FC_5771X_DB_PAGE_SIZE	128
+#define BNX2X_DB_SHIFT			3
 
 #define BNX2FC_MAX_TASKS		\
 			     (BNX2FC_MAX_OUTSTANDING_CMNDS + BNX2FC_ELSTM_XIDS)
