@@ -1092,7 +1092,7 @@ static int alua_set_params(struct scsi_device *sdev, const char *params)
 	}
 	rcu_read_unlock();
 
-	spinlock_irqsave(&pg->rtpg_lock, flags);
+	spin_lock_irqsave(&pg->rtpg_lock, flags);
 	if (optimize)
 		pg->flags |= ALUA_OPTIMIZE_STPG;
 	else
