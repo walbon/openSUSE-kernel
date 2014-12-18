@@ -1067,9 +1067,11 @@ static int alua_initialize(struct scsi_device *sdev, struct alua_dh_data *h)
 static int alua_set_params(struct scsi_device *sdev, const char *params)
 {
 	struct alua_dh_data *h = get_alua_data(sdev);
+	struct alua_port_group *pg = NULL;
 	unsigned int optimize = 0, argc;
 	const char *p = params;
 	int result = SCSI_DH_OK;
+	unsigned long flags;
 
 	if (!h)
 		return -ENXIO;
@@ -1082,11 +1084,21 @@ static int alua_set_params(struct scsi_device *sdev, const char *params)
 	if ((sscanf(p, "%u", &optimize) != 1) || (optimize > 1))
 		return -EINVAL;
 
-	if (optimize)
-		h->flags |= ALUA_OPTIMIZE_STPG;
-	else
-		h->flags &= ~ALUA_OPTIMIZE_STPG;
+	rcu_read_lock();
+	pg = rcu_dereference(h->pg);
+	if (!pg) {
+		rcu_read_unlock();
+		return -ENXIO;
+	}
+	rcu_read_unlock();
 
+	spinlock_irqsave(&pg->rtpg_lock, flags);
+	if (optimize)
+		pg->flags |= ALUA_OPTIMIZE_STPG;
+	else
+		pg->flags &= ~ALUA_OPTIMIZE_STPG;
+
+	spin_unlock_irqrestore(&pg->rtpg_lock, flags);
 	return result;
 }
 
