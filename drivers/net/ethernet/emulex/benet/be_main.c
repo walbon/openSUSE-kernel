@@ -907,37 +907,53 @@ set_vlan_promisc:
 static void be_vlan_add_vid(struct net_device *netdev, u16 vid)
 {
 	struct be_adapter *adapter = netdev_priv(netdev);
+	int status = 0;
 
-	adapter->vlans_added++;
-
-	if (!lancer_chip(adapter) && !be_physfn(adapter))
-		return;
+	if (!lancer_chip(adapter) && !be_physfn(adapter)) {
+		status = -EINVAL;
+		goto ret;
+	}
 
 	/* Packets with VID 0 are always received by Lancer by default */
 	if (lancer_chip(adapter) && vid == 0)
-		return;
+		goto ret;
 
 	adapter->vlan_tag[vid] = 1;
 	if (adapter->vlans_added <= (adapter->max_vlans + 1))
-		be_vid_config(adapter);
+		status = be_vid_config(adapter);
+
+	if (!status)
+		adapter->vlans_added++;
+	else
+		adapter->vlan_tag[vid] = 0;
+ret:
+	return;
 }
 
 static void be_vlan_rem_vid(struct net_device *netdev, u16 vid)
 {
 	struct be_adapter *adapter = netdev_priv(netdev);
+	int status = 0;
 
-	adapter->vlans_added--;
-
-	if (!lancer_chip(adapter) && !be_physfn(adapter))
-		return;
+	if (!lancer_chip(adapter) && !be_physfn(adapter)) {
+		status = -EINVAL;
+		goto ret;
+	}
 
 	/* Packets with VID 0 are always received by Lancer by default */
 	if (lancer_chip(adapter) && vid == 0)
-		return;
+		goto ret;
 
 	adapter->vlan_tag[vid] = 0;
 	if (adapter->vlans_added <= adapter->max_vlans)
-		be_vid_config(adapter);
+		status = be_vid_config(adapter);
+
+	if (!status)
+		adapter->vlans_added--;
+	else
+		adapter->vlan_tag[vid] = 1;
+ret:
+	return;
 }
 
 static void be_set_rx_mode(struct net_device *netdev)
