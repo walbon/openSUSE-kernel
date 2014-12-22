@@ -1070,6 +1070,7 @@ static void nfs4_clear_state_manager_bit(struct nfs_client *clp)
 	wake_up_bit(&clp->cl_state, NFS4CLNT_MANAGER_RUNNING);
 	rpc_wake_up(&clp->cl_rpcwaitq);
 }
+EXPORT_SYMBOL_GPL(nfs4_schedule_lease_recovery);
 
 /*
  * Schedule the nfs_client asynchronous state management routine
@@ -1134,6 +1135,7 @@ void nfs4_schedule_stateid_recovery(const struct nfs_server *server, struct nfs4
 	nfs4_state_mark_reclaim_nograce(clp, state);
 	nfs4_schedule_state_manager(clp);
 }
+EXPORT_SYMBOL_GPL(nfs4_schedule_stateid_recovery);
 
 void nfs_inode_find_state_and_recover(struct inode *inode,
 		const nfs4_stateid *stateid)
@@ -1244,6 +1246,7 @@ restart:
 		if (status >= 0) {
 			status = nfs4_reclaim_locks(state, ops);
 			if (status >= 0) {
+				spin_lock(&state->state_lock);
 				if (!test_bit(NFS_DELEGATED_STATE, &state->flags)) {
 					list_for_each_entry(lock, &state->lock_states, ls_locks) {
 						if (!(lock->ls_flags & NFS_LOCK_INITIALIZED))
@@ -1251,6 +1254,7 @@ restart:
 							       __func__);
 					}
 				}
+				spin_unlock(&state->state_lock);
 				nfs4_put_open_state(state);
 				spin_lock(&sp->so_lock);
 				goto restart;
@@ -1320,10 +1324,12 @@ static void nfs4_clear_open_state(struct nfs4_state *state)
 	clear_bit(NFS_O_RDONLY_STATE, &state->flags);
 	clear_bit(NFS_O_WRONLY_STATE, &state->flags);
 	clear_bit(NFS_O_RDWR_STATE, &state->flags);
+	spin_lock(&state->state_lock);
 	list_for_each_entry(lock, &state->lock_states, ls_locks) {
 		lock->ls_seqid.flags = 0;
 		lock->ls_flags &= ~NFS_LOCK_INITIALIZED;
 	}
+	spin_unlock(&state->state_lock);
 }
 
 static void nfs4_reset_seqids(struct nfs_server *server,

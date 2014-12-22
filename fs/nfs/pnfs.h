@@ -145,7 +145,7 @@ extern void pnfs_unregister_layoutdriver(struct pnfs_layoutdriver_type *);
 /* nfs4proc.c */
 extern int nfs4_proc_getdeviceinfo(struct nfs_server *server,
 				   struct pnfs_device *dev);
-extern int nfs4_proc_layoutget(struct nfs4_layoutget *lgp);
+extern int nfs4_proc_layoutget(struct nfs4_layoutget *lgp, gfp_t gfp_flags);
 extern int nfs4_proc_layoutreturn(struct nfs4_layoutreturn *lrp);
 
 /* pnfs.c */
@@ -179,7 +179,7 @@ int mark_matching_lsegs_invalid(struct pnfs_layout_hdr *lo,
 bool pnfs_roc(struct inode *ino);
 void pnfs_roc_release(struct inode *ino);
 void pnfs_roc_set_barrier(struct inode *ino, u32 barrier);
-bool pnfs_roc_drain(struct inode *ino, u32 *barrier);
+bool pnfs_roc_drain(struct inode *ino, u32 *barrier, struct rpc_task *task);
 void pnfs_set_layoutcommit(struct nfs_write_data *wdata);
 int pnfs_layoutcommit_inode(struct inode *inode, bool sync);
 int _pnfs_return_layout(struct inode *);
@@ -375,7 +375,7 @@ pnfs_roc_set_barrier(struct inode *ino, u32 barrier)
 }
 
 static inline bool
-pnfs_roc_drain(struct inode *ino, u32 *barrier)
+pnfs_roc_drain(struct inode *ino, u32 *barrier, struct rpc_task *task)
 {
 	return false;
 }

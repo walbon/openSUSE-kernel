@@ -63,7 +63,7 @@ extern void splash_blank(struct vc_data *vc, struct fb_info *info,
 			int blank);
 
 #  define SPLASH_VERBOSE() splash_verbose()
-#  define SPLASH_DATA(x) (x->splash_data)
+#  define SPLASH_DATA(x) (oops_in_progress ? NULL : (x)->splash_data)
 #  define TEXT_WIDTH_FROM_SPLASH_DATA(x) (x->splash_data->splash_vc_text_wi)
 #  define TEXT_HIGHT_FROM_SPLASH_DATA(x) (x->splash_data->splash_vc_text_he)
 /* vt.c */

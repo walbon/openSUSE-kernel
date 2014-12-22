@@ -519,7 +519,7 @@ sysret_check:
 	 * sysretq will re-enable interrupts:
 	 */
 	TRACE_IRQS_ON
-	RESTORE_ARGS 0,8,1,1
+	RESTORE_ARGS 1,8,0,0
 	xor %ecx,%ecx
 	xor %r11,%r11
         HYPERVISOR_IRET VGCF_IN_SYSCALL
@@ -775,7 +775,7 @@ retint_restore_args:	/* return to kernel space */
 	andb $1,%al			# EAX[0] == IRET_EFLAGS.IF & event_mask
 	jnz restore_all_enable_events	#        != 0 => enable event delivery
 		
-	RESTORE_ARGS 0,8,0
+	RESTORE_ARGS 1,8,1
 	HYPERVISOR_IRET 0
 	
 	/* edi: workmask, edx: work */
@@ -940,7 +940,7 @@ scrit:	/**** START OF CRITICAL REGION ****/
 	__TEST_PENDING
 	CFI_REMEMBER_STATE
 	jnz  14f			# process more events if necessary...
-        RESTORE_ARGS 0,8,0
+        RESTORE_ARGS 1,8,1
         HYPERVISOR_IRET 0
         
 	CFI_RESTORE_STATE
