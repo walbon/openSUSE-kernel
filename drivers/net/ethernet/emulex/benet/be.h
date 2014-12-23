@@ -213,7 +213,6 @@ struct be_tx_stats {
 };
 
 struct be_tx_obj {
-	u32 db_offset;
 	struct be_queue_info q;
 	struct be_queue_info cq;
 	/* Remember the skbs that were transmitted */
@@ -328,7 +327,6 @@ enum vf_state {
 #define BE_FLAGS_WORKER_SCHEDULED		(1 << 3)
 #define BE_UC_PMAC_COUNT		30
 #define BE_VF_UC_PMAC_COUNT		2
-#define BE_FLAGS_SETUP_DONE			(1 << 13)
 
 struct phy_info {
 	u8 transceiver;
@@ -350,7 +348,6 @@ struct be_adapter {
 	struct pci_dev *pdev;
 	struct net_device *netdev;
 
-	u8 __iomem *csr;	/* CSR BAR used only for BE2/3 */
 	u8 __iomem *db;		/* Door Bell */
 
 	struct mutex mbox_lock; /* For serializing mbox cmds to BE card */
@@ -435,7 +432,6 @@ struct be_adapter {
 	u8 wol_cap;
 	bool wol;
 	u32 uc_macs;		/* Count of secondary UC MAC programmed */
-	u16 asic_rev;
 	u32 msg_enable;
 	int be_get_temp_freq;
 	u16 max_mcast_mac;
