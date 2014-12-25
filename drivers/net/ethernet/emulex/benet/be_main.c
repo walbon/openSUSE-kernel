@@ -2405,12 +2405,12 @@ int be_poll(struct napi_struct *napi, int budget)
 	struct be_eq_obj *eqo = container_of(napi, struct be_eq_obj, napi);
 	struct be_adapter *adapter = eqo->adapter;
 	int max_work = 0, work, i, num_evts;
+	struct be_tx_obj *txo;
 
 	num_evts = events_get(eqo);
 
-	/* Process all TXQs serviced by this EQ */
-	for (i = eqo->idx; i < adapter->num_tx_qs; i += adapter->num_evt_qs)
-		be_process_tx(adapter, &adapter->tx_obj[i], i);
+	for_all_tx_queues_on_eq(adapter, eqo, txo, i)
+		be_process_tx(adapter, txo, i);
 
 	/* This loop will iterate twice for EQ0 in which
 	 * completions of the last RXQ (default one) are also processed
