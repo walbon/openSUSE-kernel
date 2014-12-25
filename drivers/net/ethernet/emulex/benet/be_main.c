@@ -3514,8 +3514,6 @@ static void be_netpoll(struct net_device *netdev)
 		be_eq_notify(eqo->adapter, eqo->q.id, false, true, 0);
 		napi_schedule(&eqo->napi);
 	}
-
-	return;
 }
 #endif
 
