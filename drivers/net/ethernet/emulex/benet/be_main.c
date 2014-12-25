@@ -1137,7 +1137,10 @@ static void be_vlan_add_vid(struct net_device *netdev, u16 vid)
 
 	/* Packets with VID 0 are always received by Lancer by default */
 	if (lancer_chip(adapter) && vid == 0)
-		goto ret;
+		return;
+
+	if (adapter->vlan_tag[vid])
+		return;
 
 	adapter->vlan_tag[vid] = 1;
 	adapter->vlans_added++;
@@ -1147,7 +1150,7 @@ static void be_vlan_add_vid(struct net_device *netdev, u16 vid)
 		adapter->vlans_added--;
 		adapter->vlan_tag[vid] = 0;
 	}
-ret:
+
 	return;
 }
 
