@@ -1260,13 +1260,15 @@ static int be_set_vf_mac(struct net_device *netdev, int vf, u8 *mac)
 					vf + 1);
 	}
 
-	if (status)
-		dev_err(&adapter->pdev->dev, "MAC %pM set on VF %d Failed\n",
-			mac, vf);
-	else
-		memcpy(vf_cfg->mac_addr, mac, ETH_ALEN);
+	if (status) {
+		dev_err(&adapter->pdev->dev, "MAC %pM set on VF %d Failed: %#x",
+			mac, vf, status);
+		return be_cmd_status(status);
+	}
 
-	return status;
+	ether_addr_copy(vf_cfg->mac_addr, mac);
+
+	return 0;
 }
 
 static int be_get_vf_config(struct net_device *netdev, int vf,
@@ -1313,12 +1315,16 @@ static int be_set_vf_vlan(struct net_device *netdev, int vf, u16 vlan, u8 qos)
 					       vf + 1, vf_cfg->if_handle, 0);
 	}
 
-	if (!status)
-		vf_cfg->vlan_tag = vlan;
-	else
-		dev_info(&adapter->pdev->dev,
-			 "VLAN %d config on VF %d failed\n", vlan, vf);
-	return status;
+	if (status) {
+		dev_err(&adapter->pdev->dev,
+			"VLAN %d config on VF %d failed : %#x\n", vlan,
+			vf, status);
+		return be_cmd_status(status);
+	}
+
+	vf_cfg->vlan_tag = vlan;
+
+	return 0;
 }
 
 static int be_set_vf_tx_rate(struct net_device *netdev, int vf, int rate)
@@ -1348,7 +1354,7 @@ static int be_set_vf_tx_rate(struct net_device *netdev, int vf, int rate)
 			"tx rate %d on VF %d failed\n", rate, vf);
 	else
 		adapter->vf_cfg[vf].tx_rate = rate;
-	return status;
+	return be_cmd_status(status);
 }
 
 static void be_aic_update(struct be_aic_obj *aic, u64 rx_pkts, u64 tx_pkts,
