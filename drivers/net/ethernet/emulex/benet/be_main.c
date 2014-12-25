@@ -1945,7 +1945,7 @@ static void be_rx_cq_clean(struct be_rx_obj *rxo)
 	 */
 	for (;;) {
 		rxcp = be_rx_compl_get(rxo);
-		if (rxcp == NULL) {
+		if (!rxcp) {
 			if (lancer_chip(adapter))
 				break;
 
@@ -2801,7 +2801,7 @@ static int be_setup_wol(struct be_adapter *adapter, bool enable)
 	cmd.size = sizeof(struct be_cmd_req_acpi_wol_magic_config);
 	cmd.va = dma_zalloc_coherent(&adapter->pdev->dev, cmd.size, &cmd.dma,
 				     GFP_KERNEL);
-	if (cmd.va == NULL)
+	if (!cmd.va)
 		return -ENOMEM;
 
 	if (enable) {
@@ -3940,7 +3940,7 @@ lancer_fw_exit:
 static int be_get_ufi_type(struct be_adapter *adapter,
 			   struct flash_file_hdr_g3 *fhdr)
 {
-	if (fhdr == NULL)
+	if (!fhdr)
 		goto be_get_ufi_exit;
 
 	if (skyhawk_chip(adapter) && fhdr->build[0] == '4')
@@ -4207,12 +4207,12 @@ static int be_map_pci_bars(struct be_adapter *adapter)
 
 	if (BEx_chip(adapter) && be_physfn(adapter)) {
 		adapter->csr = pci_iomap(adapter->pdev, 2, 0);
-		if (adapter->csr == NULL)
+		if (!adapter->csr)
 			return -ENOMEM;
 	}
 
 	addr = pci_iomap(adapter->pdev, db_bar(adapter), 0);
-	if (addr == NULL)
+	if (!addr)
 		goto pci_map_err;
 	adapter->db = addr;
 
@@ -4275,7 +4275,7 @@ static int be_ctrl_init(struct be_adapter *adapter)
 	rx_filter->va = dma_zalloc_coherent(&adapter->pdev->dev,
 					    rx_filter->size, &rx_filter->dma,
 					    GFP_KERNEL);
-	if (rx_filter->va == NULL) {
+	if (!rx_filter->va) {
 		status = -ENOMEM;
 		goto free_mbox;
 	}
@@ -4324,7 +4324,7 @@ static int be_stats_init(struct be_adapter *adapter)
 
 	cmd->va = dma_zalloc_coherent(&adapter->pdev->dev, cmd->size, &cmd->dma,
 				      GFP_KERNEL);
-	if (cmd->va == NULL)
+	if (!cmd->va)
 		return -ENOMEM;
 	return 0;
 }
@@ -4545,7 +4545,7 @@ static int be_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	pci_set_master(pdev);
 
 	netdev = alloc_etherdev_mqs(sizeof(*adapter), MAX_TX_QS, MAX_RX_QS);
-	if (netdev == NULL) {
+	if (!netdev) {
 		status = -ENOMEM;
 		goto rel_reg;
 	}
