@@ -127,10 +127,8 @@ struct nfs4_state_owner {
 	struct list_head     so_states;
 	struct nfs_seqid_counter so_seqid;
 	struct rpc_sequence  so_sequence;
-#ifndef __GENKSYMS__
 	seqcount_t	     so_reclaim_seqcount;
 	struct mutex	     so_delegreturn_mutex;
-#endif
 };
 
 enum {
