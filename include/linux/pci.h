@@ -1102,13 +1102,13 @@ extern void pci_disable_msix(struct pci_dev *dev);
 extern void msi_remove_pci_irq_vectors(struct pci_dev *dev);
 extern void pci_restore_msi_state(struct pci_dev *dev);
 extern int pci_msi_enabled(void);
+int pci_enable_msi_range(struct pci_dev *dev, int minvec, int maxvec);
+int pci_enable_msix_range(struct pci_dev *dev, struct msix_entry *entries,
+			  int minvec, int maxvec);
 #ifdef CONFIG_XEN
 extern int register_msi_get_owner(int (*func)(struct pci_dev *dev));
 extern int unregister_msi_get_owner(int (*func)(struct pci_dev *dev));
 #endif
-int pci_enable_msi_range(struct pci_dev *dev, int minvec, int maxvec);
-int pci_enable_msix_range(struct pci_dev *dev, struct msix_entry *entries,
-			  int minvec, int maxvec);
 #endif
 
 #ifdef CONFIG_PCIEPORTBUS
