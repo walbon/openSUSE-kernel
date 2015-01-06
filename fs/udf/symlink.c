@@ -42,6 +42,7 @@ static int udf_pc_to_char(struct super_block *sb, unsigned char *from,
 	tolen--;
 	while (elen < fromlen) {
 		pc = (struct pathComponent *)(from + elen);
+		elen += sizeof(struct pathComponent);
 		switch (pc->componentType) {
 		case 1:
 			if (pc->lengthComponentIdent == 0) {
@@ -68,6 +69,9 @@ static int udf_pc_to_char(struct super_block *sb, unsigned char *from,
 			/* that would be . - just ignore */
 			break;
 		case 5:
+			elen += pc->lengthComponentIdent;
+			if (elen > fromlen)
+				return -EIO;
 			comp_len = udf_get_filename(sb, pc->componentIdent,
 						    pc->lengthComponentIdent,
 						    p, tolen);
@@ -79,7 +83,6 @@ static int udf_pc_to_char(struct super_block *sb, unsigned char *from,
 			tolen--;
 			break;
 		}
-		elen += sizeof(struct pathComponent) + pc->lengthComponentIdent;
 	}
 	if (p > to + 1)
 		p[-1] = '\0';
