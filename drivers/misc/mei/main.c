@@ -77,8 +77,11 @@ static DEFINE_PCI_DEVICE_TABLE(mei_pci_tbl) = {
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MEI_DEV_ID_PPT_1)},
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MEI_DEV_ID_PPT_2)},
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MEI_DEV_ID_PPT_3)},
-	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MEI_DEV_ID_LPT)},
+	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MEI_DEV_ID_LPT_H)},
+	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MEI_DEV_ID_LPT_W)},
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MEI_DEV_ID_LPT_LP)},
+	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MEI_DEV_ID_LPT_HR)},
+	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MEI_DEV_ID_WPT_LP)},
 
 	/* required last entry */
 	{0, }
@@ -920,7 +923,9 @@ static struct miscdevice  mei_misc_device = {
 static bool __devinit mei_quirk_probe(struct pci_dev *pdev,
 				const struct pci_device_id *ent)
 {
+
 	u32 reg;
+
 	/* Cougar Point || Patsburg */
 	if (ent->device == MEI_DEV_ID_CPT_1 ||
 	    ent->device == MEI_DEV_ID_PBG_1) {
@@ -929,6 +934,7 @@ static bool __devinit mei_quirk_probe(struct pci_dev *pdev,
 		if ((reg & 0x600) == 0x200)
 			goto no_mei;
 	}
+
 
 	/* Lynx Point */
 	if (ent->device == MEI_DEV_ID_LPT_H  ||
@@ -1191,6 +1197,7 @@ static int mei_pci_resume(struct device *device)
 
 	mutex_lock(&dev->device_lock);
 	dev->dev_state = MEI_DEV_POWER_UP;
+	mei_clear_interrupts(dev);
 	mei_reset(dev, 1);
 	mutex_unlock(&dev->device_lock);
 

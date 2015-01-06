@@ -61,6 +61,11 @@ extern const u8 mei_wd_state_independence_msg[3][4];
 #define MEI_CLIENTS_MAX 256
 
 /*
+ * maximum number of consecutive resets
+ */
+#define MEI_MAX_CONSEC_RESET  3
+
+/*
  * Number of File descriptors/handles
  * that can be opened to the driver.
  *
@@ -182,6 +187,7 @@ struct mei_io_list {
 /**
  * struct mei_deive -  MEI private device struct
  * @hbuf_depth - depth of host(write) buffer
+ * @reset_count - limits the number of consecutive resets
  */
 struct mei_device {
 	struct pci_dev *pdev;	/* pointer to pci device struct */
@@ -215,6 +221,7 @@ struct mei_device {
 	struct mutex device_lock; /* device lock */
 	struct delayed_work timer_work;	/* MEI timer delayed work (timeouts) */
 	bool recvd_msg;
+	bool recvd_hw_ready;
 	/*
 	 * hw states of host and fw(ME)
 	 */
@@ -224,12 +231,14 @@ struct mei_device {
 	/*
 	 * waiting queue for receive message from FW
 	 */
+	wait_queue_head_t wait_hw_ready;
 	wait_queue_head_t wait_recvd_msg;
 	wait_queue_head_t wait_stop_wd;
 
 	/*
 	 * mei device  states
 	 */
+	unsigned long reset_count;
 	enum mei_dev_state dev_state;
 	enum mei_init_clients_states init_clients_state;
 	u16 init_clients_timer;
@@ -281,6 +290,7 @@ struct mei_device {
 struct mei_device *mei_device_init(struct pci_dev *pdev);
 void mei_reset(struct mei_device *dev, int interrupts);
 int mei_hw_init(struct mei_device *dev);
+void mei_me_hw_reset_release(struct mei_device *dev);
 int mei_task_initialize_clients(void *data);
 int mei_initialize_clients(struct mei_device *dev);
 int mei_disconnect_host_client(struct mei_device *dev, struct mei_cl *cl);
@@ -436,10 +446,6 @@ void mei_csr_clear_his(struct mei_device *dev);
 
 void mei_enable_interrupts(struct mei_device *dev);
 void mei_disable_interrupts(struct mei_device *dev);
-
-/*
- * mei hw reset function
- */
-void mei_hw_reset_release(struct mei_device *dev);
+void mei_clear_interrupts(struct mei_device *dev);
 
 #endif
