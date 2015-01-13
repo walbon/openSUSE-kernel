@@ -280,7 +280,18 @@
 #define __NR_process_vm_readv	340
 #define __NR_process_vm_writev	341
 #define __NR_s390_runtime_instr 342
-#define NR_syscalls 343
+/* Number 343 is reserved for sys_kcmp */
+/* Number 344 is reserved for sys_finit_module */
+/* Number 345 is reserved for sys_sched_setattr */
+/* Number 346 is reserved for sys_sched_getattr */
+/* Number 347 is reserved for sys_renameat2 */
+/* Number 348 is reserved for sys_seccomp */
+/* Number 349 is reserved for sys_getrandom */
+/* Number 350 is reserved for sys_memfd_create */
+/* Number 351 is reserved for sys_bpf */
+#define __NR_s390_pci_mmio_write	352
+#define __NR_s390_pci_mmio_read		353
+#define NR_syscalls 354
 
 /* 
  * There are some system calls that are not present on 64 bit, some

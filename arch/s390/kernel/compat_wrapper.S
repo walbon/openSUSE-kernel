@@ -1938,3 +1938,17 @@ compat_sys_process_vm_writev_wrapper:
 	llgf	%r0,164(%r15)		# unsigned long
 	stg	%r0,160(%r15)
 	jg	compat_sys_process_vm_writev
+
+	.globl sys_s390_pci_mmio_write_wrapper
+sys_s390_pci_mmio_write_wrapper:
+	llgfr	%r2,%r2			# unsigned long
+	llgtr	%r3,%r3			# void __user *
+	llgfr	%r4,%r4			# size_t
+	jg	sys_s390_pci_mmio_write
+
+	.globl sys_s390_pci_mmio_read_wrapper
+sys_s390_pci_mmio_read_wrapper:
+	llgfr	%r2,%r2			# unsigned long
+	llgtr	%r3,%r3			# void __user *
+	llgfr	%r4,%r4			# size_t
+	jg	sys_s390_pci_mmio_read
