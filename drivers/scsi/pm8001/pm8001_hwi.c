@@ -3106,7 +3106,7 @@ void pm8001_mpi_set_dev_state_resp(struct pm8001_hba_info *pm8001_ha,
 	complete(pm8001_dev->setds_completion);
 	ccb->task = NULL;
 	ccb->ccb_tag = 0xFFFFFFFF;
-	pm8001_ccb_free(pm8001_ha, tag);
+	pm8001_tag_free(pm8001_ha, tag);
 }
 
 void pm8001_mpi_set_nvmd_resp(struct pm8001_hba_info *pm8001_ha, void *piomb)
@@ -3125,7 +3125,7 @@ void pm8001_mpi_set_nvmd_resp(struct pm8001_hba_info *pm8001_ha, void *piomb)
 	}
 	ccb->task = NULL;
 	ccb->ccb_tag = 0xFFFFFFFF;
-	pm8001_ccb_free(pm8001_ha, tag);
+	pm8001_tag_free(pm8001_ha, tag);
 }
 
 void
@@ -3187,7 +3187,7 @@ pm8001_mpi_get_nvmd_resp(struct pm8001_hba_info *pm8001_ha, void *piomb)
 	complete(pm8001_ha->nvmd_completion);
 	ccb->task = NULL;
 	ccb->ccb_tag = 0xFFFFFFFF;
-	pm8001_ccb_free(pm8001_ha, tag);
+	pm8001_tag_free(pm8001_ha, tag);
 }
 
 int pm8001_mpi_local_phy_ctl(struct pm8001_hba_info *pm8001_ha, void *piomb)
@@ -3594,7 +3594,7 @@ int pm8001_mpi_reg_resp(struct pm8001_hba_info *pm8001_ha, void *piomb)
 	complete(pm8001_dev->dcompletion);
 	ccb->task = NULL;
 	ccb->ccb_tag = 0xFFFFFFFF;
-	pm8001_ccb_free(pm8001_ha, htag);
+	pm8001_tag_free(pm8001_ha, htag);
 	return 0;
 }
 
@@ -3678,7 +3678,7 @@ int pm8001_mpi_fw_flash_update_resp(struct pm8001_hba_info *pm8001_ha,
 	complete(pm8001_ha->nvmd_completion);
 	ccb->task = NULL;
 	ccb->ccb_tag = 0xFFFFFFFF;
-	pm8001_ccb_free(pm8001_ha, tag);
+	pm8001_tag_free(pm8001_ha, tag);
 	return 0;
 }
 
