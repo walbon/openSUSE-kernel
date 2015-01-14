@@ -164,15 +164,14 @@ static void subscr_timeout(struct tipc_subscription *sub)
 		tipc_port_unlock(server_port);
 		return;
 	}
-
-	/* Unlink subscription from name table */
-	tipc_nametbl_unsubscribe(sub);
-
 	/* Unlink subscription from subscriber */
 	list_del(&sub->subscription_list);
 
 	/* Release subscriber's server port */
 	tipc_port_unlock(server_port);
+
+	/* Unlink subscription from name table */
+	tipc_nametbl_unsubscribe(sub);
 
 	/* Notify subscriber of timeout */
 	subscr_send_event(sub, sub->evt.s.seq.lower, sub->evt.s.seq.upper,
@@ -220,7 +219,7 @@ static void subscr_terminate(struct tipc_subscriber *subscriber)
 
 	/* Sever connection to subscriber */
 	tipc_shutdown(port_ref);
-	tipc_deleteport(port_ref);
+	tipc_deleteport(tipc_port_deref(port_ref));
 
 	/* Destroy any existing subscriptions for subscriber */
 	list_for_each_entry_safe(sub, sub_temp, &subscriber->subscription_list,
@@ -507,9 +506,9 @@ int tipc_subscr_start(void)
 	if (res)
 		goto failed;
 
-	res = tipc_publish(topsrv.setup_port, TIPC_NODE_SCOPE, &seq);
+	res = tipc_publish(tipc_port_deref(topsrv.setup_port), TIPC_NODE_SCOPE, &seq);
 	if (res) {
-		tipc_deleteport(topsrv.setup_port);
+		tipc_deleteport(tipc_port_deref(topsrv.setup_port));
 		topsrv.setup_port = 0;
 		goto failed;
 	}
@@ -528,7 +527,7 @@ void tipc_subscr_stop(void)
 	spinlock_t *subscriber_lock;
 
 	if (topsrv.setup_port) {
-		tipc_deleteport(topsrv.setup_port);
+		tipc_deleteport(tipc_port_deref(topsrv.setup_port));
 		topsrv.setup_port = 0;
 
 		list_for_each_entry_safe(subscriber, subscriber_temp,

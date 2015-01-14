@@ -58,6 +58,7 @@
  * @lock: spinlock governing access to structure
  * @hash: links to adjacent nodes in unsorted hash chain
  * @list: links to adjacent nodes in sorted list of cluster's nodes
+ * @nsub_lock: lock protecting node subscription list
  * @nsub: list of "node down" subscriptions monitoring node
  * @active_links: pointers to active links to node
  * @links: pointers to all links to node
@@ -74,7 +75,8 @@
  *    @deferred_size: number of OOS b'cast messages in deferred queue
  *    @deferred_head: oldest OOS b'cast message received from node
  *    @deferred_tail: newest OOS b'cast message received from node
- *    @defragm: list of partially reassembled b'cast message fragments from node
+ *    @reasm_head: broadcast reassembly queue head from node
+ *    @reasm_tail: last broadcast fragment received from node
  *    @recv_permitted: true if node is allowed to receive b'cast messages
  */
 struct tipc_node {
@@ -82,6 +84,7 @@ struct tipc_node {
 	spinlock_t lock;
 	struct hlist_node hash;
 	struct list_head list;
+	spinlock_t nsub_lock;
 	struct list_head nsub;
 	struct tipc_link *active_links[2];
 	struct tipc_link *links[MAX_BEARERS];
@@ -90,6 +93,7 @@ struct tipc_node {
 	int block_setup;
 	int permit_changeover;
 	u32 signature;
+	struct sk_buff_head rq;
 	struct {
 		u32 acked;
 		u32 last_in;
@@ -98,7 +102,8 @@ struct tipc_node {
 		u32 deferred_size;
 		struct sk_buff *deferred_head;
 		struct sk_buff *deferred_tail;
-		struct sk_buff *defragm;
+		struct sk_buff *reasm_head;
+		struct sk_buff *reasm_tail;
 		bool recv_permitted;
 	} bclink;
 };

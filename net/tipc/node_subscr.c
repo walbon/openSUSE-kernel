@@ -48,7 +48,6 @@ void tipc_nodesub_subscribe(struct tipc_node_subscr *node_sub, u32 addr,
 		node_sub->node = NULL;
 		return;
 	}
-
 	node_sub->node = tipc_node_find(addr);
 	if (!node_sub->node) {
 		pr_warn("Node subscription rejected, unknown node 0x%x\n",
@@ -58,9 +57,9 @@ void tipc_nodesub_subscribe(struct tipc_node_subscr *node_sub, u32 addr,
 	node_sub->handle_node_down = handle_down;
 	node_sub->usr_handle = usr_handle;
 
-	tipc_node_lock(node_sub->node);
+	spin_lock_bh(&node_sub->node->nsub_lock);
 	list_add_tail(&node_sub->nodesub_list, &node_sub->node->nsub);
-	tipc_node_unlock(node_sub->node);
+	spin_unlock_bh(&node_sub->node->nsub_lock);
 }
 
 /**
@@ -71,9 +70,9 @@ void tipc_nodesub_unsubscribe(struct tipc_node_subscr *node_sub)
 	if (!node_sub->node)
 		return;
 
-	tipc_node_lock(node_sub->node);
+	spin_lock_bh(&node_sub->node->nsub_lock);
 	list_del_init(&node_sub->nodesub_list);
-	tipc_node_unlock(node_sub->node);
+	spin_unlock_bh(&node_sub->node->nsub_lock);
 }
 
 /**
