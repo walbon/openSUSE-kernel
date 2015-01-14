@@ -114,6 +114,8 @@ struct tipc_node *tipc_node_create(u32 addr)
 	INIT_HLIST_NODE(&n_ptr->hash);
 	INIT_LIST_HEAD(&n_ptr->list);
 	INIT_LIST_HEAD(&n_ptr->nsub);
+	spin_lock_init(&n_ptr->nsub_lock);
+	skb_queue_head_init(&n_ptr->rq);
 
 	hlist_add_head(&n_ptr->hash, &node_htable[tipc_hashfn(addr)]);
 
@@ -299,9 +301,10 @@ static void node_lost_contact(struct tipc_node *n_ptr)
 		}
 		n_ptr->bclink.deferred_size = 0;
 
-		if (n_ptr->bclink.defragm) {
-			kfree_skb(n_ptr->bclink.defragm);
-			n_ptr->bclink.defragm = NULL;
+		if (n_ptr->bclink.reasm_head) {
+			kfree_skb(n_ptr->bclink.reasm_head);
+			n_ptr->bclink.reasm_head = NULL;
+			n_ptr->bclink.reasm_tail = NULL;
 		}
 
 		tipc_bclink_remove_node(n_ptr->addr);

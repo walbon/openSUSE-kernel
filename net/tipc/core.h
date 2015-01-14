@@ -178,6 +178,7 @@ static inline void k_term_timer(struct timer_list *timer)
 #define BUF_HEADROOM LL_MAX_HEADER
 
 struct tipc_skb_cb {
+	char deferred;
 	void *handle;
 };
 
