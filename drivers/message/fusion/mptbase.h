@@ -91,6 +91,7 @@
 
 #define MPT_MAX_ADAPTERS		18
 #define MPT_MAX_PROTOCOL_DRIVERS	16
+#define MPT_MAX_CALLBACKNAME_LEN	49
 #define MPT_MAX_BUS			1	/* Do not change */
 #define MPT_MAX_FC_DEVICES		255
 #define MPT_MAX_SCSI_DEVICES		16
@@ -653,7 +654,7 @@ typedef struct _MPT_ADAPTER
 	int			 id;		/* Unique adapter id N {0,1,2,...} */
 	int			 pci_irq;	/* This irq           */
 	char			 name[MPT_NAME_LENGTH];	/* "iocN"             */
-	char			 prod_name[MPT_NAME_LENGTH];	/* "LSIFC9x9"         */
+	const char		 *prod_name;	/* "LSIFC9x9"         */
 #ifdef CONFIG_FUSION_LOGGING
 	char			 evStr[EVENT_DESCR_STR_SZ]; /* used in mpt_display_event_info */
 #endif

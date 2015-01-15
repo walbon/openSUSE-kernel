@@ -1348,7 +1348,6 @@ mptctl_getiocinfo (unsigned long arg, unsigned int data_size)
 	int			iocnum;
 	unsigned int		port;
 	int			cim_rev;
-	u8			revision;
 	struct scsi_device	*sdev;
 	VirtDevice		*vdevice;
 
@@ -1423,8 +1422,7 @@ mptctl_getiocinfo (unsigned long arg, unsigned int data_size)
 	pdev = (struct pci_dev *) ioc->pcidev;
 
 	karg->pciId = pdev->device;
-	pci_read_config_byte(pdev, PCI_CLASS_REVISION, &revision);
-	karg->hwRev = revision;
+	karg->hwRev = pdev->revision;
 	karg->subSystemDevice = pdev->subsystem_device;
 	karg->subSystemVendor = pdev->subsystem_vendor;
 
@@ -1862,12 +1860,7 @@ mptctl_replace_fw (unsigned long arg)
 
 	/* Allocate memory for the new FW image
 	 */
-	newFwSize = karg.newImageSize;
-
-	if (newFwSize & 0x01)
-		newFwSize += 1;
-	if (newFwSize & 0x02)
-		newFwSize += 2;
+	newFwSize = ALIGN(karg.newImageSize, 4);
 
 	mpt_alloc_fw_memory(ioc, newFwSize);
 	if (ioc->cached_fw == NULL)
@@ -2536,10 +2529,9 @@ mptctl_hp_hostinfo(unsigned long arg, unsigned int data_size)
 	int			cim_rev;
 	ToolboxIstwiReadWriteRequest_t	*IstwiRWRequest;
 	MPT_FRAME_HDR		*mf = NULL;
-	MPIHeader_t		*mpi_hdr;
 	unsigned long		timeleft;
 	int			retval;
-	u32			MsgContext;
+	u32			msgcontext;
 
 	/* Reset long to int. Should affect IA64 and SPARC only
 	 */
@@ -2655,12 +2647,11 @@ mptctl_hp_hostinfo(unsigned long arg, unsigned int data_size)
 	}
 
 	IstwiRWRequest = (ToolboxIstwiReadWriteRequest_t *)mf;
-	mpi_hdr = (MPIHeader_t *) mf;
-	MsgContext = mpi_hdr->MsgContext;
+	msgcontext = IstwiRWRequest->MsgContext;
 	memset(IstwiRWRequest,0,sizeof(ToolboxIstwiReadWriteRequest_t));
+	IstwiRWRequest->MsgContext = msgcontext;
 	IstwiRWRequest->Function = MPI_FUNCTION_TOOLBOX;
 	IstwiRWRequest->Tool = MPI_TOOLBOX_ISTWI_READ_WRITE_TOOL;
-	IstwiRWRequest->MsgContext = MsgContext;
 	IstwiRWRequest->Flags = MPI_TB_ISTWI_FLAGS_READ;
 	IstwiRWRequest->NumAddressBytes = 0x01;
 	IstwiRWRequest->DataLength = cpu_to_le16(0x04);
