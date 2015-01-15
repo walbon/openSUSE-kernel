@@ -174,7 +174,7 @@ int tipc_createport(void *usr_handle,
 		tipc_conn_msg_event conn_msg_cb,
 		tipc_continue_event continue_event_cb, u32 *portref);
 
-int tipc_deleteport(u32 portref);
+int tipc_deleteport(struct tipc_port *p_ptr);
 
 int tipc_portimportance(u32 portref, unsigned int *importance);
 int tipc_set_portimportance(u32 portref, unsigned int importance);
@@ -185,10 +185,10 @@ int tipc_set_portunreliable(u32 portref, unsigned int isunreliable);
 int tipc_portunreturnable(u32 portref, unsigned int *isunreturnable);
 int tipc_set_portunreturnable(u32 portref, unsigned int isunreturnable);
 
-int tipc_publish(u32 portref, unsigned int scope,
-		struct tipc_name_seq const *name_seq);
-int tipc_withdraw(u32 portref, unsigned int scope,
-		struct tipc_name_seq const *name_seq);
+int tipc_publish(struct tipc_port *p_ptr, unsigned int scope,
+		 struct tipc_name_seq const *name_seq);
+int tipc_withdraw(struct tipc_port *p_ptr, unsigned int scope,
+		  struct tipc_name_seq const *name_seq);
 
 int tipc_connect(u32 portref, struct tipc_portid const *port);
 
@@ -208,6 +208,8 @@ int tipc_port_peer_msg(struct tipc_port *p_ptr, struct tipc_msg *msg);
 /*
  * TIPC messaging routines
  */
+
+void tipc_port_process_rcvd(struct sk_buff_head *head);
 int tipc_port_recv_msg(struct sk_buff *buf);
 int tipc_send(u32 portref, unsigned int num_sect, struct iovec const *msg_sect,
 	      unsigned int total_len);

@@ -38,6 +38,8 @@
 #include "config.h"
 #include "port.h"
 #include "name_table.h"
+#include "name_distr.h"
+#include <linux/ratelimit.h>
 
 /* Connection management: */
 #define PROBING_INTERVAL 3600000	/* [ms] => 1 h */
@@ -153,6 +155,37 @@ int tipc_multicast(u32 ref, struct tipc_name_seq const *seq,
 	return res;
 }
 
+void tipc_port_process_rcvd(struct sk_buff_head *head)
+{
+	struct sk_buff *skb;
+	struct tipc_msg *msg;
+
+	spin_lock_bh(&head->lock);
+
+	while((skb = __skb_dequeue(head))) {
+		msg = buf_msg(skb);
+		if (msg_isdata(msg)) {
+			if (msg_mcast(msg))
+				tipc_port_recv_mcast(skb, NULL);
+			else
+				tipc_port_recv_msg(skb);
+			continue;
+		}
+		switch (msg_user(msg)) {
+		case NAME_DISTRIBUTOR:
+			tipc_named_recv(skb);
+		break;
+		case CONN_MANAGER:
+			tipc_port_recv_proto_msg(skb);
+		break;
+		default:
+			kfree_skb(skb);
+		break;
+		}
+	}
+	spin_unlock_bh(&head->lock);
+}
+
 /**
  * tipc_port_recv_mcast - deliver multicast message to all destination ports
  *
@@ -257,18 +290,15 @@ struct tipc_port *tipc_createport_raw(void *usr_handle,
 	return p_ptr;
 }
 
-int tipc_deleteport(u32 ref)
+int tipc_deleteport(struct tipc_port *p_ptr)
 {
-	struct tipc_port *p_ptr;
 	struct sk_buff *buf = NULL;
 
-	tipc_withdraw(ref, 0, NULL);
-	p_ptr = tipc_port_lock(ref);
-	if (!p_ptr)
-		return -EINVAL;
+	tipc_withdraw(p_ptr, 0, NULL);
 
-	tipc_ref_discard(ref);
-	tipc_port_unlock(p_ptr);
+	spin_lock_bh(p_ptr->lock);
+	tipc_ref_discard(p_ptr->ref);
+	spin_unlock_bh(p_ptr->lock);
 
 	k_cancel_timer(&p_ptr->timer);
 	if (p_ptr->connected) {
@@ -366,6 +396,35 @@ static struct sk_buff *port_build_proto_msg(struct tipc_port *p_ptr,
 		msg_set_msgcnt(msg, ack);
 	}
 	return buf;
+}
+
+struct reject_work {
+	struct work_struct ws;
+	struct sk_buff *buf;
+	u32 err;
+};
+
+static void do_reject(struct work_struct *ws)
+{
+	struct reject_work *w = container_of(ws, struct reject_work, ws);
+	tipc_reject_msg(w->buf, w->err);
+	kfree(w);
+}
+
+static int defer_reject(struct sk_buff *buf, u32 err)
+{
+	struct reject_work *w = kzalloc(sizeof(struct reject_work), GFP_ATOMIC);
+
+	if (!w) {
+		pr_err_ratelimited("Message reject failed\n");
+		kfree_skb(buf);
+		return -ENOMEM;
+	}
+	INIT_WORK(&w->ws, do_reject);
+	w->buf = buf;
+	w->err = err;
+	schedule_work(&w->ws);
+	return 0;
 }
 
 int tipc_reject_msg(struct sk_buff *buf, u32 err)
@@ -824,7 +883,7 @@ err:
 		buf = next;
 		continue;
 reject:
-		tipc_reject_msg(buf, TIPC_ERR_NO_PORT);
+		defer_reject(buf, TIPC_ERR_NO_PORT);
 		buf = next;
 	}
 }
@@ -965,47 +1024,36 @@ int tipc_set_portimportance(u32 ref, unsigned int imp)
 }
 
 
-int tipc_publish(u32 ref, unsigned int scope, struct tipc_name_seq const *seq)
+int tipc_publish(struct tipc_port *p_ptr, unsigned int scope,
+		 struct tipc_name_seq const *seq)
 {
-	struct tipc_port *p_ptr;
 	struct publication *publ;
 	u32 key;
-	int res = -EINVAL;
-
-	p_ptr = tipc_port_lock(ref);
-	if (!p_ptr)
-		return -EINVAL;
 
 	if (p_ptr->connected)
-		goto exit;
-	key = ref + p_ptr->pub_count + 1;
-	if (key == ref) {
-		res = -EADDRINUSE;
-		goto exit;
-	}
+		return -EINVAL;
+	key = p_ptr->ref + p_ptr->pub_count + 1;
+	if (key == p_ptr->ref)
+		return -EADDRINUSE;
+
 	publ = tipc_nametbl_publish(seq->type, seq->lower, seq->upper,
 				    scope, p_ptr->ref, key);
 	if (publ) {
 		list_add(&publ->pport_list, &p_ptr->publications);
 		p_ptr->pub_count++;
 		p_ptr->published = 1;
-		res = 0;
+		return 0;
 	}
-exit:
-	tipc_port_unlock(p_ptr);
-	return res;
+	return -EINVAL;
 }
 
-int tipc_withdraw(u32 ref, unsigned int scope, struct tipc_name_seq const *seq)
+int tipc_withdraw(struct tipc_port *p_ptr, unsigned int scope,
+		  struct tipc_name_seq const *seq)
 {
-	struct tipc_port *p_ptr;
 	struct publication *publ;
 	struct publication *tpubl;
 	int res = -EINVAL;
 
-	p_ptr = tipc_port_lock(ref);
-	if (!p_ptr)
-		return -EINVAL;
 	if (!seq) {
 		list_for_each_entry_safe(publ, tpubl,
 					 &p_ptr->publications, pport_list) {
@@ -1032,7 +1080,6 @@ int tipc_withdraw(u32 ref, unsigned int scope, struct tipc_name_seq const *seq)
 	}
 	if (list_empty(&p_ptr->publications))
 		p_ptr->published = 0;
-	tipc_port_unlock(p_ptr);
 	return res;
 }
 
@@ -1082,7 +1129,7 @@ int __tipc_connect(u32 ref, struct tipc_port *p_ptr,
 			  (net_ev_handler)port_handle_node_down);
 	res = 0;
 exit:
-	p_ptr->max_pkt = tipc_link_get_max_pkt(peer->node, ref);
+	p_ptr->max_pkt = MAX_PKT_DEFAULT;
 	return res;
 }
 
@@ -1168,8 +1215,7 @@ int tipc_port_recv_msg(struct sk_buff *buf)
 	} else {
 		err = TIPC_ERR_NO_PORT;
 	}
-
-	return tipc_reject_msg(buf, err);
+	return defer_reject(buf, err);
 }
 
 /*

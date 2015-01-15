@@ -128,19 +128,6 @@ static void advance_rx_queue(struct sock *sk)
 }
 
 /**
- * discard_rx_queue - discard all buffers in socket receive queue
- *
- * Caller must hold socket lock
- */
-static void discard_rx_queue(struct sock *sk)
-{
-	struct sk_buff *buf;
-
-	while ((buf = __skb_dequeue(&sk->sk_receive_queue)))
-		kfree_skb(buf);
-}
-
-/**
  * reject_rx_queue - reject all buffers in socket receive queue
  *
  * Caller must hold socket lock
@@ -288,10 +275,10 @@ static int release(struct socket *sock)
 	 * Delete TIPC port; this ensures no more messages are queued
 	 * (also disconnects an active connection & sends a 'FIN-' to peer)
 	 */
-	res = tipc_deleteport(tport->ref);
+	res = tipc_deleteport(tport);
 
 	/* Discard any remaining (connection-based) messages in receive queue */
-	discard_rx_queue(sk);
+	__skb_queue_purge(&sk->sk_receive_queue);
 
 	/* Reject any messages that accumulated in backlog queue */
 	sock->state = SS_DISCONNECTING;
@@ -320,28 +307,44 @@ static int release(struct socket *sock)
  */
 static int bind(struct socket *sock, struct sockaddr *uaddr, int uaddr_len)
 {
+	struct sock *sk = sock->sk;
 	struct sockaddr_tipc *addr = (struct sockaddr_tipc *)uaddr;
-	u32 portref = tipc_sk_port(sock->sk)->ref;
+	struct tipc_port *tport = tipc_sk_port(sock->sk);
+	int res = -EINVAL;
 
-	if (unlikely(!uaddr_len))
-		return tipc_withdraw(portref, 0, NULL);
+	lock_sock(sk);
+	if (unlikely(!uaddr_len)) {
+		res = tipc_withdraw(tport, 0, NULL);
+		goto exit;
+	}
 
-	if (uaddr_len < sizeof(struct sockaddr_tipc))
-		return -EINVAL;
-	if (addr->family != AF_TIPC)
-		return -EAFNOSUPPORT;
+	if (uaddr_len < sizeof(struct sockaddr_tipc)) {
+		res = -EINVAL;
+		goto exit;
+	}
+	if (addr->family != AF_TIPC) {
+		res = -EAFNOSUPPORT;
+		goto exit;
+	}
 
 	if (addr->addrtype == TIPC_ADDR_NAME)
 		addr->addr.nameseq.upper = addr->addr.nameseq.lower;
-	else if (addr->addrtype != TIPC_ADDR_NAMESEQ)
-		return -EAFNOSUPPORT;
+	else if (addr->addrtype != TIPC_ADDR_NAMESEQ) {
+		res = -EAFNOSUPPORT;
+		goto exit;
+	}
 
-	if (addr->addr.nameseq.type < TIPC_RESERVED_TYPES)
-		return -EACCES;
+	if (addr->addr.nameseq.type < TIPC_RESERVED_TYPES) {
+		res = -EACCES;
+		goto exit;
+	}
 
-	return (addr->scope > 0) ?
-		tipc_publish(portref, addr->scope, &addr->addr.nameseq) :
-		tipc_withdraw(portref, -addr->scope, &addr->addr.nameseq);
+	res = (addr->scope > 0) ?
+		tipc_publish(tport, addr->scope, &addr->addr.nameseq) :
+		tipc_withdraw(tport, -addr->scope, &addr->addr.nameseq);
+exit:
+	release_sock(sk);
+	return res;
 }
 
 /**
@@ -515,8 +518,7 @@ static int send_msg(struct kiocb *iocb, struct socket *sock,
 	if (unlikely((m->msg_namelen < sizeof(*dest)) ||
 		     (dest->family != AF_TIPC)))
 		return -EINVAL;
-	if ((total_len > TIPC_MAX_USER_MSG_SIZE) ||
-	    (m->msg_iovlen > (unsigned int)INT_MAX))
+	if (total_len > TIPC_MAX_USER_MSG_SIZE)
 		return -EMSGSIZE;
 
 	if (iocb)
@@ -532,8 +534,7 @@ static int send_msg(struct kiocb *iocb, struct socket *sock,
 			res = -EISCONN;
 			goto exit;
 		}
-		if ((tport->published) ||
-		    ((sock->type == SOCK_STREAM) && (total_len != 0))) {
+		if (tport->published) {
 			res = -EOPNOTSUPP;
 			goto exit;
 		}
@@ -624,8 +625,7 @@ static int send_packet(struct kiocb *iocb, struct socket *sock,
 	if (unlikely(dest))
 		return send_msg(iocb, sock, m, total_len);
 
-	if ((total_len > TIPC_MAX_USER_MSG_SIZE) ||
-	    (m->msg_iovlen > (unsigned int)INT_MAX))
+	if (total_len > TIPC_MAX_USER_MSG_SIZE)
 		return -EMSGSIZE;
 
 	if (iocb)
@@ -710,8 +710,7 @@ static int send_stream(struct kiocb *iocb, struct socket *sock,
 		goto exit;
 	}
 
-	if ((total_len > (unsigned int)INT_MAX) ||
-	    (m->msg_iovlen > (unsigned int)INT_MAX)) {
+	if (total_len > (unsigned int)INT_MAX) {
 		res = -EMSGSIZE;
 		goto exit;
 	}
@@ -1023,8 +1022,7 @@ static int recv_stream(struct kiocb *iocb, struct socket *sock,
 
 	lock_sock(sk);
 
-	if (unlikely((sock->state == SS_UNCONNECTED) ||
-		     (sock->state == SS_CONNECTING))) {
+	if (unlikely((sock->state == SS_UNCONNECTED))) {
 		res = -ENOTCONN;
 		goto exit;
 	}
@@ -1637,7 +1635,7 @@ restart:
 	case SS_DISCONNECTING:
 
 		/* Discard any unreceived messages */
-		discard_rx_queue(sk);
+		__skb_queue_purge(&sk->sk_receive_queue);
 
 		/* Wake up anyone sleeping in poll */
 		sk->sk_state_change(sk);
