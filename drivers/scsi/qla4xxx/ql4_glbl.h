@@ -267,6 +267,7 @@ int qla4xxx_get_default_ddb(struct scsi_qla_host *ha, uint32_t options,
 int qla4xxx_get_uni_chap_at_index(struct scsi_qla_host *ha, char *username,
 				  char *password, uint16_t chap_index);
 int qla4_8xxx_check_init_adapter_retry(struct scsi_qla_host *ha);
+int qla4_83xx_is_detached(struct scsi_qla_host *ha);
 
 extern int ql4xextended_error_logging;
 extern int ql4xdontresethba;
