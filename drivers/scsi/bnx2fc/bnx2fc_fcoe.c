@@ -1,10 +1,10 @@
-/* bnx2fc_fcoe.c: QLogic NetXtreme II Linux FCoE offload driver.
+/* bnx2fc_fcoe.c: QLogic Linux FCoE offload driver.
  * This file contains the code that interacts with libfc, libfcoe,
  * cnic modules to create FCoE instances, send/receive non-offloaded
  * FIP/FCoE packets, listen to link events etc.
  *
  * Copyright (c) 2008 - 2013 Broadcom Corporation
- * Copyright (c) 2014, QLogic Corporation
+ * Copyright (c) 2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,16 +23,16 @@ DEFINE_PER_CPU(struct bnx2fc_percpu_s, bnx2fc_percpu);
 
 #define DRV_MODULE_NAME		"bnx2fc"
 #define DRV_MODULE_VERSION	BNX2FC_VERSION
-#define DRV_MODULE_RELDATE	"Dec 11, 2013"
+#define DRV_MODULE_RELDATE	"January 06, 2015"
 
 
 static char version[] =
-		"QLogic NetXtreme II FCoE Driver " DRV_MODULE_NAME \
+		"QLogic FCoE Driver " DRV_MODULE_NAME \
 		" v" DRV_MODULE_VERSION " (" DRV_MODULE_RELDATE ")\n";
 
 
 MODULE_AUTHOR("Bhanu Prakash Gollapudi <bprakash@broadcom.com>");
-MODULE_DESCRIPTION("QLogic NetXtreme II BCM57710 FCoE Driver");
+MODULE_DESCRIPTION("QLogic FCoE Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_MODULE_VERSION);
 
