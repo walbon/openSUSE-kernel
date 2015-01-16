@@ -438,12 +438,11 @@ lpfc_sli4_rq_put(struct lpfc_queue *hq, struct lpfc_queue *dq,
 	struct lpfc_rqe *temp_hrqe;
 	struct lpfc_rqe *temp_drqe;
 	struct lpfc_register doorbell;
-	int put_index;
+	int put_index = hq->host_index;
 
 	/* sanity check on queue memory */
 	if (unlikely(!hq) || unlikely(!dq))
 		return -ENOMEM;
-	put_index = hq->host_index;
 	temp_hrqe = hq->qe[hq->host_index].rqe;
 	temp_drqe = dq->qe[dq->host_index].rqe;
 
@@ -633,7 +632,7 @@ lpfc_clr_rrq_active(struct lpfc_hba *phba,
 	if (!ndlp)
 		goto out;
 
-	if (test_and_clear_bit(xritag, ndlp->active_rrqs_xri_bitmap)) {
+	if (test_and_clear_bit(xritag, ndlp->active_rrqs.xri_bitmap)) {
 		rrq->send_rrq = 0;
 		rrq->xritag = 0;
 		rrq->rrq_stop_time = 0;
@@ -811,9 +810,7 @@ lpfc_test_rrq_active(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp,
 {
 	if (!ndlp)
 		return 0;
-	if (!ndlp->active_rrqs_xri_bitmap)
-		return 0;
-	if (test_bit(xritag, ndlp->active_rrqs_xri_bitmap))
+	if (test_bit(xritag, ndlp->active_rrqs.xri_bitmap))
 			return 1;
 	else
 		return 0;
@@ -863,10 +860,7 @@ lpfc_set_rrq_active(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp,
 	if (ndlp->vport && (ndlp->vport->load_flag & FC_UNLOADING))
 		goto out;
 
-	if (!ndlp->active_rrqs_xri_bitmap)
-		goto out;
-
-	if (test_and_set_bit(xritag, ndlp->active_rrqs_xri_bitmap))
+	if (test_and_set_bit(xritag, ndlp->active_rrqs.xri_bitmap))
 		goto out;
 
 	spin_unlock_irqrestore(&phba->hbalock, iflags);
@@ -878,16 +872,14 @@ lpfc_set_rrq_active(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp,
 				xritag, rxid, ndlp->nlp_DID, send_rrq);
 		return -EINVAL;
 	}
-	if (phba->cfg_enable_rrq == 1)
-		rrq->send_rrq = send_rrq;
-	else
-		rrq->send_rrq = 0;
+	rrq->send_rrq = send_rrq;
 	rrq->xritag = xritag;
 	rrq->rrq_stop_time = jiffies + HZ * (phba->fc_ratov + 1);
 	rrq->ndlp = ndlp;
 	rrq->nlp_DID = ndlp->nlp_DID;
 	rrq->vport = ndlp->vport;
 	rrq->rxid = rxid;
+	rrq->send_rrq = send_rrq;
 	spin_lock_irqsave(&phba->hbalock, iflags);
 	empty = list_empty(&phba->active_rrq_list);
 	list_add_tail(&rrq->list, &phba->active_rrq_list);
@@ -931,7 +923,8 @@ __lpfc_sli_get_sglq(struct lpfc_hba *phba, struct lpfc_iocbq *piocbq)
 	} else  if ((piocbq->iocb.ulpCommand == CMD_GEN_REQUEST64_CR) &&
 			!(piocbq->iocb_flag & LPFC_IO_LIBDFC))
 		ndlp = piocbq->context_un.ndlp;
-	else  if (piocbq->iocb_flag & LPFC_IO_LIBDFC)
+	else  if ((piocbq->iocb.ulpCommand == CMD_ELS_REQUEST64_CR) &&
+			(piocbq->iocb_flag & LPFC_IO_LIBDFC))
 		ndlp = piocbq->context_un.ndlp;
 	else
 		ndlp = piocbq->context1;
@@ -1031,7 +1024,7 @@ __lpfc_sli_release_iocbq_s4(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq)
 				&phba->sli4_hba.lpfc_sgl_list);
 
 			/* Check if TXQ queue needs to be serviced */
-			if (!list_empty(&pring->txq))
+			if (pring->txq_cnt)
 				lpfc_worker_wake_up(phba);
 		}
 	}
@@ -1128,6 +1121,7 @@ lpfc_sli_cancel_iocbs(struct lpfc_hba *phba, struct list_head *iocblist,
 
 	while (!list_empty(iocblist)) {
 		list_remove_head(iocblist, piocb, struct lpfc_iocbq, list);
+
 		if (!piocb->iocb_cmpl)
 			lpfc_sli_release_iocbq(phba, piocb);
 		else {
@@ -1315,6 +1309,9 @@ lpfc_sli_ringtxcmpl_put(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 {
 	list_add_tail(&piocb->list, &pring->txcmplq);
 	piocb->iocb_flag |= LPFC_IO_ON_TXCMPLQ;
+	pring->txcmplq_cnt++;
+	if (pring->txcmplq_cnt > pring->txcmplq_max)
+		pring->txcmplq_max = pring->txcmplq_cnt;
 
 	if ((unlikely(pring->ringno == LPFC_ELS_RING)) &&
 	   (piocb->iocb.ulpCommand != CMD_ABORT_XRI_CN) &&
@@ -1346,6 +1343,8 @@ lpfc_sli_ringtx_get(struct lpfc_hba *phba, struct lpfc_sli_ring *pring)
 	struct lpfc_iocbq *cmd_iocb;
 
 	list_remove_head((&pring->txq), cmd_iocb, struct lpfc_iocbq, list);
+	if (cmd_iocb != NULL)
+		pring->txq_cnt--;
 	return cmd_iocb;
 }
 
@@ -1614,9 +1613,8 @@ lpfc_sli_resume_iocb(struct lpfc_hba *phba, struct lpfc_sli_ring *pring)
 	 *  (c) link attention events can be processed (fcp ring only)
 	 *  (d) IOCB processing is not blocked by the outstanding mbox command.
 	 */
-
-	if (lpfc_is_link_up(phba) &&
-	    (!list_empty(&pring->txq)) &&
+	if (pring->txq_cnt &&
+	    lpfc_is_link_up(phba) &&
 	    (pring->ringno != phba->sli.fcp_ring ||
 	     phba->sli.sli_flag & LPFC_PROCESS_LA)) {
 
@@ -2613,6 +2611,7 @@ lpfc_sli_iocbq_lookup(struct lpfc_hba *phba,
 		cmd_iocb = phba->sli.iocbq_lookup[iotag];
 		list_del_init(&cmd_iocb->list);
 		if (cmd_iocb->iocb_flag & LPFC_IO_ON_TXCMPLQ) {
+			pring->txcmplq_cnt--;
 			cmd_iocb->iocb_flag &= ~LPFC_IO_ON_TXCMPLQ;
 		}
 		return cmd_iocb;
@@ -2650,6 +2649,7 @@ lpfc_sli_iocbq_lookup_by_tag(struct lpfc_hba *phba,
 			/* remove from txcmpl queue list */
 			list_del_init(&cmd_iocb->list);
 			cmd_iocb->iocb_flag &= ~LPFC_IO_ON_TXCMPLQ;
+			pring->txcmplq_cnt--;
 			return cmd_iocb;
 		}
 	}
@@ -3498,6 +3498,7 @@ lpfc_sli_abort_iocb_ring(struct lpfc_hba *phba, struct lpfc_sli_ring *pring)
 	 */
 	spin_lock_irq(&phba->hbalock);
 	list_splice_init(&pring->txq, &completions);
+	pring->txq_cnt = 0;
 
 	/* Next issue ABTS for everything on the txcmplq */
 	list_for_each_entry_safe(iocb, next_iocb, &pring->txcmplq, list)
@@ -3534,9 +3535,11 @@ lpfc_sli_flush_fcp_rings(struct lpfc_hba *phba)
 	spin_lock_irq(&phba->hbalock);
 	/* Retrieve everything on txq */
 	list_splice_init(&pring->txq, &txq);
+	pring->txq_cnt = 0;
 
 	/* Retrieve everything on the txcmplq */
 	list_splice_init(&pring->txcmplq, &txcmplq);
+	pring->txcmplq_cnt = 0;
 
 	/* Indicate the I/O queues are flushed */
 	phba->hba_flag |= HBA_FCP_IOQ_FLUSH;
@@ -5976,7 +5979,7 @@ lpfc_sli4_repost_els_sgl_list(struct lpfc_hba *phba)
 	struct lpfc_sglq *sglq_entry = NULL;
 	struct lpfc_sglq *sglq_entry_next = NULL;
 	struct lpfc_sglq *sglq_entry_first = NULL;
-	int status, total_cnt, post_cnt = 0, num_posted = 0, block_cnt = 0;
+	int status, post_cnt = 0, num_posted = 0, block_cnt = 0;
 	int last_xritag = NO_XRI;
 	LIST_HEAD(prep_sgl_list);
 	LIST_HEAD(blck_sgl_list);
@@ -5984,11 +5987,10 @@ lpfc_sli4_repost_els_sgl_list(struct lpfc_hba *phba)
 	LIST_HEAD(post_sgl_list);
 	LIST_HEAD(free_sgl_list);
 
-	spin_lock_irq(&phba->hbalock);
+	spin_lock(&phba->hbalock);
 	list_splice_init(&phba->sli4_hba.lpfc_sgl_list, &allc_sgl_list);
-	spin_unlock_irq(&phba->hbalock);
+	spin_unlock(&phba->hbalock);
 
-	total_cnt = phba->sli4_hba.els_xri_cnt;
 	list_for_each_entry_safe(sglq_entry, sglq_entry_next,
 				 &allc_sgl_list, list) {
 		list_del_init(&sglq_entry->list);
@@ -6040,7 +6042,9 @@ lpfc_sli4_repost_els_sgl_list(struct lpfc_hba *phba)
 						sglq_entry->sli4_xritag);
 					list_add_tail(&sglq_entry->list,
 						      &free_sgl_list);
-					total_cnt--;
+					spin_lock_irq(&phba->hbalock);
+					phba->sli4_hba.els_xri_cnt--;
+					spin_unlock_irq(&phba->hbalock);
 				}
 			}
 		}
@@ -6068,7 +6072,9 @@ lpfc_sli4_repost_els_sgl_list(struct lpfc_hba *phba)
 					(sglq_entry_first->sli4_xritag +
 					 post_cnt - 1));
 			list_splice_init(&blck_sgl_list, &free_sgl_list);
-			total_cnt -= post_cnt;
+			spin_lock_irq(&phba->hbalock);
+			phba->sli4_hba.els_xri_cnt -= post_cnt;
+			spin_unlock_irq(&phba->hbalock);
 		}
 
 		/* don't reset xirtag due to hole in xri block */
@@ -6078,18 +6084,16 @@ lpfc_sli4_repost_els_sgl_list(struct lpfc_hba *phba)
 		/* reset els sgl post count for next round of posting */
 		post_cnt = 0;
 	}
-	/* update the number of XRIs posted for ELS */
-	phba->sli4_hba.els_xri_cnt = total_cnt;
 
 	/* free the els sgls failed to post */
 	lpfc_free_sgl_list(phba, &free_sgl_list);
 
 	/* push els sgls posted to the availble list */
 	if (!list_empty(&post_sgl_list)) {
-		spin_lock_irq(&phba->hbalock);
+		spin_lock(&phba->hbalock);
 		list_splice_init(&post_sgl_list,
 				 &phba->sli4_hba.lpfc_sgl_list);
-		spin_unlock_irq(&phba->hbalock);
+		spin_unlock(&phba->hbalock);
 	} else {
 		lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
 				"3161 Failure to post els sgl to port.\n");
@@ -7610,6 +7614,7 @@ __lpfc_sli_ringtx_put(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 {
 	/* Insert the caller's iocb in the txq tail for later processing. */
 	list_add_tail(&piocb->list, &pring->txq);
+	pring->txq_cnt++;
 }
 
 /**
@@ -8381,7 +8386,7 @@ __lpfc_sli_issue_iocb_s4(struct lpfc_hba *phba, uint32_t ring_number,
 		    piocb->iocb.ulpCommand == CMD_CLOSE_XRI_CN)
 			sglq = NULL;
 		else {
-			if (!list_empty(&pring->txq)) {
+			if (pring->txq_cnt) {
 				if (!(flag & SLI_IOCB_RET_IOCB)) {
 					__lpfc_sli_ringtx_put(phba,
 						pring, piocb);
@@ -8427,14 +8432,10 @@ __lpfc_sli_issue_iocb_s4(struct lpfc_hba *phba, uint32_t ring_number,
 
 	if ((piocb->iocb_flag & LPFC_IO_FCP) ||
 		(piocb->iocb_flag & LPFC_USE_FCPWQIDX)) {
-		if (unlikely(!phba->sli4_hba.fcp_wq))
-			return IOCB_ERROR;
 		if (lpfc_sli4_wq_put(phba->sli4_hba.fcp_wq[piocb->fcp_wqidx],
 				     &wqe))
 			return IOCB_ERROR;
 	} else {
-		if (unlikely(!phba->sli4_hba.els_wq))
-			return IOCB_ERROR;
 		if (lpfc_sli4_wq_put(phba->sli4_hba.els_wq, &wqe))
 			return IOCB_ERROR;
 	}
@@ -9053,6 +9054,7 @@ lpfc_sli_host_down(struct lpfc_vport *vport)
 			if (iocb->vport != vport)
 				continue;
 			list_move_tail(&iocb->list, &completions);
+			pring->txq_cnt--;
 		}
 
 		/* Next issue ABTS for everything on the txcmplq */
@@ -9121,6 +9123,8 @@ lpfc_sli_hba_down(struct lpfc_hba *phba)
 		 * given to the FW yet.
 		 */
 		list_splice_init(&pring->txq, &completions);
+		pring->txq_cnt = 0;
+
 	}
 	spin_unlock_irqrestore(&phba->hbalock, flags);
 
@@ -9961,9 +9965,6 @@ lpfc_sli_issue_iocb_wait(struct lpfc_hba *phba,
 	long timeleft, timeout_req = 0;
 	int retval = IOCB_SUCCESS;
 	uint32_t creg_val;
-	struct lpfc_iocbq *iocb;
-	int txq_cnt = 0;
-	int txcmplq_cnt = 0;
 	struct lpfc_sli_ring *pring = &phba->sli.ring[LPFC_ELS_RING];
 	/*
 	 * If the caller has provided a response iocbq buffer, then context2
@@ -10011,17 +10012,9 @@ lpfc_sli_issue_iocb_wait(struct lpfc_hba *phba,
 			retval = IOCB_TIMEDOUT;
 		}
 	} else if (retval == IOCB_BUSY) {
-		if (phba->cfg_log_verbose & LOG_SLI) {
-			list_for_each_entry(iocb, &pring->txq, list) {
-				txq_cnt++;
-			}
-			list_for_each_entry(iocb, &pring->txcmplq, list) {
-				txcmplq_cnt++;
-			}
-			lpfc_printf_log(phba, KERN_INFO, LOG_SLI,
-				"2818 Max IOCBs %d txq cnt %d txcmplq cnt %d\n",
-				phba->iocb_cnt, txq_cnt, txcmplq_cnt);
-		}
+		lpfc_printf_log(phba, KERN_INFO, LOG_SLI,
+			"2818 Max IOCBs %d txq cnt %d txcmplq cnt %d\n",
+			phba->iocb_cnt, pring->txq_cnt, pring->txcmplq_cnt);
 		return retval;
 	} else {
 		lpfc_printf_log(phba, KERN_INFO, LOG_SLI,
@@ -11304,25 +11297,16 @@ lpfc_sli4_sp_handle_els_wcqe(struct lpfc_hba *phba, struct lpfc_queue *cq,
 	struct lpfc_iocbq *irspiocbq;
 	unsigned long iflags;
 	struct lpfc_sli_ring *pring = cq->pring;
-	int txq_cnt = 0;
-	int txcmplq_cnt = 0;
-	int fcp_txcmplq_cnt = 0;
 
 	/* Get an irspiocbq for later ELS response processing use */
 	irspiocbq = lpfc_sli_get_iocbq(phba);
 	if (!irspiocbq) {
-		if (!list_empty(&pring->txq))
-			txq_cnt++;
-		if (!list_empty(&pring->txcmplq))
-			txcmplq_cnt++;
-		if (!list_empty(&phba->sli.ring[LPFC_FCP_RING].txcmplq))
-			fcp_txcmplq_cnt++;
 		lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
 			"0387 NO IOCBQ data: txq_cnt=%d iocb_cnt=%d "
 			"fcp_txcmplq_cnt=%d, els_txcmplq_cnt=%d\n",
-			txq_cnt, phba->iocb_cnt,
-			fcp_txcmplq_cnt,
-			txcmplq_cnt);
+			pring->txq_cnt, phba->iocb_cnt,
+			phba->sli.ring[LPFC_FCP_RING].txcmplq_cnt,
+			phba->sli.ring[LPFC_ELS_RING].txcmplq_cnt);
 		return false;
 	}
 
@@ -15497,18 +15481,11 @@ lpfc_check_next_fcf_pri_level(struct lpfc_hba *phba)
 			LPFC_SLI4_FCF_TBL_INDX_MAX);
 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
 			"3060 Last IDX %d\n", last_index);
-
-	/* Verify the priority list has 2 or more entries */
-	spin_lock_irq(&phba->hbalock);
-	if (list_empty(&phba->fcf.fcf_pri_list) ||
-	    list_is_singular(&phba->fcf.fcf_pri_list)) {
-		spin_unlock_irq(&phba->hbalock);
+	if (list_empty(&phba->fcf.fcf_pri_list)) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
 			"3061 Last IDX %d\n", last_index);
 		return 0; /* Empty rr list */
 	}
-	spin_unlock_irq(&phba->hbalock);
-
 	next_fcf_pri = 0;
 	/*
 	 * Clear the rr_bmask and set all of the bits that are at this
@@ -16267,19 +16244,14 @@ lpfc_drain_txq(struct lpfc_hba *phba)
 	char *fail_msg = NULL;
 	struct lpfc_sglq *sglq;
 	union lpfc_wqe wqe;
-	int txq_cnt = 0;
 
 	spin_lock_irqsave(&phba->hbalock, iflags);
-	list_for_each_entry(piocbq, &pring->txq, list) {
-		txq_cnt++;
-	}
-
-	if (txq_cnt > pring->txq_max)
-		pring->txq_max = txq_cnt;
+	if (pring->txq_cnt > pring->txq_max)
+		pring->txq_max = pring->txq_cnt;
 
 	spin_unlock_irqrestore(&phba->hbalock, iflags);
 
-	while (!list_empty(&pring->txq)) {
+	while (pring->txq_cnt) {
 		spin_lock_irqsave(&phba->hbalock, iflags);
 
 		piocbq = lpfc_sli_ringtx_get(phba, pring);
@@ -16287,7 +16259,7 @@ lpfc_drain_txq(struct lpfc_hba *phba)
 			spin_unlock_irqrestore(&phba->hbalock, iflags);
 			lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
 				"2823 txq empty and txq_cnt is %d\n ",
-				txq_cnt);
+				pring->txq_cnt);
 			break;
 		}
 		sglq = __lpfc_sli_get_sglq(phba, piocbq);
@@ -16296,7 +16268,6 @@ lpfc_drain_txq(struct lpfc_hba *phba)
 			spin_unlock_irqrestore(&phba->hbalock, iflags);
 			break;
 		}
-		txq_cnt--;
 
 		/* The xri and iocb resources secured,
 		 * attempt to issue request
@@ -16328,5 +16299,5 @@ lpfc_drain_txq(struct lpfc_hba *phba)
 	lpfc_sli_cancel_iocbs(phba, &completions, IOSTAT_LOCAL_REJECT,
 				IOERR_SLI_ABORTED);
 
-	return txq_cnt;
+	return pring->txq_cnt;
 }

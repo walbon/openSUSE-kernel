@@ -732,7 +732,7 @@ lpfc_sli4_fcp_xri_aborted(struct lpfc_hba *phba,
 		psb = container_of(iocbq, struct lpfc_scsi_buf, cur_iocbq);
 		psb->exch_busy = 0;
 		spin_unlock_irqrestore(&phba->hbalock, iflag);
-		if (!list_empty(&pring->txq))
+		if (pring->txq_cnt)
 			lpfc_worker_wake_up(phba);
 		return;
 
@@ -885,9 +885,9 @@ lpfc_sli4_repost_scsi_sgl_list(struct lpfc_hba *phba)
 	int num_posted, rc = 0;
 
 	/* get all SCSI buffers need to repost to a local list */
-	spin_lock_irq(&phba->scsi_buf_list_lock);
+	spin_lock(&phba->scsi_buf_list_lock);
 	list_splice_init(&phba->lpfc_scsi_buf_list, &post_sblist);
-	spin_unlock_irq(&phba->scsi_buf_list_lock);
+	spin_unlock(&phba->scsi_buf_list_lock);
 
 	/* post the list of scsi buffer sgls to port if available */
 	if (!list_empty(&post_sblist)) {
@@ -1106,13 +1106,13 @@ lpfc_get_scsi_buf_s3(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
 static struct lpfc_scsi_buf*
 lpfc_get_scsi_buf_s4(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
 {
-	struct lpfc_scsi_buf *lpfc_cmd, *lpfc_cmd_next;
+	struct lpfc_scsi_buf *lpfc_cmd ;
 	unsigned long iflag = 0;
 	int found = 0;
 
 	spin_lock_irqsave(&phba->scsi_buf_list_lock, iflag);
-	list_for_each_entry_safe(lpfc_cmd, lpfc_cmd_next,
-				 &phba->lpfc_scsi_buf_list, list) {
+	list_for_each_entry(lpfc_cmd, &phba->lpfc_scsi_buf_list,
+							list) {
 		if (lpfc_test_rrq_active(phba, ndlp,
 					 lpfc_cmd->cur_iocbq.sli4_lxritag))
 			continue;
@@ -4005,7 +4005,12 @@ lpfc_scsi_prep_cmnd(struct lpfc_vport *vport, struct lpfc_scsi_buf *lpfc_cmd,
 	if (scsi_sg_count(scsi_cmnd)) {
 		if (datadir == DMA_TO_DEVICE) {
 			iocb_cmd->ulpCommand = CMD_FCP_IWRITE64_CR;
-			iocb_cmd->ulpPU = PARM_READ_CHECK;
+			if (sli4)
+				iocb_cmd->ulpPU = PARM_READ_CHECK;
+			else {
+				iocb_cmd->un.fcpi.fcpi_parm = 0;
+				iocb_cmd->ulpPU = 0;
+			}
 			fcp_cmnd->fcpCntl3 = WRITE_DATA;
 			phba->fc4OutputRequests++;
 		} else {
@@ -4241,7 +4246,7 @@ static __inline__ void lpfc_poll_rearm_timer(struct lpfc_hba * phba)
 	unsigned long  poll_tmo_expires =
 		(jiffies + msecs_to_jiffies(phba->cfg_poll_tmo));
 
-	if (!list_empty(&phba->sli.ring[LPFC_FCP_RING].txcmplq))
+	if (phba->sli.ring[LPFC_FCP_RING].txcmplq_cnt)
 		mod_timer(&phba->fcp_poll_timer,
 			  poll_tmo_expires);
 }
@@ -4618,7 +4623,7 @@ lpfc_send_taskmgmt(struct lpfc_vport *vport, struct lpfc_rport_data *rdata,
 	lpfc_cmd = lpfc_get_scsi_buf(phba, rdata->pnode);
 	if (lpfc_cmd == NULL)
 		return FAILED;
-	lpfc_cmd->timeout = phba->cfg_task_mgmt_tmo;
+	lpfc_cmd->timeout = 60;
 	lpfc_cmd->rdata = rdata;
 
 	status = lpfc_scsi_prep_task_mgmt_cmd(vport, lpfc_cmd, lun_id,
@@ -5007,24 +5012,16 @@ lpfc_host_reset_handler(struct scsi_cmnd *cmnd)
 	struct lpfc_hba *phba = vport->phba;
 	int rc, ret = SUCCESS;
 
-	lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
-			 "3172 SCSI layer issued Host Reset Data:\n");
-
 	lpfc_offline_prep(phba, LPFC_MBX_WAIT);
 	lpfc_offline(phba);
 	rc = lpfc_sli_brdrestart(phba);
 	if (rc)
 		ret = FAILED;
-	rc = lpfc_online(phba);
-	if (rc)
-		ret = FAILED;
+	lpfc_online(phba);
 	lpfc_unblock_mgmt_io(phba);
 
-	if (ret == FAILED) {
-		lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
-				 "3323 Failed host reset, bring it offline\n");
-		lpfc_sli4_offline_eratt(phba);
-	}
+	lpfc_printf_log(phba, KERN_ERR, LOG_FCP,
+			"3172 SCSI layer issued Host Reset Data: x%x\n", ret);
 	return ret;
 }
 

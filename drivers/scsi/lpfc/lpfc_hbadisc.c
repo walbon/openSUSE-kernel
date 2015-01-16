@@ -160,12 +160,11 @@ lpfc_dev_loss_tmo_callbk(struct fc_rport *rport)
 	if (!list_empty(&evtp->evt_listp))
 		return;
 
-	evtp->evt_arg1  = lpfc_nlp_get(ndlp);
-
 	spin_lock_irq(&phba->hbalock);
 	/* We need to hold the node by incrementing the reference
 	 * count until this queued work is done
 	 */
+	evtp->evt_arg1  = lpfc_nlp_get(ndlp);
 	if (evtp->evt_arg1) {
 		evtp->evt = LPFC_EVT_DEV_LOSS;
 		list_add_tail(&evtp->evt_listp, &phba->work_list);
@@ -692,15 +691,12 @@ lpfc_work_done(struct lpfc_hba *phba)
 			/* Set the lpfc data pending flag */
 			set_bit(LPFC_DATA_READY, &phba->data_flags);
 		} else {
-			if (phba->link_state >= LPFC_LINK_UP) {
-				pring->flag &= ~LPFC_DEFERRED_RING_EVENT;
-				lpfc_sli_handle_slow_ring_event(phba, pring,
-								(status &
-								HA_RXMASK));
-			}
+			pring->flag &= ~LPFC_DEFERRED_RING_EVENT;
+			lpfc_sli_handle_slow_ring_event(phba, pring,
+							(status &
+							 HA_RXMASK));
 		}
-		if ((phba->sli_rev == LPFC_SLI_REV4) &
-				 (!list_empty(&pring->txq)))
+		if ((phba->sli_rev == LPFC_SLI_REV4) && pring->txq_cnt)
 			lpfc_drain_txq(phba);
 		/*
 		 * Turn on Ring interrupts
@@ -1796,8 +1792,6 @@ lpfc_sli4_fcf_rec_mbox_parse(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq,
 	virt_addr = mboxq->sge_array->addr[0];
 
 	shdr = (union lpfc_sli4_cfg_shdr *)virt_addr;
-	lpfc_sli_pcimem_bcopy(shdr, shdr,
-			      sizeof(union lpfc_sli4_cfg_shdr));
 	shdr_status = bf_get(lpfc_mbox_hdr_status, &shdr->response);
 	shdr_add_status = bf_get(lpfc_mbox_hdr_add_status, &shdr->response);
 	if (shdr_status || shdr_add_status) {
@@ -2894,11 +2888,6 @@ lpfc_mbx_cmpl_reg_vfi(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 		lpfc_vport_set_state(vport, FC_VPORT_FAILED);
 		goto out_free_mem;
 	}
-
-	/* If the VFI is already registered, there is nothing else to do */
-	if (vport->fc_flag & FC_VFI_REGISTERED)
-		goto out_free_mem;
-
 	/* The VPI is implicitly registered when the VFI is registered */
 	spin_lock_irq(shost->host_lock);
 	vport->vpi_state |= LPFC_VPI_REGISTERED;
@@ -2991,7 +2980,6 @@ lpfc_mbx_process_link_up(struct lpfc_hba *phba, struct lpfc_mbx_read_top *la)
 	struct lpfc_dmabuf *mp;
 	int rc;
 	struct fcf_record *fcf_record;
-	uint32_t fc_flags = 0;
 
 	spin_lock_irq(&phba->hbalock);
 	switch (bf_get(lpfc_mbx_read_top_link_spd, la)) {
@@ -3023,8 +3011,11 @@ lpfc_mbx_process_link_up(struct lpfc_hba *phba, struct lpfc_mbx_read_top *la)
 				"1309 Link Up Event npiv not supported in loop "
 				"topology\n");
 				/* Get Loop Map information */
-		if (bf_get(lpfc_mbx_read_top_il, la))
-			fc_flags |= FC_LBIT;
+		if (bf_get(lpfc_mbx_read_top_il, la)) {
+			spin_lock(shost->host_lock);
+			vport->fc_flag |= FC_LBIT;
+			spin_unlock(shost->host_lock);
+		}
 
 		vport->fc_myDID = bf_get(lpfc_mbx_read_top_alpa_granted, la);
 		i = la->lilpBde64.tus.f.bdeSize;
@@ -3073,15 +3064,11 @@ lpfc_mbx_process_link_up(struct lpfc_hba *phba, struct lpfc_mbx_read_top *la)
 				phba->sli3_options |= LPFC_SLI3_NPIV_ENABLED;
 		}
 		vport->fc_myDID = phba->fc_pref_DID;
-		fc_flags |= FC_LBIT;
+		spin_lock(shost->host_lock);
+		vport->fc_flag |= FC_LBIT;
+		spin_unlock(shost->host_lock);
 	}
 	spin_unlock_irq(&phba->hbalock);
-
-	if (fc_flags) {
-		spin_lock_irq(shost->host_lock);
-		vport->fc_flag |= fc_flags;
-		spin_unlock_irq(shost->host_lock);
-	}
 
 	lpfc_linkup(phba);
 	sparam_mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
@@ -3250,7 +3237,8 @@ lpfc_mbx_cmpl_read_topology(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 		vport->fc_flag &= ~FC_BYPASSED_MODE;
 	spin_unlock_irq(shost->host_lock);
 
-	if (phba->fc_eventTag <= la->eventTag) {
+	if ((phba->fc_eventTag  < la->eventTag) ||
+	    (phba->fc_eventTag == la->eventTag)) {
 		phba->fc_stat.LinkMultiEvent++;
 		if (bf_get(lpfc_mbx_read_top_att_type, la) == LPFC_ATT_LINK_UP)
 			if (phba->fc_eventTag != 0)
@@ -3258,18 +3246,16 @@ lpfc_mbx_cmpl_read_topology(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	}
 
 	phba->fc_eventTag = la->eventTag;
-	if (phba->sli_rev < LPFC_SLI_REV4) {
-		spin_lock_irq(&phba->hbalock);
-		if (bf_get(lpfc_mbx_read_top_mm, la))
-			phba->sli.sli_flag |= LPFC_MENLO_MAINT;
-		else
-			phba->sli.sli_flag &= ~LPFC_MENLO_MAINT;
-		spin_unlock_irq(&phba->hbalock);
-	}
+	spin_lock_irq(&phba->hbalock);
+	if (bf_get(lpfc_mbx_read_top_mm, la))
+		phba->sli.sli_flag |= LPFC_MENLO_MAINT;
+	else
+		phba->sli.sli_flag &= ~LPFC_MENLO_MAINT;
+	spin_unlock_irq(&phba->hbalock);
 
 	phba->link_events++;
 	if ((bf_get(lpfc_mbx_read_top_att_type, la) == LPFC_ATT_LINK_UP) &&
-	    !(phba->sli.sli_flag & LPFC_MENLO_MAINT)) {
+	    (!bf_get(lpfc_mbx_read_top_mm, la))) {
 		phba->fc_stat.LinkUp++;
 		if (phba->link_flag & LS_LOOPBACK_MODE) {
 			lpfc_printf_log(phba, KERN_ERR, LOG_LINK_EVENT,
@@ -3314,8 +3300,8 @@ lpfc_mbx_cmpl_read_topology(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 				bf_get(lpfc_mbx_read_top_fa, la));
 		lpfc_mbx_issue_link_down(phba);
 	}
-	if ((phba->sli.sli_flag & LPFC_MENLO_MAINT) &&
-	    ((bf_get(lpfc_mbx_read_top_att_type, la) == LPFC_ATT_LINK_UP))) {
+	if ((bf_get(lpfc_mbx_read_top_mm, la)) &&
+	    (bf_get(lpfc_mbx_read_top_att_type, la) == LPFC_ATT_LINK_UP)) {
 		if (phba->link_state != LPFC_LINK_DOWN) {
 			phba->fc_stat.LinkDown++;
 			lpfc_printf_log(phba, KERN_ERR, LOG_LINK_EVENT,
@@ -3343,9 +3329,8 @@ lpfc_mbx_cmpl_read_topology(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 		}
 	}
 
-	if ((phba->sli_rev < LPFC_SLI_REV4) &&
-	    bf_get(lpfc_mbx_read_top_fa, la)) {
-		if (phba->sli.sli_flag & LPFC_MENLO_MAINT)
+	if (bf_get(lpfc_mbx_read_top_fa, la)) {
+		if (bf_get(lpfc_mbx_read_top_mm, la))
 			lpfc_issue_clear_la(phba, vport);
 		lpfc_printf_log(phba, KERN_INFO, LOG_LINK_EVENT,
 				"1311 fa %d\n",
@@ -4145,7 +4130,6 @@ lpfc_enable_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 	struct lpfc_hba *phba = vport->phba;
 	uint32_t did;
 	unsigned long flags;
-	unsigned long *active_rrqs_xri_bitmap = NULL;
 
 	if (!ndlp)
 		return NULL;
@@ -4174,16 +4158,11 @@ lpfc_enable_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 
 	/* Keep the original DID */
 	did = ndlp->nlp_DID;
-	if (phba->sli_rev == LPFC_SLI_REV4)
-		active_rrqs_xri_bitmap = ndlp->active_rrqs_xri_bitmap;
 
 	/* re-initialize ndlp except of ndlp linked list pointer */
 	memset((((char *)ndlp) + sizeof (struct list_head)), 0,
 		sizeof (struct lpfc_nodelist) - sizeof (struct list_head));
 	lpfc_initialize_node(vport, ndlp, did);
-
-	if (phba->sli_rev == LPFC_SLI_REV4)
-		ndlp->active_rrqs_xri_bitmap = active_rrqs_xri_bitmap;
 
 	spin_unlock_irqrestore(&phba->ndlp_lock, flags);
 
@@ -4375,6 +4354,7 @@ lpfc_no_rpi(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
 					   with an error */
 					list_move_tail(&iocb->list,
 						       &completions);
+					pring->txq_cnt--;
 				}
 			}
 			spin_unlock_irq(&phba->hbalock);
@@ -4758,10 +4738,9 @@ __lpfc_findnode_did(struct lpfc_vport *vport, uint32_t did)
 				 ((uint32_t) ndlp->nlp_rpi & 0xff));
 			lpfc_printf_vlog(vport, KERN_INFO, LOG_NODE,
 					 "0929 FIND node DID "
-					 "Data: x%p x%x x%x x%x %p\n",
+					 "Data: x%p x%x x%x x%x\n",
 					 ndlp, ndlp->nlp_DID,
-					 ndlp->nlp_flag, data1,
-					 ndlp->active_rrqs_xri_bitmap);
+					 ndlp->nlp_flag, data1);
 			return ndlp;
 		}
 	}
@@ -5076,6 +5055,7 @@ lpfc_free_tx(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
 		    (icmd->ulpCommand == CMD_XMIT_ELS_RSP64_CX)) {
 
 			list_move_tail(&iocb->list, &completions);
+			pring->txq_cnt--;
 		}
 	}
 
@@ -5571,12 +5551,6 @@ lpfc_nlp_init(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 
 	lpfc_initialize_node(vport, ndlp, did);
 	INIT_LIST_HEAD(&ndlp->nlp_listp);
-	if (vport->phba->sli_rev == LPFC_SLI_REV4) {
-		ndlp->active_rrqs_xri_bitmap =
-				mempool_alloc(vport->phba->active_rrq_pool,
-					      GFP_KERNEL);
-	}
-
 
 	lpfc_debugfs_disc_trc(vport, LPFC_DISC_TRC_NODE,
 		"node init:       did:x%x",
@@ -5620,9 +5594,6 @@ lpfc_nlp_release(struct kref *kref)
 	/* free ndlp memory for final ndlp release */
 	if (NLP_CHK_FREE_REQ(ndlp)) {
 		kfree(ndlp->lat_data);
-		if (phba->sli_rev == LPFC_SLI_REV4)
-			mempool_free(ndlp->active_rrqs_xri_bitmap,
-				     ndlp->phba->active_rrq_pool);
 		mempool_free(ndlp, ndlp->phba->nlp_mem_pool);
 	}
 }

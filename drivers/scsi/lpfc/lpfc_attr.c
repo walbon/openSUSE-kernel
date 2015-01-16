@@ -672,9 +672,6 @@ lpfc_do_offline(struct lpfc_hba *phba, uint32_t type)
 	int i;
 	int rc;
 
-	if (phba->pport->fc_flag & FC_OFFLINE_MODE)
-		return 0;
-
 	init_completion(&online_compl);
 	rc = lpfc_workq_post_event(phba, &status, &online_compl,
 			      LPFC_EVT_OFFLINE_PREP);
@@ -693,7 +690,7 @@ lpfc_do_offline(struct lpfc_hba *phba, uint32_t type)
 	 */
 	for (i = 0; i < psli->num_rings; i++) {
 		pring = &psli->ring[i];
-		while (!list_empty(&pring->txcmplq)) {
+		while (pring->txcmplq_cnt) {
 			msleep(10);
 			if (cnt++ > 500) {  /* 5 secs */
 				lpfc_printf_log(phba,
@@ -742,8 +739,7 @@ lpfc_selective_reset(struct lpfc_hba *phba)
 	int status = 0;
 	int rc;
 
-	if ((!phba->cfg_enable_hba_reset) ||
-	    (phba->pport->fc_flag & FC_OFFLINE_MODE))
+	if (!phba->cfg_enable_hba_reset)
 		return -EACCES;
 
 	status = lpfc_do_offline(phba, LPFC_EVT_OFFLINE);
@@ -897,7 +893,6 @@ lpfc_sli4_pdev_reg_request(struct lpfc_hba *phba, uint32_t opcode)
 		pci_disable_sriov(pdev);
 		phba->cfg_sriov_nr_virtfn = 0;
 	}
-
 	status = lpfc_do_offline(phba, LPFC_EVT_OFFLINE);
 
 	if (status != 0)
@@ -2307,17 +2302,11 @@ static DEVICE_ATTR(lpfc_enable_npiv, S_IRUGO, lpfc_enable_npiv_show, NULL);
 LPFC_ATTR_R(fcf_failover_policy, 1, 1, 2,
 	"FCF Fast failover=1 Priority failover=2");
 
-int lpfc_enable_rrq = 2;
+int lpfc_enable_rrq;
 module_param(lpfc_enable_rrq, int, S_IRUGO);
 MODULE_PARM_DESC(lpfc_enable_rrq, "Enable RRQ functionality");
 lpfc_param_show(enable_rrq);
-/*
-# lpfc_enable_rrq: Track XRI/OXID reuse after IO failures
-#	0x0 = disabled, XRI/OXID use not tracked.
-#	0x1 = XRI/OXID reuse is timed with ratov, RRQ sent.
-#	0x2 = XRI/OXID reuse is timed with ratov, No RRQ sent.
-*/
-lpfc_param_init(enable_rrq, 2, 0, 2);
+lpfc_param_init(enable_rrq, 0, 0, 1);
 static DEVICE_ATTR(lpfc_enable_rrq, S_IRUGO, lpfc_enable_rrq_show, NULL);
 
 /*
@@ -3941,12 +3930,6 @@ LPFC_ATTR_RW(poll_tmo, 10, 1, 255,
 	     "Milliseconds driver will wait between polling FCP ring");
 
 /*
-# lpfc_task_mgmt_tmo: Maximum time to wait for task management commands
-# to complete in seconds. Value range is [5,180], default value is 60.
-*/
-LPFC_ATTR_RW(task_mgmt_tmo, 60, 5, 180,
-	     "Maximum time to wait for task management commands to complete");
-/*
 # lpfc_use_msi: Use MSI (Message Signaled Interrupts) in systems that
 #		support this feature
 #       0  = MSI disabled
@@ -4144,7 +4127,6 @@ struct device_attribute *lpfc_hba_attrs[] = {
 	&dev_attr_issue_reset,
 	&dev_attr_lpfc_poll,
 	&dev_attr_lpfc_poll_tmo,
-	&dev_attr_lpfc_task_mgmt_tmo,
 	&dev_attr_lpfc_use_msi,
 	&dev_attr_lpfc_fcp_imax,
 	&dev_attr_lpfc_fcp_wq_count,
@@ -5124,7 +5106,6 @@ lpfc_get_cfgparam(struct lpfc_hba *phba)
 	lpfc_topology_init(phba, lpfc_topology);
 	lpfc_link_speed_init(phba, lpfc_link_speed);
 	lpfc_poll_tmo_init(phba, lpfc_poll_tmo);
-	lpfc_task_mgmt_tmo_init(phba, lpfc_task_mgmt_tmo);
 	lpfc_enable_npiv_init(phba, lpfc_enable_npiv);
 	lpfc_fcf_failover_policy_init(phba, lpfc_fcf_failover_policy);
 	lpfc_enable_rrq_init(phba, lpfc_enable_rrq);

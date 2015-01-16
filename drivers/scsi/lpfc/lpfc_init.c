@@ -831,6 +831,7 @@ lpfc_hba_down_post_s3(struct lpfc_hba *phba)
 		 * way, nothing should be on txcmplq as it will NEVER complete.
 		 */
 		list_splice_init(&pring->txcmplq, &completions);
+		pring->txcmplq_cnt = 0;
 		spin_unlock_irq(&phba->hbalock);
 
 		/* Cancel all the IOCBs from the completions list */
@@ -1183,7 +1184,7 @@ lpfc_offline_eratt(struct lpfc_hba *phba)
  * This routine is called to bring a SLI4 HBA offline when HBA hardware error
  * other than Port Error 6 has been detected.
  **/
-void
+static void
 lpfc_sli4_offline_eratt(struct lpfc_hba *phba)
 {
 	lpfc_offline_prep(phba, LPFC_MBX_NO_WAIT);
@@ -2905,9 +2906,9 @@ lpfc_sli4_xri_sgl_update(struct lpfc_hba *phba)
 			sglq_entry->state = SGL_FREED;
 			list_add_tail(&sglq_entry->list, &els_sgl_list);
 		}
-		spin_lock_irq(&phba->hbalock);
+		spin_lock(&phba->hbalock);
 		list_splice_init(&els_sgl_list, &phba->sli4_hba.lpfc_sgl_list);
-		spin_unlock_irq(&phba->hbalock);
+		spin_unlock(&phba->hbalock);
 	} else if (els_xri_cnt < phba->sli4_hba.els_xri_cnt) {
 		/* els xri-sgl shrinked */
 		xri_cnt = phba->sli4_hba.els_xri_cnt - els_xri_cnt;
@@ -3005,9 +3006,9 @@ lpfc_sli4_xri_sgl_update(struct lpfc_hba *phba)
 		psb->cur_iocbq.sli4_lxritag = lxri;
 		psb->cur_iocbq.sli4_xritag = phba->sli4_hba.xri_ids[lxri];
 	}
-	spin_lock_irq(&phba->scsi_buf_list_lock);
+	spin_lock(&phba->scsi_buf_list_lock);
 	list_splice_init(&scsi_sgl_list, &phba->lpfc_scsi_buf_list);
-	spin_unlock_irq(&phba->scsi_buf_list_lock);
+	spin_unlock(&phba->scsi_buf_list_lock);
 
 	return 0;
 
@@ -4951,9 +4952,6 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 
 	/* Set up the hba's configuration parameters. */
 	rc = lpfc_sli4_read_config(phba);
-	if (unlikely(rc))
-		goto out_free_bsmbx;
-	rc = lpfc_mem_alloc_active_rrq_pool_s4(phba);
 	if (unlikely(rc))
 		goto out_free_bsmbx;
 
@@ -7712,13 +7710,8 @@ lpfc_pci_function_reset(struct lpfc_hba *phba)
 
 out:
 	/* Catch the not-ready port failure after a port reset. */
-	if (num_resets >= MAX_IF_TYPE_2_RESETS) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
-				"3317 HBA not functional: IP Reset Failed "
-				"after (%d) retries, try: "
-				"echo fw_reset > board_mode\n", num_resets);
+	if (num_resets >= MAX_IF_TYPE_2_RESETS)
 		rc = -ENODEV;
-	}
 
 	return rc;
 }
@@ -9187,15 +9180,15 @@ lpfc_sli_prep_dev_for_reset(struct lpfc_hba *phba)
 	/* Block all SCSI devices' I/Os on the host */
 	lpfc_scsi_dev_block(phba);
 
-	/* Flush all driver's outstanding SCSI I/Os as we are to reset */
-	lpfc_sli_flush_fcp_rings(phba);
-
 	/* stop all timers */
 	lpfc_stop_hba_timers(phba);
 
 	/* Disable interrupt and pci device */
 	lpfc_sli_disable_intr(phba);
 	pci_disable_device(phba->pcidev);
+
+	/* Flush all driver's outstanding SCSI I/Os as we are to reset */
+	lpfc_sli_flush_fcp_rings(phba);
 }
 
 /**
@@ -9940,9 +9933,6 @@ lpfc_sli4_prep_dev_for_reset(struct lpfc_hba *phba)
 	/* Block all SCSI devices' I/Os on the host */
 	lpfc_scsi_dev_block(phba);
 
-	/* Flush all driver's outstanding SCSI I/Os as we are to reset */
-	lpfc_sli_flush_fcp_rings(phba);
-
 	/* stop all timers */
 	lpfc_stop_hba_timers(phba);
 
@@ -9950,6 +9940,9 @@ lpfc_sli4_prep_dev_for_reset(struct lpfc_hba *phba)
 	lpfc_sli4_disable_intr(phba);
 	lpfc_sli4_queue_destroy(phba);
 	pci_disable_device(phba->pcidev);
+
+	/* Flush all driver's outstanding SCSI I/Os as we are to reset */
+	lpfc_sli_flush_fcp_rings(phba);
 }
 
 /**
