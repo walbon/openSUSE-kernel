@@ -119,8 +119,6 @@ struct ctlr_info {
 	int	software_raid;
 	int 	max_commands;
 	int	commands_outstanding;
-	int 	max_outstanding; /* Debug */
-	int	usage_count;  /* number of opens all all minor devices */
 #	define PERF_MODE_INT	0
 #	define DOORBELL_INT	1
 #	define SIMPLE_MODE_INT	2
