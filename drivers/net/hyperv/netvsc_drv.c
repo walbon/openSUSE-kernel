@@ -38,6 +38,7 @@
 #include <net/route.h>
 #include <net/sock.h>
 #include <net/pkt_sched.h>
+#include <net/flow_keys.h>
 
 #include "hyperv_net.h"
 
