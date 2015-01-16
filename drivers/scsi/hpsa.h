@@ -119,7 +119,7 @@ struct ctlr_info {
 	int	interrupts_enabled;
 	int	software_raid;
 	int 	max_commands;
-	int	commands_outstanding;
+	atomic_t commands_outstanding;
 #	define PERF_MODE_INT	0
 #	define DOORBELL_INT	1
 #	define SIMPLE_MODE_INT	2
@@ -402,7 +402,7 @@ static void SA5_performant_intr_mask(struct ctlr_info *h, unsigned long val)
 static unsigned long SA5_performant_completed(struct ctlr_info *h, u8 q)
 {
 	struct reply_queue_buffer *rq = &h->reply_queue[q];
-	unsigned long flags, register_value = FIFO_EMPTY;
+	unsigned long register_value = FIFO_EMPTY;
 
 	/* msi auto clears the interrupt pending bit. */
 	if (!(h->msi_vector || h->msix_vector)) {
@@ -420,9 +420,7 @@ static unsigned long SA5_performant_completed(struct ctlr_info *h, u8 q)
 	if ((rq->head[rq->current_entry] & 1) == rq->wraparound) {
 		register_value = rq->head[rq->current_entry];
 		rq->current_entry++;
-		spin_lock_irqsave(&h->lock, flags);
-		h->commands_outstanding--;
-		spin_unlock_irqrestore(&h->lock, flags);
+		atomic_dec(&h->commands_outstanding);
 	} else {
 		register_value = FIFO_EMPTY;
 	}
@@ -440,11 +438,7 @@ static unsigned long SA5_performant_completed(struct ctlr_info *h, u8 q)
  */
 static unsigned long SA5_fifo_full(struct ctlr_info *h)
 {
-	if (h->commands_outstanding >= h->max_commands)
-		return 1;
-	else
-		return 0;
-
+	return atomic_read(&h->commands_outstanding) >= h->max_commands;
 }
 /*
  *   returns value read from hardware.
@@ -455,13 +449,9 @@ static unsigned long SA5_completed(struct ctlr_info *h,
 {
 	unsigned long register_value
 		= readl(h->vaddr + SA5_REPLY_PORT_OFFSET);
-	unsigned long flags;
 
-	if (register_value != FIFO_EMPTY) {
-		spin_lock_irqsave(&h->lock, flags);
-		h->commands_outstanding--;
-		spin_unlock_irqrestore(&h->lock, flags);
-	}
+	if (register_value != FIFO_EMPTY)
+		atomic_dec(&h->commands_outstanding);
 
 #ifdef HPSA_DEBUG
 	if (register_value != FIFO_EMPTY)
@@ -519,7 +509,6 @@ static unsigned long SA5_ioaccel_mode1_completed(struct ctlr_info *h, u8 q)
 {
 	u64 register_value;
 	struct reply_queue_buffer *rq = &h->reply_queue[q];
-	unsigned long flags;
 
 	BUG_ON(q >= h->nreply_queues);
 
@@ -537,9 +526,7 @@ static unsigned long SA5_ioaccel_mode1_completed(struct ctlr_info *h, u8 q)
 		wmb();
 		writel((q << 24) | rq->current_entry, h->vaddr +
 				IOACCEL_MODE1_CONSUMER_INDEX);
-		spin_lock_irqsave(&h->lock, flags);
-		h->commands_outstanding--;
-		spin_unlock_irqrestore(&h->lock, flags);
+		atomic_dec(&h->commands_outstanding);
 	}
 	return (unsigned long) register_value;
 }
