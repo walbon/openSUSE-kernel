@@ -787,6 +787,8 @@ int __udp6_lib_rcv(struct sk_buff *skb, struct udp_table *udptable,
 	/* deliver */
 
 	if (sk_rcvqueues_full(sk, skb)) {
+		UDP_INC_STATS_BH(sock_net(sk), UDP_MIB_RCVBUFERRORS,
+				 IS_UDPLITE(sk));
 		sock_put(sk);
 		goto discard;
 	}
