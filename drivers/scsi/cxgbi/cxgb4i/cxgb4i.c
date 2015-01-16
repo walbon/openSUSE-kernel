@@ -630,7 +630,7 @@ static int act_open_rpl_status_to_errno(int status)
 
 static void csk_act_open_retry_timer(unsigned long data)
 {
-	struct sk_buff *skb;
+	struct sk_buff *skb = NULL;
 	struct cxgbi_sock *csk = (struct cxgbi_sock *)data;
 
 	log_debug(1 << CXGBI_DBG_TOE | 1 << CXGBI_DBG_SOCK,
