@@ -6544,7 +6544,7 @@ static int hpsa_request_irq(struct ctlr_info *h,
 	irqreturn_t (*msixhandler)(int, void *),
 	irqreturn_t (*intxhandler)(int, void *))
 {
-	int rc, i;
+	int rc = 0, i;
 
 	/*
 	 * initialize h->q[x] = x so that interrupt handlers know which
