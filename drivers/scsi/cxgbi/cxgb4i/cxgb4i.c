@@ -1182,9 +1182,12 @@ static int init_act_open(struct cxgbi_sock *csk)
 
 	cxgbi_sock_set_state(csk, CTP_ACTIVE_OPEN);
 	send_act_open_req(csk, skb, csk->l2t);
+	neigh_release(n);
 	return 0;
 
 rel_resource:
+	if (n)
+		neigh_release(n);
 	if (skb)
 		__kfree_skb(skb);
 	return -EINVAL;
