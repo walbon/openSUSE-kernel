@@ -117,7 +117,6 @@ struct ctlr_info {
 	int 	nr_cmds; /* Number of commands allowed on this controller */
 	struct CfgTable __iomem *cfgtable;
 	int	interrupts_enabled;
-	int	software_raid;
 	int 	max_commands;
 	atomic_t commands_outstanding;
 #	define PERF_MODE_INT	0
@@ -230,11 +229,9 @@ struct ctlr_info {
 #define CTLR_STATE_CHANGE_EVENT_AIO_CONFIG_CHANGE	(1 << 31)
 
 #define RESCAN_REQUIRED_EVENT_BITS \
-		(CTLR_STATE_CHANGE_EVENT | \
-		CTLR_ENCLOSURE_HOT_PLUG_EVENT | \
+		(CTLR_ENCLOSURE_HOT_PLUG_EVENT | \
 		CTLR_STATE_CHANGE_EVENT_PHYSICAL_DRV | \
 		CTLR_STATE_CHANGE_EVENT_LOGICAL_DRV | \
-		CTLR_STATE_CHANGE_EVENT_REDUNDANT_CNTRL | \
 		CTLR_STATE_CHANGE_EVENT_AIO_ENABLED_DISABLED | \
 		CTLR_STATE_CHANGE_EVENT_AIO_CONFIG_CHANGE)
 	spinlock_t offline_device_lock;
@@ -281,7 +278,7 @@ struct offline_device_entry {
  * HPSA_BOARD_READY_ITERATIONS are derived from those.
  */
 #define HPSA_BOARD_READY_WAIT_SECS (120)
-#define HPSA_BOARD_NOT_READY_WAIT_SECS (120)
+#define HPSA_BOARD_NOT_READY_WAIT_SECS (100)
 #define HPSA_BOARD_READY_POLL_INTERVAL_MSECS (100)
 #define HPSA_BOARD_READY_POLL_INTERVAL \
 	((HPSA_BOARD_READY_POLL_INTERVAL_MSECS * HZ) / 1000)
@@ -343,8 +340,6 @@ struct offline_device_entry {
 static void SA5_submit_command(struct ctlr_info *h,
 	struct CommandList *c)
 {
-	dev_dbg(&h->pdev->dev, "Sending %x, tag = %x\n", c->busaddr,
-		c->Header.Tag.lower);
 	writel(c->busaddr, h->vaddr + SA5_REQUEST_PORT_OFFSET);
 	(void) readl(h->vaddr + SA5_SCRATCHPAD_OFFSET);
 }
@@ -358,8 +353,6 @@ static void SA5_submit_command_no_read(struct ctlr_info *h,
 static void SA5_submit_command_ioaccel2(struct ctlr_info *h,
 	struct CommandList *c)
 {
-	dev_dbg(&h->pdev->dev, "Sending %x, tag = %x\n", c->busaddr,
-		c->Header.Tag.lower);
 	if (c->cmd_type == CMD_IOACCEL2)
 		writel(c->busaddr, h->vaddr + IOACCEL2_INBOUND_POSTQ_32);
 	else
@@ -463,7 +456,6 @@ static unsigned long SA5_completed(struct ctlr_info *h,
 
 	return register_value;
 }
-
 /*
  *	Returns true if an interrupt is pending..
  */
@@ -471,7 +463,6 @@ static bool SA5_intr_pending(struct ctlr_info *h)
 {
 	unsigned long register_value  =
 		readl(h->vaddr + SA5_INTR_STATUS);
-	dev_dbg(&h->pdev->dev, "intr_pending %lx\n", register_value);
 	return register_value & SA5_INTR_PENDING;
 }
 

@@ -139,6 +139,7 @@ MODULE_DEVICE_TABLE(pci, hpsa_pci_device_id);
  *  access = Address of the struct of function pointers
  */
 static struct board_type products[] = {
+	{0x3233103C, "HP StorageWorks 1210m", &SA5_access}, /* alias of 333f */
 	{0x3350103C, "Smart Array P222", &SA5_access},
 	{0x3351103C, "Smart Array P420", &SA5_access},
 	{0x3352103C, "Smart Array P421", &SA5_access},
@@ -146,7 +147,6 @@ static struct board_type products[] = {
 	{0x3354103C, "Smart Array P420i", &SA5_access},
 	{0x3355103C, "Smart Array P220i", &SA5_access},
 	{0x3356103C, "Smart Array P721m", &SA5_access},
-	{0x1920103C, "Smart Array P430i", &SA5_access},
 	{0x1921103C, "Smart Array P830i", &SA5_access},
 	{0x1922103C, "Smart Array P430", &SA5_access},
 	{0x1923103C, "Smart Array P431", &SA5_access},
@@ -5931,13 +5931,8 @@ static __devinit int hpsa_kdump_hard_reset_controller(struct pci_dev *pdev)
 	pci_write_config_word(pdev, 4, command_register);
 
 	/* Some devices (notably the HP Smart Array 5i Controller)
-	 * need a little pause here.  Not all controllers though,
-	 * and for some we will miss the transition to NOT READY
-	 * if we wait here.   As a heuristic, if either doorbell
-	 * reset method is supported, we'll skip this sleep.
-	 */
-	if (!use_doorbell)
-		msleep(HPSA_POST_RESET_PAUSE_MSECS);
+	   need a little pause here */
+	msleep(HPSA_POST_RESET_PAUSE_MSECS);
 
 	rc = hpsa_wait_for_board_state(pdev, vaddr, BOARD_READY);
 	if (rc) {
@@ -6065,25 +6060,22 @@ static void __devinit hpsa_interrupt_mode(struct ctlr_info *h)
 		h->msix_vector = MAX_REPLY_QUEUES;
 		if (h->msix_vector > num_online_cpus())
 			h->msix_vector = num_online_cpus();
-		err = pci_enable_msix(h->pdev, hpsa_msix_entries,
-				      h->msix_vector);
-		if (err > 0) {
+		err = pci_enable_msix_range(h->pdev, hpsa_msix_entries,
+					    1, h->msix_vector);
+		if (err < 0) {
+			dev_warn(&h->pdev->dev, "MSI-X init failed %d\n", err);
+			h->msix_vector = 0;
+			goto single_msi_mode;
+		} else if (err < h->msix_vector) {
 			dev_warn(&h->pdev->dev, "only %d MSI-X vectors "
 			       "available\n", err);
-			h->msix_vector = err;
-			err = pci_enable_msix(h->pdev, hpsa_msix_entries,
-					      h->msix_vector);
 		}
-		if (!err) {
-			for (i = 0; i < h->msix_vector; i++)
-				h->intr[i] = hpsa_msix_entries[i].vector;
-			return;
-		} else {
-			dev_warn(&h->pdev->dev, "MSI-X init failed %d\n",
-			       err);
-			h->msix_vector = 0;
-		}
+		h->msix_vector = err;
+		for (i = 0; i < h->msix_vector; i++)
+			h->intr[i] = hpsa_msix_entries[i].vector;
+		return;
 	}
+single_msi_mode:
 	if (pci_find_capability(h->pdev, PCI_CAP_ID_MSI)) {
 		dev_info(&h->pdev->dev, "MSI\n");
 		if (!pci_enable_msi(h->pdev))
@@ -6114,15 +6106,15 @@ static int __devinit hpsa_lookup_board_id(struct pci_dev *pdev, u32 *board_id)
 	if ((subsystem_vendor_id != PCI_VENDOR_ID_HP &&
 		subsystem_vendor_id != PCI_VENDOR_ID_COMPAQ) ||
 		!hpsa_allow_any) {
-			dev_warn(&pdev->dev, "unrecognized board ID: "
-				"0x%08x, ignoring.\n", *board_id);
-				return -ENODEV;
-		}
+		dev_warn(&pdev->dev, "unrecognized board ID: "
+			"0x%08x, ignoring.\n", *board_id);
+			return -ENODEV;
+	}
 	return ARRAY_SIZE(products) - 1; /* generic unknown smart array */
 }
 
-static int __devinit hpsa_pci_find_memory_BAR(struct pci_dev *pdev,
-	unsigned long *memory_bar)
+static int hpsa_pci_find_memory_BAR(struct pci_dev *pdev,
+				    unsigned long *memory_bar)
 {
 	int i;
 
@@ -7470,7 +7462,7 @@ static void hpsa_put_ctlr_into_performant_mode(struct ctlr_info *h)
 					CFGTBL_Trans_use_short_tags;
 	int i;
 
-	if (h->intr_mode == SIMPLE_MODE_INT)
+	if (hpsa_simple_mode)
 		return;
 
 	trans_support = readl(&(h->cfgtable->TransportSupport));

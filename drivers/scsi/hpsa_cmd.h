@@ -406,7 +406,6 @@ struct CommandList {
 	int			   cmd_type;
 	long			   cmdindex;
 	struct list_head list;
-	struct request *rq;
 	struct completion *waiting;
 	void   *scsi_cmd;
 } __aligned(COMMANDLIST_ALIGNMENT);
