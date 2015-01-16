@@ -2334,7 +2334,7 @@ proc_cq:
 			goto too_big;
 	}
 
-	if (phba->cfg_EnableXLane) {
+	if (phba->cfg_fof) {
 
 		/* OAS CQ */
 		qp = phba->sli4_hba.oas_cq;
