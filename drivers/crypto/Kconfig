@@ -295,20 +295,14 @@ config CRYPTO_DEV_S5P
 	  algorithms execution.
 
 config CRYPTO_DEV_NX
-	tristate "Support for Power7+ in-Nest cryptographic accleration"
+	bool "Support for IBM Power7+ in-Nest cryptographic acceleration"
 	depends on PPC64 && IBMVIO
-	select CRYPTO_AES
-	select CRYPTO_CBC
-	select CRYPTO_ECB
-	select CRYPTO_CCM
-	select CRYPTO_GCM
-	select CRYPTO_AUTHENC
-	select CRYPTO_XCBC
-	select CRYPTO_SHA256
-	select CRYPTO_SHA512
+	default n
 	help
-	  Support for Power7+ in-Nest cryptographic acceleration. This
-	  module supports acceleration for AES and SHA2 algorithms. If you
-	  choose 'M' here, this module will be called nx_crypto.
+	  Support for Power7+ in-Nest cryptographic acceleration.
+
+if CRYPTO_DEV_NX
+	source "drivers/crypto/nx/Kconfig"
+endif
 
 endif # CRYPTO_HW
