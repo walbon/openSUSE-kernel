@@ -700,13 +700,13 @@ kdbm_print_dentry(unsigned long daddr)
 					d.d_lru.next, d.d_lru.prev);
 
 	lkdb_printf(" d_child.nxt = 0x%p d_child.prv = 0x%p\n",
-					d.d_u.d_child.next, d.d_u.d_child.prev);
+					d.d_child.next, d.d_child.prev);
 
 	lkdb_printf(" d_subdirs.nxt = 0x%p d_subdirs.prv = 0x%p\n",
 					d.d_subdirs.next, d.d_subdirs.prev);
 
 	lkdb_printf(" d_alias.nxt = 0x%p d_alias.prv = 0x%p\n",
-					d.d_alias.next, d.d_alias.prev);
+					d.d_u.d_alias.next, d.d_u.d_alias.prev);
 
 	lkdb_printf(" d_op = 0x%p d_sb = 0x%p d_fsdata = 0x%p\n",
 					d.d_op, d.d_sb, d.d_fsdata);
