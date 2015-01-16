@@ -183,6 +183,7 @@ int qla4xxx_flash_ddb_change(struct scsi_qla_host *ha, uint32_t fw_ddb_index,
 int qla4xxx_ddb_change(struct scsi_qla_host *ha, uint32_t fw_ddb_index,
 		       struct ddb_entry *ddb_entry, uint32_t state);
 void qla4xxx_build_ddb_list(struct scsi_qla_host *ha, int is_reset);
+int qla4xxx_sysfs_ddb_export(struct scsi_qla_host *ha);
 int qla4xxx_post_aen_work(struct scsi_qla_host *ha,
 			  enum iscsi_host_event_code aen_code,
 			  uint32_t data_size, uint8_t *data);
@@ -266,6 +267,8 @@ int qla4xxx_get_default_ddb(struct scsi_qla_host *ha, uint32_t options,
 			    dma_addr_t dma_addr);
 int qla4xxx_get_uni_chap_at_index(struct scsi_qla_host *ha, char *username,
 				  char *password, uint16_t chap_index);
+int qla4_8xxx_check_init_adapter_retry(struct scsi_qla_host *ha);
+int qla4_83xx_is_detached(struct scsi_qla_host *ha);
 
 extern int ql4xextended_error_logging;
 extern int ql4xdontresethba;

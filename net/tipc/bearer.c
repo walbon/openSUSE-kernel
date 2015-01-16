@@ -39,7 +39,7 @@
 #include "bearer.h"
 #include "discover.h"
 
-#define MAX_ADDR_STR 32
+#define MAX_ADDR_STR 60
 
 static struct tipc_media *media_list[MAX_MEDIA];
 static u32 media_count;
@@ -88,9 +88,6 @@ int tipc_register_media(struct tipc_media *m_ptr)
 	write_lock_bh(&tipc_net_lock);
 
 	if ((strlen(m_ptr->name) + 1) > TIPC_MAX_MEDIA_NAME)
-		goto exit;
-	if ((m_ptr->bcast_addr.media_id != m_ptr->type_id) ||
-	    !m_ptr->bcast_addr.broadcast)
 		goto exit;
 	if (m_ptr->priority > TIPC_MAX_LINK_PRI)
 		goto exit;
@@ -278,31 +275,6 @@ void tipc_bearer_remove_dest(struct tipc_bearer *b_ptr, u32 dest)
 	tipc_disc_remove_dest(b_ptr->link_req);
 }
 
-/*
- * Interrupt enabling new requests after bearer blocking:
- * See bearer_send().
- */
-void tipc_continue(struct tipc_bearer *b)
-{
-	spin_lock_bh(&b->lock);
-	b->blocked = 0;
-	spin_unlock_bh(&b->lock);
-}
-
-/*
- * tipc_bearer_blocked - determines if bearer is currently blocked
- */
-int tipc_bearer_blocked(struct tipc_bearer *b)
-{
-	int res;
-
-	spin_lock_bh(&b->lock);
-	res = b->blocked;
-	spin_unlock_bh(&b->lock);
-
-	return res;
-}
-
 /**
  * tipc_enable_bearer - enable bearer with the given name
  */
@@ -407,7 +379,7 @@ restart:
 	INIT_LIST_HEAD(&b_ptr->links);
 	spin_lock_init(&b_ptr->lock);
 
-	res = tipc_disc_create(b_ptr, &m_ptr->bcast_addr, disc_domain);
+	res = tipc_disc_create(b_ptr, &b_ptr->bcast_addr, disc_domain);
 	if (res) {
 		bearer_disable(b_ptr);
 		pr_warn("Bearer <%s> rejected, discovery object creation failed\n",
@@ -423,25 +395,16 @@ exit:
 }
 
 /**
- * tipc_block_bearer - Block the bearer with the given name, and reset all its links
+ * tipc_reset_bearer - Reset all links established over this bearer
  */
-int tipc_block_bearer(const char *name)
+int tipc_reset_bearer(struct tipc_bearer *b_ptr)
 {
-	struct tipc_bearer *b_ptr = NULL;
 	struct tipc_link *l_ptr;
 	struct tipc_link *temp_l_ptr;
 
 	read_lock_bh(&tipc_net_lock);
-	b_ptr = tipc_bearer_find(name);
-	if (!b_ptr) {
-		pr_warn("Attempt to block unknown bearer <%s>\n", name);
-		read_unlock_bh(&tipc_net_lock);
-		return -EINVAL;
-	}
-
-	pr_info("Blocking bearer <%s>\n", name);
+	pr_info("Resetting bearer <%s>\n", b_ptr->name);
 	spin_lock_bh(&b_ptr->lock);
-	b_ptr->blocked = 1;
 	list_for_each_entry_safe(l_ptr, temp_l_ptr, &b_ptr->links, link_list) {
 		struct tipc_node *n_ptr = l_ptr->owner;
 
@@ -466,7 +429,6 @@ static void bearer_disable(struct tipc_bearer *b_ptr)
 
 	pr_info("Disabling bearer <%s>\n", b_ptr->name);
 	spin_lock_bh(&b_ptr->lock);
-	b_ptr->blocked = 1;
 	b_ptr->media->disable_bearer(b_ptr);
 	list_for_each_entry_safe(l_ptr, temp_l_ptr, &b_ptr->links, link_list) {
 		tipc_link_delete(l_ptr);

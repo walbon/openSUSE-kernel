@@ -129,7 +129,7 @@ void tipc_disc_recv_msg(struct sk_buff *buf, struct tipc_bearer *b_ptr)
 	int link_fully_up;
 
 	media_addr.broadcast = 1;
-	b_ptr->media->msg2addr(&media_addr, msg_media_addr(msg));
+	b_ptr->media->msg2addr(b_ptr, &media_addr, msg_media_addr(msg));
 	kfree_skb(buf);
 
 	/* Ensure message from node is valid and communication is permitted */
@@ -240,7 +240,7 @@ void tipc_disc_recv_msg(struct sk_buff *buf, struct tipc_bearer *b_ptr)
 	/* Accept discovery message & send response, if necessary */
 	link_fully_up = link_working_working(link);
 
-	if ((type == DSC_REQ_MSG) && !link_fully_up && !b_ptr->blocked) {
+	if ((type == DSC_REQ_MSG) && !link_fully_up) {
 		rbuf = tipc_disc_init_msg(DSC_RESP_MSG, orig, b_ptr);
 		if (rbuf) {
 			tipc_bearer_send(b_ptr, rbuf, &media_addr);
@@ -289,16 +289,6 @@ void tipc_disc_remove_dest(struct tipc_link_req *req)
 }
 
 /**
- * disc_send_msg - send link setup request message
- * @req: ptr to link request structure
- */
-static void disc_send_msg(struct tipc_link_req *req)
-{
-	if (!req->bearer->blocked)
-		tipc_bearer_send(req->bearer, req->buf, &req->dest);
-}
-
-/**
  * disc_timeout - send a periodic link setup request
  * @req: ptr to link request structure
  *
@@ -323,7 +313,8 @@ static void disc_timeout(struct tipc_link_req *req)
 	 * hold at fast polling rate if don't have any associated nodes,
 	 * otherwise hold at slow polling rate
 	 */
-	disc_send_msg(req);
+	tipc_bearer_send(req->bearer, req->buf, &req->dest);
+
 
 	req->timer_intv *= 2;
 	if (req->num_nodes)
@@ -369,7 +360,7 @@ int tipc_disc_create(struct tipc_bearer *b_ptr,
 	k_init_timer(&req->timer, (Handler)disc_timeout, (unsigned long)req);
 	k_start_timer(&req->timer, req->timer_intv);
 	b_ptr->link_req = req;
-	disc_send_msg(req);
+	tipc_bearer_send(req->bearer, req->buf, &req->dest);
 	return 0;
 }
 

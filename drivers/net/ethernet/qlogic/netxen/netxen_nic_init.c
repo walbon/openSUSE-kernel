@@ -14,9 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston,
- * MA  02111-1307, USA.
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * The full GNU General Public License is included in this distribution
  * in the file called "COPYING".
@@ -137,6 +135,7 @@ void netxen_release_tx_buffers(struct netxen_adapter *adapter)
 	int i, j;
 	struct nx_host_tx_ring *tx_ring = adapter->tx_ring;
 
+	spin_lock(&adapter->tx_clean_lock);
 	cmd_buf = tx_ring->cmd_buf_arr;
 	for (i = 0; i < tx_ring->num_desc; i++) {
 		buffrag = cmd_buf->frag_array;
@@ -160,6 +159,7 @@ void netxen_release_tx_buffers(struct netxen_adapter *adapter)
 		}
 		cmd_buf++;
 	}
+	spin_unlock(&adapter->tx_clean_lock);
 }
 
 void netxen_free_sw_resources(struct netxen_adapter *adapter)
@@ -198,41 +198,33 @@ int netxen_alloc_sw_resources(struct netxen_adapter *adapter)
 	struct nx_host_sds_ring *sds_ring;
 	struct nx_host_tx_ring *tx_ring;
 	struct netxen_rx_buffer *rx_buf;
-	int ring, i, size;
+	int ring, i;
 
 	struct netxen_cmd_buffer *cmd_buf_arr;
 	struct net_device *netdev = adapter->netdev;
-	struct pci_dev *pdev = adapter->pdev;
 
-	size = sizeof(struct nx_host_tx_ring);
-	tx_ring = kzalloc(size, GFP_KERNEL);
-	if (tx_ring == NULL) {
-		dev_err(&pdev->dev, "%s: failed to allocate tx ring struct\n",
-		       netdev->name);
+	tx_ring = kzalloc(sizeof(struct nx_host_tx_ring), GFP_KERNEL);
+	if (tx_ring == NULL)
 		return -ENOMEM;
-	}
+
 	adapter->tx_ring = tx_ring;
 
 	tx_ring->num_desc = adapter->num_txd;
 	tx_ring->txq = netdev_get_tx_queue(netdev, 0);
 
 	cmd_buf_arr = vzalloc(TX_BUFF_RINGSIZE(tx_ring));
-	if (cmd_buf_arr == NULL) {
-		dev_err(&pdev->dev, "%s: failed to allocate cmd buffer ring\n",
-		       netdev->name);
+	if (cmd_buf_arr == NULL)
 		goto err_out;
-	}
+
 	tx_ring->cmd_buf_arr = cmd_buf_arr;
 
 	recv_ctx = &adapter->recv_ctx;
 
-	size = adapter->max_rds_rings * sizeof (struct nx_host_rds_ring);
-	rds_ring = kzalloc(size, GFP_KERNEL);
-	if (rds_ring == NULL) {
-		dev_err(&pdev->dev, "%s: failed to allocate rds ring struct\n",
-		       netdev->name);
+	rds_ring = kcalloc(adapter->max_rds_rings,
+			   sizeof(struct nx_host_rds_ring), GFP_KERNEL);
+	if (rds_ring == NULL)
 		goto err_out;
-	}
+
 	recv_ctx->rds_rings = rds_ring;
 
 	for (ring = 0; ring < adapter->max_rds_rings; ring++) {
@@ -1533,8 +1525,6 @@ static struct sk_buff *netxen_process_rxbuf(struct netxen_adapter *adapter,
 	} else
 		skb->ip_summed = CHECKSUM_NONE;
 
-	skb->dev = adapter->netdev;
-
 	buffer->skb = NULL;
 no_skb:
 	buffer->state = NETXEN_BUFFER_FREE;
@@ -1614,13 +1604,13 @@ netxen_process_lro(struct netxen_adapter *adapter,
 	u32 seq_number;
 	u8 vhdr_len = 0;
 
-	if (unlikely(ring > adapter->max_rds_rings))
+	if (unlikely(ring >= adapter->max_rds_rings))
 		return NULL;
 
 	rds_ring = &recv_ctx->rds_rings[ring];
 
 	index = netxen_get_lro_sts_refhandle(sts_data0);
-	if (unlikely(index > rds_ring->num_desc))
+	if (unlikely(index >= rds_ring->num_desc))
 		return NULL;
 
 	buffer = &rds_ring->rx_buf_arr[index];
@@ -1804,9 +1794,9 @@ int netxen_process_cmd_ring(struct netxen_adapter *adapter)
 			break;
 	}
 
-	if (count && netif_running(netdev)) {
-		tx_ring->sw_consumer = sw_consumer;
+	tx_ring->sw_consumer = sw_consumer;
 
+	if (count && netif_running(netdev)) {
 		smp_mb();
 
 		if (netif_queue_stopped(netdev) && netif_carrier_ok(netdev))

@@ -56,6 +56,7 @@
 #include <asm/processor-flags.h>
 #include <asm/ftrace.h>
 #include <asm/percpu.h>
+#include <asm/pgtable_types.h>
 #include <xen/interface/xen.h>
 #include <xen/interface/features.h>
 
@@ -822,7 +823,6 @@ ENTRY(retint_kernel)
 	call preempt_schedule_irq
 	jmp retint_kernel       /* check again */
 #endif
-
 	CFI_ENDPROC
 END(retint_check)
 
@@ -920,7 +920,7 @@ ENTRY(do_hypervisor_callback)   # do_hypervisor_callback(struct *pt_regs)
 	jnz  error_exit
 	bt   $TIF_NEED_RESCHED,TI_flags(%rdx)
 	jnc  error_exit
-	bt   $9,EFLAGS-ARGOFFSET(%rsp)
+	bt   $9,EFLAGS(%rsp)
 	jnc  error_exit
 	movb $0,PER_CPU_VAR(privcmd_hcall)
 	call preempt_schedule_irq
@@ -940,7 +940,7 @@ scrit:	/**** START OF CRITICAL REGION ****/
 	__TEST_PENDING
 	CFI_REMEMBER_STATE
 	jnz  14f			# process more events if necessary...
-        RESTORE_ARGS 1,8,1
+	RESTORE_ARGS 1,8,1
         HYPERVISOR_IRET 0
         
 	CFI_RESTORE_STATE
@@ -1126,7 +1126,7 @@ END(arch_unwind_init_running)
 paranoidzeroentry_ist debug do_debug DEBUG_STACK
 zeroentry nmi do_nmi_callback
 paranoidzeroentry_ist int3 do_int3 DEBUG_STACK
-paranoiderrorentry stack_segment do_stack_segment
+errorentry stack_segment do_stack_segment
 errorentry general_protection do_general_protection
 errorentry page_fault do_page_fault
 #ifdef CONFIG_KVM_GUEST
@@ -1235,17 +1235,16 @@ error_sti:
 #ifndef CONFIG_XEN
 /*
  * There are two places in the kernel that can potentially fault with
- * usergs. Handle them here. The exception handlers after iret run with
- * kernel gs again, so don't set the user space flag. B stepping K8s
- * sometimes report an truncated RIP for IRET exceptions returning to
- * compat mode. Check for these here too.
+ * usergs. Handle them here.  B stepping K8s sometimes report a
+ * truncated RIP for IRET exceptions returning to compat mode. Check
+ * for these here too.
  */
 error_kernelspace:
 	CFI_REL_OFFSET rcx, RCX+8
 	incl %ebx
-	leaq irq_return(%rip),%rcx
+	leaq native_irq_return_iret(%rip),%rcx
 	cmpq %rcx,RIP+8(%rsp)
-	je error_swapgs
+	je error_bad_iret
 	movl %ecx,%eax	/* zero extend */
 	cmpq %rax,RIP+8(%rsp)
 	je bstep_iret
@@ -1256,7 +1255,15 @@ error_kernelspace:
 bstep_iret:
 	/* Fix truncated RIP */
 	movq %rcx,RIP+8(%rsp)
-	jmp error_swapgs
+	/* fall through */
+
+error_bad_iret:
+	SWAPGS
+	mov %rsp,%rdi
+	call fixup_bad_iret
+	mov %rax,%rsp
+	decl %ebx	/* Return to usergs */
+	jmp error_sti
 #endif
 	CFI_ENDPROC
 END(error_entry)

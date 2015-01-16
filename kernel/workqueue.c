@@ -2083,7 +2083,6 @@ repeat:
 		struct work_struct *work, *n;
 
 		__set_current_state(TASK_RUNNING);
-		mayday_clear_cpu(cpu, wq->mayday_mask);
 
 		/* migrate to the target cpu if possible */
 		rescuer->gcwq = gcwq;
@@ -2098,6 +2097,9 @@ repeat:
 			if (get_work_cwq(work) == cwq)
 				move_linked_works(work, scheduled, &n);
 
+		/* No need for processing more work? */
+		if (list_empty(scheduled) || !need_to_create_worker(gcwq))
+			mayday_clear_cpu(cpu, wq->mayday_mask);
 		process_scheduled_works(rescuer);
 
 		/*

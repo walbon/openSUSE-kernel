@@ -390,6 +390,7 @@ struct qla_flt_region {
 #define MBOX_CMD_CLEAR_DATABASE_ENTRY		0x0031
 #define MBOX_CMD_CONN_OPEN			0x0074
 #define MBOX_CMD_CONN_CLOSE_SESS_LOGOUT		0x0056
+#define DDB_NOT_LOGGED_IN			0x09
 #define LOGOUT_OPTION_CLOSE_SESSION		0x0002
 #define LOGOUT_OPTION_RELOGIN			0x0004
 #define LOGOUT_OPTION_FREE_DDB			0x0008
@@ -494,9 +495,9 @@ struct qla_flt_region {
 #define MBOX_ASTS_RESPONSE_QUEUE_FULL		0x8028
 #define MBOX_ASTS_IP_ADDR_STATE_CHANGED		0x8029
 #define MBOX_ASTS_IPV6_DEFAULT_ROUTER_CHANGED	0x802A
-#define MBOX_ASTS_IPV6_PREFIX_EXPIRED		0x802B
-#define MBOX_ASTS_IPV6_ND_PREFIX_IGNORED	0x802C
-#define MBOX_ASTS_IPV6_LCL_PREFIX_IGNORED	0x802D
+#define MBOX_ASTS_IPV6_LINK_MTU_CHANGE		0x802B
+#define MBOX_ASTS_IPV6_AUTO_PREFIX_IGNORED	0x802C
+#define MBOX_ASTS_IPV6_ND_LOCAL_PREFIX_IGNORED	0x802D
 #define MBOX_ASTS_ICMPV6_ERROR_MSG_RCVD		0x802E
 #define MBOX_ASTS_INITIALIZATION_FAILED		0x8031
 #define MBOX_ASTS_SYSTEM_WARNING_EVENT		0x8036
@@ -512,14 +513,14 @@ struct qla_flt_region {
 #define MBOX_ASTS_IPSEC_SYSTEM_FATAL_ERROR	0x8022
 #define MBOX_ASTS_SUBNET_STATE_CHANGE		0x8027
 
-/* ACB State Defines */
-#define ACB_STATE_UNCONFIGURED	0x00
-#define ACB_STATE_INVALID	0x01
-#define ACB_STATE_ACQUIRING	0x02
-#define ACB_STATE_TENTATIVE	0x03
-#define ACB_STATE_DEPRICATED	0x04
-#define ACB_STATE_VALID		0x05
-#define ACB_STATE_DISABLING	0x06
+/* ACB/IP Address State Defines */
+#define IP_ADDRSTATE_UNCONFIGURED	0
+#define IP_ADDRSTATE_INVALID		1
+#define IP_ADDRSTATE_ACQUIRING		2
+#define IP_ADDRSTATE_TENTATIVE		3
+#define IP_ADDRSTATE_DEPRICATED		4
+#define IP_ADDRSTATE_PREFERRED		5
+#define IP_ADDRSTATE_DISABLING		6
 
 /* FLASH offsets */
 #define FLASH_SEGMENT_IFCB	0x04000000
@@ -532,6 +533,10 @@ struct qla_flt_region {
 /* Loopback type */
 #define ENABLE_INTERNAL_LOOPBACK	0x04
 #define ENABLE_EXTERNAL_LOOPBACK	0x08
+
+/* generic defines to enable/disable params */
+#define QL4_PARAM_DISABLE	0
+#define QL4_PARAM_ENABLE	1
 
 /*************************************************************************/
 
@@ -643,14 +648,6 @@ struct addr_ctrl_blk {
 	uint8_t ipv6_lnk_lcl_addr_state;/* 222 */
 	uint8_t ipv6_addr0_state;	/* 223 */
 	uint8_t ipv6_addr1_state;	/* 224 */
-#define IP_ADDRSTATE_UNCONFIGURED	0
-#define IP_ADDRSTATE_INVALID		1
-#define IP_ADDRSTATE_ACQUIRING		2
-#define IP_ADDRSTATE_TENTATIVE		3
-#define IP_ADDRSTATE_DEPRICATED		4
-#define IP_ADDRSTATE_PREFERRED		5
-#define IP_ADDRSTATE_DISABLING		6
-
 	uint8_t ipv6_dflt_rtr_state;    /* 225 */
 #define IPV6_RTRSTATE_UNKNOWN                   0
 #define IPV6_RTRSTATE_MANUAL                    1

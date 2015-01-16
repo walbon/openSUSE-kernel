@@ -2734,7 +2734,7 @@ __u32 __skb_get_rxhash(struct sk_buff *skb)
 			goto done;
 
 		ip = (const struct iphdr *) (skb->data + nhoff);
-		if (ip->frag_off & htons(IP_MF | IP_OFFSET))
+		if (ip_is_fragment(ip))
 			ip_proto = 0;
 		else
 			ip_proto = ip->protocol;
@@ -3998,6 +3998,9 @@ void netif_napi_add(struct net_device *dev, struct napi_struct *napi,
 	napi->gro_list = NULL;
 	napi->skb = NULL;
 	napi->poll = poll;
+	if (weight > NAPI_POLL_WEIGHT)
+		pr_err_once("netif_napi_add() called with weight %d on device %s\n",
+			    weight, dev->name);
 	napi->weight = weight;
 	list_add(&napi->dev_list, &dev->napi_list);
 	napi->dev = dev;

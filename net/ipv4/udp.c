@@ -1462,8 +1462,11 @@ int udp_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 	}
 
 
-	if (sk_rcvqueues_full(sk, skb))
+	if (sk_rcvqueues_full(sk, skb)) {
+		UDP_INC_STATS_BH(sock_net(sk), UDP_MIB_RCVBUFERRORS,
+				 is_udplite);
 		goto drop;
+	}
 
 	rc = 0;
 

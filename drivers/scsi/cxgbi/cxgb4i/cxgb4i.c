@@ -13,7 +13,6 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ":%s: " fmt, __func__
 
-#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <scsi/scsi_host.h>
@@ -359,7 +358,7 @@ static inline unsigned int calc_tx_flits_ofld(const struct sk_buff *skb)
 		return DIV_ROUND_UP(skb->len, 8);
 	flits = skb_transport_offset(skb) / 8;
 	cnt = skb_shinfo(skb)->nr_frags;
-	if (skb->tail != skb->transport_header)
+	if (skb_tail_pointer(skb) != skb_transport_header(skb))
 		cnt++;
 	return flits + sgl_len(cnt);
 }
@@ -631,7 +630,7 @@ static int act_open_rpl_status_to_errno(int status)
 
 static void csk_act_open_retry_timer(unsigned long data)
 {
-	struct sk_buff *skb;
+	struct sk_buff *skb = NULL;
 	struct cxgbi_sock *csk = (struct cxgbi_sock *)data;
 
 	log_debug(1 << CXGBI_DBG_TOE | 1 << CXGBI_DBG_SOCK,
@@ -677,6 +676,8 @@ static void do_act_open_rpl(struct cxgbi_device *cdev, struct sk_buff *skb)
 
 	if (status == CPL_ERR_RTX_NEG_ADVICE)
 		goto rel_skb;
+
+	module_put(THIS_MODULE);
 
 	if (status && status != CPL_ERR_TCAM_FULL &&
 	    status != CPL_ERR_CONN_EXIST &&
@@ -786,20 +787,23 @@ static void do_abort_req_rss(struct cxgbi_device *cdev, struct sk_buff *skb)
 	cxgbi_sock_get(csk);
 	spin_lock_bh(&csk->lock);
 
-	if (!cxgbi_sock_flag(csk, CTPF_ABORT_REQ_RCVD)) {
-		cxgbi_sock_set_flag(csk, CTPF_ABORT_REQ_RCVD);
-		cxgbi_sock_set_state(csk, CTP_ABORTING);
-		goto done;
+	cxgbi_sock_clear_flag(csk, CTPF_ABORT_REQ_RCVD);
+
+	if (!cxgbi_sock_flag(csk, CTPF_TX_DATA_SENT)) {
+		send_tx_flowc_wr(csk);
+		cxgbi_sock_set_flag(csk, CTPF_TX_DATA_SENT);
 	}
 
-	cxgbi_sock_clear_flag(csk, CTPF_ABORT_REQ_RCVD);
+	cxgbi_sock_set_flag(csk, CTPF_ABORT_REQ_RCVD);
+	cxgbi_sock_set_state(csk, CTP_ABORTING);
+
 	send_abort_rpl(csk, rst_status);
 
 	if (!cxgbi_sock_flag(csk, CTPF_ABORT_RPL_PENDING)) {
 		csk->err = abort_status_to_errno(csk, req->status, &rst_status);
 		cxgbi_sock_closed(csk);
 	}
-done:
+
 	spin_unlock_bh(&csk->lock);
 	cxgbi_sock_put(csk);
 rel_skb:
@@ -1128,6 +1132,7 @@ static int init_act_open(struct cxgbi_sock *csk)
 	struct net_device *ndev = cdev->ports[csk->port_id];
 	struct port_info *pi = netdev_priv(ndev);
 	struct sk_buff *skb = NULL;
+	struct neighbour *n;
 	unsigned int step;
 
 	log_debug(1 << CXGBI_DBG_TOE | 1 << CXGBI_DBG_SOCK,
@@ -1142,7 +1147,7 @@ static int init_act_open(struct cxgbi_sock *csk)
 	cxgbi_sock_set_flag(csk, CTPF_HAS_ATID);
 	cxgbi_sock_get(csk);
 
-	csk->l2t = cxgb4_l2t_get(lldi->l2t, dst_get_neighbour(csk->dst), ndev, 0);
+	csk->l2t = cxgb4_l2t_get(lldi->l2t, n, ndev, 0);
 	if (!csk->l2t) {
 		pr_err("%s, cannot alloc l2t.\n", ndev->name);
 		goto rel_resource;
@@ -1177,9 +1182,12 @@ static int init_act_open(struct cxgbi_sock *csk)
 
 	cxgbi_sock_set_state(csk, CTP_ACTIVE_OPEN);
 	send_act_open_req(csk, skb, csk->l2t);
+	neigh_release(n);
 	return 0;
 
 rel_resource:
+	if (n)
+		neigh_release(n);
 	if (skb)
 		__kfree_skb(skb);
 	return -EINVAL;

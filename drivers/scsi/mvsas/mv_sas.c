@@ -674,7 +674,8 @@ static int mvs_task_prep_ssp(struct mvs_info *mvi,
 	if (ssp_hdr->frame_type != SSP_TASK) {
 		buf_cmd[9] = fburst | task->ssp_task.task_attr |
 				(task->ssp_task.task_prio << 3);
-		memcpy(buf_cmd + 12, &task->ssp_task.cdb, 16);
+		memcpy(buf_cmd + 12, task->ssp_task.cmd->cmnd,
+		       task->ssp_task.cmd->cmd_len);
 	} else{
 		buf_cmd[10] = tmf->tmf;
 		switch (tmf->tmf) {
@@ -694,7 +695,7 @@ static int mvs_task_prep_ssp(struct mvs_info *mvi,
 	return 0;
 }
 
-#define	DEV_IS_GONE(mvi_dev)	((!mvi_dev || (mvi_dev->dev_type == NO_DEVICE)))
+#define	DEV_IS_GONE(mvi_dev)	((!mvi_dev || (mvi_dev->dev_type == SAS_PHY_UNUSED)))
 static int mvs_task_prep(struct sas_task *task, struct mvs_info *mvi, int is_tmf,
 				struct mvs_tmf_task *tmf, int *pass)
 {
@@ -714,7 +715,7 @@ static int mvs_task_prep(struct sas_task *task, struct mvs_info *mvi, int is_tmf
 		 * libsas will use dev->port, should
 		 * not call task_done for sata
 		 */
-		if (dev->dev_type != SATA_DEV)
+		if (dev->dev_type != SAS_SATA_DEV)
 			task->task_done(task);
 		return rc;
 	}
@@ -1147,10 +1148,10 @@ void mvs_update_phyinfo(struct mvs_info *mvi, int i, int get_st)
 			phy->identify.device_type =
 				phy->att_dev_info & PORT_DEV_TYPE_MASK;
 
-			if (phy->identify.device_type == SAS_END_DEV)
+			if (phy->identify.device_type == SAS_END_DEVICE)
 				phy->identify.target_port_protocols =
 							SAS_PROTOCOL_SSP;
-			else if (phy->identify.device_type != NO_DEVICE)
+			else if (phy->identify.device_type != SAS_PHY_UNUSED)
 				phy->identify.target_port_protocols =
 							SAS_PROTOCOL_SMP;
 			if (oob_done)
@@ -1242,7 +1243,7 @@ struct mvs_device *mvs_alloc_dev(struct mvs_info *mvi)
 {
 	u32 dev;
 	for (dev = 0; dev < MVS_MAX_DEVICES; dev++) {
-		if (mvi->devices[dev].dev_type == NO_DEVICE) {
+		if (mvi->devices[dev].dev_type == SAS_PHY_UNUSED) {
 			mvi->devices[dev].device_id = dev;
 			return &mvi->devices[dev];
 		}
@@ -1260,7 +1261,7 @@ void mvs_free_dev(struct mvs_device *mvi_dev)
 	u32 id = mvi_dev->device_id;
 	memset(mvi_dev, 0, sizeof(*mvi_dev));
 	mvi_dev->device_id = id;
-	mvi_dev->dev_type = NO_DEVICE;
+	mvi_dev->dev_type = SAS_PHY_UNUSED;
 	mvi_dev->dev_status = MVS_DEV_NORMAL;
 	mvi_dev->taskfileset = MVS_ID_NOT_MAPPED;
 }
@@ -1462,7 +1463,7 @@ static int mvs_debug_I_T_nexus_reset(struct domain_device *dev)
 {
 	int rc;
 	struct sas_phy *phy = sas_get_local_phy(dev);
-	int reset_type = (dev->dev_type == SATA_DEV ||
+	int reset_type = (dev->dev_type == SAS_SATA_DEV ||
 			(dev->tproto & SAS_PROTOCOL_STP)) ? 0 : 1;
 	rc = sas_phy_reset(phy, reset_type);
 	sas_put_local_phy(phy);
@@ -1611,7 +1612,7 @@ int mvs_abort_task(struct sas_task *task)
 
 	} else if (task->task_proto & SAS_PROTOCOL_SATA ||
 		task->task_proto & SAS_PROTOCOL_STP) {
-		if (SATA_DEV == dev->dev_type) {
+		if (SAS_SATA_DEV == dev->dev_type) {
 			struct mvs_slot_info *slot = task->lldd_task;
 			u32 slot_idx = (u32)(slot - mvi->slot_info);
 			mv_dprintk("mvs_abort_task() mvi=%p task=%p "

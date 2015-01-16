@@ -606,6 +606,19 @@ static int qla4_83xx_loopback_in_progress(struct scsi_qla_host *ha)
 	return rval;
 }
 
+static void qla4xxx_default_router_changed(struct scsi_qla_host *ha,
+                                          uint32_t *mbox_sts)
+{
+	memcpy(&ha->ip_config.ipv6_default_router_addr.s6_addr32[0],
+			&mbox_sts[2], sizeof(uint32_t));
+	memcpy(&ha->ip_config.ipv6_default_router_addr.s6_addr32[1],
+			&mbox_sts[3], sizeof(uint32_t));
+	memcpy(&ha->ip_config.ipv6_default_router_addr.s6_addr32[2],
+			&mbox_sts[4], sizeof(uint32_t));
+	memcpy(&ha->ip_config.ipv6_default_router_addr.s6_addr32[3],
+			&mbox_sts[5], sizeof(uint32_t));
+}
+
 /**
  * qla4xxx_isr_decode_mailbox - decodes mailbox status
  * @ha: Pointer to host adapter structure.
@@ -742,19 +755,36 @@ static void qla4xxx_isr_decode_mailbox(struct scsi_qla_host * ha,
 
 			/* mbox_sts[2] = Old ACB state
 			 * mbox_sts[3] = new ACB state */
-			if ((mbox_sts[3] == ACB_STATE_VALID) &&
-			    ((mbox_sts[2] == ACB_STATE_TENTATIVE) ||
-			    (mbox_sts[2] == ACB_STATE_ACQUIRING)))
+			if ((mbox_sts[3] == IP_ADDRSTATE_PREFERRED) &&
+			    ((mbox_sts[2] == IP_ADDRSTATE_TENTATIVE) ||
+			    (mbox_sts[2] == IP_ADDRSTATE_ACQUIRING)))
 				set_bit(DPC_GET_DHCP_IP_ADDR, &ha->dpc_flags);
-			else if ((mbox_sts[3] == ACB_STATE_ACQUIRING) &&
-				 (mbox_sts[2] == ACB_STATE_VALID)) {
+			else if ((mbox_sts[3] == IP_ADDRSTATE_ACQUIRING) &&
+				 (mbox_sts[2] == IP_ADDRSTATE_PREFERRED)) {
 				if (is_qla80XX(ha))
 					set_bit(DPC_RESET_HA_FW_CONTEXT,
 						&ha->dpc_flags);
 				else
 					set_bit(DPC_RESET_HA, &ha->dpc_flags);
-			} else if ((mbox_sts[3] == ACB_STATE_UNCONFIGURED))
+			} else if ((mbox_sts[3] == IP_ADDRSTATE_UNCONFIGURED))
 				complete(&ha->disable_acb_comp);
+			break;
+
+		case MBOX_ASTS_IPV6_LINK_MTU_CHANGE:
+		case MBOX_ASTS_IPV6_AUTO_PREFIX_IGNORED:
+		case MBOX_ASTS_IPV6_ND_LOCAL_PREFIX_IGNORED:
+			/* No action */
+			DEBUG2(ql4_printk(KERN_INFO, ha, "scsi%ld: AEN %04x\n",
+					  ha->host_no, mbox_status));
+			break;
+
+		case MBOX_ASTS_ICMPV6_ERROR_MSG_RCVD:
+			DEBUG2(ql4_printk(KERN_INFO, ha,
+					  "scsi%ld: AEN %04x, IPv6 ERROR, "
+					  "mbox_sts[1]=%08x, mbox_sts[2]=%08x, mbox_sts[3}=%08x, mbox_sts[4]=%08x mbox_sts[5]=%08x\n",
+					  ha->host_no, mbox_sts[0], mbox_sts[1],
+					  mbox_sts[2], mbox_sts[3], mbox_sts[4],
+					  mbox_sts[5]));
 			break;
 
 		case MBOX_ASTS_MAC_ADDRESS_CHANGED:
@@ -884,6 +914,7 @@ static void qla4xxx_isr_decode_mailbox(struct scsi_qla_host * ha,
 			DEBUG2(ql4_printk(KERN_INFO, ha,
 					  "scsi%ld: AEN %04x Received IPv6 default router changed notification\n",
 					  ha->host_no, mbox_sts[0]));
+			qla4xxx_default_router_changed(ha, mbox_sts);
 			break;
 
 		case MBOX_ASTS_INITIALIZATION_FAILED:
@@ -954,7 +985,8 @@ void qla4_82xx_interrupt_service_routine(struct scsi_qla_host *ha,
     uint32_t intr_status)
 {
 	/* Process response queue interrupt. */
-	if (intr_status & HSRX_RISC_IOCB_INT)
+	if ((intr_status & HSRX_RISC_IOCB_INT) &&
+	    test_bit(AF_INIT_DONE, &ha->flags))
 		qla4xxx_process_response_queue(ha);
 
 	/* Process mailbox/asynch event interrupt.*/
@@ -1331,6 +1363,7 @@ qla4_8xxx_msix_rsp_q(int irq, void *dev_id)
 {
 	struct scsi_qla_host *ha = dev_id;
 	unsigned long flags;
+	int intr_status;
 	uint32_t ival = 0;
 
 	spin_lock_irqsave(&ha->hardware_lock, flags);
@@ -1344,8 +1377,15 @@ qla4_8xxx_msix_rsp_q(int irq, void *dev_id)
 		qla4xxx_process_response_queue(ha);
 		writel(0, &ha->qla4_83xx_reg->iocb_int_mask);
 	} else {
-		qla4xxx_process_response_queue(ha);
-		writel(0, &ha->qla4_82xx_reg->host_int);
+		intr_status = readl(&ha->qla4_82xx_reg->host_status);
+		if (intr_status & HSRX_RISC_IOCB_INT) {
+			qla4xxx_process_response_queue(ha);
+			writel(0, &ha->qla4_82xx_reg->host_int);
+		} else {
+			ql4_printk(KERN_INFO, ha, "%s: spurious iocb interrupt...\n",
+				   __func__);
+			goto exit_msix_rsp_q;
+		}
 	}
 	ha->isr_count++;
 exit_msix_rsp_q:
@@ -1419,7 +1459,7 @@ void qla4xxx_process_aen(struct scsi_qla_host * ha, uint8_t process_aen)
 
 int qla4xxx_request_irqs(struct scsi_qla_host *ha)
 {
-	int ret;
+	int ret = 0;
 
 	if (is_qla40XX(ha))
 		goto try_intx;
@@ -1472,15 +1512,13 @@ try_msi:
 		}
 	}
 
-	/*
-	 * Prevent interrupts from falling back to INTx mode in cases where
-	 * interrupts cannot get acquired through MSI-X or MSI mode.
-	 */
+try_intx:
 	if (is_qla8022(ha)) {
-		ql4_printk(KERN_WARNING, ha, "IRQ not attached -- %d.\n", ret);
+		ql4_printk(KERN_WARNING, ha, "%s: ISP82xx Legacy interrupt not supported\n",
+			   __func__);
 		goto irq_not_attached;
 	}
-try_intx:
+
 	/* Trying INTx */
 	ret = request_irq(ha->pdev->irq, ha->isp_ops->intr_handler,
 	    IRQF_SHARED, DRIVER_NAME, ha);

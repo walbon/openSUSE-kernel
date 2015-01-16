@@ -438,7 +438,7 @@ int tipc_cfg_init(void)
 
 	seq.type = TIPC_CFG_SRV;
 	seq.lower = seq.upper = tipc_own_addr;
-	res = tipc_publish(config_port_ref, TIPC_ZONE_SCOPE, &seq);
+	res = tipc_publish(tipc_port_deref(config_port_ref), TIPC_ZONE_SCOPE, &seq);
 	if (res)
 		goto failed;
 
@@ -456,16 +456,16 @@ void tipc_cfg_reinit(void)
 
 	seq.type = TIPC_CFG_SRV;
 	seq.lower = seq.upper = 0;
-	tipc_withdraw(config_port_ref, TIPC_ZONE_SCOPE, &seq);
+	tipc_withdraw(tipc_port_deref(config_port_ref), TIPC_ZONE_SCOPE, &seq);
 
 	seq.lower = seq.upper = tipc_own_addr;
-	res = tipc_publish(config_port_ref, TIPC_ZONE_SCOPE, &seq);
+	res = tipc_publish(tipc_port_deref(config_port_ref), TIPC_ZONE_SCOPE, &seq);
 	if (res)
 		pr_err("Unable to reinitialize configuration service\n");
 }
 
 void tipc_cfg_stop(void)
 {
-	tipc_deleteport(config_port_ref);
+	tipc_deleteport(tipc_port_deref(config_port_ref));
 	config_port_ref = 0;
 }

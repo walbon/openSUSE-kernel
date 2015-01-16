@@ -35,6 +35,7 @@ struct node_cpuid_s node_cpuid[NR_CPUS] =
  * proportional to the memory access latency ratios.
  */
 u8 numa_slit[MAX_NUMNODES * MAX_NUMNODES];
+EXPORT_SYMBOL(numa_slit);
 
 /* Identify which cnode a physical address resides on */
 int

@@ -776,6 +776,7 @@ mptscsih_io_done(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *mr)
 			 * than an unsolicited DID_ABORT.
 			 */
 			sc->result = DID_RESET << 16;
+			break;
 
 		case MPI_IOCSTATUS_SCSI_EXT_TERMINATED:		/* 0x004C */
 			if ( ioc->bus_type == FC )
@@ -1261,15 +1262,13 @@ mptscsih_info(struct Scsi_Host *SChost)
 
 	h = shost_priv(SChost);
 
-	if (h) {
-		if (h->info_kbuf == NULL)
-			if ((h->info_kbuf = kmalloc(0x1000 /* 4Kb */, GFP_KERNEL)) == NULL)
-				return h->info_kbuf;
-		h->info_kbuf[0] = '\0';
+	if (h->info_kbuf == NULL)
+		if ((h->info_kbuf = kmalloc(0x1000 /* 4Kb */, GFP_KERNEL)) == NULL)
+			return h->info_kbuf;
+	h->info_kbuf[0] = '\0';
 
-		mpt_print_ioc_summary(h->ioc, h->info_kbuf, &size, 0, 0);
-		h->info_kbuf[size-1] = '\0';
-	}
+	mpt_print_ioc_summary(h->ioc, h->info_kbuf, &size, 0, 0);
+	h->info_kbuf[size-1] = '\0';
 
 	return h->info_kbuf;
 }
@@ -1475,7 +1474,6 @@ _scsih_setup_eedp(MPT_ADAPTER *ioc, struct scsi_cmnd *scmd, SCSIIO32Request_t *m
 /**
  *	mptscsih_qcmd - Primary Fusion MPT SCSI initiator IO start routine.
  *	@SCpnt: Pointer to scsi_cmnd structure
- *	@done: Pointer SCSI mid-layer IO completion function
  *
  *	(linux scsi_host_template.queuecommand routine)
  *	This is the primary SCSI IO start routine.  Create a MPI SCSIIORequest
@@ -1484,7 +1482,7 @@ _scsih_setup_eedp(MPT_ADAPTER *ioc, struct scsi_cmnd *scmd, SCSIIO32Request_t *m
  *	Returns 0. (rtn value discarded by linux scsi mid-layer)
  */
 int
-mptscsih_qcmd(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
+mptscsih_qcmd(struct scsi_cmnd *SCpnt)
 {
 	MPT_SCSI_HOST		*hd;
 	MPT_FRAME_HDR		*mf;
@@ -1500,10 +1498,9 @@ mptscsih_qcmd(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 
 	hd = shost_priv(SCpnt->device->host);
 	ioc = hd->ioc;
-	SCpnt->scsi_done = done;
 
-	dmfprintk(ioc, printk(MYIOC_s_DEBUG_FMT "qcmd: SCpnt=%p, done()=%p\n",
-		ioc->name, SCpnt, done));
+	dmfprintk(ioc, printk(MYIOC_s_DEBUG_FMT "qcmd: SCpnt=%p\n",
+		ioc->name, SCpnt));
 
 	if (ioc->taskmgmt_quiesce_io)
 		return SCSI_MLQUEUE_HOST_BUSY;
@@ -1541,8 +1538,7 @@ mptscsih_qcmd(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 	/* Default to untagged. Once a target structure has been allocated,
 	 * use the Inquiry data to determine if device supports tagged.
 	 */
-	if (vdevice
-	    && (vdevice->vtarget->tflags & MPT_TARGET_FLAGS_Q_YES)
+	if ((vdevice->vtarget->tflags & MPT_TARGET_FLAGS_Q_YES)
 	    && (SCpnt->device->tagged_supported)) {
 		scsictl = scsidir | MPI_SCSIIO_CONTROL_SIMPLEQ;
 	} else {

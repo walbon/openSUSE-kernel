@@ -185,7 +185,7 @@
 #define ADAPTER_INIT_TOV		30
 #define ADAPTER_RESET_TOV		180
 #define EXTEND_CMD_TOV			60
-#define WAIT_CMD_TOV			30
+#define WAIT_CMD_TOV			5
 #define EH_WAIT_CMD_TOV			120
 #define FIRMWARE_UP_TOV			60
 #define RESET_FIRMWARE_TOV		30
@@ -285,6 +285,8 @@ struct ddb_entry {
 
 	/* Driver Re-login  */
 	unsigned long flags;		  /* DDB Flags */
+#define DDB_CONN_CLOSE_FAILURE		0 /* 0x00000001 */
+
 	uint16_t default_relogin_timeout; /*  Max time to wait for
 					   *  relogin to complete */
 	atomic_t retry_relogin_timer;	  /* Min Time between relogins
@@ -335,6 +337,7 @@ struct ql4_tuple_ddb {
 #define DF_BOOT_TGT		1	/* Boot target entry */
 #define DF_ISNS_DISCOVERED	2	/* Device was discovered via iSNS */
 #define DF_FO_MASKED		3
+#define DF_DISABLE_RELOGIN		4	/* Disable relogin to device */
 
 enum qla4_work_type {
 	QLA4_EVENT_AEN,
@@ -538,7 +541,6 @@ struct scsi_qla_host {
 #define AF_82XX_FW_DUMPED		24 /* 0x01000000 */
 #define AF_8XXX_RST_OWNER		25 /* 0x02000000 */
 #define AF_82XX_DUMP_READING		26 /* 0x04000000 */
-#define AF_83XX_NO_FW_DUMP		27 /* 0x08000000 */
 #define AF_83XX_IOCB_INTR_ON		28 /* 0x10000000 */
 #define AF_83XX_MBOX_INTR_ON		29 /* 0x20000000 */
 
@@ -553,10 +555,11 @@ struct scsi_qla_host {
 #define DPC_AEN				9 /* 0x00000200 */
 #define DPC_GET_DHCP_IP_ADDR		15 /* 0x00008000 */
 #define DPC_LINK_CHANGED		18 /* 0x00040000 */
-#define DPC_RESET_ACTIVE		20 /* 0x00040000 */
-#define DPC_HA_UNRECOVERABLE		21 /* 0x00080000 ISP-82xx only*/
-#define DPC_HA_NEED_QUIESCENT		22 /* 0x00100000 ISP-82xx only*/
-#define DPC_POST_IDC_ACK		23 /* 0x00200000 */
+#define DPC_RESET_ACTIVE		20 /* 0x00100000 */
+#define DPC_HA_UNRECOVERABLE		21 /* 0x00200000 ISP-82xx only*/
+#define DPC_HA_NEED_QUIESCENT		22 /* 0x00400000 ISP-82xx only*/
+#define DPC_POST_IDC_ACK		23 /* 0x00800000 */
+#define DPC_SYSFS_DDB_EXPORT		25 /* 0x02000000 */
 
 	struct Scsi_Host *host; /* pointer to host data */
 	uint32_t tot_ddbs;
