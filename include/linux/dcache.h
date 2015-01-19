@@ -148,7 +148,7 @@ struct dentry {
 #endif
 	struct list_head d_subdirs;	/* our children */
 #ifdef __GENKSYMS__
-	struct hlist_node d_alias;
+	struct list_head d_alias;
 #else
 	/*
 	 * d_alias and d_rcu can share memory
