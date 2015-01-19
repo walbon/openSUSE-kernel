@@ -488,8 +488,8 @@ kdbm_inode(int argc, const char **argv)
 		list_entry(inode->i_sb_list.prev, struct inode, i_sb_list));
 
 	lkdb_printf(" i_dentry.nxt = 0x%p i_dentry.prv = 0x%p\n",
-		list_entry(inode->i_dentry.next, struct dentry, d_alias),
-		list_entry(inode->i_dentry.prev, struct dentry, d_alias));
+		list_entry(inode->i_dentry.next, struct dentry, d_u.d_alias),
+		list_entry(inode->i_dentry.prev, struct dentry, d_u.d_alias));
 
 	lkdb_printf(" i_sb = 0x%p i_op = 0x%p i_data = 0x%lx nrpages = %lu\n",
 					inode->i_sb, inode->i_op,
