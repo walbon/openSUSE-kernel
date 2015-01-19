@@ -138,14 +138,12 @@ struct dentry {
 	void *d_fsdata;			/* fs-specific data */
 
 	struct list_head d_lru;		/* LRU list */
-#ifdef __GENKSYMS__
 	union {
-		struct list_head d_child;
+		struct list_head d_child;	/* child of parent list */
+#ifdef __GENKSYMS__
 	 	struct rcu_head d_rcu;
-	} d_u;
-#else
-	struct list_head d_child;	/* child of parent list */
 #endif
+	} d_u;
 	struct list_head d_subdirs;	/* our children */
 #ifdef __GENKSYMS__
 	struct list_head d_alias;
@@ -156,7 +154,7 @@ struct dentry {
 	union {
 		struct list_head d_alias;	/* inode alias list */
 	 	struct rcu_head d_rcu;
-	} d_u;
+	};
 #endif
 };
 
