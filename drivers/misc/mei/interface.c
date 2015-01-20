@@ -56,6 +56,14 @@ void mei_disable_interrupts(struct mei_device *dev)
 	dev->host_hw_state &= ~H_IE;
 	mei_hcsr_set(dev);
 }
+void mei_clear_interrupts(struct mei_device *dev)
+{
+	u32 csr_reg = mei_hcsr_read(dev);
+
+	if ((csr_reg & H_IS) == H_IS)
+		mei_reg_write(dev, H_CSR, csr_reg);
+}
+
 
 /**
  * mei_hbuf_filled_slots - gets number of device filled buffer slots

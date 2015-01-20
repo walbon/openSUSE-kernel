@@ -138,15 +138,24 @@ struct dentry {
 	void *d_fsdata;			/* fs-specific data */
 
 	struct list_head d_lru;		/* LRU list */
-	/*
-	 * d_child and d_rcu can share memory
-	 */
 	union {
 		struct list_head d_child;	/* child of parent list */
+#ifdef __GENKSYMS__
 	 	struct rcu_head d_rcu;
+#endif
 	} d_u;
 	struct list_head d_subdirs;	/* our children */
-	struct list_head d_alias;	/* inode alias list */
+#ifdef __GENKSYMS__
+	struct list_head d_alias;
+#else
+	/*
+	 * d_alias and d_rcu can share memory
+	 */
+	union {
+		struct list_head d_alias;	/* inode alias list */
+	 	struct rcu_head d_rcu;
+	};
+#endif
 };
 
 #define d_lock	d_lockref.lock

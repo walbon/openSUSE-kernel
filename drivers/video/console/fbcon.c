@@ -2224,7 +2224,7 @@ static int fbcon_switch(struct vc_data *vc)
 	ops = info->fbcon_par;
 
 #ifdef CONFIG_BOOTSPLASH
-	{
+	if (!oops_in_progress) {
 		struct splash_data *prev_sd = vc->vc_splash_data;
 		splash_prepare(vc, info);
 		if (vc->vc_splash_data && vc->vc_splash_data->splash_state &&

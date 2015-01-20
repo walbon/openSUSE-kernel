@@ -552,9 +552,6 @@ send_layoutget(struct pnfs_layout_hdr *lo,
 	struct nfs_server *server = NFS_SERVER(ino);
 	struct nfs4_layoutget *lgp;
 	struct pnfs_layout_segment *lseg = NULL;
-	struct page **pages = NULL;
-	int i;
-	u32 max_resp_sz, max_pages;
 
 	dprintk("--> %s\n", __func__);
 
@@ -562,20 +559,6 @@ send_layoutget(struct pnfs_layout_hdr *lo,
 	lgp = kzalloc(sizeof(*lgp), gfp_flags);
 	if (lgp == NULL)
 		return NULL;
-
-	/* allocate pages for xdr post processing */
-	max_resp_sz = server->nfs_client->cl_session->fc_attrs.max_resp_sz;
-	max_pages = max_resp_sz >> PAGE_SHIFT;
-
-	pages = kzalloc(max_pages * sizeof(struct page *), gfp_flags);
-	if (!pages)
-		goto out_err_free;
-
-	for (i = 0; i < max_pages; i++) {
-		pages[i] = alloc_page(gfp_flags);
-		if (!pages[i])
-			goto out_err_free;
-	}
 
 	lgp->args.minlength = PAGE_CACHE_SIZE;
 	if (lgp->args.minlength > range->length)
@@ -585,39 +568,19 @@ send_layoutget(struct pnfs_layout_hdr *lo,
 	lgp->args.type = server->pnfs_curr_ld->id;
 	lgp->args.inode = ino;
 	lgp->args.ctx = get_nfs_open_context(ctx);
-	lgp->args.layout.pages = pages;
-	lgp->args.layout.pglen = max_pages * PAGE_SIZE;
 	lgp->lsegpp = &lseg;
 	lgp->gfp_flags = gfp_flags;
 
 	/* Synchronously retrieve layout information from server and
 	 * store in lseg.
 	 */
-	nfs4_proc_layoutget(lgp);
+	nfs4_proc_layoutget(lgp, gfp_flags);
 	if (!lseg) {
 		/* remember that LAYOUTGET failed and suspend trying */
 		set_bit(lo_fail_bit(range->iomode), &lo->plh_flags);
 	}
 
-	/* free xdr pages */
-	for (i = 0; i < max_pages; i++)
-		__free_page(pages[i]);
-	kfree(pages);
-
 	return lseg;
-
-out_err_free:
-	/* free any allocated xdr pages, lgp as it's not used */
-	if (pages) {
-		for (i = 0; i < max_pages; i++) {
-			if (!pages[i])
-				break;
-			__free_page(pages[i]);
-		}
-		kfree(pages);
-	}
-	kfree(lgp);
-	return NULL;
 }
 
 /* Initiates a LAYOUTRETURN(FILE) */
@@ -722,27 +685,29 @@ void pnfs_roc_set_barrier(struct inode *ino, u32 barrier)
 	spin_unlock(&ino->i_lock);
 }
 
-bool pnfs_roc_drain(struct inode *ino, u32 *barrier)
+bool pnfs_roc_drain(struct inode *ino, u32 *barrier, struct rpc_task *task)
 {
 	struct nfs_inode *nfsi = NFS_I(ino);
+	struct pnfs_layout_hdr *lo;
 	struct pnfs_layout_segment *lseg;
+	u32 current_seqid;
 	bool found = false;
 
 	spin_lock(&ino->i_lock);
 	list_for_each_entry(lseg, &nfsi->layout->plh_segs, pls_list)
 		if (test_bit(NFS_LSEG_ROC, &lseg->pls_flags)) {
+			rpc_sleep_on(&NFS_SERVER(ino)->roc_rpcwaitq, task, NULL);
 			found = true;
-			break;
+			goto out;
 		}
-	if (!found) {
-		struct pnfs_layout_hdr *lo = nfsi->layout;
-		u32 current_seqid = be32_to_cpu(lo->plh_stateid.seqid);
+	lo = nfsi->layout;
+	current_seqid = be32_to_cpu(lo->plh_stateid.seqid);
 
-		/* Since close does not return a layout stateid for use as
-		 * a barrier, we choose the worst-case barrier.
-		 */
-		*barrier = current_seqid + atomic_read(&lo->plh_outstanding);
-	}
+	/* Since close does not return a layout stateid for use as
+	 * a barrier, we choose the worst-case barrier.
+	 */
+	*barrier = current_seqid + atomic_read(&lo->plh_outstanding);
+out:
 	spin_unlock(&ino->i_lock);
 	return found;
 }

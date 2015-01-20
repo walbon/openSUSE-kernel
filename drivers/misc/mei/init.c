@@ -118,6 +118,7 @@ static void mei_reset_iamthif_params(struct mei_device *dev)
 	dev->iamthif_ioctl = false;
 	dev->iamthif_state = MEI_IAMTHIF_IDLE;
 	dev->iamthif_timer = 0;
+	dev->iamthif_stall_timer = 0;
 }
 
 /**
@@ -140,6 +141,7 @@ struct mei_device *mei_device_init(struct pci_dev *pdev)
 	INIT_LIST_HEAD(&dev->wd_cl.link);
 	INIT_LIST_HEAD(&dev->iamthif_cl.link);
 	mutex_init(&dev->device_lock);
+	init_waitqueue_head(&dev->wait_hw_ready);
 	init_waitqueue_head(&dev->wait_recvd_msg);
 	init_waitqueue_head(&dev->wait_stop_wd);
 	dev->dev_state = MEI_DEV_INITIALIZING;
@@ -247,22 +249,19 @@ out:
 	return ret;
 }
 
-
 /**
- * mei_hw_reset_release - release device from the reset
+ * mei_me_hw_reset_release - release device from the reset
  *
  * @dev: the device structure
  */
-void mei_hw_reset_release(struct mei_device *dev)
+void mei_me_hw_reset_release(struct mei_device *dev)
 {
-	u32 hcsr = mei_hcsr_read(dev);
-
-	hcsr |= H_IG;
-	hcsr &= ~H_RST;
-	hcsr &= ~H_IS;
-
-	mei_reg_write(dev, H_CSR, hcsr);
 	dev->host_hw_state = mei_hcsr_read(dev);
+
+	dev->host_hw_state &= ~H_RST;
+	dev->host_hw_state |= H_IG;
+
+	mei_hcsr_set(dev);
 }
 
 /**
@@ -273,16 +272,51 @@ void mei_hw_reset_release(struct mei_device *dev)
  */
 static void mei_hw_reset(struct mei_device *dev, int interrupts_enabled)
 {
-	dev->host_hw_state |= (H_RST | H_IG);
+	dev->host_hw_state |= H_RST | H_IG | H_IS;
 
 	if (interrupts_enabled)
 		mei_enable_interrupts(dev);
 	else
 		mei_disable_interrupts(dev);
 
-	if (dev->dev_state == MEI_DEV_POWER_DOWN)
-		mei_hw_reset_release(dev);
+	/*
+	 * Host reads the H_CSR once to ensure that the
+	 * posted write to H_CSR completes.
+	 */
+	dev->host_hw_state  = mei_hcsr_read(dev);
+
+	if ((dev->host_hw_state & H_RST) == 0)
+		dev_warn(&dev->pdev->dev, "H_RST is not set = 0x%08X",
+			dev->host_hw_state);
+
+	if ((dev->host_hw_state & H_RDY) == H_RDY)
+		dev_warn(&dev->pdev->dev, "H_RDY is not cleared 0x%08X",
+			dev->host_hw_state);
 }
+
+
+/**
+ * mei_me_hw_ready_wait - wait until the me(hw) has turned ready
+ * or timeout is reached
+ *
+ * @dev: mei device
+ * Return: 0 on success, error otherwise
+ */
+static int mei_hw_ready_wait(struct mei_device *dev)
+{
+	mutex_unlock(&dev->device_lock);
+	wait_event_timeout(dev->wait_hw_ready,
+			   dev->recvd_hw_ready,
+			   msecs_to_jiffies(2 * MSEC_PER_SEC));
+	mutex_lock(&dev->device_lock);
+	if (!dev->recvd_hw_ready) {
+		dev_err(&dev->pdev->dev, "wait hw ready failed\n");
+		return -ETIME;
+	}
+	dev->recvd_hw_ready = false;
+	return 0;
+}
+
 
 /**
  * mei_reset - resets host and fw.
@@ -315,12 +349,25 @@ void mei_reset(struct mei_device *dev, int interrupts_enabled)
 
 	mei_hw_reset(dev, interrupts_enabled);
 
+	if (interrupts_enabled)
+		mei_hw_ready_wait(dev);
+
+	mei_me_hw_reset_release(dev);
+
 	dev_dbg(&dev->pdev->dev, "currently saved host_hw_state = 0x%08x.\n",
 	    dev->host_hw_state);
 
 	dev->need_reset = false;
 
-	if (dev->dev_state != MEI_DEV_INITIALIZING) {
+	dev->reset_count++;
+	if (dev->reset_count > MEI_MAX_CONSEC_RESET) {
+		dev_err(&dev->pdev->dev, "reset: reached maximal consecutive resets: disabling the device\n");
+		dev->dev_state = MEI_DEV_DISABLED;
+		return;
+	}
+
+	if (dev->dev_state != MEI_DEV_INITIALIZING &&
+	    dev->dev_state != MEI_DEV_POWER_UP) {
 		if (dev->dev_state != MEI_DEV_DISABLED &&
 		    dev->dev_state != MEI_DEV_POWER_DOWN)
 			dev->dev_state = MEI_DEV_RESETING;
@@ -343,6 +390,9 @@ void mei_reset(struct mei_device *dev, int interrupts_enabled)
 		mei_reset_iamthif_params(dev);
 		dev->extra_write_index = 0;
 	}
+
+	/* we're already in reset, cancel the init timer */
+	dev->init_clients_timer = 0;
 
 	dev->me_clients_num = 0;
 	dev->rd_msg_hdr = 0;
@@ -372,6 +422,17 @@ void mei_reset(struct mei_device *dev, int interrupts_enabled)
 		list_del(&cb_pos->cb_list);
 		mei_free_cb_private(cb_pos);
 	}
+	if (!interrupts_enabled)
+		return;
+
+	dev->host_hw_state |= (H_IE | H_IG | H_RDY);
+	mei_hcsr_set(dev);
+	dev->dev_state = MEI_DEV_INIT_CLIENTS;
+	dev_dbg(&dev->pdev->dev, "link is established start sending messages.\n");
+	/* link is established
+	 * start sending messages.
+	 */
+	mei_host_start_message(dev);
 }
 
 

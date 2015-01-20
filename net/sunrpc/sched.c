@@ -95,6 +95,39 @@ __rpc_add_timer(struct rpc_wait_queue *queue, struct rpc_task *task)
 	list_add(&task->u.tk_wait.timer_list, &queue->timer_list.list);
 }
 
+static void rpc_rotate_queue_owner(struct rpc_wait_queue *queue)
+{
+	struct list_head *q = &queue->tasks[queue->priority];
+	struct rpc_task *task;
+
+	if (!list_empty(q)) {
+		task = list_first_entry(q, struct rpc_task, u.tk_wait.list);
+		if (task->tk_owner == queue->owner)
+			list_move_tail(&task->u.tk_wait.list, q);
+	}
+}
+
+static void rpc_set_waitqueue_priority(struct rpc_wait_queue *queue, int priority)
+{
+	if (queue->priority != priority) {
+		/* Fairness: rotate the list when changing priority */
+		rpc_rotate_queue_owner(queue);
+		queue->priority = priority;
+	}
+}
+
+static void rpc_set_waitqueue_owner(struct rpc_wait_queue *queue, pid_t pid)
+{
+	queue->owner = pid;
+	queue->nr = RPC_BATCH_COUNT;
+}
+
+static void rpc_reset_waitqueue_priority(struct rpc_wait_queue *queue)
+{
+	rpc_set_waitqueue_priority(queue, queue->maxpriority);
+	rpc_set_waitqueue_owner(queue, 0);
+}
+
 /*
  * Add new request to a priority queue.
  */
@@ -106,9 +139,11 @@ static void __rpc_add_wait_queue_priority(struct rpc_wait_queue *queue,
 	struct rpc_task *t;
 
 	INIT_LIST_HEAD(&task->u.tk_wait.links);
-	q = &queue->tasks[queue_priority];
 	if (unlikely(queue_priority > queue->maxpriority))
-		q = &queue->tasks[queue->maxpriority];
+		queue_priority = queue->maxpriority;
+	if (queue_priority > queue->priority)
+		rpc_set_waitqueue_priority(queue, queue_priority);
+	q = &queue->tasks[queue_priority];
 	list_for_each_entry(t, q, u.tk_wait.list) {
 		if (t->tk_owner == task->tk_owner) {
 			list_add_tail(&task->u.tk_wait.list, &t->u.tk_wait.links);
@@ -175,24 +210,6 @@ static void __rpc_remove_wait_queue(struct rpc_wait_queue *queue, struct rpc_tas
 	queue->qlen--;
 	dprintk("RPC: %5u removed from queue %p \"%s\"\n",
 			task->tk_pid, queue, rpc_qname(queue));
-}
-
-static inline void rpc_set_waitqueue_priority(struct rpc_wait_queue *queue, int priority)
-{
-	queue->priority = priority;
-	queue->count = 1 << (priority * 2);
-}
-
-static inline void rpc_set_waitqueue_owner(struct rpc_wait_queue *queue, pid_t pid)
-{
-	queue->owner = pid;
-	queue->nr = RPC_BATCH_COUNT;
-}
-
-static inline void rpc_reset_waitqueue_priority(struct rpc_wait_queue *queue)
-{
-	rpc_set_waitqueue_priority(queue, queue->maxpriority);
-	rpc_set_waitqueue_owner(queue, 0);
 }
 
 static void __rpc_init_priority_wait_queue(struct rpc_wait_queue *queue, const char *qname, unsigned char nr_queues)
@@ -452,8 +469,7 @@ static struct rpc_task *__rpc_find_next_queued_priority(struct rpc_wait_queue *q
 		/*
 		 * Check if we need to switch queues.
 		 */
-		if (--queue->count)
-			goto new_owner;
+		goto new_owner;
 	}
 
 	/*

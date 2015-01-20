@@ -728,6 +728,7 @@ static void mei_irq_thread_read_bus_message(struct mei_device *dev,
 					 */
 					bitmap_set(dev->host_clients_map, 0, 3);
 					dev->dev_state = MEI_DEV_ENABLED;
+					dev->reset_count = 0;
 
 					/* if wd initialization fails, initialization the AMTHI client,
 					 * otherwise the AMTHI client will be initialized after the WD client connect response
@@ -1434,8 +1435,9 @@ void mei_timer(struct work_struct *work)
 		}
 	}
 out:
-	schedule_delayed_work(&dev->timer_work, 2 * HZ);
-	mutex_unlock(&dev->device_lock);
+	 if (dev->dev_state != MEI_DEV_DISABLED)
+		schedule_delayed_work(&dev->timer_work, 2 * HZ);
+	 mutex_unlock(&dev->device_lock);
 }
 
 /**
@@ -1486,19 +1488,13 @@ irqreturn_t mei_interrupt_thread_handler(int irq, void *dev_id)
 	if ((dev->host_hw_state & H_RDY) == 0) {
 		if ((dev->me_hw_state & ME_RDY_HRA) == ME_RDY_HRA) {
 			dev_dbg(&dev->pdev->dev, "we need to start the dev.\n");
-			dev->host_hw_state |= (H_IE | H_IG | H_RDY);
-			mei_hcsr_set(dev);
-			dev->dev_state = MEI_DEV_INIT_CLIENTS;
-			dev_dbg(&dev->pdev->dev, "link is established start sending messages.\n");
-			/* link is established
-			 * start sending messages.
-			 */
-			mei_host_start_message(dev);
+			dev->recvd_hw_ready = true;
+			wake_up(&dev->wait_hw_ready);
+
 			mutex_unlock(&dev->device_lock);
 			return IRQ_HANDLED;
 		} else {
-			dev_dbg(&dev->pdev->dev, "mei: F/W reset complete.\n");
-			mei_hw_reset_release(dev);
+			dev_dbg(&dev->pdev->dev, "Reset Completed.\n");
 			mutex_unlock(&dev->device_lock);
 			return IRQ_HANDLED;
 		}
