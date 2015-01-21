@@ -29,6 +29,7 @@
 #include <linux/smp.h>
 #include <linux/sched.h>
 #include <linux/cpufreq.h>
+#include <linux/delay.h>
 #include <linux/compiler.h>
 #include <linux/slab.h>
 
@@ -105,7 +106,10 @@ static u8 OSC_UUID[16] = {0x9F, 0x2C, 0x9B, 0x63, 0x91, 0x70, 0x1f, 0x49,
 struct pcc_cpu {
 	u32 input_offset;
 	u32 output_offset;
+	u32 get_freq_retry;
 };
+
+static u32 min_time_between_cmds = 0;
 
 static struct pcc_cpu __percpu *pcc_cpu_info;
 
@@ -186,6 +190,15 @@ static unsigned int pcc_get_freq(unsigned int cpu)
 			" capped at %d\n", cpu, curr_freq);
 	}
 
+	if (curr_freq == 0 && pcc_cpu_data->get_freq_retry < 2) {
+		pcc_cpu_data->get_freq_retry++;
+		spin_unlock(&pcc_lock);
+		msleep(min_time_between_cmds / 1000);
+		curr_freq = pcc_get_freq(cpu);
+		return curr_freq;
+	}
+
+	pcc_cpu_data->get_freq_retry = 0;
 	spin_unlock(&pcc_lock);
 	return curr_freq;
 
@@ -524,6 +537,8 @@ static int __init pcc_cpufreq_probe(void)
 		ret = -ENOMEM;
 		goto pcch_free;
 	}
+
+	min_time_between_cmds = ioread32(&pcch_hdr->minimum_time);
 
 	printk(KERN_DEBUG "pcc-cpufreq: (v%s) driver loaded with frequency"
 	       " limits: %d MHz, %d MHz\n", PCC_VERSION,
