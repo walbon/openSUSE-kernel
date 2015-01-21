@@ -383,12 +383,6 @@ _GLOBAL(ret_from_fork)
 	li	r3,0
 	b	syscall_exit
 
-	.section	".toc","aw"
-DSCR_DEFAULT:
-	.tc dscr_default[TC],dscr_default
-
-	.section	".text"
-
 /*
  * This routine switches between two different tasks.  The process
  * state of one is saved on its kernel stack.  Then the state
@@ -445,6 +439,27 @@ END_FTR_SECTION_IFSET(CPU_FTR_DSCR)
 	mfcr	r23
 	std	r23,_CCR(r1)
 	std	r1,KSP(r3)	/* Set old stack pointer */
+
+#ifdef CONFIG_PPC_BOOK3S_64
+BEGIN_FTR_SECTION
+	/*
+	 * Back up the TAR across context switches.  Note that the TAR is not
+	 * available for use in the kernel.  (To provide this, the TAR should
+	 * be backed up/restored on exception entry/exit instead, and be in
+	 * pt_regs.  FIXME, this should be in pt_regs anyway (for debug).)
+	 */
+	mfspr	r0,SPRN_TAR
+	std	r0,THREAD_TAR(r3)
+
+	/* Event based branch registers */
+	mfspr	r0, SPRN_BESCR
+	std	r0, THREAD_BESCR(r3)
+	mfspr	r0, SPRN_EBBHR
+	std	r0, THREAD_EBBHR(r3)
+	mfspr	r0, SPRN_EBBRR
+	std	r0, THREAD_EBBRR(r3)
+END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
+#endif
 
 #ifdef CONFIG_SMP
 	/* We need a sync somewhere here to make sure that if the
@@ -528,6 +543,21 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	mr	r1,r8		/* start using new stack pointer */
 	std	r7,PACAKSAVE(r13)
 
+#ifdef CONFIG_PPC_BOOK3S_64
+BEGIN_FTR_SECTION
+	/* Event based branch registers */
+	ld	r0, THREAD_BESCR(r4)
+	mtspr	SPRN_BESCR, r0
+	ld	r0, THREAD_EBBHR(r4)
+	mtspr	SPRN_EBBHR, r0
+	ld	r0, THREAD_EBBRR(r4)
+	mtspr	SPRN_EBBRR, r0
+
+	ld	r0,THREAD_TAR(r4)
+	mtspr	SPRN_TAR,r0
+END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
+#endif
+
 #ifdef CONFIG_ALTIVEC
 BEGIN_FTR_SECTION
 	ld	r0,THREAD_VRSAVE(r4)
@@ -537,12 +567,17 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #ifdef CONFIG_PPC64
 BEGIN_FTR_SECTION
 	lwz	r6,THREAD_DSCR_INHERIT(r4)
-	ld	r7,DSCR_DEFAULT@toc(2)
 	ld	r0,THREAD_DSCR(r4)
 	cmpwi	r6,0
 	bne	1f
-	ld	r0,0(r7)
-1:	cmpd	r0,r25
+	ld	r0,PACA_DSCR(r13)
+1:
+BEGIN_FTR_SECTION_NESTED(70)
+	mfspr   r8, SPRN_FSCR
+	rldimi  r8, r6, FSCR_DSCR_LG, (63 - FSCR_DSCR_LG)
+	mtspr   SPRN_FSCR, r8
+END_FTR_SECTION_NESTED(CPU_FTR_ARCH_207S, CPU_FTR_ARCH_207S, 70)
+	cmpd    r0,r25
 	beq	2f
 	mtspr	SPRN_DSCR,r0
 2:

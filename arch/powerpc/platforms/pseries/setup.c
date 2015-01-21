@@ -418,13 +418,50 @@ static int __init pSeries_init_panel(void)
 }
 machine_arch_initcall(pseries, pSeries_init_panel);
 
+/*
+ * pseries_set_dawr
+ *
+ * POWER8 systems do not have the DABR or DABRX registers
+ * but instead they have DAWR and DAWRX registers. This
+ * function emulates H_SET_DABR or H_SET_XDABR hcall access
+ * through the new hcall H_SET_MODE.
+ */
+static int pseries_set_dawr(unsigned long dabr)
+{
+	unsigned long dawr = dabr, dawrx = 0;
+
+	/* DAWR privillege bits */
+	dawrx |= DAWRX_KERNEL;
+	dawrx |= DAWRX_USER;
+
+	/* DAWR read, write and translation bits */
+	if (dabr & DABR_DATA_READ)
+		dawrx |= DAWRX_DR;
+
+	if (dabr & DABR_DATA_WRITE)
+		dawrx |= DAWRX_DW;
+
+	if (dabr & DABR_TRANSLATION)
+		dawrx |= DAWRX_WT;
+	else
+		dawrx |= DAWRX_WTI;
+	return plpar_set_mode(0, H_SET_MODE_RESOURCE_SET_DAWR, dawr, dawrx);
+}
+
 static int pseries_set_dabr(unsigned long dabr)
 {
+	if (firmware_has_feature(FW_FEATURE_SET_MODE) &&
+				!strcmp(cur_cpu_spec->platform, "power8"))
+		return pseries_set_dawr(dabr);
 	return plpar_hcall_norets(H_SET_DABR, dabr);
 }
 
 static int pseries_set_xdabr(unsigned long dabr)
 {
+	if (firmware_has_feature(FW_FEATURE_SET_MODE) &&
+				!strcmp(cur_cpu_spec->platform, "power8"))
+		return pseries_set_dawr(dabr);
+
 	/* We want to catch accesses from kernel and userspace */
 	return plpar_hcall_norets(H_SET_XDABR, dabr,
 			H_DABRX_KERNEL | H_DABRX_USER);

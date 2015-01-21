@@ -263,6 +263,9 @@ vsx_unavailable_pSeries_1:
 	. = 0xf40
 	b	vsx_unavailable_pSeries
 
+	. = 0xf60
+	b	facility_unavailable_pSeries
+
 #ifdef CONFIG_CBE_RAS
 	STD_EXCEPTION_HV(0x1200, 0x1202, cbe_system_error)
 #endif /* CONFIG_CBE_RAS */
@@ -289,6 +292,7 @@ vsx_unavailable_pSeries_1:
 	STD_EXCEPTION_PSERIES(., 0xf00, performance_monitor)
 	STD_EXCEPTION_PSERIES(., 0xf20, altivec_unavailable)
 	STD_EXCEPTION_PSERIES(., 0xf40, vsx_unavailable)
+	STD_EXCEPTION_PSERIES(., 0xf60, facility_unavailable)
 
 /*
  * An interrupt came in while soft-disabled; clear EE in SRR1,
@@ -780,6 +784,15 @@ END_FTR_SECTION_IFSET(CPU_FTR_VSX)
 	addi	r3,r1,STACK_FRAME_OVERHEAD
 	ENABLE_INTS
 	bl	.vsx_unavailable_exception
+	b	.ret_from_except
+
+	.align	7
+	.globl facility_unavailable_common
+facility_unavailable_common:
+	EXCEPTION_PROLOG_COMMON(0xf60, PACA_EXGEN)
+	bl	.save_nvgprs
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	.facility_unavailable_exception
 	b	.ret_from_except
 
 	.align	7

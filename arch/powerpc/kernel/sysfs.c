@@ -109,16 +109,18 @@ void ppc_enable_pmcs(void)
 }
 EXPORT_SYMBOL(ppc_enable_pmcs);
 
-#define SYSFS_PMCSETUP(NAME, ADDRESS) \
+#define __SYSFS_SPRSETUP_READ_WRITE(NAME, ADDRESS, EXTRA) \
 static void read_##NAME(void *val) \
 { \
 	*(unsigned long *)val = mfspr(ADDRESS);	\
 } \
 static void write_##NAME(void *val) \
 { \
-	ppc_enable_pmcs(); \
+	EXTRA; \
 	mtspr(ADDRESS, *(unsigned long *)val);	\
-} \
+}
+
+#define __SYSFS_SPRSETUP_SHOW_STORE(NAME) \
 static ssize_t show_##NAME(struct sys_device *dev, \
 			struct sysdev_attribute *attr, \
 			char *buf) \
@@ -141,6 +143,15 @@ static ssize_t __used \
 	return count; \
 }
 
+#define SYSFS_PMCSETUP(NAME, ADDRESS) \
+	__SYSFS_SPRSETUP_READ_WRITE(NAME, ADDRESS, ppc_enable_pmcs()) \
+	__SYSFS_SPRSETUP_SHOW_STORE(NAME)
+#define SYSFS_SPRSETUP(NAME, ADDRESS) \
+	__SYSFS_SPRSETUP_READ_WRITE(NAME, ADDRESS, ) \
+	__SYSFS_SPRSETUP_SHOW_STORE(NAME)
+
+#define SYSFS_SPRSETUP_SHOW_STORE(NAME) \
+	__SYSFS_SPRSETUP_SHOW_STORE(NAME)
 
 /* Let's define all possible registers, we'll only hook up the ones
  * that are implemented on the current processor
@@ -176,30 +187,38 @@ SYSFS_PMCSETUP(pmc7, SPRN_PMC7);
 SYSFS_PMCSETUP(pmc8, SPRN_PMC8);
 
 SYSFS_PMCSETUP(mmcra, SPRN_MMCRA);
-SYSFS_PMCSETUP(purr, SPRN_PURR);
-SYSFS_PMCSETUP(spurr, SPRN_SPURR);
-SYSFS_PMCSETUP(dscr, SPRN_DSCR);
+SYSFS_SPRSETUP(purr, SPRN_PURR);
+SYSFS_SPRSETUP(spurr, SPRN_SPURR);
+SYSFS_SPRSETUP(pir, SPRN_PIR);
 
 static SYSDEV_ATTR(mmcra, 0600, show_mmcra, store_mmcra);
 static SYSDEV_ATTR(spurr, 0600, show_spurr, NULL);
-static SYSDEV_ATTR(dscr, 0600, show_dscr, store_dscr);
 static SYSDEV_ATTR(purr, 0600, show_purr, store_purr);
+static SYSDEV_ATTR(pir, 0400, show_pir, NULL);
 
-unsigned long dscr_default = 0;
-EXPORT_SYMBOL(dscr_default);
+static unsigned long dscr_default;
+
+static void read_dscr(void *val)
+{
+	*(unsigned long *)val = get_paca()->dscr_default;
+}
+
+static void write_dscr(void *val)
+{
+	get_paca()->dscr_default = *(unsigned long *)val;
+	if (!current->thread.dscr_inherit) {
+		current->thread.dscr = *(unsigned long *)val;
+		mtspr(SPRN_DSCR, *(unsigned long *)val);
+	}
+}
+
+SYSFS_SPRSETUP_SHOW_STORE(dscr);
+static SYSDEV_ATTR(dscr, 0600, show_dscr, store_dscr);
 
 static ssize_t show_dscr_default(struct sysdev_class *class,
 		struct sysdev_class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%lx\n", dscr_default);
-}
-
-static void update_dscr(void *dummy)
-{
-	if (!current->thread.dscr_inherit) {
-		current->thread.dscr = dscr_default;
-		mtspr(SPRN_DSCR, dscr_default);
-	}
 }
 
 static ssize_t __used store_dscr_default(struct sysdev_class *class,
@@ -214,7 +233,7 @@ static ssize_t __used store_dscr_default(struct sysdev_class *class,
 		return -EINVAL;
 	dscr_default = val;
 
-	on_each_cpu(update_dscr, NULL, 1);
+	on_each_cpu(write_dscr, &val, 1);
 
 	return count;
 }
@@ -239,34 +258,34 @@ SYSFS_PMCSETUP(pa6t_pmc3, SPRN_PA6T_PMC3);
 SYSFS_PMCSETUP(pa6t_pmc4, SPRN_PA6T_PMC4);
 SYSFS_PMCSETUP(pa6t_pmc5, SPRN_PA6T_PMC5);
 #ifdef CONFIG_DEBUG_KERNEL
-SYSFS_PMCSETUP(hid0, SPRN_HID0);
-SYSFS_PMCSETUP(hid1, SPRN_HID1);
-SYSFS_PMCSETUP(hid4, SPRN_HID4);
-SYSFS_PMCSETUP(hid5, SPRN_HID5);
-SYSFS_PMCSETUP(ima0, SPRN_PA6T_IMA0);
-SYSFS_PMCSETUP(ima1, SPRN_PA6T_IMA1);
-SYSFS_PMCSETUP(ima2, SPRN_PA6T_IMA2);
-SYSFS_PMCSETUP(ima3, SPRN_PA6T_IMA3);
-SYSFS_PMCSETUP(ima4, SPRN_PA6T_IMA4);
-SYSFS_PMCSETUP(ima5, SPRN_PA6T_IMA5);
-SYSFS_PMCSETUP(ima6, SPRN_PA6T_IMA6);
-SYSFS_PMCSETUP(ima7, SPRN_PA6T_IMA7);
-SYSFS_PMCSETUP(ima8, SPRN_PA6T_IMA8);
-SYSFS_PMCSETUP(ima9, SPRN_PA6T_IMA9);
-SYSFS_PMCSETUP(imaat, SPRN_PA6T_IMAAT);
-SYSFS_PMCSETUP(btcr, SPRN_PA6T_BTCR);
-SYSFS_PMCSETUP(pccr, SPRN_PA6T_PCCR);
-SYSFS_PMCSETUP(rpccr, SPRN_PA6T_RPCCR);
-SYSFS_PMCSETUP(der, SPRN_PA6T_DER);
-SYSFS_PMCSETUP(mer, SPRN_PA6T_MER);
-SYSFS_PMCSETUP(ber, SPRN_PA6T_BER);
-SYSFS_PMCSETUP(ier, SPRN_PA6T_IER);
-SYSFS_PMCSETUP(sier, SPRN_PA6T_SIER);
-SYSFS_PMCSETUP(siar, SPRN_PA6T_SIAR);
-SYSFS_PMCSETUP(tsr0, SPRN_PA6T_TSR0);
-SYSFS_PMCSETUP(tsr1, SPRN_PA6T_TSR1);
-SYSFS_PMCSETUP(tsr2, SPRN_PA6T_TSR2);
-SYSFS_PMCSETUP(tsr3, SPRN_PA6T_TSR3);
+SYSFS_SPRSETUP(hid0, SPRN_HID0);
+SYSFS_SPRSETUP(hid1, SPRN_HID1);
+SYSFS_SPRSETUP(hid4, SPRN_HID4);
+SYSFS_SPRSETUP(hid5, SPRN_HID5);
+SYSFS_SPRSETUP(ima0, SPRN_PA6T_IMA0);
+SYSFS_SPRSETUP(ima1, SPRN_PA6T_IMA1);
+SYSFS_SPRSETUP(ima2, SPRN_PA6T_IMA2);
+SYSFS_SPRSETUP(ima3, SPRN_PA6T_IMA3);
+SYSFS_SPRSETUP(ima4, SPRN_PA6T_IMA4);
+SYSFS_SPRSETUP(ima5, SPRN_PA6T_IMA5);
+SYSFS_SPRSETUP(ima6, SPRN_PA6T_IMA6);
+SYSFS_SPRSETUP(ima7, SPRN_PA6T_IMA7);
+SYSFS_SPRSETUP(ima8, SPRN_PA6T_IMA8);
+SYSFS_SPRSETUP(ima9, SPRN_PA6T_IMA9);
+SYSFS_SPRSETUP(imaat, SPRN_PA6T_IMAAT);
+SYSFS_SPRSETUP(btcr, SPRN_PA6T_BTCR);
+SYSFS_SPRSETUP(pccr, SPRN_PA6T_PCCR);
+SYSFS_SPRSETUP(rpccr, SPRN_PA6T_RPCCR);
+SYSFS_SPRSETUP(der, SPRN_PA6T_DER);
+SYSFS_SPRSETUP(mer, SPRN_PA6T_MER);
+SYSFS_SPRSETUP(ber, SPRN_PA6T_BER);
+SYSFS_SPRSETUP(ier, SPRN_PA6T_IER);
+SYSFS_SPRSETUP(sier, SPRN_PA6T_SIER);
+SYSFS_SPRSETUP(siar, SPRN_PA6T_SIAR);
+SYSFS_SPRSETUP(tsr0, SPRN_PA6T_TSR0);
+SYSFS_SPRSETUP(tsr1, SPRN_PA6T_TSR1);
+SYSFS_SPRSETUP(tsr2, SPRN_PA6T_TSR2);
+SYSFS_SPRSETUP(tsr3, SPRN_PA6T_TSR3);
 #endif /* CONFIG_DEBUG_KERNEL */
 #endif /* HAS_PPC_PMC_PA6T */
 
@@ -404,6 +423,9 @@ static void __cpuinit register_cpu_online(unsigned int cpu)
 
 	if (cpu_has_feature(CPU_FTR_DSCR))
 		sysdev_create_file(s, &attr_dscr);
+
+	if (cpu_has_feature(CPU_FTR_PPCAS_ARCH_V2))
+		sysdev_create_file(s, &attr_pir);
 #endif /* CONFIG_PPC64 */
 
 	cacheinfo_cpu_online(cpu);
@@ -474,6 +496,9 @@ static void unregister_cpu_online(unsigned int cpu)
 
 	if (cpu_has_feature(CPU_FTR_DSCR))
 		sysdev_remove_file(s, &attr_dscr);
+
+	if (cpu_has_feature(CPU_FTR_PPCAS_ARCH_V2))
+		sysdev_remove_file(s, &attr_pir);
 #endif /* CONFIG_PPC64 */
 
 	cacheinfo_cpu_offline(cpu);

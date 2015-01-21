@@ -115,6 +115,13 @@ int main(void)
 	DEFINE(THREAD_KVM_SVCPU, offsetof(struct thread_struct, kvm_shadow_vcpu));
 #endif
 
+#ifdef CONFIG_PPC_BOOK3S_64
+	DEFINE(THREAD_TAR, offsetof(struct thread_struct, tar));
+	DEFINE(THREAD_BESCR, offsetof(struct thread_struct, bescr));
+	DEFINE(THREAD_EBBHR, offsetof(struct thread_struct, ebbhr));
+	DEFINE(THREAD_EBBRR, offsetof(struct thread_struct, ebbrr));
+#endif
+
 	DEFINE(TI_FLAGS, offsetof(struct thread_info, flags));
 	DEFINE(TI_LOCAL_FLAGS, offsetof(struct thread_info, local_flags));
 	DEFINE(TI_PREEMPT, offsetof(struct thread_info, preempt_count));
@@ -195,6 +202,7 @@ int main(void)
 	DEFINE(PACAEMERGSP, offsetof(struct paca_struct, emergency_sp));
 	DEFINE(PACAHWCPUID, offsetof(struct paca_struct, hw_cpu_id));
 	DEFINE(PACAKEXECSTATE, offsetof(struct paca_struct, kexec_state));
+	DEFINE(PACA_DSCR, offsetof(struct paca_struct, dscr_default));
 	DEFINE(PACA_STARTTIME, offsetof(struct paca_struct, starttime));
 	DEFINE(PACA_STARTTIME_USER, offsetof(struct paca_struct, starttime_user));
 	DEFINE(PACA_USER_TIME, offsetof(struct paca_struct, user_time));

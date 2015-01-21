@@ -198,6 +198,13 @@
 #define   CTRL_TE	0x00c00000	/* thread enable */
 #define   CTRL_RUNLATCH	0x1
 #define SPRN_DABR	0x3F5	/* Data Address Breakpoint Register */
+#define   DAWRX_USER    __MASK(0)
+#define   DAWRX_KERNEL  __MASK(1)
+#define   DAWRX_HYP     __MASK(2)
+#define   DAWRX_WTI     __MASK(3)
+#define   DAWRX_WT      __MASK(4)
+#define   DAWRX_DR      __MASK(5)
+#define   DAWRX_DW      __MASK(6)
 #define   DABR_TRANSLATION	(1UL << 2)
 #define   DABR_DATA_WRITE	(1UL << 1)
 #define   DABR_DATA_READ	(1UL << 0)
@@ -228,7 +235,13 @@
 #define SPRN_HRMOR	0x139	/* Real mode offset register */
 #define SPRN_HSRR0	0x13A	/* Hypervisor Save/Restore 0 */
 #define SPRN_HSRR1	0x13B	/* Hypervisor Save/Restore 1 */
+#define SPRN_FSCR	0x099	/* Facility Status & Control Register */
+#define   FSCR_TAR	(1 << (63-55)) /* Enable Target Address Register */
+#define   FSCR_EBB	(1 << (63-56)) /* Enable Event Based Branching */
+#define   FSCR_DSCR	(1 << (63-61)) /* Enable Data Stream Control Register */
+#define SPRN_TAR	0x32f	/* Target Address Register */
 #define SPRN_LPCR	0x13E	/* LPAR Control Register */
+#define   HFSCR_EBB	(1 << (63-56)) /* Enable Event Based Branching */
 #define   LPCR_VPM0	(1ul << (63-0))
 #define   LPCR_VPM1	(1ul << (63-1))
 #define   LPCR_ISL	(1ul << (63-2))
@@ -238,6 +251,8 @@
 #define   LPCR_VRMA_LP1	(1ul << (63-16))
 #define   LPCR_RMLS    0x1C000000      /* impl dependent rmo limit sel */
 #define   LPCR_ILE     0x02000000      /* !HV irqs set MSR:LE */
+#define   LPCR_AIL_0	0x00000000	/* MMU off exception offset 0x0 */
+#define   LPCR_AIL_3	0x01800000	/* MMU on exception offset 0xc00...4xxx */
 #define   LPCR_PECE	0x00007000	/* powersave exit cause enable */
 #define     LPCR_PECE0	0x00004000	/* ext. exceptions can cause exit */
 #define     LPCR_PECE1	0x00002000	/* decrementer can cause exit */
@@ -272,6 +287,17 @@
 #define SPRN_DBAT7L	0x23F	/* Data BAT 7 Lower Register */
 #define SPRN_DBAT7U	0x23E	/* Data BAT 7 Upper Register */
 #define	SPRN_PPR	0x380	/* SMT Thread status Register */
+
+/* HFSCR and FSCR bit numbers are the same */
+#define FSCR_TAR_LG	8	/* Enable Target Address Register */
+#define FSCR_EBB_LG	7	/* Enable Event Based Branching */
+#define FSCR_TM_LG	5	/* Enable Transactional Memory */
+#define FSCR_BHRB_LG	4	/* Enable Branch History Rolling Buffer*/
+#define FSCR_PM_LG	3	/* Enable prob/priv access to PMU SPRs */
+#define FSCR_DSCR_LG	2	/* Enable Data Stream Control Register */
+#define FSCR_VECVSX_LG	1	/* Enable VMX/VSX registers */
+#define FSCR_FP_LG	0	/* Enable Floating Point registers */
+#define SPRN_FSCR	0x099	/* Facility Status & Control Register */
 
 #define SPRN_DEC	0x016		/* Decrement Register */
 #define SPRN_DER	0x095		/* Debug Enable Regsiter */
@@ -582,6 +608,9 @@
 
 #define   POWER7P_MMCRA_SIAR_VALID 0x10000000  /* P7+ SIAR contents valid */
 #define   POWER7P_MMCRA_SDAR_VALID 0x08000000  /* P7+ SDAR contents valid */
+#define SPRN_EBBHR	804	/* Event based branch handler register */
+#define SPRN_EBBRR	805	/* Event based branch return register */
+#define SPRN_BESCR	806	/* Branch event status and control register */
 
 #define SPRN_PMC1	787
 #define SPRN_PMC2	788
@@ -1006,6 +1035,8 @@
 #define PV_970MP	0x0044
 #define PV_970GX	0x0045
 #define PVR_POWER7p     0x004A
+#define PVR_POWER8E	0x004B
+#define PVR_POWER8	0x004D
 #define PV_BE		0x0070
 #define PV_PA6T		0x0090
 

@@ -171,6 +171,17 @@ int die(const char *str, struct pt_regs *regs, long err)
 	if (in_interrupt())
 		panic("Fatal exception in interrupt");
 
+
+	if (status == FSCR_DSCR_LG) {
+		/* User is acessing the DSCR.  Set the inherit bit and allow
+		 * the user to set it directly in future by setting via the
+		 * FSCR DSCR bit. We always leave HFSCR DSCR set.
+		 */
+		current->thread.dscr_inherit = 1;
+		mtspr(SPRN_FSCR,  value | FSCR_DSCR);
+		return;
+	}
+
 	if (panic_on_oops)
 		panic("Fatal exception");
 
@@ -926,7 +937,10 @@ static int emulate_instruction(struct pt_regs *regs)
 
 #ifdef CONFIG_PPC64
 	/* Emulate the mfspr rD, DSCR. */
-	if (((instword & PPC_INST_MFSPR_DSCR_MASK) == PPC_INST_MFSPR_DSCR) &&
+	if ((((instword & PPC_INST_MFSPR_DSCR_USER_MASK) ==
+		PPC_INST_MFSPR_DSCR_USER) ||
+	     ((instword & PPC_INST_MFSPR_DSCR_MASK) ==
+		PPC_INST_MFSPR_DSCR)) &&
 			cpu_has_feature(CPU_FTR_DSCR)) {
 		PPC_WARN_EMULATED(mfdscr, regs);
 		rd = (instword >> 21) & 0x1f;
@@ -934,7 +948,10 @@ static int emulate_instruction(struct pt_regs *regs)
 		return 0;
 	}
 	/* Emulate the mtspr DSCR, rD. */
-	if (((instword & PPC_INST_MTSPR_DSCR_MASK) == PPC_INST_MTSPR_DSCR) &&
+	if ((((instword & PPC_INST_MTSPR_DSCR_USER_MASK) ==
+		PPC_INST_MTSPR_DSCR_USER) ||
+	     ((instword & PPC_INST_MTSPR_DSCR_MASK) ==
+		PPC_INST_MTSPR_DSCR)) &&
 			cpu_has_feature(CPU_FTR_DSCR)) {
 		PPC_WARN_EMULATED(mtdscr, regs);
 		rd = (instword >> 21) & 0x1f;
@@ -1119,6 +1136,46 @@ void vsx_unavailable_exception(struct pt_regs *regs)
 	die("Unrecoverable VSX Unavailable Exception", regs, SIGABRT);
 }
 
+#ifdef CONFIG_PPC64
+void facility_unavailable_exception(struct pt_regs *regs)
+{
+	static char *facility_strings[] = {
+		[FSCR_FP_LG] = "FPU",
+		[FSCR_VECVSX_LG] = "VMX/VSX",
+		[FSCR_DSCR_LG] = "DSCR",
+		[FSCR_PM_LG] = "PMU SPRs",
+		[FSCR_BHRB_LG] = "BHRB",
+		[FSCR_TM_LG] = "TM",
+		[FSCR_EBB_LG] = "EBB",
+		[FSCR_TAR_LG] = "TAR",
+	};
+	char *facility = "unknown";
+	u64 value;
+	u8 status;
+
+	value = mfspr(SPRN_FSCR);
+	status = value >> 56;
+	if ((status < ARRAY_SIZE(facility_strings)) &&
+				facility_strings[status])
+		facility = facility_strings[status];
+	/*
+	 * An user program has executed an instruction which is not
+	 * supported in the problem state. Kernel does not support
+	 * these features, hence will deliver SIGILL signal to the
+	 * user program.
+	 */
+	if (user_mode(regs)) {
+		 _exception(SIGILL, regs, ILL_ILLOPC, regs->nip);
+		return;
+	}
+
+	pr_err_ratelimited("Facility '%s' Unavailable Exception at %lx "
+				"(msr %lx)\n", facility, regs->nip, regs->msr);
+
+	/* Kernel must not have caused this */
+	die("Unrecoverable Facility Unavailable Exception", regs, SIGABRT);
+}
+#endif
 void performance_monitor_exception(struct pt_regs *regs)
 {
 	__get_cpu_var(irq_stat).pmu_irqs++;

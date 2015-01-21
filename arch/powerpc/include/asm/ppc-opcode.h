@@ -16,6 +16,8 @@
 #include <asm/asm-compat.h>
 
 /* sorted alphabetically */
+#define PPC_INST_BHRBE			0x7c00025c
+#define PPC_INST_CLRBHRB		0x7c00035c
 #define PPC_INST_DCBA			0x7c0005ec
 #define PPC_INST_DCBA_MASK		0xfc0007fe
 #define PPC_INST_DCBAL			0x7c2005ec
@@ -45,6 +47,11 @@
 #define PPC_INST_MFSPR_DSCR_MASK	0xfc1fffff
 #define PPC_INST_MTSPR_DSCR		0x7c1103a6
 #define PPC_INST_MTSPR_DSCR_MASK	0xfc1fffff
+#define PPC_INST_MFSPR_DSCR_USER	0x7c0302a6
+#define PPC_INST_MFSPR_DSCR_USER_MASK	0xfc1fffff
+#define PPC_INST_MTSPR_DSCR_USER	0x7c0303a6
+#define PPC_INST_MTSPR_DSCR_USER_MASK	0xfc1fffff
+#define PPC_INST_SLBFEE			0x7c0007a7
 
 #define PPC_INST_STRING			0x7c00042a
 #define PPC_INST_STRING_MASK		0xfc0007fe
@@ -59,6 +66,9 @@
 #define PPC_INST_TLBIVAX		0x7c000624
 #define PPC_INST_TLBSRX_DOT		0x7c0006a5
 #define PPC_INST_XXLOR			0xf0000510
+#define PPC_INST_TRECHKPT		0x7c0007dd
+#define PPC_INST_TRECLAIM		0x7c00075d
+#define PPC_INST_TABORT			0x7c00071d
 
 #define PPC_INST_NAP			0x4c000364
 #define PPC_INST_SLEEP			0x4c0003a4
@@ -160,5 +170,18 @@
 
 #define PPC_NAP			stringify_in_c(.long PPC_INST_NAP)
 #define PPC_SLEEP		stringify_in_c(.long PPC_INST_SLEEP)
+
+/* BHRB instructions */
+#define PPC_CLRBHRB		stringify_in_c(.long PPC_INST_CLRBHRB)
+#define PPC_MFBHRBE(r, n)	stringify_in_c(.long PPC_INST_BHRBE | \
+						__PPC_RT(r) | \
+							(((n) & 0x3ff) << 11))
+
+/* Transactional memory instructions */
+#define TRECHKPT		stringify_in_c(.long PPC_INST_TRECHKPT)
+#define TRECLAIM(r)		stringify_in_c(.long PPC_INST_TRECLAIM \
+					       | __PPC_RA(r))
+#define TABORT(r)		stringify_in_c(.long PPC_INST_TABORT \
+					       | __PPC_RA(r))
 
 #endif /* _ASM_POWERPC_PPC_OPCODE_H */

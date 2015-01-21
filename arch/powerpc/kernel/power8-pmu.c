@@ -25,6 +25,37 @@
 #define PM_BRU_FIN			0x10068
 #define PM_BR_MPRED_CMPL		0x400f6
 
+/* All L1 D cache load references counted at finish, gated by reject */
+#define PM_LD_REF_L1			0x100ee
+/* Load Missed L1 */
+#define PM_LD_MISS_L1			0x3e054
+/* Store Missed L1 */
+#define PM_ST_MISS_L1			0x300f0
+/* L1 cache data prefetches */
+#define PM_L1_PREF			0x0d8b8
+/* Instruction fetches from L1 */
+#define PM_INST_FROM_L1			0x04080
+/* Demand iCache Miss */
+#define PM_L1_ICACHE_MISS		0x200fd
+/* Instruction Demand sectors wriittent into IL1 */
+#define PM_L1_DEMAND_WRITE		0x0408c
+/* Instruction prefetch written into IL1 */
+#define PM_IC_PREF_WRITE		0x0408e
+/* The data cache was reloaded from local core's L3 due to a demand load */
+#define PM_DATA_FROM_L3			0x4c042
+/* Demand LD - L3 Miss (not L2 hit and not L3 hit) */
+#define PM_DATA_FROM_L3MISS		0x300fe
+/* All successful D-side store dispatches for this thread */
+#define PM_L2_ST			0x17080
+/* All successful D-side store dispatches for this thread that were L2 Miss */
+#define PM_L2_ST_MISS			0x17082
+/* Total HW L3 prefetches(Load+store) */
+#define PM_L3_PREF_ALL			0x4e052
+/* Data PTEG reload */
+#define PM_DTLB_MISS			0x300fc
+/* ITLB Reloaded */
+#define PM_ITLB_MISS			0x400fc
+
 
 /*
  * Raw event encoding for POWER8:
@@ -108,6 +139,16 @@
 #define EVENT_MARKED_MASK	0x1
 #define EVENT_IS_MARKED		(EVENT_MARKED_MASK << EVENT_MARKED_SHIFT)
 #define EVENT_PSEL_MASK		0xff	/* PMCxSEL value */
+
+/* MMCRA IFM bits - POWER8 */
+#define	POWER8_MMCRA_IFM1		0x0000000040000000UL
+#define	POWER8_MMCRA_IFM2		0x0000000080000000UL
+#define	POWER8_MMCRA_IFM3		0x00000000C0000000UL
+
+#define ONLY_PLM \
+	(PERF_SAMPLE_BRANCH_USER        |\
+	 PERF_SAMPLE_BRANCH_KERNEL      |\
+	 PERF_SAMPLE_BRANCH_HV)
 
 /*
  * Layout of constraint bits:
@@ -469,7 +510,156 @@ static int power8_generic_events[] = {
 	[PERF_COUNT_HW_INSTRUCTIONS] =			PM_INST_CMPL,
 	[PERF_COUNT_HW_BRANCH_INSTRUCTIONS] =		PM_BRU_FIN,
 	[PERF_COUNT_HW_BRANCH_MISSES] =			PM_BR_MPRED_CMPL,
+	[PERF_COUNT_HW_CACHE_REFERENCES] =		PM_LD_REF_L1,
+	[PERF_COUNT_HW_CACHE_MISSES] =			PM_LD_MISS_L1,
 };
+
+static u64 power8_bhrb_filter_map(u64 branch_sample_type)
+{
+	u64 pmu_bhrb_filter = 0;
+
+	/* BHRB and regular PMU events share the same privilege state
+	 * filter configuration. BHRB is always recorded along with a
+	 * regular PMU event. As the privilege state filter is handled
+	 * in the basic PMC configuration of the accompanying regular
+	 * PMU event, we ignore any separate BHRB specific request.
+	 */
+
+	/* No branch filter requested */
+	if (branch_sample_type & PERF_SAMPLE_BRANCH_ANY)
+		return pmu_bhrb_filter;
+
+	/* Invalid branch filter options - HW does not support */
+	if (branch_sample_type & PERF_SAMPLE_BRANCH_ANY_RETURN)
+		return -1;
+
+	if (branch_sample_type & PERF_SAMPLE_BRANCH_IND_CALL)
+		return -1;
+
+	if (branch_sample_type & PERF_SAMPLE_BRANCH_ANY_CALL) {
+		pmu_bhrb_filter |= POWER8_MMCRA_IFM1;
+		return pmu_bhrb_filter;
+	}
+
+	/* Every thing else is unsupported */
+	return -1;
+}
+
+static void power8_config_bhrb(u64 pmu_bhrb_filter)
+{
+	/* Enable BHRB filter in PMU */
+	mtspr(SPRN_MMCRA, (mfspr(SPRN_MMCRA) | pmu_bhrb_filter));
+}
+
+#define C(x)	PERF_COUNT_HW_CACHE_##x
+
+/*
+ * Table of generalized cache-related events.
+ * 0 means not supported, -1 means nonsensical, other values
+ * are event codes.
+ */
+static int power8_cache_events[C(MAX)][C(OP_MAX)][C(RESULT_MAX)] = {
+	[ C(L1D) ] = {
+		[ C(OP_READ) ] = {
+			[ C(RESULT_ACCESS) ] = PM_LD_REF_L1,
+			[ C(RESULT_MISS)   ] = PM_LD_MISS_L1,
+		},
+		[ C(OP_WRITE) ] = {
+			[ C(RESULT_ACCESS) ] = 0,
+			[ C(RESULT_MISS)   ] = PM_ST_MISS_L1,
+		},
+		[ C(OP_PREFETCH) ] = {
+			[ C(RESULT_ACCESS) ] = PM_L1_PREF,
+			[ C(RESULT_MISS)   ] = 0,
+		},
+	},
+	[ C(L1I) ] = {
+		[ C(OP_READ) ] = {
+			[ C(RESULT_ACCESS) ] = PM_INST_FROM_L1,
+			[ C(RESULT_MISS)   ] = PM_L1_ICACHE_MISS,
+		},
+		[ C(OP_WRITE) ] = {
+			[ C(RESULT_ACCESS) ] = PM_L1_DEMAND_WRITE,
+			[ C(RESULT_MISS)   ] = -1,
+		},
+		[ C(OP_PREFETCH) ] = {
+			[ C(RESULT_ACCESS) ] = PM_IC_PREF_WRITE,
+			[ C(RESULT_MISS)   ] = 0,
+		},
+	},
+	[ C(LL) ] = {
+		[ C(OP_READ) ] = {
+			[ C(RESULT_ACCESS) ] = PM_DATA_FROM_L3,
+			[ C(RESULT_MISS)   ] = PM_DATA_FROM_L3MISS,
+		},
+		[ C(OP_WRITE) ] = {
+			[ C(RESULT_ACCESS) ] = PM_L2_ST,
+			[ C(RESULT_MISS)   ] = PM_L2_ST_MISS,
+		},
+		[ C(OP_PREFETCH) ] = {
+			[ C(RESULT_ACCESS) ] = PM_L3_PREF_ALL,
+			[ C(RESULT_MISS)   ] = 0,
+		},
+	},
+	[ C(DTLB) ] = {
+		[ C(OP_READ) ] = {
+			[ C(RESULT_ACCESS) ] = 0,
+			[ C(RESULT_MISS)   ] = PM_DTLB_MISS,
+		},
+		[ C(OP_WRITE) ] = {
+			[ C(RESULT_ACCESS) ] = -1,
+			[ C(RESULT_MISS)   ] = -1,
+		},
+		[ C(OP_PREFETCH) ] = {
+			[ C(RESULT_ACCESS) ] = -1,
+			[ C(RESULT_MISS)   ] = -1,
+		},
+	},
+	[ C(ITLB) ] = {
+		[ C(OP_READ) ] = {
+			[ C(RESULT_ACCESS) ] = 0,
+			[ C(RESULT_MISS)   ] = PM_ITLB_MISS,
+		},
+		[ C(OP_WRITE) ] = {
+			[ C(RESULT_ACCESS) ] = -1,
+			[ C(RESULT_MISS)   ] = -1,
+		},
+		[ C(OP_PREFETCH) ] = {
+			[ C(RESULT_ACCESS) ] = -1,
+			[ C(RESULT_MISS)   ] = -1,
+		},
+	},
+	[ C(BPU) ] = {
+		[ C(OP_READ) ] = {
+			[ C(RESULT_ACCESS) ] = PM_BRU_FIN,
+			[ C(RESULT_MISS)   ] = PM_BR_MPRED_CMPL,
+		},
+		[ C(OP_WRITE) ] = {
+			[ C(RESULT_ACCESS) ] = -1,
+			[ C(RESULT_MISS)   ] = -1,
+		},
+		[ C(OP_PREFETCH) ] = {
+			[ C(RESULT_ACCESS) ] = -1,
+			[ C(RESULT_MISS)   ] = -1,
+		},
+	},
+	[ C(NODE) ] = {
+		[ C(OP_READ) ] = {
+			[ C(RESULT_ACCESS) ] = -1,
+			[ C(RESULT_MISS)   ] = -1,
+		},
+		[ C(OP_WRITE) ] = {
+			[ C(RESULT_ACCESS) ] = -1,
+			[ C(RESULT_MISS)   ] = -1,
+		},
+		[ C(OP_PREFETCH) ] = {
+			[ C(RESULT_ACCESS) ] = -1,
+			[ C(RESULT_MISS)   ] = -1,
+		},
+	},
+};
+
+#undef C
 
 static struct power_pmu power8_pmu = {
 	.name			= "POWER8",
@@ -478,12 +668,16 @@ static struct power_pmu power8_pmu = {
 	.add_fields		= POWER8_ADD_FIELDS,
 	.test_adder		= POWER8_TEST_ADDER,
 	.compute_mmcr		= power8_compute_mmcr,
+	.config_bhrb		= power8_config_bhrb,
+	.bhrb_filter_map	= power8_bhrb_filter_map,
 	.get_constraint		= power8_get_constraint,
 	.get_alternatives	= power8_get_alternatives,
 	.disable_pmc		= power8_disable_pmc,
-	.flags			= PPMU_HAS_SSLOT | PPMU_HAS_SIER,
+	.flags			= PPMU_HAS_SSLOT | PPMU_HAS_SIER | PPMU_BHRB,
 	.n_generic		= ARRAY_SIZE(power8_generic_events),
 	.generic_events		= power8_generic_events,
+	.cache_events		= &power8_cache_events,
+	.bhrb_nr		= 32,
 };
 
 static int __init init_power8_pmu(void)

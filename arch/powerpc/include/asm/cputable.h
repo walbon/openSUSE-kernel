@@ -1,6 +1,7 @@
 #ifndef __ASM_POWERPC_CPUTABLE_H
 #define __ASM_POWERPC_CPUTABLE_H
 
+/* in AT_HWCAP */
 #define PPC_FEATURE_32			0x80000000
 #define PPC_FEATURE_64			0x40000000
 #define PPC_FEATURE_601_INSTR		0x20000000
@@ -32,6 +33,14 @@
 
 #define PPC_FEATURE_TRUE_LE		0x00000002
 #define PPC_FEATURE_PPC_LE		0x00000001
+
+/* in AT_HWCAP2 */
+#define PPC_FEATURE2_ARCH_2_07		0x80000000
+#define PPC_FEATURE2_HTM		0x40000000
+#define PPC_FEATURE2_DSCR		0x20000000
+#define PPC_FEATURE2_EBB		0x10000000
+#define PPC_FEATURE2_ISEL		0x08000000
+#define PPC_FEATURE2_TAR		0x04000000
 
 #ifdef __KERNEL__
 
@@ -84,6 +93,7 @@ struct cpu_spec {
 	char		*cpu_name;
 	unsigned long	cpu_features;		/* Kernel features */
 	unsigned int	cpu_user_features;	/* Userland features */
+	unsigned int	cpu_user_features2;	/* Userland features v2 */
 	unsigned int	mmu_features;		/* MMU features */
 
 	/* cache line sizes */
@@ -181,7 +191,7 @@ extern const char *powerpc_base_platform;
 
 
 #define CPU_FTR_HVMODE_206		LONG_ASM_CONST(0x0000000800000000)
-#define CPU_FTR_CFAR			LONG_ASM_CONST(0x0000001000000000)
+#define CPU_FTR_ARCH_207S		LONG_ASM_CONST(0x0000001000000000)
 #define CPU_FTR_IABR			LONG_ASM_CONST(0x0000002000000000)
 #define CPU_FTR_MMCRA			LONG_ASM_CONST(0x0000004000000000)
 #define CPU_FTR_CTRL			LONG_ASM_CONST(0x0000008000000000)
@@ -202,6 +212,7 @@ extern const char *powerpc_base_platform;
 #define CPU_FTR_ICSWX			LONG_ASM_CONST(0x1000000000000000)
 #define CPU_FTR_VMX_COPY		LONG_ASM_CONST(0x2000000000000000)
 #define	CPU_FTR_HAS_PPR			LONG_ASM_CONST(0x4000000000000000)
+#define CPU_FTR_CFAR			LONG_ASM_CONST(0x8000000000000000)
 
 #ifndef __ASSEMBLY__
 
@@ -426,6 +437,14 @@ extern const char *powerpc_base_platform;
 	    CPU_FTR_DSCR | CPU_FTR_SAO  | CPU_FTR_ASYM_SMT | \
 	    CPU_FTR_STCX_CHECKS_ADDRESS | CPU_FTR_POPCNTB | CPU_FTR_POPCNTD | \
 	    CPU_FTR_ICSWX | CPU_FTR_CFAR | CPU_FTR_VMX_COPY | CPU_FTR_HAS_PPR)
+#define CPU_FTRS_POWER8 (CPU_FTR_USE_TB | CPU_FTR_LWSYNC | \
+	    CPU_FTR_PPCAS_ARCH_V2 | CPU_FTR_CTRL | CPU_FTR_ARCH_206 |\
+	    CPU_FTR_MMCRA | CPU_FTR_SMT | \
+	    CPU_FTR_COHERENT_ICACHE | \
+	    CPU_FTR_PURR | CPU_FTR_SPURR | CPU_FTR_REAL_LE | \
+	    CPU_FTR_DSCR | CPU_FTR_SAO  | \
+	    CPU_FTR_STCX_CHECKS_ADDRESS | CPU_FTR_POPCNTB | CPU_FTR_POPCNTD | \
+	    CPU_FTR_ICSWX | CPU_FTR_CFAR | CPU_FTR_HVMODE | CPU_FTR_VMX_COPY | CPU_FTR_ARCH_207S)
 #define CPU_FTRS_CELL	(CPU_FTR_USE_TB | CPU_FTR_LWSYNC | \
 	    CPU_FTR_PPCAS_ARCH_V2 | CPU_FTR_CTRL | \
 	    CPU_FTR_ALTIVEC_COMP | CPU_FTR_MMCRA | CPU_FTR_SMT | \
@@ -446,8 +465,8 @@ extern const char *powerpc_base_platform;
 #define CPU_FTRS_POSSIBLE	\
 	    (CPU_FTRS_POWER3 | CPU_FTRS_RS64 | CPU_FTRS_POWER4 |	\
 	    CPU_FTRS_PPC970 | CPU_FTRS_POWER5 | CPU_FTRS_POWER6 |	\
-	    CPU_FTRS_POWER7 | CPU_FTRS_CELL | CPU_FTRS_PA6T |		\
-	    CPU_FTR_VSX)
+	    CPU_FTRS_POWER7 | CPU_FTRS_POWER8 | CPU_FTRS_CELL |		\
+	    CPU_FTRS_PA6T | CPU_FTR_VSX)
 #endif
 #else
 enum {
