@@ -81,6 +81,15 @@ static void qlcnic_dev_set_npar_ready(struct qlcnic_adapter *);
 static int qlcnicvf_start_firmware(struct qlcnic_adapter *);
 static void qlcnic_vlan_rx_add(struct net_device *, u16);
 static void qlcnic_vlan_rx_del(struct net_device *, u16);
+static int qlcnic_82xx_setup_intr(struct qlcnic_adapter *);
+static void qlcnic_82xx_dev_request_reset(struct qlcnic_adapter *, u32);
+static irqreturn_t qlcnic_82xx_clear_legacy_intr(struct qlcnic_adapter *);
+static pci_ers_result_t qlcnic_82xx_io_slot_reset(struct pci_dev *);
+static int qlcnic_82xx_start_firmware(struct qlcnic_adapter *);
+static void qlcnic_82xx_io_resume(struct pci_dev *);
+static void qlcnic_82xx_set_mac_filter_count(struct qlcnic_adapter *);
+static pci_ers_result_t qlcnic_82xx_io_error_detected(struct pci_dev *,
+						      pci_channel_state_t);
 
 static u32 qlcnic_vlan_tx_check(struct qlcnic_adapter *adapter)
 {
@@ -712,7 +721,7 @@ static int qlcnic_enable_msi_legacy(struct qlcnic_adapter *adapter)
 	return err;
 }
 
-int qlcnic_82xx_setup_intr(struct qlcnic_adapter *adapter)
+static int qlcnic_82xx_setup_intr(struct qlcnic_adapter *adapter)
 {
 	int num_msix, err = 0;
 
@@ -1474,7 +1483,7 @@ qlcnic_set_mgmt_operations(struct qlcnic_adapter *adapter)
 	return err;
 }
 
-int qlcnic_82xx_start_firmware(struct qlcnic_adapter *adapter)
+static int qlcnic_82xx_start_firmware(struct qlcnic_adapter *adapter)
 {
 	int err;
 
@@ -2022,7 +2031,7 @@ qlcnic_reset_context(struct qlcnic_adapter *adapter)
 	return err;
 }
 
-void qlcnic_82xx_set_mac_filter_count(struct qlcnic_adapter *adapter)
+static void qlcnic_82xx_set_mac_filter_count(struct qlcnic_adapter *adapter)
 {
 	struct qlcnic_hardware_context *ahw = adapter->ahw;
 	u16 act_pci_fn = ahw->total_nic_func;
@@ -2779,7 +2788,7 @@ static struct net_device_stats *qlcnic_get_stats(struct net_device *netdev)
 	return stats;
 }
 
-irqreturn_t qlcnic_82xx_clear_legacy_intr(struct qlcnic_adapter *adapter)
+static irqreturn_t qlcnic_82xx_clear_legacy_intr(struct qlcnic_adapter *adapter)
 {
 	u32 status;
 
@@ -3272,7 +3281,8 @@ qlcnic_set_npar_non_operational(struct qlcnic_adapter *adapter)
 	qlcnic_api_unlock(adapter);
 }
 
-void qlcnic_82xx_dev_request_reset(struct qlcnic_adapter *adapter, u32 key)
+static void qlcnic_82xx_dev_request_reset(struct qlcnic_adapter *adapter,
+					  u32 key)
 {
 	u32 state, xg_val = 0, gb_val = 0;
 
@@ -3567,8 +3577,8 @@ static int qlcnic_attach_func(struct pci_dev *pdev)
 	return err;
 }
 
-pci_ers_result_t qlcnic_82xx_io_error_detected(struct pci_dev *pdev,
-					       pci_channel_state_t state)
+static pci_ers_result_t qlcnic_82xx_io_error_detected(struct pci_dev *pdev,
+						      pci_channel_state_t state)
 {
 	struct qlcnic_adapter *adapter = pci_get_drvdata(pdev);
 	struct net_device *netdev = adapter->netdev;
@@ -3598,13 +3608,13 @@ pci_ers_result_t qlcnic_82xx_io_error_detected(struct pci_dev *pdev,
 	return PCI_ERS_RESULT_NEED_RESET;
 }
 
-pci_ers_result_t qlcnic_82xx_io_slot_reset(struct pci_dev *pdev)
+static pci_ers_result_t qlcnic_82xx_io_slot_reset(struct pci_dev *pdev)
 {
 	return qlcnic_attach_func(pdev) ? PCI_ERS_RESULT_DISCONNECT :
 				PCI_ERS_RESULT_RECOVERED;
 }
 
-void qlcnic_82xx_io_resume(struct pci_dev *pdev)
+static void qlcnic_82xx_io_resume(struct pci_dev *pdev)
 {
 	u32 state;
 	struct qlcnic_adapter *adapter = pci_get_drvdata(pdev);
