@@ -171,17 +171,6 @@ int die(const char *str, struct pt_regs *regs, long err)
 	if (in_interrupt())
 		panic("Fatal exception in interrupt");
 
-
-	if (status == FSCR_DSCR_LG) {
-		/* User is acessing the DSCR.  Set the inherit bit and allow
-		 * the user to set it directly in future by setting via the
-		 * FSCR DSCR bit. We always leave HFSCR DSCR set.
-		 */
-		current->thread.dscr_inherit = 1;
-		mtspr(SPRN_FSCR,  value | FSCR_DSCR);
-		return;
-	}
-
 	if (panic_on_oops)
 		panic("Fatal exception");
 
@@ -1155,6 +1144,17 @@ void facility_unavailable_exception(struct pt_regs *regs)
 
 	value = mfspr(SPRN_FSCR);
 	status = value >> 56;
+
+	if (status == FSCR_DSCR_LG) {
+		/* User is acessing the DSCR.  Set the inherit bit and allow
+		 * the user to set it directly in future by setting via the
+		 * FSCR DSCR bit. We always leave HFSCR DSCR set.
+		 */
+		current->thread.dscr_inherit = 1;
+		mtspr(SPRN_FSCR,  value | FSCR_DSCR);
+		return;
+	}
+
 	if ((status < ARRAY_SIZE(facility_strings)) &&
 				facility_strings[status])
 		facility = facility_strings[status];
