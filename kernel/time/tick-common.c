@@ -64,13 +64,18 @@ int tick_is_oneshot_available(void)
 static void tick_periodic(int cpu)
 {
 	if (tick_do_timer_cpu == cpu) {
+		unsigned int clock_set;
 		write_seqlock(&xtime_lock);
 
 		/* Keep track of the next tick event */
 		tick_next_period = ktime_add(tick_next_period, tick_period);
 
-		do_timer(1);
+		clock_set = do_timer(1);
 		write_sequnlock(&xtime_lock);
+
+		if (clock_set & TK_CLOCK_WAS_SET)
+			clock_was_set_delayed();
+
 		check_leap_second_message();
 	}
 
