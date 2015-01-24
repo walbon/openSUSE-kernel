@@ -97,7 +97,8 @@ static int	audit_rate_limit;
 
 /* Number of outstanding audit_buffers allowed. */
 static int	audit_backlog_limit = 64;
-static int	audit_backlog_wait_time = 60 * HZ;
+#define AUDIT_BACKLOG_WAIT_TIME (60 * HZ)
+static int	audit_backlog_wait_time = AUDIT_BACKLOG_WAIT_TIME;
 static int	audit_backlog_wait_overflow = 0;
 
 /* The identity of the user shutting down the audit system. */
@@ -411,38 +412,58 @@ static void kauditd_send_skb(struct sk_buff *skb)
 		consume_skb(skb);
 }
 
+/*
+ * flush_hold_queue - empty the hold queue if auditd appears
+ *
+ * If auditd just started, drain the queue of messages already
+ * sent to syslog/printk.  Remember loss here is ok.  We already
+ * called audit_log_lost() if it didn't go out normally.  so the
+ * race between the skb_dequeue and the next check for audit_pid
+ * doesn't matter.
+ *
+ * If you ever find kauditd to be too slow we can get a perf win
+ * by doing our own locking and keeping better track if there
+ * are messages in this queue.  I don't see the need now, but
+ * in 5 years when I want to play with this again I'll see this
+ * note and still have no friggin idea what i'm thinking today.
+ */
+static void flush_hold_queue(void)
+{
+	struct sk_buff *skb;
+
+	if (!audit_default || !audit_pid)
+		return;
+
+	skb = skb_dequeue(&audit_skb_hold_queue);
+	if (likely(!skb))
+		return;
+
+	while (skb && audit_pid) {
+		kauditd_send_skb(skb);
+		skb = skb_dequeue(&audit_skb_hold_queue);
+	}
+
+	/*
+	 * if auditd just disappeared but we
+	 * dequeued an skb we need to drop ref
+	 */
+	if (skb)
+		consume_skb(skb);
+}
+
 static int kauditd_thread(void *dummy)
 {
 	struct sk_buff *skb;
 
 	set_freezable();
 	while (!kthread_should_stop()) {
-		/*
-		 * if auditd just started drain the queue of messages already
-		 * sent to syslog/printk.  remember loss here is ok.  we already
-		 * called audit_log_lost() if it didn't go out normally.  so the
-		 * race between the skb_dequeue and the next check for audit_pid
-		 * doesn't matter.
-		 *
-		 * if you ever find kauditd to be too slow we can get a perf win
-		 * by doing our own locking and keeping better track if there
-		 * are messages in this queue.  I don't see the need now, but
-		 * in 5 years when I want to play with this again I'll see this
-		 * note and still have no friggin idea what i'm thinking today.
-		 */
-		if (audit_default && audit_pid) {
-			skb = skb_dequeue(&audit_skb_hold_queue);
-			if (unlikely(skb)) {
-				while (skb && audit_pid) {
-					kauditd_send_skb(skb);
-					skb = skb_dequeue(&audit_skb_hold_queue);
-				}
-			}
-		}
+		flush_hold_queue();
 
 		skb = skb_dequeue(&audit_skb_queue);
-		wake_up(&audit_backlog_wait);
+
 		if (skb) {
+			if (skb_queue_len(&audit_skb_queue) <= audit_backlog_limit)
+				wake_up(&audit_backlog_wait);
 			if (audit_pid)
 				kauditd_send_skb(skb);
 			else
@@ -1114,6 +1135,26 @@ static inline void audit_get_stamp(struct audit_context *ctx,
 	}
 }
 
+/*
+ * Wait for auditd to drain the queue a little
+ */
+static unsigned long wait_for_auditd(unsigned long sleep_time)
+{
+	unsigned long timeout = sleep_time;
+	DECLARE_WAITQUEUE(wait, current);
+	set_current_state(TASK_UNINTERRUPTIBLE);
+	add_wait_queue_exclusive(&audit_backlog_wait, &wait);
+
+	if (audit_backlog_limit &&
+	    skb_queue_len(&audit_skb_queue) > audit_backlog_limit)
+		timeout = schedule_timeout(sleep_time);
+
+	__set_current_state(TASK_RUNNING);
+	remove_wait_queue(&audit_backlog_wait, &wait);
+
+	return timeout;
+}
+
 /* Obtain an audit buffer.  This routine does locking to obtain the
  * audit buffer, but then no locking is required for calls to
  * audit_log_*format.  If the tsk is a task that is currently in a
@@ -1159,21 +1200,16 @@ struct audit_buffer *audit_log_start(struct audit_context *ctx, gfp_t gfp_mask,
 
 	while (audit_backlog_limit
 	       && skb_queue_len(&audit_skb_queue) > audit_backlog_limit + reserve) {
-		if (gfp_mask & __GFP_WAIT && audit_backlog_wait_time
-		    && time_before(jiffies, timeout_start + audit_backlog_wait_time)) {
+		if (gfp_mask & __GFP_WAIT && audit_backlog_wait_time) {
+			unsigned long sleep_time;
 
-			/* Wait for auditd to drain the queue a little */
-			DECLARE_WAITQUEUE(wait, current);
-			set_current_state(TASK_INTERRUPTIBLE);
-			add_wait_queue(&audit_backlog_wait, &wait);
-
-			if (audit_backlog_limit &&
-			    skb_queue_len(&audit_skb_queue) > audit_backlog_limit)
-				schedule_timeout(timeout_start + audit_backlog_wait_time - jiffies);
-
-			__set_current_state(TASK_RUNNING);
-			remove_wait_queue(&audit_backlog_wait, &wait);
-			continue;
+			sleep_time = timeout_start + audit_backlog_wait_time -
+					jiffies;
+			if ((long)sleep_time > 0) {
+				sleep_time = wait_for_auditd(sleep_time);
+				if ((long)sleep_time > 0)
+					continue;
+			}
 		}
 		if (audit_rate_check() && printk_ratelimit())
 			printk(KERN_WARNING
@@ -1186,6 +1222,8 @@ struct audit_buffer *audit_log_start(struct audit_context *ctx, gfp_t gfp_mask,
 		wake_up(&audit_backlog_wait);
 		return NULL;
 	}
+
+	audit_backlog_wait_time = AUDIT_BACKLOG_WAIT_TIME;
 
 	ab = audit_buffer_alloc(ctx, gfp_mask, type);
 	if (!ab) {
