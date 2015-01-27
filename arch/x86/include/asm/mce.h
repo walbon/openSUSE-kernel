@@ -258,5 +258,7 @@ struct cper_sec_mem_err;
 extern void apei_mce_report_mem_error(int corrected,
 				      struct cper_sec_mem_err *mem_err);
 
+int mce_get_userspace_consumers_count(void);
+
 #endif /* __KERNEL__ */
 #endif /* _ASM_X86_MCE_H */
