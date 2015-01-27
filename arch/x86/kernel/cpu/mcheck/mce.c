@@ -1776,7 +1776,7 @@ static int mce_release(struct inode *inode, struct file *file)
 
 int mce_get_userspace_consumers_count(void)
 {
-	return mce_chrdev_open_count;
+	return open_count;
 }
 EXPORT_SYMBOL_GPL(mce_get_userspace_consumers_count);
 
