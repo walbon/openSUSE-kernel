@@ -1,13 +1,15 @@
-/* cnic.c: Broadcom CNIC core network driver.
+/* cnic.c: QLogic CNIC core network driver.
  *
- * Copyright (c) 2006-2013 Broadcom Corporation
+ * Copyright (c) 2006-2014 Broadcom Corporation
+ * Copyright (c) 2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation.
  *
  * Original skeleton written by: John(Zongxi) Chen (zongxi@broadcom.com)
- * Modified and maintained by: Michael Chan <mchan@broadcom.com>
+ * Previously modified and maintained by: Michael Chan <mchan@broadcom.com>
+ * Maintained By: Dept-HSGLinuxNICDev@qlogic.com
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -56,11 +58,11 @@
 #define CNIC_MODULE_NAME	"cnic"
 
 static char version[] =
-	"Broadcom NetXtreme II CNIC Driver " CNIC_MODULE_NAME " v" CNIC_MODULE_VERSION " (" CNIC_MODULE_RELDATE ")\n";
+	"QLogic NetXtreme II CNIC Driver " CNIC_MODULE_NAME " v" CNIC_MODULE_VERSION " (" CNIC_MODULE_RELDATE ")\n";
 
 MODULE_AUTHOR("Michael Chan <mchan@broadcom.com> and John(Zongxi) "
 	      "Chen (zongxi@broadcom.com");
-MODULE_DESCRIPTION("Broadcom NetXtreme II CNIC Driver");
+MODULE_DESCRIPTION("QLogic NetXtreme II CNIC Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(CNIC_MODULE_VERSION);
 
@@ -342,7 +344,7 @@ static int cnic_send_nlmsg(struct cnic_local *cp, u32 type,
 	while (retry < 3) {
 		rc = 0;
 		rcu_read_lock();
-		ulp_ops = rcu_dereference(cnic_ulp_tbl[CNIC_ULP_ISCSI]);
+		ulp_ops = rcu_dereference(cp->ulp_ops[CNIC_ULP_ISCSI]);
 		if (ulp_ops)
 			rc = ulp_ops->iscsi_nl_send_msg(
 				cp->ulp_handle[CNIC_ULP_ISCSI],
@@ -380,10 +382,8 @@ static int cnic_iscsi_nl_msg_recv(struct cnic_dev *dev, u32 msg_type,
 		if (l5_cid >= MAX_CM_SK_TBL_SZ)
 			break;
 
-		rcu_read_lock();
-		if (!rcu_dereference(cp->ulp_ops[CNIC_ULP_L4])) {
+		if (!rcu_access_pointer(cp->ulp_ops[CNIC_ULP_L4])) {
 			rc = -ENODEV;
-			rcu_read_unlock();
 			break;
 		}
 		csk = &cp->csk_tbl[l5_cid];
@@ -393,7 +393,7 @@ static int cnic_iscsi_nl_msg_recv(struct cnic_dev *dev, u32 msg_type,
 
 			csk->vlan_id = path_resp->vlan_id;
 
-			memcpy(csk->ha, path_resp->mac_addr, 6);
+			memcpy(csk->ha, path_resp->mac_addr, ETH_ALEN);
 			if (test_bit(SK_F_IPV6, &csk->flags))
 				memcpy(&csk->src_ip[0], &path_resp->src.v6_addr,
 				       sizeof(struct in6_addr));
@@ -412,7 +412,6 @@ static int cnic_iscsi_nl_msg_recv(struct cnic_dev *dev, u32 msg_type,
 			}
 		}
 		csk_put(csk);
-		rcu_read_unlock();
 		rc = 0;
 	}
 	}
@@ -525,7 +524,7 @@ int cnic_unregister_driver(int ulp_type)
 	list_for_each_entry(dev, &cnic_dev_list, list) {
 		struct cnic_local *cp = dev->cnic_priv;
 
-		if (rcu_dereference(cp->ulp_ops[ulp_type])) {
+		if (rcu_access_pointer(cp->ulp_ops[ulp_type])) {
 			pr_err("%s: Type %d still has devices registered\n",
 			       __func__, ulp_type);
 			read_unlock(&cnic_dev_lock);
@@ -534,7 +533,7 @@ int cnic_unregister_driver(int ulp_type)
 	}
 	read_unlock(&cnic_dev_lock);
 
-	rcu_assign_pointer(cnic_ulp_tbl[ulp_type], NULL);
+	RCU_INIT_POINTER(cnic_ulp_tbl[ulp_type], NULL);
 
 	mutex_unlock(&cnic_lock);
 	synchronize_rcu();
@@ -573,7 +572,7 @@ static int cnic_register_device(struct cnic_dev *dev, int ulp_type,
 		mutex_unlock(&cnic_lock);
 		return -EAGAIN;
 	}
-	if (rcu_dereference(cp->ulp_ops[ulp_type])) {
+	if (rcu_access_pointer(cp->ulp_ops[ulp_type])) {
 		pr_err("%s: Type %d has already been registered to this device\n",
 		       __func__, ulp_type);
 		mutex_unlock(&cnic_lock);
@@ -608,9 +607,13 @@ static int cnic_unregister_device(struct cnic_dev *dev, int ulp_type)
 		pr_err("%s: Bad type %d\n", __func__, ulp_type);
 		return -EINVAL;
 	}
+
+	if (ulp_type == CNIC_ULP_ISCSI)
+		cnic_send_nlmsg(cp, ISCSI_KEVENT_IF_DOWN, NULL);
+
 	mutex_lock(&cnic_lock);
-	if (rcu_dereference(cp->ulp_ops[ulp_type])) {
-		rcu_assign_pointer(cp->ulp_ops[ulp_type], NULL);
+	if (rcu_access_pointer(cp->ulp_ops[ulp_type])) {
+		RCU_INIT_POINTER(cp->ulp_ops[ulp_type], NULL);
 		cnic_put(dev);
 	} else {
 		pr_err("%s: device not registered to this ulp type %d\n",
@@ -620,9 +623,7 @@ static int cnic_unregister_device(struct cnic_dev *dev, int ulp_type)
 	}
 	mutex_unlock(&cnic_lock);
 
-	if (ulp_type == CNIC_ULP_ISCSI)
-		cnic_send_nlmsg(cp, ISCSI_KEVENT_IF_DOWN, NULL);
-	else if (ulp_type == CNIC_ULP_FCOE)
+	if (ulp_type == CNIC_ULP_FCOE)
 		dev->fcoe_cap = NULL;
 
 	synchronize_rcu();
@@ -1039,21 +1040,17 @@ static int cnic_alloc_uio_rings(struct cnic_dev *dev, int pages)
 	struct cnic_local *cp = dev->cnic_priv;
 	struct cnic_uio_dev *udev;
 
-	read_lock(&cnic_dev_lock);
 	list_for_each_entry(udev, &cnic_udev_list, list) {
 		if (udev->pdev == dev->pcidev) {
 			udev->dev = dev;
 			if (__cnic_alloc_uio_rings(udev, pages)) {
 				udev->dev = NULL;
-				read_unlock(&cnic_dev_lock);
 				return -ENOMEM;
 			}
 			cp->udev = udev;
-			read_unlock(&cnic_dev_lock);
 			return 0;
 		}
 	}
-	read_unlock(&cnic_dev_lock);
 
 	udev = kzalloc(sizeof(struct cnic_uio_dev), GFP_ATOMIC);
 	if (!udev)
@@ -1067,9 +1064,7 @@ static int cnic_alloc_uio_rings(struct cnic_dev *dev, int pages)
 	if (__cnic_alloc_uio_rings(udev, pages))
 		goto err_udev;
 
-	write_lock(&cnic_dev_lock);
 	list_add(&udev->list, &cnic_udev_list);
-	write_unlock(&cnic_dev_lock);
 
 	pci_dev_get(udev->pdev);
 
@@ -1395,7 +1390,7 @@ static int cnic_submit_kwqe_16(struct cnic_dev *dev, u32 cmd, u32 cid,
 			     BNX2X_HW_CID(bp, cid)));
 
 	type_16 = (type << SPE_HDR_CONN_TYPE_SHIFT) & SPE_HDR_CONN_TYPE;
-	type_16 |= (cp->pfid << SPE_HDR_FUNCTION_ID_SHIFT) &
+	type_16 |= (bp->pfid << SPE_HDR_FUNCTION_ID_SHIFT) &
 		   SPE_HDR_FUNCTION_ID;
 
 	kwqe.hdr.type = cpu_to_le16(type_16);
@@ -1433,7 +1428,6 @@ static void cnic_reply_bnx2x_kcqes(struct cnic_dev *dev, int ulp_type,
 static void cnic_bnx2x_set_tcp_options(struct cnic_dev *dev, int time_stamps,
 				       int en_tcp_dack)
 {
-	struct cnic_local *cp = dev->cnic_priv;
 	struct bnx2x *bp = netdev_priv(dev->netdev);
 	u8 xstorm_flags = XSTORM_L5CM_TCP_FLAGS_WND_SCL_EN;
 	u16 tstorm_flags = 0;
@@ -1446,10 +1440,10 @@ static void cnic_bnx2x_set_tcp_options(struct cnic_dev *dev, int time_stamps,
 		tstorm_flags |= TSTORM_L5CM_TCP_FLAGS_DELAYED_ACK_EN;
 
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_TCP_VARS_FLAGS_OFFSET(cp->pfid), xstorm_flags);
+		 XSTORM_ISCSI_TCP_VARS_FLAGS_OFFSET(bp->pfid), xstorm_flags);
 
 	CNIC_WR16(dev, BAR_TSTRORM_INTMEM +
-		  TSTORM_ISCSI_TCP_VARS_FLAGS_OFFSET(cp->pfid), tstorm_flags);
+		  TSTORM_ISCSI_TCP_VARS_FLAGS_OFFSET(bp->pfid), tstorm_flags);
 }
 
 static int cnic_bnx2x_iscsi_init1(struct cnic_dev *dev, struct kwqe *kwqe)
@@ -1458,7 +1452,7 @@ static int cnic_bnx2x_iscsi_init1(struct cnic_dev *dev, struct kwqe *kwqe)
 	struct bnx2x *bp = netdev_priv(dev->netdev);
 	struct iscsi_kwqe_init1 *req1 = (struct iscsi_kwqe_init1 *) kwqe;
 	int hq_bds, pages;
-	u32 pfid = cp->pfid;
+	u32 pfid = bp->pfid;
 
 	cp->num_iscsi_tasks = req1->num_tasks_per_conn;
 	cp->num_ccells = req1->num_ccells_per_conn;
@@ -1541,9 +1535,8 @@ static int cnic_bnx2x_iscsi_init1(struct cnic_dev *dev, struct kwqe *kwqe)
 static int cnic_bnx2x_iscsi_init2(struct cnic_dev *dev, struct kwqe *kwqe)
 {
 	struct iscsi_kwqe_init2 *req2 = (struct iscsi_kwqe_init2 *) kwqe;
-	struct cnic_local *cp = dev->cnic_priv;
 	struct bnx2x *bp = netdev_priv(dev->netdev);
-	u32 pfid = cp->pfid;
+	u32 pfid = bp->pfid;
 	struct iscsi_kcqe kcqe;
 	struct kcqe *cqes[1];
 
@@ -2078,9 +2071,8 @@ static void cnic_init_storm_conn_bufs(struct cnic_dev *dev,
 
 static void cnic_init_bnx2x_mac(struct cnic_dev *dev)
 {
-	struct cnic_local *cp = dev->cnic_priv;
 	struct bnx2x *bp = netdev_priv(dev->netdev);
-	u32 pfid = cp->pfid;
+	u32 pfid = bp->pfid;
 	u8 *mac = dev->mac_addr;
 
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
@@ -2186,7 +2178,7 @@ static int cnic_bnx2x_connect(struct cnic_dev *dev, struct kwqe *wqes[],
 	cnic_init_storm_conn_bufs(dev, kwqe1, kwqe3, conn_buf);
 
 	CNIC_WR16(dev, BAR_XSTRORM_INTMEM +
-		  XSTORM_ISCSI_LOCAL_VLAN_OFFSET(cp->pfid), csk->vlan_id);
+		  XSTORM_ISCSI_LOCAL_VLAN_OFFSET(bp->pfid), csk->vlan_id);
 
 	ret = cnic_submit_kwqe_16(dev, L5CM_RAMROD_CMD_ID_TCP_CONNECT,
 			kwqe1->cid, ISCSI_CONNECTION_TYPE, &l5_data);
@@ -3138,6 +3130,7 @@ static void cnic_service_bnx2x_bh(unsigned long data)
 {
 	struct cnic_dev *dev = (struct cnic_dev *) data;
 	struct cnic_local *cp = dev->cnic_priv;
+	struct bnx2x *bp = netdev_priv(dev->netdev);
 	u32 status_idx, new_status_idx;
 
 	if (unlikely(!test_bit(CNIC_F_CNIC_UP, &dev->flags)))
@@ -3149,7 +3142,7 @@ static void cnic_service_bnx2x_bh(unsigned long data)
 		CNIC_WR16(dev, cp->kcq1.io_addr,
 			  cp->kcq1.sw_prod_idx + MAX_KCQ_IDX);
 
-		if (cp->ethdev->drv_state & CNIC_DRV_STATE_NO_FCOE) {
+		if (!CNIC_SUPPORTS_FCOE(bp)) {
 			cp->arm_int(dev, status_idx);
 			break;
 		}
@@ -3246,7 +3239,8 @@ static int cnic_copy_ulp_stats(struct cnic_dev *dev, int ulp_type)
 	int rc;
 
 	mutex_lock(&cnic_lock);
-	ulp_ops = cnic_ulp_tbl_prot(ulp_type);
+	ulp_ops = rcu_dereference_protected(cp->ulp_ops[ulp_type],
+					    lockdep_is_held(&cnic_lock));
 	if (ulp_ops && ulp_ops->cnic_get_stats)
 		rc = ulp_ops->cnic_get_stats(cp->ulp_handle[ulp_type]);
 	else
@@ -4228,9 +4222,8 @@ static void cnic_cm_stop_bnx2x_hw(struct cnic_dev *dev)
 
 static int cnic_cm_init_bnx2x_hw(struct cnic_dev *dev)
 {
-	struct cnic_local *cp = dev->cnic_priv;
 	struct bnx2x *bp = netdev_priv(dev->netdev);
-	u32 pfid = cp->pfid;
+	u32 pfid = bp->pfid;
 	u32 port = BP_PORT(bp);
 
 	cnic_init_bnx2x_mac(dev);
@@ -4996,7 +4989,7 @@ static void cnic_init_bnx2x_rx_ring(struct cnic_dev *dev,
 	data->general.activate_flg = 1;
 	data->general.sp_client_id = cli;
 	data->general.mtu = cpu_to_le16(cp->l2_single_buf_size - 14);
-	data->general.func_id = cp->pfid;
+	data->general.func_id = bp->pfid;
 
 	for (i = 0; i < BNX2X_MAX_RX_DESC_CNT; i++, rxbd++) {
 		dma_addr_t buf_map;
@@ -5046,7 +5039,7 @@ static void cnic_init_bnx2x_kcq(struct cnic_dev *dev)
 {
 	struct cnic_local *cp = dev->cnic_priv;
 	struct bnx2x *bp = netdev_priv(dev->netdev);
-	u32 pfid = cp->pfid;
+	u32 pfid = bp->pfid;
 
 	cp->kcq1.io_addr = BAR_CSTRORM_INTMEM +
 			   CSTORM_ISCSI_EQ_PROD_OFFSET(pfid, 0);
@@ -5090,11 +5083,10 @@ static int cnic_start_bnx2x_hw(struct cnic_dev *dev)
 	u32 pfid;
 
 	dev->stats_addr = ethdev->addr_drv_info_to_mcp;
-	cp->pfid = bp->pfid;
 	cp->func = bp->pf_num;
 
 	func = CNIC_FUNC(cp);
-	pfid = cp->pfid;
+	pfid = bp->pfid;
 
 	ret = cnic_init_id_tbl(&cp->cid_tbl, MAX_ISCSI_TBL_SZ,
 			       cp->iscsi_start_cid, 0);
@@ -5224,6 +5216,7 @@ static void cnic_init_rings(struct cnic_dev *dev)
 		cnic_ring_ctl(dev, cid, cli, 1);
 		*cid_ptr = cid >> 4;
 		*(cid_ptr + 1) = cid * bp->db_size;
+		*(cid_ptr + 2) = UIO_USE_TX_DOORBELL;
 	}
 }
 
@@ -5394,7 +5387,7 @@ static void cnic_stop_bnx2x_hw(struct cnic_dev *dev)
 
 	*cp->kcq1.hw_prod_idx_ptr = 0;
 	CNIC_WR(dev, BAR_CSTRORM_INTMEM +
-		CSTORM_ISCSI_EQ_CONS_OFFSET(cp->pfid, 0), 0);
+		CSTORM_ISCSI_EQ_CONS_OFFSET(bp->pfid, 0), 0);
 	CNIC_WR16(dev, cp->kcq1.io_addr, 0);
 	cnic_free_resc(dev);
 }
@@ -5416,7 +5409,7 @@ static void cnic_stop_hw(struct cnic_dev *dev)
 		cp->stop_cm(dev);
 		cp->ethdev->drv_state &= ~CNIC_DRV_STATE_HANDLES_IRQ;
 		clear_bit(CNIC_F_CNIC_UP, &dev->flags);
-		rcu_assign_pointer(cp->ulp_ops[CNIC_ULP_L4], NULL);
+		RCU_INIT_POINTER(cp->ulp_ops[CNIC_ULP_L4], NULL);
 		synchronize_rcu();
 		cnic_cm_shutdown(dev);
 		cp->stop_hw(dev);
@@ -5578,7 +5571,7 @@ static struct cnic_dev *init_bnx2x_cnic(struct net_device *dev)
 	if (cdev->max_fcoe_conn > BNX2X_FCOE_NUM_CONNECTIONS)
 		cdev->max_fcoe_conn = BNX2X_FCOE_NUM_CONNECTIONS;
 
-	memcpy(cdev->mac_addr, ethdev->iscsi_mac, 6);
+	memcpy(cdev->mac_addr, ethdev->iscsi_mac, ETH_ALEN);
 
 	cp->cnic_ops = &cnic_bnx2x_ops;
 	cp->start_hw = cnic_start_bnx2x_hw;
@@ -5628,20 +5621,27 @@ static void cnic_rcv_netevent(struct cnic_local *cp, unsigned long event,
 {
 	int if_type;
 
-	rcu_read_lock();
 	for (if_type = 0; if_type < MAX_CNIC_ULP_TYPE; if_type++) {
 		struct cnic_ulp_ops *ulp_ops;
 		void *ctx;
 
-		ulp_ops = rcu_dereference(cp->ulp_ops[if_type]);
-		if (!ulp_ops || !ulp_ops->indicate_netevent)
+		mutex_lock(&cnic_lock);
+		ulp_ops = rcu_dereference_protected(cp->ulp_ops[if_type],
+						lockdep_is_held(&cnic_lock));
+		if (!ulp_ops || !ulp_ops->indicate_netevent) {
+			mutex_unlock(&cnic_lock);
 			continue;
+		}
 
 		ctx = cp->ulp_handle[if_type];
 
+		set_bit(ULP_F_CALL_PENDING, &cp->ulp_flags[if_type]);
+		mutex_unlock(&cnic_lock);
+
 		ulp_ops->indicate_netevent(ctx, event, vlan_id);
+
+		clear_bit(ULP_F_CALL_PENDING, &cp->ulp_flags[if_type]);
 	}
-	rcu_read_unlock();
 }
 
 /* netdev event handler */

@@ -1,6 +1,7 @@
-/* cnic.h: Broadcom CNIC core network driver.
+/* cnic.h: QLogic CNIC core network driver.
  *
- * Copyright (c) 2006-2013 Broadcom Corporation
+ * Copyright (c) 2006-2014 Broadcom Corporation
+ * Copyright (c) 2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -186,6 +187,8 @@ struct kcq_info {
 	u16		(*hw_idx)(u16);
 };
 
+#define UIO_USE_TX_DOORBELL 0x017855DB
+
 struct cnic_uio_dev {
 	struct uio_info		cnic_uinfo;
 	u32			uio_dev;
@@ -303,7 +306,6 @@ struct cnic_local {
 
 	u32			chip_id;
 	int			func;
-	u32			pfid;
 
 	u32			shmem_base;
 
