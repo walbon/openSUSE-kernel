@@ -11462,7 +11462,7 @@ static int tg3_close(struct net_device *dev)
 	memset(&tp->net_stats_prev, 0, sizeof(tp->net_stats_prev));
 	memset(&tp->estats_prev, 0, sizeof(tp->estats_prev));
 
-	tg3_power_down(tp);
+	tg3_power_down_prepare(tp);
 
 	tg3_carrier_off(tp);
 
@@ -11684,9 +11684,6 @@ static int tg3_get_eeprom(struct net_device *dev, struct ethtool_eeprom *eeprom,
 	if (tg3_flag(tp, NO_NVRAM))
 		return -EINVAL;
 
-	if (tp->phy_flags & TG3_PHYFLG_IS_LOW_POWER)
-		return -EAGAIN;
-
 	offset = eeprom->offset;
 	len = eeprom->len;
 	eeprom->len = 0;
@@ -11774,9 +11771,6 @@ static int tg3_set_eeprom(struct net_device *dev, struct ethtool_eeprom *eeprom,
 	u32 offset, len, b_offset, odd_len;
 	u8 *buf;
 	__be32 start, end;
-
-	if (tp->phy_flags & TG3_PHYFLG_IS_LOW_POWER)
-		return -EAGAIN;
 
 	if (tg3_flag(tp, NO_NVRAM) ||
 	    eeprom->magic != TG3_EEPROM_MAGIC)
@@ -13505,7 +13499,7 @@ static void tg3_self_test(struct net_device *dev, struct ethtool_test *etest,
 			tg3_phy_start(tp);
 	}
 	if (tp->phy_flags & TG3_PHYFLG_IS_LOW_POWER)
-		tg3_power_down(tp);
+		tg3_power_down_prepare(tp);
 
 }
 
