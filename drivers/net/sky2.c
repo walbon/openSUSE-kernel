@@ -1373,13 +1373,14 @@ static inline unsigned sky2_rx_pad(const struct sky2_hw *hw)
  * Allocate an skb for receiving. If the MTU is large enough
  * make the skb non-linear with a fragment list of pages.
  */
-static struct sk_buff *sky2_rx_alloc(struct sky2_port *sky2)
+static struct sk_buff *sky2_rx_alloc(struct sky2_port *sky2, gfp_t gfp)
 {
 	struct sk_buff *skb;
 	int i;
 
-	skb = netdev_alloc_skb(sky2->netdev,
-			       sky2->rx_data_size + sky2_rx_pad(sky2->hw));
+	skb = __netdev_alloc_skb(sky2->netdev,
+				 sky2->rx_data_size + sky2_rx_pad(sky2->hw),
+				 gfp);
 	if (!skb)
 		goto nomem;
 
@@ -1397,7 +1398,7 @@ static struct sk_buff *sky2_rx_alloc(struct sky2_port *sky2)
 		skb_reserve(skb, NET_IP_ALIGN);
 
 	for (i = 0; i < sky2->rx_nfrags; i++) {
-		struct page *page = alloc_page(GFP_ATOMIC);
+		struct page *page = alloc_page(gfp);
 
 		if (!page)
 			goto free_partial;
@@ -1427,7 +1428,7 @@ static int sky2_alloc_rx_skbs(struct sky2_port *sky2)
 	for (i = 0; i < sky2->rx_pending; i++) {
 		struct rx_ring_info *re = sky2->rx_ring + i;
 
-		re->skb = sky2_rx_alloc(sky2);
+		re->skb = sky2_rx_alloc(sky2, GFP_KERNEL);
 		if (!re->skb)
 			return -ENOMEM;
 
@@ -2400,7 +2401,7 @@ static struct sk_buff *receive_new(struct sky2_port *sky2,
 	struct rx_ring_info nre;
 	unsigned hdr_space = sky2->rx_data_size;
 
-	nre.skb = sky2_rx_alloc(sky2);
+	nre.skb = sky2_rx_alloc(sky2, GFP_ATOMIC);
 	if (unlikely(!nre.skb))
 		goto nobuf;
 
