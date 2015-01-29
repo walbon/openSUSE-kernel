@@ -18,12 +18,12 @@ config NET_VENDOR_BROADCOM
 if NET_VENDOR_BROADCOM
 
 config BNX2
-	tristate "Broadcom NetXtremeII support"
+	tristate "QLogic NetXtremeII support"
 	depends on PCI
 	select CRC32
 	select FW_LOADER
-	help
-	  This driver supports Broadcom NetXtremeII gigabit Ethernet cards.
+	---help---
+	  This driver supports QLogic NetXtremeII gigabit Ethernet cards.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called bnx2.  This is recommended.
