@@ -5017,6 +5017,8 @@ static int sky2_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		}
  	}
 
+	netif_napi_add(dev, &hw->napi, sky2_poll, NAPI_WEIGHT);
+
 	err = register_netdev(dev);
 	if (err) {
 		dev_err(&pdev->dev, "cannot register net device\n");
@@ -5024,8 +5026,6 @@ static int sky2_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	netif_carrier_off(dev);
-
-	netif_napi_add(dev, &hw->napi, sky2_poll, NAPI_WEIGHT);
 
 	sky2_show_addr(dev);
 
