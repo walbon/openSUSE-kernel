@@ -1758,6 +1758,11 @@ static int sky2_up(struct net_device *dev)
 
 	sky2_hw_up(sky2);
 
+	if (hw->chip_id == CHIP_ID_YUKON_OPT ||
+	    hw->chip_id == CHIP_ID_YUKON_PRM ||
+	    hw->chip_id == CHIP_ID_YUKON_OP_2)
+		imask |= Y2_IS_PHY_QLNK;	/* enable PHY Quick Link */
+
 	/* Enable interrupts from phy/mac for port */
 	imask = sky2_read32(hw, B0_IMSK);
 	imask |= portirq_msk[port];
@@ -2112,15 +2117,21 @@ static int sky2_down(struct net_device *dev)
 
 	netif_info(sky2, ifdown, dev, "disabling interface\n");
 
-	/* Disable port IRQ */
-	sky2_write32(hw, B0_IMSK,
-		     sky2_read32(hw, B0_IMSK) & ~portirq_msk[sky2->port]);
-	sky2_read32(hw, B0_IMSK);
-
 	if (hw->ports == 1) {
+		sky2_write32(hw, B0_IMSK, 0);
+		sky2_read32(hw, B0_IMSK);
+
 		napi_disable(&hw->napi);
 		free_irq(hw->pdev->irq, hw);
 	} else {
+		u32 imask;
+
+		/* Disable port IRQ */
+		imask  = sky2_read32(hw, B0_IMSK);
+		imask &= ~portirq_msk[sky2->port];
+		sky2_write32(hw, B0_IMSK, imask);
+		sky2_read32(hw, B0_IMSK);
+
 		synchronize_irq(hw->pdev->irq);
 		napi_synchronize(&hw->napi);
 	}
@@ -3280,7 +3291,6 @@ static void sky2_reset(struct sky2_hw *hw)
 	    hw->chip_id == CHIP_ID_YUKON_PRM ||
 	    hw->chip_id == CHIP_ID_YUKON_OP_2) {
 		u16 reg;
-		u32 msk;
 
 		if (hw->chip_id == CHIP_ID_YUKON_OPT && hw->chip_rev == 0) {
 			/* disable PCI-E PHY power down (set PHY reg 0x80, bit 7 */
@@ -3302,11 +3312,6 @@ static void sky2_reset(struct sky2_hw *hw)
 		/* reset PHY Link Detect */
 		sky2_write8(hw, B2_TST_CTRL1, TST_CFG_WRITE_ON);
 		sky2_pci_write16(hw, PSM_CONFIG_REG4, reg);
-
-		/* enable PHY Quick Link */
-		msk = sky2_read32(hw, B0_IMSK);
-		msk |= Y2_IS_PHY_QLNK;
-		sky2_write32(hw, B0_IMSK, msk);
 
 		/* check if PSMv2 was running before */
 		reg = sky2_pci_read16(hw, PSM_CONFIG_REG3);
@@ -3434,7 +3439,9 @@ static void sky2_all_down(struct sky2_hw *hw)
 
 	sky2_read32(hw, B0_IMSK);
 	sky2_write32(hw, B0_IMSK, 0);
-	synchronize_irq(hw->pdev->irq);
+
+	if (hw->ports > 1 || netif_running(hw->dev[0]))
+		synchronize_irq(hw->pdev->irq);
 	napi_disable(&hw->napi);
 
 	for (i = 0; i < hw->ports; i++) {
@@ -3452,7 +3459,7 @@ static void sky2_all_down(struct sky2_hw *hw)
 
 static void sky2_all_up(struct sky2_hw *hw)
 {
-	u32 imask = Y2_IS_BASE;
+	u32 imask = 0;
 	int i;
 
 	for (i = 0; i < hw->ports; i++) {
@@ -3468,11 +3475,13 @@ static void sky2_all_up(struct sky2_hw *hw)
 		netif_wake_queue(dev);
 	}
 
-	sky2_write32(hw, B0_IMSK, imask);
-	sky2_read32(hw, B0_IMSK);
-
-	sky2_read32(hw, B0_Y2_SP_LISR);
-	napi_enable(&hw->napi);
+	if (imask || hw->ports > 1) {
+		imask |= Y2_IS_BASE;
+		sky2_write32(hw, B0_IMSK, imask);
+		sky2_read32(hw, B0_IMSK);
+		sky2_read32(hw, B0_Y2_SP_LISR);
+		napi_enable(&hw->napi);
+	}
 }
 
 static void sky2_restart(struct work_struct *work)
