@@ -1739,7 +1739,7 @@ static int sky2_setup_irq(struct sky2_hw *hw, const char *name)
 
 
 /* Bring up network interface. */
-static int sky2_up(struct net_device *dev)
+static int sky2_open(struct net_device *dev)
 {
 	struct sky2_port *sky2 = netdev_priv(dev);
 	struct sky2_hw *hw = sky2->hw;
@@ -2109,7 +2109,7 @@ static void sky2_hw_down(struct sky2_port *sky2)
 }
 
 /* Network shutdown */
-static int sky2_down(struct net_device *dev)
+static int sky2_close(struct net_device *dev)
 {
 	struct sky2_port *sky2 = netdev_priv(dev);
 	struct sky2_hw *hw = sky2->hw;
@@ -2617,7 +2617,7 @@ static inline void sky2_tx_done(struct net_device *dev, u16 last)
 	if (netif_running(dev)) {
 		sky2_tx_complete(sky2, last);
 
-		/* Wake unless it's detached, and called e.g. from sky2_down() */
+		/* Wake unless it's detached, and called e.g. from sky2_close() */
 		if (tx_avail(sky2) > MAX_SKB_TX_LE + 4)
 			netif_wake_queue(dev);
 	}
@@ -3413,7 +3413,7 @@ static void sky2_detach(struct net_device *dev)
 		netif_tx_lock(dev);
 		netif_device_detach(dev);	/* stop txq */
 		netif_tx_unlock(dev);
-		sky2_down(dev);
+		sky2_close(dev);
 	}
 }
 
@@ -3423,7 +3423,7 @@ static int sky2_reattach(struct net_device *dev)
 	int err = 0;
 
 	if (netif_running(dev)) {
-		err = sky2_up(dev);
+		err = sky2_open(dev);
 		if (err) {
 			netdev_info(dev, "could not restart %d\n", err);
 			dev_close(dev);
@@ -4593,7 +4593,7 @@ static int sky2_device_event(struct notifier_block *unused,
 	struct net_device *dev = ptr;
 	struct sky2_port *sky2 = netdev_priv(dev);
 
-	if (dev->netdev_ops->ndo_open != sky2_up || !sky2_debug)
+	if (dev->netdev_ops->ndo_open != sky2_open || !sky2_debug)
 		return NOTIFY_DONE;
 
 	switch (event) {
@@ -4658,8 +4658,8 @@ static __exit void sky2_debug_cleanup(void)
    not allowing netpoll on second port */
 static const struct net_device_ops sky2_netdev_ops[2] = {
   {
-	.ndo_open		= sky2_up,
-	.ndo_stop		= sky2_down,
+	.ndo_open		= sky2_open,
+	.ndo_stop		= sky2_close,
 	.ndo_start_xmit		= sky2_xmit_frame,
 	.ndo_do_ioctl		= sky2_ioctl,
 	.ndo_validate_addr	= eth_validate_addr,
@@ -4675,8 +4675,8 @@ static const struct net_device_ops sky2_netdev_ops[2] = {
 #endif
   },
   {
-	.ndo_open		= sky2_up,
-	.ndo_stop		= sky2_down,
+	.ndo_open		= sky2_open,
+	.ndo_stop		= sky2_close,
 	.ndo_start_xmit		= sky2_xmit_frame,
 	.ndo_do_ioctl		= sky2_ioctl,
 	.ndo_validate_addr	= eth_validate_addr,
