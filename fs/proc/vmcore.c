@@ -18,6 +18,7 @@
 #include <linux/init.h>
 #include <linux/crash_dump.h>
 #include <linux/list.h>
+#include <linux/vmalloc.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 
@@ -30,6 +31,9 @@ static LIST_HEAD(vmcore_list);
 static char *elfcorebuf;
 static size_t elfcorebuf_sz;
 static size_t elfcorebuf_sz_orig;
+
+static char *elfnotes_buf;
+static size_t elfnotes_sz;
 
 /* Total size of vmcore file. */
 static u64 vmcore_size;
@@ -136,10 +140,26 @@ static ssize_t read_vmcore(struct file *file, char __user *buffer,
 
 	/* Read ELF core header */
 	if (*fpos < elfcorebuf_sz) {
-		tsz = elfcorebuf_sz - *fpos;
-		if (buflen < tsz)
-			tsz = buflen;
+		tsz = min(elfcorebuf_sz - (size_t)*fpos, buflen);
 		if (copy_to_user(buffer, elfcorebuf + *fpos, tsz))
+			return -EFAULT;
+		buflen -= tsz;
+		*fpos += tsz;
+		buffer += tsz;
+		acc += tsz;
+
+		/* leave now if filled buffer already */
+		if (buflen == 0)
+			return acc;
+	}
+
+	/* Read Elf note segment */
+	if (*fpos < elfcorebuf_sz + elfnotes_sz) {
+		void *kaddr;
+
+		tsz = min(elfcorebuf_sz + elfnotes_sz - (size_t)*fpos, buflen);
+		kaddr = elfnotes_buf + *fpos - elfcorebuf_sz;
+		if (copy_to_user(buffer, kaddr, tsz))
 			return -EFAULT;
 		buflen -= tsz;
 		*fpos += tsz;
@@ -153,9 +173,7 @@ static ssize_t read_vmcore(struct file *file, char __user *buffer,
 
 	list_for_each_entry(m, &vmcore_list, list) {
 		if (*fpos < m->offset + m->size) {
-			tsz = m->offset + m->size - *fpos;
-			if (buflen < tsz)
-				tsz = buflen;
+			tsz = min_t(size_t, m->offset + m->size - *fpos, buflen);
 			start = m->paddr + *fpos - m->offset;
 			tmp = read_from_oldmem(buffer, tsz, &start, 1);
 			if (tmp < 0)
@@ -174,9 +192,122 @@ static ssize_t read_vmcore(struct file *file, char __user *buffer,
 	return acc;
 }
 
+/**
+ * alloc_elfnotes_buf - allocate buffer for ELF note segment in
+ *                      vmalloc memory
+ *
+ * @notes_sz: size of buffer
+ *
+ * If CONFIG_MMU is defined, use vmalloc_user() to allow users to mmap
+ * the buffer to user-space by means of remap_vmalloc_range().
+ *
+ * If CONFIG_MMU is not defined, use vzalloc() since mmap_vmcore() is
+ * disabled and there's no need to allow users to mmap the buffer.
+ */
+static inline char *alloc_elfnotes_buf(size_t notes_sz)
+{
+#ifdef CONFIG_MMU
+	return vmalloc_user(notes_sz);
+#else
+	return vzalloc(notes_sz);
+#endif
+}
+
+/*
+ * Disable mmap_vmcore() if CONFIG_MMU is not defined. MMU is
+ * essential for mmap_vmcore() in order to map physically
+ * non-contiguous objects (ELF header, ELF note segment and memory
+ * regions in the 1st kernel pointed to by PT_LOAD entries) into
+ * virtually contiguous user-space in ELF layout.
+ */
+#ifdef CONFIG_MMU
+static int mmap_vmcore(struct file *file, struct vm_area_struct *vma)
+{
+	size_t size = vma->vm_end - vma->vm_start;
+	u64 start, end, len, tsz;
+	struct vmcore *m;
+
+	start = (u64)vma->vm_pgoff << PAGE_SHIFT;
+	end = start + size;
+
+	if (size > vmcore_size || end > vmcore_size)
+		return -EINVAL;
+
+	if (vma->vm_flags & (VM_WRITE | VM_EXEC))
+		return -EPERM;
+
+	vma->vm_flags &= ~(VM_MAYWRITE | VM_MAYEXEC);
+	vma->vm_flags |= VM_MIXEDMAP;
+
+	len = 0;
+
+	if (start < elfcorebuf_sz) {
+		u64 pfn;
+
+		tsz = min(elfcorebuf_sz - (size_t)start, size);
+		pfn = __pa(elfcorebuf + start) >> PAGE_SHIFT;
+		if (remap_pfn_range(vma, vma->vm_start, pfn, tsz,
+				    vma->vm_page_prot))
+			return -EAGAIN;
+		size -= tsz;
+		start += tsz;
+		len += tsz;
+
+		if (size == 0)
+			return 0;
+	}
+
+	if (start < elfcorebuf_sz + elfnotes_sz) {
+		void *kaddr;
+
+		tsz = min(elfcorebuf_sz + elfnotes_sz - (size_t)start, size);
+		kaddr = elfnotes_buf + start - elfcorebuf_sz;
+		if (remap_vmalloc_range_partial(vma, vma->vm_start + len,
+						kaddr, tsz))
+			goto fail;
+		size -= tsz;
+		start += tsz;
+		len += tsz;
+
+		if (size == 0)
+			return 0;
+	}
+
+	list_for_each_entry(m, &vmcore_list, list) {
+		if (start < m->offset + m->size) {
+			u64 paddr = 0;
+
+			tsz = min_t(size_t, m->offset + m->size - start, size);
+			paddr = m->paddr + start - m->offset;
+			if (remap_pfn_range(vma, vma->vm_start + len,
+					    paddr >> PAGE_SHIFT, tsz,
+					    vma->vm_page_prot))
+				goto fail;
+			size -= tsz;
+			start += tsz;
+			len += tsz;
+
+			if (size == 0)
+				return 0;
+		}
+	}
+
+	return 0;
+fail:
+	do_munmap(vma->vm_mm, vma->vm_start, len);
+	return -EAGAIN;
+}
+#else
+static int mmap_vmcore(struct file *file, struct vm_area_struct *vma)
+{
+	return -ENOSYS;
+}
+#endif
+
 static const struct file_operations proc_vmcore_operations = {
 	.read		= read_vmcore,
 	.llseek		= default_llseek,
+	.mmap		= mmap_vmcore,
 };
 
 static struct vmcore* __init get_new_element(void)
@@ -184,61 +315,40 @@ static struct vmcore* __init get_new_element(void)
 	return kzalloc(sizeof(struct vmcore), GFP_KERNEL);
 }
 
-static u64 __init get_vmcore_size_elf64(char *elfptr, size_t elfsz)
+static u64 __init get_vmcore_size(size_t elfsz, size_t elfnotesegsz,
+				  struct list_head *vc_list)
 {
-	int i;
 	u64 size;
-	Elf64_Ehdr *ehdr_ptr;
+	struct vmcore *m;
+
+	size = elfsz + elfnotesegsz;
+	list_for_each_entry(m, vc_list, list) {
+		size += m->size;
+	}
+	return size;
+}
+
+/**
+ * update_note_header_size_elf64 - update p_memsz member of each PT_NOTE entry
+ *
+ * @ehdr_ptr: ELF header
+ *
+ * This function updates p_memsz member of each PT_NOTE entry in the
+ * program header table pointed to by @ehdr_ptr to real size of ELF
+ * note segment.
+ */
+static int __init update_note_header_size_elf64(const Elf64_Ehdr *ehdr_ptr)
+{
+	int i, rc=0;
 	Elf64_Phdr *phdr_ptr;
-
-	ehdr_ptr = (Elf64_Ehdr *)elfptr;
-	phdr_ptr = (Elf64_Phdr*)(elfptr + sizeof(Elf64_Ehdr));
-	size = elfsz;
-	for (i = 0; i < ehdr_ptr->e_phnum; i++) {
-		size += phdr_ptr->p_memsz;
-		phdr_ptr++;
-	}
-	return size;
-}
-
-static u64 __init get_vmcore_size_elf32(char *elfptr, size_t elfsz)
-{
-	int i;
-	u64 size;
-	Elf32_Ehdr *ehdr_ptr;
-	Elf32_Phdr *phdr_ptr;
-
-	ehdr_ptr = (Elf32_Ehdr *)elfptr;
-	phdr_ptr = (Elf32_Phdr*)(elfptr + sizeof(Elf32_Ehdr));
-	size = elfsz;
-	for (i = 0; i < ehdr_ptr->e_phnum; i++) {
-		size += phdr_ptr->p_memsz;
-		phdr_ptr++;
-	}
-	return size;
-}
-
-/* Merges all the PT_NOTE headers into one. */
-static int __init merge_note_headers_elf64(char *elfptr, size_t *elfsz,
-						struct list_head *vc_list)
-{
-	int i, nr_ptnote=0, rc=0;
-	char *tmp;
-	Elf64_Ehdr *ehdr_ptr;
-	Elf64_Phdr phdr, *phdr_ptr;
 	Elf64_Nhdr *nhdr_ptr;
-	u64 phdr_sz = 0, note_off;
 
-	ehdr_ptr = (Elf64_Ehdr *)elfptr;
-	phdr_ptr = (Elf64_Phdr*)(elfptr + sizeof(Elf64_Ehdr));
+	phdr_ptr = (Elf64_Phdr *)(ehdr_ptr + 1);
 	for (i = 0; i < ehdr_ptr->e_phnum; i++, phdr_ptr++) {
-		int j;
 		void *notes_section;
-		struct vmcore *new;
 		u64 offset, max_sz, sz, real_sz = 0;
 		if (phdr_ptr->p_type != PT_NOTE)
 			continue;
-		nr_ptnote++;
 		max_sz = phdr_ptr->p_memsz;
 		offset = phdr_ptr->p_offset;
 		notes_section = kmalloc(max_sz, GFP_KERNEL);
@@ -250,7 +360,7 @@ static int __init merge_note_headers_elf64(char *elfptr, size_t *elfsz,
 			return rc;
 		}
 		nhdr_ptr = notes_section;
-		for (j = 0; j < max_sz; j += sz) {
+		while (real_sz < max_sz) {
 			if (nhdr_ptr->n_namesz == 0)
 				break;
 			sz = sizeof(Elf64_Nhdr) +
@@ -259,26 +369,122 @@ static int __init merge_note_headers_elf64(char *elfptr, size_t *elfsz,
 			real_sz += sz;
 			nhdr_ptr = (Elf64_Nhdr*)((char*)nhdr_ptr + sz);
 		}
-
-		/* Add this contiguous chunk of notes section to vmcore list.*/
-		new = get_new_element();
-		if (!new) {
-			kfree(notes_section);
-			return -ENOMEM;
-		}
-		new->paddr = phdr_ptr->p_offset;
-		new->size = real_sz;
-		list_add_tail(&new->list, vc_list);
-		phdr_sz += real_sz;
 		kfree(notes_section);
+		phdr_ptr->p_memsz = real_sz;
 	}
+
+	return 0;
+}
+
+/**
+ * get_note_number_and_size_elf64 - get the number of PT_NOTE program
+ * headers and sum of real size of their ELF note segment headers and
+ * data.
+ *
+ * @ehdr_ptr: ELF header
+ * @nr_ptnote: buffer for the number of PT_NOTE program headers
+ * @sz_ptnote: buffer for size of unique PT_NOTE program header
+ *
+ * This function is used to merge multiple PT_NOTE program headers
+ * into a unique single one. The resulting unique entry will have
+ * @sz_ptnote in its phdr->p_mem.
+ *
+ * It is assumed that program headers with PT_NOTE type pointed to by
+ * @ehdr_ptr has already been updated by update_note_header_size_elf64
+ * and each of PT_NOTE program headers has actual ELF note segment
+ * size in its p_memsz member.
+ */
+static int __init get_note_number_and_size_elf64(const Elf64_Ehdr *ehdr_ptr,
+						 int *nr_ptnote, u64 *sz_ptnote)
+{
+	int i;
+	Elf64_Phdr *phdr_ptr;
+
+	*nr_ptnote = *sz_ptnote = 0;
+
+	phdr_ptr = (Elf64_Phdr *)(ehdr_ptr + 1);
+	for (i = 0; i < ehdr_ptr->e_phnum; i++, phdr_ptr++) {
+		if (phdr_ptr->p_type != PT_NOTE)
+			continue;
+		*nr_ptnote += 1;
+		*sz_ptnote += phdr_ptr->p_memsz;
+	}
+
+	return 0;
+}
+
+/**
+ * copy_notes_elf64 - copy ELF note segments in a given buffer
+ *
+ * @ehdr_ptr: ELF header
+ * @notes_buf: buffer into which ELF note segments are copied
+ *
+ * This function is used to copy ELF note segment in the 1st kernel
+ * into the buffer @notes_buf in the 2nd kernel. It is assumed that
+ * size of the buffer @notes_buf is equal to or larger than sum of the
+ * real ELF note segment headers and data.
+ *
+ * It is assumed that program headers with PT_NOTE type pointed to by
+ * @ehdr_ptr has already been updated by update_note_header_size_elf64
+ * and each of PT_NOTE program headers has actual ELF note segment
+ * size in its p_memsz member.
+ */
+static int __init copy_notes_elf64(const Elf64_Ehdr *ehdr_ptr, char *notes_buf)
+{
+	int i, rc=0;
+	Elf64_Phdr *phdr_ptr;
+
+	phdr_ptr = (Elf64_Phdr*)(ehdr_ptr + 1);
+
+	for (i = 0; i < ehdr_ptr->e_phnum; i++, phdr_ptr++) {
+		u64 offset;
+		if (phdr_ptr->p_type != PT_NOTE)
+			continue;
+		offset = phdr_ptr->p_offset;
+		rc = read_from_oldmem(notes_buf, phdr_ptr->p_memsz, &offset, 0);
+		if (rc < 0)
+			return rc;
+		notes_buf += phdr_ptr->p_memsz;
+	}
+
+	return 0;
+}
+
+/* Merges all the PT_NOTE headers into one. */
+static int __init merge_note_headers_elf64(char *elfptr, size_t *elfsz,
+					   char **notes_buf, size_t *notes_sz)
+{
+	int i, nr_ptnote=0, rc=0;
+	char *tmp;
+	Elf64_Ehdr *ehdr_ptr;
+	Elf64_Phdr phdr;
+	u64 phdr_sz = 0, note_off;
+
+	ehdr_ptr = (Elf64_Ehdr *)elfptr;
+
+	rc = update_note_header_size_elf64(ehdr_ptr);
+	if (rc < 0)
+		return rc;
+
+	rc = get_note_number_and_size_elf64(ehdr_ptr, &nr_ptnote, &phdr_sz);
+	if (rc < 0)
+		return rc;
+
+	*notes_sz = roundup(phdr_sz, PAGE_SIZE);
+	*notes_buf = alloc_elfnotes_buf(*notes_sz);
+	if (!*notes_buf)
+		return -ENOMEM;
+
+	rc = copy_notes_elf64(ehdr_ptr, *notes_buf);
+	if (rc < 0)
+		return rc;
 
 	/* Prepare merged PT_NOTE program header. */
 	phdr.p_type    = PT_NOTE;
 	phdr.p_flags   = 0;
 	note_off = sizeof(Elf64_Ehdr) +
 			(ehdr_ptr->e_phnum - nr_ptnote +1) * sizeof(Elf64_Phdr);
-	phdr.p_offset  = note_off;
+	phdr.p_offset  = roundup(note_off, PAGE_SIZE);
 	phdr.p_vaddr   = phdr.p_paddr = 0;
 	phdr.p_filesz  = phdr.p_memsz = phdr_sz;
 	phdr.p_align   = 0;
@@ -301,27 +507,27 @@ static int __init merge_note_headers_elf64(char *elfptr, size_t *elfsz,
 	return 0;
 }
 
-/* Merges all the PT_NOTE headers into one. */
-static int __init merge_note_headers_elf32(char *elfptr, size_t *elfsz,
-						struct list_head *vc_list)
+/**
+ * update_note_header_size_elf32 - update p_memsz member of each PT_NOTE entry
+ *
+ * @ehdr_ptr: ELF header
+ *
+ * This function updates p_memsz member of each PT_NOTE entry in the
+ * program header table pointed to by @ehdr_ptr to real size of ELF
+ * note segment.
+ */
+static int __init update_note_header_size_elf32(const Elf32_Ehdr *ehdr_ptr)
 {
-	int i, nr_ptnote=0, rc=0;
-	char *tmp;
-	Elf32_Ehdr *ehdr_ptr;
-	Elf32_Phdr phdr, *phdr_ptr;
+	int i, rc=0;
+	Elf32_Phdr *phdr_ptr;
 	Elf32_Nhdr *nhdr_ptr;
-	u64 phdr_sz = 0, note_off;
 
-	ehdr_ptr = (Elf32_Ehdr *)elfptr;
-	phdr_ptr = (Elf32_Phdr*)(elfptr + sizeof(Elf32_Ehdr));
+	phdr_ptr = (Elf32_Phdr *)(ehdr_ptr + 1);
 	for (i = 0; i < ehdr_ptr->e_phnum; i++, phdr_ptr++) {
-		int j;
 		void *notes_section;
-		struct vmcore *new;
 		u64 offset, max_sz, sz, real_sz = 0;
 		if (phdr_ptr->p_type != PT_NOTE)
 			continue;
-		nr_ptnote++;
 		max_sz = phdr_ptr->p_memsz;
 		offset = phdr_ptr->p_offset;
 		notes_section = kmalloc(max_sz, GFP_KERNEL);
@@ -333,7 +539,7 @@ static int __init merge_note_headers_elf32(char *elfptr, size_t *elfsz,
 			return rc;
 		}
 		nhdr_ptr = notes_section;
-		for (j = 0; j < max_sz; j += sz) {
+		while (real_sz < max_sz) {
 			if (nhdr_ptr->n_namesz == 0)
 				break;
 			sz = sizeof(Elf32_Nhdr) +
@@ -342,26 +548,122 @@ static int __init merge_note_headers_elf32(char *elfptr, size_t *elfsz,
 			real_sz += sz;
 			nhdr_ptr = (Elf32_Nhdr*)((char*)nhdr_ptr + sz);
 		}
-
-		/* Add this contiguous chunk of notes section to vmcore list.*/
-		new = get_new_element();
-		if (!new) {
-			kfree(notes_section);
-			return -ENOMEM;
-		}
-		new->paddr = phdr_ptr->p_offset;
-		new->size = real_sz;
-		list_add_tail(&new->list, vc_list);
-		phdr_sz += real_sz;
 		kfree(notes_section);
+		phdr_ptr->p_memsz = real_sz;
 	}
+
+	return 0;
+}
+
+/**
+ * get_note_number_and_size_elf32 - get the number of PT_NOTE program
+ * headers and sum of real size of their ELF note segment headers and
+ * data.
+ *
+ * @ehdr_ptr: ELF header
+ * @nr_ptnote: buffer for the number of PT_NOTE program headers
+ * @sz_ptnote: buffer for size of unique PT_NOTE program header
+ *
+ * This function is used to merge multiple PT_NOTE program headers
+ * into a unique single one. The resulting unique entry will have
+ * @sz_ptnote in its phdr->p_mem.
+ *
+ * It is assumed that program headers with PT_NOTE type pointed to by
+ * @ehdr_ptr has already been updated by update_note_header_size_elf32
+ * and each of PT_NOTE program headers has actual ELF note segment
+ * size in its p_memsz member.
+ */
+static int __init get_note_number_and_size_elf32(const Elf32_Ehdr *ehdr_ptr,
+						 int *nr_ptnote, u64 *sz_ptnote)
+{
+	int i;
+	Elf32_Phdr *phdr_ptr;
+
+	*nr_ptnote = *sz_ptnote = 0;
+
+	phdr_ptr = (Elf32_Phdr *)(ehdr_ptr + 1);
+	for (i = 0; i < ehdr_ptr->e_phnum; i++, phdr_ptr++) {
+		if (phdr_ptr->p_type != PT_NOTE)
+			continue;
+		*nr_ptnote += 1;
+		*sz_ptnote += phdr_ptr->p_memsz;
+	}
+
+	return 0;
+}
+
+/**
+ * copy_notes_elf32 - copy ELF note segments in a given buffer
+ *
+ * @ehdr_ptr: ELF header
+ * @notes_buf: buffer into which ELF note segments are copied
+ *
+ * This function is used to copy ELF note segment in the 1st kernel
+ * into the buffer @notes_buf in the 2nd kernel. It is assumed that
+ * size of the buffer @notes_buf is equal to or larger than sum of the
+ * real ELF note segment headers and data.
+ *
+ * It is assumed that program headers with PT_NOTE type pointed to by
+ * @ehdr_ptr has already been updated by update_note_header_size_elf32
+ * and each of PT_NOTE program headers has actual ELF note segment
+ * size in its p_memsz member.
+ */
+static int __init copy_notes_elf32(const Elf32_Ehdr *ehdr_ptr, char *notes_buf)
+{
+	int i, rc=0;
+	Elf32_Phdr *phdr_ptr;
+
+	phdr_ptr = (Elf32_Phdr*)(ehdr_ptr + 1);
+
+	for (i = 0; i < ehdr_ptr->e_phnum; i++, phdr_ptr++) {
+		u64 offset;
+		if (phdr_ptr->p_type != PT_NOTE)
+			continue;
+		offset = phdr_ptr->p_offset;
+		rc = read_from_oldmem(notes_buf, phdr_ptr->p_memsz, &offset, 0);
+		if (rc < 0)
+			return rc;
+		notes_buf += phdr_ptr->p_memsz;
+	}
+
+	return 0;
+}
+
+/* Merges all the PT_NOTE headers into one. */
+static int __init merge_note_headers_elf32(char *elfptr, size_t *elfsz,
+					   char **notes_buf, size_t *notes_sz)
+{
+	int i, nr_ptnote=0, rc=0;
+	char *tmp;
+	Elf32_Ehdr *ehdr_ptr;
+	Elf32_Phdr phdr;
+	u64 phdr_sz = 0, note_off;
+
+	ehdr_ptr = (Elf32_Ehdr *)elfptr;
+
+	rc = update_note_header_size_elf32(ehdr_ptr);
+	if (rc < 0)
+		return rc;
+
+	rc = get_note_number_and_size_elf32(ehdr_ptr, &nr_ptnote, &phdr_sz);
+	if (rc < 0)
+		return rc;
+
+	*notes_sz = roundup(phdr_sz, PAGE_SIZE);
+	*notes_buf = alloc_elfnotes_buf(*notes_sz);
+	if (!*notes_buf)
+		return -ENOMEM;
+
+	rc = copy_notes_elf32(ehdr_ptr, *notes_buf);
+	if (rc < 0)
+		return rc;
 
 	/* Prepare merged PT_NOTE program header. */
 	phdr.p_type    = PT_NOTE;
 	phdr.p_flags   = 0;
 	note_off = sizeof(Elf32_Ehdr) +
 			(ehdr_ptr->e_phnum - nr_ptnote +1) * sizeof(Elf32_Phdr);
-	phdr.p_offset  = note_off;
+	phdr.p_offset  = roundup(note_off, PAGE_SIZE);
 	phdr.p_vaddr   = phdr.p_paddr = 0;
 	phdr.p_filesz  = phdr.p_memsz = phdr_sz;
 	phdr.p_align   = 0;
@@ -388,6 +690,7 @@ static int __init merge_note_headers_elf32(char *elfptr, size_t *elfsz,
  * the new offset fields of exported program headers. */
 static int __init process_ptload_program_headers_elf64(char *elfptr,
 						size_t elfsz,
+						size_t elfnotes_sz,
 						struct list_head *vc_list)
 {
 	int i;
@@ -399,9 +702,8 @@ static int __init process_ptload_program_headers_elf64(char *elfptr,
 	ehdr_ptr = (Elf64_Ehdr *)elfptr;
 	phdr_ptr = (Elf64_Phdr*)(elfptr + sizeof(Elf64_Ehdr)); /* PT_NOTE hdr */
 
-	/* First program header is PT_NOTE header. */
-	vmcore_off = elfsz +
-			phdr_ptr->p_memsz; /* Note sections */
+	/* Skip Elf header, program headers and Elf note segment. */
+	vmcore_off = elfsz + elfnotes_sz;
 
 	for (i = 0; i < ehdr_ptr->e_phnum; i++, phdr_ptr++) {
 		u64 paddr, start, end, size;
@@ -431,6 +733,7 @@ static int __init process_ptload_program_headers_elf64(char *elfptr,
 
 static int __init process_ptload_program_headers_elf32(char *elfptr,
 						size_t elfsz,
+						size_t elfnotes_sz,
 						struct list_head *vc_list)
 {
 	int i;
@@ -442,9 +745,8 @@ static int __init process_ptload_program_headers_elf32(char *elfptr,
 	ehdr_ptr = (Elf32_Ehdr *)elfptr;
 	phdr_ptr = (Elf32_Phdr*)(elfptr + sizeof(Elf32_Ehdr)); /* PT_NOTE hdr */
 
-	/* First program header is PT_NOTE header. */
-	vmcore_off = elfsz +
-			phdr_ptr->p_memsz; /* Note sections */
+	/* Skip Elf header, program headers and Elf note segment. */
+	vmcore_off = elfsz + elfnotes_sz;
 
 	for (i = 0; i < ehdr_ptr->e_phnum; i++, phdr_ptr++) {
 		u64 paddr, start, end, size;
@@ -473,14 +775,14 @@ static int __init process_ptload_program_headers_elf32(char *elfptr,
 }
 
 /* Sets offset fields of vmcore elements. */
-static void __init set_vmcore_list_offsets(size_t elfsz,
+static void __init set_vmcore_list_offsets(size_t elfsz, size_t elfnotes_sz,
 					   struct list_head *vc_list)
 {
 	loff_t vmcore_off;
 	struct vmcore *m;
 
-	/* Skip Elf header and program headers. */
-	vmcore_off = elfsz;
+	/* Skip Elf header, program headers and Elf note segment. */
+	vmcore_off = elfsz + elfnotes_sz;
 
 	list_for_each_entry(m, vc_list, list) {
 		m->offset = vmcore_off;
@@ -492,6 +794,8 @@ static void free_elfcorebuf(void)
 {
 	free_pages((unsigned long)elfcorebuf, get_order(elfcorebuf_sz_orig));
 	elfcorebuf = NULL;
+	vfree(elfnotes_buf);
+	elfnotes_buf = NULL;
 }
 
 static int __init parse_crash_elf64_headers(void)
@@ -536,14 +840,15 @@ static int __init parse_crash_elf64_headers(void)
 		goto fail;
 
 	/* Merge all PT_NOTE headers into one. */
-	rc = merge_note_headers_elf64(elfcorebuf, &elfcorebuf_sz, &vmcore_list);
+	rc = merge_note_headers_elf64(elfcorebuf, &elfcorebuf_sz,
+				      &elfnotes_buf, &elfnotes_sz);
 	if (rc)
 		goto fail;
 	rc = process_ptload_program_headers_elf64(elfcorebuf, elfcorebuf_sz,
-							&vmcore_list);
+						  elfnotes_sz, &vmcore_list);
 	if (rc)
 		goto fail;
-	set_vmcore_list_offsets(elfcorebuf_sz, &vmcore_list);
+	set_vmcore_list_offsets(elfcorebuf_sz, elfnotes_sz, &vmcore_list);
 	return 0;
 fail:
 	free_elfcorebuf();
@@ -591,14 +896,15 @@ static int __init parse_crash_elf32_headers(void)
 		goto fail;
 
 	/* Merge all PT_NOTE headers into one. */
-	rc = merge_note_headers_elf32(elfcorebuf, &elfcorebuf_sz, &vmcore_list);
+	rc = merge_note_headers_elf32(elfcorebuf, &elfcorebuf_sz,
+				      &elfnotes_buf, &elfnotes_sz);
 	if (rc)
 		goto fail;
 	rc = process_ptload_program_headers_elf32(elfcorebuf, elfcorebuf_sz,
-								&vmcore_list);
+						  elfnotes_sz, &vmcore_list);
 	if (rc)
 		goto fail;
-	set_vmcore_list_offsets(elfcorebuf_sz, &vmcore_list);
+	set_vmcore_list_offsets(elfcorebuf_sz, elfnotes_sz, &vmcore_list);
 	return 0;
 fail:
 	free_elfcorebuf();
@@ -625,21 +931,20 @@ static int __init parse_crash_elf_headers(void)
 		rc = parse_crash_elf64_headers();
 		if (rc)
 			return rc;
-
-		/* Determine vmcore size. */
-		vmcore_size = get_vmcore_size_elf64(elfcorebuf, elfcorebuf_sz);
 	} else if (e_ident[EI_CLASS] == ELFCLASS32) {
 		rc = parse_crash_elf32_headers();
 		if (rc)
 			return rc;
-
-		/* Determine vmcore size. */
-		vmcore_size = get_vmcore_size_elf32(elfcorebuf, elfcorebuf_sz);
 	} else {
 		printk(KERN_WARNING "Warning: Core image elf header is not"
 					" sane\n");
 		return -EINVAL;
 	}
+
+	/* Determine vmcore size. */
+	vmcore_size = get_vmcore_size(elfcorebuf_sz, elfnotes_sz,
+				      &vmcore_list);
+
 	return 0;
 }
 
