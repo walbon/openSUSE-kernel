@@ -7691,7 +7691,7 @@ static int __init vmx_init(void)
 	r = kvm_init(&vmx_x86_ops, sizeof(struct vcpu_vmx),
 		     __alignof__(struct vcpu_vmx), THIS_MODULE);
 	if (r)
-		goto out3;
+		goto out5;
 
 	vmx_disable_intercept_for_msr(MSR_FS_BASE, false);
 	vmx_disable_intercept_for_msr(MSR_GS_BASE, false);
@@ -7737,6 +7737,8 @@ static int __init vmx_init(void)
 
 	return 0;
 
+out5:
+	free_page((unsigned long)vmx_msr_bitmap_longmode_x2apic);
 out4:
 	free_page((unsigned long)vmx_msr_bitmap_longmode);
 out3:
