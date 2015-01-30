@@ -7189,6 +7189,8 @@ static int nested_vmx_run(struct kvm_vcpu *vcpu, bool launch)
 	vcpu->cpu = cpu;
 	put_cpu();
 
+	vmx_segment_cache_clear(vmx);
+
 	vmcs12->launch_state = 1;
 
 	prepare_vmcs02(vcpu, vmcs12);
@@ -7433,6 +7435,8 @@ static void nested_vmx_vmexit(struct kvm_vcpu *vcpu)
 	vmx_vcpu_load(vcpu, cpu);
 	vcpu->cpu = cpu;
 	put_cpu();
+
+	vmx_segment_cache_clear(vmx);
 
 	/* if no vmcs02 cache requested, remove the one we used */
 	if (VMCS02_POOL_SIZE == 0)
