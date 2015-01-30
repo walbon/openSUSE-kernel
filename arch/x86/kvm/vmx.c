@@ -6414,8 +6414,6 @@ static void __vmx_complete_interrupts(struct vcpu_vmx *vmx,
 
 static void vmx_complete_interrupts(struct vcpu_vmx *vmx)
 {
-	if (is_guest_mode(&vmx->vcpu))
-		return;
 	__vmx_complete_interrupts(vmx, vmx->idt_vectoring_info,
 				  VM_EXIT_INSTRUCTION_LEN,
 				  IDT_VECTORING_ERROR_CODE);
@@ -6423,8 +6421,6 @@ static void vmx_complete_interrupts(struct vcpu_vmx *vmx)
 
 static void vmx_cancel_injection(struct kvm_vcpu *vcpu)
 {
-	if (is_guest_mode(vcpu))
-		return;
 	__vmx_complete_interrupts(to_vmx(vcpu),
 				  vmcs_read32(VM_ENTRY_INTR_INFO_FIELD),
 				  VM_ENTRY_INSTRUCTION_LEN,
@@ -6445,21 +6441,6 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	unsigned long cr4;
-
-	if (is_guest_mode(vcpu) && !vmx->nested.nested_run_pending) {
-		struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
-		if (vmcs12->idt_vectoring_info_field &
-				VECTORING_INFO_VALID_MASK) {
-			vmcs_write32(VM_ENTRY_INTR_INFO_FIELD,
-				vmcs12->idt_vectoring_info_field);
-			vmcs_write32(VM_ENTRY_INSTRUCTION_LEN,
-				vmcs12->vm_exit_instruction_len);
-			if (vmcs12->idt_vectoring_info_field &
-					VECTORING_INFO_DELIVER_CODE_MASK)
-				vmcs_write32(VM_ENTRY_EXCEPTION_ERROR_CODE,
-					vmcs12->idt_vectoring_error_code);
-		}
-	}
 
 	/* Record the guest's net vcpu time for enforced NMI injections. */
 	if (unlikely(!cpu_has_virtual_nmis() && vmx->soft_vnmi_blocked))
@@ -6598,17 +6579,6 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vcpu->arch.regs_dirty = 0;
 
 	vmx->idt_vectoring_info = vmcs_read32(IDT_VECTORING_INFO_FIELD);
-
-	if (is_guest_mode(vcpu)) {
-		struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
-		vmcs12->idt_vectoring_info_field = vmx->idt_vectoring_info;
-		if (vmx->idt_vectoring_info & VECTORING_INFO_VALID_MASK) {
-			vmcs12->idt_vectoring_error_code =
-				vmcs_read32(IDT_VECTORING_ERROR_CODE);
-			vmcs12->vm_exit_instruction_len =
-				vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
-		}
-	}
 
 	asm("mov %0, %%ds; mov %0, %%es" : : "r"(__USER_DS));
 	vmx->loaded_vmcs->launched = 1;
@@ -7268,6 +7238,48 @@ vmcs12_guest_cr4(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
 			vcpu->arch.cr4_guest_owned_bits));
 }
 
+static void vmcs12_save_pending_event(struct kvm_vcpu *vcpu,
+				       struct vmcs12 *vmcs12)
+{
+	u32 idt_vectoring;
+	unsigned int nr;
+
+	if (vcpu->arch.exception.pending) {
+		nr = vcpu->arch.exception.nr;
+		idt_vectoring = nr | VECTORING_INFO_VALID_MASK;
+
+		if (kvm_exception_is_soft(nr)) {
+			vmcs12->vm_exit_instruction_len =
+				vcpu->arch.event_exit_inst_len;
+			idt_vectoring |= INTR_TYPE_SOFT_EXCEPTION;
+		} else
+			idt_vectoring |= INTR_TYPE_HARD_EXCEPTION;
+
+		if (vcpu->arch.exception.has_error_code) {
+			idt_vectoring |= VECTORING_INFO_DELIVER_CODE_MASK;
+			vmcs12->idt_vectoring_error_code =
+				vcpu->arch.exception.error_code;
+		}
+
+		vmcs12->idt_vectoring_info_field = idt_vectoring;
+	} else if (vcpu->arch.nmi_pending) {
+		vmcs12->idt_vectoring_info_field =
+			INTR_TYPE_NMI_INTR | INTR_INFO_VALID_MASK | NMI_VECTOR;
+	} else if (vcpu->arch.interrupt.pending) {
+		nr = vcpu->arch.interrupt.nr;
+		idt_vectoring = nr | VECTORING_INFO_VALID_MASK;
+
+		if (vcpu->arch.interrupt.soft) {
+			idt_vectoring |= INTR_TYPE_SOFT_INTR;
+			vmcs12->vm_entry_instruction_len =
+				vcpu->arch.event_exit_inst_len;
+		} else
+			idt_vectoring |= INTR_TYPE_EXT_INTR;
+
+		vmcs12->idt_vectoring_info_field = idt_vectoring;
+	}
+}
+
 /*
  * prepare_vmcs12 is part of what we need to do when the nested L2 guest exits
  * and we want to prepare to run its L1 parent. L1 keeps a vmcs for L2 (vmcs12),
@@ -7353,16 +7365,29 @@ void prepare_vmcs12(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
 
 	vmcs12->vm_exit_intr_info = vmcs_read32(VM_EXIT_INTR_INFO);
 	vmcs12->vm_exit_intr_error_code = vmcs_read32(VM_EXIT_INTR_ERROR_CODE);
-	vmcs12->idt_vectoring_info_field =
-		vmcs_read32(IDT_VECTORING_INFO_FIELD);
-	vmcs12->idt_vectoring_error_code =
-		vmcs_read32(IDT_VECTORING_ERROR_CODE);
+	vmcs12->idt_vectoring_info_field = 0;
 	vmcs12->vm_exit_instruction_len = vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
 	vmcs12->vmx_instruction_info = vmcs_read32(VMX_INSTRUCTION_INFO);
 
-	/* clear vm-entry fields which are to be cleared on exit */
-	if (!(vmcs12->vm_exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY))
+	if (!(vmcs12->vm_exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY)) {
+		/* vm_entry_intr_info_field is cleared on exit. Emulate this
+		 * instead of reading the real value. */
 		vmcs12->vm_entry_intr_info_field &= ~INTR_INFO_VALID_MASK;
+
+		/*
+		 * Transfer the event that L0 or L1 may wanted to inject into
+		 * L2 to IDT_VECTORING_INFO_FIELD.
+		 */
+		vmcs12_save_pending_event(vcpu, vmcs12);
+	}
+
+	/*
+	 * Drop what we picked up for L2 via vmx_complete_interrupts. It is
+	 * preserved above and would only end up incorrectly in L1.
+	 */
+	vcpu->arch.nmi_injected = false;
+	kvm_clear_exception_queue(vcpu);
+	kvm_clear_interrupt_queue(vcpu);
 }
 
 /*
@@ -7460,6 +7485,9 @@ static void nested_vmx_vmexit(struct kvm_vcpu *vcpu)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	int cpu;
 	struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
+
+	/* trying to cancel vmlaunch/vmresume is a bug */
+	WARN_ON_ONCE(vmx->nested.nested_run_pending);
 
 	leave_guest_mode(vcpu);
 	prepare_vmcs12(vcpu, vmcs12);
