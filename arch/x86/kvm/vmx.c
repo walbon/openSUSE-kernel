@@ -6898,7 +6898,7 @@ static void prepare_vmcs02(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
 		vmcs12->guest_interruptibility_info);
 	vmcs_write32(GUEST_ACTIVITY_STATE, vmcs12->guest_activity_state);
 	vmcs_write32(GUEST_SYSENTER_CS, vmcs12->guest_sysenter_cs);
-	vmcs_writel(GUEST_DR7, vmcs12->guest_dr7);
+	kvm_set_dr(vcpu, 7, vmcs12->guest_dr7);
 	vmcs_writel(GUEST_RFLAGS, vmcs12->guest_rflags);
 	vmcs_writel(GUEST_PENDING_DBG_EXCEPTIONS,
 		vmcs12->guest_pending_dbg_exceptions);
@@ -7413,6 +7413,9 @@ void load_vmcs12_host_state(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
 	if (vmcs12->vm_exit_controls & VM_EXIT_LOAD_IA32_PERF_GLOBAL_CTRL)
 		vmcs_write64(GUEST_IA32_PERF_GLOBAL_CTRL,
 			vmcs12->host_ia32_perf_global_ctrl);
+
+	kvm_set_dr(vcpu, 7, 0x400);
+	vmcs_write64(GUEST_IA32_DEBUGCTL, 0);
 }
 
 /*
