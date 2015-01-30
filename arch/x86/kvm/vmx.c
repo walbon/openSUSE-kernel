@@ -5416,6 +5416,12 @@ static int nested_vmx_check_permission(struct kvm_vcpu *vcpu)
 	return 1;
 }
 
+static inline void nested_release_vmcs12(struct vcpu_vmx *vmx)
+{
+	kunmap(vmx->nested.current_vmcs12_page);
+	nested_release_page(vmx->nested.current_vmcs12_page);
+}
+
 /*
  * Free whatever needs to be freed from vmx->nested when L1 goes down, or
  * just stops using VMX.
@@ -5426,11 +5432,12 @@ static void free_nested(struct vcpu_vmx *vmx)
 		return;
 	vmx->nested.vmxon = false;
 	if (vmx->nested.current_vmptr != -1ull) {
-		kunmap(vmx->nested.current_vmcs12_page);
-		nested_release_page(vmx->nested.current_vmcs12_page);
+		nested_release_vmcs12(vmx);
 		vmx->nested.current_vmptr = -1ull;
 		vmx->nested.current_vmcs12 = NULL;
 	}
+	if (enable_shadow_vmcs)
+		free_vmcs(vmx->nested.current_shadow_vmcs);
 	/* Unpin physical memory we referred to in current vmcs02 */
 	if (vmx->nested.apic_access_page) {
 		nested_release_page(vmx->nested.apic_access_page);
@@ -5571,8 +5578,7 @@ static int handle_vmclear(struct kvm_vcpu *vcpu)
 	}
 
 	if (vmptr == vmx->nested.current_vmptr) {
-		kunmap(vmx->nested.current_vmcs12_page);
-		nested_release_page(vmx->nested.current_vmcs12_page);
+		nested_release_vmcs12(vmx);
 		vmx->nested.current_vmptr = -1ull;
 		vmx->nested.current_vmcs12 = NULL;
 	}
@@ -5854,10 +5860,8 @@ static int handle_vmptrld(struct kvm_vcpu *vcpu)
 			skip_emulated_instruction(vcpu);
 			return 1;
 		}
-		if (vmx->nested.current_vmptr != -1ull) {
-			kunmap(vmx->nested.current_vmcs12_page);
-			nested_release_page(vmx->nested.current_vmcs12_page);
-		}
+		if (vmx->nested.current_vmptr != -1ull)
+			nested_release_vmcs12(vmx);
 
 		vmx->nested.current_vmptr = vmptr;
 		vmx->nested.current_vmcs12 = new_vmcs12;
