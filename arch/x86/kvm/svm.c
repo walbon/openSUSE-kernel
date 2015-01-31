@@ -3619,7 +3619,7 @@ static int svm_interrupt_allowed(struct kvm_vcpu *vcpu)
 	return ret;
 }
 
-static void enable_irq_window(struct kvm_vcpu *vcpu)
+static int enable_irq_window(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
 
@@ -3633,6 +3633,7 @@ static void enable_irq_window(struct kvm_vcpu *vcpu)
 		svm_set_vintr(svm);
 		svm_inject_irq(svm, 0x0);
 	}
+	return 0;
 }
 
 static void enable_nmi_window(struct kvm_vcpu *vcpu)

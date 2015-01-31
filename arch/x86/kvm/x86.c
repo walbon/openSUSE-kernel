@@ -5545,7 +5545,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	bool nmi_pending;
 	bool req_int_win = !irqchip_in_kernel(vcpu->kvm) &&
 		vcpu->run->request_interrupt_window;
-	bool req_immediate_exit = 0;
+	bool req_immediate_exit = false;
 
 	if (vcpu->requests) {
 		if (kvm_check_request(KVM_REQ_MMU_RELOAD, vcpu))
@@ -5583,8 +5583,6 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		}
 		if (kvm_check_request(KVM_REQ_SCAN_IOAPIC, vcpu))
 			vcpu_scan_ioapic(vcpu);
-		req_immediate_exit =
-			kvm_check_request(KVM_REQ_IMMEDIATE_EXIT, vcpu);
 	}
 
 	/*
@@ -5602,7 +5600,8 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		if (nmi_pending)
 			kvm_x86_ops->enable_nmi_window(vcpu);
 		else if (kvm_cpu_has_injectable_intr(vcpu) || req_int_win)
-			kvm_x86_ops->enable_irq_window(vcpu);
+			req_immediate_exit =
+				kvm_x86_ops->enable_irq_window(vcpu) != 0;
 
 		if (kvm_lapic_enabled(vcpu)) {
 			/*
