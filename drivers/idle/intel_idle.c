@@ -204,6 +204,117 @@ static struct cpuidle_state ivb_cstates[MWAIT_MAX_NUM_CSTATES] = {
 		.enter = &intel_idle },
 };
 
+static struct cpuidle_state ivt_cstates[] = {
+	{
+		.name = "C1-IVT",
+		.desc = "MWAIT 0x00",
+		.driver_data = (void *) 0x00,
+		.flags = CPUIDLE_FLAG_TIME_VALID,
+		.exit_latency = 1,
+		.target_residency = 1,
+		.enter = &intel_idle },
+	{
+		.name = "C1E-IVT",
+		.desc = "MWAIT 0x01",
+		.driver_data = (void *) 0x01,
+		.flags = CPUIDLE_FLAG_TIME_VALID,
+		.exit_latency = 10,
+		.target_residency = 80,
+		.enter = &intel_idle },
+	{
+		.name = "C3-IVT",
+		.desc = "MWAIT 0x10",
+		.driver_data = (void *) 0x10,
+		.flags = CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
+		.exit_latency = 59,
+		.target_residency = 156,
+		.enter = &intel_idle },
+	{
+		.name = "C6-IVT",
+		.desc = "MWAIT 0x20",
+		.driver_data = (void *) 0x20,
+		.flags = CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
+		.exit_latency = 82,
+		.target_residency = 300,
+		.enter = &intel_idle },
+	{
+		.enter = NULL }
+};
+
+static struct cpuidle_state ivt_cstates_4s[] = {
+	{
+		.name = "C1-IVT-4S",
+		.desc = "MWAIT 0x00",
+		.driver_data = (void *) 0x00,
+		.flags = CPUIDLE_FLAG_TIME_VALID,
+		.exit_latency = 1,
+		.target_residency = 1,
+		.enter = &intel_idle },
+	{
+		.name = "C1E-IVT-4S",
+		.desc = "MWAIT 0x01",
+		.driver_data = (void *) 0x01,
+		.flags = CPUIDLE_FLAG_TIME_VALID,
+		.exit_latency = 10,
+		.target_residency = 250,
+		.enter = &intel_idle },
+	{
+		.name = "C3-IVT-4S",
+		.desc = "MWAIT 0x10",
+		.driver_data = (void *) 0x10,
+		.flags = CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
+		.exit_latency = 59,
+		.target_residency = 300,
+		.enter = &intel_idle },
+	{
+		.name = "C6-IVT-4S",
+		.desc = "MWAIT 0x20",
+		.driver_data = (void *) 0x20,
+		.flags = CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
+		.exit_latency = 84,
+		.target_residency = 400,
+		.enter = &intel_idle },
+	{
+		.enter = NULL }
+};
+
+static struct cpuidle_state ivt_cstates_8s[] = {
+	{
+		.name = "C1-IVT-8S",
+		.desc = "MWAIT 0x00",
+		.driver_data = (void *) 0x00,
+		.flags = CPUIDLE_FLAG_TIME_VALID,
+		.exit_latency = 1,
+		.target_residency = 1,
+		.enter = &intel_idle },
+	{
+		.name = "C1E-IVT-8S",
+		.desc = "MWAIT 0x01",
+		.driver_data = (void *) 0x01,
+		.flags = CPUIDLE_FLAG_TIME_VALID,
+		.exit_latency = 10,
+		.target_residency = 500,
+		.enter = &intel_idle },
+	{
+		.name = "C3-IVT-8S",
+		.desc = "MWAIT 0x10",
+		.driver_data = (void *) 0x10,
+		.flags = CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
+		.exit_latency = 59,
+		.target_residency = 600,
+		.enter = &intel_idle },
+	{
+		.name = "C6-IVT-8S",
+		.desc = "MWAIT 0x20",
+		.driver_data = (void *) 0x20,
+		.flags = CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
+		.exit_latency = 88,
+		.target_residency = 700,
+		.enter = &intel_idle },
+	{
+		.enter = NULL }
+};
+
 static struct cpuidle_state hsw_cstates[MWAIT_MAX_NUM_CSTATES] = {
 	{ /* MWAIT C0 */ },
 	{ /* MWAIT C1 */
@@ -516,8 +627,11 @@ static int intel_idle_probe(void)
 		break;
 
 	case 0x3A:      /* IVB */
-	case 0x3E:      /* IVB Xeon */
 		cpuidle_state_table = ivb_cstates;
+		break;
+
+	case 0x3E:      /* IVB Xeon / Ivy Town */
+		cpuidle_state_table = ivt_cstates;
 		break;
 
 	case 0x3C:      /* HSW */
@@ -575,6 +689,39 @@ static void intel_idle_cpuidle_devices_uninit(void)
 	free_percpu(intel_idle_cpuidle_devices);
 	return;
 }
+
+/*
+ * intel_idle_state_table_update()
+ *
+ * Update the default state_table for this CPU-id
+ *
+ * Currently used to access tuned IVT multi-socket targets
+ * Assumption: num_sockets == (max_package_num + 1)
+ */
+void intel_idle_state_table_update(void)
+{
+	/* IVT uses a different table for 1-2, 3-4, and > 4 sockets */
+	if (boot_cpu_data.x86_model == 0x3e) { /* IVT */
+		int cpu, package_num, num_sockets = 1;
+
+		for_each_online_cpu(cpu) {
+			package_num = topology_physical_package_id(cpu);
+			if (package_num + 1 > num_sockets) {
+				num_sockets = package_num + 1;
+
+				if (num_sockets > 4)
+					cpuidle_state_table = ivt_cstates_8s;
+					return;
+			}
+		}
+
+		if (num_sockets > 2)
+			cpuidle_state_table = ivt_cstates_4s;
+		/* else, 1 and 2 socket systems use default ivt_cstates */
+	}
+	return;
+}
+
 /*
  * intel_idle_cpuidle_devices_init()
  * allocate, initialize, register cpuidle_devices
@@ -583,6 +730,8 @@ static int intel_idle_cpuidle_devices_init(void)
 {
 	int i, cstate;
 	struct cpuidle_device *dev;
+
+	intel_idle_state_table_update();
 
 	intel_idle_cpuidle_devices = alloc_percpu(struct cpuidle_device);
 	if (intel_idle_cpuidle_devices == NULL)
