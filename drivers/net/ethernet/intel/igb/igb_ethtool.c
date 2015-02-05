@@ -38,6 +38,7 @@
 #include <linux/slab.h>
 #include <linux/pm_runtime.h>
 #include <linux/highmem.h>
+#include <linux/mdio.h>
 
 #include "igb.h"
 
