@@ -97,6 +97,7 @@
 #define VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR	0x000011ff
 
 #define VMX_MISC_SAVE_EFER_LMA			0x00000020
+#define VMX_MISC_ACTIVITY_HLT			0x00000040
 
 /* VMCS Encodings */
 enum vmcs_field {
