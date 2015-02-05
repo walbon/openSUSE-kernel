@@ -2506,6 +2506,10 @@ static void igb_probe_vfs(struct igb_adapter *adapter)
 	int old_vfs = pci_num_vf(adapter->pdev);
 	int i;
 
+	if (!adapter->msix_entries) {
+		return;
+	}
+
 	/* Virtualization features not supported on i210 family. */
 	if ((hw->mac.type == e1000_i210) || (hw->mac.type == e1000_i211))
 		return;
