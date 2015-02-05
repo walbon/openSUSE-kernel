@@ -658,6 +658,8 @@ struct kvm_x86_ops {
 	void (*handle_external_intr)(struct kvm_vcpu *vcpu);
 
 	const struct trace_print_flags *exit_reasons_str;
+
+	int (*check_nested_events)(struct kvm_vcpu *vcpu, bool external_intr);
 };
 
 struct kvm_arch_async_pf {
