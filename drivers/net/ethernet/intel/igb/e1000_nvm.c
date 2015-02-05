@@ -797,5 +797,4 @@ etrack_id:
 		fw_vers->etrack_id = (eeprom_verh << NVM_ETRACK_SHIFT)
 			| eeprom_verl;
 	}
-	return;
 }
