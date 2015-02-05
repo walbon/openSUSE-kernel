@@ -7542,7 +7542,8 @@ static int vmx_check_nested_events(struct kvm_vcpu *vcpu, bool external_intr)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 
 	if (vcpu->arch.nmi_pending && nested_exit_on_nmi(vcpu)) {
-		if (vmx->nested.nested_run_pending)
+		if (vmx->nested.nested_run_pending ||
+		    vcpu->arch.interrupt.pending)
 			return -EBUSY;
 		nested_vmx_vmexit(vcpu, EXIT_REASON_EXCEPTION_NMI,
 				  NMI_VECTOR | INTR_TYPE_NMI_INTR |
