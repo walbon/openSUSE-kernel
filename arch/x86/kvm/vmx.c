@@ -1039,7 +1039,9 @@ static inline bool is_exception(u32 intr_info)
 		== (INTR_TYPE_HARD_EXCEPTION | INTR_INFO_VALID_MASK);
 }
 
-static void nested_vmx_vmexit(struct kvm_vcpu *vcpu);
+static void nested_vmx_vmexit(struct kvm_vcpu *vcpu, u32 exit_reason,
+			      u32 exit_intr_info,
+			      unsigned long exit_qualification);
 static void nested_vmx_entry_failure(struct kvm_vcpu *vcpu,
 			struct vmcs12 *vmcs12,
 			u32 reason, unsigned long qualification);
@@ -1789,7 +1791,9 @@ static int nested_pf_handled(struct kvm_vcpu *vcpu)
 	if (!(vmcs12->exception_bitmap & (1u << PF_VECTOR)))
 		return 0;
 
-	nested_vmx_vmexit(vcpu);
+	nested_vmx_vmexit(vcpu, to_vmx(vcpu)->exit_reason,
+			  vmcs_read32(VM_EXIT_INTR_INFO),
+			  vmcs_readl(EXIT_QUALIFICATION));
 	return 1;
 }
 
@@ -4392,15 +4396,12 @@ static void vmx_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
 static int vmx_nmi_allowed(struct kvm_vcpu *vcpu)
 {
 	if (is_guest_mode(vcpu)) {
-		struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
-
 		if (to_vmx(vcpu)->nested.nested_run_pending)
 			return 0;
 		if (nested_exit_on_nmi(vcpu)) {
-			nested_vmx_vmexit(vcpu);
-			vmcs12->vm_exit_reason = EXIT_REASON_EXCEPTION_NMI;
-			vmcs12->vm_exit_intr_info = NMI_VECTOR |
-				INTR_TYPE_NMI_INTR | INTR_INFO_VALID_MASK;
+			nested_vmx_vmexit(vcpu, EXIT_REASON_EXCEPTION_NMI,
+					  NMI_VECTOR | INTR_TYPE_NMI_INTR |
+					  INTR_INFO_VALID_MASK, 0);
 			/*
 			 * The NMI-triggered VM exit counts as injection:
 			 * clear this one and block further NMIs.
@@ -4421,16 +4422,16 @@ static int vmx_nmi_allowed(struct kvm_vcpu *vcpu)
 
 static int vmx_interrupt_allowed(struct kvm_vcpu *vcpu)
 {
-	if (is_guest_mode(vcpu) && nested_exit_on_intr(vcpu)) {
-		struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
-		if (to_vmx(vcpu)->nested.nested_run_pending ||
-		    (vmcs12->idt_vectoring_info_field &
-		     VECTORING_INFO_VALID_MASK))
+	if (is_guest_mode(vcpu)) {
+		if (to_vmx(vcpu)->nested.nested_run_pending)
 			return 0;
-		nested_vmx_vmexit(vcpu);
-		vmcs12->vm_exit_reason = EXIT_REASON_EXTERNAL_INTERRUPT;
-		vmcs12->vm_exit_intr_info = 0;
-		/* fall through to normal code, but now in L1, not L2 */
+		if (nested_exit_on_intr(vcpu)) {
+			nested_vmx_vmexit(vcpu, EXIT_REASON_EXTERNAL_INTERRUPT,
+					  0, 0);
+			/*
+			 * fall through to normal code, but now in L1, not L2
+			 */
+		}
 	}
 
 	return (vmcs_readl(GUEST_RFLAGS) & X86_EFLAGS_IF) &&
@@ -6337,7 +6338,9 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		return handle_invalid_guest_state(vcpu);
 
 	if (is_guest_mode(vcpu) && nested_vmx_exit_handled(vcpu)) {
-		nested_vmx_vmexit(vcpu);
+		nested_vmx_vmexit(vcpu, exit_reason,
+				  vmcs_read32(VM_EXIT_INTR_INFO),
+				  vmcs_readl(EXIT_QUALIFICATION));
 		return 1;
 	}
 
@@ -7563,7 +7566,9 @@ static void vmcs12_save_pending_event(struct kvm_vcpu *vcpu,
  * exit-information fields only. Other fields are modified by L1 with VMWRITE,
  * which already writes to vmcs12 directly.
  */
-void prepare_vmcs12(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
+static void prepare_vmcs12(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12,
+			   u32 exit_reason, u32 exit_intr_info,
+			   unsigned long exit_qualification)
 {
 	/* update guest state fields: */
 	vmcs12->guest_cr0 = vmcs12_guest_cr0(vcpu, vmcs12);
@@ -7631,11 +7636,15 @@ void prepare_vmcs12(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
 
 	/* update exit information fields: */
 
-	vmcs12->vm_exit_reason  = vmcs_read32(VM_EXIT_REASON);
-	vmcs12->exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+	vmcs12->vm_exit_reason = exit_reason;
+	vmcs12->exit_qualification = exit_qualification;
 
-	vmcs12->vm_exit_intr_info = vmcs_read32(VM_EXIT_INTR_INFO);
-	vmcs12->vm_exit_intr_error_code = vmcs_read32(VM_EXIT_INTR_ERROR_CODE);
+	vmcs12->vm_exit_intr_info = exit_intr_info;
+	if ((vmcs12->vm_exit_intr_info &
+	     (INTR_INFO_VALID_MASK | INTR_INFO_DELIVER_CODE_MASK)) ==
+	    (INTR_INFO_VALID_MASK | INTR_INFO_DELIVER_CODE_MASK))
+		vmcs12->vm_exit_intr_error_code =
+			vmcs_read32(VM_EXIT_INTR_ERROR_CODE);
 	vmcs12->idt_vectoring_info_field = 0;
 	vmcs12->vm_exit_instruction_len = vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
 	vmcs12->vmx_instruction_info = vmcs_read32(VMX_INSTRUCTION_INFO);
@@ -7751,7 +7760,9 @@ void load_vmcs12_host_state(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
  * and modify vmcs12 to make it see what it would expect to see there if
  * L2 was its real guest. Must only be called when in L2 (is_guest_mode())
  */
-static void nested_vmx_vmexit(struct kvm_vcpu *vcpu)
+static void nested_vmx_vmexit(struct kvm_vcpu *vcpu, u32 exit_reason,
+			      u32 exit_intr_info,
+			      unsigned long exit_qualification)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	int cpu;
@@ -7761,7 +7772,8 @@ static void nested_vmx_vmexit(struct kvm_vcpu *vcpu)
 	WARN_ON_ONCE(vmx->nested.nested_run_pending);
 
 	leave_guest_mode(vcpu);
-	prepare_vmcs12(vcpu, vmcs12);
+	prepare_vmcs12(vcpu, vmcs12, exit_reason, exit_intr_info,
+		       exit_qualification);
 
 	cpu = get_cpu();
 	vmx->loaded_vmcs = &vmx->vmcs01;
