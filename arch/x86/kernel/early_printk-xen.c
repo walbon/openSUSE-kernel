@@ -16,6 +16,7 @@
 #include <asm/mrst.h>
 #include <asm/pgtable.h>
 #include <linux/usb/ehci_def.h>
+#include <linux/efi.h>
 
 #ifndef CONFIG_XEN
 /* Simple VGA output */
@@ -260,7 +261,8 @@ static int __init setup_early_printk(char *buf)
 			max_ypos = boot_params.screen_info.orig_video_lines;
 			current_ypos = boot_params.screen_info.orig_y;
 #else
-		if (!strncmp(buf, "vga", 3) || !strncmp(buf, "xen", 3)) {
+		if (!strncmp(buf, efi_enabled ? "efi" : "vga", 3)
+		    || !strncmp(buf, "xen", 3)) {
 #endif
 			early_console_register(&early_vga_console, keep);
 		}
@@ -283,6 +285,7 @@ static int __init setup_early_printk(char *buf)
 			early_console_register(&early_hsu_console, keep);
 		}
 #endif
+
 		buf++;
 	}
 	return 0;

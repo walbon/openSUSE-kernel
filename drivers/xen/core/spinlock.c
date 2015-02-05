@@ -296,11 +296,9 @@ unsigned int xen_spin_wait(arch_spinlock_t *lock, unsigned int *ptok,
 		}
 
 #if CONFIG_XEN_SPINLOCK_ACQUIRE_NESTING
-		if (upcall_mask > flags) {
-			spinning.irq_count = percpu_read(_irq_count);
-			smp_wmb();
-			arch_local_irq_restore(flags);
-		}
+		spinning.irq_count = percpu_read(_irq_count);
+		smp_wmb();
+		arch_local_irq_restore(flags);
 #endif
 
 		if (!test_evtchn(percpu_read(poll_evtchn)) &&

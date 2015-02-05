@@ -70,7 +70,7 @@ config DEBUG_STACKOVERFLOW
 
 config EARLY_PRINTK_EFI
 	bool "Early printk via the EFI framebuffer"
-	depends on EFI && EARLY_PRINTK
+	depends on EFI && EARLY_PRINTK && !XEN
 	select FONT_SUPPORT
 	---help---
 	  Write kernel log output directly into the EFI framebuffer.

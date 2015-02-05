@@ -906,7 +906,7 @@ void __init xen_finish_init_mapping(void)
 	if (!xen_feature(XENFEAT_auto_translated_physmap)
 	    && xen_start_info->mfn_list >= __START_KERNEL_map)
 		phys_to_machine_mapping =
-			__va(__pa(xen_start_info->mfn_list));
+			__va(__pa_symbol(xen_start_info->mfn_list));
 
 	/* Unpin the no longer used Xen provided page tables. */
 	mmuext.cmd = MMUEXT_UNPIN_TABLE;

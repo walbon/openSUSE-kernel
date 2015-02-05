@@ -551,24 +551,26 @@ DEFINE_XEN_GUEST_HANDLE(mmu_update_t);
 /*
  * ` enum neg_errnoval
  * ` HYPERVISOR_multicall(multicall_entry_t call_list[],
- * `                      unsigned int nr_calls);
+ * `                      uint32_t nr_calls);
  *
- * NB. The fields are natural register size for this architecture.
+ * NB. The fields are logically the natural register size for this
+ * architecture. In cases where xen_ulong_t is larger than this then
+ * any unused bits in the upper portion must be zero.
  */
 struct multicall_entry {
-    unsigned long op;
+    xen_ulong_t op;
 #if !defined(CONFIG_PARAVIRT_XEN) || defined(HAVE_XEN_PLATFORM_COMPAT_H)
-    unsigned long result;
+    xen_ulong_t result;
 #else
-    long result;
+    xen_long_t result;
 #endif
-    unsigned long args[6];
+    xen_ulong_t args[6];
 };
 DEFINE_GUEST_HANDLE_STRUCT(multicall_entry);
 typedef struct multicall_entry multicall_entry_t;
 DEFINE_XEN_GUEST_HANDLE(multicall_entry_t);
 
-#if defined(CONFIG_PARAVIRT_XEN) || __XEN_INTERFACE_VERSION__ < 0x00040400
+#if __XEN_INTERFACE_VERSION__ < 0x00040400 || (defined(CONFIG_PARAVIRT_XEN) && !defined(HAVE_XEN_PLATFORM_COMPAT_H))
 /*
  * Event channel endpoints per domain (when using the 2-level ABI):
  *  1024 if a long is 32 bits; 4096 if a long is 64 bits.

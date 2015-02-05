@@ -63,32 +63,26 @@ int arch_msi_check_device(struct pci_dev *dev, int nvec, int type)
 }
 #endif
 
-static void msi_set_enable(struct pci_dev *dev, int pos, int enable)
+static void msi_set_enable(struct pci_dev *dev, int enable)
 {
 	u16 control;
 
-	BUG_ON(!pos);
-
-	pci_read_config_word(dev, pos + PCI_MSI_FLAGS, &control);
+	pci_read_config_word(dev, dev->msi_cap + PCI_MSI_FLAGS, &control);
 	control &= ~PCI_MSI_FLAGS_ENABLE;
 	if (enable)
 		control |= PCI_MSI_FLAGS_ENABLE;
-	pci_write_config_word(dev, pos + PCI_MSI_FLAGS, control);
+	pci_write_config_word(dev, dev->msi_cap + PCI_MSI_FLAGS, control);
 }
 
 static void msix_set_enable(struct pci_dev *dev, int enable)
 {
-	int pos;
 	u16 control;
 
-	pos = pci_find_capability(dev, PCI_CAP_ID_MSIX);
-	if (pos) {
-		pci_read_config_word(dev, pos + PCI_MSIX_FLAGS, &control);
-		control &= ~PCI_MSIX_FLAGS_ENABLE;
-		if (enable)
-			control |= PCI_MSIX_FLAGS_ENABLE;
-		pci_write_config_word(dev, pos + PCI_MSIX_FLAGS, control);
-	}
+	pci_read_config_word(dev, dev->msix_cap + PCI_MSIX_FLAGS, &control);
+	control &= ~PCI_MSIX_FLAGS_ENABLE;
+	if (enable)
+		control |= PCI_MSIX_FLAGS_ENABLE;
+	pci_write_config_word(dev, dev->msix_cap + PCI_MSIX_FLAGS, control);
 }
 
 static int (*get_owner)(struct pci_dev *dev);
@@ -238,17 +232,19 @@ static int msi_unmap_pirq(struct pci_dev *dev, int pirq, domid_t owner,
 	return 0;
 }
 
-static u64 find_table_base(struct pci_dev *dev, int pos)
+static u64 find_table_base(struct pci_dev *dev)
 {
 	u8 bar;
 	u32 reg;
 	unsigned long flags;
 
- 	pci_read_config_dword(dev, msix_table_offset_reg(pos), &reg);
+	pci_read_config_dword(dev, dev->msix_cap + PCI_MSIX_TABLE, &reg);
 	bar = reg & PCI_MSIX_FLAGS_BIRMASK;
 
 	flags = pci_resource_flags(dev, bar);
-	if (flags & (IORESOURCE_DISABLED | IORESOURCE_UNSET | IORESOURCE_BUSY))
+	if (!flags ||
+	     (flags & (IORESOURCE_DISABLED | IORESOURCE_UNSET |
+		       IORESOURCE_BUSY)))
 		return 0;
 
 	return pci_resource_start(dev, bar);
@@ -327,11 +323,8 @@ void pci_restore_msi_state(struct pci_dev *dev)
 		return;
 
 	pci_intx_for_msi(dev, 0);
-	if (dev->msi_enabled) {
-		int pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
-
-		msi_set_enable(dev, pos, 0);
-	}
+	if (dev->msi_enabled)
+		msi_set_enable(dev, 0);
 	if (dev->msix_enabled)
 		msix_set_enable(dev, 0);
 
@@ -510,10 +503,9 @@ out_unroll:
 static int msi_capability_init(struct pci_dev *dev, int nvec)
 {
 	struct msi_dev_list *dev_entry = get_msi_dev_pirq_list(dev);
-	int pos, pirq;
+	int pirq;
 
-	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
-	msi_set_enable(dev, pos, 0);	/* Disable MSI during set up */
+	msi_set_enable(dev, 0);	/* Disable MSI during set up */
 
 	pirq = msi_map_vector(dev, 0, 0, dev_entry->owner);
 	if (pirq < 0)
@@ -521,7 +513,7 @@ static int msi_capability_init(struct pci_dev *dev, int nvec)
 
 	/* Set MSI enabled bits	 */
 	pci_intx_for_msi(dev, 0);
-	msi_set_enable(dev, pos, 1);
+	msi_set_enable(dev, 1);
 	dev->msi_enabled = 1;
 
 	dev->irq = dev_entry->e.pirq = pirq;
@@ -543,7 +535,7 @@ static int msix_capability_init(struct pci_dev *dev,
 				struct msix_entry *entries, int nvec)
 {
 	u64 table_base;
-	int pirq, i, j, mapped, pos;
+	int pirq, i, j, mapped;
 	u16 control;
 	struct msi_dev_list *msi_dev_entry = get_msi_dev_pirq_list(dev);
 	struct msi_pirq_entry *pirq_entry;
@@ -551,14 +543,13 @@ static int msix_capability_init(struct pci_dev *dev,
 	if (!msi_dev_entry)
 		return -ENOMEM;
 
-	pos = pci_find_capability(dev, PCI_CAP_ID_MSIX);
-	pci_read_config_word(dev, pos + PCI_MSIX_FLAGS, &control);
+	pci_read_config_word(dev, dev->msix_cap + PCI_MSIX_FLAGS, &control);
 
 	/* Ensure MSI-X is disabled while it is set up */
 	control &= ~PCI_MSIX_FLAGS_ENABLE;
-	pci_write_config_word(dev, pos + PCI_MSIX_FLAGS, control);
+	pci_write_config_word(dev, dev->msix_cap + PCI_MSIX_FLAGS, control);
 
-	table_base = find_table_base(dev, pos);
+	table_base = find_table_base(dev);
 	if (!table_base)
 		return -ENODEV;
 
@@ -568,7 +559,7 @@ static int msix_capability_init(struct pci_dev *dev,
 	 * interrupts coming in before they're fully set up.
 	 */
 	control |= PCI_MSIX_FLAGS_MASKALL | PCI_MSIX_FLAGS_ENABLE;
-	pci_write_config_word(dev, pos + PCI_MSIX_FLAGS, control);
+	pci_write_config_word(dev, dev->msix_cap + PCI_MSIX_FLAGS, control);
 
 	for (i = 0; i < nvec; i++) {
 		mapped = 0;
@@ -618,7 +609,7 @@ static int msix_capability_init(struct pci_dev *dev,
 	populate_msi_sysfs(dev);
 
 	control &= ~PCI_MSIX_FLAGS_MASKALL;
-	pci_write_config_word(dev, pos + PCI_MSIX_FLAGS, control);
+	pci_write_config_word(dev, dev->msix_cap + PCI_MSIX_FLAGS, control);
 
 	return 0;
 }
@@ -665,9 +656,6 @@ static int pci_msi_check_device(struct pci_dev *dev, int nvec, int type)
 	if (ret)
 		return ret;
 
-	if (!pci_find_capability(dev, type))
-		return -EINVAL;
-
 	return 0;
 }
 
@@ -686,14 +674,14 @@ static int pci_msi_check_device(struct pci_dev *dev, int nvec, int type)
  */
 int pci_enable_msi_block(struct pci_dev *dev, unsigned int nvec)
 {
-	int temp, status, pos, maxvec;
+	int temp, status, maxvec;
 	u16 msgctl;
 	struct msi_dev_list *msi_dev_entry = get_msi_dev_pirq_list(dev);
 
-	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
-	if (!pos)
+	if (!dev->msi_cap)
 		return -EINVAL;
-	pci_read_config_word(dev, pos + PCI_MSI_FLAGS, &msgctl);
+
+	pci_read_config_word(dev, dev->msi_cap + PCI_MSI_FLAGS, &msgctl);
 	maxvec = 1 /* XXX << ((msgctl & PCI_MSI_FLAGS_QMASK) >> 1) */;
 	if (nvec > maxvec)
 		return maxvec;
@@ -740,7 +728,7 @@ EXPORT_SYMBOL(pci_enable_msi_block);
 
 void pci_msi_shutdown(struct pci_dev *dev)
 {
-	int pirq, pos;
+	int pirq;
 	struct msi_dev_list *msi_dev_entry = get_msi_dev_pirq_list(dev);
 
 	if (!pci_msi_enable || !dev || !dev->msi_enabled)
@@ -765,8 +753,7 @@ void pci_msi_shutdown(struct pci_dev *dev)
 	memset(&msi_dev_entry->e.kobj, 0, sizeof(msi_dev_entry->e.kobj));
 
 	/* Disable MSI mode */
-	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
-	msi_set_enable(dev, pos, 0);
+	msi_set_enable(dev, 0);
 	pci_intx_for_msi(dev, 1);
 	dev->msi_enabled = 0;
 }
@@ -785,15 +772,13 @@ EXPORT_SYMBOL(pci_disable_msi);
  */
 int pci_msix_table_size(struct pci_dev *dev)
 {
-	int pos;
 	u16 control;
 
-	pos = pci_find_capability(dev, PCI_CAP_ID_MSIX);
-	if (!pos)
+	if (!dev->msix_cap)
 		return 0;
 
-	pci_read_config_word(dev, msi_control_reg(pos), &control);
-	return multi_msix_capable(control);
+	pci_read_config_word(dev, dev->msix_cap + PCI_MSIX_FLAGS, &control);
+	return msix_table_size(control);
 }
 
 /**
@@ -817,7 +802,7 @@ int pci_enable_msix(struct pci_dev *dev, struct msix_entry *entries, int nvec)
 	int i, j, temp;
 	struct msi_dev_list *msi_dev_entry = get_msi_dev_pirq_list(dev);
 
-	if (!entries)
+	if (!entries || !dev->msix_cap)
 		return -EINVAL;
 
 	if (!is_initial_xendomain()) {
@@ -980,8 +965,6 @@ EXPORT_SYMBOL(pci_msi_enabled);
 
 void pci_msi_init_pci_dev(struct pci_dev *dev)
 {
-	int pos;
-
 	INIT_LIST_HEAD(&dev->msi_list);
 	/* Disable the msi hardware to avoid screaming interrupts
 	 * during boot.  This is the power on reset default so
@@ -993,10 +976,13 @@ void pci_msi_init_pci_dev(struct pci_dev *dev)
 	    && (dev->class >> 8) == PCI_CLASS_SYSTEM_IOMMU
 	    && dev->vendor == PCI_VENDOR_ID_AMD)
 		return;
-	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
-	if (pos)
-		msi_set_enable(dev, pos, 0);
-	msix_set_enable(dev, 0);
+	dev->msi_cap = pci_find_capability(dev, PCI_CAP_ID_MSI);
+	if (dev->msi_cap && is_initial_xendomain())
+		msi_set_enable(dev, 0);
+
+	dev->msix_cap = pci_find_capability(dev, PCI_CAP_ID_MSIX);
+	if (dev->msix_cap && is_initial_xendomain())
+		msix_set_enable(dev, 0);
 }
 
 /**
