@@ -504,6 +504,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 			.nr_to_write	= write_chunk,
 			.range_cyclic	= 1,
 		};
+		bool summed = false;
 
 		nr_reclaimable = global_page_state(NR_FILE_DIRTY) +
 					global_page_state(NR_UNSTABLE_NFS);
@@ -516,12 +517,30 @@ static void balance_dirty_pages(struct address_space *mapping,
 		 * catch-up. This avoids (excessively) small writeouts
 		 * when the bdi limits are ramping up.
 		 */
-		if (nr_dirty <= (background_thresh + dirty_thresh) / 2)
+		if (!(bdi->capabilities & BDI_CAP_STRICTLIMIT) &&
+		    nr_dirty <= (background_thresh + dirty_thresh) / 2)
 			break;
 
 		bdi_thresh = bdi_dirty_limit(bdi, dirty_thresh);
 		min_task_bdi_thresh = task_min_dirty_limit(bdi_thresh);
 		task_bdi_thresh = task_dirty_limit(current, bdi_thresh);
+
+		if ((bdi->capabilities & BDI_CAP_STRICTLIMIT)) {
+			if (bdi_thresh < 2 * bdi_stat_error(bdi)) {
+				bdi_nr_reclaimable = bdi_stat_sum(bdi, BDI_RECLAIMABLE);
+				bdi_dirty = bdi_nr_reclaimable +
+					bdi_stat_sum(bdi, BDI_WRITEBACK);
+				summed = true;
+			} else {
+				bdi_nr_reclaimable = bdi_stat(bdi, BDI_RECLAIMABLE);
+				bdi_dirty = bdi_nr_reclaimable +
+					bdi_stat(bdi, BDI_WRITEBACK);
+			}
+
+			if (bdi_dirty <= bdi_thresh &&
+			    nr_dirty <= (background_thresh + dirty_thresh) / 2)
+				break;
+		}
 
 		/*
 		 * In order to avoid the stacked BDI deadlock we need
@@ -534,9 +553,11 @@ static void balance_dirty_pages(struct address_space *mapping,
 		 * deltas.
 		 */
 		if (task_bdi_thresh < 2 * bdi_stat_error(bdi)) {
-			bdi_nr_reclaimable = bdi_stat_sum(bdi, BDI_RECLAIMABLE);
-			bdi_dirty = bdi_nr_reclaimable +
-				    bdi_stat_sum(bdi, BDI_WRITEBACK);
+			if (!summed) {
+				bdi_nr_reclaimable = bdi_stat_sum(bdi, BDI_RECLAIMABLE);
+				bdi_dirty = bdi_nr_reclaimable +
+					bdi_stat_sum(bdi, BDI_WRITEBACK);
+			}
 		} else {
 			bdi_nr_reclaimable = bdi_stat(bdi, BDI_RECLAIMABLE);
 			bdi_dirty = bdi_nr_reclaimable +
