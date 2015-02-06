@@ -138,6 +138,7 @@ struct fuse_file_lock {
 #define FATTR_ATIME_NOW	(1 << 7)
 #define FATTR_MTIME_NOW	(1 << 8)
 #define FATTR_LOCKOWNER	(1 << 9)
+#define FATTR_CTIME	(1 << 10)
 
 /**
  * Flags returned by the OPEN request
@@ -358,10 +359,10 @@ struct fuse_setattr_in {
 	__u64	lock_owner;
 	__u64	atime;
 	__u64	mtime;
-	__u64	unused2;
+	__u64	ctime;
 	__u32	atimensec;
 	__u32	mtimensec;
-	__u32	unused3;
+	__u32	ctimensec;
 	__u32	mode;
 	__u32	unused4;
 	__u32	uid;
