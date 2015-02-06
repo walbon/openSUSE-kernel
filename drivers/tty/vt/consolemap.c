@@ -19,7 +19,9 @@
 #include <linux/init.h>
 #include <linux/tty.h>
 #include <asm/uaccess.h>
+#ifndef __GENKSYMS__
 #include <linux/console.h>
+#endif
 #include <linux/consolemap.h>
 #include <linux/vt_kern.h>
 
