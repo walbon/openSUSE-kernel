@@ -1270,7 +1270,9 @@ int vt_ioctl(struct tty_struct *tty,
 		ret = con_font_op(vc_cons[fg_console].d, &op);
 		if (ret)
 			break;
+		console_lock();
 		con_set_default_unimap(vc_cons[fg_console].d);
+		console_unlock();
 		break;
 		}
 #endif
