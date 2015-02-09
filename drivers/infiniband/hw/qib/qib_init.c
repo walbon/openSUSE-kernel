@@ -232,7 +232,7 @@ struct qib_ctxtdata *qib_create_ctxtdata(struct qib_pportdata *ppd, u32 ctxt,
 /*
  * Common code for initializing the physical port structure.
  */
-void qib_init_pportdata(struct qib_pportdata *ppd, struct qib_devdata *dd,
+int qib_init_pportdata(struct qib_pportdata *ppd, struct qib_devdata *dd,
 			u8 hw_pidx, u8 port)
 {
 	int size;
@@ -242,6 +242,7 @@ void qib_init_pportdata(struct qib_pportdata *ppd, struct qib_devdata *dd,
 
 	spin_lock_init(&ppd->sdma_lock);
 	spin_lock_init(&ppd->lflags_lock);
+	spin_lock_init(&ppd->cc_shadow_lock);
 	init_waitqueue_head(&ppd->state_wait);
 
 	init_timer(&ppd->symerr_clear_timer);
@@ -249,8 +250,10 @@ void qib_init_pportdata(struct qib_pportdata *ppd, struct qib_devdata *dd,
 	ppd->symerr_clear_timer.data = (unsigned long)ppd;
 
 	ppd->qib_wq = NULL;
-
-	spin_lock_init(&ppd->cc_shadow_lock);
+	ppd->ibport_data.pmastats =
+		alloc_percpu(struct qib_pma_counters);
+	if (!ppd->ibport_data.pmastats)
+		return -ENOMEM;
 
 	if (qib_cc_table_size < IB_CCT_MIN_ENTRIES)
 		goto bail;
@@ -298,7 +301,7 @@ void qib_init_pportdata(struct qib_pportdata *ppd, struct qib_devdata *dd,
 		goto bail_3;
 	}
 
-	return;
+	return 0;
 
 bail_3:
 	kfree(ppd->ccti_entries_shadow);
@@ -312,7 +315,7 @@ bail_1:
 bail:
 	/* User is intentionally disabling the congestion control agent */
 	if (!qib_cc_table_size)
-		return;
+		return 0;
 
 	if (qib_cc_table_size < IB_CCT_MIN_ENTRIES) {
 		qib_cc_table_size = 0;
@@ -323,7 +326,7 @@ bail:
 
 	qib_dev_err(dd, "Congestion Control Agent disabled for port %d\n",
 		port);
-	return;
+	return 0;
 }
 
 static int init_pioavailregs(struct qib_devdata *dd)
@@ -633,6 +636,12 @@ wq_error:
 	return -ENOMEM;
 }
 
+static void qib_free_pportdata(struct qib_pportdata *ppd)
+{
+	free_percpu(ppd->ibport_data.pmastats);
+	ppd->ibport_data.pmastats = NULL;
+}
+
 /**
  * qib_init - do the actual initialization sequence on the chip
  * @dd: the qlogic_ib device
@@ -920,6 +929,7 @@ static void qib_shutdown_device(struct qib_devdata *dd)
 			destroy_workqueue(ppd->qib_wq);
 			ppd->qib_wq = NULL;
 		}
+		qib_free_pportdata(ppd);
 	}
 
 	qib_update_eeprom_log(dd);
