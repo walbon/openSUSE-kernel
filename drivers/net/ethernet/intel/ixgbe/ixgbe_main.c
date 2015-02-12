@@ -5237,6 +5237,9 @@ static int __ixgbe_shutdown(struct pci_dev *pdev, bool *enable_wake)
 		return retval;
 
 #endif
+	if (hw->mac.ops.stop_link_on_d3)
+		hw->mac.ops.stop_link_on_d3(hw);
+
 	if (wufc) {
 		ixgbe_set_rx_mode(netdev);
 
