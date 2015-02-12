@@ -7611,9 +7611,7 @@ skip_sriov:
 		e_err(probe, "failed to allocate sysfs resources\n");
 #endif /* CONFIG_IXGBE_HWMON */
 
-#ifdef CONFIG_DEBUG_FS
 	ixgbe_dbg_adapter_init(adapter);
-#endif /* CONFIG_DEBUG_FS */
 
 	/* Need link setup for MNG FW, else wait for IXGBE_UP */
 	if (hw->mng_fw_enabled && hw->mac.ops.setup_link)
@@ -7655,9 +7653,7 @@ static void ixgbe_remove(struct pci_dev *pdev)
 	struct ixgbe_adapter *adapter = pci_get_drvdata(pdev);
 	struct net_device *netdev = adapter->netdev;
 
-#ifdef CONFIG_DEBUG_FS
 	ixgbe_dbg_adapter_exit(adapter);
-#endif /*CONFIG_DEBUG_FS */
 
 	set_bit(__IXGBE_DOWN, &adapter->state);
 	cancel_work_sync(&adapter->service_task);
@@ -7920,15 +7916,11 @@ static int __init ixgbe_init_module(void)
 	pr_info("%s - version %s\n", ixgbe_driver_string, ixgbe_driver_version);
 	pr_info("%s\n", ixgbe_copyright);
 
-#ifdef CONFIG_DEBUG_FS
 	ixgbe_dbg_init();
-#endif /* CONFIG_DEBUG_FS */
 
 	ret = pci_register_driver(&ixgbe_driver);
 	if (ret) {
-#ifdef CONFIG_DEBUG_FS
 		ixgbe_dbg_exit();
-#endif /* CONFIG_DEBUG_FS */
 		return ret;
 	}
 
@@ -7954,9 +7946,7 @@ static void __exit ixgbe_exit_module(void)
 #endif
 	pci_unregister_driver(&ixgbe_driver);
 
-#ifdef CONFIG_DEBUG_FS
 	ixgbe_dbg_exit();
-#endif /* CONFIG_DEBUG_FS */
 
 	rcu_barrier(); /* Wait for completion of call_rcu()'s */
 }
