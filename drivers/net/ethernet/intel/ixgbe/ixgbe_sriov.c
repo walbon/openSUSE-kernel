@@ -290,13 +290,13 @@ static int ixgbe_pci_sriov_disable(struct pci_dev *dev)
 	err = ixgbe_disable_sriov(adapter);
 
 	/* Only reinit if no error and state changed */
+#ifdef CONFIG_PCI_IOV
 	if (!err && current_flags != adapter->flags) {
 		/* ixgbe_disable_sriov() doesn't clear VMDQ flag */
 		adapter->flags &= ~IXGBE_FLAG_VMDQ_ENABLED;
-#ifdef CONFIG_PCI_IOV
 		ixgbe_sriov_reinit(adapter);
-#endif
 	}
+#endif
 
 	return err;
 }
