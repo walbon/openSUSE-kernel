@@ -46,6 +46,7 @@
 #include <asm/isc.h>
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
+#include <linux/crypto.h>
 
 #include "ap_bus.h"
 
@@ -71,8 +72,9 @@ static void ap_query_configuration(void);
  */
 MODULE_AUTHOR("IBM Corporation");
 MODULE_DESCRIPTION("Adjunct Processor Bus driver, "
-		   "Copyright 2006, 2012 IBM Corporation");
+		   "Copyright IBM Corp. 2006, 2012");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS_CRYPTO("z90crypt");
 
 /*
  * Module parameter
