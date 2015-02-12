@@ -1764,6 +1764,10 @@ static int ixgbe_run_loopback_test(struct ixgbe_adapter *adapter)
 	unsigned int size = 1024;
 	netdev_tx_t tx_ret_val;
 	struct sk_buff *skb;
+	u32 flags_orig = adapter->flags;
+
+	/* DCB can modify the frames on Tx */
+	adapter->flags &= ~IXGBE_FLAG_DCB_ENABLED;
 
 	/* allocate test skb */
 	skb = alloc_skb(size, GFP_KERNEL);
@@ -1816,6 +1820,7 @@ static int ixgbe_run_loopback_test(struct ixgbe_adapter *adapter)
 
 	/* free the original skb */
 	kfree_skb(skb);
+	adapter->flags = flags_orig;
 
 	return ret_val;
 }
