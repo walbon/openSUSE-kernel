@@ -1002,5 +1002,6 @@ struct e1000_hw {
 };
 
 #include "82571.h"
+#include "80003es2lan.h"
 
 #endif
