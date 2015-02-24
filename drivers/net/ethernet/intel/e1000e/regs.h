@@ -49,6 +49,7 @@
 #define E1000_IVAR	0x000E4	/* Interrupt Vector Allocation Register - RW */
 #define E1000_SVCR	0x000F0
 #define E1000_SVT	0x000F4
+#define E1000_LPIC	0x000FC	/* Low Power IDLE control */
 #define E1000_RCTL	0x00100	/* Rx Control - RW */
 #define E1000_FCTTV	0x00170	/* Flow Control Transmit Timer Value - RW */
 #define E1000_TXCW	0x00178	/* Tx Configuration Word - RW */

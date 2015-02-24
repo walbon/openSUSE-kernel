@@ -361,6 +361,9 @@
 
 #define E1000_KABGTXD_BGSQLBIAS           0x00050000
 
+/* Low Power IDLE Control */
+#define E1000_LPIC_LPIET_SHIFT		24	/* Low Power Idle Entry Time */
+
 /* PBA constants */
 #define E1000_PBA_8K  0x0008    /* 8KB */
 #define E1000_PBA_16K 0x0010    /* 16KB */
