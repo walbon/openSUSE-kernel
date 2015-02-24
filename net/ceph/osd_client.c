@@ -2512,9 +2512,9 @@ static struct ceph_msg *get_reply(struct ceph_connection *con,
 		     req->r_reply, req->r_reply->con);
 	ceph_msg_revoke_incoming(req->r_reply);
 
-	if (front_len > req->r_reply->front.iov_len) {
+	if (front_len > req->r_reply->front_alloc_len) {
 		pr_warning("get_reply front %d > preallocated %d\n",
-			   front_len, (int)req->r_reply->front.iov_len);
+			   front_len, req->r_reply->front_alloc_len);
 		m = ceph_msg_new(CEPH_MSG_OSD_OPREPLY, front_len, GFP_NOFS,
 			       	false);
 		if (!m)
