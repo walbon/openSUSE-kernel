@@ -745,11 +745,6 @@
 /* BME1000 PHY Specific Control Register */
 #define BME1000_PSCR_ENABLE_DOWNSHIFT   0x0800 /* 1 = enable downshift */
 
-
-#define PHY_PAGE_SHIFT 5
-#define PHY_REG(page, reg) (((page) << PHY_PAGE_SHIFT) | \
-                           ((reg) & MAX_PHY_REG_ADDRESS))
-
 /* Bits...
  * 15-5: page
  * 4-0: register offset
@@ -795,9 +790,5 @@
 
 /* SerDes Control */
 #define E1000_GEN_POLL_TIMEOUT          640
-
-/* FW Semaphore */
-#define E1000_FWSM_WLOCK_MAC_MASK	0x0380
-#define E1000_FWSM_WLOCK_MAC_SHIFT	7
 
 #endif /* _E1000_DEFINES_H_ */
