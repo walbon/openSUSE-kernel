@@ -2492,7 +2492,7 @@ static struct ceph_msg *get_reply(struct ceph_connection *con,
 	struct ceph_osd_client *osdc = osd->o_osdc;
 	struct ceph_msg *m;
 	struct ceph_osd_request *req;
-	int front = le32_to_cpu(hdr->front_len);
+	int front_len = le32_to_cpu(hdr->front_len);
 	int data_len = le32_to_cpu(hdr->data_len);
 	u64 tid;
 
@@ -2512,10 +2512,11 @@ static struct ceph_msg *get_reply(struct ceph_connection *con,
 		     req->r_reply, req->r_reply->con);
 	ceph_msg_revoke_incoming(req->r_reply);
 
-	if (front > req->r_reply->front.iov_len) {
+	if (front_len > req->r_reply->front.iov_len) {
 		pr_warning("get_reply front %d > preallocated %d\n",
-			   front, (int)req->r_reply->front.iov_len);
-		m = ceph_msg_new(CEPH_MSG_OSD_OPREPLY, front, GFP_NOFS, false);
+			   front_len, (int)req->r_reply->front.iov_len);
+		m = ceph_msg_new(CEPH_MSG_OSD_OPREPLY, front_len, GFP_NOFS,
+			       	false);
 		if (!m)
 			goto out;
 		ceph_msg_put(req->r_reply);
