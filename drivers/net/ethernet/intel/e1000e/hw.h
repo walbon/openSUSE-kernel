@@ -40,7 +40,6 @@ enum e1e_registers {
 	E1000_CTRL     = 0x00000, /* Device Control - RW */
 	E1000_STATUS   = 0x00008, /* Device Status - RO */
 	E1000_EECD     = 0x00010, /* EEPROM/Flash Control - RW */
-	E1000_FEXTNVM6 = 0x00010, /* Future Extended NVM 6 - RW */
 	E1000_EERD     = 0x00014, /* EEPROM Read - RW */
 	E1000_CTRL_EXT = 0x00018, /* Extended Device Control - RW */
 	E1000_FLA      = 0x0001C, /* Flash Access - RW */
@@ -414,10 +413,6 @@ enum e1e_registers {
 #define E1000_DEV_ID_PCH_LPT_I217_V		0x153B
 #define E1000_DEV_ID_PCH_LPTLP_I218_LM		0x155A
 #define E1000_DEV_ID_PCH_LPTLP_I218_V		0x1559
-#define E1000_DEV_ID_PCH_I218_LM2		0x15A0
-#define E1000_DEV_ID_PCH_I218_V2		0x15A1
-#define E1000_DEV_ID_PCH_I218_LM3		0x15A2	/* Wildcat Point PCH */
-#define E1000_DEV_ID_PCH_I218_V3		0x15A3	/* Wildcat Point PCH */
 
 #define E1000_REVISION_4 4
 
