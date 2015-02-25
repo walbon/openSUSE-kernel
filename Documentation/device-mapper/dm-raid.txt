@@ -30,6 +30,10 @@ The possible parameters are as follows:
  [max_recovery_rate <kB/sec/disk>]      Throttle RAID initialization
  [max_write_behind <sectors>]           See '-write-behind=' (man mdadm)
  [stripe_cache <sectors>]               Stripe cache size for higher RAIDs
+ [region_size <sectors>]
+     The region_size multiplied by the number of regions is the
+     logical size of the array.  The bitmap records the device
+     synchronisation state for each region.
 
 Line 3 contains the list of devices that compose the array in
 metadata/data device pairs.  If the metadata is stored separately, a '-'

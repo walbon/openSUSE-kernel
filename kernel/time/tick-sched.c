@@ -48,6 +48,7 @@ static void tick_do_update_jiffies64(ktime_t now)
 {
 	unsigned long ticks = 0;
 	ktime_t delta;
+	unsigned int clock_set = 0;
 
 	/*
 	 * Do a quick check without holding xtime_lock:
@@ -75,12 +76,14 @@ static void tick_do_update_jiffies64(ktime_t now)
 			last_jiffies_update = ktime_add_ns(last_jiffies_update,
 							   incr * ticks);
 		}
-		do_timer(++ticks);
+		clock_set = do_timer(++ticks);
 
 		/* Keep the tick_next_period variable up to date */
 		tick_next_period = ktime_add(last_jiffies_update, tick_period);
 	}
 	write_sequnlock(&xtime_lock);
+	if (clock_set & TK_CLOCK_WAS_SET)
+		clock_was_set_delayed();
 	check_leap_second_message();
 }
 

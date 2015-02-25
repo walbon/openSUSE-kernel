@@ -2952,15 +2952,18 @@ void proc_flush_task(struct task_struct *task)
 	int i;
 	struct pid *pid, *tgid;
 	struct upid *upid;
+	static DEFINE_MUTEX(lock);
 
 	pid = task_pid(task);
 	tgid = task_tgid(task);
 
+	mutex_lock(&lock);
 	for (i = 0; i <= pid->level; i++) {
 		upid = &pid->numbers[i];
 		proc_flush_task_mnt(upid->ns->proc_mnt, upid->nr,
 					tgid->numbers[i].nr);
 	}
+	mutex_unlock(&lock);
 
 	upid = &pid->numbers[pid->level];
 	if (upid->nr == 1)

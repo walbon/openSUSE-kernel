@@ -41,6 +41,7 @@ extern struct timezone sys_tz;
 #define FSEC_PER_SEC	1000000000000000LL
 
 #define TIME_T_MAX	(time_t)((1UL << ((sizeof(time_t) << 3) - 1)) - 1)
+#define TK_CLOCK_WAS_SET	1
 
 static inline int timespec_equal(const struct timespec *a,
                                  const struct timespec *b)

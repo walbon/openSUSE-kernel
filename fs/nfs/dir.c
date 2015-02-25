@@ -522,7 +522,8 @@ void nfs_prime_dcache(struct dentry *parent, struct nfs_entry *entry)
 			nfs_refresh_inode(dentry->d_inode, entry->fattr);
 			goto out;
 		} else {
-			d_drop(dentry);
+			if (d_invalidate(dentry) != 0)
+				goto out;
 			dput(dentry);
 		}
 	}
@@ -577,7 +578,7 @@ int nfs_readdir_page_filler(nfs_readdir_descriptor_t *desc, struct nfs_entry *en
 
 		count++;
 
-		if (desc->plus != 0)
+		if (desc->plus != 0 && entry->fh->size > 0)
 			nfs_prime_dcache(desc->file->f_path.dentry, entry);
 
 		status = nfs_readdir_add_to_array(entry, page);

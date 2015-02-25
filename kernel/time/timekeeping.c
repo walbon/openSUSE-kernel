@@ -865,7 +865,7 @@ static void timekeeping_adjust(s64 offset)
  *
  * Returns the unconsumed cycles.
  */
-static cycle_t logarithmic_accumulation(cycle_t offset, int shift)
+static cycle_t logarithmic_accumulation(cycle_t offset, int shift, unsigned int *clock_set)
 {
 	u64 nsecps = (u64)NSEC_PER_SEC << timekeeper.shift;
 	u64 raw_nsecs;
@@ -887,7 +887,7 @@ static cycle_t logarithmic_accumulation(cycle_t offset, int shift)
 		xtime.tv_sec += leap;
 		wall_to_monotonic.tv_sec -= leap;
 		if (leap)
-			clock_was_set_delayed();
+			*clock_set |= TK_CLOCK_WAS_SET;
 	}
 
 	/* Accumulate raw time */
@@ -915,15 +915,16 @@ static cycle_t logarithmic_accumulation(cycle_t offset, int shift)
  *
  * Called from the timer interrupt, must hold a write on xtime_lock.
  */
-static void update_wall_time(void)
+static unsigned int update_wall_time(void)
 {
 	struct clocksource *clock;
 	cycle_t offset;
 	int shift = 0, maxshift;
+	unsigned int clock_set = 0;
 
 	/* Make sure we're fully resumed: */
 	if (unlikely(timekeeping_suspended))
-		return;
+		return clock_set;
 
 	clock = timekeeper.clock;
 
@@ -934,7 +935,7 @@ static void update_wall_time(void)
 #endif
 	/* Check if there's really nothing to do */
 	if (offset < timekeeper.cycle_interval)
-		return;
+		return clock_set;
 
 	timekeeper.xtime_nsec = (s64)xtime.tv_nsec << timekeeper.shift;
 
@@ -952,7 +953,7 @@ static void update_wall_time(void)
 	maxshift = (8*sizeof(tick_length) - (ilog2(tick_length)+1)) - 1;
 	shift = min(shift, maxshift);
 	while (offset >= timekeeper.cycle_interval) {
-		offset = logarithmic_accumulation(offset, shift);
+		offset = logarithmic_accumulation(offset, shift, &clock_set);
 		if(offset < timekeeper.cycle_interval<<shift)
 			shift--;
 	}
@@ -1004,10 +1005,11 @@ static void update_wall_time(void)
 		xtime.tv_sec += leap;
 		wall_to_monotonic.tv_sec -= leap;
 		if (leap)
-			clock_was_set_delayed();
+			clock_set |= TK_CLOCK_WAS_SET;
 	}
 
 	timekeeping_update(false);
+	return clock_set;
 }
 
 /**
@@ -1139,11 +1141,13 @@ struct timespec get_monotonic_coarse(void)
  * without sampling the sequence number in xtime_lock.
  * jiffies is defined in the linker script...
  */
-void do_timer(unsigned long ticks)
+unsigned int do_timer(unsigned long ticks)
 {
+	unsigned int clock_set;
 	jiffies_64 += ticks;
-	update_wall_time();
+	clock_set = update_wall_time();
 	calc_global_load(ticks);
+	return clock_set;
 }
 
 /**
@@ -1225,8 +1229,12 @@ EXPORT_SYMBOL_GPL(ktime_get_monotonic_offset);
  */
 void xtime_update(unsigned long ticks)
 {
+	unsigned int clock_set;
+
 	write_seqlock(&xtime_lock);
-	do_timer(ticks);
+	clock_set = do_timer(ticks);
 	write_sequnlock(&xtime_lock);
+	if (clock_set & TK_CLOCK_WAS_SET)
+		clock_was_set_delayed();
 	check_leap_second_message();
 }
