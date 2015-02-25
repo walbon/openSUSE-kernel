@@ -281,6 +281,7 @@ enum {
 	IFLA_VF_VLAN,
 	IFLA_VF_TX_RATE,	/* TX Bandwidth Allocation */
 	IFLA_VF_SPOOFCHK,	/* Spoof Checking on/off switch */
+	IFLA_VF_LINK_STATE,	/* link state enable/disable/auto switch */
 	__IFLA_VF_MAX,
 };
 
@@ -306,6 +307,19 @@ struct ifla_vf_spoofchk {
 	__u32 vf;
 	__u32 setting;
 };
+
+enum {
+	IFLA_VF_LINK_STATE_AUTO,	/* link state of the uplink */
+	IFLA_VF_LINK_STATE_ENABLE,	/* link always up */
+	IFLA_VF_LINK_STATE_DISABLE,	/* link always down */
+	__IFLA_VF_LINK_STATE_MAX,
+};
+
+struct ifla_vf_link_state {
+	__u32 vf;
+	__u32 link_state;
+};
+
 #ifdef __KERNEL__
 
 /* We don't want this structure exposed to user space */
@@ -316,6 +330,7 @@ struct ifla_vf_info {
 	__u32 qos;
 	__u32 tx_rate;
 	__u32 spoofchk;
+	__u32 linkstate;
 };
 #endif
 
