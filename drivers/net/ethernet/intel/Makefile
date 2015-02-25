@@ -10,3 +10,4 @@ obj-$(CONFIG_IGBVF) += igbvf/
 obj-$(CONFIG_IXGB) += ixgb/
 obj-$(CONFIG_IXGBE) += ixgbe/
 obj-$(CONFIG_IXGBEVF) += ixgbevf/
+obj-$(CONFIG_I40E) += i40e/
