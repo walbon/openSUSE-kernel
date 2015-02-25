@@ -1460,7 +1460,10 @@ static int mlx4_init_hca(struct mlx4_dev *dev)
 			goto err_stop_fw;
 		}
 
-		process_mod_param_profile();
+		choose_steering_mode(dev, &dev_cap);
+
+		if (mlx4_is_master(dev))
+			mlx4_parav_master_pf_caps(dev);
 
 		priv->fs_hash_mode = MLX4_FS_L2_HASH;
 
@@ -1478,11 +1481,7 @@ static int mlx4_init_hca(struct mlx4_dev *dev)
 			break;
 		}
 
-		choose_steering_mode(dev, &dev_cap);
-
-		if (mlx4_is_master(dev))
-			mlx4_parav_master_pf_caps(dev);
-
+		process_mod_param_profile();
 		profile = default_profile;
 		if (dev->caps.steering_mode ==
 		    MLX4_STEERING_MODE_DEVICE_MANAGED)
