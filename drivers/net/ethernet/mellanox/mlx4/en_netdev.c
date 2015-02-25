@@ -1216,9 +1216,6 @@ void mlx4_en_stop_port(struct net_device *dev)
 		return;
 	}
 
-	/* close port*/
-	mlx4_CLOSE_PORT(mdev->dev, priv->port);
-
 	/* Synchronize with tx routine */
 	netif_tx_lock_bh(dev);
 	netif_tx_stop_all_queues(dev);
@@ -1268,11 +1265,14 @@ void mlx4_en_stop_port(struct net_device *dev)
 
 	/* Free RX Rings */
 	for (i = 0; i < priv->rx_ring_num; i++) {
+		mlx4_en_deactivate_rx_ring(priv, &priv->rx_ring[i]);
 		while (test_bit(NAPI_STATE_SCHED, &priv->rx_cq[i].napi.state))
 			msleep(1);
-		mlx4_en_deactivate_rx_ring(priv, &priv->rx_ring[i]);
 		mlx4_en_deactivate_cq(priv, &priv->rx_cq[i]);
 	}
+
+	/* close port*/
+	mlx4_CLOSE_PORT(mdev->dev, priv->port);
 }
 
 static void mlx4_en_restart(struct work_struct *work)
@@ -1431,11 +1431,9 @@ int mlx4_en_alloc_resources(struct mlx4_en_priv *priv)
 	}
 
 #ifdef CONFIG_RFS_ACCEL
-	if (priv->mdev->dev->caps.comp_pool) {
-		priv->dev->rx_cpu_rmap = alloc_irq_cpu_rmap(priv->mdev->dev->caps.comp_pool);
-		if (!priv->dev->rx_cpu_rmap)
-			goto err;
-	}
+	priv->dev->rx_cpu_rmap = alloc_irq_cpu_rmap(priv->rx_ring_num);
+	if (!priv->dev->rx_cpu_rmap)
+		goto err;
 
 	INIT_LIST_HEAD(&priv->filters);
 	spin_lock_init(&priv->filters_lock);
@@ -1596,7 +1594,7 @@ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
 		err = -ENOMEM;
 		goto out;
 	}
-	priv->tx_cq = kzalloc(sizeof(struct mlx4_en_cq) * MAX_TX_RINGS,
+	priv->tx_cq = kzalloc(sizeof(struct mlx4_en_cq) * MAX_RX_RINGS,
 			      GFP_KERNEL);
 	if (!priv->tx_cq) {
 		err = -ENOMEM;

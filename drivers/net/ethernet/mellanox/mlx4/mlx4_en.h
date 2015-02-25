@@ -94,14 +94,13 @@
 
 /* Use the maximum between 16384 and a single page */
 #define MLX4_EN_ALLOC_SIZE	PAGE_ALIGN(16384)
+#define MLX4_EN_ALLOC_ORDER	get_order(MLX4_EN_ALLOC_SIZE)
 
-#define MLX4_EN_ALLOC_PREFER_ORDER	PAGE_ALLOC_COSTLY_ORDER
-
-/* Receive fragment sizes; we use at most 3 fragments (for 9600 byte MTU
+/* Receive fragment sizes; we use at most 4 fragments (for 9600 byte MTU
  * and 4K allocations) */
 enum {
-	FRAG_SZ0 = 1536 - NET_IP_ALIGN,
-	FRAG_SZ1 = 4096,
+	FRAG_SZ0 = 512 - NET_IP_ALIGN,
+	FRAG_SZ1 = 1024,
 	FRAG_SZ2 = 4096,
 	FRAG_SZ3 = MLX4_EN_ALLOC_SIZE
 };
@@ -233,10 +232,9 @@ struct mlx4_en_tx_desc {
 #define MLX4_EN_CX3_HIGH_ID	0x1005
 
 struct mlx4_en_rx_alloc {
-	struct page	*page;
-	dma_addr_t	dma;
-	u32		offset;
-	u32		size;
+	struct page *page;
+	dma_addr_t dma;
+	u16 offset;
 };
 
 struct mlx4_en_tx_ring {
@@ -415,6 +413,8 @@ struct mlx4_en_frag_info {
 	u16 frag_prefix_size;
 	u16 frag_stride;
 	u16 frag_align;
+	u16 last_offset;
+
 };
 
 #ifdef CONFIG_MLX4_EN_DCB
