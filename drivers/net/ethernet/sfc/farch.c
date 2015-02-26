@@ -839,8 +839,7 @@ efx_farch_handle_tx_event(struct efx_channel *channel, efx_qword_t *event)
 		netif_tx_lock(efx->net_dev);
 		efx_farch_notify_tx_desc(tx_queue);
 		netif_tx_unlock(efx->net_dev);
-	} else if (EFX_QWORD_FIELD(*event, FSF_AZ_TX_EV_PKT_ERR) &&
-		   EFX_WORKAROUND_10727(efx)) {
+	} else if (EFX_QWORD_FIELD(*event, FSF_AZ_TX_EV_PKT_ERR)) {
 		efx_schedule_reset(efx, RESET_TYPE_TX_DESC_FETCH);
 	} else {
 		netif_err(efx, tx_err, efx->net_dev,
@@ -1540,8 +1539,7 @@ irqreturn_t efx_farch_legacy_interrupt(int irq, void *dev_id)
 	}
 
 	if (queues != 0) {
-		if (EFX_WORKAROUND_15783(efx))
-			efx->irq_zero_count = 0;
+		efx->irq_zero_count = 0;
 
 		/* Schedule processing of any interrupting queues */
 		if (likely(soft_enabled)) {
@@ -1553,8 +1551,10 @@ irqreturn_t efx_farch_legacy_interrupt(int irq, void *dev_id)
 		}
 		result = IRQ_HANDLED;
 
-	} else if (EFX_WORKAROUND_15783(efx)) {
+	} else {
 		efx_qword_t *event;
+
+		/* Legacy ISR read can return zero once (SF bug 15783) */
 
 		/* We can't return IRQ_HANDLED more than once on seeing ISR=0
 		 * because this might be a shared interrupt. */
