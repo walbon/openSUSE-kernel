@@ -3326,7 +3326,7 @@ L:	netdev@vger.kernel.org
 S:	Maintained
 F:	drivers/net/ixp2000/
 
-INTEL ETHERNET DRIVERS (e100/e1000/e1000e/igb/igbvf/ixgb/ixgbe/ixgbevf/i40e)
+INTEL ETHERNET DRIVERS (e100/e1000/e1000e/igb/igbvf/ixgb/ixgbe/ixgbevf/i40e/i40evf)
 M:	Jeff Kirsher <jeffrey.t.kirsher@intel.com>
 M:	Jesse Brandeburg <jesse.brandeburg@intel.com>
 M:	Bruce Allan <bruce.w.allan@intel.com>
@@ -3336,6 +3336,7 @@ M:	Greg Rose <gregory.v.rose@intel.com>
 M:	Peter P Waskiewicz Jr <peter.p.waskiewicz.jr@intel.com>
 M:	Alex Duyck <alexander.h.duyck@intel.com>
 M:	John Ronciak <john.ronciak@intel.com>
+M:	Mitch Williams <mitch.a.williams@intel.com>
 L:	e1000-devel@lists.sourceforge.net
 W:	http://e1000.sourceforge.net/
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/jkirsher/net.git
@@ -3350,6 +3351,7 @@ F:	Documentation/networking/ixgb.txt
 F:	Documentation/networking/ixgbe.txt
 F:	Documentation/networking/ixgbevf.txt
 F:	Documentation/networking/i40e.txt
+F:	Documentation/networking/i40evf.txt
 F:	drivers/net/ethernet/intel/
 
 INTEL PRO/WIRELESS 2100 NETWORK CONNECTION SUPPORT
