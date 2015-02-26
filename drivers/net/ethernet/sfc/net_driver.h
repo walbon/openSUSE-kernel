@@ -779,6 +779,7 @@ struct efx_nic {
 
 	char name[IFNAMSIZ];
 	struct pci_dev *pci_dev;
+	unsigned int port_num;
 	const struct efx_nic_type *type;
 	int legacy_irq;
 	bool legacy_irq_enabled;
@@ -911,7 +912,7 @@ static inline int efx_dev_registered(struct efx_nic *efx)
 
 static inline unsigned int efx_port_num(struct efx_nic *efx)
 {
-	return efx->net_dev->dev_id;
+	return efx->port_num;
 }
 
 /**
