@@ -2054,7 +2054,7 @@ static int efx_set_mac_address(struct net_device *net_dev, void *data)
 }
 
 /* Context: netif_addr_lock held, BHs disabled. */
-static void efx_set_multicast_list(struct net_device *net_dev)
+static void efx_set_rx_mode(struct net_device *net_dev)
 {
 	struct efx_nic *efx = netdev_priv(net_dev);
 
@@ -2084,7 +2084,7 @@ static const struct net_device_ops efx_netdev_ops = {
 	.ndo_do_ioctl		= efx_ioctl,
 	.ndo_change_mtu		= efx_change_mtu,
 	.ndo_set_mac_address	= efx_set_mac_address,
-	.ndo_set_multicast_list = efx_set_multicast_list,
+	.ndo_set_rx_mode	= efx_set_rx_mode,
 	.ndo_set_features	= efx_set_features,
 #ifdef CONFIG_SFC_SRIOV
 	.ndo_set_vf_mac		= efx_sriov_set_vf_mac,
