@@ -74,13 +74,15 @@ ip_vs_sip_fill_param(struct ip_vs_conn_param *p, struct sk_buff *skb)
 	/* Only useful with UDP */
 	if (iph.protocol != IPPROTO_UDP)
 		return -EINVAL;
-
-	/* No Data ? */
+	/* todo: IPv6 fragments:
+	 *       I think this only should be done for the first fragment. /HS
+	 */
 	dataoff = iph.len + sizeof(struct udphdr);
+
 	if (dataoff >= skb->len)
 		return -EINVAL;
-
-	if ((retc=skb_linearize(skb)) < 0)
+	retc = skb_linearize(skb);
+	if (retc < 0)
 		return retc;
 	dptr = skb->data + dataoff;
 	datalen = skb->len - dataoff;
