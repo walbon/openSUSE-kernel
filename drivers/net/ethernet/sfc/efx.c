@@ -1599,6 +1599,8 @@ static int efx_probe_nic(struct efx_nic *efx)
 	if (rc)
 		goto fail1;
 
+	efx_set_channels(efx);
+
 	rc = efx->type->dimension_resources(efx);
 	if (rc)
 		goto fail2;
@@ -1608,7 +1610,6 @@ static int efx_probe_nic(struct efx_nic *efx)
 	for (i = 0; i < ARRAY_SIZE(efx->rx_indir_table); i++)
 		efx->rx_indir_table[i] = i % efx->rss_spread;
 
-	efx_set_channels(efx);
 	netif_set_real_num_tx_queues(efx->net_dev, efx->n_tx_channels);
 	netif_set_real_num_rx_queues(efx->net_dev, efx->n_rx_channels);
 
