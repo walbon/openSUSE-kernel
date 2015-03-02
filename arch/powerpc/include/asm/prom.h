@@ -72,6 +72,8 @@ static inline int of_node_to_nid(struct device_node *device) { return 0; }
 
 extern void of_instantiate_rtc(void);
 
+extern int of_get_ibm_chip_id(struct device_node *np);
+
 /* These includes are put at the bottom because they may contain things
  * that are overridden by this file.  Ideally they shouldn't be included
  * by this file, but there are a bunch of .c files that currently depend
