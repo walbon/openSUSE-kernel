@@ -34,7 +34,7 @@
 #include <linux/kref.h>
 #include <linux/random.h>
 #include <linux/debugfs.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/delay.h>
 #include <rdma/ib_umem.h>
 #include <rdma/ib_verbs.h>

@@ -32,7 +32,7 @@
 
 
 #include <linux/gfp.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/mlx5/cmd.h>
 #include <linux/mlx5/qp.h>
 #include <linux/mlx5/driver.h>
