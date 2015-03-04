@@ -26,19 +26,6 @@
 #define KEYS_PER_NODE (NODE_SIZE / sizeof(sector_t))
 #define CHILDREN_PER_NODE (KEYS_PER_NODE + 1)
 
-/*
- * The table has always exactly one reference from either mapped_device->map
- * or hash_cell->new_map. This reference is not counted in table->holders.
- * A pair of dm_create_table/dm_destroy_table functions is used for table
- * creation/destruction.
- *
- * Temporary references from the other code increase table->holders. A pair
- * of dm_table_get/dm_table_put functions is used to manipulate it.
- *
- * When the table is about to be destroyed, we wait for table->holders to
- * drop to zero.
- */
-
 struct dm_table {
 	struct mapped_device *md;
 	atomic_t holders;
