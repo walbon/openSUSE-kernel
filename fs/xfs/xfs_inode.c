@@ -1188,6 +1188,7 @@ xfs_isize_check(
 	xfs_fileoff_t	map_first;
 	int		nimaps;
 	xfs_bmbt_irec_t	imaps[2];
+	int			error;
 
 	if ((ip->i_d.di_mode & S_IFMT) != S_IFREG)
 		return;
@@ -1204,13 +1205,12 @@ xfs_isize_check(
 	 * The filesystem could be shutting down, so bmapi may return
 	 * an error.
 	 */
-	if (xfs_bmapi(NULL, ip, map_first,
+	error = xfs_bmapi_read(ip, map_first,
 			 (XFS_B_TO_FSB(mp,
-				       (xfs_ufsize_t)XFS_MAXIOFFSET(mp)) -
-			  map_first),
-			 XFS_BMAPI_ENTIRE, NULL, 0, imaps, &nimaps,
-			 NULL))
-	    return;
+			       (xfs_ufsize_t)XFS_MAXIOFFSET(mp)) - map_first),
+			 imaps, &nimaps, XFS_BMAPI_ENTIRE);
+	if (error)
+		return;
 	ASSERT(nimaps == 1);
 	ASSERT(imaps[0].br_startblock == HOLESTARTBLOCK);
 }
