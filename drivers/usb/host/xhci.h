@@ -1268,8 +1268,8 @@ union xhci_trb {
 #define TRBS_PER_SEGMENT	64
 /* Allow two commands + a link TRB, along with any reserved command TRBs */
 #define MAX_RSVD_CMD_TRBS	(TRBS_PER_SEGMENT - 3)
-#define SEGMENT_SIZE		(TRBS_PER_SEGMENT*16)
-#define SEGMENT_SHIFT		(ilog2(SEGMENT_SIZE))
+#define TRB_SEGMENT_SIZE	(TRBS_PER_SEGMENT*16)
+#define TRB_SEGMENT_SHIFT	(ilog2(TRB_SEGMENT_SIZE))
 /* TRB buffer pointers can't cross 64KB boundaries */
 #define TRB_MAX_BUFF_SHIFT		16
 #define TRB_MAX_BUFF_SIZE	(1 << TRB_MAX_BUFF_SHIFT)
@@ -1306,8 +1306,19 @@ struct xhci_dequeue_state {
 	int new_cycle_state;
 };
 
+enum xhci_ring_type {
+	TYPE_CTRL = 0,
+	TYPE_ISOC,
+	TYPE_BULK,
+	TYPE_INTR,
+	TYPE_STREAM,
+	TYPE_COMMAND,
+	TYPE_EVENT,
+};
+
 struct xhci_ring {
 	struct xhci_segment	*first_seg;
+	struct xhci_segment	*last_seg;
 	union  xhci_trb		*enqueue;
 	struct xhci_segment	*enq_seg;
 	unsigned int		enq_updates;
@@ -1322,7 +1333,12 @@ struct xhci_ring {
 	 */
 	u32			cycle_state;
 	unsigned int		stream_id;
+	unsigned int		num_segs;
+	unsigned int		num_trbs_free;
+	unsigned int		num_trbs_free_temp;
+	enum xhci_ring_type	type;
 	bool			last_td_was_short;
+	struct radix_tree_root	*trb_address_map;
 };
 
 struct xhci_erst_entry {
@@ -1581,6 +1597,8 @@ static inline struct usb_hcd *xhci_to_hcd(struct xhci_hcd *xhci)
 	dev_err(xhci_to_hcd(xhci)->self.controller , fmt , ## args)
 #define xhci_warn(xhci, fmt, args...) \
 	dev_warn(xhci_to_hcd(xhci)->self.controller , fmt , ## args)
+#define xhci_warn_ratelimited(xhci, fmt, args...) \
+	dev_warn_ratelimited(xhci_to_hcd(xhci)->self.controller , fmt , ## args)
 
 /* TODO: copied from ehci.h - can be refactored? */
 /* xHCI spec says all registers are little endian */
@@ -1685,6 +1703,8 @@ int xhci_endpoint_init(struct xhci_hcd *xhci, struct xhci_virt_device *virt_dev,
 		struct usb_device *udev, struct usb_host_endpoint *ep,
 		gfp_t mem_flags);
 void xhci_ring_free(struct xhci_hcd *xhci, struct xhci_ring *ring);
+int xhci_ring_expansion(struct xhci_hcd *xhci, struct xhci_ring *ring,
+				unsigned int num_trbs, gfp_t flags);
 void xhci_free_or_cache_endpoint_ring(struct xhci_hcd *xhci,
 		struct xhci_virt_device *virt_dev,
 		unsigned int ep_index);
@@ -1822,6 +1842,7 @@ int xhci_cancel_cmd(struct xhci_hcd *xhci, struct xhci_command *command,
 		union xhci_trb *cmd_trb);
 void xhci_ring_ep_doorbell(struct xhci_hcd *xhci, unsigned int slot_id,
 		unsigned int ep_index, unsigned int stream_id);
+union xhci_trb *xhci_find_next_enqueue(struct xhci_ring *ring);
 
 /* xHCI roothub code */
 void xhci_set_link_state(struct xhci_hcd *xhci, __le32 __iomem **port_array,
