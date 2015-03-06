@@ -606,6 +606,13 @@ static const struct dmi_system_id bt_excepted_from_switch_table[] = {
                 },
                 .driver_data = (void *)64,
         },
+	{
+		/* IBM NeXtScale nx360 M5 */
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "IBM NeXtScale nx360 M5"),
+		},
+		.driver_data = (void *)1,
+	},
 	{ }
 };
 
