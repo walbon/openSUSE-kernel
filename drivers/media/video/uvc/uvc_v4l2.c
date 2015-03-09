@@ -561,6 +561,20 @@ static void uvc_v4l2_ioctl_warn(void)
 	warned = 1;
 }
 
+static int uvc_max_buffers(struct uvc_streaming *stream)
+{
+	int vid, pid;
+
+	vid = stream->dev->udev->descriptor.idVendor;
+	pid = stream->dev->udev->descriptor.idProduct;
+
+	if (vid == 0x04ca && pid == 0x7024)
+		return UVC_MAX_VIDEO_BUFFERS;
+	if (vid == 0x05c8 && pid == 0x035d)
+		return UVC_MAX_VIDEO_BUFFERS;
+	return UVC_MAX_VIDEO_BUFFERS / 4;
+}
+
 static long uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 {
 	struct video_device *vdev = video_devdata(file);
@@ -946,6 +960,7 @@ static long uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	case VIDIOC_REQBUFS:
 	{
 		struct v4l2_requestbuffers *rb = arg;
+		int bc, rbc;
 
 		if (rb->type != stream->type ||
 		    rb->memory != V4L2_MEMORY_MMAP)
@@ -955,7 +970,9 @@ static long uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 			return ret;
 
 		mutex_lock(&stream->mutex);
-		ret = uvc_alloc_buffers(&stream->queue, rb->count,
+		bc = uvc_max_buffers(stream);
+		rbc = rb->count;
+		ret = uvc_alloc_buffers(&stream->queue, min(bc, rbc),
 					stream->ctrl.dwMaxVideoFrameSize);
 		mutex_unlock(&stream->mutex);
 		if (ret < 0)

@@ -799,6 +799,16 @@ static void uvc_free_urb_buffers(struct uvc_streaming *stream)
 	stream->urb_size = 0;
 }
 
+static bool needs_more_packets(struct uvc_streaming *stream)
+{
+	int vid, pid;
+
+	vid = stream->dev->udev->descriptor.idVendor;
+	pid = stream->dev->udev->descriptor.idProduct;
+
+	return (vid == 0x04ca && pid == 0x7024) || (vid == 0x05c8 && pid == 0x035d);
+}
+
 /*
  * Allocate transfer buffers. This function can be called with buffers
  * already allocated when resuming from suspend, in which case it will
@@ -815,6 +825,7 @@ static int uvc_alloc_urb_buffers(struct uvc_streaming *stream,
 {
 	unsigned int npackets;
 	unsigned int i;
+	int mp;
 
 	/* Buffers are already allocated, bail out. */
 	if (stream->urb_size)
@@ -823,9 +834,10 @@ static int uvc_alloc_urb_buffers(struct uvc_streaming *stream,
 	/* Compute the number of packets. Bulk endpoints might transfer UVC
 	 * payloads across multiple URBs.
 	 */
+	mp = needs_more_packets(stream) ? UVC_MAX_PACKETS : UVC_MAX_PACKETS / 4;
 	npackets = DIV_ROUND_UP(size, psize);
-	if (npackets > UVC_MAX_PACKETS)
-		npackets = UVC_MAX_PACKETS;
+	if (npackets > mp)
+		npackets = mp;
 
 	/* Retry allocations until one succeed. */
 	for (; npackets > 1; npackets /= 2) {
