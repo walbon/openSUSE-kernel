@@ -475,8 +475,7 @@ struct md_plug_cb {
 static void plugger_unplug(struct blk_plug_cb *cb)
 {
 	struct md_plug_cb *mdcb = container_of(cb, struct md_plug_cb, cb);
-	if (atomic_dec_and_test(&mdcb->mddev->plug_cnt))
-		md_wakeup_thread(mdcb->mddev->thread);
+	md_wakeup_thread(mdcb->mddev->thread);
 	kfree(mdcb);
 }
 
