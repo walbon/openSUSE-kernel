@@ -15,7 +15,7 @@
 #include "conf_space.h"
 #include "conf_space_quirks.h"
 
-static int permissive;
+bool permissive;
 module_param(permissive, bool, 0644);
 
 #define DEFINE_PCI_CONFIG(op,size,type) 			\
