@@ -247,7 +247,9 @@ static u64 find_table_base(struct pci_dev *dev, int pos)
 	bar = reg & PCI_MSIX_FLAGS_BIRMASK;
 
 	flags = pci_resource_flags(dev, bar);
-	if (flags & (IORESOURCE_DISABLED | IORESOURCE_UNSET | IORESOURCE_BUSY))
+	if (!flags ||
+	     (flags & (IORESOURCE_DISABLED | IORESOURCE_UNSET |
+		       IORESOURCE_BUSY)))
 		return 0;
 
 	return pci_resource_start(dev, bar);
@@ -998,9 +1000,9 @@ void pci_msi_init_pci_dev(struct pci_dev *dev)
 	 * But on a Xen host don't do this for IOMMUs which the hypervisor
 	 * is in control of (and hence has already enabled on purpose).
 	 */
-	if (is_initial_xendomain()
-	    && (dev->class >> 8) == PCI_CLASS_SYSTEM_IOMMU
-	    && dev->vendor == PCI_VENDOR_ID_AMD)
+	if (!is_initial_xendomain()
+	    || ((dev->class >> 8) == PCI_CLASS_SYSTEM_IOMMU
+	        && dev->vendor == PCI_VENDOR_ID_AMD))
 		return;
 	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
 	if (pos)
