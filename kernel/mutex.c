@@ -217,7 +217,7 @@ bool osq_lock(struct mutex *mutex, struct optimistic_spin_queue **lock)
 	 * cmpxchg in an attempt to undo our queueing.
 	 */
 
-	while (!node->locked) {
+	while (!ACCESS_ONCE(node->locked)) {
 		/*
 		 * If we need to reschedule bail... so we can block.
 		 */
@@ -316,12 +316,14 @@ void osq_unlock(struct optimistic_spin_queue **lock)
 static inline int mutex_can_spin_on_owner(struct mutex *lock)
 {
 	int retval = 1;
+	struct task_struct *owner;
 
 	if (need_resched())
 		return 0;
 
 	rcu_read_lock();
-	if (lock->owner)
+	owner = ACCESS_ONCE(lock->owner);
+	if (owner)
 		retval = lock->owner->on_cpu;
 	rcu_read_unlock();
 	/*
