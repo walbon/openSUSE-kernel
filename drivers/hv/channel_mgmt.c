@@ -337,11 +337,10 @@ static void vmbus_process_offer(struct work_struct *work)
 			if (channel->sc_creation_callback != NULL)
 				channel->sc_creation_callback(newchannel);
 
-			return;
+			goto out;
 		}
 
-		free_channel(newchannel);
-		return;
+		goto err_free_chan;
 	}
 
 	/*
@@ -360,6 +359,8 @@ static void vmbus_process_offer(struct work_struct *work)
 		&newchannel->offermsg.offer.if_type,
 		&newchannel->offermsg.offer.if_instance,
 		newchannel);
+	if (!newchannel->device_obj)
+		goto err_free_chan;
 
 	/*
 	 * Add the new device to the bus. This will kick off device-driver
@@ -375,9 +376,12 @@ static void vmbus_process_offer(struct work_struct *work)
 		list_del(&newchannel->listentry);
 		spin_unlock_irqrestore(&vmbus_connection.channel_lock, flags);
 		kfree(newchannel->device_obj);
-
-		free_channel(newchannel);
+		goto err_free_chan;
 	}
+out:
+	return;
+err_free_chan:
+	free_channel(newchannel);
 }
 
 enum {
