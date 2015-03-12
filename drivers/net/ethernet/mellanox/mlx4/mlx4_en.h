@@ -323,6 +323,7 @@ struct mlx4_en_cq {
 	u16 moder_cnt;
 	struct mlx4_cqe *buf;
 #define MLX4_EN_OPCODE_ERROR	0x1e
+	struct irq_desc *irq_desc;
 };
 
 struct mlx4_en_port_profile {
