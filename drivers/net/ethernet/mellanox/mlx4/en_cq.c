@@ -190,8 +190,6 @@ void mlx4_en_destroy_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq **pcq)
 	mlx4_en_unmap_buffer(&cq->wqres.buf);
 	mlx4_free_hwq_res(mdev->dev, &cq->wqres, cq->buf_size);
 	if (priv->mdev->dev->caps.comp_pool && cq->vector) {
-		if (!cq->is_tx)
-			irq_set_affinity_hint(cq->mcq.irq, NULL);
 		mlx4_release_eq(priv->mdev->dev, cq->vector);
 	}
 	cq->vector = 0;
@@ -204,6 +202,10 @@ void mlx4_en_destroy_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq **pcq)
 void mlx4_en_deactivate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
 {
 	napi_disable(&cq->napi);
+	if (!cq->is_tx) {
+		synchronize_rcu();
+		irq_set_affinity_hint(cq->mcq.irq, NULL);
+	}
 	netif_napi_del(&cq->napi);
 
 	mlx4_cq_free(priv->mdev->dev, &cq->mcq);
