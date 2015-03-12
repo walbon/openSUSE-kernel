@@ -132,7 +132,7 @@ static int mlx4_en_get_profile(struct mlx4_en_dev *mdev)
 			MLX4_EN_MAX_TX_RING_P_UP);
 	if (params->udp_rss && !(mdev->dev->caps.flags
 					& MLX4_DEV_CAP_FLAG_UDP_RSS)) {
-		mlx4_warn(mdev, "UDP RSS is not supported on this device.\n");
+		mlx4_warn(mdev, "UDP RSS is not supported on this device\n");
 		params->udp_rss = 0;
 	}
 	for (i = 1; i <= MLX4_MAX_PORTS; i++) {
@@ -250,8 +250,7 @@ static void *mlx4_en_add(struct mlx4_dev *dev)
 
 	mdev->LSO_support = !!(dev->caps.flags & (1 << 15));
 	if (!mdev->LSO_support)
-		mlx4_warn(mdev, "LSO not supported, please upgrade to later "
-				"FW version to enable LSO\n");
+		mlx4_warn(mdev, "LSO not supported, please upgrade to later FW version to enable LSO\n");
 
 	if (mlx4_mr_alloc(mdev->dev, mdev->priv_pdn, 0, ~0ull,
 			 MLX4_PERM_LOCAL_WRITE |  MLX4_PERM_LOCAL_READ,
@@ -267,7 +266,7 @@ static void *mlx4_en_add(struct mlx4_dev *dev)
 	/* Build device profile according to supplied module parameters */
 	err = mlx4_en_get_profile(mdev);
 	if (err) {
-		mlx4_err(mdev, "Bad module parameters, aborting.\n");
+		mlx4_err(mdev, "Bad module parameters, aborting\n");
 		goto err_mr;
 	}
 

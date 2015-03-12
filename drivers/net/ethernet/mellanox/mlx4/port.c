@@ -223,8 +223,8 @@ void __mlx4_unregister_mac(struct mlx4_dev *dev, u8 port, u64 mac)
 	if (validate_index(dev, table, index))
 		goto out;
 	if (--table->refs[index]) {
-		mlx4_dbg(dev, "Have more references for index %d,"
-			 "no need to modify mac table\n", index);
+		mlx4_dbg(dev, "Have more references for index %d, no need to modify mac table\n",
+			 index);
 		goto out;
 	}
 
@@ -422,9 +422,8 @@ void __mlx4_unregister_vlan(struct mlx4_dev *dev, u8 port, u16 vlan)
 	}
 
 	if (--table->refs[index]) {
-		mlx4_dbg(dev, "Have %d more references for index %d,"
-			 "no need to modify vlan table\n", table->refs[index],
-			 index);
+		mlx4_dbg(dev, "Have %d more references for index %d, no need to modify vlan table\n",
+			 table->refs[index], index);
 		goto out;
 	}
 	table->entries[index] = 0;
