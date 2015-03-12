@@ -50,7 +50,7 @@ EXPORT_SYMBOL_GPL(__mlx4_xrcd_alloc);
 
 void __mlx4_xrcd_free(struct mlx4_dev *dev, u32 xrcdn)
 {
-	mlx4_bitmap_free(&mlx4_priv(dev)->xrcd_bitmap, xrcdn);
+	mlx4_bitmap_free(&mlx4_priv(dev)->xrcd_bitmap, xrcdn, MLX4_USE_RR);
 }
 EXPORT_SYMBOL_GPL(__mlx4_xrcd_free);
 
