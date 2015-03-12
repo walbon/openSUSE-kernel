@@ -1273,4 +1273,7 @@ void mlx4_vf_immed_vlan_work_handler(struct work_struct *_work);
 
 void mlx4_init_quotas(struct mlx4_dev *dev);
 
+/* Returns the VF index of slave */
+int mlx4_get_vf_indx(struct mlx4_dev *dev, int slave);
+
 #endif /* MLX4_H */
