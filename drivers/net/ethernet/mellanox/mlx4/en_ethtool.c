@@ -399,6 +399,8 @@ static int mlx4_en_get_coalesce(struct net_device *dev,
 
 	coal->tx_coalesce_usecs = priv->tx_usecs;
 	coal->tx_max_coalesced_frames = priv->tx_frames;
+	coal->tx_max_coalesced_frames_irq = priv->tx_work_limit;
+
 	coal->rx_coalesce_usecs = priv->rx_usecs;
 	coal->rx_max_coalesced_frames = priv->rx_frames;
 
@@ -408,6 +410,7 @@ static int mlx4_en_get_coalesce(struct net_device *dev,
 	coal->rx_coalesce_usecs_high = priv->rx_usecs_high;
 	coal->rate_sample_interval = priv->sample_interval;
 	coal->use_adaptive_rx_coalesce = priv->adaptive_rx_coal;
+
 	return 0;
 }
 
@@ -415,6 +418,9 @@ static int mlx4_en_set_coalesce(struct net_device *dev,
 			      struct ethtool_coalesce *coal)
 {
 	struct mlx4_en_priv *priv = netdev_priv(dev);
+
+	if (!coal->tx_max_coalesced_frames_irq)
+		return -EINVAL;
 
 	priv->rx_frames = (coal->rx_max_coalesced_frames ==
 			   MLX4_EN_AUTO_CONF) ?
@@ -439,6 +445,7 @@ static int mlx4_en_set_coalesce(struct net_device *dev,
 	priv->rx_usecs_high = coal->rx_coalesce_usecs_high;
 	priv->sample_interval = coal->rate_sample_interval;
 	priv->adaptive_rx_coal = coal->use_adaptive_rx_coalesce;
+	priv->tx_work_limit = coal->tx_max_coalesced_frames_irq;
 
 	return mlx4_en_moderation_update(priv);
 }
