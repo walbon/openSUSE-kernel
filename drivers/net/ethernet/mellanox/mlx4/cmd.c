@@ -1539,7 +1539,6 @@ out:
 	return ret;
 }
 
-
 static int mlx4_master_immediate_activate_vlan_qos(struct mlx4_priv *priv,
 					    int slave, int port)
 {
@@ -1561,15 +1560,19 @@ static int mlx4_master_immediate_activate_vlan_qos(struct mlx4_priv *priv,
 		return -ENOMEM;
 
 	if (vp_oper->state.default_vlan != vp_admin->default_vlan) {
-		err = __mlx4_register_vlan(&priv->dev, port,
-					   vp_admin->default_vlan,
-					   &admin_vlan_ix);
-		if (err) {
-			kfree(work);
-			mlx4_warn((&priv->dev),
-				  "No vlan resources slave %d, port %d\n",
-				  slave, port);
-			return err;
+		if (MLX4_VGT != vp_admin->default_vlan) {
+			err = __mlx4_register_vlan(&priv->dev, port,
+						   vp_admin->default_vlan,
+						   &admin_vlan_ix);
+			if (err) {
+				kfree(work);
+				mlx4_warn((&priv->dev),
+					  "No vlan resources slave %d, port %d\n",
+					  slave, port);
+				return err;
+			}
+		} else {
+			admin_vlan_ix = NO_INDX;
 		}
 		work->flags |= MLX4_VF_IMMED_VLAN_FLAG_VLAN;
 		mlx4_dbg((&(priv->dev)),
