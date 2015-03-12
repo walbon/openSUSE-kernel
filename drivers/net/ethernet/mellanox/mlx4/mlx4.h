@@ -1272,5 +1272,6 @@ void mlx4_init_quotas(struct mlx4_dev *dev);
 
 /* Returns the VF index of slave */
 int mlx4_get_vf_indx(struct mlx4_dev *dev, int slave);
+int mlx4_config_mad_demux(struct mlx4_dev *dev);
 
 #endif /* MLX4_H */
