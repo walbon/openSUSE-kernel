@@ -1278,6 +1278,8 @@ static int __mlx4_ib_modify_qp(struct ib_qp *ibqp,
 		context->sq_size_stride |= !!qp->sq_no_prefetch << 7;
 		if (ibqp->qp_type == IB_QPT_XRC)
 			context->xrcd = cpu_to_be32((u32) qp->xrcdn);
+		if (ibqp->qp_type == IB_QPT_RAW_PACKET)
+			context->param3 |= cpu_to_be32(1 << 30);
 	}
 
 	if (qp->ibqp.uobject)
