@@ -1626,13 +1626,9 @@ static int __init crash_save_vmcoreinfo_init(void)
 	VMCOREINFO_NUMBER(NR_FREE_PAGES);
 	VMCOREINFO_NUMBER(PG_lru);
 	VMCOREINFO_NUMBER(PG_private);
-#ifdef CONFIG_PAGEFLAGS_EXTENDED
-	VMCOREINFO_NUMBER(PG_head);
-#else
-	VMCOREINFO_NUMBER(PG_compound);
-#endif
 	VMCOREINFO_NUMBER(PG_swapcache);
 	VMCOREINFO_NUMBER(PG_slab);
+	VMCOREINFO_NUMBER(PG_head_mask);
 	VMCOREINFO_NUMBER(PAGE_BUDDY_MAPCOUNT_VALUE);
 
 	arch_crash_save_vmcoreinfo();
