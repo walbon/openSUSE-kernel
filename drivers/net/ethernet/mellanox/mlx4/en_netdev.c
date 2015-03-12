@@ -127,7 +127,7 @@ static void mlx4_en_filter_work(struct work_struct *work)
 		.queue_mode = MLX4_NET_TRANS_Q_LIFO,
 		.exclusive = 1,
 		.allow_loopback = 1,
-		.promisc_mode = MLX4_FS_PROMISC_NONE,
+		.promisc_mode = MLX4_FS_REGULAR,
 		.port = priv->port,
 		.priority = MLX4_DOMAIN_RFS,
 	};
@@ -444,7 +444,7 @@ static int mlx4_en_uc_steer_add(struct mlx4_en_priv *priv,
 			.queue_mode = MLX4_NET_TRANS_Q_FIFO,
 			.exclusive = 0,
 			.allow_loopback = 1,
-			.promisc_mode = MLX4_FS_PROMISC_NONE,
+			.promisc_mode = MLX4_FS_REGULAR,
 			.priority = MLX4_DOMAIN_NIC,
 		};
 
@@ -821,7 +821,7 @@ static void mlx4_en_do_set_multicast(struct work_struct *work)
 				err = mlx4_flow_steer_promisc_add(mdev->dev,
 								  priv->port,
 								  priv->base_qpn,
-								  MLX4_FS_PROMISC_UPLINK);
+								  MLX4_FS_ALL_DEFAULT);
 				if (err)
 					en_err(priv, "Failed enabling promiscuous mode\n");
 				priv->flags |= MLX4_EN_FLAG_MC_PROMISC;
@@ -885,7 +885,7 @@ static void mlx4_en_do_set_multicast(struct work_struct *work)
 		case MLX4_STEERING_MODE_DEVICE_MANAGED:
 			err = mlx4_flow_steer_promisc_remove(mdev->dev,
 							     priv->port,
-							     MLX4_FS_PROMISC_UPLINK);
+							     MLX4_FS_ALL_DEFAULT);
 			if (err)
 				en_err(priv, "Failed disabling promiscuous mode\n");
 			priv->flags &= ~MLX4_EN_FLAG_MC_PROMISC;
@@ -937,7 +937,7 @@ static void mlx4_en_do_set_multicast(struct work_struct *work)
 				err = mlx4_flow_steer_promisc_add(mdev->dev,
 								  priv->port,
 								  priv->base_qpn,
-								  MLX4_FS_PROMISC_ALL_MULTI);
+								  MLX4_FS_MC_DEFAULT);
 				break;
 
 			case MLX4_STEERING_MODE_B0:
@@ -960,7 +960,7 @@ static void mlx4_en_do_set_multicast(struct work_struct *work)
 			case MLX4_STEERING_MODE_DEVICE_MANAGED:
 				err = mlx4_flow_steer_promisc_remove(mdev->dev,
 								     priv->port,
-								     MLX4_FS_PROMISC_ALL_MULTI);
+								     MLX4_FS_MC_DEFAULT);
 				break;
 
 			case MLX4_STEERING_MODE_B0:
@@ -1475,10 +1475,10 @@ void mlx4_en_stop_port(struct net_device *dev, int detach)
 				 MLX4_EN_FLAG_MC_PROMISC);
 		mlx4_flow_steer_promisc_remove(mdev->dev,
 					       priv->port,
-					       MLX4_FS_PROMISC_UPLINK);
+					       MLX4_FS_ALL_DEFAULT);
 		mlx4_flow_steer_promisc_remove(mdev->dev,
 					       priv->port,
-					       MLX4_FS_PROMISC_ALL_MULTI);
+					       MLX4_FS_MC_DEFAULT);
 	} else if (priv->flags & MLX4_EN_FLAG_PROMISC) {
 		priv->flags &= ~MLX4_EN_FLAG_PROMISC;
 
