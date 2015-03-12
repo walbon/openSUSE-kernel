@@ -129,7 +129,7 @@ static void dump_dev_cap_flags2(struct mlx4_dev *dev, u64 flags)
 		[0] = "RSS support",
 		[1] = "RSS Toeplitz Hash Function support",
 		[2] = "RSS XOR Hash Function support",
-		[3] = "Device manage flow steering support",
+		[3] = "Device managed flow steering support",
 		[4] = "Automatic MAC reassignment support",
 		[5] = "Time stamping support",
 		[6] = "VST (control vlan insertion/stripping) support",
