@@ -1117,6 +1117,7 @@ static void mlx4_ib_multiplex_mad(struct mlx4_ib_demux_pv_ctx *ctx, struct ib_wc
 	struct ib_ah_attr ah_attr;
 	u8 *slave_id;
 	int slave;
+	int port;
 
 	/* Get slave that sent this packet */
 	if (wc->src_qp < dev->dev->phys_caps.base_proxy_sqpn ||
@@ -1193,12 +1194,10 @@ static void mlx4_ib_multiplex_mad(struct mlx4_ib_demux_pv_ctx *ctx, struct ib_wc
 	memcpy(&ah.av, &tunnel->hdr.av, sizeof (struct mlx4_av));
 	ah.ibah.device = ctx->ib_dev;
 	mlx4_ib_query_ah(&ah.ibah, &ah_attr);
-	if ((ah_attr.ah_flags & IB_AH_GRH) &&
-	    (ah_attr.grh.sgid_index != slave)) {
-		mlx4_ib_warn(ctx->ib_dev, "slave:%d accessed invalid sgid_index:%d\n",
-			     slave, ah_attr.grh.sgid_index);
+	port = mlx4_slave_convert_port(dev->dev, slave, ah_attr.port_num);
+	if (port < 0)
 		return;
-	}
+	ah_attr.port_num = port;
 
 	mlx4_ib_send_to_wire(dev, slave, ctx->port,
 			     is_proxy_qp0(dev, wc->src_qp, slave) ?
@@ -1783,7 +1782,15 @@ static int mlx4_ib_alloc_demux_ctx(struct mlx4_ib_dev *dev,
 	ctx->port = port;
 	ctx->ib_dev = &dev->ib_dev;
 
-	for (i = 0; i < dev->dev->caps.sqp_demux; i++) {
+	for (i = 0;
+	     i < min(dev->dev->caps.sqp_demux, (u16)(dev->dev->num_vfs + 1));
+	     i++) {
+		struct mlx4_active_ports actv_ports =
+			mlx4_get_active_ports(dev->dev, i);
+
+		if (!test_bit(port - 1, actv_ports.ports))
+			continue;
+
 		ret = alloc_pv_object(dev, i, port, &ctx->tun[i]);
 		if (ret) {
 			ret = -ENOMEM;

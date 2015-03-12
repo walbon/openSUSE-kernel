@@ -461,6 +461,8 @@ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
 
 		spin_lock_init(&res_alloc->alloc_lock);
 		for (t = 0; t < dev->num_vfs + 1; t++) {
+			struct mlx4_active_ports actv_ports =
+				mlx4_get_active_ports(dev, t);
 			switch (i) {
 			case RES_QP:
 				initialize_res_quotas(dev, res_alloc, RES_QP,
@@ -490,10 +492,27 @@ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
 				break;
 			case RES_MAC:
 				if (t == mlx4_master_func_num(dev)) {
-					res_alloc->quota[t] = MLX4_MAX_MAC_NUM;
+					int max_vfs_pport = 0;
+					/* Calculate the max vfs per port for */
+					/* both ports.			      */
+					for (j = 0; j < dev->caps.num_ports;
+					     j++) {
+						struct mlx4_slaves_pport slaves_pport =
+							mlx4_phys_to_slaves_pport(dev, j + 1);
+						unsigned current_slaves =
+							bitmap_weight(slaves_pport.slaves,
+								      dev->caps.num_ports) - 1;
+						if (max_vfs_pport < current_slaves)
+							max_vfs_pport =
+								current_slaves;
+					}
+					res_alloc->quota[t] =
+						MLX4_MAX_MAC_NUM -
+						2 * max_vfs_pport;
 					res_alloc->guaranteed[t] = 2;
 					for (j = 0; j < MLX4_MAX_PORTS; j++)
-						res_alloc->res_port_free[j] = MLX4_MAX_MAC_NUM;
+						res_alloc->res_port_free[j] =
+							MLX4_MAX_MAC_NUM;
 				} else {
 					res_alloc->quota[t] = MLX4_MAX_MAC_NUM;
 					res_alloc->guaranteed[t] = 2;
@@ -521,9 +540,10 @@ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
 				break;
 			}
 			if (i == RES_MAC || i == RES_VLAN) {
-				for (j = 0; j < MLX4_MAX_PORTS; j++)
-					res_alloc->res_port_rsvd[j] +=
-						res_alloc->guaranteed[t];
+				for (j = 0; j < dev->caps.num_ports; j++)
+					if (test_bit(j, actv_ports.ports))
+						res_alloc->res_port_rsvd[j] +=
+							res_alloc->guaranteed[t];
 			} else {
 				res_alloc->res_reserved += res_alloc->guaranteed[t];
 			}
@@ -1715,6 +1735,11 @@ static int mac_alloc_res(struct mlx4_dev *dev, int slave, int op, int cmd,
 		return err;
 
 	port = !in_port ? get_param_l(out_param) : in_port;
+	port = mlx4_slave_convert_port(
+			dev, slave, port);
+
+	if (port < 0)
+		return -EINVAL;
 	mac = in_param;
 
 	err = __mlx4_register_mac(dev, port, mac);
@@ -1821,6 +1846,11 @@ static int vlan_alloc_res(struct mlx4_dev *dev, int slave, int op, int cmd,
 	if (!port || op != RES_OP_RESERVE_AND_MAP)
 		return -EINVAL;
 
+	port = mlx4_slave_convert_port(
+			dev, slave, port);
+
+	if (port < 0)
+		return -EINVAL;
 	/* upstream kernels had NOP for reg/unreg vlan. Continue this. */
 	if (!in_port && port > 0 && port <= dev->caps.num_ports) {
 		slave_state[slave].old_vlan_api = true;
@@ -2118,6 +2148,11 @@ static int mac_free_res(struct mlx4_dev *dev, int slave, int op, int cmd,
 	switch (op) {
 	case RES_OP_RESERVE_AND_MAP:
 		port = !in_port ? get_param_l(out_param) : in_port;
+		port = mlx4_slave_convert_port(
+				dev, slave, port);
+
+		if (port < 0)
+			return -EINVAL;
 		mac_del_from_slave(dev, slave, in_param, port);
 		__mlx4_unregister_mac(dev, port, in_param);
 		break;
@@ -2137,6 +2172,11 @@ static int vlan_free_res(struct mlx4_dev *dev, int slave, int op, int cmd,
 	struct mlx4_slave_state *slave_state = priv->mfunc.master.slave_state;
 	int err = 0;
 
+	port = mlx4_slave_convert_port(
+			dev, slave, port);
+
+	if (port < 0)
+		return -EINVAL;
 	switch (op) {
 	case RES_OP_RESERVE_AND_MAP:
 		if (slave_state[slave].old_vlan_api)
@@ -3258,6 +3298,38 @@ int mlx4_INIT2INIT_QP_wrapper(struct mlx4_dev *dev, int slave,
 	return mlx4_GEN_QP_wrapper(dev, slave, vhcr, inbox, outbox, cmd);
 }
 
+static int adjust_qp_sched_queue(struct mlx4_dev *dev, int slave,
+				  struct mlx4_qp_context *qpc,
+				  struct mlx4_cmd_mailbox *inbox)
+{
+	enum mlx4_qp_optpar optpar = be32_to_cpu(*(__be32 *)inbox->buf);
+	u8 pri_sched_queue;
+	int port = mlx4_slave_convert_port(
+		   dev, slave, (qpc->pri_path.sched_queue >> 6 & 1) + 1) - 1;
+
+	if (port < 0)
+		return -EINVAL;
+
+	pri_sched_queue = (qpc->pri_path.sched_queue & ~(1 << 6)) |
+			  ((port & 1) << 6);
+
+	if (optpar & MLX4_QP_OPTPAR_PRIMARY_ADDR_PATH) {
+		qpc->pri_path.sched_queue = pri_sched_queue;
+	}
+
+	if (optpar & MLX4_QP_OPTPAR_ALT_ADDR_PATH) {
+		port = mlx4_slave_convert_port(
+				dev, slave, (qpc->alt_path.sched_queue >> 6 & 1)
+				+ 1) - 1;
+		if (port < 0)
+			return -EINVAL;
+		qpc->alt_path.sched_queue =
+			(qpc->alt_path.sched_queue & ~(1 << 6)) |
+			(port & 1) << 6;
+	}
+	return 0;
+}
+
 int mlx4_INIT2RTR_QP_wrapper(struct mlx4_dev *dev, int slave,
 			     struct mlx4_vhcr *vhcr,
 			     struct mlx4_cmd_mailbox *inbox,
@@ -3276,6 +3348,9 @@ int mlx4_INIT2RTR_QP_wrapper(struct mlx4_dev *dev, int slave,
 	u8 orig_vlan_index = qpc->pri_path.vlan_index;
 	u8 orig_feup = qpc->pri_path.feup;
 
+	err = adjust_qp_sched_queue(dev, slave, qpc, inbox);
+	if (err)
+		return err;
 	err = verify_qp_parameters(dev, inbox, QP_TRANS_INIT2RTR, slave);
 	if (err)
 		return err;
@@ -3324,6 +3399,9 @@ int mlx4_RTR2RTS_QP_wrapper(struct mlx4_dev *dev, int slave,
 	int err;
 	struct mlx4_qp_context *context = inbox->buf + 8;
 
+	err = adjust_qp_sched_queue(dev, slave, context, inbox);
+	if (err)
+		return err;
 	err = verify_qp_parameters(dev, inbox, QP_TRANS_RTR2RTS, slave);
 	if (err)
 		return err;
@@ -3343,6 +3421,9 @@ int mlx4_RTS2RTS_QP_wrapper(struct mlx4_dev *dev, int slave,
 	int err;
 	struct mlx4_qp_context *context = inbox->buf + 8;
 
+	err = adjust_qp_sched_queue(dev, slave, context, inbox);
+	if (err)
+		return err;
 	err = verify_qp_parameters(dev, inbox, QP_TRANS_RTS2RTS, slave);
 	if (err)
 		return err;
@@ -3361,6 +3442,9 @@ int mlx4_SQERR2RTS_QP_wrapper(struct mlx4_dev *dev, int slave,
 			      struct mlx4_cmd_info *cmd)
 {
 	struct mlx4_qp_context *context = inbox->buf + 8;
+	int err = adjust_qp_sched_queue(dev, slave, context, inbox);
+	if (err)
+		return err;
 	adjust_proxy_tun_qkey(dev, vhcr, context);
 	return mlx4_GEN_QP_wrapper(dev, slave, vhcr, inbox, outbox, cmd);
 }
@@ -3374,6 +3458,9 @@ int mlx4_SQD2SQD_QP_wrapper(struct mlx4_dev *dev, int slave,
 	int err;
 	struct mlx4_qp_context *context = inbox->buf + 8;
 
+	err = adjust_qp_sched_queue(dev, slave, context, inbox);
+	if (err)
+		return err;
 	err = verify_qp_parameters(dev, inbox, QP_TRANS_SQD2SQD, slave);
 	if (err)
 		return err;
@@ -3393,6 +3480,9 @@ int mlx4_SQD2RTS_QP_wrapper(struct mlx4_dev *dev, int slave,
 	int err;
 	struct mlx4_qp_context *context = inbox->buf + 8;
 
+	err = adjust_qp_sched_queue(dev, slave, context, inbox);
+	if (err)
+		return err;
 	err = verify_qp_parameters(dev, inbox, QP_TRANS_SQD2RTS, slave);
 	if (err)
 		return err;
@@ -3496,16 +3586,26 @@ static int rem_mcg_res(struct mlx4_dev *dev, int slave, struct res_qp *rqp,
 	return err;
 }
 
-static int qp_attach(struct mlx4_dev *dev, struct mlx4_qp *qp, u8 gid[16],
-		     int block_loopback, enum mlx4_protocol prot,
+static int qp_attach(struct mlx4_dev *dev, int slave, struct mlx4_qp *qp,
+		     u8 gid[16], int block_loopback, enum mlx4_protocol prot,
 		     enum mlx4_steer_type type, u64 *reg_id)
 {
 	switch (dev->caps.steering_mode) {
-	case MLX4_STEERING_MODE_DEVICE_MANAGED:
-		return mlx4_trans_to_dmfs_attach(dev, qp, gid, gid[5],
+	case MLX4_STEERING_MODE_DEVICE_MANAGED: {
+		int port = mlx4_slave_convert_port(dev, slave, gid[5]);
+		if (port < 0)
+			return port;
+		return mlx4_trans_to_dmfs_attach(dev, qp, gid, port,
 						block_loopback, prot,
 						reg_id);
+	}
 	case MLX4_STEERING_MODE_B0:
+		if (prot == MLX4_PROT_ETH) {
+			int port = mlx4_slave_convert_port(dev, slave, gid[5]);
+			if (port < 0)
+				return port;
+			gid[5] = port;
+		}
 		return mlx4_qp_attach_common(dev, qp, gid,
 					    block_loopback, prot, type);
 	default:
@@ -3513,9 +3613,9 @@ static int qp_attach(struct mlx4_dev *dev, struct mlx4_qp *qp, u8 gid[16],
 	}
 }
 
-static int qp_detach(struct mlx4_dev *dev, struct mlx4_qp *qp, u8 gid[16],
-		     enum mlx4_protocol prot, enum mlx4_steer_type type,
-		     u64 reg_id)
+static int qp_detach(struct mlx4_dev *dev, struct mlx4_qp *qp,
+		     u8 gid[16], enum mlx4_protocol prot,
+		     enum mlx4_steer_type type, u64 reg_id)
 {
 	switch (dev->caps.steering_mode) {
 	case MLX4_STEERING_MODE_DEVICE_MANAGED:
@@ -3552,7 +3652,7 @@ int mlx4_QP_ATTACH_wrapper(struct mlx4_dev *dev, int slave,
 
 	qp.qpn = qpn;
 	if (attach) {
-		err = qp_attach(dev, &qp, gid, block_loopback, prot,
+		err = qp_attach(dev, slave, &qp, gid, block_loopback, prot,
 				type, &reg_id);
 		if (err) {
 			pr_err("Fail to attach rule to qp 0x%x\n", qpn);
@@ -3688,6 +3788,9 @@ int mlx4_QP_FLOW_STEERING_ATTACH_wrapper(struct mlx4_dev *dev, int slave,
 		return -EOPNOTSUPP;
 
 	ctrl = (struct mlx4_net_trans_rule_hw_ctrl *)inbox->buf;
+	ctrl->port = mlx4_slave_convert_port(dev, slave, ctrl->port);
+	if (ctrl->port <= 0)
+		return -EINVAL;
 	qpn = be32_to_cpu(ctrl->qpn) & 0xffffff;
 	err = get_res(dev, slave, qpn, RES_QP, &rqp);
 	if (err) {

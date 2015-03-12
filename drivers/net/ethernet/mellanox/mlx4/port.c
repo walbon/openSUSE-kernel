@@ -625,6 +625,15 @@ int mlx4_SET_PORT_wrapper(struct mlx4_dev *dev, int slave,
 			  struct mlx4_cmd_mailbox *outbox,
 			  struct mlx4_cmd_info *cmd)
 {
+	int port = mlx4_slave_convert_port(
+			dev, slave, vhcr->in_modifier & 0xFF);
+
+	if (port < 0)
+		return -EINVAL;
+
+	vhcr->in_modifier = (vhcr->in_modifier & ~0xFF) |
+			    (port & 0xFF);
+
 	return mlx4_common_set_port(dev, slave, vhcr->in_modifier,
 				    vhcr->op_modifier, inbox);
 }

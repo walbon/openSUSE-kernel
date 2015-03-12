@@ -223,13 +223,25 @@ int mlx4_QUERY_FUNC_CAP_wrapper(struct mlx4_dev *dev, int slave,
 #define QUERY_FUNC_CAP_FLAGS0_FORCE_PHY_WQE_GID 0x80
 
 	if (vhcr->op_modifier == 1) {
+		struct mlx4_active_ports actv_ports =
+			mlx4_get_active_ports(dev, slave);
+		int converted_port = mlx4_slave_convert_port(
+				dev, slave, vhcr->in_modifier);
+
+		if (converted_port < 0)
+			return -EINVAL;
+
+		vhcr->in_modifier = converted_port;
 		/* Set nic_info bit to mark new fields support */
 		field  = QUERY_FUNC_CAP_FLAGS1_NIC_INFO;
 		MLX4_PUT(outbox->buf, field, QUERY_FUNC_CAP_FLAGS1_OFFSET);
 
-		field = vhcr->in_modifier; /* phys-port = logical-port */
+		/* phys-port = logical-port */
+		field = vhcr->in_modifier -
+			find_first_bit(actv_ports.ports, dev->caps.num_ports);
 		MLX4_PUT(outbox->buf, field, QUERY_FUNC_CAP_PHYS_PORT_OFFSET);
 
+		field = vhcr->in_modifier;
 		/* size is now the QP number */
 		size = dev->phys_caps.base_tunnel_sqpn + 8 * slave + field - 1;
 		MLX4_PUT(outbox->buf, size, QUERY_FUNC_CAP_QP0_TUNNEL);
@@ -247,12 +259,16 @@ int mlx4_QUERY_FUNC_CAP_wrapper(struct mlx4_dev *dev, int slave,
 			 QUERY_FUNC_CAP_PHYS_PORT_ID);
 
 	} else if (vhcr->op_modifier == 0) {
+		struct mlx4_active_ports actv_ports =
+			mlx4_get_active_ports(dev, slave);
 		/* enable rdma and ethernet interfaces, and new quota locations */
 		field = (QUERY_FUNC_CAP_FLAG_ETH | QUERY_FUNC_CAP_FLAG_RDMA |
 			 QUERY_FUNC_CAP_FLAG_QUOTAS);
 		MLX4_PUT(outbox->buf, field, QUERY_FUNC_CAP_FLAGS_OFFSET);
 
-		field = dev->caps.num_ports;
+		field = min(
+			bitmap_weight(actv_ports.ports, dev->caps.num_ports),
+			dev->caps.num_ports);
 		MLX4_PUT(outbox->buf, field, QUERY_FUNC_CAP_NUM_PORTS_OFFSET);
 
 		size = dev->caps.function_caps; /* set PF behaviours */
@@ -831,6 +847,10 @@ int mlx4_QUERY_DEV_CAP_wrapper(struct mlx4_dev *dev, int slave,
 	int	err = 0;
 	u8	field;
 	u32	bmme_flags;
+	int	real_port;
+	int	slave_port;
+	int	first_port;
+	struct mlx4_active_ports actv_ports;
 
 	err = mlx4_cmd_box(dev, 0, outbox->dma, 0, 0, MLX4_CMD_QUERY_DEV_CAP,
 			   MLX4_CMD_TIME_CLASS_A, MLX4_CMD_NATIVE);
@@ -843,7 +863,25 @@ int mlx4_QUERY_DEV_CAP_wrapper(struct mlx4_dev *dev, int slave,
 	MLX4_GET(flags, outbox->buf, QUERY_DEV_CAP_EXT_FLAGS_OFFSET);
 	flags |= MLX4_DEV_CAP_FLAG_PORT_MNG_CHG_EV;
 	flags &= ~MLX4_DEV_CAP_FLAG_MEM_WINDOW;
+	actv_ports = mlx4_get_active_ports(dev, slave);
+	first_port = find_first_bit(actv_ports.ports, dev->caps.num_ports);
+	for (slave_port = 0, real_port = first_port;
+	     real_port < first_port +
+	     bitmap_weight(actv_ports.ports, dev->caps.num_ports);
+	     ++real_port, ++slave_port) {
+		if (flags & (MLX4_DEV_CAP_FLAG_WOL_PORT1 << real_port))
+			flags |= MLX4_DEV_CAP_FLAG_WOL_PORT1 << slave_port;
+		else
+			flags &= ~(MLX4_DEV_CAP_FLAG_WOL_PORT1 << slave_port);
+	}
+	for (; slave_port < dev->caps.num_ports; ++slave_port)
+		flags &= ~(MLX4_DEV_CAP_FLAG_WOL_PORT1 << slave_port);
 	MLX4_PUT(outbox->buf, flags, QUERY_DEV_CAP_EXT_FLAGS_OFFSET);
+
+	MLX4_GET(field, outbox->buf, QUERY_DEV_CAP_VL_PORT_OFFSET);
+	field &= ~0x0F;
+	field |= bitmap_weight(actv_ports.ports, dev->caps.num_ports) & 0x0F;
+	MLX4_PUT(outbox->buf, field, QUERY_DEV_CAP_VL_PORT_OFFSET);
 
 	/* For guests, disable timestamp */
 	MLX4_GET(field, outbox->buf, QUERY_DEV_CAP_CQ_TS_SUPPORT_OFFSET);
@@ -882,10 +920,18 @@ int mlx4_QUERY_PORT_wrapper(struct mlx4_dev *dev, int slave,
 	u8 port_type;
 	u16 short_field;
 	int err;
+	int port = mlx4_slave_convert_port(dev, slave,
+					   vhcr->in_modifier & 0xFF);
 
 #define MLX4_VF_PORT_NO_LINK_SENSE_MASK	0xE0
 #define QUERY_PORT_CUR_MAX_PKEY_OFFSET	0x0c
 #define QUERY_PORT_CUR_MAX_GID_OFFSET	0x0e
+
+	if (port < 0)
+		return -EINVAL;
+
+	vhcr->in_modifier = (vhcr->in_modifier & ~0xFF) |
+			    (port & 0xFF);
 
 	err = mlx4_cmd_box(dev, 0, outbox->dma, vhcr->in_modifier, 0,
 			   MLX4_CMD_QUERY_PORT, MLX4_CMD_TIME_CLASS_B,
@@ -1547,8 +1593,11 @@ int mlx4_INIT_PORT_wrapper(struct mlx4_dev *dev, int slave,
 			   struct mlx4_cmd_info *cmd)
 {
 	struct mlx4_priv *priv = mlx4_priv(dev);
-	int port = vhcr->in_modifier;
+	int port = mlx4_slave_convert_port(dev, slave, vhcr->in_modifier);
 	int err;
+
+	if (port < 0)
+		return -EINVAL;
 
 	if (priv->mfunc.master.slave_state[slave].init_port_mask & (1 << port))
 		return 0;
@@ -1639,8 +1688,11 @@ int mlx4_CLOSE_PORT_wrapper(struct mlx4_dev *dev, int slave,
 			    struct mlx4_cmd_info *cmd)
 {
 	struct mlx4_priv *priv = mlx4_priv(dev);
-	int port = vhcr->in_modifier;
+	int port = mlx4_slave_convert_port(dev, slave, vhcr->in_modifier);
 	int err;
+
+	if (port < 0)
+		return -EINVAL;
 
 	if (!(priv->mfunc.master.slave_state[slave].init_port_mask &
 	    (1 << port)))
