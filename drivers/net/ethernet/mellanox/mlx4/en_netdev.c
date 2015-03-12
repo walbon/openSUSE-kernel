@@ -868,11 +868,6 @@ static void mlx4_en_do_set_multicast(struct work_struct *work)
 						  0, MLX4_MCAST_DISABLE);
 			if (err)
 				en_err(priv, "Failed disabling multicast filter\n");
-
-			/* Disable port VLAN filter */
-			err = mlx4_SET_VLAN_FLTR(mdev->dev, priv);
-			if (err)
-				en_err(priv, "Failed disabling VLAN filter\n");
 		}
 		goto out;
 	}
@@ -922,11 +917,6 @@ static void mlx4_en_do_set_multicast(struct work_struct *work)
 				en_err(priv, "Failed disabling promiscuous mode\n");
 			break;
 		}
-
-		/* Enable port VLAN filter */
-		err = mlx4_SET_VLAN_FLTR(mdev->dev, priv);
-		if (err)
-			en_err(priv, "Failed enabling VLAN filter\n");
 	}
 
 	/* Enable/disable the multicast filter according to IFF_ALLMULTI */
