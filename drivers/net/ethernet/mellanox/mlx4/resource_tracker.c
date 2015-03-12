@@ -1433,7 +1433,7 @@ static void rem_slave_macs(struct mlx4_dev *dev, int slave)
 }
 
 static int mac_alloc_res(struct mlx4_dev *dev, int slave, int op, int cmd,
-			 u64 in_param, u64 *out_param)
+			 u64 in_param, u64 *out_param, int in_port)
 {
 	int err = -EINVAL;
 	int port;
@@ -1442,7 +1442,7 @@ static int mac_alloc_res(struct mlx4_dev *dev, int slave, int op, int cmd,
 	if (op != RES_OP_RESERVE_AND_MAP)
 		return err;
 
-	port = get_param_l(out_param);
+	port = !in_port ? get_param_l(out_param) : in_port;
 	mac = in_param;
 
 	err = __mlx4_register_mac(dev, port, mac);
@@ -1460,7 +1460,7 @@ static int mac_alloc_res(struct mlx4_dev *dev, int slave, int op, int cmd,
 }
 
 static int vlan_alloc_res(struct mlx4_dev *dev, int slave, int op, int cmd,
-			 u64 in_param, u64 *out_param)
+			 u64 in_param, u64 *out_param, int port)
 {
 	return 0;
 }
@@ -1518,7 +1518,7 @@ int mlx4_ALLOC_RES_wrapper(struct mlx4_dev *dev, int slave,
 	int err;
 	int alop = vhcr->op_modifier;
 
-	switch (vhcr->in_modifier) {
+	switch (vhcr->in_modifier & 0xFF) {
 	case RES_QP:
 		err = qp_alloc_res(dev, slave, vhcr->op_modifier, alop,
 				   vhcr->in_param, &vhcr->out_param);
@@ -1546,12 +1546,14 @@ int mlx4_ALLOC_RES_wrapper(struct mlx4_dev *dev, int slave,
 
 	case RES_MAC:
 		err = mac_alloc_res(dev, slave, vhcr->op_modifier, alop,
-				    vhcr->in_param, &vhcr->out_param);
+				    vhcr->in_param, &vhcr->out_param,
+				    (vhcr->in_modifier >> 8) & 0xFF);
 		break;
 
 	case RES_VLAN:
 		err = vlan_alloc_res(dev, slave, vhcr->op_modifier, alop,
-				    vhcr->in_param, &vhcr->out_param);
+				     vhcr->in_param, &vhcr->out_param,
+				     (vhcr->in_modifier >> 8) & 0xFF);
 		break;
 
 	case RES_COUNTER:
@@ -1720,14 +1722,14 @@ static int srq_free_res(struct mlx4_dev *dev, int slave, int op, int cmd,
 }
 
 static int mac_free_res(struct mlx4_dev *dev, int slave, int op, int cmd,
-			    u64 in_param, u64 *out_param)
+			    u64 in_param, u64 *out_param, int in_port)
 {
 	int port;
 	int err = 0;
 
 	switch (op) {
 	case RES_OP_RESERVE_AND_MAP:
-		port = get_param_l(out_param);
+		port = !in_port ? get_param_l(out_param) : in_port;
 		mac_del_from_slave(dev, slave, in_param, port);
 		__mlx4_unregister_mac(dev, port, in_param);
 		break;
@@ -1741,7 +1743,7 @@ static int mac_free_res(struct mlx4_dev *dev, int slave, int op, int cmd,
 }
 
 static int vlan_free_res(struct mlx4_dev *dev, int slave, int op, int cmd,
-			    u64 in_param, u64 *out_param)
+			    u64 in_param, u64 *out_param, int port)
 {
 	return 0;
 }
@@ -1793,7 +1795,7 @@ int mlx4_FREE_RES_wrapper(struct mlx4_dev *dev, int slave,
 	int err = -EINVAL;
 	int alop = vhcr->op_modifier;
 
-	switch (vhcr->in_modifier) {
+	switch (vhcr->in_modifier & 0xFF) {
 	case RES_QP:
 		err = qp_free_res(dev, slave, vhcr->op_modifier, alop,
 				  vhcr->in_param);
@@ -1821,12 +1823,14 @@ int mlx4_FREE_RES_wrapper(struct mlx4_dev *dev, int slave,
 
 	case RES_MAC:
 		err = mac_free_res(dev, slave, vhcr->op_modifier, alop,
-				   vhcr->in_param, &vhcr->out_param);
+				   vhcr->in_param, &vhcr->out_param,
+				   (vhcr->in_modifier >> 8) & 0xFF);
 		break;
 
 	case RES_VLAN:
 		err = vlan_free_res(dev, slave, vhcr->op_modifier, alop,
-				   vhcr->in_param, &vhcr->out_param);
+				    vhcr->in_param, &vhcr->out_param,
+				    (vhcr->in_modifier >> 8) & 0xFF);
 		break;
 
 	case RES_COUNTER:
