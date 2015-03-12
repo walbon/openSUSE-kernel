@@ -392,6 +392,8 @@ static bool mlx4_en_process_tx_cq(struct net_device *dev,
 	if (!priv->port_up)
 		return true;
 
+	netdev_txq_bql_complete_prefetchw(ring->tx_queue);
+
 	index = cons_index & size_mask;
 	cqe = mlx4_en_get_cqe(buf, index, priv->cqe_size) + factor;
 	last_nr_txbb = ACCESS_ONCE(ring->last_nr_txbb);
@@ -730,6 +732,8 @@ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (vlan_tx_tag_present(skb))
 		vlan_tag = vlan_tx_tag_get(skb);
 
+
+	netdev_txq_bql_enqueue_prefetchw(ring->tx_queue);
 
 	/* Track current inflight packets for performance analysis */
 	AVG_PERF_COUNTER(priv->pstats.inflight_avg,

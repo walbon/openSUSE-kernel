@@ -36,6 +36,7 @@
 #include <linux/delay.h>
 #include <linux/mm.h>
 #include <asm/atomic.h>
+#include <linux/prefetch.h>
 #include <asm/cache.h>
 #include <asm/byteorder.h>
 
@@ -2021,6 +2022,34 @@ static inline int netif_queue_stopped(const struct net_device *dev)
 static inline int netif_tx_queue_frozen_or_stopped(const struct netdev_queue *dev_queue)
 {
 	return dev_queue->state & QUEUE_STATE_XOFF_OR_FROZEN;
+}
+
+/**
+ *	netdev_txq_bql_enqueue_prefetchw - prefetch bql data for write
+ *	@dev_queue: pointer to transmit queue
+ *
+ * BQL enabled drivers might use this helper in their ndo_start_xmit(),
+ * to give appropriate hint to the cpu.
+ */
+static inline void netdev_txq_bql_enqueue_prefetchw(struct netdev_queue *dev_queue)
+{
+#ifdef CONFIG_BQL
+	prefetchw(&dev_queue->dql.num_queued);
+#endif
+}
+
+/**
+ *	netdev_txq_bql_complete_prefetchw - prefetch bql data for write
+ *	@dev_queue: pointer to transmit queue
+ *
+ * BQL enabled drivers might use this helper in their TX completion path,
+ * to give appropriate hint to the cpu.
+ */
+static inline void netdev_txq_bql_complete_prefetchw(struct netdev_queue *dev_queue)
+{
+#ifdef CONFIG_BQL
+	prefetchw(&dev_queue->dql.limit);
+#endif
 }
 
 static inline void netdev_tx_sent_queue(struct netdev_queue *dev_queue,
