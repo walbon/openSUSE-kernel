@@ -272,7 +272,8 @@ static inline void xen_load_tls(struct thread_struct *t, unsigned int cpu)
 }
 #endif
 
-#define _LDT_empty(info)				\
+/* This intentionally ignores lm, since 32-bit apps don't have that field. */
+#define LDT_empty(info)					\
 	((info)->base_addr		== 0	&&	\
 	 (info)->limit			== 0	&&	\
 	 (info)->contents		== 0	&&	\
@@ -294,12 +295,6 @@ static inline bool LDT_zero(const struct user_desc *info)
 		info->seg_not_present	== 0 &&
 		info->useable		== 0);
 }
-
-#ifdef CONFIG_X86_64
-#define LDT_empty(info) (_LDT_empty(info) && ((info)->lm == 0))
-#else
-#define LDT_empty(info) (_LDT_empty(info))
-#endif
 
 static inline void clear_LDT(void)
 {
