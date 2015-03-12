@@ -1726,6 +1726,16 @@ static int build_sriov_qp0_header(struct mlx4_ib_sqp *sqp,
 	return 0;
 }
 
+static void mlx4_u64_to_smac(u8 *dst_mac, u64 src_mac)
+{
+	int i;
+
+	for (i = ETH_ALEN; i; i--) {
+		dst_mac[i - 1] = src_mac & 0xff;
+		src_mac >>= 8;
+	}
+}
+
 static int build_mlx_header(struct mlx4_ib_sqp *sqp, struct ib_send_wr *wr,
 			    void *wqe, unsigned *mlx_seg_len)
 {
@@ -1733,7 +1743,6 @@ static int build_mlx_header(struct mlx4_ib_sqp *sqp, struct ib_send_wr *wr,
 	struct mlx4_wqe_mlx_seg *mlx = wqe;
 	struct mlx4_wqe_inline_seg *inl = wqe + sizeof *mlx;
 	struct mlx4_ib_ah *ah = to_mah(wr->wr.ud.ah);
-	struct net_device *ndev;
 	union ib_gid sgid;
 	u16 pkey;
 	int send_size;
@@ -1835,18 +1844,17 @@ static int build_mlx_header(struct mlx4_ib_sqp *sqp, struct ib_send_wr *wr,
 	}
 
 	if (is_eth) {
-		u8 *smac;
 		u16 pcp = (be32_to_cpu(ah->av.ib.sl_tclass_flowlabel) >> 29) << 13;
+		u64 mac = atomic64_read(&to_mdev(ib_dev)->iboe.mac[sqp->qp.port - 1]);
+		u8 smac[ETH_ALEN];
 
 		mlx->sched_prio = cpu_to_be16(pcp);
 
 		memcpy(sqp->ud_header.eth.dmac_h, ah->av.eth.mac, 6);
-		/* FIXME: cache smac value? */
-		ndev = to_mdev(sqp->qp.ibqp.device)->iboe.netdevs[sqp->qp.port - 1];
-		if (!ndev)
-			return -ENODEV;
-		smac = ndev->dev_addr;
-		memcpy(sqp->ud_header.eth.smac_h, smac, 6);
+
+		mlx4_u64_to_smac(smac, mac);
+		memcpy(sqp->ud_header.eth.smac_h, smac, ETH_ALEN);
+
 		if (!memcmp(sqp->ud_header.eth.smac_h, sqp->ud_header.eth.dmac_h, 6))
 			mlx->flags |= cpu_to_be32(MLX4_WQE_CTRL_FORCE_LOOPBACK);
 		if (!is_vlan) {
