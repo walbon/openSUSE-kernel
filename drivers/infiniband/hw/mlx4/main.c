@@ -495,7 +495,6 @@ static int mlx4_ib_modify_device(struct ib_device *ibdev, int mask,
 	if (IS_ERR(mailbox))
 		return 0;
 
-	memset(mailbox->buf, 0, 256);
 	memcpy(mailbox->buf, props->node_desc, 64);
 	mlx4_cmd(to_mdev(ibdev)->dev, mailbox->dma, 1, 0,
 		 MLX4_CMD_SET_NODE, MLX4_CMD_TIME_CLASS_A, MLX4_CMD_NATIVE);
@@ -515,8 +514,6 @@ static int mlx4_SET_PORT(struct mlx4_ib_dev *dev, u8 port, int reset_qkey_viols,
 	mailbox = mlx4_alloc_cmd_mailbox(dev->dev);
 	if (IS_ERR(mailbox))
 		return PTR_ERR(mailbox);
-
-	memset(mailbox->buf, 0, 256);
 
 	if (dev->dev->flags & MLX4_FLAG_OLD_PORT_CMDS) {
 		*(u8 *) mailbox->buf	     = !!reset_qkey_viols << 6;

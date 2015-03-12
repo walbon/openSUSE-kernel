@@ -479,9 +479,6 @@ int mlx4_mr_enable(struct mlx4_dev *dev, struct mlx4_mr *mr)
 		goto err_table;
 	}
 	mpt_entry = mailbox->buf;
-
-	memset(mpt_entry, 0, sizeof *mpt_entry);
-
 	mpt_entry->flags = cpu_to_be32(MLX4_MPT_FLAG_MIO	 |
 				       MLX4_MPT_FLAG_REGION	 |
 				       mr->access);
