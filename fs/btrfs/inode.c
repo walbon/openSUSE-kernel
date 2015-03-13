@@ -243,8 +243,8 @@ static noinline int cow_file_range_inline(struct btrfs_trans_handle *trans,
 		data_len = compressed_size;
 
 	if (start > 0 ||
-	    actual_end >= PAGE_CACHE_SIZE ||
-	    data_len >= BTRFS_MAX_INLINE_DATA_SIZE(root) ||
+	    actual_end > PAGE_CACHE_SIZE ||
+	    data_len > BTRFS_MAX_INLINE_DATA_SIZE(root) ||
 	    (!compressed_size &&
 	    (actual_end & (root->sectorsize - 1)) == 0) ||
 	    end + 1 < isize ||
@@ -3567,7 +3567,8 @@ noinline int btrfs_update_inode(struct btrfs_trans_handle *trans,
 	 * without delay
 	 */
 	if (!btrfs_is_free_space_inode(inode)
-	    && root->root_key.objectid != BTRFS_DATA_RELOC_TREE_OBJECTID) {
+	    && root->root_key.objectid != BTRFS_DATA_RELOC_TREE_OBJECTID
+	    && !root->fs_info->log_root_recovering) {
 		btrfs_update_root_times(trans, root);
 
 		ret = btrfs_delayed_update_inode(trans, root, inode);
@@ -6779,6 +6780,7 @@ static int btrfs_get_blocks_direct(struct inode *inode, sector_t iblock,
 						       ram_bytes, type);
 				if (IS_ERR(em)) {
 					btrfs_end_transaction(trans, root);
+					ret = PTR_ERR(em);
 					goto unlock_err;
 				}
 			}
