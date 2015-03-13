@@ -713,7 +713,8 @@ static inline void bnx2x_vlan_mac_set_cmd_hdr_e2(struct bnx2x *bp,
 static inline void bnx2x_vlan_mac_set_rdata_hdr_e2(u32 cid, int type,
 				struct eth_classify_header *hdr, int rule_cnt)
 {
-	hdr->echo = (cid & BNX2X_SWCID_MASK) | (type << BNX2X_SWCID_SHIFT);
+	hdr->echo = cpu_to_le32((cid & BNX2X_SWCID_MASK) |
+				(type << BNX2X_SWCID_SHIFT));
 	hdr->rule_cnt = (u8)rule_cnt;
 }
 
@@ -824,8 +825,9 @@ static inline void bnx2x_vlan_mac_set_rdata_hdr_e1x(struct bnx2x *bp,
 
 	hdr->length = 1;
 	hdr->offset = (u8)cam_offset;
-	hdr->client_id = 0xff;
-	hdr->echo = ((r->cid & BNX2X_SWCID_MASK) | (type << BNX2X_SWCID_SHIFT));
+	hdr->client_id = cpu_to_le16(0xff);
+	hdr->echo = cpu_to_le32((r->cid & BNX2X_SWCID_MASK) |
+				(type << BNX2X_SWCID_SHIFT));
 }
 
 static inline void bnx2x_vlan_mac_set_cfg_entry_e1x(struct bnx2x *bp,
@@ -914,7 +916,7 @@ static void bnx2x_set_one_vlan_e2(struct bnx2x *bp,
 		(struct eth_classify_rules_ramrod_data *)(raw->rdata);
 	int rule_cnt = rule_idx + 1;
 	union eth_classify_rule_cmd *rule_entry = &data->rules[rule_idx];
-	int cmd = elem->cmd_data.vlan_mac.cmd;
+	enum bnx2x_vlan_mac_cmd cmd = elem->cmd_data.vlan_mac.cmd;
 	bool add = (cmd == BNX2X_VLAN_MAC_ADD) ? true : false;
 	u16 vlan = elem->cmd_data.vlan_mac.u.vlan.vlan;
 
@@ -964,7 +966,7 @@ static void bnx2x_set_one_vlan_mac_e2(struct bnx2x *bp,
 		(struct eth_classify_rules_ramrod_data *)(raw->rdata);
 	int rule_cnt = rule_idx + 1;
 	union eth_classify_rule_cmd *rule_entry = &data->rules[rule_idx];
-	int cmd = elem->cmd_data.vlan_mac.cmd;
+	enum bnx2x_vlan_mac_cmd cmd = elem->cmd_data.vlan_mac.cmd;
 	bool add = (cmd == BNX2X_VLAN_MAC_ADD) ? true : false;
 	u16 vlan = elem->cmd_data.vlan_mac.u.vlan_mac.vlan;
 	u8 *mac = elem->cmd_data.vlan_mac.u.vlan_mac.mac;
@@ -1547,7 +1549,7 @@ static inline int bnx2x_vlan_mac_get_registry_elem(
 	bool restore,
 	struct bnx2x_vlan_mac_registry_elem **re)
 {
-	int cmd = elem->cmd_data.vlan_mac.cmd;
+	enum bnx2x_vlan_mac_cmd cmd = elem->cmd_data.vlan_mac.cmd;
 	struct bnx2x_vlan_mac_registry_elem *reg_elem;
 
 	/* Allocate a new registry element if needed. */
@@ -1606,7 +1608,7 @@ static int bnx2x_execute_vlan_mac(struct bnx2x *bp,
 	bool restore = test_bit(RAMROD_RESTORE, ramrod_flags);
 	bool drv_only = test_bit(RAMROD_DRV_CLR_ONLY, ramrod_flags);
 	struct bnx2x_vlan_mac_registry_elem *reg_elem;
-	int cmd;
+	enum bnx2x_vlan_mac_cmd cmd;
 
 	/*
 	 * If DRIVER_ONLY execution is requested, cleanup a registry
@@ -2202,7 +2204,7 @@ static inline void bnx2x_rx_mode_set_rdata_hdr_e2(u32 cid,
 				struct eth_classify_header *hdr,
 				u8 rule_cnt)
 {
-	hdr->echo = cid;
+	hdr->echo = cpu_to_le32(cid);
 	hdr->rule_cnt = rule_cnt;
 }
 
@@ -2449,7 +2451,7 @@ static int bnx2x_mcast_wait(struct bnx2x *bp,
 static int bnx2x_mcast_enqueue_cmd(struct bnx2x *bp,
 				   struct bnx2x_mcast_obj *o,
 				   struct bnx2x_mcast_ramrod_params *p,
-				   int cmd)
+				   enum bnx2x_mcast_cmd cmd)
 {
 	int total_sz;
 	struct bnx2x_pending_mcast_cmd *new_cmd;
@@ -2581,7 +2583,7 @@ static inline u8 bnx2x_mcast_get_rx_tx_flag(struct bnx2x_mcast_obj *o)
 static void bnx2x_mcast_set_one_rule_e2(struct bnx2x *bp,
 					struct bnx2x_mcast_obj *o, int idx,
 					union bnx2x_mcast_config_data *cfg_data,
-					int cmd)
+					enum bnx2x_mcast_cmd cmd)
 {
 	struct bnx2x_raw_obj *r = &o->raw;
 	struct eth_multicast_rules_ramrod_data *data =
@@ -2645,7 +2647,7 @@ static inline int bnx2x_mcast_handle_restore_cmd_e2(
 	int *rdata_idx)
 {
 	int cur_bin, cnt = *rdata_idx;
-	union bnx2x_mcast_config_data cfg_data = {0};
+	union bnx2x_mcast_config_data cfg_data = {NULL};
 
 	/* go through the registry and configure the bins from it */
 	for (cur_bin = bnx2x_mcast_get_next_bin(o, start_bin); cur_bin >= 0;
@@ -2677,7 +2679,7 @@ static inline void bnx2x_mcast_hdl_pending_add_e2(struct bnx2x *bp,
 {
 	struct bnx2x_mcast_mac_elem *pmac_pos, *pmac_pos_n;
 	int cnt = *line_idx;
-	union bnx2x_mcast_config_data cfg_data = {0};
+	union bnx2x_mcast_config_data cfg_data = {NULL};
 
 	list_for_each_entry_safe(pmac_pos, pmac_pos_n, &cmd_pos->data.macs_head,
 				 link) {
@@ -2800,7 +2802,7 @@ static inline void bnx2x_mcast_hdl_add(struct bnx2x *bp,
 	int *line_idx)
 {
 	struct bnx2x_mcast_list_elem *mlist_pos;
-	union bnx2x_mcast_config_data cfg_data = {0};
+	union bnx2x_mcast_config_data cfg_data = {NULL};
 	int cnt = *line_idx;
 
 	list_for_each_entry(mlist_pos, &p->mcast_list, link) {
@@ -2847,7 +2849,8 @@ static inline void bnx2x_mcast_hdl_del(struct bnx2x *bp,
  * Returns number of lines filled in the ramrod data in total.
  */
 static inline int bnx2x_mcast_handle_current_cmd(struct bnx2x *bp,
-			struct bnx2x_mcast_ramrod_params *p, int cmd,
+			struct bnx2x_mcast_ramrod_params *p,
+			enum bnx2x_mcast_cmd cmd,
 			int start_cnt)
 {
 	struct bnx2x_mcast_obj *o = p->mcast_obj;
@@ -2881,7 +2884,7 @@ static inline int bnx2x_mcast_handle_current_cmd(struct bnx2x *bp,
 
 static int bnx2x_mcast_validate_e2(struct bnx2x *bp,
 				   struct bnx2x_mcast_ramrod_params *p,
-				   int cmd)
+				   enum bnx2x_mcast_cmd cmd)
 {
 	struct bnx2x_mcast_obj *o = p->mcast_obj;
 	int reg_sz = o->get_registry_size(o);
@@ -2950,8 +2953,9 @@ static inline void bnx2x_mcast_set_rdata_hdr_e2(struct bnx2x *bp,
 	struct eth_multicast_rules_ramrod_data *data =
 		(struct eth_multicast_rules_ramrod_data *)(r->rdata);
 
-	data->header.echo = ((r->cid & BNX2X_SWCID_MASK) |
-			  (BNX2X_FILTER_MCAST_PENDING << BNX2X_SWCID_SHIFT));
+	data->header.echo = cpu_to_le32((r->cid & BNX2X_SWCID_MASK) |
+					(BNX2X_FILTER_MCAST_PENDING <<
+					 BNX2X_SWCID_SHIFT));
 	data->header.rule_cnt = len;
 }
 
@@ -2985,7 +2989,7 @@ static inline int bnx2x_mcast_refresh_registry_e2(struct bnx2x *bp,
 
 static int bnx2x_mcast_setup_e2(struct bnx2x *bp,
 				struct bnx2x_mcast_ramrod_params *p,
-				int cmd)
+				enum bnx2x_mcast_cmd cmd)
 {
 	struct bnx2x_raw_obj *raw = &p->mcast_obj->raw;
 	struct bnx2x_mcast_obj *o = p->mcast_obj;
@@ -3071,7 +3075,7 @@ static int bnx2x_mcast_setup_e2(struct bnx2x *bp,
 
 static int bnx2x_mcast_validate_e1h(struct bnx2x *bp,
 				    struct bnx2x_mcast_ramrod_params *p,
-				    int cmd)
+				    enum bnx2x_mcast_cmd cmd)
 {
 	/* Mark, that there is a work to do */
 	if ((cmd == BNX2X_MCAST_CMD_DEL) || (cmd == BNX2X_MCAST_CMD_RESTORE))
@@ -3133,7 +3137,7 @@ static inline void bnx2x_mcast_hdl_restore_e1h(struct bnx2x *bp,
  */
 static int bnx2x_mcast_setup_e1h(struct bnx2x *bp,
 				 struct bnx2x_mcast_ramrod_params *p,
-				 int cmd)
+				 enum bnx2x_mcast_cmd cmd)
 {
 	int i;
 	struct bnx2x_mcast_obj *o = p->mcast_obj;
@@ -3187,7 +3191,7 @@ static int bnx2x_mcast_setup_e1h(struct bnx2x *bp,
 
 static int bnx2x_mcast_validate_e1(struct bnx2x *bp,
 				   struct bnx2x_mcast_ramrod_params *p,
-				   int cmd)
+				   enum bnx2x_mcast_cmd cmd)
 {
 	struct bnx2x_mcast_obj *o = p->mcast_obj;
 	int reg_sz = o->get_registry_size(o);
@@ -3260,7 +3264,7 @@ static void bnx2x_mcast_revert_e1(struct bnx2x *bp,
 static void bnx2x_mcast_set_one_rule_e1(struct bnx2x *bp,
 					struct bnx2x_mcast_obj *o, int idx,
 					union bnx2x_mcast_config_data *cfg_data,
-					int cmd)
+					enum bnx2x_mcast_cmd cmd)
 {
 	struct bnx2x_raw_obj *r = &o->raw;
 	struct mac_configuration_cmd *data =
@@ -3304,9 +3308,10 @@ static inline void bnx2x_mcast_set_rdata_hdr_e1(struct bnx2x *bp,
 		     BNX2X_MAX_MULTICAST*(1 + r->func_id));
 
 	data->hdr.offset = offset;
-	data->hdr.client_id = 0xff;
-	data->hdr.echo = ((r->cid & BNX2X_SWCID_MASK) |
-			  (BNX2X_FILTER_MCAST_PENDING << BNX2X_SWCID_SHIFT));
+	data->hdr.client_id = cpu_to_le16(0xff);
+	data->hdr.echo = cpu_to_le32((r->cid & BNX2X_SWCID_MASK) |
+				     (BNX2X_FILTER_MCAST_PENDING <<
+				      BNX2X_SWCID_SHIFT));
 	data->hdr.length = len;
 }
 
@@ -3329,7 +3334,7 @@ static inline int bnx2x_mcast_handle_restore_cmd_e1(
 {
 	struct bnx2x_mcast_mac_elem *elem;
 	int i = 0;
-	union bnx2x_mcast_config_data cfg_data = {0};
+	union bnx2x_mcast_config_data cfg_data = {NULL};
 
 	/* go through the registry and configure the MACs from it. */
 	list_for_each_entry(elem, &o->registry.exact_match.macs, link) {
@@ -3354,7 +3359,7 @@ static inline int bnx2x_mcast_handle_pending_cmds_e1(
 	struct bnx2x_pending_mcast_cmd *cmd_pos;
 	struct bnx2x_mcast_mac_elem *pmac_pos;
 	struct bnx2x_mcast_obj *o = p->mcast_obj;
-	union bnx2x_mcast_config_data cfg_data = {0};
+	union bnx2x_mcast_config_data cfg_data = {NULL};
 	int cnt = 0;
 
 
@@ -3478,7 +3483,7 @@ static inline int bnx2x_mcast_refresh_registry_e1(struct bnx2x *bp,
 
 static int bnx2x_mcast_setup_e1(struct bnx2x *bp,
 				struct bnx2x_mcast_ramrod_params *p,
-				int cmd)
+				enum bnx2x_mcast_cmd cmd)
 {
 	struct bnx2x_mcast_obj *o = p->mcast_obj;
 	struct bnx2x_raw_obj *raw = &o->raw;
@@ -3582,7 +3587,7 @@ static void bnx2x_mcast_set_registry_size_aprox(struct bnx2x_mcast_obj *o,
 
 int bnx2x_config_mcast(struct bnx2x *bp,
 		       struct bnx2x_mcast_ramrod_params *p,
-		       int cmd)
+		       enum bnx2x_mcast_cmd cmd)
 {
 	struct bnx2x_mcast_obj *o = p->mcast_obj;
 	struct bnx2x_raw_obj *r = &o->raw;
@@ -4105,8 +4110,8 @@ static int bnx2x_setup_rss(struct bnx2x *bp,
 	DP(BNX2X_MSG_SP, "Configuring RSS\n");
 
 	/* Set an echo field */
-	data->echo = (r->cid & BNX2X_SWCID_MASK) |
-		     (r->state << BNX2X_SWCID_SHIFT);
+	data->echo = cpu_to_le32((r->cid & BNX2X_SWCID_MASK) |
+				 (r->state << BNX2X_SWCID_SHIFT));
 
 	/* RSS mode */
 	if (test_bit(BNX2X_RSS_MODE_DISABLED, &p->rss_flags))
@@ -5769,21 +5774,20 @@ inline int bnx2x_func_send_afex_viflists(struct bnx2x *bp,
 	struct bnx2x_func_sp_obj *o = params->f_obj;
 	struct afex_vif_list_ramrod_data *rdata =
 		(struct afex_vif_list_ramrod_data *)o->afex_rdata;
-	struct bnx2x_func_afex_viflists_params *afex_viflist_params =
+	struct bnx2x_func_afex_viflists_params *afex_vif_params =
 		&params->params.afex_viflists;
 	u64 *p_rdata = (u64 *)rdata;
 
 	memset(rdata, 0, sizeof(*rdata));
 
 	/* Fill the ramrod data with provided parameters */
-	rdata->vif_list_index = afex_viflist_params->vif_list_index;
-	rdata->func_bit_map = afex_viflist_params->func_bit_map;
-	rdata->afex_vif_list_command =
-		afex_viflist_params->afex_vif_list_command;
-	rdata->func_to_clear = afex_viflist_params->func_to_clear;
+	rdata->vif_list_index = cpu_to_le16(afex_vif_params->vif_list_index);
+	rdata->func_bit_map          = afex_vif_params->func_bit_map;
+	rdata->afex_vif_list_command = afex_vif_params->afex_vif_list_command;
+	rdata->func_to_clear         = afex_vif_params->func_to_clear;
 
 	/* send in echo type of sub command */
-	rdata->echo = afex_viflist_params->afex_vif_list_command;
+	rdata->echo = afex_vif_params->afex_vif_list_command;
 
 	/*  No need for an explicit memory barrier here as long we would
 	 *  need to ensure the ordering of writing to the SPQ element

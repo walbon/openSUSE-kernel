@@ -3397,6 +3397,10 @@ struct regpair {
 	__le32 hi;
 };
 
+struct regpair_native {
+	u32 lo;
+	u32 hi;
+};
 
 /*
  * Classify rule opcodes in E2/E3
@@ -4550,13 +4554,13 @@ struct tstorm_eth_function_common_config {
  * MAC filtering configuration parameters per port in Tstorm
  */
 struct tstorm_eth_mac_filter_config {
-	__le32 ucast_drop_all;
-	__le32 ucast_accept_all;
-	__le32 mcast_drop_all;
-	__le32 mcast_accept_all;
-	__le32 bcast_accept_all;
-	__le32 vlan_filter[2];
-	__le32 unmatched_unicast;
+	u32 ucast_drop_all;
+	u32 ucast_accept_all;
+	u32 mcast_drop_all;
+	u32 mcast_accept_all;
+	u32 bcast_accept_all;
+	u32 vlan_filter[2];
+	u32 unmatched_unicast;
 };
 
 
@@ -5048,7 +5052,7 @@ union event_data {
  * per PF event ring data
  */
 struct event_ring_data {
-	struct regpair base_addr;
+	struct regpair_native base_addr;
 #if defined(__BIG_ENDIAN)
 	u8 index_id;
 	u8 sb_id;
@@ -5306,7 +5310,7 @@ struct pci_entity {
  * The fast-path status block meta-data, common to all chips
  */
 struct hc_sb_data {
-	struct regpair host_sb_addr;
+	struct regpair_native host_sb_addr;
 	struct hc_status_block_sm state_machine[HC_SB_MAX_SM];
 	struct pci_entity p_func;
 #if defined(__BIG_ENDIAN)
@@ -5320,7 +5324,7 @@ struct hc_sb_data {
 	u8 state;
 	u8 rsrv0;
 #endif
-	struct regpair rsrv1[2];
+	struct regpair_native rsrv1[2];
 };
 
 
@@ -5338,7 +5342,7 @@ enum hc_segment {
  * The fast-path status block meta-data
  */
 struct hc_sp_status_block_data {
-	struct regpair host_sb_addr;
+	struct regpair_native host_sb_addr;
 #if defined(__BIG_ENDIAN)
 	u8 rsrv1;
 	u8 state;
