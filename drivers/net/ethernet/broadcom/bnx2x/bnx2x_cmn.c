@@ -828,6 +828,8 @@ static int bnx2x_rx_int(struct bnx2x_fastpath *fp, int budget)
 	if (unlikely(bp->panic))
 		return 0;
 #endif
+	if (budget <= 0)
+		return rx_pkt;
 
 	/* CQ "next element" is of the size of the regular element,
 	   that's why it's ok here */
