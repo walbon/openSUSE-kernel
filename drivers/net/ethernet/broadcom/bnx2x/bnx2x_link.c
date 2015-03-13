@@ -2214,7 +2214,6 @@ int bnx2x_update_pfc(struct link_params *params,
 	 */
 	u32 val;
 	struct bnx2x *bp = params->bp;
-	int bnx2x_status = 0;
 	u8 bmac_loopback = (params->loopback_mode == LOOPBACK_BMAC);
 
 	if (params->feature_config_flags & FEATURE_CONFIG_PFC_ENABLED)
@@ -2228,7 +2227,7 @@ int bnx2x_update_pfc(struct link_params *params,
 	bnx2x_update_pfc_nig(params, vars, pfc_params);
 
 	if (!vars->link_up)
-		return bnx2x_status;
+		return 0;
 
 	DP(NETIF_MSG_LINK, "About to update PFC in BMAC\n");
 
@@ -2242,7 +2241,7 @@ int bnx2x_update_pfc(struct link_params *params,
 		    == 0) {
 			DP(NETIF_MSG_LINK, "About to update PFC in EMAC\n");
 			bnx2x_emac_enable(params, vars, 0);
-			return bnx2x_status;
+			return 0;
 		}
 		if (CHIP_IS_E2(bp))
 			bnx2x_update_pfc_bmac2(params, vars, bmac_loopback);
@@ -2256,7 +2255,7 @@ int bnx2x_update_pfc(struct link_params *params,
 			val = 1;
 		REG_WR(bp, NIG_REG_BMAC0_PAUSE_OUT_EN + params->port*4, val);
 	}
-	return bnx2x_status;
+	return 0;
 }
 
 static int bnx2x_bmac1_enable(struct link_params *params,
@@ -6474,7 +6473,6 @@ int bnx2x_test_link(struct link_params *params, struct link_vars *vars,
 static int bnx2x_link_initialize(struct link_params *params,
 				 struct link_vars *vars)
 {
-	int rc = 0;
 	u8 phy_index, non_ext_phy;
 	struct bnx2x *bp = params->bp;
 	/* In case of external phy existence, the line speed would be the
@@ -6547,7 +6545,7 @@ static int bnx2x_link_initialize(struct link_params *params,
 			NIG_STATUS_XGXS0_LINK_STATUS |
 			NIG_STATUS_SERDES0_LINK_STATUS |
 			NIG_MASK_MI_INT));
-	return rc;
+	return 0;
 }
 
 static void bnx2x_int_link_reset(struct bnx2x_phy *phy,
