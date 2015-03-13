@@ -318,7 +318,7 @@ static int bnx2x_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 
 	speed = ethtool_cmd_speed(cmd);
 
-	/* If recieved a request for an unknown duplex, assume full*/
+	/* If received a request for an unknown duplex, assume full*/
 	if (cmd->duplex == DUPLEX_UNKNOWN)
 		cmd->duplex = DUPLEX_FULL;
 
@@ -848,7 +848,7 @@ static int __bnx2x_get_preset_regs(struct bnx2x *bp, u32 *p, u32 preset)
 
 	/* Paged registers are supported in E2 & E3 only */
 	if (CHIP_IS_E2(bp) || CHIP_IS_E3(bp)) {
-		/* Read "paged" registes */
+		/* Read "paged" registers */
 		bnx2x_read_pages_regs(bp, p, preset);
 	}
 
@@ -1153,8 +1153,8 @@ static int bnx2x_get_eeprom_len(struct net_device *dev)
 	return bp->common.flash_size;
 }
 
-/* Per pf misc lock must be aquired before the per port mcp lock. Otherwise, had
- * we done things the other way around, if two pfs from the same port would
+/* Per pf misc lock must be acquired before the per port mcp lock. Otherwise,
+ * had we done things the other way around, if two pfs from the same port would
  * attempt to access nvram at the same time, we could run into a scenario such
  * as:
  * pf A takes the port lock.
