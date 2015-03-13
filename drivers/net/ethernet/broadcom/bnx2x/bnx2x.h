@@ -1718,6 +1718,7 @@ struct bnx2x {
 	u8					prio_to_cos[8];
 
 	int fp_array_size;
+	u32 dump_preset_idx;
 	bool					stats_started;
 	struct semaphore			stats_sema;
 };
