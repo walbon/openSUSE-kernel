@@ -3181,10 +3181,12 @@ static inline u32 bnx2x_xmit_type(struct bnx2x *bp, struct sk_buff *skb)
 		}
 	}
 
-	if (skb_is_gso_v6(skb))
-		rc |= XMIT_GSO_V6 | XMIT_CSUM_TCP | XMIT_CSUM_V6;
-	else if (skb_is_gso(skb))
-		rc |= XMIT_GSO_V4 | XMIT_CSUM_V4 | XMIT_CSUM_TCP;
+	if (skb_is_gso(skb)) {
+		if (skb_is_gso_v6(skb))
+			rc |= XMIT_GSO_V6 | XMIT_CSUM_TCP | XMIT_CSUM_V6;
+		else 
+			rc |= XMIT_GSO_V4 | XMIT_CSUM_V4 | XMIT_CSUM_TCP;
+	}
 
 	return rc;
 }
