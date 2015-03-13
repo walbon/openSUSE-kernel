@@ -84,6 +84,34 @@ static inline void bnx2x_move_fp(struct bnx2x *bp, int from, int to)
 }
 
 /**
+ * bnx2x_fill_fw_str - Fill buffer with FW version string.
+ *
+ * @bp:        driver handle
+ * @buf:       character buffer to fill with the fw name
+ * @buf_len:   length of the above buffer
+ *
+ */
+void bnx2x_fill_fw_str(struct bnx2x *bp, char *buf, size_t buf_len)
+{
+	if (IS_PF(bp)) {
+		u8 phy_fw_ver[PHY_FW_VER_LEN];
+
+		phy_fw_ver[0] = '\0';
+		bnx2x_get_ext_phy_fw_version(&bp->link_params,
+					     phy_fw_ver, PHY_FW_VER_LEN);
+		strlcpy(buf, bp->fw_ver, buf_len);
+		snprintf(buf + strlen(bp->fw_ver), 32 - strlen(bp->fw_ver),
+			 "bc %d.%d.%d%s%s",
+			 (bp->common.bc_ver & 0xff0000) >> 16,
+			 (bp->common.bc_ver & 0xff00) >> 8,
+			 (bp->common.bc_ver & 0xff),
+			 ((phy_fw_ver[0] != '\0') ? " phy " : ""), phy_fw_ver);
+	} else {
+		strlcpy(buf, bp->acquire_resp.pfdev_info.fw_ver, buf_len);
+	}
+}
+
+/**
  * bnx2x_shrink_eth_fp - guarantees fastpath structures stay intact
  *
  * @bp:	driver handle
@@ -96,6 +124,7 @@ static void bnx2x_shrink_eth_fp(struct bnx2x *bp, int delta)
 	/* Queue pointer cannot be re-set on an fp-basis, as moving pointer
 	 * backward along the array could cause memory to be overriden
 	 */
+
 	for (cos = 1; cos < bp->max_cos; cos++) {
 		for (i = 0; i < old_eth_num - delta; i++) {
 			struct bnx2x_fastpath *fp = &bp->fp[i];
