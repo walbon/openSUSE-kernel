@@ -1421,7 +1421,6 @@ struct bnx2x {
 	 */
 	bool			fcoe_init;
 
-	int			pm_cap;
 	int			mrrs;
 
 	struct delayed_work	sp_task;
