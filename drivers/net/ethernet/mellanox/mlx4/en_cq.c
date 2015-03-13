@@ -34,6 +34,8 @@
 #include <linux/mlx4/cq.h>
 #include <linux/mlx4/qp.h>
 #include <linux/mlx4/cmd.h>
+#include <linux/irq.h>
+#include <linux/irqdesc.h>
 
 #include "mlx4_en.h"
 
