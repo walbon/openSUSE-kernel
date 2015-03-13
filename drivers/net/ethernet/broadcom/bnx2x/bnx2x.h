@@ -1240,10 +1240,11 @@ enum {
 
 
 struct bnx2x_prev_path_list {
+	struct list_head list;
 	u8 bus;
 	u8 slot;
 	u8 path;
-	struct list_head list;
+	u8 aer;
 	u8 undi;
 };
 
