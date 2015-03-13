@@ -3506,8 +3506,18 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		    cpu_to_le16(vlan_tx_tag_get(skb));
 		tx_start_bd->bd_flags.as_bitfield |=
 		    (X_ETH_OUTBAND_VLAN << ETH_TX_BD_FLAGS_VLAN_MODE_SHIFT);
-	} else
-		tx_start_bd->vlan_or_ethertype = cpu_to_le16(pkt_prod);
+	} else {
+		/* when transmitting in a vf, start bd must hold the ethertype
+		 * for fw to enforce it
+		 */
+		if (IS_VF(bp)) {
+			tx_start_bd->vlan_or_ethertype =
+				cpu_to_le16(ntohs(eth->h_proto));
+		} else {
+			/* used by FW for packet accounting */
+			tx_start_bd->vlan_or_ethertype = cpu_to_le16(pkt_prod);
+		}
+	}
 
 	nbd = 2; /* start_bd + pbd + frags (updated when pages are mapped) */
 
