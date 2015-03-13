@@ -55,6 +55,8 @@ extern int int_mode;
 		if (x == NULL) \
 			goto alloc_mem_err; \
 		memset((void *)x, 0, size); \
+		DP(NETIF_MSG_HW, "BNX2X_PCI_ALLOC: Physical %Lx Virtual %p\n", \
+		   (unsigned long long)(*y), x); \
 	} while (0)
 
 #define BNX2X_ALLOC(x, size) \
