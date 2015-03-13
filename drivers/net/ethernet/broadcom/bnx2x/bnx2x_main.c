@@ -79,7 +79,7 @@
 /* Time in jiffies before concluding the transmitter is hung */
 #define TX_TIMEOUT		(5*HZ)
 
-static char version[] __devinitdata =
+static char version[] =
 	"Broadcom NetXtreme II 5771x/578xx 10/20-Gigabit Ethernet Driver "
 	DRV_MODULE_NAME " " DRV_MODULE_VERSION " (" DRV_MODULE_RELDATE ")\n";
 
@@ -160,7 +160,7 @@ enum bnx2x_board_type {
 /* indexed by board_type, above */
 static struct {
 	char *name;
-} board_info[] __devinitdata = {
+} board_info[] = {
 	{ "Broadcom NetXtreme II BCM57710 10 Gigabit PCIe [Everest]" },
 	{ "Broadcom NetXtreme II BCM57711 10 Gigabit PCIe" },
 	{ "Broadcom NetXtreme II BCM57711E 10 Gigabit PCIe" },
@@ -9435,8 +9435,8 @@ static inline void bnx2x_undi_int_disable(struct bnx2x *bp)
 		bnx2x_undi_int_disable_e1h(bp);
 }
 
-static void __devinit bnx2x_prev_unload_close_mac(struct bnx2x *bp,
-						  struct bnx2x_mac_vals *vals)
+static void bnx2x_prev_unload_close_mac(struct bnx2x *bp,
+					struct bnx2x_mac_vals *vals)
 {
 	u32 val, base_addr, offset, mask, reset_reg;
 	bool mac_stopped = false;
@@ -9517,7 +9517,7 @@ static void __devinit bnx2x_prev_unload_close_mac(struct bnx2x *bp,
 #define BNX2X_PREV_UNDI_BD(val)		((val) >> 16 & 0xffff)
 #define BNX2X_PREV_UNDI_PROD(rcq, bd)	((bd) << 16 | (rcq))
 
-static void __devinit bnx2x_prev_unload_undi_inc(struct bnx2x *bp, u8 port,
+static void bnx2x_prev_unload_undi_inc(struct bnx2x *bp, u8 port,
 						 u8 inc)
 {
 	u16 rcq, bd;
@@ -9533,7 +9533,7 @@ static void __devinit bnx2x_prev_unload_undi_inc(struct bnx2x *bp, u8 port,
 		       port, bd, rcq);
 }
 
-static int __devinit bnx2x_prev_mcp_done(struct bnx2x *bp)
+static int bnx2x_prev_mcp_done(struct bnx2x *bp)
 {
 	u32 rc = bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_DONE,
 				  DRV_MSG_CODE_UNLOAD_SKIP_LINK_RESET);
@@ -9559,7 +9559,7 @@ static struct bnx2x_prev_path_list *
 	return NULL;
 }
 
-static bool __devinit bnx2x_prev_is_path_marked(struct bnx2x *bp)
+static bool bnx2x_prev_is_path_marked(struct bnx2x *bp)
 {
 	struct bnx2x_prev_path_list *tmp_list;
 	int rc = false;
@@ -9583,7 +9583,7 @@ static bool __devinit bnx2x_prev_is_path_marked(struct bnx2x *bp)
 	return rc;
 }
 
-static int __devinit bnx2x_prev_mark_path(struct bnx2x *bp, bool after_undi)
+static int bnx2x_prev_mark_path(struct bnx2x *bp, bool after_undi)
 {
 	struct bnx2x_prev_path_list *tmp_list;
 	int rc;
@@ -9613,7 +9613,7 @@ static int __devinit bnx2x_prev_mark_path(struct bnx2x *bp, bool after_undi)
 	return rc;
 }
 
-static int __devinit bnx2x_do_flr(struct bnx2x *bp)
+static int bnx2x_do_flr(struct bnx2x *bp)
 {
 	int i;
 	u16 status;
@@ -9653,7 +9653,7 @@ clear:
 	return 0;
 }
 
-static int __devinit bnx2x_prev_unload_uncommon(struct bnx2x *bp)
+static int bnx2x_prev_unload_uncommon(struct bnx2x *bp)
 {
 	int rc;
 
@@ -9691,7 +9691,7 @@ static int __devinit bnx2x_prev_unload_uncommon(struct bnx2x *bp)
 	return rc;
 }
 
-static int __devinit bnx2x_prev_unload_common(struct bnx2x *bp)
+static int bnx2x_prev_unload_common(struct bnx2x *bp)
 {
 	u32 reset_reg, tmp_reg = 0, rc;
 	bool prev_undi = false;
@@ -9794,7 +9794,7 @@ static int __devinit bnx2x_prev_unload_common(struct bnx2x *bp)
  * to clear the interrupt which detected this from the pglueb and the was done
  * bit
  */
-static void __devinit bnx2x_prev_interrupted_dmae(struct bnx2x *bp)
+static void bnx2x_prev_interrupted_dmae(struct bnx2x *bp)
 {
 	if (!CHIP_IS_E1x(bp)) {
 		u32 val = REG_RD(bp, PGLUE_B_REG_PGLUE_B_INT_STS);
@@ -9806,7 +9806,7 @@ static void __devinit bnx2x_prev_interrupted_dmae(struct bnx2x *bp)
 	}
 }
 
-static int __devinit bnx2x_prev_unload(struct bnx2x *bp)
+static int bnx2x_prev_unload(struct bnx2x *bp)
 {
 	int time_counter = 10;
 	u32 rc, fw, hw_lock_reg, hw_lock_val;
@@ -9880,7 +9880,7 @@ static int __devinit bnx2x_prev_unload(struct bnx2x *bp)
 	return rc;
 }
 
-static void __devinit bnx2x_get_common_hwinfo(struct bnx2x *bp)
+static void bnx2x_get_common_hwinfo(struct bnx2x *bp)
 {
 	u32 val, val2, val3, val4, id, boot_mode;
 	u16 pmc;
@@ -10067,7 +10067,7 @@ static void __devinit bnx2x_get_common_hwinfo(struct bnx2x *bp)
 #define IGU_FID(val)	GET_FIELD((val), IGU_REG_MAPPING_MEMORY_FID)
 #define IGU_VEC(val)	GET_FIELD((val), IGU_REG_MAPPING_MEMORY_VECTOR)
 
-static int __devinit bnx2x_get_igu_cam_info(struct bnx2x *bp)
+static int bnx2x_get_igu_cam_info(struct bnx2x *bp)
 {
 	int pfid = BP_FUNC(bp);
 	int igu_sb_id;
@@ -10126,7 +10126,7 @@ static int __devinit bnx2x_get_igu_cam_info(struct bnx2x *bp)
 	return 0;
 }
 
-static void __devinit bnx2x_link_settings_supported(struct bnx2x *bp,
+static void bnx2x_link_settings_supported(struct bnx2x *bp,
 						    u32 switch_cfg)
 {
 	int cfg_size = 0, idx, port = BP_PORT(bp);
@@ -10225,7 +10225,7 @@ static void __devinit bnx2x_link_settings_supported(struct bnx2x *bp,
 		       bp->port.supported[1]);
 }
 
-static void __devinit bnx2x_link_settings_requested(struct bnx2x *bp)
+static void bnx2x_link_settings_requested(struct bnx2x *bp)
 {
 	u32 link_config, idx, cfg_size = 0;
 	bp->port.advertising[0] = 0;
@@ -10411,7 +10411,7 @@ static void __devinit bnx2x_link_settings_requested(struct bnx2x *bp)
 	}
 }
 
-static void __devinit bnx2x_set_mac_buf(u8 *mac_buf, u32 mac_lo, u16 mac_hi)
+static void bnx2x_set_mac_buf(u8 *mac_buf, u32 mac_lo, u16 mac_hi)
 {
 	mac_hi = cpu_to_be16(mac_hi);
 	mac_lo = cpu_to_be32(mac_lo);
@@ -10419,7 +10419,7 @@ static void __devinit bnx2x_set_mac_buf(u8 *mac_buf, u32 mac_lo, u16 mac_hi)
 	memcpy(mac_buf + sizeof(mac_hi), &mac_lo, sizeof(mac_lo));
 }
 
-static void __devinit bnx2x_get_port_hwinfo(struct bnx2x *bp)
+static void bnx2x_get_port_hwinfo(struct bnx2x *bp)
 {
 	int port = BP_PORT(bp);
 	u32 config;
@@ -10530,7 +10530,7 @@ void bnx2x_get_iscsi_info(struct bnx2x *bp)
 
 }
 
-static void __devinit bnx2x_get_ext_wwn_info(struct bnx2x *bp, int func)
+static void bnx2x_get_ext_wwn_info(struct bnx2x *bp, int func)
 {
 	/* Port info */
 	bp->cnic_eth_dev.fcoe_wwn_port_name_hi =
@@ -10544,7 +10544,7 @@ static void __devinit bnx2x_get_ext_wwn_info(struct bnx2x *bp, int func)
 	bp->cnic_eth_dev.fcoe_wwn_node_name_lo =
 		MF_CFG_RD(bp, func_ext_config[func].fcoe_wwn_node_name_lower);
 }
-static void __devinit bnx2x_get_fcoe_info(struct bnx2x *bp)
+static void bnx2x_get_fcoe_info(struct bnx2x *bp)
 {
 	int port = BP_PORT(bp);
 	int func = BP_ABS_FUNC(bp);
@@ -10604,7 +10604,7 @@ static void __devinit bnx2x_get_fcoe_info(struct bnx2x *bp)
 		bp->flags |= NO_FCOE_FLAG;
 }
 
-static void __devinit bnx2x_get_cnic_info(struct bnx2x *bp)
+static void bnx2x_get_cnic_info(struct bnx2x *bp)
 {
 	/*
 	 * iSCSI may be dynamically disabled but reading
@@ -10615,7 +10615,7 @@ static void __devinit bnx2x_get_cnic_info(struct bnx2x *bp)
 	bnx2x_get_fcoe_info(bp);
 }
 
-static void __devinit bnx2x_get_cnic_mac_hwinfo(struct bnx2x *bp)
+static void bnx2x_get_cnic_mac_hwinfo(struct bnx2x *bp)
 {
 	u32 val, val2;
 	int func = BP_ABS_FUNC(bp);
@@ -10707,7 +10707,7 @@ static void __devinit bnx2x_get_cnic_mac_hwinfo(struct bnx2x *bp)
 	}
 }
 
-static void __devinit bnx2x_get_mac_hwinfo(struct bnx2x *bp)
+static void bnx2x_get_mac_hwinfo(struct bnx2x *bp)
 {
 	u32 val, val2;
 	int func = BP_ABS_FUNC(bp);
@@ -10748,7 +10748,7 @@ static void __devinit bnx2x_get_mac_hwinfo(struct bnx2x *bp)
 			bp->dev->dev_addr);
 }
 
-static bool __devinit bnx2x_get_dropless_info(struct bnx2x *bp)
+static bool bnx2x_get_dropless_info(struct bnx2x *bp)
 {
 	int tmp;
 	u32 cfg;
@@ -10768,7 +10768,7 @@ static bool __devinit bnx2x_get_dropless_info(struct bnx2x *bp)
 	return cfg;
 }
 
-static int __devinit bnx2x_get_hwinfo(struct bnx2x *bp)
+static int bnx2x_get_hwinfo(struct bnx2x *bp)
 {
 	int /*abs*/func = BP_ABS_FUNC(bp);
 	int vn;
@@ -10997,7 +10997,7 @@ static int __devinit bnx2x_get_hwinfo(struct bnx2x *bp)
 	return rc;
 }
 
-static void __devinit bnx2x_read_fwinfo(struct bnx2x *bp)
+static void bnx2x_read_fwinfo(struct bnx2x *bp)
 {
 	int cnt, i, block_end, rodi;
 	char vpd_start[BNX2X_VPD_LEN+1];
@@ -11082,7 +11082,7 @@ out_not_found:
 	return;
 }
 
-static void __devinit bnx2x_set_modes_bitmap(struct bnx2x *bp)
+static void bnx2x_set_modes_bitmap(struct bnx2x *bp)
 {
 	u32 flags = 0;
 
@@ -11132,7 +11132,7 @@ static void __devinit bnx2x_set_modes_bitmap(struct bnx2x *bp)
 	INIT_MODE_FLAGS(bp) = flags;
 }
 
-static int __devinit bnx2x_init_bp(struct bnx2x *bp)
+static int bnx2x_init_bp(struct bnx2x *bp)
 {
 	int func;
 	int rc;
@@ -11613,7 +11613,7 @@ static int bnx2x_set_coherency_mask(struct bnx2x *bp)
 	return 0;
 }
 
-static int __devinit bnx2x_init_dev(struct pci_dev *pdev,
+static int bnx2x_init_dev(struct pci_dev *pdev,
 				    struct net_device *dev,
 				    unsigned long board_type)
 {
@@ -11793,7 +11793,7 @@ err_out:
 	return rc;
 }
 
-static void __devinit bnx2x_get_pcie_width_speed(struct bnx2x *bp,
+static void bnx2x_get_pcie_width_speed(struct bnx2x *bp,
 						 int *width, int *speed)
 {
 	u32 val = REG_RD(bp, PCICFG_OFFSET + PCICFG_LINK_CONTROL);
@@ -12100,7 +12100,7 @@ static int bnx2x_get_num_non_def_sbs(struct pci_dev *pdev,
 
 struct cnic_eth_dev *bnx2x_cnic_probe(struct net_device *);
 
-static int __devinit bnx2x_init_one(struct pci_dev *pdev,
+static int bnx2x_init_one(struct pci_dev *pdev,
 				    const struct pci_device_id *ent)
 {
 	struct net_device *dev = NULL;
@@ -12280,7 +12280,7 @@ init_one_exit:
 	return rc;
 }
 
-static void __devexit bnx2x_remove_one(struct pci_dev *pdev)
+static void bnx2x_remove_one(struct pci_dev *pdev)
 {
 	struct net_device *dev = pci_get_drvdata(pdev);
 	struct bnx2x *bp;
@@ -12495,7 +12495,7 @@ static struct pci_driver bnx2x_pci_driver = {
 	.name        = DRV_MODULE_NAME,
 	.id_table    = bnx2x_pci_tbl,
 	.probe       = bnx2x_init_one,
-	.remove      = __devexit_p(bnx2x_remove_one),
+	.remove      = bnx2x_remove_one,
 	.suspend     = bnx2x_suspend,
 	.resume      = bnx2x_resume,
 	.err_handler = &bnx2x_err_handler,
