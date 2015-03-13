@@ -2036,8 +2036,6 @@ int bnx2x_iov_init_one(struct bnx2x *bp, int int_mode_param,
 		BNX2X_MAX_NUM_VF_QUEUES * sizeof(struct bnx2x_vf_queue),
 		GFP_KERNEL);
 
-	DP(BNX2X_MSG_IOV, "bp->vfdb->vfqs was %p\n", bp->vfdb->vfqs);
-
 	if (!bp->vfdb->vfqs) {
 		BNX2X_ERR("failed to allocate vf queue array\n");
 		err = -ENOMEM;
@@ -2625,21 +2623,6 @@ void bnx2x_iov_vfop_cont(struct bnx2x *bp)
 	}
 }
 
-static inline
-struct bnx2x_virtf *__vf_from_stat_id(struct bnx2x *bp, u8 stat_id)
-{
-	int i;
-	struct bnx2x_virtf *vf = NULL;
-
-	for_each_vf(bp, i) {
-		vf = BP_VF(bp, i);
-		if (stat_id >= vf->igu_base_id &&
-		    stat_id < vf->igu_base_id + vf_sb_count(vf))
-			break;
-	}
-	return vf;
-}
-
 /* VF API helpers */
 static void bnx2x_vf_qtbl_set_q(struct bnx2x *bp, u8 abs_vfid, u8 qid,
 				u8 enable)
@@ -3156,12 +3139,6 @@ void bnx2x_vf_release(struct bnx2x *bp, struct bnx2x_virtf *vf, bool block)
 		     vf->abs_vfid, rc);
 }
 
-static inline void bnx2x_vf_get_sbdf(struct bnx2x *bp,
-			      struct bnx2x_virtf *vf, u32 *sbdf)
-{
-	*sbdf = vf->devfn | (vf->bus << 8);
-}
-
 void bnx2x_lock_vf_pf_channel(struct bnx2x *bp, struct bnx2x_virtf *vf,
 			      enum channel_tlvs tlv)
 {
@@ -3210,7 +3187,7 @@ void bnx2x_unlock_vf_pf_channel(struct bnx2x *bp, struct bnx2x_virtf *vf,
 
 	/* log the unlock */
 	DP(BNX2X_MSG_IOV, "VF[%d]: vf pf channel unlocked by %d\n",
-	   vf->abs_vfid, vf->op_current);
+	   vf->abs_vfid, current_tlv);
 }
 
 static int bnx2x_set_pf_tx_switching(struct bnx2x *bp, bool enable)
@@ -3421,7 +3398,7 @@ static int bnx2x_vf_ndo_prep(struct bnx2x *bp, int vfidx,
 	}
 
 	if (!IS_SRIOV(bp)) {
-		BNX2X_ERR("vf ndo called though sriov is disabled\n");
+		BNX2X_ERR("sriov is disabled - can't utilize iov-related functionality\n");
 		return -EINVAL;
 	}
 
