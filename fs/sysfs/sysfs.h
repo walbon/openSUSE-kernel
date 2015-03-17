@@ -19,10 +19,9 @@ struct sysfs_open_dirent;
 struct sysfs_elem_dir {
 	struct kobject		*kobj;
 
-	unsigned long		subdirs;
+	struct sysfs_dirent	*children;	/* No longer used */
 
-	struct rb_root		inode_tree;
-	struct rb_root		name_tree;
+	unsigned long		subdirs;
 };
 
 struct sysfs_elem_symlink {
@@ -63,9 +62,6 @@ struct sysfs_dirent {
 	struct sysfs_dirent	*s_sibling;
 	const char		*s_name;
 
-	struct rb_node		inode_node;
-	struct rb_node		name_node;
-
 	const void		*s_ns; /* namespace tag */
 	union {
 		struct sysfs_elem_dir		s_dir;
@@ -78,6 +74,14 @@ struct sysfs_dirent {
 	unsigned short		s_mode;
 	ino_t			s_ino;
 	struct sysfs_inode_attrs *s_iattr;
+
+#ifndef __GENKSYMS__
+	struct rb_root		s_dir_inode_tree;
+	struct rb_root		s_dir_name_tree;
+
+	struct rb_node		inode_node;
+	struct rb_node		name_node;
+#endif
 };
 
 #define SD_DEACTIVATED_BIAS		INT_MIN
