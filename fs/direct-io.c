@@ -531,6 +531,7 @@ static int get_more_blocks(struct dio *dio)
 	unsigned long dio_count;/* Number of dio_block-sized blocks */
 	unsigned long blkmask;
 	int create;
+	unsigned int i_blkbits = dio->blkbits + dio->blkfactor;
 
 	/*
 	 * If there was a memory error and we've overwritten all the
@@ -547,7 +548,7 @@ static int get_more_blocks(struct dio *dio)
 			fs_count++;
 
 		map_bh->b_state = 0;
-		map_bh->b_size = fs_count << dio->inode->i_blkbits;
+		map_bh->b_size = fs_count << i_blkbits;
 
 		/*
 		 * For writes inside i_size on a DIO_SKIP_HOLES filesystem we
@@ -986,7 +987,7 @@ out:
 static ssize_t
 direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode, 
 	const struct iovec *iov, loff_t offset, unsigned long nr_segs, 
-	unsigned blkbits, get_block_t get_block, dio_iodone_t end_io,
+	unsigned blkbits, unsigned i_blkbits, get_block_t get_block, dio_iodone_t end_io,
 	dio_submit_t submit_io, struct dio *dio)
 {
 	unsigned long user_addr; 
@@ -999,7 +1000,7 @@ direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode,
 	dio->inode = inode;
 	dio->rw = rw;
 	dio->blkbits = blkbits;
-	dio->blkfactor = inode->i_blkbits - blkbits;
+	dio->blkfactor = i_blkbits - blkbits;
 	dio->block_in_file = offset >> blkbits;
 
 	dio->get_block = get_block;
@@ -1165,7 +1166,8 @@ __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
 	int seg;
 	size_t size;
 	unsigned long addr;
-	unsigned blkbits = inode->i_blkbits;
+	unsigned i_blkbits = ACCESS_ONCE(inode->i_blkbits);
+	unsigned blkbits = i_blkbits;
 	unsigned bdev_blkbits = 0;
 	unsigned blocksize_mask = (1 << blkbits) - 1;
 	ssize_t retval = -EINVAL;
@@ -1247,9 +1249,8 @@ __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
 		(end > i_size_read(inode)));
 
 	retval = direct_io_worker(rw, iocb, inode, iov, offset,
-				nr_segs, blkbits, get_block, end_io,
+				nr_segs, blkbits, i_blkbits, get_block, end_io,
 				submit_io, dio);
-
 out:
 	return retval;
 }
