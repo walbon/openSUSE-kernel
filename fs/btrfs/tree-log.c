@@ -2383,8 +2383,8 @@ static void wait_for_writer(struct btrfs_trans_handle *trans,
 		if (root->fs_info->last_trans_log_full_commit !=
 		    trans->transid && atomic_read(&root->log_writers))
 			schedule();
-		mutex_lock(&root->log_mutex);
 		finish_wait(&root->log_writer_wait, &wait);
+		mutex_lock(&root->log_mutex);
 	}
 }
 
