@@ -3126,6 +3126,8 @@ static int cache_save_setup(struct btrfs_block_group_cache *block_group,
 		return 0;
 	}
 
+	if (trans->aborted)
+		return 0;
 again:
 	inode = lookup_free_space_inode(root, block_group, path);
 	if (IS_ERR(inode) && PTR_ERR(inode) != -ENOENT) {
@@ -3161,6 +3163,20 @@ again:
 	 */
 	BTRFS_I(inode)->generation = 0;
 	ret = btrfs_update_inode(trans, root, inode);
+	if (ret) {
+		/*
+		 * So theoretically we could recover from this, simply set the
+		 * super cache generation to 0 so we know to invalidate the
+		 * cache, but then we'd have to keep track of the block groups
+		 * that fail this way so we know we _have_ to reset this cache
+		 * before the next commit or risk reading stale cache.  So to
+		 * limit our exposure to horrible edge cases lets just abort the
+		 * transaction, this only happens in really bad situations
+		 * anyway.
+		 */
+		btrfs_abort_transaction(trans, root, ret);
+		goto out_put;
+	}
 	WARN_ON(ret);
 
 	if (i_size_read(inode) > 0) {
@@ -5450,7 +5466,8 @@ void btrfs_prepare_extent_commit(struct btrfs_trans_handle *trans,
 	update_global_block_rsv(fs_info);
 }
 
-static int unpin_extent_range(struct btrfs_root *root, u64 start, u64 end)
+static int unpin_extent_range(struct btrfs_root *root, u64 start, u64 end,
+			      const bool return_free_space)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_block_group_cache *cache = NULL;
@@ -5474,7 +5491,8 @@ static int unpin_extent_range(struct btrfs_root *root, u64 start, u64 end)
 
 		if (start < cache->last_byte_to_unpin) {
 			len = min(len, cache->last_byte_to_unpin - start);
-			btrfs_add_free_space(cache, start, len);
+			if (return_free_space)
+				btrfs_add_free_space(cache, start, len);
 		}
 
 		start += len;
@@ -5537,7 +5555,7 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans,
 						   end + 1 - start, NULL);
 
 		clear_extent_dirty(unpin, start, end, GFP_NOFS);
-		unpin_extent_range(root, start, end);
+		unpin_extent_range(root, start, end, true);
 		cond_resched();
 	}
 
@@ -8648,7 +8666,7 @@ out:
 
 int btrfs_error_unpin_extent_range(struct btrfs_root *root, u64 start, u64 end)
 {
-	return unpin_extent_range(root, start, end);
+	return unpin_extent_range(root, start, end, false);
 }
 
 int btrfs_error_discard_extent(struct btrfs_root *root, u64 bytenr,
