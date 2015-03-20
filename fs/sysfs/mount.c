@@ -19,6 +19,7 @@
 #include <linux/module.h>
 #include <linux/magic.h>
 #include <linux/slab.h>
+#include <linux/poison.h>
 
 #include "sysfs.h"
 
@@ -35,6 +36,7 @@ static const struct super_operations sysfs_ops = {
 struct sysfs_dirent sysfs_root = {
 	.s_name		= "",
 	.s_count	= ATOMIC_INIT(1),
+	.s_dir		= { .children_unused = LIST_POISON1 },
 	.s_flags	= SYSFS_DIR | (KOBJ_NS_TYPE_NONE << SYSFS_NS_TYPE_SHIFT),
 	.s_mode		= S_IFDIR | S_IRWXU | S_IRUGO | S_IXUGO,
 	.s_ino		= 1,

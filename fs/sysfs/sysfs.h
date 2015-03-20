@@ -11,14 +11,20 @@
 #include <linux/lockdep.h>
 #include <linux/kobject_ns.h>
 #include <linux/fs.h>
+#include <linux/rbtree.h>
 
 struct sysfs_open_dirent;
 
 /* type-specific structures for sysfs_dirent->s_* union members */
 struct sysfs_elem_dir {
 	struct kobject		*kobj;
-	/* children list starts here and goes through sd->s_sibling */
-	struct sysfs_dirent	*children;
+
+#ifdef __GENKSYMS__
+	struct sysfs_dirent	*children;	/* No longer used */
+#else
+	/* Make sure the compilation fails if somebody still needs it */
+	void			*children_unused;
+#endif
 
 	unsigned long		subdirs;
 };
@@ -73,6 +79,14 @@ struct sysfs_dirent {
 	unsigned short		s_mode;
 	ino_t			s_ino;
 	struct sysfs_inode_attrs *s_iattr;
+
+#ifndef __GENKSYMS__
+	struct rb_root		s_dir_inode_tree;
+	struct rb_root		s_dir_name_tree;
+
+	struct rb_node		inode_node;
+	struct rb_node		name_node;
+#endif
 };
 
 #define SD_DEACTIVATED_BIAS		INT_MIN
