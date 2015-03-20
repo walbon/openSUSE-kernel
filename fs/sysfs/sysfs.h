@@ -19,7 +19,12 @@ struct sysfs_open_dirent;
 struct sysfs_elem_dir {
 	struct kobject		*kobj;
 
+#ifdef __GENKSYMS__
 	struct sysfs_dirent	*children;	/* No longer used */
+#else
+	/* Make sure the compilation fails if somebody still needs it */
+	void			*children_unused;
+#endif
 
 	unsigned long		subdirs;
 };
