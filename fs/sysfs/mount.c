@@ -36,7 +36,6 @@ static const struct super_operations sysfs_ops = {
 struct sysfs_dirent sysfs_root = {
 	.s_name		= "",
 	.s_count	= ATOMIC_INIT(1),
-	.s_dir		= { .children_unused = LIST_POISON1 },
 	.s_flags	= SYSFS_DIR | (KOBJ_NS_TYPE_NONE << SYSFS_NS_TYPE_SHIFT),
 	.s_mode		= S_IFDIR | S_IRWXU | S_IRUGO | S_IXUGO,
 	.s_ino		= 1,
@@ -55,6 +54,7 @@ static int sysfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* get root inode, initialize and unlock it */
 	mutex_lock(&sysfs_mutex);
+	sysfs_root.s_dir.children_unused = LIST_POISON1;
 	inode = sysfs_get_inode(sb, &sysfs_root);
 	mutex_unlock(&sysfs_mutex);
 	if (!inode) {
