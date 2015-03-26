@@ -19,7 +19,6 @@
 #include <linux/module.h>
 #include <linux/magic.h>
 #include <linux/slab.h>
-#include <linux/poison.h>
 
 #include "sysfs.h"
 

@@ -22,7 +22,6 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/security.h>
-#include <linux/poison.h>
 #include "sysfs.h"
 
 DEFINE_MUTEX(sysfs_mutex);
