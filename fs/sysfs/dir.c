@@ -350,7 +350,6 @@ struct sysfs_dirent *sysfs_new_dirent(const char *name, umode_t mode, int type)
 	sd->s_name = name;
 	sd->s_mode = mode;
 	sd->s_flags = type;
-	sd->s_dir.children_unused = LIST_POISON1;
 
 	return sd;
 
