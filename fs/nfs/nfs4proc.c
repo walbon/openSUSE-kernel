@@ -1470,7 +1470,6 @@ static void nfs4_open_prepare(struct rpc_task *task, void *calldata)
 		rcu_read_lock();
 		delegation = rcu_dereference(NFS_I(data->state->inode)->delegation);
 		if (data->o_arg.claim != NFS4_OPEN_CLAIM_DELEGATE_CUR &&
-		    test_bit(NFS_DELEGATION_RETURNING, &delegation->flags) == 0 &&
 		    can_open_delegated(delegation, data->o_arg.fmode))
 			goto unlock_no_action;
 		rcu_read_unlock();
