@@ -2760,7 +2760,7 @@ static int em_call(struct x86_emulate_ctxt *ctxt)
 	struct decode_cache *c = &ctxt->decode;
 	long rel = c->src.val;
 
-	c->src.val = (unsigned long)ctxt->eip;
+	c->src.val = c->eip;
 	rc = jmp_rel(ctxt, rel);
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
@@ -3440,7 +3440,7 @@ static struct opcode opcode_table[256] = {
 	/* 0xD8 - 0xDF */
 	N, N, N, N, N, N, N, N,
 	/* 0xE0 - 0xE7 */
-	X3(I(SrcImmByte, em_loop)),
+	X3(I(SrcImmByte | NearBranch, em_loop)),
 	I(SrcImmByte | NearBranch, em_jcxz),
 	D2bvIP(SrcImmUByte | DstAcc, in,  check_perm_in),
 	D2bvIP(SrcAcc | DstImmUByte, out, check_perm_out),
