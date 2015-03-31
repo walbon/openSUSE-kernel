@@ -1592,6 +1592,7 @@ void mlx4_en_stop_port(struct net_device *dev, int detach)
 		while (test_bit(NAPI_STATE_SCHED, &priv->rx_cq[i]->napi.state))
 			msleep(1);
 		mlx4_en_deactivate_rx_ring(priv, priv->rx_ring[i]);
+		mlx4_en_deactivate_cq(priv, priv->rx_cq[i]);
 
 		mlx4_en_free_affinity_hint(priv, i);
 	}
