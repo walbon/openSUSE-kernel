@@ -3391,6 +3391,40 @@ unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
 #endif /* CONFIG_HIBERNATION */
 
 /*
+ * This should probably go into mm/vmstat.c but there is no intention to
+ * spread any knowledge outside of this single user so let's stay here
+ * and be quiet so that nobody notices us.
+ *
+ * A new counter has to be added to enum pagecache_limit_stat_item and
+ * its name to vmstat_text.
+ *
+ * The pagecache limit reclaim is also a slow path so we can go without
+ * per-cpu accounting for now.
+ *
+ * No kernel path should _ever_ depend on these counters. They are solely
+ * for userspace debugging via /proc/vmstat
+ */
+static atomic_t pagecache_limit_stats[NR_PAGECACHE_LIMIT_ITEMS];
+
+void all_pagecache_limit_counters(unsigned long *ret)
+{
+	int i;
+
+	for (i = 0; i < NR_PAGECACHE_LIMIT_ITEMS; i++)
+		ret[i] = atomic_read(&pagecache_limit_stats[i]);
+}
+
+static void inc_pagecache_limit_stat(enum pagecache_limit_stat_item item)
+{
+	atomic_inc(&pagecache_limit_stats[item]);
+}
+
+static void dec_pagecache_limit_stat(enum pagecache_limit_stat_item item)
+{
+	atomic_dec(&pagecache_limit_stats[item]);
+}
+
+/*
  * Returns non-zero if the lock has been acquired, false if somebody
  * else is holding the lock.
  */
@@ -3501,7 +3535,9 @@ static int shrink_all_zones(unsigned long nr_pages, int prio,
 	 * do it if there is nothing to be done.
 	 */
 	if (!nr_locked_zones) {
+		inc_pagecache_limit_stat(NR_PAGECACHE_LIMIT_BLOCKED);
 		schedule();
+		dec_pagecache_limit_stat(NR_PAGECACHE_LIMIT_BLOCKED);
 		finish_wait(&pagecache_reclaim_wq, &wait);
 		goto out;
 	}
@@ -3543,6 +3579,8 @@ static void __shrink_page_cache(gfp_t mask)
 	};
 	struct reclaim_state *old_rs = current->reclaim_state;
 	long nr_pages;
+
+	inc_pagecache_limit_stat(NR_PAGECACHE_LIMIT_THROTTLED);
 
 	/* We might sleep during direct reclaim so make atomic context
 	 * is certainly a bug.
@@ -3620,6 +3658,7 @@ retry:
 	}
 
 out:
+	dec_pagecache_limit_stat(NR_PAGECACHE_LIMIT_THROTTLED);
 	current->reclaim_state = old_rs;
 }
 
@@ -3961,7 +4000,6 @@ int page_evictable(struct page *page, struct vm_area_struct *vma)
 static void check_move_unevictable_page(struct page *page, struct zone *zone)
 {
 	VM_BUG_ON(PageActive(page));
-
 
 retry:
 	ClearPageUnevictable(page);

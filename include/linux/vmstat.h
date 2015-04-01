@@ -258,6 +258,18 @@ static inline void refresh_zone_stat_thresholds(void) { }
 
 #endif		/* CONFIG_SMP */
 
+enum pagecache_limit_stat_item {
+	NR_PAGECACHE_LIMIT_THROTTLED,	/* Number of tasks throttled by the
+					 * page cache limit.
+					 */
+	NR_PAGECACHE_LIMIT_BLOCKED,	/* Number of tasks blocked waiting for
+					 * the page cache limit reclaim.
+					 */
+	NR_PAGECACHE_LIMIT_ITEMS,
+};
+
+void all_pagecache_limit_counters(unsigned long *);
+
 extern const char * const vmstat_text[];
 
 #endif /* _LINUX_VMSTAT_H */
