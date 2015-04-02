@@ -3464,6 +3464,8 @@ static int shrink_all_zones(unsigned long nr_pages, int prio,
 	unsigned int nr_locked_zones = 0;
 	DEFINE_WAIT(wait);
 
+	trace_mm_pagecache_reclaim_start(nr_pages, pass, prio, sc->gfp_mask,
+							sc->may_writepage);
 	prepare_to_wait(&pagecache_reclaim_wq, &wait, TASK_INTERRUPTIBLE);
 
 	for_each_populated_zone(zone) {
@@ -3544,8 +3546,10 @@ static int shrink_all_zones(unsigned long nr_pages, int prio,
 
 out_wakeup:
 	wake_up_interruptible(&pagecache_reclaim_wq);
-	sc->nr_reclaimed += nr_reclaimed;
 out:
+	sc->nr_reclaimed = nr_reclaimed;
+	trace_mm_pagecache_reclaim_end(sc->nr_scanned, nr_reclaimed,
+							nr_locked_zones);
 	return nr_locked_zones;
 }
 
@@ -3581,6 +3585,7 @@ static void __shrink_page_cache(gfp_t mask)
 	long nr_pages;
 
 	inc_pagecache_limit_stat(NR_PAGECACHE_LIMIT_THROTTLED);
+	trace_mm_shrink_page_cache_start(mask);
 
 	/* We might sleep during direct reclaim so make atomic context
 	 * is certainly a bug.
@@ -3658,6 +3663,7 @@ retry:
 	}
 
 out:
+	trace_mm_shrink_page_cache_end(ret);
 	dec_pagecache_limit_stat(NR_PAGECACHE_LIMIT_THROTTLED);
 	current->reclaim_state = old_rs;
 }
