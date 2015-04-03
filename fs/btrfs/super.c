@@ -1763,7 +1763,7 @@ static int btrfs_show_devname(struct seq_file *m, struct vfsmount *vfs)
 
 static dev_t btrfs_get_maps_dev(struct inode *inode)
 {
-	return BTRFS_I(inode)->root->anon_super.s_dev;
+	return BTRFS_I(inode)->root->anon_dev;
 }
 
 static const struct super_operations btrfs_super_ops = {
