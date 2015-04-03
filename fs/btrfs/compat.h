@@ -3,6 +3,7 @@
 
 #define btrfs_drop_nlink(inode) drop_nlink(inode)
 #define btrfs_inc_nlink(inode)	inc_nlink(inode)
+#define set_nlink(inode, nlink)	((inode)->i_nlink = (nlink))
 
 static inline int printk_get_level(const char *buffer)
 {
