@@ -33,4 +33,10 @@ static inline const char *printk_skip_level(const char *buffer)
 static inline void sb_start_intwrite(struct super_block *sb) { }
 static inline void sb_end_intwrite(struct super_block *sb) { }
 
+#ifdef file_inode
+#error Conflicting definition of file_inode
+#else
+#define file_inode(file)	((file)->f_path.dentry->d_inode)
+#endif
+
 #endif /* _COMPAT_H_ */
