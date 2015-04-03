@@ -1394,9 +1394,9 @@ static int load_segment_descriptor(struct x86_emulate_ctxt *ctxt,
 	}
 load:
 	ops->set_segment(ctxt, selector, &seg_desc, 0, seg);
-	return X86EMUL_CONTINUE;
 	if (desc)
 		*desc = seg_desc;
+	return X86EMUL_CONTINUE;
 exception:
 	emulate_exception(ctxt, err_vec, err_code, true);
 	return X86EMUL_PROPAGATE_FAULT;
