@@ -1361,7 +1361,7 @@ static void scrub_recheck_block_checksum(struct btrfs_fs_info *fs_info,
 	if (is_metadata) {
 		struct btrfs_header *h;
 
-		mapped_buffer = kmap_atomic(sblock->pagev[0]->page, KM_USER0);
+		mapped_buffer = kmap_atomic(sblock->pagev[0]->page);
 		h = (struct btrfs_header *)mapped_buffer;
 
 		if (sblock->pagev[0]->logical != le64_to_cpu(h->bytenr) ||
@@ -1378,7 +1378,7 @@ static void scrub_recheck_block_checksum(struct btrfs_fs_info *fs_info,
 		if (!have_csum)
 			return;
 
-		mapped_buffer = kmap_atomic(sblock->pagev[0]->page, KM_USER0);
+		mapped_buffer = kmap_atomic(sblock->pagev[0]->page);
 	}
 
 	for (page_num = 0;;) {
@@ -1390,14 +1390,13 @@ static void scrub_recheck_block_checksum(struct btrfs_fs_info *fs_info,
 			crc = btrfs_csum_data(mapped_buffer, crc,
 					      PAGE_SIZE);
 
-		kunmap_atomic(mapped_buffer, KM_USER0);
+		kunmap_atomic(mapped_buffer);
 		page_num++;
 		if (page_num >= sblock->page_count)
 			break;
 		WARN_ON(!sblock->pagev[page_num]->page);
 
-		mapped_buffer = kmap_atomic(sblock->pagev[page_num]->page,
-					    KM_USER0);
+		mapped_buffer = kmap_atomic(sblock->pagev[page_num]->page);
 	}
 
 	btrfs_csum_final(crc, calculated_csum);
@@ -1685,7 +1684,7 @@ static int scrub_checksum_data(struct scrub_block *sblock)
 
 	on_disk_csum = sblock->pagev[0]->csum;
 	page = sblock->pagev[0]->page;
-	buffer = kmap_atomic(page, KM_USER0);
+	buffer = kmap_atomic(page);
 
 	len = sctx->sectorsize;
 	index = 0;
@@ -1693,7 +1692,7 @@ static int scrub_checksum_data(struct scrub_block *sblock)
 		u64 l = min_t(u64, len, PAGE_SIZE);
 
 		crc = btrfs_csum_data(buffer, crc, l);
-		kunmap_atomic(buffer, KM_USER0);
+		kunmap_atomic(buffer);
 		len -= l;
 		if (len == 0)
 			break;
@@ -1701,7 +1700,7 @@ static int scrub_checksum_data(struct scrub_block *sblock)
 		BUG_ON(index >= sblock->page_count);
 		BUG_ON(!sblock->pagev[index]->page);
 		page = sblock->pagev[index]->page;
-		buffer = kmap_atomic(page, KM_USER0);
+		buffer = kmap_atomic(page);
 	}
 
 	btrfs_csum_final(crc, csum);
@@ -1731,7 +1730,7 @@ static int scrub_checksum_tree_block(struct scrub_block *sblock)
 
 	BUG_ON(sblock->page_count < 1);
 	page = sblock->pagev[0]->page;
-	mapped_buffer = kmap_atomic(page, KM_USER0);
+	mapped_buffer = kmap_atomic(page);
 	h = (struct btrfs_header *)mapped_buffer;
 	memcpy(on_disk_csum, h->csum, sctx->csum_size);
 
@@ -1763,7 +1762,7 @@ static int scrub_checksum_tree_block(struct scrub_block *sblock)
 		u64 l = min_t(u64, len, mapped_size);
 
 		crc = btrfs_csum_data(p, crc, l);
-		kunmap_atomic(mapped_buffer, KM_USER0);
+		kunmap_atomic(mapped_buffer);
 		len -= l;
 		if (len == 0)
 			break;
@@ -1771,7 +1770,7 @@ static int scrub_checksum_tree_block(struct scrub_block *sblock)
 		BUG_ON(index >= sblock->page_count);
 		BUG_ON(!sblock->pagev[index]->page);
 		page = sblock->pagev[index]->page;
-		mapped_buffer = kmap_atomic(page, KM_USER0);
+		mapped_buffer = kmap_atomic(page);
 		mapped_size = PAGE_SIZE;
 		p = mapped_buffer;
 	}
@@ -1801,7 +1800,7 @@ static int scrub_checksum_super(struct scrub_block *sblock)
 
 	BUG_ON(sblock->page_count < 1);
 	page = sblock->pagev[0]->page;
-	mapped_buffer = kmap_atomic(page, KM_USER0);
+	mapped_buffer = kmap_atomic(page);
 	s = (struct btrfs_super_block *)mapped_buffer;
 	memcpy(on_disk_csum, s->csum, sctx->csum_size);
 
@@ -1822,7 +1821,7 @@ static int scrub_checksum_super(struct scrub_block *sblock)
 		u64 l = min_t(u64, len, mapped_size);
 
 		crc = btrfs_csum_data(p, crc, l);
-		kunmap_atomic(mapped_buffer, KM_USER0);
+		kunmap_atomic(mapped_buffer);
 		len -= l;
 		if (len == 0)
 			break;
@@ -1830,7 +1829,7 @@ static int scrub_checksum_super(struct scrub_block *sblock)
 		BUG_ON(index >= sblock->page_count);
 		BUG_ON(!sblock->pagev[index]->page);
 		page = sblock->pagev[index]->page;
-		mapped_buffer = kmap_atomic(page, KM_USER0);
+		mapped_buffer = kmap_atomic(page);
 		mapped_size = PAGE_SIZE;
 		p = mapped_buffer;
 	}
