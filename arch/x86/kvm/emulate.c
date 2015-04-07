@@ -3446,7 +3446,7 @@ static struct opcode opcode_table[256] = {
 	D2bvIP(SrcAcc | DstImmUByte, out, check_perm_out),
 	/* 0xE8 - 0xEF */
 	I(SrcImm | NearBranch, em_call), D(SrcImm | ImplicitOps),
-	D(SrcImmFAddr | No64), D(SrcImmByte | ImplicitOps),
+	I(SrcImmFAddr | No64, em_jmp_far), D(SrcImmByte | ImplicitOps),
 	D2bvIP(SrcDX | DstAcc, in,  check_perm_in),
 	D2bvIP(SrcAcc | DstDX, out, check_perm_out),
 	/* 0xF0 - 0xF7 */
