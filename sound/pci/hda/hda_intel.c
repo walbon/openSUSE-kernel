@@ -562,11 +562,15 @@ enum {
 #define AZX_DCAPS_4K_BDLE_BOUNDARY (1 << 23)	/* BDLE in 4k boundary */
 #define AZX_DCAPS_COUNT_LPIB_DELAY  (1 << 25)	/* Take LPIB as delay */
 #define AZX_DCAPS_PM_RUNTIME	(1 << 26)	/* runtime PM support */
+#define AZX_DCAPS_SEPARATE_STREAM_TAG	(1 << 30) /* capture and playback use separate stream tag */
 
 /* quirks for Intel PCH */
 #define AZX_DCAPS_INTEL_PCH \
 	(AZX_DCAPS_SCH_SNOOP | AZX_DCAPS_BUFSIZE | \
 	 AZX_DCAPS_COUNT_LPIB_DELAY | AZX_DCAPS_PM_RUNTIME)
+
+#define AZX_DCAPS_INTEL_SKYLAKE \
+	(AZX_DCAPS_INTEL_PCH | AZX_DCAPS_SEPARATE_STREAM_TAG)
 
 /* quirks for ATI SB / AMD Hudson */
 #define AZX_DCAPS_PRESET_ATI_SB \
@@ -2455,6 +2459,11 @@ static int __devinit azx_mixer_create(struct azx *chip)
 	return snd_hda_build_controls(chip->bus);
 }
 
+static bool is_input_stream(struct azx *chip, unsigned char index)
+{
+	return (index >= chip->capture_index_offset &&
+		index < chip->capture_index_offset + chip->capture_streams);
+}
 
 /*
  * initialize SD streams
@@ -2462,6 +2471,8 @@ static int __devinit azx_mixer_create(struct azx *chip)
 static int __devinit azx_init_stream(struct azx *chip)
 {
 	int i;
+	int in_stream_tag = 0;
+	int out_stream_tag = 0;
 
 	/* initialize each stream (aka device)
 	 * assign the starting bdl address to each stream (device)
@@ -2474,9 +2485,21 @@ static int __devinit azx_init_stream(struct azx *chip)
 		azx_dev->sd_addr = chip->remap_addr + (0x20 * i + 0x80);
 		/* int mask: SDI0=0x01, SDI1=0x02, ... SDO3=0x80 */
 		azx_dev->sd_int_sta_mask = 1 << i;
-		/* stream tag: must be non-zero and unique */
 		azx_dev->index = i;
-		azx_dev->stream_tag = i + 1;
+
+		/* stream tag must be unique throughout
+		 * the stream direction group,
+		 * valid values 1...15
+		 * use separate stream tag if the flag
+		 * AZX_DCAPS_SEPARATE_STREAM_TAG is used
+		 */
+		if (chip->driver_caps & AZX_DCAPS_SEPARATE_STREAM_TAG)
+			azx_dev->stream_tag =
+				is_input_stream(chip, i) ?
+				++in_stream_tag :
+				++out_stream_tag;
+		else
+			azx_dev->stream_tag = i + 1;
 	}
 
 	return 0;
@@ -3428,10 +3451,10 @@ static DEFINE_PCI_DEVICE_TABLE(azx_ids) = {
 	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_INTEL_PCH },
 	/* Sunrise Point */
 	{ PCI_DEVICE(0x8086, 0xa170),
-	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_INTEL_PCH },
+	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_INTEL_SKYLAKE },
 	/* Sunrise Point-LP */
 	{ PCI_DEVICE(0x8086, 0x9d70),
-	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_INTEL_PCH },
+	  .driver_data = AZX_DRIVER_PCH | AZX_DCAPS_INTEL_SKYLAKE },
 	/* Haswell */
 	{ PCI_DEVICE(0x8086, 0x0a0c),
 	  .driver_data = AZX_DRIVER_SCH | AZX_DCAPS_INTEL_PCH },
