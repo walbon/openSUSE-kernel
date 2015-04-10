@@ -16,8 +16,9 @@
  * Boston, MA 021110-1307, USA.
  */
 
-#ifndef __IOCTL_
-#define __IOCTL_
+#ifndef _UAPI_LINUX_BTRFS_H
+#define _UAPI_LINUX_BTRFS_H
+#include <linux/types.h>
 #include <linux/ioctl.h>
 
 #define BTRFS_IOCTL_MAGIC 0x94
@@ -426,7 +427,6 @@ struct btrfs_ioctl_qgroup_create_args {
 	__u64 create;
 	__u64 qgroupid;
 };
-
 struct btrfs_ioctl_timespec {
 	__u64 sec;
 	__u32 nsec;
@@ -565,4 +565,4 @@ struct btrfs_ioctl_compr_size_args {
 #define BTRFS_IOC_FILE_EXTENT_SAME _IOWR(BTRFS_IOCTL_MAGIC, 54, \
 					 struct btrfs_ioctl_same_args)
 
-#endif
+#endif /* _UAPI_LINUX_BTRFS_H */

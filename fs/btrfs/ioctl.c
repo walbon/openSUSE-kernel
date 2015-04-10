@@ -42,13 +42,13 @@
 #include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/uuid.h>
+#include <linux/btrfs.h>
 #include <linux/uaccess.h>
 #include "compat.h"
 #include "ctree.h"
 #include "disk-io.h"
 #include "transaction.h"
 #include "btrfs_inode.h"
-#include "ioctl.h"
 #include "print-tree.h"
 #include "volumes.h"
 #include "locking.h"
