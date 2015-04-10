@@ -99,10 +99,10 @@ MODULE_PARM_DESC(log_num_mgm_entry_size, "log mgm size, that defines the num"
 					 " To activate device managed"
 					 " flow steering when available, set to -1");
 
-static bool enable_64b_cqe_eqe = true;
+static bool enable_64b_cqe_eqe = false;
 module_param(enable_64b_cqe_eqe, bool, 0444);
 MODULE_PARM_DESC(enable_64b_cqe_eqe,
-		 "Enable 64 byte CQEs/EQEs when the FW supports this (default: True)");
+		 "Enable 64 byte CQEs/EQEs when the FW supports this (default: False)");
 
 #define PF_CONTEXT_BEHAVIOUR_MASK	(MLX4_FUNC_CAP_64B_EQE_CQE | \
 					 MLX4_FUNC_CAP_EQE_CQE_STRIDE)
