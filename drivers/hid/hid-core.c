@@ -638,6 +638,86 @@ static u8 *fetch_item(__u8 *start, __u8 *end, struct hid_item *item)
 	return NULL;
 }
 
+/* SLE11 specific */
+#define HID_QUIRK_MULTITOUCH		0x04000000
+#define HID_QUIRK_MULTITOUCH_WIN_8	0x08000000
+
+static int hid_scan_main(struct hid_parser *parser, struct hid_item *item)
+{
+	struct hid_device *hid = parser->device;
+	__u32 data;
+	int i;
+
+	data = item_udata(item);
+
+	switch (item->tag) {
+	case HID_MAIN_ITEM_TAG_BEGIN_COLLECTION:
+		break;
+	case HID_MAIN_ITEM_TAG_END_COLLECTION:
+		break;
+	case HID_MAIN_ITEM_TAG_INPUT:
+		/* ignore constant inputs, they will be ignored by hid-input */
+		if (data & HID_MAIN_ITEM_CONSTANT)
+			break;
+		for (i = 0; i < parser->local.usage_index; i++)
+			if (parser->local.usage[i] == HID_DG_CONTACTID)
+				hid->quirks |= HID_QUIRK_MULTITOUCH;
+		break;
+	case HID_MAIN_ITEM_TAG_OUTPUT:
+		break;
+	case HID_MAIN_ITEM_TAG_FEATURE:
+		for (i = 0; i < parser->local.usage_index; i++)
+			if (parser->local.usage[i] == 0xff0000c5 &&
+			    parser->global.report_count == 256 &&
+			    parser->global.report_size == 8)
+				hid->quirks |= HID_QUIRK_MULTITOUCH_WIN_8;
+		break;
+	}
+
+	/* Reset the local parser environment */
+	memset(&parser->local, 0, sizeof(parser->local));
+
+	return 0;
+}
+
+/*
+ * Parse a report descriptor to check whether it's a Win-8 multitouch device
+ * Two hid->quirks bits are used for keeping the parsed flags where the
+ * upstream driver uses parser->scan_flags instead.
+ */
+static int hid_parse_multitouch_win8(struct hid_device *hid)
+{
+	struct hid_parser *parser;
+	struct hid_item item;
+	__u8 *start = hid->rdesc;
+	__u8 *end = start + hid->rsize;
+	static int (*dispatch_type[])(struct hid_parser *parser,
+				      struct hid_item *item) = {
+		hid_scan_main,
+		hid_parser_global,
+		hid_parser_local,
+		hid_parser_reserved
+	};
+
+	parser = vzalloc(sizeof(struct hid_parser));
+	if (!parser)
+		return -ENOMEM;
+
+	parser->device = hid;
+	hid->quirks &=~ (HID_QUIRK_MULTITOUCH | HID_QUIRK_MULTITOUCH_WIN_8);
+
+	while ((start = fetch_item(start, end, &item)) != NULL)
+		dispatch_type[item.type](parser, &item);
+
+	if ((hid->quirks & HID_QUIRK_MULTITOUCH) &&
+	    (hid->quirks & HID_QUIRK_MULTITOUCH_WIN_8))
+		hid_info(hid, "Detected Win8 compliant touchscreen\n");
+	else
+		hid->quirks &=~ (HID_QUIRK_MULTITOUCH | HID_QUIRK_MULTITOUCH_WIN_8);
+	vfree(parser);
+	return 0;
+}
+
 /**
  * hid_parse_report - parse device report
  *
@@ -664,7 +744,7 @@ int hid_parse_report(struct hid_device *device, __u8 *start,
 		hid_parser_reserved
 	};
 
-	if (device->driver->report_fixup)
+	if (device->driver && device->driver->report_fixup)
 		start = device->driver->report_fixup(device, start, &size);
 
 	device->rdesc = kmemdup(start, size, GFP_KERNEL);
@@ -1439,7 +1519,6 @@ static const struct hid_device_id hid_have_special_driver[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_APPLE, USB_DEVICE_ID_APPLE_GEYSER1_TP_ONLY) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_ASUS, USB_DEVICE_ID_ASUS_T91MT) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_ASUS, USB_DEVICE_ID_ASUSTEK_MULTITOUCH_YFO) },
-	{ HID_USB_DEVICE(USB_VENDOR_ID_ATMEL, USB_DEVICE_ID_ATMEL_MXT_DIG2) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_BELKIN, USB_DEVICE_ID_FLIP_KVM) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_BTC, USB_DEVICE_ID_BTC_EMPREX_REMOTE) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_BTC, USB_DEVICE_ID_BTC_EMPREX_REMOTE_2) },
@@ -1692,12 +1771,19 @@ static int hid_bus_match(struct device *dev, struct device_driver *drv)
 	struct hid_driver *hdrv = container_of(drv, struct hid_driver, driver);
 	struct hid_device *hdev = container_of(dev, struct hid_device, dev);
 
+	if ((hdev->quirks & HID_QUIRK_MULTITOUCH_WIN_8) &&
+	    !strcmp(hdrv->name, "hid-multitouch"))
+		return 1;
+
 	if (!hid_match_device(hdev, hdrv))
 		return 0;
 
 	/* generic wants all that don't have specialized driver */
-	if (!strncmp(hdrv->name, "generic-", 8))
+	if (!strncmp(hdrv->name, "generic-", 8)) {
+		if (hdev->quirks & HID_QUIRK_MULTITOUCH_WIN_8)
+			return 0;
 		return !hid_match_id(hdev, hid_have_special_driver);
+	}
 
 	return 1;
 }
@@ -1993,6 +2079,12 @@ static const struct hid_device_id hid_mouse_ignore_list[] = {
 	{ }
 };
 
+/* devices that need dynamic win8 touchscreen detection (e.g. Atmel) */
+static const struct hid_device_id hid_multitouch_win8_list[] = {
+	{ HID_USB_DEVICE(USB_VENDOR_ID_ATMEL, USB_DEVICE_ID_ATMEL_MXT_DIG2) },
+	{}
+};
+
 static bool hid_ignore(struct hid_device *hdev)
 {
 	switch (hdev->vendor) {
@@ -2044,6 +2136,15 @@ int hid_add_device(struct hid_device *hdev)
 	 * is converted to allow more than 20 bytes as the device name? */
 	dev_set_name(&hdev->dev, "%04X:%04X:%04X.%04X", hdev->bus,
 		     hdev->vendor, hdev->product, atomic_inc_return(&id));
+
+	if (hid_match_id(hdev, hid_multitouch_win8_list)) {
+		ret = hid_parse(hdev);
+		if (ret < 0)
+			return ret;
+		ret = hid_parse_multitouch_win8(hdev);
+		if (ret < 0)
+			return ret;
+	}
 
 	hid_debug_register(hdev, dev_name(&hdev->dev));
 	ret = device_add(&hdev->dev);
