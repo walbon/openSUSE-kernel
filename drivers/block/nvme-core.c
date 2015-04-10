@@ -939,7 +939,7 @@ static int nvme_make_request(struct request_queue *q, struct bio *bio)
 
 	if (!nvmeq) {
 		bio_endio(bio, -EIO);
-		return result;
+		return 0;
 	}
 
 	spin_lock_irq(&nvmeq->q_lock);
