@@ -301,10 +301,11 @@ static int mlx4_dev_cap(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 		return -ENODEV;
 	}
 
-	if (dev_cap->uar_size > pci_resource_len(dev->pdev, 2)) {
+	if (dev_cap->uar_size > pci_resource_len(dev->persist->pdev, 2)) {
 		mlx4_err(dev, "HCA reported UAR size of 0x%x bigger than PCI resource 2 size of 0x%llx, aborting\n",
 			 dev_cap->uar_size,
-			 (unsigned long long) pci_resource_len(dev->pdev, 2));
+			 (unsigned long long)
+			 pci_resource_len(dev->persist->pdev, 2));
 		return -ENODEV;
 	}
 
@@ -506,8 +507,10 @@ static int mlx4_get_pcie_dev_link_caps(struct mlx4_dev *dev,
 	*speed = PCI_SPEED_UNKNOWN;
 	*width = PCIE_LNK_WIDTH_UNKNOWN;
 
-	err1 = pcie_capability_read_dword(dev->pdev, PCI_EXP_LNKCAP, &lnkcap1);
-	err2 = pcie_capability_read_dword(dev->pdev, PCI_EXP_LNKCAP2, &lnkcap2);
+	err1 = pcie_capability_read_dword(dev->persist->pdev, PCI_EXP_LNKCAP,
+					  &lnkcap1);
+	err2 = pcie_capability_read_dword(dev->persist->pdev, PCI_EXP_LNKCAP2,
+					  &lnkcap2);
 	if (!err2 && lnkcap2) { /* PCIe r3.0-compliant */
 		if (lnkcap2 & PCI_EXP_LNKCAP2_SLS_8_0GB)
 			*speed = PCIE_SPEED_8_0GT;
@@ -552,7 +555,7 @@ static void mlx4_check_pcie_caps(struct mlx4_dev *dev)
 		return;
 	}
 
-	err = pcie_get_minimum_link(dev->pdev, &speed, &width);
+	err = pcie_get_minimum_link(dev->persist->pdev, &speed, &width);
 	if (err || speed == PCI_SPEED_UNKNOWN ||
 	    width == PCIE_LNK_WIDTH_UNKNOWN) {
 		mlx4_warn(dev,
@@ -798,10 +801,12 @@ static int mlx4_slave_cap(struct mlx4_dev *dev)
 
 	if (dev->caps.uar_page_size * (dev->caps.num_uars -
 				       dev->caps.reserved_uars) >
-				       pci_resource_len(dev->pdev, 2)) {
+				       pci_resource_len(dev->persist->pdev,
+							2)) {
 		mlx4_err(dev, "HCA reported UAR region size of 0x%x bigger than PCI resource 2 size of 0x%llx, aborting\n",
 			 dev->caps.uar_page_size * dev->caps.num_uars,
-			 (unsigned long long) pci_resource_len(dev->pdev, 2));
+			 (unsigned long long)
+			 pci_resource_len(dev->persist->pdev, 2));
 		goto err_mem;
 	}
 
@@ -1437,9 +1442,9 @@ static int map_bf_area(struct mlx4_dev *dev)
 	if (!dev->caps.bf_reg_size)
 		return -ENXIO;
 
-	bf_start = pci_resource_start(dev->pdev, 2) +
+	bf_start = pci_resource_start(dev->persist->pdev, 2) +
 			(dev->caps.num_uars << PAGE_SHIFT);
-	bf_len = pci_resource_len(dev->pdev, 2) -
+	bf_len = pci_resource_len(dev->persist->pdev, 2) -
 			(dev->caps.num_uars << PAGE_SHIFT);
 	priv->bf_mapping = io_mapping_create_wc(bf_start, bf_len);
 	if (!priv->bf_mapping)
@@ -1481,7 +1486,8 @@ static int map_internal_clock(struct mlx4_dev *dev)
 	struct mlx4_priv *priv = mlx4_priv(dev);
 
 	priv->clock_mapping =
-		ioremap(pci_resource_start(dev->pdev, priv->fw.clock_bar) +
+		ioremap(pci_resource_start(dev->persist->pdev,
+					   priv->fw.clock_bar) +
 			priv->fw.clock_offset, MLX4_CLOCK_SIZE);
 
 	if (!priv->clock_mapping)
@@ -1609,7 +1615,8 @@ static void choose_steering_mode(struct mlx4_dev *dev,
 	if (mlx4_log_num_mgm_entry_size == -1 &&
 	    dev_cap->flags2 & MLX4_DEV_CAP_FLAG2_FS_EN &&
 	    (!mlx4_is_mfunc(dev) ||
-	     (dev_cap->fs_max_num_qp_per_entry >= (dev->num_vfs + 1))) &&
+	     (dev_cap->fs_max_num_qp_per_entry >=
+	     (dev->persist->num_vfs + 1))) &&
 	    choose_log_fs_mgm_entry_size(dev_cap->fs_max_num_qp_per_entry) >=
 		MLX4_MIN_MGM_LOG_ENTRY_SIZE) {
 		dev->oper_log_mgm_entry_size =
@@ -2093,7 +2100,8 @@ static void mlx4_enable_msi_x(struct mlx4_dev *dev)
 		for (i = 0; i < nreq; ++i)
 			entries[i].entry = i;
 
-		nreq = pci_enable_msix_range(dev->pdev, entries, 2, nreq);
+		nreq = pci_enable_msix_range(dev->persist->pdev, entries, 2,
+					     nreq);
 
 		if (nreq < 0) {
 			kfree(entries);
@@ -2121,7 +2129,7 @@ no_msi:
 	dev->caps.comp_pool	   = 0;
 
 	for (i = 0; i < 2; ++i)
-		priv->eq_table.eq[i].irq = dev->pdev->irq;
+		priv->eq_table.eq[i].irq = dev->persist->pdev->irq;
 }
 
 static int mlx4_init_port_info(struct mlx4_dev *dev, int port)
@@ -2148,7 +2156,7 @@ static int mlx4_init_port_info(struct mlx4_dev *dev, int port)
 	info->port_attr.show      = show_port_type;
 	sysfs_attr_init(&info->port_attr.attr);
 
-	err = device_create_file(&dev->pdev->dev, &info->port_attr);
+	err = device_create_file(&dev->persist->pdev->dev, &info->port_attr);
 	if (err) {
 		mlx4_err(dev, "Failed to create file for port %d\n", port);
 		info->port = -1;
@@ -2165,10 +2173,12 @@ static int mlx4_init_port_info(struct mlx4_dev *dev, int port)
 	info->port_mtu_attr.show      = show_port_ib_mtu;
 	sysfs_attr_init(&info->port_mtu_attr.attr);
 
-	err = device_create_file(&dev->pdev->dev, &info->port_mtu_attr);
+	err = device_create_file(&dev->persist->pdev->dev,
+				 &info->port_mtu_attr);
 	if (err) {
 		mlx4_err(dev, "Failed to create mtu file for port %d\n", port);
-		device_remove_file(&info->dev->pdev->dev, &info->port_attr);
+		device_remove_file(&info->dev->persist->pdev->dev,
+				   &info->port_attr);
 		info->port = -1;
 	}
 
@@ -2180,8 +2190,9 @@ static void mlx4_cleanup_port_info(struct mlx4_port_info *info)
 	if (info->port < 0)
 		return;
 
-	device_remove_file(&info->dev->pdev->dev, &info->port_attr);
-	device_remove_file(&info->dev->pdev->dev, &info->port_mtu_attr);
+	device_remove_file(&info->dev->persist->pdev->dev, &info->port_attr);
+	device_remove_file(&info->dev->persist->pdev->dev,
+			   &info->port_mtu_attr);
 }
 
 static int mlx4_init_steering(struct mlx4_dev *dev)
@@ -2248,10 +2259,11 @@ static int mlx4_get_ownership(struct mlx4_dev *dev)
 	void __iomem *owner;
 	u32 ret;
 
-	if (pci_channel_offline(dev->pdev))
+	if (pci_channel_offline(dev->persist->pdev))
 		return -EIO;
 
-	owner = ioremap(pci_resource_start(dev->pdev, 0) + MLX4_OWNER_BASE,
+	owner = ioremap(pci_resource_start(dev->persist->pdev, 0) +
+			MLX4_OWNER_BASE,
 			MLX4_OWNER_SIZE);
 	if (!owner) {
 		mlx4_err(dev, "Failed to obtain ownership bit\n");
@@ -2267,10 +2279,11 @@ static void mlx4_free_ownership(struct mlx4_dev *dev)
 {
 	void __iomem *owner;
 
-	if (pci_channel_offline(dev->pdev))
+	if (pci_channel_offline(dev->persist->pdev))
 		return;
 
-	owner = ioremap(pci_resource_start(dev->pdev, 0) + MLX4_OWNER_BASE,
+	owner = ioremap(pci_resource_start(dev->persist->pdev, 0) +
+			MLX4_OWNER_BASE,
 			MLX4_OWNER_SIZE);
 	if (!owner) {
 		mlx4_err(dev, "Failed to obtain ownership bit\n");
@@ -2352,7 +2365,7 @@ static int mlx4_load_one(struct pci_dev *pdev, int pci_dev_data,
 					mlx4_warn(dev, "Running in master mode\n");
 					dev->flags |= MLX4_FLAG_SRIOV |
 						MLX4_FLAG_MASTER;
-					dev->num_vfs = total_vfs;
+					dev->persist->num_vfs = total_vfs;
 				}
 			}
 		}
@@ -2438,12 +2451,14 @@ slave_start:
 				 dev->caps.num_ports);
 			goto err_close;
 		}
-		memcpy(dev->nvfs, nvfs, sizeof(dev->nvfs));
+		memcpy(dev->persist->nvfs, nvfs, sizeof(dev->persist->nvfs));
 
-		for (i = 0; i < sizeof(dev->nvfs)/sizeof(dev->nvfs[0]); i++) {
+		for (i = 0;
+		     i < sizeof(dev->persist->nvfs)/
+		     sizeof(dev->persist->nvfs[0]); i++) {
 			unsigned j;
 
-			for (j = 0; j < dev->nvfs[i]; ++sum, ++j) {
+			for (j = 0; j < dev->persist->nvfs[i]; ++sum, ++j) {
 				dev->dev_vfs[sum].min_port = i < 2 ? i + 1 : 1;
 				dev->dev_vfs[sum].n_ports = i < 2 ? 1 :
 					dev->caps.num_ports;
@@ -2732,20 +2747,28 @@ static int mlx4_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		return -ENOMEM;
 
 	dev       = &priv->dev;
-	dev->pdev = pdev;
-	pci_set_drvdata(pdev, dev);
+	dev->persist = kzalloc(sizeof(*dev->persist), GFP_KERNEL);
+	if (!dev->persist) {
+		kfree(priv);
+		return -ENOMEM;
+	}
+	dev->persist->pdev = pdev;
+	dev->persist->dev = dev;
+	pci_set_drvdata(pdev, dev->persist);
 	priv->pci_dev_data = id->driver_data;
 
 	ret =  __mlx4_init_one(pdev, id->driver_data, priv);
-	if (ret)
+	if (ret) {
+		kfree(dev->persist);
 		kfree(priv);
-
+	}
 	return ret;
 }
 
 static void mlx4_unload_one(struct pci_dev *pdev)
 {
-	struct mlx4_dev  *dev  = pci_get_drvdata(pdev);
+	struct mlx4_dev_persistent *persist = pci_get_drvdata(pdev);
+	struct mlx4_dev  *dev  = persist->dev;
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	int               pci_dev_data;
 	int p;
@@ -2827,26 +2850,29 @@ static void mlx4_unload_one(struct pci_dev *pdev)
 
 static void mlx4_remove_one(struct pci_dev *pdev)
 {
-	struct mlx4_dev  *dev  = pci_get_drvdata(pdev);
+	struct mlx4_dev_persistent *persist = pci_get_drvdata(pdev);
+	struct mlx4_dev  *dev  = persist->dev;
 	struct mlx4_priv *priv = mlx4_priv(dev);
 
 	mlx4_unload_one(pdev);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
+	kfree(dev->persist);
 	kfree(priv);
 	pci_set_drvdata(pdev, NULL);
 }
 
 int mlx4_restart_one(struct pci_dev *pdev)
 {
-	struct mlx4_dev	 *dev  = pci_get_drvdata(pdev);
+	struct mlx4_dev_persistent *persist = pci_get_drvdata(pdev);
+	struct mlx4_dev	 *dev  = persist->dev;
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	int nvfs[MLX4_MAX_PORTS + 1] = {0, 0, 0};
 	int pci_dev_data, err, total_vfs;
 
 	pci_dev_data = priv->pci_dev_data;
-	total_vfs = dev->num_vfs;
-	memcpy(nvfs, dev->nvfs, sizeof(dev->nvfs));
+	total_vfs = dev->persist->num_vfs;
+	memcpy(nvfs, dev->persist->nvfs, sizeof(dev->persist->nvfs));
 
 	mlx4_unload_one(pdev);
 	err = mlx4_load_one(pdev, pci_dev_data, total_vfs, nvfs, priv);

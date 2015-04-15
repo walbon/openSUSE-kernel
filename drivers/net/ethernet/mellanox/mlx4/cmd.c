@@ -307,7 +307,7 @@ static int cmd_pending(struct mlx4_dev *dev)
 {
 	u32 status;
 
-	if (pci_channel_offline(dev->pdev))
+	if (pci_channel_offline(dev->persist->pdev))
 		return -EIO;
 
 	status = readl(mlx4_priv(dev)->cmd.hcr + HCR_STATUS_OFFSET);
@@ -328,7 +328,7 @@ static int mlx4_cmd_post(struct mlx4_dev *dev, u64 in_param, u64 out_param,
 
 	mutex_lock(&cmd->hcr_mutex);
 
-	if (pci_channel_offline(dev->pdev)) {
+	if (pci_channel_offline(dev->persist->pdev)) {
 		/*
 		 * Device is going through error recovery
 		 * and cannot accept commands.
@@ -342,7 +342,7 @@ static int mlx4_cmd_post(struct mlx4_dev *dev, u64 in_param, u64 out_param,
 		end += msecs_to_jiffies(GO_BIT_TIMEOUT_MSECS);
 
 	while (cmd_pending(dev)) {
-		if (pci_channel_offline(dev->pdev)) {
+		if (pci_channel_offline(dev->persist->pdev)) {
 			/*
 			 * Device is going through error recovery
 			 * and cannot accept commands.
@@ -464,7 +464,7 @@ static int mlx4_cmd_poll(struct mlx4_dev *dev, u64 in_param, u64 *out_param,
 
 	down(&priv->cmd.poll_sem);
 
-	if (pci_channel_offline(dev->pdev)) {
+	if (pci_channel_offline(dev->persist->pdev)) {
 		/*
 		 * Device is going through error recovery
 		 * and cannot accept commands.
@@ -487,7 +487,7 @@ static int mlx4_cmd_poll(struct mlx4_dev *dev, u64 in_param, u64 *out_param,
 
 	end = msecs_to_jiffies(timeout) + jiffies;
 	while (cmd_pending(dev) && time_before(jiffies, end)) {
-		if (pci_channel_offline(dev->pdev)) {
+		if (pci_channel_offline(dev->persist->pdev)) {
 			/*
 			 * Device is going through error recovery
 			 * and cannot accept commands.
@@ -612,7 +612,7 @@ int __mlx4_cmd(struct mlx4_dev *dev, u64 in_param, u64 *out_param,
 	       int out_is_imm, u32 in_modifier, u8 op_modifier,
 	       u16 op, unsigned long timeout, int native)
 {
-	if (pci_channel_offline(dev->pdev))
+	if (pci_channel_offline(dev->persist->pdev))
 		return -EIO;
 
 	if (!mlx4_is_mfunc(dev) || (native && mlx4_is_master(dev))) {
@@ -1940,11 +1940,12 @@ int mlx4_multi_func_init(struct mlx4_dev *dev)
 
 	if (mlx4_is_master(dev))
 		priv->mfunc.comm =
-		ioremap(pci_resource_start(dev->pdev, priv->fw.comm_bar) +
+		ioremap(pci_resource_start(dev->persist->pdev,
+					   priv->fw.comm_bar) +
 			priv->fw.comm_base, MLX4_COMM_PAGESIZE);
 	else
 		priv->mfunc.comm =
-		ioremap(pci_resource_start(dev->pdev, 2) +
+		ioremap(pci_resource_start(dev->persist->pdev, 2) +
 			MLX4_SLAVE_COMM_BASE, MLX4_COMM_PAGESIZE);
 	if (!priv->mfunc.comm) {
 		mlx4_err(dev, "Couldn't map communication vector\n");
@@ -2050,9 +2051,9 @@ err_comm_admin:
 err_comm:
 	iounmap(priv->mfunc.comm);
 err_vhcr:
-	dma_free_coherent(&(dev->pdev->dev), PAGE_SIZE,
-					     priv->mfunc.vhcr,
-					     priv->mfunc.vhcr_dma);
+	dma_free_coherent(&dev->persist->pdev->dev, PAGE_SIZE,
+			  priv->mfunc.vhcr,
+			  priv->mfunc.vhcr_dma);
 	priv->mfunc.vhcr = NULL;
 	return -ENOMEM;
 }
@@ -2071,8 +2072,9 @@ int mlx4_cmd_init(struct mlx4_dev *dev)
 	priv->mfunc.vhcr = NULL;
 
 	if (!mlx4_is_slave(dev)) {
-		priv->cmd.hcr = ioremap(pci_resource_start(dev->pdev, 0) +
-					MLX4_HCR_BASE, MLX4_HCR_SIZE);
+		priv->cmd.hcr = ioremap(pci_resource_start(dev->persist->pdev,
+							   0) + MLX4_HCR_BASE,
+					MLX4_HCR_SIZE);
 		if (!priv->cmd.hcr) {
 			mlx4_err(dev, "Couldn't map command register\n");
 			return -ENOMEM;
@@ -2080,14 +2082,15 @@ int mlx4_cmd_init(struct mlx4_dev *dev)
 	}
 
 	if (mlx4_is_mfunc(dev)) {
-		priv->mfunc.vhcr = dma_alloc_coherent(&(dev->pdev->dev), PAGE_SIZE,
-						      &priv->mfunc.vhcr_dma,
-						      GFP_KERNEL);
+		priv->mfunc.vhcr =
+			dma_alloc_coherent(&dev->persist->pdev->dev,
+					   PAGE_SIZE, &priv->mfunc.vhcr_dma,
+					   GFP_KERNEL);
 		if (!priv->mfunc.vhcr)
 			goto err_hcr;
 	}
 
-	priv->cmd.pool = pci_pool_create("mlx4_cmd", dev->pdev,
+	priv->cmd.pool = pci_pool_create("mlx4_cmd", dev->persist->pdev,
 					 MLX4_MAILBOX_SIZE,
 					 MLX4_MAILBOX_SIZE, 0);
 	if (!priv->cmd.pool)
@@ -2097,7 +2100,7 @@ int mlx4_cmd_init(struct mlx4_dev *dev)
 
 err_vhcr:
 	if (mlx4_is_mfunc(dev))
-		dma_free_coherent(&(dev->pdev->dev), PAGE_SIZE,
+		dma_free_coherent(&dev->persist->pdev->dev, PAGE_SIZE,
 				  priv->mfunc.vhcr, priv->mfunc.vhcr_dma);
 	priv->mfunc.vhcr = NULL;
 
@@ -2136,7 +2139,7 @@ void mlx4_cmd_cleanup(struct mlx4_dev *dev)
 	if (!mlx4_is_slave(dev))
 		iounmap(priv->cmd.hcr);
 	if (mlx4_is_mfunc(dev))
-		dma_free_coherent(&(dev->pdev->dev), PAGE_SIZE,
+		dma_free_coherent(&dev->persist->pdev->dev, PAGE_SIZE,
 				  priv->mfunc.vhcr, priv->mfunc.vhcr_dma);
 	priv->mfunc.vhcr = NULL;
 }
@@ -2237,8 +2240,9 @@ u32 mlx4_comm_get_version(void)
 
 static int mlx4_get_slave_indx(struct mlx4_dev *dev, int vf)
 {
-	if ((vf < 0) || (vf >= dev->num_vfs)) {
-		mlx4_err(dev, "Bad vf number:%d (number of activated vf: %d)\n", vf, dev->num_vfs);
+	if ((vf < 0) || (vf >= dev->persist->num_vfs)) {
+		mlx4_err(dev, "Bad vf number:%d (number of activated vf: %d)\n",
+			 vf, dev->persist->num_vfs);
 		return -EINVAL;
 	}
 
@@ -2247,7 +2251,7 @@ static int mlx4_get_slave_indx(struct mlx4_dev *dev, int vf)
 
 int mlx4_get_vf_indx(struct mlx4_dev *dev, int slave)
 {
-	if (slave < 1 || slave > dev->num_vfs) {
+	if (slave < 1 || slave > dev->persist->num_vfs) {
 		mlx4_err(dev,
 			 "Bad slave number:%d (number of activated slaves: %lu)\n",
 			 slave, dev->num_slaves);
@@ -2319,7 +2323,7 @@ struct mlx4_slaves_pport mlx4_phys_to_slaves_pport(struct mlx4_dev *dev,
 	if (port <= 0 || port > dev->caps.num_ports)
 		return slaves_pport;
 
-	for (i = 0; i < dev->num_vfs + 1; i++) {
+	for (i = 0; i < dev->persist->num_vfs + 1; i++) {
 		struct mlx4_active_ports actv_ports =
 			mlx4_get_active_ports(dev, i);
 		if (test_bit(port - 1, actv_ports.ports))
@@ -2339,7 +2343,7 @@ struct mlx4_slaves_pport mlx4_phys_to_slaves_pport_actv(
 
 	bitmap_zero(slaves_pport.slaves, MLX4_MFUNC_MAX);
 
-	for (i = 0; i < dev->num_vfs + 1; i++) {
+	for (i = 0; i < dev->persist->num_vfs + 1; i++) {
 		struct mlx4_active_ports actv_ports =
 			mlx4_get_active_ports(dev, i);
 		if (bitmap_equal(crit_ports->ports, actv_ports.ports,
