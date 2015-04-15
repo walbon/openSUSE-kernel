@@ -107,6 +107,8 @@ MODULE_PARM_DESC(enable_64b_cqe_eqe,
 #define PF_CONTEXT_BEHAVIOUR_MASK	(MLX4_FUNC_CAP_64B_EQE_CQE | \
 					 MLX4_FUNC_CAP_EQE_CQE_STRIDE)
 
+#define RESET_PERSIST_MASK_FLAGS	(MLX4_FLAG_SRIOV)
+
 static char mlx4_version[] =
 	DRV_NAME ": Mellanox ConnectX core driver v"
 	DRV_VERSION " (" DRV_RELDATE ")\n";
@@ -1518,6 +1520,50 @@ static void mlx4_close_hca(struct mlx4_dev *dev)
 	}
 }
 
+static int mlx4_comm_check_offline(struct mlx4_dev *dev)
+{
+#define COMM_CHAN_OFFLINE_OFFSET 0x09
+
+	u32 comm_flags;
+	u32 offline_bit;
+	unsigned long end;
+	struct mlx4_priv *priv = mlx4_priv(dev);
+
+	end = msecs_to_jiffies(MLX4_COMM_OFFLINE_TIME_OUT) + jiffies;
+	while (time_before(jiffies, end)) {
+		comm_flags = swab32(readl((__iomem char *)priv->mfunc.comm +
+					  MLX4_COMM_CHAN_FLAGS));
+		offline_bit = (comm_flags &
+			       (u32)(1 << COMM_CHAN_OFFLINE_OFFSET));
+		if (!offline_bit)
+			return 0;
+		/* There are cases as part of AER/Reset flow that PF needs
+		 * around 100 msec to load. We therefore sleep for 100 msec
+		 * to allow other tasks to make use of that CPU during this
+		 * time interval.
+		 */
+		msleep(100);
+	}
+	mlx4_err(dev, "Communication channel is offline.\n");
+	return -EIO;
+}
+
+static void mlx4_reset_vf_support(struct mlx4_dev *dev)
+{
+#define COMM_CHAN_RST_OFFSET 0x1e
+
+	struct mlx4_priv *priv = mlx4_priv(dev);
+	u32 comm_rst;
+	u32 comm_caps;
+
+	comm_caps = swab32(readl((__iomem char *)priv->mfunc.comm +
+				 MLX4_COMM_CHAN_CAPS));
+	comm_rst = (comm_caps & (u32)(1 << COMM_CHAN_RST_OFFSET));
+
+	if (comm_rst)
+		dev->caps.vf_caps |= MLX4_VF_CAP_FLAG_RESET;
+}
+
 static int mlx4_init_slave(struct mlx4_dev *dev)
 {
 	struct mlx4_priv *priv = mlx4_priv(dev);
@@ -1529,6 +1575,12 @@ static int mlx4_init_slave(struct mlx4_dev *dev)
 
 	mutex_lock(&priv->cmd.slave_cmd_mutex);
 	priv->cmd.max_cmds = 1;
+	if (mlx4_comm_check_offline(dev)) {
+		mlx4_err(dev, "PF is not responsive, skipping initialization\n");
+		goto err_offline;
+	}
+
+	mlx4_reset_vf_support(dev);
 	mlx4_warn(dev, "Sending reset\n");
 	ret_from_reset = mlx4_comm_cmd(dev, MLX4_COMM_CMD_RESET, 0,
 				       MLX4_COMM_TIME);
@@ -1581,6 +1633,7 @@ static int mlx4_init_slave(struct mlx4_dev *dev)
 
 err:
 	mlx4_comm_cmd(dev, MLX4_COMM_CMD_RESET, 0, 0);
+err_offline:
 	mutex_unlock(&priv->cmd.slave_cmd_mutex);
 	return -EIO;
 }
@@ -2295,7 +2348,8 @@ static void mlx4_free_ownership(struct mlx4_dev *dev)
 }
 
 static int mlx4_load_one(struct pci_dev *pdev, int pci_dev_data,
-			 int total_vfs, int *nvfs, struct mlx4_priv *priv)
+			 int total_vfs, int *nvfs, struct mlx4_priv *priv,
+			 int reset_flow)
 {
 	struct mlx4_dev *dev;
 	unsigned sum = 0;
@@ -2348,7 +2402,7 @@ static int mlx4_load_one(struct pci_dev *pdev, int pci_dev_data,
 				mlx4_err(dev, "Failed to allocate memory for VFs\n");
 				err = -ENOMEM;
 				goto err_free_own;
-			} else {
+			} else if (!reset_flow) {
 				existing_vfs = pci_num_vf(pdev);
 				if (existing_vfs) {
 					err = 0;
@@ -2515,6 +2569,17 @@ slave_start:
 		goto err_steer;
 
 	mlx4_init_quotas(dev);
+	/* When PF resources are ready arm its comm channel to enable
+	 * getting commands
+	 */
+	if (mlx4_is_master(dev)) {
+		err = mlx4_ARM_COMM_CHANNEL(dev);
+		if (err) {
+			mlx4_err(dev, " Failed to arm comm channel eq: %x\n",
+				 err);
+			goto err_steer;
+		}
+	}
 
 	for (port = 1; port <= dev->caps.num_ports; port++) {
 		err = mlx4_init_port_info(dev, port);
@@ -2584,8 +2649,10 @@ err_cmd:
 	mlx4_cmd_cleanup(dev);
 
 err_sriov:
-	if (dev->flags & MLX4_FLAG_SRIOV && !existing_vfs)
+	if (dev->flags & MLX4_FLAG_SRIOV && !existing_vfs) {
 		pci_disable_sriov(pdev);
+		dev->flags &= ~MLX4_FLAG_SRIOV;
+	}
 
 	kfree(priv->dev.dev_vfs);
 
@@ -2729,7 +2796,7 @@ static int __mlx4_init_one(struct pci_dev *pdev, int pci_dev_data,
 	if (err)
 		goto err_release_regions;
 
-	err = mlx4_load_one(pdev, pci_dev_data, total_vfs, nvfs, priv);
+	err = mlx4_load_one(pdev, pci_dev_data, total_vfs, nvfs, priv, 0);
 	if (err)
 		goto err_catas;
 
@@ -2787,9 +2854,11 @@ static void mlx4_clean_dev(struct mlx4_dev *dev)
 {
 	struct mlx4_dev_persistent *persist = dev->persist;
 	struct mlx4_priv *priv = mlx4_priv(dev);
+	unsigned long	flags = (dev->flags & RESET_PERSIST_MASK_FLAGS);
 
 	memset(priv, 0, sizeof(*priv));
 	priv->dev.persist = persist;
+	priv->dev.flags = flags;
 }
 
 static void mlx4_unload_one(struct pci_dev *pdev)
@@ -2799,7 +2868,6 @@ static void mlx4_unload_one(struct pci_dev *pdev)
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	int               pci_dev_data;
 	int p, i;
-	int active_vfs = 0;
 
 	if (priv->removed)
 		return;
@@ -2813,14 +2881,6 @@ static void mlx4_unload_one(struct pci_dev *pdev)
 
 	pci_dev_data = priv->pci_dev_data;
 
-	/* Disabling SR-IOV is not allowed while there are active vf's */
-	if (mlx4_is_master(dev)) {
-		active_vfs = mlx4_how_many_lives_vf(dev);
-		if (active_vfs) {
-			pr_warn("Removing PF when there are active VF's !!\n");
-			pr_warn("Will not disable SR-IOV.\n");
-		}
-	}
 	mlx4_stop_sense(dev);
 	mlx4_unregister_device(dev);
 
@@ -2863,10 +2923,6 @@ static void mlx4_unload_one(struct pci_dev *pdev)
 
 	if (dev->flags & MLX4_FLAG_MSI_X)
 		pci_disable_msix(pdev);
-	if (dev->flags & MLX4_FLAG_SRIOV && !active_vfs) {
-		mlx4_warn(dev, "Disabling SR-IOV\n");
-		pci_disable_sriov(pdev);
-	}
 
 	if (!mlx4_is_slave(dev))
 		mlx4_free_ownership(dev);
@@ -2887,10 +2943,20 @@ static void mlx4_remove_one(struct pci_dev *pdev)
 	struct mlx4_dev_persistent *persist = pci_get_drvdata(pdev);
 	struct mlx4_dev  *dev  = persist->dev;
 	struct mlx4_priv *priv = mlx4_priv(dev);
+	int active_vfs = 0;
 
 	mutex_lock(&persist->interface_state_mutex);
 	persist->interface_state |= MLX4_INTERFACE_STATE_DELETION;
 	mutex_unlock(&persist->interface_state_mutex);
+
+	/* Disabling SR-IOV is not allowed while there are active vf's */
+	if (mlx4_is_master(dev) && dev->flags & MLX4_FLAG_SRIOV) {
+		active_vfs = mlx4_how_many_lives_vf(dev);
+		if (active_vfs) {
+			pr_warn("Removing PF when there are active VF's !!\n");
+			pr_warn("Will not disable SR-IOV.\n");
+		}
+	}
 
 	/* device marked to be under deletion running now without the lock
 	 * letting other tasks to be terminated
@@ -2900,6 +2966,11 @@ static void mlx4_remove_one(struct pci_dev *pdev)
 	else
 		mlx4_info(dev, "%s: interface is down\n", __func__);
 	mlx4_catas_end(dev);
+	if (dev->flags & MLX4_FLAG_SRIOV && !active_vfs) {
+		mlx4_warn(dev, "Disabling SR-IOV\n");
+		pci_disable_sriov(pdev);
+	}
+
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
 	kfree(dev->persist);
@@ -2939,7 +3010,7 @@ int mlx4_restart_one(struct pci_dev *pdev)
 	memcpy(nvfs, dev->persist->nvfs, sizeof(dev->persist->nvfs));
 
 	mlx4_unload_one(pdev);
-	err = mlx4_load_one(pdev, pci_dev_data, total_vfs, nvfs, priv);
+	err = mlx4_load_one(pdev, pci_dev_data, total_vfs, nvfs, priv, 1);
 	if (err) {
 		mlx4_err(dev, "%s: ERROR: mlx4_load_one failed, pci_name=%s, err=%d\n",
 			 __func__, pci_name(pdev), err);
@@ -3051,7 +3122,7 @@ static pci_ers_result_t mlx4_pci_slot_reset(struct pci_dev *pdev)
 	mutex_lock(&persist->interface_state_mutex);
 	if (!(persist->interface_state & MLX4_INTERFACE_STATE_UP)) {
 		ret = mlx4_load_one(pdev, priv->pci_dev_data, total_vfs, nvfs,
-				    priv);
+				    priv, 1);
 		if (ret) {
 			mlx4_err(dev, "%s: mlx4_load_one failed, ret=%d\n",
 				 __func__,  ret);

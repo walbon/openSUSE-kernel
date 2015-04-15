@@ -180,6 +180,10 @@ enum {
 };
 
 enum {
+	MLX4_VF_CAP_FLAG_RESET			= 1 << 0
+};
+
+enum {
 	MLX4_DEV_CAP_64B_EQE_ENABLED	= 1LL << 0,
 	MLX4_DEV_CAP_64B_CQE_ENABLED	= 1LL << 1,
 	MLX4_DEV_CAP_CQE_STRIDE_ENABLED	= 1LL << 2,
@@ -481,6 +485,7 @@ struct mlx4_caps {
 	u32			function_caps;  /* VFs must be aware of these */
 	u16			hca_core_clock;
 	u64			phys_port_id[MLX4_MAX_PORTS + 1];
+	u32			vf_caps;
 };
 
 struct mlx4_buf_list {
