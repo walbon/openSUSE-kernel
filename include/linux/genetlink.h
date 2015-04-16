@@ -86,6 +86,9 @@ enum {
 extern void genl_lock(void);
 extern void genl_unlock(void);
 
+#define MODULE_ALIAS_GENL_FAMILY(family)\
+ MODULE_ALIAS_NET_PF_PROTO_NAME(PF_NETLINK, NETLINK_GENERIC, "-family-" family)
+
 #endif /* __KERNEL__ */
 
 #endif	/* __LINUX_GENERIC_NETLINK_H */
