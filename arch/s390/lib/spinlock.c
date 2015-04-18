@@ -41,7 +41,7 @@ static inline void _raw_yield_cpu(int cpu)
 
 void arch_spin_lock_wait(arch_spinlock_t *lp)
 {
-	unsigned int cpu = ~smp_processor_id();
+	unsigned int cpu = SPINLOCK_LOCKVAL;
 	unsigned int owner;
 	int count;
 
@@ -69,7 +69,7 @@ EXPORT_SYMBOL(arch_spin_lock_wait);
 
 void arch_spin_lock_wait_flags(arch_spinlock_t *lp, unsigned long flags)
 {
-	unsigned int cpu = ~smp_processor_id();
+	unsigned int cpu = SPINLOCK_LOCKVAL;
 	unsigned int owner;
 	int count;
 
