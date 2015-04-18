@@ -64,10 +64,18 @@ static unsigned long setup_zero_pages(void)
 		break;
 	case 0x2097:	/* z10 */
 	case 0x2098:	/* z10 */
+  	case 0x2827:	/* zEC12 */
+  	case 0x2828:	/* zEC12 */
+  		order = 5;
+  		break;
+	case 0x2964:	/* z13 */
 	default:
-		order = 2;
+		order = 7;
 		break;
 	}
+	/* Limit number of empty zero pages for small memory sizes */
+	while (order > 2 && (totalram_pages >> 10) < (1UL << order))
+		order--;
 
 	empty_zero_page = __get_free_pages(GFP_KERNEL | __GFP_ZERO, order);
 	if (!empty_zero_page)
