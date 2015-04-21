@@ -10,7 +10,6 @@
  */
 #include <linux/module.h>
 #include <linux/console.h>
-#include <linux/capability.h>
 #include <drm/drmP.h>
 
 #include "mgag200_drv.h"
@@ -123,12 +122,10 @@ static int __init mgag200_init(void)
 		return -EINVAL;
 #endif
 
-#ifdef CAP_COMPROMISE_KERNEL
-	if (capable(CAP_COMPROMISE_KERNEL) && mgag200_modeset == -1) {
+	if (!secure_modules() && mgag200_modeset == -1) {
 		printk(KERN_INFO "This driver is only used in secure boot mode as default\n");
 		return -EINVAL;
 	}
-#endif
 
 	if (mgag200_modeset == 0)
 		return -EINVAL;
