@@ -1798,64 +1798,6 @@ out:
 	return ret;
 }
 
-void extent_cache_csums_dio(struct extent_io_tree *tree, u64 start, u32 csums[],
-			    int count)
-{
-	struct rb_node *node;
-	struct extent_state *state;
-
-	spin_lock(&tree->lock);
-	/*
-	 * this search will find all the extents that end after
-	 * our range starts.
-	 */
-	node = tree_search(tree, start);
-	BUG_ON(!node);
-
-	state = rb_entry(node, struct extent_state, rb_node);
-	BUG_ON(state->start != start);
-
-	while (count) {
-		state->private = *csums++;
-		count--;
-		state = next_state(state);
-	}
-	spin_unlock(&tree->lock);
-}
-
-static inline u64 __btrfs_get_bio_offset(struct bio *bio, int bio_index)
-{
-	struct bio_vec *bvec = bio->bi_io_vec + bio_index;
-
-	return page_offset(bvec->bv_page) + bvec->bv_offset;
-}
-
-void extent_cache_csums(struct extent_io_tree *tree, struct bio *bio, int bio_index,
-			u32 csums[], int count)
-{
-	struct rb_node *node;
-	struct extent_state *state = NULL;
-	u64 start;
-
-	spin_lock(&tree->lock);
-	do {
-		start = __btrfs_get_bio_offset(bio, bio_index);
-		if (state == NULL || state->start != start) {
-			node = tree_search(tree, start);
-			BUG_ON(!node);
-
-			state = rb_entry(node, struct extent_state, rb_node);
-			BUG_ON(state->start != start);
-		}
-		state->private = *csums++;
-		count--;
-		bio_index++;
-
-		state = next_state(state);
-	} while (count);
-	spin_unlock(&tree->lock);
-}
-
 int get_state_private(struct extent_io_tree *tree, u64 start, u64 *private)
 {
 	struct rb_node *node;
@@ -2673,11 +2615,11 @@ void set_page_extent_mapped(struct page *page)
  * handlers)
  * XXX JDM: This needs looking at to ensure proper page locking
  */
-static int __do_readpage(struct extent_io_tree *tree,
-			 struct page *page,
-			 get_extent_t *get_extent,
-			 struct bio **bio, int mirror_num,
-			 unsigned long *bio_flags, int rw)
+static int __extent_read_full_page(struct extent_io_tree *tree,
+				   struct page *page,
+				   get_extent_t *get_extent,
+				   struct bio **bio, int mirror_num,
+				   unsigned long *bio_flags, int rw)
 {
 	struct inode *inode = page->mapping->host;
 	u64 start = page_offset(page);
@@ -2691,24 +2633,33 @@ static int __do_readpage(struct extent_io_tree *tree,
 	sector_t sector;
 	struct extent_map *em;
 	struct block_device *bdev;
+	struct btrfs_ordered_extent *ordered;
 	int ret;
 	int nr = 0;
-	int parent_locked = *bio_flags & EXTENT_BIO_PARENT_LOCKED;
 	size_t pg_offset = 0;
 	size_t iosize;
 	size_t disk_io_size;
 	size_t blocksize = inode->i_sb->s_blocksize;
-	unsigned long this_bio_flag = *bio_flags & EXTENT_BIO_PARENT_LOCKED;
+	unsigned long this_bio_flag = 0;
 
 	set_page_extent_mapped(page);
 
-	end = page_end;
 	if (!PageUptodate(page)) {
 		if (cleancache_get_page(page) == 0) {
 			BUG_ON(blocksize != PAGE_SIZE);
-			unlock_extent(tree, start, end);
 			goto out;
 		}
+	}
+
+	end = page_end;
+	while (1) {
+		lock_extent(tree, start, end);
+		ordered = btrfs_lookup_ordered_extent(inode, start);
+		if (!ordered)
+			break;
+		unlock_extent(tree, start, end);
+		btrfs_start_ordered_extent(inode, ordered, 1);
+		btrfs_put_ordered_extent(ordered);
 	}
 
 	if (page->index == last_byte >> PAGE_CACHE_SHIFT) {
@@ -2737,18 +2688,15 @@ static int __do_readpage(struct extent_io_tree *tree,
 			kunmap_atomic(userpage);
 			set_extent_uptodate(tree, cur, cur + iosize - 1,
 					    &cached, GFP_NOFS);
-			if (!parent_locked)
-				unlock_extent_cached(tree, cur,
-						     cur + iosize - 1,
-						     &cached, GFP_NOFS);
+			unlock_extent_cached(tree, cur, cur + iosize - 1,
+					     &cached, GFP_NOFS);
 			break;
 		}
 		em = get_extent(inode, page, pg_offset, cur,
 				end - cur + 1, 0);
 		if (IS_ERR_OR_NULL(em)) {
 			SetPageError(page);
-			if (!parent_locked)
-				unlock_extent(tree, cur, end);
+			unlock_extent(tree, cur, end);
 			break;
 		}
 		extent_offset = cur - em->start;
@@ -2756,7 +2704,7 @@ static int __do_readpage(struct extent_io_tree *tree,
 		BUG_ON(end < cur);
 
 		if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags)) {
-			this_bio_flag |= EXTENT_BIO_COMPRESSED;
+			this_bio_flag = EXTENT_BIO_COMPRESSED;
 			extent_set_compress_type(&this_bio_flag,
 						 em->compress_type);
 		}
@@ -2800,8 +2748,7 @@ static int __do_readpage(struct extent_io_tree *tree,
 		if (test_range_bit(tree, cur, cur_end,
 				   EXTENT_UPTODATE, 1, NULL)) {
 			check_page_uptodate(tree, page);
-			if (!parent_locked)
-				unlock_extent(tree, cur, cur + iosize - 1);
+			unlock_extent(tree, cur, cur + iosize - 1);
 			cur = cur + iosize;
 			pg_offset += iosize;
 			continue;
@@ -2811,8 +2758,7 @@ static int __do_readpage(struct extent_io_tree *tree,
 		 */
 		if (block_start == EXTENT_MAP_INLINE) {
 			SetPageError(page);
-			if (!parent_locked)
-				unlock_extent(tree, cur, cur + iosize - 1);
+			unlock_extent(tree, cur, cur + iosize - 1);
 			cur = cur + iosize;
 			pg_offset += iosize;
 			continue;
@@ -2830,8 +2776,7 @@ static int __do_readpage(struct extent_io_tree *tree,
 			*bio_flags = this_bio_flag;
 		} else {
 			SetPageError(page);
-			if (!parent_locked)
-				unlock_extent(tree, cur, cur + iosize - 1);
+			unlock_extent(tree, cur, cur + iosize - 1);
 		}
 		cur = cur + iosize;
 		pg_offset += iosize;
@@ -2845,101 +2790,6 @@ out:
 	return 0;
 }
 
-static inline void __do_contiguous_readpages(struct extent_io_tree *tree,
-					     struct page *pages[], int nr_pages,
-					     u64 start, u64 end,
-					     get_extent_t *get_extent,
-					     struct bio **bio, int mirror_num,
-					     unsigned long *bio_flags, int rw)
-{
-	struct inode *inode;
-	struct btrfs_ordered_extent *ordered;
-	int index;
-
-	inode = pages[0]->mapping->host;
-	while (1) {
-		lock_extent(tree, start, end);
-		ordered = btrfs_lookup_ordered_range(inode, start,
-						     end - start + 1);
-		if (!ordered)
-			break;
-		unlock_extent(tree, start, end);
-		btrfs_start_ordered_extent(inode, ordered, 1);
-		btrfs_put_ordered_extent(ordered);
-	}
-
-	for (index = 0; index < nr_pages; index++) {
-		__do_readpage(tree, pages[index], get_extent, bio, mirror_num,
-			      bio_flags, rw);
-		page_cache_release(pages[index]);
-	}
-}
-
-static void __extent_readpages(struct extent_io_tree *tree,
-			       struct page *pages[],
-			       int nr_pages, get_extent_t *get_extent,
-			       struct bio **bio, int mirror_num,
-			       unsigned long *bio_flags, int rw)
-{
-	u64 start;
-	u64 end = 0;
-	u64 page_start;
-	int index;
-	int first_index;
-
-	for (index = 0; index < nr_pages; index++) {
-		page_start = page_offset(pages[index]);
-		if (!end) {
-			start = page_start;
-			end = start + PAGE_CACHE_SIZE - 1;
-			first_index = index;
-		} else if (end + 1 == page_start) {
-			end += PAGE_CACHE_SIZE;
-		} else {
-			__do_contiguous_readpages(tree, &pages[first_index],
-						  index - first_index, start,
-						  end, get_extent, bio,
-						  mirror_num, bio_flags, rw);
-			start = page_start;
-			end = start + PAGE_CACHE_SIZE - 1;
-			first_index = index;
-		}
-	}
-
-	if (end)
-		__do_contiguous_readpages(tree, &pages[first_index],
-					  index - first_index, start,
-					  end, get_extent, bio,
-					  mirror_num, bio_flags, rw);
-}
-
-static int __extent_read_full_page(struct extent_io_tree *tree,
-				   struct page *page,
-				   get_extent_t *get_extent,
-				   struct bio **bio, int mirror_num,
-				   unsigned long *bio_flags, int rw)
-{
-	struct inode *inode = page->mapping->host;
-	struct btrfs_ordered_extent *ordered;
-	u64 start = page_offset(page);
-	u64 end = start + PAGE_CACHE_SIZE - 1;
-	int ret;
-
-	while (1) {
-		lock_extent(tree, start, end);
-		ordered = btrfs_lookup_ordered_extent(inode, start);
-		if (!ordered)
-			break;
-		unlock_extent(tree, start, end);
-		btrfs_start_ordered_extent(inode, ordered, 1);
-		btrfs_put_ordered_extent(ordered);
-	}
-
-	ret = __do_readpage(tree, page, get_extent, bio, mirror_num, bio_flags,
-			    rw);
-	return ret;
-}
-
 int extent_read_full_page(struct extent_io_tree *tree, struct page *page,
 			    get_extent_t *get_extent, int mirror_num)
 {
@@ -2948,20 +2798,6 @@ int extent_read_full_page(struct extent_io_tree *tree, struct page *page,
 	int ret;
 
 	ret = __extent_read_full_page(tree, page, get_extent, &bio, mirror_num,
-				      &bio_flags, READ);
-	if (bio)
-		ret = submit_one_bio(READ, bio, mirror_num, bio_flags);
-	return ret;
-}
-
-int extent_read_full_page_nolock(struct extent_io_tree *tree, struct page *page,
-				 get_extent_t *get_extent, int mirror_num)
-{
-	struct bio *bio = NULL;
-	unsigned long bio_flags = EXTENT_BIO_PARENT_LOCKED;
-	int ret;
-
-	ret = __do_readpage(tree, page, get_extent, &bio, mirror_num,
 				      &bio_flags, READ);
 	if (bio)
 		ret = submit_one_bio(READ, bio, mirror_num, bio_flags);
@@ -3816,6 +3652,7 @@ int extent_readpages(struct extent_io_tree *tree,
 	unsigned long bio_flags = 0;
 	struct page *pagepool[16];
 	struct page *page;
+	int i = 0;
 	int nr = 0;
 
 	for (page_idx = 0; page_idx < nr_pages; page_idx++) {
@@ -3832,13 +3669,18 @@ int extent_readpages(struct extent_io_tree *tree,
 		pagepool[nr++] = page;
 		if (nr < ARRAY_SIZE(pagepool))
 			continue;
-		__extent_readpages(tree, pagepool, nr, get_extent,
-				   &bio, 0, &bio_flags, READ);
+		for (i = 0; i < nr; i++) {
+			__extent_read_full_page(tree, pagepool[i], get_extent,
+					&bio, 0, &bio_flags, READ);
+			page_cache_release(pagepool[i]);
+		}
 		nr = 0;
 	}
-	if (nr)
-		__extent_readpages(tree, pagepool, nr, get_extent,
-				   &bio, 0, &bio_flags, READ);
+	for (i = 0; i < nr; i++) {
+		__extent_read_full_page(tree, pagepool[i], get_extent,
+					&bio, 0, &bio_flags, READ);
+		page_cache_release(pagepool[i]);
+	}
 
 	BUG_ON(!list_empty(pages));
 	if (bio)
