@@ -10,7 +10,6 @@
  */
 #include <linux/module.h>
 #include <linux/console.h>
-#include <linux/capability.h>
 #include <drm/drmP.h>
 
 #include "cirrus_drv.h"
@@ -120,12 +119,10 @@ static int __init cirrus_init(void)
 		return -EINVAL;
 #endif
 
-#ifdef CAP_COMPROMISE_KERNEL
-	if (capable(CAP_COMPROMISE_KERNEL) && cirrus_modeset == -1) {
+	if (!secure_modules() && cirrus_modeset == -1) {
 		printk(KERN_INFO "This driver is only used in secure boot mode as default\n");
 		return -EINVAL;
 	}
-#endif
 
 	if (cirrus_modeset == 0)
 		return -EINVAL;
