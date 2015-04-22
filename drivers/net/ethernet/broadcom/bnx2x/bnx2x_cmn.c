@@ -3205,7 +3205,7 @@ static u16 bnx2x_tx_split(struct bnx2x *bp,
 
 #define bswab32(b32) ((__force __le32) swab32((__force __u32) (b32)))
 #define bswab16(b16) ((__force __le16) swab16((__force __u16) (b16)))
-static inline __le16 bnx2x_csum_fix(unsigned char *t_header, u16 csum, s8 fix)
+static __le16 bnx2x_csum_fix(unsigned char *t_header, u16 csum, s8 fix)
 {
 	__sum16 tsum = (__force __sum16) csum;
 
@@ -3220,7 +3220,7 @@ static inline __le16 bnx2x_csum_fix(unsigned char *t_header, u16 csum, s8 fix)
 	return bswab16(tsum);
 }
 
-static inline u32 bnx2x_xmit_type(struct bnx2x *bp, struct sk_buff *skb)
+static u32 bnx2x_xmit_type(struct bnx2x *bp, struct sk_buff *skb)
 {
 	u32 rc;
 
@@ -3657,6 +3657,20 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			hlen = bnx2x_set_pbd_csum_e2(bp, skb,
 						     &pbd_e2_parsing_data,
 						     xmit_type);
+
+		/* Add the macs to the parsing BD this is a vf */
+		if (IS_VF(bp)) {
+			/* override GRE parameters in BD */
+			bnx2x_set_fw_mac_addr(&pbd_e2->data.mac_addr.src_hi,
+					      &pbd_e2->data.mac_addr.src_mid,
+					      &pbd_e2->data.mac_addr.src_lo,
+					      eth->h_source);
+
+			bnx2x_set_fw_mac_addr(&pbd_e2->data.mac_addr.dst_hi,
+					      &pbd_e2->data.mac_addr.dst_mid,
+					      &pbd_e2->data.mac_addr.dst_lo,
+					      eth->h_dest);
+		}
 
 		SET_FLAG(pbd_e2_parsing_data,
 			 ETH_TX_PARSE_BD_E2_ETH_ADDR_TYPE, mac_type);
