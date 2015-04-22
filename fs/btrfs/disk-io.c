@@ -1470,7 +1470,7 @@ struct btrfs_root *btrfs_read_fs_root_no_radix(struct btrfs_root *tree_root,
 	if (ret == 0) {
 		l = path->nodes[0];
 		slot = path->slots[0];
-		btrfs_read_root_item(tree_root, l, slot, &root->root_item);
+		btrfs_read_root_item(l, slot, &root->root_item);
 		memcpy(&root->root_key, location, sizeof(*location));
 	}
 	btrfs_free_path(path);
@@ -2397,6 +2397,9 @@ int open_ctree(struct super_block *sb,
 	features |= BTRFS_FEATURE_INCOMPAT_MIXED_BACKREF;
 	if (tree_root->fs_info->compress_type == BTRFS_COMPRESS_LZO)
 		features |= BTRFS_FEATURE_INCOMPAT_COMPRESS_LZO;
+
+	if (features & BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA)
+		printk(KERN_ERR "btrfs: has skinny extents\n");
 
 	/*
 	 * flag our filesystem as having big metadata blocks if
