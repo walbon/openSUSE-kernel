@@ -402,6 +402,33 @@ static const struct dmi_system_id rtc_quirks[] __initconst = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "4852570"),
 		},
 	},
+	/* https://bugzilla.novell.com/show_bug.cgi?id=927262 */
+	{
+		.callback = set_alarm_disable_quirk,
+		.ident    = "TGCS POS",
+		.matches  = {
+			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "6140"),
+		},
+	},
+	/* https://bugzilla.novell.com/show_bug.cgi?id=927262 */
+	{
+		.callback = set_alarm_disable_quirk,
+		.ident    = "TGCS POS",
+		.matches  = {
+			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "4900"),
+		},
+	},
+	/* https://bugzilla.novell.com/show_bug.cgi?id=927262 */
+	{
+		.callback = set_alarm_disable_quirk,
+		.ident    = "TGCS POS",
+		.matches  = {
+			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "4810"),
+		},
+	},
 	/* https://bugzilla.novell.com/show_bug.cgi?id=812592 */
 	{
 		.callback = set_alarm_disable_quirk,
