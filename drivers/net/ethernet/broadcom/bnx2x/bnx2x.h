@@ -1416,6 +1416,7 @@ struct bnx2x {
 #define BC_SUPPORTS_DCBX_MSG_NON_PMF	(1 << 21)
 #define IS_VF_FLAG			(1 << 22)
 #define BC_SUPPORTS_RMMOD_CMD		(1 << 23)
+#define HAS_PHYS_PORT_ID		(1 << 24)
 #define AER_ENABLED			(1 << 25)
 #define PTP_SUPPORTED			(1 << 26)
 #define TX_TIMESTAMPING_EN		(1 << 27)
@@ -1754,6 +1755,8 @@ struct bnx2x {
 	u32 dump_preset_idx;
 	bool					stats_started;
 	struct semaphore			stats_sema;
+
+	u8					phys_port_id[ETH_ALEN];
 
 	/* PTP related context */
 	struct ptp_clock *ptp_clock;
