@@ -399,6 +399,8 @@ int __remove_pages(struct zone *zone, unsigned long phys_start_pfn,
 		pr_warn("Unable to release resource <%016llx-%016llx> (%d)\n",
 				start, start + size - 1, ret);
 
+	release_mem_region(phys_start_pfn << PAGE_SHIFT, nr_pages * PAGE_SIZE);
+
 	sections_to_remove = nr_pages / PAGES_PER_SECTION;
 	for (i = 0; i < sections_to_remove; i++) {
 		unsigned long pfn = phys_start_pfn + i*PAGES_PER_SECTION;
