@@ -1257,7 +1257,7 @@ static void bnx2x_stats_update(struct bnx2x *bp)
 
 	if (IS_PF(bp)) {
 		if (*stats_comp != DMAE_COMP_VAL)
-			return;
+			goto out;
 
 		if (bp->port.pmf)
 			bnx2x_hw_stats_update(bp);
@@ -1267,9 +1267,8 @@ static void bnx2x_stats_update(struct bnx2x *bp)
 				BNX2X_ERR("storm stats were not updated for 3 times\n");
 				bnx2x_panic();
 			}
-			return;
+			goto out;
 		}
-		goto out;
 	} else {
 		/* vf doesn't collect HW statistics, and doesn't get completions
 		 * perform only update
@@ -1282,7 +1281,7 @@ static void bnx2x_stats_update(struct bnx2x *bp)
 
 	/* vf is done */
 	if (IS_VF(bp))
-		return;
+		goto out;
 
 	if (netif_msg_timer(bp)) {
 		struct bnx2x_eth_stats *estats = &bp->eth_stats;
