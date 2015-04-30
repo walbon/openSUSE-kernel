@@ -1028,6 +1028,7 @@ int rndis_filter_device_add(struct hv_device *dev,
 
 	/* Initialize the rndis device */
 	net_device = hv_get_drvdata(dev);
+	net_device->max_chn = 1;
 	net_device->num_chn = 1;
 
 	net_device->extension = rndis_device;
@@ -1095,6 +1096,7 @@ int rndis_filter_device_add(struct hv_device *dev,
 	if (ret || rsscap.num_recv_que < 2)
 		goto out;
 
+	net_device->max_chn = rsscap.num_recv_que;
 	net_device->num_chn = (num_online_cpus() < rsscap.num_recv_que) ?
 			       num_online_cpus() : rsscap.num_recv_que;
 	if (net_device->num_chn == 1)
@@ -1136,13 +1138,13 @@ int rndis_filter_device_add(struct hv_device *dev,
 	net_device->num_chn = 1 +
 		init_packet->msg.v5_msg.subchn_comp.num_subchannels;
 
-	vmbus_are_subchannels_present(dev->channel);
-
 	ret = rndis_filter_set_rss_param(rndis_device, net_device->num_chn);
 
 out:
-	if (ret)
+	if (ret) {
+		net_device->max_chn = 1;
 		net_device->num_chn = 1;
+	}
 	return 0; /* return 0 because primary channel can be used alone */
 
 err_dev_remv:
