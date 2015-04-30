@@ -901,11 +901,15 @@ cleanup:
 
 static void __exit vmbus_exit(void)
 {
+	int cpu;
+
 	vmbus_connection.conn_state = DISCONNECTED;
 	free_irq(irq, hv_acpi_dev);
 	vmbus_free_channels();
 	bus_unregister(&hv_bus);
 	hv_cleanup();
+	for_each_online_cpu(cpu)
+		smp_call_function_single(cpu, hv_synic_cleanup, NULL, 1);
 	acpi_bus_unregister_driver(&vmbus_acpi_driver);
 	hv_cpu_hotplug_quirk(false);
 	vmbus_disconnect();
