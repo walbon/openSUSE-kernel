@@ -904,6 +904,7 @@ static void __exit vmbus_exit(void)
 	int cpu;
 
 	vmbus_connection.conn_state = DISCONNECTED;
+	hv_synic_clockevents_cleanup();
 	free_irq(irq, hv_acpi_dev);
 	vmbus_free_channels();
 	bus_unregister(&hv_bus);
