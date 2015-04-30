@@ -659,33 +659,37 @@ static unsigned int copy_from_bounce_buffer(struct scatterlist *orig_sgl,
 	unsigned long bounce_addr = 0;
 	unsigned long dest_addr = 0;
 	unsigned long flags;
+	struct scatterlist *cur_dest_sgl;
+	struct scatterlist *cur_src_sgl;
 
 	local_irq_save(flags);
-
+	cur_dest_sgl = orig_sgl;
+	cur_src_sgl = bounce_sgl;
 	for (i = 0; i < orig_sgl_count; i++) {
-		dest_addr = (unsigned long)kmap_atomic(sg_page((&orig_sgl[i])),
-					KM_IRQ0) + orig_sgl[i].offset;
+		dest_addr = (unsigned long)
+				kmap_atomic(sg_page(cur_dest_sgl), KM_IRQ0) +
+				cur_dest_sgl->offset;
 		dest = dest_addr;
-		destlen = orig_sgl[i].length;
+		destlen = cur_dest_sgl->length;
 
 		if (bounce_addr == 0)
-			bounce_addr =
-			(unsigned long)kmap_atomic(sg_page((&bounce_sgl[j])),
+			bounce_addr = (unsigned long)kmap_atomic(
+							sg_page(cur_src_sgl),
 							KM_IRQ0);
 
 		while (destlen) {
-			src = bounce_addr + bounce_sgl[j].offset;
-			srclen = bounce_sgl[j].length - bounce_sgl[j].offset;
+			src = bounce_addr + cur_src_sgl->offset;
+			srclen = cur_src_sgl->length - cur_src_sgl->offset;
 
 			copylen = min(srclen, destlen);
 			memcpy((void *)dest, (void *)src, copylen);
 
 			total_copied += copylen;
-			bounce_sgl[j].offset += copylen;
+			cur_src_sgl->offset += copylen;
 			destlen -= copylen;
 			dest += copylen;
 
-			if (bounce_sgl[j].offset == bounce_sgl[j].length) {
+			if (cur_src_sgl->offset == cur_src_sgl->length) {
 				/* full */
 				kunmap_atomic((void *)bounce_addr, KM_IRQ0);
 				j++;
@@ -702,25 +706,29 @@ static unsigned int copy_from_bounce_buffer(struct scatterlist *orig_sgl,
 					 * We are done; cleanup and return.
 					 */
 					kunmap_atomic((void *)(dest_addr -
-							orig_sgl[i].offset),
+							cur_dest_sgl->offset),
 							KM_IRQ0);
 					local_irq_restore(flags);
 					return total_copied;
 				}
 
 				/* if we need to use another bounce buffer */
-				if (destlen || i != orig_sgl_count - 1)
-					bounce_addr =
-					(unsigned long)kmap_atomic(
-					sg_page((&bounce_sgl[j])), KM_IRQ0);
+				if (destlen || i != orig_sgl_count - 1) {
+					cur_src_sgl = sg_next(cur_src_sgl);
+					bounce_addr = (unsigned long)
+							kmap_atomic(
+							sg_page(cur_src_sgl),
+							KM_IRQ0);
+				}
 			} else if (destlen == 0 && i == orig_sgl_count - 1) {
 				/* unmap the last bounce that is < PAGE_SIZE */
 				kunmap_atomic((void *)bounce_addr, KM_IRQ0);
 			}
 		}
 
-		kunmap_atomic((void *)(dest_addr - orig_sgl[i].offset),
+		kunmap_atomic((void *)(dest_addr - cur_dest_sgl->offset),
 			      KM_IRQ0);
+		cur_dest_sgl = sg_next(cur_dest_sgl);
 	}
 
 	local_irq_restore(flags);
@@ -741,52 +749,59 @@ static unsigned int copy_to_bounce_buffer(struct scatterlist *orig_sgl,
 	unsigned long bounce_addr = 0;
 	unsigned long src_addr = 0;
 	unsigned long flags;
+	struct scatterlist *cur_src_sgl;
+	struct scatterlist *cur_dest_sgl;
 
 	local_irq_save(flags);
 
+	cur_src_sgl = orig_sgl;
+	cur_dest_sgl = bounce_sgl;
+
 	for (i = 0; i < orig_sgl_count; i++) {
-		src_addr = (unsigned long)kmap_atomic(sg_page((&orig_sgl[i])),
-				KM_IRQ0) + orig_sgl[i].offset;
+		src_addr = (unsigned long)kmap_atomic(sg_page(cur_src_sgl),
+				KM_IRQ0) + cur_src_sgl->offset;
 		src = src_addr;
-		srclen = orig_sgl[i].length;
+		srclen = cur_src_sgl->length;
 
 		if (bounce_addr == 0)
 			bounce_addr =
-			(unsigned long)kmap_atomic(sg_page((&bounce_sgl[j])),
+			(unsigned long)kmap_atomic(sg_page(cur_dest_sgl),
 						KM_IRQ0);
 
 		while (srclen) {
 			/* assume bounce offset always == 0 */
-			dest = bounce_addr + bounce_sgl[j].length;
-			destlen = PAGE_SIZE - bounce_sgl[j].length;
+			dest = bounce_addr + cur_dest_sgl->length;
+			destlen = PAGE_SIZE - cur_dest_sgl->length;
 
 			copylen = min(srclen, destlen);
 			memcpy((void *)dest, (void *)src, copylen);
 
 			total_copied += copylen;
-			bounce_sgl[j].length += copylen;
+			cur_dest_sgl->length += copylen;
 			srclen -= copylen;
 			src += copylen;
 
-			if (bounce_sgl[j].length == PAGE_SIZE) {
+			if (cur_dest_sgl->length == PAGE_SIZE) {
 				/* full..move to next entry */
 				kunmap_atomic((void *)bounce_addr, KM_IRQ0);
+				bounce_addr = 0;
 				j++;
-
-				/* if we need to use another bounce buffer */
-				if (srclen || i != orig_sgl_count - 1)
-					bounce_addr =
-					(unsigned long)kmap_atomic(
-					sg_page((&bounce_sgl[j])), KM_IRQ0);
-
-			} else if (srclen == 0 && i == orig_sgl_count - 1) {
-				/* unmap the last bounce that is < PAGE_SIZE */
-				kunmap_atomic((void *)bounce_addr, KM_IRQ0);
 			}
+
+			/* if we need to use another bounce buffer */
+			if (srclen && bounce_addr == 0) {
+				cur_dest_sgl = sg_next(cur_dest_sgl);
+				bounce_addr = (unsigned long)kmap_atomic(sg_page(cur_dest_sgl), KM_IRQ0);
+			}
+
 		}
 
-		kunmap_atomic((void *)(src_addr - orig_sgl[i].offset), KM_IRQ0);
+		kunmap_atomic((void *)(src_addr - cur_src_sgl->offset), KM_IRQ0);
+		cur_src_sgl = sg_next(cur_src_sgl);
 	}
+
+	if (bounce_addr)
+		kunmap_atomic((void *)bounce_addr, KM_IRQ0);
 
 	local_irq_restore(flags);
 
@@ -1618,6 +1633,7 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
 	unsigned int sg_count = 0;
 	struct vmscsi_request *vm_srb;
 	struct stor_mem_pools *memp = scmnd->device->hostdata;
+	struct scatterlist *cur_sgl;
 	struct vmbus_packet_mpb_array  *payload;
 	u32 payload_sz;
 	u32 length;
@@ -1742,9 +1758,12 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
 		payload->range.len = length;
 		payload->range.offset = sgl[0].offset;
 
-		for (i = 0; i < sg_count; i++)
+		cur_sgl = sgl;
+		for (i = 0; i < sg_count; i++) {
 			payload->range.pfn_array[i] =
-				page_to_pfn(sg_page((&sgl[i])));
+				page_to_pfn(sg_page((cur_sgl)));
+			cur_sgl = sg_next(cur_sgl);
+		}
 
 	} else if (scsi_sglist(scmnd)) {
 		payload->range.len = length;
