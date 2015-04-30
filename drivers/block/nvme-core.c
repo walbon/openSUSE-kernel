@@ -43,6 +43,8 @@
 #include <scsi/sg.h>
 #include <asm-generic/io-64-nonatomic-lo-hi.h>
 
+#include <trace/events/block.h>
+
 #define NVME_Q_DEPTH 1024
 #define SQ_SIZE(depth)		(depth * sizeof(struct nvme_command))
 #define CQ_SIZE(depth)		(depth * sizeof(struct nvme_completion))
@@ -491,10 +493,11 @@ static void bio_completion(struct nvme_queue *nvmeq, void *ctx,
 		nvme_end_io_acct(bio, iod->start_time);
 	}
 	nvme_free_iod(nvmeq->dev, iod);
-	if (status)
-		bio_endio(bio, error);
-	else
-		bio_endio(bio, 0);
+	if (!status)
+		error = 0;
+
+	trace_block_bio_complete(bdev_get_queue(bio->bi_bdev), bio, error);
+	bio_endio(bio, error);
 }
 
 /* length is in bytes.  gfp flags indicates whether we may sleep. */
@@ -671,6 +674,7 @@ static int nvme_split_and_submit(struct bio *bio, struct nvme_queue *nvmeq,
 	if (!bp)
 		return -ENOMEM;
 
+	trace_block_split(bdev_get_queue(bio->bi_bdev), bio, offset);
 	if (!waitqueue_active(&nvmeq->sq_full))
 		add_wait_queue(&nvmeq->sq_full, &nvmeq->sq_cong_wait);
 	bio_list_add(&nvmeq->sq_cong, &bp->b1);

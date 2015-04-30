@@ -38,6 +38,8 @@
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_bio_remap);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_rq_remap);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_bio_complete);
+EXPORT_TRACEPOINT_SYMBOL_GPL(block_split);
+EXPORT_TRACEPOINT_SYMBOL_GPL(block_unplug);
 
 static int __make_request(struct request_queue *q, struct bio *bio);
 
