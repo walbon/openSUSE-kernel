@@ -113,6 +113,8 @@ enum {
 #define	IPOIB_OP_CM     (0)
 #endif
 
+#define IPOIB_QPN_MASK ((__force u32) cpu_to_be32(0xFFFFFF))
+
 /* structs */
 
 struct ipoib_header {
@@ -262,7 +264,10 @@ struct ipoib_ethtool_st {
 	u16     max_coalesced_frames;
 };
 
+struct ipoib_neigh_table;
+
 struct ipoib_neigh_hash {
+	struct ipoib_neigh_table       *ntbl;
 	struct ipoib_neigh __rcu      **buckets;
 	struct rcu_head			rcu;
 	u32				mask;
@@ -271,9 +276,9 @@ struct ipoib_neigh_hash {
 
 struct ipoib_neigh_table {
 	struct ipoib_neigh_hash __rcu  *htbl;
-	rwlock_t			rwlock;
 	atomic_t			entries;
 	struct completion		flushed;
+	struct completion		deleted;
 };
 
 /*
