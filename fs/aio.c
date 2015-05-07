@@ -449,7 +449,7 @@ static struct kiocb *__aio_get_req(struct kioctx *ctx)
 	req->ki_flags = 0;
 	req->ki_users = 2;
 	req->ki_key = 0;
-	req->ki_ctx = (unsigned long)ctx;
+	req->ki_ctx = ctx;
 	req->ki_cancel = NULL;
 	req->ki_retry = NULL;
 	req->ki_dtor = NULL;
