@@ -293,7 +293,7 @@ xfs_file_aio_read(
 
 	BUG_ON(iocb->ki_pos != pos);
 
-	if (unlikely(file->f_flags & O_DIRECT))
+	if (unlikely(kiocb_is_direct(iocb)))
 		ioflags |= IO_ISDIRECT;
 	if (file->f_mode & FMODE_NOCMTIME)
 		ioflags |= IO_INVIS;
@@ -729,12 +729,13 @@ out_lock:
  */
 STATIC ssize_t
 xfs_file_aio_write_checks(
-	struct file		*file,
+	struct kiocb		*iocb,
 	loff_t			*pos,
 	size_t			*count,
 	int			*iolock,
 	int			*eventsent)
 {
+	struct file		*file = iocb->ki_filp;
 	struct inode		*inode = file->f_mapping->host;
 	struct xfs_inode	*ip = XFS_I(inode);
 	xfs_fsize_t		new_size;
@@ -742,7 +743,7 @@ xfs_file_aio_write_checks(
 
 	xfs_rw_ilock(ip, XFS_ILOCK_EXCL);
 start:
-	error = generic_write_checks(file, pos, count, S_ISBLK(inode->i_mode));
+	error = generic_write_checks2(iocb, pos, count, S_ISBLK(inode->i_mode));
 	if (error) {
 		xfs_rw_iunlock(ip, XFS_ILOCK_EXCL | *iolock);
 		*iolock = 0;
@@ -777,7 +778,7 @@ start:
 		 * event prevents another call to XFS_SEND_DATA, which is
 		 * what allows the size to change in the first place.
 		 */
-		if ((file->f_flags & O_APPEND) && *pos != ip->i_size)
+		if (kiocb_is_append(iocb) && *pos != ip->i_size)
 			goto start;
 	}
 
@@ -872,7 +873,7 @@ xfs_file_dio_aio_write(
 		*iolock = XFS_IOLOCK_SHARED;
 	xfs_rw_ilock(ip, *iolock);
 
-	ret = xfs_file_aio_write_checks(file, &pos, &count, iolock, eventsent);
+	ret = xfs_file_aio_write_checks(iocb, &pos, &count, iolock, eventsent);
 	if (ret)
 		return ret;
 
@@ -935,7 +936,7 @@ xfs_file_buffered_aio_write(
 	*iolock = XFS_IOLOCK_EXCL;
 	xfs_rw_ilock(ip, *iolock);
 
-	ret = xfs_file_aio_write_checks(file, &pos, &count, iolock, eventsent);
+	ret = xfs_file_aio_write_checks(iocb, &pos, &count, iolock, eventsent);
 	if (ret)
 		return ret;
 
@@ -994,7 +995,7 @@ start:
 	if (XFS_FORCED_SHUTDOWN(ip->i_mount))
 		return -EIO;
 
-	if (unlikely(file->f_flags & O_DIRECT))
+	if (unlikely(kiocb_is_direct(iocb)))
 		ret = xfs_file_dio_aio_write(iocb, iovp, nr_segs, pos,
 						ocount, &iolock, &eventsent);
 	else
