@@ -256,9 +256,11 @@ xfs_alloc_fix_len(
 	if (k == args->mod)
 		return;
 	if (k > args->mod) {
+		/* casts to (int) catch length underflows */
 		if ((int)(rlen = rlen - k - args->mod) < (int)args->minlen)
 			return;
 	} else {
+		/* casts to (int) catch length underflows */
 		if ((int)(rlen = rlen - args->prod - (args->mod - k)) <
 		    (int)args->minlen)
 			return;
@@ -287,7 +289,8 @@ xfs_alloc_fix_minleft(
 	if (diff >= 0)
 		return 1;
 	args->len += diff;		/* shrink the allocated space */
-	if (args->len >= args->minlen)
+	/* casts to (int) catch length underflows */
+	if ((int)args->len >= (int)args->minlen)
 		return 1;
 	args->agbno = NULLAGBLOCK;
 	return 0;
