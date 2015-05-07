@@ -6,7 +6,6 @@
 #include <linux/aio_abi.h>
 #include <linux/uio.h>
 #include <linux/rcupdate.h>
-#include <linux/fs.h>
 
 #include <asm/atomic.h>
 
@@ -128,15 +127,7 @@ struct kiocb {
 	struct eventfd_ctx	*ki_eventfd;
 };
 
-static inline int iocb_flags(struct file *file)
-{
-	int res = 0;
-	if (file->f_flags & O_APPEND)
-		res |= (1 << KIF_APPEND);
-	if (file->f_flags & O_DIRECT)
-		res |= (1 << KIF_DIRECT);
-	return res;
-}
+int iocb_flags(struct file *file);
 
 static inline bool kiocb_is_direct(struct kiocb *kiocb)
 {

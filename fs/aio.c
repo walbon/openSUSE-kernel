@@ -1903,3 +1903,14 @@ SYSCALL_DEFINE5(io_getevents, aio_context_t, ctx_id,
 	asmlinkage_protect(5, ret, ctx_id, min_nr, nr, events, timeout);
 	return ret;
 }
+
+int iocb_flags(struct file *file)
+{
+	int res = 0;
+	if (file->f_flags & O_APPEND)
+		res |= (1 << KIF_APPEND);
+	if (file->f_flags & O_DIRECT)
+		res |= (1 << KIF_DIRECT);
+	return res;
+}
+EXPORT_SYMBOL(iocb_flags);
