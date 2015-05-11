@@ -2,10 +2,39 @@
  * Copyright IBM Corp. 2011
  * Author(s): Jan Glauber <jang@linux.vnet.ibm.com>
  */
+#include <linux/hugetlb.h>
 #include <linux/module.h>
 #include <linux/mm.h>
-#include <linux/hugetlb.h>
 #include <asm/pgtable.h>
+#include <asm/page.h>
+
+static inline unsigned long sske_frame(unsigned long addr, unsigned char skey)
+{
+	asm volatile(".insn rrf,0xb22b0000,%[skey],%[addr],9,0"
+		     : [addr] "+a" (addr) : [skey] "d" (skey));
+	return addr;
+}
+
+void storage_key_init_range(unsigned long start, unsigned long end)
+{
+	unsigned long boundary, size;
+
+	while (start < end) {
+		if (MACHINE_HAS_EDAT1) {
+			/* set storage keys for a 1MB frame */
+			size = 1UL << 20;
+			boundary = (start + size) & ~(size - 1);
+			if (boundary <= end) {
+				do {
+					start = sske_frame(start, PAGE_DEFAULT_KEY);
+				} while (start < boundary);
+				continue;
+			}
+		}
+		page_set_storage_key(start, PAGE_DEFAULT_KEY, 0);
+		start += PAGE_SIZE;
+	}
+}
 
 static void change_page_attr(unsigned long addr, int numpages,
 			     pte_t (*set) (pte_t))

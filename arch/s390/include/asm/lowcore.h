@@ -142,7 +142,12 @@ struct _lowcore {
 	/* Interrupt response block */
 	__u8	irb[64];			/* 0x0300 */
 
+#ifndef __GENKSYMS__
+	__u32	spinlock_lockval;		/* 0x0340 */
+	__u8	pad_0x0344[0x0e00-0x0344];	/* 0x0344 */
+#else
 	__u8	pad_0x0340[0x0e00-0x0340];	/* 0x0340 */
+#endif
 
 	/*
 	 * 0xe00 contains the address of the IPL Parameter Information
@@ -281,7 +286,12 @@ struct _lowcore {
 	/* Per cpu primary space access list */
 	__u32	paste[16];			/* 0x03c0 */
 
+#ifndef __GENKSYMS__
+	__u32	spinlock_lockval;		/* 0x0400 */
+	__u8	pad_0x0404[0x0e00-0x0404];	/* 0x0404 */
+#else
 	__u8	pad_0x0400[0x0e00-0x0400];	/* 0x0400 */
+#endif
 
 	/*
 	 * 0xe00 contains the address of the IPL Parameter Information

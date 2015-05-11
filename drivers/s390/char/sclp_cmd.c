@@ -19,8 +19,9 @@
 #include <linux/memory.h>
 #include <linux/platform_device.h>
 #include <asm/chpid.h>
-#include <asm/sclp.h>
 #include <asm/setup.h>
+#include <asm/page.h>
+#include <asm/sclp.h>
 
 #include "sclp.h"
 
@@ -389,7 +390,15 @@ out:
 
 static int sclp_assign_storage(u16 rn)
 {
-	return do_assign_storage(0x000d0001, rn);
+	unsigned long long start;
+	int rc;
+
+	rc = do_assign_storage(0x000d0001, rn);
+	if (rc)
+		return rc;
+	start = rn2addr(rn);
+	storage_key_init_range(start, start + rzm);
+	return 0;
 }
 
 static int sclp_unassign_storage(u16 rn)

@@ -703,6 +703,7 @@ int __cpuinit __cpu_up(unsigned int cpu)
 	cpu_lowcore->percpu_offset = __per_cpu_offset[cpu];
 	cpu_lowcore->current_task = (unsigned long) idle;
 	cpu_lowcore->cpu_nr = cpu;
+	cpu_lowcore->spinlock_lockval = arch_spin_lockval(cpu);
 	cpu_lowcore->kernel_asce = S390_lowcore.kernel_asce;
 	cpu_lowcore->machine_flags = S390_lowcore.machine_flags;
 	cpu_lowcore->ftrace_func = S390_lowcore.ftrace_func;
@@ -855,6 +856,7 @@ void __init smp_cpus_done(unsigned int max_cpus)
 void __init smp_setup_processor_id(void)
 {
 	S390_lowcore.cpu_nr = 0;
+	S390_lowcore.spinlock_lockval = arch_spin_lockval(0);
 	__cpu_logical_map[0] = stap();
 }
 

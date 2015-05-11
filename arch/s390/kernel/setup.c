@@ -427,6 +427,11 @@ setup_lowcore(void)
 	lc->last_update_timer = S390_lowcore.last_update_timer;
 	lc->last_update_clock = S390_lowcore.last_update_clock;
 	lc->ftrace_func = S390_lowcore.ftrace_func;
+
+#ifdef CONFIG_SMP
+	lc->spinlock_lockval = arch_spin_lockval(0);
+#endif
+
 	set_prefix((u32)(unsigned long) lc);
 	lowcore_ptr[0] = lc;
 }
@@ -876,9 +881,7 @@ setup_memory(void)
 			continue;
 		add_active_range(0, start_chunk, end_chunk);
 		pfn = max(start_chunk, start_pfn);
-		for (; pfn < end_chunk; pfn++)
-			page_set_storage_key(PFN_PHYS(pfn),
-					     PAGE_DEFAULT_KEY, 0);
+		storage_key_init_range(PFN_PHYS(pfn), PFN_PHYS(end_chunk));
 	}
 
 	psw_set_key(PAGE_DEFAULT_KEY);
