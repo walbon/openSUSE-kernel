@@ -679,9 +679,12 @@ void native_machine_shutdown(void)
 	 */
 	if (!LKDB_IS_RUNNING())
 #endif	/* defined(CONFIG_X86_32) && defined(CONFIG_KDB) */
-	/* O.K Now that I'm on the appropriate processor,
-	 * stop all of the others.
+	/*
+	 * O.K Now that I'm on the appropriate processor, stop all of the
+	 * others. Also disable the local irq to not receive the per-cpu
+	 * timer interrupt which may trigger scheduler's load balance.
 	 */
+	local_irq_disable();
 	stop_other_cpus();
 #endif
 
