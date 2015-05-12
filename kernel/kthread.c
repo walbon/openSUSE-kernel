@@ -16,7 +16,9 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/freezer.h>
+#ifndef __GENKSYMS__
 #include <linux/hardirq.h>
+#endif
 #include <trace/events/sched.h>
 
 static DEFINE_SPINLOCK(kthread_create_lock);
