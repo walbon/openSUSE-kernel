@@ -137,7 +137,7 @@ static ssize_t udf_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 
 	down_write(&iinfo->i_data_sem);
 	if (iinfo->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB) {
-		if (file->f_flags & O_APPEND)
+		if (kiocb_is_append(iocb))
 			pos = inode->i_size;
 		else
 			pos = ppos;

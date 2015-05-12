@@ -34,6 +34,8 @@ struct kioctx;
 /* #define KIF_LOCKED		0 */
 #define KIF_KICKED		1
 #define KIF_CANCELLED		2
+#define KIF_APPEND		3
+#define KIF_DIRECT		4
 
 #define kiocbTryLock(iocb)	test_and_set_bit(KIF_LOCKED, &(iocb)->ki_flags)
 #define kiocbTryKick(iocb)	test_and_set_bit(KIF_KICKED, &(iocb)->ki_flags)
@@ -125,11 +127,23 @@ struct kiocb {
 	struct eventfd_ctx	*ki_eventfd;
 };
 
+int iocb_flags(struct file *file);
+
+static inline bool kiocb_is_direct(struct kiocb *kiocb)
+{
+	return kiocb->ki_flags & (1 << KIF_DIRECT);
+}
+
+static inline bool kiocb_is_append(struct kiocb *kiocb)
+{
+	return kiocb->ki_flags & (1 << KIF_APPEND);
+}
+
 #define is_sync_kiocb(iocb)	((iocb)->ki_key == KIOCB_SYNC_KEY)
 #define init_sync_kiocb(x, filp)			\
 	do {						\
 		struct task_struct *tsk = current;	\
-		(x)->ki_flags = 0;			\
+		(x)->ki_flags = filp ? iocb_flags(filp) : 0; \
 		(x)->ki_users = 1;			\
 		(x)->ki_key = KIOCB_SYNC_KEY;		\
 		(x)->ki_filp = (filp);			\
