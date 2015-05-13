@@ -1347,7 +1347,7 @@ static struct sched_param fifo_param, normal_param;
 static inline void kworker_set_sched_params(struct task_struct *worker)
 {
 	int prio = fifo_param.sched_priority;
-	if (!prio)
+	if (!prio || in_interrupt())
 		return;
 	if (worker->policy == SCHED_FIFO && worker->rt_priority == prio)
 		return;
@@ -1356,7 +1356,7 @@ static inline void kworker_set_sched_params(struct task_struct *worker)
 
 static inline void kworker_clr_sched_params(struct task_struct *worker)
 {
-	if (!fifo_param.sched_priority || !rt_task(worker))
+	if (in_interrupt() || !fifo_param.sched_priority || !rt_task(worker))
 		return;
 	sched_setscheduler_nocheck(worker, SCHED_NORMAL, &normal_param);
 }

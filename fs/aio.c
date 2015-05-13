@@ -1647,6 +1647,11 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 		fput(file);
 		return -EAGAIN;
 	}
+	/*
+	 * req isn't visible yet so we can modify ki_flags with non-atomic
+	 * ops
+	 */
+	req->ki_flags |= iocb_flags(file);
 	req->ki_filp = file;
 	if (iocb->aio_flags & IOCB_FLAG_RESFD) {
 		/*
@@ -1898,3 +1903,14 @@ SYSCALL_DEFINE5(io_getevents, aio_context_t, ctx_id,
 	asmlinkage_protect(5, ret, ctx_id, min_nr, nr, events, timeout);
 	return ret;
 }
+
+int iocb_flags(struct file *file)
+{
+	int res = 0;
+	if (file->f_flags & O_APPEND)
+		res |= (1 << KIF_APPEND);
+	if (file->f_flags & O_DIRECT)
+		res |= (1 << KIF_DIRECT);
+	return res;
+}
+EXPORT_SYMBOL(iocb_flags);

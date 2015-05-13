@@ -16,6 +16,9 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/freezer.h>
+#ifndef __GENKSYMS__
+#include <linux/hardirq.h>
+#endif
 #include <trace/events/sched.h>
 
 static DEFINE_SPINLOCK(kthread_create_lock);
@@ -128,6 +131,8 @@ static struct sched_param fifo_param, normal_param;
 
 static inline void kthread_set_sched_params(struct task_struct *kthread)
 {
+	if (in_interrupt())
+		return;
 	if (!fifo_param.sched_priority) {
 		sched_setscheduler_nocheck(kthread, SCHED_NORMAL, &normal_param);
 		return;
@@ -137,7 +142,7 @@ static inline void kthread_set_sched_params(struct task_struct *kthread)
 
 static inline void kthread_clr_sched_params(struct task_struct *kthread)
 {
-	if (!rt_task(kthread) || !fifo_param.sched_priority)
+	if (in_interrupt() || !rt_task(kthread) || !fifo_param.sched_priority)
 		return;
 	sched_setscheduler_nocheck(kthread, SCHED_NORMAL, &normal_param);
 }
