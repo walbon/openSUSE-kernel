@@ -992,7 +992,7 @@ xfs_fs_write_inode(
 		 * of synchronous log foces dramatically.
 		 */
 		xfs_ioend_wait(ip);
-		error = xfs_log_dirty_inode(ip, NULL, 0);
+		error = xfs_log_dirty_inode(ip, NULL, 0, NULL);
 		if (error)
 			goto out;
 		return 0;
