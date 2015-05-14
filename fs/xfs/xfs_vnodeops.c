@@ -332,6 +332,9 @@ xfs_setattr(
 			 * do not wait the usual (long) time for writeout.
 			 */
 			xfs_iflags_set(ip, XFS_ITRUNCATED);
+
+			/* A truncate down always removes post-EOF blocks. */
+			xfs_inode_clear_eofblocks_tag(ip);
 		}
 	} else if (tp) {
 		xfs_trans_ijoin(tp, ip);
@@ -694,6 +697,8 @@ xfs_free_eofblocks(
 		} else {
 			error = xfs_trans_commit(tp,
 						XFS_TRANS_RELEASE_LOG_RES);
+			if (!error)
+				xfs_inode_clear_eofblocks_tag(ip);
 		}
 		if (!(flags & XFS_FREE_EOF_HASLOCK))
 			xfs_iunlock(ip, XFS_IOLOCK_EXCL|XFS_ILOCK_EXCL);
