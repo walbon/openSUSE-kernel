@@ -653,7 +653,7 @@ xfs_free_eofblocks(
 		if (flags & XFS_FREE_EOF_TRYLOCK) {
 			if (!xfs_ilock_nowait(ip, XFS_IOLOCK_EXCL)) {
 				xfs_trans_cancel(tp, 0);
-				return 0;
+				return EAGAIN;
 			}
 		} else if (!(flags & XFS_FREE_EOF_HASLOCK)){
 			xfs_ilock(ip, XFS_IOLOCK_EXCL);
@@ -1027,7 +1027,7 @@ xfs_release(
 
 		error = xfs_free_eofblocks(mp, ip,
 					   XFS_FREE_EOF_TRYLOCK);
-		if (error)
+		if (error && error != EAGAIN)
 			return error;
 
 		/* delalloc blocks after truncation means it really is dirty */
