@@ -462,18 +462,10 @@ int dm_get_device(struct dm_target *ti, const char *path, fmode_t mode,
 		dd->dm_dev.mode = mode;
 		dd->dm_dev.bdev = NULL;
 
-		r = open_dev(dd, dev, t->md);
-		if (r == -EROFS) {
-			dd->dm_dev.mode &= ~FMODE_WRITE;
-			r = open_dev(dd, dev, t->md);
-		}
-		if (r) {
+		if ((r = open_dev(dd, dev, t->md))) {
 			kfree(dd);
 			return r;
 		}
-
-		if (dd->dm_dev.mode != mode)
-			t->mode = dd->dm_dev.mode;
 
 		format_dev_t(dd->dm_dev.name, dev);
 
