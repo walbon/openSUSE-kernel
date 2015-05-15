@@ -392,9 +392,11 @@ unsigned long determine_dirtyable_memory(void)
 {
 	unsigned long x;
 
-	x = global_page_state(NR_FREE_PAGES) +
-		global_page_state(NR_ACTIVE_FILE) +
-		global_page_state(NR_INACTIVE_FILE);
+	x = global_page_state(NR_FREE_PAGES);
+	x -= min(x, dirty_balance_reserve);
+
+	x += global_page_state(NR_ACTIVE_FILE);
+	x += global_page_state(NR_INACTIVE_FILE);
 
 	if (!vm_highmem_is_dirtyable)
 		x -= highmem_dirtyable_memory(x);
