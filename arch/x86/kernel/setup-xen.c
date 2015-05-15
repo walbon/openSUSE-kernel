@@ -1296,6 +1296,7 @@ void __init setup_arch(char **cmdline_p)
 #else
 	if (efi_enabled && efi_get_secure_boot()) {
 #endif
+		pr_info("Secure boot enabled\n");
 		enforce_signed_modules();
 #ifdef CONFIG_EFI
 		secure_boot_enabled = 1;
