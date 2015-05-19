@@ -2418,6 +2418,13 @@ int open_ctree(struct super_block *sb,
 		}
 	}
 
+	if (features & BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA) {
+		if (!allow_unsupported) {
+			printk(KERN_WARNING "btrfs: skinny metadata feature supported read-only, load module with allow_unsupported=1\n");
+			sb->s_flags |= MS_RDONLY;
+		}
+	}
+
 	nodesize = btrfs_super_nodesize(disk_super);
 	leafsize = btrfs_super_leafsize(disk_super);
 	sectorsize = btrfs_super_sectorsize(disk_super);
