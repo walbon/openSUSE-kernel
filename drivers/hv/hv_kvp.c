@@ -650,6 +650,7 @@ void hv_kvp_onchannelcallback(void *context)
 			vmbus_prep_negotiate_resp(icmsghdrp, negop,
 				 recv_buffer, util_fw_version,
 				 kvp_srv_version);
+			kvp_transaction.active = true;
 
 		} else {
 			kvp_msg = (struct hv_kvp_msg *)&recv_buffer[
@@ -709,7 +710,6 @@ hv_kvp_init(struct hv_util_service *srv)
 	 * Defer processing channel callbacks until the daemon
 	 * has registered.
 	 */
-	kvp_transaction.active = true;
 
 	return 0;
 }

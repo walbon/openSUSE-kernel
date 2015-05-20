@@ -239,6 +239,7 @@ void hv_fcopy_onchannelcallback(void *context)
 		fcopy_srv_version = WIN8_SRV_VERSION;
 		vmbus_prep_negotiate_resp(icmsghdr, negop, recv_buffer,
 				util_fw_version, fcopy_srv_version);
+		fcopy_transaction.active = true;
 	} else {
 		fcopy_msg = (struct hv_fcopy_hdr *)&recv_buffer[
 				sizeof(struct vmbuspipe_hdr) +
@@ -428,7 +429,6 @@ int hv_fcopy_init(struct hv_util_service *srv)
 	 * Defer processing channel callbacks until the daemon
 	 * has registered.
 	 */
-	fcopy_transaction.active = true;
 	sema_init(&fcopy_transaction.read_sema, 0);
 
 	return fcopy_dev_init();

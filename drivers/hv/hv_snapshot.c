@@ -211,6 +211,7 @@ void hv_vss_onchannelcallback(void *context)
 			vmbus_prep_negotiate_resp(icmsghdrp, negop,
 				 recv_buffer, UTIL_FW_VERSION,
 				 VSS_VERSION);
+			vss_transaction.active = true;
 		} else {
 			vss_msg = (struct hv_vss_msg *)&recv_buffer[
 				sizeof(struct vmbuspipe_hdr) +
@@ -291,7 +292,6 @@ hv_vss_init(struct hv_util_service *srv)
 	 * Defer processing channel callbacks until the daemon
 	 * has registered.
 	 */
-	vss_transaction.active = true;
 	return 0;
 }
 
