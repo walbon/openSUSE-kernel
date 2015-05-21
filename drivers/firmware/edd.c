@@ -549,7 +549,7 @@ edd_has_edd30(struct edd_device *edev)
 
 	/* We support T13 d1572 and the original Phoenix spec */
 	if (info->params.device_path_info_length != 44 &&
-	    info->params.device_path_info_lenght != 36)
+	    info->params.device_path_info_length != 36)
 		return 0;
 
 	for (i = 30; i < info->params.device_path_info_length + 30; i++)
