@@ -2524,8 +2524,10 @@ static struct file *path_openat(int dfd, const char *pathname,
 			break;
 		}
 		error = may_follow_link(&link, nd);
-		if (unlikely(error))
+		if (unlikely(error)) {
+			filp = ERR_PTR(error);
 			break;
+		}
 		nd->flags |= LOOKUP_PARENT;
 		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
 		error = follow_link(&link, nd, &cookie);
