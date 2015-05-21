@@ -646,6 +646,7 @@ static int intel_idle_probe(void)
 		break;
 
 	case 0x3d:	/* BDW */
+	case 0x47:	/* BDW */
 	case 0x4f:	/* BDW */
 	case 0x56:	/* BDW */
 		cpuidle_state_table = bdw_cstates;
