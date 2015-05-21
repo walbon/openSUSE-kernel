@@ -929,4 +929,25 @@ int rtc_timer_cancel(struct rtc_device *rtc, struct rtc_timer* timer)
 	return ret;
 }
 
+/* rtc_alarm_restore - Restores the alarm time
+ * @ rtc: rtc device to be used
+ *
+ * Kernel interface to restore the alarm time
+ */
+int rtc_alarm_restore(struct rtc_device *rtc)
+{
+	struct rtc_wkalrm aie_alarm;
+	int err;
 
+	/* If someone has configured the AIE timer, do nothing. */
+	if (rtc->aie_timer.enabled)
+		return 0;
+
+	/* Read the alarm date/time from aie_timer. */
+	err = rtc_read_alarm(rtc, &aie_alarm);
+	if (err < 0)
+		return err;
+
+	return __rtc_set_alarm(rtc, &aie_alarm);
+}
+EXPORT_SYMBOL_GPL(rtc_alarm_restore);
