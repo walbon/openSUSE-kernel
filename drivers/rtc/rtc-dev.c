@@ -454,7 +454,6 @@ static int rtc_dev_release(struct inode *inode, struct file *file)
 	rtc_dev_ioctl(file, RTC_UIE_OFF, 0);
 	rtc_update_irq_enable(rtc, 0);
 	rtc_irq_set_state(rtc, NULL, 0);
-	rtc_alarm_restore(rtc);
 
 	if (rtc->ops->release)
 		rtc->ops->release(rtc->dev.parent);
