@@ -3644,9 +3644,15 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
 	uint32_t logit = LOG_FCP;
 
 	/* Sanity check on return of outstanding command */
-	if (!(lpfc_cmd->pCmd))
+	spin_lock_irqsave(&phba->hbalock, flags);
+	if (!(lpfc_cmd->pCmd)) {
+		spin_unlock_irqrestore(&phba->hbalock, flags);
 		return;
+	}
 	cmd = lpfc_cmd->pCmd;
+	cmd->host_scribble = NULL;
+	spin_unlock_irqrestore(&phba->hbalock, flags);
+
 	shost = cmd->device->host;
 
 	lpfc_cmd->result = (pIocbOut->iocb.un.ulpWord[4] & IOERR_PARAM_MASK);
@@ -3857,16 +3863,16 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
 
 	lpfc_scsi_unprep_dma_buf(phba, lpfc_cmd);
 
-	/* The sdev is not guaranteed to be valid post scsi_done upcall. */
+	/* The cmd is not guaranteed to be valid post scsi_done upcall. */
 	queue_depth = cmd->device->queue_depth;
 	scsi_id = cmd->device->id;
+	spin_lock_irqsave(&phba->hbalock, flags);
+	lpfc_cmd->pCmd = NULL;
+	spin_unlock_irqrestore(&phba->hbalock, flags);
+
 	cmd->scsi_done(cmd);
 
 	if (phba->cfg_poll & ENABLE_FCP_RING_POLLING) {
-		spin_lock_irqsave(&phba->hbalock, flags);
-		lpfc_cmd->pCmd = NULL;
-		spin_unlock_irqrestore(&phba->hbalock, flags);
-
 		/*
 		 * If there is a thread waiting for command completion
 		 * wake up the thread.
@@ -3904,10 +3910,6 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
 							       depth+1, depth);
 		}
 	}
-
-	spin_lock_irqsave(&phba->hbalock, flags);
-	lpfc_cmd->pCmd = NULL;
-	spin_unlock_irqrestore(&phba->hbalock, flags);
 
 	/*
 	 * If there is a thread waiting for command completion
@@ -4398,6 +4400,7 @@ lpfc_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *cmnd)
 	return 0;
 
  out_host_busy_free_buf:
+	cmnd->host_scribble = NULL;
 	lpfc_scsi_unprep_dma_buf(phba, lpfc_cmd);
 	lpfc_release_scsi_buf(phba, lpfc_cmd);
  out_host_busy:
