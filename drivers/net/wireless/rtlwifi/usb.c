@@ -101,7 +101,7 @@ static int _usbctrl_vendorreq_sync_read(struct usb_device *udev, u8 request,
 	reqtype =  REALTEK_USB_VENQT_READ;
 
 	status = usb_control_msg(udev, pipe, request, reqtype, value, index,
-				 pdata, len, 0); /* max. timeout */
+				 pdata, len, 1000);
 
 	if (status < 0)
 		printk(KERN_ERR "reg 0x%x, usbctrl_vendorreq TimeOut! "
