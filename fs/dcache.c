@@ -1171,9 +1171,9 @@ positive:
 rename_retry:
 	spin_unlock(&this_parent->d_lock);
 	rcu_read_unlock();
-rename_retry_unlocked:
 	if (locked)
 		goto again;
+rename_retry_unlocked:
 	locked = 1;
 	write_seqlock(&rename_lock);
 	goto again;
@@ -1238,6 +1238,7 @@ resume:
 		 */
 		if (found && need_resched()) {
 			spin_unlock(&dentry->d_lock);
+			rcu_read_lock();
 			goto out;
 		}
 
