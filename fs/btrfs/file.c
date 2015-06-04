@@ -2453,24 +2453,31 @@ static int find_desired_extent(struct inode *inode, loff_t *offset, int origin)
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct extent_map *em;
 	struct extent_state *cached_state = NULL;
-	u64 lockstart = *offset;
-	u64 lockend = i_size_read(inode);
-	u64 start = *offset;
-	u64 orig_start = *offset;
-	u64 len = i_size_read(inode);
+	u64 orig_start;
 	u64 last_end = 0;
+	u64 lockstart;
+	u64 lockend;
+	u64 start;
+	u64 len;
 	int ret = 0;
 
-	lockend = max_t(u64, root->sectorsize, lockend);
+	if (inode->i_size == 0)
+		return -ENXIO;
+
+	/*
+	 * *offset can be negative, in this case we start finding DATA/HOLE from
+	 * the very start of the file.
+	 */
+	start = max_t(loff_t, 0, *offset);
+	orig_start = start;
+
+	lockstart = round_down(start, root->sectorsize);
+	lockend = round_up(i_size_read(inode), root->sectorsize);
 	if (lockend <= lockstart)
 		lockend = lockstart + root->sectorsize;
 
 	lockend--;
 	len = lockend - lockstart + 1;
-
-	len = max_t(u64, len, root->sectorsize);
-	if (inode->i_size == 0)
-		return -ENXIO;
 
 	lock_extent_bits(&BTRFS_I(inode)->io_tree, lockstart, lockend, 0,
 			 &cached_state);
