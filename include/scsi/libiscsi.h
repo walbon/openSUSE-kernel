@@ -175,7 +175,9 @@ struct iscsi_conn {
 
 	/* iSCSI connection-wide sequencing */
 	uint32_t		exp_statsn;
+#if 0
 	uint32_t		statsn;
+#endif
 
 	/* control data */
 	int			id;		/* CID */
@@ -216,6 +218,7 @@ struct iscsi_conn {
 	int			persistent_port;
 	char			*persistent_address;
 
+#if 0
 	unsigned		max_segment_size;
 	unsigned		tcp_xmit_wsf;
 	unsigned		tcp_recv_wsf;
@@ -231,6 +234,7 @@ struct iscsi_conn {
 	uint8_t			ipv6_traffic_class;
 	uint8_t			ipv6_flow_label;
 	uint8_t			is_fw_assigned_ipv6;
+#endif
 
 	/* MIB-statistics */
 	uint64_t		txdata_octets;
@@ -309,6 +313,7 @@ struct iscsi_session {
 	char			*boot_root;
 	char			*boot_nic;
 	char			*boot_target;
+#if 0
 	char			*portal_type;
 	char			*discovery_parent_type;
 	uint16_t		discovery_parent_idx;
@@ -321,7 +326,7 @@ struct iscsi_session {
 	uint8_t			bidi_chap_en;
 	uint8_t			discovery_auth_optional;
 	uint8_t			isid[ISID_SIZE];
-
+#endif
 	/* control data */
 	struct iscsi_transport	*tt;
 	struct Scsi_Host	*host;
@@ -340,6 +345,10 @@ struct iscsi_session {
 	struct iscsi_task	**cmds;		/* Original Cmds arr */
 	struct iscsi_pool	cmdpool;	/* PDU's pool */
 	void			*dd_data;	/* LLD private data */
+#ifndef __GENKSYMS__
+	/* move this here to preserve kabi */
+	uint8_t			discovery_sess;
+#endif
 };
 
 enum {

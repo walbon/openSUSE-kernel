@@ -2812,8 +2812,10 @@ void iscsi_session_teardown(struct iscsi_cls_session *cls_session)
 	kfree(session->boot_nic);
 	kfree(session->boot_target);
 	kfree(session->ifacename);
+#if 0
 	kfree(session->portal_type);
 	kfree(session->discovery_parent_type);
+#endif
 
 	iscsi_destroy_session(cls_session);
 	iscsi_host_dec_session_cnt(shost);
@@ -3260,11 +3262,13 @@ int iscsi_set_param(struct iscsi_cls_conn *cls_conn,
 		return iscsi_switch_str_param(&session->boot_nic, buf);
 	case ISCSI_PARAM_BOOT_TARGET:
 		return iscsi_switch_str_param(&session->boot_target, buf);
+#if 0
 	case ISCSI_PARAM_PORTAL_TYPE:
 		return iscsi_switch_str_param(&session->portal_type, buf);
 	case ISCSI_PARAM_DISCOVERY_PARENT_TYPE:
 		return iscsi_switch_str_param(&session->discovery_parent_type,
 					      buf);
+#endif
 	case ISCSI_PARAM_DISCOVERY_SESS:
 		sscanf(buf, "%d", &val);
 		session->discovery_sess = !!val;
@@ -3355,12 +3359,15 @@ int iscsi_session_get_param(struct iscsi_cls_session *cls_session,
 		break;
 	case ISCSI_PARAM_BOOT_TARGET:
 		len = sprintf(buf, "%s\n", session->boot_target);
+#if 0
 	case ISCSI_PARAM_AUTO_SND_TGT_DISABLE:
 		len = sprintf(buf, "%u\n", session->auto_snd_tgt_disable);
 		break;
+#endif
 	case ISCSI_PARAM_DISCOVERY_SESS:
 		len = sprintf(buf, "%u\n", session->discovery_sess);
 		break;
+#if 0
 	case ISCSI_PARAM_PORTAL_TYPE:
 		len = sprintf(buf, "%s\n", session->portal_type);
 		break;
@@ -3401,6 +3408,7 @@ int iscsi_session_get_param(struct iscsi_cls_session *cls_session,
 		else
 			len = sprintf(buf, "\n");
 		break;
+#endif
 	default:
 		return -ENOSYS;
 	}
@@ -3490,6 +3498,7 @@ int iscsi_conn_get_param(struct iscsi_cls_conn *cls_conn,
 	case ISCSI_PARAM_PERSISTENT_ADDRESS:
 		len = sprintf(buf, "%s\n", conn->persistent_address);
 		break;
+#if 0
 	case ISCSI_PARAM_STATSN:
 		len = sprintf(buf, "%u\n", conn->statsn);
 		break;
@@ -3535,6 +3544,7 @@ int iscsi_conn_get_param(struct iscsi_cls_conn *cls_conn,
 	case ISCSI_PARAM_TCP_RECV_WSF:
 		len = sprintf(buf, "%u\n", conn->tcp_recv_wsf);
 		break;
+#endif
 	default:
 		return -ENOSYS;
 	}
