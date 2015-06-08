@@ -3356,7 +3356,7 @@ iscsi_conn_attr(exp_statsn, ISCSI_PARAM_EXP_STATSN);
 iscsi_conn_attr(persistent_address, ISCSI_PARAM_PERSISTENT_ADDRESS);
 iscsi_conn_attr(ping_tmo, ISCSI_PARAM_PING_TMO);
 iscsi_conn_attr(recv_tmo, ISCSI_PARAM_RECV_TMO);
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 iscsi_conn_attr(local_port, ISCSI_PARAM_LOCAL_PORT);
 iscsi_conn_attr(statsn, ISCSI_PARAM_STATSN);
 iscsi_conn_attr(keepalive_tmo, ISCSI_PARAM_KEEPALIVE_TMO);
@@ -3426,7 +3426,7 @@ static struct attribute *iscsi_conn_attrs[] = {
 	&dev_attr_conn_persistent_port.attr,
 	&dev_attr_conn_ping_tmo.attr,
 	&dev_attr_conn_recv_tmo.attr,
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 	&dev_attr_conn_local_port.attr,
 	&dev_attr_conn_statsn.attr,
 	&dev_attr_conn_keepalive_tmo.attr,
@@ -3481,7 +3481,7 @@ static mode_t iscsi_conn_attr_is_visible(struct kobject *kobj,
 		param = ISCSI_PARAM_PING_TMO;
 	else if (attr == &dev_attr_conn_recv_tmo.attr)
 		param = ISCSI_PARAM_RECV_TMO;
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 	else if (attr == &dev_attr_conn_local_port.attr)
 		param = ISCSI_PARAM_LOCAL_PORT;
 	else if (attr == &dev_attr_conn_statsn.attr)
@@ -3575,11 +3575,11 @@ iscsi_session_attr(targetalias, ISCSI_PARAM_TARGET_ALIAS, 0);
 iscsi_session_attr(boot_root, ISCSI_PARAM_BOOT_ROOT, 0);
 iscsi_session_attr(boot_nic, ISCSI_PARAM_BOOT_NIC, 0);
 iscsi_session_attr(boot_target, ISCSI_PARAM_BOOT_TARGET, 0);
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 iscsi_session_attr(auto_snd_tgt_disable, ISCSI_PARAM_AUTO_SND_TGT_DISABLE, 0);
 #endif
 iscsi_session_attr(discovery_session, ISCSI_PARAM_DISCOVERY_SESS, 0);
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 iscsi_session_attr(portal_type, ISCSI_PARAM_PORTAL_TYPE, 0);
 iscsi_session_attr(chap_auth, ISCSI_PARAM_CHAP_AUTH_EN, 0);
 iscsi_session_attr(discovery_logout, ISCSI_PARAM_DISCOVERY_LOGOUT_EN, 0);
@@ -3698,11 +3698,11 @@ static struct attribute *iscsi_session_attrs[] = {
 	&dev_attr_sess_chap_out_idx.attr,
 	&dev_attr_sess_chap_in_idx.attr,
 	&dev_attr_priv_sess_target_id.attr,
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 	&dev_attr_sess_auto_snd_tgt_disable.attr,
 #endif
 	&dev_attr_sess_discovery_session.attr,
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 	&dev_attr_sess_portal_type.attr,
 	&dev_attr_sess_chap_auth.attr,
 	&dev_attr_sess_discovery_logout.attr,
@@ -3779,13 +3779,13 @@ static mode_t iscsi_session_attr_is_visible(struct kobject *kobj,
 		param = ISCSI_PARAM_BOOT_NIC;
 	else if (attr == &dev_attr_sess_boot_target.attr)
 		param = ISCSI_PARAM_BOOT_TARGET;
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 	else if (attr == &dev_attr_sess_auto_snd_tgt_disable.attr)
 		param = ISCSI_PARAM_AUTO_SND_TGT_DISABLE;
 #endif
 	else if (attr == &dev_attr_sess_discovery_session.attr)
 		param = ISCSI_PARAM_DISCOVERY_SESS;
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 	else if (attr == &dev_attr_sess_portal_type.attr)
 		param = ISCSI_PARAM_PORTAL_TYPE;
 	else if (attr == &dev_attr_sess_chap_auth.attr)

@@ -175,7 +175,7 @@ struct iscsi_conn {
 
 	/* iSCSI connection-wide sequencing */
 	uint32_t		exp_statsn;
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 	uint32_t		statsn;
 #endif
 
@@ -218,7 +218,7 @@ struct iscsi_conn {
 	int			persistent_port;
 	char			*persistent_address;
 
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 	unsigned		max_segment_size;
 	unsigned		tcp_xmit_wsf;
 	unsigned		tcp_recv_wsf;
@@ -313,7 +313,7 @@ struct iscsi_session {
 	char			*boot_root;
 	char			*boot_nic;
 	char			*boot_target;
-#if 0
+#ifdef UNUSED_SYSFS_ATTRS
 	char			*portal_type;
 	char			*discovery_parent_type;
 	uint16_t		discovery_parent_idx;
