@@ -93,6 +93,17 @@ MODULE_DESCRIPTION("sysfs interface to BIOS iBFT information");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(IBFT_ISCSI_VERSION);
 
+#ifndef CONFIG_ISCSI_IBFT_FIND
+/*
+ * Physical location of iSCSI Boot Format Table.
+ * Normally defined in iscsi_ibft_find.c, which
+ * is statically compiled in if enabled.
+ * All others need to define it here.
+ */
+struct acpi_table_ibft *ibft_addr;
+EXPORT_SYMBOL_GPL(ibft_addr);
+#endif /* CONFIG_ISCSI_IBFT_FIND */
+
 struct ibft_hdr {
 	u8 id;
 	u8 version;
