@@ -155,6 +155,7 @@ enum
 	KERN_NMI_WATCHDOG=75, /* int: enable/disable nmi watchdog */
 	KERN_PANIC_ON_NMI=76, /* int: whether we will panic on an unrecovered */
  	KERN_KDB=77,		/* int: kdb on/off */
+	KERN_PANIC_ON_WARN=78,	/* int: call panic() in WARN() functions */
 	KERN_PANIC_ON_IO_NMI=79, /* int: whether we will panic on an io NMI */
 };
 
