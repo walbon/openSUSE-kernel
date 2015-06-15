@@ -64,7 +64,7 @@ struct config_field_entry {
 	void *data;
 };
 
-extern bool permissive;
+extern int permissive;
 
 #define OFFSET(cfg_entry) ((cfg_entry)->base_offset+(cfg_entry)->field->offset)
 
