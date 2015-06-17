@@ -372,7 +372,7 @@ static inline char *__bio_kmap_irq(struct bio *bio, unsigned short idx,
 static inline bool bio_has_data(struct bio *bio)
 {
 	if (bio && bio->bi_vcnt &&
-	    (!bio->bi_rw & REQ_DISCARD))
+	    !(bio->bi_rw & REQ_DISCARD))
 		return true;
 
 	return false;
