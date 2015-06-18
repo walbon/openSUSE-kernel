@@ -992,20 +992,7 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 static int scsi_init_sgtable(struct request *req, struct scsi_data_buffer *sdb,
 			     gfp_t gfp_mask)
 {
-	int count = 0;
-	struct bio_vec *bvec;
-	struct req_iterator iter;
-
-	rq_for_each_segment(bvec, req, iter)
-		count++;
-
-	if (count > req->nr_phys_segments) {
-		printk(KERN_WARNING "%s: sg tablesize mismatch, "
-		       "%d should be %d\n", __func__,
-		       count, req->nr_phys_segments);
-		blk_dump_rq_flags(req, __func__);
-		req->nr_phys_segments = count;
-	}
+	int count;
 
 	/*
 	 * If sg table allocation fails, requeue request later.
