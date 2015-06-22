@@ -26,13 +26,14 @@ static void mga_dirty_update(struct mga_fbdev *mfbdev,
 	struct mgag200_bo *bo;
 	int src_offset, dst_offset;
 	int bpp = (mfbdev->mfb.base.bits_per_pixel + 7)/8;
-	int ret;
+	int ret = -EBUSY;
 	bool unmap = false;
 
 	obj = mfbdev->mfb.obj;
 	bo = gem_to_mga_bo(obj);
 
-	ret = mgag200_bo_reserve(bo, true);
+	if (drm_can_sleep())
+		ret = mgag200_bo_reserve(bo, true);
 	if (ret) {
 		DRM_ERROR("failed to reserve fb bo\n");
 		return;

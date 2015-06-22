@@ -24,13 +24,14 @@ static void cirrus_dirty_update(struct cirrus_fbdev *afbdev,
 	struct cirrus_bo *bo;
 	int src_offset, dst_offset;
 	int bpp = (afbdev->gfb.base.bits_per_pixel + 7)/8;
-	int ret;
+	int ret = -EBUSY;
 	bool unmap = false;
 
 	obj = afbdev->gfb.obj;
 	bo = gem_to_cirrus_bo(obj);
 
-	ret = cirrus_bo_reserve(bo, true);
+	if (drm_can_sleep())
+		ret = cirrus_bo_reserve(bo, true);
 	if (ret) {
 		DRM_ERROR("failed to reserve fb bo\n");
 		return;
