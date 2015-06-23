@@ -1529,6 +1529,7 @@ extern int pci_enable_sriov(struct pci_dev *dev, int nr_virtfn);
 extern void pci_disable_sriov(struct pci_dev *dev);
 extern irqreturn_t pci_sriov_migration(struct pci_dev *dev);
 extern int pci_num_vf(struct pci_dev *dev);
+int pci_vfs_assigned(struct pci_dev *dev);
 #else
 static inline int pci_enable_sriov(struct pci_dev *dev, int nr_virtfn)
 {
@@ -1542,6 +1543,10 @@ static inline irqreturn_t pci_sriov_migration(struct pci_dev *dev)
 	return IRQ_NONE;
 }
 static inline int pci_num_vf(struct pci_dev *dev)
+{
+	return 0;
+}
+static inline int pci_vfs_assigned(struct pci_dev *dev)
 {
 	return 0;
 }
