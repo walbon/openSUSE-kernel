@@ -2410,9 +2410,13 @@ static void mlx4_remove_one(struct pci_dev *pdev)
 	int active_vfs = 0;
 
 	if (dev) {
-		/* Disabling SR-IOV is not allowed while there are active vf's */
+		/*
+		 * Disabling SR-IOV is not allowed while there are active or
+		 * assigned VF's
+		 */
 		if (mlx4_is_master(dev)) {
-			active_vfs = mlx4_how_many_lives_vf(dev);
+			active_vfs = max(mlx4_how_many_lives_vf(dev),
+					 pci_vfs_assigned(pdev));
 			if (active_vfs) {
 				pr_warn("Removing PF when there are active VF's !!\n");
 				pr_warn("Will not disable SR-IOV.\n");
