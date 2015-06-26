@@ -1269,9 +1269,7 @@ static ssize_t qlcnic_hwmon_show_temp(struct device *dev,
 				      struct device_attribute *dev_attr,
 				      char *buf)
 {
-	struct pci_dev *pdev = to_pci_dev(dev);
-	struct net_device *netdev = pci_get_drvdata(pdev);
-	struct qlcnic_adapter *adapter = netdev_priv(netdev);
+	struct qlcnic_adapter *adapter = dev_get_drvdata(dev);
 	unsigned int temperature = 0, value = 0;
 
 	if (qlcnic_83xx_check(adapter))
