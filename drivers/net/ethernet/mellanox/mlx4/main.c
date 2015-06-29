@@ -2953,9 +2953,13 @@ static void mlx4_remove_one(struct pci_dev *pdev)
 	persist->interface_state |= MLX4_INTERFACE_STATE_DELETION;
 	mutex_unlock(&persist->interface_state_mutex);
 
-	/* Disabling SR-IOV is not allowed while there are active vf's */
+	/*
+	 * Disabling SR-IOV is not allowed while there are active or
+	 * assigned VF's
+	 */
 	if (mlx4_is_master(dev) && dev->flags & MLX4_FLAG_SRIOV) {
-		active_vfs = mlx4_how_many_lives_vf(dev);
+		active_vfs = max(mlx4_how_many_lives_vf(dev),
+				pci_vfs_assigned(pdev));
 		if (active_vfs) {
 			pr_warn("Removing PF when there are active VF's !!\n");
 			pr_warn("Will not disable SR-IOV.\n");
