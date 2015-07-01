@@ -428,7 +428,8 @@ static void apparmor_file_free_security(struct file *file)
 static int common_file_perm(int op, struct file *file, u32 mask)
 {
 	struct aa_file_cxt *fcxt = file->f_security;
-	struct aa_profile *profile, *fprofile = aa_cred_profile(file->f_cred);
+	struct aa_task_cxt *tmp = file->f_cred->security;
+	struct aa_profile *profile, *fprofile = tmp->profile;
 	int error = 0;
 
 	BUG_ON(!fprofile);
