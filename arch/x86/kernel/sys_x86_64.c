@@ -47,8 +47,11 @@ unsigned long align_addr(unsigned long addr, struct file *filp,
 	 */
 	if (!(flags & ALIGN_TOPDOWN))
 		tmp_addr += va_align.mask;
+	else
+		tmp_addr -= va_align.mask;
 
 	tmp_addr &= ~va_align.mask;
+	tmp_addr |=  va_align.bits;
 
 	return tmp_addr;
 }
