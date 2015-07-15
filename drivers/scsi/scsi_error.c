@@ -330,7 +330,7 @@ static inline void scsi_post_sense_event(struct scsi_device *sdev,
  * @scmd:	Cmd to have sense checked.
  *
  * Return value:
- *	SUCCESS or FAILED or NEEDS_RETRY or TARGET_ERROR or ADD_TO_MLQUEUE
+ *	SUCCESS or FAILED or NEEDS_RETRY or ADD_TO_MLQUEUE
  *
  * Notes:
  *	When a deferred error is detected the current command has
@@ -493,13 +493,15 @@ static int scsi_check_sense(struct scsi_cmnd *scmd)
 	case MISCOMPARE:
 	case BLANK_CHECK:
 	case DATA_PROTECT:
-		return TARGET_ERROR;
+		set_host_byte(scmd, DID_TARGET_FAILURE);
+		return SUCCESS;
 
 	case MEDIUM_ERROR:
 		if (sshdr.asc == 0x11 || /* UNRECOVERED READ ERR */
 		    sshdr.asc == 0x13 || /* AMNF DATA FIELD */
 		    sshdr.asc == 0x14) { /* RECORD NOT FOUND */
-			return TARGET_ERROR;
+			set_host_byte(scmd, DID_TARGET_FAILURE);
+			return SUCCESS;
 		}
 		return NEEDS_RETRY;
 
@@ -507,7 +509,7 @@ static int scsi_check_sense(struct scsi_cmnd *scmd)
 		if (scmd->device->retry_hwerror)
 			return ADD_TO_MLQUEUE;
 		else
-			return TARGET_ERROR;
+			set_host_byte(scmd, DID_TARGET_FAILURE);
 
 	case ILLEGAL_REQUEST:
 		if (sshdr.asc == 0x20 || /* Invalid command operation code */
@@ -515,14 +517,14 @@ static int scsi_check_sense(struct scsi_cmnd *scmd)
 		    sshdr.asc == 0x22 || /* Invalid function */
 		    sshdr.asc == 0x24 || /* Invalid field in cdb */
 		    sshdr.asc == 0x26) { /* Parameter value invalid */
-			return TARGET_ERROR;
+			set_host_byte(scmd, DID_TARGET_FAILURE);
 		}
 		if (sshdr.asc == 0x25 && sshdr.ascq == 0x1) {
 			/*
 			 * Inactive Snapshot on EMC Symmetrix or Clariion.
 			 * No Access possible, and retry pointless.
 			 */
-			return TARGET_ERROR;
+			set_host_byte(scmd, DID_TARGET_FAILURE);
 		}
 		return SUCCESS;
 
@@ -991,7 +993,6 @@ retry:
 		case SUCCESS:
 		case NEEDS_RETRY:
 		case FAILED:
-		case TARGET_ERROR:
 			break;
 		case ADD_TO_MLQUEUE:
 			rtn = NEEDS_RETRY;
@@ -1780,32 +1781,9 @@ int scsi_decide_disposition(struct scsi_cmnd *scmd)
 			return FAILED;
 		}
 	case DID_RESET:
-		return SUCCESS;
-#ifdef CONFIG_XEN /* Shouldn't this be done always?
-		   *
-		   * Overall, shouldn't the return value of this function be
-		   * the same when called twice in immediate succession?
-		   */
 	case DID_TARGET_FAILURE:
-		/*
-		 * scsi_check_sense(scmd) returning TARGET_ERROR gets
-		 * converted to DID_TARGET_FAILURE below, so if that
-		 * happened on the backend side, the frontend side
-		 * handling here would otherwise cause error handling to be
-		 * invoked from scsi_softirq_done().
-		 */
-		if (msg_byte(scmd->result) == COMMAND_COMPLETE &&
-		    status_byte(scmd->result) == CHECK_CONDITION &&
-		    scsi_check_sense(scmd) == TARGET_ERROR)
-			return SUCCESS;
-		return FAILED;
 	case DID_NEXUS_FAILURE:
-		/* Similarly for the respective conversion above/below. */
-		if (msg_byte(scmd->result) == COMMAND_COMPLETE &&
-		    status_byte(scmd->result) == RESERVATION_CONFLICT)
-			break;
-		/* fallthrough */
-#endif
+		return SUCCESS;
 	default:
 		return FAILED;
 	}
@@ -1844,17 +1822,6 @@ int scsi_decide_disposition(struct scsi_cmnd *scmd)
 		rtn = scsi_check_sense(scmd);
 		if (rtn == NEEDS_RETRY)
 			goto maybe_retry;
-		else if (rtn == ADD_TO_MLQUEUE)
-			/* Always enforce a retry for ADD_TO_MLQUEUE */
-			rtn = NEEDS_RETRY;
-		else if (rtn == TARGET_ERROR) {
-			/*
-			 * Need to modify host byte to signal a
-			 * permanent target failure
-			 */
-			set_host_byte(scmd, DID_TARGET_FAILURE);
-			rtn = SUCCESS;
-		}
 		/* if rtn == FAILED, we have no sense information;
 		 * returning FAILED will wake the error handler thread
 		 * to collect the sense and redo the decide
