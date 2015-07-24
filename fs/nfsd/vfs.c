@@ -2012,6 +2012,11 @@ static __be32 nfsd_buffered_readdir(struct file *file, filldir_t func,
 	return cdp->err;
 }
 
+#include <linux/module.h>
+static bool allow_large_cookies = true;
+module_param(allow_large_cookies, bool, 0644);
+MODULE_PARM_DESC(allow_large_cookies,
+		 "Allow NFS server to send 64 bit readdir cookies to clients.");
 /*
  * Read entries from a directory.
  * The  NFSv3/4 verifier we ignore for now.
@@ -2026,7 +2031,7 @@ nfsd_readdir(struct svc_rqst *rqstp, struct svc_fh *fhp, loff_t *offsetp,
 	int             may_flags = NFSD_MAY_READ;
 
 	/* NFSv2 only supports 32 bit cookies */
-	if (rqstp->rq_vers > 2)
+	if (rqstp->rq_vers > 2 && allow_large_cookies)
 		may_flags |= NFSD_MAY_64BIT_COOKIE;
 
 	err = nfsd_open(rqstp, fhp, S_IFDIR, may_flags, &file);
