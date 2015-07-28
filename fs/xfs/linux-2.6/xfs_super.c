@@ -1377,6 +1377,12 @@ xfs_finish_flags(
 			xfs_warn(mp,
 		"logbuf size must be greater than or equal to log stripe size");
 			return XFS_ERROR(EINVAL);
+		} else if (mp->m_logbsize > 0 && mp->m_sb.sb_logsunit > 0 &&
+			   mp->m_logbsize % mp->m_sb.sb_logsunit) {
+			xfs_warn(mp,
+		"logbuf size must be integer multiple of log stripe size");
+			return XFS_ERROR(EINVAL);
+
 		}
 	} else {
 		/* Fail a mount if the logbuf is larger than 32K */
