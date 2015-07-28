@@ -36,6 +36,8 @@
 		(RECLAIM_WB_ASYNC) \
 	)
 
+#include "pagecache-limit.h"
+
 TRACE_EVENT(mm_vmscan_kswapd_sleep,
 
 	TP_PROTO(int nid),
