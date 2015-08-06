@@ -415,6 +415,19 @@ static inline char * __deprecated pack_hex_byte(char *buf, u8 byte)
 extern int hex_to_bin(char ch);
 extern int __must_check hex2bin(u8 *dst, const char *src, size_t count);
 
+extern atomic_t panic_cpu;
+
+/*
+ * A variant of panic() called from NMI context.
+ * If we've already panicked on this cpu, return from here.
+ */
+#define nmi_panic(fmt, ...)						\
+	do {								\
+		int this_cpu = raw_smp_processor_id();			\
+		if (atomic_cmpxchg(&panic_cpu, -1, this_cpu) != this_cpu) \
+			panic(fmt, ##__VA_ARGS__);			\
+	} while (0)
+
 /*
  * General tracing related utility functions - trace_printk(),
  * tracing_on/tracing_off and tracing_start()/tracing_stop
