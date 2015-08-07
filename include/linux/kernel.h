@@ -200,6 +200,7 @@ extern struct atomic_notifier_head panic_notifier_list;
 extern long (*panic_blink)(int state);
 NORET_TYPE void panic(const char * fmt, ...)
 	__attribute__ ((NORET_AND format (printf, 1, 2))) __cold;
+void nmi_panic_self_stop(struct pt_regs *);
 extern void oops_enter(void);
 extern void oops_exit(void);
 void print_oops_end_marker(void);
@@ -420,12 +421,19 @@ extern atomic_t panic_cpu;
 /*
  * A variant of panic() called from NMI context.
  * If we've already panicked on this cpu, return from here.
+ * If another cpu already panicked, loop in nmi_panic_self_stop() which
+ * can provide architecture dependent code such as saving register states
+ * for crash dump.
  */
-#define nmi_panic(fmt, ...)						\
+#define nmi_panic(regs, fmt, ...)					\
 	do {								\
+		int old_cpu;						\
 		int this_cpu = raw_smp_processor_id();			\
-		if (atomic_cmpxchg(&panic_cpu, -1, this_cpu) != this_cpu) \
+		old_cpu = atomic_cmpxchg(&panic_cpu, -1, this_cpu);	\
+		if (old_cpu == -1)					\
 			panic(fmt, ##__VA_ARGS__);			\
+		else if (old_cpu != this_cpu)				\
+			nmi_panic_self_stop(regs);			\
 	} while (0)
 
 /*
