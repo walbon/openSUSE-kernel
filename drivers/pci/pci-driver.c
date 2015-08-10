@@ -18,7 +18,9 @@
 #include <linux/sched.h>
 #include <linux/cpu.h>
 #include <linux/pm_runtime.h>
+#ifndef __GENKSYMS__
 #include <linux/kexec.h>
+#endif
 #include "pci.h"
 
 struct pci_dynid {
