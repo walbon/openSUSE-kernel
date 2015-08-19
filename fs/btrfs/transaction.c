@@ -773,6 +773,8 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
 	struct extent_state *cached_state = NULL;
 	u64 start = 0;
 	u64 end;
+	struct btrfs_inode *btree_ino = BTRFS_I(root->fs_info->btree_inode);
+	bool errors = false;
 
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
 				      EXTENT_NEED_WAIT, &cached_state)) {
@@ -786,6 +788,26 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
 	}
 	if (err)
 		werr = err;
+
+	if (root->root_key.objectid == BTRFS_TREE_LOG_OBJECTID) {
+		if ((mark & EXTENT_DIRTY) &&
+		    test_and_clear_bit(BTRFS_INODE_BTREE_LOG1_ERR,
+				       &btree_ino->runtime_flags))
+			errors = true;
+
+		if ((mark & EXTENT_NEW) &&
+		    test_and_clear_bit(BTRFS_INODE_BTREE_LOG2_ERR,
+				       &btree_ino->runtime_flags))
+			errors = true;
+	} else {
+		if (test_and_clear_bit(BTRFS_INODE_BTREE_ERR,
+				       &btree_ino->runtime_flags))
+			errors = true;
+	}
+
+	if (errors && !werr)
+		werr = -EIO;
+
 	return werr;
 }
 
@@ -814,9 +836,15 @@ int btrfs_write_and_wait_transaction(struct btrfs_trans_handle *trans,
 				     struct btrfs_root *root)
 {
 	if (!trans || !trans->transaction) {
-		struct inode *btree_inode;
-		btree_inode = root->fs_info->btree_inode;
-		return filemap_write_and_wait(btree_inode->i_mapping);
+		int ret;
+		struct inode *btree_inode = root->fs_info->btree_inode;
+
+		ret = filemap_write_and_wait(btree_inode->i_mapping);
+		if (!ret &&
+		    test_bit(BTRFS_INODE_BTREE_ERR,
+			     &BTRFS_I(btree_inode)->runtime_flags))
+			ret = -EIO;
+		return ret;
 	}
 	return btrfs_write_and_wait_marked_extents(root,
 					   &trans->transaction->dirty_pages,
@@ -1542,6 +1570,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	struct btrfs_transaction *cur_trans = trans->transaction;
 	struct btrfs_transaction *prev_trans = NULL;
 	DEFINE_WAIT(wait);
+	struct btrfs_inode *btree_ino = BTRFS_I(root->fs_info->btree_inode);
 	int ret;
 	int should_grow = 0;
 	unsigned long now = get_seconds();
@@ -1790,6 +1819,10 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	       sizeof(*root->fs_info->super_copy));
 
 	trans->transaction->blocked = 0;
+
+	clear_bit(BTRFS_INODE_BTREE_LOG1_ERR, &btree_ino->runtime_flags);
+	clear_bit(BTRFS_INODE_BTREE_LOG2_ERR, &btree_ino->runtime_flags);
+
 	spin_lock(&root->fs_info->trans_lock);
 	root->fs_info->running_transaction = NULL;
 	root->fs_info->trans_no_join = 0;
