@@ -1909,27 +1909,6 @@ retry_cpuset:
 	pol = get_vma_policy(current, vma, addr);
 	cpuset_mems_cookie = read_mems_allowed_begin();
 
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	if (unlikely(hugepage && pol->mode != MPOL_INTERLEAVE)) {
-		/*
-		 * For hugepage allocation and non-interleave policy which
-		 * allows the current node, we only try to allocate from the
-		 * current node and don't fall back to other nodes, as the
-		 * cost of remote accesses would likely offset THP benefits.
-		 *
-		 * If the policy is interleave, or does not allow the current
-		 * node in its nodemask, we allocate the standard way.
-		 */
-		nmask = policy_nodemask(gfp, pol);
-		if (!nmask || node_isset(node, *nmask)) {
-			mpol_cond_put(pol);
-			page = alloc_pages_exact_node(node,
-						gfp | __GFP_THISNODE, order);
-			goto out;
-		}
-	}
-#endif
-
 	if (pol->mode == MPOL_INTERLEAVE) {
 		unsigned nid;
 
@@ -1938,6 +1917,34 @@ retry_cpuset:
 		page = alloc_page_interleave(gfp, order, nid);
 		goto out;
 	}
+
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+	if (unlikely(hugepage)) {
+		int hpage_node = node;
+
+		/*
+		 * For hugepage allocation and non-interleave policy which
+		 * allows the current node (or other explicitly preferred
+		 * node) we only try to allocate from the current/preferred
+		 * node and don't fall back to other nodes, as the cost of
+		 * remote accesses would likely offset THP benefits.
+		 *
+		 * If the policy is interleave, or does not allow the current
+		 * node in its nodemask, we allocate the standard way.
+		 */
+		if (pol->mode == MPOL_PREFERRED &&
+						!(pol->flags & MPOL_F_LOCAL))
+			hpage_node = pol->v.preferred_node;
+
+		nmask = policy_nodemask(gfp, pol);
+		if (!nmask || node_isset(hpage_node, *nmask)) {
+			mpol_cond_put(pol);
+			page = alloc_pages_exact_node(hpage_node,
+						gfp | __GFP_THISNODE, order);
+			goto out;
+		}
+	}
+#endif
 
 	nmask = policy_nodemask(gfp, pol);
 	zl = policy_zonelist(gfp, pol, node);
