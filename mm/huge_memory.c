@@ -1825,6 +1825,7 @@ static void collapse_huge_page(struct mm_struct *mm,
 	spinlock_t *ptl;
 	int isolated;
 	unsigned long hstart, hend;
+	gfp_t flags;
 
 	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
 #ifndef CONFIG_NUMA
@@ -1834,6 +1835,10 @@ static void collapse_huge_page(struct mm_struct *mm,
 #else
 	VM_BUG_ON(*hpage);
 
+	/* Only allocate from the target node */
+	flags = alloc_hugepage_gfpmask(khugepaged_defrag(), __GFP_OTHER_NODE) |
+		__GFP_THISNODE;
+
 	/*
 	 * Before allocating the hugepage, release the mmap_sem read lock.
 	 * The allocation can take potentially a long time if it involves
@@ -1842,8 +1847,7 @@ static void collapse_huge_page(struct mm_struct *mm,
 	 */
 	up_read(&mm->mmap_sem);
 
-	new_page = alloc_pages_exact_node(node, alloc_hugepage_gfpmask(
-		khugepaged_defrag(), __GFP_OTHER_NODE), HPAGE_PMD_ORDER);
+	new_page = alloc_pages_exact_node(node, flags, HPAGE_PMD_ORDER);
 	if (unlikely(!new_page)) {
 		count_vm_event(THP_COLLAPSE_ALLOC_FAILED);
 		*hpage = ERR_PTR(-ENOMEM);
