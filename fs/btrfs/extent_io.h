@@ -40,9 +40,10 @@
 #define EXTENT_BUFFER_TREE_REF 5
 #define EXTENT_BUFFER_STALE 6
 #define EXTENT_BUFFER_WRITEBACK 7
-#define EXTENT_BUFFER_IOERR 8
+#define EXTENT_BUFFER_READ_ERR 8        /* read IO error */
 #define EXTENT_BUFFER_DUMMY 9
 #define EXTENT_BUFFER_IN_TREE 10
+#define EXTENT_BUFFER_WRITE_ERR 11    /* write IO error */
 
 /* these are flags for extent_clear_unlock_delalloc */
 #define EXTENT_CLEAR_UNLOCK_PAGE 0x1
@@ -143,7 +144,9 @@ struct extent_buffer {
 	atomic_t blocking_readers;
 	atomic_t spinning_readers;
 	atomic_t spinning_writers;
-	int lock_nested;
+	short lock_nested;
+	/* >= 0 if eb belongs to a log tree, -1 otherwise */
+	short log_index;
 
 	/* protects write locks */
 	rwlock_t lock;
