@@ -6942,8 +6942,6 @@ static void btrfs_endio_direct_write(struct bio *bio, int err)
 	u64 ordered_bytes = dip->bytes;
 	int ret;
 
-	if (err)
-		goto out_done;
 again:
 	ret = btrfs_dec_test_first_ordered_pending(inode, &ordered,
 						   &ordered_offset,
@@ -6966,7 +6964,6 @@ out_test:
 		ordered = NULL;
 		goto again;
 	}
-out_done:
 	bio->bi_private = dip->private;
 
 	kfree(dip);
