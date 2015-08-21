@@ -374,7 +374,7 @@ static unsigned long quick_pit_calibrate(void)
 			goto success;
 		}
 	}
-	printk("Fast TSC calibration failed\n");
+	pr_info("Fast TSC calibration failed\n");
 	return 0;
 
 success:
@@ -393,7 +393,7 @@ success:
 	 */
 	delta *= PIT_TICK_RATE;
 	do_div(delta, i*256*1000);
-	printk("Fast TSC calibration using PIT\n");
+	pr_info("Fast TSC calibration using PIT\n");
 	return delta;
 }
 
@@ -992,9 +992,9 @@ void __init tsc_init(void)
 		return;
 	}
 
-	printk("Detected %lu.%03lu MHz processor.\n",
-			(unsigned long)cpu_khz / 1000,
-			(unsigned long)cpu_khz % 1000);
+	pr_info("Detected %lu.%03lu MHz processor.\n",
+		(unsigned long)cpu_khz / 1000,
+		(unsigned long)cpu_khz % 1000);
 
 	/*
 	 * Secondary CPUs do not run through tsc_init(), so set up
