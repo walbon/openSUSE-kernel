@@ -489,6 +489,9 @@ enum iscsi_param {
 
 	ISCSI_PARAM_CHAP_IN_IDX,
 	ISCSI_PARAM_CHAP_OUT_IDX,
+
+	ISCSI_PARAM_DISCOVERY_SESS,
+
 	/* must always be last */
 	ISCSI_PARAM_MAX,
 };
