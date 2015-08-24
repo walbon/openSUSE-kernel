@@ -85,6 +85,12 @@ struct page {
 	union {
 		pgoff_t index;		/* Our offset within mapping. */
 		void *freelist;		/* SLUB: freelist req. slab lock */
+#ifdef __GENKSYMS__
+		bool pfmemalloc;	/* pfmemalloc has been removed
+					 * and users are supposed to use
+					 * page_is_pfmemalloc(page) instead
+					 */
+#endif
 	};
 	struct list_head lru;		/* Pageout list, eg. active_list
 					 * protected by zone->lru_lock !
