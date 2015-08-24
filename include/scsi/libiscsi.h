@@ -287,6 +287,8 @@ struct iscsi_session {
 	char			*targetalias;
 	char			*ifacename;
 	char			*initiatorname;
+	char			*discovery_sess;
+
 	/* control data */
 	struct iscsi_transport	*tt;
 	struct Scsi_Host	*host;
