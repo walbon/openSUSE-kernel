@@ -2145,7 +2145,7 @@ static inline struct page *__netdev_alloc_pages(struct net_device *dev,
 		gfp_mask |= __GFP_MEMALLOC;
 
 	page = alloc_pages_node(NUMA_NO_NODE, gfp_mask, order);
-	if (skb && page && page->pfmemalloc)
+	if (skb && page && page_is_pfmemalloc(page))
 		skb->pfmemalloc = true;
 
 	return page;
@@ -2188,7 +2188,7 @@ static inline struct page *netdev_alloc_page(struct net_device *dev)
 static inline void propagate_pfmemalloc_skb(struct page *page,
 						struct sk_buff *skb)
 {
-	if (page && page->pfmemalloc)
+	if (page && page_is_pfmemalloc(page))
 		skb->pfmemalloc = true;
 }
 
