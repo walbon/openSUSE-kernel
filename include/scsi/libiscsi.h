@@ -287,6 +287,7 @@ struct iscsi_session {
 	char			*targetalias;
 	char			*ifacename;
 	char			*initiatorname;
+
 	/* control data */
 	struct iscsi_transport	*tt;
 	struct Scsi_Host	*host;
@@ -305,6 +306,10 @@ struct iscsi_session {
 	struct iscsi_task	**cmds;		/* Original Cmds arr */
 	struct iscsi_pool	cmdpool;	/* PDU's pool */
 	void			*dd_data;	/* LLD private data */
+#ifndef __GENKSYMS__
+	/* move new field to end to minimize change */
+	uint8_t			discovery_sess;
+#endif
 };
 
 enum {
