@@ -6430,7 +6430,7 @@ static bool igb_can_reuse_rx_page(struct igb_rx_buffer *rx_buffer,
 	if (unlikely(page_to_nid(page) != numa_node_id()))
 		return false;
 
-	if (unlikely(page->pfmemalloc))
+	if (unlikely(page_is_pfmemalloc(page)))
 		return false;
 
 #if (PAGE_SIZE < 8192)
@@ -6500,7 +6500,7 @@ static bool igb_add_rx_frag(struct igb_ring *rx_ring,
 
 		/* we can reuse buffer as-is, just make sure it is local */
 		if (likely((page_to_nid(page) == numa_node_id()) &&
-			   !page->pfmemalloc))
+			   !page_is_pfmemalloc(page)))
 			return true;
 
 		/* this page cannot be reused so discard it */
