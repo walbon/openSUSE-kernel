@@ -764,7 +764,7 @@ void xhci_shutdown(struct usb_hcd *hcd)
 	if (xhci->quirks & XHCI_SPURIOUS_REBOOT)
 		usb_disable_xhci_ports(pdev);
 
-	if (xhci->quirks & XHCI_HSW_SPURIOUS_WAKEUP) {
+	if (xhci->quirks & XHCI_SPURIOUS_WAKEUP) {
 		/* Workaround for spurious wakeups at shutdown with HSW:
 		 * we must call xhci_stop() for clearing all wakeups, and
 		 * set the device to D3.
