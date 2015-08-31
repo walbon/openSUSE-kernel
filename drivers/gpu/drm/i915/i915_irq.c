@@ -36,6 +36,59 @@
 #include "i915_trace.h"
 #include "intel_drv.h"
 
+static const u32 hpd_ibx[] = {
+	[HPD_CRT] = SDE_CRT_HOTPLUG,
+	[HPD_SDVO_B] = SDE_SDVOB_HOTPLUG,
+	[HPD_PORT_B] = SDE_PORTB_HOTPLUG,
+	[HPD_PORT_C] = SDE_PORTC_HOTPLUG,
+	[HPD_PORT_D] = SDE_PORTD_HOTPLUG
+};
+
+static const u32 hpd_cpt[] = {
+	[HPD_CRT] = SDE_CRT_HOTPLUG_CPT,
+	[HPD_PORT_B] = SDE_PORTB_HOTPLUG_CPT,
+	[HPD_PORT_C] = SDE_PORTC_HOTPLUG_CPT,
+	[HPD_PORT_D] = SDE_PORTD_HOTPLUG_CPT
+};
+
+static const u32 hpd_mask_i915[] = {
+	[HPD_CRT] = CRT_HOTPLUG_INT_EN,
+	[HPD_SDVO_B] = SDVOB_HOTPLUG_INT_EN,
+	[HPD_SDVO_C] = SDVOC_HOTPLUG_INT_EN,
+	[HPD_PORT_B] = HDMIB_HOTPLUG_INT_EN,
+	[HPD_PORT_C] = HDMIC_HOTPLUG_INT_EN,
+	[HPD_PORT_D] = HDMID_HOTPLUG_INT_EN
+};
+
+static const u32 hpd_status_gen4[] = {
+	[HPD_CRT] = CRT_HOTPLUG_INT_STATUS,
+	[HPD_SDVO_B] = SDVOB_HOTPLUG_INT_STATUS_G4X,
+	[HPD_SDVO_C] = SDVOC_HOTPLUG_INT_STATUS_G4X,
+	[HPD_PORT_B] = HDMIB_HOTPLUG_INT_STATUS,
+	[HPD_PORT_C] = HDMIC_HOTPLUG_INT_STATUS,
+	[HPD_PORT_D] = HDMID_HOTPLUG_INT_STATUS
+};
+
+static const u32 hpd_status_i965[] = {
+	 [HPD_CRT] = CRT_HOTPLUG_INT_STATUS,
+	 [HPD_SDVO_B] = SDVOB_HOTPLUG_INT_STATUS_I965,
+	 [HPD_SDVO_C] = SDVOC_HOTPLUG_INT_STATUS_I965,
+	 [HPD_PORT_B] = HDMIB_HOTPLUG_INT_STATUS,
+	 [HPD_PORT_C] = HDMIC_HOTPLUG_INT_STATUS,
+	 [HPD_PORT_D] = HDMID_HOTPLUG_INT_STATUS
+};
+
+static const u32 hpd_status_i915[] = { /* i915 and valleyview are the same */
+	[HPD_CRT] = CRT_HOTPLUG_INT_STATUS,
+	[HPD_SDVO_B] = SDVOB_HOTPLUG_INT_STATUS_I915,
+	[HPD_SDVO_C] = SDVOC_HOTPLUG_INT_STATUS_I915,
+	[HPD_PORT_B] = HDMIB_HOTPLUG_INT_STATUS,
+	[HPD_PORT_C] = HDMIC_HOTPLUG_INT_STATUS,
+	[HPD_PORT_D] = HDMID_HOTPLUG_INT_STATUS
+};
+
+
+
 /* For display hotplug interrupt */
 static void
 ironlake_enable_display_irq(drm_i915_private_t *dev_priv, u32 mask)
@@ -630,7 +683,7 @@ static irqreturn_t valleyview_irq_handler(int irq, void *arg)
 
 			DRM_DEBUG_DRIVER("hotplug event received, stat 0x%08x\n",
 					 hotplug_status);
-			if (hotplug_status & dev_priv->hotplug_supported_mask)
+			if (hotplug_status & HOTPLUG_INT_STATUS_I915)
 				queue_work(dev_priv->wq,
 					   &dev_priv->hotplug_work);
 
@@ -2016,6 +2069,19 @@ static void ironlake_enable_pch_hotplug(struct drm_device *dev)
 	I915_WRITE(PCH_PORT_HOTPLUG, hotplug);
 }
 
+static void ibx_irq_postinstall(struct drm_device *dev)
+{
+	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
+	u32 mask;
+
+	if (HAS_PCH_IBX(dev))
+		mask = SDE_GMBUS | SDE_AUX_MASK;
+	else
+		mask = SDE_GMBUS_CPT | SDE_AUX_MASK_CPT;
+	I915_WRITE(SDEIIR, I915_READ(SDEIIR));
+	I915_WRITE(SDEIMR, ~mask);
+}
+
 static int ironlake_irq_postinstall(struct drm_device *dev)
 {
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
@@ -2024,8 +2090,6 @@ static int ironlake_irq_postinstall(struct drm_device *dev)
 			   DE_PLANEA_FLIP_DONE | DE_PLANEB_FLIP_DONE |
 			   DE_AUX_CHANNEL_A;
 	u32 gt_irqs;
-	u32 hotplug_mask;
-	u32 pch_irq_mask;
 
 	dev_priv->irq_mask = ~display_mask;
 
@@ -2051,31 +2115,9 @@ static int ironlake_irq_postinstall(struct drm_device *dev)
 	I915_WRITE(GTIER, gt_irqs);
 	POSTING_READ(GTIER);
 
-	if (HAS_PCH_CPT(dev)) {
-		hotplug_mask = (SDE_CRT_HOTPLUG_CPT |
-				SDE_PORTB_HOTPLUG_CPT |
-				SDE_PORTC_HOTPLUG_CPT |
-				SDE_PORTD_HOTPLUG_CPT |
-				SDE_GMBUS_CPT |
-				SDE_AUX_MASK_CPT);
-	} else {
-		hotplug_mask = (SDE_CRT_HOTPLUG |
-				SDE_PORTB_HOTPLUG |
-				SDE_PORTC_HOTPLUG |
-				SDE_PORTD_HOTPLUG |
-				SDE_GMBUS |
-				SDE_AUX_MASK);
-	}
-
-	pch_irq_mask = ~hotplug_mask;
-
-	I915_WRITE(SDEIIR, I915_READ(SDEIIR));
-	I915_WRITE(SDEIMR, pch_irq_mask);
-	I915_WRITE(SDEIER, hotplug_mask);
-	POSTING_READ(SDEIER);
-
+	ibx_irq_postinstall(dev);
 	ironlake_enable_pch_hotplug(dev);
-
+	
 	if (IS_IRONLAKE_M(dev)) {
 		/* Clear & enable PCU event interrupts */
 		I915_WRITE(DEIIR, DE_PCU_EVENT);
@@ -2098,8 +2140,6 @@ static int ivybridge_irq_postinstall(struct drm_device *dev)
 		DE_AUX_CHANNEL_A_IVB;
 	u32 pm_irqs = GEN6_PM_RPS_EVENTS;
 	u32 gt_irqs;
-	u32 hotplug_mask;
-	u32 pch_irq_mask;
 
 	dev_priv->irq_mask = ~display_mask;
 
@@ -2139,21 +2179,9 @@ static int ivybridge_irq_postinstall(struct drm_device *dev)
 		   (I915_READ(GEN6_PMIER) & GEN6_PM_RPS_EVENTS) | pm_irqs);
 	POSTING_READ(GEN6_PMIER);
 
-	hotplug_mask = (SDE_CRT_HOTPLUG_CPT |
-			SDE_PORTB_HOTPLUG_CPT |
-			SDE_PORTC_HOTPLUG_CPT |
-			SDE_PORTD_HOTPLUG_CPT |
-			SDE_GMBUS_CPT |
-			SDE_AUX_MASK_CPT);
-	pch_irq_mask = ~hotplug_mask;
-
-	I915_WRITE(SDEIIR, I915_READ(SDEIIR));
-	I915_WRITE(SDEIMR, pch_irq_mask);
-	I915_WRITE(SDEIER, hotplug_mask);
-	POSTING_READ(SDEIER);
-
+	ibx_irq_postinstall(dev);
 	ironlake_enable_pch_hotplug(dev);
-
+	
 	return 0;
 }
 
@@ -2472,26 +2500,16 @@ static int i915_irq_postinstall(struct drm_device *dev)
 
 static void i915_hpd_irq_setup(struct drm_device *dev)
 {
-	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
-	u32 hotplug_en;
-
 	if (I915_HAS_HOTPLUG(dev)) {
-		hotplug_en = I915_READ(PORT_HOTPLUG_EN);
+		drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
+		struct drm_mode_config *mode_config = &dev->mode_config;
+		struct intel_encoder *encoder;
+		u32 hotplug_en = I915_READ(PORT_HOTPLUG_EN);
 
-		if (dev_priv->hotplug_supported_mask & HDMIB_HOTPLUG_INT_STATUS)
-			hotplug_en |= HDMIB_HOTPLUG_INT_EN;
-		if (dev_priv->hotplug_supported_mask & HDMIC_HOTPLUG_INT_STATUS)
-			hotplug_en |= HDMIC_HOTPLUG_INT_EN;
-		if (dev_priv->hotplug_supported_mask & HDMID_HOTPLUG_INT_STATUS)
-			hotplug_en |= HDMID_HOTPLUG_INT_EN;
-		if (dev_priv->hotplug_supported_mask & SDVOC_HOTPLUG_INT_STATUS_I915)
-			hotplug_en |= SDVOC_HOTPLUG_INT_EN;
-		if (dev_priv->hotplug_supported_mask & SDVOB_HOTPLUG_INT_STATUS_I915)
-			hotplug_en |= SDVOB_HOTPLUG_INT_EN;
-		if (dev_priv->hotplug_supported_mask & CRT_HOTPLUG_INT_STATUS) {
-			hotplug_en |= CRT_HOTPLUG_INT_EN;
-			hotplug_en |= CRT_HOTPLUG_VOLTAGE_COMPARE_50;
-		}
+		hotplug_en &= ~HOTPLUG_INT_EN_MASK;
+		list_for_each_entry(encoder, &mode_config->encoder_list, base.head)
+			hotplug_en |= hpd_mask_i915[encoder->hpd_pin];
+		hotplug_en |= CRT_HOTPLUG_VOLTAGE_COMPARE_50;
 
 		/* Ignore TV since it's buggy */
 
@@ -2555,7 +2573,7 @@ static irqreturn_t i915_irq_handler(int irq, void *arg)
 
 			DRM_DEBUG_DRIVER("hotplug event received, stat 0x%08x\n",
 				  hotplug_status);
-			if (hotplug_status & dev_priv->hotplug_supported_mask)
+			if (hotplug_status & HOTPLUG_INT_STATUS_I915)
 				queue_work(dev_priv->wq,
 					   &dev_priv->hotplug_work);
 
@@ -2708,38 +2726,22 @@ static int i965_irq_postinstall(struct drm_device *dev)
 static void i965_hpd_irq_setup(struct drm_device *dev)
 {
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
+	struct drm_mode_config *mode_config = &dev->mode_config;
+	struct intel_encoder *encoder;
 	u32 hotplug_en;
 
 	/* Note HDMI and DP share hotplug bits */
 	hotplug_en = 0;
-	if (dev_priv->hotplug_supported_mask & HDMIB_HOTPLUG_INT_STATUS)
-		hotplug_en |= HDMIB_HOTPLUG_INT_EN;
-	if (dev_priv->hotplug_supported_mask & HDMIC_HOTPLUG_INT_STATUS)
-		hotplug_en |= HDMIC_HOTPLUG_INT_EN;
-	if (dev_priv->hotplug_supported_mask & HDMID_HOTPLUG_INT_STATUS)
-		hotplug_en |= HDMID_HOTPLUG_INT_EN;
-	if (IS_G4X(dev)) {
-		if (dev_priv->hotplug_supported_mask & SDVOC_HOTPLUG_INT_STATUS_G4X)
-			hotplug_en |= SDVOC_HOTPLUG_INT_EN;
-		if (dev_priv->hotplug_supported_mask & SDVOB_HOTPLUG_INT_STATUS_G4X)
-			hotplug_en |= SDVOB_HOTPLUG_INT_EN;
-	} else {
-		if (dev_priv->hotplug_supported_mask & SDVOC_HOTPLUG_INT_STATUS_I965)
-			hotplug_en |= SDVOC_HOTPLUG_INT_EN;
-		if (dev_priv->hotplug_supported_mask & SDVOB_HOTPLUG_INT_STATUS_I965)
-			hotplug_en |= SDVOB_HOTPLUG_INT_EN;
-	}
-	if (dev_priv->hotplug_supported_mask & CRT_HOTPLUG_INT_STATUS) {
-		hotplug_en |= CRT_HOTPLUG_INT_EN;
-
-		/* Programming the CRT detection parameters tends
-		   to generate a spurious hotplug event about three
-		   seconds later.  So just do it once.
-		   */
-		if (IS_G4X(dev))
-			hotplug_en |= CRT_HOTPLUG_ACTIVATION_PERIOD_64;
-		hotplug_en |= CRT_HOTPLUG_VOLTAGE_COMPARE_50;
-	}
+	list_for_each_entry(encoder, &mode_config->encoder_list, base.head)
+		/* enable bits are the same for all generations */
+		hotplug_en |= hpd_mask_i915[encoder->hpd_pin];
+	/* Programming the CRT detection parameters tends
+	   to generate a spurious hotplug event about three
+	   seconds later.  So just do it once.
+	*/
+	if (IS_G4X(dev))
+		hotplug_en |= CRT_HOTPLUG_ACTIVATION_PERIOD_64;
+	hotplug_en |= CRT_HOTPLUG_VOLTAGE_COMPARE_50;
 
 	/* Ignore TV since it's buggy */
 
@@ -2802,7 +2804,9 @@ static irqreturn_t i965_irq_handler(int irq, void *arg)
 
 			DRM_DEBUG_DRIVER("hotplug event received, stat 0x%08x\n",
 				  hotplug_status);
-			if (hotplug_status & dev_priv->hotplug_supported_mask)
+			if (hotplug_status & (IS_G4X(dev) ?
+					      HOTPLUG_INT_STATUS_G4X :
+					      HOTPLUG_INT_STATUS_I965))
 				queue_work(dev_priv->wq,
 					   &dev_priv->hotplug_work);
 
