@@ -1687,6 +1687,12 @@
 /* SDVO is different across gen3/4 */
 #define   SDVOC_HOTPLUG_INT_STATUS_G4X		(1 << 3)
 #define   SDVOB_HOTPLUG_INT_STATUS_G4X		(1 << 2)
+/*
+ * Bspec seems to be seriously misleaded about the SDVO hpd bits on i965g/gm,
+ * since reality corrobates that they're the same as on gen3. But keep these
+ * bits here (and the comment!) to help any other lost wanderers back onto the
+ * right tracks.
+ */
 #define   SDVOC_HOTPLUG_INT_STATUS_I965		(3 << 4)
 #define   SDVOB_HOTPLUG_INT_STATUS_I965		(3 << 2)
 #define   SDVOC_HOTPLUG_INT_STATUS_I915		(1 << 7)
@@ -1694,13 +1700,6 @@
 #define   HOTPLUG_INT_STATUS_G4X		(CRT_HOTPLUG_INT_STATUS | \
 						 SDVOB_HOTPLUG_INT_STATUS_G4X | \
 						 SDVOC_HOTPLUG_INT_STATUS_G4X | \
-						 HDMIB_HOTPLUG_INT_STATUS | \
-						 HDMIC_HOTPLUG_INT_STATUS | \
-						 HDMID_HOTPLUG_INT_STATUS)
-
-#define HOTPLUG_INT_STATUS_I965			(CRT_HOTPLUG_INT_STATUS | \
-						 SDVOB_HOTPLUG_INT_STATUS_I965 | \
-						 SDVOC_HOTPLUG_INT_STATUS_I965 | \
 						 HDMIB_HOTPLUG_INT_STATUS | \
 						 HDMIC_HOTPLUG_INT_STATUS | \
 						 HDMID_HOTPLUG_INT_STATUS)
