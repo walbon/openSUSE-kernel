@@ -660,9 +660,19 @@ static inline bool hotplug_irq_storm_detect(struct drm_device *dev,
 
 	for (i = 1; i < HPD_NUM_PINS; i++) {
 
-		WARN(((hpd[i] & hotplug_trigger) &&
-		      dev_priv->hpd_stats[i].hpd_mark != HPD_ENABLED),
-		     "Received HPD interrupt although disabled\n");
+		if (hpd[i] & hotplug_trigger &&
+		    dev_priv->hpd_stats[i].hpd_mark == HPD_DISABLED) {
+			/*
+			 * On GMCH platforms the interrupt mask bits only
+			 * prevent irq generation, not the setting of the
+			 * hotplug bits itself. So only WARN about unexpected
+			 * interrupts on saner platforms.
+			 */
+			WARN_ONCE(INTEL_INFO(dev)->gen >= 5 && !IS_VALLEYVIEW(dev),
+				  "Received HPD interrupt (0x%08x) on pin %d (0x%08x) although disabled\n",
+				  hotplug_trigger, i, hpd[i]);
+			continue;
+		}
 
 		if (!(hpd[i] & hotplug_trigger) ||
 		    dev_priv->hpd_stats[i].hpd_mark != HPD_ENABLED)
