@@ -1977,7 +1977,13 @@ static void ironlake_irq_preinstall(struct drm_device *dev)
 
 	/* south display irq */
 	I915_WRITE(SDEIMR, 0xffffffff);
-	I915_WRITE(SDEIER, 0x0);
+	/*
+	 * SDEIER is also touched by the interrupt handler to work around missed
+	 * PCH interrupts. Hence we can't update it after the interrupt handler
+	 * is enabled - instead we unconditionally enable all PCH interrupt
+	 * sources here, but then only unmask them as needed with SDEIMR.
+	 */
+	I915_WRITE(SDEIER, 0xffffffff);
 	POSTING_READ(SDEIER);
 }
 
@@ -2049,18 +2055,30 @@ static void valleyview_irq_preinstall(struct drm_device *dev)
 	POSTING_READ(VLV_IER);
 }
 
-/*
- * Enable digital hotplug on the PCH, and configure the DP short pulse
- * duration to 2ms (which is the minimum in the Display Port spec)
- *
- * This register is the same on all known PCH chips.
- */
-
-static void ironlake_enable_pch_hotplug(struct drm_device *dev)
+static void ibx_hpd_irq_setup(struct drm_device *dev)
 {
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
-	u32	hotplug;
+	struct drm_mode_config *mode_config = &dev->mode_config;
+	struct intel_encoder *intel_encoder;
+	u32 mask = ~I915_READ(SDEIMR);
+	u32 hotplug;
 
+	if (HAS_PCH_IBX(dev)) {
+		list_for_each_entry(intel_encoder, &mode_config->encoder_list, base.head)
+			mask |= hpd_ibx[intel_encoder->hpd_pin];
+	} else {
+		list_for_each_entry(intel_encoder, &mode_config->encoder_list, base.head)
+			mask |= hpd_cpt[intel_encoder->hpd_pin];
+	}
+
+	I915_WRITE(SDEIMR, ~mask);
+
+	/*
+	 * Enable digital hotplug on the PCH, and configure the DP short pulse
+	 * duration to 2ms (which is the minimum in the Display Port spec)
+	 *
+	 * This register is the same on all known PCH chips.
+	 */
 	hotplug = I915_READ(PCH_PORT_HOTPLUG);
 	hotplug &= ~(PORTD_PULSE_DURATION_MASK|PORTC_PULSE_DURATION_MASK|PORTB_PULSE_DURATION_MASK);
 	hotplug |= PORTD_HOTPLUG_ENABLE | PORTD_PULSE_DURATION_2ms;
@@ -2116,8 +2134,7 @@ static int ironlake_irq_postinstall(struct drm_device *dev)
 	POSTING_READ(GTIER);
 
 	ibx_irq_postinstall(dev);
-	ironlake_enable_pch_hotplug(dev);
-	
+
 	if (IS_IRONLAKE_M(dev)) {
 		/* Clear & enable PCU event interrupts */
 		I915_WRITE(DEIIR, DE_PCU_EVENT);
@@ -2180,8 +2197,7 @@ static int ivybridge_irq_postinstall(struct drm_device *dev)
 	POSTING_READ(GEN6_PMIER);
 
 	ibx_irq_postinstall(dev);
-	ironlake_enable_pch_hotplug(dev);
-	
+
 	return 0;
 }
 
@@ -2935,6 +2951,7 @@ void intel_irq_init(struct drm_device *dev)
 		dev->driver->irq_uninstall = ironlake_irq_uninstall;
 		dev->driver->enable_vblank = ivybridge_enable_vblank;
 		dev->driver->disable_vblank = ivybridge_disable_vblank;
+		dev_priv->display.hpd_irq_setup = ibx_hpd_irq_setup;
 	} else if (HAS_PCH_SPLIT(dev)) {
 		dev->driver->irq_handler = ironlake_irq_handler;
 		dev->driver->irq_preinstall = ironlake_irq_preinstall;
@@ -2942,6 +2959,7 @@ void intel_irq_init(struct drm_device *dev)
 		dev->driver->irq_uninstall = ironlake_irq_uninstall;
 		dev->driver->enable_vblank = ironlake_enable_vblank;
 		dev->driver->disable_vblank = ironlake_disable_vblank;
+		dev_priv->display.hpd_irq_setup = ibx_hpd_irq_setup;
 	} else {
 		if (INTEL_INFO(dev)->gen == 2) {
 			dev->driver->irq_preinstall = i8xx_irq_preinstall;
