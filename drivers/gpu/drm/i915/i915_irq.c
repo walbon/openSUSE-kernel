@@ -660,6 +660,10 @@ static inline bool hotplug_irq_storm_detect(struct drm_device *dev,
 
 	for (i = 1; i < HPD_NUM_PINS; i++) {
 
+		WARN(((hpd[i] & hotplug_trigger) &&
+		      dev_priv->hpd_stats[i].hpd_mark != HPD_ENABLED),
+		     "Received HPD interrupt although disabled\n");
+
 		if (!(hpd[i] & hotplug_trigger) ||
 		    dev_priv->hpd_stats[i].hpd_mark != HPD_ENABLED)
 			dev_priv->hpd_event_bits |= (1 << i);
@@ -670,6 +674,7 @@ static inline bool hotplug_irq_storm_detect(struct drm_device *dev,
 				   + msecs_to_jiffies(HPD_STORM_DETECT_PERIOD))) {
 			dev_priv->hpd_stats[i].hpd_last_jiffies = jiffies;
 			dev_priv->hpd_stats[i].hpd_cnt = 0;
+			DRM_DEBUG_KMS("Received HPD interrupt on PIN %d - cnt: 0\n", i);
 		} else if (dev_priv->hpd_stats[i].hpd_cnt > HPD_STORM_THRESHOLD) {
 			dev_priv->hpd_stats[i].hpd_mark = HPD_MARK_DISABLED;
 			dev_priv->hpd_event_bits &= ~(1 << i);
@@ -677,6 +682,8 @@ static inline bool hotplug_irq_storm_detect(struct drm_device *dev,
 			ret = true;
 		} else {
 			dev_priv->hpd_stats[i].hpd_cnt++;
+			DRM_DEBUG_KMS("Received HPD interrupt on PIN %d - cnt: %d\n", i,
+				      dev_priv->hpd_stats[i].hpd_cnt);
 		}
 	}
 
