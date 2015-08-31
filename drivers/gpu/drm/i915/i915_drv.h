@@ -793,6 +793,14 @@ typedef struct drm_i915_private {
 	struct drm_i915_error_state *first_error;
 	struct work_struct error_work;
 	struct completion error_completion;
+
+	/**
+	 * wq - Driver workqueue for GEM.
+	 *
+	 * NOTE: Work items scheduled here are not allowed to grab any modeset
+	 * locks, for otherwise the flushing done in the pageflip code will
+	 * result in deadlocks.
+	 */
 	struct workqueue_struct *wq;
 
 	/* Display functions */
