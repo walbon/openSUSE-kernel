@@ -36,7 +36,15 @@
 #include "i915_trace.h"
 #include "intel_drv.h"
 
-static const u32 hpd_ibx[] = {
+/**
+ * DOC: interrupt handling
+ *
+ * These functions provide the basic support for enabling and disabling the
+ * interrupt handling support. There's a lot more functionality in i915_irq.c
+ * and related files, but that will be described in separate chapters.
+ */
+
+static const u32 hpd_ibx[HPD_NUM_PINS] = {
 	[HPD_CRT] = SDE_CRT_HOTPLUG,
 	[HPD_SDVO_B] = SDE_SDVOB_HOTPLUG,
 	[HPD_PORT_B] = SDE_PORTB_HOTPLUG,
@@ -44,14 +52,14 @@ static const u32 hpd_ibx[] = {
 	[HPD_PORT_D] = SDE_PORTD_HOTPLUG
 };
 
-static const u32 hpd_cpt[] = {
+static const u32 hpd_cpt[HPD_NUM_PINS] = {
 	[HPD_CRT] = SDE_CRT_HOTPLUG_CPT,
 	[HPD_PORT_B] = SDE_PORTB_HOTPLUG_CPT,
 	[HPD_PORT_C] = SDE_PORTC_HOTPLUG_CPT,
 	[HPD_PORT_D] = SDE_PORTD_HOTPLUG_CPT
 };
 
-static const u32 hpd_mask_i915[] = {
+static const u32 hpd_mask_i915[HPD_NUM_PINS] = {
 	[HPD_CRT] = CRT_HOTPLUG_INT_EN,
 	[HPD_SDVO_B] = SDVOB_HOTPLUG_INT_EN,
 	[HPD_SDVO_C] = SDVOC_HOTPLUG_INT_EN,
@@ -60,7 +68,7 @@ static const u32 hpd_mask_i915[] = {
 	[HPD_PORT_D] = HDMID_HOTPLUG_INT_EN
 };
 
-static const u32 hpd_status_gen4[] = {
+static const u32 hpd_status_gen4[HPD_NUM_PINS] = {
 	[HPD_CRT] = CRT_HOTPLUG_INT_STATUS,
 	[HPD_SDVO_B] = SDVOB_HOTPLUG_INT_STATUS_G4X,
 	[HPD_SDVO_C] = SDVOC_HOTPLUG_INT_STATUS_G4X,
@@ -69,7 +77,7 @@ static const u32 hpd_status_gen4[] = {
 	[HPD_PORT_D] = HDMID_HOTPLUG_INT_STATUS
 };
 
-static const u32 hpd_status_i915[] = { /* i915 and valleyview are the same */
+static const u32 hpd_status_i915[HPD_NUM_PINS] = { /* i915 and valleyview are the same */
 	[HPD_CRT] = CRT_HOTPLUG_INT_STATUS,
 	[HPD_SDVO_B] = SDVOB_HOTPLUG_INT_STATUS_I915,
 	[HPD_SDVO_C] = SDVOC_HOTPLUG_INT_STATUS_I915,
@@ -644,7 +652,7 @@ static void gen6_queue_rps_work(struct drm_i915_private *dev_priv,
 
 static inline void intel_hpd_irq_handler(struct drm_device *dev,
 					 u32 hotplug_trigger,
-					 const u32 *hpd)
+					 const u32 hpd[HPD_NUM_PINS])
 {
 	drm_i915_private_t *dev_priv = dev->dev_private;
 	int i;
