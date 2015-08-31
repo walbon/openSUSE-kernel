@@ -2225,30 +2225,6 @@ static int valleyview_irq_postinstall(struct drm_device *dev)
 	return 0;
 }
 
-static void valleyview_hpd_irq_setup(struct drm_device *dev)
-{
-	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
-	u32 hotplug_en = I915_READ(PORT_HOTPLUG_EN);
-
-	/* Note HDMI and DP share bits */
-	if (dev_priv->hotplug_supported_mask & HDMIB_HOTPLUG_INT_STATUS)
-		hotplug_en |= HDMIB_HOTPLUG_INT_EN;
-	if (dev_priv->hotplug_supported_mask & HDMIC_HOTPLUG_INT_STATUS)
-		hotplug_en |= HDMIC_HOTPLUG_INT_EN;
-	if (dev_priv->hotplug_supported_mask & HDMID_HOTPLUG_INT_STATUS)
-		hotplug_en |= HDMID_HOTPLUG_INT_EN;
-	if (dev_priv->hotplug_supported_mask & SDVOC_HOTPLUG_INT_STATUS_I915)
-		hotplug_en |= SDVOC_HOTPLUG_INT_EN;
-	if (dev_priv->hotplug_supported_mask & SDVOB_HOTPLUG_INT_STATUS_I915)
-		hotplug_en |= SDVOB_HOTPLUG_INT_EN;
-	if (dev_priv->hotplug_supported_mask & CRT_HOTPLUG_INT_STATUS) {
-		hotplug_en |= CRT_HOTPLUG_INT_EN;
-		hotplug_en |= CRT_HOTPLUG_VOLTAGE_COMPARE_50;
-	}
-
-	I915_WRITE(PORT_HOTPLUG_EN, hotplug_en);
-}
-
 static void valleyview_irq_uninstall(struct drm_device *dev)
 {
 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
@@ -2946,7 +2922,7 @@ void intel_irq_init(struct drm_device *dev)
 		dev->driver->irq_uninstall = valleyview_irq_uninstall;
 		dev->driver->enable_vblank = valleyview_enable_vblank;
 		dev->driver->disable_vblank = valleyview_disable_vblank;
-		dev_priv->display.hpd_irq_setup = valleyview_hpd_irq_setup;
+		dev_priv->display.hpd_irq_setup = i915_hpd_irq_setup;
 	} else if (IS_IVYBRIDGE(dev) || IS_HASWELL(dev)) {
 		/* Share uninstall handlers with ILK/SNB */
 		dev->driver->irq_handler = ivybridge_irq_handler;
