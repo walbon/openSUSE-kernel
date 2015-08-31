@@ -693,6 +693,9 @@ static inline void intel_hpd_irq_handler(struct drm_device *dev,
 
 	if (storm_detected)
 		dev_priv->display.hpd_irq_setup(dev);
+
+	queue_work(dev_priv->wq,
+		   &dev_priv->hotplug_work);
 }
 
 static void gmbus_irq_handler(struct drm_device *dev)
@@ -801,8 +804,6 @@ static irqreturn_t valleyview_irq_handler(int irq, void *arg)
 					 hotplug_status);
 			if (hotplug_trigger) {
 				intel_hpd_irq_handler(dev, hotplug_trigger, hpd_status_i915);
-				queue_work(dev_priv->wq,
-					   &dev_priv->hotplug_work);
 			}
 			I915_WRITE(PORT_HOTPLUG_STAT, hotplug_status);
 			I915_READ(PORT_HOTPLUG_STAT);
@@ -831,7 +832,6 @@ static void ibx_irq_handler(struct drm_device *dev, u32 pch_iir)
 
 	if (hotplug_trigger) {
 		intel_hpd_irq_handler(dev, hotplug_trigger, hpd_ibx);
-		queue_work(dev_priv->wq, &dev_priv->hotplug_work);
 	}
 	if (pch_iir & SDE_AUDIO_POWER_MASK)
 		DRM_DEBUG_DRIVER("PCH audio power change on port %d\n",
@@ -879,7 +879,6 @@ static void cpt_irq_handler(struct drm_device *dev, u32 pch_iir)
 
 	if (hotplug_trigger) {
 		intel_hpd_irq_handler(dev, hotplug_trigger, hpd_cpt);
-		queue_work(dev_priv->wq, &dev_priv->hotplug_work);
 	}
 	if (pch_iir & SDE_AUDIO_POWER_MASK_CPT)
 		DRM_DEBUG_DRIVER("PCH audio power change on port %d\n",
@@ -2708,8 +2707,6 @@ static irqreturn_t i915_irq_handler(int irq, void *arg)
 				  hotplug_status);
 			if (hotplug_trigger) {
 				intel_hpd_irq_handler(dev, hotplug_trigger, hpd_status_i915);
-				queue_work(dev_priv->wq,
-					   &dev_priv->hotplug_work);
 			}
 			I915_WRITE(PORT_HOTPLUG_STAT, hotplug_status);
 			POSTING_READ(PORT_HOTPLUG_STAT);
@@ -2949,8 +2946,6 @@ static irqreturn_t i965_irq_handler(int irq, void *arg)
 			if (hotplug_trigger) {
 				intel_hpd_irq_handler(dev, hotplug_trigger,
 						      IS_G4X(dev) ? hpd_status_gen4 : hpd_status_i915);
-				queue_work(dev_priv->wq,
-					   &dev_priv->hotplug_work);
 			}
 			I915_WRITE(PORT_HOTPLUG_STAT, hotplug_status);
 			I915_READ(PORT_HOTPLUG_STAT);
