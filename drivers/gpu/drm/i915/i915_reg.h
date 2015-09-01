@@ -1634,6 +1634,12 @@
 #define   SDVOC_HOTPLUG_INT_EN			(1 << 25)
 #define   TV_HOTPLUG_INT_EN			(1 << 18)
 #define   CRT_HOTPLUG_INT_EN			(1 << 9)
+#define HOTPLUG_INT_EN_MASK			(HDMIB_HOTPLUG_INT_EN | \
+						 HDMIC_HOTPLUG_INT_EN | \
+						 HDMID_HOTPLUG_INT_EN | \
+						 SDVOC_HOTPLUG_INT_EN | \
+						 SDVOB_HOTPLUG_INT_EN | \
+						 CRT_HOTPLUG_INT_EN)
 #define   CRT_HOTPLUG_FORCE_DETECT		(1 << 3)
 #define CRT_HOTPLUG_ACTIVATION_PERIOD_32	(0 << 8)
 /* must use period 64 on GM45 according to docs */
@@ -1681,10 +1687,29 @@
 /* SDVO is different across gen3/4 */
 #define   SDVOC_HOTPLUG_INT_STATUS_G4X		(1 << 3)
 #define   SDVOB_HOTPLUG_INT_STATUS_G4X		(1 << 2)
+/*
+ * Bspec seems to be seriously misleaded about the SDVO hpd bits on i965g/gm,
+ * since reality corrobates that they're the same as on gen3. But keep these
+ * bits here (and the comment!) to help any other lost wanderers back onto the
+ * right tracks.
+ */
 #define   SDVOC_HOTPLUG_INT_STATUS_I965		(3 << 4)
 #define   SDVOB_HOTPLUG_INT_STATUS_I965		(3 << 2)
 #define   SDVOC_HOTPLUG_INT_STATUS_I915		(1 << 7)
 #define   SDVOB_HOTPLUG_INT_STATUS_I915		(1 << 6)
+#define   HOTPLUG_INT_STATUS_G4X		(CRT_HOTPLUG_INT_STATUS | \
+						 SDVOB_HOTPLUG_INT_STATUS_G4X | \
+						 SDVOC_HOTPLUG_INT_STATUS_G4X | \
+						 HDMIB_HOTPLUG_INT_STATUS | \
+						 HDMIC_HOTPLUG_INT_STATUS | \
+						 HDMID_HOTPLUG_INT_STATUS)
+
+#define HOTPLUG_INT_STATUS_I915			(CRT_HOTPLUG_INT_STATUS | \
+						 SDVOB_HOTPLUG_INT_STATUS_I915 | \
+						 SDVOC_HOTPLUG_INT_STATUS_I915 | \
+						 HDMIB_HOTPLUG_INT_STATUS | \
+						 HDMIC_HOTPLUG_INT_STATUS | \
+						 HDMID_HOTPLUG_INT_STATUS)
 
 /* SDVO port control */
 #define SDVOB			0x61140
@@ -3505,7 +3530,11 @@
 #define SDE_PORTC_HOTPLUG       (1 << 9)
 #define SDE_PORTB_HOTPLUG       (1 << 8)
 #define SDE_SDVOB_HOTPLUG       (1 << 6)
-#define SDE_HOTPLUG_MASK	(0xf << 8)
+#define SDE_HOTPLUG_MASK        (SDE_CRT_HOTPLUG | \
+				 SDE_SDVOB_HOTPLUG |	\
+				 SDE_PORTB_HOTPLUG |	\
+				 SDE_PORTC_HOTPLUG |	\
+				 SDE_PORTD_HOTPLUG)
 #define SDE_TRANSB_CRC_DONE	(1 << 5)
 #define SDE_TRANSB_CRC_ERR	(1 << 4)
 #define SDE_TRANSB_FIFO_UNDER	(1 << 3)

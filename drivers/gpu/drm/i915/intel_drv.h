@@ -163,6 +163,7 @@ struct intel_encoder {
 	 * it is connected to in the pipe parameter. */
 	bool (*get_hw_state)(struct intel_encoder *, enum pipe *pipe);
 	int crtc_mask;
+	enum hpd_pin hpd_pin;
 };
 
 struct intel_panel {
@@ -192,6 +193,10 @@ struct intel_connector {
 
 	/* Cached EDID for eDP and LVDS. May hold ERR_PTR for invalid EDID. */
 	struct edid *edid;
+
+	/* since POLL and HPD connectors may use the same HPD line keep the native
+	   state of connector->polled in case hotplug storm detection changes it */
+	u8 polled;
 };
 
 struct intel_crtc {
