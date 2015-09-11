@@ -15,4 +15,6 @@ void hyperv_callback_vector(void);
 void hyperv_vector_handler(struct pt_regs *regs);
 void hv_register_vmbus_handler(int irq, irq_handler_t handler);
 
+void hv_setup_kexec_handler(void (*handler)(void));
+void hv_remove_kexec_handler(void);
 #endif

@@ -17,6 +17,7 @@
 #include <linux/hardirq.h>
 #include <linux/efi.h>
 #include <linux/interrupt.h>
+#include <linux/kexec.h>
 #include <asm/processor.h>
 #include <asm/hypervisor.h>
 #include <asm/hyperv.h>
@@ -27,9 +28,12 @@
 #include <asm/i8259.h>
 #include <asm/apic.h>
 #include <asm/timer.h>
+#include <asm/reboot.h>
 
 struct ms_hyperv_info ms_hyperv;
 EXPORT_SYMBOL_GPL(ms_hyperv);
+
+static void (*hv_kexec_handler)(void);
 
 static bool __init ms_hyperv_platform(void)
 {
@@ -45,6 +49,25 @@ static bool __init ms_hyperv_platform(void)
 	return eax >= HYPERV_CPUID_MIN &&
 		eax <= HYPERV_CPUID_MAX &&
 		!memcmp("Microsoft Hv", hyp_signature, 12);
+}
+
+void hv_setup_kexec_handler(void (*handler)(void))
+{
+	hv_kexec_handler = handler;
+}
+EXPORT_SYMBOL_GPL(hv_setup_kexec_handler);
+
+void hv_remove_kexec_handler(void)
+{
+	hv_kexec_handler = NULL;
+}
+EXPORT_SYMBOL_GPL(hv_remove_kexec_handler);
+
+static void hv_machine_shutdown(void)
+{
+	if (kexec_in_progress && hv_kexec_handler)
+		hv_kexec_handler();
+	native_machine_shutdown();
 }
 
 static cycle_t read_hv_clock(struct clocksource *arg)
@@ -100,6 +123,7 @@ static void __init ms_hyperv_init_platform(void)
 	no_timer_check = 1;
 #endif
 
+	machine_ops.shutdown = hv_machine_shutdown;
 }
 
 const __refconst struct hypervisor_x86 x86_hyper_ms_hyperv = {
