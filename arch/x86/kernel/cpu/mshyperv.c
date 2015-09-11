@@ -34,6 +34,7 @@ struct ms_hyperv_info ms_hyperv;
 EXPORT_SYMBOL_GPL(ms_hyperv);
 
 static void (*hv_kexec_handler)(void);
+static void (*hv_crash_handler)(struct pt_regs *regs);
 
 static bool __init ms_hyperv_platform(void)
 {
@@ -63,12 +64,32 @@ void hv_remove_kexec_handler(void)
 }
 EXPORT_SYMBOL_GPL(hv_remove_kexec_handler);
 
+
+void hv_setup_crash_handler(void (*handler)(struct pt_regs *regs))
+{
+	hv_crash_handler = handler;
+}
+EXPORT_SYMBOL_GPL(hv_setup_crash_handler);
+
+void hv_remove_crash_handler(void)
+{
+	hv_crash_handler = NULL;
+}
+EXPORT_SYMBOL_GPL(hv_remove_crash_handler);
 static void hv_machine_shutdown(void)
 {
 	if (kexec_in_progress && hv_kexec_handler)
 		hv_kexec_handler();
 	native_machine_shutdown();
 }
+
+static void hv_machine_crash_shutdown(struct pt_regs *regs)
+{
+	if (hv_crash_handler)
+		hv_crash_handler(regs);
+	native_machine_crash_shutdown(regs);
+}
+
 
 static cycle_t read_hv_clock(struct clocksource *arg)
 {
@@ -124,6 +145,7 @@ static void __init ms_hyperv_init_platform(void)
 #endif
 
 	machine_ops.shutdown = hv_machine_shutdown;
+	machine_ops.crash_shutdown = hv_machine_crash_shutdown;
 }
 
 const __refconst struct hypervisor_x86 x86_hyper_ms_hyperv = {
