@@ -264,8 +264,8 @@ typedef struct xfs_inode {
 	struct inode		i_vnode;	/* embedded VFS inode */
 } xfs_inode_t;
 
-#define XFS_ISIZE(ip)	(((ip)->i_d.di_mode & S_IFMT) == S_IFREG) ? \
-				(ip)->i_size : (ip)->i_d.di_size;
+#define XFS_ISIZE(ip)	((((ip)->i_d.di_mode & S_IFMT) == S_IFREG) ? \
+				(ip)->i_size : (ip)->i_d.di_size)
 
 /* Convert from vfs inode to xfs inode */
 static inline struct xfs_inode *XFS_I(struct inode *inode)
@@ -577,6 +577,7 @@ void		xfs_iext_irec_compact(xfs_ifork_t *);
 void		xfs_iext_irec_compact_pages(xfs_ifork_t *);
 void		xfs_iext_irec_compact_full(xfs_ifork_t *);
 void		xfs_iext_irec_update_extoffs(xfs_ifork_t *, int, int);
+bool		xfs_can_free_eofblocks(struct xfs_inode *, bool);
 
 #define xfs_ipincount(ip)	((unsigned int) atomic_read(&ip->i_pincount))
 

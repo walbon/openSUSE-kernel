@@ -222,6 +222,10 @@ typedef struct xfs_mount {
 	struct workqueue_struct	*m_data_workqueue;
 	const char		*m_unwritten_workqueue_name;
 	struct workqueue_struct	*m_unwritten_workqueue;
+	struct delayed_work	m_eofblocks_work; /* background eof blocks
+						     trimming */
+	const char		*m_eofblocks_workqueue_name;
+	struct workqueue_struct *m_eofblocks_workqueue;
 #endif
 } xfs_mount_t;
 
