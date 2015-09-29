@@ -22,6 +22,7 @@
 #include <asm/uaccess.h>
 #include <asm/desc.h>
 #include <asm/debugreg.h>
+#include <asm/mmu_context.h>
 #if 0
 #include <asm/pgtable.h>
 #endif
@@ -582,6 +583,7 @@ kdb_ldt(int argc, const char **argv)
 	kdb_desc_t *ldt, *ldt_desc;
 	unsigned int max_sel;
 	static int last_sel = 0, last_count = 0;
+	struct ldt_struct *ldtp;
 
 	diag = lkdb_parse_two_numbers(argc, argv, &sel, &count,
 				     &last_sel, &last_count);
@@ -591,13 +593,13 @@ kdb_ldt(int argc, const char **argv)
 	if (strcmp(argv[0], "ldtp") == 0) {
 		lkdb_printf("pid=%d, process=%s\n",
 			   lkdb_current_task->pid, lkdb_current_task->comm);
-		if (!lkdb_current_task->mm ||
-		    !lkdb_current_task->mm->context.ldt) {
+		ldtp = lkdb_current_task->mm->context.ldt;
+		if (!lkdb_current_task->mm || !ldtp) {
 			lkdb_printf("no special LDT for this process\n");
 			return 0;
 		}
-		ldt = lkdb_current_task->mm->context.ldt;
-		max_sel = lkdb_current_task->mm->context.size;
+		ldt = ldtp->entries;
+		max_sel = ldtp->size;
 	} else {
 
 		/* sldt gives the GDT selector for the segment containing LDT */
