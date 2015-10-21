@@ -37,6 +37,13 @@
 
 #define PCI_VENDOR_ID_ETRON		0x1b6f
 #define PCI_DEVICE_ID_ASROCK_P67	0x7023
+#define PCI_DEVICE_ID_EJ168		0x7023
+
+#define PCI_DEVICE_ID_INTEL_LYNXPOINT_XHCI	0x8c31
+#define PCI_DEVICE_ID_INTEL_LYNXPOINT_LP_XHCI	0x9c31
+#define PCI_DEVICE_ID_INTEL_CHERRYVIEW_XHCI		0x22b5
+#define PCI_DEVICE_ID_INTEL_SUNRISEPOINT_H_XHCI		0xa12f
+#define PCI_DEVICE_ID_INTEL_SUNRISEPOINT_LP_XHCI	0x9d2f
 
 static const char hcd_name[] = "xhci_hcd";
 
@@ -94,6 +101,7 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 	if (pdev->vendor == PCI_VENDOR_ID_INTEL) {
 		xhci->quirks |= XHCI_LPM_SUPPORT;
 		xhci->quirks |= XHCI_INTEL_HOST;
+		xhci->quirks |= XHCI_AVOID_BEI;
 	}
 	if (pdev->vendor == PCI_VENDOR_ID_INTEL &&
 			pdev->device == PCI_DEVICE_ID_INTEL_PANTHERPOINT_XHCI) {
@@ -109,7 +117,6 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 		 * PPT chipsets.
 		 */
 		xhci->quirks |= XHCI_SPURIOUS_REBOOT;
-		xhci->quirks |= XHCI_AVOID_BEI;
 	}
 	if (pdev->vendor == PCI_VENDOR_ID_INTEL &&
 	    (pdev->device == PCI_DEVICE_ID_INTEL_LYNXPOINT_XHCI ||
@@ -123,7 +130,13 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 		 * https://bugzilla.kernel.org/show_bug.cgi?id=66171
 		 */
 		if (pdev->subsystem_vendor == PCI_VENDOR_ID_HP)
-			xhci->quirks |= XHCI_HSW_SPURIOUS_WAKEUP;
+			xhci->quirks |= XHCI_SPURIOUS_WAKEUP;
+	}
+	if (pdev->vendor == PCI_VENDOR_ID_INTEL &&
+		(pdev->device == PCI_DEVICE_ID_INTEL_SUNRISEPOINT_LP_XHCI ||
+		 pdev->device == PCI_DEVICE_ID_INTEL_SUNRISEPOINT_H_XHCI ||
+		 pdev->device == PCI_DEVICE_ID_INTEL_CHERRYVIEW_XHCI)) {
+		xhci->quirks |= XHCI_PME_STUCK_QUIRK;
 	}
 	if (pdev->vendor == PCI_VENDOR_ID_ETRON &&
 			pdev->device == PCI_DEVICE_ID_ASROCK_P67) {
@@ -136,6 +149,21 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 		xhci->quirks |= XHCI_RESET_ON_RESUME;
 	if (pdev->vendor == PCI_VENDOR_ID_VIA)
 		xhci->quirks |= XHCI_RESET_ON_RESUME;
+}
+
+/*
+ * Make sure PME works on some Intel xHCI controllers by writing 1 to clear
+ * the Internal PME flag bit in vendor specific PMCTRL register at offset 0x80a4
+ */
+static void xhci_pme_quirk(struct xhci_hcd *xhci)
+{
+	u32 val;
+	void __iomem *reg;
+
+	reg = (void __iomem *) xhci->cap_regs + 0x80a4;
+	val = readl(reg);
+	writel(val | BIT(28), reg);
+	readl(reg);
 }
 
 /* called during probe() after chip reset completes */
@@ -236,7 +264,7 @@ static void xhci_pci_remove(struct pci_dev *dev)
 	usb_hcd_pci_remove(dev);
 
 	/* Workaround for spurious wakeups at shutdown with HSW */
-	if (xhci->quirks & XHCI_HSW_SPURIOUS_WAKEUP)
+	if (xhci->quirks & XHCI_SPURIOUS_WAKEUP)
 		pci_set_power_state(dev, PCI_D3cold);
 
 	kfree(xhci);
@@ -258,6 +286,9 @@ static int xhci_pci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 	if (hcd->state != HC_STATE_SUSPENDED ||
 			xhci->shared_hcd->state != HC_STATE_SUSPENDED)
 		return -EINVAL;
+
+	if (xhci->quirks & XHCI_PME_STUCK_QUIRK)
+		xhci_pme_quirk(xhci);
 
 	retval = xhci_suspend(xhci, do_wakeup);
 
@@ -297,6 +328,9 @@ static int xhci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 
 	if (pdev->vendor == PCI_VENDOR_ID_INTEL)
 		usb_enable_xhci_ports(pdev);
+
+	if (xhci->quirks & XHCI_PME_STUCK_QUIRK)
+		xhci_pme_quirk(xhci);
 
 	retval = xhci_resume(xhci, hibernated);
 	return retval;

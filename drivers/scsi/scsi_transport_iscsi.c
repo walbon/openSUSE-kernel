@@ -24,7 +24,6 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/bsg-lib.h>
-#include <linux/list.h>
 #include <net/tcp.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_host.h>
@@ -3358,6 +3357,7 @@ iscsi_conn_attr(persistent_address, ISCSI_PARAM_PERSISTENT_ADDRESS);
 iscsi_conn_attr(ping_tmo, ISCSI_PARAM_PING_TMO);
 iscsi_conn_attr(recv_tmo, ISCSI_PARAM_RECV_TMO);
 
+
 #define iscsi_conn_ep_attr_show(param)					\
 static ssize_t show_conn_ep_param_##param(struct device *dev,		\
 					  struct device_attribute *attr,\
@@ -3503,6 +3503,7 @@ iscsi_session_attr(tgt_reset_tmo, ISCSI_PARAM_TGT_RESET_TMO, 0);
 iscsi_session_attr(ifacename, ISCSI_PARAM_IFACE_NAME, 0);
 iscsi_session_attr(initiatorname, ISCSI_PARAM_INITIATOR_NAME, 0);
 iscsi_session_attr(targetalias, ISCSI_PARAM_TARGET_ALIAS, 0);
+iscsi_session_attr(discovery_session, ISCSI_PARAM_DISCOVERY_SESS, 0);
 
 static ssize_t
 show_priv_session_state(struct device *dev, struct device_attribute *attr,
@@ -3604,6 +3605,7 @@ static struct attribute *iscsi_session_attrs[] = {
 	&dev_attr_sess_chap_out_idx.attr,
 	&dev_attr_sess_chap_in_idx.attr,
 	&dev_attr_priv_sess_target_id.attr,
+	&dev_attr_sess_discovery_session.attr,
 	NULL,
 };
 
@@ -3663,6 +3665,8 @@ static mode_t iscsi_session_attr_is_visible(struct kobject *kobj,
 		param = ISCSI_PARAM_TARGET_ALIAS;
 	else if (attr == &dev_attr_priv_sess_recovery_tmo.attr)
 		return S_IRUGO | S_IWUSR;
+	else if (attr == &dev_attr_sess_discovery_session.attr)
+		param = ISCSI_PARAM_DISCOVERY_SESS;
 	else if (attr == &dev_attr_priv_sess_state.attr)
 		return S_IRUGO;
 	else if (attr == &dev_attr_priv_sess_creator.attr)

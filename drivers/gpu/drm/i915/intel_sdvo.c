@@ -2235,7 +2235,6 @@ intel_sdvo_dvi_init(struct intel_sdvo *intel_sdvo, int device)
 	connector = &intel_connector->base;
 	if (intel_sdvo_get_hotplug_support(intel_sdvo) &
 		intel_sdvo_connector->output_flag) {
-		connector->polled = DRM_CONNECTOR_POLL_HPD;
 		intel_sdvo->hotplug_active |= intel_sdvo_connector->output_flag;
 		/* Some SDVO devices have one-shot hotplug interrupts.
 		 * Ensure that they get re-enabled when an interrupt happens.
@@ -2243,7 +2242,7 @@ intel_sdvo_dvi_init(struct intel_sdvo *intel_sdvo, int device)
 		intel_encoder->hot_plug = intel_sdvo_enable_hotplug;
 		intel_sdvo_enable_hotplug(intel_encoder);
 	} else {
-		connector->polled = DRM_CONNECTOR_POLL_CONNECT | DRM_CONNECTOR_POLL_DISCONNECT;
+		intel_connector->polled = DRM_CONNECTOR_POLL_CONNECT | DRM_CONNECTOR_POLL_DISCONNECT;
 	}
 	encoder->encoder_type = DRM_MODE_ENCODER_TMDS;
 	connector->connector_type = DRM_MODE_CONNECTOR_DVID;
@@ -2312,7 +2311,7 @@ intel_sdvo_analog_init(struct intel_sdvo *intel_sdvo, int device)
 
 	intel_connector = &intel_sdvo_connector->base;
 	connector = &intel_connector->base;
-	connector->polled = DRM_CONNECTOR_POLL_CONNECT;
+	intel_connector->polled = DRM_CONNECTOR_POLL_CONNECT;
 	encoder->encoder_type = DRM_MODE_ENCODER_DAC;
 	connector->connector_type = DRM_MODE_CONNECTOR_VGA;
 
@@ -2766,6 +2765,14 @@ bool intel_sdvo_init(struct drm_device *dev, uint32_t sdvo_reg, bool is_sdvob)
 		goto err_output;
 	}
 
+	/* Only enable the hotplug irq if we need it, to work around noisy
+	 * hotplug lines.
+	 */
+	if (intel_sdvo->hotplug_active) {
+		intel_encoder->hpd_pin =
+			intel_sdvo->is_sdvob ?  HPD_SDVO_B : HPD_SDVO_C;
+	}
+
 	/*
 	 * Cloning SDVO with anything is often impossible, since the SDVO
 	 * encoder can request a special input timing mode. And even if that's
@@ -2775,12 +2782,6 @@ bool intel_sdvo_init(struct drm_device *dev, uint32_t sdvo_reg, bool is_sdvob)
 	 * cloning for SDVO encoders.
 	 */
 	intel_sdvo->base.cloneable = false;
-
-	/* Only enable the hotplug irq if we need it, to work around noisy
-	 * hotplug lines.
-	 */
-	if (intel_sdvo->hotplug_active)
-		dev_priv->hotplug_supported_mask |= hotplug_mask;
 
 	intel_sdvo_select_ddc_bus(dev_priv, intel_sdvo, sdvo_reg);
 

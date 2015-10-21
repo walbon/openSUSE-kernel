@@ -224,11 +224,12 @@ EXPORT_SYMBOL(xen_load_gs_index);
 void release_thread(struct task_struct *dead_task)
 {
 	if (dead_task->mm) {
-		if (dead_task->mm->context.size) {
+		struct ldt_struct *ldt;
+
+		ldt = dead_task->mm->context.ldt;
+		if (ldt) {
 			printk("WARNING: dead process %8s still has LDT? <%p/%d>\n",
-					dead_task->comm,
-					dead_task->mm->context.ldt,
-					dead_task->mm->context.size);
+				dead_task->comm, ldt->entries, ldt->size);
 			BUG();
 		}
 	}

@@ -3165,6 +3165,7 @@ int iscsi_set_param(struct iscsi_cls_conn *cls_conn,
 {
 	struct iscsi_conn *conn = cls_conn->dd_data;
 	struct iscsi_session *session = conn->session;
+	int val;
 
 	switch(param) {
 	case ISCSI_PARAM_FAST_ABORT:
@@ -3248,6 +3249,10 @@ int iscsi_set_param(struct iscsi_cls_conn *cls_conn,
 		return iscsi_switch_str_param(&session->ifacename, buf);
 	case ISCSI_PARAM_INITIATOR_NAME:
 		return iscsi_switch_str_param(&session->initiatorname, buf);
+	case ISCSI_PARAM_DISCOVERY_SESS:
+		sscanf(buf, "%d", &val);
+		session->discovery_sess = !!val;
+		break;
 	default:
 		return -ENOSYS;
 	}
@@ -3325,6 +3330,9 @@ int iscsi_session_get_param(struct iscsi_cls_session *cls_session,
 		break;
 	case ISCSI_PARAM_INITIATOR_NAME:
 		len = sprintf(buf, "%s\n", session->initiatorname);
+		break;
+	case ISCSI_PARAM_DISCOVERY_SESS:
+		len = sprintf(buf, "%u\n", session->discovery_sess);
 		break;
 	default:
 		return -ENOSYS;

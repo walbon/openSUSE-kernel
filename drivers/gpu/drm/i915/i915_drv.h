@@ -86,6 +86,19 @@ enum port {
 };
 #define port_name(p) ((p) + 'A')
 
+enum hpd_pin {
+	HPD_NONE = 0,
+	HPD_PORT_A = HPD_NONE, /* PORT_A is internal */
+	HPD_TV = HPD_NONE,     /* TV is known to be unreliable */
+	HPD_CRT,
+	HPD_SDVO_B,
+	HPD_SDVO_C,
+	HPD_PORT_B,
+	HPD_PORT_C,
+	HPD_PORT_D,
+	HPD_NUM_PINS
+};
+
 #define I915_GEM_GPU_DOMAINS \
 	(I915_GEM_DOMAIN_RENDER | \
 	 I915_GEM_DOMAIN_SAMPLER | \
@@ -699,11 +712,20 @@ typedef struct drm_i915_private {
 	u32 pipestat[2];
 	u32 irq_mask;
 	u32 gt_irq_mask;
-	u32 pch_irq_mask;
 
-	u32 hotplug_supported_mask;
 	struct work_struct hotplug_work;
 	bool enable_hotplug_processing;
+	struct {
+		unsigned long hpd_last_jiffies;
+		int hpd_cnt;
+		enum {
+			HPD_ENABLED = 0,
+			HPD_DISABLED = 1,
+			HPD_MARK_DISABLED = 2
+		} hpd_mark;
+	} hpd_stats[HPD_NUM_PINS];
+	u32 hpd_event_bits;
+	struct timer_list hotplug_reenable_timer;
 
 	int num_pipe;
 	int num_pch_pll;
@@ -771,6 +793,14 @@ typedef struct drm_i915_private {
 	struct drm_i915_error_state *first_error;
 	struct work_struct error_work;
 	struct completion error_completion;
+
+	/**
+	 * wq - Driver workqueue for GEM.
+	 *
+	 * NOTE: Work items scheduled here are not allowed to grab any modeset
+	 * locks, for otherwise the flushing done in the pageflip code will
+	 * result in deadlocks.
+	 */
 	struct workqueue_struct *wq;
 
 	/* Display functions */
@@ -1359,6 +1389,9 @@ extern void i915_update_gfx_val(struct drm_i915_private *dev_priv);
 extern void intel_console_resume(struct work_struct *work);
 
 /* i915_irq.c */
+void i915_hotplug_interrupt_update(struct drm_i915_private *dev_priv,
+				   uint32_t mask,
+				   uint32_t bits);
 void i915_hangcheck_elapsed(unsigned long data);
 void i915_handle_error(struct drm_device *dev, bool wedged);
 
