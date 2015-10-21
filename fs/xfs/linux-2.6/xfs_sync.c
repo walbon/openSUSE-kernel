@@ -191,6 +191,7 @@ restart:
 		if (error == EFSCORRUPTED)
 			break;
 
+		cond_resched();
 	} while (nr_found && !done);
 
 	if (skipped) {

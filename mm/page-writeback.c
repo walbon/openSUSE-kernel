@@ -369,6 +369,12 @@ static unsigned long highmem_dirtyable_memory(unsigned long total)
 		x += zone_page_state(z, NR_FREE_PAGES) +
 		     zone_page_state(z, NR_ACTIVE_FILE) +
 		     zone_page_state(z, NR_INACTIVE_FILE);
+
+		/* Do not include highmem reserves */
+		if (high_wmark_pages(z) > x)
+			x -= high_wmark_pages(z);
+		else
+			x = 0;
 	}
 	/*
 	 * Make sure that the number of highmem pages is never larger
