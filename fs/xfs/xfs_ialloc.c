@@ -161,26 +161,19 @@ xfs_ialloc_inode_init(
 {
 	struct xfs_buf		*fbuf;
 	struct xfs_dinode	*free;
-	int			blks_per_cluster, nbufs, ninodes;
+	int			nbufs, blks_per_cluster, inodes_per_cluster;
 	int			version;
 	int			i, j;
 	xfs_daddr_t		d;
 
 	/*
-	 * Loop over the new block(s), filling in the inodes.
-	 * For small block sizes, manipulate the inodes in buffers
-	 * which are multiples of the blocks size.
+	 * Loop over the new block(s), filling in the inodes.  For small block
+	 * sizes, manipulate the inodes in buffers  which are multiples of the
+	 * blocks size.
 	 */
-	if (mp->m_sb.sb_blocksize >= XFS_INODE_CLUSTER_SIZE(mp)) {
-		blks_per_cluster = 1;
-		nbufs = length;
-		ninodes = mp->m_sb.sb_inopblock;
-	} else {
-		blks_per_cluster = XFS_INODE_CLUSTER_SIZE(mp) /
-				   mp->m_sb.sb_blocksize;
-		nbufs = length / blks_per_cluster;
-		ninodes = blks_per_cluster * mp->m_sb.sb_inopblock;
-	}
+	blks_per_cluster = xfs_icluster_size_fsb(mp);
+	inodes_per_cluster = blks_per_cluster << mp->m_sb.sb_inopblog;
+	nbufs = length / blks_per_cluster;
 
 	/*
 	 * Figure out what version number to use in the inodes we create.
@@ -212,8 +205,8 @@ xfs_ialloc_inode_init(
 		 *	to log a whole cluster of inodes instead of all the
 		 *	individual transactions causing a lot of log traffic.
 		 */
-		xfs_buf_zero(fbuf, 0, ninodes << mp->m_sb.sb_inodelog);
-		for (i = 0; i < ninodes; i++) {
+		xfs_buf_zero(fbuf, 0, inodes_per_cluster << mp->m_sb.sb_inodelog);
+		for (i = 0; i < inodes_per_cluster; i++) {
 			int	ioffset = i << mp->m_sb.sb_inodelog;
 			uint	isize = sizeof(struct xfs_dinode);
 
@@ -1311,7 +1304,7 @@ xfs_imap(
 		return XFS_ERROR(EINVAL);
 	}
 
-	blks_per_cluster = XFS_INODE_CLUSTER_SIZE(mp) >> mp->m_sb.sb_blocklog;
+	blks_per_cluster = xfs_icluster_size_fsb(mp);
 
 	/*
 	 * For bulkstat and handle lookups, we have an untrusted inode number
@@ -1332,7 +1325,7 @@ xfs_imap(
 	 * If the inode cluster size is the same as the blocksize or
 	 * smaller we get to the buffer by simple arithmetics.
 	 */
-	if (XFS_INODE_CLUSTER_SIZE(mp) <= mp->m_sb.sb_blocksize) {
+	if (blks_per_cluster == 1) {
 		offset = XFS_INO_TO_OFFSET(mp, ino);
 		ASSERT(offset < mp->m_sb.sb_inopblock);
 
