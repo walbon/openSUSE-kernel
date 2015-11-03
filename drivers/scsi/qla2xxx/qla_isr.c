@@ -1954,12 +1954,16 @@ qla2x00_status_entry(scsi_qla_host_t *vha, struct rsp_que *rsp, void *pkt)
 	/* Validate handle. */
 	if (handle < req->num_outstanding_cmds) {
 		sp = req->outstanding_cmds[handle];
-	} else
-		sp = NULL;
-
-	if (sp == NULL) {
+		if (!sp) {
+			ql_dbg(ql_dbg_io, vha, 0x3075,
+				"%s(%ld): Already returned command for status handle (0x%x).\n",
+				__func__, vha->host_no, sts->handle);
+			return;
+		}
+	} else {
 		ql_dbg(ql_dbg_io, vha, 0x3017,
-		    "Invalid status handle (0x%x).\n", sts->handle);
+			"Invalid status handle, out of range (0x%x).\n",
+			sts->handle);
 
 		if (IS_QLA82XX(ha))
 			set_bit(FCOE_CTX_RESET_NEEDED, &vha->dpc_flags);
@@ -2227,14 +2231,14 @@ out:
 		    "FCP command status: 0x%x-0x%x (0x%x) "
 		    "nexus=%ld:%d:%d portid=%02x%02x%02x oxid=0x%x "
 		    "cdb=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x len=0x%x "
-		    "rsp_info=0x%x resid=0x%x fw_resid=0x%x.\n",
+		    "rsp_info=0x%x resid=0x%x fw_resid=0x%x sp=%p cp=%p.\n",
 		    comp_status, scsi_status, res, vha->host_no,
 		    cp->device->id, cp->device->lun, fcport->d_id.b.domain,
 		    fcport->d_id.b.area, fcport->d_id.b.al_pa, ox_id,
 		    cp->cmnd[0], cp->cmnd[1], cp->cmnd[2], cp->cmnd[3],
 		    cp->cmnd[4], cp->cmnd[5], cp->cmnd[6], cp->cmnd[7],
 		    cp->cmnd[8], cp->cmnd[9], scsi_bufflen(cp), rsp_info_len,
-		    resid_len, fw_resid_len);
+		    resid_len, fw_resid_len, sp, cp);
 
 	if (!cp->result)
 		qla2x00_do_host_ramp_up(vha);
