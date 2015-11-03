@@ -792,8 +792,19 @@ start:
 	 * blocks that fall between the existing EOF and the start of this
 	 * write.
 	 */
-	if (*pos > ip->i_size)
+	if (*pos > ip->i_size) {
+		xfs_rw_iunlock(ip, XFS_ILOCK_EXCL);
+		/*
+		 * We hold XFS_IOLOCK_EXCL but there can still be AIO DIO in
+		 * flight for the last block we want to zero out part of. Wait
+		 * for it so that we don't lose that data. Since we hold
+		 * XFS_IOLOCK_EXCL all the time, ip->i_size cannot change under
+		 * us and we are safe to continue without restart.
+		 */
+		xfs_ioend_wait(ip);
+		xfs_rw_ilock(ip, XFS_ILOCK_EXCL);
 		error = -xfs_zero_eof(ip, *pos, ip->i_size);
+	}
 
 	xfs_rw_iunlock(ip, XFS_ILOCK_EXCL);
 	if (error)
