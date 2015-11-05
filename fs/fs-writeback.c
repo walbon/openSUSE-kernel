@@ -504,7 +504,7 @@ static bool pin_sb_for_writeback(struct super_block *sb)
 	spin_unlock(&sb_lock);
 
 	if (down_read_trylock(&sb->s_umount)) {
-		if (sb->s_root)
+		if (sb->s_frozen == SB_UNFROZEN && sb->s_root)
 			return true;
 		up_read(&sb->s_umount);
 	}
