@@ -420,7 +420,8 @@ void sync_supers(void)
  *	Scans the superblock list and calls given function, passing it
  *	locked superblock and given argument.
  */
-void iterate_supers(void (*f)(struct super_block *, void *), void *arg)
+static void __iterate_supers(void (*f)(struct super_block *, void *), void *arg,
+			     int thawed)
 {
 	struct super_block *sb, *p = NULL;
 
@@ -431,7 +432,14 @@ void iterate_supers(void (*f)(struct super_block *, void *), void *arg)
 		sb->s_count++;
 		spin_unlock(&sb_lock);
 
+retry:
+		if (thawed)
+			vfs_check_frozen(sb, SB_FREEZE_WRITE);
 		down_read(&sb->s_umount);
+		if (thawed && sb->s_frozen != SB_UNFROZEN) {
+			up_read(&sb->s_umount);
+			goto retry;
+		}
 		if (sb->s_root)
 			f(sb, arg);
 		up_read(&sb->s_umount);
@@ -444,6 +452,16 @@ void iterate_supers(void (*f)(struct super_block *, void *), void *arg)
 	if (p)
 		__put_super(p);
 	spin_unlock(&sb_lock);
+}
+
+void iterate_supers(void (*f)(struct super_block *, void *), void *arg)
+{
+	__iterate_supers(f, arg, 0);
+}
+
+void iterate_supers_thawed(void (*f)(struct super_block *, void *), void *arg)
+{
+	__iterate_supers(f, arg, 1);
 }
 
 /**
