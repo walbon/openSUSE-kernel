@@ -34,6 +34,8 @@
 #include <linux/hardirq.h> /* for BUG_ON(!in_atomic()) only */
 #include <linux/memcontrol.h>
 #include <linux/cleancache.h>
+#include <linux/mutex.h>
+#include <asm/mutex.h>
 #ifndef __GENKSYMS__
 #include <linux/hugetlb.h>
 #endif
@@ -689,7 +691,7 @@ enum trylock_page_status {
 /* Returns true if spinning should continue */
 static bool continue_trylock_relax(unsigned long expires)
 {
-	cpu_relax();
+	arch_mutex_cpu_relax();
 	return !(need_resched() || time_after(jiffies, expires));
 }
 #else
