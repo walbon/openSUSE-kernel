@@ -368,7 +368,13 @@ static void cachefiles_sync_cache(struct fscache_cache *_cache)
 	/* make sure all pages pinned by operations on behalf of the netfs are
 	 * written to disc */
 	cachefiles_begin_secure(cache, &saved_cred);
+retry:
+	vfs_check_frozen(cache->mnt->mnt_sb, SB_FREEZE_WRITE);
 	down_read(&cache->mnt->mnt_sb->s_umount);
+	if (cache->mnt->mnt_sb->s_frozen != SB_UNFROZEN) {
+		up_read(&cache->mnt->mnt_sb->s_umount);
+		goto retry;
+	}
 	ret = sync_filesystem(cache->mnt->mnt_sb);
 	up_read(&cache->mnt->mnt_sb->s_umount);
 	cachefiles_end_secure(cache, saved_cred);
