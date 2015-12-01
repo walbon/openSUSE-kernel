@@ -1148,6 +1148,18 @@ asmlinkage long compat_sys_kexec_load(unsigned long entry,
 
 void crash_kexec(struct pt_regs *regs)
 {
+	int old_cpu, this_cpu;
+
+	/*
+	 * `old_cpu == -1' means we are the first comer and crash_kexec()
+	 * was called without entering panic().
+	 * `old_cpu == this_cpu' means crash_kexec() was called from panic().
+	 */
+	this_cpu = raw_smp_processor_id();
+	old_cpu = atomic_cmpxchg(&panic_cpu, -1, this_cpu);
+	if (old_cpu != -1 && old_cpu != this_cpu)
+		return;
+
 	/* Take the kexec_mutex here to prevent sys_kexec_load
 	 * running on one cpu from replacing the crash kernel
 	 * we are using after a panic on a different cpu.
@@ -1178,6 +1190,14 @@ void crash_kexec(struct pt_regs *regs)
 		}
 		mutex_unlock(&kexec_mutex);
 	}
+
+	/*
+	 * If we came here from panic(), we have to keep panic_cpu
+	 * to prevent other cpus from entering panic().  Otherwise,
+	 * resetting it so that other cpus can enter panic()/crash_kexec().
+	 */
+	if (old_cpu == -1)
+		atomic_xchg(&panic_cpu, -1);
 }
 
 size_t crash_get_memory_size(void)
