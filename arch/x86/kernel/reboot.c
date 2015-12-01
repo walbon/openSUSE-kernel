@@ -791,6 +791,7 @@ static int crashing_cpu;
 static nmi_shootdown_cb shootdown_callback;
 
 static atomic_t waiting_for_crash_ipi;
+static int crash_ipi_done;
 
 #ifdef CONFIG_KDB_KDUMP
 void halt_current_cpu(struct pt_regs *regs)
@@ -881,6 +882,7 @@ void nmi_shootdown_cpus(nmi_shootdown_cb callback)
 	wmb();
 
 	smp_send_nmi_allbutself();
+	crash_ipi_done = 1; /* Kick cpus looping in nmi context */
 
 	msecs = 1000; /* Wait at most a second for the other cpus to stop */
 	while ((atomic_read(&waiting_for_crash_ipi) > 0) && msecs) {
@@ -890,6 +892,26 @@ void nmi_shootdown_cpus(nmi_shootdown_cb callback)
 
 	/* Leave the nmi callback set */
 }
+
+void nmi_panic_self_stop(struct pt_regs *regs)
+{
+	struct die_args data = {.regs = regs};
+
+	while (crash_ipi_done == 0)
+		cpu_relax();
+
+	/*
+	 * This is an ungly hack but we cannot use the notifier
+	 * API here. So we have to steal akk guts and call shootdown_callback
+	 * directly. nmi_shootdown_cpus should have already configured
+	 * the correct callback.
+	 * We currently have on 2 callbacks:
+	 * 	- kdump_nmi_callback cares only about regs
+	 * 	- vmxoff_nmi ignores paramteres altogether
+	 */
+	shootdown_callback(safe_smp_processor_id(), &data); /* Shouldn't return */
+}
+
 #else /* !CONFIG_SMP */
 void nmi_shootdown_cpus(nmi_shootdown_cb callback)
 {
