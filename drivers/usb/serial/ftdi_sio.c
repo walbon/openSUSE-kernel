@@ -2171,6 +2171,8 @@ static int ftdi_chars_in_buffer(struct tty_struct *tty)
 	int ret;
 
 	chars = usb_serial_generic_chars_in_buffer(tty);
+	if (chars)
+		return chars;
 
 	/* Check hardware buffer */
 	switch (priv->chip_type) {
