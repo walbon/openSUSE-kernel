@@ -75,7 +75,8 @@ struct ftdi_private {
 	unsigned long last_dtr_rts;	/* saved modem control outputs */
 	struct async_icount	icount;
 	wait_queue_head_t delta_msr_wait; /* Used for TIOCMIWAIT */
-	char prev_status, diff_status;        /* Used for TIOCMIWAIT */
+	char prev_status;	/* Used for TIOCMIWAIT */
+	bool dev_gone;		/* Used to abort TIOCMIWAIT */
 	char transmit_empty;	/* If transmitter is empty or not */
 	struct usb_serial_port *port;
 	__u16 interface;	/* FT2232C, FT2232H or FT4232H port interface
@@ -971,6 +972,9 @@ static int ftdi_get_icount(struct tty_struct *tty,
 static int  ftdi_ioctl(struct tty_struct *tty,
 			unsigned int cmd, unsigned long arg);
 static void ftdi_break_ctl(struct tty_struct *tty, int break_state);
+static int ftdi_chars_in_buffer(struct tty_struct *tty);
+static int ftdi_get_modem_status(struct tty_struct *tty,
+						unsigned char status[2]);
 
 static unsigned short int ftdi_232am_baud_base_to_divisor(int baud, int base);
 static unsigned short int ftdi_232am_baud_to_divisor(int baud);
@@ -1006,6 +1010,7 @@ static struct usb_serial_driver ftdi_sio_device = {
 	.ioctl =		ftdi_ioctl,
 	.set_termios =		ftdi_set_termios,
 	.break_ctl =		ftdi_break_ctl,
+	.chars_in_buffer =      ftdi_chars_in_buffer,
 };
 
 
@@ -1736,10 +1741,10 @@ static int ftdi_sio_port_probe(struct usb_serial_port *port)
 
 	kref_init(&priv->kref);
 	mutex_init(&priv->cfg_lock);
-	memset(&priv->icount, 0x00, sizeof(priv->icount));
 	init_waitqueue_head(&priv->delta_msr_wait);
 
 	priv->flags = ASYNC_LOW_LATENCY;
+	priv->dev_gone = false;
 
 	if (quirk && quirk->port_probe)
 		quirk->port_probe(priv);
@@ -1897,6 +1902,9 @@ static int ftdi_sio_port_remove(struct usb_serial_port *port)
 
 	dbg("%s", __func__);
 
+	priv->dev_gone = true;
+	wake_up_interruptible_all(&priv->delta_msr_wait);
+
 	remove_sysfs_attrs(port);
 
 	kref_put(&priv->kref, ftdi_sio_priv_release);
@@ -2040,17 +2048,19 @@ static int ftdi_process_packet(struct tty_struct *tty,
 	   N.B. packet may be processed more than once, but differences
 	   are only processed once.  */
 	status = packet[0] & FTDI_STATUS_B0_MASK;
-	if (status & FTDI_RS0_CTS)
-		priv->icount.cts++;
-	if (status & FTDI_RS0_DSR)
-		priv->icount.dsr++;
-	if (status & FTDI_RS0_RI)
-		priv->icount.rng++;
-	if (status & FTDI_RS0_RLSD)
-		priv->icount.dcd++;
 	if (status != priv->prev_status) {
-		priv->diff_status |= status ^ priv->prev_status;
-		wake_up_interruptible(&priv->delta_msr_wait);
+		char diff_status = status ^ priv->prev_status;
+
+		if (diff_status & FTDI_RS0_CTS)
+			priv->icount.cts++;
+		if (diff_status & FTDI_RS0_DSR)
+			priv->icount.dsr++;
+		if (diff_status & FTDI_RS0_RI)
+			priv->icount.rng++;
+		if (diff_status & FTDI_RS0_RLSD)
+			priv->icount.dcd++;
+
+		wake_up_interruptible_all(&priv->delta_msr_wait);
 		priv->prev_status = status;
 	}
 
@@ -2152,6 +2162,29 @@ static void ftdi_break_ctl(struct tty_struct *tty, int break_state)
 	dbg("%s break state is %d - urb is %d", __func__,
 						break_state, urb_value);
 
+}
+
+static int ftdi_chars_in_buffer(struct tty_struct *tty)
+{
+	struct usb_serial_port *port = tty->driver_data;
+	int chars;
+	unsigned char buf[2];
+	int ret;
+
+	chars = usb_serial_generic_chars_in_buffer(tty);
+	if (chars)
+		goto out;
+
+	/* Check if hardware buffer is empty. */
+	ret = ftdi_get_modem_status(tty, buf);
+	if (ret == 2) {
+		if (!(buf[1] & FTDI_RS_TEMT))
+			chars = 1;
+	}
+out:
+	dev_dbg(&port->dev, "%s - %d\n", __func__, chars);
+
+	return chars;
 }
 
 /* old_termios contains the original termios settings and tty->termios contains
@@ -2338,7 +2371,14 @@ no_c_cflag_changes:
 	}
 }
 
-static int ftdi_tiocmget(struct tty_struct *tty)
+/*
+ * Get modem-control status.
+ *
+ * Returns the number of status bytes retrieved (device dependant), or
+ * negative error code.
+ */
+static int ftdi_get_modem_status(struct tty_struct *tty,
+						unsigned char status[2])
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct ftdi_private *priv = usb_get_serial_port_data(port);
@@ -2380,16 +2420,43 @@ static int ftdi_tiocmget(struct tty_struct *tty)
 			FTDI_SIO_GET_MODEM_STATUS_REQUEST_TYPE,
 			0, priv->interface,
 			buf, len, WDR_TIMEOUT);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(&port->dev, "failed to get modem status: %d\n", ret);
+		ret = usb_translate_errors(ret);
 		goto out;
+	}
 
-	ret = (buf[0] & FTDI_SIO_DSR_MASK ? TIOCM_DSR : 0) |
-		(buf[0] & FTDI_SIO_CTS_MASK ? TIOCM_CTS : 0) |
-		(buf[0]  & FTDI_SIO_RI_MASK  ? TIOCM_RI  : 0) |
-		(buf[0]  & FTDI_SIO_RLSD_MASK ? TIOCM_CD  : 0) |
-		priv->last_dtr_rts;
+	status[0] = buf[0];
+	if (ret > 1)
+		status[1] = buf[1];
+	else
+		status[1] = 0;
+
+	dev_dbg(&port->dev, "%s - 0x%02x%02x\n", __func__, status[0],
+								status[1]);
 out:
 	kfree(buf);
+
+	return ret;
+}
+
+static int ftdi_tiocmget(struct tty_struct *tty)
+{
+	struct usb_serial_port *port = tty->driver_data;
+	struct ftdi_private *priv = usb_get_serial_port_data(port);
+	unsigned char buf[2];
+	int ret;
+
+	ret = ftdi_get_modem_status(tty, buf);
+	if (ret < 0)
+		return ret;
+
+	ret =	(buf[0] & FTDI_SIO_DSR_MASK  ? TIOCM_DSR : 0) |
+		(buf[0] & FTDI_SIO_CTS_MASK  ? TIOCM_CTS : 0) |
+		(buf[0] & FTDI_SIO_RI_MASK   ? TIOCM_RI  : 0) |
+		(buf[0] & FTDI_SIO_RLSD_MASK ? TIOCM_CD  : 0) |
+		priv->last_dtr_rts;
+
 	return ret;
 }
 
@@ -2422,13 +2489,52 @@ static int ftdi_get_icount(struct tty_struct *tty,
 	return 0;
 }
 
+static bool usb_serial_generic_msr_changed(struct tty_struct *tty,
+				unsigned long arg, struct async_icount *cprev,
+				bool *result)
+{
+	struct usb_serial_port *port = tty->driver_data;
+	struct ftdi_private *priv = usb_get_serial_port_data(port);
+	struct async_icount cnow;
+	unsigned long flags;
+	bool ret;
+
+	/*
+	 * Use tty-port initialised flag to detect all hangups including the
+	 * one generated at USB-device disconnect.
+	 *
+	 * FIXME: Remove hupping check once tty_port_hangup calls shutdown
+	 *        (which clears the initialised flag) before wake up.
+	 */
+	if (test_bit(TTY_HUPPING, &tty->flags))
+		return true;
+	if (!test_bit(ASYNCB_INITIALIZED, &port->port.flags))
+		return true;
+
+	spin_lock_irqsave(&port->lock, flags);
+	cnow = priv->icount;				/* atomic copy*/
+	spin_unlock_irqrestore(&port->lock, flags);
+
+	ret =	((arg & TIOCM_RNG) && (cnow.rng != cprev->rng)) ||
+		((arg & TIOCM_DSR) && (cnow.dsr != cprev->dsr)) ||
+		((arg & TIOCM_CD)  && (cnow.dcd != cprev->dcd)) ||
+		((arg & TIOCM_CTS) && (cnow.cts != cprev->cts));
+
+	*cprev = cnow;
+	*result = ret;
+
+	return ret;
+}
+
 static int ftdi_ioctl(struct tty_struct *tty,
 					unsigned int cmd, unsigned long arg)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct ftdi_private *priv = usb_get_serial_port_data(port);
 	struct async_icount cnow;
-	struct async_icount cprev;
+	unsigned long flags;
+	int ret;
+	bool result;
 
 	dbg("%s cmd 0x%04x", __func__, cmd);
 
@@ -2452,26 +2558,27 @@ static int ftdi_ioctl(struct tty_struct *tty,
 	 * This code is borrowed from linux/drivers/char/serial.c
 	 */
 	case TIOCMIWAIT:
-		cprev = priv->icount;
-		while (1) {
-			interruptible_sleep_on(&priv->delta_msr_wait);
-			/* see if a signal did it */
-			if (signal_pending(current))
-				return -ERESTARTSYS;
-			cnow = priv->icount;
-			if (cnow.rng == cprev.rng && cnow.dsr == cprev.dsr &&
-			    cnow.dcd == cprev.dcd && cnow.cts == cprev.cts)
-				return -EIO; /* no change => error */
-			if (((arg & TIOCM_RNG) && (cnow.rng != cprev.rng)) ||
-			    ((arg & TIOCM_DSR) && (cnow.dsr != cprev.dsr)) ||
-			    ((arg & TIOCM_CD)  && (cnow.dcd != cprev.dcd)) ||
-			    ((arg & TIOCM_CTS) && (cnow.cts != cprev.cts))) {
-				return 0;
-			}
-			cprev = cnow;
+		spin_lock_irqsave(&port->lock, flags);
+		cnow = priv->icount;				/* atomic copy */
+		spin_unlock_irqrestore(&port->lock, flags);
+
+		result = false;
+		ret = wait_event_interruptible(priv->delta_msr_wait,
+			usb_serial_generic_msr_changed(tty, arg, &cnow, &result));
+		if (ret == -ERESTARTSYS)
+			return ret;
+		if (result) {
+			ret = 0;
+			if (test_bit(TTY_HUPPING, &tty->flags))
+				ret = -EIO;
+			if (!test_bit(ASYNCB_INITIALIZED, &port->port.flags))
+				ret = -EIO;
+			if (priv->dev_gone)
+				ret = -ENODEV;
+			return ret;
+		} else {
+			return priv->dev_gone ? -ENODEV : -EIO;
 		}
-		/* not reached */
-		break;
 	case TIOCSERGETLSR:
 		return get_lsr_info(port, (struct serial_struct __user *)arg);
 		break;
