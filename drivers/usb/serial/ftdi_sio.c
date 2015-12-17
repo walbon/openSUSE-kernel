@@ -75,8 +75,8 @@ struct ftdi_private {
 	unsigned long last_dtr_rts;	/* saved modem control outputs */
 	struct async_icount	icount;
 	wait_queue_head_t delta_msr_wait; /* Used for TIOCMIWAIT */
-	char prev_status;        /* Used for TIOCMIWAIT */
-	bool dev_gone;        /* Used to abort TIOCMIWAIT */
+	char prev_status;	/* Used for TIOCMIWAIT */
+	bool dev_gone;		/* Used to abort TIOCMIWAIT */
 	char transmit_empty;	/* If transmitter is empty or not */
 	struct usb_serial_port *port;
 	__u16 interface;	/* FT2232C, FT2232H or FT4232H port interface
@@ -2489,13 +2489,52 @@ static int ftdi_get_icount(struct tty_struct *tty,
 	return 0;
 }
 
+static bool usb_serial_generic_msr_changed(struct tty_struct *tty,
+				unsigned long arg, struct async_icount *cprev,
+				bool *result)
+{
+	struct usb_serial_port *port = tty->driver_data;
+	struct ftdi_private *priv = usb_get_serial_port_data(port);
+	struct async_icount cnow;
+	unsigned long flags;
+	bool ret;
+
+	/*
+	 * Use tty-port initialised flag to detect all hangups including the
+	 * one generated at USB-device disconnect.
+	 *
+	 * FIXME: Remove hupping check once tty_port_hangup calls shutdown
+	 *        (which clears the initialised flag) before wake up.
+	 */
+	if (test_bit(TTY_HUPPING, &tty->flags))
+		return true;
+	if (!test_bit(ASYNCB_INITIALIZED, &port->port.flags))
+		return true;
+
+	spin_lock_irqsave(&port->lock, flags);
+	cnow = priv->icount;				/* atomic copy*/
+	spin_unlock_irqrestore(&port->lock, flags);
+
+	ret =	((arg & TIOCM_RNG) && (cnow.rng != cprev->rng)) ||
+		((arg & TIOCM_DSR) && (cnow.dsr != cprev->dsr)) ||
+		((arg & TIOCM_CD)  && (cnow.dcd != cprev->dcd)) ||
+		((arg & TIOCM_CTS) && (cnow.cts != cprev->cts));
+
+	*cprev = cnow;
+	*result = ret;
+
+	return ret;
+}
+
 static int ftdi_ioctl(struct tty_struct *tty,
 					unsigned int cmd, unsigned long arg)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct ftdi_private *priv = usb_get_serial_port_data(port);
 	struct async_icount cnow;
-	struct async_icount cprev;
+	unsigned long flags;
+	int ret;
+	bool result;
 
 	dbg("%s cmd 0x%04x", __func__, cmd);
 
@@ -2519,23 +2558,27 @@ static int ftdi_ioctl(struct tty_struct *tty,
 	 * This code is borrowed from linux/drivers/char/serial.c
 	 */
 	case TIOCMIWAIT:
-		cprev = priv->icount;
-		while (!priv->dev_gone) {
-			interruptible_sleep_on(&priv->delta_msr_wait);
-			/* see if a signal did it */
-			if (signal_pending(current))
-				return -ERESTARTSYS;
-			cnow = priv->icount;
-			if (((arg & TIOCM_RNG) && (cnow.rng != cprev.rng)) ||
-			    ((arg & TIOCM_DSR) && (cnow.dsr != cprev.dsr)) ||
-			    ((arg & TIOCM_CD)  && (cnow.dcd != cprev.dcd)) ||
-			    ((arg & TIOCM_CTS) && (cnow.cts != cprev.cts))) {
-				return 0;
-			}
-			cprev = cnow;
+		spin_lock_irqsave(&port->lock, flags);
+		cnow = priv->icount;				/* atomic copy */
+		spin_unlock_irqrestore(&port->lock, flags);
+
+		result = false;
+		ret = wait_event_interruptible(priv->delta_msr_wait,
+			usb_serial_generic_msr_changed(tty, arg, &cnow, &result));
+		if (ret == -ERESTARTSYS)
+			return ret;
+		if (result) {
+			ret = 0;
+			if (test_bit(TTY_HUPPING, &tty->flags))
+				ret = -EIO;
+			if (!test_bit(ASYNCB_INITIALIZED, &port->port.flags))
+				ret = -EIO;
+			if (priv->dev_gone)
+				ret = -ENODEV;
+			return ret;
+		} else {
+			return priv->dev_gone ? -ENODEV : -EIO;
 		}
-		return -EIO;
-		break;
 	case TIOCSERGETLSR:
 		return get_lsr_info(port, (struct serial_struct __user *)arg);
 		break;
