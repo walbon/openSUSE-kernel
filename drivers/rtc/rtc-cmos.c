@@ -34,13 +34,11 @@
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/platform_device.h>
+#include <linux/mod_devicetable.h>
 #include <linux/log2.h>
 #include <linux/pm.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
-#ifndef __GENKSYMS__
-#include <linux/dmi.h>
-#endif
 
 /* this is for "generic access to PC-style RTC" using CMOS_READ/CMOS_WRITE */
 #include <asm-generic/rtc.h>
@@ -50,6 +48,7 @@ struct cmos_rtc {
 	struct device		*dev;
 	int			irq;
 	struct resource		*iomem;
+	unsigned long		alarm_expires;
 
 	void			(*wake_on)(struct device *);
 	void			(*wake_off)(struct device *);
@@ -376,107 +375,10 @@ static int cmos_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 
 	spin_unlock_irq(&rtc_lock);
 
+	rtc_tm_to_time(&t->time, &cmos->alarm_expires);
+
 	return 0;
 }
-
-/*
- * Do not disable RTC alarm on shutdown - workaround for b0rked BIOSes.
- */
-static bool alarm_disable_quirk;
-
-static int __init set_alarm_disable_quirk(const struct dmi_system_id *id)
-{
-	alarm_disable_quirk = true;
-	pr_info("rtc-cmos: BIOS has alarm-disable quirk. ");
-	pr_info("RTC alarms disabled\n");
-	return 0;
-}
-
-static const struct dmi_system_id rtc_quirks[] __initconst = {
-	/* https://bugzilla.novell.com/show_bug.cgi?id=805740 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "IBM Truman",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "4852570"),
-		},
-	},
-	/* https://bugzilla.novell.com/show_bug.cgi?id=927262 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "TGCS POS",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "6140"),
-		},
-	},
-	/* https://bugzilla.novell.com/show_bug.cgi?id=927262 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "TGCS POS",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "4900"),
-		},
-	},
-	/* https://bugzilla.novell.com/show_bug.cgi?id=927262 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "TGCS POS",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "IBM CORPORATION"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "4900"),
-		},
-	},
-	/* https://bugzilla.novell.com/show_bug.cgi?id=927262 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "TGCS POS",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "4810"),
-		},
-	},
-	/* https://bugzilla.novell.com/show_bug.cgi?id=927262 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "TGCS POS",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "485257"),
-		},
-	},
-	/* https://bugzilla.novell.com/show_bug.cgi?id=927262 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "TGCS POS",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "4852E7"),
-		},
-	},
-	/* https://bugzilla.novell.com/show_bug.cgi?id=812592 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "Gigabyte GA-990XA-UD3",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR,
-					"Gigabyte Technology Co., Ltd."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "GA-990XA-UD3"),
-		},
-	},
-	/* http://permalink.gmane.org/gmane.linux.kernel/1604474 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "Toshiba Satellite L300",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Satellite L300"),
-		},
-	},
-	{}
-};
 
 static int cmos_alarm_irq_enable(struct device *dev, unsigned int enabled)
 {
@@ -485,9 +387,6 @@ static int cmos_alarm_irq_enable(struct device *dev, unsigned int enabled)
 
 	if (!is_valid_irq(cmos->irq))
 		return -EINVAL;
-
-	if (alarm_disable_quirk)
-		return 0;
 
 	spin_lock_irqsave(&rtc_lock, flags);
 
@@ -890,6 +789,51 @@ static void __exit cmos_do_remove(struct device *dev)
 	dev_set_drvdata(dev, NULL);
 }
 
+static int cmos_aie_poweroff(struct device *dev)
+{
+	struct cmos_rtc	*cmos = dev_get_drvdata(dev);
+	struct rtc_time now;
+	unsigned long t_now;
+	int retval = 0;
+	unsigned char rtc_control;
+
+	if (!cmos->alarm_expires)
+		return -EINVAL;
+
+	spin_lock_irq(&rtc_lock);
+	rtc_control = CMOS_READ(RTC_CONTROL);
+	spin_unlock_irq(&rtc_lock);
+
+	/* We only care about the situation where AIE is disabled. */
+	if (rtc_control & RTC_AIE)
+		return -EBUSY;
+
+	cmos_read_time(dev, &now);
+	rtc_tm_to_time(&now, &t_now);
+
+	/*
+	 * When enabling "RTC wake-up" in BIOS setup, the machine reboots
+	 * automatically right after shutdown on some buggy boxes.
+	 * This automatic rebooting issue won't happen when the alarm
+	 * time is larger than now+1 seconds.
+	 *
+	 * If the alarm time is equal to now+1 seconds, the issue can be
+	 * prevented by cancelling the alarm.
+	 */
+	if (cmos->alarm_expires == t_now + 1) {
+		struct rtc_wkalrm alarm;
+
+		/* Cancel the AIE timer by configuring the past time. */
+		rtc_time_to_tm(t_now - 1, &alarm.time);
+		alarm.enabled = 0;
+		retval = cmos_set_alarm(dev, &alarm);
+	} else if (cmos->alarm_expires > t_now + 1) {
+		retval = -EBUSY;
+	}
+
+	return retval;
+}
+
 #ifdef	CONFIG_PM
 
 static int cmos_suspend(struct device *dev)
@@ -1134,8 +1078,12 @@ static int cmos_pnp_resume(struct pnp_dev *pnp)
 
 static void cmos_pnp_shutdown(struct pnp_dev *pnp)
 {
-	if (system_state == SYSTEM_POWER_OFF && !cmos_poweroff(&pnp->dev))
-		return;
+	if (system_state == SYSTEM_POWER_OFF) {
+		int retval = cmos_poweroff(&pnp->dev);
+
+		if (cmos_aie_poweroff(&pnp->dev) < 0 && !retval)
+			return;
+	}
 
 	cmos_do_shutdown();
 }
@@ -1227,8 +1175,12 @@ static int __exit cmos_platform_remove(struct platform_device *pdev)
 
 static void cmos_platform_shutdown(struct platform_device *pdev)
 {
-	if (system_state == SYSTEM_POWER_OFF && !cmos_poweroff(&pdev->dev))
-		return;
+	if (system_state == SYSTEM_POWER_OFF) {
+		int retval = cmos_poweroff(&pdev->dev);
+
+		if (cmos_aie_poweroff(&pdev->dev) < 0 && !retval)
+			return;
+	}
 
 	cmos_do_shutdown();
 }
@@ -1269,8 +1221,6 @@ static int __init cmos_init(void)
 		if (retval == 0)
 			platform_driver_registered = true;
 	}
-
-	dmi_check_system(rtc_quirks);
 
 	if (retval == 0)
 		return 0;

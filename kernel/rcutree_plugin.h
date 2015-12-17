@@ -1805,10 +1805,6 @@ static int synchronize_sched_expedited_cpu_stop(void *data)
  * significant time on all CPUs, and is thus not recommended for
  * any sort of common-case code.
  *
- * Note that it is illegal to call this function while holding any
- * lock that is acquired by a CPU-hotplug notifier.  Failing to
- * observe this restriction will result in deadlock.
- *
  * This implementation can be thought of as an application of ticket
  * locking to RCU, with sync_sched_expedited_started and
  * sync_sched_expedited_done taking on the roles of the halves
@@ -1836,7 +1832,11 @@ void synchronize_sched_expedited(void)
 
 	/* Note that atomic_inc_return() implies full memory barrier. */
 	firstsnap = snap = atomic_inc_return(&sync_sched_expedited_started);
-	get_online_cpus();
+	if (!try_get_online_cpus()) {
+		/* CPU hotplug operation in flight, fall back to normal GP. */
+		synchronize_sched();
+		return;
+	}
 
 	/*
 	 * Each pass through the following loop attempts to force a
@@ -1870,7 +1870,11 @@ void synchronize_sched_expedited(void)
 		 * for them, and they started after our first try, so their
 		 * grace period works for us.
 		 */
-		get_online_cpus();
+		if (!try_get_online_cpus()) {
+			/* CPU hotplug operation in flight, use normal GP. */
+			synchronize_sched();
+			return;
+		}
 		snap = atomic_read(&sync_sched_expedited_started) - 1;
 		smp_mb(); /* ensure read is before try_stop_cpus(). */
 	}

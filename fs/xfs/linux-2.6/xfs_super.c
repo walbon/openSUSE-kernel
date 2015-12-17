@@ -846,8 +846,22 @@ xfs_init_mount_workqueues(
 	if (!mp->m_unwritten_workqueue)
 		goto out_free_data_conv_queue_name;
 
+	wqname = kasprintf(GFP_KERNEL, "xfs-eofblocks/%s", mp->m_fsname);
+	if (!wqname)
+		goto out_destroy_data_conv_queue;
+
+	mp->m_eofblocks_workqueue_name = wqname;
+	mp->m_eofblocks_workqueue = alloc_workqueue(wqname, WQ_NON_REENTRANT, 0);
+	if (!mp->m_eofblocks_workqueue)
+		goto out_free_eofblocks_name;
+
+
 	return 0;
 
+out_free_eofblocks_name:
+	kfree(mp->m_eofblocks_workqueue_name);
+out_destroy_data_conv_queue:
+	destroy_workqueue(mp->m_unwritten_workqueue);
 out_free_data_conv_queue_name:
 	kfree(mp->m_unwritten_workqueue_name);
 out_destroy_data_iodone_queue:
@@ -865,6 +879,8 @@ xfs_destroy_mount_workqueues(
 	destroy_workqueue(mp->m_data_workqueue);
 	kfree(mp->m_unwritten_workqueue_name);
 	destroy_workqueue(mp->m_unwritten_workqueue);
+	kfree(mp->m_eofblocks_workqueue_name);
+	destroy_workqueue(mp->m_eofblocks_workqueue);
 }
 
 /* Catch misguided souls that try to use this interface on XFS */
@@ -992,7 +1008,7 @@ xfs_fs_write_inode(
 		 * of synchronous log foces dramatically.
 		 */
 		xfs_ioend_wait(ip);
-		error = xfs_log_dirty_inode(ip, NULL, 0);
+		error = xfs_log_dirty_inode(ip, NULL, 0, NULL);
 		if (error)
 			goto out;
 		return 0;
@@ -1508,6 +1524,7 @@ xfs_fs_fill_super(
 	error = xfs_syncd_init(mp);
 	if (error)
 		goto out_unmount;
+	INIT_DELAYED_WORK(&mp->m_eofblocks_work, xfs_eofblocks_worker);
 
 	root = igrab(VFS_I(mp->m_rootip));
 	if (!root) {

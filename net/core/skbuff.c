@@ -2610,15 +2610,11 @@ int skb_append_datato_frags(struct sock *sk, struct sk_buff *skb,
 		copy = (length > left)? left : length;
 
 		/* 
-		 * Propagate page->pfmemalloc to the skb if we can. The problem is
-		 * that not all callers have unique ownership of the page. If
-		 * pfmemalloc is set, we check the mapping as a mapping implies
-		 * page->index is set (index and pfmemalloc share space).
-		 * If it's a valid mapping, we cannot use page->pfmemalloc but we
-		 * do not lose pfmemalloc information as the pages would not be
-		 * allocated using __GFP_MEMALLOC.
+		 * Propagate page pfmemalloc to the skb if we can. The problem is
+		 * that not all callers have unique ownership of the page but rely
+		 * on page_is_pfmemalloc doing the right thing(tm).
 		 */
-		if (frag->page->pfmemalloc && !frag->page->mapping)
+		if (page_is_pfmemalloc(frag->page))
 			skb->pfmemalloc = true;
 
 		ret = getfrag(from, (page_address(frag->page) +

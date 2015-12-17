@@ -1334,7 +1334,7 @@ void __cpuinit cpu_init(void)
 	set_tss_desc(cpu, t);
 	load_TR_desc();
 #endif
-	load_LDT(&init_mm.context);
+	load_mm_ldt(&init_mm);
 
 	clear_all_debug_regs();
 	dbg_restore_debug_regs();
@@ -1390,7 +1390,7 @@ void __cpuinit cpu_init(void)
 
 	load_sp0(t, thread);
 
-	load_LDT(&init_mm.context);
+	load_mm_ldt(&init_mm);
 
 #ifndef CONFIG_X86_NO_TSS
 	t->x86_tss.io_bitmap_base = offsetof(struct tss_struct, io_bitmap);

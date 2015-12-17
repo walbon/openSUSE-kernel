@@ -45,6 +45,32 @@ static void put_transaction(struct btrfs_transaction *transaction)
 	}
 }
 
+static void clear_btree_io_tree(struct extent_io_tree *tree)
+{
+	spin_lock(&tree->lock);
+	while (!RB_EMPTY_ROOT(&tree->state)) {
+		struct rb_node *node;
+		struct extent_state *state;
+
+		node = rb_first(&tree->state);
+		state = rb_entry(node, struct extent_state, rb_node);
+		rb_erase(&state->rb_node, &tree->state);
+		RB_CLEAR_NODE(&state->rb_node);
+		/*
+		 * btree io trees aren't supposed to have tasks waiting for
+		 * changes in the flags of extent states ever.
+		 */
+		BUG_ON(waitqueue_active(&state->wq));
+		free_extent_state(state);
+		if (need_resched()) {
+			spin_unlock(&tree->lock);
+			cond_resched();
+			spin_lock(&tree->lock);
+		}
+	}
+	spin_unlock(&tree->lock);
+}
+
 static noinline void switch_commit_root(struct btrfs_root *root)
 {
 	free_extent_buffer(root->commit_root);
@@ -744,17 +770,38 @@ int btrfs_write_marked_extents(struct btrfs_root *root,
 
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
 				      mark, &cached_state)) {
-		convert_extent_bit(dirty_pages, start, end, EXTENT_NEED_WAIT,
-				   mark, &cached_state, GFP_NOFS);
-		cached_state = NULL;
-		err = filemap_fdatawrite_range(mapping, start, end);
+		bool wait_writeback = false;
+
+		err = convert_extent_bit(dirty_pages, start, end,
+					 EXTENT_NEED_WAIT,
+					 mark, &cached_state, GFP_NOFS);
+		/*
+		 * convert_extent_bit can return -ENOMEM, which is most of the
+		 * time a temporary error. So when it happens, ignore the error
+		 * and wait for writeback of this range to finish - because we
+		 * failed to set the bit EXTENT_NEED_WAIT for the range, a call
+		 * to btrfs_wait_marked_extents() would not know that writeback
+		 * for this range started and therefore wouldn't wait for it to
+		 * finish - we don't want to commit a superblock that points to
+		 * btree nodes/leafs for which writeback hasn't finished yet
+		 * (and without errors).
+		 * We cleanup any entries left in the io tree when committing
+		 * the transaction (through clear_btree_io_tree()).
+		 */
+		if (err == -ENOMEM) {
+			err = 0;
+			wait_writeback = true;
+		}
+		if (!err)
+			err = filemap_fdatawrite_range(mapping, start, end);
 		if (err)
 			werr = err;
+		else if (wait_writeback)
+			werr = filemap_fdatawait_range(mapping, start, end);
+		cached_state = NULL;
 		cond_resched();
 		start = end + 1;
 	}
-	if (err)
-		werr = err;
 	return werr;
 }
 
@@ -773,12 +820,26 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
 	struct extent_state *cached_state = NULL;
 	u64 start = 0;
 	u64 end;
+	struct btrfs_inode *btree_ino = BTRFS_I(root->fs_info->btree_inode);
+	bool errors = false;
 
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
 				      EXTENT_NEED_WAIT, &cached_state)) {
-		clear_extent_bit(dirty_pages, start, end, EXTENT_NEED_WAIT,
-				 0, 0, &cached_state, GFP_NOFS);
-		err = filemap_fdatawait_range(mapping, start, end);
+		/*
+		 * Ignore -ENOMEM errors returned by clear_extent_bit().
+		 * When committing the transaction, we'll remove any entries
+		 * left in the io tree. For a log commit, we don't remove them
+		 * after committing the log because the tree can be accessed
+		 * concurrently - we do it only at transaction commit time when
+		 * it's safe to do it (through clear_btree_io_tree()).
+		 */
+		err = clear_extent_bit(dirty_pages, start, end,
+				       EXTENT_NEED_WAIT,
+				       0, 0, &cached_state, GFP_NOFS);
+		if (err == -ENOMEM)
+			err = 0;
+		if (!err)
+			err = filemap_fdatawait_range(mapping, start, end);
 		if (err)
 			werr = err;
 		cond_resched();
@@ -786,6 +847,26 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
 	}
 	if (err)
 		werr = err;
+
+	if (root->root_key.objectid == BTRFS_TREE_LOG_OBJECTID) {
+		if ((mark & EXTENT_DIRTY) &&
+		    test_and_clear_bit(BTRFS_INODE_BTREE_LOG1_ERR,
+				       &btree_ino->runtime_flags))
+			errors = true;
+
+		if ((mark & EXTENT_NEW) &&
+		    test_and_clear_bit(BTRFS_INODE_BTREE_LOG2_ERR,
+				       &btree_ino->runtime_flags))
+			errors = true;
+	} else {
+		if (test_and_clear_bit(BTRFS_INODE_BTREE_ERR,
+				       &btree_ino->runtime_flags))
+			errors = true;
+	}
+
+	if (errors && !werr)
+		werr = -EIO;
+
 	return werr;
 }
 
@@ -813,14 +894,25 @@ int btrfs_write_and_wait_marked_extents(struct btrfs_root *root,
 int btrfs_write_and_wait_transaction(struct btrfs_trans_handle *trans,
 				     struct btrfs_root *root)
 {
+	int ret;
+
 	if (!trans || !trans->transaction) {
-		struct inode *btree_inode;
-		btree_inode = root->fs_info->btree_inode;
-		return filemap_write_and_wait(btree_inode->i_mapping);
+		struct inode *btree_inode = root->fs_info->btree_inode;
+
+		ret = filemap_write_and_wait(btree_inode->i_mapping);
+		if (!ret &&
+		    test_bit(BTRFS_INODE_BTREE_ERR,
+			     &BTRFS_I(btree_inode)->runtime_flags))
+			ret = -EIO;
+		return ret;
 	}
-	return btrfs_write_and_wait_marked_extents(root,
+
+	ret = btrfs_write_and_wait_marked_extents(root,
 					   &trans->transaction->dirty_pages,
 					   EXTENT_DIRTY);
+	clear_btree_io_tree(&trans->transaction->dirty_pages);
+
+	return ret;
 }
 
 /*
@@ -836,7 +928,7 @@ int btrfs_write_and_wait_transaction(struct btrfs_trans_handle *trans,
 static int update_cowonly_root(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root)
 {
-	int ret;
+	int ret = 0;
 	u64 old_root_bytenr;
 	u64 old_root_used;
 	struct btrfs_root *tree_root = root->fs_info->tree_root;
@@ -855,18 +947,20 @@ static int update_cowonly_root(struct btrfs_trans_handle *trans,
 					&root->root_key,
 					&root->root_item);
 		if (ret)
-			return ret;
+			goto out;
 
 		old_root_used = btrfs_root_used(&root->root_item);
 		ret = btrfs_write_dirty_block_groups(trans, root);
 		if (ret)
-			return ret;
+			goto out;
 	}
 
 	if (root != root->fs_info->extent_root)
 		switch_commit_root(root);
+ out:
+	clear_btree_io_tree(&root->dirty_log_pages);
 
-	return 0;
+	return ret;
 }
 
 /*
@@ -1542,6 +1636,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	struct btrfs_transaction *cur_trans = trans->transaction;
 	struct btrfs_transaction *prev_trans = NULL;
 	DEFINE_WAIT(wait);
+	struct btrfs_inode *btree_ino = BTRFS_I(root->fs_info->btree_inode);
 	int ret;
 	int should_grow = 0;
 	unsigned long now = get_seconds();
@@ -1621,8 +1716,11 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 			spin_unlock(&root->fs_info->trans_lock);
 
 			wait_for_commit(root, prev_trans);
+			ret = prev_trans->aborted;
 
 			put_transaction(prev_trans);
+			if (ret)
+				goto cleanup_transaction;
 		} else {
 			spin_unlock(&root->fs_info->trans_lock);
 		}
@@ -1790,6 +1888,10 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	       sizeof(*root->fs_info->super_copy));
 
 	trans->transaction->blocked = 0;
+
+	clear_bit(BTRFS_INODE_BTREE_LOG1_ERR, &btree_ino->runtime_flags);
+	clear_bit(BTRFS_INODE_BTREE_LOG2_ERR, &btree_ino->runtime_flags);
+
 	spin_lock(&root->fs_info->trans_lock);
 	root->fs_info->running_transaction = NULL;
 	root->fs_info->trans_no_join = 0;

@@ -750,7 +750,7 @@ void tick_check_idle(int cpu)
  * We rearm the timer until we get disabled by the idle code.
  * Called with interrupts disabled and timer->base->cpu_base->lock held.
  */
-static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
+enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
 {
 	struct tick_sched *ts =
 		container_of(timer, struct tick_sched, sched_timer);

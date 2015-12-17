@@ -102,7 +102,7 @@ static void sync_filesystems(int wait, unsigned long sincejif)
 		.sincejif = sincejif,
 		.wait = wait,
 	};
-	iterate_supers(sync_one_sb, &arg);
+	iterate_supers_thawed(sync_one_sb, &arg);
 }
 
 /*

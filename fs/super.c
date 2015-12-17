@@ -420,7 +420,8 @@ void sync_supers(void)
  *	Scans the superblock list and calls given function, passing it
  *	locked superblock and given argument.
  */
-void iterate_supers(void (*f)(struct super_block *, void *), void *arg)
+static void __iterate_supers(void (*f)(struct super_block *, void *), void *arg,
+			     int thawed)
 {
 	struct super_block *sb, *p = NULL;
 
@@ -431,7 +432,14 @@ void iterate_supers(void (*f)(struct super_block *, void *), void *arg)
 		sb->s_count++;
 		spin_unlock(&sb_lock);
 
+retry:
+		if (thawed)
+			vfs_check_frozen(sb, SB_FREEZE_WRITE);
 		down_read(&sb->s_umount);
+		if (thawed && sb->s_frozen != SB_UNFROZEN) {
+			up_read(&sb->s_umount);
+			goto retry;
+		}
 		if (sb->s_root)
 			f(sb, arg);
 		up_read(&sb->s_umount);
@@ -444,6 +452,16 @@ void iterate_supers(void (*f)(struct super_block *, void *), void *arg)
 	if (p)
 		__put_super(p);
 	spin_unlock(&sb_lock);
+}
+
+void iterate_supers(void (*f)(struct super_block *, void *), void *arg)
+{
+	__iterate_supers(f, arg, 0);
+}
+
+void iterate_supers_thawed(void (*f)(struct super_block *, void *), void *arg)
+{
+	__iterate_supers(f, arg, 1);
 }
 
 /**
@@ -485,6 +503,28 @@ rescan:
 }
 
 EXPORT_SYMBOL(get_super);
+
+/**
+ *	get_super_thawed - get thawed superblock of a device
+ *	@bdev: device to get the superblock for
+ *
+ *	Scans the superblock list and finds the superblock of the file system
+ *	mounted on the device. The superblock is returned once it is thawed
+ *	(or immediately if it was not frozen). %NULL is returned if no match
+ *	is found.
+ */
+struct super_block *get_super_thawed(struct block_device *bdev)
+{
+	while (1) {
+		struct super_block *s = get_super(bdev);
+		if (!s || s->s_frozen == SB_UNFROZEN)
+			return s;
+		up_read(&s->s_umount);
+		vfs_check_frozen(s, SB_FREEZE_WRITE);
+		put_super(s);
+	}
+}
+EXPORT_SYMBOL(get_super_thawed);
 
 /**
  * get_active_super - get an active reference to the superblock of a device

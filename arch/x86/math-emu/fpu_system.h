@@ -16,9 +16,24 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 
-/* s is always from a cpu register, and the cpu does bounds checking
- * during register load --> no further bounds checks needed */
-#define LDT_DESCRIPTOR(s)	(((struct desc_struct *)current->mm->context.ldt)[(s) >> 3])
+#include <asm/desc.h>
+#include <asm/mmu_context.h>
+
+static inline struct desc_struct FPU_get_ldt_descriptor(unsigned seg)
+{
+	static struct desc_struct zero_desc;
+	struct desc_struct ret = zero_desc;
+	struct ldt_struct *ldt;
+
+	seg >>= 3;
+	mutex_lock(&current->mm->context.lock);
+	ldt = current->mm->context.ldt;
+	if (ldt && seg < ldt->size)
+		ret = ldt->entries[seg];
+	mutex_unlock(&current->mm->context.lock);
+	return ret;
+}
+
 #define SEG_D_SIZE(x)		((x).b & (3 << 21))
 #define SEG_G_BIT(x)		((x).b & (1 << 23))
 #define SEG_GRANULARITY(x)	(((x).b & (1 << 23)) ? 4096 : 1)

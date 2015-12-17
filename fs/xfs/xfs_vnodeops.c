@@ -332,6 +332,9 @@ xfs_setattr(
 			 * do not wait the usual (long) time for writeout.
 			 */
 			xfs_iflags_set(ip, XFS_ITRUNCATED);
+
+			/* A truncate down always removes post-EOF blocks. */
+			xfs_inode_clear_eofblocks_tag(ip);
 		}
 	} else if (tp) {
 		xfs_trans_ijoin(tp, ip);
@@ -650,7 +653,7 @@ xfs_free_eofblocks(
 		if (flags & XFS_FREE_EOF_TRYLOCK) {
 			if (!xfs_ilock_nowait(ip, XFS_IOLOCK_EXCL)) {
 				xfs_trans_cancel(tp, 0);
-				return 0;
+				return EAGAIN;
 			}
 		} else if (!(flags & XFS_FREE_EOF_HASLOCK)){
 			xfs_ilock(ip, XFS_IOLOCK_EXCL);
@@ -694,6 +697,8 @@ xfs_free_eofblocks(
 		} else {
 			error = xfs_trans_commit(tp,
 						XFS_TRANS_RELEASE_LOG_RES);
+			if (!error)
+				xfs_inode_clear_eofblocks_tag(ip);
 		}
 		if (!(flags & XFS_FREE_EOF_HASLOCK))
 			xfs_iunlock(ip, XFS_IOLOCK_EXCL|XFS_ILOCK_EXCL);
@@ -994,11 +999,7 @@ xfs_release(
 	if (ip->i_d.di_nlink == 0)
 		return 0;
 
-	if ((((ip->i_d.di_mode & S_IFMT) == S_IFREG) &&
-	     ((ip->i_size > 0) || (VN_CACHED(VFS_I(ip)) > 0 ||
-	       ip->i_delayed_blks > 0)) &&
-	     (ip->i_df.if_flags & XFS_IFEXTENTS))  &&
-	    (!(ip->i_d.di_flags & (XFS_DIFLAG_PREALLOC | XFS_DIFLAG_APPEND)))) {
+	if (xfs_can_free_eofblocks(ip, false)) {
 
 		/*
 		 * If we can't get the iolock just skip truncating the blocks
@@ -1026,7 +1027,7 @@ xfs_release(
 
 		error = xfs_free_eofblocks(mp, ip,
 					   XFS_FREE_EOF_TRYLOCK);
-		if (error)
+		if (error && error != EAGAIN)
 			return error;
 
 		/* delalloc blocks after truncation means it really is dirty */
@@ -1089,13 +1090,12 @@ xfs_inactive(
 		goto out;
 
 	if (ip->i_d.di_nlink != 0) {
-		if ((((ip->i_d.di_mode & S_IFMT) == S_IFREG) &&
-                     ((ip->i_size > 0) || (VN_CACHED(VFS_I(ip)) > 0 ||
-                       ip->i_delayed_blks > 0)) &&
-		      (ip->i_df.if_flags & XFS_IFEXTENTS) &&
-		     (!(ip->i_d.di_flags &
-				(XFS_DIFLAG_PREALLOC | XFS_DIFLAG_APPEND)) ||
-		      (ip->i_delayed_blks != 0)))) {
+		/*
+		 * force is true because we are evicting an inode from the
+		 * cache. Post-eof blocks must be freed, lest we end up with
+		 * broken free space accounting.
+		 */
+		if (xfs_can_free_eofblocks(ip, true)) {
 			error = xfs_free_eofblocks(mp, ip, 0);
 			if (error)
 				return VN_INACTIVE_CACHE;

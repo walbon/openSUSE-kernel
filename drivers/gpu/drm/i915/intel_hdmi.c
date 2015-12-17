@@ -973,24 +973,24 @@ void intel_hdmi_init_connector(struct intel_digital_port *intel_dig_port,
 			   DRM_MODE_CONNECTOR_HDMIA);
 	drm_connector_helper_add(connector, &intel_hdmi_connector_helper_funcs);
 
-	connector->polled = DRM_CONNECTOR_POLL_HPD;
 	connector->interlace_allowed = 1;
 	connector->doublescan_allowed = 0;
 
 	switch (port) {
 	case PORT_B:
 		intel_hdmi->ddc_bus = GMBUS_PORT_DPB;
-		dev_priv->hotplug_supported_mask |= HDMIB_HOTPLUG_INT_STATUS;
+		intel_encoder->hpd_pin = HPD_PORT_B;
 		break;
 	case PORT_C:
 		intel_hdmi->ddc_bus = GMBUS_PORT_DPC;
-		dev_priv->hotplug_supported_mask |= HDMIC_HOTPLUG_INT_STATUS;
+		intel_encoder->hpd_pin = HPD_PORT_C;
 		break;
 	case PORT_D:
 		intel_hdmi->ddc_bus = GMBUS_PORT_DPD;
-		dev_priv->hotplug_supported_mask |= HDMID_HOTPLUG_INT_STATUS;
+		intel_encoder->hpd_pin = HPD_PORT_D;
 		break;
 	case PORT_A:
+		intel_encoder->hpd_pin = HPD_PORT_A;
 		/* Internal port only for eDP. */
 	default:
 		BUG();
