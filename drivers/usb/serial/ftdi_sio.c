@@ -2446,8 +2446,10 @@ static int ftdi_tiocmget(struct tty_struct *tty)
 			FTDI_SIO_GET_MODEM_STATUS_REQUEST_TYPE,
 			0, priv->interface,
 			buf, len, WDR_TIMEOUT);
-	if (ret < 0)
+	if (ret < 0) {
+		ret = usb_translate_errors(ret);
 		goto out;
+	}
 
 	ret =	(buf[0] & FTDI_SIO_DSR_MASK  ? TIOCM_DSR : 0) |
 		(buf[0] & FTDI_SIO_CTS_MASK  ? TIOCM_CTS : 0) |
