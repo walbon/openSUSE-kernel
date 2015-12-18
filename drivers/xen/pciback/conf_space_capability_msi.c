@@ -33,7 +33,8 @@ int pciback_enable_msi(struct pciback_device *pdev,
 int pciback_disable_msi(struct pciback_device *pdev,
 		struct pci_dev *dev, struct xen_pci_op *op)
 {
-	pci_disable_msi(dev);
+	if (dev->msi_enabled)
+		pci_disable_msi(dev);
 
 	op->value = dev->irq;
 	return 0;
@@ -80,8 +81,8 @@ int pciback_enable_msix(struct pciback_device *pdev,
 int pciback_disable_msix(struct pciback_device *pdev,
 		struct pci_dev *dev, struct xen_pci_op *op)
 {
-
-	pci_disable_msix(dev);
+	if (dev->msix_enabled)
+		pci_disable_msix(dev);
 
 	op->value = dev->irq;
 	return 0;
