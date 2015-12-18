@@ -9,7 +9,14 @@
 int pciback_enable_msi(struct pciback_device *pdev,
 		struct pci_dev *dev, struct xen_pci_op *op)
 {
-	int status = pci_enable_msi(dev);
+	int status;
+
+	if (dev->msi_enabled)
+		status = -EALREADY;
+	else if (dev->msix_enabled)
+		status = -ENXIO;
+	else
+		status = pci_enable_msi(dev);
 
 	if (status) {
 		if (printk_ratelimit())
