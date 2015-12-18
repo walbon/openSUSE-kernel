@@ -48,6 +48,12 @@ int pciback_enable_msix(struct pciback_device *pdev,
 	if (op->value > SH_INFO_MAX_VEC)
 		return -EINVAL;
 
+	if (dev->msix_enabled)
+		return -EALREADY;
+
+	if (dev->msi_enabled)
+		return -ENXIO;
+
 	entries = kmalloc(op->value * sizeof(*entries), GFP_KERNEL);
 	if (entries == NULL)
 		return -ENOMEM;
