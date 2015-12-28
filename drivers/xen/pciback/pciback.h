@@ -43,6 +43,7 @@ struct pciback_device {
 	unsigned long flags;
 
 	struct work_struct op_work;
+	struct xen_pci_op op;
 };
 
 struct pciback_dev_data {

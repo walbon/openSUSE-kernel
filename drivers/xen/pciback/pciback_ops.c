@@ -79,8 +79,10 @@ void pciback_do_op(struct work_struct *work)
 {
 	struct pciback_device *pdev = container_of(work, struct pciback_device, op_work);
 	struct pci_dev *dev;
-	struct xen_pci_op *op = &pdev->sh_info->op;
+	struct xen_pci_op *op = &pdev->op;
 
+	*op = pdev->sh_info->op;
+	barrier();
 	dev = pciback_get_pci_dev(pdev, op->domain, op->bus, op->devfn);
 
 	if (dev == NULL)
@@ -116,6 +118,17 @@ void pciback_do_op(struct work_struct *work)
 				break;
 		}
 	}
+	pdev->sh_info->op.err = op->err;
+	pdev->sh_info->op.value = op->value;
+#ifdef CONFIG_PCI_MSI
+	if (op->cmd == XEN_PCI_OP_enable_msix && op->err == 0) {
+		unsigned int i;
+
+		for (i = 0; i < op->value; i++)
+			pdev->sh_info->op.msix_entries[i].vector =
+				op->msix_entries[i].vector;
+	}
+#endif
 	/* Tell the driver domain that we're done. */ 
 	wmb();
 	clear_bit(_XEN_PCIF_active, (unsigned long *)&pdev->sh_info->flags);
