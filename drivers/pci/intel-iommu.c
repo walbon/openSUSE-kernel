@@ -425,6 +425,19 @@ static LIST_HEAD(device_domain_list);
 
 static struct iommu_ops intel_iommu_ops;
 
+static bool device_has_dma_domain(struct pci_dev *pdev)
+{
+	struct device_domain_info *info;
+
+	info = pdev->dev.archdata.iommu;
+
+	if (!info || info == DUMMY_DEVICE_DOMAIN_INFO || !info->domain)
+		return false;
+
+	return !(info->domain->flags & DOMAIN_FLAG_VIRTUAL_MACHINE) &&
+	       !(info->domain->flags & DOMAIN_FLAG_STATIC_IDENTITY);
+}
+
 static int __init intel_iommu_setup(char *str)
 {
 	if (!str)
@@ -2885,7 +2898,8 @@ static int iommu_no_mapping(struct device *dev)
 		 * In case of a detached 64 bit DMA device from vm, the device
 		 * is put into si_domain for identity mapping.
 		 */
-		if (iommu_should_identity_map(pdev, 0)) {
+		if (iommu_should_identity_map(pdev, 0) &&
+		    !device_has_dma_domain(pdev)) {
 			int ret;
 			ret = domain_add_dev_info(si_domain, pdev,
 						  hw_pass_through ?
