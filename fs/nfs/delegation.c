@@ -93,7 +93,8 @@ out:
 	return status;
 }
 
-static int nfs_delegation_claim_opens(struct inode *inode, const nfs4_stateid *stateid)
+static int nfs_delegation_claim_opens(struct inode *inode,
+		const nfs4_stateid *stateid, fmode_t type)
 {
 	struct nfs_inode *nfsi = NFS_I(inode);
 	struct nfs_open_context *ctx;
@@ -118,7 +119,7 @@ again:
 		/* Block nfs4_proc_unlck */
 		mutex_lock(&sp->so_delegreturn_mutex);
 		seq = raw_seqcount_begin(&sp->so_reclaim_seqcount);
-		err = nfs4_open_delegation_recall(ctx, state, stateid);
+		err = nfs4_open_delegation_recall(ctx, state, stateid, type);
 		if (!err)
 			err = nfs_delegation_claim_locks(ctx, state);
 		if (!err && read_seqcount_retry(&sp->so_reclaim_seqcount, seq))
@@ -367,7 +368,8 @@ static int nfs_end_delegation_return(struct inode *inode, struct nfs_delegation 
 	if (delegation == NULL)
 		return 0;
 	do {
-		err = nfs_delegation_claim_opens(inode, &delegation->stateid);
+		err = nfs_delegation_claim_opens(inode, &delegation->stateid,
+				delegation->type);
 		if (!issync || err != -EAGAIN)
 			break;
 		/*
