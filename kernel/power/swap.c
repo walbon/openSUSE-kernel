@@ -384,7 +384,7 @@ static int write_page(void *buf, sector_t offset, struct hib_bio_batch *hb)
 static void release_swap_writer(struct swap_map_handle *handle)
 {
 	if (handle->cur)
-		free_page((unsigned long)handle->cur);
+		put_page(virt_to_page((unsigned long)handle->cur));
 	handle->cur = NULL;
 }
 

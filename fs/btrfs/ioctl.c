@@ -2573,15 +2573,8 @@ static int btrfs_ioctl_defrag(struct file *file, void __user *argp)
 
 	switch (inode->i_mode & S_IFMT) {
 	case S_IFDIR:
-		if (!capable(CAP_SYS_ADMIN)) {
-			ret = -EPERM;
-			goto out;
-		}
-		ret = btrfs_defrag_root(root);
-		if (ret)
-			goto out;
-		ret = btrfs_defrag_root(root->fs_info->extent_root);
-		break;
+		ret = 0;
+		goto out;
 	case S_IFREG:
 		if (!(file->f_mode & FMODE_WRITE)) {
 			ret = -EINVAL;
@@ -4807,9 +4800,13 @@ static long btrfs_ioctl_quota_ctl(struct file *file, void __user *arg)
 	switch (sa->cmd) {
 	case BTRFS_QUOTA_CTL_ENABLE:
 		ret = btrfs_quota_enable(trans, root->fs_info);
+		if (!ret)
+			btrfs_info(root->fs_info, "quota is enabled");
 		break;
 	case BTRFS_QUOTA_CTL_DISABLE:
 		ret = btrfs_quota_disable(trans, root->fs_info);
+		if (!ret)
+			btrfs_info(root->fs_info, "quota is disabled");
 		break;
 	default:
 		ret = -EINVAL;
@@ -5443,6 +5440,7 @@ long btrfs_ioctl(struct file *file, unsigned int
 {
 	struct btrfs_root *root = BTRFS_I(file_inode(file))->root;
 	void __user *argp = (void __user *)arg;
+	int ret = -ENOTTY;
 
 	switch (cmd) {
 	case FS_IOC_GETFLAGS:
@@ -5537,6 +5535,11 @@ long btrfs_ioctl(struct file *file, unsigned int
 	case BTRFS_IOC_BALANCE_PROGRESS:
 		return btrfs_ioctl_balance_progress(root, argp);
 	case BTRFS_IOC_SET_RECEIVED_SUBVOL:
+		if (!btrfs_allow_unsupported) {
+			printk(KERN_WARNING "btrfs: IOC_SET_RECEIVED_SUBVOL is not supported, load module with allow_unsupported=1\n");
+			ret = -EOPNOTSUPP;
+			break;
+		}
 		return btrfs_ioctl_set_received_subvol(file, argp);
 #ifdef CONFIG_64BIT
 	case BTRFS_IOC_SET_RECEIVED_SUBVOL_32:
@@ -5561,6 +5564,11 @@ long btrfs_ioctl(struct file *file, unsigned int
 	case BTRFS_IOC_QUOTA_RESCAN_WAIT:
 		return btrfs_ioctl_quota_rescan_wait(file, argp);
 	case BTRFS_IOC_DEV_REPLACE:
+		if (!btrfs_allow_unsupported) {
+			printk(KERN_WARNING "btrfs: IOC_DEV_REPLACE is not supported, load module with allow_unsupported=1\n");
+			ret = -EOPNOTSUPP;
+			break;
+		}
 		return btrfs_ioctl_dev_replace(root, argp);
 	case BTRFS_IOC_GET_FSLABEL:
 		return btrfs_ioctl_get_fslabel(file, argp);
@@ -5576,5 +5584,5 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_set_features(file, argp);
 	}
 
-	return -ENOTTY;
+	return ret;
 }

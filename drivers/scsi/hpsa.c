@@ -81,10 +81,19 @@ MODULE_SUPPORTED_DEVICE("HP Smart Array Controllers");
 MODULE_VERSION(HPSA_DRIVER_VERSION);
 MODULE_LICENSE("GPL");
 
-static int hpsa_allow_any;
-module_param(hpsa_allow_any, int, S_IRUGO|S_IWUSR);
+static bool hpsa_allow_any = false;
+static bool hpsa_claimed_unsupported = false;
+static int hpsa_set_hpsa_allow_any(const char *buffer,
+				   const struct kernel_param *kp);
+static struct kernel_param_ops hpsa_allow_any_ops = {
+	.set = hpsa_set_hpsa_allow_any,
+	.get = param_get_bool,
+};
+
+module_param_cb(hpsa_allow_any, &hpsa_allow_any_ops, &hpsa_allow_any,
+		S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(hpsa_allow_any,
-		"Allow hpsa driver to access unknown HP Smart Array hardware");
+		"Allow hpsa driver to access unsupported HP Smart Array hardware");
 static int hpsa_simple_mode;
 module_param(hpsa_simple_mode, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(hpsa_simple_mode,
@@ -99,7 +108,6 @@ static const struct pci_device_id hpsa_pci_device_id[] = {
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3249},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x324A},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x324B},
-	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3233},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3350},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3351},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3352},
@@ -107,6 +115,7 @@ static const struct pci_device_id hpsa_pci_device_id[] = {
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3354},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3355},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSF,     0x103C, 0x3356},
+	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSH,     0x103C, 0x1920},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSH,     0x103C, 0x1921},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSH,     0x103C, 0x1922},
 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSH,     0x103C, 0x1923},
@@ -145,6 +154,8 @@ static const struct pci_device_id hpsa_pci_device_id[] = {
 	{PCI_VENDOR_ID_HP, 0x333f, 0x103c, 0x333f},
 	{PCI_VENDOR_ID_HP,     PCI_ANY_ID,	PCI_ANY_ID, PCI_ANY_ID,
 		PCI_CLASS_STORAGE_RAID << 8, 0xffff << 8, 0},
+	{PCI_VENDOR_ID_COMPAQ, PCI_ANY_ID,	PCI_ANY_ID, PCI_ANY_ID,
+		PCI_CLASS_STORAGE_RAID << 8, 0xffff << 8, 0},
 	{0,}
 };
 
@@ -170,6 +181,7 @@ static struct board_type products[] = {
 	{0x3354103C, "Smart Array P420i", &SA5_access},
 	{0x3355103C, "Smart Array P220i", &SA5_access},
 	{0x3356103C, "Smart Array P721m", &SA5_access},
+	{0x1920103C, "Smart Array P430i", &SA5_access},
 	{0x1921103C, "Smart Array P830i", &SA5_access},
 	{0x1922103C, "Smart Array P430", &SA5_access},
 	{0x1923103C, "Smart Array P431", &SA5_access},
@@ -7375,8 +7387,14 @@ static int hpsa_lookup_board_id(struct pci_dev *pdev, u32 *board_id)
 		!hpsa_allow_any) {
 		dev_warn(&pdev->dev, "unrecognized board ID: "
 			"0x%08x, ignoring.\n", *board_id);
+		dev_warn(&pdev->dev, "This device may be enabled by loading the hpsa module with the hpsa_allow_any=1 option or by writing \"%s\" to /sys/bus/pci/drivers/hpsa/bind while the module is loaded. Please note that the driver is untested with this device and will result in an unsupported environment.\n", dev_name(&pdev->dev));
 			return -ENODEV;
 	}
+#ifdef CONFIG_SUSE_KERNEL_SUPPORTED
+	add_taint(TAINT_NO_SUPPORT, LOCKDEP_STILL_OK);
+#endif
+	dev_warn(&pdev->dev, "unsupported board ID: 0x%08x\n", *board_id);
+	hpsa_claimed_unsupported = true;
 	return ARRAY_SIZE(products) - 1; /* generic unknown smart array */
 }
 
@@ -9666,6 +9684,32 @@ static void __attribute__((unused)) verify_offsets(void)
 	VERIFY_OFFSET(CISS_LUN, 0x78);
 	VERIFY_OFFSET(SG, 0x78 + 8);
 #undef VERIFY_OFFSET
+}
+
+static int hpsa_set_hpsa_allow_any(const char *buffer,
+				   const struct kernel_param *kp)
+{
+	int ret;
+	struct kernel_param dummy_kp = *kp;
+	bool newval;
+
+	dummy_kp.arg = &newval;
+
+	ret = param_set_bool(buffer, &dummy_kp);
+	if (ret)
+		return ret;
+
+	if (hpsa_allow_any && !newval) {
+		if (hpsa_claimed_unsupported) {
+			pr_info("hpsa: can't disable hpsa_allow_any parameter. Devices already in use.\n");
+			return -EPERM;
+		} else
+			hpsa_allow_any = false;
+	} else if (!hpsa_allow_any && newval) {
+		pr_info("hpsa: allowing unsupported devices. If devices are claimed, this will result in an unsupported environment.\n");
+		hpsa_allow_any = true;
+	}
+	return 0;
 }
 
 module_init(hpsa_init);

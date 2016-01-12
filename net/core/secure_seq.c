@@ -119,7 +119,7 @@ u32 secure_ipv4_port_ephemeral(__be32 saddr, __be32 daddr, __be16 dport)
 EXPORT_SYMBOL_GPL(secure_ipv4_port_ephemeral);
 #endif
 
-#if IS_ENABLED(CONFIG_IP_DCCP)
+#if IS_ENABLED(CONFIG_IP_DCCP) || IS_ENABLED(CONFIG_INET)
 u64 secure_dccp_sequence_number(__be32 saddr, __be32 daddr,
 				__be16 sport, __be16 dport)
 {

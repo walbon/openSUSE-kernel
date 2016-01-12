@@ -441,6 +441,24 @@ static ssize_t in_write_bytes_avail_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(in_write_bytes_avail);
 
+static ssize_t vendor_show(struct device *dev,
+			   struct device_attribute *dev_atttr,
+			   char *buf)
+{
+	struct hv_device *hv_dev = device_to_hv_device(dev);
+	return sprintf(buf, "0x%x\n", hv_dev->vendor_id);
+}
+static DEVICE_ATTR_RO(vendor);
+
+static ssize_t device_show(struct device *dev,
+			   struct device_attribute *dev_atttr,
+			   char *buf)
+{
+	struct hv_device *hv_dev = device_to_hv_device(dev);
+	return sprintf(buf, "0x%x\n", hv_dev->device_id);
+}
+static DEVICE_ATTR_RO(device);
+
 static ssize_t channel_vp_mapping_show(struct device *dev,
 				       struct device_attribute *dev_attr,
 				       char *buf)
@@ -503,6 +521,8 @@ static struct attribute *vmbus_attrs[] = {
 	&dev_attr_in_read_bytes_avail.attr,
 	&dev_attr_in_write_bytes_avail.attr,
 	&dev_attr_channel_vp_mapping.attr,
+	&dev_attr_vendor.attr,
+	&dev_attr_device.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(vmbus);
@@ -1308,6 +1328,7 @@ cleanup:
 	return ret;
 }
 
+#if 0
 static void __exit vmbus_exit(void)
 {
 	int cpu;
@@ -1336,9 +1357,9 @@ static void __exit vmbus_exit(void)
 	if (vmbus_proto_version > VERSION_WIN7)
 		cpu_hotplug_enable();
 }
+#endif
 
 
 MODULE_LICENSE("GPL");
 
 subsys_initcall(hv_acpi_init);
-module_exit(vmbus_exit);

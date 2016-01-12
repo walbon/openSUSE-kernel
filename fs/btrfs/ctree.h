@@ -4393,4 +4393,9 @@ static inline int btrfs_test_is_dummy_root(struct btrfs_root *root)
 	return 0;
 }
 
+/*
+ * Module parameter
+ */
+extern bool btrfs_allow_unsupported;
+
 #endif

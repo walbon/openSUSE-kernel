@@ -18,6 +18,7 @@
 
 #include <linux/blkdev.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/buffer_head.h>
 #include <linux/fs.h>
 #include <linux/pagemap.h>
@@ -628,6 +629,11 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 					     "disabling disk space caching");
 			break;
 		case Opt_inode_cache:
+			if (!btrfs_allow_unsupported) {
+				printk(KERN_WARNING "btrfs: inode_cache is not supported, load module with allow_unsupported=1\n");
+				ret = -EOPNOTSUPP;
+				break;
+			}
 			btrfs_set_pending_and_info(info, INODE_MAP_CACHE,
 					   "enabling inode map caching");
 			break;
@@ -649,6 +655,11 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 			btrfs_clear_opt(info->mount_opt, ENOSPC_DEBUG);
 			break;
 		case Opt_defrag:
+			if (!btrfs_allow_unsupported) {
+				printk(KERN_WARNING "btrfs: autodefrag is not supported, load module with allow_unsupported=1\n");
+				ret = -EOPNOTSUPP;
+				break;
+			}
 			btrfs_set_and_info(root, AUTO_DEFRAG,
 					   "enabling auto defrag");
 			break;
@@ -1700,6 +1711,13 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 			ret = -EACCES;
 			goto restore;
 		}
+		if ((btrfs_super_incompat_flags(fs_info->super_copy)
+					& BTRFS_FEATURE_INCOMPAT_RAID56)
+				&& !btrfs_allow_unsupported) {
+			printk(KERN_WARNING "btrfs: cannot remount RW, RAID56 is supported read-only, load module with allow_unsupported=1\n");
+			ret = -EINVAL;
+			goto restore;
+		}
 
 		if (btrfs_super_log_root(fs_info->super_copy) != 0) {
 			ret = -EINVAL;
@@ -2296,6 +2314,13 @@ static int __init init_btrfs_fs(void)
 
 	btrfs_print_info();
 
+#ifdef CONFIG_SUSE_KERNEL_SUPPORTED
+	if (btrfs_allow_unsupported) {
+		add_taint(TAINT_NO_SUPPORT, LOCKDEP_STILL_OK);
+		printk(KERN_INFO "btrfs: allow_unsupported=1 taints kernel\n");
+	}
+#endif
+
 	err = btrfs_run_sanity_tests();
 	if (err)
 		goto unregister_ioctl;
@@ -2352,6 +2377,46 @@ static void __exit exit_btrfs_fs(void)
 	btrfs_exit_compress();
 	btrfs_hash_exit();
 }
+
+#ifdef CONFIG_SUSE_KERNEL_SUPPORTED
+bool btrfs_allow_unsupported = false;
+#else
+bool btrfs_allow_unsupported = true;
+#endif
+
+static int btrfs_set_allow_unsupported(const char *buffer, const struct kernel_param *kp)
+{
+	int ret;
+	struct kernel_param dummy_kp = *kp;
+	bool newval;
+
+	dummy_kp.arg = &newval;
+
+	ret = param_set_bool(buffer, &dummy_kp);
+	if (ret)
+		return ret;
+
+#ifdef CONFIG_SUSE_KERNEL_SUPPORTED
+	if (btrfs_allow_unsupported && !newval) {
+		printk(KERN_INFO "btrfs: disallowing unsupported features, kernel remains tainted\n");
+		btrfs_allow_unsupported = false;
+	} else if (!btrfs_allow_unsupported && newval) {
+		printk(KERN_INFO "btrfs: allowing unsupported features, kernel tainted\n");
+		add_taint(TAINT_NO_SUPPORT, LOCKDEP_STILL_OK);
+		btrfs_allow_unsupported = true;
+	}
+#endif
+	return 0;
+}
+
+static struct kernel_param_ops btrfs_allow_unsupported_param_ops = {
+	.set = btrfs_set_allow_unsupported,
+	.get = param_get_bool,
+};
+
+module_param_cb(allow_unsupported, &btrfs_allow_unsupported_param_ops,
+		&btrfs_allow_unsupported, 0644);
+MODULE_PARM_DESC(allow_unsupported, "Allow using features that are out of supported scope");
 
 late_initcall(init_btrfs_fs);
 module_exit(exit_btrfs_fs)

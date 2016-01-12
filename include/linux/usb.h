@@ -330,6 +330,7 @@ struct usb_host_bos {
 	struct usb_ss_cap_descriptor	*ss_cap;
 	struct usb_ssp_cap_descriptor	*ssp_cap;
 	struct usb_ss_container_id_descriptor	*ss_id;
+	void *suse_kabi_padding;
 };
 
 int __usb_get_extra_descriptor(char *buffer, unsigned size,
@@ -395,6 +396,7 @@ struct usb_bus {
 	struct mon_bus *mon_bus;	/* non-null when associated */
 	int monitored;			/* non-zero when monitored */
 #endif
+	void *suse_kabi_padding;
 };
 
 struct usb_dev_state;
@@ -614,6 +616,7 @@ struct usb_device {
 	struct usb3_lpm_parameters u1_params;
 	struct usb3_lpm_parameters u2_params;
 	unsigned lpm_disable_count;
+	void *suse_kabi_padding;
 };
 #define	to_usb_device(d) container_of(d, struct usb_device, dev)
 
@@ -1141,6 +1144,8 @@ struct usb_device_driver {
 	int (*resume) (struct usb_device *udev, pm_message_t message);
 	struct usbdrv_wrap drvwrap;
 	unsigned int supports_autosuspend:1;
+
+	void *suse_kabi_padding;
 };
 #define	to_usb_device_driver(d) container_of(d, struct usb_device_driver, \
 		drvwrap.driver)

@@ -156,10 +156,10 @@ static int common_perm(int op, struct path *path, u32 mask,
 	struct aa_profile *profile;
 	int error = 0;
 
-	profile = __aa_current_profile();
+	profile = aa_begin_current_profile();
 	if (!unconfined(profile))
 		error = aa_path_perm(op, profile, path, 0, mask, cond);
-
+	aa_end_current_profile(profile);
 	return error;
 }
 
@@ -366,6 +366,7 @@ static int apparmor_inode_getattr(const struct path *path)
 
 static int apparmor_file_open(struct file *file, const struct cred *cred)
 {
+	const struct aa_task_cxt *cxt = cred_cxt(cred);
 	struct aa_file_cxt *fcxt = file->f_security;
 	struct aa_profile *profile;
 	int error = 0;
@@ -383,7 +384,7 @@ static int apparmor_file_open(struct file *file, const struct cred *cred)
 		return 0;
 	}
 
-	profile = aa_cred_profile(cred);
+	profile = aa_get_newest_profile(cxt->profile);
 	if (!unconfined(profile)) {
 		struct inode *inode = file_inode(file);
 		struct path_cond cond = { inode->i_uid, inode->i_mode };
@@ -393,6 +394,7 @@ static int apparmor_file_open(struct file *file, const struct cred *cred)
 		/* todo cache full allowed permissions set and state */
 		fcxt->allow = aa_map_file_to_perms(file);
 	}
+	aa_put_profile(profile);
 
 	return error;
 }
@@ -426,7 +428,7 @@ static int common_file_perm(int op, struct file *file, u32 mask)
 	    !mediated_filesystem(file->f_path.dentry))
 		return 0;
 
-	profile = __aa_current_profile();
+	profile = aa_begin_current_profile();
 
 	/* revalidate access, if task is unconfined, or the cached cred
 	 * doesn't match or if the request is for more permissions than
@@ -439,6 +441,7 @@ static int common_file_perm(int op, struct file *file, u32 mask)
 	    ((fprofile != profile) || (mask & ~fcxt->allow)))
 		error = aa_file_perm(op, profile, file, mask);
 
+	aa_end_current_profile(profile);
 	return error;
 }
 
@@ -597,12 +600,13 @@ fail:
 static int apparmor_task_setrlimit(struct task_struct *task,
 		unsigned int resource, struct rlimit *new_rlim)
 {
-	struct aa_profile *profile = __aa_current_profile();
+	struct aa_profile *profile = aa_begin_current_profile();
 	int error = 0;
 
 	if (!unconfined(profile))
 		error = aa_task_setrlimit(profile, task, resource, new_rlim);
 
+	aa_end_current_profile(profile);
 	return error;
 }
 
