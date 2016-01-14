@@ -2849,6 +2849,7 @@ enum {
 	RES_MAX_USAGE,
 	RES_FAILCNT,
 	RES_SOFT_LIMIT,
+	RES_LOW_LIMIT,
 };
 
 static u64 mem_cgroup_read_u64(struct cgroup_subsys_state *css,
@@ -2886,6 +2887,9 @@ static u64 mem_cgroup_read_u64(struct cgroup_subsys_state *css,
 		return counter->failcnt;
 	case RES_SOFT_LIMIT:
 		return (u64)memcg->soft_limit * PAGE_SIZE;
+	case RES_LOW_LIMIT:
+		return (u64)memcg->low * PAGE_SIZE;
+		break;
 	default:
 		BUG();
 	}
@@ -3024,7 +3028,15 @@ static ssize_t mem_cgroup_write(struct kernfs_open_file *of,
 		}
 		break;
 	case RES_SOFT_LIMIT:
+		WARN(nr_pages != PAGE_COUNTER_MAX && memcg->low,
+				"Using soft limit with low limit is not supported.\n");
 		memcg->soft_limit = nr_pages;
+		ret = 0;
+		break;
+	case RES_LOW_LIMIT:
+		WARN(nr_pages && memcg->soft_limit != PAGE_COUNTER_MAX,
+				"Using soft limit with low limit is not supported.\n");
+		memcg->low = nr_pages;
 		ret = 0;
 		break;
 	}
@@ -4029,6 +4041,12 @@ static struct cftype mem_cgroup_legacy_files[] = {
 	{
 		.name = "soft_limit_in_bytes",
 		.private = MEMFILE_PRIVATE(_MEM, RES_SOFT_LIMIT),
+		.write = mem_cgroup_write,
+		.read_u64 = mem_cgroup_read_u64,
+	},
+	{
+		.name = "low_limit_in_bytes",
+		.private = MEMFILE_PRIVATE(_MEM, RES_LOW_LIMIT),
 		.write = mem_cgroup_write,
 		.read_u64 = mem_cgroup_read_u64,
 	},
