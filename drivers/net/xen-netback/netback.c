@@ -2047,6 +2047,7 @@ static void xenvif_wait_for_rx_work(struct xenvif_queue *queue)
 	for (;;) {
 		long ret;
 
+		klp_kgraft_mark_task_safe(current);
 		prepare_to_wait(&queue->wq, &wait, TASK_INTERRUPTIBLE);
 		if (xenvif_have_rx_work(queue))
 			break;
@@ -2066,6 +2067,8 @@ int xenvif_kthread_guest_rx(void *data)
 		xenvif_queue_carrier_on(queue);
 
 	for (;;) {
+		klp_kgraft_mark_task_safe(current);
+
 		xenvif_wait_for_rx_work(queue);
 
 		if (kthread_should_stop())
@@ -2129,9 +2132,10 @@ int xenvif_dealloc_kthread(void *data)
 	struct xenvif_queue *queue = data;
 
 	for (;;) {
-		wait_event_interruptible(queue->dealloc_wq,
+		wait_event_interruptible(queue->dealloc_wq, ({
+					 klp_kgraft_mark_task_safe(current);
 					 tx_dealloc_work_todo(queue) ||
-					 xenvif_dealloc_kthread_should_stop(queue));
+					 xenvif_dealloc_kthread_should_stop(queue); }));
 		if (xenvif_dealloc_kthread_should_stop(queue))
 			break;
 

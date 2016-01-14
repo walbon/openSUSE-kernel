@@ -108,6 +108,8 @@ static int smpboot_thread_fn(void *data)
 	struct smp_hotplug_thread *ht = td->ht;
 
 	while (1) {
+		klp_kgraft_mark_task_safe(current);
+
 		set_current_state(TASK_INTERRUPTIBLE);
 		preempt_disable();
 		if (kthread_should_stop()) {

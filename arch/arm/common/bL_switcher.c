@@ -283,9 +283,9 @@ static int bL_switcher_thread(void *arg)
 	do {
 		if (signal_pending(current))
 			flush_signals(current);
-		wait_event_interruptible(t->wq,
+		wait_event_interruptible(t->wq, ({ klp_kgraft_mark_task_safe(current);
 				t->wanted_cluster != -1 ||
-				kthread_should_stop());
+				kthread_should_stop(); }));
 
 		spin_lock(&t->lock);
 		cluster = t->wanted_cluster;

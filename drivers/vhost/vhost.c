@@ -291,6 +291,7 @@ static int vhost_worker(void *data)
 	use_mm(dev->mm);
 
 	for (;;) {
+		klp_kgraft_mark_task_safe(current);
 		/* mb paired w/ kthread_stop */
 		set_current_state(TASK_INTERRUPTIBLE);
 

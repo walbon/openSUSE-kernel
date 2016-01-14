@@ -3994,6 +3994,7 @@ brcmf_sdio_watchdog_thread(void *data)
 	/* Run until signal received */
 	brcmf_sdiod_freezer_count(bus->sdiodev);
 	while (1) {
+		klp_kgraft_mark_task_safe(current);
 		if (kthread_should_stop())
 			break;
 		brcmf_sdiod_freezer_uncount(bus->sdiodev);

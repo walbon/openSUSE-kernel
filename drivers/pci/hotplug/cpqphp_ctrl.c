@@ -1748,6 +1748,7 @@ static int event_thread(void *data)
 		dbg("!!!!event_thread sleeping\n");
 		set_current_state(TASK_INTERRUPTIBLE);
 		schedule();
+		klp_kgraft_mark_task_safe(current);
 
 		if (kthread_should_stop())
 			break;

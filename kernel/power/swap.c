@@ -577,8 +577,9 @@ static int crc32_threadfn(void *data)
 	unsigned i;
 
 	while (1) {
-		wait_event(d->go, atomic_read(&d->ready) ||
-		                  kthread_should_stop());
+		wait_event(d->go, ({ klp_kgraft_mark_task_safe(current);
+				  atomic_read(&d->ready) ||
+		                  kthread_should_stop(); }));
 		if (kthread_should_stop()) {
 			d->thr = NULL;
 			atomic_set(&d->stop, 1);
@@ -620,8 +621,9 @@ static int lzo_compress_threadfn(void *data)
 	struct cmp_data *d = data;
 
 	while (1) {
-		wait_event(d->go, atomic_read(&d->ready) ||
-		                  kthread_should_stop());
+		wait_event(d->go, ({ klp_kgraft_mark_task_safe(current);
+				  atomic_read(&d->ready) ||
+		                  kthread_should_stop(); }));
 		if (kthread_should_stop()) {
 			d->thr = NULL;
 			d->ret = -1;
@@ -1110,8 +1112,9 @@ static int lzo_decompress_threadfn(void *data)
 	struct dec_data *d = data;
 
 	while (1) {
-		wait_event(d->go, atomic_read(&d->ready) ||
-		                  kthread_should_stop());
+		wait_event(d->go, ({ klp_kgraft_mark_task_safe(current);
+				  atomic_read(&d->ready) ||
+		                  kthread_should_stop(); }));
 		if (kthread_should_stop()) {
 			d->thr = NULL;
 			d->ret = -1;

@@ -24,6 +24,7 @@ static void simple_thread_func(int cnt)
 	int len = cnt % 5;
 	int i;
 
+	klp_kgraft_mark_task_safe(current);
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule_timeout(HZ);
 

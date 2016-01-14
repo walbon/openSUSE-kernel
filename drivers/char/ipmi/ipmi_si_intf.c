@@ -1076,6 +1076,8 @@ static int ipmi_thread(void *data)
 	while (!kthread_should_stop()) {
 		int busy_wait;
 
+		klp_kgraft_mark_task_safe(current);
+
 		spin_lock_irqsave(&(smi_info->si_lock), flags);
 		smi_result = smi_event_handler(smi_info, 0);
 

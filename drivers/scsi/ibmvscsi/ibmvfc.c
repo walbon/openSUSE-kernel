@@ -4480,8 +4480,9 @@ static int ibmvfc_work(void *data)
 	set_user_nice(current, MIN_NICE);
 
 	while (1) {
-		rc = wait_event_interruptible(vhost->work_wait_q,
-					      ibmvfc_work_to_do(vhost));
+		rc = wait_event_interruptible(vhost->work_wait_q, ({
+					      klp_kgraft_mark_task_safe(current);
+					      ibmvfc_work_to_do(vhost); }));
 
 		BUG_ON(rc);
 

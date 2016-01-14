@@ -521,6 +521,7 @@ qcaspi_spi_thread(void *data)
 			schedule();
 
 		set_current_state(TASK_RUNNING);
+		klp_kgraft_mark_task_safe(current);
 
 		netdev_dbg(qca->net_dev, "have work to do. int: %d, tx_skb: %p\n",
 			   qca->intr_req - qca->intr_svc,

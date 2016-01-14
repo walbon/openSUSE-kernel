@@ -1259,6 +1259,8 @@ static int dm_thread_func(void *dm_dev)
 	struct hv_dynmem_device *dm = dm_dev;
 
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current);
+
 		wait_for_completion_interruptible_timeout(
 						&dm_device.config_event, 1*HZ);
 		/*

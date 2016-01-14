@@ -1881,6 +1881,7 @@ static int fcoe_percpu_receive_thread(void *arg)
 			set_current_state(TASK_INTERRUPTIBLE);
 			spin_unlock_bh(&p->fcoe_rx_list.lock);
 			schedule();
+			klp_kgraft_mark_task_safe(current);
 			continue;
 		}
 

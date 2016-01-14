@@ -916,6 +916,8 @@ static int genwqe_health_thread(void *data)
 
  health_thread_begin:
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current);
+
 		rc = wait_event_interruptible_timeout(cd->health_waitq,
 			 (genwqe_health_check_cond(cd, &gfir) ||
 			  (should_stop = kthread_should_stop())),

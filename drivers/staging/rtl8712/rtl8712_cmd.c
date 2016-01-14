@@ -322,6 +322,7 @@ int r8712_cmd_thread(void *context)
 
 	allow_signal(SIGTERM);
 	while (1) {
+		klp_kgraft_mark_task_safe(current);
 		if ((_down_sema(&(pcmdpriv->cmd_queue_sema))) == _FAIL)
 			break;
 		if (padapter->bDriverStopped || padapter->bSurpriseRemoved)

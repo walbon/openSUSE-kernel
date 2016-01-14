@@ -3164,6 +3164,7 @@ kiblnd_connd(void *arg)
 			continue;
 
 		/* Nothing to do for 'timeout'  */
+		klp_kgraft_mark_task_safe(current);
 		set_current_state(TASK_INTERRUPTIBLE);
 		add_wait_queue(&kiblnd_data.kib_connd_waitq, &wait);
 		spin_unlock_irqrestore(&kiblnd_data.kib_connd_lock, flags);
@@ -3374,6 +3375,7 @@ kiblnd_scheduler(void *arg)
 		if (did_something)
 			continue;
 
+		klp_kgraft_mark_task_safe(current);
 		set_current_state(TASK_INTERRUPTIBLE);
 		add_wait_queue_exclusive(&sched->ibs_waitq, &wait);
 		spin_unlock_irqrestore(&sched->ibs_lock, flags);
@@ -3450,6 +3452,7 @@ kiblnd_failover_thread(void *arg)
 		/* long sleep if no more pending failover */
 		long_sleep = list_empty(&kiblnd_data.kib_failed_devs);
 
+		klp_kgraft_mark_task_safe(current);
 		set_current_state(TASK_INTERRUPTIBLE);
 		add_wait_queue(&kiblnd_data.kib_failover_waitq, &wait);
 		write_unlock_irqrestore(glock, flags);

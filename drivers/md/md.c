@@ -7101,9 +7101,9 @@ static int md_thread(void *arg)
 			flush_signals(current);
 
 		wait_event_interruptible_timeout
-			(thread->wqueue,
+			(thread->wqueue, ({ klp_kgraft_mark_task_safe(current);
 			 test_bit(THREAD_WAKEUP, &thread->flags)
-			 || kthread_should_stop(),
+			 || kthread_should_stop(); }),
 			 thread->timeout);
 
 		clear_bit(THREAD_WAKEUP, &thread->flags);

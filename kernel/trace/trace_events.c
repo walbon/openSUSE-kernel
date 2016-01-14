@@ -3216,6 +3216,7 @@ static __init int event_test_thread(void *unused)
 
 	set_current_state(TASK_INTERRUPTIBLE);
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current);
 		schedule();
 		set_current_state(TASK_INTERRUPTIBLE);
 	}

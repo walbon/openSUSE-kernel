@@ -793,7 +793,7 @@ static int stir_transmit_thread(void *arg)
 		/* sleep if nothing to send */
                 set_current_state(TASK_INTERRUPTIBLE);
                 schedule();
-
+		klp_kgraft_mark_task_safe(current);
 	}
         return 0;
 }

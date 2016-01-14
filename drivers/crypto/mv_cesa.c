@@ -639,6 +639,8 @@ static int queue_manag(void *data)
 
 		schedule();
 
+		klp_kgraft_mark_task_safe(current);
+
 	} while (!kthread_should_stop());
 	return 0;
 }

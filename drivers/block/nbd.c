@@ -553,9 +553,10 @@ static int nbd_thread_send(void *data)
 	set_user_nice(current, MIN_NICE);
 	while (!kthread_should_stop() || !list_empty(&nbd->waiting_queue)) {
 		/* wait for something to do */
-		wait_event_interruptible(nbd->waiting_wq,
+		wait_event_interruptible(nbd->waiting_wq, ({
+					 klp_kgraft_mark_task_safe(current);
 					 kthread_should_stop() ||
-					 !list_empty(&nbd->waiting_queue));
+					 !list_empty(&nbd->waiting_queue); }));
 
 		if (signal_pending(current)) {
 			int ret = kernel_dequeue_signal(NULL);

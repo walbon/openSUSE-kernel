@@ -23,6 +23,7 @@ int speakup_thread(void *data)
 		DEFINE_WAIT(wait);
 
 		while (1) {
+			klp_kgraft_mark_task_safe(current);
 			spin_lock_irqsave(&speakup_info.spinlock, flags);
 			our_sound = spk_unprocessed_sound;
 			spk_unprocessed_sound.active = 0;

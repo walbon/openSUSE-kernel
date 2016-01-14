@@ -3965,8 +3965,10 @@ int iscsi_target_tx_thread(void *arg)
 		 */
 		iscsit_thread_check_cpumask(conn, current, 1);
 
-		wait_event_interruptible(conn->queues_wq,
-					 !iscsit_conn_all_queues_empty(conn));
+		wait_event_interruptible(conn->queues_wq, ({
+					 klp_kgraft_mark_task_safe(current);
+					 !iscsit_conn_all_queues_empty(conn);
+					 }));
 
 		if (signal_pending(current))
 			goto transport_err;
@@ -4117,6 +4119,7 @@ int iscsi_target_rx_thread(void *arg)
 	}
 
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current);
 		/*
 		 * Ensure that both TX and RX per connection kthreads
 		 * are scheduled to run on the same CPU.

@@ -948,6 +948,7 @@ cifs_demultiplex_thread(void *p)
 	if (!task_to_wake) {
 		set_current_state(TASK_INTERRUPTIBLE);
 		while (!signal_pending(current)) {
+			klp_kgraft_mark_task_safe(current);
 			schedule();
 			set_current_state(TASK_INTERRUPTIBLE);
 		}

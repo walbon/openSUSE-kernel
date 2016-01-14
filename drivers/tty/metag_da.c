@@ -299,8 +299,9 @@ static int put_data(void *arg)
 		if (stall)
 			msleep(25);
 
-		wait_event_interruptible(dashtty_waitqueue,
-					 atomic_read(&dashtty_xmit_cnt));
+		wait_event_interruptible(dashtty_waitqueue, ({
+					 klp_kgraft_mark_task_safe(current);
+					 atomic_read(&dashtty_xmit_cnt); }));
 	}
 
 	return 0;

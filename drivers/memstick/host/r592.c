@@ -571,6 +571,8 @@ static int r592_process_thread(void *data)
 	unsigned long flags;
 
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current);
+
 		spin_lock_irqsave(&dev->io_thread_lock, flags);
 		set_current_state(TASK_INTERRUPTIBLE);
 		error = memstick_next_req(dev->host, &dev->req);

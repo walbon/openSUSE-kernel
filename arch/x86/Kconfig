@@ -118,6 +118,7 @@ config X86
 	select HAVE_KERNEL_LZMA
 	select HAVE_KERNEL_LZO
 	select HAVE_KERNEL_XZ
+	select HAVE_KGRAFT			if X86_64
 	select HAVE_KPROBES
 	select HAVE_KPROBES_ON_FTRACE
 	select HAVE_KRETPROBES
@@ -297,6 +298,7 @@ config PGTABLE_LEVELS
 
 source "init/Kconfig"
 source "kernel/Kconfig.freezer"
+source "kernel/Kconfig.kgraft"
 
 menu "Processor type and features"
 
