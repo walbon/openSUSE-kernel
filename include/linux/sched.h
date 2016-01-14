@@ -783,6 +783,7 @@ struct signal_struct {
 	struct mutex cred_guard_mutex;	/* guard against foreign influences on
 					 * credential calculations
 					 * (notably. ptrace) */
+	void *suse_kabi_padding;
 };
 
 /*
@@ -1271,6 +1272,7 @@ struct sched_entity {
 	/* Per entity load average tracking */
 	struct sched_avg	avg;
 #endif
+	void *suse_kabi_padding;
 };
 
 struct sched_rt_entity {

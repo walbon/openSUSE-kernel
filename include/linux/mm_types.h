@@ -355,6 +355,7 @@ struct vm_area_struct {
 	struct mempolicy *vm_policy;	/* NUMA policy for the VMA */
 #endif
 	struct vm_userfaultfd_ctx vm_userfaultfd_ctx;
+	void *suse_kabi_padding;
 };
 
 struct core_thread {
@@ -511,6 +512,7 @@ struct mm_struct {
 #ifdef CONFIG_HUGETLB_PAGE
 	atomic_long_t hugetlb_usage;
 #endif
+	void *suse_kabi_padding;
 };
 
 static inline void mm_init_cpumask(struct mm_struct *mm)
