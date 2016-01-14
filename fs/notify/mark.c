@@ -511,7 +511,9 @@ static int fsnotify_mark_destroy(void *ignored)
 			fsnotify_put_mark(mark);
 		}
 
-		wait_event_interruptible(destroy_waitq, !list_empty(&destroy_list));
+		wait_event_interruptible(destroy_waitq, ({
+				klp_kgraft_mark_task_safe(current);
+				!list_empty(&destroy_list); }));
 	}
 
 	return 0;
