@@ -138,6 +138,7 @@ config S390
 	select HAVE_KERNEL_LZMA
 	select HAVE_KERNEL_LZO
 	select HAVE_KERNEL_XZ
+	select HAVE_KGRAFT
 	select HAVE_KPROBES
 	select HAVE_KRETPROBES
 	select HAVE_KVM
@@ -172,6 +173,8 @@ config PGTABLE_LEVELS
 source "init/Kconfig"
 
 source "kernel/Kconfig.freezer"
+
+source "kernel/Kconfig.kgraft"
 
 source "kernel/livepatch/Kconfig"
 

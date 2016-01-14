@@ -2098,6 +2098,8 @@ static int rfcomm_run(void *unused)
 	add_wait_queue(&rfcomm_wq, &wait);
 	while (!kthread_should_stop()) {
 
+		klp_kgraft_mark_task_safe(current);
+
 		/* Process stuff */
 		rfcomm_process_sessions();
 

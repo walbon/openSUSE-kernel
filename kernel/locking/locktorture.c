@@ -582,6 +582,7 @@ static int lock_torture_writer(void *arg)
 	set_user_nice(current, MAX_NICE);
 
 	do {
+		klp_kgraft_mark_task_safe(current);
 		if ((torture_random(&rand) & 0xfffff) == 0)
 			schedule_timeout_uninterruptible(1);
 
@@ -619,6 +620,7 @@ static int lock_torture_reader(void *arg)
 	set_user_nice(current, MAX_NICE);
 
 	do {
+		klp_kgraft_mark_task_safe(current);
 		if ((torture_random(&rand) & 0xfffff) == 0)
 			schedule_timeout_uninterruptible(1);
 
@@ -721,6 +723,7 @@ static int lock_torture_stats(void *arg)
 {
 	VERBOSE_TOROUT_STRING("lock_torture_stats task started");
 	do {
+		klp_kgraft_mark_task_safe(current);
 		schedule_timeout_interruptible(stat_interval * HZ);
 		lock_torture_stats_print();
 		torture_shutdown_absorb("lock_torture_stats");

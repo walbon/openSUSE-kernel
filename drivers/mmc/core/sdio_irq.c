@@ -172,6 +172,7 @@ static int sdio_irq_thread(void *_host)
 			host->ops->enable_sdio_irq(host, 1);
 		if (!kthread_should_stop())
 			schedule_timeout(period);
+		klp_kgraft_mark_task_safe(current);
 		set_current_state(TASK_RUNNING);
 	} while (!kthread_should_stop());
 

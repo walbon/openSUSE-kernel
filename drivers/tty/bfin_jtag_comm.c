@@ -72,6 +72,9 @@ bfin_jc_emudat_manager(void *arg)
 
 	while (!kthread_should_stop()) {
 		struct tty_struct *tty = tty_port_tty_get(&port);
+
+		klp_kgraft_mark_task_safe(current);
+
 		/* no one left to give data to, so sleep */
 		if (tty == NULL && circ_empty(&bfin_jc_write_buf)) {
 			pr_debug("waiting for readers\n");

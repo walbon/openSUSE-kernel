@@ -436,8 +436,9 @@ static int ptlrpcd(void *arg)
 				  ptlrpc_expired_set, set);
 
 		lu_context_enter(&env.le_ctx);
-		l_wait_event(set->set_waitq,
-			     ptlrpcd_check(&env, pc), &lwi);
+		l_wait_event(set->set_waitq, ({
+			     klp_kgraft_mark_task_safe(current);
+			     ptlrpcd_check(&env, pc); }), &lwi);
 		lu_context_exit(&env.le_ctx);
 
 		/*

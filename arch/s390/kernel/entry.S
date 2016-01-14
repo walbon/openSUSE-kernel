@@ -46,7 +46,7 @@ STACK_SIZE  = 1 << STACK_SHIFT
 STACK_INIT = STACK_SIZE - STACK_FRAME_OVERHEAD - __PT_SIZE
 
 _TIF_WORK	= (_TIF_SIGPENDING | _TIF_NOTIFY_RESUME | _TIF_NEED_RESCHED | \
-		   _TIF_UPROBE)
+		   _TIF_UPROBE | _TIF_KGR_IN_PROGRESS)
 _TIF_TRACE	= (_TIF_SYSCALL_TRACE | _TIF_SYSCALL_AUDIT | _TIF_SECCOMP | \
 		   _TIF_SYSCALL_TRACEPOINT)
 _CIF_WORK	= (_CIF_MCCK_PENDING | _CIF_ASCE | _CIF_FPU)
@@ -73,6 +73,15 @@ _PIF_WORK	= (_PIF_PER_TRAP)
 	tm	__PT_PSW+1(%r11),0x01	# returning to user ?
 	jz	.+10
 	brasl	%r14,lockdep_sys_exit
+#endif
+	.endm
+
+	.macro	HANDLE_KGRAFT TI_reg
+#if IS_ENABLED(CONFIG_LIVEPATCH)
+	TSTMSK	__TI_flags(\TI_reg),_TIF_KGR_IN_PROGRESS
+	jz	0f
+	brasl	%r14,s390_handle_kgraft
+0:
 #endif
 	.endm
 
@@ -275,6 +284,7 @@ ENTRY(system_call)
 	mvc	__PT_INT_CODE(4,%r11),__LC_SVC_ILC
 	stg	%r14,__PT_FLAGS(%r11)
 .Lsysc_do_svc:
+	HANDLE_KGRAFT %r12
 	lg	%r10,__TI_sysc_table(%r12)	# address of system call table
 	llgh	%r8,__PT_INT_CODE+2(%r11)
 	slag	%r8,%r8,2			# shift and test for svc 0
@@ -328,6 +338,8 @@ ENTRY(system_call)
 #endif
 	TSTMSK	__PT_FLAGS(%r11),_PIF_PER_TRAP
 	jo	.Lsysc_singlestep
+	HANDLE_KGRAFT %r12		# handle kGraft just before signals and
+					# possible syscall restart
 	TSTMSK	__TI_flags(%r12),_TIF_SIGPENDING
 	jo	.Lsysc_sigpending
 	TSTMSK	__TI_flags(%r12),_TIF_NOTIFY_RESUME
@@ -651,6 +663,7 @@ ENTRY(io_int_handler)
 	jo	.Lio_mcck_pending
 	TSTMSK	__TI_flags(%r12),_TIF_NEED_RESCHED
 	jo	.Lio_reschedule
+	HANDLE_KGRAFT %r12
 	TSTMSK	__TI_flags(%r12),_TIF_SIGPENDING
 	jo	.Lio_sigpending
 	TSTMSK	__TI_flags(%r12),_TIF_NOTIFY_RESUME

@@ -94,6 +94,7 @@ static int mmc_queue_thread(void *d)
 			}
 			up(&mq->thread_sem);
 			schedule();
+			klp_kgraft_mark_task_safe(current);
 			down(&mq->thread_sem);
 		}
 	} while (1);

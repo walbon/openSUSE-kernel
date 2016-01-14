@@ -358,6 +358,8 @@ static int balloon(void *_vballoon)
 
 		add_wait_queue(&vb->config_change, &wait);
 		for (;;) {
+			klp_kgraft_mark_task_safe(current);
+
 			if ((diff = towards_target(vb)) != 0 ||
 			    vb->need_stats_update ||
 			    kthread_should_stop() ||

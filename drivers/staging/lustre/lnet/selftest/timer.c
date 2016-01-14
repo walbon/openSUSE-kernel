@@ -172,6 +172,7 @@ stt_timer_main(void *arg)
 	cfs_block_allsigs();
 
 	while (!stt_data.stt_shuttingdown) {
+		klp_kgraft_mark_task_safe(current);
 		stt_check_timers(&stt_data.stt_prev_slot);
 
 		wait_event_timeout(stt_data.stt_waitq,

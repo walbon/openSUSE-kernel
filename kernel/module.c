@@ -19,6 +19,7 @@
 #include <linux/export.h>
 #include <linux/moduleloader.h>
 #include <linux/trace_events.h>
+#include <linux/kgraft.h>
 #include <linux/init.h>
 #include <linux/kallsyms.h>
 #include <linux/file.h>
@@ -3619,6 +3620,17 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	err = complete_formation(mod, info);
 	if (err)
 		goto ddebug_cleanup;
+
+#if IS_ENABLED(CONFIG_KGRAFT)
+	/*
+	 * kGraft patches should to be applied after symbols are visible
+	 * to kallsyms but before the module init is called. Then the
+	 * changes can be applied immediately.
+	 */
+	err = kgr_module_init(mod);
+	if (err)
+		goto bug_cleanup;
+#endif
 
 	/* Module is ready to execute: parsing args may do that. */
 	after_dashes = parse_args(mod->name, mod->args, mod->kp, mod->num_kp,

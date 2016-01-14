@@ -178,6 +178,7 @@ int rtw_cmd_thread(void *context)
 	RT_TRACE(_module_rtl871x_cmd_c_, _drv_info_, ("start r871x rtw_cmd_thread !!!!\n"));
 
 	while (1) {
+		klp_kgraft_mark_task_safe(current);
 		if (_rtw_down_sema(&pcmdpriv->cmd_queue_sema) == _FAIL)
 			break;
 

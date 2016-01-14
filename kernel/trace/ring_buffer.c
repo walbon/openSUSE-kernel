@@ -4819,6 +4819,7 @@ static __init int rb_test(void *arg)
 	struct rb_test_data *data = arg;
 
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current);
 		rb_write_something(data, false);
 		data->cnt++;
 
@@ -4842,6 +4843,7 @@ static __init void rb_ipi(void *ignore)
 static __init int rb_hammer_test(void *arg)
 {
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current);
 
 		/* Send an IPI to all cpus to write data! */
 		smp_call_function(rb_ipi, NULL, 1);

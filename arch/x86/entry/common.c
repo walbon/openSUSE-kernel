@@ -141,6 +141,13 @@ unsigned long syscall_trace_enter_phase1(struct pt_regs *regs, u32 arch)
 	}
 #endif
 
+#if IS_ENABLED(CONFIG_LIVEPATCH)
+	if (work & _TIF_KGR_IN_PROGRESS) {
+		klp_kgraft_mark_task_safe(current);
+		work &= ~_TIF_KGR_IN_PROGRESS;
+	}
+#endif
+
 	/* Do our best to finish without phase 2. */
 	if (work == 0)
 		return ret;  /* seccomp and/or nohz only (ret == 0 here) */
@@ -220,7 +227,8 @@ long syscall_trace_enter(struct pt_regs *regs)
 
 #define EXIT_TO_USERMODE_LOOP_FLAGS				\
 	(_TIF_SIGPENDING | _TIF_NOTIFY_RESUME | _TIF_UPROBE |	\
-	 _TIF_NEED_RESCHED | _TIF_USER_RETURN_NOTIFY)
+	 _TIF_NEED_RESCHED | _TIF_USER_RETURN_NOTIFY |		\
+	 _TIF_KGR_IN_PROGRESS)
 
 static void exit_to_usermode_loop(struct pt_regs *regs, u32 cached_flags)
 {
@@ -241,6 +249,11 @@ static void exit_to_usermode_loop(struct pt_regs *regs, u32 cached_flags)
 
 		if (cached_flags & _TIF_UPROBE)
 			uprobe_notify_resume(regs);
+
+#if IS_ENABLED(CONFIG_LIVEPATCH)
+		if (cached_flags & _TIF_KGR_IN_PROGRESS)
+			klp_kgraft_mark_task_safe(current);
+#endif
 
 		/* deal with pending signal delivery */
 		if (cached_flags & _TIF_SIGPENDING)

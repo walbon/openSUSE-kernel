@@ -6171,6 +6171,16 @@ F:	include/linux/kdb.h
 F:	include/linux/kgdb.h
 F:	kernel/debug/
 
+KGRAFT
+M:	Jiri Kosina <jkosina@suse.com>
+M:	Jiri Slaby <jslaby@suse.com>
+M:	Vojtech Pavlik <vojtech@suse.com>
+F:	Documentation/kgraft.txt
+F:	arch/*/include/asm/kgraft.h
+F:	include/linux/kgraft.h
+F:	kernel/kgraft*
+F:	samples/kgraft/
+
 KMEMCHECK
 M:	Vegard Nossum <vegardno@ifi.uio.no>
 M:	Pekka Enberg <penberg@kernel.org>

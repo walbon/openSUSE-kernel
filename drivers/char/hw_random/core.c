@@ -405,6 +405,8 @@ static int hwrng_fillfn(void *unused)
 	while (!kthread_should_stop()) {
 		struct hwrng *rng;
 
+		klp_kgraft_mark_task_safe(current);
+
 		rng = get_current_rng();
 		if (IS_ERR(rng) || !rng)
 			break;

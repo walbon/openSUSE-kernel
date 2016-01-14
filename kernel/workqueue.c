@@ -2181,6 +2181,7 @@ sleep:
 	__set_current_state(TASK_INTERRUPTIBLE);
 	spin_unlock_irq(&pool->lock);
 	schedule();
+	klp_kgraft_mark_task_safe(current);
 	goto woke_up;
 }
 
@@ -2221,6 +2222,8 @@ static int rescuer_thread(void *__rescuer)
 	rescuer->task->flags |= PF_WQ_WORKER;
 repeat:
 	set_current_state(TASK_INTERRUPTIBLE);
+
+	klp_kgraft_mark_task_safe(current);
 
 	/*
 	 * By the time the rescuer is requested to stop, the workqueue

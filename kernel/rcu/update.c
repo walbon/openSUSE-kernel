@@ -671,8 +671,9 @@ static int __noreturn rcu_tasks_kthread(void *arg)
 
 		/* If there were none, wait a bit and start over. */
 		if (!list) {
-			wait_event_interruptible(rcu_tasks_cbs_wq,
-						 rcu_tasks_cbs_head);
+			wait_event_interruptible(rcu_tasks_cbs_wq, ({
+						 klp_kgraft_mark_task_safe(current);
+						 rcu_tasks_cbs_head; }));
 			if (!rcu_tasks_cbs_head) {
 				WARN_ON(signal_pending(current));
 				schedule_timeout_interruptible(HZ/10);

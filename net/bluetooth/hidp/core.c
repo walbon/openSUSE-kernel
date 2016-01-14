@@ -1182,6 +1182,7 @@ static void hidp_session_run(struct hidp_session *session)
 	struct sk_buff *skb;
 
 	for (;;) {
+		klp_kgraft_mark_task_safe(current);
 		/*
 		 * This thread can be woken up two ways:
 		 *  - You call hidp_session_terminate() which sets the

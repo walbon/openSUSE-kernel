@@ -2076,9 +2076,10 @@ static int __noreturn rcu_gp_kthread(void *arg)
 					       READ_ONCE(rsp->gpnum),
 					       TPS("reqwait"));
 			rsp->gp_state = RCU_GP_WAIT_GPS;
-			wait_event_interruptible(rsp->gp_wq,
+			wait_event_interruptible(rsp->gp_wq, ({
+						 klp_kgraft_mark_task_safe(current);
 						 READ_ONCE(rsp->gp_flags) &
-						 RCU_GP_FLAG_INIT);
+						 RCU_GP_FLAG_INIT; }));
 			rsp->gp_state = RCU_GP_DONE_GPS;
 			/* Locking provides needed memory barrier. */
 			if (rcu_gp_init(rsp))
@@ -2108,6 +2109,7 @@ static int __noreturn rcu_gp_kthread(void *arg)
 			rsp->gp_state = RCU_GP_WAIT_FQS;
 			ret = wait_event_interruptible_timeout(rsp->gp_wq,
 					rcu_gp_fqs_check_wake(rsp, &gf), j);
+			klp_kgraft_mark_task_safe(current);
 			rsp->gp_state = RCU_GP_DOING_FQS;
 			/* Locking provides needed memory barriers. */
 			/* If grace period done, leave loop. */

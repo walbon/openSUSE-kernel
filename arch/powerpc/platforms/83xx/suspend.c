@@ -265,7 +265,9 @@ static int mpc83xx_suspend_begin(suspend_state_t state)
 static int agent_thread_fn(void *data)
 {
 	while (1) {
-		wait_event_interruptible(agent_wq, pci_pm_state >= 2);
+		wait_event_interruptible(agent_wq, ({
+				klp_kgraft_mark_task_safe(current);
+				pci_pm_state >= 2; }));
 		try_to_freeze();
 
 		if (signal_pending(current) || pci_pm_state < 2)

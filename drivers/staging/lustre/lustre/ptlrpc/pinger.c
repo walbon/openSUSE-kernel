@@ -270,9 +270,10 @@ static int ptlrpc_pinger_main(void *arg)
 			lwi = LWI_TIMEOUT(max_t(long, time_to_next_wake,
 						cfs_time_seconds(1)),
 					  NULL, NULL);
-			l_wait_event(thread->t_ctl_waitq,
+			l_wait_event(thread->t_ctl_waitq, ({
+				     klp_kgraft_mark_task_safe(current);
 				     thread_is_stopping(thread) ||
-				     thread_is_event(thread),
+				     thread_is_event(thread); }),
 				     &lwi);
 			if (thread_test_and_clear_flags(thread, SVC_STOPPING))
 				break;

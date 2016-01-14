@@ -2752,6 +2752,7 @@ int jfs_lazycommit(void *arg)
 	struct jfs_sb_info *sbi;
 
 	do {
+		klp_kgraft_mark_task_safe(current);
 		LAZY_LOCK(flags);
 		jfs_commit_thread_waking = 0;	/* OK to wake another thread */
 		while (!list_empty(&TxAnchor.unlock_queue)) {
@@ -2935,6 +2936,7 @@ int jfs_sync(void *arg)
 	tid_t tid;
 
 	do {
+		klp_kgraft_mark_task_safe(current);
 		/*
 		 * write each inode on the anonymous inode list
 		 */

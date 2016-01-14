@@ -1064,6 +1064,7 @@ static int trace_wakeup_test_thread(void *data)
 
 	/* we are awake, now wait to disappear */
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current);
 		schedule();
 		set_current_state(TASK_INTERRUPTIBLE);
 	}
