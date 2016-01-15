@@ -87,6 +87,8 @@ enum {
 	Opt_acl, Opt_noacl,
 	Opt_rdirplus, Opt_nordirplus,
 	Opt_sharecache, Opt_nosharecache,
+	Opt_sharetransport, Opt_nosharetransport,
+	Opt_sharetransportid,
 	Opt_resvport, Opt_noresvport,
 	Opt_fscache, Opt_nofscache,
 	Opt_migration, Opt_nomigration,
@@ -145,6 +147,9 @@ static const match_table_t nfs_mount_option_tokens = {
 	{ Opt_nordirplus, "nordirplus" },
 	{ Opt_sharecache, "sharecache" },
 	{ Opt_nosharecache, "nosharecache" },
+	{ Opt_sharetransport, "sharetransport"},
+	{ Opt_nosharetransport, "nosharetransport"},
+	{ Opt_sharetransportid, "sharetransport=%s"},
 	{ Opt_resvport, "resvport" },
 	{ Opt_noresvport, "noresvport" },
 	{ Opt_fscache, "fsc" },
@@ -641,6 +646,7 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss,
 		{ NFS_MOUNT_NOACL, ",noacl", "" },
 		{ NFS_MOUNT_NORDIRPLUS, ",nordirplus", "" },
 		{ NFS_MOUNT_UNSHARED, ",nosharecache", "" },
+		{ NFS_MOUNT_NOSHARE_XPRT, ",nosharetransport", ""},
 		{ NFS_MOUNT_NORESVPORT, ",noresvport", "" },
 		{ 0, NULL, NULL }
 	};
@@ -669,6 +675,8 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss,
 		else
 			seq_puts(m, nfs_infop->nostr);
 	}
+	if (clp->cl_xprt_id)
+		seq_printf(m, ",sharetransport=%u", clp->cl_xprt_id);
 	rcu_read_lock();
 	seq_printf(m, ",proto=%s",
 		   rpc_peeraddr2str(nfss->client, RPC_DISPLAY_NETID));
@@ -1302,6 +1310,12 @@ static int nfs_parse_mount_options(char *raw,
 		case Opt_nosharecache:
 			mnt->flags |= NFS_MOUNT_UNSHARED;
 			break;
+		case Opt_sharetransport:
+			mnt->flags &= ~NFS_MOUNT_NOSHARE_XPRT;
+			break;
+		case Opt_nosharetransport:
+			mnt->flags |= NFS_MOUNT_NOSHARE_XPRT;
+			break;
 		case Opt_resvport:
 			mnt->flags &= ~NFS_MOUNT_NORESVPORT;
 			break;
@@ -1409,6 +1423,12 @@ static int nfs_parse_mount_options(char *raw,
 			if (option > NFS4_MAX_MINOR_VERSION)
 				goto out_invalid_value;
 			mnt->minorversion = option;
+			break;
+		case Opt_sharetransportid:
+			if (nfs_get_option_ul(args, &option) ||
+			    option <= 0)
+				goto out_invalid_value;
+			mnt->xprt_id = option;
 			break;
 
 		/*
@@ -1620,6 +1640,10 @@ static int nfs_parse_mount_options(char *raw,
 	    (mnt->version != 4 || mnt->minorversion != 0))
 		goto out_migration_misuse;
 
+	if (mnt->flags & NFS_MOUNT_NOSHARE_XPRT &&
+	    mnt->version == 4)
+		goto out_noshare_misuse;
+
 	/*
 	 * verify that any proto=/mountproto= options match the address
 	 * families in the addr=/mountaddr= options.
@@ -1640,6 +1664,10 @@ static int nfs_parse_mount_options(char *raw,
 
 	return 1;
 
+out_noshare_misuse:
+	printk(KERN_INFO "NFS: nosharetransport is not compatible with vers=4\n");
+	printk(KERN_INFO "NFS: use sharetransport=N for some unique N\n");
+	return 0;
 out_mountproto_mismatch:
 	printk(KERN_INFO "NFS: mount server address does not match mountproto= "
 			 "option\n");
@@ -2210,6 +2238,9 @@ nfs_compare_remount_data(struct nfs_server *nfss,
 	return 0;
 }
 
+static bool always_nosharetransport = 0;
+module_param(always_nosharetransport, bool, 0644);
+
 int
 nfs_remount(struct super_block *sb, int *flags, char *raw_data)
 {
@@ -2260,6 +2291,8 @@ nfs_remount(struct super_block *sb, int *flags, char *raw_data)
 	error = -EINVAL;
 	if (!nfs_parse_mount_options((char *)options, data))
 		goto out;
+	if (always_nosharetransport)
+		data->flags |= NFS_MOUNT_NOSHARE_XPRT;
 
 	/*
 	 * noac is a special case. It implies -o sync, but that's not
@@ -2408,6 +2441,10 @@ static int nfs_compare_super_address(struct nfs_server *server1,
 				     struct nfs_server *server2)
 {
 	struct sockaddr *sap1, *sap2;
+
+	if (server1->nfs_client->cl_xprt_id !=
+	    server2->nfs_client->cl_xprt_id)
+		return 0;
 
 	sap1 = (struct sockaddr *)&server1->nfs_client->cl_addr;
 	sap2 = (struct sockaddr *)&server2->nfs_client->cl_addr;
@@ -2633,6 +2670,8 @@ struct dentry *nfs_fs_mount(struct file_system_type *fs_type,
 		mntroot = ERR_PTR(error);
 		goto out;
 	}
+	if (always_nosharetransport)
+		mount_info.parsed->flags |= NFS_MOUNT_NOSHARE_XPRT;
 
 	nfs_mod = get_nfs_version(mount_info.parsed->version);
 	if (IS_ERR(nfs_mod)) {

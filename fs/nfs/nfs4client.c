@@ -519,6 +519,9 @@ int nfs40_walk_client_list(struct nfs_client *new,
 		if (!nfs4_match_client_owner_id(pos, new))
 			continue;
 
+		if (pos->cl_xprt_id != new->cl_xprt_id)
+			continue;
+
 		atomic_inc(&pos->cl_count);
 		spin_unlock(&nn->nfs_client_lock);
 
@@ -648,6 +651,9 @@ int nfs41_walk_client_list(struct nfs_client *new,
 			status = -NFS4ERR_STALE_CLIENTID;
 		}
 		if (pos->cl_cons_state != NFS_CS_READY)
+			continue;
+
+		if (pos->cl_xprt_id != new->cl_xprt_id)
 			continue;
 
 		if (!nfs4_match_clientids(pos, new))
@@ -787,7 +793,7 @@ static int nfs4_set_client(struct nfs_server *server,
 		const char *ip_addr,
 		rpc_authflavor_t authflavour,
 		int proto, const struct rpc_timeout *timeparms,
-		u32 minorversion, struct net *net)
+		u32 minorversion, struct net *net, unsigned int xprt_id)
 {
 	struct nfs_client_initdata cl_init = {
 		.hostname = hostname,
@@ -797,6 +803,7 @@ static int nfs4_set_client(struct nfs_server *server,
 		.proto = proto,
 		.minorversion = minorversion,
 		.net = net,
+		.xprt_id = xprt_id,
 	};
 	struct nfs_client *clp;
 	int error;
@@ -854,6 +861,7 @@ struct nfs_client *nfs4_set_ds_client(struct nfs_client* mds_clp,
 		.proto = ds_proto,
 		.minorversion = minor_version,
 		.net = mds_clp->cl_net,
+		.xprt_id = mds_clp->cl_xprt_id,
 	};
 	struct rpc_timeout ds_timeout;
 	struct nfs_client *clp;
@@ -998,7 +1006,8 @@ static int nfs4_init_server(struct nfs_server *server,
 			data->nfs_server.protocol,
 			&timeparms,
 			data->minorversion,
-			data->net);
+			data->net,
+			data->xprt_id);
 	if (error < 0)
 		goto error;
 
@@ -1095,7 +1104,8 @@ struct nfs_server *nfs4_create_referral_server(struct nfs_clone_mount *data,
 				rpc_protocol(parent_server->client),
 				parent_server->client->cl_timeout,
 				parent_client->cl_mvops->minor_version,
-				parent_client->cl_net);
+				parent_client->cl_net,
+				parent_client->cl_xprt_id);
 	if (error < 0)
 		goto error;
 
@@ -1204,7 +1214,7 @@ int nfs4_update_server(struct nfs_server *server, const char *hostname,
 	error = nfs4_set_client(server, hostname, sap, salen, buf,
 				clp->cl_rpcclient->cl_auth->au_flavor,
 				clp->cl_proto, clnt->cl_timeout,
-				clp->cl_minorversion, net);
+				clp->cl_minorversion, net, clp->cl_xprt_id);
 	nfs_put_client(clp);
 	if (error != 0) {
 		nfs_server_insert_lists(server);
