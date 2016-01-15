@@ -1570,6 +1570,8 @@ err_unregister_interrupts:
 	nicvf_unregister_interrupts(nic);
 err_free_netdev:
 	pci_set_drvdata(pdev, NULL);
+	if (nic->qs)
+		devm_kfree(&pdev->dev, nic->qs);
 	free_netdev(netdev);
 err_release_regions:
 	pci_release_regions(pdev);
@@ -1597,6 +1599,8 @@ static void nicvf_remove(struct pci_dev *pdev)
 		unregister_netdev(pnetdev);
 	nicvf_unregister_interrupts(nic);
 	pci_set_drvdata(pdev, NULL);
+	if (nic->qs)
+		devm_kfree(&pdev->dev, nic->qs);
 	free_netdev(netdev);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
