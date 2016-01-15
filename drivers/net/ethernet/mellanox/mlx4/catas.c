@@ -42,10 +42,10 @@ enum {
 
 
 
-int mlx4_internal_err_reset = 1;
+int mlx4_internal_err_reset = 0;
 module_param_named(internal_err_reset, mlx4_internal_err_reset,  int, 0644);
 MODULE_PARM_DESC(internal_err_reset,
-		 "Reset device on internal errors if non-zero (default 1)");
+		 "Reset device on internal errors if non-zero (default 0)");
 
 static int read_vendor_id(struct mlx4_dev *dev)
 {
