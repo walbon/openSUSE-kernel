@@ -1128,7 +1128,7 @@ int nfs_flush_incompatible(struct file *file, struct page *page)
 		if (req == NULL)
 			return 0;
 		l_ctx = req->wb_lock_context;
-		do_flush = req->wb_page != page || req->wb_context != ctx;
+		do_flush = req->wb_page != page;
 		/* for now, flush if more than 1 request in page_group */
 		do_flush |= req->wb_this_page != req;
 		if (l_ctx && flctx &&
@@ -1137,6 +1137,16 @@ int nfs_flush_incompatible(struct file *file, struct page *page)
 			do_flush |= l_ctx->lockowner.l_owner != current->files
 				|| l_ctx->lockowner.l_pid != current->tgid;
 		}
+		if (req->wb_context != ctx) {
+			do_flush |=
+				(req->wb_context->dentry != ctx->dentry ||
+				 req->wb_context->cred != ctx->cred );
+			if (req->wb_context->state || ctx->state)
+				do_flush |=
+					(req->wb_lock_context->lockowner.l_owner != current->files ||
+					 req->wb_lock_context->lockowner.l_pid != current->tgid);
+		}
+
 		nfs_release_request(req);
 		if (!do_flush)
 			return 0;

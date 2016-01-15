@@ -183,6 +183,24 @@ enum flag_bits {
 				 * Usually, this device should be faster
 				 * than other devices in the array
 				 */
+	FailFast,		/* Minimal retries should be attempted on
+				 * this device, so use REQ_FAILFAST_DEV.
+				 * Also don't try to repair failed reads.
+				 * It is expects that no bad block log
+				 * is present.
+				 */
+	LastDev,		/* Seems to be the last working dev as
+				 * it didn't fail, so don't use FailFast
+				 * any more for metadata
+				 */
+	Timeout,		/* Device fault due to timeout.
+				 * 'Faulty' is required to be set.
+				 */
+	RemoveSynchronised,	/* synchronize_rcu was called after
+				 * This device was known to be faulty,
+				 * so it is save to remove without
+				 * another call.
+				 */
 };
 
 #define BB_LEN_MASK	(0x00000000000001FFULL)
@@ -234,6 +252,7 @@ struct mddev {
 				 */
 #define MD_JOURNAL_CLEAN 5	/* A raid with journal is already clean */
 #define MD_HAS_JOURNAL	6	/* The raid array has journal feature set */
+#define MD_NEED_REWRITE 7	/* metadata write need to be repeated */
 
 	int				suspended;
 	atomic_t			active_io;
@@ -647,7 +666,7 @@ extern int mddev_congested(struct mddev *mddev, int bits);
 extern void md_flush_request(struct mddev *mddev, struct bio *bio);
 extern void md_super_write(struct mddev *mddev, struct md_rdev *rdev,
 			   sector_t sector, int size, struct page *page);
-extern void md_super_wait(struct mddev *mddev);
+extern int md_super_wait(struct mddev *mddev);
 extern int sync_page_io(struct md_rdev *rdev, sector_t sector, int size,
 			struct page *page, int rw, bool metadata_op);
 extern void md_do_sync(struct md_thread *thread);

@@ -50,6 +50,8 @@ static struct mm_struct efi_mm = {
 	.mmlist			= LIST_HEAD_INIT(efi_mm.mmlist),
 };
 
+static bool uefi_debug __initdata;
+
 static int __init is_normal_ram(efi_memory_desc_t *md)
 {
 	if (md->attribute & EFI_MEMORY_WB)
@@ -199,14 +201,15 @@ static __init void reserve_regions(void)
 	set_bit(EFI_MEMMAP, &efi.flags);
 }
 
-void __init efi_init(void)
+void __init efi_init_fdt(void *fdt)
 {
 	struct efi_fdt_params params;
 
 	/* Grab UEFI information placed in FDT by stub */
-	if (!efi_get_fdt_params(&params))
+	if (!efi_get_fdt_params(fdt, &params))
 		return;
 
+	uefi_debug = params.verbose;
 	efi_system_table = params.system_table;
 
 	memblock_reserve(params.mmap & PAGE_MASK,

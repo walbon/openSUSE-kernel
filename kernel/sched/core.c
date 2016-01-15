@@ -705,6 +705,14 @@ static inline bool got_nohz_idle_kick(void)
 	return false;
 }
 
+int sched_needs_cpu(int cpu)
+{
+	if (tick_nohz_full_cpu(cpu))
+		return 0;
+
+	return  cpu_rq(cpu)->avg_idle < sysctl_sched_migration_cost;
+}
+
 #else /* CONFIG_NO_HZ_COMMON */
 
 static inline bool got_nohz_idle_kick(void)
@@ -5322,6 +5330,34 @@ static struct ctl_table sd_ctl_root[] = {
 	{}
 };
 
+static void update_top_cache_domain(int cpu);
+
+int domain_flags_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp,
+		loff_t *ppos)
+{
+	int ret, cpu;
+	static DEFINE_MUTEX(mutex);
+
+	mutex_lock(&mutex);
+	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+
+	if (!ret && write) {
+		get_online_cpus();
+		mutex_lock(&sched_domains_mutex);
+		rcu_read_lock();
+		for_each_cpu(cpu, cpu_online_mask) {
+			update_top_cache_domain(cpu);
+		}
+		rcu_read_unlock();
+		mutex_unlock(&sched_domains_mutex);
+		put_online_cpus();
+	}
+	mutex_unlock(&mutex);
+
+	return ret;
+}
+
 static struct ctl_table *sd_alloc_ctl_entry(int n)
 {
 	struct ctl_table *entry =
@@ -5402,7 +5438,7 @@ sd_alloc_ctl_domain_table(struct sched_domain *sd)
 		&sd->cache_nice_tries,
 		sizeof(int), 0644, proc_dointvec_minmax, false);
 	set_table_entry(&table[10], "flags", &sd->flags,
-		sizeof(int), 0644, proc_dointvec_minmax, false);
+		sizeof(int), 0644, domain_flags_handler, false);
 	set_table_entry(&table[11], "max_newidle_lb_cost",
 		&sd->max_newidle_lb_cost,
 		sizeof(long), 0644, proc_doulongvec_minmax, false);
@@ -8610,3 +8646,13 @@ void dump_cpu_task(int cpu)
 	pr_info("Task dump for CPU %d:\n", cpu);
 	sched_show_task(cpu_curr(cpu));
 }
+
+/*
+ * Bootline option to disable sched_rt_runtime.
+ */
+static int __init parse_nortsched(char *arg)
+{
+	sysctl_sched_rt_runtime = -1;
+	return 0;
+}
+early_param("nortsched", parse_nortsched);

@@ -2560,6 +2560,8 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	noresume	[SWSUSP] Disables resume and restores original swap
 			space.
 
+	nortsched       [KNL] Disables realtime task bandwidth control.
+
 	no-scroll	[VGA] Disables scrollback.
 			This is required for the Braillex ib80-piezo Braille
 			reader made by F.H. Papenmeier (Germany).
@@ -3429,6 +3431,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			[KNL,ARM,CMA] Remoteproc physical memory block.
 			Memory area to be used by remote processor image,
 			managed by CMA.
+
+	rtkthreads=	[KNL] kernel threads run as SCHED_FIFO at the provided priority (1..99).
+
+	rtworkqueues=	[KNL] kworker threads run as SCHED_FIFO at the provided priority (1..99).
 
 	rw		[KNL] Mount root device read-write on boot
 

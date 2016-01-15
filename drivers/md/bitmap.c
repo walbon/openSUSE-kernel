@@ -446,6 +446,13 @@ void bitmap_update_sb(struct bitmap *bitmap)
 	sb->sectors_reserved = cpu_to_le32(bitmap->mddev->
 					   bitmap_info.space);
 	kunmap_atomic(sb);
+	/* Don't write until any other writes have completed */
+	if (bitmap->storage.file)
+		wait_event(bitmap->write_wait,
+			   atomic_read(&bitmap->pending_writes)==0);
+	else
+		md_super_wait(bitmap->mddev);
+
 	write_page(bitmap, bitmap->storage.sb_page, 1);
 }
 
@@ -976,6 +983,7 @@ void bitmap_unplug(struct bitmap *bitmap)
 {
 	unsigned long i;
 	int dirty, need_write;
+	int writing = 0;
 
 	if (!bitmap || !bitmap->storage.filemap ||
 	    test_bit(BITMAP_STALE, &bitmap->flags))
@@ -990,8 +998,20 @@ void bitmap_unplug(struct bitmap *bitmap)
 		need_write = test_and_clear_page_attr(bitmap, i,
 						      BITMAP_PAGE_NEEDWRITE);
 		if (dirty || need_write) {
+			if (!writing) {
+				/* Need to ensure any prior writes from
+				 * bitmap_daemon_work have completed.
+				 * We don't want the writes racing.
+				 */
+				if (bitmap->storage.file)
+					wait_event(bitmap->write_wait,
+						   atomic_read(&bitmap->pending_writes)==0);
+				else
+					md_super_wait(bitmap->mddev);
+			}
 			clear_page_attr(bitmap, i, BITMAP_PAGE_PENDING);
 			write_page(bitmap, bitmap->storage.filemap[i], 0);
+			writing = 1;
 		}
 	}
 	if (bitmap->storage.file)
@@ -1281,6 +1301,13 @@ void bitmap_daemon_work(struct mddev *mddev)
 		}
 	}
 	spin_unlock_irq(&counts->lock);
+
+	/* Make sure any prior writes have completed */
+	if (bitmap->storage.file)
+		wait_event(bitmap->write_wait,
+			   atomic_read(&bitmap->pending_writes)==0);
+	else
+		md_super_wait(bitmap->mddev);
 
 	/* Now start writeout on any page in NEEDWRITE that isn't DIRTY.
 	 * DIRTY pages need to be written by bitmap_unplug so it can wait
