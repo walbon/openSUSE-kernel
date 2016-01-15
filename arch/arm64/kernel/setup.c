@@ -53,6 +53,7 @@
 #include <asm/cpufeature.h>
 #include <asm/cpu_ops.h>
 #include <asm/kasan.h>
+#include <asm/numa.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/smp_plat.h>
@@ -180,6 +181,9 @@ static void __init smp_build_mpidr_hash(void)
 static void __init setup_machine_fdt(phys_addr_t dt_phys)
 {
 	void *dt_virt = fixmap_remap_fdt(dt_phys);
+
+	if (dt_virt)
+		efi_init_fdt(dt_virt);
 
 	if (!dt_virt || !early_init_dt_scan(dt_virt)) {
 		pr_crit("\n"
@@ -313,7 +317,6 @@ void __init setup_arch(char **cmdline_p)
 	 */
 	local_async_enable();
 
-	efi_init();
 	arm64_memblock_init();
 
 	/* Parse the ACPI tables for possible boot-time configuration */
@@ -371,6 +374,9 @@ arch_initcall_sync(arm64_device_init);
 static int __init topology_init(void)
 {
 	int i;
+
+	for_each_online_node(i)
+		register_one_node(i);
 
 	for_each_possible_cpu(i) {
 		struct cpu *cpu = &per_cpu(cpu_data.cpu, i);

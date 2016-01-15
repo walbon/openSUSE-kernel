@@ -24,8 +24,7 @@ efi_status_t update_fdt(efi_system_table_t *sys_table, void *orig_fdt,
 			unsigned long map_size, unsigned long desc_size,
 			u32 desc_ver)
 {
-	int node, prev, num_rsv;
-	int status;
+	int node, status;
 	u32 fdt_val32;
 	u64 fdt_val64;
 
@@ -52,36 +51,6 @@ efi_status_t update_fdt(efi_system_table_t *sys_table, void *orig_fdt,
 
 	if (status != 0)
 		goto fdt_set_fail;
-
-	/*
-	 * Delete any memory nodes present. We must delete nodes which
-	 * early_init_dt_scan_memory may try to use.
-	 */
-	prev = 0;
-	for (;;) {
-		const char *type;
-		int len;
-
-		node = fdt_next_node(fdt, prev, NULL);
-		if (node < 0)
-			break;
-
-		type = fdt_getprop(fdt, node, "device_type", &len);
-		if (type && strncmp(type, "memory", len) == 0) {
-			fdt_del_node(fdt, node);
-			continue;
-		}
-
-		prev = node;
-	}
-
-	/*
-	 * Delete all memory reserve map entries. When booting via UEFI,
-	 * kernel will use the UEFI memory map to find reserved regions.
-	 */
-	num_rsv = fdt_num_mem_rsv(fdt);
-	while (num_rsv-- > 0)
-		fdt_del_mem_rsv(fdt, num_rsv);
 
 	node = fdt_subnode_offset(fdt, 0, "chosen");
 	if (node < 0) {
@@ -156,10 +125,6 @@ fdt_set_fail:
 	return EFI_LOAD_ERROR;
 }
 
-#ifndef EFI_FDT_ALIGN
-#define EFI_FDT_ALIGN EFI_PAGE_SIZE
-#endif
-
 /*
  * Allocate memory for a new FDT, then add EFI, commandline, and
  * initrd related fields to the FDT.  This routine increases the
@@ -177,7 +142,6 @@ fdt_set_fail:
 efi_status_t allocate_new_fdt_and_exit_boot(efi_system_table_t *sys_table,
 					    void *handle,
 					    unsigned long *new_fdt_addr,
-					    unsigned long max_addr,
 					    u64 initrd_addr, u64 initrd_size,
 					    char *cmdline_ptr,
 					    unsigned long fdt_addr,
@@ -214,8 +178,13 @@ efi_status_t allocate_new_fdt_and_exit_boot(efi_system_table_t *sys_table,
 	 */
 	new_fdt_size = fdt_size + EFI_PAGE_SIZE;
 	while (1) {
-		status = efi_high_alloc(sys_table, new_fdt_size, EFI_FDT_ALIGN,
-					new_fdt_addr, max_addr);
+		if (new_fdt_size > EFI_FDT_MAX_SIZE) {
+			pr_efi_err(sys_table, "FDT size exceeds EFI_FDT_MAX_SIZE.\n");
+			goto fail;
+		}
+		status = sys_table->boottime->allocate_pool(EFI_LOADER_DATA,
+							    new_fdt_size,
+							    (void **)new_fdt_addr);
 		if (status != EFI_SUCCESS) {
 			pr_efi_err(sys_table, "Unable to allocate memory for new device tree.\n");
 			goto fail;
@@ -249,7 +218,7 @@ efi_status_t allocate_new_fdt_and_exit_boot(efi_system_table_t *sys_table,
 			 * to get new one that reflects the free/alloc we do
 			 * on the device tree buffer.
 			 */
-			efi_free(sys_table, new_fdt_size, *new_fdt_addr);
+			sys_table->boottime->free_pool((void *)*new_fdt_addr);
 			sys_table->boottime->free_pool(memory_map);
 			new_fdt_size += EFI_PAGE_SIZE;
 		} else {
@@ -307,7 +276,7 @@ fail_free_mmap:
 	sys_table->boottime->free_pool(memory_map);
 
 fail_free_new_fdt:
-	efi_free(sys_table, new_fdt_size, *new_fdt_addr);
+	sys_table->boottime->free_pool((void *)*new_fdt_addr);
 
 fail:
 	sys_table->boottime->free_pool(runtime_map);
