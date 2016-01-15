@@ -153,6 +153,70 @@ static void destroy_super_rcu(struct rcu_head *head)
 	schedule_work(&s->destroy_work);
 }
 
+static bool super_dev_match(struct super_block *sb, dev_t dev)
+{
+	struct super_block_dev *sbdev;
+
+	if (sb->s_dev == dev)
+		return true;
+
+	if (list_empty(&sb->s_sbdevs))
+		return false;
+
+	list_for_each_entry(sbdev, &sb->s_sbdevs, entry)
+		if (sbdev->anon_dev ==  dev)
+			return true;
+
+	return false;
+}
+
+/* To be used only by btrfs */
+int insert_anon_sbdev(struct super_block *sb, struct super_block_dev *sbdev)
+{
+	int ret;
+
+	ret = get_anon_bdev(&sbdev->anon_dev);
+	if (ret)
+		return ret;
+
+	sbdev->sb = sb;
+
+	spin_lock(&sb_lock);
+	list_add_tail(&sbdev->entry, &sb->s_sbdevs);
+	spin_unlock(&sb_lock);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(insert_anon_sbdev);
+
+/* To be used only by btrfs */
+void remove_anon_sbdev(struct super_block_dev *sbdev)
+{
+	struct super_block *sb;
+	struct super_block_dev *sbdev_i, *tmp;
+
+	if (!sbdev)
+		return;
+
+	sb = sbdev->sb;
+
+	spin_lock(&sb_lock);
+
+	WARN_ON(list_empty(&sb->s_sbdevs));
+
+	list_for_each_entry_safe(sbdev_i, tmp, &sb->s_sbdevs, entry) {
+		if (sbdev == sbdev_i) {
+			list_del_init(&sbdev_i->entry);
+			break;
+		}
+	}
+
+	spin_unlock(&sb_lock);
+
+	free_anon_bdev(sbdev->anon_dev);
+}
+EXPORT_SYMBOL_GPL(remove_anon_sbdev);
+
 /**
  *	destroy_super	-	frees a superblock
  *	@s: superblock to free
@@ -165,6 +229,7 @@ static void destroy_super(struct super_block *s)
 	list_lru_destroy(&s->s_inode_lru);
 	security_sb_free(s);
 	WARN_ON(!list_empty(&s->s_mounts));
+	WARN_ON(!list_empty(&s->s_sbdevs));
 	kfree(s->s_subtype);
 	kfree(s->s_options);
 	call_rcu(&s->rcu, destroy_super_rcu);
@@ -206,6 +271,7 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags)
 	mutex_init(&s->s_sync_lock);
 	INIT_LIST_HEAD(&s->s_inodes);
 	spin_lock_init(&s->s_inode_list_lock);
+	INIT_LIST_HEAD(&s->s_sbdevs);
 
 	if (list_lru_init_memcg(&s->s_dentry_lru))
 		goto fail;
@@ -673,7 +739,7 @@ restart:
 	spin_unlock(&sb_lock);
 	return NULL;
 }
- 
+
 struct super_block *user_get_super(dev_t dev)
 {
 	struct super_block *sb;
@@ -683,7 +749,7 @@ rescan:
 	list_for_each_entry(sb, &super_blocks, s_list) {
 		if (hlist_unhashed(&sb->s_instances))
 			continue;
-		if (sb->s_dev ==  dev) {
+		if (super_dev_match(sb, dev)) {
 			sb->s_count++;
 			spin_unlock(&sb_lock);
 			down_read(&sb->s_umount);

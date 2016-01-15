@@ -1273,6 +1273,14 @@ struct sb_writers {
 	struct percpu_rw_semaphore	rw_sem[SB_FREEZE_LEVELS];
 };
 
+/* we can expand this to help the VFS layer with modern filesystems */
+/* To be used only used by btrfs */
+struct super_block_dev {
+	struct super_block	*sb;
+	struct list_head	entry;		/* For struct sb->s_sbdevs */
+	dev_t			anon_dev;
+};
+
 struct super_block {
 	struct list_head	s_list;		/* Keep this first */
 	dev_t			s_dev;		/* search index; _not_ kdev_t */
@@ -1297,6 +1305,7 @@ struct super_block {
 	const struct xattr_handler **s_xattr;
 
 	struct hlist_bl_head	s_anon;		/* anonymous dentries for (nfs) exporting */
+	struct list_head	s_sbdevs;	/* internal fs dev_t */
 	struct list_head	s_mounts;	/* list of mounts; _not_ for fs use */
 	struct block_device	*s_bdev;
 	struct backing_dev_info *s_bdi;
@@ -1970,6 +1979,11 @@ void deactivate_locked_super(struct super_block *sb);
 int set_anon_super(struct super_block *s, void *data);
 int get_anon_bdev(dev_t *);
 void free_anon_bdev(dev_t);
+
+/* These two are to be used only by btrfs */
+int insert_anon_sbdev(struct super_block *sb, struct super_block_dev *sbdev);
+void remove_anon_sbdev(struct super_block_dev *sbdev);
+
 struct super_block *sget(struct file_system_type *type,
 			int (*test)(struct super_block *,void *),
 			int (*set)(struct super_block *,void *),
