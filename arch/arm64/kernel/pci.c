@@ -94,3 +94,12 @@ struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root)
 	return NULL;
 }
 #endif
+
+#ifdef CONFIG_NUMA
+int pcibus_to_node(struct pci_bus *bus)
+{
+	return dev_to_node(&bus->dev);
+}
+EXPORT_SYMBOL(pcibus_to_node);
+#endif
+

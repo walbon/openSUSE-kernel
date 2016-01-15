@@ -6,4 +6,5 @@ obj-$(CONFIG_HUGETLB_PAGE)	+= hugetlbpage.o
 obj-$(CONFIG_ARM64_PTDUMP)	+= dump.o
 
 obj-$(CONFIG_KASAN)		+= kasan_init.o
+obj-$(CONFIG_NUMA)		+= numa.o
 KASAN_SANITIZE_kasan_init.o	:= n
