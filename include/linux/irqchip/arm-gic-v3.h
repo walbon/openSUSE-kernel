@@ -334,6 +334,7 @@ struct device_node;
 int its_cpu_init(void);
 int its_init(struct device_node *node, struct rdists *rdists,
 	     struct irq_domain *domain);
+struct irq_domain *gic_get_irq_domain(void);
 
 static inline bool gic_enable_sre(void)
 {

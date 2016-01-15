@@ -60,6 +60,11 @@ static struct static_key supports_deactivate = STATIC_KEY_INIT_TRUE;
 /* Our default, arbitrary priority value. Linux only uses one anyway. */
 #define DEFAULT_PMR_VALUE	0xf0
 
+struct irq_domain *gic_get_irq_domain(void)
+{
+	return gic_data.domain;
+}
+
 static inline unsigned int gic_irq(struct irq_data *d)
 {
 	return d->hwirq;
