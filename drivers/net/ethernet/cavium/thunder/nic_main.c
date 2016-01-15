@@ -54,11 +54,6 @@ struct nicpf {
 	bool			irq_allocated[NIC_PF_MSIX_VECTORS];
 };
 
-static inline bool pass1_silicon(struct nicpf *nic)
-{
-	return nic->pdev->revision < 8;
-}
-
 /* Supported devices */
 static const struct pci_device_id nic_id_table[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_CAVIUM, PCI_DEVICE_ID_THUNDER_NIC_PF) },
@@ -1027,7 +1022,8 @@ static int nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	/* MAP PF's configuration registers */
-	nic->reg_base = pcim_iomap(pdev, PCI_CFG_REG_BAR_NUM, 0);
+	nic->reg_base = ioremap(pci_resource_start(pdev, 0),
+			pci_resource_len(pdev, 0));
 	if (!nic->reg_base) {
 		dev_err(dev, "Cannot map config register space, aborting\n");
 		err = -ENOMEM;
@@ -1093,6 +1089,8 @@ static void nic_remove(struct pci_dev *pdev)
 		destroy_workqueue(nic->check_link);
 	}
 
+	if (nic->reg_base)
+		iounmap(nic->reg_base);
 	nic_unregister_interrupts(nic);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);

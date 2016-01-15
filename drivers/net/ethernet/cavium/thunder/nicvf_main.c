@@ -525,14 +525,20 @@ static void nicvf_snd_pkt_handler(struct net_device *netdev,
 		   __func__, cqe_tx->sq_qs, cqe_tx->sq_idx,
 		   cqe_tx->sqe_ptr, hdr->subdesc_cnt);
 
-	nicvf_put_sq_desc(sq, hdr->subdesc_cnt + 1);
 	nicvf_check_cqe_tx_errs(nic, cq, cqe_tx);
 	skb = (struct sk_buff *)sq->skbuff[cqe_tx->sqe_ptr];
-	/* For TSO offloaded packets only one head SKB needs to be freed */
+	/* For SW TSO offloaded packets only one head SKB needs to be freed */
 	if (skb) {
+		nicvf_put_sq_desc(sq, hdr->subdesc_cnt + 1);
 		prefetch(skb);
 		dev_consume_skb_any(skb);
 		sq->skbuff[cqe_tx->sqe_ptr] = (u64)NULL;
+	} else {
+		/* In case of HW TSO, a CQE_TX is added by HW for each segment.
+		 * Free SQEs only once.
+		 */
+		if (!nic->hw_tso)
+			nicvf_put_sq_desc(sq, hdr->subdesc_cnt + 1);
 	}
 }
 
@@ -1147,7 +1153,7 @@ int nicvf_open(struct net_device *netdev)
 		cq_poll->cq_idx = qidx;
 		cq_poll->nicvf = nic;
 		netif_napi_add(netdev, &cq_poll->napi, nicvf_poll,
-			       NAPI_POLL_WEIGHT);
+			       VNIC_NAPI_WEIGHT);
 		napi_enable(&cq_poll->napi);
 		nic->napi[qidx] = cq_poll;
 	}
@@ -1386,6 +1392,7 @@ static void nicvf_tx_timeout(struct net_device *dev)
 		netdev_warn(dev, "%s: Transmit timed out, resetting\n",
 			    dev->name);
 
+	nic->drv_stats.tx_timeout++;
 	schedule_work(&nic->reset_task);
 }
 
@@ -1512,7 +1519,8 @@ static int nicvf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	nic->max_queues = qcount;
 
 	/* MAP VF's configuration registers */
-	nic->reg_base = pcim_iomap(pdev, PCI_CFG_REG_BAR_NUM, 0);
+	nic->reg_base = ioremap(pci_resource_start(pdev, 0),
+			pci_resource_len(pdev, 0));
 	if (!nic->reg_base) {
 		dev_err(dev, "Cannot map config register space, aborting\n");
 		err = -ENOMEM;
@@ -1549,6 +1557,9 @@ static int nicvf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	netdev->vlan_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_TSO;
 
+	if (!pass1_silicon(nic))
+		nic->hw_tso = true;
+
 	netdev->netdev_ops = &nicvf_netdev_ops;
 	netdev->watchdog_timeo = NICVF_TX_TIMEOUT;
 
@@ -1570,6 +1581,8 @@ err_unregister_interrupts:
 	nicvf_unregister_interrupts(nic);
 err_free_netdev:
 	pci_set_drvdata(pdev, NULL);
+	if (nic->qs)
+		devm_kfree(&pdev->dev, nic->qs);
 	free_netdev(netdev);
 err_release_regions:
 	pci_release_regions(pdev);
@@ -1597,6 +1610,11 @@ static void nicvf_remove(struct pci_dev *pdev)
 		unregister_netdev(pnetdev);
 	nicvf_unregister_interrupts(nic);
 	pci_set_drvdata(pdev, NULL);
+
+	if (nic->reg_base)
+		iounmap(nic->reg_base);
+	if (nic->qs)
+		devm_kfree(&pdev->dev, nic->qs);
 	free_netdev(netdev);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);

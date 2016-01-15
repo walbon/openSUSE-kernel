@@ -34,6 +34,8 @@
 /* NIC priv flags */
 #define	NIC_SRIOV_ENABLED		BIT(0)
 
+#define	VNIC_NAPI_WEIGHT		NAPI_POLL_WEIGHT
+
 /* Min/Max packet size */
 #define	NIC_HW_MIN_FRS			64
 #define	NIC_HW_MAX_FRS			9200 /* 9216 max packet including FCS */
@@ -162,6 +164,8 @@ struct nicvf_rss_info {
 	u64 key[RSS_HASH_KEY_SIZE];
 } ____cacheline_aligned_in_smp;
 
+#define pass1_silicon(nic)		((nic)->pdev->revision < 8)
+
 enum rx_stats_reg_offset {
 	RX_OCTS = 0x0,
 	RX_UCAST = 0x1,
@@ -248,10 +252,13 @@ struct nicvf_drv_stats {
 	u64 rx_frames_jumbo;
 	u64 rx_drops;
 
+	u64 rcv_buffer_alloc_failures;
+
 	/* Tx */
 	u64 tx_frames_ok;
 	u64 tx_drops;
 	u64 tx_tso;
+	u64 tx_timeout;
 	u64 txq_stop;
 	u64 txq_wake;
 };
@@ -262,9 +269,10 @@ struct nicvf {
 	struct pci_dev		*pdev;
 	u8			vf_id;
 	u8			node;
-	u8			tns_mode:1;
-	u8			sqs_mode:1;
-	u8			loopback_supported:1;
+	bool			tns_mode:1;
+	bool                    sqs_mode:1;
+	bool			loopback_supported:1;
+	bool			hw_tso:1;
 	u16			mtu;
 	struct queue_set	*qs;
 #define	MAX_SQS_PER_VF_SINGLE_NODE		5
@@ -352,9 +360,9 @@ struct nic_cfg_msg {
 	u8    msg;
 	u8    vf_id;
 	u8    node_id;
-	u8    tns_mode:1;
-	u8    sqs_mode:1;
-	u8    loopback_supported:1;
+	bool  tns_mode:1;
+	bool  sqs_mode:1;
+	bool  loopback_supported:1;
 	u8    mac_addr[ETH_ALEN];
 };
 
