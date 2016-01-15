@@ -1612,6 +1612,27 @@ static struct worker *alloc_worker(int node)
 	return worker;
 }
 
+static struct sched_param fifo_param, normal_param;
+
+static inline void kworker_set_sched_params(struct task_struct *worker)
+{
+	int prio = fifo_param.sched_priority;
+	if (!prio || in_interrupt())
+		return;
+	if (worker->policy == SCHED_FIFO && worker->rt_priority == prio)
+		return;
+	sched_setscheduler_nocheck(worker, SCHED_FIFO, &fifo_param);
+}
+
+static inline void kworker_clr_sched_params(struct task_struct *worker)
+{
+	if (!fifo_param.sched_priority || worker->policy != SCHED_FIFO)
+		return;
+	if (in_interrupt())
+		return;
+	sched_setscheduler_nocheck(worker, SCHED_NORMAL, &normal_param);
+}
+
 /**
  * worker_attach_to_pool() - attach a worker to a pool
  * @worker: worker to be attached
@@ -1715,6 +1736,7 @@ static struct worker *create_worker(struct worker_pool *pool)
 
 	set_user_nice(worker->task, pool->attrs->nice);
 	kthread_bind_mask(worker->task, pool->attrs->cpumask);
+	kworker_set_sched_params(worker->task);
 
 	/* successful, attach the worker to the pool */
 	worker_attach_to_pool(worker, pool);
@@ -1762,6 +1784,7 @@ static void destroy_worker(struct worker *worker)
 
 	list_del_init(&worker->entry);
 	worker->flags |= WORKER_DIE;
+	kworker_clr_sched_params(worker->task);
 	wake_up_process(worker->task);
 }
 
@@ -3860,6 +3883,7 @@ struct workqueue_struct *__alloc_workqueue_key(const char *fmt,
 
 		wq->rescuer = rescuer;
 		kthread_bind_mask(rescuer->task, cpu_possible_mask);
+		kworker_set_sched_params(rescuer->task);
 		wake_up_process(rescuer->task);
 	}
 
@@ -3939,8 +3963,10 @@ void destroy_workqueue(struct workqueue_struct *wq)
 
 	workqueue_sysfs_unregister(wq);
 
-	if (wq->rescuer)
+	if (wq->rescuer) {
+		kworker_clr_sched_params(wq->rescuer->task);
 		kthread_stop(wq->rescuer->task);
+	}
 
 	if (!(wq->flags & WQ_UNBOUND)) {
 		/*
@@ -5296,3 +5322,17 @@ static int __init init_workqueues(void)
 	return 0;
 }
 early_initcall(init_workqueues);
+
+static int __init setup_rtworkqueues(char *str)
+{
+	int prio;
+
+	if (kstrtoint(str, 0, &prio) || prio < 1 || prio > 99) {
+		prio = 0;
+		pr_warn("Unable to set kworker default priority\n");
+	}
+	fifo_param.sched_priority = prio;
+
+        return 1;
+}
+__setup("rtworkqueues=", setup_rtworkqueues);
