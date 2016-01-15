@@ -615,17 +615,6 @@ megasas_check_reset_ppc(struct megasas_instance *instance,
 	return 0;
 }
 
-/**
- * megasas_adp_reset_ppc -  For controller reset
- * @regs:                              MFI register set
- */
-static int
-megasas_adp_reset_ppc(struct megasas_instance *instance,
-	struct megasas_register_set __iomem *regs)
-{
-	return 0;
-}
-
 static struct megasas_instance_template megasas_instance_template_ppc = {
 
 	.fire_cmd = megasas_fire_cmd_ppc,
@@ -633,7 +622,7 @@ static struct megasas_instance_template megasas_instance_template_ppc = {
 	.disable_intr = megasas_disable_intr_ppc,
 	.clear_intr = megasas_clear_intr_ppc,
 	.read_fw_status_reg = megasas_read_fw_status_reg_ppc,
-	.adp_reset = megasas_adp_reset_ppc,
+	.adp_reset = megasas_adp_reset_xscale,
 	.check_reset = megasas_check_reset_ppc,
 	.service_isr = megasas_isr,
 	.tasklet = megasas_complete_cmd_dpc,
@@ -1771,7 +1760,7 @@ static void megasas_set_dma_alignment(struct scsi_device *sdev)
 
 static int megasas_slave_configure(struct scsi_device *sdev)
 {
-	u16 pd_index = 0;
+	u16 pd_index = 0, ld_index;
 	struct megasas_instance *instance;
 
 	instance = megasas_lookup_instance(sdev->host->host_no);
@@ -1782,6 +1771,11 @@ static int megasas_slave_configure(struct scsi_device *sdev)
 				sdev->id;
 			if (instance->pd_list[pd_index].driveState !=
 				MR_PD_STATE_SYSTEM)
+				return -ENXIO;
+		} else {
+			ld_index = ((sdev->channel - MEGASAS_MAX_PD_CHANNELS) *
+				    MEGASAS_MAX_DEV_PER_CHANNEL) + sdev->id;
+			if (instance->ld_ids[ld_index] == 0xff)
 				return -ENXIO;
 		}
 	}
@@ -4107,6 +4101,10 @@ megasas_ld_list_query(struct megasas_instance *instance, u8 query_type)
 		ret = megasas_issue_polled(instance, cmd);
 
 	tgtid_count = le32_to_cpu(ci->count);
+	if (tgtid_count == 0) {
+		/* No drives found, try the older LD list DCMD */
+		ret = 1;
+	}
 
 	if ((ret == 0) && (tgtid_count <= (instance->fw_supported_vd_count))) {
 		memset(instance->ld_ids, 0xff, MEGASAS_MAX_LD_IDS);
