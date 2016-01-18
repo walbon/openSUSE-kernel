@@ -1328,7 +1328,6 @@ cleanup:
 	return ret;
 }
 
-#if 0
 static void __exit vmbus_exit(void)
 {
 	int cpu;
@@ -1357,9 +1356,9 @@ static void __exit vmbus_exit(void)
 	if (vmbus_proto_version > VERSION_WIN7)
 		cpu_hotplug_enable();
 }
-#endif
 
 
 MODULE_LICENSE("GPL");
 
 subsys_initcall(hv_acpi_init);
+module_exit(vmbus_exit);
