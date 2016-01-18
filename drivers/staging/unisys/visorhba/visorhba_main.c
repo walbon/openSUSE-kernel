@@ -1021,8 +1021,9 @@ static int process_incoming_rsps(void *v)
 		if (kthread_should_stop())
 			break;
 		wait_event_interruptible_timeout(
-			devdata->rsp_queue, (atomic_read(
-					     &devdata->interrupt_rcvd) == 1),
+			devdata->rsp_queue, ({
+				klp_kgraft_mark_task_safe(current);
+				(atomic_read(&devdata->interrupt_rcvd) == 1); }),
 				msecs_to_jiffies(devdata->thread_wait_ms));
 		/* drain queue */
 		drain_queue(cmdrsp, devdata);

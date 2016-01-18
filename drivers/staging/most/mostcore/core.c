@@ -1183,9 +1183,10 @@ static int hdm_enqueue_thread(void *data)
 	typeof(c->iface->enqueue) enqueue = c->iface->enqueue;
 
 	while (likely(!kthread_should_stop())) {
-		wait_event_interruptible(c->hdm_fifo_wq,
+		wait_event_interruptible(c->hdm_fifo_wq, ({
+					 klp_kgraft_mark_task_safe(current);
 					 (mbo = get_hdm_mbo(c)) ||
-					 kthread_should_stop());
+					 kthread_should_stop(); }));
 
 		if (unlikely(!mbo))
 			continue;

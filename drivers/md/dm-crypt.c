@@ -1200,6 +1200,7 @@ static int dmcrypt_write(void *data)
 
 		spin_lock_irq(&cc->write_thread_wait.lock);
 continue_locked:
+		klp_kgraft_mark_task_safe(current);
 
 		if (!RB_EMPTY_ROOT(&cc->write_tree))
 			goto pop_from_list;

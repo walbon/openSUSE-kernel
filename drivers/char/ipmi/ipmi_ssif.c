@@ -479,6 +479,8 @@ static int ipmi_ssif_thread(void *data)
 	while (!kthread_should_stop()) {
 		int result;
 
+		klp_kgraft_mark_task_safe(current); /* insufficient */
+
 		/* Wait for something to do */
 		result = wait_for_completion_interruptible(
 						&ssif_info->wake_thread);

@@ -148,6 +148,8 @@ static int power_saving_thread(void *data)
 	while (!kthread_should_stop()) {
 		unsigned long expire_time;
 
+		klp_kgraft_mark_task_safe(current);
+
 		/* round robin to cpus */
 		expire_time = last_jiffies + round_robin_time * HZ;
 		if (time_before(expire_time, jiffies)) {

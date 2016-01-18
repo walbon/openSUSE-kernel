@@ -1040,6 +1040,7 @@ static int sahara_queue_manage(void *data)
 	int ret = 0;
 
 	do {
+		klp_kgraft_mark_task_safe(current);
 		__set_current_state(TASK_INTERRUPTIBLE);
 
 		mutex_lock(&dev->queue_mutex);
