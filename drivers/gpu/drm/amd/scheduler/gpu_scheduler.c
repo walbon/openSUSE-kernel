@@ -419,9 +419,10 @@ static int amd_sched_main(void *param)
 		struct fence *fence;
 		unsigned long flags;
 
-		wait_event_interruptible(sched->wake_up_worker,
+		wait_event_interruptible(sched->wake_up_worker, ({
+			klp_kgraft_mark_task_safe(current);
 			(entity = amd_sched_select_entity(sched)) ||
-			kthread_should_stop());
+			kthread_should_stop(); }));
 
 		if (!entity)
 			continue;

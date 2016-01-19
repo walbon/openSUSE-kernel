@@ -661,6 +661,8 @@ static int tag_mount(struct vfsmount *mnt, void *arg)
 static int prune_tree_thread(void *unused)
 {
 	for (;;) {
+		klp_kgraft_mark_task_safe(current);
+
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (list_empty(&prune_list))
 			schedule();

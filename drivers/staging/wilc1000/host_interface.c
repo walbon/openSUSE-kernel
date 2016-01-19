@@ -2813,6 +2813,8 @@ static int hostIFthread(void *pvArg)
 	memset(&msg, 0, sizeof(struct host_if_msg));
 
 	while (1) {
+		klp_kgraft_mark_task_safe(current); /* insufficient */
+
 		wilc_mq_recv(&hif_msg_q, &msg, sizeof(struct host_if_msg), &u32Ret);
 		hif_drv = (struct host_if_drv *)msg.drv;
 		if (msg.id == HOST_IF_MSG_EXIT) {

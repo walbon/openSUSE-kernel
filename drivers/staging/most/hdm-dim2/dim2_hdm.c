@@ -281,9 +281,10 @@ static int deliver_netinfo_thread(void *data)
 	struct dim2_hdm *dev = data;
 
 	while (!kthread_should_stop()) {
-		wait_event_interruptible(dev->netinfo_waitq,
+		wait_event_interruptible(dev->netinfo_waitq, ({
+					 klp_kgraft_mark_task_safe(current);
 					 dev->deliver_netinfo ||
-					 kthread_should_stop());
+					 kthread_should_stop(); }));
 
 		if (dev->deliver_netinfo) {
 			dev->deliver_netinfo--;

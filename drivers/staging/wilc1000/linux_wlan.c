@@ -457,6 +457,7 @@ static int linux_wlan_txq_task(void *vp)
 	/* inform wilc1000_wlan_init that TXQ task is started. */
 	up(&wl->txq_thread_started);
 	while (1) {
+		klp_kgraft_mark_task_safe(current); /* insufficient */
 
 		PRINT_D(TX_DBG, "txq_task Taking a nap :)\n");
 		down(&wl->txq_event);

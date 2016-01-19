@@ -492,9 +492,10 @@ static int mips_ejtag_fdc_put(void *arg)
 	__set_current_state(TASK_RUNNING);
 	while (!kthread_should_stop()) {
 		/* Wait for data to actually write */
-		wait_event_interruptible(priv->waitqueue,
+		wait_event_interruptible(priv->waitqueue, ({
+					 klp_kgraft_mark_task_safe(current);
 					 atomic_read(&priv->xmit_total) ||
-					 kthread_should_stop());
+					 kthread_should_stop(); }));
 		if (kthread_should_stop())
 			break;
 
@@ -511,10 +512,11 @@ static int mips_ejtag_fdc_put(void *arg)
 			}
 		}
 		raw_spin_unlock_irq(&priv->lock);
-		wait_event_interruptible(priv->waitqueue,
+		wait_event_interruptible(priv->waitqueue, ({
+					 klp_kgraft_mark_task_safe(current);
 					 !(mips_ejtag_fdc_read(priv, REG_FDSTAT)
 					   & REG_FDSTAT_TXF) ||
-					 kthread_should_stop());
+					 kthread_should_stop(); }));
 		if (kthread_should_stop())
 			break;
 

@@ -297,6 +297,7 @@ static int cosm_scif_server(void *unused)
 	allow_signal(SIGKILL);
 
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current); /* insufficient */
 		rc = scif_accept(listen_epd, &port_id, &newepd,
 				 SCIF_ACCEPT_SYNC);
 		if (rc < 0) {
