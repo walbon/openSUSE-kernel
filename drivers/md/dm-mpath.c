@@ -603,8 +603,6 @@ static struct pgpath *parse_path(struct dm_arg_set *as, struct path_selector *ps
 		}
 	} else {
 		memcpy(p->path.pdev, p->path.dev->name, 16);
-		ti->error = "error getting device";
-		goto bad;
 	}
 
 	if (p->path.dev)
