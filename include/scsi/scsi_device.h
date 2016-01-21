@@ -109,6 +109,7 @@ struct scsi_device {
 	char type;
 	char scsi_level;
 	char inq_periph_qual;	/* PQ from INQUIRY data */	
+	struct mutex inquiry_mutex;
 	unsigned char inquiry_len;	/* valid bytes in 'inquiry' */
 	unsigned char * inquiry;	/* INQUIRY response data */
 	const char * vendor;		/* [back_compat] point into 'inquiry' ... */
@@ -117,9 +118,9 @@ struct scsi_device {
 
 #define SCSI_VPD_PG_LEN                255
 	int vpd_pg83_len;
-	unsigned char *vpd_pg83;
+	unsigned char __rcu *vpd_pg83;
 	int vpd_pg80_len;
-	unsigned char *vpd_pg80;
+	unsigned char __rcu *vpd_pg80;
 	unsigned char current_tag;	/* current tag */
 	struct scsi_target      *sdev_target;   /* used only for single_lun */
 
@@ -175,6 +176,7 @@ struct scsi_device {
 	unsigned no_dif:1;	/* T10 PI (DIF) should be disabled */
 	unsigned broken_fua:1;		/* Don't set FUA bit */
 	unsigned lun_in_cdb:1;		/* Store LUN bits in CDB[1] */
+	unsigned synchronous_alua:1;	/* Synchronous ALUA commands */
 
 	atomic_t disk_events_disable_depth; /* disable depth for disk events */
 
@@ -199,6 +201,7 @@ struct scsi_device {
 	struct scsi_device_handler *handler;
 	void			*handler_data;
 
+	enum scsi_access_state	access_state;
 	enum scsi_device_state sdev_state;
 	unsigned long		sdev_data[0];
 } __attribute__((aligned(sizeof(unsigned long))));
