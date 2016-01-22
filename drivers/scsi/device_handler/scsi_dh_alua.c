@@ -349,7 +349,7 @@ static int alua_check_vpd(struct scsi_device *sdev, struct alua_dh_data *h,
 	}
 
 	pg = alua_alloc_pg(sdev, group_id, tpgs);
-	if (PTR_ERR(pg)) {
+	if (IS_ERR(pg)) {
 		if (PTR_ERR(h->pg) == -ENOMEM)
 			return SCSI_DH_NOMEM;
 		return SCSI_DH_DEV_UNSUPP;
