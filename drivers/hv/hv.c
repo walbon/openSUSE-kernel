@@ -192,9 +192,7 @@ int hv_init(void)
 {
 	int max_leaf;
 	union hv_x64_msr_hypercall_contents hypercall_msr;
-	union hv_x64_msr_hypercall_contents tsc_msr;
 	void *virtaddr = NULL;
-	void *va_tsc = NULL;
 	__u8 d1 = 0x10; /* SuSE */
 	__u16 d2 = 0x0; /* -d of a.b.c-d */
 
@@ -242,6 +240,9 @@ int hv_init(void)
 
 #ifdef CONFIG_X86_64
 	if (ms_hyperv.features & HV_X64_MSR_REFERENCE_TSC_AVAILABLE) {
+		union hv_x64_msr_hypercall_contents tsc_msr;
+		void *va_tsc;
+
 		va_tsc = __vmalloc(PAGE_SIZE, GFP_KERNEL, PAGE_KERNEL);
 		if (!va_tsc)
 			goto cleanup;
