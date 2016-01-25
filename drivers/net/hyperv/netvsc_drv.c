@@ -1023,7 +1023,7 @@ static void netvsc_link_change(struct work_struct *w)
 	struct netvsc_device *net_device;
 	struct rndis_device *rdev;
 	bool notify, refresh = false;
-	char *argv[] = { "/sbin/rcnetwork", "restart", NULL };
+	char *argv[] = { "/etc/init.d/network", "restart", NULL };
 	char *envp[] = { "HOME=/", "PATH=/sbin:/usr/sbin:/bin:/usr/bin", NULL };
 
 	rtnl_lock();
