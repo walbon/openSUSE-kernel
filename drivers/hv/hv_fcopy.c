@@ -108,8 +108,6 @@ static int fcopy_handle_handshake(u32 version)
 		return -EINVAL;
 	}
 	pr_debug("FCP: userspace daemon ver. %d registered\n", version);
-	/* Forward state for hv_fcopy_onchannelcallback */
-	fcopy_transaction.state = HVUTIL_READY;
 	hv_poll_channel(fcopy_transaction.recv_channel, fcopy_poll_wrapper);
 	return 0;
 }
@@ -286,6 +284,9 @@ static int fcopy_on_msg(void *msg, int len)
 
 	if (fcopy_transaction.state == HVUTIL_DEVICE_INIT)
 		return fcopy_handle_handshake(*val);
+
+	if (fcopy_transaction.state != HVUTIL_USERSPACE_REQ)
+		return -EINVAL;
 
 	/*
 	 * Complete the transaction by forwarding the result
