@@ -673,9 +673,19 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 			pg->interval = 2;
 			err = SCSI_DH_RETRY;
 		} else {
+			struct alua_dh_data *h;
+
 			/* Transitioning time exceeded, set port to standby */
+			sdev_printk(KERN_INFO, sdev,
+				    "%s: transitioning timeout exceeded\n",
+				    ALUA_DH_NAME);
 			err = SCSI_DH_IO;
 			pg->state = SCSI_ACCESS_STATE_STANDBY;
+			list_for_each_entry_rcu(h, &pg->dh_list, node) {
+				BUG_ON(!h->sdev);
+				h->sdev->access_state = (pg->state & 0x0f) |
+					(pg->pref << 7);
+			}
 			pg->expiry = 0;
 		}
 		break;
@@ -735,8 +745,6 @@ static unsigned alua_stpg(struct scsi_device *sdev, struct alua_port_group *pg)
 		return SCSI_DH_NOSYS;
 		break;
 	}
-	/* Set state to transitioning */
-	pg->state = SCSI_ACCESS_STATE_TRANSITIONING;
 	retval = submit_stpg(sdev, pg->group_id, &sense_hdr);
 
 	if (retval) {
@@ -1019,15 +1027,17 @@ static int alua_prep_fn(struct scsi_device *sdev, struct request *req)
 {
 	struct alua_dh_data *h = sdev->handler_data;
 	struct alua_port_group __rcu *pg;
-	enum scsi_access_state state = SCSI_ACCESS_STATE_OPTIMAL;
+	enum scsi_access_state state;
 	int ret = BLKPREP_OK;
 
+	state = sdev->access_state & 0x0f;
 	rcu_read_lock();
 	pg = rcu_dereference(h->pg);
 	if (pg) {
-		state = pg->state;
-		/* Defer I/O while rtpg_work is active */
-		if (pg->rtpg_sdev)
+		if (pg->flags & ALUA_PG_RUN_RTPG ||
+		    pg->flags & ALUA_PG_RUN_STPG ||
+		    pg->flags & ALUA_PG_RUNNING)
+			/* Defer I/O while rtpg_work is active */
 			state = SCSI_ACCESS_STATE_TRANSITIONING;
 	}
 	rcu_read_unlock();
