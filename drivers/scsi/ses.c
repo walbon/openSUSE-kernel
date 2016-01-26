@@ -580,7 +580,7 @@ static void ses_match_to_enclosure(struct enclosure_device *edev,
 				   struct scsi_device *sdev)
 {
 	unsigned char *desc;
-	unsigned char __rcu *vpd_pg83;
+	struct scsi_vpd_pg *vpd_pg83;
 	struct efd efd = {
 		.addr = 0,
 	};
@@ -594,8 +594,8 @@ static void ses_match_to_enclosure(struct enclosure_device *edev,
 		return;
 	}
 
-	desc = vpd_pg83 + 4;
-	while (desc < vpd_pg83 + sdev->vpd_pg83_len) {
+	desc = vpd_pg83->buf + 4;
+	while (desc < vpd_pg83->buf + vpd_pg83->len) {
 		enum scsi_protocol proto = desc[0] >> 4;
 		u8 code_set = desc[0] & 0x0f;
 		u8 piv = desc[1] & 0x80;
