@@ -13,6 +13,7 @@
 #include <linux/security.h>
 #include <linux/cred.h>
 #include "overlayfs.h"
+#include "compat.h"
 
 void ovl_cleanup(struct inode *wdir, struct dentry *wdentry)
 {
@@ -60,7 +61,10 @@ static struct dentry *ovl_whiteout(struct dentry *workdir,
 	if (IS_ERR(whiteout))
 		return whiteout;
 
-	err = ovl_do_whiteout(wdir, whiteout);
+	if (!ovl_compat_mode(dentry))
+		err = ovl_do_whiteout(wdir, whiteout);
+	else
+		err = ovl_compat_whiteout(workdir, dentry, whiteout);
 	if (err) {
 		dput(whiteout);
 		whiteout = ERR_PTR(err);
@@ -190,14 +194,24 @@ out_unlock:
 }
 
 static int ovl_lock_rename_workdir(struct dentry *workdir,
-				   struct dentry *upperdir)
+				   struct dentry *upperdir,
+				   struct dentry *ovl_dir)
 {
+	struct dentry *d, *ancestor = NULL;
+
 	/* Workdir should not be the same as upperdir */
 	if (workdir == upperdir)
 		goto err;
 
-	/* Workdir should not be subdir of upperdir and vice versa */
-	if (lock_rename(workdir, upperdir) != NULL)
+	if (ovl_compat_mode(ovl_dir))
+		ancestor = workdir->d_parent;
+
+	/*
+	 * Workdir should not be subdir of upperdir and vice versa,
+	 * except in compat mode.
+	 */
+	d = lock_rename(workdir, upperdir);
+	if (d != NULL && d != ancestor)
 		goto err_unlock;
 
 	return 0;
@@ -225,7 +239,7 @@ static struct dentry *ovl_clear_empty(struct dentry *dentry,
 	if (WARN_ON(!workdir))
 		return ERR_PTR(-EROFS);
 
-	err = ovl_lock_rename_workdir(workdir, upperdir);
+	err = ovl_lock_rename_workdir(workdir, upperdir, dentry);
 	if (err)
 		goto out;
 
@@ -328,7 +342,7 @@ static int ovl_create_over_whiteout(struct dentry *dentry, struct inode *inode,
 	if (WARN_ON(!workdir))
 		return -EROFS;
 
-	err = ovl_lock_rename_workdir(workdir, upperdir);
+	err = ovl_lock_rename_workdir(workdir, upperdir, dentry);
 	if (err)
 		goto out;
 
@@ -536,7 +550,7 @@ static int ovl_remove_and_whiteout(struct dentry *dentry, bool is_dir)
 		}
 	}
 
-	err = ovl_lock_rename_workdir(workdir, upperdir);
+	err = ovl_lock_rename_workdir(workdir, upperdir, dentry);
 	if (err)
 		goto out_dput;
 

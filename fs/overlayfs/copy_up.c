@@ -17,6 +17,7 @@
 #include <linux/sched.h>
 #include <linux/namei.h>
 #include "overlayfs.h"
+#include "compat.h"
 
 #define OVL_COPY_UP_CHUNK_SIZE (1 << 20)
 
@@ -294,9 +295,13 @@ int ovl_copy_up_one(struct dentry *parent, struct dentry *dentry,
 	const struct cred *old_cred;
 	struct cred *override_cred;
 	char *link = NULL;
+	struct dentry *d, *ancestor = NULL;
 
 	if (WARN_ON(!workdir))
 		return -EROFS;
+
+	if (ovl_compat_mode(dentry))
+		ancestor = workdir->d_parent;
 
 	ovl_path_upper(parent, &parentpath);
 	upperdir = parentpath.dentry;
@@ -335,7 +340,9 @@ int ovl_copy_up_one(struct dentry *parent, struct dentry *dentry,
 	old_cred = override_creds(override_cred);
 
 	err = -EIO;
-	if (lock_rename(workdir, upperdir) != NULL) {
+
+	d = lock_rename(workdir, upperdir);
+	if (d != NULL && d != ancestor) {
 		pr_err("overlayfs: failed to lock workdir+upperdir\n");
 		goto out_unlock;
 	}
