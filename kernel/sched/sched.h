@@ -248,7 +248,12 @@ struct task_group {
 	unsigned long shares;
 
 #ifdef	CONFIG_SMP
-	atomic_long_t load_avg;
+	/*
+	 * load_avg can be heavily contended at clock tick time, so put
+	 * it in its own cacheline separated from the fields above which
+	 * will also be accessed at each tick.
+	 */
+	atomic_long_t load_avg ____cacheline_aligned;
 #endif
 #endif
 
@@ -1252,15 +1257,7 @@ extern void update_group_capacity(struct sched_domain *sd, int cpu);
 
 extern void trigger_load_balance(struct rq *rq);
 
-extern void idle_enter_fair(struct rq *this_rq);
-extern void idle_exit_fair(struct rq *this_rq);
-
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask);
-
-#else
-
-static inline void idle_enter_fair(struct rq *rq) { }
-static inline void idle_exit_fair(struct rq *rq) { }
 
 #endif
 
