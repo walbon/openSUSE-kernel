@@ -659,8 +659,10 @@ static int pl2303_ioctl(struct tty_struct *tty,
 				ret = -EIO;
 			if (!test_bit(ASYNCB_INITIALIZED, &port->port.flags))
 				ret = -EIO;
+			if (port->serial->disconnected)
+				ret = - ENODEV;
 		}
-		return -EIO;
+		return ret;
 	default:
 		dbg("%s not supported = 0x%04x", __func__, cmd);
 		break;
@@ -857,6 +859,18 @@ static void pl2303_process_read_urb(struct urb *urb)
 	tty_kref_put(tty);
 }
 
+static void pl2303_suse_disconnect(struct usb_serial *serial)
+{
+	int i;
+	struct pl2303_private *priv;
+
+	for (i = 0; i < serial->num_ports; ++i) {
+		priv = usb_get_serial_port_data(serial->port[i]);
+
+		wake_up_all(&priv->delta_msr_wait);
+	}
+}
+
 /* All of the device info needed for the PL2303 SIO serial converter */
 static struct usb_serial_driver pl2303_device = {
 	.driver = {
@@ -881,6 +895,7 @@ static struct usb_serial_driver pl2303_device = {
 	.read_int_callback =	pl2303_read_int_callback,
 	.attach =		pl2303_startup,
 	.release =		pl2303_release,
+	.disconnect =		pl2303_suse_disconnect,
 };
 
 static int __init pl2303_init(void)
