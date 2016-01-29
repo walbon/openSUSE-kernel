@@ -131,6 +131,7 @@ static struct usb_driver pl2303_driver = {
 #define VENDOR_READ_REQUEST		0x01
 
 #define UART_STATE			0x08
+#define UART_STATE_MSR_MASK		0x8b
 #define UART_STATE_TRANSIENT_MASK	0x74
 #define UART_DCD			0x01
 #define UART_DSR			0x02
@@ -728,15 +729,18 @@ static void pl2303_update_line_status(struct usb_serial_port *port,
 	spin_unlock_irqrestore(&priv->lock, flags);
 	if (priv->line_status & UART_BREAK_ERROR)
 		usb_serial_handle_break(port);
-	wake_up_interruptible(&priv->delta_msr_wait);
 
-	if (delta & UART_DCD) {
-		tty = tty_port_tty_get(&port->port);
-		if (tty) {
-			usb_serial_handle_dcd_change(port, tty,
+	if (delta & UART_STATE_MSR_MASK) {
+		if (delta & UART_DCD) {
+			tty = tty_port_tty_get(&port->port);
+			if (tty) {
+				usb_serial_handle_dcd_change(port, tty,
 							status & UART_DCD);
-			tty_kref_put(tty);
+				tty_kref_put(tty);
+			}
 		}
+
+		wake_up_interruptible(&port->port.delta_msr_wait);
 	}
 }
 
