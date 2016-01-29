@@ -155,6 +155,7 @@ struct pl2303_private {
 	u8 line_control;
 	u8 line_status;
 	enum pl2303_type type;
+	struct async_icount icount;
 };
 
 static int pl2303_vendor_read(__u16 value, __u16 index,
@@ -587,40 +588,39 @@ static int pl2303_carrier_raised(struct usb_serial_port *port)
 	return 0;
 }
 
-static int wait_modem_info(struct usb_serial_port *port, unsigned int arg)
+static bool usb_serial_generic_msr_changed(struct tty_struct *tty,
+				unsigned long arg, struct async_icount *cprev)
 {
+	struct usb_serial_port *port = tty->driver_data;
 	struct pl2303_private *priv = usb_get_serial_port_data(port);
+	struct async_icount cnow;
 	unsigned long flags;
-	unsigned int prevstatus;
-	unsigned int status;
-	unsigned int changed;
+	bool ret;
 
-	spin_lock_irqsave(&priv->lock, flags);
-	prevstatus = priv->line_status;
-	spin_unlock_irqrestore(&priv->lock, flags);
+	/*
+	 * Use tty-port initialised flag to detect all hangups including the
+	 * one generated at USB-device disconnect.
+	 *
+	 * FIXME: Remove hupping check once tty_port_hangup calls shutdown
+	 *        (which clears the initialised flag) before wake up.
+	 */
+	if (test_bit(TTY_HUPPING, &tty->flags))
+		return true;
+	if (!test_bit(ASYNCB_INITIALIZED, &port->port.flags))
+		return true;
 
-	while (1) {
-		interruptible_sleep_on(&priv->delta_msr_wait);
-		/* see if a signal did it */
-		if (signal_pending(current))
-			return -ERESTARTSYS;
+	spin_lock_irqsave(&port->lock, flags);
+	cnow = priv->icount;				/* atomic copy*/
+	spin_unlock_irqrestore(&port->lock, flags);
 
-		spin_lock_irqsave(&priv->lock, flags);
-		status = priv->line_status;
-		spin_unlock_irqrestore(&priv->lock, flags);
+	ret =	((arg & TIOCM_RNG) && (cnow.rng != cprev->rng)) ||
+		((arg & TIOCM_DSR) && (cnow.dsr != cprev->dsr)) ||
+		((arg & TIOCM_CD)  && (cnow.dcd != cprev->dcd)) ||
+		((arg & TIOCM_CTS) && (cnow.cts != cprev->cts));
 
-		changed = prevstatus ^ status;
+	*cprev = cnow;
 
-		if (((arg & TIOCM_RNG) && (changed & UART_RING)) ||
-		    ((arg & TIOCM_DSR) && (changed & UART_DSR)) ||
-		    ((arg & TIOCM_CD)  && (changed & UART_DCD)) ||
-		    ((arg & TIOCM_CTS) && (changed & UART_CTS))) {
-			return 0;
-		}
-		prevstatus = status;
-	}
-	/* NOTREACHED */
-	return 0;
+	return ret;
 }
 
 static int pl2303_ioctl(struct tty_struct *tty,
@@ -628,6 +628,10 @@ static int pl2303_ioctl(struct tty_struct *tty,
 {
 	struct serial_struct ser;
 	struct usb_serial_port *port = tty->driver_data;
+	struct pl2303_private *priv = usb_get_serial_port_data(port);
+	int ret;
+	struct async_icount cnow;
+	unsigned long flags;
 	dbg("%s (%d) cmd = 0x%04x", __func__, port->number, cmd);
 
 	switch (cmd) {
@@ -644,8 +648,19 @@ static int pl2303_ioctl(struct tty_struct *tty,
 		return 0;
 
 	case TIOCMIWAIT:
-		dbg("%s (%d) TIOCMIWAIT", __func__,  port->number);
-		return wait_modem_info(port, arg);
+		spin_lock_irqsave(&port->lock, flags);
+		cnow = priv->icount;				/* atomic copy */
+		spin_unlock_irqrestore(&port->lock, flags);
+
+		ret = wait_event_interruptible(priv->delta_msr_wait,
+			usb_serial_generic_msr_changed(tty, arg, &cnow));
+		if (!ret) {
+			if (test_bit(TTY_HUPPING, &tty->flags))
+				ret = -EIO;
+			if (!test_bit(ASYNCB_INITIALIZED, &port->port.flags))
+				ret = -EIO;
+		}
+		return -EIO;
 	default:
 		dbg("%s not supported = 0x%04x", __func__, cmd);
 		break;
@@ -731,7 +746,14 @@ static void pl2303_update_line_status(struct usb_serial_port *port,
 		usb_serial_handle_break(port);
 
 	if (delta & UART_STATE_MSR_MASK) {
+		if (delta & UART_CTS)
+			priv->icount.cts++;
+		if (delta & UART_DSR)
+			priv->icount.dsr++;
+		if (delta & UART_RING)
+			priv->icount.rng++;
 		if (delta & UART_DCD) {
+			priv->icount.dcd++;
 			tty = tty_port_tty_get(&port->port);
 			if (tty) {
 				usb_serial_handle_dcd_change(port, tty,
