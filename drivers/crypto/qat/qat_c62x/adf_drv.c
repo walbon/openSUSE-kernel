@@ -60,13 +60,13 @@
 #include <adf_accel_devices.h>
 #include <adf_common_drv.h>
 #include <adf_cfg.h>
-#include "adf_dh895xcc_hw_data.h"
+#include "adf_c62x_hw_data.h"
 
 #define ADF_SYSTEM_DEVICE(device_id) \
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, device_id)}
 
 static const struct pci_device_id adf_pci_tbl[] = {
-	ADF_SYSTEM_DEVICE(ADF_DH895XCC_PCI_DEVICE_ID),
+	ADF_SYSTEM_DEVICE(ADF_C62X_PCI_DEVICE_ID),
 	{0,}
 };
 MODULE_DEVICE_TABLE(pci, adf_pci_tbl);
@@ -76,7 +76,7 @@ static void adf_remove(struct pci_dev *dev);
 
 static struct pci_driver adf_driver = {
 	.id_table = adf_pci_tbl,
-	.name = ADF_DH895XCC_DEVICE_NAME,
+	.name = ADF_C62X_DEVICE_NAME,
 	.probe = adf_probe,
 	.remove = adf_remove,
 	.sriov_configure = adf_sriov_configure,
@@ -102,8 +102,8 @@ static void adf_cleanup_accel(struct adf_accel_dev *accel_dev)
 
 	if (accel_dev->hw_device) {
 		switch (accel_pci_dev->pci_dev->device) {
-		case ADF_DH895XCC_PCI_DEVICE_ID:
-			adf_clean_hw_data_dh895xcc(accel_dev->hw_device);
+		case ADF_C62X_PCI_DEVICE_ID:
+			adf_clean_hw_data_c62x(accel_dev->hw_device);
 			break;
 		default:
 			break;
@@ -126,7 +126,7 @@ static int adf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	int ret, bar_mask;
 
 	switch (ent->device) {
-	case ADF_DH895XCC_PCI_DEVICE_ID:
+	case ADF_C62X_PCI_DEVICE_ID:
 		break;
 	default:
 		dev_err(&pdev->dev, "Invalid device 0x%x.\n", ent->device);
@@ -168,7 +168,7 @@ static int adf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	accel_dev->hw_device = hw_data;
-	adf_init_hw_data_dh895xcc(accel_dev->hw_device);
+	adf_init_hw_data_c62x(accel_dev->hw_device);
 	pci_read_config_byte(pdev, PCI_REVISION_ID, &accel_pci_dev->revid);
 	pci_read_config_dword(pdev, ADF_DEVICE_FUSECTL_OFFSET,
 			      &hw_data->fuses);
@@ -203,8 +203,6 @@ static int adf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (ret)
 		goto out_err;
 
-	pcie_set_readrq(pdev, 1024);
-
 	/* enable PCI device */
 	if (pci_enable_device(pdev)) {
 		ret = -EFAULT;
@@ -225,7 +223,7 @@ static int adf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64));
 	}
 
-	if (pci_request_regions(pdev, ADF_DH895XCC_DEVICE_NAME)) {
+	if (pci_request_regions(pdev, ADF_C62X_DEVICE_NAME)) {
 		ret = -EFAULT;
 		goto out_err_disable;
 	}
@@ -333,6 +331,5 @@ module_exit(adfdrv_release);
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Intel");
-MODULE_FIRMWARE(ADF_DH895XCC_FW);
 MODULE_DESCRIPTION("Intel(R) QuickAssist Technology");
 MODULE_VERSION(ADF_DRV_VERSION);

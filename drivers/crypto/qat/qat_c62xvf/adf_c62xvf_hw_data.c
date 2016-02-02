@@ -47,42 +47,42 @@
 #include <adf_accel_devices.h>
 #include <adf_pf2vf_msg.h>
 #include <adf_common_drv.h>
-#include "adf_dh895xccvf_hw_data.h"
+#include "adf_c62xvf_hw_data.h"
 
-static struct adf_hw_device_class dh895xcciov_class = {
-	.name = ADF_DH895XCCVF_DEVICE_NAME,
-	.type = DEV_DH895XCCVF,
+static struct adf_hw_device_class c62xiov_class = {
+	.name = ADF_C62XVF_DEVICE_NAME,
+	.type = DEV_C62XVF,
 	.instances = 0
 };
 
 static u32 get_accel_mask(u32 fuse)
 {
-	return ADF_DH895XCCIOV_ACCELERATORS_MASK;
+	return ADF_C62XIOV_ACCELERATORS_MASK;
 }
 
 static u32 get_ae_mask(u32 fuse)
 {
-	return ADF_DH895XCCIOV_ACCELENGINES_MASK;
+	return ADF_C62XIOV_ACCELENGINES_MASK;
 }
 
 static u32 get_num_accels(struct adf_hw_device_data *self)
 {
-	return ADF_DH895XCCIOV_MAX_ACCELERATORS;
+	return ADF_C62XIOV_MAX_ACCELERATORS;
 }
 
 static u32 get_num_aes(struct adf_hw_device_data *self)
 {
-	return ADF_DH895XCCIOV_MAX_ACCELENGINES;
+	return ADF_C62XIOV_MAX_ACCELENGINES;
 }
 
 static u32 get_misc_bar_id(struct adf_hw_device_data *self)
 {
-	return ADF_DH895XCCIOV_PMISC_BAR;
+	return ADF_C62XIOV_PMISC_BAR;
 }
 
 static u32 get_etr_bar_id(struct adf_hw_device_data *self)
 {
-	return ADF_DH895XCCIOV_ETR_BAR;
+	return ADF_C62XIOV_ETR_BAR;
 }
 
 static enum dev_sku_info get_sku(struct adf_hw_device_data *self)
@@ -92,12 +92,12 @@ static enum dev_sku_info get_sku(struct adf_hw_device_data *self)
 
 static u32 get_pf2vf_offset(u32 i)
 {
-	return ADF_DH895XCCIOV_PF2VF_OFFSET;
+	return ADF_C62XIOV_PF2VF_OFFSET;
 }
 
 static u32 get_vintmsk_offset(u32 i)
 {
-	return ADF_DH895XCCIOV_VINTMSK_OFFSET;
+	return ADF_C62XIOV_VINTMSK_OFFSET;
 }
 
 static int adf_vf_int_noop(struct adf_accel_dev *accel_dev)
@@ -132,15 +132,15 @@ static void adf_vf2pf_shutdown(struct adf_accel_dev *accel_dev)
 			"Failed to send Shutdown event to PF\n");
 }
 
-void adf_init_hw_data_dh895xcciov(struct adf_hw_device_data *hw_data)
+void adf_init_hw_data_c62xiov(struct adf_hw_device_data *hw_data)
 {
-	hw_data->dev_class = &dh895xcciov_class;
-	hw_data->num_banks = ADF_DH895XCCIOV_ETR_MAX_BANKS;
-	hw_data->num_accel = ADF_DH895XCCIOV_MAX_ACCELERATORS;
+	hw_data->dev_class = &c62xiov_class;
+	hw_data->num_banks = ADF_C62XIOV_ETR_MAX_BANKS;
+	hw_data->num_accel = ADF_C62XIOV_MAX_ACCELERATORS;
 	hw_data->num_logical_accel = 1;
-	hw_data->num_engines = ADF_DH895XCCIOV_MAX_ACCELENGINES;
-	hw_data->tx_rx_gap = ADF_DH895XCCIOV_RX_RINGS_OFFSET;
-	hw_data->tx_rings_mask = ADF_DH895XCCIOV_TX_RINGS_MASK;
+	hw_data->num_engines = ADF_C62XIOV_MAX_ACCELENGINES;
+	hw_data->tx_rx_gap = ADF_C62XIOV_RX_RINGS_OFFSET;
+	hw_data->tx_rings_mask = ADF_C62XIOV_TX_RINGS_MASK;
 	hw_data->alloc_irq = adf_vf_isr_resource_alloc;
 	hw_data->free_irq = adf_vf_isr_resource_free;
 	hw_data->enable_error_correction = adf_vf_void_noop;
@@ -166,7 +166,7 @@ void adf_init_hw_data_dh895xcciov(struct adf_hw_device_data *hw_data)
 	adf_devmgr_update_class_index(hw_data);
 }
 
-void adf_clean_hw_data_dh895xcciov(struct adf_hw_device_data *hw_data)
+void adf_clean_hw_data_c62xiov(struct adf_hw_device_data *hw_data)
 {
 	hw_data->dev_class->instances--;
 	adf_devmgr_update_class_index(hw_data);
