@@ -497,7 +497,6 @@ xfsaild(
 	long		tout = 0;	/* milliseconds */
 
 	current->flags |= PF_MEMALLOC;
-	set_freezable();
 
 	while (!kthread_should_stop()) {
 		klp_kgraft_mark_task_safe(current);
