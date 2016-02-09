@@ -9,7 +9,14 @@
 int pciback_enable_msi(struct pciback_device *pdev,
 		struct pci_dev *dev, struct xen_pci_op *op)
 {
-	int status = pci_enable_msi(dev);
+	int status;
+
+	if (dev->msi_enabled)
+		status = -EALREADY;
+	else if (dev->msix_enabled)
+		status = -ENXIO;
+	else
+		status = pci_enable_msi(dev);
 
 	if (status) {
 		if (printk_ratelimit())
@@ -26,7 +33,8 @@ int pciback_enable_msi(struct pciback_device *pdev,
 int pciback_disable_msi(struct pciback_device *pdev,
 		struct pci_dev *dev, struct xen_pci_op *op)
 {
-	pci_disable_msi(dev);
+	if (dev->msi_enabled)
+		pci_disable_msi(dev);
 
 	op->value = dev->irq;
 	return 0;
@@ -37,9 +45,21 @@ int pciback_enable_msix(struct pciback_device *pdev,
 {
 	int i, result;
 	struct msix_entry *entries;
+	u16 cmd;
 
 	if (op->value > SH_INFO_MAX_VEC)
 		return -EINVAL;
+
+	if (dev->msix_enabled)
+		return -EALREADY;
+
+	/*
+	 * PCI_COMMAND_MEMORY must be enabled, otherwise we may not be able
+	 * to access the BARs where the MSI-X entries reside.
+	 */
+	pci_read_config_word(dev, PCI_COMMAND, &cmd);
+	if (dev->msi_enabled || !(cmd & PCI_COMMAND_MEMORY))
+		return -ENXIO;
 
 	entries = kmalloc(op->value * sizeof(*entries), GFP_KERNEL);
 	if (entries == NULL)
@@ -67,8 +87,8 @@ int pciback_enable_msix(struct pciback_device *pdev,
 int pciback_disable_msix(struct pciback_device *pdev,
 		struct pci_dev *dev, struct xen_pci_op *op)
 {
-
-	pci_disable_msix(dev);
+	if (dev->msix_enabled)
+		pci_disable_msix(dev);
 
 	op->value = dev->irq;
 	return 0;
