@@ -1117,7 +1117,7 @@ bool drm_edid_block_valid(u8 *raw_edid, int block, bool print_bad_edid,
 	csum = drm_edid_block_checksum(raw_edid);
 	if (csum) {
 		if (print_bad_edid) {
-			DRM_ERROR("EDID checksum is invalid, remainder is %d\n", csum);
+			DRM_INFO("EDID checksum is invalid, remainder is %d\n", csum);
 		}
 
 		if (edid_corrupt)
@@ -1149,10 +1149,10 @@ bool drm_edid_block_valid(u8 *raw_edid, int block, bool print_bad_edid,
 bad:
 	if (print_bad_edid) {
 		if (drm_edid_is_zero(raw_edid, EDID_LENGTH)) {
-			printk(KERN_ERR "EDID block is all zeroes\n");
+			printk(KERN_INFO "EDID block is all zeroes\n");
 		} else {
-			printk(KERN_ERR "Raw EDID:\n");
-			print_hex_dump(KERN_ERR, " \t", DUMP_PREFIX_NONE, 16, 1,
+			printk(KERN_INFO "Raw EDID:\n");
+			print_hex_dump(KERN_INFO, " \t", DUMP_PREFIX_NONE, 16, 1,
 			       raw_edid, EDID_LENGTH, false);
 		}
 	}
