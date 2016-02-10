@@ -529,6 +529,7 @@ static enum drm_connector_status cirrus_vga_detect(struct drm_connector
 
 static void cirrus_connector_destroy(struct drm_connector *connector)
 {
+	drm_connector_unregister(connector);
 	drm_connector_cleanup(connector);
 	kfree(connector);
 }
