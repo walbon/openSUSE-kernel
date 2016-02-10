@@ -979,7 +979,7 @@ typedef struct drm_i915_private {
 	struct drm_property *broadcast_rgb_property;
 	struct drm_property *force_audio_property;
 
-	bool hw_contexts_disabled;
+	bool hw_contexts_enabled;
 	uint32_t hw_context_size;
 
 	bool fdi_rx_polarity_reversed;
