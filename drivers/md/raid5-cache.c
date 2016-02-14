@@ -1181,6 +1181,7 @@ int r5l_init_log(struct r5conf *conf, struct md_rdev *rdev)
 		goto error;
 
 	rcu_assign_pointer(conf->log, log);
+	set_bit(MD_HAS_JOURNAL, &conf->mddev->flags);
 	return 0;
 error:
 	md_unregister_thread(&log->reclaim_thread);
