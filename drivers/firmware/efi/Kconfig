@@ -41,6 +41,10 @@ config EFI_VARS_PSTORE_DEFAULT_DISABLE
 	  backend for pstore by default. This setting can be overridden
 	  using the efivars module's pstore_disable parameter.
 
+config EFI_HIBERNATION_KEYS
+	bool
+	select EFI_VARS
+
 config EFI_RUNTIME_MAP
 	bool "Export efi runtime maps to sysfs"
 	depends on X86 && EFI && KEXEC_CORE
