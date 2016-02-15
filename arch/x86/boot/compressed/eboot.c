@@ -13,6 +13,7 @@
 #include <asm/setup.h>
 #include <asm/desc.h>
 #include <asm/bootparam_utils.h>
+#include <asm/suspend.h>
 
 #include "../string.h"
 #include "eboot.h"
@@ -31,12 +32,14 @@ static void setup_boot_services##bits(struct efi_config *c)		\
 {									\
 	efi_system_table_##bits##_t *table;				\
 	efi_boot_services_##bits##_t *bt;				\
+	efi_runtime_services_##bits##_t *rt;				\
 									\
 	table = (typeof(table))sys_table;				\
 									\
 	c->text_output = table->con_out;				\
 									\
 	bt = (typeof(bt))(unsigned long)(table->boottime);		\
+	rt = (typeof(rt))(unsigned long)(table->runtime);		\
 									\
 	c->allocate_pool = bt->allocate_pool;				\
 	c->allocate_pages = bt->allocate_pages;				\
@@ -46,6 +49,8 @@ static void setup_boot_services##bits(struct efi_config *c)		\
 	c->locate_handle = bt->locate_handle;				\
 	c->handle_protocol = bt->handle_protocol;			\
 	c->exit_boot_services = bt->exit_boot_services;			\
+	c->get_variable = rt->get_variable;				\
+	c->set_variable = rt->set_variable;				\
 }
 BOOT_SERVICES(32);
 BOOT_SERVICES(64);
@@ -1431,6 +1436,98 @@ free_mem_map:
 	return status;
 }
 
+#ifdef CONFIG_HIBERNATE_VERIFICATION
+#define HIBERNATION_KEY \
+	((efi_char16_t [15]) { 'H', 'I', 'B', 'E', 'R', 'N', 'A', 'T', 'I', 'O', 'N', 'K', 'e', 'y', 0 })
+#define HIBERNATION_KEY_ATTRIBUTE	(EFI_VARIABLE_NON_VOLATILE | \
+					EFI_VARIABLE_BOOTSERVICE_ACCESS)
+
+static void setup_hibernation_keys(struct boot_params *params)
+{
+	unsigned long key_size;
+	unsigned long attributes;
+	unsigned long ignore;
+	struct setup_data *setup_data, *hibernation_setup_data;
+	struct hibernation_keys *keys;
+	bool regen_key = false;
+	unsigned long size = 0;
+	efi_status_t status, reg_status;
+
+	/* Allocate setup_data to carry keys */
+	size = sizeof(struct setup_data) + sizeof(struct hibernation_keys);
+	status = efi_call_early(allocate_pool, EFI_LOADER_DATA,
+				size, &hibernation_setup_data);
+	if (status != EFI_SUCCESS) {
+		efi_printk(sys_table, "Failed to alloc mem for hibernation keys\n");
+		return;
+	}
+
+	memset(hibernation_setup_data, 0, size);
+	keys = (struct hibernation_keys *) hibernation_setup_data->data;
+
+	status = efi_call_early(get_variable, HIBERNATION_KEY,
+				&EFI_HIBERNATION_GUID, &attributes,
+				&key_size, keys->hibernation_key);
+	if (status == EFI_SUCCESS && attributes != HIBERNATION_KEY_ATTRIBUTE) {
+		efi_printk(sys_table, "A hibernation key is not boot service variable\n");
+		memset(keys->hibernation_key, 0, HIBERNATION_DIGEST_SIZE);
+		status = efi_call_early(set_variable, HIBERNATION_KEY,
+					&EFI_HIBERNATION_GUID, attributes, 0,
+					NULL);
+		if (status == EFI_SUCCESS) {
+			efi_printk(sys_table, "Cleaned existing hibernation key\n");
+			status = EFI_NOT_FOUND;
+		} else
+			goto clean_fail;
+	}
+
+	reg_status = efi_call_early(get_variable, HIBERNATION_KEY_REGEN_FLAG,
+				    &EFI_HIBERNATION_GUID, &attributes, &ignore,
+				    &regen_key);
+	if ((status != EFI_SUCCESS) ||
+	   (reg_status == EFI_SUCCESS && regen_key)) {
+		efi_printk(sys_table, "Regenerating hibernation key\n");
+
+		efi_get_random_key(sys_table, params, keys->hibernation_key,
+				   HIBERNATION_DIGEST_SIZE);
+
+		/* Set new hibernation key to bootservice non-volatile variable */
+		status = efi_call_early(set_variable, HIBERNATION_KEY,
+					&EFI_HIBERNATION_GUID,
+					HIBERNATION_KEY_ATTRIBUTE,
+					HIBERNATION_DIGEST_SIZE,
+					keys->hibernation_key);
+		if (status != EFI_SUCCESS)
+			efi_printk(sys_table, "Failed to set hibernation key\n");
+
+		efi_call_early(get_variable, HIBERNATION_KEY,
+				&EFI_HIBERNATION_GUID,
+				&attributes, &key_size, keys->hibernation_key);
+
+		/* Clean key regenerate flag */
+		efi_call_early(set_variable, HIBERNATION_KEY_REGEN_FLAG,
+				&EFI_HIBERNATION_GUID, 0, 0, NULL);
+	}
+
+clean_fail:
+	hibernation_setup_data->type = SETUP_HIBERNATION_KEYS;
+	hibernation_setup_data->len = sizeof(struct hibernation_keys);
+	hibernation_setup_data->next = 0;
+	keys->hkey_status = efi_status_to_err(status);
+
+	setup_data = (struct setup_data *)params->hdr.setup_data;
+	while (setup_data && setup_data->next)
+		setup_data = (struct setup_data *)setup_data->next;
+
+	if (setup_data)
+		setup_data->next = (unsigned long)hibernation_setup_data;
+	else
+		params->hdr.setup_data = (unsigned long)hibernation_setup_data;
+}
+#else
+static void setup_hibernation_keys(struct boot_params *params) {}
+#endif
+
 /*
  * On success we return a pointer to a boot_params structure, and NULL
  * on failure.
@@ -1471,6 +1568,8 @@ struct boot_params *efi_main(struct efi_config *c,
 	setup_graphics(boot_params);
 
 	setup_efi_pci(boot_params);
+
+	setup_hibernation_keys(boot_params);
 
 	status = efi_call_early(allocate_pool, EFI_LOADER_DATA,
 				sizeof(*gdt), (void **)&gdt);

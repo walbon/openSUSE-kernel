@@ -522,6 +522,7 @@ extern enum system_states {
 #define TAINT_UNSIGNED_MODULE		13
 #define TAINT_SOFTLOCKUP		14
 #define TAINT_LIVEPATCH			15
+#define TAINT_UNSAFE_HIBERNATE		16
 
 #ifdef CONFIG_SUSE_KERNEL_SUPPORTED
 /*
