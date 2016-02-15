@@ -19,6 +19,7 @@
 #include <linux/statfs.h>
 #include <linux/seq_file.h>
 #include "overlayfs.h"
+#include "compat.h"
 
 MODULE_AUTHOR("Miklos Szeredi <miklos@szeredi.hu>");
 MODULE_DESCRIPTION("Overlay filesystem");
@@ -42,6 +43,7 @@ struct ovl_fs {
 	long lower_namelen;
 	/* pathnames of lower and upper dirs, for show_options */
 	struct ovl_config config;
+	bool compat;
 };
 
 struct ovl_dir_cache;
@@ -213,6 +215,14 @@ struct dentry *ovl_workdir(struct dentry *dentry)
 	return ofs->workdir;
 }
 
+#ifdef CONFIG_OVERLAY_FS_COMPAT
+bool ovl_compat_mode(struct dentry *dentry)
+{
+	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
+	return ofs->compat;
+}
+#endif
+
 bool ovl_dentry_is_opaque(struct dentry *dentry)
 {
 	struct ovl_entry *oe = dentry->d_fsdata;
@@ -256,9 +266,12 @@ u64 ovl_dentry_version_get(struct dentry *dentry)
 	return oe->version;
 }
 
-bool ovl_is_whiteout(struct dentry *dentry)
+bool ovl_is_whiteout(struct dentry *dentry, struct dentry *ovl_dir)
 {
 	struct inode *inode = dentry->d_inode;
+
+	if (ovl_compat_mode(ovl_dir))
+		return ovl_compat_is_whiteout(ovl_dir, dentry);
 
 	return inode && IS_WHITEOUT(inode);
 }
@@ -441,7 +454,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 				err = -EREMOTE;
 				goto out;
 			}
-			if (ovl_is_whiteout(this)) {
+			if (ovl_is_whiteout(this, dentry)) {
 				dput(this);
 				this = NULL;
 				upperopaque = true;
@@ -475,7 +488,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		}
 		if (!this)
 			continue;
-		if (ovl_is_whiteout(this)) {
+		if (ovl_is_whiteout(this, dentry)) {
 			dput(this);
 			break;
 		}
@@ -794,7 +807,8 @@ static void ovl_unescape(char *s)
 	}
 }
 
-static int ovl_mount_dir_noesc(const char *name, struct path *path)
+static int ovl_mount_dir_noesc(const char *name, struct path *path,
+			       struct ovl_fs *ufs)
 {
 	int err = -EINVAL;
 
@@ -803,6 +817,9 @@ static int ovl_mount_dir_noesc(const char *name, struct path *path)
 		goto out;
 	}
 	err = kern_path(name, LOOKUP_FOLLOW, path);
+	if (err == -ENOENT && ufs->compat)
+		err = ovl_compat_mkdir(name, path);
+
 	if (err) {
 		pr_err("overlayfs: failed to resolve '%s': %i\n", name, err);
 		goto out;
@@ -824,14 +841,15 @@ out:
 	return err;
 }
 
-static int ovl_mount_dir(const char *name, struct path *path)
+static int ovl_mount_dir(struct ovl_fs *ufs, const char *name,
+			 struct path *path)
 {
 	int err = -ENOMEM;
 	char *tmp = kstrdup(name, GFP_KERNEL);
 
 	if (tmp) {
 		ovl_unescape(tmp);
-		err = ovl_mount_dir_noesc(tmp, path);
+		err = ovl_mount_dir_noesc(tmp, path, ufs);
 
 		if (!err)
 			if (ovl_dentry_remote(path->dentry)) {
@@ -846,12 +864,12 @@ static int ovl_mount_dir(const char *name, struct path *path)
 }
 
 static int ovl_lower_dir(const char *name, struct path *path, long *namelen,
-			 int *stack_depth, bool *remote)
+			 int *stack_depth, bool *remote, struct ovl_fs *ufs)
 {
 	int err;
 	struct kstatfs statfs;
 
-	err = ovl_mount_dir_noesc(name, path);
+	err = ovl_mount_dir_noesc(name, path, ufs);
 	if (err)
 		goto out;
 
@@ -874,13 +892,21 @@ out:
 	return err;
 }
 
-/* Workdir should not be subdir of upperdir and vice versa */
-static bool ovl_workdir_ok(struct dentry *workdir, struct dentry *upperdir)
+/*
+ * Workdir should not be subdir of upperdir and vice versa
+ * In compatibility mode, workdir must be a subdir of upperdir
+ */
+static bool ovl_workdir_ok(struct dentry *workdir, struct dentry *upperdir,
+			   struct ovl_fs *ofs)
 {
 	bool ok = false;
+	struct dentry *ancestor = NULL;
+
+	if (ofs->compat)
+		ancestor = workdir;
 
 	if (workdir != upperdir) {
-		ok = (lock_rename(workdir, upperdir) == NULL);
+		ok = (lock_rename(workdir, upperdir) == ancestor);
 		unlock_rename(workdir, upperdir);
 	}
 	return ok;
@@ -906,6 +932,8 @@ static unsigned int ovl_split_lowerdirs(char *str)
 	return ctr;
 }
 
+static bool ovl_compat_sb(struct super_block *sb);
+
 static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct path upperpath = { NULL, NULL };
@@ -927,6 +955,8 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	if (!ufs)
 		goto out;
 
+	ufs->compat = ovl_compat_sb(sb);
+
 	err = ovl_parse_opt((char *) data, &ufs->config);
 	if (err)
 		goto out_free_config;
@@ -937,6 +967,24 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_free_config;
 	}
 
+#ifdef CONFIG_OVERLAY_FS_COMPAT
+	if (ufs->compat) {
+		if (ufs->config.workdir) {
+			pr_err("overlayfs: 'workdir' is prohibited in compatibility mode\n");
+			err = -EINVAL;
+			goto out_free_config;
+		}
+
+		ufs->config.workdir = kasprintf(GFP_KERNEL, "%s/%s",
+						ufs->config.upperdir,
+						COMPAT_WORKDIR);
+		if (!ufs->config.workdir) {
+			err = -ENOMEM;
+			goto out_free_config;
+		}
+	}
+#endif
+
 	sb->s_stack_depth = 0;
 	if (ufs->config.upperdir) {
 		if (!ufs->config.workdir) {
@@ -944,7 +992,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			goto out_free_config;
 		}
 
-		err = ovl_mount_dir(ufs->config.upperdir, &upperpath);
+		err = ovl_mount_dir(ufs, ufs->config.upperdir, &upperpath);
 		if (err)
 			goto out_free_config;
 
@@ -955,7 +1003,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			goto out_put_upperpath;
 		}
 
-		err = ovl_mount_dir(ufs->config.workdir, &workpath);
+		err = ovl_mount_dir(ufs, ufs->config.workdir, &workpath);
 		if (err)
 			goto out_put_upperpath;
 
@@ -964,11 +1012,17 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			pr_err("overlayfs: workdir and upperdir must reside under the same mount\n");
 			goto out_put_workpath;
 		}
-		if (!ovl_workdir_ok(workpath.dentry, upperpath.dentry)) {
-			pr_err("overlayfs: workdir and upperdir must be separate subtrees\n");
+		if (!ovl_workdir_ok(workpath.dentry, upperpath.dentry, ufs)) {
+			if (!ufs->compat)
+				pr_err("overlayfs: workdir and upperdir must be separate subtrees\n");
+			else
+				pr_err("overlayfs: workdir must be subdir of upperdir in compatibility mode (internal error)\n");
 			goto out_put_workpath;
 		}
 		sb->s_stack_depth = upperpath.mnt->mnt_sb->s_stack_depth;
+	} else if (ufs->compat) {
+		pr_err("overlayfs: missing upperdir in compatibility mode.\n");
+		goto out_free_config;
 	}
 	err = -ENOMEM;
 	lowertmp = kstrdup(ufs->config.lowerdir, GFP_KERNEL);
@@ -984,6 +1038,9 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	} else if (!ufs->config.upperdir && stacklen == 1) {
 		pr_err("overlayfs: at least 2 lowerdir are needed while upperdir nonexistent\n");
 		goto out_free_lowertmp;
+	} else if (ufs->compat && stacklen > 1) {
+		pr_err("overlayfs: compatibility mode is limited to one lower directory\n");
+		goto out_free_lowertmp;
 	}
 
 	stack = kcalloc(stacklen, sizeof(struct path), GFP_KERNEL);
@@ -994,7 +1051,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	for (numlower = 0; numlower < stacklen; numlower++) {
 		err = ovl_lower_dir(lower, &stack[numlower],
 				    &ufs->lower_namelen, &sb->s_stack_depth,
-				    &remote);
+				    &remote, ufs);
 		if (err)
 			goto out_put_lowerpath;
 
@@ -1086,6 +1143,9 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_root = root_dentry;
 	sb->s_fs_info = ufs;
 
+	if (ufs->compat)
+		pr_info("overlayfs: mounted file system in 'overlayfs' compatibility mode.  This mode is is offered for compatibility with a historical 'early adopter' format and may be unsupported in a future release.  Please consider using the official 'overlay' interface instead.\n");
+
 	return 0;
 
 out_free_oe:
@@ -1130,13 +1190,45 @@ static struct file_system_type ovl_fs_type = {
 };
 MODULE_ALIAS_FS("overlay");
 
+#ifdef CONFIG_OVERLAY_FS_COMPAT
+static struct file_system_type ovl_compat_fs_type = {
+	.owner		= THIS_MODULE,
+	.name		= "overlayfs",
+	.mount		= ovl_mount,
+	.kill_sb	= kill_anon_super,
+};
+MODULE_ALIAS_FS("overlayfs");
+#endif
+
+static bool ovl_compat_sb(struct super_block *sb)
+{
+#ifdef CONFIG_OVERLAY_FS_COMPAT
+	return sb->s_type == &ovl_compat_fs_type;
+#else
+	return false;
+#endif
+}
+
 static int __init ovl_init(void)
 {
-	return register_filesystem(&ovl_fs_type);
+	int ret = register_filesystem(&ovl_fs_type);
+	if (ret)
+		return ret;
+
+#ifdef CONFIG_OVERLAY_FS_COMPAT
+	ret = register_filesystem(&ovl_compat_fs_type);
+	if (ret)
+		unregister_filesystem(&ovl_fs_type);
+#endif
+
+	return ret;
 }
 
 static void __exit ovl_exit(void)
 {
+#ifdef CONFIG_OVERLAY_FS_COMPAT
+	unregister_filesystem(&ovl_compat_fs_type);
+#endif
 	unregister_filesystem(&ovl_fs_type);
 }
 

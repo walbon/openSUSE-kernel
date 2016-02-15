@@ -16,6 +16,7 @@
 #include <linux/security.h>
 #include <linux/cred.h>
 #include "overlayfs.h"
+#include "compat.h"
 
 struct ovl_cache_entry {
 	unsigned int len;
@@ -41,6 +42,7 @@ struct ovl_readdir_data {
 	struct list_head *list;
 	struct list_head middle;
 	struct ovl_cache_entry *first_maybe_whiteout;
+	struct dentry *dentry;
 	int count;
 	int err;
 };
@@ -98,7 +100,8 @@ static struct ovl_cache_entry *ovl_cache_entry_new(struct ovl_readdir_data *rdd,
 	p->ino = ino;
 	p->is_whiteout = false;
 
-	if (d_type == DT_CHR) {
+	if ((d_type == DT_CHR && !ovl_compat_mode(rdd->dentry)) ||
+	     ovl_compat_maybe_whiteout(rdd->dentry, d_type, ino)) {
 		p->next_maybe_whiteout = rdd->first_maybe_whiteout;
 		rdd->first_maybe_whiteout = p;
 	}
@@ -224,7 +227,8 @@ static int ovl_check_whiteouts(struct dentry *dir, struct ovl_readdir_data *rdd)
 			rdd->first_maybe_whiteout = p->next_maybe_whiteout;
 			dentry = lookup_one_len(p->name, dir, p->len);
 			if (!IS_ERR(dentry)) {
-				p->is_whiteout = ovl_is_whiteout(dentry);
+				p->is_whiteout = ovl_is_whiteout(dentry,
+								 rdd->dentry);
 				dput(dentry);
 			}
 		}
@@ -290,6 +294,7 @@ static int ovl_dir_read_merged(struct dentry *dentry, struct list_head *list)
 		.list = list,
 		.root = RB_ROOT,
 		.is_merge = false,
+		.dentry = dentry,
 	};
 	int idx, next;
 
