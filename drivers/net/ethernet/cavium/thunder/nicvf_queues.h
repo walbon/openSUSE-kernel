@@ -10,7 +10,6 @@
 #define NICVF_QUEUES_H
 
 #include <linux/netdevice.h>
-#include "nic.h"
 #include "q_struct.h"
 
 #define MAX_QUEUE_SET			128
@@ -76,7 +75,7 @@
  */
 #define CMP_QSIZE		CMP_QUEUE_SIZE3
 #define CMP_QUEUE_LEN		(1ULL << (CMP_QSIZE + 10))
-#define CMP_QUEUE_CQE_THRESH	(VNIC_NAPI_WEIGHT / 2)
+#define CMP_QUEUE_CQE_THRESH	(NAPI_POLL_WEIGHT / 2)
 #define CMP_QUEUE_TIMER_THRESH	80 /* ~2usec */
 
 #define RBDR_SIZE		RBDR_SIZE0

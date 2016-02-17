@@ -298,10 +298,7 @@ static int nicvf_init_cmp_queue(struct nicvf *nic,
 		return err;
 
 	cq->desc = cq->dmem.base;
-	if (!pass1_silicon(nic))
-		cq->thresh = CMP_QUEUE_CQE_THRESH;
-	else
-		cq->thresh = 0;
+	cq->thresh = pass1_silicon(nic->pdev) ? 0 : CMP_QUEUE_CQE_THRESH;
 	nic->cq_coalesce_usecs = (CMP_QUEUE_TIMER_THRESH * 0.05) - 1;
 
 	return 0;

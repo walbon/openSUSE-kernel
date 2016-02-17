@@ -34,8 +34,6 @@
 /* NIC priv flags */
 #define	NIC_SRIOV_ENABLED		BIT(0)
 
-#define	VNIC_NAPI_WEIGHT		NAPI_POLL_WEIGHT
-
 /* Min/Max packet size */
 #define	NIC_HW_MIN_FRS			64
 #define	NIC_HW_MAX_FRS			9200 /* 9216 max packet including FCS */
@@ -164,8 +162,6 @@ struct nicvf_rss_info {
 	u64 key[RSS_HASH_KEY_SIZE];
 } ____cacheline_aligned_in_smp;
 
-#define pass1_silicon(nic)		((nic)->pdev->revision < 8)
-
 enum rx_stats_reg_offset {
 	RX_OCTS = 0x0,
 	RX_UCAST = 0x1,
@@ -272,7 +268,7 @@ struct nicvf {
 	bool			tns_mode:1;
 	bool                    sqs_mode:1;
 	bool			loopback_supported:1;
-	bool			hw_tso:1;
+	bool			hw_tso;
 	u16			mtu;
 	struct queue_set	*qs;
 #define	MAX_SQS_PER_VF_SINGLE_NODE		5
@@ -495,6 +491,11 @@ static inline int nic_get_node_id(struct pci_dev *pdev)
 {
 	u64 addr = pci_resource_start(pdev, PCI_CFG_REG_BAR_NUM);
 	return ((addr >> NIC_NODE_ID_SHIFT) & NIC_NODE_ID_MASK);
+}
+
+static inline bool pass1_silicon(struct pci_dev *pdev)
+{
+	return pdev->revision < 8;
 }
 
 int nicvf_set_real_num_queues(struct net_device *netdev,

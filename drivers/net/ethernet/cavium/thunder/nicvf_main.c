@@ -527,15 +527,17 @@ static void nicvf_snd_pkt_handler(struct net_device *netdev,
 
 	nicvf_check_cqe_tx_errs(nic, cq, cqe_tx);
 	skb = (struct sk_buff *)sq->skbuff[cqe_tx->sqe_ptr];
-	/* For SW TSO offloaded packets only one head SKB needs to be freed */
+	/* For TSO offloaded packets only one SQE will have a valid SKB */
 	if (skb) {
 		nicvf_put_sq_desc(sq, hdr->subdesc_cnt + 1);
 		prefetch(skb);
 		dev_consume_skb_any(skb);
 		sq->skbuff[cqe_tx->sqe_ptr] = (u64)NULL;
 	} else {
-		/* In case of HW TSO, a CQE_TX is added by HW for each segment.
-		 * Free SQEs only once.
+		/* In case of HW TSO, HW sends a CQE for each segment of a TSO
+		 * packet instead of a single CQE for the whole TSO packet
+		 * transmitted. Each of this CQE points to the same SQE, so
+		 * avoid freeing same SQE multiple times.
 		 */
 		if (!nic->hw_tso)
 			nicvf_put_sq_desc(sq, hdr->subdesc_cnt + 1);
@@ -1153,7 +1155,7 @@ int nicvf_open(struct net_device *netdev)
 		cq_poll->cq_idx = qidx;
 		cq_poll->nicvf = nic;
 		netif_napi_add(netdev, &cq_poll->napi, nicvf_poll,
-			       VNIC_NAPI_WEIGHT);
+			       NAPI_POLL_WEIGHT);
 		napi_enable(&cq_poll->napi);
 		nic->napi[qidx] = cq_poll;
 	}
@@ -1557,7 +1559,7 @@ static int nicvf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	netdev->vlan_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_TSO;
 
-	if (!pass1_silicon(nic))
+	if (!pass1_silicon(nic->pdev))
 		nic->hw_tso = true;
 
 	netdev->netdev_ops = &nicvf_netdev_ops;
