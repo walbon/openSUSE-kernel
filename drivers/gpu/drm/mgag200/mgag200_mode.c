@@ -104,6 +104,72 @@ static bool mga_crtc_mode_fixup(struct drm_crtc *crtc,
 	return true;
 }
 
+static int mga_set_plls(struct mga_device *mdev, long clock)
+{
+	const int post_div_max = 7;
+	const int in_div_min = 1;
+	const int in_div_max = 6;
+	const int feed_div_min = 7;
+	const int feed_div_max = 127;
+	u8 testm, testn;
+	u8 n = 0, m = 0, p, s;
+	long f_vco;
+	long computed;
+	long delta, tmp_delta;
+
+	long ref_clk = mdev->bios.ref_clk;
+	long p_clk_min = mdev->bios.pclk_min;
+	long p_clk_max =  mdev->bios.pclk_max;
+
+	if (clock > p_clk_max) {
+		printk(KERN_WARNING "Pixel Clock %ld too high\n", clock);
+		return 1;
+	}
+
+	if (clock <  p_clk_min >> 3)
+		clock = p_clk_min >> 3;
+
+	f_vco = clock;
+	for (p = 0;
+	     p <= post_div_max && f_vco < p_clk_min;
+	     p = (p << 1) + 1, f_vco <<= 1);
+
+	delta = clock;
+
+	for ( testm = in_div_min; testm <= in_div_max; testm++) {
+		for (testn = feed_div_min; testn <= feed_div_max; testn++) {
+			computed = ref_clk * (testn + 1) / (testm + 1);
+			if (computed < f_vco)
+				tmp_delta = f_vco - computed;
+			else
+				tmp_delta  = computed - f_vco;
+			if (tmp_delta < delta) {
+				delta = tmp_delta;
+				m = testm;
+				n = testn;
+			}
+		}
+	}
+	f_vco = ref_clk * (n + 1) / (m + 1);
+	if (f_vco < 100000)
+		s = 0;
+	else if (f_vco < 140000)
+		s = 1;
+	else if (f_vco < 180000)
+		s = 2;
+	else
+		s = 3;
+
+	DRM_DEBUG_KMS("clock: %ld vco: %ld m: %d n: %d p: %d s: %d\n",
+		      clock, f_vco, m, n, p, s);
+
+	WREG_DAC(MGA1064_PIX_PLLC_M, m);
+	WREG_DAC(MGA1064_PIX_PLLC_N, n);
+	WREG_DAC(MGA1064_PIX_PLLC_P, (p | (s << 3)));
+
+	return 0;
+}
+
 #define P_ARRAY_SIZE 9
 
 static int mga_g200se_set_plls(struct mga_device *mdev, long clock)
@@ -666,6 +732,10 @@ static int mga_g200er_set_plls(struct mga_device *mdev, long clock)
 static int mga_crtc_set_plls(struct mga_device *mdev, long clock)
 {
 	switch(mdev->type) {
+	case G200:
+	case G200_PCI:
+		return mga_set_plls(mdev, clock);
+		break;
 	case G200_SE_A:
 	case G200_SE_B:
 		return mga_g200se_set_plls(mdev, clock);
@@ -862,7 +932,8 @@ static int mga_crtc_do_set_base(struct drm_crtc *crtc,
 		ret = ttm_bo_kmap(&bo->bo, 0, bo->bo.num_pages, &bo->kmap);
 		if (ret)
 			DRM_ERROR("failed to kmap fbcon\n");
-
+		else
+			mgag200_fbdev_set_base(mdev, gpu_addr);
 	}
 	mgag200_bo_unreserve(bo);
 
@@ -909,6 +980,17 @@ static int mga_crtc_mode_set(struct drm_crtc *crtc,
 	bppshift = mdev->bpp_shifts[(crtc->primary->fb->bits_per_pixel >> 3) - 1];
 
 	switch (mdev->type) {
+	case G200:
+	case G200_PCI:
+		dacvalue[MGA1064_SYS_PLL_M] = 0x04;
+		dacvalue[MGA1064_SYS_PLL_N] = 0x2D;
+		dacvalue[MGA1064_SYS_PLL_P] = 0x19;
+		if (mdev->has_sdram)
+			option = 0x40499121;
+		else
+			option = 0x4049cd21;
+		option2 = 0x00008000;
+		break;
 	case G200_SE_A:
 	case G200_SE_B:
 		dacvalue[MGA1064_VREF_CTL] = 0x03;
@@ -1591,7 +1673,16 @@ static int mga_vga_mode_valid(struct drm_connector *connector,
 {
 	struct drm_device *dev = connector->dev;
 	struct mga_device *mdev = (struct mga_device*)dev->dev_private;
-	int bpp = 32;
+	int lace = 1 + ((mode->flags & DRM_MODE_FLAG_INTERLACE) ? 1 : 0);
+	int bpp;
+	uint32_t bw;
+
+	bpp = mdev->preferred_bpp;
+	/* Validate the mode input by the user */
+	if (connector->cmdline_mode.specified) {
+		if (connector->cmdline_mode.bpp_specified)
+			bpp = connector->cmdline_mode.bpp;
+	}
 
 	if (IS_G200_SE(mdev)) {
 		if (mdev->unique_rev_id == 0x01) {
@@ -1599,37 +1690,54 @@ static int mga_vga_mode_valid(struct drm_connector *connector,
 				return MODE_VIRTUAL_X;
 			if (mode->vdisplay > 1200)
 				return MODE_VIRTUAL_Y;
-			if (mga_vga_calculate_mode_bandwidth(mode, bpp)
-				> (24400 * 1024))
+			if ((bw =
+			     mga_vga_calculate_mode_bandwidth(mode, bpp))
+			    > (24400 * 1024)) {
+				DRM_DEBUG_KMS("Mode %d exceeds bandwidth: %d > %d",
+					      mode->base.id, bw, 24400 * 1024);
 				return MODE_BANDWIDTH;
+			}
 		} else if (mdev->unique_rev_id == 0x02) {
 			if (mode->hdisplay > 1920)
 				return MODE_VIRTUAL_X;
 			if (mode->vdisplay > 1200)
 				return MODE_VIRTUAL_Y;
-			if (mga_vga_calculate_mode_bandwidth(mode, bpp)
-				> (30100 * 1024))
+			if ((bw =
+			     mga_vga_calculate_mode_bandwidth(mode, bpp))
+			    > (30100 * 1024)) {
+				DRM_DEBUG_KMS("Mode %d exceeds bandwidth: %d > %d",
+					      mode->base.id, bw, 30100 * 1024);
 				return MODE_BANDWIDTH;
+			}
 		}
 	} else if (mdev->type == G200_WB) {
 		if (mode->hdisplay > 1280)
 			return MODE_VIRTUAL_X;
 		if (mode->vdisplay > 1024)
 			return MODE_VIRTUAL_Y;
-		if (mga_vga_calculate_mode_bandwidth(mode,
-			bpp > (31877 * 1024)))
+		if ((bw = mga_vga_calculate_mode_bandwidth(mode, bpp))
+		    > (31877 * 1024)) {
+			DRM_DEBUG_KMS("Mode %d exceeds bandwidth: %d > %d",
+				      mode->base.id, bw, 31877 * 1024);
 			return MODE_BANDWIDTH;
+		}
 	} else if (mdev->type == G200_EV &&
-		(mga_vga_calculate_mode_bandwidth(mode, bpp)
+		   ((bw = mga_vga_calculate_mode_bandwidth(mode, bpp))
 			> (32700 * 1024))) {
+		DRM_DEBUG_KMS("Mode %d exceeds bandwidth: %d > %d",
+			      mode->base.id, bw, 32700 * 1024);
 		return MODE_BANDWIDTH;
 	} else if (mdev->type == G200_EH &&
-		(mga_vga_calculate_mode_bandwidth(mode, bpp)
+		   ((bw = mga_vga_calculate_mode_bandwidth(mode, bpp))
 			> (37500 * 1024))) {
+		DRM_DEBUG_KMS("Mode %d exceeds bandwidth: %d > %d",
+			      mode->base.id, bw, 37500 * 1024);
 		return MODE_BANDWIDTH;
 	} else if (mdev->type == G200_ER &&
-		(mga_vga_calculate_mode_bandwidth(mode,
-			bpp) > (55000 * 1024))) {
+		   ((bw = mga_vga_calculate_mode_bandwidth(mode, bpp))
+			> (55000 * 1024))) {
+		DRM_DEBUG_KMS("Mode %d exceeds bandwidth: %d > %d",
+			      mode->base.id, bw, 55000 * 1024);
 		return MODE_BANDWIDTH;
 	}
 
@@ -1638,22 +1746,22 @@ static int mga_vga_mode_valid(struct drm_connector *connector,
 		return MODE_H_ILLEGAL;
 	}
 
-	if (mode->crtc_hdisplay > 2048 || mode->crtc_hsync_start > 4096 ||
-	    mode->crtc_hsync_end > 4096 || mode->crtc_htotal > 4096 ||
-	    mode->crtc_vdisplay > 2048 || mode->crtc_vsync_start > 4096 ||
-	    mode->crtc_vsync_end > 4096 || mode->crtc_vtotal > 4096) {
+	if (mode->hdisplay > 2048 || mode->hsync_start > 4096 ||
+	    mode->hsync_end > 4096 || mode->htotal > 4096 ||
+	    mode->vdisplay > 2048 * lace ||
+	    mode->vsync_start > 4096 * lace ||
+	    mode->vsync_end > 4096 * lace ||
+	    mode->vtotal > 4096 * lace) {
+		DRM_DEBUG_KMS("Mode: %d exceeds h/v param max limits\n",
+			      mode->base.id);
 		return MODE_BAD;
-	}
-
-	/* Validate the mode input by the user */
-	if (connector->cmdline_mode.specified) {
-		if (connector->cmdline_mode.bpp_specified)
-			bpp = connector->cmdline_mode.bpp;
 	}
 
 	if ((mode->hdisplay * mode->vdisplay * (bpp/8)) > mdev->mc.vram_size) {
 		if (connector->cmdline_mode.specified)
 			connector->cmdline_mode.specified = false;
+		DRM_DEBUG_KMS("Mode %d needs more than %lu vram\n",
+			      mode->base.id, (unsigned long)mdev->mc.vram_size);
 		return MODE_BAD;
 	}
 
@@ -1680,6 +1788,7 @@ static void mga_connector_destroy(struct drm_connector *connector)
 {
 	struct mga_connector *mga_connector = to_mga_connector(connector);
 	mgag200_i2c_destroy(mga_connector->i2c);
+	drm_connector_unregister(connector);
 	drm_connector_cleanup(connector);
 	kfree(connector);
 }
@@ -1701,12 +1810,16 @@ static struct drm_connector *mga_vga_init(struct drm_device *dev)
 {
 	struct drm_connector *connector;
 	struct mga_connector *mga_connector;
+	struct mga_device *mdev = dev->dev_private;
 
 	mga_connector = kzalloc(sizeof(struct mga_connector), GFP_KERNEL);
 	if (!mga_connector)
 		return NULL;
 
 	connector = &mga_connector->base;
+
+	connector->interlace_allowed = true;
+	connector->doublescan_allowed = (mdev->type == G200_WB) ? false : true;
 
 	drm_connector_init(dev, connector,
 			   &mga_vga_connector_funcs, DRM_MODE_CONNECTOR_VGA);
