@@ -82,8 +82,8 @@ const char *scsi_host_state_name(enum scsi_host_state state)
 }
 
 static const struct {
-	enum scsi_access_state	value;
-	char			*name;
+	unsigned char	value;
+	char		*name;
 } sdev_access_states[] = {
 	{ SCSI_ACCESS_STATE_OPTIMAL, "active/optimized" },
 	{ SCSI_ACCESS_STATE_ACTIVE, "active/non-optimized" },
@@ -92,10 +92,9 @@ static const struct {
 	{ SCSI_ACCESS_STATE_LBA, "lba-dependent" },
 	{ SCSI_ACCESS_STATE_OFFLINE, "offline" },
 	{ SCSI_ACCESS_STATE_TRANSITIONING, "transitioning" },
-	{ SCSI_ACCESS_STATE_UNKNOWN, "unknown" },
 };
 
-const char *scsi_access_state_name(enum scsi_access_state state)
+const char *scsi_access_state_name(unsigned char state)
 {
 	int i;
 	char *name = NULL;
@@ -1010,16 +1009,21 @@ sdev_show_access_state(struct device *dev,
 		       char *buf)
 {
 	struct scsi_device *sdev = to_scsi_device(dev);
-	enum scsi_access_state access_state;
+	unsigned char access_state;
+	const char *access_state_name;
 	bool pref = false;
+
+	if (!sdev->handler)
+		return -EINVAL;
 
 	if (sdev->access_state & SCSI_ACCESS_STATE_PREFERRED)
 		pref = true;
 
 	access_state = (sdev->access_state & SCSI_ACCESS_STATE_MASK);
+	access_state_name = scsi_access_state_name(access_state);
 
 	return snprintf(buf, 32, "%s%s\n",
-			scsi_access_state_name(access_state),
+			access_state_name ? access_state_name : "unknown",
 			pref ? " preferred" : "");
 }
 static DEVICE_ATTR(access_state, S_IRUGO, sdev_show_access_state, NULL);
