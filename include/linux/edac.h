@@ -28,12 +28,10 @@ struct device;
 extern int edac_op_state;
 extern int edac_err_assert;
 extern atomic_t edac_handlers;
-extern struct bus_type edac_subsys;
 
 extern int edac_handler_set(void);
 extern void edac_atomic_assert_error(void);
 extern struct bus_type *edac_get_sysfs_subsys(void);
-extern void edac_put_sysfs_subsys(void);
 
 enum {
 	EDAC_REPORTING_ENABLED,
