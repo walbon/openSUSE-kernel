@@ -48,6 +48,7 @@
 #include "xfs_trans_priv.h"
 #include "xfs_log.h"
 #include "xfs_bmap_btree.h"
+#include "xfs_dmapi.h"
 
 kmem_zone_t *xfs_inode_zone;
 
@@ -1156,6 +1157,16 @@ xfs_create(
 	if (XFS_FORCED_SHUTDOWN(mp))
 		return -EIO;
 
+	if (DM_EVENT_ENABLED(dp, DM_EVENT_CREATE)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_CREATE,
+				dp, DM_RIGHT_NULL, NULL,
+				DM_RIGHT_NULL, name->name, NULL,
+				mode, 0, 0);
+
+		if (error)
+			return error;
+	}
+
 	prid = xfs_get_initial_prid(dp);
 
 	/*
@@ -1288,7 +1299,16 @@ xfs_create(
 	xfs_qm_dqrele(pdqp);
 
 	*ipp = ip;
-	return 0;
+
+	/* Fallthrough to std_return with error = 0  */
+ std_return:
+	if (DM_EVENT_ENABLED(dp, DM_EVENT_POSTCREATE)) {
+		XFS_SEND_NAMESP(mp, DM_EVENT_POSTCREATE, dp, DM_RIGHT_NULL,
+				ip, DM_RIGHT_NULL, name->name, NULL, mode,
+				error, 0);
+	}
+
+	return error;
 
  out_bmap_cancel:
 	xfs_bmap_cancel(&free_list);
@@ -1311,7 +1331,8 @@ xfs_create(
 
 	if (unlock_dp_on_error)
 		xfs_iunlock(dp, XFS_IOLOCK_EXCL | XFS_ILOCK_EXCL);
-	return error;
+
+	goto std_return;
 }
 
 int
@@ -1437,6 +1458,17 @@ xfs_link(
 	if (XFS_FORCED_SHUTDOWN(mp))
 		return -EIO;
 
+	if (DM_EVENT_ENABLED(tdp, DM_EVENT_LINK)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_LINK,
+					tdp, DM_RIGHT_NULL,
+					sip, DM_RIGHT_NULL,
+					target_name->name, NULL, 0, 0, 0);
+		if (error)
+			return error;
+	}
+
+	/* Return through std_return after this point. */
+
 	error = xfs_qm_dqattach(sip, 0);
 	if (error)
 		goto std_return;
@@ -1512,12 +1544,24 @@ xfs_link(
 		goto error_return;
 	}
 
-	return xfs_trans_commit(tp);
+	error = xfs_trans_commit(tp);
+	if (error)
+		goto std_return;
 
+	/* Fall through to std_return with error = 0. */
+ std_return:
+	if (DM_EVENT_ENABLED(sip, DM_EVENT_POSTLINK)) {
+		(void) XFS_SEND_NAMESP(mp, DM_EVENT_POSTLINK,
+				tdp, DM_RIGHT_NULL,
+				sip, DM_RIGHT_NULL,
+				target_name->name, NULL, 0, error, 0);
+	}
+	return error;
+
+	/* FALLTHROUGH */
  error_return:
 	xfs_trans_cancel(tp);
- std_return:
-	return error;
+	goto std_return;
 }
 
 /*
@@ -1883,6 +1927,9 @@ xfs_inactive(
 	}
 
 	mp = ip->i_mount;
+
+	if (ip->i_d.di_nlink == 0 && DM_EVENT_ENABLED(ip, DM_EVENT_DESTROY))
+		XFS_SEND_DESTROY(mp, ip, DM_RIGHT_NULL);
 
 	/* If this is a read-only mount, don't do this (would generate I/O) */
 	if (mp->m_flags & XFS_MOUNT_RDONLY)
@@ -2531,6 +2578,14 @@ xfs_remove(
 	if (XFS_FORCED_SHUTDOWN(mp))
 		return -EIO;
 
+	if (DM_EVENT_ENABLED(dp, DM_EVENT_REMOVE)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_REMOVE, dp, DM_RIGHT_NULL,
+					NULL, DM_RIGHT_NULL, name->name, NULL,
+					ip->i_d.di_mode, 0, 0);
+		if (error)
+			return error;
+	}
+
 	error = xfs_qm_dqattach(dp, 0);
 	if (error)
 		goto std_return;
@@ -2635,14 +2690,20 @@ xfs_remove(
 	if (is_dir && xfs_inode_is_filestream(ip))
 		xfs_filestream_deassociate(ip);
 
-	return 0;
+std_return:
+	if (DM_EVENT_ENABLED(dp, DM_EVENT_POSTREMOVE)) {
+		XFS_SEND_NAMESP(mp, DM_EVENT_POSTREMOVE, dp, DM_RIGHT_NULL,
+				NULL, DM_RIGHT_NULL, name->name, NULL,
+				ip->i_d.di_mode, error, 0);
+	}
+
+	return error;
 
  out_bmap_cancel:
 	xfs_bmap_cancel(&free_list);
  out_trans_cancel:
 	xfs_trans_cancel(tp);
- std_return:
-	return error;
+	goto std_return;
 }
 
 /*
@@ -2904,6 +2965,18 @@ xfs_rename(
 
 	trace_xfs_rename(src_dp, target_dp, src_name, target_name);
 
+	if (DM_EVENT_ENABLED(src_dp, DM_EVENT_RENAME) ||
+	    DM_EVENT_ENABLED(target_dp, DM_EVENT_RENAME)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_RENAME,
+					src_dp, DM_RIGHT_NULL,
+					target_dp, DM_RIGHT_NULL,
+					src_name->name, target_name->name,
+					0, 0, 0);
+		if (error)
+			return error;
+	}
+	/* Return through std_return after this point. */
+
 	if ((flags & RENAME_EXCHANGE) && !target_ip)
 		return -EINVAL;
 
@@ -3164,6 +3237,18 @@ xfs_rename(
 	error = xfs_finish_rename(tp, &free_list);
 	if (wip)
 		IRELE(wip);
+
+	/* Fall through to std_return with error = 0 or errno from
+	 * xfs_trans_commit	 */
+ std_return:
+	if (DM_EVENT_ENABLED(src_dp, DM_EVENT_POSTRENAME) ||
+	    DM_EVENT_ENABLED(target_dp, DM_EVENT_POSTRENAME)) {
+		(void) XFS_SEND_NAMESP (mp, DM_EVENT_POSTRENAME,
+					src_dp, DM_RIGHT_NULL,
+					target_dp, DM_RIGHT_NULL,
+					src_name->name, target_name->name,
+					0, error, 0);
+	}
 	return error;
 
 out_bmap_cancel:
@@ -3172,7 +3257,7 @@ out_trans_cancel:
 	xfs_trans_cancel(tp);
 	if (wip)
 		IRELE(wip);
-	return error;
+	goto std_return;
 }
 
 STATIC int

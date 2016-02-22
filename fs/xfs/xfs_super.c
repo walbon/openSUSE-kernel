@@ -45,6 +45,7 @@
 #include "xfs_filestream.h"
 #include "xfs_quota.h"
 #include "xfs_sysfs.h"
+#include "xfs_dmapi.h"
 
 #include <linux/namei.h>
 #include <linux/init.h>
@@ -55,6 +56,10 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/parser.h>
+#include <linux/unsupported-feature.h>
+
+DECLARE_SUSE_UNSUPPORTED_FEATURE(xfs);
+DEFINE_SUSE_UNSUPPORTED_FEATURE(xfs);
 
 static const struct super_operations xfs_super_operations;
 static kmem_zone_t *xfs_ioend_zone;
@@ -109,6 +114,9 @@ static struct xfs_kobj xfs_dbg_kobj;	/* global debug sysfs attrs */
 #define MNTOPT_GQUOTANOENF "gqnoenforce"/* group quota limit enforcement */
 #define MNTOPT_PQUOTANOENF "pqnoenforce"/* project quota limit enforcement */
 #define MNTOPT_QUOTANOENF  "qnoenforce"	/* same as uqnoenforce */
+#define MNTOPT_DMAPI	"dmapi"		/* DMI enabled (DMAPI / XDSM) */
+#define MNTOPT_XDSM	"xdsm"		/* DMI enabled (DMAPI / XDSM) */
+#define MNTOPT_DMI	"dmi"		/* DMI enabled (DMAPI / XDSM) */
 #define MNTOPT_DISCARD	   "discard"	/* Discard unused blocks */
 #define MNTOPT_NODISCARD   "nodiscard"	/* Do not discard unused blocks */
 
@@ -173,13 +181,15 @@ suffix_kstrtoint(char *s, unsigned int base, int *res)
 STATIC int
 xfs_parseargs(
 	struct xfs_mount	*mp,
-	char			*options)
+	char			*options,
+	char			**mtpt)
 {
 	struct super_block	*sb = mp->m_super;
 	char			*this_char, *value;
 	int			dsunit = 0;
 	int			dswidth = 0;
 	int			iosize = 0;
+	int			dmapi_implies_ikeep = 1;
 	__uint8_t		iosizelog = 0;
 
 	/*
@@ -249,9 +259,14 @@ xfs_parseargs(
 			if (!mp->m_logname)
 				return -ENOMEM;
 		} else if (!strcmp(this_char, MNTOPT_MTPT)) {
-			xfs_warn(mp, "%s option not allowed on this system",
-				this_char);
-			return -EINVAL;
+			if (!value || !*value) {
+				xfs_warn(mp, "%s option requires an argument",
+					 this_char);
+				return -EINVAL;
+			}
+			*mtpt = kstrndup(value, MAXNAMELEN, GFP_KERNEL);
+			if (!*mtpt)
+				return -ENOMEM;
 		} else if (!strcmp(this_char, MNTOPT_RTDEV)) {
 			if (!value || !*value) {
 				xfs_warn(mp, "%s option requires an argument",
@@ -314,6 +329,7 @@ xfs_parseargs(
 		} else if (!strcmp(this_char, MNTOPT_IKEEP)) {
 			mp->m_flags |= XFS_MOUNT_IKEEP;
 		} else if (!strcmp(this_char, MNTOPT_NOIKEEP)) {
+			dmapi_implies_ikeep = 0;
 			mp->m_flags &= ~XFS_MOUNT_IKEEP;
 		} else if (!strcmp(this_char, MNTOPT_LARGEIO)) {
 			mp->m_flags &= ~XFS_MOUNT_COMPAT_IOSIZE;
@@ -353,6 +369,12 @@ xfs_parseargs(
 		} else if (!strcmp(this_char, MNTOPT_GQUOTANOENF)) {
 			mp->m_qflags |= (XFS_GQUOTA_ACCT | XFS_GQUOTA_ACTIVE);
 			mp->m_qflags &= ~XFS_GQUOTA_ENFD;
+		} else if (!strcmp(this_char, MNTOPT_DMAPI)) {
+			mp->m_flags |= XFS_MOUNT_DMAPI;
+		} else if (!strcmp(this_char, MNTOPT_XDSM)) {
+			mp->m_flags |= XFS_MOUNT_DMAPI;
+		} else if (!strcmp(this_char, MNTOPT_DMI)) {
+			mp->m_flags |= XFS_MOUNT_DMAPI;
 		} else if (!strcmp(this_char, MNTOPT_DISCARD)) {
 			mp->m_flags |= XFS_MOUNT_DISCARD;
 		} else if (!strcmp(this_char, MNTOPT_NODISCARD)) {
@@ -389,6 +411,12 @@ xfs_parseargs(
 	}
 #endif
 
+	if ((mp->m_flags & XFS_MOUNT_DMAPI) && (!*mtpt || *mtpt[0] == '\0')) {
+		printk("XFS: %s option needs the mount point option as well\n",
+			MNTOPT_DMAPI);
+		return -EINVAL;
+	}
+
 	if ((dsunit && !dswidth) || (!dsunit && dswidth)) {
 		xfs_warn(mp, "sunit and swidth must be specified together");
 		return -EINVAL;
@@ -400,6 +428,18 @@ xfs_parseargs(
 			dswidth, dsunit);
 		return -EINVAL;
 	}
+
+	/*
+	 * Applications using DMI filesystems often expect the
+	 * inode generation number to be monotonically increasing.
+	 * If we delete inode chunks we break this assumption, so
+	 * keep unused inode chunks on disk for DMI filesystems
+	 * until we come up with a better solution.
+	 * Note that if "ikeep" or "noikeep" mount options are
+	 * supplied, then they are honored.
+	 */
+	if ((mp->m_flags & XFS_MOUNT_DMAPI) && dmapi_implies_ikeep)
+		mp->m_flags |= XFS_MOUNT_IKEEP;
 
 done:
 	if (dsunit && !(mp->m_flags & XFS_MOUNT_NOALIGN)) {
@@ -469,6 +509,7 @@ xfs_showargs(
 		{ XFS_MOUNT_NORECOVERY,		"," MNTOPT_NORECOVERY },
 		{ XFS_MOUNT_ATTR2,		"," MNTOPT_ATTR2 },
 		{ XFS_MOUNT_FILESTREAMS,	"," MNTOPT_FILESTREAM },
+		{ XFS_MOUNT_DMAPI,		"," MNTOPT_DMAPI },
 		{ XFS_MOUNT_GRPID,		"," MNTOPT_GRPID },
 		{ XFS_MOUNT_DISCARD,		"," MNTOPT_DISCARD },
 		{ XFS_MOUNT_SMALL_INUMS,	"," MNTOPT_32BITINODE },
@@ -1423,6 +1464,20 @@ xfs_destroy_percpu_counters(
 	percpu_counter_destroy(&mp->m_fdblocks);
 }
 
+int
+xfs_check_unsupported(struct xfs_mount *mp, const char *description)
+{
+	if (mp->m_flags & XFS_MOUNT_RDONLY)
+		return 0;
+
+	if (xfs_allow_unsupported())
+		return 0;
+
+	xfs_alert(mp, "Couldn't mount because of unsupported optional feature %s.  Load module with allow_unsupported=1.",
+		  description);
+	return -EOPNOTSUPP;
+}
+
 STATIC int
 xfs_fs_fill_super(
 	struct super_block	*sb,
@@ -1432,6 +1487,7 @@ xfs_fs_fill_super(
 	struct inode		*root;
 	struct xfs_mount	*mp = NULL;
 	int			flags = 0, error = -ENOMEM;
+	char			*mtpt = NULL;
 
 	mp = kzalloc(sizeof(struct xfs_mount), GFP_KERNEL);
 	if (!mp)
@@ -1447,9 +1503,11 @@ xfs_fs_fill_super(
 	mp->m_super = sb;
 	sb->s_fs_info = mp;
 
-	error = xfs_parseargs(mp, (char *)data);
+	error = xfs_parseargs(mp, (char *)data, &mtpt);
 	if (error)
 		goto out_free_fsname;
+
+	mp->m_mtpt = mtpt;
 
 	sb_min_blocksize(sb, BBSIZE);
 	sb->s_xattr = xfs_xattr_handlers;
@@ -1460,12 +1518,16 @@ xfs_fs_fill_super(
 #endif
 	sb->s_op = &xfs_super_operations;
 
+	error = xfs_dmops_get(mp);
+	if (error)
+		goto out_free_fsname;
+
 	if (silent)
 		flags |= XFS_MFSI_QUIET;
 
 	error = xfs_open_devices(mp);
 	if (error)
-		goto out_free_fsname;
+		goto out_put_dmops;
 
 	error = xfs_init_mount_workqueues(mp);
 	if (error)
@@ -1515,8 +1577,6 @@ xfs_fs_fill_super(
 		sb->s_flags |= MS_I_VERSION;
 
 	if (mp->m_flags & XFS_MOUNT_DAX) {
-		xfs_warn(mp,
-	"DAX enabled. Warning: EXPERIMENTAL, use at your own risk");
 		if (sb->s_blocksize != PAGE_SIZE) {
 			xfs_alert(mp,
 		"Filesystem block size invalid for DAX Turning DAX off.");
@@ -1526,11 +1586,17 @@ xfs_fs_fill_super(
 		"Block device does not support DAX Turning DAX off.");
 			mp->m_flags &= ~XFS_MOUNT_DAX;
 		}
+		if (mp->m_flags & XFS_MOUNT_DAX)
+			xfs_warn(mp, "DAX enabled.");
 	}
 
-	if (xfs_sb_version_hassparseinodes(&mp->m_sb))
+	if (xfs_sb_version_hassparseinodes(&mp->m_sb)) {
+		error = xfs_check_unsupported(mp, "EXPERIMENTAL sparse inode");
+		if (error)
+			goto out_free_sb;
 		xfs_alert(mp,
 	"EXPERIMENTAL sparse inode feature enabled. Use at your own risk!");
+	}
 
 	error = xfs_mountfs(mp);
 	if (error)
@@ -1541,6 +1607,9 @@ xfs_fs_fill_super(
 		error = -ENOENT;
 		goto out_unmount;
 	}
+
+	XFS_SEND_MOUNT(mp, DM_RIGHT_NULL, mtpt, mp->m_fsname);
+
 	sb->s_root = d_make_root(root);
 	if (!sb->s_root) {
 		error = -ENOMEM;
@@ -1561,8 +1630,11 @@ xfs_fs_fill_super(
 	xfs_destroy_mount_workqueues(mp);
  out_close_devices:
 	xfs_close_devices(mp);
+ out_put_dmops:
+	xfs_dmops_put(mp);
  out_free_fsname:
 	xfs_free_fsname(mp);
+	kfree(mtpt);
 	kfree(mp);
  out:
 	return error;
@@ -1580,15 +1652,19 @@ xfs_fs_put_super(
 	struct xfs_mount	*mp = XFS_M(sb);
 
 	xfs_notice(mp, "Unmounting Filesystem");
+	XFS_SEND_PREUNMOUNT(mp);
 	xfs_filestream_unmount(mp);
-	xfs_unmountfs(mp);
+	XFS_SEND_UNMOUNT(mp);
 
+	xfs_unmountfs(mp);
 	xfs_freesb(mp);
 	free_percpu(mp->m_stats.xs_stats);
 	xfs_destroy_percpu_counters(mp);
 	xfs_destroy_mount_workqueues(mp);
 	xfs_close_devices(mp);
+	xfs_dmops_put(mp);
 	xfs_free_fsname(mp);
+	kfree(mp->m_mtpt);
 	kfree(mp);
 }
 
@@ -1634,7 +1710,7 @@ static const struct super_operations xfs_super_operations = {
 	.free_cached_objects	= xfs_fs_free_cached_objects,
 };
 
-static struct file_system_type xfs_fs_type = {
+struct file_system_type xfs_fs_type = {
 	.owner			= THIS_MODULE,
 	.name			= "xfs",
 	.mount			= xfs_fs_mount,
@@ -1642,6 +1718,7 @@ static struct file_system_type xfs_fs_type = {
 	.fs_flags		= FS_REQUIRES_DEV,
 };
 MODULE_ALIAS_FS("xfs");
+EXPORT_SYMBOL(xfs_fs_type);
 
 STATIC int __init
 xfs_init_zones(void)

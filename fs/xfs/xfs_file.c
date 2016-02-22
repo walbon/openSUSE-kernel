@@ -37,6 +37,7 @@
 #include "xfs_log.h"
 #include "xfs_icache.h"
 #include "xfs_pnfs.h"
+#include "xfs_dmapi.h"
 
 #include <linux/dcache.h>
 #include <linux/falloc.h>
@@ -44,6 +45,9 @@
 #include <linux/backing-dev.h>
 
 static const struct vm_operations_struct xfs_file_vm_ops;
+#ifdef HAVE_DMAPI
+static struct vm_operations_struct xfs_dmapi_file_vm_ops;
+#endif
 
 /*
  * Locking primitives for read and write IO paths to ensure we consistently use
@@ -203,13 +207,12 @@ xfs_dir_fsync(
 }
 
 STATIC int
-xfs_file_fsync(
-	struct file		*file,
+__xfs_fsync(
+	struct inode		*inode,
 	loff_t			start,
 	loff_t			end,
 	int			datasync)
 {
-	struct inode		*inode = file->f_mapping->host;
 	struct xfs_inode	*ip = XFS_I(inode);
 	struct xfs_mount	*mp = ip->i_mount;
 	int			error = 0;
@@ -283,6 +286,22 @@ xfs_file_fsync(
 	return error;
 }
 
+STATIC int
+xfs_file_fsync(
+	struct file		*file,
+	loff_t			start,
+	loff_t			end,
+	int			datasync)
+{
+	return __xfs_fsync(file->f_mapping->host, start, end, datasync);
+}
+
+int
+xfs_fsync(struct xfs_inode *ip, int datasync)
+{
+	return __xfs_fsync(VFS_I(ip), 0, LLONG_MAX, datasync);
+}
+
 STATIC ssize_t
 xfs_file_read_iter(
 	struct kiocb		*iocb,
@@ -338,6 +357,24 @@ xfs_file_read_iter(
 	 * serialisation.
 	 */
 	xfs_rw_ilock(ip, XFS_IOLOCK_SHARED);
+
+	if (DM_EVENT_ENABLED(ip, DM_EVENT_READ) && !(ioflags & XFS_IO_INVIS)) {
+		int dmflags = FILP_DELAY_FLAG(file);
+		int iolock = XFS_IOLOCK_SHARED;
+
+		/*
+		 * no need to set DM_FLAGS_IMUX. xfs_rw_ilock() will not
+		 * enable the inode mutex for a XFS_IOLOCK_SHARED lock type
+		 */
+
+		ret = XFS_SEND_DATA(mp, DM_EVENT_READ, ip, iocb->ki_pos, size,
+				     dmflags, &iolock);
+		if (ret) {
+			xfs_rw_iunlock(ip, XFS_IOLOCK_SHARED);
+			return ret;
+		}
+	}
+
 	if ((ioflags & XFS_IO_ISDIRECT) && inode->i_mapping->nrpages) {
 		xfs_rw_iunlock(ip, XFS_IOLOCK_SHARED);
 		xfs_rw_ilock(ip, XFS_IOLOCK_EXCL);
@@ -403,6 +440,19 @@ xfs_file_splice_read(
 		return -EIO;
 
 	xfs_rw_ilock(ip, XFS_IOLOCK_SHARED);
+
+	if (DM_EVENT_ENABLED(ip, DM_EVENT_READ) && !(ioflags & XFS_IO_INVIS)) {
+		struct xfs_mount	*mp = ip->i_mount;
+		int iolock = XFS_IOLOCK_SHARED;
+		int error;
+
+		error = XFS_SEND_DATA(mp, DM_EVENT_READ, ip, *ppos, count,
+					FILP_DELAY_FLAG(infilp), &iolock);
+		if (error) {
+			xfs_iunlock(ip, XFS_IOLOCK_SHARED);
+			return error;
+		}
+	}
 
 	trace_xfs_file_splice_read(ip, count, *ppos, ioflags);
 
@@ -580,7 +630,8 @@ STATIC ssize_t
 xfs_file_aio_write_checks(
 	struct kiocb		*iocb,
 	struct iov_iter		*from,
-	int			*iolock)
+	int			*iolock,
+	int			*eventsent)
 {
 	struct file		*file = iocb->ki_filp;
 	struct inode		*inode = file->f_mapping->host;
@@ -593,6 +644,33 @@ restart:
 	error = generic_write_checks(iocb, from);
 	if (error <= 0)
 		return error;
+
+	if ((DM_EVENT_ENABLED(ip, DM_EVENT_WRITE) &&
+	    !(file->f_mode & FMODE_NOCMTIME) && !*eventsent)) {
+		int	dmflags = FILP_DELAY_FLAG(file);
+
+		if (*iolock & XFS_IOLOCK_EXCL)
+			 dmflags |= DM_FLAGS_IMUX; /* dmapi disable mutex flg */
+
+		error = XFS_SEND_DATA(ip->i_mount, DM_EVENT_WRITE, ip,
+				       iocb->ki_pos, count, dmflags, iolock);
+		if (error)
+			return error;
+
+	/* DMAPI NOSPACE will call this routine again. eventsent is retained
+	 * to ensure that DM event is only sent once.
+	 */
+		*eventsent = 1;
+		/*
+		 * The iolock was dropped and reacquired in XFS_SEND_DATA
+		 * so we have to recheck the size when appending.
+		 * We will only "goto start;" once, since having sent the
+		 * event prevents another call to XFS_SEND_DATA, which is
+		 * what allows the size to change in the first place.
+		 */
+		if ((file->f_flags & O_APPEND) && iocb->ki_pos != XFS_ISIZE(ip))
+			goto restart;
+	}
 
 	error = xfs_break_layouts(inode, iolock, true);
 	if (error)
@@ -700,7 +778,8 @@ restart:
 STATIC ssize_t
 xfs_file_dio_aio_write(
 	struct kiocb		*iocb,
-	struct iov_iter		*from)
+	struct iov_iter		*from,
+	int			*eventsent)
 {
 	struct file		*file = iocb->ki_filp;
 	struct address_space	*mapping = file->f_mapping;
@@ -749,7 +828,7 @@ xfs_file_dio_aio_write(
 		xfs_rw_ilock(ip, iolock);
 	}
 
-	ret = xfs_file_aio_write_checks(iocb, from, &iolock);
+	ret = xfs_file_aio_write_checks(iocb, from, &iolock, eventsent);
 	if (ret)
 		goto out;
 	count = iov_iter_count(from);
@@ -815,7 +894,8 @@ out:
 STATIC ssize_t
 xfs_file_buffered_aio_write(
 	struct kiocb		*iocb,
-	struct iov_iter		*from)
+	struct iov_iter		*from,
+	int			*eventsent)
 {
 	struct file		*file = iocb->ki_filp;
 	struct address_space	*mapping = file->f_mapping;
@@ -827,7 +907,7 @@ xfs_file_buffered_aio_write(
 
 	xfs_rw_ilock(ip, iolock);
 
-	ret = xfs_file_aio_write_checks(iocb, from, &iolock);
+	ret = xfs_file_aio_write_checks(iocb, from, &iolock, eventsent);
 	if (ret)
 		goto out;
 
@@ -882,6 +962,7 @@ xfs_file_write_iter(
 	struct xfs_inode	*ip = XFS_I(inode);
 	ssize_t			ret;
 	size_t			ocount = iov_iter_count(from);
+	int			eventsent = 0;
 
 	XFS_STATS_INC(ip->i_mount, xs_write_calls);
 
@@ -891,10 +972,24 @@ xfs_file_write_iter(
 	if (XFS_FORCED_SHUTDOWN(ip->i_mount))
 		return -EIO;
 
+start:
 	if ((iocb->ki_flags & IOCB_DIRECT) || IS_DAX(inode))
-		ret = xfs_file_dio_aio_write(iocb, from);
+		ret = xfs_file_dio_aio_write(iocb, from, &eventsent);
 	else
-		ret = xfs_file_buffered_aio_write(iocb, from);
+ 		ret = xfs_file_buffered_aio_write(iocb, from, &eventsent);
+
+	if (ret == -ENOSPC &&
+	    DM_EVENT_ENABLED(ip, DM_EVENT_NOSPACE) &&
+	    !(file->f_mode & FMODE_NOCMTIME)) {
+		ret = XFS_SEND_NAMESP(ip->i_mount, DM_EVENT_NOSPACE, ip,
+				DM_RIGHT_NULL, ip, DM_RIGHT_NULL, NULL, NULL,
+				 0, 0, 0); /* Delay flag intentionally unused */
+		if (!ret)
+			goto start;
+		/* error will goto out_unlock below */
+	}
+	if (ret <= 0)
+		return ret;
 
 	if (ret > 0) {
 		ssize_t err;
@@ -1085,6 +1180,23 @@ xfs_file_release(
 {
 	return xfs_release(XFS_I(inode));
 }
+
+#ifdef HAVE_DMAPI
+STATIC int
+xfs_vm_fault(
+	struct vm_area_struct	*vma,
+	struct vm_fault	*vmf)
+{
+	struct inode	*inode = vma->vm_file->f_path.dentry->d_inode;
+	struct xfs_mount *mp = XFS_M(inode->i_sb);
+
+	ASSERT_ALWAYS(mp->m_flags & XFS_MOUNT_DMAPI);
+
+	if (XFS_SEND_MMAP(mp, vma, 0))
+		return VM_FAULT_SIGBUS;
+	return filemap_fault(vma, vmf);
+}
+#endif /* HAVE_DMAPI */
 
 STATIC int
 xfs_file_readdir(
@@ -1510,11 +1622,21 @@ xfs_filemap_page_mkwrite(
 	struct vm_fault		*vmf)
 {
 	struct inode		*inode = file_inode(vma->vm_file);
-	int			ret;
+	int			ret = 0;
 
 	trace_xfs_filemap_page_mkwrite(XFS_I(inode));
 
 	sb_start_pagefault(inode->i_sb);
+
+#ifdef HAVE_DMAPI
+	if (XFS_M(inode->i_sb)->m_flags & XFS_MOUNT_DMAPI) {
+		if (vma->vm_flags & VM_MAYSHARE) {
+			ret = XFS_SEND_MMAP(XFS_M(inode->i_sb), vma, VM_WRITE);
+			if (ret)
+				return block_page_mkwrite_return(ret);
+		}
+	}
+#endif /* HAVE_DMAPI */
 	file_update_time(vma->vm_file);
 	xfs_ilock(XFS_I(inode), XFS_MMAPLOCK_SHARED);
 
@@ -1649,10 +1771,37 @@ xfs_file_mmap(
 {
 	file_accessed(filp);
 	vma->vm_ops = &xfs_file_vm_ops;
+
+#ifdef HAVE_DMAPI
+	if (XFS_M(filp->f_path.dentry->d_inode->i_sb)->m_flags & XFS_MOUNT_DMAPI)
+		vma->vm_ops = &xfs_dmapi_file_vm_ops;
+#endif /* HAVE_DMAPI */
+
 	if (IS_DAX(file_inode(filp)))
 		vma->vm_flags |= VM_MIXEDMAP | VM_HUGEPAGE;
 	return 0;
 }
+
+
+#ifdef HAVE_FOP_OPEN_EXEC
+/* If the user is attempting to execute a file that is offline then
+ * we have to trigger a DMAPI READ event before the file is marked as busy
+ * otherwise the invisible I/O will not be able to write to the file to bring
+ * it back online.
+ */
+STATIC int
+xfs_file_open_exec(
+	struct inode	*inode)
+{
+	struct xfs_mount *mp = XFS_M(inode->i_sb);
+	struct xfs_inode *ip = XFS_I(inode);
+
+	if (unlikely(mp->m_flags & XFS_MOUNT_DMAPI) &&
+	             DM_EVENT_ENABLED(ip, DM_EVENT_READ))
+		return XFS_SEND_DATA(mp, DM_EVENT_READ, ip, 0, 0, 0, NULL);
+	return 0;
+}
+#endif /* HAVE_FOP_OPEN_EXEC */
 
 const struct file_operations xfs_file_operations = {
 	.llseek		= xfs_file_llseek,
@@ -1669,6 +1818,9 @@ const struct file_operations xfs_file_operations = {
 	.release	= xfs_file_release,
 	.fsync		= xfs_file_fsync,
 	.fallocate	= xfs_file_fallocate,
+#ifdef HAVE_FOP_OPEN_EXEC
+	.open_exec	= xfs_file_open_exec,
+#endif
 };
 
 const struct file_operations xfs_dir_file_operations = {
@@ -1682,3 +1834,10 @@ const struct file_operations xfs_dir_file_operations = {
 #endif
 	.fsync		= xfs_dir_fsync,
 };
+
+#ifdef HAVE_DMAPI
+static struct vm_operations_struct xfs_dmapi_file_vm_ops = {
+	.fault		= xfs_vm_fault,
+	.page_mkwrite	= xfs_filemap_page_mkwrite,
+};
+#endif /* HAVE_DMAPI */

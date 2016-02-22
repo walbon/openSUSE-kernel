@@ -40,6 +40,8 @@
 #include "xfs_trace.h"
 #include "xfs_icache.h"
 #include "xfs_log.h"
+#include "xfs_dmapi.h"
+#include "dmapi/xfs_dm.h"
 
 /* Kernel only BMAP related definitions and functions */
 
@@ -559,6 +561,28 @@ xfs_getbmap(
 		prealloced = 0;
 		fixlen = 1LL << 32;
 	} else {
+		/*
+		 * If the BMV_IF_NO_DMAPI_READ interface bit specified, do
+		 * not generate a DMAPI read event.  Otherwise, if the
+		 * DM_EVENT_READ bit is set for the file, generate a read
+		 * event in order that the DMAPI application may do its thing
+		 * before we return the extents.  Usually this means restoring
+		 * user file data to regions of the file that look like holes.
+		 *
+		 * The "old behavior" (from XFS_IOC_GETBMAP) is to not specify
+		 * BMV_IF_NO_DMAPI_READ so that read events are generated.
+		 * If this were not true, callers of ioctl(XFS_IOC_GETBMAP)
+		 * could misinterpret holes in a DMAPI file as true holes,
+		 * when in fact they may represent offline user data.
+		 */
+		if (DM_EVENT_ENABLED(ip, DM_EVENT_READ) &&
+		    !(iflags & BMV_IF_NO_DMAPI_READ)) {
+			error = XFS_SEND_DATA(mp, DM_EVENT_READ, ip,
+					      0, 0, 0, NULL);
+			if (error)
+				return error;
+		}
+
 		if (ip->i_d.di_format != XFS_DINODE_FMT_EXTENTS &&
 		    ip->i_d.di_format != XFS_DINODE_FMT_BTREE &&
 		    ip->i_d.di_format != XFS_DINODE_FMT_LOCAL)
@@ -993,9 +1017,25 @@ xfs_alloc_file_space(
 	startoffset_fsb	= XFS_B_TO_FSBT(mp, offset);
 	allocatesize_fsb = XFS_B_TO_FSB(mp, count);
 
+	/*	Generate a DMAPI event if needed.	*/
+	if (alloc_type != 0 && offset < XFS_ISIZE(ip) &&
+			!xfs_dmapi_marked() &&
+			DM_EVENT_ENABLED(ip, DM_EVENT_WRITE)) {
+		xfs_off_t           end_dmi_offset;
+
+		end_dmi_offset = offset+len;
+		if (end_dmi_offset > XFS_ISIZE(ip))
+			end_dmi_offset = XFS_ISIZE(ip);
+		error = XFS_SEND_DATA(mp, DM_EVENT_WRITE, ip, offset,
+				      end_dmi_offset - offset, 0, NULL);
+		if (error)
+			return error;
+	}
+
 	/*
 	 * Allocate file space until done or until there is an error
 	 */
+retry:
 	while (allocatesize_fsb && !error) {
 		xfs_fileoff_t	s, e;
 
@@ -1092,6 +1132,17 @@ xfs_alloc_file_space(
 		startoffset_fsb += allocated_fsb;
 		allocatesize_fsb -= allocated_fsb;
 	}
+dmapi_enospc_check:
+	if (error == ENOSPC && !xfs_dmapi_marked() &&
+	    DM_EVENT_ENABLED(ip, DM_EVENT_NOSPACE)) {
+		error = XFS_SEND_NAMESP(mp, DM_EVENT_NOSPACE,
+				ip, DM_RIGHT_NULL,
+				ip, DM_RIGHT_NULL,
+				NULL, NULL, 0, 0, 0); /* Delay flag intentionally unused */
+		if (error == 0)
+			goto retry;	/* Maybe DMAPI app. has made space */
+		/* else fall through with error from XFS_SEND_DATA */
+	}
 
 	return error;
 
@@ -1102,7 +1153,7 @@ error0:	/* Cancel bmap, unlock inode, unreserve quota blocks, cancel trans */
 error1:	/* Just cancel transaction */
 	xfs_trans_cancel(tp);
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
-	return error;
+	goto dmapi_enospc_check;
 }
 
 /*
@@ -1201,13 +1252,16 @@ xfs_zero_remaining_bytes(
 }
 
 int
-xfs_free_file_space(
+__xfs_free_file_space(
 	struct xfs_inode	*ip,
 	xfs_off_t		offset,
-	xfs_off_t		len)
+	xfs_off_t		len,
+	bool			dmapi_nonblock,
+	bool			rounding_done)
 {
 	int			committed;
 	int			done;
+	xfs_off_t		end_dmi_offset;
 	xfs_fileoff_t		endoffset_fsb;
 	int			error;
 	xfs_fsblock_t		firstfsb;
@@ -1237,14 +1291,32 @@ xfs_free_file_space(
 		return error;
 	rt = XFS_IS_REALTIME_INODE(ip);
 	startoffset_fsb	= XFS_B_TO_FSB(mp, offset);
-	endoffset_fsb = XFS_B_TO_FSBT(mp, offset + len);
+	end_dmi_offset = offset + len;
+	endoffset_fsb = XFS_B_TO_FSBT(mp, end_dmi_offset);
+
+	if (offset < XFS_ISIZE(ip) && !xfs_dmapi_marked() &&
+	    DM_EVENT_ENABLED(ip, DM_EVENT_WRITE)) {
+		if (end_dmi_offset > XFS_ISIZE(ip))
+			end_dmi_offset = XFS_ISIZE(ip);
+		error = XFS_SEND_DATA(mp, DM_EVENT_WRITE, ip,
+				offset, end_dmi_offset - offset,
+				dmapi_nonblock ? DM_FLAGS_NDELAY : 0, NULL);
+		if (error)
+			return error;
+	}
 
 	/* wait for the completion of any pending DIOs */
 	inode_dio_wait(VFS_I(ip));
 
-	rounding = max_t(xfs_off_t, 1 << mp->m_sb.sb_blocklog, PAGE_CACHE_SIZE);
-	ioffset = round_down(offset, rounding);
-	iendoffset = round_up(offset + len, rounding) - 1;
+	if (!rounding_done) {
+		rounding = max_t(xfs_off_t, 1 << mp->m_sb.sb_blocklog, PAGE_CACHE_SIZE);
+		ioffset = round_down(offset, rounding);
+		iendoffset = round_up(offset + len, rounding) - 1;
+	} else {
+		ioffset = offset;
+		iendoffset = offset + len - 1;
+	}
+
 	error = filemap_write_and_wait_range(VFS_I(ip)->i_mapping, ioffset,
 					     iendoffset);
 	if (error)
@@ -1371,6 +1443,15 @@ xfs_free_file_space(
 	xfs_trans_cancel(tp);
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	goto out;
+}
+
+int
+xfs_free_file_space(
+	struct xfs_inode	*ip,
+	xfs_off_t		offset,
+	xfs_off_t		len)
+{
+	return __xfs_free_file_space(ip, offset, len, false, false);
 }
 
 /*
