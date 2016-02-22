@@ -50,6 +50,8 @@
 #include "acl.h"
 #include "mballoc.h"
 
+DEFINE_SUSE_UNSUPPORTED_FEATURE(ext4)
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/ext4.h>
 
@@ -2466,6 +2468,28 @@ static unsigned long ext4_get_stripe_size(struct ext4_sb_info *sbi)
 	return ret;
 }
 
+static int
+ext4_check_unsupported_ro(struct super_block *sb, bool allow_ro, bool readonly,
+			  const char *description)
+{
+       if (allow_ro && readonly)
+               return 0;
+
+       if (ext4_allow_unsupported())
+               return 0;
+
+       ext4_msg(sb, KERN_ERR "Couldn't mount %sbecause of SUSE-unsupported optional feature %s.  Load module with allow_unsupported=1.",
+                 description, allow_ro ? "RDWR " : "");
+       return -EINVAL;
+}
+
+static int
+ext4_check_unsupported(struct super_block *sb, const char *description)
+{
+	/* The readonly argument doesn't matter if allow_ro is false */
+	return ext4_check_unsupported_ro(sb, false, false, description);
+}
+
 /*
  * Check whether this filesystem can be mounted based on
  * the features present and the RDONLY/RDWR mount requested.
@@ -2492,24 +2516,6 @@ static int ext4_feature_set_ok(struct super_block *sb, int readonly)
 		return 1;
 	}
 
-	if (!allow_unsupported &&
-	    (EXT4_HAS_RO_COMPAT_FEATURE(sb, EXT4_FEATURE_RO_COMPAT_BIGALLOC) ||
-	     EXT4_HAS_RO_COMPAT_FEATURE(sb,
-				EXT4_FEATURE_RO_COMPAT_METADATA_CSUM))) {
-		char *f;
-
-		if (EXT4_HAS_RO_COMPAT_FEATURE(sb,
-				EXT4_FEATURE_RO_COMPAT_BIGALLOC)) {
-			f = "BIGALLOC";
-		} else
-			f = "METADATA_CSUM";
-
-		ext4_msg(sb, KERN_ERR, "Couldn't mount RDWR because of "
-			 "unsupported optional feature %s. Load module "
-			 "with allow_unsupported=1", f);
-		return 0;
-	}
-
 	/* Check that feature set is OK for a read-write mount */
 	if (ext4_has_unknown_ext4_ro_compat_features(sb)) {
 		ext4_msg(sb, KERN_ERR, "couldn't mount RDWR because of "
@@ -2518,6 +2524,16 @@ static int ext4_feature_set_ok(struct super_block *sb, int readonly)
 				~EXT4_FEATURE_RO_COMPAT_SUPP));
 		return 0;
 	}
+
+	if (EXT4_HAS_RO_COMPAT_FEATURE(sb, EXT4_FEATURE_RO_COMPAT_BIGALLOC) &&
+	    ext4_check_unsupported_ro(sb, true, readonly, "BIGALLOC"))
+		return 0;
+
+	if (EXT4_HAS_RO_COMPAT_FEATURE(sb,
+				       EXT4_FEATURE_RO_COMPAT_METADATA_CSUM) &&
+	    ext4_check_unsupported_ro(sb, true, readonly, "METADATA_CSUM"))
+		return 0;
+
 	/*
 	 * Large file size enabled file system can only be mounted
 	 * read-write on 32-bit systems if kernel is built with CONFIG_LBDAF
@@ -4277,23 +4293,23 @@ static int ext4_load_journal(struct super_block *sb,
 
 	if (err) {
 		ext4_msg(sb, KERN_ERR, "error loading journal");
-		jbd2_journal_destroy(journal);
-		return err;
+		goto out_destroy_journal;
 	}
 
-	if (!allow_unsupported) {
-		csum_v1 = jbd2_journal_check_used_features(journal,
-				JBD2_FEATURE_COMPAT_CHECKSUM, 0, 0);
-		csum_v2 = jbd2_journal_check_used_features(journal, 0, 0,
-				JBD2_FEATURE_INCOMPAT_CSUM_V2);
-		if (csum_v1 || csum_v2) {
-			ext4_msg(sb, KERN_ERR, "Couldn't mount because of "
-				 "unsupported journal feature %s. Load module "
-			 	 "with allow_unsupported=1",
-				 csum_v1 ? "CHECKSUM" : "CSUM_V2");
-			jbd2_journal_destroy(journal);
-			return -EINVAL;
-		}
+	csum_v1 = jbd2_journal_check_used_features(journal,
+			JBD2_FEATURE_COMPAT_CHECKSUM, 0, 0);
+	if (csum_v1) {
+		err = ext4_check_unsupported(sb, "CHECKSUM");
+		if (err)
+			goto out_destroy_journal;
+	}
+
+	csum_v2 = jbd2_journal_check_used_features(journal, 0, 0,
+			JBD2_FEATURE_INCOMPAT_CSUM_V2);
+	if (csum_v2) {
+		err = ext4_check_unsupported(sb, "CSUM_V1");
+		if (err)
+			goto out_destroy_journal;
 	}
 
 	EXT4_SB(sb)->s_journal = journal;
@@ -4308,6 +4324,10 @@ static int ext4_load_journal(struct super_block *sb,
 	}
 
 	return 0;
+
+out_destroy_journal:
+	jbd2_journal_destroy(journal);
+	return err;
 }
 
 static int ext4_commit_super(struct super_block *sb, int sync)
@@ -5286,13 +5306,6 @@ static int __init ext4_init_fs(void)
 		init_waitqueue_head(&ext4__ioend_wq[i]);
 	}
 
-#ifdef CONFIG_SUSE_KERNEL_SUPPORTED
-	if (allow_unsupported) {
-		add_taint(TAINT_NO_SUPPORT, LOCKDEP_STILL_OK);
-		printk(KERN_INFO "ext4: allow_unsupported=1 taints kernel\n");
-	}
-#endif
-
 	err = ext4_init_es();
 	if (err)
 		return err;
@@ -5357,47 +5370,6 @@ static void __exit ext4_exit_fs(void)
 	ext4_exit_pageio();
 	ext4_exit_es();
 }
-
-#ifdef CONFIG_SUSE_KERNEL_SUPPORTED
-bool allow_unsupported = false;
-#else
-bool allow_unsupported = true;
-#endif
-
-static int ext4_set_allow_unsupported(const char *buffer,
-				      const struct kernel_param *kp)
-{
-	int ret;
-	struct kernel_param dummy_kp = *kp;
-	bool newval;
-
-	dummy_kp.arg = &newval;
-
-	ret = param_set_bool(buffer, &dummy_kp);
-	if (ret)
-		return ret;
-
-#ifdef CONFIG_SUSE_KERNEL_SUPPORTED
-	if (allow_unsupported && !newval) {
-		printk(KERN_INFO "ext4: disallowing unsupported features, kernel remains tainted\n");
-		allow_unsupported = false;
-	} else if (!allow_unsupported && newval) {
-		printk(KERN_INFO "ext4: allowing unsupported features, kernel tainted\n");
-		add_taint(TAINT_NO_SUPPORT, LOCKDEP_STILL_OK);
-		allow_unsupported = true;
-	}
-#endif
-	return 0;
-}
-
-static struct kernel_param_ops ext4_allow_unsupported_param_ops = {
-	.set = ext4_set_allow_unsupported,
-	.get = param_get_bool,
-};
-
-module_param_cb(allow_unsupported, &ext4_allow_unsupported_param_ops,
-		&allow_unsupported, 0644);
-MODULE_PARM_DESC(allow_unsupported, "Allow using features that are out of supported scope");
 
 MODULE_AUTHOR("Remy Card, Stephen Tweedie, Andrew Morton, Andreas Dilger, Theodore Ts'o and others");
 MODULE_DESCRIPTION("Fourth Extended Filesystem");

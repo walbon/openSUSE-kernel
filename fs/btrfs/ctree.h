@@ -35,6 +35,7 @@
 #include <linux/btrfs.h>
 #include <linux/workqueue.h>
 #include <linux/security.h>
+#include <linux/unsupported-feature.h>
 #include "extent_io.h"
 #include "extent_map.h"
 #include "async-thread.h"
@@ -4393,6 +4394,7 @@ static inline int btrfs_test_is_dummy_root(struct btrfs_root *root)
 /*
  * Module parameter
  */
-extern bool btrfs_allow_unsupported;
+DECLARE_SUSE_UNSUPPORTED_FEATURE(btrfs)
+#define btrfs_allow_unsupported btrfs_allow_unsupported()
 
 #endif

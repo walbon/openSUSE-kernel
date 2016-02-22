@@ -36,6 +36,8 @@
 #ifdef __KERNEL__
 #include <linux/compat.h>
 #endif
+#include <linux/module.h>
+#include <linux/unsupported-feature.h>
 
 /*
  * The fourth extended filesystem constants/structures
@@ -2540,8 +2542,6 @@ extern int ext4_group_extend(struct super_block *sb,
 extern int ext4_resize_fs(struct super_block *sb, ext4_fsblk_t n_blocks_count);
 
 /* super.c */
-extern bool allow_unsupported;
-
 extern int ext4_seq_options_show(struct seq_file *seq, void *offset);
 extern int ext4_calculate_overhead(struct super_block *sb);
 extern void ext4_superblock_csum_set(struct super_block *sb);
@@ -3227,4 +3227,5 @@ extern void ext4_resize_end(struct super_block *sb);
 #define EFSBADCRC	EBADMSG		/* Bad CRC detected */
 #define EFSCORRUPTED	EUCLEAN		/* Filesystem is corrupted */
 
+DECLARE_SUSE_UNSUPPORTED_FEATURE(ext4);
 #endif	/* _EXT4_H */
