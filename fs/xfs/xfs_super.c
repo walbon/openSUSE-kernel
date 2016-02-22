@@ -56,6 +56,10 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/parser.h>
+#include <linux/unsupported-feature.h>
+
+DECLARE_SUSE_UNSUPPORTED_FEATURE(xfs);
+DEFINE_SUSE_UNSUPPORTED_FEATURE(xfs);
 
 static const struct super_operations xfs_super_operations;
 static kmem_zone_t *xfs_ioend_zone;
@@ -1460,6 +1464,20 @@ xfs_destroy_percpu_counters(
 	percpu_counter_destroy(&mp->m_fdblocks);
 }
 
+int
+xfs_check_unsupported(struct xfs_mount *mp, const char *description)
+{
+	if (mp->m_flags & XFS_MOUNT_RDONLY)
+		return 0;
+
+	if (xfs_allow_unsupported())
+		return 0;
+
+	xfs_alert(mp, "Couldn't mount because of unsupported optional feature %s.  Load module with allow_unsupported=1.",
+		  description);
+	return -EOPNOTSUPP;
+}
+
 STATIC int
 xfs_fs_fill_super(
 	struct super_block	*sb,
@@ -1559,8 +1577,6 @@ xfs_fs_fill_super(
 		sb->s_flags |= MS_I_VERSION;
 
 	if (mp->m_flags & XFS_MOUNT_DAX) {
-		xfs_warn(mp,
-	"DAX enabled. Warning: EXPERIMENTAL, use at your own risk");
 		if (sb->s_blocksize != PAGE_SIZE) {
 			xfs_alert(mp,
 		"Filesystem block size invalid for DAX Turning DAX off.");
@@ -1570,11 +1586,17 @@ xfs_fs_fill_super(
 		"Block device does not support DAX Turning DAX off.");
 			mp->m_flags &= ~XFS_MOUNT_DAX;
 		}
+		if (mp->m_flags & XFS_MOUNT_DAX)
+			xfs_warn(mp, "DAX enabled.");
 	}
 
-	if (xfs_sb_version_hassparseinodes(&mp->m_sb))
+	if (xfs_sb_version_hassparseinodes(&mp->m_sb)) {
+		error = xfs_check_unsupported(mp, "EXPERIMENTAL sparse inode");
+		if (error)
+			goto out_free_sb;
 		xfs_alert(mp,
 	"EXPERIMENTAL sparse inode feature enabled. Use at your own risk!");
+	}
 
 	error = xfs_mountfs(mp);
 	if (error)
