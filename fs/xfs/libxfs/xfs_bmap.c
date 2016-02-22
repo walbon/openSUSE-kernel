@@ -45,6 +45,7 @@
 #include "xfs_symlink.h"
 #include "xfs_attr_leaf.h"
 #include "xfs_filestream.h"
+#include "xfs_dmapi.h"
 
 
 kmem_zone_t		*xfs_bmap_free_item_zone;

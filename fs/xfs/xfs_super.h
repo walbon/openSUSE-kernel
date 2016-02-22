@@ -44,6 +44,12 @@ extern void xfs_qm_exit(void);
 # define XFS_REALTIME_STRING
 #endif
 
+#ifdef CONFIG_XFS_DMAPI
+# define XFS_DMAPI_STRING	"dmapi support, "
+#else
+# define XFS_DMAPI_STRING
+#endif
+
 #ifdef DEBUG
 # define XFS_DBG_STRING		"debug"
 #else
@@ -54,6 +60,7 @@ extern void xfs_qm_exit(void);
 #define XFS_BUILD_OPTIONS	XFS_ACL_STRING \
 				XFS_SECURITY_STRING \
 				XFS_REALTIME_STRING \
+				XFS_DMAPI_STRING \
 				XFS_DBG_STRING /* DBG must be last */
 
 struct xfs_inode;

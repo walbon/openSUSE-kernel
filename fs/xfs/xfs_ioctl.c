@@ -41,6 +41,7 @@
 #include "xfs_trans.h"
 #include "xfs_pnfs.h"
 #include "xfs_acl.h"
+#include "xfs_dmapi.h"
 
 #include <linux/capability.h>
 #include <linux/dcache.h>
@@ -622,6 +623,7 @@ xfs_ioc_space(
 	enum xfs_prealloc_flags	flags = 0;
 	uint			iolock = XFS_IOLOCK_EXCL;
 	int			error;
+	bool			dmapi_nonblock;
 
 	/*
 	 * Only allow the sys admin to reserve space unless
@@ -639,6 +641,9 @@ xfs_ioc_space(
 
 	if (!S_ISREG(inode->i_mode))
 		return -EINVAL;
+
+	if (filp->f_flags & (O_NDELAY|O_NONBLOCK))
+		dmapi_nonblock = true;
 
 	if (filp->f_flags & O_DSYNC)
 		flags |= XFS_PREALLOC_SYNC;
@@ -714,7 +719,8 @@ xfs_ioc_space(
 		break;
 	case XFS_IOC_UNRESVSP:
 	case XFS_IOC_UNRESVSP64:
-		error = xfs_free_file_space(ip, bf->l_start, bf->l_len);
+		error = __xfs_free_file_space(ip, bf->l_start, bf->l_len,
+					    dmapi_nonblock, false);
 		break;
 	case XFS_IOC_ALLOCSP:
 	case XFS_IOC_ALLOCSP64:
@@ -787,11 +793,11 @@ xfs_ioc_bulkstat(
 					bulkreq.ubuffer, xfs_inumbers_fmt);
 	else if (cmd == XFS_IOC_FSBULKSTAT_SINGLE)
 		error = xfs_bulkstat_one(mp, inlast, bulkreq.ubuffer,
-					sizeof(xfs_bstat_t), NULL, &done);
+					sizeof(xfs_bstat_t), NULL, NULL, &done);
 	else	/* XFS_IOC_FSBULKSTAT */
 		error = xfs_bulkstat(mp, &inlast, &count, xfs_bulkstat_one,
-				     sizeof(xfs_bstat_t), bulkreq.ubuffer,
-				     &done);
+				     NULL, sizeof(xfs_bstat_t),
+				     bulkreq.ubuffer, &done);
 
 	if (error)
 		return error;
@@ -1178,7 +1184,8 @@ xfs_ioctl_setattr_check_projid(
 STATIC int
 xfs_ioctl_setattr(
 	xfs_inode_t		*ip,
-	struct fsxattr		*fa)
+	struct fsxattr		*fa,
+	bool			dmapi_nonblock)
 {
 	struct xfs_mount	*mp = ip->i_mount;
 	struct xfs_trans	*tp;
@@ -1273,7 +1280,16 @@ xfs_ioctl_setattr(
 	xfs_qm_dqrele(udqp);
 	xfs_qm_dqrele(pdqp);
 
-	return code;
+	if (code)
+		return code;
+
+	if (DM_EVENT_ENABLED(ip, DM_EVENT_ATTRIBUTE)) {
+		XFS_SEND_NAMESP(mp, DM_EVENT_ATTRIBUTE, ip, DM_RIGHT_NULL,
+				NULL, DM_RIGHT_NULL, NULL, NULL, 0, 0,
+				dmapi_nonblock ? DM_FLAGS_NDELAY : 0);
+	}
+
+	return 0;
 
 error_trans_cancel:
 	xfs_trans_cancel(tp);
@@ -1291,14 +1307,18 @@ xfs_ioc_fssetxattr(
 {
 	struct fsxattr		fa;
 	int error;
+	bool			dmapi_nonblock = false;
 
 	if (copy_from_user(&fa, arg, sizeof(fa)))
 		return -EFAULT;
 
+	if (filp->f_flags & (O_NDELAY|O_NONBLOCK))
+		dmapi_nonblock = true;
+
 	error = mnt_want_write_file(filp);
 	if (error)
 		return error;
-	error = xfs_ioctl_setattr(ip, &fa);
+	error = xfs_ioctl_setattr(ip, &fa, dmapi_nonblock);
 	mnt_drop_write_file(filp);
 	return error;
 }

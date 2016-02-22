@@ -31,7 +31,7 @@
 #include "xfs_trace.h"
 #include "xfs_icache.h"
 
-STATIC int
+int
 xfs_internal_inum(
 	xfs_mount_t	*mp,
 	xfs_ino_t	ino)
@@ -161,6 +161,7 @@ xfs_bulkstat_one(
 	xfs_ino_t	ino,		/* inode number to get data for */
 	void		__user *buffer,	/* buffer to place output in */
 	int		ubsize,		/* size of buffer */
+	void		*private_data,	/* my private data */
 	int		*ubused,	/* bytes used by me */
 	int		*stat)		/* BULKSTAT_RV_... */
 {
@@ -276,6 +277,7 @@ xfs_bulkstat_ag_ichunk(
 	xfs_agnumber_t			agno,
 	struct xfs_inobt_rec_incore	*irbp,
 	bulkstat_one_pf			formatter,
+	void				*private_data,
 	size_t				statstruct_size,
 	struct xfs_bulkstat_agichunk	*acp,
 	xfs_agino_t			*last_agino)
@@ -301,7 +303,8 @@ xfs_bulkstat_ag_ichunk(
 		/* Get the inode and fill in a single buffer */
 		ubused = statstruct_size;
 		error = formatter(mp, XFS_AGINO_TO_INO(mp, agno, agino),
-				  *ubufp, acp->ac_ubleft, &ubused, &fmterror);
+				  *ubufp, acp->ac_ubleft, private_data,
+ 				  &ubused, &fmterror);
 
 		if (fmterror == BULKSTAT_RV_GIVEUP ||
 		    (error && error != -ENOENT && error != -EINVAL)) {
@@ -343,6 +346,7 @@ xfs_bulkstat(
 	xfs_ino_t		*lastinop, /* last inode returned */
 	int			*ubcountp, /* size of buffer/count returned */
 	bulkstat_one_pf		formatter, /* func that'd fill a single buf */
+	void			*private_data,/* private data for formatter */
 	size_t			statstruct_size, /* sizeof struct filling */
 	char			__user *ubuffer, /* buffer with inode stats */
 	int			*done)	/* 1 if there are more stats to get */
@@ -488,8 +492,8 @@ del_cursor:
 		     irbp < irbufend && ac.ac_ubleft >= statstruct_size;
 		     irbp++) {
 			error = xfs_bulkstat_ag_ichunk(mp, agno, irbp,
-					formatter, statstruct_size, &ac,
-					&agino);
+					formatter, private_data,
+					statstruct_size, &ac, &agino);
 			if (error)
 				break;
 

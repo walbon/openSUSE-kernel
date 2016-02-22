@@ -57,6 +57,9 @@ int	xfs_bmap_last_extent(struct xfs_trans *tp, struct xfs_inode *ip,
 /* preallocation and hole punch interface */
 int	xfs_alloc_file_space(struct xfs_inode *ip, xfs_off_t offset,
 			     xfs_off_t len, int alloc_type);
+int	__xfs_free_file_space(struct xfs_inode *ip, xfs_off_t offset,
+			    xfs_off_t len, bool dmapi_nonblock,
+			    bool keep_rounding);
 int	xfs_free_file_space(struct xfs_inode *ip, xfs_off_t offset,
 			    xfs_off_t len);
 int	xfs_zero_file_space(struct xfs_inode *ip, xfs_off_t offset,

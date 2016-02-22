@@ -38,6 +38,8 @@
 #include "xfs_dir2.h"
 #include "xfs_trans_space.h"
 #include "xfs_pnfs.h"
+#include "xfs_dmapi.h"
+#include "dmapi/xfs_dm.h"
 
 #include <linux/capability.h>
 #include <linux/xattr.h>
@@ -727,6 +729,17 @@ xfs_setattr_nonsize(
 			return error;
 	}
 
+	if (DM_EVENT_ENABLED(ip, DM_EVENT_ATTRIBUTE) && !xfs_dmapi_marked()) {
+		int ndelay = 0;
+#ifdef ATTR_NO_BLOCK
+		if (iattr->ia_valid & ATTR_NO_BLOCK)
+			ndelay = DM_FLAGS_NDELAY;
+#endif
+		(void) XFS_SEND_NAMESP(mp, DM_EVENT_ATTRIBUTE, ip,
+				       DM_RIGHT_NULL, NULL, DM_RIGHT_NULL,
+				       NULL, NULL, 0, 0, ndelay);
+	}
+
 	return 0;
 
 out_unlock:
@@ -771,6 +784,20 @@ xfs_setattr_size(
 	ASSERT(S_ISREG(ip->i_d.di_mode));
 	ASSERT((iattr->ia_valid & (ATTR_UID|ATTR_GID|ATTR_ATIME|ATTR_ATIME_SET|
 		ATTR_MTIME_SET|ATTR_KILL_PRIV|ATTR_TIMES_SET)) == 0);
+
+	if (DM_EVENT_ENABLED(ip, DM_EVENT_TRUNCATE) && !xfs_dmapi_marked()) {
+		int dmflags = DM_SEM_FLAG_WR;
+#ifdef ATTR_NO_BLOCK
+		if (iattr->ia_valid & ATTR_NO_BLOCK)
+			dmflags |= DM_FLAGS_NDELAY;
+#endif
+		error = XFS_SEND_DATA(mp, DM_EVENT_TRUNCATE, ip,
+			iattr->ia_size, 0, dmflags, NULL);
+		if (error) {
+			lock_flags = 0;
+			goto out_unlock;
+		}
+	}
 
 	oldsize = inode->i_size;
 	newsize = iattr->ia_size;
@@ -931,6 +958,20 @@ xfs_setattr_size(
 out_unlock:
 	if (lock_flags)
 		xfs_iunlock(ip, lock_flags);
+
+	if (!error &&
+	    DM_EVENT_ENABLED(ip, DM_EVENT_ATTRIBUTE) && !xfs_dmapi_marked()) {
+		int ndelay = 0;
+#ifdef ATTR_NO_BLOCK
+		if (iattr->ia_valid & ATTR_NO_BLOCK)
+			ndelay = DM_FLAGS_NDELAY;
+#endif
+
+		(void) XFS_SEND_NAMESP(mp, DM_EVENT_ATTRIBUTE, ip,
+				       DM_RIGHT_NULL, NULL, DM_RIGHT_NULL,
+				       NULL, NULL, 0, 0, ndelay);
+	}
+
 	return error;
 
 out_trans_cancel:

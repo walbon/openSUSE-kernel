@@ -379,6 +379,15 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
 	/* Callers that do fh_verify should do the fh_want_write: */
 	get_write_count = !fhp->fh_dentry;
 
+	/*
+	 * Tell a Hierarchical Storage Manager (e.g. via DMAPI) to
+	 * return EAGAIN when an action would take minutes instead of
+	 * milliseconds so that NFS can reply to the client with
+	 * NFSERR_JUKEBOX instead of blocking an nfsd thread.
+	 */
+	if (rqstp->rq_vers >= 3)
+		iap->ia_valid |= ATTR_NO_BLOCK;
+
 	/* Get inode */
 	err = fh_verify(rqstp, fhp, ftype, accmode);
 	if (err)
@@ -864,6 +873,10 @@ static __be32
 nfsd_vfs_read(struct svc_rqst *rqstp, struct file *file,
 	      loff_t offset, struct kvec *vec, int vlen, unsigned long *count)
 {
+	/* Support HSMs -- see comment in nfsd_setattr() */
+	if (rqstp->rq_vers >= 3)
+		file->f_flags |= O_NONBLOCK;
+
 	if (file->f_op->splice_read && test_bit(RQ_SPLICE_OK, &rqstp->rq_flags))
 		return nfsd_splice_read(rqstp, file, offset, count);
 	else
@@ -939,6 +952,10 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
 
 	if (!EX_ISSYNC(exp))
 		stable = 0;
+
+	/* Support HSMs -- see comment in nfsd_setattr() */
+	if (rqstp->rq_vers >= 3)
+		file->f_flags |= O_NONBLOCK;
 
 	/* Write the data. */
 	oldfs = get_fs(); set_fs(KERNEL_DS);
