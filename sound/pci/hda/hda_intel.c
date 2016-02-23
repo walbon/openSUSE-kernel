@@ -265,6 +265,9 @@ enum { SDI0, SDI1, SDI2, SDI3, SDO0, SDO1, SDO2, SDO3 };
 #define ICH6_REG_SD_BDLPL		0x18
 #define ICH6_REG_SD_BDLPU		0x1c
 
+/* Skylake/Broxton display HD-A controller Extended Mode registers */
+#define ICH6_REG_SKL_EM4L		0x1040
+
 /* PCI space */
 #define ICH6_PCIREG_TCSEL	0x44
 
@@ -368,6 +371,8 @@ enum {
 
 /* HD Audio class code */
 #define PCI_CLASS_MULTIMEDIA_HD_AUDIO	0x0403
+
+#define IS_BROXTON(pci)	((pci)->device == 0x5a98)
 
 /*
  */
@@ -1223,12 +1228,29 @@ static void azx_stream_stop(struct azx *chip, struct azx_dev *azx_dev)
 		   azx_readl(chip, INTCTL) & ~(1 << azx_dev->index));
 }
 
+/*
+ * In BXT-P A0, HD-Audio DMA requests is later than expected,
+ * and makes an audio stream sensitive to system latencies when
+ * 24/32 bits are playing.
+ * Adjusting threshold of DMA fifo to force the DMA request
+ * sooner to improve latency tolerance at the expense of power.
+ */
+static void bxt_reduce_dma_latency(struct azx *chip)
+{
+	u32 val;
+
+	val = azx_readl(chip, SKL_EM4L);
+	val &= (0x3 << 20);
+	azx_writel(chip, SKL_EM4L, val);
+}
 
 /*
  * reset and start the controller registers
  */
 static void azx_init_chip(struct azx *chip, int full_reset)
 {
+	struct pci_dev *pci = chip->pci;
+
 	if (chip->initialized)
 		return;
 
@@ -1246,6 +1268,10 @@ static void azx_init_chip(struct azx *chip, int full_reset)
 	/* program the position buffer */
 	azx_writel(chip, DPLBASE, (u32)chip->posbuf.addr);
 	azx_writel(chip, DPUBASE, upper_32_bits(chip->posbuf.addr));
+
+	/* reduce dma latency to avoid noise */
+	if (IS_BROXTON(pci))
+		bxt_reduce_dma_latency(chip);
 
 	chip->initialized = 1;
 }
