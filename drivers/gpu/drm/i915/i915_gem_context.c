@@ -245,12 +245,14 @@ void i915_gem_context_init(struct drm_device *dev)
 	uint32_t ctx_size;
 
 	if (!HAS_HW_CONTEXTS(dev)) {
-		dev_priv->hw_contexts_disabled = true;
+		dev_priv->hw_contexts_enabled = false;
 		return;
 	}
 
+	dev_priv->hw_contexts_enabled = true;
+
 	/* If called from reset, or thaw... we've been here already */
-	if (dev_priv->hw_contexts_disabled ||
+	if (!dev_priv->hw_contexts_enabled ||
 	    dev_priv->ring[RCS].default_context)
 		return;
 
@@ -259,12 +261,12 @@ void i915_gem_context_init(struct drm_device *dev)
 	dev_priv->hw_context_size = round_up(dev_priv->hw_context_size, 4096);
 
 	if (ctx_size <= 0 || ctx_size > (1<<20)) {
-		dev_priv->hw_contexts_disabled = true;
+		dev_priv->hw_contexts_enabled = false;
 		return;
 	}
 
 	if (create_default_context(dev_priv)) {
-		dev_priv->hw_contexts_disabled = true;
+		dev_priv->hw_contexts_enabled = false;
 		return;
 	}
 
@@ -276,7 +278,7 @@ void i915_gem_context_fini(struct drm_device *dev)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct i915_hw_context *ctx;
 
-	if (dev_priv->hw_contexts_disabled)
+	if (!dev_priv->hw_contexts_enabled)
 		return;
 
 	ctx = dev_priv->ring[RCS].default_context;
@@ -455,7 +457,7 @@ int i915_switch_context(struct intel_ring_buffer *ring,
 	struct drm_i915_private *dev_priv = ring->dev->dev_private;
 	struct i915_hw_context *to;
 
-	if (dev_priv->hw_contexts_disabled)
+	if (!dev_priv->hw_contexts_enabled)
 		return 0;
 
 	if (ring != &dev_priv->ring[RCS])
@@ -487,7 +489,7 @@ int i915_gem_context_create_ioctl(struct drm_device *dev, void *data,
 	if (!(dev->driver->driver_features & DRIVER_GEM))
 		return -ENODEV;
 
-	if (dev_priv->hw_contexts_disabled)
+	if (!dev_priv->hw_contexts_enabled)
 		return -ENODEV;
 
 	ret = i915_mutex_lock_interruptible(dev);
