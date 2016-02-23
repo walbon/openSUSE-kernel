@@ -361,6 +361,8 @@ enum {
 #define NVIDIA_HDA_ENABLE_COHBIT      0x01
 
 /* Defines for Intel SCH HDA snoop control */
+#define INTEL_HDA_CGCTL	 0x48
+#define INTEL_HDA_CGCTL_MISCBDCGE        (0x1 << 6)
 #define INTEL_SCH_HDA_DEVC      0x78
 #define INTEL_SCH_HDA_DEVC_NOSNOOP       (0x1<<11)
 
@@ -1250,9 +1252,16 @@ static void bxt_reduce_dma_latency(struct azx *chip)
 static void azx_init_chip(struct azx *chip, int full_reset)
 {
 	struct pci_dev *pci = chip->pci;
+	u32 val;
 
 	if (chip->initialized)
 		return;
+
+	if (IS_BROXTON(pci)) {
+		pci_read_config_dword(pci, INTEL_HDA_CGCTL, &val);
+		val = val & ~INTEL_HDA_CGCTL_MISCBDCGE;
+		pci_write_config_dword(pci, INTEL_HDA_CGCTL, val);
+	}
 
 	/* reset controller */
 	azx_reset(chip, full_reset);
@@ -1272,6 +1281,12 @@ static void azx_init_chip(struct azx *chip, int full_reset)
 	/* reduce dma latency to avoid noise */
 	if (IS_BROXTON(pci))
 		bxt_reduce_dma_latency(chip);
+
+	if (IS_BROXTON(pci)) {
+		pci_read_config_dword(pci, INTEL_HDA_CGCTL, &val);
+		val = val | INTEL_HDA_CGCTL_MISCBDCGE;
+		pci_write_config_dword(pci, INTEL_HDA_CGCTL, val);
+	}
 
 	chip->initialized = 1;
 }
