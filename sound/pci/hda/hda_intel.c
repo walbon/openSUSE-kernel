@@ -374,7 +374,10 @@ enum {
 /* HD Audio class code */
 #define PCI_CLASS_MULTIMEDIA_HD_AUDIO	0x0403
 
-#define IS_BROXTON(pci)	((pci)->device == 0x5a98)
+#define IS_SKL(pci) ((pci)->vendor == 0x8086 && (pci)->device == 0xa170)
+#define IS_SKL_LP(pci) ((pci)->vendor == 0x8086 && (pci)->device == 0x9d70)
+#define IS_BXT(pci) ((pci)->vendor == 0x8086 && (pci)->device == 0x5a98)
+#define IS_SKL_PLUS(pci) (IS_SKL(pci) || IS_SKL_LP(pci) || IS_BXT(pci))
 
 /*
  */
@@ -1257,7 +1260,7 @@ static void azx_init_chip(struct azx *chip, int full_reset)
 	if (chip->initialized)
 		return;
 
-	if (IS_BROXTON(pci)) {
+	if (IS_SKL_PLUS(pci)) {
 		pci_read_config_dword(pci, INTEL_HDA_CGCTL, &val);
 		val = val & ~INTEL_HDA_CGCTL_MISCBDCGE;
 		pci_write_config_dword(pci, INTEL_HDA_CGCTL, val);
@@ -1279,10 +1282,10 @@ static void azx_init_chip(struct azx *chip, int full_reset)
 	azx_writel(chip, DPUBASE, upper_32_bits(chip->posbuf.addr));
 
 	/* reduce dma latency to avoid noise */
-	if (IS_BROXTON(pci))
+	if (IS_BXT(pci))
 		bxt_reduce_dma_latency(chip);
 
-	if (IS_BROXTON(pci)) {
+	if (IS_SKL_PLUS(pci)) {
 		pci_read_config_dword(pci, INTEL_HDA_CGCTL, &val);
 		val = val | INTEL_HDA_CGCTL_MISCBDCGE;
 		pci_write_config_dword(pci, INTEL_HDA_CGCTL, val);
