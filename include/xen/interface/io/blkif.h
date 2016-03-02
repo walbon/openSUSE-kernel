@@ -594,6 +594,23 @@ struct blkif_request {
             uint64_t       nr_sectors;
             uint8_t        _pad3;
         } discard;
+	struct __attribute__((__packed__)) blkif_request_indirect {
+            uint8_t        indirect_op;
+            uint16_t       nr_segments;
+#ifndef CONFIG_X86_32
+            uint32_t       _pad1;    /* offsetof(blkif_...,u.indirect.id) == 8 */
+#endif
+            uint64_t       id;
+            blkif_sector_t sector_number;
+            blkif_vdev_t   handle;
+            uint16_t       _pad2;
+            grant_ref_t    indirect_grefs[BLKIF_MAX_INDIRECT_PAGES_PER_REQUEST];
+#ifndef CONFIG_X86_32
+            uint32_t      _pad3;     /* make it 64 byte aligned */
+#else
+            uint64_t      _pad3;     /* make it 64 byte aligned */
+#endif
+	} indirect;
     } u;
 } __attribute__((__packed__));
 #endif
@@ -616,8 +633,6 @@ struct blkif_request_discard {
 };
 typedef struct blkif_request_discard blkif_request_discard_t;
 
-#endif
-
 struct blkif_request_indirect {
     uint8_t        operation;    /* BLKIF_OP_INDIRECT                    */
     uint8_t        indirect_op;  /* BLKIF_OP_{READ/WRITE}                */
@@ -631,6 +646,8 @@ struct blkif_request_indirect {
 #endif
 };
 typedef struct blkif_request_indirect blkif_request_indirect_t;
+
+#endif
 
 struct blkif_response {
 	uint64_t        id;              /* copied from request */
