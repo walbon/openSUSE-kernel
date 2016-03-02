@@ -563,22 +563,43 @@ struct blkif_request_segment {
  */
 struct blkif_request {
     uint8_t        operation;    /* BLKIF_OP_???                         */
+#if !defined(CONFIG_PARAVIRT_XEN) || defined(HAVE_XEN_PLATFORM_COMPAT_H)
     uint8_t        nr_segments;  /* number of segments                   */
     blkif_vdev_t   handle;       /* only for read/write requests         */
     uint64_t       id;           /* private guest value, echoed in resp  */
-#if !defined(CONFIG_PARAVIRT_XEN) || defined(HAVE_XEN_PLATFORM_COMPAT_H)
     blkif_sector_t sector_number;/* start sector idx on disk (r/w only)  */
     struct blkif_request_segment seg[BLKIF_MAX_SEGMENTS_PER_REQUEST];
+};
 #else
     union {
-        struct blkif_request_rw {
+        struct __attribute__((__packed__)) blkif_request_rw {
+            uint8_t        nr_segments;  /* number of segments                  */
+            blkif_vdev_t   handle;       /* only for read/write requests        */
+#ifndef CONFIG_X86_32
+            uint32_t       _pad1;        /* offsetof(blkif_request,u.rw.id) == 8 */
+#endif
+            uint64_t       id;           /* private guest value, echoed in resp */
             blkif_sector_t sector_number;/* start sector idx on disk (r/w only) */
             struct blkif_request_segment seg[BLKIF_MAX_SEGMENTS_PER_REQUEST];
         } rw;
-    } u;
+        struct __attribute__((__packed__)) blkif_request_discard {
+            uint8_t        flag;         /* BLKIF_DISCARD_SECURE or zero.        */
+#define BLKIF_DISCARD_SECURE (1<<0)      /* ignored if discard-secure=0          */
+            blkif_vdev_t   _pad1;        /* only for read/write requests         */
+#ifndef CONFIG_X86_32
+            uint32_t       _pad2;        /* offsetof(blkif_req..,u.discard.id)==8*/
 #endif
-};
+            uint64_t       id;           /* private guest value, echoed in resp  */
+            blkif_sector_t sector_number;
+            uint64_t       nr_sectors;
+            uint8_t        _pad3;
+        } discard;
+    } u;
+} __attribute__((__packed__));
+#endif
 typedef struct blkif_request blkif_request_t;
+
+#if !defined(CONFIG_PARAVIRT_XEN) || defined(HAVE_XEN_PLATFORM_COMPAT_H)
 
 /*
  * Cast to this structure when blkif_request.operation == BLKIF_OP_DISCARD
@@ -594,6 +615,8 @@ struct blkif_request_discard {
     uint64_t       nr_sectors;   /* number of contiguous sectors to discard*/
 };
 typedef struct blkif_request_discard blkif_request_discard_t;
+
+#endif
 
 struct blkif_request_indirect {
     uint8_t        operation;    /* BLKIF_OP_INDIRECT                    */
