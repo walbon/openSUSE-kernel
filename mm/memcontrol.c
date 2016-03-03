@@ -1451,7 +1451,7 @@ done:
 		rcu_read_unlock();
 		pr_cont(":");
 
-		for (i = 0; i < MEM_CGROUP_STAT_NSTATS; i++) {
+		for (i = 0; i < MEM_CGROUP_STAT_DATA; i++) {
 			if (i == MEM_CGROUP_STAT_SWAP && !do_swap_account)
 				continue;
 			pr_cont(" %s:%ldKB", mem_cgroup_stat_names[i],
@@ -4229,7 +4229,7 @@ static int mem_control_stat_show(struct cgroup *cont, struct cftype *cft,
 	struct mem_cgroup *mi;
 	unsigned int i;
 
-	for (i = 0; i < MEM_CGROUP_STAT_NSTATS; i++) {
+	for (i = 0; i < MEM_CGROUP_STAT_DATA; i++) {
 		if (i == MEM_CGROUP_STAT_SWAP && !do_swap_account)
 			continue;
 		seq_printf(m, "%s %ld\n", mem_cgroup_stat_names[i],
@@ -4254,7 +4254,7 @@ static int mem_control_stat_show(struct cgroup *cont, struct cftype *cft,
 				   memsw_limit);
 	}
 
-	for (i = 0; i < MEM_CGROUP_STAT_NSTATS; i++) {
+	for (i = 0; i < MEM_CGROUP_STAT_DATA; i++) {
 		long long val = 0;
 
 		if (i == MEM_CGROUP_STAT_SWAP && !do_swap_account)
