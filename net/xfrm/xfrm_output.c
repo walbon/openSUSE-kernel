@@ -179,8 +179,12 @@ int xfrm_output(struct sk_buff *skb)
 	struct net *net = dev_net(skb_dst(skb)->dev);
 	int err;
 
-	if (skb_is_gso(skb))
-		return xfrm_output_gso(skb);
+	if (skb_is_gso(skb)) {
+		if (skb_is_ufo(skb))
+			return xfrm_output2(skb);
+		else
+			return xfrm_output_gso(skb);
+	}
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		err = skb_checksum_help(skb);
