@@ -321,12 +321,12 @@ struct idmap_hashent {
 	unsigned long		ih_expires;
 	__u32			ih_id;
 	size_t			ih_namelen;
-	char			ih_name[IDMAP_NAMESZ];
 };
 
 struct idmap_hashtable {
 	__u8			h_type;
 	struct idmap_hashent	h_entries[IDMAP_HASH_SZ];
+	char			*h_names[DIV_ROUND_UP(IDMAP_HASH_SZ * IDMAP_NAMESZ, PAGE_SIZE)];
 };
 
 struct idmap {
@@ -353,23 +353,46 @@ static const struct rpc_pipe_ops idmap_upcall_ops = {
 	.destroy_msg	= idmap_pipe_destroy_msg,
 };
 
+static void idmap_free(struct idmap *idmap)
+{
+
+	if (idmap) {
+		int i;
+		for (i = 0; i < ARRAY_SIZE(idmap->idmap_user_hash.h_names); i++) {
+			kfree(idmap->idmap_user_hash.h_names[i]);
+			kfree(idmap->idmap_group_hash.h_names[i]);
+		}
+		kfree(idmap);
+	}
+}
+
 int
 nfs_idmap_new(struct nfs_client *clp)
 {
 	struct idmap *idmap;
 	int error;
+	int i;
 
 	BUG_ON(clp->cl_idmap != NULL);
 
 	idmap = kzalloc(sizeof(*idmap), GFP_KERNEL);
 	if (idmap == NULL)
 		return -ENOMEM;
+	for (i = 0; i < ARRAY_SIZE(idmap->idmap_user_hash.h_names); i++) {
+		idmap->idmap_user_hash.h_names[i] = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		idmap->idmap_group_hash.h_names[i] = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		if (!idmap->idmap_user_hash.h_names[i] ||
+		    !idmap->idmap_group_hash.h_names[i]) {
+			idmap_free(idmap);
+			return -ENOMEM;
+		}
+	}
 
 	idmap->idmap_dentry = rpc_mkpipe(clp->cl_rpcclient->cl_path.dentry,
 			"idmap", idmap, &idmap_upcall_ops, 0);
 	if (IS_ERR(idmap->idmap_dentry)) {
 		error = PTR_ERR(idmap->idmap_dentry);
-		kfree(idmap);
+		idmap_free(idmap);
 		return error;
 	}
 
@@ -392,7 +415,7 @@ nfs_idmap_delete(struct nfs_client *clp)
 		return;
 	rpc_unlink(idmap->idmap_dentry);
 	clp->cl_idmap = NULL;
-	kfree(idmap);
+	idmap_free(idmap);
 }
 
 /*
@@ -404,12 +427,21 @@ idmap_name_hash(struct idmap_hashtable* h, const char *name, size_t len)
 	return &h->h_entries[fnvhash32(name, len) % IDMAP_HASH_SZ];
 }
 
+static char *get_ih_name(struct idmap_hashtable *h, struct idmap_hashent *he)
+{
+	int i = he - h->h_entries;
+	int p = (i * IDMAP_NAMESZ) / PAGE_SIZE;
+	i -= p * PAGE_SIZE;
+	return h->h_names[p] + i * IDMAP_NAMESZ;
+}
+
 static struct idmap_hashent *
 idmap_lookup_name(struct idmap_hashtable *h, const char *name, size_t len)
 {
 	struct idmap_hashent *he = idmap_name_hash(h, name, len);
+	char *ih_name = get_ih_name(h, he);
 
-	if (he->ih_namelen != len || memcmp(he->ih_name, name, len) != 0)
+	if (he->ih_namelen != len || memcmp(ih_name, name, len) != 0)
 		return NULL;
 	if (time_after(jiffies, he->ih_expires))
 		return NULL;
@@ -451,12 +483,14 @@ idmap_alloc_id(struct idmap_hashtable *h, __u32 id)
 }
 
 static void
-idmap_update_entry(struct idmap_hashent *he, const char *name,
+idmap_update_entry(struct idmap_hashtable *h,
+		   struct idmap_hashent *he, const char *name,
 		size_t namelen, __u32 id)
 {
+	char *ih_name = get_ih_name(h, he);
 	he->ih_id = id;
-	memcpy(he->ih_name, name, namelen);
-	he->ih_name[namelen] = '\0';
+	memcpy(ih_name, name, namelen);
+	ih_name[namelen] = '\0';
 	he->ih_namelen = namelen;
 	he->ih_expires = jiffies + nfs_idmap_cache_timeout;
 }
@@ -556,7 +590,8 @@ nfs_idmap_name(struct idmap *idmap, struct idmap_hashtable *h,
 
 	he = idmap_lookup_id(h, id);
 	if (he) {
-		memcpy(name, he->ih_name, he->ih_namelen);
+		char *ih_name = get_ih_name(h, he);
+		memcpy(name, ih_name, he->ih_namelen);
 		ret = he->ih_namelen;
 		goto out;
 	}
@@ -693,7 +728,7 @@ idmap_pipe_downcall(struct file *filp, const char __user *src, size_t mlen)
 
 	/* If the entry is valid, also copy it to the cache */
 	if (he != NULL)
-		idmap_update_entry(he, im_in.im_name, namelen_in, im_in.im_id);
+		idmap_update_entry(h, he, im_in.im_name, namelen_in, im_in.im_id);
 	ret = mlen;
 out:
 	mutex_unlock(&idmap->idmap_im_lock);
