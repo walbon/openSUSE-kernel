@@ -325,9 +325,9 @@ static struct sk_buff *igmpv3_newpack(struct net_device *dev, unsigned int mtu)
 	skb_dst_set(skb, &rt->dst);
 	skb->dev = dev;
 
-	skb->reserved_tailroom = skb_end_offset(skb) -
-				 min(mtu, skb_end_offset(skb));
 	skb_reserve(skb, LL_RESERVED_SPACE(dev));
+	skb_tailroom_reserve(skb, mtu, LL_ALLOCATED_SPACE(dev) -
+			     LL_RESERVED_SPACE(dev));
 
 	skb_reset_network_header(skb);
 	pip = ip_hdr(skb);
