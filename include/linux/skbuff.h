@@ -454,7 +454,7 @@ struct sk_buff {
 		__u32		mark;
 		__u32		dropcount;
 #ifndef __GENKSYMS__
-		__u32		avail_size;
+		__u32		reserved_tailroom;
 #endif
 	};
 
@@ -1419,7 +1419,10 @@ static inline int skb_tailroom(const struct sk_buff *skb)
  */
 static inline int skb_availroom(const struct sk_buff *skb)
 {
-	return skb_is_nonlinear(skb) ? 0 : skb->avail_size - skb->len;
+	if (skb_is_nonlinear(skb))
+		return 0;
+
+	return skb->end - skb->tail - skb->reserved_tailroom;
 }
 
 /**
