@@ -265,9 +265,9 @@ struct nicvf {
 	struct pci_dev		*pdev;
 	u8			vf_id;
 	u8			node;
-	bool			tns_mode:1;
-	bool                    sqs_mode:1;
-	bool			loopback_supported:1;
+	bool			tns_mode;
+	bool                    sqs_mode;
+	bool			loopback_supported;
 	bool			hw_tso;
 	u16			mtu;
 	struct queue_set	*qs;
@@ -356,9 +356,9 @@ struct nic_cfg_msg {
 	u8    msg;
 	u8    vf_id;
 	u8    node_id;
-	bool  tns_mode:1;
-	bool  sqs_mode:1;
-	bool  loopback_supported:1;
+	bool  tns_mode;
+	bool  sqs_mode;
+	bool  loopback_supported;
 	u8    mac_addr[ETH_ALEN];
 };
 
