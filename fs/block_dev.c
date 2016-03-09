@@ -163,11 +163,16 @@ static void submit_failfast_bio(int rw, struct bio *bio, struct inode *inode,
 	submit_bio(rw, bio);
 }
 
+static struct inode *bdev_file_inode(struct file *file)
+{
+	return file->f_mapping->host;
+}
+
 static ssize_t
 blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter, loff_t offset)
 {
 	struct file *file = iocb->ki_filp;
-	struct inode *inode = file->f_mapping->host;
+	struct inode *inode = bdev_file_inode(file);
 	dio_submit_t *submit_io = NULL;
 
 	if (file->f_flags & O_NONBLOCK)
@@ -348,7 +353,7 @@ static int blkdev_write_end(struct file *file, struct address_space *mapping,
  */
 static loff_t block_llseek(struct file *file, loff_t offset, int whence)
 {
-	struct inode *bd_inode = file->f_mapping->host;
+	struct inode *bd_inode = bdev_file_inode(file);
 	loff_t retval;
 
 	mutex_lock(&bd_inode->i_mutex);
@@ -359,7 +364,7 @@ static loff_t block_llseek(struct file *file, loff_t offset, int whence)
 	
 int blkdev_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 {
-	struct inode *bd_inode = filp->f_mapping->host;
+	struct inode *bd_inode = bdev_file_inode(filp);
 	struct block_device *bdev = I_BDEV(bd_inode);
 	int error;
 	
@@ -1615,14 +1620,14 @@ EXPORT_SYMBOL(blkdev_put);
 
 static int blkdev_close(struct inode * inode, struct file * filp)
 {
-	struct block_device *bdev = I_BDEV(filp->f_mapping->host);
+	struct block_device *bdev = I_BDEV(bdev_file_inode(filp));
 	blkdev_put(bdev, filp->f_mode);
 	return 0;
 }
 
 static long block_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
-	struct block_device *bdev = I_BDEV(file->f_mapping->host);
+	struct block_device *bdev = I_BDEV(bdev_file_inode(file));
 	fmode_t mode = file->f_mode;
 
 	/*
@@ -1647,7 +1652,7 @@ static long block_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 ssize_t blkdev_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	struct file *file = iocb->ki_filp;
-	struct inode *bd_inode = file->f_mapping->host;
+	struct inode *bd_inode = bdev_file_inode(file);
 	loff_t size = i_size_read(bd_inode);
 	struct blk_plug plug;
 	ssize_t ret;
@@ -1679,7 +1684,7 @@ EXPORT_SYMBOL_GPL(blkdev_write_iter);
 ssize_t blkdev_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
 	struct file *file = iocb->ki_filp;
-	struct inode *bd_inode = file->f_mapping->host;
+	struct inode *bd_inode = bdev_file_inode(file);
 	loff_t size = i_size_read(bd_inode);
 	loff_t pos = iocb->ki_pos;
 
