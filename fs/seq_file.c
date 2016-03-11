@@ -10,7 +10,9 @@
 #include <linux/seq_file.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
+#ifndef __GENKSYMS__
 #include <linux/mm.h>
+#endif
 
 #include <asm/uaccess.h>
 #include <asm/page.h>
