@@ -408,6 +408,7 @@ struct request_queue {
 
 	unsigned int		rq_timeout;
 	struct timer_list	timeout;
+	struct work_struct	timeout_work;
 	struct list_head	timeout_list;
 
 	struct list_head	icq_list;
@@ -681,9 +682,12 @@ static inline bool blk_write_same_mergeable(struct bio *a, struct bio *b)
 /*
  * q->prep_rq_fn return values
  */
-#define BLKPREP_OK		0	/* serve it */
-#define BLKPREP_KILL		1	/* fatal error, kill */
-#define BLKPREP_DEFER		2	/* leave on queue */
+enum {
+	BLKPREP_OK,		/* serve it */
+	BLKPREP_KILL,		/* fatal error, kill, return -EIO */
+	BLKPREP_DEFER,		/* leave on queue */
+	BLKPREP_INVALID,	/* invalid command, kill, return -EREMOTEIO */
+};
 
 extern unsigned long blk_max_low_pfn, blk_max_pfn;
 

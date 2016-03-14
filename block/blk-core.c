@@ -51,7 +51,7 @@ DEFINE_IDA(blk_queue_ida);
 /*
  * For the allocated request tables
  */
-struct kmem_cache *request_cachep = NULL;
+struct kmem_cache *request_cachep;
 
 /*
  * For queue allocation
@@ -680,6 +680,13 @@ static void blk_queue_usage_counter_release(struct percpu_ref *ref)
 	wake_up_all(&q->mq_freeze_wq);
 }
 
+static void blk_rq_timed_out_timer(unsigned long data)
+{
+	struct request_queue *q = (struct request_queue *)data;
+
+	kblockd_schedule_work(&q->timeout_work);
+}
+
 struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id)
 {
 	struct request_queue *q;
@@ -841,6 +848,7 @@ blk_init_allocated_queue(struct request_queue *q, request_fn_proc *rfn,
 	if (blk_init_rl(&q->root_rl, q, GFP_KERNEL))
 		goto fail;
 
+	INIT_WORK(&q->timeout_work, blk_timeout_work);
 	q->request_fn		= rfn;
 	q->prep_rq_fn		= NULL;
 	q->unprep_rq_fn		= NULL;
@@ -2447,14 +2455,16 @@ struct request *blk_peek_request(struct request_queue *q)
 
 			rq = NULL;
 			break;
-		} else if (ret == BLKPREP_KILL) {
+		} else if (ret == BLKPREP_KILL || ret == BLKPREP_INVALID) {
+			int err = (ret == BLKPREP_INVALID) ? -EREMOTEIO : -EIO;
+
 			rq->cmd_flags |= REQ_QUIET;
 			/*
 			 * Mark this request as started so we don't trigger
 			 * any debug logic in the end I/O path.
 			 */
 			blk_start_request(rq);
-			__blk_end_request_all(rq, -EIO);
+			__blk_end_request_all(rq, err);
 		} else {
 			printk(KERN_ERR "%s: bad return=%d\n", __func__, ret);
 			break;
@@ -3535,7 +3545,7 @@ int __init blk_dev_init(void)
 	request_cachep = kmem_cache_create("blkdev_requests",
 			sizeof(struct request), 0, SLAB_PANIC, NULL);
 
-	blk_requestq_cachep = kmem_cache_create("blkdev_queue",
+	blk_requestq_cachep = kmem_cache_create("request_queue",
 			sizeof(struct request_queue), 0, SLAB_PANIC, NULL);
 
 	return 0;
