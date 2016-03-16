@@ -15,6 +15,7 @@
 #include <linux/ioport.h>
 #include <linux/module.h>
 #include <linux/types.h>
+#include <linux/memremap.h>
 #include <linux/io.h>
 #include "nfit_test.h"
 
@@ -93,6 +94,55 @@ void *__wrap_devm_memremap(struct device *dev, resource_size_t offset,
 	return devm_memremap(dev, offset, size, flags);
 }
 EXPORT_SYMBOL(__wrap_devm_memremap);
+
+#ifdef __HAVE_ARCH_PTE_DEVMAP
+#include <linux/memremap.h>
+#include <linux/pfn_t.h>
+
+void *__wrap_devm_memremap_pages(struct device *dev, struct resource *res,
+		 struct vmem_altmap *altmap)
+{
+	resource_size_t offset = res->start;
+	struct nfit_test_resource *nfit_res;
+
+	rcu_read_lock();
+	nfit_res = get_nfit_res(offset);
+	rcu_read_unlock();
+	if (nfit_res)
+		return nfit_res->buf + offset - nfit_res->res->start;
+	return devm_memremap_pages(dev, res, altmap);
+}
+EXPORT_SYMBOL(__wrap_devm_memremap_pages);
+
+pfn_t __wrap_phys_to_pfn_t(dma_addr_t addr, unsigned long flags)
+{
+	struct nfit_test_resource *nfit_res;
+
+	rcu_read_lock();
+	nfit_res = get_nfit_res(addr);
+	rcu_read_unlock();
+	if (nfit_res)
+		flags &= ~PFN_MAP;
+        return phys_to_pfn_t(addr, flags);
+}
+EXPORT_SYMBOL(__wrap_phys_to_pfn_t);
+#else
+/* to be removed post 4.5-rc1 */
+void *__wrap_devm_memremap_pages(struct device *dev, struct resource *res,
+				 struct vmem_altmap *altmap)
+{
+	resource_size_t offset = res->start;
+	struct nfit_test_resource *nfit_res;
+
+	rcu_read_lock();
+	nfit_res = get_nfit_res(offset);
+	rcu_read_unlock();
+	if (nfit_res)
+		return nfit_res->buf + offset - nfit_res->res->start;
+	return devm_memremap_pages(dev, res, altmap);
+}
+EXPORT_SYMBOL(__wrap_devm_memremap_pages);
+#endif
 
 void *__wrap_memremap(resource_size_t offset, size_t size,
 		unsigned long flags)
