@@ -4376,7 +4376,7 @@ megasas_ld_list_query(struct megasas_instance *instance, u8 query_type)
 		 * Some older firmware return '0' if the LD LIST QUERY
 		 * command is not supported.
 		 */
-		if (tgtid_cound == 0) {
+		if (tgtid_count == 0) {
 			ret = DCMD_FAILED;
 			break;
 		}
@@ -7090,7 +7090,7 @@ megasas_aen_polling(struct work_struct *work)
 			if (!instance->requestorId ||
 			    (instance->requestorId && megasas_get_ld_vf_affiliation(instance, 0))) {
 				dcmd_ret = megasas_ld_list_query(instance, MR_LD_QUERY_TYPE_EXPOSED_TO_HOST);
-				if (dmcd_ret == DCMD_FAILED)
+				if (dcmd_ret == DCMD_FAILED)
 					dcmd_ret = megasas_get_ld_list(instance);
 			}
 
