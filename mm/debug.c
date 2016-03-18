@@ -28,36 +28,6 @@ const struct trace_print_flags vmaflag_names[] = {
 	{0, NULL}
 };
 
-static void dump_flags(unsigned long flags,
-			const struct trace_print_flags *names, int count)
-{
-	const char *delim = "";
-	unsigned long mask;
-	int i;
-
-	pr_emerg("flags: %#lx(", flags);
-
-	/* remove zone id */
-	flags &= (1UL << NR_PAGEFLAGS) - 1;
-
-	for (i = 0; i < count && flags; i++) {
-
-		mask = names[i].mask;
-		if ((flags & mask) != mask)
-			continue;
-
-		flags &= ~mask;
-		pr_cont("%s%s", delim, names[i].name);
-		delim = "|";
-	}
-
-	/* check for left over flags */
-	if (flags)
-		pr_cont("%s%#lx", delim, flags);
-
-	pr_cont(")\n");
-}
-
 void dump_page_badflags(struct page *page, const char *reason,
 		unsigned long badflags)
 {
@@ -65,15 +35,15 @@ void dump_page_badflags(struct page *page, const char *reason,
 		  page, atomic_read(&page->_count), page_mapcount(page),
 		  page->mapping, page->index);
 	BUILD_BUG_ON(ARRAY_SIZE(pageflag_names) != __NR_PAGEFLAGS + 1);
-	dump_flags(page->flags, pageflag_names,
-					ARRAY_SIZE(pageflag_names) - 1);
+	pr_emerg("flags: %#lx(%pGp)\n", page->flags, &page->flags);
+
 	if (reason)
 		pr_alert("page dumped because: %s\n", reason);
-	if (page->flags & badflags) {
-		pr_alert("bad because of flags:\n");
-		dump_flags(page->flags & badflags, pageflag_names,
-					ARRAY_SIZE(pageflag_names) - 1);
-	}
+
+	badflags &= page->flags;
+	if (badflags)
+		pr_alert("bad because of flags: %#lx(%pGp)\n", badflags,
+								&badflags);
 #ifdef CONFIG_MEMCG
 	if (page->mem_cgroup)
 		pr_alert("page->mem_cgroup:%p\n", page->mem_cgroup);
@@ -93,13 +63,14 @@ void dump_vma(const struct vm_area_struct *vma)
 	pr_emerg("vma %p start %p end %p\n"
 		"next %p prev %p mm %p\n"
 		"prot %lx anon_vma %p vm_ops %p\n"
-		"pgoff %lx file %p private_data %p\n",
+		"pgoff %lx file %p private_data %p\n"
+		"flags: %#lx(%pGv)\n",
 		vma, (void *)vma->vm_start, (void *)vma->vm_end, vma->vm_next,
 		vma->vm_prev, vma->vm_mm,
 		(unsigned long)pgprot_val(vma->vm_page_prot),
 		vma->anon_vma, vma->vm_ops, vma->vm_pgoff,
-		vma->vm_file, vma->vm_private_data);
-	dump_flags(vma->vm_flags, vmaflag_names, ARRAY_SIZE(vmaflag_names) - 1);
+		vma->vm_file, vma->vm_private_data,
+		vma->vm_flags, &vma->vm_flags);
 }
 EXPORT_SYMBOL(dump_vma);
 
@@ -133,7 +104,7 @@ void dump_mm(const struct mm_struct *mm)
 #if defined(CONFIG_NUMA_BALANCING) || defined(CONFIG_COMPACTION)
 		"tlb_flush_pending %d\n"
 #endif
-		"%s",	/* This is here to hold the comma */
+		"def_flags: %#lx(%pGv)\n",
 
 		mm, mm->mmap, mm->vmacache_seqnum, mm->task_size,
 #ifdef CONFIG_MMU
@@ -167,11 +138,8 @@ void dump_mm(const struct mm_struct *mm)
 #if defined(CONFIG_NUMA_BALANCING) || defined(CONFIG_COMPACTION)
 		mm->tlb_flush_pending,
 #endif
-		""		/* This is here to not have a comma! */
-		);
-
-		dump_flags(mm->def_flags, vmaflag_names,
-				ARRAY_SIZE(vmaflag_names) - 1);
+		mm->def_flags, &mm->def_flags
+	);
 }
 
 #endif		/* CONFIG_DEBUG_VM */
