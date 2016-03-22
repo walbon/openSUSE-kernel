@@ -956,18 +956,15 @@ static inline int32_t intel_pstate_get_scaled_busy(struct cpudata *cpu)
 	/*
 	 * Since we have a deferred timer, it will not fire unless
 	 * we are in C0.  So, determine if the actual elapsed time
-	 * is significantly greater (3x) than our sample interval.  If it
+	 * is significantly greater (12x) than our sample interval.  If it
 	 * is, then we were idle for a long enough period of time
 	 * to adjust our busyness.
 	 */
 	sample_time = pid_params.sample_rate_ms  * USEC_PER_MSEC;
 	duration_us = ktime_us_delta(cpu->sample.time,
 				     cpu->last_sample_time);
-	if (duration_us > sample_time * 3) {
-		sample_ratio = div_fp(int_tofp(sample_time),
-				      int_tofp(duration_us));
-		core_busy = mul_fp(core_busy, sample_ratio);
-	}
+	if (duration_us > sample_time * 12)
+		core_busy = 0;
 
 	return core_busy;
 }
