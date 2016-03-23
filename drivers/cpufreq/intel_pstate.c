@@ -933,7 +933,7 @@ static inline void intel_pstate_set_sample_time(struct cpudata *cpu)
 
 static inline int32_t intel_pstate_get_scaled_busy(struct cpudata *cpu)
 {
-	int32_t core_busy, max_pstate, current_pstate, sample_ratio;
+	int32_t core_busy, max_pstate, current_pstate;
 	s64 duration_us;
 	u32 sample_time;
 
