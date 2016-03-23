@@ -2473,7 +2473,7 @@ static int khugepaged_find_target_node(void)
 
 static inline struct page *alloc_khugepaged_hugepage(void)
 {
-	page = alloc_pages(alloc_hugepage_khugepaged_gfpmask(),
+	return alloc_pages(alloc_hugepage_khugepaged_gfpmask(),
 			   HPAGE_PMD_ORDER);
 }
 
