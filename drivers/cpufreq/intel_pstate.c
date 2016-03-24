@@ -908,8 +908,6 @@ static inline void intel_pstate_sample(struct cpudata *cpu)
 	cpu->sample.mperf -= cpu->prev_mperf;
 	cpu->sample.tsc -= cpu->prev_tsc;
 
-	intel_pstate_calc_busy(cpu);
-
 	cpu->prev_aperf = aperf;
 	cpu->prev_mperf = mperf;
 	cpu->prev_tsc = tsc;
@@ -952,6 +950,8 @@ static inline int32_t intel_pstate_get_scaled_busy(struct cpudata *cpu)
 	max_pstate = int_tofp(cpu->pstate.max_pstate_physical);
 	current_pstate = int_tofp(cpu->pstate.current_pstate);
 	core_busy = mul_fp(core_busy, div_fp(max_pstate, current_pstate));
+
+	intel_pstate_calc_busy(cpu);
 
 	/*
 	 * Since we have a deferred timer, it will not fire unless
