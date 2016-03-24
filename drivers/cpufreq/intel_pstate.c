@@ -191,8 +191,8 @@ static struct perf_limits *limits = &powersave_limits;
 
 static inline void pid_reset(struct _pid *pid, int setpoint, int busy,
 			     int deadband, int integral) {
-	pid->setpoint = setpoint;
-	pid->deadband  = deadband;
+	pid->setpoint = int_tofp(setpoint);
+	pid->deadband  = int_tofp(deadband);
 	pid->integral  = int_tofp(integral);
 	pid->last_err  = int_tofp(setpoint) - int_tofp(busy);
 }
@@ -218,9 +218,9 @@ static signed int pid_calc(struct _pid *pid, int32_t busy)
 	int32_t pterm, dterm, fp_error;
 	int32_t integral_limit;
 
-	fp_error = int_tofp(pid->setpoint) - busy;
+	fp_error = pid->setpoint - busy;
 
-	if (abs(fp_error) <= int_tofp(pid->deadband))
+	if (abs(fp_error) <= pid->deadband)
 		return 0;
 
 	pterm = mul_fp(pid->p_gain, fp_error);
@@ -823,11 +823,11 @@ static void intel_pstate_get_min_max(struct cpudata *cpu, int *min, int *max)
 	 * policy, or by cpu specific default values determined through
 	 * experimentation.
 	 */
-	max_perf_adj = fp_toint(mul_fp(int_tofp(max_perf), limits->max_perf));
+	max_perf_adj = fp_toint(max_perf * limits->max_perf);
 	*max = clamp_t(int, max_perf_adj,
 			cpu->pstate.min_pstate, cpu->pstate.turbo_pstate);
 
-	min_perf = fp_toint(mul_fp(int_tofp(max_perf), limits->min_perf));
+	min_perf = fp_toint(max_perf * limits->min_perf);
 	*min = clamp_t(int, min_perf, cpu->pstate.min_pstate, max_perf);
 }
 
@@ -873,12 +873,6 @@ static inline void intel_pstate_calc_busy(struct cpudata *cpu)
 	core_pct = int_tofp(sample->aperf) * int_tofp(100);
 	core_pct = div64_u64(core_pct, int_tofp(sample->mperf));
 
-	sample->freq = fp_toint(
-		mul_fp(int_tofp(
-			cpu->pstate.max_pstate_physical *
-			cpu->pstate.scaling / 100),
-			core_pct));
-
 	sample->core_pct_busy = (int32_t)core_pct;
 }
 
@@ -908,11 +902,15 @@ static inline void intel_pstate_sample(struct cpudata *cpu)
 	cpu->sample.mperf -= cpu->prev_mperf;
 	cpu->sample.tsc -= cpu->prev_tsc;
 
-	intel_pstate_calc_busy(cpu);
-
 	cpu->prev_aperf = aperf;
 	cpu->prev_mperf = mperf;
 	cpu->prev_tsc = tsc;
+}
+
+static inline int32_t get_avg_frequency(struct cpudata *cpu)
+{
+	return div64_u64(cpu->pstate.max_pstate_physical * cpu->sample.aperf *
+		cpu->pstate.scaling, cpu->sample.mperf);
 }
 
 static inline void intel_hwp_set_sample_time(struct cpudata *cpu)
@@ -952,6 +950,8 @@ static inline int32_t intel_pstate_get_scaled_busy(struct cpudata *cpu)
 	max_pstate = int_tofp(cpu->pstate.max_pstate_physical);
 	current_pstate = int_tofp(cpu->pstate.current_pstate);
 	core_busy = mul_fp(core_busy, div_fp(max_pstate, current_pstate));
+
+	intel_pstate_calc_busy(cpu);
 
 	/*
 	 * Since we have a deferred timer, it will not fire unless
@@ -995,7 +995,7 @@ static inline void intel_pstate_adjust_busy_pstate(struct cpudata *cpu)
 		sample->mperf,
 		sample->aperf,
 		sample->tsc,
-		sample->freq);
+		get_avg_frequency(cpu));
 }
 
 static void intel_hwp_timer_func(unsigned long __data)
@@ -1095,7 +1095,7 @@ static unsigned int intel_pstate_get(unsigned int cpu_num)
 	if (!cpu)
 		return 0;
 	sample = &cpu->sample;
-	return sample->freq;
+	return get_avg_frequency(cpu);
 }
 
 static int intel_pstate_set_policy(struct cpufreq_policy *policy)
