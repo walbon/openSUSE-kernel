@@ -603,16 +603,19 @@ static int its_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 			    bool force)
 {
 	unsigned int cpu;
+	const struct cpumask *cpu_mask = cpu_online_mask;
 	struct its_device *its_dev = irq_data_get_irq_chip_data(d);
 	struct its_collection *target_col;
 	u32 id = its_get_event_id(d);
 
+       /* lpi cannot be routed to a redistributor that is on a foreign node */
 	if (its_dev->its->flags & ITS_FLAGS_WORKAROUND_CAVIUM_23144) {
-		cpu = cpumask_any_and(mask_val,
-				cpumask_of_node(its_dev->its->numa_node));
-	} else {
-		cpu = cpumask_any_and(mask_val, cpu_online_mask);
+		cpu_mask = cpumask_of_node(its_dev->its->numa_node);
+		if (!cpumask_intersects(mask_val, cpu_mask))
+			return -EINVAL;
 	}
+
+	cpu = cpumask_any_and(mask_val, cpu_mask);
 
 	if (cpu >= nr_cpu_ids)
 		return -EINVAL;
@@ -1079,11 +1082,6 @@ static void its_cpu_init_lpis(void)
 	dsb(sy);
 }
 
-static inline int cpu_get_node_thunderx_early(void)
-{
-	return MPIDR_AFFINITY_LEVEL(read_cpuid_mpidr(), 2);
-}
-
 static void its_cpu_init_collection(void)
 {
 	struct its_node *its;
@@ -1096,9 +1094,14 @@ static void its_cpu_init_collection(void)
 		u64 target;
 
 		/* avoid cross node core and its mapping */
-		if ((its->flags & ITS_FLAGS_WORKAROUND_CAVIUM_23144) &&
-			its->numa_node != cpu_get_node_thunderx_early())
+		if (its->flags & ITS_FLAGS_WORKAROUND_CAVIUM_23144) {
+			struct device_node *cpu_node;
+
+			cpu_node = of_get_cpu_node(cpu, NULL);
+			if (its->numa_node != NUMA_NO_NODE &&
+			its->numa_node != of_node_to_nid(cpu_node))
 				continue;
+		}
 
 		/*
 		 * We now have to bind each collection to its target
@@ -1327,15 +1330,14 @@ static void its_irq_domain_activate(struct irq_domain *domain,
 {
 	struct its_device *its_dev = irq_data_get_irq_chip_data(d);
 	u32 event = its_get_event_id(d);
-	unsigned int cpu;
+	const struct cpumask *cpu_mask = cpu_online_mask;
 
-	if (its_dev->its->flags & ITS_FLAGS_WORKAROUND_CAVIUM_23144)
-		cpu = cpumask_first(cpumask_of_node(its_dev->its->numa_node));
-	else
-		cpu = cpumask_first(cpu_online_mask);
+	/* get the cpu_mask of local node */
+	if (IS_ENABLED(CONFIG_NUMA))
+		cpu_mask = cpumask_of_node(its_dev->its->numa_node);
 
 	/* Bind the LPI to the first possible CPU */
-	its_dev->event_map.col_map[event] = cpu;
+	its_dev->event_map.col_map[event] = cpumask_first(cpu_mask);
 
 	/* Map the GIC IRQ and event to the device */
 	its_send_mapvi(its_dev, d->hwirq, event);
@@ -1425,19 +1427,11 @@ static void __maybe_unused its_enable_quirk_cavium_22375(void *data)
 	its->flags |= ITS_FLAGS_WORKAROUND_CAVIUM_22375;
 }
 
-static inline int its_get_node_thunderx(struct its_node *its)
-{
-	return (its->phys_base >> 44) & 0x3;
-}
-
 static void __maybe_unused its_enable_quirk_cavium_23144(void *data)
 {
-	struct its_node __maybe_unused *its = data;
+	struct its_node *its = data;
 
-	if (num_possible_nodes() > 1) {
-		its->numa_node = its_get_node_thunderx(its);
 		its->flags |= ITS_FLAGS_WORKAROUND_CAVIUM_23144;
-	}
 }
 
 static const struct gic_quirk its_quirks[] = {
@@ -1449,6 +1443,7 @@ static const struct gic_quirk its_quirks[] = {
 		.init	= its_enable_quirk_cavium_22375,
 	},
 #endif
+
 #ifdef CONFIG_CAVIUM_ERRATUM_23144
 	{
 		.desc	= "ITS: Cavium erratum 23144",
@@ -1518,6 +1513,7 @@ static int its_probe(struct device_node *node, struct irq_domain *parent)
 	its->base = its_base;
 	its->phys_base = res.start;
 	its->ite_size = ((readl_relaxed(its_base + GITS_TYPER) >> 4) & 0xf) + 1;
+	its->numa_node = of_node_to_nid(node);
 
 	its->cmd_base = kzalloc(ITS_CMD_QUEUE_SZ, GFP_KERNEL);
 	if (!its->cmd_base) {
