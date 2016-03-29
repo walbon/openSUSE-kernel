@@ -161,6 +161,11 @@ static inline bool llist_empty(const struct llist_head *head)
 	return ACCESS_ONCE(head->first) == NULL;
 }
 
+static inline struct llist_node *llist_next(struct llist_node *node)
+{
+	return node->next;
+}
+
 extern bool llist_add_batch(struct llist_node *new_first,
 			    struct llist_node *new_last,
 			    struct llist_head *head);
