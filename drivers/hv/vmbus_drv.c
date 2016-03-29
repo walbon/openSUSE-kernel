@@ -440,24 +440,6 @@ static ssize_t in_write_bytes_avail_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(in_write_bytes_avail);
 
-static ssize_t vendor_show(struct device *dev,
-			   struct device_attribute *dev_atttr,
-			   char *buf)
-{
-	struct hv_device *hv_dev = device_to_hv_device(dev);
-	return sprintf(buf, "0x%x\n", hv_dev->vendor_id);
-}
-static DEVICE_ATTR_RO(vendor);
-
-static ssize_t device_show(struct device *dev,
-			   struct device_attribute *dev_atttr,
-			   char *buf)
-{
-	struct hv_device *hv_dev = device_to_hv_device(dev);
-	return sprintf(buf, "0x%x\n", hv_dev->device_id);
-}
-static DEVICE_ATTR_RO(device);
-
 static ssize_t channel_vp_mapping_show(struct device *dev,
 				       struct device_attribute *dev_attr,
 				       char *buf)
@@ -494,6 +476,24 @@ static ssize_t channel_vp_mapping_show(struct device *dev,
 	return tot_written;
 }
 static DEVICE_ATTR_RO(channel_vp_mapping);
+
+static ssize_t vendor_show(struct device *dev,
+			   struct device_attribute *dev_attr,
+			   char *buf)
+{
+	struct hv_device *hv_dev = device_to_hv_device(dev);
+	return sprintf(buf, "0x%x\n", hv_dev->vendor_id);
+}
+static DEVICE_ATTR_RO(vendor);
+
+static ssize_t device_show(struct device *dev,
+			   struct device_attribute *dev_attr,
+			   char *buf)
+{
+	struct hv_device *hv_dev = device_to_hv_device(dev);
+	return sprintf(buf, "0x%x\n", hv_dev->device_id);
+}
+static DEVICE_ATTR_RO(device);
 
 /* Set up per device attributes in /sys/bus/vmbus/devices/<bus device> */
 static struct attribute *vmbus_attrs[] = {
@@ -977,6 +977,7 @@ struct hv_device *vmbus_device_create(const uuid_le *type,
 	memcpy(&child_device_obj->dev_type, type, sizeof(uuid_le));
 	memcpy(&child_device_obj->dev_instance, instance,
 	       sizeof(uuid_le));
+	child_device_obj->vendor_id = 0x1414; /* MSFT vendor ID */
 
 
 	return child_device_obj;
