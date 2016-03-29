@@ -326,6 +326,11 @@ struct arm_smmu_device {
 
 	struct list_head		list;
 	struct rb_root			masters;
+	/*
+	 *The following fields are specific to Cavium, Thunder
+	 */
+	u32				cavium_id_base;
+
 };
 
 struct arm_smmu_cfg {
@@ -335,8 +340,8 @@ struct arm_smmu_cfg {
 };
 #define INVALID_IRPTNDX			0xff
 
-#define ARM_SMMU_CB_ASID(cfg)		((cfg)->cbndx)
-#define ARM_SMMU_CB_VMID(cfg)		((cfg)->cbndx + 1)
+#define ARM_SMMU_CB_ASID(smmu, cfg) ((u16)(smmu)->cavium_id_base + (cfg)->cbndx)
+#define ARM_SMMU_CB_VMID(smmu, cfg) ((u16)(smmu)->cavium_id_base + (cfg)->cbndx + 1)
 
 enum arm_smmu_domain_stage {
 	ARM_SMMU_DOMAIN_S1 = 0,
@@ -363,6 +368,8 @@ struct arm_smmu_option_prop {
 	u32 opt;
 	const char *prop;
 };
+
+static atomic_t cavium_smmu_context_count = ATOMIC_INIT(0);
 
 static struct arm_smmu_option_prop arm_smmu_options[] = {
 	{ ARM_SMMU_OPT_SECURE_CFG_ACCESS, "calxeda,smmu-secure-config-access" },
@@ -575,11 +582,11 @@ static void arm_smmu_tlb_inv_context(void *cookie)
 
 	if (stage1) {
 		base = ARM_SMMU_CB_BASE(smmu) + ARM_SMMU_CB(smmu, cfg->cbndx);
-		writel_relaxed(ARM_SMMU_CB_ASID(cfg),
+		writel_relaxed(ARM_SMMU_CB_ASID(smmu, cfg),
 			       base + ARM_SMMU_CB_S1_TLBIASID);
 	} else {
 		base = ARM_SMMU_GR0(smmu);
-		writel_relaxed(ARM_SMMU_CB_VMID(cfg),
+		writel_relaxed(ARM_SMMU_CB_VMID(smmu, cfg),
 			       base + ARM_SMMU_GR0_TLBIVMID);
 	}
 
@@ -601,7 +608,7 @@ static void arm_smmu_tlb_inv_range_nosync(unsigned long iova, size_t size,
 
 		if (!IS_ENABLED(CONFIG_64BIT) || smmu->version == ARM_SMMU_V1) {
 			iova &= ~12UL;
-			iova |= ARM_SMMU_CB_ASID(cfg);
+			iova |= ARM_SMMU_CB_ASID(smmu, cfg);
 			do {
 				writel_relaxed(iova, reg);
 				iova += granule;
@@ -609,7 +616,7 @@ static void arm_smmu_tlb_inv_range_nosync(unsigned long iova, size_t size,
 #ifdef CONFIG_64BIT
 		} else {
 			iova >>= 12;
-			iova |= (u64)ARM_SMMU_CB_ASID(cfg) << 48;
+			iova |= (u64)ARM_SMMU_CB_ASID(smmu, cfg) << 48;
 			do {
 				writeq_relaxed(iova, reg);
 				iova += granule >> 12;
@@ -629,7 +636,7 @@ static void arm_smmu_tlb_inv_range_nosync(unsigned long iova, size_t size,
 #endif
 	} else {
 		reg = ARM_SMMU_GR0(smmu) + ARM_SMMU_GR0_TLBIVMID;
-		writel_relaxed(ARM_SMMU_CB_VMID(cfg), reg);
+		writel_relaxed(ARM_SMMU_CB_VMID(smmu, cfg), reg);
 	}
 }
 
@@ -738,7 +745,7 @@ static void arm_smmu_init_context_bank(struct arm_smmu_domain *smmu_domain,
 #endif
 		/* if 16bit VMID supported set VMID in CBA2R */
 		if (smmu->features & ARM_SMMU_FEAT_VMID16)
-			reg |= ARM_SMMU_CB_VMID(cfg) << CBA2R_VMID_SHIFT;
+			reg |= ARM_SMMU_CB_VMID(smmu, cfg) << CBA2R_VMID_SHIFT;
 
 		writel_relaxed(reg, gr1_base + ARM_SMMU_GR1_CBA2R(cfg->cbndx));
 	}
@@ -757,7 +764,7 @@ static void arm_smmu_init_context_bank(struct arm_smmu_domain *smmu_domain,
 			(CBAR_S1_MEMATTR_WB << CBAR_S1_MEMATTR_SHIFT);
 	} else if (!(smmu->features & ARM_SMMU_FEAT_VMID16)) {
 		/*16 bit VMID is not supported set 8 bit VMID here */
-		reg |= ARM_SMMU_CB_VMID(cfg) << CBAR_VMID_SHIFT;
+		reg |= ARM_SMMU_CB_VMID(smmu, cfg) << CBAR_VMID_SHIFT;
 	}
 	writel_relaxed(reg, gr1_base + ARM_SMMU_GR1_CBAR(cfg->cbndx));
 
@@ -765,11 +772,11 @@ static void arm_smmu_init_context_bank(struct arm_smmu_domain *smmu_domain,
 	if (stage1) {
 		reg64 = pgtbl_cfg->arm_lpae_s1_cfg.ttbr[0];
 
-		reg64 |= ((u64)ARM_SMMU_CB_ASID(cfg)) << TTBRn_ASID_SHIFT;
+		reg64 |= ((u64)ARM_SMMU_CB_ASID(smmu, cfg)) << TTBRn_ASID_SHIFT;
 		smmu_writeq(reg64, cb_base + ARM_SMMU_CB_TTBR0);
 
 		reg64 = pgtbl_cfg->arm_lpae_s1_cfg.ttbr[1];
-		reg64 |= ((u64)ARM_SMMU_CB_ASID(cfg)) << TTBRn_ASID_SHIFT;
+		reg64 |= ((u64)ARM_SMMU_CB_ASID(smmu, cfg)) << TTBRn_ASID_SHIFT;
 		smmu_writeq(reg64, cb_base + ARM_SMMU_CB_TTBR1);
 	} else {
 		reg64 = pgtbl_cfg->arm_lpae_s2_cfg.vttbr;
@@ -1718,6 +1725,7 @@ static const struct of_device_id arm_smmu_of_match[] = {
 	{ .compatible = "arm,mmu-400", .data = (void *)ARM_SMMU_V1 },
 	{ .compatible = "arm,mmu-401", .data = (void *)ARM_SMMU_V1 },
 	{ .compatible = "arm,mmu-500", .data = (void *)ARM_SMMU_V2 },
+	{ .compatible = "cavium,smmu-v2", .data = (void *)ARM_SMMU_V2 },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, arm_smmu_of_match);
@@ -1826,6 +1834,18 @@ static int arm_smmu_device_dt_probe(struct platform_device *pdev)
 				i, smmu->irqs[i]);
 			goto out_free_irqs;
 		}
+	}
+	/*
+	 * Due to Errata#27704 CN88xx SMMUv2,supports  only shared ASID and VMID
+	 * namespaces; specifically within a given node SMMU0 and SMMU1 share,
+	 * as does SMMU2 and SMMU3. see if this is a Cavium SMMU, if so
+	 * set asid and vmid base such that each SMMU gets unique
+	 * asid/vmid space.
+	 */
+	if (of_device_is_compatible(dev->of_node, "cavium,smmu-v2")) {
+		smmu->cavium_id_base = atomic_add_return(smmu->num_context_banks,
+				&cavium_smmu_context_count);
+		smmu->cavium_id_base -= smmu->num_context_banks;
 	}
 
 	INIT_LIST_HEAD(&smmu->list);
