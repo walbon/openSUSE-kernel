@@ -80,6 +80,9 @@ void pciback_do_op(struct work_struct *work)
 	struct pciback_device *pdev = container_of(work, struct pciback_device, op_work);
 	struct pci_dev *dev;
 	struct xen_pci_op *op = &pdev->op;
+#ifdef CONFIG_PCI_MSI
+	unsigned int nr = 0;
+#endif
 
 	*op = pdev->sh_info->op;
 	barrier();
@@ -107,6 +110,7 @@ void pciback_do_op(struct work_struct *work)
 				op->err = pciback_disable_msi(pdev, dev, op);
 				break;
 			case XEN_PCI_OP_enable_msix:
+				nr = op->value;
 				op->err = pciback_enable_msix(pdev, dev, op);
 				break;
 			case XEN_PCI_OP_disable_msix:
@@ -124,7 +128,7 @@ void pciback_do_op(struct work_struct *work)
 	if (op->cmd == XEN_PCI_OP_enable_msix && op->err == 0) {
 		unsigned int i;
 
-		for (i = 0; i < op->value; i++)
+		for (i = 0; i < nr; i++)
 			pdev->sh_info->op.msix_entries[i].vector =
 				op->msix_entries[i].vector;
 	}
