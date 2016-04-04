@@ -180,6 +180,12 @@ static int create_fixed_stream_quirk(struct snd_usb_audio *chip,
 	}
 	alts = &iface->altsetting[fp->altset_idx];
 	altsd = get_iface_desc(alts);
+	if (altsd->bNumEndpoints < 1) {
+		kfree(fp);
+		kfree(rate_table);
+		return -EINVAL;
+	}
+
 	fp->protocol = altsd->bInterfaceProtocol;
 
 	if (fp->datainterval == 0)
@@ -1124,6 +1130,7 @@ bool snd_usb_get_sample_rate_quirk(struct snd_usb_audio *chip)
 	case USB_ID(0x045E, 0x076F): /* MS Lifecam HD-6000 */
 	case USB_ID(0x045E, 0x0772): /* MS Lifecam Studio */
 	case USB_ID(0x045E, 0x0779): /* MS Lifecam HD-3000 */
+	case USB_ID(0x047F, 0xAA05): /* Plantronics DA45 */
 	case USB_ID(0x04D8, 0xFEEA): /* Benchmark DAC1 Pre */
 	case USB_ID(0x074D, 0x3553): /* Outlaw RR2150 (Micronas UAC3553B) */
 	case USB_ID(0x21B4, 0x0081): /* AudioQuest DragonFly */

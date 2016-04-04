@@ -408,6 +408,7 @@ struct request_queue {
 
 	unsigned int		rq_timeout;
 	struct timer_list	timeout;
+	struct work_struct	timeout_work;
 	struct list_head	timeout_list;
 
 	struct list_head	icq_list;
@@ -681,9 +682,12 @@ static inline bool blk_write_same_mergeable(struct bio *a, struct bio *b)
 /*
  * q->prep_rq_fn return values
  */
-#define BLKPREP_OK		0	/* serve it */
-#define BLKPREP_KILL		1	/* fatal error, kill */
-#define BLKPREP_DEFER		2	/* leave on queue */
+enum {
+	BLKPREP_OK,		/* serve it */
+	BLKPREP_KILL,		/* fatal error, kill, return -EIO */
+	BLKPREP_DEFER,		/* leave on queue */
+	BLKPREP_INVALID,	/* invalid command, kill, return -EREMOTEIO */
+};
 
 extern unsigned long blk_max_low_pfn, blk_max_pfn;
 
@@ -1025,6 +1029,7 @@ extern int blk_pre_runtime_suspend(struct request_queue *q);
 extern void blk_post_runtime_suspend(struct request_queue *q, int err);
 extern void blk_pre_runtime_resume(struct request_queue *q);
 extern void blk_post_runtime_resume(struct request_queue *q, int err);
+extern void blk_set_runtime_active(struct request_queue *q);
 #else
 static inline void blk_pm_runtime_init(struct request_queue *q,
 	struct device *dev) {}
@@ -1035,6 +1040,7 @@ static inline int blk_pre_runtime_suspend(struct request_queue *q)
 static inline void blk_post_runtime_suspend(struct request_queue *q, int err) {}
 static inline void blk_pre_runtime_resume(struct request_queue *q) {}
 static inline void blk_post_runtime_resume(struct request_queue *q, int err) {}
+extern inline void blk_set_runtime_active(struct request_queue *q) {}
 #endif
 
 /*
@@ -1368,6 +1374,13 @@ static inline void put_dev_sector(Sector p)
 	page_cache_release(p.v);
 }
 
+static inline bool __bvec_gap_to_prev(struct request_queue *q,
+				struct bio_vec *bprv, unsigned int offset)
+{
+	return offset ||
+		((bprv->bv_offset + bprv->bv_len) & queue_virt_boundary(q));
+}
+
 /*
  * Check if adding a bio_vec after bprv with offset would create a gap in
  * the SG list. Most drivers don't care about this, but some do.
@@ -1377,18 +1390,22 @@ static inline bool bvec_gap_to_prev(struct request_queue *q,
 {
 	if (!queue_virt_boundary(q))
 		return false;
-	return offset ||
-		((bprv->bv_offset + bprv->bv_len) & queue_virt_boundary(q));
+	return __bvec_gap_to_prev(q, bprv, offset);
 }
 
 static inline bool bio_will_gap(struct request_queue *q, struct bio *prev,
 			 struct bio *next)
 {
-	if (!bio_has_data(prev))
-		return false;
+	if (bio_has_data(prev) && queue_virt_boundary(q)) {
+		struct bio_vec pb, nb;
 
-	return bvec_gap_to_prev(q, &prev->bi_io_vec[prev->bi_vcnt - 1],
-				next->bi_io_vec[0].bv_offset);
+		bio_get_last_bvec(prev, &pb);
+		bio_get_first_bvec(next, &nb);
+
+		return __bvec_gap_to_prev(q, &pb, nb.bv_offset);
+	}
+
+	return false;
 }
 
 static inline bool req_gap_back_merge(struct request *req, struct bio *bio)

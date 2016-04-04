@@ -1208,6 +1208,8 @@ static inline struct inode *file_inode(const struct file *f)
 	return f->f_inode;
 }
 
+extern struct dentry *file_dentry(const struct file *file);
+
 static inline int locks_lock_file_wait(struct file *filp, struct file_lock *fl)
 {
 	return locks_lock_inode_wait(file_inode(filp), fl);
@@ -2280,6 +2282,14 @@ extern struct super_block *freeze_bdev(struct block_device *);
 extern void emergency_thaw_all(void);
 extern int thaw_bdev(struct block_device *bdev, struct super_block *sb);
 extern int fsync_bdev(struct block_device *);
+#ifdef CONFIG_FS_DAX
+extern bool blkdev_dax_capable(struct block_device *bdev);
+#else
+static inline bool blkdev_dax_capable(struct block_device *bdev)
+{
+	return false;
+}
+#endif
 
 extern struct super_block *blockdev_superblock;
 

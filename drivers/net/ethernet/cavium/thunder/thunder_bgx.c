@@ -886,6 +886,17 @@ static void bgx_get_qlm_mode(struct bgx *bgx)
 
 #ifdef CONFIG_ACPI
 
+static int bgx_match_phy_id(struct device *dev, void *data)
+{
+	struct phy_device *phydev = to_phy_device(dev);
+	u32 *phy_id = data;
+
+	if (phydev->addr == *phy_id)
+		return 1;
+
+	return 0;
+}
+
 static int acpi_get_mac_address(struct acpi_device *adev, u8 *dst)
 {
 	u8 mac[ETH_ALEN];
@@ -906,23 +917,41 @@ out:
 	return ret;
 }
 
-/* Currently only sets the MAC address. */
 static acpi_status bgx_acpi_register_phy(acpi_handle handle,
 					 u32 lvl, void *context, void **rv)
 {
+	struct acpi_reference_args args;
 	struct bgx *bgx = context;
 	struct acpi_device *adev;
+	struct device *phy_dev;
+	struct fwnode_handle *fwnode;
+	u32 phy_id;
 
 	if (acpi_bus_get_device(handle, &adev))
-		goto out;
+		return AE_OK;
+
+	fwnode = acpi_fwnode_handle(adev);
+
+	if (acpi_node_get_property_reference(fwnode, "phy-handle", 0, &args))
+		return AE_OK;
+
+	if (acpi_dev_prop_read_single(args.adev, "phy-channel", DEV_PROP_U32,
+					&phy_id))
+		return AE_OK;
+
+	phy_dev = bus_find_device(&mdio_bus_type, NULL, (void *)&phy_id,
+				  bgx_match_phy_id);
+	if (!phy_dev)
+		return AE_OK;
+
+	SET_NETDEV_DEV(&bgx->lmac[bgx->lmac_count].netdev, &bgx->pdev->dev);
+	bgx->lmac[bgx->lmac_count].phydev = to_phy_device(phy_dev);
+	bgx->lmac[bgx->lmac_count].lmacid = bgx->lmac_count;
 
 	acpi_get_mac_address(adev, bgx->lmac[bgx->lmac_count].mac);
 
-	SET_NETDEV_DEV(&bgx->lmac[bgx->lmac_count].netdev, &bgx->pdev->dev);
-
-	bgx->lmac[bgx->lmac_count].lmacid = bgx->lmac_count;
-out:
 	bgx->lmac_count++;
+
 	return AE_OK;
 }
 

@@ -1299,8 +1299,6 @@ struct sched_rt_entity {
 	/* rq "owned" by this entity/group: */
 	struct rt_rq		*my_q;
 #endif
-	/* Reserved for kGraft */
-	unsigned long	suse_kabi_padding;
 };
 
 struct sched_dl_entity {
@@ -1830,6 +1828,9 @@ struct task_struct {
 	unsigned long	task_state_change;
 #endif
 	int pagefault_disabled;
+
+	void *suse_kabi_padding;
+
 /* CPU-specific state of this task */
 	struct thread_struct thread;
 /*

@@ -1335,7 +1335,7 @@ static void arm_smmu_tlb_inv_context(void *cookie)
 }
 
 static void arm_smmu_tlb_inv_range_nosync(unsigned long iova, size_t size,
-					  bool leaf, void *cookie)
+					  size_t granule, bool leaf, void *cookie)
 {
 	struct arm_smmu_domain *smmu_domain = cookie;
 	struct arm_smmu_device *smmu = smmu_domain->smmu;
@@ -1354,7 +1354,10 @@ static void arm_smmu_tlb_inv_range_nosync(unsigned long iova, size_t size,
 		cmd.tlbi.vmid	= smmu_domain->s2_cfg.vmid;
 	}
 
-	arm_smmu_cmdq_issue_cmd(smmu, &cmd);
+	do {
+		arm_smmu_cmdq_issue_cmd(smmu, &cmd);
+		cmd.tlbi.addr += granule;
+	} while (size -= granule);
 }
 
 static struct iommu_gather_ops arm_smmu_gather_ops = {

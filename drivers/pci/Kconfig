@@ -118,7 +118,7 @@ config PCI_LABEL
 	def_bool y if (DMI || ACPI)
 	select NLS
 
-config HYPERV_VPCI
+config PCI_HYPERV
         tristate "Hyper-V PCI Frontend"
         depends on PCI && X86 && HYPERV && PCI_MSI && PCI_MSI_IRQ_DOMAIN && X86_64
         help
