@@ -1719,14 +1719,7 @@ static struct device_attribute ibmvscsi_host_os_type = {
 static ssize_t show_host_config(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
-	struct Scsi_Host *shost = class_to_shost(dev);
-	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
-
-	/* returns null-terminated host config data */
-       if (ibmvscsi_do_host_config(hostdata, buf, buff_size) == 0)
-		return strlen(buf);
-	else
-		return 0;
+	return 0;
 }
 
 static struct device_attribute ibmvscsi_host_config = {
