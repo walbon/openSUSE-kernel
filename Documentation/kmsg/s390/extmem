@@ -146,6 +146,8 @@
  * Description:
  * The DEFSEG z/VM CP command failed to permanently save changes to a DCSS.
  * User action:
+ * Ensure that the z/VM guest virtual machine is authorized to issue
+ * the CP DEFSEG command (typically privilege class E).
  * Look for related messages to find the cause of this error. See also message
  * HCP<response-code>E in the DEFSEG section of the "z/VM CP Command and
  * Utility Reference".
@@ -159,6 +161,8 @@
  * Description:
  * The SAVESEG z/VM CP command failed to permanently save changes to a DCSS.
  * User action:
+ * Ensure that the z/VM guest virtual machine is authorized to issue
+ * the CP SAVESEG command (typically privilege class E).
  * Look for related messages to find the cause of this error. See also message
  * HCP<response-code>E in the SAVESEG section of the "z/VM CP Command and
  * Utility Reference".
@@ -172,7 +176,7 @@
  * Description:
  * You cannot load or query the specified DCSS because it either is not defined
  * in the z/VM hypervisor, or it is a class S DCSS, or it is above 2047 MB
- * and he Linux system is a 31-bit system.
+ * and the Linux system is a 31-bit system.
  * User action:
  * Use the CP command "QUERY NSS" to find out if the DCSS is a valid
  * DCSS that can be loaded.
@@ -287,4 +291,3 @@
  * User action:
  * Ensure that the DCSS range is defined below the kernel mapping range.
  */
-

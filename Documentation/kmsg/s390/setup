@@ -1,78 +1,25 @@
 /*?
- * Text: "Execute protection active, mvcos available\n"
- * Severity: Informational
- * Description:
- * The kernel parameter 'noexec' has been specified. The kernel will
- * honor the execute bit of mappings and will use the mvcos instruction
- * to copy between the user and kernel address space.
- * User action:
- * None.
- */
-
-/*?
- * Text: "Execute protection active, mvcos not available\n"
- * Severity: Informational
- * Description:
- * The kernel parameter 'noexec' has been specified. The kernel will
- * honor the execute bit of mappings. The mvcos instruction is not
- * available and the kernel will use the slower page table walk method
- * to copy between the user and kernel address space.
- * User action:
- * None.
- */
-
-/*?
- * Text: "Address spaces switched, mvcos available\n"
- * Severity: Informational
- * Description:
- * The kernel parameter 'switch_amode' has been specified. The kernel
- * will use the primary address space for user space processes and the
- * home address space for the kernel. The mvcos instruction is used to
- * copy between the user and kernel address space.
- * User action:
- * None.
- */
-
-/*?
- * Text: "Address spaces switched, mvcos not available\n"
- * Severity: Informational
- * Description:
- * The kernel parameter 'switch_amode' has been specified. The kernel
- * will use the primary address space for user space processes and the
- * home address space for the kernel. The mvcos instruction is not
- * available and the kernel will use the slower page table walk method
- * to copy between the user and kernel address space.
- * User action:
- * None.
- */
-
-/*?
- * Text: "initrd extends beyond end of memory (0x%08lx > 0x%08lx) disabling initrd\n"
+ * Text: "The initial RAM disk does not fit into the memory\n"
  * Severity: Error
- * Parameter:
- *   @1: start address of the initial RAM disk
- *   @2: memory end address
  * Description:
- * The load address and the size of the initial RAM disk result in an end
- * address of the initial RAM disk that is beyond the end of the system
- * memory.
+ * The load address and the size of the initial RAM disk specify a memory
+ * area that is not available.
  * User action:
  * Lower the load address of the initial RAM disk, reduce the size of the
- * initial RAM disk, or increase the size if the system memory to make the
+ * initial RAM disk, or increase the size of the system memory to make the
  * initial RAM disk fit into the memory.
  */
 
 /*?
- * Text: "Moving initrd (0x%08lx -> 0x%08lx, size: %ld)\n"
- * Severity: Informational
+ * Text: "The maximum memory size is %luMB\n"
+ * Severity: Notice
  * Parameter:
- *   @1: old start address of the initial RAM disk
- *   @2: new start address of the initial RAM disk
- *   @3: size of the initial RAM disk
+ *   @1: size in MB
  * Description:
- * The location of the initial RAM disk conflicted with the boot memory bitmap.
- * To resolve the conflict the initial RAM disk has been moved to a new
- * location.
+ * The system memory size cannot exceed the amount of memory that is
+ * provided by the real or virtual hardware. It can be further reduced
+ * through an upper memory address limit that is specified with the
+ * mem= kernel parameter.
  * User action:
  * None.
  */
@@ -130,6 +77,16 @@
  */
 
 /*?
+ * Text: "Linux is running under KVM in 64-bit mode\n"
+ * Severity: Informational
+ * Description:
+ * The 64-bit Linux kernel detected that it is running as a guest operating
+ * system of the KVM hypervisor.
+ * User action:
+ * None.
+ */
+
+/*?
  * Text: "Linux is running natively in 64-bit mode\n"
  * Severity: Informational
  * Description:
@@ -177,5 +134,31 @@
  * the CP SAVESYS command.
  */
 
-/*? Text: "Linux is running under KVM in 64-bit mode\n" */
+/*?
+ * Text: "crashkernel reservation failed: %s\n"
+ * Severity: Informational
+ * Parameter:
+ *   @1: reason string
+ * Description:
+ * The memory reservation for the kdump "crashkernel" parameter was not
+ * successful. The Linux kernel was either not able to find a free memory
+ * area or an invalid area has been defined. The reason string describes the
+ * cause of the failure in more detail.
+ * User action:
+ * Increase the memory footprint of your virtual machine or adjust the values
+ * for the "crashkernel" kernel parameter. Then boot your Linux system again.
+ */
 
+/*?
+ * Text: "Reserving %lluMB of memory at %lluMB for crashkernel (System RAM: %luMB)\n"
+ * Severity: Informational
+ * Parameter:
+ *   @1: amount of reserved memory
+ *   @2: storage location of reserved memory
+ *   @3: amount of system RAM
+ * Description:
+ * The memory reservation for the kdump "crashkernel" parameter was successful
+ * and a kdump kernel can now be loaded with the kexec tool.
+ * User action:
+ * None.
+ */

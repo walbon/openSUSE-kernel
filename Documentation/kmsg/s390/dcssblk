@@ -190,3 +190,16 @@
  * types SR and ER to read-only by writing 1 to the sysfs 'shared' attribute of
  * the DCSS. Then try again to suspend the system.
  */
+
+/*?
+ * Text: "DCSS %s is of type SN or EN and cannot be saved\n"
+ * Severity: Warning
+ * Parameter:
+ *   @1: DCSS name
+ * Description:
+ * DCSSs of type SN or EN cannot be saved.
+ * User action:
+ * If the DCSS was set up with the intention to prevent the content from being saved,
+ * no action is necessary.
+ * To be able to save the content, you must define the DCSS with a type other than SN or EN.
+ */
