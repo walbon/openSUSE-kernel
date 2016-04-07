@@ -26,6 +26,7 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/platform_device.h>
 
 #include <asm/cacheflush.h>
 #include <asm/efi.h>
@@ -33,6 +34,9 @@
 #include <asm/mmu_context.h>
 #include <asm/mmu.h>
 #include <asm/pgtable.h>
+
+/* we will fill this structure from the stub, so don't put it in .bss */
+struct screen_info screen_info __section(.data);
 
 struct efi_memory_map memmap;
 
@@ -241,7 +245,23 @@ void __init efi_init_fdt(void *fdt)
 
 	reserve_regions();
 	early_memunmap(memmap.map, params.mmap_size);
+
+	if (screen_info.orig_video_isVGA == VIDEO_TYPE_EFI)
+		memblock_reserve(screen_info.lfb_base, screen_info.lfb_size);
 }
+
+static int __init register_gop_device(void)
+{
+	void *pd;
+
+	if (screen_info.orig_video_isVGA != VIDEO_TYPE_EFI)
+		return 0;
+
+	/* the efifb driver accesses screen_info directly, no need to pass it */
+	pd = platform_device_register_simple("efi-framebuffer", 0, NULL, 0);
+	return PTR_ERR_OR_ZERO(pd);
+}
+subsys_initcall(register_gop_device);
 
 static bool __init efi_virtmap_init(void)
 {

@@ -23,7 +23,7 @@ KBUILD_CFLAGS			:= $(cflags-y) \
 GCOV_PROFILE			:= n
 KASAN_SANITIZE			:= n
 
-lib-y				:= efi-stub-helper.o
+lib-y				:= efi-stub-helper.o gop.o
 
 # include the stub's generic dependencies from lib/ when building for ARM/arm64
 arm-deps := fdt_rw.c fdt_ro.c fdt_wip.c fdt.c fdt_empty_tree.c fdt_sw.c sort.c

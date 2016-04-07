@@ -152,6 +152,8 @@ static inline bool efi_runtime_supported(void)
 extern struct console early_efi_console;
 extern void parse_efi_setup(u64 phys_addr, u32 data_len);
 
+extern void efifb_setup_from_dmi(struct screen_info *si, const char *opt);
+
 #ifdef CONFIG_EFI_MIXED
 extern void efi_thunk_runtime_setup(void);
 extern efi_status_t efi_thunk_set_virtual_address_map(
@@ -198,6 +200,11 @@ __pure const struct efi_config *__efi_early(void);
 
 #define efi_call_early(f, ...)						\
 	__efi_early()->call(__efi_early()->f, __VA_ARGS__);
+
+#define __efi_call_early(f, ...)					\
+	__efi_early()->call((unsigned long)f, __VA_ARGS__);
+
+#define efi_is_64bit()		__efi_early()->is64
 
 extern bool efi_reboot_required(void);
 
