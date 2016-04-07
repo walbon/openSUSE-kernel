@@ -236,37 +236,31 @@ extern asmlinkage void dump_stack(void) __cold;
 #define pr_fmt(fmt) fmt
 #endif
 
+#if defined(__KMSG_CHECKER) && defined(KMSG_COMPONENT)
+
+/* generate magic string for scripts/kmsg-doc to parse */
+#define pr_printk_hash(level, format, ...) \
+	__KMSG_PRINT(level _FMT_ format _ARGS_ __VA_ARGS__ _END_)
+
+#elif defined(CONFIG_KMSG_IDS) && defined(KMSG_COMPONENT)
+
+__printf(2, 3) int printk_hash(const char *, const char *, ...);
+#define pr_printk_hash(level, format, ...) \
+	printk_hash(level KMSG_COMPONENT ".%06x" ": ", format, ##__VA_ARGS__)
+
+#else /* !defined(CONFIG_KMSG_IDS) */
+
+#define pr_printk_hash(level, format, ...) \
+	printk(level pr_fmt(format), ##__VA_ARGS__)
+
+#endif
+
 /*
  * These can be used to print at the various log levels.
  * All of these will print unconditionally, although note that pr_debug()
  * and other debug macros are compiled out unless either DEBUG is defined
  * or CONFIG_DYNAMIC_DEBUG is set.
  */
-
-#if defined(__KMSG_CHECKER) && defined(KMSG_COMPONENT)
-
-/* generate magic string for scripts/kmsg-doc to parse */
-#define pr_printk_hash(level, format, ...) \
-	__KMSG_PRINT(level _FMT_ format _ARGS_ #__VA_ARGS__ _END_)
-#define __pr_printk_hash pr_printk_hash
-
-#elif defined(CONFIG_KMSG_IDS) && defined(KMSG_COMPONENT)
-
-int printk_hash(const char *, const char *, ...);
-#define pr_printk_hash(level, format, ...) \
-	printk_hash(level KMSG_COMPONENT ".%06x" ": ", format, ##__VA_ARGS__)
-#define __pr_printk_hash(level, format, ...) \
-	printk_hash(level, format, ##__VA_ARGS__)
-
-#else /* !defined(CONFIG_KMSG_IDS) */
-
-#define pr_printk_hash(level, format, ...) \
-	printk(level pr_fmt(format), ##__VA_ARGS__)
-#define __pr_printk_hash(level, format, ...) \
-	printk(level format, ##__VA_ARGS__)
-
-#endif
-
 #define pr_emerg(fmt, ...) \
 	pr_printk_hash(KERN_EMERG, fmt, ##__VA_ARGS__)
 #define pr_alert(fmt, ...) \
@@ -288,7 +282,7 @@ int printk_hash(const char *, const char *, ...);
  * back to KERN_DEFAULT.
  */
 #define pr_cont(fmt, ...) \
-	__pr_printk_hash(KERN_CONT, fmt, ##__VA_ARGS__)
+	pr_printk_hash(KERN_CONT, fmt, ##__VA_ARGS__)
 
 /* pr_devel() should produce zero code unless DEBUG is defined */
 #ifdef DEBUG

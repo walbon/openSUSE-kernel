@@ -143,3 +143,104 @@
  * User action:
  * None.
  */
+
+/*?
+ * Text: "Logging for subchannel 0.%x.%04x failed with errno=%d\n"
+ * Severity: Warning
+ * Parameter:
+ *   @1: subchannel set ID
+ *   @2: subchannel number
+ *   @3: errno
+ * Description:
+ * Capturing model-dependent logs and traces could not be triggered for the
+ * specified subchannel.
+ * User action:
+ * See the errno man page to find out what caused the problem.
+ */
+
+/*?
+ * Text: "Logging for subchannel 0.%x.%04x was triggered\n"
+ * Severity: Notice
+ * Parameter:
+ *   @1: subchannel set ID
+ *   @2: subchannel number
+ * Description:
+ * Model-dependent logs and traces may be captured for the specified
+ * subchannel.
+ * User action:
+ * None.
+ */
+
+/*?
+ * Text: "%s: No interrupt was received within %lus (CS=%02x, DS=%02x, CHPID=%x.%02x)\n"
+ * Severity: Warning
+ * Parameter:
+ *   @1: device number
+ *   @2: timeout value
+ *   @3: channel status
+ *   @4: device status
+ *   @5: channel subsystem ID
+ *   @6: CHPID
+ * Description:
+ * Internal I/Os are used by the common I/O layer to ensure that devices are
+ * operational and accessible.
+ * The common I/O layer did not receive an interrupt for an internal I/O
+ * during the specified timeout period.
+ * As a result, the device might assume a state that makes the device
+ * unusable to Linux until the problem is resolved.
+ * User action:
+ * Make sure that the device is working correctly and try the action again.
+ */
+
+/*?
+ * Text: "Link stopped: RS=%02x RSID=%04x IC=%02x IUPARAMS=%s IUNODEID=%s AUPARAMS=%s AUNODEID=%s\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: reporting source
+ *   @2: reporting source ID
+ *   @3: incident code
+ *   @4: incident unit parameters
+ *   @5: incident unit node ID
+ *   @6: attached unit parameters
+ *   @7: attached unit node ID
+ *
+ * Description:
+ * A hardware error has occurred. A unit at one end of an interface
+ * link has detected a failure in the link or in one of the units attached to
+ * the link. As a result, data transfer across the link has stopped. In the
+ * message text, the node IDs of involved units are represented in the
+ * following format: TTTTTT/MDL,MMM.PPSSSSSSSSSSSS,XXXX where TTTTTT refers to
+ * the machine type, MDL the model number, MMM the manufacturer, PP the
+ * manufacturing plant, SSSSSSSSSSSS the unit sequence number and XXXX the
+ * machine type-dependent physical interface number. If no data is available
+ * for the unit parameters or node ID field, "n/a" is used instead.
+ *
+ * User action:
+ * Report the problem to your support organization.
+ */
+
+/*?
+ * Text: "Link degraded: RS=%02x RSID=%04x IC=%02x IUPARAMS=%s IUNODEID=%s AUPARAMS=%s AUNODEID=%s\n"
+ * Severity: Warning
+ * Parameter:
+ *   @1: reporting source
+ *   @2: reporting source ID
+ *   @3: incident code
+ *   @4: incident unit parameters
+ *   @5: incident unit node ID
+ *   @6: attached unit parameters
+ *   @7: attached unit node ID
+ * Description:
+ * A hardware error has occurred. A unit at one end of an interface
+ * link has detected a failure in the link or in one of the units attached to
+ * the link. As a result, data transfer across the link is degraded. In the
+ * message text, the node IDs of involved units are represented in the
+ * following format: TTTTTT/MDL,MMM.PPSSSSSSSSSSSS,XXXX where TTTTTT refers to
+ * the machine type, MDL the model number, MMM the manufacturer, PP the
+ * manufacturing plant, SSSSSSSSSSSS the unit sequence number and XXXX the
+ * machine type-dependent physical interface number. If no data is available
+ * for the unit parameters or node ID field, "n/a" is used instead.
+ *
+ * User action:
+ * Report the problem to your support organization.
+ */
