@@ -1905,14 +1905,29 @@ static irqreturn_t e1000_msix_other(int __always_unused irq, void *data)
 	struct net_device *netdev = data;
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
+	u32 icr = er32(ICR);
 
-	hw->mac.get_link_status = true;
-
-	/* guard against interrupt when we're going down */
-	if (!test_bit(__E1000_DOWN, &adapter->state)) {
-		mod_timer(&adapter->watchdog_timer, jiffies + 1);
-		ew32(IMS, E1000_IMS_OTHER);
+	if (!(icr & E1000_ICR_INT_ASSERTED)) {
+		if (!test_bit(__E1000_DOWN, &adapter->state))
+			ew32(IMS, E1000_IMS_OTHER);
+		return IRQ_NONE;
 	}
+
+	if (icr & adapter->eiac_mask)
+		ew32(ICS, (icr & adapter->eiac_mask));
+
+	if (icr & E1000_ICR_OTHER) {
+		if (!(icr & E1000_ICR_LSC))
+			goto no_link_interrupt;
+		hw->mac.get_link_status = true;
+		/* guard against interrupt when we're going down */
+		if (!test_bit(__E1000_DOWN, &adapter->state))
+			mod_timer(&adapter->watchdog_timer, jiffies + 1);
+	}
+
+no_link_interrupt:
+	if (!test_bit(__E1000_DOWN, &adapter->state))
+		ew32(IMS, E1000_IMS_LSC | E1000_IMS_OTHER);
 
 	return IRQ_HANDLED;
 }
@@ -1931,9 +1946,6 @@ static irqreturn_t e1000_intr_msix_tx(int __always_unused irq, void *data)
 		/* Ring was not completely cleaned, so fire another interrupt */
 		ew32(ICS, tx_ring->ims_val);
 
-	if (!test_bit(__E1000_DOWN, &adapter->state))
-		ew32(IMS, adapter->tx_ring->ims_val);
-
 	return IRQ_HANDLED;
 }
 
@@ -1947,10 +1959,8 @@ static irqreturn_t e1000_intr_msix_rx(int __always_unused irq, void *data)
 	 * previous interrupt.
 	 */
 	if (rx_ring->set_itr) {
-		u32 itr = rx_ring->itr_val ?
-			  1000000000 / (rx_ring->itr_val * 256) : 0;
-
-		writel(itr, rx_ring->itr_register);
+		writel(1000000000 / (rx_ring->itr_val * 256),
+		       rx_ring->itr_register);
 		rx_ring->set_itr = 0;
 	}
 
@@ -2015,7 +2025,6 @@ static void e1000_configure_msix(struct e1000_adapter *adapter)
 		       hw->hw_addr + E1000_EITR_82574(vector));
 	else
 		writel(1, hw->hw_addr + E1000_EITR_82574(vector));
-	adapter->eiac_mask |= E1000_IMS_OTHER;
 
 	/* Cause Tx interrupts on every write back */
 	ivar |= (1 << 31);
@@ -2023,8 +2032,12 @@ static void e1000_configure_msix(struct e1000_adapter *adapter)
 	ew32(IVAR, ivar);
 
 	/* enable MSI-X PBA support */
-	ctrl_ext = er32(CTRL_EXT) & ~E1000_CTRL_EXT_IAME;
-	ctrl_ext |= E1000_CTRL_EXT_PBA_CLR | E1000_CTRL_EXT_EIAME;
+	ctrl_ext = er32(CTRL_EXT);
+	ctrl_ext |= E1000_CTRL_EXT_PBA_CLR;
+
+	/* Auto-Mask Other interrupts upon ICR read */
+	ew32(IAM, ~E1000_EIAC_MASK_82574 | E1000_IMS_OTHER);
+	ctrl_ext |= E1000_CTRL_EXT_EIAME;
 	ew32(CTRL_EXT, ctrl_ext);
 	e1e_flush();
 }
@@ -2240,7 +2253,7 @@ static void e1000_irq_enable(struct e1000_adapter *adapter)
 
 	if (adapter->msix_entries) {
 		ew32(EIAC_82574, adapter->eiac_mask & E1000_EIAC_MASK_82574);
-		ew32(IMS, adapter->eiac_mask | E1000_IMS_LSC);
+		ew32(IMS, adapter->eiac_mask | E1000_IMS_OTHER | E1000_IMS_LSC);
 	} else if ((hw->mac.type == e1000_pch_lpt) ||
 		   (hw->mac.type == e1000_pch_spt)) {
 		ew32(IMS, IMS_ENABLE_MASK | E1000_IMS_ECCER);
@@ -4131,24 +4144,10 @@ void e1000e_reset(struct e1000_adapter *adapter)
 
 }
 
-/**
- * e1000e_trigger_lsc - trigger an LSC interrupt
- * @adapter: 
- *
- * Fire a link status change interrupt to start the watchdog.
- **/
-static void e1000e_trigger_lsc(struct e1000_adapter *adapter)
+int e1000e_up(struct e1000_adapter *adapter)
 {
 	struct e1000_hw *hw = &adapter->hw;
 
-	if (adapter->msix_entries)
-		ew32(ICS, E1000_ICS_OTHER);
-	else
-		ew32(ICS, E1000_ICS_LSC);
-}
-
-int e1000e_up(struct e1000_adapter *adapter)
-{
 	/* hardware has been reset, we need to reload some things */
 	e1000_configure(adapter);
 
@@ -4160,7 +4159,11 @@ int e1000e_up(struct e1000_adapter *adapter)
 
 	netif_start_queue(adapter->netdev);
 
-	e1000e_trigger_lsc(adapter);
+	/* fire a link change interrupt to start the watchdog */
+	if (adapter->msix_entries)
+		ew32(ICS, E1000_ICS_LSC | E1000_ICR_OTHER);
+	else
+		ew32(ICS, E1000_ICS_LSC);
 
 	return 0;
 }
@@ -4310,8 +4313,6 @@ static cycle_t e1000e_cyclecounter_read(const struct cyclecounter *cc)
 		 * rate and is a multiple of incvalue
 		 */
 		incvalue = er32(TIMINCA) & E1000_TIMINCA_INCVALUE_MASK;
-		if (!incvalue)
-			return 0;
 		for (i = 0; i < E1000_MAX_82574_SYSTIM_REREADS; i++) {
 			/* latch SYSTIMH on read of SYSTIML */
 			systim_next = (cycle_t)er32(SYSTIML);
@@ -4589,7 +4590,11 @@ static int e1000_open(struct net_device *netdev)
 	hw->mac.get_link_status = true;
 	pm_runtime_put(&pdev->dev);
 
-	e1000e_trigger_lsc(adapter);
+	/* fire a link status change interrupt to start the watchdog */
+	if (adapter->msix_entries)
+		ew32(ICS, E1000_ICS_LSC | E1000_ICR_OTHER);
+	else
+		ew32(ICS, E1000_ICS_LSC);
 
 	return 0;
 
