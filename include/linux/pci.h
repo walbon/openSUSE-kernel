@@ -1765,6 +1765,17 @@ int pci_vpd_find_tag(const u8 *buf, unsigned int off, unsigned int len, u8 rdt);
 int pci_vpd_find_info_keyword(const u8 *buf, unsigned int off,
 			      unsigned int len, const char *kw);
 
+/**
+ * pci_ari_enabled - query ARI forwarding status
+ * @bus: the PCI bus
+ *
+ * Returns 1 if ARI forwarding is enabled, or 0 if not enabled;
+ */
+static inline int pci_ari_enabled(struct pci_bus *bus)
+{
+	return bus->self && bus->self->ari_enabled;
+}
+
 #ifdef CONFIG_PCI_GUESTDEV
 int pci_is_guestdev(struct pci_dev *dev);
 #else
