@@ -28,6 +28,7 @@
 #include <clocksource/arm_arch_timer.h>
 
 extern bool arm_arch_timer_reread;
+extern bool arm_arch_timer_rewrite;
 
 /* QorIQ errata workarounds */
 #define ARCH_TIMER_REREAD(reg) ({ \
@@ -52,6 +53,20 @@ extern bool arm_arch_timer_reread;
 	_val; \
 })
 
+#define ARCH_TIMER_TVAL_REWRITE(pv, val) do { \
+	u64 _cnt_old, _cnt_new; \
+	int _timeout = 200; \
+	do { \
+		asm volatile("mrs %0, cntvct_el0;" \
+			     "msr cnt" pv "_tval_el0, %2;" \
+			     "mrs %1, cntvct_el0" \
+			     : "=&r" (_cnt_old), "=r" (_cnt_new) \
+			     : "r" (val)); \
+		_timeout--; \
+	} while (_cnt_old != _cnt_new && _timeout); \
+	WARN_ON_ONCE(!_timeout); \
+} while (0)
+
 /*
  * These register accessors are marked inline so the compiler can
  * nicely work out which register we want, and chuck away the rest of
@@ -66,7 +81,11 @@ void arch_timer_reg_write_cp15(int access, enum arch_timer_reg reg, u32 val)
 			asm volatile("msr cntp_ctl_el0,  %0" : : "r" (val));
 			break;
 		case ARCH_TIMER_REG_TVAL:
-			asm volatile("msr cntp_tval_el0, %0" : : "r" (val));
+			if (arm_arch_timer_rewrite)
+				ARCH_TIMER_TVAL_REWRITE("p", val);
+			else
+				asm volatile("msr cntp_tval_el0, %0" : :
+					     "r" (val));
 			break;
 		}
 	} else if (access == ARCH_TIMER_VIRT_ACCESS) {
@@ -75,7 +94,11 @@ void arch_timer_reg_write_cp15(int access, enum arch_timer_reg reg, u32 val)
 			asm volatile("msr cntv_ctl_el0,  %0" : : "r" (val));
 			break;
 		case ARCH_TIMER_REG_TVAL:
-			asm volatile("msr cntv_tval_el0, %0" : : "r" (val));
+			if (arm_arch_timer_rewrite)
+				ARCH_TIMER_TVAL_REWRITE("v", val);
+			else
+				asm volatile("msr cntv_tval_el0, %0" : :
+					     "r" (val));
 			break;
 		}
 	}
