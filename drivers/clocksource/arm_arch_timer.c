@@ -71,6 +71,9 @@ static bool arch_timer_use_virtual = true;
 static bool arch_timer_c3stop;
 static bool arch_timer_mem_use_virtual;
 
+bool arm_arch_timer_reread; /* QorIQ erratum A-008585 */
+EXPORT_SYMBOL(arm_arch_timer_reread);
+
 /*
  * Architected system timer support.
  */
@@ -728,6 +731,8 @@ static void __init arch_timer_of_init(struct device_node *np)
 	arch_timer_detect_rate(NULL, np);
 
 	arch_timer_c3stop = !of_property_read_bool(np, "always-on");
+	arm_arch_timer_reread =
+		of_property_read_bool(np, "fsl,erratum-a008585");
 
 	/*
 	 * If we cannot rely on firmware initializing the timer registers then
