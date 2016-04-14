@@ -55,7 +55,7 @@ xfs_count_page_state(
 	} while ((bh = bh->b_this_page) != head);
 }
 
-STATIC struct block_device *
+struct block_device *
 xfs_find_bdev_for_inode(
 	struct inode		*inode)
 {
@@ -1208,6 +1208,10 @@ xfs_vm_writepages(
 	struct writeback_control *wbc)
 {
 	xfs_iflags_clear(XFS_I(mapping->host), XFS_ITRUNCATED);
+	if (dax_mapping(mapping))
+		return dax_writeback_mapping_range(mapping,
+				xfs_find_bdev_for_inode(mapping->host), wbc);
+
 	return generic_writepages(mapping, wbc);
 }
 
@@ -1648,7 +1652,7 @@ out_end_io:
  * case the completion can be called in interrupt context, whereas if we have an
  * ioend we will always be called in task context (i.e. from a workqueue).
  */
-STATIC void
+STATIC int
 xfs_end_io_direct_write(
 	struct kiocb		*iocb,
 	loff_t			offset,
@@ -1658,15 +1662,19 @@ xfs_end_io_direct_write(
 	struct inode		*inode = file_inode(iocb->ki_filp);
 	struct xfs_ioend	*ioend = private;
 
+	if (size <= 0)
+		return 0;
+
 	trace_xfs_gbmap_direct_endio(XFS_I(inode), offset, size,
 				     ioend ? ioend->io_type : 0, NULL);
 
 	if (!ioend) {
 		ASSERT(offset + size <= i_size_read(inode));
-		return;
+		return 0;
 	}
 
 	__xfs_end_io_direct_write(inode, ioend, offset, size);
+	return 0;
 }
 
 static inline ssize_t
@@ -1675,10 +1683,7 @@ xfs_vm_do_dio(
 	struct kiocb		*iocb,
 	struct iov_iter		*iter,
 	loff_t			offset,
-	void			(*endio)(struct kiocb	*iocb,
-					 loff_t		offset,
-					 ssize_t	size,
-					 void		*private),
+	dio_iodone_t		endio,
 	int			flags)
 {
 	struct block_device	*bdev;
