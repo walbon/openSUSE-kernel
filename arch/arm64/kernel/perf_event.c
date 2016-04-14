@@ -101,13 +101,13 @@
 /* ARMv8 Cortex-A53 specific event types. */
 #define ARMV8_A53_PERFCTR_PREFETCH_LINEFILL			0xC2
 
-
+/* ARMv8 Cavium ThunderX specific event types. */
 #define ARMV8_THUNDER_PERFCTR_L1_DCACHE_MISS_ST			0xE9
 #define ARMV8_THUNDER_PERFCTR_L1_DCACHE_PREF_ACCESS		0xEA
 #define ARMV8_THUNDER_PERFCTR_L1_DCACHE_PREF_MISS		0xEB
 #define ARMV8_THUNDER_PERFCTR_L1_ICACHE_PREF_ACCESS		0xEC
 #define ARMV8_THUNDER_PERFCTR_L1_ICACHE_PREF_MISS		0xED
-/* ARMv8 Cavium ThunderX specific event types. */
+
 /* PMUv3 HW events mapping. */
 static const unsigned armv8_pmuv3_perf_map[PERF_COUNT_HW_MAX] = {
 	PERF_MAP_ALL_UNSUPPORTED,
