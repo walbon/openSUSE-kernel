@@ -971,7 +971,7 @@ static int armv8_vulcan_map_event(struct perf_event *event)
 {
 	return armpmu_map_event(event, &armv8_vulcan_perf_map,
 				&armv8_vulcan_perf_cache_map,
-				ARMV8_PMU_EVTYPE_EVENT);
+				ARMV8_EVTYPE_EVENT);
 }
 
 static void armv8pmu_read_num_pmnc_events(void *info)
