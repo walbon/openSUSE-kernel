@@ -4147,7 +4147,7 @@ static void e1000e_trigger_lsc(struct e1000_adapter *adapter)
 		ew32(ICS, E1000_ICS_LSC);
 }
 
-int e1000e_up(struct e1000_adapter *adapter)
+void e1000e_up(struct e1000_adapter *adapter)
 {
 	/* hardware has been reset, we need to reload some things */
 	e1000_configure(adapter);
@@ -4161,8 +4161,6 @@ int e1000e_up(struct e1000_adapter *adapter)
 	netif_start_queue(adapter->netdev);
 
 	e1000e_trigger_lsc(adapter);
-
-	return 0;
 }
 
 static void e1000e_flush_descriptors(struct e1000_adapter *adapter)
@@ -6626,7 +6624,7 @@ static int e1000e_pm_runtime_resume(struct device *dev)
 		return rc;
 
 	if (netdev->flags & IFF_UP)
-		rc = e1000e_up(adapter);
+		e1000e_up(adapter);
 
 	return rc;
 }
@@ -6817,13 +6815,8 @@ static void e1000_io_resume(struct pci_dev *pdev)
 
 	e1000_init_manageability_pt(adapter);
 
-	if (netif_running(netdev)) {
-		if (e1000e_up(adapter)) {
-			dev_err(&pdev->dev,
-				"can't bring device back up after reset\n");
-			return;
-		}
-	}
+	if (netif_running(netdev))
+		e1000e_up(adapter);
 
 	netif_device_attach(netdev);
 
@@ -7460,6 +7453,11 @@ static const struct pci_device_id e1000_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_V), board_pch_spt },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_LM2), board_pch_spt },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_V2), board_pch_spt },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_LBG_I219_LM3), board_pch_spt },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_LM4), board_pch_spt },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_V4), board_pch_spt },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_LM5), board_pch_spt },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_V5), board_pch_spt },
 
 	{ 0, 0, 0, 0, 0, 0, 0 }	/* terminate list */
 };
@@ -7499,14 +7497,11 @@ static struct pci_driver e1000_driver = {
  **/
 static int __init e1000_init_module(void)
 {
-	int ret;
-
 	pr_info("Intel(R) PRO/1000 Network Driver - %s\n",
 		e1000e_driver_version);
 	pr_info("Copyright(c) 1999 - 2015 Intel Corporation.\n");
-	ret = pci_register_driver(&e1000_driver);
 
-	return ret;
+	return pci_register_driver(&e1000_driver);
 }
 module_init(e1000_init_module);
 
