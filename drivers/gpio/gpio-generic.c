@@ -518,7 +518,7 @@ int bgpio_init(struct gpio_chip *gc, struct device *dev,
 		return -EINVAL;
 
 	spin_lock_init(&gc->bgpio_lock);
-	gc->dev = dev;
+	gc->parent = dev;
 	gc->label = dev_name(dev);
 	gc->base = -1;
 	gc->ngpio = gc->bgpio_bits;

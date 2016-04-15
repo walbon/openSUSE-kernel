@@ -886,18 +886,8 @@ static void bgx_get_qlm_mode(struct bgx *bgx)
 
 #ifdef CONFIG_ACPI
 
-static int bgx_match_phy_id(struct device *dev, void *data)
-{
-	struct phy_device *phydev = to_phy_device(dev);
-	u32 *phy_id = data;
-
-	if (phydev->addr == *phy_id)
-		return 1;
-
-	return 0;
-}
-
-static int acpi_get_mac_address(struct acpi_device *adev, u8 *dst)
+static int acpi_get_mac_address(struct device *dev, struct acpi_device *adev,
+				u8 *dst)
 {
 	u8 mac[ETH_ALEN];
 	int ret;
@@ -908,50 +898,36 @@ static int acpi_get_mac_address(struct acpi_device *adev, u8 *dst)
 		goto out;
 
 	if (!is_valid_ether_addr(mac)) {
+		dev_err(dev, "MAC address invalid: %pM\n", mac);
 		ret = -EINVAL;
 		goto out;
 	}
+
+	dev_info(dev, "MAC address set to: %pM\n", mac);
 
 	memcpy(dst, mac, ETH_ALEN);
 out:
 	return ret;
 }
 
+/* Currently only sets the MAC address. */
 static acpi_status bgx_acpi_register_phy(acpi_handle handle,
 					 u32 lvl, void *context, void **rv)
 {
-	struct acpi_reference_args args;
 	struct bgx *bgx = context;
+	struct device *dev = &bgx->pdev->dev;
 	struct acpi_device *adev;
-	struct device *phy_dev;
-	struct fwnode_handle *fwnode;
-	u32 phy_id;
 
 	if (acpi_bus_get_device(handle, &adev))
-		return AE_OK;
+		goto out;
 
-	fwnode = acpi_fwnode_handle(adev);
+	acpi_get_mac_address(dev, adev, bgx->lmac[bgx->lmac_count].mac);
 
-	if (acpi_node_get_property_reference(fwnode, "phy-handle", 0, &args))
-		return AE_OK;
+	SET_NETDEV_DEV(&bgx->lmac[bgx->lmac_count].netdev, dev);
 
-	if (acpi_dev_prop_read_single(args.adev, "phy-channel", DEV_PROP_U32,
-					&phy_id))
-		return AE_OK;
-
-	phy_dev = bus_find_device(&mdio_bus_type, NULL, (void *)&phy_id,
-				  bgx_match_phy_id);
-	if (!phy_dev)
-		return AE_OK;
-
-	SET_NETDEV_DEV(&bgx->lmac[bgx->lmac_count].netdev, &bgx->pdev->dev);
-	bgx->lmac[bgx->lmac_count].phydev = to_phy_device(phy_dev);
 	bgx->lmac[bgx->lmac_count].lmacid = bgx->lmac_count;
-
-	acpi_get_mac_address(adev, bgx->lmac[bgx->lmac_count].mac);
-
+out:
 	bgx->lmac_count++;
-
 	return AE_OK;
 }
 
@@ -998,24 +974,20 @@ static int bgx_init_acpi_phy(struct bgx *bgx)
 static int bgx_init_of_phy(struct bgx *bgx)
 {
 	struct fwnode_handle *fwn;
+	struct device_node *node = NULL;
 	u8 lmac = 0;
-	const char *mac;
 
 	device_for_each_child_node(&bgx->pdev->dev, fwn) {
+		struct phy_device *pd;
 		struct device_node *phy_np;
-		struct device_node *node = to_of_node(fwn);
+		const char *mac;
 
-		/* If it is not an OF node we cannot handle it yet, so
-		 * exit the loop.
+		/* Should always be an OF node.  But if it is not, we
+		 * cannot handle it, so exit the loop.
 		 */
+		node = to_of_node(fwn);
 		if (!node)
 			break;
-
-		phy_np = of_parse_phandle(node, "phy-handle", 0);
-		if (!phy_np)
-			continue;
-
-		bgx->lmac[lmac].phydev = of_phy_find_device(phy_np);
 
 		mac = of_get_mac_address(node);
 		if (mac)
@@ -1023,13 +995,41 @@ static int bgx_init_of_phy(struct bgx *bgx)
 
 		SET_NETDEV_DEV(&bgx->lmac[lmac].netdev, &bgx->pdev->dev);
 		bgx->lmac[lmac].lmacid = lmac;
-		lmac++;
-		if (lmac == MAX_LMAC_PER_BGX) {
-			of_node_put(node);
-			break;
+
+		phy_np = of_parse_phandle(node, "phy-handle", 0);
+		/* If there is no phy or defective firmware presents
+		 * this cortina phy, for which there is no driver
+		 * support, ignore it.
+		 */
+		if (phy_np &&
+		    !of_device_is_compatible(phy_np, "cortina,cs4223-slice")) {
+			/* Wait until the phy drivers are available */
+			pd = of_phy_find_device(phy_np);
+			if (!pd)
+				goto defer;
+			bgx->lmac[lmac].phydev = pd;
 		}
+
+		lmac++;
+		if (lmac == MAX_LMAC_PER_BGX)
+			break;
 	}
+	of_node_put(node);
 	return 0;
+
+defer:
+	/* We are bailing out, try not to leak device reference counts
+	 * for phy devices we may have already found.
+	 */
+	while (lmac) {
+		if (bgx->lmac[lmac].phydev) {
+			put_device(&bgx->lmac[lmac].phydev->dev);
+			bgx->lmac[lmac].phydev = NULL;
+		}
+		lmac--;
+	}
+	of_node_put(node);
+	return -EPROBE_DEFER;
 }
 
 #else
@@ -1055,9 +1055,6 @@ static int bgx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct device *dev = &pdev->dev;
 	struct bgx *bgx = NULL;
 	u8 lmac;
-
-	/* Load octeon mdio driver */
-	octeon_mdiobus_force_mod_depencency();
 
 	bgx = devm_kzalloc(dev, sizeof(*bgx), GFP_KERNEL);
 	if (!bgx)

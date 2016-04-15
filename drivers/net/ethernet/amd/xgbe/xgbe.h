@@ -773,8 +773,8 @@ struct xgbe_prv_data {
 	/* Overall device lock */
 	spinlock_t lock;
 
-	/* XPCS indirect addressing mutex */
-	struct mutex xpcs_mutex;
+	/* XPCS indirect addressing lock */
+	spinlock_t xpcs_lock;
 
 	/* RSS addressing mutex */
 	struct mutex rss_mutex;
@@ -925,6 +925,7 @@ struct xgbe_prv_data {
 	u32 serdes_dfe_tap_ena[XGBE_SPEEDS];
 
 	/* Auto-negotiation state machine support */
+	unsigned int an_int;
 	struct mutex an_mutex;
 	enum xgbe_an an_result;
 	enum xgbe_an an_state;

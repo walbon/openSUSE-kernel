@@ -27,6 +27,46 @@
 
 #include <clocksource/arm_arch_timer.h>
 
+extern bool arm_arch_timer_reread;
+extern bool arm_arch_timer_rewrite;
+
+/* QorIQ errata workarounds */
+#define ARCH_TIMER_REREAD(reg) ({ \
+	u64 _val_old, _val_new; \
+	int _timeout = 200; \
+	do { \
+		asm volatile("mrs %0, " reg ";" \
+			     "mrs %1, " reg \
+			     : "=r" (_val_old), "=r" (_val_new)); \
+		_timeout--; \
+	} while (_val_old != _val_new && _timeout); \
+	WARN_ON_ONCE(!_timeout); \
+	_val_old; \
+})
+
+#define ARCH_TIMER_READ(reg) ({ \
+	u64 _val; \
+	if (arm_arch_timer_reread) \
+		_val = ARCH_TIMER_REREAD(reg); \
+	else \
+		asm volatile("mrs %0, " reg : "=r" (_val)); \
+	_val; \
+})
+
+#define ARCH_TIMER_TVAL_REWRITE(pv, val) do { \
+	u64 _cnt_old, _cnt_new; \
+	int _timeout = 200; \
+	do { \
+		asm volatile("mrs %0, cntvct_el0;" \
+			     "msr cnt" pv "_tval_el0, %2;" \
+			     "mrs %1, cntvct_el0" \
+			     : "=&r" (_cnt_old), "=r" (_cnt_new) \
+			     : "r" (val)); \
+		_timeout--; \
+	} while (_cnt_old != _cnt_new && _timeout); \
+	WARN_ON_ONCE(!_timeout); \
+} while (0)
+
 /*
  * These register accessors are marked inline so the compiler can
  * nicely work out which register we want, and chuck away the rest of
@@ -41,7 +81,11 @@ void arch_timer_reg_write_cp15(int access, enum arch_timer_reg reg, u32 val)
 			asm volatile("msr cntp_ctl_el0,  %0" : : "r" (val));
 			break;
 		case ARCH_TIMER_REG_TVAL:
-			asm volatile("msr cntp_tval_el0, %0" : : "r" (val));
+			if (arm_arch_timer_rewrite)
+				ARCH_TIMER_TVAL_REWRITE("p", val);
+			else
+				asm volatile("msr cntp_tval_el0, %0" : :
+					     "r" (val));
 			break;
 		}
 	} else if (access == ARCH_TIMER_VIRT_ACCESS) {
@@ -50,7 +94,11 @@ void arch_timer_reg_write_cp15(int access, enum arch_timer_reg reg, u32 val)
 			asm volatile("msr cntv_ctl_el0,  %0" : : "r" (val));
 			break;
 		case ARCH_TIMER_REG_TVAL:
-			asm volatile("msr cntv_tval_el0, %0" : : "r" (val));
+			if (arm_arch_timer_rewrite)
+				ARCH_TIMER_TVAL_REWRITE("v", val);
+			else
+				asm volatile("msr cntv_tval_el0, %0" : :
+					     "r" (val));
 			break;
 		}
 	}
@@ -69,7 +117,7 @@ u32 arch_timer_reg_read_cp15(int access, enum arch_timer_reg reg)
 			asm volatile("mrs %0,  cntp_ctl_el0" : "=r" (val));
 			break;
 		case ARCH_TIMER_REG_TVAL:
-			asm volatile("mrs %0, cntp_tval_el0" : "=r" (val));
+			val = ARCH_TIMER_READ("cntp_tval_el0");
 			break;
 		}
 	} else if (access == ARCH_TIMER_VIRT_ACCESS) {
@@ -78,7 +126,7 @@ u32 arch_timer_reg_read_cp15(int access, enum arch_timer_reg reg)
 			asm volatile("mrs %0,  cntv_ctl_el0" : "=r" (val));
 			break;
 		case ARCH_TIMER_REG_TVAL:
-			asm volatile("mrs %0, cntv_tval_el0" : "=r" (val));
+			val = ARCH_TIMER_READ("cntv_tval_el0");
 			break;
 		}
 	}
@@ -116,12 +164,8 @@ static inline u64 arch_counter_get_cntpct(void)
 
 static inline u64 arch_counter_get_cntvct(void)
 {
-	u64 cval;
-
 	isb();
-	asm volatile("mrs %0, cntvct_el0" : "=r" (cval));
-
-	return cval;
+	return ARCH_TIMER_READ("cntvct_el0");
 }
 
 static inline int arch_timer_arch_init(void)
