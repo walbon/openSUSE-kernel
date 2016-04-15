@@ -678,7 +678,8 @@ static struct ib_mr *iwch_get_dma_mr(struct ib_pd *pd, int acc)
 	return ibmr;
 }
 
-static struct ib_mw *iwch_alloc_mw(struct ib_pd *pd, enum ib_mw_type type)
+static struct ib_mw *iwch_alloc_mw(struct ib_pd *pd, enum ib_mw_type type,
+				   struct ib_udata *udata)
 {
 	struct iwch_dev *rhp;
 	struct iwch_pd *php;
