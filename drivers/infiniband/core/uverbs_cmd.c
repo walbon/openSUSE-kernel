@@ -1258,7 +1258,7 @@ err_copy:
 	idr_remove_uobj(&ib_uverbs_mw_idr, uobj);
 
 err_unalloc:
-	ib_dealloc_mw(mw);
+	uverbs_dealloc_mw(mw);
 
 err_put:
 	put_pd_read(pd);
@@ -1287,7 +1287,7 @@ ssize_t ib_uverbs_dealloc_mw(struct ib_uverbs_file *file,
 
 	mw = uobj->object;
 
-	ret = ib_dealloc_mw(mw);
+	ret = uverbs_dealloc_mw(mw);
 	if (!ret)
 		uobj->live = 0;
 
