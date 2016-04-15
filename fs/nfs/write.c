@@ -1482,6 +1482,7 @@ void nfs_commit_release_pages(struct nfs_write_data *data)
 {
 	struct nfs_page	*req;
 	int status = data->task.tk_status;
+	struct nfs_server *nfss;
 
 	while (!list_empty(&data->pages)) {
 		req = nfs_list_entry(data->pages.next);
@@ -1514,6 +1515,9 @@ void nfs_commit_release_pages(struct nfs_write_data *data)
 	next:
 		nfs_clear_page_tag_locked(req);
 	}
+	nfss = NFS_SERVER(data->inode);
+	if (atomic_long_read(&nfss->writeback) < NFS_CONGESTION_OFF_THRESH)
+		clear_bdi_congested(&nfss->backing_dev_info, BLK_RW_ASYNC);
 }
 EXPORT_SYMBOL_GPL(nfs_commit_release_pages);
 
