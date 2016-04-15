@@ -57,10 +57,10 @@ static void change_page_attr(unsigned long addr, int numpages,
 
 		pte = *ptep;
 		pte = set(pte);
-		__ptep_ipte(addr, ptep);
 		*ptep = pte;
 		addr += PAGE_SIZE;
 	}
+	__tlb_flush_global();
 }
 
 int set_memory_ro(unsigned long addr, int numpages)
