@@ -427,6 +427,20 @@ out:
 	return error;
 }
 
+#include <linux/hash.h>
+
+static inline wait_queue_head_t *page_waitqueue(struct page *page)
+{
+	const struct zone *zone = page_zone(page);
+
+	return &zone->wait_table[hash_ptr(page, zone->wait_table_bits)];
+}
+
+static inline void wake_up_page(struct page *page, int bit)
+{
+	__wake_up_bit(page_waitqueue(page), &page->flags, bit);
+}
+
 /*
  * Remove a write request from an inode
  */
@@ -441,6 +455,8 @@ static void nfs_inode_remove_request(struct nfs_page *req)
 	if (likely(!PageSwapCache(req->wb_page))) {
 		set_page_private(req->wb_page, 0);
 		ClearPagePrivate(req->wb_page);
+		smp_mb();
+		wake_up_page(req->wb_page, PG_private);
 		clear_bit(PG_MAPPED, &req->wb_flags);
 	}
 	radix_tree_delete(&nfsi->nfs_page_tree, req->wb_index);

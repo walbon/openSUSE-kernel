@@ -489,6 +489,31 @@ static void nfs_invalidate_page(struct page *page, unsigned long offset)
 	nfs_fscache_invalidate_page(page, page->mapping->host);
 }
 
+#include <linux/hash.h>
+
+static inline wait_queue_head_t *page_waitqueue(struct page *page)
+{
+	const struct zone *zone = page_zone(page);
+
+	return &zone->wait_table[hash_ptr(page, zone->wait_table_bits)];
+}
+
+static void wait_on_page_bit_killable_timeout(struct page *page, int bit_nr, unsigned long timeout)
+{
+	DEFINE_WAIT_BIT(wait, &page->flags, bit_nr);
+	wait_queue_head_t *wq = page_waitqueue(page);
+
+	if (!test_bit(bit_nr, &page->flags))
+		return;
+
+	do {
+		prepare_to_wait(wq, &wait.wait, TASK_KILLABLE);
+		if (test_bit(bit_nr, &page->flags))
+			timeout = schedule_timeout(timeout);
+	} while (test_bit(bit_nr, &page->flags) && timeout > 0);
+	finish_wait(wq, &wait.wait);
+}
+
 /*
  * Attempt to release the private state associated with a page
  * - Called if either PG_private or PG_fscache is set on the page
@@ -501,17 +526,23 @@ static int nfs_release_page(struct page *page, gfp_t gfp)
 
 	dfprintk(PAGECACHE, "NFS: release_page(%p)\n", page);
 
-	/* Only do I/O if gfp is a superset of GFP_KERNEL, and we're not
-	 * doing this memory reclaim for a fs-related allocation.
+	/* Always try to initiate a 'commit' if relevant, but only
+	 * wait for it if __GFP_WAIT is set and the calling process is
+	 * allowed to block.  Even then, only wait 1 second.
+	 * Waiting indefinitely can cause deadlocks when the NFS
+	 * server is on this machine, and there is no particular need
+	 * to wait extensively here.  A short wait has the benefit
+	 * that someone else can worry about the freezer.
 	 */
-	if (mapping && (gfp & GFP_KERNEL) == GFP_KERNEL &&
-	    !(current->flags & PF_FSTRANS)) {
-		int how = FLUSH_SYNC;
-
-		/* Don't let kswapd deadlock waiting for OOM RPC calls */
-		if (current_is_kswapd())
-			how = 0;
-		nfs_commit_inode(mapping->host, how);
+	if (mapping) {
+		struct nfs_server *nfss = NFS_SERVER(mapping->host);
+		nfs_commit_inode(mapping->host, 0);
+		if ((gfp & __GFP_WAIT) &&
+		    !current_is_kswapd() &&
+		    !(current->flags & PF_FSTRANS)) {
+			wait_on_page_bit_killable_timeout(page, PG_private,
+							  HZ);
+		}
 	}
 	/* If PagePrivate() is set, then the page is not freeable */
 	if (PagePrivate(page))
