@@ -102,6 +102,12 @@ struct net {
 	struct netns_xfrm	xfrm;
 #endif
 	struct netns_ipvs	*ipvs;
+#ifndef __GENKSYMS__
+	struct list_head	fib6_walkers;
+	rwlock_t		fib6_walker_lock;
+	spinlock_t		fib6_gc_lock;
+	__u32			fib6_sernum;
+#endif
 };
 
 
