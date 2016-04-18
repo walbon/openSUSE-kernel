@@ -73,7 +73,7 @@ snic_ver_enc(const char *s)
 			continue;
 		}
 
-		if (i > 4 || !isdigit(c))
+		if (i > 3 || !isdigit(c))
 			goto end;
 
 		v[i] = v[i] * 10 + (c - '0');
