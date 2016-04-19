@@ -1127,6 +1127,9 @@ int kgr_patch_kernel(struct kgr_patch *patch)
 		return -EBUSY;
 	}
 
+	pr_notice_once("tainting kernel with TAINT_LIVEPATCH\n");
+	add_taint(TAINT_LIVEPATCH, LOCKDEP_STILL_OK);
+
 	init_completion(&patch->finish);
 
 	ret = kgr_patch_dir_add(patch);
