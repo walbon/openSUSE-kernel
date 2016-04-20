@@ -262,6 +262,13 @@ static void perf_duration_warn(struct irq_work *w)
 			"kernel.perf_event_max_sample_rate to %d\n",
 			avg_local_sample_len, allowed_ns >> 1,
 			sysctl_perf_event_sample_rate);
+
+	if (sysctl_perf_event_sample_rate < 4000) {
+		printk_ratelimited(KERN_WARNING
+			"Subsequent perf sampling commands (record) will fail unless frequency <= %d is specified (via -F). "
+			"To disable this warning 'echo 0 > /proc/sys/kernel/perf_cpu_time_max_percent'\n",
+			sysctl_perf_event_sample_rate);
+	}
 }
 
 static DEFINE_IRQ_WORK(perf_duration_work, perf_duration_warn);
@@ -305,6 +312,13 @@ void perf_sample_event_took(u64 sample_len_ns)
 			     "kernel.perf_event_max_sample_rate to %d\n",
 			     avg_local_sample_len, allowed_ns >> 1,
 			     sysctl_perf_event_sample_rate);
+
+		if (sysctl_perf_event_sample_rate < 4000) {
+			early_printk(KERN_WARNING
+				"Subsequent perf sampling commands (record) will fail unless frequency <= %d is specified (via -F). "
+				"To disable this warning 'echo 0 > /proc/sys/kernel/perf_cpu_time_max_percent'\n",
+				sysctl_perf_event_sample_rate);
+		}
 	}
 }
 
