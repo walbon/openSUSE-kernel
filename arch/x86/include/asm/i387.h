@@ -441,12 +441,20 @@ static inline bool irq_fpu_usable(void)
 		interrupted_kernel_fpu_idle();
 }
 
-static inline void kernel_fpu_begin(void)
+/*
+ * Careful: __kernel_fpu_begin/end() must be called with preempt disabled
+ * and they don't touch the preempt state on their own.
+ * If you enable preemption after __kernel_fpu_begin(), preempt notifier
+ * should call the __kernel_fpu_end() to prevent the kernel/user FPU
+ * state from getting corrupted. KVM for example uses this model.
+ *
+ * All other cases use kernel_fpu_begin/end() which disable preemption
+ * during kernel FPU usage.
+ */
+static inline void __kernel_fpu_begin(void)
 {
 	struct task_struct *me = current;
 
-	WARN_ON_ONCE(!irq_fpu_usable());
-	preempt_disable();
 	if (__thread_has_fpu(me)) {
 		__save_init_fpu(me);
 		__thread_clear_has_fpu(me);
@@ -455,9 +463,21 @@ static inline void kernel_fpu_begin(void)
 		clts();
 }
 
-static inline void kernel_fpu_end(void)
+static inline void __kernel_fpu_end(void)
 {
 	stts();
+}
+
+static inline void kernel_fpu_begin(void)
+{
+	WARN_ON_ONCE(!irq_fpu_usable());
+	preempt_disable();
+	__kernel_fpu_begin();
+}
+
+static inline void kernel_fpu_end(void)
+{
+	__kernel_fpu_end();
 	preempt_enable();
 }
 
