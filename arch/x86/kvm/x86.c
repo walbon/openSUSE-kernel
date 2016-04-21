@@ -544,6 +544,31 @@ void kvm_lmsw(struct kvm_vcpu *vcpu, unsigned long msw)
 }
 EXPORT_SYMBOL_GPL(kvm_lmsw);
 
+static void kvm_put_guest_xcr0(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->guest_xcr0_loaded) {
+		if (vcpu->arch.xcr0 != host_xcr0)
+			xsetbv(XCR_XFEATURE_ENABLED_MASK, host_xcr0);
+		vcpu->guest_xcr0_loaded = 0;
+	}
+}
+
+static void vcpu_scan_ioapic(struct kvm_vcpu *vcpu)
+{
+	u64 eoi_exit_bitmap[4];
+	u32 tmr[8];
+
+	if (!(vcpu->arch.apic->vcpu->arch.apic_base & MSR_IA32_APICBASE_ENABLE))
+		return;
+
+	memset(eoi_exit_bitmap, 0, 32);
+	memset(tmr, 0, 32);
+
+	kvm_ioapic_scan_entry(vcpu, eoi_exit_bitmap, tmr);
+	kvm_x86_ops->load_eoi_exitmap(vcpu, eoi_exit_bitmap);
+	kvm_apic_update_tmr(vcpu, tmr);
+}
+
 int __kvm_set_xcr(struct kvm_vcpu *vcpu, u32 index, u64 xcr)
 {
 	u64 xcr0;
@@ -558,8 +583,8 @@ int __kvm_set_xcr(struct kvm_vcpu *vcpu, u32 index, u64 xcr)
 		return 1;
 	if (xcr0 & ~host_xcr0)
 		return 1;
+	kvm_put_guest_xcr0(vcpu);
 	vcpu->arch.xcr0 = xcr0;
-	vcpu->guest_xcr0_loaded = 0;
 	return 0;
 }
 
@@ -5521,31 +5546,6 @@ static void kvm_load_guest_xcr0(struct kvm_vcpu *vcpu)
 		xsetbv(XCR_XFEATURE_ENABLED_MASK, vcpu->arch.xcr0);
 		vcpu->guest_xcr0_loaded = 1;
 	}
-}
-
-static void kvm_put_guest_xcr0(struct kvm_vcpu *vcpu)
-{
-	if (vcpu->guest_xcr0_loaded) {
-		if (vcpu->arch.xcr0 != host_xcr0)
-			xsetbv(XCR_XFEATURE_ENABLED_MASK, host_xcr0);
-		vcpu->guest_xcr0_loaded = 0;
-	}
-}
-
-static void vcpu_scan_ioapic(struct kvm_vcpu *vcpu)
-{
-	u64 eoi_exit_bitmap[4];
-	u32 tmr[8];
-
-	if (!(vcpu->arch.apic->vcpu->arch.apic_base & MSR_IA32_APICBASE_ENABLE))
-		return;
-
-	memset(eoi_exit_bitmap, 0, 32);
-	memset(tmr, 0, 32);
-
-	kvm_ioapic_scan_entry(vcpu, eoi_exit_bitmap, tmr);
-	kvm_x86_ops->load_eoi_exitmap(vcpu, eoi_exit_bitmap);
-	kvm_apic_update_tmr(vcpu, tmr);
 }
 
 static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
