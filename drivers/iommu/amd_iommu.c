@@ -94,6 +94,7 @@ struct iommu_dev_data {
 	struct list_head dev_data_list;	  /* For global dev_data_list */
 	struct protection_domain *domain; /* Domain the device is bound to */
 	u16 devid;			  /* PCI Device ID */
+	u16 alias;			  /* Alias Device ID */
 	bool iommu_v2;			  /* Device can make use of IOMMUv2 */
 	bool passthrough;		  /* Device is identity mapped */
 	struct {
@@ -123,9 +124,25 @@ static int protection_domain_init(struct protection_domain *domain);
  *
  ****************************************************************************/
 
+static inline u16 get_pci_device_id(struct device *dev);
+static inline int get_acpihid_device_id(struct device *dev,
+					struct acpihid_map_entry **entry);
+
 static struct protection_domain *to_pdomain(struct iommu_domain *dom)
 {
 	return container_of(dom, struct protection_domain, domain);
+}
+
+static inline int get_device_id(struct device *dev)
+{
+	int devid;
+
+	if (dev_is_pci(dev))
+		devid = get_pci_device_id(dev);
+	else
+		devid = get_acpihid_device_id(dev, NULL);
+
+	return devid;
 }
 
 static struct iommu_dev_data *alloc_dev_data(u16 devid)
@@ -163,6 +180,67 @@ out_unlock:
 	spin_unlock_irqrestore(&dev_data_list_lock, flags);
 
 	return dev_data;
+}
+
+static int __last_alias(struct pci_dev *pdev, u16 alias, void *data)
+{
+	*(u16 *)data = alias;
+	return 0;
+}
+
+static u16 get_alias(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	u16 devid, ivrs_alias, pci_alias;
+
+	devid = get_device_id(dev);
+	ivrs_alias = amd_iommu_alias_table[devid];
+	pci_for_each_dma_alias(pdev, __last_alias, &pci_alias);
+
+	if (ivrs_alias == pci_alias)
+		return ivrs_alias;
+
+	/*
+	 * DMA alias showdown
+	 *
+	 * The IVRS is fairly reliable in telling us about aliases, but it
+	 * can't know about every screwy device.  If we don't have an IVRS
+	 * reported alias, use the PCI reported alias.  In that case we may
+	 * still need to initialize the rlookup and dev_table entries if the
+	 * alias is to a non-existent device.
+	 */
+	if (ivrs_alias == devid) {
+		if (!amd_iommu_rlookup_table[pci_alias]) {
+			amd_iommu_rlookup_table[pci_alias] =
+				amd_iommu_rlookup_table[devid];
+			memcpy(amd_iommu_dev_table[pci_alias].data,
+			       amd_iommu_dev_table[devid].data,
+			       sizeof(amd_iommu_dev_table[pci_alias].data));
+		}
+
+		return pci_alias;
+	}
+
+	pr_info("AMD-Vi: Using IVRS reported alias %02x:%02x.%d "
+		"for device %s[%04x:%04x], kernel reported alias "
+		"%02x:%02x.%d\n", PCI_BUS_NUM(ivrs_alias), PCI_SLOT(ivrs_alias),
+		PCI_FUNC(ivrs_alias), dev_name(dev), pdev->vendor, pdev->device,
+		PCI_BUS_NUM(pci_alias), PCI_SLOT(pci_alias),
+		PCI_FUNC(pci_alias));
+
+	/*
+	 * If we don't have a PCI DMA alias and the IVRS alias is on the same
+	 * bus, then the IVRS table may know about a quirk that we don't.
+	 */
+	if (pci_alias == devid &&
+	    PCI_BUS_NUM(ivrs_alias) == pdev->bus->number) {
+		pci_add_dma_alias(pdev, ivrs_alias & 0xff);
+		pr_info("AMD-Vi: Added PCI DMA alias %02x.%d for %s\n",
+			PCI_SLOT(ivrs_alias), PCI_FUNC(ivrs_alias),
+			dev_name(dev));
+	}
+
+	return ivrs_alias;
 }
 
 static struct iommu_dev_data *find_dev_data(u16 devid)
@@ -219,18 +297,6 @@ static inline int get_acpihid_device_id(struct device *dev,
 	return -EINVAL;
 }
 
-static inline int get_device_id(struct device *dev)
-{
-	int devid;
-
-	if (dev_is_pci(dev))
-		devid = get_pci_device_id(dev);
-	else
-		devid = get_acpihid_device_id(dev, NULL);
-
-	return devid;
-}
-
 static struct iommu_dev_data *get_dev_data(struct device *dev)
 {
 	return dev->archdata.iommu;
@@ -242,7 +308,7 @@ static struct iommu_dev_data *get_dev_data(struct device *dev)
 static struct iommu_group *acpihid_device_group(struct device *dev)
 {
 	struct acpihid_map_entry *p, *entry = NULL;
-	u16 devid;
+	int devid;
 
 	devid = get_acpihid_device_id(dev, &entry);
 	if (devid < 0)
@@ -385,6 +451,11 @@ static int iommu_init_device(struct device *dev)
 	if (!dev_data)
 		return -ENOMEM;
 
+	if (dev_is_pci(dev))
+		dev_data->alias = get_alias(dev);
+	else
+		dev_data->alias = amd_iommu_alias_table[devid];
+
 	if (dev_is_pci(dev) && pci_iommuv2_capable(to_pci_dev(dev))) {
 		struct amd_iommu *iommu;
 
@@ -409,7 +480,10 @@ static void iommu_ignore_device(struct device *dev)
 	if (IS_ERR_VALUE(devid))
 		return;
 
-	alias = amd_iommu_alias_table[devid];
+	if (dev_is_pci(dev))
+		alias = get_alias(dev);
+	else
+		alias = amd_iommu_alias_table[devid];
 
 	memset(&amd_iommu_dev_table[devid], 0, sizeof(struct dev_table_entry));
 	memset(&amd_iommu_dev_table[alias], 0, sizeof(struct dev_table_entry));
@@ -1104,7 +1178,7 @@ static int device_flush_dte(struct iommu_dev_data *dev_data)
 	int ret;
 
 	iommu = amd_iommu_rlookup_table[dev_data->devid];
-	alias = amd_iommu_alias_table[dev_data->devid];
+	alias = dev_data->alias;
 
 	ret = iommu_flush_dte(iommu, dev_data->devid);
 	if (!ret && alias != dev_data->devid)
@@ -1978,7 +2052,7 @@ static void do_attach(struct iommu_dev_data *dev_data,
 	bool ats;
 
 	iommu = amd_iommu_rlookup_table[dev_data->devid];
-	alias = amd_iommu_alias_table[dev_data->devid];
+	alias = dev_data->alias;
 	ats   = dev_data->ats.enabled;
 
 	/* Update data structures */
@@ -2012,7 +2086,7 @@ static void do_detach(struct iommu_dev_data *dev_data)
 		return;
 
 	iommu = amd_iommu_rlookup_table[dev_data->devid];
-	alias = amd_iommu_alias_table[dev_data->devid];
+	alias = dev_data->alias;
 
 	/* decrease reference counters */
 	dev_data->domain->dev_iommu[iommu->index] -= 1;
