@@ -636,6 +636,7 @@ static bool vga_arbiter_del_pci_device(struct pci_dev *pdev)
 	 * it's copies of the pci_dev pointer
 	 */
 	vga_arb_device_card_gone(pdev);
+	pr_info("device added: PCI:%s\n", pci_name(pdev));
 
 	/* Wake up all possible waiters */
 	wake_up_all(&vga_wait_queue);
@@ -1100,7 +1101,7 @@ static ssize_t vga_arb_write(struct file *file, const char __user *buf,
 		pr_debug("vgadev %p\n", vgadev);
 		if (vgadev == NULL) {
 			if (pdev) {
-				pr_err("this pci device is not a vga device\n");
+				pr_err("this pci device is not a vga device: %s\n", pci_name(pdev));
 				pci_dev_put(pdev);
 			}
 
