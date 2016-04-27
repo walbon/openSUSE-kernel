@@ -1513,8 +1513,10 @@ static void error(struct mddev *mddev, struct md_rdev *rdev)
 	 */
 	set_bit(MD_RECOVERY_INTR, &mddev->recovery);
 	spin_unlock_irqrestore(&conf->device_lock, flags);
+	spin_lock_irqsave(&mddev->lock, flags);
 	set_bit(MD_CHANGE_DEVS, &mddev->flags);
 	set_bit(MD_CHANGE_PENDING, &mddev->flags);
+	spin_unlock_irqrestore(&mddev->lock, flags);
 	printk(KERN_ALERT
 	       "md/raid1:%s: Disk failure on %s, disabling device.\n"
 	       "md/raid1:%s: Operation continuing on %d devices.\n",
