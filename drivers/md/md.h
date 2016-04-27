@@ -220,6 +220,9 @@ struct mddev {
 #define MD_JOURNAL_CLEAN 5	/* A raid with journal is already clean */
 #define MD_HAS_JOURNAL	6	/* The raid array has journal feature set */
 #define MD_NEED_REWRITE 7	/* metadata write need to be repeated */
+#define MD_RELOAD_SB	8	/* Reload the superblock because another node
+				 * updated it.
+				 */
 
 	int				suspended;
 	atomic_t			active_io;
@@ -450,6 +453,7 @@ struct mddev {
 	struct work_struct event_work;	/* used by dm to report failure event */
 	void (*sync_super)(struct mddev *mddev, struct md_rdev *rdev);
 	struct md_cluster_info		*cluster_info;
+	unsigned int			good_device_nr;	/* good device num within cluster raid */
 };
 
 static inline int __must_check mddev_lock(struct mddev *mddev)
