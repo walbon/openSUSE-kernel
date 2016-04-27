@@ -1178,8 +1178,10 @@ static void __make_request(struct mddev *mddev, struct bio *bio)
 		/* Need to update reshape_position in metadata */
 		raid10_log(mddev, "reshape metadata delay");
 		mddev->reshape_position = conf->reshape_progress;
+		spin_lock_irqsave(&mddev->lock, flags);
 		set_bit(MD_CHANGE_DEVS, &mddev->flags);
 		set_bit(MD_CHANGE_PENDING, &mddev->flags);
+		spin_unlock_irqrestore(&mddev->lock, flags);
 		md_wakeup_thread(mddev->thread);
 		wait_event(mddev->sb_wait,
 			   !test_bit(MD_CHANGE_PENDING, &mddev->flags));
@@ -1677,15 +1679,17 @@ static void error(struct mddev *mddev, struct md_rdev *rdev)
 	}
 	if (test_and_clear_bit(In_sync, &rdev->flags))
 		mddev->degraded++;
+	spin_unlock_irqrestore(&conf->device_lock, flags);
 	/*
 	 * If recovery is running, make sure it aborts.
 	 */
 	set_bit(MD_RECOVERY_INTR, &mddev->recovery);
 	set_bit(Blocked, &rdev->flags);
 	set_bit(Faulty, &rdev->flags);
+	spin_lock_irqsave(&mddev->lock, flags);
 	set_bit(MD_CHANGE_DEVS, &mddev->flags);
 	set_bit(MD_CHANGE_PENDING, &mddev->flags);
-	spin_unlock_irqrestore(&conf->device_lock, flags);
+	spin_unlock_irqrestore(&mddev->lock, flags);
 	printk(KERN_ALERT
 	       "md/raid10:%s: Disk failure on %s, disabling device.\n"
 	       "md/raid10:%s: Operation continuing on %d devices.\n",

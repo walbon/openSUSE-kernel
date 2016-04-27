@@ -2339,19 +2339,26 @@ void md_update_sb(struct mddev *mddev, int force_change)
 		return;
 	}
 
+repeat:
 	if (mddev_is_clustered(mddev)) {
 		if (test_and_clear_bit(MD_CHANGE_DEVS, &mddev->flags))
 			force_change = 1;
+		if (test_and_clear_bit(MD_CHANGE_CLEAN, &mddev->flags))
+			nospares = 1;
 		ret = md_cluster_ops->metadata_update_start(mddev);
 		/* Has someone else has updated the sb */
 		if (!does_sb_need_changing(mddev)) {
 			if (ret == 0)
 				md_cluster_ops->metadata_update_cancel(mddev);
-			clear_bit(MD_CHANGE_PENDING, &mddev->flags);
+			spin_lock(&mddev->lock);
+			if (!test_bit(MD_CHANGE_DEVS, &mddev->flags) &&
+			    !test_bit(MD_CHANGE_CLEAN, &mddev->flags))
+				clear_bit(MD_CHANGE_PENDING, &mddev->flags);
+			spin_unlock(&mddev->lock);
 			return;
 		}
 	}
-repeat:
+
 	/* First make sure individual recovery_offsets are correct */
 	rdev_for_each(rdev, mddev) {
 		if (rdev->raid_disk >= 0 &&
@@ -2480,9 +2487,13 @@ rewrite:
 		goto rewrite;
 	/* if there was a failure, MD_CHANGE_DEVS was set, and we re-write super */
 
+	if (mddev_is_clustered(mddev) && ret == 0)
+		md_cluster_ops->metadata_update_finish(mddev);
+
 	spin_lock(&mddev->lock);
 	if (mddev->in_sync != sync_req ||
-	    test_bit(MD_CHANGE_DEVS, &mddev->flags)) {
+	    test_bit(MD_CHANGE_DEVS, &mddev->flags) ||
+	    test_bit(MD_CHANGE_CLEAN, &mddev->flags)) {
 		/* have to write it out again */
 		spin_unlock(&mddev->lock);
 		goto repeat;
@@ -2502,9 +2513,6 @@ rewrite:
 		clear_bit(BlockedBadBlocks, &rdev->flags);
 		wake_up(&rdev->blocked_wait);
 	}
-
-	if (mddev_is_clustered(mddev) && ret == 0)
-		md_cluster_ops->metadata_update_finish(mddev);
 }
 EXPORT_SYMBOL(md_update_sb);
 
@@ -4889,6 +4897,10 @@ array_size_store(struct mddev *mddev, const char *buf, size_t len)
 	if (err)
 		return err;
 
+	/* cluster raid doesn't support change array_sectors */
+	if (mddev_is_clustered(mddev))
+		return -EINVAL;
+
 	if (strncmp(buf, "default", 7) == 0) {
 		if (mddev->pers)
 			sectors = mddev->pers->size(mddev, 0, 0);
@@ -6239,14 +6251,10 @@ static int hot_remove_disk(struct mddev *mddev, dev_t dev)
 {
 	char b[BDEVNAME_SIZE];
 	struct md_rdev *rdev;
-	int ret = -1;
 
 	rdev = find_rdev(mddev, dev);
 	if (!rdev)
 		return -ENXIO;
-
-	if (mddev_is_clustered(mddev))
-		ret = md_cluster_ops->metadata_update_start(mddev);
 
 	if (rdev->raid_disk < 0)
 		goto kick_rdev;
@@ -6258,7 +6266,7 @@ static int hot_remove_disk(struct mddev *mddev, dev_t dev)
 		goto busy;
 
 kick_rdev:
-	if (mddev_is_clustered(mddev) && ret == 0)
+	if (mddev_is_clustered(mddev))
 		md_cluster_ops->remove_disk(mddev, rdev);
 
 	md_kick_rdev_from_array(rdev);
@@ -6271,9 +6279,6 @@ kick_rdev:
 
 	return 0;
 busy:
-	if (mddev_is_clustered(mddev) && ret == 0)
-		md_cluster_ops->metadata_update_cancel(mddev);
-
 	printk(KERN_WARNING "md: cannot remove active disk %s from %s ...\n",
 		bdevname(rdev->bdev,b), mdname(mddev));
 	return -EBUSY;
@@ -6535,6 +6540,10 @@ static int update_size(struct mddev *mddev, sector_t num_sectors)
 	int rv;
 	int fit = (num_sectors == 0);
 
+	/* cluster raid doesn't support update size */
+	if (mddev_is_clustered(mddev))
+		return -EINVAL;
+
 	if (mddev->pers->resize == NULL)
 		return -EINVAL;
 	/* The "num_sectors" is the number of sectors of each device that
@@ -6714,6 +6723,19 @@ static int update_array_info(struct mddev *mddev, mdu_array_info_t *info)
 			if (mddev->bitmap->storage.file) {
 				rv = -EINVAL;
 				goto err;
+			}
+			if (mddev->bitmap_info.nodes) {
+				/* hold PW on all the bitmap lock */
+				if (md_cluster_ops->lock_all_bitmaps(mddev) <= 0) {
+					printk("md: can't change bitmap to none since the"
+						" array is using by more than one node\n");
+					rv = -EPERM;
+					md_cluster_ops->unlock_all_bitmaps(mddev);
+					goto err;
+				}
+
+				mddev->bitmap_info.nodes = 0;
+				md_cluster_ops->leave(mddev);
 			}
 			mddev->pers->quiesce(mddev, 1);
 			bitmap_destroy(mddev);
@@ -7873,7 +7895,7 @@ void md_do_sync(struct md_thread *thread)
 	struct md_rdev *rdev;
 	char *desc, *action = NULL;
 	struct blk_plug plug;
-	bool cluster_resync_finished = false;
+	int ret;
 
 	/* just incase thread restarts... */
 	if (test_bit(MD_RECOVERY_DONE, &mddev->recovery))
@@ -7881,6 +7903,19 @@ void md_do_sync(struct md_thread *thread)
 	if (mddev->ro) {/* never try to sync a read-only array */
 		set_bit(MD_RECOVERY_INTR, &mddev->recovery);
 		return;
+	}
+
+	if (mddev_is_clustered(mddev)) {
+		ret = md_cluster_ops->resync_start(mddev);
+		if (ret)
+			goto skip;
+
+		if (!(test_bit(MD_RECOVERY_SYNC, &mddev->recovery) ||
+			test_bit(MD_RECOVERY_RESHAPE, &mddev->recovery) ||
+			test_bit(MD_RECOVERY_RECOVER, &mddev->recovery))
+		     && ((unsigned long long)mddev->curr_resync_completed
+			 < (unsigned long long)mddev->resync_max_sectors))
+			goto skip;
 	}
 
 	if (test_bit(MD_RECOVERY_SYNC, &mddev->recovery)) {
@@ -8177,11 +8212,6 @@ void md_do_sync(struct md_thread *thread)
 		mddev->curr_resync_completed = mddev->curr_resync;
 		sysfs_notify(&mddev->kobj, NULL, "sync_completed");
 	}
-	/* tell personality and other nodes that we are finished */
-	if (mddev_is_clustered(mddev)) {
-		md_cluster_ops->resync_finish(mddev);
-		cluster_resync_finished = true;
-	}
 	mddev->pers->sync_request(mddev, max_sectors, &skipped);
 
 	if (!test_bit(MD_RECOVERY_CHECK, &mddev->recovery) &&
@@ -8218,12 +8248,20 @@ void md_do_sync(struct md_thread *thread)
 		}
 	}
  skip:
-	set_bit(MD_CHANGE_DEVS, &mddev->flags);
-
 	if (mddev_is_clustered(mddev) &&
-	    test_bit(MD_RECOVERY_INTR, &mddev->recovery) &&
-	    !cluster_resync_finished)
+	    ret == 0) {
+		/* set CHANGE_PENDING here since maybe another
+		 * update is needed, so other nodes are informed */
+		spin_lock(&mddev->lock);
+		set_bit(MD_CHANGE_DEVS, &mddev->flags);
+		set_bit(MD_CHANGE_PENDING, &mddev->flags);
+		spin_unlock(&mddev->lock);
+		md_wakeup_thread(mddev->thread);
+		wait_event(mddev->sb_wait,
+			   !test_bit(MD_CHANGE_PENDING, &mddev->flags));
 		md_cluster_ops->resync_finish(mddev);
+	} else
+		set_bit(MD_CHANGE_DEVS, &mddev->flags);
 
 	spin_lock(&mddev->lock);
 	if (!test_bit(MD_RECOVERY_INTR, &mddev->recovery)) {
@@ -8328,18 +8366,9 @@ static void md_start_sync(struct work_struct *ws)
 	struct mddev *mddev = container_of(ws, struct mddev, del_work);
 	int ret = 0;
 
-	if (mddev_is_clustered(mddev)) {
-		ret = md_cluster_ops->resync_start(mddev);
-		if (ret) {
-			mddev->sync_thread = NULL;
-			goto out;
-		}
-	}
-
 	mddev->sync_thread = md_register_thread(md_do_sync,
 						mddev,
 						"resync");
-out:
 	if (!mddev->sync_thread) {
 		if (!(mddev_is_clustered(mddev) && ret == -EAGAIN))
 			printk(KERN_ERR "%s: could not start resync"
@@ -8407,6 +8436,7 @@ void md_check_recovery(struct mddev *mddev)
 		(mddev->flags & MD_UPDATE_SB_FLAGS & ~ (1<<MD_CHANGE_PENDING)) ||
 		test_bit(MD_RECOVERY_NEEDED, &mddev->recovery) ||
 		test_bit(MD_RECOVERY_DONE, &mddev->recovery) ||
+		test_bit(MD_RELOAD_SB, &mddev->flags) ||
 		(mddev->external == 0 && mddev->safemode == 1) ||
 		(mddev->safemode == 2 && ! atomic_read(&mddev->writes_pending)
 		 && !mddev->in_sync && mddev->recovery_cp == MaxSector)
@@ -8443,6 +8473,21 @@ void md_check_recovery(struct mddev *mddev)
 			clear_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
 			clear_bit(MD_CHANGE_PENDING, &mddev->flags);
 			goto unlock;
+		}
+
+		if (mddev_is_clustered(mddev)) {
+			struct md_rdev *rdev;
+			/* kick the device if another node issued a
+			 * remove disk.
+			 */
+			rdev_for_each(rdev, mddev) {
+				if (test_and_clear_bit(ClusterRemove, &rdev->flags) &&
+						rdev->raid_disk < 0)
+					md_kick_rdev_from_array(rdev);
+			}
+
+			if (test_and_clear_bit(MD_RELOAD_SB, &mddev->flags))
+				md_reload_sb(mddev, mddev->good_device_nr);
 		}
 
 		if (!mddev->external) {
@@ -8622,6 +8667,7 @@ EXPORT_SYMBOL(md_finish_reshape);
 int rdev_set_badblocks(struct md_rdev *rdev, sector_t s, int sectors,
 		       int is_new)
 {
+	struct mddev *mddev = rdev->mddev;
 	int rv;
 	if (is_new)
 		s += rdev->new_data_offset;
@@ -8631,8 +8677,10 @@ int rdev_set_badblocks(struct md_rdev *rdev, sector_t s, int sectors,
 	if (rv == 0) {
 		/* Make sure they get written out promptly */
 		sysfs_notify_dirent_safe(rdev->sysfs_state);
+		spin_lock(&mddev->lock);
 		set_bit(MD_CHANGE_CLEAN, &rdev->mddev->flags);
 		set_bit(MD_CHANGE_PENDING, &rdev->mddev->flags);
+		spin_unlock(&mddev->lock);
 		md_wakeup_thread(rdev->mddev->thread);
 		return 1;
 	} else
@@ -8766,7 +8814,11 @@ static void check_sb_changes(struct mddev *mddev, struct md_rdev *rdev)
 				ret = remove_and_add_spares(mddev, rdev2);
 				pr_info("Activated spare: %s\n",
 						bdevname(rdev2->bdev,b));
-				continue;
+
+				/* wakeup mddev->thread here, so array could
+				 * perform resync with the new activated disk */
+				set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
+				md_wakeup_thread(mddev->thread);
 			}
 			/* device faulty
 			 * We just want to do the minimum to mark the disk
