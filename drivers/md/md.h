@@ -180,6 +180,7 @@ enum flag_bits {
 				 * so it is save to remove without
 				 * another call.
 				 */
+	ClusterRemove,
 };
 
 static inline int is_badblock(struct md_rdev *rdev, sector_t s, int sectors,
