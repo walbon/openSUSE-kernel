@@ -34,6 +34,8 @@
 #include <scsi/scsi_driver.h>
 #include <scsi/scsi_host.h>
 
+#include <scsi/scsi_transport_sas.h>
+
 struct ses_device {
 	unsigned char *page1;
 	unsigned char *page1_types;
@@ -579,37 +581,15 @@ static void ses_enclosure_data_process(struct enclosure_device *edev,
 static void ses_match_to_enclosure(struct enclosure_device *edev,
 				   struct scsi_device *sdev)
 {
-	unsigned char *desc;
-	struct scsi_vpd_pg *vpd_pg83;
 	struct efd efd = {
 		.addr = 0,
 	};
 
 	ses_enclosure_data_process(edev, to_scsi_device(edev->edev.parent), 0);
 
-	rcu_read_lock();
-	vpd_pg83 = rcu_dereference(sdev->vpd_pg83);
-	if (!vpd_pg83) {
-		rcu_read_unlock();
-		return;
-	}
+	if (is_sas_attached(sdev))
+		efd.addr = sas_get_address(sdev);
 
-	desc = vpd_pg83->buf + 4;
-	while (desc < vpd_pg83->buf + vpd_pg83->len) {
-		enum scsi_protocol proto = desc[0] >> 4;
-		u8 code_set = desc[0] & 0x0f;
-		u8 piv = desc[1] & 0x80;
-		u8 assoc = (desc[1] & 0x30) >> 4;
-		u8 type = desc[1] & 0x0f;
-		u8 len = desc[3];
-
-		if (piv && code_set == 1 && assoc == 1
-		    && proto == SCSI_PROTOCOL_SAS && type == 3 && len == 8)
-			efd.addr = get_unaligned_be64(&desc[4]);
-
-		desc += len + 4;
-	}
-	rcu_read_unlock();
 	if (efd.addr) {
 		efd.dev = &sdev->sdev_gendev;
 
