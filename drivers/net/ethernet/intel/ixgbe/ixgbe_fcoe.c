@@ -77,7 +77,7 @@ int ixgbe_fcoe_ddp_put(struct net_device *netdev, u16 xid)
 	if (!netdev)
 		return 0;
 
-	if (xid >= netdev->fcoe_ddp_xid)
+	if (xid >= IXGBE_FCOE_DDP_MAX)
 		return 0;
 
 	adapter = netdev_priv(netdev);
@@ -177,7 +177,7 @@ static int ixgbe_fcoe_ddp_setup(struct net_device *netdev, u16 xid,
 		return 0;
 
 	adapter = netdev_priv(netdev);
-	if (xid >= netdev->fcoe_ddp_xid) {
+	if (xid >= IXGBE_FCOE_DDP_MAX) {
 		e_warn(drv, "xid=0x%x out-of-range\n", xid);
 		return 0;
 	}
