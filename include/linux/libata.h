@@ -180,6 +180,7 @@ enum {
 	ATA_DFLAG_DA		= (1 << 26), /* device supports Device Attention */
 	ATA_DFLAG_DEVSLP	= (1 << 27), /* device supports Device Sleep */
 	ATA_DFLAG_ACPI_DISABLED = (1 << 28), /* ACPI for the device is disabled */
+	ATA_DFLAG_D_SENSE	= (1 << 29), /* Descriptor sense requested */
 
 	ATA_DEV_UNKNOWN		= 0,	/* unknown device */
 	ATA_DEV_ATA		= 1,	/* ATA device */
@@ -205,6 +206,7 @@ enum {
 	ATA_LFLAG_NO_LPM	= (1 << 8), /* disable LPM on this link */
 	ATA_LFLAG_RST_ONCE	= (1 << 9), /* limit recovery to one reset */
 	ATA_LFLAG_CHANGED	= (1 << 10), /* LPM state changed on this link */
+	ATA_LFLAG_NO_DB_DELAY	= (1 << 11), /* no debounce delay on link resume */
 
 	/* struct ata_port flags */
 	ATA_FLAG_SLAVE_POSS	= (1 << 0), /* host supports slave dev */
@@ -525,6 +527,7 @@ enum ata_lpm_policy {
 enum ata_lpm_hints {
 	ATA_LPM_EMPTY		= (1 << 0), /* port empty/probing */
 	ATA_LPM_HIPM		= (1 << 1), /* may use HIPM */
+	ATA_LPM_WAKE_ONLY	= (1 << 2), /* only wake up link */
 };
 
 /* forward declarations */
