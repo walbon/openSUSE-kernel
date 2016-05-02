@@ -423,6 +423,7 @@ static int bch_writeback_thread(void *arg)
 	bool searched_full_index;
 
 	while (!kthread_should_stop()) {
+		klp_kgraft_mark_task_safe(current);
 		down_write(&dc->writeback_lock);
 		if (!atomic_read(&dc->has_dirty) ||
 		    (!test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) &&
@@ -458,8 +459,10 @@ static int bch_writeback_thread(void *arg)
 
 			while (delay &&
 			       !kthread_should_stop() &&
-			       !test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags))
+			       !test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags)) {
+				klp_kgraft_mark_task_safe(current);
 				delay = schedule_timeout_interruptible(delay);
+			}
 		}
 	}
 
