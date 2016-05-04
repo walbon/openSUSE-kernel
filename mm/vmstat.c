@@ -570,31 +570,6 @@ void drain_zonestat(struct zone *zone, struct per_cpu_pageset *pset)
 
 #ifdef CONFIG_NUMA
 /*
- * zonelist = the list of zones passed to the allocator
- * z 	    = the zone from which the allocation occurred.
- *
- * Must be called with interrupts disabled.
- *
- * When __GFP_OTHER_NODE is set assume the node of the preferred
- * zone is the local node. This is useful for daemons who allocate
- * memory on behalf of other processes.
- */
-void zone_statistics(struct zone *preferred_zone, struct zone *z, gfp_t flags)
-{
-	if (z->zone_pgdat == preferred_zone->zone_pgdat) {
-		__inc_zone_state(z, NUMA_HIT);
-	} else {
-		__inc_zone_state(z, NUMA_MISS);
-		__inc_zone_state(preferred_zone, NUMA_FOREIGN);
-	}
-	if (z->node == ((flags & __GFP_OTHER_NODE) ?
-			preferred_zone->node : numa_node_id()))
-		__inc_zone_state(z, NUMA_LOCAL);
-	else
-		__inc_zone_state(z, NUMA_OTHER);
-}
-
-/*
  * Determine the per node value of a stat item.
  */
 unsigned long node_page_state(int node, enum zone_stat_item item)
@@ -1065,7 +1040,7 @@ static void pagetypeinfo_showmixedcount_print(struct seq_file *m,
 		block_end_pfn = min(block_end_pfn, end_pfn);
 
 		page = pfn_to_page(pfn);
-		pageblock_mt = get_pfnblock_migratetype(page, pfn);
+		pageblock_mt = get_pageblock_migratetype(page);
 
 		for (; pfn < block_end_pfn; pfn++) {
 			if (!pfn_valid_within(pfn))
