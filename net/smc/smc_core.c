@@ -21,6 +21,7 @@
 #include "smc_ib.h"
 #include "smc_wr.h"
 #include "smc_llc.h"
+#include "smc_cdc.h"
 
 #define SMC_LGR_NUM_INCR	256
 
@@ -347,6 +348,8 @@ int smc_conn_create(struct smc_sock *smc, __be32 peer_in_addr,
 		smc_lgr_register_conn(conn); /* add smc conn to lgr */
 		rc = smc_link_determine_gid(conn->lgr);
 	}
+	conn->local_tx_ctrl.common.type = SMC_CDC_MSG_TYPE;
+	conn->local_tx_ctrl.len = sizeof(struct smc_cdc_msg);
 
 out:
 	return rc ? rc : local_contact;
@@ -446,6 +449,7 @@ int smc_sndbuf_create(struct smc_sock *smc)
 		conn->sndbuf_desc = sndbuf_desc;
 		conn->sndbuf_size = tmp_bufsize;
 		smc->sk.sk_sndbuf = tmp_bufsize * 2;
+		atomic_set(&conn->sndbuf_space, tmp_bufsize);
 		return 0;
 	} else {
 		return -ENOMEM;
@@ -521,6 +525,7 @@ int smc_rmb_create(struct smc_sock *smc)
 		conn->rmbe_size = tmp_bufsize;
 		conn->rmbe_size_short = tmp_bufsize_short;
 		smc->sk.sk_rcvbuf = tmp_bufsize * 2;
+		atomic_set(&conn->bytes_to_rcv, 0);
 		return 0;
 	} else {
 		return -ENOMEM;
