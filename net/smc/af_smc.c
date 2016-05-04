@@ -35,6 +35,7 @@
 #include "smc_core.h"
 #include "smc_ib.h"
 #include "smc_pnet.h"
+#include "smc_tx.h"
 
 static DEFINE_MUTEX(smc_create_lgr_pending);	/* serialize link group
 						 * creation
@@ -433,6 +434,7 @@ static int smc_connect_rdma(struct smc_sock *smc)
 out_connected:
 	smc_copy_sock_settings_to_clc(smc);
 	smc->sk.sk_state = SMC_ACTIVE;
+	smc_tx_init(smc);
 
 	return rc ? rc : local_contact;
 
@@ -771,6 +773,7 @@ static void smc_listen_worker(struct work_struct *work)
 out_connected:
 	sk_refcnt_debug_inc(newsmcsk);
 	newsmcsk->sk_state = SMC_ACTIVE;
+	smc_tx_init(new_smc);
 enqueue:
 	if (local_contact == SMC_FIRST_CONTACT)
 		mutex_unlock(&smc_create_lgr_pending);
@@ -942,7 +945,7 @@ static int smc_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 	if (smc->use_fallback)
 		rc = smc->clcsock->ops->sendmsg(smc->clcsock, msg, len);
 	else
-		rc = sock_no_sendmsg(sock, msg, len);
+		rc = smc_tx_sendmsg(smc, msg, len);
 out:
 	release_sock(sk);
 	return rc;

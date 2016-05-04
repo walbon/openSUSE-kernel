@@ -14,6 +14,7 @@
 #include "smc.h"
 #include "smc_wr.h"
 #include "smc_cdc.h"
+#include "smc_tx.h"
 
 struct smc_cdc_tx_pend {
 	struct smc_connection	*conn;		/* socket connection */
@@ -45,7 +46,7 @@ static void smc_cdc_tx_handler(struct smc_wr_tx_pend_priv *pnd_snd,
 		xchg(&cdcpend->conn->tx_curs_fin.acurs,
 		     cdcpend->cursor.acurs);
 	}
-	/* subsequent patch: wake if send buffer space available */
+	smc_tx_sndbuf_nonfull(smc);
 	bh_unlock_sock(&smc->sk);
 }
 
@@ -149,7 +150,9 @@ static void smc_cdc_msg_recv_action(struct smc_sock *smc,
 	}
 
 	/* piggy backed tx info */
-	/* subsequent patch: wake receivers if receive buffer space available */
+	/* trigger sndbuf consumer: RDMA write into peer RMBE and CDC */
+	if (diff_cons)
+		smc_tx_sndbuf_nonempty(conn);
 
 	/* subsequent patch: trigger socket release if connection closed */
 
