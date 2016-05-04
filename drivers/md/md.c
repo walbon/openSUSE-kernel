@@ -2350,11 +2350,9 @@ repeat:
 		if (!does_sb_need_changing(mddev)) {
 			if (ret == 0)
 				md_cluster_ops->metadata_update_cancel(mddev);
-			spin_lock(&mddev->lock);
-			if (!test_bit(MD_CHANGE_DEVS, &mddev->flags) &&
-			    !test_bit(MD_CHANGE_CLEAN, &mddev->flags))
-				clear_bit(MD_CHANGE_PENDING, &mddev->flags);
-			spin_unlock(&mddev->lock);
+			bit_clear_unless(&mddev->flags, BIT(MD_CHANGE_PENDING),
+							 BIT(MD_CHANGE_DEVS) |
+							 BIT(MD_CHANGE_CLEAN));
 			return;
 		}
 	}
@@ -2490,16 +2488,11 @@ rewrite:
 	if (mddev_is_clustered(mddev) && ret == 0)
 		md_cluster_ops->metadata_update_finish(mddev);
 
-	spin_lock(&mddev->lock);
 	if (mddev->in_sync != sync_req ||
-	    test_bit(MD_CHANGE_DEVS, &mddev->flags) ||
-	    test_bit(MD_CHANGE_CLEAN, &mddev->flags)) {
+	    !bit_clear_unless(&mddev->flags, BIT(MD_CHANGE_PENDING),
+			       BIT(MD_CHANGE_DEVS) | BIT(MD_CHANGE_CLEAN)))
 		/* have to write it out again */
-		spin_unlock(&mddev->lock);
 		goto repeat;
-	}
-	clear_bit(MD_CHANGE_PENDING, &mddev->flags);
-	spin_unlock(&mddev->lock);
 	wake_up(&mddev->sb_wait);
 	if (test_bit(MD_RECOVERY_RUNNING, &mddev->recovery))
 		sysfs_notify(&mddev->kobj, NULL, "sync_completed");
@@ -8252,10 +8245,8 @@ void md_do_sync(struct md_thread *thread)
 	    ret == 0) {
 		/* set CHANGE_PENDING here since maybe another
 		 * update is needed, so other nodes are informed */
-		spin_lock(&mddev->lock);
-		set_bit(MD_CHANGE_DEVS, &mddev->flags);
-		set_bit(MD_CHANGE_PENDING, &mddev->flags);
-		spin_unlock(&mddev->lock);
+		set_mask_bits(&mddev->flags, 0,
+			      BIT(MD_CHANGE_PENDING) | BIT(MD_CHANGE_DEVS));
 		md_wakeup_thread(mddev->thread);
 		wait_event(mddev->sb_wait,
 			   !test_bit(MD_CHANGE_PENDING, &mddev->flags));
@@ -8677,10 +8668,8 @@ int rdev_set_badblocks(struct md_rdev *rdev, sector_t s, int sectors,
 	if (rv == 0) {
 		/* Make sure they get written out promptly */
 		sysfs_notify_dirent_safe(rdev->sysfs_state);
-		spin_lock(&mddev->lock);
-		set_bit(MD_CHANGE_CLEAN, &rdev->mddev->flags);
-		set_bit(MD_CHANGE_PENDING, &rdev->mddev->flags);
-		spin_unlock(&mddev->lock);
+		set_mask_bits(&mddev->flags, 0,
+			      BIT(MD_CHANGE_CLEAN) | BIT(MD_CHANGE_PENDING));
 		md_wakeup_thread(rdev->mddev->thread);
 		return 1;
 	} else
