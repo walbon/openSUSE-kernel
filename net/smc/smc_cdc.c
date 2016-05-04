@@ -15,6 +15,7 @@
 #include "smc_wr.h"
 #include "smc_cdc.h"
 #include "smc_tx.h"
+#include "smc_rx.h"
 
 struct smc_cdc_tx_pend {
 	struct smc_connection	*conn;		/* socket connection */
@@ -161,7 +162,13 @@ static void smc_cdc_msg_recv_action(struct smc_sock *smc,
 		return;
 
 	/* data available */
-	/* subsequent patch: send delayed ack, wake receivers */
+	if ((conn->local_rx_ctrl.prod_flags.write_blocked) ||
+	    (conn->local_rx_ctrl.prod_flags.cons_curs_upd_req))
+		smc_tx_consumer_update(conn);
+	if (diff_prod ||
+	    smc_stop_received(conn) ||
+	    smc->sk.sk_shutdown & RCV_SHUTDOWN)
+		smc->sk.sk_data_ready(&smc->sk);
 }
 
 /* called under tasklet context */

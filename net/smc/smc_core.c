@@ -526,6 +526,9 @@ int smc_rmb_create(struct smc_sock *smc)
 		conn->rmbe_size_short = tmp_bufsize_short;
 		smc->sk.sk_rcvbuf = tmp_bufsize * 2;
 		atomic_set(&conn->bytes_to_rcv, 0);
+		conn->rmbe_update_limit =
+				min_t(int, conn->rmbe_size / 10,
+				      SOCK_MIN_SNDBUF / 2);
 		return 0;
 	} else {
 		return -ENOMEM;
