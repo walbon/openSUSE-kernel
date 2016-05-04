@@ -14,6 +14,8 @@
 #include <linux/types.h>
 #include <net/sock.h>
 
+#include "smc_ib.h"
+
 #define SMCPROTO_SMC		0	/* SMC protocol */
 
 enum smc_state {		/* possible states of an SMC socket */
@@ -24,9 +26,19 @@ enum smc_state {		/* possible states of an SMC socket */
 	SMC_DESTRUCT	= 32
 };
 
+struct smc_link_group;
+
+struct smc_connection {
+	struct rb_node		alert_node;
+	struct smc_link_group	*lgr;		/* link group of connection */
+	u32			alert_token_local; /* unique conn. id */
+	u8			peer_conn_idx;	/* from tcp handshake */
+};
+
 struct smc_sock {				/* smc sock container */
 	struct sock		sk;
 	struct socket		*clcsock;	/* internal tcp socket */
+	struct smc_connection	conn;		/* smc connection */
 	struct sockaddr		*addr;		/* inet connect address */
 	struct smc_sock		*listen_smc;	/* listen parent */
 	struct work_struct	tcp_listen_work;/* handle tcp socket accepts */
@@ -77,6 +89,11 @@ static inline bool using_ipsec(struct smc_sock *smc)
 }
 #endif
 
+struct smc_clc_msg_local;
+
 int smc_netinfo_by_tcpsk(struct socket *, __be32 *, u8 *);
+void smc_conn_free(struct smc_connection *);
+int smc_conn_create(struct smc_sock *, __be32, struct smc_ib_device *, u8,
+		    struct smc_clc_msg_local *, int);
 
 #endif	/* _SMC_H */
