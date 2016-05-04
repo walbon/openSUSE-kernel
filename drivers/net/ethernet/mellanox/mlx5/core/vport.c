@@ -76,7 +76,7 @@ u8 mlx5_query_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod, u16 vport)
 
 	return MLX5_GET(query_vport_state_out, out, admin_state);
 }
-EXPORT_SYMBOL(mlx5_query_vport_admin_state);
+EXPORT_SYMBOL_GPL(mlx5_query_vport_admin_state);
 
 int mlx5_modify_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
 				  u16 vport, u8 state)
@@ -104,7 +104,7 @@ int mlx5_modify_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
 
 	return err;
 }
-EXPORT_SYMBOL(mlx5_modify_vport_admin_state);
+EXPORT_SYMBOL_GPL(mlx5_modify_vport_admin_state);
 
 static int mlx5_query_nic_vport_context(struct mlx5_core_dev *mdev, u16 vport,
 					u32 *out, int outlen)
@@ -151,12 +151,9 @@ int mlx5_query_nic_vport_mac_address(struct mlx5_core_dev *mdev,
 				nic_vport_context.permanent_address);
 
 	err = mlx5_query_nic_vport_context(mdev, vport, out, outlen);
-	if (err)
-		goto out;
+	if (!err)
+		ether_addr_copy(addr, &out_addr[2]);
 
-	ether_addr_copy(addr, &out_addr[2]);
-
-out:
 	kvfree(out);
 	return err;
 }
@@ -197,7 +194,7 @@ int mlx5_modify_nic_vport_mac_address(struct mlx5_core_dev *mdev,
 
 	return err;
 }
-EXPORT_SYMBOL(mlx5_modify_nic_vport_mac_address);
+EXPORT_SYMBOL_GPL(mlx5_modify_nic_vport_mac_address);
 
 int mlx5_query_nic_vport_mac_list(struct mlx5_core_dev *dev,
 				  u32 vport,
