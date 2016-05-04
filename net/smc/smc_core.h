@@ -47,6 +47,8 @@ struct smc_link {
 	struct ib_qp		*roce_qp;	/* IB queue pair */
 	struct ib_qp_attr	qp_attr;	/* IB queue pair attributes */
 
+	struct ib_mr		*mr_tx;		/* send IB DMA memory region */
+
 	struct smc_wr_buf	*wr_tx_bufs;	/* WR send payload buffers */
 	struct ib_send_wr	*wr_tx_ibs;	/* WR send meta data */
 	struct ib_sge		*wr_tx_sges;	/* WR send gather meta data */
@@ -91,7 +93,15 @@ struct smc_buf_desc {
 	u64			dma_addr[SMC_LINKS_PER_LGR_MAX];
 						/* mapped address of buffer */
 	void			*cpu_addr;	/* virtual address of buffer */
+	struct ib_mr		*mr_rx[SMC_LINKS_PER_LGR_MAX]; /* for rmb only:
+						 * rkey provided to peer
+						 */
 	u32			used;		/* currently used / unused */
+};
+
+struct smc_rtoken {				/* address/key of remote RMB */
+	u64			dma_addr;
+	u32			rkey;
 };
 
 struct smc_link_group {
@@ -110,6 +120,12 @@ struct smc_link_group {
 	rwlock_t		sndbufs_lock;	/* protects tx buffers */
 	struct list_head	rmbs[SMC_RMB_SIZES];	/* rx buffers */
 	rwlock_t		rmbs_lock;	/* protects rx buffers */
+	struct smc_rtoken	rtokens[SMC_RMBS_PER_LGR_MAX]
+				       [SMC_LINKS_PER_LGR_MAX];
+						/* remote addr/key pairs */
+	unsigned long		rtokens_used_mask[BITS_TO_LONGS(
+							SMC_RMBS_PER_LGR_MAX)];
+						/* used rtoken elements */
 };
 
 /* Find the connection associated with the given alert token in the link group.
@@ -150,5 +166,7 @@ struct smc_clc_msg_accept_confirm;
 void smc_lgr_free(struct smc_link_group *);
 int smc_sndbuf_create(struct smc_sock *);
 int smc_rmb_create(struct smc_sock *);
+int smc_rmb_rtoken_handling(struct smc_connection *,
+			    struct smc_clc_msg_accept_confirm *);
 
 #endif

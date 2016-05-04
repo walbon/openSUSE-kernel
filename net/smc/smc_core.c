@@ -119,6 +119,19 @@ static int smc_lgr_create(struct smc_sock *smc, __be32 peer_in_addr,
 	if (rc)
 		goto free_lgr;
 	init_waitqueue_head(&lnk->wr_tx_wait);
+	rc = smc_ib_create_protection_domain(lnk);
+	if (rc)
+		goto free_link_mem;
+	rc = smc_ib_get_memory_region(lnk->roce_pd, IB_ACCESS_LOCAL_WRITE,
+				      &lnk->mr_tx);
+	if (rc)
+		goto dealloc_pd;
+	rc = smc_ib_create_queue_pair(lnk);
+	if (rc)
+		goto dereg_mr;
+	rc = smc_wr_create_lgr(lnk);
+	if (rc)
+		goto destroy_qp;
 
 	smc->conn.lgr = lgr;
 	rwlock_init(&lgr->conns_lock);
@@ -127,6 +140,14 @@ static int smc_lgr_create(struct smc_sock *smc, __be32 peer_in_addr,
 	spin_unlock(&smc_lgr_list.lock);
 	return 0;
 
+destroy_qp:
+	smc_ib_destroy_queue_pair(lnk);
+dereg_mr:
+	smc_ib_dereg_memory_region(lnk->mr_tx);
+dealloc_pd:
+	smc_ib_dealloc_protection_domain(lnk);
+free_link_mem:
+	smc_wr_free_link_mem(lnk);
 free_lgr:
 	kfree(lgr);
 out:
@@ -468,6 +489,18 @@ int smc_rmb_create(struct smc_sock *smc)
 			kfree(rmb_desc);
 			continue; /* if mapping failed, try smaller one */
 		}
+		rc = smc_ib_get_memory_region(lgr->lnk[SMC_SINGLE_LINK].roce_pd,
+					      IB_ACCESS_REMOTE_WRITE |
+					      IB_ACCESS_LOCAL_WRITE,
+					     &rmb_desc->mr_rx[SMC_SINGLE_LINK]);
+		if (rc) {
+			smc_ib_buf_unmap(lgr->lnk[SMC_SINGLE_LINK].smcibdev,
+					 tmp_bufsize, rmb_desc,
+					 DMA_FROM_DEVICE);
+			kfree(rmb_desc->cpu_addr);
+			kfree(rmb_desc);
+			continue;
+		}
 		rmb_desc->used = 1;
 		write_lock_bh(&lgr->rmbs_lock);
 		list_add(&rmb_desc->list,
@@ -483,4 +516,39 @@ int smc_rmb_create(struct smc_sock *smc)
 	} else {
 		return -ENOMEM;
 	}
+}
+
+static inline int smc_rmb_reserve_rtoken_idx(struct smc_link_group *lgr)
+{
+	int i;
+
+	for_each_clear_bit(i, lgr->rtokens_used_mask, SMC_RMBS_PER_LGR_MAX) {
+		if (!test_and_set_bit(i, lgr->rtokens_used_mask))
+			return i;
+	}
+	return -ENOSPC;
+}
+
+/* save rkey and dma_addr received from peer during clc handshake */
+int smc_rmb_rtoken_handling(struct smc_connection *conn,
+			    struct smc_clc_msg_accept_confirm *clc)
+{
+	u64 dma_addr = be64_to_cpu(clc->rmb_dma_addr);
+	struct smc_link_group *lgr = conn->lgr;
+	u32 rkey = ntohl(clc->rmb_rkey);
+	int i;
+
+	for (i = 0; i < SMC_RMBS_PER_LGR_MAX; i++) {
+		if ((lgr->rtokens[i][SMC_SINGLE_LINK].rkey == rkey) &&
+		    test_bit(i, lgr->rtokens_used_mask)) {
+			conn->rtoken_idx = i;
+			return 0;
+		}
+	}
+	conn->rtoken_idx = smc_rmb_reserve_rtoken_idx(lgr);
+	if (conn->rtoken_idx < 0)
+		return conn->rtoken_idx;
+	lgr->rtokens[conn->rtoken_idx][SMC_SINGLE_LINK].rkey = rkey;
+	lgr->rtokens[conn->rtoken_idx][SMC_SINGLE_LINK].dma_addr = dma_addr;
+	return 0;
 }
