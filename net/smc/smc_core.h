@@ -131,6 +131,7 @@ struct smc_link_group {
 						/* used rtoken elements */
 
 	u32			id;		/* unique lgr id */
+	struct delayed_work	free_work;	/* delayed freeing of an lgr */
 };
 
 /* Find the connection associated with the given alert token in the link group.

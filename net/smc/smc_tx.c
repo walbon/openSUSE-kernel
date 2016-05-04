@@ -423,6 +423,41 @@ out_unlock:
 	return rc;
 }
 
+int smc_tx_close_wr(struct smc_connection *conn)
+{
+	struct smc_cdc_tx_pend *pend;
+	struct smc_wr_buf *wr_buf;
+	int rc;
+
+	conn->local_tx_ctrl.conn_state_flags.sending_done = 1;
+
+	rc = smc_cdc_get_free_slot(&conn->lgr->lnk[SMC_SINGLE_LINK], &wr_buf,
+				   &pend);
+
+	rc = smc_cdc_msg_send(conn, wr_buf, pend);
+
+	return rc;
+}
+
+int smc_tx_close(struct smc_connection *conn)
+{
+	struct smc_cdc_tx_pend *pend;
+	struct smc_wr_buf *wr_buf;
+	int rc;
+
+	if (atomic_read(&conn->bytes_to_rcv))
+		conn->local_tx_ctrl.conn_state_flags.abnormal_close = 1;
+	else
+		conn->local_tx_ctrl.conn_state_flags.closed_conn = 1;
+
+	rc = smc_cdc_get_free_slot(&conn->lgr->lnk[SMC_SINGLE_LINK], &wr_buf,
+				   &pend);
+
+	rc = smc_cdc_msg_send(conn, wr_buf, pend);
+
+	return rc;
+}
+
 /* Wakeup sndbuf consumers from process context
  * since there is more data to transmit
  */

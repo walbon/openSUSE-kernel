@@ -177,6 +177,11 @@ check_repeat:
 	return read_done;
 }
 
+void smc_rx_handler(struct smc_sock *smc)
+{
+	smc->sk.sk_data_ready(&smc->sk);
+}
+
 /* Initialize receive properties on connection establishment. NB: not __init! */
 void smc_rx_init(struct smc_sock *smc)
 {

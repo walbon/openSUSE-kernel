@@ -153,8 +153,10 @@ struct smc_cdc_tx_pend;
 
 int smc_cdc_get_free_slot(struct smc_link *, struct smc_wr_buf **,
 			  struct smc_cdc_tx_pend **);
+void smc_cdc_put_conn_slots(struct smc_connection *conn);
 int smc_cdc_msg_send(struct smc_connection *, struct smc_wr_buf *,
 		     struct smc_cdc_tx_pend *);
+int smc_cdc_wr_tx_pends(struct smc_connection *);
 int smc_cdc_init(void) __init;
 
 #endif /* SMC_CDC_H */

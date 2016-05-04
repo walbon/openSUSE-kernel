@@ -390,6 +390,14 @@ out:
 	return rc;
 }
 
+static void smc_ib_cleanup_per_ibdev(struct smc_ib_device *smcibdev)
+{
+	ib_destroy_cq(smcibdev->roce_cq_send);
+	ib_destroy_cq(smcibdev->roce_cq_recv);
+	ib_unregister_event_handler(&smcibdev->event_handler);
+	smc_wr_remove_dev(smcibdev);
+}
+
 static struct ib_client smc_ib_client;
 
 /* callback function for ib_register_client() */
@@ -436,8 +444,9 @@ static void smc_ib_remove_dev(struct ib_device *ibdev, void *client_data)
 	struct smc_ib_device *smcibdev;
 
 	smcibdev = ib_get_client_data(ibdev, &smc_ib_client);
-	smc_wr_remove_dev(smcibdev);
 	ib_set_client_data(ibdev, &smc_ib_client, NULL);
+	if (smcibdev->initialized)
+		smc_ib_cleanup_per_ibdev(smcibdev);
 	spin_lock(&smc_ib_devices.lock);
 	list_del_init(&smcibdev->list); /* remove from smc_ib_devices */
 	spin_unlock(&smc_ib_devices.lock);

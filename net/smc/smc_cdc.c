@@ -102,6 +102,35 @@ out:
 	return rc;
 }
 
+int smc_cdc_wr_tx_pends(struct smc_connection *conn)
+{
+	struct smc_link *link = &conn->lgr->lnk[SMC_SINGLE_LINK];
+	int i;
+
+	for_each_set_bit(i, link->wr_tx_mask, link->wr_tx_cnt) {
+		struct smc_cdc_tx_pend *tx_pend;
+
+		tx_pend = (struct smc_cdc_tx_pend *)&link->wr_tx_pends[i].priv;
+		if (tx_pend->conn == conn)
+			return 1;
+	}
+	return 0;
+}
+
+void smc_cdc_put_conn_slots(struct smc_connection *conn)
+{
+	struct smc_link *link = &conn->lgr->lnk[SMC_SINGLE_LINK];
+	int i;
+
+	for_each_set_bit(i, link->wr_tx_mask, link->wr_tx_cnt) {
+		struct smc_wr_tx_pend_priv *tx_pend;
+
+		tx_pend = &link->wr_tx_pends[i].priv;
+		if (((struct smc_cdc_tx_pend *)tx_pend)->conn == conn)
+			smc_wr_tx_put_slot(link, tx_pend);
+	}
+}
+
 static inline bool smc_cdc_before(u16 seq1, u16 seq2)
 {
 	return (s16)(seq1 - seq2) < 0;
@@ -131,6 +160,7 @@ static void smc_cdc_msg_recv_action(struct smc_sock *smc,
 		smp_mb__before_atomic();
 		atomic_add(diff_cons, &conn->peer_rmbe_space);
 		smp_mb__after_atomic();
+		smc_rx_handler(smc);
 	}
 
 	diff_prod = smc_curs_diff(conn->rmbe_size, &prod_old,
@@ -143,19 +173,15 @@ static void smc_cdc_msg_recv_action(struct smc_sock *smc,
 
 	if (conn->local_rx_ctrl.conn_state_flags.abnormal_close)
 		smc->sk.sk_err = ECONNRESET;
-	if (smc_stop_received(conn)) {
-		smc->sk.sk_shutdown |= RCV_SHUTDOWN;
-		sock_set_flag(&smc->sk, SOCK_DONE);
-
-		/* subsequent patch: terminate connection */
-	}
+	if (smc_stop_received(conn))
+		smc_conn_release_handler(smc);
 
 	/* piggy backed tx info */
 	/* trigger sndbuf consumer: RDMA write into peer RMBE and CDC */
-	if (diff_cons)
+	if (diff_cons && smc_tx_prepared_sends(conn)) {
 		smc_tx_sndbuf_nonempty(conn);
-
-	/* subsequent patch: trigger socket release if connection closed */
+		smc_wake_close_tx_prepared(smc);
+	}
 
 	/* socket connected but not accepted */
 	if (!smc->sk.sk_socket)
@@ -165,10 +191,6 @@ static void smc_cdc_msg_recv_action(struct smc_sock *smc,
 	if ((conn->local_rx_ctrl.prod_flags.write_blocked) ||
 	    (conn->local_rx_ctrl.prod_flags.cons_curs_upd_req))
 		smc_tx_consumer_update(conn);
-	if (diff_prod ||
-	    smc_stop_received(conn) ||
-	    smc->sk.sk_shutdown & RCV_SHUTDOWN)
-		smc->sk.sk_data_ready(&smc->sk);
 }
 
 /* called under tasklet context */

@@ -32,15 +32,6 @@
 static DEFINE_HASHTABLE(smc_wr_rx_hash, SMC_WR_RX_HASH_BITS);
 static DEFINE_SPINLOCK(smc_wr_rx_hash_lock);
 
-struct smc_wr_tx_pend {	/* control data for a pending send request */
-	u64			wr_id;		/* work request id sent */
-	smc_wr_tx_handler	handler;
-	enum ib_wc_status	wc_status;	/* CQE status */
-	struct smc_link		*link;
-	u32			idx;
-	struct smc_wr_tx_pend_priv priv;
-};
-
 static bool smc_wr_tx_pending_on_link(struct smc_link *link)
 {
 	return find_first_bit(link->wr_tx_mask, link->wr_tx_cnt)
@@ -214,6 +205,7 @@ int smc_wr_tx_put_slot(struct smc_link *link,
 	pend = container_of(wr_pend_priv, struct smc_wr_tx_pend, priv);
 	if (pend->idx < link->wr_tx_cnt) {
 		test_and_clear_bit(pend->idx, link->wr_tx_mask);
+		memset(&pend, 0, sizeof(pend));
 		return 1;
 	}
 

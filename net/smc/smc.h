@@ -32,6 +32,14 @@ enum smc_state {		/* possible states of an SMC socket */
 	SMC_INIT	= 2,
 	SMC_CLOSED	= 7,
 	SMC_LISTEN	= 10,
+	SMC_PEERCLW1	= 20,
+	SMC_PEERCLW2	= 21,
+	SMC_APPLCLW1	= 22,
+	SMC_APPLCLW2	= 23,
+	SMC_APPLFINCLW	= 24,
+	SMC_PEERFINCLW	= 25,
+	SMC_PEERABORTW	= 26,
+	SMC_PROCESSABORT = 27,
 	SMC_DESTRUCT	= 32
 };
 
@@ -163,6 +171,7 @@ struct smc_sock {				/* smc sock container */
 	struct work_struct	smc_listen_work;/* prepare new accept socket */
 	struct list_head	accept_q;	/* sockets to be accepted */
 	spinlock_t		accept_q_lock;	/* protects accept_q */
+	struct delayed_work	fin_work;	/* final socket freeing */
 	u8			use_fallback : 1, /* fallback to tcp */
 				clc_started : 1;/* smc_connect_rdma ran */
 };
@@ -175,6 +184,8 @@ static inline struct smc_sock *smc_sk(const struct sock *sk)
 #define SMC_SYSTEMID_LEN		8
 
 extern u8	local_systemid[SMC_SYSTEMID_LEN]; /* unique system identifier */
+
+extern struct mutex smc_create_lgr_pending;
 
 /* convert an u32 value into network byte order, store it into a 3 byte field */
 static inline void hton24(u8 *net, u32 host)
@@ -236,5 +247,7 @@ int smc_netinfo_by_tcpsk(struct socket *, __be32 *, u8 *);
 void smc_conn_free(struct smc_connection *);
 int smc_conn_create(struct smc_sock *, __be32, struct smc_ib_device *, u8,
 		    struct smc_clc_msg_local *, int);
+void smc_conn_release_handler(struct smc_sock *);
+void smc_wake_close_tx_prepared(struct smc_sock *);
 
 #endif	/* _SMC_H */

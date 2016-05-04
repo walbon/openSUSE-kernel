@@ -19,5 +19,6 @@
 void smc_rx_init(struct smc_sock *);
 int smc_rx_to_read(struct smc_connection *);
 int smc_rx_recvmsg(struct smc_sock *, struct msghdr *, size_t, int);
+void smc_rx_handler(struct smc_sock *);
 
 #endif /* SMC_RX_H */

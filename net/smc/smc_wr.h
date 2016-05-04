@@ -40,6 +40,15 @@ struct smc_wr_rx_handler {
 	u8			type;
 };
 
+struct smc_wr_tx_pend {		/* control data for a pending send request */
+	u64			wr_id;		/* work request id sent */
+	smc_wr_tx_handler	handler;
+	enum ib_wc_status	wc_status;	/* CQE status */
+	struct smc_link		*link;
+	u32			idx;
+	struct smc_wr_tx_pend_priv priv;
+};
+
 /* Only used by RDMA write WRs.
  * All other WRs (CDC/LLC) use smc_wr_tx_send handling WR_ID implicitly
  */
