@@ -2444,7 +2444,7 @@ sisusb_open(struct inode *inode, struct file *file)
 
 	if (!sisusb->devinit) {
 		if (sisusb->sisusb_dev->speed == USB_SPEED_HIGH ||
-		    sisusb->sisusb_dev->speed == USB_SPEED_SUPER) {
+		    sisusb->sisusb_dev->speed >= USB_SPEED_SUPER) {
 			if (sisusb_init_gfxdevice(sisusb, 0)) {
 				mutex_unlock(&sisusb->lock);
 				dev_err(&sisusb->sisusb_dev->dev, "Failed to initialize device\n");
@@ -3181,7 +3181,7 @@ static int sisusb_probe(struct usb_interface *intf,
 
 	sisusb->present = 1;
 
-	if (dev->speed == USB_SPEED_HIGH || dev->speed == USB_SPEED_SUPER) {
+	if (dev->speed == USB_SPEED_HIGH || dev->speed >= USB_SPEED_SUPER) {
 		int initscreen = 1;
 #ifdef INCL_SISUSB_CON
 		if (sisusb_first_vc > 0 &&
