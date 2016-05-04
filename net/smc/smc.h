@@ -33,6 +33,16 @@ struct smc_connection {
 	struct smc_link_group	*lgr;		/* link group of connection */
 	u32			alert_token_local; /* unique conn. id */
 	u8			peer_conn_idx;	/* from tcp handshake */
+	int			peer_rmbe_len;	/* size of peer rx buffer */
+	atomic_t		peer_rmbe_space;/* remaining free bytes in peer
+						 * rmbe
+						 */
+
+	struct smc_buf_desc	*sndbuf_desc;	/* send buffer descriptor */
+	int			sndbuf_size;	/* sndbuf size <== sock wmem */
+	struct smc_buf_desc	*rmb_desc;	/* RMBE descriptor */
+	int			rmbe_size;	/* RMBE size <== sock rmem */
+	int			rmbe_size_short;/* compressed notation */
 };
 
 struct smc_sock {				/* smc sock container */
@@ -74,6 +84,29 @@ static inline u32 ntoh24(u8 *net)
 
 	memcpy(((u8 *)&t) + 1, net, 3);
 	return be32_to_cpu(t);
+}
+
+#define SMC_RMB_SIZES	16	/* number of distinct sizes for an RMB*/
+
+/* convert the RMB size into the compressed notation - minimum 16K */
+static inline u8 smc_compress_bufsize(int size)
+{
+	u8 compressed = 0;
+
+	size = (size - 1) >> 14;
+	compressed = ilog2(size) + 1;
+	if (compressed >= SMC_RMB_SIZES)
+		compressed = SMC_RMB_SIZES - 1;
+	return compressed;
+}
+
+/* convert the RMB size from compressed notation into integer */
+static inline int smc_uncompress_bufsize(u8 compressed)
+{
+	u32 size;
+
+	size = 0x00000001 << (((int)compressed) + 14);
+	return (int)size;
 }
 
 #ifdef CONFIG_XFRM
