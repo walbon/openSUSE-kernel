@@ -124,25 +124,16 @@ static int protection_domain_init(struct protection_domain *domain);
  *
  ****************************************************************************/
 
-static inline u16 get_pci_device_id(struct device *dev);
-static inline int get_acpihid_device_id(struct device *dev,
-					struct acpihid_map_entry **entry);
-
 static struct protection_domain *to_pdomain(struct iommu_domain *dom)
 {
 	return container_of(dom, struct protection_domain, domain);
 }
 
-static inline int get_device_id(struct device *dev)
+static inline u16 get_pci_device_id(struct device *dev)
 {
-	int devid;
+	struct pci_dev *pdev = to_pci_dev(dev);
 
-	if (dev_is_pci(dev))
-		devid = get_pci_device_id(dev);
-	else
-		devid = get_acpihid_device_id(dev, NULL);
-
-	return devid;
+	return PCI_DEVID(pdev->bus->number, pdev->devfn);
 }
 
 static struct iommu_dev_data *alloc_dev_data(u16 devid)
@@ -193,7 +184,7 @@ static u16 get_alias(struct device *dev)
 	struct pci_dev *pdev = to_pci_dev(dev);
 	u16 devid, ivrs_alias, pci_alias;
 
-	devid = get_device_id(dev);
+	devid = get_pci_device_id(dev);
 	ivrs_alias = amd_iommu_alias_table[devid];
 	pci_for_each_dma_alias(pdev, __last_alias, &pci_alias);
 
@@ -275,13 +266,6 @@ static inline int match_hid_uid(struct device *dev,
 	return (strcmp(hid, entry->hid) || strcmp(uid, entry->uid));
 }
 
-static inline u16 get_pci_device_id(struct device *dev)
-{
-	struct pci_dev *pdev = to_pci_dev(dev);
-
-	return PCI_DEVID(pdev->bus->number, pdev->devfn);
-}
-
 static inline int get_acpihid_device_id(struct device *dev,
 					struct acpihid_map_entry **entry)
 {
@@ -295,6 +279,18 @@ static inline int get_acpihid_device_id(struct device *dev,
 		}
 	}
 	return -EINVAL;
+}
+
+static inline int get_device_id(struct device *dev)
+{
+	int devid;
+
+	if (dev_is_pci(dev))
+		devid = get_pci_device_id(dev);
+	else
+		devid = get_acpihid_device_id(dev, NULL);
+
+	return devid;
 }
 
 static struct iommu_dev_data *get_dev_data(struct device *dev)
@@ -451,10 +447,7 @@ static int iommu_init_device(struct device *dev)
 	if (!dev_data)
 		return -ENOMEM;
 
-	if (dev_is_pci(dev))
-		dev_data->alias = get_alias(dev);
-	else
-		dev_data->alias = amd_iommu_alias_table[devid];
+	dev_data->alias = get_alias(dev);
 
 	if (dev_is_pci(dev) && pci_iommuv2_capable(to_pci_dev(dev))) {
 		struct amd_iommu *iommu;
@@ -480,10 +473,7 @@ static void iommu_ignore_device(struct device *dev)
 	if (IS_ERR_VALUE(devid))
 		return;
 
-	if (dev_is_pci(dev))
-		alias = get_alias(dev);
-	else
-		alias = amd_iommu_alias_table[devid];
+	alias = get_alias(dev);
 
 	memset(&amd_iommu_dev_table[devid], 0, sizeof(struct dev_table_entry));
 	memset(&amd_iommu_dev_table[alias], 0, sizeof(struct dev_table_entry));
