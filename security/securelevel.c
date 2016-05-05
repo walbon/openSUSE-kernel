@@ -92,25 +92,3 @@ out:
 	free_page((unsigned long) page);
 	return length;
 }
-
-static const struct file_operations securelevel_fops = {
-	.read 	= securelevel_read,
-	.write 	= securelevel_write,
-	.llseek	= generic_file_llseek,
-};
-
-static __init int setup_securelevel(void)
-{
-	struct dentry *securelevel_file;
-
-	securelevel_file = securityfs_create_file("securelevel",
-						  S_IWUSR | S_IRUGO,
-						  NULL, NULL,
-						  &securelevel_fops);
-
-	if (IS_ERR(securelevel_file))
-		return PTR_ERR(securelevel_file);
-
-	return 0;
-}
-late_initcall(setup_securelevel);
