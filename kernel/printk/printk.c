@@ -46,6 +46,8 @@
 #include <linux/utsname.h>
 #include <linux/ctype.h>
 #include <linux/uio.h>
+#include <linux/kthread.h>
+#include <linux/sched/rt.h>
 
 #include <asm/uaccess.h>
 
@@ -282,6 +284,18 @@ static u32 clear_idx;
 static char __log_buf[__LOG_BUF_LEN] __aligned(LOG_ALIGN);
 static char *log_buf = __log_buf;
 static u32 log_buf_len = __LOG_BUF_LEN;
+
+/* Control whether printing to console must be synchronous. */
+static bool __read_mostly printk_sync = true;
+/* Printing kthread for async printk */
+static struct task_struct *printk_kthread;
+/* When `true' printing thread has messages to print */
+static bool printk_kthread_need_flush_console;
+
+static inline bool can_printk_async(void)
+{
+	return !printk_sync && printk_kthread;
+}
 
 /* Return log buffer address */
 char *log_buf_addr_get(void)
@@ -1494,58 +1508,6 @@ static void zap_locks(void)
 	sema_init(&console_sem, 1);
 }
 
-/*
- * Check if we have any console that is capable of printing while cpu is
- * booting or shutting down. Requires console_sem.
- */
-static int have_callable_console(void)
-{
-	struct console *con;
-
-	for_each_console(con)
-		if (con->flags & CON_ANYTIME)
-			return 1;
-
-	return 0;
-}
-
-/*
- * Can we actually use the console at this time on this cpu?
- *
- * Console drivers may assume that per-cpu resources have been allocated. So
- * unless they're explicitly marked as being able to cope (CON_ANYTIME) don't
- * call them until this CPU is officially up.
- */
-static inline int can_use_console(unsigned int cpu)
-{
-	return cpu_online(cpu) || have_callable_console();
-}
-
-/*
- * Try to get console ownership to actually show the kernel
- * messages from a 'printk'. Return true (and with the
- * console_lock held, and 'console_locked' set) if it
- * is successful, false otherwise.
- */
-static int console_trylock_for_printk(void)
-{
-	unsigned int cpu = smp_processor_id();
-
-	if (!console_trylock())
-		return 0;
-	/*
-	 * If we can't use the console, we need to release the console
-	 * semaphore by hand to avoid flushing the buffer. We need to hold the
-	 * console semaphore in order to do this test safely.
-	 */
-	if (!can_use_console(cpu)) {
-		console_locked = 0;
-		up_console_sem();
-		return 0;
-	}
-	return 1;
-}
-
 int printk_delay_msec __read_mostly;
 
 static inline void printk_delay(void)
@@ -1672,7 +1634,9 @@ asmlinkage int vprintk_emit(int facility, int level,
 			    const char *dict, size_t dictlen,
 			    const char *fmt, va_list args)
 {
-	static int recursion_bug;
+	/* cpu currently holding logbuf_lock in this function */
+	static unsigned int logbuf_cpu = UINT_MAX;
+	static bool recursion_bug;
 	static char textbuf[LOG_LINE_MAX];
 	char *text = textbuf;
 	size_t text_len = 0;
@@ -1681,8 +1645,6 @@ asmlinkage int vprintk_emit(int facility, int level,
 	int this_cpu;
 	int printed_len = 0;
 	bool in_sched = false;
-	/* cpu currently holding logbuf_lock in this function */
-	static unsigned int logbuf_cpu = UINT_MAX;
 
 	if (level == LOGLEVEL_SCHED) {
 		level = LOGLEVEL_DEFAULT;
@@ -1692,7 +1654,6 @@ asmlinkage int vprintk_emit(int facility, int level,
 	boot_delay_msec(level);
 	printk_delay();
 
-	/* This stops the holder of console_sem just where we want him */
 	local_irq_save(flags);
 	this_cpu = smp_processor_id();
 
@@ -1708,7 +1669,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 		 * it can be printed at the next appropriate moment:
 		 */
 		if (!oops_in_progress && !lockdep_recursing(current)) {
-			recursion_bug = 1;
+			recursion_bug = true;
 			local_irq_restore(flags);
 			return 0;
 		}
@@ -1716,6 +1677,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 	}
 
 	lockdep_off();
+	/* This stops the holder of console_sem just where we want him */
 	raw_spin_lock(&logbuf_lock);
 	logbuf_cpu = this_cpu;
 
@@ -1723,7 +1685,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 		static const char recursion_msg[] =
 			"BUG: recent printk recursion!";
 
-		recursion_bug = 0;
+		recursion_bug = false;
 		/* emit KERN_CRIT message */
 		printed_len += log_store(0, 2, LOG_PREFIX|LOG_NEWLINE, 0,
 					 NULL, 0, recursion_msg,
@@ -1821,20 +1783,35 @@ asmlinkage int vprintk_emit(int facility, int level,
 	if (!in_sched) {
 		lockdep_off();
 		/*
-		 * Disable preemption to avoid being preempted while holding
-		 * console_sem which would prevent anyone from printing to
-		 * console
+		 * Attempt to print the messages to console asynchronously so
+		 * that the kernel doesn't get stalled due to slow serial
+		 * console. That can lead to softlockups, lost interrupts, or
+		 * userspace timing out under heavy printing load.
+		 *
+		 * However we resort to synchronous printing of messages during
+		 * early boot, when synchronous printing was explicitly
+		 * requested by a kernel parameter, or when console_verbose()
+		 * was called to print everything during panic / oops.
+		 * Unlike bust_spinlocks() and oops_in_progress,
+		 * console_verbose() sets console_loglevel to MOTORMOUTH and
+		 * never clears it, while oops_in_progress can go back to 0,
+		 * switching printk back to async mode; we want printk to
+		 * operate in sync mode once panic() occurred.
 		 */
-		preempt_disable();
-
-		/*
-		 * Try to acquire and then immediately release the console
-		 * semaphore.  The release will print out buffers and wake up
-		 * /dev/kmsg and syslog() users.
-		 */
-		if (console_trylock_for_printk())
-			console_unlock();
-		preempt_enable();
+		if (console_loglevel != CONSOLE_LOGLEVEL_MOTORMOUTH &&
+				can_printk_async()) {
+			/* Offload printing to a schedulable context. */
+			printk_kthread_need_flush_console = true;
+			wake_up_process(printk_kthread);
+		} else {
+			/*
+			 * Try to acquire and then immediately release the
+			 * console semaphore.  The release will print out
+			 * buffers and wake up /dev/kmsg and syslog() users.
+			 */
+			if (console_trylock())
+				console_unlock();
+		}
 		lockdep_on();
 	}
 
@@ -2185,7 +2162,20 @@ int console_trylock(void)
 		return 0;
 	}
 	console_locked = 1;
-	console_may_schedule = 0;
+	/*
+	 * When PREEMPT_COUNT disabled we can't reliably detect if it's
+	 * safe to schedule (e.g. calling printk while holding a spin_lock),
+	 * because preempt_disable()/preempt_enable() are just barriers there
+	 * and preempt_count() is always 0.
+	 *
+	 * RCU read sections have a separate preemption counter when
+	 * PREEMPT_RCU enabled thus we must take extra care and check
+	 * rcu_preempt_depth(), otherwise RCU read sections modify
+	 * preempt_count().
+	 */
+	console_may_schedule = !oops_in_progress &&
+			preemptible() &&
+			!rcu_preempt_depth();
 	return 1;
 }
 EXPORT_SYMBOL(console_trylock);
@@ -2193,6 +2183,34 @@ EXPORT_SYMBOL(console_trylock);
 int is_console_locked(void)
 {
 	return console_locked;
+}
+
+/*
+ * Check if we have any console that is capable of printing while cpu is
+ * booting or shutting down. Requires console_sem.
+ */
+static int have_callable_console(void)
+{
+	struct console *con;
+
+	for_each_console(con)
+		if ((con->flags & CON_ENABLED) &&
+				(con->flags & CON_ANYTIME))
+			return 1;
+
+	return 0;
+}
+
+/*
+ * Can we actually use the console at this time on this cpu?
+ *
+ * Console drivers may assume that per-cpu resources have been allocated. So
+ * unless they're explicitly marked as being able to cope (CON_ANYTIME) don't
+ * call them until this CPU is officially up.
+ */
+static inline int can_use_console(void)
+{
+	return cpu_online(raw_smp_processor_id()) || have_callable_console();
 }
 
 static void console_cont_flush(char *text, size_t size)
@@ -2265,9 +2283,21 @@ void console_unlock(void)
 	do_cond_resched = console_may_schedule;
 	console_may_schedule = 0;
 
+again:
+	/*
+	 * We released the console_sem lock, so we need to recheck if
+	 * cpu is online and (if not) is there at least one CON_ANYTIME
+	 * console.
+	 */
+	if (!can_use_console()) {
+		console_locked = 0;
+		up_console_sem();
+		return;
+	}
+
 	/* flush buffered message fragment immediately to console */
 	console_cont_flush(text, sizeof(text));
-again:
+
 	for (;;) {
 		struct printk_log *msg;
 		size_t ext_len = 0;
@@ -2441,28 +2471,6 @@ struct tty_driver *console_device(int *index)
 	}
 	console_unlock();
 	return driver;
-}
-
-/*
- * Wait until all messages accumulated in the printk buffer are printed to
- * console. Note that as soon as this function returns, new messages may be
- * added to the printk buffer by other CPUs.
- */
-void console_flush(void)
-{
-	bool retry;
-	unsigned long flags;
-
-	while (1) {
-		raw_spin_lock_irqsave(&logbuf_lock, flags);
-		retry = console_seq != log_next_seq;
-		raw_spin_unlock_irqrestore(&logbuf_lock, flags);
-		if (!retry || console_suspended)
-			break;
-		/* Cycle console_sem to wait for outstanding printing */
-		console_lock();
-		console_unlock();
-	}
 }
 
 /*
@@ -2741,6 +2749,89 @@ late_initcall(printk_late_init);
 
 #if defined CONFIG_PRINTK
 /*
+ * Prevent starting printk_kthread from start_kernel()->parse_args().
+ * It's not possible at this stage. Instead, do it via the initcall
+ * or a sysfs knob.
+ */
+static bool printk_kthread_can_run;
+
+static int printk_kthread_func(void *data)
+{
+	while (1) {
+		set_current_state(TASK_INTERRUPTIBLE);
+		if (!printk_kthread_need_flush_console)
+			schedule();
+
+		__set_current_state(TASK_RUNNING);
+		klp_kgraft_mark_task_safe(current);
+		/*
+		 * Avoid an infinite loop when console_unlock() cannot
+		 * access consoles, e.g. because console_suspended is
+		 * true. schedule(), someone else will print the messages
+		 * from resume_console().
+		 */
+		printk_kthread_need_flush_console = false;
+
+		console_lock();
+		console_unlock();
+	}
+
+	return 0;
+}
+
+static int __init_printk_kthread(void)
+{
+	struct task_struct *thread;
+	struct sched_param param = {
+		.sched_priority = MAX_RT_PRIO - 1,
+	};
+
+	if (!printk_kthread_can_run || printk_sync || printk_kthread)
+		return 0;
+
+	thread = kthread_run(printk_kthread_func, NULL, "printk");
+	if (IS_ERR(thread)) {
+		pr_err("printk: unable to create printing thread\n");
+		printk_sync = true;
+		return PTR_ERR(thread);
+	}
+
+	sched_setscheduler(thread, SCHED_FIFO, &param);
+	printk_kthread = thread;
+	return 0;
+}
+
+static int printk_sync_set(const char *val, const struct kernel_param *kp)
+{
+	int ret;
+
+	ret = param_set_bool(val, kp);
+	if (ret)
+		return ret;
+	return __init_printk_kthread();
+}
+
+static const struct kernel_param_ops param_ops_printk_sync = {
+	.set = printk_sync_set,
+	.get = param_get_bool,
+};
+
+module_param_cb(synchronous, &param_ops_printk_sync, &printk_sync,
+		S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(synchronous, "make printing to console synchronous");
+
+/*
+ * Init async printk via late_initcall, after core/arch/etc.
+ * initialization.
+ */
+static __init int init_printk_kthread(void)
+{
+	printk_kthread_can_run = true;
+	return __init_printk_kthread();
+}
+late_initcall(init_printk_kthread);
+
+/*
  * Delayed printk version, for scheduler-internal messages:
  */
 #define PRINTK_PENDING_WAKEUP	0x01
@@ -2753,9 +2844,16 @@ static void wake_up_klogd_work_func(struct irq_work *irq_work)
 	int pending = __this_cpu_xchg(printk_pending, 0);
 
 	if (pending & PRINTK_PENDING_OUTPUT) {
-		/* If trylock fails, someone else is doing the printing */
-		if (console_trylock())
-			console_unlock();
+		if (can_printk_async()) {
+			wake_up_process(printk_kthread);
+		} else {
+			/*
+			 * If trylock fails, someone else is doing
+			 * the printing
+			 */
+			if (console_trylock())
+				console_unlock();
+		}
 	}
 
 	if (pending & PRINTK_PENDING_WAKEUP)
