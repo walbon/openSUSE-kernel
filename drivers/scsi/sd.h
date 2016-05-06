@@ -56,6 +56,7 @@ enum {
 	SD_LBP_WS16,		/* Use WRITE SAME(16) with UNMAP bit */
 	SD_LBP_WS10,		/* Use WRITE SAME(10) with UNMAP bit */
 	SD_LBP_ZERO,		/* Use WRITE SAME(10) with zero payload */
+	SD_ZBC_RESET_WP,	/* Use RESET WRITE POINTER */
 	SD_LBP_DISABLE,		/* Discard disabled due to failed cmd */
 };
 
@@ -94,6 +95,8 @@ struct scsi_disk {
 	unsigned	lbpvpd : 1;
 	unsigned	ws10 : 1;
 	unsigned	ws16 : 1;
+	unsigned	rc_basis: 2;
+	unsigned	zoned: 2;
 };
 #define to_scsi_disk(obj) container_of(obj,struct scsi_disk,dev)
 
