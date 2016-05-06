@@ -77,7 +77,7 @@ bool hibernation_available(void)
 
 	if (get_securelevel() <= 0)
 		return true;
-	else if (get_securelevel() > 0) {
+	else {
 #ifdef CONFIG_HIBERNATE_VERIFICATION
 		sigenforce = 1;
 		return true;
