@@ -1212,7 +1212,7 @@ static void bitmap_set_pending(struct bitmap_counts *bitmap, sector_t offset)
 
 static bitmap_counter_t *bitmap_get_counter(struct bitmap_counts *bitmap,
 					    sector_t offset, sector_t *blocks,
-					    int create, int no_hijack);
+					    int create);
 
 /*
  * bitmap daemon -- periodically wakes up to clean bits and flush pages
@@ -1292,7 +1292,7 @@ void bitmap_daemon_work(struct mddev *mddev)
 		}
 		bmc = bitmap_get_counter(counts,
 					 block,
-					 &blocks, 0, 0);
+					 &blocks, 0);
 
 		if (!bmc) {
 			j |= PAGE_COUNTER_MASK;
@@ -1349,7 +1349,7 @@ void bitmap_daemon_work(struct mddev *mddev)
 
 static bitmap_counter_t *bitmap_get_counter(struct bitmap_counts *bitmap,
 					    sector_t offset, sector_t *blocks,
-					    int create, int no_hijack)
+					    int create)
 __releases(bitmap->lock)
 __acquires(bitmap->lock)
 {
@@ -1410,7 +1410,7 @@ int bitmap_startwrite(struct bitmap *bitmap, sector_t offset, unsigned long sect
 		bitmap_counter_t *bmc;
 
 		spin_lock_irq(&bitmap->counts.lock);
-		bmc = bitmap_get_counter(&bitmap->counts, offset, &blocks, 1, 0);
+		bmc = bitmap_get_counter(&bitmap->counts, offset, &blocks, 1);
 		if (!bmc) {
 			spin_unlock_irq(&bitmap->counts.lock);
 			return 0;
@@ -1472,7 +1472,7 @@ void bitmap_endwrite(struct bitmap *bitmap, sector_t offset, unsigned long secto
 		bitmap_counter_t *bmc;
 
 		spin_lock_irqsave(&bitmap->counts.lock, flags);
-		bmc = bitmap_get_counter(&bitmap->counts, offset, &blocks, 0, 0);
+		bmc = bitmap_get_counter(&bitmap->counts, offset, &blocks, 0);
 		if (!bmc) {
 			spin_unlock_irqrestore(&bitmap->counts.lock, flags);
 			return;
@@ -1516,7 +1516,7 @@ static int __bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t 
 		return 1; /* always resync if no bitmap */
 	}
 	spin_lock_irq(&bitmap->counts.lock);
-	bmc = bitmap_get_counter(&bitmap->counts, offset, blocks, 0, 0);
+	bmc = bitmap_get_counter(&bitmap->counts, offset, blocks, 0);
 	rv = 0;
 	if (bmc) {
 		/* locked */
@@ -1568,7 +1568,7 @@ void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, i
 		return;
 	}
 	spin_lock_irqsave(&bitmap->counts.lock, flags);
-	bmc = bitmap_get_counter(&bitmap->counts, offset, blocks, 0, 0);
+	bmc = bitmap_get_counter(&bitmap->counts, offset, blocks, 0);
 	if (bmc == NULL)
 		goto unlock;
 	/* locked */
@@ -1667,7 +1667,7 @@ static void bitmap_set_memory_bits(struct bitmap *bitmap, sector_t offset, int n
 	sector_t secs;
 	bitmap_counter_t *bmc;
 	spin_lock_irq(&bitmap->counts.lock);
-	bmc = bitmap_get_counter(&bitmap->counts, offset, &secs, 1, 0);
+	bmc = bitmap_get_counter(&bitmap->counts, offset, &secs, 1);
 	if (!bmc) {
 		spin_unlock_irq(&bitmap->counts.lock);
 		return;
@@ -2092,8 +2092,8 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 		     chunks << chunkshift);
 
 	spin_lock_irq(&bitmap->counts.lock);
-	/* For cluster raid, need to pre-allocate bitmap when it is initialized */
-	if (mddev_is_clustered(bitmap->mddev) && init) {
+	/* For cluster raid, need to pre-allocate bitmap */
+	if (mddev_is_clustered(bitmap->mddev)) {
 		unsigned long page;
 		for (page = 0; page < pages; page++) {
 			ret = bitmap_checkpage(&bitmap->counts, page, 1, 1);
@@ -2115,7 +2115,7 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 				bitmap->mddev->bitmap_info.chunksize = 1 << (old_counts.chunkshift +
 									     BITMAP_BLOCK_SHIFT);
 				blocks = old_counts.chunks << old_counts.chunkshift;
-				pr_err("Could not setup in-memory bitmap for cluster raid\n");
+				pr_err("Could not pre-allocate in-memory bitmap for cluster raid\n");
 				break;
 			} else
 				bitmap->counts.bp[page].count += 1;
@@ -2127,12 +2127,12 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 		int set;
 
 		bmc_old = bitmap_get_counter(&old_counts, block,
-					     &old_blocks, 0, 0);
+					     &old_blocks, 0);
 		set = bmc_old && NEEDED(*bmc_old);
 
 		if (set) {
 			bmc_new = bitmap_get_counter(&bitmap->counts, block,
-						     &new_blocks, 1, 0);
+						     &new_blocks, 1);
 			if (*bmc_new == 0) {
 				/* need to set on-disk bits too. */
 				sector_t end = block + new_blocks;
@@ -2160,7 +2160,7 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 		while (block < (chunks << chunkshift)) {
 			bitmap_counter_t *bmc;
 			bmc = bitmap_get_counter(&bitmap->counts, block,
-						 &new_blocks, 1, 0);
+						 &new_blocks, 1);
 			if (bmc) {
 				/* new space.  It needs to be resynced, so
 				 * we set NEEDED_MASK.
