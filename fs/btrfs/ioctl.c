@@ -5615,11 +5615,6 @@ long btrfs_ioctl(struct file *file, unsigned int
 	case BTRFS_IOC_BALANCE_PROGRESS:
 		return btrfs_ioctl_balance_progress(root, argp);
 	case BTRFS_IOC_SET_RECEIVED_SUBVOL:
-		if (!btrfs_allow_unsupported) {
-			printk(KERN_WARNING "btrfs: IOC_SET_RECEIVED_SUBVOL is not supported, load module with allow_unsupported=1\n");
-			ret = -EOPNOTSUPP;
-			break;
-		}
 		return btrfs_ioctl_set_received_subvol(file, argp);
 #ifdef CONFIG_64BIT
 	case BTRFS_IOC_SET_RECEIVED_SUBVOL_32:
