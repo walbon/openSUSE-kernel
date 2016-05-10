@@ -127,7 +127,10 @@ out:
 			dma_unmap_page(priv->ddev, page_alloc[i].dma,
 				page_alloc[i].page_size, PCI_DMA_FROMDEVICE);
 			page = page_alloc[i].page;
-			atomic_set(&page->_count, 1);
+			/* Revert changes done by mlx4_alloc_pages */
+			atomic_sub(page_alloc[i].page_size /
+				   priv->frag_info[i].frag_stride - 1,
+				   &page->_count);
 			put_page(page);
 		}
 	}
@@ -177,7 +180,9 @@ out:
 		dma_unmap_page(priv->ddev, page_alloc->dma,
 			       page_alloc->page_size, PCI_DMA_FROMDEVICE);
 		page = page_alloc->page;
-		atomic_set(&page->_count, 1);
+		/* Revert changes done by mlx4_alloc_pages */
+		atomic_sub(page_alloc->page_size /
+			   priv->frag_info[i].frag_stride - 1, &page->_count);
 		put_page(page);
 		page_alloc->page = NULL;
 	}
