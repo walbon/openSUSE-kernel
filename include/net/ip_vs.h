@@ -1590,7 +1590,7 @@ static inline void ip_vs_conn_drop_conntrack(struct ip_vs_conn *cp)
 
 /* Really using conntrack? */
 static inline bool ip_vs_conn_uses_conntrack(struct ip_vs_conn *cp,
-					struct sk_buff *skb)
+					     struct sk_buff *skb)
 {
 #ifdef CONFIG_IP_VS_NFCT
 	enum ip_conntrack_info ctinfo;
