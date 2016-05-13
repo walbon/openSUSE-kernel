@@ -108,10 +108,11 @@ int aa_audit_file(struct aa_profile *profile, struct file_perms *perms,
 		  const char *target, kuid_t ouid, const char *info, int error)
 {
 	int type = AUDIT_APPARMOR_AUTO;
-	struct common_audit_data sa;
 	struct apparmor_audit_data aad = {0,};
-	sa.type = LSM_AUDIT_DATA_NONE;
-	sa.aad = &aad;
+	struct common_audit_data sa = {
+		.type = LSM_AUDIT_DATA_NONE,
+		.aad = &aad
+	};
 	aad.op = op,
 	aad.fs.request = request;
 	aad.name = name;
