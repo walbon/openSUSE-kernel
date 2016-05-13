@@ -543,6 +543,33 @@ static int virtscsi_abort(struct scsi_cmnd *sc)
 	return virtscsi_tmf(vscsi, cmd);
 }
 
+static enum blk_eh_timer_return virtscsi_timed_out(struct scsi_cmnd *sc)
+{
+	struct virtio_scsi *vscsi = shost_priv(sc->device->host);
+	struct virtio_scsi_cmd *cmd;
+
+	scmd_printk(KERN_INFO, sc, "timeout\n");
+	cmd = mempool_alloc(virtscsi_cmd_pool, GFP_NOIO);
+	if (!cmd)
+		return FAILED;
+
+	memset(cmd, 0, sizeof(*cmd));
+	cmd->sc = sc;
+	cmd->req.tmf = (struct virtio_scsi_ctrl_tmf_req){
+		.type = VIRTIO_SCSI_T_TMF,
+		.subtype = VIRTIO_SCSI_T_TMF_QUERY_TASK,
+		.lun[0] = 1,
+		.lun[1] = sc->device->id,
+		.lun[2] = (sc->device->lun >> 8) | 0x40,
+		.lun[3] = sc->device->lun & 0xff,
+		.tag = (unsigned long)sc,
+	};
+	if (virtscsi_tmf(vscsi, cmd) == FAILED)
+		return BLK_EH_NOT_HANDLED;
+
+	return BLK_EH_RESET_TIMER;
+}
+
 static struct scsi_host_template virtscsi_host_template = {
 	.module = THIS_MODULE,
 	.name = "Virtio SCSI HBA",
@@ -551,6 +578,7 @@ static struct scsi_host_template virtscsi_host_template = {
 	.this_id = -1,
 	.eh_abort_handler = virtscsi_abort,
 	.eh_device_reset_handler = virtscsi_device_reset,
+	.eh_timed_out = virtscsi_timed_out,
 
 	.can_queue = 1024,
 	.dma_boundary = UINT_MAX,
