@@ -1333,7 +1333,7 @@ static void its_irq_domain_activate(struct irq_domain *domain,
 	const struct cpumask *cpu_mask = cpu_online_mask;
 
 	/* get the cpu_mask of local node */
-	if (IS_ENABLED(CONFIG_NUMA))
+	if (its_dev->its->numa_node >= 0)
 		cpu_mask = cpumask_of_node(its_dev->its->numa_node);
 
 	/* Bind the LPI to the first possible CPU */
