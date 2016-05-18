@@ -740,16 +740,16 @@ static int ext2_get_blocks(struct inode *inode,
 		err = dax_clear_sectors(inode->i_sb->s_bdev,
 				le32_to_cpu(chain[depth-1].key) <<
 				(inode->i_blkbits - 9),
-				1 << inode->i_blkbits);
+				count << inode->i_blkbits);
 		if (err) {
 			mutex_unlock(&ei->truncate_mutex);
 			goto cleanup;
 		}
-	}
+	} else
+		set_buffer_new(bh_result);
 
 	ext2_splice_branch(inode, iblock, partial, indirect_blks, count);
 	mutex_unlock(&ei->truncate_mutex);
-	set_buffer_new(bh_result);
 got_it:
 	map_bh(bh_result, inode->i_sb, le32_to_cpu(chain[depth-1].key));
 	if (count > blocks_to_boundary)
