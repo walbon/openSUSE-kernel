@@ -286,7 +286,7 @@ static char *log_buf = __log_buf;
 static u32 log_buf_len = __LOG_BUF_LEN;
 
 /* Control whether printing to console must be synchronous. */
-static bool __read_mostly printk_sync = true;
+static bool __read_mostly printk_sync = false;
 /* Printing kthread for async printk */
 static struct task_struct *printk_kthread;
 /* When `true' printing thread has messages to print */
