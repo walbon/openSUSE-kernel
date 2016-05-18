@@ -41,6 +41,27 @@ struct snd_hrtimer {
 	bool in_callback;
 };
 
+#if BITS_PER_LONG < 64
+static u64 __ktime_divns(const ktime_t kt, s64 div)
+{
+	u64 dclc;
+	int sft = 0;
+
+	dclc = ktime_to_ns(kt);
+	/* Make sure the divisor is less than 2^32: */
+	while (div >> 32) {
+		sft++;
+		div >>= 1;
+	}
+	dclc >>= sft;
+	do_div(dclc, (unsigned long) div);
+
+	return dclc;
+}
+#else /* BITS_PER_LONG < 64 */
+# define __ktime_divns(kt, div)		ktime_divns(kt, div)
+#endif
+
 static enum hrtimer_restart snd_hrtimer_callback(struct hrtimer *hrt)
 {
 	struct snd_hrtimer *stime = container_of(hrt, struct snd_hrtimer, hrt);
@@ -59,7 +80,7 @@ static enum hrtimer_restart snd_hrtimer_callback(struct hrtimer *hrt)
 	/* calculate the drift */
 	delta = ktime_sub(hrt->base->get_time(), hrtimer_get_expires(hrt));
 	if (delta.tv64 > 0)
-		ticks += ktime_divns(delta, ticks * resolution);
+		ticks += __ktime_divns(delta, ticks * resolution);
 
 	snd_timer_interrupt(stime->timer, ticks);
 
