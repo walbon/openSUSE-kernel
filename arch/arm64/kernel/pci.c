@@ -51,21 +51,11 @@ int pcibios_enable_device(struct pci_dev *dev, int mask)
 	return pci_enable_resources(dev, mask);
 }
 
-static int (*pcibios_add_device_impl)(struct pci_dev *);
-
-void set_pcibios_add_device(int (*arg)(struct pci_dev *))
-{
-	pcibios_add_device_impl = arg;
-}
-
 /*
  * Try to assign the IRQ number from DT when adding a new device
  */
 int pcibios_add_device(struct pci_dev *dev)
 {
-	if (pcibios_add_device_impl)
-		return pcibios_add_device_impl(dev);
-
 	dev->irq = of_irq_parse_and_map_pci(dev, 0, 0);
 
 	return 0;
