@@ -1842,7 +1842,7 @@ static int megasas_slave_configure(struct scsi_device *sdev)
 	    sdev->type == TYPE_DISK) {
 		pd_index = (sdev->channel * MEGASAS_MAX_DEV_PER_CHANNEL) +
 			sdev->id;
-		if (!instance->pd_list_not_supported &&
+		if (instance->pd_list_not_supported ||
 		    (instance->pd_list[pd_index].driveState !=
 		     MR_PD_STATE_SYSTEM))
 			return -ENXIO;
