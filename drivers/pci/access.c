@@ -174,38 +174,6 @@ struct pci_ops *pci_bus_set_ops(struct pci_bus *bus, struct pci_ops *ops)
 }
 EXPORT_SYMBOL(pci_bus_set_ops);
 
-/**
- * pci_read_vpd - Read one entry from Vital Product Data
- * @dev:	pci device struct
- * @pos:	offset in vpd space
- * @count:	number of bytes to read
- * @buf:	pointer to where to store result
- *
- */
-ssize_t pci_read_vpd(struct pci_dev *dev, loff_t pos, size_t count, void *buf)
-{
-	if (!dev->vpd || !dev->vpd->ops)
-		return -ENODEV;
-	return dev->vpd->ops->read(dev, pos, count, buf);
-}
-EXPORT_SYMBOL(pci_read_vpd);
-
-/**
- * pci_write_vpd - Write entry to Vital Product Data
- * @dev:	pci device struct
- * @pos:	offset in vpd space
- * @count:	number of bytes to write
- * @buf:	buffer containing write data
- *
- */
-ssize_t pci_write_vpd(struct pci_dev *dev, loff_t pos, size_t count, const void *buf)
-{
-	if (!dev->vpd || !dev->vpd->ops)
-		return -ENODEV;
-	return dev->vpd->ops->write(dev, pos, count, buf);
-}
-EXPORT_SYMBOL(pci_write_vpd);
-
 /*
  * The following routines are to prevent the user from accessing PCI config
  * space when it's unsafe to do so.  Some devices require this during BIST and
@@ -277,23 +245,44 @@ PCI_USER_WRITE_CONFIG(dword, u32)
 
 /* VPD access through PCI 2.2+ VPD capability */
 
-#define PCI_VPD_PCI22_SIZE (PCI_VPD_ADDR_MASK + 1)
+/**
+ * pci_read_vpd - Read one entry from Vital Product Data
+ * @dev:	pci device struct
+ * @pos:	offset in vpd space
+ * @count:	number of bytes to read
+ * @buf:	pointer to where to store result
+ */
+ssize_t pci_read_vpd(struct pci_dev *dev, loff_t pos, size_t count, void *buf)
+{
+	if (!dev->vpd || !dev->vpd->ops)
+		return -ENODEV;
+	return dev->vpd->ops->read(dev, pos, count, buf);
+}
+EXPORT_SYMBOL(pci_read_vpd);
 
-struct pci_vpd_pci22 {
-	struct pci_vpd base;
-	struct mutex lock;
-	u16	flag;
-	u8	busy:1;
-	u8	valid:1;
-	u8	cap;
-};
+/**
+ * pci_write_vpd - Write entry to Vital Product Data
+ * @dev:	pci device struct
+ * @pos:	offset in vpd space
+ * @count:	number of bytes to write
+ * @buf:	buffer containing write data
+ */
+ssize_t pci_write_vpd(struct pci_dev *dev, loff_t pos, size_t count, const void *buf)
+{
+	if (!dev->vpd || !dev->vpd->ops)
+		return -ENODEV;
+	return dev->vpd->ops->write(dev, pos, count, buf);
+}
+EXPORT_SYMBOL(pci_write_vpd);
+
+#define PCI_VPD_MAX_SIZE (PCI_VPD_ADDR_MASK + 1)
 
 /**
  * pci_vpd_size - determine actual size of Vital Product Data
  * @dev:	pci device struct
  * @old_size:	current assumed size, also maximum allowed size
  */
-static size_t pci_vpd_pci22_size(struct pci_dev *dev, size_t old_size)
+static size_t pci_vpd_size(struct pci_dev *dev, size_t old_size)
 {
 	size_t off = 0;
 	unsigned char header[1+2];	/* 1 byte tag, 2 bytes length */
@@ -311,9 +300,9 @@ static size_t pci_vpd_pci22_size(struct pci_dev *dev, size_t old_size)
 			    (tag == PCI_VPD_LTIN_RW_DATA)) {
 				if (pci_read_vpd(dev, off+1, 2,
 						 &header[1]) != 2) {
-					dev_dbg(&dev->dev,
-						"invalid large VPD tag %02x size at offset %zu",
-						tag, off + 1);
+					dev_warn(&dev->dev,
+						 "invalid large VPD tag %02x size at offset %zu",
+						 tag, off + 1);
 					return 0;
 				}
 				off += PCI_VPD_LRDT_TAG_SIZE +
@@ -325,15 +314,17 @@ static size_t pci_vpd_pci22_size(struct pci_dev *dev, size_t old_size)
 				pci_vpd_srdt_size(header);
 			tag = pci_vpd_srdt_tag(header);
 		}
+
 		if (tag == PCI_VPD_STIN_END)	/* End tag descriptor */
 			return off;
+
 		if ((tag != PCI_VPD_LTIN_ID_STRING) &&
 		    (tag != PCI_VPD_LTIN_RO_DATA) &&
 		    (tag != PCI_VPD_LTIN_RW_DATA)) {
-			dev_dbg(&dev->dev,
-				"invalid %s VPD tag %02x at offset %zu",
-				(header[0] & PCI_VPD_LRDT) ? "large" : "short",
-				tag, off);
+			dev_warn(&dev->dev,
+				 "invalid %s VPD tag %02x at offset %zu",
+				 (header[0] & PCI_VPD_LRDT) ? "large" : "short",
+				 tag, off);
 			return 0;
 		}
 	}
@@ -348,44 +339,44 @@ static size_t pci_vpd_pci22_size(struct pci_dev *dev, size_t old_size)
  *
  * Returns 0 on success, negative values indicate error.
  */
-static int pci_vpd_pci22_wait(struct pci_dev *dev)
+static int pci_vpd_wait(struct pci_dev *dev)
 {
-	struct pci_vpd_pci22 *vpd =
-		container_of(dev->vpd, struct pci_vpd_pci22, base);
-	unsigned long timeout = jiffies + HZ/20 + 2;
+	struct pci_vpd *vpd = dev->vpd;
+	unsigned long timeout = jiffies + msecs_to_jiffies(50);
+	unsigned long max_sleep = 16;
 	u16 status;
 	int ret;
 
 	if (!vpd->busy)
 		return 0;
 
-	for (;;) {
+	while (time_before(jiffies, timeout)) {
 		ret = pci_user_read_config_word(dev, vpd->cap + PCI_VPD_ADDR,
 						&status);
 		if (ret < 0)
 			return ret;
 
 		if ((status & PCI_VPD_ADDR_F) == vpd->flag) {
-			vpd->busy = false;
+			vpd->busy = 0;
 			return 0;
 		}
 
-		if (time_after(jiffies, timeout)) {
-			dev_printk(KERN_DEBUG, &dev->dev, "vpd r/w failed.  This is likely a firmware bug on this device.  Contact the card vendor for a firmware update\n");
-			return -ETIMEDOUT;
-		}
 		if (fatal_signal_pending(current))
 			return -EINTR;
-		if (!cond_resched())
-			udelay(10);
+
+		usleep_range(10, max_sleep);
+		if (max_sleep < 1024)
+			max_sleep *= 2;
 	}
+
+	dev_warn(&dev->dev, "VPD access failed.  This is likely a firmware bug on this device.  Contact the card vendor for a firmware update\n");
+	return -ETIMEDOUT;
 }
 
-static ssize_t pci_vpd_pci22_read(struct pci_dev *dev, loff_t pos, size_t count,
-				  void *arg)
+static ssize_t pci_vpd_read(struct pci_dev *dev, loff_t pos, size_t count,
+			    void *arg)
 {
-	struct pci_vpd_pci22 *vpd =
-		container_of(dev->vpd, struct pci_vpd_pci22, base);
+	struct pci_vpd *vpd = dev->vpd;
 	int ret;
 	loff_t end = pos + count;
 	u8 *buf = arg;
@@ -393,24 +384,26 @@ static ssize_t pci_vpd_pci22_read(struct pci_dev *dev, loff_t pos, size_t count,
 	if (pos < 0)
 		return -EINVAL;
 
-	if (!vpd->valid && vpd->base.len > 0) {
-		vpd->valid = true;
-		vpd->base.len = pci_vpd_pci22_size(dev, vpd->base.len);
+	if (!vpd->valid) {
+		vpd->valid = 1;
+		vpd->len = pci_vpd_size(dev, vpd->len);
 	}
-	if (vpd->base.len == 0)
+
+	if (vpd->len == 0)
 		return -EIO;
 
-	if (end > vpd->base.len) {
-		if (pos > vpd->base.len)
-			return 0;
-		end = vpd->base.len;
+	if (pos > vpd->len)
+		return 0;
+
+	if (end > vpd->len) {
+		end = vpd->len;
 		count = end - pos;
 	}
 
 	if (mutex_lock_killable(&vpd->lock))
 		return -EINTR;
 
-	ret = pci_vpd_pci22_wait(dev);
+	ret = pci_vpd_wait(dev);
 	if (ret < 0)
 		goto out;
 
@@ -422,9 +415,9 @@ static ssize_t pci_vpd_pci22_read(struct pci_dev *dev, loff_t pos, size_t count,
 						 pos & ~3);
 		if (ret < 0)
 			break;
-		vpd->busy = true;
+		vpd->busy = 1;
 		vpd->flag = PCI_VPD_ADDR_F;
-		ret = pci_vpd_pci22_wait(dev);
+		ret = pci_vpd_wait(dev);
 		if (ret < 0)
 			break;
 
@@ -447,11 +440,10 @@ out:
 	return ret ? ret : count;
 }
 
-static ssize_t pci_vpd_pci22_write(struct pci_dev *dev, loff_t pos, size_t count,
-				   const void *arg)
+static ssize_t pci_vpd_write(struct pci_dev *dev, loff_t pos, size_t count,
+			     const void *arg)
 {
-	struct pci_vpd_pci22 *vpd =
-		container_of(dev->vpd, struct pci_vpd_pci22, base);
+	struct pci_vpd *vpd = dev->vpd;
 	const u8 *buf = arg;
 	loff_t end = pos + count;
 	int ret = 0;
@@ -459,20 +451,21 @@ static ssize_t pci_vpd_pci22_write(struct pci_dev *dev, loff_t pos, size_t count
 	if (pos < 0 || (pos & 3) || (count & 3))
 		return -EINVAL;
 
-	if (!vpd->valid && vpd->base.len > 0) {
-		vpd->valid = true;
-		vpd->base.len = pci_vpd_pci22_size(dev, vpd->base.len);
+	if (!vpd->valid) {
+		vpd->valid = 1;
+		vpd->len = pci_vpd_size(dev, vpd->len);
 	}
-	if (vpd->base.len == 0)
+
+	if (vpd->len == 0)
 		return -EIO;
 
-	if (end > vpd->base.len)
+	if (end > vpd->len)
 		return -EINVAL;
 
 	if (mutex_lock_killable(&vpd->lock))
 		return -EINTR;
 
-	ret = pci_vpd_pci22_wait(dev);
+	ret = pci_vpd_wait(dev);
 	if (ret < 0)
 		goto out;
 
@@ -492,9 +485,9 @@ static ssize_t pci_vpd_pci22_write(struct pci_dev *dev, loff_t pos, size_t count
 		if (ret < 0)
 			break;
 
-		vpd->busy = true;
+		vpd->busy = 1;
 		vpd->flag = 0;
-		ret = pci_vpd_pci22_wait(dev);
+		ret = pci_vpd_wait(dev);
 		if (ret < 0)
 			break;
 
@@ -505,15 +498,9 @@ out:
 	return ret ? ret : count;
 }
 
-static void pci_vpd_pci22_release(struct pci_dev *dev)
-{
-	kfree(container_of(dev->vpd, struct pci_vpd_pci22, base));
-}
-
-static const struct pci_vpd_ops pci_vpd_pci22_ops = {
-	.read = pci_vpd_pci22_read,
-	.write = pci_vpd_pci22_write,
-	.release = pci_vpd_pci22_release,
+static const struct pci_vpd_ops pci_vpd_ops = {
+	.read = pci_vpd_read,
+	.write = pci_vpd_write,
 };
 
 static ssize_t pci_vpd_f0_read(struct pci_dev *dev, loff_t pos, size_t count,
@@ -549,12 +536,11 @@ static ssize_t pci_vpd_f0_write(struct pci_dev *dev, loff_t pos, size_t count,
 static const struct pci_vpd_ops pci_vpd_f0_ops = {
 	.read = pci_vpd_f0_read,
 	.write = pci_vpd_f0_write,
-	.release = pci_vpd_pci22_release,
 };
 
-int pci_vpd_pci22_init(struct pci_dev *dev)
+int pci_vpd_init(struct pci_dev *dev)
 {
-	struct pci_vpd_pci22 *vpd;
+	struct pci_vpd *vpd;
 	u8 cap;
 
 	cap = pci_find_capability(dev, PCI_CAP_ID_VPD);
@@ -565,17 +551,22 @@ int pci_vpd_pci22_init(struct pci_dev *dev)
 	if (!vpd)
 		return -ENOMEM;
 
-	vpd->base.len = PCI_VPD_PCI22_SIZE;
+	vpd->len = PCI_VPD_MAX_SIZE;
 	if (dev->dev_flags & PCI_DEV_FLAGS_VPD_REF_F0)
-		vpd->base.ops = &pci_vpd_f0_ops;
+		vpd->ops = &pci_vpd_f0_ops;
 	else
-		vpd->base.ops = &pci_vpd_pci22_ops;
+		vpd->ops = &pci_vpd_ops;
 	mutex_init(&vpd->lock);
 	vpd->cap = cap;
-	vpd->busy = false;
-	vpd->valid = false;
-	dev->vpd = &vpd->base;
+	vpd->busy = 0;
+	vpd->valid = 0;
+	dev->vpd = vpd;
 	return 0;
+}
+
+void pci_vpd_release(struct pci_dev *dev)
+{
+	kfree(dev->vpd);
 }
 
 /**
