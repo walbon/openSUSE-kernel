@@ -96,8 +96,10 @@ static const struct block_device_operations xlvbd_block_fops;
  */
 
 static unsigned int xen_blkif_max_segments = 32;
-module_param_named(max, xen_blkif_max_segments, int, S_IRUGO);
-MODULE_PARM_DESC(max, "Maximum amount of segments in indirect requests (default is 32)");
+module_param_named(max_indirect_segments, xen_blkif_max_segments, uint,
+		   S_IRUGO);
+MODULE_PARM_DESC(max_indirect_segments,
+		 "Maximum amount of segments in indirect requests (default is 32)");
 
 /*
  * Maximum order of pages to be used for the shared ring between front and
