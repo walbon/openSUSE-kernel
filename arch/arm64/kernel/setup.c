@@ -63,6 +63,7 @@
 #include <asm/memblock.h>
 #include <asm/efi.h>
 #include <asm/xen/hypervisor.h>
+#include <asm/mmu_context.h>
 
 phys_addr_t __fdt_pointer __initdata;
 
@@ -316,6 +317,12 @@ void __init setup_arch(char **cmdline_p)
 	 * (Report possible System Errors once we can report this occurred)
 	 */
 	local_async_enable();
+
+	/*
+	 * TTBR0 is only used for the identity mapping at this stage. Make it
+	 * point to zero page to avoid speculatively fetching new entries.
+	 */
+	cpu_uninstall_idmap();
 
 	arm64_memblock_init();
 
