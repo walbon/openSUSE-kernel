@@ -2173,6 +2173,8 @@ int nfs_access_cache_shrinker(struct shrinker *shrink,
 	if ((gfp_mask & GFP_KERNEL) != GFP_KERNEL)
 		return (nr_to_scan == 0) ? 0 : -1;
 
+	if (nr_to_scan == 0)
+		return (atomic_long_read(&nfs_access_nr_entries) / 100) * sysctl_vfs_cache_pressure;
 	spin_lock(&nfs_access_lru_lock);
 	list_for_each_entry_safe(nfsi, next, &nfs_access_lru_list, access_cache_inode_lru) {
 		struct inode *inode;
