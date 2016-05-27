@@ -22,6 +22,7 @@
 #include <crypto/sha.h>
 #include <linux/syscalls.h>
 #include <linux/vmalloc.h>
+#include <linux/security.h>
 #include "kexec_internal.h"
 
 /*
