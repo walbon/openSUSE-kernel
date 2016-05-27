@@ -749,7 +749,11 @@ void fib_del_ifaddr(struct in_ifaddr *ifa, struct in_ifaddr *iprim)
 	if (ifa->ifa_flags & IFA_F_SECONDARY) {
 		prim = inet_ifa_byprefix(in_dev, any, ifa->ifa_mask);
 		if (prim == NULL) {
-			printk(KERN_WARNING "fib_del_ifaddr: bug: prim == NULL\n");
+			/* if the device has been deleted, we don't perform
+			 * address promotion
+			 */
+			if (!in_dev->dead)
+				printk(KERN_WARNING "fib_del_ifaddr: bug: prim == NULL\n");
 			return;
 		}
 		if (iprim && iprim != prim) {
