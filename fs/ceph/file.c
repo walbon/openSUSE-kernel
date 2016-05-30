@@ -615,7 +615,7 @@ static void ceph_aio_complete_req(struct ceph_osd_request *req,
 	int rc = req->r_result;
 	struct inode *inode = req->r_inode;
 	struct ceph_aio_request *aio_req = req->r_priv;
-	struct ceph_osd_data *osd_data = osd_req_op_extent_osd_data(req, 0);
+	struct ceph_osd_data *osd_data = osd_req_op_extent_osd_response_data(req, 0);
 	int num_pages = calc_pages_for((u64)osd_data->alignment,
 				       osd_data->length);
 
