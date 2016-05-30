@@ -234,7 +234,7 @@
 			#size-cells = <0>;
 			reg = <0x0 0x1f610000 0x0 0x100>,
 			      <0x0 0X1f61d000 0x0 0X100>;
-			clocks = <&xge0clk 0>;
+			clocks = <&xge1clk 0>;
 		};
 
 		sgenet0: ethernet@1f610000 {
