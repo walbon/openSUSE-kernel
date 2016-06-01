@@ -70,3 +70,13 @@
 &xgenet1 {
 	status = "ok";
 };
+
+&mdio {
+	sgenet0phy: phy@3 {
+		reg = <0x0>;
+	};
+	sgenet1phy: phy@2 {
+		reg = <0x2>;
+	};
+};
+

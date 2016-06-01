@@ -52,6 +52,7 @@ enum ceph_osd_data_type {
 #ifdef CONFIG_BLOCK
 	CEPH_OSD_DATA_TYPE_BIO,
 #endif /* CONFIG_BLOCK */
+	CEPH_OSD_DATA_TYPE_SG,
 };
 
 struct ceph_osd_data {
@@ -70,6 +71,11 @@ struct ceph_osd_data {
 			struct bio	*bio;		/* list of bios */
 			size_t		bio_length;	/* total in list */
 		};
+		struct {
+			struct scatterlist *sgl;
+			size_t		sgl_length;
+			unsigned int	sgl_init_offset;
+		};
 #endif /* CONFIG_BLOCK */
 	};
 };
@@ -84,14 +90,16 @@ struct ceph_osd_req_op {
 			u64 offset, length;
 			u64 truncate_size;
 			u32 truncate_seq;
-			struct ceph_osd_data osd_data;
+			struct ceph_osd_data request_data;
+			struct ceph_osd_data response_data;
 		} extent;
 		struct {
 			u32 name_len;
 			u32 value_len;
 			__u8 cmp_op;       /* CEPH_OSD_CMPXATTR_OP_* */
 			__u8 cmp_mode;     /* CEPH_OSD_CMPXATTR_MODE_* */
-			struct ceph_osd_data osd_data;
+			struct ceph_osd_data request_data;
+			struct ceph_osd_data response_data;
 		} xattr;
 		struct {
 			const char *class_name;
@@ -106,14 +114,24 @@ struct ceph_osd_req_op {
 		struct {
 			u64 cookie;
 			u64 ver;
-			u32 prot_ver;
-			u32 timeout;
-			__u8 flag;
+			__u8 op;
+			u32 gen;
 		} watch;
+		struct {
+			u64 cookie;
+			struct ceph_osd_data request_data;
+			struct ceph_osd_data response_data;
+		} notify;
 		struct {
 			u64 expected_object_size;
 			u64 expected_write_size;
 		} alloc_hint;
+		struct {
+			u64 offset;
+			u64 length;
+			u64 data_length;
+			struct ceph_osd_data request_data;
+		} writesame;
 	};
 };
 
@@ -184,7 +202,7 @@ struct ceph_osd_event {
 	u64 cookie;
 	int one_shot;
 	struct ceph_osd_client *osdc;
-	void (*cb)(u64, u64, u8, void *);
+	void (*cb)(u64, u64, u8, s32, u64, void *, void *, u32);
 	void *data;
 	struct rb_node node;
 	struct list_head osd_node;
@@ -197,6 +215,10 @@ struct ceph_osd_event_work {
         u64 ver;
         u64 notify_id;
         u8 opcode;
+	s32 return_code;
+	u64 notifier_gid;
+	void *payload;
+	u32 payload_len;
 };
 
 struct ceph_osd_client {
@@ -257,6 +279,10 @@ extern void osd_req_op_raw_data_in_pages(struct ceph_osd_request *,
 					u32 alignment, bool pages_from_pool,
 					bool own_pages);
 
+extern void osd_req_op_writesame_init(struct ceph_osd_request *osd_req,
+					unsigned int which, u16 opcode,
+					u64 offset, u64 length,
+					u64 data_length);
 extern void osd_req_op_extent_init(struct ceph_osd_request *osd_req,
 					unsigned int which, u16 opcode,
 					u64 offset, u64 length,
@@ -264,7 +290,10 @@ extern void osd_req_op_extent_init(struct ceph_osd_request *osd_req,
 extern void osd_req_op_extent_update(struct ceph_osd_request *osd_req,
 					unsigned int which, u64 length);
 
-extern struct ceph_osd_data *osd_req_op_extent_osd_data(
+extern struct ceph_osd_data *osd_req_op_extent_osd_request_data(
+					struct ceph_osd_request *osd_req,
+					unsigned int which);
+extern struct ceph_osd_data *osd_req_op_extent_osd_response_data(
 					struct ceph_osd_request *osd_req,
 					unsigned int which);
 extern struct ceph_osd_data *osd_req_op_cls_response_data(
@@ -284,7 +313,16 @@ extern void osd_req_op_extent_osd_data_bio(struct ceph_osd_request *,
 					unsigned int which,
 					struct bio *bio, size_t bio_length);
 #endif /* CONFIG_BLOCK */
-
+extern void osd_req_op_extent_osd_data_sg(struct ceph_osd_request *,
+					unsigned int which,
+					struct scatterlist *sgl,
+					unsigned int init_sg_offset,
+					u64 length);
+extern void osd_req_op_writesame_osd_data_sg(struct ceph_osd_request *,
+					unsigned int which,
+					struct scatterlist *sgl,
+					unsigned int init_sg_offset,
+					u64 length);
 extern void osd_req_op_cls_request_data_pagelist(struct ceph_osd_request *,
 					unsigned int which,
 					struct ceph_pagelist *pagelist);
@@ -298,7 +336,21 @@ extern void osd_req_op_cls_response_data_pages(struct ceph_osd_request *,
 					struct page **pages, u64 length,
 					u32 alignment, bool pages_from_pool,
 					bool own_pages);
-
+extern void osd_req_op_notify_request_data_pagelist(struct ceph_osd_request *,
+					unsigned int which,
+					struct ceph_pagelist *pagelist);
+extern void osd_req_op_notify_response_data_pages(struct ceph_osd_request *,
+					unsigned int which,
+					struct page **pages, u64 length,
+					u32 alignment, bool pages_from_pool,
+					bool own_pages);
+extern void osd_req_op_xattr_response_data_pages(struct ceph_osd_request *,
+					unsigned int which,
+					struct page **pages, u64 length,
+					u32 alignment, bool pages_from_pool,
+					bool own_pages);
+extern void osd_req_op_notify_init(struct ceph_osd_request *osd_req,
+				   unsigned int which, u16 opcode, u64 cookie);
 extern void osd_req_op_cls_init(struct ceph_osd_request *osd_req,
 					unsigned int which, u16 opcode,
 					const char *class, const char *method);
@@ -307,7 +359,7 @@ extern int osd_req_op_xattr_init(struct ceph_osd_request *osd_req, unsigned int 
 				 size_t size, u8 cmp_op, u8 cmp_mode);
 extern void osd_req_op_watch_init(struct ceph_osd_request *osd_req,
 					unsigned int which, u16 opcode,
-					u64 cookie, u64 version, int flag);
+					u8 watch_opcode, u64 cookie);
 extern void osd_req_op_alloc_hint_init(struct ceph_osd_request *osd_req,
 				       unsigned int which,
 				       u64 expected_object_size,
@@ -369,7 +421,8 @@ extern int ceph_osdc_writepages(struct ceph_osd_client *osdc,
 
 /* watch/notify events */
 extern int ceph_osdc_create_event(struct ceph_osd_client *osdc,
-				  void (*event_cb)(u64, u64, u8, void *),
+				  void (*event_cb)(u64, u64, u8, s32, u64,
+						   void *, void *, u32),
 				  void *data, struct ceph_osd_event **pevent);
 extern void ceph_osdc_cancel_event(struct ceph_osd_event *event);
 extern void ceph_osdc_put_event(struct ceph_osd_event *event);
