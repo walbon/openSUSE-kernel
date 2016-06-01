@@ -73,6 +73,7 @@ struct elousb {
 	dma_addr_t data_dma;
 	struct timer_list timer;
 	struct work_struct workaround_work;
+	char deathrow;
 };
 
 static void elousb_irq(struct urb *urb)
@@ -196,7 +197,15 @@ fail:
 	if ((io_ret = flush_smartset_responses(dev)) < 0)
 		err("final FLUSH_SMARTSET_RESPONSES failed, error %d", io_ret);
 	kfree(buffer);
-	mod_timer(&elo->timer, jiffies + PERIODIC_READ_INTERVAL);
+	/*
+	 * This old kernel makes a delayed work queue by hand
+	 * We cannot kills this in one stroke
+	 * Thus we are vulnerable to bnc#982354
+	 * only during a window, but it has to be fixed
+	 * with a flag
+	 */
+	if (!elo->deathrow)
+		mod_timer(&elo->timer, jiffies + PERIODIC_READ_INTERVAL);
 	return;
 }
 
@@ -420,6 +429,7 @@ static void elousb_disconnect(struct usb_interface *intf)
 
 	usb_set_intfdata(intf, NULL);
 	if (elo) {
+		elo->deathrow = 1;
 		usb_kill_urb(elo->irq);
 		input_unregister_device(elo->dev);
 		usb_free_urb(elo->irq);
