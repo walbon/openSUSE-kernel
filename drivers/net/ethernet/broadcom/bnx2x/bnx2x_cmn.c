@@ -508,7 +508,7 @@ static int bnx2x_alloc_rx_sge(struct bnx2x *bp,
 		if (pool->page)
 			put_page(pool->page);
 
-		pool->page = alloc_pages(GFP_KERNEL, PAGES_PER_SGE_SHIFT);
+		pool->page = alloc_pages(GFP_ATOMIC, PAGES_PER_SGE_SHIFT);
 		if (unlikely(!pool->page)) {
 			BNX2X_ERR("Can't alloc sge\n");
 			return -ENOMEM;
