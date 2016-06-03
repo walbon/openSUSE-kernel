@@ -223,6 +223,9 @@ struct mddev {
 #define MD_RELOAD_SB	8	/* Reload the superblock because another node
 				 * updated it.
 				 */
+#define MD_CLUSTER_RESYNC_LOCKED 9 /* cluster raid only, which means node
+				    * already took resync lock, need to
+				    * release the lock */
 
 	int				suspended;
 	atomic_t			active_io;
