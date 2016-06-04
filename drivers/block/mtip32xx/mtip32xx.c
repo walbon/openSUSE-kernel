@@ -2051,7 +2051,7 @@ static int exec_drive_taskfile(struct driver_data *dd,
 					 outbuf,
 					 taskout,
 					 DMA_TO_DEVICE);
-		if (outbuf_dma == 0) {
+		if (pci_dma_mapping_error(dd->pdev, outbuf_dma)) {
 			err = -ENOMEM;
 			goto abort;
 		}
@@ -2068,7 +2068,7 @@ static int exec_drive_taskfile(struct driver_data *dd,
 		inbuf_dma = pci_map_single(dd->pdev,
 					 inbuf,
 					 taskin, DMA_FROM_DEVICE);
-		if (inbuf_dma == 0) {
+		if (pci_dma_mapping_error(dd->pdev, inbuf_dma)) {
 			err = -ENOMEM;
 			goto abort;
 		}
@@ -3880,7 +3880,6 @@ static enum blk_eh_timer_return mtip_cmd_timeout(struct request *req,
 								bool reserved)
 {
 	struct driver_data *dd = req->q->queuedata;
-	int ret = BLK_EH_RESET_TIMER;
 
 	if (reserved)
 		goto exit_handler;
@@ -3893,7 +3892,7 @@ static enum blk_eh_timer_return mtip_cmd_timeout(struct request *req,
 
 	wake_up_interruptible(&dd->port->svc_wait);
 exit_handler:
-	return ret;
+	return BLK_EH_RESET_TIMER;
 }
 
 static struct blk_mq_ops mtip_mq_ops = {
@@ -4025,12 +4024,6 @@ skip_create_disk:
 	blk_queue_max_segment_size(dd->queue, 0x400000);
 	blk_queue_io_min(dd->queue, 4096);
 	blk_queue_bounce_limit(dd->queue, dd->pdev->dma_mask);
-
-	/*
-	 * write back cache is not supported in the device. FUA depends on
-	 * write back cache support, hence setting flush support to zero.
-	 */
-	blk_queue_flush(dd->queue, 0);
 
 	/* Signal trim support */
 	if (dd->trim_supp == true) {

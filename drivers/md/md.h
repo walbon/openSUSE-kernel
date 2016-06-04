@@ -223,6 +223,9 @@ struct mddev {
 #define MD_RELOAD_SB	8	/* Reload the superblock because another node
 				 * updated it.
 				 */
+#define MD_CLUSTER_RESYNC_LOCKED 9 /* cluster raid only, which means node
+				    * already took resync lock, need to
+				    * release the lock */
 
 	int				suspended;
 	atomic_t			active_io;
@@ -231,8 +234,6 @@ struct mddev {
 						       * are happening, so run/
 						       * takeover/stop are not safe
 						       */
-	int				ready; /* See when safe to pass
-						* IO requests down */
 	struct gendisk			*gendisk;
 
 	struct kobject			kobj;
@@ -249,7 +250,7 @@ struct mddev {
 							 * managed externally */
 	char				metadata_type[17]; /* externally set*/
 	int				chunk_sectors;
-	time_t				ctime, utime;
+	time64_t			ctime, utime;
 	int				level, layout;
 	char				clevel[16];
 	int				raid_disks;
