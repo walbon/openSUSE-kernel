@@ -277,7 +277,7 @@ SQSH_EXTERN unsigned int squashfs3_read_data(struct super_block *s, char *buffer
 			zlib_err = zlib_inflate(&msblk->stream, Z_NO_FLUSH);
 			if (zlib_err != Z_OK && zlib_err != Z_STREAM_END) {
 				ERROR("zlib_inflate returned unexpected result 0x%x,"
-					" srclength %d, avail_in %d, avail_out %d\n", zlib_err,
+					" srclength %d, avail_in %lx, avail_out %lx\n", zlib_err,
 					srclength, msblk->stream.avail_in, msblk->stream.avail_out);
 				goto release_mutex;
 			}
