@@ -2597,6 +2597,10 @@ static const struct alg_test_desc alg_test_descs[] = {
 		.alg = "cryptd(__driver-cbc-serpent-avx2)",
 		.test = alg_test_null,
 	}, {
+		.alg = "cryptd(__driver-ctr-aes-aesni)",
+		.test = alg_test_null,
+		.fips_allowed = 1,
+	}, {
 		.alg = "cryptd(__driver-ecb-aes-aesni)",
 		.test = alg_test_null,
 		.fips_allowed = 1,
@@ -3061,6 +3065,7 @@ static const struct alg_test_desc alg_test_descs[] = {
 	}, {
 		.alg = "ecb(cipher_null)",
 		.test = alg_test_null,
+		.fips_allowed = 1,
 	}, {
 		.alg = "ecb(des)",
 		.test = alg_test_skcipher,
@@ -3251,15 +3256,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.hash = {
 				.vecs = ghash_tv_template,
 				.count = GHASH_TEST_VECTORS
-			}
-		}
-	}, {
-		.alg = "hmac(crc32)",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = {
-				.vecs = bfin_crc_tv_template,
-				.count = BFIN_CRC_TEST_VECTORS
 			}
 		}
 	}, {
@@ -3600,7 +3596,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 	}, {
 		.alg = "rfc4543(gcm(aes))",
 		.test = alg_test_aead,
-		.fips_allowed = 1,
 		.suite = {
 			.aead = {
 				.enc = {
