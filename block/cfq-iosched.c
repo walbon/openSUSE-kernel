@@ -32,7 +32,7 @@ static u64 cfq_slice_async = NSEC_PER_SEC / 25;
 static const int cfq_slice_async_rq = 2;
 static u64 cfq_slice_idle = NSEC_PER_SEC / 125;
 static u64 cfq_group_idle = NSEC_PER_SEC / 125;
-static const u64 cfq_target_latency = NSEC_PER_SEC * 3/10; /* 300 ms */
+static const u64 cfq_target_latency = (u64)NSEC_PER_SEC * 3/10; /* 300 ms */
 static const int cfq_hist_divisor = 4;
 
 /*
@@ -3171,10 +3171,10 @@ new_workload:
 	 */
 	group_slice = cfq_group_slice(cfqd, cfqg);
 
-	slice = group_slice * count /
+	slice = div_u64(group_slice * count,
 		max_t(unsigned, cfqg->busy_queues_avg[cfqd->serving_wl_class],
 		      cfq_group_busy_queues_wl(cfqd->serving_wl_class, cfqd,
-					cfqg));
+					cfqg)));
 
 	if (cfqd->serving_wl_type == ASYNC_WORKLOAD) {
 		u64 tmp;
