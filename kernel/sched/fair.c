@@ -8261,9 +8261,13 @@ void init_cfs_rq(struct cfs_rq *cfs_rq)
 }
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
-static void task_move_group_fair(struct task_struct *p)
+static void task_move_group_fair(struct task_struct *p, bool fork)
 {
-	detach_task_cfs_rq(p);
+	/*
+	 * Newly forked task should not be removed from any cfs_rq
+	 */
+	if (!fork)
+		detach_task_cfs_rq(p);
 	set_task_rq(p, task_cpu(p));
 	attach_task_cfs_rq(p);
 	/*
