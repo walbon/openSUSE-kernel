@@ -2857,29 +2857,24 @@ static inline void update_load_avg(struct sched_entity *se, int update_tg)
 
 static void attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	if (!sched_feat(ATTACH_AGE_LOAD))
-		goto skip_aging;
-
-	/*
-	 * If we got migrated (either between CPUs or between cgroups) we'll
-	 * have aged the average right before clearing @last_update_time.
-	 */
-	if (se->avg.last_update_time) {
-		__update_load_avg(cfs_rq->avg.last_update_time, cpu_of(rq_of(cfs_rq)),
-				  &se->avg, 0, 0, NULL);
-
-		/*
-		 * XXX: we could have just aged the entire load away if we've been
-		 * absent from the fair class for too long.
-		 */
-	}
-
-skip_aging:
 	se->avg.last_update_time = cfs_rq->avg.last_update_time;
 	cfs_rq->avg.load_avg += se->avg.load_avg;
 	cfs_rq->avg.load_sum += se->avg.load_sum;
 	cfs_rq->avg.util_avg += se->avg.util_avg;
 	cfs_rq->avg.util_sum += se->avg.util_sum;
+}
+
+static inline void attach_age_load_task(struct rq *rq, struct task_struct *p)
+{
+	struct sched_entity *se = &p->se;
+
+	if (!sched_feat(ATTACH_AGE_LOAD))
+		return;
+
+	if (se->avg.last_update_time) {
+		__update_load_avg(cfs_rq_of(se)->avg.last_update_time, cpu_of(rq),
+				  &se->avg, 0, 0, NULL);
+	}
 }
 
 static void detach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
@@ -3002,6 +2997,7 @@ static inline void
 attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) {}
 static inline void
 detach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) {}
+static inline void attach_age_load_task(struct rq *rq, struct task_struct *p) {}
 
 static inline int idle_balance(struct rq *rq)
 {
@@ -8222,6 +8218,12 @@ static void switched_from_fair(struct rq *rq, struct task_struct *p)
 
 static void switched_to_fair(struct rq *rq, struct task_struct *p)
 {
+	/*
+	 * If we change between classes, age the averages before attaching them.
+	 * XXX: we could have just aged the entire load away if we've been
+	 * absent from the fair class for too long.
+	 */
+	attach_age_load_task(rq, p);
 	attach_task_cfs_rq(p);
 
 	if (task_on_rq_queued(p)) {
@@ -8273,11 +8275,6 @@ static void task_move_group_fair(struct task_struct *p)
 {
 	detach_task_cfs_rq(p);
 	set_task_rq(p, task_cpu(p));
-
-#ifdef CONFIG_SMP
-	/* Tell se's cfs_rq has been changed -- migrated */
-	p->se.avg.last_update_time = 0;
-#endif
 	attach_task_cfs_rq(p);
 }
 
