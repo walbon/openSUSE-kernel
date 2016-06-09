@@ -75,7 +75,6 @@ struct xenbus_device {
 	enum xenbus_state state;
 	struct completion down;
 	struct work_struct work;
-	const char *vbd_hd_symlink;
 };
 
 static inline struct xenbus_device *to_xenbus_device(struct device *dev)
