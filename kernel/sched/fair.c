@@ -676,8 +676,8 @@ static unsigned long task_h_load(struct task_struct *p);
 #define LOAD_AVG_MAX 47742 /* maximum possible load avg */
 #define LOAD_AVG_MAX_N 345 /* number of full periods to produce LOAD_AVG_MAX */
 
-/* Give new sched_entity start runnable values to heavy its load in infant time */
-void init_entity_runnable_average(struct sched_entity *se)
+/* Give new sched_entity start load values to heavy its load in infant time */
+void init_entity_sched_avg(struct sched_entity *se)
 {
 	struct sched_avg *sa = &se->avg;
 
@@ -698,9 +698,7 @@ void init_entity_runnable_average(struct sched_entity *se)
 static inline unsigned long cfs_rq_runnable_load_avg(struct cfs_rq *cfs_rq);
 static inline unsigned long cfs_rq_load_avg(struct cfs_rq *cfs_rq);
 #else
-void init_entity_runnable_average(struct sched_entity *se)
-{
-}
+void init_entity_sched_avg(struct sched_entity *se) { }
 #endif
 
 /*
@@ -2855,26 +2853,9 @@ static inline void update_load_avg(struct sched_entity *se, int update_tg)
 		update_tg_load_avg(cfs_rq, 0);
 }
 
-static void attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
+/* Virtually synchronize task with its cfs_rq */
+static inline void attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	if (!sched_feat(ATTACH_AGE_LOAD))
-		goto skip_aging;
-
-	/*
-	 * If we got migrated (either between CPUs or between cgroups) we'll
-	 * have aged the average right before clearing @last_update_time.
-	 */
-	if (se->avg.last_update_time) {
-		__update_load_avg(cfs_rq->avg.last_update_time, cpu_of(rq_of(cfs_rq)),
-				  &se->avg, 0, 0, NULL);
-
-		/*
-		 * XXX: we could have just aged the entire load away if we've been
-		 * absent from the fair class for too long.
-		 */
-	}
-
-skip_aging:
 	se->avg.last_update_time = cfs_rq->avg.last_update_time;
 	cfs_rq->avg.load_avg += se->avg.load_avg;
 	cfs_rq->avg.load_sum += se->avg.load_sum;
@@ -2954,6 +2935,11 @@ static inline u64 cfs_rq_last_update_time(struct cfs_rq *cfs_rq)
 }
 #endif
 
+static inline void reset_task_last_update_time(struct task_struct *p)
+{
+	p->se.avg.last_update_time = 0;
+}
+
 /*
  * Task first catches up with cfs_rq, and then subtract
  * itself from the cfs_rq (task must be off the queue now).
@@ -2999,9 +2985,8 @@ dequeue_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) {}
 static inline void remove_entity_load_avg(struct sched_entity *se) {}
 
 static inline void
-attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) {}
-static inline void
 detach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) {}
+static inline void reset_task_last_update_time(struct task_struct *p) {}
 
 static inline int idle_balance(struct rq *rq)
 {
@@ -8208,9 +8193,6 @@ static void attach_task_cfs_rq(struct task_struct *p)
 	se->depth = se->parent ? se->parent->depth + 1 : 0;
 #endif
 
-	/* Synchronize task with its cfs_rq */
-	attach_entity_load_avg(cfs_rq, se);
-
 	if (!vruntime_normalized(p))
 		se->vruntime += cfs_rq->min_vruntime;
 }
@@ -8218,6 +8200,14 @@ static void attach_task_cfs_rq(struct task_struct *p)
 static void switched_from_fair(struct rq *rq, struct task_struct *p)
 {
 	detach_task_cfs_rq(p);
+	reset_task_last_update_time(p);
+	/*
+	 * If we change back to fair class, we will attach the sched
+	 * avgs when we are enqueued, which will be done only once. We
+	 * won't have the chance to consistently age the avgs before
+	 * attaching them, so we have to continue with the last updated
+	 * sched avgs when we were detached.
+	 */
 }
 
 static void switched_to_fair(struct rq *rq, struct task_struct *p)
@@ -8269,16 +8259,20 @@ void init_cfs_rq(struct cfs_rq *cfs_rq)
 }
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
-static void task_move_group_fair(struct task_struct *p)
+static void task_move_group_fair(struct task_struct *p, bool fork)
 {
-	detach_task_cfs_rq(p);
+	/*
+	 * Newly forked task should not be removed from any cfs_rq
+	 */
+	if (!fork)
+		detach_task_cfs_rq(p);
 	set_task_rq(p, task_cpu(p));
-
-#ifdef CONFIG_SMP
-	/* Tell se's cfs_rq has been changed -- migrated */
-	p->se.avg.last_update_time = 0;
-#endif
 	attach_task_cfs_rq(p);
+	/*
+	 * This assures we will attach the sched avgs when we are enqueued,
+	 * which will be done only once.
+	 */
+	reset_task_last_update_time(p);
 }
 
 void free_fair_sched_group(struct task_group *tg)
@@ -8331,7 +8325,7 @@ int alloc_fair_sched_group(struct task_group *tg, struct task_group *parent)
 
 		init_cfs_rq(cfs_rq);
 		init_tg_cfs_entry(tg, cfs_rq, se, i, parent->se[i]);
-		init_entity_runnable_average(se);
+		init_entity_sched_avg(se);
 	}
 
 	return 1;

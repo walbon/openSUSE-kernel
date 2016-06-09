@@ -36,6 +36,17 @@
 
 #define XEN_BUS_ID_SIZE			20
 
+enum vbd_hd_name_state {
+	VBD_HDNAME_ERR = 0,
+	VBD_HDNAME_UNHANDLED,
+	VBD_HDNAME_HD,
+	VBD_HDNAME_XVDA,
+	VBD_HDNAME_XVDE,
+	VBD_HDNAME_XVDZZ,
+	VBD_HDNAME_HD_SYMLINK_NO,
+	VBD_HDNAME_HD_SYMLINK_MAYBE,
+
+};
 struct xen_bus_type {
 	char *root;
 	unsigned int levels;
@@ -45,6 +56,7 @@ struct xen_bus_type {
 	void (*otherend_changed)(struct xenbus_watch *watch, const char **vec,
 				 unsigned int len);
 	struct bus_type bus;
+	enum vbd_hd_name_state vbd_hd_names;
 };
 
 enum xenstore_init {

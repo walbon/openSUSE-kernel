@@ -2474,6 +2474,9 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	if (p->sched_class->task_fork)
 		p->sched_class->task_fork(p);
 
+	/* Initialize new task's sched averages */
+	init_entity_sched_avg(&p->se);
+
 	/*
 	 * The child is not yet in the pid-hash so no cgroup attach races,
 	 * and the cgroup is pinned to this child due to cgroup_fork()
@@ -2614,8 +2617,6 @@ void wake_up_new_task(struct task_struct *p)
 	struct rq *rq;
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
-	/* Initialize new task's runnable average */
-	init_entity_runnable_average(&p->se);
 #ifdef CONFIG_SMP
 	/*
 	 * Fork balancing, do it here and not earlier because:
@@ -8044,7 +8045,7 @@ void sched_offline_group(struct task_group *tg)
  *	by now. This function just updates tsk->se.cfs_rq and tsk->se.parent to
  *	reflect its new group.
  */
-void sched_move_task(struct task_struct *tsk)
+void sched_move_task(struct task_struct *tsk, bool fork)
 {
 	struct task_group *tg;
 	int queued, running;
@@ -8073,7 +8074,7 @@ void sched_move_task(struct task_struct *tsk)
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	if (tsk->sched_class->task_move_group)
-		tsk->sched_class->task_move_group(tsk);
+		tsk->sched_class->task_move_group(tsk, fork);
 	else
 #endif
 		set_task_rq(tsk, task_cpu(tsk));
@@ -8506,7 +8507,7 @@ static void cpu_cgroup_css_free(struct cgroup_subsys_state *css)
 
 static void cpu_cgroup_fork(struct task_struct *task, void *private)
 {
-	sched_move_task(task);
+	sched_move_task(task, true);
 }
 
 static int cpu_cgroup_can_attach(struct cgroup_taskset *tset)
@@ -8533,7 +8534,7 @@ static void cpu_cgroup_attach(struct cgroup_taskset *tset)
 	struct cgroup_subsys_state *css;
 
 	cgroup_taskset_for_each(task, css, tset)
-		sched_move_task(task);
+		sched_move_task(task, false);
 }
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
