@@ -149,7 +149,7 @@ int tcf_action_copy_stats(struct sk_buff *, struct tc_action *, int);
 #else /* CONFIG_NET_CLS_ACT */
 
 #define tc_no_actions(_exts) true
-#define tc_for_each_action(_a, _exts) while (0)
+#define tc_for_each_action(_a, _exts) while ((void)(_a), 0)
 
 #endif /* CONFIG_NET_CLS_ACT */
 #endif

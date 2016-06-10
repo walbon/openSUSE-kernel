@@ -423,105 +423,6 @@ const struct attribute_group *xenbus_dev_groups[] = {
 };
 EXPORT_SYMBOL_GPL(xenbus_dev_groups);
 
-static bool vbd_is_hd_name(const char *str)
-{
-	return strncmp(str, "hd", 2) == 0 && strlen(str) == 3;
-}
-
-/*
- * Generate a flag for udev to create also /dev/hd symlinks for xvd devices
- * The Xenlinux based frontend used the "dev" property from domU.cfg
- * to set the kernel device name. This was rejected for pvops, and as
- * a result the kernel name will always be forced to start with xvd.
- * The reason for hd/sd in config files was to provide combatibility
- * with old installers who only knew about hd and sd. In addition a
- * device named hd was an indicator for qemu to create an emulated
- * piix IDE controller for the emulated BIOS to boot from.  Starting
- * with Xen 4.3 qemu recognized also xvd and created an piix IDE
- * controller.
- * With the Xenlinux based frontend driver it was possible to have a
- * mix of hd and xvd device names. To catch such setup the following
- * rules try to make sure no overlap happens:
- *  only hd device names: create symlinks
- *  hd[a-d] and/or xvde+: create symlinks
- *  xvd[a-d]: never create symlinks even if there are also hd names
- *
- * These udev rules are needed to actually create the symlink:
- * # Somewhere in the middle of /usr/lib/udev/rules.d/60-persistent-storage.rules
- * KERNEL=="xvd*", ENV{DEVTYPE}=="disk",      IMPORT{program}="/bin/grep -w VBD_HD_SYMLINK /sys/%p/../../uevent"
- * KERNEL=="xvd*", ENV{DEVTYPE}=="partition", IMPORT{program}="/bin/grep -w VBD_HD_SYMLINK /sys/%p/../../../uevent"
- * KERNEL=="xvd*", ENV{DEVTYPE}=="disk",      ENV{VBD_HD_SYMLINK}=="?*" ,SYMLINK+="$env{VBD_HD_SYMLINK}"
- * KERNEL=="xvd*", ENV{DEVTYPE}=="partition", ENV{VBD_HD_SYMLINK}=="?*" ,SYMLINK+="$env{VBD_HD_SYMLINK}%n"
- */
-static enum vbd_hd_name_state xenbus_vbd_find_hd_name(const char *nodename, const char **dev_value)
-{
-	int err;
-	const char *be_path = NULL, *val = NULL;
-
-	err = xenbus_gather(XBT_NIL, nodename,
-			    "backend", NULL, &be_path,
-			    NULL);
-	if (err)
-		return VBD_HDNAME_ERR;
-
-	err = xenbus_gather(XBT_NIL, be_path,
-			    "dev", NULL, &val,
-			    NULL);
-	kfree(be_path);
-	if (err || !val)
-		return VBD_HDNAME_ERR;
-
-	/* hd? -> maybe */
-	if (vbd_is_hd_name(val)) {
-		*dev_value = val;
-		return VBD_HDNAME_HD;
-	}
-	if (strncmp(val, "xvd", 3) == 0) {
-		/* xvd?? -> maybe */
-		if (strlen(val) > 4)
-			return VBD_HDNAME_XVDZZ;
-		/* xvde+ -> maybe */
-		if (val[3] > 'd')
-			return VBD_HDNAME_XVDE;
-		return VBD_HDNAME_XVDA;
-	}
-	return VBD_HDNAME_UNHANDLED;
-}
-
-/* Set global bus state and per-device vdev string */
-static void xenbus_set_vbd_hd_name_state(struct xen_bus_type *bus,
-					 const char *nodename,
-					 const char **dev_value)
-{
-	/* No domU, no hd symlink for vbd devices */
-	if (xen_initial_domain()) {
-		bus->vbd_hd_names = VBD_HDNAME_HD_SYMLINK_NO;
-		return;
-	}
-	switch (xenbus_vbd_find_hd_name(nodename, dev_value)) {
-	case VBD_HDNAME_ERR:
-	case VBD_HDNAME_UNHANDLED:
-	default:
-		break;
-	case VBD_HDNAME_XVDA:
-		/* With xvd[a-d] there can be no hd symlink */
-		bus->vbd_hd_names = VBD_HDNAME_HD_SYMLINK_NO;
-		break;
-	case VBD_HDNAME_HD:
-	case VBD_HDNAME_XVDE:
-	case VBD_HDNAME_XVDZZ:
-		switch (bus->vbd_hd_names) {
-			case VBD_HDNAME_HD_SYMLINK_NO:
-				break;
-			case VBD_HDNAME_HD_SYMLINK_MAYBE:
-				break;
-			default:
-				bus->vbd_hd_names = VBD_HDNAME_HD_SYMLINK_MAYBE;
-				break;
-		}
-		break;
-	}
-}
 int xenbus_probe_node(struct xen_bus_type *bus,
 		      const char *type,
 		      const char *nodename)
@@ -531,7 +432,6 @@ int xenbus_probe_node(struct xen_bus_type *bus,
 	struct xenbus_device *xendev;
 	size_t stringlen;
 	char *tmpstring;
-	const char *hd_dev_value = NULL;
 
 	enum xenbus_state state = xenbus_read_driver_state(nodename);
 
@@ -541,19 +441,10 @@ int xenbus_probe_node(struct xen_bus_type *bus,
 		return 0;
 	}
 
-	if (strcmp(type, "vbd") == 0)
-	{
-		xenbus_set_vbd_hd_name_state(bus, nodename, &hd_dev_value);
-	}
-
 	stringlen = strlen(nodename) + 1 + strlen(type) + 1;
-	if (hd_dev_value)
-		stringlen += strlen(hd_dev_value) + 1;
 	xendev = kzalloc(sizeof(*xendev) + stringlen, GFP_KERNEL);
-	if (!xendev) {
-		kfree(hd_dev_value);
+	if (!xendev)
 		return -ENOMEM;
-	}
 
 	xendev->state = XenbusStateInitialising;
 
@@ -566,14 +457,6 @@ int xenbus_probe_node(struct xen_bus_type *bus,
 	tmpstring += strlen(tmpstring) + 1;
 	strcpy(tmpstring, type);
 	xendev->devicetype = tmpstring;
-
-	tmpstring += strlen(tmpstring) + 1;
-	if (hd_dev_value) {
-		strcpy(tmpstring, hd_dev_value);
-		xendev->vbd_hd_symlink = tmpstring;
-		kfree(hd_dev_value);
-	}
-
 	init_completion(&xendev->down);
 
 	xendev->dev.bus = &bus->bus;

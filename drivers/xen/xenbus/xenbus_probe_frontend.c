@@ -79,14 +79,8 @@ static int xenbus_uevent_frontend(struct device *_dev,
 				  struct kobj_uevent_env *env)
 {
 	struct xenbus_device *dev = to_xenbus_device(_dev);
-	struct xen_bus_type *bus =
-		container_of(dev->dev.bus, struct xen_bus_type, bus);
 
 	if (add_uevent_var(env, "MODALIAS=xen:%s", dev->devicetype))
-		return -ENOMEM;
-	if (dev->vbd_hd_symlink &&
-		bus->vbd_hd_names == VBD_HDNAME_HD_SYMLINK_MAYBE &&
-		add_uevent_var(env, "VBD_HD_SYMLINK=%s", dev->vbd_hd_symlink))
 		return -ENOMEM;
 
 	return 0;
