@@ -157,7 +157,6 @@ struct blkfront_info
 	unsigned int max_indirect_segments;
 	int is_ready;
 	struct blk_mq_tag_set tag_set;
-	const char *vdev;
 };
 
 static unsigned int nr_minors;
@@ -922,52 +921,6 @@ static int xen_translate_vdev(int vdevice, int *minor, unsigned int *offset)
 	return 0;
 }
 
-/* xlvbd sysfs attributes */
-static ssize_t xlvbd_attr_show(struct device *dev, char *page,
-			ssize_t (*callback)(struct blkfront_info *, char *))
-{
-	struct gendisk *disk = dev_to_disk(dev);
-	struct blkfront_info *info = disk->private_data;
-
-	return callback(info, page);
-}
-
-#define XLVBD_ATTR_RO(_name)						\
-static ssize_t xlvbd_attr_##_name##_show(struct blkfront_info *, char *);\
-static ssize_t xlvbd_attr_do_show_##_name(struct device *d,		\
-				struct device_attribute *attr, char *b)	\
-{									\
-	return xlvbd_attr_show(d, b, xlvbd_attr_##_name##_show);	\
-}									\
-static struct device_attribute xlvbd_attr_##_name =			\
-	__ATTR(_name, S_IRUGO, xlvbd_attr_do_show_##_name, NULL);
-
-
-static ssize_t xlvbd_attr_backend_dev_show(struct blkfront_info *info,
-					   char *buf)
-{
-	if (!info->vdev)
-		return 0;
-	return snprintf(buf, PAGE_SIZE, "%s\n", info->vdev);
-}
-
-XLVBD_ATTR_RO(backend_dev);
-
-static struct attribute *xlvbd_attrs[] = {
-	&xlvbd_attr_backend_dev.attr,
-	NULL,
-};
-
-static const struct attribute_group xlvbd_attribute_group = {
-	.name = "blkfront",
-	.attrs = xlvbd_attrs,
-};
-
-static const struct attribute_group *xlvbd_attribute_groups[] = {
-	&xlvbd_attribute_group,
-	NULL,
-};
-
 static char *encode_disk_name(char *ptr, unsigned int n)
 {
 	if (n >= 26)
@@ -1045,7 +998,6 @@ static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
 	gd->private_data = info;
 	gd->driverfs_dev = &(info->xbdev->dev);
 	set_capacity(gd, capacity);
-	disk_to_dev(gd)->groups = xlvbd_attribute_groups;
 
 	if (xlvbd_init_blk_queue(gd, sector_size, physical_sector_size,
 				 info->max_indirect_segments ? :
@@ -1607,26 +1559,6 @@ again:
 	return err;
 }
 
-/*
- * Generate a flag for udev to create also /dev/hd symlinks for xvd devices
- * The Xenlinux based frontend used the "dev" property from domU.cfg
- * to set the kernel device name. This was rejected for pvops, and as
- * a result the kernel name will always be forced to start with xvd.
- * The reason for hd/sd in config files was to provide combatibility
- * with old installers who only knew about hd and sd. In addition a
- * device named hd was an indicator for qemu to create an emulated
- * piix IDE controller for the emulated BIOS to boot from.  Starting
- * with Xen 4.3 qemu recognized also xvd and created an piix IDE
- * controller.
- */
-static void blkfront_gather_backend_dev(struct blkfront_info *info)
-{
-	const char *dev;
-
-	dev = xenbus_read(XBT_NIL, info->xbdev->otherend, "dev", NULL);
-	if (!IS_ERR(dev))
-		info->vdev = dev;
-}
 /**
  * Entry point to this code when a new device is created.  Allocate the basic
  * structures and the ring buffer for communication with the backend, and
@@ -1700,7 +1632,6 @@ static int blkfront_probe(struct xenbus_device *dev,
 	/* Front end dir is a number, which is used as the id. */
 	info->handle = simple_strtoul(strrchr(dev->nodename, '/')+1, NULL, 0);
 	dev_set_drvdata(&dev->dev, info);
-	blkfront_gather_backend_dev(info);
 
 	return 0;
 }
@@ -2316,7 +2247,6 @@ static void blkif_release(struct gendisk *disk, fmode_t mode)
 		dev_info(disk_to_dev(bdev->bd_disk), "releasing disk\n");
 		xlvbd_release_gendisk(info);
 		disk->private_data = NULL;
-		kfree(info->vdev);
 		kfree(info);
 	}
 
