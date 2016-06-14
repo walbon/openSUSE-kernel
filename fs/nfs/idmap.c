@@ -429,10 +429,13 @@ idmap_name_hash(struct idmap_hashtable* h, const char *name, size_t len)
 
 static char *get_ih_name(struct idmap_hashtable *h, struct idmap_hashent *he)
 {
-	int i = he - h->h_entries;
-	int p = (i * IDMAP_NAMESZ) / PAGE_SIZE;
-	i -= p * PAGE_SIZE;
-	return h->h_names[p] + i * IDMAP_NAMESZ;
+	unsigned int i = he - h->h_entries;
+	unsigned int offset = i * IDMAP_NAMESZ;
+	unsigned int p = offset >> PAGE_SHIFT;
+
+	offset &= (PAGE_SIZE - 1);
+
+	return h->h_names[p] + offset;
 }
 
 static struct idmap_hashent *
