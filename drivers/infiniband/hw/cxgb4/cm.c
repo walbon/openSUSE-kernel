@@ -2780,6 +2780,8 @@ int c4iw_create_listen(struct iw_cm_id *cm_id, int backlog)
 			err = c4iw_wait_for_reply(&ep->com.dev->rdev,
 						  &ep->com.wr_wait,
 						  0, 0, __func__);
+		else if (err > 0)
+			err = net_xmit_errno(err);
 	}
 	if (!err) {
 		cm_id->provider_data = ep;
