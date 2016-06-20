@@ -1460,7 +1460,8 @@ static void process_mpa_request(struct c4iw_ep *ep, struct sk_buff *skb)
 		__state_set(&ep->com, MPA_REQ_RCVD);
 
 		/* drive upcall */
-		mutex_lock(&ep->parent_ep->com.mutex);
+		mutex_lock_nested(&ep->parent_ep->com.mutex,
+				  SINGLE_DEPTH_NESTING);
 		if (ep->parent_ep->com.state != DEAD) {
 			if (connect_request_upcall(ep))
 				abort_connection(ep, skb, GFP_KERNEL);
@@ -2780,6 +2781,8 @@ int c4iw_create_listen(struct iw_cm_id *cm_id, int backlog)
 			err = c4iw_wait_for_reply(&ep->com.dev->rdev,
 						  &ep->com.wr_wait,
 						  0, 0, __func__);
+		else if (err > 0)
+			err = net_xmit_errno(err);
 	}
 	if (!err) {
 		cm_id->provider_data = ep;
