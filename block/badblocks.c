@@ -575,6 +575,8 @@ EXPORT_SYMBOL_GPL(devm_init_badblocks);
  */
 void badblocks_exit(struct badblocks *bb)
 {
+	if (!bb)
+		return;
 	if (bb->dev)
 		devm_kfree(bb->dev, bb->page);
 	else
