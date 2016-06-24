@@ -2,6 +2,7 @@
 
 #include <linux/uaccess.h>
 #include <linux/module.h>
+#include <asm/pat.h>
 #include <linux/mutex.h>
 #include <linux/init.h>
 
@@ -298,10 +299,13 @@ void __init mtrr_bp_init(void)
 		rdmsrl(MSR_K8_TOP_MEM2, tom2);
 		tom2 &= 0xffffff8000000ULL;
 	}
+
+	pat_init();
 }
 
 void mtrr_ap_init(void)
 {
+	pat_init();
 }
 
 static int __init mtrr_init(void)
