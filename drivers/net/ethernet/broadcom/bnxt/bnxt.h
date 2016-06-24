@@ -298,13 +298,14 @@ struct rx_tpa_start_cmp_ext {
 	#define RX_TPA_START_CMP_FLAGS2_L4_CS_CALC		(0x1 << 1)
 	#define RX_TPA_START_CMP_FLAGS2_T_IP_CS_CALC		(0x1 << 2)
 	#define RX_TPA_START_CMP_FLAGS2_T_L4_CS_CALC		(0x1 << 3)
+	#define RX_TPA_START_CMP_FLAGS2_IP_TYPE			(0x1 << 8)
 
 	__le32 rx_tpa_start_cmp_metadata;
 	__le32 rx_tpa_start_cmp_cfa_code_v2;
 	#define RX_TPA_START_CMP_V2				(0x1 << 0)
 	#define RX_TPA_START_CMP_CFA_CODE			(0xffff << 16)
 	 #define RX_TPA_START_CMPL_CFA_CODE_SHIFT		 16
-	__le32 rx_tpa_start_cmp_unused5;
+	__le32 rx_tpa_start_cmp_hdr_info;
 };
 
 struct rx_tpa_end_cmp {
@@ -425,10 +426,17 @@ struct rx_tpa_end_cmp_ext {
 
 #define MAX_TPA		64
 
+#if (BNXT_PAGE_SHIFT == 16)
+#define MAX_RX_PAGES	1
+#define MAX_RX_AGG_PAGES	4
+#define MAX_TX_PAGES	1
+#define MAX_CP_PAGES	8
+#else
 #define MAX_RX_PAGES	8
 #define MAX_RX_AGG_PAGES	32
 #define MAX_TX_PAGES	8
 #define MAX_CP_PAGES	64
+#endif
 
 #define RX_DESC_CNT (BNXT_PAGE_SIZE / sizeof(struct rx_bd))
 #define TX_DESC_CNT (BNXT_PAGE_SIZE / sizeof(struct tx_bd))
@@ -577,6 +585,19 @@ struct bnxt_tpa_info {
 	u32			metadata;
 	enum pkt_hash_types	hash_type;
 	u32			rss_hash;
+	u32			hdr_info;
+
+#define BNXT_TPA_L4_SIZE(hdr_info)	\
+	(((hdr_info) & 0xf8000000) ? ((hdr_info) >> 27) : 32)
+
+#define BNXT_TPA_INNER_L3_OFF(hdr_info)	\
+	(((hdr_info) >> 18) & 0x1ff)
+
+#define BNXT_TPA_INNER_L2_OFF(hdr_info)	\
+	(((hdr_info) >> 9) & 0x1ff)
+
+#define BNXT_TPA_OUTER_L3_OFF(hdr_info)	\
+	((hdr_info) & 0x1ff)
 };
 
 struct bnxt_rx_ring_info {
@@ -828,9 +849,11 @@ struct bnxt_link_info {
 #define BNXT_LINK_SPEED_MSK_25GB PORT_PHY_QCFG_RESP_SUPPORT_SPEEDS_25GB
 #define BNXT_LINK_SPEED_MSK_40GB PORT_PHY_QCFG_RESP_SUPPORT_SPEEDS_40GB
 #define BNXT_LINK_SPEED_MSK_50GB PORT_PHY_QCFG_RESP_SUPPORT_SPEEDS_50GB
+	u16			support_auto_speeds;
 	u16			lp_auto_link_speeds;
 	u16			force_link_speed;
 	u32			preemphasis;
+	u8			module_status;
 
 	/* copy of requested setting from ethtool cmd */
 	u8			autoneg;
@@ -842,7 +865,6 @@ struct bnxt_link_info {
 	u32			advertising;
 	bool			force_link_chng;
 
-	u8			last_port_module_event;
 	/* a copy of phy_qcfg output used to report link
 	 * info to VF
 	 */
@@ -866,6 +888,44 @@ struct bnxt {
 	void __iomem		*bar2;
 
 	u32			reg_base;
+	u16			chip_num;
+#define CHIP_NUM_57301		0x16c8
+#define CHIP_NUM_57302		0x16c9
+#define CHIP_NUM_57304		0x16ca
+#define CHIP_NUM_57402		0x16d0
+#define CHIP_NUM_57404		0x16d1
+#define CHIP_NUM_57406		0x16d2
+
+#define CHIP_NUM_57311		0x16ce
+#define CHIP_NUM_57312		0x16cf
+#define CHIP_NUM_57314		0x16df
+#define CHIP_NUM_57412		0x16d6
+#define CHIP_NUM_57414		0x16d7
+#define CHIP_NUM_57416		0x16d8
+#define CHIP_NUM_57417		0x16d9
+
+#define BNXT_CHIP_NUM_5730X(chip_num)		\
+	((chip_num) >= CHIP_NUM_57301 &&	\
+	 (chip_num) <= CHIP_NUM_57304)
+
+#define BNXT_CHIP_NUM_5740X(chip_num)		\
+	((chip_num) >= CHIP_NUM_57402 &&	\
+	 (chip_num) <= CHIP_NUM_57406)
+
+#define BNXT_CHIP_NUM_5731X(chip_num)		\
+	((chip_num) == CHIP_NUM_57311 ||	\
+	 (chip_num) == CHIP_NUM_57312 ||	\
+	 (chip_num) == CHIP_NUM_57314)
+
+#define BNXT_CHIP_NUM_5741X(chip_num)		\
+	((chip_num) >= CHIP_NUM_57412 &&	\
+	 (chip_num) <= CHIP_NUM_57417)
+
+#define BNXT_CHIP_NUM_57X0X(chip_num)		\
+	(BNXT_CHIP_NUM_5730X(chip_num) || BNXT_CHIP_NUM_5740X(chip_num))
+
+#define BNXT_CHIP_NUM_57X1X(chip_num)		\
+	(BNXT_CHIP_NUM_5731X(chip_num) || BNXT_CHIP_NUM_5741X(chip_num))
 
 	struct net_device	*dev;
 	struct pci_dev		*pdev;
@@ -900,11 +960,16 @@ struct bnxt {
 
 #define BNXT_PF(bp)		(!((bp)->flags & BNXT_FLAG_VF))
 #define BNXT_VF(bp)		((bp)->flags & BNXT_FLAG_VF)
+#define BNXT_NPAR(bp)		((bp)->port_partition_type)
+#define BNXT_SINGLE_PF(bp)	(BNXT_PF(bp) && !BNXT_NPAR(bp))
 
 	struct bnxt_napi	**bnapi;
 
 	struct bnxt_rx_ring_info	*rx_ring;
 	struct bnxt_tx_ring_info	*tx_ring;
+
+	struct sk_buff *	(*gro_func)(struct bnxt_tpa_info *, int, int,
+					    struct sk_buff *);
 
 	u32			rx_buf_size;
 	u32			rx_buf_use_size;	/* useable size */
@@ -986,6 +1051,7 @@ struct bnxt {
 	__le16			vxlan_fw_dst_port_id;
 	u8			nge_port_cnt;
 	__le16			nge_fw_dst_port_id;
+	u8			port_partition_type;
 
 	u16			rx_coal_ticks;
 	u16			rx_coal_ticks_irq;
@@ -1011,6 +1077,7 @@ struct bnxt {
 #define BNXT_HWRM_PF_UNLOAD_SP_EVENT	8
 #define BNXT_PERIODIC_STATS_SP_EVENT	9
 #define BNXT_HWRM_PORT_MODULE_SP_EVENT	10
+#define BNXT_RESET_TASK_SILENT_SP_EVENT	11
 
 	struct bnxt_pf_info	pf;
 #ifdef CONFIG_BNXT_SRIOV
@@ -1122,6 +1189,16 @@ static inline void bnxt_disable_poll(struct bnxt_napi *bnapi)
 }
 
 #endif
+
+#define I2C_DEV_ADDR_A0				0xa0
+#define I2C_DEV_ADDR_A2				0xa2
+#define SFP_EEPROM_SFF_8472_COMP_ADDR		0x5e
+#define SFP_EEPROM_SFF_8472_COMP_SIZE		1
+#define SFF_MODULE_ID_SFP			0x3
+#define SFF_MODULE_ID_QSFP			0xc
+#define SFF_MODULE_ID_QSFP_PLUS			0xd
+#define SFF_MODULE_ID_QSFP28			0x11
+#define BNXT_MAX_PHY_I2C_RESP_SIZE		64
 
 void bnxt_set_ring_params(struct bnxt *);
 void bnxt_hwrm_cmd_hdr_init(struct bnxt *, void *, u16, u16, u16);
