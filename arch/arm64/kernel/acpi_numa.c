@@ -29,6 +29,7 @@
 #include <asm/numa.h>
 
 static int cpus_in_srat;
+int acpi_numa __initdata;
 
 struct __node_cpu_hwid {
 	u32 node_id;    /* logical node containing this CPU */
@@ -37,6 +38,17 @@ struct __node_cpu_hwid {
 
 static struct __node_cpu_hwid early_node_cpu_hwid[NR_CPUS] = {
 [0 ... NR_CPUS - 1] = {NUMA_NO_NODE, PHYS_CPUID_INVALID} };
+
+void __init bad_srat(void)
+{
+	pr_err("SRAT: SRAT not used.\n");
+	acpi_numa = -1;
+}
+
+int __init srat_disabled(void)
+{
+	return acpi_numa < 0;
+}
 
 /*
  * Callback for SLIT parsing.  pxm_to_node() returns NUMA_NO_NODE for
