@@ -68,7 +68,7 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 	if ((ma->flags & ACPI_SRAT_MEM_ENABLED) == 0)
 		goto out_err;
 	hotpluggable = ma->flags & ACPI_SRAT_MEM_HOT_PLUGGABLE;
-	if (hotpluggable && !save_add_info())
+	if (hotpluggable && !IS_ENABLED(CONFIG_MEMORY_HOTPLUG))
 		goto out_err;
 
 	start = ma->base_address;
@@ -77,7 +77,7 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 	if (acpi_srat_revision <= 1)
 		pxm &= 0xff;
 
-	node = setup_node(pxm);
+	node = acpi_map_pxm_to_node(pxm);
 	if (node == NUMA_NO_NODE || node >= MAX_NUMNODES) {
 		pr_err("SRAT: Too many proximity domains.\n");
 		goto out_err_bad_srat;
@@ -107,7 +107,7 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 out_err_bad_srat:
 	bad_srat();
 out_err:
-	return -1;
+	return -EINVAL;
 }
 
 /*
