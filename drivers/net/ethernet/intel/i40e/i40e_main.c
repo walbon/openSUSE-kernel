@@ -5007,7 +5007,6 @@ static void i40e_dcb_reconfigure(struct i40e_pf *pf)
 			if (pf->vsi[v]->netdev)
 				i40e_dcbnl_set_all(pf->vsi[v]);
 		}
-		i40e_notify_client_of_l2_param_changes(pf->vsi[v]);
 	}
 }
 
@@ -5771,6 +5770,8 @@ static int i40e_handle_lldp_event(struct i40e_pf *pf,
 		i40e_service_event_schedule(pf);
 	} else {
 		i40e_pf_unquiesce_all_vsi(pf);
+		/* Notify the client for the DCB changes */
+		i40e_notify_client_of_l2_param_changes(pf->vsi[pf->lan_vsi]);
 	}
 
 exit:
