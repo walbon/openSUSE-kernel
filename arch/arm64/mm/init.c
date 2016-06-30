@@ -228,6 +228,7 @@ void __init bootmem_init(void)
 	zone_sizes_init(min, max);
 
 	high_memory = __va((max << PAGE_SHIFT) - 1) + 1;
+	memblock_dump_all();
 }
 
 #ifndef CONFIG_SPARSEMEM_VMEMMAP
