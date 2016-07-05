@@ -2192,11 +2192,6 @@ static int vgic_ioaddr_assign(struct kvm *kvm, phys_addr_t *ioaddr,
 	return ret;
 }
 
-static u64 vgic_get_vcpu_base(void)
-{
-	return vgic->vcpu_base;
-}
-
 /**
  * kvm_vgic_addr - set or get vgic VM base addresses
  * @kvm:   pointer to the vm struct
@@ -2232,13 +2227,6 @@ int kvm_vgic_addr(struct kvm *kvm, unsigned long type, u64 *addr, bool write)
 		block_size = KVM_VGIC_V2_CPU_SIZE;
 		alignment = SZ_4K;
 		break;
-	case KVM_VGIC_V2_PAGE_OFFSET:
-		if (write) {
-			r = -ENODEV;
-		} else {
-			*addr = vgic_get_vcpu_base() & ~PAGE_MASK;
-		}
-		goto out;
 #ifdef CONFIG_KVM_ARM_VGIC_V3
 	case KVM_VGIC_V3_ADDR_TYPE_DIST:
 		type_needed = KVM_DEV_TYPE_ARM_VGIC_V3;
