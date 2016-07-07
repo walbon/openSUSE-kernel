@@ -121,6 +121,9 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 	if (!old_mm)
 		return 0;
 	mm->context.vdso = old_mm->context.vdso;
+#ifdef CONFIG_X86_64
+	mm->context.ia32_compat = old_mm->context.ia32_compat;
+#endif
 
 	mutex_lock(&old_mm->context.lock);
 	old_ldt = old_mm->context.ldt;
