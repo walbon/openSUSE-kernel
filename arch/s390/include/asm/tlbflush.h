@@ -79,8 +79,7 @@ static inline void __tlb_flush_mm(struct mm_struct * mm)
 	 * only ran on the local cpu.
 	 */
 	if (MACHINE_HAS_IDTE)
-		__tlb_flush_idte((unsigned long) mm->pgd |
-				 mm->context.asce_bits);
+		__tlb_flush_idte(mm->context.asce);
 	else
 		__tlb_flush_full(mm);
 }
