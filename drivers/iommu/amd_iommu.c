@@ -375,7 +375,7 @@ static void init_unity_mappings_for_device(struct device *dev,
 	int devid;
 
 	devid = get_device_id(dev);
-	if (IS_ERR_VALUE(devid))
+	if (devid < 0)
 		return;
 
 	list_for_each_entry(e, &amd_iommu_unity_map, list) {
@@ -397,7 +397,7 @@ static bool check_device(struct device *dev)
 		return false;
 
 	devid = get_device_id(dev);
-	if (IS_ERR_VALUE(devid))
+	if (devid < 0)
 		return false;
 
 	/* Out of our scope? */
@@ -440,7 +440,7 @@ static int iommu_init_device(struct device *dev)
 		return 0;
 
 	devid = get_device_id(dev);
-	if (IS_ERR_VALUE(devid))
+	if (devid < 0)
 		return devid;
 
 	dev_data = find_dev_data(devid);
@@ -470,7 +470,7 @@ static void iommu_ignore_device(struct device *dev)
 	int devid;
 
 	devid = get_device_id(dev);
-	if (IS_ERR_VALUE(devid))
+	if (devid < 0)
 		return;
 
 	alias = get_alias(dev);
@@ -488,7 +488,7 @@ static void iommu_uninit_device(struct device *dev)
 	struct iommu_dev_data *dev_data;
 
 	devid = get_device_id(dev);
-	if (IS_ERR_VALUE(devid))
+	if (devid < 0)
 		return;
 
 	dev_data = search_dev_data(devid);
@@ -2330,7 +2330,7 @@ static int amd_iommu_add_device(struct device *dev)
 		return 0;
 
 	devid = get_device_id(dev);
-	if (IS_ERR_VALUE(devid))
+	if (devid < 0)
 		return devid;
 
 	iommu = amd_iommu_rlookup_table[devid];
@@ -2376,7 +2376,7 @@ static void amd_iommu_remove_device(struct device *dev)
 		return;
 
 	devid = get_device_id(dev);
-	if (IS_ERR_VALUE(devid))
+	if (devid < 0)
 		return;
 
 	iommu = amd_iommu_rlookup_table[devid];
@@ -3087,9 +3087,7 @@ static struct iommu_domain *amd_iommu_domain_alloc(unsigned type)
 static void amd_iommu_domain_free(struct iommu_domain *dom)
 {
 	struct protection_domain *domain;
-
-	if (!dom)
-		return;
+	struct dma_ops_domain *dma_dom;
 
 	domain = to_pdomain(dom);
 
@@ -3098,13 +3096,24 @@ static void amd_iommu_domain_free(struct iommu_domain *dom)
 
 	BUG_ON(domain->dev_cnt != 0);
 
-	if (domain->mode != PAGE_MODE_NONE)
-		free_pagetable(domain);
+	if (!dom)
+		return;
 
-	if (domain->flags & PD_IOMMUV2_MASK)
-		free_gcr3_table(domain);
+	switch (dom->type) {
+	case IOMMU_DOMAIN_DMA:
+		dma_dom = domain->priv;
+		dma_ops_domain_free(dma_dom);
+		break;
+	default:
+		if (domain->mode != PAGE_MODE_NONE)
+			free_pagetable(domain);
 
-	protection_domain_free(domain);
+		if (domain->flags & PD_IOMMUV2_MASK)
+			free_gcr3_table(domain);
+
+		protection_domain_free(domain);
+		break;
+	}
 }
 
 static void amd_iommu_detach_device(struct iommu_domain *dom,
@@ -3118,7 +3127,7 @@ static void amd_iommu_detach_device(struct iommu_domain *dom,
 		return;
 
 	devid = get_device_id(dev);
-	if (IS_ERR_VALUE(devid))
+	if (devid < 0)
 		return;
 
 	if (dev_data->domain != NULL)
@@ -3240,7 +3249,7 @@ static void amd_iommu_get_dm_regions(struct device *dev,
 	int devid;
 
 	devid = get_device_id(dev);
-	if (IS_ERR_VALUE(devid))
+	if (devid < 0)
 		return;
 
 	list_for_each_entry(entry, &amd_iommu_unity_map, list) {
@@ -3943,7 +3952,7 @@ static struct irq_domain *get_irq_domain(struct irq_alloc_info *info)
 	case X86_IRQ_ALLOC_TYPE_MSI:
 	case X86_IRQ_ALLOC_TYPE_MSIX:
 		devid = get_device_id(&info->msi_dev->dev);
-		if (IS_ERR_VALUE(devid))
+		if (devid < 0)
 			return NULL;
 
 		if (devid >= 0) {
