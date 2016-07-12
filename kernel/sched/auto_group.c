@@ -143,7 +143,7 @@ autogroup_move_group(struct task_struct *p, struct autogroup *ag)
 		goto out;
 
 	for_each_thread(p, t)
-		sched_move_task(t, false);
+		sched_move_task(t);
 out:
 	unlock_task_sighand(p, &flags);
 	autogroup_kref_put(prev);
