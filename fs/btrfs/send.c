@@ -5601,6 +5601,15 @@ static int changed_ref(struct send_ctx *sctx,
 {
 	int ret = 0;
 
+	if (sctx->cur_ino != sctx->cmp_key->objectid)
+		btrfs_err(sctx->send_root->fs_info,
+			  "unexpected ref for different inode, current inode is %llu, found inode is %llu, send root %llu, parent root %llu, result %d",
+			  sctx->cur_ino, sctx->cmp_key->objectid,
+			  sctx->send_root->root_key.objectid,
+			  sctx->parent_root ?
+			  sctx->parent_root->root_key.objectid : 0,
+			  result);
+
 	BUG_ON(sctx->cur_ino != sctx->cmp_key->objectid);
 
 	if (!sctx->cur_inode_new_gen &&
@@ -5626,6 +5635,15 @@ static int changed_xattr(struct send_ctx *sctx,
 {
 	int ret = 0;
 
+	if (sctx->cur_ino != sctx->cmp_key->objectid)
+		btrfs_err(sctx->send_root->fs_info,
+			  "unexpected xattr for different inode, current inode is %llu, found inode is %llu, send root %llu, parent root %llu, result %d",
+			  sctx->cur_ino, sctx->cmp_key->objectid,
+			  sctx->send_root->root_key.objectid,
+			  sctx->parent_root ?
+			  sctx->parent_root->root_key.objectid : 0,
+			  result);
+
 	BUG_ON(sctx->cur_ino != sctx->cmp_key->objectid);
 
 	if (!sctx->cur_inode_new_gen && !sctx->cur_inode_deleted) {
@@ -5649,6 +5667,15 @@ static int changed_extent(struct send_ctx *sctx,
 			  enum btrfs_compare_tree_result result)
 {
 	int ret = 0;
+
+	if (sctx->cur_ino != sctx->cmp_key->objectid)
+		btrfs_err(sctx->send_root->fs_info,
+			  "unexpected extent for different inode, current inode is %llu, found inode is %llu, send root %llu, parent root %llu, result %d",
+			  sctx->cur_ino, sctx->cmp_key->objectid,
+			  sctx->send_root->root_key.objectid,
+			  sctx->parent_root ?
+			  sctx->parent_root->root_key.objectid : 0,
+			  result);
 
 	BUG_ON(sctx->cur_ino != sctx->cmp_key->objectid);
 
