@@ -19,11 +19,13 @@ static inline int init_new_context(struct task_struct *tsk,
 	atomic_set(&mm->context.attach_count, 0);
 	mm->context.flush_mm = 0;
 	switch (mm->context.asce_limit) {
+#ifdef CONFIG_64BIT
 	case 1UL << 42:
 		/*
 		 * forked 3-level task, fall through to set new asce with new
 		 * mm->pgd
 		 */
+#endif
 	case 0:
 		/* context created by exec, set asce limit to 4TB */
 		mm->context.asce = __pa(mm->pgd) | _ASCE_TABLE_LENGTH |
@@ -33,15 +35,17 @@ static inline int init_new_context(struct task_struct *tsk,
 #endif
 		mm->context.asce_limit = STACK_TOP_MAX;
 		break;
+#ifdef CONFIG_64BIT
 	case 1UL << 53:
 		/* forked 4-level task, set new asce with new mm->pgd */
 		mm->context.asce = __pa(mm->pgd) | _ASCE_TABLE_LENGTH |
 				   _ASCE_USER_BITS | _ASCE_TYPE_REGION2;
 		break;
+#endif
 	case 1UL << 31:
 		/* forked 2-level compat task, set new asce with new mm->pgd */
 		mm->context.asce = __pa(mm->pgd) | _ASCE_TABLE_LENGTH |
-				   _ASCE_USER_BITS | _ASCE_TYPE_SEGMENT;
+				   _ASCE_USER_BITS;
 	}
 	if (current->mm && current->mm->context.alloc_pgste) {
 		/*
