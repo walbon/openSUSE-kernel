@@ -1152,6 +1152,9 @@ struct sched_class {
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	void (*task_move_group) (struct task_struct *p, int on_rq);
 #endif
+#ifndef __GENKSYMS__
+	void (*update_curr) (struct rq *rq);
+#endif
 };
 
 struct load_weight {
