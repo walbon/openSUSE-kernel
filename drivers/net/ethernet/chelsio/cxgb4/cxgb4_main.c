@@ -168,7 +168,8 @@ MODULE_PARM_DESC(force_init, "Forcibly become Master PF and initialize adapter,"
 static int dflt_msg_enable = DFLT_MSG_ENABLE;
 
 module_param(dflt_msg_enable, int, 0644);
-MODULE_PARM_DESC(dflt_msg_enable, "Chelsio T4 default message enable bitmap");
+MODULE_PARM_DESC(dflt_msg_enable, "Chelsio T4 default message enable bitmap, "
+		 "deprecated parameter");
 
 /*
  * The driver uses the best interrupt scheme available on a platform in the
@@ -430,11 +431,8 @@ static int set_rxmode(struct net_device *dev, int mtu, bool sleep_ok)
 	struct port_info *pi = netdev_priv(dev);
 	struct adapter *adapter = pi->adapter;
 
-	if (!(dev->flags & IFF_PROMISC)) {
-		__dev_uc_sync(dev, cxgb4_mac_sync, cxgb4_mac_unsync);
-		if (!(dev->flags & IFF_ALLMULTI))
-			__dev_mc_sync(dev, cxgb4_mac_sync, cxgb4_mac_unsync);
-	}
+	__dev_uc_sync(dev, cxgb4_mac_sync, cxgb4_mac_unsync);
+	__dev_mc_sync(dev, cxgb4_mac_sync, cxgb4_mac_unsync);
 
 	return t4_set_rxmode(adapter, adapter->mbox, pi->viid, mtu,
 			     (dev->flags & IFF_PROMISC) ? 1 : 0,
