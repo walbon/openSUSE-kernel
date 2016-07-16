@@ -78,10 +78,12 @@ enum fip_state {
  * The mode is the state that is to be entered after link up.
  * It must not change after fcoe_ctlr_init() sets it.
  */
-#define FIP_MODE_AUTO		FIP_ST_AUTO
-#define FIP_MODE_NON_FIP	FIP_ST_NON_FIP
-#define FIP_MODE_FABRIC		FIP_ST_ENABLED
-#define FIP_MODE_VN2VN		FIP_ST_VNMP_START
+enum fip_mode {
+	FIP_MODE_AUTO = FIP_ST_AUTO,
+	FIP_MODE_NON_FIP,
+	FIP_MODE_FABRIC,
+	FIP_MODE_VN2VN,
+};
 
 /**
  * struct fcoe_ctlr - FCoE Controller and FIP state
@@ -108,8 +110,10 @@ enum fip_state {
  * @flogi_req_send: send of FLOGI requested
  * @flogi_count:   number of FLOGI attempts in AUTO mode.
  * @map_dest:	   use the FC_MAP mode for destination MAC addresses.
+ * @fip_resp:	   start FIP VLAN discovery responder
  * @spma:	   supports SPMA server-provided MACs mode
  * @probe_tries:   number of FC_IDs probed
+ * @priority:      DCBx FCoE APP priority
  * @dest_addr:	   MAC address of the selected FC forwarder.
  * @ctl_src_addr:  the native MAC address of our local port.
  * @send:	   LLD-supplied function to handle sending FIP Ethernet frames
@@ -124,7 +128,7 @@ enum fip_state {
  */
 struct fcoe_ctlr {
 	enum fip_state state;
-	enum fip_state mode;
+	enum fip_mode mode;
 	struct fc_lport *lp;
 	struct fcoe_fcf *sel_fcf;
 	struct list_head fcfs;
@@ -147,7 +151,8 @@ struct fcoe_ctlr {
 	u16 flogi_oxid;
 	u8 flogi_req_send;
 	u8 flogi_count;
-	u8 map_dest;
+	bool map_dest;
+	bool fip_resp;
 	u8 spma;
 	u8 probe_tries;
 	u8 priority;
@@ -311,7 +316,7 @@ struct fcoe_transport {
 	struct list_head list;
 	bool (*match) (struct net_device *device);
 	int (*alloc) (struct net_device *device);
-	int (*create) (struct net_device *device, enum fip_state fip_mode);
+	int (*create) (struct net_device *device, enum fip_mode fip_mode);
 	int (*destroy) (struct net_device *device);
 	int (*enable) (struct net_device *device);
 	int (*disable) (struct net_device *device);

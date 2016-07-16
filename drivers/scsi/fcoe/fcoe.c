@@ -107,7 +107,7 @@ static int fcoe_dcb_app_notification(struct notifier_block *notifier,
 				     ulong event, void *ptr);
 
 static bool fcoe_match(struct net_device *netdev);
-static int fcoe_create(struct net_device *netdev, enum fip_state fip_mode);
+static int fcoe_create(struct net_device *netdev, enum fip_mode fip_mode);
 static int fcoe_destroy(struct net_device *netdev);
 static int fcoe_enable(struct net_device *netdev);
 static int fcoe_disable(struct net_device *netdev);
@@ -115,7 +115,7 @@ static int fcoe_disable(struct net_device *netdev);
 /* fcoe_syfs control interface handlers */
 static int fcoe_ctlr_alloc(struct net_device *netdev);
 static int fcoe_ctlr_enabled(struct fcoe_ctlr_device *cdev);
-
+static void fcoe_ctlr_mode(struct fcoe_ctlr_device *ctlr_dev);
 
 static struct fc_seq *fcoe_elsct_send(struct fc_lport *,
 				      u32 did, struct fc_frame *,
@@ -146,8 +146,9 @@ static void fcoe_set_vport_symbolic_name(struct fc_vport *);
 static void fcoe_set_port_id(struct fc_lport *, u32, struct fc_frame *);
 static void fcoe_fcf_get_vlan_id(struct fcoe_fcf_device *);
 
+
 static struct fcoe_sysfs_function_template fcoe_sysfs_templ = {
-	.set_fcoe_ctlr_mode = fcoe_ctlr_set_fip_mode,
+	.set_fcoe_ctlr_mode = fcoe_ctlr_mode,
 	.set_fcoe_ctlr_enabled = fcoe_ctlr_enabled,
 	.get_fcoe_ctlr_link_fail = fcoe_ctlr_get_lesb,
 	.get_fcoe_ctlr_vlink_fail = fcoe_ctlr_get_lesb,
@@ -672,6 +673,12 @@ static int fcoe_netdev_config(struct fc_lport *lport, struct net_device *netdev)
 	fcoe = port->priv;
 	ctlr = fcoe_to_ctlr(fcoe);
 
+	/* Figure out the VLAN ID, if any */
+	if (netdev->priv_flags & IFF_802_1Q_VLAN)
+		lport->vlan = vlan_dev_vlan_id(netdev);
+	else
+		lport->vlan = 0;
+
 	/*
 	 * Determine max frame size based on underlying device and optional
 	 * user-configured limit.  If the MFS is too low, fcoe_link_ok()
@@ -769,9 +776,6 @@ static void fcoe_fdmi_info(struct fc_lport *lport, struct net_device *netdev)
 	port = lport_priv(lport);
 	fcoe = port->priv;
 	realdev = fcoe->realdev;
-
-	if (!realdev)
-		return;
 
 	/* No FDMI state m/c for NPIV ports */
 	if (lport->vport)
@@ -1978,6 +1982,32 @@ static int fcoe_ctlr_enabled(struct fcoe_ctlr_device *cdev)
 }
 
 /**
+ * fcoe_ctlr_mode() - Switch FIP mode
+ * @cdev: The FCoE Controller that is being modified
+ *
+ * When the FIP mode has been changed we need to update
+ * the multicast addresses to ensure we get the correct
+ * frames.
+ */
+static void fcoe_ctlr_mode(struct fcoe_ctlr_device *ctlr_dev)
+{
+	struct fcoe_ctlr *ctlr = fcoe_ctlr_device_priv(ctlr_dev);
+	struct fcoe_interface *fcoe = fcoe_ctlr_priv(ctlr);
+
+	if (ctlr_dev->mode == FIP_CONN_TYPE_VN2VN &&
+	    ctlr->mode != FIP_MODE_VN2VN) {
+		dev_mc_del(fcoe->netdev, FIP_ALL_ENODE_MACS);
+		dev_mc_add(fcoe->netdev, FIP_ALL_VN2VN_MACS);
+		dev_mc_add(fcoe->netdev, FIP_ALL_P2P_MACS);
+	} else if (ctlr->mode != FIP_MODE_FABRIC) {
+		dev_mc_del(fcoe->netdev, FIP_ALL_VN2VN_MACS);
+		dev_mc_del(fcoe->netdev, FIP_ALL_P2P_MACS);
+		dev_mc_add(fcoe->netdev, FIP_ALL_ENODE_MACS);
+	}
+	fcoe_ctlr_set_fip_mode(ctlr_dev);
+}
+
+/**
  * fcoe_destroy() - Destroy a FCoE interface
  * @netdev  : The net_device object the Ethernet interface to create on
  *
@@ -2132,7 +2162,7 @@ enum fcoe_create_link_state {
  * consolidation of code can be done when that interface is
  * removed.
  */
-static int _fcoe_create(struct net_device *netdev, enum fip_state fip_mode,
+static int _fcoe_create(struct net_device *netdev, enum fip_mode fip_mode,
 			enum fcoe_create_link_state link_state)
 {
 	int rc = 0;
@@ -2221,7 +2251,7 @@ out:
  *
  * Returns: 0 for success
  */
-static int fcoe_create(struct net_device *netdev, enum fip_state fip_mode)
+static int fcoe_create(struct net_device *netdev, enum fip_mode fip_mode)
 {
 	return _fcoe_create(netdev, fip_mode, FCOE_CREATE_LINK_UP);
 }
