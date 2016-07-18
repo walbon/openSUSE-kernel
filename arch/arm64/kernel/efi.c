@@ -217,9 +217,14 @@ static __init void reserve_regions(void)
 #ifdef CONFIG_PCI
 static bool efi_pci_overlaps_efifb(struct pci_bar_update_info *update_info)
 {
+	u64 lfb_base = screen_info.lfb_base;
+
+	if (screen_info.capabilities & VIDEO_CAPABILITY_64BIT_BASE)
+		lfb_base |= (u64)screen_info.ext_lfb_base << 32;
+
 	/* is the screen_info frame buffer inside the pci BAR? */
-	if (screen_info.lfb_base >= update_info->old_start &&
-	    (screen_info.lfb_base + screen_info.lfb_size) <=
+	if (lfb_base >= update_info->old_start &&
+	    (lfb_base + screen_info.lfb_size) <=
 	     (update_info->old_start + update_info->size))
 		return true;
 
@@ -237,7 +242,21 @@ static int efi_pci_notifier(struct notifier_block *self,
 	 */
 	if (efi_pci_overlaps_efifb(update_info)) {
 		u64 diff = (update_info->new_start - update_info->old_start);
-		screen_info.lfb_base += diff;
+		u32 ext_lfb_base = screen_info.ext_lfb_base;
+		u64 new_base = screen_info.lfb_base;
+
+		if (screen_info.capabilities & VIDEO_CAPABILITY_64BIT_BASE)
+			new_base += (u64)ext_lfb_base << 32;
+
+		new_base += diff;
+
+		screen_info.lfb_base = new_base;
+
+		ext_lfb_base = new_base >> 32;
+		if (ext_lfb_base) {
+			screen_info.capabilities |= VIDEO_CAPABILITY_64BIT_BASE;
+			screen_info.ext_lfb_base = ext_lfb_base;
+		}
 	}
 
 	return NOTIFY_OK;
