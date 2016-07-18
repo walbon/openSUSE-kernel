@@ -202,7 +202,7 @@ static __init void reserve_regions(void)
 			early_init_dt_add_memory_arch(paddr, size);
 
 		if (is_reserve_region(md)) {
-			memblock_reserve(paddr, size);
+			memblock_mark_nomap(paddr, size);
 			if (efi_enabled(EFI_DBG))
 				pr_cont("*");
 		}
@@ -260,8 +260,6 @@ void __init efi_init_fdt(void *fdt)
 	uefi_debug = params.verbose;
 	efi_system_table = params.system_table;
 
-	memblock_reserve(params.mmap & PAGE_MASK,
-			 PAGE_ALIGN(params.mmap_size + (params.mmap & ~PAGE_MASK)));
 	memmap.phys_map = params.mmap;
 	memmap.map = early_memremap(params.mmap, params.mmap_size);
 	if (memmap.map == NULL) {
@@ -281,6 +279,9 @@ void __init efi_init_fdt(void *fdt)
 
 	reserve_regions();
 	early_memunmap(memmap.map, params.mmap_size);
+	memblock_mark_nomap(params.mmap & PAGE_MASK,
+			    PAGE_ALIGN(params.mmap_size +
+				       (params.mmap & ~PAGE_MASK)));
 
 	if (screen_info.orig_video_isVGA == VIDEO_TYPE_EFI) {
 		pci_notify_on_update_resource(&efi_pci_notifier_block);
