@@ -245,7 +245,8 @@ xfs_end_io(
 	 * We might have to update the on-disk file size after extending
 	 * writes.
 	 */
-	xfs_setfilesize(ioend);
+	if (ioend->io_type != IO_DIRECT || xfs_ioend_is_append(ioend))
+		xfs_setfilesize(ioend);
 
 done:
 	if (ioend->io_iocb)
