@@ -1665,11 +1665,6 @@ translate_compat_table(struct net *net,
 	if (ret)
 		goto free_newinfo;
 
-	/* And one copy for every other CPU */
-	for_each_possible_cpu(i)
-		if (newinfo->entries[i] && newinfo->entries[i] != entry1)
-			memcpy(newinfo->entries[i], entry1, newinfo->size);
-
 	*pinfo = newinfo;
 	*pentry0 = entry1;
 	xt_free_table_info(info);
