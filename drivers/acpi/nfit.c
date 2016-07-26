@@ -1185,11 +1185,11 @@ static int acpi_nfit_add_dimm(struct acpi_nfit_desc *acpi_desc,
 
 	/*
 	 * Until standardization materializes we need to consider several
-	 * different command sets.  Note, that checking for zero functions
-	 * tells us if any commands might be reachable through this uuid.
+	 * different command sets.  Note, that checking for function0 (bit0)
+	 * tells us if any commands are reachable through this uuid.
 	 */
 	for (i = NVDIMM_FAMILY_INTEL; i <= NVDIMM_FAMILY_MSFT; i++)
-		if (acpi_check_dsm(adev_dimm->handle, to_nfit_uuid(i), 1, 0))
+		if (acpi_check_dsm(adev_dimm->handle, to_nfit_uuid(i), 1, 1))
 			break;
 
 	/* limit the supported commands to those that are publicly documented */
@@ -1207,9 +1207,10 @@ static int acpi_nfit_add_dimm(struct acpi_nfit_desc *acpi_desc,
 	} else if (nfit_mem->family == NVDIMM_FAMILY_MSFT)
 		dsm_mask = 0xffffffff;
 	else {
-		dev_err(dev, "unknown dimm command family\n");
+		dev_dbg(dev, "unknown dimm command family\n");
 		nfit_mem->family = -1;
-		return force_enable_dimms ? 0 : -ENODEV;
+		/* DSMs are optional, continue loading the driver... */
+		return 0;
 	}
 
 	uuid = to_nfit_uuid(nfit_mem->family);

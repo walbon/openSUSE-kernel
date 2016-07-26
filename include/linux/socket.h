@@ -200,7 +200,10 @@ struct ucred {
 #define AF_ALG		38	/* Algorithm sockets		*/
 #define AF_NFC		39	/* NFC sockets			*/
 #define AF_VSOCK	40	/* vSockets			*/
-#define AF_MAX		41	/* For now.. */
+//define AF_KCM		41	/* Kernel Connection Multiplexor*/
+//define AF_QIPCRTR	42	/* Qualcomm IPC Router          */
+
+#define AF_MAX		47	/* For later.. */
 
 /* Protocol families, same as address families. */
 #define PF_UNSPEC	AF_UNSPEC
