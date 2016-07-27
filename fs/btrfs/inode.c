@@ -3909,6 +3909,10 @@ noinline int btrfs_update_inode(struct btrfs_trans_handle *trans,
 		ret = btrfs_delayed_update_inode(trans, root, inode);
 		if (!ret)
 			btrfs_set_inode_last_trans(trans, inode);
+		else
+			btrfs_warn_rl(root->fs_info,
+				      "failed to do delayed inode update for inode %llu root %llu, error %d",
+				      btrfs_ino(inode), root->root_key.objectid, ret);
 		return ret;
 	}
 
