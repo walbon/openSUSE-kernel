@@ -119,6 +119,19 @@ ssize_t pci_write_vpd(struct pci_dev *dev, loff_t pos, size_t count, const void 
 }
 EXPORT_SYMBOL(pci_write_vpd);
 
+/**
+ * pci_set_vpd_size - Set size of Vital Product Data space
+ * @dev:	pci device struct
+ * @len:	size of vpd space
+ */
+int pci_set_vpd_size(struct pci_dev *dev, size_t len)
+{
+	if (!dev->vpd || !dev->vpd->ops)
+		return -ENODEV;
+	return dev->vpd->ops->set_size(dev, len);
+}
+EXPORT_SYMBOL(pci_set_vpd_size);
+
 /*
  * The following routines are to prevent the user from accessing PCI config
  * space when it's unsafe to do so.  Some devices require this during BIST and
@@ -426,6 +439,20 @@ out:
 	return ret ? ret : count;
 }
 
+static int pci_vpd_pci22_set_size(struct pci_dev *dev, size_t len)
+{
+	struct pci_vpd_pci22 *vpd;
+
+	if (len == 0 || len > PCI_VPD_PCI22_SIZE)
+		return -EIO;
+
+	vpd = container_of(dev->vpd, struct pci_vpd_pci22, base);
+	vpd->valid = 1;
+	vpd->base.len = len;
+
+	return 0;
+}
+
 static void pci_vpd_pci22_release(struct pci_dev *dev)
 {
 	kfree(container_of(dev->vpd, struct pci_vpd_pci22, base));
@@ -434,6 +461,7 @@ static void pci_vpd_pci22_release(struct pci_dev *dev)
 static const struct pci_vpd_ops pci_vpd_pci22_ops = {
 	.read = pci_vpd_pci22_read,
 	.write = pci_vpd_pci22_write,
+	.set_size = pci_vpd_pci22_set_size,
 	.release = pci_vpd_pci22_release,
 };
 
@@ -465,9 +493,24 @@ static ssize_t pci_vpd_f0_write(struct pci_dev *dev, loff_t pos, size_t count,
 	return ret;
 }
 
+static int pci_vpd_f0_set_size(struct pci_dev *dev, size_t len)
+{
+	struct pci_dev *tdev = pci_get_slot(dev->bus,
+					    PCI_DEVFN(PCI_SLOT(dev->devfn), 0));
+	int ret;
+
+	if (!tdev)
+		return -ENODEV;
+
+	ret = pci_set_vpd_size(tdev, len);
+	pci_dev_put(tdev);
+	return ret;
+}
+
 static const struct pci_vpd_ops pci_vpd_f0_ops = {
 	.read = pci_vpd_f0_read,
 	.write = pci_vpd_f0_write,
+	.set_size = pci_vpd_f0_set_size,
 	.release = pci_vpd_pci22_release,
 };
 

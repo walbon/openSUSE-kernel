@@ -100,6 +100,9 @@ struct pci_vpd_ops {
 	ssize_t (*read)(struct pci_dev *dev, loff_t pos, size_t count, void *buf);
 	ssize_t (*write)(struct pci_dev *dev, loff_t pos, size_t count, const void *buf);
 	void (*release)(struct pci_dev *dev);
+#ifndef __GENKSYMS__
+	int (*set_size)(struct pci_dev *dev, size_t len);
+#endif
 };
 
 struct pci_vpd {
