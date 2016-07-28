@@ -1173,7 +1173,7 @@ struct drm_mode_config {
  */
 #define drm_for_each_plane_mask(plane, dev, plane_mask) \
 	list_for_each_entry((plane), &(dev)->mode_config.plane_list, head) \
-		if ((plane_mask) & (1 << drm_plane_index(plane)))
+		for_each_if ((plane_mask) & (1 << drm_plane_index(plane)))
 
 /**
  * drm_for_each_encoder_mask - iterate over encoders specified by bitmask
@@ -1566,7 +1566,7 @@ static inline struct drm_property *drm_property_find(struct drm_device *dev,
 /* Plane list iterator for legacy (overlay only) planes. */
 #define drm_for_each_legacy_plane(plane, dev) \
 	list_for_each_entry(plane, &(dev)->mode_config.plane_list, head) \
-		if (plane->type == DRM_PLANE_TYPE_OVERLAY)
+		for_each_if (plane->type == DRM_PLANE_TYPE_OVERLAY)
 
 #define drm_for_each_plane(plane, dev) \
 	list_for_each_entry(plane, &(dev)->mode_config.plane_list, head)
