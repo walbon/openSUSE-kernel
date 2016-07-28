@@ -254,6 +254,7 @@ struct vm_fault {
 	pgoff_t max_pgoff;		/* map pages for offset from pgoff till
 					 * max_pgoff inclusive */
 	pte_t *pte;			/* pte entry associated with ->pgoff */
+	void *suse_kabi_padding;
 };
 
 /*
