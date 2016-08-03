@@ -98,6 +98,8 @@ static void fcoe_dev_cleanup(void);
 static struct fcoe_interface
 *fcoe_hostlist_lookup_port(const struct net_device *);
 
+static int fcoe_fip_vlan_recv(struct sk_buff *, struct net_device *,
+			      struct packet_type *, struct net_device *);
 static int fcoe_fip_recv(struct sk_buff *, struct net_device *,
 			 struct packet_type *, struct net_device *);
 
@@ -371,6 +373,12 @@ static int fcoe_interface_setup(struct fcoe_interface *fcoe,
 	fcoe->fip_packet_type.dev = netdev;
 	dev_add_pack(&fcoe->fip_packet_type);
 
+	if (fcoe->realdev != netdev) {
+		fcoe->fip_vlan_packet_type.func = fcoe_fip_vlan_recv;
+		fcoe->fip_vlan_packet_type.type = htons(ETH_P_FIP);
+		fcoe->fip_vlan_packet_type.dev = fcoe->realdev;
+		dev_add_pack(&fcoe->fip_vlan_packet_type);
+	}
 	return 0;
 }
 
@@ -458,6 +466,8 @@ static void fcoe_interface_remove(struct fcoe_interface *fcoe)
 	 */
 	__dev_remove_pack(&fcoe->fcoe_packet_type);
 	__dev_remove_pack(&fcoe->fip_packet_type);
+	if (fcoe->netdev != fcoe->realdev)
+		__dev_remove_pack(&fcoe->fip_vlan_packet_type);
 	synchronize_net();
 
 	/* Delete secondary MAC addresses */
@@ -505,6 +515,51 @@ static void fcoe_interface_cleanup(struct fcoe_interface *fcoe)
 }
 
 /**
+ * fcoe_fip_vlan_recv() - Handler for received FIP VLAN frames
+ * @skb:      The receive skb
+ * @netdev:   The associated net device
+ * @ptype:    The packet_type structure which was used to register this handler
+ * @orig_dev: The original net_device the the skb was received on.
+ *	      (in case dev is a bond)
+ *
+ * Returns: 0 for success
+ */
+static int fcoe_fip_vlan_recv(struct sk_buff *skb, struct net_device *netdev,
+			      struct packet_type *ptype,
+			      struct net_device *orig_dev)
+{
+	struct fcoe_interface *fcoe;
+	struct fcoe_ctlr *ctlr;
+	struct fip_header *fiph;
+
+	if (skb_vlan_tagged(skb)) {
+		kfree_skb(skb);
+		return 0;
+	}
+
+	fiph = (struct fip_header *)skb->data;
+	if (FIP_VER_DECAPS(fiph->fip_ver) != FIP_VER ||
+	    ntohs(fiph->fip_op) != FIP_OP_VLAN) {
+		FCOE_NETDEV_DBG(netdev,
+				"skb_info: drop fip vlan op %x/%x\n",
+				ntohs(fiph->fip_op), fiph->fip_subcode);
+		kfree_skb(skb);
+		return 0;
+	}
+
+	fcoe = container_of(ptype, struct fcoe_interface, fip_vlan_packet_type);
+	ctlr = fcoe_to_ctlr(fcoe);
+	if (!ctlr->fip_resp) {
+		FCOE_NETDEV_DBG(netdev,
+				"skb_info: drop fip vlan (responder not active)\n");
+		kfree_skb(skb);
+	} else
+		fcoe_ctlr_recv(ctlr, skb);
+
+	return 0;
+}
+
+/**
  * fcoe_fip_recv() - Handler for received FIP frames
  * @skb:      The receive skb
  * @netdev:   The associated net device
@@ -547,7 +602,13 @@ static void fcoe_port_send(struct fcoe_port *port, struct sk_buff *skb)
  */
 static void fcoe_fip_send(struct fcoe_ctlr *fip, struct sk_buff *skb)
 {
-	skb->dev = fcoe_from_ctlr(fip)->netdev;
+	struct fip_header *fiph = (struct fip_header *)skb->data;
+
+	if (ntohs(fiph->fip_op) == FIP_OP_VLAN) {
+		skb->dev = fcoe_from_ctlr(fip)->realdev;
+	} else {
+		skb->dev = fcoe_from_ctlr(fip)->netdev;
+	}
 	fcoe_port_send(lport_priv(fip->lp), skb);
 }
 
