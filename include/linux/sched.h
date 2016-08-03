@@ -735,6 +735,7 @@ struct user_struct {
 #endif
 #ifndef __GENKSYMS__
 	atomic_long_t pipe_bufs;  /* how many pages are allocated in pipe buffers */
+	unsigned long unix_inflight;	/* How many files in flight in unix sockets */
 #endif
 };
 
