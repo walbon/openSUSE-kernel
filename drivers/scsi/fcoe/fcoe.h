@@ -68,6 +68,7 @@ do {                                                            	\
  * @netdev:	      The associated net device
  * @fcoe_packet_type: FCoE packet type
  * @fip_packet_type:  FIP packet type
+ * @fip_vlan_packet_type:  FIP VLAN packet type
  * @oem:	      The offload exchange manager for all local port
  *		      instances associated with this port
  * @removed:	      Indicates fcoe interface removed from net device
@@ -80,6 +81,7 @@ struct fcoe_interface {
 	struct net_device  *realdev;
 	struct packet_type fcoe_packet_type;
 	struct packet_type fip_packet_type;
+	struct packet_type fip_vlan_packet_type;
 	struct fc_exch_mgr *oem;
 	u8	removed;
 	u8	priority;

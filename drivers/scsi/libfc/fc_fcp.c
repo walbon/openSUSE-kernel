@@ -122,6 +122,7 @@ static void fc_fcp_srr_error(struct fc_fcp_pkt *, struct fc_frame *);
 #define FC_HRD_ERROR		9
 #define FC_CRC_ERROR		10
 #define FC_TIMED_OUT		11
+#define FC_TRANS_RESET		12
 
 /*
  * Error recovery timeout values.
@@ -253,8 +254,21 @@ static inline void fc_fcp_unlock_pkt(struct fc_fcp_pkt *fsp)
  */
 static void fc_fcp_timer_set(struct fc_fcp_pkt *fsp, unsigned long delay)
 {
-	if (!(fsp->state & FC_SRB_COMPL))
+	if (!(fsp->state & FC_SRB_COMPL)) {
 		mod_timer(&fsp->timer, jiffies + delay);
+		fsp->timer_delay = delay;
+	}
+}
+
+static void fc_fcp_abort_done(struct fc_fcp_pkt *fsp)
+{
+	fsp->state |= FC_SRB_ABORTED;
+	fsp->state &= ~FC_SRB_ABORT_PENDING;
+
+	if (fsp->wait_for_comp)
+		complete(&fsp->tm_done);
+	else
+		fc_fcp_complete_locked(fsp);
 }
 
 /**
@@ -264,6 +278,8 @@ static void fc_fcp_timer_set(struct fc_fcp_pkt *fsp, unsigned long delay)
  */
 static int fc_fcp_send_abort(struct fc_fcp_pkt *fsp)
 {
+	int rc;
+
 	if (!fsp->seq_ptr)
 		return -EINVAL;
 
@@ -271,7 +287,16 @@ static int fc_fcp_send_abort(struct fc_fcp_pkt *fsp)
 	put_cpu();
 
 	fsp->state |= FC_SRB_ABORT_PENDING;
-	return fsp->lp->tt.seq_exch_abort(fsp->seq_ptr, 0);
+	rc = fsp->lp->tt.seq_exch_abort(fsp->seq_ptr, 0);
+	/*
+	 * ->seq_exch_abort() might return -ENXIO if
+	 * the sequence is already completed
+	 */
+	if (rc == -ENXIO) {
+		fc_fcp_abort_done(fsp);
+		rc = 0;
+	}
+	return rc;
 }
 
 /**
@@ -283,7 +308,7 @@ static int fc_fcp_send_abort(struct fc_fcp_pkt *fsp)
  * fc_io_compl() will notify the SCSI-ml that the I/O is done.
  * The SCSI-ml will retry the command.
  */
-static void fc_fcp_retry_cmd(struct fc_fcp_pkt *fsp)
+static void fc_fcp_retry_cmd(struct fc_fcp_pkt *fsp, int status_code)
 {
 	if (fsp->seq_ptr) {
 		fsp->lp->tt.exch_done(fsp->seq_ptr);
@@ -292,7 +317,7 @@ static void fc_fcp_retry_cmd(struct fc_fcp_pkt *fsp)
 
 	fsp->state &= ~FC_SRB_ABORT_PENDING;
 	fsp->io_status = 0;
-	fsp->status_code = FC_ERROR;
+	fsp->status_code = status_code;
 	fc_fcp_complete_locked(fsp);
 }
 
@@ -727,15 +752,8 @@ static void fc_fcp_abts_resp(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
 		ba_done = 0;
 	}
 
-	if (ba_done) {
-		fsp->state |= FC_SRB_ABORTED;
-		fsp->state &= ~FC_SRB_ABORT_PENDING;
-
-		if (fsp->wait_for_comp)
-			complete(&fsp->tm_done);
-		else
-			fc_fcp_complete_locked(fsp);
-	}
+	if (ba_done)
+		fc_fcp_abort_done(fsp);
 }
 
 /**
@@ -764,8 +782,11 @@ static void fc_fcp_recv(struct fc_seq *seq, struct fc_frame *fp, void *arg)
 	fh = fc_frame_header_get(fp);
 	r_ctl = fh->fh_r_ctl;
 
-	if (lport->state != LPORT_ST_READY)
+	if (lport->state != LPORT_ST_READY) {
+		FC_FCP_DBG(fsp, "lport state %d, ignoring r_ctl %x\n",
+			   lport->state, r_ctl);
 		goto out;
+	}
 	if (fc_fcp_lock_pkt(fsp))
 		goto out;
 
@@ -774,8 +795,10 @@ static void fc_fcp_recv(struct fc_seq *seq, struct fc_frame *fp, void *arg)
 		goto unlock;
 	}
 
-	if (fsp->state & (FC_SRB_ABORTED | FC_SRB_ABORT_PENDING))
+	if (fsp->state & (FC_SRB_ABORTED | FC_SRB_ABORT_PENDING)) {
+		FC_FCP_DBG(fsp, "command aborted, ignoring r_ctl %x\n", r_ctl);
 		goto unlock;
+	}
 
 	if (r_ctl == FC_RCTL_DD_DATA_DESC) {
 		/*
@@ -910,6 +933,16 @@ static void fc_fcp_resp(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
 			 * Wait a at least one jiffy to see if it is delivered.
 			 * If this expires without data, we may do SRR.
 			 */
+			if (fsp->lp->qfull) {
+				FC_FCP_DBG(fsp, "tgt %6.6x data underrun, "
+					   "retry due to queue busy\n",
+					   fsp->rport->port_id);
+				return;
+			}
+			FC_FCP_DBG(fsp, "tgt %6.6x xfer len %zx data underrun "
+				   "len %x, data len %x\n",
+				   fsp->rport->port_id,
+				   fsp->xfer_len, expected_len, fsp->data_len);
 			fc_fcp_timer_set(fsp, 2);
 			return;
 		}
@@ -959,8 +992,12 @@ static void fc_fcp_complete_locked(struct fc_fcp_pkt *fsp)
 		if (fsp->cdb_status == SAM_STAT_GOOD &&
 		    fsp->xfer_len < fsp->data_len && !fsp->io_status &&
 		    (!(fsp->scsi_comp_flags & FCP_RESID_UNDER) ||
-		     fsp->xfer_len < fsp->data_len - fsp->scsi_resid))
+		     fsp->xfer_len < fsp->data_len - fsp->scsi_resid)) {
+			FC_FCP_DBG( fsp, "data underrun, "
+				    "xfer_len %zx data_len %x\n",
+				    fsp->xfer_len, fsp->data_len );
 			fsp->status_code = FC_DATA_UNDRUN;
+		}
 	}
 
 	seq = fsp->seq_ptr;
@@ -1196,7 +1233,7 @@ static void fc_fcp_error(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
 		return;
 
 	if (error == -FC_EX_CLOSED) {
-		fc_fcp_retry_cmd(fsp);
+		fc_fcp_retry_cmd(fsp, FC_ERROR);
 		goto unlock;
 	}
 
@@ -1222,8 +1259,16 @@ static int fc_fcp_pkt_abort(struct fc_fcp_pkt *fsp)
 	int rc = FAILED;
 	unsigned long ticks_left;
 
-	if (fc_fcp_send_abort(fsp))
+	FC_FCP_DBG(fsp, "pkt abort state %x\n", fsp->state);
+	if (fc_fcp_send_abort(fsp)) {
+		FC_FCP_DBG(fsp, "failed to send abort\n");
 		return FAILED;
+	}
+
+	if (fsp->state & FC_SRB_ABORTED) {
+		FC_FCP_DBG(fsp, "target abort cmd  completed\n");
+		return SUCCESS;
+	}
 
 	init_completion(&fsp->tm_done);
 	fsp->wait_for_comp = 1;
@@ -1394,6 +1439,15 @@ static void fc_fcp_timeout(unsigned long data)
 	if (fsp->cdb_cmd.fc_tm_flags)
 		goto unlock;
 
+	if (fsp->lp->qfull) {
+		FC_FCP_DBG(fsp, "fcp timeout, resetting timer delay %d\n",
+			   fsp->timer_delay);
+		setup_timer(&fsp->timer, fc_fcp_timeout, (unsigned long)fsp);
+		fc_fcp_timer_set(fsp, fsp->timer_delay);
+		goto unlock;
+	}
+	FC_FCP_DBG(fsp, "fcp timeout, delay %d flags %x state %x\n",
+		   fsp->timer_delay, rpriv->flags, fsp->state);
 	fsp->state |= FC_SRB_FCP_PROCESSING_TMO;
 
 	if (rpriv->flags & FC_RP_FLAGS_REC_SUPPORTED)
@@ -1503,6 +1557,10 @@ static void fc_fcp_rec_resp(struct fc_seq *seq, struct fc_frame *fp, void *arg)
 			break;
 		case ELS_RJT_LOGIC:
 		case ELS_RJT_UNAB:
+			FC_FCP_DBG(fsp, "device %x REC reject "
+				   "reason %x expl %x xfer_len %zx\n",
+				   fsp->rport->port_id, rjt->er_reason,
+				   rjt->er_explan, fsp->xfer_len);
 			/*
 			 * If no data transfer, the command frame got dropped
 			 * so we just retry.  If data was transferred, we
@@ -1511,10 +1569,11 @@ static void fc_fcp_rec_resp(struct fc_seq *seq, struct fc_frame *fp, void *arg)
 			 */
 			if (rjt->er_explan == ELS_EXPL_OXID_RXID &&
 			    fsp->xfer_len == 0) {
-				fc_fcp_retry_cmd(fsp);
+				fsp->state |= FC_SRB_ABORTED;
+				fc_fcp_retry_cmd(fsp, FC_TRANS_RESET);
 				break;
 			}
-			fc_fcp_recovery(fsp, FC_ERROR);
+			fc_fcp_recovery(fsp, FC_TRANS_RESET);
 			break;
 		}
 	} else if (opcode == ELS_LS_ACC) {
@@ -1608,7 +1667,9 @@ static void fc_fcp_rec_error(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
 
 	switch (error) {
 	case -FC_EX_CLOSED:
-		fc_fcp_retry_cmd(fsp);
+		FC_FCP_DBG(fsp, "REC %p fid %6.6x exchange closed\n",
+			   fsp, fsp->rport->port_id);
+		fc_fcp_retry_cmd(fsp, FC_ERROR);
 		break;
 
 	default:
@@ -1622,8 +1683,8 @@ static void fc_fcp_rec_error(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
 		 * Assume REC or LS_ACC was lost.
 		 * The exchange manager will have aborted REC, so retry.
 		 */
-		FC_FCP_DBG(fsp, "REC fid %6.6x error error %d retry %d/%d\n",
-			   fsp->rport->port_id, error, fsp->recov_retry,
+		FC_FCP_DBG(fsp, "REC %p fid %6.6x exchange timeout retry %d/%d\n",
+			   fsp, fsp->rport->port_id, fsp->recov_retry,
 			   FC_MAX_RECOV_RETRY);
 		if (fsp->recov_retry++ < FC_MAX_RECOV_RETRY)
 			fc_fcp_rec(fsp);
@@ -1642,6 +1703,7 @@ out:
  */
 static void fc_fcp_recovery(struct fc_fcp_pkt *fsp, u8 code)
 {
+	FC_FCP_DBG(fsp, "start recovery code %x\n", code);
 	fsp->status_code = code;
 	fsp->cdb_status = 0;
 	fsp->io_status = 0;
@@ -1706,7 +1768,7 @@ static void fc_fcp_srr(struct fc_fcp_pkt *fsp, enum fc_rctl r_ctl, u32 offset)
 	fc_fcp_pkt_hold(fsp);		/* hold for outstanding SRR */
 	return;
 retry:
-	fc_fcp_retry_cmd(fsp);
+	fc_fcp_retry_cmd(fsp, FC_TRANS_RESET);
 }
 
 /**
@@ -1768,15 +1830,17 @@ static void fc_fcp_srr_error(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
 		goto out;
 	switch (PTR_ERR(fp)) {
 	case -FC_EX_TIMEOUT:
+		FC_FCP_DBG(fsp, "SRR timeout, retries %d\n", fsp->recov_retry);
 		if (fsp->recov_retry++ < FC_MAX_RECOV_RETRY)
 			fc_fcp_rec(fsp);
 		else
 			fc_fcp_recovery(fsp, FC_TIMED_OUT);
 		break;
 	case -FC_EX_CLOSED:			/* e.g., link failure */
+		FC_FCP_DBG(fsp, "SRR error, exchange closed\n");
 		/* fall through */
 	default:
-		fc_fcp_retry_cmd(fsp);
+		fc_fcp_retry_cmd(fsp, FC_ERROR);
 		break;
 	}
 	fc_fcp_unlock_pkt(fsp);
@@ -1980,14 +2044,25 @@ static void fc_io_compl(struct fc_fcp_pkt *fsp)
 		sc_cmd->result = (DID_ERROR << 16) | fsp->cdb_status;
 		break;
 	case FC_CMD_ABORTED:
-		FC_FCP_DBG(fsp, "Returning DID_ERROR to scsi-ml "
-			  "due to FC_CMD_ABORTED\n");
-		sc_cmd->result = (DID_ERROR << 16) | fsp->io_status;
+		if (host_byte(sc_cmd->result) == DID_TIME_OUT)
+			FC_FCP_DBG(fsp, "Returning DID_TIME_OUT to scsi-ml "
+				   "due to FC_CMD_ABORTED\n");
+		else {
+			FC_FCP_DBG(fsp, "Returning DID_ERROR to scsi-ml "
+				   "due to FC_CMD_ABORTED\n");
+			set_host_byte(sc_cmd, DID_ERROR);
+		}
+		sc_cmd->result |= fsp->io_status;
 		break;
 	case FC_CMD_RESET:
 		FC_FCP_DBG(fsp, "Returning DID_RESET to scsi-ml "
 			   "due to FC_CMD_RESET\n");
 		sc_cmd->result = (DID_RESET << 16);
+		break;
+	case FC_TRANS_RESET:
+		FC_FCP_DBG(fsp, "Returning DID_SOFT_ERROR to scsi-ml "
+			   "due to FC_TRANS_RESET\n");
+		sc_cmd->result = (DID_SOFT_ERROR << 16);
 		break;
 	case FC_HRD_ERROR:
 		FC_FCP_DBG(fsp, "Returning DID_NO_CONNECT to scsi-ml "

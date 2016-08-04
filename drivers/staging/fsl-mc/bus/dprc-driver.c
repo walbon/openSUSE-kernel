@@ -312,17 +312,6 @@ int dprc_scan_objects(struct fsl_mc_device *mc_bus_dev,
 				continue;
 			}
 
-			/*
-			 * for DPRC versions that do not support the
-			 * shareability attribute, make simplifying assumption
-			 * that only SEC is not shareable.
-			 */
-			if ((mc_bus_dev->obj_desc.ver_major == 5) &&
-			    (mc_bus_dev->obj_desc.ver_minor == 0) &&
-			    (strcmp(obj_desc->type, "dpseci") == 0))
-				obj_desc->flags |=
-					DPRC_OBJ_FLAG_NO_MEM_SHAREABILITY;
-
 			irq_count += obj_desc->irq_count;
 			dev_dbg(&mc_bus_dev->dev,
 				"Discovered object: type %s, id %d\n",
