@@ -415,6 +415,14 @@ config CAVIUM_ERRATUM_23154
 
 	  If unsure, say Y.
 
+config CAVIUM_ERRATUM_26026
+	bool "Cavium erratum 26026: "
+	default y
+	help
+	  Tbd.
+
+	  If unsure, say Y.
+
 config CAVIUM_ERRATUM_27456
 	bool "Cavium erratum 27456: Broadcast TLBI instructions may cause icache corruption"
 	default y
