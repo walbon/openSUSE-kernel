@@ -1607,6 +1607,10 @@ again:
 		err = -ENOENT;
 		goto out;
 	} else if (WARN_ON(ret)) {
+		btrfs_err(root->fs_info,
+			  "did not found inline extent backref for bytenr %llu num_bytes %llu owner %llu skinny metadata %d",
+			  bytenr, num_bytes, owner,
+			  btrfs_fs_incompat(root->fs_info, SKINNY_METADATA));
 		err = -EIO;
 		goto out;
 	}
