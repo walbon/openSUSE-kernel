@@ -361,7 +361,7 @@ esw_fdb_set_vport_rule(struct mlx5_eswitch *esw, u8 mac[ETH_ALEN], u32 vport)
 				   match_v,
 				   MLX5_FLOW_CONTEXT_ACTION_FWD_DEST,
 				   0, &dest);
-	if (IS_ERR_OR_NULL(flow_rule)) {
+	if (IS_ERR(flow_rule)) {
 		pr_warn(
 			"FDB: Failed to add flow rule: dmac_v(%pM) dmac_c(%pM) -> vport(%d), err(%ld)\n",
 			 dmac_v, dmac_c, vport, PTR_ERR(flow_rule));
@@ -402,7 +402,7 @@ static int esw_create_fdb_table(struct mlx5_eswitch *esw, int nvports)
 
 	table_size = BIT(MLX5_CAP_ESW_FLOWTABLE_FDB(dev, log_max_ft_size));
 	fdb = mlx5_create_flow_table(root_ns, 0, table_size);
-	if (IS_ERR_OR_NULL(fdb)) {
+	if (IS_ERR(fdb)) {
 		err = PTR_ERR(fdb);
 		esw_warn(dev, "Failed to create FDB Table err %d\n", err);
 		goto out;
@@ -417,7 +417,7 @@ static int esw_create_fdb_table(struct mlx5_eswitch *esw, int nvports)
 	eth_broadcast_addr(dmac);
 
 	g = mlx5_create_flow_group(fdb, flow_group_in);
-	if (IS_ERR_OR_NULL(g)) {
+	if (IS_ERR(g)) {
 		err = PTR_ERR(g);
 		esw_warn(dev, "Failed to create flow group err(%d)\n", err);
 		goto out;
