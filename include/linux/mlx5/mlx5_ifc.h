@@ -202,7 +202,8 @@ enum {
 	MLX5_CMD_OP_SET_FLOW_TABLE_ENTRY          = 0x936,
 	MLX5_CMD_OP_QUERY_FLOW_TABLE_ENTRY        = 0x937,
 	MLX5_CMD_OP_DELETE_FLOW_TABLE_ENTRY       = 0x938,
-	MLX5_CMD_OP_MODIFY_FLOW_TABLE             = 0x93c
+	MLX5_CMD_OP_MODIFY_FLOW_TABLE             = 0x93c,
+	MLX5_CMD_OP_MAX
 };
 
 struct mlx5_ifc_flow_table_fields_supported_bits {
