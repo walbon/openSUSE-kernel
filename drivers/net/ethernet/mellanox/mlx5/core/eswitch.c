@@ -426,7 +426,7 @@ static int esw_create_fdb_table(struct mlx5_eswitch *esw, int nvports)
 	esw->fdb_table.addr_grp = g;
 	esw->fdb_table.fdb = fdb;
 out:
-	kfree(flow_group_in);
+	kvfree(flow_group_in);
 	if (err && !IS_ERR_OR_NULL(fdb))
 		mlx5_destroy_flow_table(fdb);
 	return err;
