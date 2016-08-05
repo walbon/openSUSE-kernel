@@ -329,14 +329,13 @@ void __init setup_arch(char **cmdline_p)
 	/* Parse the ACPI tables for possible boot-time configuration */
 	acpi_boot_table_init();
 
-	paging_init_map_mem();
+	paging_init();
+	relocate_initrd();
 
 	if (acpi_disabled)
 		unflatten_device_tree();
 
-	paging_init_rest();
-
-	relocate_initrd();
+	bootmem_init();
 
 	kasan_init();
 

@@ -361,7 +361,7 @@ esw_fdb_set_vport_rule(struct mlx5_eswitch *esw, u8 mac[ETH_ALEN], u32 vport)
 				   match_v,
 				   MLX5_FLOW_CONTEXT_ACTION_FWD_DEST,
 				   0, &dest);
-	if (IS_ERR_OR_NULL(flow_rule)) {
+	if (IS_ERR(flow_rule)) {
 		pr_warn(
 			"FDB: Failed to add flow rule: dmac_v(%pM) dmac_c(%pM) -> vport(%d), err(%ld)\n",
 			 dmac_v, dmac_c, vport, PTR_ERR(flow_rule));
@@ -402,7 +402,7 @@ static int esw_create_fdb_table(struct mlx5_eswitch *esw, int nvports)
 
 	table_size = BIT(MLX5_CAP_ESW_FLOWTABLE_FDB(dev, log_max_ft_size));
 	fdb = mlx5_create_flow_table(root_ns, 0, table_size);
-	if (IS_ERR_OR_NULL(fdb)) {
+	if (IS_ERR(fdb)) {
 		err = PTR_ERR(fdb);
 		esw_warn(dev, "Failed to create FDB Table err %d\n", err);
 		goto out;
@@ -417,7 +417,7 @@ static int esw_create_fdb_table(struct mlx5_eswitch *esw, int nvports)
 	eth_broadcast_addr(dmac);
 
 	g = mlx5_create_flow_group(fdb, flow_group_in);
-	if (IS_ERR_OR_NULL(g)) {
+	if (IS_ERR(g)) {
 		err = PTR_ERR(g);
 		esw_warn(dev, "Failed to create flow group err(%d)\n", err);
 		goto out;
@@ -426,7 +426,7 @@ static int esw_create_fdb_table(struct mlx5_eswitch *esw, int nvports)
 	esw->fdb_table.addr_grp = g;
 	esw->fdb_table.fdb = fdb;
 out:
-	kfree(flow_group_in);
+	kvfree(flow_group_in);
 	if (err && !IS_ERR_OR_NULL(fdb))
 		mlx5_destroy_flow_table(fdb);
 	return err;
@@ -954,9 +954,22 @@ void mlx5_eswitch_vport_event(struct mlx5_eswitch *esw, struct mlx5_eqe *eqe)
 	(esw && MLX5_CAP_GEN(esw->dev, vport_group_manager) && mlx5_core_is_pf(esw->dev))
 #define LEGAL_VPORT(esw, vport) (vport >= 0 && vport < esw->total_vports)
 
+static void node_guid_gen_from_mac(u64 *node_guid, u8 mac[ETH_ALEN])
+{
+	((u8 *)node_guid)[7] = mac[0];
+	((u8 *)node_guid)[6] = mac[1];
+	((u8 *)node_guid)[5] = mac[2];
+	((u8 *)node_guid)[4] = 0xff;
+	((u8 *)node_guid)[3] = 0xfe;
+	((u8 *)node_guid)[2] = mac[3];
+	((u8 *)node_guid)[1] = mac[4];
+	((u8 *)node_guid)[0] = mac[5];
+}
+
 int mlx5_eswitch_set_vport_mac(struct mlx5_eswitch *esw,
 			       int vport, u8 mac[ETH_ALEN])
 {
+	u64 node_guid;
 	int err = 0;
 
 	if (!ESW_ALLOWED(esw))
@@ -971,6 +984,13 @@ int mlx5_eswitch_set_vport_mac(struct mlx5_eswitch *esw,
 			       vport, err);
 		return err;
 	}
+
+	node_guid_gen_from_mac(&node_guid, mac);
+	err = mlx5_modify_nic_vport_node_guid(esw->dev, vport, node_guid);
+	if (err)
+		mlx5_core_warn(esw->dev,
+			       "Failed to set vport %d node guid, err = %d. RDMA_CM will not function properly for this VF.\n",
+			       vport, err);
 
 	return err;
 }
