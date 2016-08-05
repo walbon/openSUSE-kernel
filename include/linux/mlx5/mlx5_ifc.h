@@ -202,7 +202,8 @@ enum {
 	MLX5_CMD_OP_SET_FLOW_TABLE_ENTRY          = 0x936,
 	MLX5_CMD_OP_QUERY_FLOW_TABLE_ENTRY        = 0x937,
 	MLX5_CMD_OP_DELETE_FLOW_TABLE_ENTRY       = 0x938,
-	MLX5_CMD_OP_MODIFY_FLOW_TABLE             = 0x93c
+	MLX5_CMD_OP_MODIFY_FLOW_TABLE             = 0x93c,
+	MLX5_CMD_OP_MAX
 };
 
 struct mlx5_ifc_flow_table_fields_supported_bits {
@@ -496,7 +497,9 @@ struct mlx5_ifc_e_switch_cap_bits {
 	u8         vport_svlan_insert[0x1];
 	u8         vport_cvlan_insert_if_not_exist[0x1];
 	u8         vport_cvlan_insert_overwrite[0x1];
-	u8         reserved_at_5[0x1b];
+	u8         reserved_at_5[0x19];
+	u8         nic_vport_node_guid_modify[0x1];
+	u8         nic_vport_port_guid_modify[0x1];
 
 	u8         reserved_at_20[0x7e0];
 };
@@ -4508,7 +4511,10 @@ struct mlx5_ifc_modify_nic_vport_context_out_bits {
 };
 
 struct mlx5_ifc_modify_nic_vport_field_select_bits {
-	u8         reserved_at_0[0x19];
+	u8         reserved_at_0[0x16];
+	u8         node_guid[0x1];
+	u8         port_guid[0x1];
+	u8         reserved_at_18[0x1];
 	u8         mtu[0x1];
 	u8         change_event[0x1];
 	u8         promisc[0x1];

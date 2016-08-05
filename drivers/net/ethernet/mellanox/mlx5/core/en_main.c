@@ -541,7 +541,7 @@ static int mlx5e_create_sq(struct mlx5e_channel *c,
 	int txq_ix;
 	int err;
 
-	err = mlx5_alloc_map_uar(mdev, &sq->uar, true);
+	err = mlx5_alloc_map_uar(mdev, &sq->uar, !!MLX5_CAP_GEN(mdev, bf));
 	if (err)
 		return err;
 
@@ -1464,8 +1464,11 @@ static void mlx5e_netdev_set_tcs(struct net_device *netdev)
 
 	netdev_set_num_tc(netdev, ntc);
 
+	/* Map netdev TCs to offset 0
+	 * We have our own UP to TXQ mapping for QoS
+	 */
 	for (tc = 0; tc < ntc; tc++)
-		netdev_set_tc_queue(netdev, tc, nch, tc * nch);
+		netdev_set_tc_queue(netdev, tc, nch, 0);
 }
 
 int mlx5e_open_locked(struct net_device *netdev)
@@ -2645,10 +2648,7 @@ static void mlx5e_destroy_netdev(struct mlx5_core_dev *mdev, void *vpriv)
 	flush_workqueue(priv->wq);
 	if (test_bit(MLX5_INTERFACE_STATE_SHUTDOWN, &mdev->intf_state)) {
 		netif_device_detach(netdev);
-		mutex_lock(&priv->state_lock);
-		if (test_bit(MLX5E_STATE_OPENED, &priv->state))
-			mlx5e_close_locked(netdev);
-		mutex_unlock(&priv->state_lock);
+		mlx5e_close(netdev);
 	} else {
 		unregister_netdev(netdev);
 	}

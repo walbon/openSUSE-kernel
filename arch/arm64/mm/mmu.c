@@ -441,10 +441,10 @@ static void __init map_kernel(pgd_t *pgd)
 }
 
 /*
- * paging_init_map_mem() sets up the page tables so that memblock
- * memory is usable.
+ * paging_init() sets up the page tables, initialises the zone memory
+ * maps and sets up the zero page.
  */
-void __init paging_init_map_mem(void)
+void __init paging_init(void)
 {
 	phys_addr_t pgd_phys = early_pgtable_alloc();
 	pgd_t *pgd = pgd_set_fixmap(pgd_phys);
@@ -473,17 +473,6 @@ void __init paging_init_map_mem(void)
 	 */
 	memblock_free(__pa(swapper_pg_dir) + PAGE_SIZE,
 		      SWAPPER_DIR_SIZE - PAGE_SIZE);
-}
-
-/*
- * paging_init_rest() finishes setting up the page tables, initializes
- * the zone memory maps and sets up the zero page.
- */
-void __init paging_init_rest(void)
-{
-
-	bootmem_init();
-	memblock_dump_all();
 }
 
 /*

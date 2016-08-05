@@ -63,6 +63,14 @@ unsigned int fcoe_debug_logging;
 module_param_named(debug_logging, fcoe_debug_logging, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(debug_logging, "a bit mask of logging levels");
 
+unsigned int fcoe_e_d_tov = 2 * 1000;
+module_param_named(e_d_tov, fcoe_e_d_tov, int, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(e_d_tov, "E_D_TOV in ms, default 2000");
+
+unsigned int fcoe_r_a_tov = 2 * 2 * 1000;
+module_param_named(r_a_tov, fcoe_r_a_tov, int, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(r_a_tov, "R_A_TOV in ms, default 4000");
+
 static DEFINE_MUTEX(fcoe_config_mutex);
 
 static struct workqueue_struct *fcoe_wq;
@@ -90,6 +98,8 @@ static void fcoe_dev_cleanup(void);
 static struct fcoe_interface
 *fcoe_hostlist_lookup_port(const struct net_device *);
 
+static int fcoe_fip_vlan_recv(struct sk_buff *, struct net_device *,
+			      struct packet_type *, struct net_device *);
 static int fcoe_fip_recv(struct sk_buff *, struct net_device *,
 			 struct packet_type *, struct net_device *);
 
@@ -363,6 +373,12 @@ static int fcoe_interface_setup(struct fcoe_interface *fcoe,
 	fcoe->fip_packet_type.dev = netdev;
 	dev_add_pack(&fcoe->fip_packet_type);
 
+	if (fcoe->realdev != netdev) {
+		fcoe->fip_vlan_packet_type.func = fcoe_fip_vlan_recv;
+		fcoe->fip_vlan_packet_type.type = htons(ETH_P_FIP);
+		fcoe->fip_vlan_packet_type.dev = fcoe->realdev;
+		dev_add_pack(&fcoe->fip_vlan_packet_type);
+	}
 	return 0;
 }
 
@@ -450,6 +466,8 @@ static void fcoe_interface_remove(struct fcoe_interface *fcoe)
 	 */
 	__dev_remove_pack(&fcoe->fcoe_packet_type);
 	__dev_remove_pack(&fcoe->fip_packet_type);
+	if (fcoe->netdev != fcoe->realdev)
+		__dev_remove_pack(&fcoe->fip_vlan_packet_type);
 	synchronize_net();
 
 	/* Delete secondary MAC addresses */
@@ -497,6 +515,51 @@ static void fcoe_interface_cleanup(struct fcoe_interface *fcoe)
 }
 
 /**
+ * fcoe_fip_vlan_recv() - Handler for received FIP VLAN frames
+ * @skb:      The receive skb
+ * @netdev:   The associated net device
+ * @ptype:    The packet_type structure which was used to register this handler
+ * @orig_dev: The original net_device the the skb was received on.
+ *	      (in case dev is a bond)
+ *
+ * Returns: 0 for success
+ */
+static int fcoe_fip_vlan_recv(struct sk_buff *skb, struct net_device *netdev,
+			      struct packet_type *ptype,
+			      struct net_device *orig_dev)
+{
+	struct fcoe_interface *fcoe;
+	struct fcoe_ctlr *ctlr;
+	struct fip_header *fiph;
+
+	if (skb_vlan_tagged(skb)) {
+		kfree_skb(skb);
+		return 0;
+	}
+
+	fiph = (struct fip_header *)skb->data;
+	if (FIP_VER_DECAPS(fiph->fip_ver) != FIP_VER ||
+	    ntohs(fiph->fip_op) != FIP_OP_VLAN) {
+		FCOE_NETDEV_DBG(netdev,
+				"skb_info: drop fip vlan op %x/%x\n",
+				ntohs(fiph->fip_op), fiph->fip_subcode);
+		kfree_skb(skb);
+		return 0;
+	}
+
+	fcoe = container_of(ptype, struct fcoe_interface, fip_vlan_packet_type);
+	ctlr = fcoe_to_ctlr(fcoe);
+	if (!ctlr->fip_resp) {
+		FCOE_NETDEV_DBG(netdev,
+				"skb_info: drop fip vlan (responder not active)\n");
+		kfree_skb(skb);
+	} else
+		fcoe_ctlr_recv(ctlr, skb);
+
+	return 0;
+}
+
+/**
  * fcoe_fip_recv() - Handler for received FIP frames
  * @skb:      The receive skb
  * @netdev:   The associated net device
@@ -539,7 +602,13 @@ static void fcoe_port_send(struct fcoe_port *port, struct sk_buff *skb)
  */
 static void fcoe_fip_send(struct fcoe_ctlr *fip, struct sk_buff *skb)
 {
-	skb->dev = fcoe_from_ctlr(fip)->netdev;
+	struct fip_header *fiph = (struct fip_header *)skb->data;
+
+	if (ntohs(fiph->fip_op) == FIP_OP_VLAN) {
+		skb->dev = fcoe_from_ctlr(fip)->realdev;
+	} else {
+		skb->dev = fcoe_from_ctlr(fip)->netdev;
+	}
 	fcoe_port_send(lport_priv(fip->lp), skb);
 }
 
@@ -586,8 +655,8 @@ static int fcoe_lport_config(struct fc_lport *lport)
 	lport->qfull = 0;
 	lport->max_retry_count = 3;
 	lport->max_rport_retry_count = 3;
-	lport->e_d_tov = 2 * 1000;	/* FC-FS default */
-	lport->r_a_tov = 2 * 2 * 1000;
+	lport->e_d_tov = fcoe_e_d_tov;
+	lport->r_a_tov = fcoe_r_a_tov;
 	lport->service_params = (FCP_SPPF_INIT_FCN | FCP_SPPF_RD_XRDY_DIS |
 				 FCP_SPPF_RETRY | FCP_SPPF_CONF_COMPL);
 	lport->does_npiv = 1;
@@ -2112,6 +2181,8 @@ static bool fcoe_match(struct net_device *netdev)
  */
 static void fcoe_dcb_create(struct fcoe_interface *fcoe)
 {
+	int ctlr_prio = TC_PRIO_BESTEFFORT;
+	int fcoe_prio = TC_PRIO_INTERACTIVE;
 #ifdef CONFIG_DCB
 	int dcbx;
 	u8 fup, up;
@@ -2138,10 +2209,12 @@ static void fcoe_dcb_create(struct fcoe_interface *fcoe)
 			fup = dcb_getapp(netdev, &app);
 		}
 
-		fcoe->priority = ffs(up) ? ffs(up) - 1 : 0;
-		ctlr->priority = ffs(fup) ? ffs(fup) - 1 : fcoe->priority;
+		fcoe_prio = ffs(up) ? ffs(up) - 1 : 0;
+		ctlr_prio = ffs(fup) ? ffs(fup) - 1 : fcoe_prio;
 	}
 #endif
+	fcoe->priority = fcoe_prio;
+	ctlr->priority = ctlr_prio;
 }
 
 enum fcoe_create_link_state {
