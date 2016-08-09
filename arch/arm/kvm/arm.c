@@ -1168,10 +1168,12 @@ int kvm_arch_init(void *opaque)
 	int err;
 	int ret, cpu;
 
+#ifdef CONFIG_ARM64
 	if (cpus_have_cap(ARM64_HAS_NO_BCAST_TLBI)) {
 		kvm_err("Missing broadcast TLBI support.\n");
 		return -ENODEV;
 	}
+#endif
 
 	if (!is_hyp_mode_available()) {
 		kvm_err("HYP mode not available\n");
