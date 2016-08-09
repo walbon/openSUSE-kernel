@@ -466,6 +466,7 @@ enum {
 enum {
 	MLX4_INTERFACE_STATE_UP		= 1 << 0,
 	MLX4_INTERFACE_STATE_DELETION	= 1 << 1,
+	MLX4_INTERFACE_STATE_SHUTDOWN	= 1 << 2,
 };
 
 #define MSTR_SM_CHANGE_MASK (MLX4_EQ_PORT_INFO_MSTR_SM_SL_CHANGE_MASK | \
@@ -618,6 +619,7 @@ struct mlx4_buf_list {
 
 struct mlx4_buf {
 	struct mlx4_buf_list	direct;
+	struct mlx4_buf_list   *page_list;
 	int			nbufs;
 	int			npages;
 	int			page_shift;
@@ -1052,12 +1054,16 @@ static inline int mlx4_is_eth(struct mlx4_dev *dev, int port)
 	return dev->caps.port_type[port] == MLX4_PORT_TYPE_IB ? 0 : 1;
 }
 
-int mlx4_buf_alloc(struct mlx4_dev *dev, int size,
+int mlx4_buf_alloc(struct mlx4_dev *dev, int size, int max_direct,
 		   struct mlx4_buf *buf, gfp_t gfp);
 void mlx4_buf_free(struct mlx4_dev *dev, int size, struct mlx4_buf *buf);
 static inline void *mlx4_buf_offset(struct mlx4_buf *buf, int offset)
 {
-	return buf->direct.buf + offset;
+	if (buf->nbufs == 1)
+		return buf->direct.buf + offset;
+	else
+		return buf->page_list[offset >> PAGE_SHIFT].buf +
+			(offset & (PAGE_SIZE - 1));
 }
 
 int mlx4_pd_alloc(struct mlx4_dev *dev, u32 *pdn);
