@@ -434,7 +434,7 @@ static struct scsi_dev_info_list *scsi_dev_info_list_find(const char *vendor,
 	 * here, and we don't know what device it is
 	 * trying to work with, leave it as-is.
 	 */
-	vmax = 8;	/* max length of vendor */
+	vmax = sizeof(devinfo->vendor);
 	vskip = vendor;
 	while (vmax > 0 && *vskip == ' ') {
 		vmax--;
@@ -444,7 +444,7 @@ static struct scsi_dev_info_list *scsi_dev_info_list_find(const char *vendor,
 	while (vmax > 0 && vskip[vmax - 1] == ' ')
 		--vmax;
 
-	mmax = 16;	/* max length of model */
+	mmax = sizeof(devinfo->model);
 	mskip = model;
 	while (mmax > 0 && *mskip == ' ') {
 		mmax--;
@@ -460,10 +460,12 @@ static struct scsi_dev_info_list *scsi_dev_info_list_find(const char *vendor,
 			 * Behave like the older version of get_device_flags.
 			 */
 			if (memcmp(devinfo->vendor, vskip, vmax) ||
-					devinfo->vendor[vmax])
+					(vmax < sizeof(devinfo->vendor) &&
+						devinfo->vendor[vmax]))
 				continue;
 			if (memcmp(devinfo->model, mskip, mmax) ||
-					devinfo->model[mmax])
+					(mmax < sizeof(devinfo->model) &&
+						devinfo->model[mmax]))
 				continue;
 			return devinfo;
 		} else {
