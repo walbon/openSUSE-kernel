@@ -43,6 +43,42 @@ void __spin_yield(arch_spinlock_t *lock)
 }
 EXPORT_SYMBOL_GPL(__spin_yield);
 
+void arch_spin_unlock_wait(arch_spinlock_t *lock)
+{
+	arch_spinlock_t lock_val;
+
+	smp_mb();
+
+	/*
+	 * Atomically load and store back the lock value (unchanged). This
+	 * ensures that our observation of the lock value is ordered with
+	 * respect to other lock operations.
+	 */
+	__asm__ __volatile__(
+"1:	" PPC_LWARX(%0, 0, %2, 0) "\n"
+"	stwcx. %0, 0, %2\n"
+"	bne- 1b\n"
+	: "=&r" (lock_val), "+m" (*lock)
+	: "r" (lock)
+	: "cr0", "xer");
+
+	if (arch_spin_value_unlocked(lock_val))
+		goto out;
+
+	while (lock->slock) {
+		HMT_low();
+		if (SHARED_PROCESSOR)
+			__spin_yield(lock);
+	}
+	HMT_medium();
+
+out:
+	smp_mb();
+}
+#ifdef CONFIG_PPC64
+EXPORT_SYMBOL_GPL(arch_spin_unlock_wait);
+#endif
+
 /*
  * Waiting for a read lock or a write lock on a rwlock...
  * This turns out to be the same for read and write locks, since
@@ -68,19 +104,3 @@ void __rw_yield(arch_rwlock_t *rw)
 		get_hard_smp_processor_id(holder_cpu), yield_count);
 }
 #endif
-
-void arch_spin_unlock_wait(arch_spinlock_t *lock)
-{
-	smp_mb();
-
-	while (lock->slock) {
-		HMT_low();
-		if (SHARED_PROCESSOR)
-			__spin_yield(lock);
-	}
-	HMT_medium();
-
-	smp_mb();
-}
-
-EXPORT_SYMBOL(arch_spin_unlock_wait);
