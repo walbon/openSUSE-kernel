@@ -257,7 +257,7 @@ void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 	trans->aborted = errno;
 	/* Nothing used. The other threads that have joined this
 	 * transaction may be able to continue. */
-	if (!trans->blocks_used) {
+	if (!trans->dirty) {
 		const char *errstr;
 
 		errstr = btrfs_decode_error(errno);
