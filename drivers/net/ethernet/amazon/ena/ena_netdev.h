@@ -43,9 +43,9 @@
 #include "ena_com.h"
 #include "ena_eth_com.h"
 
-#define DRV_MODULE_VER_MAJOR	0
-#define DRV_MODULE_VER_MINOR	6
-#define DRV_MODULE_VER_SUBMINOR 8
+#define DRV_MODULE_VER_MAJOR	1
+#define DRV_MODULE_VER_MINOR	0
+#define DRV_MODULE_VER_SUBMINOR 2
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_VERSION
@@ -54,7 +54,6 @@
 	__stringify(DRV_MODULE_VER_MINOR) "."	\
 	__stringify(DRV_MODULE_VER_SUBMINOR)
 #endif
-#define DRV_MODULE_RELDATE      "7-JUNE-2016"
 
 #define DEVICE_NAME	"Elastic Network Adapter (ENA)"
 
@@ -68,7 +67,7 @@
 #define ENA_DEFAULT_RING_SIZE	(1024)
 
 #define ENA_TX_WAKEUP_THRESH		(MAX_SKB_FRAGS + 2)
-#define ENA_DEFAULT_SMALL_PACKET_LEN		(128 - NET_IP_ALIGN)
+#define ENA_DEFAULT_RX_COPYBREAK	(128 - NET_IP_ALIGN)
 
 /* limit the buffer size to 600 bytes to handle MTU changes from very
  * small to very large, in which case the number of buffers per packet
@@ -136,9 +135,6 @@ struct ena_napi {
 	struct napi_struct napi ____cacheline_aligned;
 	struct ena_ring *tx_ring;
 	struct ena_ring *rx_ring;
-#ifndef HAVE_NETDEV_NAPI_LIST
-	struct net_device poll_dev;
-#endif /* HAVE_NETDEV_NAPI_LIST */
 	u32 qid;
 };
 
@@ -187,7 +183,7 @@ struct ena_stats_rx {
 	u64 skb_alloc_fail;
 	u64 dma_mapping_err;
 	u64 bad_desc_num;
-	u64 small_copy_len_pkt;
+	u64 rx_copybreak_pkt;
 };
 
 struct ena_ring {
@@ -210,7 +206,7 @@ struct ena_ring {
 
 	u16 next_to_use;
 	u16 next_to_clean;
-	u16 rx_small_copy_len;
+	u16 rx_copybreak;
 	u16 qid;
 	u16 mtu;
 	u16 sgl_size;
@@ -265,7 +261,7 @@ struct ena_adapter {
 	/* rx packets that shorter that this len will be copied to the skb
 	 * header
 	 */
-	u32 small_copy_len;
+	u32 rx_copybreak;
 	u32 max_mtu;
 
 	int num_queues;
@@ -307,6 +303,7 @@ struct ena_adapter {
 	struct work_struct resume_io_task;
 	struct timer_list timer_service;
 
+	bool wd_state;
 	unsigned long last_keep_alive_jiffies;
 
 	struct u64_stats_sync syncp;

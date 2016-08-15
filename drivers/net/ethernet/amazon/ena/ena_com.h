@@ -47,24 +47,8 @@
 #include "ena_eth_io_defs.h"
 #include "ena_regs_defs.h"
 
-#define ena_trc_dbg(format, arg...) \
-	pr_debug("[ENA_COM: %s] " format, __func__, ##arg)
-#define ena_trc_info(format, arg...) \
-	pr_info("[ENA_COM: %s] " format, __func__, ##arg)
-#define ena_trc_warn(format, arg...) \
-	pr_warn("[ENA_COM: %s] " format, __func__, ##arg)
-#define ena_trc_err(format, arg...) \
-	pr_err("[ENA_COM: %s] " format, __func__, ##arg)
-
-#define ENA_ASSERT(cond, format, arg...)				\
-	do {								\
-		if (unlikely(!(cond))) {				\
-			ena_trc_err(					\
-				"Assert failed on %s:%s:%d:" format,	\
-				__FILE__, __func__, __LINE__, ##arg);	\
-			WARN_ON(!(cond));				\
-		}							\
-	} while (0)
+#undef pr_fmt
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #define ENA_MAX_NUM_IO_QUEUES		128U
 /* We need to queues for each IO (on for Tx and one for Rx) */
@@ -109,6 +93,8 @@
 #define ENA_INTR_INITIAL_RX_INTERVAL_USECS		4
 #define ENA_INTR_DELAY_OLD_VALUE_WEIGHT			6
 #define ENA_INTR_DELAY_NEW_VALUE_WEIGHT			4
+#define ENA_INTR_MODER_LEVEL_STRIDE			2
+#define ENA_INTR_BYTE_COUNT_NOT_SUPPORTED		0xFFFFFF
 
 enum ena_intr_moder_level {
 	ENA_INTR_MODER_LOWEST = 0,
@@ -141,8 +127,8 @@ struct ena_com_rx_buf_info {
 };
 
 struct ena_com_io_desc_addr {
-	u8  __iomem *pbuf_dev_addr; /* LLQ address */
-	u8  *virt_addr;
+	u8 __iomem *pbuf_dev_addr; /* LLQ address */
+	u8 *virt_addr;
 	dma_addr_t phys_addr;
 };
 
@@ -385,7 +371,7 @@ int ena_com_mmio_reg_read_request_init(struct ena_com_dev *ena_dev);
 
 /* ena_com_set_mmio_read_mode - Enable/disable the mmio reg read mechanism
  * @ena_dev: ENA communication layer struct
- * @realess_supported: readless mode (enable/disable)
+ * @readless_supported: readless mode (enable/disable)
  */
 void ena_com_set_mmio_read_mode(struct ena_com_dev *ena_dev,
 				bool readless_supported);
@@ -434,7 +420,7 @@ int ena_com_dev_reset(struct ena_com_dev *ena_dev);
 
 /* ena_com_create_io_queue - Create io queue.
  * @ena_dev: ENA communication layer struct
- * ena_com_create_io_ctx - create context structure
+ * @ctx - create context structure
  *
  * Create the submission and the completion queues.
  *
@@ -443,8 +429,9 @@ int ena_com_dev_reset(struct ena_com_dev *ena_dev);
 int ena_com_create_io_queue(struct ena_com_dev *ena_dev,
 			    struct ena_com_create_io_ctx *ctx);
 
-/* ena_com_admin_destroy - Destroy IO queue with the queue id - qid.
+/* ena_com_destroy_io_queue - Destroy IO queue with the queue id - qid.
  * @ena_dev: ENA communication layer struct
+ * @qid - the caller virtual queue id.
  */
 void ena_com_destroy_io_queue(struct ena_com_dev *ena_dev, u16 qid);
 
@@ -985,8 +972,8 @@ static inline void ena_com_calculate_interrupt_delay(struct ena_com_dev *ena_dev
 		return;
 
 	curr_moder_idx = (enum ena_intr_moder_level)(*moder_tbl_idx);
-	if (unlikely(curr_moder_idx >=  ENA_INTR_MAX_NUM_OF_LEVELS)) {
-		ena_trc_err("Wrong moderation index %u\n", curr_moder_idx);
+	if (unlikely(curr_moder_idx >= ENA_INTR_MAX_NUM_OF_LEVELS)) {
+		pr_err("Wrong moderation index %u\n", curr_moder_idx);
 		return;
 	}
 
@@ -997,19 +984,19 @@ static inline void ena_com_calculate_interrupt_delay(struct ena_com_dev *ena_dev
 		if ((pkts > curr_moder_entry->pkts_per_interval) ||
 		    (bytes > curr_moder_entry->bytes_per_interval))
 			new_moder_idx =
-				(enum ena_intr_moder_level)(curr_moder_idx + 1);
+				(enum ena_intr_moder_level)(curr_moder_idx + ENA_INTR_MODER_LEVEL_STRIDE);
 	} else {
-		pred_moder_entry = &intr_moder_tbl[curr_moder_idx - 1];
+		pred_moder_entry = &intr_moder_tbl[curr_moder_idx - ENA_INTR_MODER_LEVEL_STRIDE];
 
 		if ((pkts <= pred_moder_entry->pkts_per_interval) ||
 		    (bytes <= pred_moder_entry->bytes_per_interval))
 			new_moder_idx =
-				(enum ena_intr_moder_level)(curr_moder_idx - 1);
+				(enum ena_intr_moder_level)(curr_moder_idx - ENA_INTR_MODER_LEVEL_STRIDE);
 		else if ((pkts > curr_moder_entry->pkts_per_interval) ||
 			 (bytes > curr_moder_entry->bytes_per_interval)) {
 			if (curr_moder_idx != ENA_INTR_MODER_HIGHEST)
 				new_moder_idx =
-				(enum ena_intr_moder_level)(curr_moder_idx + 1);
+					(enum ena_intr_moder_level)(curr_moder_idx + ENA_INTR_MODER_LEVEL_STRIDE);
 		}
 	}
 	new_moder_entry = &intr_moder_tbl[new_moder_idx];
@@ -1042,7 +1029,7 @@ static inline void ena_com_update_intr_reg(struct ena_eth_io_intr_reg *intr_reg,
 
 	intr_reg->intr_control |=
 		(tx_delay_interval << ENA_ETH_IO_INTR_REG_TX_INTR_DELAY_SHIFT)
-		& ENA_ETH_IO_INTR_REG_RX_INTR_DELAY_MASK;
+		& ENA_ETH_IO_INTR_REG_TX_INTR_DELAY_MASK;
 
 	if (unmask)
 		intr_reg->intr_control |= ENA_ETH_IO_INTR_REG_INTR_UNMASK_MASK;
