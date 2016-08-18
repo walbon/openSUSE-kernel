@@ -1120,7 +1120,7 @@ static void fc_rport_prli_resp(struct fc_seq *sp, struct fc_frame *fp,
 	u32 roles = FC_RPORT_ROLE_UNKNOWN;
 	u32 fcp_parm = 0;
 	u8 op;
-	u8 resp_code = 0;
+	enum fc_els_spp_resp resp_code;
 
 	mutex_lock(&rdata->rp_mutex);
 
@@ -1168,13 +1168,28 @@ static void fc_rport_prli_resp(struct fc_seq *sp, struct fc_frame *fp,
 		if (fcp_parm & FCP_SPPF_CONF_COMPL)
 			rdata->flags |= FC_RP_FLAGS_CONF_REQ;
 
-		prov = fc_passive_prov[FC_TYPE_FCP];
+		/*
+		 * Call prli provider if we should act as a target
+		 */
+		prov = fc_passive_prov[rdata->spp_type];
 		if (prov) {
 			memset(&temp_spp, 0, sizeof(temp_spp));
-			prov->prli(rdata, pp->prli.prli_spp_len,
-				   &pp->spp, &temp_spp);
+			resp_code = prov->prli(rdata, pp->prli.prli_spp_len,
+					       &pp->spp, &temp_spp);
+		} else {
+			memcpy(&temp_spp, &pp->spp, sizeof(temp_spp));
 		}
-
+		/*
+		 * Check if the image pair could be established
+		 */
+		if (rdata->spp_type != FC_TYPE_FCP ||
+		    resp_code != FC_SPP_RESP_ACK ||
+		    !(temp_spp.spp_flags & FC_SPP_EST_IMG_PAIR)) {
+			/*
+			 * Nope; we can't use this port as a target.
+			 */
+			fcp_parm &= ~FCP_SPPF_TARG_FCN;
+		}
 		rdata->supported_classes = FC_COS_CLASS3;
 		if (fcp_parm & FCP_SPPF_INIT_FCN)
 			roles |= FC_RPORT_ROLE_FCP_INITIATOR;
@@ -1224,6 +1239,15 @@ static void fc_rport_enter_prli(struct fc_rport_priv *rdata)
 	if (rdata->ids.port_id >= FC_FID_DOM_MGR) {
 		fc_rport_enter_ready(rdata);
 		return;
+	}
+
+	/*
+	 * And if the local port does not support the initiator function
+	 * there's no need to send a PRLI, either.
+	 */
+	if (!(lport->service_params & FCP_SPPF_INIT_FCN)) {
+		    fc_rport_enter_ready(rdata);
+		    return;
 	}
 
 	FC_RPORT_DBG(rdata, "Port entered PRLI state from %s state\n",
@@ -1988,13 +2012,6 @@ static void fc_rport_recv_prli_req(struct fc_rport_priv *rdata,
 	fc_fill_reply_hdr(fp, rx_fp, FC_RCTL_ELS_REP, 0);
 	lport->tt.frame_send(lport, fp);
 
-	switch (rdata->rp_state) {
-	case RPORT_ST_PRLI:
-		fc_rport_enter_ready(rdata);
-		break;
-	default:
-		break;
-	}
 	goto drop;
 
 reject_len:
