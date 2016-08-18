@@ -1334,7 +1334,8 @@ static void fc_rport_rtv_resp(struct fc_seq *sp, struct fc_frame *fp,
 				tov /= 1000000;
 			if (tov == 0)
 				tov = 1;
-			rdata->e_d_tov = tov;
+			if (tov > rdata->e_d_tov)
+				rdata->e_d_tov = tov;
 		}
 	}
 
