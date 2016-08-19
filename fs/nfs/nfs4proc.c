@@ -1223,6 +1223,10 @@ static int nfs4_open_recover(struct nfs4_opendata *opendata, struct nfs4_state *
 {
 	int ret;
 
+	/* Don't trigger recovery in nfs_test_and_clear_all_open_stateid */
+	clear_bit(NFS_O_RDWR_STATE, &state->flags);
+	clear_bit(NFS_O_WRONLY_STATE, &state->flags);
+	clear_bit(NFS_O_RDONLY_STATE, &state->flags);
 	/* memory barrier prior to reading state->n_* */
 	clear_bit(NFS_DELEGATED_STATE, &state->flags);
 	smp_rmb();
