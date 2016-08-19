@@ -378,7 +378,9 @@ static void fc_rport_work(struct work_struct *work)
 				mutex_unlock(&rdata->rp_mutex);
 			} else {
 				FC_RPORT_DBG(rdata, "work delete\n");
+				mutex_lock(&lport->disc.disc_mutex);
 				list_del_rcu(&rdata->peers);
+				mutex_unlock(&lport->disc.disc_mutex);
 				mutex_unlock(&rdata->rp_mutex);
 				kref_put(&rdata->kref, lport->tt.rport_destroy);
 			}
@@ -433,9 +435,13 @@ static int fc_rport_login(struct fc_rport_priv *rdata)
 	case RPORT_ST_DELETE:
 		FC_RPORT_DBG(rdata, "Restart deleted port\n");
 		break;
-	default:
+	case RPORT_ST_INIT:
 		FC_RPORT_DBG(rdata, "Login to port\n");
 		fc_rport_enter_flogi(rdata);
+		break;
+	default:
+		FC_RPORT_DBG(rdata, "Login in progress, state %s\n",
+			     fc_rport_state(rdata));
 		break;
 	}
 	mutex_unlock(&rdata->rp_mutex);
@@ -489,6 +495,9 @@ static void fc_rport_enter_delete(struct fc_rport_priv *rdata,
  */
 static int fc_rport_logoff(struct fc_rport_priv *rdata)
 {
+	struct fc_lport *lport = rdata->local_port;
+	u32 port_id = rdata->ids.port_id;
+
 	mutex_lock(&rdata->rp_mutex);
 
 	FC_RPORT_DBG(rdata, "Remove port\n");
@@ -498,6 +507,17 @@ static int fc_rport_logoff(struct fc_rport_priv *rdata)
 		FC_RPORT_DBG(rdata, "Port in Delete state, not removing\n");
 		goto out;
 	}
+	/*
+	 * FC-LS states:
+	 * To explicitly Logout, the initiating Nx_Port shall terminate
+	 * other open Sequences that it initiated with the destination
+	 * Nx_Port prior to performing Logout.
+	 */
+	mutex_unlock(&rdata->rp_mutex);
+	lport->tt.exch_mgr_reset(lport, 0, port_id);
+	lport->tt.exch_mgr_reset(lport, port_id, 0);
+	mutex_lock(&rdata->rp_mutex);
+
 	fc_rport_enter_logo(rdata);
 
 	/*
@@ -593,14 +613,22 @@ static void fc_rport_timeout(struct work_struct *work)
  */
 static void fc_rport_error(struct fc_rport_priv *rdata, int err)
 {
+	struct fc_lport *lport = rdata->local_port;
+
 	FC_RPORT_DBG(rdata, "Error %d in state %s, retries %d\n",
 		     -err, fc_rport_state(rdata), rdata->retries);
 
 	switch (rdata->rp_state) {
 	case RPORT_ST_FLOGI:
-	case RPORT_ST_PLOGI:
 		rdata->flags &= ~FC_RP_STARTED;
 		fc_rport_enter_delete(rdata, RPORT_EV_FAILED);
+		break;
+	case RPORT_ST_PLOGI:
+		if (lport->point_to_multipoint) {
+			rdata->flags &= ~FC_RP_STARTED;
+			fc_rport_enter_delete(rdata, RPORT_EV_FAILED);
+		} else
+			fc_rport_enter_logo(rdata);
 		break;
 	case RPORT_ST_RTV:
 		fc_rport_enter_ready(rdata);
@@ -1092,7 +1120,7 @@ static void fc_rport_prli_resp(struct fc_seq *sp, struct fc_frame *fp,
 	u32 roles = FC_RPORT_ROLE_UNKNOWN;
 	u32 fcp_parm = 0;
 	u8 op;
-	u8 resp_code = 0;
+	enum fc_els_spp_resp resp_code;
 
 	mutex_lock(&rdata->rp_mutex);
 
@@ -1140,13 +1168,28 @@ static void fc_rport_prli_resp(struct fc_seq *sp, struct fc_frame *fp,
 		if (fcp_parm & FCP_SPPF_CONF_COMPL)
 			rdata->flags |= FC_RP_FLAGS_CONF_REQ;
 
-		prov = fc_passive_prov[FC_TYPE_FCP];
+		/*
+		 * Call prli provider if we should act as a target
+		 */
+		prov = fc_passive_prov[rdata->spp_type];
 		if (prov) {
 			memset(&temp_spp, 0, sizeof(temp_spp));
-			prov->prli(rdata, pp->prli.prli_spp_len,
-				   &pp->spp, &temp_spp);
+			resp_code = prov->prli(rdata, pp->prli.prli_spp_len,
+					       &pp->spp, &temp_spp);
+		} else {
+			memcpy(&temp_spp, &pp->spp, sizeof(temp_spp));
 		}
-
+		/*
+		 * Check if the image pair could be established
+		 */
+		if (rdata->spp_type != FC_TYPE_FCP ||
+		    resp_code != FC_SPP_RESP_ACK ||
+		    !(temp_spp.spp_flags & FC_SPP_EST_IMG_PAIR)) {
+			/*
+			 * Nope; we can't use this port as a target.
+			 */
+			fcp_parm &= ~FCP_SPPF_TARG_FCN;
+		}
 		rdata->supported_classes = FC_COS_CLASS3;
 		if (fcp_parm & FCP_SPPF_INIT_FCN)
 			roles |= FC_RPORT_ROLE_FCP_INITIATOR;
@@ -1198,6 +1241,15 @@ static void fc_rport_enter_prli(struct fc_rport_priv *rdata)
 		return;
 	}
 
+	/*
+	 * And if the local port does not support the initiator function
+	 * there's no need to send a PRLI, either.
+	 */
+	if (!(lport->service_params & FCP_SPPF_INIT_FCN)) {
+		    fc_rport_enter_ready(rdata);
+		    return;
+	}
+
 	FC_RPORT_DBG(rdata, "Port entered PRLI state from %s state\n",
 		     fc_rport_state(rdata));
 
@@ -1230,7 +1282,7 @@ static void fc_rport_enter_prli(struct fc_rport_priv *rdata)
 }
 
 /**
- * fc_rport_els_rtv_resp() - Handler for Request Timeout Value (RTV) responses
+ * fc_rport_rtv_resp() - Handler for Request Timeout Value (RTV) responses
  * @sp:	       The sequence the RTV was on
  * @fp:	       The RTV response frame
  * @rdata_arg: The remote port that sent the RTV response
@@ -1276,13 +1328,15 @@ static void fc_rport_rtv_resp(struct fc_seq *sp, struct fc_frame *fp,
 			tov = ntohl(rtv->rtv_r_a_tov);
 			if (tov == 0)
 				tov = 1;
-			rdata->r_a_tov = tov;
+			if (tov > rdata->r_a_tov)
+				rdata->r_a_tov = tov;
 			tov = ntohl(rtv->rtv_e_d_tov);
 			if (toq & FC_ELS_RTV_EDRES)
 				tov /= 1000000;
 			if (tov == 0)
 				tov = 1;
-			rdata->e_d_tov = tov;
+			if (tov > rdata->e_d_tov)
+				rdata->e_d_tov = tov;
 		}
 	}
 
@@ -1355,8 +1409,9 @@ static void fc_rport_recv_rtv_req(struct fc_rport_priv *rdata,
 	}
 	rtv = fc_frame_payload_get(fp, sizeof(*rtv));
 	rtv->rtv_cmd = ELS_LS_ACC;
-	rtv->rtv_r_a_tov = lport->r_a_tov;
-	rtv->rtv_e_d_tov = lport->e_d_tov;
+	rtv->rtv_r_a_tov = htonl(lport->r_a_tov);
+	rtv->rtv_e_d_tov = htonl(lport->e_d_tov);
+	rtv->rtv_toq = 0;
 	fc_fill_reply_hdr(fp, in_fp, FC_RCTL_ELS_REP, 0);
 	lport->tt.frame_send(lport, fp);
 drop:
@@ -1623,8 +1678,12 @@ static void fc_rport_recv_els_req(struct fc_lport *lport, struct fc_frame *fp)
 	struct fc_seq_els_data els_data;
 
 	rdata = lport->tt.rport_lookup(lport, fc_frame_sid(fp));
-	if (!rdata)
+	if (!rdata) {
+		FC_RPORT_ID_DBG(lport, fc_frame_sid(fp),
+				"Received ELS 0x%02x from non-logged-in port\n",
+				fc_frame_payload_op(fp));
 		goto reject;
+	}
 
 	mutex_lock(&rdata->rp_mutex);
 
@@ -1634,7 +1693,19 @@ static void fc_rport_recv_els_req(struct fc_lport *lport, struct fc_frame *fp)
 	case RPORT_ST_READY:
 	case RPORT_ST_ADISC:
 		break;
+	case RPORT_ST_PLOGI:
+		if (fc_frame_payload_op(fp) == ELS_PRLI) {
+			FC_RPORT_DBG(rdata, "Reject ELS PRLI "
+				     "while in state %s\n",
+				     fc_rport_state(rdata));
+			mutex_unlock(&rdata->rp_mutex);
+			kref_put(&rdata->kref, lport->tt.rport_destroy);
+			goto busy;
+		}
 	default:
+		FC_RPORT_DBG(rdata,
+			     "Reject ELS 0x%02x while in state %s\n",
+			     fc_frame_payload_op(fp), fc_rport_state(rdata));
 		mutex_unlock(&rdata->rp_mutex);
 		kref_put(&rdata->kref, lport->tt.rport_destroy);
 		goto reject;
@@ -1678,6 +1749,14 @@ reject:
 	els_data.explan = ELS_EXPL_PLOGI_REQD;
 	lport->tt.seq_els_rsp_send(fp, ELS_LS_RJT, &els_data);
 	fc_frame_free(fp);
+	return;
+
+busy:
+	els_data.reason = ELS_RJT_BUSY;
+	els_data.explan = ELS_EXPL_NONE;
+	lport->tt.seq_els_rsp_send(fp, ELS_LS_RJT, &els_data);
+	fc_frame_free(fp);
+	return;
 }
 
 /**
@@ -1715,6 +1794,7 @@ static void fc_rport_recv_req(struct fc_lport *lport, struct fc_frame *fp)
 	case ELS_RRQ:
 	case ELS_REC:
 	case ELS_RLS:
+	case ELS_RTV:
 		fc_rport_recv_els_req(lport, fp);
 		break;
 	default:
@@ -1960,13 +2040,6 @@ static void fc_rport_recv_prli_req(struct fc_rport_priv *rdata,
 	fc_fill_reply_hdr(fp, rx_fp, FC_RCTL_ELS_REP, 0);
 	lport->tt.frame_send(lport, fp);
 
-	switch (rdata->rp_state) {
-	case RPORT_ST_PRLI:
-		fc_rport_enter_ready(rdata);
-		break;
-	default:
-		break;
-	}
 	goto drop;
 
 reject_len:
@@ -2034,7 +2107,7 @@ static void fc_rport_recv_prlo_req(struct fc_rport_priv *rdata,
 	spp->spp_type_ext = rspp->spp_type_ext;
 	spp->spp_flags = FC_SPP_RESP_ACK;
 
-	fc_rport_enter_delete(rdata, RPORT_EV_LOGO);
+	fc_rport_enter_prli(rdata);
 
 	fc_fill_reply_hdr(fp, rx_fp, FC_RCTL_ELS_REP, 0);
 	lport->tt.frame_send(lport, fp);
@@ -2074,7 +2147,7 @@ static void fc_rport_recv_logo_req(struct fc_lport *lport, struct fc_frame *fp)
 		FC_RPORT_DBG(rdata, "Received LOGO request while in state %s\n",
 			     fc_rport_state(rdata));
 
-		fc_rport_enter_delete(rdata, RPORT_EV_LOGO);
+		fc_rport_enter_delete(rdata, RPORT_EV_STOP);
 		mutex_unlock(&rdata->rp_mutex);
 		kref_put(&rdata->kref, rdata->local_port->tt.rport_destroy);
 	} else

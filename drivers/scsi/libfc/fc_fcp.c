@@ -427,8 +427,6 @@ static void fc_fcp_can_queue_ramp_down(struct fc_lport *lport)
 	if (!can_queue)
 		can_queue = 1;
 	lport->host->can_queue = can_queue;
-	shost_printk(KERN_ERR, lport->host, "libfc: Could not allocate frame.\n"
-		     "Reducing can_queue to %d.\n", can_queue);
 
 unlock:
 	spin_unlock_irqrestore(lport->host->host_lock, flags);
@@ -455,7 +453,26 @@ static inline struct fc_frame *fc_fcp_frame_alloc(struct fc_lport *lport,
 	put_cpu();
 	/* error case */
 	fc_fcp_can_queue_ramp_down(lport);
+	shost_printk(KERN_ERR, lport->host,
+		     "libfc: Could not allocate frame, "
+		     "reducing can_queue to %d.\n", lport->host->can_queue);
 	return NULL;
+}
+
+/**
+ * get_fsp_rec_tov() - Helper function to get REC_TOV
+ * @fsp: the FCP packet
+ *
+ * Returns rec tov in jiffies as rpriv->e_d_tov + 1 second
+ */
+static inline unsigned int get_fsp_rec_tov(struct fc_fcp_pkt *fsp)
+{
+	struct fc_rport_libfc_priv *rpriv = fsp->rport->dd_data;
+	unsigned int e_d_tov = FC_DEF_E_D_TOV;
+
+	if (rpriv && rpriv->e_d_tov > e_d_tov)
+		e_d_tov = rpriv->e_d_tov;
+	return msecs_to_jiffies(e_d_tov) + HZ;
 }
 
 /**
@@ -561,8 +578,10 @@ crc_err:
 	 * and completes the transfer, call the completion handler.
 	 */
 	if (unlikely(fsp->state & FC_SRB_RCV_STATUS) &&
-	    fsp->xfer_len == fsp->data_len - fsp->scsi_resid)
+	    fsp->xfer_len == fsp->data_len - fsp->scsi_resid) {
+		FC_FCP_DBG( fsp, "complete out-of-order sequence\n" );
 		fc_fcp_complete_locked(fsp);
+	}
 	return;
 err:
 	fc_fcp_recovery(fsp, host_bcode);
@@ -943,7 +962,7 @@ static void fc_fcp_resp(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
 				   "len %x, data len %x\n",
 				   fsp->rport->port_id,
 				   fsp->xfer_len, expected_len, fsp->data_len);
-			fc_fcp_timer_set(fsp, 2);
+			fc_fcp_timer_set(fsp, get_fsp_rec_tov(fsp));
 			return;
 		}
 		fsp->status_code = FC_DATA_OVRRUN;
@@ -1150,19 +1169,6 @@ static int fc_fcp_pkt_send(struct fc_lport *lport, struct fc_fcp_pkt *fsp)
 	}
 
 	return rc;
-}
-
-/**
- * get_fsp_rec_tov() - Helper function to get REC_TOV
- * @fsp: the FCP packet
- *
- * Returns rec tov in jiffies as rpriv->e_d_tov + 1 second
- */
-static inline unsigned int get_fsp_rec_tov(struct fc_fcp_pkt *fsp)
-{
-	struct fc_rport_libfc_priv *rpriv = fsp->rport->dd_data;
-
-	return msecs_to_jiffies(rpriv->e_d_tov) + HZ;
 }
 
 /**
@@ -1562,13 +1568,14 @@ static void fc_fcp_rec_resp(struct fc_seq *seq, struct fc_frame *fp, void *arg)
 				   fsp->rport->port_id, rjt->er_reason,
 				   rjt->er_explan, fsp->xfer_len);
 			/*
-			 * If no data transfer, the command frame got dropped
-			 * so we just retry.  If data was transferred, we
-			 * lost the response but the target has no record,
-			 * so we abort and retry.
+			 * If response got lost or is stuck in the
+			 * queue somewhere we have no idea if and when
+			 * the response will be received. So quarantine
+			 * the xid and retry the command.
 			 */
-			if (rjt->er_explan == ELS_EXPL_OXID_RXID &&
-			    fsp->xfer_len == 0) {
+			if (rjt->er_explan == ELS_EXPL_OXID_RXID) {
+				struct fc_exch *ep = fc_seq_exch(fsp->seq_ptr);
+				ep->state |= FC_EX_QUARANTINE;
 				fsp->state |= FC_SRB_ABORTED;
 				fc_fcp_retry_cmd(fsp, FC_TRANS_RESET);
 				break;
@@ -1730,7 +1737,6 @@ static void fc_fcp_srr(struct fc_fcp_pkt *fsp, enum fc_rctl r_ctl, u32 offset)
 	struct fc_seq *seq;
 	struct fcp_srr *srr;
 	struct fc_frame *fp;
-	unsigned int rec_tov;
 
 	rport = fsp->rport;
 	rpriv = rport->dd_data;
@@ -1754,10 +1760,9 @@ static void fc_fcp_srr(struct fc_fcp_pkt *fsp, enum fc_rctl r_ctl, u32 offset)
 		       rpriv->local_port->port_id, FC_TYPE_FCP,
 		       FC_FCTL_REQ, 0);
 
-	rec_tov = get_fsp_rec_tov(fsp);
 	seq = lport->tt.exch_seq_send(lport, fp, fc_fcp_srr_resp,
 				      fc_fcp_pkt_destroy,
-				      fsp, jiffies_to_msecs(rec_tov));
+				      fsp, get_fsp_rec_tov(fsp));
 	if (!seq)
 		goto retry;
 
@@ -1896,8 +1901,13 @@ int fc_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *sc_cmd)
 	rpriv = rport->dd_data;
 
 	if (!fc_fcp_lport_queue_ready(lport)) {
-		if (lport->qfull)
+		if (lport->qfull) {
 			fc_fcp_can_queue_ramp_down(lport);
+			shost_printk(KERN_ERR, lport->host,
+				     "libfc: queue full, "
+				     "reducing can_queue to %d.\n",
+				     lport->host->can_queue);
+		}
 		rc = SCSI_MLQUEUE_HOST_BUSY;
 		goto out;
 	}

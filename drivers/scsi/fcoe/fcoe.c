@@ -602,12 +602,15 @@ static void fcoe_port_send(struct fcoe_port *port, struct sk_buff *skb)
  */
 static void fcoe_fip_send(struct fcoe_ctlr *fip, struct sk_buff *skb)
 {
-	struct fip_header *fiph = (struct fip_header *)skb->data;
+	struct ethhdr *eh = eth_hdr(skb);
+	struct fip_header *fiph = NULL;
 
-	if (ntohs(fiph->fip_op) == FIP_OP_VLAN) {
-		skb->dev = fcoe_from_ctlr(fip)->realdev;
-	} else {
-		skb->dev = fcoe_from_ctlr(fip)->netdev;
+	skb->dev = fcoe_from_ctlr(fip)->netdev;
+	if (ntohs(eh->h_proto) == ETH_P_FIP) {
+		fiph = (struct fip_header *)((unsigned char *)eh +
+					     sizeof(struct ethhdr));
+		if (ntohs(fiph->fip_op) == FIP_OP_VLAN)
+			skb->dev = fcoe_from_ctlr(fip)->realdev;
 	}
 	fcoe_port_send(lport_priv(fip->lp), skb);
 }
