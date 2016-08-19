@@ -1328,7 +1328,8 @@ static void fc_rport_rtv_resp(struct fc_seq *sp, struct fc_frame *fp,
 			tov = ntohl(rtv->rtv_r_a_tov);
 			if (tov == 0)
 				tov = 1;
-			rdata->r_a_tov = tov;
+			if (tov > rdata->r_a_tov)
+				rdata->r_a_tov = tov;
 			tov = ntohl(rtv->rtv_e_d_tov);
 			if (toq & FC_ELS_RTV_EDRES)
 				tov /= 1000000;
@@ -1408,8 +1409,9 @@ static void fc_rport_recv_rtv_req(struct fc_rport_priv *rdata,
 	}
 	rtv = fc_frame_payload_get(fp, sizeof(*rtv));
 	rtv->rtv_cmd = ELS_LS_ACC;
-	rtv->rtv_r_a_tov = lport->r_a_tov;
-	rtv->rtv_e_d_tov = lport->e_d_tov;
+	rtv->rtv_r_a_tov = htonl(lport->r_a_tov);
+	rtv->rtv_e_d_tov = htonl(lport->e_d_tov);
+	rtv->rtv_toq = 0;
 	fc_fill_reply_hdr(fp, in_fp, FC_RCTL_ELS_REP, 0);
 	lport->tt.frame_send(lport, fp);
 drop:
