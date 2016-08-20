@@ -549,6 +549,10 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 				    "%s: rtpg failed, result %d\n",
 				    ALUA_DH_NAME, retval);
 			kfree(buff);
+			if (host_byte(retval) == DID_SOFT_ERROR ||
+			    host_byte(retval) == DID_IMM_RETRY ||
+			    host_byte(retval) == DID_REQUEUE)
+				goto retry;
 			if (driver_byte(retval) == DRIVER_ERROR)
 				return SCSI_DH_DEV_TEMP_BUSY;
 			return SCSI_DH_IO;

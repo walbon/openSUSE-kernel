@@ -68,10 +68,14 @@ static void fc_disc_stop_rports(struct fc_disc *disc)
 
 	lport = fc_disc_lport(disc);
 
-	mutex_lock(&disc->disc_mutex);
-	list_for_each_entry_rcu(rdata, &disc->rports, peers)
-		lport->tt.rport_logoff(rdata);
-	mutex_unlock(&disc->disc_mutex);
+	rcu_read_lock();
+	list_for_each_entry_rcu(rdata, &disc->rports, peers) {
+		if (kref_get_unless_zero(&rdata->kref)) {
+			lport->tt.rport_logoff(rdata);
+			kref_put(&rdata->kref, lport->tt.rport_destroy);
+		}
+	}
+	rcu_read_unlock();
 }
 
 /**
@@ -289,16 +293,20 @@ static void fc_disc_done(struct fc_disc *disc, enum fc_disc_event event)
 	 * Skip ports which were never discovered.  These are the dNS port
 	 * and ports which were created by PLOGI.
 	 */
-	list_for_each_entry_rcu(rdata, &disc->rports, peers) {
-		if (!rdata->disc_id)
-			continue;
-		if (rdata->disc_id == disc->disc_id)
-			lport->tt.rport_login(rdata);
-		else
-			lport->tt.rport_logoff(rdata);
-	}
-
 	mutex_unlock(&disc->disc_mutex);
+	rcu_read_lock();
+	list_for_each_entry_rcu(rdata, &disc->rports, peers) {
+		if (!kref_get_unless_zero(&rdata->kref))
+			continue;
+		if (rdata->disc_id) {
+			if (rdata->disc_id == disc->disc_id)
+				lport->tt.rport_login(rdata);
+			else
+				lport->tt.rport_logoff(rdata);
+		}
+		kref_put(&rdata->kref, lport->tt.rport_destroy);
+	}
+	rcu_read_unlock();
 	disc->disc_callback(lport, event);
 	mutex_lock(&disc->disc_mutex);
 }
