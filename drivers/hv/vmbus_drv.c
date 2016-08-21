@@ -41,8 +41,8 @@
 #include <linux/ptrace.h>
 #include <linux/screen_info.h>
 #include <linux/kdebug.h>
-#include <linux/efi.h>
 #include <linux/random.h>
+#include <linux/efi.h>
 #include "hyperv_vmbus.h"
 
 static struct acpi_device  *hv_acpi_dev;
