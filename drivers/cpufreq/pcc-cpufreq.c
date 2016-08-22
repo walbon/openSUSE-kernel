@@ -200,9 +200,25 @@ static int pcc_cpufreq_target(struct cpufreq_policy *policy,
 {
 	struct pcc_cpu *pcc_cpu_data;
 	struct cpufreq_freqs freqs;
+	static u32 limit = 0;
+
 	u16 status;
 	u32 input_buffer;
 	int cpu;
+
+	if (!limit) {
+		u32 f_min = policy->cpuinfo.min_freq / 1000;
+		u32 f_max = policy->cpuinfo.max_freq / 1000;
+		limit = (f_max - f_min) * f_min;
+		limit /= f_max;
+		limit *= 1000;
+		limit += f_min * 1000;
+		pr_debug("pcc-cpufreq: setting deadband limit to %u kHz\n",
+			limit);
+	}
+
+	if (target_freq < limit)
+		target_freq = policy->min;
 
 	cpu = policy->cpu;
 	pcc_cpu_data = per_cpu_ptr(pcc_cpu_info, cpu);
@@ -214,6 +230,10 @@ static int pcc_cpufreq_target(struct cpufreq_policy *policy,
 
 	freqs.old = policy->cur;
 	freqs.new = target_freq;
+
+	if (freqs.new == freqs.old)
+		return 0;
+
 	cpufreq_freq_transition_begin(policy, &freqs);
 	spin_lock(&pcc_lock);
 
@@ -554,8 +574,6 @@ static int pcc_cpufreq_cpu_init(struct cpufreq_policy *policy)
 		ioread32(&pcch_hdr->nominal) * 1000;
 	policy->min = policy->cpuinfo.min_freq =
 		ioread32(&pcch_hdr->minimum_frequency) * 1000;
-
-	policy->cpuinfo.transition_latency = CPUFREQ_ETERNAL;
 
 	pr_debug("init: policy->max is %d, policy->min is %d\n",
 		policy->max, policy->min);
