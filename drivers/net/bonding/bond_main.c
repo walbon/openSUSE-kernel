@@ -2855,8 +2855,8 @@ static void bond_validate_arp(struct bonding *bond, struct slave *slave, __be32 
 	}
 }
 
-static int bond_arp_rcv(struct sk_buff *skb, struct bonding *bond,
-			 struct slave *slave)
+int bond_arp_rcv(struct sk_buff *skb, struct bonding *bond,
+		 struct slave *slave)
 {
 	struct arphdr *arp;
 	unsigned char *arp_ptr;
