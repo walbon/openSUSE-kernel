@@ -546,8 +546,7 @@ static ssize_t bonding_store_arp_interval(struct device *d,
 				bond->recv_probe = NULL;
 		} else {
 			/* arp_validate can be set only in active-backup mode */
-			if (bond->params.arp_validate)
-				bond->recv_probe = bond_arp_rcv;
+			bond->recv_probe = bond_arp_rcv;
 		}
 
 		/* If the interface is up, we may need to fire off

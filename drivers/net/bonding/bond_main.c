@@ -3555,8 +3555,7 @@ static int bond_open(struct net_device *bond_dev)
 					  bond_loadbalance_arp_mon);
 
 		queue_delayed_work(bond->wq, &bond->arp_work, 0);
-		if (bond->params.arp_validate)
-			bond->recv_probe = bond_arp_rcv;
+		bond->recv_probe = bond_arp_rcv;
 	}
 
 	if (bond->params.mode == BOND_MODE_8023AD) {
