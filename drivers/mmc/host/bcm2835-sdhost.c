@@ -321,9 +321,9 @@ static void bcm2835_sdhost_reset_internal(struct bcm2835_host *host)
 	temp |= (FIFO_READ_THRESHOLD << SDEDM_READ_THRESHOLD_SHIFT) |
 		(FIFO_WRITE_THRESHOLD << SDEDM_WRITE_THRESHOLD_SHIFT);
 	bcm2835_sdhost_write(host, temp, SDEDM);
-	mdelay(10);
+	msleep(20);
 	bcm2835_sdhost_set_power(host, true);
-	mdelay(10);
+	msleep(20);
 	host->clock = 0;
 	bcm2835_sdhost_write(host, host->hcfg, SDHCFG);
 	bcm2835_sdhost_write(host, host->cdiv, SDCDIV);
@@ -334,9 +334,10 @@ static void bcm2835_sdhost_reset(struct mmc_host *mmc)
 	struct bcm2835_host *host = mmc_priv(mmc);
 	unsigned long flags;
 
-	spin_lock_irqsave(&host->lock, flags);
+	if (host->dma_chan)
+		dmaengine_terminate_all(host->dma_chan);
+	tasklet_kill(&host->finish_tasklet);
 	bcm2835_sdhost_reset_internal(host);
-	spin_unlock_irqrestore(&host->lock, flags);
 }
 
 static void bcm2835_sdhost_set_ios(struct mmc_host *mmc, struct mmc_ios *ios);
