@@ -327,7 +327,6 @@ static void bcm2835_sdhost_reset_internal(struct bcm2835_host *host)
 	host->clock = 0;
 	bcm2835_sdhost_write(host, host->hcfg, SDHCFG);
 	bcm2835_sdhost_write(host, host->cdiv, SDCDIV);
-	mmiowb();
 }
 
 static void bcm2835_sdhost_reset(struct mmc_host *mmc)
@@ -1035,8 +1034,6 @@ static void bcm2835_sdhost_timeout(unsigned long data)
 			tasklet_schedule(&host->finish_tasklet);
 		}
 	}
-
-	mmiowb();
 	spin_unlock_irqrestore(&host->lock, flags);
 }
 
@@ -1187,8 +1184,6 @@ static irqreturn_t bcm2835_sdhost_irq(int irq, void *dev_id)
 		result = IRQ_HANDLED;
 	}
 
-	mmiowb();
-
 	spin_unlock(&host->lock);
 
 	return result;
@@ -1303,7 +1298,6 @@ static void bcm2835_sdhost_request(struct mmc_host *mmc,
 		bcm2835_sdhost_dumpregs(host);
 		mrq->cmd->error = -EILSEQ;
 		tasklet_schedule(&host->finish_tasklet);
-		mmiowb();
 		spin_unlock_irqrestore(&host->lock, flags);
 		return;
 	}
@@ -1323,8 +1317,6 @@ static void bcm2835_sdhost_request(struct mmc_host *mmc,
 		if (!host->use_busy)
 			bcm2835_sdhost_finish_command(host, &flags);
 	}
-
-	mmiowb();
 
 	spin_unlock_irqrestore(&host->lock, flags);
 }
@@ -1353,8 +1345,6 @@ static void bcm2835_sdhost_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	bcm2835_sdhost_write(host, host->hcfg, SDHCFG);
 
-	mmiowb();
-
 	spin_unlock_irqrestore(&host->lock, flags);
 }
 
@@ -1382,8 +1372,6 @@ static void bcm2835_sdhost_cmd_wait_work(struct work_struct *work)
 	}
 
 	bcm2835_sdhost_finish_command(host, &flags);
-
-	mmiowb();
 
 	spin_unlock_irqrestore(&host->lock, flags);
 }
@@ -1414,8 +1402,6 @@ static void bcm2835_sdhost_tasklet_finish(unsigned long param)
 	host->mrq = NULL;
 	host->cmd = NULL;
 	host->data = NULL;
-
-	mmiowb();
 
 	host->dma_desc = NULL;
 	terminate_chan = host->dma_chan;
@@ -1515,7 +1501,6 @@ int bcm2835_sdhost_add_host(struct bcm2835_host *host)
 		goto untasklet;
 	}
 
-	mmiowb();
 	mmc_add_host(mmc);
 
 	pio_limit_string[0] = '\0';
