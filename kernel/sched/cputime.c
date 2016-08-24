@@ -288,12 +288,12 @@ static inline u64 read_sum_exec_runtime(struct task_struct *t)
 static u64 read_sum_exec_runtime(struct task_struct *t)
 {
 	u64 ns;
-	struct rq_flags rf;
+	unsigned long flags;
 	struct rq *rq;
 
-	rq = task_rq_lock(t, &rf);
+	rq = task_rq_lock(t, &flags);
 	ns = t->se.sum_exec_runtime;
-	task_rq_unlock(rq, t, &rf);
+	task_rq_unlock(rq, t, &flags);
 
 	return ns;
 }
