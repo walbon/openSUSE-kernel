@@ -73,6 +73,7 @@
 
 &xgenet {
 	status = "ok";
+	rxlos-gpios = <&sbgpio 12 1>;
 };
 
 &mdio {
