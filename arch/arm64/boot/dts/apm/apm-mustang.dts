@@ -73,10 +73,11 @@
 
 &xgenet {
 	status = "ok";
+	rxlos-gpios = <&sbgpio 12 1>;
 };
 
 &mdio {
-	menetphy: phy@3 {
+	menet0phy: phy@3 {
 		reg = <0x3>;
 	};
 	sgenet0phy: phy@4 {

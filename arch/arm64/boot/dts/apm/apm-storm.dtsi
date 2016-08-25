@@ -841,7 +841,7 @@
 			clocks = <&rtcclk 0>;
 		};
 
-		mdio: mdio@0x17020000 {
+		mdio: mdio@17020000 {
 			compatible = "apm,xgene-mdio-rgmii";
 			#address-cells = <1>;
 			#size-cells = <0>;
@@ -858,11 +858,21 @@
 			reg-names = "enet_csr", "ring_csr", "ring_cmd";
 			interrupts = <0x0 0x3c 0x4>;
 			dma-coherent;
+			clocks = <&menetclk 0>;
 			/* mac address will be overwritten by the bootloader */
 			local-mac-address = [00 00 00 00 00 00];
-			clocks = <&menetclk 0>;
 			phy-connection-type = "rgmii";
-			phy-handle = <&menetphy>;
+			phy-handle = <&menetphy>,<&menet0phy>;
+			mdio {
+				compatible = "apm,xgene-mdio";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				menetphy: menetphy@3 {
+					compatible = "ethernet-phy-id001c.c915";
+					reg = <0x3>;
+				};
+
+			};
 		};
 
 		sgenet0: ethernet@1f210000 {
@@ -875,8 +885,8 @@
 			interrupts = <0x0 0xA0 0x4>,
 				     <0x0 0xA1 0x4>;
 			dma-coherent;
-			local-mac-address = [00 00 00 00 00 00];
 			clocks = <&sge0clk 0>;
+			local-mac-address = [00 00 00 00 00 00];
 			phy-connection-type = "sgmii";
 			phy-handle = <&sgenet0phy>;
 		};

@@ -258,11 +258,10 @@ config MDIO_BCM_IPROC
 	  Broadcom iProc SoC's.
 
 config MDIO_XGENE
-       tristate "APM X-Gene SoC MDIO bus controller"
-       help
-         This module provides a driver for the MDIO busses found in the
-         APM X-Gene SoC's.
-
+	tristate "APM X-Gene SoC MDIO bus controller"
+	help
+	  This module provides a driver for the MDIO busses found in the
+	  APM X-Gene SoC's.
 
 endif # PHYLIB
 
