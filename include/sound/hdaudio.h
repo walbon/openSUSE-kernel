@@ -87,6 +87,8 @@ struct hdac_device {
 	bool lazy_cache:1;	/* don't wake up for writes */
 	bool caps_overwriting:1; /* caps overwrite being in process */
 	bool cache_coef:1;	/* cache COEF read/write too */
+
+	void *reserved;		/* kABI placeholder */
 };
 
 /* device/driver type used for matching */
@@ -306,6 +308,8 @@ struct hdac_bus {
 	/* i915 component interface */
 	struct i915_audio_component *audio_component;
 	int i915_power_refcount;
+
+	void *reserved;		/* kABI placeholder */
 };
 
 int snd_hdac_bus_init(struct hdac_bus *bus, struct device *dev,
