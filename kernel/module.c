@@ -1887,9 +1887,11 @@ static int mod_sysfs_setup(struct module *mod,
 	add_notes_attrs(mod, info);
 
 #ifdef CONFIG_SUSE_KERNEL_SUPPORTED
-	if (mod->taints & (1 << TAINT_EXTERNAL_SUPPORT))
+	if (mod->taints & (1 << TAINT_EXTERNAL_SUPPORT)) {
+		pr_notice("%s: externally supported module, "
+			  "setting X kernel taint flag.\n", mod->name);
 		add_taint(TAINT_EXTERNAL_SUPPORT, LOCKDEP_STILL_OK);
-	else if (mod->taints & (1 << TAINT_NO_SUPPORT)) {
+	} else if (mod->taints & (1 << TAINT_NO_SUPPORT)) {
 		if (unsupported == 0) {
 			printk(KERN_WARNING "%s: module not supported by "
 			       "SUSE, refusing to load. To override, echo "
@@ -2995,8 +2997,12 @@ static int check_modinfo(struct module *mod, struct load_info *info, int flags)
 		return -ENOEXEC;
 	}
 
-	if (!get_modinfo(info, "intree"))
+	if (!get_modinfo(info, "intree")) {
+		if (!test_taint(TAINT_OOT_MODULE))
+			pr_warn("%s: loading out-of-tree module taints kernel.\n",
+				mod->name);
 		add_taint_module(mod, TAINT_OOT_MODULE, LOCKDEP_STILL_OK);
+	}
 
 	if (get_modinfo(info, "staging")) {
 		add_taint_module(mod, TAINT_CRAP, LOCKDEP_STILL_OK);
@@ -3161,6 +3167,8 @@ static int move_module(struct module *mod, struct load_info *info)
 
 static int check_module_license_and_versions(struct module *mod)
 {
+	int prev_taint = test_taint(TAINT_PROPRIETARY_MODULE);
+
 	/*
 	 * ndiswrapper is under GPL by itself, but loads proprietary modules.
 	 * Don't use add_taint_module(), as it would prevent ndiswrapper from
@@ -3178,6 +3186,9 @@ static int check_module_license_and_versions(struct module *mod)
 	if (strcmp(mod->name, "lve") == 0)
 		add_taint_module(mod, TAINT_PROPRIETARY_MODULE,
 				 LOCKDEP_NOW_UNRELIABLE);
+
+	if (!prev_taint && test_taint(TAINT_PROPRIETARY_MODULE))
+		pr_warn("%s: module license taints kernel.\n", mod->name);
 
 #ifdef CONFIG_MODVERSIONS
 	if ((mod->num_syms && !mod->crcs)

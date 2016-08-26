@@ -220,7 +220,7 @@ extern const char *ceph_osd_state_name(int s);
 	f(TRUNCATE,	__CEPH_OSD_OP(WR, DATA, 3),	"truncate")	    \
 	f(ZERO,		__CEPH_OSD_OP(WR, DATA, 4),	"zero")		    \
 	f(DELETE,	__CEPH_OSD_OP(WR, DATA, 5),	"delete")	    \
-	f(WRITESAME,	__CEPH_OSD_OP(WR, DATA, 36),	"write-same")	    \
+	f(WRITESAME,	__CEPH_OSD_OP(WR, DATA, 38),	"write-same")	    \
 									    \
 	/* fancy write */						    \
 	f(APPEND,	__CEPH_OSD_OP(WR, DATA, 6),	"append")	    \
