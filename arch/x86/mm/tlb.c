@@ -128,7 +128,7 @@ static void flush_tlb_func(void *info)
 
 }
 
-void native_flush_tlb_others(const struct cpumask *cpumask,
+void native_flush_tlb_others(struct cpumask *cpumask,
 				 struct mm_struct *mm, unsigned long start,
 				 unsigned long end)
 {
