@@ -251,7 +251,7 @@ int watermark_scale_factor = 10;
 
 static unsigned long __meminitdata nr_kernel_pages;
 static unsigned long __meminitdata nr_all_pages;
-static unsigned long __meminitdata nr_memory_reserve;
+static unsigned long __meminitdata dma_reserve;
 
 #ifdef CONFIG_HAVE_MEMBLOCK_NODE_MAP
 static unsigned long __meminitdata arch_zone_lowest_possible_pfn[MAX_NR_ZONES];
@@ -5735,10 +5735,10 @@ static void __paginginit free_area_init_core(struct pglist_data *pgdat)
 		}
 
 		/* Account for reserved pages */
-		if (j == 0 && freesize > nr_memory_reserve) {
-			freesize -= nr_memory_reserve;
+		if (j == 0 && freesize > dma_reserve) {
+			freesize -= dma_reserve;
 			printk(KERN_DEBUG "  %s zone: %lu pages reserved\n",
-					zone_names[0], nr_memory_reserve);
+					zone_names[0], dma_reserve);
 		}
 
 		if (!is_highmem_idx(j))
@@ -6431,9 +6431,8 @@ void __init mem_init_print_info(const char *str)
 }
 
 /**
- * set_memory_reserve - set number of pages reserved in the first zone
- * @nr_reserve: The number of pages to mark reserved
- * @inc: true increment to existing value; false set new value.
+ * set_dma_reserve - set the specified number of pages reserved in the first zone
+ * @new_dma_reserve: The number of pages to mark reserved
  *
  * The per-cpu batchsize and zone watermarks are determined by managed_pages.
  * In the DMA zone, a significant percentage may be consumed by kernel image
@@ -6442,12 +6441,9 @@ void __init mem_init_print_info(const char *str)
  * first zone (e.g., ZONE_DMA). The effect will be lower watermarks and
  * smaller per-cpu batchsize.
  */
-void __init set_memory_reserve(unsigned long nr_reserve, bool inc)
+void __init set_dma_reserve(unsigned long new_dma_reserve)
 {
-	if (inc)
-		nr_memory_reserve += nr_reserve;
-	else
-		nr_memory_reserve = nr_reserve;
+	dma_reserve = new_dma_reserve;
 }
 
 void __init free_area_init(unsigned long *zones_size)
@@ -6879,6 +6875,17 @@ static int __init set_hashdist(char *str)
 __setup("hashdist=", set_hashdist);
 #endif
 
+#ifndef __HAVE_ARCH_RESERVED_KERNEL_PAGES
+/*
+ * Returns the number of pages that arch has reserved but
+ * is not known to alloc_large_system_hash().
+ */
+static unsigned long __init arch_reserved_kernel_pages(void)
+{
+	return 0;
+}
+#endif
+
 /*
  * allocate a large system hash table from bootmem
  * - it is assumed that the hash table must contain an exact power-of-2
@@ -6903,6 +6910,7 @@ void *__init alloc_large_system_hash(const char *tablename,
 	if (!numentries) {
 		/* round applicable memory size up to nearest megabyte */
 		numentries = nr_kernel_pages;
+		numentries -= arch_reserved_kernel_pages();
 
 		/* It isn't necessary when PAGE_SIZE >= 1MB */
 		if (PAGE_SHIFT < 20)
