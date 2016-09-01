@@ -219,7 +219,7 @@ static int do_ipv6_setsockopt(struct sock *sk, int level, int optname,
 			opt = xchg((__force struct ipv6_txoptions **)&np->opt,
 				   NULL);
 			if (opt) {
-				atomic_sub(opt->tot_len, &sk->sk_omem_alloc);
+				atomic_sub(opt->tot_len + IPV6_TXOPT_RCU_LEN, &sk->sk_omem_alloc);
 				txopt_put(opt);
 			}
 			pktopt = xchg(&np->pktoptions, NULL);
@@ -421,7 +421,7 @@ static int do_ipv6_setsockopt(struct sock *sk, int level, int optname,
 		opt = ipv6_update_options(sk, opt);
 sticky_done:
 		if (opt) {
-			atomic_sub(opt->tot_len, &sk->sk_omem_alloc);
+			atomic_sub(opt->tot_len + IPV6_TXOPT_RCU_LEN, &sk->sk_omem_alloc);
 			txopt_put(opt);
 		}
 		break;
@@ -452,6 +452,7 @@ sticky_done:
 	case IPV6_2292PKTOPTIONS:
 	{
 		struct ipv6_txoptions *opt = NULL;
+		struct ipv6_txoptions_rcu *opt_rcu = NULL;
 		struct msghdr msg;
 		struct flowi6 fl6;
 		int junk;
@@ -470,13 +471,14 @@ sticky_done:
 		if (optlen > 64*1024)
 			break;
 
-		opt = sock_kmalloc(sk, sizeof(*opt) + optlen, GFP_KERNEL);
+		opt_rcu = sock_kmalloc(sk, sizeof(*opt_rcu) + optlen, GFP_KERNEL);
 		retv = -ENOBUFS;
-		if (opt == NULL)
+		if (opt_rcu == NULL)
 			break;
 
-		memset(opt, 0, sizeof(*opt));
-		atomic_set(&opt->refcnt, 1);
+		memset(opt_rcu, 0, sizeof(*opt_rcu));
+		atomic_set(&opt_rcu->refcnt, 1);
+		opt = &opt_rcu->txoptions;
 		opt->tot_len = sizeof(*opt) + optlen;
 		retv = -EFAULT;
 		if (copy_from_user(opt+1, optval, optlen))
@@ -494,7 +496,7 @@ update:
 		opt = ipv6_update_options(sk, opt);
 done:
 		if (opt) {
-			atomic_sub(opt->tot_len, &sk->sk_omem_alloc);
+			atomic_sub(opt->tot_len + IPV6_TXOPT_RCU_LEN, &sk->sk_omem_alloc);
 			txopt_put(opt);
 		}
 		break;
