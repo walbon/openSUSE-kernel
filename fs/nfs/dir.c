@@ -1270,7 +1270,12 @@ out_zap_parent:
 			goto out_valid;
 		if (dentry->d_flags & DCACHE_DISCONNECTED)
 			goto out_valid;
+		if (IS_ROOT(dentry))
+			goto out_valid;
 		shrink_dcache_parent(dentry);
+		if (dentry->d_lockref.count > 1)
+			/* possibly mounted, too dangerous to drop */
+			goto out_valid;
 	}
 	d_drop(dentry);
 	dput(parent);
