@@ -330,8 +330,12 @@ int __init fadump_reserve_mem(void)
 	}
 	fw_dump.reserve_dump_area_start = base;
 	fw_dump.reserve_dump_area_size = size;
-	set_memory_reserve(size/PAGE_SIZE, true);
 	return 1;
+}
+
+unsigned long __init arch_reserved_kernel_pages(void)
+{
+	return memblock_reserved_size() / PAGE_SIZE;
 }
 
 /* Look for fadump= cmdline option. */
