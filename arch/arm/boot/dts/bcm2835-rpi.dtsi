@@ -26,6 +26,11 @@
 			firmware = <&firmware>;
 			#power-domain-cells = <1>;
 		};
+
+		thermal {
+			compatible = "raspberrypi,bcm2835-thermal";
+			firmware = <&firmware>;
+		};
 	};
 };
 
