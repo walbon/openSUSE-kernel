@@ -31,6 +31,11 @@
 			compatible = "raspberrypi,bcm2835-thermal";
 			firmware = <&firmware>;
 		};
+
+		cpufreq {
+			compatible = "raspberrypi,bcm2835-cpufreq";
+			firmware = <&firmware>;
+		};
 	};
 };
 
