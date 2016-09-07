@@ -1370,7 +1370,7 @@ static void xen_flush_tlb_single(unsigned long addr)
 	preempt_enable();
 }
 
-static void xen_flush_tlb_others(const struct cpumask *cpus,
+static void xen_flush_tlb_others(struct cpumask *cpus,
 				 struct mm_struct *mm, unsigned long start,
 				 unsigned long end)
 {
