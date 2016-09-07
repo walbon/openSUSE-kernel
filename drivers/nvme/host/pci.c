@@ -1664,7 +1664,8 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 	return 0;
 
  disable:
-	pci_disable_device(pdev);
+	pci_release_regions(pdev);
+
 	return result;
 }
 
@@ -1917,10 +1918,10 @@ static int nvme_dev_map(struct nvme_dev *dev)
 	if (!dev->bar)
 		goto release;
 
-       return 0;
-  release:
-       pci_release_selected_regions(pdev, bars);
-       return -ENODEV;
+	return 0;
+release:
+	pci_release_selected_regions(pdev, bars);
+	return -ENODEV;
 }
 
 static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
