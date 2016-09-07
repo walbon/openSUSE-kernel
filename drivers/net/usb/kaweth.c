@@ -1003,6 +1003,7 @@ static int kaweth_probe(
 	struct net_device *netdev;
 	const eth_addr_t bcast_addr = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 	int result = 0;
+	int rv = -EIO;
 
 	dbg("Kawasaki Device Probe (Device number:%d): 0x%4.4x:0x%4.4x:0x%4.4x",
 		 dev->devnum,
@@ -1023,6 +1024,7 @@ static int kaweth_probe(
 	kaweth = netdev_priv(netdev);
 	kaweth->dev = dev;
 	kaweth->net = netdev;
+	kaweth->intf = intf;
 
 	spin_lock_init(&kaweth->device_lock);
 	init_waitqueue_head(&kaweth->term_wait);
@@ -1042,6 +1044,10 @@ static int kaweth_probe(
 		/* Download the firmware */
 		dev_info(&intf->dev, "Downloading firmware...\n");
 		kaweth->firmware_buf = (__u8 *)__get_free_page(GFP_KERNEL);
+		if (!kaweth->firmware_buf) {
+			rv = -ENOMEM;
+			goto err_free_netdev;
+		}
 		if ((result = kaweth_download_firmware(kaweth,
 						      "kaweth/new_code.bin",
 						      100,
@@ -1136,8 +1142,6 @@ err_fw:
 
 	dbg("Initializing net device.");
 
-	kaweth->intf = intf;
-
 	kaweth->tx_urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!kaweth->tx_urb)
 		goto err_free_netdev;
@@ -1207,7 +1211,7 @@ err_only_tx:
 err_free_netdev:
 	free_netdev(netdev);
 
-	return -EIO;
+	return rv;
 }
 
 /****************************************************************
