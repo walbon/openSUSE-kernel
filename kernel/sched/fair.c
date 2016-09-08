@@ -7166,13 +7166,19 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 		 * This cpu is idle. If the busiest group is not overloaded
 		 * and there is no imbalance between this and busiest group
 		 * wrt idle cpus, it is balanced. The imbalance becomes
-		 * significant if the diff is greater than 2 otherwise we
-		 * may end up merely moving the imbalance to another group,
-		 * or bouncing a buddy pair needlessly.
+		 * significant if the diff is greater than 1 for most CPUs,
+		 * or 2 for older CPUs having multiple groups of 2 cores
+		 * sharing an L2, otherwise we may end up uselessly moving
+		 * the imbalance to another group, or starting a tug of war
+		 * with idle L2 groups constantly ripping communicating
+		 * tasks apart, and no L3 to mitigate the cache miss pain.
 		 */
-		if ((busiest->group_type != group_overloaded) &&
-				(local->idle_cpus <= (busiest->idle_cpus + 2)))
-			goto out_balanced;
+		if (busiest->group_type != group_overloaded) {
+			int imbalance = __this_cpu_read(sd_llc_size) == 2 ? 2 : 1;
+
+			if (local->idle_cpus <= busiest->idle_cpus + imbalance)
+				goto out_balanced;
+		}
 	} else {
 		/*
 		 * In the CPU_NEWLY_IDLE, CPU_NOT_IDLE cases, use
