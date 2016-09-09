@@ -339,10 +339,21 @@ static int posix_cpu_clock_get(const clockid_t which_clock, struct timespec *tp)
 			error = cpu_clock_sample(which_clock,
 						 current, &rtn);
 		} else {
-			read_lock(&tasklist_lock);
+			unsigned long flags;
+			struct sighand_struct *sighand;
+
+			/*
+			 * while_each_thread() is not yet entirely RCU safe,
+			 * keep locking the group while sampling process
+			 * clock for now.
+			 */
+			sighand = lock_task_sighand(current, &flags);
+			if (!sighand)
+				return error;
+
 			error = cpu_clock_sample_group(which_clock,
 						       current, &rtn);
-			read_unlock(&tasklist_lock);
+			unlock_task_sighand(current, &flags);
 		}
 	} else {
 		/*
@@ -359,13 +370,24 @@ static int posix_cpu_clock_get(const clockid_t which_clock, struct timespec *tp)
 								 p, &rtn);
 				}
 			} else {
-				read_lock(&tasklist_lock);
+				unsigned long flags;
+				struct sighand_struct *sighand;
+
+				/*
+				 * while_each_thread() is not yet entirely RCU safe,
+				 * keep locking the group while sampling process
+				 * clock for now.
+				 */
+				sighand = lock_task_sighand(p, &flags);
+				if (!sighand)
+					return error;
+
 				if (thread_group_leader(p) && p->sighand) {
 					error =
 					    cpu_clock_sample_group(which_clock,
 							           p, &rtn);
 				}
-				read_unlock(&tasklist_lock);
+				unlock_task_sighand(p, &flags);
 			}
 		}
 		rcu_read_unlock();
