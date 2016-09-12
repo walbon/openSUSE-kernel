@@ -1189,7 +1189,10 @@ static void fc_rport_prli_resp(struct fc_seq *sp, struct fc_frame *fp,
 		/*
 		 * Check if the image pair could be established
 		 */
-		if (rdata->spp_type != FC_TYPE_FCP ||
+		if (!resp_code)
+			/* ->prli might have changed parameters */
+			fcp_parm = ntohl(pp->spp.spp_params);
+		else if (rdata->spp_type != FC_TYPE_FCP ||
 		    resp_code != FC_SPP_RESP_ACK ||
 		    !(temp_spp.spp_flags & FC_SPP_EST_IMG_PAIR)) {
 			/*
