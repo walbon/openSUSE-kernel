@@ -2125,7 +2125,6 @@ void mlx4_en_destroy_netdev(struct net_device *dev)
 
 	/* Unregister device - this will close the port if it was up */
 	if (priv->registered) {
-		unregister_netdev(dev);
 		if (shutdown)
 			mlx4_en_shutdown(dev);
 		else
