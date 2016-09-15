@@ -609,9 +609,11 @@ static int its_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 
        /* lpi cannot be routed to a redistributor that is on a foreign node */
 	if (its_dev->its->flags & ITS_FLAGS_WORKAROUND_CAVIUM_23144) {
-		cpu_mask = cpumask_of_node(its_dev->its->numa_node);
-		if (!cpumask_intersects(mask_val, cpu_mask))
-			return -EINVAL;
+		if (its_dev->its->numa_node >= 0) {
+			cpu_mask = cpumask_of_node(its_dev->its->numa_node);
+			if (!cpumask_intersects(mask_val, cpu_mask))
+				return -EINVAL;
+		}
 	}
 
 	cpu = cpumask_any_and(mask_val, cpu_mask);
@@ -1092,13 +1094,13 @@ static void its_cpu_init_collection(void)
 	list_for_each_entry(its, &its_nodes, entry) {
 		u64 target;
 
-		/* avoid cross node core and its mapping */
+		/* avoid cross node collections and its mapping */
 		if (its->flags & ITS_FLAGS_WORKAROUND_CAVIUM_23144) {
 			struct device_node *cpu_node;
 
 			cpu_node = of_get_cpu_node(cpu, NULL);
 			if (its->numa_node != NUMA_NO_NODE &&
-			its->numa_node != of_node_to_nid(cpu_node))
+				its->numa_node != of_node_to_nid(cpu_node))
 				continue;
 		}
 
@@ -1430,7 +1432,7 @@ static void __maybe_unused its_enable_quirk_cavium_23144(void *data)
 {
 	struct its_node *its = data;
 
-		its->flags |= ITS_FLAGS_WORKAROUND_CAVIUM_23144;
+	its->flags |= ITS_FLAGS_WORKAROUND_CAVIUM_23144;
 }
 
 static const struct gic_quirk its_quirks[] = {
@@ -1442,7 +1444,6 @@ static const struct gic_quirk its_quirks[] = {
 		.init	= its_enable_quirk_cavium_22375,
 	},
 #endif
-
 #ifdef CONFIG_CAVIUM_ERRATUM_23144
 	{
 		.desc	= "ITS: Cavium erratum 23144",
