@@ -737,7 +737,12 @@ static void bgx_lmac_disable(struct bgx *bgx, u8 lmacid)
 	bgx_reg_write(bgx, lmacid, BGX_CMRX_CFG, cfg);
 
 	/* Disable serdes lanes */
-	bgx_reg_modify(bgx, lmacid, BGX_SPUX_CONTROL1, SPU_CTL_LOW_POWER);
+        if (!lmac->is_sgmii)
+                bgx_reg_modify(bgx, lmacid,
+                               BGX_SPUX_CONTROL1, SPU_CTL_LOW_POWER);
+        else
+                bgx_reg_modify(bgx, lmacid,
+                               BGX_GMP_PCS_MRX_CTL, PCS_MRX_CTL_PWR_DN);
 
 	/* Disable LMAC */
 	cfg = bgx_reg_read(bgx, lmacid, BGX_CMRX_CFG);

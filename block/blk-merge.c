@@ -94,8 +94,30 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 	bool do_split = true;
 	struct bio *new = NULL;
 	const unsigned max_sectors = get_max_io_size(q, bio);
+	unsigned bvecs = 0;
 
 	bio_for_each_segment(bv, bio, iter) {
+		/*
+		 * With arbitrary bio size, the incoming bio may be very
+		 * big. We have to split the bio into small bios so that
+		 * each holds at most BIO_MAX_PAGES bvecs because
+		 * bio_clone() can fail to allocate big bvecs.
+		 *
+		 * It should have been better to apply the limit per
+		 * request queue in which bio_clone() is involved,
+		 * instead of globally. The biggest blocker is the
+		 * bio_clone() in bio bounce.
+		 *
+		 * If bio is splitted by this reason, we should have
+		 * allowed to continue bios merging, but don't do
+		 * that now for making the change simple.
+		 *
+		 * TODO: deal with bio bounce's bio_clone() gracefully
+		 * and convert the global limit into per-queue limit.
+		 */
+		if (bvecs++ >= BIO_MAX_PAGES)
+			goto split;
+
 		/*
 		 * If the queue doesn't support SG gaps and adding this
 		 * offset would create a gap, disallow it.
@@ -304,7 +326,6 @@ static int blk_phys_contig_segment(struct request_queue *q, struct bio *bio,
 				   struct bio *nxt)
 {
 	struct bio_vec end_bv = { NULL }, nxt_bv;
-	struct bvec_iter iter;
 
 	if (!blk_queue_cluster(q))
 		return 0;
@@ -316,11 +337,8 @@ static int blk_phys_contig_segment(struct request_queue *q, struct bio *bio,
 	if (!bio_has_data(bio))
 		return 1;
 
-	bio_for_each_segment(end_bv, bio, iter)
-		if (end_bv.bv_len == iter.bi_size)
-			break;
-
-	nxt_bv = bio_iovec(nxt);
+	bio_get_last_bvec(bio, &end_bv);
+	bio_get_first_bvec(nxt, &nxt_bv);
 
 	if (!BIOVEC_PHYS_MERGEABLE(&end_bv, &nxt_bv))
 		return 0;
