@@ -1181,20 +1181,15 @@ static void fc_rport_prli_resp(struct fc_seq *sp, struct fc_frame *fp,
 		prov = fc_passive_prov[rdata->spp_type];
 		if (prov) {
 			memset(&temp_spp, 0, sizeof(temp_spp));
-			resp_code = prov->prli(rdata, pp->prli.prli_spp_len,
-					       &pp->spp, &temp_spp);
-		} else {
-			memcpy(&temp_spp, &pp->spp, sizeof(temp_spp));
+			prov->prli(rdata, pp->prli.prli_spp_len,
+				   &pp->spp, &temp_spp);
 		}
 		/*
 		 * Check if the image pair could be established
 		 */
-		if (!resp_code)
-			/* ->prli might have changed parameters */
-			fcp_parm = ntohl(pp->spp.spp_params);
-		else if (rdata->spp_type != FC_TYPE_FCP ||
+		if (rdata->spp_type != FC_TYPE_FCP ||
 		    resp_code != FC_SPP_RESP_ACK ||
-		    !(temp_spp.spp_flags & FC_SPP_EST_IMG_PAIR)) {
+		    !(pp->spp.spp_flags & FC_SPP_EST_IMG_PAIR)) {
 			/*
 			 * Nope; we can't use this port as a target.
 			 */
