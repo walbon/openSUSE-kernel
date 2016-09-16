@@ -184,6 +184,7 @@ struct kvm_s390_skeys {
 #define KVM_EXIT_SYSTEM_EVENT     24
 #define KVM_EXIT_S390_STSI        25
 #define KVM_EXIT_IOAPIC_EOI       26
+#define KVM_EXIT_ARM_TIMER        28
 
 /* For KVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
@@ -338,6 +339,12 @@ struct kvm_run {
 		struct {
 			__u8 vector;
 		} eoi;
+		/* KVM_EXIT_ARM_TIMER */
+#ifndef __GENKSYMS__
+		struct {
+			__u8 timesource;
+		} arm_timer;
+#endif
 		/* Fix the size of the union. */
 		char padding[256];
 	};
@@ -831,6 +838,7 @@ struct kvm_ppc_smmu_info {
 #define KVM_CAP_GUEST_DEBUG_HW_WPS 120
 #define KVM_CAP_SPLIT_IRQCHIP 121
 #define KVM_CAP_IOEVENTFD_ANY_LENGTH 122
+#define KVM_CAP_ARM_TIMER 133
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
@@ -1268,5 +1276,13 @@ struct kvm_assigned_msix_entry {
 	__u16 entry; /* The index of entry in the MSI-X table */
 	__u16 padding[3];
 };
+
+/* Available with KVM_CAP_ARM_TIMER */
+
+/* Bits for run->request_interrupt_window */
+#define KVM_IRQWINDOW_VTIMER		(1 << 0)
+
+/* Bits for run->arm_timer.timesource */
+#define KVM_ARM_TIMER_VTIMER		(1 << 0)
 
 #endif /* __LINUX_KVM_H */
