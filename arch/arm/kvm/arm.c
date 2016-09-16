@@ -187,6 +187,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_ARM_PSCI_0_2:
 	case KVM_CAP_READONLY_MEM:
 	case KVM_CAP_MP_STATE:
+	case KVM_CAP_ARM_TIMER:
 		r = 1;
 		break;
 	case KVM_CAP_COALESCED_MMIO:
@@ -468,13 +469,7 @@ static int kvm_vcpu_first_run_init(struct kvm_vcpu *vcpu)
 			return ret;
 	}
 
-	/*
-	 * Enable the arch timers only if we have an in-kernel VGIC
-	 * and it has been properly initialized, since we cannot handle
-	 * interrupts from the virtual timer with a userspace gic.
-	 */
-	if (irqchip_in_kernel(kvm) && vgic_initialized(kvm))
-		kvm_timer_enable(kvm);
+	kvm_timer_enable(kvm);
 
 	return 0;
 }
@@ -585,6 +580,13 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		if (signal_pending(current)) {
 			ret = -EINTR;
 			run->exit_reason = KVM_EXIT_INTR;
+		}
+
+		if (kvm_check_request(KVM_REQ_PENDING_TIMER, vcpu)) {
+			/* Tell user space about the pending vtimer */
+			ret = 0;
+			run->exit_reason = KVM_EXIT_ARM_TIMER;
+			run->arm_timer.timesource = KVM_ARM_TIMER_VTIMER;
 		}
 
 		if (ret <= 0 || need_new_vmid_gen(vcpu->kvm) ||
@@ -819,6 +821,29 @@ static int kvm_arch_vcpu_ioctl_vcpu_init(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
+static int kvm_vcpu_ioctl_enable_cap(struct kvm_vcpu *vcpu,
+				     struct kvm_enable_cap *cap)
+{
+	int r;
+
+	if (cap->flags)
+		return -EINVAL;
+
+	switch (cap->cap) {
+	case KVM_CAP_ARM_TIMER:
+		r = 0;
+		if (cap->args[0] != KVM_ARM_TIMER_VTIMER)
+			return -EINVAL;
+		vcpu->arch.user_space_arm_timers = true;
+		break;
+	default:
+		r = -EINVAL;
+		break;
+	}
+
+	return r;
+}
+
 long kvm_arch_vcpu_ioctl(struct file *filp,
 			 unsigned int ioctl, unsigned long arg)
 {
@@ -865,6 +890,14 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 		if (n < reg_list.n)
 			return -E2BIG;
 		return kvm_arm_copy_reg_indices(vcpu, user_list->reg);
+	}
+	case KVM_ENABLE_CAP:
+	{
+		struct kvm_enable_cap cap;
+
+		if (copy_from_user(&cap, argp, sizeof(cap)))
+			return -EFAULT;
+		return kvm_vcpu_ioctl_enable_cap(vcpu, &cap);
 	}
 	default:
 		return -EINVAL;
