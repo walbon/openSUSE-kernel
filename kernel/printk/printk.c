@@ -2896,9 +2896,6 @@ static int printk_kthread_func(void *data)
 static int __init_printk_kthread(void)
 {
 	struct task_struct *thread;
-	struct sched_param param = {
-		.sched_priority = MAX_RT_PRIO - 1,
-	};
 
 	if (!printk_kthread_can_run || printk_sync || printk_kthread)
 		return 0;
@@ -2910,7 +2907,6 @@ static int __init_printk_kthread(void)
 		return PTR_ERR(thread);
 	}
 
-	sched_setscheduler(thread, SCHED_FIFO, &param);
 	printk_kthread = thread;
 	return 0;
 }
