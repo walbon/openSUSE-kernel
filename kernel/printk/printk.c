@@ -392,6 +392,11 @@ static u32 log_buf_len = __LOG_BUF_LEN;
 
 /* Control whether printing to console must be synchronous. */
 static bool __read_mostly printk_sync = false;
+/*
+ * Force sync printk mode during suspend/kexec, regardless whether
+ * console_suspend_enabled permits console suspend.
+ */
+static bool __read_mostly force_printk_sync;
 /* Printing kthread for async printk */
 static struct task_struct *printk_kthread;
 /* When `true' printing thread has messages to print */
@@ -399,7 +404,7 @@ static bool printk_kthread_need_flush_console;
 
 static inline bool can_printk_async(void)
 {
-	return !printk_sync && printk_kthread;
+	return !printk_sync && printk_kthread && !force_printk_sync;
 }
 
 /* Return log buffer address */
@@ -2061,6 +2066,7 @@ static size_t cont_print_text(char *text, size_t size) { return 0; }
 
 /* Still needs to be defined for users */
 DEFINE_PER_CPU(printk_func_t, printk_func);
+static bool __read_mostly force_printk_sync;
 
 #endif /* CONFIG_PRINTK */
 
@@ -2197,6 +2203,8 @@ MODULE_PARM_DESC(console_suspend, "suspend console during suspend"
  */
 void suspend_console(void)
 {
+	force_printk_sync = true;
+
 	if (!console_suspend_enabled)
 		return;
 	printk("Suspending console(s) (use no_console_suspend to debug)\n");
@@ -2207,6 +2215,8 @@ void suspend_console(void)
 
 void resume_console(void)
 {
+	force_printk_sync = false;
+
 	if (!console_suspend_enabled)
 		return;
 	down_console_sem();
@@ -2896,9 +2906,6 @@ static int printk_kthread_func(void *data)
 static int __init_printk_kthread(void)
 {
 	struct task_struct *thread;
-	struct sched_param param = {
-		.sched_priority = MAX_RT_PRIO - 1,
-	};
 
 	if (!printk_kthread_can_run || printk_sync || printk_kthread)
 		return 0;
@@ -2910,7 +2917,6 @@ static int __init_printk_kthread(void)
 		return PTR_ERR(thread);
 	}
 
-	sched_setscheduler(thread, SCHED_FIFO, &param);
 	printk_kthread = thread;
 	return 0;
 }
