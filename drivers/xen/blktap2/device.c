@@ -287,7 +287,7 @@ blktap_device_fast_flush(struct blktap *tap, struct blktap_request *request)
 }
 
 /*
- * tap->tap_sem held on entry
+ * tap->tap_sem and tap->ring.vma->vm_mm->mmap_sem held on entry
  */
 static void
 blktap_unmap(struct blktap *tap, struct blktap_request *request)
@@ -296,7 +296,6 @@ blktap_unmap(struct blktap *tap, struct blktap_request *request)
 	unsigned long kvaddr;
 
 	usr_idx = request->usr_idx;
-	down_write(&tap->ring.vma->vm_mm->mmap_sem);
 
 	for (i = 0; i < request->nr_pages; i++) {
 		kvaddr = request_to_kaddr(request, i);
@@ -316,7 +315,6 @@ blktap_unmap(struct blktap *tap, struct blktap_request *request)
 	}
 
 	blktap_device_fast_flush(tap, request);
-	up_write(&tap->ring.vma->vm_mm->mmap_sem);
 }
 
 /*
@@ -333,6 +331,12 @@ blktap_device_fail_pending_requests(struct blktap *tap)
 
 	if (!test_bit(BLKTAP_DEVICE, &tap->dev_inuse))
 		return;
+
+	/*
+	 * Being called via vm_munmap(), which acquires current->mm->mmap_sem,
+	 * assure that's the semaphore blktap_unmap() wants held.
+	 */
+	WARN_ON(current->mm != tap->ring.vma->vm_mm);
 
 	down_write(&tap->tap_sem);
 
