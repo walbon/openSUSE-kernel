@@ -450,6 +450,12 @@ static u16 netbk_gop_frag(netif_t *netif, struct netbk_rx_meta *meta,
 		copy_gop->len = size;
 	} else {
 		meta->copy = 0;
+
+		gop = npo->trans + npo->trans_prod++;
+		gop->mfn = virt_to_mfn(page_address(page));
+		gop->domid = netif->domid;
+		gop->ref = req->gref;
+
 		if (!xen_feature(XENFEAT_auto_translated_physmap)) {
 			unsigned long new_mfn = alloc_mfn(netbk);
 
@@ -471,11 +477,6 @@ static u16 netbk_gop_frag(netif_t *netif, struct netbk_rx_meta *meta,
 				MMU_MACHPHYS_UPDATE;
 			mmu->val = page_to_pfn(page);
 		}
-
-		gop = npo->trans + npo->trans_prod++;
-		gop->mfn = virt_to_mfn(page_address(page));
-		gop->domid = netif->domid;
-		gop->ref = req->gref;
 	}
 	return req->id;
 }
