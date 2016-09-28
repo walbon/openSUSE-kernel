@@ -2491,6 +2491,8 @@ static void fcoe_ctlr_vn_add(struct fcoe_ctlr *fip, struct fc_rport_priv *new)
 		mutex_unlock(&lport->disc.disc_mutex);
 		return;
 	}
+	mutex_lock(&rdata->rp_mutex);
+	mutex_unlock(&lport->disc.disc_mutex);
 
 	rdata->ops = &fcoe_ctlr_vn_rport_ops;
 	rdata->disc_id = lport->disc.disc_id;
@@ -2499,11 +2501,13 @@ static void fcoe_ctlr_vn_add(struct fcoe_ctlr *fip, struct fc_rport_priv *new)
 	if ((ids->port_name != -1 && ids->port_name != new->ids.port_name) ||
 	    (ids->node_name != -1 && ids->node_name != new->ids.node_name)) {
 		LIBFCOE_FIP_DBG(fip, "vn_add rport logoff %6.6x\n", port_id);
+		mutex_unlock(&rdata->rp_mutex);
 		lport->tt.rport_logoff(rdata);
+		mutex_lock(&rdata->rp_mutex);
 	}
 	ids->port_name = new->ids.port_name;
 	ids->node_name = new->ids.node_name;
-	mutex_unlock(&lport->disc.disc_mutex);
+	mutex_unlock(&rdata->rp_mutex);
 
 	frport = fcoe_ctlr_rport(rdata);
 	LIBFCOE_FIP_DBG(fip, "vn_add rport %6.6x %s state %d\n",
