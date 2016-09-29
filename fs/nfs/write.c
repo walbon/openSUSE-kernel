@@ -773,7 +773,7 @@ int nfs_flush_incompatible(struct file *file, struct page *page)
 static int nfs_write_pageuptodate(struct page *page, struct inode *inode)
 {
 	return PageUptodate(page) &&
-		!(NFS_I(inode)->cache_validity & (NFS_INO_REVAL_PAGECACHE|NFS_INO_INVALID_DATA));
+		!(NFS_I(inode)->cache_validity & (NFS_INO_REVAL_PAGECACHE|NFS_INO_INVALID_DATA)) && !test_bit(NFS_INO_INVALIDATING, &NFS_I(inode)->flags);
 }
 
 /*

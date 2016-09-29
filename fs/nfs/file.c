@@ -243,7 +243,7 @@ nfs_file_read(struct kiocb *iocb, const struct iovec *iov,
 		dentry->d_parent->d_name.name, dentry->d_name.name,
 		(unsigned long) count, (unsigned long) pos);
 
-	result = nfs_revalidate_mapping(inode, iocb->ki_filp->f_mapping);
+	result = nfs_revalidate_mapping_protected(inode, iocb->ki_filp->f_mapping);
 	if (!result) {
 		result = generic_file_aio_read(iocb, iov, nr_segs, pos);
 		if (result > 0)
@@ -265,7 +265,7 @@ nfs_file_splice_read(struct file *filp, loff_t *ppos,
 		dentry->d_parent->d_name.name, dentry->d_name.name,
 		(unsigned long) count, (unsigned long long) *ppos);
 
-	res = nfs_revalidate_mapping(inode, filp->f_mapping);
+	res = nfs_revalidate_mapping_protected(inode, filp->f_mapping);
 	if (!res) {
 		res = generic_file_splice_read(filp, ppos, pipe, count, flags);
 		if (res > 0)
@@ -630,6 +630,9 @@ static int nfs_vm_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 
 	/* make sure the cache has finished storing the page */
 	nfs_fscache_wait_on_page_write(NFS_I(dentry->d_inode), page);
+
+	wait_on_bit(&NFS_I(dentry->d_inode)->flags, NFS_INO_INVALIDATING,
+			nfs_wait_bit_killable, TASK_KILLABLE);
 
 	lock_page(page);
 	mapping = page_file_mapping(page);

@@ -857,17 +857,24 @@ int nfs_revalidate_inode_rcu(struct nfs_server *server, struct inode *inode)
 static int nfs_invalidate_mapping(struct inode *inode, struct address_space *mapping)
 {
 	struct nfs_inode *nfsi = NFS_I(inode);
-	
+	int ret;
+
 	if (mapping->nrpages != 0) {
-		int ret = invalidate_inode_pages2(mapping);
+		if (S_ISREG(inode->i_mode)) {
+			unmap_mapping_range(mapping, 0, 0, 0);
+			ret = nfs_sync_mapping(mapping);
+			if (ret < 0)
+				return ret;
+		}
+		ret = invalidate_inode_pages2(mapping);
 		if (ret < 0)
 			return ret;
 	}
-	spin_lock(&inode->i_lock);
-	nfsi->cache_validity &= ~NFS_INO_INVALID_DATA;
-	if (S_ISDIR(inode->i_mode))
+	if (S_ISDIR(inode->i_mode)) {
+		spin_lock(&inode->i_lock);
 		memset(nfsi->cookieverf, 0, sizeof(nfsi->cookieverf));
-	spin_unlock(&inode->i_lock);
+		spin_unlock(&inode->i_lock);
+	}
 	nfs_inc_stats(inode, NFSIOS_DATAINVALIDATE);
 	nfs_fscache_wait_on_invalidate(inode);
 	dfprintk(PAGECACHE, "NFS: (%s/%Ld) data cache invalidated\n",
@@ -876,13 +883,17 @@ static int nfs_invalidate_mapping(struct inode *inode, struct address_space *map
 }
 
 /**
- * nfs_revalidate_mapping - Revalidate the pagecache
+ * __nfs_revalidate_mapping - Revalidate the pagecache
  * @inode - pointer to host inode
  * @mapping - pointer to mapping
+ * @may_lock - take inode->i_mutex?
  */
-int nfs_revalidate_mapping(struct inode *inode, struct address_space *mapping)
+static int __nfs_revalidate_mapping(struct inode *inode,
+		struct address_space *mapping,
+		bool may_lock)
 {
 	struct nfs_inode *nfsi = NFS_I(inode);
+	unsigned long *bitlock = &nfsi->flags;
 	int ret = 0;
 
 	/* swapfiles are not supposed to be shared. */
@@ -896,10 +907,73 @@ int nfs_revalidate_mapping(struct inode *inode, struct address_space *mapping)
 		if (ret < 0)
 			goto out;
 	}
-	if (nfsi->cache_validity & NFS_INO_INVALID_DATA)
+
+	/*
+	 * We must clear NFS_INO_INVALID_DATA first to ensure that
+	 * invalidations that come in while we're shooting down the mappings
+	 * are respected. But, that leaves a race window where one revalidator
+	 * can clear the flag, and then another checks it before the mapping
+	 * gets invalidated. Fix that by serializing access to this part of
+	 * the function.
+	 *
+	 * At the same time, we need to allow other tasks to see whether we
+	 * might be in the middle of invalidating the pages, so we only set
+	 * the bit lock here if it looks like we're going to be doing that.
+	 */
+	for (;;) {
+		ret = wait_on_bit(bitlock, NFS_INO_INVALIDATING,
+				  nfs_wait_bit_killable, TASK_KILLABLE);
+		if (ret)
+			goto out;
+		spin_lock(&inode->i_lock);
+		if (test_bit(NFS_INO_INVALIDATING, bitlock)) {
+			spin_unlock(&inode->i_lock);
+			continue;
+		}
+		if (nfsi->cache_validity & NFS_INO_INVALID_DATA)
+			break;
+		spin_unlock(&inode->i_lock);
+		goto out;
+	}
+
+	set_bit(NFS_INO_INVALIDATING, bitlock);
+	nfsi->cache_validity &= ~NFS_INO_INVALID_DATA;
+	spin_unlock(&inode->i_lock);
+	if (may_lock) {
+		mutex_lock(&inode->i_mutex);
 		ret = nfs_invalidate_mapping(inode, mapping);
+		mutex_unlock(&inode->i_mutex);
+	} else
+		ret = nfs_invalidate_mapping(inode, mapping);
+
+	clear_bit_unlock(NFS_INO_INVALIDATING, bitlock);
+	smp_mb__after_clear_bit();
+	wake_up_bit(bitlock, NFS_INO_INVALIDATING);
 out:
 	return ret;
+}
+
+/**
+ * nfs_revalidate_mapping - Revalidate the pagecache
+ * @inode - pointer to host inode
+ * @mapping - pointer to mapping
+ */
+int nfs_revalidate_mapping(struct inode *inode, struct address_space *mapping)
+{
+	return __nfs_revalidate_mapping(inode, mapping, false);
+}
+
+/**
+ * nfs_revalidate_mapping_protected - Revalidate the pagecache
+ * @inode - pointer to host inode
+ * @mapping - pointer to mapping
+ *
+ * Differs from nfs_revalidate_mapping() in that it grabs the inode->i_mutex
+ * while invalidating the mapping.
+ */
+int nfs_revalidate_mapping_protected(struct inode *inode, struct address_space *mapping)
+{
+	return __nfs_revalidate_mapping(inode, mapping, true);
 }
 
 static unsigned long nfs_wcc_update_inode(struct inode *inode, struct nfs_fattr *fattr)
