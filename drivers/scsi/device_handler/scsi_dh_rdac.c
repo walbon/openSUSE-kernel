@@ -409,12 +409,14 @@ static int submit_inquiry(struct scsi_device *sdev, int page_code,
 {
 	struct request *rq;
 	struct request_queue *q = sdev->request_queue;
-	int err = SCSI_DH_RES_TEMP_UNAVAIL;
+	struct scsi_sense_hdr sense_hdr;
+	int err = SCSI_DH_IO, retry_cnt = RDAC_RETRY_COUNT;
 
 	rq = get_rdac_req(sdev, &h->inq, len, READ);
 	if (!rq)
-		goto done;
+		return SCSI_DH_RES_TEMP_UNAVAIL;
 
+retry:
 	/* Prepare the command. */
 	rq->cmd[0] = INQUIRY;
 	rq->cmd[1] = 1;
@@ -426,12 +428,21 @@ static int submit_inquiry(struct scsi_device *sdev, int page_code,
 	memset(rq->sense, 0, SCSI_SENSE_BUFFERSIZE);
 	rq->sense_len = 0;
 
-	err = blk_execute_rq(q, NULL, rq, 1);
-	if (err == -EIO)
-		err = SCSI_DH_IO;
+	if (blk_execute_rq(q, NULL, rq, 1) == -EIO) {
+		if (scsi_normalize_sense(rq->sense, SCSI_SENSE_BUFFERSIZE,
+					 &sense_hdr)) {
+			if (sense_hdr.sense_key == UNIT_ATTENTION) {
+				if (retry_cnt) {
+					retry_cnt--;
+					goto retry;
+				}
+				err = SCSI_DH_RETRY;
+			}
+		}
+	} else
+		err = SCSI_DH_OK;
 
 	blk_put_request(rq);
-done:
 	return err;
 }
 
