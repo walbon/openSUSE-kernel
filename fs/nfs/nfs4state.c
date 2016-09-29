@@ -394,6 +394,8 @@ nfs4_find_state_owner_locked(struct nfs_server *server, struct rpc_cred *cred)
 			p = &parent->rb_left;
 		else if (cred > sp->so_cred)
 			p = &parent->rb_right;
+		else if (test_bit(NFS_OWNER_STALE, &sp->so_flags))
+			p = &parent->rb_left;
 		else {
 			atomic_inc(&sp->so_count);
 			res = sp;
@@ -419,6 +421,8 @@ nfs4_insert_state_owner_locked(struct nfs4_state_owner *new)
 			p = &parent->rb_left;
 		else if (new->so_cred > sp->so_cred)
 			p = &parent->rb_right;
+		else if (test_bit(NFS_OWNER_STALE, &sp->so_flags))
+			p = &parent->rb_left;
 		else {
 			atomic_inc(&sp->so_count);
 			return sp;
@@ -469,19 +473,16 @@ nfs4_alloc_state_owner(void)
 static void
 nfs4_drop_state_owner(struct nfs4_state_owner *sp)
 {
-	struct rb_node *rb_node = &sp->so_server_node;
-
-	if (!RB_EMPTY_NODE(rb_node)) {
-		struct nfs_server *server = sp->so_server;
-		struct nfs_client *clp = server->nfs_client;
-
-		spin_lock(&clp->cl_lock);
-		if (!RB_EMPTY_NODE(rb_node)) {
-			rb_erase(rb_node, &server->state_owners);
-			RB_CLEAR_NODE(rb_node);
-		}
-		spin_unlock(&clp->cl_lock);
-	}
+	struct nfs_client *clp = sp->so_server->nfs_client;
+	spin_lock(&clp->cl_lock);
+	set_bit(NFS_OWNER_STALE, &sp->so_flags);
+	/* delegation recall might insist on using this owner-owner,
+	 * so reset it so that a new 'confirm' stage is initiated
+	 */
+	nfs_free_unique_id(&sp->so_server->openowner_id, &sp->so_owner_id);
+	nfs_alloc_unique_id_locked(&sp->so_server->openowner_id,
+				   &sp->so_owner_id, 1, 64);
+	spin_unlock(&clp->cl_lock);
 }
 
 /**
