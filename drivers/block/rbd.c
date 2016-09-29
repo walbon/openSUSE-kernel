@@ -1763,7 +1763,7 @@ static void rbd_osd_cmpext_callback(struct rbd_obj_request *obj_request,
 		 * on mismatch reply buf will contain offset and mismatched
 		 * data
 		 */
-		obj_request->xferred = osd_req->r_reply_op_len[1];
+		obj_request->xferred = osd_req->r_ops[1].outdata_len;
 	else
 		obj_request->xferred = obj_request->length;
 	obj_request_done_set(obj_request);
@@ -1829,7 +1829,7 @@ static void rbd_osd_req_callback(struct ceph_osd_request *osd_req,
 	 * passed to the block layer, which just supports a 32-bit
 	 * length field.
 	 */
-	obj_request->xferred = osd_req->r_reply_op_len[0];
+	obj_request->xferred = osd_req->r_ops[0].outdata_len;
 	rbd_assert(obj_request->xferred < (u64)UINT_MAX);
 
 	opcode = osd_req->r_ops[0].op;
