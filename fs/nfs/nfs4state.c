@@ -473,7 +473,16 @@ nfs4_alloc_state_owner(void)
 static void
 nfs4_drop_state_owner(struct nfs4_state_owner *sp)
 {
+	struct nfs_client *clp = sp->so_server->nfs_client;
+	spin_lock(&clp->cl_lock);
 	set_bit(NFS_OWNER_STALE, &sp->so_flags);
+	/* delegation recall might insist on using this owner-owner,
+	 * so reset it so that a new 'confirm' stage is initiated
+	 */
+	nfs_free_unique_id(&sp->so_server->openowner_id, &sp->so_owner_id);
+	nfs_alloc_unique_id_locked(&sp->so_server->openowner_id,
+				   &sp->so_owner_id, 1, 64);
+	spin_unlock(&clp->cl_lock);
 }
 
 /**
