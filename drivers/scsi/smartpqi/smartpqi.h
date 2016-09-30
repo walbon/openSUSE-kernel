@@ -79,11 +79,13 @@ struct pqi_ctrl_registers {
 	__le32	sis_ctrl_to_host_doorbell;		/* 9Ch */
 	u8	reserved3[0xa0 - (0x9c + sizeof(__le32))];
 	__le32	sis_ctrl_to_host_doorbell_clear;	/* A0h */
-	u8	reserved4[0xbc - (0xa0 + sizeof(__le32))];
+	u8	reserved4[0xb0 - (0xa0 + sizeof(__le32))];
+	__le32	sis_driver_scratch;			/* B0h */
+	u8	reserved5[0xbc - (0xb0 + sizeof(__le32))];
 	__le32	sis_firmware_status;			/* BCh */
-	u8	reserved5[0x1000 - (0xbc + sizeof(__le32))];
+	u8	reserved6[0x1000 - (0xbc + sizeof(__le32))];
 	__le32	sis_mailbox[8];				/* 1000h */
-	u8	reserved6[0x4000 - (0x1000 + (sizeof(__le32) * 8))];
+	u8	reserved7[0x4000 - (0x1000 + (sizeof(__le32) * 8))];
 	/*
 	 * The PQI spec states that the PQI registers should be at
 	 * offset 0 from the PCIe BAR 0.  However, we can't map
@@ -370,7 +372,6 @@ struct pqi_task_management_request {
 };
 
 #define SOP_TASK_MANAGEMENT_LUN_RESET	0x8
-#define PQI_ABORT_TIMEOUT_MSECS		(20 * 1000)
 
 struct pqi_task_management_response {
 	struct pqi_iu_header header;
@@ -545,10 +546,8 @@ typedef u32 pqi_index_t;
 #define SOP_TASK_ATTRIBUTE_ORDERED		2
 #define SOP_TASK_ATTRIBUTE_ACA			4
 
-#define SOP_TASK_MANAGEMENT_FUNCTION_COMPLETE	0x0
-#define SOP_TASK_MANAGEMENT_FUNCTION_REJECTED	0x4
-#define SOP_TASK_MANAGEMENT_FUNCTION_FAILED	0x5
-#define SOP_TASK_MANAGEMENT_FUNCTION_SUCCEEDED	0x8
+#define SOP_TMF_COMPLETE		0x0
+#define SOP_TMF_FUNCTION_SUCCEEDED	0x8
 
 /* additional CDB bytes usage field codes */
 #define SOP_ADDITIONAL_CDB_BYTES_0	0	/* 16-byte CDB */
@@ -634,13 +633,6 @@ struct pqi_encryption_info {
 #define PQI_MAX_TRANSFER_SIZE		(4 * 1024U * 1024U)
 
 #define RAID_MAP_MAX_ENTRIES		1024
-
-#define PQI_RESERVED_IO_SLOTS_LUN_RESET			1
-#define PQI_RESERVED_IO_SLOTS_EVENT_ACK			1
-#define PQI_RESERVED_IO_SLOTS_SYNCHRONOUS_REQUESTS	3
-#define PQI_RESERVED_IO_SLOTS				\
-	(PQI_RESERVED_IO_SLOTS_LUN_RESET + PQI_RESERVED_IO_SLOTS_EVENT_ACK + \
-	PQI_RESERVED_IO_SLOTS_SYNCHRONOUS_REQUESTS)
 
 #define PQI_PHYSICAL_DEVICE_BUS		0
 #define PQI_RAID_VOLUME_BUS		1
@@ -764,7 +756,6 @@ struct pqi_scsi_dev {
 
 	struct pqi_sas_port *sas_port;
 	struct scsi_device *sdev;
-	bool	reset_in_progress;
 
 	struct list_head scsi_device_list_entry;
 	struct list_head new_device_list_entry;
@@ -886,6 +877,13 @@ struct pqi_event {
 	__le32	additional_event_id;
 };
 
+#define PQI_RESERVED_IO_SLOTS_LUN_RESET			1
+#define PQI_RESERVED_IO_SLOTS_EVENT_ACK			PQI_NUM_SUPPORTED_EVENTS
+#define PQI_RESERVED_IO_SLOTS_SYNCHRONOUS_REQUESTS	3
+#define PQI_RESERVED_IO_SLOTS				\
+	(PQI_RESERVED_IO_SLOTS_LUN_RESET + PQI_RESERVED_IO_SLOTS_EVENT_ACK + \
+	PQI_RESERVED_IO_SLOTS_SYNCHRONOUS_REQUESTS)
+
 struct pqi_ctrl_info {
 	unsigned int	ctrl_id;
 	struct pci_dev	*pci_dev;
@@ -965,6 +963,11 @@ struct pqi_ctrl_info {
 
 	struct semaphore sync_request_sem;
 	struct semaphore lun_reset_sem;
+};
+
+enum pqi_ctrl_mode {
+	UNKNOWN,
+	PQI_MODE
 };
 
 /*
