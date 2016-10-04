@@ -3416,19 +3416,18 @@ ncls:
 				&& !skb_pfmemalloc_protocol(skb))
 		goto drop;
 
-	rx_handler = rcu_dereference(skb->dev->rx_handler);
 	if (vlan_tx_tag_present(skb)) {
 		if (pt_prev) {
 			ret = deliver_skb(skb, pt_prev, orig_dev);
 			pt_prev = NULL;
 		}
-		if (vlan_do_receive(&skb, !rx_handler)) {
-			orig_dev = skb->dev;
+		if (vlan_do_receive(&skb))
 			goto another_round;
-		} else if (unlikely(!skb))
+		else if (unlikely(!skb))
 			goto unlock;
 	}
 
+	rx_handler = rcu_dereference(skb->dev->rx_handler);
 	if (rx_handler) {
 		if (pt_prev) {
 			ret = deliver_skb(skb, pt_prev, orig_dev);
@@ -3447,6 +3446,16 @@ ncls:
 		default:
 			BUG();
 		}
+	}
+
+	if (unlikely(vlan_tx_tag_present(skb))) {
+		if (vlan_tx_tag_get_id(skb))
+			skb->pkt_type = PACKET_OTHERHOST;
+		/* Note: we might in the future use prio bits
+		 * and set skb->priority like in vlan_do_receive()
+		 * For the time being, just ignore Priority Code Point
+		 */
+		skb->vlan_tci = 0;
 	}
 
 	/* deliver only exact match when indicated */
