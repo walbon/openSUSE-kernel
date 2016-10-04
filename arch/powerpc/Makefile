@@ -22,7 +22,7 @@ CROSS32AR		:= $(CROSS32_COMPILE)ar
 
 ifeq ($(HAS_BIARCH),y)
 ifeq ($(CROSS32_COMPILE),)
-CROSS32CC	:= $(CC) -m32
+CROSS32CC	:= $(CC) -m32 -mbig-endian
 CROSS32AR	:= GNUTARGET=elf32-powerpc $(AR)
 endif
 endif
