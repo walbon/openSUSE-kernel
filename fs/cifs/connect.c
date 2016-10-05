@@ -3209,13 +3209,15 @@ remote_path_check:
 			goto mount_fail_check;
 		}
 
-		rc = cifs_are_all_path_components_accessible(xid, tcon, cifs_sb,
-							     full_path);
-		if (rc != 0) {
-			cifswarn("cannot query dirs between root and final path, "
-				 "enabling CIFS_MOUNT_USE_PREFIX_PATH\n");
-			cifs_sb->mnt_cifs_flags |= CIFS_MOUNT_USE_PREFIX_PATH;
-			rc = 0;
+		if (rc != -EREMOTE) {
+			rc = cifs_are_all_path_components_accessible(xid, tcon, cifs_sb,
+								     full_path);
+			if (rc != 0) {
+				cifswarn("cannot query dirs between root and final path, "
+					 "enabling CIFS_MOUNT_USE_PREFIX_PATH\n");
+				cifs_sb->mnt_cifs_flags |= CIFS_MOUNT_USE_PREFIX_PATH;
+				rc = 0;
+			}
 		}
 		kfree(full_path);
 	}
