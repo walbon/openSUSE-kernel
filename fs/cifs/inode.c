@@ -913,12 +913,29 @@ struct inode *cifs_root_iget(struct super_block *sb)
 	struct inode *inode = NULL;
 	long rc;
 	struct cifs_tcon *tcon = cifs_sb_master_tcon(cifs_sb);
+	char *path = NULL;
+	int len;
+
+	if ((cifs_sb->mnt_cifs_flags & CIFS_MOUNT_USE_PREFIX_PATH)
+	    && cifs_sb->prepath) {
+		len = strlen(cifs_sb->prepath);
+		path = kzalloc(len + 2 /* leading sep + null */, GFP_KERNEL);
+		if (path == NULL)
+			return ERR_PTR(-ENOMEM);
+		path[0] = '/';
+		memcpy(path+1, cifs_sb->prepath, len);
+	} else {
+		path = kstrdup("", GFP_KERNEL);
+		if (path == NULL)
+			return ERR_PTR(-ENOMEM);
+	}
 
 	xid = GetXid();
+	convert_delimiter(path, CIFS_DIR_SEP(cifs_sb));
 	if (tcon->unix_ext)
-		rc = cifs_get_inode_info_unix(&inode, "", sb, xid);
+		rc = cifs_get_inode_info_unix(&inode, path, sb, xid);
 	else
-		rc = cifs_get_inode_info(&inode, "", NULL, sb, xid, NULL);
+		rc = cifs_get_inode_info(&inode, path, NULL, sb, xid, NULL);
 
 	if (!inode) {
 		inode = ERR_PTR(rc);
@@ -944,6 +961,7 @@ struct inode *cifs_root_iget(struct super_block *sb)
 	}
 
 out:
+	kfree(path);
 	/* can not call macro FreeXid here since in a void func
 	 * TODO: This is no longer true
 	 */
