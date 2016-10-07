@@ -298,9 +298,9 @@ void __init efi_init_fdt(void *fdt)
 
 	reserve_regions();
 	early_memunmap(memmap.map, params.mmap_size);
-	memblock_mark_nomap(params.mmap & PAGE_MASK,
-			    PAGE_ALIGN(params.mmap_size +
-				       (params.mmap & ~PAGE_MASK)));
+	memblock_reserve(params.mmap & PAGE_MASK,
+			 PAGE_ALIGN(params.mmap_size +
+				    (params.mmap & ~PAGE_MASK)));
 
 	if (screen_info.orig_video_isVGA == VIDEO_TYPE_EFI) {
 		pci_notify_on_update_resource(&efi_pci_notifier_block);
