@@ -486,9 +486,10 @@ static void ceph_osdc_release_request(struct kref *kref)
 	ceph_put_snap_context(req->r_snapc);
 	if (req->r_mempool)
 		mempool_free(req, req->r_osdc->req_mempool);
-	else
+	else if (req->r_num_ops <= CEPH_OSD_SLAB_OPS)
 		kmem_cache_free(ceph_osd_request_cache, req);
-
+	else
+		kfree(req);
 }
 
 void ceph_osdc_get_request(struct ceph_osd_request *req)
@@ -517,27 +518,21 @@ struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 	struct ceph_msg *msg;
 	size_t msg_size;
 
-	BUILD_BUG_ON(CEPH_OSD_MAX_OP > U16_MAX);
-	BUG_ON(num_ops > CEPH_OSD_MAX_OP);
-
-	msg_size = 4 + 4 + 8 + 8 + 4+8;
-	msg_size += 2 + 4 + 8 + 4 + 4; /* oloc */
-	msg_size += 1 + 8 + 4 + 4;     /* pg_t */
-	msg_size += 4 + CEPH_MAX_OID_NAME_LEN; /* oid */
-	msg_size += 2 + num_ops*sizeof(struct ceph_osd_op);
-	msg_size += 8;  /* snapid */
-	msg_size += 8;  /* snap_seq */
-	msg_size += 8 * (snapc ? snapc->num_snaps : 0);  /* snaps */
-	msg_size += 4;
-
 	if (use_mempool) {
+		BUG_ON(num_ops > CEPH_OSD_SLAB_OPS);
 		req = mempool_alloc(osdc->req_mempool, gfp_flags);
-		memset(req, 0, sizeof(*req));
+	} else if (num_ops <= CEPH_OSD_SLAB_OPS) {
+		req = kmem_cache_alloc(ceph_osd_request_cache, gfp_flags);
 	} else {
-		req = kmem_cache_zalloc(ceph_osd_request_cache, gfp_flags);
+		BUG_ON(num_ops > CEPH_OSD_MAX_OPS);
+		req = kmalloc(sizeof(*req) + num_ops * sizeof(req->r_ops[0]),
+			      gfp_flags);
 	}
-	if (req == NULL)
+	if (unlikely(!req))
 		return NULL;
+
+	/* req only, each op is zeroed in _osd_req_op_init() */
+	memset(req, 0, sizeof(*req));
 
 	req->r_osdc = osdc;
 	req->r_mempool = use_mempool;
@@ -556,17 +551,35 @@ struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 	req->r_base_oloc.pool = -1;
 	req->r_target_oloc.pool = -1;
 
+	msg_size = OSD_OPREPLY_FRONT_LEN;
+	if (num_ops > CEPH_OSD_SLAB_OPS) {
+		/* ceph_osd_op and rval */
+		msg_size += (num_ops - CEPH_OSD_SLAB_OPS) *
+			    (sizeof(struct ceph_osd_op) + 4);
+	}
+
 	/* create reply message */
 	if (use_mempool)
 		msg = ceph_msgpool_get(&osdc->msgpool_op_reply, 0);
 	else
-		msg = ceph_msg_new(CEPH_MSG_OSD_OPREPLY,
-				   OSD_OPREPLY_FRONT_LEN, gfp_flags, true);
+		msg = ceph_msg_new(CEPH_MSG_OSD_OPREPLY, msg_size,
+				   gfp_flags, true);
 	if (!msg) {
 		ceph_osdc_put_request(req);
 		return NULL;
 	}
 	req->r_reply = msg;
+
+	msg_size = 4 + 4 + 4; /* client_inc, osdmap_epoch, flags */
+	msg_size += 4 + 4 + 4 + 8; /* mtime, reassert_version */
+	msg_size += 2 + 4 + 8 + 4 + 4; /* oloc */
+	msg_size += 1 + 8 + 4 + 4; /* pgid */
+	msg_size += 4 + CEPH_MAX_OID_NAME_LEN; /* oid */
+	msg_size += 2 + num_ops * sizeof(struct ceph_osd_op);
+	msg_size += 8; /* snapid */
+	msg_size += 8; /* snap_seq */
+	msg_size += 4 + 8 * (snapc ? snapc->num_snaps : 0); /* snaps */
+	msg_size += 4; /* retry_attempt */
 
 	/* create request message; allow space for oid */
 	if (use_mempool)
@@ -638,7 +651,7 @@ void osd_req_op_writesame_init(struct ceph_osd_request *osd_req,
 	op->writesame.offset = offset;
 	op->writesame.length = length;
 	op->writesame.data_length = data_length;
-	op->payload_len = data_length;
+	op->indata_len = data_length;
 }
 EXPORT_SYMBOL(osd_req_op_writesame_init);
 
@@ -663,7 +676,7 @@ void osd_req_op_extent_init(struct ceph_osd_request *osd_req,
 	    opcode == CEPH_OSD_OP_CMPEXT)
 		payload_len += length;
 
-	op->payload_len = payload_len;
+	op->indata_len = payload_len;
 }
 EXPORT_SYMBOL(osd_req_op_extent_init);
 
@@ -682,7 +695,7 @@ void osd_req_op_extent_update(struct ceph_osd_request *osd_req,
 	BUG_ON(length > previous);
 
 	op->extent.length = length;
-	op->payload_len -= previous - length;
+	op->indata_len -= previous - length;
 }
 EXPORT_SYMBOL(osd_req_op_extent_update);
 
@@ -719,7 +732,7 @@ void osd_req_op_cls_init(struct ceph_osd_request *osd_req, unsigned int which,
 
 	op->cls.argc = 0;	/* currently unused */
 
-	op->payload_len = payload_len;
+	op->indata_len = payload_len;
 }
 EXPORT_SYMBOL(osd_req_op_cls_init);
 
@@ -760,7 +773,7 @@ int osd_req_op_xattr_init(struct ceph_osd_request *osd_req, unsigned int which,
 	op->xattr.cmp_mode = cmp_mode;
 
 	ceph_osd_data_pagelist_init(&op->xattr.request_data, req_pagelist);
-	op->payload_len = payload_len;
+	op->indata_len = payload_len;
 
 	return 0;
 
@@ -907,7 +920,7 @@ static u64 osd_req_encode_op(struct ceph_osd_request *req,
 			BUG_ON(osd_data->type == CEPH_OSD_DATA_TYPE_NONE);
 			dst->cls.indata_len = cpu_to_le32(data_length);
 			ceph_osdc_msg_data_add(req->r_request, osd_data);
-			src->payload_len += data_length;
+			src->indata_len += data_length;
 			request_data_len += data_length;
 		}
 		osd_data = &src->cls.response_data;
@@ -923,7 +936,7 @@ static u64 osd_req_encode_op(struct ceph_osd_request *req,
 		if (data_length) {
 			BUG_ON(osd_data->type == CEPH_OSD_DATA_TYPE_NONE);
 			ceph_osdc_msg_data_add(req->r_request, osd_data);
-			src->payload_len += data_length;
+			src->indata_len += data_length;
 			request_data_len += data_length;
 		}
 		osd_data = &src->notify.response_data;
@@ -978,7 +991,7 @@ static u64 osd_req_encode_op(struct ceph_osd_request *req,
 
 	dst->op = cpu_to_le16(src->op);
 	dst->flags = cpu_to_le32(src->flags);
-	dst->payload_len = cpu_to_le32(src->payload_len);
+	dst->payload_len = cpu_to_le32(src->indata_len);
 
 	return request_data_len;
 }
@@ -2039,7 +2052,7 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg)
 
 	ceph_decode_need(&p, end, 4, bad_put);
 	numops = ceph_decode_32(&p);
-	if (numops > CEPH_OSD_MAX_OP)
+	if (numops > CEPH_OSD_MAX_OPS)
 		goto bad_put;
 	if (numops != req->r_num_ops)
 		goto bad_put;
@@ -2050,7 +2063,7 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg)
 		int len;
 
 		len = le32_to_cpu(op->payload_len);
-		req->r_reply_op_len[i] = len;
+		req->r_ops[i].outdata_len = len;
 		dout(" op %d has %d bytes\n", i, len);
 		payload_len += len;
 		p += sizeof(*op);
@@ -2065,7 +2078,7 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg)
 	ceph_decode_need(&p, end, 4 + numops * 4, bad_put);
 	retry_attempt = ceph_decode_32(&p);
 	for (i = 0; i < numops; i++)
-		req->r_reply_op_result[i] = ceph_decode_32(&p);
+		req->r_ops[i].rval = ceph_decode_32(&p);
 
 	if (le16_to_cpu(msg->hdr.version) >= 6) {
 		p += 8 + 4; /* skip replay_version */
@@ -2899,8 +2912,8 @@ int ceph_osdc_init(struct ceph_osd_client *osdc, struct ceph_client *client)
 	    round_jiffies_relative(osdc->client->options->osd_idle_ttl));
 
 	err = -ENOMEM;
-	osdc->req_mempool = mempool_create_kmalloc_pool(10,
-					sizeof(struct ceph_osd_request));
+	osdc->req_mempool = mempool_create_slab_pool(10,
+						     ceph_osd_request_cache);
 	if (!osdc->req_mempool)
 		goto out;
 
@@ -3035,11 +3048,12 @@ EXPORT_SYMBOL(ceph_osdc_writepages);
 
 int ceph_osdc_setup(void)
 {
+	size_t size = sizeof(struct ceph_osd_request) +
+	    CEPH_OSD_SLAB_OPS * sizeof(struct ceph_osd_req_op);
+
 	BUG_ON(ceph_osd_request_cache);
-	ceph_osd_request_cache = kmem_cache_create("ceph_osd_request",
-					sizeof (struct ceph_osd_request),
-					__alignof__(struct ceph_osd_request),
-					0, NULL);
+	ceph_osd_request_cache = kmem_cache_create("ceph_osd_request", size,
+						   0, 0, NULL);
 
 	return ceph_osd_request_cache ? 0 : -ENOMEM;
 }

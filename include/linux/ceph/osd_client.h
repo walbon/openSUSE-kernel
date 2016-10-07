@@ -43,7 +43,8 @@ struct ceph_osd {
 };
 
 
-#define CEPH_OSD_MAX_OP	3
+#define CEPH_OSD_SLAB_OPS	2
+#define CEPH_OSD_MAX_OPS	16
 
 enum ceph_osd_data_type {
 	CEPH_OSD_DATA_TYPE_NONE = 0,
@@ -83,7 +84,10 @@ struct ceph_osd_data {
 struct ceph_osd_req_op {
 	u16 op;           /* CEPH_OSD_OP_* */
 	u32 flags;        /* CEPH_OSD_OP_FLAG_* */
-	u32 payload_len;
+	u32 indata_len;   /* request */
+	u32 outdata_len;  /* reply */
+	s32 rval;
+
 	union {
 		struct ceph_osd_data raw_data_in;
 		struct {
@@ -154,7 +158,6 @@ struct ceph_osd_request {
 
 	/* request osd ops array  */
 	unsigned int		r_num_ops;
-	struct ceph_osd_req_op	r_ops[CEPH_OSD_MAX_OP];
 
 	/* these are updated on each send */
 	__le32           *r_request_osdmap_epoch;
@@ -166,8 +169,6 @@ struct ceph_osd_request {
 	struct ceph_eversion *r_request_reassert_version;
 
 	int               r_result;
-	int               r_reply_op_len[CEPH_OSD_MAX_OP];
-	s32               r_reply_op_result[CEPH_OSD_MAX_OP];
 	int               r_got_reply;
 	int		  r_linger;
 
@@ -192,6 +193,8 @@ struct ceph_osd_request {
 	unsigned long     r_stamp;            /* send OR check time */
 
 	struct ceph_snap_context *r_snapc;    /* snap context for writes */
+
+	struct ceph_osd_req_op r_ops[];
 };
 
 struct ceph_request_redirect {
