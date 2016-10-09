@@ -2080,7 +2080,9 @@ struct napi_gro_cb {
 	u8	is_ipv6:1;
 
 	/* Number of gro_receive callbacks this packet already went through */
+#ifndef __GENKSYMS__
 	u8 recursion_counter:4;
+#endif
 
 	/* 3 bit hole */
 
