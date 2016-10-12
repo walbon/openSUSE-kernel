@@ -2058,11 +2058,7 @@ struct napi_gro_cb {
 	u8	same_flow:1;
 
 	/* Used in tunnel GRO receive */
-#ifdef __GENKSYMS__
-	u8	udp_mark:1;
-#else
 	u8	encap_mark:1;
-#endif
 
 	/* GRO checksum is valid */
 	u8	csum_valid:1;
@@ -2079,9 +2075,7 @@ struct napi_gro_cb {
 	u8	is_ipv6:1;
 
 	/* Number of gro_receive callbacks this packet already went through */
-#ifndef __GENKSYMS__
 	u8 recursion_counter:4;
-#endif
 
 	/* 3 bit hole */
 
