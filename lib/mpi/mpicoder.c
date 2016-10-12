@@ -20,6 +20,8 @@
 
 #include <linux/bitops.h>
 #include <linux/count_zeros.h>
+#include <linux/byteorder/generic.h>
+#include <linux/string.h>
 #include "mpi-internal.h"
 
 #define MAX_EXTERN_MPI_BITS 16384
@@ -163,7 +165,13 @@ int mpi_read_buffer(MPI a, uint8_t *buf, unsigned buf_len, unsigned *nbytes,
 		    int *sign)
 {
 	uint8_t *p;
-	mpi_limb_t alimb;
+#if BYTES_PER_MPI_LIMB == 4
+	__be32 alimb;
+#elif BYTES_PER_MPI_LIMB == 8
+	__be64 alimb;
+#else
+#error please implement for this limb size.
+#endif
 	unsigned int n = mpi_get_size(a);
 	int i, lzeros;
 
@@ -183,38 +191,19 @@ int mpi_read_buffer(MPI a, uint8_t *buf, unsigned buf_len, unsigned *nbytes,
 	p = buf;
 	*nbytes = n - lzeros;
 
-	for (i = a->nlimbs - 1; i >= 0; i--) {
-		alimb = a->d[i];
+	for (i = a->nlimbs - 1 - lzeros / BYTES_PER_MPI_LIMB,
+			lzeros %= BYTES_PER_MPI_LIMB;
+		i >= 0; i--) {
 #if BYTES_PER_MPI_LIMB == 4
-		*p++ = alimb >> 24;
-		*p++ = alimb >> 16;
-		*p++ = alimb >> 8;
-		*p++ = alimb;
+		alimb = cpu_to_be32(a->d[i]);
 #elif BYTES_PER_MPI_LIMB == 8
-		*p++ = alimb >> 56;
-		*p++ = alimb >> 48;
-		*p++ = alimb >> 40;
-		*p++ = alimb >> 32;
-		*p++ = alimb >> 24;
-		*p++ = alimb >> 16;
-		*p++ = alimb >> 8;
-		*p++ = alimb;
+		alimb = cpu_to_be64(a->d[i]);
 #else
 #error please implement for this limb size.
 #endif
-
-		if (lzeros > 0) {
-			if (lzeros >= sizeof(alimb)) {
-				p -= sizeof(alimb);
-			} else {
-				mpi_limb_t *limb1 = (void *)p - sizeof(alimb);
-				mpi_limb_t *limb2 = (void *)p - sizeof(alimb)
-							+ lzeros;
-				*limb1 = *limb2;
-				p -= lzeros;
-			}
-			lzeros -= sizeof(alimb);
-		}
+		memcpy(p, (u8 *)&alimb + lzeros, BYTES_PER_MPI_LIMB - lzeros);
+		p += BYTES_PER_MPI_LIMB - lzeros;
+		lzeros = 0;
 	}
 	return 0;
 }
@@ -359,7 +348,13 @@ int mpi_write_to_sgl(MPI a, struct scatterlist *sgl, unsigned *nbytes,
 		     int *sign)
 {
 	u8 *p, *p2;
-	mpi_limb_t alimb, alimb2;
+#if BYTES_PER_MPI_LIMB == 4
+	__be32 alimb;
+#elif BYTES_PER_MPI_LIMB == 8
+	__be64 alimb;
+#else
+#error please implement for this limb size.
+#endif
 	unsigned int n = mpi_get_size(a);
 	int i, x, y = 0, lzeros, buf_len;
 
@@ -383,36 +378,19 @@ int mpi_write_to_sgl(MPI a, struct scatterlist *sgl, unsigned *nbytes,
 	for (i = a->nlimbs - 1 - lzeros / BYTES_PER_MPI_LIMB,
 			lzeros %= BYTES_PER_MPI_LIMB;
 		i >= 0; i--) {
-		alimb = a->d[i];
-		p = (u8 *)&alimb2;
 #if BYTES_PER_MPI_LIMB == 4
-		*p++ = alimb >> 24;
-		*p++ = alimb >> 16;
-		*p++ = alimb >> 8;
-		*p++ = alimb;
+		alimb = cpu_to_be32(a->d[i]);
 #elif BYTES_PER_MPI_LIMB == 8
-		*p++ = alimb >> 56;
-		*p++ = alimb >> 48;
-		*p++ = alimb >> 40;
-		*p++ = alimb >> 32;
-		*p++ = alimb >> 24;
-		*p++ = alimb >> 16;
-		*p++ = alimb >> 8;
-		*p++ = alimb;
+		alimb = cpu_to_be64(a->d[i]);
 #else
 #error please implement for this limb size.
 #endif
-		if (lzeros > 0) {
-			mpi_limb_t *limb1 = (void *)p - sizeof(alimb);
-			mpi_limb_t *limb2 = (void *)p - sizeof(alimb)
-				+ lzeros;
-			*limb1 = *limb2;
-			p -= lzeros;
+		if (lzeros) {
 			y = lzeros;
-			lzeros -= sizeof(alimb);
+			lzeros = 0;
 		}
 
-		p = p - (sizeof(alimb) - y);
+		p = (u8 *)&alimb + y;
 
 		for (x = 0; x < sizeof(alimb) - y; x++) {
 			if (!buf_len) {

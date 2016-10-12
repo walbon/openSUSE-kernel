@@ -181,7 +181,7 @@ static __init void reserve_regions(void)
 	 * uses its own memory map instead.
 	 */
 	memblock_dump_all();
-	memblock_remove(0, ULLONG_MAX);
+	memblock_remove(0, (phys_addr_t)ULLONG_MAX);
 
 	for_each_efi_memory_desc(&memmap, md) {
 		paddr = md->phys_addr;
@@ -298,9 +298,9 @@ void __init efi_init_fdt(void *fdt)
 
 	reserve_regions();
 	early_memunmap(memmap.map, params.mmap_size);
-	memblock_mark_nomap(params.mmap & PAGE_MASK,
-			    PAGE_ALIGN(params.mmap_size +
-				       (params.mmap & ~PAGE_MASK)));
+	memblock_reserve(params.mmap & PAGE_MASK,
+			 PAGE_ALIGN(params.mmap_size +
+				    (params.mmap & ~PAGE_MASK)));
 
 	if (screen_info.orig_video_isVGA == VIDEO_TYPE_EFI) {
 		pci_notify_on_update_resource(&efi_pci_notifier_block);
