@@ -207,6 +207,7 @@ enum mcp_flags {
 	MCP_UC = (1 << 1),		/* log uncorrected errors */
 	MCP_DONTLOG = (1 << 2),		/* only clear, don't log */
 };
+bool __machine_check_poll(enum mcp_flags flags, mce_banks_t *b);
 void machine_check_poll(enum mcp_flags flags, mce_banks_t *b);
 
 int mce_notify_irq(void);
