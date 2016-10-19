@@ -601,12 +601,6 @@ void __tty_hangup(struct tty_struct *tty)
 	}
 	spin_unlock(&tty_files_lock);
 
-	/*
-	 * it drops BTM and thus races with reopen
-	 * we protect the race by TTY_HUPPING
-	 */
-	tty_ldisc_hangup(tty);
-
 	read_lock(&tasklist_lock);
 	if (tty->session) {
 		do_each_pid_task(tty->session, PIDTYPE_SID, p) {
@@ -632,6 +626,12 @@ void __tty_hangup(struct tty_struct *tty)
 		} while_each_pid_task(tty->session, PIDTYPE_SID, p);
 	}
 	read_unlock(&tasklist_lock);
+
+	/*
+	 * it drops BTM and thus races with reopen
+	 * we protect the race by TTY_HUPPING
+	 */
+	tty_ldisc_hangup(tty);
 
 	spin_lock_irqsave(&tty->ctrl_lock, flags);
 	clear_bit(TTY_THROTTLED, &tty->flags);
