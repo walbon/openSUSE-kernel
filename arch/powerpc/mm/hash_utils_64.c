@@ -194,18 +194,23 @@ int htab_bolt_mapping(unsigned long vstart, unsigned long vend,
 	     vaddr += step, paddr += step) {
 		unsigned long hash, hpteg;
 		unsigned long vsid = get_kernel_vsid(vaddr, ssize);
-		unsigned long va = hpt_va(vaddr, vsid, ssize);
+		unsigned long vpn  = hpt_vpn(vaddr, vsid, ssize);
 		unsigned long tprot = prot;
 
+		/*
+		 * If we hit a bad address return error.
+		 */
+		if (!vsid)
+			return -1;
 		/* Make kernel text executable */
 		if (overlaps_kernel_text(vaddr, vaddr + step))
 			tprot &= ~HPTE_R_N;
 
-		hash = hpt_hash(va, shift, ssize);
+		hash = hpt_hash(vpn, shift, ssize);
 		hpteg = ((hash & htab_hash_mask) * HPTES_PER_GROUP);
 
 		BUG_ON(!ppc_md.hpte_insert);
-		ret = ppc_md.hpte_insert(hpteg, va, paddr, tprot,
+		ret = ppc_md.hpte_insert(hpteg, vpn, paddr, tprot,
 					 HPTE_V_BOLTED, psize, ssize);
 
 		if (ret < 0)
@@ -810,16 +815,19 @@ unsigned int hash_page_do_lazy_icache(unsigned int pp, pte_t pte, int trap)
 #ifdef CONFIG_PPC_MM_SLICES
 unsigned int get_paca_psize(unsigned long addr)
 {
-	unsigned long index, slices;
+	u64 lpsizes;
+	unsigned char *hpsizes;
+	unsigned long index, mask_index;
 
 	if (addr < SLICE_LOW_TOP) {
-		slices = get_paca()->context.low_slices_psize;
+		lpsizes = get_paca()->context.low_slices_psize;
 		index = GET_LOW_SLICE_INDEX(addr);
-	} else {
-		slices = get_paca()->context.high_slices_psize;
-		index = GET_HIGH_SLICE_INDEX(addr);
+		return (lpsizes >> (index * 4)) & 0xF;
 	}
-	return (slices >> (index * 4)) & 0xF;
+	hpsizes = get_paca()->context.high_slices_psize;
+	index = GET_HIGH_SLICE_INDEX(addr);
+	mask_index = index & 0x1;
+	return (hpsizes[index >> 1] >> (mask_index * 4)) & 0xF;
 }
 
 #else
@@ -925,11 +933,6 @@ int hash_page(unsigned long ea, unsigned long access, unsigned long trap)
 	DBG_LOW("hash_page(ea=%016lx, access=%lx, trap=%lx\n",
 		ea, access, trap);
 
-	if ((ea & ~REGION_MASK) >= PGTABLE_RANGE) {
-		DBG_LOW(" out of pgtable range !\n");
- 		return 1;
-	}
-
 	/* Get region & vsid */
  	switch (REGION_ID(ea)) {
 	case USER_REGION_ID:
@@ -960,6 +963,11 @@ int hash_page(unsigned long ea, unsigned long access, unsigned long trap)
 	}
 	DBG_LOW(" mm=%p, mm->pgdir=%p, vsid=%016lx\n", mm, mm->pgd, vsid);
 
+	/* Bad address. */
+	if (!vsid) {
+		DBG_LOW("Bad address!\n");
+		return 1;
+	}
 	/* Get pgdir */
 	pgdir = mm->pgd;
 	if (pgdir == NULL)
@@ -1129,6 +1137,8 @@ void hash_preload(struct mm_struct *mm, unsigned long ea,
 	/* Get VSID */
 	ssize = user_segment_size(ea);
 	vsid = get_vsid(mm->context.id, ea, ssize);
+	if (!vsid)
+		return;
 
 	/* Hash doesn't like irqs */
 	local_irq_save(flags);
@@ -1159,21 +1169,21 @@ void hash_preload(struct mm_struct *mm, unsigned long ea,
 /* WARNING: This is called from hash_low_64.S, if you change this prototype,
  *          do not forget to update the assembly call site !
  */
-void flush_hash_page(unsigned long va, real_pte_t pte, int psize, int ssize,
+void flush_hash_page(unsigned long vpn, real_pte_t pte, int psize, int ssize,
 		     int local)
 {
 	unsigned long hash, index, shift, hidx, slot;
 
-	DBG_LOW("flush_hash_page(va=%016lx)\n", va);
-	pte_iterate_hashed_subpages(pte, psize, va, index, shift) {
-		hash = hpt_hash(va, shift, ssize);
+	DBG_LOW("flush_hash_page(vpn=%016lx)\n", vpn);
+	pte_iterate_hashed_subpages(pte, psize, vpn, index, shift) {
+		hash = hpt_hash(vpn, shift, ssize);
 		hidx = __rpte_to_hidx(pte, index);
 		if (hidx & _PTEIDX_SECONDARY)
 			hash = ~hash;
 		slot = (hash & htab_hash_mask) * HPTES_PER_GROUP;
 		slot += hidx & _PTEIDX_GROUP_IX;
 		DBG_LOW(" sub %ld: hash=%lx, hidx=%lx\n", index, slot, hidx);
-		ppc_md.hpte_invalidate(slot, va, psize, ssize, local);
+		ppc_md.hpte_invalidate(slot, vpn, psize, ssize, local);
 	} pte_iterate_hashed_end();
 }
 
@@ -1187,7 +1197,7 @@ void flush_hash_range(unsigned long number, int local)
 			&__get_cpu_var(ppc64_tlb_batch);
 
 		for (i = 0; i < number; i++)
-			flush_hash_page(batch->vaddr[i], batch->pte[i],
+			flush_hash_page(batch->vpn[i], batch->pte[i],
 					batch->psize, batch->ssize, local);
 	}
 }
@@ -1214,14 +1224,17 @@ static void kernel_map_linear_page(unsigned long vaddr, unsigned long lmi)
 {
 	unsigned long hash, hpteg;
 	unsigned long vsid = get_kernel_vsid(vaddr, mmu_kernel_ssize);
-	unsigned long va = hpt_va(vaddr, vsid, mmu_kernel_ssize);
+	unsigned long vpn = hpt_vpn(vaddr, vsid, mmu_kernel_ssize);
 	unsigned long mode = htab_convert_pte_flags(PAGE_KERNEL);
 	int ret;
 
-	hash = hpt_hash(va, PAGE_SHIFT, mmu_kernel_ssize);
+	hash = hpt_hash(vpn, PAGE_SHIFT, mmu_kernel_ssize);
 	hpteg = ((hash & htab_hash_mask) * HPTES_PER_GROUP);
 
-	ret = ppc_md.hpte_insert(hpteg, va, __pa(vaddr),
+	/* Don't create HPTE entries for bad address */
+	if (!vsid)
+		return;
+	ret = ppc_md.hpte_insert(hpteg, vpn, __pa(vaddr),
 				 mode, HPTE_V_BOLTED,
 				 mmu_linear_psize, mmu_kernel_ssize);
 	BUG_ON (ret < 0);
@@ -1235,9 +1248,9 @@ static void kernel_unmap_linear_page(unsigned long vaddr, unsigned long lmi)
 {
 	unsigned long hash, hidx, slot;
 	unsigned long vsid = get_kernel_vsid(vaddr, mmu_kernel_ssize);
-	unsigned long va = hpt_va(vaddr, vsid, mmu_kernel_ssize);
+	unsigned long vpn = hpt_vpn(vaddr, vsid, mmu_kernel_ssize);
 
-	hash = hpt_hash(va, PAGE_SHIFT, mmu_kernel_ssize);
+	hash = hpt_hash(vpn, PAGE_SHIFT, mmu_kernel_ssize);
 	spin_lock(&linear_map_hash_lock);
 	BUG_ON(!(linear_map_hash_slots[lmi] & 0x80));
 	hidx = linear_map_hash_slots[lmi] & 0x7f;
@@ -1247,7 +1260,7 @@ static void kernel_unmap_linear_page(unsigned long vaddr, unsigned long lmi)
 		hash = ~hash;
 	slot = (hash & htab_hash_mask) * HPTES_PER_GROUP;
 	slot += hidx & _PTEIDX_GROUP_IX;
-	ppc_md.hpte_invalidate(slot, va, mmu_linear_psize, mmu_kernel_ssize, 0);
+	ppc_md.hpte_invalidate(slot, vpn, mmu_linear_psize, mmu_kernel_ssize, 0);
 }
 
 void kernel_map_pages(struct page *page, int numpages, int enable)

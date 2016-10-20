@@ -89,11 +89,19 @@ extern unsigned int HPAGE_SHIFT;
 #define GET_LOW_SLICE_INDEX(addr)	((addr) >> SLICE_LOW_SHIFT)
 #define GET_HIGH_SLICE_INDEX(addr)	((addr) >> SLICE_HIGH_SHIFT)
 
+/*
+ * 1 bit per slice and we have one slice per 1TB
+ * Right now we support only 64TB.
+ * IF we change this we will have to change the type
+ * of high_slices
+ */
+#define SLICE_MASK_SIZE 8
+
 #ifndef __ASSEMBLY__
 
 struct slice_mask {
 	u16 low_slices;
-	u16 high_slices;
+	u64 high_slices;
 };
 
 struct mm_struct;
