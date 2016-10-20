@@ -692,7 +692,9 @@ void nfs_file_set_open_context(struct file *filp, struct nfs_open_context *ctx)
 	struct nfs_inode *nfsi = NFS_I(inode);
 
 	filp->private_data = get_nfs_open_context(ctx);
+#ifndef __GENKSYMS__
 	ctx->flock_owner = (fl_owner_t)filp;
+#endif
 	spin_lock(&inode->i_lock);
 	list_add(&ctx->list, &nfsi->open_files);
 	spin_unlock(&inode->i_lock);
