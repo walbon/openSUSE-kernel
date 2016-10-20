@@ -96,6 +96,7 @@ struct nfs_lock_context {
 struct nfs4_state;
 struct nfs_open_context {
 	struct nfs_lock_context lock_context;
+	fl_owner_t flock_owner;
 	struct path path;
 	struct rpc_cred *cred;
 	struct nfs4_state *state;
