@@ -2688,15 +2688,20 @@ static int _nfs4_do_setattr(struct inode *inode, struct rpc_cred *cred,
 	if (nfs4_copy_delegation_stateid(&arg.stateid, inode, fmode)) {
 		/* Use that stateid */
 	} else if (truncate && ctx != NULL) {
-		struct nfs_lockowner lockowner = {
-			.l_owner = current->files,
-			.l_pid = current->tgid,
-		};
+		struct nfs_lock_context *l_ctx;
+		l_ctx = nfs_get_lock_context(ctx);
+		if (IS_ERR(l_ctx))
+			return PTR_ERR(l_ctx);
 		if (!nfs4_valid_open_stateid(ctx->state))
-			return -EBADF;
-		if (nfs4_select_rw_stateid(&arg.stateid, ctx->state, FMODE_WRITE,
-				&lockowner) == -EIO)
-			return -EBADF;
+			status = -EBADF;
+		else if (nfs4_select_rw_stateid(&arg.stateid, ctx->state, FMODE_WRITE,
+				l_ctx) == -EIO)
+			status = -EBADF;
+		else
+			status = 0;
+		nfs_put_lock_context(l_ctx);
+		if (status)
+			return status;
 	} else
 		nfs4_stateid_copy(&arg.stateid, &zero_stateid);
 
@@ -4272,11 +4277,7 @@ int nfs4_set_rw_stateid(nfs4_stateid *stateid,
 		const struct nfs_lock_context *l_ctx,
 		fmode_t fmode)
 {
-	const struct nfs_lockowner *lockowner = NULL;
-
-	if (l_ctx != NULL)
-		lockowner = &l_ctx->lockowner;
-	return nfs4_select_rw_stateid(stateid, ctx->state, fmode, lockowner);
+	return nfs4_select_rw_stateid(stateid, ctx->state, fmode, l_ctx);
 }
 EXPORT_SYMBOL_GPL(nfs4_set_rw_stateid);
 
