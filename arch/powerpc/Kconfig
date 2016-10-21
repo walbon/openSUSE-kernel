@@ -445,10 +445,8 @@ config ARCH_MEMORY_PROBE
 	depends on MEMORY_HOTPLUG
 
 config BIGMEM
-	bool
-	default n
-	help
-	  Change the mm code to safely use > 1.5 TB of physical RAM
+	bool "Allow for >1.5TB of physical memory"
+	depends on PPC64
 
 # Some NUMA nodes have memory ranges that span
 # other nodes.  Even though a pfn is valid and
