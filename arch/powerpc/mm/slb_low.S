@@ -31,15 +31,23 @@
  * No other registers are examined or changed.
  */
 _GLOBAL(slb_allocate_realmode)
+#ifndef CONFIG_BIGMEM
+	/* r3 = faulting address */
+#else
 	/*
 	 * check for bad kernel/user address
 	 * (ea & ~REGION_MASK) >= PGTABLE_RANGE
 	 */
 	rldicr. r9,r3,4,(63 - 46 - 4)
 	bne-	8f
+#endif
 
 	srdi	r9,r3,60		/* get region */
+#ifndef CONFIG_BIGMEM
+	srdi	r10,r3,28		/* get esid */
+#else
 	srdi	r10,r3,SID_SHIFT	/* get esid */
+#endif
 	cmpldi	cr7,r9,0xc		/* cmp PAGE_OFFSET for later use */
 
 	/* r3 = address, r10 = esid, cr7 = <> PAGE_OFFSET */
@@ -61,6 +69,7 @@ _GLOBAL(slb_allocate_realmode)
 	 */
 _GLOBAL(slb_miss_kernel_load_linear)
 	li	r11,0
+#ifdef CONFIG_BIGMEM
 	/*
 	 * context = (MAX_USER_CONTEXT) + ((ea >> 60) - 0xc) + 1
 	 * r9 = region id.
@@ -69,6 +78,7 @@ _GLOBAL(slb_miss_kernel_load_linear)
 	addi	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@l
 
 
+#endif
 BEGIN_FTR_SECTION
 	b	slb_finish_load
 END_MMU_FTR_SECTION_IFCLR(MMU_FTR_1T_SEGMENT)
@@ -98,6 +108,7 @@ _GLOBAL(slb_miss_kernel_load_vmemmap)
 	_GLOBAL(slb_miss_kernel_load_io)
 	li	r11,0
 6:
+#ifdef CONFIG_BIGMEM
 	/*
 	 * context = (MAX_USER_CONTEXT) + ((ea >> 60) - 0xc) + 1
 	 * r9 = region id.
@@ -105,12 +116,23 @@ _GLOBAL(slb_miss_kernel_load_vmemmap)
 	addis	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@ha
 	addi	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@l
 
+#endif
 BEGIN_FTR_SECTION
 	b	slb_finish_load
 END_MMU_FTR_SECTION_IFCLR(MMU_FTR_1T_SEGMENT)
 	b	slb_finish_load_1T
 
+#ifndef CONFIG_BIGMEM
+0:	/* user address: proto-VSID = context << 15 | ESID. First check
+	 * if the address is within the boundaries of the user region
+	 */
+	srdi.	r9,r10,USER_ESID_BITS
+	bne-	8f			/* invalid ea bits set */
+
+
+#else
 0:
+#endif
 	/* when using slices, we extract the psize off the slice bitmaps
 	 * and then we need to get the sllp encoding off the mmu_psize_defs
 	 * array.
@@ -122,10 +144,24 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_1T_SEGMENT)
 	 * between 4k and 64k standard page size
 	 */
 #ifdef CONFIG_PPC_MM_SLICES
+#ifdef CONFIG_BIGMEM
 	/* r10 have esid */
+#endif
 	cmpldi	r10,16
+#ifndef CONFIG_BIGMEM
+
+	/* Get the slice index * 4 in r11 and matching slice size mask in r9 */
+	ld	r9,PACALOWSLICESPSIZE(r13)
+	sldi	r11,r10,2
+#else
 	/* below SLICE_LOW_TOP */
+#endif
 	blt	5f
+#ifndef CONFIG_BIGMEM
+	ld	r9,PACAHIGHSLICEPSIZE(r13)
+	srdi	r11,r10,(SLICE_HIGH_SHIFT - SLICE_LOW_SHIFT - 2)
+	andi.	r11,r11,0x3c
+#else
 	/*
 	 * Handle hpsizes,
 	 * r9 is get_paca()->context.high_slices_psize[index], r11 is mask_index
@@ -136,7 +172,11 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_1T_SEGMENT)
 	/* r11 = (r10 >> (SLICE_HIGH_SHIFT - SLICE_LOW_SHIFT)) & 0x1 */
 	rldicl	r11,r10,(64 - (SLICE_HIGH_SHIFT - SLICE_LOW_SHIFT)),63
 	b	6f
+#endif
 
+#ifndef CONFIG_BIGMEM
+5:	/* Extract the psize and multiply to get an array offset */
+#else
 5:
 	/*
 	 * Handle lpsizes
@@ -147,6 +187,7 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_1T_SEGMENT)
 6:
 	sldi	r11,r11,2  /* index * 4 */
 	/* Extract the psize and multiply to get an array offset */
+#endif
 	srd	r9,r9,r11
 	andi.	r9,r9,0xf
 	mulli	r9,r9,MMUPSIZEDEFSIZE
@@ -166,13 +207,20 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_1T_SEGMENT)
 	ld	r9,PACACONTEXTID(r13)
 BEGIN_FTR_SECTION
 	cmpldi	r10,0x1000
+#ifndef CONFIG_BIGMEM
+END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
+	rldimi	r10,r9,USER_ESID_BITS,0
+BEGIN_FTR_SECTION
+#endif
 	bge	slb_finish_load_1T
 END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	b	slb_finish_load
 
 8:	/* invalid EA */
 	li	r10,0			/* BAD_VSID */
+#ifdef CONFIG_BIGMEM
 	li	r9,0			/* BAD_VSID */
+#endif
 	li	r11,SLB_VSID_USER	/* flags don't much matter */
 	b	slb_finish_load
 
@@ -221,6 +269,10 @@ _GLOBAL(slb_allocate_user)
 
 	/* get context to calculate proto-VSID */
 	ld	r9,PACACONTEXTID(r13)
+#ifndef CONFIG_BIGMEM
+	rldimi	r10,r9,USER_ESID_BITS,0
+
+#endif
 	/* fall through slb_finish_load */
 
 #endif /* __DISABLED__ */
@@ -229,16 +281,26 @@ _GLOBAL(slb_allocate_user)
 /*
  * Finish loading of an SLB entry and return
  *
+#ifndef CONFIG_BIGMEM
+ * r3 = EA, r10 = proto-VSID, r11 = flags, clobbers r9, cr7 = <> PAGE_OFFSET
+#else
  * r3 = EA, r9 = context, r10 = ESID, r11 = flags, clobbers r9, cr7 = <> PAGE_OFFSET
+#endif
  */
 slb_finish_load:
+#ifdef CONFIG_BIGMEM
 	rldimi  r10,r9,ESID_BITS,0
+#endif
 	ASM_VSID_SCRAMBLE(r10,r9,256M)
+#ifndef CONFIG_BIGMEM
+	rldimi	r11,r10,SLB_VSID_SHIFT,16	/* combine VSID and flags */
+#else
 	/*
 	 * bits above VSID_BITS_256M need to be ignored from r10
 	 * also combine VSID and flags
 	 */
 	rldimi	r11,r10,SLB_VSID_SHIFT,(64 - (SLB_VSID_SHIFT + VSID_BITS_256M))
+#endif
 
 	/* r3 = EA, r11 = VSID data */
 	/*
@@ -296,10 +358,17 @@ _GLOBAL(slb_compare_rr_to_size)
 	bge	1f
 
 	/* still room in the slb cache */
+#ifndef CONFIG_BIGMEM
+	sldi	r11,r3,1		/* r11 = offset * sizeof(u16) */
+	rldicl	r10,r10,36,28		/* get low 16 bits of the ESID */
+	add	r11,r11,r13		/* r11 = (u16 *)paca + offset */
+	sth	r10,PACASLBCACHE(r11)	/* paca->slb_cache[offset] = esid */
+#else
 	sldi	r11,r3,2		/* r11 = offset * sizeof(u32) */
 	srdi    r10,r10,28		/* get the 36 bits of the ESID */
 	add	r11,r11,r13		/* r11 = (u32 *)paca + offset */
 	stw	r10,PACASLBCACHE(r11)	/* paca->slb_cache[offset] = esid */
+#endif
 	addi	r3,r3,1			/* offset++ */
 	b	2f
 1:					/* offset >= SLB_CACHE_ENTRIES */
@@ -313,17 +382,29 @@ _GLOBAL(slb_compare_rr_to_size)
  * Finish loading of a 1T SLB entry (for the kernel linear mapping) and return.
  * We assume legacy iSeries will never have 1T segments.
  *
+#ifndef CONFIG_BIGMEM
+ * r3 = EA, r10 = proto-VSID, r11 = flags, clobbers r9
+#else
  * r3 = EA, r9 = context, r10 = ESID(256MB), r11 = flags, clobbers r9
+#endif
  */
 slb_finish_load_1T:
+#ifndef CONFIG_BIGMEM
+	srdi	r10,r10,40-28		/* get 1T ESID */
+#else
 	srdi	r10,r10,(SID_SHIFT_1T - SID_SHIFT)	/* get 1T ESID */
 	rldimi  r10,r9,ESID_BITS_1T,0
+#endif
 	ASM_VSID_SCRAMBLE(r10,r9,1T)
+#ifndef CONFIG_BIGMEM
+	rldimi	r11,r10,SLB_VSID_SHIFT_1T,16	/* combine VSID and flags */
+#else
 	/*
 	 * bits above VSID_BITS_1T need to be ignored from r10
 	 * also combine VSID and flags
 	 */
 	rldimi	r11,r10,SLB_VSID_SHIFT_1T,(64 - (SLB_VSID_SHIFT_1T + VSID_BITS_1T))
+#endif
 	li	r10,MMU_SEGSIZE_1T
 	rldimi	r11,r10,SLB_VSID_SSIZE_SHIFT,0	/* insert segment size */
 

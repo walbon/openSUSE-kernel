@@ -38,6 +38,8 @@ static inline struct kvmppc_book3s_shadow_vcpu *to_svcpu(struct kvm_vcpu *vcpu)
 #define SID_SHIFT	28
 #define ESID_MASK	0xf0000000
 #define VSID_MASK	0x00fffffff0000000ULL
+#ifdef CONFIG_BIGMEM
 #define VPN_SHIFT	12
+#endif
 
 #endif /* __ASM_KVM_BOOK3S_32_H__ */

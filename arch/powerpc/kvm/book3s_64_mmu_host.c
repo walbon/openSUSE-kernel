@@ -33,7 +33,11 @@
 
 void kvmppc_mmu_invalidate_pte(struct kvm_vcpu *vcpu, struct hpte_cache *pte)
 {
+#ifndef CONFIG_BIGMEM
+	ppc_md.hpte_invalidate(pte->slot, pte->host_va,
+#else
 	ppc_md.hpte_invalidate(pte->slot, pte->host_vpn,
+#endif
 			       MMU_PAGE_4K, MMU_SEGSIZE_256M,
 			       false);
 }
@@ -80,9 +84,15 @@ static struct kvmppc_sid_map *find_sid_vsid(struct kvm_vcpu *vcpu, u64 gvsid)
 
 int kvmppc_mmu_map_page(struct kvm_vcpu *vcpu, struct kvmppc_pte *orig_pte)
 {
+#ifdef CONFIG_BIGMEM
 	unsigned long vpn;
+#endif
 	pfn_t hpaddr;
+#ifndef CONFIG_BIGMEM
+	ulong hash, hpteg, va;
+#else
 	ulong hash, hpteg;
+#endif
 	u64 vsid;
 	int ret;
 	int rflags = 0x192;
@@ -115,7 +125,11 @@ int kvmppc_mmu_map_page(struct kvm_vcpu *vcpu, struct kvmppc_pte *orig_pte)
 	}
 
 	vsid = map->host_vsid;
+#ifndef CONFIG_BIGMEM
+	va = hpt_va(orig_pte->eaddr, vsid, MMU_SEGSIZE_256M);
+#else
 	vpn = hpt_vpn(orig_pte->eaddr, vsid, MMU_SEGSIZE_256M);
+#endif
 
 	if (!orig_pte->may_write)
 		rflags |= HPTE_R_PP;
@@ -125,7 +139,11 @@ int kvmppc_mmu_map_page(struct kvm_vcpu *vcpu, struct kvmppc_pte *orig_pte)
 	if (!orig_pte->may_execute)
 		rflags |= HPTE_R_N;
 
+#ifndef CONFIG_BIGMEM
+	hash = hpt_hash(va, PTE_SIZE, MMU_SEGSIZE_256M);
+#else
 	hash = hpt_hash(vpn, PTE_SIZE, MMU_SEGSIZE_256M);
+#endif
 
 map_again:
 	hpteg = ((hash & htab_hash_mask) * HPTES_PER_GROUP);
@@ -135,8 +153,12 @@ map_again:
 		if (ppc_md.hpte_remove(hpteg) < 0)
 			return -1;
 
+#ifndef CONFIG_BIGMEM
+	ret = ppc_md.hpte_insert(hpteg, va, hpaddr, rflags, vflags, MMU_PAGE_4K, MMU_SEGSIZE_256M);
+#else
 	ret = ppc_md.hpte_insert(hpteg, vpn, hpaddr, rflags, vflags,
 				 MMU_PAGE_4K, MMU_SEGSIZE_256M);
+#endif
 
 	if (ret < 0) {
 		/* If we couldn't map a primary PTE, try a secondary */
@@ -147,8 +169,12 @@ map_again:
 	} else {
 		struct hpte_cache *pte = kvmppc_mmu_hpte_cache_next(vcpu);
 
+#ifndef CONFIG_BIGMEM
+		trace_kvm_book3s_64_mmu_map(rflags, hpteg, va, hpaddr, orig_pte);
+#else
 		trace_kvm_book3s_64_mmu_map(rflags, hpteg,
 					    vpn, hpaddr, orig_pte);
+#endif
 
 		/* The ppc_md code may give us a secondary entry even though we
 		   asked for a primary. Fix up. */
@@ -158,7 +184,11 @@ map_again:
 		}
 
 		pte->slot = hpteg + (ret & 7);
+#ifndef CONFIG_BIGMEM
+		pte->host_va = va;
+#else
 		pte->host_vpn = vpn;
+#endif
 		pte->pte = *orig_pte;
 		pte->pfn = hpaddr >> PAGE_SHIFT;
 
@@ -302,8 +332,13 @@ int kvmppc_mmu_init(struct kvm_vcpu *vcpu)
 		return -1;
 	vcpu3s->context_id[0] = err;
 
+#ifndef CONFIG_BIGMEM
+	vcpu3s->vsid_max = ((vcpu3s->context_id[0] + 1) << USER_ESID_BITS) - 1;
+	vcpu3s->vsid_first = vcpu3s->context_id[0] << USER_ESID_BITS;
+#else
 	vcpu3s->vsid_max = ((vcpu3s->context_id[0] + 1) << ESID_BITS) - 1;
 	vcpu3s->vsid_first = vcpu3s->context_id[0] << ESID_BITS;
+#endif
 	vcpu3s->vsid_next = vcpu3s->vsid_first;
 
 	kvmppc_mmu_hpte_init(vcpu);

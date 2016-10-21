@@ -141,7 +141,11 @@ extern char etext[];
 int kvmppc_mmu_map_page(struct kvm_vcpu *vcpu, struct kvmppc_pte *orig_pte)
 {
 	pfn_t hpaddr;
+#ifndef CONFIG_BIGMEM
+	u64 va;
+#else
 	u64 vpn;
+#endif
 	u64 vsid;
 	struct kvmppc_sid_map *map;
 	volatile u32 *pteg;
@@ -171,7 +175,12 @@ int kvmppc_mmu_map_page(struct kvm_vcpu *vcpu, struct kvmppc_pte *orig_pte)
 	BUG_ON(!map);
 
 	vsid = map->host_vsid;
+#ifndef CONFIG_BIGMEM
+	va = (vsid << SID_SHIFT) | (eaddr & ~ESID_MASK);
+
+#else
 	vpn = (vsid << (SID_SHIFT - VPN_SHIFT)) | ((eaddr & ~ESID_MASK) >> VPN_SHIFT)
+#endif
 next_pteg:
 	if (rr == 16) {
 		primary = !primary;
@@ -238,11 +247,19 @@ next_pteg:
 	dprintk_mmu("KVM: %c%c Map 0x%llx: [%lx] 0x%llx (0x%llx) -> %lx\n",
 		    orig_pte->may_write ? 'w' : '-',
 		    orig_pte->may_execute ? 'x' : '-',
+#ifndef CONFIG_BIGMEM
+		    orig_pte->eaddr, (ulong)pteg, va,
+#else
 		    orig_pte->eaddr, (ulong)pteg, vpn,
+#endif
 		    orig_pte->vpage, hpaddr);
 
 	pte->slot = (ulong)&pteg[rr];
+#ifndef CONFIG_BIGMEM
+	pte->host_va = va;
+#else
 	pte->host_vpn = vpn;
+#endif
 	pte->pte = *orig_pte;
 	pte->pfn = hpaddr >> PAGE_SHIFT;
 

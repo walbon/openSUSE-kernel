@@ -9,6 +9,16 @@
 
 struct mm_struct;
 
+#ifndef CONFIG_BIGMEM
+#ifdef CONFIG_DEBUG_VM
+extern void assert_pte_locked(struct mm_struct *mm, unsigned long addr);
+#else /* CONFIG_DEBUG_VM */
+static inline void assert_pte_locked(struct mm_struct *mm, unsigned long addr)
+{
+}
+#endif /* !CONFIG_DEBUG_VM */
+
+#endif
 #endif /* !__ASSEMBLY__ */
 
 #if defined(CONFIG_PPC64)
@@ -19,8 +29,10 @@ struct mm_struct;
 
 #ifndef __ASSEMBLY__
 
+#ifdef CONFIG_BIGMEM
 #include <asm/tlbflush.h>
 
+#endif
 /* Generic accessors to PTE bits */
 static inline int pte_write(pte_t pte)		{ return pte_val(pte) & _PAGE_RW; }
 static inline int pte_dirty(pte_t pte)		{ return pte_val(pte) & _PAGE_DIRTY; }

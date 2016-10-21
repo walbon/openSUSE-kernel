@@ -43,7 +43,11 @@ enum ps3_lpar_vas_id {
 
 static DEFINE_SPINLOCK(ps3_htab_lock);
 
+#ifndef CONFIG_BIGMEM
+static long ps3_hpte_insert(unsigned long hpte_group, unsigned long va,
+#else
 static long ps3_hpte_insert(unsigned long hpte_group, unsigned long vpn,
+#endif
 	unsigned long pa, unsigned long rflags, unsigned long vflags,
 	int psize, int ssize)
 {
@@ -61,7 +65,11 @@ static long ps3_hpte_insert(unsigned long hpte_group, unsigned long vpn,
 	 */
 	vflags &= ~HPTE_V_SECONDARY;
 
+#ifndef CONFIG_BIGMEM
+	hpte_v = hpte_encode_v(va, psize, ssize) | vflags | HPTE_V_VALID;
+#else
 	hpte_v = hpte_encode_v(vpn, psize, ssize) | vflags | HPTE_V_VALID;
+#endif
 	hpte_r = hpte_encode_r(ps3_mm_phys_to_lpar(pa), psize) | rflags;
 
 	spin_lock_irqsave(&ps3_htab_lock, flags);
@@ -75,8 +83,13 @@ static long ps3_hpte_insert(unsigned long hpte_group, unsigned long vpn,
 
 	if (result) {
 		/* all entries bolted !*/
+#ifndef CONFIG_BIGMEM
+		pr_info("%s:result=%d va=%lx pa=%lx ix=%lx v=%llx r=%llx\n",
+			__func__, result, va, pa, hpte_group, hpte_v, hpte_r);
+#else
 		pr_info("%s:result=%d vpn=%lx pa=%lx ix=%lx v=%llx r=%llx\n",
 			__func__, result, vpn, pa, hpte_group, hpte_v, hpte_r);
+#endif
 		BUG();
 	}
 
@@ -107,7 +120,11 @@ static long ps3_hpte_remove(unsigned long hpte_group)
 }
 
 static long ps3_hpte_updatepp(unsigned long slot, unsigned long newpp,
+#ifndef CONFIG_BIGMEM
+	unsigned long va, int psize, int ssize, int local)
+#else
 	unsigned long vpn, int psize, int ssize, int local)
+#endif
 {
 	int result;
 	u64 hpte_v, want_v, hpte_rs;
@@ -115,7 +132,11 @@ static long ps3_hpte_updatepp(unsigned long slot, unsigned long newpp,
 	unsigned long flags;
 	long ret;
 
+#ifndef CONFIG_BIGMEM
+	want_v = hpte_encode_v(va, psize, ssize);
+#else
 	want_v = hpte_encode_v(vpn, psize, ssize);
+#endif
 
 	spin_lock_irqsave(&ps3_htab_lock, flags);
 
@@ -125,8 +146,13 @@ static long ps3_hpte_updatepp(unsigned long slot, unsigned long newpp,
 				       &hpte_rs);
 
 	if (result) {
+#ifndef CONFIG_BIGMEM
+		pr_info("%s: res=%d read va=%lx slot=%lx psize=%d\n",
+			__func__, result, va, slot, psize);
+#else
 		pr_info("%s: res=%d read vpn=%lx slot=%lx psize=%d\n",
 			__func__, result, vpn, slot, psize);
+#endif
 		BUG();
 	}
 
@@ -159,7 +185,11 @@ static void ps3_hpte_updateboltedpp(unsigned long newpp, unsigned long ea,
 	panic("ps3_hpte_updateboltedpp() not implemented");
 }
 
+#ifndef CONFIG_BIGMEM
+static void ps3_hpte_invalidate(unsigned long slot, unsigned long va,
+#else
 static void ps3_hpte_invalidate(unsigned long slot, unsigned long vpn,
+#endif
 	int psize, int ssize, int local)
 {
 	unsigned long flags;
@@ -170,8 +200,13 @@ static void ps3_hpte_invalidate(unsigned long slot, unsigned long vpn,
 	result = lv1_write_htab_entry(PS3_LPAR_VAS_ID_CURRENT, slot, 0, 0);
 
 	if (result) {
+#ifndef CONFIG_BIGMEM
+		pr_info("%s: res=%d va=%lx slot=%lx psize=%d\n",
+			__func__, result, va, slot, psize);
+#else
 		pr_info("%s: res=%d vpn=%lx slot=%lx psize=%d\n",
 			__func__, result, vpn, slot, psize);
+#endif
 		BUG();
 	}
 

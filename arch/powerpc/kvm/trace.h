@@ -186,7 +186,11 @@ TRACE_EVENT(kvm_book3s_mmu_map,
 	TP_ARGS(pte),
 
 	TP_STRUCT__entry(
+#ifndef CONFIG_BIGMEM
+		__field(	u64,		host_va		)
+#else
 		__field(	u64,		host_vpn	)
+#endif
 		__field(	u64,		pfn		)
 		__field(	ulong,		eaddr		)
 		__field(	u64,		vpage		)
@@ -195,7 +199,11 @@ TRACE_EVENT(kvm_book3s_mmu_map,
 	),
 
 	TP_fast_assign(
+#ifndef CONFIG_BIGMEM
+		__entry->host_va	= pte->host_va;
+#else
 		__entry->host_vpn	= pte->host_vpn;
+#endif
 		__entry->pfn		= pte->pfn;
 		__entry->eaddr		= pte->pte.eaddr;
 		__entry->vpage		= pte->pte.vpage;
@@ -205,8 +213,13 @@ TRACE_EVENT(kvm_book3s_mmu_map,
 					  (pte->pte.may_execute ? 0x1 : 0);
 	),
 
+#ifndef CONFIG_BIGMEM
+	TP_printk("Map: hva=%llx pfn=%llx ea=%lx vp=%llx ra=%lx [%x]",
+		  __entry->host_va, __entry->pfn, __entry->eaddr,
+#else
 	TP_printk("Map: hvpn=%llx pfn=%llx ea=%lx vp=%llx ra=%lx [%x]",
 		  __entry->host_vpn, __entry->pfn, __entry->eaddr,
+#endif
 		  __entry->vpage, __entry->raddr, __entry->flags)
 );
 
@@ -215,7 +228,11 @@ TRACE_EVENT(kvm_book3s_mmu_invalidate,
 	TP_ARGS(pte),
 
 	TP_STRUCT__entry(
+#ifndef CONFIG_BIGMEM
+		__field(	u64,		host_va		)
+#else
 		__field(	u64,		host_vpn	)
+#endif
 		__field(	u64,		pfn		)
 		__field(	ulong,		eaddr		)
 		__field(	u64,		vpage		)
@@ -224,7 +241,11 @@ TRACE_EVENT(kvm_book3s_mmu_invalidate,
 	),
 
 	TP_fast_assign(
+#ifndef CONFIG_BIGMEM
+		__entry->host_va	= pte->host_va;
+#else
 		__entry->host_vpn	= pte->host_vpn;
+#endif
 		__entry->pfn		= pte->pfn;
 		__entry->eaddr		= pte->pte.eaddr;
 		__entry->vpage		= pte->pte.vpage;
@@ -235,7 +256,11 @@ TRACE_EVENT(kvm_book3s_mmu_invalidate,
 	),
 
 	TP_printk("Flush: hva=%llx pfn=%llx ea=%lx vp=%llx ra=%lx [%x]",
+#ifndef CONFIG_BIGMEM
+		  __entry->host_va, __entry->pfn, __entry->eaddr,
+#else
 		  __entry->host_vpn, __entry->pfn, __entry->eaddr,
+#endif
 		  __entry->vpage, __entry->raddr, __entry->flags)
 );
 

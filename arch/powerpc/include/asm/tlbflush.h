@@ -95,7 +95,11 @@ struct ppc64_tlb_batch {
 	unsigned long		index;
 	struct mm_struct	*mm;
 	real_pte_t		pte[PPC64_TLB_BATCH_NR];
+#ifndef CONFIG_BIGMEM
+	unsigned long		vaddr[PPC64_TLB_BATCH_NR];
+#else
 	unsigned long		vpn[PPC64_TLB_BATCH_NR];
+#endif
 	unsigned int		psize;
 	int			ssize;
 };
@@ -103,6 +107,11 @@ DECLARE_PER_CPU(struct ppc64_tlb_batch, ppc64_tlb_batch);
 
 extern void __flush_tlb_pending(struct ppc64_tlb_batch *batch);
 
+#ifndef CONFIG_BIGMEM
+extern void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
+			    pte_t *ptep, unsigned long pte, int huge);
+
+#endif
 #define __HAVE_ARCH_ENTER_LAZY_MMU_MODE
 
 static inline void arch_enter_lazy_mmu_mode(void)
@@ -124,7 +133,11 @@ static inline void arch_leave_lazy_mmu_mode(void)
 #define arch_flush_lazy_mmu_mode()      do {} while (0)
 
 
+#ifndef CONFIG_BIGMEM
+extern void flush_hash_page(unsigned long va, real_pte_t pte, int psize,
+#else
 extern void flush_hash_page(unsigned long vpn, real_pte_t pte, int psize,
+#endif
 			    int ssize, int local);
 extern void flush_hash_range(unsigned long number, int local);
 

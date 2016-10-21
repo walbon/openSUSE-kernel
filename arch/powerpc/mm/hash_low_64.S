@@ -71,7 +71,11 @@ _GLOBAL(__hash_page_4K)
 	/* Save non-volatile registers.
 	 * r31 will hold "old PTE"
 	 * r30 is "new PTE"
+#ifndef CONFIG_BIGMEM
+	 * r29 is "va"
+#else
 	 * r29 is vpn
+#endif
 	 * r28 is a hash value
 	 * r27 is hashtab mask (maybe dynamic patched instead ?)
 	 */
@@ -119,6 +123,17 @@ BEGIN_FTR_SECTION
 	cmpdi	r9,0			/* check segment size */
 	bne	3f
 END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
+#ifndef CONFIG_BIGMEM
+	/* Calc va and put it in r29 */
+	rldicr	r29,r5,28,63-28
+	rldicl	r3,r3,0,36
+	or	r29,r3,r29
+
+	/* Calculate hash value for primary slot and store it in r28 */
+	rldicl	r5,r5,0,25		/* vsid & 0x0000007fffffffff */
+	rldicl	r0,r3,64-12,48		/* (ea >> 12) & 0xffff */
+	xor	r28,r5,r0
+#else
 	/* Calc vpn and put it in r29 */
 	sldi	r29,r5,SID_SHIFT - VPN_SHIFT
 	rldicl  r28,r3,64 - VPN_SHIFT,64 - (SID_SHIFT - VPN_SHIFT)
@@ -130,8 +145,19 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	 */
 	rldicl	r0,r3,64-12,48
 	xor	r28,r5,r0		/* hash */
+#endif
 	b	4f
 
+#ifndef CONFIG_BIGMEM
+3:	/* Calc VA and hash in r29 and r28 for 1T segment */
+	sldi	r29,r5,40		/* vsid << 40 */
+	clrldi	r3,r3,24		/* ea & 0xffffffffff */
+	rldic	r28,r5,25,25		/* (vsid << 25) & 0x7fffffffff */
+	clrldi	r5,r5,40		/* vsid & 0xffffff */
+	rldicl	r0,r3,64-12,36		/* (ea >> 12) & 0xfffffff */
+	xor	r28,r28,r5
+	or	r29,r3,r29		/* VA */
+#else
 3:	/* Calc vpn and put it in r29 */
 	sldi	r29,r5,SID_SHIFT_1T - VPN_SHIFT
 	rldicl  r28,r3,64 - VPN_SHIFT,64 - (SID_SHIFT_1T - VPN_SHIFT)
@@ -146,6 +172,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	/* r0 =  (va >> 12) & ((1ul << (40 - 12)) -1) */
 	rldicl	r0,r3,64-12,36
 	xor	r28,r28,r5		/* vsid ^ ( vsid << 25) */
+#endif
 	xor	r28,r28,r0		/* hash */
 
 	/* Convert linux PTE bits into HW equivalents */
@@ -201,7 +228,11 @@ htab_insert_pte:
 
 	/* Call ppc_md.hpte_insert */
 	ld	r6,STK_PARM(r4)(r1)	/* Retrieve new pp bits */
+#ifndef CONFIG_BIGMEM
+	mr	r4,r29			/* Retrieve va */
+#else
 	mr	r4,r29			/* Retrieve vpn */
+#endif
 	li	r7,0			/* !bolted, !secondary */
 	li	r8,MMU_PAGE_4K		/* page size */
 	ld	r9,STK_PARM(r9)(r1)	/* segment size */
@@ -224,7 +255,11 @@ _GLOBAL(htab_call_hpte_insert1)
 	
 	/* Call ppc_md.hpte_insert */
 	ld	r6,STK_PARM(r4)(r1)	/* Retrieve new pp bits */
+#ifndef CONFIG_BIGMEM
+	mr	r4,r29			/* Retrieve va */
+#else
 	mr	r4,r29			/* Retrieve vpn */
+#endif
 	li	r7,HPTE_V_SECONDARY	/* !bolted, secondary */
 	li	r8,MMU_PAGE_4K		/* page size */
 	ld	r9,STK_PARM(r9)(r1)	/* segment size */
@@ -294,7 +329,11 @@ htab_modify_pte:
 	add	r3,r0,r3	/* add slot idx */
 
 	/* Call ppc_md.hpte_updatepp */
+#ifndef CONFIG_BIGMEM
+	mr	r5,r29			/* va */
+#else
 	mr	r5,r29			/* vpn */
+#endif
 	li	r6,MMU_PAGE_4K		/* page size */
 	ld	r7,STK_PARM(r9)(r1)	/* segment size */
 	ld	r8,STK_PARM(r8)(r1)	/* get "local" param */
@@ -355,7 +394,11 @@ _GLOBAL(__hash_page_4K)
 	/* Save non-volatile registers.
 	 * r31 will hold "old PTE"
 	 * r30 is "new PTE"
+#ifndef CONFIG_BIGMEM
+	 * r29 is "va"
+#else
 	 * r29 is vpn
+#endif
 	 * r28 is a hash value
 	 * r27 is hashtab mask (maybe dynamic patched instead ?)
 	 * r26 is the hidx mask
@@ -410,6 +453,17 @@ BEGIN_FTR_SECTION
 	cmpdi	r9,0			/* check segment size */
 	bne	3f
 END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
+#ifndef CONFIG_BIGMEM
+	/* Calc va and put it in r29 */
+	rldicr	r29,r5,28,63-28		/* r29 = (vsid << 28) */
+	rldicl	r3,r3,0,36		/* r3 = (ea & 0x0fffffff) */
+	or	r29,r3,r29		/* r29 = va */
+
+	/* Calculate hash value for primary slot and store it in r28 */
+	rldicl	r5,r5,0,25		/* vsid & 0x0000007fffffffff */
+	rldicl	r0,r3,64-12,48		/* (ea >> 12) & 0xffff */
+	xor	r28,r5,r0
+#else
 	/* Calc vpn and put it in r29 */
 	sldi	r29,r5,SID_SHIFT - VPN_SHIFT
 	/*
@@ -425,8 +479,19 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	 */
 	rldicl	r0,r3,64-12,48
 	xor	r28,r5,r0		/* hash */
+#endif
 	b	4f
 
+#ifndef CONFIG_BIGMEM
+3:	/* Calc VA and hash in r29 and r28 for 1T segment */
+	sldi	r29,r5,40		/* vsid << 40 */
+	clrldi	r3,r3,24		/* ea & 0xffffffffff */
+	rldic	r28,r5,25,25		/* (vsid << 25) & 0x7fffffffff */
+	clrldi	r5,r5,40		/* vsid & 0xffffff */
+	rldicl	r0,r3,64-12,36		/* (ea >> 12) & 0xfffffff */
+	xor	r28,r28,r5
+	or	r29,r3,r29		/* VA */
+#else
 3:	/* Calc vpn and put it in r29 */
 	sldi	r29,r5,SID_SHIFT_1T - VPN_SHIFT
 	/*
@@ -445,6 +510,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	/* r0 = (va >> 12) & ((1ul << (40 - 12)) -1) */
 	rldicl	r0,r3,64-12,36
 	xor	r28,r28,r5		/* vsid ^ ( vsid << 25) */
+#endif
 	xor	r28,r28,r0		/* hash */
 
 	/* Convert linux PTE bits into HW equivalents */
@@ -520,7 +586,11 @@ htab_special_pfn:
 
 	/* Call ppc_md.hpte_insert */
 	ld	r6,STK_PARM(r4)(r1)	/* Retrieve new pp bits */
+#ifndef CONFIG_BIGMEM
+	mr	r4,r29			/* Retrieve va */
+#else
 	mr	r4,r29			/* Retrieve vpn */
+#endif
 	li	r7,0			/* !bolted, !secondary */
 	li	r8,MMU_PAGE_4K		/* page size */
 	ld	r9,STK_PARM(r9)(r1)	/* segment size */
@@ -547,7 +617,11 @@ _GLOBAL(htab_call_hpte_insert1)
 
 	/* Call ppc_md.hpte_insert */
 	ld	r6,STK_PARM(r4)(r1)	/* Retrieve new pp bits */
+#ifndef CONFIG_BIGMEM
+	mr	r4,r29			/* Retrieve va */
+#else
 	mr	r4,r29			/* Retrieve vpn */
+#endif
 	li	r7,HPTE_V_SECONDARY	/* !bolted, secondary */
 	li	r8,MMU_PAGE_4K		/* page size */
 	ld	r9,STK_PARM(r9)(r1)	/* segment size */
@@ -579,7 +653,11 @@ _GLOBAL(htab_call_hpte_remove)
 	 * useless now that the segment has been switched to 4k pages.
 	 */
 htab_inval_old_hpte:
+#ifndef CONFIG_BIGMEM
+	mr	r3,r29			/* virtual addr */
+#else
 	mr	r3,r29			/* vpn */
+#endif
 	mr	r4,r31			/* PTE.pte */
 	li	r5,0			/* PTE.hidx */
 	li	r6,MMU_PAGE_64K		/* psize */
@@ -652,7 +730,11 @@ htab_modify_pte:
 	add	r3,r0,r3	/* add slot idx */
 
 	/* Call ppc_md.hpte_updatepp */
+#ifndef CONFIG_BIGMEM
+	mr	r5,r29			/* va */
+#else
 	mr	r5,r29			/* vpn */
+#endif
 	li	r6,MMU_PAGE_4K		/* page size */
 	ld	r7,STK_PARM(r9)(r1)	/* segment size */
 	ld	r8,STK_PARM(r8)(r1)	/* get "local" param */
@@ -708,7 +790,11 @@ _GLOBAL(__hash_page_64K)
 	/* Save non-volatile registers.
 	 * r31 will hold "old PTE"
 	 * r30 is "new PTE"
+#ifndef CONFIG_BIGMEM
+	 * r29 is "va"
+#else
 	 * r29 is vpn
+#endif
 	 * r28 is a hash value
 	 * r27 is hashtab mask (maybe dynamic patched instead ?)
 	 */
@@ -761,19 +847,43 @@ BEGIN_FTR_SECTION
 	cmpdi	r9,0			/* check segment size */
 	bne	3f
 END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
+#ifndef CONFIG_BIGMEM
+	/* Calc va and put it in r29 */
+	rldicr	r29,r5,28,63-28
+	rldicl	r3,r3,0,36
+	or	r29,r3,r29
+#else
 	/* Calc vpn and put it in r29 */
 	sldi	r29,r5,SID_SHIFT - VPN_SHIFT
 	rldicl  r28,r3,64 - VPN_SHIFT,64 - (SID_SHIFT - VPN_SHIFT)
 	or	r29,r28,r29
+#endif
 
+#ifndef CONFIG_BIGMEM
+	/* Calculate hash value for primary slot and store it in r28 */
+	rldicl	r5,r5,0,25		/* vsid & 0x0000007fffffffff */
+	rldicl	r0,r3,64-16,52		/* (ea >> 16) & 0xfff */
+	xor	r28,r5,r0
+#else
 	/* Calculate hash value for primary slot and store it in r28
 	 * r3 = va, r5 = vsid
 	 * r0 = (va >> 16) & ((1ul << (28 - 16)) -1)
 	 */
 	rldicl	r0,r3,64-16,52
 	xor	r28,r5,r0		/* hash */
+#endif
 	b	4f
 
+#ifndef CONFIG_BIGMEM
+3:	/* Calc VA and hash in r29 and r28 for 1T segment */
+	sldi	r29,r5,40		/* vsid << 40 */
+	clrldi	r3,r3,24		/* ea & 0xffffffffff */
+	rldic	r28,r5,25,25		/* (vsid << 25) & 0x7fffffffff */
+	clrldi	r5,r5,40		/* vsid & 0xffffff */
+	rldicl	r0,r3,64-16,40		/* (ea >> 16) & 0xffffff */
+	xor	r28,r28,r5
+	or	r29,r3,r29		/* VA */
+#else
 3:	/* Calc vpn and put it in r29 */
 	sldi	r29,r5,SID_SHIFT_1T - VPN_SHIFT
 	rldicl  r28,r3,64 - VPN_SHIFT,64 - (SID_SHIFT_1T - VPN_SHIFT)
@@ -787,6 +897,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	/* r0 = (va >> 16) & ((1ul << (40 - 16)) -1) */
 	rldicl	r0,r3,64-16,40
 	xor	r28,r28,r5		/* vsid ^ ( vsid << 25) */
+#endif
 	xor	r28,r28,r0		/* hash */
 
 	/* Convert linux PTE bits into HW equivalents */
@@ -845,7 +956,11 @@ ht64_insert_pte:
 
 	/* Call ppc_md.hpte_insert */
 	ld	r6,STK_PARM(r4)(r1)	/* Retrieve new pp bits */
+#ifndef CONFIG_BIGMEM
+	mr	r4,r29			/* Retrieve va */
+#else
 	mr	r4,r29			/* Retrieve vpn */
+#endif
 	li	r7,0			/* !bolted, !secondary */
 	li	r8,MMU_PAGE_64K
 	ld	r9,STK_PARM(r9)(r1)	/* segment size */
@@ -868,7 +983,11 @@ _GLOBAL(ht64_call_hpte_insert1)
 
 	/* Call ppc_md.hpte_insert */
 	ld	r6,STK_PARM(r4)(r1)	/* Retrieve new pp bits */
+#ifndef CONFIG_BIGMEM
+	mr	r4,r29			/* Retrieve va */
+#else
 	mr	r4,r29			/* Retrieve vpn */
+#endif
 	li	r7,HPTE_V_SECONDARY	/* !bolted, secondary */
 	li	r8,MMU_PAGE_64K
 	ld	r9,STK_PARM(r9)(r1)	/* segment size */
@@ -938,7 +1057,11 @@ ht64_modify_pte:
 	add	r3,r0,r3	/* add slot idx */
 
 	/* Call ppc_md.hpte_updatepp */
+#ifndef CONFIG_BIGMEM
+	mr	r5,r29			/* va */
+#else
 	mr	r5,r29			/* vpn */
+#endif
 	li	r6,MMU_PAGE_64K
 	ld	r7,STK_PARM(r9)(r1)	/* segment size */
 	ld	r8,STK_PARM(r8)(r1)	/* get "local" param */
