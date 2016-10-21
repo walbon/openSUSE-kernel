@@ -3598,7 +3598,8 @@ static void skl_update_other_pipe_wm(struct drm_device *dev,
 		 * because it was really needed, so we expect the WM values to
 		 * be different.
 		 */
-		WARN_ON(!wm_changed);
+		if (!wm_changed)
+			DRM_DEBUG_DRIVER("inconsistent wm_changed\n");
 
 		skl_compute_wm_results(dev, &params, &pipe_wm, r, intel_crtc);
 		r->dirty[intel_crtc->pipe] = true;
