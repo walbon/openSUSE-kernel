@@ -551,7 +551,7 @@ dotraplinkage void __kprobes do_int3(struct pt_regs *regs, long error_code)
  * for scheduling or signal handling. The actual stack switch is done in
  * entry.S
  */
-asmlinkage __kprobes struct pt_regs *sync_regs(struct pt_regs *eregs)
+asmlinkage __kprobes notrace struct pt_regs *sync_regs(struct pt_regs *eregs)
 {
 	struct pt_regs *regs = eregs;
 	/* Did already sync */
@@ -576,7 +576,7 @@ struct bad_iret_stack {
 	struct pt_regs regs;
 };
 
-asmlinkage
+asmlinkage __kprobes notrace
 struct bad_iret_stack *fixup_bad_iret(struct bad_iret_stack *s)
 {
 	/*
