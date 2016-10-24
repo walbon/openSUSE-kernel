@@ -106,6 +106,9 @@ struct nfs_open_context {
 	int error;
 
 	struct list_head list;
+#ifndef __GENKSYMS__
+	fl_owner_t flock_owner;
+#endif
 };
 
 struct nfs_open_dir_context {

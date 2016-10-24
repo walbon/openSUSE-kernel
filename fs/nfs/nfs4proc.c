@@ -83,7 +83,7 @@ static int _nfs4_proc_lookup(struct rpc_clnt *client, struct inode *dir,
 static int _nfs4_proc_getattr(struct nfs_server *server, struct nfs_fh *fhandle, struct nfs_fattr *fattr);
 static int nfs4_do_setattr(struct inode *inode, struct rpc_cred *cred,
 			    struct nfs_fattr *fattr, struct iattr *sattr,
-			    struct nfs4_state *state);
+			    struct nfs_open_context *ctx);
 
 /* Prevent leaks of NFSv4 errors into userland */
 static int nfs4_map_errors(int err)
@@ -1887,7 +1887,7 @@ static int _nfs4_do_open(struct inode *dir, struct path *path, fmode_t fmode, in
 		nfs_fattr_init(opendata->o_res.f_attr);
 		status = nfs4_do_setattr(state->inode, cred,
 				opendata->o_res.f_attr, sattr,
-				state);
+				NULL);
 		if (status == 0)
 			nfs_setattr_update_inode(state->inode, sattr);
 		nfs_post_op_update_inode(state->inode, opendata->o_res.f_attr);
@@ -1959,9 +1959,10 @@ static struct nfs4_state *nfs4_do_open(struct inode *dir, struct path *path, fmo
 
 static int _nfs4_do_setattr(struct inode *inode, struct rpc_cred *cred,
 			    struct nfs_fattr *fattr, struct iattr *sattr,
-			    struct nfs4_state *state)
+			    struct nfs_open_context *ctx)
 {
 	struct nfs_server *server = NFS_SERVER(inode);
+	struct nfs4_state *state = ctx ? ctx->state : NULL;
         struct nfs_setattrargs  arg = {
                 .fh             = NFS_FH(inode),
                 .iap            = sattr,
@@ -1984,12 +1985,14 @@ static int _nfs4_do_setattr(struct inode *inode, struct rpc_cred *cred,
 	nfs_fattr_init(fattr);
 
 	if (state != NULL) {
-		struct nfs_lockowner lockowner = {
-			.l_owner = current->files,
-			.l_pid = current->tgid,
-		};
-		if (nfs4_select_rw_stateid(&arg.stateid, state, FMODE_WRITE,
-					   &lockowner) == -EIO)
+		struct nfs_lock_context *l_ctx;
+		l_ctx = nfs_get_lock_context(ctx);
+		if (IS_ERR(l_ctx))
+			return PTR_ERR(l_ctx);
+		status = nfs4_select_rw_stateid(&arg.stateid, state, FMODE_WRITE,
+						l_ctx);
+		nfs_put_lock_context(l_ctx);
+		if (status == -EIO)
 			return -EBADF;
 	} else if (nfs4_copy_delegation_stateid(&arg.stateid, inode,
 				FMODE_WRITE)) {
@@ -2005,17 +2008,17 @@ static int _nfs4_do_setattr(struct inode *inode, struct rpc_cred *cred,
 
 static int nfs4_do_setattr(struct inode *inode, struct rpc_cred *cred,
 			   struct nfs_fattr *fattr, struct iattr *sattr,
-			   struct nfs4_state *state)
+			   struct nfs_open_context *ctx)
 {
 	struct nfs_server *server = NFS_SERVER(inode);
 	struct nfs4_exception exception = {
-		.state = state,
+		.state = ctx ? ctx->state : NULL,
 		.inode = inode,
 	};
 	int err;
 	do {
 		err = nfs4_handle_exception(server,
-				_nfs4_do_setattr(inode, cred, fattr, sattr, state),
+				_nfs4_do_setattr(inode, cred, fattr, sattr, ctx),
 				&exception);
 	} while (exception.retry);
 	return err;
@@ -2516,7 +2519,7 @@ nfs4_proc_setattr(struct dentry *dentry, struct nfs_fattr *fattr,
 {
 	struct inode *inode = dentry->d_inode;
 	struct rpc_cred *cred = NULL;
-	struct nfs4_state *state = NULL;
+	struct nfs_open_context *ctx = NULL;
 	int status;
 
 	if (pnfs_ld_layoutret_on_setattr(inode))
@@ -2526,16 +2529,13 @@ nfs4_proc_setattr(struct dentry *dentry, struct nfs_fattr *fattr,
 	
 	/* Search for an existing open(O_WRITE) file */
 	if (sattr->ia_valid & ATTR_FILE) {
-		struct nfs_open_context *ctx;
 
 		ctx = nfs_file_open_context(sattr->ia_file);
-		if (ctx) {
+		if (ctx)
 			cred = ctx->cred;
-			state = ctx->state;
-		}
 	}
 
-	status = nfs4_do_setattr(inode, cred, fattr, sattr, state);
+	status = nfs4_do_setattr(inode, cred, fattr, sattr, ctx);
 	if (status == 0)
 		nfs_setattr_update_inode(inode, sattr);
 	return status;
@@ -3335,15 +3335,12 @@ int nfs4_set_rw_stateid(nfs4_stateid *stateid,
 		const struct nfs_lock_context *l_ctx,
 		fmode_t fmode)
 {
-	const struct nfs_lockowner *lockowner = NULL;
-
 	if (ctx->state == NULL) {
 		nfs4_stateid_copy(stateid, &zero_stateid);
 		return 0;
 	}
-	if (l_ctx != NULL)
-		lockowner = &l_ctx->lockowner;
-	return nfs4_select_rw_stateid(stateid, ctx->state, fmode, lockowner);
+
+	return nfs4_select_rw_stateid(stateid, ctx->state, fmode, l_ctx);
 }
 EXPORT_SYMBOL_GPL(nfs4_set_rw_stateid);
 
