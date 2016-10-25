@@ -22,7 +22,7 @@ CROSS32AR		:= $(CROSS32_COMPILE)ar
 
 ifeq ($(HAS_BIARCH),y)
 ifeq ($(CROSS32_COMPILE),)
-CROSS32CC	:= $(CC) -m32
+CROSS32CC	:= $(CC) -m32 -mbig-endian
 CROSS32AR	:= GNUTARGET=elf32-powerpc $(AR)
 endif
 endif
@@ -56,11 +56,20 @@ endif
 
 UTS_MACHINE := $(OLDARCH)
 
+ifeq ($(call cc-option-yn,-mbig-endian),y)
+override CC	+= -mbig-endian
+override AS	+= -mbig-endian
+endif
+override LD	+= -EB
+LDEMULATION	:= ppc
+GNUTARGET	:= powerpc
+MULTIPLEWORD	:= -mmultiple
+
 ifeq ($(HAS_BIARCH),y)
 override AS	+= -a$(CONFIG_WORD_SIZE)
-override LD	+= -m elf$(CONFIG_WORD_SIZE)ppc
+override LD	+= -m elf$(CONFIG_WORD_SIZE)$(LDEMULATION)
 override CC	+= -m$(CONFIG_WORD_SIZE)
-override AR	:= GNUTARGET=elf$(CONFIG_WORD_SIZE)-powerpc $(AR)
+override AR	:= GNUTARGET=elf$(CONFIG_WORD_SIZE)-$(GNUTARGET) $(AR)
 endif
 
 LDFLAGS_vmlinux-yy := -Bstatic
@@ -68,27 +77,23 @@ LDFLAGS_vmlinux-$(CONFIG_PPC64)$(CONFIG_RELOCATABLE) := -pie
 LDFLAGS_vmlinux	:= $(LDFLAGS_vmlinux-yy)
 
 CFLAGS-$(CONFIG_PPC64)	:= -mminimal-toc -mtraceback=no -mcall-aixdesc
-CFLAGS-$(CONFIG_PPC32)	:= -ffixed-r2 -mmultiple
-KBUILD_CPPFLAGS	+= -Iarch/$(ARCH)
-KBUILD_AFLAGS	+= -Iarch/$(ARCH)
+CFLAGS-$(CONFIG_PPC64)	+= $(call cc-option,-mabi=elfv1)
+AFLAGS-$(CONFIG_PPC64)	+= $(call cc-option,-mabi=elfv1)
+CFLAGS-$(CONFIG_PPC64)	+= $(call cc-option,-mno-pointers-to-nested-functions)
+CFLAGS-$(CONFIG_PPC32)	:= -ffixed-r2 $(MULTIPLEWORD)
+
+asinstr := $(call as-instr,lis 9$(comma)foo@high,-DHAVE_AS_ATHIGH=1)
+
+KBUILD_CPPFLAGS	+= -Iarch/$(ARCH) $(asinstr)
+KBUILD_AFLAGS	+= -Iarch/$(ARCH) $(AFLAGS-y)
 KBUILD_CFLAGS	+= -msoft-float -pipe -Iarch/$(ARCH) $(CFLAGS-y)
 CPP		= $(CC) -E $(KBUILD_CFLAGS)
 
 CHECKFLAGS	+= -m$(CONFIG_WORD_SIZE) -D__powerpc__ -D__powerpc$(CONFIG_WORD_SIZE)__
 
 ifeq ($(CONFIG_PPC64),y)
-GCC_BROKEN_VEC	:= $(call cc-ifversion, -lt, 0400, y)
-
 ifeq ($(CONFIG_POWER4_ONLY),y)
-ifeq ($(CONFIG_ALTIVEC),y)
-ifeq ($(GCC_BROKEN_VEC),y)
-	KBUILD_CFLAGS += $(call cc-option,-mcpu=970)
-else
 	KBUILD_CFLAGS += $(call cc-option,-mcpu=power4)
-endif
-else
-	KBUILD_CFLAGS += $(call cc-option,-mcpu=power4)
-endif
 else
 	KBUILD_CFLAGS += $(call cc-option,-mtune=power4)
 endif
@@ -131,8 +136,7 @@ KBUILD_CFLAGS		+= -mno-sched-epilog
 endif
 
 cpu-as-$(CONFIG_4xx)		+= -Wa,-m405
-cpu-as-$(CONFIG_6xx)		+= -Wa,-maltivec
-cpu-as-$(CONFIG_POWER4)		+= -Wa,-maltivec
+cpu-as-$(CONFIG_ALTIVEC)	+= -Wa,-maltivec
 cpu-as-$(CONFIG_E500)		+= -Wa,-me500
 cpu-as-$(CONFIG_E200)		+= -Wa,-me200
 
@@ -191,7 +195,7 @@ $(BOOT_TARGETS2): vmlinux
 bootwrapper_install:
 	$(Q)$(MAKE) ARCH=ppc64 $(build)=$(boot) $(patsubst %,$(boot)/%,$@)
 
-%.dtb:
+%.dtb: scripts
 	$(Q)$(MAKE) ARCH=ppc64 $(build)=$(boot) $(patsubst %,$(boot)/%,$@)
 
 define archhelp
@@ -233,10 +237,11 @@ archprepare: checkbin
 # Use the file '.tmp_gas_check' for binutils tests, as gas won't output
 # to stdout and these checks are run even on install targets.
 TOUT	:= .tmp_gas_check
-# Ensure this is binutils 2.12.1 (or 2.12.90.0.7) or later for altivec
-# instructions.
-# gcc-3.4 and binutils-2.14 are a fatal combination.
 
+# Check gcc and binutils versions:
+# - gcc-3.4 and binutils-2.14 are a fatal combination
+# - Require gcc 4.0 or above on 64-bit
+# - gcc-4.2.0 has issues compiling modules on 64-bit
 checkbin:
 	@if test "$(call cc-version)" = "0304" ; then \
 		if ! /bin/echo mftb 5 | $(AS) -v -mppc -many -o $(TOUT) >/dev/null 2>&1 ; then \
@@ -246,18 +251,18 @@ checkbin:
 			false; \
 		fi ; \
 	fi
+	@if test "$(call cc-version)" -lt "0400" \
+	    && test "x${CONFIG_PPC64}" = "xy" ; then \
+                echo -n "Sorry, GCC v4.0 or above is required to build " ; \
+                echo "the 64-bit powerpc kernel." ; \
+                false ; \
+        fi
 	@if test "$(call cc-fullversion)" = "040200" \
 	    && test "x${CONFIG_MODULES}${CONFIG_PPC64}" = "xyy" ; then \
 		echo -n '*** GCC-4.2.0 cannot compile the 64-bit powerpc ' ; \
 		echo 'kernel with modules enabled.' ; \
 		echo -n '*** Please use a different GCC version or ' ; \
 		echo 'disable kernel modules' ; \
-		false ; \
-	fi
-	@if ! /bin/echo dssall | $(AS) -many -o $(TOUT) >/dev/null 2>&1 ; then \
-		echo -n '*** ${VERSION}.${PATCHLEVEL} kernels no longer build ' ; \
-		echo 'correctly with old versions of binutils.' ; \
-		echo '*** Please upgrade your binutils to 2.12.1 or newer' ; \
 		false ; \
 	fi
 
