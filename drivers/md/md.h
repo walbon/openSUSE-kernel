@@ -78,6 +78,9 @@ struct mdk_rdev_s
 					 * be considerred for bvec_merge_fn but not
 					 * yet for actual IO
 					 */
+#define	Bitmap_sync 6		/* ..actually, not quite In_sync.  Need a
+				 * bitmap-based recovery to get fully in sync
+				 */
 #define	AutoDetected	7		/* added by auto-detect */
 #define Blocked		8		/* An error occurred on an externally
 					 * managed array, don't allow writes
