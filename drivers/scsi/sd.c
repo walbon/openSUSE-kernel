@@ -1431,11 +1431,12 @@ static const struct block_device_operations sd_fops = {
  *	@eh_cmnd_len:	Length of eh_cmnd in bytes
  *	@eh_disp:	The recovery disposition suggested by the midlayer
  *
- *	This function is called by the SCSI midlayer upon completion of
- *	an error handling command (TEST UNIT READY, START STOP UNIT,
- *	etc.) The command sent to the device by the error handler is
- *	stored in eh_cmnd. The result of sending the eh command is
- *	passed in eh_disp.
+ *	This function is called by the SCSI midlayer upon completion of an
+ *	error test command (currently TEST UNIT READY). The result of sending
+ *	the eh command is passed in eh_disp.  We're looking for devices that
+ *	fail medium access commands but are OK with non access commands like
+ *	test unit ready (so wrongly see the device as having a successful
+ *	recovery)
  **/
 static int sd_eh_action(struct scsi_cmnd *scmd, unsigned char *eh_cmnd,
 			int eh_cmnd_len, int eh_disp)
@@ -1443,7 +1444,9 @@ static int sd_eh_action(struct scsi_cmnd *scmd, unsigned char *eh_cmnd,
 	struct scsi_disk *sdkp = scsi_disk(scmd->request->rq_disk);
 
 	if (!scsi_device_online(scmd->device) ||
-	    !scsi_medium_access_command(scmd))
+	    !scsi_medium_access_command(scmd) ||
+	    host_byte(scmd->result) != DID_TIME_OUT ||
+	    eh_disp != SUCCESS)
 		return eh_disp;
 
 	/*
@@ -1453,9 +1456,7 @@ static int sd_eh_action(struct scsi_cmnd *scmd, unsigned char *eh_cmnd,
 	 * process of recovering or has it suffered an internal failure
 	 * that prevents access to the storage medium.
 	 */
-	if (host_byte(scmd->result) == DID_TIME_OUT && eh_disp == SUCCESS &&
-	    eh_cmnd_len && eh_cmnd[0] == TEST_UNIT_READY)
-		sdkp->medium_access_timed_out++;
+	sdkp->medium_access_timed_out++;
 
 	/*
 	 * If the device keeps failing read/write commands but TEST UNIT
