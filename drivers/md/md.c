@@ -1189,6 +1189,7 @@ static int super_90_validate(mddev_t *mddev, mdk_rdev_t *rdev)
 	clear_bit(Faulty, &rdev->flags);
 	clear_bit(Timeout, &rdev->flags);
 	clear_bit(In_sync, &rdev->flags);
+	clear_bit(Bitmap_sync, &rdev->flags);
 	clear_bit(WriteMostly, &rdev->flags);
 
 	if (mddev->raid_disks == 0) {
@@ -1267,6 +1268,8 @@ static int super_90_validate(mddev_t *mddev, mdk_rdev_t *rdev)
 		 */
 		if (ev1 < mddev->bitmap->events_cleared)
 			return 0;
+		if (ev1 < mddev->events)
+			set_bit(Bitmap_sync, &rdev->flags);
 	} else {
 		if (ev1 < mddev->events)
 			/* just a hot-add of a new device, leave raid_disk at -1 */
@@ -1641,6 +1644,7 @@ static int super_1_validate(mddev_t *mddev, mdk_rdev_t *rdev)
 	clear_bit(Faulty, &rdev->flags);
 	clear_bit(Timeout, &rdev->flags);
 	clear_bit(In_sync, &rdev->flags);
+	clear_bit(Bitmap_sync, &rdev->flags);
 	clear_bit(WriteMostly, &rdev->flags);
 
 	if (mddev->raid_disks == 0) {
@@ -1723,6 +1727,8 @@ static int super_1_validate(mddev_t *mddev, mdk_rdev_t *rdev)
 		 */
 		if (ev1 < mddev->bitmap->events_cleared)
 			return 0;
+		if (ev1 < mddev->events)
+			set_bit(Bitmap_sync, &rdev->flags);
 	} else {
 		if (ev1 < mddev->events)
 			/* just a hot-add of a new device, leave raid_disk at -1 */
@@ -2765,6 +2771,7 @@ slot_store(mdk_rdev_t *rdev, const char *buf, size_t len)
 			rdev->saved_raid_disk = slot;
 		else
 			rdev->saved_raid_disk = -1;
+		clear_bit(Bitmap_sync, &rdev->flags);
 		err = rdev->mddev->pers->
 			hot_add_disk(rdev->mddev, rdev);
 		if (err) {
@@ -5634,6 +5641,7 @@ static int add_new_disk(mddev_t * mddev, mdu_disk_info_t *info)
 			    info->raid_disk < mddev->raid_disks) {
 				rdev->raid_disk = info->raid_disk;
 				set_bit(In_sync, &rdev->flags);
+				clear_bit(Bitmap_sync, &rdev->flags);
 			} else
 				rdev->raid_disk = -1;
 			rdev->saved_raid_disk = rdev->raid_disk;
