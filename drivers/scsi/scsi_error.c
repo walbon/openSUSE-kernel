@@ -45,6 +45,7 @@
 
 #include <trace/events/scsi.h>
 
+static void scsi_eh_reset(struct scsi_cmnd *scmd);
 static void scsi_eh_done(struct scsi_cmnd *scmd);
 
 /*
@@ -128,6 +129,7 @@ int scsi_eh_scmd_add(struct scsi_cmnd *scmd, int eh_flag)
 
 	ret = 1;
 	scmd->eh_eflags |= eh_flag;
+	scsi_eh_reset(scmd);
 	list_add_tail(&scmd->eh_entry, &shost->eh_cmd_q);
 	shost->host_failed++;
 	scsi_eh_wakeup(shost);
@@ -1034,6 +1036,14 @@ static int scsi_eh_action(struct scsi_cmnd *scmd, int rtn)
 					      scmd->cmd_len, rtn);
 	}
 	return rtn;
+}
+
+static void scsi_eh_reset(struct scsi_cmnd *scmd)
+{
+	struct scsi_driver *sdrv = scsi_cmd_to_driver(scmd);
+
+	if (sdrv->eh_action)
+		sdrv->eh_action(scmd, NULL, 0, SUCCESS);
 }
 
 /**

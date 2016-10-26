@@ -1443,6 +1443,10 @@ static int sd_eh_action(struct scsi_cmnd *scmd, unsigned char *eh_cmnd,
 {
 	struct scsi_disk *sdkp = scsi_disk(scmd->request->rq_disk);
 
+	if (!eh_cmnd) {
+		sdkp->medium_access_reset = 0;
+		return SUCCESS;
+	}
 	if (!scsi_device_online(scmd->device) ||
 	    !scsi_medium_access_command(scmd) ||
 	    host_byte(scmd->result) != DID_TIME_OUT ||
@@ -1456,7 +1460,10 @@ static int sd_eh_action(struct scsi_cmnd *scmd, unsigned char *eh_cmnd,
 	 * process of recovering or has it suffered an internal failure
 	 * that prevents access to the storage medium.
 	 */
-	sdkp->medium_access_timed_out++;
+	if (!sdkp->medium_access_reset) {
+		sdkp->medium_access_timed_out++;
+		sdkp->medium_access_reset++;
+	}
 
 	/*
 	 * If the device keeps failing read/write commands but TEST UNIT
