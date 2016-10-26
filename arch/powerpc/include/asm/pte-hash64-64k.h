@@ -66,7 +66,7 @@
 				    psize == MMU_PAGE_64K_AP);              \
                 shift = mmu_psize_defs[psize].shift;                        \
 		for (index = 0; va < __end; index++, va += (1L << shift)) { \
-		        if (!__split || __rpte_sub_valid(rpte, index)) do { \
+		        if (!__split || __rpte_sub_valid(rpte, index)) do {
 #else
 #define pte_iterate_hashed_subpages(rpte, psize, vpn, index, shift)	\
 	do {								\

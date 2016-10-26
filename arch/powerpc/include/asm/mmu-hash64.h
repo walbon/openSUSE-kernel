@@ -15,16 +15,16 @@
 #include <asm/asm-compat.h>
 #include <asm/page.h>
 
-/*
 #ifdef CONFIG_BIGMEM
+/*.
  * This is necessary to get the definition of PGTABLE_RANGE which we
  * need for various slices related matters. Note that this isn't the
  * complete pgtable.h but only a portion of it.
  */
 #include <asm/pgtable-ppc64.h>
 
-/*
 #endif
+/*
  * Segment table
  */
 
@@ -202,8 +202,8 @@ extern unsigned long tce_alloc_start, tce_alloc_end;
  */
 extern int mmu_ci_restrictions;
 
-/*
 #ifdef CONFIG_BIGMEM
+/*.
  * This computes the AVPN and B fields of the first dword of a HPTE,
  * for use when we want to match an existing PTE.  The bottom 7 bits
  * of the returned value are zero.
@@ -226,8 +226,8 @@ static inline unsigned long hpte_encode_avpn(unsigned long vpn, int psize,
 	return v;
 }
 
-/*
 #endif
+/*
  * This function sets the AVPN and L fields of the HPTE  appropriately
  * for the page size
  */

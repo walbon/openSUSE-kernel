@@ -438,8 +438,8 @@ static void pSeries_lpar_hptab_clear(void)
 	}
 }
 
-/*
 #ifndef CONFIG_BIGMEM
+/*
  * This computes the AVPN and B fields of the first dword of a HPTE,
  * for use when we want to match an existing PTE.  The bottom 7 bits
  * of the returned value are zero.
@@ -455,8 +455,10 @@ static inline unsigned long hpte_encode_avpn(unsigned long va, int psize,
 	return v;
 }
 
-/*
+#else
+ /* . */
 #endif
+/*
  * NOTE: for updatepp ops we are fortunate that the linux "newpp" bits and
  * the low 3 bits of flags happen to line up.  So no transform is needed.
  * We can probably optimize here and assume the high bits of newpp are
