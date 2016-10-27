@@ -7,6 +7,9 @@
 struct ms_hyperv_info {
 	u32 features;
 	u32 hints;
+#ifndef __GENKSYMS__
+	u32 misc_features;
+#endif
 };
 
 extern struct ms_hyperv_info ms_hyperv;
