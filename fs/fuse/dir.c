@@ -1713,7 +1713,7 @@ static int fuse_setattr(struct dentry *entry, struct iattr *attr)
 		 * ia_mode calculation may have used stale i_mode.  Refresh and
 		 * recalculate.
 		 */
-		ret = fuse_do_getattr(entry, NULL, file);
+		ret = fuse_do_getattr(inode, NULL, file);
 		if (ret)
 			return ret;
 
