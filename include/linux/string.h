@@ -128,6 +128,7 @@ extern void argv_free(char **argv);
 
 extern bool sysfs_streq(const char *s1, const char *s2);
 extern int strtobool(const char *s, bool *res);
+extern int kstrtobool(const char *s, bool *res);
 
 int match_string(const char * const *array, size_t n, const char *string);
 
