@@ -2074,10 +2074,13 @@ struct napi_gro_cb {
 	/* Used in foo-over-udp, set in udp[46]_gro_receive */
 	u8	is_ipv6:1;
 
+	/* Used in GRE, set in fou/gue_gro_receive */
+	u8	is_fou:1;
+
 	/* Number of gro_receive callbacks this packet already went through */
 	u8 recursion_counter:4;
 
-	/* 3 bit hole */
+	/* 2 bit hole */
 
 	/* used to support CHECKSUM_COMPLETE for tunneling protocols */
 	__wsum	csum;
@@ -2099,12 +2102,27 @@ static inline struct sk_buff **call_gro_receive(gro_receive_t cb,
 						struct sk_buff **head,
 						struct sk_buff *skb)
 {
-	if (gro_recursion_inc_test(skb)) {
+	if (unlikely(gro_recursion_inc_test(skb))) {
 		NAPI_GRO_CB(skb)->flush |= 1;
 		return NULL;
 	}
 
 	return cb(head, skb);
+}
+
+typedef struct sk_buff **(*gro_receive_sk_t)(struct sock *, struct sk_buff **,
+					     struct sk_buff *);
+static inline struct sk_buff **call_gro_receive_sk(gro_receive_sk_t cb,
+						   struct sock *sk,
+						   struct sk_buff **head,
+						   struct sk_buff *skb)
+{
+	if (unlikely(gro_recursion_inc_test(skb))) {
+		NAPI_GRO_CB(skb)->flush |= 1;
+		return NULL;
+	}
+
+	return cb(sk, head, skb);
 }
 
 struct packet_type {
