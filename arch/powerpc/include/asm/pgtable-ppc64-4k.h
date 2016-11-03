@@ -7,7 +7,11 @@
  */
 #define PTE_INDEX_SIZE  9
 #define PMD_INDEX_SIZE  7
+#ifndef CONFIG_BIGMEM
 #define PUD_INDEX_SIZE  7
+#else
+#define PUD_INDEX_SIZE  9
+#endif
 #define PGD_INDEX_SIZE  9
 
 #ifndef __ASSEMBLY__

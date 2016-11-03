@@ -444,6 +444,10 @@ config ARCH_MEMORY_PROBE
 	def_bool y
 	depends on MEMORY_HOTPLUG
 
+config BIGMEM
+	bool "Allow for >1.5TB of physical memory"
+	depends on PPC64
+
 # Some NUMA nodes have memory ranges that span
 # other nodes.  Even though a pfn is valid and
 # between a node's start and end pfns, it may not

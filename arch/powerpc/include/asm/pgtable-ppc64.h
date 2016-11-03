@@ -21,6 +21,7 @@
 #define PGTABLE_RANGE (ASM_CONST(1) << PGTABLE_EADDR_SIZE)
 
 
+#ifndef CONFIG_BIGMEM
 /* Some sanity checking */
 #if TASK_SIZE_USER64 > PGTABLE_RANGE
 #error TASK_SIZE_USER64 exceeds pagetable range
@@ -32,6 +33,7 @@
 #endif
 #endif
 
+#endif
 /*
  * Define the address range of the kernel non-linear virtual area
  */
@@ -41,7 +43,11 @@
 #else
 #define KERN_VIRT_START ASM_CONST(0xD000000000000000)
 #endif
+#ifndef CONFIG_BIGMEM
 #define KERN_VIRT_SIZE	PGTABLE_RANGE
+#else
+#define KERN_VIRT_SIZE	ASM_CONST(0x0000100000000000)
+#endif
 
 /*
  * The vmalloc space starts at the beginning of that region, and
@@ -117,9 +123,11 @@
 
 #ifndef __ASSEMBLY__
 
+#ifndef CONFIG_BIGMEM
 #include <linux/stddef.h>
 #include <asm/tlbflush.h>
 
+#endif
 /*
  * This is the default implementation of various PTE accessors, it's
  * used in all cases except Book3S with 64K pages where we have a
@@ -198,7 +206,12 @@
 /* to find an entry in a kernel page-table-directory */
 /* This now only contains the vmalloc pages */
 #define pgd_offset_k(address) pgd_offset(&init_mm, address)
+#ifndef CONFIG_BIGMEM
 
+#else
+extern void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
+			    pte_t *ptep, unsigned long pte, int huge);
+#endif
 
 /* Atomic PTE updates */
 static inline unsigned long pte_update(struct mm_struct *mm,
@@ -342,11 +355,35 @@ static inline void __ptep_set_access_flags(pte_t *ptep, pte_t entry)
 	printk("%s:%d: bad pgd %08lx.\n", __FILE__, __LINE__, pgd_val(e))
 
 /* Encode and de-code a swap entry */
+#ifndef CONFIG_BIGMEM
 #define __swp_type(entry)	(((entry).val >> 1) & 0x3f)
 #define __swp_offset(entry)	((entry).val >> 8)
 #define __swp_entry(type, offset) ((swp_entry_t){((type)<< 1)|((offset)<<8)})
 #define __pte_to_swp_entry(pte)	((swp_entry_t){pte_val(pte) >> PTE_RPN_SHIFT})
 #define __swp_entry_to_pte(x)	((pte_t) { (x).val << PTE_RPN_SHIFT })
+#else
+#define MAX_SWAPFILES_CHECK() do { \
+	BUILD_BUG_ON(MAX_SWAPFILES_SHIFT > SWP_TYPE_BITS); \
+	/*							\
+	 * Don't have overlapping bits with _PAGE_HPTEFLAGS	\
+	 * We filter HPTEFLAGS on set_pte.			\
+	 */							\
+	BUILD_BUG_ON(_PAGE_HPTEFLAGS & (0x1f << _PAGE_BIT_SWAP_TYPE)); \
+	} while (0)
+/*
+ * on pte we don't need handle RADIX_TREE_EXCEPTIONAL_SHIFT;
+ */
+#define SWP_TYPE_BITS 5
+#define __swp_type(x)		(((x).val >> _PAGE_BIT_SWAP_TYPE) \
+				& ((1UL << SWP_TYPE_BITS) - 1))
+#define __swp_offset(x)		((x).val >> PTE_RPN_SHIFT)
+#define __swp_entry(type, offset)	((swp_entry_t) { \
+					((type) << _PAGE_BIT_SWAP_TYPE) \
+					| ((offset) << PTE_RPN_SHIFT) })
+
+#define __pte_to_swp_entry(pte)		((swp_entry_t) { pte_val((pte)) })
+#define __swp_entry_to_pte(x)		__pte((x).val)
+#endif
 #define pte_to_pgoff(pte)	(pte_val(pte) >> PTE_RPN_SHIFT)
 #define pgoff_to_pte(off)	((pte_t) {((off) << PTE_RPN_SHIFT)|_PAGE_FILE})
 #define PTE_FILE_MAX_BITS	(BITS_PER_LONG - PTE_RPN_SHIFT)

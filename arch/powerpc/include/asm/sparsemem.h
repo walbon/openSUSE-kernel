@@ -10,8 +10,13 @@
  */
 #define SECTION_SIZE_BITS       24
 
+#ifndef CONFIG_BIGMEM
 #define MAX_PHYSADDR_BITS       44
 #define MAX_PHYSMEM_BITS        44
+#else
+#define MAX_PHYSADDR_BITS       46
+#define MAX_PHYSMEM_BITS        46
+#endif
 
 #endif /* CONFIG_SPARSEMEM */
 

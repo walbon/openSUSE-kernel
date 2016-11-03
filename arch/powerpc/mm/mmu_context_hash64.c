@@ -222,6 +222,7 @@ EXPORT_SYMBOL_GPL(drop_cop);
 static DEFINE_SPINLOCK(mmu_context_lock);
 static DEFINE_IDA(mmu_context_ida);
 
+#ifndef CONFIG_BIGMEM
 /*
  * The proto-VSID space has 2^35 - 1 segments available for user mappings.
  * Each segment contains 2^28 bytes.  Each context maps 2^44 bytes,
@@ -229,6 +230,7 @@ static DEFINE_IDA(mmu_context_ida);
  */
 #define MAX_CONTEXT	((1UL << 19) - 1)
 
+#endif
 int __init_new_context(void)
 {
 	int index;
@@ -247,7 +249,11 @@ again:
 	else if (err)
 		return err;
 
+#ifndef CONFIG_BIGMEM
 	if (index > MAX_CONTEXT) {
+#else
+	if (index > MAX_USER_CONTEXT) {
+#endif
 		spin_lock(&mmu_context_lock);
 		ida_remove(&mmu_context_ida, index);
 		spin_unlock(&mmu_context_lock);

@@ -102,7 +102,11 @@ struct paca_struct {
 	/* SLB related definitions */
 	u16 vmalloc_sllp;
 	u16 slb_cache_ptr;
+#ifndef CONFIG_BIGMEM
 	u16 slb_cache[SLB_CACHE_ENTRIES];
+#else
+	u32 slb_cache[SLB_CACHE_ENTRIES];
+#endif
 #endif /* CONFIG_PPC_STD_MMU_64 */
 
 #ifdef CONFIG_PPC_BOOK3E

@@ -298,9 +298,15 @@ void vpa_init(int cpu)
 }
 
 static long pSeries_lpar_hpte_insert(unsigned long hpte_group,
+#ifndef CONFIG_BIGMEM
  			      unsigned long va, unsigned long pa,
  			      unsigned long rflags, unsigned long vflags,
 			      int psize, int ssize)
+#else
+				     unsigned long vpn, unsigned long pa,
+				     unsigned long rflags, unsigned long vflags,
+				     int psize, int ssize)
+#endif
 {
 	unsigned long lpar_rc;
 	unsigned long flags;
@@ -308,11 +314,21 @@ static long pSeries_lpar_hpte_insert(unsigned long hpte_group,
 	unsigned long hpte_v, hpte_r;
 
 	if (!(vflags & HPTE_V_BOLTED))
+#ifndef CONFIG_BIGMEM
 		pr_devel("hpte_insert(group=%lx, va=%016lx, pa=%016lx, "
 			 "rflags=%lx, vflags=%lx, psize=%d)\n",
 			 hpte_group, va, pa, rflags, vflags, psize);
+#else
+		pr_devel("hpte_insert(group=%lx, vpn=%016lx, "
+			 "pa=%016lx, rflags=%lx, vflags=%lx, psize=%d)\n",
+			 hpte_group, vpn,  pa, rflags, vflags, psize);
+#endif
 
+#ifndef CONFIG_BIGMEM
 	hpte_v = hpte_encode_v(va, psize, ssize) | vflags | HPTE_V_VALID;
+#else
+	hpte_v = hpte_encode_v(vpn, psize, ssize) | vflags | HPTE_V_VALID;
+#endif
 	hpte_r = hpte_encode_r(pa, psize) | rflags;
 
 	if (!(vflags & HPTE_V_BOLTED))
@@ -422,6 +438,7 @@ static void pSeries_lpar_hptab_clear(void)
 	}
 }
 
+#ifndef CONFIG_BIGMEM
 /*
  * This computes the AVPN and B fields of the first dword of a HPTE,
  * for use when we want to match an existing PTE.  The bottom 7 bits
@@ -438,6 +455,9 @@ static inline unsigned long hpte_encode_avpn(unsigned long va, int psize,
 	return v;
 }
 
+#else
+ /* . */
+#endif
 /*
  * NOTE: for updatepp ops we are fortunate that the linux "newpp" bits and
  * the low 3 bits of flags happen to line up.  So no transform is needed.
@@ -446,14 +466,22 @@ static inline unsigned long hpte_encode_avpn(unsigned long va, int psize,
  */
 static long pSeries_lpar_hpte_updatepp(unsigned long slot,
 				       unsigned long newpp,
+#ifndef CONFIG_BIGMEM
 				       unsigned long va,
+#else
+				       unsigned long vpn,
+#endif
 				       int psize, int ssize, int local)
 {
 	unsigned long lpar_rc;
 	unsigned long flags = (newpp & 7) | H_AVPN;
 	unsigned long want_v;
 
+#ifndef CONFIG_BIGMEM
 	want_v = hpte_encode_avpn(va, psize, ssize);
+#else
+	want_v = hpte_encode_avpn(vpn, psize, ssize);
+#endif
 
 	pr_devel("    update: avpnv=%016lx, hash=%016lx, f=%lx, psize: %d ...",
 		 want_v, slot, flags, psize);
@@ -491,15 +519,24 @@ static unsigned long pSeries_lpar_hpte_getword0(unsigned long slot)
 	return dword0;
 }
 
+#ifndef CONFIG_BIGMEM
 static long pSeries_lpar_hpte_find(unsigned long va, int psize, int ssize)
+#else
+static long pSeries_lpar_hpte_find(unsigned long vpn, int psize, int ssize)
+#endif
 {
 	unsigned long hash;
 	unsigned long i;
 	long slot;
 	unsigned long want_v, hpte_v;
 
+#ifndef CONFIG_BIGMEM
 	hash = hpt_hash(va, mmu_psize_defs[psize].shift, ssize);
 	want_v = hpte_encode_avpn(va, psize, ssize);
+#else
+	hash = hpt_hash(vpn, mmu_psize_defs[psize].shift, ssize);
+	want_v = hpte_encode_avpn(vpn, psize, ssize);
+#endif
 
 	/* Bolted entries are always in the primary group */
 	slot = (hash & htab_hash_mask) * HPTES_PER_GROUP;
@@ -519,12 +556,25 @@ static void pSeries_lpar_hpte_updateboltedpp(unsigned long newpp,
 					     unsigned long ea,
 					     int psize, int ssize)
 {
+#ifndef CONFIG_BIGMEM
 	unsigned long lpar_rc, slot, vsid, va, flags;
+#else
+	unsigned long vpn;
+	unsigned long lpar_rc, slot, vsid, flags;
+#endif
 
 	vsid = get_kernel_vsid(ea, ssize);
+#ifndef CONFIG_BIGMEM
 	va = hpt_va(ea, vsid, ssize);
+#else
+	vpn = hpt_vpn(ea, vsid, ssize);
+#endif
 
+#ifndef CONFIG_BIGMEM
 	slot = pSeries_lpar_hpte_find(va, psize, ssize);
+#else
+	slot = pSeries_lpar_hpte_find(vpn, psize, ssize);
+#endif
 	BUG_ON(slot == -1);
 
 	flags = newpp & 7;
@@ -533,17 +583,30 @@ static void pSeries_lpar_hpte_updateboltedpp(unsigned long newpp,
 	BUG_ON(lpar_rc != H_SUCCESS);
 }
 
+#ifndef CONFIG_BIGMEM
 static void pSeries_lpar_hpte_invalidate(unsigned long slot, unsigned long va,
+#else
+static void pSeries_lpar_hpte_invalidate(unsigned long slot, unsigned long vpn,
+#endif
 					 int psize, int ssize, int local)
 {
 	unsigned long want_v;
 	unsigned long lpar_rc;
 	unsigned long dummy1, dummy2;
 
+#ifndef CONFIG_BIGMEM
 	pr_devel("    inval : slot=%lx, va=%016lx, psize: %d, local: %d\n",
 		 slot, va, psize, local);
+#else
+	pr_devel("    inval : slot=%lx, vpn=%016lx, psize: %d, local: %d\n",
+		 slot, vpn, psize, local);
+#endif
 
+#ifndef CONFIG_BIGMEM
 	want_v = hpte_encode_avpn(va, psize, ssize);
+#else
+	want_v = hpte_encode_avpn(vpn, psize, ssize);
+#endif
 	lpar_rc = plpar_pte_remove(H_AVPN, slot, want_v, &dummy1, &dummy2);
 	if (lpar_rc == H_NOT_FOUND)
 		return;
@@ -554,15 +617,32 @@ static void pSeries_lpar_hpte_invalidate(unsigned long slot, unsigned long va,
 static void pSeries_lpar_hpte_removebolted(unsigned long ea,
 					   int psize, int ssize)
 {
+#ifndef CONFIG_BIGMEM
 	unsigned long slot, vsid, va;
+#else
+	unsigned long vpn;
+	unsigned long slot, vsid;
+#endif
 
 	vsid = get_kernel_vsid(ea, ssize);
+#ifndef CONFIG_BIGMEM
 	va = hpt_va(ea, vsid, ssize);
+#else
+	vpn = hpt_vpn(ea, vsid, ssize);
+#endif
 
+#ifndef CONFIG_BIGMEM
 	slot = pSeries_lpar_hpte_find(va, psize, ssize);
+#else
+	slot = pSeries_lpar_hpte_find(vpn, psize, ssize);
+#endif
 	BUG_ON(slot == -1);
 
+#ifndef CONFIG_BIGMEM
 	pSeries_lpar_hpte_invalidate(slot, va, psize, ssize, 0);
+#else
+	pSeries_lpar_hpte_invalidate(slot, vpn, psize, ssize, 0);
+#endif
 }
 
 /* Flag bits for H_BULK_REMOVE */
@@ -578,12 +658,17 @@ static void pSeries_lpar_hpte_removebolted(unsigned long ea,
  */
 static void pSeries_lpar_flush_hash_range(unsigned long number, int local)
 {
+#ifdef CONFIG_BIGMEM
+	unsigned long vpn;
+#endif
 	unsigned long i, pix, rc;
 	unsigned long flags = 0;
 	struct ppc64_tlb_batch *batch = &__get_cpu_var(ppc64_tlb_batch);
 	int lock_tlbie = !mmu_has_feature(MMU_FTR_LOCKLESS_TLBIE);
 	unsigned long param[9];
+#ifndef CONFIG_BIGMEM
 	unsigned long va;
+#endif
 	unsigned long hash, index, shift, hidx, slot;
 	real_pte_t pte;
 	int psize, ssize;
@@ -595,21 +680,38 @@ static void pSeries_lpar_flush_hash_range(unsigned long number, int local)
 	ssize = batch->ssize;
 	pix = 0;
 	for (i = 0; i < number; i++) {
+#ifndef CONFIG_BIGMEM
 		va = batch->vaddr[i];
+#else
+		vpn = batch->vpn[i];
+#endif
 		pte = batch->pte[i];
+#ifndef CONFIG_BIGMEM
 		pte_iterate_hashed_subpages(pte, psize, va, index, shift) {
 			hash = hpt_hash(va, shift, ssize);
+#else
+		pte_iterate_hashed_subpages(pte, psize, vpn, index, shift) {
+			hash = hpt_hash(vpn, shift, ssize);
+#endif
 			hidx = __rpte_to_hidx(pte, index);
 			if (hidx & _PTEIDX_SECONDARY)
 				hash = ~hash;
 			slot = (hash & htab_hash_mask) * HPTES_PER_GROUP;
 			slot += hidx & _PTEIDX_GROUP_IX;
 			if (!firmware_has_feature(FW_FEATURE_BULK_REMOVE)) {
+#ifndef CONFIG_BIGMEM
 				pSeries_lpar_hpte_invalidate(slot, va, psize,
+#else
+				pSeries_lpar_hpte_invalidate(slot, vpn, psize,
+#endif
 							     ssize, local);
 			} else {
 				param[pix] = HBR_REQUEST | HBR_AVPN | slot;
+#ifndef CONFIG_BIGMEM
 				param[pix+1] = hpte_encode_avpn(va, psize,
+#else
+				param[pix+1] = hpte_encode_avpn(vpn, psize,
+#endif
 								ssize);
 				pix += 2;
 				if (pix == 8) {

@@ -18,14 +18,25 @@ int __hash_page_huge(unsigned long ea, unsigned long access, unsigned long vsid,
 		     pte_t *ptep, unsigned long trap, int local, int ssize,
 		     unsigned int shift, unsigned int mmu_psize)
 {
+#ifdef CONFIG_BIGMEM
+	unsigned long vpn;
+#endif
 	unsigned long old_pte, new_pte;
+#ifndef CONFIG_BIGMEM
 	unsigned long va, rflags, pa, sz;
+#else
+	unsigned long rflags, pa, sz;
+#endif
 	long slot;
 
 	BUG_ON(shift != mmu_psize_defs[mmu_psize].shift);
 
 	/* Search the Linux page table for a match with va */
+#ifndef CONFIG_BIGMEM
 	va = hpt_va(ea, vsid, ssize);
+#else
+	vpn = hpt_vpn(ea, vsid, ssize);
+#endif
 
 	/* At this point, we have a pte (old_pte) which can be used to build
 	 * or update an HPTE. There are 2 cases:
@@ -69,19 +80,31 @@ int __hash_page_huge(unsigned long ea, unsigned long access, unsigned long vsid,
 		/* There MIGHT be an HPTE for this pte */
 		unsigned long hash, slot;
 
+#ifndef CONFIG_BIGMEM
 		hash = hpt_hash(va, shift, ssize);
+#else
+		hash = hpt_hash(vpn, shift, ssize);
+#endif
 		if (old_pte & _PAGE_F_SECOND)
 			hash = ~hash;
 		slot = (hash & htab_hash_mask) * HPTES_PER_GROUP;
 		slot += (old_pte & _PAGE_F_GIX) >> 12;
 
+#ifndef CONFIG_BIGMEM
 		if (ppc_md.hpte_updatepp(slot, rflags, va, mmu_psize,
+#else
+		if (ppc_md.hpte_updatepp(slot, rflags, vpn, mmu_psize,
+#endif
 					 ssize, local) == -1)
 			old_pte &= ~_PAGE_HPTEFLAGS;
 	}
 
 	if (likely(!(old_pte & _PAGE_HASHPTE))) {
+#ifndef CONFIG_BIGMEM
 		unsigned long hash = hpt_hash(va, shift, ssize);
+#else
+		unsigned long hash = hpt_hash(vpn, shift, ssize);
+#endif
 		unsigned long hpte_group;
 
 		pa = pte_pfn(__pte(old_pte)) << PAGE_SHIFT;
@@ -101,14 +124,22 @@ repeat:
 				      _PAGE_COHERENT | _PAGE_GUARDED));
 
 		/* Insert into the hash table, primary slot */
+#ifndef CONFIG_BIGMEM
 		slot = ppc_md.hpte_insert(hpte_group, va, pa, rflags, 0,
+#else
+		slot = ppc_md.hpte_insert(hpte_group, vpn, pa, rflags, 0,
+#endif
 					  mmu_psize, ssize);
 
 		/* Primary is full, try the secondary */
 		if (unlikely(slot == -1)) {
 			hpte_group = ((~hash & htab_hash_mask) *
 				      HPTES_PER_GROUP) & ~0x7UL;
+#ifndef CONFIG_BIGMEM
 			slot = ppc_md.hpte_insert(hpte_group, va, pa, rflags,
+#else
+			slot = ppc_md.hpte_insert(hpte_group, vpn, pa, rflags,
+#endif
 						  HPTE_V_SECONDARY,
 						  mmu_psize, ssize);
 			if (slot == -1) {

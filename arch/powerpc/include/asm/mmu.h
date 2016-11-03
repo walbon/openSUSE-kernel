@@ -137,6 +137,17 @@ extern void setup_initial_memory_limit(phys_addr_t first_memblock_base,
 extern u64 ppc64_rma_size;
 #endif /* CONFIG_PPC64 */
 
+#ifdef CONFIG_BIGMEM
+struct mm_struct;
+#ifdef CONFIG_DEBUG_VM
+extern void assert_pte_locked(struct mm_struct *mm, unsigned long addr);
+#else /* CONFIG_DEBUG_VM */
+static inline void assert_pte_locked(struct mm_struct *mm, unsigned long addr)
+{
+}
+#endif /* !CONFIG_DEBUG_VM */
+
+#endif
 #endif /* !__ASSEMBLY__ */
 
 /* The kernel use the constants below to index in the page sizes array.

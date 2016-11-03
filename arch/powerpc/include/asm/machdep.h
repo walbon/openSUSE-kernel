@@ -33,19 +33,31 @@ struct machdep_calls {
 	char		*name;
 #ifdef CONFIG_PPC64
 	void            (*hpte_invalidate)(unsigned long slot,
+#ifndef CONFIG_BIGMEM
 					   unsigned long va,
+#else
+					   unsigned long vpn,
+#endif
 					   int psize, int ssize,
 					   int local);
 	long		(*hpte_updatepp)(unsigned long slot, 
 					 unsigned long newpp, 
+#ifndef CONFIG_BIGMEM
 					 unsigned long va,
+#else
+					 unsigned long vpn,
+#endif
 					 int psize, int ssize,
 					 int local);
 	void            (*hpte_updateboltedpp)(unsigned long newpp, 
 					       unsigned long ea,
 					       int psize, int ssize);
 	long		(*hpte_insert)(unsigned long hpte_group,
+#ifndef CONFIG_BIGMEM
 				       unsigned long va,
+#else
+				       unsigned long vpn,
+#endif
 				       unsigned long prpn,
 				       unsigned long rflags,
 				       unsigned long vflags,

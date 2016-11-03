@@ -34,6 +34,13 @@
 #include <asm/mmu.h>
 #include <asm/spu.h>
 
+#ifdef CONFIG_BIGMEM
+/* some sanity checks */
+#if (PGTABLE_RANGE >> 43) > SLICE_MASK_SIZE
+#error PGTABLE_RANGE exceeds slice_mask high_slices size
+#endif
+
+#endif
 static DEFINE_SPINLOCK(slice_convert_lock);
 
 
@@ -42,7 +49,11 @@ int _slice_debug = 1;
 
 static void slice_print_mask(const char *label, struct slice_mask mask)
 {
+#ifndef CONFIG_BIGMEM
 	char	*p, buf[16 + 3 + 16 + 1];
+#else
+	char	*p, buf[16 + 3 + 64 + 1];
+#endif
 	int	i;
 
 	if (!_slice_debug)
@@ -54,7 +65,11 @@ static void slice_print_mask(const char *label, struct slice_mask mask)
 	*(p++) = '-';
 	*(p++) = ' ';
 	for (i = 0; i < SLICE_NUM_HIGH; i++)
+#ifndef CONFIG_BIGMEM
 		*(p++) = (mask.high_slices & (1 << i)) ? '1' : '0';
+#else
+		*(p++) = (mask.high_slices & (1ul << i)) ? '1' : '0';
+#endif
 	*(p++) = 0;
 
 	printk(KERN_DEBUG "%s:%s\n", label, buf);
@@ -84,8 +99,13 @@ static struct slice_mask slice_range_to_mask(unsigned long start,
 	}
 
 	if ((start + len) > SLICE_LOW_TOP)
+#ifndef CONFIG_BIGMEM
 		ret.high_slices = (1u << (GET_HIGH_SLICE_INDEX(end) + 1))
 			- (1u << GET_HIGH_SLICE_INDEX(start));
+#else
+		ret.high_slices = (1ul << (GET_HIGH_SLICE_INDEX(end) + 1))
+			- (1ul << GET_HIGH_SLICE_INDEX(start));
+#endif
 
 	return ret;
 }
@@ -135,26 +155,56 @@ static struct slice_mask slice_mask_for_free(struct mm_struct *mm)
 
 	for (i = 0; i < SLICE_NUM_HIGH; i++)
 		if (!slice_high_has_vma(mm, i))
+#ifndef CONFIG_BIGMEM
 			ret.high_slices |= 1u << i;
+#else
+			ret.high_slices |= 1ul << i;
+#endif
 
 	return ret;
 }
 
 static struct slice_mask slice_mask_for_size(struct mm_struct *mm, int psize)
 {
+#ifdef CONFIG_BIGMEM
+	unsigned char *hpsizes;
+	int index, mask_index;
+#endif
 	struct slice_mask ret = { 0, 0 };
 	unsigned long i;
+#ifndef CONFIG_BIGMEM
 	u64 psizes;
+#else
+	u64 lpsizes;
+#endif
 
+#ifndef CONFIG_BIGMEM
 	psizes = mm->context.low_slices_psize;
+#else
+	lpsizes = mm->context.low_slices_psize;
+#endif
 	for (i = 0; i < SLICE_NUM_LOW; i++)
+#ifndef CONFIG_BIGMEM
 		if (((psizes >> (i * 4)) & 0xf) == psize)
+#else
+		if (((lpsizes >> (i * 4)) & 0xf) == psize)
+#endif
 			ret.low_slices |= 1u << i;
 
+#ifndef CONFIG_BIGMEM
 	psizes = mm->context.high_slices_psize;
 	for (i = 0; i < SLICE_NUM_HIGH; i++)
 		if (((psizes >> (i * 4)) & 0xf) == psize)
 			ret.high_slices |= 1u << i;
+#else
+	hpsizes = mm->context.high_slices_psize;
+	for (i = 0; i < SLICE_NUM_HIGH; i++) {
+		mask_index = i & 0x1;
+		index = i >> 1;
+		if (((hpsizes[index] >> (mask_index * 4)) & 0xf) == psize)
+			ret.high_slices |= 1ul << i;
+	}
+#endif
 
 	return ret;
 }
@@ -183,8 +233,16 @@ static void slice_flush_segments(void *parm)
 
 static void slice_convert(struct mm_struct *mm, struct slice_mask mask, int psize)
 {
+#ifdef CONFIG_BIGMEM
+	int index, mask_index;
+#endif
 	/* Write the new slice psize bits */
+#ifndef CONFIG_BIGMEM
 	u64 lpsizes, hpsizes;
+#else
+	unsigned char *hpsizes;
+	u64 lpsizes;
+#endif
 	unsigned long i, flags;
 
 	slice_dbg("slice_convert(mm=%p, psize=%d)\n", mm, psize);
@@ -201,14 +259,31 @@ static void slice_convert(struct mm_struct *mm, struct slice_mask mask, int psiz
 			lpsizes = (lpsizes & ~(0xful << (i * 4))) |
 				(((unsigned long)psize) << (i * 4));
 
+#ifndef CONFIG_BIGMEM
 	hpsizes = mm->context.high_slices_psize;
 	for (i = 0; i < SLICE_NUM_HIGH; i++)
 		if (mask.high_slices & (1u << i))
 			hpsizes = (hpsizes & ~(0xful << (i * 4))) |
 				(((unsigned long)psize) << (i * 4));
 
+#else
+	/* Assign the value back */
+#endif
 	mm->context.low_slices_psize = lpsizes;
+#ifndef CONFIG_BIGMEM
 	mm->context.high_slices_psize = hpsizes;
+#else
+
+	hpsizes = mm->context.high_slices_psize;
+	for (i = 0; i < SLICE_NUM_HIGH; i++) {
+		mask_index = i & 0x1;
+		index = i >> 1;
+		if (mask.high_slices & (1ul << i))
+			hpsizes[index] = (hpsizes[index] &
+					  ~(0xf << (mask_index * 4))) |
+				(((unsigned long)psize) << (mask_index * 4));
+	}
+#endif
 
 	slice_dbg(" lsps=%lx, hsps=%lx\n",
 		  mm->context.low_slices_psize,
@@ -587,18 +662,39 @@ unsigned long arch_get_unmapped_area_topdown(struct file *filp,
 
 unsigned int get_slice_psize(struct mm_struct *mm, unsigned long addr)
 {
+#ifndef CONFIG_BIGMEM
 	u64 psizes;
 	int index;
+#else
+	unsigned char *hpsizes;
+	int index, mask_index;
+#endif
 
 	if (addr < SLICE_LOW_TOP) {
+#ifndef CONFIG_BIGMEM
 		psizes = mm->context.low_slices_psize;
+#else
+		u64 lpsizes;
+		lpsizes = mm->context.low_slices_psize;
+#endif
 		index = GET_LOW_SLICE_INDEX(addr);
+#ifndef CONFIG_BIGMEM
 	} else {
 		psizes = mm->context.high_slices_psize;
 		index = GET_HIGH_SLICE_INDEX(addr);
+#else
+		return (lpsizes >> (index * 4)) & 0xf;
+#endif
 	}
+#ifndef CONFIG_BIGMEM
 
 	return (psizes >> (index * 4)) & 0xf;
+#else
+	hpsizes = mm->context.high_slices_psize;
+	index = GET_HIGH_SLICE_INDEX(addr);
+	mask_index = index & 0x1;
+	return (hpsizes[index >> 1] >> (mask_index * 4)) & 0xf;
+#endif
 }
 EXPORT_SYMBOL_GPL(get_slice_psize);
 
@@ -618,7 +714,13 @@ EXPORT_SYMBOL_GPL(get_slice_psize);
  */
 void slice_set_user_psize(struct mm_struct *mm, unsigned int psize)
 {
+#ifndef CONFIG_BIGMEM
 	unsigned long flags, lpsizes, hpsizes;
+#else
+	int index, mask_index;
+	unsigned char *hpsizes;
+	unsigned long flags, lpsizes;
+#endif
 	unsigned int old_psize;
 	int i;
 
@@ -639,15 +741,34 @@ void slice_set_user_psize(struct mm_struct *mm, unsigned int psize)
 		if (((lpsizes >> (i * 4)) & 0xf) == old_psize)
 			lpsizes = (lpsizes & ~(0xful << (i * 4))) |
 				(((unsigned long)psize) << (i * 4));
+#ifdef CONFIG_BIGMEM
+	/* Assign the value back */
+	mm->context.low_slices_psize = lpsizes;
+#endif
 
 	hpsizes = mm->context.high_slices_psize;
+#ifndef CONFIG_BIGMEM
 	for (i = 0; i < SLICE_NUM_HIGH; i++)
 		if (((hpsizes >> (i * 4)) & 0xf) == old_psize)
 			hpsizes = (hpsizes & ~(0xful << (i * 4))) |
 				(((unsigned long)psize) << (i * 4));
+#else
+	for (i = 0; i < SLICE_NUM_HIGH; i++) {
+		mask_index = i & 0x1;
+		index = i >> 1;
+		if (((hpsizes[index] >> (mask_index * 4)) & 0xf) == old_psize)
+			hpsizes[index] = (hpsizes[index] &
+					  ~(0xf << (mask_index * 4))) |
+				(((unsigned long)psize) << (mask_index * 4));
+	}
 
+
+#endif
+
+#ifndef CONFIG_BIGMEM
 	mm->context.low_slices_psize = lpsizes;
 	mm->context.high_slices_psize = hpsizes;
+#endif
 
 	slice_dbg(" lsps=%lx, hsps=%lx\n",
 		  mm->context.low_slices_psize,
@@ -660,18 +781,47 @@ void slice_set_user_psize(struct mm_struct *mm, unsigned int psize)
 void slice_set_psize(struct mm_struct *mm, unsigned long address,
 		     unsigned int psize)
 {
+#ifdef CONFIG_BIGMEM
+	unsigned char *hpsizes;
+#endif
 	unsigned long i, flags;
+#ifndef CONFIG_BIGMEM
 	u64 *p;
+#else
+	u64 *lpsizes;
+#endif
 
 	spin_lock_irqsave(&slice_convert_lock, flags);
 	if (address < SLICE_LOW_TOP) {
 		i = GET_LOW_SLICE_INDEX(address);
+#ifndef CONFIG_BIGMEM
 		p = &mm->context.low_slices_psize;
+#else
+		lpsizes = &mm->context.low_slices_psize;
+		*lpsizes = (*lpsizes & ~(0xful << (i * 4))) |
+			((unsigned long) psize << (i * 4));
+#endif
 	} else {
+#ifdef CONFIG_BIGMEM
+		int index, mask_index;
+#endif
 		i = GET_HIGH_SLICE_INDEX(address);
+#ifndef CONFIG_BIGMEM
 		p = &mm->context.high_slices_psize;
+#else
+		hpsizes = mm->context.high_slices_psize;
+		mask_index = i & 0x1;
+		index = i >> 1;
+		hpsizes[index] = (hpsizes[index] &
+				  ~(0xf << (mask_index * 4))) |
+			(((unsigned long)psize) << (mask_index * 4));
+#endif
 	}
+#ifndef CONFIG_BIGMEM
 	*p = (*p & ~(0xful << (i * 4))) | ((unsigned long) psize << (i * 4));
+#else
+
+#endif
 	spin_unlock_irqrestore(&slice_convert_lock, flags);
 
 #ifdef CONFIG_SPU_BASE
