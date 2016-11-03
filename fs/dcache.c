@@ -2509,6 +2509,12 @@ static void __d_materialise_dentry(struct dentry *dentry, struct dentry *anon)
 		INIT_LIST_HEAD(&dentry->d_u.d_child);
 
 	anon->d_parent = (dparent == dentry) ? anon : dparent;
+	if (likely(!d_unhashed(anon))) {
+		hlist_bl_lock(&anon->d_sb->s_anon);
+		__hlist_bl_del(&anon->d_hash);
+		anon->d_hash.pprev = NULL;
+		hlist_bl_unlock(&anon->d_sb->s_anon);
+	}
 	list_del(&anon->d_u.d_child);
 	if (!IS_ROOT(anon))
 		list_add(&anon->d_u.d_child, &anon->d_parent->d_subdirs);
@@ -2564,7 +2570,6 @@ struct dentry *d_materialise_unique(struct dentry *dentry, struct inode *inode)
 			} else if (IS_ROOT(alias)) {
 				/* Is this an anonymous mountpoint that we
 				 * could splice into our tree? */
-				__d_drop(alias);
 				__d_materialise_dentry(dentry, alias);
 				write_sequnlock(&rename_lock);
 				goto found;
