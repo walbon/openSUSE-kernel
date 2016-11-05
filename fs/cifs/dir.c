@@ -47,18 +47,33 @@ renew_parental_timestamps(struct dentry *direntry)
 
 char *
 cifs_build_path_to_root(struct smb_vol *vol, struct cifs_sb_info *cifs_sb,
-			struct cifs_tcon *tcon)
+			struct cifs_tcon *tcon, int add_treename)
 {
 	int pplen = vol->prepath ? strlen(vol->prepath) + 1 : 0;
+	int dfsplen;
 	char *full_path = NULL;
 
-	full_path = kmalloc(pplen + 1, GFP_KERNEL);
+	/* if no prefix path, simply set path to the root of share to "" */
+	if (pplen == 0) {
+		full_path = kzalloc(1, GFP_KERNEL);
+		return full_path;
+	}
+
+	if (add_treename)
+		dfsplen = strnlen(tcon->treeName, MAX_TREE_SIZE + 1);
+	else
+		dfsplen = 0;
+
+	full_path = kmalloc(dfsplen + pplen + 1, GFP_KERNEL);
 	if (full_path == NULL)
 		return full_path;
 
-	strncpy(full_path, vol->prepath, pplen);
+	if (dfsplen)
+		strncpy(full_path, tcon->treeName, dfsplen);
+	full_path[dfsplen] = CIFS_DIR_SEP(cifs_sb);
+	strncpy(full_path + dfsplen + 1, vol->prepath, pplen);
 	convert_delimiter(full_path, CIFS_DIR_SEP(cifs_sb));
-	full_path[pplen] = 0; /* add trailing null */
+	full_path[dfsplen + pplen] = 0; /* add trailing null */
 	return full_path;
 }
 
