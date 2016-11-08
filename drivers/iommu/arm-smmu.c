@@ -326,11 +326,8 @@ struct arm_smmu_device {
 
 	struct list_head		list;
 	struct rb_root			masters;
-	/*
-	 *The following fields are specific to Cavium, Thunder
-	 */
-	u32				cavium_id_base;
 
+	u32				cavium_id_base; /* Specific to Cavium */
 };
 
 struct arm_smmu_cfg {
@@ -1680,7 +1677,6 @@ static int arm_smmu_device_cfg_probe(struct arm_smmu_device *smmu)
 	size = arm_smmu_id_size_to_bits((id >> ID2_OAS_SHIFT) & ID2_OAS_MASK);
 	smmu->pa_size = size;
 
-	/* See if 16bit VMID is supported */
 	if (id & ID2_VMID16)
 		smmu->features |= ARM_SMMU_FEAT_VMID16;
 
@@ -1857,16 +1853,16 @@ static int arm_smmu_device_dt_probe(struct platform_device *pdev)
 			goto out_free_irqs;
 		}
 	}
+
 	/*
-	 * Due to Errata#27704 CN88xx SMMUv2,supports  only shared ASID and VMID
-	 * namespaces; specifically within a given node SMMU0 and SMMU1 share,
-	 * as does SMMU2 and SMMU3. see if this is a Cavium SMMU, if so
-	 * set asid and vmid base such that each SMMU gets unique
-	 * asid/vmid space.
+	 * Cavium CN88xx erratum #27704.
+	 * Ensure ASID and VMID allocation is unique across all SMMUs in
+	 * the system.
 	 */
 	if (of_device_is_compatible(dev->of_node, "cavium,smmu-v2")) {
-		smmu->cavium_id_base = atomic_add_return(smmu->num_context_banks,
-				&cavium_smmu_context_count);
+		smmu->cavium_id_base =
+			atomic_add_return(smmu->num_context_banks,
+					  &cavium_smmu_context_count);
 		smmu->cavium_id_base -= smmu->num_context_banks;
 	}
 
