@@ -1207,8 +1207,14 @@ static int igb_alloc_q_vector(struct igb_adapter *adapter,
 
 	/* allocate q_vector and rings */
 	q_vector = adapter->q_vector[v_idx];
-	if (!q_vector)
+	if (!q_vector) {
 		q_vector = kzalloc(size, GFP_KERNEL);
+	} else if (size > ksize(q_vector)) {
+		kfree_rcu(q_vector, rcu);
+		q_vector = kzalloc(size, GFP_KERNEL);
+	} else {
+		memset(q_vector, 0, size);
+	}
 	if (!q_vector)
 		return -ENOMEM;
 
@@ -2789,6 +2795,73 @@ out:
 #endif /* CONFIG_PCI_IOV */
 }
 
+static void igb_init_queue_configuration(struct igb_adapter *adapter)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	u32 max_rss_queues;
+
+	/* Determine the maximum number of RSS queues supported. */
+	switch (hw->mac.type) {
+	case e1000_i211:
+		max_rss_queues = IGB_MAX_RX_QUEUES_I211;
+		break;
+	case e1000_82575:
+	case e1000_i210:
+		max_rss_queues = IGB_MAX_RX_QUEUES_82575;
+		break;
+	case e1000_i350:
+		/* I350 cannot do RSS and SR-IOV at the same time */
+		if (!!adapter->vfs_allocated_count) {
+			max_rss_queues = 1;
+			break;
+		}
+		/* fall through */
+	case e1000_82576:
+		if (!!adapter->vfs_allocated_count) {
+			max_rss_queues = 2;
+			break;
+		}
+		/* fall through */
+	case e1000_82580:
+	case e1000_i354:
+	default:
+		max_rss_queues = IGB_MAX_RX_QUEUES;
+		break;
+	}
+
+	adapter->rss_queues = min_t(u32, max_rss_queues, num_online_cpus());
+
+	igb_set_flag_queue_pairs(adapter, max_rss_queues);
+}
+
+void igb_set_flag_queue_pairs(struct igb_adapter *adapter,
+			      const u32 max_rss_queues)
+{
+	struct e1000_hw *hw = &adapter->hw;
+
+	/* Determine if we need to pair queues. */
+	switch (hw->mac.type) {
+	case e1000_82575:
+	case e1000_i211:
+		/* Device supports enough interrupts without queue pairing. */
+		break;
+	case e1000_82576:
+	case e1000_82580:
+	case e1000_i350:
+	case e1000_i354:
+	case e1000_i210:
+	default:
+		/* If rss_queues > half of max_rss_queues, pair the queues in
+		 * order to conserve interrupts due to limited supply.
+		 */
+		if (adapter->rss_queues > (max_rss_queues / 2))
+			adapter->flags |= IGB_FLAG_QUEUE_PAIRS;
+		else
+			adapter->flags &= ~IGB_FLAG_QUEUE_PAIRS;
+		break;
+	}
+}
+
 /**
  *  igb_sw_init - Initialize general software structures (struct igb_adapter)
  *  @adapter: board private structure to initialize
@@ -2802,7 +2875,6 @@ static int igb_sw_init(struct igb_adapter *adapter)
 	struct e1000_hw *hw = &adapter->hw;
 	struct net_device *netdev = adapter->netdev;
 	struct pci_dev *pdev = adapter->pdev;
-	u32 max_rss_queues;
 
 	pci_read_config_word(pdev, PCI_COMMAND, &hw->bus.pci_cmd_word);
 
@@ -2838,64 +2910,7 @@ static int igb_sw_init(struct igb_adapter *adapter)
 	}
 #endif /* CONFIG_PCI_IOV */
 
-	/* Determine the maximum number of RSS queues supported. */
-	switch (hw->mac.type) {
-	case e1000_i211:
-		max_rss_queues = IGB_MAX_RX_QUEUES_I211;
-		break;
-	case e1000_82575:
-	case e1000_i210:
-		max_rss_queues = IGB_MAX_RX_QUEUES_82575;
-		break;
-	case e1000_i350:
-		/* I350 cannot do RSS and SR-IOV at the same time */
-		if (!!adapter->vfs_allocated_count) {
-			max_rss_queues = 1;
-			break;
-		}
-		/* fall through */
-	case e1000_82576:
-		if (!!adapter->vfs_allocated_count) {
-			max_rss_queues = 2;
-			break;
-		}
-		/* fall through */
-	case e1000_82580:
-	case e1000_i354:
-	default:
-		max_rss_queues = IGB_MAX_RX_QUEUES;
-		break;
-	}
-
-	adapter->rss_queues = min_t(u32, max_rss_queues, num_online_cpus());
-
-	/* Determine if we need to pair queues. */
-	switch (hw->mac.type) {
-	case e1000_82575:
-	case e1000_i211:
-		/* Device supports enough interrupts without queue pairing. */
-		break;
-	case e1000_82576:
-		/* If VFs are going to be allocated with RSS queues then we
-		 * should pair the queues in order to conserve interrupts due
-		 * to limited supply.
-		 */
-		if ((adapter->rss_queues > 1) &&
-		    (adapter->vfs_allocated_count > 6))
-			adapter->flags |= IGB_FLAG_QUEUE_PAIRS;
-		/* fall through */
-	case e1000_82580:
-	case e1000_i350:
-	case e1000_i354:
-	case e1000_i210:
-	default:
-		/* If rss_queues > half of max_rss_queues, pair the queues in
-		 * order to conserve interrupts due to limited supply.
-		 */
-		if (adapter->rss_queues > (max_rss_queues / 2))
-			adapter->flags |= IGB_FLAG_QUEUE_PAIRS;
-		break;
-	}
+	igb_init_queue_configuration(adapter);
 
 	/* Setup and initialize a copy of the hw vlan table array */
 	adapter->shadow_vfta = kcalloc(E1000_VLAN_FILTER_TBL_SIZE, sizeof(u32),
