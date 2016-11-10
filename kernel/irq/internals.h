@@ -83,6 +83,7 @@ extern void irq_mark_irq(unsigned int irq);
 
 extern void init_kstat_irqs(struct irq_desc *desc, int node, int nr);
 
+irqreturn_t __handle_irq_event_percpu(struct irq_desc *desc, unsigned int *flags);
 irqreturn_t handle_irq_event_percpu(struct irq_desc *desc);
 irqreturn_t handle_irq_event(struct irq_desc *desc);
 
@@ -130,6 +131,9 @@ static inline void chip_bus_sync_unlock(struct irq_desc *desc)
 
 #define IRQ_GET_DESC_CHECK_GLOBAL	(_IRQ_DESC_CHECK)
 #define IRQ_GET_DESC_CHECK_PERCPU	(_IRQ_DESC_CHECK | _IRQ_DESC_PERCPU)
+
+#define for_each_action_of_desc(desc, act)			\
+	for (act = desc->act; act; act = act->next)
 
 struct irq_desc *
 __irq_get_desc_lock(unsigned int irq, unsigned long *flags, bool bus,
