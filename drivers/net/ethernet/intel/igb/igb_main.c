@@ -2791,54 +2791,10 @@ out:
 #endif /* CONFIG_PCI_IOV */
 }
 
-/**
- *  igb_sw_init - Initialize general software structures (struct igb_adapter)
- *  @adapter: board private structure to initialize
- *
- *  igb_sw_init initializes the Adapter private data structure.
- *  Fields are initialized based on PCI device information and
- *  OS network device settings (MTU size).
- **/
-static int igb_sw_init(struct igb_adapter *adapter)
+static void igb_init_queue_configuration(struct igb_adapter *adapter)
 {
 	struct e1000_hw *hw = &adapter->hw;
-	struct net_device *netdev = adapter->netdev;
-	struct pci_dev *pdev = adapter->pdev;
 	u32 max_rss_queues;
-
-	pci_read_config_word(pdev, PCI_COMMAND, &hw->bus.pci_cmd_word);
-
-	/* set default ring sizes */
-	adapter->tx_ring_count = IGB_DEFAULT_TXD;
-	adapter->rx_ring_count = IGB_DEFAULT_RXD;
-
-	/* set default ITR values */
-	adapter->rx_itr_setting = IGB_DEFAULT_ITR;
-	adapter->tx_itr_setting = IGB_DEFAULT_ITR;
-
-	/* set default work limits */
-	adapter->tx_work_limit = IGB_DEFAULT_TX_WORK;
-
-	adapter->max_frame_size = netdev->mtu + ETH_HLEN + ETH_FCS_LEN +
-				  VLAN_HLEN;
-	adapter->min_frame_size = ETH_ZLEN + ETH_FCS_LEN;
-
-	spin_lock_init(&adapter->stats64_lock);
-#ifdef CONFIG_PCI_IOV
-	switch (hw->mac.type) {
-	case e1000_82576:
-	case e1000_i350:
-		if (max_vfs > 7) {
-			dev_warn(&pdev->dev,
-				 "Maximum of 7 VFs per PF, using max\n");
-			max_vfs = adapter->vfs_allocated_count = 7;
-		} else
-			adapter->vfs_allocated_count = max_vfs;
-		break;
-	default:
-		break;
-	}
-#endif /* CONFIG_PCI_IOV */
 
 	/* Determine the maximum number of RSS queues supported. */
 	switch (hw->mac.type) {
@@ -2898,6 +2854,57 @@ static int igb_sw_init(struct igb_adapter *adapter)
 			adapter->flags |= IGB_FLAG_QUEUE_PAIRS;
 		break;
 	}
+}
+
+/**
+ *  igb_sw_init - Initialize general software structures (struct igb_adapter)
+ *  @adapter: board private structure to initialize
+ *
+ *  igb_sw_init initializes the Adapter private data structure.
+ *  Fields are initialized based on PCI device information and
+ *  OS network device settings (MTU size).
+ **/
+static int igb_sw_init(struct igb_adapter *adapter)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	struct net_device *netdev = adapter->netdev;
+	struct pci_dev *pdev = adapter->pdev;
+
+	pci_read_config_word(pdev, PCI_COMMAND, &hw->bus.pci_cmd_word);
+
+	/* set default ring sizes */
+	adapter->tx_ring_count = IGB_DEFAULT_TXD;
+	adapter->rx_ring_count = IGB_DEFAULT_RXD;
+
+	/* set default ITR values */
+	adapter->rx_itr_setting = IGB_DEFAULT_ITR;
+	adapter->tx_itr_setting = IGB_DEFAULT_ITR;
+
+	/* set default work limits */
+	adapter->tx_work_limit = IGB_DEFAULT_TX_WORK;
+
+	adapter->max_frame_size = netdev->mtu + ETH_HLEN + ETH_FCS_LEN +
+				  VLAN_HLEN;
+	adapter->min_frame_size = ETH_ZLEN + ETH_FCS_LEN;
+
+	spin_lock_init(&adapter->stats64_lock);
+#ifdef CONFIG_PCI_IOV
+	switch (hw->mac.type) {
+	case e1000_82576:
+	case e1000_i350:
+		if (max_vfs > 7) {
+			dev_warn(&pdev->dev,
+				 "Maximum of 7 VFs per PF, using max\n");
+			max_vfs = adapter->vfs_allocated_count = 7;
+		} else
+			adapter->vfs_allocated_count = max_vfs;
+		break;
+	default:
+		break;
+	}
+#endif /* CONFIG_PCI_IOV */
+
+	igb_init_queue_configuration(adapter);
 
 	/* Setup and initialize a copy of the hw vlan table array */
 	adapter->shadow_vfta = kcalloc(E1000_VLAN_FILTER_TBL_SIZE, sizeof(u32),
