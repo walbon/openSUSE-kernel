@@ -817,7 +817,7 @@ no_skb:
 		np->rx_skbs[id] = skb;
 
 		ref = gnttab_claim_grant_reference(&np->gref_rx_head);
-		BUG_ON((signed short)ref < 0);
+		BUG_ON(IS_ERR_VALUE((int32_t)ref));
 		np->grant_rx_ref[id] = ref;
 
 		pfn = page_to_pfn(skb_shinfo(skb)->frags[0].page);
@@ -924,7 +924,7 @@ static void xennet_make_frags(struct sk_buff *skb, struct net_device *dev,
 		tx = RING_GET_REQUEST(&np->tx, prod++);
 		tx->id = id;
 		ref = gnttab_claim_grant_reference(&np->gref_tx_head);
-		BUG_ON((signed short)ref < 0);
+		BUG_ON(IS_ERR_VALUE((int32_t)ref));
 
 		mfn = virt_to_mfn(data);
 		gnttab_grant_foreign_access_ref(ref, np->xbdev->otherend_id,
@@ -946,7 +946,7 @@ static void xennet_make_frags(struct sk_buff *skb, struct net_device *dev,
 		tx = RING_GET_REQUEST(&np->tx, prod++);
 		tx->id = id;
 		ref = gnttab_claim_grant_reference(&np->gref_tx_head);
-		BUG_ON((signed short)ref < 0);
+		BUG_ON(IS_ERR_VALUE((int32_t)ref));
 
 		mfn = pfn_to_mfn(page_to_pfn(frag->page));
 		gnttab_grant_foreign_access_ref(ref, np->xbdev->otherend_id,
@@ -1018,7 +1018,7 @@ static int network_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	tx->id   = id;
 	ref = gnttab_claim_grant_reference(&np->gref_tx_head);
-	BUG_ON((signed short)ref < 0);
+	BUG_ON(IS_ERR_VALUE((int32_t)ref));
 	mfn = virt_to_mfn(data);
 	gnttab_grant_foreign_access_ref(
 		ref, np->xbdev->otherend_id, mfn, GTF_readonly);
