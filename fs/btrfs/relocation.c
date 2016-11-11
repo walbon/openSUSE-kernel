@@ -3970,7 +3970,7 @@ static int qgroup_fix_relocated_data_extents(struct btrfs_trans_handle *trans,
 			btrfs_file_extent_disk_bytenr(path->nodes[0], fi),
 			btrfs_file_extent_disk_num_bytes(path->nodes[0], fi));
 			*/
-		ret = btrfs_qgroup_insert_dirty_extent(trans, fs_info,
+		ret = btrfs_qgroup_trace_extent(trans, fs_info,
 			btrfs_file_extent_disk_bytenr(path->nodes[0], fi),
 			btrfs_file_extent_disk_num_bytes(path->nodes[0], fi),
 			GFP_NOFS);
