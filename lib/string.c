@@ -656,6 +656,12 @@ int match_string(const char * const *array, size_t n, const char *string)
 }
 EXPORT_SYMBOL(match_string);
 
+int strtobool(const char *s, bool *res)
+{
+	return kstrtobool(s, res);
+}
+EXPORT_SYMBOL(strtobool);
+
 #ifndef __HAVE_ARCH_MEMSET
 /**
  * memset - Fill a region of memory with the given value
