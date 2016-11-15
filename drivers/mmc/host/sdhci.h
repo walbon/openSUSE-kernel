@@ -488,8 +488,6 @@ struct sdhci_host {
 	dma_addr_t align_addr;	/* Mapped bounce buffer */
 
 	unsigned int desc_sz;	/* ADMA descriptor size */
-	unsigned int align_sz;  /* unused -- kABI */
-	unsigned int align_mask;/* unused -- kABI */
 
 	struct tasklet_struct finish_tasklet;	/* Tasklet structures */
 

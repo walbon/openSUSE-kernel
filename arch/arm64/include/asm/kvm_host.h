@@ -171,10 +171,8 @@ struct kvm_vcpu_arch {
 	/* Detect first run of a vcpu */
 	bool has_run_once;
 
-#ifndef __GENKSYMS__
 	/* User space wants timer notifications */
 	bool user_space_arm_timers;
-#endif
 };
 
 #define vcpu_gp_regs(v)		(&(v)->arch.ctxt.gp_regs)

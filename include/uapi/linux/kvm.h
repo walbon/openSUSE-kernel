@@ -340,11 +340,9 @@ struct kvm_run {
 			__u8 vector;
 		} eoi;
 		/* KVM_EXIT_ARM_TIMER */
-#ifndef __GENKSYMS__
 		struct {
 			__u8 timesource;
 		} arm_timer;
-#endif
 		/* Fix the size of the union. */
 		char padding[256];
 	};

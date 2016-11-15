@@ -172,11 +172,7 @@ struct dw_mci {
 	/* For edmac */
 	struct dw_mci_dma_slave *dms;
 	/* Registers's physical base address */
-#ifdef __GENKSYMS__
-	void			*phy_regs;
-#else
 	resource_size_t		phy_regs;
-#endif
 
 	u32			cmd_status;
 	u32			data_status;

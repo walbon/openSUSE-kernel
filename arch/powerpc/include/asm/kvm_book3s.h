@@ -83,6 +83,7 @@ struct kvmppc_vcpu_book3s {
 	u64 sdr1;
 	u64 hior;
 	u64 msr_mask;
+	u64 vtb;
 #ifdef CONFIG_PPC_BOOK3S_32
 	u32 vsid_pool[VSID_POOL_SIZE];
 	u32 vsid_next;
@@ -104,9 +105,6 @@ struct kvmppc_vcpu_book3s {
 #endif
 	int hpte_cache_count;
 	spinlock_t mmu_lock;
-#ifndef __GENKSYMS__
-	u64 vtb;
-#endif
 };
 
 #define VSID_REAL	0x07ffffffffc00000ULL

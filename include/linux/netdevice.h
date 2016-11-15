@@ -2058,11 +2058,7 @@ struct napi_gro_cb {
 	u8	same_flow:1;
 
 	/* Used in tunnel GRO receive */
-#ifdef __GENKSYMS__
-	u8	udp_mark:1;
-#else
 	u8	encap_mark:1;
-#endif
 
 	/* GRO checksum is valid */
 	u8	csum_valid:1;
@@ -2078,13 +2074,11 @@ struct napi_gro_cb {
 	/* Used in foo-over-udp, set in udp[46]_gro_receive */
 	u8	is_ipv6:1;
 
-#ifndef __GENKSYMS__
-	/* Number of gro_receive callbacks this packet already went through */
-	u8 recursion_counter:4;
-
 	/* Used in GRE, set in fou/gue_gro_receive */
 	u8	is_fou:1;
-#endif
+
+	/* Number of gro_receive callbacks this packet already went through */
+	u8 recursion_counter:4;
 
 	/* 2 bit hole */
 
