@@ -262,7 +262,7 @@ fail:
 	return -ENODEV;
 }
 
-const struct x86_cpu_id skx_cpuids[] = {
+static const struct x86_cpu_id skx_cpuids[] = {
 	{ X86_VENDOR_INTEL, 6, 0x55, 0, 0 },	/* Skylake */
 	{ }
 };
@@ -1036,7 +1036,7 @@ static void skx_remove(void)
  *	search for all the devices we need
  *	check which DIMMs are present.
  */
-int __init skx_init(void)
+static int __init skx_init(void)
 {
 	const struct x86_cpu_id *id;
 	const struct munit *m;
