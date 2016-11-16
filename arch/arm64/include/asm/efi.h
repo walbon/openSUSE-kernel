@@ -4,6 +4,7 @@
 #include <asm/boot.h>
 #include <asm/io.h>
 #include <asm/neon.h>
+#include <asm/ptrace.h>
 
 #ifdef CONFIG_EFI
 extern void efi_init_fdt(void *fdt);
@@ -29,6 +30,8 @@ extern void efi_init_fdt(void *fdt);
 	efi_virtmap_unload();						\
 	kernel_neon_end();						\
 })
+
+#define ARCH_EFI_IRQ_FLAGS_MASK (PSR_D_BIT | PSR_A_BIT | PSR_I_BIT | PSR_F_BIT)
 
 /* arch specific definitions used by the stub code */
 
