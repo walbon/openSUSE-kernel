@@ -166,6 +166,11 @@ int ovl_permission(struct inode *inode, int mask)
 			goto out_dput;
 	}
 
+	if (!is_upper && !special_file(realinode->i_mode) && mask & MAY_WRITE) {
+		mask &= ~(MAY_WRITE | MAY_APPEND);
+		/* Make sure mounter can read file for copy up later */
+		mask |= MAY_READ;
+	}
 	err = __inode_permission(realinode, mask);
 out_dput:
 	dput(alias);
