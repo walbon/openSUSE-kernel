@@ -1607,12 +1607,6 @@ again:
 		err = -ENOENT;
 		goto out;
 	} else if (WARN_ON(ret)) {
-		btrfs_err(root->fs_info,
-			  "did not found extent item for bytenr %llu num_bytes %llu owner %llu skinny metadata %d slot %d",
-			  bytenr, num_bytes, owner,
-			  btrfs_fs_incompat(root->fs_info, SKINNY_METADATA),
-			  path->slots[0]);
-		btrfs_print_leaf(root, path->nodes[0]);
 		err = -EIO;
 		goto out;
 	}
