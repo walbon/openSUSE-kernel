@@ -2018,7 +2018,7 @@ static struct hpsa_scsi_dev_t *lookup_hpsa_scsi_dev(struct ctlr_info *h,
 
 static int hpsa_slave_alloc(struct scsi_device *sdev)
 {
-	struct hpsa_scsi_dev_t *sd;
+	struct hpsa_scsi_dev_t *sd = NULL;
 	unsigned long flags;
 	struct ctlr_info *h;
 
@@ -2035,7 +2035,8 @@ static int hpsa_slave_alloc(struct scsi_device *sdev)
 			sd->target = sdev_id(sdev);
 			sd->lun = sdev->lun;
 		}
-	} else
+	}
+	if (!sd)
 		sd = lookup_hpsa_scsi_dev(h, sdev_channel(sdev),
 					sdev_id(sdev), sdev->lun);
 
@@ -3598,8 +3599,32 @@ out:
 static inline int hpsa_scsi_do_report_phys_luns(struct ctlr_info *h,
 		struct ReportExtendedLUNdata *buf, int bufsize)
 {
-	return hpsa_scsi_do_report_luns(h, 0, buf, bufsize,
-						HPSA_REPORT_PHYS_EXTENDED);
+	int rc;
+	struct ReportLUNdata *lbuf;
+
+	rc = hpsa_scsi_do_report_luns(h, 0, buf, bufsize,
+				      HPSA_REPORT_PHYS_EXTENDED);
+	if (!rc || !hpsa_allow_any)
+		return rc;
+
+	/* REPORT PHYS EXTENDED is not supported */
+	lbuf = kzalloc(sizeof(*lbuf), GFP_KERNEL);
+	if (!lbuf)
+		return -ENOMEM;
+
+	rc = hpsa_scsi_do_report_luns(h, 0, lbuf, sizeof(*lbuf), 0);
+	if (!rc) {
+		int i;
+		u32 nphys;
+
+		/* Copy ReportLUNdata header */
+		memcpy(buf, lbuf, 8);
+		nphys = be32_to_cpu(*((__be32 *)lbuf->LUNListLength)) / 24;
+		for (i = 0; i < nphys; i++)
+			memcpy(buf->LUN[i].lunid, lbuf->LUN[i], 8);
+	}
+	kfree(lbuf);
+	return rc;
 }
 
 static inline int hpsa_scsi_do_report_log_luns(struct ctlr_info *h,
@@ -3816,6 +3841,7 @@ static int hpsa_update_device_info(struct ctlr_info *h,
 		sizeof(this_device->vendor));
 	memcpy(this_device->model, &inq_buff[16],
 		sizeof(this_device->model));
+	this_device->rev = inq_buff[2];
 	memset(this_device->device_id, 0,
 		sizeof(this_device->device_id));
 	hpsa_get_device_id(h, scsi3addr, this_device->device_id, 8,
@@ -3898,10 +3924,14 @@ static void figure_bus_target_lun(struct ctlr_info *h,
 
 	if (!is_logical_dev_addr_mode(lunaddrbytes)) {
 		/* physical device, target and lun filled in later */
-		if (is_hba_lunid(lunaddrbytes))
+		if (is_hba_lunid(lunaddrbytes)) {
+			int bus = HPSA_HBA_BUS;
+
+			if (!device->rev)
+				bus = HPSA_LEGACY_HBA_BUS;
 			hpsa_set_bus_target_lun(device,
-					HPSA_HBA_BUS, 0, lunid & 0x3fff);
-		else
+					bus, 0, lunid & 0x3fff);
+		} else
 			/* defer target, lun assignment for physical devices */
 			hpsa_set_bus_target_lun(device,
 					HPSA_PHYSICAL_DEVICE_BUS, -1, -1);
@@ -5414,7 +5444,7 @@ static int hpsa_scsi_queue_command(struct Scsi_Host *sh, struct scsi_cmnd *cmd)
 
 	dev = cmd->device->hostdata;
 	if (!dev) {
-		cmd->result = NOT_READY << 16; /* host byte */
+		cmd->result = DID_NO_CONNECT << 16;
 		cmd->scsi_done(cmd);
 		return 0;
 	}
