@@ -348,7 +348,9 @@ struct intel_crtc_state {
 #define PIPE_CONFIG_QUIRK_MODE_SYNC_FLAGS	(1<<0) /* unreliable sync mode.flags */
 	unsigned long quirks;
 
-	bool update_pipe;
+	bool update_pipe; /* can a fast modeset be performed? */
+	bool disable_cxsr;
+	bool wm_changed; /* watermarks are updated */
 
 	/* Pipe source size (ie. panel fitter input size)
 	 * All planes will be positioned inside this space,
@@ -468,6 +470,9 @@ struct intel_crtc_state {
 
 	/* w/a for waiting 2 vblanks during crtc enable */
 	enum pipe hsw_workaround_pipe;
+
+	/* IVB sprite scaling w/a (WaCxSRDisabledForSpriteScaling:ivb) */
+	bool disable_lp_wm;
 };
 
 struct vlv_wm_state {
@@ -512,9 +517,7 @@ struct intel_crtc_atomic_commit {
 	bool wait_for_flips;
 	bool disable_fbc;
 	bool disable_ips;
-	bool disable_cxsr;
 	bool pre_disable_primary;
-	bool update_wm_pre, update_wm_post;
 
 	/* Sleepable operations to perform after commit */
 	unsigned fb_bits;
