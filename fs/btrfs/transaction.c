@@ -1423,11 +1423,8 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	u64 root_flags;
 	uuid_le new_uuid;
 
-	path = btrfs_alloc_path();
-	if (!path) {
-		pending->error = -ENOMEM;
-		return 0;
-	}
+	ASSERT(pending->path);
+	path = pending->path;
 
 	ASSERT(pending->root_item);
 	new_root_item = pending->root_item;
@@ -1659,6 +1656,8 @@ no_free_objectid:
 	kfree(new_root_item);
 	pending->root_item = NULL;
 	btrfs_free_path(path);
+	pending->path = NULL;
+
 	return ret;
 }
 
