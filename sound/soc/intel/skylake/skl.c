@@ -526,8 +526,7 @@ static void skl_remove(struct pci_dev *pci)
 	if (skl->tplg)
 		release_firmware(skl->tplg);
 
-	if (pci_dev_run_wake(pci))
-		pm_runtime_get_noresume(&pci->dev);
+	pm_runtime_get_noresume(&pci->dev);
 	pci_dev_put(pci);
 	skl_platform_unregister(&pci->dev);
 	skl_free_dsp(skl);
