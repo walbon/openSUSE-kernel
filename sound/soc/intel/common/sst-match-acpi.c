@@ -23,7 +23,14 @@
 static acpi_status sst_acpi_mach_match(acpi_handle handle, u32 level,
 				       void *context, void **ret)
 {
+	unsigned long long sta;
+	acpi_status status;
+
 	*(bool *)context = true;
+	status = acpi_evaluate_integer(handle, "_STA", NULL, &sta);
+	if (ACPI_FAILURE(status) || !(sta & ACPI_STA_DEVICE_PRESENT))
+		*(bool *)context = false;
+
 	return AE_OK;
 }
 
@@ -37,7 +44,6 @@ struct sst_acpi_mach *sst_acpi_find_machine(struct sst_acpi_mach *machines)
 						  sst_acpi_mach_match,
 						  &found, NULL)) && found)
 			return mach;
-
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(sst_acpi_find_machine);
