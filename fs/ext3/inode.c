@@ -3201,12 +3201,13 @@ int ext3_write_inode(struct inode *inode, struct writeback_control *wbc)
 }
 
 #ifdef CONFIG_EXT3_FS_NFS4ACL
-static int ext3_inode_change_ok(struct inode *inode, struct iattr *attr)
+static int ext3_setattr_prepare(struct dentry *dentry, struct iattr *attr)
 {
 	unsigned int ia_valid = attr->ia_valid;
+	struct inode *inode = dentry->d_inode;
 
 	if (!test_opt(inode->i_sb, NFS4ACL))
-		return inode_change_ok(inode, attr);
+		return setattr_prepare(dentry, attr);
 
 	/* If force is set do it anyway. */
 	if (ia_valid & ATTR_FORCE)
@@ -3256,7 +3257,7 @@ error:
 	return -EPERM;
 }
 #else
-# define ext3_inode_change_ok inode_change_ok
+# define ext3_setattr_prepare setattr_prepare
 #endif
 
 /*
@@ -3282,7 +3283,7 @@ int ext3_setattr(struct dentry *dentry, struct iattr *attr)
 	int error, rc = 0;
 	const unsigned int ia_valid = attr->ia_valid;
 
-	error = ext3_inode_change_ok(inode, attr);
+	error = ext3_setattr_prepare(dentry, attr);
 	if (error)
 		return error;
 
