@@ -4746,8 +4746,18 @@ void swap_buf_le16(u16 *buf, unsigned int buf_words)
 static struct ata_queued_cmd *ata_qc_new(struct ata_port *ap)
 {
 	struct ata_queued_cmd *qc = NULL;
-	unsigned int max_queue = ap->host->n_tags;
+	unsigned int max_queue;
 	unsigned int i, tag;
+
+	/*
+	 * Since SAS controllers doesn't initialize ->scsi_host, we have to
+	 * check if ata_port->scsi_host exists or not.
+	 */
+	if (ap->scsi_host)
+		max_queue = clamp(ap->scsi_host->can_queue, 1,
+				  ATA_MAX_QUEUE - 1);
+	else
+		max_queue = ATA_MAX_QUEUE - 1;
 
 	/* no command while frozen */
 	if (unlikely(ap->pflags & ATA_PFLAG_FROZEN))
@@ -6035,7 +6045,6 @@ void ata_host_init(struct ata_host *host, struct device *dev,
 {
 	spin_lock_init(&host->lock);
 	mutex_init(&host->eh_mutex);
-	host->n_tags = ATA_MAX_QUEUE - 1;
 	host->dev = dev;
 	host->ops = ops;
 }
@@ -6116,8 +6125,6 @@ static void async_port_probe(void *data, async_cookie_t cookie)
 int ata_host_register(struct ata_host *host, struct scsi_host_template *sht)
 {
 	int i, rc;
-
-	host->n_tags = clamp(sht->can_queue, 1, ATA_MAX_QUEUE - 1);
 
 	/* host must have been started */
 	if (!(host->flags & ATA_HOST_STARTED)) {
