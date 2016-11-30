@@ -30,6 +30,7 @@
 #include <sound/jack.h>
 #include "../../codecs/rt5645.h"
 #include "../atom/sst-atom-controls.h"
+#include "../common/sst-acpi.h"
 
 #define CHT_PLAT_CLK_3_HZ	19200000
 #define CHT_CODEC_DAI	"rt5645-aif1"
@@ -150,6 +151,17 @@ static const struct snd_kcontrol_new cht_mc_controls[] = {
 	SOC_DAPM_PIN_SWITCH("Ext Spk"),
 };
 
+static struct snd_soc_jack_pin cht_bsw_jack_pins[] = {
+	{
+		.pin	= "Headphone",
+		.mask	= SND_JACK_HEADPHONE,
+	},
+	{
+		.pin	= "Headset Mic",
+		.mask	= SND_JACK_MICROPHONE,
+	},
+};
+
 static int cht_aif1_hw_params(struct snd_pcm_substream *substream,
 			     struct snd_pcm_hw_params *params)
 {
@@ -205,9 +217,9 @@ static int cht_codec_init(struct snd_soc_pcm_runtime *runtime)
 	else
 		jack_type = SND_JACK_HEADPHONE | SND_JACK_MICROPHONE;
 
-	ret = snd_soc_card_jack_new(runtime->card, "Headset Jack",
+	ret = snd_soc_card_jack_new(runtime->card, "Headset",
 				    jack_type, &ctx->jack,
-				    NULL, 0);
+				    cht_bsw_jack_pins, ARRAY_SIZE(cht_bsw_jack_pins));
 	if (ret) {
 		dev_err(runtime->dev, "Headset jack creation failed %d\n", ret);
 		return ret;
@@ -261,6 +273,18 @@ static struct snd_soc_dai_link cht_dailink[] = {
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
+		.ops = &cht_aif1_ops,
+	},
+	[MERR_DPCM_DEEP_BUFFER] = {
+		.name = "Deep-Buffer Audio Port",
+		.stream_name = "Deep-Buffer Audio",
+		.cpu_dai_name = "deepbuffer-cpu-dai",
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+		.platform_name = "sst-mfld-platform",
+		.nonatomic = true,
+		.dynamic = 1,
+		.dpcm_playback = 1,
 		.ops = &cht_aif1_ops,
 	},
 	[MERR_DPCM_COMPR] = {
@@ -320,6 +344,7 @@ static struct snd_soc_card snd_soc_card_chtrt5650 = {
 };
 
 static struct cht_acpi_card snd_soc_cards[] = {
+	{"10EC5640", CODEC_TYPE_RT5645, &snd_soc_card_chtrt5645},
 	{"10EC5645", CODEC_TYPE_RT5645, &snd_soc_card_chtrt5645},
 	{"10EC5650", CODEC_TYPE_RT5650, &snd_soc_card_chtrt5650},
 };
@@ -331,6 +356,8 @@ static acpi_status snd_acpi_codec_match(acpi_handle handle, u32 level,
 	return AE_OK;
 }
 
+static char cht_rt5640_codec_name[16]; /* i2c-<HID>:00 with HID being 8 chars */
+
 static int snd_cht_mc_probe(struct platform_device *pdev)
 {
 	int ret_val = 0;
@@ -339,6 +366,9 @@ static int snd_cht_mc_probe(struct platform_device *pdev)
 	struct snd_soc_card *card = snd_soc_cards[0].soc_card;
 	bool found = false;
 	char codec_name[16];
+	struct sst_acpi_mach *mach;
+	const char *i2c_name = NULL;
+	int dai_index = 0;
 
 	drv = devm_kzalloc(&pdev->dev, sizeof(*drv), GFP_ATOMIC);
 	if (!drv)
@@ -357,9 +387,24 @@ static int snd_cht_mc_probe(struct platform_device *pdev)
 		}
 	}
 	card->dev = &pdev->dev;
+	mach = card->dev->platform_data;
 	sprintf(codec_name, "i2c-%s:00", drv->acpi_card->codec_id);
+
 	/* set correct codec name */
-	strcpy((char *)card->dai_link[2].codec_name, codec_name);
+	for (i = 0; i < ARRAY_SIZE(cht_dailink); i++)
+		if (!strcmp(card->dai_link[i].codec_name, "i2c-10EC5645:00")) {
+			card->dai_link[i].codec_name = kstrdup(codec_name, GFP_KERNEL);
+			dai_index = i;
+		}
+
+	/* fixup codec name based on HID */
+	i2c_name = sst_acpi_find_name_from_hid(mach->id);
+	if (i2c_name != NULL) {
+		snprintf(cht_rt5640_codec_name, sizeof(cht_rt5640_codec_name),
+			"%s%s", "i2c-", i2c_name);
+		cht_dailink[dai_index].codec_name = cht_rt5640_codec_name;
+	}
+
 	snd_soc_card_set_drvdata(card, drv);
 	ret_val = devm_snd_soc_register_card(&pdev->dev, card);
 	if (ret_val) {
