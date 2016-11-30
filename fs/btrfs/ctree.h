@@ -591,14 +591,15 @@ struct btrfs_node {
  * The slots array records the index of the item or block pointer
  * used while walking the tree.
  */
+enum { READA_NONE = 0, READA_BACK, READA_FORWARD };
 struct btrfs_path {
 	struct extent_buffer *nodes[BTRFS_MAX_LEVEL];
 	int slots[BTRFS_MAX_LEVEL];
 	/* if there is real range locking, this locks field will change */
-	int locks[BTRFS_MAX_LEVEL];
-	int reada;
+	u8 locks[BTRFS_MAX_LEVEL];
+	u8 reada;
 	/* keep some upper locks as we walk down */
-	int lowest_level;
+	u8 lowest_level;
 
 	/*
 	 * set by btrfs_split_item, tells search_slot to keep all locks
@@ -3905,7 +3906,6 @@ void btrfs_extent_item_to_extent_map(struct inode *inode,
 /* inode.c */
 struct btrfs_delalloc_work {
 	struct inode *inode;
-	int wait;
 	int delay_iput;
 	struct completion completion;
 	struct list_head list;
@@ -3913,7 +3913,7 @@ struct btrfs_delalloc_work {
 };
 
 struct btrfs_delalloc_work *btrfs_alloc_delalloc_work(struct inode *inode,
-						    int wait, int delay_iput);
+						    int delay_iput);
 void btrfs_wait_and_free_delalloc_work(struct btrfs_delalloc_work *work);
 
 struct extent_map *btrfs_get_extent_fiemap(struct inode *inode, struct page *page,

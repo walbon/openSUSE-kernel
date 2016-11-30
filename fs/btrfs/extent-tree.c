@@ -438,7 +438,7 @@ static noinline void caching_thread(struct btrfs_work *work)
 	 */
 	path->skip_locking = 1;
 	path->search_commit_root = 1;
-	path->reada = 1;
+	path->reada = READA_FORWARD;
 
 	key.objectid = last;
 	key.offset = 0;
@@ -2115,7 +2115,7 @@ static int __btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 	if (!path)
 		return -ENOMEM;
 
-	path->reada = 1;
+	path->reada = READA_FORWARD;
 	path->leave_spinning = 1;
 	/* this will setup the path even if it fails to insert the back ref */
 	ret = insert_inline_extent_backref(trans, fs_info->extent_root, path,
@@ -2141,7 +2141,7 @@ static int __btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 	btrfs_mark_buffer_dirty(leaf);
 	btrfs_release_path(path);
 
-	path->reada = 1;
+	path->reada = READA_FORWARD;
 	path->leave_spinning = 1;
 	/* now insert the actual backref */
 	ret = insert_extent_backref(trans, root->fs_info->extent_root,
@@ -2254,7 +2254,7 @@ static int run_delayed_extent_op(struct btrfs_trans_handle *trans,
 	}
 
 again:
-	path->reada = 1;
+	path->reada = READA_FORWARD;
 	path->leave_spinning = 1;
 	ret = btrfs_search_slot(trans, root->fs_info->extent_root, &key,
 				path, 0, 1);
@@ -2988,9 +2988,9 @@ int btrfs_set_disk_extent_flags(struct btrfs_trans_handle *trans,
 		return -ENOMEM;
 
 	extent_op->flags_to_set = flags;
-	extent_op->update_flags = 1;
-	extent_op->update_key = 0;
-	extent_op->is_data = is_data ? 1 : 0;
+	extent_op->update_flags = true;
+	extent_op->update_key = false;
+	extent_op->is_data = is_data ? true : false;
 	extent_op->level = level;
 
 	ret = btrfs_add_delayed_extent_op(root->fs_info, trans, bytenr,
@@ -3684,11 +3684,21 @@ int btrfs_write_dirty_block_groups(struct btrfs_trans_handle *trans,
 		return -ENOMEM;
 
 	/*
-	 * We don't need the lock here since we are protected by the transaction
-	 * commit.  We want to do the cache_save_setup first and then run the
+	 * Even though we are in the critical section of the transaction commit,
+	 * we can still have concurrent tasks adding elements to this
+	 * transaction's list of dirty block groups. These tasks correspond to
+	 * endio free space workers started when writeback finishes for a
+	 * space cache, which run inode.c:btrfs_finish_ordered_io(), and can
+	 * allocate new block groups as a result of COWing nodes of the root
+	 * tree when updating the free space inode. The writeback for the space
+	 * caches is triggered by an earlier call to
+	 * btrfs_start_dirty_block_groups() and iterations of the following
+	 * loop.
+	 * Also we want to do the cache_save_setup first and then run the
 	 * delayed refs to make sure we have the best chance at doing this all
 	 * in one shot.
 	 */
+	spin_lock(&cur_trans->dirty_bgs_lock);
 	while (!list_empty(&cur_trans->dirty_bgs)) {
 		cache = list_first_entry(&cur_trans->dirty_bgs,
 					 struct btrfs_block_group_cache,
@@ -3700,11 +3710,13 @@ int btrfs_write_dirty_block_groups(struct btrfs_trans_handle *trans,
 		 * finish and then do it all again
 		 */
 		if (!list_empty(&cache->io_list)) {
+			spin_unlock(&cur_trans->dirty_bgs_lock);
 			list_del_init(&cache->io_list);
 			btrfs_wait_cache_io(root, trans, cache,
 					    &cache->io_ctl, path,
 					    cache->key.objectid);
 			btrfs_put_block_group(cache);
+			spin_lock(&cur_trans->dirty_bgs_lock);
 		}
 
 		/*
@@ -3712,6 +3724,7 @@ int btrfs_write_dirty_block_groups(struct btrfs_trans_handle *trans,
 		 * on any pending IO
 		 */
 		list_del_init(&cache->dirty_list);
+		spin_unlock(&cur_trans->dirty_bgs_lock);
 		should_put = 1;
 
 		cache_save_setup(cache, trans, path);
@@ -3736,6 +3749,25 @@ int btrfs_write_dirty_block_groups(struct btrfs_trans_handle *trans,
 		}
 		if (!ret) {
 			ret = write_one_cache_group(trans, root, path, cache);
+			/*
+			 * One of the free space endio workers might have
+			 * created a new block group while updating a free space
+			 * cache's inode (at inode.c:btrfs_finish_ordered_io())
+			 * and hasn't released its transaction handle yet, in
+			 * which case the new block group is still attached to
+			 * its transaction handle and its creation has not
+			 * finished yet (no block group item in the extent tree
+			 * yet, etc). If this is the case, wait for all free
+			 * space endio workers to finish and retry. This is a
+			 * a very rare case so no need for a more efficient and
+			 * complex approach.
+			 */
+			if (ret == -ENOENT) {
+				wait_event(cur_trans->writer_wait,
+				   atomic_read(&cur_trans->num_writers) == 1);
+				ret = write_one_cache_group(trans, root, path,
+							    cache);
+			}
 			if (ret)
 				btrfs_abort_transaction(trans, root, ret);
 		}
@@ -3743,7 +3775,9 @@ int btrfs_write_dirty_block_groups(struct btrfs_trans_handle *trans,
 		/* if its not on the io list, we need to put the block group */
 		if (should_put)
 			btrfs_put_block_group(cache);
+		spin_lock(&cur_trans->dirty_bgs_lock);
 	}
+	spin_unlock(&cur_trans->dirty_bgs_lock);
 
 	while (!list_empty(io)) {
 		cache = list_first_entry(io, struct btrfs_block_group_cache,
@@ -6445,7 +6479,7 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 	if (!path)
 		return -ENOMEM;
 
-	path->reada = 1;
+	path->reada = READA_FORWARD;
 	path->leave_spinning = 1;
 
 	is_data = owner_objectid >= BTRFS_FIRST_FREE_OBJECTID;
@@ -7841,7 +7875,7 @@ btrfs_init_new_buffer(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 	clear_bit(EXTENT_BUFFER_STALE, &buf->bflags);
 
 	btrfs_set_lock_blocking(buf);
-	btrfs_set_buffer_uptodate(buf);
+	set_extent_buffer_uptodate(buf);
 
 	if (root->root_key.objectid == BTRFS_TREE_LOG_OBJECTID) {
 		buf->log_index = root->log_transid % 2;
@@ -7987,12 +8021,9 @@ struct extent_buffer *btrfs_alloc_tree_block(struct btrfs_trans_handle *trans,
 		else
 			memset(&extent_op->key, 0, sizeof(extent_op->key));
 		extent_op->flags_to_set = flags;
-		if (skinny_metadata)
-			extent_op->update_key = 0;
-		else
-			extent_op->update_key = 1;
-		extent_op->update_flags = 1;
-		extent_op->is_data = 0;
+		extent_op->update_key = skinny_metadata ? false : true;
+		extent_op->update_flags = true;
+		extent_op->is_data = false;
 		extent_op->level = level;
 
 		ret = btrfs_add_delayed_tree_ref(root->fs_info, trans,
@@ -9458,7 +9489,7 @@ int btrfs_read_block_groups(struct btrfs_root *root)
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
-	path->reada = 1;
+	path->reada = READA_FORWARD;
 
 	cache_gen = btrfs_super_cache_generation(root->fs_info->super_copy);
 	if (btrfs_test_opt(root, SPACE_CACHE) &&
@@ -10092,7 +10123,7 @@ btrfs_start_trans_remove_block_group(struct btrfs_fs_info *fs_info,
 	 * more device items and remove one chunk item), but this is done at
 	 * btrfs_remove_chunk() through a call to check_system_chunk().
 	 */
-	map = (struct map_lookup *)em->bdev;
+	map = em->map_lookup;
 	num_items = 3 + map->num_stripes;
 	free_extent_map(em);
 
@@ -10279,7 +10310,7 @@ int btrfs_init_space_info(struct btrfs_fs_info *fs_info)
 
 	disk_super = fs_info->super_copy;
 	if (!btrfs_super_root(disk_super))
-		return 1;
+		return -EINVAL;
 
 	features = btrfs_super_incompat_flags(disk_super);
 	if (features & BTRFS_FEATURE_INCOMPAT_MIXED_GROUPS)
