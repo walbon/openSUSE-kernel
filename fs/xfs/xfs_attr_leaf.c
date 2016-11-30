@@ -627,6 +627,10 @@ xfs_attr_shortform_list(xfs_attr_list_context_t *context)
 					   (int)sfe->namelen,
 					   (int)sfe->valuelen,
 					   &sfe->nameval[sfe->namelen]);
+			if (error) {
+				kmem_free(sbuf);
+				return error;
+			}
 
 			/*
 			 * Either search callback finished early or
@@ -2404,14 +2408,13 @@ xfs_attr_leaf_list_int(xfs_dabuf_t *bp, xfs_attr_list_context_t *context)
 				args.rmtblkno = be32_to_cpu(name_rmt->valueblk);
 				args.rmtblkcnt = XFS_B_TO_FSB(args.dp->i_mount, valuelen);
 				retval = xfs_attr_rmtval_get(&args);
-				if (retval)
-					return retval;
-				retval = context->put_listent(context,
-						entry->flags,
-						name_rmt->name,
-						(int)name_rmt->namelen,
-						valuelen,
-						args.value);
+				if (!retval)
+					retval = context->put_listent(context,
+							entry->flags,
+							name_rmt->name,
+							(int)name_rmt->namelen,
+							valuelen,
+							args.value);
 				kmem_free(args.value);
 			} else {
 				retval = context->put_listent(context,
