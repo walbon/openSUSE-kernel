@@ -3432,6 +3432,7 @@ static const struct x86_cpu_id sbridge_cpuids[] = {
 	ICPU(0x4f, pci_dev_descr_broadwell_table),	/* BROADWELL */
 	ICPU(0x56, pci_dev_descr_broadwell_table),	/* BROADWELL-DE */
 	ICPU(0x57, pci_dev_descr_knl_table),		/* KNIGHTS_LANDING */
+	ICPU(0x85, pci_dev_descr_knl_table),		/* KNIGHTS_MILL */
 	{ }
 };
 MODULE_DEVICE_TABLE(x86cpu, sbridge_cpuids);
