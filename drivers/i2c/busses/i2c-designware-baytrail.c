@@ -19,13 +19,15 @@
 #include <linux/interrupt.h>
 
 #include <asm/iosf_mbi.h>
+#include <asm/cpu_device_id.h>
 
 #include "i2c-designware-core.h"
 
 #define SEMAPHORE_TIMEOUT	100
-#define PUNIT_SEMAPHORE		0x7
 #define PUNIT_SEMAPHORE_BIT	BIT(0)
 #define PUNIT_SEMAPHORE_ACQUIRE	BIT(1)
+
+static int punit_semaphore = 0x07;
 
 static unsigned long acquired;
 
@@ -34,7 +36,7 @@ static int get_sem(struct device *dev, u32 *sem)
 	u32 data;
 	int ret;
 
-	ret = iosf_mbi_read(BT_MBI_UNIT_PMC, BT_MBI_BUNIT_READ, PUNIT_SEMAPHORE,
+	ret = iosf_mbi_read(BT_MBI_UNIT_PMC, BT_MBI_BUNIT_READ, punit_semaphore,
 				&data);
 	if (ret) {
 		dev_err(dev, "iosf failed to read punit semaphore\n");
@@ -51,14 +53,14 @@ static void reset_semaphore(struct device *dev)
 	u32 data;
 
 	if (iosf_mbi_read(BT_MBI_UNIT_PMC, BT_MBI_BUNIT_READ,
-				PUNIT_SEMAPHORE, &data)) {
+				punit_semaphore, &data)) {
 		dev_err(dev, "iosf failed to reset punit semaphore during read\n");
 		return;
 	}
 
 	data &= ~PUNIT_SEMAPHORE_BIT;
 	if (iosf_mbi_write(BT_MBI_UNIT_PMC, BT_MBI_BUNIT_WRITE,
-				PUNIT_SEMAPHORE, data))
+				punit_semaphore, data))
 		dev_err(dev, "iosf failed to reset punit semaphore during write\n");
 }
 
@@ -78,7 +80,7 @@ static int baytrail_i2c_acquire(struct dw_i2c_dev *dev)
 
 	/* host driver writes to side band semaphore register */
 	ret = iosf_mbi_write(BT_MBI_UNIT_PMC, BT_MBI_BUNIT_WRITE,
-				PUNIT_SEMAPHORE, PUNIT_SEMAPHORE_ACQUIRE);
+				punit_semaphore, PUNIT_SEMAPHORE_ACQUIRE);
 	if (ret) {
 		dev_err(dev->dev, "iosf punit semaphore request failed\n");
 		return ret;
@@ -103,7 +105,7 @@ static int baytrail_i2c_acquire(struct dw_i2c_dev *dev)
 	reset_semaphore(dev->dev);
 
 	ret = iosf_mbi_read(BT_MBI_UNIT_PMC, BT_MBI_BUNIT_READ,
-				PUNIT_SEMAPHORE, &sem);
+				punit_semaphore, &sem);
 	if (ret)
 		dev_err(dev->dev, "iosf failed to read punit semaphore\n");
 	else
@@ -125,6 +127,16 @@ static void baytrail_i2c_release(struct dw_i2c_dev *dev)
 	reset_semaphore(dev->dev);
 	dev_dbg(dev->dev, "punit semaphore held for %ums\n",
 		jiffies_to_msecs(jiffies - acquired));
+}
+
+static bool is_cherrytrail(void)
+{
+	static const struct x86_cpu_id cpu_ids[] = {
+		{ X86_VENDOR_INTEL, 6, 76 },
+		{}
+	};
+
+	return x86_match_cpu(cpu_ids);
 }
 
 int i2c_dw_eval_lock_support(struct dw_i2c_dev *dev)
@@ -149,6 +161,10 @@ int i2c_dw_eval_lock_support(struct dw_i2c_dev *dev)
 		dev->acquire_lock = baytrail_i2c_acquire;
 		dev->release_lock = baytrail_i2c_release;
 		dev->pm_runtime_disabled = true;
+		if (is_cherrytrail()) {
+			dev_info(dev->dev, "Using semaphore reg 0x10e for Cherry Trail\n");
+			punit_semaphore = 0x10e;
+		}
 	}
 
 	if (!iosf_mbi_available())
