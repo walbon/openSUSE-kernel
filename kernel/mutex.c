@@ -503,6 +503,8 @@ slowpath:
 		preempt_disable();
 		spin_lock_mutex(&lock->wait_lock, flags);
 	}
+	__set_task_state(task, TASK_RUNNING);
+
 	mutex_remove_waiter(lock, &waiter, current_thread_info());
 	/* set it to 0 if there are no waiters left: */
 	if (likely(MUTEX_LIST_EMPTY(&lock->wait_list)))
