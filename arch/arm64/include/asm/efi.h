@@ -4,6 +4,7 @@
 #include <asm/boot.h>
 #include <asm/io.h>
 #include <asm/neon.h>
+#include <asm/ptrace.h>
 
 #ifdef CONFIG_EFI
 extern void efi_init_fdt(void *fdt);
@@ -11,31 +12,26 @@ extern void efi_init_fdt(void *fdt);
 #define efi_init_fdt(x)
 #endif
 
-#define efi_call_virt(f, ...)						\
+#define arch_efi_call_virt_setup()					\
 ({									\
-	efi_##f##_t *__f;						\
-	efi_status_t __s;						\
-									\
 	kernel_neon_begin();						\
 	efi_virtmap_load();						\
-	__f = efi.systab->runtime->f;					\
-	__s = __f(__VA_ARGS__);						\
-	efi_virtmap_unload();						\
-	kernel_neon_end();						\
-	__s;								\
 })
 
-#define __efi_call_virt(f, ...)						\
+#define arch_efi_call_virt(f, args...)					\
 ({									\
 	efi_##f##_t *__f;						\
-									\
-	kernel_neon_begin();						\
-	efi_virtmap_load();						\
 	__f = efi.systab->runtime->f;					\
-	__f(__VA_ARGS__);						\
+	__f(args);							\
+})
+
+#define arch_efi_call_virt_teardown()					\
+({									\
 	efi_virtmap_unload();						\
 	kernel_neon_end();						\
 })
+
+#define ARCH_EFI_IRQ_FLAGS_MASK (PSR_D_BIT | PSR_A_BIT | PSR_I_BIT | PSR_F_BIT)
 
 /* arch specific definitions used by the stub code */
 
