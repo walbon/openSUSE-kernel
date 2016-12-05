@@ -93,6 +93,9 @@ enum vm_event_item { PGPGIN, PGPGOUT, PSWPIN, PSWPOUT,
 		VMACACHE_FIND_HITS,
 		VMACACHE_FULL_FLUSHES,
 #endif
+#ifndef __GENKSYMS__
+		PGLAZYFREED,
+#endif
 		NR_VM_EVENT_ITEMS
 };
 

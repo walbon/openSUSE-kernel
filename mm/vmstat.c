@@ -846,6 +846,9 @@ const char * const vmstat_text[] = {
 	"vmacache_full_flushes",
 #endif
 #endif /* CONFIG_VM_EVENTS_COUNTERS */
+#ifndef __GENKSYMS__
+	"pglazyfreed",
+#endif
 };
 #endif /* CONFIG_PROC_FS || CONFIG_SYSFS || CONFIG_NUMA */
 
