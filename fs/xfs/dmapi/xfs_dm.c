@@ -2437,7 +2437,6 @@ xfs_dm_set_eventlist(
 	return(-error); /* Return negative error to DMAPI */
 }
 
-
 /*
  *  This turned out not XFS-specific, but leave it here with get_fileattr.
  */
