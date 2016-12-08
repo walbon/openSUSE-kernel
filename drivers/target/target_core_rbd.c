@@ -806,9 +806,12 @@ tcm_rbd_gen_it_nexus(struct se_session *se_sess,
 {
 	struct se_portal_group *se_tpg;
 	const struct target_core_fabric_ops *tfo;
+	u32 tpg_tag = 0;
+	char *tpg_wwn = "";
 	int rc;
 
-	if (!se_sess || !se_sess->se_node_acl || !se_sess->se_tpg) {
+	if (!se_sess || !se_sess->se_node_acl || !se_sess->se_tpg
+					|| !se_sess->se_tpg->se_tpg_tfo) {
 		pr_warn("invalid session for IT nexus generation\n");
 		return -EINVAL;
 	}
@@ -816,15 +819,28 @@ tcm_rbd_gen_it_nexus(struct se_session *se_sess,
 	se_tpg = se_sess->se_tpg;
 	tfo = se_tpg->se_tpg_tfo;
 
+	/*
+	 * nexus generation may be coming from an xcopy, in which case tfo
+	 * refers to xcopy_pt_tfo (tpg_get_wwn and tpg_get_tag are NULL).
+	 */
+	if (tfo->tpg_get_tag) {
+		tpg_tag = tfo->tpg_get_tag(se_tpg);
+	}
+	if (tfo->tpg_get_wwn) {
+		tpg_wwn = tfo->tpg_get_wwn(se_tpg);
+	}
+
 	rc = snprintf(nexus_buf, buflen, "%s,i,0x%llx,%s,t,0x%x",
 		      se_sess->se_node_acl->initiatorname,
 		      se_sess->sess_bin_isid,
-		      tfo->tpg_get_wwn(se_tpg),
-		      (u32)tfo->tpg_get_tag(se_tpg));
+		      tpg_wwn,
+		      tpg_tag);
 	if ((rc < 0) || (rc >= buflen)) {
 		pr_err("error formatting reserve cookie\n");
 		return -EINVAL;
 	}
+
+	pr_debug("generated nexus: %s\n", nexus_buf);
 
 	return 0;
 }
