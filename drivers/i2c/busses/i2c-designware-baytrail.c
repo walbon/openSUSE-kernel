@@ -29,7 +29,7 @@
 
 static unsigned long acquired;
 
-static int get_sem(struct device *dev, u32 *sem)
+static int get_sem(struct dw_i2c_dev *dev, u32 *sem)
 {
 	u32 data;
 	int ret;
@@ -37,7 +37,7 @@ static int get_sem(struct device *dev, u32 *sem)
 	ret = iosf_mbi_read(BT_MBI_UNIT_PMC, BT_MBI_BUNIT_READ, PUNIT_SEMAPHORE,
 				&data);
 	if (ret) {
-		dev_err(dev, "iosf failed to read punit semaphore\n");
+		dev_err(dev->dev, "iosf failed to read punit semaphore\n");
 		return ret;
 	}
 
@@ -46,20 +46,20 @@ static int get_sem(struct device *dev, u32 *sem)
 	return 0;
 }
 
-static void reset_semaphore(struct device *dev)
+static void reset_semaphore(struct dw_i2c_dev *dev)
 {
 	u32 data;
 
 	if (iosf_mbi_read(BT_MBI_UNIT_PMC, BT_MBI_BUNIT_READ,
 				PUNIT_SEMAPHORE, &data)) {
-		dev_err(dev, "iosf failed to reset punit semaphore during read\n");
+		dev_err(dev->dev, "iosf failed to reset punit semaphore during read\n");
 		return;
 	}
 
 	data &= ~PUNIT_SEMAPHORE_BIT;
 	if (iosf_mbi_write(BT_MBI_UNIT_PMC, BT_MBI_BUNIT_WRITE,
 				PUNIT_SEMAPHORE, data))
-		dev_err(dev, "iosf failed to reset punit semaphore during write\n");
+		dev_err(dev->dev, "iosf failed to reset punit semaphore during write\n");
 }
 
 static int baytrail_i2c_acquire(struct dw_i2c_dev *dev)
@@ -88,7 +88,7 @@ static int baytrail_i2c_acquire(struct dw_i2c_dev *dev)
 	start = jiffies;
 	end = start + msecs_to_jiffies(SEMAPHORE_TIMEOUT);
 	do {
-		ret = get_sem(dev->dev, &sem);
+		ret = get_sem(dev, &sem);
 		if (!ret && sem) {
 			acquired = jiffies;
 			dev_dbg(dev->dev, "punit semaphore acquired after %ums\n",
@@ -100,7 +100,7 @@ static int baytrail_i2c_acquire(struct dw_i2c_dev *dev)
 	} while (time_before(jiffies, end));
 
 	dev_err(dev->dev, "punit semaphore timed out, resetting\n");
-	reset_semaphore(dev->dev);
+	reset_semaphore(dev);
 
 	ret = iosf_mbi_read(BT_MBI_UNIT_PMC, BT_MBI_BUNIT_READ,
 				PUNIT_SEMAPHORE, &sem);
@@ -122,7 +122,7 @@ static void baytrail_i2c_release(struct dw_i2c_dev *dev)
 	if (!dev->acquire_lock)
 		return;
 
-	reset_semaphore(dev->dev);
+	reset_semaphore(dev);
 	dev_dbg(dev->dev, "punit semaphore held for %ums\n",
 		jiffies_to_msecs(jiffies - acquired));
 }
