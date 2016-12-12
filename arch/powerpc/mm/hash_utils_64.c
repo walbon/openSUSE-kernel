@@ -1148,9 +1148,19 @@ void hash_preload(struct mm_struct *mm, unsigned long ea,
 	BUG_ON(REGION_ID(ea) != USER_REGION_ID);
 
 #ifdef CONFIG_PPC_MM_SLICES
+	{
+	int psize = get_slice_psize(mm, ea);
+
 	/* We only prefault standard pages for now */
-	if (unlikely(get_slice_psize(mm, ea) != mm->context.user_psize))
+	if (unlikely(psize != mm->context.user_psize))
 		return;
+
+	/*
+	 * Don't prefault if subpage protection is enabled for the EA.
+	 */
+	if (unlikely((psize == MMU_PAGE_4K) && subpage_protection(mm, ea)))
+		return;
+	}
 #endif
 
 	DBG_LOW("hash_preload(mm=%p, mm->pgdir=%p, ea=%016lx, access=%lx,"
