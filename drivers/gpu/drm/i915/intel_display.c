@@ -4816,7 +4816,7 @@ static void intel_post_plane_update(struct intel_crtc *crtc)
 
 	crtc->wm.cxsr_allowed = true;
 
-	if (pipe_config->wm_changed)
+	if (pipe_config->wm_changed && pipe_config->base.active)
 		intel_update_watermarks(&crtc->base);
 
 	if (atomic->update_fbc)
@@ -13250,6 +13250,9 @@ static int intel_atomic_commit(struct drm_device *dev,
 			dev_priv->display.crtc_disable(crtc);
 			intel_crtc->active = false;
 			intel_disable_shared_dpll(intel_crtc);
+
+			if (!crtc->state->active)
+				intel_update_watermarks(crtc);
 		}
 	}
 
