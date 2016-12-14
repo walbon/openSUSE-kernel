@@ -677,12 +677,12 @@ static bool intel_dsi_get_hw_state(struct intel_encoder *encoder,
 						MIPI_PORT_CTRL(port);
 		dpi_enabled = I915_READ(ctrl_reg) & DPI_ENABLE;
 
-		/* Due to some hardware limitations on BYT, MIPI Port C DPI
-		 * Enable bit does not get set. To check whether DSI Port C
-		 * was enabled in BIOS, check the Pipe B enable bit
+		/*
+		 * Due to some hardware limitations on VLV/CHV, the DPI enable
+		 * bit in port C control register does not get set. As a
+		 * workaround, check pipe B conf instead.
 		 */
-		if (IS_VALLEYVIEW(dev) && !IS_CHERRYVIEW(dev) &&
-		    (port == PORT_C))
+		if ((IS_VALLEYVIEW(dev) || IS_CHERRYVIEW(dev)) && port == PORT_C)
 			dpi_enabled = I915_READ(PIPECONF(PIPE_B)) &
 							PIPECONF_ENABLE;
 

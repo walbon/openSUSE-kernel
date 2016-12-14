@@ -1215,6 +1215,13 @@ static int parse_flow_attr(u32 *match_c, u32 *match_v,
 					     dmac_47_16),
 				ib_spec->eth.val.dst_mac);
 
+		ether_addr_copy(MLX5_ADDR_OF(fte_match_set_lyr_2_4, outer_headers_c,
+					     smac_47_16),
+				ib_spec->eth.mask.src_mac);
+		ether_addr_copy(MLX5_ADDR_OF(fte_match_set_lyr_2_4, outer_headers_v,
+					     smac_47_16),
+				ib_spec->eth.val.src_mac);
+
 		if (ib_spec->eth.mask.vlan_tag) {
 			MLX5_SET(fte_match_set_lyr_2_4, outer_headers_c,
 				 vlan_tag, 1);
@@ -1597,6 +1604,7 @@ static struct mlx5_ib_flow_handler *create_leftovers_rule(struct mlx5_ib_dev *de
 						 &leftovers_specs[LEFTOVERS_UC].flow_attr,
 						 dst);
 		if (IS_ERR(handler_ucast)) {
+			mlx5_del_flow_rule(handler->rule);
 			kfree(handler);
 			handler = handler_ucast;
 		} else {

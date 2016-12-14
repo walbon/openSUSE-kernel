@@ -145,7 +145,7 @@ int tcf_action_copy_stats(struct sk_buff *, struct tc_action *, int);
 	(list_empty(&(_exts)->actions))
 
 #define tc_for_each_action(_a, _exts) \
-	list_for_each_entry(a, &(_exts)->actions, list)
+	list_for_each_entry(_a, &(_exts)->actions, list)
 #else /* CONFIG_NET_CLS_ACT */
 
 #define tc_no_actions(_exts) true
