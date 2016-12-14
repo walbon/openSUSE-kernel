@@ -108,7 +108,6 @@ static int map_gicc_mpidr(struct acpi_subtable_header *entry,
 	return -EINVAL;
 }
 
-#ifdef CONFIG_ARM64
 static phys_cpuid_t map_madt_entry(struct acpi_table_madt *madt,
 				   int type, u32 acpi_id)
 {
@@ -163,44 +162,6 @@ phys_cpuid_t __init acpi_map_madt_entry(u32 acpi_id)
 
 	return rv;
 }
-#else
-static phys_cpuid_t map_madt_entry(int type, u32 acpi_id)
-{
-	unsigned long madt_end, entry;
-	phys_cpuid_t phys_id = PHYS_CPUID_INVALID;	/* CPU hardware ID */
-	struct acpi_table_madt *madt;
-
-	madt = get_madt_table();
-	if (!madt)
-		return phys_id;
-
-	entry = (unsigned long)madt;
-	madt_end = entry + madt->header.length;
-
-	/* Parse all entries looking for a match. */
-
-	entry += sizeof(struct acpi_table_madt);
-	while (entry + sizeof(struct acpi_subtable_header) < madt_end) {
-		struct acpi_subtable_header *header =
-			(struct acpi_subtable_header *)entry;
-		if (header->type == ACPI_MADT_TYPE_LOCAL_APIC) {
-			if (!map_lapic_id(header, acpi_id, &phys_id))
-				break;
-		} else if (header->type == ACPI_MADT_TYPE_LOCAL_X2APIC) {
-			if (!map_x2apic_id(header, type, acpi_id, &phys_id))
-				break;
-		} else if (header->type == ACPI_MADT_TYPE_LOCAL_SAPIC) {
-			if (!map_lsapic_id(header, type, acpi_id, &phys_id))
-				break;
-		} else if (header->type == ACPI_MADT_TYPE_GENERIC_INTERRUPT) {
-			if (!map_gicc_mpidr(header, type, acpi_id, &phys_id))
-				break;
-		}
-		entry += header->length;
-	}
-	return phys_id;
-}
-#endif
 
 static phys_cpuid_t map_mat_entry(acpi_handle handle, int type, u32 acpi_id)
 {
@@ -236,7 +197,6 @@ exit:
 	return phys_id;
 }
 
-#ifdef CONFIG_ARM64
 phys_cpuid_t acpi_get_phys_id(acpi_handle handle, int type, u32 acpi_id)
 {
 	phys_cpuid_t phys_id;
@@ -247,18 +207,6 @@ phys_cpuid_t acpi_get_phys_id(acpi_handle handle, int type, u32 acpi_id)
 
 	return phys_id;
 }
-#else
-phys_cpuid_t acpi_get_phys_id(acpi_handle handle, int type, u32 acpi_id)
-{
-	phys_cpuid_t phys_id;
-
-	phys_id = map_mat_entry(handle, type, acpi_id);
-	if (invalid_phys_cpuid(phys_id))
-		phys_id = map_madt_entry(type, acpi_id);
-
-	return phys_id;
-}
-#endif
 
 int acpi_map_cpuid(phys_cpuid_t phys_id, u32 acpi_id)
 {

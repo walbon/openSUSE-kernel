@@ -45,8 +45,6 @@ static bool param_acpi_off __initdata;
 static bool param_acpi_on __initdata;
 static bool param_acpi_force __initdata;
 
-void __init acpi_numa_arch_fixup(void) {}
-
 static int __init parse_acpi(char *arg)
 {
 	if (!arg)
