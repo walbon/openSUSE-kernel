@@ -1043,6 +1043,12 @@ extern int sched_domain_level_max;
 
 struct sched_group;
 
+struct sched_domain_shared {
+	atomic_t	ref;
+	atomic_t	nr_busy_cpus;
+	int		has_idle_cores;
+};
+
 struct sched_domain {
 	/* These fields must be setup */
 	struct sched_domain *parent;	/* top domain must be null terminated */
@@ -1072,6 +1078,8 @@ struct sched_domain {
 	/* idle_balance() stats */
 	u64 max_newidle_lb_cost;
 	unsigned long next_decay_max_lb_cost;
+
+	u64 avg_scan_cost;		/* select_idle_sibling */
 
 #ifdef CONFIG_SCHEDSTATS
 	/* load_balance() stats */
@@ -1111,6 +1119,7 @@ struct sched_domain {
 		void *private;		/* used during construction */
 		struct rcu_head rcu;	/* used during destruction */
 	};
+	struct sched_domain_shared *shared;
 
 	unsigned int span_weight;
 	/*
@@ -1144,6 +1153,7 @@ typedef int (*sched_domain_flags_f)(void);
 
 struct sd_data {
 	struct sched_domain **__percpu sd;
+	struct sched_domain_shared **__percpu sds;
 	struct sched_group **__percpu sg;
 	struct sched_group_capacity **__percpu sgc;
 };
