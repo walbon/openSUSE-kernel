@@ -227,7 +227,7 @@ static inline void adj_guesttime(u64 hosttime, u64 reftime, u8 flags)
 
 	/*
 	 * This check is safe since we are executing in the
-	 * interrupt context and time synch messages are always
+	 * interrupt context and time synch messages arre always
 	 * delivered on the same CPU.
 	 */
 	if (work_pending(&wrk.work))
@@ -383,28 +383,23 @@ static int util_probe(struct hv_device *dev,
 	 * service version numbers we will negotiate.
 	 */
 	switch (vmbus_proto_version) {
-	case VERSION_WS2008:
+	case (VERSION_WS2008):
 		util_fw_version = UTIL_WS2K8_FW_VERSION;
 		sd_srv_version = SD_VERSION_1;
 		ts_srv_version = TS_VERSION_1;
 		hb_srv_version = HB_VERSION_1;
 		break;
-
-	case VERSION_WIN7:
-	case VERSION_WIN8:
-	case VERSION_WIN8_1:
-		util_fw_version = UTIL_FW_VERSION;
-		sd_srv_version = SD_VERSION;
-		ts_srv_version = TS_VERSION_3;
-		hb_srv_version = HB_VERSION;
-		break;
-	case VERSION_WIN10:
-	default:
+	case(VERSION_WIN10):
 		util_fw_version = UTIL_FW_VERSION;
 		sd_srv_version = SD_VERSION;
 		ts_srv_version = TS_VERSION;
 		hb_srv_version = HB_VERSION;
 		break;
+	default:
+		util_fw_version = UTIL_FW_VERSION;
+		sd_srv_version = SD_VERSION;
+		ts_srv_version = TS_VERSION_3;
+		hb_srv_version = HB_VERSION;
 	}
 
 	ret = vmbus_open(dev->channel, 4 * PAGE_SIZE, 4 * PAGE_SIZE, NULL, 0,
