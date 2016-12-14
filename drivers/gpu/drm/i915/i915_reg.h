@@ -6762,6 +6762,7 @@ enum skl_disp_power_wells {
 
 #define GEN7_UCGCTL4				0x940c
 #define  GEN7_L3BANK2X_CLOCK_GATE_DISABLE	(1<<25)
+#define  GEN8_EU_GAUNIT_CLOCK_GATE_DISABLE	(1<<14)
 
 #define GEN6_RCGCTL1				0x9410
 #define GEN6_RCGCTL2				0x9414
