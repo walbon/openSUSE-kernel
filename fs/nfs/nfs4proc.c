@@ -4057,12 +4057,10 @@ int nfs4_proc_setclientid_confirm(struct nfs_client *clp,
 
 	now = jiffies;
 	status = rpc_call_sync(clp->cl_rpcclient, &msg, RPC_TASK_TIMEOUT);
-	if (status == 0) {
-		spin_lock(&clp->cl_lock);
-		clp->cl_lease_time = fsinfo.lease_time * HZ;
-		clp->cl_last_renewal = now;
-		spin_unlock(&clp->cl_lock);
-	}
+	if (status == 0)
+		nfs4_set_lease_period(clp,
+				      fsinfo.lease_time * HZ,
+				      now);
 	return status;
 }
 
