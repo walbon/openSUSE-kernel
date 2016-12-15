@@ -211,8 +211,10 @@ struct rpc_xprt {
 	struct work_struct	task_cleanup;
 	struct timer_list	timer;
 	unsigned long		last_used,
-				idle_timeout,
-				max_reconnect_timeout;
+				idle_timeout;
+#ifndef __GENKSYMS__
+	unsigned long		max_reconnect_timeout;
+#endif
 
 	/*
 	 * Send stuff
