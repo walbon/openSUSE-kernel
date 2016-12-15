@@ -3610,7 +3610,7 @@ static int nfs4_proc_async_renew_flags(struct nfs_client *clp, struct rpc_cred *
 		return -ENOMEM;
 	data->client = clp;
 	data->timestamp = jiffies;
-	return rpc_call_async(clp->cl_rpcclient, &msg, RPC_TASK_SOFT,
+	return rpc_call_async(clp->cl_rpcclient, &msg, RPC_TASK_TIMEOUT,
 			&nfs4_renew_ops, data);
 }
 #ifdef __GENKSYMS__
@@ -3630,7 +3630,7 @@ static int nfs4_proc_renew(struct nfs_client *clp, struct rpc_cred *cred)
 	unsigned long now = jiffies;
 	int status;
 
-	status = rpc_call_sync(clp->cl_rpcclient, &msg, 0);
+	status = rpc_call_sync(clp->cl_rpcclient, &msg, RPC_TASK_TIMEOUT);
 	if (status < 0)
 		return status;
 	do_renew_lease(clp, now);
@@ -5754,7 +5754,7 @@ static struct rpc_task *_nfs41_proc_sequence(struct nfs_client *clp, struct rpc_
 		.rpc_client = clp->cl_rpcclient,
 		.rpc_message = &msg,
 		.callback_ops = seq_ops,
-		.flags = RPC_TASK_ASYNC | RPC_TASK_SOFT,
+		.flags = RPC_TASK_ASYNC | RPC_TASK_TIMEOUT,
 	};
 
 	if (!atomic_inc_not_zero(&clp->cl_count))
