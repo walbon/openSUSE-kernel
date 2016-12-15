@@ -1585,6 +1585,9 @@ enum skl_disp_power_wells {
 
 #define GEN7_TLB_RD_ADDR	0x4700
 
+#define GEN9_GAMT_ECO_REG_RW_IA 0x4ab0
+#define   GAMT_ECO_ENABLE_IN_PLACE_DECOMPRESS	(1<<18)
+
 #if 0
 #define PRB0_TAIL	0x02030
 #define PRB0_HEAD	0x02034
@@ -5938,7 +5941,8 @@ enum skl_disp_power_wells {
 #define  VLV_B0_WA_L3SQCREG1_VALUE		0x00D30000
 
 #define GEN8_L3SQCREG1				0xB100
-#define  BDW_WA_L3SQCREG1_DEFAULT		0x784000
+#define  L3_GENERAL_PRIO_CREDITS(x)		(((x) >> 1) << 19)
+#define  L3_HIGH_PRIO_CREDITS(x)		(((x) >> 1) << 14)
 
 #define GEN7_L3CNTLREG1				0xB01C
 #define  GEN7_WA_FOR_GEN7_L3_CONTROL			0x3C47FF8C
@@ -6761,6 +6765,7 @@ enum skl_disp_power_wells {
 
 #define GEN7_UCGCTL4				0x940c
 #define  GEN7_L3BANK2X_CLOCK_GATE_DISABLE	(1<<25)
+#define  GEN8_EU_GAUNIT_CLOCK_GATE_DISABLE	(1<<14)
 
 #define GEN6_RCGCTL1				0x9410
 #define GEN6_RCGCTL2				0x9414

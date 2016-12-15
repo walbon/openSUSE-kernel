@@ -1087,6 +1087,14 @@ static int skl_init_workarounds(struct intel_engine_cs *ring)
 			GEN7_HALF_SLICE_CHICKEN1,
 			GEN7_SBE_SS_CACHE_DISPATCH_PORT_SHARING_DISABLE);
 
+	/* WaDisableGafsUnitClkGating:skl */
+	WA_SET_BIT(GEN7_UCGCTL4, GEN8_EU_GAUNIT_CLOCK_GATE_DISABLE);
+
+	/* WaInPlaceDecompressionHang:skl */
+	if (IS_SKL_REVID(dev_priv, SKL_REVID_H0, REVID_FOREVER))
+		WA_SET_BIT(GEN9_GAMT_ECO_REG_RW_IA,
+			   GAMT_ECO_ENABLE_IN_PLACE_DECOMPRESS);
+
 	return skl_tune_iz_hashing(ring);
 }
 
