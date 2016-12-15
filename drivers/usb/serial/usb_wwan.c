@@ -691,12 +691,12 @@ int usb_wwan_suspend(struct usb_serial *serial, pm_message_t message)
 }
 EXPORT_SYMBOL(usb_wwan_suspend);
 
-static void play_delayed(struct usb_serial_port *port)
+static int play_delayed(struct usb_serial_port *port)
 {
 	struct usb_wwan_intf_private *data;
 	struct usb_wwan_port_private *portdata;
 	struct urb *urb;
-	int err;
+	int err = 0;
 
 	portdata = usb_get_serial_port_data(port);
 	data = port->serial->private;
@@ -713,6 +713,8 @@ static void play_delayed(struct usb_serial_port *port)
 			break;
 		}
 	}
+
+	return err;
 }
 
 int usb_wwan_resume(struct usb_serial *serial)
@@ -722,7 +724,8 @@ int usb_wwan_resume(struct usb_serial *serial)
 	struct usb_wwan_intf_private *intfdata = serial->private;
 	struct usb_wwan_port_private *portdata;
 	struct urb *urb;
-	int err = 0;
+	int err;
+	int err_count = 0;
 
 	dbg("%s entered", __func__);
 	/* get the interrupt URBs resubmitted unconditionally */
@@ -737,8 +740,12 @@ int usb_wwan_resume(struct usb_serial *serial)
 		if (err < 0) {
 			err("%s: Error %d for interrupt URB of port%d",
 			    __func__, err, i);
-			goto err_out;
+			err_count++;
 		}
+
+		err = play_delayed(port);
+		if (err)
+			err_count++;
 	}
 
 	spin_lock_irq(&intfdata->susp_lock);
@@ -758,16 +765,17 @@ int usb_wwan_resume(struct usb_serial *serial)
 			if (err < 0) {
 				err("%s: Error %d for bulk URB %d",
 				    __func__, err, i);
-				spin_unlock_irq(&intfdata->susp_lock);
-				goto err_out;
+				err_count++;
 			}
 		}
-		play_delayed(port);
 	}
 	intfdata->suspended = 0;
 	spin_unlock_irq(&intfdata->susp_lock);
-err_out:
-	return err;
+
+	if (err_count)
+		return -EIO;
+
+	return 0;
 }
 EXPORT_SYMBOL(usb_wwan_resume);
 #endif
