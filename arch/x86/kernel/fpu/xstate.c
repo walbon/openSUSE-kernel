@@ -5,6 +5,7 @@
  */
 #include <linux/compat.h>
 #include <linux/cpu.h>
+#include <linux/mman.h>
 #include <linux/pkeys.h>
 
 #include <asm/fpu/api.h>
@@ -856,9 +857,10 @@ out:
 	fpu__current_fpstate_write_end();
 }
 
+#ifdef CONFIG_ARCH_HAS_PKEYS
+
 #define NR_VALID_PKRU_BITS (CONFIG_NR_PROTECTION_KEYS * 2)
 #define PKRU_VALID_MASK (NR_VALID_PKRU_BITS - 1)
-
 /*
  * This will go out and modify the XSAVE buffer so that PKRU is
  * set to a particular state for access to 'pkey'.
@@ -926,3 +928,4 @@ int arch_set_user_pkey_access(struct task_struct *tsk, int pkey,
 
 	return 0;
 }
+#endif /* ! CONFIG_ARCH_HAS_PKEYS */
