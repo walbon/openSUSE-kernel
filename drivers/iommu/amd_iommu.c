@@ -184,6 +184,12 @@ static inline u16 get_pci_device_id(struct device *dev)
 	return PCI_DEVID(pdev->bus->number, pdev->devfn);
 }
 
+static struct dma_ops_domain* to_dma_ops_domain(struct protection_domain *domain)
+{
+	BUG_ON(domain->flags != PD_DMA_OPS_MASK);
+	return container_of(domain, struct dma_ops_domain, domain);
+}
+
 static struct iommu_dev_data *alloc_dev_data(u16 devid)
 {
 	struct iommu_dev_data *dev_data;
@@ -1672,7 +1678,6 @@ static struct dma_ops_domain *dma_ops_domain_alloc(void)
 	dma_dom->domain.mode = PAGE_MODE_2_LEVEL;
 	dma_dom->domain.pt_root = (void *)get_zeroed_page(GFP_KERNEL);
 	dma_dom->domain.flags = PD_DMA_OPS_MASK;
-	dma_dom->domain.priv = dma_dom;
 	if (!dma_dom->domain.pt_root)
 		goto free_dma_dom;
 
@@ -2376,6 +2381,7 @@ static dma_addr_t map_page(struct device *dev, struct page *page,
 {
 	phys_addr_t paddr = page_to_phys(page) + offset;
 	struct protection_domain *domain;
+	struct dma_ops_domain *dma_dom;
 	u64 dma_mask;
 
 	domain = get_domain(dev);
@@ -2385,8 +2391,9 @@ static dma_addr_t map_page(struct device *dev, struct page *page,
 		return DMA_ERROR_CODE;
 
 	dma_mask = *dev->dma_mask;
+	dma_dom = to_dma_ops_domain(domain);
 
-	return __map_single(dev, domain->priv, paddr, size, dir, dma_mask);
+	return __map_single(dev, dma_dom, paddr, size, dir, dma_mask);
 }
 
 /*
@@ -2396,12 +2403,15 @@ static void unmap_page(struct device *dev, dma_addr_t dma_addr, size_t size,
 		       enum dma_data_direction dir, struct dma_attrs *attrs)
 {
 	struct protection_domain *domain;
+	struct dma_ops_domain *dma_dom;
 
 	domain = get_domain(dev);
 	if (IS_ERR(domain))
 		return;
 
-	__unmap_single(domain->priv, dma_addr, size, dir);
+	dma_dom = to_dma_ops_domain(domain);
+
+	__unmap_single(dma_dom, dma_addr, size, dir);
 }
 
 static int sg_num_pages(struct device *dev,
@@ -2449,7 +2459,7 @@ static int map_sg(struct device *dev, struct scatterlist *sglist,
 	if (IS_ERR(domain))
 		return 0;
 
-	dma_dom  = domain->priv;
+	dma_dom  = to_dma_ops_domain(domain);
 	dma_mask = *dev->dma_mask;
 
 	npages = sg_num_pages(dev, sglist, nelems);
@@ -2520,6 +2530,7 @@ static void unmap_sg(struct device *dev, struct scatterlist *sglist,
 		     struct dma_attrs *attrs)
 {
 	struct protection_domain *domain;
+	struct dma_ops_domain *dma_dom;
 	unsigned long startaddr;
 	int npages = 2;
 
@@ -2528,9 +2539,10 @@ static void unmap_sg(struct device *dev, struct scatterlist *sglist,
 		return;
 
 	startaddr = sg_dma_address(sglist) & PAGE_MASK;
+	dma_dom   = to_dma_ops_domain(domain);
 	npages    = sg_num_pages(dev, sglist, nelems);
 
-	__unmap_single(domain->priv, startaddr, npages << PAGE_SHIFT, dir);
+	__unmap_single(dma_dom, startaddr, npages << PAGE_SHIFT, dir);
 }
 
 /*
@@ -2542,6 +2554,7 @@ static void *alloc_coherent(struct device *dev, size_t size,
 {
 	u64 dma_mask = dev->coherent_dma_mask;
 	struct protection_domain *domain;
+	struct dma_ops_domain *dma_dom;
 	struct page *page;
 
 	domain = get_domain(dev);
@@ -2552,6 +2565,7 @@ static void *alloc_coherent(struct device *dev, size_t size,
 	} else if (IS_ERR(domain))
 		return NULL;
 
+	dma_dom   = to_dma_ops_domain(domain);
 	size	  = PAGE_ALIGN(size);
 	dma_mask  = dev->coherent_dma_mask;
 	flag     &= ~(__GFP_DMA | __GFP_HIGHMEM | __GFP_DMA32);
@@ -2571,7 +2585,7 @@ static void *alloc_coherent(struct device *dev, size_t size,
 	if (!dma_mask)
 		dma_mask = *dev->dma_mask;
 
-	*dma_addr = __map_single(dev, domain->priv, page_to_phys(page),
+	*dma_addr = __map_single(dev, dma_dom, page_to_phys(page),
 				 size, DMA_BIDIRECTIONAL, dma_mask);
 
 	if (*dma_addr == DMA_ERROR_CODE)
@@ -2595,6 +2609,7 @@ static void free_coherent(struct device *dev, size_t size,
 			  struct dma_attrs *attrs)
 {
 	struct protection_domain *domain;
+	struct dma_ops_domain *dma_dom;
 	struct page *page;
 
 	page = virt_to_page(virt_addr);
@@ -2604,7 +2619,9 @@ static void free_coherent(struct device *dev, size_t size,
 	if (IS_ERR(domain))
 		goto free_mem;
 
-	__unmap_single(domain->priv, dma_addr, size, DMA_BIDIRECTIONAL);
+	dma_dom = to_dma_ops_domain(domain);
+
+	__unmap_single(dma_dom, dma_addr, size, DMA_BIDIRECTIONAL);
 
 free_mem:
 	if (!dma_release_from_contiguous(dev, page, size >> PAGE_SHIFT))
@@ -2897,7 +2914,7 @@ static void amd_iommu_domain_free(struct iommu_domain *dom)
 		queue_flush_all();
 
 		/* Now release the domain */
-		dma_dom = domain->priv;
+		dma_dom = to_dma_ops_domain(domain);
 		dma_ops_domain_free(dma_dom);
 		break;
 	default:
@@ -3085,8 +3102,7 @@ static void amd_iommu_apply_dm_region(struct device *dev,
 				      struct iommu_domain *domain,
 				      struct iommu_dm_region *region)
 {
-	struct protection_domain *pdomain = to_pdomain(domain);
-	struct dma_ops_domain *dma_dom = pdomain->priv;
+	struct dma_ops_domain *dma_dom = to_dma_ops_domain(to_pdomain(domain));
 	unsigned long start, end;
 
 	start = IOVA_PFN(region->start);
