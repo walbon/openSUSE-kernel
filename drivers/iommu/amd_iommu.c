@@ -4067,11 +4067,9 @@ static struct irq_domain *get_irq_domain(struct irq_alloc_info *info)
 		if (devid < 0)
 			return NULL;
 
-		if (devid >= 0) {
-			iommu = amd_iommu_rlookup_table[devid];
-			if (iommu)
-				return iommu->msi_domain;
-		}
+		iommu = amd_iommu_rlookup_table[devid];
+		if (iommu)
+			return iommu->msi_domain;
 		break;
 	default:
 		break;
