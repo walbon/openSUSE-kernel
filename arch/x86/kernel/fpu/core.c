@@ -11,6 +11,7 @@
 #include <asm/traps.h>
 
 #include <linux/hardirq.h>
+#include <linux/pkeys.h>
 
 /*
  * Represents the initial FPU state. It's mostly (but not completely) zeroes,
@@ -474,6 +475,9 @@ static inline void copy_init_fpstate_to_fpregs(void)
 		copy_kernel_to_xregs(&init_fpstate.xsave, -1);
 	else
 		copy_kernel_to_fxregs(&init_fpstate.fxsave);
+
+	if (boot_cpu_has(X86_FEATURE_OSPKE))
+		copy_init_pkru_to_fpregs();
 }
 
 /*
