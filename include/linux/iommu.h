@@ -146,6 +146,7 @@ struct iommu_dm_region {
  * @remove_device: remove device from iommu grouping
  * @domain_get_attr: Query domain attributes
  * @domain_set_attr: Change domain attributes
+ * @apply_dm_region: Temporary helper call-back for iova reserved ranges
  * @of_xlate: add OF master IDs to iommu grouping
  * @pgsize_bitmap: bitmap of supported page sizes
  * @priv: per-instance data private to the iommu driver
@@ -177,6 +178,8 @@ struct iommu_ops {
 	/* Request/Free a list of direct mapping requirements for a device */
 	void (*get_dm_regions)(struct device *dev, struct list_head *list);
 	void (*put_dm_regions)(struct device *dev, struct list_head *list);
+	void (*apply_dm_region)(struct device *dev, struct iommu_domain *domain,
+				struct iommu_dm_region *region);
 
 	/* Window handling functions */
 	int (*domain_window_enable)(struct iommu_domain *domain, u32 wnd_nr,

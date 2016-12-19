@@ -421,47 +421,6 @@ struct protection_domain {
 	bool updated;		/* complete domain flush required */
 	unsigned dev_cnt;	/* devices assigned to this domain */
 	unsigned dev_iommu[MAX_IOMMUS]; /* per-IOMMU reference count */
-	void *priv;             /* private data */
-};
-
-/*
- * For dynamic growth the aperture size is split into ranges of 128MB of
- * DMA address space each. This struct represents one such range.
- */
-struct aperture_range {
-
-	/* address allocation bitmap */
-	unsigned long *bitmap;
-
-	/*
-	 * Array of PTE pages for the aperture. In this array we save all the
-	 * leaf pages of the domain page table used for the aperture. This way
-	 * we don't need to walk the page table to find a specific PTE. We can
-	 * just calculate its address in constant time.
-	 */
-	u64 *pte_pages[64];
-
-	unsigned long offset;
-};
-
-/*
- * Data container for a dma_ops specific protection domain
- */
-struct dma_ops_domain {
-	/* generic protection domain information */
-	struct protection_domain domain;
-
-	/* size of the aperture for the mappings */
-	unsigned long aperture_size;
-
-	/* address we start to search for free addresses */
-	unsigned long next_address;
-
-	/* address space relevant data */
-	struct aperture_range *aperture[APERTURE_MAX_RANGES];
-
-	/* This will be set to true when TLB needs to be flushed */
-	bool need_flush;
 };
 
 /*
@@ -721,31 +680,5 @@ static inline int get_hpet_devid(int id)
 
 	return -EINVAL;
 }
-
-#ifdef CONFIG_AMD_IOMMU_STATS
-
-struct __iommu_counter {
-	char *name;
-	struct dentry *dent;
-	u64 value;
-};
-
-#define DECLARE_STATS_COUNTER(nm) \
-	static struct __iommu_counter nm = {	\
-		.name = #nm,			\
-	}
-
-#define INC_STATS_COUNTER(name)		name.value += 1
-#define ADD_STATS_COUNTER(name, x)	name.value += (x)
-#define SUB_STATS_COUNTER(name, x)	name.value -= (x)
-
-#else /* CONFIG_AMD_IOMMU_STATS */
-
-#define DECLARE_STATS_COUNTER(name)
-#define INC_STATS_COUNTER(name)
-#define ADD_STATS_COUNTER(name, x)
-#define SUB_STATS_COUNTER(name, x)
-
-#endif /* CONFIG_AMD_IOMMU_STATS */
 
 #endif /* _ASM_X86_AMD_IOMMU_TYPES_H */
