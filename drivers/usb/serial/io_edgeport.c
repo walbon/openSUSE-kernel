@@ -3165,16 +3165,9 @@ static void edge_disconnect(struct usb_serial *serial)
 
 	dbg("%s", __func__);
 
-	/* stop reads and writes on all ports */
-	/* free up our endpoint stuff */
 	if (edge_serial->is_epic) {
 		usb_kill_urb(edge_serial->interrupt_read_urb);
-		usb_free_urb(edge_serial->interrupt_read_urb);
-		kfree(edge_serial->interrupt_in_buffer);
-
 		usb_kill_urb(edge_serial->read_urb);
-		usb_free_urb(edge_serial->read_urb);
-		kfree(edge_serial->bulk_in_buffer);
 	}
 }
 
@@ -3192,6 +3185,16 @@ static void edge_release(struct usb_serial *serial)
 
 	for (i = 0; i < serial->num_ports; ++i)
 		kfree(usb_get_serial_port_data(serial->port[i]));
+
+	if (edge_serial->is_epic) {
+		usb_kill_urb(edge_serial->interrupt_read_urb);
+		usb_free_urb(edge_serial->interrupt_read_urb);
+		kfree(edge_serial->interrupt_in_buffer);
+
+		usb_kill_urb(edge_serial->read_urb);
+		usb_free_urb(edge_serial->read_urb);
+		kfree(edge_serial->bulk_in_buffer);
+	}
 
 	kfree(edge_serial);
 }
