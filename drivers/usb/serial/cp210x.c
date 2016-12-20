@@ -48,8 +48,8 @@ static int cp210x_tiocmset(struct tty_struct *, unsigned int, unsigned int);
 static int cp210x_tiocmset_port(struct usb_serial_port *port,
 		unsigned int, unsigned int);
 static void cp210x_break_ctl(struct tty_struct *, int);
-static int cp210x_startup(struct usb_serial *);
-static void cp210x_release(struct usb_serial *);
+static int cp210x_port_probe(struct usb_serial_port *);
+static int cp210x_port_remove(struct usb_serial_port *);
 static void cp210x_dtr_rts(struct usb_serial_port *p, int on);
 
 static int debug;
@@ -217,8 +217,8 @@ static struct usb_serial_driver cp210x_device = {
 	.set_termios		= cp210x_set_termios,
 	.tiocmget 		= cp210x_tiocmget,
 	.tiocmset		= cp210x_tiocmset,
-	.attach			= cp210x_startup,
-	.release		= cp210x_release,
+	.port_probe		= cp210x_port_probe,
+	.port_remove		= cp210x_port_remove,
 	.dtr_rts		= cp210x_dtr_rts
 };
 
@@ -880,39 +880,32 @@ static void cp210x_break_ctl (struct tty_struct *tty, int break_state)
 	cp210x_set_config(port, CP210X_SET_BREAK, &state, 2);
 }
 
-static int cp210x_startup(struct usb_serial *serial)
+static int cp210x_port_probe(struct usb_serial_port *port)
 {
+	struct usb_serial *serial = port->serial;
+	struct usb_host_interface *cur_altsetting;
 	struct cp210x_port_private *port_priv;
-	int i;
 
-	/* cp210x buffers behave strangely unless device is reset */
-	usb_reset_device(serial->dev);
+	port_priv = kzalloc(sizeof(*port_priv), GFP_KERNEL);
+	if (!port_priv)
+		return -ENOMEM;
 
-	for (i = 0; i < serial->num_ports; i++) {
-		port_priv = kzalloc(sizeof(*port_priv), GFP_KERNEL);
-		if (!port_priv)
-			return -ENOMEM;
+	cur_altsetting = serial->interface->cur_altsetting;
+	port_priv->bInterfaceNumber = cur_altsetting->desc.bInterfaceNumber;
 
-		memset(port_priv, 0x00, sizeof(*port_priv));
-		port_priv->bInterfaceNumber =
-		    serial->interface->cur_altsetting->desc.bInterfaceNumber;
-
-		usb_set_serial_port_data(serial->port[i], port_priv);
-	}
+	usb_set_serial_port_data(port, port_priv);
 
 	return 0;
 }
 
-static void cp210x_release(struct usb_serial *serial)
+static int cp210x_port_remove(struct usb_serial_port *port)
 {
 	struct cp210x_port_private *port_priv;
-	int i;
 
-	for (i = 0; i < serial->num_ports; i++) {
-		port_priv = usb_get_serial_port_data(serial->port[i]);
-		kfree(port_priv);
-		usb_set_serial_port_data(serial->port[i], NULL);
-	}
+	port_priv = usb_get_serial_port_data(port);
+	kfree(port_priv);
+
+	return 0;
 }
 
 static int __init cp210x_init(void)
