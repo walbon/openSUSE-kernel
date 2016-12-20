@@ -399,14 +399,88 @@ static int cp210x_set_config(struct usb_serial_port *port, u8 request,
 }
 
 /*
- * cp210x_set_config_single
- * Convenience function for calling cp210x_set_config on single data values
- * without requiring an integer pointer
+ * Reads a variable-sized block of CP210X_ registers, identified by req.
+ * Returns data into buf in native USB byte order.
  */
-static inline int cp210x_set_config_single(struct usb_serial_port *port,
-		u8 request, unsigned int data)
+static int cp210x_read_reg_block(struct usb_serial_port *port, u8 req,
+		void *buf, int bufsize)
 {
-	return cp210x_set_config(port, request, &data, 2);
+	struct usb_serial *serial = port->serial;
+	struct cp210x_port_private *port_priv = usb_get_serial_port_data(port);
+	void *dmabuf;
+	int result;
+
+	dmabuf = kmalloc(bufsize, GFP_KERNEL);
+	if (!dmabuf) {
+		/*
+		 * FIXME Some callers don't bother to check for error,
+		 * at least give them consistent junk until they are fixed
+		 */
+		memset(buf, 0, bufsize);
+		return -ENOMEM;
+	}
+
+	result = usb_control_msg(serial->dev, usb_rcvctrlpipe(serial->dev, 0),
+			req, REQTYPE_INTERFACE_TO_HOST, 0,
+			port_priv->bInterfaceNumber, dmabuf, bufsize,
+			USB_CTRL_SET_TIMEOUT);
+	if (result == bufsize) {
+		memcpy(buf, dmabuf, bufsize);
+		result = 0;
+	} else {
+		dev_err(&port->dev, "failed get req 0x%x size %d status: %d\n",
+				req, bufsize, result);
+		if (result >= 0)
+			result = -EPROTO;
+
+		/*
+		 * FIXME Some callers don't bother to check for error,
+		 * at least give them consistent junk until they are fixed
+		 */
+		memset(buf, 0, bufsize);
+	}
+
+	kfree(dmabuf);
+
+	return result;
+}
+
+/*
+ * Reads any 16-bit CP210X_ register identified by req.
+ */
+static int cp210x_read_u16_reg(struct usb_serial_port *port, u8 req, u16 *val)
+{
+	__le16 le16_val;
+	int err;
+
+	err = cp210x_read_reg_block(port, req, &le16_val, sizeof(le16_val));
+	if (err)
+		return err;
+
+	*val = le16_to_cpu(le16_val);
+	return 0;
+}
+
+/*
+ * Writes any 16-bit CP210X_ register (req) whose value is passed
+ * entirely in the wValue field of the USB request.
+ */
+static int cp210x_write_u16_reg(struct usb_serial_port *port, u8 req, u16 val)
+{
+	struct usb_serial *serial = port->serial;
+	struct cp210x_port_private *port_priv = usb_get_serial_port_data(port);
+	int result;
+
+	result = usb_control_msg(serial->dev, usb_sndctrlpipe(serial->dev, 0),
+			req, REQTYPE_HOST_TO_INTERFACE, val,
+			port_priv->bInterfaceNumber, NULL, 0,
+			USB_CTRL_SET_TIMEOUT);
+	if (result < 0) {
+		dev_err(&port->dev, "failed set request 0x%x status: %d\n",
+				req, result);
+	}
+
+	return result;
 }
 
 /*
@@ -418,47 +492,46 @@ static inline int cp210x_set_config_single(struct usb_serial_port *port,
 static int cp210x_detect_swapped_line_ctl(struct usb_serial_port *port)
 {
 	struct cp210x_port_private *port_priv = usb_get_serial_port_data(port);
-	unsigned int line_ctl_save;
-	unsigned int line_ctl_test;
+	u16 line_ctl_save;
+	u16 line_ctl_test;
 	int err;
 
-	err = cp210x_get_config(port, CP210X_GET_LINE_CTL, &line_ctl_save, 2);
+	err = cp210x_read_u16_reg(port, CP210X_GET_LINE_CTL, &line_ctl_save);
 	if (err)
 		return err;
 
-	line_ctl_test = 0x800;
-	err = cp210x_set_config(port, CP210X_SET_LINE_CTL, &line_ctl_test, 2);
+	err = cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, 0x800);
 	if (err)
 		return err;
 
-	err = cp210x_get_config(port, CP210X_GET_LINE_CTL, &line_ctl_test, 2);
+	err = cp210x_read_u16_reg(port, CP210X_GET_LINE_CTL, &line_ctl_test);
 	if (err)
 		return err;
 
 	if (line_ctl_test == 8) {
 		port_priv->has_swapped_line_ctl = true;
-		line_ctl_save = swab16((u16)line_ctl_save);
+		line_ctl_save = swab16(line_ctl_save);
 	}
 
-	return cp210x_set_config(port, CP210X_SET_LINE_CTL, &line_ctl_save, 2);
+	return cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, line_ctl_save);
 }
 
 /*
- * Must always be called instead of cp210x_get_config(CP210X_GET_LINE_CTL)
+ * Must always be called instead of cp210x_read_u16_reg(CP210X_GET_LINE_CTL)
  * to workaround cp2108 bug and get correct value.
  */
-static int cp210x_get_line_ctl(struct usb_serial_port *port, unsigned int *ctl)
+static int cp210x_get_line_ctl(struct usb_serial_port *port, u16 *ctl)
 {
 	struct cp210x_port_private *port_priv = usb_get_serial_port_data(port);
 	int err;
 
-	err = cp210x_get_config(port, CP210X_GET_LINE_CTL, ctl, 2);
+	err = cp210x_read_u16_reg(port, CP210X_GET_LINE_CTL, ctl);
 	if (err)
 		return err;
 
 	/* Workaround swapped bytes in 16-bit value from CP210X_GET_LINE_CTL */
 	if (port_priv->has_swapped_line_ctl)
-		*ctl = swab16((u16)(*ctl));
+		*ctl = swab16(*ctl);
 
 	return 0;
 }
@@ -508,7 +581,7 @@ static int cp210x_open(struct tty_struct *tty, struct usb_serial_port *port)
 {
 	dbg("%s - port %d", __func__, port->number);
 
-	if (cp210x_set_config_single(port, CP210X_IFC_ENABLE, UART_ENABLE)) {
+	if (cp210x_write_u16_reg(port, CP210X_IFC_ENABLE, UART_ENABLE)) {
 		dev_err(&port->dev, "%s - Unable to enable UART\n",
 				__func__);
 		return -EPROTO;
@@ -532,7 +605,7 @@ static void cp210x_close(struct usb_serial_port *port)
 
 	mutex_lock(&port->serial->disc_mutex);
 	if (!port->serial->disconnected)
-		cp210x_set_config_single(port, CP210X_IFC_ENABLE, UART_DISABLE);
+		cp210x_write_u16_reg(port, CP210X_IFC_ENABLE, UART_DISABLE);
 	mutex_unlock(&port->serial->disc_mutex);
 }
 
@@ -569,7 +642,7 @@ static void cp210x_get_termios_port(struct usb_serial_port *port,
 {
 	unsigned int cflag, modem_ctl[4];
 	unsigned int baud;
-	unsigned int bits;
+	u16 bits;
 
 	dbg("%s - port %d", __func__, port->number);
 
@@ -605,14 +678,14 @@ static void cp210x_get_termios_port(struct usb_serial_port *port,
 		cflag |= CS8;
 		bits &= ~BITS_DATA_MASK;
 		bits |= BITS_DATA_8;
-		cp210x_set_config(port, CP210X_SET_LINE_CTL, &bits, 2);
+		cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, bits);
 		break;
 	default:
 		dbg("%s - Unknown number of data bits, using 8", __func__);
 		cflag |= CS8;
 		bits &= ~BITS_DATA_MASK;
 		bits |= BITS_DATA_8;
-		cp210x_set_config(port, CP210X_SET_LINE_CTL, &bits, 2);
+		cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, bits);
 		break;
 	}
 
@@ -635,20 +708,20 @@ static void cp210x_get_termios_port(struct usb_serial_port *port,
 				__func__);
 		cflag &= ~PARENB;
 		bits &= ~BITS_PARITY_MASK;
-		cp210x_set_config(port, CP210X_SET_LINE_CTL, &bits, 2);
+		cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, bits);
 		break;
 	case BITS_PARITY_SPACE:
 		dbg("%s - parity = SPACE (not supported, disabling parity)",
 				__func__);
 		cflag &= ~PARENB;
 		bits &= ~BITS_PARITY_MASK;
-		cp210x_set_config(port, CP210X_SET_LINE_CTL, &bits, 2);
+		cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, bits);
 		break;
 	default:
 		dbg("%s - Unknown parity mode, disabling parity", __func__);
 		cflag &= ~PARENB;
 		bits &= ~BITS_PARITY_MASK;
-		cp210x_set_config(port, CP210X_SET_LINE_CTL, &bits, 2);
+		cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, bits);
 		break;
 	}
 
@@ -661,7 +734,7 @@ static void cp210x_get_termios_port(struct usb_serial_port *port,
 		dbg("%s - stop bits = 1.5 (not supported, using 1 stop bit)",
 								__func__);
 		bits &= ~BITS_STOP_MASK;
-		cp210x_set_config(port, CP210X_SET_LINE_CTL, &bits, 2);
+		cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, bits);
 		break;
 	case BITS_STOP_2:
 		dbg("%s - stop bits = 2", __func__);
@@ -671,7 +744,7 @@ static void cp210x_get_termios_port(struct usb_serial_port *port,
 		dbg("%s - Unknown number of stop bits, using 1 stop bit",
 								__func__);
 		bits &= ~BITS_STOP_MASK;
-		cp210x_set_config(port, CP210X_SET_LINE_CTL, &bits, 2);
+		cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, bits);
 		break;
 	}
 
@@ -744,7 +817,7 @@ static void cp210x_set_termios(struct tty_struct *tty,
 		struct usb_serial_port *port, struct ktermios *old_termios)
 {
 	unsigned int cflag, old_cflag;
-	unsigned int bits;
+	u16 bits;
 	unsigned int modem_ctl[4];
 
 	dbg("%s - port %d", __func__, port->number);
@@ -791,7 +864,7 @@ static void cp210x_set_termios(struct tty_struct *tty,
 				bits |= BITS_DATA_8;
 				break;
 		}
-		if (cp210x_set_config(port, CP210X_SET_LINE_CTL, &bits, 2))
+		if (cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, bits))
 			dbg("Number of data bits requested "
 					"not supported by device\n");
 	}
@@ -809,7 +882,7 @@ static void cp210x_set_termios(struct tty_struct *tty,
 				dbg("%s - parity = EVEN", __func__);
 			}
 		}
-		if (cp210x_set_config(port, CP210X_SET_LINE_CTL, &bits, 2))
+		if (cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, bits))
 			dbg("Parity mode not supported "
 					"by device\n");
 	}
@@ -824,7 +897,7 @@ static void cp210x_set_termios(struct tty_struct *tty,
 			bits |= BITS_STOP_1;
 			dbg("%s - stop bits = 1", __func__);
 		}
-		if (cp210x_set_config(port, CP210X_SET_LINE_CTL, &bits, 2))
+		if (cp210x_write_u16_reg(port, CP210X_SET_LINE_CTL, bits))
 			dbg("Number of stop bits requested "
 					"not supported by device\n");
 	}
@@ -865,7 +938,7 @@ static int cp210x_tiocmset (struct tty_struct *tty,
 static int cp210x_tiocmset_port(struct usb_serial_port *port,
 		unsigned int set, unsigned int clear)
 {
-	unsigned int control = 0;
+	u16 control = 0;
 
 	dbg("%s - port %d", __func__, port->number);
 
@@ -888,7 +961,7 @@ static int cp210x_tiocmset_port(struct usb_serial_port *port,
 
 	dbg("%s - control = 0x%.4x", __func__, control);
 
-	return cp210x_set_config(port, CP210X_SET_MHS, &control, 2);
+	return cp210x_write_u16_reg(port, CP210X_SET_MHS, control);
 }
 
 static void cp210x_dtr_rts(struct usb_serial_port *p, int on)
@@ -924,7 +997,7 @@ static int cp210x_tiocmget (struct tty_struct *tty)
 static void cp210x_break_ctl (struct tty_struct *tty, int break_state)
 {
 	struct usb_serial_port *port = tty->driver_data;
-	unsigned int state;
+	u16 state;
 
 	dbg("%s - port %d", __func__, port->number);
 	if (break_state == 0)
@@ -933,7 +1006,7 @@ static void cp210x_break_ctl (struct tty_struct *tty, int break_state)
 		state = BREAK_ON;
 	dbg("%s - turning break %s", __func__,
 			state == BREAK_OFF ? "off" : "on");
-	cp210x_set_config(port, CP210X_SET_BREAK, &state, 2);
+	cp210x_write_u16_reg(port, CP210X_SET_BREAK, state);
 }
 
 static int cp210x_port_probe(struct usb_serial_port *port)
