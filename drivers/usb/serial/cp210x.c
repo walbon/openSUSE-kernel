@@ -621,7 +621,6 @@ static void cp210x_get_termios(struct tty_struct *tty,
 static void cp210x_get_termios_port(struct usb_serial_port *port,
 	unsigned int *cflagp, unsigned int *baudp)
 {
-	struct device *dev = &port->dev;
 	unsigned int cflag;
 	u8 modem_ctl[16];
 	u32 baud;
@@ -906,8 +905,7 @@ static void cp210x_set_termios(struct tty_struct *tty,
 		} else {
 			modem_ctl[0] &= ~0x7B;
 			modem_ctl[0] |= 0x01;
-			/* FIXME - OR here instead of assignment looks wrong */
-			modem_ctl[4] |= 0x40;
+			modem_ctl[4] = 0x40;
 			dbg("%s - flow control = NONE", __func__);
 		}
 
