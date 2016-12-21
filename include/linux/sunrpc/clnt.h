@@ -164,6 +164,8 @@ size_t		rpc_pton(const char *, const size_t,
 char *		rpc_sockaddr2uaddr(const struct sockaddr *);
 size_t		rpc_uaddr2sockaddr(const char *, const size_t,
 				   struct sockaddr *, const size_t);
+void		rpc_cap_max_reconnect_timeout(struct rpc_clnt *clnt,
+			unsigned long timeo);
 
 static inline unsigned short rpc_get_port(const struct sockaddr *sap)
 {

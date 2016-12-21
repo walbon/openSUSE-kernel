@@ -193,6 +193,9 @@ struct rpc_xprt {
 	struct timer_list	timer;
 	unsigned long		last_used,
 				idle_timeout;
+#ifndef __GENKSYMS__
+	unsigned long		max_reconnect_timeout;
+#endif
 
 	/*
 	 * Send stuff
