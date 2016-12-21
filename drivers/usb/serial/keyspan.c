@@ -2719,6 +2719,10 @@ static void keyspan_release(struct usb_serial *serial)
 
 	s_priv = usb_get_serial_data(serial);
 
+	/* Make sure to unlink the URBs submitted in attach. */
+	usb_kill_urb(s_priv->instat_urb);
+	usb_kill_urb(s_priv->indat_urb);
+
 	/*  dbg("Freeing serial->private."); */
 	kfree(s_priv);
 
