@@ -169,7 +169,7 @@ static struct inode *bdev_file_inode(struct file *file)
 }
 
 static ssize_t
-blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter, loff_t offset)
+blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = bdev_file_inode(file);
@@ -178,9 +178,9 @@ blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter, loff_t offset)
 	if (file->f_flags & O_NONBLOCK)
 		submit_io = submit_failfast_bio;
 	if (IS_DAX(inode))
-		return dax_do_io(iocb, inode, iter, offset, blkdev_get_block,
+		return dax_do_io(iocb, inode, iter, blkdev_get_block,
 				NULL, DIO_SKIP_DIO_COUNT);
-	return __blockdev_direct_IO(iocb, inode, I_BDEV(inode), iter, offset,
+	return __blockdev_direct_IO(iocb, inode, I_BDEV(inode), iter,
 				    blkdev_get_block, NULL, submit_io,
 				    DIO_SKIP_DIO_COUNT);
 }
