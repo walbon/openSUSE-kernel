@@ -3534,8 +3534,6 @@ static void set_dte_irq_entry(u16 devid, struct irq_remap_table *table)
 	amd_iommu_dev_table[devid].data[2] = dte;
 }
 
-#define IRTE_ALLOCATED (~1U)
-
 static struct irq_remap_table *get_irq_table(u16 devid, bool ioapic)
 {
 	struct irq_remap_table *table = NULL;
@@ -3581,13 +3579,18 @@ static struct irq_remap_table *get_irq_table(u16 devid, bool ioapic)
 		goto out;
 	}
 
-	memset(table->table, 0, MAX_IRQS_PER_TABLE * sizeof(u32));
+	if (!AMD_IOMMU_GUEST_IR_GA(amd_iommu_guest_ir))
+		memset(table->table, 0,
+		       MAX_IRQS_PER_TABLE * sizeof(u32));
+	else
+		memset(table->table, 0,
+		       (MAX_IRQS_PER_TABLE * (sizeof(u64) * 2)));
 
 	if (ioapic) {
 		int i;
 
 		for (i = 0; i < 32; ++i)
-			table->table[i] = IRTE_ALLOCATED;
+			iommu->irte_ops->set_allocated(table, i);
 	}
 
 	irq_lookup_table[devid] = table;
@@ -3613,6 +3616,10 @@ static int alloc_irq_index(u16 devid, int count)
 	struct irq_remap_table *table;
 	unsigned long flags;
 	int index, c;
+	struct amd_iommu *iommu = amd_iommu_rlookup_table[devid];
+
+	if (!iommu)
+		return -ENODEV;
 
 	table = get_irq_table(devid, false);
 	if (!table)
@@ -3624,14 +3631,14 @@ static int alloc_irq_index(u16 devid, int count)
 	for (c = 0, index = table->min_index;
 	     index < MAX_IRQS_PER_TABLE;
 	     ++index) {
-		if (table->table[index] == 0)
+		if (!iommu->irte_ops->is_allocated(table, index))
 			c += 1;
 		else
 			c = 0;
 
 		if (c == count)	{
 			for (; c != 0; --c)
-				table->table[index - c + 1] = IRTE_ALLOCATED;
+				iommu->irte_ops->set_allocated(table, index - c + 1);
 
 			index -= count - 1;
 			goto out;
@@ -3717,7 +3724,7 @@ static void free_irte(u16 devid, int index)
 		return;
 
 	spin_lock_irqsave(&table->lock, flags);
-	table->table[index] = 0;
+	iommu->irte_ops->clear_allocated(table, index);
 	spin_unlock_irqrestore(&table->lock, flags);
 
 	iommu_flush_irt(iommu, devid);
@@ -3807,6 +3814,7 @@ static void irte_ga_set_affinity(void *entry, u16 devid, u16 index,
 	modify_irte_ga(devid, index, irte);
 }
 
+#define IRTE_ALLOCATED (~1U)
 static void irte_set_allocated(struct irq_remap_table *table, int index)
 {
 	table->table[index] = IRTE_ALLOCATED;
@@ -3936,19 +3944,17 @@ static void irq_remapping_prepare_irte(struct amd_ir_data *data,
 {
 	struct irq_2_irte *irte_info = &data->irq_2_irte;
 	struct msi_msg *msg = &data->msi_entry;
-	union irte *irte = &data->irte_entry;
 	struct IO_APIC_route_entry *entry;
+	struct amd_iommu *iommu = amd_iommu_rlookup_table[devid];
+
+	if (!iommu)
+		return;
 
 	data->irq_2_irte.devid = devid;
 	data->irq_2_irte.index = index + sub_handle;
-
-	/* Setup IRTE for IOMMU */
-	irte->val = 0;
-	irte->fields.vector      = irq_cfg->vector;
-	irte->fields.int_type    = apic->irq_delivery_mode;
-	irte->fields.destination = irq_cfg->dest_apicid;
-	irte->fields.dm          = apic->irq_dest_mode;
-	irte->fields.valid       = 1;
+	iommu->irte_ops->prepare(data->entry, apic->irq_delivery_mode,
+				 apic->irq_dest_mode, irq_cfg->vector,
+				 irq_cfg->dest_apicid);
 
 	switch (info->type) {
 	case X86_IRQ_ALLOC_TYPE_IOAPIC:
@@ -4004,7 +4010,7 @@ static int irq_remapping_alloc(struct irq_domain *domain, unsigned int virq,
 {
 	struct irq_alloc_info *info = arg;
 	struct irq_data *irq_data;
-	struct amd_ir_data *data;
+	struct amd_ir_data *data = NULL;
 	struct irq_cfg *cfg;
 	int i, ret, devid;
 	int index = -1;
@@ -4056,6 +4062,16 @@ static int irq_remapping_alloc(struct irq_domain *domain, unsigned int virq,
 		if (!data)
 			goto out_free_data;
 
+		if (!AMD_IOMMU_GUEST_IR_GA(amd_iommu_guest_ir))
+			data->entry = kzalloc(sizeof(union irte), GFP_KERNEL);
+		else
+			data->entry = kzalloc(sizeof(struct irte_ga),
+						     GFP_KERNEL);
+		if (!data->entry) {
+			kfree(data);
+			goto out_free_data;
+		}
+
 		irq_data->hwirq = (devid << 16) + i;
 		irq_data->chip_data = data;
 		irq_data->chip = &amd_ir_chip;
@@ -4092,6 +4108,7 @@ static void irq_remapping_free(struct irq_domain *domain, unsigned int virq,
 			data = irq_data->chip_data;
 			irte_info = &data->irq_2_irte;
 			free_irte(irte_info->devid, irte_info->index);
+			kfree(data->entry);
 			kfree(data);
 		}
 	}
@@ -4103,8 +4120,11 @@ static void irq_remapping_activate(struct irq_domain *domain,
 {
 	struct amd_ir_data *data = irq_data->chip_data;
 	struct irq_2_irte *irte_info = &data->irq_2_irte;
+	struct amd_iommu *iommu = amd_iommu_rlookup_table[irte_info->devid];
 
-	modify_irte(irte_info->devid, irte_info->index, &data->irte_entry);
+	if (iommu)
+		iommu->irte_ops->activate(data->entry, irte_info->devid,
+					  irte_info->index);
 }
 
 static void irq_remapping_deactivate(struct irq_domain *domain,
@@ -4112,10 +4132,11 @@ static void irq_remapping_deactivate(struct irq_domain *domain,
 {
 	struct amd_ir_data *data = irq_data->chip_data;
 	struct irq_2_irte *irte_info = &data->irq_2_irte;
-	union irte entry;
+	struct amd_iommu *iommu = amd_iommu_rlookup_table[irte_info->devid];
 
-	entry.val = 0;
-	modify_irte(irte_info->devid, irte_info->index, &data->irte_entry);
+	if (iommu)
+		iommu->irte_ops->deactivate(data->entry, irte_info->devid,
+					    irte_info->index);
 }
 
 static struct irq_domain_ops amd_ir_domain_ops = {
@@ -4132,7 +4153,11 @@ static int amd_ir_set_affinity(struct irq_data *data,
 	struct irq_2_irte *irte_info = &ir_data->irq_2_irte;
 	struct irq_cfg *cfg = irqd_cfg(data);
 	struct irq_data *parent = data->parent_data;
+	struct amd_iommu *iommu = amd_iommu_rlookup_table[irte_info->devid];
 	int ret;
+
+	if (!iommu)
+		return -ENODEV;
 
 	ret = parent->chip->irq_set_affinity(parent, mask, force);
 	if (ret < 0 || ret == IRQ_SET_MASK_OK_DONE)
@@ -4142,9 +4167,8 @@ static int amd_ir_set_affinity(struct irq_data *data,
 	 * Atomically updates the IRTE with the new destination, vector
 	 * and flushes the interrupt entry cache.
 	 */
-	ir_data->irte_entry.fields.vector = cfg->vector;
-	ir_data->irte_entry.fields.destination = cfg->dest_apicid;
-	modify_irte(irte_info->devid, irte_info->index, &ir_data->irte_entry);
+	iommu->irte_ops->set_affinity(ir_data->entry, irte_info->devid,
+			    irte_info->index, cfg->vector, cfg->dest_apicid);
 
 	/*
 	 * After this point, all the interrupts will start arriving
