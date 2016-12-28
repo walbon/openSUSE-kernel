@@ -29,4 +29,9 @@ struct efi_uga_draw_protocol {
 	void *blt;
 };
 
+#if CONFIG_HIBERNATE_VERIFICATION
+extern void efi_get_random_key(efi_system_table_t *sys_table,
+		struct boot_params *params, u8 key[], unsigned int size);
+#endif
+
 #endif /* BOOT_COMPRESSED_EBOOT_H */
