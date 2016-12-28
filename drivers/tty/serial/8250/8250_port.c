@@ -1297,6 +1297,13 @@ static void autoconfig(struct uart_8250_port *up)
 
 out_lock:
 	spin_unlock_irqrestore(&port->lock, flags);
+
+	/*
+	 * Check if the device is a Fintek F81216A
+	 */
+	if (port->type == PORT_16550A)
+		fintek_8250_probe(up);
+
 	if (up->capabilities != old_capabilities) {
 		printk(KERN_WARNING
 		       "ttyS%d: detected caps %08x should be %08x\n",
