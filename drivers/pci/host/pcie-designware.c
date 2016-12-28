@@ -109,18 +109,18 @@ int dw_pcie_cfg_write(void __iomem *addr, int size, u32 val)
 	return PCIBIOS_SUCCESSFUL;
 }
 
-static inline void dw_pcie_readl_rc(struct pcie_port *pp, u32 reg, u32 *val)
+u32 dw_pcie_readl_rc(struct pcie_port *pp, u32 reg)
 {
 	if (pp->ops->readl_rc)
-		pp->ops->readl_rc(pp, pp->dbi_base + reg, val);
-	else
-		*val = readl(pp->dbi_base + reg);
+		return pp->ops->readl_rc(pp, reg);
+
+	return readl(pp->dbi_base + reg);
 }
 
-static inline void dw_pcie_writel_rc(struct pcie_port *pp, u32 val, u32 reg)
+void dw_pcie_writel_rc(struct pcie_port *pp, u32 reg, u32 val)
 {
 	if (pp->ops->writel_rc)
-		pp->ops->writel_rc(pp, val, pp->dbi_base + reg);
+		pp->ops->writel_rc(pp, reg, val);
 	else
 		writel(val, pp->dbi_base + reg);
 }
@@ -154,16 +154,20 @@ static int dw_pcie_wr_own_conf(struct pcie_port *pp, int where, int size,
 static void dw_pcie_prog_outbound_atu(struct pcie_port *pp, int index,
 		int type, u64 cpu_addr, u64 pci_addr, u32 size)
 {
-	dw_pcie_writel_rc(pp, PCIE_ATU_REGION_OUTBOUND | index,
-			  PCIE_ATU_VIEWPORT);
-	dw_pcie_writel_rc(pp, lower_32_bits(cpu_addr), PCIE_ATU_LOWER_BASE);
-	dw_pcie_writel_rc(pp, upper_32_bits(cpu_addr), PCIE_ATU_UPPER_BASE);
-	dw_pcie_writel_rc(pp, lower_32_bits(cpu_addr + size - 1),
-			  PCIE_ATU_LIMIT);
-	dw_pcie_writel_rc(pp, lower_32_bits(pci_addr), PCIE_ATU_LOWER_TARGET);
-	dw_pcie_writel_rc(pp, upper_32_bits(pci_addr), PCIE_ATU_UPPER_TARGET);
-	dw_pcie_writel_rc(pp, type, PCIE_ATU_CR1);
-	dw_pcie_writel_rc(pp, PCIE_ATU_ENABLE, PCIE_ATU_CR2);
+		dw_pcie_writel_rc(pp, PCIE_ATU_VIEWPORT,
+				  PCIE_ATU_REGION_OUTBOUND | index);
+		dw_pcie_writel_rc(pp, PCIE_ATU_LOWER_BASE,
+				  lower_32_bits(cpu_addr));
+		dw_pcie_writel_rc(pp, PCIE_ATU_UPPER_BASE,
+				  upper_32_bits(cpu_addr));
+		dw_pcie_writel_rc(pp, PCIE_ATU_LIMIT,
+				  lower_32_bits(cpu_addr + size - 1));
+		dw_pcie_writel_rc(pp, PCIE_ATU_LOWER_TARGET,
+				  lower_32_bits(pci_addr));
+		dw_pcie_writel_rc(pp, PCIE_ATU_UPPER_TARGET,
+				  upper_32_bits(pci_addr));
+		dw_pcie_writel_rc(pp, PCIE_ATU_CR1, type);
+		dw_pcie_writel_rc(pp, PCIE_ATU_CR2, PCIE_ATU_ENABLE);
 }
 
 static struct irq_chip dw_msi_irq_chip = {
@@ -712,7 +716,7 @@ void dw_pcie_setup_rc(struct pcie_port *pp)
 	u32 memlimit;
 
 	/* set the number of lanes */
-	dw_pcie_readl_rc(pp, PCIE_PORT_LINK_CONTROL, &val);
+	val = dw_pcie_readl_rc(pp, PCIE_PORT_LINK_CONTROL);
 	val &= ~PORT_LINK_MODE_MASK;
 	switch (pp->lanes) {
 	case 1:
@@ -731,10 +735,10 @@ void dw_pcie_setup_rc(struct pcie_port *pp)
 		dev_err(pp->dev, "num-lanes %u: invalid value\n", pp->lanes);
 		return;
 	}
-	dw_pcie_writel_rc(pp, val, PCIE_PORT_LINK_CONTROL);
+	dw_pcie_writel_rc(pp, PCIE_PORT_LINK_CONTROL, val);
 
 	/* set link width speed control register */
-	dw_pcie_readl_rc(pp, PCIE_LINK_WIDTH_SPEED_CONTROL, &val);
+	val = dw_pcie_readl_rc(pp, PCIE_LINK_WIDTH_SPEED_CONTROL);
 	val &= ~PORT_LOGIC_LINK_WIDTH_MASK;
 	switch (pp->lanes) {
 	case 1:
@@ -750,36 +754,36 @@ void dw_pcie_setup_rc(struct pcie_port *pp)
 		val |= PORT_LOGIC_LINK_WIDTH_8_LANES;
 		break;
 	}
-	dw_pcie_writel_rc(pp, val, PCIE_LINK_WIDTH_SPEED_CONTROL);
+	dw_pcie_writel_rc(pp, PCIE_LINK_WIDTH_SPEED_CONTROL, val);
 
 	/* setup RC BARs */
-	dw_pcie_writel_rc(pp, 0x00000004, PCI_BASE_ADDRESS_0);
-	dw_pcie_writel_rc(pp, 0x00000000, PCI_BASE_ADDRESS_1);
+	dw_pcie_writel_rc(pp, PCI_BASE_ADDRESS_0, 0x00000004);
+	dw_pcie_writel_rc(pp, PCI_BASE_ADDRESS_1, 0x00000000);
 
 	/* setup interrupt pins */
-	dw_pcie_readl_rc(pp, PCI_INTERRUPT_LINE, &val);
+	val = dw_pcie_readl_rc(pp, PCI_INTERRUPT_LINE);
 	val &= 0xffff00ff;
 	val |= 0x00000100;
-	dw_pcie_writel_rc(pp, val, PCI_INTERRUPT_LINE);
+	dw_pcie_writel_rc(pp, PCI_INTERRUPT_LINE, val);
 
 	/* setup bus numbers */
-	dw_pcie_readl_rc(pp, PCI_PRIMARY_BUS, &val);
+	val = dw_pcie_readl_rc(pp, PCI_PRIMARY_BUS);
 	val &= 0xff000000;
 	val |= 0x00010100;
-	dw_pcie_writel_rc(pp, val, PCI_PRIMARY_BUS);
+	dw_pcie_writel_rc(pp, PCI_PRIMARY_BUS, val);
 
 	/* setup memory base, memory limit */
 	membase = ((u32)pp->mem_base & 0xfff00000) >> 16;
 	memlimit = (pp->mem_size + (u32)pp->mem_base) & 0xfff00000;
 	val = memlimit | membase;
-	dw_pcie_writel_rc(pp, val, PCI_MEMORY_BASE);
+	dw_pcie_writel_rc(pp, PCI_MEMORY_BASE, val);
 
 	/* setup command register */
-	dw_pcie_readl_rc(pp, PCI_COMMAND, &val);
+	val = dw_pcie_readl_rc(pp, PCI_COMMAND);
 	val &= 0xffff0000;
 	val |= PCI_COMMAND_IO | PCI_COMMAND_MEMORY |
 		PCI_COMMAND_MASTER | PCI_COMMAND_SERR;
-	dw_pcie_writel_rc(pp, val, PCI_COMMAND);
+	dw_pcie_writel_rc(pp, PCI_COMMAND, val);
 }
 
 MODULE_AUTHOR("Jingoo Han <jg1.han@samsung.com>");
