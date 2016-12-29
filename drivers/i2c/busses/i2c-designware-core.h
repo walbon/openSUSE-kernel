@@ -22,7 +22,9 @@
  *
  */
 
+#ifndef __GENKSYMS__
 #include <linux/pm_qos.h>
+#endif
 
 #define DW_IC_CON_MASTER		0x1
 #define DW_IC_CON_SPEED_STD		0x2
@@ -106,10 +108,12 @@ struct dw_i2c_dev {
 	u16			ss_lcnt;
 	u16			fs_hcnt;
 	u16			fs_lcnt;
-	struct pm_qos_request	pm_qos;
 	int			(*acquire_lock)(struct dw_i2c_dev *dev);
 	void			(*release_lock)(struct dw_i2c_dev *dev);
 	bool			pm_runtime_disabled;
+#ifndef __GENKSYMS__
+	struct pm_qos_request	pm_qos;
+#endif
 };
 
 #define ACCESS_SWAP		0x00000001
