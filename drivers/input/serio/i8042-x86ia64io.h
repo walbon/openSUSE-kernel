@@ -891,7 +891,9 @@ static const struct dmi_system_id __initconst i8042_dmi_kbdreset_table[] = {
 
 #ifdef CONFIG_PNP
 #include <linux/pnp.h>
+#ifndef __GENKSYMS__
 #include <linux/acpi.h>
+#endif
 
 static bool i8042_pnp_kbd_registered;
 static unsigned int i8042_pnp_kbd_devices;
