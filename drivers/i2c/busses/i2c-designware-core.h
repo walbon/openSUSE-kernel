@@ -22,6 +22,9 @@
  *
  */
 
+#ifndef __GENKSYMS__
+#include <linux/pm_qos.h>
+#endif
 
 #define DW_IC_CON_MASTER		0x1
 #define DW_IC_CON_SPEED_STD		0x2
@@ -61,6 +64,7 @@
  * @ss_lcnt: standard speed LCNT value
  * @fs_hcnt: fast speed HCNT value
  * @fs_lcnt: fast speed LCNT value
+ * @pm_qos: pm_qos_request used while holding a hardware lock on the bus
  * @acquire_lock: function to acquire a hardware lock on the bus
  * @release_lock: function to release a hardware lock on the bus
  * @pm_runtime_disabled: true if pm runtime is disabled
@@ -107,6 +111,9 @@ struct dw_i2c_dev {
 	int			(*acquire_lock)(struct dw_i2c_dev *dev);
 	void			(*release_lock)(struct dw_i2c_dev *dev);
 	bool			pm_runtime_disabled;
+#ifndef __GENKSYMS__
+	struct pm_qos_request	pm_qos;
+#endif
 };
 
 #define ACCESS_SWAP		0x00000001
@@ -122,7 +129,9 @@ extern u32 i2c_dw_read_comp_param(struct dw_i2c_dev *dev);
 extern int i2c_dw_probe(struct dw_i2c_dev *dev);
 
 #if IS_ENABLED(CONFIG_I2C_DESIGNWARE_BAYTRAIL)
-extern int i2c_dw_eval_lock_support(struct dw_i2c_dev *dev);
+extern int i2c_dw_probe_lock_support(struct dw_i2c_dev *dev);
+extern void i2c_dw_remove_lock_support(struct dw_i2c_dev *dev);
 #else
-static inline int i2c_dw_eval_lock_support(struct dw_i2c_dev *dev) { return 0; }
+static inline int i2c_dw_probe_lock_support(struct dw_i2c_dev *dev) { return 0; }
+static inline void i2c_dw_remove_lock_support(struct dw_i2c_dev *dev) {}
 #endif

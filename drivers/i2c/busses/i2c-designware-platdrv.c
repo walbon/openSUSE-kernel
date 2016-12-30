@@ -190,7 +190,7 @@ static int dw_i2c_plat_probe(struct platform_device *pdev)
 			clk_freq = pdata->i2c_scl_freq;
 	}
 
-	r = i2c_dw_eval_lock_support(dev);
+	r = i2c_dw_probe_lock_support(dev);
 	if (r)
 		return r;
 
@@ -265,6 +265,8 @@ static int dw_i2c_plat_remove(struct platform_device *pdev)
 	pm_runtime_put_sync(&pdev->dev);
 	if (!dev->pm_runtime_disabled)
 		pm_runtime_disable(&pdev->dev);
+
+	i2c_dw_remove_lock_support(dev);
 
 	return 0;
 }
