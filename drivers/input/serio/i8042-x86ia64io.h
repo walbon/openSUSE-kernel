@@ -891,6 +891,9 @@ static const struct dmi_system_id __initconst i8042_dmi_kbdreset_table[] = {
 
 #ifdef CONFIG_PNP
 #include <linux/pnp.h>
+#ifndef __GENKSYMS__
+#include <linux/acpi.h>
+#endif
 
 static bool i8042_pnp_kbd_registered;
 static unsigned int i8042_pnp_kbd_devices;
@@ -1055,7 +1058,15 @@ static int __init i8042_pnp_init(void)
 #if defined(__ia64__)
 		return -ENODEV;
 #else
-		pr_info("PNP: No PS/2 controller found. Probing ports directly.\n");
+		pr_info("PNP: No PS/2 controller found.\n");
+#ifdef CONFIG_ACPI
+		if (acpi_gbl_FADT.header.revision >= FADT2_REVISION_ID &&
+		    !(acpi_gbl_FADT.boot_flags & ACPI_FADT_8042)) {
+			pr_debug("ACPI: i8042 controller is absent\n");
+			return -ENODEV;
+		}
+#endif
+		pr_info("Probing ports directly.\n");
 		return 0;
 #endif
 	}
@@ -1142,7 +1153,7 @@ static int __init i8042_platform_init(void)
 
 #ifdef CONFIG_X86
 	u8 a20_on = 0xdf;
-	/* Just return if pre-detection shows no i8042 controller exist */
+	/* Just return if platform does not have i8042 controller */
 	if (!x86_platform.i8042_detect())
 		return -ENODEV;
 #endif
