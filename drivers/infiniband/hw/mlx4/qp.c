@@ -1006,8 +1006,10 @@ struct ib_qp *mlx4_ib_create_qp(struct ib_pd *pd,
 	{
 		err = create_qp_common(dev, pd, init_attr,
 				       udata, 0, &qp);
-		if (err)
+		if (err) {
+			kfree(qp);
 			return ERR_PTR(err);
+		}
 
 		if (init_attr->qp_type == IB_QPT_XRC)
 			qp->xrcdn = to_mxrcd(init_attr->xrc_domain)->xrcdn;
