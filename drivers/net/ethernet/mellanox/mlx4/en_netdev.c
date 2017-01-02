@@ -1271,17 +1271,13 @@ static int mlx4_en_init_affinity_hint(struct mlx4_en_priv *priv, int ring_idx)
 {
 	struct mlx4_en_rx_ring *ring = priv->rx_ring[ring_idx];
 	int numa_node = priv->mdev->dev->numa_node;
-	int ret = 0;
 
 	if (!zalloc_cpumask_var(&ring->affinity_mask, GFP_KERNEL))
 		return -ENOMEM;
 
-	ret = cpumask_set_cpu_local_first(ring_idx, numa_node,
-					  ring->affinity_mask);
-	if (ret)
-		free_cpumask_var(ring->affinity_mask);
-
-	return ret;
+	cpumask_set_cpu(cpumask_local_spread(ring_idx, numa_node),
+			ring->affinity_mask);
+	return 0;
 }
 
 static void mlx4_en_free_affinity_hint(struct mlx4_en_priv *priv, int ring_idx)
@@ -1812,10 +1808,17 @@ void mlx4_en_destroy_netdev(struct net_device *dev)
 	/* flush any pending task for this netdev */
 	flush_workqueue(mdev->workqueue);
 
+	if (mdev->dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_TS)
+		mlx4_en_remove_timestamp(mdev);
+
 	/* Detach the netdev so tasks would not attempt to access it */
 	mutex_lock(&mdev->state_lock);
 	mdev->pndev[priv->port] = NULL;
 	mutex_unlock(&mdev->state_lock);
+
+#ifdef CONFIG_RFS_ACCEL
+	mlx4_en_cleanup_filters(priv);
+#endif
 
 	mlx4_en_free_resources(priv);
 
@@ -1962,7 +1965,7 @@ static int mlx4_en_set_vf_mac(struct net_device *dev, int queue, u8 *mac)
 	struct mlx4_en_dev *mdev = en_priv->mdev;
 	u64 mac_u64 = mlx4_mac_to_u64(mac);
 
-	if (!is_valid_ether_addr(mac))
+	if (is_multicast_ether_addr(mac))
 		return -EINVAL;
 
 	return mlx4_set_vf_mac(mdev->dev, en_priv->port, queue, mac_u64);
@@ -2237,9 +2240,12 @@ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
 	}
 	queue_delayed_work(mdev->workqueue, &priv->stats_task, STATS_DELAY);
 
+	/* Initialize time stamp mechanism */
 	if (mdev->dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_TS)
-		queue_delayed_work(mdev->workqueue, &priv->service_task,
-				   SERVICE_TASK_DELAY);
+		mlx4_en_init_timestamp(mdev);
+
+	queue_delayed_work(mdev->workqueue, &priv->service_task,
+			   SERVICE_TASK_DELAY);
 
 	return 0;
 

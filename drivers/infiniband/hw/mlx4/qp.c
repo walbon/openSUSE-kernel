@@ -1006,8 +1006,10 @@ struct ib_qp *mlx4_ib_create_qp(struct ib_pd *pd,
 	{
 		err = create_qp_common(dev, pd, init_attr,
 				       udata, 0, &qp);
-		if (err)
+		if (err) {
+			kfree(qp);
 			return ERR_PTR(err);
+		}
 
 		if (init_attr->qp_type == IB_QPT_XRC)
 			qp->xrcdn = to_mxrcd(init_attr->xrc_domain)->xrcdn;
@@ -1773,8 +1775,9 @@ static int build_mlx_header(struct mlx4_ib_sqp *sqp, struct ib_send_wr *wr,
 			 * indexes don't necessarily match the hw ones, so
 			 * we must use our own cache */
 			sgid.global.subnet_prefix =
-				to_mdev(ib_dev)->sriov.demux[sqp->qp.port - 1].
-				subnet_prefix;
+				cpu_to_be64(atomic64_read(&(to_mdev(ib_dev)->sriov.
+							    demux[sqp->qp.port - 1].
+							    subnet_prefix)));
 			sgid.global.interface_id =
 				to_mdev(ib_dev)->sriov.demux[sqp->qp.port - 1].
 				guid_cache[ah->av.ib.gid_index];
@@ -1809,8 +1812,9 @@ static int build_mlx_header(struct mlx4_ib_sqp *sqp, struct ib_send_wr *wr,
 			 * indexes don't necessarily match the hw ones, so
 			 * we must use our own cache */
 			sqp->ud_header.grh.source_gid.global.subnet_prefix =
-				to_mdev(ib_dev)->sriov.demux[sqp->qp.port - 1].
-						       subnet_prefix;
+				cpu_to_be64(atomic64_read(&(to_mdev(ib_dev)->sriov.
+							    demux[sqp->qp.port - 1].
+							    subnet_prefix)));
 			sqp->ud_header.grh.source_gid.global.interface_id =
 				to_mdev(ib_dev)->sriov.demux[sqp->qp.port - 1].
 					       guid_cache[ah->av.ib.gid_index];
