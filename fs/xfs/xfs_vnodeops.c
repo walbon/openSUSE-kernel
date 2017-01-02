@@ -502,7 +502,7 @@ xfs_setattr(
 		/* xfs_setattr() is deprecated. Use xfs_setattr_dentry(). */
 		WARN_ON(!(flags & XFS_ATTR_DMI));
 
-		code = -inode_change_ok(inode, iattr);
+		code = -inode_change_ok(VFS_I(ip), iattr);
 		if (code)
 			return code;
 	}
