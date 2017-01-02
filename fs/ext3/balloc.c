@@ -1441,6 +1441,10 @@ static int ext3_has_free_blocks(struct ext3_sb_info *sbi)
 
 	free_blocks = percpu_counter_read_positive(&sbi->s_freeblocks_counter);
 	root_blocks = le32_to_cpu(sbi->s_es->s_r_blocks_count);
+	if (free_blocks >= root_blocks + 1)
+		return 1;
+	/* Per-cpu counter error can lead to false ENOSPC. Sum the counter. */
+	free_blocks = percpu_counter_sum_positive(&sbi->s_freeblocks_counter);
 	if (free_blocks < root_blocks + 1 && !capable(CAP_SYS_RESOURCE) &&
 		sbi->s_resuid != current_fsuid() &&
 		(sbi->s_resgid == 0 || !in_group_p (sbi->s_resgid))) {
