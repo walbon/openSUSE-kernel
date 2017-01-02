@@ -72,6 +72,9 @@ struct tipc_media_addr {
 
 struct tipc_bearer;
 
+/* minimum bearer MTU */
+#define TIPC_MIN_BEARER_MTU	100	/* MAX_H_SIZE + INT_H_SIZE */
+
 /**
  * struct tipc_media - TIPC media information available to internal users
  * @send_msg: routine which handles buffer transmission
@@ -204,6 +207,15 @@ static inline void tipc_bearer_send(struct tipc_bearer *b, struct sk_buff *buf,
 				   struct tipc_media_addr *dest)
 {
 	b->media->send_msg(buf, b, dest);
+}
+
+/* check if device MTU is too low for a TIPC bearer */
+static inline bool tipc_mtu_bad(struct net_device *dev, unsigned int reserve)
+{
+	if (dev->mtu >= TIPC_MIN_BEARER_MTU + reserve)
+		return false;
+	netdev_warn(dev, "MTU too low for tipc bearer\n");
+	return true;
 }
 
 #endif	/* _TIPC_BEARER_H */
