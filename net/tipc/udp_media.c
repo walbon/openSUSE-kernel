@@ -376,8 +376,8 @@ static int tipc_udp_enable(struct net *net, struct tipc_bearer *b,
 		udp_conf.local_ip.s_addr = htonl(INADDR_ANY);
 		udp_conf.use_udp_checksums = false;
 		ub->ifindex = dev->ifindex;
-		if (tipc_check_mtu(dev, sizeof(struct iphdr) +
-					sizeof(struct udphdr))) {
+		if (tipc_mtu_bad(dev, sizeof(struct iphdr) +
+				      sizeof(struct udphdr))) {
 			err = -EINVAL;
 			goto err;
 		}

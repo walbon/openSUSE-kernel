@@ -230,8 +230,8 @@ void tipc_bearer_xmit(struct net *net, u32 bearer_id,
 void tipc_bearer_bc_xmit(struct net *net, u32 bearer_id,
 			 struct sk_buff_head *xmitq);
 
-/* check if device MTU is sufficient for tipc headers */
-static inline bool tipc_check_mtu(struct net_device *dev, unsigned int reserve)
+/* check if device MTU is too low for tipc headers */
+static inline bool tipc_mtu_bad(struct net_device *dev, unsigned int reserve)
 {
 	if (dev->mtu >= TIPC_MIN_BEARER_MTU + reserve)
 		return false;
