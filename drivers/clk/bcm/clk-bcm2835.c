@@ -564,10 +564,6 @@ static int bcm2835_pll_on(struct clk_hw *hw)
 		     cprman_read(cprman, data->a2w_ctrl_reg) &
 		     ~A2W_PLL_CTRL_PWRDN);
 
-	cprman_write(cprman, data->a2w_ctrl_reg,
-		     cprman_read(cprman, data->a2w_ctrl_reg) &
-		     ~A2W_PLL_CTRL_PWRDN);
-
 	/* Take the PLL out of reset. */
 	cprman_write(cprman, data->cm_ctrl_reg,
 		     cprman_read(cprman, data->cm_ctrl_reg) & ~CM_PLL_ANARST);
