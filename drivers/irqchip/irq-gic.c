@@ -1229,7 +1229,7 @@ static void __init gic_of_setup_kvm_info(struct device_node *node)
 	gic_set_kvm_info(&gic_v2_kvm_info);
 }
 
-static int __init
+int __init
 gic_of_init(struct device_node *node, struct device_node *parent)
 {
 	void __iomem *cpu_base;
