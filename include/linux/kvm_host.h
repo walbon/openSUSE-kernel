@@ -151,6 +151,7 @@ struct kvm_vcpu {
 	} async_pf;
 #endif
 
+	bool preempted;
 	struct kvm_vcpu_arch arch;
 };
 
