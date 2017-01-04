@@ -6314,7 +6314,9 @@ int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
 	int r;
 
 	vcpu->arch.mtrr_state.have_fixed = 1;
-	vcpu_load(vcpu);
+	r = vcpu_load(vcpu);
+	if (r)
+		return r;
 	r = kvm_arch_vcpu_reset(vcpu);
 	if (r == 0)
 		r = kvm_mmu_setup(vcpu);
@@ -6339,9 +6341,11 @@ int kvm_arch_vcpu_postcreate(struct kvm_vcpu *vcpu)
 
 void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
 {
+	int r;
 	vcpu->arch.apf.msr_val = 0;
 
-	vcpu_load(vcpu);
+	r = vcpu_load(vcpu);
+	BUG_ON(r);
 	kvm_mmu_unload(vcpu);
 	vcpu_put(vcpu);
 
@@ -6505,7 +6509,9 @@ int kvm_arch_init_vm(struct kvm *kvm)
 
 static void kvm_unload_vcpu_mmu(struct kvm_vcpu *vcpu)
 {
-	vcpu_load(vcpu);
+	int r;
+	r = vcpu_load(vcpu);
+	BUG_ON(r);
 	kvm_mmu_unload(vcpu);
 	vcpu_put(vcpu);
 }
