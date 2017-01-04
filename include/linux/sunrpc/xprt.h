@@ -173,6 +173,9 @@ struct rpc_xprt {
 	unsigned long		state;		/* transport state */
 	unsigned char		shutdown   : 1,	/* being shut down */
 				resvport   : 1; /* use a reserved port */
+#ifndef __GENKSYMS__
+	unsigned int		max_reconnect_timeout:30;
+#endif
 	unsigned int		swapper;	/* we're swapping over this
 						   transport */
 	unsigned int		bind_index;	/* bind function index */
@@ -193,9 +196,6 @@ struct rpc_xprt {
 	struct timer_list	timer;
 	unsigned long		last_used,
 				idle_timeout;
-#ifndef __GENKSYMS__
-	unsigned long		max_reconnect_timeout;
-#endif
 
 	/*
 	 * Send stuff
