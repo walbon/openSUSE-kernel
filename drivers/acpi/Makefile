@@ -99,3 +99,5 @@ obj-$(CONFIG_CRC_PMIC_OPREGION) += pmic/intel_pmic_crc.o
 obj-$(CONFIG_XPOWER_PMIC_OPREGION) += pmic/intel_pmic_xpower.o
 
 video-objs			+= acpi_video.o video_detect.o
+
+obj-$(CONFIG_ARM64)		+= arm64/
