@@ -298,16 +298,16 @@ rpcauth_prune_expired(struct list_head *free, int nr_to_scan)
 	unsigned long expired = jiffies - RPC_AUTH_EXPIRY_MORATORIUM;
 
 	list_for_each_entry_safe(cred, next, &cred_unused, cr_lru) {
-
-		if (nr_to_scan-- == 0)
-			break;
 		/*
 		 * Enforce a 60 second garbage collection moratorium
 		 * Note that the cred_unused list must be time-ordered.
 		 */
 		if (time_in_range(cred->cr_expire, expired, jiffies) &&
 		    test_bit(RPCAUTH_CRED_HASHED, &cred->cr_flags) != 0)
-			return 0;
+			return -1;
+
+		if (nr_to_scan-- == 0)
+			break;
 
 		list_del_init(&cred->cr_lru);
 		number_cred_unused--;
@@ -323,7 +323,7 @@ rpcauth_prune_expired(struct list_head *free, int nr_to_scan)
 		}
 		spin_unlock(cache_lock);
 	}
-	return (number_cred_unused / 100) * sysctl_vfs_cache_pressure;
+	return number_cred_unused * sysctl_vfs_cache_pressure / 100;
 }
 
 static unsigned long
