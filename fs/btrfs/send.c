@@ -3566,7 +3566,8 @@ static int wait_for_parent_move(struct send_ctx *sctx,
 			ret = is_ancestor(sctx->parent_root,
 					  sctx->cur_ino, sctx->cur_inode_gen,
 					  ino, path_before);
-			break;
+			if (ret)
+				break;
 		}
 
 		fs_path_reset(path_before);
