@@ -416,7 +416,7 @@ static const struct nd_cmd_desc __nd_cmd_dimm_descs[] = {
 	},
 	[ND_CMD_SMART_THRESHOLD] = {
 		.out_num = 2,
-		.out_sizes = { 4, 128, },
+		.out_sizes = { 4, 8, },
 	},
 	[ND_CMD_DIMM_FLAGS] = {
 		.out_num = 2,
