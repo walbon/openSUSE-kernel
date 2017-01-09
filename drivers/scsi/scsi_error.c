@@ -1040,10 +1040,12 @@ static int scsi_eh_action(struct scsi_cmnd *scmd, int rtn)
 
 static void scsi_eh_reset(struct scsi_cmnd *scmd)
 {
-	struct scsi_driver *sdrv = scsi_cmd_to_driver(scmd);
+	if (scmd->request->cmd_type != REQ_TYPE_BLOCK_PC) {
+		struct scsi_driver *sdrv = scsi_cmd_to_driver(scmd);
 
-	if (sdrv->eh_action)
-		sdrv->eh_action(scmd, NULL, 0, SUCCESS);
+		if (sdrv->eh_action)
+			sdrv->eh_action(scmd, NULL, 0, SUCCESS);
+	}
 }
 
 /**
