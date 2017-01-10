@@ -1882,7 +1882,11 @@ struct task_struct {
 #endif
 	int pagefault_disabled;
 
+#ifdef __GENKSYMS__
 	void *suse_kabi_padding;
+#else
+	const struct cred __rcu *ptracer_cred; /* Tracer's credentials at attach */
+#endif
 
 /* CPU-specific state of this task */
 	struct thread_struct thread;

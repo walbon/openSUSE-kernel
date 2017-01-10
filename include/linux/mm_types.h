@@ -518,7 +518,11 @@ struct mm_struct {
 #ifdef CONFIG_HUGETLB_PAGE
 	atomic_long_t hugetlb_usage;
 #endif
+#ifdef __GENKSYMS__
 	void *suse_kabi_padding;
+#else
+	struct user_namespace *user_ns;
+#endif
 };
 
 static inline void mm_init_cpumask(struct mm_struct *mm)
