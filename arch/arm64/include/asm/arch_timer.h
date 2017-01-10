@@ -20,52 +20,54 @@
 #define __ASM_ARCH_TIMER_H
 
 #include <asm/barrier.h>
+#include <asm/sysreg.h>
 
 #include <linux/bug.h>
 #include <linux/init.h>
+#include <linux/jump_label.h>
 #include <linux/types.h>
 
 #include <clocksource/arm_arch_timer.h>
 
-extern bool arm_arch_timer_reread;
-extern bool arm_arch_timer_rewrite;
+#if IS_ENABLED(CONFIG_FSL_ERRATUM_A008585)
+extern struct static_key_false arch_timer_read_ool_enabled;
+#define needs_fsl_a008585_workaround() \
+	static_branch_unlikely(&arch_timer_read_ool_enabled)
+#else
+#define needs_fsl_a008585_workaround()  false
+#endif
 
-/* QorIQ errata workarounds */
-#define ARCH_TIMER_REREAD(reg) ({ \
-	u64 _val_old, _val_new; \
-	int _timeout = 200; \
-	do { \
-		asm volatile("mrs %0, " reg ";" \
-			     "mrs %1, " reg \
-			     : "=r" (_val_old), "=r" (_val_new)); \
-		_timeout--; \
-	} while (_val_old != _val_new && _timeout); \
-	WARN_ON_ONCE(!_timeout); \
-	_val_old; \
+u32 __fsl_a008585_read_cntp_tval_el0(void);
+u32 __fsl_a008585_read_cntv_tval_el0(void);
+u64 __fsl_a008585_read_cntvct_el0(void);
+
+/*
+ * The number of retries is an arbitrary value well beyond the highest number
+ * of iterations the loop has been observed to take.
+ */
+#define __fsl_a008585_read_reg(reg) ({			\
+	u64 _old, _new;					\
+	int _retries = 200;				\
+							\
+	do {						\
+		_old = read_sysreg(reg);		\
+		_new = read_sysreg(reg);		\
+		_retries--;				\
+	} while (unlikely(_old != _new) && _retries);	\
+							\
+	WARN_ON_ONCE(!_retries);			\
+	_new;						\
 })
 
-#define ARCH_TIMER_READ(reg) ({ \
-	u64 _val; \
-	if (arm_arch_timer_reread) \
-		_val = ARCH_TIMER_REREAD(reg); \
-	else \
-		asm volatile("mrs %0, " reg : "=r" (_val)); \
-	_val; \
+#define arch_timer_reg_read_stable(reg) 		\
+({							\
+	u64 _val;					\
+	if (needs_fsl_a008585_workaround())		\
+		_val = __fsl_a008585_read_##reg();	\
+	else						\
+		_val = read_sysreg(reg);		\
+	_val;						\
 })
-
-#define ARCH_TIMER_TVAL_REWRITE(pv, val) do { \
-	u64 _cnt_old, _cnt_new; \
-	int _timeout = 200; \
-	do { \
-		asm volatile("mrs %0, cntvct_el0;" \
-			     "msr cnt" pv "_tval_el0, %2;" \
-			     "mrs %1, cntvct_el0" \
-			     : "=&r" (_cnt_old), "=r" (_cnt_new) \
-			     : "r" (val)); \
-		_timeout--; \
-	} while (_cnt_old != _cnt_new && _timeout); \
-	WARN_ON_ONCE(!_timeout); \
-} while (0)
 
 /*
  * These register accessors are marked inline so the compiler can
@@ -78,27 +80,19 @@ void arch_timer_reg_write_cp15(int access, enum arch_timer_reg reg, u32 val)
 	if (access == ARCH_TIMER_PHYS_ACCESS) {
 		switch (reg) {
 		case ARCH_TIMER_REG_CTRL:
-			asm volatile("msr cntp_ctl_el0,  %0" : : "r" (val));
+			write_sysreg(val, cntp_ctl_el0);
 			break;
 		case ARCH_TIMER_REG_TVAL:
-			if (arm_arch_timer_rewrite)
-				ARCH_TIMER_TVAL_REWRITE("p", val);
-			else
-				asm volatile("msr cntp_tval_el0, %0" : :
-					     "r" (val));
+			write_sysreg(val, cntp_tval_el0);
 			break;
 		}
 	} else if (access == ARCH_TIMER_VIRT_ACCESS) {
 		switch (reg) {
 		case ARCH_TIMER_REG_CTRL:
-			asm volatile("msr cntv_ctl_el0,  %0" : : "r" (val));
+			write_sysreg(val, cntv_ctl_el0);
 			break;
 		case ARCH_TIMER_REG_TVAL:
-			if (arm_arch_timer_rewrite)
-				ARCH_TIMER_TVAL_REWRITE("v", val);
-			else
-				asm volatile("msr cntv_tval_el0, %0" : :
-					     "r" (val));
+			write_sysreg(val, cntv_tval_el0);
 			break;
 		}
 	}
@@ -109,48 +103,38 @@ void arch_timer_reg_write_cp15(int access, enum arch_timer_reg reg, u32 val)
 static __always_inline
 u32 arch_timer_reg_read_cp15(int access, enum arch_timer_reg reg)
 {
-	u32 val;
-
 	if (access == ARCH_TIMER_PHYS_ACCESS) {
 		switch (reg) {
 		case ARCH_TIMER_REG_CTRL:
-			asm volatile("mrs %0,  cntp_ctl_el0" : "=r" (val));
-			break;
+			return read_sysreg(cntp_ctl_el0);
 		case ARCH_TIMER_REG_TVAL:
-			val = ARCH_TIMER_READ("cntp_tval_el0");
-			break;
+			return arch_timer_reg_read_stable(cntp_tval_el0);
 		}
 	} else if (access == ARCH_TIMER_VIRT_ACCESS) {
 		switch (reg) {
 		case ARCH_TIMER_REG_CTRL:
-			asm volatile("mrs %0,  cntv_ctl_el0" : "=r" (val));
-			break;
+			return read_sysreg(cntv_ctl_el0);
 		case ARCH_TIMER_REG_TVAL:
-			val = ARCH_TIMER_READ("cntv_tval_el0");
-			break;
+			return arch_timer_reg_read_stable(cntv_tval_el0);
 		}
 	}
 
-	return val;
+	BUG();
 }
 
 static inline u32 arch_timer_get_cntfrq(void)
 {
-	u32 val;
-	asm volatile("mrs %0,   cntfrq_el0" : "=r" (val));
-	return val;
+	return read_sysreg(cntfrq_el0);
 }
 
 static inline u32 arch_timer_get_cntkctl(void)
 {
-	u32 cntkctl;
-	asm volatile("mrs	%0, cntkctl_el1" : "=r" (cntkctl));
-	return cntkctl;
+	return read_sysreg(cntkctl_el1);
 }
 
 static inline void arch_timer_set_cntkctl(u32 cntkctl)
 {
-	asm volatile("msr	cntkctl_el1, %0" : : "r" (cntkctl));
+	write_sysreg(cntkctl, cntkctl_el1);
 }
 
 static inline u64 arch_counter_get_cntpct(void)
@@ -165,7 +149,7 @@ static inline u64 arch_counter_get_cntpct(void)
 static inline u64 arch_counter_get_cntvct(void)
 {
 	isb();
-	return ARCH_TIMER_READ("cntvct_el0");
+	return arch_timer_reg_read_stable(cntvct_el0);
 }
 
 static inline int arch_timer_arch_init(void)
