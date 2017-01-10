@@ -34,7 +34,6 @@ struct vdso_data {
 	__u32 tz_minuteswest;	/* Whacky timezone stuff */
 	__u32 tz_dsttime;
 	__u32 use_syscall;
-	__u32 timer_reread;	/* Erratum requires two equal timer reads */
 };
 
 #endif /* !__ASSEMBLY__ */

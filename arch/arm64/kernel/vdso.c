@@ -31,7 +31,6 @@
 #include <linux/timekeeper_internal.h>
 #include <linux/vmalloc.h>
 
-#include <asm/arch_timer.h>
 #include <asm/cacheflush.h>
 #include <asm/signal32.h>
 #include <asm/vdso.h>
@@ -200,12 +199,11 @@ up_fail:
  */
 void update_vsyscall(struct timekeeper *tk)
 {
-	u32 use_syscall = strcmp(tk->tkr_mono.clock->name, "arch_sys_counter");
+	u32 use_syscall = !tk->tkr_mono.clock->archdata.vdso_direct;
 
 	++vdso_data->tb_seq_count;
 	smp_wmb();
 
-	vdso_data->timer_reread			= arm_arch_timer_reread;
 	vdso_data->use_syscall			= use_syscall;
 	vdso_data->xtime_coarse_sec		= tk->xtime_sec;
 	vdso_data->xtime_coarse_nsec		= tk->tkr_mono.xtime_nsec >>

@@ -270,7 +270,7 @@ static bool tk_is_cntvct(const struct timekeeper *tk)
 	if (!IS_ENABLED(CONFIG_ARM_ARCH_TIMER))
 		return false;
 
-	if (strcmp(tk->tkr_mono.clock->name, "arch_sys_counter") != 0)
+	if (!tk->tkr_mono.clock->archdata.vdso_direct)
 		return false;
 
 	return true;
@@ -307,7 +307,6 @@ void update_vsyscall(struct timekeeper *tk)
 
 	vdso_write_begin(vdso_data);
 
-	vdso_data->timer_reread			= arm_arch_timer_reread;
 	vdso_data->tk_is_cntvct			= tk_is_cntvct(tk);
 	vdso_data->xtime_coarse_sec		= tk->xtime_sec;
 	vdso_data->xtime_coarse_nsec		= (u32)(tk->tkr_mono.xtime_nsec >>
