@@ -68,11 +68,6 @@ static struct gic_kvm_info gic_v3_kvm_info;
 /* Our default, arbitrary priority value. Linux only uses one anyway. */
 #define DEFAULT_PMR_VALUE	0xf0
 
-struct irq_domain *gic_get_irq_domain(void)
-{
-	return gic_data.domain;
-}
-
 static inline unsigned int gic_irq(struct irq_data *d)
 {
 	return d->hwirq;
