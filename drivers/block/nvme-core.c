@@ -29,6 +29,7 @@
 #include <linux/kdev_t.h>
 #include <linux/kthread.h>
 #include <linux/kernel.h>
+#include <linux/list_sort.h>
 #include <linux/llist.h>
 #include <linux/mm.h>
 #include <linux/module.h>
@@ -248,9 +249,16 @@ static void special_completion(struct nvme_queue *nvmeq, void *ctx,
 
 		if (status == NVME_SC_SUCCESS || status == NVME_SC_ABORT_REQ)
 			++nvmeq->dev->event_limit;
-		if (status == NVME_SC_SUCCESS)
-			dev_warn(nvmeq->q_dmadev,
-				"async event result %08x\n", result);
+		if (status == NVME_SC_SUCCESS) {
+			switch (result & 0xff07) {
+			case 0x0002: /* 0x0002 == NVME_AER_NOTICE_NS_CHANGED */
+				dev_info(nvmeq->q_dmadev, "rescanning\n");
+				schedule_work(&nvmeq->dev->scan_work);
+			default:
+				dev_warn(nvmeq->q_dmadev,
+					"async event result %08x\n", result);
+			}
+		}
 		return;
 	}
 
@@ -1965,9 +1973,15 @@ static int nvme_revalidate_disk(struct gendisk *disk)
 	}
 
 	if (nvme_identify(dev, ns->ns_id, 0, dma_addr)) {
-		dev_warn(&dev->pci_dev->dev,
-				"identify failed ns:%d, setting capacity to 0\n", ns->ns_id);
-		memset(id, 0, sizeof(*id));
+		dev_warn(&dev->pci_dev->dev, "%s: Identify failure nvme%dn%d\n", __func__,
+			dev->instance, ns->ns_id);
+		dma_free_coherent(&dev->pci_dev->dev, 4096, id, dma_addr);
+		return -ENODEV;
+	}
+
+	if (id->ncap == 0) {
+		dma_free_coherent(&dev->pci_dev->dev, 4096, id, dma_addr);
+		return -ENODEV;
 	}
 
 	old_ms = ns->ms;
@@ -1985,10 +1999,7 @@ static int nvme_revalidate_disk(struct gendisk *disk)
 
 	blk_queue_logical_block_size(ns->queue, bs);
 
-	if (id->ncap == 0) /*|| (ns->ms && !disk->integrity))*/
-		set_capacity(disk, 0);
-	else
-		set_capacity(disk, le64_to_cpup(&id->nsze) << (ns->lba_shift - 9));
+	set_capacity(disk, le64_to_cpup(&id->nsze) << (ns->lba_shift - 9));
 
 	if (dev->oncs & NVME_CTRL_ONCS_DSM)
 		nvme_config_discard(ns);
@@ -2162,12 +2173,17 @@ static void nvme_alloc_ns(struct nvme_dev *dev, unsigned nsid)
 
 	/* Initialize capacity to 0 until we establish the namespace format. */
 	set_capacity(disk, 0);
-	nvme_revalidate_disk(ns->disk);
+	if (nvme_revalidate_disk(ns->disk))
+		goto out_free_disk;
+
 	add_disk(ns->disk);
 	if (ns->ms)
 		revalidate_disk(ns->disk);
 	return;
 
+ out_free_disk:
+	kfree(disk);
+	list_del(&ns->list);
  out_free_queue:
 	blk_cleanup_queue(ns->queue);
  out_free_ns:
@@ -2449,6 +2465,102 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 	return result;
 }
 
+static void nvme_free_namespace(struct nvme_ns *ns)
+{
+	list_del(&ns->list);
+
+	spin_lock(&dev_list_lock);
+	ns->disk->private_data = NULL;
+	spin_unlock(&dev_list_lock);
+
+	put_disk(ns->disk);
+	kfree(ns);
+}
+
+static int ns_cmp(void *priv, struct list_head *a, struct list_head *b)
+{
+	struct nvme_ns *nsa = container_of(a, struct nvme_ns, list);
+	struct nvme_ns *nsb = container_of(b, struct nvme_ns, list);
+
+	return nsa->ns_id - nsb->ns_id;
+}
+
+static struct nvme_ns *nvme_find_ns(struct nvme_dev *dev, unsigned nsid)
+{
+	struct nvme_ns *ns;
+
+	list_for_each_entry(ns, &dev->namespaces, list) {
+		if (ns->ns_id == nsid)
+			return ns;
+		if (ns->ns_id > nsid)
+			break;
+	}
+	return NULL;
+}
+
+static inline bool nvme_io_incapable(struct nvme_dev *dev)
+{
+	return (!dev->bar || readl(&dev->bar->csts) & NVME_CSTS_CFS ||
+						dev->online_queues < 2);
+}
+
+static void nvme_ns_remove(struct nvme_ns *ns)
+{
+       bool kill = nvme_io_incapable(ns->dev) && !blk_queue_dying(ns->queue);
+
+	if (ns->disk->flags & GENHD_FL_UP)
+		del_gendisk(ns->disk);
+	if (kill || !blk_queue_dying(ns->queue))
+		blk_cleanup_queue(ns->queue);
+}
+
+static void nvme_scan_namespaces(struct nvme_dev *dev, unsigned nn)
+{
+	struct nvme_ns *ns, *next;
+	unsigned i;
+
+	for (i = 1; i <= nn; i++) {
+		ns = nvme_find_ns(dev, i);
+		if (ns) {
+			if (revalidate_disk(ns->disk)) {
+				nvme_ns_remove(ns);
+				nvme_free_namespace(ns);
+			}
+		} else
+			nvme_alloc_ns(dev, i);
+	}
+	list_for_each_entry_safe(ns, next, &dev->namespaces, list) {
+		if (ns->ns_id > nn) {
+			nvme_ns_remove(ns);
+			nvme_free_namespace(ns);
+		}
+	}
+	list_sort(NULL, &dev->namespaces, ns_cmp);
+}
+
+static void nvme_dev_scan(struct work_struct *work)
+{
+	struct nvme_dev *dev = container_of(work, struct nvme_dev, scan_work);
+	struct nvme_id_ctrl *ctrl;
+	dma_addr_t dma_addr;
+	void *mem;
+	int res;
+
+        mem = dma_alloc_coherent(&dev->pci_dev->dev, 4096, &dma_addr, GFP_KERNEL);
+        if (!mem)
+                return;
+
+        res = nvme_identify(dev, 0, 1, dma_addr);
+        if (res) {
+                dma_free_coherent(&dev->pci_dev->dev, 4096, mem, dma_addr);
+                return;
+        }
+
+        ctrl = mem;
+	nvme_scan_namespaces(dev, le32_to_cpup(&ctrl->nn));
+	dma_free_coherent(&dev->pci_dev->dev, 4096, mem, dma_addr);
+}
+
 /*
  * Return: error value if an error occurred setting up the queues or calling
  * Identify Device.  0 if these succeeded, even if adding some of the
@@ -2459,7 +2571,7 @@ static int nvme_dev_add(struct nvme_dev *dev)
 {
 	struct pci_dev *pdev = dev->pci_dev;
 	int res;
-	unsigned nn, i;
+	unsigned nn;
 	struct nvme_id_ctrl *ctrl;
 	void *mem;
 	dma_addr_t dma_addr;
@@ -2496,9 +2608,7 @@ static int nvme_dev_add(struct nvme_dev *dev)
 
 	dma_free_coherent(&dev->pci_dev->dev, 4096, mem, dma_addr);
 
-	for (i = 1; i <= nn; i++)
-		nvme_alloc_ns(dev, i);
-
+	schedule_work(&dev->scan_work);
 	return 0;
 }
 
@@ -2762,12 +2872,8 @@ static void nvme_dev_remove(struct nvme_dev *dev)
 {
 	struct nvme_ns *ns;
 
-	list_for_each_entry(ns, &dev->namespaces, list) {
-		if (ns->disk->flags & GENHD_FL_UP)
-			del_gendisk(ns->disk);
-		if (!blk_queue_dying(ns->queue))
-			blk_cleanup_queue(ns->queue);
-	}
+	list_for_each_entry(ns, &dev->namespaces, list)
+		nvme_ns_remove(ns);
 }
 
 static int nvme_setup_prp_pools(struct nvme_dev *dev)
@@ -2827,16 +2933,8 @@ static void nvme_free_namespaces(struct nvme_dev *dev)
 {
 	struct nvme_ns *ns, *next;
 
-	list_for_each_entry_safe(ns, next, &dev->namespaces, list) {
-		list_del(&ns->list);
-
-		spin_lock(&dev_list_lock);
-		ns->disk->private_data = NULL;
-		spin_unlock(&dev_list_lock);
-
-		put_disk(ns->disk);
-		kfree(ns);
-	}
+	list_for_each_entry_safe(ns, next, &dev->namespaces, list)
+		nvme_free_namespace(ns);
 }
 
 static void nvme_free_dev(struct kref *kref)
@@ -2984,7 +3082,9 @@ static int nvme_dev_resume(struct nvme_dev *dev)
 		PREPARE_WORK(&dev->reset_work, nvme_remove_disks);
 		queue_work(nvme_workq, &dev->reset_work);
 		spin_unlock(&dev_list_lock);
-	}
+	} else
+		schedule_work(&dev->scan_work);
+
 	dev->initialized = 1;
 	return 0;
 }
@@ -3068,6 +3168,7 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	get_device(dev->device);
 
 	INIT_LIST_HEAD(&dev->node);
+	INIT_WORK(&dev->scan_work, nvme_dev_scan);
 	INIT_WORK(&dev->probe_work, nvme_async_probe);
 	schedule_work(&dev->probe_work);
 	return 0;
@@ -3125,6 +3226,7 @@ static void nvme_remove(struct pci_dev *pdev)
 
 	pci_set_drvdata(pdev, NULL);
 	flush_work(&dev->probe_work);
+	flush_work(&dev->scan_work);
 	flush_work(&dev->reset_work);
 	flush_work(&dev->cpu_work);
 	nvme_dev_shutdown(dev);
