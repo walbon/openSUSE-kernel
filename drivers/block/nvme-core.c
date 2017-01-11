@@ -1937,13 +1937,24 @@ static int nvme_getgeo(struct block_device *bd, struct hd_geometry *geo)
 	return 0;
 }
 
+static void nvme_config_discard(struct nvme_ns *ns)
+{
+	u32 logical_block_size = queue_logical_block_size(ns->queue);
+	ns->queue->limits.discard_zeroes_data = 0;
+	ns->queue->limits.discard_alignment = logical_block_size;
+	ns->queue->limits.discard_granularity = logical_block_size;
+	ns->queue->limits.max_discard_sectors = 0xffffffff;
+	queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, ns->queue);
+}
+
 static int nvme_revalidate_disk(struct gendisk *disk)
 {
 	struct nvme_ns *ns = disk->private_data;
 	struct nvme_dev *dev = ns->dev;
 	struct nvme_id_ns *id;
 	dma_addr_t dma_addr;
-	int lbaf;
+	int lbaf, old_ms;
+	unsigned short bs;
 
 	id = dma_alloc_coherent(&dev->pci_dev->dev, 4096, &dma_addr,
 								GFP_KERNEL);
@@ -1953,15 +1964,35 @@ static int nvme_revalidate_disk(struct gendisk *disk)
 		return 0;
 	}
 
-	if (nvme_identify(dev, ns->ns_id, 0, dma_addr))
-		goto free;
+	if (nvme_identify(dev, ns->ns_id, 0, dma_addr)) {
+		dev_warn(&dev->pci_dev->dev,
+				"identify failed ns:%d, setting capacity to 0\n", ns->ns_id);
+		memset(id, 0, sizeof(*id));
+	}
 
-	lbaf = id->flbas & 0xf;
+	old_ms = ns->ms;
+	lbaf = id->flbas & 0xf; /* 0xf == NVME_NS_FLBAS_LBA_MASK */
 	ns->lba_shift = id->lbaf[lbaf].ds;
+	ns->ms = le16_to_cpu(id->lbaf[lbaf].ms);
 
-	blk_queue_logical_block_size(ns->queue, 1 << ns->lba_shift);
-	set_capacity(disk, le64_to_cpup(&id->nsze) << (ns->lba_shift - 9));
- free:
+	/*
+	* If identify namespace failed, use default 512 byte block size so
+	* block layer can use before failing read/write for 0 capacity.
+	*/
+	if (ns->lba_shift == 0)
+		ns->lba_shift = 9;
+	bs = 1 << ns->lba_shift;
+
+	blk_queue_logical_block_size(ns->queue, bs);
+
+	if (id->ncap == 0) /*|| (ns->ms && !disk->integrity))*/
+		set_capacity(disk, 0);
+	else
+		set_capacity(disk, le64_to_cpup(&id->nsze) << (ns->lba_shift - 9));
+
+	if (dev->oncs & NVME_CTRL_ONCS_DSM)
+		nvme_config_discard(ns);
+
 	dma_free_coherent(&dev->pci_dev->dev, 4096, id, dma_addr);
 	return 0;
 }
@@ -2082,29 +2113,14 @@ static int nvme_kthread(void *data)
 	return 0;
 }
 
-static void nvme_config_discard(struct nvme_ns *ns)
-{
-	u32 logical_block_size = queue_logical_block_size(ns->queue);
-	ns->queue->limits.discard_zeroes_data = 0;
-	ns->queue->limits.discard_alignment = logical_block_size;
-	ns->queue->limits.discard_granularity = logical_block_size;
-	ns->queue->limits.max_discard_sectors = 0xffffffff;
-	queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, ns->queue);
-}
-
-static struct nvme_ns *nvme_alloc_ns(struct nvme_dev *dev, unsigned nsid,
-			struct nvme_id_ns *id, struct nvme_lba_range_type *rt)
+static void nvme_alloc_ns(struct nvme_dev *dev, unsigned nsid)
 {
 	struct nvme_ns *ns;
 	struct gendisk *disk;
-	int lbaf;
-
-	if (rt->attributes & NVME_LBART_ATTRIB_HIDE)
-		return NULL;
 
 	ns = kzalloc(sizeof(*ns), GFP_KERNEL);
 	if (!ns)
-		return NULL;
+		return;
 	ns->queue = blk_alloc_queue(GFP_KERNEL);
 	if (!ns->queue)
 		goto out_free_ns;
@@ -2121,9 +2137,9 @@ static struct nvme_ns *nvme_alloc_ns(struct nvme_dev *dev, unsigned nsid,
 		goto out_free_queue;
 	ns->ns_id = nsid;
 	ns->disk = disk;
-	lbaf = id->flbas & 0xf;
-	ns->lba_shift = id->lbaf[lbaf].ds;
-	ns->ms = le16_to_cpu(id->lbaf[lbaf].ms);
+	ns->lba_shift = 9; /* set to a default value for 512 until disk is validated */
+	list_add_tail(&ns->list, &dev->namespaces);
+
 	blk_queue_logical_block_size(ns->queue, 1 << ns->lba_shift);
 	if (dev->max_hw_sectors) {
 		u32 max_segments =
@@ -2143,18 +2159,19 @@ static struct nvme_ns *nvme_alloc_ns(struct nvme_dev *dev, unsigned nsid,
 	disk->driverfs_dev = dev->device;
 	disk->flags = GENHD_FL_EXT_DEVT;
 	sprintf(disk->disk_name, "nvme%dn%d", dev->instance, nsid);
-	set_capacity(disk, le64_to_cpup(&id->nsze) << (ns->lba_shift - 9));
 
-	if (dev->oncs & NVME_CTRL_ONCS_DSM)
-		nvme_config_discard(ns);
-
-	return ns;
+	/* Initialize capacity to 0 until we establish the namespace format. */
+	set_capacity(disk, 0);
+	nvme_revalidate_disk(ns->disk);
+	add_disk(ns->disk);
+	if (ns->ms)
+		revalidate_disk(ns->disk);
+	return;
 
  out_free_queue:
 	blk_cleanup_queue(ns->queue);
  out_free_ns:
 	kfree(ns);
-	return NULL;
 }
 
 static int nvme_find_closest_node(int node)
@@ -2443,22 +2460,20 @@ static int nvme_dev_add(struct nvme_dev *dev)
 	struct pci_dev *pdev = dev->pci_dev;
 	int res;
 	unsigned nn, i;
-	struct nvme_ns *ns;
 	struct nvme_id_ctrl *ctrl;
-	struct nvme_id_ns *id_ns;
 	void *mem;
 	dma_addr_t dma_addr;
 	int shift = NVME_CAP_MPSMIN(readq(&dev->bar->cap)) + 12;
 
-	mem = dma_alloc_coherent(&pdev->dev, 8192, &dma_addr, GFP_KERNEL);
+	mem = dma_alloc_coherent(&pdev->dev, 4096, &dma_addr, GFP_KERNEL);
 	if (!mem)
 		return -ENOMEM;
 
 	res = nvme_identify(dev, 0, 1, dma_addr);
 	if (res) {
 		dev_err(&pdev->dev, "Identify Controller failed (%d)\n", res);
-		res = -EIO;
-		goto out;
+		dma_free_coherent(&dev->pci_dev->dev, 4096, mem, dma_addr);
+		return -EIO;
 	}
 
 	ctrl = mem;
@@ -2479,31 +2494,12 @@ static int nvme_dev_add(struct nvme_dev *dev)
 			(pdev->device == 0x0953) && ctrl->vs[3])
 		dev->stripe_size = 1 << (ctrl->vs[3] + shift);
 
-	id_ns = mem;
-	for (i = 1; i <= nn; i++) {
-		res = nvme_identify(dev, i, 0, dma_addr);
-		if (res)
-			continue;
+	dma_free_coherent(&dev->pci_dev->dev, 4096, mem, dma_addr);
 
-		if (id_ns->ncap == 0)
-			continue;
+	for (i = 1; i <= nn; i++)
+		nvme_alloc_ns(dev, i);
 
-		res = nvme_get_features(dev, NVME_FEAT_LBA_RANGE, i,
-							dma_addr + 4096, NULL);
-		if (res)
-			memset(mem + 4096, 0, 4096);
-
-		ns = nvme_alloc_ns(dev, i, mem, mem + 4096);
-		if (ns)
-			list_add_tail(&ns->list, &dev->namespaces);
-	}
-	list_for_each_entry(ns, &dev->namespaces, list)
-		add_disk(ns->disk);
-	res = 0;
-
- out:
-	dma_free_coherent(&dev->pci_dev->dev, 8192, mem, dma_addr);
-	return res;
+	return 0;
 }
 
 static int nvme_dev_map(struct nvme_dev *dev)
