@@ -155,19 +155,23 @@ static void xgene_enet_rd_mac(struct xgene_enet_pdata *pdata,
 			   rd_addr);
 }
 
-static void xgene_enet_rd_pcs(struct xgene_enet_pdata *pdata,
+static bool xgene_enet_rd_pcs(struct xgene_enet_pdata *pdata,
 			      u32 rd_addr, u32 *rd_data)
 {
 	void __iomem *addr, *rd, *cmd, *cmd_done;
+	bool success;
 
 	addr = pdata->pcs_addr + PCS_ADDR_REG_OFFSET;
 	rd = pdata->pcs_addr + PCS_READ_REG_OFFSET;
 	cmd = pdata->pcs_addr + PCS_COMMAND_REG_OFFSET;
 	cmd_done = pdata->pcs_addr + PCS_COMMAND_DONE_REG_OFFSET;
 
-	if (!xgene_enet_rd_indirect(addr, rd, cmd, cmd_done, rd_addr, rd_data))
+	success = xgene_enet_rd_indirect(addr, rd, cmd, cmd_done, rd_addr, rd_data);
+	if (!success)
 		netdev_err(pdata->ndev, "PCS read failed, addr: %04x\n",
 			   rd_addr);
+
+	return success;
 }
 
 static int xgene_enet_ecc_init(struct xgene_enet_pdata *pdata)
@@ -208,7 +212,9 @@ static void xgene_pcs_reset(struct xgene_enet_pdata *pdata)
 {
 	u32 data;
 
-	xgene_enet_rd_pcs(pdata, PCS_CONTROL_1, &data);
+	if (!xgene_enet_rd_pcs(pdata, PCS_CONTROL_1, &data))
+		return;
+
 	xgene_enet_wr_pcs(pdata, PCS_CONTROL_1, data | PCS_CTRL_PCS_RST);
 	xgene_enet_wr_pcs(pdata, PCS_CONTROL_1, data & ~PCS_CTRL_PCS_RST);
 }
@@ -226,9 +232,22 @@ static void xgene_xgmac_set_mac_addr(struct xgene_enet_pdata *pdata)
 	xgene_enet_wr_mac(pdata, HSTMACADR_MSW_ADDR, addr1);
 }
 
-static void xgene_xgmac_set_mss(struct xgene_enet_pdata *pdata)
+static void xgene_xgmac_set_mss(struct xgene_enet_pdata *pdata,
+				u16 mss, u8 index)
 {
-	xgene_enet_wr_csr(pdata, XG_TSIF_MSS_REG0_ADDR, pdata->mss);
+	u8 offset;
+	u32 data;
+
+	offset = (index < 2) ? 0 : 4;
+	xgene_enet_rd_csr(pdata, XG_TSIF_MSS_REG0_ADDR + offset, &data);
+
+	if (!(index & 0x1))
+		data = SET_VAL(TSO_MSS1, data >> TSO_MSS1_POS) |
+			SET_VAL(TSO_MSS0, mss);
+	else
+		data = SET_VAL(TSO_MSS1, mss) | SET_VAL(TSO_MSS0, data);
+
+	xgene_enet_wr_csr(pdata, XG_TSIF_MSS_REG0_ADDR + offset, data);
 }
 
 static u32 xgene_enet_link_status(struct xgene_enet_pdata *pdata)
@@ -252,7 +271,6 @@ static void xgene_xgmac_init(struct xgene_enet_pdata *pdata)
 	xgene_enet_wr_mac(pdata, AXGMAC_CONFIG_1, data);
 
 	xgene_xgmac_set_mac_addr(pdata);
-	xgene_xgmac_set_mss(pdata);
 
 	xgene_enet_rd_csr(pdata, XG_RSIF_CONFIG_REG_ADDR, &data);
 	data |= CFG_RSIF_FPBUFF_TIMEOUT_EN;
@@ -397,16 +415,31 @@ static void xgene_enet_clear(struct xgene_enet_pdata *pdata,
 	xgene_enet_wr_ring_if(pdata, addr, data);
 }
 
+static int xgene_enet_gpio_lookup(struct xgene_enet_pdata *pdata)
+{
+	struct device *dev = &pdata->pdev->dev;
+
+	pdata->sfp_rdy = gpiod_get(dev, "rxlos", GPIOD_IN);
+	if (IS_ERR(pdata->sfp_rdy))
+		pdata->sfp_rdy = gpiod_get(dev, "sfp", GPIOD_IN);
+
+	if (IS_ERR(pdata->sfp_rdy))
+		return -ENODEV;
+
+	return 0;
+}
+
 static void xgene_enet_link_state(struct work_struct *work)
 {
 	struct xgene_enet_pdata *pdata = container_of(to_delayed_work(work),
 					 struct xgene_enet_pdata, link_work);
-	struct gpio_desc *sfp_rdy = pdata->sfp_rdy;
 	struct net_device *ndev = pdata->ndev;
 	u32 link_status, poll_interval;
 
 	link_status = xgene_enet_link_status(pdata);
-	if (link_status && !IS_ERR(sfp_rdy) && !gpiod_get_value(sfp_rdy))
+	if (pdata->sfp_gpio_en && link_status &&
+	    (!IS_ERR(pdata->sfp_rdy) || !xgene_enet_gpio_lookup(pdata)) &&
+	    !gpiod_get_value(pdata->sfp_rdy))
 		link_status = 0;
 
 	if (link_status) {
