@@ -151,6 +151,13 @@ int xb_wait_for_data_to_read(void)
 	return wait_event_interruptible(xb_waitq, xb_data_to_read());
 }
 
+int xb_wait_for_data_to_read_kgraft(void)
+{
+	return wait_event_interruptible(xb_waitq, ({
+				klp_kgraft_mark_task_safe(current);
+				xb_data_to_read(); }));
+}
+
 int xb_read(void *data, unsigned len)
 {
 	struct xenstore_domain_interface *intf = xen_store_interface;
