@@ -62,6 +62,7 @@ struct hash_testvec {
  * @tap:	How to distribute data in @np SGs
  * @also_non_np: 	if set to 1, the test will be also done without
  * 			splitting data in @np SGs
+ * @fips_skip:	Skip the test vector in FIPS mode
  */
 
 struct cipher_testvec {
@@ -78,6 +79,7 @@ struct cipher_testvec {
 	unsigned char klen;
 	unsigned short ilen;
 	unsigned short rlen;
+	bool fips_skip;
 };
 
 struct aead_testvec {
@@ -17193,6 +17195,7 @@ static struct cipher_testvec aes_xts_enc_tv_template[] = {
 			  "\x00\x00\x00\x00\x00\x00\x00\x00"
 			  "\x00\x00\x00\x00\x00\x00\x00\x00",
 		.klen   = 32,
+		.fips_skip = 1,
 		.iv     = "\x00\x00\x00\x00\x00\x00\x00\x00"
 			  "\x00\x00\x00\x00\x00\x00\x00\x00",
 		.input  = "\x00\x00\x00\x00\x00\x00\x00\x00"
@@ -17535,6 +17538,7 @@ static struct cipher_testvec aes_xts_dec_tv_template[] = {
 			  "\x00\x00\x00\x00\x00\x00\x00\x00"
 			  "\x00\x00\x00\x00\x00\x00\x00\x00",
 		.klen   = 32,
+		.fips_skip = 1,
 		.iv     = "\x00\x00\x00\x00\x00\x00\x00\x00"
 			  "\x00\x00\x00\x00\x00\x00\x00\x00",
 		.input = "\x91\x7c\xf6\x9e\xbd\x68\xb2\xec"
