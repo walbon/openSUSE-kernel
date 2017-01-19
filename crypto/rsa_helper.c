@@ -28,9 +28,8 @@ int rsa_get_n(void *context, size_t hdrlen, unsigned char tag,
 	if (!key->n)
 		return -ENOMEM;
 
-	/* In FIPS mode only allow key size 2K & 3K */
-	if (fips_enabled && (mpi_get_size(key->n) != 256 &&
-			     mpi_get_size(key->n) != 384)) {
+	/* In FIPS mode only allow key size 2K and higher */
+	if (fips_enabled && (mpi_get_size(key->n) < 256)) {
 		pr_err("RSA: key size not allowed in FIPS mode\n");
 		mpi_free(key->n);
 		key->n = NULL;
@@ -62,9 +61,8 @@ int rsa_get_d(void *context, size_t hdrlen, unsigned char tag,
 	if (!key->d)
 		return -ENOMEM;
 
-	/* In FIPS mode only allow key size 2K & 3K */
-	if (fips_enabled && (mpi_get_size(key->d) != 256 &&
-			     mpi_get_size(key->d) != 384)) {
+	/* In FIPS mode only allow key size 2K and higher */
+	if (fips_enabled && (mpi_get_size(key->d) < 256)) {
 		pr_err("RSA: key size not allowed in FIPS mode\n");
 		mpi_free(key->d);
 		key->d = NULL;
