@@ -70,6 +70,7 @@
 #define PIN_BASED_EXT_INTR_MASK                 0x00000001
 #define PIN_BASED_NMI_EXITING                   0x00000008
 #define PIN_BASED_VIRTUAL_NMIS                  0x00000020
+#define PIN_BASED_VMX_PREEMPTION_TIMER          0x00000040
 #define PIN_BASED_POSTED_INTR                   0x00000080
 
 #define PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR	0x00000016
@@ -96,6 +97,7 @@
 
 #define VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR	0x000011ff
 
+#define VMX_MISC_PREEMPTION_TIMER_RATE_MASK	0x0000001f
 #define VMX_MISC_SAVE_EFER_LMA			0x00000020
 #define VMX_MISC_ACTIVITY_HLT			0x00000040
 
@@ -224,6 +226,7 @@ enum vmcs_field {
 	GUEST_INTERRUPTIBILITY_INFO     = 0x00004824,
 	GUEST_ACTIVITY_STATE            = 0X00004826,
 	GUEST_SYSENTER_CS               = 0x0000482A,
+	VMX_PREEMPTION_TIMER_VALUE      = 0x0000482E,
 	HOST_IA32_SYSENTER_CS           = 0x00004c00,
 	CR0_GUEST_HOST_MASK             = 0x00006000,
 	CR4_GUEST_HOST_MASK             = 0x00006002,
@@ -309,6 +312,7 @@ enum vmcs_field {
 #define EXIT_REASON_EOI_INDUCED         45
 #define EXIT_REASON_EPT_VIOLATION       48
 #define EXIT_REASON_EPT_MISCONFIG       49
+#define EXIT_REASON_PREEMPTION_TIMER    52
 #define EXIT_REASON_INVVPID             53
 #define EXIT_REASON_WBINVD		54
 #define EXIT_REASON_XSETBV		55
@@ -382,6 +386,18 @@ enum vmcs_field {
 #define TYPE_MOV_FROM_DR                (1 << 4)
 #define DEBUG_REG_ACCESS_REG(eq)        (((eq) >> 8) & 0xf) /* 11:8, general purpose reg. */
 
+
+/*
+ * Exit Qualifications for APIC-Access
+ */
+#define APIC_ACCESS_OFFSET              0xfff   /* 11:0, offset within the APIC page */
+#define APIC_ACCESS_TYPE                0xf000  /* 15:12, access type */
+#define TYPE_LINEAR_APIC_INST_READ      (0 << 12)
+#define TYPE_LINEAR_APIC_INST_WRITE     (1 << 12)
+#define TYPE_LINEAR_APIC_INST_FETCH     (2 << 12)
+#define TYPE_LINEAR_APIC_EVENT          (3 << 12)
+#define TYPE_PHYSICAL_APIC_EVENT        (10 << 12)
+#define TYPE_PHYSICAL_APIC_INST         (15 << 12)
 
 /* segment AR */
 #define SEGMENT_AR_L_MASK (1 << 13)

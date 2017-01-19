@@ -1212,6 +1212,15 @@ void kvm_apic_write_nodecode(struct kvm_vcpu *vcpu, u32 offset)
 }
 EXPORT_SYMBOL_GPL(kvm_apic_write_nodecode);
 
+void kvm_lapic_set_eoi(struct kvm_vcpu *vcpu)
+{
+       struct kvm_lapic *apic = vcpu->arch.apic;
+
+       if (apic)
+               apic_reg_write(vcpu->arch.apic, APIC_EOI, 0);
+}
+EXPORT_SYMBOL_GPL(kvm_lapic_set_eoi);
+
 void kvm_free_lapic(struct kvm_vcpu *vcpu)
 {
 	if (!vcpu->arch.apic)
@@ -1404,7 +1413,7 @@ int apic_has_pending_timer(struct kvm_vcpu *vcpu)
 	return 0;
 }
 
-static int kvm_apic_local_deliver(struct kvm_lapic *apic, int lvt_type)
+int kvm_apic_local_deliver(struct kvm_lapic *apic, int lvt_type)
 {
 	u32 reg = apic_get_reg(apic, lvt_type);
 	int vector, mode, trig_mode;
@@ -1511,8 +1520,8 @@ void kvm_inject_apic_timer_irqs(struct kvm_vcpu *vcpu)
 	struct kvm_lapic *apic = vcpu->arch.apic;
 
 	if (apic && atomic_read(&apic->lapic_timer.pending) > 0) {
-		if (kvm_apic_local_deliver(apic, APIC_LVTT))
-			atomic_dec(&apic->lapic_timer.pending);
+		kvm_apic_local_deliver(apic, APIC_LVTT);
+		atomic_set(&apic->lapic_timer.pending, 0);
 	}
 }
 
