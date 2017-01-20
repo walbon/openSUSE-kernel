@@ -34,8 +34,9 @@
 #define ARM64_HAS_NO_HW_PREFETCH		9
 #define ARM64_HAS_NO_BCAST_TLBI			10
 #define ARM64_HAS_UAO				11
+#define ARM64_ALT_PAN_NOT_UAO			12
 
-#define ARM64_NCAPS				12
+#define ARM64_NCAPS				13
 
 #ifndef __ASSEMBLY__
 
