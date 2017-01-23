@@ -123,6 +123,8 @@ static int btrfs_set_acl(struct btrfs_trans_handle *trans,
 			ret = posix_acl_update_mode(inode, &mode, &acl);
 			if (ret)
 				return ret;
+			if (ret == 0)
+				acl = NULL;
 			inode->i_mode = mode;
 		}
 		ret = 0;
