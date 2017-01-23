@@ -36,6 +36,7 @@
  */
 #define LOG_INODE_ALL 0
 #define LOG_INODE_EXISTS 1
+#define LOG_OTHER_INODE 2
 
 /*
  * directory trouble cases
@@ -2819,7 +2820,7 @@ int btrfs_sync_log(struct btrfs_trans_handle *trans,
 	 */
 	mutex_unlock(&root->log_mutex);
 
-	btrfs_init_log_ctx(&root_log_ctx);
+	btrfs_init_log_ctx(&root_log_ctx, NULL);
 
 	mutex_lock(&log_root_tree->log_mutex);
 	atomic_inc(&log_root_tree->log_batch);
@@ -4613,7 +4614,7 @@ static int btrfs_log_inode(struct btrfs_trans_handle *trans,
 	if (S_ISDIR(inode->i_mode) ||
 	    (!test_bit(BTRFS_INODE_NEEDS_FULL_SYNC,
 		       &BTRFS_I(inode)->runtime_flags) &&
-	     inode_only == LOG_INODE_EXISTS))
+	     inode_only >= LOG_INODE_EXISTS))
 		max_key.type = BTRFS_XATTR_ITEM_KEY;
 	else
 		max_key.type = (u8)-1;
@@ -4637,7 +4638,13 @@ static int btrfs_log_inode(struct btrfs_trans_handle *trans,
 		return ret;
 	}
 
-	mutex_lock(&BTRFS_I(inode)->log_mutex);
+	if (inode_only == LOG_OTHER_INODE) {
+		inode_only = LOG_INODE_EXISTS;
+		mutex_lock_nested(&BTRFS_I(inode)->log_mutex,
+				  SINGLE_DEPTH_NESTING);
+	} else {
+		mutex_lock(&BTRFS_I(inode)->log_mutex);
+	}
 
 	/*
 	 * Collect ordered extents only if we are logging data. This is to
@@ -4752,7 +4759,8 @@ again:
 			if (ret < 0) {
 				err = ret;
 				goto out_unlock;
-			} else if (ret > 0) {
+			} else if (ret > 0 && ctx &&
+				   other_ino != btrfs_ino(ctx->inode)) {
 				struct btrfs_key inode_key;
 				struct inode *other_inode;
 
@@ -4801,7 +4809,7 @@ again:
 				 * unpin it.
 				 */
 				err = btrfs_log_inode(trans, root, other_inode,
-						      LOG_INODE_EXISTS,
+						      LOG_OTHER_INODE,
 						      0, LLONG_MAX, ctx);
 				iput(other_inode);
 				if (err)
