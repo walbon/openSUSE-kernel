@@ -1505,6 +1505,9 @@ static int xgene_change_mtu(struct net_device *ndev, int new_mtu)
 	struct xgene_enet_pdata *pdata = netdev_priv(ndev);
 	int frame_size;
 
+	if (new_mtu < 68 || new_mtu > XGENE_ENET_MAX_MTU)
+		return -EINVAL;
+
 	if (!netif_running(ndev))
 		return 0;
 
@@ -1851,7 +1854,6 @@ static int xgene_enet_init_hw(struct xgene_enet_pdata *pdata)
 					    buf_pool->id, ring_id);
 	}
 
-	ndev->max_mtu = XGENE_ENET_MAX_MTU;
 	pdata->phy_speed = SPEED_UNKNOWN;
 	pdata->mac_ops->init(pdata);
 
