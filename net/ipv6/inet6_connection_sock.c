@@ -76,7 +76,7 @@ struct dst_entry *inet6_csk_route_req(struct sock *sk,
 	final_p = fl6_update_dst(&fl6, rcu_dereference(np->opt), &final);
 	rcu_read_unlock();
 	ipv6_addr_copy(&fl6.saddr, &treq->loc_addr);
-	fl6.flowi6_oif = sk->sk_bound_dev_if;
+	fl6.flowi6_oif = treq->iif;
 	fl6.flowi6_mark = sk->sk_mark;
 	fl6.fl6_dport = inet_rsk(req)->rmt_port;
 	fl6.fl6_sport = inet_rsk(req)->loc_port;
