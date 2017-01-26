@@ -478,19 +478,18 @@ out:
 }
 
 
-static int tcp_v6_send_synack(struct sock *sk,
+static int tcp_v6_send_synack(struct sock *sk, struct dst_entry *dst,
+			      struct flowi6 *fl6,
 			      struct request_sock *req,
 			      struct request_values *rvp)
 {
 	struct inet6_request_sock *treq = inet6_rsk(req);
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	struct sk_buff * skb;
-	struct flowi6 fl6;
-	struct dst_entry *dst;
 	int err = -ENOMEM;
 
-	dst = inet6_csk_route_req(sk, &fl6, req);
-	if (!dst)
+	/* First, grab a route. */
+	if (!dst && (dst = inet6_csk_route_req(sk, fl6, req)) == NULL)
 		goto done;
 
 	skb = tcp_make_synack(sk, dst, req, rvp);
@@ -498,9 +497,9 @@ static int tcp_v6_send_synack(struct sock *sk,
 	if (skb) {
 		__tcp_v6_send_check(skb, &treq->loc_addr, &treq->rmt_addr);
 
-		ipv6_addr_copy(&fl6.daddr, &treq->rmt_addr);
+		ipv6_addr_copy(&fl6->daddr, &treq->rmt_addr);
 		rcu_read_lock();
-		err = ip6_xmit(sk, skb, &fl6, rcu_dereference(np->opt));
+		err = ip6_xmit(sk, skb, fl6, rcu_dereference(np->opt));
 		rcu_read_unlock();
 		err = net_xmit_eval(err);
 	}
@@ -513,8 +512,10 @@ done:
 static int tcp_v6_rtx_synack(struct sock *sk, struct request_sock *req,
 			     struct request_values *rvp)
 {
+	struct flowi6 fl6;
+
 	TCP_INC_STATS_BH(sock_net(sk), TCP_MIB_RETRANSSEGS);
-	return tcp_v6_send_synack(sk, req, rvp);
+	return tcp_v6_send_synack(sk, NULL, &fl6, req, rvp);
 }
 
 static inline void syn_flood_warning(struct sk_buff *skb)
@@ -1336,7 +1337,7 @@ have_isn:
 
 	security_inet_conn_request(sk, skb, req);
 
-	if (tcp_v6_send_synack(sk, req,
+	if (tcp_v6_send_synack(sk, dst, &fl6, req,
 			       (struct request_values *)&tmp_ext) ||
 	    want_cookie)
 		goto drop_and_free;
