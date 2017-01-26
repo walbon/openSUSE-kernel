@@ -16,6 +16,7 @@ int of_pci_get_devfn(struct device_node *np);
 int of_irq_parse_and_map_pci(const struct pci_dev *dev, u8 slot, u8 pin);
 int of_pci_parse_bus_range(struct device_node *node, struct resource *res);
 int of_get_pci_domain_nr(struct device_node *node);
+int of_pci_get_max_link_speed(struct device_node *node);
 void of_pci_check_probe_only(void);
 int of_pci_map_rid(struct device_node *np, u32 rid,
 		   const char *map_name, const char *map_mask_name,
@@ -53,6 +54,12 @@ static inline int
 of_get_pci_domain_nr(struct device_node *node)
 {
 	return -1;
+}
+
+static inline int
+of_pci_get_max_link_speed(struct device_node *node)
+{
+	return -EINVAL;
 }
 
 static inline int of_pci_map_rid(struct device_node *np, u32 rid,
