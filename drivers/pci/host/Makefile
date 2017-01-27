@@ -24,5 +24,5 @@ obj-$(CONFIG_PCIE_ALTERA) += pcie-altera.o
 obj-$(CONFIG_PCIE_ALTERA_MSI) += pcie-altera-msi.o
 obj-$(CONFIG_ARM64) += pcie-hisi.o
 obj-$(CONFIG_PCI_HOST_THUNDER_ECAM) += pci-thunder-ecam.o
-obj-$(CONFIG_PCI_HOST_THUNDER_PEM) += pci-thunder-pem.o
+obj-$(CONFIG_ARM64) += pci-thunder-pem.o
 obj-$(CONFIG_PCIE_ROCKCHIP) += pcie-rockchip.o
