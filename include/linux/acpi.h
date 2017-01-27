@@ -369,6 +369,8 @@ static inline int acpi_dev_filter_resource_type_cb(struct acpi_resource *ares,
 	return acpi_dev_filter_resource_type(ares, (unsigned long)arg);
 }
 
+struct acpi_device *acpi_resource_consumer(struct resource *res);
+
 int acpi_check_resource_conflict(const struct resource *res);
 
 int acpi_check_region(resource_size_t start, resource_size_t n,
@@ -652,6 +654,11 @@ static inline void acpi_dma_configure(struct device *dev,
 static inline void acpi_dma_deconfigure(struct device *dev) { }
 
 #define ACPI_PTR(_ptr)	(NULL)
+
+static inline struct acpi_device *acpi_resource_consumer(struct resource *res)
+{
+	return NULL;
+}
 
 #endif	/* !CONFIG_ACPI */
 
