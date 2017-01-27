@@ -104,8 +104,8 @@ config PCIE_XILINX
 
 config PCI_XGENE
 	bool "X-Gene PCIe controller"
-	depends on ARCH_XGENE
-	depends on OF
+	depends on ARM64
+	depends on OF || (ACPI && PCI_QUIRKS)
 	select PCIEPORTBUS
 	select PCI_MSI_IRQ_DOMAIN if PCI_MSI
 	help
