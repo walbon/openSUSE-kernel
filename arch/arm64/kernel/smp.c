@@ -591,6 +591,13 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 	numa_store_cpu_info(this_cpu);
 
 	/*
+	 * If UP is mandated by "nosmp" (which implies "maxcpus=0"), don't set
+	 * secondary CPUs present.
+	 */
+	if (max_cpus == 0)
+		return;
+
+	/*
 	 * Initialise the present map (which describes the set of CPUs
 	 * actually populated at the present time) and release the
 	 * secondaries from the bootloader.
