@@ -3,8 +3,9 @@ menu "PCI host controller drivers"
 
 config PCI_DRA7XX
 	bool "TI DRA7xx PCIe controller"
-	select PCIE_DW
 	depends on OF && HAS_IOMEM && TI_PIPE3
+	depends on PCI_MSI_IRQ_DOMAIN
+	select PCIE_DW
 	depends on BROKEN
 	help
 	 Enables support for the PCIe controller in the DRA7xx SoC.  There
@@ -19,7 +20,7 @@ config PCI_MVEBU
 config PCIE_XILINX_NWL
 	bool "NWL PCIe Core"
 	depends on ARCH_ZYNQMP
-	select PCI_MSI_IRQ_DOMAIN if PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	help
 	 Say 'Y' here if you want kernel support for Xilinx
 	 NWL PCIe controller. The controller can act as Root Port
@@ -28,16 +29,19 @@ config PCIE_XILINX_NWL
 
 config PCIE_DW
 	bool
+	depends on PCI_MSI_IRQ_DOMAIN
 
 config PCI_EXYNOS
 	bool "Samsung Exynos PCIe controller"
 	depends on SOC_EXYNOS5440
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIEPORTBUS
 	select PCIE_DW
 
 config PCI_IMX6
 	bool "Freescale i.MX6 PCIe controller"
 	depends on SOC_IMX6Q
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIEPORTBUS
 	select PCIE_DW
 
@@ -79,6 +83,7 @@ config PCI_HOST_GENERIC
 config PCIE_SPEAR13XX
 	bool "STMicroelectronics SPEAr PCIe controller"
 	depends on ARCH_SPEAR13XX
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIEPORTBUS
 	select PCIE_DW
 	help
@@ -87,6 +92,7 @@ config PCIE_SPEAR13XX
 config PCI_KEYSTONE
 	bool "TI Keystone PCIe controller"
 	depends on ARCH_KEYSTONE
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW
 	select PCIEPORTBUS
 	help
@@ -107,7 +113,6 @@ config PCI_XGENE
 	depends on ARM64
 	depends on OF || (ACPI && PCI_QUIRKS)
 	select PCIEPORTBUS
-	select PCI_MSI_IRQ_DOMAIN if PCI_MSI
 	help
 	  Say Y here if you want internal PCI support on APM X-Gene SoC.
 	  There are 5 internal PCIe ports available. Each port is GEN3 capable
@@ -115,7 +120,8 @@ config PCI_XGENE
 
 config PCI_XGENE_MSI
 	bool "X-Gene v1 PCIe MSI feature"
-	depends on PCI_XGENE && PCI_MSI
+	depends on PCI_XGENE
+	depends on PCI_MSI_IRQ_DOMAIN
 	default y
 	help
 	  Say Y here if you want PCIe MSI support for the APM X-Gene v1 SoC.
@@ -124,6 +130,7 @@ config PCI_XGENE_MSI
 config PCI_LAYERSCAPE
 	bool "Freescale Layerscape PCIe controller"
 	depends on OF && (ARM || ARCH_LAYERSCAPE)
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW
 	select MFD_SYSCON
 	help
@@ -174,8 +181,8 @@ config PCIE_ALTERA
 
 config PCIE_ALTERA_MSI
 	bool "Altera PCIe MSI feature"
-	depends on PCIE_ALTERA && PCI_MSI
-	select PCI_MSI_IRQ_DOMAIN
+	depends on PCIE_ALTERA
+	depends on PCI_MSI_IRQ_DOMAIN
 	help
 	  Say Y here if you want PCIe MSI support for the Altera FPGA.
 	  This MSI driver supports Altera MSI to GIC controller IP.
@@ -183,6 +190,7 @@ config PCIE_ALTERA_MSI
 config PCI_HISI
 	depends on OF && ARM64
 	bool "HiSilicon Hip05 and Hip06 SoCs PCIe controllers"
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIEPORTBUS
 	select PCIE_DW
 	help
