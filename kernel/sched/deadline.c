@@ -670,8 +670,11 @@ static enum hrtimer_restart dl_task_timer(struct hrtimer *timer)
 	 *
 	 * XXX figure out if select_task_rq_dl() deals with offline cpus.
 	 */
-	if (unlikely(!rq->online))
+	if (unlikely(!rq->online)) {
+		lockdep_unpin_lock(&rq->lock);
 		rq = dl_task_offline_migration(rq, p);
+		lockdep_pin_lock(&rq->lock);
+	}
 
 	/*
 	 * Queueing this task back might have overloaded rq, check if we need
