@@ -464,17 +464,23 @@ static inline int entity_before(struct sched_entity *a,
 
 static void update_min_vruntime(struct cfs_rq *cfs_rq)
 {
+	struct sched_entity *curr = cfs_rq->curr;
+
 	u64 vruntime = cfs_rq->min_vruntime;
 
-	if (cfs_rq->curr)
-		vruntime = cfs_rq->curr->vruntime;
+	if (curr) {
+		if (curr->on_rq)
+			vruntime = curr->vruntime;
+		else
+			curr = NULL;
+	}
 
 	if (cfs_rq->rb_leftmost) {
 		struct sched_entity *se = rb_entry(cfs_rq->rb_leftmost,
 						   struct sched_entity,
 						   run_node);
 
-		if (!cfs_rq->curr)
+		if (!curr)
 			vruntime = se->vruntime;
 		else
 			vruntime = min_vruntime(vruntime, se->vruntime);
@@ -741,7 +747,6 @@ void post_init_entity_util_avg(struct sched_entity *se)
 	struct sched_avg *sa = &se->avg;
 	long cap = (long)(SCHED_CAPACITY_SCALE - cfs_rq->avg.util_avg) / 2;
 	u64 now = cfs_rq_clock_task(cfs_rq);
-	int tg_update;
 
 	if (cap > 0) {
 		if (cfs_rq->avg.util_avg != 0) {
@@ -774,10 +779,9 @@ void post_init_entity_util_avg(struct sched_entity *se)
 		}
 	}
 
-	tg_update = update_cfs_rq_load_avg(now, cfs_rq);
+	update_cfs_rq_load_avg(now, cfs_rq);
 	attach_entity_load_avg(cfs_rq, se);
-	if (tg_update)
-		update_tg_load_avg(cfs_rq, false);
+	update_tg_load_avg(cfs_rq, false);
 }
 
 #else /* !CONFIG_SMP */
@@ -2823,9 +2827,21 @@ __update_load_avg(u64 now, int cpu, struct sched_avg *sa,
 }
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
-/*
- * Updating tg's load_avg is necessary before update_cfs_share (which is done)
- * and effective_load (which is not done because it is too costly).
+/**
+ * update_tg_load_avg - update the tg's load avg
+ * @cfs_rq: the cfs_rq whose avg changed
+ * @force: update regardless of how small the difference
+ *
+ * This function 'ensures': tg->load_avg := \Sum tg->cfs_rq[]->avg.load.
+ * However, because tg->load_avg is a global value there are performance
+ * considerations.
+ *
+ * In order to avoid having to look at the other cfs_rq's, we use a
+ * differential update where we store the last value we propagated. This in
+ * turn allows skipping updates if the differential is 'small'.
+ *
+ * Updating tg's load_avg is necessary before update_cfs_share() (which is
+ * done) and effective_load() (which is not done because it is too costly).
  */
 static inline void update_tg_load_avg(struct cfs_rq *cfs_rq, int force)
 {
@@ -2923,10 +2939,10 @@ static inline u64 cfs_rq_clock_task(struct cfs_rq *cfs_rq);
  *
  * cfs_rq->avg is used for task_h_load() and update_cfs_share() for example.
  *
- * Returns true if the load decayed or we removed utilization. It is expected
- * that one calls update_tg_load_avg() on this condition, but after you've
- * modified the cfs_rq avg (attach/detach), such that we propagate the new
- * avg up.
+ * Returns true if the load decayed or we removed load.
+ *
+ * Since both these conditions indicate a changed cfs_rq->avg.load we should
+ * call update_tg_load_avg() when this function returns true.
  */
 static inline int update_cfs_rq_load_avg(u64 now, struct cfs_rq *cfs_rq)
 {
@@ -3434,9 +3450,10 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	account_entity_dequeue(cfs_rq, se);
 
 	/*
-	 * Normalize the entity after updating the min_vruntime because the
-	 * update can refer to the ->curr item and we need to reflect this
-	 * movement in our normalized position.
+	 * Normalize after update_curr(); which will also have moved
+	 * min_vruntime if @se is the one holding it back. But before doing
+	 * update_min_vruntime() again, which will discount @se's position and
+	 * can move min_vruntime forward still more.
 	 */
 	if (!(flags & DEQUEUE_SLEEP))
 		se->vruntime -= cfs_rq->min_vruntime;
@@ -3444,8 +3461,16 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	/* return excess runtime on last dequeue */
 	return_cfs_rq_runtime(cfs_rq);
 
-	update_min_vruntime(cfs_rq);
 	update_cfs_shares(cfs_rq);
+
+	/*
+	 * Now advance min_vruntime if @se was the entity holding it back,
+	 * except when: DEQUEUE_SAVE && !DEQUEUE_MOVE, in this case we'll be
+	 * put back on, and if we advance min_vruntime, we'll be placed back
+	 * further than we started -- ie. we'll be penalized.
+	 */
+	if ((flags & (DEQUEUE_SAVE | DEQUEUE_MOVE)) == DEQUEUE_SAVE)
+		update_min_vruntime(cfs_rq);
 }
 
 /*
@@ -3721,7 +3746,7 @@ static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
 static inline u64 cfs_rq_clock_task(struct cfs_rq *cfs_rq)
 {
 	if (unlikely(cfs_rq->throttle_count))
-		return cfs_rq->throttled_clock_task;
+		return cfs_rq->throttled_clock_task - cfs_rq->throttled_clock_task_time;
 
 	return rq_clock_task(rq_of(cfs_rq)) - cfs_rq->throttled_clock_task_time;
 }
@@ -3859,13 +3884,11 @@ static int tg_unthrottle_up(struct task_group *tg, void *data)
 	struct cfs_rq *cfs_rq = tg->cfs_rq[cpu_of(rq)];
 
 	cfs_rq->throttle_count--;
-#ifdef CONFIG_SMP
 	if (!cfs_rq->throttle_count) {
 		/* adjust cfs_rq_clock_task() */
 		cfs_rq->throttled_clock_task_time += rq_clock_task(rq) -
 					     cfs_rq->throttled_clock_task;
 	}
-#endif
 
 	return 0;
 }
@@ -4706,9 +4729,17 @@ static void __update_cpu_load(struct rq *this_rq, unsigned long this_load,
 
 		/* scale is effectively 1 << i now, and >> i divides by scale */
 
-		old_load = this_rq->cpu_load[i] - tickless_load;
+		old_load = this_rq->cpu_load[i];
 		old_load = decay_load_missed(old_load, pending_updates - 1, i);
-		old_load += tickless_load;
+		if (tickless_load) {
+			old_load -= decay_load_missed(tickless_load, pending_updates - 1, i);
+			/*
+			 * old_load can never be a negative value because a
+			 * decayed tickless_load cannot be greater than the
+			 * original tickless_load.
+			 */
+			old_load += tickless_load;
+		}
 		new_load = this_load;
 		/*
 		 * Round up the averaging division if load is increasing. This
@@ -4944,9 +4975,9 @@ static long effective_load(struct task_group *tg, int cpu, long wl, long wg)
 		 * wl = S * s'_i; see (2)
 		 */
 		if (W > 0 && w < W)
-			wl = (w * (long)tg->shares) / W;
+			wl = (w * (long)scale_load_down(tg->shares)) / W;
 		else
-			wl = tg->shares;
+			wl = scale_load_down(tg->shares);
 
 		/*
 		 * Per the above, wl is the new se->load.weight value; since
@@ -7324,7 +7355,7 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
 		load_above_capacity = busiest->sum_nr_running * SCHED_CAPACITY_SCALE;
 		if (load_above_capacity > busiest->group_capacity) {
 			load_above_capacity -= busiest->group_capacity;
-			load_above_capacity *= NICE_0_LOAD;
+			load_above_capacity *= scale_load_down(NICE_0_LOAD);
 			load_above_capacity /= busiest->group_capacity;
 		} else
 			load_above_capacity = ~0UL;
@@ -8638,7 +8669,6 @@ static void detach_task_cfs_rq(struct task_struct *p)
 	struct sched_entity *se = &p->se;
 	struct cfs_rq *cfs_rq = cfs_rq_of(se);
 	u64 now = cfs_rq_clock_task(cfs_rq);
-	int tg_update;
 
 	if (!vruntime_normalized(p)) {
 		/*
@@ -8650,10 +8680,9 @@ static void detach_task_cfs_rq(struct task_struct *p)
 	}
 
 	/* Catch up with the cfs_rq and remove our load when we leave */
-	tg_update = update_cfs_rq_load_avg(now, cfs_rq);
+	update_cfs_rq_load_avg(now, cfs_rq);
 	detach_entity_load_avg(cfs_rq, se);
-	if (tg_update)
-		update_tg_load_avg(cfs_rq, false);
+	update_tg_load_avg(cfs_rq, false);
 }
 
 static void attach_task_cfs_rq(struct task_struct *p)
@@ -8661,7 +8690,6 @@ static void attach_task_cfs_rq(struct task_struct *p)
 	struct sched_entity *se = &p->se;
 	struct cfs_rq *cfs_rq = cfs_rq_of(se);
 	u64 now = cfs_rq_clock_task(cfs_rq);
-	int tg_update;
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	/*
@@ -8672,10 +8700,9 @@ static void attach_task_cfs_rq(struct task_struct *p)
 #endif
 
 	/* Synchronize task with its cfs_rq */
-	tg_update = update_cfs_rq_load_avg(now, cfs_rq);
+	update_cfs_rq_load_avg(now, cfs_rq);
 	attach_entity_load_avg(cfs_rq, se);
-	if (tg_update)
-		update_tg_load_avg(cfs_rq, false);
+	update_tg_load_avg(cfs_rq, false);
 
 	if (!vruntime_normalized(p))
 		se->vruntime += cfs_rq->min_vruntime;

@@ -1352,6 +1352,10 @@ struct sched_rt_entity {
 	unsigned long timeout;
 	unsigned long watchdog_stamp;
 	unsigned int time_slice;
+#ifndef __GENKSYMS__
+	unsigned short on_rq;
+	unsigned short on_list;
+#endif
 
 	struct sched_rt_entity *back;
 #ifdef CONFIG_RT_GROUP_SCHED

@@ -740,6 +740,8 @@ static bool wake_up_full_nohz_cpu(int cpu)
 	 * If needed we can still optimize that later with an
 	 * empty IRQ.
 	 */
+	if (cpu_is_offline(cpu))
+		return true;  /* Don't try to wake offline CPUs. */
 	if (tick_nohz_full_cpu(cpu)) {
 		if (cpu != smp_processor_id() ||
 		    tick_nohz_tick_stopped())
@@ -750,6 +752,11 @@ static bool wake_up_full_nohz_cpu(int cpu)
 	return false;
 }
 
+/*
+ * Wake up the specified CPU.  If the CPU is going offline, it is the
+ * caller's responsibility to deal with the lost wakeup, for example,
+ * by hooking into the CPU_DEAD notifier like timers and hrtimers do.
+ */
 void wake_up_nohz_cpu(int cpu)
 {
 	if (!wake_up_full_nohz_cpu(cpu))
@@ -1264,10 +1271,10 @@ void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 
 	p->sched_class->set_cpus_allowed(p, new_mask);
 
-	if (running)
-		p->sched_class->set_curr_task(rq);
 	if (queued)
 		enqueue_task(rq, p, ENQUEUE_RESTORE);
+	if (running)
+		p->sched_class->set_curr_task(rq);
 }
 
 /*
@@ -2330,6 +2337,10 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	__dl_clear_params(p);
 
 	INIT_LIST_HEAD(&p->rt.run_list);
+	p->rt.timeout		= 0;
+	p->rt.time_slice	= sched_rr_timeslice;
+	p->rt.on_rq		= 0;
+	p->rt.on_list		= 0;
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	INIT_HLIST_HEAD(&p->preempt_notifiers);
@@ -2626,7 +2637,8 @@ static int dl_overflow(struct task_struct *p, int policy,
 	u64 new_bw = dl_policy(policy) ? to_ratio(period, runtime) : 0;
 	int cpus, err = -1;
 
-	if (new_bw == p->dl.dl_bw)
+	/* !deadline task may carry old deadline bandwidth */
+	if (new_bw == p->dl.dl_bw && task_has_dl_policy(p))
 		return 0;
 
 	/*
@@ -3700,7 +3712,7 @@ EXPORT_SYMBOL(default_wake_function);
  */
 void rt_mutex_setprio(struct task_struct *p, int prio)
 {
-	int oldprio, queued, running, enqueue_flag = ENQUEUE_RESTORE;
+	int oldprio, queued, running, queue_flag = DEQUEUE_SAVE | DEQUEUE_MOVE;
 	struct rq *rq;
 	const struct sched_class *prev_class;
 
@@ -3729,11 +3741,15 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 
 	trace_sched_pi_setprio(p, prio);
 	oldprio = p->prio;
+
+	if (oldprio == prio)
+		queue_flag &= ~DEQUEUE_MOVE;
+
 	prev_class = p->sched_class;
 	queued = task_on_rq_queued(p);
 	running = task_current(rq, p);
 	if (queued)
-		dequeue_task(rq, p, DEQUEUE_SAVE);
+		dequeue_task(rq, p, queue_flag);
 	if (running)
 		put_prev_task(rq, p);
 
@@ -3751,7 +3767,7 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 		if (!dl_prio(p->normal_prio) ||
 		    (pi_task && dl_entity_preempt(&pi_task->dl, &p->dl))) {
 			p->dl.dl_boosted = 1;
-			enqueue_flag |= ENQUEUE_REPLENISH;
+			queue_flag |= ENQUEUE_REPLENISH;
 		} else
 			p->dl.dl_boosted = 0;
 		p->sched_class = &dl_sched_class;
@@ -3759,7 +3775,7 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 		if (dl_prio(oldprio))
 			p->dl.dl_boosted = 0;
 		if (oldprio < prio)
-			enqueue_flag |= ENQUEUE_HEAD;
+			queue_flag |= ENQUEUE_HEAD;
 		p->sched_class = &rt_sched_class;
 	} else {
 		if (dl_prio(oldprio))
@@ -3771,10 +3787,10 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 
 	p->prio = prio;
 
+	if (queued)
+		enqueue_task(rq, p, queue_flag);
 	if (running)
 		p->sched_class->set_curr_task(rq);
-	if (queued)
-		enqueue_task(rq, p, enqueue_flag);
 
 	check_class_changed(rq, p, prev_class, oldprio);
 out_unlock:
@@ -3788,7 +3804,8 @@ out_unlock:
 
 void set_user_nice(struct task_struct *p, long nice)
 {
-	int old_prio, delta, queued;
+	bool queued, running;
+	int old_prio, delta;
 	unsigned long flags;
 	struct rq *rq;
 
@@ -3812,8 +3829,11 @@ void set_user_nice(struct task_struct *p, long nice)
 		goto out_unlock;
 	}
 	queued = task_on_rq_queued(p);
+	running = task_current(rq, p);
 	if (queued)
 		dequeue_task(rq, p, DEQUEUE_SAVE);
+	if (running)
+		put_prev_task(rq, p);
 
 	p->static_prio = NICE_TO_PRIO(nice);
 	set_load_weight(p);
@@ -3830,6 +3850,8 @@ void set_user_nice(struct task_struct *p, long nice)
 		if (delta < 0 || (delta > 0 && task_running(rq, p)))
 			resched_curr(rq);
 	}
+	if (running)
+		p->sched_class->set_curr_task(rq);
 out_unlock:
 	task_rq_unlock(rq, p, &flags);
 }
@@ -4132,6 +4154,7 @@ static int __sched_setscheduler(struct task_struct *p,
 	const struct sched_class *prev_class;
 	struct rq *rq;
 	int reset_on_fork;
+	int queue_flags = DEQUEUE_SAVE | DEQUEUE_MOVE;
 
 	/* may grab non-irq protected spin_locks */
 	BUG_ON(in_interrupt());
@@ -4315,36 +4338,32 @@ change:
 		 * itself.
 		 */
 		new_effective_prio = rt_mutex_get_effective_prio(p, newprio);
-		if (new_effective_prio == oldprio) {
-			__setscheduler_params(p, attr);
-			task_rq_unlock(rq, p, &flags);
-			return 0;
-		}
+		if (new_effective_prio == oldprio)
+			queue_flags &= ~DEQUEUE_MOVE;
 	}
 
 	queued = task_on_rq_queued(p);
 	running = task_current(rq, p);
 	if (queued)
-		dequeue_task(rq, p, DEQUEUE_SAVE);
+		dequeue_task(rq, p, queue_flags);
 	if (running)
 		put_prev_task(rq, p);
 
 	prev_class = p->sched_class;
 	__setscheduler(rq, p, attr, pi);
 
-	if (running)
-		p->sched_class->set_curr_task(rq);
 	if (queued) {
-		int enqueue_flags = ENQUEUE_RESTORE;
 		/*
 		 * We enqueue to tail when the priority of a task is
 		 * increased (user space view).
 		 */
-		if (oldprio <= p->prio)
-			enqueue_flags |= ENQUEUE_HEAD;
+		if (oldprio < p->prio)
+			queue_flags |= ENQUEUE_HEAD;
 
-		enqueue_task(rq, p, enqueue_flags);
+		enqueue_task(rq, p, queue_flags);
 	}
+	if (running)
+		p->sched_class->set_curr_task(rq);
 
 	check_class_changed(rq, p, prev_class, oldprio);
 	preempt_disable(); /* avoid rq from going away on us */
@@ -5461,6 +5480,8 @@ out:
 
 #ifdef CONFIG_SMP
 
+static bool sched_smp_initialized __read_mostly;
+
 #ifdef CONFIG_NUMA_BALANCING
 /* Migrate current task p to target_cpu */
 int migrate_task_to(struct task_struct *p, int target_cpu)
@@ -5501,10 +5522,10 @@ void sched_setnuma(struct task_struct *p, int nid)
 
 	p->numa_preferred_nid = nid;
 
-	if (running)
-		p->sched_class->set_curr_task(rq);
 	if (queued)
 		enqueue_task(rq, p, ENQUEUE_RESTORE);
+	if (running)
+		p->sched_class->set_curr_task(rq);
 	task_rq_unlock(rq, p, &flags);
 }
 #endif /* CONFIG_NUMA_BALANCING */
@@ -5895,7 +5916,6 @@ migration_call(struct notifier_block *nfb, unsigned long action, void *hcpu)
 
 	case CPU_UP_PREPARE:
 		rq->calc_load_update = calc_load_update;
-		account_reset_rq(rq);
 		break;
 
 	case CPU_ONLINE:
@@ -5991,25 +6011,6 @@ static int sched_cpu_inactive(struct notifier_block *nfb,
 		return NOTIFY_DONE;
 	}
 }
-
-static int __init migration_init(void)
-{
-	void *cpu = (void *)(long)smp_processor_id();
-	int err;
-
-	/* Initialize migration for the boot CPU */
-	err = migration_call(&migration_notifier, CPU_UP_PREPARE, cpu);
-	BUG_ON(err == NOTIFY_BAD);
-	migration_call(&migration_notifier, CPU_ONLINE, cpu);
-	register_cpu_notifier(&migration_notifier);
-
-	/* Register cpu active notifiers */
-	cpu_notifier(sched_cpu_active, CPU_PRI_SCHED_ACTIVE);
-	cpu_notifier(sched_cpu_inactive, CPU_PRI_SCHED_INACTIVE);
-
-	return 0;
-}
-early_initcall(migration_init);
 
 static cpumask_var_t sched_domains_tmpmask; /* sched_domains_mutex */
 
@@ -6937,6 +6938,9 @@ static struct sched_domain_topology_level *sched_domain_topology =
 
 void set_sched_topology(struct sched_domain_topology_level *tl)
 {
+	if (WARN_ON_ONCE(sched_smp_initialized))
+		return;
+
 	sched_domain_topology = tl;
 }
 
@@ -7207,6 +7211,9 @@ static int sched_domains_numa_masks_update(struct notifier_block *nfb,
 					   void *hcpu)
 {
 	int cpu = (long)hcpu;
+
+	if (!sched_smp_initialized)
+		return NOTIFY_DONE;
 
 	switch (action & ~CPU_TASKS_FROZEN) {
 	case CPU_ONLINE:
@@ -7641,6 +7648,9 @@ static int num_cpus_frozen;	/* used to mark begin/end of suspend/resume */
 static int cpuset_cpu_active(struct notifier_block *nfb, unsigned long action,
 			     void *hcpu)
 {
+	if (!sched_smp_initialized)
+		return NOTIFY_DONE;
+
 	switch (action) {
 	case CPU_ONLINE_FROZEN:
 	case CPU_DOWN_FAILED_FROZEN:
@@ -7680,6 +7690,9 @@ static int cpuset_cpu_inactive(struct notifier_block *nfb, unsigned long action,
 	struct dl_bw *dl_b;
 	bool overflow;
 	int cpus;
+
+	if (!sched_smp_initialized)
+		return NOTIFY_DONE;
 
 	switch (action) {
 	case CPU_DOWN_PREPARE:
@@ -7744,10 +7757,6 @@ void __init sched_init_smp(void)
 		cpumask_set_cpu(smp_processor_id(), non_isolated_cpus);
 	mutex_unlock(&sched_domains_mutex);
 
-	hotcpu_notifier(sched_domains_numa_masks_update, CPU_PRI_SCHED_ACTIVE);
-	hotcpu_notifier(cpuset_cpu_active, CPU_PRI_CPUSET_ACTIVE);
-	hotcpu_notifier(cpuset_cpu_inactive, CPU_PRI_CPUSET_INACTIVE);
-
 	init_hrtick();
 
 	/* Move init over to a non-isolated CPU */
@@ -7760,7 +7769,33 @@ void __init sched_init_smp(void)
 	init_sched_dl_class();
 
 	sched_init_smt();
+
+	sched_smp_initialized = true;
 }
+
+static int __init migration_init(void)
+{
+	void *cpu = (void *)(long)smp_processor_id();
+	int err;
+
+	/* Initialize migration for the boot CPU */
+	err = migration_call(&migration_notifier, CPU_UP_PREPARE, cpu);
+	BUG_ON(err == NOTIFY_BAD);
+	migration_call(&migration_notifier, CPU_ONLINE, cpu);
+	register_cpu_notifier(&migration_notifier);
+
+	/* Register cpu active notifiers */
+	cpu_notifier(sched_cpu_active, CPU_PRI_SCHED_ACTIVE);
+	cpu_notifier(sched_cpu_inactive, CPU_PRI_SCHED_INACTIVE);
+
+	hotcpu_notifier(sched_domains_numa_masks_update, CPU_PRI_SCHED_ACTIVE);
+	hotcpu_notifier(cpuset_cpu_active, CPU_PRI_CPUSET_ACTIVE);
+	hotcpu_notifier(cpuset_cpu_inactive, CPU_PRI_CPUSET_INACTIVE);
+
+	return 0;
+}
+early_initcall(migration_init);
+
 #else
 void __init sched_init_smp(void)
 {
@@ -8258,16 +8293,16 @@ void sched_move_task(struct task_struct *tsk)
 	queued = task_on_rq_queued(tsk);
 
 	if (queued)
-		dequeue_task(rq, tsk, DEQUEUE_SAVE);
+		dequeue_task(rq, tsk, DEQUEUE_SAVE | DEQUEUE_MOVE);
 	if (unlikely(running))
 		put_prev_task(rq, tsk);
 
 	sched_change_group(tsk, TASK_MOVE_GROUP);
 
+	if (queued)
+		enqueue_task(rq, tsk, ENQUEUE_RESTORE | ENQUEUE_MOVE);
 	if (unlikely(running))
 		tsk->sched_class->set_curr_task(rq);
-	if (queued)
-		enqueue_task(rq, tsk, ENQUEUE_RESTORE);
 
 	task_rq_unlock(rq, tsk, &flags);
 }

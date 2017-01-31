@@ -493,7 +493,7 @@ struct request_queue {
 #define QUEUE_FLAG_POLL	       22	/* IO polling enabled if set */
 #define QUEUE_FLAG_WC	       23	/* Write back caching */
 #define QUEUE_FLAG_FUA	       24	/* device supports FUA writes */
-#define QUEUE_FLAG_NO_ROUND    23	/* Don't round timeout up to next second */
+#define QUEUE_FLAG_NO_ROUND    26	/* Don't round timeout up to next second */
 
 #define QUEUE_FLAG_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_STACKABLE)	|	\

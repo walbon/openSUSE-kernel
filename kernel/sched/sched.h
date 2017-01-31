@@ -1151,18 +1151,40 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 extern const int sched_prio_to_weight[40];
 extern const u32 sched_prio_to_wmult[40];
 
+/*
+ * {de,en}queue flags:
+ *
+ * DEQUEUE_SLEEP  - task is no longer runnable
+ * ENQUEUE_WAKEUP - task just became runnable
+ *
+ * SAVE/RESTORE - an otherwise spurious dequeue/enqueue, done to ensure tasks
+ *                are in a known state which allows modification. Such pairs
+ *                should preserve as much state as possible.
+ *
+ * MOVE - paired with SAVE/RESTORE, explicitly does not preserve the location
+ *        in the runqueue.
+ *
+ * ENQUEUE_HEAD      - place at front of runqueue (tail if not specified)
+ * ENQUEUE_REPLENISH - CBS (replenish runtime and postpone deadline)
+ * ENQUEUE_MIGRATED  - the task was migrated during wakeup
+ *
+ */
+
+#define DEQUEUE_SLEEP		0x01
+#define DEQUEUE_SAVE		0x02 /* matches ENQUEUE_RESTORE */
+#define DEQUEUE_MOVE		0x04 /* matches ENQUEUE_MOVE */
+
 #define ENQUEUE_WAKEUP		0x01
-#define ENQUEUE_HEAD		0x02
+#define ENQUEUE_RESTORE		0x02
+#define ENQUEUE_MOVE		0x04
+
+#define ENQUEUE_HEAD		0x08
+#define ENQUEUE_REPLENISH	0x10
 #ifdef CONFIG_SMP
-#define ENQUEUE_MIGRATED	0x04
+#define ENQUEUE_MIGRATED	0x20
 #else
 #define ENQUEUE_MIGRATED	0x00
 #endif
-#define ENQUEUE_REPLENISH	0x08
-#define ENQUEUE_RESTORE	0x10
-
-#define DEQUEUE_SLEEP		0x01
-#define DEQUEUE_SAVE		0x02
 
 #define RETRY_TASK		((void *)-1UL)
 
@@ -1703,16 +1725,3 @@ static inline u64 irq_time_read(int cpu)
 }
 #endif /* CONFIG_64BIT */
 #endif /* CONFIG_IRQ_TIME_ACCOUNTING */
-
-static inline void account_reset_rq(struct rq *rq)
-{
-#ifdef CONFIG_IRQ_TIME_ACCOUNTING
-	rq->prev_irq_time = 0;
-#endif
-#ifdef CONFIG_PARAVIRT
-	rq->prev_steal_time = 0;
-#endif
-#ifdef CONFIG_PARAVIRT_TIME_ACCOUNTING
-	rq->prev_steal_time_rq = 0;
-#endif
-}
