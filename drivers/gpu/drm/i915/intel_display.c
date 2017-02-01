@@ -5720,34 +5720,23 @@ skl_dpll0_enable(struct drm_i915_private *dev_priv, unsigned int required_vco)
 		DRM_ERROR("DPLL0 not locked\n");
 }
 
-static bool skl_cdclk_pcu_ready(struct drm_i915_private *dev_priv)
-{
-	int ret;
-	u32 val;
-
-	/* inform PCU we want to change CDCLK */
-	val = SKL_CDCLK_PREPARE_FOR_CHANGE;
-	mutex_lock(&dev_priv->rps.hw_lock);
-	ret = sandybridge_pcode_read(dev_priv, SKL_PCODE_CDCLK_CONTROL, &val);
-	mutex_unlock(&dev_priv->rps.hw_lock);
-
-	return ret == 0 && (val & SKL_CDCLK_READY_FOR_CHANGE);
-}
-
-static bool skl_cdclk_wait_for_pcu_ready(struct drm_i915_private *dev_priv)
-{
-	return _wait_for(skl_cdclk_pcu_ready(dev_priv), 3000, 10) == 0;
-}
-
 static void skl_set_cdclk(struct drm_i915_private *dev_priv, unsigned int freq)
 {
 	struct drm_device *dev = dev_priv->dev;
 	u32 freq_select, pcu_ack;
+	int ret;
 
 	DRM_DEBUG_DRIVER("Changing CDCLK to %dKHz\n", freq);
 
-	if (!skl_cdclk_wait_for_pcu_ready(dev_priv)) {
-		DRM_ERROR("failed to inform PCU about cdclk change\n");
+	mutex_lock(&dev_priv->rps.hw_lock);
+	ret = skl_pcode_request(dev_priv, SKL_PCODE_CDCLK_CONTROL,
+				SKL_CDCLK_PREPARE_FOR_CHANGE,
+				SKL_CDCLK_READY_FOR_CHANGE,
+				SKL_CDCLK_READY_FOR_CHANGE, 3);
+	mutex_unlock(&dev_priv->rps.hw_lock);
+	if (ret) {
+		DRM_ERROR("Failed to inform PCU about cdclk change (%d)\n",
+			  ret);
 		return;
 	}
 
