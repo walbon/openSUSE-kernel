@@ -1052,7 +1052,7 @@ defer:
 	 */
 	while (lmac) {
 		if (bgx->lmac[lmac].phydev) {
-			put_device(&bgx->lmac[lmac].phydev->mdio.dev);
+			put_device(&bgx->lmac[lmac].phydev->dev);
 			bgx->lmac[lmac].phydev = NULL;
 		}
 		lmac--;
