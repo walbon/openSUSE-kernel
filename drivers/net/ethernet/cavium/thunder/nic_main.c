@@ -54,6 +54,11 @@ struct nicpf {
 	bool			irq_allocated[NIC_PF_MSIX_VECTORS];
 };
 
+static inline bool pass1_silicon(struct nicpf *nic)
+{
+	return nic->pdev->revision < 8;
+}
+
 /* Supported devices */
 static const struct pci_device_id nic_id_table[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_CAVIUM, PCI_DEVICE_ID_THUNDER_NIC_PF) },
@@ -117,7 +122,7 @@ static void nic_send_msg_to_vf(struct nicpf *nic, int vf, union nic_mbx *mbx)
 	 * when PF writes to MBOX(1), in next revisions when
 	 * PF writes to MBOX(0)
 	 */
-	if (pass1_silicon(nic->pdev)) {
+	if (pass1_silicon(nic)) {
 		/* see the comment for nic_reg_write()/nic_reg_read()
 		 * functions above
 		 */
@@ -398,7 +403,7 @@ static void nic_config_cpi(struct nicpf *nic, struct cpi_cfg_msg *cfg)
 			padd = cpi % 8; /* 3 bits CS out of 6bits DSCP */
 
 		/* Leave RSS_SIZE as '0' to disable RSS */
-		if (pass1_silicon(nic->pdev)) {
+		if (pass1_silicon(nic)) {
 			nic_reg_write(nic, NIC_PF_CPI_0_2047_CFG | (cpi << 3),
 				      (vnic << 24) | (padd << 16) |
 				      (rssi_base + rssi));
@@ -468,7 +473,7 @@ static void nic_config_rss(struct nicpf *nic, struct rss_cfg_msg *cfg)
 	}
 
 	cpi_base = nic->cpi_base[cfg->vf_id];
-	if (pass1_silicon(nic->pdev))
+	if (pass1_silicon(nic))
 		idx_addr = NIC_PF_CPI_0_2047_CFG;
 	else
 		idx_addr = NIC_PF_MPI_0_2047_CFG;
@@ -499,7 +504,6 @@ static void nic_tx_channel_cfg(struct nicpf *nic, u8 vnic,
 	u32 rr_quantum;
 	u8 sq_idx = sq->sq_num;
 	u8 pqs_vnic;
-	int svf;
 
 	if (sq->sqs_mode)
 		pqs_vnic = nic->pqs_vf[vnic];
@@ -512,19 +516,10 @@ static void nic_tx_channel_cfg(struct nicpf *nic, u8 vnic,
 	/* 24 bytes for FCS, IPG and preamble */
 	rr_quantum = ((NIC_HW_MAX_FRS + 24) / 4);
 
-	if (!sq->sqs_mode) {
-		tl4 = (lmac * NIC_TL4_PER_LMAC) + (bgx * NIC_TL4_PER_BGX);
-	} else {
-		for (svf = 0; svf < MAX_SQS_PER_VF; svf++) {
-			if (nic->vf_sqs[pqs_vnic][svf] == vnic)
-				break;
-		}
-		tl4 = (MAX_LMAC_PER_BGX * NIC_TL4_PER_LMAC);
-		tl4 += (lmac * NIC_TL4_PER_LMAC * MAX_SQS_PER_VF);
-		tl4 += (svf * NIC_TL4_PER_LMAC);
-		tl4 += (bgx * NIC_TL4_PER_BGX);
-	}
+	tl4 = (lmac * NIC_TL4_PER_LMAC) + (bgx * NIC_TL4_PER_BGX);
 	tl4 += sq_idx;
+	if (sq->sqs_mode)
+		tl4 += vnic * 8;
 
 	tl3 = tl4 / (NIC_MAX_TL4 / NIC_MAX_TL3);
 	nic_reg_write(nic, NIC_PF_QSET_0_127_SQ_0_7_CFG2 |
@@ -1038,8 +1033,7 @@ static int nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	/* MAP PF's configuration registers */
-	nic->reg_base = ioremap(pci_resource_start(pdev, 0),
-			pci_resource_len(pdev, 0));
+	nic->reg_base = pcim_iomap(pdev, PCI_CFG_REG_BAR_NUM, 0);
 	if (!nic->reg_base) {
 		dev_err(dev, "Cannot map config register space, aborting\n");
 		err = -ENOMEM;
@@ -1105,8 +1099,6 @@ static void nic_remove(struct pci_dev *pdev)
 		destroy_workqueue(nic->check_link);
 	}
 
-	if (nic->reg_base)
-		iounmap(nic->reg_base);
 	nic_unregister_interrupts(nic);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
