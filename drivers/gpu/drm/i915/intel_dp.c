@@ -265,6 +265,8 @@ static void
 intel_dp_init_panel_power_sequencer_registers(struct drm_device *dev,
 					      struct intel_dp *intel_dp,
 					      bool force_disable_vdd);
+static void
+intel_dp_pps_init(struct drm_device *dev, struct intel_dp *intel_dp);
 
 static void pps_lock(struct intel_dp *intel_dp)
 {
@@ -5070,13 +5072,8 @@ void intel_dp_encoder_reset(struct drm_encoder *encoder)
 
 	pps_lock(intel_dp);
 
-	/*
-	 * Read out the current power sequencer assignment,
-	 * in case the BIOS did something with it.
-	 */
-	if (IS_VALLEYVIEW(encoder->dev))
-		vlv_initial_power_sequencer_setup(intel_dp);
-
+	/* Reinit the power sequencer, in case BIOS did something with it. */
+	intel_dp_pps_init(encoder->dev, intel_dp);
 	intel_edp_panel_vdd_sanitize(intel_dp);
 
 	pps_unlock(intel_dp);
@@ -5504,6 +5501,17 @@ intel_dp_init_panel_power_sequencer_registers(struct drm_device *dev,
 		      I915_READ(pp_div_reg));
 }
 
+static void intel_dp_pps_init(struct drm_device *dev,
+			      struct intel_dp *intel_dp)
+{
+	if (IS_VALLEYVIEW(dev) || IS_CHERRYVIEW(dev)) {
+		vlv_initial_power_sequencer_setup(intel_dp);
+	} else {
+		intel_dp_init_panel_power_sequencer(dev, intel_dp);
+		intel_dp_init_panel_power_sequencer_registers(dev, intel_dp, false);
+	}
+}
+
 /**
  * intel_dp_set_drrs_state - program registers for RR switch to take effect
  * @dev: DRM device
@@ -5924,7 +5932,7 @@ static bool intel_edp_init_connector(struct intel_dp *intel_dp,
 
 	/* We now know it's not a ghost, init power sequence regs. */
 	pps_lock(intel_dp);
-	intel_dp_init_panel_power_sequencer_registers(dev, intel_dp, false);
+	intel_dp_pps_init(dev, intel_dp);
 	pps_unlock(intel_dp);
 
 	mutex_lock(&dev->mode_config.mutex);
