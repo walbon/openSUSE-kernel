@@ -12,6 +12,8 @@ struct linear_private_data
 {
 	struct rcu_head		rcu;
 	sector_t		array_sectors;
+	int			raid_disks;	/* a copy of
+						 * mddev->raid_disks */
 	dev_info_t		disks[0];
 };
 
