@@ -764,6 +764,12 @@ struct intel_dp {
 	 * this port. Only relevant on VLV/CHV.
 	 */
 	enum pipe pps_pipe;
+	/*
+	 * Pipe currently driving the port. Used for preventing
+	 * the use of the PPS for any pipe currentrly driving
+	 * external DP as that will mess things up on VLV.
+	 */
+	enum pipe active_pipe;
 	struct edp_power_seq pps_delays;
 
 	bool can_mst; /* this port supports mst */
