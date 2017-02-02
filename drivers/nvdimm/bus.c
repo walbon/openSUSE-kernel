@@ -527,7 +527,7 @@ u32 nd_cmd_in_size(struct nvdimm *nvdimm, int cmd,
 }
 EXPORT_SYMBOL_GPL(nd_cmd_in_size);
 
-u32 nd_cmd_out_size(struct nvdimm *nvdimm, int cmd,
+u32 __nd_cmd_out_size(struct nvdimm *nvdimm, int cmd,
 		const struct nd_cmd_desc *desc, int idx, const u32 *in_field,
 		const u32 *out_field, unsigned long remainder)
 {
@@ -566,6 +566,15 @@ u32 nd_cmd_out_size(struct nvdimm *nvdimm, int cmd,
 
 
 	return UINT_MAX;
+}
+EXPORT_SYMBOL_GPL(__nd_cmd_out_size);
+
+u32 nd_cmd_out_size(struct nvdimm *nvdimm, int cmd,
+		const struct nd_cmd_desc *desc, int idx, const u32 *in_field,
+		const u32 *out_field)
+{
+	return __nd_cmd_out_size(nvdimm, cmd, desc, idx,
+				 in_field, out_field, 0);
 }
 EXPORT_SYMBOL_GPL(nd_cmd_out_size);
 
@@ -705,7 +714,7 @@ static int __nd_ioctl(struct nvdimm_bus *nvdimm_bus, struct nvdimm *nvdimm,
 	/* process an output envelope */
 	for (i = 0; i < desc->out_num; i++) {
 		u32 out_size = nd_cmd_out_size(nvdimm, cmd, desc, i,
-				(u32 *) in_env, (u32 *) out_env, 0);
+				(u32 *) in_env, (u32 *) out_env);
 		u32 copy;
 
 		if (out_size == UINT_MAX) {
