@@ -527,9 +527,9 @@ u32 nd_cmd_in_size(struct nvdimm *nvdimm, int cmd,
 }
 EXPORT_SYMBOL_GPL(nd_cmd_in_size);
 
-u32 nd_cmd_out_size(struct nvdimm *nvdimm, int cmd,
+u32 __nd_cmd_out_size(struct nvdimm *nvdimm, int cmd,
 		const struct nd_cmd_desc *desc, int idx, const u32 *in_field,
-		const u32 *out_field)
+		const u32 *out_field, unsigned long remainder)
 {
 	if (idx >= desc->out_num)
 		return UINT_MAX;
@@ -541,9 +541,24 @@ u32 nd_cmd_out_size(struct nvdimm *nvdimm, int cmd,
 		return in_field[1];
 	else if (nvdimm && cmd == ND_CMD_VENDOR && idx == 2)
 		return out_field[1];
-	else if (!nvdimm && cmd == ND_CMD_ARS_STATUS && idx == 2)
-		return out_field[1] - 8;
-	else if (cmd == ND_CMD_CALL) {
+	else if (!nvdimm && cmd == ND_CMD_ARS_STATUS && idx == 2) {
+		/*
+		 * Per table 9-276 ARS Data in ACPI 6.1, out_field[1] is
+		 * "Size of Output Buffer in bytes, including this
+		 * field."
+		 */
+		if (out_field[1] < 4)
+			return 0;
+		/*
+		 * ACPI 6.1 is ambiguous if 'status' is included in the
+		 * output size. If we encounter an output size that
+		 * overshoots the remainder by 4 bytes, assume it was
+		 * including 'status'.
+		 */
+		if (out_field[1] - 8 == remainder)
+			return remainder;
+		return out_field[1] - 4;
+	} else if (cmd == ND_CMD_CALL) {
 		struct nd_cmd_pkg *pkg = (struct nd_cmd_pkg *) in_field;
 
 		return pkg->nd_size_out;
@@ -551,6 +566,15 @@ u32 nd_cmd_out_size(struct nvdimm *nvdimm, int cmd,
 
 
 	return UINT_MAX;
+}
+EXPORT_SYMBOL_GPL(__nd_cmd_out_size);
+
+u32 nd_cmd_out_size(struct nvdimm *nvdimm, int cmd,
+		const struct nd_cmd_desc *desc, int idx, const u32 *in_field,
+		const u32 *out_field)
+{
+	return __nd_cmd_out_size(nvdimm, cmd, desc, idx,
+				 in_field, out_field, 0);
 }
 EXPORT_SYMBOL_GPL(nd_cmd_out_size);
 
