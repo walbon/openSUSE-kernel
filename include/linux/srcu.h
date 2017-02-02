@@ -30,11 +30,32 @@
 #include <linux/mutex.h>
 
 struct srcu_struct_array {
+#ifdef __GENKSYMS__
+	/* This structure is only used by kernel/srcu.c.
+	 * 'struct srcu_struct' holds a pointer to a per-cpu
+	 * array of these, but that is allocated and freed by
+	 * API functions {init,cleanup}_srcu_struct(), so even
+	 * code which allocates a 'srcu_struct' won't be affect
+	 * by size changes of this structure.
+	 * So tell the kABI, that this still holds just a pair of ints.
+	 */
 	int c[2];
+#else
+	unsigned long c[2];
+	unsigned long seq[2];
+#endif
 };
 
 struct srcu_struct {
+#ifdef __GENKSYMS__
+	/* "int" and "unsigned" are the same size, and
+	 * this field is not used outside core code,
+	 * so kabi can be preserved by pretending it is still 'int'
+	 */
 	int completed;
+#else
+	unsigned completed;
+#endif
 	struct srcu_struct_array __percpu *per_cpu_ref;
 	struct mutex mutex;
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
