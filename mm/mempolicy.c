@@ -1932,9 +1932,9 @@ retry_cpuset:
 
 		nmask = policy_nodemask(gfp, pol);
 		if (!nmask || node_isset(hpage_node, *nmask)) {
-			mpol_cond_put(pol);
 			page = alloc_pages_exact_node(hpage_node,
 						gfp | __GFP_THISNODE, order);
+			mpol_cond_put(pol);
 			goto out;
 		}
 	}
