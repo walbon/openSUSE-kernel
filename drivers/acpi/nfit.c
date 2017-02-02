@@ -90,54 +90,50 @@ static struct acpi_device *to_acpi_dev(struct acpi_nfit_desc *acpi_desc)
 	return to_acpi_device(acpi_desc->dev);
 }
 
-static int xlat_status(void *buf, unsigned int cmd)
+static int xlat_bus_status(void *buf, unsigned int cmd, u32 status)
 {
 	struct nd_cmd_clear_error *clear_err;
 	struct nd_cmd_ars_status *ars_status;
-	struct nd_cmd_ars_start *ars_start;
-	struct nd_cmd_ars_cap *ars_cap;
 	u16 flags;
 
 	switch (cmd) {
 	case ND_CMD_ARS_CAP:
-		ars_cap = buf;
-		if ((ars_cap->status & 0xffff) == NFIT_ARS_CAP_NONE)
+		if ((status & 0xffff) == NFIT_ARS_CAP_NONE)
 			return -ENOTTY;
 
 		/* Command failed */
-		if (ars_cap->status & 0xffff)
+		if (status & 0xffff)
 			return -EIO;
 
 		/* No supported scan types for this range */
 		flags = ND_ARS_PERSISTENT | ND_ARS_VOLATILE;
-		if ((ars_cap->status >> 16 & flags) == 0)
+		if ((status >> 16 & flags) == 0)
 			return -ENOTTY;
 		break;
 	case ND_CMD_ARS_START:
-		ars_start = buf;
 		/* ARS is in progress */
-		if ((ars_start->status & 0xffff) == NFIT_ARS_START_BUSY)
+		if ((status & 0xffff) == NFIT_ARS_START_BUSY)
 			return -EBUSY;
 
 		/* Command failed */
-		if (ars_start->status & 0xffff)
+		if (status & 0xffff)
 			return -EIO;
 		break;
 	case ND_CMD_ARS_STATUS:
 		ars_status = buf;
 		/* Command failed */
-		if (ars_status->status & 0xffff)
+		if (status & 0xffff)
 			return -EIO;
 		/* Check extended status (Upper two bytes) */
-		if (ars_status->status == NFIT_ARS_STATUS_DONE)
+		if (status == NFIT_ARS_STATUS_DONE)
 			return 0;
 
 		/* ARS is in progress */
-		if (ars_status->status == NFIT_ARS_STATUS_BUSY)
+		if (status == NFIT_ARS_STATUS_BUSY)
 			return -EBUSY;
 
 		/* No ARS performed for the current boot */
-		if (ars_status->status == NFIT_ARS_STATUS_NONE)
+		if (status == NFIT_ARS_STATUS_NONE)
 			return -EAGAIN;
 
 		/*
@@ -145,19 +141,20 @@ static int xlat_status(void *buf, unsigned int cmd)
 		 * agent wants the scan to stop.  If we didn't overflow
 		 * then just continue with the returned results.
 		 */
-		if (ars_status->status == NFIT_ARS_STATUS_INTR) {
-			if (ars_status->flags & NFIT_ARS_F_OVERFLOW)
+		if (status == NFIT_ARS_STATUS_INTR) {
+			if (ars_status->out_length >= 40 && (ars_status->flags
+						& NFIT_ARS_F_OVERFLOW))
 				return -ENOSPC;
 			return 0;
 		}
 
 		/* Unknown status */
-		if (ars_status->status >> 16)
+		if (status >> 16)
 			return -EIO;
 		break;
 	case ND_CMD_CLEAR_ERROR:
 		clear_err = buf;
-		if (clear_err->status & 0xffff)
+		if (status & 0xffff)
 			return -EIO;
 		if (!clear_err->cleared)
 			return -EIO;
@@ -168,6 +165,19 @@ static int xlat_status(void *buf, unsigned int cmd)
 		break;
 	}
 
+	/* all other non-zero status results in an error */
+	if (status)
+		return -EIO;
+	return 0;
+}
+
+static int xlat_status(struct nvdimm *nvdimm, void *buf, unsigned int cmd,
+		u32 status)
+{
+	if (!nvdimm)
+		return xlat_bus_status(buf, cmd, status);
+	if (status)
+		return -EIO;
 	return 0;
 }
 
@@ -182,10 +192,10 @@ static int acpi_nfit_ctl(struct nvdimm_bus_descriptor *nd_desc,
 	struct nd_cmd_pkg *call_pkg = NULL;
 	const char *cmd_name, *dimm_name;
 	unsigned long cmd_mask, dsm_mask;
+	u32 offset, fw_status = 0;
 	acpi_handle handle;
 	unsigned int func;
 	const u8 *uuid;
-	u32 offset;
 	int rc, i;
 
 	func = cmd;
@@ -294,8 +304,9 @@ static int acpi_nfit_ctl(struct nvdimm_bus_descriptor *nd_desc,
 	}
 
 	for (i = 0, offset = 0; i < desc->out_num; i++) {
-		u32 out_size = nd_cmd_out_size(nvdimm, cmd, desc, i, buf,
-				(u32 *) out_obj->buffer.pointer);
+		u32 out_size = __nd_cmd_out_size(nvdimm, cmd, desc, i, buf,
+				(u32 *) out_obj->buffer.pointer,
+				out_obj->buffer.length - offset);
 
 		if (offset + out_size > out_obj->buffer.length) {
 			dev_dbg(dev, "%s:%s output object underflow cmd: %s field: %d\n",
@@ -313,6 +324,15 @@ static int acpi_nfit_ctl(struct nvdimm_bus_descriptor *nd_desc,
 				out_obj->buffer.pointer + offset, out_size);
 		offset += out_size;
 	}
+
+	/*
+	 * Set fw_status for all the commands with a known format to be
+	 * later interpreted by xlat_status().
+	 */
+	if (i >= 1 && ((cmd >= ND_CMD_ARS_CAP && cmd <= ND_CMD_CLEAR_ERROR)
+			|| (cmd >= ND_CMD_SMART && cmd <= ND_CMD_VENDOR)))
+		fw_status = *(u32 *) out_obj->buffer.pointer;
+
 	if (offset + in_buf.buffer.length < buf_len) {
 		if (i >= 1) {
 			/*
@@ -321,7 +341,8 @@ static int acpi_nfit_ctl(struct nvdimm_bus_descriptor *nd_desc,
 			 */
 			rc = buf_len - offset - in_buf.buffer.length;
 			if (cmd_rc)
-				*cmd_rc = xlat_status(buf, cmd);
+				*cmd_rc = xlat_status(nvdimm, buf, cmd,
+						fw_status);
 		} else {
 			dev_err(dev, "%s:%s underrun cmd: %s buf_len: %d out_len: %d\n",
 					__func__, dimm_name, cmd_name, buf_len,
@@ -331,7 +352,7 @@ static int acpi_nfit_ctl(struct nvdimm_bus_descriptor *nd_desc,
 	} else {
 		rc = 0;
 		if (cmd_rc)
-			*cmd_rc = xlat_status(buf, cmd);
+			*cmd_rc = xlat_status(nvdimm, buf, cmd, fw_status);
 	}
 
  out:
@@ -1926,19 +1947,32 @@ static int ars_get_status(struct acpi_nfit_desc *acpi_desc)
 	return cmd_rc;
 }
 
-static int ars_status_process_records(struct nvdimm_bus *nvdimm_bus,
+static int ars_status_process_records(struct acpi_nfit_desc *acpi_desc,
 		struct nd_cmd_ars_status *ars_status)
 {
+	struct nvdimm_bus *nvdimm_bus = acpi_desc->nvdimm_bus;
 	int rc;
 	u32 i;
 
+	/*
+	 * First record starts at 44 byte offset from the start of the
+	 * payload.
+	 */
+	if (ars_status->out_length < 44)
+		return 0;
 	for (i = 0; i < ars_status->num_records; i++) {
+		/* only process full records */
+		if (ars_status->out_length
+				< 44 + sizeof(struct nd_ars_record) * (i + 1))
+			break;
 		rc = nvdimm_bus_add_poison(nvdimm_bus,
 				ars_status->records[i].err_address,
 				ars_status->records[i].length);
 		if (rc)
 			return rc;
 	}
+	if (i < ars_status->num_records)
+		dev_warn(acpi_desc->dev, "detected truncatted ars results\n");
 
 	return 0;
 }
@@ -2198,8 +2232,7 @@ static int acpi_nfit_query_poison(struct acpi_nfit_desc *acpi_desc,
 	if (rc < 0 && rc != -ENOSPC)
 		return rc;
 
-	if (ars_status_process_records(acpi_desc->nvdimm_bus,
-				acpi_desc->ars_status))
+	if (ars_status_process_records(acpi_desc, acpi_desc->ars_status))
 		return -ENOMEM;
 
 	return 0;
