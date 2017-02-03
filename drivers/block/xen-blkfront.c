@@ -720,7 +720,8 @@ static int blkif_queue_request(struct request *req)
 	if (unlikely(info->connected != BLKIF_STATE_CONNECTED))
 		return 1;
 
-	if (unlikely(req->cmd_flags & (REQ_DISCARD | REQ_SECURE)))
+	if (unlikely(req_op(req) == REQ_OP_DISCARD ||
+		     req->cmd_flags & REQ_SECURE))
 		return blkif_queue_discard_req(req);
 	else
 		return blkif_queue_rw_req(req);
