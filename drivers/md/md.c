@@ -6172,9 +6172,12 @@ static int add_new_disk(struct mddev *mddev, mdu_disk_info_t *info)
 
 		if (mddev_is_clustered(mddev)) {
 			if (info->state & (1 << MD_DISK_CANDIDATE)) {
-				err = md_cluster_ops->new_disk_ack(mddev, (err == 0));
-				if (err)
-					md_kick_rdev_from_array(rdev);
+				if (!err) {
+					err = md_cluster_ops->new_disk_ack(mddev,
+						err == 0);
+					if (err)
+						md_kick_rdev_from_array(rdev);
+				}
 			} else {
 				if (err)
 					md_cluster_ops->add_new_disk_cancel(mddev);

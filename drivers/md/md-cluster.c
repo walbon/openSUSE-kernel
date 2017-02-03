@@ -10,7 +10,6 @@
 
 
 #include <linux/module.h>
-#include <linux/completion.h>
 #include <linux/kthread.h>
 #include <linux/dlm.h>
 #include <linux/sched.h>
@@ -27,7 +26,8 @@ struct dlm_lock_resource {
 	struct dlm_lksb lksb;
 	char *name; /* lock name. */
 	uint32_t flags; /* flags to pass to dlm_lock() */
-	struct completion completion; /* completion for synchronized locking */
+	wait_queue_head_t sync_locking; /* wait queue for synchronized locking */
+	bool sync_locking_done;
 	void (*bast)(void *arg, int mode); /* blocking AST function pointer*/
 	struct mddev *mddev; /* pointing back to mddev. */
 	int mode;
@@ -120,7 +120,8 @@ static void sync_ast(void *arg)
 	struct dlm_lock_resource *res;
 
 	res = arg;
-	complete(&res->completion);
+	res->sync_locking_done = true;
+	wake_up(&res->sync_locking);
 }
 
 static int dlm_lock_sync(struct dlm_lock_resource *res, int mode)
@@ -132,7 +133,8 @@ static int dlm_lock_sync(struct dlm_lock_resource *res, int mode)
 			0, sync_ast, res, res->bast);
 	if (ret)
 		return ret;
-	wait_for_completion(&res->completion);
+	wait_event(res->sync_locking, res->sync_locking_done);
+	res->sync_locking_done = false;
 	if (res->lksb.sb_status == 0)
 		res->mode = mode;
 	return res->lksb.sb_status;
@@ -143,8 +145,10 @@ static int dlm_unlock_sync(struct dlm_lock_resource *res)
 	return dlm_lock_sync(res, DLM_LOCK_NL);
 }
 
-/* An variation of dlm_lock_sync, which make lock request could
- * be interrupted */
+/*
+ * An variation of dlm_lock_sync, which make lock request could
+ * be interrupted
+ */
 static int dlm_lock_sync_interruptible(struct dlm_lock_resource *res, int mode,
 				       struct mddev *mddev)
 {
@@ -156,23 +160,24 @@ static int dlm_lock_sync_interruptible(struct dlm_lock_resource *res, int mode,
 	if (ret)
 		return ret;
 
-	wait_event(res->completion.wait,
-		   res->completion.done || kthread_should_stop()
-					|| test_bit(MD_CLOSING, &mddev->flags));
-	if (!res->completion.done) {
+	wait_event(res->sync_locking, res->sync_locking_done
+				      || kthread_should_stop()
+				      || test_bit(MD_CLOSING, &mddev->flags));
+	if (!res->sync_locking_done) {
 		/*
 		 * the convert queue contains the lock request when request is
 		 * interrupted, and sync_ast could still be run, so need to
 		 * cancel the request and reset completion
 		 */
-		ret = dlm_unlock(res->ls, res->lksb.sb_lkid, DLM_LKF_CANCEL, &res->lksb, res);
-		reinit_completion(&res->completion);
+		ret = dlm_unlock(res->ls, res->lksb.sb_lkid, DLM_LKF_CANCEL,
+			&res->lksb, res);
+		res->sync_locking_done = false;
 		if (unlikely(ret != 0))
 			pr_info("failed to cancel previous lock request "
 				 "%s return %d\n", res->name, ret);
 		return -EPERM;
-	}
-	wait_for_completion(&res->completion);
+	} else
+		res->sync_locking_done = false;
 	if (res->lksb.sb_status == 0)
 		res->mode = mode;
 	return res->lksb.sb_status;
@@ -188,7 +193,8 @@ static struct dlm_lock_resource *lockres_init(struct mddev *mddev,
 	res = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
 	if (!res)
 		return NULL;
-	init_completion(&res->completion);
+	init_waitqueue_head(&res->sync_locking);
+	res->sync_locking_done = false;
 	res->ls = cinfo->lockspace;
 	res->mddev = mddev;
 	res->mode = DLM_LOCK_IV;
@@ -236,13 +242,16 @@ static void lockres_free(struct dlm_lock_resource *res)
 	if (!res)
 		return;
 
-	/* use FORCEUNLOCK flag, so we can unlock even the lock is on the
-	 * waiting or convert queue */
-	ret = dlm_unlock(res->ls, res->lksb.sb_lkid, DLM_LKF_FORCEUNLOCK, &res->lksb, res);
+	/*
+	 * use FORCEUNLOCK flag, so we can unlock even the lock is on the
+	 * waiting or convert queue
+	 */
+	ret = dlm_unlock(res->ls, res->lksb.sb_lkid, DLM_LKF_FORCEUNLOCK,
+		&res->lksb, res);
 	if (unlikely(ret != 0))
 		pr_err("failed to unlock %s return %d\n", res->name, ret);
 	else
-		wait_for_completion(&res->completion);
+		wait_event(res->sync_locking, res->sync_locking_done);
 
 	kfree(res->name);
 	kfree(res->lksb.sb_lvbptr);
@@ -523,9 +532,10 @@ static void process_metadata_update(struct mddev *mddev, struct cluster_msg *msg
 
 static void process_remove_disk(struct mddev *mddev, struct cluster_msg *msg)
 {
-	struct md_rdev *rdev = md_find_rdev_nr_rcu(mddev,
-						   le32_to_cpu(msg->raid_slot));
+	struct md_rdev *rdev;
 
+	rcu_read_lock();
+	rdev = md_find_rdev_nr_rcu(mddev, le32_to_cpu(msg->raid_slot));
 	if (rdev) {
 		set_bit(ClusterRemove, &rdev->flags);
 		set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
@@ -534,18 +544,21 @@ static void process_remove_disk(struct mddev *mddev, struct cluster_msg *msg)
 	else
 		pr_warn("%s: %d Could not find disk(%d) to REMOVE\n",
 			__func__, __LINE__, le32_to_cpu(msg->raid_slot));
+	rcu_read_unlock();
 }
 
 static void process_readd_disk(struct mddev *mddev, struct cluster_msg *msg)
 {
-	struct md_rdev *rdev = md_find_rdev_nr_rcu(mddev,
-						   le32_to_cpu(msg->raid_slot));
+	struct md_rdev *rdev;
 
+	rcu_read_lock();
+	rdev = md_find_rdev_nr_rcu(mddev, le32_to_cpu(msg->raid_slot));
 	if (rdev && test_bit(Faulty, &rdev->flags))
 		clear_bit(Faulty, &rdev->flags);
 	else
 		pr_warn("%s: %d Could not find disk(%d) which is faulty",
 			__func__, __LINE__, le32_to_cpu(msg->raid_slot));
+	rcu_read_unlock();
 }
 
 static int process_recvd_msg(struct mddev *mddev, struct cluster_msg *msg)
