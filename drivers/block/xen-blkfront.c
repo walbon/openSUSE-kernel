@@ -1696,7 +1696,7 @@ static int blkif_recover(struct blkfront_info *info)
 		 * Get the bios in the request so we can re-queue them.
 		 */
 		if (copy[i].request->cmd_flags &
-		    (REQ_FLUSH | REQ_FUA | REQ_DISCARD | REQ_SECURE)) {
+		    (REQ_FLUSH | REQ_FUA | REQ_SECURE)) {
 			/*
 			 * Flush operations don't contain bios, so
 			 * we need to requeue the whole request

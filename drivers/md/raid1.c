@@ -419,7 +419,7 @@ static void raid1_end_write_request(struct bio *bio)
 	mirror = find_bio_disk(r1_bio, bio);
 	rdev = conf->mirrors[mirror].rdev;
 
-	discard_error = bio->bi_error && (bio->bi_rw & REQ_DISCARD);
+	discard_error = bio->bi_error && (bio_op(bio) == REQ_OP_DISCARD);
 
 	/*
 	 * 'one mirror IO has finished' event handler:
