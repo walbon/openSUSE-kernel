@@ -159,8 +159,8 @@ blkdev_get_block(struct inode *inode, sector_t iblock,
 static void submit_failfast_bio(int rw, struct bio *bio, struct inode *inode,
 				loff_t offset)
 {
-	bio->bi_rw |= REQ_FAILFAST_DEV;
-	submit_bio(rw, bio);
+	bio->bi_rw |= REQ_FAILFAST_DEV | rw;
+	submit_bio(bio);
 }
 
 static struct inode *bdev_file_inode(struct file *file)
