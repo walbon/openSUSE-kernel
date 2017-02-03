@@ -339,7 +339,7 @@ static int __blkdev_issue_discard_async(struct block_device *bdev, sector_t sect
 					struct bio *parent_bio)
 {
 	struct request_queue *q = bdev_get_queue(bdev);
-	int op_flags = 0;
+	enum req_op op = REQ_OP_DISCARD;
 	struct bio *bio;
 
 	if (!q || !nr_sects)
@@ -349,9 +349,9 @@ static int __blkdev_issue_discard_async(struct block_device *bdev, sector_t sect
 		return -EOPNOTSUPP;
 
 	if (flags & BLKDEV_DISCARD_SECURE) {
-		if (!blk_queue_secdiscard(q))
+		if (!blk_queue_secure_erase(q))
 			return -EOPNOTSUPP;
-		op_flags |= REQ_SECURE;
+		op = REQ_OP_SECURE_ERASE;
 	}
 
 	/*
@@ -366,7 +366,7 @@ static int __blkdev_issue_discard_async(struct block_device *bdev, sector_t sect
 	bio->bi_iter.bi_sector = sector;
 	bio->bi_bdev = bdev;
 	bio->bi_iter.bi_size = nr_sects << 9;
-	bio_set_op_attrs(bio, REQ_OP_DISCARD, op_flags);
+	bio_set_op_attrs(bio, op, 0);
 
 	submit_bio(bio);
 

@@ -1136,7 +1136,6 @@ static void __make_request(struct mddev *mddev, struct bio *bio)
 	const int rw = bio_data_dir(bio);
 	const unsigned long do_sync = (bio->bi_rw & REQ_SYNC);
 	const unsigned long do_fua = (bio->bi_rw & REQ_FUA);
-	const unsigned long do_sec = (bio->bi_rw & REQ_SECURE);
 	unsigned long flags;
 	struct md_rdev *blocked_rdev;
 	struct blk_plug_cb *cb;
@@ -1450,7 +1449,7 @@ retry_write:
 							      rdev));
 			mbio->bi_bdev = rdev->bdev;
 			mbio->bi_end_io	= raid10_end_write_request;
-			bio_set_op_attrs(mbio, op, do_sync | do_fua | do_sec);
+			bio_set_op_attrs(mbio, op, do_sync | do_fua);
 			mbio->bi_private = r10_bio;
 
 			atomic_inc(&r10_bio->remaining);
@@ -1500,7 +1499,7 @@ retry_write:
 			if (test_bit(FailFast, &conf->mirrors[d].rdev->flags) &&
 			    enough(conf, d))
 				do_ff = REQ_FAILFAST_DEV;
-			bio_set_op_attrs(mbio, op, do_sync | do_fua | do_sec | do_ff);
+			bio_set_op_attrs(mbio, op, do_sync | do_fua | do_ff);
 			mbio->bi_private = r10_bio;
 
 			atomic_inc(&r10_bio->remaining);

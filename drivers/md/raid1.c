@@ -1098,7 +1098,6 @@ static void raid1_make_request(struct mddev *mddev, struct bio * bio)
 	const unsigned long do_sync = (bio->bi_rw & REQ_SYNC);
 	const unsigned long do_flush_fua = (bio->bi_rw &
 						(REQ_PREFLUSH | REQ_FUA));
-	const unsigned long do_sec = (bio->bi_rw & REQ_SECURE);
 	struct md_rdev *blocked_rdev;
 	struct blk_plug_cb *cb;
 	struct raid1_plug_cb *plug = NULL;
@@ -1426,7 +1425,7 @@ read_again:
 		    !test_bit(WriteMostly, &conf->mirrors[i].rdev->flags) &&
 		    conf->raid_disks - mddev->degraded > 1)
 			do_ff = REQ_FAILFAST_DEV;
-		bio_set_op_attrs(mbio, op, do_flush_fua | do_sync | do_sec | do_ff);
+		bio_set_op_attrs(mbio, op, do_flush_fua | do_sync | do_ff);
 		mbio->bi_private = r1_bio;
 
 		atomic_inc(&r1_bio->remaining);
