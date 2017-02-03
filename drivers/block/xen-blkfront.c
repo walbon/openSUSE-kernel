@@ -992,7 +992,6 @@ static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
 	gd->first_minor = minor;
 	gd->fops = &xlvbd_block_fops;
 	gd->private_data = info;
-	gd->driverfs_dev = &(info->xbdev->dev);
 	set_capacity(gd, capacity);
 
 	if (xlvbd_init_blk_queue(gd, sector_size, physical_sector_size,
@@ -2083,7 +2082,7 @@ static void blkfront_connect(struct blkfront_info *info)
 	kick_pending_request_queues(info);
 	spin_unlock_irq(&info->io_lock);
 
-	add_disk(info->gd);
+	device_add_disk(&info->xbdev->dev, info->gd);
 
 	info->is_ready = 1;
 }

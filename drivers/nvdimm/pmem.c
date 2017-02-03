@@ -289,7 +289,6 @@ static int pmem_attach_disk(struct device *dev,
 	disk->queue		= q;
 	disk->flags		= GENHD_FL_EXT_DEVT;
 	nvdimm_namespace_disk_name(ndns, disk->disk_name);
-	disk->driverfs_dev = dev;
 	set_capacity(disk, (pmem->size - pmem->pfn_pad - pmem->data_offset)
 			/ 512);
 	if (devm_init_badblocks(dev, &pmem->bb))
@@ -297,7 +296,7 @@ static int pmem_attach_disk(struct device *dev,
 	nvdimm_badblocks_populate(to_nd_region(dev->parent), &pmem->bb, res);
 
 	disk->bb = &pmem->bb;
-	add_disk(disk);
+	device_add_disk(dev, disk);
 	revalidate_disk(disk);
 
 	return 0;
