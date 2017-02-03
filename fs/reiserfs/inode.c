@@ -2667,7 +2667,7 @@ static int reiserfs_write_full_page(struct page *page,
 	do {
 		struct buffer_head *next = bh->b_this_page;
 		if (buffer_async_write(bh)) {
-			submit_bh(WRITE, bh);
+			submit_bh(REQ_OP_WRITE, 0, bh);
 			nr++;
 		}
 		put_bh(bh);
@@ -2727,7 +2727,7 @@ fail:
 		struct buffer_head *next = bh->b_this_page;
 		if (buffer_async_write(bh)) {
 			clear_buffer_dirty(bh);
-			submit_bh(WRITE, bh);
+			submit_bh(REQ_OP_WRITE, 0, bh);
 			nr++;
 		}
 		put_bh(bh);
