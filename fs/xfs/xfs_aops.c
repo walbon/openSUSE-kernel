@@ -379,10 +379,14 @@ xfs_submit_ioend_bio(
 	xfs_ioend_t		*ioend,
 	struct bio		*bio)
 {
+	int			op_flags = 0;
+
 	atomic_inc(&ioend->io_remaining);
 	bio->bi_private = ioend;
 	bio->bi_end_io = xfs_end_bio;
-	bio->bi_rw = wbc->sync_mode == WB_SYNC_ALL ? WRITE_SYNC : WRITE;
+	if (wbc->sync_mode == WB_SYNC_ALL)
+		op_flags = WRITE_SYNC;
+	bio_set_op_attrs(bio, REQ_OP_WRITE, op_flags);
 	submit_bio(bio);
 }
 
