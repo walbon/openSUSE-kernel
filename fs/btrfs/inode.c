@@ -9299,6 +9299,8 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 	u64 new_idx = 0;
 	u64 root_objectid;
 	int ret;
+	bool root_log_pinned = false;
+	bool dest_log_pinned = false;
 
 	/* we only allow rename subvolume link between subvolumes */
 	if (old_ino != BTRFS_FIRST_FREE_OBJECTID && root != dest)
@@ -9343,6 +9345,8 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 		/* force full log commit if subvolume involved. */
 		btrfs_set_log_full_commit(root->fs_info, trans);
 	} else {
+		btrfs_pin_log_trans(root);
+		root_log_pinned = true;
 		ret = btrfs_insert_inode_ref(trans, dest,
 					     new_dentry->d_name.name,
 					     new_dentry->d_name.len,
@@ -9350,7 +9354,6 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 					     btrfs_ino(new_dir), old_idx);
 		if (ret)
 			goto out_fail;
-		btrfs_pin_log_trans(root);
 	}
 
 	/* And now for the dest. */
@@ -9358,6 +9361,8 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 		/* force full log commit if subvolume involved. */
 		btrfs_set_log_full_commit(dest->fs_info, trans);
 	} else {
+		btrfs_pin_log_trans(dest);
+		dest_log_pinned = true;
 		ret = btrfs_insert_inode_ref(trans, root,
 					     old_dentry->d_name.name,
 					     old_dentry->d_name.len,
@@ -9365,7 +9370,6 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 					     btrfs_ino(old_dir), new_idx);
 		if (ret)
 			goto out_fail;
-		btrfs_pin_log_trans(dest);
 	}
 
 	/* Update inode version and ctime/mtime. */
@@ -9444,17 +9448,47 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 	if (new_inode->i_nlink == 1)
 		BTRFS_I(new_inode)->dir_index = new_idx;
 
-	if (old_ino != BTRFS_FIRST_FREE_OBJECTID) {
+	if (root_log_pinned) {
 		parent = new_dentry->d_parent;
 		btrfs_log_new_name(trans, old_inode, old_dir, parent);
 		btrfs_end_log_trans(root);
+		root_log_pinned = false;
 	}
-	if (new_ino != BTRFS_FIRST_FREE_OBJECTID) {
+	if (dest_log_pinned) {
 		parent = old_dentry->d_parent;
 		btrfs_log_new_name(trans, new_inode, new_dir, parent);
 		btrfs_end_log_trans(dest);
+		dest_log_pinned = false;
 	}
 out_fail:
+	/*
+	 * If we have pinned a log and an error happened, we unpin tasks
+	 * trying to sync the log and force them to fallback to a transaction
+	 * commit if the log currently contains any of the inodes involved in
+	 * this rename operation (to ensure we do not persist a log with an
+	 * inconsistent state for any of these inodes or leading to any
+	 * inconsistencies when replayed). If the transaction was aborted, the
+	 * abortion reason is propagated to userspace when attempting to commit
+	 * the transaction. If the log does not contain any of these inodes, we
+	 * allow the tasks to sync it.
+	 */
+	if (ret && (root_log_pinned || dest_log_pinned)) {
+		if (btrfs_inode_in_log(old_dir, root->fs_info->generation) ||
+		    btrfs_inode_in_log(new_dir, root->fs_info->generation) ||
+		    btrfs_inode_in_log(old_inode, root->fs_info->generation) ||
+		    (new_inode &&
+		     btrfs_inode_in_log(new_inode, root->fs_info->generation)))
+		    btrfs_set_log_full_commit(root->fs_info, trans);
+
+		if (root_log_pinned) {
+			btrfs_end_log_trans(root);
+			root_log_pinned = false;
+		}
+		if (dest_log_pinned) {
+			btrfs_end_log_trans(dest);
+			dest_log_pinned = false;
+		}
+	}
 	ret = btrfs_end_transaction(trans, root);
 out_notrans:
 	if (new_ino == BTRFS_FIRST_FREE_OBJECTID)
@@ -9499,21 +9533,21 @@ static int btrfs_whiteout_for_rename(struct btrfs_trans_handle *trans,
 	ret = btrfs_init_inode_security(trans, inode, dir,
 				&dentry->d_name);
 	if (ret)
-		return ret;
+		goto out;
 
 	ret = btrfs_add_nondir(trans, dir, dentry,
 				inode, 0, index);
 	if (ret)
-		return ret;
+		goto out;
 
 	ret = btrfs_update_inode(trans, root, inode);
-	if (ret)
-		return ret;
-
+out:
 	unlock_new_inode(inode);
+	if (ret)
+		inode_dec_link_count(inode);
 	iput(inode);
 
-	return 0;
+	return ret;
 }
 
 static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
@@ -9521,6 +9555,7 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 			   unsigned int flags)
 {
 	struct btrfs_trans_handle *trans;
+	unsigned int trans_num_items;
 	struct btrfs_root *root = BTRFS_I(old_dir)->root;
 	struct btrfs_root *dest = BTRFS_I(new_dir)->root;
 	struct inode *new_inode = d_inode(new_dentry);
@@ -9530,6 +9565,7 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	u64 root_objectid;
 	int ret;
 	u64 old_ino = btrfs_ino(old_inode);
+	bool log_pinned = false;
 
 	if (btrfs_ino(new_dir) == BTRFS_EMPTY_SUBVOL_DIR_OBJECTID)
 		return -EPERM;
@@ -9583,8 +9619,14 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	 * would require 5 item modifications, so we'll assume they are normal
 	 * inodes.  So 5 * 2 is 10, plus 1 for the new link, so 11 total items
 	 * should cover the worst case number of items we'll modify.
+	 * If our rename has the whiteout flag, we need more 5 units for the
+	 * new inode (1 inode item, 1 inode ref, 2 dir items and 1 xattr item
+	 * when selinux is enabled).
 	 */
-	trans = btrfs_start_transaction(root, 11);
+	trans_num_items = 11;
+	if (flags & RENAME_WHITEOUT)
+		trans_num_items += 5;
+	trans = btrfs_start_transaction(root, trans_num_items);
 	if (IS_ERR(trans)) {
 		ret = PTR_ERR(trans);
 		goto out_notrans;
@@ -9602,6 +9644,8 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		/* force full log commit if subvolume involved. */
 		btrfs_set_log_full_commit(root->fs_info, trans);
 	} else {
+		btrfs_pin_log_trans(root);
+		log_pinned = true;
 		ret = btrfs_insert_inode_ref(trans, dest,
 					     new_dentry->d_name.name,
 					     new_dentry->d_name.len,
@@ -9609,14 +9653,6 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 					     btrfs_ino(new_dir), index);
 		if (ret)
 			goto out_fail;
-		/*
-		 * this is an ugly little race, but the rename is required
-		 * to make sure that if we crash, the inode is either at the
-		 * old name or the new one.  pinning the log transaction lets
-		 * us make sure we don't allow a log commit to come in after
-		 * we unlink the name but before we add the new name back in.
-		 */
-		btrfs_pin_log_trans(root);
 	}
 
 	inode_inc_iversion(old_dir);
@@ -9683,10 +9719,12 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	if (old_inode->i_nlink == 1)
 		BTRFS_I(old_inode)->dir_index = index;
 
-	if (old_ino != BTRFS_FIRST_FREE_OBJECTID) {
+	if (log_pinned) {
 		struct dentry *parent = new_dentry->d_parent;
+
 		btrfs_log_new_name(trans, old_inode, old_dir, parent);
 		btrfs_end_log_trans(root);
+		log_pinned = false;
 	}
 
 	if (flags & RENAME_WHITEOUT) {
@@ -9699,6 +9737,28 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		}
 	}
 out_fail:
+	/*
+	 * If we have pinned the log and an error happened, we unpin tasks
+	 * trying to sync the log and force them to fallback to a transaction
+	 * commit if the log currently contains any of the inodes involved in
+	 * this rename operation (to ensure we do not persist a log with an
+	 * inconsistent state for any of these inodes or leading to any
+	 * inconsistencies when replayed). If the transaction was aborted, the
+	 * abortion reason is propagated to userspace when attempting to commit
+	 * the transaction. If the log does not contain any of these inodes, we
+	 * allow the tasks to sync it.
+	 */
+	if (ret && log_pinned) {
+		if (btrfs_inode_in_log(old_dir, root->fs_info->generation) ||
+		    btrfs_inode_in_log(new_dir, root->fs_info->generation) ||
+		    btrfs_inode_in_log(old_inode, root->fs_info->generation) ||
+		    (new_inode &&
+		     btrfs_inode_in_log(new_inode, root->fs_info->generation)))
+		    btrfs_set_log_full_commit(root->fs_info, trans);
+
+		btrfs_end_log_trans(root);
+		log_pinned = false;
+	}
 	btrfs_end_transaction(trans, root);
 out_notrans:
 	if (old_ino == BTRFS_FIRST_FREE_OBJECTID)
