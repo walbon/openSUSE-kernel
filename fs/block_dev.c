@@ -156,10 +156,10 @@ blkdev_get_block(struct inode *inode, sector_t iblock,
 	return 0;
 }
 
-static void submit_failfast_bio(int rw, struct bio *bio, struct inode *inode,
+static void submit_failfast_bio(struct bio *bio, struct inode *inode,
 				loff_t offset)
 {
-	bio->bi_rw |= REQ_FAILFAST_DEV | rw;
+	bio_set_op_attrs(bio, bio_op(bio), REQ_FAILFAST_DEV);
 	submit_bio(bio);
 }
 
