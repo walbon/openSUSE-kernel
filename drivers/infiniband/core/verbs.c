@@ -48,6 +48,7 @@
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_cache.h>
 #include <rdma/ib_addr.h>
+#include <rdma/rw.h>
 
 #include "core_priv.h"
 
@@ -229,12 +230,6 @@ EXPORT_SYMBOL(rdma_port_get_link_layer);
 struct ib_pd *ib_alloc_pd(struct ib_device *device)
 {
 	struct ib_pd *pd;
-	struct ib_device_attr devattr;
-	int rc;
-
-	rc = ib_query_device(device, &devattr);
-	if (rc)
-		return ERR_PTR(rc);
 
 	pd = device->alloc_pd(device, NULL, NULL);
 	if (IS_ERR(pd))
@@ -245,7 +240,7 @@ struct ib_pd *ib_alloc_pd(struct ib_device *device)
 	pd->local_mr = NULL;
 	atomic_set(&pd->usecnt, 0);
 
-	if (devattr.device_cap_flags & IB_DEVICE_LOCAL_DMA_LKEY)
+	if (device->attrs.device_cap_flags & IB_DEVICE_LOCAL_DMA_LKEY)
 		pd->local_dma_lkey = device->local_dma_lkey;
 	else {
 		struct ib_mr *mr;
@@ -732,59 +727,88 @@ struct ib_qp *ib_open_qp(struct ib_xrcd *xrcd,
 }
 EXPORT_SYMBOL(ib_open_qp);
 
+static struct ib_qp *ib_create_xrc_qp(struct ib_qp *qp,
+		struct ib_qp_init_attr *qp_init_attr)
+{
+	struct ib_qp *real_qp = qp;
+
+	qp->event_handler = __ib_shared_qp_event_handler;
+	qp->qp_context = qp;
+	qp->pd = NULL;
+	qp->send_cq = qp->recv_cq = NULL;
+	qp->srq = NULL;
+	qp->xrcd = qp_init_attr->xrcd;
+	atomic_inc(&qp_init_attr->xrcd->usecnt);
+	INIT_LIST_HEAD(&qp->open_list);
+
+	qp = __ib_open_qp(real_qp, qp_init_attr->event_handler,
+			  qp_init_attr->qp_context);
+	if (!IS_ERR(qp))
+		__ib_insert_xrcd_qp(qp_init_attr->xrcd, real_qp);
+	else
+		real_qp->device->destroy_qp(real_qp);
+	return qp;
+}
+
 struct ib_qp *ib_create_qp(struct ib_pd *pd,
 			   struct ib_qp_init_attr *qp_init_attr)
 {
-	struct ib_qp *qp, *real_qp;
-	struct ib_device *device;
+	struct ib_device *device = pd ? pd->device : qp_init_attr->xrcd->device;
+	struct ib_qp *qp;
+	int ret;
 
-	device = pd ? pd->device : qp_init_attr->xrcd->device;
+	/*
+	 * If the callers is using the RDMA API calculate the resources
+	 * needed for the RDMA READ/WRITE operations.
+	 *
+	 * Note that these callers need to pass in a port number.
+	 */
+	if (qp_init_attr->cap.max_rdma_ctxs)
+		rdma_rw_init_qp(device, qp_init_attr);
+
 	qp = device->create_qp(pd, qp_init_attr, NULL);
+	if (IS_ERR(qp))
+		return qp;
 
-	if (!IS_ERR(qp)) {
-		qp->device     = device;
-		qp->real_qp    = qp;
-		qp->uobject    = NULL;
-		qp->qp_type    = qp_init_attr->qp_type;
+	qp->device     = device;
+	qp->real_qp    = qp;
+	qp->uobject    = NULL;
+	qp->qp_type    = qp_init_attr->qp_type;
 
-		atomic_set(&qp->usecnt, 0);
-		if (qp_init_attr->qp_type == IB_QPT_XRC_TGT) {
-			qp->event_handler = __ib_shared_qp_event_handler;
-			qp->qp_context = qp;
-			qp->pd = NULL;
-			qp->send_cq = qp->recv_cq = NULL;
-			qp->srq = NULL;
-			qp->xrcd = qp_init_attr->xrcd;
-			atomic_inc(&qp_init_attr->xrcd->usecnt);
-			INIT_LIST_HEAD(&qp->open_list);
+	atomic_set(&qp->usecnt, 0);
+	qp->mrs_used = 0;
+	spin_lock_init(&qp->mr_lock);
+	INIT_LIST_HEAD(&qp->rdma_mrs);
 
-			real_qp = qp;
-			qp = __ib_open_qp(real_qp, qp_init_attr->event_handler,
-					  qp_init_attr->qp_context);
-			if (!IS_ERR(qp))
-				__ib_insert_xrcd_qp(qp_init_attr->xrcd, real_qp);
-			else
-				real_qp->device->destroy_qp(real_qp);
-		} else {
-			qp->event_handler = qp_init_attr->event_handler;
-			qp->qp_context = qp_init_attr->qp_context;
-			if (qp_init_attr->qp_type == IB_QPT_XRC_INI) {
-				qp->recv_cq = NULL;
-				qp->srq = NULL;
-			} else {
-				qp->recv_cq = qp_init_attr->recv_cq;
-				atomic_inc(&qp_init_attr->recv_cq->usecnt);
-				qp->srq = qp_init_attr->srq;
-				if (qp->srq)
-					atomic_inc(&qp_init_attr->srq->usecnt);
-			}
+	if (qp_init_attr->qp_type == IB_QPT_XRC_TGT)
+		return ib_create_xrc_qp(qp, qp_init_attr);
 
-			qp->pd	    = pd;
-			qp->send_cq = qp_init_attr->send_cq;
-			qp->xrcd    = NULL;
+	qp->event_handler = qp_init_attr->event_handler;
+	qp->qp_context = qp_init_attr->qp_context;
+	if (qp_init_attr->qp_type == IB_QPT_XRC_INI) {
+		qp->recv_cq = NULL;
+		qp->srq = NULL;
+	} else {
+		qp->recv_cq = qp_init_attr->recv_cq;
+		atomic_inc(&qp_init_attr->recv_cq->usecnt);
+		qp->srq = qp_init_attr->srq;
+		if (qp->srq)
+			atomic_inc(&qp_init_attr->srq->usecnt);
+	}
 
-			atomic_inc(&pd->usecnt);
-			atomic_inc(&qp_init_attr->send_cq->usecnt);
+	qp->pd	    = pd;
+	qp->send_cq = qp_init_attr->send_cq;
+	qp->xrcd    = NULL;
+
+	atomic_inc(&pd->usecnt);
+	atomic_inc(&qp_init_attr->send_cq->usecnt);
+
+	if (qp_init_attr->cap.max_rdma_ctxs) {
+		ret = rdma_rw_init_mrs(qp, qp_init_attr);
+		if (ret) {
+			pr_err("failed to init MR pool ret= %d\n", ret);
+			ib_destroy_qp(qp);
+			qp = ERR_PTR(ret);
 		}
 	}
 
@@ -1262,6 +1286,8 @@ int ib_destroy_qp(struct ib_qp *qp)
 	struct ib_srq *srq;
 	int ret;
 
+	WARN_ON_ONCE(qp->mrs_used > 0);
+
 	if (atomic_read(&qp->usecnt))
 		return -EBUSY;
 
@@ -1272,6 +1298,9 @@ int ib_destroy_qp(struct ib_qp *qp)
 	scq  = qp->send_cq;
 	rcq  = qp->recv_cq;
 	srq  = qp->srq;
+
+	if (!qp->uobject)
+		rdma_rw_cleanup_mrs(qp);
 
 	ret = qp->device->destroy_qp(qp);
 	if (!ret) {
@@ -1355,6 +1384,7 @@ struct ib_mr *ib_get_dma_mr(struct ib_pd *pd, int mr_access_flags)
 		mr->pd      = pd;
 		mr->uobject = NULL;
 		atomic_inc(&pd->usecnt);
+		mr->need_inval = false;
 	}
 
 	return mr;
@@ -1408,6 +1438,7 @@ struct ib_mr *ib_alloc_mr(struct ib_pd *pd,
 		mr->pd      = pd;
 		mr->uobject = NULL;
 		atomic_inc(&pd->usecnt);
+		mr->need_inval = false;
 	}
 
 	return mr;
@@ -1719,3 +1750,167 @@ next_page:
 	return i;
 }
 EXPORT_SYMBOL(ib_sg_to_pages);
+
+struct ib_drain_cqe {
+	struct ib_cqe cqe;
+	struct completion done;
+};
+
+static void ib_drain_qp_done(struct ib_cq *cq, struct ib_wc *wc)
+{
+	struct ib_drain_cqe *cqe = container_of(wc->wr_cqe, struct ib_drain_cqe,
+						cqe);
+
+	complete(&cqe->done);
+}
+
+/*
+ * Post a WR and block until its completion is reaped for the SQ.
+ */
+static void __ib_drain_sq(struct ib_qp *qp)
+{
+	struct ib_qp_attr attr = { .qp_state = IB_QPS_ERR };
+	struct ib_drain_cqe sdrain;
+	struct ib_send_wr swr = {}, *bad_swr;
+	int ret;
+
+	if (qp->send_cq->poll_ctx == IB_POLL_DIRECT) {
+		WARN_ONCE(qp->send_cq->poll_ctx == IB_POLL_DIRECT,
+			  "IB_POLL_DIRECT poll_ctx not supported for drain\n");
+		return;
+	}
+
+	swr.wr_cqe = &sdrain.cqe;
+	sdrain.cqe.done = ib_drain_qp_done;
+	init_completion(&sdrain.done);
+
+	ret = ib_modify_qp(qp, &attr, IB_QP_STATE);
+	if (ret) {
+		WARN_ONCE(ret, "failed to drain send queue: %d\n", ret);
+		return;
+	}
+
+	ret = ib_post_send(qp, &swr, &bad_swr);
+	if (ret) {
+		WARN_ONCE(ret, "failed to drain send queue: %d\n", ret);
+		return;
+	}
+
+	wait_for_completion(&sdrain.done);
+}
+
+/*
+ * Post a WR and block until its completion is reaped for the RQ.
+ */
+static void __ib_drain_rq(struct ib_qp *qp)
+{
+	struct ib_qp_attr attr = { .qp_state = IB_QPS_ERR };
+	struct ib_drain_cqe rdrain;
+	struct ib_recv_wr rwr = {}, *bad_rwr;
+	int ret;
+
+	if (qp->recv_cq->poll_ctx == IB_POLL_DIRECT) {
+		WARN_ONCE(qp->recv_cq->poll_ctx == IB_POLL_DIRECT,
+			  "IB_POLL_DIRECT poll_ctx not supported for drain\n");
+		return;
+	}
+
+	rwr.wr_cqe = &rdrain.cqe;
+	rdrain.cqe.done = ib_drain_qp_done;
+	init_completion(&rdrain.done);
+
+	ret = ib_modify_qp(qp, &attr, IB_QP_STATE);
+	if (ret) {
+		WARN_ONCE(ret, "failed to drain recv queue: %d\n", ret);
+		return;
+	}
+
+	ret = ib_post_recv(qp, &rwr, &bad_rwr);
+	if (ret) {
+		WARN_ONCE(ret, "failed to drain recv queue: %d\n", ret);
+		return;
+	}
+
+	wait_for_completion(&rdrain.done);
+}
+
+/**
+ * ib_drain_sq() - Block until all SQ CQEs have been consumed by the
+ *		   application.
+ * @qp:            queue pair to drain
+ *
+ * If the device has a provider-specific drain function, then
+ * call that.  Otherwise call the generic drain function
+ * __ib_drain_sq().
+ *
+ * The caller must:
+ *
+ * ensure there is room in the CQ and SQ for the drain work request and
+ * completion.
+ *
+ * allocate the CQ using ib_alloc_cq() and the CQ poll context cannot be
+ * IB_POLL_DIRECT.
+ *
+ * ensure that there are no other contexts that are posting WRs concurrently.
+ * Otherwise the drain is not guaranteed.
+ */
+void ib_drain_sq(struct ib_qp *qp)
+{
+	if (qp->device->drain_sq)
+		qp->device->drain_sq(qp);
+	else
+		__ib_drain_sq(qp);
+}
+EXPORT_SYMBOL(ib_drain_sq);
+
+/**
+ * ib_drain_rq() - Block until all RQ CQEs have been consumed by the
+ *		   application.
+ * @qp:            queue pair to drain
+ *
+ * If the device has a provider-specific drain function, then
+ * call that.  Otherwise call the generic drain function
+ * __ib_drain_rq().
+ *
+ * The caller must:
+ *
+ * ensure there is room in the CQ and RQ for the drain work request and
+ * completion.
+ *
+ * allocate the CQ using ib_alloc_cq() and the CQ poll context cannot be
+ * IB_POLL_DIRECT.
+ *
+ * ensure that there are no other contexts that are posting WRs concurrently.
+ * Otherwise the drain is not guaranteed.
+ */
+void ib_drain_rq(struct ib_qp *qp)
+{
+	if (qp->device->drain_rq)
+		qp->device->drain_rq(qp);
+	else
+		__ib_drain_rq(qp);
+}
+EXPORT_SYMBOL(ib_drain_rq);
+
+/**
+ * ib_drain_qp() - Block until all CQEs have been consumed by the
+ *		   application on both the RQ and SQ.
+ * @qp:            queue pair to drain
+ *
+ * The caller must:
+ *
+ * ensure there is room in the CQ(s), SQ, and RQ for drain work requests
+ * and completions.
+ *
+ * allocate the CQs using ib_alloc_cq() and the CQ poll context cannot be
+ * IB_POLL_DIRECT.
+ *
+ * ensure that there are no other contexts that are posting WRs concurrently.
+ * Otherwise the drain is not guaranteed.
+ */
+void ib_drain_qp(struct ib_qp *qp)
+{
+	ib_drain_sq(qp);
+	ib_drain_rq(qp);
+}
+EXPORT_SYMBOL(ib_drain_qp);

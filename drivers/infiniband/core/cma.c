@@ -800,6 +800,7 @@ int rdma_create_qp(struct rdma_cm_id *id, struct ib_pd *pd,
 	if (id->device != pd->device)
 		return -EINVAL;
 
+	qp_init_attr->port_num = id->port_num;
 	qp = ib_create_qp(pd, qp_init_attr);
 	if (IS_ERR(qp))
 		return PTR_ERR(qp);
@@ -2031,7 +2032,6 @@ static int iw_conn_req_handler(struct iw_cm_id *cm_id,
 	struct rdma_id_private *listen_id, *conn_id;
 	struct rdma_cm_event event;
 	int ret;
-	struct ib_device_attr attr;
 	struct sockaddr *laddr = (struct sockaddr *)&iw_event->local_addr;
 	struct sockaddr *raddr = (struct sockaddr *)&iw_event->remote_addr;
 
@@ -2072,13 +2072,6 @@ static int iw_conn_req_handler(struct iw_cm_id *cm_id,
 
 	memcpy(cma_src_addr(conn_id), laddr, rdma_addr_size(laddr));
 	memcpy(cma_dst_addr(conn_id), raddr, rdma_addr_size(raddr));
-
-	ret = ib_query_device(conn_id->id.device, &attr);
-	if (ret) {
-		mutex_unlock(&conn_id->handler_mutex);
-		rdma_destroy_id(new_cm_id);
-		goto out;
-	}
 
 	memset(&event, 0, sizeof event);
 	event.event = RDMA_CM_EVENT_CONNECT_REQUEST;
