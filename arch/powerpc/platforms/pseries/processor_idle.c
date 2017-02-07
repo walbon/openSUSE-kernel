@@ -168,7 +168,7 @@ void update_smt_snooze_delay(int cpu, int residency)
 	} else {
 		dev = per_cpu_ptr(pseries_cpuidle_devices, cpu);
 		if (dev) {
-			dev->states[1].flags ^= CPUIDLE_FLAG_IGNORE;
+			dev->states[1].flags &= !CPUIDLE_FLAG_IGNORE;
 			dev->states[1].target_residency = residency;
 		}
 	}
