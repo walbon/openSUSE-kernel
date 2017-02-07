@@ -1160,6 +1160,10 @@ static int tm_cfpr_set(struct task_struct *target,
 	flush_altivec_to_thread(target);
 	flush_tmregs_to_thread(target);
 
+	for (i = 0; i < 32; i++)
+		buf[i] = target->thread.TS_TRANS_FPR(i);
+	buf[32] = target->thread.transact_fp.fpscr;
+
 	/* copy to local buffer then write that out */
 	i = user_regset_copyin(&pos, &count, &kbuf, &ubuf, buf, 0, -1);
 	if (i)
@@ -1423,6 +1427,9 @@ static int tm_cvsx_set(struct task_struct *target,
 	flush_altivec_to_thread(target);
 	flush_tmregs_to_thread(target);
 	flush_vsx_to_thread(target);
+
+	for (i = 0; i < 32 ; i++)
+		buf[i] = target->thread.transact_fp.fpr[i][TS_VSRLOWOFFSET];
 
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
 				 buf, 0, 32 * sizeof(double));
