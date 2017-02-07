@@ -56,8 +56,18 @@ static inline unsigned int tcp_optlen(const struct sk_buff *skb)
 
 /* TCP Fast Open Cookie as stored in memory */
 struct tcp_fastopen_cookie {
+#ifndef __GENKSYMS__
+	union {
+		u8	val[TCP_FASTOPEN_COOKIE_MAX];
+#if IS_ENABLED(CONFIG_IPV6)
+		struct in6_addr addr;
+#endif
+	};
+#endif
 	s8	len;
+#ifdef __GENKSYMS__
 	u8	val[TCP_FASTOPEN_COOKIE_MAX];
+#endif
 	bool	exp;	/* In RFC6994 experimental option format */
 };
 
