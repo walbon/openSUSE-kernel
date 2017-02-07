@@ -2144,7 +2144,7 @@ config ARCH_SUSPEND_POSSIBLE
 	def_bool y
 
 config ARM_CPU_SUSPEND
-	def_bool PM_SLEEP
+	def_bool PM_SLEEP || ARM_PSCI_FW
 
 config ARCH_HIBERNATION_POSSIBLE
 	bool
