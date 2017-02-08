@@ -104,21 +104,27 @@ EXPORT_SYMBOL(__wrap_devm_memremap);
 #include <linux/pfn_t.h>
 
 void *__wrap_devm_memremap_pages(struct device *dev, struct resource *res,
-		 struct vmem_altmap *altmap)
+		struct percpu_ref *ref, struct vmem_altmap *altmap)
 {
 	resource_size_t offset = res->start;
-	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
+	struct nfit_test_resource *nfit_res;
 
+	rcu_read_lock();
+	nfit_res = get_nfit_res(offset);
+	rcu_read_unlock();
 	if (nfit_res)
 		return nfit_res->buf + offset - nfit_res->res->start;
-	return devm_memremap_pages(dev, res, altmap);
+	return devm_memremap_pages(dev, res, ref, altmap);
 }
 EXPORT_SYMBOL(__wrap_devm_memremap_pages);
 
 pfn_t __wrap_phys_to_pfn_t(dma_addr_t addr, unsigned long flags)
 {
-	struct nfit_test_resource *nfit_res = get_nfit_res(addr);
+	struct nfit_test_resource *nfit_res;
 
+	rcu_read_lock();
+	nfit_res = get_nfit_res(addr);
+	rcu_read_unlock();
 	if (nfit_res)
 		flags &= ~PFN_MAP;
         return phys_to_pfn_t(addr, flags);
@@ -126,15 +132,17 @@ pfn_t __wrap_phys_to_pfn_t(dma_addr_t addr, unsigned long flags)
 EXPORT_SYMBOL(__wrap_phys_to_pfn_t);
 #else
 /* to be removed post 4.5-rc1 */
-void *__wrap_devm_memremap_pages(struct device *dev, struct resource *res,
-				 struct vmem_altmap *altmap)
+void *__wrap_devm_memremap_pages(struct device *dev, struct resource *res)
 {
 	resource_size_t offset = res->start;
-	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
+	struct nfit_test_resource *nfit_res;
 
+	rcu_read_lock();
+	nfit_res = get_nfit_res(offset);
+	rcu_read_unlock();
 	if (nfit_res)
 		return nfit_res->buf + offset - nfit_res->res->start;
-	return devm_memremap_pages(dev, res, altmap);
+	return devm_memremap_pages(dev, res);
 }
 EXPORT_SYMBOL(__wrap_devm_memremap_pages);
 #endif
