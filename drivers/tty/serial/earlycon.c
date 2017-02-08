@@ -75,11 +75,12 @@ static void __init earlycon_init(struct earlycon_device *device,
 	strlcpy(earlycon->name, name, min(len + 1, sizeof(earlycon->name)));
 	earlycon->data = &early_console_dev;
 
-	if (port->iotype == UPIO_MEM || port->iotype == UPIO_MEM32 || 
-	    port->iotype == UPIO_MEM32BE)
+	if (port->iotype == UPIO_MEM || port->iotype == UPIO_MEM16 ||
+	    port->iotype == UPIO_MEM32 || port->iotype == UPIO_MEM32BE)
 		pr_info("%s%d at MMIO%s %pa (options '%s')\n",
 			earlycon->name, earlycon->index,
 			(port->iotype == UPIO_MEM) ? "" :
+			(port->iotype == UPIO_MEM16) ? "16" :
 			(port->iotype == UPIO_MEM32) ? "32" : "32be",
 			&port->mapbase, device->options);
 	else
@@ -98,10 +99,16 @@ static int __init parse_options(struct earlycon_device *device, char *options)
 		return -EINVAL;
 
 	switch (port->iotype) {
+	case UPIO_MEM:
+		port->mapbase = addr;
+		break;
+	case UPIO_MEM16:
+		port->regshift = 1;
+		port->mapbase = addr;
+		break;
 	case UPIO_MEM32:
 	case UPIO_MEM32BE:
-		port->regshift = 2;	/* fall-through */
-	case UPIO_MEM:
+		port->regshift = 2;
 		port->mapbase = addr;
 		break;
 	case UPIO_PORT:
