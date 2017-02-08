@@ -1134,8 +1134,8 @@ static void __make_request(struct mddev *mddev, struct bio *bio)
 	int i;
 	const int op = bio_op(bio);
 	const int rw = bio_data_dir(bio);
-	const unsigned long do_sync = (bio->bi_rw & REQ_SYNC);
-	const unsigned long do_fua = (bio->bi_rw & REQ_FUA);
+	const unsigned long do_sync = (bio->bi_opf & REQ_SYNC);
+	const unsigned long do_fua = (bio->bi_opf & REQ_FUA);
 	unsigned long flags;
 	struct md_rdev *blocked_rdev;
 	struct blk_plug_cb *cb;
@@ -1542,7 +1542,7 @@ static void raid10_make_request(struct mddev *mddev, struct bio *bio)
 
 	struct bio *split;
 
-	if (unlikely(bio->bi_rw & REQ_PREFLUSH)) {
+	if (unlikely(bio->bi_opf & REQ_PREFLUSH)) {
 		md_flush_request(mddev, bio);
 		return;
 	}
@@ -2113,7 +2113,7 @@ static void sync_request_write(struct mddev *mddev, struct r10bio *r10_bio)
 		md_sync_acct(conf->mirrors[d].rdev->bdev, bio_sectors(tbio));
 
 		if (test_bit(FailFast, &conf->mirrors[d].rdev->flags))
-			tbio->bi_rw |= REQ_FAILFAST_DEV;
+			tbio->bi_opf |= REQ_FAILFAST_DEV;
 		tbio->bi_iter.bi_sector += conf->mirrors[d].rdev->data_offset;
 		tbio->bi_bdev = conf->mirrors[d].rdev->bdev;
 		generic_make_request(tbio);
@@ -2655,7 +2655,7 @@ read_more:
 		return;
 	}
 
-	do_sync = (r10_bio->master_bio->bi_rw & REQ_SYNC);
+	do_sync = (r10_bio->master_bio->bi_opf & REQ_SYNC);
 	slot = r10_bio->read_slot;
 	printk_ratelimited(
 		KERN_ERR
@@ -3289,7 +3289,7 @@ static sector_t raid10_sync_request(struct mddev *mddev, sector_t sector_nr,
 				r10_bio = rb2;
 				break;
 			}
-			if (r10_bio->devs[0].bio->bi_rw & REQ_FAILFAST_DEV) {
+			if (r10_bio->devs[0].bio->bi_opf & REQ_FAILFAST_DEV) {
 				/* only want this if there is elsewhere to
 				 * read from
 				 */
@@ -3302,7 +3302,7 @@ static sector_t raid10_sync_request(struct mddev *mddev, sector_t sector_nr,
 						targets++;
 				}
 				if (targets == 1)
-					r10_bio->devs[0].bio->bi_rw
+					r10_bio->devs[0].bio->bi_opf
 						&= ~REQ_FAILFAST_DEV;
 			}
 		}
@@ -3407,7 +3407,7 @@ static sector_t raid10_sync_request(struct mddev *mddev, sector_t sector_nr,
 			bio->bi_iter.bi_sector = sector +
 				conf->mirrors[d].replacement->data_offset;
 			if (test_bit(FailFast, &conf->mirrors[d].rdev->flags))
-				bio->bi_rw |= REQ_FAILFAST_DEV;
+				bio->bi_opf |= REQ_FAILFAST_DEV;
 			bio->bi_bdev = conf->mirrors[d].replacement->bdev;
 			count++;
 		}

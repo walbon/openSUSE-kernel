@@ -285,7 +285,7 @@ static blk_qc_t md_make_request(struct request_queue *q, struct bio *bio)
 	 */
 	sectors = bio_sectors(bio);
 	/* bio could be mergeable after passing to underlayer */
-	bio->bi_rw &= ~REQ_NOMERGE;
+	bio->bi_opf &= ~REQ_NOMERGE;
 	mddev->pers->make_request(mddev, bio);
 
 	cpu = part_stat_lock();
@@ -414,7 +414,7 @@ static void md_submit_flush_data(struct work_struct *ws)
 		/* an empty barrier - all done */
 		bio_endio(bio);
 	else {
-		bio->bi_rw &= ~REQ_PREFLUSH;
+		bio->bi_opf &= ~REQ_PREFLUSH;
 		mddev->pers->make_request(mddev, bio);
 	}
 
@@ -720,7 +720,7 @@ static void super_written(struct bio *bio)
 		if (test_bit(Faulty, &rdev->flags)) {
 			if (bio->bi_error == -ETIMEDOUT)
 				set_bit(Timeout, &rdev->flags);
-		} else if (bio->bi_rw & REQ_FAILFAST_DEV) {
+		} else if (bio->bi_opf & REQ_FAILFAST_DEV) {
 			set_bit(MD_NEED_REWRITE, &mddev->flags);
 			set_bit(LastDev, &rdev->flags);
 		}
@@ -760,7 +760,7 @@ void md_super_write(struct mddev *mddev, struct md_rdev *rdev,
 
 	if (test_bit(FailFast, &rdev->flags) &&
 	    !test_bit(LastDev, &rdev->flags))
-		bio->bi_rw |= REQ_FAILFAST_DEV;
+		bio->bi_opf |= REQ_FAILFAST_DEV;
 
 	atomic_inc(&mddev->pending_writes);
 	submit_bio(bio);
