@@ -16,6 +16,7 @@
 #define __NFIT_H__
 #include <linux/workqueue.h>
 #include <linux/libnvdimm.h>
+#include <linux/ndctl.h>
 #include <linux/types.h>
 #include <linux/uuid.h>
 #include <linux/acpi.h>
@@ -84,7 +85,7 @@ enum nfit_root_notifiers {
 struct nfit_spa {
 	struct list_head list;
 	struct nd_region *nd_region;
-	unsigned int ars_done:1;
+	unsigned int ars_required:1;
 	u32 clear_err_unit;
 	u32 max_ars;
 	struct acpi_nfit_system_address spa[0];
@@ -131,6 +132,7 @@ struct nfit_mem {
 	struct list_head list;
 	struct acpi_device *adev;
 	struct acpi_nfit_desc *acpi_desc;
+	struct resource *flush_wpq;
 	unsigned long dsm_mask;
 	int family;
 };
@@ -138,9 +140,7 @@ struct nfit_mem {
 struct acpi_nfit_desc {
 	struct nvdimm_bus_descriptor nd_desc;
 	struct acpi_table_header acpi_header;
-	struct mutex spa_map_mutex;
 	struct mutex init_mutex;
-	struct list_head spa_maps;
 	struct list_head memdevs;
 	struct list_head flushes;
 	struct list_head dimms;
@@ -153,6 +153,9 @@ struct acpi_nfit_desc {
 	struct nd_cmd_ars_status *ars_status;
 	size_t ars_status_size;
 	struct work_struct work;
+	struct list_head list;
+	struct kernfs_node *scrub_count_state;
+	unsigned int scrub_count;
 	unsigned int cancel:1;
 	unsigned long dimm_cmd_force_en;
 	unsigned long bus_cmd_force_en;
@@ -168,7 +171,7 @@ enum nd_blk_mmio_selector {
 struct nd_blk_addr {
 	union {
 		void __iomem *base;
-		void __pmem  *aperture;
+		void *aperture;
 	};
 };
 
@@ -187,28 +190,26 @@ struct nfit_blk {
 	u64 bdw_offset; /* post interleave offset */
 	u64 stat_offset;
 	u64 cmd_offset;
-	void __iomem *nvdimm_flush;
 	u32 dimm_flags;
 };
 
-enum spa_map_type {
-	SPA_MAP_CONTROL,
-	SPA_MAP_APERTURE,
-};
+extern struct list_head acpi_descs;
+extern struct mutex acpi_desc_lock;
+int acpi_nfit_ars_rescan(struct acpi_nfit_desc *acpi_desc);
 
-struct nfit_spa_mapping {
-	struct acpi_nfit_desc *acpi_desc;
-	struct acpi_nfit_system_address *spa;
-	struct list_head list;
-	struct kref kref;
-	enum spa_map_type type;
-	struct nd_blk_addr addr;
-};
-
-static inline struct nfit_spa_mapping *to_spa_map(struct kref *kref)
+#ifdef CONFIG_X86_MCE
+void nfit_mce_register(void);
+void nfit_mce_unregister(void);
+#else
+static inline void nfit_mce_register(void)
 {
-	return container_of(kref, struct nfit_spa_mapping, kref);
 }
+static inline void nfit_mce_unregister(void)
+{
+}
+#endif
+
+int nfit_spa_type(struct acpi_nfit_system_address *spa);
 
 static inline struct acpi_nfit_memory_map *__to_nfit_memdev(
 		struct nfit_mem *nfit_mem)

@@ -29,10 +29,9 @@
  * a subsequent arch_wmb_pmem() can flush cpu and memory controller
  * write buffers to guarantee durability.
  */
-static inline void arch_memcpy_to_pmem(void __pmem *dst, const void *src,
-		size_t n)
+static inline void arch_memcpy_to_pmem(void *dst, const void *src, size_t n)
 {
-	int unwritten;
+	int rem;
 
 	/*
 	 * We are copying between two kernel buffers, if
@@ -40,19 +39,17 @@ static inline void arch_memcpy_to_pmem(void __pmem *dst, const void *src,
 	 * fault) we would have already reported a general protection fault
 	 * before the WARN+BUG.
 	 */
-	unwritten = __copy_from_user_inatomic_nocache((void __force *) dst,
-			(void __user *) src, n);
-	if (WARN(unwritten, "%s: fault copying %p <- %p unwritten: %d\n",
-				__func__, dst, src, unwritten))
+	rem = __copy_from_user_inatomic_nocache(dst, (void __user *) src, n);
+	if (WARN(rem, "%s: fault copying %p <- %p unwritten: %d\n",
+				__func__, dst, src, rem))
 		BUG();
 }
 
-static inline int arch_memcpy_from_pmem(void *dst, const void __pmem *src,
-		size_t n)
+static inline int arch_memcpy_from_pmem(void *dst, const void *src, size_t n)
 {
 	if (static_cpu_has(X86_FEATURE_MCE_RECOVERY))
-		return memcpy_mcsafe(dst, (void __force *) src, n);
-	memcpy(dst, (void __force *) src, n);
+		return memcpy_mcsafe(dst, src, n);
+	memcpy(dst, src, n);
 	return 0;
 }
 
@@ -84,15 +81,14 @@ static inline void arch_wmb_pmem(void)
  * instruction.  This function requires explicit ordering with an
  * arch_wmb_pmem() call.
  */
-static inline void arch_wb_cache_pmem(void __pmem *addr, size_t size)
+static inline void arch_wb_cache_pmem(void *addr, size_t size)
 {
 	u16 x86_clflush_size = boot_cpu_data.x86_clflush_size;
 	unsigned long clflush_mask = x86_clflush_size - 1;
-	void *vaddr = (void __force *)addr;
-	void *vend = vaddr + size;
+	void *vend = addr + size;
 	void *p;
 
-	for (p = (void *)((unsigned long)vaddr & ~clflush_mask);
+	for (p = (void *)((unsigned long)addr & ~clflush_mask);
 	     p < vend; p += x86_clflush_size)
 		clwb(p);
 }
@@ -115,14 +111,13 @@ static inline bool __iter_needs_pmem_wb(struct iov_iter *i)
  * Copy data from the iterator 'i' to the PMEM buffer starting at 'addr'.
  * This function requires explicit ordering with an arch_wmb_pmem() call.
  */
-static inline size_t arch_copy_from_iter_pmem(void __pmem *addr, size_t bytes,
+static inline size_t arch_copy_from_iter_pmem(void *addr, size_t bytes,
 		struct iov_iter *i)
 {
-	void *vaddr = (void __force *)addr;
 	size_t len;
 
 	/* TODO: skip the write-back by always using non-temporal stores */
-	len = copy_from_iter_nocache(vaddr, bytes, i);
+	len = copy_from_iter_nocache(addr, bytes, i);
 
 	if (__iter_needs_pmem_wb(i))
 		arch_wb_cache_pmem(addr, bytes);
@@ -138,17 +133,15 @@ static inline size_t arch_copy_from_iter_pmem(void __pmem *addr, size_t bytes,
  * Write zeros into the memory range starting at 'addr' for 'size' bytes.
  * This function requires explicit ordering with an arch_wmb_pmem() call.
  */
-static inline void arch_clear_pmem(void __pmem *addr, size_t size)
+static inline void arch_clear_pmem(void *addr, size_t size)
 {
-	void *vaddr = (void __force *)addr;
-
-	memset(vaddr, 0, size);
+	memset(addr, 0, size);
 	arch_wb_cache_pmem(addr, size);
 }
 
-static inline void arch_invalidate_pmem(void __pmem *addr, size_t size)
+static inline void arch_invalidate_pmem(void *addr, size_t size)
 {
-	clflush_cache_range((void __force *) addr, size);
+	clflush_cache_range(addr, size);
 }
 
 static inline bool __arch_has_wmb_pmem(void)

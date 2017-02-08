@@ -29,27 +29,28 @@
 #include <linux/slab.h>
 #include <linux/pmem.h>
 #include <linux/nd.h>
+#include "pmem.h"
 #include "pfn.h"
 #include "nd.h"
 
-struct pmem_device {
-	/* One contiguous memory region per device */
-	phys_addr_t		phys_addr;
-	/* when non-zero this device is hosting a 'pfn' instance */
-	phys_addr_t		data_offset;
-	unsigned long		pfn_flags;
-	void __pmem		*virt_addr;
-	/* immutable base size of the namespace */
-	size_t			size;
-	/* trim size when namespace capacity has been section aligned */
-	u32			pfn_pad;
-	struct badblocks	bb;
-};
+static struct device *to_dev(struct pmem_device *pmem)
+{
+	/*
+	 * nvdimm bus services need a 'dev' parameter, and we record the device
+	 * at init in bb.dev.
+	 */
+	return pmem->bb.dev;
+}
+
+static struct nd_region *to_region(struct pmem_device *pmem)
+{
+	return to_nd_region(to_dev(pmem)->parent);
+}
 
 static void pmem_clear_poison(struct pmem_device *pmem, phys_addr_t offset,
 		unsigned int len)
 {
-	struct device *dev = pmem->bb.dev;
+	struct device *dev = to_dev(pmem);
 	sector_t sector;
 	long cleared;
 
@@ -57,7 +58,7 @@ static void pmem_clear_poison(struct pmem_device *pmem, phys_addr_t offset,
 	cleared = nvdimm_clear_poison(dev, pmem->phys_addr + offset, len);
 
 	if (cleared > 0 && cleared / 512) {
-		dev_dbg(dev, "%s: %llx clear %ld sector%s\n",
+		dev_dbg(dev, "%s: %#llx clear %ld sector%s\n",
 				__func__, (unsigned long long) sector,
 				cleared / 512, cleared / 512 > 1 ? "s" : "");
 		badblocks_clear(&pmem->bb, sector, cleared / 512);
@@ -73,7 +74,7 @@ static int pmem_do_bvec(struct pmem_device *pmem, struct page *page,
 	bool bad_pmem = false;
 	void *mem = kmap_atomic(page);
 	phys_addr_t pmem_off = sector * 512 + pmem->data_offset;
-	void __pmem *pmem_addr = pmem->virt_addr + pmem_off;
+	void *pmem_addr = pmem->virt_addr + pmem_off;
 
 	if (unlikely(is_bad_pmem(&pmem->bb, sector, len)))
 		bad_pmem = true;
@@ -112,6 +113,11 @@ static int pmem_do_bvec(struct pmem_device *pmem, struct page *page,
 	return rc;
 }
 
+/* account for REQ_FLUSH rename, replace with REQ_PREFLUSH after v4.8-rc1 */
+#ifndef REQ_FLUSH
+#define REQ_FLUSH REQ_PREFLUSH
+#endif
+
 static blk_qc_t pmem_make_request(struct request_queue *q, struct bio *bio)
 {
 	int rc = 0;
@@ -120,6 +126,10 @@ static blk_qc_t pmem_make_request(struct request_queue *q, struct bio *bio)
 	struct bio_vec bvec;
 	struct bvec_iter iter;
 	struct pmem_device *pmem = q->queuedata;
+	struct nd_region *nd_region = to_region(pmem);
+
+	if (bio->bi_opf & REQ_FLUSH)
+		nvdimm_flush(nd_region);
 
 	do_acct = nd_iostat_start(bio, &start);
 	bio_for_each_segment(bvec, bio, iter) {
@@ -134,8 +144,8 @@ static blk_qc_t pmem_make_request(struct request_queue *q, struct bio *bio)
 	if (do_acct)
 		nd_iostat_end(bio, start);
 
-	if (bio_data_dir(bio))
-		wmb_pmem();
+	if (bio->bi_opf & REQ_FUA)
+		nvdimm_flush(nd_region);
 
 	bio_endio(bio);
 	return BLK_QC_T_NONE;
@@ -147,8 +157,8 @@ static int pmem_rw_page(struct block_device *bdev, sector_t sector,
 	struct pmem_device *pmem = bdev->bd_queue->queuedata;
 	int rc;
 
-	rc = pmem_do_bvec(pmem, page, PAGE_CACHE_SIZE, 0, is_write, sector);
-	if (is_write)
+	rc = pmem_do_bvec(pmem, page, PAGE_SIZE, 0, is_write, sector);
+	if(is_write)
 		wmb_pmem();
 
 	/*
@@ -163,15 +173,24 @@ static int pmem_rw_page(struct block_device *bdev, sector_t sector,
 	return rc;
 }
 
-static long pmem_direct_access(struct block_device *bdev, sector_t sector,
-		      void __pmem **kaddr, pfn_t *pfn)
+/* see "strong" declaration in tools/testing/nvdimm/pmem-dax.c */
+__weak long pmem_direct_access(struct block_device *bdev, sector_t sector,
+		      void **kaddr, pfn_t *pfn, long size)
 {
 	struct pmem_device *pmem = bdev->bd_queue->queuedata;
 	resource_size_t offset = sector * 512 + pmem->data_offset;
 
+	if (unlikely(is_bad_pmem(&pmem->bb, sector, size)))
+		return -EIO;
 	*kaddr = pmem->virt_addr + offset;
 	*pfn = phys_to_pfn_t(pmem->phys_addr + offset, pmem->pfn_flags);
 
+	/*
+	 * If badblocks are present, limit known good range to the
+	 * requested range.
+	 */
+	if (unlikely(pmem->bb.count))
+		return size;
 	return pmem->size - pmem->pfn_pad - offset;
 }
 
@@ -187,7 +206,7 @@ static void pmem_release_queue(void *q)
 	blk_cleanup_queue(q);
 }
 
-void pmem_release_disk(void *disk)
+static void pmem_release_disk(void *disk)
 {
 	del_gendisk(disk);
 	put_disk(disk);
@@ -197,6 +216,7 @@ static int pmem_attach_disk(struct device *dev,
 		struct nd_namespace_common *ndns)
 {
 	struct nd_namespace_io *nsio = to_nd_namespace_io(&ndns->dev);
+	struct nd_region *nd_region = to_nd_region(dev->parent);
 	struct vmem_altmap __altmap, *altmap = NULL;
 	struct resource *res = &nsio->res;
 	struct nd_pfn *nd_pfn = NULL;
@@ -226,7 +246,7 @@ static int pmem_attach_disk(struct device *dev,
 	dev_set_drvdata(dev, pmem);
 	pmem->phys_addr = res->start;
 	pmem->size = resource_size(res);
-	if (!arch_has_wmb_pmem())
+	if (nvdimm_has_flush(nd_region) < 0)
 		dev_warn(dev, "unable to guarantee persistence of writes\n");
 
 	if (!devm_request_mem_region(dev, res->start, resource_size(res),
@@ -261,15 +281,14 @@ static int pmem_attach_disk(struct device *dev,
 	 * At release time the queue must be dead before
 	 * devm_memremap_pages is unwound
 	 */
-	if (devm_add_action(dev, pmem_release_queue, q)) {
-		blk_cleanup_queue(q);
+	if (devm_add_action_or_reset(dev, pmem_release_queue, q))
 		return -ENOMEM;
-	}
 
 	if (IS_ERR(addr))
 		return PTR_ERR(addr);
-	pmem->virt_addr = (void __pmem *) addr;
+	pmem->virt_addr = addr;
 
+	blk_queue_write_cache(q, true, true);
 	blk_queue_make_request(q, pmem_make_request);
 	blk_queue_physical_block_size(q, PAGE_SIZE);
 	blk_queue_max_hw_sectors(q, UINT_MAX);
@@ -279,12 +298,10 @@ static int pmem_attach_disk(struct device *dev,
 	q->queuedata = pmem;
 
 	disk = alloc_disk_node(0, nid);
+
+	disk->bb = &pmem->bb;
 	if (!disk)
 		return -ENOMEM;
-	if (devm_add_action(dev, pmem_release_disk, disk)) {
-		put_disk(disk);
-		return -ENOMEM;
-	}
 
 	disk->fops		= &pmem_fops;
 	disk->queue		= q;
@@ -294,11 +311,13 @@ static int pmem_attach_disk(struct device *dev,
 			/ 512);
 	if (devm_init_badblocks(dev, &pmem->bb))
 		return -ENOMEM;
-	nvdimm_badblocks_populate(to_nd_region(dev->parent), &pmem->bb, res);
-
-	disk->bb = &pmem->bb;
+	nvdimm_badblocks_populate(nd_region, &pmem->bb, res);
 	device_add_disk(dev, disk);
 	revalidate_disk(disk);
+
+	if (devm_add_action_or_reset(dev, pmem_release_disk, disk))
+		return -ENOMEM;
+
 
 	return 0;
 }
@@ -333,13 +352,20 @@ static int nd_pmem_remove(struct device *dev)
 {
 	if (is_nd_btt(dev))
 		nvdimm_namespace_detach_btt(to_nd_btt(dev));
+	nvdimm_flush(to_nd_region(dev->parent));
+
 	return 0;
+}
+
+static void nd_pmem_shutdown(struct device *dev)
+{
+	nvdimm_flush(to_nd_region(dev->parent));
 }
 
 static void nd_pmem_notify(struct device *dev, enum nvdimm_event event)
 {
-	struct nd_region *nd_region = to_nd_region(dev->parent);
 	struct pmem_device *pmem = dev_get_drvdata(dev);
+	struct nd_region *nd_region = to_region(pmem);
 	resource_size_t offset = 0, end_trunc = 0;
 	struct nd_namespace_common *ndns;
 	struct nd_namespace_io *nsio;
@@ -375,6 +401,7 @@ static struct nd_device_driver nd_pmem_driver = {
 	.probe = nd_pmem_probe,
 	.remove = nd_pmem_remove,
 	.notify = nd_pmem_notify,
+	.shutdown = nd_pmem_shutdown,
 	.drv = {
 		.name = "nd_pmem",
 	},
