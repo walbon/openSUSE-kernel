@@ -682,6 +682,21 @@ out:
 	return ev_file;
 }
 
+static int verify_command_mask(struct ib_device *ib_dev, __u32 command)
+{
+	u64 mask;
+
+	if (command <= IB_USER_VERBS_CMD_OPEN_QP)
+		mask = ib_dev->uverbs_cmd_mask;
+	else
+		mask = ib_dev->uverbs_ex_cmd_mask;
+
+	if (mask & ((u64)1 << command))
+		return 0;
+
+	return -1;
+}
+
 static ssize_t ib_uverbs_write(struct file *filp, const char __user *buf,
 			     size_t count, loff_t *pos)
 {
@@ -717,6 +732,10 @@ static ssize_t ib_uverbs_write(struct file *filp, const char __user *buf,
 	}
 
 	command = hdr.command & IB_USER_VERBS_CMD_COMMAND_MASK;
+	if (verify_command_mask(ib_dev, command)) {
+		ret = -EOPNOTSUPP;
+		goto out;
+	}
 
 	flags = (hdr.command &
 		 IB_USER_VERBS_CMD_FLAGS_MASK) >> IB_USER_VERBS_CMD_FLAGS_SHIFT;
@@ -731,11 +750,6 @@ static ssize_t ib_uverbs_write(struct file *filp, const char __user *buf,
 		if (!file->ucontext &&
 		    command != IB_USER_VERBS_CMD_GET_CONTEXT) {
 			ret = -EINVAL;
-			goto out;
-		}
-
-		if (!(ib_dev->uverbs_cmd_mask & (1ull << command))) {
-			ret = -ENOSYS;
 			goto out;
 		}
 
@@ -763,11 +777,6 @@ static ssize_t ib_uverbs_write(struct file *filp, const char __user *buf,
 
 		if (!file->ucontext) {
 			ret = -EINVAL;
-			goto out;
-		}
-
-		if (!(ib_dev->uverbs_ex_cmd_mask & (1ull << command))) {
-			ret = -ENOSYS;
 			goto out;
 		}
 
