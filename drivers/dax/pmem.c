@@ -24,7 +24,7 @@ struct dax_pmem {
 	struct completion cmp;
 };
 
-struct dax_pmem *to_dax_pmem(struct percpu_ref *ref)
+static struct dax_pmem *to_dax_pmem(struct percpu_ref *ref)
 {
 	return container_of(ref, struct dax_pmem, ref);
 }
@@ -61,6 +61,7 @@ static int dax_pmem_probe(struct device *dev)
 	int rc;
 	void *addr;
 	struct resource res;
+	struct dax_dev *dax_dev;
 	struct nd_pfn_sb *pfn_sb;
 	struct dax_pmem *dax_pmem;
 	struct nd_region *nd_region;
@@ -88,7 +89,8 @@ static int dax_pmem_probe(struct device *dev)
 	pfn_sb = nd_pfn->pfn_sb;
 
 	if (!devm_request_mem_region(dev, nsio->res.start,
-				resource_size(&nsio->res), dev_name(dev))) {
+				resource_size(&nsio->res),
+				dev_name(&ndns->dev))) {
 		dev_warn(dev, "could not reserve region %pR\n", &nsio->res);
 		return -EBUSY;
 	}
@@ -104,21 +106,19 @@ static int dax_pmem_probe(struct device *dev)
 	if (rc)
 		return rc;
 
-	rc = devm_add_action(dev, dax_pmem_percpu_exit, &dax_pmem->ref);
-	if (rc) {
-		dax_pmem_percpu_exit(&dax_pmem->ref);
+	rc = devm_add_action_or_reset(dev, dax_pmem_percpu_exit,
+							&dax_pmem->ref);
+	if (rc)
 		return rc;
-	}
 
 	addr = devm_memremap_pages(dev, &res, &dax_pmem->ref, altmap);
 	if (IS_ERR(addr))
 		return PTR_ERR(addr);
 
-	rc = devm_add_action(dev, dax_pmem_percpu_kill, &dax_pmem->ref);
-	if (rc) {
-		dax_pmem_percpu_kill(&dax_pmem->ref);
+	rc = devm_add_action_or_reset(dev, dax_pmem_percpu_kill,
+							&dax_pmem->ref);
+	if (rc)
 		return rc;
-	}
 
 	/* adjust the dax_region resource to the start of data */
 	res.start += le64_to_cpu(pfn_sb->dataoff);
@@ -133,12 +133,12 @@ static int dax_pmem_probe(struct device *dev)
 		return -ENOMEM;
 
 	/* TODO: support for subdividing a dax region... */
-	rc = devm_create_dax_dev(dax_region, &res, 1);
+	dax_dev = devm_create_dax_dev(dax_region, &res, 1);
 
 	/* child dax_dev instances now own the lifetime of the dax_region */
 	dax_region_put(dax_region);
 
-	return rc;
+	return PTR_ERR_OR_ZERO(dax_dev);
 }
 
 static struct nd_device_driver dax_pmem_driver = {
