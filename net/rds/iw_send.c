@@ -767,7 +767,7 @@ static int rds_iw_build_send_reg(struct rds_iw_send_work *send,
 {
 	int n;
 
-	n = ib_map_mr_sg(send->s_mr, sg, sg_nents, PAGE_SIZE);
+	n = ib_map_mr_sg(send->s_mr, sg, sg_nents, 0, PAGE_SIZE);
 	if (unlikely(n != sg_nents))
 		return n < 0 ? n : -EINVAL;
 

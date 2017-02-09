@@ -1158,14 +1158,15 @@ static int rxe_set_page(struct ib_mr *ibmr, u64 addr)
 	return 0;
 }
 
-static int rxe_map_mr_sg(struct ib_mr *ibmr, struct scatterlist *sg, int sg_nents)
+static int rxe_map_mr_sg(struct ib_mr *ibmr, struct scatterlist *sg,
+ 			int sg_nents, unsigned int *sg_offset)
 {
 	struct rxe_mem *mr = to_rmr(ibmr);
 	int n;
 
 	mr->nbuf = 0;
 
-	n = ib_sg_to_pages(ibmr, sg, sg_nents, rxe_set_page);
+	n = ib_sg_to_pages(ibmr, sg, sg_nents, sg_offset, rxe_set_page);
 
 	mr->va = ibmr->iova;
 	mr->iova = ibmr->iova;

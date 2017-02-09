@@ -666,7 +666,7 @@ static int rds_iw_rdma_reg_mr(struct rds_iw_mapping *mapping)
 	struct ib_send_wr *failed_wr;
 	int ret, n;
 
-	n = ib_map_mr_sg_zbva(ibmr->mr, m_sg->list, m_sg->len, PAGE_SIZE);
+	n = ib_map_mr_sg_zbva(ibmr->mr, m_sg->list, m_sg->len, 0, PAGE_SIZE);
 	if (unlikely(n != m_sg->len))
 		return n < 0 ? n : -EINVAL;
 
