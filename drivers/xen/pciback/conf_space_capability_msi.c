@@ -46,7 +46,6 @@ int pciback_enable_msix(struct pciback_device *pdev,
 	int i, result;
 	struct msix_entry *entries;
 	u16 cmd;
-	struct pci_dev *phys_dev = dev;
 
 	if (op->value > SH_INFO_MAX_VEC)
 		return -EINVAL;
@@ -59,10 +58,7 @@ int pciback_enable_msix(struct pciback_device *pdev,
 	 * to access the BARs where the MSI-X entries reside.
 	 * But VF devices are unique in which the PF needs to be checked.
 	 */
-#ifdef CONFIG_PCI_IOV
-	phys_dev = dev->is_virtfn ? dev->physfn : dev;
-#endif
-	pci_read_config_word(phys_dev, PCI_COMMAND, &cmd);
+	pci_read_config_word(pci_physfn(dev), PCI_COMMAND, &cmd);
 	if (dev->msi_enabled || !(cmd & PCI_COMMAND_MEMORY))
 		return -ENXIO;
 
