@@ -60,7 +60,7 @@ int pciback_enable_msix(struct pciback_device *pdev,
 	 * But VF devices are unique in which the PF needs to be checked.
 	 */
 #ifdef CONFIG_PCI_IOV
-	phys_dev = dev->is_physfn ? dev : dev->physfn;
+	phys_dev = dev->is_virtfn ? dev->physfn : dev;
 #endif
 	pci_read_config_word(phys_dev, PCI_COMMAND, &cmd);
 	if (dev->msi_enabled || !(cmd & PCI_COMMAND_MEMORY))
