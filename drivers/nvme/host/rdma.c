@@ -90,6 +90,8 @@ struct nvme_rdma_request {
 
 enum nvme_rdma_queue_flags {
 	NVME_RDMA_Q_CONNECTED = (1 << 0),
+	NVME_RDMA_IB_QUEUE_ALLOCATED = (1 << 1),
+	NVME_RDMA_Q_DELETING = (1 << 2),
 };
 
 struct nvme_rdma_queue {
@@ -561,6 +563,7 @@ static int nvme_rdma_init_queue(struct nvme_rdma_ctrl *ctrl,
 
 	queue = &ctrl->queues[idx];
 	queue->ctrl = ctrl;
+	queue->flags = 0;
 	init_completion(&queue->cm_done);
 
 	if (idx > 0)
@@ -617,7 +620,7 @@ static void nvme_rdma_free_queue(struct nvme_rdma_queue *queue)
 
 static void nvme_rdma_stop_and_free_queue(struct nvme_rdma_queue *queue)
 {
-	if (!test_and_clear_bit(NVME_RDMA_Q_CONNECTED, &queue->flags))
+	if (test_and_set_bit(NVME_RDMA_Q_DELETING, &queue->flags))
 		return;
 	nvme_rdma_stop_queue(queue);
 	nvme_rdma_free_queue(queue);
@@ -771,8 +774,13 @@ static void nvme_rdma_error_recovery_work(struct work_struct *work)
 {
 	struct nvme_rdma_ctrl *ctrl = container_of(work,
 			struct nvme_rdma_ctrl, err_work);
+	int i;
 
 	nvme_stop_keep_alive(&ctrl->ctrl);
+
+	for (i = 0; i < ctrl->queue_count; i++)
+		clear_bit(NVME_RDMA_Q_CONNECTED, &ctrl->queues[i].flags);
+
 	if (ctrl->queue_count > 1)
 		nvme_stop_queues(&ctrl->ctrl);
 	blk_mq_stop_hw_queues(ctrl->ctrl.admin_q);
@@ -1324,30 +1332,16 @@ out_destroy_queue_ib:
  */
 static int nvme_rdma_device_unplug(struct nvme_rdma_queue *queue)
 {
-	struct nvme_rdma_ctrl *ctrl = queue->ctrl;
-	int ret, ctrl_deleted = 0;
+	int ctrl_deleted = 0;
 
-	/* First disable the queue so ctrl delete won't free it */
-	if (!test_and_clear_bit(NVME_RDMA_Q_CONNECTED, &queue->flags))
-		goto out;
-
-	/* delete the controller */
-	ret = __nvme_rdma_del_ctrl(ctrl);
-	if (!ret) {
-		dev_warn(ctrl->ctrl.device,
-			"Got rdma device removal event, deleting ctrl\n");
-		flush_work(&ctrl->delete_work);
-
-		/* Return non-zero so the cm_id will destroy implicitly */
-		ctrl_deleted = 1;
-
+	/* Disable the queue so ctrl delete won't free it */
+	if (!test_and_set_bit(NVME_RDMA_Q_DELETING, &queue->flags)) {
 		/* Free this queue ourselves */
 		rdma_disconnect(queue->cm_id);
 		ib_drain_qp(queue->qp);
 		nvme_rdma_destroy_queue_ib(queue);
 	}
 
-out:
 	return ctrl_deleted;
 }
 
