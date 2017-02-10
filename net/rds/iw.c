@@ -76,7 +76,7 @@ static void rds_iw_add_one(struct ib_device *device)
 	rds_iwdev->max_sge = min(device->attrs.max_sge, RDS_IW_MAX_SGE);
 
 	rds_iwdev->dev = device;
-	rds_iwdev->pd = ib_alloc_pd(device);
+	rds_iwdev->pd = ib_alloc_pd(device, 0);
 	if (IS_ERR(rds_iwdev->pd))
 		goto free_dev;
 
