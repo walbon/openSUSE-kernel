@@ -245,7 +245,7 @@ struct request *blk_mq_alloc_request(struct request_queue *q, int rw,
 		return ERR_PTR(ret);
 
 	ctx = blk_mq_get_ctx(q);
-	hctx = q->mq_ops->map_queue(q, ctx->cpu);
+	hctx = blk_mq_map_queue(q, ctx->cpu);
 	blk_mq_set_alloc_data(&alloc_data, q, flags, ctx, hctx);
 
 	rq = __blk_mq_alloc_request(&alloc_data, rw, 0);
@@ -254,7 +254,7 @@ struct request *blk_mq_alloc_request(struct request_queue *q, int rw,
 		blk_mq_put_ctx(ctx);
 
 		ctx = blk_mq_get_ctx(q);
-		hctx = q->mq_ops->map_queue(q, ctx->cpu);
+		hctx = blk_mq_map_queue(q, ctx->cpu);
 		blk_mq_set_alloc_data(&alloc_data, q, flags, ctx, hctx);
 		rq =  __blk_mq_alloc_request(&alloc_data, rw, 0);
 		ctx = alloc_data.ctx;
@@ -338,11 +338,7 @@ EXPORT_SYMBOL_GPL(blk_mq_free_hctx_request);
 
 void blk_mq_free_request(struct request *rq)
 {
-	struct blk_mq_hw_ctx *hctx;
-	struct request_queue *q = rq->q;
-
-	hctx = q->mq_ops->map_queue(q, rq->mq_ctx->cpu);
-	blk_mq_free_hctx_request(hctx, rq);
+	blk_mq_free_hctx_request(blk_mq_map_queue(rq->q, rq->mq_ctx->cpu), rq);
 }
 EXPORT_SYMBOL_GPL(blk_mq_free_request);
 
@@ -1072,9 +1068,7 @@ void blk_mq_insert_request(struct request *rq, bool at_head, bool run_queue,
 {
 	struct blk_mq_ctx *ctx = rq->mq_ctx;
 	struct request_queue *q = rq->q;
-	struct blk_mq_hw_ctx *hctx;
-
-	hctx = q->mq_ops->map_queue(q, ctx->cpu);
+	struct blk_mq_hw_ctx *hctx = blk_mq_map_queue(q, ctx->cpu);
 
 	spin_lock(&ctx->lock);
 	__blk_mq_insert_request(hctx, rq, at_head);
@@ -1091,11 +1085,9 @@ static void blk_mq_insert_requests(struct request_queue *q,
 				     bool from_schedule)
 
 {
-	struct blk_mq_hw_ctx *hctx;
+	struct blk_mq_hw_ctx *hctx = blk_mq_map_queue(q, ctx->cpu);
 
 	trace_block_unplug(q, depth, !from_schedule);
-
-	hctx = q->mq_ops->map_queue(q, ctx->cpu);
 
 	/*
 	 * preemption doesn't flush plug list, so it's possible ctx->cpu is
@@ -1230,7 +1222,7 @@ static struct request *blk_mq_map_request(struct request_queue *q,
 
 	blk_queue_enter_live(q);
 	ctx = blk_mq_get_ctx(q);
-	hctx = q->mq_ops->map_queue(q, ctx->cpu);
+	hctx = blk_mq_map_queue(q, ctx->cpu);
 
 	if (rw_is_sync(bio_op(bio), bio->bi_opf))
 		op_flags |= REQ_SYNC;
@@ -1244,7 +1236,7 @@ static struct request *blk_mq_map_request(struct request_queue *q,
 		trace_block_sleeprq(q, bio, op);
 
 		ctx = blk_mq_get_ctx(q);
-		hctx = q->mq_ops->map_queue(q, ctx->cpu);
+		hctx = blk_mq_map_queue(q, ctx->cpu);
 		blk_mq_set_alloc_data(&alloc_data, q, 0, ctx, hctx);
 		rq = __blk_mq_alloc_request(&alloc_data, op, op_flags);
 		ctx = alloc_data.ctx;
@@ -1261,8 +1253,7 @@ static int blk_mq_direct_issue_request(struct request *rq, blk_qc_t *cookie)
 {
 	int ret;
 	struct request_queue *q = rq->q;
-	struct blk_mq_hw_ctx *hctx = q->mq_ops->map_queue(q,
-			rq->mq_ctx->cpu);
+	struct blk_mq_hw_ctx *hctx = blk_mq_map_queue(q, rq->mq_ctx->cpu);
 	struct blk_mq_queue_data bd = {
 		.rq = rq,
 		.list = NULL,
@@ -1465,15 +1456,6 @@ run_queue:
 	blk_mq_put_ctx(data.ctx);
 	return cookie;
 }
-
-/*
- * Default mapping to a software queue, since we use one per CPU.
- */
-struct blk_mq_hw_ctx *blk_mq_map_queue(struct request_queue *q, const int cpu)
-{
-	return q->queue_hw_ctx[q->mq_map[cpu]];
-}
-EXPORT_SYMBOL(blk_mq_map_queue);
 
 static void blk_mq_free_rq_map(struct blk_mq_tag_set *set,
 		struct blk_mq_tags *tags, unsigned int hctx_idx)
@@ -1808,7 +1790,7 @@ static void blk_mq_init_cpu_queues(struct request_queue *q,
 		if (!cpu_online(i))
 			continue;
 
-		hctx = q->mq_ops->map_queue(q, i);
+		hctx = blk_mq_map_queue(q, i);
 
 		/*
 		 * Set local node, IFF we have more than one hw queue. If
@@ -1861,7 +1843,7 @@ static void blk_mq_map_swqueue(struct request_queue *q,
 		}
 
 		ctx = per_cpu_ptr(q->queue_ctx, i);
-		hctx = q->mq_ops->map_queue(q, i);
+		hctx = blk_mq_map_queue(q, i);
 
 		cpumask_set_cpu(i, hctx->cpumask);
 		ctx->index_hw = hctx->nr_ctx;
@@ -2326,7 +2308,7 @@ int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 	if (set->queue_depth < set->reserved_tags + BLK_MQ_TAG_MIN)
 		return -EINVAL;
 
-	if (!set->ops->queue_rq || !set->ops->map_queue)
+	if (!set->ops->queue_rq)
 		return -EINVAL;
 
 	if (set->queue_depth > BLK_MQ_MAX_DEPTH) {
