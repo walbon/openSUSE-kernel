@@ -23,8 +23,6 @@ static DEFINE_MUTEX(irq_domain_mutex);
 static DEFINE_MUTEX(revmap_trees_mutex);
 static struct irq_domain *irq_default_domain;
 
-static int irq_domain_alloc_descs(int virq, unsigned int nr_irqs,
-				  irq_hw_number_t hwirq, int node);
 static void irq_domain_check_hierarchy(struct irq_domain *domain);
 
 struct irqchip_fwid {
@@ -485,7 +483,7 @@ unsigned int irq_create_mapping(struct irq_domain *domain,
 	}
 
 	/* Allocate a virtual interrupt number */
-	virq = irq_domain_alloc_descs(-1, 1, hwirq, of_node_to_nid(of_node));
+	virq = irq_domain_alloc_descs(-1, 1, hwirq, of_node_to_nid(of_node), NULL);
 	if (virq <= 0) {
 		pr_debug("-> virq allocation failed\n");
 		return 0;
@@ -835,20 +833,24 @@ const struct irq_domain_ops irq_domain_simple_ops = {
 };
 EXPORT_SYMBOL_GPL(irq_domain_simple_ops);
 
-static int irq_domain_alloc_descs(int virq, unsigned int cnt,
-				  irq_hw_number_t hwirq, int node)
+int irq_domain_alloc_descs(int virq, unsigned int cnt, irq_hw_number_t hwirq,
+			   int node, const struct cpumask *affinity)
 {
 	unsigned int hint;
 
 	if (virq >= 0) {
-		virq = irq_alloc_descs(virq, virq, cnt, node);
+		virq = __irq_alloc_descs(virq, virq, cnt, node, THIS_MODULE,
+					 affinity);
 	} else {
 		hint = hwirq % nr_irqs;
 		if (hint == 0)
 			hint++;
-		virq = irq_alloc_descs_from(hint, cnt, node);
-		if (virq <= 0 && hint > 1)
-			virq = irq_alloc_descs_from(1, cnt, node);
+		virq = __irq_alloc_descs(-1, hint, cnt, node, THIS_MODULE,
+					 affinity);
+		if (virq <= 0 && hint > 1) {
+			virq = __irq_alloc_descs(-1, 1, cnt, node, THIS_MODULE,
+						 affinity);
+		}
 	}
 
 	return virq;
@@ -1161,6 +1163,7 @@ int irq_domain_alloc_irqs_recursive(struct irq_domain *domain,
  * @node:	NUMA node id for memory allocation
  * @arg:	domain specific argument
  * @realloc:	IRQ descriptors have already been allocated if true
+ * @affinity:	Optional irq affinity mask for multiqueue devices
  *
  * Allocate IRQ numbers and initialized all data structures to support
  * hierarchy IRQ domains.
@@ -1176,7 +1179,7 @@ int irq_domain_alloc_irqs_recursive(struct irq_domain *domain,
  */
 int __irq_domain_alloc_irqs(struct irq_domain *domain, int irq_base,
 			    unsigned int nr_irqs, int node, void *arg,
-			    bool realloc)
+			    bool realloc, const struct cpumask *affinity)
 {
 	int i, ret, virq;
 
@@ -1194,7 +1197,8 @@ int __irq_domain_alloc_irqs(struct irq_domain *domain, int irq_base,
 	if (realloc && irq_base >= 0) {
 		virq = irq_base;
 	} else {
-		virq = irq_domain_alloc_descs(irq_base, nr_irqs, 0, node);
+		virq = irq_domain_alloc_descs(irq_base, nr_irqs, 0, node,
+					      affinity);
 		if (virq < 0) {
 			pr_debug("cannot allocate IRQ(base %d, count %d)\n",
 				 irq_base, nr_irqs);
