@@ -542,7 +542,7 @@ static int __init genpd_poweroff_unused(void)
 }
 late_initcall(genpd_poweroff_unused);
 
-#ifdef CONFIG_PM_SLEEP
+#if defined(CONFIG_PM_SLEEP) || defined(CONFIG_PM_GENERIC_DOMAINS_OF)
 
 /**
  * pm_genpd_present - Check if the given PM domain has been initialized.
@@ -561,6 +561,10 @@ static bool pm_genpd_present(const struct generic_pm_domain *genpd)
 
 	return false;
 }
+
+#endif
+
+#ifdef CONFIG_PM_SLEEP
 
 static bool genpd_dev_active_wakeup(struct generic_pm_domain *genpd,
 				    struct device *dev)
@@ -1647,7 +1651,19 @@ static int genpd_add_provider(struct device_node *np, genpd_xlate_t xlate,
 int of_genpd_add_provider_simple(struct device_node *np,
 				 struct generic_pm_domain *genpd)
 {
-	return genpd_add_provider(np, genpd_xlate_simple, genpd);
+	int ret = -EINVAL;
+
+	if (!np || !genpd)
+		return -EINVAL;
+
+	mutex_lock(&gpd_list_lock);
+
+	if (pm_genpd_present(genpd))
+		ret = genpd_add_provider(np, genpd_xlate_simple, genpd);
+
+	mutex_unlock(&gpd_list_lock);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(of_genpd_add_provider_simple);
 
@@ -1659,7 +1675,26 @@ EXPORT_SYMBOL_GPL(of_genpd_add_provider_simple);
 int of_genpd_add_provider_onecell(struct device_node *np,
 				  struct genpd_onecell_data *data)
 {
-	return genpd_add_provider(np, genpd_xlate_onecell, data);
+	unsigned int i;
+	int ret;
+
+	if (!np || !data)
+		return -EINVAL;
+
+	mutex_lock(&gpd_list_lock);
+
+	for (i = 0; i < data->num_domains; i++) {
+		if (!pm_genpd_present(data->domains[i])) {
+			mutex_unlock(&gpd_list_lock);
+			return -EINVAL;
+		}
+	}
+
+	ret = genpd_add_provider(np, genpd_xlate_onecell, data);
+
+	mutex_unlock(&gpd_list_lock);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(of_genpd_add_provider_onecell);
 
