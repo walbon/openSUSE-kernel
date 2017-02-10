@@ -1012,6 +1012,7 @@ static int __init uncore_pci_init(void)
 	case 87: /* Knights Landing */
 		ret = knl_uncore_pci_init();
 		break;
+	case 78: /* Skylake mobile -- INTEL_FAM6_SKYLAKE_MOBILE */
 	case 94: /* SkyLake */
 		ret = skl_uncore_pci_init();
 		break;
@@ -1315,6 +1316,10 @@ static int __init uncore_cpu_init(void)
 		break;
 	case 87: /* Knights Landing */
 		knl_uncore_cpu_init();
+		break;
+        case 78: /* Skylake mobile -- INTEL_FAM6_SKYLAKE_MOBILE */
+        case 94: /* SkyLake */
+               skl_uncore_cpu_init();
 		break;
 	default:
 		return 0;
