@@ -677,7 +677,8 @@ static int uncore_pmu_event_init(struct perf_event *event)
 		/* fixed counters have event field hardcoded to zero */
 		hwc->config = 0ULL;
 	} else {
-		hwc->config = event->attr.config & pmu->type->event_mask;
+		hwc->config = event->attr.config &
+			      (pmu->type->event_mask | ((u64)pmu->type->event_mask_ext << 32));
 		if (pmu->type->ops->hw_config) {
 			ret = pmu->type->ops->hw_config(box, event);
 			if (ret)
@@ -1016,6 +1017,9 @@ static int __init uncore_pci_init(void)
 	case 94: /* SkyLake */
 		ret = skl_uncore_pci_init();
 		break;
+	case 85: /* Skylake server -- INTEL_FAM6_SKYLAKE_X */
+		ret = skx_uncore_pci_init();
+		break;
 	default:
 		return 0;
 	}
@@ -1321,6 +1325,9 @@ static int __init uncore_cpu_init(void)
         case 94: /* SkyLake */
                skl_uncore_cpu_init();
 		break;
+        case 85: /* Skylake server -- INTEL_FAM6_SKYLAKE_X */
+                skx_uncore_cpu_init();
+		 break;
 	default:
 		return 0;
 	}
