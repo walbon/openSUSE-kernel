@@ -3775,6 +3775,7 @@ __init int intel_pmu_init(void)
 		break;
 
 	case 87: /* Knights Landing Xeon Phi */
+	case 133: /*  Knights Mill -- INTEL_FAM6_XEON_PHI_KNM */
 		memcpy(hw_cache_event_ids,
 		       slm_hw_cache_event_ids, sizeof(hw_cache_event_ids));
 		memcpy(hw_cache_extra_regs,
@@ -3789,7 +3790,7 @@ __init int intel_pmu_init(void)
 		x86_pmu.flags |= PMU_FL_HAS_RSP_1;
 		x86_pmu.flags |= PMU_FL_NO_HT_SHARING;
 
-		pr_cont("Knights Landing events, ");
+		pr_cont("Knights Landing/Mill events, ");
 		break;
 
 	case 142: /* 14nm Kabylake Mobile */
