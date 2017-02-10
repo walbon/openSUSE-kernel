@@ -1735,7 +1735,8 @@ static short ieee80211_sta_ps_sleep(struct ieee80211_device *ieee, u32 *time_h,
 	if(dtim & ((IEEE80211_DTIM_UCAST | IEEE80211_DTIM_MBCAST)& ieee->ps))
 		return 2;
 
-	if(!time_after(jiffies, ieee->dev->trans_start + MSECS(timeout)))
+	if(!time_after(jiffies,
+		       dev_trans_start(ieee->dev) + MSECS(timeout)))
 		return 0;
 
 	if(!time_after(jiffies, ieee->last_rx_ps_time + MSECS(timeout)))

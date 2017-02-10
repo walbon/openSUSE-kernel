@@ -49,7 +49,7 @@ void mlx5e_fill_hwstamp(struct mlx5e_tstamp *tstamp, u64 timestamp,
 	hwts->hwtstamp = ns_to_ktime(nsec);
 }
 
-static cycle_t mlx5e_read_internal_timer(const struct cyclecounter *cc)
+static u64 mlx5e_read_internal_timer(const struct cyclecounter *cc)
 {
 	struct mlx5e_tstamp *tstamp = container_of(cc, struct mlx5e_tstamp,
 						   cycles);
@@ -269,7 +269,7 @@ void mlx5e_timestamp_init(struct mlx5e_priv *priv)
 
 	tstamp->ptp = ptp_clock_register(&tstamp->ptp_info,
 					 &priv->mdev->pdev->dev);
-	if (IS_ERR_OR_NULL(tstamp->ptp)) {
+	if (IS_ERR(tstamp->ptp)) {
 		mlx5_core_warn(priv->mdev, "ptp_clock_register failed %ld\n",
 			       PTR_ERR(tstamp->ptp));
 		tstamp->ptp = NULL;

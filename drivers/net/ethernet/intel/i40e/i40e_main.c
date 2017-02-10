@@ -2218,12 +2218,7 @@ static void i40e_sync_filters_subtask(struct i40e_pf *pf)
 static int i40e_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct i40e_netdev_priv *np = netdev_priv(netdev);
-	int max_frame = new_mtu + ETH_HLEN + ETH_FCS_LEN + VLAN_HLEN;
 	struct i40e_vsi *vsi = np->vsi;
-
-	/* MTU < 68 is an error and causes problems on some kernels */
-	if ((new_mtu < 68) || (max_frame > I40E_MAX_RXBUFFER))
-		return -EINVAL;
 
 	netdev_info(netdev, "changing MTU from %d to %d\n",
 		    netdev->mtu, new_mtu);
@@ -9238,6 +9233,11 @@ static int i40e_config_netdev(struct i40e_vsi *vsi)
 	i40e_fcoe_config_netdev(netdev, vsi);
 #endif
 
+	/* MTU range: 68 - 9706 */
+	netdev->min_mtu = ETH_MIN_MTU;
+	netdev->max_mtu = I40E_MAX_RXBUFFER -
+			  (ETH_HLEN + ETH_FCS_LEN + VLAN_HLEN);
+
 	return 0;
 }
 
@@ -10819,8 +10819,7 @@ static int i40e_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	/* set up pci connections */
-	err = pci_request_selected_regions(pdev, pci_select_bars(pdev,
-					   IORESOURCE_MEM), i40e_driver_name);
+	err = pci_request_mem_regions(pdev, i40e_driver_name);
 	if (err) {
 		dev_info(&pdev->dev,
 			 "pci_request_selected_regions failed %d\n", err);
@@ -11317,8 +11316,7 @@ err_ioremap:
 	kfree(pf);
 err_pf_alloc:
 	pci_disable_pcie_error_reporting(pdev);
-	pci_release_selected_regions(pdev,
-				     pci_select_bars(pdev, IORESOURCE_MEM));
+	pci_release_mem_regions(pdev);
 err_pci_reg:
 err_dma:
 	pci_disable_device(pdev);
@@ -11427,8 +11425,7 @@ static void i40e_remove(struct pci_dev *pdev)
 
 	iounmap(hw->hw_addr);
 	kfree(pf);
-	pci_release_selected_regions(pdev,
-				     pci_select_bars(pdev, IORESOURCE_MEM));
+	pci_release_mem_regions(pdev);
 
 	pci_disable_pcie_error_reporting(pdev);
 	pci_disable_device(pdev);

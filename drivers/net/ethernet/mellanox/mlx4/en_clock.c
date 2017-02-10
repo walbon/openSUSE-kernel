@@ -38,7 +38,7 @@
 
 /* mlx4_en_read_clock - read raw cycle counter (to be used by time counter)
  */
-static cycle_t mlx4_en_read_clock(const struct cyclecounter *tc)
+static u64 mlx4_en_read_clock(const struct cyclecounter *tc)
 {
 	struct mlx4_en_dev *mdev =
 		container_of(tc, struct mlx4_en_dev, cycles);
@@ -298,7 +298,7 @@ void mlx4_en_init_timestamp(struct mlx4_en_dev *mdev)
 	if (IS_ERR(mdev->ptp_clock)) {
 		mdev->ptp_clock = NULL;
 		mlx4_err(mdev, "ptp_clock_register failed\n");
-	} else {
+	} else if (mdev->ptp_clock) {
 		mlx4_info(mdev, "registered PHC clock\n");
 	}
 
