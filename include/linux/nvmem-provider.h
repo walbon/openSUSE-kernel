@@ -14,6 +14,10 @@
 
 struct nvmem_device;
 struct nvmem_cell_info;
+typedef int (*nvmem_reg_read_t)(void *priv, unsigned int offset,
+				void *val, size_t bytes);
+typedef int (*nvmem_reg_write_t)(void *priv, unsigned int offset,
+				 void *val, size_t bytes);
 
 struct nvmem_config {
 	struct device		*dev;
@@ -23,6 +27,12 @@ struct nvmem_config {
 	const struct nvmem_cell_info	*cells;
 	int			ncells;
 	bool			read_only;
+	nvmem_reg_read_t	reg_read;
+	nvmem_reg_write_t	reg_write;
+	int	size;
+	int	word_size;
+	int	stride;
+	void	*priv;
 };
 
 #if IS_ENABLED(CONFIG_NVMEM)
