@@ -12,14 +12,14 @@
 #include <linux/usb/phy.h>
 
 #if IS_ENABLED(CONFIG_OF)
-enum usb_dr_mode of_usb_get_dr_mode_by_phy(struct device_node *phy_np);
+enum usb_dr_mode of_usb_get_dr_mode_by_phy(struct device_node *np, int arg0);
 bool of_usb_host_tpl_support(struct device_node *np);
 int of_usb_update_otg_caps(struct device_node *np,
 			struct usb_otg_caps *otg_caps);
 struct device_node *usb_of_get_child_node(struct device_node *parent,
 			int portnum);
 #else
-enum usb_dr_mode of_usb_get_dr_mode_by_phy(struct device_node *phy_np)
+enum usb_dr_mode of_usb_get_dr_mode_by_phy(struct device_node *np, int arg0)
 {
 	return USB_DR_MODE_UNKNOWN;
 }
