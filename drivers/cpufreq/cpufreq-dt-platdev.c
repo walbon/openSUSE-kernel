@@ -22,6 +22,8 @@ static const struct of_device_id machines[] __initconst = {
 	{ .compatible = "rockchip,rk3366", },
 	{ .compatible = "rockchip,rk3368", },
 	{ .compatible = "rockchip,rk3399", },
+
+	{ }
 };
 
 static int __init cpufreq_dt_platdev_init(void)
