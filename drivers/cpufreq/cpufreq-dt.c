@@ -18,7 +18,6 @@
 #include <linux/cpu.h>
 #include <linux/cpu_cooling.h>
 #include <linux/cpufreq.h>
-#include <linux/cpufreq-dt.h>
 #include <linux/cpumask.h>
 #include <linux/err.h>
 #include <linux/module.h>
@@ -252,10 +251,7 @@ static int cpufreq_init(struct cpufreq_policy *policy)
 	}
 
 	if (need_update) {
-		struct cpufreq_dt_platform_data *pd = cpufreq_get_driver_data();
-
-		if (!pd || !pd->independent_clocks)
-			cpumask_setall(policy->cpus);
+		cpumask_setall(policy->cpus);
 
 		/*
 		 * OPP tables are initialized only for policy->cpu, do it for
