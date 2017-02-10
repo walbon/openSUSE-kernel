@@ -920,8 +920,7 @@ static sector_t wait_barrier(struct r1conf *conf, struct bio *bio)
 		spin_unlock_irq(&conf->resync_lock);
 	}
 
-	if (bio && bio_data_dir(bio) == WRITE &&
-	    atomic_read(&conf->barrier)) {
+	if (bio && bio_data_dir(bio) == WRITE) {
 		spin_lock_irq(&conf->resync_lock);
 		if (bio->bi_iter.bi_sector >= conf->next_resync) {
 			if (conf->start_next_window == MaxSector)
