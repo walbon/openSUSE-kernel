@@ -1463,6 +1463,140 @@ static __initconst const u64 slm_hw_cache_event_ids
  },
 };
 
+static struct extra_reg intel_glm_extra_regs[] __read_mostly = {
+	/* must define OFFCORE_RSP_X first, see intel_fixup_er() */
+	INTEL_UEVENT_EXTRA_REG(0x01b7, MSR_OFFCORE_RSP_0, 0x760005ffbfull, RSP_0),
+	INTEL_UEVENT_EXTRA_REG(0x02b7, MSR_OFFCORE_RSP_1, 0x360005ffbfull, RSP_1),
+	EVENT_EXTRA_END
+};
+
+#define GLM_DEMAND_DATA_RD		BIT_ULL(0)
+#define GLM_DEMAND_RFO			BIT_ULL(1)
+#define GLM_ANY_RESPONSE		BIT_ULL(16)
+#define GLM_SNP_NONE_OR_MISS		BIT_ULL(33)
+#define GLM_DEMAND_READ			GLM_DEMAND_DATA_RD
+#define GLM_DEMAND_WRITE		GLM_DEMAND_RFO
+#define GLM_DEMAND_PREFETCH		(SNB_PF_DATA_RD|SNB_PF_RFO)
+#define GLM_LLC_ACCESS			GLM_ANY_RESPONSE
+#define GLM_SNP_ANY			(GLM_SNP_NONE_OR_MISS|SNB_NO_FWD|SNB_HITM)
+#define GLM_LLC_MISS			(GLM_SNP_ANY|SNB_NON_DRAM)
+
+static __initconst const u64 glm_hw_cache_event_ids
+				[PERF_COUNT_HW_CACHE_MAX]
+				[PERF_COUNT_HW_CACHE_OP_MAX]
+				[PERF_COUNT_HW_CACHE_RESULT_MAX] = {
+	[C(L1D)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= 0x81d0,	/* MEM_UOPS_RETIRED.ALL_LOADS */
+			[C(RESULT_MISS)]	= 0x0,
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= 0x82d0,	/* MEM_UOPS_RETIRED.ALL_STORES */
+			[C(RESULT_MISS)]	= 0x0,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= 0x0,
+			[C(RESULT_MISS)]	= 0x0,
+		},
+	},
+	[C(L1I)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= 0x0380,	/* ICACHE.ACCESSES */
+			[C(RESULT_MISS)]	= 0x0280,	/* ICACHE.MISSES */
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= -1,
+			[C(RESULT_MISS)]	= -1,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= 0x0,
+			[C(RESULT_MISS)]	= 0x0,
+		},
+	},
+	[C(LL)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= 0x1b7,	/* OFFCORE_RESPONSE */
+			[C(RESULT_MISS)]	= 0x1b7,	/* OFFCORE_RESPONSE */
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= 0x1b7,	/* OFFCORE_RESPONSE */
+			[C(RESULT_MISS)]	= 0x1b7,	/* OFFCORE_RESPONSE */
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= 0x1b7,	/* OFFCORE_RESPONSE */
+			[C(RESULT_MISS)]	= 0x1b7,	/* OFFCORE_RESPONSE */
+		},
+	},
+	[C(DTLB)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= 0x81d0,	/* MEM_UOPS_RETIRED.ALL_LOADS */
+			[C(RESULT_MISS)]	= 0x0,
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= 0x82d0,	/* MEM_UOPS_RETIRED.ALL_STORES */
+			[C(RESULT_MISS)]	= 0x0,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= 0x0,
+			[C(RESULT_MISS)]	= 0x0,
+		},
+	},
+	[C(ITLB)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= 0x00c0,	/* INST_RETIRED.ANY_P */
+			[C(RESULT_MISS)]	= 0x0481,	/* ITLB.MISS */
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= -1,
+			[C(RESULT_MISS)]	= -1,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= -1,
+			[C(RESULT_MISS)]	= -1,
+		},
+	},
+	[C(BPU)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= 0x00c4,	/* BR_INST_RETIRED.ALL_BRANCHES */
+			[C(RESULT_MISS)]	= 0x00c5,	/* BR_MISP_RETIRED.ALL_BRANCHES */
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= -1,
+			[C(RESULT_MISS)]	= -1,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= -1,
+			[C(RESULT_MISS)]	= -1,
+		},
+	},
+};
+
+static __initconst const u64 glm_hw_cache_extra_regs
+				[PERF_COUNT_HW_CACHE_MAX]
+				[PERF_COUNT_HW_CACHE_OP_MAX]
+				[PERF_COUNT_HW_CACHE_RESULT_MAX] = {
+	[C(LL)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= GLM_DEMAND_READ|
+						  GLM_LLC_ACCESS,
+			[C(RESULT_MISS)]	= GLM_DEMAND_READ|
+						  GLM_LLC_MISS,
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= GLM_DEMAND_WRITE|
+						  GLM_LLC_ACCESS,
+			[C(RESULT_MISS)]	= GLM_DEMAND_WRITE|
+						  GLM_LLC_MISS,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= GLM_DEMAND_PREFETCH|
+						  GLM_LLC_ACCESS,
+			[C(RESULT_MISS)]	= GLM_DEMAND_PREFETCH|
+						  GLM_LLC_MISS,
+		},
+	},
+};
+
 #define KNL_OT_L2_HITE		BIT_ULL(19) /* Other Tile L2 Hit */
 #define KNL_OT_L2_HITF		BIT_ULL(20) /* Other Tile L2 Hit */
 #define KNL_MCDRAM_LOCAL	BIT_ULL(21)
@@ -2538,6 +2672,44 @@ static void intel_pebs_aliases_snb(struct perf_event *event)
 	}
 }
 
+static void intel_pebs_aliases_precdist(struct perf_event *event)
+{
+	if ((event->hw.config & X86_RAW_EVENT_MASK) == 0x003c) {
+		/*
+		 * Use an alternative encoding for CPU_CLK_UNHALTED.THREAD_P
+		 * (0x003c) so that we can use it with PEBS.
+		 *
+		 * The regular CPU_CLK_UNHALTED.THREAD_P event (0x003c) isn't
+		 * PEBS capable. However we can use INST_RETIRED.PREC_DIST
+		 * (0x01c0), which is a PEBS capable event, to get the same
+		 * count.
+		 *
+		 * The PREC_DIST event has special support to minimize sample
+		 * shadowing effects. One drawback is that it can be
+		 * only programmed on counter 1, but that seems like an
+		 * acceptable trade off.
+		 */
+		u64 alt_config = X86_CONFIG(.event=0xc0, .umask=0x01, .inv=1, .cmask=16);
+
+		alt_config |= (event->hw.config & ~X86_RAW_EVENT_MASK);
+		event->hw.config = alt_config;
+	}
+}
+
+static void intel_pebs_aliases_ivb(struct perf_event *event)
+{
+	if (event->attr.precise_ip < 3)
+		return intel_pebs_aliases_snb(event);
+	return intel_pebs_aliases_precdist(event);
+}
+
+static void intel_pebs_aliases_skl(struct perf_event *event)
+{
+	if (event->attr.precise_ip < 3)
+		return intel_pebs_aliases_core2(event);
+	return intel_pebs_aliases_precdist(event);
+}
+
 static unsigned long intel_pmu_free_running_flags(struct perf_event *event)
 {
 	unsigned long flags = x86_pmu.free_running_flags;
@@ -3416,6 +3588,29 @@ __init int intel_pmu_init(void)
 		pr_cont("Silvermont events, ");
 		break;
 
+	case 92: /* 14nm Atom "Goldmont" */
+	case 95: /* 14nm Atom "Goldmont Denverton" */
+		memcpy(hw_cache_event_ids, glm_hw_cache_event_ids,
+		       sizeof(hw_cache_event_ids));
+		memcpy(hw_cache_extra_regs, glm_hw_cache_extra_regs,
+		       sizeof(hw_cache_extra_regs));
+
+		intel_pmu_lbr_init_skl();
+
+		x86_pmu.event_constraints = intel_slm_event_constraints;
+		x86_pmu.pebs_constraints = intel_glm_pebs_event_constraints;
+		x86_pmu.extra_regs = intel_glm_extra_regs;
+		/*
+		 * It's recommended to use CPU_CLK_UNHALTED.CORE_P + NPEBS
+		 * for precise cycles.
+		 * :pp is identical to :ppp
+		 */
+		x86_pmu.pebs_aliases = NULL;
+		x86_pmu.pebs_prec_dist = true;
+		x86_pmu.flags |= PMU_FL_HAS_RSP_1;
+		pr_cont("Goldmont events, ");
+		break;
+
 	case 37: /* 32nm Westmere    */
 	case 44: /* 32nm Westmere-EP */
 	case 47: /* 32nm Westmere-EX */
@@ -3496,7 +3691,8 @@ __init int intel_pmu_init(void)
 
 		x86_pmu.event_constraints = intel_ivb_event_constraints;
 		x86_pmu.pebs_constraints = intel_ivb_pebs_event_constraints;
-		x86_pmu.pebs_aliases = intel_pebs_aliases_snb;
+		x86_pmu.pebs_aliases = intel_pebs_aliases_ivb;
+		x86_pmu.pebs_prec_dist = true;
 		if (boot_cpu_data.x86_model == 62)
 			x86_pmu.extra_regs = intel_snbep_extra_regs;
 		else
@@ -3529,7 +3725,8 @@ __init int intel_pmu_init(void)
 		x86_pmu.event_constraints = intel_hsw_event_constraints;
 		x86_pmu.pebs_constraints = intel_hsw_pebs_event_constraints;
 		x86_pmu.extra_regs = intel_snbep_extra_regs;
-		x86_pmu.pebs_aliases = intel_pebs_aliases_snb;
+		x86_pmu.pebs_aliases = intel_pebs_aliases_ivb;
+		x86_pmu.pebs_prec_dist = true;
 		/* all extra regs are per-cpu when HT is on */
 		x86_pmu.flags |= PMU_FL_HAS_RSP_1;
 		x86_pmu.flags |= PMU_FL_NO_HT_SHARING;
@@ -3564,7 +3761,8 @@ __init int intel_pmu_init(void)
 		x86_pmu.event_constraints = intel_bdw_event_constraints;
 		x86_pmu.pebs_constraints = intel_hsw_pebs_event_constraints;
 		x86_pmu.extra_regs = intel_snbep_extra_regs;
-		x86_pmu.pebs_aliases = intel_pebs_aliases_snb;
+		x86_pmu.pebs_aliases = intel_pebs_aliases_ivb;
+		x86_pmu.pebs_prec_dist = true;
 		/* all extra regs are per-cpu when HT is on */
 		x86_pmu.flags |= PMU_FL_HAS_RSP_1;
 		x86_pmu.flags |= PMU_FL_NO_HT_SHARING;
@@ -3577,6 +3775,7 @@ __init int intel_pmu_init(void)
 		break;
 
 	case 87: /* Knights Landing Xeon Phi */
+	case 133: /*  Knights Mill -- INTEL_FAM6_XEON_PHI_KNM */
 		memcpy(hw_cache_event_ids,
 		       slm_hw_cache_event_ids, sizeof(hw_cache_event_ids));
 		memcpy(hw_cache_extra_regs,
@@ -3591,11 +3790,14 @@ __init int intel_pmu_init(void)
 		x86_pmu.flags |= PMU_FL_HAS_RSP_1;
 		x86_pmu.flags |= PMU_FL_NO_HT_SHARING;
 
-		pr_cont("Knights Landing events, ");
+		pr_cont("Knights Landing/Mill events, ");
 		break;
 
+	case 142: /* 14nm Kabylake Mobile */
+	case 158: /* 14nm Kabylake Desktop */
 	case 78: /* 14nm Skylake Mobile */
 	case 94: /* 14nm Skylake Desktop */
+	case 85: /* 14nm Skylake Server */
 		x86_pmu.late_ack = true;
 		memcpy(hw_cache_event_ids, skl_hw_cache_event_ids, sizeof(hw_cache_event_ids));
 		memcpy(hw_cache_extra_regs, skl_hw_cache_extra_regs, sizeof(hw_cache_extra_regs));
@@ -3604,7 +3806,8 @@ __init int intel_pmu_init(void)
 		x86_pmu.event_constraints = intel_skl_event_constraints;
 		x86_pmu.pebs_constraints = intel_skl_pebs_event_constraints;
 		x86_pmu.extra_regs = intel_skl_extra_regs;
-		x86_pmu.pebs_aliases = intel_pebs_aliases_snb;
+		x86_pmu.pebs_aliases = intel_pebs_aliases_skl;
+		x86_pmu.pebs_prec_dist = true;
 		/* all extra regs are per-cpu when HT is on */
 		x86_pmu.flags |= PMU_FL_HAS_RSP_1;
 		x86_pmu.flags |= PMU_FL_NO_HT_SHARING;
