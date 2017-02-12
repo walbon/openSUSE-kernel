@@ -1104,7 +1104,7 @@ static int hp100_open(struct net_device *dev)
 		return -EAGAIN;
 	}
 
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	netif_trans_update(dev); /* prevent tx timeout */
 	netif_start_queue(dev);
 
 	lp->lan_type = hp100_sense_lan(dev);

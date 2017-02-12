@@ -64,12 +64,12 @@ struct ixgbe_mac_operations {
 	s32 (*set_uc_addr)(struct ixgbe_hw *, u32, u8 *);
 	s32 (*init_rx_addrs)(struct ixgbe_hw *);
 	s32 (*update_mc_addr_list)(struct ixgbe_hw *, struct net_device *);
-	s32 (*update_xcast_mode)(struct ixgbe_hw *, struct net_device *, int);
+	s32 (*update_xcast_mode)(struct ixgbe_hw *, int);
 	s32 (*enable_mc)(struct ixgbe_hw *);
 	s32 (*disable_mc)(struct ixgbe_hw *);
 	s32 (*clear_vfta)(struct ixgbe_hw *);
 	s32 (*set_vfta)(struct ixgbe_hw *, u32, u32, bool);
-	void (*set_rlpml)(struct ixgbe_hw *, u16);
+	s32 (*set_rlpml)(struct ixgbe_hw *, u16);
 };
 
 enum ixgbe_mac_type {
@@ -78,6 +78,7 @@ enum ixgbe_mac_type {
 	ixgbe_mac_X540_vf,
 	ixgbe_mac_X550_vf,
 	ixgbe_mac_X550EM_x_vf,
+	ixgbe_mac_x550em_a_vf,
 	ixgbe_num_macs
 };
 

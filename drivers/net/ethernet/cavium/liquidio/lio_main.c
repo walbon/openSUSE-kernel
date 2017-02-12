@@ -2901,7 +2901,7 @@ static int liquidio_xmit(struct sk_buff *skb, struct net_device *netdev)
 	if (status == IQ_SEND_STOP)
 		stop_q(lio->netdev, q_idx);
 
-	netdev->trans_start = jiffies;
+	netif_trans_update(netdev);
 
 	stats->tx_done++;
 	stats->tx_tot_bytes += skb->len;
@@ -2930,7 +2930,7 @@ static void liquidio_tx_timeout(struct net_device *netdev)
 	netif_info(lio, tx_err, lio->netdev,
 		   "Transmit timeout tx_dropped:%ld, waking up queues now!!\n",
 		   netdev->stats.tx_dropped);
-	netdev->trans_start = jiffies;
+	netif_trans_update(netdev);
 	txqs_wake(netdev);
 }
 
