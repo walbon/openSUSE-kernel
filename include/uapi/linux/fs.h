@@ -153,6 +153,10 @@ struct inodes_stat_t {
 #define BLKROTATIONAL _IO(0x12,126)
 #define BLKZEROOUT _IO(0x12,127)
 #define BLKDAXGET _IO(0x12,129)
+/*
+ * A jump here: 130-131 are reserved for zoned block devices
+ * (see uapi/linux/blkzoned.h)
+ */
 
 #define BMAP_IOCTL 1		/* obsolete - kept for compatibility */
 #define FIBMAP	   _IO(0x00,1)	/* bmap access */
