@@ -1009,7 +1009,7 @@ static int scsi_init_sgtable(struct request *req, struct scsi_data_buffer *sdb)
 	count = blk_rq_map_sg(req->q, req, sdb->table.sgl);
 	BUG_ON(count > sdb->table.nents);
 	sdb->table.nents = count;
-	sdb->length = blk_rq_payload_bytes(req);
+	sdb->length = blk_rq_bytes(req);
 	return BLKPREP_OK;
 }
 
@@ -1990,15 +1990,6 @@ static void scsi_exit_request(void *data, struct request *rq,
 	kfree(cmd->sense_buffer);
 }
 
-static int scsi_map_queues(struct blk_mq_tag_set *set)
-{
-	struct Scsi_Host *shost = container_of(set, struct Scsi_Host, tag_set);
-
-	if (shost->hostt->map_queues)
-		return shost->hostt->map_queues(shost);
-	return blk_mq_map_queues(set);
-}
-
 static u64 scsi_calculate_bounce_limit(struct Scsi_Host *shost)
 {
 	struct device *host_dev;
@@ -2091,7 +2082,6 @@ static struct blk_mq_ops scsi_mq_ops = {
 	.timeout	= scsi_timeout,
 	.init_request	= scsi_init_request,
 	.exit_request	= scsi_exit_request,
-	.map_queues	= scsi_map_queues,
 };
 
 struct request_queue *scsi_mq_alloc_queue(struct scsi_device *sdev)
