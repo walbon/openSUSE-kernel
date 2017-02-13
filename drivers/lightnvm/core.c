@@ -472,6 +472,8 @@ static int nvm_core_init(struct nvm_dev *dev)
 	mutex_init(&dev->mlock);
 	spin_lock_init(&dev->lock);
 
+	blk_queue_logical_block_size(dev->q, dev->sec_size);
+
 	return 0;
 }
 
