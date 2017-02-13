@@ -2027,11 +2027,10 @@ static void fc_vport_dev_release(struct device *dev)
 	kfree(vport);
 }
 
-int scsi_is_fc_vport(const struct device *dev)
+static int scsi_is_fc_vport(const struct device *dev)
 {
 	return dev->release == fc_vport_dev_release;
 }
-EXPORT_SYMBOL(scsi_is_fc_vport);
 
 static int fc_vport_match(struct attribute_container *cont,
 			    struct device *dev)
@@ -3856,15 +3855,15 @@ fail_host_msg:
 static void
 fc_bsg_goose_queue(struct fc_rport *rport)
 {
-	if (!rport->rqst_q)
+	struct request_queue *q = rport->rqst_q;
+	unsigned long flags;
+
+	if (!q)
 		return;
 
-	/*
-	 * This get/put dance makes no sense
-	 */
-	get_device(&rport->dev);
-	blk_run_queue_async(rport->rqst_q);
-	put_device(&rport->dev);
+	spin_lock_irqsave(q->queue_lock, flags);
+	blk_run_queue_async(q);
+	spin_unlock_irqrestore(q->queue_lock, flags);
 }
 
 /**

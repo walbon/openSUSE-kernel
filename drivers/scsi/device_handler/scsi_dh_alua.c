@@ -95,7 +95,7 @@ struct alua_port_group {
 
 struct alua_dh_data {
 	struct list_head	node;
-	struct alua_port_group	*pg;
+	struct alua_port_group __rcu *pg;
 	int			group_id;
 	spinlock_t		pg_lock;
 	struct scsi_device	*sdev;
@@ -190,8 +190,8 @@ static int submit_stpg(struct scsi_device *sdev, int group_id,
 				      ALUA_FAILOVER_RETRIES, NULL, req_flags);
 }
 
-struct alua_port_group *alua_find_get_pg(char *id_str, size_t id_size,
-					 int group_id)
+static struct alua_port_group *alua_find_get_pg(char *id_str, size_t id_size,
+						int group_id)
 {
 	struct alua_port_group *pg;
 
@@ -222,8 +222,8 @@ struct alua_port_group *alua_find_get_pg(char *id_str, size_t id_size,
  * Allocate a new port_group structure for a given
  * device.
  */
-struct alua_port_group *alua_alloc_pg(struct scsi_device *sdev,
-				      int group_id, int tpgs)
+static struct alua_port_group *alua_alloc_pg(struct scsi_device *sdev,
+					     int group_id, int tpgs)
 {
 	struct alua_port_group *pg, *tmp_pg;
 
@@ -369,7 +369,7 @@ static int alua_check_vpd(struct scsi_device *sdev, struct alua_dh_data *h,
 
 	/* Check for existing port group references */
 	spin_lock(&h->pg_lock);
-	old_pg = h->pg;
+	old_pg = rcu_dereference_protected(h->pg, lockdep_is_held(&h->pg_lock));
 	if (old_pg != pg) {
 		/* port group has changed. Update to new port group */
 		if (h->pg) {
@@ -388,7 +388,9 @@ static int alua_check_vpd(struct scsi_device *sdev, struct alua_dh_data *h,
 		list_add_rcu(&h->node, &pg->dh_list);
 	spin_unlock_irqrestore(&pg->lock, flags);
 
-	alua_rtpg_queue(h->pg, sdev, NULL, true);
+	alua_rtpg_queue(rcu_dereference_protected(h->pg,
+						  lockdep_is_held(&h->pg_lock)),
+			sdev, NULL, true);
 	spin_unlock(&h->pg_lock);
 
 	if (old_pg)
@@ -587,6 +589,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
 			sdev_printk(KERN_ERR, sdev, "%s: rtpg retry\n",
 				    ALUA_DH_NAME);
 			scsi_print_sense_hdr(sdev, ALUA_DH_NAME, &sense_hdr);
+			kfree(buff);
 			return err;
 		}
 		sdev_printk(KERN_ERR, sdev, "%s: rtpg failed\n",
@@ -796,6 +799,7 @@ static void alua_rtpg_work(struct work_struct *work)
 		WARN_ON(pg->flags & ALUA_PG_RUN_RTPG);
 		WARN_ON(pg->flags & ALUA_PG_RUN_STPG);
 		spin_unlock_irqrestore(&pg->lock, flags);
+		kref_put(&pg->kref, release_port_group);
 		return;
 	}
 	if (pg->flags & ALUA_SYNC_STPG)
@@ -893,6 +897,7 @@ static void alua_rtpg_queue(struct alua_port_group *pg,
 		/* Do not queue if the worker is already running */
 		if (!(pg->flags & ALUA_PG_RUNNING)) {
 			kref_get(&pg->kref);
+			sdev = NULL;
 			start_queue = 1;
 		}
 	}
@@ -904,7 +909,8 @@ static void alua_rtpg_queue(struct alua_port_group *pg,
 	if (start_queue &&
 	    !queue_delayed_work(alua_wq, &pg->rtpg_work,
 				msecs_to_jiffies(ALUA_RTPG_DELAY_MSECS))) {
-		scsi_device_put(sdev);
+		if (sdev)
+			scsi_device_put(sdev);
 		kref_put(&pg->kref, release_port_group);
 	}
 }
@@ -940,7 +946,7 @@ static int alua_initialize(struct scsi_device *sdev, struct alua_dh_data *h)
 static int alua_set_params(struct scsi_device *sdev, const char *params)
 {
 	struct alua_dh_data *h = sdev->handler_data;
-	struct alua_port_group __rcu *pg = NULL;
+	struct alua_port_group *pg = NULL;
 	unsigned int optimize = 0, argc;
 	const char *p = params;
 	int result = SCSI_DH_OK;
@@ -987,7 +993,7 @@ static int alua_activate(struct scsi_device *sdev,
 	struct alua_dh_data *h = sdev->handler_data;
 	int err = SCSI_DH_OK;
 	struct alua_queue_data *qdata;
-	struct alua_port_group __rcu *pg;
+	struct alua_port_group *pg;
 
 	qdata = kzalloc(sizeof(*qdata), GFP_KERNEL);
 	if (!qdata) {
@@ -1051,7 +1057,7 @@ static void alua_check(struct scsi_device *sdev, bool force)
 static int alua_prep_fn(struct scsi_device *sdev, struct request *req)
 {
 	struct alua_dh_data *h = sdev->handler_data;
-	struct alua_port_group __rcu *pg;
+	struct alua_port_group *pg;
 	unsigned char state = SCSI_ACCESS_STATE_OPTIMAL;
 	int ret = BLKPREP_OK;
 
@@ -1121,7 +1127,7 @@ static void alua_bus_detach(struct scsi_device *sdev)
 	struct alua_port_group *pg;
 
 	spin_lock(&h->pg_lock);
-	pg = h->pg;
+	pg = rcu_dereference_protected(h->pg, lockdep_is_held(&h->pg_lock));
 	rcu_assign_pointer(h->pg, NULL);
 	h->sdev = NULL;
 	spin_unlock(&h->pg_lock);

@@ -1009,7 +1009,7 @@ static int scsi_init_sgtable(struct request *req, struct scsi_data_buffer *sdb)
 	count = blk_rq_map_sg(req->q, req, sdb->table.sgl);
 	BUG_ON(count > sdb->table.nents);
 	sdb->table.nents = count;
-	sdb->length = blk_rq_bytes(req);
+	sdb->length = blk_rq_payload_bytes(req);
 	return BLKPREP_OK;
 }
 
@@ -1801,7 +1801,7 @@ static inline int prep_to_mq(int ret)
 {
 	switch (ret) {
 	case BLKPREP_OK:
-		return 0;
+		return BLK_MQ_RQ_QUEUE_OK;
 	case BLKPREP_DEFER:
 		return BLK_MQ_RQ_QUEUE_BUSY;
 	default:
@@ -1888,7 +1888,7 @@ static int scsi_queue_rq(struct blk_mq_hw_ctx *hctx,
 	int reason;
 
 	ret = prep_to_mq(scsi_prep_state_check(sdev, req));
-	if (ret)
+	if (ret != BLK_MQ_RQ_QUEUE_OK)
 		goto out;
 
 	ret = BLK_MQ_RQ_QUEUE_BUSY;
@@ -1905,7 +1905,7 @@ static int scsi_queue_rq(struct blk_mq_hw_ctx *hctx,
 
 	if (!(req->cmd_flags & REQ_DONTPREP)) {
 		ret = prep_to_mq(scsi_mq_prep_fn(req));
-		if (ret)
+		if (ret != BLK_MQ_RQ_QUEUE_OK)
 			goto out_dec_host_busy;
 		req->cmd_flags |= REQ_DONTPREP;
 	} else {
@@ -1988,6 +1988,15 @@ static void scsi_exit_request(void *data, struct request *rq,
 	struct scsi_cmnd *cmd = blk_mq_rq_to_pdu(rq);
 
 	kfree(cmd->sense_buffer);
+}
+
+static int scsi_map_queues(struct blk_mq_tag_set *set)
+{
+	struct Scsi_Host *shost = container_of(set, struct Scsi_Host, tag_set);
+
+	if (shost->hostt->map_queues)
+		return shost->hostt->map_queues(shost);
+	return blk_mq_map_queues(set);
 }
 
 static u64 scsi_calculate_bounce_limit(struct Scsi_Host *shost)
@@ -2082,6 +2091,7 @@ static struct blk_mq_ops scsi_mq_ops = {
 	.timeout	= scsi_timeout,
 	.init_request	= scsi_init_request,
 	.exit_request	= scsi_exit_request,
+	.map_queues	= scsi_map_queues,
 };
 
 struct request_queue *scsi_mq_alloc_queue(struct scsi_device *sdev)
@@ -2728,6 +2738,39 @@ void sdev_evt_send_simple(struct scsi_device *sdev,
 EXPORT_SYMBOL_GPL(sdev_evt_send_simple);
 
 /**
+ * scsi_request_fn_active() - number of kernel threads inside scsi_request_fn()
+ * @sdev: SCSI device to count the number of scsi_request_fn() callers for.
+ */
+static int scsi_request_fn_active(struct scsi_device *sdev)
+{
+	struct request_queue *q = sdev->request_queue;
+	int request_fn_active;
+
+	WARN_ON_ONCE(sdev->host->use_blk_mq);
+
+	spin_lock_irq(q->queue_lock);
+	request_fn_active = q->request_fn_active;
+	spin_unlock_irq(q->queue_lock);
+
+	return request_fn_active;
+}
+
+/**
+ * scsi_wait_for_queuecommand() - wait for ongoing queuecommand() calls
+ * @sdev: SCSI device pointer.
+ *
+ * Wait until the ongoing shost->hostt->queuecommand() calls that are
+ * invoked from scsi_request_fn() have finished.
+ */
+static void scsi_wait_for_queuecommand(struct scsi_device *sdev)
+{
+	WARN_ON_ONCE(sdev->host->use_blk_mq);
+
+	while (scsi_request_fn_active(sdev))
+		msleep(20);
+}
+
+/**
  *	scsi_device_quiesce - Block user issued commands.
  *	@sdev:	scsi device to quiesce.
  *
@@ -2811,8 +2854,7 @@ EXPORT_SYMBOL(scsi_target_resume);
  * @sdev:	device to block
  *
  * Block request made by scsi lld's to temporarily stop all
- * scsi commands on the specified device.  Called from interrupt
- * or normal process context.
+ * scsi commands on the specified device. May sleep.
  *
  * Returns zero if successful or error if not
  *
@@ -2821,6 +2863,10 @@ EXPORT_SYMBOL(scsi_target_resume);
  *	(which must be a legal transition).  When the device is in this
  *	state, all commands are deferred until the scsi lld reenables
  *	the device with scsi_device_unblock or device_block_tmo fires.
+ *
+ * To do: avoid that scsi_send_eh_cmnd() calls queuecommand() after
+ * scsi_internal_device_block() has blocked a SCSI device and also
+ * remove the rport mutex lock and unlock calls from srp_queuecommand().
  */
 int
 scsi_internal_device_block(struct scsi_device *sdev)
@@ -2843,11 +2889,12 @@ scsi_internal_device_block(struct scsi_device *sdev)
 	 * request queue. 
 	 */
 	if (q->mq_ops) {
-		blk_mq_stop_hw_queues(q);
+		blk_mq_quiesce_queue(q);
 	} else {
 		spin_lock_irqsave(q->queue_lock, flags);
 		blk_stop_queue(q);
 		spin_unlock_irqrestore(q->queue_lock, flags);
+		scsi_wait_for_queuecommand(sdev);
 	}
 
 	return 0;
