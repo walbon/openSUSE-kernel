@@ -217,7 +217,7 @@ static void sata_dwc_clear_dmacr(struct sata_dwc_device_port *hsdevp, u8 tag);
 
 static const char *get_prot_descript(u8 protocol)
 {
-	switch ((enum ata_tf_protocols)protocol) {
+	switch (protocol) {
 	case ATA_PROT_NODATA:
 		return "ATA no data";
 	case ATA_PROT_PIO:
