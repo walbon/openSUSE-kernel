@@ -1673,7 +1673,7 @@ xfs_dm_get_dirattrs_rvp(
 	error = -EFAULT;
 	if (cb->lastbuf && put_user(0, &cb->lastbuf->_link))
 		goto out_kfree;
-	ASSERT(cb.nwritten <= buflen);
+	ASSERT(cb->nwritten <= buflen);
 	if (put_user(cb->nwritten, rlenp))
 		goto out_kfree;
 	if (copy_to_user(locp, &loc, sizeof(loc)))
