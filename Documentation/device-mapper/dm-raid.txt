@@ -257,3 +257,10 @@ Version History
 1.5.2   'mismatch_cnt' is zero unless [last_]sync_action is "check".
 1.6.0   Add discard support (and devices_handle_discard_safely module param).
 1.7.0   Add support for MD RAID0 mappings.
+1.8.0   Explictely check for compatible flags in the superblock metadata
+	and reject to start the raid set if any are set by a newer
+	target version, thus avoiding data corruption on a raid set
+	with a reshape in progress.
+1.9.0   Add support for RAID level takeover/reshape/region size
+	and set size reduction.
+1.9.1   Fix activation of existing RAID 4/10 mapped devices
