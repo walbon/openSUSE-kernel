@@ -317,8 +317,7 @@ static int bcm7xxx_dummy_config_init(struct phy_device *phydev)
 	.phy_id		= (_oui),					\
 	.phy_id_mask	= 0xfffffff0,					\
 	.name		= _name,					\
-	.features	= PHY_GBIT_FEATURES |				\
-			  SUPPORTED_Pause | SUPPORTED_Asym_Pause,	\
+	.features	= PHY_GBIT_FEATURES,				\
 	.flags		= PHY_IS_INTERNAL,				\
 	.config_init	= bcm7xxx_28nm_config_init,			\
 	.config_aneg	= genphy_config_aneg,				\
@@ -338,8 +337,7 @@ static struct phy_driver bcm7xxx_driver[] = {
 	.phy_id         = PHY_ID_BCM7425,
 	.phy_id_mask    = 0xfffffff0,
 	.name           = "Broadcom BCM7425",
-	.features       = PHY_GBIT_FEATURES |
-			  SUPPORTED_Pause | SUPPORTED_Asym_Pause,
+	.features       = PHY_GBIT_FEATURES,
 	.flags          = PHY_IS_INTERNAL,
 	.config_init    = bcm7xxx_config_init,
 	.config_aneg    = genphy_config_aneg,
@@ -351,8 +349,7 @@ static struct phy_driver bcm7xxx_driver[] = {
 	.phy_id         = PHY_ID_BCM7429,
 	.phy_id_mask    = 0xfffffff0,
 	.name           = "Broadcom BCM7429",
-	.features       = PHY_GBIT_FEATURES |
-			  SUPPORTED_Pause | SUPPORTED_Asym_Pause,
+	.features       = PHY_GBIT_FEATURES,
 	.flags          = PHY_IS_INTERNAL,
 	.config_init    = bcm7xxx_config_init,
 	.config_aneg    = genphy_config_aneg,
@@ -364,8 +361,7 @@ static struct phy_driver bcm7xxx_driver[] = {
 	.phy_id		= PHY_BCM_OUI_4,
 	.phy_id_mask	= 0xffff0000,
 	.name		= "Broadcom BCM7XXX 40nm",
-	.features	= PHY_GBIT_FEATURES |
-			  SUPPORTED_Pause | SUPPORTED_Asym_Pause,
+	.features	= PHY_GBIT_FEATURES,
 	.flags		= PHY_IS_INTERNAL,
 	.config_init	= bcm7xxx_config_init,
 	.config_aneg	= genphy_config_aneg,
@@ -377,8 +373,7 @@ static struct phy_driver bcm7xxx_driver[] = {
 	.phy_id		= PHY_BCM_OUI_5,
 	.phy_id_mask	= 0xffffff00,
 	.name		= "Broadcom BCM7XXX 65nm",
-	.features	= PHY_BASIC_FEATURES |
-			  SUPPORTED_Pause | SUPPORTED_Asym_Pause,
+	.features	= PHY_BASIC_FEATURES,
 	.flags		= PHY_IS_INTERNAL,
 	.config_init	= bcm7xxx_dummy_config_init,
 	.config_aneg	= genphy_config_aneg,
