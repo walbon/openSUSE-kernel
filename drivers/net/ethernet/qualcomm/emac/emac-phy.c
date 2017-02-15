@@ -199,7 +199,7 @@ int emac_phy_config(struct platform_device *pdev, struct emac_adapter *adpt)
 			 */
 			adpt->phydev = phy_find_first(mii_bus);
 		else
-			adpt->phydev = mdiobus_get_phy(mii_bus, phy_addr);
+			adpt->phydev = mii_bus->phy_map[phy_addr];
 
 		/* of_phy_find_device() claims a reference to the phydev,
 		 * so we do that here manually as well. When the driver
@@ -207,7 +207,7 @@ int emac_phy_config(struct platform_device *pdev, struct emac_adapter *adpt)
 		 * without worrying about ACPI vs DT.
 		 */
 		if (adpt->phydev)
-			get_device(&adpt->phydev->mdio.dev);
+			get_device(&adpt->phydev->dev);
 	} else {
 		struct device_node *phy_np;
 
