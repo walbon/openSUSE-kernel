@@ -106,7 +106,7 @@ static void internal_dev_destructor(struct net_device *dev)
 	free_netdev(dev);
 }
 
-static struct rtnl_link_stats64 *
+static void
 internal_get_stats(struct net_device *dev, struct rtnl_link_stats64 *stats)
 {
 	int i;
@@ -134,8 +134,6 @@ internal_get_stats(struct net_device *dev, struct rtnl_link_stats64 *stats)
 		stats->tx_bytes         += local_stats.tx_bytes;
 		stats->tx_packets       += local_stats.tx_packets;
 	}
-
-	return stats;
 }
 
 static const struct net_device_ops internal_dev_netdev_ops = {

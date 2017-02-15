@@ -585,7 +585,7 @@ static void mvneta_mib_counters_clear(struct mvneta_port *pp)
 }
 
 /* Get System Network Statistics */
-struct rtnl_link_stats64 *mvneta_get_stats64(struct net_device *dev,
+void mvneta_get_stats64(struct net_device *dev,
 					     struct rtnl_link_stats64 *stats)
 {
 	struct mvneta_port *pp = netdev_priv(dev);
@@ -618,8 +618,6 @@ struct rtnl_link_stats64 *mvneta_get_stats64(struct net_device *dev,
 	stats->rx_dropped	= dev->stats.rx_dropped;
 
 	stats->tx_dropped	= dev->stats.tx_dropped;
-
-	return stats;
 }
 
 /* Rx descriptors helper methods */

@@ -190,8 +190,8 @@ static rx_handler_result_t vrf_handle_frame(struct sk_buff **pskb)
 	return RX_HANDLER_PASS;
 }
 
-static struct rtnl_link_stats64 *vrf_get_stats64(struct net_device *dev,
-						 struct rtnl_link_stats64 *stats)
+static void vrf_get_stats64(struct net_device *dev,
+			    struct rtnl_link_stats64 *stats)
 {
 	int i;
 
@@ -215,7 +215,6 @@ static struct rtnl_link_stats64 *vrf_get_stats64(struct net_device *dev,
 		stats->rx_bytes += rbytes;
 		stats->rx_packets += rpkts;
 	}
-	return stats;
 }
 
 #if IS_ENABLED(CONFIG_IPV6)

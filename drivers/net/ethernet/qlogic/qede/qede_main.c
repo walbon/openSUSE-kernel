@@ -1768,7 +1768,7 @@ void qede_fill_by_demand_stats(struct qede_dev *edev)
 	edev->stats.tx_mac_ctrl_frames = stats.tx_mac_ctrl_frames;
 }
 
-static struct rtnl_link_stats64 *qede_get_stats64(
+static void qede_get_stats64(
 			    struct net_device *dev,
 			    struct rtnl_link_stats64 *stats)
 {
@@ -1800,8 +1800,6 @@ static struct rtnl_link_stats64 *qede_get_stats64(
 	stats->collisions = edev->stats.tx_total_collisions;
 	stats->rx_crc_errors = edev->stats.rx_crc_errors;
 	stats->rx_frame_errors = edev->stats.rx_align_errors;
-
-	return stats;
 }
 
 #ifdef CONFIG_QED_SRIOV

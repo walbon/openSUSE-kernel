@@ -7732,7 +7732,7 @@ err_pm_runtime_put:
 	goto out;
 }
 
-static struct rtnl_link_stats64 *
+static void
 rtl8169_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
 {
 	struct rtl8169_private *tp = netdev_priv(dev);
@@ -7780,8 +7780,6 @@ rtl8169_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
 		le32_to_cpu(tp->tc_offset.tx_multi_collision);
 	stats->tx_aborted_errors = le16_to_cpu(counters->tx_aborted) -
 		le16_to_cpu(tp->tc_offset.tx_aborted);
-
-	return stats;
 }
 
 static void rtl8169_net_suspend(struct net_device *dev)
