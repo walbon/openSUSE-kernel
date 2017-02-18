@@ -50,6 +50,7 @@
 #include <linux/aer.h>
 #include <linux/prefetch.h>
 #include <linux/pm_runtime.h>
+#include <linux/etherdevice.h>
 #ifdef CONFIG_IGB_DCA
 #include <linux/dca.h>
 #endif
@@ -57,7 +58,7 @@
 #include "igb.h"
 
 #define MAJ 5
-#define MIN 3
+#define MIN 4
 #define BUILD 0
 #define DRV_VERSION __stringify(MAJ) "." __stringify(MIN) "." \
 __stringify(BUILD) "-k"
@@ -175,6 +176,8 @@ static int igb_ndo_set_vf_spoofchk(struct net_device *netdev, int vf,
 static int igb_ndo_get_vf_config(struct net_device *netdev, int vf,
 				 struct ifla_vf_info *ivi);
 static void igb_check_vf_rate_limit(struct igb_adapter *);
+static void igb_nfc_filter_exit(struct igb_adapter *adapter);
+static void igb_nfc_filter_restore(struct igb_adapter *adapter);
 
 #ifdef CONFIG_PCI_IOV
 static int igb_vf_configure(struct igb_adapter *adapter, int vf);
@@ -835,7 +838,7 @@ static void igb_assign_vector(struct igb_q_vector *q_vector, int msix_vector)
 			igb_write_ivar(hw, msix_vector,
 				       tx_queue & 0x7,
 				       ((tx_queue & 0x8) << 1) + 8);
-		q_vector->eims_value = 1 << msix_vector;
+		q_vector->eims_value = BIT(msix_vector);
 		break;
 	case e1000_82580:
 	case e1000_i350:
@@ -856,7 +859,7 @@ static void igb_assign_vector(struct igb_q_vector *q_vector, int msix_vector)
 			igb_write_ivar(hw, msix_vector,
 				       tx_queue >> 1,
 				       ((tx_queue & 0x1) << 4) + 8);
-		q_vector->eims_value = 1 << msix_vector;
+		q_vector->eims_value = BIT(msix_vector);
 		break;
 	default:
 		BUG();
@@ -918,7 +921,7 @@ static void igb_configure_msix(struct igb_adapter *adapter)
 		     E1000_GPIE_NSICR);
 
 		/* enable msix_other interrupt */
-		adapter->eims_other = 1 << vector;
+		adapter->eims_other = BIT(vector);
 		tmp = (vector++ | E1000_IVAR_VALID) << 8;
 
 		wr32(E1000_IVAR_MISC, tmp);
@@ -1610,6 +1613,7 @@ static void igb_configure(struct igb_adapter *adapter)
 	igb_setup_mrqc(adapter);
 	igb_setup_rctl(adapter);
 
+	igb_nfc_filter_restore(adapter);
 	igb_configure_tx(adapter);
 	igb_configure_rx(adapter);
 
@@ -2026,7 +2030,8 @@ void igb_reset(struct igb_adapter *adapter)
 	wr32(E1000_VET, ETHERNET_IEEE_VLAN_TYPE);
 
 	/* Re-enable PTP, where applicable. */
-	igb_ptp_reset(adapter);
+	if (adapter->ptp_flags & IGB_PTP_ENABLED)
+		igb_ptp_reset(adapter);
 
 	igb_get_phy_info(hw);
 }
@@ -2056,6 +2061,21 @@ static int igb_set_features(struct net_device *netdev,
 
 	if (!(changed & (NETIF_F_RXALL | NETIF_F_NTUPLE)))
 		return 0;
+
+	if (!(features & NETIF_F_NTUPLE)) {
+		struct hlist_node *node2;
+		struct igb_nfc_filter *rule;
+
+		spin_lock(&adapter->nfc_lock);
+		hlist_for_each_entry_safe(rule, node2,
+					  &adapter->nfc_filter_list, nfc_node) {
+			igb_erase_filter(adapter, rule);
+			hlist_del(&rule->nfc_node);
+			kfree(rule);
+		}
+		spin_unlock(&adapter->nfc_lock);
+		adapter->nfc_filter_count = 0;
+	}
 
 	netdev->features = features;
 
@@ -2444,9 +2464,11 @@ static int igb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		break;
 	}
 
-	/* copy the MAC address out of the NVM */
-	if (hw->mac.ops.read_mac_addr(hw))
-		dev_err(&pdev->dev, "NVM Read Error\n");
+	if (eth_platform_get_mac_address(&pdev->dev, hw->mac.addr)) {
+		/* copy the MAC address out of the NVM */
+		if (hw->mac.ops.read_mac_addr(hw))
+			dev_err(&pdev->dev, "NVM Read Error\n");
+	}
 
 	memcpy(netdev->dev_addr, hw->mac.addr, netdev->addr_len);
 
@@ -3014,6 +3036,7 @@ static int igb_sw_init(struct igb_adapter *adapter)
 				  VLAN_HLEN;
 	adapter->min_frame_size = ETH_ZLEN + ETH_FCS_LEN;
 
+	spin_lock_init(&adapter->nfc_lock);
 	spin_lock_init(&adapter->stats64_lock);
 #ifdef CONFIG_PCI_IOV
 	switch (hw->mac.type) {
@@ -3200,6 +3223,8 @@ static int __igb_close(struct net_device *netdev, bool suspending)
 
 	igb_down(adapter);
 	igb_free_irq(adapter);
+
+	igb_nfc_filter_exit(adapter);
 
 	igb_free_all_tx_resources(adapter);
 	igb_free_all_rx_resources(adapter);
@@ -3887,7 +3912,8 @@ static void igb_clean_rx_ring(struct igb_ring *rx_ring)
 			       buffer_info->dma,
 			       PAGE_SIZE,
 			       DMA_FROM_DEVICE);
-		__free_page(buffer_info->page);
+		__page_frag_cache_drain(buffer_info->page,
+					buffer_info->pagecnt_bias);
 
 		buffer_info->page = NULL;
 	}
@@ -4061,7 +4087,7 @@ static int igb_vlan_promisc_enable(struct igb_adapter *adapter)
 	for (i = E1000_VLVF_ARRAY_SIZE; --i;) {
 		u32 vlvf = rd32(E1000_VLVF(i));
 
-		vlvf |= 1 << pf_id;
+		vlvf |= BIT(pf_id);
 		wr32(E1000_VLVF(i), vlvf);
 	}
 
@@ -4088,7 +4114,7 @@ static void igb_scrub_vfta(struct igb_adapter *adapter, u32 vfta_offset)
 	/* guarantee that we don't scrub out management VLAN */
 	vid = adapter->mng_vlan_id;
 	if (vid >= vid_start && vid < vid_end)
-		vfta[(vid - vid_start) / 32] |= 1 << (vid % 32);
+		vfta[(vid - vid_start) / 32] |= BIT(vid % 32);
 
 	if (!adapter->vfs_allocated_count)
 		goto set_vfta;
@@ -4107,7 +4133,7 @@ static void igb_scrub_vfta(struct igb_adapter *adapter, u32 vfta_offset)
 
 		if (vlvf & E1000_VLVF_VLANID_ENABLE) {
 			/* record VLAN ID in VFTA */
-			vfta[(vid - vid_start) / 32] |= 1 << (vid % 32);
+			vfta[(vid - vid_start) / 32] |= BIT(vid % 32);
 
 			/* if PF is part of this then continue */
 			if (test_bit(vid, adapter->active_vlans))
@@ -4115,7 +4141,7 @@ static void igb_scrub_vfta(struct igb_adapter *adapter, u32 vfta_offset)
 		}
 
 		/* remove PF from the pool */
-		bits = ~(1 << pf_id);
+		bits = ~BIT(pf_id);
 		bits &= rd32(E1000_VLVF(i));
 		wr32(E1000_VLVF(i), bits);
 	}
@@ -4273,13 +4299,13 @@ static void igb_spoof_check(struct igb_adapter *adapter)
 		return;
 
 	for (j = 0; j < adapter->vfs_allocated_count; j++) {
-		if (adapter->wvbr & (1 << j) ||
-		    adapter->wvbr & (1 << (j + IGB_STAGGERED_QUEUE_OFFSET))) {
+		if (adapter->wvbr & BIT(j) ||
+		    adapter->wvbr & BIT(j + IGB_STAGGERED_QUEUE_OFFSET)) {
 			dev_warn(&adapter->pdev->dev,
 				"Spoof event(s) detected on VF %d\n", j);
 			adapter->wvbr &=
-				~((1 << j) |
-				  (1 << (j + IGB_STAGGERED_QUEUE_OFFSET)));
+				~(BIT(j) |
+				  BIT(j + IGB_STAGGERED_QUEUE_OFFSET));
 		}
 	}
 }
@@ -5947,11 +5973,11 @@ static void igb_clear_vf_vfta(struct igb_adapter *adapter, u32 vf)
 
 	/* create mask for VF and other pools */
 	pool_mask = E1000_VLVF_POOLSEL_MASK;
-	vlvf_mask = 1 << (E1000_VLVF_POOLSEL_SHIFT + vf);
+	vlvf_mask = BIT(E1000_VLVF_POOLSEL_SHIFT + vf);
 
 	/* drop PF from pool bits */
-	pool_mask &= ~(1 << (E1000_VLVF_POOLSEL_SHIFT +
-			     adapter->vfs_allocated_count));
+	pool_mask &= ~BIT(E1000_VLVF_POOLSEL_SHIFT +
+			     adapter->vfs_allocated_count);
 
 	/* Find the vlan filter for this id */
 	for (i = E1000_VLVF_ARRAY_SIZE; i--;) {
@@ -5974,7 +6000,7 @@ static void igb_clear_vf_vfta(struct igb_adapter *adapter, u32 vf)
 			goto update_vlvf;
 
 		vid = vlvf & E1000_VLVF_VLANID_MASK;
-		vfta_mask = 1 << (vid % 32);
+		vfta_mask = BIT(vid % 32);
 
 		/* clear bit from VFTA */
 		vfta = adapter->shadow_vfta[vid / 32];
@@ -6011,7 +6037,7 @@ static int igb_find_vlvf_entry(struct e1000_hw *hw, u32 vlan)
 	return idx;
 }
 
-void igb_update_pf_vlvf(struct igb_adapter *adapter, u32 vid)
+static void igb_update_pf_vlvf(struct igb_adapter *adapter, u32 vid)
 {
 	struct e1000_hw *hw = &adapter->hw;
 	u32 bits, pf_id;
@@ -6025,13 +6051,13 @@ void igb_update_pf_vlvf(struct igb_adapter *adapter, u32 vid)
 	 * entry other than the PF.
 	 */
 	pf_id = adapter->vfs_allocated_count + E1000_VLVF_POOLSEL_SHIFT;
-	bits = ~(1 << pf_id) & E1000_VLVF_POOLSEL_MASK;
+	bits = ~BIT(pf_id) & E1000_VLVF_POOLSEL_MASK;
 	bits &= rd32(E1000_VLVF(idx));
 
 	/* Disable the filter so this falls into the default pool. */
 	if (!bits) {
 		if (adapter->flags & IGB_FLAG_VLAN_PROMISC)
-			wr32(E1000_VLVF(idx), 1 << pf_id);
+			wr32(E1000_VLVF(idx), BIT(pf_id));
 		else
 			wr32(E1000_VLVF(idx), 0);
 	}
@@ -6215,9 +6241,9 @@ static void igb_vf_reset_msg(struct igb_adapter *adapter, u32 vf)
 
 	/* enable transmit and receive for vf */
 	reg = rd32(E1000_VFTE);
-	wr32(E1000_VFTE, reg | (1 << vf));
+	wr32(E1000_VFTE, reg | BIT(vf));
 	reg = rd32(E1000_VFRE);
-	wr32(E1000_VFRE, reg | (1 << vf));
+	wr32(E1000_VFRE, reg | BIT(vf));
 
 	adapter->vf_data[vf].flags |= IGB_VF_FLAG_CTS;
 
@@ -6738,13 +6764,15 @@ static bool igb_can_reuse_rx_page(struct igb_rx_buffer *rx_buffer,
 				  struct page *page,
 				  unsigned int truesize)
 {
+	unsigned int pagecnt_bias = rx_buffer->pagecnt_bias--;
+
 	/* avoid re-using remote pages */
 	if (unlikely(igb_page_is_reserved(page)))
 		return false;
 
 #if (PAGE_SIZE < 8192)
 	/* if we are only owner of page we can reuse it */
-	if (unlikely(page_count(page) != 1))
+	if (unlikely(atomic_read(&page->_count) != pagecnt_bias))
 		return false;
 
 	/* flip page offset to other buffer */
@@ -6757,10 +6785,14 @@ static bool igb_can_reuse_rx_page(struct igb_rx_buffer *rx_buffer,
 		return false;
 #endif
 
-	/* Even if we own the page, we are not allowed to use atomic_set()
-	 * This would break get_page_unless_zero() users.
+	/* If we have drained the page fragment pool we need to update
+	 * the pagecnt_bias and page count so that we fully restock the
+	 * number of references the driver holds.
 	 */
-	atomic_inc(&page->_count);
+	if (unlikely(pagecnt_bias == 1)) {
+		atomic_add(USHRT_MAX, &page->_count);
+		rx_buffer->pagecnt_bias = USHRT_MAX;
+	}
 
 	return true;
 }
@@ -6782,12 +6814,12 @@ static bool igb_can_reuse_rx_page(struct igb_rx_buffer *rx_buffer,
  **/
 static bool igb_add_rx_frag(struct igb_ring *rx_ring,
 			    struct igb_rx_buffer *rx_buffer,
+			    unsigned int size,
 			    union e1000_adv_rx_desc *rx_desc,
 			    struct sk_buff *skb)
 {
 	struct page *page = rx_buffer->page;
 	unsigned char *va = page_address(page) + rx_buffer->page_offset;
-	unsigned int size = le16_to_cpu(rx_desc->wb.upper.length);
 #if (PAGE_SIZE < 8192)
 	unsigned int truesize = IGB_RX_BUFSZ;
 #else
@@ -6812,7 +6844,6 @@ static bool igb_add_rx_frag(struct igb_ring *rx_ring,
 			return true;
 
 		/* this page cannot be reused so discard it */
-		__free_page(page);
 		return false;
 	}
 
@@ -6839,6 +6870,7 @@ static struct sk_buff *igb_fetch_rx_buffer(struct igb_ring *rx_ring,
 					   union e1000_adv_rx_desc *rx_desc,
 					   struct sk_buff *skb)
 {
+	unsigned int size = le16_to_cpu(rx_desc->wb.upper.length);
 	struct igb_rx_buffer *rx_buffer;
 	struct page *page;
 
@@ -6874,17 +6906,20 @@ static struct sk_buff *igb_fetch_rx_buffer(struct igb_ring *rx_ring,
 	dma_sync_single_range_for_cpu(rx_ring->dev,
 				      rx_buffer->dma,
 				      rx_buffer->page_offset,
-				      IGB_RX_BUFSZ,
+				      size,
 				      DMA_FROM_DEVICE);
 
 	/* pull page into skb */
-	if (igb_add_rx_frag(rx_ring, rx_buffer, rx_desc, skb)) {
+	if (igb_add_rx_frag(rx_ring, rx_buffer, size, rx_desc, skb)) {
 		/* hand second half of page back to the ring */
 		igb_reuse_rx_page(rx_ring, rx_buffer);
 	} else {
-		/* we are not reusing the buffer so unmap it */
+		/* We are not reusing the buffer so unmap it and free
+		 * any references we are holding to it
+		 */
 		dma_unmap_page(rx_ring->dev, rx_buffer->dma,
 			       PAGE_SIZE, DMA_FROM_DEVICE);
+		__page_frag_cache_drain(page, rx_buffer->pagecnt_bias);
 	}
 
 	/* clear contents of rx_buffer */
@@ -7157,6 +7192,7 @@ static bool igb_alloc_mapped_page(struct igb_ring *rx_ring,
 	bi->dma = dma;
 	bi->page = page;
 	bi->page_offset = 0;
+	bi->pagecnt_bias = 1;
 
 	return true;
 }
@@ -7454,6 +7490,8 @@ static int __igb_shutdown(struct pci_dev *pdev, bool *enable_wake,
 	if (netif_running(netdev))
 		__igb_close(netdev, true);
 
+	igb_ptp_suspend(adapter);
+
 	igb_clear_interrupt_scheme(adapter);
 
 #ifdef CONFIG_PM
@@ -7561,7 +7599,6 @@ static int igb_resume(struct device *dev)
 
 	if (igb_init_interrupt_scheme(adapter, true)) {
 		dev_err(&pdev->dev, "Unable to allocate memory for queues\n");
-		rtnl_unlock();
 		return -ENOMEM;
 	}
 
@@ -7832,11 +7869,13 @@ static void igb_rar_set_qsel(struct igb_adapter *adapter, u8 *addr, u32 index,
 	struct e1000_hw *hw = &adapter->hw;
 	u32 rar_low, rar_high;
 
-	/* HW expects these in little endian so we reverse the byte order
-	 * from network order (big endian) to CPU endian
+	/* HW expects these to be in network order when they are plugged
+	 * into the registers which are little endian.  In order to guarantee
+	 * that ordering we need to do an leXX_to_cpup here in order to be
+	 * ready for the byteswap that occurs with writel
 	 */
-	rar_low = le32_to_cpup((__be32 *)(addr));
-	rar_high = le16_to_cpup((__be16 *)(addr + 4));
+	rar_low = le32_to_cpup((__le32 *)(addr));
+	rar_high = le16_to_cpup((__le16 *)(addr + 4));
 
 	/* Indicate to hardware the Address is Valid. */
 	rar_high |= E1000_RAH_AV;
@@ -7908,7 +7947,7 @@ static void igb_set_vf_rate_limit(struct e1000_hw *hw, int vf, int tx_rate,
 		/* Calculate the rate factor values to set */
 		rf_int = link_speed / tx_rate;
 		rf_dec = (link_speed - (rf_int * tx_rate));
-		rf_dec = (rf_dec * (1 << E1000_RTTBCNRC_RF_INT_SHIFT)) /
+		rf_dec = (rf_dec * BIT(E1000_RTTBCNRC_RF_INT_SHIFT)) /
 			 tx_rate;
 
 		bcnrc_val = E1000_RTTBCNRC_RS_ENA;
@@ -7998,11 +8037,11 @@ static int igb_ndo_set_vf_spoofchk(struct net_device *netdev, int vf,
 	reg_offset = (hw->mac.type == e1000_82576) ? E1000_DTXSWC : E1000_TXSWC;
 	reg_val = rd32(reg_offset);
 	if (setting)
-		reg_val |= ((1 << vf) |
-			    (1 << (vf + E1000_DTXSWC_VLAN_SPOOF_SHIFT)));
+		reg_val |= (BIT(vf) |
+			    BIT(vf + E1000_DTXSWC_VLAN_SPOOF_SHIFT));
 	else
-		reg_val &= ~((1 << vf) |
-			     (1 << (vf + E1000_DTXSWC_VLAN_SPOOF_SHIFT)));
+		reg_val &= ~(BIT(vf) |
+			     BIT(vf + E1000_DTXSWC_VLAN_SPOOF_SHIFT));
 	wr32(reg_offset, reg_val);
 
 	adapter->vf_data[vf].spoofchk_enabled = setting;
@@ -8231,5 +8270,29 @@ int igb_reinit_queues(struct igb_adapter *adapter)
 		err = igb_open(netdev);
 
 	return err;
+}
+
+static void igb_nfc_filter_exit(struct igb_adapter *adapter)
+{
+	struct igb_nfc_filter *rule;
+
+	spin_lock(&adapter->nfc_lock);
+
+	hlist_for_each_entry(rule, &adapter->nfc_filter_list, nfc_node)
+		igb_erase_filter(adapter, rule);
+
+	spin_unlock(&adapter->nfc_lock);
+}
+
+static void igb_nfc_filter_restore(struct igb_adapter *adapter)
+{
+	struct igb_nfc_filter *rule;
+
+	spin_lock(&adapter->nfc_lock);
+
+	hlist_for_each_entry(rule, &adapter->nfc_filter_list, nfc_node)
+		igb_add_filter(adapter, rule);
+
+	spin_unlock(&adapter->nfc_lock);
 }
 /* igb_main.c */
