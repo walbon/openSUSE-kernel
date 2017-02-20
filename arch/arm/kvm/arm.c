@@ -1073,8 +1073,8 @@ static int init_hyp_mode(void)
 	/*
 	 * Map the Hyp-code called directly from the host
 	 */
-	err = create_hyp_mappings(kvm_ksym_ref(__kvm_hyp_code_start),
-				  kvm_ksym_ref(__kvm_hyp_code_end));
+	err = create_hyp_mappings(kvm_ksym_ref(__hyp_text_start),
+				  kvm_ksym_ref(__hyp_text_end));
 	if (err) {
 		kvm_err("Cannot map world-switch code\n");
 		goto out_free_mappings;
