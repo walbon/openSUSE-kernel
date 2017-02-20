@@ -183,9 +183,6 @@ static void __init setup_machine_fdt(phys_addr_t dt_phys)
 {
 	void *dt_virt = fixmap_remap_fdt(dt_phys);
 
-	if (dt_virt)
-		efi_init_fdt(dt_virt);
-
 	if (!dt_virt || !early_init_dt_scan(dt_virt)) {
 		pr_crit("\n"
 			"Error: invalid device tree blob at physical address %pa (virtual address 0x%p)\n"
@@ -324,6 +321,7 @@ void __init setup_arch(char **cmdline_p)
 	 */
 	cpu_uninstall_idmap();
 
+	efi_init();
 	arm64_memblock_init();
 
 	/* Parse the ACPI tables for possible boot-time configuration */

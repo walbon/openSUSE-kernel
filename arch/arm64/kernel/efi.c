@@ -55,8 +55,6 @@ static struct mm_struct efi_mm = {
 	.mmlist			= LIST_HEAD_INIT(efi_mm.mmlist),
 };
 
-static bool uefi_debug __initdata;
-
 static int __init is_normal_ram(efi_memory_desc_t *md)
 {
 	if (md->attribute & EFI_MEMORY_WB)
@@ -268,15 +266,14 @@ static struct notifier_block efi_pci_notifier_block = {
 #define pci_notify_on_update_resource(a)
 #endif
 
-void __init efi_init_fdt(void *fdt)
+void __init efi_init(void)
 {
 	struct efi_fdt_params params;
 
 	/* Grab UEFI information placed in FDT by stub */
-	if (!efi_get_fdt_params(fdt, &params))
+	if (!efi_get_fdt_params(&params))
 		return;
 
-	uefi_debug = params.verbose;
 	efi_system_table = params.system_table;
 
 	memmap.phys_map = params.mmap;
