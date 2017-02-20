@@ -1144,7 +1144,7 @@ static void pl011_dma_shutdown(struct uart_amba_port *uap)
 
 	/* Disable RX and TX DMA */
 	while (pl011_read(uap, REG_FR) & UART01x_FR_BUSY)
-		barrier();
+		cpu_relax();
 
 	spin_lock_irq(&uap->port.lock);
 	uap->dmacr &= ~(UART011_DMAONERR | UART011_RXDMAE | UART011_TXDMAE);
@@ -1588,7 +1588,7 @@ static void pl011_put_poll_char(struct uart_port *port,
 	    container_of(port, struct uart_amba_port, port);
 
 	while (pl011_read(uap, REG_FR) & UART01x_FR_TXFF)
-		barrier();
+		cpu_relax();
 
 	pl011_write(ch, uap, REG_DR);
 }
@@ -2127,7 +2127,7 @@ static void pl011_console_putchar(struct uart_port *port, int ch)
 	    container_of(port, struct uart_amba_port, port);
 
 	while (pl011_read(uap, REG_FR) & UART01x_FR_TXFF)
-		barrier();
+		cpu_relax();
 	pl011_write(ch, uap, REG_DR);
 }
 
@@ -2135,7 +2135,7 @@ static void
 pl011_console_write(struct console *co, const char *s, unsigned int count)
 {
 	struct uart_amba_port *uap = amba_ports[co->index];
-	unsigned int status, old_cr = 0, new_cr;
+	unsigned int old_cr = 0, new_cr;
 	unsigned long flags;
 	int locked = 1;
 
@@ -2165,9 +2165,8 @@ pl011_console_write(struct console *co, const char *s, unsigned int count)
 	 *	Finally, wait for transmitter to become empty
 	 *	and restore the TCR
 	 */
-	do {
-		status = pl011_read(uap, REG_FR);
-	} while (status & UART01x_FR_BUSY);
+	while (pl011_read(uap, REG_FR) & UART01x_FR_BUSY)
+		cpu_relax();
 	if (!uap->vendor->always_enabled)
 		pl011_write(old_cr, uap, REG_CR);
 
@@ -2334,13 +2333,13 @@ static struct console amba_console = {
 static void pl011_putc(struct uart_port *port, int c)
 {
 	while (readl(port->membase + UART01x_FR) & UART01x_FR_TXFF)
-		;
+		cpu_relax();
 	if (port->iotype == UPIO_MEM32)
 		writel(c, port->membase + UART01x_DR);
 	else
 		writeb(c, port->membase + UART01x_DR);
 	while (readl(port->membase + UART01x_FR) & UART01x_FR_BUSY)
-		;
+		cpu_relax();
 }
 
 static void pl011_early_write(struct console *con, const char *s, unsigned n)
