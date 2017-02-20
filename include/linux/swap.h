@@ -384,6 +384,9 @@ static inline void mem_cgroup_uncharge_swap(swp_entry_t entry)
 }
 #endif
 #ifdef CONFIG_SWAP
+
+#include <linux/blk_types.h> /* for bio_end_io_t */
+
 /* linux/mm/page_io.c */
 extern int swap_readpage(struct page *);
 extern int swap_writepage(struct page *page, struct writeback_control *wbc);
