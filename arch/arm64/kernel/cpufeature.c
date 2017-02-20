@@ -822,8 +822,6 @@ static void enable_cpu_capabilities(const struct arm64_cpu_capabilities *caps)
 			stop_machine(caps[i].enable, NULL, cpu_online_mask);
 }
 
-#ifdef CONFIG_HOTPLUG_CPU
-
 /*
  * Flag to indicate if we have computed the system wide
  * capabilities based on the boot time active CPUs. This
@@ -928,14 +926,6 @@ void verify_local_cpu_capabilities(void)
 		}
 	}
 }
-
-#else	/* !CONFIG_HOTPLUG_CPU */
-
-static inline void set_sys_caps_initialised(void)
-{
-}
-
-#endif	/* CONFIG_HOTPLUG_CPU */
 
 static void setup_feature_capabilities(void)
 {
