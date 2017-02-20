@@ -415,15 +415,14 @@ ENDPROC(__create_page_tables)
  */
 	.set	initial_sp, init_thread_union + THREAD_START_SP
 __mmap_switched:
-	adr_l	x6, __bss_start
-	adr_l	x7, __bss_stop
-
-1:	cmp	x6, x7
-	b.hs	2f
-	str	xzr, [x6], #8			// Clear BSS
-	b	1b
+	// Clear BSS
+	adr_l	x0, __bss_start
+	mov	x1, xzr
+	adr_l	x2, __bss_stop
+	sub	x2, x2, x0
+	bl	__pi_memset
 	dsb	ishst				// Make zero page visible to PTW
-2:
+
 	adr_l	sp, initial_sp, x4
 	mov	x4, sp
 	and	x4, x4, #~(THREAD_SIZE - 1)
