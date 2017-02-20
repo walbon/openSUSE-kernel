@@ -38,8 +38,9 @@
 #define ARM64_HAS_32BIT_EL0			13
 #define ARM64_HAS_VIRT_HOST_EXTN		14
 #define ARM64_HYP_OFFSET_LOW			15
+#define ARM64_WORKAROUND_REPEAT_TLBI		16
 
-#define ARM64_NCAPS				16
+#define ARM64_NCAPS				17
 
 #ifndef __ASSEMBLY__
 

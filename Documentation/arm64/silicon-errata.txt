@@ -61,3 +61,4 @@ stable kernels.
 | Cavium         | ThunderX Core   | #26026          | CAVIUM_ERRATUM_26026    |
 |                |                 |                 |                         |
 | Freescale/NXP  | LS2080A/LS1043A | A-008585        | FSL_ERRATUM_A008585     |
+| Qualcomm Tech. | Falkor v1       | E1009           | QCOM_FALKOR_ERRATUM_1009|
