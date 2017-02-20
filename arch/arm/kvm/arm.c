@@ -496,7 +496,13 @@ void kvm_arm_halt_guest(struct kvm *kvm)
 	kvm_make_all_cpus_request(kvm, KVM_REQ_VCPU_EXIT);
 }
 
-static void kvm_arm_resume_vcpu(struct kvm_vcpu *vcpu)
+void kvm_arm_halt_vcpu(struct kvm_vcpu *vcpu)
+{
+	vcpu->arch.pause = true;
+	kvm_vcpu_kick(vcpu);
+}
+
+void kvm_arm_resume_vcpu(struct kvm_vcpu *vcpu)
 {
 	wait_queue_head_t *wq = kvm_arch_vcpu_wq(vcpu);
 
