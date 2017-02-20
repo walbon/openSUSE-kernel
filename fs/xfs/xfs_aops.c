@@ -385,7 +385,7 @@ xfs_submit_ioend_bio(
 	bio->bi_private = ioend;
 	bio->bi_end_io = xfs_end_bio;
 	if (wbc->sync_mode == WB_SYNC_ALL)
-		op_flags = WRITE_SYNC;
+		op_flags = REQ_SYNC;
 	bio_set_op_attrs(bio, REQ_OP_WRITE, op_flags);
 	submit_bio(bio);
 }

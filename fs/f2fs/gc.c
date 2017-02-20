@@ -541,7 +541,7 @@ static void move_encrypted_block(struct inode *inode, block_t bidx)
 		.sbi = F2FS_I_SB(inode),
 		.type = DATA,
 		.op = REQ_OP_READ,
-		.op_flags = READ_SYNC,
+		.op_flags = 0,
 		.encrypted_page = NULL,
 	};
 	struct dnode_of_data dn;
@@ -609,7 +609,7 @@ static void move_encrypted_block(struct inode *inode, block_t bidx)
 	allocate_data_block(fio.sbi, NULL, fio.blk_addr,
 					&fio.blk_addr, &sum, CURSEG_COLD_DATA);
 	fio.op = REQ_OP_WRITE;
-	fio.op_flags = WRITE_SYNC;
+	fio.op_flags = REQ_SYNC;
 	f2fs_submit_page_mbio(&fio);
 
 	dn.data_blkaddr = fio.blk_addr;
@@ -644,7 +644,7 @@ static void move_data_page(struct inode *inode, block_t bidx, int gc_type)
 			.sbi = F2FS_I_SB(inode),
 			.type = DATA,
 			.op = REQ_OP_WRITE,
-			.op_flags = WRITE_SYNC,
+			.op_flags = REQ_SYNC,
 			.page = page,
 			.encrypted_page = NULL,
 		};
