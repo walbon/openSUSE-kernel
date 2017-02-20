@@ -37,8 +37,9 @@
 #define ARM64_ALT_PAN_NOT_UAO			12
 #define ARM64_HAS_32BIT_EL0			13
 #define ARM64_HAS_VIRT_HOST_EXTN		14
+#define ARM64_HYP_OFFSET_LOW			15
 
-#define ARM64_NCAPS				15
+#define ARM64_NCAPS				16
 
 #ifndef __ASSEMBLY__
 
