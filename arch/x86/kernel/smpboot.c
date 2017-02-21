@@ -1223,8 +1223,7 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 	pr_info("CPU%d: ", 0);
 	print_cpu_info(&cpu_data(0));
 
-	if (is_uv_system())
-		uv_system_init();
+	uv_system_init();
 
 	set_mtrr_aps_delayed_init();
 
