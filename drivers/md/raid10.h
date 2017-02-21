@@ -131,7 +131,6 @@ struct r10bio {
 		};
 		sector_t	addr;
 		int		devnum;
-		int		error;
 	} devs[0];
 };
 
@@ -156,7 +155,5 @@ enum r10bio_state {
  * flag is set
  */
 	R10BIO_Previous,
-/* failfast devices did receive failfast requests. */
-	R10BIO_FailFast,
 };
 #endif

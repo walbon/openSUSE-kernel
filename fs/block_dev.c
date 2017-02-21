@@ -171,13 +171,6 @@ blkdev_get_block(struct inode *inode, sector_t iblock,
 	return 0;
 }
 
-static void submit_failfast_bio(struct bio *bio, struct inode *inode,
-				loff_t offset)
-{
-	bio_set_op_attrs(bio, bio_op(bio), REQ_FAILFAST_DEV);
-	submit_bio(bio);
-}
-
 static struct inode *bdev_file_inode(struct file *file)
 {
 	return file->f_mapping->host;
@@ -261,11 +254,7 @@ blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = bdev_file_inode(file);
-	dio_submit_t *submit_io = NULL;
 	int nr_pages;
-
-	if (file->f_flags & O_NONBLOCK)
-		submit_io = submit_failfast_bio;
 
 	nr_pages = iov_iter_npages(iter, BIO_MAX_PAGES);
 	if (!nr_pages)
@@ -273,7 +262,7 @@ blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 	if (is_sync_kiocb(iocb) && nr_pages <= DIO_INLINE_BIO_VECS)
 		return __blkdev_direct_IO_simple(iocb, iter, nr_pages);
 	return __blockdev_direct_IO(iocb, inode, I_BDEV(inode), iter,
-				    blkdev_get_block, NULL, submit_io,
+				    blkdev_get_block, NULL, NULL,
 				    DIO_SKIP_DIO_COUNT);
 }
 

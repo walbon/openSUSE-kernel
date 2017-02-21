@@ -1695,6 +1695,9 @@ static int blkif_recover(struct blkfront_info *info)
 			/*
 			 * Flush operations don't contain bios, so
 			 * we need to requeue the whole request
+			 *
+			 * XXX: but this doesn't make any sense for a
+			 * write with the FUA flag set..
 			 */
 			list_add(&copy[i].request->queuelist, &requests);
 			continue;
