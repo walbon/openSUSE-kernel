@@ -1766,7 +1766,7 @@ static int raid10_remove_disk(struct mddev *mddev, struct md_rdev *rdev)
 		err = -EBUSY;
 		goto abort;
 	}
-	/* Only remove faulty devices if recovery
+	/* Only remove non-faulty devices if recovery
 	 * is not possible.
 	 */
 	if (!test_bit(Faulty, &rdev->flags) &&
@@ -1778,14 +1778,16 @@ static int raid10_remove_disk(struct mddev *mddev, struct md_rdev *rdev)
 		goto abort;
 	}
 	*rdevp = NULL;
-	if (!test_bit(RemoveSynchronised, &rdev->flags))
-			synchronize_rcu();
-	if (atomic_read(&rdev->nr_pending)) {
-		/* lost the race, try later */
-		err = -EBUSY;
-		*rdevp = rdev;
-		goto abort;
-	} else if (p->replacement) {
+	if (!test_bit(RemoveSynchronized, &rdev->flags)) {
+		synchronize_rcu();
+		if (atomic_read(&rdev->nr_pending)) {
+			/* lost the race, try later */
+			err = -EBUSY;
+			*rdevp = rdev;
+			goto abort;
+		}
+	}
+	if (p->replacement) {
 		/* We must have just cleared 'rdev' */
 		p->rdev = p->replacement;
 		clear_bit(Replacement, &p->replacement->flags);
@@ -2172,21 +2174,20 @@ static void recovery_request_write(struct mddev *mddev, struct r10bio *r10_bio)
  */
 static void check_decay_read_errors(struct mddev *mddev, struct md_rdev *rdev)
 {
-	struct timespec cur_time_mon;
+	long cur_time_mon;
 	unsigned long hours_since_last;
 	unsigned int read_errors = atomic_read(&rdev->read_errors);
 
-	ktime_get_ts(&cur_time_mon);
+	cur_time_mon = ktime_get_seconds();
 
-	if (rdev->last_read_error.tv_sec == 0 &&
-	    rdev->last_read_error.tv_nsec == 0) {
+	if (rdev->last_read_error == 0) {
 		/* first time we've seen a read error */
 		rdev->last_read_error = cur_time_mon;
 		return;
 	}
 
-	hours_since_last = (cur_time_mon.tv_sec -
-			    rdev->last_read_error.tv_sec) / 3600;
+	hours_since_last = (long)(cur_time_mon -
+			    rdev->last_read_error) / 3600;
 
 	rdev->last_read_error = cur_time_mon;
 
@@ -2288,6 +2289,7 @@ static void fix_read_error(struct r10conf *conf, struct mddev *mddev, struct r10
 			rdev = rcu_dereference(conf->mirrors[d].rdev);
 			if (rdev &&
 			    test_bit(In_sync, &rdev->flags) &&
+			    !test_bit(Faulty, &rdev->flags) &&
 			    is_badblock(rdev, r10_bio->devs[sl].addr + sect, s,
 					&first_bad, &bad_sectors) == 0) {
 				atomic_inc(&rdev->nr_pending);
@@ -2341,6 +2343,7 @@ static void fix_read_error(struct r10conf *conf, struct mddev *mddev, struct r10
 			d = r10_bio->devs[sl].devnum;
 			rdev = rcu_dereference(conf->mirrors[d].rdev);
 			if (!rdev ||
+			    test_bit(Faulty, &rdev->flags) ||
 			    !test_bit(In_sync, &rdev->flags))
 				continue;
 
@@ -2380,6 +2383,7 @@ static void fix_read_error(struct r10conf *conf, struct mddev *mddev, struct r10
 			d = r10_bio->devs[sl].devnum;
 			rdev = rcu_dereference(conf->mirrors[d].rdev);
 			if (!rdev ||
+			    test_bit(Faulty, &rdev->flags) ||
 			    !test_bit(In_sync, &rdev->flags))
 				continue;
 
@@ -2957,6 +2961,7 @@ static sector_t raid10_sync_request(struct mddev *mddev, sector_t sector_nr,
 			mreplace = rcu_dereference(mirror->replacement);
 
 			if ((mrdev == NULL ||
+			     test_bit(Faulty, &mrdev->flags) ||
 			     test_bit(In_sync, &mrdev->flags)) &&
 			    (mreplace == NULL ||
 			     test_bit(Faulty, &mreplace->flags))) {
@@ -2975,6 +2980,8 @@ static sector_t raid10_sync_request(struct mddev *mddev, sector_t sector_nr,
 				rcu_read_unlock();
 				continue;
 			}
+			if (mreplace && test_bit(Faulty, &mreplace->flags))
+				mreplace = NULL;
 			/* Unless we are doing a full sync, or a replacement
 			 * we only need to recover the block if it is set in
 			 * the bitmap
