@@ -184,5 +184,6 @@ enum r1bio_state {
  */
 	R1BIO_MadeGood,
 	R1BIO_WriteError,
+	R1BIO_FailFast,
 };
 #endif
