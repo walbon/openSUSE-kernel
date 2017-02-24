@@ -64,6 +64,7 @@
 #include <linux/raid/md_p.h>
 #include <linux/raid/md_u.h>
 #include <linux/slab.h>
+#include <trace/events/block.h>
 #include "md.h"
 #include "bitmap.h"
 #include "md-cluster.h"
@@ -726,7 +727,13 @@ static void super_written(struct bio *bio)
 	if (bio->bi_error) {
 		pr_err("md: super_written gets error=%d\n", bio->bi_error);
 		md_error(mddev, rdev);
-	}
+		if (!test_bit(Faulty, &rdev->flags)
+		    && (bio->bi_opf & MD_FAILFAST)) {
+			set_bit(MD_NEED_REWRITE, &mddev->flags);
+			set_bit(LastDev, &rdev->flags);
+		}
+	} else
+		clear_bit(LastDev, &rdev->flags);
 
 	if (atomic_dec_and_test(&mddev->pending_writes))
 		wake_up(&mddev->sb_wait);
@@ -743,7 +750,13 @@ void md_super_write(struct mddev *mddev, struct md_rdev *rdev,
 	 * if zero is reached.
 	 * If an error occurred, call md_error
 	 */
-	struct bio *bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
+	struct bio *bio;
+	int ff = 0;
+
+	if (test_bit(Faulty, &rdev->flags))
+		return;
+
+	bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
 
 	atomic_inc(&rdev->nr_pending);
 
@@ -752,16 +765,24 @@ void md_super_write(struct mddev *mddev, struct md_rdev *rdev,
 	bio_add_page(bio, page, size, 0);
 	bio->bi_private = rdev;
 	bio->bi_end_io = super_written;
-	bio->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH | REQ_FUA;
+
+	if (test_bit(MD_FAILFAST_SUPPORTED, &mddev->flags) &&
+	    test_bit(FailFast, &rdev->flags) &&
+	    !test_bit(LastDev, &rdev->flags))
+		ff = MD_FAILFAST;
+	bio->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH | REQ_FUA | ff;
 
 	atomic_inc(&mddev->pending_writes);
 	submit_bio(bio);
 }
 
-void md_super_wait(struct mddev *mddev)
+int md_super_wait(struct mddev *mddev)
 {
 	/* wait for all superblock writes that were scheduled to complete */
 	wait_event(mddev->sb_wait, atomic_read(&mddev->pending_writes)==0);
+	if (test_and_clear_bit(MD_NEED_REWRITE, &mddev->flags))
+		return -EAGAIN;
+	return 0;
 }
 
 int sync_page_io(struct md_rdev *rdev, sector_t sector, int size,
@@ -1163,6 +1184,8 @@ static int super_90_validate(struct mddev *mddev, struct md_rdev *rdev)
 		}
 		if (desc->state & (1<<MD_DISK_WRITEMOSTLY))
 			set_bit(WriteMostly, &rdev->flags);
+		if (desc->state & (1<<MD_DISK_FAILFAST))
+			set_bit(FailFast, &rdev->flags);
 	} else /* MULTIPATH are always insync */
 		set_bit(In_sync, &rdev->flags);
 	return 0;
@@ -1288,6 +1311,8 @@ static void super_90_sync(struct mddev *mddev, struct md_rdev *rdev)
 		}
 		if (test_bit(WriteMostly, &rdev2->flags))
 			d->state |= (1<<MD_DISK_WRITEMOSTLY);
+		if (test_bit(FailFast, &rdev2->flags))
+			d->state |= (1<<MD_DISK_FAILFAST);
 	}
 	/* now set the "removed" and "faulty" bits on any missing devices */
 	for (i=0 ; i < mddev->raid_disks ; i++) {
@@ -1329,9 +1354,10 @@ super_90_rdev_size_change(struct md_rdev *rdev, sector_t num_sectors)
 	if (IS_ENABLED(CONFIG_LBDAF) && (u64)num_sectors >= (2ULL << 32) &&
 	    rdev->mddev->level >= 1)
 		num_sectors = (sector_t)(2ULL << 32) - 2;
-	md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
+	do {
+		md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
 		       rdev->sb_page);
-	md_super_wait(rdev->mddev);
+	} while (md_super_wait(rdev->mddev) < 0);
 	return num_sectors;
 }
 
@@ -1672,6 +1698,8 @@ static int super_1_validate(struct mddev *mddev, struct md_rdev *rdev)
 		}
 		if (sb->devflags & WriteMostly1)
 			set_bit(WriteMostly, &rdev->flags);
+		if (sb->devflags & FailFast1)
+			set_bit(FailFast, &rdev->flags);
 		if (le32_to_cpu(sb->feature_map) & MD_FEATURE_REPLACEMENT)
 			set_bit(Replacement, &rdev->flags);
 	} else /* MULTIPATH are always insync */
@@ -1710,6 +1738,10 @@ static void super_1_sync(struct mddev *mddev, struct md_rdev *rdev)
 	sb->chunksize = cpu_to_le32(mddev->chunk_sectors);
 	sb->level = cpu_to_le32(mddev->level);
 	sb->layout = cpu_to_le32(mddev->layout);
+	if (test_bit(FailFast, &rdev->flags))
+		sb->devflags |= FailFast1;
+	else
+		sb->devflags &= ~FailFast1;
 
 	if (test_bit(WriteMostly, &rdev->flags))
 		sb->devflags |= WriteMostly1;
@@ -1866,9 +1898,10 @@ super_1_rdev_size_change(struct md_rdev *rdev, sector_t num_sectors)
 	sb->data_size = cpu_to_le64(num_sectors);
 	sb->super_offset = rdev->sb_start;
 	sb->sb_csum = calc_sb_1_csum(sb);
-	md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
-		       rdev->sb_page);
-	md_super_wait(rdev->mddev);
+	do {
+		md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
+			       rdev->sb_page);
+	} while (md_super_wait(rdev->mddev) < 0);
 	return num_sectors;
 
 }
@@ -2403,6 +2436,9 @@ repeat:
 	pr_debug("md: updating %s RAID superblock on device (in sync %d)\n",
 		 mdname(mddev), mddev->in_sync);
 
+	if (mddev->queue)
+		blk_add_trace_msg(mddev->queue, "md md_update_sb");
+rewrite:
 	bitmap_update_sb(mddev->bitmap);
 	rdev_for_each(rdev, mddev) {
 		char b[BDEVNAME_SIZE];
@@ -2434,7 +2470,8 @@ repeat:
 			/* only need to write one superblock... */
 			break;
 	}
-	md_super_wait(mddev);
+	if (md_super_wait(mddev) < 0)
+		goto rewrite;
 	/* if there was a failure, MD_CHANGE_DEVS was set, and we re-write super */
 
 	if (mddev_is_clustered(mddev) && ret == 0)
@@ -2554,6 +2591,8 @@ state_show(struct md_rdev *rdev, char *page)
 		len += sprintf(page+len, "replacement%s", sep);
 	if (test_bit(ExternalBbl, &flags))
 		len += sprintf(page+len, "external_bbl%s", sep);
+	if (test_bit(FailFast, &flags))
+		len += sprintf(page+len, "failfast%s", sep);
 
 	if (len)
 		len -= strlen(sep);
@@ -2576,6 +2615,7 @@ state_store(struct md_rdev *rdev, const char *buf, size_t len)
 	 *            so that it gets rebuilt based on bitmap
 	 *  write_error - sets WriteErrorSeen
 	 *  -write_error - clears WriteErrorSeen
+	 *  {,-}failfast - set/clear FailFast
 	 */
 	int err = -EINVAL;
 	if (cmd_match(buf, "faulty") && rdev->mddev->pers) {
@@ -2633,6 +2673,12 @@ state_store(struct md_rdev *rdev, const char *buf, size_t len)
 		err = 0;
 	} else if (cmd_match(buf, "insync") && rdev->raid_disk == -1) {
 		set_bit(In_sync, &rdev->flags);
+		err = 0;
+	} else if (cmd_match(buf, "failfast")) {
+		set_bit(FailFast, &rdev->flags);
+		err = 0;
+	} else if (cmd_match(buf, "-failfast")) {
+		clear_bit(FailFast, &rdev->flags);
 		err = 0;
 	} else if (cmd_match(buf, "-insync") && rdev->raid_disk >= 0 &&
 		   !test_bit(Journal, &rdev->flags)) {
@@ -5939,6 +5985,8 @@ static int get_disk_info(struct mddev *mddev, void __user * arg)
 			info.state |= (1<<MD_DISK_JOURNAL);
 		if (test_bit(WriteMostly, &rdev->flags))
 			info.state |= (1<<MD_DISK_WRITEMOSTLY);
+		if (test_bit(FailFast, &rdev->flags))
+			info.state |= (1<<MD_DISK_FAILFAST);
 	} else {
 		info.major = info.minor = 0;
 		info.raid_disk = -1;
@@ -6046,6 +6094,10 @@ static int add_new_disk(struct mddev *mddev, mdu_disk_info_t *info)
 			set_bit(WriteMostly, &rdev->flags);
 		else
 			clear_bit(WriteMostly, &rdev->flags);
+		if (info->state & (1<<MD_DISK_FAILFAST))
+			set_bit(FailFast, &rdev->flags);
+		else
+			clear_bit(FailFast, &rdev->flags);
 
 		if (info->state & (1<<MD_DISK_JOURNAL)) {
 			struct md_rdev *rdev2;
@@ -6135,6 +6187,8 @@ static int add_new_disk(struct mddev *mddev, mdu_disk_info_t *info)
 
 		if (info->state & (1<<MD_DISK_WRITEMOSTLY))
 			set_bit(WriteMostly, &rdev->flags);
+		if (info->state & (1<<MD_DISK_FAILFAST))
+			set_bit(FailFast, &rdev->flags);
 
 		if (!mddev->persistent) {
 			pr_debug("md: nonpersistent superblock ...\n");
