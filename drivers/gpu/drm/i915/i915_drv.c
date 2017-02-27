@@ -40,6 +40,7 @@
 #include <linux/pm_runtime.h>
 #include <drm/drm_crtc_helper.h>
 
+
 static struct drm_driver driver;
 
 #define GEN_DEFAULT_PIPEOFFSETS \
@@ -675,7 +676,7 @@ static int i915_drm_suspend(struct drm_device *dev)
 #endif
 	intel_opregion_notify_adapter(dev, opregion_target_state);
 
-	intel_uncore_forcewake_reset(dev, false);
+	intel_uncore_suspend(dev);
 	intel_opregion_fini(dev);
 
 	intel_fbdev_set_suspend(dev, FBINFO_STATE_SUSPENDED, true);
@@ -869,7 +870,7 @@ static int i915_drm_resume_early(struct drm_device *dev)
 		DRM_ERROR("Resume prepare failed: %d, continuing anyway\n",
 			  ret);
 
-	intel_uncore_early_sanitize(dev, true);
+	intel_uncore_resume_early(dev);
 
 	if (IS_BROXTON(dev))
 		ret = bxt_resume_prepare(dev_priv);
@@ -1588,7 +1589,7 @@ static int intel_runtime_suspend(struct device *device)
 	}
 
 	cancel_delayed_work_sync(&dev_priv->gpu_error.hangcheck_work);
-	intel_uncore_forcewake_reset(dev, false);
+	intel_uncore_suspend(dev);
 	dev_priv->pm.suspended = true;
 
 	/*

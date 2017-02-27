@@ -25,6 +25,7 @@
 #include "intel_drv.h"
 #include "i915_vgpu.h"
 
+#include <asm/iosf_mbi.h>
 #include <linux/pm_runtime.h>
 
 #define FORCEWAKE_ACK_TIMEOUT_MS 50
@@ -261,7 +262,7 @@ static void intel_uncore_fw_release_timer(unsigned long arg)
 	spin_unlock_irqrestore(&domain->i915->uncore.lock, irqflags);
 }
 
-void intel_uncore_forcewake_reset(struct drm_device *dev, bool restore)
+static void intel_uncore_forcewake_reset(struct drm_device *dev, bool restore)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	unsigned long irqflags;
@@ -370,9 +371,22 @@ static void __intel_uncore_early_sanitize(struct drm_device *dev,
 	intel_uncore_forcewake_reset(dev, restore_forcewake);
 }
 
-void intel_uncore_early_sanitize(struct drm_device *dev, bool restore_forcewake)
+void intel_uncore_suspend(struct drm_device *dev)
 {
-	__intel_uncore_early_sanitize(dev, restore_forcewake);
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	iosf_mbi_unregister_pmic_bus_access_notifier(
+		&dev_priv->uncore.pmic_bus_access_nb);
+	intel_uncore_forcewake_reset(dev, false);
+}
+
+void intel_uncore_resume_early(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	__intel_uncore_early_sanitize(dev, true);
+	iosf_mbi_register_pmic_bus_access_notifier(
+		&dev_priv->uncore.pmic_bus_access_nb);
 	i915_check_and_clear_faults(dev);
 }
 
@@ -1194,6 +1208,32 @@ static void intel_uncore_fw_domains_init(struct drm_device *dev)
 	WARN_ON(dev_priv->uncore.fw_domains == 0);
 }
 
+static int i915_pmic_bus_access_notifier(struct notifier_block *nb,
+					 unsigned long action, void *data)
+{
+	struct drm_i915_private *dev_priv = container_of(nb,
+			struct drm_i915_private, uncore.pmic_bus_access_nb);
+
+	switch (action) {
+	case MBI_PMIC_BUS_ACCESS_BEGIN:
+		/*
+		 * forcewake all now to make sure that we don't need to do a
+		 * forcewake later which on systems where this notifier gets
+		 * called requires the punit to access to the shared pmic i2c
+		 * bus, which will be busy after this notification, leading to:
+		 * "render: timed out waiting for forcewake ack request."
+		 * errors.
+		 */
+		intel_uncore_forcewake_get(dev_priv, FORCEWAKE_ALL);
+		break;
+	case MBI_PMIC_BUS_ACCESS_END:
+		intel_uncore_forcewake_put(dev_priv, FORCEWAKE_ALL);
+		break;
+	}
+
+	return NOTIFY_OK;
+}
+
 void intel_uncore_init(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -1203,6 +1243,9 @@ void intel_uncore_init(struct drm_device *dev)
 	intel_uncore_ellc_detect(dev);
 	intel_uncore_fw_domains_init(dev);
 	__intel_uncore_early_sanitize(dev, false);
+
+	dev_priv->uncore.pmic_bus_access_nb.notifier_call =
+		i915_pmic_bus_access_notifier;
 
 	switch (INTEL_INFO(dev)->gen) {
 	default:
@@ -1251,6 +1294,9 @@ void intel_uncore_init(struct drm_device *dev)
 		ASSIGN_READ_MMIO_VFUNCS(vgpu);
 	}
 
+	iosf_mbi_register_pmic_bus_access_notifier(
+		&dev_priv->uncore.pmic_bus_access_nb);
+
 	i915_check_and_clear_faults(dev);
 }
 #undef ASSIGN_WRITE_MMIO_VFUNCS
@@ -1258,6 +1304,11 @@ void intel_uncore_init(struct drm_device *dev)
 
 void intel_uncore_fini(struct drm_device *dev)
 {
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	iosf_mbi_unregister_pmic_bus_access_notifier(
+		&dev_priv->uncore.pmic_bus_access_nb);
+
 	/* Paranoia: make sure we have disabled everything before we exit. */
 	intel_uncore_sanitize(dev);
 	intel_uncore_forcewake_reset(dev, false);
