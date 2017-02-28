@@ -27,7 +27,6 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/platform_device.h>
-#include <linux/pci.h>
 
 #include <asm/cacheflush.h>
 #include <asm/efi.h>
@@ -212,60 +211,6 @@ static __init void reserve_regions(void)
 	set_bit(EFI_MEMMAP, &efi.flags);
 }
 
-#ifdef CONFIG_PCI
-static bool efi_pci_overlaps_efifb(struct pci_bar_update_info *update_info)
-{
-	u64 lfb_base = screen_info.lfb_base;
-
-	if (screen_info.capabilities & VIDEO_CAPABILITY_64BIT_BASE)
-		lfb_base |= (u64)screen_info.ext_lfb_base << 32;
-
-	/* is the screen_info frame buffer inside the pci BAR? */
-	if (lfb_base >= update_info->old_start &&
-	    (lfb_base + screen_info.lfb_size) <=
-	     (update_info->old_start + update_info->size))
-		return true;
-
-	return false;
-}
-
-static int efi_pci_notifier(struct notifier_block *self,
-			    unsigned long cmd, void *v)
-{
-	struct pci_bar_update_info *update_info = v;
-
-	/*
-	 * When we reallocate a BAR that contains our frame buffer, set the
-	 * screen_info base to where it belongs
-	 */
-	if (efi_pci_overlaps_efifb(update_info)) {
-		u64 diff = (update_info->new_start - update_info->old_start);
-		u32 ext_lfb_base = screen_info.ext_lfb_base;
-		u64 new_base = screen_info.lfb_base;
-
-		if (screen_info.capabilities & VIDEO_CAPABILITY_64BIT_BASE)
-			new_base += (u64)ext_lfb_base << 32;
-
-		new_base += diff;
-
-		screen_info.lfb_base = new_base;
-
-		ext_lfb_base = new_base >> 32;
-		if (ext_lfb_base) {
-			screen_info.capabilities |= VIDEO_CAPABILITY_64BIT_BASE;
-			screen_info.ext_lfb_base = ext_lfb_base;
-		}
-	}
-
-	return NOTIFY_OK;
-}
-static struct notifier_block efi_pci_notifier_block = {
-	.notifier_call = efi_pci_notifier,
-};
-#else
-#define pci_notify_on_update_resource(a)
-#endif
-
 void __init efi_init(void)
 {
 	struct efi_fdt_params params;
@@ -299,10 +244,8 @@ void __init efi_init(void)
 			 PAGE_ALIGN(params.mmap_size +
 				    (params.mmap & ~PAGE_MASK)));
 
-	if (screen_info.orig_video_isVGA == VIDEO_TYPE_EFI) {
-		pci_notify_on_update_resource(&efi_pci_notifier_block);
+	if (screen_info.orig_video_isVGA == VIDEO_TYPE_EFI)
 		memblock_reserve(screen_info.lfb_base, screen_info.lfb_size);
-	}
 }
 
 static int __init register_gop_device(void)
