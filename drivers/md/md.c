@@ -5579,8 +5579,8 @@ void md_stop(struct mddev *mddev)
 	/* stop the array and free an attached data structures.
 	 * This is called from dm-raid
 	 */
-	__md_stop(mddev);
 	bitmap_destroy(mddev);
+	__md_stop(mddev);
 	if (mddev->bio_set)
 		bioset_free(mddev->bio_set);
 }
@@ -5693,6 +5693,22 @@ static int do_md_stop(struct mddev *mddev, int mode,
 			set_disk_ro(disk, 0);
 
 		__md_stop_writes(mddev);
+
+		/*
+		 * Destroy bitmap after all writes are stopped
+		 */
+		if (mode == 0) {
+			bitmap_destroy(mddev);
+			if (mddev->bitmap_info.file) {
+				struct file *f = mddev->bitmap_info.file;
+				spin_lock(&mddev->lock);
+				mddev->bitmap_info.file = NULL;
+				spin_unlock(&mddev->lock);
+				fput(f);
+			}
+			mddev->bitmap_info.offset = 0;
+		}
+
 		__md_stop(mddev);
 		mddev->queue->backing_dev_info.congested_fn = NULL;
 
@@ -5717,19 +5733,7 @@ static int do_md_stop(struct mddev *mddev, int mode,
 	 */
 	if (mode == 0) {
 		pr_info("md: %s stopped.\n", mdname(mddev));
-
-		bitmap_destroy(mddev);
-		if (mddev->bitmap_info.file) {
-			struct file *f = mddev->bitmap_info.file;
-			spin_lock(&mddev->lock);
-			mddev->bitmap_info.file = NULL;
-			spin_unlock(&mddev->lock);
-			fput(f);
-		}
-		mddev->bitmap_info.offset = 0;
-
 		export_array(mddev);
-
 		md_clean(mddev);
 		if (mddev->hold_active == UNTIL_STOP)
 			mddev->hold_active = 0;
