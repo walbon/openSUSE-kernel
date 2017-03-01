@@ -270,8 +270,14 @@ static inline int is_module_addr(void *addr)
 #define _REGION3_ENTRY		(_REGION_ENTRY_TYPE_R3 | _REGION_ENTRY_LENGTH)
 #define _REGION3_ENTRY_EMPTY	(_REGION_ENTRY_TYPE_R3 | _REGION_ENTRY_INVALID)
 
+#define _REGION3_ENTRY_ORIGIN_LARGE ~0x7fffffffUL /* large page address	     */
+#define _REGION3_ENTRY_ORIGIN  ~0x7ffUL/* region third table origin	     */
+
 #define _REGION3_ENTRY_LARGE	0x400	/* RTTE-format control, large page  */
 #define _REGION3_ENTRY_RO	0x200	/* page protection bit		    */
+
+#define _REGION_ENTRY_BITS	0xfffffffffffff227UL
+#define _REGION_ENTRY_BITS_LARGE 0xffffffff8000fe27UL
 
 /* Bits in the segment table entry */
 #define _SEGMENT_ENTRY_BITS	0xfffffffffffffe33UL
@@ -468,7 +474,7 @@ static inline int pud_none(pud_t pud)
 {
 	if ((pud_val(pud) & _REGION_ENTRY_TYPE_MASK) < _REGION_ENTRY_TYPE_R3)
 		return 0;
-	return (pud_val(pud) & _REGION_ENTRY_INVALID) != 0UL;
+	return pud_val(pud) == _REGION3_ENTRY_EMPTY;
 }
 
 static inline int pud_large(pud_t pud)
@@ -478,17 +484,35 @@ static inline int pud_large(pud_t pud)
 	return !!(pud_val(pud) & _REGION3_ENTRY_LARGE);
 }
 
+static inline unsigned long pud_pfn(pud_t pud)
+{
+	unsigned long origin_mask;
+
+	origin_mask = _REGION3_ENTRY_ORIGIN;
+	if (pud_large(pud))
+		origin_mask = _REGION3_ENTRY_ORIGIN_LARGE;
+	return (pud_val(pud) & origin_mask) >> PAGE_SHIFT;
+}
+
+static inline int pmd_large(pmd_t pmd)
+{
+	return (pmd_val(pmd) & _SEGMENT_ENTRY_LARGE) != 0;
+}
+
+static inline int pmd_bad(pmd_t pmd)
+{
+	if (pmd_large(pmd))
+		return (pmd_val(pmd) & ~_SEGMENT_ENTRY_BITS_LARGE) != 0;
+	return (pmd_val(pmd) & ~_SEGMENT_ENTRY_BITS) != 0;
+}
+
 static inline int pud_bad(pud_t pud)
 {
-	/*
-	 * With dynamic page table levels the pud can be a region table
-	 * entry or a segment table entry. Check for the bit that are
-	 * invalid for either table entry.
-	 */
-	unsigned long mask =
-		~_SEGMENT_ENTRY_ORIGIN & ~_REGION_ENTRY_INVALID &
-		~_REGION_ENTRY_TYPE_MASK & ~_REGION_ENTRY_LENGTH;
-	return (pud_val(pud) & mask) != 0;
+	if ((pud_val(pud) & _REGION_ENTRY_TYPE_MASK) < _REGION_ENTRY_TYPE_R3)
+		return pmd_bad(__pmd(pud_val(pud)));
+	if (pud_large(pud))
+		return (pud_val(pud) & ~_REGION_ENTRY_BITS_LARGE) != 0;
+	return (pud_val(pud) & ~_REGION_ENTRY_BITS) != 0;
 }
 
 static inline int pmd_present(pmd_t pmd)
@@ -501,11 +525,6 @@ static inline int pmd_none(pmd_t pmd)
 	return pmd_val(pmd) == _SEGMENT_ENTRY_INVALID;
 }
 
-static inline int pmd_large(pmd_t pmd)
-{
-	return (pmd_val(pmd) & _SEGMENT_ENTRY_LARGE) != 0;
-}
-
 static inline unsigned long pmd_pfn(pmd_t pmd)
 {
 	unsigned long origin_mask;
@@ -514,13 +533,6 @@ static inline unsigned long pmd_pfn(pmd_t pmd)
 	if (pmd_large(pmd))
 		origin_mask = _SEGMENT_ENTRY_ORIGIN_LARGE;
 	return (pmd_val(pmd) & origin_mask) >> PAGE_SHIFT;
-}
-
-static inline int pmd_bad(pmd_t pmd)
-{
-	if (pmd_large(pmd))
-		return (pmd_val(pmd) & ~_SEGMENT_ENTRY_BITS_LARGE) != 0;
-	return (pmd_val(pmd) & ~_SEGMENT_ENTRY_BITS) != 0;
 }
 
 #define __HAVE_ARCH_PMDP_SPLITTING_FLUSH
@@ -1343,6 +1355,7 @@ static inline pmd_t *pmd_offset(pud_t *pud, unsigned long address)
 #define pte_page(x) pfn_to_page(pte_pfn(x))
 
 #define pmd_page(pmd) pfn_to_page(pmd_pfn(pmd))
+#define pud_page(pud) pfn_to_page(pud_pfn(pud))
 
 /* Find an entry in the lowest level page table.. */
 #define pte_offset(pmd, addr) ((pte_t *) pmd_deref(*(pmd)) + pte_index(addr))
@@ -1472,6 +1485,19 @@ static inline void __pmdp_idte(unsigned long address, pmd_t *pmdp)
 		: "cc" );
 }
 
+static inline void __pudp_idte(unsigned long address, pud_t *pudp)
+{
+	unsigned long r3o;
+
+	r3o = (unsigned long) pudp - pud_index(address) * sizeof(pud_t);
+	r3o |= _ASCE_TYPE_REGION3;
+	asm volatile(
+		"	.insn	rrf,0xb98e0000,%2,%3,0,0"
+		: "=m" (*pudp)
+		: "m" (*pudp), "a" (r3o), "a" ((address & PUD_MASK))
+		: "cc");
+}
+
 static inline void __pmdp_idte_local(unsigned long address, pmd_t *pmdp)
 {
 	unsigned long sto;
@@ -1482,6 +1508,19 @@ static inline void __pmdp_idte_local(unsigned long address, pmd_t *pmdp)
 		: "=m" (*pmdp)
 		: "m" (*pmdp), "a" (sto), "a" ((address & HPAGE_MASK))
 		: "cc" );
+}
+
+static inline void __pudp_idte_local(unsigned long address, pud_t *pudp)
+{
+	unsigned long r3o;
+
+	r3o = (unsigned long) pudp - pud_index(address) * sizeof(pud_t);
+	r3o |= _ASCE_TYPE_REGION3;
+	asm volatile(
+		"	.insn	rrf,0xb98e0000,%2,%3,0,1"
+		: "=m" (*pudp)
+		: "m" (*pudp), "a" (r3o), "a" ((address & PUD_MASK))
+		: "cc");
 }
 
 static inline void pmdp_flush_direct(struct mm_struct *mm,
@@ -1502,6 +1541,31 @@ static inline void pmdp_flush_direct(struct mm_struct *mm,
 		__pmdp_idte_local(address, pmdp);
 	else
 		__pmdp_idte(address, pmdp);
+	atomic_sub(0x10000, &mm->context.attach_count);
+}
+
+static inline void pudp_flush_direct(struct mm_struct *mm,
+				     unsigned long address, pud_t *pudp)
+{
+	int active, count;
+
+	if (pud_val(*pudp) & _REGION_ENTRY_INVALID)
+		return;
+	if (!MACHINE_HAS_IDTE) {
+		/*
+		 * Invalid bit position is the same for pmd and pud, so we can
+		 * re-use _pmd_csp() here
+		 */
+		__pmdp_csp((pmd_t *) pudp);
+		return;
+	}
+	active = (mm == current->active_mm) ? 1 : 0;
+	count = atomic_add_return(0x10000, &mm->context.attach_count);
+	if (MACHINE_HAS_TLB_LC && (count & 0xffff) <= active &&
+	    cpumask_equal(mm_cpumask(mm), cpumask_of(smp_processor_id())))
+		__pudp_idte_local(address, pudp);
+	else
+		__pudp_idte(address, pudp);
 	atomic_sub(0x10000, &mm->context.attach_count);
 }
 
