@@ -5579,8 +5579,8 @@ void md_stop(struct mddev *mddev)
 	/* stop the array and free an attached data structures.
 	 * This is called from dm-raid
 	 */
-	__md_stop(mddev);
 	bitmap_destroy(mddev);
+	__md_stop(mddev);
 	if (mddev->bio_set)
 		bioset_free(mddev->bio_set);
 }
@@ -5693,6 +5693,22 @@ static int do_md_stop(struct mddev *mddev, int mode,
 			set_disk_ro(disk, 0);
 
 		__md_stop_writes(mddev);
+
+		/*
+		 * Destroy bitmap after all writes are stopped
+		 */
+		if (mode == 0) {
+			bitmap_destroy(mddev);
+			if (mddev->bitmap_info.file) {
+				struct file *f = mddev->bitmap_info.file;
+				spin_lock(&mddev->lock);
+				mddev->bitmap_info.file = NULL;
+				spin_unlock(&mddev->lock);
+				fput(f);
+			}
+			mddev->bitmap_info.offset = 0;
+		}
+
 		__md_stop(mddev);
 		mddev->queue->backing_dev_info.congested_fn = NULL;
 
@@ -5717,19 +5733,7 @@ static int do_md_stop(struct mddev *mddev, int mode,
 	 */
 	if (mode == 0) {
 		pr_info("md: %s stopped.\n", mdname(mddev));
-
-		bitmap_destroy(mddev);
-		if (mddev->bitmap_info.file) {
-			struct file *f = mddev->bitmap_info.file;
-			spin_lock(&mddev->lock);
-			mddev->bitmap_info.file = NULL;
-			spin_unlock(&mddev->lock);
-			fput(f);
-		}
-		mddev->bitmap_info.offset = 0;
-
 		export_array(mddev);
-
 		md_clean(mddev);
 		if (mddev->hold_active == UNTIL_STOP)
 			mddev->hold_active = 0;
@@ -6496,10 +6500,7 @@ static int update_size(struct mddev *mddev, sector_t num_sectors)
 	struct md_rdev *rdev;
 	int rv;
 	int fit = (num_sectors == 0);
-
-	/* cluster raid doesn't support update size */
-	if (mddev_is_clustered(mddev))
-		return -EINVAL;
+	sector_t old_dev_sectors = mddev->dev_sectors;
 
 	if (mddev->pers->resize == NULL)
 		return -EINVAL;
@@ -6527,8 +6528,14 @@ static int update_size(struct mddev *mddev, sector_t num_sectors)
 			return -ENOSPC;
 	}
 	rv = mddev->pers->resize(mddev, num_sectors);
-	if (!rv)
-		revalidate_disk(mddev->gendisk);
+	if (!rv) {
+		if (mddev_is_clustered(mddev))
+			md_cluster_ops->update_size(mddev, old_dev_sectors);
+		else if (mddev->queue) {
+			set_capacity(mddev->gendisk, mddev->array_sectors);
+			revalidate_disk(mddev->gendisk);
+		}
+	}
 	return rv;
 }
 
@@ -8382,7 +8389,6 @@ void md_check_recovery(struct mddev *mddev)
 		(mddev->flags & MD_UPDATE_SB_FLAGS & ~ (1<<MD_CHANGE_PENDING)) ||
 		test_bit(MD_RECOVERY_NEEDED, &mddev->recovery) ||
 		test_bit(MD_RECOVERY_DONE, &mddev->recovery) ||
-		test_bit(MD_RELOAD_SB, &mddev->flags) ||
 		(mddev->external == 0 && mddev->safemode == 1) ||
 		(mddev->safemode == 2 && ! atomic_read(&mddev->writes_pending)
 		 && !mddev->in_sync && mddev->recovery_cp == MaxSector)
@@ -8431,9 +8437,6 @@ void md_check_recovery(struct mddev *mddev)
 						rdev->raid_disk < 0)
 					md_kick_rdev_from_array(rdev);
 			}
-
-			if (test_and_clear_bit(MD_RELOAD_SB, &mddev->flags))
-				md_reload_sb(mddev, mddev->good_device_nr);
 		}
 
 		if (!mddev->external) {
@@ -8743,6 +8746,18 @@ static void check_sb_changes(struct mddev *mddev, struct md_rdev *rdev)
 	struct md_rdev *rdev2;
 	int role, ret;
 	char b[BDEVNAME_SIZE];
+
+	/*
+	 * If size is changed in another node then we need to
+	 * do resize as well.
+	 */
+	if (mddev->dev_sectors != le64_to_cpu(sb->size)) {
+		ret = mddev->pers->resize(mddev, le64_to_cpu(sb->size));
+		if (ret)
+			pr_info("md-cluster: resize failed\n");
+		else
+			bitmap_update_sb(mddev->bitmap);
+	}
 
 	/* Check for change of roles in the active devices */
 	rdev_for_each(rdev2, mddev) {
