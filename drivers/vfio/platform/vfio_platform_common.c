@@ -693,7 +693,7 @@ int vfio_platform_probe_common(struct vfio_platform_device *vdev,
 		return ret;
 	}
 
-	group = vfio_iommu_group_get(dev);
+	group = iommu_group_get(dev);
 	if (!group) {
 		pr_err("VFIO: No IOMMU group for device %s\n", vdev->name);
 		return -EINVAL;
@@ -701,7 +701,7 @@ int vfio_platform_probe_common(struct vfio_platform_device *vdev,
 
 	ret = vfio_add_group_dev(dev, &vfio_platform_ops, vdev);
 	if (ret) {
-		vfio_iommu_group_put(group, dev);
+		iommu_group_put(group);
 		return ret;
 	}
 
@@ -719,7 +719,7 @@ struct vfio_platform_device *vfio_platform_remove_common(struct device *dev)
 
 	if (vdev) {
 		vfio_platform_put_reset(vdev);
-		vfio_iommu_group_put(dev->iommu_group, dev);
+		iommu_group_put(dev->iommu_group);
 	}
 
 	return vdev;
