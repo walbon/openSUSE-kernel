@@ -497,7 +497,8 @@ static int nicvf_init_resources(struct nicvf *nic)
 
 static void nicvf_snd_pkt_handler(struct net_device *netdev,
 				  struct cqe_send_t *cqe_tx,
-				  int cqe_type, int budget)
+				  int cqe_type, int budget,
+				  unsigned int *tx_pkts, unsigned int *tx_bytes)
 {
 	struct sk_buff *skb = NULL;
 	struct nicvf *nic = netdev_priv(netdev);
@@ -528,6 +529,8 @@ static void nicvf_snd_pkt_handler(struct net_device *netdev,
 		}
 		nicvf_put_sq_desc(sq, hdr->subdesc_cnt + 1);
 		prefetch(skb);
+		(*tx_pkts)++;
+		*tx_bytes += skb->len;
 		napi_consume_skb(skb, budget);
 		sq->skbuff[cqe_tx->sqe_ptr] = (u64)NULL;
 	} else {
@@ -642,6 +645,7 @@ static int nicvf_cq_intr_handler(struct net_device *netdev, u8 cq_idx,
 	struct cqe_rx_t *cq_desc;
 	struct netdev_queue *txq;
 	struct snd_queue *sq;
+	unsigned int tx_pkts = 0, tx_bytes = 0;
 
 	spin_lock_bh(&cq->lock);
 loop:
@@ -681,7 +685,7 @@ loop:
 		case CQE_TYPE_SEND:
 			nicvf_snd_pkt_handler(netdev,
 					      (void *)cq_desc, CQE_TYPE_SEND,
-					      budget);
+					      budget, &tx_pkts, &tx_bytes);
 			tx_done++;
 		break;
 		case CQE_TYPE_INVALID:
@@ -712,6 +716,9 @@ done:
 		netdev = nic->pnicvf->netdev;
 		txq = netdev_get_tx_queue(netdev,
 					  nicvf_netdev_qidx(nic, cq_idx));
+		if (tx_pkts)
+			netdev_tx_completed_queue(txq, tx_pkts, tx_bytes);
+
 		/* To read updated queue and carrier status */
 		smp_mb();
 		if (netif_tx_queue_stopped(txq) && netif_carrier_ok(netdev)) {
@@ -1172,6 +1179,9 @@ int nicvf_stop(struct net_device *netdev)
 	}
 
 	netif_tx_disable(netdev);
+
+	for (qidx = 0; qidx < netdev->num_tx_queues; qidx++)
+		netdev_tx_reset_queue(netdev_get_tx_queue(netdev, qidx));
 
 	/* Free resources */
 	nicvf_config_data_transfer(nic, false);
