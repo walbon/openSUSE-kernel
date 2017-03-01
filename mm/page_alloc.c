@@ -1217,8 +1217,7 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 	local_irq_restore(flags);
 }
 
-static void __init __free_pages_boot_core(struct page *page,
-					unsigned long pfn, unsigned int order)
+static void __init __free_pages_boot_core(struct page *page, unsigned int order)
 {
 	unsigned int nr_pages = 1 << order;
 	struct page *p = page;
@@ -1295,7 +1294,7 @@ void __init __free_pages_bootmem(struct page *page, unsigned long pfn,
 {
 	if (early_page_uninitialised(pfn))
 		return;
-	return __free_pages_boot_core(page, pfn, order);
+	return __free_pages_boot_core(page, order);
 }
 
 /*
@@ -1377,15 +1376,18 @@ static void __init deferred_free_range(struct page *page,
 		return;
 
 	/* Free a large naturally-aligned chunk if possible */
-	if (nr_pages == MAX_ORDER_NR_PAGES &&
-	    (pfn & (MAX_ORDER_NR_PAGES-1)) == 0) {
+	if (nr_pages == pageblock_nr_pages &&
+	    (pfn & (pageblock_nr_pages - 1)) == 0) {
 		set_pageblock_migratetype(page, MIGRATE_MOVABLE);
-		__free_pages_boot_core(page, pfn, MAX_ORDER-1);
+		__free_pages_boot_core(page, pageblock_order);
 		return;
 	}
 
-	for (i = 0; i < nr_pages; i++, page++, pfn++)
-		__free_pages_boot_core(page, pfn, 0);
+	for (i = 0; i < nr_pages; i++, page++, pfn++) {
+		if ((pfn & (pageblock_nr_pages - 1)) == 0)
+			set_pageblock_migratetype(page, MIGRATE_MOVABLE);
+		__free_pages_boot_core(page, 0);
+	}
 }
 
 /* Completion tracking for deferred_init_memmap() threads */
@@ -1453,9 +1455,9 @@ static int __init deferred_init_memmap(void *data)
 
 			/*
 			 * Ensure pfn_valid is checked every
-			 * MAX_ORDER_NR_PAGES for memory holes
+			 * pageblock_nr_pages for memory holes
 			 */
-			if ((pfn & (MAX_ORDER_NR_PAGES - 1)) == 0) {
+			if ((pfn & (pageblock_nr_pages - 1)) == 0) {
 				if (!pfn_valid(pfn)) {
 					page = NULL;
 					goto free_range;
@@ -1468,7 +1470,7 @@ static int __init deferred_init_memmap(void *data)
 			}
 
 			/* Minimise pfn page lookups and scheduler checks */
-			if (page && (pfn & (MAX_ORDER_NR_PAGES - 1)) != 0) {
+			if (page && (pfn & (pageblock_nr_pages - 1)) != 0) {
 				page++;
 			} else {
 				nr_pages += nr_to_free;
@@ -1504,6 +1506,9 @@ free_range:
 			free_base_page = NULL;
 			free_base_pfn = nr_to_free = 0;
 		}
+		/* Free the last block of pages to allocator */
+		nr_pages += nr_to_free;
+		deferred_free_range(free_base_page, free_base_pfn, nr_to_free);
 
 		first_init_pfn = max(end_pfn, first_init_pfn);
 	}
