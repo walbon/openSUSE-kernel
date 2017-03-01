@@ -117,13 +117,13 @@ enum iommu_attr {
 };
 
 /**
- * struct iommu_dm_region - descriptor for a direct mapped memory region
+ * struct iommu_resv_region - descriptor for a reserved memory region
  * @list: Linked list pointers
  * @start: System physical start address of the region
  * @length: Length of the region in bytes
  * @prot: IOMMU Protection flags (READ/WRITE/...)
  */
-struct iommu_dm_region {
+struct iommu_resv_region {
 	struct list_head	list;
 	phys_addr_t		start;
 	size_t			length;
@@ -149,13 +149,13 @@ struct iommu_dm_region {
  * @device_group: find iommu group for a particular device
  * @domain_get_attr: Query domain attributes
  * @domain_set_attr: Change domain attributes
- * @get_dm_regions: Request list of direct mapping requirements for a device
- * @put_dm_regions: Free list of direct mapping requirements for a device
+ * @get_resv_regions: Request list of reserved regions for a device
+ * @put_resv_regions: Free list of reserved regions for a device
+ * @apply_resv_region: Temporary helper call-back for iova reserved ranges
  * @domain_window_enable: Configure and enable a particular window for a domain
  * @domain_window_disable: Disable a particular window for a domain
  * @domain_set_windows: Set the number of windows for a domain
  * @domain_get_windows: Return the number of windows for a domain
- * @apply_dm_region: Temporary helper call-back for iova reserved ranges
  * @of_xlate: add OF master IDs to iommu grouping
  * @pgsize_bitmap: bitmap of supported page sizes
  * @priv: per-instance data private to the iommu driver
@@ -184,11 +184,12 @@ struct iommu_ops {
 	int (*domain_set_attr)(struct iommu_domain *domain,
 			       enum iommu_attr attr, void *data);
 
-	/* Request/Free a list of direct mapping requirements for a device */
-	void (*get_dm_regions)(struct device *dev, struct list_head *list);
-	void (*put_dm_regions)(struct device *dev, struct list_head *list);
-	void (*apply_dm_region)(struct device *dev, struct iommu_domain *domain,
-				struct iommu_dm_region *region);
+	/* Request/Free a list of reserved regions for a device */
+	void (*get_resv_regions)(struct device *dev, struct list_head *list);
+	void (*put_resv_regions)(struct device *dev, struct list_head *list);
+	void (*apply_resv_region)(struct device *dev,
+				  struct iommu_domain *domain,
+				  struct iommu_resv_region *region);
 
 	/* Window handling functions */
 	int (*domain_window_enable)(struct iommu_domain *domain, u32 wnd_nr,
@@ -236,8 +237,8 @@ extern phys_addr_t iommu_iova_to_phys(struct iommu_domain *domain, dma_addr_t io
 extern void iommu_set_fault_handler(struct iommu_domain *domain,
 			iommu_fault_handler_t handler, void *token);
 
-extern void iommu_get_dm_regions(struct device *dev, struct list_head *list);
-extern void iommu_put_dm_regions(struct device *dev, struct list_head *list);
+extern void iommu_get_resv_regions(struct device *dev, struct list_head *list);
+extern void iommu_put_resv_regions(struct device *dev, struct list_head *list);
 extern int iommu_request_dm_for_dev(struct device *dev);
 
 extern int iommu_attach_group(struct iommu_domain *domain,
@@ -445,12 +446,12 @@ static inline void iommu_set_fault_handler(struct iommu_domain *domain,
 {
 }
 
-static inline void iommu_get_dm_regions(struct device *dev,
+static inline void iommu_get_resv_regions(struct device *dev,
 					struct list_head *list)
 {
 }
 
-static inline void iommu_put_dm_regions(struct device *dev,
+static inline void iommu_put_resv_regions(struct device *dev,
 					struct list_head *list)
 {
 }
