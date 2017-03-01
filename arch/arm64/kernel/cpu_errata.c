@@ -107,6 +107,12 @@ const struct arm64_cpu_capabilities arm64_errata[] = {
 			   MIDR_CPU_VAR_REV(0, 0),
 			   MIDR_CPU_VAR_REV(1, 1)),
 	},
+	{
+	/* Cavium ThunderX, T81 pass 1.0 */
+		.desc = "Cavium erratum 27456",
+		.capability = ARM64_WORKAROUND_CAVIUM_27456,
+		MIDR_RANGE(MIDR_THUNDERX_81XX, 0x00, 0x00),
+	},
 #endif
 #ifdef CONFIG_QCOM_FALKOR_ERRATUM_1009
 	{
