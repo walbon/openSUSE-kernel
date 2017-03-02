@@ -2271,7 +2271,7 @@ static int b44_register_phy_one(struct b44 *bp)
 		goto err_out_mdiobus;
 	}
 
-	if (!bp->mii_bus->phy_map[bp->phy_addr] &&
+	if (!mdiobus_is_registered_device(bp->mii_bus, bp->phy_addr) &&
 	    (sprom->boardflags_lo & (B44_BOARDFLAG_ROBO | B44_BOARDFLAG_ADM))) {
 
 		dev_info(sdev->dev,
@@ -2304,10 +2304,9 @@ static int b44_register_phy_one(struct b44 *bp)
 
 	bp->phydev = phydev;
 	bp->old_link = 0;
-	bp->phy_addr = phydev->addr;
+	bp->phy_addr = phydev->mdio.addr;
 
-	dev_info(sdev->dev, "attached PHY driver [%s] (mii_bus:phy_addr=%s)\n",
-		 phydev->drv->name, phydev_name(phydev));
+	phy_attached_info(phydev);
 
 	return 0;
 

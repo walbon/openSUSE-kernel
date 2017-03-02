@@ -315,7 +315,8 @@ smsc9420_ethtool_getregs(struct net_device *dev, struct ethtool_regs *regs,
 		return;
 
 	for (i = 0; i <= 31; i++)
-		data[j++] = smsc9420_mii_read(phy_dev->bus, phy_dev->addr, i);
+		data[j++] = smsc9420_mii_read(phy_dev->mdio.bus,
+					      phy_dev->mdio.addr, i);
 }
 
 static void smsc9420_eeprom_enable_access(struct smsc9420_pdata *pd)
@@ -1157,14 +1158,11 @@ static int smsc9420_mii_probe(struct net_device *dev)
 	BUG_ON(pd->phy_dev);
 
 	/* Device only supports internal PHY at address 1 */
-	if (!pd->mii_bus->phy_map[1]) {
+	phydev = mdiobus_get_phy(pd->mii_bus, 1);
+	if (!phydev) {
 		netdev_err(dev, "no PHY found at address 1\n");
 		return -ENODEV;
 	}
-
-	phydev = pd->mii_bus->phy_map[1];
-	netif_info(pd, probe, pd->dev, "PHY addr %d, phy_id 0x%08X\n",
-		   phydev->addr, phydev->phy_id);
 
 	phydev = phy_connect(dev, phydev_name(phydev),
 			     smsc9420_phy_adjust_link, PHY_INTERFACE_MODE_MII);
@@ -1174,13 +1172,12 @@ static int smsc9420_mii_probe(struct net_device *dev)
 		return PTR_ERR(phydev);
 	}
 
-	netdev_info(dev, "attached PHY driver [%s] (mii_bus:phy_addr=%s, irq=%d)\n",
-		    phydev->drv->name, phydev_name(phydev), phydev->irq);
-
 	/* mask with MAC supported features */
 	phydev->supported &= (PHY_BASIC_FEATURES | SUPPORTED_Pause |
 			      SUPPORTED_Asym_Pause);
 	phydev->advertising = phydev->supported;
+
+	phy_attached_info(phydev);
 
 	pd->phy_dev = phydev;
 	pd->last_duplex = -1;

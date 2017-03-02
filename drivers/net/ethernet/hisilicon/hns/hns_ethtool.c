@@ -69,7 +69,7 @@ static void hns_get_mdix_mode(struct net_device *net_dev,
 	int mdix_ctrl, mdix, retval, is_resolved;
 	struct phy_device *phy_dev = net_dev->phydev;
 
-	if (!phy_dev || !phy_dev->bus) {
+	if (!phy_dev || !phy_dev->mdio.bus) {
 		cmd->base.eth_tp_mdix_ctrl = ETH_TP_MDI_INVALID;
 		cmd->base.eth_tp_mdix = ETH_TP_MDI_INVALID;
 		return;

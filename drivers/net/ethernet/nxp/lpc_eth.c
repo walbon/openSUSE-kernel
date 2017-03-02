@@ -816,15 +816,14 @@ static int lpc_mii_probe(struct net_device *ndev)
 	pldat->duplex = -1;
 	pldat->phy_dev = phydev;
 
-	netdev_info(ndev,
-		"attached PHY driver [%s] (mii_bus:phy_addr=%s, irq=%d)\n",
-		phydev->drv->name, phydev_name(phydev), phydev->irq);
+	phy_attached_info(phydev);
+
 	return 0;
 }
 
 static int lpc_mii_init(struct netdata_local *pldat)
 {
-	int err = -ENXIO, i;
+	int err = -ENXIO;
 
 	pldat->mii_bus = mdiobus_alloc();
 	if (!pldat->mii_bus) {
@@ -863,7 +862,6 @@ static int lpc_mii_init(struct netdata_local *pldat)
 
 err_out_unregister_bus:
 	mdiobus_unregister(pldat->mii_bus);
-err_out_1:
 	mdiobus_free(pldat->mii_bus);
 err_out:
 	return err;

@@ -284,10 +284,11 @@ static int marvell_of_reg_init(struct phy_device *phydev)
 	const __be32 *paddr;
 	int len, i, saved_page, current_page, page_changed, ret;
 
-	if (!phydev->dev.of_node)
+	if (!phydev->mdio.dev.of_node)
 		return 0;
 
-	paddr = of_get_property(phydev->dev.of_node, "marvell,reg-init", &len);
+	paddr = of_get_property(phydev->mdio.dev.of_node,
+				"marvell,reg-init", &len);
 	if (!paddr || len < (4 * sizeof(*paddr)))
 		return 0;
 
@@ -999,7 +1000,6 @@ static struct phy_driver marvell_drivers[] = {
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1112,
@@ -1014,7 +1014,6 @@ static struct phy_driver marvell_drivers[] = {
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1111,
@@ -1029,7 +1028,6 @@ static struct phy_driver marvell_drivers[] = {
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1118,
@@ -1044,7 +1042,6 @@ static struct phy_driver marvell_drivers[] = {
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = {.owner = THIS_MODULE,},
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1121R,
@@ -1059,7 +1056,6 @@ static struct phy_driver marvell_drivers[] = {
 		.did_interrupt = &m88e1121_did_interrupt,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1318S,
@@ -1076,7 +1072,6 @@ static struct phy_driver marvell_drivers[] = {
 		.set_wol = &m88e1318_set_wol,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1145,
@@ -1091,7 +1086,6 @@ static struct phy_driver marvell_drivers[] = {
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1149R,
@@ -1106,7 +1100,6 @@ static struct phy_driver marvell_drivers[] = {
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1240,
@@ -1121,7 +1114,6 @@ static struct phy_driver marvell_drivers[] = {
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1116R,
@@ -1136,7 +1128,6 @@ static struct phy_driver marvell_drivers[] = {
 		.config_intr = &marvell_config_intr,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1510,
@@ -1151,7 +1142,6 @@ static struct phy_driver marvell_drivers[] = {
 		.did_interrupt = &m88e1121_did_interrupt,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1540,
@@ -1166,7 +1156,6 @@ static struct phy_driver marvell_drivers[] = {
 		.did_interrupt = &m88e1121_did_interrupt,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E3016,
@@ -1183,7 +1172,6 @@ static struct phy_driver marvell_drivers[] = {
 		.did_interrupt = &m88e1121_did_interrupt,
 		.resume = &genphy_resume,
 		.suspend = &genphy_suspend,
-		.driver = { .owner = THIS_MODULE },
 	},
 };
 

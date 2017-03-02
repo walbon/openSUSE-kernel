@@ -401,7 +401,7 @@ int bcmgenet_mii_probe(struct net_device *dev)
 	 * Ethernet MAC ISRs
 	 */
 	if (priv->internal_phy)
-		priv->mii_bus->irq[phydev->addr] = PHY_IGNORE_INTERRUPT;
+		priv->mii_bus->irq[phydev->mdio.addr] = PHY_IGNORE_INTERRUPT;
 
 	return 0;
 }
@@ -573,7 +573,7 @@ static int bcmgenet_mii_pd_init(struct bcmgenet_priv *priv)
 		}
 
 		if (pd->phy_address >= 0 && pd->phy_address < PHY_MAX_ADDR)
-			phydev = mdio->phy_map[pd->phy_address];
+			phydev = mdiobus_get_phy(mdio, pd->phy_address);
 		else
 			phydev = phy_find_first(mdio);
 

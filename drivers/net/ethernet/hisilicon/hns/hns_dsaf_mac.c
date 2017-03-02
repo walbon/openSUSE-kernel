@@ -830,7 +830,7 @@ static int  hns_mac_get_info(struct hns_mac_cb *mac_cb)
 			/* refcount is held by of_phy_find_device()
 			 * if the phy_dev is found
 			 */
-			put_device(&mac_cb->phy_dev->dev);
+			put_device(&mac_cb->phy_dev->mdio.dev);
 
 			dev_dbg(mac_cb->dev, "mac%d phy_node: %s\n",
 				mac_cb->mac_id, np->name);
@@ -849,7 +849,7 @@ static int  hns_mac_get_info(struct hns_mac_cb *mac_cb)
 			/* refcount is held by of_phy_find_device()
 			 * if the phy_dev is found
 			 */
-			put_device(&mac_cb->phy_dev->dev);
+			put_device(&mac_cb->phy_dev->mdio.dev);
 			dev_dbg(mac_cb->dev, "mac%d phy_node: %s\n",
 				mac_cb->mac_id, np->name);
 		}

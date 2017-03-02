@@ -197,11 +197,11 @@ int fixed_phy_set_link_update(struct phy_device *phydev,
 	struct fixed_mdio_bus *fmb = &platform_fmb;
 	struct fixed_phy *fp;
 
-	if (!phydev || !phydev->bus)
+	if (!phydev || !phydev->mdio.bus)
 		return -EINVAL;
 
 	list_for_each_entry(fp, &fmb->phys, node) {
-		if (fp->addr == phydev->addr) {
+		if (fp->addr == phydev->mdio.addr) {
 			fp->link_update = link_update;
 			fp->phydev = phydev;
 			return 0;
@@ -219,11 +219,11 @@ int fixed_phy_update_state(struct phy_device *phydev,
 	struct fixed_mdio_bus *fmb = &platform_fmb;
 	struct fixed_phy *fp;
 
-	if (!phydev || phydev->bus != fmb->mii_bus)
+	if (!phydev || phydev->mdio.bus != fmb->mii_bus)
 		return -EINVAL;
 
 	list_for_each_entry(fp, &fmb->phys, node) {
-		if (fp->addr == phydev->addr) {
+		if (fp->addr == phydev->mdio.addr) {
 #define _UPD(x) if (changed->x) \
 	fp->status.x = status->x
 			_UPD(link);
@@ -255,7 +255,8 @@ int fixed_phy_add(unsigned int irq, int phy_addr,
 
 	memset(fp->regs, 0xFF,  sizeof(fp->regs[0]) * MII_REGS_NUM);
 
-	fmb->mii_bus->irq[phy_addr] = irq;
+	if (irq != PHY_POLL)
+		fmb->mii_bus->irq[phy_addr] = irq;
 
 	fp->addr = phy_addr;
 	fp->status = *status;
@@ -315,6 +316,9 @@ struct phy_device *fixed_phy_register(unsigned int irq,
 	int phy_addr;
 	int ret;
 
+	if (!fmb->mii_bus || fmb->mii_bus->state != MDIOBUS_REGISTERED)
+		return ERR_PTR(-EPROBE_DEFER);
+
 	/* Get the next available PHY address, up to PHY_MAX_ADDR */
 	spin_lock(&phy_fixed_addr_lock);
 	if (phy_fixed_addr == PHY_MAX_ADDR) {
@@ -344,7 +348,7 @@ struct phy_device *fixed_phy_register(unsigned int irq,
 	}
 
 	of_node_get(np);
-	phy->dev.of_node = np;
+	phy->mdio.dev.of_node = np;
 	phy->is_pseudo_fixed_link = true;
 
 	switch (status->speed) {
