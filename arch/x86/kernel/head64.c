@@ -191,7 +191,7 @@ void __init x86_64_start_reservations(char *real_mode_data)
 		copy_bootdata(__va(real_mode_data));
 
 	x86_early_init_platform_quirks();
-	reserve_ebda_region();
+	reserve_bios_regions();
 
 	start_kernel();
 }

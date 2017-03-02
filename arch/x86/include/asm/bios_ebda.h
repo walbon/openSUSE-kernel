@@ -38,7 +38,7 @@ static inline unsigned int get_bios_ebda_length(void)
 	return length;
 }
 
-void reserve_ebda_region(void);
+void reserve_bios_regions(void);
 
 #ifdef CONFIG_X86_CHECK_BIOS_CORRUPTION
 /*
