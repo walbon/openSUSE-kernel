@@ -41,7 +41,7 @@ static phys_addr_t efi_to_phys(unsigned long addr)
 {
 	efi_memory_desc_t *md;
 
-	for_each_efi_memory_desc(&memmap, md) {
+	for_each_efi_memory_desc_in_map(&memmap, md) {
 		if (!(md->attribute & EFI_MEMORY_RUNTIME))
 			continue;
 		if (md->virt_addr == 0)
@@ -154,7 +154,7 @@ static __init void reserve_regions(void)
 	memblock_dump_all();
 	memblock_remove(0, (phys_addr_t)ULLONG_MAX);
 
-	for_each_efi_memory_desc(&memmap, md) {
+	for_each_efi_memory_desc_in_map(&memmap, md) {
 		paddr = md->phys_addr;
 		npages = md->num_pages;
 

@@ -53,14 +53,12 @@ struct efi_scratch efi_scratch;
 static void __init early_code_mapping_set_exec(int executable)
 {
 	efi_memory_desc_t *md;
-	void *p;
 
 	if (!(__supported_pte_mask & _PAGE_NX))
 		return;
 
 	/* Make EFI service code area executable */
-	for (p = memmap.map; p < memmap.map_end; p += memmap.desc_size) {
-		md = p;
+	for_each_efi_memory_desc(md) {
 		if (md->type == EFI_RUNTIME_SERVICES_CODE ||
 		    md->type == EFI_BOOT_SERVICES_CODE)
 			efi_set_executable(md, executable);
@@ -250,7 +248,7 @@ int __init efi_setup_page_tables(unsigned long pa_memmap, unsigned num_pages)
 	 * Map all of RAM so that we can access arguments in the 1:1
 	 * mapping when making EFI runtime calls.
 	 */
-	for_each_efi_memory_desc(&memmap, md) {
+	for_each_efi_memory_desc(md) {
 		if (md->type != EFI_CONVENTIONAL_MEMORY &&
 		    md->type != EFI_LOADER_DATA &&
 		    md->type != EFI_LOADER_CODE)
