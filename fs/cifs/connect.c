@@ -98,6 +98,7 @@ enum {
 	Opt_cruid, Opt_gid, Opt_file_mode,
 	Opt_dirmode, Opt_port,
 	Opt_rsize, Opt_wsize, Opt_actimeo,
+	Opt_snapshot,
 
 	/* Mount options which take string value */
 	Opt_user, Opt_pass, Opt_ip,
@@ -191,6 +192,7 @@ static const match_table_t cifs_mount_option_tokens = {
 	{ Opt_rsize, "rsize=%s" },
 	{ Opt_wsize, "wsize=%s" },
 	{ Opt_actimeo, "actimeo=%s" },
+	{ Opt_snapshot, "snapshot=%s" },
 
 	{ Opt_blank_user, "user=" },
 	{ Opt_blank_user, "username=" },
@@ -1588,6 +1590,14 @@ cifs_parse_mount_options(const char *mountdata, const char *devname,
 				goto cifs_parse_mount_err;
 			}
 			break;
+		case Opt_snapshot:
+			if (get_option_ul(args, &option)) {
+				cifs_dbg(VFS, "%s: Invalid snapshot time\n",
+					 __func__);
+				goto cifs_parse_mount_err;
+			}
+			vol->snapshot_time = option;
+			break;
 
 		/* String Arguments */
 
@@ -2572,7 +2582,7 @@ static int match_tcon(struct cifs_tcon *tcon, const char *unc)
 }
 
 static struct cifs_tcon *
-cifs_find_tcon(struct cifs_ses *ses, const char *unc)
+cifs_find_tcon(struct cifs_ses *ses, struct smb_vol *volume_info)
 {
 	struct list_head *tmp;
 	struct cifs_tcon *tcon;
@@ -2580,8 +2590,14 @@ cifs_find_tcon(struct cifs_ses *ses, const char *unc)
 	spin_lock(&cifs_tcp_ses_lock);
 	list_for_each(tmp, &ses->tcon_list) {
 		tcon = list_entry(tmp, struct cifs_tcon, tcon_list);
-		if (!match_tcon(tcon, unc))
+		if (!match_tcon(tcon, volume_info->UNC))
 			continue;
+
+#ifdef CONFIG_CIFS_SMB2
+		if (tcon->snapshot_time != volume_info->snapshot_time)
+			continue;
+#endif /* CONFIG_CIFS_SMB2 */
+
 		++tcon->tc_count;
 		spin_unlock(&cifs_tcp_ses_lock);
 		return tcon;
@@ -2622,7 +2638,7 @@ cifs_get_tcon(struct cifs_ses *ses, struct smb_vol *volume_info)
 	int rc, xid;
 	struct cifs_tcon *tcon;
 
-	tcon = cifs_find_tcon(ses, volume_info->UNC);
+	tcon = cifs_find_tcon(ses, volume_info);
 	if (tcon) {
 		cifs_dbg(FYI, "Found match on UNC path\n");
 		/* existing tcon already has a reference */
@@ -2641,6 +2657,22 @@ cifs_get_tcon(struct cifs_ses *ses, struct smb_vol *volume_info)
 	if (tcon == NULL) {
 		rc = -ENOMEM;
 		goto out_fail;
+	}
+
+	if (volume_info->snapshot_time) {
+#ifdef CONFIG_CIFS_SMB2
+		if (ses->server->vals->protocol_id == 0) {
+			cifs_dbg(VFS,
+			     "Use SMB2 or later for snapshot mount option\n");
+			rc = -EOPNOTSUPP;
+			goto out_fail;
+		} else
+			tcon->snapshot_time = volume_info->snapshot_time;
+#else
+		cifs_dbg(VFS, "Snapshot mount option requires SMB2 support\n");
+		rc = -EOPNOTSUPP;
+		goto out_fail;
+#endif /* CONFIG_CIFS_SMB2 */
 	}
 
 	tcon->ses = ses;
