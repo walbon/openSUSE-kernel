@@ -1111,6 +1111,8 @@ void __init setup_arch(char **cmdline_p)
 	if (efi_enabled(EFI_MEMMAP)) {
 		efi_fake_memmap();
 		efi_find_mirror();
+		efi_esrt_init();
+
 		/*
 		 * The EFI specification says that boot service code won't be
 		 * called after ExitBootServices(). This is, in fact, a lie.
