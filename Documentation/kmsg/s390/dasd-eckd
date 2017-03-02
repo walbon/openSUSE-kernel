@@ -2098,3 +2098,56 @@
  * User action:
  * None.
  */
+
+/*?
+ * Text: "%s: High Performance FICON disabled\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the DASD
+ * Description:
+ * High Performance FICON (HPF) has been disabled. Either the device
+ * lost HPF functionality, or none of the remaining channel paths are
+ * HPF capable.
+ * User action:
+ * Report the problem to your support organization.
+ * Ensure that the cabling between the storage server and the mainframe
+ * system is securely in place.
+ * Reset the device and channel paths by writing "all" or a logical path mask
+ * to the path_reset sysfs attribute of the device.
+ */
+
+/*?
+ * Text: "%s: Channel path %02X lost HPF functionality and is disabled\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the DASD
+ *   @2: logical path mask
+ * Description:
+ * A channel path has lost High Performance FICON (HPF) functionality
+ * and was removed from regular operations.
+ * User action:
+ * Report the problem to your support organization.
+ * Ensure that the cabling between the storage server and the mainframe
+ * system is securely in place.
+ * Reset the device and channel paths by writing "all" or a logical path mask
+ * to the path_reset sysfs attribute of the device.
+ */
+
+/*?
+ * Text: "%s: Path %x.%02x (pathmask %02x) is disabled - IFCC threshold exceeded\n"
+ * Severity: Error
+ * Parameter:
+ *   @1: bus ID of the DASD
+ *   @2: cssid
+ *   @3: chpid
+ *   @4: logical path mask
+ * Description:
+ * Due to numerous interface or channel control checks (IFCCs), a channel path
+ * was removed from regular operations to retain good I/O performance.
+ * User action:
+ * Ensure that the cabling between the storage server and the mainframe
+ * system is securely in place.
+ * Reset the device and channel paths by writing "all" or a logical path mask
+ * to the path_reset sysfs attribute of the device.
+ * If the problem persists, report it to your support organization.
+ */

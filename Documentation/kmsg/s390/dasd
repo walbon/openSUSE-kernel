@@ -49,6 +49,18 @@
  */
 
 /*?
+ * Text: "%s: The specified DASD is a partition and cannot be checked\n"
+ * Severity: Warning
+ * Parameter:
+ *   @1: bus ID of the DASD
+ * Description:
+ * The DASD you try to check is a partition. Partitions cannot be checked
+ * separately. You can only check a complete DASD including all its partitions.
+ * User action:
+ * Check the complete DASD.
+ */
+
+/*?
  * Text: "%s: Formatting unit %d failed with rc=%d\n"
  * Severity: Error
  * Parameter:
