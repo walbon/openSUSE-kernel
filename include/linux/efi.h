@@ -664,6 +664,10 @@ void efi_native_runtime_setup(void);
 	EFI_GUID(0xd3b36f2c, 0xd551, 0x11d4, \
 		 0x9a, 0x46, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d)
 
+#define EFI_MEMORY_ATTRIBUTES_TABLE_GUID \
+	EFI_GUID(0xdcfa911d, 0x26eb, 0x469f, \
+		 0xa2, 0x20, 0x38, 0xb7, 0xdc, 0x46, 0x12, 0x20)
+
 typedef struct {
 	efi_guid_t guid;
 	u64 table;
@@ -905,6 +909,14 @@ typedef struct {
 	/* efi_signature_data_t signatures[][] */
 } efi_signature_list_t;
 
+typedef struct {
+	u32 version;
+	u32 num_entries;
+	u32 desc_size;
+	u32 reserved;
+	efi_memory_desc_t entry[0];
+} efi_memory_attributes_table_t;
+
 /*
  * All runtime access to EFI goes through this structure:
  */
@@ -926,6 +938,7 @@ extern struct efi {
 	unsigned long config_table;	/* config tables */
 	unsigned long esrt;		/* ESRT table */
 	unsigned long properties_table;	/* properties table */
+	unsigned long mem_attr_table;	/* memory attributes table */
 	efi_get_time_t *get_time;
 	efi_set_time_t *set_time;
 	efi_get_wakeup_time_t *get_wakeup_time;
