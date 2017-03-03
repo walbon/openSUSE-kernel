@@ -1307,17 +1307,21 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 {
 	const char *algo = crypto_tfm_alg_driver_name(crypto_acomp_tfm(tfm));
 	unsigned int i;
-	char output[COMP_BUF_SIZE];
+	char *output;
 	int ret;
 	struct scatterlist src, dst;
 	struct acomp_req *req;
 	struct tcrypt_result result;
 
+	output = kmalloc(COMP_BUF_SIZE, GFP_KERNEL);
+	if (!output)
+		return -ENOMEM;
+
 	for (i = 0; i < ctcount; i++) {
 		unsigned int dlen = COMP_BUF_SIZE;
 		int ilen = ctemplate[i].inlen;
 
-		memset(output, 0, sizeof(output));
+		memset(output, 0, dlen);
 		init_completion(&result.completion);
 		sg_init_one(&src, ctemplate[i].input, ilen);
 		sg_init_one(&dst, output, dlen);
@@ -1366,7 +1370,7 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 		unsigned int dlen = COMP_BUF_SIZE;
 		int ilen = dtemplate[i].inlen;
 
-		memset(output, 0, sizeof(output));
+		memset(output, 0, dlen);
 		init_completion(&result.completion);
 		sg_init_one(&src, dtemplate[i].input, ilen);
 		sg_init_one(&dst, output, dlen);
@@ -1414,6 +1418,7 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 	ret = 0;
 
 out:
+	kfree(output);
 	return ret;
 }
 
