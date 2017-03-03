@@ -398,7 +398,8 @@ static int mii_probe(struct net_device *dev, int phy_mode)
 
 	/* search for connected PHY device */
 	for (i = 0; i < PHY_MAX_ADDR; ++i) {
-		struct phy_device *const tmp_phydev = lp->mii_bus->phy_map[i];
+		struct phy_device *const tmp_phydev =
+			mdiobus_get_phy(lp->mii_bus, i);
 
 		if (!tmp_phydev)
 			continue; /* no PHY here... */
@@ -444,10 +445,8 @@ static int mii_probe(struct net_device *dev, int phy_mode)
 	lp->old_duplex = -1;
 	lp->phydev = phydev;
 
-	pr_info("attached PHY driver [%s] "
-	        "(mii_bus:phy_addr=%s, irq=%d, mdc_clk=%dHz(mdc_div=%d)@sclk=%dMHz)\n",
-		phydev->drv->name, phydev_name(phydev), phydev->irq,
-	        MDC_CLK, mdc_div, sclk/1000000);
+	phy_attached_print(phydev, "mdc_clk=%dHz(mdc_div=%d)@sclk=%dMHz)\n",
+			   MDC_CLK, mdc_div, sclk / 1000000);
 
 	return 0;
 }
@@ -1857,7 +1856,7 @@ static int bfin_mii_bus_probe(struct platform_device *pdev)
 	rc = mdiobus_register(miibus);
 	if (rc) {
 		dev_err(&pdev->dev, "Cannot register MDIO bus!\n");
-		goto out_err_alloc;
+		goto out_err_irq_alloc;
 	}
 
 	platform_set_drvdata(pdev, miibus);

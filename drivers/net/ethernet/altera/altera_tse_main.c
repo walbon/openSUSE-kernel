@@ -193,7 +193,6 @@ static void altera_tse_mdio_destroy(struct net_device *dev)
 			    priv->mdio->id);
 
 	mdiobus_unregister(priv->mdio);
-	kfree(priv->mdio->irq);
 	mdiobus_free(priv->mdio);
 	priv->mdio = NULL;
 }
@@ -844,7 +843,7 @@ static int init_phy(struct net_device *dev)
 	}
 
 	netdev_dbg(dev, "attached to PHY %d UID 0x%08x Link = %d\n",
-		   phydev->addr, phydev->phy_id, phydev->link);
+		   phydev->mdio.addr, phydev->phy_id, phydev->link);
 
 	priv->phydev = phydev;
 	return 0;

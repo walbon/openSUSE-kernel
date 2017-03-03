@@ -44,7 +44,7 @@ static int smsc_phy_ack_interrupt(struct phy_device *phydev)
 static int smsc_phy_config_init(struct phy_device *phydev)
 {
 	int __maybe_unused len;
-	struct device *dev __maybe_unused = &phydev->dev;
+	struct device *dev __maybe_unused = &phydev->mdio.dev;
 	struct device_node *of_node __maybe_unused = dev->of_node;
 	int rc = phy_read(phydev, MII_LAN83C185_CTRL_STATUS);
 	int enable_energy = 1;
@@ -170,8 +170,6 @@ static struct phy_driver smsc_phy_driver[] = {
 
 	.suspend	= genphy_suspend,
 	.resume		= genphy_resume,
-
-	.driver		= { .owner = THIS_MODULE, }
 }, {
 	.phy_id		= 0x0007c0b0, /* OUI=0x00800f, Model#=0x0b */
 	.phy_id_mask	= 0xfffffff0,
@@ -192,8 +190,6 @@ static struct phy_driver smsc_phy_driver[] = {
 
 	.suspend	= genphy_suspend,
 	.resume		= genphy_resume,
-
-	.driver		= { .owner = THIS_MODULE, }
 }, {
 	.phy_id		= 0x0007c0c0, /* OUI=0x00800f, Model#=0x0c */
 	.phy_id_mask	= 0xfffffff0,
@@ -214,8 +210,6 @@ static struct phy_driver smsc_phy_driver[] = {
 
 	.suspend	= genphy_suspend,
 	.resume		= genphy_resume,
-
-	.driver		= { .owner = THIS_MODULE, }
 }, {
 	.phy_id		= 0x0007c0d0, /* OUI=0x00800f, Model#=0x0d */
 	.phy_id_mask	= 0xfffffff0,
@@ -235,8 +229,6 @@ static struct phy_driver smsc_phy_driver[] = {
 
 	.suspend	= genphy_suspend,
 	.resume		= genphy_resume,
-
-	.driver		= { .owner = THIS_MODULE, }
 }, {
 	.phy_id		= 0x0007c0f0, /* OUI=0x00800f, Model#=0x0f */
 	.phy_id_mask	= 0xfffffff0,
@@ -257,8 +249,6 @@ static struct phy_driver smsc_phy_driver[] = {
 
 	.suspend	= genphy_suspend,
 	.resume		= genphy_resume,
-
-	.driver		= { .owner = THIS_MODULE, }
 } };
 
 module_phy_driver(smsc_phy_driver);
