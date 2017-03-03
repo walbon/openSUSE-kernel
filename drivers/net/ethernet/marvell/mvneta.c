@@ -4116,6 +4116,7 @@ static int mvneta_probe(struct platform_device *pdev)
 			pp->bm_priv = NULL;
 		}
 	}
+	of_node_put(bm_node);
 
 	err = mvneta_init(&pdev->dev, pp);
 	if (err < 0)
