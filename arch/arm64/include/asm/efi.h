@@ -2,7 +2,9 @@
 #define _ASM_EFI_H
 
 #include <asm/io.h>
+#include <asm/mmu_context.h>
 #include <asm/neon.h>
+#include <asm/tlbflush.h>
 #include <asm/ptrace.h>
 
 #ifdef CONFIG_EFI
@@ -10,6 +12,10 @@ extern void efi_init(void);
 #else
 #define efi_init()
 #endif
+
+int efi_create_mapping(struct mm_struct *mm, efi_memory_desc_t *md);
+
+#define efi_set_mapping_permissions	efi_create_mapping
 
 #define arch_efi_call_virt_setup()					\
 ({									\
@@ -67,6 +73,11 @@ static inline void efifb_setup_from_dmi(struct screen_info *si, const char *opt)
  *   into a private set of page tables. If this all succeeds, the Runtime
  *   Services are enabled and the EFI_RUNTIME_SERVICES bit set.
  */
+
+static inline void efi_set_pgd(struct mm_struct *mm)
+{
+	switch_mm(NULL, mm, NULL);
+}
 
 void efi_virtmap_load(void);
 void efi_virtmap_unload(void);
