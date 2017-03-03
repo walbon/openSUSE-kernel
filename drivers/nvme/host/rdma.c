@@ -12,13 +12,11 @@
  * more details.
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-#include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/string.h>
-#include <linux/jiffies.h>
 #include <linux/atomic.h>
 #include <linux/blk-mq.h>
 #include <linux/types.h>
@@ -26,7 +24,6 @@
 #include <linux/mutex.h>
 #include <linux/scatterlist.h>
 #include <linux/nvme.h>
-#include <linux/t10-pi.h>
 #include <asm/unaligned.h>
 
 #include <rdma/ib_verbs.h>
@@ -45,10 +42,6 @@
 #define NVME_RDMA_MAX_SEGMENTS		256
 
 #define NVME_RDMA_MAX_INLINE_SEGMENTS	1
-
-#define NVME_RDMA_MAX_PAGES_PER_MR	512
-
-#define NVME_RDMA_DEF_RECONNECT_DELAY	20
 
 /*
  * We handle AEN commands ourselves and don't even let the
@@ -73,13 +66,13 @@ struct nvme_rdma_qe {
 
 struct nvme_rdma_queue;
 struct nvme_rdma_request {
+	struct nvme_request	req;
 	struct ib_mr		*mr;
 	struct nvme_rdma_qe	sqe;
 	struct ib_sge		sge[1 + NVME_RDMA_MAX_INLINE_SEGMENTS];
 	u32			num_sge;
 	int			nents;
 	bool			inline_data;
-	bool			need_inval;
 	struct ib_reg_wr	reg_wr;
 	struct ib_cqe		reg_cqe;
 	struct nvme_rdma_queue  *queue;
@@ -91,6 +84,7 @@ enum nvme_rdma_queue_flags {
 	NVME_RDMA_Q_CONNECTED = (1 << 0),
 	NVME_RDMA_IB_QUEUE_ALLOCATED = (1 << 1),
 	NVME_RDMA_Q_DELETING = (1 << 2),
+	NVME_RDMA_Q_LIVE = (1 << 3),
 };
 
 struct nvme_rdma_queue {
@@ -291,7 +285,7 @@ static int nvme_rdma_reinit_request(void *data, struct request *rq)
 	struct nvme_rdma_request *req = blk_mq_rq_to_pdu(rq);
 	int ret = 0;
 
-	if (!req->need_inval)
+	if (!req->mr->need_inval)
 		goto out;
 
 	ib_dereg_mr(req->mr);
@@ -304,7 +298,7 @@ static int nvme_rdma_reinit_request(void *data, struct request *rq)
 		goto out;
 	}
 
-	req->need_inval = false;
+	req->mr->need_inval = false;
 
 out:
 	return ret;
@@ -477,9 +471,14 @@ out_err:
 
 static void nvme_rdma_destroy_queue_ib(struct nvme_rdma_queue *queue)
 {
-	struct nvme_rdma_device *dev = queue->device;
-	struct ib_device *ibdev = dev->dev;
+	struct nvme_rdma_device *dev;
+	struct ib_device *ibdev;
 
+	if (!test_and_clear_bit(NVME_RDMA_IB_QUEUE_ALLOCATED, &queue->flags))
+		return;
+
+	dev = queue->device;
+	ibdev = dev->dev;
 	rdma_destroy_qp(queue->cm_id);
 	ib_free_cq(queue->ib_cq);
 
@@ -530,6 +529,7 @@ static int nvme_rdma_create_queue_ib(struct nvme_rdma_queue *queue,
 		ret = -ENOMEM;
 		goto out_destroy_qp;
 	}
+	set_bit(NVME_RDMA_IB_QUEUE_ALLOCATED, &queue->flags);
 
 	return 0;
 
@@ -588,6 +588,7 @@ static int nvme_rdma_init_queue(struct nvme_rdma_ctrl *ctrl,
 	return 0;
 
 out_destroy_cm_id:
+	nvme_rdma_destroy_queue_ib(queue);
 	rdma_destroy_id(queue->cm_id);
 	return ret;
 }
@@ -626,10 +627,18 @@ static int nvme_rdma_connect_io_queues(struct nvme_rdma_ctrl *ctrl)
 
 	for (i = 1; i < ctrl->queue_count; i++) {
 		ret = nvmf_connect_io_queue(&ctrl->ctrl, i);
-		if (ret)
-			break;
+		if (ret) {
+			dev_info(ctrl->ctrl.device,
+				"failed to connect i/o queue: %d\n", ret);
+			goto out_free_queues;
+		}
+		set_bit(NVME_RDMA_Q_LIVE, &ctrl->queues[i].flags);
 	}
 
+	return 0;
+
+out_free_queues:
+	nvme_rdma_free_io_queues(ctrl);
 	return ret;
 }
 
@@ -638,7 +647,8 @@ static int nvme_rdma_init_io_queues(struct nvme_rdma_ctrl *ctrl)
 	int i, ret;
 
 	for (i = 1; i < ctrl->queue_count; i++) {
-		ret = nvme_rdma_init_queue(ctrl, i, ctrl->ctrl.sqsize);
+		ret = nvme_rdma_init_queue(ctrl, i,
+					   ctrl->ctrl.opts->queue_size);
 		if (ret) {
 			dev_info(ctrl->ctrl.device,
 				"failed to initialize i/o queue: %d\n", ret);
@@ -649,7 +659,7 @@ static int nvme_rdma_init_io_queues(struct nvme_rdma_ctrl *ctrl)
 	return 0;
 
 out_free_queues:
-	for (; i >= 1; i--)
+	for (i--; i >= 1; i--)
 		nvme_rdma_stop_and_free_queue(&ctrl->queues[i]);
 
 	return ret;
@@ -718,6 +728,8 @@ static void nvme_rdma_reconnect_ctrl_work(struct work_struct *work)
 	if (ret)
 		goto stop_admin_q;
 
+	set_bit(NVME_RDMA_Q_LIVE, &ctrl->queues[0].flags);
+
 	ret = nvme_enable_ctrl(&ctrl->ctrl, ctrl->cap);
 	if (ret)
 		goto stop_admin_q;
@@ -737,8 +749,11 @@ static void nvme_rdma_reconnect_ctrl_work(struct work_struct *work)
 	changed = nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_LIVE);
 	WARN_ON_ONCE(!changed);
 
-	if (ctrl->queue_count > 1)
+	if (ctrl->queue_count > 1) {
 		nvme_start_queues(&ctrl->ctrl);
+		nvme_queue_scan(&ctrl->ctrl);
+		nvme_queue_async_events(&ctrl->ctrl);
+	}
 
 	dev_info(ctrl->ctrl.device, "Successfully reconnected\n");
 
@@ -764,8 +779,10 @@ static void nvme_rdma_error_recovery_work(struct work_struct *work)
 
 	nvme_stop_keep_alive(&ctrl->ctrl);
 
-	for (i = 0; i < ctrl->queue_count; i++)
+	for (i = 0; i < ctrl->queue_count; i++) {
 		clear_bit(NVME_RDMA_Q_CONNECTED, &ctrl->queues[i].flags);
+		clear_bit(NVME_RDMA_Q_LIVE, &ctrl->queues[i].flags);
+	}
 
 	if (ctrl->queue_count > 1)
 		nvme_stop_queues(&ctrl->ctrl);
@@ -849,7 +866,7 @@ static void nvme_rdma_unmap_data(struct nvme_rdma_queue *queue,
 	if (!blk_rq_bytes(rq))
 		return;
 
-	if (req->need_inval) {
+	if (req->mr->need_inval) {
 		res = nvme_rdma_inv_rkey(queue, req);
 		if (res < 0) {
 			dev_err(ctrl->ctrl.device,
@@ -935,7 +952,7 @@ static int nvme_rdma_map_sg_fr(struct nvme_rdma_queue *queue,
 			     IB_ACCESS_REMOTE_READ |
 			     IB_ACCESS_REMOTE_WRITE;
 
-	req->need_inval = true;
+	req->mr->need_inval = true;
 
 	sg->addr = cpu_to_le64(req->mr->iova);
 	put_unaligned_le24(req->mr->length, sg->length);
@@ -958,7 +975,7 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 
 	req->num_sge = 1;
 	req->inline_data = false;
-	req->need_inval = false;
+	req->mr->need_inval = false;
 
 	c->common.flags |= NVME_CMD_SGL_METABUF;
 
@@ -1120,12 +1137,9 @@ static void nvme_rdma_submit_async_event(struct nvme_ctrl *arg, int aer_idx)
 static int nvme_rdma_process_nvme_rsp(struct nvme_rdma_queue *queue,
 		struct nvme_completion *cqe, struct ib_wc *wc, int tag)
 {
-	u16 status = le16_to_cpu(cqe->status);
 	struct request *rq;
 	struct nvme_rdma_request *req;
 	int ret = 0;
-
-	status >>= 1;
 
 	rq = blk_mq_tag_to_rq(nvme_rdma_tagset(queue), cqe->command_id);
 	if (!rq) {
@@ -1137,18 +1151,15 @@ static int nvme_rdma_process_nvme_rsp(struct nvme_rdma_queue *queue,
 	}
 	req = blk_mq_rq_to_pdu(rq);
 
-	if (rq->cmd_type == REQ_TYPE_DRV_PRIV && rq->special)
-		memcpy(rq->special, cqe, sizeof(*cqe));
-
 	if (rq->tag == tag)
 		ret = 1;
 
 	if ((wc->wc_flags & IB_WC_WITH_INVALIDATE) &&
 	    wc->ex.invalidate_rkey == req->mr->rkey)
-		req->need_inval = false;
+		req->mr->need_inval = false;
 
-	blk_mq_complete_request(rq, status);
-
+	req->req.result = cqe->result;
+	blk_mq_complete_request(rq, le16_to_cpu(cqe->status) >> 1);
 	return ret;
 }
 
@@ -1176,7 +1187,8 @@ static int __nvme_rdma_recv_done(struct ib_cq *cq, struct ib_wc *wc, int tag)
 	 */
 	if (unlikely(nvme_rdma_queue_idx(queue) == 0 &&
 			cqe->command_id >= NVME_RDMA_AQ_BLKMQ_DEPTH))
-		nvme_complete_async_event(&queue->ctrl->ctrl, cqe);
+		nvme_complete_async_event(&queue->ctrl->ctrl, cqe->status,
+				&cqe->result);
 	else
 		ret = nvme_rdma_process_nvme_rsp(queue, cqe, wc, tag);
 	ib_dma_sync_single_for_device(ibdev, qe->dma, len, DMA_FROM_DEVICE);
@@ -1278,8 +1290,22 @@ static int nvme_rdma_route_resolved(struct nvme_rdma_queue *queue)
 
 	priv.recfmt = cpu_to_le16(NVME_RDMA_CM_FMT_1_0);
 	priv.qid = cpu_to_le16(nvme_rdma_queue_idx(queue));
-	priv.hrqsize = cpu_to_le16(queue->queue_size);
-	priv.hsqsize = cpu_to_le16(queue->queue_size);
+	/*
+	 * set the admin queue depth to the minimum size
+	 * specified by the Fabrics standard.
+	 */
+	if (priv.qid == 0) {
+		priv.hrqsize = cpu_to_le16(NVMF_AQ_DEPTH);
+		priv.hsqsize = cpu_to_le16(NVMF_AQ_DEPTH - 1);
+	} else {
+		/*
+		 * current interpretation of the fabrics spec
+		 * is at minimum you make hrqsize sqsize+1, or a
+		 * 1's based representation of sqsize.
+		 */
+		priv.hrqsize = cpu_to_le16(queue->queue_size);
+		priv.hsqsize = cpu_to_le16(queue->ctrl->ctrl.sqsize);
+	}
 
 	ret = rdma_connect(queue->cm_id, &param);
 	if (ret) {
@@ -1367,6 +1393,24 @@ nvme_rdma_timeout(struct request *rq, bool reserved)
 	return BLK_EH_HANDLED;
 }
 
+/*
+ * We cannot accept any other command until the Connect command has completed.
+ */
+static inline bool nvme_rdma_queue_is_ready(struct nvme_rdma_queue *queue,
+		struct request *rq)
+{
+	if (unlikely(!test_bit(NVME_RDMA_Q_LIVE, &queue->flags))) {
+		struct nvme_command *cmd = (struct nvme_command *)rq->cmd;
+
+		if (rq->cmd_type != REQ_TYPE_DRV_PRIV ||
+		    cmd->common.opcode != nvme_fabrics_command ||
+		    cmd->fabrics.fctype != nvme_fabrics_type_connect)
+			return false;
+	}
+
+	return true;
+}
+
 static int nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 		const struct blk_mq_queue_data *bd)
 {
@@ -1383,12 +1427,15 @@ static int nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 
 	WARN_ON_ONCE(rq->tag < 0);
 
+	if (!nvme_rdma_queue_is_ready(queue, rq))
+		return BLK_MQ_RQ_QUEUE_BUSY;
+
 	dev = queue->device->dev;
 	ib_dma_sync_single_for_cpu(dev, sqe->dma,
 			sizeof(struct nvme_command), DMA_TO_DEVICE);
 
 	ret = nvme_setup_cmd(ns, rq, c);
-	if (ret)
+	if (ret != BLK_MQ_RQ_QUEUE_OK)
 		return ret;
 
 	c->common.command_id = rq->tag;
@@ -1409,7 +1456,7 @@ static int nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 	if (rq->cmd_type == REQ_TYPE_FS && req_op(rq) == REQ_OP_FLUSH)
 		flush = true;
 	ret = nvme_rdma_post_send(queue, sqe, req->sge, req->num_sge,
-			req->need_inval ? &req->reg_wr.wr : NULL, flush);
+			req->mr->need_inval ? &req->reg_wr.wr : NULL, flush);
 	if (ret) {
 		nvme_rdma_unmap_data(queue, rq);
 		goto err;
@@ -1533,6 +1580,8 @@ static int nvme_rdma_configure_admin_queue(struct nvme_rdma_ctrl *ctrl)
 	if (error)
 		goto out_cleanup_queue;
 
+	set_bit(NVME_RDMA_Q_LIVE, &ctrl->queues[0].flags);
+
 	error = nvmf_reg_read64(&ctrl->ctrl, NVME_REG_CAP, &ctrl->cap);
 	if (error) {
 		dev_err(ctrl->ctrl.device,
@@ -1624,15 +1673,19 @@ static int __nvme_rdma_del_ctrl(struct nvme_rdma_ctrl *ctrl)
 static int nvme_rdma_del_ctrl(struct nvme_ctrl *nctrl)
 {
 	struct nvme_rdma_ctrl *ctrl = to_rdma_ctrl(nctrl);
-	int ret;
+	int ret = 0;
 
+	/*
+	 * Keep a reference until all work is flushed since
+	 * __nvme_rdma_del_ctrl can free the ctrl mem
+	 */
+	if (!kref_get_unless_zero(&ctrl->ctrl.kref))
+		return -EBUSY;
 	ret = __nvme_rdma_del_ctrl(ctrl);
-	if (ret)
-		return ret;
-
-	flush_work(&ctrl->delete_work);
-
-	return 0;
+	if (!ret)
+		flush_work(&ctrl->delete_work);
+	nvme_put_ctrl(&ctrl->ctrl);
+	return ret;
 }
 
 static void nvme_rdma_remove_ctrl_work(struct work_struct *work)
@@ -1681,6 +1734,7 @@ static void nvme_rdma_reset_ctrl_work(struct work_struct *work)
 	if (ctrl->queue_count > 1) {
 		nvme_start_queues(&ctrl->ctrl);
 		nvme_queue_scan(&ctrl->ctrl);
+		nvme_queue_async_events(&ctrl->ctrl);
 	}
 
 	return;
@@ -1751,7 +1805,7 @@ static int nvme_rdma_create_io_queues(struct nvme_rdma_ctrl *ctrl)
 
 	memset(&ctrl->tag_set, 0, sizeof(ctrl->tag_set));
 	ctrl->tag_set.ops = &nvme_rdma_mq_ops;
-	ctrl->tag_set.queue_depth = ctrl->ctrl.sqsize;
+	ctrl->tag_set.queue_depth = ctrl->ctrl.opts->queue_size;
 	ctrl->tag_set.reserved_tags = 1; /* fabric connect */
 	ctrl->tag_set.numa_node = NUMA_NO_NODE;
 	ctrl->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
@@ -1849,7 +1903,7 @@ static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 	spin_lock_init(&ctrl->lock);
 
 	ctrl->queue_count = opts->nr_io_queues + 1; /* +1 for admin queue */
-	ctrl->ctrl.sqsize = opts->queue_size;
+	ctrl->ctrl.sqsize = opts->queue_size - 1;
 	ctrl->ctrl.kato = opts->kato;
 
 	ret = -ENOMEM;

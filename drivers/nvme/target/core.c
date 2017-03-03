@@ -13,6 +13,7 @@
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/module.h>
+#include <linux/random.h>
 #include "nvmet.h"
 
 static struct nvmet_fabrics_ops *nvmet_transports[NVMF_TRTYPE_MAX];
@@ -616,7 +617,7 @@ u16 nvmet_ctrl_find_get(const char *subsysnqn, const char *hostnqn, u16 cntlid,
 	if (!subsys) {
 		pr_warn("connect request for invalid subsystem %s!\n",
 			subsysnqn);
-		req->rsp->result = IPO_IATTR_CONNECT_DATA(subsysnqn);
+		req->rsp->result.u32 = IPO_IATTR_CONNECT_DATA(subsysnqn);
 		return NVME_SC_CONNECT_INVALID_PARAM | NVME_SC_DNR;
 	}
 
@@ -637,7 +638,7 @@ u16 nvmet_ctrl_find_get(const char *subsysnqn, const char *hostnqn, u16 cntlid,
 
 	pr_warn("could not find controller %d for subsys %s / host %s\n",
 		cntlid, subsysnqn, hostnqn);
-	req->rsp->result = IPO_IATTR_CONNECT_DATA(cntlid);
+	req->rsp->result.u32 = IPO_IATTR_CONNECT_DATA(cntlid);
 	status = NVME_SC_CONNECT_INVALID_PARAM | NVME_SC_DNR;
 
 out:
@@ -699,7 +700,7 @@ u16 nvmet_alloc_ctrl(const char *subsysnqn, const char *hostnqn,
 	if (!subsys) {
 		pr_warn("connect request for invalid subsystem %s!\n",
 			subsysnqn);
-		req->rsp->result = IPO_IATTR_CONNECT_DATA(subsysnqn);
+		req->rsp->result.u32 = IPO_IATTR_CONNECT_DATA(subsysnqn);
 		goto out;
 	}
 
@@ -708,7 +709,7 @@ u16 nvmet_alloc_ctrl(const char *subsysnqn, const char *hostnqn,
 	if (!nvmet_host_allowed(req, subsys, hostnqn)) {
 		pr_info("connect by host %s for subsystem %s not allowed\n",
 			hostnqn, subsysnqn);
-		req->rsp->result = IPO_IATTR_CONNECT_DATA(hostnqn);
+		req->rsp->result.u32 = IPO_IATTR_CONNECT_DATA(hostnqn);
 		up_read(&nvmet_config_sem);
 		goto out_put_subsystem;
 	}
@@ -727,6 +728,9 @@ u16 nvmet_alloc_ctrl(const char *subsysnqn, const char *hostnqn,
 
 	memcpy(ctrl->subsysnqn, subsysnqn, NVMF_NQN_SIZE);
 	memcpy(ctrl->hostnqn, hostnqn, NVMF_NQN_SIZE);
+
+	/* generate a random serial number as our controllers are ephemeral: */
+	get_random_bytes(&ctrl->serial, sizeof(ctrl->serial));
 
 	kref_init(&ctrl->ref);
 	ctrl->subsys = subsys;
@@ -834,9 +838,13 @@ static void nvmet_fatal_error_handler(struct work_struct *work)
 
 void nvmet_ctrl_fatal_error(struct nvmet_ctrl *ctrl)
 {
-	ctrl->csts |= NVME_CSTS_CFS;
-	INIT_WORK(&ctrl->fatal_err_work, nvmet_fatal_error_handler);
-	schedule_work(&ctrl->fatal_err_work);
+	mutex_lock(&ctrl->lock);
+	if (!(ctrl->csts & NVME_CSTS_CFS)) {
+		ctrl->csts |= NVME_CSTS_CFS;
+		INIT_WORK(&ctrl->fatal_err_work, nvmet_fatal_error_handler);
+		schedule_work(&ctrl->fatal_err_work);
+	}
+	mutex_unlock(&ctrl->lock);
 }
 EXPORT_SYMBOL_GPL(nvmet_ctrl_fatal_error);
 
