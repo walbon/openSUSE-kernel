@@ -1322,13 +1322,12 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 		int ilen = ctemplate[i].inlen;
 		void *input_vec;
 
-		input_vec = kmalloc(ilen, GFP_KERNEL);
+		input_vec = kmemdup(ctemplate[i].input, ilen, GFP_KERNEL);
 		if (!input_vec) {
 			ret = -ENOMEM;
 			goto out;
 		}
 
-		memcpy(input_vec, ctemplate[i].input, ilen);
 		memset(output, 0, dlen);
 		init_completion(&result.completion);
 		sg_init_one(&src, input_vec, ilen);
@@ -1384,13 +1383,12 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 		int ilen = dtemplate[i].inlen;
 		void *input_vec;
 
-		input_vec = kmalloc(ilen, GFP_KERNEL);
+		input_vec = kmemdup(dtemplate[i].input, ilen, GFP_KERNEL);
 		if (!input_vec) {
 			ret = -ENOMEM;
 			goto out;
 		}
 
-		memcpy(input_vec, dtemplate[i].input, ilen);
 		memset(output, 0, dlen);
 		init_completion(&result.completion);
 		sg_init_one(&src, input_vec, ilen);
