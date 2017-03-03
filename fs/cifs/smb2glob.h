@@ -71,4 +71,9 @@
  */
 #define SMB2_MAX_CREDITS_AVAILABLE 32000
 
+static inline struct smb2_sync_hdr *get_sync_hdr(void *buf)
+{
+	return &(((struct smb2_hdr *)buf)->sync_hdr);
+}
+
 #endif	/* _SMB2_GLOB_H */
