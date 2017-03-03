@@ -1320,16 +1320,25 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 	for (i = 0; i < ctcount; i++) {
 		unsigned int dlen = COMP_BUF_SIZE;
 		int ilen = ctemplate[i].inlen;
+		void *input_vec;
 
+		input_vec = kmalloc(ilen, GFP_KERNEL);
+		if (!input_vec) {
+			ret = -ENOMEM;
+			goto out;
+		}
+
+		memcpy(input_vec, ctemplate[i].input, ilen);
 		memset(output, 0, dlen);
 		init_completion(&result.completion);
-		sg_init_one(&src, ctemplate[i].input, ilen);
+		sg_init_one(&src, input_vec, ilen);
 		sg_init_one(&dst, output, dlen);
 
 		req = acomp_request_alloc(tfm);
 		if (!req) {
 			pr_err("alg: acomp: request alloc failed for %s\n",
 			       algo);
+			kfree(input_vec);
 			ret = -ENOMEM;
 			goto out;
 		}
@@ -1342,6 +1351,7 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 		if (ret) {
 			pr_err("alg: acomp: compression failed on test %d for %s: ret=%d\n",
 			       i + 1, algo, -ret);
+			kfree(input_vec);
 			acomp_request_free(req);
 			goto out;
 		}
@@ -1350,6 +1360,7 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 			pr_err("alg: acomp: Compression test %d failed for %s: output len = %d\n",
 			       i + 1, algo, req->dlen);
 			ret = -EINVAL;
+			kfree(input_vec);
 			acomp_request_free(req);
 			goto out;
 		}
@@ -1359,26 +1370,37 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 			       i + 1, algo);
 			hexdump(output, req->dlen);
 			ret = -EINVAL;
+			kfree(input_vec);
 			acomp_request_free(req);
 			goto out;
 		}
 
+		kfree(input_vec);
 		acomp_request_free(req);
 	}
 
 	for (i = 0; i < dtcount; i++) {
 		unsigned int dlen = COMP_BUF_SIZE;
 		int ilen = dtemplate[i].inlen;
+		void *input_vec;
 
+		input_vec = kmalloc(ilen, GFP_KERNEL);
+		if (!input_vec) {
+			ret = -ENOMEM;
+			goto out;
+		}
+
+		memcpy(input_vec, dtemplate[i].input, ilen);
 		memset(output, 0, dlen);
 		init_completion(&result.completion);
-		sg_init_one(&src, dtemplate[i].input, ilen);
+		sg_init_one(&src, input_vec, ilen);
 		sg_init_one(&dst, output, dlen);
 
 		req = acomp_request_alloc(tfm);
 		if (!req) {
 			pr_err("alg: acomp: request alloc failed for %s\n",
 			       algo);
+			kfree(input_vec);
 			ret = -ENOMEM;
 			goto out;
 		}
@@ -1391,6 +1413,7 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 		if (ret) {
 			pr_err("alg: acomp: decompression failed on test %d for %s: ret=%d\n",
 			       i + 1, algo, -ret);
+			kfree(input_vec);
 			acomp_request_free(req);
 			goto out;
 		}
@@ -1399,6 +1422,7 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 			pr_err("alg: acomp: Decompression test %d failed for %s: output len = %d\n",
 			       i + 1, algo, req->dlen);
 			ret = -EINVAL;
+			kfree(input_vec);
 			acomp_request_free(req);
 			goto out;
 		}
@@ -1408,10 +1432,12 @@ static int test_acomp(struct crypto_acomp *tfm, struct comp_testvec *ctemplate,
 			       i + 1, algo);
 			hexdump(output, req->dlen);
 			ret = -EINVAL;
+			kfree(input_vec);
 			acomp_request_free(req);
 			goto out;
 		}
 
+		kfree(input_vec);
 		acomp_request_free(req);
 	}
 
