@@ -47,8 +47,10 @@ static struct nvmf_host *nvmf_host_add(const char *hostnqn)
 
 	mutex_lock(&nvmf_hosts_mutex);
 	host = __nvmf_host_find(hostnqn);
-	if (host)
+	if (host) {
+		kref_get(&host->ref);
 		goto out_unlock;
+	}
 
 	host = kmalloc(sizeof(*host), GFP_KERNEL);
 	if (!host)
@@ -56,7 +58,7 @@ static struct nvmf_host *nvmf_host_add(const char *hostnqn)
 
 	kref_init(&host->ref);
 	memcpy(host->nqn, hostnqn, NVMF_NQN_SIZE);
-	uuid_le_gen(&host->id);
+	uuid_be_gen(&host->id);
 
 	list_add_tail(&host->list, &nvmf_hosts);
 out_unlock:
@@ -73,9 +75,9 @@ static struct nvmf_host *nvmf_host_default(void)
 		return NULL;
 
 	kref_init(&host->ref);
-	uuid_le_gen(&host->id);
+	uuid_be_gen(&host->id);
 	snprintf(host->nqn, NVMF_NQN_SIZE,
-		"nqn.2014-08.org.nvmexpress:NVMf:uuid:%pUl", &host->id);
+		"nqn.2014-08.org.nvmexpress:NVMf:uuid:%pUb", &host->id);
 
 	mutex_lock(&nvmf_hosts_mutex);
 	list_add_tail(&host->list, &nvmf_hosts);
@@ -159,7 +161,7 @@ EXPORT_SYMBOL_GPL(nvmf_get_subsysnqn);
 int nvmf_reg_read32(struct nvme_ctrl *ctrl, u32 off, u32 *val)
 {
 	struct nvme_command cmd;
-	struct nvme_completion cqe;
+	union nvme_result res;
 	int ret;
 
 	memset(&cmd, 0, sizeof(cmd));
@@ -167,11 +169,11 @@ int nvmf_reg_read32(struct nvme_ctrl *ctrl, u32 off, u32 *val)
 	cmd.prop_get.fctype = nvme_fabrics_type_property_get;
 	cmd.prop_get.offset = cpu_to_le32(off);
 
-	ret = __nvme_submit_sync_cmd(ctrl->admin_q, &cmd, &cqe, NULL, 0, 0,
+	ret = __nvme_submit_sync_cmd(ctrl->admin_q, &cmd, &res, NULL, 0, 0,
 			NVME_QID_ANY, 0, 0);
 
 	if (ret >= 0)
-		*val = le64_to_cpu(cqe.result64);
+		*val = le64_to_cpu(res.u64);
 	if (unlikely(ret != 0))
 		dev_err(ctrl->device,
 			"Property Get error: %d, offset %#x\n",
@@ -205,7 +207,7 @@ EXPORT_SYMBOL_GPL(nvmf_reg_read32);
 int nvmf_reg_read64(struct nvme_ctrl *ctrl, u32 off, u64 *val)
 {
 	struct nvme_command cmd;
-	struct nvme_completion cqe;
+	union nvme_result res;
 	int ret;
 
 	memset(&cmd, 0, sizeof(cmd));
@@ -214,11 +216,11 @@ int nvmf_reg_read64(struct nvme_ctrl *ctrl, u32 off, u64 *val)
 	cmd.prop_get.attrib = 1;
 	cmd.prop_get.offset = cpu_to_le32(off);
 
-	ret = __nvme_submit_sync_cmd(ctrl->admin_q, &cmd, &cqe, NULL, 0, 0,
+	ret = __nvme_submit_sync_cmd(ctrl->admin_q, &cmd, &res, NULL, 0, 0,
 			NVME_QID_ANY, 0, 0);
 
 	if (ret >= 0)
-		*val = le64_to_cpu(cqe.result64);
+		*val = le64_to_cpu(res.u64);
 	if (unlikely(ret != 0))
 		dev_err(ctrl->device,
 			"Property Get error: %d, offset %#x\n",
@@ -366,7 +368,7 @@ static void nvmf_log_connect_error(struct nvme_ctrl *ctrl,
 int nvmf_connect_admin_queue(struct nvme_ctrl *ctrl)
 {
 	struct nvme_command cmd;
-	struct nvme_completion cqe;
+	union nvme_result res;
 	struct nvmf_connect_data *data;
 	int ret;
 
@@ -374,7 +376,14 @@ int nvmf_connect_admin_queue(struct nvme_ctrl *ctrl)
 	cmd.connect.opcode = nvme_fabrics_command;
 	cmd.connect.fctype = nvme_fabrics_type_connect;
 	cmd.connect.qid = 0;
-	cmd.connect.sqsize = cpu_to_le16(ctrl->sqsize);
+
+	/*
+	 * fabrics spec sets a minimum of depth 32 for admin queue,
+	 * so set the queue with this depth always until
+	 * justification otherwise.
+	 */
+	cmd.connect.sqsize = cpu_to_le16(NVMF_AQ_DEPTH - 1);
+
 	/*
 	 * Set keep-alive timeout in seconds granularity (ms * 1000)
 	 * and add a grace period for controller kato enforcement
@@ -386,21 +395,21 @@ int nvmf_connect_admin_queue(struct nvme_ctrl *ctrl)
 	if (!data)
 		return -ENOMEM;
 
-	memcpy(&data->hostid, &ctrl->opts->host->id, sizeof(uuid_le));
+	memcpy(&data->hostid, &ctrl->opts->host->id, sizeof(uuid_be));
 	data->cntlid = cpu_to_le16(0xffff);
 	strncpy(data->subsysnqn, ctrl->opts->subsysnqn, NVMF_NQN_SIZE);
 	strncpy(data->hostnqn, ctrl->opts->host->nqn, NVMF_NQN_SIZE);
 
-	ret = __nvme_submit_sync_cmd(ctrl->admin_q, &cmd, &cqe,
+	ret = __nvme_submit_sync_cmd(ctrl->admin_q, &cmd, &res,
 			data, sizeof(*data), 0, NVME_QID_ANY, 1,
 			BLK_MQ_REQ_RESERVED | BLK_MQ_REQ_NOWAIT);
 	if (ret) {
-		nvmf_log_connect_error(ctrl, ret, le32_to_cpu(cqe.result),
+		nvmf_log_connect_error(ctrl, ret, le32_to_cpu(res.u32),
 				       &cmd, data);
 		goto out_free_data;
 	}
 
-	ctrl->cntlid = le16_to_cpu(cqe.result16);
+	ctrl->cntlid = le16_to_cpu(res.u16);
 
 out_free_data:
 	kfree(data);
@@ -432,7 +441,7 @@ int nvmf_connect_io_queue(struct nvme_ctrl *ctrl, u16 qid)
 {
 	struct nvme_command cmd;
 	struct nvmf_connect_data *data;
-	struct nvme_completion cqe;
+	union nvme_result res;
 	int ret;
 
 	memset(&cmd, 0, sizeof(cmd));
@@ -445,16 +454,16 @@ int nvmf_connect_io_queue(struct nvme_ctrl *ctrl, u16 qid)
 	if (!data)
 		return -ENOMEM;
 
-	memcpy(&data->hostid, &ctrl->opts->host->id, sizeof(uuid_le));
+	memcpy(&data->hostid, &ctrl->opts->host->id, sizeof(uuid_be));
 	data->cntlid = cpu_to_le16(ctrl->cntlid);
 	strncpy(data->subsysnqn, ctrl->opts->subsysnqn, NVMF_NQN_SIZE);
 	strncpy(data->hostnqn, ctrl->opts->host->nqn, NVMF_NQN_SIZE);
 
-	ret = __nvme_submit_sync_cmd(ctrl->connect_q, &cmd, &cqe,
+	ret = __nvme_submit_sync_cmd(ctrl->connect_q, &cmd, &res,
 			data, sizeof(*data), 0, qid, 1,
 			BLK_MQ_REQ_RESERVED | BLK_MQ_REQ_NOWAIT);
 	if (ret) {
-		nvmf_log_connect_error(ctrl, ret, le32_to_cpu(cqe.result),
+		nvmf_log_connect_error(ctrl, ret, le32_to_cpu(res.u32),
 				       &cmd, data);
 	}
 	kfree(data);
