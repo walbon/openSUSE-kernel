@@ -263,8 +263,8 @@ static void ena_get_strings(struct net_device *netdev, u32 sset, u8 *data)
 	ena_com_dev_strings(&data);
 }
 
-static int ena_get_settings(struct net_device *netdev,
-			    struct ethtool_cmd *ecmd)
+static int ena_get_link_ksettings(struct net_device *netdev,
+				  struct ethtool_link_ksettings *link_ksettings)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
@@ -277,18 +277,20 @@ static int ena_get_settings(struct net_device *netdev,
 		return rc;
 
 	link = &feat_resp.u.link;
+	link_ksettings->base.speed = link->speed;
 
-	ethtool_cmd_speed_set(ecmd, link->speed);
+	if (link->flags & ENA_ADMIN_GET_FEATURE_LINK_DESC_AUTONEG_MASK) {
+		ethtool_link_ksettings_add_link_mode(link_ksettings,
+						     supported, Autoneg);
+		ethtool_link_ksettings_add_link_mode(link_ksettings,
+						     supported, Autoneg);
+	}
 
-	if (link->flags & ENA_ADMIN_GET_FEATURE_LINK_DESC_DUPLEX_MASK)
-		ecmd->duplex = DUPLEX_FULL;
-	else
-		ecmd->duplex = DUPLEX_HALF;
+	link_ksettings->base.autoneg =
+		(link->flags & ENA_ADMIN_GET_FEATURE_LINK_DESC_AUTONEG_MASK) ?
+		AUTONEG_ENABLE : AUTONEG_DISABLE;
 
-	if (link->flags & ENA_ADMIN_GET_FEATURE_LINK_DESC_AUTONEG_MASK)
-		ecmd->autoneg = AUTONEG_ENABLE;
-	else
-		ecmd->autoneg = AUTONEG_DISABLE;
+	link_ksettings->base.duplex = DUPLEX_FULL;
 
 	return 0;
 }
@@ -797,7 +799,7 @@ static int ena_set_tunable(struct net_device *netdev,
 }
 
 static const struct ethtool_ops ena_ethtool_ops = {
-	.get_settings		= ena_get_settings,
+	.get_link_ksettings	= ena_get_link_ksettings,
 	.get_drvinfo		= ena_get_drvinfo,
 	.get_msglevel		= ena_get_msglevel,
 	.set_msglevel		= ena_set_msglevel,
