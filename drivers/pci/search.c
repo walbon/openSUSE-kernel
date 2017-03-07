@@ -61,6 +61,15 @@ int pci_for_each_dma_alias(struct pci_dev *pdev,
 		tmp = bus->self;
 
 		/*
+		 * Stop at bridges where IOMMU is attached, going
+		 * further up finds invalid aliases.
+		 */
+		if (IS_ENABLED(CONFIG_ARM64) &&
+		    tmp->vendor == PCI_VENDOR_ID_BROADCOM &&
+		    (tmp->device == 0x9000 || tmp->device == 0x9084))
+			return ret;
+
+		/*
 		 * PCIe-to-PCI/X bridges alias transactions from downstream
 		 * devices using the subordinate bus number (PCI Express to
 		 * PCI/PCI-X Bridge Spec, rev 1.0, sec 2.3).  For all cases
