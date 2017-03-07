@@ -362,7 +362,6 @@ struct phy_device *of_phy_attach(struct net_device *dev,
 }
 EXPORT_SYMBOL(of_phy_attach);
 
-#if defined(CONFIG_FIXED_PHY)
 /*
  * of_phy_is_fixed_link() and of_phy_register_fixed_link() must
  * support two DT bindings:
@@ -452,4 +451,18 @@ int of_phy_register_fixed_link(struct device_node *np)
 	return -ENODEV;
 }
 EXPORT_SYMBOL(of_phy_register_fixed_link);
-#endif
+
+void of_phy_deregister_fixed_link(struct device_node *np)
+{
+	struct phy_device *phydev;
+
+	phydev = of_phy_find_device(np);
+	if (!phydev)
+		return;
+
+	fixed_phy_unregister(phydev);
+
+	put_device(&phydev->mdio.dev);	/* of_phy_find_device() */
+	phy_device_free(phydev);	/* fixed_phy_register() */
+}
+EXPORT_SYMBOL(of_phy_deregister_fixed_link);

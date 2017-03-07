@@ -652,7 +652,7 @@ static void mvneta_mib_counters_clear(struct mvneta_port *pp)
 }
 
 /* Get System Network Statistics */
-static struct rtnl_link_stats64 *
+static void
 mvneta_get_stats64(struct net_device *dev,
 		   struct rtnl_link_stats64 *stats)
 {
