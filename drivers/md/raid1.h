@@ -45,12 +45,10 @@ struct r1_private_data_s {
 	int			nr_queued;
 	atomic_t		barrier;
 	sector_t		next_resync;
-	unsigned long		flags;
-#define R1FLAG_ARRAY_FROZEN 0
-	/* Set if a full sync is needed, (fresh device added).
-	* Cleared when a sync completes.
-	*/
-#define R1FLAG_FULLSYNC 1
+	int			fullsync;  /* set to 1 if a full sync is needed,
+					    * (fresh device added).
+					    * Cleared when a sync completes.
+					    */
 
 	wait_queue_head_t	wait_barrier;
 

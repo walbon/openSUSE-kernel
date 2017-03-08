@@ -639,6 +639,15 @@ static void raise_barrier(conf_t *conf)
 
 	/* block any new IO from starting */
 	atomic_inc(&conf->barrier);
+	/*
+	 * In raise_barrier() we firstly increase conf->barrier then
+	 * check conf->nr_pending. In wait_barrier() we firstly
+	 * increase conf->nr_pending then check conf->barrier.
+	 * A memory barrier here to make sure conf->nr_pending won't
+	 * be fetched before conf->barrier is increased. Otherwise
+	 * there will be a race between raise_barrier() and wait_barrier().
+	 */
+	smp_mb__after_atomic_inc();
 
 	/* Now wait for all pending IO to complete */
 	wait_event_lock_irq(conf->wait_barrier,
@@ -658,31 +667,62 @@ static void lower_barrier(conf_t *conf)
 
 static void wait_barrier(conf_t *conf)
 {
+	/*
+	 * We need to increase conf->nr_pending very early here,
+	 * then raise_barrier() can be blocked when it waits for
+	 * conf->nr_pending to be 0. Then we can avoid holding
+	 * conf->resync_lock when there is no barrier raised in same
+	 * barrier unit bucket. Also if the array is frozen, I/O
+	 * should be blocked until array is unfrozen.
+	 */
 	atomic_inc(&conf->nr_pending);
-	if (atomic_read(&conf->barrier)) {
-		spin_lock_irq(&conf->resync_lock);
-		atomic_inc(&conf->nr_waiting);
-		atomic_dec(&conf->nr_pending);
-		/* Wait for the barrier to drop.
-		 * However if there are already pending
-		 * requests (preventing the barrier from
-		 * rising completely), and the
-		 * pre-process bio queue isn't empty,
-		 * then don't wait, as we need to empty
-		 * that queue to get the nr_pending
-		 * count down.
-		 */
-		wait_event_lock_irq(conf->wait_barrier,
-				    !atomic_read(&conf->barrier) ||
-				    (atomic_read(&conf->nr_pending) &&
-				     current->bio_list &&
-				     !bio_list_empty(current->bio_list)),
-				    conf->resync_lock,
+	/*
+	 * In wait_barrier() we firstly increase conf->nr_pending, then
+	 * check conf->barrier. In raise_barrier() we firstly increase
+	 * conf->barrier, then check conf->nr_pending. A memory
+	 * barrier is necessary here to make sure conf->barrier won't be
+	 * fetched before conf->nr_pending is increased. Otherwise there
+	 * will be a race between wait_barrier() and raise_barrier().
+	 */
+	smp_mb__after_atomic_inc();
+
+	if (!atomic_read(&conf->barrier))
+		return;
+
+	/*
+	 * After holding conf->resync_lock, conf->nr_pending
+	 * should be decreased before waiting for barrier to drop.
+	 * Otherwise, we may encounter a race condition because
+	 * raise_barrer() might be waiting for conf->nr_pending
+	 * to be 0 at same time.
+	 */
+	spin_lock_irq(&conf->resync_lock);
+	atomic_inc(&conf->nr_waiting);
+	atomic_dec(&conf->nr_pending);
+	/*
+	 * In case freeze_array() is waiting for
+	 * get_unqueued_pending() == extra
+	 */
+        wake_up(&conf->wait_barrier);
+	/* Wait for the barrier to drop.
+	 * However if there are already pending
+	 * requests (preventing the barrier from
+	 * rising completely), and the
+	 * pre-process bio queue isn't empty,
+	 * then don't wait, as we need to empty
+	 * that queue to get the nr_pending
+	 * count down.
+	 */
+	wait_event_lock_irq(conf->wait_barrier,
+			    !atomic_read(&conf->barrier) ||
+			    (atomic_read(&conf->nr_pending) &&
+			     current->bio_list &&
+			     !bio_list_empty(current->bio_list)),
+			    conf->resync_lock,
 			);
-		atomic_inc(&conf->nr_pending);
-		atomic_dec(&conf->nr_waiting);
-		spin_unlock_irq(&conf->resync_lock);
-	}
+	atomic_inc(&conf->nr_pending);
+	atomic_dec(&conf->nr_waiting);
+	spin_unlock_irq(&conf->resync_lock);
 }
 
 static void allow_barrier(conf_t *conf)
@@ -1147,7 +1187,7 @@ static int raid1_add_disk(mddev_t *mddev, mdk_rdev_t *rdev)
 			 * if this was recently any drive of the array
 			 */
 			if (rdev->saved_raid_disk < 0)
-				set_bit(R1FLAG_FULLSYNC, &conf->flags);
+				conf->fullsync = 1;
 			rcu_assign_pointer(p->rdev, rdev);
 			break;
 		}
@@ -1809,7 +1849,7 @@ static sector_t sync_request(mddev_t *mddev, sector_t sector_nr, int *skipped, i
 			bitmap_end_sync(mddev->bitmap, mddev->curr_resync,
 						&sync_blocks, 1);
 		else /* completed sync */
-			clear_bit(R1FLAG_FULLSYNC, &conf->flags);
+			conf->fullsync = 0;
 
 		bitmap_close_sync(mddev->bitmap);
 		close_sync(conf);
@@ -1819,7 +1859,7 @@ static sector_t sync_request(mddev_t *mddev, sector_t sector_nr, int *skipped, i
 	if (mddev->bitmap == NULL &&
 	    mddev->recovery_cp == MaxSector &&
 	    !test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery) &&
-	    !test_bit(R1FLAG_FULLSYNC, &conf->flags)) {
+	    conf->fullsync == 0) {
 		*skipped = 1;
 		return max_sector - sector_nr;
 	}
@@ -1827,8 +1867,7 @@ static sector_t sync_request(mddev_t *mddev, sector_t sector_nr, int *skipped, i
 	 * This call the bitmap_start_sync doesn't actually record anything
 	 */
 	if (!bitmap_start_sync(mddev->bitmap, sector_nr, &sync_blocks, 1) &&
-	    !test_bit(R1FLAG_FULLSYNC, &conf->flags) &&
-	    !test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery)) {
+	    !conf->fullsync && !test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery)) {
 		/* We can skip this block, and probably several more */
 		*skipped = 1;
 		return sync_blocks;
@@ -1941,7 +1980,7 @@ static sector_t sync_request(mddev_t *mddev, sector_t sector_nr, int *skipped, i
 		if (sync_blocks == 0) {
 			if (!bitmap_start_sync(mddev->bitmap, sector_nr,
 					       &sync_blocks, still_degraded) &&
-			    !test_bit(R1FLAG_FULLSYNC, &conf->flags) &&
+			    !conf->fullsync &&
 			    !test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery))
 				break;
 			BUG_ON(sync_blocks < (PAGE_SIZE>>9));
@@ -2075,7 +2114,7 @@ static conf_t *setup_conf(mddev_t *mddev)
 		    !test_bit(In_sync, &disk->rdev->flags)) {
 			disk->head_position = 0;
 			if (disk->rdev)
-				set_bit(R1FLAG_FULLSYNC, &conf->flags);
+				conf->fullsync = 1;
 		} else if (conf->last_used < 0)
 			/*
 			 * The first working device is used as a
