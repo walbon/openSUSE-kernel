@@ -332,12 +332,26 @@ config MPC512X_DMA
 
 config MV_XOR
 	bool "Marvell XOR engine support"
-	depends on PLAT_ORION
+	depends on PLAT_ORION || ARCH_MVEBU || COMPILE_TEST
 	select DMA_ENGINE
 	select DMA_ENGINE_RAID
 	select ASYNC_TX_ENABLE_CHANNEL_SWITCH
 	---help---
 	  Enable support for the Marvell XOR engine.
+
+config MV_XOR_V2
+	bool "Marvell XOR engine version 2 support "
+	depends on ARM64
+	select DMA_ENGINE
+	select DMA_ENGINE_RAID
+	select ASYNC_TX_ENABLE_CHANNEL_SWITCH
+	select GENERIC_MSI_IRQ_DOMAIN
+	---help---
+	  Enable support for the Marvell version 2 XOR engine.
+
+	  This engine provides acceleration for copy, XOR and RAID6
+	  operations, and is available on Marvell Armada 7K and 8K
+	  platforms.
 
 config MXS_DMA
 	bool "MXS DMA support"
