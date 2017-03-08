@@ -29,6 +29,9 @@ MODULE_AUTHOR("Yazen Ghannam <yazen.ghannam@linaro.org>");
 MODULE_DESCRIPTION("CRC32 and CRC32C using optional ARMv8 instructions");
 MODULE_LICENSE("GPL v2");
 
+/* Request crc extension capabilities from the assembler */
+asm(".arch_extension crc");
+
 #define CRC32X(crc, value) __asm__("crc32x %w[c], %w[c], %x[v]":[c]"+r"(crc):[v]"r"(value))
 #define CRC32W(crc, value) __asm__("crc32w %w[c], %w[c], %w[v]":[c]"+r"(crc):[v]"r"(value))
 #define CRC32H(crc, value) __asm__("crc32h %w[c], %w[c], %w[v]":[c]"+r"(crc):[v]"r"(value))
