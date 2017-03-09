@@ -814,7 +814,7 @@ static int cpsw_rx_poll(struct napi_struct *napi_rx, int budget)
 
 	num_rx = cpdma_chan_process(priv->rxch, budget);
 	if (num_rx < budget) {
-		napi_complete(napi_rx);
+		napi_complete_done(napi_rx, num_rx);
 		writel(0xff, &priv->wr_regs->rx_en);
 		if (priv->quirk_irq && priv->rx_irq_disabled) {
 			priv->rx_irq_disabled = false;
