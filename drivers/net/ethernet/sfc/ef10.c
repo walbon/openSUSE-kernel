@@ -4678,6 +4678,8 @@ static int efx_ef10_set_mac_address(struct efx_nic *efx)
 
 	efx_device_detach_sync(efx);
 	efx_net_stop(efx->net_dev);
+
+	mutex_lock(&efx->mac_lock);
 	down_write(&efx->filter_sem);
 	efx_ef10_filter_table_remove(efx);
 
@@ -4690,6 +4692,8 @@ static int efx_ef10_set_mac_address(struct efx_nic *efx)
 
 	efx_ef10_filter_table_probe(efx);
 	up_write(&efx->filter_sem);
+	mutex_unlock(&efx->mac_lock);
+
 	if (was_enabled)
 		efx_net_open(efx->net_dev);
 	netif_device_attach(efx->net_dev);
