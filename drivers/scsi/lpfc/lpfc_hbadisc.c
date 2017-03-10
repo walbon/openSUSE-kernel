@@ -911,8 +911,11 @@ lpfc_linkdown(struct lpfc_hba *phba)
 			vports[i]->fc_myDID = 0;
 
 			if ((phba->cfg_enable_fc4_type == LPFC_ENABLE_BOTH) ||
-			    (phba->cfg_enable_fc4_type == LPFC_ENABLE_NVME))
-				lpfc_nvme_update_localport(vports[i]);
+			    (phba->cfg_enable_fc4_type == LPFC_ENABLE_NVME)) {
+				if (!phba->nvmet_support)
+					lpfc_nvme_update_localport(vports[i]);
+				/* todo: tgt: update targetport attributes */
+			}
 		}
 	}
 	lpfc_destroy_vport_work_array(phba, vports);
@@ -3584,8 +3587,11 @@ lpfc_mbx_cmpl_reg_vpi(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 		vport->fc_myDID = 0;
 
 		if ((phba->cfg_enable_fc4_type == LPFC_ENABLE_BOTH) ||
-		    (phba->cfg_enable_fc4_type == LPFC_ENABLE_NVME))
-			lpfc_nvme_update_localport(vport);
+		    (phba->cfg_enable_fc4_type == LPFC_ENABLE_NVME)) {
+			if (!phba->nvmet_support)
+				lpfc_nvme_update_localport(vport);
+			/* todo: update targetport attributes */
+		}
 		goto out;
 	}
 
@@ -4176,6 +4182,11 @@ lpfc_nlp_state_cleanup(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 				 */
 				vport->phba->nport_event_cnt++;
 				lpfc_nvme_register_port(vport, ndlp);
+			} else {
+				/* Just take an NDLP ref count since the
+				 * target does not register rports.
+				 */
+				lpfc_nlp_get(ndlp);
 			}
 		}
 	}
@@ -5097,6 +5108,8 @@ lpfc_setup_disc_node(struct lpfc_vport *vport, uint32_t did)
 			return NULL;
 		lpfc_nlp_init(vport, ndlp, did);
 		lpfc_nlp_set_state(vport, ndlp, NLP_STE_NPR_NODE);
+		if (vport->phba->nvmet_support)
+			return ndlp;
 		spin_lock_irq(shost->host_lock);
 		ndlp->nlp_flag |= NLP_NPR_2B_DISC;
 		spin_unlock_irq(shost->host_lock);
@@ -5105,6 +5118,8 @@ lpfc_setup_disc_node(struct lpfc_vport *vport, uint32_t did)
 		ndlp = lpfc_enable_node(vport, ndlp, NLP_STE_NPR_NODE);
 		if (!ndlp)
 			return NULL;
+		if (vport->phba->nvmet_support)
+			return ndlp;
 		spin_lock_irq(shost->host_lock);
 		ndlp->nlp_flag |= NLP_NPR_2B_DISC;
 		spin_unlock_irq(shost->host_lock);
@@ -5124,6 +5139,8 @@ lpfc_setup_disc_node(struct lpfc_vport *vport, uint32_t did)
 			 * delay timeout is not needed.
 			 */
 			lpfc_cancel_retry_delay_tmo(vport, ndlp);
+			if (vport->phba->nvmet_support)
+				return ndlp;
 			spin_lock_irq(shost->host_lock);
 			ndlp->nlp_flag |= NLP_NPR_2B_DISC;
 			spin_unlock_irq(shost->host_lock);
@@ -5139,6 +5156,8 @@ lpfc_setup_disc_node(struct lpfc_vport *vport, uint32_t did)
 		    ndlp->nlp_flag & NLP_RCV_PLOGI)
 			return NULL;
 		lpfc_nlp_set_state(vport, ndlp, NLP_STE_NPR_NODE);
+		if (vport->phba->nvmet_support)
+			return ndlp;
 		spin_lock_irq(shost->host_lock);
 		ndlp->nlp_flag |= NLP_NPR_2B_DISC;
 		spin_unlock_irq(shost->host_lock);
