@@ -1,9 +1,11 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
+ * Copyright (C) 2017 Broadcom. All Rights Reserved. The term      *
+ * “Broadcom” refers to Broadcom Limited and/or its subsidiaries.  *
  * Copyright (C) 2009-2015 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
- * www.emulex.com                                                  *
+ * www.broadcom.com                                                *
  *                                                                 *
  * This program is free software; you can redistribute it and/or   *
  * modify it under the terms of version 2 of the GNU General       *
@@ -1682,6 +1684,7 @@ lpfc_bsg_diag_mode_enter(struct lpfc_hba *phba)
 	struct lpfc_vport **vports;
 	struct Scsi_Host *shost;
 	struct lpfc_sli *psli;
+	struct lpfc_queue *qp = NULL;
 	struct lpfc_sli_ring *pring;
 	int i = 0;
 
@@ -1689,9 +1692,6 @@ lpfc_bsg_diag_mode_enter(struct lpfc_hba *phba)
 	if (!psli)
 		return -ENODEV;
 
-	pring = &psli->ring[LPFC_FCP_RING];
-	if (!pring)
-		return -ENODEV;
 
 	if ((phba->link_state == LPFC_HBA_ERROR) ||
 	    (psli->sli_flag & LPFC_BLOCK_MGMT_IO) ||
@@ -1710,10 +1710,18 @@ lpfc_bsg_diag_mode_enter(struct lpfc_hba *phba)
 		scsi_block_requests(shost);
 	}
 
-	while (!list_empty(&pring->txcmplq)) {
-		if (i++ > 500)  /* wait up to 5 seconds */
+	if (phba->sli_rev != LPFC_SLI_REV4) {
+		pring = &psli->sli3_ring[LPFC_FCP_RING];
+		lpfc_emptyq_wait(phba, &pring->txcmplq, &phba->hbalock);
+		return 0;
+	}
+	list_for_each_entry(qp, &phba->sli4_hba.lpfc_wq_list, wq_list) {
+		pring = qp->pring;
+		if (!pring || (pring->ringno != LPFC_FCP_RING))
+			continue;
+		if (!lpfc_emptyq_wait(phba, &pring->txcmplq,
+				      &pring->ring_lock))
 			break;
-		msleep(10);
 	}
 	return 0;
 }
@@ -2669,7 +2677,7 @@ err_get_xri_exit:
  * lpfc_bsg_dma_page_alloc - allocate a bsg mbox page sized dma buffers
  * @phba: Pointer to HBA context object
  *
- * This function allocates BSG_MBOX_SIZE (4KB) page size dma buffer and.
+ * This function allocates BSG_MBOX_SIZE (4KB) page size dma buffer and
  * returns the pointer to the buffer.
  **/
 static struct lpfc_dmabuf *
@@ -2841,8 +2849,7 @@ out:
 static int lpfcdiag_loop_post_rxbufs(struct lpfc_hba *phba, uint16_t rxxri,
 			     size_t len)
 {
-	struct lpfc_sli *psli = &phba->sli;
-	struct lpfc_sli_ring *pring = &psli->ring[LPFC_ELS_RING];
+	struct lpfc_sli_ring *pring;
 	struct lpfc_iocbq *cmdiocbq;
 	IOCB_t *cmd = NULL;
 	struct list_head head, *curr, *next;
@@ -2855,6 +2862,8 @@ static int lpfcdiag_loop_post_rxbufs(struct lpfc_hba *phba, uint16_t rxxri,
 	int ret_val = 0;
 	int iocb_stat;
 	int i = 0;
+
+	pring = lpfc_phba_elsring(phba);
 
 	cmdiocbq = lpfc_sli_get_iocbq(phba);
 	rxbmp = kmalloc(sizeof(struct lpfc_dmabuf), GFP_KERNEL);
@@ -5185,6 +5194,48 @@ no_dd_data:
 	return rc;
 }
 
+static int
+lpfc_forced_link_speed(struct fc_bsg_job *job)
+{
+	struct Scsi_Host *shost = job->shost;
+	struct lpfc_vport *vport = shost_priv(shost);
+	struct lpfc_hba *phba = vport->phba;
+	struct forced_link_speed_support_reply *forced_reply;
+	int rc = 0;
+
+	if (job->request_len <
+	    sizeof(struct fc_bsg_request) +
+	    sizeof(struct get_forced_link_speed_support)) {
+		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
+				"0048 Received FORCED_LINK_SPEED request "
+				"below minimum size\n");
+		rc = -EINVAL;
+		goto job_error;
+	}
+
+	forced_reply = (struct forced_link_speed_support_reply *)
+		job->reply->reply_data.vendor_reply.vendor_rsp;
+
+	if (job->reply_len <
+	    sizeof(struct fc_bsg_request) +
+	    sizeof(struct forced_link_speed_support_reply)) {
+		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
+				"0049 Received FORCED_LINK_SPEED reply below "
+				"minimum size\n");
+		rc = -EINVAL;
+		goto job_error;
+	}
+
+	forced_reply->supported = (phba->hba_flag & HBA_FORCED_LINK_SPEED)
+				   ? LPFC_FORCED_LINK_SPEED_SUPPORTED
+				   : LPFC_FORCED_LINK_SPEED_NOT_SUPPORTED;
+job_error:
+	job->reply->result = rc;
+	if (rc == 0)
+		job->job_done(job);
+	return rc;
+}
+
 /**
  * lpfc_bsg_hst_vendor - process a vendor-specific fc_bsg_job
  * @job: fc_bsg_job to handle
@@ -5226,6 +5277,9 @@ lpfc_bsg_hst_vendor(struct fc_bsg_job *job)
 	case LPFC_BSG_VENDOR_MENLO_CMD:
 	case LPFC_BSG_VENDOR_MENLO_DATA:
 		rc = lpfc_menlo_cmd(job);
+		break;
+	case LPFC_BSG_VENDOR_FORCED_LINK_SPEED:
+		rc = lpfc_forced_link_speed(job);
 		break;
 	default:
 		rc = -EINVAL;
@@ -5283,12 +5337,14 @@ lpfc_bsg_timeout(struct fc_bsg_job *job)
 	struct lpfc_vport *vport = (struct lpfc_vport *)job->shost->hostdata;
 	struct lpfc_hba *phba = vport->phba;
 	struct lpfc_iocbq *cmdiocb;
-	struct lpfc_sli_ring *pring = &phba->sli.ring[LPFC_ELS_RING];
+	struct lpfc_sli_ring *pring;
 	struct bsg_job_data *dd_data;
 	unsigned long flags;
 	int rc = 0;
 	LIST_HEAD(completions);
 	struct lpfc_iocbq *check_iocb, *next_iocb;
+
+	pring = lpfc_phba_elsring(phba);
 
 	/* if job's driver data is NULL, the command completed or is in the
 	 * the process of completing.  In this case, return status to request
