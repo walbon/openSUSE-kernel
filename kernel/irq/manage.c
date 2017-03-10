@@ -1134,6 +1134,13 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 	new->irq = irq;
 
 	/*
+	 * If the trigger type is not specified by the caller,
+	 * then use the default for this interrupt.
+	 */
+	if (!(new->flags & IRQF_TRIGGER_MASK))
+		new->flags |= irqd_get_trigger_type(&desc->irq_data);
+
+	/*
 	 * Check whether the interrupt nests into another interrupt
 	 * thread.
 	 */
@@ -1756,7 +1763,14 @@ void enable_percpu_irq(unsigned int irq, unsigned int type)
 	if (!desc)
 		return;
 
+	/*
+	 * If the trigger type is not specified by the caller, then
+	 * use the default for this interrupt.
+	 */
 	type &= IRQ_TYPE_SENSE_MASK;
+	if (type == IRQ_TYPE_NONE)
+		type = irqd_get_trigger_type(&desc->irq_data);
+
 	if (type != IRQ_TYPE_NONE) {
 		int ret;
 
