@@ -1477,6 +1477,10 @@ config KALLSYMS_ALL
 
 	   Say N unless you really need all symbols.
 
+config KALLSYMS_ABSOLUTE_PERCPU
+	bool
+	default X86_64 && SMP
+
 config KALLSYMS_BASE_RELATIVE
 	bool
 	depends on KALLSYMS
