@@ -374,7 +374,6 @@ void __init efi_runtime_update_mappings(void)
 	unsigned long pfn;
 	pgd_t *pgd = efi_pgd;
 	efi_memory_desc_t *md;
-	void *p;
 
 	if (efi_enabled(EFI_OLD_MEMMAP)) {
 		if (__supported_pte_mask & _PAGE_NX)
@@ -385,9 +384,8 @@ void __init efi_runtime_update_mappings(void)
 	if (!efi_enabled(EFI_NX_PE_DATA))
 		return;
 
-	for (p = memmap.map; p < memmap.map_end; p += memmap.desc_size) {
+	for_each_efi_memory_desc(md) {
 		unsigned long pf = 0;
-		md = p;
 
 		if (!(md->attribute & EFI_MEMORY_RUNTIME))
 			continue;
