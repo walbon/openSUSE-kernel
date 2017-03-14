@@ -1865,7 +1865,7 @@ static int blkfront_setup_indirect(struct blkfront_info *info)
 		grants = BLKIF_MAX_SEGMENTS_PER_REQUEST;
 	else
 		grants = info->max_indirect_segments;
-	psegs = grants / GRANTS_PER_PSEG;
+	psegs = DIV_ROUND_UP(grants, GRANTS_PER_PSEG);
 
 	err = fill_grant_buffer(info,
 				(grants + INDIRECT_GREFS(grants)) * BLK_RING_SIZE(info));
@@ -1982,11 +1982,11 @@ static int blkfront_gather_backend_features(struct blkfront_info *info)
 	err = xenbus_gather(XBT_NIL, info->xbdev->otherend,
 			    "feature-max-indirect-segments", "%u", &indirect_segments,
 			    NULL);
-	if (err)
-		info->max_indirect_segments = 0;
-	else
-		info->max_indirect_segments = min(indirect_segments,
-						  xen_blkif_max_segments);
+	if (indirect_segments > xen_blkif_max_segments)
+		indirect_segments = xen_blkif_max_segments;
+	if (err || indirect_segments <= BLKIF_MAX_SEGMENTS_PER_REQUEST)
+		indirect_segments = 0;
+	info->max_indirect_segments = indirect_segments;
 
 	return blkfront_setup_indirect(info);
 }
@@ -2308,6 +2308,9 @@ static int __init xlblk_init(void)
 
 	if (!xen_domain())
 		return -ENODEV;
+
+	if (xen_blkif_max_segments < BLKIF_MAX_SEGMENTS_PER_REQUEST)
+		xen_blkif_max_segments = BLKIF_MAX_SEGMENTS_PER_REQUEST;
 
 	if (xen_blkif_max_ring_order > XENBUS_MAX_RING_GRANT_ORDER) {
 		pr_info("Invalid max_ring_order (%d), will use default max: %d.\n",
