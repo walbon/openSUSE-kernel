@@ -6205,7 +6205,6 @@ M:	Jiri Kosina <jkosina@suse.com>
 M:	Jiri Slaby <jslaby@suse.com>
 M:	Vojtech Pavlik <vojtech@suse.com>
 F:	Documentation/kgraft.txt
-F:	arch/*/include/asm/kgraft.h
 F:	include/linux/kgraft.h
 F:	kernel/kgraft*
 F:	samples/kgraft/

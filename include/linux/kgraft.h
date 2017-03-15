@@ -26,8 +26,6 @@
 
 #if IS_ENABLED(CONFIG_KGRAFT)
 
-#include <asm/kgraft.h>
-
 #define KGR_TIMEOUT 2
 
 struct kgr_patch;
