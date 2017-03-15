@@ -57,7 +57,7 @@ static inline struct dev_info *which_dev(struct mddev *mddev, sector_t sector)
  * In linear_congested() conf->raid_disks is used as a copy of
  * mddev->raid_disks to iterate conf->disks[], because conf->raid_disks
  * and conf->disks[] are created in linear_conf(), they are always
- * consitent with each other, but mddev->raid_disks dose not.
+ * consitent with each other, but mddev->raid_disks does not.
  */
 static int linear_congested(struct mddev *mddev, int bits)
 {
@@ -152,7 +152,8 @@ static struct linear_conf *linear_conf(struct mddev *mddev, int raid_disks)
 			conf->disks[i-1].end_sector +
 			conf->disks[i].rdev->sectors;
 
-	/* conf->raid_disks is copy of mddev->raid_disks. The reason to
+	/*
+	 * conf->raid_disks is copy of mddev->raid_disks. The reason to
 	 * keep a copy of mddev->raid_disks in struct linear_conf is,
 	 * mddev->raid_disks may not be consistent with pointers number of
 	 * conf->disks[] when it is updated in linear_add() and used to
