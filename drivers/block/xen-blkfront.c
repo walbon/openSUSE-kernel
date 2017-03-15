@@ -1556,6 +1556,9 @@ again:
  destroy_blkring:
 	blkif_free(info, 0);
  out:
+	kfree(info);
+	dev_set_drvdata(&dev->dev, NULL);
+
 	return err;
 }
 
@@ -1862,7 +1865,7 @@ static int blkfront_setup_indirect(struct blkfront_info *info)
 		grants = BLKIF_MAX_SEGMENTS_PER_REQUEST;
 	else
 		grants = info->max_indirect_segments;
-	psegs = grants / GRANTS_PER_PSEG;
+	psegs = DIV_ROUND_UP(grants, GRANTS_PER_PSEG);
 
 	err = fill_grant_buffer(info,
 				(grants + INDIRECT_GREFS(grants)) * BLK_RING_SIZE(info));
@@ -1979,11 +1982,11 @@ static int blkfront_gather_backend_features(struct blkfront_info *info)
 	err = xenbus_gather(XBT_NIL, info->xbdev->otherend,
 			    "feature-max-indirect-segments", "%u", &indirect_segments,
 			    NULL);
-	if (err)
-		info->max_indirect_segments = 0;
-	else
-		info->max_indirect_segments = min(indirect_segments,
-						  xen_blkif_max_segments);
+	if (indirect_segments > xen_blkif_max_segments)
+		indirect_segments = xen_blkif_max_segments;
+	if (err || indirect_segments <= BLKIF_MAX_SEGMENTS_PER_REQUEST)
+		indirect_segments = 0;
+	info->max_indirect_segments = indirect_segments;
 
 	return blkfront_setup_indirect(info);
 }
@@ -2067,7 +2070,7 @@ static void blkfront_connect(struct blkfront_info *info)
 	if (err) {
 		xenbus_dev_fatal(info->xbdev, err, "xlvbd_add at %s",
 				 info->xbdev->otherend);
-		return;
+		goto fail;
 	}
 
 	xenbus_switch_state(info->xbdev, XenbusStateConnected);
@@ -2081,6 +2084,11 @@ static void blkfront_connect(struct blkfront_info *info)
 	add_disk(info->gd);
 
 	info->is_ready = 1;
+	return;
+
+fail:
+	blkif_free(info, 0);
+	return;
 }
 
 /**
@@ -2097,11 +2105,8 @@ static void blkback_changed(struct xenbus_device *dev,
 	case XenbusStateInitWait:
 		if (dev->state != XenbusStateInitialising)
 			break;
-		if (talk_to_blkback(dev, info)) {
-			kfree(info);
-			dev_set_drvdata(&dev->dev, NULL);
+		if (talk_to_blkback(dev, info))
 			break;
-		}
 	case XenbusStateInitialising:
 	case XenbusStateInitialised:
 	case XenbusStateReconfiguring:
@@ -2110,6 +2115,23 @@ static void blkback_changed(struct xenbus_device *dev,
 		break;
 
 	case XenbusStateConnected:
+		/*
+		 * talk_to_blkback sets state to XenbusStateInitialised
+		 * and blkfront_connect sets it to XenbusStateConnected
+		 * (if connection went OK).
+		 *
+		 * If the backend (or toolstack) decides to poke at backend
+		 * state (and re-trigger the watch by setting the state repeatedly
+		 * to XenbusStateConnected (4)) we need to deal with this.
+		 * This is allowed as this is used to communicate to the guest
+		 * that the size of disk has changed!
+		 */
+		if ((dev->state != XenbusStateInitialised) &&
+		    (dev->state != XenbusStateConnected)) {
+			if (talk_to_blkback(dev, info))
+				break;
+		}
+
 		blkfront_connect(info);
 		break;
 
@@ -2286,6 +2308,9 @@ static int __init xlblk_init(void)
 
 	if (!xen_domain())
 		return -ENODEV;
+
+	if (xen_blkif_max_segments < BLKIF_MAX_SEGMENTS_PER_REQUEST)
+		xen_blkif_max_segments = BLKIF_MAX_SEGMENTS_PER_REQUEST;
 
 	if (xen_blkif_max_ring_order > XENBUS_MAX_RING_GRANT_ORDER) {
 		pr_info("Invalid max_ring_order (%d), will use default max: %d.\n",
