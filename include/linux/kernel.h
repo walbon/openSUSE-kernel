@@ -526,6 +526,7 @@ extern enum system_states {
 #define TAINT_SOFTLOCKUP		14
 #define TAINT_LIVEPATCH			15
 #define TAINT_UNSAFE_HIBERNATE		16
+/* !!! Keep TAINT_FLAGS_COUNT in sync !!! */
 
 #ifdef CONFIG_SUSE_KERNEL_SUPPORTED
 /*
@@ -534,6 +535,9 @@ extern enum system_states {
  */
 #define TAINT_NO_SUPPORT		30
 #define TAINT_EXTERNAL_SUPPORT		31
+#define TAINT_FLAGS_COUNT		32
+#else
+#define TAINT_FLAGS_COUNT		17
 #endif
 
 extern const char hex_asc[];
