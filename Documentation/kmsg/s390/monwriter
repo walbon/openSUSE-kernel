@@ -14,3 +14,4 @@
  * For other return codes see the section about DIAGNOSE Code X'DC'
  * in "z/VM CP Programming Services".
  */
+/*? Text: "%s: %d output lines suppressed due to ratelimiting\n" */

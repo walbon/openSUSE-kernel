@@ -128,3 +128,4 @@
  * if prng was compiled into the kernel, restart Linux.
  * If the error persists, contact your support organization.
  */
+/*? Text: "%s: %d output lines suppressed due to ratelimiting\n" */

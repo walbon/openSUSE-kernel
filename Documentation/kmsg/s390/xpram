@@ -71,3 +71,4 @@
 /*? Text: "  partitions to be sized automatically: %d\n" */
 /*? Text: "  automatically determined partition size: %lu kB\n" */
 /*? Text: "  %u pages expanded memory found (%lu KB).\n" */
+/*? Text: "%s: %d output lines suppressed due to ratelimiting\n" */

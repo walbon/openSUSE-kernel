@@ -41,3 +41,4 @@
  * to find the hotplug memory block size value in hexadecimal notation.
  * On z/VM, query your memory setup with "vmcp q v store".
  */
+/*? Text: "%s: %d output lines suppressed due to ratelimiting\n" */
