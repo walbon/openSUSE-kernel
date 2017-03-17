@@ -13,6 +13,7 @@
 #include <asm/msr.h>
 #include <asm/bugs.h>
 #include <asm/cpu.h>
+#include <asm/intel-family.h>
 #include <asm/hwcap2.h>
 #include <asm/elf.h>
 
@@ -77,8 +78,15 @@ static void probe_xeon_phi_r3mwait(struct cpuinfo_x86 *c)
 	 * Ring 3 MONITOR/MWAIT feature cannot be detected without
 	 * cpu model and family comparison.
 	 */
-	if (c->x86 != 6 || c->x86_model != INTEL_FAM6_XEON_PHI_KNL)
+	if (c->x86 != 6)
 		return;
+	switch (c->x86_model) {
+	case INTEL_FAM6_XEON_PHI_KNL:
+	case INTEL_FAM6_XEON_PHI_KNM:
+		break;
+	default:
+		return;
+	}
 
 	if (ring3mwait_disabled) {
 		msr_clear_bit(MSR_MISC_FEATURE_ENABLES,
