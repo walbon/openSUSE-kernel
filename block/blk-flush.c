@@ -366,7 +366,7 @@ static void flush_data_end_io(struct request *rq, int error)
 	elv_completed_request(q, rq);
 
 	/* for avoiding double accounting */
-	rq->cmd_flags &= ~RQF_STARTED;
+	rq->rq_flags &= ~RQF_STARTED;
 
 	/*
 	 * After populating an empty queue, kick it to avoid stall.  Read
