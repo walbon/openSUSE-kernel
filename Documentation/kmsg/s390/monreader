@@ -125,3 +125,4 @@
  * the *MONITOR DCSS on the z/VM hypervisor. If the default name, MONDCSS, is
  * used, omit the monreader.mondcss or mondcss parameter.
  */
+/*? Text: "%s: %d output lines suppressed due to ratelimiting\n" */

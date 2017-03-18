@@ -689,3 +689,4 @@
  * Ensure that the kernel module with the specified name is correctly installed
  * or set the sysfs 'use_diag' attribute of the DASD to 0 to switch off DIAG.
  */
+/*? Text: "%s: %d output lines suppressed due to ratelimiting\n" */
