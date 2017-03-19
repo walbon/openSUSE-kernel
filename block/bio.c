@@ -675,6 +675,7 @@ struct bio *bio_clone_bioset(struct bio *bio_src, gfp_t gfp_mask,
 	switch (bio_op(bio)) {
 	case REQ_OP_DISCARD:
 	case REQ_OP_SECURE_ERASE:
+	case REQ_OP_WRITE_ZEROES:
 		break;
 	case REQ_OP_WRITE_SAME:
 		bio->bi_io_vec[bio->bi_vcnt++] = bio_src->bi_io_vec[0];
@@ -1841,15 +1842,7 @@ struct bio *bio_split(struct bio *bio, int sectors,
 	BUG_ON(sectors <= 0);
 	BUG_ON(sectors >= bio_sectors(bio));
 
-	/*
-	 * Discards need a mutable bio_vec to accommodate the payload
-	 * required by the DSM TRIM and UNMAP commands.
-	 */
-	if (bio_op(bio) == REQ_OP_DISCARD || bio_op(bio) == REQ_OP_SECURE_ERASE)
-		split = bio_clone_bioset(bio, gfp, bs);
-	else
-		split = bio_clone_fast(bio, gfp, bs);
-
+	split = bio_clone_fast(bio, gfp, bs);
 	if (!split)
 		return NULL;
 

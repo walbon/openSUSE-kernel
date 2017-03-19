@@ -740,8 +740,7 @@ map_buffer_cached:
 					set_buffer_uptodate(bh);
 				if (unlikely(was_hole)) {
 					/* We allocated the buffer. */
-					unmap_underlying_metadata(bh->b_bdev,
-							bh->b_blocknr);
+					clean_bdev_bh_alias(bh);
 					if (bh_end <= pos || bh_pos >= end)
 						mark_buffer_dirty(bh);
 					else
@@ -784,7 +783,7 @@ map_buffer_cached:
 				continue;
 			}
 			/* We allocated the buffer. */
-			unmap_underlying_metadata(bh->b_bdev, bh->b_blocknr);
+			clean_bdev_bh_alias(bh);
 			/*
 			 * If the buffer is fully outside the write, zero it,
 			 * set it uptodate, and mark it dirty so it gets
@@ -1952,12 +1951,9 @@ static ssize_t ntfs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		written = ntfs_perform_write(file, from, iocb->ki_pos);
 	current->backing_dev_info = NULL;
 	mutex_unlock(&vi->i_mutex);
-	if (likely(written > 0)) {
-		err = generic_write_sync(file, iocb->ki_pos, written);
-		if (err < 0)
-			written = 0;
-	}
 	iocb->ki_pos += written;
+	if (likely(written > 0))
+		written = generic_write_sync(iocb, written);
 	return written ? written : err;
 }
 

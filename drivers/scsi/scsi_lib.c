@@ -1007,8 +1007,8 @@ static int scsi_init_sgtable(struct request *req, struct scsi_data_buffer *sdb)
 	/*
 	 * If sg table allocation fails, requeue request later.
 	 */
-	if (unlikely(sg_alloc_table_chained(&sdb->table, req->nr_phys_segments,
-					sdb->table.sgl)))
+	if (unlikely(sg_alloc_table_chained(&sdb->table,
+			blk_rq_nr_phys_segments(req), sdb->table.sgl)))
 		return BLKPREP_DEFER;
 
 	/* 
@@ -1018,7 +1018,7 @@ static int scsi_init_sgtable(struct request *req, struct scsi_data_buffer *sdb)
 	count = blk_rq_map_sg(req->q, req, sdb->table.sgl);
 	BUG_ON(count > sdb->table.nents);
 	sdb->table.nents = count;
-	sdb->length = blk_rq_bytes(req);
+	sdb->length = blk_rq_payload_bytes(req);
 	return BLKPREP_OK;
 }
 

@@ -109,14 +109,12 @@ void blk_queue_congestion_threshold(struct request_queue *q)
  * @bdev:	device
  *
  * Locates the passed device's request queue and returns the address of its
- * backing_dev_info.  This function can only be called if @bdev is opened
- * and the return value is never NULL.
+ * backing_dev_info. The return value is never NULL however we may return
+ * &noop_backing_dev_info if the bdev is not currently open.
  */
 struct backing_dev_info *blk_get_backing_dev_info(struct block_device *bdev)
 {
-	struct request_queue *q = bdev_get_queue(bdev);
-
-	return &q->backing_dev_info;
+	return bdev->bd_bdi;
 }
 EXPORT_SYMBOL(blk_get_backing_dev_info);
 
@@ -1475,38 +1473,6 @@ void blk_put_request(struct request *req)
 }
 EXPORT_SYMBOL(blk_put_request);
 
-/**
- * blk_add_request_payload - add a payload to a request
- * @rq: request to update
- * @page: page backing the payload
- * @offset: offset in page
- * @len: length of the payload.
- *
- * This allows to later add a payload to an already submitted request by
- * a block driver.  The driver needs to take care of freeing the payload
- * itself.
- *
- * Note that this is a quite horrible hack and nothing but handling of
- * discard requests should ever use it.
- */
-void blk_add_request_payload(struct request *rq, struct page *page,
-		int offset, unsigned int len)
-{
-	struct bio *bio = rq->bio;
-
-	bio->bi_io_vec->bv_page = page;
-	bio->bi_io_vec->bv_offset = offset;
-	bio->bi_io_vec->bv_len = len;
-
-	bio->bi_iter.bi_size = len;
-	bio->bi_vcnt = 1;
-	bio->bi_phys_segments = 1;
-
-	rq->__data_len = rq->resid_len = len;
-	rq->nr_phys_segments = 1;
-}
-EXPORT_SYMBOL_GPL(blk_add_request_payload);
-
 bool bio_attempt_back_merge(struct request_queue *q, struct request *req,
 			    struct bio *bio)
 {
@@ -1950,6 +1916,10 @@ generic_make_request_checks(struct bio *bio)
 	case REQ_OP_ZONE_REPORT:
 	case REQ_OP_ZONE_RESET:
 		if (!bdev_is_zoned(bio->bi_bdev))
+			goto not_supported;
+		break;
+	case REQ_OP_WRITE_ZEROES:
+		if (!bdev_write_zeroes_sectors(bio->bi_bdev))
 			goto not_supported;
 		break;
 	default:
@@ -2633,6 +2603,8 @@ bool blk_update_request(struct request *req, int error, unsigned int nr_bytes)
 		req->__data_len = 0;
 		return false;
 	}
+
+	WARN_ON_ONCE(req->rq_flags & RQF_SPECIAL_PAYLOAD);
 
 	req->__data_len -= total_bytes;
 

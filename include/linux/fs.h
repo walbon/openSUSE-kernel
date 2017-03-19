@@ -265,6 +265,8 @@ struct writeback_control;
 #define IOCB_APPEND		(1 << 1)
 #define IOCB_DIRECT		(1 << 2)
 #define IOCB_HIPRI		(1 << 3)
+#define IOCB_DSYNC		(1 << 4)
+#define IOCB_SYNC		(1 << 5)
 
 struct kiocb {
 	struct file		*ki_filp;
@@ -416,6 +418,7 @@ struct block_device {
 	int			bd_invalidated;
 	struct gendisk *	bd_disk;
 	struct request_queue *  bd_queue;
+	struct backing_dev_info *bd_bdi;
 	struct list_head	bd_list;
 	/*
 	 * Private data.  You must have bd_claim'ed the block_device
@@ -2416,13 +2419,25 @@ extern int filemap_fdatawrite_range(struct address_space *mapping,
 extern int vfs_fsync_range(struct file *file, loff_t start, loff_t end,
 			   int datasync);
 extern int vfs_fsync(struct file *file, int datasync);
-static inline int generic_write_sync(struct file *file, loff_t pos, loff_t count)
+
+/*
+ * Sync the bytes written if this was a synchronous write.  Expect ki_pos
+ * to already be updated for the write, and will return either the amount
+ * of bytes passed in, or an error if syncing the file failed.
+ */
+static inline ssize_t generic_write_sync(struct kiocb *iocb, ssize_t count)
 {
-	if (!(file->f_flags & O_DSYNC) && !IS_SYNC(file->f_mapping->host))
-		return 0;
-	return vfs_fsync_range(file, pos, pos + count - 1,
-			       (file->f_flags & __O_SYNC) ? 0 : 1);
+	if (iocb->ki_flags & IOCB_DSYNC) {
+		int ret = vfs_fsync_range(iocb->ki_filp,
+				iocb->ki_pos - count, iocb->ki_pos - 1,
+				(iocb->ki_flags & IOCB_SYNC) ? 0 : 1);
+		if (ret)
+			return ret;
+	}
+
+	return count;
 }
+
 extern void emergency_sync(void);
 extern void emergency_remount(void);
 #ifdef CONFIG_BLOCK
@@ -2618,7 +2633,7 @@ extern ssize_t generic_write_checks(struct kiocb *, struct iov_iter *);
 extern ssize_t generic_file_read_iter(struct kiocb *, struct iov_iter *);
 extern ssize_t __generic_file_write_iter(struct kiocb *, struct iov_iter *);
 extern ssize_t generic_file_write_iter(struct kiocb *, struct iov_iter *);
-extern ssize_t generic_file_direct_write(struct kiocb *, struct iov_iter *, loff_t);
+extern ssize_t generic_file_direct_write(struct kiocb *, struct iov_iter *);
 extern ssize_t generic_perform_write(struct file *, struct iov_iter *, loff_t);
 
 ssize_t vfs_iter_read(struct file *file, struct iov_iter *iter, loff_t *ppos);
@@ -2857,6 +2872,10 @@ static inline int iocb_flags(struct file *file)
 		res |= IOCB_APPEND;
 	if (io_is_direct(file))
 		res |= IOCB_DIRECT;
+	if ((file->f_flags & O_DSYNC) || IS_SYNC(file->f_mapping->host))
+		res |= IOCB_DSYNC;
+	if (file->f_flags & __O_SYNC)
+		res |= IOCB_SYNC;
 	return res;
 }
 
