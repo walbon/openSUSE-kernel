@@ -47,3 +47,4 @@
  * To avoid this message in the future, specify a valid memory stripe size
  * with the emu_size= kernel parameter.
  */
+/*? Text: "%s: %d output lines suppressed due to ratelimiting\n" */
