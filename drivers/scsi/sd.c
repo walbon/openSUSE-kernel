@@ -716,7 +716,6 @@ static int sd_setup_discard_cmnd(struct scsi_cmnd *cmd)
 	struct scsi_disk *sdkp = scsi_disk(rq->rq_disk);
 	sector_t sector = blk_rq_pos(rq);
 	unsigned int nr_sectors = blk_rq_sectors(rq);
-	unsigned int nr_bytes = blk_rq_bytes(rq);
 	unsigned int len;
 	int ret;
 	char *buf;
@@ -772,24 +771,19 @@ static int sd_setup_discard_cmnd(struct scsi_cmnd *cmd)
 		goto out;
 	}
 
-	rq->completion_data = page;
 	rq->timeout = SD_TIMEOUT;
 
 	cmd->transfersize = len;
 	cmd->allowed = SD_MAX_RETRIES;
 
-	/*
-	 * Initially __data_len is set to the amount of data that needs to be
-	 * transferred to the target. This amount depends on whether WRITE SAME
-	 * or UNMAP is being used. After the scatterlist has been mapped by
-	 * scsi_init_io() we set __data_len to the size of the area to be
-	 * discarded on disk. This allows us to report completion on the full
-	 * amount of blocks described by the request.
-	 */
-	blk_add_request_payload(rq, page, 0, len);
-	ret = scsi_init_io(cmd);
-	rq->__data_len = nr_bytes;
+	rq->special_vec.bv_page = page;
+	rq->special_vec.bv_offset = 0;
+	rq->special_vec.bv_len = len;
 
+	rq->rq_flags |= RQF_SPECIAL_PAYLOAD;
+	rq->resid_len = len;
+
+	ret = scsi_init_io(cmd);
 out:
 	if (ret != BLKPREP_OK)
 		__free_page(page);
@@ -877,11 +871,11 @@ static int sd_setup_write_same_cmnd(struct scsi_cmnd *cmd)
 	cmd->allowed = SD_MAX_RETRIES;
 
 	/*
-	 * For WRITE_SAME the data transferred in the DATA IN buffer is
+	 * For WRITE SAME the data transferred via the DATA OUT buffer is
 	 * different from the amount of data actually written to the target.
 	 *
-	 * We set up __data_len to the amount of data transferred from the
-	 * DATA IN buffer so that blk_rq_map_sg set up the proper S/G list
+	 * We set up __data_len to the amount of data transferred via the
+	 * DATA OUT buffer so that blk_rq_map_sg sets up the proper S/G list
 	 * to transfer a single sector of data first, but then reset it to
 	 * the amount of data to be written right after so that the I/O path
 	 * knows how much to actually write.
@@ -1182,8 +1176,8 @@ static void sd_uninit_command(struct scsi_cmnd *SCpnt)
 {
 	struct request *rq = SCpnt->request;
 
-	if (req_op(rq) == REQ_OP_DISCARD)
-		__free_page(rq->completion_data);
+	if (rq->rq_flags & RQF_SPECIAL_PAYLOAD)
+		__free_page(rq->special_vec.bv_page);
 
 	if (SCpnt->cmnd != rq->cmd) {
 		mempool_free(SCpnt->cmnd, sd_cdb_pool);
@@ -3096,6 +3090,23 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 	put_device(&sdkp->dev);
 }
 
+struct sd_devt {
+	int idx;
+	struct disk_devt disk_devt;
+};
+
+void sd_devt_release(struct disk_devt *disk_devt)
+{
+	struct sd_devt *sd_devt = container_of(disk_devt, struct sd_devt,
+			disk_devt);
+
+	spin_lock(&sd_index_lock);
+	ida_remove(&sd_index_ida, sd_devt->idx);
+	spin_unlock(&sd_index_lock);
+
+	kfree(sd_devt);
+}
+
 /**
  *	sd_probe - called during driver initialization and whenever a
  *	new scsi device is attached to the system. It is called once
@@ -3117,6 +3128,7 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 static int sd_probe(struct device *dev)
 {
 	struct scsi_device *sdp = to_scsi_device(dev);
+	struct sd_devt *sd_devt;
 	struct scsi_disk *sdkp;
 	struct gendisk *gd;
 	int index;
@@ -3142,9 +3154,13 @@ static int sd_probe(struct device *dev)
 	if (!sdkp)
 		goto out;
 
+	sd_devt = kzalloc(sizeof(*sd_devt), GFP_KERNEL);
+	if (!sd_devt)
+		goto out_free;
+
 	gd = alloc_disk(SD_MINORS);
 	if (!gd)
-		goto out_free;
+		goto out_free_devt;
 
 	do {
 		if (!ida_pre_get(&sd_index_ida, GFP_KERNEL))
@@ -3159,6 +3175,11 @@ static int sd_probe(struct device *dev)
 		sdev_printk(KERN_WARNING, sdp, "sd_probe: memory exhausted.\n");
 		goto out_put;
 	}
+
+	atomic_set(&sd_devt->disk_devt.count, 1);
+	sd_devt->disk_devt.release = sd_devt_release;
+	sd_devt->idx = index;
+	gd->disk_devt = &sd_devt->disk_devt;
 
 	error = sd_format_disk_name("sd", index, gd->disk_name, DISK_NAME_LEN);
 	if (error) {
@@ -3199,13 +3220,14 @@ static int sd_probe(struct device *dev)
 	return 0;
 
  out_free_index:
-	spin_lock(&sd_index_lock);
-	ida_remove(&sd_index_ida, index);
-	spin_unlock(&sd_index_lock);
+	put_disk_devt(&sd_devt->disk_devt);
+	sd_devt = NULL;
  out_put:
 	put_disk(gd);
  out_free:
 	kfree(sdkp);
+ out_free_devt:
+	kfree(sd_devt);
  out:
 	scsi_autopm_put_device(sdp);
 	return error;
@@ -3264,10 +3286,7 @@ static void scsi_disk_release(struct device *dev)
 	struct scsi_disk *sdkp = to_scsi_disk(dev);
 	struct gendisk *disk = sdkp->disk;
 	
-	spin_lock(&sd_index_lock);
-	ida_remove(&sd_index_ida, sdkp->index);
-	spin_unlock(&sd_index_lock);
-
+	put_disk_devt(disk->disk_devt);
 	disk->private_data = NULL;
 	put_disk(disk);
 	put_device(&sdkp->device->sdev_gendev);

@@ -225,9 +225,9 @@ static inline struct page *dio_get_page(struct dio *dio,
  * filesystems can use it to hold additional state between get_block calls and
  * dio_complete.
  */
-static ssize_t dio_complete(struct dio *dio, loff_t offset, ssize_t ret,
-		bool is_async)
+static ssize_t dio_complete(struct dio *dio, ssize_t ret, bool is_async)
 {
+	loff_t offset = dio->iocb->ki_pos;
 	ssize_t transferred = 0;
 
 	/*
@@ -258,6 +258,7 @@ static ssize_t dio_complete(struct dio *dio, loff_t offset, ssize_t ret,
 	if (dio->end_io) {
 		int err;
 
+		// XXX: ki_pos??
 		err = dio->end_io(dio->iocb, offset, ret, dio->private);
 		if (err)
 			ret = err;
@@ -267,15 +268,15 @@ static ssize_t dio_complete(struct dio *dio, loff_t offset, ssize_t ret,
 		inode_dio_end(dio->inode);
 
 	if (is_async) {
-		if (dio->op == REQ_OP_WRITE) {
-			int err;
+		/*
+		 * generic_write_sync expects ki_pos to have been updated
+		 * already, but the submission path only does this for
+		 * synchronous I/O.
+		 */
+		dio->iocb->ki_pos += transferred;
 
-			err = generic_write_sync(dio->iocb->ki_filp, offset,
-						 transferred);
-			if (err < 0 && ret > 0)
-				ret = err;
-		}
-
+		if (dio->op == REQ_OP_WRITE)
+			ret = generic_write_sync(dio->iocb,  transferred);
 		dio->iocb->ki_complete(dio->iocb, ret, 0);
 	}
 
@@ -287,7 +288,7 @@ static void dio_aio_complete_work(struct work_struct *work)
 {
 	struct dio *dio = container_of(work, struct dio, complete_work);
 
-	dio_complete(dio, dio->iocb->ki_pos, 0, true);
+	dio_complete(dio, 0, true);
 }
 
 static int dio_bio_complete(struct dio *dio, struct bio *bio);
@@ -316,7 +317,7 @@ static void dio_bio_end_aio(struct bio *bio)
 			queue_work(dio->inode->i_sb->s_dio_done_wq,
 				   &dio->complete_work);
 		} else {
-			dio_complete(dio, dio->iocb->ki_pos, 0, true);
+			dio_complete(dio, 0, true);
 		}
 	}
 }
@@ -629,11 +630,11 @@ static int get_more_blocks(struct dio *dio, struct dio_submit *sdio,
 		map_bh->b_size = fs_count << i_blkbits;
 
 		/*
-		 * For writes inside i_size on a DIO_SKIP_HOLES filesystem we
-		 * forbid block creations: only overwrites are permitted.
-		 * We will return early to the caller once we see an
-		 * unmapped buffer head returned, and the caller will fall
-		 * back to buffered I/O.
+		 * For writes that could fill holes inside i_size on a
+		 * DIO_SKIP_HOLES filesystem we forbid block creations: only
+		 * overwrites are permitted. We will return early to the caller
+		 * once we see an unmapped buffer head returned, and the caller
+		 * will fall back to buffered I/O.
 		 *
 		 * Otherwise the decision is left to the get_blocks method,
 		 * which may decide to handle it or also return an unmapped
@@ -641,8 +642,8 @@ static int get_more_blocks(struct dio *dio, struct dio_submit *sdio,
 		 */
 		create = dio->op == REQ_OP_WRITE;
 		if (dio->flags & DIO_SKIP_HOLES) {
-			if (sdio->block_in_file < (i_size_read(dio->inode) >>
-							sdio->blkbits))
+			if (fs_startblk <= ((i_size_read(dio->inode) - 1) >>
+							i_blkbits))
 				create = 0;
 		}
 
@@ -839,24 +840,6 @@ out:
 }
 
 /*
- * Clean any dirty buffers in the blockdev mapping which alias newly-created
- * file blocks.  Only called for S_ISREG files - blockdevs do not set
- * buffer_new
- */
-static void clean_blockdev_aliases(struct dio *dio, struct buffer_head *map_bh)
-{
-	unsigned i;
-	unsigned nblocks;
-
-	nblocks = map_bh->b_size >> dio->inode->i_blkbits;
-
-	for (i = 0; i < nblocks; i++) {
-		unmap_underlying_metadata(map_bh->b_bdev,
-					  map_bh->b_blocknr + i);
-	}
-}
-
-/*
  * If we are not writing the entire block and get_block() allocated
  * the block for us, we need to fill-in the unused portion of the
  * block with zeros. This happens only if user-buffer, fileoffset or
@@ -920,6 +903,7 @@ static int do_direct_IO(struct dio *dio, struct dio_submit *sdio,
 			struct buffer_head *map_bh)
 {
 	const unsigned blkbits = sdio->blkbits;
+	const unsigned i_blkbits = blkbits + sdio->blkfactor;
 	int ret = 0;
 
 	while (sdio->block_in_file < sdio->final_block_in_request) {
@@ -956,11 +940,15 @@ static int do_direct_IO(struct dio *dio, struct dio_submit *sdio,
 					goto do_holes;
 
 				sdio->blocks_available =
-						map_bh->b_size >> sdio->blkbits;
+						map_bh->b_size >> blkbits;
 				sdio->next_block_for_io =
 					map_bh->b_blocknr << sdio->blkfactor;
-				if (buffer_new(map_bh))
-					clean_blockdev_aliases(dio, map_bh);
+				if (buffer_new(map_bh)) {
+					clean_bdev_aliases(
+						map_bh->b_bdev,
+						map_bh->b_blocknr,
+						map_bh->b_size >> i_blkbits);
+				}
 
 				if (!sdio->blkfactor)
 					goto do_holes;
@@ -1326,7 +1314,7 @@ do_blockdev_direct_IO(struct kiocb *iocb, struct inode *inode,
 		dio_await_completion(dio);
 
 	if (drop_refcount(dio) == 0) {
-		retval = dio_complete(dio, offset, retval, false);
+		retval = dio_complete(dio, retval, false);
 	} else
 		BUG_ON(retval != -EIOCBQUEUED);
 

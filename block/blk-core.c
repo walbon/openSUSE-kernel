@@ -74,7 +74,7 @@ static void blk_clear_congested(struct request_list *rl, int sync)
 	 * flip its congestion state for events on other blkcgs.
 	 */
 	if (rl == &rl->q->root_rl)
-		clear_wb_congested(rl->q->backing_dev_info.wb.congested, sync);
+		clear_wb_congested(rl->q->backing_dev_info->wb.congested, sync);
 #endif
 }
 
@@ -85,7 +85,7 @@ static void blk_set_congested(struct request_list *rl, int sync)
 #else
 	/* see blk_clear_congested() */
 	if (rl == &rl->q->root_rl)
-		set_wb_congested(rl->q->backing_dev_info.wb.congested, sync);
+		set_wb_congested(rl->q->backing_dev_info->wb.congested, sync);
 #endif
 }
 
@@ -103,22 +103,6 @@ void blk_queue_congestion_threshold(struct request_queue *q)
 		nr = 1;
 	q->nr_congestion_off = nr;
 }
-
-/**
- * blk_get_backing_dev_info - get the address of a queue's backing_dev_info
- * @bdev:	device
- *
- * Locates the passed device's request queue and returns the address of its
- * backing_dev_info.  This function can only be called if @bdev is opened
- * and the return value is never NULL.
- */
-struct backing_dev_info *blk_get_backing_dev_info(struct block_device *bdev)
-{
-	struct request_queue *q = bdev_get_queue(bdev);
-
-	return &q->backing_dev_info;
-}
-EXPORT_SYMBOL(blk_get_backing_dev_info);
 
 void blk_rq_init(struct request_queue *q, struct request *rq)
 {
@@ -584,7 +568,7 @@ void blk_cleanup_queue(struct request_queue *q)
 	blk_flush_integrity();
 
 	/* @q won't process any more request, flush async actions */
-	del_timer_sync(&q->backing_dev_info.laptop_mode_wb_timer);
+	del_timer_sync(&q->backing_dev_info->laptop_mode_wb_timer);
 	blk_sync_queue(q);
 
 	if (q->mq_ops)
@@ -596,7 +580,8 @@ void blk_cleanup_queue(struct request_queue *q)
 		q->queue_lock = &q->__queue_lock;
 	spin_unlock_irq(lock);
 
-	bdi_unregister(&q->backing_dev_info);
+	bdi_unregister(q->backing_dev_info);
+	put_disk_devt(q->disk_devt);
 
 	/* @q is and will stay empty, shutdown and put */
 	blk_put_queue(q);
@@ -693,7 +678,6 @@ static void blk_rq_timed_out_timer(unsigned long data)
 struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id)
 {
 	struct request_queue *q;
-	int err;
 
 	q = kmem_cache_alloc_node(blk_requestq_cachep,
 				gfp_mask | __GFP_ZERO, node_id);
@@ -708,17 +692,17 @@ struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id)
 	if (!q->bio_split)
 		goto fail_id;
 
-	q->backing_dev_info.ra_pages =
-			(VM_MAX_READAHEAD * 1024) / PAGE_CACHE_SIZE;
-	q->backing_dev_info.capabilities = BDI_CAP_CGROUP_WRITEBACK;
-	q->backing_dev_info.name = "block";
-	q->node = node_id;
-
-	err = bdi_init(&q->backing_dev_info);
-	if (err)
+	q->backing_dev_info = bdi_alloc_node(gfp_mask, node_id);
+	if (!q->backing_dev_info)
 		goto fail_split;
 
-	setup_timer(&q->backing_dev_info.laptop_mode_wb_timer,
+	q->backing_dev_info->ra_pages =
+			(VM_MAX_READAHEAD * 1024) / PAGE_CACHE_SIZE;
+	q->backing_dev_info->capabilities = BDI_CAP_CGROUP_WRITEBACK;
+	q->backing_dev_info->name = "block";
+	q->node = node_id;
+
+	setup_timer(&q->backing_dev_info->laptop_mode_wb_timer,
 		    laptop_mode_timer_fn, (unsigned long) q);
 	setup_timer(&q->timeout, blk_rq_timed_out_timer, (unsigned long) q);
 	INIT_LIST_HEAD(&q->queue_head);
@@ -768,7 +752,7 @@ struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id)
 fail_ref:
 	percpu_ref_exit(&q->q_usage_counter);
 fail_bdi:
-	bdi_destroy(&q->backing_dev_info);
+	bdi_put(q->backing_dev_info);
 fail_split:
 	bioset_free(q->bio_split);
 fail_id:
@@ -1195,7 +1179,7 @@ fail_elvpriv:
 	 * disturb iosched and blkcg but weird is bettern than dead.
 	 */
 	printk_ratelimited(KERN_WARNING "%s: dev %s: request aux data allocation failed, iosched may be disturbed\n",
-			   __func__, dev_name(q->backing_dev_info.dev));
+			   __func__, dev_name(q->backing_dev_info->dev));
 
 	rq->rq_flags &= ~RQF_ELVPRIV;
 	rq->elv.icq = NULL;
@@ -1474,38 +1458,6 @@ void blk_put_request(struct request *req)
 	}
 }
 EXPORT_SYMBOL(blk_put_request);
-
-/**
- * blk_add_request_payload - add a payload to a request
- * @rq: request to update
- * @page: page backing the payload
- * @offset: offset in page
- * @len: length of the payload.
- *
- * This allows to later add a payload to an already submitted request by
- * a block driver.  The driver needs to take care of freeing the payload
- * itself.
- *
- * Note that this is a quite horrible hack and nothing but handling of
- * discard requests should ever use it.
- */
-void blk_add_request_payload(struct request *rq, struct page *page,
-		int offset, unsigned int len)
-{
-	struct bio *bio = rq->bio;
-
-	bio->bi_io_vec->bv_page = page;
-	bio->bi_io_vec->bv_offset = offset;
-	bio->bi_io_vec->bv_len = len;
-
-	bio->bi_iter.bi_size = len;
-	bio->bi_vcnt = 1;
-	bio->bi_phys_segments = 1;
-
-	rq->__data_len = rq->resid_len = len;
-	rq->nr_phys_segments = 1;
-}
-EXPORT_SYMBOL_GPL(blk_add_request_payload);
 
 bool bio_attempt_back_merge(struct request_queue *q, struct request *req,
 			    struct bio *bio)
@@ -1950,6 +1902,10 @@ generic_make_request_checks(struct bio *bio)
 	case REQ_OP_ZONE_REPORT:
 	case REQ_OP_ZONE_RESET:
 		if (!bdev_is_zoned(bio->bi_bdev))
+			goto not_supported;
+		break;
+	case REQ_OP_WRITE_ZEROES:
+		if (!bdev_write_zeroes_sectors(bio->bi_bdev))
 			goto not_supported;
 		break;
 	default:
@@ -2634,6 +2590,8 @@ bool blk_update_request(struct request *req, int error, unsigned int nr_bytes)
 		return false;
 	}
 
+	WARN_ON_ONCE(req->rq_flags & RQF_SPECIAL_PAYLOAD);
+
 	req->__data_len -= total_bytes;
 
 	/* update sector only for requests with clear definition of sector */
@@ -2716,7 +2674,7 @@ void blk_finish_request(struct request *req, int error)
 	BUG_ON(blk_queued_rq(req));
 
 	if (unlikely(laptop_mode) && req->cmd_type == REQ_TYPE_FS)
-		laptop_io_completion(&req->q->backing_dev_info);
+		laptop_io_completion(req->q->backing_dev_info);
 
 	blk_delete_timer(req);
 
