@@ -390,6 +390,60 @@ static void free_qpn(struct rvt_qpn_table *qpt, u32 qpn)
 }
 
 /**
+ * rvt_clear_mr_refs - Drop help mr refs
+ * @qp: rvt qp data structure
+ * @clr_sends: If shoudl clear send side or not
+ */
+static void rvt_clear_mr_refs(struct rvt_qp *qp, int clr_sends)
+{
+	unsigned n;
+	struct rvt_dev_info *rdi = ib_to_rvt(qp->ibqp.device);
+
+	if (test_and_clear_bit(RVT_R_REWIND_SGE, &qp->r_aflags))
+		rvt_put_ss(&qp->s_rdma_read_sge);
+
+	rvt_put_ss(&qp->r_sge);
+
+	if (clr_sends) {
+		while (qp->s_last != qp->s_head) {
+			struct rvt_swqe *wqe = rvt_get_swqe_ptr(qp, qp->s_last);
+			unsigned i;
+
+			for (i = 0; i < wqe->wr.num_sge; i++) {
+				struct rvt_sge *sge = &wqe->sg_list[i];
+
+				rvt_put_mr(sge->mr);
+			}
+			if (qp->ibqp.qp_type == IB_QPT_UD ||
+			    qp->ibqp.qp_type == IB_QPT_SMI ||
+			    qp->ibqp.qp_type == IB_QPT_GSI)
+				atomic_dec(&ibah_to_rvtah(
+						wqe->ud_wr.ah)->refcount);
+			if (++qp->s_last >= qp->s_size)
+				qp->s_last = 0;
+			smp_wmb(); /* see qp_set_savail */
+		}
+		if (qp->s_rdma_mr) {
+			rvt_put_mr(qp->s_rdma_mr);
+			qp->s_rdma_mr = NULL;
+		}
+	}
+
+	if (qp->ibqp.qp_type != IB_QPT_RC)
+		return;
+
+	for (n = 0; n < rvt_max_atomic(rdi); n++) {
+		struct rvt_ack_entry *e = &qp->s_ack_queue[n];
+
+		if (e->opcode == IB_OPCODE_RC_RDMA_READ_REQUEST &&
+		    e->rdma_sge.mr) {
+			rvt_put_mr(e->rdma_sge.mr);
+			e->rdma_sge.mr = NULL;
+		}
+	}
+}
+
+/**
  * rvt_remove_qp - remove qp form table
  * @rdi: rvt dev struct
  * @qp: qp to remove
@@ -516,7 +570,12 @@ static void rvt_reset_qp(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 	qp->s_ssn = 1;
 	qp->s_lsn = 0;
 	qp->s_mig_state = IB_MIG_MIGRATED;
-	memset(qp->s_ack_queue, 0, sizeof(qp->s_ack_queue));
+	if (qp->s_ack_queue)
+		memset(
+			qp->s_ack_queue,
+			0,
+			rvt_max_atomic(rdi) *
+				sizeof(*qp->s_ack_queue));
 	qp->r_head_ack_queue = 0;
 	qp->s_tail_ack_queue = 0;
 	qp->s_num_rd_atomic = 0;
@@ -624,6 +683,16 @@ struct ib_qp *rvt_create_qp(struct ib_pd *ibpd,
 			goto bail_swq;
 
 		RCU_INIT_POINTER(qp->next, NULL);
+		if (init_attr->qp_type == IB_QPT_RC) {
+			qp->s_ack_queue =
+				kzalloc_node(
+					sizeof(*qp->s_ack_queue) *
+					 rvt_max_atomic(rdi),
+					gfp,
+					rdi->dparms.node);
+			if (!qp->s_ack_queue)
+				goto bail_qp;
+		}
 
 		/*
 		 * Driver needs to set up it's private QP structure and do any
@@ -804,6 +873,7 @@ bail_driver_priv:
 	rdi->driver_f.qp_priv_free(rdi, qp);
 
 bail_qp:
+	kfree(qp->s_ack_queue);
 	kfree(qp);
 
 bail_swq:
@@ -811,60 +881,6 @@ bail_swq:
 
 	return ret;
 }
-
-/**
- * rvt_clear_mr_refs - Drop help mr refs
- * @qp: rvt qp data structure
- * @clr_sends: If shoudl clear send side or not
- */
-void rvt_clear_mr_refs(struct rvt_qp *qp, int clr_sends)
-{
-	unsigned n;
-
-	if (test_and_clear_bit(RVT_R_REWIND_SGE, &qp->r_aflags))
-		rvt_put_ss(&qp->s_rdma_read_sge);
-
-	rvt_put_ss(&qp->r_sge);
-
-	if (clr_sends) {
-		while (qp->s_last != qp->s_head) {
-			struct rvt_swqe *wqe = rvt_get_swqe_ptr(qp, qp->s_last);
-			unsigned i;
-
-			for (i = 0; i < wqe->wr.num_sge; i++) {
-				struct rvt_sge *sge = &wqe->sg_list[i];
-
-				rvt_put_mr(sge->mr);
-			}
-			if (qp->ibqp.qp_type == IB_QPT_UD ||
-			    qp->ibqp.qp_type == IB_QPT_SMI ||
-			    qp->ibqp.qp_type == IB_QPT_GSI)
-				atomic_dec(&ibah_to_rvtah(
-						wqe->ud_wr.ah)->refcount);
-			if (++qp->s_last >= qp->s_size)
-				qp->s_last = 0;
-			smp_wmb(); /* see qp_set_savail */
-		}
-		if (qp->s_rdma_mr) {
-			rvt_put_mr(qp->s_rdma_mr);
-			qp->s_rdma_mr = NULL;
-		}
-	}
-
-	if (qp->ibqp.qp_type != IB_QPT_RC)
-		return;
-
-	for (n = 0; n < ARRAY_SIZE(qp->s_ack_queue); n++) {
-		struct rvt_ack_entry *e = &qp->s_ack_queue[n];
-
-		if (e->opcode == IB_OPCODE_RC_RDMA_READ_REQUEST &&
-		    e->rdma_sge.mr) {
-			rvt_put_mr(e->rdma_sge.mr);
-			e->rdma_sge.mr = NULL;
-		}
-	}
-}
-EXPORT_SYMBOL(rvt_clear_mr_refs);
 
 /**
  * rvt_error_qp - put a QP into the error state
@@ -1285,6 +1301,7 @@ int rvt_destroy_qp(struct ib_qp *ibqp)
 		vfree(qp->r_rq.wq);
 	vfree(qp->s_wq);
 	rdi->driver_f.qp_priv_free(rdi, qp);
+	kfree(qp->s_ack_queue);
 	kfree(qp);
 	return 0;
 }
