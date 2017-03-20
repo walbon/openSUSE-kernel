@@ -26,7 +26,9 @@
 #include <linux/cache.h>
 #include <linux/slab.h>
 #include <asm-generic/pci-bridge.h>
+#ifndef __GENKSYMS__
 #include <linux/acpi.h>
+#endif
 #include "pci.h"
 
 unsigned int pci_flags;
