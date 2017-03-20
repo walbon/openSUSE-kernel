@@ -1321,20 +1321,6 @@ static void chcr_hmac_cra_exit(struct crypto_tfm *tfm)
 	}
 }
 
-static int chcr_copy_assoc(struct aead_request *req,
-				struct chcr_aead_ctx *ctx)
-{
-	SKCIPHER_REQUEST_ON_STACK(skreq, ctx->null);
-
-	skcipher_request_set_tfm(skreq, ctx->null);
-	skcipher_request_set_callback(skreq, aead_request_flags(req),
-			NULL, NULL);
-	skcipher_request_set_crypt(skreq, req->src, req->dst, req->assoclen,
-			NULL);
-
-	return crypto_skcipher_encrypt(skreq);
-}
-
 static unsigned char get_hmac(unsigned int authsize)
 {
 	switch (authsize) {
@@ -1371,6 +1357,9 @@ static struct sk_buff *create_authenc_wr(struct aead_request *req,
 	unsigned short stop_offset = 0;
 	unsigned int  assoclen = req->assoclen;
 	unsigned int  authsize = crypto_aead_authsize(tfm);
+	struct blkcipher_desc desc = {
+		.tfm = aeadctx->null,
+	};
 	int err = 0;
 	int null = 0;
 	gfp_t flags = req->base.flags & CRYPTO_TFM_REQ_MAY_SLEEP ? GFP_KERNEL :
@@ -1388,7 +1377,8 @@ static struct sk_buff *create_authenc_wr(struct aead_request *req,
 	reqctx->dst = src;
 
 	if (req->src != req->dst) {
-		err = chcr_copy_assoc(req, aeadctx);
+		err = crypto_blkcipher_encrypt(&desc, req->dst,
+						req->src, req->assoclen);
 		if (err)
 			return ERR_PTR(err);
 		reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd, req->dst,
@@ -1719,6 +1709,9 @@ static struct sk_buff *create_aead_ccm_wr(struct aead_request *req,
 	unsigned int dst_size = 0, kctx_len;
 	unsigned int sub_type;
 	unsigned int authsize = crypto_aead_authsize(tfm);
+	struct blkcipher_desc desc = {
+		.tfm = aeadctx->null,
+	};
 	int err = 0;
 	gfp_t flags = req->base.flags & CRYPTO_TFM_REQ_MAY_SLEEP ? GFP_KERNEL :
 		GFP_ATOMIC;
@@ -1734,7 +1727,8 @@ static struct sk_buff *create_aead_ccm_wr(struct aead_request *req,
 	reqctx->dst = src;
 
 	if (req->src != req->dst) {
-		err = chcr_copy_assoc(req, aeadctx);
+		err = crypto_blkcipher_encrypt(&desc, req->dst,
+						req->src, req->assoclen);
 		if (err) {
 			pr_err("AAD copy to destination buffer fails\n");
 			return ERR_PTR(err);
@@ -1748,7 +1742,6 @@ static struct sk_buff *create_aead_ccm_wr(struct aead_request *req,
 		pr_err("CCM:Invalid Destination sg entries\n");
 		goto err;
 	}
-
 
 	if (aead_ccm_validate_input(op_type, req, aeadctx, sub_type))
 		goto err;
@@ -1821,6 +1814,9 @@ static struct sk_buff *create_gcm_wr(struct aead_request *req,
 	unsigned int crypt_len = 0;
 	unsigned int authsize = crypto_aead_authsize(tfm);
 	unsigned char hmac_ctrl = get_hmac(authsize);
+	struct blkcipher_desc desc = {
+		.tfm = aeadctx->null,
+	};
 	int err = 0;
 	gfp_t flags = req->base.flags & CRYPTO_TFM_REQ_MAY_SLEEP ? GFP_KERNEL :
 		GFP_ATOMIC;
@@ -1838,7 +1834,8 @@ static struct sk_buff *create_gcm_wr(struct aead_request *req,
 	src = scatterwalk_ffwd(reqctx->srcffwd, req->src, req->assoclen);
 	reqctx->dst = src;
 	if (req->src != req->dst) {
-		err = chcr_copy_assoc(req, aeadctx);
+		err = crypto_blkcipher_encrypt(&desc, req->dst,
+						req->src, req->assoclen);
 		if (err)
 			return	ERR_PTR(err);
 		reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd, req->dst,

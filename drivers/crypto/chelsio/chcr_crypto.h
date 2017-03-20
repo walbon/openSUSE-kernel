@@ -187,7 +187,7 @@ struct __aead_ctx {
 struct chcr_aead_ctx {
 	__be32 key_ctx_hdr;
 	unsigned int enckey_len;
-	struct crypto_skcipher *null;
+	struct crypto_blkcipher *null;
 	u8 salt[MAX_SALT];
 	u8 key[CHCR_AES_MAX_KEY_LEN];
 	u16 hmac_ctrl;
