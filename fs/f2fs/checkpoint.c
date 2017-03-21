@@ -57,7 +57,7 @@ static struct page *__get_meta_page(struct f2fs_sb_info *sbi, pgoff_t index,
 		.type = META,
 		.op = REQ_OP_READ,
 		.op_flags = REQ_META | REQ_PRIO,
-		.blkaddr = index,
+		.blk_addr = index,
 		.encrypted_page = NULL,
 	};
 

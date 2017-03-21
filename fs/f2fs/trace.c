@@ -29,12 +29,8 @@ static inline void __print_last_io(void)
 			last_io.major, last_io.minor,
 			last_io.pid, "----------------",
 			last_io.type,
-<<<<<<< HEAD
-			last_io.fio.rw, last_io.fio.blk_addr,
-=======
 			last_io.fio.op, last_io.fio.op_flags,
-			last_io.fio.new_blkaddr,
->>>>>>> 04d328d... f2fs: use bio op accessors
+			last_io.fio.blk_addr,
 			last_io.len);
 	memset(&last_io, 0, sizeof(last_io));
 }
@@ -105,15 +101,10 @@ void f2fs_trace_ios(struct f2fs_io_info *fio, int flush)
 	if (last_io.major == major && last_io.minor == minor &&
 			last_io.pid == pid &&
 			last_io.type == __file_type(inode, pid) &&
-<<<<<<< HEAD
-			last_io.fio.rw == fio->rw &&
-			last_io.fio.blk_addr + last_io.len == fio->blk_addr) {
-=======
 			last_io.fio.op == fio->op &&
 			last_io.fio.op_flags == fio->op_flags &&
-			last_io.fio.new_blkaddr + last_io.len ==
-							fio->new_blkaddr) {
->>>>>>> 04d328d... f2fs: use bio op accessors
+			last_io.fio.blk_addr + last_io.len ==
+							fio->blk_addr) {
 		last_io.len++;
 		return;
 	}

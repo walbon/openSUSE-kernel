@@ -444,7 +444,7 @@ repeat:
 	} else {
 		f2fs_put_page(page, 1);
 
-		page = get_read_data_page(inode, index, READ_SYNC, true);
+		page = get_read_data_page(inode, index, REQ_SYNC, true);
 		if (IS_ERR(page))
 			goto repeat;
 
