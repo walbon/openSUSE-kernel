@@ -1160,12 +1160,12 @@ static void drbd_setup_queue_param(struct drbd_device *device, struct drbd_backi
 
 			queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, q);
 			/* REALLY? Is stacking secdiscard "legal"? */
-			if (blk_queue_secdiscard(b))
-				queue_flag_set_unlocked(QUEUE_FLAG_SECDISCARD, q);
+			if (blk_queue_secure_erase(b))
+				queue_flag_set_unlocked(QUEUE_FLAG_SECERASE, q);
 		} else {
 			blk_queue_max_discard_sectors(q, 0);
 			queue_flag_clear_unlocked(QUEUE_FLAG_DISCARD, q);
-			queue_flag_clear_unlocked(QUEUE_FLAG_SECDISCARD, q);
+			queue_flag_clear_unlocked(QUEUE_FLAG_SECERASE, q);
 		}
 
 		blk_queue_stack_limits(q, b);
