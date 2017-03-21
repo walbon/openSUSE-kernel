@@ -53,6 +53,8 @@
 #include "cxgb4_uld.h"
 
 #define CH_WARN(adap, fmt, ...) dev_warn(adap->pdev_dev, fmt, ## __VA_ARGS__)
+extern struct list_head adapter_list;
+extern struct mutex uld_mutex;
 
 enum {
 	MAX_NPORTS	= 4,     /* max # of ports */
@@ -324,7 +326,9 @@ struct adapter_params {
 	unsigned int sf_fw_start;         /* start of FW image in flash */
 
 	unsigned int fw_vers;
+	unsigned int bs_vers;		/* bootstrap version */
 	unsigned int tp_vers;
+	unsigned int er_vers;		/* expansion ROM version */
 	u8 api_vers[7];
 
 	unsigned short mtus[NMTUS];
@@ -336,6 +340,7 @@ struct adapter_params {
 	enum chip_type chip;               /* chip code */
 	struct arch_specific_params arch;  /* chip specific params */
 	unsigned char offload;
+	unsigned char crypto;		/* HW capability for crypto */
 
 	unsigned char bypass;
 
@@ -357,6 +362,34 @@ struct sge_idma_monitor_state {
 	unsigned int idma_warn[2];	/* time to warning in HZ */
 };
 
+/* Firmware Mailbox Command/Reply log.  All values are in Host-Endian format.
+ * The access and execute times are signed in order to accommodate negative
+ * error returns.
+ */
+struct mbox_cmd {
+	u64 cmd[MBOX_LEN / 8];		/* a Firmware Mailbox Command/Reply */
+	u64 timestamp;			/* OS-dependent timestamp */
+	u32 seqno;			/* sequence number */
+	s16 access;			/* time (ms) to access mailbox */
+	s16 execute;			/* time (ms) to execute */
+};
+
+struct mbox_cmd_log {
+	unsigned int size;		/* number of entries in the log */
+	unsigned int cursor;		/* next position in the log to write */
+	u32 seqno;			/* next sequence number */
+	/* variable length mailbox command log starts here */
+};
+
+/* Given a pointer to a Firmware Mailbox Command Log and a log entry index,
+ * return a pointer to the specified entry.
+ */
+static inline struct mbox_cmd *mbox_cmd_log_entry(struct mbox_cmd_log *log,
+						  unsigned int entry_idx)
+{
+	return &((struct mbox_cmd *)&(log)[1])[entry_idx];
+}
+
 #include "t4fw_api.h"
 
 #define FW_VERSION(chip) ( \
@@ -372,7 +405,6 @@ struct fw_info {
 	char *fw_mod_name;
 	struct fw_hdr fw_hdr;
 };
-
 
 struct trace_params {
 	u32 data[TRACE_LEN / 4];
@@ -402,11 +434,6 @@ enum {
 	MAX_ETH_QSETS = 32,           /* # of Ethernet Tx/Rx queue sets */
 	MAX_OFLD_QSETS = 16,          /* # of offload Tx, iscsi Rx queue sets */
 	MAX_CTRL_QUEUES = NCHAN,      /* # of control Tx queues */
-	MAX_RDMA_QUEUES = NCHAN,      /* # of streaming RDMA Rx queues */
-	MAX_RDMA_CIQS = 32,        /* # of  RDMA concentrator IQs */
-
-	/* # of streaming iSCSIT Rx queues */
-	MAX_ISCSIT_QUEUES = MAX_OFLD_QSETS,
 };
 
 enum {
@@ -423,8 +450,7 @@ enum {
 enum {
 	INGQ_EXTRAS = 2,        /* firmware event queue and */
 				/*   forwarded interrupts */
-	MAX_INGQ = MAX_ETH_QSETS + MAX_OFLD_QSETS + MAX_RDMA_QUEUES +
-		   MAX_RDMA_CIQS + MAX_ISCSIT_QUEUES + INGQ_EXTRAS,
+	MAX_INGQ = MAX_ETH_QSETS + INGQ_EXTRAS,
 };
 
 struct adapter;
@@ -476,6 +502,10 @@ enum {                                 /* adapter flags */
 	USING_SOFT_PARAMS  = (1 << 6),
 	MASTER_PF          = (1 << 7),
 	FW_OFLD_CONN       = (1 << 9),
+};
+
+enum {
+	ULP_CRYPTO_LOOKASIDE = 1 << 0,
 };
 
 struct rx_sw_desc;
@@ -600,6 +630,7 @@ struct tx_sw_desc;
 
 struct sge_txq {
 	unsigned int  in_use;       /* # of in-use Tx descriptors */
+	unsigned int  q_type;	    /* Q type Eth/Ctrl/Ofld */
 	unsigned int  size;         /* # of descriptors */
 	unsigned int  cidx;         /* SW consumer index */
 	unsigned int  pidx;         /* producer index */
@@ -630,7 +661,7 @@ struct sge_eth_txq {                /* state for an SGE Ethernet Tx queue */
 	unsigned long mapping_err;  /* # of I/O MMU packet mapping errors */
 } ____cacheline_aligned_in_smp;
 
-struct sge_ofld_txq {               /* state for an SGE offload Tx queue */
+struct sge_uld_txq {               /* state for an SGE offload Tx queue */
 	struct sge_txq q;
 	struct adapter *adap;
 	struct sk_buff_head sendq;  /* list of backpressured packets */
@@ -648,17 +679,30 @@ struct sge_ctrl_txq {               /* state for an SGE control Tx queue */
 	u8 full;                    /* the Tx ring is full */
 } ____cacheline_aligned_in_smp;
 
+struct sge_uld_rxq_info {
+	char name[IFNAMSIZ];	/* name of ULD driver */
+	struct sge_ofld_rxq *uldrxq; /* Rxq's for ULD */
+	u16 *msix_tbl;		/* msix_tbl for uld */
+	u16 *rspq_id;		/* response queue id's of rxq */
+	u16 nrxq;		/* # of ingress uld queues */
+	u16 nciq;		/* # of completion queues */
+	u8 uld;			/* uld type */
+};
+
+struct sge_uld_txq_info {
+	struct sge_uld_txq *uldtxq; /* Txq's for ULD */
+	atomic_t users;		/* num users */
+	u16 ntxq;		/* # of egress uld queues */
+};
+
 struct sge {
 	struct sge_eth_txq ethtxq[MAX_ETH_QSETS];
-	struct sge_ofld_txq ofldtxq[MAX_OFLD_QSETS];
 	struct sge_ctrl_txq ctrlq[MAX_CTRL_QUEUES];
 
 	struct sge_eth_rxq ethrxq[MAX_ETH_QSETS];
-	struct sge_ofld_rxq iscsirxq[MAX_OFLD_QSETS];
-	struct sge_ofld_rxq iscsitrxq[MAX_ISCSIT_QUEUES];
-	struct sge_ofld_rxq rdmarxq[MAX_RDMA_QUEUES];
-	struct sge_ofld_rxq rdmaciq[MAX_RDMA_CIQS];
 	struct sge_rspq fw_evtq ____cacheline_aligned_in_smp;
+	struct sge_uld_rxq_info **uld_rxq_info;
+	struct sge_uld_txq_info **uld_txq_info;
 
 	struct sge_rspq intrq ____cacheline_aligned_in_smp;
 	spinlock_t intrq_lock;
@@ -666,14 +710,8 @@ struct sge {
 	u16 max_ethqsets;           /* # of available Ethernet queue sets */
 	u16 ethqsets;               /* # of active Ethernet queue sets */
 	u16 ethtxq_rover;           /* Tx queue to clean up next */
-	u16 iscsiqsets;              /* # of active iSCSI queue sets */
-	u16 niscsitq;               /* # of available iSCST Rx queues */
-	u16 rdmaqs;                 /* # of available RDMA Rx queues */
-	u16 rdmaciqs;               /* # of available RDMA concentrator IQs */
-	u16 iscsi_rxq[MAX_OFLD_QSETS];
-	u16 iscsit_rxq[MAX_ISCSIT_QUEUES];
-	u16 rdma_rxq[MAX_RDMA_QUEUES];
-	u16 rdma_ciq[MAX_RDMA_CIQS];
+	u16 ofldqsets;              /* # of active ofld queue sets */
+	u16 nqs_per_uld;	    /* # of Rx queues per ULD */
 	u16 timer_val[SGE_NTIMERS];
 	u8 counter_val[SGE_NCOUNTERS];
 	u32 fl_pg_order;            /* large page allocation size */
@@ -697,10 +735,7 @@ struct sge {
 };
 
 #define for_each_ethrxq(sge, i) for (i = 0; i < (sge)->ethqsets; i++)
-#define for_each_iscsirxq(sge, i) for (i = 0; i < (sge)->iscsiqsets; i++)
-#define for_each_iscsitrxq(sge, i) for (i = 0; i < (sge)->niscsitq; i++)
-#define for_each_rdmarxq(sge, i) for (i = 0; i < (sge)->rdmaqs; i++)
-#define for_each_rdmaciq(sge, i) for (i = 0; i < (sge)->rdmaciqs; i++)
+#define for_each_ofldtxq(sge, i) for (i = 0; i < (sge)->ofldqsets; i++)
 
 struct l2t_data;
 
@@ -725,15 +760,34 @@ struct hash_mac_addr {
 	u8 addr[ETH_ALEN];
 };
 
+struct uld_msix_bmap {
+	unsigned long *msix_bmap;
+	unsigned int mapsize;
+	spinlock_t lock; /* lock for acquiring bitmap */
+};
+
+struct uld_msix_info {
+	unsigned short vec;
+	char desc[IFNAMSIZ + 10];
+	unsigned int idx;
+};
+
+struct vf_info {
+	unsigned char vf_mac_addr[ETH_ALEN];
+	bool pf_set_mac;
+};
+
 struct adapter {
 	void __iomem *regs;
 	void __iomem *bar2;
 	u32 t4_bar0;
 	struct pci_dev *pdev;
 	struct device *pdev_dev;
+	const char *name;
 	unsigned int mbox;
 	unsigned int pf;
 	unsigned int flags;
+	unsigned int adap_idx;
 	enum chip_type chip;
 
 	int msg_enable;
@@ -746,12 +800,18 @@ struct adapter {
 		unsigned short vec;
 		char desc[IFNAMSIZ + 10];
 	} msix_info[MAX_INGQ + 1];
+	struct uld_msix_info *msix_info_ulds; /* msix info for uld's */
+	struct uld_msix_bmap msix_bmap_ulds; /* msix bitmap for all uld */
+	int msi_idx;
 
 	struct doorbell_stats db_stats;
 	struct sge sge;
 
 	struct net_device *port[MAX_NPORTS];
 	u8 chan_map[NCHAN];                   /* channel -> port map */
+
+	struct vf_info *vfinfo;
+	u8 num_vfs;
 
 	u32 filter_mode;
 	unsigned int l2t_start;
@@ -760,7 +820,10 @@ struct adapter {
 	unsigned int clipt_start;
 	unsigned int clipt_end;
 	struct clip_tbl *clipt;
+	struct cxgb4_uld_info *uld;
 	void *uld_handle[CXGB4_ULD_MAX];
+	unsigned int num_uld;
+	unsigned int num_ofld_uld;
 	struct list_head list_node;
 	struct list_head rcu_node;
 	struct list_head mac_hlist; /* list of MAC addresses in MPS Hash */
@@ -775,6 +838,12 @@ struct adapter {
 	struct work_struct db_full_task;
 	struct work_struct db_drop_task;
 	bool tid_release_task_busy;
+
+	/* support for mailbox command/reply logging */
+#define T4_OS_LOG_MBOX_CMDS 256
+	struct mbox_cmd_log *mbox_log;
+
+	struct mutex uld_mutex;
 
 	struct dentry *debugfs_root;
 	bool use_bd;     /* Use SGE Back Door intfc for reading SGE Contexts */
@@ -913,6 +982,16 @@ enum {
 static inline int is_offload(const struct adapter *adap)
 {
 	return adap->params.offload;
+}
+
+static inline int is_pci_uld(const struct adapter *adap)
+{
+	return adap->params.crypto;
+}
+
+static inline int is_uld(const struct adapter *adap)
+{
+	return (adap->params.offload || adap->params.crypto);
 }
 
 static inline u32 t4_read_reg(struct adapter *adap, u32 reg_addr)
@@ -1141,15 +1220,16 @@ int t4_sge_alloc_eth_txq(struct adapter *adap, struct sge_eth_txq *txq,
 int t4_sge_alloc_ctrl_txq(struct adapter *adap, struct sge_ctrl_txq *txq,
 			  struct net_device *dev, unsigned int iqid,
 			  unsigned int cmplqid);
-int t4_sge_alloc_ofld_txq(struct adapter *adap, struct sge_ofld_txq *txq,
-			  struct net_device *dev, unsigned int iqid);
+int t4_sge_mod_ctrl_txq(struct adapter *adap, unsigned int eqid,
+			unsigned int cmplqid);
+int t4_sge_alloc_uld_txq(struct adapter *adap, struct sge_uld_txq *txq,
+			 struct net_device *dev, unsigned int iqid,
+			 unsigned int uld_type);
 irqreturn_t t4_sge_intr_msix(int irq, void *cookie);
 int t4_sge_init(struct adapter *adap);
 void t4_sge_start(struct adapter *adap);
 void t4_sge_stop(struct adapter *adap);
 int cxgb_busy_poll(struct napi_struct *napi);
-int cxgb4_set_rspq_intr_params(struct sge_rspq *q, unsigned int us,
-			       unsigned int cnt);
 void cxgb4_set_ethtool_ops(struct net_device *netdev);
 int cxgb4_write_rss(const struct port_info *pi, const u16 *queues);
 extern int dbfifo_int_thresh;
@@ -1252,6 +1332,18 @@ static inline int hash_mac_addr(const u8 *addr)
 	return a & 0x3f;
 }
 
+int cxgb4_set_rspq_intr_params(struct sge_rspq *q, unsigned int us,
+			       unsigned int cnt);
+static inline void init_rspq(struct adapter *adap, struct sge_rspq *q,
+			     unsigned int us, unsigned int cnt,
+			     unsigned int size, unsigned int iqe_size)
+{
+	q->adap = adap;
+	cxgb4_set_rspq_intr_params(q, us, cnt);
+	q->iqe_len = iqe_size;
+	q->size = size;
+}
+
 void t4_write_indirect(struct adapter *adap, unsigned int addr_reg,
 		       unsigned int data_reg, const u32 *vals,
 		       unsigned int nregs, unsigned int start_idx);
@@ -1306,6 +1398,7 @@ int t4_fl_pkt_align(struct adapter *adap);
 unsigned int t4_flash_cfg_addr(struct adapter *adapter);
 int t4_check_fw_version(struct adapter *adap);
 int t4_get_fw_version(struct adapter *adapter, u32 *vers);
+int t4_get_bs_version(struct adapter *adapter, u32 *vers);
 int t4_get_tp_version(struct adapter *adapter, u32 *vers);
 int t4_get_exprom_version(struct adapter *adapter, u32 *vers);
 int t4_prep_fw(struct adapter *adap, struct fw_info *fw_info,
@@ -1480,4 +1573,14 @@ void t4_idma_monitor_init(struct adapter *adapter,
 void t4_idma_monitor(struct adapter *adapter,
 		     struct sge_idma_monitor_state *idma,
 		     int hz, int ticks);
+int t4_set_vf_mac_acl(struct adapter *adapter, unsigned int vf,
+		      unsigned int naddr, u8 *addr);
+void t4_uld_mem_free(struct adapter *adap);
+int t4_uld_mem_alloc(struct adapter *adap);
+void t4_uld_clean_up(struct adapter *adap);
+void t4_register_netevent_notifier(void);
+void free_rspq_fl(struct adapter *adap, struct sge_rspq *rq, struct sge_fl *fl);
+void free_tx_desc(struct adapter *adap, struct sge_txq *q,
+		  unsigned int n, bool unmap);
+void free_txq(struct adapter *adap, struct sge_txq *q);
 #endif /* __CXGB4_H__ */

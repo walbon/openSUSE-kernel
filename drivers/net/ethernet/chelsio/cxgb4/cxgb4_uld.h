@@ -32,8 +32,8 @@
  * SOFTWARE.
  */
 
-#ifndef __CXGB4_OFLD_H
-#define __CXGB4_OFLD_H
+#ifndef __CXGB4_ULD_H
+#define __CXGB4_ULD_H
 
 #include <linux/cache.h>
 #include <linux/spinlock.h>
@@ -41,6 +41,8 @@
 #include <linux/inetdevice.h>
 #include <linux/atomic.h>
 #include "cxgb4.h"
+
+#define MAX_ULD_QSETS 16
 
 /* CPL message priority levels */
 enum {
@@ -75,6 +77,8 @@ enum {
 
 /* Special asynchronous notification message */
 #define CXGB4_MSG_AN ((void *)1)
+#define TX_ULD(uld)(((uld) != CXGB4_ULD_CRYPTO) ? CXGB4_TX_OFLD :\
+		      CXGB4_TX_CRYPTO)
 
 struct serv_entry {
 	void *data;
@@ -189,10 +193,25 @@ static inline void set_wr_txq(struct sk_buff *skb, int prio, int queue)
 }
 
 enum cxgb4_uld {
+	CXGB4_ULD_INIT,
 	CXGB4_ULD_RDMA,
 	CXGB4_ULD_ISCSI,
 	CXGB4_ULD_ISCSIT,
+	CXGB4_ULD_CRYPTO,
 	CXGB4_ULD_MAX
+};
+
+enum cxgb4_tx_uld {
+	CXGB4_TX_OFLD,
+	CXGB4_TX_CRYPTO,
+	CXGB4_TX_MAX
+};
+
+enum cxgb4_txq_type {
+	CXGB4_TXQ_ETH,
+	CXGB4_TXQ_ULD,
+	CXGB4_TXQ_CTRL,
+	CXGB4_TXQ_MAX
 };
 
 enum cxgb4_state {
@@ -284,6 +303,12 @@ struct cxgb4_lld_info {
 
 struct cxgb4_uld_info {
 	const char *name;
+	void *handle;
+	unsigned int nrxq;
+	unsigned int rxq_size;
+	unsigned int ntxq;
+	bool ciq;
+	bool lro;
 	void *(*add)(const struct cxgb4_lld_info *p);
 	int (*rx_handler)(void *handle, const __be64 *rsp,
 			  const struct pkt_gl *gl);
@@ -299,6 +324,7 @@ struct cxgb4_uld_info {
 int cxgb4_register_uld(enum cxgb4_uld type, const struct cxgb4_uld_info *p);
 int cxgb4_unregister_uld(enum cxgb4_uld type);
 int cxgb4_ofld_send(struct net_device *dev, struct sk_buff *skb);
+int cxgb4_crypto_send(struct net_device *dev, struct sk_buff *skb);
 unsigned int cxgb4_dbfifo_count(const struct net_device *dev, int lpfifo);
 unsigned int cxgb4_port_chan(const struct net_device *dev);
 unsigned int cxgb4_port_viid(const struct net_device *dev);
@@ -330,4 +356,4 @@ int cxgb4_bar2_sge_qregs(struct net_device *dev,
 			 u64 *pbar2_qoffset,
 			 unsigned int *pbar2_qid);
 
-#endif  /* !__CXGB4_OFLD_H */
+#endif  /* !__CXGB4_ULD_H */

@@ -224,18 +224,34 @@ static void fw_asrt(struct adapter *adap, u32 mbox_addr)
 		  be32_to_cpu(asrt.u.assert.x), be32_to_cpu(asrt.u.assert.y));
 }
 
-static void dump_mbox(struct adapter *adap, int mbox, u32 data_reg)
+/**
+ *	t4_record_mbox - record a Firmware Mailbox Command/Reply in the log
+ *	@adapter: the adapter
+ *	@cmd: the Firmware Mailbox Command or Reply
+ *	@size: command length in bytes
+ *	@access: the time (ms) needed to access the Firmware Mailbox
+ *	@execute: the time (ms) the command spent being executed
+ */
+static void t4_record_mbox(struct adapter *adapter,
+			   const __be64 *cmd, unsigned int size,
+			   int access, int execute)
 {
-	dev_err(adap->pdev_dev,
-		"mbox %d: %llx %llx %llx %llx %llx %llx %llx %llx\n", mbox,
-		(unsigned long long)t4_read_reg64(adap, data_reg),
-		(unsigned long long)t4_read_reg64(adap, data_reg + 8),
-		(unsigned long long)t4_read_reg64(adap, data_reg + 16),
-		(unsigned long long)t4_read_reg64(adap, data_reg + 24),
-		(unsigned long long)t4_read_reg64(adap, data_reg + 32),
-		(unsigned long long)t4_read_reg64(adap, data_reg + 40),
-		(unsigned long long)t4_read_reg64(adap, data_reg + 48),
-		(unsigned long long)t4_read_reg64(adap, data_reg + 56));
+	struct mbox_cmd_log *log = adapter->mbox_log;
+	struct mbox_cmd *entry;
+	int i;
+
+	entry = mbox_cmd_log_entry(log, log->cursor++);
+	if (log->cursor == log->size)
+		log->cursor = 0;
+
+	for (i = 0; i < size / 8; i++)
+		entry->cmd[i] = be64_to_cpu(cmd[i]);
+	while (i < MBOX_LEN / 8)
+		entry->cmd[i++] = 0;
+	entry->timestamp = jiffies;
+	entry->seqno = log->seqno++;
+	entry->access = access;
+	entry->execute = execute;
 }
 
 /**
@@ -268,12 +284,15 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox, const void *cmd,
 		1, 1, 3, 5, 10, 10, 20, 50, 100, 200
 	};
 
+	u16 access = 0;
+	u16 execute = 0;
 	u32 v;
 	u64 res;
-	int i, ms, delay_idx;
+	int i, ms, delay_idx, ret;
 	const __be64 *p = cmd;
 	u32 data_reg = PF_REG(mbox, CIM_PF_MAILBOX_DATA_A);
 	u32 ctl_reg = PF_REG(mbox, CIM_PF_MAILBOX_CTRL_A);
+	__be64 cmd_rpl[MBOX_LEN / 8];
 
 	if ((size & 15) || size > MBOX_LEN)
 		return -EINVAL;
@@ -289,9 +308,14 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox, const void *cmd,
 	for (i = 0; v == MBOX_OWNER_NONE && i < 3; i++)
 		v = MBOWNER_G(t4_read_reg(adap, ctl_reg));
 
-	if (v != MBOX_OWNER_DRV)
-		return v ? -EBUSY : -ETIMEDOUT;
+	if (v != MBOX_OWNER_DRV) {
+		ret = (v == MBOX_OWNER_FW) ? -EBUSY : -ETIMEDOUT;
+		t4_record_mbox(adap, cmd, MBOX_LEN, access, ret);
+		return ret;
+	}
 
+	/* Copy in the new mailbox command and send it on its way ... */
+	t4_record_mbox(adap, cmd, MBOX_LEN, access, 0);
 	for (i = 0; i < size; i += 8)
 		t4_write_reg64(adap, data_reg + i, be64_to_cpu(*p++));
 
@@ -317,26 +341,31 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox, const void *cmd,
 				continue;
 			}
 
-			res = t4_read_reg64(adap, data_reg);
+			get_mbox_rpl(adap, cmd_rpl, MBOX_LEN / 8, data_reg);
+			res = be64_to_cpu(cmd_rpl[0]);
+
 			if (FW_CMD_OP_G(res >> 32) == FW_DEBUG_CMD) {
 				fw_asrt(adap, data_reg);
 				res = FW_CMD_RETVAL_V(EIO);
 			} else if (rpl) {
-				get_mbox_rpl(adap, rpl, size / 8, data_reg);
+				memcpy(rpl, cmd_rpl, size);
 			}
 
-			if (FW_CMD_RETVAL_G((int)res))
-				dump_mbox(adap, mbox, data_reg);
 			t4_write_reg(adap, ctl_reg, 0);
+
+			execute = i + ms;
+			t4_record_mbox(adap, cmd_rpl,
+				       MBOX_LEN, access, execute);
 			return -FW_CMD_RETVAL_G((int)res);
 		}
 	}
 
-	dump_mbox(adap, mbox, data_reg);
+	ret = -ETIMEDOUT;
+	t4_record_mbox(adap, cmd, MBOX_LEN, access, ret);
 	dev_err(adap->pdev_dev, "command %#x in mailbox %d timed out\n",
 		*(const u8 *)cmd, mbox);
 	t4_report_fw_error(adap);
-	return -ETIMEDOUT;
+	return ret;
 }
 
 int t4_wr_mbox_meat(struct adapter *adap, int mbox, const void *cmd, int size,
@@ -2690,7 +2719,7 @@ int t4_get_raw_vpd_params(struct adapter *adapter, struct vpd_params *p)
 
 out:
 	vfree(vpd);
-	return ret;
+	return ret < 0 ? ret : 0;
 }
 
 /**
@@ -2932,6 +2961,20 @@ unlock:
 int t4_get_fw_version(struct adapter *adapter, u32 *vers)
 {
 	return t4_read_flash(adapter, FLASH_FW_START +
+			     offsetof(struct fw_hdr, fw_ver), 1,
+			     vers, 0);
+}
+
+/**
+ *	t4_get_bs_version - read the firmware bootstrap version
+ *	@adapter: the adapter
+ *	@vers: where to place the version
+ *
+ *	Reads the FW Bootstrap version from flash.
+ */
+int t4_get_bs_version(struct adapter *adapter, u32 *vers)
+{
+	return t4_read_flash(adapter, FLASH_FWBOOTSTRAP_START +
 			     offsetof(struct fw_hdr, fw_ver), 1,
 			     vers, 0);
 }
@@ -8125,4 +8168,45 @@ void t4_idma_monitor(struct adapter *adapter,
 			 debug0, debug11);
 		t4_sge_decode_idma_state(adapter, idma->idma_state[i]);
 	}
+}
+
+/**
+ *	t4_set_vf_mac - Set MAC address for the specified VF
+ *	@adapter: The adapter
+ *	@vf: one of the VFs instantiated by the specified PF
+ *	@naddr: the number of MAC addresses
+ *	@addr: the MAC address(es) to be set to the specified VF
+ */
+int t4_set_vf_mac_acl(struct adapter *adapter, unsigned int vf,
+		      unsigned int naddr, u8 *addr)
+{
+	struct fw_acl_mac_cmd cmd;
+
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.op_to_vfn = cpu_to_be32(FW_CMD_OP_V(FW_ACL_MAC_CMD) |
+				    FW_CMD_REQUEST_F |
+				    FW_CMD_WRITE_F |
+				    FW_ACL_MAC_CMD_PFN_V(adapter->pf) |
+				    FW_ACL_MAC_CMD_VFN_V(vf));
+
+	/* Note: Do not enable the ACL */
+	cmd.en_to_len16 = cpu_to_be32((unsigned int)FW_LEN16(cmd));
+	cmd.nmac = naddr;
+
+	switch (adapter->pf) {
+	case 3:
+		memcpy(cmd.macaddr3, addr, sizeof(cmd.macaddr3));
+		break;
+	case 2:
+		memcpy(cmd.macaddr2, addr, sizeof(cmd.macaddr2));
+		break;
+	case 1:
+		memcpy(cmd.macaddr1, addr, sizeof(cmd.macaddr1));
+		break;
+	case 0:
+		memcpy(cmd.macaddr0, addr, sizeof(cmd.macaddr0));
+		break;
+	}
+
+	return t4_wr_mbox(adapter, adapter->mbox, &cmd, sizeof(cmd), &cmd);
 }

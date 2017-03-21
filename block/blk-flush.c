@@ -366,7 +366,7 @@ static void flush_data_end_io(struct request *rq, int error)
 	elv_completed_request(q, rq);
 
 	/* for avoiding double accounting */
-	rq->cmd_flags &= ~RQF_STARTED;
+	rq->rq_flags &= ~RQF_STARTED;
 
 	/*
 	 * After populating an empty queue, kick it to avoid stall.  Read
@@ -454,7 +454,7 @@ void blk_insert_flush(struct request *rq)
 	if ((policy & REQ_FSEQ_DATA) &&
 	    !(policy & (REQ_FSEQ_PREFLUSH | REQ_FSEQ_POSTFLUSH))) {
 		if (q->mq_ops) {
-			blk_mq_insert_request(rq, false, false, true);
+			blk_mq_insert_request(rq, false, true, false);
 		} else
 			list_add_tail(&rq->queuelist, &q->queue_head);
 		return;

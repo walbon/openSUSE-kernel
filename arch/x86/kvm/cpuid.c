@@ -365,7 +365,8 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		F(XSAVEOPT) | F(XSAVEC) | F(XGETBV1) | f_xsaves;
 
 	/* cpuid 7.0.ecx*/
-	const u32 kvm_cpuid_7_0_ecx_x86_features = F(PKU) | 0 /*OSPKE*/;
+	const u32 kvm_cpuid_7_0_ecx_x86_features =
+		F(PKU) | 0 /*OSPKE*/ | F(AVX512_VPOPCNTDQ);
 
 	/* all calls to cpuid_count() should be made on the same cpu */
 	get_cpu();

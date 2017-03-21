@@ -30,3 +30,4 @@
  */
 
 /*? Text: "iucv_external_interrupt: out of memory\n" */
+/*? Text: "%s: %d output lines suppressed due to ratelimiting\n" */
