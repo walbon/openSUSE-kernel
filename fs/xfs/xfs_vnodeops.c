@@ -199,13 +199,6 @@ xfs_free_eofblocks(
 		 */
 		tp = xfs_trans_alloc(mp, XFS_TRANS_INACTIVE);
 
-		/*
-		 * Do the xfs_itruncate_start() call before
-		 * reserving any log space because
-		 * itruncate_start will call into the buffer
-		 * cache and we can't
-		 * do that within a transaction.
-		 */
 		if (flags & XFS_FREE_EOF_TRYLOCK) {
 			if (!xfs_ilock_nowait(ip, XFS_IOLOCK_EXCL)) {
 				xfs_trans_cancel(tp, 0);
@@ -213,14 +206,6 @@ xfs_free_eofblocks(
 			}
 		} else if (!(flags & XFS_FREE_EOF_HASLOCK)){
 			xfs_ilock(ip, XFS_IOLOCK_EXCL);
-		}
-		error = xfs_itruncate_start(ip, XFS_ITRUNC_DEFINITE,
-				    ip->i_size);
-		if (error) {
-			xfs_trans_cancel(tp, 0);
-			if (!(flags & XFS_FREE_EOF_HASLOCK))
-				xfs_iunlock(ip, XFS_IOLOCK_EXCL);
-			return error;
 		}
 
 		error = xfs_trans_reserve(tp, 0,
@@ -667,20 +652,9 @@ xfs_inactive(
 
 	tp = xfs_trans_alloc(mp, XFS_TRANS_INACTIVE);
 	if (truncate) {
-		/*
-		 * Do the xfs_itruncate_start() call before
-		 * reserving any log space because itruncate_start
-		 * will call into the buffer cache and we can't
-		 * do that within a transaction.
-		 */
 		xfs_ilock(ip, XFS_IOLOCK_EXCL);
 
-		error = xfs_itruncate_start(ip, XFS_ITRUNC_DEFINITE, 0);
-		if (error) {
-			xfs_trans_cancel(tp, 0);
-			xfs_iunlock(ip, XFS_IOLOCK_EXCL);
-			return VN_INACTIVE_CACHE;
-		}
+		xfs_ioend_wait(ip);
 
 		error = xfs_trans_reserve(tp, 0,
 					  XFS_ITRUNCATE_LOG_RES(mp),
