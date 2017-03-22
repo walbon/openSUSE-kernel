@@ -1101,7 +1101,7 @@ repeat:
 	if (!page)
 		return ERR_PTR(-ENOMEM);
 
-	err = read_node_page(page, READ_SYNC);
+	err = read_node_page(page, REQ_SYNC);
 	if (err < 0) {
 		f2fs_put_page(page, 1);
 		return ERR_PTR(err);

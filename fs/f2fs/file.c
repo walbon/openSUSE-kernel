@@ -1688,25 +1688,13 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file_inode(file);
-	ssize_t ret;
 
 	if (f2fs_encrypted_inode(inode) &&
 				!f2fs_has_encryption_key(inode) &&
 				f2fs_get_encryption_info(inode))
 		return -EACCES;
 
-	mutex_lock(&inode->i_mutex);
-	ret = generic_write_checks(iocb, from);
-	if (ret > 0) {
-		ret = f2fs_preallocate_blocks(iocb, from);
-		if (!ret)
-			ret = __generic_file_write_iter(iocb, from);
-	}
-	mutex_unlock(&inode->i_mutex);
-
-	if (ret > 0)
-		ret = generic_write_sync(iocb, ret);
-	return ret;
+	return generic_file_write_iter(iocb, from);
 }
 
 #ifdef CONFIG_COMPAT
