@@ -1658,7 +1658,7 @@ xfs_dm_get_dirattrs_rvp(
 	mutex_lock(&inode->i_mutex);
 	error = -ENOENT;
 	if (!IS_DEADDIR(inode)) {
-		error = -xfs_readdir(dp, cb, dp->i_size,
+		error = -xfs_readdir(dp, cb, XFS_ISIZE(dp),
 					 (xfs_off_t *)&loc, dm_filldir);
 	}
 	mutex_unlock(&inode->i_mutex);
@@ -2146,7 +2146,7 @@ xfs_dm_probe_hole(
 	mp = ip->i_mount;
 	lock_flags = XFS_ILOCK_EXCL | XFS_IOLOCK_EXCL;
 	xfs_ilock(ip, lock_flags);
-	realsize = ip->i_size;
+	realsize = XFS_ISIZE(ip);
 	xfs_iunlock(ip, lock_flags);
 
 	if ((off + len) > realsize)
@@ -2201,7 +2201,7 @@ xfs_dm_punch_hole(
 	down_rw_sems(inode, DM_SEM_FLAG_WR);
 
 	xfs_ilock(ip, XFS_ILOCK_EXCL | XFS_IOLOCK_EXCL);
-	realsize = ip->i_size;
+	realsize = XFS_ISIZE(ip);
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	align = xfs_get_extsz_hint(ip);
 	if (align == 0)
@@ -2928,8 +2928,8 @@ xfs_dm_send_mmap_event(
 	length = 0; /* whole file, for now */
 
 	filesize = ip->i_new_size;
-	if (filesize < ip->i_size) {
-		filesize = ip->i_size;
+	if (filesize < XFS_ISIZE(ip)) {
+		filesize = XFS_ISIZE(ip);
 	}
 
 	/* Set first byte number beyond the map area. */
