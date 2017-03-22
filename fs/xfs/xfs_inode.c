@@ -668,7 +668,7 @@ xfs_dinode_from_disk(
 	to->di_forkoff = from->di_forkoff;
 	to->di_aformat	= from->di_aformat;
 	to->di_dmevmask	= be32_to_cpu(from->di_dmevmask);
-	to->di_dmstate	= be16_to_cpu(from->di_dmstate);
+	atomic_set(&to->di_dmstate, be16_to_cpu(from->di_dmstate));
 	to->di_flags	= be16_to_cpu(from->di_flags);
 	to->di_gen	= be32_to_cpu(from->di_gen);
 }
@@ -704,7 +704,7 @@ xfs_dinode_to_disk(
 	to->di_forkoff = from->di_forkoff;
 	to->di_aformat = from->di_aformat;
 	to->di_dmevmask = cpu_to_be32(from->di_dmevmask);
-	to->di_dmstate = cpu_to_be16(from->di_dmstate);
+	to->di_dmstate = cpu_to_be16(atomic_read(&from->di_dmstate));
 	to->di_flags = cpu_to_be16(from->di_flags);
 	to->di_gen = cpu_to_be32(from->di_gen);
 }
@@ -1070,7 +1070,7 @@ xfs_ialloc(
 	 */
 	ip->i_d.di_extsize = 0;
 	ip->i_d.di_dmevmask = 0;
-	ip->i_d.di_dmstate = 0;
+	atomic_set(&ip->i_d.di_dmstate, 0);
 	ip->i_d.di_flags = 0;
 	flags = XFS_ILOG_CORE;
 	switch (mode & S_IFMT) {
