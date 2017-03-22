@@ -223,7 +223,14 @@ xfs_free_eofblocks(
 		xfs_ilock(ip, XFS_ILOCK_EXCL);
 		xfs_trans_ijoin(tp, ip);
 
-		error = xfs_itruncate_data(&tp, ip, ip->i_size);
+		/*
+		 * Do not update the on-disk file size.  If we update the
+		 * on-disk file size and then the system crashes before the
+		 * contents of the file are flushed to disk then the files
+		 * may be full of holes (ie NULL files bug).
+		 */
+		error = xfs_itruncate_extents(&tp, ip, XFS_DATA_FORK,
+					      ip->i_size);
 		if (error) {
 			/*
 			 * If we get an error at this point we simply don't
@@ -668,14 +675,19 @@ xfs_inactive(
 		xfs_ilock(ip, XFS_ILOCK_EXCL);
 		xfs_trans_ijoin(tp, ip);
 
-		error = xfs_itruncate_data(&tp, ip, 0);
+		ip->i_d.di_size = 0;
+		ip->i_size = 0;
+		xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
+
+		error = xfs_itruncate_extents(&tp, ip, XFS_DATA_FORK, 0);
 		if (error) {
 			xfs_trans_cancel(tp,
 				XFS_TRANS_RELEASE_LOG_RES | XFS_TRANS_ABORT);
 			xfs_iunlock(ip, XFS_IOLOCK_EXCL | XFS_ILOCK_EXCL);
 			return VN_INACTIVE_CACHE;
 		}
-	} else if ((ip->i_d.di_mode & S_IFMT) == S_IFLNK) {
+		ASSERT(ip->i_d.di_nextents == 0);
+	} else if (S_ISLNK(ip->i_d.di_mode)) {
 
 		/*
 		 * If we get an error while cleaning up a
