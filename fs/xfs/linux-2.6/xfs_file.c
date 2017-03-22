@@ -39,6 +39,7 @@
 
 #include <linux/dcache.h>
 #include <linux/falloc.h>
+#include <linux/splice.h>
 
 static const struct vm_operations_struct xfs_file_vm_ops;
 #ifdef HAVE_DMAPI
@@ -435,6 +436,42 @@ xfs_file_splice_read(
 	return ret;
 }
 
+
+static ssize_t
+xfs_file_splice_write_actor(
+	struct pipe_inode_info  *pipe,
+	struct splice_desc      *sd)
+{
+	struct file *out = sd->u.file;
+	struct inode *inode = out->f_mapping->host;
+	struct xfs_inode *ip = XFS_I(out->f_mapping->host);
+	loff_t tmp_pos = sd->pos;
+	size_t tmp_count = sd->total_len;
+	ssize_t ret;
+
+
+	xfs_rw_ilock(ip, XFS_IOLOCK_EXCL);
+	ret = generic_write_checks(out, &tmp_pos, &tmp_count,
+				   S_ISBLK(inode->i_mode));
+	if (ret < 0 || tmp_count == 0)
+		goto out_unlock;
+
+	sd->total_len = tmp_count;
+	WARN_ON(sd->pos != tmp_pos);
+
+	ret = file_remove_suid(out);
+	if (!ret) {
+		ret = file_update_time(out);
+		if (!ret)
+			ret = splice_from_pipe_feed(pipe, sd, pipe_to_file);
+	}
+
+out_unlock:
+	xfs_rw_iunlock(ip, XFS_IOLOCK_EXCL);
+	return ret;
+
+}
+	
 /*
  * xfs_file_splice_write() does not use xfs_rw_ilock() because
  * generic_file_splice_write() takes the i_mutex itself. This, in theory,
@@ -464,26 +501,23 @@ xfs_file_splice_write(
 	if (XFS_FORCED_SHUTDOWN(ip->i_mount))
 		return -EIO;
 
-	xfs_ilock(ip, XFS_IOLOCK_EXCL);
 
 	if (DM_EVENT_ENABLED(ip, DM_EVENT_WRITE) && !(ioflags & IO_INVIS)) {
-		int iolock = XFS_IOLOCK_EXCL;
 		struct xfs_mount	*mp = ip->i_mount;
 		int error;
 
 		error = XFS_SEND_DATA(mp, DM_EVENT_WRITE, ip, *ppos, count,
-					FILP_DELAY_FLAG(outfilp), &iolock);
+					FILP_DELAY_FLAG(outfilp), NULL);
 		if (error) {
-			xfs_iunlock(ip, XFS_IOLOCK_EXCL);
 			return -error;
 		}
 	}
 
 	trace_xfs_file_splice_write(ip, count, *ppos, ioflags);
 
-	ret = generic_file_splice_write(pipe, outfilp, ppos, count, flags);
+	ret = splice_write_to_file(pipe, outfilp, ppos, count, flags,
+			xfs_file_splice_write_actor);
 
-	xfs_iunlock(ip, XFS_IOLOCK_EXCL);
 	return ret;
 }
 
