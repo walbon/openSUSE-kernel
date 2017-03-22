@@ -866,7 +866,6 @@ DECLARE_EVENT_CLASS(xfs_file_class,
 		__field(dev_t, dev)
 		__field(xfs_ino_t, ino)
 		__field(xfs_fsize_t, size)
-		__field(xfs_fsize_t, new_size)
 		__field(loff_t, offset)
 		__field(size_t, count)
 		__field(int, flags)
@@ -875,17 +874,15 @@ DECLARE_EVENT_CLASS(xfs_file_class,
 		__entry->dev = VFS_I(ip)->i_sb->s_dev;
 		__entry->ino = ip->i_ino;
 		__entry->size = ip->i_d.di_size;
-		__entry->new_size = ip->i_new_size;
 		__entry->offset = offset;
 		__entry->count = count;
 		__entry->flags = flags;
 	),
-	TP_printk("dev %d:%d ino 0x%llx size 0x%llx new_size 0x%llx "
+	TP_printk("dev %d:%d ino 0x%llx size 0x%llx "
 		  "offset 0x%llx count 0x%zx ioflags %s",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->ino,
 		  __entry->size,
-		  __entry->new_size,
 		  __entry->offset,
 		  __entry->count,
 		  __print_flags(__entry->flags, "|", XFS_IO_FLAGS))
@@ -953,7 +950,6 @@ DECLARE_EVENT_CLASS(xfs_imap_class,
 		__field(dev_t, dev)
 		__field(xfs_ino_t, ino)
 		__field(loff_t, size)
-		__field(loff_t, new_size)
 		__field(loff_t, offset)
 		__field(size_t, count)
 		__field(int, type)
@@ -965,7 +961,6 @@ DECLARE_EVENT_CLASS(xfs_imap_class,
 		__entry->dev = VFS_I(ip)->i_sb->s_dev;
 		__entry->ino = ip->i_ino;
 		__entry->size = ip->i_d.di_size;
-		__entry->new_size = ip->i_new_size;
 		__entry->offset = offset;
 		__entry->count = count;
 		__entry->type = type;
@@ -973,13 +968,12 @@ DECLARE_EVENT_CLASS(xfs_imap_class,
 		__entry->startblock = irec ? irec->br_startblock : 0;
 		__entry->blockcount = irec ? irec->br_blockcount : 0;
 	),
-	TP_printk("dev %d:%d ino 0x%llx size 0x%llx new_size 0x%llx "
+	TP_printk("dev %d:%d ino 0x%llx size 0x%llx "
 		  "offset 0x%llx count %zd type %s "
 		  "startoff 0x%llx startblock %lld blockcount 0x%llx",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->ino,
 		  __entry->size,
-		  __entry->new_size,
 		  __entry->offset,
 		  __entry->count,
 		  __print_symbolic(__entry->type, XFS_IO_TYPES),
@@ -1005,7 +999,6 @@ DECLARE_EVENT_CLASS(xfs_simple_io_class,
 		__field(dev_t, dev)
 		__field(xfs_ino_t, ino)
 		__field(loff_t, size)
-		__field(loff_t, new_size)
 		__field(loff_t, offset)
 		__field(size_t, count)
 	),
@@ -1013,16 +1006,14 @@ DECLARE_EVENT_CLASS(xfs_simple_io_class,
 		__entry->dev = VFS_I(ip)->i_sb->s_dev;
 		__entry->ino = ip->i_ino;
 		__entry->size = ip->i_d.di_size;
-		__entry->new_size = ip->i_new_size;
 		__entry->offset = offset;
 		__entry->count = count;
 	),
-	TP_printk("dev %d:%d ino 0x%llx size 0x%llx new_size 0x%llx "
+	TP_printk("dev %d:%d ino 0x%llx size 0x%llx "
 		  "offset 0x%llx count %zd",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->ino,
 		  __entry->size,
-		  __entry->new_size,
 		  __entry->offset,
 		  __entry->count)
 );

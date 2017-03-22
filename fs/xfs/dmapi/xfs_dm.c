@@ -2927,10 +2927,7 @@ xfs_dm_send_mmap_event(
 	offset = 0; /* beginning of file, for now */
 	length = 0; /* whole file, for now */
 
-	filesize = ip->i_new_size;
-	if (filesize < XFS_ISIZE(ip)) {
-		filesize = XFS_ISIZE(ip);
-	}
+	filesize = XFS_ISIZE(ip);
 
 	/* Set first byte number beyond the map area. */
 
