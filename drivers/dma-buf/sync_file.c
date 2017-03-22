@@ -26,6 +26,13 @@
 #include <linux/sync_file.h>
 #include <uapi/linux/sync_file.h>
 
+#define u64_to_user_ptr(x) (		\
+{					\
+       typecheck(u64, x);		\
+       (void __user *)(uintptr_t)x;	\
+}					\
+)
+
 static const struct file_operations sync_file_fops;
 
 static struct sync_file *sync_file_alloc(void)
