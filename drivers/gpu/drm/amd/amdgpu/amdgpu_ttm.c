@@ -492,12 +492,15 @@ static int amdgpu_ttm_tt_pin_userptr(struct ttm_tt *ttm)
 {
 	struct amdgpu_device *adev = amdgpu_get_adev(ttm->bdev);
 	struct amdgpu_ttm_tt *gtt = (void *)ttm;
+	enum dma_data_direction direction;
+	unsigned int flags = 0;
 	unsigned pinned = 0, nents;
 	int r;
 
-	int write = !(gtt->userflags & AMDGPU_GEM_USERPTR_READONLY);
-	enum dma_data_direction direction = write ?
-		DMA_BIDIRECTIONAL : DMA_TO_DEVICE;
+	if (!(gtt->userflags & AMDGPU_GEM_USERPTR_READONLY))
+		flags |= FOLL_WRITE;
+
+	direction = (flags & FOLL_WRITE) ? DMA_BIDIRECTIONAL : DMA_TO_DEVICE;
 
 	if (current->mm != gtt->usermm)
 		return -EPERM;
@@ -518,7 +521,7 @@ static int amdgpu_ttm_tt_pin_userptr(struct ttm_tt *ttm)
 		uint64_t userptr = gtt->userptr + pinned * PAGE_SIZE;
 		struct page **pages = ttm->pages + pinned;
 
-		r = get_user_pages(userptr, num_pages, write, 0, pages, NULL);
+		r = get_user_pages(userptr, num_pages, flags, pages, NULL);
 		if (r < 0)
 			goto release_pages;
 
