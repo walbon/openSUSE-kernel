@@ -29,6 +29,8 @@
 
 #ifndef __ASSEMBLY__
 
+#include <asm/percpu.h>
+
 #include <linux/threads.h>
 #include <linux/cpumask.h>
 #include <linux/thread_info.h>
