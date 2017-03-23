@@ -54,7 +54,7 @@
 #define MACB_MAX_TX_LEN		((unsigned int)((1 << MACB_TX_FRMLEN_SIZE) - 1))
 #define GEM_MAX_TX_LEN		((unsigned int)((1 << GEM_TX_FRMLEN_SIZE) - 1))
 
-#define GEM_MTU_MIN_SIZE	68
+#define GEM_MTU_MIN_SIZE	ETH_MIN_MTU
 
 /*
  * Graceful stop timeouts in us. We should allow up to
@@ -1900,18 +1900,8 @@ static int macb_close(struct net_device *dev)
 
 static int macb_change_mtu(struct net_device *dev, int new_mtu)
 {
-	struct macb *bp = netdev_priv(dev);
-	u32 max_mtu;
-
 	if (netif_running(dev))
 		return -EBUSY;
-
-	max_mtu = ETH_DATA_LEN;
-	if (bp->caps & MACB_CAPS_JUMBO)
-		max_mtu = gem_readl(bp, JML) - ETH_HLEN - ETH_FCS_LEN;
-
-	if ((new_mtu > max_mtu) || (new_mtu < GEM_MTU_MIN_SIZE))
-		return -EINVAL;
 
 	dev->mtu = new_mtu;
 
@@ -2886,6 +2876,13 @@ static int macb_probe(struct platform_device *pdev)
 		err = dev->irq;
 		goto err_disable_clocks;
 	}
+
+	/* MTU range: 68 - 1500 or 10240 */
+	dev->min_mtu = GEM_MTU_MIN_SIZE;
+	if (bp->caps & MACB_CAPS_JUMBO)
+		dev->max_mtu = gem_readl(bp, JML) - ETH_HLEN - ETH_FCS_LEN;
+	else
+		dev->max_mtu = ETH_DATA_LEN;
 
 	mac = of_get_mac_address(np);
 	if (mac)
