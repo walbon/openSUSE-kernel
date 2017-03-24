@@ -1564,7 +1564,7 @@ static int enic_request_intr(struct enic *enic)
 			intr = enic_msix_rq_intr(enic, i);
 			snprintf(enic->msix[intr].devname,
 				sizeof(enic->msix[intr].devname),
-				"%.11s-rx-%d", netdev->name, i);
+				"%.11s-rx-%u", netdev->name, i);
 			enic->msix[intr].isr = enic_isr_msix;
 			enic->msix[intr].devid = &enic->napi[i];
 		}
@@ -1575,7 +1575,7 @@ static int enic_request_intr(struct enic *enic)
 			intr = enic_msix_wq_intr(enic, i);
 			snprintf(enic->msix[intr].devname,
 				sizeof(enic->msix[intr].devname),
-				"%.11s-tx-%d", netdev->name, i);
+				"%.11s-tx-%u", netdev->name, i);
 			enic->msix[intr].isr = enic_isr_msix;
 			enic->msix[intr].devid = &enic->napi[wq];
 		}
