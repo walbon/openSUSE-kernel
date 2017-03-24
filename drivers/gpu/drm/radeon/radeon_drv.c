@@ -401,6 +401,9 @@ static int radeon_pci_probe(struct pci_dev *pdev,
 {
 	int ret;
 
+	if (vga_switcheroo_client_probe_defer(pdev))
+		return -EPROBE_DEFER;
+
 	/* Get rid of things like offb */
 	ret = radeon_kick_out_firmware_fb(pdev);
 	if (ret)

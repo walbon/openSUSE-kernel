@@ -317,6 +317,9 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
 
 	nvkm_device_del(&device);
 
+	if (vga_switcheroo_client_probe_defer(pdev))
+		return -EPROBE_DEFER;
+
 	/* Remove conflicting drivers (vesafb, efifb etc). */
 	aper = alloc_apertures(3);
 	if (!aper)

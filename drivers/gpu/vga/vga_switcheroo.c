@@ -307,7 +307,8 @@ static int register_client(struct pci_dev *pdev,
  *
  * Register vga client (GPU). Enable vga_switcheroo if another GPU and a
  * handler have already registered. The power state of the client is assumed
- * to be ON.
+ * to be ON. Beforehand, vga_switcheroo_client_probe_defer() shall be called
+ * to ensure that all prerequisites are met.
  *
  * Return: 0 on success, -ENOMEM on memory allocation error.
  */
@@ -373,6 +374,23 @@ find_active_client(struct list_head *head)
 			return client;
 	return NULL;
 }
+
+/**
+ * vga_switcheroo_client_probe_defer() - whether to defer probing a given client
+ * @pdev: client pci device
+ *
+ * Determine whether any prerequisites are not fulfilled to probe a given
+ * client. Drivers shall invoke this early on in their ->probe callback
+ * and return %-EPROBE_DEFER if it evaluates to %true. Thou shalt not
+ * register the client ere thou hast called this.
+ *
+ * Return: %true if probing should be deferred, otherwise %false.
+ */
+bool vga_switcheroo_client_probe_defer(struct pci_dev *pdev)
+{
+	return false;
+}
+EXPORT_SYMBOL(vga_switcheroo_client_probe_defer);
 
 /**
  * vga_switcheroo_get_client_state() - obtain power state of a given client
