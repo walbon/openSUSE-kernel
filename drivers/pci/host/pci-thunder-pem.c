@@ -14,6 +14,7 @@
  * Copyright (C) 2015 - 2016 Cavium, Inc.
  */
 
+#include <linux/bitfield.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/of_address.h>
@@ -36,7 +37,7 @@ struct thunder_pem_pci {
 static int thunder_pem_bridge_read(struct pci_bus *bus, unsigned int devfn,
 				   int where, int size, u32 *val)
 {
-	u64 read_val;
+	u64 read_val, tmp_val;
 	struct pci_config_window *cfg = bus->sysdata;
 	struct thunder_pem_pci *pem_pci = (struct thunder_pem_pci *)cfg->priv;
 
@@ -65,13 +66,28 @@ static int thunder_pem_bridge_read(struct pci_bus *bus, unsigned int devfn,
 		read_val |= 0x00007000; /* Skip MSI CAP */
 		break;
 	case 0x70: /* Express Cap */
-		/* PME interrupt on vector 2*/
-		read_val |= (2u << 25);
+		/*
+		 * Change PME interrupt to vector 2 on T88 where it
+		 * reads as 0, else leave it alone.
+		 */
+		if (!(read_val & (0x1f << 25)))
+			read_val |= (2u << 25);
 		break;
 	case 0xb0: /* MSI-X Cap */
-		/* TableSize=4, Next Cap is EA */
+		/* TableSize=2 or 4, Next Cap is EA */
 		read_val &= 0xc00000ff;
-		read_val |= 0x0003bc00;
+		/*
+		 * If Express Cap(0x70) raw PME vector reads as 0 we are on
+		 * T88 and TableSize is reported as 4, else TableSize
+		 * is 2.
+		 */
+		writeq(0x70, pem_pci->pem_reg_base + PEM_CFG_RD);
+		tmp_val = readq(pem_pci->pem_reg_base + PEM_CFG_RD);
+		tmp_val >>= 32;
+		if (!(tmp_val & (0x1f << 25)))
+			read_val |= 0x0003bc00;
+		else
+			read_val |= 0x0001bc00;
 		break;
 	case 0xb4:
 		/* Table offset=0, BIR=0 */
@@ -144,11 +160,11 @@ static int thunder_pem_config_read(struct pci_bus *bus, unsigned int devfn,
  * reserved bits, this makes the code simpler and is OK as the bits
  * are not affected by writing zeros to them.
  */
-static u32 thunder_pem_bridge_w1c_bits(int where)
+static u32 thunder_pem_bridge_w1c_bits(u64 where_aligned)
 {
 	u32 w1c_bits = 0;
 
-	switch (where & ~3) {
+	switch (where_aligned) {
 	case 0x04: /* Command/Status */
 	case 0x1c: /* Base and I/O Limit/Secondary Status */
 		w1c_bits = 0xff000000;
@@ -175,12 +191,34 @@ static u32 thunder_pem_bridge_w1c_bits(int where)
 	return w1c_bits;
 }
 
+/* Some bits must be written to one so they appear to be read-only. */
+static u32 thunder_pem_bridge_w1_bits(u64 where_aligned)
+{
+	u32 w1_bits;
+
+	switch (where_aligned) {
+	case 0x1c: /* I/O Base / I/O Limit, Secondary Status */
+		/* Force 32-bit I/O addressing. */
+		w1_bits = 0x0101;
+		break;
+	case 0x24: /* Prefetchable Memory Base / Prefetchable Memory Limit */
+		/* Force 64-bit addressing */
+		w1_bits = 0x00010001;
+		break;
+	default:
+		w1_bits = 0;
+		break;
+	}
+	return w1_bits;
+}
+
 static int thunder_pem_bridge_write(struct pci_bus *bus, unsigned int devfn,
 				    int where, int size, u32 val)
 {
 	struct pci_config_window *cfg = bus->sysdata;
 	struct thunder_pem_pci *pem_pci = (struct thunder_pem_pci *)cfg->priv;
 	u64 write_val, read_val;
+	u64 where_aligned = where & ~3ull;
 	u32 mask = 0;
 
 
@@ -195,8 +233,7 @@ static int thunder_pem_bridge_write(struct pci_bus *bus, unsigned int devfn,
 	 */
 	switch (size) {
 	case 1:
-		read_val = where & ~3ull;
-		writeq(read_val, pem_pci->pem_reg_base + PEM_CFG_RD);
+		writeq(where_aligned, pem_pci->pem_reg_base + PEM_CFG_RD);
 		read_val = readq(pem_pci->pem_reg_base + PEM_CFG_RD);
 		read_val >>= 32;
 		mask = ~(0xff << (8 * (where & 3)));
@@ -205,8 +242,7 @@ static int thunder_pem_bridge_write(struct pci_bus *bus, unsigned int devfn,
 		val |= (u32)read_val;
 		break;
 	case 2:
-		read_val = where & ~3ull;
-		writeq(read_val, pem_pci->pem_reg_base + PEM_CFG_RD);
+		writeq(where_aligned, pem_pci->pem_reg_base + PEM_CFG_RD);
 		read_val = readq(pem_pci->pem_reg_base + PEM_CFG_RD);
 		read_val >>= 32;
 		mask = ~(0xffff << (8 * (where & 3)));
@@ -234,11 +270,17 @@ static int thunder_pem_bridge_write(struct pci_bus *bus, unsigned int devfn,
 	}
 
 	/*
+	 * Some bits must be read-only with value of one.  Since the
+	 * access method allows these to be cleared if a zero is
+	 * written, force them to one before writing.
+	 */
+	val |= thunder_pem_bridge_w1_bits(where_aligned);
+
+	/*
 	 * Low order bits are the config address, the high order 32
 	 * bits are the data to be written.
 	 */
-	write_val = where & ~3ull;
-	write_val |= (((u64)val) << 32);
+	write_val = (((u64)val) << 32) | where_aligned;
 	writeq(write_val, pem_pci->pem_reg_base + PEM_CFG_WR);
 	return PCIBIOS_SUCCESSFUL;
 }
@@ -293,6 +335,50 @@ static int thunder_pem_init(struct device *dev, struct pci_config_window *cfg,
 
 #if defined(CONFIG_ACPI) && defined(CONFIG_PCI_QUIRKS)
 
+#define PEM_RES_BASE		0x87e0c0000000UL
+#define PEM_NODE_MASK		GENMASK(45, 44)
+#define PEM_INDX_MASK		GENMASK(26, 24)
+#define PEM_MIN_DOM_IN_NODE	4
+#define PEM_MAX_DOM_IN_NODE	10
+
+static void thunder_pem_reserve_range(struct device *dev, int seg,
+				      struct resource *r)
+{
+	resource_size_t start = r->start, end = r->end;
+	struct resource *res;
+	const char *regionid;
+
+	regionid = kasprintf(GFP_KERNEL, "PEM RC:%d", seg);
+	if (!regionid)
+		return;
+
+	res = request_mem_region(start, end - start + 1, regionid);
+	if (res)
+		res->flags &= ~IORESOURCE_BUSY;
+	else
+		kfree(regionid);
+
+	dev_info(dev, "%pR %s reserved\n", r,
+		 res ? "has been" : "could not be");
+}
+
+static void thunder_pem_legacy_fw(struct acpi_pci_root *root,
+				 struct resource *res_pem)
+{
+	int node = acpi_get_node(root->device->handle);
+	int index;
+
+	if (node == NUMA_NO_NODE)
+		node = 0;
+
+	index = root->segment - PEM_MIN_DOM_IN_NODE;
+	index -= node * PEM_MAX_DOM_IN_NODE;
+	res_pem->start = PEM_RES_BASE | FIELD_PREP(PEM_NODE_MASK, node) |
+					FIELD_PREP(PEM_INDX_MASK, index);
+	res_pem->end = res_pem->start + SZ_16M - 1;
+	res_pem->flags = IORESOURCE_MEM;
+}
+
 static int thunder_pem_acpi_init(struct pci_config_window *cfg)
 {
 	struct device *dev = cfg->parent;
@@ -305,10 +391,17 @@ static int thunder_pem_acpi_init(struct pci_config_window *cfg)
 	if (!res_pem)
 		return -ENOMEM;
 
-	ret = acpi_get_rc_resources(dev, "THRX0002", root->segment, res_pem);
+	ret = acpi_get_rc_resources(dev, "CAVA02B", root->segment, res_pem);
+
+	/*
+	 * If we fail to gather resources it means that we run with old
+	 * FW where we need to calculate PEM-specific resources manually.
+	 */
 	if (ret) {
-		dev_err(dev, "can't get rc base address\n");
-		return ret;
+		thunder_pem_legacy_fw(root, res_pem);
+		/* Reserve PEM-specific resources and PCI configuration space */
+		thunder_pem_reserve_range(dev, root->segment, res_pem);
+		thunder_pem_reserve_range(dev, root->segment, &cfg->res);
 	}
 
 	return thunder_pem_init(dev, cfg, res_pem);
