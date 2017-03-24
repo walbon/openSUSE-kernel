@@ -78,13 +78,13 @@ static inline int set_av_attr(struct ocrdma_dev *dev, struct ocrdma_ah *ah,
 				dev->id);
 		}
 		eth.eth_type = cpu_to_be16(0x8100);
-		eth.roce_eth_type = cpu_to_be16(OCRDMA_ROCE_ETH_TYPE);
+		eth.roce_eth_type = cpu_to_be16(ETH_P_IBOE);
 		vlan_tag |= (dev->sl & 0x07) << OCRDMA_VID_PCP_SHIFT;
 		eth.vlan_tag = cpu_to_be16(vlan_tag);
 		eth_sz = sizeof(struct ocrdma_eth_vlan);
 		*isvlan = true;
 	} else {
-		eth.eth_type = cpu_to_be16(OCRDMA_ROCE_ETH_TYPE);
+		eth.eth_type = cpu_to_be16(ETH_P_IBOE);
 		eth_sz = sizeof(struct ocrdma_eth_basic);
 	}
 	/* MAC */
