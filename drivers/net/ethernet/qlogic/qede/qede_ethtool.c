@@ -529,18 +529,10 @@ static void qede_update_mtu(struct qede_dev *edev, union qede_reload_args *args)
 }
 
 /* Netdevice NDOs */
-#define ETH_MAX_JUMBO_PACKET_SIZE	9600
-#define ETH_MIN_PACKET_SIZE		60
 int qede_change_mtu(struct net_device *ndev, int new_mtu)
 {
 	struct qede_dev *edev = netdev_priv(ndev);
 	union qede_reload_args args;
-
-	if ((new_mtu > ETH_MAX_JUMBO_PACKET_SIZE) ||
-	    ((new_mtu + ETH_HLEN) < ETH_MIN_PACKET_SIZE)) {
-		DP_ERR(edev, "Can't support requested MTU size\n");
-		return -EINVAL;
-	}
 
 	DP_VERBOSE(edev, (NETIF_MSG_IFUP | NETIF_MSG_IFDOWN),
 		   "Configuring MTU size of %d\n", new_mtu);
@@ -1128,6 +1120,48 @@ static void qede_self_test(struct net_device *dev,
 	}
 }
 
+static int qede_set_tunable(struct net_device *dev,
+			    const struct ethtool_tunable *tuna,
+			    const void *data)
+{
+	struct qede_dev *edev = netdev_priv(dev);
+	u32 val;
+
+	switch (tuna->id) {
+	case ETHTOOL_RX_COPYBREAK:
+		val = *(u32 *)data;
+		if (val < QEDE_MIN_PKT_LEN || val > QEDE_RX_HDR_SIZE) {
+			DP_VERBOSE(edev, QED_MSG_DEBUG,
+				   "Invalid rx copy break value, range is [%u, %u]",
+				   QEDE_MIN_PKT_LEN, QEDE_RX_HDR_SIZE);
+			return -EINVAL;
+		}
+
+		edev->rx_copybreak = *(u32 *)data;
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
+static int qede_get_tunable(struct net_device *dev,
+			    const struct ethtool_tunable *tuna, void *data)
+{
+	struct qede_dev *edev = netdev_priv(dev);
+
+	switch (tuna->id) {
+	case ETHTOOL_RX_COPYBREAK:
+		*(u32 *)data = edev->rx_copybreak;
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
 static const struct ethtool_ops qede_ethtool_ops = {
 	.get_settings = qede_get_settings,
 	.set_settings = qede_set_settings,
@@ -1154,6 +1188,8 @@ static const struct ethtool_ops qede_ethtool_ops = {
 	.get_channels = qede_get_channels,
 	.set_channels = qede_set_channels,
 	.self_test = qede_self_test,
+	.get_tunable = qede_get_tunable,
+	.set_tunable = qede_set_tunable,
 };
 
 static const struct ethtool_ops qede_vf_ethtool_ops = {
@@ -1176,6 +1212,8 @@ static const struct ethtool_ops qede_vf_ethtool_ops = {
 	.set_rxfh = qede_set_rxfh,
 	.get_channels = qede_get_channels,
 	.set_channels = qede_set_channels,
+	.get_tunable = qede_get_tunable,
+	.set_tunable = qede_set_tunable,
 };
 
 void qede_set_ethtool_ops(struct net_device *dev)

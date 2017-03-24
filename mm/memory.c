@@ -2279,11 +2279,6 @@ static int wp_page_shared(struct mm_struct *mm, struct vm_area_struct *vma,
 
 	page_cache_get(old_page);
 
-	/*
-	 * Only catch write-faults on shared writable pages,
-	 * read-only shared pages can get COWed by
-	 * get_user_pages(.write=1, .force=1).
-	 */
 	if (vma->vm_ops && vma->vm_ops->page_mkwrite) {
 		int tmp;
 
@@ -3714,6 +3709,10 @@ static int __access_remote_vm(struct task_struct *tsk, struct mm_struct *mm,
 {
 	struct vm_area_struct *vma;
 	void *old_buf = buf;
+	unsigned int flags = FOLL_FORCE;
+
+	if (write)
+		flags |= FOLL_WRITE;
 
 	down_read(&mm->mmap_sem);
 	/* ignore errors, just check how much was successfully transferred */
@@ -3723,7 +3722,7 @@ static int __access_remote_vm(struct task_struct *tsk, struct mm_struct *mm,
 		struct page *page = NULL;
 
 		ret = get_user_pages_remote(tsk, mm, addr, 1,
-				write, 1, &page, &vma);
+				flags, &page, &vma, NULL);
 		if (ret <= 0) {
 #ifndef CONFIG_HAVE_IOREMAP_PROT
 			break;
