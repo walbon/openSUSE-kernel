@@ -38,6 +38,7 @@
 #include <linux/console.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
+#include <linux/vga_switcheroo.h>
 #include <drm/drm_crtc_helper.h>
 
 static struct drm_driver driver;
@@ -1009,6 +1010,9 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 */
 	if (PCI_FUNC(pdev->devfn))
 		return -ENODEV;
+
+	if (vga_switcheroo_client_probe_defer(pdev))
+		return -EPROBE_DEFER;
 
 	return drm_get_pci_dev(pdev, ent, &driver);
 }
