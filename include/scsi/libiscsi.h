@@ -251,6 +251,10 @@ struct iscsi_conn {
 	/* custom statistics */
 	uint32_t		eh_abort_cnt;
 	uint32_t		fmr_unalign_cnt;
+
+#ifndef __GENKSYMS__
+	spinlock_t		taskqueuelock;  /* protects the next three lists */
+#endif
 };
 
 struct iscsi_pool {
