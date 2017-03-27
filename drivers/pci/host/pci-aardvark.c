@@ -4,6 +4,8 @@
  *
  * Copyright (C) 2016 Marvell
  *
+ * Author: Hezi Shahmoon <hezi.shahmoon@marvell.com>
+ *
  * This file is licensed under the terms of the GNU General Public
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
@@ -15,7 +17,7 @@
 #include <linux/irqdomain.h>
 #include <linux/kernel.h>
 #include <linux/pci.h>
-#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/of_address.h>
 #include <linux/of_pci.h>
@@ -856,13 +858,15 @@ static int advk_pcie_parse_request_of_pci_ranges(struct advk_pcie *pcie)
 	if (err)
 		return err;
 
+	err = devm_request_pci_bus_resources(dev, &pcie->resources);
+	if (err)
+		goto out_release_res;
+
 	resource_list_for_each_entry(win, &pcie->resources) {
-		struct resource *parent = NULL;
 		struct resource *res = win->res;
 
 		switch (resource_type(res)) {
 		case IORESOURCE_IO:
-			parent = &ioport_resource;
 			advk_pcie_set_ob_win(pcie, 1,
 					     upper_32_bits(res->start),
 					     lower_32_bits(res->start),
@@ -870,14 +874,11 @@ static int advk_pcie_parse_request_of_pci_ranges(struct advk_pcie *pcie)
 					     lower_32_bits(res->start),
 					     OB_PCIE_IO);
 			err = pci_remap_iospace(res, iobase);
-			if (err) {
+			if (err)
 				dev_warn(dev, "error %d: failed to map resource %pR\n",
 					 err, res);
-				continue;
-			}
 			break;
 		case IORESOURCE_MEM:
-			parent = &iomem_resource;
 			advk_pcie_set_ob_win(pcie, 0,
 					     upper_32_bits(res->start),
 					     lower_32_bits(res->start),
@@ -889,14 +890,6 @@ static int advk_pcie_parse_request_of_pci_ranges(struct advk_pcie *pcie)
 		case IORESOURCE_BUS:
 			pcie->root_bus_nr = res->start;
 			break;
-		default:
-			continue;
-		}
-
-		if (parent) {
-			err = devm_request_resource(dev, parent, res);
-			if (err)
-				goto out_release_res;
 		}
 	}
 
@@ -1005,8 +998,4 @@ static struct platform_driver advk_pcie_driver = {
 	},
 	.probe = advk_pcie_probe,
 };
-module_platform_driver(advk_pcie_driver);
-
-MODULE_AUTHOR("Hezi Shahmoon <hezi.shahmoon@marvell.com>");
-MODULE_DESCRIPTION("Aardvark PCIe driver");
-MODULE_LICENSE("GPL v2");
+builtin_platform_driver(advk_pcie_driver);
