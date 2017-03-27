@@ -49,8 +49,7 @@ struct clk_lookup *clkdev_hw_create(struct clk_hw *hw, const char *con_id,
 void clkdev_add_table(struct clk_lookup *, size_t);
 int clk_add_alias(const char *, const char *, const char *, struct device *);
 
-int clk_register_clkdev(struct clk *, const char *, const char *, ...)
-	__printf(3, 4);
+int clk_register_clkdev(struct clk *, const char *, const char *);
 int clk_hw_register_clkdev(struct clk_hw *, const char *, const char *);
 
 #ifdef CONFIG_COMMON_CLK
