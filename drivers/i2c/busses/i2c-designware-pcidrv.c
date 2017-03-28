@@ -68,6 +68,7 @@ struct dw_pci_controller {
 	u32 rx_fifo_depth;
 	u32 clk_khz;
 	u32 functionality;
+	u32 flags;
 	struct dw_scl_sda_cfg *scl_sda_cfg;
 };
 
@@ -165,6 +166,7 @@ static struct dw_pci_controller dw_pci_controllers[] = {
 		.tx_fifo_depth = 32,
 		.rx_fifo_depth = 32,
 		.functionality = I2C_FUNC_10BIT_ADDR,
+		.flags = MODEL_CHERRYTRAIL,
 		.scl_sda_cfg = &byt_config,
 	},
 };
@@ -234,9 +236,7 @@ static int i2c_dw_pci_probe(struct pci_dev *pdev,
 	dev->base = pcim_iomap_table(pdev)[0];
 	dev->dev = &pdev->dev;
 	dev->irq = pdev->irq;
-	if (id->driver_data == cherrytrail)
-		dev->accessor_flags |= ACCESS_IS_CHERRYTRAIL;
-
+	dev->flags |= controller->flags;
 	dev->functionality = controller->functionality |
 				DW_DEFAULT_FUNCTIONALITY;
 

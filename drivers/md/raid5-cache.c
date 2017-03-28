@@ -1194,6 +1194,10 @@ int r5l_init_log(struct r5conf *conf, struct md_rdev *rdev)
 {
 	struct request_queue *q = bdev_get_queue(rdev->bdev);
 	struct r5l_log *log;
+	char b[BDEVNAME_SIZE];
+
+	pr_debug("md/raid:%s: using device %s as journal\n",
+		 mdname(conf->mddev), bdevname(rdev->bdev, b));
 
 	if (PAGE_SIZE != 4096)
 		return -EINVAL;
@@ -1265,8 +1269,13 @@ io_kc:
 	return -EINVAL;
 }
 
-void r5l_exit_log(struct r5l_log *log)
+void r5l_exit_log(struct r5conf *conf)
 {
+	struct r5l_log *log = conf->log;
+
+	conf->log = NULL;
+	synchronize_rcu();
+
 	md_unregister_thread(&log->reclaim_thread);
 	mempool_destroy(log->meta_pool);
 	bioset_free(log->bs);

@@ -412,8 +412,8 @@ static void pci_read_bridge_mmio_pref(struct pci_bus *child)
 	res = child->resource[2];
 	pci_read_config_word(dev, PCI_PREF_MEMORY_BASE, &mem_base_lo);
 	pci_read_config_word(dev, PCI_PREF_MEMORY_LIMIT, &mem_limit_lo);
-	base64 = ((u64)mem_base_lo & PCI_PREF_RANGE_MASK) << 16;
-	limit64 = ((u64)mem_limit_lo & PCI_PREF_RANGE_MASK) << 16;
+	base64 = (mem_base_lo & PCI_PREF_RANGE_MASK) << 16;
+	limit64 = (mem_limit_lo & PCI_PREF_RANGE_MASK) << 16;
 
 	if ((mem_base_lo & PCI_PREF_RANGE_TYPE_MASK) == PCI_PREF_RANGE_TYPE_64) {
 		u32 mem_base_hi, mem_limit_hi;

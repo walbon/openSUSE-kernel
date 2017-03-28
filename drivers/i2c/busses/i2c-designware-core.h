@@ -65,7 +65,7 @@
  * @pm_qos: pm_qos_request used while holding a hardware lock on the bus
  * @acquire_lock: function to acquire a hardware lock on the bus
  * @release_lock: function to release a hardware lock on the bus
- * @pm_runtime_disabled: true if pm runtime is disabled
+ * @pm_disabled: true if power-management should be disabled for this i2c-bus
  *
  * HCNT and LCNT parameters can be used if the platform knows more accurate
  * values than the one computed based only on the input clock frequency.
@@ -92,7 +92,7 @@ struct dw_i2c_dev {
 	unsigned int		status;
 	u32			abort_source;
 	int			irq;
-	u32			accessor_flags;
+	u32			flags;
 	struct i2c_adapter	adapter;
 	u32			functionality;
 	u32			master_cfg;
@@ -109,14 +109,14 @@ struct dw_i2c_dev {
 	struct pm_qos_request	pm_qos;
 	int			(*acquire_lock)(struct dw_i2c_dev *dev);
 	void			(*release_lock)(struct dw_i2c_dev *dev);
-	bool			pm_runtime_disabled;
+	bool			pm_disabled;
 };
 
 #define ACCESS_SWAP		0x00000001
 #define ACCESS_16BIT		0x00000002
 #define ACCESS_INTR_MASK	0x00000004
-/* Not really an accessor_flag but also set through driver_data */
-#define ACCESS_IS_CHERRYTRAIL	0x00000008
+
+#define MODEL_CHERRYTRAIL	0x00000100
 
 extern int i2c_dw_init(struct dw_i2c_dev *dev);
 extern void i2c_dw_disable(struct dw_i2c_dev *dev);
