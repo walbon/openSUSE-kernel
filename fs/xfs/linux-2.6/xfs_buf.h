@@ -47,6 +47,7 @@ typedef enum {
 #define XBF_READ	(1 << 0) /* buffer intended for reading from device */
 #define XBF_WRITE	(1 << 1) /* buffer intended for writing to device */
 #define XBF_MAPPED	(1 << 2) /* buffer mapped (b_addr valid) */
+#define XBF_NO_IOACCT	 (1 << 3) /* bypass I/O accounting (non-LRU bufs) */
 #define XBF_ASYNC	(1 << 4) /* initiator will not wait for completion */
 #define XBF_DONE	(1 << 5) /* all pages in the buffer uptodate */
 #define XBF_DELWRI	(1 << 6) /* buffer has dirty pages */
@@ -184,7 +185,7 @@ extern xfs_buf_t *xfs_buf_get(xfs_buftarg_t *, xfs_off_t, size_t,
 extern xfs_buf_t *xfs_buf_read(xfs_buftarg_t *, xfs_off_t, size_t,
 				xfs_buf_flags_t);
 
-extern xfs_buf_t *xfs_buf_get_empty(size_t, xfs_buftarg_t *);
+extern xfs_buf_t *xfs_buf_get_empty(size_t, xfs_buftarg_t *, xfs_buf_flags_t);
 extern void xfs_buf_set_empty(struct xfs_buf *bp, size_t len);
 extern xfs_buf_t *xfs_buf_get_uncached(struct xfs_buftarg *, size_t, int);
 extern int xfs_buf_associate_memory(xfs_buf_t *, void *, size_t);

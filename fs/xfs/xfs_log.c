@@ -1064,7 +1064,7 @@ xlog_alloc_log(xfs_mount_t	*mp,
 	xlog_get_iclog_buffer_size(mp, log);
 
 	error = ENOMEM;
-	bp = xfs_buf_get_empty(log->l_iclog_size, mp->m_logdev_targp);
+	bp = xfs_buf_get_empty(log->l_iclog_size, mp->m_logdev_targp, XBF_NO_IOACCT);
 	if (!bp)
 		goto out_free_log;
 	XFS_BUF_SET_IODONE_FUNC(bp, xlog_iodone);
@@ -1098,7 +1098,7 @@ xlog_alloc_log(xfs_mount_t	*mp,
 		prev_iclog = iclog;
 
 		bp = xfs_buf_get_uncached(mp->m_logdev_targp,
-						log->l_iclog_size, 0);
+						log->l_iclog_size, XBF_NO_IOACCT);
 		if (!bp)
 			goto out_free_iclog;
 		if (!XFS_BUF_CPSEMA(bp))

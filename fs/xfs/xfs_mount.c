@@ -692,7 +692,7 @@ xfs_readsb(xfs_mount_t *mp, int flags)
 
 reread:
 	bp = xfs_buf_read_uncached(mp, mp->m_ddev_targp,
-					XFS_SB_DADDR, sector_size, 0);
+					XFS_SB_DADDR, sector_size, XBF_NO_IOACCT);
 	if (!bp) {
 		if (loud)
 			xfs_warn(mp, "SB buffer read failed");

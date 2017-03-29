@@ -726,13 +726,14 @@ xfs_buf_read_uncached(
 xfs_buf_t *
 xfs_buf_get_empty(
 	size_t			len,
-	xfs_buftarg_t		*target)
+	xfs_buftarg_t		*target,
+	xfs_buf_flags_t		flags)
 {
 	xfs_buf_t		*bp;
 
 	bp = xfs_buf_allocate(0);
 	if (bp)
-		_xfs_buf_initialize(bp, target, 0, len, 0);
+		_xfs_buf_initialize(bp, target, 0, len, flags & XBF_NO_IOACCT);
 	return bp;
 }
 
@@ -824,7 +825,7 @@ xfs_buf_get_uncached(
 	bp = xfs_buf_allocate(0);
 	if (unlikely(bp == NULL))
 		goto fail;
-	_xfs_buf_initialize(bp, target, 0, len, 0);
+	_xfs_buf_initialize(bp, target, 0, len, flags & XBF_NO_IOACCT);
 
 	error = _xfs_buf_get_pages(bp, page_count, 0);
 	if (error)
