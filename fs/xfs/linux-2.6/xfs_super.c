@@ -837,9 +837,20 @@ xfs_init_mount_workqueues(
 	if (!mp->m_data_workqueue)
 		goto out;
 
-	wqname = kasprintf(GFP_KERNEL, "xfs-conv/%s", mp->m_fsname);
+	wqname = kasprintf(GFP_KERNEL, "xfs-buf/%s", mp->m_fsname);
 	if (!wqname)
 		goto out_destroy_data_iodone_queue;
+
+	mp->m_buf_workqueue_name = wqname;
+	mp->m_buf_workqueue = alloc_workqueue(wqname,
+			WQ_MEM_RECLAIM|WQ_HIGHPRI|WQ_FREEZABLE, 1);
+	if (!mp->m_buf_workqueue)
+		goto out_destroy_buf_queue_name;
+
+
+	wqname = kasprintf(GFP_KERNEL, "xfs-conv/%s", mp->m_fsname);
+	if (!wqname)
+		goto out_destroy_buf_queue;
 
 	mp->m_unwritten_workqueue_name = wqname;
 	mp->m_unwritten_workqueue = alloc_workqueue(wqname, WQ_MEM_RECLAIM, 0);
@@ -864,6 +875,10 @@ out_destroy_data_conv_queue:
 	destroy_workqueue(mp->m_unwritten_workqueue);
 out_free_data_conv_queue_name:
 	kfree(mp->m_unwritten_workqueue_name);
+out_destroy_buf_queue:
+	destroy_workqueue(mp->m_buf_workqueue);
+out_destroy_buf_queue_name:
+	kfree(mp->m_buf_workqueue_name);
 out_destroy_data_iodone_queue:
 	destroy_workqueue(mp->m_data_workqueue);
 out:
@@ -877,6 +892,8 @@ xfs_destroy_mount_workqueues(
 {
 	kfree(mp->m_data_workqueue_name);
 	destroy_workqueue(mp->m_data_workqueue);
+	kfree(mp->m_buf_workqueue_name);
+	destroy_workqueue(mp->m_buf_workqueue);
 	kfree(mp->m_unwritten_workqueue_name);
 	destroy_workqueue(mp->m_unwritten_workqueue);
 	kfree(mp->m_eofblocks_workqueue_name);
