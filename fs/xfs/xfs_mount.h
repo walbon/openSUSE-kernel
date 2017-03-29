@@ -215,8 +215,10 @@ typedef struct xfs_mount {
 	int64_t			m_low_space[XFS_LOWSP_MAX];
 						/* low free space thresholds */
 
+#ifndef __GENKSYMS__
 	const char 		*m_buf_workqueue_name;
 	struct workqueue_struct *m_buf_workqueue;
+#endif
 	const char		*m_data_workqueue_name;
 	struct workqueue_struct	*m_data_workqueue;
 	const char		*m_unwritten_workqueue_name;

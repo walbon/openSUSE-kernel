@@ -121,7 +121,9 @@ typedef struct xfs_buftarg {
 	struct list_head	bt_lru;
 	spinlock_t		bt_lru_lock;
 	unsigned int		bt_lru_nr;
+#ifndef __GENKSYMS__
 	struct percpu_counter	bt_io_count;
+#endif
 } xfs_buftarg_t;
 
 struct xfs_buf;
