@@ -2039,7 +2039,7 @@ _base_enable_msix(struct MPT3SAS_ADAPTER *ioc)
  * mpt3sas_base_unmap_resources - free controller resources
  * @ioc: per adapter object
  */
-void
+static void
 mpt3sas_base_unmap_resources(struct MPT3SAS_ADAPTER *ioc)
 {
 	struct pci_dev *pdev = ioc->pdev;
@@ -3895,7 +3895,6 @@ _base_handshake_req_reply_wait(struct MPT3SAS_ADAPTER *ioc, int request_bytes,
 	MPI2DefaultReply_t *default_reply = (MPI2DefaultReply_t *)reply;
 	int i;
 	u8 failed;
-	u16 dummy;
 	__le32 *mfp;
 
 	/* make sure doorbell is not in use */
@@ -3975,7 +3974,7 @@ _base_handshake_req_reply_wait(struct MPT3SAS_ADAPTER *ioc, int request_bytes,
 			return -EFAULT;
 		}
 		if (i >=  reply_bytes/2) /* overflow case */
-			dummy = readl(&ioc->chip->Doorbell);
+			readl(&ioc->chip->Doorbell);
 		else
 			reply[i] = le16_to_cpu(readl(&ioc->chip->Doorbell)
 			    & MPI2_DOORBELL_DATA_MASK);
@@ -4020,7 +4019,6 @@ mpt3sas_base_sas_iounit_control(struct MPT3SAS_ADAPTER *ioc,
 {
 	u16 smid;
 	u32 ioc_state;
-	unsigned long timeleft;
 	bool issue_reset = false;
 	int rc;
 	void *request;
@@ -4073,7 +4071,7 @@ mpt3sas_base_sas_iounit_control(struct MPT3SAS_ADAPTER *ioc,
 		ioc->ioc_link_reset_in_progress = 1;
 	init_completion(&ioc->base_cmds.done);
 	mpt3sas_base_put_smid_default(ioc, smid);
-	timeleft = wait_for_completion_timeout(&ioc->base_cmds.done,
+	wait_for_completion_timeout(&ioc->base_cmds.done,
 	    msecs_to_jiffies(10000));
 	if ((mpi_request->Operation == MPI2_SAS_OP_PHY_HARD_RESET ||
 	    mpi_request->Operation == MPI2_SAS_OP_PHY_LINK_RESET) &&
@@ -4123,7 +4121,6 @@ mpt3sas_base_scsi_enclosure_processor(struct MPT3SAS_ADAPTER *ioc,
 {
 	u16 smid;
 	u32 ioc_state;
-	unsigned long timeleft;
 	bool issue_reset = false;
 	int rc;
 	void *request;
@@ -4174,7 +4171,7 @@ mpt3sas_base_scsi_enclosure_processor(struct MPT3SAS_ADAPTER *ioc,
 	memcpy(request, mpi_request, sizeof(Mpi2SepReply_t));
 	init_completion(&ioc->base_cmds.done);
 	mpt3sas_base_put_smid_default(ioc, smid);
-	timeleft = wait_for_completion_timeout(&ioc->base_cmds.done,
+	wait_for_completion_timeout(&ioc->base_cmds.done,
 	    msecs_to_jiffies(10000));
 	if (!(ioc->base_cmds.status & MPT3_CMD_COMPLETE)) {
 		pr_err(MPT3SAS_FMT "%s: timeout\n",
@@ -4559,7 +4556,6 @@ _base_send_port_enable(struct MPT3SAS_ADAPTER *ioc)
 {
 	Mpi2PortEnableRequest_t *mpi_request;
 	Mpi2PortEnableReply_t *mpi_reply;
-	unsigned long timeleft;
 	int r = 0;
 	u16 smid;
 	u16 ioc_status;
@@ -4587,8 +4583,7 @@ _base_send_port_enable(struct MPT3SAS_ADAPTER *ioc)
 
 	init_completion(&ioc->port_enable_cmds.done);
 	mpt3sas_base_put_smid_default(ioc, smid);
-	timeleft = wait_for_completion_timeout(&ioc->port_enable_cmds.done,
-	    300*HZ);
+	wait_for_completion_timeout(&ioc->port_enable_cmds.done, 300*HZ);
 	if (!(ioc->port_enable_cmds.status & MPT3_CMD_COMPLETE)) {
 		pr_err(MPT3SAS_FMT "%s: timeout\n",
 		    ioc->name, __func__);
@@ -4739,7 +4734,6 @@ static int
 _base_event_notification(struct MPT3SAS_ADAPTER *ioc)
 {
 	Mpi2EventNotificationRequest_t *mpi_request;
-	unsigned long timeleft;
 	u16 smid;
 	int r = 0;
 	int i;
@@ -4771,7 +4765,7 @@ _base_event_notification(struct MPT3SAS_ADAPTER *ioc)
 		    cpu_to_le32(ioc->event_masks[i]);
 	init_completion(&ioc->base_cmds.done);
 	mpt3sas_base_put_smid_default(ioc, smid);
-	timeleft = wait_for_completion_timeout(&ioc->base_cmds.done, 30*HZ);
+	wait_for_completion_timeout(&ioc->base_cmds.done, 30*HZ);
 	if (!(ioc->base_cmds.status & MPT3_CMD_COMPLETE)) {
 		pr_err(MPT3SAS_FMT "%s: timeout\n",
 		    ioc->name, __func__);
