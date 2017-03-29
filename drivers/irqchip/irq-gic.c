@@ -55,7 +55,7 @@
 
 static void gic_check_cpu_features(void)
 {
-	WARN_TAINT_ONCE(cpus_have_cap(ARM64_HAS_SYSREG_GIC_CPUIF),
+	WARN_TAINT_ONCE(this_cpu_has_cap(ARM64_HAS_SYSREG_GIC_CPUIF),
 			TAINT_CPU_OUT_OF_SPEC,
 			"GICv3 system registers enabled, broken firmware!\n");
 }
@@ -509,6 +509,7 @@ static int gic_cpu_init(struct gic_chip_data *gic)
 		if (WARN_ON(cpu >= NR_GIC_CPU_IF))
 			return -EINVAL;
 
+		gic_check_cpu_features();
 		cpu_mask = gic_get_cpumask(gic);
 		gic_cpu_map[cpu] = cpu_mask;
 
@@ -1059,8 +1060,6 @@ static const struct irq_domain_ops gic_irq_domain_ops = {
 static void gic_init_chip(struct gic_chip_data *gic, struct device *dev,
 			 const char *name, bool use_eoimode1)
 {
-	gic_check_cpu_features();
-
 	/* Initialize irq_chip */
 	gic->chip = gic_chip;
 	gic->chip.name = name;

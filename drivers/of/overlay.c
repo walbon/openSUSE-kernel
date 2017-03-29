@@ -56,6 +56,41 @@ struct of_overlay {
 static int of_overlay_apply_one(struct of_overlay *ov,
 		struct device_node *target, const struct device_node *overlay);
 
+static BLOCKING_NOTIFIER_HEAD(of_overlay_chain);
+
+int of_overlay_notifier_register(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&of_overlay_chain, nb);
+}
+EXPORT_SYMBOL_GPL(of_overlay_notifier_register);
+
+int of_overlay_notifier_unregister(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_unregister(&of_overlay_chain, nb);
+}
+EXPORT_SYMBOL_GPL(of_overlay_notifier_unregister);
+
+static int of_overlay_notify(struct of_overlay *ov,
+			     enum of_overlay_notify_action action)
+{
+	struct of_overlay_notify_data nd;
+	int i, ret;
+
+	for (i = 0; i < ov->count; i++) {
+		struct of_overlay_info *ovinfo = &ov->ovinfo_tab[i];
+
+		nd.target = ovinfo->target;
+		nd.overlay = ovinfo->overlay;
+
+		ret = blocking_notifier_call_chain(&of_overlay_chain,
+						   action, &nd);
+		if (ret)
+			return notifier_to_errno(ret);
+	}
+
+	return 0;
+}
+
 static int of_overlay_apply_single_property(struct of_overlay *ov,
 		struct device_node *target, struct property *prop)
 {
@@ -370,6 +405,13 @@ int of_overlay_create(struct device_node *tree)
 		goto err_free_idr;
 	}
 
+	err = of_overlay_notify(ov, OF_OVERLAY_PRE_APPLY);
+	if (err < 0) {
+		pr_err("%s: Pre-apply notifier failed (err=%d)\n",
+		       __func__, err);
+		goto err_free_idr;
+	}
+
 	/* apply the overlay */
 	err = of_overlay_apply(ov);
 	if (err) {
@@ -379,15 +421,17 @@ int of_overlay_create(struct device_node *tree)
 	}
 
 	/* apply the changeset */
-	err = of_changeset_apply(&ov->cset);
+	err = __of_changeset_apply(&ov->cset);
 	if (err) {
-		pr_err("%s: of_changeset_apply() failed for tree@%s\n",
+		pr_err("%s: __of_changeset_apply() failed for tree@%s\n",
 				__func__, tree->full_name);
 		goto err_revert_overlay;
 	}
 
 	/* add to the tail of the overlay list */
 	list_add_tail(&ov->node, &ov_list);
+
+	of_overlay_notify(ov, OF_OVERLAY_POST_APPLY);
 
 	mutex_unlock(&of_mutex);
 
@@ -509,9 +553,10 @@ int of_overlay_destroy(int id)
 		goto out;
 	}
 
-
+	of_overlay_notify(ov, OF_OVERLAY_PRE_REMOVE);
 	list_del(&ov->node);
-	of_changeset_revert(&ov->cset);
+	of_overlay_notify(ov, OF_OVERLAY_POST_REMOVE);
+	__of_changeset_revert(&ov->cset);
 	of_free_overlay_info(ov);
 	idr_remove(&ov_idr, id);
 	of_changeset_destroy(&ov->cset);
@@ -542,7 +587,7 @@ int of_overlay_destroy_all(void)
 	/* the tail of list is guaranteed to be safe to remove */
 	list_for_each_entry_safe_reverse(ov, ovn, &ov_list, node) {
 		list_del(&ov->node);
-		of_changeset_revert(&ov->cset);
+		__of_changeset_revert(&ov->cset);
 		of_free_overlay_info(ov);
 		idr_remove(&ov_idr, ov->id);
 		kfree(ov);

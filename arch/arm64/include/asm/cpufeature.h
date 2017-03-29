@@ -39,11 +39,15 @@
 #define ARM64_HAS_VIRT_HOST_EXTN		14
 #define ARM64_HYP_OFFSET_LOW			15
 #define ARM64_WORKAROUND_REPEAT_TLBI		16
+#define ARM64_WORKAROUND_858921			17
+#define ARM64_WORKAROUND_QCOM_FALKOR_E1003	18
 
-#define ARM64_NCAPS				17
+#define ARM64_NCAPS				19
 
 #ifndef __ASSEMBLY__
 
+#include <linux/bug.h>
+#include <linux/jump_label.h>
 #include <linux/kernel.h>
 
 /* CPU feature register tracking */
@@ -81,10 +85,17 @@ struct arm64_ftr_reg {
 	struct arm64_ftr_bits	*ftr_bits;
 };
 
+/* scope of capability check */
+enum {
+	SCOPE_SYSTEM,
+	SCOPE_LOCAL_CPU,
+};
+
 struct arm64_cpu_capabilities {
 	const char *desc;
 	u16 capability;
-	bool (*matches)(const struct arm64_cpu_capabilities *);
+	int def_scope;			/* default scope */
+	bool (*matches)(const struct arm64_cpu_capabilities *caps, int scope);
 	int (*enable)(void *);		/* Called on all active CPUs */
 	union {
 		struct {	/* To be used for erratum handling only */
@@ -104,10 +115,21 @@ struct arm64_cpu_capabilities {
 };
 
 extern DECLARE_BITMAP(cpu_hwcaps, ARM64_NCAPS);
+extern struct static_key_false cpu_hwcap_keys[ARM64_NCAPS];
+
+bool this_cpu_has_cap(unsigned int cap);
 
 static inline bool cpu_have_feature(unsigned int num)
 {
 	return elf_hwcap & (1UL << num);
+}
+
+/* System capability check for constant caps */
+static inline bool cpus_have_const_cap(int num)
+{
+	if (num >= ARM64_NCAPS)
+		return false;
+	return static_branch_unlikely(&cpu_hwcap_keys[num]);
 }
 
 static inline bool cpus_have_cap(unsigned int num)
@@ -119,11 +141,13 @@ static inline bool cpus_have_cap(unsigned int num)
 
 static inline void cpus_set_cap(unsigned int num)
 {
-	if (num >= ARM64_NCAPS)
+	if (num >= ARM64_NCAPS) {
 		pr_warn("Attempt to set an illegal CPU capability (%d >= %d)\n",
 			num, ARM64_NCAPS);
-	else
+	} else {
 		__set_bit(num, cpu_hwcaps);
+		static_branch_enable(&cpu_hwcap_keys[num]);
+	}
 }
 
 static inline int __attribute_const__
@@ -187,6 +211,7 @@ void update_cpu_capabilities(const struct arm64_cpu_capabilities *caps,
 			    const char *info);
 void check_local_cpu_errata(void);
 
+void verify_local_cpu_errata(void);
 void verify_local_cpu_capabilities(void);
 
 u64 read_system_reg(u32 id);
@@ -198,7 +223,7 @@ static inline bool cpu_supports_mixed_endian_el0(void)
 
 static inline bool system_supports_32bit_el0(void)
 {
-	return cpus_have_cap(ARM64_HAS_32BIT_EL0);
+	return cpus_have_const_cap(ARM64_HAS_32BIT_EL0);
 }
 
 static inline bool system_supports_mixed_endian_el0(void)
