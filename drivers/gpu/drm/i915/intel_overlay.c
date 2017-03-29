@@ -197,7 +197,8 @@ intel_overlay_map_regs(struct intel_overlay *overlay)
 		regs = (struct overlay_registers __iomem *)overlay->reg_bo->phys_handle->vaddr;
 	else
 		regs = io_mapping_map_wc(dev_priv->gtt.mappable,
-					 i915_gem_obj_ggtt_offset(overlay->reg_bo));
+					 i915_gem_obj_ggtt_offset(overlay->reg_bo),
+					 PAGE_SIZE);
 
 	return regs;
 }
