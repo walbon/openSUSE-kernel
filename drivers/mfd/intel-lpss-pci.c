@@ -17,6 +17,7 @@
 #include <linux/pci.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 
 #include "intel-lpss.h"
 
@@ -65,6 +66,20 @@ static const struct intel_lpss_platform_info spt_info = {
 	.clk_rate = 120000000,
 };
 
+static struct property_entry spt_i2c_properties[] = {
+	PROPERTY_ENTRY_U32("i2c-sda-hold-time-ns", 230),
+	{ },
+};
+
+static struct property_set spt_i2c_pset = {
+	.properties = spt_i2c_properties,
+};
+
+static const struct intel_lpss_platform_info spt_i2c_info = {
+	.clk_rate = 120000000,
+	.pset = &spt_i2c_pset,
+};
+
 static const struct intel_lpss_platform_info spt_uart_info = {
 	.clk_rate = 120000000,
 	.clk_con_id = "baudclk",
@@ -80,19 +95,6 @@ static const struct intel_lpss_platform_info bxt_uart_info = {
 };
 
 static const struct intel_lpss_platform_info bxt_i2c_info = {
-	.clk_rate = 133000000,
-};
-
-static const struct intel_lpss_platform_info kbl_info = {
-	.clk_rate = 120000000,
-};
-
-static const struct intel_lpss_platform_info kbl_uart_info = {
-	.clk_rate = 120000000,
-	.clk_con_id = "baudclk",
-};
-
-static const struct intel_lpss_platform_info kbl_i2c_info = {
 	.clk_rate = 133000000,
 };
 
@@ -134,31 +136,31 @@ static const struct pci_device_id intel_lpss_pci_ids[] = {
 	{ PCI_VDEVICE(INTEL, 0x9d28), (kernel_ulong_t)&spt_uart_info },
 	{ PCI_VDEVICE(INTEL, 0x9d29), (kernel_ulong_t)&spt_info },
 	{ PCI_VDEVICE(INTEL, 0x9d2a), (kernel_ulong_t)&spt_info },
-	{ PCI_VDEVICE(INTEL, 0x9d60), (kernel_ulong_t)&spt_info },
-	{ PCI_VDEVICE(INTEL, 0x9d61), (kernel_ulong_t)&spt_info },
-	{ PCI_VDEVICE(INTEL, 0x9d62), (kernel_ulong_t)&spt_info },
-	{ PCI_VDEVICE(INTEL, 0x9d63), (kernel_ulong_t)&spt_info },
-	{ PCI_VDEVICE(INTEL, 0x9d64), (kernel_ulong_t)&spt_info },
-	{ PCI_VDEVICE(INTEL, 0x9d65), (kernel_ulong_t)&spt_info },
+	{ PCI_VDEVICE(INTEL, 0x9d60), (kernel_ulong_t)&spt_i2c_info },
+	{ PCI_VDEVICE(INTEL, 0x9d61), (kernel_ulong_t)&spt_i2c_info },
+	{ PCI_VDEVICE(INTEL, 0x9d62), (kernel_ulong_t)&spt_i2c_info },
+	{ PCI_VDEVICE(INTEL, 0x9d63), (kernel_ulong_t)&spt_i2c_info },
+	{ PCI_VDEVICE(INTEL, 0x9d64), (kernel_ulong_t)&spt_i2c_info },
+	{ PCI_VDEVICE(INTEL, 0x9d65), (kernel_ulong_t)&spt_i2c_info },
 	{ PCI_VDEVICE(INTEL, 0x9d66), (kernel_ulong_t)&spt_uart_info },
 	/* SPT-H */
 	{ PCI_VDEVICE(INTEL, 0xa127), (kernel_ulong_t)&spt_uart_info },
 	{ PCI_VDEVICE(INTEL, 0xa128), (kernel_ulong_t)&spt_uart_info },
 	{ PCI_VDEVICE(INTEL, 0xa129), (kernel_ulong_t)&spt_info },
 	{ PCI_VDEVICE(INTEL, 0xa12a), (kernel_ulong_t)&spt_info },
-	{ PCI_VDEVICE(INTEL, 0xa160), (kernel_ulong_t)&spt_info },
-	{ PCI_VDEVICE(INTEL, 0xa161), (kernel_ulong_t)&spt_info },
+	{ PCI_VDEVICE(INTEL, 0xa160), (kernel_ulong_t)&spt_i2c_info },
+	{ PCI_VDEVICE(INTEL, 0xa161), (kernel_ulong_t)&spt_i2c_info },
 	{ PCI_VDEVICE(INTEL, 0xa166), (kernel_ulong_t)&spt_uart_info },
 	/* KBL-H */
-	{ PCI_VDEVICE(INTEL, 0xa2a7), (kernel_ulong_t)&kbl_uart_info },
-	{ PCI_VDEVICE(INTEL, 0xa2a8), (kernel_ulong_t)&kbl_uart_info },
-	{ PCI_VDEVICE(INTEL, 0xa2a9), (kernel_ulong_t)&kbl_info },
-	{ PCI_VDEVICE(INTEL, 0xa2aa), (kernel_ulong_t)&kbl_info },
-	{ PCI_VDEVICE(INTEL, 0xa2e0), (kernel_ulong_t)&kbl_i2c_info },
-	{ PCI_VDEVICE(INTEL, 0xa2e1), (kernel_ulong_t)&kbl_i2c_info },
-	{ PCI_VDEVICE(INTEL, 0xa2e2), (kernel_ulong_t)&kbl_i2c_info },
-	{ PCI_VDEVICE(INTEL, 0xa2e3), (kernel_ulong_t)&kbl_i2c_info },
-	{ PCI_VDEVICE(INTEL, 0xa2e6), (kernel_ulong_t)&kbl_uart_info },
+	{ PCI_VDEVICE(INTEL, 0xa2a7), (kernel_ulong_t)&spt_uart_info },
+	{ PCI_VDEVICE(INTEL, 0xa2a8), (kernel_ulong_t)&spt_uart_info },
+	{ PCI_VDEVICE(INTEL, 0xa2a9), (kernel_ulong_t)&spt_info },
+	{ PCI_VDEVICE(INTEL, 0xa2aa), (kernel_ulong_t)&spt_info },
+	{ PCI_VDEVICE(INTEL, 0xa2e0), (kernel_ulong_t)&spt_i2c_info },
+	{ PCI_VDEVICE(INTEL, 0xa2e1), (kernel_ulong_t)&spt_i2c_info },
+	{ PCI_VDEVICE(INTEL, 0xa2e2), (kernel_ulong_t)&spt_i2c_info },
+	{ PCI_VDEVICE(INTEL, 0xa2e3), (kernel_ulong_t)&spt_i2c_info },
+	{ PCI_VDEVICE(INTEL, 0xa2e6), (kernel_ulong_t)&spt_uart_info },
 	{ }
 };
 MODULE_DEVICE_TABLE(pci, intel_lpss_pci_ids);
