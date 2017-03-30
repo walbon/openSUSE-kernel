@@ -863,6 +863,7 @@ struct ibmvnic_sub_crq_queue {
 	spinlock_t lock;
 	struct sk_buff *rx_skb_top;
 	struct ibmvnic_adapter *adapter;
+	atomic_t used;
 };
 
 struct ibmvnic_long_term_buff {
@@ -952,7 +953,6 @@ struct ibmvnic_adapter {
 	dma_addr_t bounce_buffer_dma;
 
 	/* Statistics */
-	struct net_device_stats net_stats;
 	struct ibmvnic_statistics stats;
 	dma_addr_t stats_token;
 	struct completion stats_done;
@@ -976,11 +976,11 @@ struct ibmvnic_adapter {
 	dma_addr_t login_rsp_buf_token;
 	int login_rsp_buf_sz;
 
-	atomic_t running_cap_queries;
+	atomic_t running_cap_crqs;
+	bool wait_capability;
 
 	struct ibmvnic_sub_crq_queue **tx_scrq;
 	struct ibmvnic_sub_crq_queue **rx_scrq;
-	int requested_caps;
 	bool renegotiate;
 
 	/* rx structs */
@@ -1049,5 +1049,7 @@ struct ibmvnic_adapter {
 
 	struct work_struct vnic_crq_init;
 	struct work_struct ibmvnic_xport;
+	struct tasklet_struct tasklet;
 	bool failover;
+	bool is_closed;
 };
