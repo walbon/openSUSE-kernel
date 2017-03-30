@@ -989,7 +989,7 @@ static ssize_t generic_file_splice_write_actor(struct pipe_inode_info *pipe,
 	loff_t tmp_pos = sd->pos;
 	size_t tmp_count = sd->total_len;
 	ssize_t ret;
-	
+
 	mutex_lock_nested(&inode->i_mutex, I_MUTEX_CHILD);
 	ret = generic_write_checks(out, &tmp_pos, &tmp_count,
 				   S_ISBLK(inode->i_mode));
@@ -1031,7 +1031,6 @@ splice_write_to_file(struct pipe_inode_info *pipe, struct file *out,
 			  splice_write_actor actor)
 {
 	struct address_space *mapping = out->f_mapping;
-	struct inode *inode = mapping->host;
 	struct splice_desc sd = {
 		.total_len = len,
 		.flags = flags,
