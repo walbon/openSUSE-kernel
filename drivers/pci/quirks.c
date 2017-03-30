@@ -4187,7 +4187,7 @@ static const struct pci_dev_enable_acs {
 	{ 0 }
 };
 
-void pci_dev_specific_enable_acs(struct pci_dev *dev)
+int pci_dev_specific_enable_acs(struct pci_dev *dev)
 {
 	const struct pci_dev_enable_acs *i;
 	int ret;
@@ -4199,9 +4199,11 @@ void pci_dev_specific_enable_acs(struct pci_dev *dev)
 		     i->device == (u16)PCI_ANY_ID)) {
 			ret = i->enable_acs(dev);
 			if (ret >= 0)
-				return;
+				return ret;
 		}
 	}
+
+	return -ENOTTY;
 }
 
 /*
