@@ -39,8 +39,7 @@ static void smc_tx_write_space(struct sock *sk)
 		clear_bit(SOCK_NOSPACE, &sock->flags);
 		rcu_read_lock();
 		wq = rcu_dereference(sk->sk_wq);
-//		if (skwq_has_sleeper(wq))
-		if (wq_has_sleeper(wq))
+ 		if (skwq_has_sleeper(wq))
 			wake_up_interruptible_poll(&wq->wait,
 						   POLLOUT | POLLWRNORM |
 						   POLLWRBAND);
