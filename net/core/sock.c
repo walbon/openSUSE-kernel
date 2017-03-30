@@ -264,7 +264,7 @@ static const char *const af_family_key_strings[AF_MAX+1] = {
   "sk_lock-AF_RXRPC" , "sk_lock-AF_ISDN"     , "sk_lock-AF_PHONET"   ,
   "sk_lock-AF_IEEE802154", "sk_lock-AF_CAIF" , "sk_lock-AF_ALG"      ,
   "sk_lock-AF_NFC"   , "sk_lock-AF_VSOCK"    , "sk_lock-41"          ,
-  "sk_lock-42"       , "sk_lock-43"          , "sk_lock-44"          ,
+  "sk_lock-42"       , "sk_lock-AF_SMC"      , "sk_lock-44"          ,
   "sk_lock-45"       , "sk_lock-46"          , "sk_lock-AF_MAX"      ,
 };
 static const char *const af_family_slock_key_strings[AF_MAX+1] = {
@@ -282,7 +282,7 @@ static const char *const af_family_slock_key_strings[AF_MAX+1] = {
   "slock-AF_RXRPC" , "slock-AF_ISDN"     , "slock-AF_PHONET"   ,
   "slock-AF_IEEE802154", "slock-AF_CAIF" , "slock-AF_ALG"      ,
   "slock-AF_NFC"   , "slock-AF_VSOCK"    , "slock-41"          ,
-  "slock-42"       , "slock-43"          , "slock-44"          ,
+  "slock-42"       , "slock-AF_SMC"      , "slock-44"          ,
   "slock-45"       , "slock-46"          , "slock-AF_MAX"      ,
 };
 static const char *const af_family_clock_key_strings[AF_MAX+1] = {
@@ -300,7 +300,7 @@ static const char *const af_family_clock_key_strings[AF_MAX+1] = {
   "clock-AF_RXRPC" , "clock-AF_ISDN"     , "clock-AF_PHONET"   ,
   "clock-AF_IEEE802154", "clock-AF_CAIF" , "clock-AF_ALG"      ,
   "clock-AF_NFC"   , "clock-AF_VSOCK"    , "clock-41"          ,
-  "clock-42"       , "clock-43"          , "clock-44"          ,
+  "clock-42"       , "clock-AF_SMC"      , "clock-44"          ,
   "clock-45"       , "clock-46"          , "clock-AF_MAX"      ,
 };
 
