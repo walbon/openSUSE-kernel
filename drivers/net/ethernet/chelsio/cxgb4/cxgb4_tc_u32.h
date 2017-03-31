@@ -1,7 +1,7 @@
 /*
  * This file is part of the Chelsio T4 Ethernet driver for Linux.
  *
- * Copyright (c) 2003-2014 Chelsio Communications, Inc. All rights reserved.
+ * Copyright (c) 2016 Chelsio Communications, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -32,33 +32,23 @@
  * SOFTWARE.
  */
 
-#ifndef __T4FW_VERSION_H__
-#define __T4FW_VERSION_H__
+#ifndef __CXGB4_TC_U32_H
+#define __CXGB4_TC_U32_H
 
-#define T4FW_VERSION_MAJOR 0x01
-#define T4FW_VERSION_MINOR 0x10
-#define T4FW_VERSION_MICRO 0x21
-#define T4FW_VERSION_BUILD 0x00
+#include <net/pkt_cls.h>
 
-#define T4FW_MIN_VERSION_MAJOR 0x01
-#define T4FW_MIN_VERSION_MINOR 0x04
-#define T4FW_MIN_VERSION_MICRO 0x00
+static inline bool can_tc_u32_offload(struct net_device *dev)
+{
+	struct adapter *adap = netdev2adap(dev);
 
-#define T5FW_VERSION_MAJOR 0x01
-#define T5FW_VERSION_MINOR 0x10
-#define T5FW_VERSION_MICRO 0x21
-#define T5FW_VERSION_BUILD 0x00
+	return (dev->features & NETIF_F_HW_TC) && adap->tc_u32 ? true : false;
+}
 
-#define T5FW_MIN_VERSION_MAJOR 0x00
-#define T5FW_MIN_VERSION_MINOR 0x00
-#define T5FW_MIN_VERSION_MICRO 0x00
+int cxgb4_config_knode(struct net_device *dev, __be16 protocol,
+		       struct tc_cls_u32_offload *cls);
+int cxgb4_delete_knode(struct net_device *dev, __be16 protocol,
+		       struct tc_cls_u32_offload *cls);
 
-#define T6FW_VERSION_MAJOR 0x01
-#define T6FW_VERSION_MINOR 0x10
-#define T6FW_VERSION_MICRO 0x21
-#define T6FW_VERSION_BUILD 0x00
-
-#define T6FW_MIN_VERSION_MAJOR 0x00
-#define T6FW_MIN_VERSION_MINOR 0x00
-#define T6FW_MIN_VERSION_MICRO 0x00
-#endif
+void cxgb4_cleanup_tc_u32(struct adapter *adapter);
+struct cxgb4_tc_u32_table *cxgb4_init_tc_u32(struct adapter *adap);
+#endif /* __CXGB4_TC_U32_H */

@@ -1,7 +1,7 @@
 /*
  * This file is part of the Chelsio T4 Ethernet driver for Linux.
  *
- * Copyright (c) 2003-2014 Chelsio Communications, Inc. All rights reserved.
+ * Copyright (c) 2003-2016 Chelsio Communications, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -32,33 +32,17 @@
  * SOFTWARE.
  */
 
-#ifndef __T4FW_VERSION_H__
-#define __T4FW_VERSION_H__
+#ifndef __CXGB4_FILTER_H
+#define __CXGB4_FILTER_H
 
-#define T4FW_VERSION_MAJOR 0x01
-#define T4FW_VERSION_MINOR 0x10
-#define T4FW_VERSION_MICRO 0x21
-#define T4FW_VERSION_BUILD 0x00
+#include "t4_msg.h"
 
-#define T4FW_MIN_VERSION_MAJOR 0x01
-#define T4FW_MIN_VERSION_MINOR 0x04
-#define T4FW_MIN_VERSION_MICRO 0x00
+void filter_rpl(struct adapter *adap, const struct cpl_set_tcb_rpl *rpl);
+void clear_filter(struct adapter *adap, struct filter_entry *f);
 
-#define T5FW_VERSION_MAJOR 0x01
-#define T5FW_VERSION_MINOR 0x10
-#define T5FW_VERSION_MICRO 0x21
-#define T5FW_VERSION_BUILD 0x00
+int set_filter_wr(struct adapter *adapter, int fidx);
+int delete_filter(struct adapter *adapter, unsigned int fidx);
 
-#define T5FW_MIN_VERSION_MAJOR 0x00
-#define T5FW_MIN_VERSION_MINOR 0x00
-#define T5FW_MIN_VERSION_MICRO 0x00
-
-#define T6FW_VERSION_MAJOR 0x01
-#define T6FW_VERSION_MINOR 0x10
-#define T6FW_VERSION_MICRO 0x21
-#define T6FW_VERSION_BUILD 0x00
-
-#define T6FW_MIN_VERSION_MAJOR 0x00
-#define T6FW_MIN_VERSION_MINOR 0x00
-#define T6FW_MIN_VERSION_MICRO 0x00
-#endif
+int writable_filter(struct filter_entry *f);
+void clear_all_filters(struct adapter *adapter);
+#endif /* __CXGB4_FILTER_H */

@@ -1,7 +1,7 @@
 /*
  * This file is part of the Chelsio T4 Ethernet driver for Linux.
  *
- * Copyright (c) 2003-2014 Chelsio Communications, Inc. All rights reserved.
+ * Copyright (c) 2003-2016 Chelsio Communications, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -67,6 +67,7 @@
 #include <linux/crash_dump.h>
 
 #include "cxgb4.h"
+#include "cxgb4_filter.h"
 #include "t4_regs.h"
 #include "t4_values.h"
 #include "t4_msg.h"
@@ -76,6 +77,8 @@
 #include "cxgb4_debugfs.h"
 #include "clip_tbl.h"
 #include "l2t.h"
+#include "sched.h"
+#include "cxgb4_tc_u32.h"
 
 char cxgb4_driver_name[] = KBUILD_MODNAME;
 
@@ -85,30 +88,6 @@ char cxgb4_driver_name[] = KBUILD_MODNAME;
 #define DRV_VERSION "2.0.0-ko"
 const char cxgb4_driver_version[] = DRV_VERSION;
 #define DRV_DESC "Chelsio T4/T5/T6 Network Driver"
-
-/* Host shadow copy of ingress filter entry.  This is in host native format
- * and doesn't match the ordering or bit order, etc. of the hardware of the
- * firmware command.  The use of bit-field structure elements is purely to
- * remind ourselves of the field size limitations and save memory in the case
- * where the filter table is large.
- */
-struct filter_entry {
-	/* Administrative fields for filter.
-	 */
-	u32 valid:1;            /* filter allocated and valid */
-	u32 locked:1;           /* filter is administratively locked */
-
-	u32 pending:1;          /* filter action is pending firmware reply */
-	u32 smtidx:8;           /* Source MAC Table index for smac */
-	struct l2t_entry *l2t;  /* Layer Two Table entry for dmac */
-
-	/* The filter itself.  Most of this is a straight copy of information
-	 * provided by the extended ioctl().  Some fields are translated to
-	 * internal forms -- for instance the Ingress Queue ID passed in from
-	 * the ioctl() is translated into the Absolute Ingress Queue ID.
-	 */
-	struct ch_filter_specification fs;
-};
 
 #define DFLT_MSG_ENABLE (NETIF_MSG_DRV | NETIF_MSG_PROBE | NETIF_MSG_LINK | \
 			 NETIF_MSG_TIMER | NETIF_MSG_IFDOWN | NETIF_MSG_IFUP |\
@@ -155,24 +134,6 @@ MODULE_FIRMWARE(FW5_FNAME);
 MODULE_FIRMWARE(FW6_FNAME);
 
 /*
- * Normally we're willing to become the firmware's Master PF but will be happy
- * if another PF has already become the Master and initialized the adapter.
- * Setting "force_init" will cause this driver to forcibly establish itself as
- * the Master PF and initialize the adapter.
- */
-static uint force_init;
-
-module_param(force_init, uint, 0644);
-MODULE_PARM_DESC(force_init, "Forcibly become Master PF and initialize adapter,"
-		 "deprecated parameter");
-
-static int dflt_msg_enable = DFLT_MSG_ENABLE;
-
-module_param(dflt_msg_enable, int, 0644);
-MODULE_PARM_DESC(dflt_msg_enable, "Chelsio T4 default message enable bitmap, "
-		 "deprecated parameter");
-
-/*
  * The driver uses the best interrupt scheme available on a platform in the
  * order MSI-X, MSI, legacy INTx interrupts.  This parameter determines which
  * of these schemes the driver may consider as follows:
@@ -199,16 +160,6 @@ MODULE_PARM_DESC(msi, "whether to use INTx (0), MSI (1) or MSI-X (2)");
  * PCI-E Bus transfers enough to measurably affect performance.
  */
 static int rx_dma_offset = 2;
-
-#ifdef CONFIG_PCI_IOV
-/* Configure the number of PCI-E Virtual Function which are to be instantiated
- * on SR-IOV Capable Physical Functions.
- */
-static unsigned int num_vf[NUM_OF_PF_WITH_SRIOV];
-
-module_param_array(num_vf, uint, NULL, 0644);
-MODULE_PARM_DESC(num_vf, "number of VFs for each of PFs 0-3, deprecated parameter - please use the pci sysfs interface.");
-#endif
 
 /* TX Queue select used to determine what algorithm to use for selecting TX
  * queue. Select between the kernel provided function (select_queue=0) or user
@@ -237,17 +188,23 @@ static void link_report(struct net_device *dev)
 		const struct port_info *p = netdev_priv(dev);
 
 		switch (p->link_cfg.speed) {
-		case 10000:
-			s = "10Gbps";
-			break;
-		case 1000:
-			s = "1000Mbps";
-			break;
 		case 100:
 			s = "100Mbps";
 			break;
+		case 1000:
+			s = "1Gbps";
+			break;
+		case 10000:
+			s = "10Gbps";
+			break;
+		case 25000:
+			s = "25Gbps";
+			break;
 		case 40000:
 			s = "40Gbps";
+			break;
+		case 100000:
+			s = "100Gbps";
 			break;
 		default:
 			pr_info("%s: unsupported speed: %d\n",
@@ -298,6 +255,17 @@ static void dcb_tx_queue_prio_enable(struct net_device *dev, int enable)
 			txq->dcb_prio = value;
 	}
 }
+
+static int cxgb4_dcb_enabled(const struct net_device *dev)
+{
+	struct port_info *pi = netdev_priv(dev);
+
+	if (!pi->dcb.enabled)
+		return 0;
+
+	return ((pi->dcb.state == CXGB4_DCB_STATE_FW_ALLSYNCED) ||
+		(pi->dcb.state == CXGB4_DCB_STATE_HOST));
+}
 #endif /* CONFIG_CHELSIO_T4_DCB */
 
 void t4_os_link_changed(struct adapter *adapter, int port_id, int link_stat)
@@ -310,8 +278,10 @@ void t4_os_link_changed(struct adapter *adapter, int port_id, int link_stat)
 			netif_carrier_on(dev);
 		else {
 #ifdef CONFIG_CHELSIO_T4_DCB
-			cxgb4_dcb_state_init(dev);
-			dcb_tx_queue_prio_enable(dev, false);
+			if (cxgb4_dcb_enabled(dev)) {
+				cxgb4_dcb_state_init(dev);
+				dcb_tx_queue_prio_enable(dev, false);
+			}
 #endif /* CONFIG_CHELSIO_T4_DCB */
 			netif_carrier_off(dev);
 		}
@@ -333,6 +303,17 @@ void t4_os_portmod_changed(const struct adapter *adap, int port_id)
 		netdev_info(dev, "port module unplugged\n");
 	else if (pi->mod_type < ARRAY_SIZE(mod_str))
 		netdev_info(dev, "%s module inserted\n", mod_str[pi->mod_type]);
+	else if (pi->mod_type == FW_PORT_MOD_TYPE_NOTSUPPORTED)
+		netdev_info(dev, "%s: unsupported port module inserted\n",
+			    dev->name);
+	else if (pi->mod_type == FW_PORT_MOD_TYPE_UNKNOWN)
+		netdev_info(dev, "%s: unknown port module inserted\n",
+			    dev->name);
+	else if (pi->mod_type == FW_PORT_MOD_TYPE_ERROR)
+		netdev_info(dev, "%s: transceiver module error\n", dev->name);
+	else
+		netdev_info(dev, "%s: unknown module type %d inserted\n",
+			    dev->name, pi->mod_type);
 }
 
 int dbfifo_int_thresh = 10; /* 10 == 640 entry threshold */
@@ -476,28 +457,12 @@ static int link_start(struct net_device *dev)
 	return ret;
 }
 
-int cxgb4_dcb_enabled(const struct net_device *dev)
-{
-#ifdef CONFIG_CHELSIO_T4_DCB
-	struct port_info *pi = netdev_priv(dev);
-
-	if (!pi->dcb.enabled)
-		return 0;
-
-	return ((pi->dcb.state == CXGB4_DCB_STATE_FW_ALLSYNCED) ||
-		(pi->dcb.state == CXGB4_DCB_STATE_HOST));
-#else
-	return 0;
-#endif
-}
-EXPORT_SYMBOL(cxgb4_dcb_enabled);
-
 #ifdef CONFIG_CHELSIO_T4_DCB
 /* Handle a Data Center Bridging update message from the firmware. */
 static void dcb_rpl(struct adapter *adap, const struct fw_port_cmd *pcmd)
 {
 	int port = FW_PORT_CMD_PORTID_G(ntohl(pcmd->op_to_portid));
-	struct net_device *dev = adap->port[port];
+	struct net_device *dev = adap->port[adap->chan_map[port]];
 	int old_dcb_enabled = cxgb4_dcb_enabled(dev);
 	int new_dcb_enabled;
 
@@ -512,66 +477,6 @@ static void dcb_rpl(struct adapter *adap, const struct fw_port_cmd *pcmd)
 		dcb_tx_queue_prio_enable(dev, new_dcb_enabled);
 }
 #endif /* CONFIG_CHELSIO_T4_DCB */
-
-/* Clear a filter and release any of its resources that we own.  This also
- * clears the filter's "pending" status.
- */
-static void clear_filter(struct adapter *adap, struct filter_entry *f)
-{
-	/* If the new or old filter have loopback rewriteing rules then we'll
-	 * need to free any existing Layer Two Table (L2T) entries of the old
-	 * filter rule.  The firmware will handle freeing up any Source MAC
-	 * Table (SMT) entries used for rewriting Source MAC Addresses in
-	 * loopback rules.
-	 */
-	if (f->l2t)
-		cxgb4_l2t_release(f->l2t);
-
-	/* The zeroing of the filter rule below clears the filter valid,
-	 * pending, locked flags, l2t pointer, etc. so it's all we need for
-	 * this operation.
-	 */
-	memset(f, 0, sizeof(*f));
-}
-
-/* Handle a filter write/deletion reply.
- */
-static void filter_rpl(struct adapter *adap, const struct cpl_set_tcb_rpl *rpl)
-{
-	unsigned int idx = GET_TID(rpl);
-	unsigned int nidx = idx - adap->tids.ftid_base;
-	unsigned int ret;
-	struct filter_entry *f;
-
-	if (idx >= adap->tids.ftid_base && nidx <
-	   (adap->tids.nftids + adap->tids.nsftids)) {
-		idx = nidx;
-		ret = TCB_COOKIE_G(rpl->cookie);
-		f = &adap->tids.ftid_tab[idx];
-
-		if (ret == FW_FILTER_WR_FLT_DELETED) {
-			/* Clear the filter when we get confirmation from the
-			 * hardware that the filter has been deleted.
-			 */
-			clear_filter(adap, f);
-		} else if (ret == FW_FILTER_WR_SMT_TBL_FULL) {
-			dev_err(adap->pdev_dev, "filter %u setup failed due to full SMT\n",
-				idx);
-			clear_filter(adap, f);
-		} else if (ret == FW_FILTER_WR_FLT_ADDED) {
-			f->smtidx = (be64_to_cpu(rpl->oldval) >> 24) & 0xff;
-			f->pending = 0;  /* asynchronous setup completed */
-			f->valid = 1;
-		} else {
-			/* Something went wrong.  Issue a warning about the
-			 * problem and clear everything out.
-			 */
-			dev_err(adap->pdev_dev, "filter %u setup failed with error %u\n",
-				idx, ret);
-			clear_filter(adap, f);
-		}
-	}
-}
 
 /* Response queue handler for the FW event queue.
  */
@@ -627,7 +532,8 @@ static int fwevtq_handler(struct sge_rspq *q, const __be64 *rsp,
 		    action == FW_PORT_ACTION_GET_PORT_INFO) {
 			int port = FW_PORT_CMD_PORTID_G(
 					be32_to_cpu(pcmd->op_to_portid));
-			struct net_device *dev = q->adap->port[port];
+			struct net_device *dev =
+				q->adap->port[q->adap->chan_map[port]];
 			int state_input = ((pcmd->u.info.dcbxdis_pkd &
 					    FW_PORT_CMD_DCBXDIS_F)
 					   ? CXGB4_DCB_INPUT_FW_DISABLED
@@ -838,14 +744,8 @@ static void quiesce_rx(struct adapter *adap)
 	for (i = 0; i < adap->sge.ingr_sz; i++) {
 		struct sge_rspq *q = adap->sge.ingr_map[i];
 
-		if (q && q->handler) {
+		if (q && q->handler)
 			napi_disable(&q->napi);
-			local_bh_disable();
-			while (!cxgb_poll_lock_napi(q))
-				mdelay(1);
-			local_bh_enable();
-		}
-
 	}
 }
 
@@ -876,10 +776,9 @@ static void enable_rx(struct adapter *adap)
 
 		if (!q)
 			continue;
-		if (q->handler) {
-			cxgb_busy_poll_init_lock(q);
+		if (q->handler)
 			napi_enable(&q->napi);
-		}
+
 		/* 0-increment GTS to start the timer and enable interrupts */
 		t4_write_reg(adap, MYPF_REG(SGE_PF_GTS_A),
 			     SEINTARM_V(q->intr_params) |
@@ -1000,151 +899,6 @@ void *t4_alloc_mem(size_t size)
 void t4_free_mem(void *addr)
 {
 	kvfree(addr);
-}
-
-/* Send a Work Request to write the filter at a specified index.  We construct
- * a Firmware Filter Work Request to have the work done and put the indicated
- * filter into "pending" mode which will prevent any further actions against
- * it till we get a reply from the firmware on the completion status of the
- * request.
- */
-static int set_filter_wr(struct adapter *adapter, int fidx)
-{
-	struct filter_entry *f = &adapter->tids.ftid_tab[fidx];
-	struct sk_buff *skb;
-	struct fw_filter_wr *fwr;
-	unsigned int ftid;
-
-	skb = alloc_skb(sizeof(*fwr), GFP_KERNEL);
-	if (!skb)
-		return -ENOMEM;
-
-	/* If the new filter requires loopback Destination MAC and/or VLAN
-	 * rewriting then we need to allocate a Layer 2 Table (L2T) entry for
-	 * the filter.
-	 */
-	if (f->fs.newdmac || f->fs.newvlan) {
-		/* allocate L2T entry for new filter */
-		f->l2t = t4_l2t_alloc_switching(adapter, f->fs.vlan,
-						f->fs.eport, f->fs.dmac);
-		if (f->l2t == NULL) {
-			kfree_skb(skb);
-			return -ENOMEM;
-		}
-	}
-
-	ftid = adapter->tids.ftid_base + fidx;
-
-	fwr = (struct fw_filter_wr *)__skb_put(skb, sizeof(*fwr));
-	memset(fwr, 0, sizeof(*fwr));
-
-	/* It would be nice to put most of the following in t4_hw.c but most
-	 * of the work is translating the cxgbtool ch_filter_specification
-	 * into the Work Request and the definition of that structure is
-	 * currently in cxgbtool.h which isn't appropriate to pull into the
-	 * common code.  We may eventually try to come up with a more neutral
-	 * filter specification structure but for now it's easiest to simply
-	 * put this fairly direct code in line ...
-	 */
-	fwr->op_pkd = htonl(FW_WR_OP_V(FW_FILTER_WR));
-	fwr->len16_pkd = htonl(FW_WR_LEN16_V(sizeof(*fwr)/16));
-	fwr->tid_to_iq =
-		htonl(FW_FILTER_WR_TID_V(ftid) |
-		      FW_FILTER_WR_RQTYPE_V(f->fs.type) |
-		      FW_FILTER_WR_NOREPLY_V(0) |
-		      FW_FILTER_WR_IQ_V(f->fs.iq));
-	fwr->del_filter_to_l2tix =
-		htonl(FW_FILTER_WR_RPTTID_V(f->fs.rpttid) |
-		      FW_FILTER_WR_DROP_V(f->fs.action == FILTER_DROP) |
-		      FW_FILTER_WR_DIRSTEER_V(f->fs.dirsteer) |
-		      FW_FILTER_WR_MASKHASH_V(f->fs.maskhash) |
-		      FW_FILTER_WR_DIRSTEERHASH_V(f->fs.dirsteerhash) |
-		      FW_FILTER_WR_LPBK_V(f->fs.action == FILTER_SWITCH) |
-		      FW_FILTER_WR_DMAC_V(f->fs.newdmac) |
-		      FW_FILTER_WR_SMAC_V(f->fs.newsmac) |
-		      FW_FILTER_WR_INSVLAN_V(f->fs.newvlan == VLAN_INSERT ||
-					     f->fs.newvlan == VLAN_REWRITE) |
-		      FW_FILTER_WR_RMVLAN_V(f->fs.newvlan == VLAN_REMOVE ||
-					    f->fs.newvlan == VLAN_REWRITE) |
-		      FW_FILTER_WR_HITCNTS_V(f->fs.hitcnts) |
-		      FW_FILTER_WR_TXCHAN_V(f->fs.eport) |
-		      FW_FILTER_WR_PRIO_V(f->fs.prio) |
-		      FW_FILTER_WR_L2TIX_V(f->l2t ? f->l2t->idx : 0));
-	fwr->ethtype = htons(f->fs.val.ethtype);
-	fwr->ethtypem = htons(f->fs.mask.ethtype);
-	fwr->frag_to_ovlan_vldm =
-		(FW_FILTER_WR_FRAG_V(f->fs.val.frag) |
-		 FW_FILTER_WR_FRAGM_V(f->fs.mask.frag) |
-		 FW_FILTER_WR_IVLAN_VLD_V(f->fs.val.ivlan_vld) |
-		 FW_FILTER_WR_OVLAN_VLD_V(f->fs.val.ovlan_vld) |
-		 FW_FILTER_WR_IVLAN_VLDM_V(f->fs.mask.ivlan_vld) |
-		 FW_FILTER_WR_OVLAN_VLDM_V(f->fs.mask.ovlan_vld));
-	fwr->smac_sel = 0;
-	fwr->rx_chan_rx_rpl_iq =
-		htons(FW_FILTER_WR_RX_CHAN_V(0) |
-		      FW_FILTER_WR_RX_RPL_IQ_V(adapter->sge.fw_evtq.abs_id));
-	fwr->maci_to_matchtypem =
-		htonl(FW_FILTER_WR_MACI_V(f->fs.val.macidx) |
-		      FW_FILTER_WR_MACIM_V(f->fs.mask.macidx) |
-		      FW_FILTER_WR_FCOE_V(f->fs.val.fcoe) |
-		      FW_FILTER_WR_FCOEM_V(f->fs.mask.fcoe) |
-		      FW_FILTER_WR_PORT_V(f->fs.val.iport) |
-		      FW_FILTER_WR_PORTM_V(f->fs.mask.iport) |
-		      FW_FILTER_WR_MATCHTYPE_V(f->fs.val.matchtype) |
-		      FW_FILTER_WR_MATCHTYPEM_V(f->fs.mask.matchtype));
-	fwr->ptcl = f->fs.val.proto;
-	fwr->ptclm = f->fs.mask.proto;
-	fwr->ttyp = f->fs.val.tos;
-	fwr->ttypm = f->fs.mask.tos;
-	fwr->ivlan = htons(f->fs.val.ivlan);
-	fwr->ivlanm = htons(f->fs.mask.ivlan);
-	fwr->ovlan = htons(f->fs.val.ovlan);
-	fwr->ovlanm = htons(f->fs.mask.ovlan);
-	memcpy(fwr->lip, f->fs.val.lip, sizeof(fwr->lip));
-	memcpy(fwr->lipm, f->fs.mask.lip, sizeof(fwr->lipm));
-	memcpy(fwr->fip, f->fs.val.fip, sizeof(fwr->fip));
-	memcpy(fwr->fipm, f->fs.mask.fip, sizeof(fwr->fipm));
-	fwr->lp = htons(f->fs.val.lport);
-	fwr->lpm = htons(f->fs.mask.lport);
-	fwr->fp = htons(f->fs.val.fport);
-	fwr->fpm = htons(f->fs.mask.fport);
-	if (f->fs.newsmac)
-		memcpy(fwr->sma, f->fs.smac, sizeof(fwr->sma));
-
-	/* Mark the filter as "pending" and ship off the Filter Work Request.
-	 * When we get the Work Request Reply we'll clear the pending status.
-	 */
-	f->pending = 1;
-	set_wr_txq(skb, CPL_PRIORITY_CONTROL, f->fs.val.iport & 0x3);
-	t4_ofld_send(adapter, skb);
-	return 0;
-}
-
-/* Delete the filter at a specified index.
- */
-static int del_filter_wr(struct adapter *adapter, int fidx)
-{
-	struct filter_entry *f = &adapter->tids.ftid_tab[fidx];
-	struct sk_buff *skb;
-	struct fw_filter_wr *fwr;
-	unsigned int len, ftid;
-
-	len = sizeof(*fwr);
-	ftid = adapter->tids.ftid_base + fidx;
-
-	skb = alloc_skb(len, GFP_KERNEL);
-	if (!skb)
-		return -ENOMEM;
-
-	fwr = (struct fw_filter_wr *)__skb_put(skb, len);
-	t4_mk_filtdelwr(ftid, fwr, adapter->sge.fw_evtq.abs_id);
-
-	/* Mark the filter as "pending" and ship off the Filter Work Request.
-	 * When we get the Work Request Reply we'll clear the pending status.
-	 */
-	f->pending = 1;
-	t4_mgmt_tx(adapter, skb);
-	return 0;
 }
 
 static u16 cxgb_select_queue(struct net_device *dev, struct sk_buff *skb,
@@ -1528,19 +1282,22 @@ EXPORT_SYMBOL(cxgb4_remove_tid);
  */
 static int tid_init(struct tid_info *t)
 {
-	size_t size;
-	unsigned int stid_bmap_size;
-	unsigned int natids = t->natids;
 	struct adapter *adap = container_of(t, struct adapter, tids);
+	unsigned int max_ftids = t->nftids + t->nsftids;
+	unsigned int natids = t->natids;
+	unsigned int stid_bmap_size;
+	unsigned int ftid_bmap_size;
+	size_t size;
 
 	stid_bmap_size = BITS_TO_LONGS(t->nstids + t->nsftids);
+	ftid_bmap_size = BITS_TO_LONGS(t->nftids);
 	size = t->ntids * sizeof(*t->tid_tab) +
 	       natids * sizeof(*t->atid_tab) +
 	       t->nstids * sizeof(*t->stid_tab) +
 	       t->nsftids * sizeof(*t->stid_tab) +
 	       stid_bmap_size * sizeof(long) +
-	       t->nftids * sizeof(*t->ftid_tab) +
-	       t->nsftids * sizeof(*t->ftid_tab);
+	       max_ftids * sizeof(*t->ftid_tab) +
+	       ftid_bmap_size * sizeof(long);
 
 	t->tid_tab = t4_alloc_mem(size);
 	if (!t->tid_tab)
@@ -1550,8 +1307,10 @@ static int tid_init(struct tid_info *t)
 	t->stid_tab = (struct serv_entry *)&t->atid_tab[natids];
 	t->stid_bmap = (unsigned long *)&t->stid_tab[t->nstids + t->nsftids];
 	t->ftid_tab = (struct filter_entry *)&t->stid_bmap[stid_bmap_size];
+	t->ftid_bmap = (unsigned long *)&t->ftid_tab[max_ftids];
 	spin_lock_init(&t->stid_lock);
 	spin_lock_init(&t->atid_lock);
+	spin_lock_init(&t->ftid_lock);
 
 	t->stids_in_use = 0;
 	t->sftids_in_use = 0;
@@ -1566,12 +1325,16 @@ static int tid_init(struct tid_info *t)
 			t->atid_tab[natids - 1].next = &t->atid_tab[natids];
 		t->afree = t->atid_tab;
 	}
-	bitmap_zero(t->stid_bmap, t->nstids + t->nsftids);
-	/* Reserve stid 0 for T4/T5 adapters */
-	if (!t->stid_base &&
-	    (CHELSIO_CHIP_VERSION(adap->params.chip) <= CHELSIO_T5))
-		__set_bit(0, t->stid_bmap);
 
+	if (is_offload(adap)) {
+		bitmap_zero(t->stid_bmap, t->nstids + t->nsftids);
+		/* Reserve stid 0 for T4/T5 adapters */
+		if (!t->stid_base &&
+		    CHELSIO_CHIP_VERSION(adap->params.chip) <= CHELSIO_T5)
+			__set_bit(0, t->stid_bmap);
+	}
+
+	bitmap_zero(t->ftid_bmap, t->nftids);
 	return 0;
 }
 
@@ -2519,40 +2282,6 @@ static int cxgb_close(struct net_device *dev)
 	return t4_enable_vi(adapter, adapter->pf, pi->viid, false, false);
 }
 
-/* Return an error number if the indicated filter isn't writable ...
- */
-static int writable_filter(struct filter_entry *f)
-{
-	if (f->locked)
-		return -EPERM;
-	if (f->pending)
-		return -EBUSY;
-
-	return 0;
-}
-
-/* Delete the filter at the specified index (if valid).  The checks for all
- * the common problems with doing this like the filter being locked, currently
- * pending in another operation, etc.
- */
-static int delete_filter(struct adapter *adapter, unsigned int fidx)
-{
-	struct filter_entry *f;
-	int ret;
-
-	if (fidx >= adapter->tids.nftids + adapter->tids.nsftids)
-		return -EINVAL;
-
-	f = &adapter->tids.ftid_tab[fidx];
-	ret = writable_filter(f);
-	if (ret)
-		return ret;
-	if (f->valid)
-		return del_filter_wr(adapter, fidx);
-
-	return 0;
-}
-
 int cxgb4_create_server_filter(const struct net_device *dev, unsigned int stid,
 		__be32 sip, __be16 sport, __be16 vlan,
 		unsigned int queue, unsigned char port, unsigned char mask)
@@ -2622,7 +2351,6 @@ EXPORT_SYMBOL(cxgb4_create_server_filter);
 int cxgb4_remove_server_filter(const struct net_device *dev, unsigned int stid,
 		unsigned int queue, bool ipv6)
 {
-	int ret;
 	struct filter_entry *f;
 	struct adapter *adap;
 
@@ -2636,11 +2364,7 @@ int cxgb4_remove_server_filter(const struct net_device *dev, unsigned int stid,
 	/* Unlock the filter */
 	f->locked = 0;
 
-	ret = delete_filter(adap, stid);
-	if (ret)
-		return ret;
-
-	return 0;
+	return delete_filter(adap, stid);
 }
 EXPORT_SYMBOL(cxgb4_remove_server_filter);
 
@@ -2676,7 +2400,7 @@ static void cxgb_get_stats(struct net_device *dev,
 	ns->rx_over_errors   = 0;
 	ns->rx_crc_errors    = stats.rx_fcs_err;
 	ns->rx_frame_errors  = stats.rx_symbol_err;
-	ns->rx_fifo_errors   = stats.rx_ovflow0 + stats.rx_ovflow1 +
+	ns->rx_dropped	     = stats.rx_ovflow0 + stats.rx_ovflow1 +
 			       stats.rx_ovflow2 + stats.rx_ovflow3 +
 			       stats.rx_trunc0 + stats.rx_trunc1 +
 			       stats.rx_trunc2 + stats.rx_trunc3;
@@ -2852,6 +2576,19 @@ static int cxgb_get_vf_config(struct net_device *dev,
 	ether_addr_copy(ivi->mac, adap->vfinfo[vf].vf_mac_addr);
 	return 0;
 }
+
+static int cxgb_get_phys_port_id(struct net_device *dev,
+				 struct netdev_phys_item_id *ppid)
+{
+	struct port_info *pi = netdev_priv(dev);
+	unsigned int phy_port_id;
+
+	phy_port_id = pi->adapter->adap_idx * 10 + pi->port_id;
+	ppid->id_len = sizeof(phy_port_id);
+	memcpy(ppid->id, &phy_port_id, ppid->id_len);
+	return 0;
+}
+
 #endif
 
 static int cxgb_set_mac_addr(struct net_device *dev, void *p)
@@ -2890,6 +2627,116 @@ static void cxgb_netpoll(struct net_device *dev)
 }
 #endif
 
+static int cxgb_set_tx_maxrate(struct net_device *dev, int index, u32 rate)
+{
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adap = pi->adapter;
+	struct sched_class *e;
+	struct ch_sched_params p;
+	struct ch_sched_queue qe;
+	u32 req_rate;
+	int err = 0;
+
+	if (!can_sched(dev))
+		return -ENOTSUPP;
+
+	if (index < 0 || index > pi->nqsets - 1)
+		return -EINVAL;
+
+	if (!(adap->flags & FULL_INIT_DONE)) {
+		dev_err(adap->pdev_dev,
+			"Failed to rate limit on queue %d. Link Down?\n",
+			index);
+		return -EINVAL;
+	}
+
+	/* Convert from Mbps to Kbps */
+	req_rate = rate << 10;
+
+	/* Max rate is 10 Gbps */
+	if (req_rate >= SCHED_MAX_RATE_KBPS) {
+		dev_err(adap->pdev_dev,
+			"Invalid rate %u Mbps, Max rate is %u Gbps\n",
+			rate, SCHED_MAX_RATE_KBPS);
+		return -ERANGE;
+	}
+
+	/* First unbind the queue from any existing class */
+	memset(&qe, 0, sizeof(qe));
+	qe.queue = index;
+	qe.class = SCHED_CLS_NONE;
+
+	err = cxgb4_sched_class_unbind(dev, (void *)(&qe), SCHED_QUEUE);
+	if (err) {
+		dev_err(adap->pdev_dev,
+			"Unbinding Queue %d on port %d fail. Err: %d\n",
+			index, pi->port_id, err);
+		return err;
+	}
+
+	/* Queue already unbound */
+	if (!req_rate)
+		return 0;
+
+	/* Fetch any available unused or matching scheduling class */
+	memset(&p, 0, sizeof(p));
+	p.type = SCHED_CLASS_TYPE_PACKET;
+	p.u.params.level    = SCHED_CLASS_LEVEL_CL_RL;
+	p.u.params.mode     = SCHED_CLASS_MODE_CLASS;
+	p.u.params.rateunit = SCHED_CLASS_RATEUNIT_BITS;
+	p.u.params.ratemode = SCHED_CLASS_RATEMODE_ABS;
+	p.u.params.channel  = pi->tx_chan;
+	p.u.params.class    = SCHED_CLS_NONE;
+	p.u.params.minrate  = 0;
+	p.u.params.maxrate  = req_rate;
+	p.u.params.weight   = 0;
+	p.u.params.pktsize  = dev->mtu;
+
+	e = cxgb4_sched_class_alloc(dev, &p);
+	if (!e)
+		return -ENOMEM;
+
+	/* Bind the queue to a scheduling class */
+	memset(&qe, 0, sizeof(qe));
+	qe.queue = index;
+	qe.class = e->idx;
+
+	err = cxgb4_sched_class_bind(dev, (void *)(&qe), SCHED_QUEUE);
+	if (err)
+		dev_err(adap->pdev_dev,
+			"Queue rate limiting failed. Err: %d\n", err);
+	return err;
+}
+
+static int cxgb_setup_tc(struct net_device *dev, u32 handle, __be16 proto,
+			 struct tc_to_netdev *tc)
+{
+	struct port_info *pi = netdev2pinfo(dev);
+	struct adapter *adap = netdev2adap(dev);
+
+	if (!(adap->flags & FULL_INIT_DONE)) {
+		dev_err(adap->pdev_dev,
+			"Failed to setup tc on port %d. Link Down?\n",
+			pi->port_id);
+		return -EINVAL;
+	}
+
+	if (TC_H_MAJ(handle) == TC_H_MAJ(TC_H_INGRESS) &&
+	    tc->type == TC_SETUP_CLSU32) {
+		switch (tc->cls_u32->command) {
+		case TC_CLSU32_NEW_KNODE:
+		case TC_CLSU32_REPLACE_KNODE:
+			return cxgb4_config_knode(dev, proto, tc->cls_u32);
+		case TC_CLSU32_DELETE_KNODE:
+			return cxgb4_delete_knode(dev, proto, tc->cls_u32);
+		default:
+			return -EOPNOTSUPP;
+		}
+	}
+
+	return -EOPNOTSUPP;
+}
+
 static const struct net_device_ops cxgb4_netdev_ops = {
 	.ndo_open             = cxgb_open,
 	.ndo_stop             = cxgb_close,
@@ -2909,9 +2756,8 @@ static const struct net_device_ops cxgb4_netdev_ops = {
 	.ndo_fcoe_enable      = cxgb_fcoe_enable,
 	.ndo_fcoe_disable     = cxgb_fcoe_disable,
 #endif /* CONFIG_CHELSIO_T4_FCOE */
-#ifdef CONFIG_NET_RX_BUSY_POLL
-	.ndo_busy_poll        = cxgb_busy_poll,
-#endif
+	.ndo_set_tx_maxrate   = cxgb_set_tx_maxrate,
+	.ndo_setup_tc         = cxgb_setup_tc,
 };
 
 #ifdef CONFIG_PCI_IOV
@@ -2919,6 +2765,7 @@ static const struct net_device_ops cxgb4_mgmt_netdev_ops = {
 	.ndo_open             = dummy_open,
 	.ndo_set_vf_mac       = cxgb_set_vf_mac,
 	.ndo_get_vf_config    = cxgb_get_vf_config,
+	.ndo_get_phys_port_id = cxgb_get_phys_port_id,
 };
 #endif
 
@@ -2939,8 +2786,24 @@ static const struct ethtool_ops cxgb4_mgmt_ethtool_ops = {
 
 void t4_fatal_err(struct adapter *adap)
 {
-	t4_set_reg_field(adap, SGE_CONTROL_A, GLOBALENABLE_F, 0);
-	t4_intr_disable(adap);
+	int port;
+
+	/* Disable the SGE since ULDs are going to free resources that
+	 * could be exposed to the adapter.  RDMA MWs for example...
+	 */
+	t4_shutdown_adapter(adap);
+	for_each_port(adap, port) {
+		struct net_device *dev = adap->port[port];
+
+		/* If we get here in very early initialization the network
+		 * devices may not have been set up yet.
+		 */
+		if (!dev)
+			continue;
+
+		netif_tx_stop_all_queues(dev);
+		netif_carrier_off(dev);
+	}
 	dev_alert(adap->pdev_dev, "encountered fatal error, adapter stopped\n");
 }
 
@@ -3777,6 +3640,12 @@ static int adap_init0(struct adapter *adap)
 	adap->clipt_start = val[0];
 	adap->clipt_end = val[1];
 
+	/* We don't yet have a PARAMs calls to retrieve the number of Traffic
+	 * Classes supported by the hardware/firmware so we hard code it here
+	 * for now.
+	 */
+	adap->params.nsched_cls = is_t4(adap->params.chip) ? 15 : 16;
+
 	/* query params related to active filter region */
 	params[0] = FW_PARAM_PFVF(ACTIVE_FILTER_START);
 	params[1] = FW_PARAM_PFVF(ACTIVE_FILTER_END);
@@ -3813,6 +3682,12 @@ static int adap_init0(struct adapter *adap)
 				      1, params, val);
 		adap->params.ulptx_memwrite_dsgl = (ret == 0 && val[0] != 0);
 	}
+
+	/* See if FW supports FW_RI_FR_NSMR_TPTE_WR work request */
+	params[0] = FW_PARAM_DEV(RI_FR_NSMR_TPTE_WR);
+	ret = t4_query_params(adap, adap->mbox, adap->pf, 0,
+			      1, params, val);
+	adap->params.fr_nsmr_tpte_wr_support = (ret == 0 && val[0] != 0);
 
 	/*
 	 * Get device capabilities so we can determine what resources we need
@@ -4112,10 +3987,17 @@ static const struct pci_error_handlers cxgb4_eeh = {
 	.resume         = eeh_resume,
 };
 
+/* Return true if the Link Configuration supports "High Speeds" (those greater
+ * than 1Gb/s).
+ */
 static inline bool is_x_10g_port(const struct link_config *lc)
 {
-	return (lc->supported & FW_PORT_CAP_SPEED_10G) != 0 ||
-	       (lc->supported & FW_PORT_CAP_SPEED_40G) != 0;
+	unsigned int speeds, high_speeds;
+
+	speeds = FW_PORT_CAP_SPEED_V(FW_PORT_CAP_SPEED_G(lc->supported));
+	high_speeds = speeds & ~(FW_PORT_CAP_SPEED_100M | FW_PORT_CAP_SPEED_1G);
+
+	return high_speeds != 0;
 }
 
 /*
@@ -4189,7 +4071,7 @@ static void cfg_queues(struct adapter *adap)
 		 * capped by the number of available cores.
 		 */
 		if (n10g) {
-			i = num_online_cpus();
+			i = min_t(int, MAX_OFLD_QSETS, num_online_cpus());
 			s->ofldqsets = roundup(i, adap->params.nports);
 		} else {
 			s->ofldqsets = adap->params.nports;
@@ -4540,13 +4422,17 @@ static void print_port_info(const struct net_device *dev)
 		spd = " 8 GT/s";
 
 	if (pi->link_cfg.supported & FW_PORT_CAP_SPEED_100M)
-		bufp += sprintf(bufp, "100/");
+		bufp += sprintf(bufp, "100M/");
 	if (pi->link_cfg.supported & FW_PORT_CAP_SPEED_1G)
-		bufp += sprintf(bufp, "1000/");
+		bufp += sprintf(bufp, "1G/");
 	if (pi->link_cfg.supported & FW_PORT_CAP_SPEED_10G)
 		bufp += sprintf(bufp, "10G/");
+	if (pi->link_cfg.supported & FW_PORT_CAP_SPEED_25G)
+		bufp += sprintf(bufp, "25G/");
 	if (pi->link_cfg.supported & FW_PORT_CAP_SPEED_40G)
 		bufp += sprintf(bufp, "40G/");
+	if (pi->link_cfg.supported & FW_PORT_CAP_SPEED_100G)
+		bufp += sprintf(bufp, "100G/");
 	if (bufp != buf)
 		--bufp;
 	sprintf(bufp, "BASE-%s", t4_get_port_type_description(pi->port_type));
@@ -4572,7 +4458,9 @@ static void free_some_resources(struct adapter *adapter)
 	unsigned int i;
 
 	t4_free_mem(adapter->l2t);
+	t4_cleanup_sched(adapter);
 	t4_free_mem(adapter->tids.tid_tab);
+	cxgb4_cleanup_tc_u32(adapter);
 	kfree(adapter->sge.egr_map);
 	kfree(adapter->sge.ingr_map);
 	kfree(adapter->sge.starving_fl);
@@ -4648,12 +4536,14 @@ static int config_mgmt_dev(struct pci_dev *pdev)
 	int err;
 
 	snprintf(name, IFNAMSIZ, "mgmtpf%d%d", adap->adap_idx, adap->pf);
-	netdev = alloc_netdev(0, name, NET_NAME_UNKNOWN, dummy_setup);
+	netdev = alloc_netdev(sizeof(struct port_info), name, NET_NAME_UNKNOWN,
+			      dummy_setup);
 	if (!netdev)
 		return -ENOMEM;
 
 	pi = netdev_priv(netdev);
 	pi->adapter = adap;
+	pi->port_id = adap->pf % adap->params.nports;
 	SET_NETDEV_DEV(netdev, &pdev->dev);
 
 	adap->port[0] = netdev;
@@ -4743,6 +4633,9 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	u32 whoami, pl_rev;
 	enum chip_type chip;
 	static int adap_idx = 1;
+#ifdef CONFIG_PCI_IOV
+	u32 v, port_vec;
+#endif
 
 	printk_once(KERN_INFO "%s - version %s\n", DRV_DESC, DRV_VERSION);
 
@@ -4838,12 +4731,15 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	adapter->name = pci_name(pdev);
 	adapter->mbox = func;
 	adapter->pf = func;
-	adapter->msg_enable = dflt_msg_enable;
+	adapter->msg_enable = DFLT_MSG_ENABLE;
 	memset(adapter->chan_map, 0xff, sizeof(adapter->chan_map));
 
 	spin_lock_init(&adapter->stats_lock);
 	spin_lock_init(&adapter->tid_release_lock);
 	spin_lock_init(&adapter->win0_lock);
+	spin_lock_init(&adapter->mbox_lock);
+
+	INIT_LIST_HEAD(&adapter->mlist.list);
 
 	INIT_WORK(&adapter->tid_release_task, process_tid_release_list);
 	INIT_WORK(&adapter->db_full_task, process_db_full);
@@ -4917,7 +4813,8 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		netdev->hw_features = NETIF_F_SG | TSO_FLAGS |
 			NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
 			NETIF_F_RXCSUM | NETIF_F_RXHASH |
-			NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_CTAG_RX;
+			NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_CTAG_RX |
+			NETIF_F_HW_TC;
 		if (highdma)
 			netdev->hw_features |= NETIF_F_HIGHDMA;
 		netdev->features |= netdev->hw_features;
@@ -4995,10 +4892,25 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		}
 	}
 #endif
-	if (is_offload(adapter) && tid_init(&adapter->tids) < 0) {
+
+	for_each_port(adapter, i) {
+		pi = adap2pinfo(adapter, i);
+		pi->sched_tbl = t4_init_sched(adapter->params.nsched_cls);
+		if (!pi->sched_tbl)
+			dev_warn(&pdev->dev,
+				 "could not activate scheduling on port %d\n",
+				 i);
+	}
+
+	if (tid_init(&adapter->tids) < 0) {
 		dev_warn(&pdev->dev, "could not allocate TID table, "
 			 "continuing\n");
 		adapter->params.offload = 0;
+	} else {
+		adapter->tc_u32 = cxgb4_init_tc_u32(adapter);
+		if (!adapter->tc_u32)
+			dev_warn(&pdev->dev,
+				 "could not offload tc u32, continuing\n");
 	}
 
 	if (is_offload(adapter)) {
@@ -5041,6 +4953,7 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 */
 	for_each_port(adapter, i) {
 		pi = adap2pinfo(adapter, i);
+		adapter->port[i]->dev_port = pi->lport;
 		netif_set_real_num_tx_queues(adapter->port[i], pi->nqsets);
 		netif_set_real_num_rx_queues(adapter->port[i], pi->nqsets);
 
@@ -5080,17 +4993,6 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 sriov:
 #ifdef CONFIG_PCI_IOV
-	if (func < ARRAY_SIZE(num_vf) && num_vf[func] > 0) {
-		dev_warn(&pdev->dev,
-			 "Enabling SR-IOV VFs using the num_vf module "
-			 "parameter is deprecated - please use the pci sysfs "
-			 "interface instead.\n");
-		if (pci_enable_sriov(pdev, num_vf[func]) == 0)
-			dev_info(&pdev->dev,
-				 "instantiated %u virtual functions\n",
-				 num_vf[func]);
-	}
-
 	adapter = kzalloc(sizeof(*adapter), GFP_KERNEL);
 	if (!adapter) {
 		err = -ENOMEM;
@@ -5112,6 +5014,19 @@ sriov:
 		err = -ENOMEM;
 		goto free_adapter;
 	}
+	spin_lock_init(&adapter->mbox_lock);
+	INIT_LIST_HEAD(&adapter->mlist.list);
+
+	v = FW_PARAMS_MNEM_V(FW_PARAMS_MNEM_DEV) |
+	    FW_PARAMS_PARAM_X_V(FW_PARAMS_PARAM_DEV_PORTVEC);
+	err = t4_query_params(adapter, adapter->mbox, adapter->pf, 0, 1,
+			      &v, &port_vec);
+	if (err < 0) {
+		dev_err(adapter->pdev_dev, "Could not fetch port params\n");
+		goto free_adapter;
+	}
+
+	adapter->params.nports = hweight32(port_vec);
 	pci_set_drvdata(pdev, adapter);
 	return 0;
 
@@ -5182,13 +5097,7 @@ static void remove_one(struct pci_dev *pdev)
 		/* If we allocated filters, free up state associated with any
 		 * valid filters ...
 		 */
-		if (adapter->tids.ftid_tab) {
-			struct filter_entry *f = &adapter->tids.ftid_tab[0];
-			for (i = 0; i < (adapter->tids.nftids +
-					adapter->tids.nsftids); i++, f++)
-				if (f->valid)
-					clear_filter(adapter, f);
-		}
+		clear_all_filters(adapter);
 
 		if (adapter->flags & FULL_INIT_DONE)
 			cxgb_down(adapter);

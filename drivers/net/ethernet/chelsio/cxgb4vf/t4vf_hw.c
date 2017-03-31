@@ -314,8 +314,9 @@ int t4vf_wr_mbox_core(struct adapter *adapter, const void *cmd, int size,
 }
 
 #define ADVERT_MASK (FW_PORT_CAP_SPEED_100M | FW_PORT_CAP_SPEED_1G |\
-		     FW_PORT_CAP_SPEED_10G | FW_PORT_CAP_SPEED_40G | \
-		     FW_PORT_CAP_SPEED_100G | FW_PORT_CAP_ANEG)
+		     FW_PORT_CAP_SPEED_10G | FW_PORT_CAP_SPEED_25G | \
+		     FW_PORT_CAP_SPEED_40G | FW_PORT_CAP_SPEED_100G | \
+		     FW_PORT_CAP_ANEG)
 
 /**
  *	init_link_config - initialize a link's SW state
@@ -328,6 +329,7 @@ int t4vf_wr_mbox_core(struct adapter *adapter, const void *cmd, int size,
 static void init_link_config(struct link_config *lc, unsigned int caps)
 {
 	lc->supported = caps;
+	lc->lp_advertising = 0;
 	lc->requested_speed = 0;
 	lc->speed = 0;
 	lc->requested_fc = lc->fc = PAUSE_RX | PAUSE_TX;
@@ -1715,8 +1717,12 @@ int t4vf_handle_fw_rpl(struct adapter *adapter, const __be64 *rpl)
 			speed = 1000;
 		else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_10G))
 			speed = 10000;
+		else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_25G))
+			speed = 25000;
 		else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_40G))
 			speed = 40000;
+		else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_100G))
+			speed = 100000;
 
 		/*
 		 * Scan all of our "ports" (Virtual Interfaces) looking for
@@ -1747,6 +1753,8 @@ int t4vf_handle_fw_rpl(struct adapter *adapter, const __be64 *rpl)
 				lc->fc = fc;
 				lc->supported =
 					be16_to_cpu(port_cmd->u.info.pcap);
+				lc->lp_advertising =
+					be16_to_cpu(port_cmd->u.info.lpacap);
 				t4vf_os_link_changed(adapter, pidx, link_ok);
 			}
 		}
