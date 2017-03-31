@@ -261,7 +261,6 @@ void hv_synic_free(void)
  */
 void hv_synic_init(void *arg)
 {
-	u64 version;
 	union hv_synic_simp simp;
 	union hv_synic_siefp siefp;
 	union hv_synic_sint shared_sint;
@@ -269,9 +268,6 @@ void hv_synic_init(void *arg)
 	u64 vp_index;
 
 	int cpu = smp_processor_id();
-
-	/* Check the version */
-	rdmsrl(HV_X64_MSR_SVERSION, version);
 
 	/* Setup the Synic's message page */
 	rdmsrl(HV_X64_MSR_SIMP, simp.as_uint64);
