@@ -49,15 +49,14 @@
 time_t nfsd4_lease = 90;     /* default lease time */
 time_t nfsd4_grace = 90;
 static time_t boot_time;
-static u32 current_ownerid = 1;
-static u32 current_fileid = 1;
-static u32 current_delegid = 1;
 static stateid_t zerostateid;             /* bits all 0 */
 static stateid_t onestateid;              /* bits all 1 */
 static u64 current_sessionid = 1;
 
 #define ZERO_STATEID(stateid) (!memcmp((stateid), &zerostateid, sizeof(stateid_t)))
 #define ONE_STATEID(stateid)  (!memcmp((stateid), &onestateid, sizeof(stateid_t)))
+
+DEFINE_IDA(current_ids);
 
 /* forward declarations */
 static struct nfs4_stateid * find_stateid(stateid_t *stid, int flags);
@@ -116,6 +115,7 @@ put_nfs4_file(struct nfs4_file *fi)
 		list_del(&fi->fi_hash);
 		spin_unlock(&recall_lock);
 		iput(fi->fi_inode);
+		ida_simple_remove(&current_ids, fi->fi_id);
 		kmem_cache_free(file_slab, fi);
 	}
 }
@@ -315,7 +315,7 @@ alloc_init_deleg(struct nfs4_client *clp, struct nfs4_stateid *stp, struct svc_f
 	dp->dl_file = fp;
 	dp->dl_type = type;
 	dp->dl_stateid.si_boot = boot_time;
-	dp->dl_stateid.si_stateownerid = current_delegid++;
+	dp->dl_stateid.si_stateownerid = ida_simple_get(&current_ids, 0, 0, GFP_KERNEL);
 	dp->dl_stateid.si_fileid = 0;
 	dp->dl_stateid.si_generation = 0;
 	fh_copy_shallow(&dp->dl_fh, &current_fh->fh_handle);
@@ -331,6 +331,7 @@ nfs4_put_delegation(struct nfs4_delegation *dp)
 	if (atomic_dec_and_test(&dp->dl_count)) {
 		dprintk("NFSD: freeing dp %p\n",dp);
 		put_nfs4_file(dp->dl_file);
+		ida_simple_remove(&current_ids, dp->dl_stateid.si_stateownerid);
 		kmem_cache_free(deleg_slab, dp);
 		num_delegations--;
 	}
@@ -2170,7 +2171,7 @@ alloc_init_file(struct inode *ino)
 		INIT_LIST_HEAD(&fp->fi_stateids);
 		INIT_LIST_HEAD(&fp->fi_delegations);
 		fp->fi_inode = igrab(ino);
-		fp->fi_id = current_fileid++;
+		fp->fi_id = ida_simple_get(&current_ids, 0, 0, GFP_KERNEL);
 		fp->fi_had_conflict = false;
 		fp->fi_lease = NULL;
 		memset(fp->fi_fds, 0, sizeof(fp->fi_fds));
@@ -2233,6 +2234,7 @@ nfs4_free_stateowner(struct kref *kref)
 	struct nfs4_stateowner *sop =
 		container_of(kref, struct nfs4_stateowner, so_ref);
 	kfree(sop->so_owner.data);
+	ida_simple_remove(&current_ids, sop->so_id);
 	kmem_cache_free(stateowner_slab, sop);
 }
 
@@ -2258,10 +2260,12 @@ alloc_init_open_stateowner(unsigned int strhashval, struct nfs4_client *clp, str
 	struct nfs4_stateowner *sop;
 	struct nfs4_replay *rp;
 	unsigned int idhashval;
+	u32 coi;
 
 	if (!(sop = alloc_stateowner(&open->op_owner)))
 		return NULL;
-	idhashval = ownerid_hashval(current_ownerid);
+	coi = ida_simple_get(&current_ids, 0, 0, GFP_KERNEL);
+	idhashval = ownerid_hashval(coi);
 	INIT_LIST_HEAD(&sop->so_idhash);
 	INIT_LIST_HEAD(&sop->so_strhash);
 	INIT_LIST_HEAD(&sop->so_perclient);
@@ -2273,7 +2277,7 @@ alloc_init_open_stateowner(unsigned int strhashval, struct nfs4_client *clp, str
 	list_add(&sop->so_strhash, &ownerstr_hashtbl[strhashval]);
 	list_add(&sop->so_perclient, &clp->cl_openowners);
 	sop->so_is_open_owner = 1;
-	sop->so_id = current_ownerid++;
+	sop->so_id = coi;
 	sop->so_client = clp;
 	sop->so_seqid = open->op_seqid;
 	sop->so_confirmed = 0;
@@ -3787,10 +3791,12 @@ alloc_init_lock_stateowner(unsigned int strhashval, struct nfs4_client *clp, str
 	struct nfs4_stateowner *sop;
 	struct nfs4_replay *rp;
 	unsigned int idhashval;
+	u32 coi;
 
 	if (!(sop = alloc_stateowner(&lock->lk_new_owner)))
 		return NULL;
-	idhashval = lockownerid_hashval(current_ownerid);
+	coi = ida_simple_get(&current_ids, 0, 0, GFP_KERNEL);
+	idhashval = ownerid_hashval(coi);
 	INIT_LIST_HEAD(&sop->so_idhash);
 	INIT_LIST_HEAD(&sop->so_strhash);
 	INIT_LIST_HEAD(&sop->so_perclient);
@@ -3802,7 +3808,7 @@ alloc_init_lock_stateowner(unsigned int strhashval, struct nfs4_client *clp, str
 	list_add(&sop->so_strhash, &lock_ownerstr_hashtbl[strhashval]);
 	list_add(&sop->so_perstateid, &open_stp->st_lockowners);
 	sop->so_is_open_owner = 0;
-	sop->so_id = current_ownerid++;
+	sop->so_id = coi;
 	sop->so_client = clp;
 	/* It is the openowner seqid that will be incremented in encode in the
 	 * case of new lockowners; so increment the lock seqid manually: */
