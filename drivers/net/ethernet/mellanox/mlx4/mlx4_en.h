@@ -102,7 +102,8 @@
 /* Use the maximum between 16384 and a single page */
 #define MLX4_EN_ALLOC_SIZE	PAGE_ALIGN(16384)
 
-#define MLX4_EN_ALLOC_PREFER_ORDER	PAGE_ALLOC_COSTLY_ORDER
+#define MLX4_EN_ALLOC_PREFER_ORDER min_t(int, get_order(32768),		\
+					 PAGE_ALLOC_COSTLY_ORDER)
 
 /* Receive fragment sizes; we use at most 3 fragments (for 9600 byte MTU
  * and 4K allocations) */
@@ -262,41 +263,45 @@ struct mlx4_en_tx_ring {
 	u32			last_nr_txbb;
 	u32			cons;
 	unsigned long		wake_queue;
+	struct netdev_queue	*tx_queue;
 
 	/* cache line used and dirtied in mlx4_en_xmit() */
 	u32			prod ____cacheline_aligned_in_smp;
+	unsigned int		tx_dropped;
 	unsigned long		bytes;
 	unsigned long		packets;
 	unsigned long		tx_csum;
 	unsigned long		tso_packets;
 	unsigned long		xmit_more;
-	unsigned int		tx_dropped;
 	struct mlx4_bf		bf;
-	unsigned long		queue_stopped;
 
 	/* Following part should be mostly read */
-	cpumask_t		affinity_mask;
-	struct mlx4_qp		qp;
-	struct mlx4_hwq_resources wqres;
-	u32			size; /* number of TXBBs */
-	u32			size_mask;
-	u16			stride;
-	u32			full_size;
-	u16			cqn;	/* index of port CQ associated with this ring */
-	u32			buf_size;
 	__be32			doorbell_qpn;
 	__be32			mr_key;
+	u32			size; /* number of TXBBs */
+	u32			size_mask;
+	u32			full_size;
+	u32			buf_size;
 	void			*buf;
 	struct mlx4_en_tx_info	*tx_info;
-	u8			*bounce_buf;
-	struct mlx4_qp_context	context;
 	int			qpn;
-	enum mlx4_qp_state	qp_state;
 	u8			queue_index;
 	bool			bf_enabled;
 	bool			bf_alloced;
-	struct netdev_queue	*tx_queue;
-	int			hwtstamp_tx_type;
+	u8			hwtstamp_tx_type;
+	u8			*bounce_buf;
+
+	/* Not used in fast path
+	 * Only queue_stopped might be used if BQL is not properly working.
+	 */
+	unsigned long		queue_stopped;
+	struct mlx4_hwq_resources sp_wqres;
+	struct mlx4_qp		sp_qp;
+	struct mlx4_qp_context	sp_context;
+	cpumask_t		sp_affinity_mask;
+	enum mlx4_qp_state	sp_qp_state;
+	u16			sp_stride;
+	u16			sp_cqn;	/* index of port CQ associated with this ring */
 } ____cacheline_aligned_in_smp;
 
 struct mlx4_en_rx_desc {
@@ -391,12 +396,11 @@ struct mlx4_en_dev {
 	u32                     priv_pdn;
 	spinlock_t              uar_lock;
 	u8			mac_removed[MLX4_MAX_PORTS + 1];
-	rwlock_t		clock_lock;
 	u32			nominal_c_mult;
 	struct cyclecounter	cycles;
+	seqlock_t		clock_lock;
 	struct timecounter	clock;
 	unsigned long		last_overflow_check;
-	unsigned long		overflow_period;
 	struct ptp_clock	*ptp_clock;
 	struct ptp_clock_info	ptp_clock_info;
 	struct notifier_block	nb;
@@ -450,6 +454,17 @@ struct mlx4_en_frag_info {
 
 #define MLX4_EN_TC_ETS 7
 
+enum dcb_pfc_type {
+	pfc_disabled = 0,
+	pfc_enabled_full,
+	pfc_enabled_tx,
+	pfc_enabled_rx
+};
+
+struct mlx4_en_cee_config {
+	bool	pfc_state;
+	enum	dcb_pfc_type dcb_pfc[MLX4_EN_NUM_UP];
+};
 #endif
 
 struct ethtool_flow_id {
@@ -469,6 +484,9 @@ enum {
 	MLX4_EN_FLAG_RX_FILTER_NEEDED	= (1 << 3),
 	MLX4_EN_FLAG_FORCE_PROMISC	= (1 << 4),
 	MLX4_EN_FLAG_RX_CSUM_NON_TCP_UDP	= (1 << 5),
+#ifdef CONFIG_MLX4_EN_DCB
+	MLX4_EN_FLAG_DCB_ENABLED        = (1 << 6),
+#endif
 };
 
 #define PORT_BEACON_MAX_LIMIT (65535)
@@ -572,9 +590,12 @@ struct mlx4_en_priv {
 	u32 counter_index;
 
 #ifdef CONFIG_MLX4_EN_DCB
+#define MLX4_EN_DCB_ENABLED	0x3
 	struct ieee_ets ets;
 	u16 maxrate[IEEE_8021QAZ_MAX_TCS];
 	enum dcbnl_cndd_states cndd_state[IEEE_8021QAZ_MAX_TCS];
+	struct mlx4_en_cee_config cee_config;
+	u8 dcbx_cap;
 #endif
 #ifdef CONFIG_RFS_ACCEL
 	spinlock_t filters_lock;
@@ -688,6 +709,7 @@ void mlx4_en_rx_irq(struct mlx4_cq *mcq);
 int mlx4_SET_MCAST_FLTR(struct mlx4_dev *dev, u8 port, u64 mac, u64 clear, u8 mode);
 int mlx4_SET_VLAN_FLTR(struct mlx4_dev *dev, struct mlx4_en_priv *priv);
 
+void mlx4_en_fold_software_stats(struct net_device *dev);
 int mlx4_en_DUMP_ETH_STATS(struct mlx4_en_dev *mdev, u8 port, u8 reset);
 int mlx4_en_QUERY_PORT(struct mlx4_en_dev *mdev, u8 port);
 

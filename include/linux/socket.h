@@ -202,6 +202,10 @@ struct ucred {
 #define AF_VSOCK	40	/* vSockets			*/
 //define AF_KCM		41	/* Kernel Connection Multiplexor*/
 //define AF_QIPCRTR	42	/* Qualcomm IPC Router          */
+#define AF_SMC		43	/* smc sockets: reserve number for
+				 * PF_SMC protocol family that
+				 * reuses AF_INET address family
+				 */
 
 #define AF_MAX		47	/* For later.. */
 
@@ -249,6 +253,7 @@ struct ucred {
 #define PF_ALG		AF_ALG
 #define PF_NFC		AF_NFC
 #define PF_VSOCK	AF_VSOCK
+#define PF_SMC		AF_SMC
 #define PF_MAX		AF_MAX
 
 /* Maximum queue length specifiable by listen.  */

@@ -1,7 +1,7 @@
 /*
  * This file is part of the Chelsio T4 Ethernet driver for Linux.
  *
- * Copyright (c) 2003-2014 Chelsio Communications, Inc. All rights reserved.
+ * Copyright (c) 2003-2016 Chelsio Communications, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -284,6 +284,7 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox, const void *cmd,
 		1, 1, 3, 5, 10, 10, 20, 50, 100, 200
 	};
 
+	struct mbox_list entry;
 	u16 access = 0;
 	u16 execute = 0;
 	u32 v;
@@ -293,6 +294,7 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox, const void *cmd,
 	u32 data_reg = PF_REG(mbox, CIM_PF_MAILBOX_DATA_A);
 	u32 ctl_reg = PF_REG(mbox, CIM_PF_MAILBOX_CTRL_A);
 	__be64 cmd_rpl[MBOX_LEN / 8];
+	u32 pcie_fw;
 
 	if ((size & 15) || size > MBOX_LEN)
 		return -EINVAL;
@@ -304,11 +306,68 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox, const void *cmd,
 	if (adap->pdev->error_state != pci_channel_io_normal)
 		return -EIO;
 
+	/* If we have a negative timeout, that implies that we can't sleep. */
+	if (timeout < 0) {
+		sleep_ok = false;
+		timeout = -timeout;
+	}
+
+	/* Queue ourselves onto the mailbox access list.  When our entry is at
+	 * the front of the list, we have rights to access the mailbox.  So we
+	 * wait [for a while] till we're at the front [or bail out with an
+	 * EBUSY] ...
+	 */
+	spin_lock(&adap->mbox_lock);
+	list_add_tail(&entry.list, &adap->mlist.list);
+	spin_unlock(&adap->mbox_lock);
+
+	delay_idx = 0;
+	ms = delay[0];
+
+	for (i = 0; ; i += ms) {
+		/* If we've waited too long, return a busy indication.  This
+		 * really ought to be based on our initial position in the
+		 * mailbox access list but this is a start.  We very rearely
+		 * contend on access to the mailbox ...
+		 */
+		pcie_fw = t4_read_reg(adap, PCIE_FW_A);
+		if (i > FW_CMD_MAX_TIMEOUT || (pcie_fw & PCIE_FW_ERR_F)) {
+			spin_lock(&adap->mbox_lock);
+			list_del(&entry.list);
+			spin_unlock(&adap->mbox_lock);
+			ret = (pcie_fw & PCIE_FW_ERR_F) ? -ENXIO : -EBUSY;
+			t4_record_mbox(adap, cmd, size, access, ret);
+			return ret;
+		}
+
+		/* If we're at the head, break out and start the mailbox
+		 * protocol.
+		 */
+		if (list_first_entry(&adap->mlist.list, struct mbox_list,
+				     list) == &entry)
+			break;
+
+		/* Delay for a bit before checking again ... */
+		if (sleep_ok) {
+			ms = delay[delay_idx];  /* last element may repeat */
+			if (delay_idx < ARRAY_SIZE(delay) - 1)
+				delay_idx++;
+			msleep(ms);
+		} else {
+			mdelay(ms);
+		}
+	}
+
+	/* Loop trying to get ownership of the mailbox.  Return an error
+	 * if we can't gain ownership.
+	 */
 	v = MBOWNER_G(t4_read_reg(adap, ctl_reg));
 	for (i = 0; v == MBOX_OWNER_NONE && i < 3; i++)
 		v = MBOWNER_G(t4_read_reg(adap, ctl_reg));
-
 	if (v != MBOX_OWNER_DRV) {
+		spin_lock(&adap->mbox_lock);
+		list_del(&entry.list);
+		spin_unlock(&adap->mbox_lock);
 		ret = (v == MBOX_OWNER_FW) ? -EBUSY : -ETIMEDOUT;
 		t4_record_mbox(adap, cmd, MBOX_LEN, access, ret);
 		return ret;
@@ -325,7 +384,10 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox, const void *cmd,
 	delay_idx = 0;
 	ms = delay[0];
 
-	for (i = 0; i < timeout; i += ms) {
+	for (i = 0;
+	     !((pcie_fw = t4_read_reg(adap, PCIE_FW_A)) & PCIE_FW_ERR_F) &&
+	     i < timeout;
+	     i += ms) {
 		if (sleep_ok) {
 			ms = delay[delay_idx];  /* last element may repeat */
 			if (delay_idx < ARRAY_SIZE(delay) - 1)
@@ -356,15 +418,22 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox, const void *cmd,
 			execute = i + ms;
 			t4_record_mbox(adap, cmd_rpl,
 				       MBOX_LEN, access, execute);
+			spin_lock(&adap->mbox_lock);
+			list_del(&entry.list);
+			spin_unlock(&adap->mbox_lock);
 			return -FW_CMD_RETVAL_G((int)res);
 		}
 	}
 
-	ret = -ETIMEDOUT;
+	ret = (pcie_fw & PCIE_FW_ERR_F) ? -ENXIO : -ETIMEDOUT;
 	t4_record_mbox(adap, cmd, MBOX_LEN, access, ret);
 	dev_err(adap->pdev_dev, "command %#x in mailbox %d timed out\n",
 		*(const u8 *)cmd, mbox);
 	t4_report_fw_error(adap);
+	spin_lock(&adap->mbox_lock);
+	list_del(&entry.list);
+	spin_unlock(&adap->mbox_lock);
+	t4_fatal_err(adap);
 	return ret;
 }
 
@@ -3617,7 +3686,8 @@ void t4_ulprx_read_la(struct adapter *adap, u32 *la_buf)
 }
 
 #define ADVERT_MASK (FW_PORT_CAP_SPEED_100M | FW_PORT_CAP_SPEED_1G |\
-		     FW_PORT_CAP_SPEED_10G | FW_PORT_CAP_SPEED_40G | \
+		     FW_PORT_CAP_SPEED_10G | FW_PORT_CAP_SPEED_25G | \
+		     FW_PORT_CAP_SPEED_40G | FW_PORT_CAP_SPEED_100G | \
 		     FW_PORT_CAP_ANEG)
 
 /**
@@ -5371,22 +5441,28 @@ unsigned int t4_get_mps_bg_map(struct adapter *adap, int idx)
 const char *t4_get_port_type_description(enum fw_port_type port_type)
 {
 	static const char *const port_type_description[] = {
-		"R XFI",
-		"R XAUI",
-		"T SGMII",
-		"T XFI",
-		"T XAUI",
+		"Fiber_XFI",
+		"Fiber_XAUI",
+		"BT_SGMII",
+		"BT_XFI",
+		"BT_XAUI",
 		"KX4",
 		"CX4",
 		"KX",
 		"KR",
-		"R SFP+",
-		"KR/KX",
-		"KR/KX/KX4",
-		"R QSFP_10G",
-		"R QSA",
-		"R QSFP",
-		"R BP40_BA",
+		"SFP",
+		"BP_AP",
+		"BP4_AP",
+		"QSFP_10G",
+		"QSA",
+		"QSFP",
+		"BP40_BA",
+		"KR4_100G",
+		"CR4_QSFP",
+		"CR_QSFP",
+		"CR2_QSFP",
+		"SFP28",
+		"KR_SFP28",
 	};
 
 	if (port_type < ARRAY_SIZE(port_type_description))
@@ -5427,6 +5503,7 @@ void t4_get_port_stats_offset(struct adapter *adap, int idx,
 void t4_get_port_stats(struct adapter *adap, int idx, struct port_stats *p)
 {
 	u32 bgmap = t4_get_mps_bg_map(adap, idx);
+	u32 stat_ctl = t4_read_reg(adap, MPS_STAT_CTL_A);
 
 #define GET_STAT(name) \
 	t4_read_reg64(adap, \
@@ -5458,6 +5535,14 @@ void t4_get_port_stats(struct adapter *adap, int idx, struct port_stats *p)
 	p->tx_ppp6             = GET_STAT(TX_PORT_PPP6);
 	p->tx_ppp7             = GET_STAT(TX_PORT_PPP7);
 
+	if (CHELSIO_CHIP_VERSION(adap->params.chip) >= CHELSIO_T5) {
+		if (stat_ctl & COUNTPAUSESTATTX_F) {
+			p->tx_frames -= p->tx_pause;
+			p->tx_octets -= p->tx_pause * 64;
+		}
+		if (stat_ctl & COUNTPAUSEMCTX_F)
+			p->tx_mcast_frames -= p->tx_pause;
+	}
 	p->rx_octets           = GET_STAT(RX_PORT_BYTES);
 	p->rx_frames           = GET_STAT(RX_PORT_FRAMES);
 	p->rx_bcast_frames     = GET_STAT(RX_PORT_BCAST);
@@ -5485,6 +5570,15 @@ void t4_get_port_stats(struct adapter *adap, int idx, struct port_stats *p)
 	p->rx_ppp5             = GET_STAT(RX_PORT_PPP5);
 	p->rx_ppp6             = GET_STAT(RX_PORT_PPP6);
 	p->rx_ppp7             = GET_STAT(RX_PORT_PPP7);
+
+	if (CHELSIO_CHIP_VERSION(adap->params.chip) >= CHELSIO_T5) {
+		if (stat_ctl & COUNTPAUSESTATRX_F) {
+			p->rx_frames -= p->rx_pause;
+			p->rx_octets -= p->rx_pause * 64;
+		}
+		if (stat_ctl & COUNTPAUSEMCRX_F)
+			p->rx_mcast_frames -= p->rx_pause;
+	}
 
 	p->rx_ovflow0 = (bgmap & 1) ? GET_STAT_COM(RX_BG_0_MAC_DROP_FRAME) : 0;
 	p->rx_ovflow1 = (bgmap & 2) ? GET_STAT_COM(RX_BG_1_MAC_DROP_FRAME) : 0;
@@ -6275,7 +6369,6 @@ int t4_fixup_host_params(struct adapter *adap, unsigned int page_size,
 	unsigned int stat_len = cache_line_size > 64 ? 128 : 64;
 	unsigned int fl_align = cache_line_size < 32 ? 32 : cache_line_size;
 	unsigned int fl_align_log = fls(fl_align) - 1;
-	unsigned int ingpad;
 
 	t4_write_reg(adap, SGE_HOST_PAGE_SIZE_A,
 		     HOSTPAGESIZEPF0_V(sge_hps) |
@@ -6295,6 +6388,10 @@ int t4_fixup_host_params(struct adapter *adap, unsigned int page_size,
 						  INGPADBOUNDARY_SHIFT_X) |
 				 EGRSTATUSPAGESIZE_V(stat_len != 64));
 	} else {
+		unsigned int pack_align;
+		unsigned int ingpad, ingpack;
+		unsigned int pcie_cap;
+
 		/* T5 introduced the separation of the Free List Padding and
 		 * Packing Boundaries.  Thus, we can select a smaller Padding
 		 * Boundary to avoid uselessly chewing up PCIe Link and Memory
@@ -6307,27 +6404,62 @@ int t4_fixup_host_params(struct adapter *adap, unsigned int page_size,
 		 * Size (the minimum unit of transfer to/from Memory).  If we
 		 * have a Padding Boundary which is smaller than the Memory
 		 * Line Size, that'll involve a Read-Modify-Write cycle on the
-		 * Memory Controller which is never good.  For T5 the smallest
-		 * Padding Boundary which we can select is 32 bytes which is
-		 * larger than any known Memory Controller Line Size so we'll
-		 * use that.
-		 *
-		 * T5 has a different interpretation of the "0" value for the
-		 * Packing Boundary.  This corresponds to 16 bytes instead of
-		 * the expected 32 bytes.  We never have a Packing Boundary
-		 * less than 32 bytes so we can't use that special value but
-		 * on the other hand, if we wanted 32 bytes, the best we can
-		 * really do is 64 bytes.
-		*/
-		if (fl_align <= 32) {
-			fl_align = 64;
-			fl_align_log = 6;
+		 * Memory Controller which is never good.
+		 */
+
+		/* We want the Packing Boundary to be based on the Cache Line
+		 * Size in order to help avoid False Sharing performance
+		 * issues between CPUs, etc.  We also want the Packing
+		 * Boundary to incorporate the PCI-E Maximum Payload Size.  We
+		 * get best performance when the Packing Boundary is a
+		 * multiple of the Maximum Payload Size.
+		 */
+		pack_align = fl_align;
+		pcie_cap = pci_find_capability(adap->pdev, PCI_CAP_ID_EXP);
+		if (pcie_cap) {
+			unsigned int mps, mps_log;
+			u16 devctl;
+
+			/* The PCIe Device Control Maximum Payload Size field
+			 * [bits 7:5] encodes sizes as powers of 2 starting at
+			 * 128 bytes.
+			 */
+			pci_read_config_word(adap->pdev,
+					     pcie_cap + PCI_EXP_DEVCTL,
+					     &devctl);
+			mps_log = ((devctl & PCI_EXP_DEVCTL_PAYLOAD) >> 5) + 7;
+			mps = 1 << mps_log;
+			if (mps > pack_align)
+				pack_align = mps;
 		}
 
+		/* N.B. T5/T6 have a crazy special interpretation of the "0"
+		 * value for the Packing Boundary.  This corresponds to 16
+		 * bytes instead of the expected 32 bytes.  So if we want 32
+		 * bytes, the best we can really do is 64 bytes ...
+		 */
+		if (pack_align <= 16) {
+			ingpack = INGPACKBOUNDARY_16B_X;
+			fl_align = 16;
+		} else if (pack_align == 32) {
+			ingpack = INGPACKBOUNDARY_64B_X;
+			fl_align = 64;
+		} else {
+			unsigned int pack_align_log = fls(pack_align) - 1;
+
+			ingpack = pack_align_log - INGPACKBOUNDARY_SHIFT_X;
+			fl_align = pack_align;
+		}
+
+		/* Use the smallest Ingress Padding which isn't smaller than
+		 * the Memory Controller Read/Write Size.  We'll take that as
+		 * being 8 bytes since we don't know of any system with a
+		 * wider Memory Controller Bus Width.
+		 */
 		if (is_t5(adap->params.chip))
-			ingpad = INGPCIEBOUNDARY_32B_X;
+			ingpad = INGPADBOUNDARY_32B_X;
 		else
-			ingpad = T6_INGPADBOUNDARY_32B_X;
+			ingpad = T6_INGPADBOUNDARY_8B_X;
 
 		t4_set_reg_field(adap, SGE_CONTROL_A,
 				 INGPADBOUNDARY_V(INGPADBOUNDARY_M) |
@@ -6336,8 +6468,7 @@ int t4_fixup_host_params(struct adapter *adap, unsigned int page_size,
 				 EGRSTATUSPAGESIZE_V(stat_len != 64));
 		t4_set_reg_field(adap, SGE_CONTROL2_A,
 				 INGPACKBOUNDARY_V(INGPACKBOUNDARY_M),
-				 INGPACKBOUNDARY_V(fl_align_log -
-						   INGPACKBOUNDARY_SHIFT_X));
+				 INGPACKBOUNDARY_V(ingpack));
 	}
 	/*
 	 * Adjust various SGE Free List Host Buffer Sizes.
@@ -7132,52 +7263,127 @@ int t4_ofld_eq_free(struct adapter *adap, unsigned int mbox, unsigned int pf,
 }
 
 /**
- *	t4_handle_fw_rpl - process a FW reply message
+ *	t4_link_down_rc_str - return a string for a Link Down Reason Code
  *	@adap: the adapter
+ *	@link_down_rc: Link Down Reason Code
+ *
+ *	Returns a string representation of the Link Down Reason Code.
+ */
+static const char *t4_link_down_rc_str(unsigned char link_down_rc)
+{
+	static const char * const reason[] = {
+		"Link Down",
+		"Remote Fault",
+		"Auto-negotiation Failure",
+		"Reserved",
+		"Insufficient Airflow",
+		"Unable To Determine Reason",
+		"No RX Signal Detected",
+		"Reserved",
+	};
+
+	if (link_down_rc >= ARRAY_SIZE(reason))
+		return "Bad Reason Code";
+
+	return reason[link_down_rc];
+}
+
+/**
+ *	t4_handle_get_port_info - process a FW reply message
+ *	@pi: the port info
  *	@rpl: start of the FW message
  *
- *	Processes a FW message, such as link state change messages.
+ *	Processes a GET_PORT_INFO FW reply message.
+ */
+void t4_handle_get_port_info(struct port_info *pi, const __be64 *rpl)
+{
+	const struct fw_port_cmd *p = (const void *)rpl;
+	struct adapter *adap = pi->adapter;
+
+	/* link/module state change message */
+	int speed = 0, fc = 0;
+	struct link_config *lc;
+	u32 stat = be32_to_cpu(p->u.info.lstatus_to_modtype);
+	int link_ok = (stat & FW_PORT_CMD_LSTATUS_F) != 0;
+	u32 mod = FW_PORT_CMD_MODTYPE_G(stat);
+
+	if (stat & FW_PORT_CMD_RXPAUSE_F)
+		fc |= PAUSE_RX;
+	if (stat & FW_PORT_CMD_TXPAUSE_F)
+		fc |= PAUSE_TX;
+	if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_100M))
+		speed = 100;
+	else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_1G))
+		speed = 1000;
+	else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_10G))
+		speed = 10000;
+	else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_25G))
+		speed = 25000;
+	else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_40G))
+		speed = 40000;
+	else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_100G))
+		speed = 100000;
+
+	lc = &pi->link_cfg;
+
+	if (mod != pi->mod_type) {
+		pi->mod_type = mod;
+		t4_os_portmod_changed(adap, pi->port_id);
+	}
+	if (link_ok != lc->link_ok || speed != lc->speed ||
+	    fc != lc->fc) {	/* something changed */
+		if (!link_ok && lc->link_ok) {
+			unsigned char rc = FW_PORT_CMD_LINKDNRC_G(stat);
+
+			lc->link_down_rc = rc;
+			dev_warn(adap->pdev_dev,
+				 "Port %d link down, reason: %s\n",
+				 pi->port_id, t4_link_down_rc_str(rc));
+		}
+		lc->link_ok = link_ok;
+		lc->speed = speed;
+		lc->fc = fc;
+		lc->supported = be16_to_cpu(p->u.info.pcap);
+		lc->lp_advertising = be16_to_cpu(p->u.info.lpacap);
+		t4_os_link_changed(adap, pi->port_id, link_ok);
+	}
+}
+
+/**
+ *      t4_handle_fw_rpl - process a FW reply message
+ *      @adap: the adapter
+ *      @rpl: start of the FW message
+ *
+ *      Processes a FW message, such as link state change messages.
  */
 int t4_handle_fw_rpl(struct adapter *adap, const __be64 *rpl)
 {
 	u8 opcode = *(const u8 *)rpl;
 
-	if (opcode == FW_PORT_CMD) {    /* link/module state change message */
-		int speed = 0, fc = 0;
-		const struct fw_port_cmd *p = (void *)rpl;
+	/* This might be a port command ... this simplifies the following
+	 * conditionals ...  We can get away with pre-dereferencing
+	 * action_to_len16 because it's in the first 16 bytes and all messages
+	 * will be at least that long.
+	 */
+	const struct fw_port_cmd *p = (const void *)rpl;
+	unsigned int action =
+		FW_PORT_CMD_ACTION_G(be32_to_cpu(p->action_to_len16));
+
+	if (opcode == FW_PORT_CMD && action == FW_PORT_ACTION_GET_PORT_INFO) {
+		int i;
 		int chan = FW_PORT_CMD_PORTID_G(be32_to_cpu(p->op_to_portid));
-		int port = adap->chan_map[chan];
-		struct port_info *pi = adap2pinfo(adap, port);
-		struct link_config *lc = &pi->link_cfg;
-		u32 stat = be32_to_cpu(p->u.info.lstatus_to_modtype);
-		int link_ok = (stat & FW_PORT_CMD_LSTATUS_F) != 0;
-		u32 mod = FW_PORT_CMD_MODTYPE_G(stat);
+		struct port_info *pi = NULL;
 
-		if (stat & FW_PORT_CMD_RXPAUSE_F)
-			fc |= PAUSE_RX;
-		if (stat & FW_PORT_CMD_TXPAUSE_F)
-			fc |= PAUSE_TX;
-		if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_100M))
-			speed = 100;
-		else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_1G))
-			speed = 1000;
-		else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_10G))
-			speed = 10000;
-		else if (stat & FW_PORT_CMD_LSPEED_V(FW_PORT_CAP_SPEED_40G))
-			speed = 40000;
+		for_each_port(adap, i) {
+			pi = adap2pinfo(adap, i);
+			if (pi->tx_chan == chan)
+				break;
+		}
 
-		if (link_ok != lc->link_ok || speed != lc->speed ||
-		    fc != lc->fc) {                    /* something changed */
-			lc->link_ok = link_ok;
-			lc->speed = speed;
-			lc->fc = fc;
-			lc->supported = be16_to_cpu(p->u.info.pcap);
-			t4_os_link_changed(adap, port, link_ok);
-		}
-		if (mod != pi->mod_type) {
-			pi->mod_type = mod;
-			t4_os_portmod_changed(adap, port);
-		}
+		t4_handle_get_port_info(pi, rpl);
+	} else {
+		dev_warn(adap->pdev_dev, "Unknown firmware reply %d\n", opcode);
+		return -EINVAL;
 	}
 	return 0;
 }
@@ -7204,6 +7410,7 @@ static void get_pci_mode(struct adapter *adapter, struct pci_params *p)
 static void init_link_config(struct link_config *lc, unsigned int caps)
 {
 	lc->supported = caps;
+	lc->lp_advertising = 0;
 	lc->requested_speed = 0;
 	lc->speed = 0;
 	lc->requested_fc = lc->fc = PAUSE_RX | PAUSE_TX;
@@ -7386,6 +7593,39 @@ int t4_prep_adapter(struct adapter *adapter)
 
 	/* Set pci completion timeout value to 4 seconds. */
 	set_pcie_completion_timeout(adapter, 0xd);
+	return 0;
+}
+
+/**
+ *	t4_shutdown_adapter - shut down adapter, host & wire
+ *	@adapter: the adapter
+ *
+ *	Perform an emergency shutdown of the adapter and stop it from
+ *	continuing any further communication on the ports or DMA to the
+ *	host.  This is typically used when the adapter and/or firmware
+ *	have crashed and we want to prevent any further accidental
+ *	communication with the rest of the world.  This will also force
+ *	the port Link Status to go down -- if register writes work --
+ *	which should help our peers figure out that we're down.
+ */
+int t4_shutdown_adapter(struct adapter *adapter)
+{
+	int port;
+
+	t4_intr_disable(adapter);
+	t4_write_reg(adapter, DBG_GPIO_EN_A, 0);
+	for_each_port(adapter, port) {
+		u32 a_port_cfg = PORT_REG(port,
+					  is_t4(adapter->params.chip)
+					  ? XGMAC_PORT_CFG_A
+					  : MAC_PORT_CFG_A);
+
+		t4_write_reg(adapter, a_port_cfg,
+			     t4_read_reg(adapter, a_port_cfg)
+			     & ~SIGNAL_DET_V(1));
+	}
+	t4_set_reg_field(adapter, SGE_CONTROL_A, GLOBALENABLE_F, 0);
+
 	return 0;
 }
 
@@ -7599,6 +7839,13 @@ int t4_init_tp_params(struct adapter *adap)
 				 &adap->params.tp.ingress_config, 1,
 				 TP_INGRESS_CONFIG_A);
 	}
+	/* For T6, cache the adapter's compressed error vector
+	 * and passing outer header info for encapsulated packets.
+	 */
+	if (CHELSIO_CHIP_VERSION(adap->params.chip) > CHELSIO_T5) {
+		v = t4_read_reg(adap, TP_OUT_CONFIG_A);
+		adap->params.tp.rx_pkt_encap = (v & CRXPKTENC_F) ? 1 : 0;
+	}
 
 	/* Now that we have TP_VLAN_PRI_MAP cached, we can calculate the field
 	 * shift positions of several elements of the Compressed Filter Tuple
@@ -7697,61 +7944,73 @@ int t4_init_rss_mode(struct adapter *adap, int mbox)
 	return 0;
 }
 
+/**
+ *	t4_init_portinfo - allocate a virtual interface amd initialize port_info
+ *	@pi: the port_info
+ *	@mbox: mailbox to use for the FW command
+ *	@port: physical port associated with the VI
+ *	@pf: the PF owning the VI
+ *	@vf: the VF owning the VI
+ *	@mac: the MAC address of the VI
+ *
+ *	Allocates a virtual interface for the given physical port.  If @mac is
+ *	not %NULL it contains the MAC address of the VI as assigned by FW.
+ *	@mac should be large enough to hold an Ethernet address.
+ *	Returns < 0 on error.
+ */
+int t4_init_portinfo(struct port_info *pi, int mbox,
+		     int port, int pf, int vf, u8 mac[])
+{
+	int ret;
+	struct fw_port_cmd c;
+	unsigned int rss_size;
+
+	memset(&c, 0, sizeof(c));
+	c.op_to_portid = cpu_to_be32(FW_CMD_OP_V(FW_PORT_CMD) |
+				     FW_CMD_REQUEST_F | FW_CMD_READ_F |
+				     FW_PORT_CMD_PORTID_V(port));
+	c.action_to_len16 = cpu_to_be32(
+		FW_PORT_CMD_ACTION_V(FW_PORT_ACTION_GET_PORT_INFO) |
+		FW_LEN16(c));
+	ret = t4_wr_mbox(pi->adapter, mbox, &c, sizeof(c), &c);
+	if (ret)
+		return ret;
+
+	ret = t4_alloc_vi(pi->adapter, mbox, port, pf, vf, 1, mac, &rss_size);
+	if (ret < 0)
+		return ret;
+
+	pi->viid = ret;
+	pi->tx_chan = port;
+	pi->lport = port;
+	pi->rss_size = rss_size;
+
+	ret = be32_to_cpu(c.u.info.lstatus_to_modtype);
+	pi->mdio_addr = (ret & FW_PORT_CMD_MDIOCAP_F) ?
+		FW_PORT_CMD_MDIOADDR_G(ret) : -1;
+	pi->port_type = FW_PORT_CMD_PTYPE_G(ret);
+	pi->mod_type = FW_PORT_MOD_TYPE_NA;
+
+	init_link_config(&pi->link_cfg, be16_to_cpu(c.u.info.pcap));
+	return 0;
+}
+
 int t4_port_init(struct adapter *adap, int mbox, int pf, int vf)
 {
 	u8 addr[6];
 	int ret, i, j = 0;
-	struct fw_port_cmd c;
-	struct fw_rss_vi_config_cmd rvc;
-
-	memset(&c, 0, sizeof(c));
-	memset(&rvc, 0, sizeof(rvc));
 
 	for_each_port(adap, i) {
-		unsigned int rss_size;
-		struct port_info *p = adap2pinfo(adap, i);
+		struct port_info *pi = adap2pinfo(adap, i);
 
 		while ((adap->params.portvec & (1 << j)) == 0)
 			j++;
 
-		c.op_to_portid = cpu_to_be32(FW_CMD_OP_V(FW_PORT_CMD) |
-					     FW_CMD_REQUEST_F | FW_CMD_READ_F |
-					     FW_PORT_CMD_PORTID_V(j));
-		c.action_to_len16 = cpu_to_be32(
-			FW_PORT_CMD_ACTION_V(FW_PORT_ACTION_GET_PORT_INFO) |
-			FW_LEN16(c));
-		ret = t4_wr_mbox(adap, mbox, &c, sizeof(c), &c);
+		ret = t4_init_portinfo(pi, mbox, j, pf, vf, addr);
 		if (ret)
 			return ret;
 
-		ret = t4_alloc_vi(adap, mbox, j, pf, vf, 1, addr, &rss_size);
-		if (ret < 0)
-			return ret;
-
-		p->viid = ret;
-		p->tx_chan = j;
-		p->lport = j;
-		p->rss_size = rss_size;
 		memcpy(adap->port[i]->dev_addr, addr, ETH_ALEN);
-		adap->port[i]->dev_port = j;
-
-		ret = be32_to_cpu(c.u.info.lstatus_to_modtype);
-		p->mdio_addr = (ret & FW_PORT_CMD_MDIOCAP_F) ?
-			FW_PORT_CMD_MDIOADDR_G(ret) : -1;
-		p->port_type = FW_PORT_CMD_PTYPE_G(ret);
-		p->mod_type = FW_PORT_MOD_TYPE_NA;
-
-		rvc.op_to_viid =
-			cpu_to_be32(FW_CMD_OP_V(FW_RSS_VI_CONFIG_CMD) |
-				    FW_CMD_REQUEST_F | FW_CMD_READ_F |
-				    FW_RSS_VI_CONFIG_CMD_VIID(p->viid));
-		rvc.retval_len16 = cpu_to_be32(FW_LEN16(rvc));
-		ret = t4_wr_mbox(adap, mbox, &rvc, sizeof(rvc), &rvc);
-		if (ret)
-			return ret;
-		p->rss_mode = be32_to_cpu(rvc.u.basicvirtual.defaultq_to_udpen);
-
-		init_link_config(&p->link_cfg, be16_to_cpu(c.u.info.pcap));
 		j++;
 	}
 	return 0;
@@ -8209,4 +8468,33 @@ int t4_set_vf_mac_acl(struct adapter *adapter, unsigned int vf,
 	}
 
 	return t4_wr_mbox(adapter, adapter->mbox, &cmd, sizeof(cmd), &cmd);
+}
+
+int t4_sched_params(struct adapter *adapter, int type, int level, int mode,
+		    int rateunit, int ratemode, int channel, int class,
+		    int minrate, int maxrate, int weight, int pktsize)
+{
+	struct fw_sched_cmd cmd;
+
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.op_to_write = cpu_to_be32(FW_CMD_OP_V(FW_SCHED_CMD) |
+				      FW_CMD_REQUEST_F |
+				      FW_CMD_WRITE_F);
+	cmd.retval_len16 = cpu_to_be32(FW_LEN16(cmd));
+
+	cmd.u.params.sc = FW_SCHED_SC_PARAMS;
+	cmd.u.params.type = type;
+	cmd.u.params.level = level;
+	cmd.u.params.mode = mode;
+	cmd.u.params.ch = channel;
+	cmd.u.params.cl = class;
+	cmd.u.params.unit = rateunit;
+	cmd.u.params.rate = ratemode;
+	cmd.u.params.min = cpu_to_be32(minrate);
+	cmd.u.params.max = cpu_to_be32(maxrate);
+	cmd.u.params.weight = cpu_to_be16(weight);
+	cmd.u.params.pktsize = cpu_to_be16(pktsize);
+
+	return t4_wr_mbox_meat(adapter, adapter->mbox, &cmd, sizeof(cmd),
+			       NULL, 1);
 }

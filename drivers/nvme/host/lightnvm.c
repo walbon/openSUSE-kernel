@@ -523,7 +523,7 @@ static void nvme_nvm_end_io(struct request *rq, int error)
 
 	nvm_end_io(rqd, error);
 
-	kfree(rq->cmd);
+	kfree(nvme_req(rq)->cmd);
 	blk_mq_free_request(rq);
 }
 

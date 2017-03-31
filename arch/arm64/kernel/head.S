@@ -709,7 +709,8 @@ ENDPROC(__secondary_switched)
 
 	.macro	update_early_cpu_boot_status status, tmp1, tmp2
 	mov	\tmp2, #\status
-	str_l	\tmp2, __early_cpu_boot_status, \tmp1
+	adr_l	\tmp1, __early_cpu_boot_status
+	str	\tmp2, [\tmp1]
 	dmb	sy
 	dc	ivac, \tmp1			// Invalidate potentially stale cache line
 	.endm
@@ -732,7 +733,7 @@ ENTRY(__early_cpu_boot_status)
  * If it isn't, park the CPU
  */
 	.section	".idmap.text", "ax"
-__enable_mmu:
+ENTRY(__enable_mmu)
 	mrs	x18, sctlr_el1			// preserve old SCTLR_EL1 value
 	mrs	x1, ID_AA64MMFR0_EL1
 	ubfx	x2, x1, #ID_AA64MMFR0_TGRAN_SHIFT, 4
@@ -765,10 +766,14 @@ __enable_mmu:
 	isb
 	bl	__create_page_tables		// recreate kernel mapping
 
+	tlbi	vmalle1				// Remove any stale TLB entries
+	dsb	nsh
+
 	msr	sctlr_el1, x19			// re-enable the MMU
 	isb
-	ic	ialluis				// flush instructions fetched
-	isb					// via old mapping
+	ic	iallu				// flush instructions fetched
+	dsb	nsh				// via old mapping
+	isb
 	add	x27, x27, x23			// relocated __mmap_switched
 #endif
 	br	x27

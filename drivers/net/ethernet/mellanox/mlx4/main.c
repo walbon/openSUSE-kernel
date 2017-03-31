@@ -42,6 +42,7 @@
 #include <linux/io-mapping.h>
 #include <linux/delay.h>
 #include <linux/kmod.h>
+#include <linux/etherdevice.h>
 
 #include <linux/mlx4/device.h>
 #include <linux/mlx4/doorbell.h>
@@ -291,6 +292,7 @@ static int _mlx4_dev_port(struct mlx4_dev *dev, int port,
 	dev->caps.pkey_table_len[port] = port_cap->max_pkeys;
 	dev->caps.port_width_cap[port] = port_cap->max_port_width;
 	dev->caps.eth_mtu_cap[port]    = port_cap->eth_mtu;
+	dev->caps.max_tc_eth	       = port_cap->max_tc_eth;
 	dev->caps.def_mac[port]        = port_cap->def_mac;
 	dev->caps.supported_type[port] = port_cap->supported_port_types;
 	dev->caps.suggested_type[port] = port_cap->suggested_type;
@@ -780,6 +782,23 @@ int mlx4_is_slave_active(struct mlx4_dev *dev, int slave)
 }
 EXPORT_SYMBOL(mlx4_is_slave_active);
 
+void mlx4_handle_eth_header_mcast_prio(struct mlx4_net_trans_rule_hw_ctrl *ctrl,
+				       struct _rule_hw *eth_header)
+{
+	if (is_multicast_ether_addr(eth_header->eth.dst_mac) ||
+	    is_broadcast_ether_addr(eth_header->eth.dst_mac)) {
+		struct mlx4_net_trans_rule_hw_eth *eth =
+			(struct mlx4_net_trans_rule_hw_eth *)eth_header;
+		struct _rule_hw *next_rule = (struct _rule_hw *)(eth + 1);
+		bool last_rule = next_rule->size == 0 && next_rule->id == 0 &&
+			next_rule->rsvd == 0;
+
+		if (last_rule)
+			ctrl->prio = cpu_to_be16(MLX4_DOMAIN_NIC);
+	}
+}
+EXPORT_SYMBOL(mlx4_handle_eth_header_mcast_prio);
+
 static void slave_adjust_steering_mode(struct mlx4_dev *dev,
 				       struct mlx4_dev_cap *dev_cap,
 				       struct mlx4_init_hca_param *hca_param)
@@ -818,10 +837,8 @@ static int mlx4_slave_cap(struct mlx4_dev *dev)
 	 */
 	if (hca_param.global_caps) {
 		mlx4_err(dev, "Unknown hca global capabilities\n");
-		return -ENOSYS;
+		return -EINVAL;
 	}
-
-	mlx4_log_num_mgm_entry_size = hca_param.log_mc_entry_sz;
 
 	dev->caps.hca_core_clock = hca_param.hca_core_clock;
 
@@ -876,7 +893,7 @@ static int mlx4_slave_cap(struct mlx4_dev *dev)
 	    PF_CONTEXT_BEHAVIOUR_MASK) {
 		mlx4_err(dev, "Unknown pf context behaviour %x known flags %x\n",
 			 func_cap.pf_context_behaviour, PF_CONTEXT_BEHAVIOUR_MASK);
-		return -ENOSYS;
+		return -EINVAL;
 	}
 
 	dev->caps.num_ports		= func_cap.num_ports;
@@ -1114,6 +1131,14 @@ static ssize_t set_port_type(struct device *dev,
 		info->tmp_type = MLX4_PORT_TYPE_AUTO;
 	else {
 		mlx4_err(mdev, "%s is not supported port type\n", buf);
+		err = -EINVAL;
+		goto err_out;
+	}
+
+	if ((info->tmp_type & mdev->caps.supported_type[info->port]) != info->tmp_type) {
+		mlx4_err(mdev,
+			 "Requested port type for port %d is not supported on this HCA\n",
+			 info->port);
 		err = -EINVAL;
 		goto err_out;
 	}
@@ -1404,7 +1429,7 @@ int mlx4_port_map_set(struct mlx4_dev *dev, struct mlx4_port_map *v2p)
 	int err;
 
 	if (!(dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_PORT_REMAP))
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 
 	mutex_lock(&priv->bond_mutex);
 
@@ -1841,7 +1866,7 @@ int mlx4_get_internal_clock_params(struct mlx4_dev *dev,
 	struct mlx4_priv *priv = mlx4_priv(dev);
 
 	if (mlx4_is_slave(dev))
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 
 	if (!params)
 		return -EINVAL;
@@ -2349,7 +2374,7 @@ static int mlx4_init_hca(struct mlx4_dev *dev)
 
 	/* Query CONFIG_DEV parameters */
 	err = mlx4_config_dev_retrieval(dev, &params);
-	if (err && err != -ENOTSUPP) {
+	if (err && err != -EOPNOTSUPP) {
 		mlx4_err(dev, "Failed to query CONFIG_DEV parameters\n");
 	} else if (!err) {
 		dev->caps.rx_checksum_flags_port[1] = params.rx_csum_flags_port_1;
@@ -3448,7 +3473,7 @@ slave_start:
 	mlx4_enable_msi_x(dev);
 	if ((mlx4_is_mfunc(dev)) &&
 	    !(dev->flags & MLX4_FLAG_MSI_X)) {
-		err = -ENOSYS;
+		err = -EOPNOTSUPP;
 		mlx4_err(dev, "INTx is not supported in multi-function mode, aborting\n");
 		goto err_free_eq;
 	}
@@ -3956,49 +3981,51 @@ int mlx4_restart_one(struct pci_dev *pdev)
 	return err;
 }
 
+#define MLX_SP(id) { PCI_VDEVICE(MELLANOX, id), MLX4_PCI_DEV_FORCE_SENSE_PORT }
+#define MLX_VF(id) { PCI_VDEVICE(MELLANOX, id), MLX4_PCI_DEV_IS_VF }
+#define MLX_GN(id) { PCI_VDEVICE(MELLANOX, id), 0 }
+
 static const struct pci_device_id mlx4_pci_table[] = {
-	/* MT25408 "Hermon" SDR */
-	{ PCI_VDEVICE(MELLANOX, 0x6340), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT25408 "Hermon" DDR */
-	{ PCI_VDEVICE(MELLANOX, 0x634a), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT25408 "Hermon" QDR */
-	{ PCI_VDEVICE(MELLANOX, 0x6354), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT25408 "Hermon" DDR PCIe gen2 */
-	{ PCI_VDEVICE(MELLANOX, 0x6732), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT25408 "Hermon" QDR PCIe gen2 */
-	{ PCI_VDEVICE(MELLANOX, 0x673c), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT25408 "Hermon" EN 10GigE */
-	{ PCI_VDEVICE(MELLANOX, 0x6368), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT25408 "Hermon" EN 10GigE PCIe gen2 */
-	{ PCI_VDEVICE(MELLANOX, 0x6750), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT25458 ConnectX EN 10GBASE-T 10GigE */
-	{ PCI_VDEVICE(MELLANOX, 0x6372), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT25458 ConnectX EN 10GBASE-T+Gen2 10GigE */
-	{ PCI_VDEVICE(MELLANOX, 0x675a), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT26468 ConnectX EN 10GigE PCIe gen2*/
-	{ PCI_VDEVICE(MELLANOX, 0x6764), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT26438 ConnectX EN 40GigE PCIe gen2 5GT/s */
-	{ PCI_VDEVICE(MELLANOX, 0x6746), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT26478 ConnectX2 40GigE PCIe gen2 */
-	{ PCI_VDEVICE(MELLANOX, 0x676e), MLX4_PCI_DEV_FORCE_SENSE_PORT },
-	/* MT25400 Family [ConnectX-2 Virtual Function] */
-	{ PCI_VDEVICE(MELLANOX, 0x1002), MLX4_PCI_DEV_IS_VF },
+	/* MT25408 "Hermon" */
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_HERMON_SDR),	/* SDR */
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_HERMON_DDR),	/* DDR */
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_HERMON_QDR),	/* QDR */
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_HERMON_DDR_GEN2), /* DDR Gen2 */
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_HERMON_QDR_GEN2),	/* QDR Gen2 */
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_HERMON_EN),	/* EN 10GigE */
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_HERMON_EN_GEN2),  /* EN 10GigE Gen2 */
+	/* MT25458 ConnectX EN 10GBASE-T */
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_CONNECTX_EN),
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_CONNECTX_EN_T_GEN2),	/* Gen2 */
+	/* MT26468 ConnectX EN 10GigE PCIe Gen2*/
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_CONNECTX_EN_GEN2),
+	/* MT26438 ConnectX EN 40GigE PCIe Gen2 5GT/s */
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_CONNECTX_EN_5_GEN2),
+	/* MT26478 ConnectX2 40GigE PCIe Gen2 */
+	MLX_SP(PCI_DEVICE_ID_MELLANOX_CONNECTX2),
+	/* MT25400 Family [ConnectX-2] */
+	MLX_VF(0x1002),					/* Virtual Function */
 	/* MT27500 Family [ConnectX-3] */
-	{ PCI_VDEVICE(MELLANOX, 0x1003), 0 },
-	/* MT27500 Family [ConnectX-3 Virtual Function] */
-	{ PCI_VDEVICE(MELLANOX, 0x1004), MLX4_PCI_DEV_IS_VF },
-	{ PCI_VDEVICE(MELLANOX, 0x1005), 0 }, /* MT27510 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x1006), 0 }, /* MT27511 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x1007), 0 }, /* MT27520 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x1008), 0 }, /* MT27521 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x1009), 0 }, /* MT27530 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100a), 0 }, /* MT27531 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100b), 0 }, /* MT27540 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100c), 0 }, /* MT27541 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100d), 0 }, /* MT27550 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100e), 0 }, /* MT27551 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x100f), 0 }, /* MT27560 Family */
-	{ PCI_VDEVICE(MELLANOX, 0x1010), 0 }, /* MT27561 Family */
+	MLX_GN(PCI_DEVICE_ID_MELLANOX_CONNECTX3),
+	MLX_VF(0x1004),					/* Virtual Function */
+	MLX_GN(0x1005),					/* MT27510 Family */
+	MLX_GN(0x1006),					/* MT27511 Family */
+	MLX_GN(PCI_DEVICE_ID_MELLANOX_CONNECTX3_PRO),	/* MT27520 Family */
+	MLX_GN(0x1008),					/* MT27521 Family */
+	MLX_GN(0x1009),					/* MT27530 Family */
+	MLX_GN(0x100a),					/* MT27531 Family */
+	MLX_GN(0x100b),					/* MT27540 Family */
+	MLX_GN(0x100c),					/* MT27541 Family */
+	MLX_GN(0x100d),					/* MT27550 Family */
+	MLX_GN(0x100e),					/* MT27551 Family */
+	MLX_GN(0x100f),					/* MT27560 Family */
+	MLX_GN(0x1010),					/* MT27561 Family */
+
+	/*
+	 * See the mellanox_check_broken_intx_masking() quirk when
+	 * adding devices
+	 */
+
 	{ 0, }
 };
 

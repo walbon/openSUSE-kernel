@@ -36,7 +36,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/types.h>
@@ -136,15 +135,17 @@ static int uldrx_handler(struct sge_rspq *q, const __be64 *rsp,
 }
 
 static int alloc_uld_rxqs(struct adapter *adap,
-			  struct sge_uld_rxq_info *rxq_info,
-			  unsigned int nq, unsigned int offset, bool lro)
+			  struct sge_uld_rxq_info *rxq_info, bool lro)
 {
 	struct sge *s = &adap->sge;
-	struct sge_ofld_rxq *q = rxq_info->uldrxq + offset;
-	unsigned short *ids = rxq_info->rspq_id + offset;
-	unsigned int per_chan = nq / adap->params.nports;
+	unsigned int nq = rxq_info->nrxq + rxq_info->nciq;
+	struct sge_ofld_rxq *q = rxq_info->uldrxq;
+	unsigned short *ids = rxq_info->rspq_id;
 	unsigned int bmap_idx = 0;
-	int i, err, msi_idx;
+	unsigned int per_chan;
+	int i, err, msi_idx, que_idx = 0;
+
+	per_chan = rxq_info->nrxq / adap->params.nports;
 
 	if (adap->flags & USING_MSIX)
 		msi_idx = 1;
@@ -152,12 +153,18 @@ static int alloc_uld_rxqs(struct adapter *adap,
 		msi_idx = -((int)s->intrq.abs_id + 1);
 
 	for (i = 0; i < nq; i++, q++) {
+		if (i == rxq_info->nrxq) {
+			/* start allocation of concentrator queues */
+			per_chan = rxq_info->nciq / adap->params.nports;
+			que_idx = 0;
+		}
+
 		if (msi_idx >= 0) {
 			bmap_idx = get_msix_idx_from_bmap(adap);
 			msi_idx = adap->msix_info_ulds[bmap_idx].idx;
 		}
 		err = t4_sge_alloc_rxq(adap, &q->rspq, false,
-				       adap->port[i / per_chan],
+				       adap->port[que_idx++ / per_chan],
 				       msi_idx,
 				       q->fl.size ? &q->fl : NULL,
 				       uldrx_handler,
@@ -166,33 +173,24 @@ static int alloc_uld_rxqs(struct adapter *adap,
 		if (err)
 			goto freeout;
 		if (msi_idx >= 0)
-			rxq_info->msix_tbl[i + offset] = bmap_idx;
+			rxq_info->msix_tbl[i] = bmap_idx;
 		memset(&q->stats, 0, sizeof(q->stats));
 		if (ids)
 			ids[i] = q->rspq.abs_id;
 	}
 	return 0;
 freeout:
-	q = rxq_info->uldrxq + offset;
+	q = rxq_info->uldrxq;
 	for ( ; i; i--, q++) {
 		if (q->rspq.desc)
 			free_rspq_fl(adap, &q->rspq,
 				     q->fl.size ? &q->fl : NULL);
 	}
-
-	/* We need to free rxq also in case of ciq allocation failure */
-	if (offset) {
-		q = rxq_info->uldrxq + offset;
-		for ( ; i; i--, q++) {
-			if (q->rspq.desc)
-				free_rspq_fl(adap, &q->rspq,
-					     q->fl.size ? &q->fl : NULL);
-		}
-	}
 	return err;
 }
 
-int setup_sge_queues_uld(struct adapter *adap, unsigned int uld_type, bool lro)
+static int
+setup_sge_queues_uld(struct adapter *adap, unsigned int uld_type, bool lro)
 {
 	struct sge_uld_rxq_info *rxq_info = adap->sge.uld_rxq_info[uld_type];
 	int i, ret = 0;
@@ -205,9 +203,7 @@ int setup_sge_queues_uld(struct adapter *adap, unsigned int uld_type, bool lro)
 			return -ENOMEM;
 	}
 
-	ret = !(!alloc_uld_rxqs(adap, rxq_info, rxq_info->nrxq, 0, lro) &&
-		 !alloc_uld_rxqs(adap, rxq_info, rxq_info->nciq,
-				 rxq_info->nrxq, lro));
+	ret = !(!alloc_uld_rxqs(adap, rxq_info, lro));
 
 	/* Tell uP to route control queue completions to rdma rspq */
 	if (adap->flags & FULL_INIT_DONE &&
@@ -239,7 +235,7 @@ static void t4_free_uld_rxqs(struct adapter *adap, int n,
 	}
 }
 
-void free_sge_queues_uld(struct adapter *adap, unsigned int uld_type)
+static void free_sge_queues_uld(struct adapter *adap, unsigned int uld_type)
 {
 	struct sge_uld_rxq_info *rxq_info = adap->sge.uld_rxq_info[uld_type];
 
@@ -266,8 +262,8 @@ void free_sge_queues_uld(struct adapter *adap, unsigned int uld_type)
 		kfree(rxq_info->msix_tbl);
 }
 
-int cfg_queues_uld(struct adapter *adap, unsigned int uld_type,
-		   const struct cxgb4_uld_info *uld_info)
+static int cfg_queues_uld(struct adapter *adap, unsigned int uld_type,
+			  const struct cxgb4_uld_info *uld_info)
 {
 	struct sge *s = &adap->sge;
 	struct sge_uld_rxq_info *rxq_info;
@@ -309,7 +305,7 @@ int cfg_queues_uld(struct adapter *adap, unsigned int uld_type,
 	}
 
 	rxq_info->rspq_id = kcalloc(nrxq, sizeof(unsigned short), GFP_KERNEL);
-	if (!rxq_info->uldrxq) {
+	if (!rxq_info->rspq_id) {
 		kfree(rxq_info->uldrxq);
 		kfree(rxq_info);
 		return -ENOMEM;
@@ -342,7 +338,7 @@ int cfg_queues_uld(struct adapter *adap, unsigned int uld_type,
 	return 0;
 }
 
-void free_queues_uld(struct adapter *adap, unsigned int uld_type)
+static void free_queues_uld(struct adapter *adap, unsigned int uld_type)
 {
 	struct sge_uld_rxq_info *rxq_info = adap->sge.uld_rxq_info[uld_type];
 
@@ -351,7 +347,8 @@ void free_queues_uld(struct adapter *adap, unsigned int uld_type)
 	kfree(rxq_info);
 }
 
-int request_msix_queue_irqs_uld(struct adapter *adap, unsigned int uld_type)
+static int
+request_msix_queue_irqs_uld(struct adapter *adap, unsigned int uld_type)
 {
 	struct sge_uld_rxq_info *rxq_info = adap->sge.uld_rxq_info[uld_type];
 	int err = 0;
@@ -368,7 +365,7 @@ int request_msix_queue_irqs_uld(struct adapter *adap, unsigned int uld_type)
 	}
 	return 0;
 unwind:
-	while (--idx >= 0) {
+	while (idx-- > 0) {
 		bmap_idx = rxq_info->msix_tbl[idx];
 		free_msix_idx_in_bmap(adap, bmap_idx);
 		free_irq(adap->msix_info_ulds[bmap_idx].vec,
@@ -377,7 +374,8 @@ unwind:
 	return err;
 }
 
-void free_msix_queue_irqs_uld(struct adapter *adap, unsigned int uld_type)
+static void
+free_msix_queue_irqs_uld(struct adapter *adap, unsigned int uld_type)
 {
 	struct sge_uld_rxq_info *rxq_info = adap->sge.uld_rxq_info[uld_type];
 	unsigned int idx, bmap_idx;
@@ -391,7 +389,7 @@ void free_msix_queue_irqs_uld(struct adapter *adap, unsigned int uld_type)
 	}
 }
 
-void name_msix_vecs_uld(struct adapter *adap, unsigned int uld_type)
+static void name_msix_vecs_uld(struct adapter *adap, unsigned int uld_type)
 {
 	struct sge_uld_rxq_info *rxq_info = adap->sge.uld_rxq_info[uld_type];
 	int n = sizeof(adap->msix_info_ulds[0].desc);
@@ -410,10 +408,9 @@ static void enable_rx(struct adapter *adap, struct sge_rspq *q)
 	if (!q)
 		return;
 
-	if (q->handler) {
-		cxgb_busy_poll_init_lock(q);
+	if (q->handler)
 		napi_enable(&q->napi);
-	}
+
 	/* 0-increment GTS to start the timer and enable interrupts */
 	t4_write_reg(adap, MYPF_REG(SGE_PF_GTS_A),
 		     SEINTARM_V(q->intr_params) |
@@ -422,16 +419,11 @@ static void enable_rx(struct adapter *adap, struct sge_rspq *q)
 
 static void quiesce_rx(struct adapter *adap, struct sge_rspq *q)
 {
-	if (q && q->handler) {
+	if (q && q->handler)
 		napi_disable(&q->napi);
-		local_bh_disable();
-		while (!cxgb_poll_lock_napi(q))
-			mdelay(1);
-		local_bh_enable();
-	}
 }
 
-void enable_rx_uld(struct adapter *adap, unsigned int uld_type)
+static void enable_rx_uld(struct adapter *adap, unsigned int uld_type)
 {
 	struct sge_uld_rxq_info *rxq_info = adap->sge.uld_rxq_info[uld_type];
 	int idx;
@@ -440,7 +432,7 @@ void enable_rx_uld(struct adapter *adap, unsigned int uld_type)
 		enable_rx(adap, &rxq_info->uldrxq[idx].rspq);
 }
 
-void quiesce_rx_uld(struct adapter *adap, unsigned int uld_type)
+static void quiesce_rx_uld(struct adapter *adap, unsigned int uld_type)
 {
 	struct sge_uld_rxq_info *rxq_info = adap->sge.uld_rxq_info[uld_type];
 	int idx;
@@ -534,7 +526,7 @@ setup_sge_txq_uld(struct adapter *adap, unsigned int uld_type,
 	txq_info->uldtxq = kcalloc(txq_info->ntxq, sizeof(struct sge_uld_txq),
 				   GFP_KERNEL);
 	if (!txq_info->uldtxq) {
-		kfree(txq_info->uldtxq);
+		kfree(txq_info);
 		return -ENOMEM;
 	}
 
@@ -599,7 +591,6 @@ void t4_uld_mem_free(struct adapter *adap)
 
 void t4_uld_clean_up(struct adapter *adap)
 {
-	struct sge_uld_rxq_info *rxq_info;
 	unsigned int i;
 
 	if (!adap->uld)
@@ -607,7 +598,6 @@ void t4_uld_clean_up(struct adapter *adap)
 	for (i = 0; i < CXGB4_ULD_MAX; i++) {
 		if (!adap->uld[i].handle)
 			continue;
-		rxq_info = adap->sge.uld_rxq_info[i];
 		if (adap->flags & FULL_INIT_DONE)
 			quiesce_rx_uld(adap, i);
 		if (adap->flags & USING_MSIX)
@@ -657,6 +647,7 @@ static void uld_init(struct adapter *adap, struct cxgb4_lld_info *lld)
 	lld->max_ird_adapter = adap->params.max_ird_adapter;
 	lld->ulptx_memwrite_dsgl = adap->params.ulptx_memwrite_dsgl;
 	lld->nodeid = dev_to_node(adap->pdev_dev);
+	lld->fr_nsmr_tpte_wr_support = adap->params.fr_nsmr_tpte_wr_support;
 }
 
 static void uld_attach(struct adapter *adap, unsigned int uld)

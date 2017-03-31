@@ -1,7 +1,7 @@
 /*
  * This file is part of the Chelsio T4 Ethernet driver for Linux.
  *
- * Copyright (c) 2003-2014 Chelsio Communications, Inc. All rights reserved.
+ * Copyright (c) 2003-2016 Chelsio Communications, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -263,6 +263,11 @@ struct tp_params {
 	u32 vlan_pri_map;               /* cached TP_VLAN_PRI_MAP */
 	u32 ingress_config;             /* cached TP_INGRESS_CONFIG */
 
+	/* cached TP_OUT_CONFIG compressed error vector
+	 * and passing outer header info for encapsulated packets.
+	 */
+	int rx_pkt_encap;
+
 	/* TP_VLAN_PRI_MAP Compressed Filter Tuple field offsets.  This is a
 	 * subset of the set of fields which may be present in the Compressed
 	 * Filter Tuple portion of filters and TCP TCB connections.  The
@@ -347,8 +352,10 @@ struct adapter_params {
 	unsigned int ofldq_wr_cred;
 	bool ulptx_memwrite_dsgl;          /* use of T5 DSGL allowed */
 
+	unsigned int nsched_cls;          /* number of traffic classes */
 	unsigned int max_ordird_qp;       /* Max read depth per RDMA QP */
 	unsigned int max_ird_adapter;     /* Max read depth per adapter */
+	bool fr_nsmr_tpte_wr_support;	  /* FW support for FR_NSMR_TPTE_WR */
 };
 
 /* State needed to monitor the forward progress of SGE Ingress DMA activities
@@ -420,12 +427,14 @@ struct trace_params {
 struct link_config {
 	unsigned short supported;        /* link capabilities */
 	unsigned short advertising;      /* advertised capabilities */
-	unsigned short requested_speed;  /* speed user has requested */
-	unsigned short speed;            /* actual link speed */
+	unsigned short lp_advertising;   /* peer advertised capabilities */
+	unsigned int   requested_speed;  /* speed user has requested */
+	unsigned int   speed;            /* actual link speed */
 	unsigned char  requested_fc;     /* flow control user has requested */
 	unsigned char  fc;               /* actual link flow control */
 	unsigned char  autoneg;          /* autonegotiating? */
 	unsigned char  link_ok;          /* link up? */
+	unsigned char  link_down_rc;     /* link down reason */
 };
 
 #define FW_LEN16(fw_struct) FW_CMD_LEN16_V(sizeof(fw_struct) / 16)
@@ -487,6 +496,7 @@ struct port_info {
 #endif /* CONFIG_CHELSIO_T4_FCOE */
 	bool rxtstamp;  /* Enable TS */
 	struct hwtstamp_config tstamp_config;
+	struct sched_table *sched_tbl;
 };
 
 struct dentry;
@@ -576,22 +586,6 @@ struct sge_rspq {                   /* state for an SGE response queue */
 	rspq_handler_t handler;
 	rspq_flush_handler_t flush_handler;
 	struct t4_lro_mgr lro_mgr;
-#ifdef CONFIG_NET_RX_BUSY_POLL
-#define CXGB_POLL_STATE_IDLE		0
-#define CXGB_POLL_STATE_NAPI		BIT(0) /* NAPI owns this poll */
-#define CXGB_POLL_STATE_POLL		BIT(1) /* poll owns this poll */
-#define CXGB_POLL_STATE_NAPI_YIELD	BIT(2) /* NAPI yielded this poll */
-#define CXGB_POLL_STATE_POLL_YIELD	BIT(3) /* poll yielded this poll */
-#define CXGB_POLL_YIELD			(CXGB_POLL_STATE_NAPI_YIELD |   \
-					 CXGB_POLL_STATE_POLL_YIELD)
-#define CXGB_POLL_LOCKED		(CXGB_POLL_STATE_NAPI |         \
-					 CXGB_POLL_STATE_POLL)
-#define CXGB_POLL_USER_PEND		(CXGB_POLL_STATE_POLL |         \
-					 CXGB_POLL_STATE_POLL_YIELD)
-	unsigned int bpoll_state;
-	spinlock_t bpoll_lock;		/* lock for busy poll */
-#endif /* CONFIG_NET_RX_BUSY_POLL */
-
 };
 
 struct sge_eth_stats {              /* Ethernet queue statistics */
@@ -777,6 +771,10 @@ struct vf_info {
 	bool pf_set_mac;
 };
 
+struct mbox_list {
+	struct list_head list;
+};
+
 struct adapter {
 	void __iomem *regs;
 	void __iomem *bar2;
@@ -839,6 +837,10 @@ struct adapter {
 	struct work_struct db_drop_task;
 	bool tid_release_task_busy;
 
+	/* lock for mailbox cmd list */
+	spinlock_t mbox_lock;
+	struct mbox_list mlist;
+
 	/* support for mailbox command/reply logging */
 #define T4_OS_LOG_MBOX_CMDS 256
 	struct mbox_cmd_log *mbox_log;
@@ -854,6 +856,58 @@ struct adapter {
 
 	spinlock_t stats_lock;
 	spinlock_t win0_lock ____cacheline_aligned_in_smp;
+
+	/* TC u32 offload */
+	struct cxgb4_tc_u32_table *tc_u32;
+};
+
+/* Support for "sched-class" command to allow a TX Scheduling Class to be
+ * programmed with various parameters.
+ */
+struct ch_sched_params {
+	s8   type;                     /* packet or flow */
+	union {
+		struct {
+			s8   level;    /* scheduler hierarchy level */
+			s8   mode;     /* per-class or per-flow */
+			s8   rateunit; /* bit or packet rate */
+			s8   ratemode; /* %port relative or kbps absolute */
+			s8   channel;  /* scheduler channel [0..N] */
+			s8   class;    /* scheduler class [0..N] */
+			s32  minrate;  /* minimum rate */
+			s32  maxrate;  /* maximum rate */
+			s16  weight;   /* percent weight */
+			s16  pktsize;  /* average packet size */
+		} params;
+	} u;
+};
+
+enum {
+	SCHED_CLASS_TYPE_PACKET = 0,    /* class type */
+};
+
+enum {
+	SCHED_CLASS_LEVEL_CL_RL = 0,    /* class rate limiter */
+};
+
+enum {
+	SCHED_CLASS_MODE_CLASS = 0,     /* per-class scheduling */
+};
+
+enum {
+	SCHED_CLASS_RATEUNIT_BITS = 0,  /* bit rate scheduling */
+};
+
+enum {
+	SCHED_CLASS_RATEMODE_ABS = 1,   /* Kb/s */
+};
+
+/* Support for "sched_queue" command to allow one or more NIC TX Queues
+ * to be bound to a TX Scheduling Class.
+ */
+struct ch_sched_queue {
+	s8   queue;    /* queue index */
+	s8   class;    /* class index */
 };
 
 /* Defined bit width of user definable filter tuples
@@ -979,6 +1033,32 @@ enum {
 	VLAN_REWRITE
 };
 
+/* Host shadow copy of ingress filter entry.  This is in host native format
+ * and doesn't match the ordering or bit order, etc. of the hardware of the
+ * firmware command.  The use of bit-field structure elements is purely to
+ * remind ourselves of the field size limitations and save memory in the case
+ * where the filter table is large.
+ */
+struct filter_entry {
+	/* Administrative fields for filter. */
+	u32 valid:1;            /* filter allocated and valid */
+	u32 locked:1;           /* filter is administratively locked */
+
+	u32 pending:1;          /* filter action is pending firmware reply */
+	u32 smtidx:8;           /* Source MAC Table index for smac */
+	struct filter_ctx *ctx; /* Caller's completion hook */
+	struct l2t_entry *l2t;  /* Layer Two Table entry for dmac */
+	struct net_device *dev; /* Associated net device */
+	u32 tid;                /* This will store the actual tid */
+
+	/* The filter itself.  Most of this is a straight copy of information
+	 * provided by the extended ioctl().  Some fields are translated to
+	 * internal forms -- for instance the Ingress Queue ID passed in from
+	 * the ioctl() is translated into the Absolute Ingress Queue ID.
+	 */
+	struct ch_filter_specification fs;
+};
+
 static inline int is_offload(const struct adapter *adap)
 {
 	return adap->params.offload;
@@ -1077,102 +1157,6 @@ static inline struct adapter *netdev2adap(const struct net_device *dev)
 	return netdev2pinfo(dev)->adapter;
 }
 
-#ifdef CONFIG_NET_RX_BUSY_POLL
-static inline void cxgb_busy_poll_init_lock(struct sge_rspq *q)
-{
-	spin_lock_init(&q->bpoll_lock);
-	q->bpoll_state = CXGB_POLL_STATE_IDLE;
-}
-
-static inline bool cxgb_poll_lock_napi(struct sge_rspq *q)
-{
-	bool rc = true;
-
-	spin_lock(&q->bpoll_lock);
-	if (q->bpoll_state & CXGB_POLL_LOCKED) {
-		q->bpoll_state |= CXGB_POLL_STATE_NAPI_YIELD;
-		rc = false;
-	} else {
-		q->bpoll_state = CXGB_POLL_STATE_NAPI;
-	}
-	spin_unlock(&q->bpoll_lock);
-	return rc;
-}
-
-static inline bool cxgb_poll_unlock_napi(struct sge_rspq *q)
-{
-	bool rc = false;
-
-	spin_lock(&q->bpoll_lock);
-	if (q->bpoll_state & CXGB_POLL_STATE_POLL_YIELD)
-		rc = true;
-	q->bpoll_state = CXGB_POLL_STATE_IDLE;
-	spin_unlock(&q->bpoll_lock);
-	return rc;
-}
-
-static inline bool cxgb_poll_lock_poll(struct sge_rspq *q)
-{
-	bool rc = true;
-
-	spin_lock_bh(&q->bpoll_lock);
-	if (q->bpoll_state & CXGB_POLL_LOCKED) {
-		q->bpoll_state |= CXGB_POLL_STATE_POLL_YIELD;
-		rc = false;
-	} else {
-		q->bpoll_state |= CXGB_POLL_STATE_POLL;
-	}
-	spin_unlock_bh(&q->bpoll_lock);
-	return rc;
-}
-
-static inline bool cxgb_poll_unlock_poll(struct sge_rspq *q)
-{
-	bool rc = false;
-
-	spin_lock_bh(&q->bpoll_lock);
-	if (q->bpoll_state & CXGB_POLL_STATE_POLL_YIELD)
-		rc = true;
-	q->bpoll_state = CXGB_POLL_STATE_IDLE;
-	spin_unlock_bh(&q->bpoll_lock);
-	return rc;
-}
-
-static inline bool cxgb_poll_busy_polling(struct sge_rspq *q)
-{
-	return q->bpoll_state & CXGB_POLL_USER_PEND;
-}
-#else
-static inline void cxgb_busy_poll_init_lock(struct sge_rspq *q)
-{
-}
-
-static inline bool cxgb_poll_lock_napi(struct sge_rspq *q)
-{
-	return true;
-}
-
-static inline bool cxgb_poll_unlock_napi(struct sge_rspq *q)
-{
-	return false;
-}
-
-static inline bool cxgb_poll_lock_poll(struct sge_rspq *q)
-{
-	return false;
-}
-
-static inline bool cxgb_poll_unlock_poll(struct sge_rspq *q)
-{
-	return false;
-}
-
-static inline bool cxgb_poll_busy_polling(struct sge_rspq *q)
-{
-	return false;
-}
-#endif /* CONFIG_NET_RX_BUSY_POLL */
-
 /* Return a version number to identify the type of adapter.  The scheme is:
  * - bits 0..9: chip version
  * - bits 10..15: chip revision
@@ -1229,7 +1213,6 @@ irqreturn_t t4_sge_intr_msix(int irq, void *cookie);
 int t4_sge_init(struct adapter *adap);
 void t4_sge_start(struct adapter *adap);
 void t4_sge_stop(struct adapter *adap);
-int cxgb_busy_poll(struct napi_struct *napi);
 void cxgb4_set_ethtool_ops(struct net_device *netdev);
 int cxgb4_write_rss(const struct port_info *pi, const u16 *queues);
 extern int dbfifo_int_thresh;
@@ -1405,6 +1388,7 @@ int t4_prep_fw(struct adapter *adap, struct fw_info *fw_info,
 	       const u8 *fw_data, unsigned int fw_size,
 	       struct fw_hdr *card_fw, enum dev_state state, int *reset);
 int t4_prep_adapter(struct adapter *adapter);
+int t4_shutdown_adapter(struct adapter *adapter);
 
 enum t4_bar2_qtype { T4_BAR2_QTYPE_EGRESS, T4_BAR2_QTYPE_INGRESS };
 int t4_bar2_sge_qregs(struct adapter *adapter,
@@ -1422,6 +1406,8 @@ int t4_init_sge_params(struct adapter *adapter);
 int t4_init_tp_params(struct adapter *adap);
 int t4_filter_field_shift(const struct adapter *adap, int filter_sel);
 int t4_init_rss_mode(struct adapter *adap, int mbox);
+int t4_init_portinfo(struct port_info *pi, int mbox,
+		     int port, int pf, int vf, u8 mac[]);
 int t4_port_init(struct adapter *adap, int mbox, int pf, int vf);
 void t4_fatal_err(struct adapter *adapter);
 int t4_config_rss_range(struct adapter *adapter, int mbox, unsigned int viid,
@@ -1557,6 +1543,7 @@ int t4_ctrl_eq_free(struct adapter *adap, unsigned int mbox, unsigned int pf,
 int t4_ofld_eq_free(struct adapter *adap, unsigned int mbox, unsigned int pf,
 		    unsigned int vf, unsigned int eqid);
 int t4_sge_ctxt_flush(struct adapter *adap, unsigned int mbox);
+void t4_handle_get_port_info(struct port_info *pi, const __be64 *rpl);
 int t4_handle_fw_rpl(struct adapter *adap, const __be64 *rpl);
 void t4_db_full(struct adapter *adapter);
 void t4_db_dropped(struct adapter *adapter);
@@ -1566,6 +1553,9 @@ void t4_get_trace_filter(struct adapter *adapter, struct trace_params *tp,
 			 int filter_index, int *enabled);
 int t4_fwaddrspace_write(struct adapter *adap, unsigned int mbox,
 			 u32 addr, u32 val);
+int t4_sched_params(struct adapter *adapter, int type, int level, int mode,
+		    int rateunit, int ratemode, int channel, int class,
+		    int minrate, int maxrate, int weight, int pktsize);
 void t4_sge_decode_idma_state(struct adapter *adapter, int state);
 void t4_free_mem(void *addr);
 void t4_idma_monitor_init(struct adapter *adapter,

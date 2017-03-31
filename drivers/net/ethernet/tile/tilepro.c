@@ -2027,7 +2027,7 @@ static void tile_net_tx_timeout(struct net_device *dev)
 {
 	PDEBUG("tile_net_tx_timeout()\n");
 	PDEBUG("Transmit timeout at %ld, latency %ld\n", jiffies,
-	       jiffies - dev->trans_start);
+	       jiffies - dev_trans_start(dev));
 
 	/* XXX: ISSUE: This doesn't seem useful for us. */
 	netif_wake_queue(dev);
@@ -2091,10 +2091,7 @@ static void tile_net_get_stats64(struct net_device *dev,
 	stats->tx_bytes   = tx_bytes;
 	stats->rx_errors  = rx_errors;
 	stats->rx_dropped = rx_dropped;
-
-	return stats;
 }
-
 
 /*
  * Change the "mtu".
