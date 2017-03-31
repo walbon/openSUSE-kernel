@@ -1361,15 +1361,6 @@ static void scsiback_release_cmd(struct se_cmd *se_cmd)
 	kmem_cache_free(scsiback_cachep, pending_req);
 }
 
-static int scsiback_shutdown_session(struct se_session *se_sess)
-{
-	return 0;
-}
-
-static void scsiback_close_session(struct se_session *se_sess)
-{
-}
-
 static u32 scsiback_sess_get_index(struct se_session *se_sess)
 {
 	return 0;
@@ -1801,8 +1792,6 @@ static const struct target_core_fabric_ops scsiback_ops = {
 	.tpg_get_inst_index		= scsiback_tpg_get_inst_index,
 	.check_stop_free		= scsiback_check_stop_free,
 	.release_cmd			= scsiback_release_cmd,
-	.shutdown_session		= scsiback_shutdown_session,
-	.close_session			= scsiback_close_session,
 	.sess_get_index			= scsiback_sess_get_index,
 	.sess_get_initiator_sid		= NULL,
 	.write_pending			= scsiback_write_pending,
