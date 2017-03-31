@@ -641,6 +641,7 @@ struct vmbus_channel_msginfo {
 
 	/* Synchronize the request/response if needed */
 	struct completion  waitevent;
+	struct vmbus_channel *waiting_channel;
 	union {
 		struct vmbus_channel_version_supported version_supported;
 		struct vmbus_channel_open_result open_result;
@@ -1132,6 +1133,12 @@ struct hv_driver {
 	const struct hv_vmbus_device_id *id_table;
 
 	struct device_driver driver;
+
+	/* dynamic device GUID's */
+	struct  {
+		spinlock_t lock;
+		struct list_head list;
+	} dynids;
 
 	int (*probe)(struct hv_device *, const struct hv_vmbus_device_id *);
 	int (*remove)(struct hv_device *);
