@@ -766,10 +766,14 @@ ENTRY(__enable_mmu)
 	isb
 	bl	__create_page_tables		// recreate kernel mapping
 
+	tlbi	vmalle1				// Remove any stale TLB entries
+	dsb	nsh
+
 	msr	sctlr_el1, x19			// re-enable the MMU
 	isb
-	ic	ialluis				// flush instructions fetched
-	isb					// via old mapping
+	ic	iallu				// flush instructions fetched
+	dsb	nsh				// via old mapping
+	isb
 	add	x27, x27, x23			// relocated __mmap_switched
 #endif
 	br	x27

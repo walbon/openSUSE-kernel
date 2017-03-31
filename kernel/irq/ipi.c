@@ -94,6 +94,7 @@ int irq_reserve_ipi(struct irq_domain *domain,
 		data = irq_get_irq_data(virq + i);
 		cpumask_copy(data->common->affinity, dest);
 		data->common->ipi_offset = offset;
+		irq_set_status_flags(virq + i, IRQ_NO_BALANCING);
 	}
 	return virq;
 
@@ -124,7 +125,7 @@ int irq_destroy_ipi(unsigned int irq, const struct cpumask *dest)
 
 	domain = data->domain;
 	if (WARN_ON(domain == NULL))
-		return;
+		return -EINVAL;
 
 	if (!irq_domain_is_ipi(domain)) {
 		pr_warn("Trying to destroy a non IPI domain!\n");
