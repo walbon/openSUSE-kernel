@@ -21,6 +21,7 @@
 **********************************************************************/
 #include <linux/version.h>
 #include <linux/module.h>
+#include <linux/interrupt.h>
 #include <linux/crc32.h>
 #include <linux/dma-mapping.h>
 #include <linux/pci.h>
