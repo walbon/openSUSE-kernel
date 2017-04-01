@@ -247,7 +247,6 @@ static int p80211_convert_to_ether(wlandevice_t *wlandev, struct sk_buff *skb)
 	}
 
 	if (skb_p80211_to_ether(wlandev, wlandev->ethconv, skb) == 0) {
-		skb->dev->last_rx = jiffies;
 		wlandev->netdev->stats.rx_packets++;
 		wlandev->netdev->stats.rx_bytes += skb->len;
 		netif_rx_ni(skb);
@@ -283,7 +282,6 @@ static void p80211netdev_rx_bh(unsigned long arg)
 				skb->ip_summed = CHECKSUM_NONE;
 				skb->pkt_type = PACKET_OTHERHOST;
 				skb->protocol = htons(ETH_P_80211_RAW);
-				dev->last_rx = jiffies;
 
 				dev->stats.rx_packets++;
 				dev->stats.rx_bytes += skb->len;
