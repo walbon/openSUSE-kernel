@@ -256,22 +256,37 @@ static int emac_change_mtu(struct net_device *netdev, int new_mtu)
 static int emac_open(struct net_device *netdev)
 {
 	struct emac_adapter *adpt = netdev_priv(netdev);
+	struct emac_irq	*irq = &adpt->irq;
 	int ret;
+
+	ret = request_irq(irq->irq, emac_isr, 0, "emac-core0", irq);
+	if (ret) {
+		netdev_err(adpt->netdev, "could not request emac-core0 irq\n");
+		return ret;
+	}
 
 	/* allocate rx/tx dma buffer & descriptors */
 	ret = emac_mac_rx_tx_rings_alloc_all(adpt);
 	if (ret) {
 		netdev_err(adpt->netdev, "error allocating rx/tx rings\n");
+		free_irq(irq->irq, irq);
 		return ret;
 	}
 
 	ret = emac_mac_up(adpt);
 	if (ret) {
 		emac_mac_rx_tx_rings_free_all(adpt);
+		free_irq(irq->irq, irq);
 		return ret;
 	}
 
-	emac_mac_start(adpt);
+	ret = adpt->phy.open(adpt);
+	if (ret) {
+		emac_mac_down(adpt);
+		emac_mac_rx_tx_rings_free_all(adpt);
+		free_irq(irq->irq, irq);
+		return ret;
+	}
 
 	return 0;
 }
@@ -283,8 +298,11 @@ static int emac_close(struct net_device *netdev)
 
 	mutex_lock(&adpt->reset_lock);
 
+	adpt->phy.close(adpt);
 	emac_mac_down(adpt);
 	emac_mac_rx_tx_rings_free_all(adpt);
+
+	free_irq(adpt->irq.irq, &adpt->irq);
 
 	mutex_unlock(&adpt->reset_lock);
 
@@ -418,6 +436,10 @@ static void emac_init_adapter(struct emac_adapter *adpt)
 {
 	u32 reg;
 
+	adpt->rrd_size = EMAC_RRD_SIZE;
+	adpt->tpd_size = EMAC_TPD_SIZE;
+	adpt->rfd_size = EMAC_RFD_SIZE;
+
 	/* descriptors */
 	adpt->tx_desc_cnt = EMAC_DEF_TX_DESCS;
 	adpt->rx_desc_cnt = EMAC_DEF_RX_DESCS;
@@ -438,6 +460,9 @@ static void emac_init_adapter(struct emac_adapter *adpt)
 
 	/* others */
 	adpt->preamble = EMAC_PREAMBLE_DEF;
+
+	/* default to automatic flow control */
+	adpt->automatic = true;
 }
 
 /* Get the clock */
@@ -602,7 +627,7 @@ static int emac_probe(struct platform_device *pdev)
 {
 	struct net_device *netdev;
 	struct emac_adapter *adpt;
-	struct emac_phy *phy;
+	struct emac_sgmii *phy;
 	u16 devid, revid;
 	u32 reg;
 	int ret;
@@ -636,6 +661,7 @@ static int emac_probe(struct platform_device *pdev)
 	adpt->msg_enable = EMAC_MSG_DEFAULT;
 
 	phy = &adpt->phy;
+	atomic_set(&phy->decode_error_count, 0);
 
 	mutex_init(&adpt->reset_lock);
 	spin_lock_init(&adpt->stats.lock);
@@ -655,10 +681,6 @@ static int emac_probe(struct platform_device *pdev)
 
 	netdev->watchdog_timeo = EMAC_WATCHDOG_TIME;
 	netdev->irq = adpt->irq.irq;
-
-	adpt->rrd_size = EMAC_RRD_SIZE;
-	adpt->tpd_size = EMAC_TPD_SIZE;
-	adpt->rfd_size = EMAC_RFD_SIZE;
 
 	netdev->netdev_ops = &emac_netdev_ops;
 

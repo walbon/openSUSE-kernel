@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/etherdevice.h>
+#include <linux/interrupt.h>
 #include <linux/mii.h>
 #include <linux/phy.h>
 #include <linux/phy_fixed.h>
