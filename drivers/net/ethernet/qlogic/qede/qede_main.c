@@ -67,6 +67,7 @@
 #include <linux/vmalloc.h>
 #include <linux/qed/qede_roce.h>
 #include "qede.h"
+#include "qede_ptp.h"
 
 static char version[] =
 	"QLogic FastLinQ 4xxxx Ethernet Driver qede " DRV_MODULE_VERSION "\n";
@@ -610,6 +611,9 @@ static netdev_tx_t qede_start_xmit(struct sk_buff *skb,
 	memset(first_bd, 0, sizeof(*first_bd));
 	first_bd->data.bd_flags.bitfields =
 		1 << ETH_TX_1ST_BD_FLAGS_START_BD_SHIFT;
+
+	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP))
+		qede_ptp_tx_ts(edev, skb);
 
 	/* Map skb linear data for DMA and set in the first BD */
 	mapping = dma_map_single(txq->dev, skb->data,
@@ -1686,6 +1690,7 @@ static int qede_rx_process_cqe(struct qede_dev *edev,
 	qede_get_rxhash(skb, fp_cqe->bitfields, fp_cqe->rss_hash);
 	qede_set_skb_csum(skb, csum_flag);
 	skb_record_rx_queue(skb, rxq->rxq_id);
+	qede_ptp_record_rx_ts(edev, cqe, skb);
 
 	/* SKB is prepared - pass it to stack */
 	qede_skb_receive(edev, fp, rxq, skb, le16_to_cpu(fp_cqe->vlan_tag));
@@ -2462,6 +2467,25 @@ static netdev_features_t qede_features_check(struct sk_buff *skb,
 	return features;
 }
 
+static int qede_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
+{
+	struct qede_dev *edev = netdev_priv(dev);
+
+	if (!netif_running(dev))
+		return -EAGAIN;
+
+	switch (cmd) {
+	case SIOCSHWTSTAMP:
+		return qede_ptp_hw_ts(edev, ifr);
+	default:
+		DP_VERBOSE(edev, QED_MSG_DEBUG,
+			   "default IOCTL cmd 0x%x\n", cmd);
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
 static const struct net_device_ops qede_netdev_ops = {
 	.ndo_open = qede_open,
 	.ndo_stop = qede_close,
@@ -2470,6 +2494,7 @@ static const struct net_device_ops qede_netdev_ops = {
 	.ndo_set_mac_address = qede_set_mac_addr,
 	.ndo_validate_addr = eth_validate_addr,
 	.ndo_change_mtu = qede_change_mtu,
+	.ndo_do_ioctl = qede_ioctl,
 #ifdef CONFIG_QED_SRIOV
 	.ndo_set_vf_mac = qede_set_vf_mac,
 	.ndo_set_vf_vlan = qede_set_vf_vlan,
@@ -2815,6 +2840,15 @@ static int __qede_probe(struct pci_dev *pdev, u32 dp_module, u8 dp_level,
 
 	edev->ops->common->set_id(cdev, edev->ndev->name, DRV_MODULE_VERSION);
 
+	/* PTP not supported on VFs */
+	if (!is_vf) {
+		rc = qede_ptp_register_phc(edev);
+		if (rc) {
+			DP_NOTICE(edev, "Cannot register PHC\n");
+			goto err5;
+		}
+	}
+
 	edev->ops->register_ops(cdev, &qede_ll_ops, edev);
 
 #ifdef CONFIG_DCB
@@ -2830,6 +2864,8 @@ static int __qede_probe(struct pci_dev *pdev, u32 dp_module, u8 dp_level,
 
 	return 0;
 
+err5:
+	unregister_netdev(edev->ndev);
 err4:
 	qede_roce_dev_remove(edev);
 err3:
@@ -2880,6 +2916,8 @@ static void __qede_remove(struct pci_dev *pdev, enum qede_remove_mode mode)
 	cancel_delayed_work_sync(&edev->sp_task);
 
 	unregister_netdev(ndev);
+
+	qede_ptp_remove(edev);
 
 	qede_roce_dev_remove(edev);
 
@@ -3575,6 +3613,7 @@ static int qede_start_queues(struct qede_dev *edev, bool clear_stats)
 	if (!vport_update_params)
 		return -ENOMEM;
 
+	start.handle_ptp_pkts = !!(edev->ptp);
 	start.gro_enable = !edev->gro_disable;
 	start.mtu = edev->ndev->mtu;
 	start.vport_id = 0;
@@ -3701,6 +3740,8 @@ static void qede_unload(struct qede_dev *edev, enum qede_unload_mode mode,
 	qede_roce_dev_event_close(edev);
 	edev->state = QEDE_STATE_CLOSED;
 
+	qede_ptp_stop(edev);
+
 	/* Close OS Tx */
 	netif_tx_disable(edev->ndev);
 	netif_carrier_off(edev->ndev);
@@ -3801,6 +3842,8 @@ static int qede_load(struct qede_dev *edev, enum qede_load_mode mode,
 	edev->ops->common->get_link(edev->cdev, &link_output);
 	qede_roce_dev_event_open(edev);
 	qede_link_update(edev, &link_output);
+
+	qede_ptp_start(edev, (mode == QEDE_LOAD_NORMAL));
 
 	edev->state = QEDE_STATE_OPEN;
 
