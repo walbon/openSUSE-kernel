@@ -160,13 +160,13 @@ void hyperv_init(void)
 		clocksource_register_hz(&hyperv_cs_tsc, NSEC_PER_SEC/100);
 		return;
 	}
+register_msr_cs:
 #endif
 	/*
 	 * For 32 bit guests just use the MSR based mechanism for reading
 	 * the partition counter.
 	 */
 
-register_msr_cs:
 	hyperv_cs = &hyperv_cs_msr;
 	if (ms_hyperv.features & HV_X64_MSR_TIME_REF_COUNT_AVAILABLE)
 		clocksource_register_hz(&hyperv_cs_msr, NSEC_PER_SEC/100);
@@ -185,6 +185,10 @@ void hyperv_cleanup(void)
 	/* Reset the hypercall page */
 	hypercall_msr.as_uint64 = 0;
 	wrmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
+
+	/* Reset the TSC page */
+	hypercall_msr.as_uint64 = 0;
+	wrmsrl(HV_X64_MSR_REFERENCE_TSC, hypercall_msr.as_uint64);
 }
 EXPORT_SYMBOL_GPL(hyperv_cleanup);
 
