@@ -275,7 +275,8 @@ struct qede_rx_queue {
 	u16 sw_rx_cons;
 	u16 sw_rx_prod;
 
-	u16 num_rx_buffers; /* Slowpath */
+	u16 filled_buffers;
+	u8 data_direction;
 	u8 rxq_id;
 
 	u32 rx_buf_size;
@@ -286,6 +287,9 @@ struct qede_rx_queue {
 	struct sw_rx_data *sw_rx_ring;
 	struct qed_chain rx_bd_ring;
 	struct qed_chain rx_comp_ring ____cacheline_aligned;
+
+	/* Used once per each NAPI run */
+	u16 num_rx_buffers;
 
 	/* GRO */
 	struct qede_agg_info tpa_info[ETH_TPA_MAX_AGGS_NUM];
