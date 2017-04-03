@@ -1771,7 +1771,7 @@ static int qede_poll(struct napi_struct *napi, int budget)
 			qede_rx_int(fp, budget) : 0;
 	if (rx_work_done < budget) {
 		if (!qede_poll_is_more_work(fp)) {
-			napi_complete(napi);
+			napi_complete_done(napi, rx_work_done);
 
 			/* Update and reenable interrupts */
 			qed_sb_ack(fp->sb_info, IGU_INT_ENABLE, 1);
