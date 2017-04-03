@@ -2416,6 +2416,16 @@ static void qede_del_geneve_port(struct net_device *dev,
 	set_bit(QEDE_SP_GENEVE_PORT_CONFIG, &edev->sp_flags);
 	schedule_delayed_work(&edev->sp_task, 0);
 }
+
+static int qede_set_vf_trust(struct net_device *dev, int vfidx, bool setting)
+{
+	struct qede_dev *edev = netdev_priv(dev);
+
+	if (!edev->ops)
+		return -EINVAL;
+
+	return edev->ops->iov->set_trust(edev->cdev, vfidx, setting);
+}
 #endif
 
 /* 8B udp header + 8B base tunnel header + 32B option length */
@@ -2463,6 +2473,7 @@ static const struct net_device_ops qede_netdev_ops = {
 #ifdef CONFIG_QED_SRIOV
 	.ndo_set_vf_mac = qede_set_vf_mac,
 	.ndo_set_vf_vlan = qede_set_vf_vlan,
+	.ndo_set_vf_trust = qede_set_vf_trust,
 #endif
 	.ndo_vlan_rx_add_vid = qede_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid = qede_vlan_rx_kill_vid,
@@ -4056,11 +4067,13 @@ static void qede_config_rx_mode(struct net_device *ndev)
 		goto out;
 
 	/* Check for promiscuous */
-	if ((ndev->flags & IFF_PROMISC) ||
-	    (uc_count > edev->dev_info.num_mac_filters - 1)) {
+	if (ndev->flags & IFF_PROMISC)
 		accept_flags = QED_FILTER_RX_MODE_TYPE_PROMISC;
-	} else {
-		/* Add MAC filters according to the unicast secondary macs */
+	else
+		accept_flags = QED_FILTER_RX_MODE_TYPE_REGULAR;
+
+	/* Configure all filters regardless, in case promisc is rejected */
+	if (uc_count < edev->dev_info.num_mac_filters) {
 		int i;
 
 		temp = uc_macs;
@@ -4073,11 +4086,13 @@ static void qede_config_rx_mode(struct net_device *ndev)
 
 			temp += ETH_ALEN;
 		}
-
-		rc = qede_configure_mcast_filtering(ndev, &accept_flags);
-		if (rc)
-			goto out;
+	} else {
+		accept_flags = QED_FILTER_RX_MODE_TYPE_PROMISC;
 	}
+
+	rc = qede_configure_mcast_filtering(ndev, &accept_flags);
+	if (rc)
+		goto out;
 
 	/* take care of VLAN mode */
 	if (ndev->flags & IFF_PROMISC) {
