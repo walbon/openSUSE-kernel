@@ -137,8 +137,10 @@ struct hv_netvsc_packet {
 	u8 page_buf_cnt;
 
 	u16 q_idx;
-	u32 send_buf_index;
+	u16 total_packets;
 
+	u32 total_bytes;
+	u32 send_buf_index;
 	u32 total_data_buflen;
 };
 
@@ -697,8 +699,8 @@ struct net_device_context {
 	u32 msg_enable; /* debug level */
 
 	u32 tx_checksum_mask;
-	struct netvsc_stats __percpu *tx_stats;
-	struct netvsc_stats __percpu *rx_stats;
+
+	u32 tx_send_table[VRSS_SEND_TAB_SIZE];
 
 	/* Ethtool settings */
 	u8 duplex;
@@ -723,6 +725,9 @@ struct netvsc_channel {
 	struct multi_send_data msd;
 	struct multi_recv_comp mrc;
 	atomic_t queue_sends;
+
+	struct netvsc_stats tx_stats;
+	struct netvsc_stats rx_stats;
 };
 
 /* Per netvsc device */
@@ -754,7 +759,6 @@ struct netvsc_device {
 
 	struct nvsp_message revoke_packet;
 
-	u32 send_table[VRSS_SEND_TAB_SIZE];
 	u32 max_chn;
 	u32 num_chn;
 	spinlock_t sc_lock; /* Protects num_sc_offered variable */
