@@ -64,6 +64,7 @@
 #include <linux/random.h>
 #include <net/ip6_checksum.h>
 #include <linux/bitops.h>
+#include <linux/vmalloc.h>
 #include <linux/qed/qede_roce.h>
 #include "qede.h"
 
@@ -179,8 +180,12 @@ static int qede_sriov_configure(struct pci_dev *pdev, int num_vfs_param)
 {
 	struct qede_dev *edev = netdev_priv(pci_get_drvdata(pdev));
 	struct qed_dev_info *qed_info = &edev->dev_info.common;
+	struct qed_update_vport_params *vport_params;
 	int rc;
 
+	vport_params = vzalloc(sizeof(*vport_params));
+	if (!vport_params)
+		return -ENOMEM;
 	DP_VERBOSE(edev, QED_MSG_IOV, "Requested %d VFs\n", num_vfs_param);
 
 	rc = edev->ops->iov->configure(edev->cdev, num_vfs_param);
@@ -188,15 +193,13 @@ static int qede_sriov_configure(struct pci_dev *pdev, int num_vfs_param)
 	/* Enable/Disable Tx switching for PF */
 	if ((rc == num_vfs_param) && netif_running(edev->ndev) &&
 	    qed_info->mf_mode != QED_MF_NPAR && qed_info->tx_switching) {
-		struct qed_update_vport_params params;
-
-		memset(&params, 0, sizeof(params));
-		params.vport_id = 0;
-		params.update_tx_switching_flg = 1;
-		params.tx_switching_flg = num_vfs_param ? 1 : 0;
-		edev->ops->vport_update(edev->cdev, &params);
+		vport_params->vport_id = 0;
+		vport_params->update_tx_switching_flg = 1;
+		vport_params->tx_switching_flg = num_vfs_param ? 1 : 0;
+		edev->ops->vport_update(edev->cdev, vport_params);
 	}
 
+	vfree(vport_params);
 	return rc;
 }
 #endif
@@ -1801,6 +1804,60 @@ static int qede_set_mac_addr(struct net_device *ndev, void *p);
 static void qede_set_rx_mode(struct net_device *ndev);
 static void qede_config_rx_mode(struct net_device *ndev);
 
+void qede_fill_rss_params(struct qede_dev *edev,
+			  struct qed_update_vport_rss_params *rss, u8 *update)
+{
+	bool need_reset = false;
+	int i;
+
+	if (QEDE_RSS_COUNT(edev) <= 1) {
+		memset(rss, 0, sizeof(*rss));
+		*update = 0;
+		return;
+	}
+
+	/* Need to validate current RSS config uses valid entries */
+	for (i = 0; i < QED_RSS_IND_TABLE_SIZE; i++) {
+		if (edev->rss_ind_table[i] >= QEDE_RSS_COUNT(edev)) {
+			need_reset = true;
+			break;
+		}
+	}
+
+	if (!(edev->rss_params_inited & QEDE_RSS_INDIR_INITED) || need_reset) {
+		for (i = 0; i < QED_RSS_IND_TABLE_SIZE; i++) {
+			u16 indir_val, val;
+
+			val = QEDE_RSS_COUNT(edev);
+			indir_val = ethtool_rxfh_indir_default(i, val);
+			edev->rss_ind_table[i] = indir_val;
+		}
+		edev->rss_params_inited |= QEDE_RSS_INDIR_INITED;
+	}
+
+	/* Now that we have the queue-indirection, prepare the handles */
+	for (i = 0; i < QED_RSS_IND_TABLE_SIZE; i++) {
+		u16 idx = QEDE_RX_QUEUE_IDX(edev, edev->rss_ind_table[i]);
+
+		rss->rss_ind_table[i] = edev->fp_array[idx].rxq->handle;
+	}
+
+	if (!(edev->rss_params_inited & QEDE_RSS_KEY_INITED)) {
+		netdev_rss_key_fill(edev->rss_key, sizeof(edev->rss_key));
+		edev->rss_params_inited |= QEDE_RSS_KEY_INITED;
+	}
+	memcpy(rss->rss_key, edev->rss_key, sizeof(rss->rss_key));
+
+	if (!(edev->rss_params_inited & QEDE_RSS_CAPS_INITED)) {
+		edev->rss_caps = QED_RSS_IPV4 | QED_RSS_IPV6 |
+		    QED_RSS_IPV4_TCP | QED_RSS_IPV6_TCP;
+		edev->rss_params_inited |= QEDE_RSS_CAPS_INITED;
+	}
+	rss->rss_caps = edev->rss_caps;
+
+	*update = 1;
+}
+
 static int qede_set_ucast_rx_mac(struct qede_dev *edev,
 				 enum qed_filter_xcast_params_type opcode,
 				 unsigned char mac[ETH_ALEN])
@@ -1995,22 +2052,25 @@ static int qede_set_vf_link_state(struct net_device *dev, int vfidx,
 }
 #endif
 
-static void qede_config_accept_any_vlan(struct qede_dev *edev, bool action)
+static int qede_config_accept_any_vlan(struct qede_dev *edev, bool action)
 {
-	struct qed_update_vport_params params;
+	struct qed_update_vport_params *params;
 	int rc;
 
 	/* Proceed only if action actually needs to be performed */
 	if (edev->accept_any_vlan == action)
-		return;
+		return 0;
 
 	memset(&params, 0, sizeof(params));
+	params = vzalloc(sizeof(*params));
+	if (!params)
+		return -ENOMEM;
 
-	params.vport_id = 0;
-	params.accept_any_vlan = action;
-	params.update_accept_any_vlan_flg = 1;
+	params->vport_id = 0;
+	params->accept_any_vlan = action;
+	params->update_accept_any_vlan_flg = 1;
 
-	rc = edev->ops->vport_update(edev->cdev, &params);
+	rc = edev->ops->vport_update(edev->cdev, params);
 	if (rc) {
 		DP_ERR(edev, "Failed to %s accept-any-vlan\n",
 		       action ? "enable" : "disable");
@@ -2019,6 +2079,9 @@ static void qede_config_accept_any_vlan(struct qede_dev *edev, bool action)
 			action ? "enabled" : "disabled");
 		edev->accept_any_vlan = action;
 	}
+
+	vfree(params);
+	return 0;
 }
 
 static int qede_vlan_rx_add_vid(struct net_device *dev, __be16 proto, u16 vid)
@@ -2082,8 +2145,13 @@ static int qede_vlan_rx_add_vid(struct net_device *dev, __be16 proto, u16 vid)
 			edev->configured_vlans++;
 	} else {
 		/* Out of quota; Activate accept-any-VLAN mode */
-		if (!edev->non_configured_vlans)
-			qede_config_accept_any_vlan(edev, true);
+		if (!edev->non_configured_vlans) {
+			rc = qede_config_accept_any_vlan(edev, true);
+			if (rc) {
+				kfree(vlan);
+				goto out;
+			}
+		}
 
 		edev->non_configured_vlans++;
 	}
@@ -2158,9 +2226,12 @@ static int qede_configure_vlan_filters(struct qede_dev *edev)
 	 */
 
 	if (accept_any_vlan)
-		qede_config_accept_any_vlan(edev, true);
+		rc = qede_config_accept_any_vlan(edev, true);
 	else if (!edev->non_configured_vlans)
-		qede_config_accept_any_vlan(edev, false);
+		rc = qede_config_accept_any_vlan(edev, false);
+
+	if (rc && !real_rc)
+		real_rc = rc;
 
 	return real_rc;
 }
@@ -3370,19 +3441,24 @@ static int qede_stop_txq(struct qede_dev *edev,
 
 static int qede_stop_queues(struct qede_dev *edev)
 {
-	struct qed_update_vport_params vport_update_params;
+	struct qed_update_vport_params *vport_update_params;
 	struct qed_dev *cdev = edev->cdev;
 	struct qede_fastpath *fp;
 	int rc, i;
 
 	/* Disable the vport */
-	memset(&vport_update_params, 0, sizeof(vport_update_params));
-	vport_update_params.vport_id = 0;
-	vport_update_params.update_vport_active_flg = 1;
-	vport_update_params.vport_active_flg = 0;
-	vport_update_params.update_rss_flg = 0;
+	vport_update_params = vzalloc(sizeof(*vport_update_params));
+	if (!vport_update_params)
+		return -ENOMEM;
 
-	rc = edev->ops->vport_update(cdev, &vport_update_params);
+	vport_update_params->vport_id = 0;
+	vport_update_params->update_vport_active_flg = 1;
+	vport_update_params->vport_active_flg = 0;
+	vport_update_params->update_rss_flg = 0;
+
+	rc = edev->ops->vport_update(cdev, vport_update_params);
+	vfree(vport_update_params);
+
 	if (rc) {
 		DP_ERR(edev, "Failed to update vport\n");
 		return rc;
@@ -3472,11 +3548,10 @@ static int qede_start_queues(struct qede_dev *edev, bool clear_stats)
 {
 	int vlan_removal_en = 1;
 	struct qed_dev *cdev = edev->cdev;
-	struct qed_update_vport_params vport_update_params;
-	struct qed_queue_start_common_params q_params;
 	struct qed_dev_info *qed_info = &edev->dev_info.common;
+	struct qed_update_vport_params *vport_update_params;
+	struct qed_queue_start_common_params q_params;
 	struct qed_start_vport_params start = {0};
-	bool reset_rss_indir = false;
 	int rc, i;
 
 	if (!edev->num_queues) {
@@ -3484,6 +3559,10 @@ static int qede_start_queues(struct qede_dev *edev, bool clear_stats)
 		       "Cannot update V-VPORT as active as there are no Rx queues\n");
 		return -EINVAL;
 	}
+
+	vport_update_params = vzalloc(sizeof(*vport_update_params));
+	if (!vport_update_params)
+		return -ENOMEM;
 
 	start.gro_enable = !edev->gro_disable;
 	start.mtu = edev->ndev->mtu;
@@ -3496,7 +3575,7 @@ static int qede_start_queues(struct qede_dev *edev, bool clear_stats)
 
 	if (rc) {
 		DP_ERR(edev, "Start V-PORT failed %d\n", rc);
-		return rc;
+		goto out;
 	}
 
 	DP_VERBOSE(edev, NETIF_MSG_IFUP,
@@ -3532,7 +3611,7 @@ static int qede_start_queues(struct qede_dev *edev, bool clear_stats)
 			if (rc) {
 				DP_ERR(edev, "Start RXQ #%d failed %d\n", i,
 				       rc);
-				return rc;
+				goto out;
 			}
 
 			/* Use the return parameters */
@@ -3548,77 +3627,31 @@ static int qede_start_queues(struct qede_dev *edev, bool clear_stats)
 		if (fp->type & QEDE_FASTPATH_TX) {
 			rc = qede_start_txq(edev, fp, fp->txq, i, TX_PI(0));
 			if (rc)
-				return rc;
+				goto out;
 		}
 	}
 
 	/* Prepare and send the vport enable */
-	memset(&vport_update_params, 0, sizeof(vport_update_params));
-	vport_update_params.vport_id = start.vport_id;
-	vport_update_params.update_vport_active_flg = 1;
-	vport_update_params.vport_active_flg = 1;
+	vport_update_params->vport_id = start.vport_id;
+	vport_update_params->update_vport_active_flg = 1;
+	vport_update_params->vport_active_flg = 1;
 
 	if ((qed_info->mf_mode == QED_MF_NPAR || pci_num_vf(edev->pdev)) &&
 	    qed_info->tx_switching) {
-		vport_update_params.update_tx_switching_flg = 1;
-		vport_update_params.tx_switching_flg = 1;
+		vport_update_params->update_tx_switching_flg = 1;
+		vport_update_params->tx_switching_flg = 1;
 	}
 
-	/* Fill struct with RSS params */
-	if (QEDE_RSS_COUNT(edev) > 1) {
-		vport_update_params.update_rss_flg = 1;
+	qede_fill_rss_params(edev, &vport_update_params->rss_params,
+			     &vport_update_params->update_rss_flg);
 
-		/* Need to validate current RSS config uses valid entries */
-		for (i = 0; i < QED_RSS_IND_TABLE_SIZE; i++) {
-			if (edev->rss_params.rss_ind_table[i] >=
-			    QEDE_RSS_COUNT(edev)) {
-				reset_rss_indir = true;
-				break;
-			}
-		}
-
-		if (!(edev->rss_params_inited & QEDE_RSS_INDIR_INITED) ||
-		    reset_rss_indir) {
-			u16 val;
-
-			for (i = 0; i < QED_RSS_IND_TABLE_SIZE; i++) {
-				u16 indir_val;
-
-				val = QEDE_RSS_COUNT(edev);
-				indir_val = ethtool_rxfh_indir_default(i, val);
-				edev->rss_params.rss_ind_table[i] = indir_val;
-			}
-			edev->rss_params_inited |= QEDE_RSS_INDIR_INITED;
-		}
-
-		if (!(edev->rss_params_inited & QEDE_RSS_KEY_INITED)) {
-			netdev_rss_key_fill(edev->rss_params.rss_key,
-					    sizeof(edev->rss_params.rss_key));
-			edev->rss_params_inited |= QEDE_RSS_KEY_INITED;
-		}
-
-		if (!(edev->rss_params_inited & QEDE_RSS_CAPS_INITED)) {
-			edev->rss_params.rss_caps = QED_RSS_IPV4 |
-						    QED_RSS_IPV6 |
-						    QED_RSS_IPV4_TCP |
-						    QED_RSS_IPV6_TCP;
-			edev->rss_params_inited |= QEDE_RSS_CAPS_INITED;
-		}
-
-		memcpy(&vport_update_params.rss_params, &edev->rss_params,
-		       sizeof(vport_update_params.rss_params));
-	} else {
-		memset(&vport_update_params.rss_params, 0,
-		       sizeof(vport_update_params.rss_params));
-	}
-
-	rc = edev->ops->vport_update(cdev, &vport_update_params);
-	if (rc) {
+	rc = edev->ops->vport_update(cdev, vport_update_params);
+	if (rc)
 		DP_ERR(edev, "Update V-PORT failed %d\n", rc);
-		return rc;
-	}
 
-	return 0;
+out:
+	vfree(vport_update_params);
+	return rc;
 }
 
 static int qede_set_mcast_rx_mac(struct qede_dev *edev,
