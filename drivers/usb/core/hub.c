@@ -3710,7 +3710,7 @@ static int hub_set_address(struct usb_device *udev, int devnum)
  */
 static void hub_set_initial_usb2_lpm_policy(struct usb_device *udev)
 {
-	if (!udev->usb2_hw_lpm_capable)
+	if (!udev->usb2_hw_lpm_capable || !udev->bos)
 		return;
 
 	if ((udev->bos->ext_cap->bmAttributes & cpu_to_le32(USB_BESL_SUPPORT))) {
