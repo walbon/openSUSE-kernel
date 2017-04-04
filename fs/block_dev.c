@@ -871,6 +871,7 @@ static void init_once(void *foo)
 #ifdef CONFIG_SYSFS
 	INIT_LIST_HEAD(&bdev->bd_holder_disks);
 #endif
+	bdev->bd_bdi = &noop_backing_dev_info;
 	inode_init_once(&ei->vfs_inode);
 	/* Initialize mutex for freeze. */
 	mutex_init(&bdev->bd_fsfreeze_mutex);
@@ -896,8 +897,10 @@ static void bdev_evict_inode(struct inode *inode)
 	}
 	list_del_init(&bdev->bd_list);
 	spin_unlock(&bdev_lock);
-	if (bdev->bd_bdi != &noop_backing_dev_info)
+	if (bdev->bd_bdi != &noop_backing_dev_info) {
 		bdi_put(bdev->bd_bdi);
+		bdev->bd_bdi = &noop_backing_dev_info;
+	}
 }
 
 static const struct super_operations bdev_sops = {
@@ -913,7 +916,7 @@ static struct dentry *bd_mount(struct file_system_type *fs_type,
 {
 	struct dentry *dent;
 	dent = mount_pseudo(fs_type, "bdev:", &bdev_sops, NULL, BDEVFS_MAGIC);
-	if (dent)
+	if (!IS_ERR(dent))
 		dent->d_sb->s_iflags |= SB_I_CGROUPWB;
 	return dent;
 }
@@ -1000,7 +1003,6 @@ struct block_device *bdget(dev_t dev)
 		bdev->bd_contains = NULL;
 		bdev->bd_super = NULL;
 		bdev->bd_inode = inode;
-		bdev->bd_bdi = &noop_backing_dev_info;
 		bdev->bd_block_size = (1 << inode->i_blkbits);
 		bdev->bd_part_count = 0;
 		bdev->bd_invalidated = 0;
