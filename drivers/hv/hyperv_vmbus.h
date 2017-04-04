@@ -29,6 +29,7 @@
 #include <asm/sync_bitops.h>
 #include <linux/atomic.h>
 #include <linux/hyperv.h>
+#include <linux/interrupt.h>
 
 /*
  * Timeout for services such as KVP and fcopy.
@@ -40,66 +41,9 @@
  */
 #define HV_UTIL_NEGO_TIMEOUT 55
 
-
-/* Define version of the synthetic interrupt controller. */
-#define HV_SYNIC_VERSION		(1)
-
-#define HV_ANY_VP			(0xFFFFFFFF)
-
 /* Define synthetic interrupt controller flag constants. */
 #define HV_EVENT_FLAGS_COUNT		(256 * 8)
-#define HV_EVENT_FLAGS_BYTE_COUNT	(256)
-#define HV_EVENT_FLAGS_DWORD_COUNT	(256 / sizeof(u32))
-
-/* Define invalid partition identifier. */
-#define HV_PARTITION_ID_INVALID		((u64)0x0)
-
-/* Define port type. */
-enum hv_port_type {
-	HVPORT_MSG	= 1,
-	HVPORT_EVENT		= 2,
-	HVPORT_MONITOR	= 3
-};
-
-/* Define port information structure. */
-struct hv_port_info {
-	enum hv_port_type port_type;
-	u32 padding;
-	union {
-		struct {
-			u32 target_sint;
-			u32 target_vp;
-			u64 rsvdz;
-		} message_port_info;
-		struct {
-			u32 target_sint;
-			u32 target_vp;
-			u16 base_flag_number;
-			u16 flag_count;
-			u32 rsvdz;
-		} event_port_info;
-		struct {
-			u64 monitor_address;
-			u64 rsvdz;
-		} monitor_port_info;
-	};
-};
-
-struct hv_connection_info {
-	enum hv_port_type port_type;
-	u32 padding;
-	union {
-		struct {
-			u64 rsvdz;
-		} message_connection_info;
-		struct {
-			u64 rsvdz;
-		} event_connection_info;
-		struct {
-			u64 monitor_address;
-		} monitor_connection_info;
-	};
-};
+#define HV_EVENT_FLAGS_LONG_COUNT	(256 / sizeof(unsigned long))
 
 /*
  * Timer configuration register.
@@ -117,18 +61,10 @@ union hv_timer_config {
 	};
 };
 
-/* Define the number of message buffers associated with each port. */
-#define HV_PORT_MESSAGE_BUFFER_COUNT	(16)
 
 /* Define the synthetic interrupt controller event flags format. */
 union hv_synic_event_flags {
-	u8 flags8[HV_EVENT_FLAGS_BYTE_COUNT];
-	u32 flags32[HV_EVENT_FLAGS_DWORD_COUNT];
-};
-
-/* Define the synthetic interrupt flags page layout. */
-struct hv_synic_event_flags_page {
-	union hv_synic_event_flags sintevent_flags[HV_SYNIC_SINT_COUNT];
+	unsigned long flags[HV_EVENT_FLAGS_LONG_COUNT];
 };
 
 /* Define SynIC control register. */
@@ -232,6 +168,8 @@ struct hv_monitor_page {
 	u8 rsvdz4[1984];
 };
 
+#define HV_HYPERCALL_PARAM_ALIGN	sizeof(u64)
+
 /* Definition of the hv_post_message hypercall input structure. */
 struct hv_input_post_message {
 	union hv_connection_id connectionid;
@@ -241,41 +179,6 @@ struct hv_input_post_message {
 	u64 payload[HV_MESSAGE_PAYLOAD_QWORD_COUNT];
 };
 
-/*
- * Versioning definitions used for guests reporting themselves to the
- * hypervisor, and visa versa.
- */
-
-/* Version info reported by guest OS's */
-enum hv_guest_os_vendor {
-	HVGUESTOS_VENDOR_MICROSOFT	= 0x0001
-};
-
-enum hv_guest_os_microsoft_ids {
-	HVGUESTOS_MICROSOFT_UNDEFINED	= 0x00,
-	HVGUESTOS_MICROSOFT_MSDOS		= 0x01,
-	HVGUESTOS_MICROSOFT_WINDOWS3X	= 0x02,
-	HVGUESTOS_MICROSOFT_WINDOWS9X	= 0x03,
-	HVGUESTOS_MICROSOFT_WINDOWSNT	= 0x04,
-	HVGUESTOS_MICROSOFT_WINDOWSCE	= 0x05
-};
-
-/*
- * Declare the MSR used to identify the guest OS.
- */
-#define HV_X64_MSR_GUEST_OS_ID	0x40000000
-
-union hv_x64_msr_guest_os_id_contents {
-	u64 as_uint64;
-	struct {
-		u64 build_number:16;
-		u64 service_version:8; /* Service Pack, etc. */
-		u64 minor_version:8;
-		u64 major_version:8;
-		u64 os_id:8; /* enum hv_guest_os_microsoft_ids (if Vendor=MS) */
-		u64 vendor_id:16; /* enum hv_guest_os_vendor */
-	};
-};
 
 enum {
 	VMBUS_MESSAGE_CONNECTION_ID	= 1,
@@ -287,54 +190,31 @@ enum {
 	VMBUS_MESSAGE_SINT		= 2,
 };
 
-/* #defines */
+/*
+ * Per cpu state for channel handling
+ */
+struct hv_per_cpu_context {
+	void *synic_message_page;
+	void *synic_event_page;
+	/*
+	 * buffer to post messages to the host.
+	 */
+	void *post_msg_page;
 
-#define HV_PRESENT_BIT			0x80000000
+	/*
+	 * Starting with win8, we can take channel interrupts on any CPU;
+	 * we will manage the tasklet that handles events messages on a per CPU
+	 * basis.
+	 */
+	struct tasklet_struct msg_dpc;
 
-
-#define HV_CPU_POWER_MANAGEMENT		(1 << 0)
-#define HV_RECOMMENDATIONS_MAX		4
-
-#define HV_X64_MAX			5
-#define HV_CAPS_MAX			8
-
-
-#define HV_HYPERCALL_PARAM_ALIGN	sizeof(u64)
-
-
-/* Service definitions */
-
-#define HV_SERVICE_PARENT_PORT				(0)
-#define HV_SERVICE_PARENT_CONNECTION			(0)
-
-#define HV_SERVICE_CONNECT_RESPONSE_SUCCESS		(0)
-#define HV_SERVICE_CONNECT_RESPONSE_INVALID_PARAMETER	(1)
-#define HV_SERVICE_CONNECT_RESPONSE_UNKNOWN_SERVICE	(2)
-#define HV_SERVICE_CONNECT_RESPONSE_CONNECTION_REJECTED	(3)
-
-#define HV_SERVICE_CONNECT_REQUEST_MESSAGE_ID		(1)
-#define HV_SERVICE_CONNECT_RESPONSE_MESSAGE_ID		(2)
-#define HV_SERVICE_DISCONNECT_REQUEST_MESSAGE_ID	(3)
-#define HV_SERVICE_DISCONNECT_RESPONSE_MESSAGE_ID	(4)
-#define HV_SERVICE_MAX_MESSAGE_ID				(4)
-
-#define HV_SERVICE_PROTOCOL_VERSION (0x0010)
-#define HV_CONNECT_PAYLOAD_BYTE_COUNT 64
-
-/* #define VMBUS_REVISION_NUMBER	6 */
-
-/* Our local vmbus's port and connection id. Anything >0 is fine */
-/* #define VMBUS_PORT_ID		11 */
-
-/* 628180B8-308D-4c5e-B7DB-1BEB62E62EF4 */
-static const uuid_le VMBUS_SERVICE_ID = {
-	.b = {
-		0xb8, 0x80, 0x81, 0x62, 0x8d, 0x30, 0x5e, 0x4c,
-		0xb7, 0xdb, 0x1b, 0xeb, 0x62, 0xe6, 0x2e, 0xf4
-	},
+	/*
+	 * To optimize the mapping of relid to channel, maintain
+	 * per-cpu list of the channels based on their CPU affinity.
+	 */
+	struct list_head chan_list;
+	struct clock_event_device *clk_evt;
 };
-
-
 
 struct hv_context {
 	/* We only support running on top of Hyper-V
@@ -346,8 +226,8 @@ struct hv_context {
 
 	bool synic_initialized;
 
-	void *synic_message_page[NR_CPUS];
-	void *synic_event_page[NR_CPUS];
+	struct hv_per_cpu_context __percpu *cpu_context;
+
 	/*
 	 * Hypervisor's notion of virtual processor ID is different from
 	 * Linux' notion of CPU ID. This information can only be retrieved
@@ -358,26 +238,7 @@ struct hv_context {
 	 * Linux cpuid 'a'.
 	 */
 	u32 vp_index[NR_CPUS];
-	/*
-	 * Starting with win8, we can take channel interrupts on any CPU;
-	 * we will manage the tasklet that handles events messages on a per CPU
-	 * basis.
-	 */
-	struct tasklet_struct *event_dpc[NR_CPUS];
-	struct tasklet_struct *msg_dpc[NR_CPUS];
-	/*
-	 * To optimize the mapping of relid to channel, maintain
-	 * per-cpu list of the channels based on their CPU affinity.
-	 */
-	struct list_head percpu_list[NR_CPUS];
-	/*
-	 * buffer to post messages to the host.
-	 */
-	void *post_msg_page[NR_CPUS];
-	/*
-	 * Support PV clockevent device.
-	 */
-	struct clock_event_device *clk_evt[NR_CPUS];
+
 	/*
 	 * To manage allocations in a NUMA node.
 	 * Array indexed by numa node ID.
@@ -398,8 +259,6 @@ struct hv_ring_buffer_debug_info {
 /* Hv Interface */
 
 extern int hv_init(void);
-
-extern void hv_cleanup(bool crash);
 
 extern int hv_post_message(union hv_connection_id connection_id,
 			 enum hv_message_type message_type,
@@ -424,20 +283,14 @@ int hv_ringbuffer_init(struct hv_ring_buffer_info *ring_info,
 void hv_ringbuffer_cleanup(struct hv_ring_buffer_info *ring_info);
 
 int hv_ringbuffer_write(struct vmbus_channel *channel,
-		    struct kvec *kv_list,
-		    u32 kv_count, bool lock,
-		    bool kick_q);
+			const struct kvec *kv_list, u32 kv_count);
 
 int hv_ringbuffer_read(struct vmbus_channel *channel,
 		       void *buffer, u32 buflen, u32 *buffer_actual_len,
 		       u64 *requestid, bool raw);
 
-void hv_ringbuffer_get_debuginfo(struct hv_ring_buffer_info *ring_info,
-			    struct hv_ring_buffer_debug_info *debug_info);
-
-void hv_begin_read(struct hv_ring_buffer_info *rbi);
-
-u32 hv_end_read(struct hv_ring_buffer_info *rbi);
+void hv_ringbuffer_get_debuginfo(const struct hv_ring_buffer_info *ring_info,
+				 struct hv_ring_buffer_debug_info *debug_info);
 
 /*
  * Maximum channels is determined by the size of the interrupt page
@@ -504,6 +357,11 @@ struct vmbus_msginfo {
 
 extern struct vmbus_connection vmbus_connection;
 
+static inline void vmbus_send_interrupt(u32 relid)
+{
+	sync_set_bit(relid, vmbus_connection.send_int_page);
+}
+
 enum vmbus_message_handler_type {
 	/* The related handler can sleep. */
 	VMHT_BLOCKING = 0,
@@ -530,10 +388,6 @@ struct hv_device *vmbus_device_create(const uuid_le *type,
 
 int vmbus_device_register(struct hv_device *child_device_obj);
 void vmbus_device_unregister(struct hv_device *device_obj);
-
-/* static void */
-/* VmbusChildDeviceDestroy( */
-/* struct hv_device *); */
 
 struct vmbus_channel *relid2channel(u32 relid);
 

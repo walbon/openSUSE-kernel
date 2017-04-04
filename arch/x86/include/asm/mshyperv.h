@@ -3,6 +3,7 @@
 
 #include <linux/types.h>
 #include <linux/interrupt.h>
+#include <linux/clocksource.h>
 #include <asm/hyperv.h>
 
 /*
@@ -80,7 +81,7 @@ struct ms_hyperv_tsc_page {
  *
  */
 
-#define HV_LINUX_VENDOR_ID              0x8800
+#define HV_LINUX_VENDOR_ID              0x8100
 
 /*
  * Generate the guest ID based on the guideline described above.
@@ -91,7 +92,7 @@ static inline  __u64 generate_guest_id(__u64 d_info1, __u64 kernel_version,
 {
 	__u64 guest_id = 0;
 
-	guest_id = (((__u64)HV_LINUX_VENDOR_ID) << 56);
+	guest_id = (((__u64)HV_LINUX_VENDOR_ID) << 48);
 	guest_id |= (d_info1 << 48);
 	guest_id |= (kernel_version << 16);
 	guest_id |= d_info2;
@@ -146,6 +147,14 @@ static inline void vmbus_signal_eom(struct hv_message *msg, u32 old_msg_type)
 #define hv_get_siefp(val) rdmsrl(HV_X64_MSR_SIEFP, val)
 #define hv_set_siefp(val) wrmsrl(HV_X64_MSR_SIEFP, val)
 
+#define hv_get_synic_state(val) rdmsrl(HV_X64_MSR_SCONTROL, val)
+#define hv_set_synic_state(val) wrmsrl(HV_X64_MSR_SCONTROL, val)
+
+#define hv_get_vp_index(index) rdmsrl(HV_X64_MSR_VP_INDEX, index)
+
+#define hv_get_synint_state(int_num, val) rdmsrl(int_num, val)
+#define hv_set_synint_state(int_num, val) wrmsrl(int_num, val)
+
 void hyperv_callback_vector(void);
 #ifdef CONFIG_TRACING
 #define trace_hyperv_callback_vector hyperv_callback_vector
@@ -160,8 +169,11 @@ void hv_setup_crash_handler(void (*handler)(struct pt_regs *regs));
 void hv_remove_crash_handler(void);
 
 #if IS_ENABLED(CONFIG_HYPERV)
+extern struct clocksource *hyperv_cs;
+
 void hyperv_init(void);
 void hyperv_report_panic(struct pt_regs *regs);
 bool hv_is_hypercall_page_setup(void);
+void hyperv_cleanup(void);
 #endif
 #endif

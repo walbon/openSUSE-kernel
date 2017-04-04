@@ -730,7 +730,7 @@ static int msix_setup_entries(struct pci_dev *dev, void __iomem *base,
 	ret = 0;
 out:
 	kfree(masks);
-	return 0;
+	return ret;
 }
 
 static void msix_program_entries(struct pci_dev *dev,
@@ -1205,6 +1205,16 @@ int pci_alloc_irq_vectors_affinity(struct pci_dev *dev, unsigned int min_vecs,
 	if (flags & PCI_IRQ_AFFINITY) {
 		if (!affd)
 			affd = &msi_default_affd;
+
+		if (affd->pre_vectors + affd->post_vectors > min_vecs)
+			return -EINVAL;
+
+		/*
+		 * If there aren't any vectors left after applying the pre/post
+		 * vectors don't bother with assigning affinity.
+		 */
+		if (affd->pre_vectors + affd->post_vectors == min_vecs)
+			affd = NULL;
 	} else {
 		if (WARN_ON(affd))
 			affd = NULL;
@@ -1298,7 +1308,8 @@ const struct cpumask *pci_irq_get_affinity(struct pci_dev *dev, int nr)
 	} else if (dev->msi_enabled) {
 		struct msi_desc *entry = first_pci_msi_entry(dev);
 
-		if (WARN_ON_ONCE(!entry || nr >= entry->nvec_used))
+		if (WARN_ON_ONCE(!entry || !entry->affinity ||
+				 nr >= entry->nvec_used))
 			return NULL;
 
 		return &entry->affinity[nr];

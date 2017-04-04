@@ -366,6 +366,7 @@ static struct srp_fr_pool *srp_create_fr_pool(struct ib_device *device,
 	struct srp_fr_desc *d;
 	struct ib_mr *mr;
 	int i, ret = -EINVAL;
+	enum ib_mr_type mr_type;
 
 	if (pool_size <= 0)
 		goto err;
@@ -379,9 +380,13 @@ static struct srp_fr_pool *srp_create_fr_pool(struct ib_device *device,
 	spin_lock_init(&pool->lock);
 	INIT_LIST_HEAD(&pool->free_list);
 
+	if (device->attrs.device_cap_flags & IB_DEVICE_SG_GAPS_REG)
+		mr_type = IB_MR_TYPE_SG_GAPS;
+	else
+		mr_type = IB_MR_TYPE_MEM_REG;
+
 	for (i = 0, d = &pool->desc[0]; i < pool->size; i++, d++) {
-		mr = ib_alloc_mr(pd, IB_MR_TYPE_MEM_REG,
-				 max_page_list_len);
+		mr = ib_alloc_mr(pd, mr_type, max_page_list_len);
 		if (IS_ERR(mr)) {
 			ret = PTR_ERR(mr);
 			goto destroy_pool;
@@ -1459,7 +1464,6 @@ static int srp_map_sg_fr(struct srp_map_state *state, struct srp_rdma_ch *ch,
 {
 	unsigned int sg_offset = 0;
 
-	state->desc = req->indirect_desc;
 	state->fr.next = req->fr_list;
 	state->fr.end = req->fr_list + ch->target->mr_per_cmd;
 	state->sg = scat;
@@ -1491,7 +1495,6 @@ static int srp_map_sg_dma(struct srp_map_state *state, struct srp_rdma_ch *ch,
 	struct scatterlist *sg;
 	int i;
 
-	state->desc = req->indirect_desc;
 	for_each_sg(scat, sg, count, i) {
 		srp_map_desc(state, ib_sg_dma_address(dev->dev, sg),
 			     ib_sg_dma_len(dev->dev, sg),
@@ -1658,6 +1661,7 @@ static int srp_map_data(struct scsi_cmnd *scmnd, struct srp_rdma_ch *ch,
 				   target->indirect_size, DMA_TO_DEVICE);
 
 	memset(&state, 0, sizeof(state));
+	state.desc = req->indirect_desc;
 	if (dev->use_fast_reg)
 		ret = srp_map_sg_fr(&state, ch, req, scat, count);
 	else if (dev->use_fmr)
@@ -2661,9 +2665,8 @@ static int srp_slave_alloc(struct scsi_device *sdev)
 	struct Scsi_Host *shost = sdev->host;
 	struct srp_target_port *target = host_to_target(shost);
 	struct srp_device *srp_dev = target->srp_host->srp_dev;
-	struct ib_device *ibdev = srp_dev->dev;
 
-	if (!(ibdev->attrs.device_cap_flags & IB_DEVICE_SG_GAPS_REG))
+	if (true)
 		blk_queue_virt_boundary(sdev->request_queue,
 					~srp_dev->mr_page_mask);
 
