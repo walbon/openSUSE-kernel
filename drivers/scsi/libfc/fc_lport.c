@@ -200,7 +200,7 @@ static void fc_lport_rport_callback(struct fc_lport *lport,
 				     "in the DNS or FDMI state, it's in the "
 				     "%d state", rdata->ids.port_id,
 				     lport->state);
-			lport->tt.rport_logoff(rdata);
+			fc_rport_logoff(rdata);
 		}
 		break;
 	case RPORT_EV_LOGO:
@@ -246,17 +246,17 @@ static void fc_lport_ptp_setup(struct fc_lport *lport,
 			       u64 remote_wwnn)
 {
 	if (lport->ptp_rdata) {
-		lport->tt.rport_logoff(lport->ptp_rdata);
-		kref_put(&lport->ptp_rdata->kref, lport->tt.rport_destroy);
+		fc_rport_logoff(lport->ptp_rdata);
+		kref_put(&lport->ptp_rdata->kref, fc_rport_destroy);
 	}
 	mutex_lock(&lport->disc.disc_mutex);
-	lport->ptp_rdata = lport->tt.rport_create(lport, remote_fid);
+	lport->ptp_rdata = fc_rport_create(lport, remote_fid);
 	kref_get(&lport->ptp_rdata->kref);
 	lport->ptp_rdata->ids.port_name = remote_wwpn;
 	lport->ptp_rdata->ids.node_name = remote_wwnn;
 	mutex_unlock(&lport->disc.disc_mutex);
 
-	lport->tt.rport_login(lport->ptp_rdata);
+	fc_rport_login(lport->ptp_rdata);
 
 	fc_lport_enter_ready(lport);
 }
@@ -415,7 +415,7 @@ static void fc_lport_recv_rlir_req(struct fc_lport *lport, struct fc_frame *fp)
 	FC_LPORT_DBG(lport, "Received RLIR request while in state %s\n",
 		     fc_lport_state(lport));
 
-	lport->tt.seq_els_rsp_send(fp, ELS_LS_ACC, NULL);
+	fc_seq_els_rsp_send(fp, ELS_LS_ACC, NULL);
 	fc_frame_free(fp);
 }
 
@@ -484,7 +484,7 @@ static void fc_lport_recv_rnid_req(struct fc_lport *lport,
 	if (!req) {
 		rjt_data.reason = ELS_RJT_LOGIC;
 		rjt_data.explan = ELS_EXPL_NONE;
-		lport->tt.seq_els_rsp_send(in_fp, ELS_LS_RJT, &rjt_data);
+		fc_seq_els_rsp_send(in_fp, ELS_LS_RJT, &rjt_data);
 	} else {
 		fmt = req->rnid_fmt;
 		len = sizeof(*rp);
@@ -524,7 +524,7 @@ static void fc_lport_recv_rnid_req(struct fc_lport *lport,
  */
 static void fc_lport_recv_logo_req(struct fc_lport *lport, struct fc_frame *fp)
 {
-	lport->tt.seq_els_rsp_send(fp, ELS_LS_ACC, NULL);
+	fc_seq_els_rsp_send(fp, ELS_LS_ACC, NULL);
 	fc_lport_enter_reset(lport);
 	fc_frame_free(fp);
 }
@@ -626,9 +626,9 @@ int fc_fabric_logoff(struct fc_lport *lport)
 	lport->tt.disc_stop_final(lport);
 	mutex_lock(&lport->lp_mutex);
 	if (lport->dns_rdata)
-		lport->tt.rport_logoff(lport->dns_rdata);
+		fc_rport_logoff(lport->dns_rdata);
 	mutex_unlock(&lport->lp_mutex);
-	lport->tt.rport_flush_queue();
+	fc_rport_flush_queue();
 	mutex_lock(&lport->lp_mutex);
 	fc_lport_enter_logo(lport);
 	mutex_unlock(&lport->lp_mutex);
@@ -905,7 +905,7 @@ static void fc_lport_recv_els_req(struct fc_lport *lport,
 		/*
 		 * Check opcode.
 		 */
-		recv = lport->tt.rport_recv_req;
+		recv = fc_rport_recv_req;
 		switch (fc_frame_payload_op(fp)) {
 		case ELS_FLOGI:
 			if (!lport->point_to_multipoint)
@@ -947,15 +947,14 @@ struct fc4_prov fc_lport_els_prov = {
 };
 
 /**
- * fc_lport_recv_req() - The generic lport request handler
+ * fc_lport_recv() - The generic lport request handler
  * @lport: The lport that received the request
  * @fp: The frame the request is in
  *
  * Locking Note: This function should not be called with the lport
  *		 lock held because it may grab the lock.
  */
-static void fc_lport_recv_req(struct fc_lport *lport,
-			      struct fc_frame *fp)
+void fc_lport_recv(struct fc_lport *lport, struct fc_frame *fp)
 {
 	struct fc_frame_header *fh = fc_frame_header_get(fp);
 	struct fc_seq *sp = fr_seq(fp);
@@ -984,8 +983,9 @@ drop:
 	FC_LPORT_DBG(lport, "dropping unexpected frame type %x\n", fh->fh_type);
 	fc_frame_free(fp);
 	if (sp)
-		lport->tt.exch_done(sp);
+		fc_exch_done(sp);
 }
+EXPORT_SYMBOL(fc_lport_recv);
 
 /**
  * fc_lport_reset() - Reset a local port
@@ -1013,12 +1013,14 @@ EXPORT_SYMBOL(fc_lport_reset);
  */
 static void fc_lport_reset_locked(struct fc_lport *lport)
 {
-	if (lport->dns_rdata)
-		lport->tt.rport_logoff(lport->dns_rdata);
+	if (lport->dns_rdata) {
+		fc_rport_logoff(lport->dns_rdata);
+		lport->dns_rdata = NULL;
+	}
 
 	if (lport->ptp_rdata) {
-		lport->tt.rport_logoff(lport->ptp_rdata);
-		kref_put(&lport->ptp_rdata->kref, lport->tt.rport_destroy);
+		fc_rport_logoff(lport->ptp_rdata);
+		kref_put(&lport->ptp_rdata->kref, fc_rport_destroy);
 		lport->ptp_rdata = NULL;
 	}
 
@@ -1432,13 +1434,13 @@ static void fc_lport_enter_dns(struct fc_lport *lport)
 	fc_lport_state_enter(lport, LPORT_ST_DNS);
 
 	mutex_lock(&lport->disc.disc_mutex);
-	rdata = lport->tt.rport_create(lport, FC_FID_DIR_SERV);
+	rdata = fc_rport_create(lport, FC_FID_DIR_SERV);
 	mutex_unlock(&lport->disc.disc_mutex);
 	if (!rdata)
 		goto err;
 
 	rdata->ops = &fc_lport_rport_ops;
-	lport->tt.rport_login(rdata);
+	fc_rport_login(rdata);
 	return;
 
 err:
@@ -1549,13 +1551,13 @@ static void fc_lport_enter_fdmi(struct fc_lport *lport)
 	fc_lport_state_enter(lport, LPORT_ST_FDMI);
 
 	mutex_lock(&lport->disc.disc_mutex);
-	rdata = lport->tt.rport_create(lport, FC_FID_MGMT_SERV);
+	rdata = fc_rport_create(lport, FC_FID_MGMT_SERV);
 	mutex_unlock(&lport->disc.disc_mutex);
 	if (!rdata)
 		goto err;
 
 	rdata->ops = &fc_lport_rport_ops;
-	lport->tt.rport_login(rdata);
+	fc_rport_login(rdata);
 	return;
 
 err:
@@ -1866,12 +1868,6 @@ EXPORT_SYMBOL(fc_lport_config);
  */
 int fc_lport_init(struct fc_lport *lport)
 {
-	if (!lport->tt.lport_recv)
-		lport->tt.lport_recv = fc_lport_recv_req;
-
-	if (!lport->tt.lport_reset)
-		lport->tt.lport_reset = fc_lport_reset;
-
 	fc_host_port_type(lport->host) = FC_PORTTYPE_NPORT;
 	fc_host_node_name(lport->host) = lport->wwnn;
 	fc_host_port_name(lport->host) = lport->wwpn;
@@ -2013,8 +2009,8 @@ static int fc_lport_els_request(struct fc_bsg_job *job,
 	info->nents = job->reply_payload.sg_cnt;
 	info->sg = job->reply_payload.sg_list;
 
-	if (!lport->tt.exch_seq_send(lport, fp, fc_lport_bsg_resp,
-				     NULL, info, tov)) {
+	if (!fc_exch_seq_send(lport, fp, fc_lport_bsg_resp,
+			      NULL, info, tov)) {
 		kfree(info);
 		return -ECOMM;
 	}
@@ -2074,8 +2070,8 @@ static int fc_lport_ct_request(struct fc_bsg_job *job,
 	info->nents = job->reply_payload.sg_cnt;
 	info->sg = job->reply_payload.sg_list;
 
-	if (!lport->tt.exch_seq_send(lport, fp, fc_lport_bsg_resp,
-				     NULL, info, tov)) {
+	if (!fc_exch_seq_send(lport, fp, fc_lport_bsg_resp,
+			      NULL, info, tov)) {
 		kfree(info);
 		return -ECOMM;
 	}
@@ -2132,11 +2128,11 @@ int fc_lport_bsg_request(struct fc_bsg_job *job)
 				break;
 			tov = rdata->e_d_tov;
 		} else {
-			rdata = lport->tt.rport_lookup(lport, did);
+			rdata = fc_rport_lookup(lport, did);
 			if (!rdata)
 				break;
 			tov = rdata->e_d_tov;
-			kref_put(&rdata->kref, lport->tt.rport_destroy);
+			kref_put(&rdata->kref, fc_rport_destroy);
 		}
 
 		rc = fc_lport_ct_request(job, lport, did, tov);
