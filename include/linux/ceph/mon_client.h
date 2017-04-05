@@ -77,7 +77,6 @@ struct ceph_mon_client {
 
 	/* pending generic requests */
 	struct rb_root generic_request_tree;
-	int num_generic_requests;
 	u64 last_tid;
 
 	/* subs, indexed with CEPH_SUB_* */
@@ -86,6 +85,7 @@ struct ceph_mon_client {
 		bool want;
 		u32 have; /* epoch */
 	} subs[3];
+	int fs_cluster_id; /* "mdsmap.<id>" sub */
 
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *debugfs_file;
@@ -116,6 +116,7 @@ extern const char *ceph_sub_str[];
 bool ceph_monc_want_map(struct ceph_mon_client *monc, int sub, u32 epoch,
 			bool continuous);
 void ceph_monc_got_map(struct ceph_mon_client *monc, int sub, u32 epoch);
+void ceph_monc_renew_subs(struct ceph_mon_client *monc);
 
 extern void ceph_monc_request_next_osdmap(struct ceph_mon_client *monc);
 extern int ceph_monc_wait_osdmap(struct ceph_mon_client *monc, u32 epoch,
