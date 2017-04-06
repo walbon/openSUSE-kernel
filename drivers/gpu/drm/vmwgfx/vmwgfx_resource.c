@@ -1301,10 +1301,8 @@ int vmw_surface_define_ioctl(struct drm_device *dev, void *data,
 
 	num_sizes = 0;
 	for (i = 0; i < DRM_VMW_MAX_SURFACE_FACES; ++i) {
-		if (req->mip_levels[i] > DRM_VMW_MAX_MIP_LEVELS) {
-			ret = -EINVAL;
-			goto out_err0;
-		}
+		if (req->mip_levels[i] > DRM_VMW_MAX_MIP_LEVELS)
+			return -EINVAL;
 		num_sizes += req->mip_levels[i];
 	}
 
