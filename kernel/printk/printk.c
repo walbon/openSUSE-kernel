@@ -49,7 +49,7 @@
 #include <linux/kthread.h>
 #include <linux/sched/rt.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/printk.h>

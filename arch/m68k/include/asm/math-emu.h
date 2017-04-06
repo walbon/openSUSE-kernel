@@ -190,7 +190,7 @@ extern unsigned int fp_debugprint;
 /* These macros are used to read from/write to user space
  * on error we jump to the fixup section, load the fault
  * address into %a0 and jump to the exit.
- * (derived from <asm/uaccess.h>)
+ * (derived from <linux/uaccess.h>)
  */
 .macro	getuser	size,src,dest,label,addr
 |	printf	,"[\size<%08x]",1,\addr

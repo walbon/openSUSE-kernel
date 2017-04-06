@@ -29,7 +29,7 @@
  *
  * http://oss.sgi.com/projects/GenInfo/SGIGPLNoticeExplan/
  */
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include "dmapi.h"
 #include "dmapi_kern.h"
 #include "dmapi_private.h"

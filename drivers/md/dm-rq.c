@@ -23,11 +23,7 @@ static unsigned dm_mq_queue_depth = DM_MQ_QUEUE_DEPTH;
 #define RESERVED_REQUEST_BASED_IOS	256
 static unsigned reserved_rq_based_ios = RESERVED_REQUEST_BASED_IOS;
 
-#ifdef CONFIG_DM_MQ_DEFAULT
-static bool use_blk_mq = true;
-#else
-static bool use_blk_mq = false;
-#endif
+static bool use_blk_mq = IS_ENABLED(CONFIG_DM_MQ_DEFAULT);
 
 bool dm_use_blk_mq_default(void)
 {
@@ -210,6 +206,9 @@ static void rq_end_stats(struct mapped_device *md, struct request *orig)
  */
 static void rq_completed(struct mapped_device *md, int rw, bool run_queue)
 {
+	struct request_queue *q = md->queue;
+	unsigned long flags;
+
 	atomic_dec(&md->pending[rw]);
 
 	/* nudge anyone waiting on suspend queue */
@@ -222,8 +221,11 @@ static void rq_completed(struct mapped_device *md, int rw, bool run_queue)
 	 * back into ->request_fn() could deadlock attempting to grab the
 	 * queue lock again.
 	 */
-	if (!md->queue->mq_ops && run_queue)
-		blk_run_queue_async(md->queue);
+	if (!q->mq_ops && run_queue) {
+		spin_lock_irqsave(q->queue_lock, flags);
+		blk_run_queue_async(q);
+		spin_unlock_irqrestore(q->queue_lock, flags);
+	}
 
 	/*
 	 * dm_put() must be at the end of this function. See the comment above
@@ -267,19 +269,6 @@ static void dm_end_request(struct request *clone, int error)
 	struct dm_rq_target_io *tio = clone->end_io_data;
 	struct mapped_device *md = tio->md;
 	struct request *rq = tio->orig;
-
-	if (rq->cmd_type == REQ_TYPE_BLOCK_PC) {
-		rq->errors = clone->errors;
-		rq->resid_len = clone->resid_len;
-
-		if (rq->sense)
-			/*
-			 * We are using the sense buffer of the original
-			 * request.
-			 * So setting the length of the sense data is enough.
-			 */
-			rq->sense_len = clone->sense_len;
-	}
 
 	free_rq_clone(clone);
 	rq_end_stats(md, rq);
@@ -509,9 +498,6 @@ static int setup_clone(struct request *clone, struct request *rq,
 	if (r)
 		return r;
 
-	clone->cmd = rq->cmd;
-	clone->cmd_len = rq->cmd_len;
-	clone->sense = rq->sense;
 	clone->end_io = end_clone_request;
 	clone->end_io_data = tio;
 
@@ -777,6 +763,10 @@ static void dm_old_request_fn(struct request_queue *q)
 		int srcu_idx;
 		struct dm_table *map = dm_get_live_table(md, &srcu_idx);
 
+		if (unlikely(!map)) {
+			dm_put_live_table(md, srcu_idx);
+			return;
+		}
 		ti = dm_table_find_target(map, pos);
 		dm_put_live_table(md, srcu_idx);
 	}
@@ -798,7 +788,7 @@ static void dm_old_request_fn(struct request_queue *q)
 			pos = blk_rq_pos(rq);
 
 		if ((dm_old_request_peeked_before_merge_deadline(md) &&
-		     md_in_flight(md) && rq->bio && rq->bio->bi_vcnt == 1 &&
+		     md_in_flight(md) && rq->bio && !bio_multiple_segments(rq->bio) &&
 		     md->last_rq_pos == pos && md->last_rq_rw == rq_data_dir(rq)) ||
 		    (ti->type->busy && ti->type->busy(ti))) {
 			blk_delay_queue(q, 10);
@@ -821,7 +811,8 @@ static void dm_old_request_fn(struct request_queue *q)
 int dm_old_init_request_queue(struct mapped_device *md)
 {
 	/* Fully initialize the queue */
-	if (!blk_init_allocated_queue(md->queue, dm_old_request_fn, NULL))
+	md->queue->request_fn = dm_old_request_fn;
+	if (blk_init_allocated_queue(md->queue) < 0)
 		return -EINVAL;
 
 	/* disable dm_old_request_fn's merge heuristic by default */

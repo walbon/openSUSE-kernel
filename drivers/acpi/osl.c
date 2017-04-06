@@ -43,7 +43,7 @@
 #include <linux/security.h>
 
 #include <asm/io.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/io-64-nonatomic-lo-hi.h>
 
 #include "internal.h"

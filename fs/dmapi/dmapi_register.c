@@ -36,7 +36,7 @@
 #include <linux/module.h>
 #include <linux/mount.h>
 #include <linux/namei.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/seq_file.h>
