@@ -251,6 +251,7 @@ int hv_init(void)
 			goto cleanup;
 		hv_context.tsc_page = va_tsc;
 
+		hyperv_cs = &hyperv_cs_tsc;
 		rdmsrl(HV_X64_MSR_REFERENCE_TSC, tsc_msr.as_uint64);
 
 		tsc_msr.enable = 1;
