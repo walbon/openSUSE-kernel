@@ -53,10 +53,6 @@
 #include "sa.h"
 #include "core_priv.h"
 
-MODULE_AUTHOR("Roland Dreier");
-MODULE_DESCRIPTION("InfiniBand subnet administration query support");
-MODULE_LICENSE("Dual BSD/GPL");
-
 #define IB_SA_LOCAL_SVC_TIMEOUT_MIN		100
 #define IB_SA_LOCAL_SVC_TIMEOUT_DEFAULT		2000
 #define IB_SA_LOCAL_SVC_TIMEOUT_MAX		200000
@@ -1968,7 +1964,7 @@ static void ib_sa_remove_one(struct ib_device *device, void *client_data)
 	kfree(sa_dev);
 }
 
-static int __init ib_sa_init(void)
+int ib_sa_init(void)
 {
 	int ret;
 
@@ -2013,7 +2009,7 @@ err1:
 	return ret;
 }
 
-static void __exit ib_sa_cleanup(void)
+void ib_sa_cleanup(void)
 {
 	ibnl_remove_client(RDMA_NL_LS);
 	cancel_delayed_work(&ib_nl_timed_work);
@@ -2023,6 +2019,3 @@ static void __exit ib_sa_cleanup(void)
 	ib_unregister_client(&sa_client);
 	idr_destroy(&query_idr);
 }
-
-module_init(ib_sa_init);
-module_exit(ib_sa_cleanup);
