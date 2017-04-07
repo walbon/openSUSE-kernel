@@ -2267,6 +2267,8 @@ static pci_ers_result_t fm10k_io_error_detected(struct pci_dev *pdev,
 	if (state == pci_channel_io_perm_failure)
 		return PCI_ERS_RESULT_DISCONNECT;
 
+	rtnl_lock();
+
 	if (netif_running(netdev))
 		fm10k_close(netdev);
 
@@ -2274,6 +2276,8 @@ static pci_ers_result_t fm10k_io_error_detected(struct pci_dev *pdev,
 
 	/* free interrupts */
 	fm10k_clear_queueing_scheme(interface);
+
+	rtnl_unlock();
 
 	pci_disable_device(pdev);
 
@@ -2345,11 +2349,13 @@ static void fm10k_io_resume(struct pci_dev *pdev)
 	/* reset statistics starting values */
 	hw->mac.ops.rebind_hw_stats(hw, &interface->stats);
 
+	rtnl_lock();
+
 	err = fm10k_init_queueing_scheme(interface);
 	if (err) {
 		dev_err(&interface->pdev->dev,
 			"init_queueing_scheme failed: %d\n", err);
-		return;
+		goto unlock;
 	}
 
 	/* reassociate interrupts */
@@ -2366,6 +2372,9 @@ static void fm10k_io_resume(struct pci_dev *pdev)
 
 	if (!err)
 		netif_device_attach(netdev);
+
+unlock:
+	rtnl_unlock();
 }
 
 static const struct pci_error_handlers fm10k_err_handler = {
