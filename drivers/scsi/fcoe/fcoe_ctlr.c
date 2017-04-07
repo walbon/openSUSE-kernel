@@ -1318,7 +1318,7 @@ drop:
  * The overall length has already been checked.
  */
 static void fcoe_ctlr_recv_clr_vlink(struct fcoe_ctlr *fip,
-				     struct fip_header *fh)
+				     struct sk_buff *skb)
 {
 	struct fip_desc *desc;
 	struct fip_mac_desc *mp;
@@ -1333,17 +1333,46 @@ static void fcoe_ctlr_recv_clr_vlink(struct fcoe_ctlr *fip,
 	int num_vlink_desc;
 	int reset_phys_port = 0;
 	struct fip_vn_desc **vlink_desc_arr = NULL;
+	struct fip_header *fh = (struct fip_header *)skb->data;
+	struct ethhdr *eh = eth_hdr(skb);
 
 	LIBFCOE_FIP_DBG(fip, "Clear Virtual Link received\n");
 
-	if (!fcf || !lport->port_id) {
+	if (!fcf) {
 		/*
 		 * We are yet to select best FCF, but we got CVL in the
 		 * meantime. reset the ctlr and let it rediscover the FCF
 		 */
+		LIBFCOE_FIP_DBG(fip, "Resetting fcoe_ctlr as FCF has not been "
+		    "selected yet\n");
 		mutex_lock(&fip->ctlr_mutex);
 		fcoe_ctlr_reset(fip);
 		mutex_unlock(&fip->ctlr_mutex);
+		return;
+	}
+
+	/*
+	 * If we've selected an FCF check that the CVL is from there to avoid
+	 * processing CVLs from an unexpected source.  If it is from an
+	 * unexpected source drop it on the floor.
+	 */
+	if (!ether_addr_equal(eh->h_source, fcf->fcf_mac)) {
+		LIBFCOE_FIP_DBG(fip, "Dropping CVL due to source address "
+		    "mismatch with FCF src=%pM\n", eh->h_source);
+		return;
+	}
+
+	/*
+	 * If we haven't logged into the fabric but receive a CVL we should
+	 * reset everything and go back to solicitation.
+	 */
+	if (!lport->port_id) {
+		LIBFCOE_FIP_DBG(fip, "lport not logged in, resoliciting\n");
+		mutex_lock(&fip->ctlr_mutex);
+		fcoe_ctlr_reset(fip);
+		mutex_unlock(&fip->ctlr_mutex);
+		fc_lport_reset(fip->lp);
+		fcoe_ctlr_solicit(fip, NULL);
 		return;
 	}
 
@@ -1578,7 +1607,7 @@ static int fcoe_ctlr_recv_handler(struct fcoe_ctlr *fip, struct sk_buff *skb)
 	if (op == FIP_OP_DISC && sub == FIP_SC_ADV)
 		fcoe_ctlr_recv_adv(fip, skb);
 	else if (op == FIP_OP_CTRL && sub == FIP_SC_CLR_VLINK)
-		fcoe_ctlr_recv_clr_vlink(fip, fiph);
+		fcoe_ctlr_recv_clr_vlink(fip, skb);
 	kfree_skb(skb);
 	return 0;
 drop:
@@ -2124,7 +2153,7 @@ static void fcoe_ctlr_vn_rport_callback(struct fc_lport *lport,
 			LIBFCOE_FIP_DBG(fip,
 					"rport FLOGI limited port_id %6.6x\n",
 					rdata->ids.port_id);
-			lport->tt.rport_logoff(rdata);
+			fc_rport_logoff(rdata);
 		}
 		break;
 	default:
@@ -2150,8 +2179,8 @@ static void fcoe_ctlr_disc_stop_locked(struct fc_lport *lport)
 	rcu_read_lock();
 	list_for_each_entry_rcu(rdata, &lport->disc.rports, peers) {
 		if (kref_get_unless_zero(&rdata->kref)) {
-			lport->tt.rport_logoff(rdata);
-			kref_put(&rdata->kref, lport->tt.rport_destroy);
+			fc_rport_logoff(rdata);
+			kref_put(&rdata->kref, fc_rport_destroy);
 		}
 	}
 	rcu_read_unlock();
@@ -2186,7 +2215,7 @@ static void fcoe_ctlr_disc_stop(struct fc_lport *lport)
 static void fcoe_ctlr_disc_stop_final(struct fc_lport *lport)
 {
 	fcoe_ctlr_disc_stop(lport);
-	lport->tt.rport_flush_queue();
+	fc_rport_flush_queue();
 	synchronize_rcu();
 }
 
@@ -2486,7 +2515,7 @@ static void fcoe_ctlr_vn_add(struct fcoe_ctlr *fip, struct fc_rport_priv *new)
 		return;
 
 	mutex_lock(&lport->disc.disc_mutex);
-	rdata = lport->tt.rport_create(lport, port_id);
+	rdata = fc_rport_create(lport, port_id);
 	if (!rdata) {
 		mutex_unlock(&lport->disc.disc_mutex);
 		return;
@@ -2502,7 +2531,8 @@ static void fcoe_ctlr_vn_add(struct fcoe_ctlr *fip, struct fc_rport_priv *new)
 	    (ids->node_name != -1 && ids->node_name != new->ids.node_name)) {
 		LIBFCOE_FIP_DBG(fip, "vn_add rport logoff %6.6x\n", port_id);
 		mutex_unlock(&rdata->rp_mutex);
-		lport->tt.rport_logoff(rdata);
+		LIBFCOE_FIP_DBG(fip, "vn_add rport logoff %6.6x\n", port_id);
+		fc_rport_logoff(rdata);
 		mutex_lock(&rdata->rp_mutex);
 	}
 	ids->port_name = new->ids.port_name;
@@ -2532,12 +2562,12 @@ static int fcoe_ctlr_vn_lookup(struct fcoe_ctlr *fip, u32 port_id, u8 *mac)
 	struct fcoe_rport *frport;
 	int ret = -1;
 
-	rdata = lport->tt.rport_lookup(lport, port_id);
+	rdata = fc_rport_lookup(lport, port_id);
 	if (rdata) {
 		frport = fcoe_ctlr_rport(rdata);
 		memcpy(mac, frport->enode_mac, ETH_ALEN);
 		ret = 0;
-		kref_put(&rdata->kref, lport->tt.rport_destroy);
+		kref_put(&rdata->kref, fc_rport_destroy);
 	}
 	return ret;
 }
@@ -2634,7 +2664,7 @@ static void fcoe_ctlr_vn_beacon(struct fcoe_ctlr *fip,
 		fcoe_ctlr_vn_send(fip, FIP_SC_VN_PROBE_REQ, fcoe_all_vn2vn, 0);
 		return;
 	}
-	rdata = lport->tt.rport_lookup(lport, new->ids.port_id);
+	rdata = fc_rport_lookup(lport, new->ids.port_id);
 	if (rdata) {
 		if (rdata->ids.node_name == new->ids.node_name &&
 		    rdata->ids.port_name == new->ids.port_name) {
@@ -2645,11 +2675,11 @@ static void fcoe_ctlr_vn_beacon(struct fcoe_ctlr *fip,
 				LIBFCOE_FIP_DBG(fip, "beacon expired "
 						"for rport %x\n",
 						rdata->ids.port_id);
-				lport->tt.rport_login(rdata);
+				fc_rport_login(rdata);
 			}
 			frport->time = jiffies;
 		}
-		kref_put(&rdata->kref, lport->tt.rport_destroy);
+		kref_put(&rdata->kref, fc_rport_destroy);
 		return;
 	}
 	if (fip->state != FIP_ST_VNMP_UP)
@@ -2690,7 +2720,7 @@ static unsigned long fcoe_ctlr_vn_age(struct fcoe_ctlr *fip)
 			continue;
 		frport = fcoe_ctlr_rport(rdata);
 		if (!frport->time) {
-			kref_put(&rdata->kref, lport->tt.rport_destroy);
+			kref_put(&rdata->kref, fc_rport_destroy);
 			continue;
 		}
 		deadline = frport->time +
@@ -2700,10 +2730,10 @@ static unsigned long fcoe_ctlr_vn_age(struct fcoe_ctlr *fip)
 			LIBFCOE_FIP_DBG(fip,
 				"port %16.16llx fc_id %6.6x beacon expired\n",
 				rdata->ids.port_name, rdata->ids.port_id);
-			lport->tt.rport_logoff(rdata);
+			fc_rport_logoff(rdata);
 		} else if (time_before(deadline, next_time))
 			next_time = deadline;
-		kref_put(&rdata->kref, lport->tt.rport_destroy);
+		kref_put(&rdata->kref, fc_rport_destroy);
 	}
 	rcu_read_unlock();
 	return next_time;
@@ -3002,7 +3032,7 @@ static void fcoe_ctlr_disc_recv(struct fc_lport *lport, struct fc_frame *fp)
 
 	rjt_data.reason = ELS_RJT_UNSUP;
 	rjt_data.explan = ELS_EXPL_NONE;
-	lport->tt.seq_els_rsp_send(fp, ELS_LS_RJT, &rjt_data);
+	fc_seq_els_rsp_send(fp, ELS_LS_RJT, &rjt_data);
 	fc_frame_free(fp);
 }
 
@@ -3059,8 +3089,8 @@ static void fcoe_ctlr_vn_disc(struct fcoe_ctlr *fip)
 			continue;
 		frport = fcoe_ctlr_rport(rdata);
 		if (frport->time)
-			lport->tt.rport_login(rdata);
-		kref_put(&rdata->kref, lport->tt.rport_destroy);
+			fc_rport_login(rdata);
+		kref_put(&rdata->kref, fc_rport_destroy);
 	}
 	rcu_read_unlock();
 	if (callback)
@@ -3206,7 +3236,6 @@ int fcoe_libfc_config(struct fc_lport *lport, struct fcoe_ctlr *fip,
 	fc_exch_init(lport);
 	fc_elsct_init(lport);
 	fc_lport_init(lport);
-	fc_rport_init(lport);
 	fc_disc_init(lport);
 	fcoe_ctlr_mode_set(lport, fip, fip->mode);
 	return 0;

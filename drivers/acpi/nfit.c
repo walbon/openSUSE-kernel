@@ -110,7 +110,7 @@ static int xlat_bus_status(void *buf, unsigned int cmd, u32 status)
 		flags = ND_ARS_PERSISTENT | ND_ARS_VOLATILE;
 		if ((status >> 16 & flags) == 0)
 			return -ENOTTY;
-		break;
+		return 0;
 	case ND_CMD_ARS_START:
 		/* ARS is in progress */
 		if ((status & 0xffff) == NFIT_ARS_START_BUSY)
@@ -119,7 +119,7 @@ static int xlat_bus_status(void *buf, unsigned int cmd, u32 status)
 		/* Command failed */
 		if (status & 0xffff)
 			return -EIO;
-		break;
+		return 0;
 	case ND_CMD_ARS_STATUS:
 		ars_status = buf;
 		/* Command failed */
@@ -152,7 +152,7 @@ static int xlat_bus_status(void *buf, unsigned int cmd, u32 status)
 		/* Unknown status */
 		if (status >> 16)
 			return -EIO;
-		break;
+		return 0;
 	case ND_CMD_CLEAR_ERROR:
 		clear_err = buf;
 		if (status & 0xffff)
@@ -161,7 +161,7 @@ static int xlat_bus_status(void *buf, unsigned int cmd, u32 status)
 			return -EIO;
 		if (clear_err->length > clear_err->cleared)
 			return clear_err->cleared;
-		break;
+		return 0;
 	default:
 		break;
 	}
@@ -2533,10 +2533,9 @@ int acpi_nfit_init(struct acpi_nfit_desc *acpi_desc, void *data, acpi_size sz)
 	if (rc)
 		goto out_unlock;
 
-	if (nfit_mem_init(acpi_desc) != 0) {
-		rc = -ENOMEM;
+	rc = nfit_mem_init(acpi_desc);
+	if (rc)
 		goto out_unlock;
-	}
 
 	rc = acpi_nfit_register_dimms(acpi_desc);
 	if (rc)
@@ -2568,6 +2567,7 @@ static int acpi_nfit_flush_probe(struct nvdimm_bus_descriptor *nd_desc)
 	struct acpi_nfit_desc *acpi_desc = to_acpi_nfit_desc(nd_desc);
 	struct device *dev = acpi_desc->dev;
 	struct acpi_nfit_flush_work flush;
+	int rc;
 
 	/* bounce the device lock to flush acpi_nfit_add / acpi_nfit_notify */
 	device_lock(dev);
@@ -2580,7 +2580,10 @@ static int acpi_nfit_flush_probe(struct nvdimm_bus_descriptor *nd_desc)
 	INIT_WORK_ONSTACK(&flush.work, flush_probe);
 	COMPLETION_INITIALIZER_ONSTACK(flush.cmp);
 	queue_work(nfit_wq, &flush.work);
-	return wait_for_completion_interruptible(&flush.cmp);
+
+	rc = wait_for_completion_interruptible(&flush.cmp);
+	cancel_work_sync(&flush.work);
+	return rc;
 }
 
 static int acpi_nfit_clear_to_send(struct nvdimm_bus_descriptor *nd_desc,

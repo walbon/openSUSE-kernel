@@ -533,8 +533,7 @@ out:
  * Note: The frame will be freed either by a direct call to fc_frame_free(fp)
  * or indirectly by calling libfc_function_template.frame_send().
  */
-static int fc_seq_send(struct fc_lport *lport, struct fc_seq *sp,
-		       struct fc_frame *fp)
+int fc_seq_send(struct fc_lport *lport, struct fc_seq *sp, struct fc_frame *fp)
 {
 	struct fc_exch *ep;
 	int error;
@@ -544,6 +543,7 @@ static int fc_seq_send(struct fc_lport *lport, struct fc_seq *sp,
 	spin_unlock_bh(&ep->ex_lock);
 	return error;
 }
+EXPORT_SYMBOL(fc_seq_send);
 
 /**
  * fc_seq_alloc() - Allocate a sequence for a given exchange
@@ -585,7 +585,7 @@ static struct fc_seq *fc_seq_start_next_locked(struct fc_seq *sp)
  *			 for a given sequence/exchange pair
  * @sp: The sequence/exchange to get a new exchange for
  */
-static struct fc_seq *fc_seq_start_next(struct fc_seq *sp)
+struct fc_seq *fc_seq_start_next(struct fc_seq *sp)
 {
 	struct fc_exch *ep = fc_seq_exch(sp);
 
@@ -595,16 +595,16 @@ static struct fc_seq *fc_seq_start_next(struct fc_seq *sp)
 
 	return sp;
 }
+EXPORT_SYMBOL(fc_seq_start_next);
 
 /*
  * Set the response handler for the exchange associated with a sequence.
  *
  * Note: May sleep if invoked from outside a response handler.
  */
-static void fc_seq_set_resp(struct fc_seq *sp,
-			    void (*resp)(struct fc_seq *, struct fc_frame *,
-					 void *),
-			    void *arg)
+void fc_seq_set_resp(struct fc_seq *sp,
+		     void (*resp)(struct fc_seq *, struct fc_frame *, void *),
+		     void *arg)
 {
 	struct fc_exch *ep = fc_seq_exch(sp);
 	DEFINE_WAIT(wait);
@@ -623,11 +623,19 @@ static void fc_seq_set_resp(struct fc_seq *sp,
 	ep->arg = arg;
 	spin_unlock_bh(&ep->ex_lock);
 }
+EXPORT_SYMBOL(fc_seq_set_resp);
 
 /**
  * fc_exch_abort_locked() - Abort an exchange
  * @ep:	The exchange to be aborted
  * @timer_msec: The period of time to wait before aborting
+ *
+ * Abort an exchange and sequence. Generally called because of a
+ * exchange timeout or an abort from the upper layer.
+ *
+ * A timer_msec can be specified for abort timeout, if non-zero
+ * timer_msec value is specified then exchange resp handler
+ * will be called with timeout error if no response to abort.
  *
  * Locking notes:  Called with exch lock held
  *
@@ -692,8 +700,7 @@ static int fc_exch_abort_locked(struct fc_exch *ep,
  *
  * Return value: 0 on success else error code
  */
-static int fc_seq_exch_abort(const struct fc_seq *req_sp,
-			     unsigned int timer_msec)
+int fc_seq_exch_abort(const struct fc_seq *req_sp, unsigned int timer_msec)
 {
 	struct fc_exch *ep;
 	int error;
@@ -904,14 +911,19 @@ err:
  * EM is selected when a NULL match function pointer is encountered
  * or when a call to a match function returns true.
  */
-static inline struct fc_exch *fc_exch_alloc(struct fc_lport *lport,
-					    struct fc_frame *fp)
+static struct fc_exch *fc_exch_alloc(struct fc_lport *lport,
+				     struct fc_frame *fp)
 {
 	struct fc_exch_mgr_anchor *ema;
+	struct fc_exch *ep;
 
-	list_for_each_entry(ema, &lport->ema_list, ema_list)
-		if (!ema->match || ema->match(fp))
-			return fc_exch_em_alloc(lport, ema->mp);
+	list_for_each_entry(ema, &lport->ema_list, ema_list) {
+		if (!ema->match || ema->match(fp)) {
+			ep = fc_exch_em_alloc(lport, ema->mp);
+			if (ep)
+				return ep;
+		}
+	}
 	return NULL;
 }
 
@@ -926,6 +938,9 @@ static struct fc_exch *fc_exch_find(struct fc_exch_mgr *mp, u16 xid)
 	struct fc_exch_pool *pool;
 	struct fc_exch *ep = NULL;
 	u16 cpu = xid & fc_cpu_mask;
+
+	if (xid == FC_XID_UNKNOWN)
+		return NULL;
 
 	if (cpu >= nr_cpu_ids || !cpu_possible(cpu)) {
 		pr_err("host%u: lport %6.6x: xid %d invalid CPU %d\n:",
@@ -958,7 +973,7 @@ static struct fc_exch *fc_exch_find(struct fc_exch_mgr *mp, u16 xid)
  *
  * Note: May sleep if invoked from outside a response handler.
  */
-static void fc_exch_done(struct fc_seq *sp)
+void fc_exch_done(struct fc_seq *sp)
 {
 	struct fc_exch *ep = fc_seq_exch(sp);
 	int rc;
@@ -971,6 +986,7 @@ static void fc_exch_done(struct fc_seq *sp)
 	if (!rc)
 		fc_exch_delete(ep);
 }
+EXPORT_SYMBOL(fc_exch_done);
 
 /**
  * fc_exch_resp() - Allocate a new exchange for a response frame
@@ -1217,8 +1233,8 @@ static void fc_exch_set_addr(struct fc_exch *ep,
  *
  * The received frame is not freed.
  */
-static void fc_seq_els_rsp_send(struct fc_frame *fp, enum fc_els_cmd els_cmd,
-				struct fc_seq_els_data *els_data)
+void fc_seq_els_rsp_send(struct fc_frame *fp, enum fc_els_cmd els_cmd,
+			 struct fc_seq_els_data *els_data)
 {
 	switch (els_cmd) {
 	case ELS_LS_RJT:
@@ -1237,6 +1253,7 @@ static void fc_seq_els_rsp_send(struct fc_frame *fp, enum fc_els_cmd els_cmd,
 		FC_LPORT_DBG(fr_dev(fp), "Invalid ELS CMD:%x\n", els_cmd);
 	}
 }
+EXPORT_SYMBOL_GPL(fc_seq_els_rsp_send);
 
 /**
  * fc_seq_send_last() - Send a sequence that is the last in the exchange
@@ -1463,7 +1480,7 @@ reject:
  * A reference will be held on the exchange/sequence for the caller, which
  * must call fc_seq_release().
  */
-static struct fc_seq *fc_seq_assign(struct fc_lport *lport, struct fc_frame *fp)
+struct fc_seq *fc_seq_assign(struct fc_lport *lport, struct fc_frame *fp)
 {
 	struct fc_exch_mgr_anchor *ema;
 
@@ -1477,15 +1494,17 @@ static struct fc_seq *fc_seq_assign(struct fc_lport *lport, struct fc_frame *fp)
 			break;
 	return fr_seq(fp);
 }
+EXPORT_SYMBOL(fc_seq_assign);
 
 /**
  * fc_seq_release() - Release the hold
  * @sp:    The sequence.
  */
-static void fc_seq_release(struct fc_seq *sp)
+void fc_seq_release(struct fc_seq *sp)
 {
 	fc_exch_release(fc_seq_exch(sp));
 }
+EXPORT_SYMBOL(fc_seq_release);
 
 /**
  * fc_exch_recv_req() - Handler for an incoming request
@@ -1521,7 +1540,7 @@ static void fc_exch_recv_req(struct fc_lport *lport, struct fc_exch_mgr *mp,
 	 * The upper-level protocol may request one later, if needed.
 	 */
 	if (fh->fh_rx_id == htons(FC_XID_UNKNOWN))
-		return lport->tt.lport_recv(lport, fp);
+		return fc_lport_recv(lport, fp);
 
 	reject = fc_seq_lookup_recip(lport, mp, fp);
 	if (reject == FC_RJT_NONE) {
@@ -1542,7 +1561,7 @@ static void fc_exch_recv_req(struct fc_lport *lport, struct fc_exch_mgr *mp,
 		 * first.
 		 */
 		if (!fc_invoke_resp(ep, sp, fp))
-			lport->tt.lport_recv(lport, fp);
+			fc_lport_recv(lport, fp);
 		fc_exch_release(ep);	/* release from lookup */
 	} else {
 		FC_LPORT_DBG(lport, "exch/seq lookup failed: reject %x\n",
@@ -2000,8 +2019,7 @@ static void fc_exch_els_rec(struct fc_frame *rfp)
 	enum fc_els_rjt_reason reason = ELS_RJT_LOGIC;
 	enum fc_els_rjt_explan explan;
 	u32 sid;
-	u16 rxid;
-	u16 oxid;
+	u16 xid, rxid, oxid;
 
 	lport = fr_dev(rfp);
 	rp = fc_frame_payload_get(rfp, sizeof(*rp));
@@ -2012,9 +2030,18 @@ static void fc_exch_els_rec(struct fc_frame *rfp)
 	rxid = ntohs(rp->rec_rx_id);
 	oxid = ntohs(rp->rec_ox_id);
 
-	ep = fc_exch_lookup(lport,
-			    sid == fc_host_port_id(lport->host) ? oxid : rxid);
 	explan = ELS_EXPL_OXID_RXID;
+	if (sid == fc_host_port_id(lport->host))
+		xid = oxid;
+	else
+		xid = rxid;
+	if (xid == FC_XID_UNKNOWN) {
+		FC_LPORT_DBG(lport,
+			     "REC request from %x: invalid rxid %x oxid %x\n",
+			     sid, rxid, oxid);
+		goto reject;
+	}
+	ep = fc_exch_lookup(lport, xid);
 	if (!ep) {
 		FC_LPORT_DBG(lport, "REC request from %x: "
 			     "xid %4.4x-%4.4x not found\n",
@@ -2113,6 +2140,24 @@ cleanup:
  * @arg:	The argument to be passed to the response handler
  * @timer_msec: The timeout period for the exchange
  *
+ * The exchange response handler is set in this routine to resp()
+ * function pointer. It can be called in two scenarios: if a timeout
+ * occurs or if a response frame is received for the exchange. The
+ * fc_frame pointer in response handler will also indicate timeout
+ * as error using IS_ERR related macros.
+ *
+ * The exchange destructor handler is also set in this routine.
+ * The destructor handler is invoked by EM layer when exchange
+ * is about to free, this can be used by caller to free its
+ * resources along with exchange free.
+ *
+ * The arg is passed back to resp and destructor handler.
+ *
+ * The timeout value (in msec) for an exchange is set if non zero
+ * timer_msec argument is specified. The timer is canceled when
+ * it fires or when the exchange is done. The exchange timeout handler
+ * is registered by EM layer.
+ *
  * The frame pointer with some of the header's fields must be
  * filled before calling this routine, those fields are:
  *
@@ -2123,14 +2168,13 @@ cleanup:
  * - frame control
  * - parameter or relative offset
  */
-static struct fc_seq *fc_exch_seq_send(struct fc_lport *lport,
-				       struct fc_frame *fp,
-				       void (*resp)(struct fc_seq *,
-						    struct fc_frame *fp,
-						    void *arg),
-				       void (*destructor)(struct fc_seq *,
-							  void *),
-				       void *arg, u32 timer_msec)
+struct fc_seq *fc_exch_seq_send(struct fc_lport *lport,
+				struct fc_frame *fp,
+				void (*resp)(struct fc_seq *,
+					     struct fc_frame *fp,
+					     void *arg),
+				void (*destructor)(struct fc_seq *, void *),
+				void *arg, u32 timer_msec)
 {
 	struct fc_exch *ep;
 	struct fc_seq *sp = NULL;
@@ -2183,6 +2227,7 @@ err:
 		fc_exch_delete(ep);
 	return NULL;
 }
+EXPORT_SYMBOL(fc_exch_seq_send);
 
 /**
  * fc_exch_rrq() - Send an ELS RRQ (Reinstate Recovery Qualifier) command
@@ -2610,35 +2655,8 @@ EXPORT_SYMBOL(fc_exch_recv);
  */
 int fc_exch_init(struct fc_lport *lport)
 {
-	if (!lport->tt.seq_start_next)
-		lport->tt.seq_start_next = fc_seq_start_next;
-
-	if (!lport->tt.seq_set_resp)
-		lport->tt.seq_set_resp = fc_seq_set_resp;
-
-	if (!lport->tt.exch_seq_send)
-		lport->tt.exch_seq_send = fc_exch_seq_send;
-
-	if (!lport->tt.seq_send)
-		lport->tt.seq_send = fc_seq_send;
-
-	if (!lport->tt.seq_els_rsp_send)
-		lport->tt.seq_els_rsp_send = fc_seq_els_rsp_send;
-
-	if (!lport->tt.exch_done)
-		lport->tt.exch_done = fc_exch_done;
-
 	if (!lport->tt.exch_mgr_reset)
 		lport->tt.exch_mgr_reset = fc_exch_mgr_reset;
-
-	if (!lport->tt.seq_exch_abort)
-		lport->tt.seq_exch_abort = fc_seq_exch_abort;
-
-	if (!lport->tt.seq_assign)
-		lport->tt.seq_assign = fc_seq_assign;
-
-	if (!lport->tt.seq_release)
-		lport->tt.seq_release = fc_seq_release;
 
 	return 0;
 }

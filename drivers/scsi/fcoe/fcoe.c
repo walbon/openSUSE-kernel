@@ -601,16 +601,22 @@ static void fcoe_port_send(struct fcoe_port *port, struct sk_buff *skb)
  */
 static void fcoe_fip_send(struct fcoe_ctlr *fip, struct sk_buff *skb)
 {
-	struct ethhdr *eh = eth_hdr(skb);
-	struct fip_header *fiph = NULL;
+	struct fcoe_interface *fcoe = fcoe_from_ctlr(fip);
+	struct fip_frame {
+		struct ethhdr eth;
+		struct fip_header fip;
+	} __packed *frame;
 
-	skb->dev = fcoe_from_ctlr(fip)->netdev;
-	if (ntohs(eh->h_proto) == ETH_P_FIP) {
-		fiph = (struct fip_header *)((unsigned char *)eh +
-					     sizeof(struct ethhdr));
-		if (ntohs(fiph->fip_op) == FIP_OP_VLAN)
-			skb->dev = fcoe_from_ctlr(fip)->realdev;
-	}
+	/*
+	 * Use default VLAN for FIP VLAN discovery protocol
+	 */
+	frame = (struct fip_frame *)skb->data;
+	if (ntohs(frame->eth.h_proto) == ETH_P_FIP &&
+	    ntohs(frame->fip.fip_op) == FIP_OP_VLAN &&
+	    fcoe->realdev != fcoe->netdev)
+		skb->dev = fcoe->realdev;
+	else
+		skb->dev = fcoe->netdev;
 	fcoe_port_send(lport_priv(fip->lp), skb);
 }
 
@@ -2185,11 +2191,11 @@ static void fcoe_dcb_create(struct fcoe_interface *fcoe)
 {
 	int ctlr_prio = TC_PRIO_BESTEFFORT;
 	int fcoe_prio = TC_PRIO_INTERACTIVE;
+	struct fcoe_ctlr *ctlr = fcoe_to_ctlr(fcoe);
 #ifdef CONFIG_DCB
 	int dcbx;
 	u8 fup, up;
 	struct net_device *netdev = fcoe->realdev;
-	struct fcoe_ctlr *ctlr = fcoe_to_ctlr(fcoe);
 	struct dcb_app app = {
 				.priority = 0,
 				.protocol = ETH_P_FCOE
