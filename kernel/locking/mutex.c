@@ -506,6 +506,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 		    struct lockdep_map *nest_lock, unsigned long ip,
 		    struct ww_acquire_ctx *ww_ctx, const bool use_ww_ctx)
 {
+	struct task_struct *task = current;
 	struct mutex_waiter waiter;
 	unsigned long flags;
 	int ret;
@@ -536,11 +537,11 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 		goto skip_wait;
 
 	debug_mutex_lock_common(lock, &waiter);
-	debug_mutex_add_waiter(lock, &waiter, current);
+	debug_mutex_add_waiter(lock, &waiter, task);
 
 	/* add waiting tasks to the end of the waitqueue (FIFO): */
 	list_add_tail(&waiter.list, &lock->wait_list);
-	waiter.task = current;
+	waiter.task = task;
 
 	lock_contended(&lock->dep_map, ip);
 
@@ -563,7 +564,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 		 * got a signal? (This code gets eliminated in the
 		 * TASK_UNINTERRUPTIBLE case.)
 		 */
-		if (unlikely(signal_pending_state(state, current))) {
+		if (unlikely(signal_pending_state(state, task))) {
 			ret = -EINTR;
 			goto err;
 		}
@@ -574,16 +575,16 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 				goto err;
 		}
 
-		__set_current_state(state);
+		__set_task_state(task, state);
 
 		/* didn't get the lock, go to sleep: */
 		spin_unlock_mutex(&lock->wait_lock, flags);
 		schedule_preempt_disabled();
 		spin_lock_mutex(&lock->wait_lock, flags);
 	}
-	__set_current_state(TASK_RUNNING);
+	__set_task_state(task, TASK_RUNNING);
 
-	mutex_remove_waiter(lock, &waiter, current);
+	mutex_remove_waiter(lock, &waiter, task);
 	/* set it to 0 if there are no waiters left: */
 	if (likely(list_empty(&lock->wait_list)))
 		atomic_set(&lock->count, 0);
@@ -604,7 +605,7 @@ skip_wait:
 	return 0;
 
 err:
-	mutex_remove_waiter(lock, &waiter, current);
+	mutex_remove_waiter(lock, &waiter, task);
 	spin_unlock_mutex(&lock->wait_lock, flags);
 	debug_mutex_free_waiter(&waiter);
 	mutex_release(&lock->dep_map, 1, ip);
