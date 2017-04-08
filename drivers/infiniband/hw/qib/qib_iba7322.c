@@ -2893,7 +2893,6 @@ static void qib_setup_7322_cleanup(struct qib_devdata *dd)
 			dd->cspec->gpio_mask &= ~mask;
 			qib_write_kreg(dd, kr_gpio_mask, dd->cspec->gpio_mask);
 			spin_unlock_irqrestore(&dd->cspec->gpio_lock, flags);
-			qib_qsfp_deinit(&dd->pport[i].cpspec->qsfp_data);
 		}
 	}
 }
@@ -7069,7 +7068,7 @@ static void qib_7322_txchk_change(struct qib_devdata *dd, u32 start,
 	unsigned long flags;
 
 	while (wait) {
-		unsigned long shadow;
+		unsigned long shadow = 0;
 		int cstart, previ = -1;
 
 		/*

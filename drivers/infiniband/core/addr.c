@@ -47,10 +47,6 @@
 #include <rdma/ib_addr.h>
 #include <rdma/ib.h>
 
-MODULE_AUTHOR("Sean Hefty");
-MODULE_DESCRIPTION("IB Address Translation");
-MODULE_LICENSE("Dual BSD/GPL");
-
 struct addr_req {
 	struct list_head list;
 	struct sockaddr_storage src_addr;
@@ -535,13 +531,16 @@ EXPORT_SYMBOL(rdma_addr_cancel);
 struct resolve_cb_context {
 	struct rdma_dev_addr *addr;
 	struct completion comp;
+	int status;
 };
 
 static void resolve_cb(int status, struct sockaddr *src_addr,
 	     struct rdma_dev_addr *addr, void *context)
 {
-	memcpy(((struct resolve_cb_context *)context)->addr, addr, sizeof(struct
-				rdma_dev_addr));
+	if (!status)
+		memcpy(((struct resolve_cb_context *)context)->addr,
+		       addr, sizeof(struct rdma_dev_addr));
+	((struct resolve_cb_context *)context)->status = status;
 	complete(&((struct resolve_cb_context *)context)->comp);
 }
 
@@ -578,6 +577,10 @@ int rdma_addr_find_l2_eth_by_grh(const union ib_gid *sgid,
 		return ret;
 
 	wait_for_completion(&ctx.comp);
+
+	ret = ctx.status;
+	if (ret)
+		return ret;
 
 	memcpy(dmac, dev_addr.dst_dev_addr, ETH_ALEN);
 	dev = dev_get_by_index(&init_net, dev_addr.bound_dev_if);
@@ -634,9 +637,9 @@ static struct notifier_block nb = {
 	.notifier_call = netevent_callback
 };
 
-static int __init addr_init(void)
+int addr_init(void)
 {
-	addr_wq = create_singlethread_workqueue("ib_addr");
+	addr_wq = alloc_workqueue("ib_addr", WQ_MEM_RECLAIM, 0);
 	if (!addr_wq)
 		return -ENOMEM;
 
@@ -645,12 +648,9 @@ static int __init addr_init(void)
 	return 0;
 }
 
-static void __exit addr_cleanup(void)
+void addr_cleanup(void)
 {
 	rdma_addr_unregister_client(&self);
 	unregister_netevent_notifier(&nb);
 	destroy_workqueue(addr_wq);
 }
-
-module_init(addr_init);
-module_exit(addr_cleanup);
