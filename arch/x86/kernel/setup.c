@@ -1106,7 +1106,7 @@ void __init setup_arch(char **cmdline_p)
 	memblock_set_current_limit(ISA_END_ADDRESS);
 	memblock_x86_fill();
 
-	reserve_bios_regions();
+	reserve_ebda_region();
 
 	if (efi_enabled(EFI_MEMMAP)) {
 		efi_fake_memmap();

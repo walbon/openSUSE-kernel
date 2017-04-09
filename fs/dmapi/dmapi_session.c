@@ -32,7 +32,7 @@
 
 #include <linux/init.h>
 #include <linux/proc_fs.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #ifdef CONFIG_PROC_FS
 #include <linux/module.h>
 #endif

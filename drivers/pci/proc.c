@@ -12,7 +12,7 @@
 #include <linux/seq_file.h>
 #include <linux/capability.h>
 #include <linux/security.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/byteorder.h>
 #include "pci.h"
 

@@ -466,13 +466,16 @@ static int dm_blk_ioctl(struct block_device *bdev, fmode_t mode,
 
 	if (r > 0) {
 		/*
-		 * Target determined this ioctl is being issued against
-		 * a logical partition of the parent bdev; so extra
-		 * validation is needed.
+		 * Target determined this ioctl is being issued against a
+		 * subset of the parent bdev; require extra privileges.
 		 */
-		r = scsi_verify_blk_ioctl(NULL, cmd);
-		if (r)
+		if (!capable(CAP_SYS_RAWIO)) {
+			DMWARN_LIMIT(
+	"%s: sending ioctl %x to DM device without required privilege.",
+				current->comm, cmd);
+			r = -ENOIOCTLCMD;
 			goto out;
+		}
 	}
 
 	r =  __blkdev_driver_ioctl(bdev, mode, cmd, arg);
@@ -1941,9 +1944,7 @@ static void __dm_destroy(struct mapped_device *md, bool wait)
 	set_bit(DMF_FREEING, &md->flags);
 	spin_unlock(&_minor_lock);
 
-	spin_lock_irq(q->queue_lock);
-	queue_flag_set(QUEUE_FLAG_DYING, q);
-	spin_unlock_irq(q->queue_lock);
+	blk_set_queue_dying(q);
 
 	if (dm_request_based(md) && md->kworker_task)
 		flush_kthread_worker(&md->kworker);

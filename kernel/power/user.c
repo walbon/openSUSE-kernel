@@ -27,7 +27,7 @@
 #include <linux/security.h>
 #include <linux/efi.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include "power.h"
 

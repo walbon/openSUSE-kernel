@@ -72,7 +72,7 @@
 #include <linux/seq_file.h>
 #include <linux/uio.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 /* Uncomment to enable debugging */
 /* #define TUN_DEBUG 1 */

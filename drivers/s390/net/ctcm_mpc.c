@@ -46,7 +46,7 @@
 #include <asm/ccwdev.h>
 #include <asm/ccwgroup.h>
 #include <linux/bitops.h>	/* instead of <asm/bitops.h> ok ? */
-#include <linux/uaccess.h>	/* instead of <asm/uaccess.h> ok ? */
+#include <linux/uaccess.h>	/* instead of <linux/uaccess.h> ok ? */
 #include <linux/wait.h>
 #include <linux/moduleparam.h>
 #include <asm/idals.h>

@@ -62,6 +62,9 @@ int cma_get_default_gid_type(struct cma_device *cma_dev,
 int cma_set_default_gid_type(struct cma_device *cma_dev,
 			     unsigned int port,
 			     enum ib_gid_type default_gid_type);
+int cma_get_default_roce_tos(struct cma_device *cma_dev, unsigned int port);
+int cma_set_default_roce_tos(struct cma_device *a_dev, unsigned int port,
+			     u8 default_roce_tos);
 struct ib_device *cma_get_ib_dev(struct cma_device *cma_dev);
 
 int  ib_device_register_sysfs(struct ib_device *device,
@@ -71,9 +74,6 @@ void ib_device_unregister_sysfs(struct ib_device *device);
 
 void ib_cache_setup(void);
 void ib_cache_cleanup(void);
-
-int ib_resolve_eth_dmac(struct ib_qp *qp,
-			struct ib_qp_attr *qp_attr, int *qp_attr_mask);
 
 typedef void (*roce_netdev_callback)(struct ib_device *device, u8 port,
 	      struct net_device *idev, void *cookie);
@@ -136,5 +136,19 @@ static inline bool rdma_is_upper_dev_rcu(struct net_device *dev,
 
 	return _upper == upper;
 }
+
+int addr_init(void);
+void addr_cleanup(void);
+
+int ib_mad_init(void);
+void ib_mad_cleanup(void);
+
+int ib_sa_init(void);
+void ib_sa_cleanup(void);
+
+int ib_nl_handle_resolve_resp(struct sk_buff *skb,
+			      struct netlink_callback *cb);
+int ib_nl_handle_set_timeout(struct sk_buff *skb,
+			     struct netlink_callback *cb);
 
 #endif /* _CORE_PRIV_H */

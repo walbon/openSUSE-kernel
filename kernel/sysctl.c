@@ -66,7 +66,7 @@
 #include <linux/kexec.h>
 #include <linux/bpf.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/processor.h>
 
 #ifdef CONFIG_X86
