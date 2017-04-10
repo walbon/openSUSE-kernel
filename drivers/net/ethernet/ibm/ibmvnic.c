@@ -905,7 +905,8 @@ static int ibmvnic_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
 
-	if (new_mtu > adapter->max_mtu || new_mtu < adapter->min_mtu)
+	if (new_mtu > adapter->max_mtu - ETH_HLEN ||
+            new_mtu < adapter->min_mtu - ETH_HLEN)
 		return -EINVAL;
 
 	netdev->mtu = new_mtu;
@@ -1508,7 +1509,7 @@ static void init_sub_crqs(struct ibmvnic_adapter *adapter, int retry)
 		adapter->req_rx_queues = adapter->opt_rx_comp_queues;
 		adapter->req_rx_add_queues = adapter->max_rx_add_queues;
 
-		adapter->req_mtu = adapter->max_mtu;
+		adapter->req_mtu = adapter->netdev->mtu + ETH_HLEN;
 	}
 
 	total_queues = adapter->req_tx_queues + adapter->req_rx_queues;
@@ -3666,7 +3667,7 @@ static void handle_crq_init_rsp(struct work_struct *work)
 		goto task_failed;
 
 	netdev->real_num_tx_queues = adapter->req_tx_queues;
-	netdev->mtu = adapter->req_mtu;
+	netdev->mtu = adapter->req_mtu - ETH_HLEN;
 
 	if (adapter->failover) {
 		adapter->failover = false;
@@ -3806,7 +3807,7 @@ static int ibmvnic_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	}
 
 	netdev->real_num_tx_queues = adapter->req_tx_queues;
-	netdev->mtu = adapter->req_mtu;
+	netdev->mtu = adapter->req_mtu - ETH_HLEN;
 
 	rc = register_netdev(netdev);
 	if (rc) {
