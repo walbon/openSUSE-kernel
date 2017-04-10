@@ -2000,7 +2000,7 @@ static struct ceph_osd_request *rbd_osd_req_create(
 	osd_req->r_callback = rbd_osd_req_callback;
 	osd_req->r_priv = obj_request;
 
-	osd_req->r_base_oloc.pool = ceph_file_layout_pg_pool(rbd_dev->layout);
+	osd_req->r_base_oloc.pool = rbd_dev->layout.pool_id;
 	if (ceph_oid_aprintf(&osd_req->r_base_oid, GFP_NOIO, "%s",
 			     obj_request->object_name))
 		goto fail;
@@ -2053,7 +2053,7 @@ rbd_osd_req_create_copyup(struct rbd_obj_request *obj_request)
 	osd_req->r_callback = rbd_osd_req_callback;
 	osd_req->r_priv = obj_request;
 
-	osd_req->r_base_oloc.pool = ceph_file_layout_pg_pool(rbd_dev->layout);
+	osd_req->r_base_oloc.pool = rbd_dev->layout.pool_id;
 	if (ceph_oid_aprintf(&osd_req->r_base_oid, GFP_NOIO, "%s",
 			     obj_request->object_name))
 		goto fail;
@@ -3180,7 +3180,7 @@ rbd_img_obj_creatrunc_submit(struct rbd_obj_request *obj_request)
 	osd_req->r_flags = CEPH_OSD_FLAG_WRITE | CEPH_OSD_FLAG_ONDISK;
 	osd_req->r_callback = rbd_osd_req_callback;
 	osd_req->r_priv = creatrunc_req;
-	osd_req->r_base_oloc.pool = ceph_file_layout_pg_pool(rbd_dev->layout);
+	osd_req->r_base_oloc.pool = rbd_dev->layout.pool_id;
 	if (ceph_oid_aprintf(&osd_req->r_base_oid, GFP_NOIO, "%s",
 			     creatrunc_req->object_name))
 		goto fail_creatrunc_request;
@@ -4694,10 +4694,10 @@ static struct rbd_device *rbd_dev_create(struct rbd_client *rbdc,
 
 	/* Initialize the layout used for all rbd requests */
 
-	rbd_dev->layout.fl_stripe_unit = cpu_to_le32(1 << RBD_MAX_OBJ_ORDER);
-	rbd_dev->layout.fl_stripe_count = cpu_to_le32(1);
-	rbd_dev->layout.fl_object_size = cpu_to_le32(1 << RBD_MAX_OBJ_ORDER);
-	rbd_dev->layout.fl_pg_pool = cpu_to_le32((u32) spec->pool_id);
+	rbd_dev->layout.stripe_unit = 1 << RBD_MAX_OBJ_ORDER;
+	rbd_dev->layout.stripe_count = 1;
+	rbd_dev->layout.object_size = 1 << RBD_MAX_OBJ_ORDER;
+	rbd_dev->layout.pool_id = spec->pool_id;
 
 	/*
 	 * If this is a mapping rbd_dev (as opposed to a parent one),
