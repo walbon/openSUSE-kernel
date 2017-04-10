@@ -63,37 +63,13 @@ void kvm_clear_hyp_idmap(void);
 static inline void kvm_set_pmd(pmd_t *pmd, pmd_t new_pmd)
 {
 	*pmd = new_pmd;
-	flush_pmd_entry(pmd);
+	dsb(ishst);
 }
 
 static inline void kvm_set_pte(pte_t *pte, pte_t new_pte)
 {
 	*pte = new_pte;
-	/*
-	 * flush_pmd_entry just takes a void pointer and cleans the necessary
-	 * cache entries, so we can reuse the function for ptes.
-	 */
-	flush_pmd_entry(pte);
-}
-
-static inline void kvm_clean_pgd(pgd_t *pgd)
-{
-	clean_dcache_area(pgd, PTRS_PER_S2_PGD * sizeof(pgd_t));
-}
-
-static inline void kvm_clean_pmd(pmd_t *pmd)
-{
-	clean_dcache_area(pmd, PTRS_PER_PMD * sizeof(pmd_t));
-}
-
-static inline void kvm_clean_pmd_entry(pmd_t *pmd)
-{
-	clean_pmd_entry(pmd);
-}
-
-static inline void kvm_clean_pte(pte_t *pte)
-{
-	clean_pte_table(pte);
+	dsb(ishst);
 }
 
 static inline pte_t kvm_s2pte_mkwrite(pte_t pte)
@@ -153,8 +129,7 @@ static inline bool vcpu_has_cache_enabled(struct kvm_vcpu *vcpu)
 
 static inline void __coherent_cache_guest_page(struct kvm_vcpu *vcpu,
 					       kvm_pfn_t pfn,
-					       unsigned long size,
-					       bool ipa_uncached)
+					       unsigned long size)
 {
 	/*
 	 * If we are going to insert an instruction page and the icache is
