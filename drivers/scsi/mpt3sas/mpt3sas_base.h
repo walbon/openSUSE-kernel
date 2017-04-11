@@ -416,7 +416,6 @@ struct MPT3SAS_DEVICE {
 	 * thing while a SATL command is pending.
 	 */
 	unsigned long ata_command_pending;
-
 };
 
 #define MPT3_CMD_NOT_USED	0x8000	/* free */
