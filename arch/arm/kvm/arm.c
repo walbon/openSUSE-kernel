@@ -135,7 +135,6 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 		goto out_free_stage2_pgd;
 
 	kvm_vgic_early_init(kvm);
-	kvm_timer_init(kvm);
 
 	/* Mark the initial VMID generation invalid */
 	kvm->arch.vmid_gen = 0;
@@ -151,6 +150,16 @@ out_fail_alloc:
 	free_percpu(kvm->arch.last_vcpu_ran);
 	kvm->arch.last_vcpu_ran = NULL;
 	return ret;
+}
+
+bool kvm_arch_has_vcpu_debugfs(void)
+{
+	return false;
+}
+
+int kvm_arch_create_vcpu_debugfs(struct kvm_vcpu *vcpu)
+{
+	return 0;
 }
 
 int kvm_arch_vcpu_fault(struct kvm_vcpu *vcpu, struct vm_fault *vmf)
@@ -210,6 +219,22 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 		break;
 	case KVM_CAP_MAX_VCPUS:
 		r = KVM_MAX_VCPUS;
+		break;
+	case KVM_CAP_NR_MEMSLOTS:
+		r = KVM_USER_MEM_SLOTS;
+		break;
+	case KVM_CAP_MSI_DEVID:
+		if (!kvm)
+			r = -EINVAL;
+		else
+			r = kvm->arch.vgic.msis_require_devid;
+		break;
+	case KVM_CAP_ARM_USER_IRQ:
+		/*
+		 * 1: EL1_VTIMER, EL1_PTIMER, and PMU.
+		 * (bump this number if adding more devices)
+		 */
+		r = 1;
 		break;
 	default:
 		r = kvm_arch_dev_ioctl_check_extension(kvm, ext);
@@ -285,7 +310,8 @@ void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
 
 int kvm_cpu_has_pending_timer(struct kvm_vcpu *vcpu)
 {
-	return kvm_timer_should_fire(vcpu);
+	return kvm_timer_should_fire(vcpu_vtimer(vcpu)) ||
+	       kvm_timer_should_fire(vcpu_ptimer(vcpu));
 }
 
 void kvm_arch_vcpu_blocking(struct kvm_vcpu *vcpu)
@@ -497,13 +523,7 @@ static int kvm_vcpu_first_run_init(struct kvm_vcpu *vcpu)
 			return ret;
 	}
 
-	/*
-	 * Enable the arch timers only if we have an in-kernel VGIC
-	 * and it has been properly initialized, since we cannot handle
-	 * interrupts from the virtual timer with a userspace gic.
-	 */
-	if (irqchip_in_kernel(kvm) && vgic_initialized(kvm))
-		ret = kvm_timer_enable(vcpu);
+	ret = kvm_timer_enable(vcpu);
 
 	return ret;
 }
@@ -531,10 +551,10 @@ void kvm_arm_halt_vcpu(struct kvm_vcpu *vcpu)
 
 void kvm_arm_resume_vcpu(struct kvm_vcpu *vcpu)
 {
-	wait_queue_head_t *wq = kvm_arch_vcpu_wq(vcpu);
+	struct swait_queue_head *wq = kvm_arch_vcpu_wq(vcpu);
 
 	vcpu->arch.pause = false;
-	wake_up_interruptible(wq);
+	swake_up(wq);
 }
 
 void kvm_arm_resume_guest(struct kvm *kvm)
@@ -548,9 +568,9 @@ void kvm_arm_resume_guest(struct kvm *kvm)
 
 static void vcpu_sleep(struct kvm_vcpu *vcpu)
 {
-	wait_queue_head_t *wq = kvm_arch_vcpu_wq(vcpu);
+	struct swait_queue_head *wq = kvm_arch_vcpu_wq(vcpu);
 
-	wait_event_interruptible(*wq, ((!vcpu->arch.power_off) &&
+	swait_event_interruptible(*wq, ((!vcpu->arch.power_off) &&
 				       (!vcpu->arch.pause)));
 }
 
@@ -617,9 +637,14 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		local_irq_disable();
 
 		/*
-		 * Re-check atomic conditions
+		 * If we have a singal pending, or need to notify a userspace
+		 * irqchip about timer or PMU level changes, then we exit (and
+		 * update the timer level state in kvm_timer_update_run
+		 * below).
 		 */
-		if (signal_pending(current)) {
+		if (signal_pending(current) ||
+		    kvm_timer_should_notify_user(vcpu) ||
+		    kvm_pmu_should_notify_user(vcpu)) {
 			ret = -EINTR;
 			run->exit_reason = KVM_EXIT_INTR;
 		}
@@ -689,6 +714,12 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		preempt_enable();
 
 		ret = handle_exit(vcpu, run, ret);
+	}
+
+	/* Tell userspace about in-kernel device output levels */
+	if (unlikely(!irqchip_in_kernel(vcpu->kvm))) {
+		kvm_timer_update_run(vcpu);
+		kvm_pmu_update_run(vcpu);
 	}
 
 	if (vcpu->sigset_active)
@@ -1032,9 +1063,13 @@ long kvm_arch_vm_ioctl(struct file *filp,
 
 	switch (ioctl) {
 	case KVM_CREATE_IRQCHIP: {
+		int ret;
 		if (!vgic_present)
 			return -ENXIO;
-		return kvm_vgic_create(kvm, KVM_DEV_TYPE_ARM_VGIC_V2);
+		mutex_lock(&kvm->lock);
+		ret = kvm_vgic_create(kvm, KVM_DEV_TYPE_ARM_VGIC_V2);
+		mutex_unlock(&kvm->lock);
+		return ret;
 	}
 	case KVM_ARM_SET_DEVICE_ADDR: {
 		struct kvm_arm_device_addr dev_addr;
@@ -1079,6 +1114,9 @@ static void cpu_init_hyp_mode(void *dummy)
 	__cpu_init_hyp_mode(pgd_ptr, hyp_stack_ptr, vector_ptr);
 	__cpu_init_stage2();
 
+	if (is_kernel_in_hyp_mode())
+		kvm_timer_init_vhe();
+
 	kvm_arm_init_debug();
 }
 
@@ -1094,6 +1132,9 @@ static void cpu_hyp_reinit(void)
 		if (__hyp_get_vectors() == hyp_default_vectors)
 			cpu_init_hyp_mode(NULL);
 	}
+
+	if (vgic_present)
+		kvm_vgic_init_cpu_hardware();
 }
 
 static void cpu_hyp_reset(void)
@@ -1197,6 +1238,10 @@ static int init_common_resources(void)
 		return -ENOMEM;
 	}
 
+	/* set size of VMID supported by CPU */
+	kvm_vmid_bits = kvm_get_vmid_bits();
+	kvm_info("%d-bit VMID\n", kvm_vmid_bits);
+
 	return 0;
 }
 
@@ -1262,10 +1307,6 @@ static void teardown_hyp_mode(void)
 
 static int init_vhe_mode(void)
 {
-	/* set size of VMID supported by CPU */
-	kvm_vmid_bits = kvm_get_vmid_bits();
-	kvm_info("%d-bit VMID\n", kvm_vmid_bits);
-
 	kvm_info("VHE mode initialized successfully\n");
 	return 0;
 }
@@ -1323,6 +1364,13 @@ static int init_hyp_mode(void)
 		goto out_err;
 	}
 
+	err = create_hyp_mappings(kvm_ksym_ref(__bss_start),
+				  kvm_ksym_ref(__bss_stop), PAGE_HYP_RO);
+	if (err) {
+		kvm_err("Cannot map bss section\n");
+		goto out_err;
+	}
+
 	/*
 	 * Map the Hyp stack pages
 	 */
@@ -1348,10 +1396,6 @@ static int init_hyp_mode(void)
 			goto out_err;
 		}
 	}
-
-	/* set size of VMID supported by CPU */
-	kvm_vmid_bits = kvm_get_vmid_bits();
-	kvm_info("%d-bit VMID\n", kvm_vmid_bits);
 
 	kvm_info("Hyp mode initialized successfully\n");
 

@@ -230,11 +230,42 @@ static void kvm_pmu_update_state(struct kvm_vcpu *vcpu)
 		return;
 
 	overflow = !!kvm_pmu_overflow_status(vcpu);
-	if (pmu->irq_level != overflow) {
-		pmu->irq_level = overflow;
-		kvm_vgic_inject_irq(vcpu->kvm, vcpu->vcpu_id,
-				    pmu->irq_num, overflow);
+	if (pmu->irq_level == overflow)
+		return;
+
+	pmu->irq_level = overflow;
+
+	if (likely(irqchip_in_kernel(vcpu->kvm))) {
+		int ret;
+		ret = kvm_vgic_inject_irq(vcpu->kvm, vcpu->vcpu_id,
+					  pmu->irq_num, overflow);
+		WARN_ON(ret);
 	}
+}
+
+bool kvm_pmu_should_notify_user(struct kvm_vcpu *vcpu)
+{
+	struct kvm_pmu *pmu = &vcpu->arch.pmu;
+	struct kvm_sync_regs *sregs = &vcpu->run->s.regs;
+	bool run_level = sregs->device_irq_level & KVM_ARM_DEV_PMU;
+
+	if (likely(irqchip_in_kernel(vcpu->kvm)))
+		return false;
+
+	return pmu->irq_level != run_level;
+}
+
+/*
+ * Reflect the PMU overflow interrupt output level into the kvm_run structure
+ */
+void kvm_pmu_update_run(struct kvm_vcpu *vcpu)
+{
+	struct kvm_sync_regs *regs = &vcpu->run->s.regs;
+
+	/* Populate the timer bitmap for user space */
+	regs->device_irq_level &= ~KVM_ARM_DEV_PMU;
+	if (vcpu->arch.pmu.irq_level)
+		regs->device_irq_level |= KVM_ARM_DEV_PMU;
 }
 
 /**
@@ -305,7 +336,7 @@ void kvm_pmu_software_increment(struct kvm_vcpu *vcpu, u64 val)
 			continue;
 		type = vcpu_sys_reg(vcpu, PMEVTYPER0_EL0 + i)
 		       & ARMV8_PMU_EVTYPE_EVENT;
-		if ((type == ARMV8_PMU_EVTYPE_EVENT_SW_INCR)
+		if ((type == ARMV8_PMUV3_PERFCTR_SW_INCR)
 		    && (enable & BIT(i))) {
 			reg = vcpu_sys_reg(vcpu, PMEVCNTR0_EL0 + i) + 1;
 			reg = lower_32_bits(reg);
@@ -379,7 +410,8 @@ void kvm_pmu_set_counter_event_type(struct kvm_vcpu *vcpu, u64 data,
 	eventsel = data & ARMV8_PMU_EVTYPE_EVENT;
 
 	/* Software increment event does't need to be backed by a perf event */
-	if (eventsel == ARMV8_PMU_EVTYPE_EVENT_SW_INCR)
+	if (eventsel == ARMV8_PMUV3_PERFCTR_SW_INCR &&
+	    select_idx != ARMV8_PMU_CYCLE_IDX)
 		return;
 
 	memset(&attr, 0, sizeof(struct perf_event_attr));
@@ -391,7 +423,8 @@ void kvm_pmu_set_counter_event_type(struct kvm_vcpu *vcpu, u64 data,
 	attr.exclude_kernel = data & ARMV8_PMU_EXCLUDE_EL1 ? 1 : 0;
 	attr.exclude_hv = 1; /* Don't count EL2 events */
 	attr.exclude_host = 1; /* Don't count host events */
-	attr.config = eventsel;
+	attr.config = (select_idx == ARMV8_PMU_CYCLE_IDX) ?
+		ARMV8_PMUV3_PERFCTR_CPU_CYCLES : eventsel;
 
 	counter = kvm_pmu_get_counter_value(vcpu, select_idx);
 	/* The initial sample period (overflow count) of an event. */
@@ -421,6 +454,14 @@ bool kvm_arm_support_pmu_v3(void)
 static int kvm_arm_pmu_v3_init(struct kvm_vcpu *vcpu)
 {
 	if (!kvm_arm_support_pmu_v3())
+		return -ENODEV;
+
+	/*
+	 * We currently require an in-kernel VGIC to use the PMU emulation,
+	 * because we do not support forwarding PMU overflow interrupts to
+	 * userspace yet.
+	 */
+	if (!irqchip_in_kernel(vcpu->kvm) || !vgic_initialized(vcpu->kvm))
 		return -ENODEV;
 
 	if (!test_bit(KVM_ARM_VCPU_PMU_V3, vcpu->arch.features) ||
