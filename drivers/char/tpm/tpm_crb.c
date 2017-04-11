@@ -20,9 +20,6 @@
 #include <linux/rculist.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
-#ifdef CONFIG_ARM64
-#include <linux/arm-smccc.h>
-#endif
 #include "tpm.h"
 
 #define ACPI_SIG_TPM2 "TPM2"
@@ -55,28 +52,18 @@ enum crb_cancel {
 	CRB_CANCEL_INVOKE	= BIT(0),
 };
 
-struct crb_regs_head {
-	u32 loc_state;
-	u32 reserved1;
-	u32 loc_ctrl;
-	u32 loc_sts;
-	u8 reserved2[32];
-	u64 intf_id;
-	u64 ctrl_ext;
-} __packed;
-
-struct crb_regs_tail {
-	u32 ctrl_req;
-	u32 ctrl_sts;
-	u32 ctrl_cancel;
-	u32 ctrl_start;
-	u32 ctrl_int_enable;
-	u32 ctrl_int_sts;
-	u32 ctrl_cmd_size;
-	u32 ctrl_cmd_pa_low;
-	u32 ctrl_cmd_pa_high;
-	u32 ctrl_rsp_size;
-	u64 ctrl_rsp_pa;
+struct crb_control_area {
+	u32 req;
+	u32 sts;
+	u32 cancel;
+	u32 start;
+	u32 int_enable;
+	u32 int_sts;
+	u32 cmd_size;
+	u32 cmd_pa_low;
+	u32 cmd_pa_high;
+	u32 rsp_size;
+	u64 rsp_pa;
 } __packed;
 
 enum crb_status {
@@ -86,26 +73,15 @@ enum crb_status {
 enum crb_flags {
 	CRB_FL_ACPI_START	= BIT(0),
 	CRB_FL_CRB_START	= BIT(1),
-	CRB_FL_CRB_SMC_START	= BIT(2),
 };
 
 struct crb_priv {
 	unsigned int flags;
 	void __iomem *iobase;
-	struct crb_regs_head __iomem *regs_h;
-	struct crb_regs_tail __iomem *regs_t;
+	struct crb_control_area __iomem *cca;
 	u8 __iomem *cmd;
 	u8 __iomem *rsp;
 	u32 cmd_size;
-	u32 smc_func_id;
-};
-
-struct tpm2_crb_smc {
-	u32 interrupt;
-	u8 interrupt_flags;
-	u8 op_flags;
-	u16 reserved2;
-	u32 smc_func_id;
 };
 
 /**
@@ -125,11 +101,10 @@ struct tpm2_crb_smc {
  */
 static int __maybe_unused crb_go_idle(struct device *dev, struct crb_priv *priv)
 {
-	if ((priv->flags & CRB_FL_ACPI_START) ||
-	    (priv->flags & CRB_FL_CRB_SMC_START))
+	if (priv->flags & CRB_FL_ACPI_START)
 		return 0;
 
-	iowrite32(CRB_CTRL_REQ_GO_IDLE, &priv->regs_t->ctrl_req);
+	iowrite32(CRB_CTRL_REQ_GO_IDLE, &priv->cca->req);
 	/* we don't really care when this settles */
 
 	return 0;
@@ -153,24 +128,21 @@ static int __maybe_unused crb_cmd_ready(struct device *dev,
 					struct crb_priv *priv)
 {
 	ktime_t stop, start;
-	u32 req;
 
-	if ((priv->flags & CRB_FL_ACPI_START) ||
-	    (priv->flags & CRB_FL_CRB_SMC_START))
+	if (priv->flags & CRB_FL_ACPI_START)
 		return 0;
 
-	iowrite32(CRB_CTRL_REQ_CMD_READY, &priv->regs_t->ctrl_req);
+	iowrite32(CRB_CTRL_REQ_CMD_READY, &priv->cca->req);
 
 	start = ktime_get();
 	stop = ktime_add(start, ms_to_ktime(TPM2_TIMEOUT_C));
 	do {
-		req = ioread32(&priv->regs_t->ctrl_req);
-		if (!(req & CRB_CTRL_REQ_CMD_READY))
+		if (!(ioread32(&priv->cca->req) & CRB_CTRL_REQ_CMD_READY))
 			return 0;
 		usleep_range(50, 100);
 	} while (ktime_before(ktime_get(), stop));
 
-	if (ioread32(&priv->regs_t->ctrl_req) & CRB_CTRL_REQ_CMD_READY) {
+	if (ioread32(&priv->cca->req) & CRB_CTRL_REQ_CMD_READY) {
 		dev_warn(dev, "cmdReady timed out\n");
 		return -ETIME;
 	}
@@ -183,7 +155,7 @@ static u8 crb_status(struct tpm_chip *chip)
 	struct crb_priv *priv = dev_get_drvdata(&chip->dev);
 	u8 sts = 0;
 
-	if ((ioread32(&priv->regs_t->ctrl_start) & CRB_START_INVOKE) !=
+	if ((ioread32(&priv->cca->start) & CRB_START_INVOKE) !=
 	    CRB_START_INVOKE)
 		sts |= CRB_DRV_STS_COMPLETE;
 
@@ -199,7 +171,7 @@ static int crb_recv(struct tpm_chip *chip, u8 *buf, size_t count)
 	if (count < 6)
 		return -EIO;
 
-	if (ioread32(&priv->regs_t->ctrl_sts) & CRB_CTRL_STS_ERROR)
+	if (ioread32(&priv->cca->sts) & CRB_CTRL_STS_ERROR)
 		return -EIO;
 
 	memcpy_fromio(buf, priv->rsp, 6);
@@ -230,34 +202,6 @@ static int crb_do_acpi_start(struct tpm_chip *chip)
 	return rc;
 }
 
-#ifdef CONFIG_ARM64
-/*
- * This is a TPM Command Response Buffer start method that invokes a
- * Secure Monitor Call to requrest the firmware to execute or cancel
- * a TPM 2.0 command.
- */
-static int tpm_crb_smc_start(struct device *dev, unsigned long func_id)
-{
-	struct arm_smccc_res res;
-
-	arm_smccc_smc(func_id, 0, 0, 0, 0, 0, 0, 0, &res);
-	if (res.a0 != 0) {
-		dev_err(dev,
-			FW_BUG "tpm_crb_smc_start() returns res.a0 = 0x%lx\n",
-			res.a0);
-		return -EIO;
-	}
-
-	return 0;
-}
-#else
-static int tpm_crb_smc_start(struct device *dev, unsigned long func_id)
-{
-	dev_err(dev, FW_BUG "tpm_crb: incorrect start method\n");
-	return -EINVAL;
-}
-#endif
-
 static int crb_send(struct tpm_chip *chip, u8 *buf, size_t len)
 {
 	struct crb_priv *priv = dev_get_drvdata(&chip->dev);
@@ -266,7 +210,7 @@ static int crb_send(struct tpm_chip *chip, u8 *buf, size_t len)
 	/* Zero the cancel register so that the next command will not get
 	 * canceled.
 	 */
-	iowrite32(0, &priv->regs_t->ctrl_cancel);
+	iowrite32(0, &priv->cca->cancel);
 
 	if (len > priv->cmd_size) {
 		dev_err(&chip->dev, "invalid command count value %zd %d\n",
@@ -280,15 +224,10 @@ static int crb_send(struct tpm_chip *chip, u8 *buf, size_t len)
 	wmb();
 
 	if (priv->flags & CRB_FL_CRB_START)
-		iowrite32(CRB_START_INVOKE, &priv->regs_t->ctrl_start);
+		iowrite32(CRB_START_INVOKE, &priv->cca->start);
 
 	if (priv->flags & CRB_FL_ACPI_START)
 		rc = crb_do_acpi_start(chip);
-
-	if (priv->flags & CRB_FL_CRB_SMC_START) {
-		iowrite32(CRB_START_INVOKE, &priv->regs_t->ctrl_start);
-		rc = tpm_crb_smc_start(&chip->dev, priv->smc_func_id);
-	}
 
 	return rc;
 }
@@ -297,7 +236,7 @@ static void crb_cancel(struct tpm_chip *chip)
 {
 	struct crb_priv *priv = dev_get_drvdata(&chip->dev);
 
-	iowrite32(CRB_CANCEL_INVOKE, &priv->regs_t->ctrl_cancel);
+	iowrite32(CRB_CANCEL_INVOKE, &priv->cca->cancel);
 
 	if ((priv->flags & CRB_FL_ACPI_START) && crb_do_acpi_start(chip))
 		dev_err(&chip->dev, "ACPI Start failed\n");
@@ -306,7 +245,7 @@ static void crb_cancel(struct tpm_chip *chip)
 static bool crb_req_canceled(struct tpm_chip *chip, u8 status)
 {
 	struct crb_priv *priv = dev_get_drvdata(&chip->dev);
-	u32 cancel = ioread32(&priv->regs_t->ctrl_cancel);
+	u32 cancel = ioread32(&priv->cca->cancel);
 
 	return (cancel & CRB_CANCEL_INVOKE) == CRB_CANCEL_INVOKE;
 }
@@ -406,22 +345,10 @@ static int crb_map_io(struct acpi_device *device, struct crb_priv *priv,
 	if (IS_ERR(priv->iobase))
 		return PTR_ERR(priv->iobase);
 
-	/* The ACPI IO region starts at the head area and continues to include
-	 * the control area, as one nice sane region except for some older
-	 * stuff that puts the control area outside the ACPI IO region.
-	 */
-	if (!(priv->flags & CRB_FL_ACPI_START)) {
-		if (buf->control_address == io_res.start +
-		    sizeof(*priv->regs_h))
-			priv->regs_h = priv->iobase;
-		else
-			dev_warn(dev, FW_BUG "Bad ACPI memory layout");
-	}
-
-	priv->regs_t = crb_map_res(dev, priv, &io_res, buf->control_address,
-				   sizeof(struct crb_regs_tail));
-	if (IS_ERR(priv->regs_t))
-		return PTR_ERR(priv->regs_t);
+	priv->cca = crb_map_res(dev, priv, &io_res, buf->control_address,
+				sizeof(struct crb_control_area));
+	if (IS_ERR(priv->cca))
+		return PTR_ERR(priv->cca);
 
 	/*
 	 * PTT HW bug w/a: wake up the device to access
@@ -431,11 +358,11 @@ static int crb_map_io(struct acpi_device *device, struct crb_priv *priv,
 	if (ret)
 		return ret;
 
-	pa_high = ioread32(&priv->regs_t->ctrl_cmd_pa_high);
-	pa_low  = ioread32(&priv->regs_t->ctrl_cmd_pa_low);
+	pa_high = ioread32(&priv->cca->cmd_pa_high);
+	pa_low  = ioread32(&priv->cca->cmd_pa_low);
 	cmd_pa = ((u64)pa_high << 32) | pa_low;
 	cmd_size = crb_fixup_cmd_size(dev, &io_res, cmd_pa,
-				      ioread32(&priv->regs_t->ctrl_cmd_size));
+				      ioread32(&priv->cca->cmd_size));
 
 	dev_dbg(dev, "cmd_hi = %X cmd_low = %X cmd_size %X\n",
 		pa_high, pa_low, cmd_size);
@@ -446,10 +373,10 @@ static int crb_map_io(struct acpi_device *device, struct crb_priv *priv,
 		goto out;
 	}
 
-	memcpy_fromio(&rsp_pa, &priv->regs_t->ctrl_rsp_pa, 8);
+	memcpy_fromio(&rsp_pa, &priv->cca->rsp_pa, 8);
 	rsp_pa = le64_to_cpu(rsp_pa);
 	rsp_size = crb_fixup_cmd_size(dev, &io_res, rsp_pa,
-				      ioread32(&priv->regs_t->ctrl_rsp_size));
+				      ioread32(&priv->cca->rsp_size));
 
 	if (cmd_pa != rsp_pa) {
 		priv->rsp = crb_map_res(dev, priv, &io_res, rsp_pa, rsp_size);
@@ -482,7 +409,6 @@ static int crb_acpi_add(struct acpi_device *device)
 	struct crb_priv *priv;
 	struct tpm_chip *chip;
 	struct device *dev = &device->dev;
-	struct tpm2_crb_smc *crb_smc;
 	acpi_status status;
 	u32 sm;
 	int rc;
@@ -514,20 +440,6 @@ static int crb_acpi_add(struct acpi_device *device)
 	if (sm == ACPI_TPM2_START_METHOD ||
 	    sm == ACPI_TPM2_COMMAND_BUFFER_WITH_START_METHOD)
 		priv->flags |= CRB_FL_ACPI_START;
-
-	if (sm == ACPI_TPM2_COMMAND_BUFFER_WITH_SMC) {
-		if (buf->header.length < (sizeof(*buf) + sizeof(*crb_smc))) {
-			dev_err(dev,
-				FW_BUG "TPM2 ACPI table has wrong size %u for start method type %d\n",
-				buf->header.length,
-				ACPI_TPM2_COMMAND_BUFFER_WITH_SMC);
-			return -EINVAL;
-		}
-		crb_smc = ACPI_ADD_PTR(struct tpm2_crb_smc, buf,
-				       ACPI_TPM2_START_METHOD_PARAMETER_OFFSET);
-		priv->smc_func_id = crb_smc->smc_func_id;
-		priv->flags |= CRB_FL_CRB_SMC_START;
-	}
 
 	rc = crb_map_io(device, priv, buf);
 	if (rc)
