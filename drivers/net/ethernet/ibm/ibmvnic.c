@@ -905,7 +905,7 @@ static int ibmvnic_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
 
-	if (new_mtu > adapter->req_mtu || new_mtu < adapter->min_mtu)
+	if (new_mtu > adapter->max_mtu || new_mtu < adapter->min_mtu)
 		return -EINVAL;
 
 	netdev->mtu = new_mtu;
