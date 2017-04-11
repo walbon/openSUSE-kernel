@@ -1121,6 +1121,7 @@ static int is_firmware_flash_cmd(u8 *cdb)
  */
 #define HEARTBEAT_SAMPLE_INTERVAL_DURING_FLASH (240 * HZ)
 #define HEARTBEAT_SAMPLE_INTERVAL (30 * HZ)
+#define HPSA_EVENT_MONITOR_INTERVAL (15 * HZ)
 static void dial_down_lockup_detection_during_fw_flash(struct ctlr_info *h,
 		struct CommandList *c)
 {
@@ -8710,6 +8711,29 @@ out:
 	return rc;
 }
 
+/*
+ * watch for controller events
+ */
+static void hpsa_event_monitor_worker(struct work_struct *work)
+{
+	struct ctlr_info *h = container_of(to_delayed_work(work),
+	struct ctlr_info, event_monitor_work);
+
+	if (h->remove_in_progress)
+		return;
+
+	if (hpsa_ctlr_needs_rescan(h)) {
+		scsi_host_get(h->scsi_host);
+		hpsa_ack_ctlr_events(h);
+		hpsa_scan_start(h->scsi_host);
+		scsi_host_put(h->scsi_host);
+	}
+
+	if (!h->remove_in_progress)
+		schedule_delayed_work(&h->event_monitor_work,
+					HPSA_EVENT_MONITOR_INTERVAL);
+}
+
 static void hpsa_rescan_ctlr_worker(struct work_struct *work)
 {
 	unsigned long flags;
@@ -8728,9 +8752,9 @@ static void hpsa_rescan_ctlr_worker(struct work_struct *work)
 		return;
 	}
 
-	if (hpsa_ctlr_needs_rescan(h) || hpsa_offline_devices_ready(h)) {
+	if (h->drv_req_rescan || hpsa_offline_devices_ready(h)) {
+		h->drv_req_rescan = 0;
 		scsi_host_get(h->scsi_host);
-		hpsa_ack_ctlr_events(h);
 		hpsa_scan_start(h->scsi_host);
 		scsi_host_put(h->scsi_host);
 	} else if (h->discovery_polling) {
@@ -9009,6 +9033,9 @@ reinit_after_soft_reset:
 	INIT_DELAYED_WORK(&h->rescan_ctlr_work, hpsa_rescan_ctlr_worker);
 	queue_delayed_work(h->rescan_ctlr_wq, &h->rescan_ctlr_work,
 				h->heartbeat_sample_interval);
+	INIT_DELAYED_WORK(&h->event_monitor_work, hpsa_event_monitor_worker);
+	schedule_delayed_work(&h->event_monitor_work,
+				HPSA_EVENT_MONITOR_INTERVAL);
 	return 0;
 
 clean7: /* perf, sg, cmd, irq, shost, pci, lu, aer/h */
@@ -9177,6 +9204,7 @@ static void hpsa_remove_one(struct pci_dev *pdev)
 	spin_unlock_irqrestore(&h->lock, flags);
 	cancel_delayed_work_sync(&h->monitor_ctlr_work);
 	cancel_delayed_work_sync(&h->rescan_ctlr_work);
+	cancel_delayed_work_sync(&h->event_monitor_work);
 	destroy_workqueue(h->rescan_ctlr_wq);
 	destroy_workqueue(h->resubmit_wq);
 
