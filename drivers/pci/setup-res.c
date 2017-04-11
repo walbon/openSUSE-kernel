@@ -23,7 +23,10 @@
 #include <linux/ioport.h>
 #include <linux/cache.h>
 #include <linux/slab.h>
+#include <linux/notifier.h>
 #include "pci.h"
+
+static RAW_NOTIFIER_HEAD(bar_update_chain);
 
 static void pci_std_update_resource(struct pci_dev *dev, int resno)
 {
@@ -33,6 +36,9 @@ static void pci_std_update_resource(struct pci_dev *dev, int resno)
 	u32 new, check, mask;
 	int reg;
 	struct resource *res = dev->resource + resno;
+	struct pci_bar_update_info update_info;
+	struct pci_bus_region update_reg;
+	struct resource update_res;
 
 	/* Per SR-IOV spec 3.4.1.11, VF BARs are RO zero */
 	if (dev->is_virtfn)
@@ -87,6 +93,22 @@ static void pci_std_update_resource(struct pci_dev *dev, int resno)
 		return;
 
 	/*
+	 * Fetch the old BAR location from the device, so we can notify
+	 * users of that BAR that its location is changing.
+	 */
+	pci_read_config_dword(dev, reg, &check);
+	update_reg.start = check & PCI_BASE_ADDRESS_MEM_MASK;
+	if (check & PCI_BASE_ADDRESS_MEM_TYPE_64) {
+		pci_read_config_dword(dev, reg, &check);
+		update_reg.start |= ((u64)check) << 32;
+	}
+	update_info.size = region.end - region.start;
+	update_reg.end = update_reg.start + update_info.size;
+	pcibios_bus_to_resource(dev->bus, &update_res, &update_reg);
+	update_info.old_start = update_res.start;
+	update_info.new_start = res->start;
+
+	/*
 	 * We can't update a 64-bit BAR atomically, so when possible,
 	 * disable decoding so that a half-updated BAR won't conflict
 	 * with another device.
@@ -118,6 +140,14 @@ static void pci_std_update_resource(struct pci_dev *dev, int resno)
 
 	if (disable)
 		pci_write_config_word(dev, PCI_COMMAND, cmd);
+
+	/* Tell interested parties that the BAR mapping changed */
+	raw_notifier_call_chain(&bar_update_chain, 0, &update_info);
+}
+
+int pci_notify_on_update_resource(struct notifier_block *nb)
+{
+        return raw_notifier_chain_register(&bar_update_chain, nb);
 }
 
 void pci_update_resource(struct pci_dev *dev, int resno)
