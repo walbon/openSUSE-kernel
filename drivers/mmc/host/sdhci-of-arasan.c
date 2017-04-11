@@ -489,6 +489,7 @@ clk_dis_ahb:
 
 static int sdhci_arasan_remove(struct platform_device *pdev)
 {
+	int ret;
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
@@ -498,9 +499,11 @@ static int sdhci_arasan_remove(struct platform_device *pdev)
 		phy_exit(sdhci_arasan->phy);
 	}
 
+	ret = sdhci_pltfm_unregister(pdev);
+
 	clk_disable_unprepare(sdhci_arasan->clk_ahb);
 
-	return sdhci_pltfm_unregister(pdev);
+	return ret;
 }
 
 static struct platform_driver sdhci_arasan_driver = {
