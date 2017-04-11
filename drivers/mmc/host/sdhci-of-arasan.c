@@ -212,7 +212,7 @@ static int sdhci_arasan_suspend(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
 	int ret;
 
 	ret = sdhci_suspend_host(host);
@@ -246,7 +246,7 @@ static int sdhci_arasan_resume(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
 	int ret;
 
 	ret = clk_enable(sdhci_arasan->clk_ahb);
@@ -381,10 +381,13 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 	struct sdhci_pltfm_host *pltfm_host;
 	struct sdhci_arasan_data *sdhci_arasan;
 
-	sdhci_arasan = devm_kzalloc(&pdev->dev, sizeof(*sdhci_arasan),
-			GFP_KERNEL);
-	if (!sdhci_arasan)
-		return -ENOMEM;
+	host = sdhci_pltfm_init(pdev, &sdhci_arasan_pdata,
+				sizeof(*sdhci_arasan));
+	if (IS_ERR(host))
+		return PTR_ERR(host);
+
+	pltfm_host = sdhci_priv(host);
+	sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
 
 	match = of_match_node(sdhci_arasan_of_match, pdev->dev.of_node);
 	sdhci_arasan->soc_ctl_map = match->data;
@@ -427,15 +430,7 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 		goto clk_dis_ahb;
 	}
 
-	host = sdhci_pltfm_init(pdev, &sdhci_arasan_pdata, 0);
-	if (IS_ERR(host)) {
-		ret = PTR_ERR(host);
-		goto clk_disable_all;
-	}
-
 	sdhci_get_of_property(pdev);
-	pltfm_host = sdhci_priv(host);
-	pltfm_host->priv = sdhci_arasan;
 	pltfm_host->clk = clk_xin;
 
 	if (of_device_is_compatible(pdev->dev.of_node,
@@ -492,7 +487,8 @@ static int sdhci_arasan_remove(struct platform_device *pdev)
 	int ret;
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
+	struct clk *clk_ahb = sdhci_arasan->clk_ahb;
 
 	if (!IS_ERR(sdhci_arasan->phy)) {
 		phy_power_off(sdhci_arasan->phy);
@@ -501,7 +497,7 @@ static int sdhci_arasan_remove(struct platform_device *pdev)
 
 	ret = sdhci_pltfm_unregister(pdev);
 
-	clk_disable_unprepare(sdhci_arasan->clk_ahb);
+	clk_disable_unprepare(clk_ahb);
 
 	return ret;
 }
