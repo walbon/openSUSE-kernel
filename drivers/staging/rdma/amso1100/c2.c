@@ -832,7 +832,7 @@ static int c2_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
 
 	spin_unlock_irqrestore(&c2_port->tx_lock, flags);
 
-	netdev->trans_start = jiffies;
+	netif_trans_update(netdev);
 
 	return NETDEV_TX_OK;
 }

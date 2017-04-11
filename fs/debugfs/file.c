@@ -127,7 +127,6 @@ static int open_proxy_open(struct inode *inode, struct file *filp)
 		r = real_fops->open(inode, filp);
 
 out:
-	fops_put(real_fops);
 	debugfs_use_file_finish(srcu_idx);
 	return r;
 }
@@ -262,8 +261,10 @@ static int full_proxy_open(struct inode *inode, struct file *filp)
 
 	if (real_fops->open) {
 		r = real_fops->open(inode, filp);
-
-		if (filp->f_op != proxy_fops) {
+		if (r) {
+			replace_fops(filp, d_inode(dentry)->i_fop);
+			goto free_proxy;
+		} else if (filp->f_op != proxy_fops) {
 			/* No protection against file removal anymore. */
 			WARN(1, "debugfs file owner replaced proxy fops: %pd",
 				dentry);
@@ -283,6 +284,34 @@ out:
 const struct file_operations debugfs_full_proxy_file_operations = {
 	.open = full_proxy_open,
 };
+
+ssize_t debugfs_attr_read(struct file *file, char __user *buf,
+			size_t len, loff_t *ppos)
+{
+	ssize_t ret;
+	int srcu_idx;
+
+	ret = debugfs_use_file_start(F_DENTRY(file), &srcu_idx);
+	if (likely(!ret))
+		ret = simple_attr_read(file, buf, len, ppos);
+	debugfs_use_file_finish(srcu_idx);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(debugfs_attr_read);
+
+ssize_t debugfs_attr_write(struct file *file, const char __user *buf,
+			 size_t len, loff_t *ppos)
+{
+	ssize_t ret;
+	int srcu_idx;
+
+	ret = debugfs_use_file_start(F_DENTRY(file), &srcu_idx);
+	if (likely(!ret))
+		ret = simple_attr_write(file, buf, len, ppos);
+	debugfs_use_file_finish(srcu_idx);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(debugfs_attr_write);
 
 static struct dentry *debugfs_create_mode(const char *name, umode_t mode,
 					  struct dentry *parent, void *value,
