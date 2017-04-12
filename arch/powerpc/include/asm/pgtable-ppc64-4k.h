@@ -8,7 +8,7 @@
 #define PTE_INDEX_SIZE  9
 #define PMD_INDEX_SIZE  7
 #define PUD_INDEX_SIZE  9
-#define PGD_INDEX_SIZE  9
+#define PGD_INDEX_SIZE  12
 
 #ifndef __ASSEMBLY__
 #define PTE_TABLE_SIZE	(sizeof(pte_t) << PTE_INDEX_SIZE)
