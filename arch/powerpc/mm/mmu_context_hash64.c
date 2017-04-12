@@ -63,7 +63,7 @@ int hash__alloc_context_id(void)
 }
 EXPORT_SYMBOL_GPL(hash__alloc_context_id);
 
-int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
+static int hash__init_new_context(struct mm_struct *mm)
 {
 	int index;
 
@@ -77,8 +77,22 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 	 */
 	if (slice_mm_new_context(mm))
 		slice_set_user_psize(mm, mmu_virtual_psize);
+
 	subpage_prot_init_new_context(mm);
+
+	return index;
+}
+
+int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
+{
+	int index;
+
+	index = hash__init_new_context(mm);
+	if (index < 0)
+		return index;
+
 	mm->context.id = index;
+
 #ifdef CONFIG_PPC_ICSWX
 	mm->context.cop_lockp = kmalloc(sizeof(spinlock_t), GFP_KERNEL);
 	if (!mm->context.cop_lockp) {
