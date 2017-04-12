@@ -938,15 +938,12 @@ qed_eth_pf_tx_queue_start(struct qed_hwfn *p_hwfn,
 			  dma_addr_t pbl_addr,
 			  u16 pbl_size, void __iomem **pp_doorbell)
 {
-	union qed_qm_pq_params pq_params;
 	int rc;
 
-	memset(&pq_params, 0, sizeof(pq_params));
 
 	rc = qed_eth_txq_start_ramrod(p_hwfn, p_cid,
 				      pbl_addr, pbl_size,
-				      qed_get_qm_pq(p_hwfn, PROTOCOLID_ETH,
-						    &pq_params));
+				      qed_get_cm_pq_idx_mcos(p_hwfn, tc));
 	if (rc)
 		return rc;
 
@@ -1932,7 +1929,11 @@ static int qed_start_vport(struct qed_dev *cdev,
 			return rc;
 		}
 
-		qed_hw_start_fastpath(p_hwfn);
+		rc = qed_hw_start_fastpath(p_hwfn);
+		if (rc) {
+			DP_ERR(cdev, "Failed to start VPORT fastpath\n");
+			return rc;
+		}
 
 		DP_VERBOSE(cdev, (QED_MSG_SPQ | NETIF_MSG_IFUP),
 			   "Started V-PORT %d with MTU %d\n",
@@ -2175,7 +2176,13 @@ static int qed_start_txq(struct qed_dev *cdev,
 #define QED_HW_STOP_RETRY_LIMIT (10)
 static int qed_fastpath_stop(struct qed_dev *cdev)
 {
-	qed_hw_stop_fastpath(cdev);
+	int rc;
+
+	rc = qed_hw_stop_fastpath(cdev);
+	if (rc) {
+		DP_ERR(cdev, "Failed to stop Fastpath\n");
+		return rc;
+	}
 
 	return 0;
 }
