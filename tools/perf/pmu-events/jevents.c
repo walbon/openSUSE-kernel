@@ -197,6 +197,7 @@ static struct map {
 	{ "CBO", "uncore_cbox" },
 	{ "QPI LL", "uncore_qpi" },
 	{ "SBO", "uncore_sbox" },
+	{ "iMPH-U", "uncore_arb" },
 	{}
 };
 
