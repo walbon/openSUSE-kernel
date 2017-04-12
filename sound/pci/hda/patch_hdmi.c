@@ -1660,11 +1660,10 @@ static void sync_eld_via_acomp(struct hda_codec *codec,
 	int size;
 
 	mutex_lock(&per_pin->lock);
+	eld->monitor_present = false;
 	size = snd_hdac_acomp_get_eld(&codec->bus->core, per_pin->pin_nid,
 				      &eld->monitor_present, eld->eld_buffer,
 				      ELD_MAX_SIZE);
-	if (size < 0)
-		goto unlock;
 	if (size > 0) {
 		size = min(size, ELD_MAX_SIZE);
 		if (snd_hdmi_parse_eld(codec, &eld->info,
@@ -1683,7 +1682,6 @@ static void sync_eld_via_acomp(struct hda_codec *codec,
 	update_eld(codec, per_pin, eld);
 	snd_jack_report(per_pin->acomp_jack,
 			eld->monitor_present ? SND_JACK_AVOUT : 0);
- unlock:
 	mutex_unlock(&per_pin->lock);
 }
 
