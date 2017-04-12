@@ -1257,8 +1257,6 @@ static void atmci_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	WARN_ON(slot->mrq);
 	dev_dbg(&host->pdev->dev, "MRQ: cmd %u\n", mrq->cmd->opcode);
 
-	pm_runtime_get_sync(&host->pdev->dev);
-
 	/*
 	 * We may "know" the card is gone even though there's still an
 	 * electrical connection. If so, we really need to communicate
@@ -1288,8 +1286,6 @@ static void atmci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	struct atmel_mci_slot	*slot = mmc_priv(mmc);
 	struct atmel_mci	*host = slot->host;
 	unsigned int		i;
-
-	pm_runtime_get_sync(&host->pdev->dev);
 
 	slot->sdc_reg &= ~ATMCI_SDCBUS_MASK;
 	switch (ios->bus_width) {
@@ -1423,8 +1419,6 @@ static void atmci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		break;
 	}
 
-	pm_runtime_mark_last_busy(&host->pdev->dev);
-	pm_runtime_put_autosuspend(&host->pdev->dev);
 }
 
 static int atmci_get_ro(struct mmc_host *mmc)
@@ -1516,9 +1510,6 @@ static void atmci_request_end(struct atmel_mci *host, struct mmc_request *mrq)
 	spin_unlock(&host->lock);
 	mmc_request_done(prev_mmc, mrq);
 	spin_lock(&host->lock);
-
-	pm_runtime_mark_last_busy(&host->pdev->dev);
-	pm_runtime_put_autosuspend(&host->pdev->dev);
 }
 
 static void atmci_command_complete(struct atmel_mci *host,
