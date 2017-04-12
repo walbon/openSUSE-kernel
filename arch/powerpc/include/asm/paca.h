@@ -132,6 +132,7 @@ struct paca_struct {
 #endif /* CONFIG_PPC_BOOK3E */
 
 	mm_context_t context;
+	unsigned long addr_limit;
 
 	/*
 	 * then miscellaneous read-write fields

@@ -195,6 +195,7 @@ int main(void)
 					    context.low_slices_psize));
 	DEFINE(PACAHIGHSLICEPSIZE, offsetof(struct paca_struct,
 					    context.high_slices_psize));
+	DEFINE(PACA_ADDR_LIMIT, offsetof(struct paca_struct, addr_limit));
 	DEFINE(MMUPSIZEDEFSIZE, sizeof(struct mmu_psize_def));
 #endif /* CONFIG_PPC_MM_SLICES */
 
