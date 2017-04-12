@@ -4244,6 +4244,14 @@ static ssize_t rbd_snap_show(struct device *dev,
 	return sprintf(buf, "%s\n", rbd_dev->spec->snap_name);
 }
 
+static ssize_t rbd_snap_id_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct rbd_device *rbd_dev = dev_to_rbd_dev(dev);
+
+	return sprintf(buf, "%llu\n", rbd_dev->spec->snap_id);
+}
+
 /*
  * For a v2 image, shows the chain of parent images, separated by empty
  * lines.  For v1 images or if there is no parent, shows "(no parent
@@ -4584,6 +4592,7 @@ static DEVICE_ATTR(name, S_IRUGO, rbd_name_show, NULL);
 static DEVICE_ATTR(image_id, S_IRUGO, rbd_image_id_show, NULL);
 static DEVICE_ATTR(refresh, S_IWUSR, NULL, rbd_image_refresh);
 static DEVICE_ATTR(current_snap, S_IRUGO, rbd_snap_show, NULL);
+static DEVICE_ATTR(snap_id, S_IRUGO, rbd_snap_id_show, NULL);
 static DEVICE_ATTR(parent, S_IRUGO, rbd_parent_show, NULL);
 static DEVICE_ATTR(setxattr, S_IWUSR, NULL, rbd_setxattr_set);
 static DEVICE_ATTR(cmpsetxattr, S_IWUSR, NULL, rbd_cmpsetxattr_set);
@@ -4602,6 +4611,7 @@ static struct attribute *rbd_attrs[] = {
 	&dev_attr_name.attr,
 	&dev_attr_image_id.attr,
 	&dev_attr_current_snap.attr,
+	&dev_attr_snap_id.attr,
 	&dev_attr_parent.attr,
 	&dev_attr_refresh.attr,
 	&dev_attr_setxattr.attr,
