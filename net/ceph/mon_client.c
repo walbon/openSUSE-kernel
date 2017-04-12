@@ -227,9 +227,10 @@ static void __schedule_delayed(struct ceph_mon_client *monc)
 }
 
 const char *ceph_sub_str[] = {
-	[CEPH_SUB_MDSMAP] = "mdsmap",
 	[CEPH_SUB_MONMAP] = "monmap",
 	[CEPH_SUB_OSDMAP] = "osdmap",
+	[CEPH_SUB_FSMAP]  = "fsmap.user",
+	[CEPH_SUB_MDSMAP] = "mdsmap",
 };
 
 /*
@@ -260,20 +261,26 @@ static void __send_subscribe(struct ceph_mon_client *monc)
 	BUG_ON(num < 1); /* monmap sub is always there */
 	ceph_encode_32(&p, num);
 	for (i = 0; i < ARRAY_SIZE(monc->subs); i++) {
-		const char *s = ceph_sub_str[i];
+		char buf[32];
+		int len;
 
 		if (!monc->subs[i].want)
 			continue;
 
-		dout("%s %s start %llu flags 0x%x\n", __func__, s,
+		len = sprintf(buf, "%s", ceph_sub_str[i]);
+		if (i == CEPH_SUB_MDSMAP &&
+		    monc->fs_cluster_id != CEPH_FS_CLUSTER_ID_NONE)
+			len += sprintf(buf + len, ".%d", monc->fs_cluster_id);
+
+		dout("%s %s start %llu flags 0x%x\n", __func__, buf,
 		     le64_to_cpu(monc->subs[i].item.start),
 		     monc->subs[i].item.flags);
-		ceph_encode_string(&p, end, s, strlen(s));
+		ceph_encode_string(&p, end, buf, len);
 		memcpy(p, &monc->subs[i].item, sizeof(monc->subs[i].item));
 		p += sizeof(monc->subs[i].item);
 	}
 
-	BUG_ON(p != (end - 35 - (ARRAY_SIZE(monc->subs) - num) * 19));
+	BUG_ON(p > end);
 	msg->front.iov_len = p - msg->front.iov_base;
 	msg->hdr.front_len = cpu_to_le32(msg->front.iov_len);
 	ceph_msg_revoke(msg);
@@ -375,6 +382,14 @@ void ceph_monc_got_map(struct ceph_mon_client *monc, int sub, u32 epoch)
 	mutex_unlock(&monc->mutex);
 }
 EXPORT_SYMBOL(ceph_monc_got_map);
+
+void ceph_monc_renew_subs(struct ceph_mon_client *monc)
+{
+	mutex_lock(&monc->mutex);
+	__send_subscribe(monc);
+	mutex_unlock(&monc->mutex);
+}
+EXPORT_SYMBOL(ceph_monc_renew_subs);
 
 /*
  * Register interest in the next osdmap
@@ -478,45 +493,7 @@ out:
 /*
  * generic requests (currently statfs, mon_get_version)
  */
-static struct ceph_mon_generic_request *__lookup_generic_req(
-	struct ceph_mon_client *monc, u64 tid)
-{
-	struct ceph_mon_generic_request *req;
-	struct rb_node *n = monc->generic_request_tree.rb_node;
-
-	while (n) {
-		req = rb_entry(n, struct ceph_mon_generic_request, node);
-		if (tid < req->tid)
-			n = n->rb_left;
-		else if (tid > req->tid)
-			n = n->rb_right;
-		else
-			return req;
-	}
-	return NULL;
-}
-
-static void __insert_generic_request(struct ceph_mon_client *monc,
-			    struct ceph_mon_generic_request *new)
-{
-	struct rb_node **p = &monc->generic_request_tree.rb_node;
-	struct rb_node *parent = NULL;
-	struct ceph_mon_generic_request *req = NULL;
-
-	while (*p) {
-		parent = *p;
-		req = rb_entry(parent, struct ceph_mon_generic_request, node);
-		if (new->tid < req->tid)
-			p = &(*p)->rb_left;
-		else if (new->tid > req->tid)
-			p = &(*p)->rb_right;
-		else
-			BUG();
-	}
-
-	rb_link_node(&new->node, parent, p);
-	rb_insert_color(&new->node, &monc->generic_request_tree);
-}
+DEFINE_RB_FUNCS(generic_request, struct ceph_mon_generic_request, tid, node)
 
 static void release_generic_request(struct kref *kref)
 {
@@ -551,7 +528,7 @@ static struct ceph_msg *get_generic_reply(struct ceph_connection *con,
 	struct ceph_msg *m;
 
 	mutex_lock(&monc->mutex);
-	req = __lookup_generic_req(monc, tid);
+	req = lookup_generic_request(&monc->generic_request_tree, tid);
 	if (!req) {
 		dout("get_generic_reply %lld dne\n", tid);
 		*skip = 1;
@@ -578,16 +555,14 @@ static int __do_generic_request(struct ceph_mon_client *monc, u64 tid,
 	/* register request */
 	req->tid = tid != 0 ? tid : ++monc->last_tid;
 	req->request->hdr.tid = cpu_to_le64(req->tid);
-	__insert_generic_request(monc, req);
-	monc->num_generic_requests++;
+	insert_generic_request(&monc->generic_request_tree, req);
 	ceph_con_send(&monc->con, ceph_msg_get(req->request));
 	mutex_unlock(&monc->mutex);
 
 	err = wait_for_completion_interruptible(&req->completion);
 
 	mutex_lock(&monc->mutex);
-	rb_erase(&req->node, &monc->generic_request_tree);
-	monc->num_generic_requests--;
+	erase_generic_request(&monc->generic_request_tree, req);
 
 	if (!err)
 		err = req->result;
@@ -621,7 +596,7 @@ static void handle_statfs_reply(struct ceph_mon_client *monc,
 	dout("handle_statfs_reply %p tid %llu\n", msg, tid);
 
 	mutex_lock(&monc->mutex);
-	req = __lookup_generic_req(monc, tid);
+	req = lookup_generic_request(&monc->generic_request_tree, tid);
 	if (req) {
 		*(struct ceph_statfs *)req->buf = reply->st;
 		req->result = 0;
@@ -653,6 +628,7 @@ int ceph_monc_do_statfs(struct ceph_mon_client *monc, struct ceph_statfs *buf)
 		return -ENOMEM;
 
 	kref_init(&req->kref);
+	RB_CLEAR_NODE(&req->node);
 	req->buf = buf;
 	init_completion(&req->completion);
 
@@ -698,7 +674,7 @@ static void handle_get_version_reply(struct ceph_mon_client *monc,
 		goto bad;
 
 	mutex_lock(&monc->mutex);
-	req = __lookup_generic_req(monc, handle);
+	req = lookup_generic_request(&monc->generic_request_tree, handle);
 	if (req) {
 		*(u64 *)req->buf = ceph_decode_64(&p);
 		req->result = 0;
@@ -734,6 +710,7 @@ int ceph_monc_do_get_version(struct ceph_mon_client *monc, const char *what,
 		return -ENOMEM;
 
 	kref_init(&req->kref);
+	RB_CLEAR_NODE(&req->node);
 	req->buf = newest;
 	init_completion(&req->completion);
 
@@ -890,7 +867,7 @@ int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl)
 	if (!monc->m_subscribe_ack)
 		goto out_auth;
 
-	monc->m_subscribe = ceph_msg_new(CEPH_MSG_MON_SUBSCRIBE, 96, GFP_NOFS,
+	monc->m_subscribe = ceph_msg_new(CEPH_MSG_MON_SUBSCRIBE, 128, GFP_NOFS,
 					 true);
 	if (!monc->m_subscribe)
 		goto out_subscribe_ack;
@@ -914,8 +891,9 @@ int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl)
 
 	INIT_DELAYED_WORK(&monc->delayed_work, delayed_work);
 	monc->generic_request_tree = RB_ROOT;
-	monc->num_generic_requests = 0;
 	monc->last_tid = 0;
+
+	monc->fs_cluster_id = CEPH_FS_CLUSTER_ID_NONE;
 
 	return 0;
 
@@ -1126,6 +1104,7 @@ static struct ceph_msg *mon_alloc_msg(struct ceph_connection *con,
 	case CEPH_MSG_MON_MAP:
 	case CEPH_MSG_MDS_MAP:
 	case CEPH_MSG_OSD_MAP:
+	case CEPH_MSG_FS_MAP_USER:
 		m = ceph_msg_new(type, front_len, GFP_NOFS, false);
 		if (!m)
 			return NULL;	/* ENOMEM--return skip == 0 */
