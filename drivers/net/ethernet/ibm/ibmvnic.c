@@ -110,6 +110,11 @@ static int ibmvnic_poll(struct napi_struct *napi, int data);
 static void send_map_query(struct ibmvnic_adapter *adapter);
 static void send_request_map(struct ibmvnic_adapter *, dma_addr_t, __be32, u8);
 static void send_request_unmap(struct ibmvnic_adapter *, u8);
+static void send_login(struct ibmvnic_adapter *adapter);
+static void send_cap_queries(struct ibmvnic_adapter *adapter);
+static int init_sub_crq_irqs(struct ibmvnic_adapter *adapter);
+static int ibmvnic_init(struct ibmvnic_adapter *);
+static void ibmvnic_release_crq_queue(struct ibmvnic_adapter *);
 
 struct ibmvnic_stat {
 	char name[ETH_GSTRING_LEN];
@@ -189,9 +194,10 @@ static int alloc_long_term_buff(struct ibmvnic_adapter *adapter,
 	}
 	ltb->map_id = adapter->map_id;
 	adapter->map_id++;
+
+	init_completion(&adapter->fw_done);
 	send_request_map(adapter, ltb->addr,
 			 ltb->size, ltb->map_id);
-	init_completion(&adapter->fw_done);
 	wait_for_completion(&adapter->fw_done);
 	return 0;
 }
@@ -367,6 +373,38 @@ static void free_rx_pool(struct ibmvnic_adapter *adapter,
 	pool->rx_buff = NULL;
 }
 
+static int ibmvnic_login(struct net_device *netdev)
+{
+	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
+	unsigned long timeout = msecs_to_jiffies(30000);
+	struct device *dev = &adapter->vdev->dev;
+
+	do {
+		if (adapter->renegotiate) {
+			adapter->renegotiate = false;
+			release_sub_crqs_no_irqs(adapter);
+
+			reinit_completion(&adapter->init_done);
+			send_cap_queries(adapter);
+			if (!wait_for_completion_timeout(&adapter->init_done,
+							 timeout)) {
+				dev_err(dev, "Capabilities query timeout\n");
+				return -1;
+			}
+		}
+
+		reinit_completion(&adapter->init_done);
+		send_login(adapter);
+		if (!wait_for_completion_timeout(&adapter->init_done,
+						 timeout)) {
+			dev_err(dev, "Login timeout\n");
+			return -1;
+		}
+	} while (adapter->renegotiate);
+
+	return 0;
+}
+
 static int ibmvnic_open(struct net_device *netdev)
 {
 	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
@@ -376,7 +414,30 @@ static int ibmvnic_open(struct net_device *netdev)
 	int rxadd_subcrqs;
 	u64 *size_array;
 	int tx_subcrqs;
+	int rc = 0;
 	int i, j;
+
+	if (adapter->is_closed) {
+		rc = ibmvnic_init(adapter);
+		if (rc)
+			return rc;
+	}
+
+	rc = ibmvnic_login(netdev);
+	if (rc)
+		return rc;
+
+	rc = netif_set_real_num_tx_queues(netdev, adapter->req_tx_queues);
+	if (rc) {
+		dev_err(dev, "failed to set the number of tx queues\n");
+		return -1;
+	}
+
+	rc = init_sub_crq_irqs(adapter);
+	if (rc) {
+		dev_err(dev, "failed to initialize sub crq irqs\n");
+		return -1;
+	}
 
 	rxadd_subcrqs =
 	    be32_to_cpu(adapter->login_rsp_buf->num_rxadd_subcrqs);
@@ -403,7 +464,7 @@ static int ibmvnic_open(struct net_device *netdev)
 	send_map_query(adapter);
 	for (i = 0; i < rxadd_subcrqs; i++) {
 		init_rx_pool(adapter, &adapter->rx_pool[i],
-			     IBMVNIC_BUFFS_PER_POOL, i,
+			     adapter->req_rx_add_entries_per_subcrq, i,
 			     be64_to_cpu(size_array[i]), 1);
 		if (alloc_rx_pool(adapter, &adapter->rx_pool[i])) {
 			dev_err(dev, "Couldn't alloc rx pool\n");
@@ -418,23 +479,23 @@ static int ibmvnic_open(struct net_device *netdev)
 	for (i = 0; i < tx_subcrqs; i++) {
 		tx_pool = &adapter->tx_pool[i];
 		tx_pool->tx_buff =
-		    kcalloc(adapter->max_tx_entries_per_subcrq,
+		    kcalloc(adapter->req_tx_entries_per_subcrq,
 			    sizeof(struct ibmvnic_tx_buff), GFP_KERNEL);
 		if (!tx_pool->tx_buff)
 			goto tx_pool_alloc_failed;
 
 		if (alloc_long_term_buff(adapter, &tx_pool->long_term_buff,
-					 adapter->max_tx_entries_per_subcrq *
+					 adapter->req_tx_entries_per_subcrq *
 					 adapter->req_mtu))
 			goto tx_ltb_alloc_failed;
 
 		tx_pool->free_map =
-		    kcalloc(adapter->max_tx_entries_per_subcrq,
+		    kcalloc(adapter->req_tx_entries_per_subcrq,
 			    sizeof(int), GFP_KERNEL);
 		if (!tx_pool->free_map)
 			goto tx_fm_alloc_failed;
 
-		for (j = 0; j < adapter->max_tx_entries_per_subcrq; j++)
+		for (j = 0; j < adapter->req_tx_entries_per_subcrq; j++)
 			tx_pool->free_map[j] = j;
 
 		tx_pool->consumer_index = 0;
@@ -472,6 +533,7 @@ static int ibmvnic_open(struct net_device *netdev)
 	ibmvnic_send_crq(adapter, &crq);
 
 	netif_tx_start_all_queues(netdev);
+	adapter->is_closed = false;
 
 	return 0;
 
@@ -505,25 +567,17 @@ rx_pool_alloc_failed:
 	adapter->rx_pool = NULL;
 rx_pool_arr_alloc_failed:
 	for (i = 0; i < adapter->req_rx_queues; i++)
-		napi_enable(&adapter->napi[i]);
+		napi_disable(&adapter->napi[i]);
 alloc_napi_failed:
+	release_sub_crqs(adapter);
 	return -ENOMEM;
 }
 
-static int ibmvnic_close(struct net_device *netdev)
+static void ibmvnic_release_resources(struct ibmvnic_adapter *adapter)
 {
-	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
 	struct device *dev = &adapter->vdev->dev;
-	union ibmvnic_crq crq;
+	int tx_scrqs, rx_scrqs;
 	int i;
-
-	adapter->closing = true;
-
-	for (i = 0; i < adapter->req_rx_queues; i++)
-		napi_disable(&adapter->napi[i]);
-
-	if (!adapter->failover)
-		netif_tx_stop_all_queues(netdev);
 
 	if (adapter->bounce_buffer) {
 		if (!dma_mapping_error(dev, adapter->bounce_buffer_dma)) {
@@ -537,33 +591,70 @@ static int ibmvnic_close(struct net_device *netdev)
 		adapter->bounce_buffer = NULL;
 	}
 
+	tx_scrqs = be32_to_cpu(adapter->login_rsp_buf->num_txsubm_subcrqs);
+	for (i = 0; i < tx_scrqs; i++) {
+		struct ibmvnic_tx_pool *tx_pool = &adapter->tx_pool[i];
+
+		kfree(tx_pool->tx_buff);
+		free_long_term_buff(adapter, &tx_pool->long_term_buff);
+		kfree(tx_pool->free_map);
+	}
+	kfree(adapter->tx_pool);
+	adapter->tx_pool = NULL;
+
+	rx_scrqs = be32_to_cpu(adapter->login_rsp_buf->num_rxadd_subcrqs);
+	for (i = 0; i < rx_scrqs; i++) {
+		struct ibmvnic_rx_pool *rx_pool = &adapter->rx_pool[i];
+
+		free_rx_pool(adapter, rx_pool);
+		free_long_term_buff(adapter, &rx_pool->long_term_buff);
+	}
+	kfree(adapter->rx_pool);
+	adapter->rx_pool = NULL;
+
+	release_sub_crqs(adapter);
+	ibmvnic_release_crq_queue(adapter);
+
+	if (adapter->debugfs_dir && !IS_ERR(adapter->debugfs_dir))
+		debugfs_remove_recursive(adapter->debugfs_dir);
+
+	if (adapter->stats_token)
+		dma_unmap_single(dev, adapter->stats_token,
+				 sizeof(struct ibmvnic_statistics),
+				 DMA_FROM_DEVICE);
+
+	if (adapter->ras_comps)
+		dma_free_coherent(dev, adapter->ras_comp_num *
+				  sizeof(struct ibmvnic_fw_component),
+				  adapter->ras_comps, adapter->ras_comps_tok);
+
+	kfree(adapter->ras_comp_int);
+}
+
+static int ibmvnic_close(struct net_device *netdev)
+{
+	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
+	union ibmvnic_crq crq;
+	int i;
+
+	adapter->closing = true;
+
+	for (i = 0; i < adapter->req_rx_queues; i++)
+		napi_disable(&adapter->napi[i]);
+
+	if (!adapter->failover)
+		netif_tx_stop_all_queues(netdev);
+
 	memset(&crq, 0, sizeof(crq));
 	crq.logical_link_state.first = IBMVNIC_CRQ_CMD;
 	crq.logical_link_state.cmd = LOGICAL_LINK_STATE;
 	crq.logical_link_state.link_state = IBMVNIC_LOGICAL_LNK_DN;
 	ibmvnic_send_crq(adapter, &crq);
 
-	for (i = 0; i < be32_to_cpu(adapter->login_rsp_buf->num_txsubm_subcrqs);
-	     i++) {
-		kfree(adapter->tx_pool[i].tx_buff);
-		free_long_term_buff(adapter,
-				    &adapter->tx_pool[i].long_term_buff);
-		kfree(adapter->tx_pool[i].free_map);
-	}
-	kfree(adapter->tx_pool);
-	adapter->tx_pool = NULL;
+	ibmvnic_release_resources(adapter);
 
-	for (i = 0; i < be32_to_cpu(adapter->login_rsp_buf->num_rxadd_subcrqs);
-	     i++) {
-		free_rx_pool(adapter, &adapter->rx_pool[i]);
-		free_long_term_buff(adapter,
-				    &adapter->rx_pool[i].long_term_buff);
-	}
-	kfree(adapter->rx_pool);
-	adapter->rx_pool = NULL;
-
+	adapter->is_closed = true;
 	adapter->closing = false;
-
 	return 0;
 }
 
@@ -704,6 +795,7 @@ static int ibmvnic_xmit(struct sk_buff *skb, struct net_device *netdev)
 	u8 *hdrs = (u8 *)&adapter->tx_rx_desc_req;
 	struct device *dev = &adapter->vdev->dev;
 	struct ibmvnic_tx_buff *tx_buff = NULL;
+	struct ibmvnic_sub_crq_queue *tx_scrq;
 	struct ibmvnic_tx_pool *tx_pool;
 	unsigned int tx_send_failed = 0;
 	unsigned int tx_map_failed = 0;
@@ -723,6 +815,7 @@ static int ibmvnic_xmit(struct sk_buff *skb, struct net_device *netdev)
 	int ret = 0;
 
 	tx_pool = &adapter->tx_pool[queue_num];
+	tx_scrq = adapter->tx_scrq[queue_num];
 	txq = netdev_get_tx_queue(netdev, skb_get_queue_mapping(skb));
 	handle_array = (u64 *)((u8 *)(adapter->login_rsp_buf) +
 				   be32_to_cpu(adapter->login_rsp_buf->
@@ -743,7 +836,7 @@ static int ibmvnic_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 	tx_pool->consumer_index =
 	    (tx_pool->consumer_index + 1) %
-		adapter->max_tx_entries_per_subcrq;
+		adapter->req_tx_entries_per_subcrq;
 
 	tx_buff = &tx_pool->tx_buff[index];
 	tx_buff->skb = skb;
@@ -816,7 +909,7 @@ static int ibmvnic_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 		if (tx_pool->consumer_index == 0)
 			tx_pool->consumer_index =
-				adapter->max_tx_entries_per_subcrq - 1;
+				adapter->req_tx_entries_per_subcrq - 1;
 		else
 			tx_pool->consumer_index--;
 
@@ -825,6 +918,14 @@ static int ibmvnic_xmit(struct sk_buff *skb, struct net_device *netdev)
 		ret = NETDEV_TX_BUSY;
 		goto out;
 	}
+
+	atomic_inc(&tx_scrq->used);
+
+	if (atomic_read(&tx_scrq->used) >= adapter->req_tx_entries_per_subcrq) {
+		netdev_info(netdev, "Stopping queue %d\n", queue_num);
+		netif_stop_subqueue(netdev, queue_num);
+	}
+
 	tx_packets++;
 	tx_bytes += skb->len;
 	txq->trans_start = jiffies;
@@ -905,7 +1006,8 @@ static int ibmvnic_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
 
-	if (new_mtu > adapter->req_mtu || new_mtu < adapter->min_mtu)
+	if (new_mtu > adapter->max_mtu - ETH_HLEN ||
+            new_mtu < adapter->min_mtu - ETH_HLEN)
 		return -EINVAL;
 
 	netdev->mtu = new_mtu;
@@ -1133,10 +1235,10 @@ static void ibmvnic_get_ethtool_stats(struct net_device *dev,
 	crq.request_statistics.ioba = cpu_to_be32(adapter->stats_token);
 	crq.request_statistics.len =
 	    cpu_to_be32(sizeof(struct ibmvnic_statistics));
-	ibmvnic_send_crq(adapter, &crq);
 
 	/* Wait for data to be written */
 	init_completion(&adapter->stats_done);
+	ibmvnic_send_crq(adapter, &crq);
 	wait_for_completion(&adapter->stats_done);
 
 	for (i = 0; i < ARRAY_SIZE(ibmvnic_stats); i++)
@@ -1219,6 +1321,7 @@ static struct ibmvnic_sub_crq_queue *init_sub_crq_queue(struct ibmvnic_adapter
 	scrq->adapter = adapter;
 	scrq->size = 4 * PAGE_SIZE / sizeof(*scrq->msgs);
 	scrq->cur = 0;
+	atomic_set(&scrq->used, 0);
 	scrq->rx_skb_top = NULL;
 	spin_lock_init(&scrq->lock);
 
@@ -1252,6 +1355,7 @@ static void release_sub_crqs(struct ibmvnic_adapter *adapter)
 				release_sub_crq_queue(adapter,
 						      adapter->tx_scrq[i]);
 			}
+		kfree(adapter->tx_scrq);
 		adapter->tx_scrq = NULL;
 	}
 
@@ -1264,10 +1368,9 @@ static void release_sub_crqs(struct ibmvnic_adapter *adapter)
 				release_sub_crq_queue(adapter,
 						      adapter->rx_scrq[i]);
 			}
+		kfree(adapter->rx_scrq);
 		adapter->rx_scrq = NULL;
 	}
-
-	adapter->requested_caps = 0;
 }
 
 static void release_sub_crqs_no_irqs(struct ibmvnic_adapter *adapter)
@@ -1289,8 +1392,6 @@ static void release_sub_crqs_no_irqs(struct ibmvnic_adapter *adapter)
 						      adapter->rx_scrq[i]);
 		adapter->rx_scrq = NULL;
 	}
-
-	adapter->requested_caps = 0;
 }
 
 static int disable_scrq_irq(struct ibmvnic_adapter *adapter,
@@ -1365,14 +1466,28 @@ restart_loop:
 						 DMA_TO_DEVICE);
 			}
 
-			if (txbuff->last_frag)
+			if (txbuff->last_frag) {
+				atomic_dec(&scrq->used);
+
+				if (atomic_read(&scrq->used) <=
+				    (adapter->req_tx_entries_per_subcrq / 2) &&
+				    netif_subqueue_stopped(adapter->netdev,
+							   txbuff->skb)) {
+					netif_wake_subqueue(adapter->netdev,
+							    scrq->pool_index);
+					netdev_dbg(adapter->netdev,
+						   "Started queue %d\n",
+						   scrq->pool_index);
+				}
+
 				dev_kfree_skb_any(txbuff->skb);
+			}
 
 			adapter->tx_pool[pool].free_map[adapter->tx_pool[pool].
 						     producer_index] = index;
 			adapter->tx_pool[pool].producer_index =
 			    (adapter->tx_pool[pool].producer_index + 1) %
-			    adapter->max_tx_entries_per_subcrq;
+			    adapter->req_tx_entries_per_subcrq;
 		}
 		/* remove tx_comp scrq*/
 		next->tx_comp.first = 0;
@@ -1508,7 +1623,7 @@ static void init_sub_crqs(struct ibmvnic_adapter *adapter, int retry)
 		adapter->req_rx_queues = adapter->opt_rx_comp_queues;
 		adapter->req_rx_add_queues = adapter->max_rx_add_queues;
 
-		adapter->req_mtu = adapter->max_mtu;
+		adapter->req_mtu = adapter->netdev->mtu + ETH_HLEN;
 	}
 
 	total_queues = adapter->req_tx_queues + adapter->req_rx_queues;
@@ -1578,30 +1693,36 @@ static void init_sub_crqs(struct ibmvnic_adapter *adapter, int retry)
 
 	crq.request_capability.capability = cpu_to_be16(REQ_TX_QUEUES);
 	crq.request_capability.number = cpu_to_be64(adapter->req_tx_queues);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.request_capability.capability = cpu_to_be16(REQ_RX_QUEUES);
 	crq.request_capability.number = cpu_to_be64(adapter->req_rx_queues);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.request_capability.capability = cpu_to_be16(REQ_RX_ADD_QUEUES);
 	crq.request_capability.number = cpu_to_be64(adapter->req_rx_add_queues);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.request_capability.capability =
 	    cpu_to_be16(REQ_TX_ENTRIES_PER_SUBCRQ);
 	crq.request_capability.number =
 	    cpu_to_be64(adapter->req_tx_entries_per_subcrq);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.request_capability.capability =
 	    cpu_to_be16(REQ_RX_ADD_ENTRIES_PER_SUBCRQ);
 	crq.request_capability.number =
 	    cpu_to_be64(adapter->req_rx_add_entries_per_subcrq);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.request_capability.capability = cpu_to_be16(REQ_MTU);
 	crq.request_capability.number = cpu_to_be64(adapter->req_mtu);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	if (adapter->netdev->flags & IFF_PROMISC) {
@@ -1609,12 +1730,14 @@ static void init_sub_crqs(struct ibmvnic_adapter *adapter, int retry)
 			crq.request_capability.capability =
 			    cpu_to_be16(PROMISC_REQUESTED);
 			crq.request_capability.number = cpu_to_be64(1);
+			atomic_inc(&adapter->running_cap_crqs);
 			ibmvnic_send_crq(adapter, &crq);
 		}
 	} else {
 		crq.request_capability.capability =
 		    cpu_to_be16(PROMISC_REQUESTED);
 		crq.request_capability.number = cpu_to_be64(0);
+		atomic_inc(&adapter->running_cap_crqs);
 		ibmvnic_send_crq(adapter, &crq);
 	}
 
@@ -1966,112 +2089,112 @@ static void send_cap_queries(struct ibmvnic_adapter *adapter)
 {
 	union ibmvnic_crq crq;
 
-	atomic_set(&adapter->running_cap_queries, 0);
+	atomic_set(&adapter->running_cap_crqs, 0);
 	memset(&crq, 0, sizeof(crq));
 	crq.query_capability.first = IBMVNIC_CRQ_CMD;
 	crq.query_capability.cmd = QUERY_CAPABILITY;
 
 	crq.query_capability.capability = cpu_to_be16(MIN_TX_QUEUES);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(MIN_RX_QUEUES);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(MIN_RX_ADD_QUEUES);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(MAX_TX_QUEUES);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(MAX_RX_QUEUES);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(MAX_RX_ADD_QUEUES);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability =
 	    cpu_to_be16(MIN_TX_ENTRIES_PER_SUBCRQ);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability =
 	    cpu_to_be16(MIN_RX_ADD_ENTRIES_PER_SUBCRQ);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability =
 	    cpu_to_be16(MAX_TX_ENTRIES_PER_SUBCRQ);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability =
 	    cpu_to_be16(MAX_RX_ADD_ENTRIES_PER_SUBCRQ);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(TCP_IP_OFFLOAD);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(PROMISC_SUPPORTED);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(MIN_MTU);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(MAX_MTU);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(MAX_MULTICAST_FILTERS);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(VLAN_HEADER_INSERTION);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(MAX_TX_SG_ENTRIES);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(RX_SG_SUPPORTED);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(OPT_TX_COMP_SUB_QUEUES);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(OPT_RX_COMP_QUEUES);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability =
 			cpu_to_be16(OPT_RX_BUFADD_Q_PER_RX_COMP_Q);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability =
 			cpu_to_be16(OPT_TX_ENTRIES_PER_SUBCRQ);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability =
 			cpu_to_be16(OPT_RXBA_ENTRIES_PER_SUBCRQ);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 
 	crq.query_capability.capability = cpu_to_be16(TX_RX_DESC_REQ);
-	atomic_inc(&adapter->running_cap_queries);
+	atomic_inc(&adapter->running_cap_crqs);
 	ibmvnic_send_crq(adapter, &crq);
 }
 
@@ -2197,12 +2320,12 @@ static void handle_error_info_rsp(union ibmvnic_crq *crq,
 
 	if (!found) {
 		dev_err(dev, "Couldn't find error id %x\n",
-			crq->request_error_rsp.error_id);
+			be32_to_cpu(crq->request_error_rsp.error_id));
 		return;
 	}
 
 	dev_err(dev, "Detailed info for error id %x:",
-		crq->request_error_rsp.error_id);
+		be32_to_cpu(crq->request_error_rsp.error_id));
 
 	for (i = 0; i < error_buff->len; i++) {
 		pr_cont("%02x", (int)error_buff->buff[i]);
@@ -2281,8 +2404,8 @@ static void handle_error_indication(union ibmvnic_crq *crq,
 	dev_err(dev, "Firmware reports %serror id %x, cause %d\n",
 		crq->error_indication.
 		    flags & IBMVNIC_FATAL_ERROR ? "FATAL " : "",
-		crq->error_indication.error_id,
-		crq->error_indication.error_cause);
+		be32_to_cpu(crq->error_indication.error_id),
+		be16_to_cpu(crq->error_indication.error_cause));
 
 	error_buff = kmalloc(sizeof(*error_buff), GFP_ATOMIC);
 	if (!error_buff)
@@ -2359,6 +2482,7 @@ static void handle_request_cap_rsp(union ibmvnic_crq *crq,
 	u64 *req_value;
 	char *name;
 
+	atomic_dec(&adapter->running_cap_crqs);
 	switch (be16_to_cpu(crq->request_capability_rsp.capability)) {
 	case REQ_TX_QUEUES:
 		req_value = &adapter->req_tx_queues;
@@ -2400,10 +2524,10 @@ static void handle_request_cap_rsp(union ibmvnic_crq *crq,
 	case PARTIALSUCCESS:
 		dev_info(dev, "req=%lld, rsp=%ld in %s queue, retrying.\n",
 			 *req_value,
-			 (long int)be32_to_cpu(crq->request_capability_rsp.
+			 (long int)be64_to_cpu(crq->request_capability_rsp.
 					       number), name);
 		release_sub_crqs_no_irqs(adapter);
-		*req_value = be32_to_cpu(crq->request_capability_rsp.number);
+		*req_value = be64_to_cpu(crq->request_capability_rsp.number);
 		init_sub_crqs(adapter, 1);
 		return;
 	default:
@@ -2413,12 +2537,13 @@ static void handle_request_cap_rsp(union ibmvnic_crq *crq,
 	}
 
 	/* Done receiving requested capabilities, query IP offload support */
-	if (++adapter->requested_caps == 7) {
+	if (atomic_read(&adapter->running_cap_crqs) == 0) {
 		union ibmvnic_crq newcrq;
 		int buf_sz = sizeof(struct ibmvnic_query_ip_offload_buffer);
 		struct ibmvnic_query_ip_offload_buffer *ip_offload_buf =
 		    &adapter->ip_offload_buf;
 
+		adapter->wait_capability = false;
 		adapter->ip_offload_tok = dma_map_single(dev, ip_offload_buf,
 							 buf_sz,
 							 DMA_FROM_DEVICE);
@@ -2554,9 +2679,9 @@ static void handle_query_cap_rsp(union ibmvnic_crq *crq,
 	struct device *dev = &adapter->vdev->dev;
 	long rc;
 
-	atomic_dec(&adapter->running_cap_queries);
+	atomic_dec(&adapter->running_cap_crqs);
 	netdev_dbg(netdev, "Outstanding queries: %d\n",
-		   atomic_read(&adapter->running_cap_queries));
+		   atomic_read(&adapter->running_cap_crqs));
 	rc = crq->query_capability.rc.code;
 	if (rc) {
 		dev_err(dev, "Error %ld in QUERY_CAP_RSP\n", rc);
@@ -2712,9 +2837,11 @@ static void handle_query_cap_rsp(union ibmvnic_crq *crq,
 	}
 
 out:
-	if (atomic_read(&adapter->running_cap_queries) == 0)
+	if (atomic_read(&adapter->running_cap_crqs) == 0) {
+		adapter->wait_capability = false;
 		init_sub_crqs(adapter, 0);
 		/* We're done querying the capabilities, initialize sub-crqs */
+	}
 }
 
 static void handle_control_ras_rsp(union ibmvnic_crq *crq,
@@ -2809,9 +2936,9 @@ static ssize_t trace_read(struct file *file, char __user *user_buf, size_t len,
 	crq.collect_fw_trace.correlator = adapter->ras_comps[num].correlator;
 	crq.collect_fw_trace.ioba = cpu_to_be32(trace_tok);
 	crq.collect_fw_trace.len = adapter->ras_comps[num].trace_buff_size;
-	ibmvnic_send_crq(adapter, &crq);
 
 	init_completion(&adapter->fw_done);
+	ibmvnic_send_crq(adapter, &crq);
 	wait_for_completion(&adapter->fw_done);
 
 	if (*ppos + len > be32_to_cpu(adapter->ras_comps[num].trace_buff_size))
@@ -3390,8 +3517,7 @@ static void ibmvnic_handle_crq(union ibmvnic_crq *crq,
 		dma_unmap_single(dev, adapter->ip_offload_ctrl_tok,
 				 sizeof(adapter->ip_offload_ctrl),
 				 DMA_TO_DEVICE);
-		/* We're done with the queries, perform the login */
-		send_login(adapter);
+		complete(&adapter->init_done);
 		break;
 	case REQUEST_RAS_COMP_NUM_RSP:
 		netdev_dbg(netdev, "Got Request RAS Comp Num Response\n");
@@ -3424,6 +3550,18 @@ static void ibmvnic_handle_crq(union ibmvnic_crq *crq,
 static irqreturn_t ibmvnic_interrupt(int irq, void *instance)
 {
 	struct ibmvnic_adapter *adapter = instance;
+	unsigned long flags;
+
+	spin_lock_irqsave(&adapter->crq.lock, flags);
+	vio_disable_interrupts(adapter->vdev);
+	tasklet_schedule(&adapter->tasklet);
+	spin_unlock_irqrestore(&adapter->crq.lock, flags);
+	return IRQ_HANDLED;
+}
+
+static void ibmvnic_tasklet(void *data)
+{
+	struct ibmvnic_adapter *adapter = data;
 	struct ibmvnic_crq_queue *queue = &adapter->crq;
 	struct vio_dev *vdev = adapter->vdev;
 	union ibmvnic_crq *crq;
@@ -3445,11 +3583,19 @@ static irqreturn_t ibmvnic_interrupt(int irq, void *instance)
 			ibmvnic_handle_crq(crq, adapter);
 			crq->generic.first = 0;
 		} else {
-			done = true;
+			/* remain in tasklet until all
+			 * capabilities responses are received
+			 */
+			if (!adapter->wait_capability)
+				done = true;
 		}
 	}
+	/* if capabilities CRQ's were sent in this tasklet, the following
+	 * tasklet must wait until all responses are received
+	 */
+	if (atomic_read(&adapter->running_cap_crqs) != 0)
+		adapter->wait_capability = true;
 	spin_unlock_irqrestore(&queue->lock, flags);
-	return IRQ_HANDLED;
 }
 
 static int ibmvnic_reenable_crq_queue(struct ibmvnic_adapter *adapter)
@@ -3504,6 +3650,7 @@ static void ibmvnic_release_crq_queue(struct ibmvnic_adapter *adapter)
 
 	netdev_dbg(adapter->netdev, "Releasing CRQ\n");
 	free_irq(vdev->irq, adapter);
+	tasklet_kill(&adapter->tasklet);
 	do {
 		rc = plpar_hcall_norets(H_FREE_CRQ, vdev->unit_address);
 	} while (rc == H_BUSY || H_IS_LONG_BUSY(rc));
@@ -3549,6 +3696,9 @@ static int ibmvnic_init_crq_queue(struct ibmvnic_adapter *adapter)
 
 	retrc = 0;
 
+	tasklet_init(&adapter->tasklet, (void *)ibmvnic_tasklet,
+		     (unsigned long)adapter);
+
 	netdev_dbg(adapter->netdev, "registering irq 0x%x\n", vdev->irq);
 	rc = request_irq(vdev->irq, ibmvnic_interrupt, 0, IBMVNIC_NAME,
 			 adapter);
@@ -3570,6 +3720,7 @@ static int ibmvnic_init_crq_queue(struct ibmvnic_adapter *adapter)
 	return retrc;
 
 req_irq_failed:
+	tasklet_kill(&adapter->tasklet);
 	do {
 		rc = plpar_hcall_norets(H_FREE_CRQ, vdev->unit_address);
 	} while (rc == H_BUSY || H_IS_LONG_BUSY(rc));
@@ -3591,9 +3742,9 @@ static int ibmvnic_dump_show(struct seq_file *seq, void *v)
 	memset(&crq, 0, sizeof(crq));
 	crq.request_dump_size.first = IBMVNIC_CRQ_CMD;
 	crq.request_dump_size.cmd = REQUEST_DUMP_SIZE;
-	ibmvnic_send_crq(adapter, &crq);
 
 	init_completion(&adapter->fw_done);
+	ibmvnic_send_crq(adapter, &crq);
 	wait_for_completion(&adapter->fw_done);
 
 	seq_write(seq, adapter->dump_data, adapter->dump_data_size);
@@ -3639,34 +3790,14 @@ static void handle_crq_init_rsp(struct work_struct *work)
 		}
 	}
 
-	send_version_xchg(adapter);
 	reinit_completion(&adapter->init_done);
+	send_version_xchg(adapter);
 	if (!wait_for_completion_timeout(&adapter->init_done, timeout)) {
 		dev_err(dev, "Passive init timeout\n");
 		goto task_failed;
 	}
 
-	do {
-		if (adapter->renegotiate) {
-			adapter->renegotiate = false;
-			release_sub_crqs_no_irqs(adapter);
-			send_cap_queries(adapter);
-
-			reinit_completion(&adapter->init_done);
-			if (!wait_for_completion_timeout(&adapter->init_done,
-							 timeout)) {
-				dev_err(dev, "Passive init timeout\n");
-				goto task_failed;
-			}
-		}
-	} while (adapter->renegotiate);
-	rc = init_sub_crq_irqs(adapter);
-
-	if (rc)
-		goto task_failed;
-
-	netdev->real_num_tx_queues = adapter->req_tx_queues;
-	netdev->mtu = adapter->req_mtu;
+	netdev->mtu = adapter->req_mtu - ETH_HLEN;
 
 	if (adapter->failover) {
 		adapter->failover = false;
@@ -3697,14 +3828,65 @@ task_failed:
 	dev_err(dev, "Passive initialization was not successful\n");
 }
 
+static int ibmvnic_init(struct ibmvnic_adapter *adapter)
+{
+	struct device *dev = &adapter->vdev->dev;
+	unsigned long timeout = msecs_to_jiffies(30000);
+	struct dentry *ent;
+	char buf[17]; /* debugfs name buf */
+	int rc;
+
+	rc = ibmvnic_init_crq_queue(adapter);
+	if (rc) {
+		dev_err(dev, "Couldn't initialize crq. rc=%d\n", rc);
+		return rc;
+	}
+
+	adapter->stats_token = dma_map_single(dev, &adapter->stats,
+				      sizeof(struct ibmvnic_statistics),
+				      DMA_FROM_DEVICE);
+	if (dma_mapping_error(dev, adapter->stats_token)) {
+		ibmvnic_release_crq_queue(adapter);
+		dev_err(dev, "Couldn't map stats buffer\n");
+		return -ENOMEM;
+	}
+
+	snprintf(buf, sizeof(buf), "ibmvnic_%x", adapter->vdev->unit_address);
+	ent = debugfs_create_dir(buf, NULL);
+	if (!ent || IS_ERR(ent)) {
+		dev_info(dev, "debugfs create directory failed\n");
+		adapter->debugfs_dir = NULL;
+	} else {
+		adapter->debugfs_dir = ent;
+		ent = debugfs_create_file("dump", S_IRUGO,
+					  adapter->debugfs_dir,
+					  adapter->netdev, &ibmvnic_dump_ops);
+		if (!ent || IS_ERR(ent)) {
+			dev_info(dev, "debugfs create dump file failed\n");
+			adapter->debugfs_dump = NULL;
+		} else {
+			adapter->debugfs_dump = ent;
+		}
+	}
+
+	init_completion(&adapter->init_done);
+	ibmvnic_send_crq_init(adapter);
+	if (!wait_for_completion_timeout(&adapter->init_done, timeout)) {
+		dev_err(dev, "Initialization sequence timed out\n");
+		if (adapter->debugfs_dir && !IS_ERR(adapter->debugfs_dir))
+			debugfs_remove_recursive(adapter->debugfs_dir);
+		ibmvnic_release_crq_queue(adapter);
+		return -1;
+	}
+
+	return 0;
+}
+
 static int ibmvnic_probe(struct vio_dev *dev, const struct vio_device_id *id)
 {
-	unsigned long timeout = msecs_to_jiffies(30000);
 	struct ibmvnic_adapter *adapter;
 	struct net_device *netdev;
 	unsigned char *mac_addr_p;
-	struct dentry *ent;
-	char buf[17]; /* debugfs name buf */
 	int rc;
 
 	dev_dbg(&dev->dev, "entering ibmvnic_probe for UA 0x%x\n",
@@ -3742,118 +3924,36 @@ static int ibmvnic_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	spin_lock_init(&adapter->stats_lock);
 
-	rc = ibmvnic_init_crq_queue(adapter);
-	if (rc) {
-		dev_err(&dev->dev, "Couldn't initialize crq. rc=%d\n", rc);
-		goto free_netdev;
-	}
-
 	INIT_LIST_HEAD(&adapter->errors);
 	INIT_LIST_HEAD(&adapter->inflight);
 	spin_lock_init(&adapter->error_list_lock);
 	spin_lock_init(&adapter->inflight_lock);
 
-	adapter->stats_token = dma_map_single(&dev->dev, &adapter->stats,
-					      sizeof(struct ibmvnic_statistics),
-					      DMA_FROM_DEVICE);
-	if (dma_mapping_error(&dev->dev, adapter->stats_token)) {
-		if (!firmware_has_feature(FW_FEATURE_CMO))
-			dev_err(&dev->dev, "Couldn't map stats buffer\n");
-		rc = -ENOMEM;
-		goto free_crq;
-	}
-
-	snprintf(buf, sizeof(buf), "ibmvnic_%x", dev->unit_address);
-	ent = debugfs_create_dir(buf, NULL);
-	if (!ent || IS_ERR(ent)) {
-		dev_info(&dev->dev, "debugfs create directory failed\n");
-		adapter->debugfs_dir = NULL;
-	} else {
-		adapter->debugfs_dir = ent;
-		ent = debugfs_create_file("dump", S_IRUGO, adapter->debugfs_dir,
-					  netdev, &ibmvnic_dump_ops);
-		if (!ent || IS_ERR(ent)) {
-			dev_info(&dev->dev,
-				 "debugfs create dump file failed\n");
-			adapter->debugfs_dump = NULL;
-		} else {
-			adapter->debugfs_dump = ent;
-		}
-	}
-	ibmvnic_send_crq_init(adapter);
-
-	init_completion(&adapter->init_done);
-	if (!wait_for_completion_timeout(&adapter->init_done, timeout))
-		return 0;
-
-	do {
-		if (adapter->renegotiate) {
-			adapter->renegotiate = false;
-			release_sub_crqs_no_irqs(adapter);
-			send_cap_queries(adapter);
-
-			reinit_completion(&adapter->init_done);
-			if (!wait_for_completion_timeout(&adapter->init_done,
-							 timeout))
-				return 0;
-		}
-	} while (adapter->renegotiate);
-
-	rc = init_sub_crq_irqs(adapter);
+	rc = ibmvnic_init(adapter);
 	if (rc) {
-		dev_err(&dev->dev, "failed to initialize sub crq irqs\n");
-		goto free_debugfs;
+		free_netdev(netdev);
+		return rc;
 	}
 
-	netdev->real_num_tx_queues = adapter->req_tx_queues;
-	netdev->mtu = adapter->req_mtu;
+	netdev->mtu = adapter->req_mtu - ETH_HLEN;
+	adapter->is_closed = false;
 
 	rc = register_netdev(netdev);
 	if (rc) {
 		dev_err(&dev->dev, "failed to register netdev rc=%d\n", rc);
-		goto free_sub_crqs;
+		free_netdev(netdev);
+		return rc;
 	}
 	dev_info(&dev->dev, "ibmvnic registered\n");
 
 	return 0;
-
-free_sub_crqs:
-	release_sub_crqs(adapter);
-free_debugfs:
-	if (adapter->debugfs_dir && !IS_ERR(adapter->debugfs_dir))
-		debugfs_remove_recursive(adapter->debugfs_dir);
-free_crq:
-	ibmvnic_release_crq_queue(adapter);
-free_netdev:
-	free_netdev(netdev);
-	return rc;
 }
 
 static int ibmvnic_remove(struct vio_dev *dev)
 {
 	struct net_device *netdev = dev_get_drvdata(&dev->dev);
-	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
 
 	unregister_netdev(netdev);
-
-	release_sub_crqs(adapter);
-
-	ibmvnic_release_crq_queue(adapter);
-
-	if (adapter->debugfs_dir && !IS_ERR(adapter->debugfs_dir))
-		debugfs_remove_recursive(adapter->debugfs_dir);
-
-	dma_unmap_single(&dev->dev, adapter->stats_token,
-			 sizeof(struct ibmvnic_statistics), DMA_FROM_DEVICE);
-
-	if (adapter->ras_comps)
-		dma_free_coherent(&dev->dev,
-				  adapter->ras_comp_num *
-				  sizeof(struct ibmvnic_fw_component),
-				  adapter->ras_comps, adapter->ras_comps_tok);
-
-	kfree(adapter->ras_comp_int);
-
 	free_netdev(netdev);
 	dev_set_drvdata(&dev->dev, NULL);
 
