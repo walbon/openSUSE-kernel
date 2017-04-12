@@ -18,11 +18,8 @@
 /*
  * An RBD device name will be "rbd#", where the "rbd" comes from
  * RBD_DRV_NAME above, and # is a unique integer identifier.
- * MAX_INT_FORMAT_WIDTH is used in ensuring DEV_NAME_LEN is big
- * enough to hold all possible device names.
  */
 #define DEV_NAME_LEN		32
-#define MAX_INT_FORMAT_WIDTH	((5 * sizeof (int)) / 2 + 1)
 
 /*
  * block device image metadata (in-memory version)
@@ -128,10 +125,12 @@ struct rbd_device {
 
 	struct ceph_object_id	header_oid;
 
-	struct ceph_file_layout	layout;
+	struct ceph_file_layout	layout;		/* used for all rbd requests */
 
 	struct ceph_osd_event   *watch_event;
 	struct rbd_obj_request	*watch_request;
+
+	struct workqueue_struct *task_wq;
 
 	struct rbd_spec		*parent_spec;
 	u64			parent_overlap;
