@@ -503,8 +503,6 @@ static int acm_tty_open(struct tty_struct *tty, struct file *filp)
 	    (acm->ctrl_caps & USB_CDC_CAP_LINE))
 		goto bail_out;
 
-	usb_autopm_put_interface(acm->control);
-
 	/*
 	 * Unthrottle device in case the TTY was closed while throttled.
 	 */
@@ -519,6 +517,7 @@ static int acm_tty_open(struct tty_struct *tty, struct file *filp)
 	set_bit(ASYNCB_INITIALIZED, &acm->port.flags);
 	rv = tty_port_block_til_ready(&acm->port, tty, filp);
 
+	usb_autopm_put_interface(acm->control);
 	mutex_unlock(&acm->mutex);
 out:
 	mutex_unlock(&open_mutex);
