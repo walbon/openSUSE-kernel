@@ -488,7 +488,8 @@ extern void slb_set_size(u16 size);
 #define USER_VSID_RANGE	(1UL << (ESID_BITS + SID_SHIFT))
 
 /* 4 bits per slice and we have one slice per 1TB */
-#define SLICE_ARRAY_SIZE  (PGTABLE_RANGE >> 41)
+#define SLICE_ARRAY_SIZE	(PGTABLE_RANGE >> 41)
+#define TASK_SLICE_ARRAY_SZ(x)	((x)->context.addr_limit >> 41)
 
 #ifndef __ASSEMBLY__
 
@@ -534,6 +535,7 @@ typedef struct {
 #ifdef CONFIG_PPC_MM_SLICES
 	u64 low_slices_psize;	/* SLB page size encodings */
 	unsigned char high_slices_psize[SLICE_ARRAY_SIZE];
+	unsigned long addr_limit;
 #else
 	u16 sllp;		/* SLB page size encoding */
 #endif
