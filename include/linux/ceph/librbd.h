@@ -126,7 +126,7 @@ struct rbd_device {
 	struct rbd_spec		*spec;
 	struct rbd_options	*opts;
 
-	char			*header_name;
+	struct ceph_object_id	header_oid;
 
 	struct ceph_file_layout	layout;
 

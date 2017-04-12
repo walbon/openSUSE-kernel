@@ -153,6 +153,11 @@ extern const char *ceph_osd_state_name(int s);
 #define CEPH_OSDMAP_NOIN     (1<<8)  /* block osd auto mark-in */
 #define CEPH_OSDMAP_NOBACKFILL (1<<9) /* block osd backfill */
 #define CEPH_OSDMAP_NORECOVER (1<<10) /* block osd recovery and backfill */
+#define CEPH_OSDMAP_NOSCRUB  (1<<11) /* block periodic scrub */
+#define CEPH_OSDMAP_NODEEP_SCRUB (1<<12) /* block periodic deep-scrub */
+#define CEPH_OSDMAP_NOTIERAGENT (1<<13) /* disable tiering agent */
+#define CEPH_OSDMAP_NOREBALANCE (1<<14) /* block osd backfill unless pg is degraded */
+#define CEPH_OSDMAP_SORTBITWISE (1<<15) /* use bitwise hobject_t sort */
 
 /*
  * The error code to return when an OSD can't handle a write
@@ -392,6 +397,13 @@ enum {
 	CEPH_OSD_FLAG_SKIPRWLOCKS =   0x10000,  /* skip rw locks */
 	CEPH_OSD_FLAG_IGNORE_OVERLAY = 0x20000, /* ignore pool overlay */
 	CEPH_OSD_FLAG_FLUSH =         0x40000,  /* this is part of flush */
+	CEPH_OSD_FLAG_MAP_SNAP_CLONE = 0x80000,  /* map snap direct to clone id */
+	CEPH_OSD_FLAG_ENFORCE_SNAPC   = 0x100000,  /* use snapc provided even if
+						      pool uses pool snaps */
+	CEPH_OSD_FLAG_REDIRECTED   = 0x200000,  /* op has been redirected */
+	CEPH_OSD_FLAG_KNOWN_REDIR = 0x400000,  /* redirect bit is authoritative */
+	CEPH_OSD_FLAG_FULL_TRY =    0x800000,  /* try op despite full flag */
+	CEPH_OSD_FLAG_FULL_FORCE = 0x1000000,  /* force op despite full flag */
 };
 
 enum {
