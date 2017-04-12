@@ -244,3 +244,8 @@ void __init free_unused_pacas(void)
 
 	free_lppacas();
 }
+
+void copy_mm_to_paca(struct mm_struct *mm)
+{
+	get_paca()->context = mm->context;
+}
