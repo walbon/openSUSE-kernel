@@ -1410,8 +1410,7 @@ static int acm_suspend(struct usb_interface *intf, pm_message_t message)
 	*/
 	mutex_lock(&acm->mutex);
 
-	if (acm->port.count)
-		stop_data_traffic(acm);
+	stop_data_traffic(acm);
 
 	mutex_unlock(&acm->mutex);
 	return 0;
