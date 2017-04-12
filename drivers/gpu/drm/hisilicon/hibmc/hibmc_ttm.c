@@ -527,7 +527,7 @@ hibmc_framebuffer_init(struct drm_device *dev,
 static struct drm_framebuffer *
 hibmc_user_framebuffer_create(struct drm_device *dev,
 			      struct drm_file *filp,
-			      const struct drm_mode_fb_cmd2 *mode_cmd)
+			      struct drm_mode_fb_cmd2 *mode_cmd)
 {
 	struct drm_gem_object *obj;
 	struct hibmc_framebuffer *hibmc_fb;
@@ -550,3 +550,9 @@ hibmc_user_framebuffer_create(struct drm_device *dev,
 	}
 	return &hibmc_fb->fb;
 }
+
+const struct drm_mode_config_funcs hibmc_mode_funcs = {
+	.atomic_check = drm_atomic_helper_check,
+	.atomic_commit = drm_atomic_helper_commit,
+	.fb_create = hibmc_user_framebuffer_create,
+};
