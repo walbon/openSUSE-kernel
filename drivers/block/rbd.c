@@ -2144,7 +2144,9 @@ static void rbd_obj_request_destroy(struct kref *kref)
 			bio_chain_put(obj_request->bio_list);
 		break;
 	case OBJ_REQUEST_PAGES:
-		if (obj_request->pages)
+		/* img_data requests don't own their page array */
+		if (obj_request->pages &&
+		    !obj_request_img_data_test(obj_request))
 			ceph_release_page_vector(obj_request->pages,
 						obj_request->page_count);
 		break;
@@ -2376,13 +2378,6 @@ static bool rbd_img_obj_end_request(struct rbd_obj_request *obj_request)
 		xferred = obj_request->length;
 	}
 	img_request->completed += xferred;
-
-	/* Image object requests don't own their page array */
-
-	if (obj_request->type == OBJ_REQUEST_PAGES) {
-		obj_request->pages = NULL;
-		obj_request->page_count = 0;
-	}
 
 	if (img_request_child_test(img_request)) {
 		rbd_assert(img_request->obj_request != NULL);
