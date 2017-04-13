@@ -2365,6 +2365,13 @@ static int mos7840_startup(struct usb_serial *serial)
 	/* we set up the pointers to the endpoints in the mos7840_open *
 	 * function, as the structures aren't created yet.             */
 
+	if (serial->num_bulk_in < serial->num_ports ||
+			serial->num_bulk_out < serial->num_ports) {
+		dev_err(&serial->interface->dev, "missing endpoints\n");
+		return -ENODEV;
+	}
+
+
 	/* set up port private structures */
 	for (i = 0; i < serial->num_ports; ++i) {
 		dbg ("mos7840_startup: configuring port %d............", i);
