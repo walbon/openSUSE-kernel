@@ -97,6 +97,7 @@ struct scsi_disk {
 	unsigned	ws16 : 1;
 	unsigned	rc_basis: 2;
 	unsigned	zoned: 2;
+	unsigned	ignore_medium_access_errors : 1;
 };
 #define to_scsi_disk(obj) container_of(obj,struct scsi_disk,dev)
 

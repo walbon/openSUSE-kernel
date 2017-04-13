@@ -1284,7 +1284,7 @@ store_fc_vport_delete(struct device *dev, struct device_attribute *attr,
 	unsigned long flags;
 
 	spin_lock_irqsave(shost->host_lock, flags);
-	if (vport->flags & (FC_VPORT_DEL | FC_VPORT_CREATING)) {
+	if (vport->flags & (FC_VPORT_DEL | FC_VPORT_CREATING | FC_VPORT_DELETING)) {
 		spin_unlock_irqrestore(shost->host_lock, flags);
 		return -EBUSY;
 	}
@@ -1623,7 +1623,9 @@ store_fc_private_host_tgtid_bind_type(struct device *dev,
 				&fc_host_rport_bindings(shost), peers);
 			list_del(&rport->peers);
 			rport->port_state = FC_PORTSTATE_DELETED;
+			spin_unlock_irqrestore(shost->host_lock, flags);
 			fc_queue_work(shost, &rport->rport_delete_work);
+			spin_lock_irqsave(shost->host_lock, flags);
 		}
 		spin_unlock_irqrestore(shost->host_lock, flags);
 	}
@@ -2447,22 +2449,31 @@ fc_remove_host(struct Scsi_Host *shost)
 	spin_lock_irqsave(shost->host_lock, flags);
 
 	/* Remove any vports */
-	list_for_each_entry_safe(vport, next_vport, &fc_host->vports, peers)
+	list_for_each_entry_safe(vport, next_vport, &fc_host->vports, peers) {
+		list_del(&vport->peers);
+		vport->flags |= FC_VPORT_DELETING;
+		spin_unlock_irqrestore(shost->host_lock, flags);
 		fc_queue_work(shost, &vport->vport_delete_work);
+		spin_lock_irqsave(shost->host_lock, flags);
+	}
 
 	/* Remove any remote ports */
 	list_for_each_entry_safe(rport, next_rport,
 			&fc_host->rports, peers) {
 		list_del(&rport->peers);
 		rport->port_state = FC_PORTSTATE_DELETED;
+		spin_unlock_irqrestore(shost->host_lock, flags);
 		fc_queue_work(shost, &rport->rport_delete_work);
+		spin_lock_irqsave(shost->host_lock, flags);
 	}
 
 	list_for_each_entry_safe(rport, next_rport,
 			&fc_host->rport_bindings, peers) {
 		list_del(&rport->peers);
 		rport->port_state = FC_PORTSTATE_DELETED;
+		spin_unlock_irqrestore(shost->host_lock, flags);
 		fc_queue_work(shost, &rport->rport_delete_work);
+		spin_lock_irqsave(shost->host_lock, flags);
 	}
 
 	spin_unlock_irqrestore(shost->host_lock, flags);
@@ -2512,7 +2523,13 @@ fc_starget_delete(struct work_struct *work)
 {
 	struct fc_rport *rport =
 		container_of(work, struct fc_rport, stgt_delete_work);
+	struct Scsi_Host *shost = rport_to_shost(rport);
+	unsigned long flags;
 
+	spin_lock_irqsave(shost->host_lock, flags);
+	rport->flags &= ~FC_RPORT_TGT_DELETE_PENDING;
+	rport->scsi_target_id = -1;
+	spin_unlock_irqrestore(shost->host_lock, flags);
 	fc_terminate_rport_io(rport);
 	scsi_remove_target(&rport->dev);
 }
@@ -2543,6 +2560,13 @@ fc_rport_final_delete(struct work_struct *work)
 		scsi_flush_work(shost);
 
 	/*
+	 * if a target delete is pending, flush the SCSI host work_q
+	 * so that we don't race against it.
+	 */
+	if (rport->flags & FC_RPORT_TGT_DELETE_PENDING)
+		scsi_flush_work(shost);
+
+	/*
 	 * Cancel any outstanding timers. These should really exist
 	 * only when rmmod'ing the LLDD and we're asking for
 	 * immediate termination of the rports
@@ -2561,8 +2585,10 @@ fc_rport_final_delete(struct work_struct *work)
 	spin_unlock_irqrestore(shost->host_lock, flags);
 
 	/* Delete SCSI target and sdevs */
-	if (rport->scsi_target_id != -1)
-		fc_starget_delete(&rport->stgt_delete_work);
+	if (rport->scsi_target_id != -1) {
+		scsi_remove_target(&rport->dev);
+		rport->scsi_target_id = -1;
+	}
 
 	/*
 	 * Notify the driver that the rport is now dead. The LLDD will
@@ -3137,6 +3163,7 @@ fc_timeout_deleted_rport(struct work_struct *work)
 		dev_printk(KERN_ERR, &rport->dev,
 			"blocked FC remote port time out: no longer"
 			" a FCP target, removing starget\n");
+		rport->flags |= FC_RPORT_TGT_DELETE_PENDING;
 		spin_unlock_irqrestore(shost->host_lock, flags);
 		scsi_target_unblock(&rport->dev, SDEV_TRANSPORT_OFFLINE);
 		fc_queue_work(shost, &rport->stgt_delete_work);
@@ -3161,8 +3188,8 @@ fc_timeout_deleted_rport(struct work_struct *work)
 			"blocked FC remote port time out: removing"
 			" rport%s\n",
 			(rport->scsi_target_id != -1) ?  " and starget" : "");
-		fc_queue_work(shost, &rport->rport_delete_work);
 		spin_unlock_irqrestore(shost->host_lock, flags);
+		fc_queue_work(shost, &rport->rport_delete_work);
 		return;
 	}
 
@@ -3223,12 +3250,13 @@ fc_timeout_deleted_rport(struct work_struct *work)
 		 * all attached scsi devices.
 		 */
 		rport->flags |= FC_RPORT_DEVLOSS_CALLBK_DONE;
+		rport->flags |= FC_RPORT_TGT_DELETE_PENDING;
+		spin_unlock_irqrestore(shost->host_lock, flags);
 		fc_queue_work(shost, &rport->stgt_delete_work);
 
 		do_callback = 1;
-	}
-
-	spin_unlock_irqrestore(shost->host_lock, flags);
+	} else
+		spin_unlock_irqrestore(shost->host_lock, flags);
 
 	/*
 	 * Notify the driver that the rport is now dead. The LLDD will
