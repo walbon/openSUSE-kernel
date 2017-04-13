@@ -1245,7 +1245,7 @@ comp_pmu(const void *p1, const void *p2)
 	struct perf_pmu_event_symbol *pmu1 = (struct perf_pmu_event_symbol *) p1;
 	struct perf_pmu_event_symbol *pmu2 = (struct perf_pmu_event_symbol *) p2;
 
-	return strcmp(pmu1->symbol, pmu2->symbol);
+	return strcasecmp(pmu1->symbol, pmu2->symbol);
 }
 
 static void perf_pmu__parse_cleanup(void)
@@ -1283,15 +1283,18 @@ static void perf_pmu__parse_init(void)
 	struct perf_pmu_alias *alias;
 	int len = 0;
 
-	pmu = perf_pmu__find("cpu");
-	if ((pmu == NULL) || list_empty(&pmu->aliases)) {
+	pmu = NULL;
+	while ((pmu = perf_pmu__scan(pmu)) != NULL) {
+		list_for_each_entry(alias, &pmu->aliases, list) {
+			if (strchr(alias->name, '-'))
+				len++;
+			len++;
+		}
+	}
+
+	if (len == 0) {
 		perf_pmu_events_list_num = -1;
 		return;
-	}
-	list_for_each_entry(alias, &pmu->aliases, list) {
-		if (strchr(alias->name, '-'))
-			len++;
-		len++;
 	}
 	perf_pmu_events_list = malloc(sizeof(struct perf_pmu_event_symbol) * len);
 	if (!perf_pmu_events_list)
@@ -1299,19 +1302,22 @@ static void perf_pmu__parse_init(void)
 	perf_pmu_events_list_num = len;
 
 	len = 0;
-	list_for_each_entry(alias, &pmu->aliases, list) {
-		struct perf_pmu_event_symbol *p = perf_pmu_events_list + len;
-		char *tmp = strchr(alias->name, '-');
+	pmu = NULL;
+	while ((pmu = perf_pmu__scan(pmu)) != NULL) {
+		list_for_each_entry(alias, &pmu->aliases, list) {
+			struct perf_pmu_event_symbol *p = perf_pmu_events_list + len;
+			char *tmp = strchr(alias->name, '-');
 
-		if (tmp != NULL) {
-			SET_SYMBOL(strndup(alias->name, tmp - alias->name),
-					PMU_EVENT_SYMBOL_PREFIX);
-			p++;
-			SET_SYMBOL(strdup(++tmp), PMU_EVENT_SYMBOL_SUFFIX);
-			len += 2;
-		} else {
-			SET_SYMBOL(strdup(alias->name), PMU_EVENT_SYMBOL);
-			len++;
+			if (tmp != NULL) {
+				SET_SYMBOL(strndup(alias->name, tmp - alias->name),
+						PMU_EVENT_SYMBOL_PREFIX);
+				p++;
+				SET_SYMBOL(strdup(++tmp), PMU_EVENT_SYMBOL_SUFFIX);
+				len += 2;
+			} else {
+				SET_SYMBOL(strdup(alias->name), PMU_EVENT_SYMBOL);
+				len++;
+			}
 		}
 	}
 	qsort(perf_pmu_events_list, len,
@@ -1386,8 +1392,7 @@ int parse_events_terms(struct list_head *terms, const char *str)
 		return 0;
 	}
 
-	if (data.terms)
-		parse_events__free_terms(data.terms);
+	parse_events_terms__delete(data.terms);
 	return ret;
 }
 
@@ -1942,7 +1947,8 @@ out_enomem:
 /*
  * Print the help text for the event symbols:
  */
-void print_events(const char *event_glob, bool name_only)
+void print_events(const char *event_glob, bool name_only, bool quiet_flag,
+			bool long_desc)
 {
 	print_symbol_events(event_glob, PERF_TYPE_HARDWARE,
 			    event_symbols_hw, PERF_COUNT_HW_MAX, name_only);
@@ -1952,7 +1958,7 @@ void print_events(const char *event_glob, bool name_only)
 
 	print_hwcache_events(event_glob, name_only);
 
-	print_pmu_events(event_glob, name_only);
+	print_pmu_events(event_glob, name_only, quiet_flag, long_desc);
 
 	if (event_glob != NULL)
 		return;
@@ -2068,12 +2074,22 @@ int parse_events_term__clone(struct parse_events_term **new,
 			term->err_term, term->err_val);
 }
 
-void parse_events__free_terms(struct list_head *terms)
+void parse_events_terms__purge(struct list_head *terms)
 {
 	struct parse_events_term *term, *h;
 
-	list_for_each_entry_safe(term, h, terms, list)
+	list_for_each_entry_safe(term, h, terms, list) {
+		list_del_init(&term->list);
 		free(term);
+	}
+}
+
+void parse_events_terms__delete(struct list_head *terms)
+{
+	if (!terms)
+		return;
+	parse_events_terms__purge(terms);
+	free(terms);
 }
 
 void parse_events_evlist_error(struct parse_events_evlist *data,

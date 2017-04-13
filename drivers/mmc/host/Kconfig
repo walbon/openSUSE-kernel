@@ -122,6 +122,7 @@ config MMC_SDHCI_OF_ARASAN
 	tristate "SDHCI OF support for the Arasan SDHCI controllers"
 	depends on MMC_SDHCI_PLTFM
 	depends on OF
+	depends on COMMON_CLK
 	help
 	  This selects the Arasan Secure Digital Host Controller Interface
 	  (SDHCI). This hardware is found e.g. in Xilinx' Zynq SoC.
@@ -609,6 +610,17 @@ config SDH_BFIN_MISSING_CMD_PULLUP_WORKAROUND
 	depends on SDH_BFIN
 	help
 	  If you say yes here SD-Cards may work on the EZkit.
+
+config MMC_CAVIUM_THUNDERX
+	tristate "Cavium ThunderX SD/MMC Card Interface support"
+	depends on PCI && 64BIT && (ARM64 || COMPILE_TEST)
+	depends on GPIOLIB
+	depends on OF_ADDRESS
+	help
+	  This selects Cavium ThunderX SD/MMC Card Interface.
+	  If you have an Cavium ARM64 board with a Multimedia Card slot
+	  or builtin eMMC chip say Y or M here. If built as a module
+	  the module will be called thunderx_mmc.ko.
 
 config MMC_DW
 	tristate "Synopsys DesignWare Memory Card Interface"

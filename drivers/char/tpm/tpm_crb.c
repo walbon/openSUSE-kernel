@@ -135,6 +135,25 @@ static int __maybe_unused crb_go_idle(struct device *dev, struct crb_priv *priv)
 	return 0;
 }
 
+static bool crb_wait_for_reg_32(u32 __iomem *reg, u32 mask, u32 value,
+				unsigned long timeout)
+{
+	ktime_t start;
+	ktime_t stop;
+
+	start = ktime_get();
+	stop = ktime_add(start, ms_to_ktime(timeout));
+
+	do {
+		if ((ioread32(reg) & mask) == value)
+			return true;
+
+		usleep_range(50, 100);
+	} while (ktime_before(ktime_get(), stop));
+
+	return false;
+}
+
 /**
  * crb_cmd_ready - request tpm crb device to enter ready state
  *
@@ -152,25 +171,15 @@ static int __maybe_unused crb_go_idle(struct device *dev, struct crb_priv *priv)
 static int __maybe_unused crb_cmd_ready(struct device *dev,
 					struct crb_priv *priv)
 {
-	ktime_t stop, start;
-	u32 req;
-
 	if ((priv->flags & CRB_FL_ACPI_START) ||
 	    (priv->flags & CRB_FL_CRB_SMC_START))
 		return 0;
 
 	iowrite32(CRB_CTRL_REQ_CMD_READY, &priv->regs_t->ctrl_req);
-
-	start = ktime_get();
-	stop = ktime_add(start, ms_to_ktime(TPM2_TIMEOUT_C));
-	do {
-		req = ioread32(&priv->regs_t->ctrl_req);
-		if (!(req & CRB_CTRL_REQ_CMD_READY))
-			return 0;
-		usleep_range(50, 100);
-	} while (ktime_before(ktime_get(), stop));
-
-	if (ioread32(&priv->regs_t->ctrl_req) & CRB_CTRL_REQ_CMD_READY) {
+	if (!crb_wait_for_reg_32(&priv->regs_t->ctrl_req,
+				 CRB_CTRL_REQ_CMD_READY /* mask */,
+				 0, /* value */
+				 TPM2_TIMEOUT_C)) {
 		dev_warn(dev, "cmdReady timed out\n");
 		return -ETIME;
 	}
@@ -204,8 +213,7 @@ static int crb_recv(struct tpm_chip *chip, u8 *buf, size_t count)
 
 	memcpy_fromio(buf, priv->rsp, 6);
 	expected = be32_to_cpup((__be32 *) &buf[2]);
-
-	if (expected > count)
+	if (expected > count || expected < 6)
 		return -EIO;
 
 	memcpy_fromio(&buf[6], &priv->rsp[6], expected - 6);
@@ -523,8 +531,7 @@ static int crb_acpi_add(struct acpi_device *device)
 				ACPI_TPM2_COMMAND_BUFFER_WITH_SMC);
 			return -EINVAL;
 		}
-		crb_smc = ACPI_ADD_PTR(struct tpm2_crb_smc, buf,
-				       ACPI_TPM2_START_METHOD_PARAMETER_OFFSET);
+		crb_smc = ACPI_ADD_PTR(struct tpm2_crb_smc, buf, sizeof(*buf));
 		priv->smc_func_id = crb_smc->smc_func_id;
 		priv->flags |= CRB_FL_CRB_SMC_START;
 	}
@@ -574,8 +581,7 @@ static int crb_acpi_remove(struct acpi_device *device)
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int crb_pm_runtime_suspend(struct device *dev)
+static int __maybe_unused crb_pm_runtime_suspend(struct device *dev)
 {
 	struct tpm_chip *chip = dev_get_drvdata(dev);
 	struct crb_priv *priv = dev_get_drvdata(&chip->dev);
@@ -583,17 +589,38 @@ static int crb_pm_runtime_suspend(struct device *dev)
 	return crb_go_idle(dev, priv);
 }
 
-static int crb_pm_runtime_resume(struct device *dev)
+static int __maybe_unused crb_pm_runtime_resume(struct device *dev)
 {
 	struct tpm_chip *chip = dev_get_drvdata(dev);
 	struct crb_priv *priv = dev_get_drvdata(&chip->dev);
 
 	return crb_cmd_ready(dev, priv);
 }
-#endif /* CONFIG_PM */
+
+static int __maybe_unused crb_pm_suspend(struct device *dev)
+{
+	int ret;
+
+	ret = tpm_pm_suspend(dev);
+	if (ret)
+		return ret;
+
+	return crb_pm_runtime_suspend(dev);
+}
+
+static int __maybe_unused crb_pm_resume(struct device *dev)
+{
+	int ret;
+
+	ret = crb_pm_runtime_resume(dev);
+	if (ret)
+		return ret;
+
+	return tpm_pm_resume(dev);
+}
 
 static const struct dev_pm_ops crb_pm = {
-	SET_SYSTEM_SLEEP_PM_OPS(tpm_pm_suspend, tpm_pm_resume)
+	SET_SYSTEM_SLEEP_PM_OPS(crb_pm_suspend, crb_pm_resume)
 	SET_RUNTIME_PM_OPS(crb_pm_runtime_suspend, crb_pm_runtime_resume, NULL)
 };
 

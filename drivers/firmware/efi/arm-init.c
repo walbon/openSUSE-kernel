@@ -181,6 +181,43 @@ static __init void reserve_regions(void)
 	}
 }
 
+#ifdef CONFIG_PCI
+#include <linux/pci.h>
+
+static bool efi_pci_overlaps_efifb(struct pci_bar_update_info *update_info)
+{
+	/* is the screen_info frame buffer inside the pci BAR? */
+	if (screen_info.lfb_base >= update_info->old_start &&
+	    (screen_info.lfb_base + screen_info.lfb_size) <=
+	     (update_info->old_start + update_info->size))
+		return true;
+
+	return false;
+}
+
+static int efi_pci_notifier(struct notifier_block *self,
+			    unsigned long cmd, void *v)
+{
+	struct pci_bar_update_info *update_info = v;
+
+	/*
+	 * When we reallocate a BAR that contains our frame buffer, set the
+	 * screen_info base to where it belongs
+	 */
+	if (efi_pci_overlaps_efifb(update_info)) {
+		u64 diff = (update_info->new_start - update_info->old_start);
+		screen_info.lfb_base += diff;
+	}
+
+	return NOTIFY_OK;
+}
+static struct notifier_block efi_pci_notifier_block = {
+	.notifier_call = efi_pci_notifier,
+};
+#else
+#define pci_notify_on_update_resource(a)
+#endif
+
 void __init efi_init(void)
 {
 	struct efi_memory_map_data data;
@@ -216,8 +253,10 @@ void __init efi_init(void)
 			 PAGE_ALIGN(params.mmap_size +
 				    (params.mmap & ~PAGE_MASK)));
 
-	if (screen_info.orig_video_isVGA == VIDEO_TYPE_EFI)
+	if (screen_info.orig_video_isVGA == VIDEO_TYPE_EFI) {
+		pci_notify_on_update_resource(&efi_pci_notifier_block);
 		memblock_reserve(screen_info.lfb_base, screen_info.lfb_size);
+	}
 }
 
 static int __init register_gop_device(void)

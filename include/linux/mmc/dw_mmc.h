@@ -17,6 +17,7 @@
 #include <linux/scatterlist.h>
 #include <linux/mmc/core.h>
 #include <linux/dmaengine.h>
+#include <linux/reset.h>
 
 #define MAX_MCI_SLOTS	2
 
@@ -37,6 +38,12 @@ enum {
 	EVENT_DATA_COMPLETE,
 	EVENT_DATA_ERROR,
 	EVENT_XFER_ERROR
+};
+
+enum dw_mci_cookie {
+	COOKIE_UNMAPPED,
+	COOKIE_PRE_MAPPED,	/* mapped by pre_req() of dwmmc */
+	COOKIE_MAPPED,		/* mapped by prepare_data() of dwmmc */
 };
 
 struct mmc_data;
@@ -100,13 +107,15 @@ struct dw_mci_dma_slave {
  * @ciu_clk: Pointer to card interface unit clock instance.
  * @slot: Slots sharing this MMC controller.
  * @fifo_depth: depth of FIFO.
+ * @data_addr_override: override fifo reg offset with this value.
+ * @wm_aligned: force fifo watermark equal with data length in PIO mode.
+ *	Set as true if alignment is needed.
  * @data_shift: log2 of FIFO item size.
  * @part_buf_start: Start index in part_buf.
  * @part_buf_count: Bytes of partial data in part_buf.
  * @part_buf: Simple buffer for partial fifo reads/writes.
  * @push_data: Pointer to FIFO push function.
  * @pull_data: Pointer to FIFO pull function.
- * @quirks: Set of quirks that apply to specific versions of the IP.
  * @irq_flags: The flags to be passed to request_irq.
  * @irq: The irq value to be passed to request_irq.
  * @sdio_id0: Number of slot0 in the SDIO interrupt registers.
@@ -146,6 +155,8 @@ struct dw_mci {
 	spinlock_t		irq_lock;
 	void __iomem		*regs;
 	void __iomem		*fifo_reg;
+	u32			data_addr_override;
+	bool			wm_aligned;
 
 	struct scatterlist	*sg;
 	struct sg_mapping_iter	sg_miter;
@@ -210,9 +221,6 @@ struct dw_mci {
 	void (*push_data)(struct dw_mci *host, void *buf, int cnt);
 	void (*pull_data)(struct dw_mci *host, void *buf, int cnt);
 
-	/* Workaround flags */
-	u32			quirks;
-
 	bool			vqmmc_enabled;
 	unsigned long		irq_flags; /* IRQ flags */
 	int			irq;
@@ -234,18 +242,6 @@ struct dw_mci_dma_ops {
 	void (*exit)(struct dw_mci *host);
 };
 
-/* IP Quirks/flags. */
-/* DTO fix for command transmission with IDMAC configured */
-#define DW_MCI_QUIRK_IDMAC_DTO			BIT(0)
-/* delay needed between retries on some 2.11a implementations */
-#define DW_MCI_QUIRK_RETRY_DELAY		BIT(1)
-/* High Speed Capable - Supports HS cards (up to 50MHz) */
-#define DW_MCI_QUIRK_HIGHSPEED			BIT(2)
-/* Unreliable card detection */
-#define DW_MCI_QUIRK_BROKEN_CARD_DETECTION	BIT(3)
-/* Timer for broken data transfer over scheme */
-#define DW_MCI_QUIRK_BROKEN_DTO			BIT(4)
-
 struct dma_pdata;
 
 struct block_settings {
@@ -260,7 +256,6 @@ struct block_settings {
 struct dw_mci_board {
 	u32 num_slots;
 
-	u32 quirks; /* Workaround / Quirk flags */
 	unsigned int bus_hz; /* Clock speed at the cclk_in pad */
 
 	u32 caps;	/* Capabilities */
@@ -276,6 +271,7 @@ struct dw_mci_board {
 	/* delay in mS before detecting cards after interrupt */
 	u32 detect_delay_ms;
 
+	struct reset_control *rstc;
 	struct dw_mci_dma_ops *dma_ops;
 	struct dma_pdata *data;
 };

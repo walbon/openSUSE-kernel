@@ -13,6 +13,7 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/dw_mmc.h>
 #include <linux/of_address.h>
+#include <linux/mmc/slot-gpio.h>
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
 
@@ -26,11 +27,6 @@ struct dw_mci_rockchip_priv_data {
 	struct clk		*sample_clk;
 	int			default_sample_phase;
 };
-
-static void dw_mci_rockchip_prepare_command(struct dw_mci *host, u32 *cmdr)
-{
-	*cmdr |= SDMMC_CMD_USE_HOLD_REG;
-}
 
 static void dw_mci_rk3288_set_ios(struct dw_mci *host, struct mmc_ios *ios)
 {
@@ -291,9 +287,6 @@ static int dw_mci_rockchip_init(struct dw_mci *host)
 	/* It is slot 8 on Rockchip SoCs */
 	host->sdio_id0 = 8;
 
-	/* It needs this quirk on all Rockchip SoCs */
-	host->pdata->quirks |= DW_MCI_QUIRK_BROKEN_DTO;
-
 	if (of_device_is_compatible(host->dev->of_node,
 				    "rockchip,rk3288-dw-mshc"))
 		host->bus_hz /= RK3288_CLKGEN_DIV;
@@ -303,19 +296,17 @@ static int dw_mci_rockchip_init(struct dw_mci *host)
 
 /* Common capabilities of RK3288 SoC */
 static unsigned long dw_mci_rk3288_dwmmc_caps[4] = {
-	MMC_CAP_RUNTIME_RESUME | MMC_CAP_ERASE | MMC_CAP_CMD23, /* emmc */
-	MMC_CAP_RUNTIME_RESUME | MMC_CAP_ERASE | MMC_CAP_CMD23, /* sdmmc */
-	MMC_CAP_RUNTIME_RESUME | MMC_CAP_ERASE | MMC_CAP_CMD23, /* sdio0 */
-	MMC_CAP_RUNTIME_RESUME | MMC_CAP_ERASE | MMC_CAP_CMD23, /* sdio1 */
+	MMC_CAP_CMD23, /* emmc */
+	MMC_CAP_CMD23, /* sdmmc */
+	MMC_CAP_CMD23, /* sdio0 */
+	MMC_CAP_CMD23, /* sdio1 */
 };
 static const struct dw_mci_drv_data rk2928_drv_data = {
-	.prepare_command        = dw_mci_rockchip_prepare_command,
 	.init			= dw_mci_rockchip_init,
 };
 
 static const struct dw_mci_drv_data rk3288_drv_data = {
 	.caps			= dw_mci_rk3288_dwmmc_caps,
-	.prepare_command        = dw_mci_rockchip_prepare_command,
 	.set_ios		= dw_mci_rk3288_set_ios,
 	.execute_tuning		= dw_mci_rk3288_execute_tuning,
 	.parse_dt		= dw_mci_rk3288_parse_dt,

@@ -28,6 +28,7 @@
 #include <linux/of_mdio.h>
 #include <linux/of_net.h>
 #include <linux/phy.h>
+#include <linux/phy_fixed.h>
 #include <linux/platform_device.h>
 #include <linux/skbuff.h>
 #include <net/hwbm.h>
@@ -429,6 +430,7 @@ struct mvneta_port {
 	/* Flags for special SoC configurations */
 	bool neta_armada3700;
 	u16 rx_offset_correction;
+	const struct mbus_dram_target_info *dram_target_info;
 };
 
 /* The mvneta_tx_desc and mvneta_rx_desc structures describe the
@@ -3121,29 +3123,6 @@ static void mvneta_stop_dev(struct mvneta_port *pp)
 	mvneta_rx_reset(pp);
 }
 
-/* Return positive if MTU is valid */
-static int mvneta_check_mtu_valid(struct net_device *dev, int mtu)
-{
-	if (mtu < 68) {
-		netdev_err(dev, "cannot change mtu to less than 68\n");
-		return -EINVAL;
-	}
-
-	/* 9676 == 9700 - 20 and rounding to 8 */
-	if (mtu > 9676) {
-		netdev_info(dev, "Illegal MTU value %d, round to 9676\n", mtu);
-		mtu = 9676;
-	}
-
-	if (!IS_ALIGNED(MVNETA_RX_PKT_SIZE(mtu), 8)) {
-		netdev_info(dev, "Illegal MTU value %d, rounding to %d\n",
-			mtu, ALIGN(MVNETA_RX_PKT_SIZE(mtu), 8));
-		mtu = ALIGN(MVNETA_RX_PKT_SIZE(mtu), 8);
-	}
-
-	return mtu;
-}
-
 static void mvneta_percpu_enable(void *arg)
 {
 	struct mvneta_port *pp = arg;
@@ -3164,9 +3143,11 @@ static int mvneta_change_mtu(struct net_device *dev, int mtu)
 	struct mvneta_port *pp = netdev_priv(dev);
 	int ret;
 
-	mtu = mvneta_check_mtu_valid(dev, mtu);
-	if (mtu < 0)
-		return -EINVAL;
+	if (!IS_ALIGNED(MVNETA_RX_PKT_SIZE(mtu), 8)) {
+		netdev_info(dev, "Illegal MTU value %d, rounding to %d\n",
+			    mtu, ALIGN(MVNETA_RX_PKT_SIZE(mtu), 8));
+		mtu = ALIGN(MVNETA_RX_PKT_SIZE(mtu), 8);
+	}
 
 	dev->mtu = mtu;
 
@@ -3926,6 +3907,25 @@ static int mvneta_ethtool_get_rxfh(struct net_device *dev, u32 *indir, u8 *key,
 	return 0;
 }
 
+static void mvneta_ethtool_get_wol(struct net_device *dev,
+				   struct ethtool_wolinfo *wol)
+{
+	wol->supported = 0;
+	wol->wolopts = 0;
+
+	if (dev->phydev)
+		phy_ethtool_get_wol(dev->phydev, wol);
+}
+
+static int mvneta_ethtool_set_wol(struct net_device *dev,
+				  struct ethtool_wolinfo *wol)
+{
+	if (!dev->phydev)
+		return -EOPNOTSUPP;
+
+	return phy_ethtool_set_wol(dev->phydev, wol);
+}
+
 static const struct net_device_ops mvneta_netdev_ops = {
 	.ndo_open            = mvneta_open,
 	.ndo_stop            = mvneta_stop,
@@ -3938,7 +3938,7 @@ static const struct net_device_ops mvneta_netdev_ops = {
 	.ndo_do_ioctl        = mvneta_ioctl,
 };
 
-const struct ethtool_ops mvneta_eth_tool_ops = {
+static const struct ethtool_ops mvneta_eth_tool_ops = {
 	.nway_reset	= phy_ethtool_nway_reset,
 	.get_link       = ethtool_op_get_link,
 	.set_coalesce   = mvneta_ethtool_set_coalesce,
@@ -3955,6 +3955,8 @@ const struct ethtool_ops mvneta_eth_tool_ops = {
 	.set_rxfh	= mvneta_ethtool_set_rxfh,
 	.get_link_ksettings = phy_ethtool_get_link_ksettings,
 	.set_link_ksettings = mvneta_ethtool_set_link_ksettings,
+	.get_wol        = mvneta_ethtool_get_wol,
+	.set_wol        = mvneta_ethtool_set_wol,
 };
 
 /* Initialize hw */
@@ -4075,6 +4077,8 @@ static int mvneta_port_power_up(struct mvneta_port *pp, int phy_mode)
 		break;
 	case PHY_INTERFACE_MODE_RGMII:
 	case PHY_INTERFACE_MODE_RGMII_ID:
+	case PHY_INTERFACE_MODE_RGMII_RXID:
+	case PHY_INTERFACE_MODE_RGMII_TXID:
 		ctrl |= MVNETA_GMAC2_PORT_RGMII;
 		break;
 	default:
@@ -4095,7 +4099,6 @@ static int mvneta_port_power_up(struct mvneta_port *pp, int phy_mode)
 /* Device initialization routine */
 static int mvneta_probe(struct platform_device *pdev)
 {
-	const struct mbus_dram_target_info *dram_target_info;
 	struct resource *res;
 	struct device_node *dn = pdev->dev.of_node;
 	struct device_node *phy_node;
@@ -4245,13 +4248,13 @@ static int mvneta_probe(struct platform_device *pdev)
 
 	pp->tx_csum_limit = tx_csum_limit;
 
-	dram_target_info = mv_mbus_dram_info();
+	pp->dram_target_info = mv_mbus_dram_info();
 	/* Armada3700 requires setting default configuration of Mbus
 	 * windows, however without using filled mbus_dram_target_info
 	 * structure.
 	 */
-	if (dram_target_info || pp->neta_armada3700)
-		mvneta_conf_mbus_windows(pp, dram_target_info);
+	if (pp->dram_target_info || pp->neta_armada3700)
+		mvneta_conf_mbus_windows(pp, pp->dram_target_info);
 
 	pp->tx_ring_size = MVNETA_MAX_TXD;
 	pp->rx_ring_size = MVNETA_MAX_RXD;
@@ -4304,6 +4307,11 @@ static int mvneta_probe(struct platform_device *pdev)
 	dev->vlan_features |= dev->features;
 	dev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
 	dev->gso_max_segs = MVNETA_MAX_TSO_SEGS;
+
+	/* MTU range: 68 - 9676 */
+	dev->min_mtu = ETH_MIN_MTU;
+	/* 9676 == 9700 - 20 and rounding to 8 */
+	dev->max_mtu = 9676;
 
 	err = register_netdev(dev);
 	if (err < 0) {
@@ -4378,6 +4386,61 @@ static int mvneta_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
+static int mvneta_suspend(struct device *device)
+{
+	struct net_device *dev = dev_get_drvdata(device);
+	struct mvneta_port *pp = netdev_priv(dev);
+
+	if (netif_running(dev))
+		mvneta_stop(dev);
+	netif_device_detach(dev);
+	clk_disable_unprepare(pp->clk_bus);
+	clk_disable_unprepare(pp->clk);
+	return 0;
+}
+
+static int mvneta_resume(struct device *device)
+{
+	struct platform_device *pdev = to_platform_device(device);
+	struct net_device *dev = dev_get_drvdata(device);
+	struct mvneta_port *pp = netdev_priv(dev);
+	int err;
+
+	clk_prepare_enable(pp->clk);
+	if (!IS_ERR(pp->clk_bus))
+		clk_prepare_enable(pp->clk_bus);
+	if (pp->dram_target_info || pp->neta_armada3700)
+		mvneta_conf_mbus_windows(pp, pp->dram_target_info);
+	if (pp->bm_priv) {
+		err = mvneta_bm_port_init(pdev, pp);
+		if (err < 0) {
+			dev_info(&pdev->dev, "use SW buffer management\n");
+			pp->bm_priv = NULL;
+		}
+	}
+	mvneta_defaults_set(pp);
+	err = mvneta_port_power_up(pp, pp->phy_interface);
+	if (err < 0) {
+		dev_err(device, "can't power up port\n");
+		return err;
+	}
+
+	if (pp->use_inband_status)
+		mvneta_fixed_link_update(pp, dev->phydev);
+
+	netif_device_attach(dev);
+	if (netif_running(dev)) {
+		mvneta_open(dev);
+		mvneta_set_rx_mode(dev);
+	}
+
+	return 0;
+}
+#endif
+
+static SIMPLE_DEV_PM_OPS(mvneta_pm_ops, mvneta_suspend, mvneta_resume);
+
 static const struct of_device_id mvneta_match[] = {
 	{ .compatible = "marvell,armada-370-neta" },
 	{ .compatible = "marvell,armada-xp-neta" },
@@ -4392,6 +4455,7 @@ static struct platform_driver mvneta_driver = {
 	.driver = {
 		.name = MVNETA_DRIVER_NAME,
 		.of_match_table = mvneta_match,
+		.pm = &mvneta_pm_ops,
 	},
 };
 

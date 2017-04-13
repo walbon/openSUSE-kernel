@@ -46,6 +46,8 @@ struct i915_audio_component_ops {
 	void (*codec_wake_override)(struct device *, bool enable);
 	int (*get_cdclk_freq)(struct device *);
 	int (*sync_audio_rate)(struct device *, int port, int rate);
+	int (*get_eld)(struct device *, int port, bool *enabled,
+		       unsigned char *buf, int max_bytes);
 };
 
 struct i915_audio_component_audio_ops {

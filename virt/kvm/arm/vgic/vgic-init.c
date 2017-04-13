@@ -73,12 +73,8 @@ int kvm_vgic_create(struct kvm *kvm, u32 type)
 	int i, vcpu_lock_idx = -1, ret;
 	struct kvm_vcpu *vcpu;
 
-	mutex_lock(&kvm->lock);
-
-	if (irqchip_in_kernel(kvm)) {
-		ret = -EEXIST;
-		goto out;
-	}
+	if (irqchip_in_kernel(kvm))
+		return -EEXIST;
 
 	/*
 	 * This function is also called by the KVM_CREATE_IRQCHIP handler,
@@ -87,10 +83,8 @@ int kvm_vgic_create(struct kvm *kvm, u32 type)
 	 * the proper checks already.
 	 */
 	if (type == KVM_DEV_TYPE_ARM_VGIC_V2 &&
-		!kvm_vgic_global_state.can_emulate_gicv2) {
-		ret = -ENODEV;
-		goto out;
-	}
+		!kvm_vgic_global_state.can_emulate_gicv2)
+		return -ENODEV;
 
 	/*
 	 * Any time a vcpu is run, vcpu_load is called which tries to grab the
@@ -138,9 +132,6 @@ out_unlock:
 		vcpu = kvm_get_vcpu(kvm, vcpu_lock_idx);
 		mutex_unlock(&vcpu->mutex);
 	}
-
-out:
-	mutex_unlock(&kvm->lock);
 	return ret;
 }
 
@@ -268,6 +259,8 @@ int vgic_init(struct kvm *kvm)
 	if (ret)
 		goto out;
 
+	vgic_debug_init(kvm);
+
 	dist->initialized = true;
 out:
 	return ret;
@@ -277,15 +270,11 @@ static void kvm_vgic_dist_destroy(struct kvm *kvm)
 {
 	struct vgic_dist *dist = &kvm->arch.vgic;
 
-	mutex_lock(&kvm->lock);
-
 	dist->ready = false;
 	dist->initialized = false;
 
 	kfree(dist->spis);
 	dist->nr_spis = 0;
-
-	mutex_unlock(&kvm->lock);
 }
 
 void kvm_vgic_vcpu_destroy(struct kvm_vcpu *vcpu)
@@ -295,15 +284,25 @@ void kvm_vgic_vcpu_destroy(struct kvm_vcpu *vcpu)
 	INIT_LIST_HEAD(&vgic_cpu->ap_list_head);
 }
 
-void kvm_vgic_destroy(struct kvm *kvm)
+/* To be called with kvm->lock held */
+static void __kvm_vgic_destroy(struct kvm *kvm)
 {
 	struct kvm_vcpu *vcpu;
 	int i;
+
+	vgic_debug_destroy(kvm);
 
 	kvm_vgic_dist_destroy(kvm);
 
 	kvm_for_each_vcpu(i, vcpu, kvm)
 		kvm_vgic_vcpu_destroy(vcpu);
+}
+
+void kvm_vgic_destroy(struct kvm *kvm)
+{
+	mutex_lock(&kvm->lock);
+	__kvm_vgic_destroy(kvm);
+	mutex_unlock(&kvm->lock);
 }
 
 /**
@@ -357,6 +356,10 @@ int kvm_vgic_map_resources(struct kvm *kvm)
 		ret = vgic_v2_map_resources(kvm);
 	else
 		ret = vgic_v3_map_resources(kvm);
+
+	if (ret)
+		__kvm_vgic_destroy(kvm);
+
 out:
 	mutex_unlock(&kvm->lock);
 	return ret;
@@ -402,6 +405,25 @@ static irqreturn_t vgic_maintenance_handler(int irq, void *data)
 }
 
 /**
+ * kvm_vgic_init_cpu_hardware - initialize the GIC VE hardware
+ *
+ * For a specific CPU, initialize the GIC VE hardware.
+ */
+void kvm_vgic_init_cpu_hardware(void)
+{
+	BUG_ON(preemptible());
+
+	/*
+	 * We want to make sure the list registers start out clear so that we
+	 * only have the program the used registers.
+	 */
+	if (kvm_vgic_global_state.type == VGIC_V2)
+		vgic_v2_init_lrs();
+	else
+		kvm_call_hyp(__vgic_v3_init_lrs);
+}
+
+/**
  * kvm_vgic_hyp_init: populates the kvm_vgic_global_state variable
  * according to the host GIC model. Accordingly calls either
  * vgic_v2/v3_probe which registers the KVM_DEVICE that can be
@@ -427,6 +449,10 @@ int kvm_vgic_hyp_init(void)
 		break;
 	case GIC_V3:
 		ret = vgic_v3_probe(gic_kvm_info);
+		if (!ret) {
+			static_branch_enable(&kvm_vgic_global_state.gicv3_cpuif);
+			kvm_info("GIC system register CPU interface enabled\n");
+		}
 		break;
 	default:
 		ret = -ENODEV;

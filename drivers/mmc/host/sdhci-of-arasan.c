@@ -19,18 +19,18 @@
  * your option) any later version.
  */
 
+#include <linux/clk-provider.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/phy/phy.h>
 #include <linux/regmap.h>
 #include "sdhci-pltfm.h"
+#include <linux/of.h>
 
-#define SDHCI_ARASAN_CLK_CTRL_OFFSET	0x2c
+#define SDHCI_ARASAN_VENDOR_REGISTER	0x78
 
-#define CLK_CTRL_TIMEOUT_SHIFT		16
-#define CLK_CTRL_TIMEOUT_MASK		(0xf << CLK_CTRL_TIMEOUT_SHIFT)
-#define CLK_CTRL_TIMEOUT_MIN_EXP	13
+#define VENDOR_ENHANCED_STROBE		BIT(0)
 
 /*
  * On some SoCs the syscon area has a feature where the upper 16-bits of
@@ -73,19 +73,28 @@ struct sdhci_arasan_soc_ctl_map {
 
 /**
  * struct sdhci_arasan_data
+ * @host:		Pointer to the main SDHCI host structure.
  * @clk_ahb:		Pointer to the AHB clock
  * @phy:		Pointer to the generic phy
- * @phy_on:		True if the PHY is turned on.
+ * @sdcardclk_hw:	Struct for the clock we might provide to a PHY.
+ * @sdcardclk:		Pointer to normal 'struct clock' for sdcardclk_hw.
  * @soc_ctl_base:	Pointer to regmap for syscon for soc_ctl registers.
  * @soc_ctl_map:	Map to get offsets into soc_ctl registers.
  */
 struct sdhci_arasan_data {
+	struct sdhci_host *host;
 	struct clk	*clk_ahb;
 	struct phy	*phy;
-	bool		phy_on;
+
+	struct clk_hw	sdcardclk_hw;
+	struct clk      *sdcardclk;
 
 	struct regmap	*soc_ctl_base;
 	const struct sdhci_arasan_soc_ctl_map *soc_ctl_map;
+	unsigned int	quirks; /* Arasan deviations from spec */
+
+/* Controller does not have CD wired and will not function normally without */
+#define SDHCI_ARASAN_QUIRK_FORCE_CDTEST	BIT(0)
 };
 
 static const struct sdhci_arasan_soc_ctl_map rk3399_soc_ctl_map = {
@@ -146,15 +155,15 @@ static int sdhci_arasan_syscon_write(struct sdhci_host *host,
 
 static unsigned int sdhci_arasan_get_timeout_clock(struct sdhci_host *host)
 {
-	u32 div;
 	unsigned long freq;
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 
-	div = readl(host->ioaddr + SDHCI_ARASAN_CLK_CTRL_OFFSET);
-	div = (div & CLK_CTRL_TIMEOUT_MASK) >> CLK_CTRL_TIMEOUT_SHIFT;
+	/* SDHCI timeout clock is in kHz */
+	freq = DIV_ROUND_UP(clk_get_rate(pltfm_host->clk), 1000);
 
-	freq = clk_get_rate(pltfm_host->clk);
-	freq /= 1 << (CLK_CTRL_TIMEOUT_MIN_EXP + div);
+	/* or in MHz */
+	if (host->caps & SDHCI_TIMEOUT_CLK_UNIT)
+		freq = DIV_ROUND_UP(freq, 1000);
 
 	return freq;
 }
@@ -163,10 +172,12 @@ static void sdhci_arasan_set_clock(struct sdhci_host *host, unsigned int clock)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
+	bool ctrl_phy = false;
 
-	if (sdhci_arasan->phy_on && !IS_ERR(sdhci_arasan->phy)) {
-		sdhci_arasan->phy_on = false;
+	if (clock > MMC_HIGH_52_MAX_DTR && (!IS_ERR(sdhci_arasan->phy)))
+		ctrl_phy = true;
 
+	if (ctrl_phy) {
 		spin_unlock_irq(&host->lock);
 		phy_power_off(sdhci_arasan->phy);
 		spin_lock_irq(&host->lock);
@@ -174,13 +185,63 @@ static void sdhci_arasan_set_clock(struct sdhci_host *host, unsigned int clock)
 
 	sdhci_set_clock(host, clock);
 
-	if (host->mmc->actual_clock && !IS_ERR(sdhci_arasan->phy)) {
-		sdhci_arasan->phy_on = true;
-
+	if (ctrl_phy) {
 		spin_unlock_irq(&host->lock);
 		phy_power_on(sdhci_arasan->phy);
 		spin_lock_irq(&host->lock);
 	}
+}
+
+static void sdhci_arasan_hs400_enhanced_strobe(struct mmc_host *mmc,
+					struct mmc_ios *ios)
+{
+	u32 vendor;
+	struct sdhci_host *host = mmc_priv(mmc);
+
+	vendor = readl(host->ioaddr + SDHCI_ARASAN_VENDOR_REGISTER);
+	if (ios->enhanced_strobe)
+		vendor |= VENDOR_ENHANCED_STROBE;
+	else
+		vendor &= ~VENDOR_ENHANCED_STROBE;
+
+	writel(vendor, host->ioaddr + SDHCI_ARASAN_VENDOR_REGISTER);
+}
+
+static void sdhci_arasan_reset(struct sdhci_host *host, u8 mask)
+{
+	u8 ctrl;
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
+
+	sdhci_reset(host, mask);
+
+	if (sdhci_arasan->quirks & SDHCI_ARASAN_QUIRK_FORCE_CDTEST) {
+		ctrl = sdhci_readb(host, SDHCI_HOST_CONTROL);
+		ctrl |= SDHCI_CTRL_CDTEST_INS | SDHCI_CTRL_CDTEST_EN;
+		sdhci_writeb(host, ctrl, SDHCI_HOST_CONTROL);
+	}
+}
+
+static int sdhci_arasan_voltage_switch(struct mmc_host *mmc,
+				       struct mmc_ios *ios)
+{
+	switch (ios->signal_voltage) {
+	case MMC_SIGNAL_VOLTAGE_180:
+		/*
+		 * Plese don't switch to 1V8 as arasan,5.1 doesn't
+		 * actually refer to this setting to indicate the
+		 * signal voltage and the state machine will be broken
+		 * actually if we force to enable 1V8. That's something
+		 * like broken quirk but we could work around here.
+		 */
+		return 0;
+	case MMC_SIGNAL_VOLTAGE_330:
+	case MMC_SIGNAL_VOLTAGE_120:
+		/* We don't support 3V3 and 1V2 */
+		break;
+	}
+
+	return -EINVAL;
 }
 
 static struct sdhci_ops sdhci_arasan_ops = {
@@ -188,7 +249,7 @@ static struct sdhci_ops sdhci_arasan_ops = {
 	.get_max_clock = sdhci_pltfm_clk_get_max_clock,
 	.get_timeout_clock = sdhci_arasan_get_timeout_clock,
 	.set_bus_width = sdhci_set_bus_width,
-	.reset = sdhci_reset,
+	.reset = sdhci_arasan_reset,
 	.set_uhs_signaling = sdhci_set_uhs_signaling,
 };
 
@@ -212,7 +273,7 @@ static int sdhci_arasan_suspend(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
 	int ret;
 
 	ret = sdhci_suspend_host(host);
@@ -246,7 +307,7 @@ static int sdhci_arasan_resume(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
 	int ret;
 
 	ret = clk_enable(sdhci_arasan->clk_ahb);
@@ -292,6 +353,31 @@ static const struct of_device_id sdhci_arasan_of_match[] = {
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, sdhci_arasan_of_match);
+
+/**
+ * sdhci_arasan_sdcardclk_recalc_rate - Return the card clock rate
+ *
+ * Return the current actual rate of the SD card clock.  This can be used
+ * to communicate with out PHY.
+ *
+ * @hw:			Pointer to the hardware clock structure.
+ * @parent_rate		The parent rate (should be rate of clk_xin).
+ * Returns the card clock rate.
+ */
+static unsigned long sdhci_arasan_sdcardclk_recalc_rate(struct clk_hw *hw,
+						      unsigned long parent_rate)
+
+{
+	struct sdhci_arasan_data *sdhci_arasan =
+		container_of(hw, struct sdhci_arasan_data, sdcardclk_hw);
+	struct sdhci_host *host = sdhci_arasan->host;
+
+	return host->mmc->actual_clock;
+}
+
+static const struct clk_ops arasan_sdcardclk_ops = {
+	.recalc_rate = sdhci_arasan_sdcardclk_recalc_rate,
+};
 
 /**
  * sdhci_arasan_update_clockmultiplier - Set corecfg_clockmultiplier
@@ -371,6 +457,83 @@ static void sdhci_arasan_update_baseclkfreq(struct sdhci_host *host)
 	sdhci_arasan_syscon_write(host, &soc_ctl_map->baseclkfreq, mhz);
 }
 
+/**
+ * sdhci_arasan_register_sdclk - Register the sdclk for a PHY to use
+ *
+ * Some PHY devices need to know what the actual card clock is.  In order for
+ * them to find out, we'll provide a clock through the common clock framework
+ * for them to query.
+ *
+ * Note: without seriously re-architecting SDHCI's clock code and testing on
+ * all platforms, there's no way to create a totally beautiful clock here
+ * with all clock ops implemented.  Instead, we'll just create a clock that can
+ * be queried and set the CLK_GET_RATE_NOCACHE attribute to tell common clock
+ * framework that we're doing things behind its back.  This should be sufficient
+ * to create nice clean device tree bindings and later (if needed) we can try
+ * re-architecting SDHCI if we see some benefit to it.
+ *
+ * @sdhci_arasan:	Our private data structure.
+ * @clk_xin:		Pointer to the functional clock
+ * @dev:		Pointer to our struct device.
+ * Returns 0 on success and error value on error
+ */
+static int sdhci_arasan_register_sdclk(struct sdhci_arasan_data *sdhci_arasan,
+				       struct clk *clk_xin,
+				       struct device *dev)
+{
+	struct device_node *np = dev->of_node;
+	struct clk_init_data sdcardclk_init;
+	const char *parent_clk_name;
+	int ret;
+
+	/* Providing a clock to the PHY is optional; no error if missing */
+	if (!of_find_property(np, "#clock-cells", NULL))
+		return 0;
+
+	ret = of_property_read_string_index(np, "clock-output-names", 0,
+					    &sdcardclk_init.name);
+	if (ret) {
+		dev_err(dev, "DT has #clock-cells but no clock-output-names\n");
+		return ret;
+	}
+
+	parent_clk_name = __clk_get_name(clk_xin);
+	sdcardclk_init.parent_names = &parent_clk_name;
+	sdcardclk_init.num_parents = 1;
+	sdcardclk_init.flags = CLK_GET_RATE_NOCACHE;
+	sdcardclk_init.ops = &arasan_sdcardclk_ops;
+
+	sdhci_arasan->sdcardclk_hw.init = &sdcardclk_init;
+	sdhci_arasan->sdcardclk =
+		devm_clk_register(dev, &sdhci_arasan->sdcardclk_hw);
+	sdhci_arasan->sdcardclk_hw.init = NULL;
+
+	ret = of_clk_add_provider(np, of_clk_src_simple_get,
+				  sdhci_arasan->sdcardclk);
+	if (ret)
+		dev_err(dev, "Failed to add clock provider\n");
+
+	return ret;
+}
+
+/**
+ * sdhci_arasan_unregister_sdclk - Undoes sdhci_arasan_register_sdclk()
+ *
+ * Should be called any time we're exiting and sdhci_arasan_register_sdclk()
+ * returned success.
+ *
+ * @dev:		Pointer to our struct device.
+ */
+static void sdhci_arasan_unregister_sdclk(struct device *dev)
+{
+	struct device_node *np = dev->of_node;
+
+	if (!of_find_property(np, "#clock-cells", NULL))
+		return;
+
+	of_clk_del_provider(dev->of_node);
+}
+
 static int sdhci_arasan_probe(struct platform_device *pdev)
 {
 	int ret;
@@ -380,11 +543,16 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 	struct sdhci_host *host;
 	struct sdhci_pltfm_host *pltfm_host;
 	struct sdhci_arasan_data *sdhci_arasan;
+	struct device_node *np = pdev->dev.of_node;
 
-	sdhci_arasan = devm_kzalloc(&pdev->dev, sizeof(*sdhci_arasan),
-			GFP_KERNEL);
-	if (!sdhci_arasan)
-		return -ENOMEM;
+	host = sdhci_pltfm_init(pdev, &sdhci_arasan_pdata,
+				sizeof(*sdhci_arasan));
+	if (IS_ERR(host))
+		return PTR_ERR(host);
+
+	pltfm_host = sdhci_priv(host);
+	sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
+	sdhci_arasan->host = host;
 
 	match = of_match_node(sdhci_arasan_of_match, pdev->dev.of_node);
 	sdhci_arasan->soc_ctl_map = match->data;
@@ -406,19 +574,21 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 	sdhci_arasan->clk_ahb = devm_clk_get(&pdev->dev, "clk_ahb");
 	if (IS_ERR(sdhci_arasan->clk_ahb)) {
 		dev_err(&pdev->dev, "clk_ahb clock not found.\n");
-		return PTR_ERR(sdhci_arasan->clk_ahb);
+		ret = PTR_ERR(sdhci_arasan->clk_ahb);
+		goto err_pltfm_free;
 	}
 
 	clk_xin = devm_clk_get(&pdev->dev, "clk_xin");
 	if (IS_ERR(clk_xin)) {
 		dev_err(&pdev->dev, "clk_xin clock not found.\n");
-		return PTR_ERR(clk_xin);
+		ret = PTR_ERR(clk_xin);
+		goto err_pltfm_free;
 	}
 
 	ret = clk_prepare_enable(sdhci_arasan->clk_ahb);
 	if (ret) {
 		dev_err(&pdev->dev, "Unable to enable AHB clock.\n");
-		return ret;
+		goto err_pltfm_free;
 	}
 
 	ret = clk_prepare_enable(clk_xin);
@@ -427,15 +597,11 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 		goto clk_dis_ahb;
 	}
 
-	host = sdhci_pltfm_init(pdev, &sdhci_arasan_pdata, 0);
-	if (IS_ERR(host)) {
-		ret = PTR_ERR(host);
-		goto clk_disable_all;
-	}
-
 	sdhci_get_of_property(pdev);
-	pltfm_host = sdhci_priv(host);
-	pltfm_host->priv = sdhci_arasan;
+
+	if (of_property_read_bool(np, "xlnx,fails-without-test-cd"))
+		sdhci_arasan->quirks |= SDHCI_ARASAN_QUIRK_FORCE_CDTEST;
+
 	pltfm_host->clk = clk_xin;
 
 	if (of_device_is_compatible(pdev->dev.of_node,
@@ -444,10 +610,14 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 
 	sdhci_arasan_update_baseclkfreq(host);
 
+	ret = sdhci_arasan_register_sdclk(sdhci_arasan, clk_xin, &pdev->dev);
+	if (ret)
+		goto clk_disable_all;
+
 	ret = mmc_of_parse(host->mmc);
 	if (ret) {
 		dev_err(&pdev->dev, "parsing dt failed (%u)\n", ret);
-		goto clk_disable_all;
+		goto unreg_clk;
 	}
 
 	sdhci_arasan->phy = ERR_PTR(-ENODEV);
@@ -458,14 +628,25 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 		if (IS_ERR(sdhci_arasan->phy)) {
 			ret = PTR_ERR(sdhci_arasan->phy);
 			dev_err(&pdev->dev, "No phy for arasan,sdhci-5.1.\n");
-			goto clk_disable_all;
+			goto unreg_clk;
 		}
 
 		ret = phy_init(sdhci_arasan->phy);
 		if (ret < 0) {
 			dev_err(&pdev->dev, "phy_init err.\n");
-			goto clk_disable_all;
+			goto unreg_clk;
 		}
+
+		ret = phy_power_on(sdhci_arasan->phy);
+		if (ret < 0) {
+			dev_err(&pdev->dev, "phy_power_on err.\n");
+			goto err_phy_power;
+		}
+
+		host->mmc_host_ops.hs400_enhanced_strobe =
+					sdhci_arasan_hs400_enhanced_strobe;
+		host->mmc_host_ops.start_signal_voltage_switch =
+					sdhci_arasan_voltage_switch;
 	}
 
 	ret = sdhci_add_host(host);
@@ -476,31 +657,41 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 
 err_add_host:
 	if (!IS_ERR(sdhci_arasan->phy))
+		phy_power_off(sdhci_arasan->phy);
+err_phy_power:
+	if (!IS_ERR(sdhci_arasan->phy))
 		phy_exit(sdhci_arasan->phy);
-err_pltfm_free:
-	sdhci_pltfm_free(pdev);
+unreg_clk:
+	sdhci_arasan_unregister_sdclk(&pdev->dev);
 clk_disable_all:
 	clk_disable_unprepare(clk_xin);
 clk_dis_ahb:
 	clk_disable_unprepare(sdhci_arasan->clk_ahb);
-
+err_pltfm_free:
+	sdhci_pltfm_free(pdev);
 	return ret;
 }
 
 static int sdhci_arasan_remove(struct platform_device *pdev)
 {
+	int ret;
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
+	struct clk *clk_ahb = sdhci_arasan->clk_ahb;
 
 	if (!IS_ERR(sdhci_arasan->phy)) {
 		phy_power_off(sdhci_arasan->phy);
 		phy_exit(sdhci_arasan->phy);
 	}
 
-	clk_disable_unprepare(sdhci_arasan->clk_ahb);
+	sdhci_arasan_unregister_sdclk(&pdev->dev);
 
-	return sdhci_pltfm_unregister(pdev);
+	ret = sdhci_pltfm_unregister(pdev);
+
+	clk_disable_unprepare(clk_ahb);
+
+	return ret;
 }
 
 static struct platform_driver sdhci_arasan_driver = {
