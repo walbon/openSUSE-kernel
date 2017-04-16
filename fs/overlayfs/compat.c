@@ -94,7 +94,7 @@ bool ovl_compat_is_whiteout(struct dentry *ovl_dir, struct dentry *dentry)
 	int res;
 	char val;
 
-	if (!ovl_compat_mode(dentry))
+	if (!ovl_compat_mode(ovl_dir))
 		return false;
 
 	if (!dentry)
