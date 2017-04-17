@@ -28,8 +28,6 @@ struct rbd_image_header {
 	/* These six fields never change for a given rbd image */
 	char *object_prefix;
 	__u8 obj_order;
-	__u8 crypt_type;
-	__u8 comp_type;
 	u64 stripe_unit;
 	u64 stripe_count;
 	u64 features;		/* Might be changeable someday? */

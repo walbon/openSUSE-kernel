@@ -868,12 +868,6 @@ static int rbd_header_from_disk(struct rbd_device *rbd_dev,
 	if (first_time) {
 		header->object_prefix = object_prefix;
 		header->obj_order = ondisk->options.order;
-		header->crypt_type = ondisk->options.crypt_type;
-		header->comp_type = ondisk->options.comp_type;
-		/* The rest aren't used for format 1 images */
-		header->stripe_unit = 0;
-		header->stripe_count = 0;
-		header->features = 0;
 	} else {
 		ceph_put_snap_context(header->snapc);
 		kfree(header->snap_names);
@@ -5736,7 +5730,6 @@ static int rbd_dev_v2_header_onetime(struct rbd_device *rbd_dev)
 		if (ret < 0)
 			goto out_err;
 	}
-	/* No support for crypto and compression type format 2 images */
 
 	return 0;
 out_err:
