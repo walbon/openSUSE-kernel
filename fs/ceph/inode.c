@@ -1019,7 +1019,9 @@ out:
 static void update_dentry_lease(struct dentry *dentry,
 				struct ceph_mds_reply_lease *lease,
 				struct ceph_mds_session *session,
-				unsigned long from_time)
+				unsigned long from_time,
+				struct ceph_vino *tgt_vino,
+				struct ceph_vino *dir_vino)
 {
 	struct ceph_dentry_info *di = ceph_dentry(dentry);
 	long unsigned duration = le32_to_cpu(lease->duration_ms);
@@ -1031,12 +1033,27 @@ static void update_dentry_lease(struct dentry *dentry,
 	if (dentry->d_op != &ceph_dentry_ops)
 		return;
 
+	/*
+	 * Make sure dentry's inode matches tgt_vino. NULL tgt_vino means that
+	 * we expect a negative dentry.
+	 */
+	if (!tgt_vino && d_really_is_positive(dentry))
+		return;
+
+	if (tgt_vino && (d_really_is_negative(dentry) ||
+			!ceph_ino_compare(d_inode(dentry), tgt_vino)))
+		return;
+
 	spin_lock(&dentry->d_lock);
 	dout("update_dentry_lease %p duration %lu ms ttl %lu\n",
 	     dentry, duration, ttl);
 
-	/* make lease_rdcache_gen match directory */
 	dir = d_inode(dentry->d_parent);
+
+	/* make sure parent matches dir_vino */
+	if (!ceph_ino_compare(dir, dir_vino))
+		goto out_unlock;
+
 	di->lease_shared_gen = ceph_inode(dir)->i_shared_gen;
 
 	if (duration == 0)
@@ -1115,7 +1132,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req)
 	struct ceph_mds_session *session = req->r_session;
 	struct ceph_mds_reply_info_parsed *rinfo = &req->r_reply_info;
 	struct inode *in = NULL;
-	struct ceph_vino vino;
+	struct ceph_vino tvino, dvino;
 	struct ceph_fs_client *fsc = ceph_sb_to_client(sb);
 	int err = 0;
 
@@ -1156,8 +1173,8 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req)
 			dname.name = rinfo->dname;
 			dname.len = rinfo->dname_len;
 			dname.hash = full_name_hash(dname.name, dname.len);
-			vino.ino = le64_to_cpu(rinfo->targeti.in->ino);
-			vino.snap = le64_to_cpu(rinfo->targeti.in->snapid);
+			tvino.ino = le64_to_cpu(rinfo->targeti.in->ino);
+			tvino.snap = le64_to_cpu(rinfo->targeti.in->snapid);
 retry_lookup:
 			dn = d_lookup(parent, &dname);
 			dout("d_lookup on parent=%p name=%.*s got %p\n",
@@ -1179,8 +1196,8 @@ retry_lookup:
 					goto done;
 				}
 			} else if (d_really_is_positive(dn) &&
-				   (ceph_ino(d_inode(dn)) != vino.ino ||
-				    ceph_snap(d_inode(dn)) != vino.snap)) {
+				   (ceph_ino(d_inode(dn)) != tvino.ino ||
+				    ceph_snap(d_inode(dn)) != tvino.snap)) {
 				dout(" dn %p points to wrong inode %p\n",
 				     dn, d_inode(dn));
 				d_delete(dn);
@@ -1194,10 +1211,10 @@ retry_lookup:
 	}
 
 	if (rinfo->head->is_target) {
-		vino.ino = le64_to_cpu(rinfo->targeti.in->ino);
-		vino.snap = le64_to_cpu(rinfo->targeti.in->snapid);
+		tvino.ino = le64_to_cpu(rinfo->targeti.in->ino);
+		tvino.snap = le64_to_cpu(rinfo->targeti.in->snapid);
 
-		in = ceph_get_inode(sb, vino);
+		in = ceph_get_inode(sb, tvino);
 		if (IS_ERR(in)) {
 			err = PTR_ERR(in);
 			goto done;
@@ -1238,10 +1255,12 @@ retry_lookup:
 		BUG_ON(!dn);
 		BUG_ON(!dir);
 		BUG_ON(d_inode(dn->d_parent) != dir);
-		BUG_ON(ceph_ino(dir) !=
-		       le64_to_cpu(rinfo->diri.in->ino));
-		BUG_ON(ceph_snap(dir) !=
-		       le64_to_cpu(rinfo->diri.in->snapid));
+
+		dvino.ino = le64_to_cpu(rinfo->diri.in->ino);
+		dvino.snap = le64_to_cpu(rinfo->diri.in->snapid);
+
+		BUG_ON(ceph_ino(dir) != dvino.ino);
+		BUG_ON(ceph_snap(dir) != dvino.snap);
 
 		/* do we have a lease on the whole dir? */
 		have_dir_cap =
@@ -1298,7 +1317,8 @@ retry_lookup:
 					d_add(dn, NULL);
 				update_dentry_lease(dn, rinfo->dlease,
 						    session,
-						    req->r_request_started);
+						    req->r_request_started,
+						    NULL, &dvino);
 			}
 			goto done;
 		}
@@ -1321,9 +1341,13 @@ retry_lookup:
 			have_lease = false;
 		}
 
-		if (have_lease)
+		if (have_lease) {
+			tvino.ino = le64_to_cpu(rinfo->targeti.in->ino);
+			tvino.snap = le64_to_cpu(rinfo->targeti.in->snapid);
 			update_dentry_lease(dn, rinfo->dlease, session,
-					    req->r_request_started);
+					    req->r_request_started,
+					    &tvino, &dvino);
+		}
 		dout(" final dn %p\n", dn);
 	} else if ((req->r_op == CEPH_MDS_OP_LOOKUPSNAP ||
 		    req->r_op == CEPH_MDS_OP_MKSNAP) &&
@@ -1497,14 +1521,14 @@ int ceph_readdir_prepopulate(struct ceph_mds_request *req,
 	/* FIXME: release caps/leases if error occurs */
 	for (i = 0; i < rinfo->dir_nr; i++) {
 		struct ceph_mds_reply_dir_entry *rde = rinfo->dir_entries + i;
-		struct ceph_vino vino;
+		struct ceph_vino tvino, dvino;
 
 		dname.name = rde->name;
 		dname.len = rde->name_len;
 		dname.hash = full_name_hash(dname.name, dname.len);
 
-		vino.ino = le64_to_cpu(rde->inode.in->ino);
-		vino.snap = le64_to_cpu(rde->inode.in->snapid);
+		tvino.ino = le64_to_cpu(rde->inode.in->ino);
+		tvino.snap = le64_to_cpu(rde->inode.in->snapid);
 
 		if (rinfo->hash_order) {
 			u32 hash = ceph_str_hash(ci->i_dir_layout.dl_dir_hash,
@@ -1539,8 +1563,8 @@ retry_lookup:
 				goto out;
 			}
 		} else if (d_really_is_positive(dn) &&
-			   (ceph_ino(d_inode(dn)) != vino.ino ||
-			    ceph_snap(d_inode(dn)) != vino.snap)) {
+			   (ceph_ino(d_inode(dn)) != tvino.ino ||
+			    ceph_snap(d_inode(dn)) != tvino.snap)) {
 			dout(" dn %p points to wrong inode %p\n",
 			     dn, d_inode(dn));
 			d_delete(dn);
@@ -1552,7 +1576,7 @@ retry_lookup:
 		if (d_really_is_positive(dn)) {
 			in = d_inode(dn);
 		} else {
-			in = ceph_get_inode(parent->d_sb, vino);
+			in = ceph_get_inode(parent->d_sb, tvino);
 			if (IS_ERR(in)) {
 				dout("new_inode badness\n");
 				d_drop(dn);
@@ -1597,8 +1621,9 @@ retry_lookup:
 
 		ceph_dentry(dn)->offset = rde->offset;
 
+		dvino = ceph_vino(d_inode(parent));
 		update_dentry_lease(dn, rde->lease, req->r_session,
-				    req->r_request_started);
+				    req->r_request_started, &tvino, &dvino);
 
 		if (err == 0 && skipped == 0 && cache_ctl.index >= 0) {
 			ret = fill_readdir_cache(d_inode(parent), dn,
