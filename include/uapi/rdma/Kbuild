@@ -8,3 +8,4 @@ header-y += rdma_user_cm.h
 header-y += hfi/
 header-y += rdma_user_rxe.h
 header-y += mlx4-abi.h
+header-y += mlx5-abi.h

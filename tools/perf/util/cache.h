@@ -31,6 +31,7 @@ extern const char *perf_config_dirname(const char *, const char *);
 /* pager.c */
 extern void setup_pager(void);
 extern int pager_in_use(void);
+extern int pager_get_columns(void);
 extern int pager_use_color;
 
 char *alias_lookup(const char *alias);
