@@ -628,7 +628,7 @@ static int fl_change(struct net *net, struct sk_buff *in_skb,
 	fl_hw_replace_filter(tp,
 			     &head->dissector,
 			     &mask.key,
-			     &fnew->key,
+			     &fnew->mkey,
 			     &fnew->exts,
 			     (unsigned long)fnew,
 			     flags);
