@@ -154,6 +154,7 @@ static const struct of_device_id whitelist_phys[] = {
 	{ .compatible = "marvell,88E1111", },
 	{ .compatible = "marvell,88e1116", },
 	{ .compatible = "marvell,88e1118", },
+	{ .compatible = "marvell,88e1145", },
 	{ .compatible = "marvell,88e1149r", },
 	{ .compatible = "marvell,88e1310", },
 	{ .compatible = "marvell,88E1510", },
@@ -293,6 +294,7 @@ struct phy_device *of_phy_find_device(struct device_node *phy_np)
 		mdiodev = to_mdio_device(d);
 		if (mdiodev->flags & MDIO_DEVICE_FLAG_PHY)
 			return to_phy_device(d);
+		put_device(d);
 	}
 
 	return NULL;
