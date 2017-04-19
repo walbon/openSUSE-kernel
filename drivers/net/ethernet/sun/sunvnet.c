@@ -1590,15 +1590,6 @@ static void vnet_set_rx_mode(struct net_device *dev)
 	rcu_read_unlock();
 }
 
-static int vnet_change_mtu(struct net_device *dev, int new_mtu)
-{
-	if (new_mtu < 68 || new_mtu > 65535)
-		return -EINVAL;
-
-	dev->mtu = new_mtu;
-	return 0;
-}
-
 static int vnet_set_mac_addr(struct net_device *dev, void *p)
 {
 	return -EINVAL;
@@ -1748,7 +1739,6 @@ static const struct net_device_ops vnet_ops = {
 	.ndo_set_mac_address	= vnet_set_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_tx_timeout		= vnet_tx_timeout,
-	.ndo_change_mtu		= vnet_change_mtu,
 	.ndo_start_xmit		= vnet_start_xmit,
 	.ndo_select_queue	= vnet_select_queue,
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -1790,6 +1780,10 @@ static struct vnet *vnet_new(const u64 *local_mac,
 	dev->hw_features = NETIF_F_TSO | NETIF_F_GSO | NETIF_F_GSO_SOFTWARE |
 			   NETIF_F_HW_CSUM | NETIF_F_SG;
 	dev->features = dev->hw_features;
+
+	/* MTU range: 68 - 65535 */
+	dev->min_mtu = ETH_MIN_MTU;
+	dev->max_mtu = VNET_MAX_MTU;
 
 	SET_NETDEV_DEV(dev, &vdev->dev);
 

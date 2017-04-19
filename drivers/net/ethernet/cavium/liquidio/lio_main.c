@@ -2153,11 +2153,14 @@ void liquidio_link_ctrl_cmd_completion(void *nctrl_ptr)
 	case OCTNET_CMD_CHANGE_MTU:
 		/* If command is successful, change the MTU. */
 		netif_info(lio, probe, lio->netdev, " MTU Changed from %d to %d\n",
-			   netdev->mtu, nctrl->ncmd.s.param2);
+			   netdev->mtu, nctrl->ncmd.s.param1);
 		dev_info(&oct->pci_dev->dev, "%s MTU Changed from %d to %d\n",
 			 netdev->name, netdev->mtu,
-			 nctrl->ncmd.s.param2);
-		netdev->mtu = nctrl->ncmd.s.param2;
+			 nctrl->ncmd.s.param1);
+		rtnl_lock();
+		netdev->mtu = nctrl->ncmd.s.param1;
+		call_netdevice_notifiers(NETDEV_CHANGEMTU, netdev);
+		rtnl_unlock();
 		break;
 
 	case OCTNET_CMD_GPIO_ACCESS:
@@ -2386,20 +2389,7 @@ static int liquidio_change_mtu(struct net_device *netdev, int new_mtu)
 	struct octeon_device *oct = lio->oct_dev;
 	struct octnic_ctrl_pkt nctrl;
 	struct octnic_ctrl_params nparams;
-	int max_frm_size = new_mtu + OCTNET_FRM_HEADER_SIZE;
 	int ret = 0;
-
-	/* Limit the MTU to make sure the ethernet packets are between 64 bytes
-	 * and 65535 bytes
-	 */
-	if ((max_frm_size < OCTNET_MIN_FRM_SIZE) ||
-	    (max_frm_size > OCTNET_MAX_FRM_SIZE)) {
-		dev_err(&oct->pci_dev->dev, "Invalid MTU: %d\n", new_mtu);
-		dev_err(&oct->pci_dev->dev, "Valid range %d and %d\n",
-			(OCTNET_MIN_FRM_SIZE - OCTNET_FRM_HEADER_SIZE),
-			(OCTNET_MAX_FRM_SIZE - OCTNET_FRM_HEADER_SIZE));
-		return -EINVAL;
-	}
 
 	memset(&nctrl, 0, sizeof(struct octnic_ctrl_pkt));
 
@@ -3286,6 +3276,10 @@ static int setup_nic_devices(struct octeon_device *octeon_dev)
 		netdev->vlan_features = lio->dev_capability;
 
 		netdev->hw_features = lio->dev_capability;
+
+		/* MTU range: 68 - 16000 */
+		netdev->min_mtu = LIO_MIN_MTU_SIZE;
+		netdev->max_mtu = LIO_MAX_MTU_SIZE;
 
 		/* Point to the  properties for octeon device to which this
 		 * interface belongs.

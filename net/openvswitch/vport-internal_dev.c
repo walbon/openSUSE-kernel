@@ -89,15 +89,6 @@ static const struct ethtool_ops internal_dev_ethtool_ops = {
 	.get_link	= ethtool_op_get_link,
 };
 
-static int internal_dev_change_mtu(struct net_device *netdev, int new_mtu)
-{
-	if (new_mtu < 68)
-		return -EINVAL;
-
-	netdev->mtu = new_mtu;
-	return 0;
-}
-
 static void internal_dev_destructor(struct net_device *dev)
 {
 	struct vport *vport = ovs_internal_dev_get_vport(dev);
@@ -141,7 +132,6 @@ static const struct net_device_ops internal_dev_netdev_ops = {
 	.ndo_stop = internal_dev_stop,
 	.ndo_start_xmit = internal_dev_xmit,
 	.ndo_set_mac_address = eth_mac_addr,
-	.ndo_change_mtu = internal_dev_change_mtu,
 	.ndo_get_stats64 = internal_get_stats,
 };
 
@@ -152,6 +142,8 @@ static struct rtnl_link_ops internal_dev_link_ops __read_mostly = {
 static void do_setup(struct net_device *netdev)
 {
 	ether_setup(netdev);
+
+	netdev->max_mtu = ETH_MAX_MTU;
 
 	netdev->netdev_ops = &internal_dev_netdev_ops;
 
