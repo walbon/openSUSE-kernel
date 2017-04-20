@@ -41,6 +41,7 @@
 #include "hns_roce_device.h"
 #include "hns_roce_user.h"
 #include "hns_roce_hem.h"
+#include <linux/hns/hns.h>
 
 /**
  * hns_get_gid_index - Get gid index.
@@ -841,6 +842,8 @@ static int hns_roce_probe(struct platform_device *pdev)
 	struct hns_roce_dev *hr_dev;
 	struct device *dev = &pdev->dev;
 
+	hns_enet_register();
+
 	hr_dev = (struct hns_roce_dev *)ib_alloc_device(sizeof(*hr_dev));
 	if (!hr_dev)
 		return -ENOMEM;
@@ -964,6 +967,8 @@ static int hns_roce_remove(struct platform_device *pdev)
 	hr_dev->hw->reset(hr_dev, false);
 
 	ib_dealloc_device(&hr_dev->ib_dev);
+
+	hns_enet_unregister();
 
 	return 0;
 }

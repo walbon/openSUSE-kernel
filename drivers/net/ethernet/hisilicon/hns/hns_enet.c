@@ -2388,6 +2388,18 @@ static int hns_nic_dev_remove(struct platform_device *pdev)
 	return 0;
 }
 
+void hns_enet_register(void)
+{
+	__module_get(THIS_MODULE);
+}
+EXPORT_SYMBOL(hns_enet_register);
+
+void hns_enet_unregister(void)
+{
+	module_put(THIS_MODULE);
+}
+EXPORT_SYMBOL(hns_enet_unregister);
+
 static const struct of_device_id hns_enet_of_match[] = {
 	{.compatible = "hisilicon,hns-nic-v1",},
 	{.compatible = "hisilicon,hns-nic-v2",},
