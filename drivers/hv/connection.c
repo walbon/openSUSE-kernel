@@ -440,6 +440,9 @@ int vmbus_post_msg(void *buffer, size_t buflen)
 	int ret = 0;
 	int retries = 0;
 	u32 usec = 1;
+	/* No sleep in case of crash */
+	struct vmbus_channel_message_header *hdr = buffer;
+	bool can_sleep = !(buflen == sizeof(*hdr) && hdr->msgtype == CHANNELMSG_UNLOAD);
 
 	conn_id.asu32 = 0;
 	conn_id.u.id = VMBUS_MESSAGE_CONNECTION_ID;
@@ -449,7 +452,7 @@ int vmbus_post_msg(void *buffer, size_t buflen)
 	 * insufficient resources. Retry the operation a couple of
 	 * times before giving up.
 	 */
-	while (retries < 20) {
+	while (retries < 100) {
 		ret = hv_post_message(conn_id, 1, buffer, buflen);
 
 		switch (ret) {
@@ -472,8 +475,14 @@ int vmbus_post_msg(void *buffer, size_t buflen)
 		}
 
 		retries++;
-		udelay(usec);
-		if (usec < 2048)
+		if (can_sleep && usec > 1000)
+			msleep(usec / 1000);
+		else if (usec < MAX_UDELAY_MS * 1000)
+			udelay(usec);
+		else
+			mdelay(usec / 1000);
+
+		if (usec < 256000)
 			usec *= 2;
 	}
 	return ret;
