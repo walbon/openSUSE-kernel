@@ -3009,7 +3009,7 @@ static void free_log_tree(struct btrfs_trans_handle *trans,
 			break;
 
 		clear_extent_bits(&log->dirty_log_pages, start, end,
-				  EXTENT_DIRTY | EXTENT_NEW, GFP_NOFS);
+				  EXTENT_DIRTY | EXTENT_NEW);
 	}
 
 	/*
