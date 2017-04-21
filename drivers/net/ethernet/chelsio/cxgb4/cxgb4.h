@@ -761,6 +761,27 @@ struct hash_mac_addr {
 	u8 addr[ETH_ALEN];
 };
 
+struct uld_msix_bmap {
+	unsigned long *msix_bmap;
+	unsigned int mapsize;
+	spinlock_t lock; /* lock for acquiring bitmap */
+};
+
+struct uld_msix_info {
+	unsigned short vec;
+	char desc[IFNAMSIZ + 10];
+	unsigned int idx;
+};
+
+struct vf_info {
+	unsigned char vf_mac_addr[ETH_ALEN];
+	bool pf_set_mac;
+};
+
+struct mbox_list {
+	struct list_head list;
+};
+
 struct adapter {
 	void __iomem *regs;
 	void __iomem *bar2;
@@ -812,6 +833,10 @@ struct adapter {
 	struct work_struct db_full_task;
 	struct work_struct db_drop_task;
 	bool tid_release_task_busy;
+
+	/* lock for mailbox cmd list */
+	spinlock_t mbox_lock;
+	struct mbox_list mlist;
 
 	/* support for mailbox command/reply logging */
 #define T4_OS_LOG_MBOX_CMDS 256
