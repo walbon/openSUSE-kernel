@@ -885,7 +885,7 @@ static int ovl_rename2(struct inode *olddir, struct dentry *old,
 	} else {
 		new_create = true;
 		if (!d_is_negative(newdentry) &&
-		    (!new_opaque || !ovl_is_whiteout(newdentry, new_upperdir)))
+		    (!new_opaque || !ovl_is_whiteout(newdentry, new)))
 			goto out_dput;
 	}
 
