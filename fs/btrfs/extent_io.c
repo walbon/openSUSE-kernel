@@ -1039,7 +1039,13 @@ hit_next:
 		goto out;
 	}
 
-	goto search_again;
+search_again:
+	if (start > end)
+		goto out;
+	spin_unlock(&tree->lock);
+	if (gfpflags_allow_blocking(mask))
+		cond_resched();
+	goto again;
 
 out:
 	spin_unlock(&tree->lock);
@@ -1048,13 +1054,6 @@ out:
 
 	return err;
 
-search_again:
-	if (start > end)
-		goto out;
-	spin_unlock(&tree->lock);
-	if (gfpflags_allow_blocking(mask))
-		cond_resched();
-	goto again;
 }
 
 int set_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
