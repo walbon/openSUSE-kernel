@@ -3721,6 +3721,15 @@ H_RANDOM hypercall backed by a hardware random-number generator.
 If present, the kernel H_RANDOM handler can be enabled for guest use
 with the KVM_CAP_PPC_ENABLE_HCALL capability.
 
+8.8 KVM_CAP_X86_GUEST_MWAIT
+
+Architectures: x86
+
+This capability indicates that guest using memory monotoring instructions
+(MWAIT/MWAITX) to stop the virtual CPU will not cause a VM exit.  As such time
+spent while virtual CPU is halted in this way will then be accounted for as
+guest running time on the host (as opposed to e.g. HLT).
+
 8.5 KVM_CAP_ARM_USER_IRQ
 
 Architectures: arm, arm64
