@@ -728,14 +728,6 @@ next:
 	start = last_end + 1;
 	if (start <= end && state && !need_resched())
 		goto hit_next;
-	goto search_again;
-
-out:
-	spin_unlock(&tree->lock);
-	if (prealloc)
-		free_extent_state(prealloc);
-
-	return 0;
 
 search_again:
 	if (start > end)
@@ -744,6 +736,14 @@ search_again:
 	if (gfpflags_allow_blocking(mask))
 		cond_resched();
 	goto again;
+
+out:
+	spin_unlock(&tree->lock);
+	if (prealloc)
+		free_extent_state(prealloc);
+
+	return 0;
+
 }
 
 static void wait_on_state(struct extent_io_tree *tree,
