@@ -956,15 +956,6 @@ static int ssip_pn_stop(struct net_device *dev)
 	return 0;
 }
 
-static int ssip_pn_set_mtu(struct net_device *dev, int new_mtu)
-{
-	if (new_mtu > SSIP_MAX_MTU || new_mtu < PHONET_MIN_MTU)
-		return -EINVAL;
-	dev->mtu = new_mtu;
-
-	return 0;
-}
-
 static int ssip_pn_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct hsi_client *cl = to_hsi_client(dev->dev.parent);
@@ -1047,7 +1038,6 @@ static const struct net_device_ops ssip_pn_ops = {
 	.ndo_open	= ssip_pn_open,
 	.ndo_stop	= ssip_pn_stop,
 	.ndo_start_xmit	= ssip_pn_xmit,
-	.ndo_change_mtu	= ssip_pn_set_mtu,
 };
 
 static void ssip_pn_setup(struct net_device *dev)
@@ -1121,6 +1111,10 @@ static int ssi_protocol_probe(struct device *dev)
 		err = -ENOMEM;
 		goto out1;
 	}
+
+	/* MTU range: 6 - 65535 */
+	ssi->netdev->min_mtu = PHONET_MIN_MTU;
+	ssi->netdev->max_mtu = SSIP_MAX_MTU;
 
 	SET_NETDEV_DEV(ssi->netdev, dev);
 	netif_carrier_off(ssi->netdev);

@@ -109,8 +109,7 @@ static int vmbus_negotiate_version(struct vmbus_channel_msginfo *msginfo,
 	spin_unlock_irqrestore(&vmbus_connection.channelmsg_lock, flags);
 
 	ret = vmbus_post_msg(msg,
-			     sizeof(struct vmbus_channel_initiate_contact),
-			     true);
+			       sizeof(struct vmbus_channel_initiate_contact));
 	if (ret != 0) {
 		spin_lock_irqsave(&vmbus_connection.channelmsg_lock, flags);
 		list_del(&msginfo->msglistentry);
@@ -339,12 +338,15 @@ void vmbus_on_event(unsigned long data)
 /*
  * vmbus_post_msg - Send a msg on the vmbus's message connection
  */
-int vmbus_post_msg(void *buffer, size_t buflen, bool can_sleep)
+int vmbus_post_msg(void *buffer, size_t buflen)
 {
 	union hv_connection_id conn_id;
 	int ret = 0;
 	int retries = 0;
 	u32 usec = 1;
+	/* No sleep in case of crash */
+	struct vmbus_channel_message_header *hdr = buffer;
+	bool can_sleep = !(buflen == sizeof(*hdr) && hdr->msgtype == CHANNELMSG_UNLOAD);
 
 	conn_id.asu32 = 0;
 	conn_id.u.id = VMBUS_MESSAGE_CONNECTION_ID;

@@ -48,6 +48,8 @@ MODULE_LICENSE("GPL");
 #define RIONET_TX_RING_SIZE	CONFIG_RIONET_TX_SIZE
 #define RIONET_RX_RING_SIZE	CONFIG_RIONET_RX_SIZE
 #define RIONET_MAX_NETS		8
+#define RIONET_MSG_SIZE         RIO_MAX_MSG_SIZE
+#define RIONET_MAX_MTU          (RIONET_MSG_SIZE - ETH_HLEN)
 
 struct rionet_private {
 	struct rio_mport *mport;
@@ -454,7 +456,6 @@ static const struct net_device_ops rionet_netdev_ops = {
 	.ndo_open		= rionet_open,
 	.ndo_stop		= rionet_close,
 	.ndo_start_xmit		= rionet_start_xmit,
-	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= eth_mac_addr,
 };
@@ -489,7 +490,10 @@ static int rionet_setup_netdev(struct rio_mport *mport, struct net_device *ndev)
 	ndev->dev_addr[5] = device_id & 0xff;
 
 	ndev->netdev_ops = &rionet_netdev_ops;
-	ndev->mtu = RIO_MAX_MSG_SIZE - 14;
+	ndev->mtu = RIONET_MAX_MTU;
+	/* MTU range: 68 - 4082 */
+	ndev->min_mtu = ETH_MIN_MTU;
+	ndev->max_mtu = RIONET_MAX_MTU;
 	ndev->features = NETIF_F_LLTX;
 	SET_NETDEV_DEV(ndev, &mport->dev);
 	ndev->ethtool_ops = &rionet_ethtool_ops;

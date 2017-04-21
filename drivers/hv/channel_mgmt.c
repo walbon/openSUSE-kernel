@@ -378,8 +378,7 @@ static void vmbus_release_relid(u32 relid)
 	memset(&msg, 0, sizeof(struct vmbus_channel_relid_released));
 	msg.child_relid = relid;
 	msg.header.msgtype = CHANNELMSG_RELID_RELEASED;
-	vmbus_post_msg(&msg, sizeof(struct vmbus_channel_relid_released),
-		       true);
+	vmbus_post_msg(&msg, sizeof(struct vmbus_channel_relid_released));
 }
 
 void hv_process_channel_removal(struct vmbus_channel *channel, u32 relid)
@@ -769,8 +768,7 @@ void vmbus_initiate_unload(bool crash)
 	init_completion(&vmbus_connection.unload_event);
 	memset(&hdr, 0, sizeof(struct vmbus_channel_message_header));
 	hdr.msgtype = CHANNELMSG_UNLOAD;
-	vmbus_post_msg(&hdr, sizeof(struct vmbus_channel_message_header),
-		       !crash);
+	vmbus_post_msg(&hdr, sizeof(struct vmbus_channel_message_header));
 
 	/*
 	 * vmbus_initiate_unload() is also called on crash and the crash can be
@@ -1154,8 +1152,8 @@ int vmbus_request_offers(void)
 	msg->msgtype = CHANNELMSG_REQUESTOFFERS;
 
 
-	ret = vmbus_post_msg(msg, sizeof(struct vmbus_channel_message_header),
-			     true);
+	ret = vmbus_post_msg(msg,
+			       sizeof(struct vmbus_channel_message_header));
 	if (ret != 0) {
 		pr_err("Unable to request offers - %d\n", ret);
 

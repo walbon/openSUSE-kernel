@@ -994,8 +994,10 @@ struct btrfs_dev_replace {
 	pid_t lock_owner;
 	atomic_t nesting_level;
 	struct mutex lock_finishing_cancel_unmount;
-	struct mutex lock_management_lock;
-	struct mutex lock;
+	rwlock_t lock;
+	atomic_t read_locks;
+	atomic_t blocking_readers;
+	wait_queue_head_t read_lock_wq;
 
 	struct btrfs_scrub_progress scrub_progress;
 };
@@ -1783,6 +1785,9 @@ struct btrfs_fs_info {
 	spinlock_t reada_lock;
 	struct radix_tree_root reada_tree;
 
+	/* readahead works cnt */
+	atomic_t reada_works_cnt;
+
 	/* Extent buffer radix tree */
 	spinlock_t buffer_lock;
 	struct radix_tree_root buffer_radix;
@@ -2286,6 +2291,9 @@ struct btrfs_map_token {
 	char *kaddr;
 	unsigned long offset;
 };
+
+#define BTRFS_BYTES_TO_BLKS(fs_info, bytes) \
+				((bytes) >> (fs_info)->sb->s_blocksize_bits)
 
 static inline void btrfs_init_map_token (struct btrfs_map_token *token)
 {
@@ -3955,7 +3963,7 @@ int btrfs_unlink_subvol(struct btrfs_trans_handle *trans,
 			struct btrfs_root *root,
 			struct inode *dir, u64 objectid,
 			const char *name, int name_len);
-int btrfs_truncate_page(struct inode *inode, loff_t from, loff_t len,
+int btrfs_truncate_block(struct inode *inode, loff_t from, loff_t len,
 			int front);
 int btrfs_truncate_inode_items(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root,
@@ -4366,8 +4374,8 @@ struct reada_control *btrfs_reada_add(struct btrfs_root *root,
 			      struct btrfs_key *start, struct btrfs_key *end);
 int btrfs_reada_wait(void *handle);
 void btrfs_reada_detach(void *handle);
-int btree_readahead_hook(struct btrfs_root *root, struct extent_buffer *eb,
-			 u64 start, int err);
+int btree_readahead_hook(struct btrfs_fs_info *fs_info,
+			 struct extent_buffer *eb, u64 start, int err);
 
 static inline int is_fstree(u64 rootid)
 {

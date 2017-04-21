@@ -30,6 +30,9 @@
 #include <linux/dma-mapping.h>
 #include <linux/ptp_clock_kernel.h>
 
+#define LIO_MAX_MTU_SIZE (OCTNET_MAX_FRM_SIZE - OCTNET_FRM_HEADER_SIZE)
+#define LIO_MIN_MTU_SIZE ETH_MIN_MTU
+
 /** LiquidIO per-interface network private data */
 struct lio {
 	/** State of the interface. Rx/Tx happens only in the RUNNING state.  */

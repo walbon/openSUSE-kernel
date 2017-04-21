@@ -845,10 +845,6 @@ static noinline int btrfs_mksubvol(struct path *parent,
 	if (IS_ERR(dentry))
 		goto out_unlock;
 
-	error = -EEXIST;
-	if (d_really_is_positive(dentry))
-		goto out_dput;
-
 	error = btrfs_may_create(dir, dentry);
 	if (error)
 		goto out_dput;
@@ -2967,8 +2963,8 @@ static int btrfs_cmp_data_prepare(struct inode *src, u64 loff,
 	 * of the array is bounded by len, which is in turn bounded by
 	 * BTRFS_MAX_DEDUPE_LEN.
 	 */
-	src_pgarr = kzalloc(num_pages * sizeof(struct page *), GFP_NOFS);
-	dst_pgarr = kzalloc(num_pages * sizeof(struct page *), GFP_NOFS);
+	src_pgarr = kcalloc(num_pages, sizeof(struct page *), GFP_KERNEL);
+	dst_pgarr = kcalloc(num_pages, sizeof(struct page *), GFP_KERNEL);
 	if (!src_pgarr || !dst_pgarr) {
 		kfree(src_pgarr);
 		kfree(dst_pgarr);
@@ -3073,6 +3069,9 @@ static int btrfs_extent_same(struct inode *src, u64 loff, u64 olen,
 		mutex_lock(&src->i_mutex);
 
 		ret = extent_same_check_offsets(src, loff, &len, olen);
+		if (ret)
+			goto out_unlock;
+		ret = extent_same_check_offsets(src, dst_loff, &len, olen);
 		if (ret)
 			goto out_unlock;
 
@@ -4013,8 +4012,9 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	 * Truncate page cache pages so that future reads will see the cloned
 	 * data immediately and not the previous data.
 	 */
-	truncate_inode_pages_range(&inode->i_data, destoff,
-				   PAGE_CACHE_ALIGN(destoff + len) - 1);
+	truncate_inode_pages_range(&inode->i_data,
+				round_down(destoff, PAGE_CACHE_SIZE),
+				round_up(destoff + len, PAGE_CACHE_SIZE) - 1);
 out_unlock:
 	if (!same_inode)
 		btrfs_double_inode_unlock(src, inode);
