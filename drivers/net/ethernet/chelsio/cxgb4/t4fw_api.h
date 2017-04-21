@@ -2249,7 +2249,7 @@ struct fw_acl_vlan_cmd {
 enum fw_port_cap {
 	FW_PORT_CAP_SPEED_100M		= 0x0001,
 	FW_PORT_CAP_SPEED_1G		= 0x0002,
-	FW_PORT_CAP_SPEED_2_5G		= 0x0004,
+	FW_PORT_CAP_SPEED_25G		= 0x0004,
 	FW_PORT_CAP_SPEED_10G		= 0x0008,
 	FW_PORT_CAP_SPEED_40G		= 0x0010,
 	FW_PORT_CAP_SPEED_100G		= 0x0020,
@@ -2264,6 +2264,12 @@ enum fw_port_cap {
 	FW_PORT_CAP_PHYXS_LPBK		= 0x4000,
 	FW_PORT_CAP_FAR_END_LPBK	= 0x8000,
 };
+
+#define FW_PORT_CAP_SPEED_S     0
+#define FW_PORT_CAP_SPEED_M     0x3f
+#define FW_PORT_CAP_SPEED_V(x)  ((x) << FW_PORT_CAP_SPEED_S)
+#define FW_PORT_CAP_SPEED_G(x) \
+	(((x) >> FW_PORT_CAP_SPEED_S) & FW_PORT_CAP_SPEED_M)
 
 enum fw_port_mdi {
 	FW_PORT_CAP_MDI_UNCHANGED,
