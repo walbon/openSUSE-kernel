@@ -837,6 +837,7 @@ struct kvm_ppc_smmu_info {
 #define KVM_CAP_SPLIT_IRQCHIP 121
 #define KVM_CAP_IOEVENTFD_ANY_LENGTH 122
 #define KVM_CAP_ARM_TIMER 133
+#define KVM_CAP_X86_GUEST_MWAIT 143
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
