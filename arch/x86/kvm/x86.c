@@ -2575,6 +2575,9 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 #endif
 		r = 1;
 		break;
+	case KVM_CAP_X86_GUEST_MWAIT:
+		r = kvm_mwait_in_guest();
+		break;
 	case KVM_CAP_X86_SMM:
 		/* SMBASE is usually relocated above 1M on modern chipsets,
 		 * and SMM handlers might indeed rely on 4G segment limits,

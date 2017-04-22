@@ -834,6 +834,7 @@ struct kvm_ppc_smmu_info {
 #define KVM_CAP_ARM_PMU_V3 125
 #define KVM_CAP_VCPU_ATTRIBUTES 126
 #define KVM_CAP_MSI_DEVID 131
+#define KVM_CAP_X86_GUEST_MWAIT 143
 #define KVM_CAP_ARM_USER_IRQ (0x1000 | 137) /* Will only be fixed in 4.12 */
 
 #ifdef KVM_CAP_IRQ_ROUTING
