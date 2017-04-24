@@ -107,7 +107,10 @@ static dma_addr_t arc_dma_map_page(struct device *dev, struct page *page,
 		struct dma_attrs *attrs)
 {
 	unsigned long paddr = page_to_phys(page) + offset;
-	_dma_cache_sync(paddr, size, dir);
+
+	if (!dma_get_attr(DMA_ATTR_SKIP_CPU_SYNC, attrs))
+		_dma_cache_sync(paddr, size, dir);
+
 	return (dma_addr_t)paddr;
 }
 
