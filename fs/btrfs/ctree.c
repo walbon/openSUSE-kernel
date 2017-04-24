@@ -1011,7 +1011,7 @@ static noinline int update_ref_for_cow(struct btrfs_trans_handle *trans,
 			return ret;
 		if (refs == 0) {
 			ret = -EROFS;
-			btrfs_std_error(root->fs_info, ret, NULL);
+			btrfs_handle_fs_error(root->fs_info, ret, NULL);
 			return ret;
 		}
 	} else {
@@ -1784,10 +1784,12 @@ static noinline int generic_bin_search(struct extent_buffer *eb,
 			if (!err) {
 				tmp = (struct btrfs_disk_key *)(kaddr + offset -
 							map_start);
-			} else {
+			} else if (err == 1) {
 				read_extent_buffer(eb, &unaligned,
 						   offset, sizeof(unaligned));
 				tmp = &unaligned;
+			} else {
+				return err;
 			}
 
 		} else {
@@ -1929,7 +1931,7 @@ static noinline int balance_level(struct btrfs_trans_handle *trans,
 		child = read_node_slot(root, mid, 0);
 		if (!child) {
 			ret = -EROFS;
-			btrfs_std_error(root->fs_info, ret, NULL);
+			btrfs_handle_fs_error(root->fs_info, ret, NULL);
 			goto enospc;
 		}
 
@@ -2032,7 +2034,7 @@ static noinline int balance_level(struct btrfs_trans_handle *trans,
 		 */
 		if (!left) {
 			ret = -EROFS;
-			btrfs_std_error(root->fs_info, ret, NULL);
+			btrfs_handle_fs_error(root->fs_info, ret, NULL);
 			goto enospc;
 		}
 		wret = balance_node_right(trans, root, mid, left);
@@ -2511,6 +2513,8 @@ read_block_for_search(struct btrfs_trans_handle *trans,
 		if (!btrfs_buffer_uptodate(tmp, 0, 0))
 			ret = -EIO;
 		free_extent_buffer(tmp);
+	} else {
+		ret = PTR_ERR(tmp);
 	}
 	return ret;
 }
@@ -2826,6 +2830,8 @@ cow_done:
 		}
 
 		ret = key_search(b, key, level, &prev_cmp, &slot);
+		if (ret < 0)
+			goto done;
 
 		if (level != 0) {
 			int dec = 0;

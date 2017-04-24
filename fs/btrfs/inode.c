@@ -824,6 +824,7 @@ retry:
 						async_extent->ram_size - 1, 0);
 			goto out_free_reserve;
 		}
+		btrfs_dec_block_group_reservations(root->fs_info, ins.objectid);
 
 		/*
 		 * clear dirty, set writeback and unlock the pages.
@@ -861,6 +862,7 @@ retry:
 	}
 	return;
 out_free_reserve:
+	btrfs_dec_block_group_reservations(root->fs_info, ins.objectid);
 	btrfs_free_reserved_extent(root, ins.objectid, ins.offset, 1);
 out_free:
 	extent_clear_unlock_delalloc(inode, async_extent->start,
@@ -1038,6 +1040,8 @@ static noinline int cow_file_range(struct inode *inode,
 				goto out_drop_extent_cache;
 		}
 
+		btrfs_dec_block_group_reservations(root->fs_info, ins.objectid);
+
 		if (disk_num_bytes < cur_alloc_size)
 			break;
 
@@ -1066,6 +1070,7 @@ out:
 out_drop_extent_cache:
 	btrfs_drop_extent_cache(inode, start, start + ram_size - 1, 0);
 out_reserve:
+	btrfs_dec_block_group_reservations(root->fs_info, ins.objectid);
 	btrfs_free_reserved_extent(root, ins.objectid, ins.offset, 1);
 out_unlock:
 	extent_clear_unlock_delalloc(inode, start, end, locked_page,
@@ -1377,6 +1382,9 @@ next_slot:
 			 */
 			if (csum_exist_in_range(root, disk_bytenr, num_bytes))
 				goto out_check;
+			if (!btrfs_inc_nocow_writers(root->fs_info,
+						     disk_bytenr))
+				goto out_check;
 			nocow = 1;
 		} else if (extent_type == BTRFS_FILE_EXTENT_INLINE) {
 			extent_end = found_key.offset +
@@ -1391,6 +1399,9 @@ out_check:
 			path->slots[0]++;
 			if (!nolock && nocow)
 				btrfs_end_write_no_snapshoting(root);
+			if (nocow)
+				btrfs_dec_nocow_writers(root->fs_info,
+							disk_bytenr);
 			goto next_slot;
 		}
 		if (!nocow) {
@@ -1411,6 +1422,9 @@ out_check:
 			if (ret) {
 				if (!nolock && nocow)
 					btrfs_end_write_no_snapshoting(root);
+				if (nocow)
+					btrfs_dec_nocow_writers(root->fs_info,
+								disk_bytenr);
 				goto error;
 			}
 			cow_start = (u64)-1;
@@ -1453,6 +1467,8 @@ out_check:
 
 		ret = btrfs_add_ordered_extent(inode, cur_offset, disk_bytenr,
 					       num_bytes, num_bytes, type);
+		if (nocow)
+			btrfs_dec_nocow_writers(root->fs_info, disk_bytenr);
 		BUG_ON(ret); /* -ENOMEM */
 
 		if (root->root_key.objectid ==
@@ -1962,7 +1978,7 @@ int btrfs_set_extent_delalloc(struct inode *inode, u64 start, u64 end,
 {
 	WARN_ON((end & (PAGE_CACHE_SIZE - 1)) == 0);
 	return set_extent_delalloc(&BTRFS_I(inode)->io_tree, start, end,
-				   cached_state, GFP_NOFS);
+				   cached_state);
 }
 
 /* see btrfs_writepage_start_hook for details on why this is required */
@@ -3103,8 +3119,7 @@ static int btrfs_readpage_end_io_hook(struct btrfs_io_bio *io_bio,
 
 	if (root->root_key.objectid == BTRFS_DATA_RELOC_TREE_OBJECTID &&
 	    test_range_bit(io_tree, start, end, EXTENT_NODATASUM, 1, NULL)) {
-		clear_extent_bits(io_tree, start, end, EXTENT_NODATASUM,
-				  GFP_NOFS);
+		clear_extent_bits(io_tree, start, end, EXTENT_NODATASUM);
 		return 0;
 	}
 
@@ -3256,7 +3271,16 @@ int btrfs_orphan_add(struct btrfs_trans_handle *trans, struct inode *inode)
 	/* grab metadata reservation from transaction handle */
 	if (reserve) {
 		ret = btrfs_orphan_reserve_metadata(trans, inode);
-		BUG_ON(ret); /* -ENOSPC in reservation; Logic error? JDM */
+		ASSERT(!ret);
+		if (ret) {
+			atomic_dec(&root->orphan_inodes);
+			clear_bit(BTRFS_INODE_ORPHAN_META_RESERVED,
+				  &BTRFS_I(inode)->runtime_flags);
+			if (insert)
+				clear_bit(BTRFS_INODE_HAS_ORPHAN_ITEM,
+					  &BTRFS_I(inode)->runtime_flags);
+			return ret;
+		}
 	}
 
 	/* insert an orphan item to track this unlinked/truncated file */
@@ -4555,6 +4579,7 @@ delete:
 			BUG_ON(ret);
 			if (btrfs_should_throttle_delayed_refs(trans, root))
 				btrfs_async_run_delayed_refs(root,
+							     trans->transid,
 					trans->delayed_ref_updates * 2, 0);
 			if (be_nice) {
 				if (truncate_space_check(trans, root,
@@ -7123,6 +7148,43 @@ out:
 	return em;
 }
 
+static struct extent_map *btrfs_create_dio_extent(struct inode *inode,
+						  const u64 start,
+						  const u64 len,
+						  const u64 orig_start,
+						  const u64 block_start,
+						  const u64 block_len,
+						  const u64 orig_block_len,
+						  const u64 ram_bytes,
+						  const int type)
+{
+	struct extent_map *em = NULL;
+	int ret;
+
+	down_read(&BTRFS_I(inode)->dio_sem);
+	if (type != BTRFS_ORDERED_NOCOW) {
+		em = create_pinned_em(inode, start, len, orig_start,
+				      block_start, block_len, orig_block_len,
+				      ram_bytes, type);
+		if (IS_ERR(em))
+			goto out;
+	}
+	ret = btrfs_add_ordered_extent_dio(inode, start, block_start,
+					   len, block_len, type);
+	if (ret) {
+		if (em) {
+			free_extent_map(em);
+			btrfs_drop_extent_cache(inode, start,
+						start + len - 1, 0);
+		}
+		em = ERR_PTR(ret);
+	}
+ out:
+	up_read(&BTRFS_I(inode)->dio_sem);
+
+	return em;
+}
+
 static struct extent_map *btrfs_new_extent_direct(struct inode *inode,
 						  u64 start, u64 len)
 {
@@ -7138,41 +7200,13 @@ static struct extent_map *btrfs_new_extent_direct(struct inode *inode,
 	if (ret)
 		return ERR_PTR(ret);
 
-	/*
-	 * Create the ordered extent before the extent map. This is to avoid
-	 * races with the fast fsync path that would lead to it logging file
-	 * extent items that point to disk extents that were not yet written to.
-	 * The fast fsync path collects ordered extents into a local list and
-	 * then collects all the new extent maps, so we must create the ordered
-	 * extent first and make sure the fast fsync path collects any new
-	 * ordered extents after collecting new extent maps as well.
-	 * The fsync path simply can not rely on inode_dio_wait() because it
-	 * causes deadlock with AIO.
-	 */
-	ret = btrfs_add_ordered_extent_dio(inode, start, ins.objectid,
-					   ins.offset, ins.offset, 0);
-	if (ret) {
+	em = btrfs_create_dio_extent(inode, start, ins.offset, start,
+				     ins.objectid, ins.offset, ins.offset,
+				     ins.offset, 0);
+	btrfs_dec_block_group_reservations(root->fs_info, ins.objectid);
+	if (IS_ERR(em))
 		btrfs_free_reserved_extent(root, ins.objectid, ins.offset, 1);
-		return ERR_PTR(ret);
-	}
 
-	em = create_pinned_em(inode, start, ins.offset, start, ins.objectid,
-			      ins.offset, ins.offset, ins.offset, 0);
-	if (IS_ERR(em)) {
-		struct btrfs_ordered_extent *oe;
-
-		btrfs_free_reserved_extent(root, ins.objectid, ins.offset, 1);
-		oe = btrfs_lookup_ordered_extent(inode, start);
-		ASSERT(oe);
-		if (WARN_ON(!oe))
-			return em;
-		set_bit(BTRFS_ORDERED_IOERR, &oe->flags);
-		set_bit(BTRFS_ORDERED_IO_DONE, &oe->flags);
-		btrfs_remove_ordered_extent(inode, oe);
-		/* Once for our lookup and once for the ordered extents tree. */
-		btrfs_put_ordered_extent(oe);
-		btrfs_put_ordered_extent(oe);
-	}
 	return em;
 }
 
@@ -7644,24 +7678,21 @@ static int btrfs_get_blocks_direct(struct inode *inode, sector_t iblock,
 		block_start = em->block_start + (start - em->start);
 
 		if (can_nocow_extent(inode, start, &len, &orig_start,
-				     &orig_block_len, &ram_bytes) == 1) {
+				     &orig_block_len, &ram_bytes) == 1 &&
+		    btrfs_inc_nocow_writers(root->fs_info, block_start)) {
+			struct extent_map *em2;
+
+			em2 = btrfs_create_dio_extent(inode, start, len,
+						      orig_start, block_start,
+						      len, orig_block_len,
+						      ram_bytes, type);
+			btrfs_dec_nocow_writers(root->fs_info, block_start);
 			if (type == BTRFS_ORDERED_PREALLOC) {
 				free_extent_map(em);
-				em = create_pinned_em(inode, start, len,
-						       orig_start,
-						       block_start, len,
-						       orig_block_len,
-						       ram_bytes, type);
-				if (IS_ERR(em)) {
-					ret = PTR_ERR(em);
-					goto unlock_err;
-				}
+				em = em2;
 			}
-
-			ret = btrfs_add_ordered_extent_dio(inode, start,
-					   block_start, len, len, type);
-			if (ret) {
-				free_extent_map(em);
+			if (em2 && IS_ERR(em2)) {
+				ret = PTR_ERR(em2);
 				goto unlock_err;
 			}
 			goto unlock;
@@ -9229,6 +9260,7 @@ struct inode *btrfs_alloc_inode(struct super_block *sb)
 	INIT_LIST_HEAD(&ei->delalloc_inodes);
 	INIT_LIST_HEAD(&ei->delayed_iput);
 	RB_CLEAR_NODE(&ei->rb_node);
+	init_rwsem(&ei->dio_sem);
 
 	return inode;
 }
@@ -10255,6 +10287,7 @@ static int __btrfs_prealloc_file_range(struct inode *inode, int mode,
 				btrfs_end_transaction(trans, root);
 			break;
 		}
+		btrfs_dec_block_group_reservations(root->fs_info, ins.objectid);
 
 		last_alloc = ins.offset;
 		ret = insert_reserved_file_extent(trans, inode,

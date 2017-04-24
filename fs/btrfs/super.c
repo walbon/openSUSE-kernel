@@ -100,15 +100,6 @@ const char *btrfs_decode_error(int errno)
 	return errstr;
 }
 
-static void save_error_info(struct btrfs_fs_info *fs_info)
-{
-	/*
-	 * today we only save the error info into ram.  Long term we'll
-	 * also send it down to the disk
-	 */
-	set_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state);
-}
-
 /* btrfs handle error by forcing the filesystem readonly */
 static void btrfs_handle_error(struct btrfs_fs_info *fs_info)
 {
@@ -134,11 +125,11 @@ static void btrfs_handle_error(struct btrfs_fs_info *fs_info)
 }
 
 /*
- * __btrfs_std_error decodes expected errors from the caller and
+ * __btrfs_handle_fs_error decodes expected errors from the caller and
  * invokes the approciate error response.
  */
 __cold
-void __btrfs_std_error(struct btrfs_fs_info *fs_info, const char *function,
+void __btrfs_handle_fs_error(struct btrfs_fs_info *fs_info, const char *function,
 		       unsigned int line, int errno, const char *fmt, ...)
 {
 	struct super_block *sb = fs_info->sb;
@@ -173,8 +164,13 @@ void __btrfs_std_error(struct btrfs_fs_info *fs_info, const char *function,
 	}
 #endif
 
+	/*
+	 * Today we only save the error info to memory.  Long term we'll
+	 * also send it down to the disk
+	 */
+	set_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state);
+
 	/* Don't go through full error handling during mount */
-	save_error_info(fs_info);
 	if (sb->s_flags & MS_BORN)
 		btrfs_handle_error(fs_info);
 }
@@ -255,7 +251,7 @@ void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 	/* Wake up anybody who may be waiting on this transaction */
 	wake_up(&root->fs_info->transaction_wait);
 	wake_up(&root->fs_info->transaction_blocked_wait);
-	__btrfs_std_error(root->fs_info, function, line, errno, NULL);
+	__btrfs_handle_fs_error(root->fs_info, function, line, errno, NULL);
 }
 /*
  * __btrfs_panic decodes unexpected, fatal errors from the caller,
@@ -1113,7 +1109,7 @@ int btrfs_sync_fs(struct super_block *sb, int wait)
 		return 0;
 	}
 
-	btrfs_wait_ordered_roots(fs_info, -1);
+	btrfs_wait_ordered_roots(fs_info, -1, 0, (u64)-1);
 
 	trans = btrfs_attach_transaction_barrier(root);
 	if (IS_ERR(trans)) {
@@ -1794,6 +1790,8 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 			}
 		}
 		sb->s_flags &= ~MS_RDONLY;
+
+		fs_info->open = 1;
 	}
 out:
 	wake_up_process(fs_info->transaction_kthread);
@@ -2034,6 +2032,7 @@ static int btrfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct btrfs_block_rsv *block_rsv = &fs_info->global_block_rsv;
 	int ret;
 	u64 thresh = 0;
+	int mixed = 0;
 
 	/*
 	 * holding chunk_muext to avoid allocating new chunks, holding
@@ -2059,8 +2058,17 @@ static int btrfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 				}
 			}
 		}
-		if (found->flags & BTRFS_BLOCK_GROUP_METADATA)
-			total_free_meta += found->disk_total - found->disk_used;
+
+		/*
+		 * Metadata in mixed block goup profiles are accounted in data
+		 */
+		if (!mixed && found->flags & BTRFS_BLOCK_GROUP_METADATA) {
+			if (found->flags & BTRFS_BLOCK_GROUP_DATA)
+				mixed = 1;
+			else
+				total_free_meta += found->disk_total -
+					found->disk_used;
+		}
 
 		total_used += found->disk_used;
 	}
@@ -2073,7 +2081,11 @@ static int btrfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 	/* Account global block reserve as used, it's in logical size already */
 	spin_lock(&block_rsv->lock);
-	buf->f_bfree -= block_rsv->size >> bits;
+	/* Mixed block groups accounting is not byte-accurate, avoid overflow */
+	if (buf->f_bfree >= block_rsv->size >> bits)
+		buf->f_bfree -= block_rsv->size >> bits;
+	else
+		buf->f_bfree = 0;
 	spin_unlock(&block_rsv->lock);
 
 	buf->f_bavail = div_u64(total_free_data, factor);
@@ -2098,7 +2110,7 @@ static int btrfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	 */
 	thresh = 4 * 1024 * 1024;
 
-	if (total_free_meta - thresh < block_rsv->size)
+	if (!mixed && total_free_meta - thresh < block_rsv->size)
 		buf->f_bavail = 0;
 
 	buf->f_type = BTRFS_SUPER_MAGIC;
@@ -2279,7 +2291,7 @@ static void btrfs_interface_exit(void)
 
 static void btrfs_print_info(void)
 {
-	printk(KERN_INFO "Btrfs loaded"
+	printk(KERN_INFO "Btrfs loaded, crc32c=%s"
 #ifdef CONFIG_BTRFS_DEBUG
 			", debug=on"
 #endif
@@ -2289,7 +2301,8 @@ static void btrfs_print_info(void)
 #ifdef CONFIG_BTRFS_FS_CHECK_INTEGRITY
 			", integrity-checker=on"
 #endif
-			"\n");
+			"\n",
+			btrfs_crc32c_impl());
 }
 
 static int btrfs_run_sanity_tests(void)
