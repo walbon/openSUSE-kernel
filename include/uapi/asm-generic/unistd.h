@@ -715,6 +715,10 @@ __SYSCALL(__NR_userfaultfd, sys_userfaultfd)
 __SYSCALL(__NR_membarrier, sys_membarrier)
 #define __NR_mlock2 284
 __SYSCALL(__NR_mlock2, sys_mlock2)
+#define __NR_preadv2 286
+__SYSCALL(__NR_preadv2, sys_preadv2)
+#define __NR_pwritev2 287
+__SYSCALL(__NR_pwritev2, sys_pwritev2)
 #define __NR_pkey_mprotect 288
 __SYSCALL(__NR_pkey_mprotect, sys_pkey_mprotect)
 #define __NR_pkey_alloc 289
