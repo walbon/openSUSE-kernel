@@ -4019,6 +4019,7 @@ L:	linux-mips@linux-mips.org
 W:	bluesmoke.sourceforge.net
 S:	Supported
 F:	drivers/edac/octeon_edac*
+F:	drivers/edac/thunderx_edac*
 
 EDAC-E752X
 M:	Mark Gross <mark.gross@intel.com>
