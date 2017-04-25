@@ -230,9 +230,9 @@ static int add_excluded_extent(struct btrfs_root *root,
 {
 	u64 end = start + num_bytes - 1;
 	set_extent_bits(&root->fs_info->freed_extents[0],
-			start, end, EXTENT_UPTODATE, GFP_NOFS);
+			start, end, EXTENT_UPTODATE);
 	set_extent_bits(&root->fs_info->freed_extents[1],
-			start, end, EXTENT_UPTODATE, GFP_NOFS);
+			start, end, EXTENT_UPTODATE);
 	return 0;
 }
 
@@ -245,9 +245,9 @@ static void free_excluded_extents(struct btrfs_root *root,
 	end = start + cache->key.offset - 1;
 
 	clear_extent_bits(&root->fs_info->freed_extents[0],
-			  start, end, EXTENT_UPTODATE, GFP_NOFS);
+			  start, end, EXTENT_UPTODATE);
 	clear_extent_bits(&root->fs_info->freed_extents[1],
-			  start, end, EXTENT_UPTODATE, GFP_NOFS);
+			  start, end, EXTENT_UPTODATE);
 }
 
 static int exclude_super_stripes(struct btrfs_root *root,
@@ -2026,6 +2026,11 @@ int btrfs_discard_extent(struct btrfs_root *root, u64 bytenr,
 	struct btrfs_bio *bbio = NULL;
 
 
+	/*
+	 * Avoid races with device replace and make sure our bbio has devices
+	 * associated to its stripes that don't go away while we are discarding.
+	 */
+	btrfs_bio_counter_inc_blocked(root->fs_info);
 	/* Tell the block device(s) that the sectors can be discarded */
 	ret = btrfs_map_block(root->fs_info, REQ_OP_DISCARD,
 			      bytenr, &num_bytes, &bbio, 0);
@@ -2058,6 +2063,7 @@ int btrfs_discard_extent(struct btrfs_root *root, u64 bytenr,
 		}
 		btrfs_put_bbio(bbio);
 	}
+	btrfs_bio_counter_dec(root->fs_info);
 
 	if (actual_bytes)
 		*actual_bytes = discarded_bytes;
@@ -2816,6 +2822,7 @@ int btrfs_should_throttle_delayed_refs(struct btrfs_trans_handle *trans,
 
 struct async_delayed_refs {
 	struct btrfs_root *root;
+	u64 transid;
 	int count;
 	int error;
 	int sync;
@@ -2831,6 +2838,10 @@ static void delayed_ref_async_start(struct btrfs_work *work)
 
 	async = container_of(work, struct async_delayed_refs, work);
 
+	/* if the commit is already started, we don't need to wait here */
+	if (btrfs_transaction_blocked(async->root->fs_info))
+		goto done;
+
 	trans = btrfs_join_transaction(async->root);
 	if (IS_ERR(trans)) {
 		async->error = PTR_ERR(trans);
@@ -2842,10 +2853,15 @@ static void delayed_ref_async_start(struct btrfs_work *work)
 	 * wait on delayed refs
 	 */
 	trans->sync = true;
+
+	/* Don't bother flushing if we got into a different transaction */
+	if (trans->transid > async->transid)
+		goto end;
+
 	ret = btrfs_run_delayed_refs(trans, async->root, async->count);
 	if (ret)
 		async->error = ret;
-
+end:
 	ret = btrfs_end_transaction(trans, async->root);
 	if (ret && !async->error)
 		async->error = ret;
@@ -2857,7 +2873,7 @@ done:
 }
 
 int btrfs_async_run_delayed_refs(struct btrfs_root *root,
-				 unsigned long count, int wait)
+				 unsigned long count, u64 transid, int wait)
 {
 	struct async_delayed_refs *async;
 	int ret;
@@ -2869,6 +2885,7 @@ int btrfs_async_run_delayed_refs(struct btrfs_root *root,
 	async->root = root->fs_info->tree_root;
 	async->count = count;
 	async->error = 0;
+	async->transid = transid;
 	if (wait)
 		async->sync = 1;
 	else
@@ -3808,6 +3825,59 @@ int btrfs_extent_readonly(struct btrfs_root *root, u64 bytenr)
 	return readonly;
 }
 
+bool btrfs_inc_nocow_writers(struct btrfs_fs_info *fs_info, u64 bytenr)
+{
+	struct btrfs_block_group_cache *bg;
+	bool ret = true;
+
+	bg = btrfs_lookup_block_group(fs_info, bytenr);
+	if (!bg)
+		return false;
+
+	spin_lock(&bg->lock);
+	if (bg->ro)
+		ret = false;
+	else
+		atomic_inc(&bg->nocow_writers);
+	spin_unlock(&bg->lock);
+
+	/* no put on block group, done by btrfs_dec_nocow_writers */
+	if (!ret)
+		btrfs_put_block_group(bg);
+
+	return ret;
+
+}
+
+void btrfs_dec_nocow_writers(struct btrfs_fs_info *fs_info, u64 bytenr)
+{
+	struct btrfs_block_group_cache *bg;
+
+	bg = btrfs_lookup_block_group(fs_info, bytenr);
+	ASSERT(bg);
+	if (atomic_dec_and_test(&bg->nocow_writers))
+		wake_up_atomic_t(&bg->nocow_writers);
+	/*
+	 * Once for our lookup and once for the lookup done by a previous call
+	 * to btrfs_inc_nocow_writers()
+	 */
+	btrfs_put_block_group(bg);
+	btrfs_put_block_group(bg);
+}
+
+static int btrfs_wait_nocow_writers_atomic_t(atomic_t *a)
+{
+	schedule();
+	return 0;
+}
+
+void btrfs_wait_nocow_writers(struct btrfs_block_group_cache *bg)
+{
+	wait_on_atomic_t(&bg->nocow_writers,
+			 btrfs_wait_nocow_writers_atomic_t,
+			 TASK_UNINTERRUPTIBLE);
+}
+
 static const char *alloc_name(u64 flags)
 {
 	switch (flags) {
@@ -4125,7 +4195,7 @@ commit_trans:
 
 			if (need_commit > 0) {
 				btrfs_start_delalloc_roots(fs_info, 0, -1);
-				btrfs_wait_ordered_roots(fs_info, -1);
+				btrfs_wait_ordered_roots(fs_info, -1, 0, (u64)-1);
 			}
 
 			trans = btrfs_join_transaction(root);
@@ -4572,7 +4642,8 @@ static void btrfs_writeback_inodes_sb_nr(struct btrfs_root *root,
 		 */
 		btrfs_start_delalloc_roots(root->fs_info, 0, nr_items);
 		if (!current->journal_info)
-			btrfs_wait_ordered_roots(root->fs_info, nr_items);
+			btrfs_wait_ordered_roots(root->fs_info, nr_items,
+						 0, (u64)-1);
 	}
 }
 
@@ -4609,7 +4680,7 @@ static void shrink_delalloc(struct btrfs_root *root, u64 to_reclaim, u64 orig,
 
 	/* Calc the number of the pages we need flush for space reservation */
 	items = calc_reclaim_items_nr(root, to_reclaim);
-	to_reclaim = items * EXTENT_SIZE_PER_ITEM;
+	to_reclaim = (u64)items * EXTENT_SIZE_PER_ITEM;
 
 	trans = (struct btrfs_trans_handle *)current->journal_info;
 	block_rsv = &root->fs_info->delalloc_block_rsv;
@@ -4621,7 +4692,8 @@ static void shrink_delalloc(struct btrfs_root *root, u64 to_reclaim, u64 orig,
 		if (trans)
 			return;
 		if (wait_ordered)
-			btrfs_wait_ordered_roots(root->fs_info, items);
+			btrfs_wait_ordered_roots(root->fs_info, items,
+						 0, (u64)-1);
 		return;
 	}
 
@@ -4660,7 +4732,8 @@ skip_async:
 
 		loops++;
 		if (wait_ordered && !trans) {
-			btrfs_wait_ordered_roots(root->fs_info, items);
+			btrfs_wait_ordered_roots(root->fs_info, items,
+						 0, (u64)-1);
 		} else {
 			time_left = schedule_timeout_killable(1);
 			if (time_left)
@@ -6163,6 +6236,57 @@ int btrfs_exclude_logged_extents(struct btrfs_root *log,
 	return 0;
 }
 
+static void
+btrfs_inc_block_group_reservations(struct btrfs_block_group_cache *bg)
+{
+	atomic_inc(&bg->reservations);
+}
+
+void btrfs_dec_block_group_reservations(struct btrfs_fs_info *fs_info,
+					const u64 start)
+{
+	struct btrfs_block_group_cache *bg;
+
+	bg = btrfs_lookup_block_group(fs_info, start);
+	ASSERT(bg);
+	if (atomic_dec_and_test(&bg->reservations))
+		wake_up_atomic_t(&bg->reservations);
+	btrfs_put_block_group(bg);
+}
+
+static int btrfs_wait_bg_reservations_atomic_t(atomic_t *a)
+{
+	schedule();
+	return 0;
+}
+
+void btrfs_wait_block_group_reservations(struct btrfs_block_group_cache *bg)
+{
+	struct btrfs_space_info *space_info = bg->space_info;
+
+	ASSERT(bg->ro);
+
+	if (!(bg->flags & BTRFS_BLOCK_GROUP_DATA))
+		return;
+
+	/*
+	 * Our block group is read only but before we set it to read only,
+	 * some task might have had allocated an extent from it already, but it
+	 * has not yet created a respective ordered extent (and added it to a
+	 * root's list of ordered extents).
+	 * Therefore wait for any task currently allocating extents, since the
+	 * block group's reservations counter is incremented while a read lock
+	 * on the groups' semaphore is held and decremented after releasing
+	 * the read access on that semaphore and creating the ordered extent.
+	 */
+	down_write(&space_info->groups_sem);
+	up_write(&space_info->groups_sem);
+
+	wait_on_atomic_t(&bg->reservations,
+			 btrfs_wait_bg_reservations_atomic_t,
+			 TASK_UNINTERRUPTIBLE);
+}
+
 /**
  * btrfs_update_reserved_bytes - update the block_group and space info counters
  * @cache:	The cache we are manipulating
@@ -6399,7 +6523,7 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans,
 			ret = btrfs_discard_extent(root, start,
 						   end + 1 - start, NULL);
 
-		clear_extent_dirty(unpin, start, end, GFP_NOFS);
+		clear_extent_dirty(unpin, start, end);
 		unpin_extent_range(root, start, end, true);
 		mutex_unlock(&fs_info->unused_bg_unpin_mutex);
 		cond_resched();
@@ -7009,36 +7133,35 @@ btrfs_lock_cluster(struct btrfs_block_group_cache *block_group,
 		   int delalloc)
 {
 	struct btrfs_block_group_cache *used_bg = NULL;
-	bool locked = false;
-again:
+
 	spin_lock(&cluster->refill_lock);
-	if (locked) {
+	while (1) {
+		used_bg = cluster->block_group;
+		if (!used_bg)
+			return NULL;
+
+		if (used_bg == block_group)
+			return used_bg;
+
+		btrfs_get_block_group(used_bg);
+
+		if (!delalloc)
+			return used_bg;
+
+		if (down_read_trylock(&used_bg->data_rwsem))
+			return used_bg;
+
+		spin_unlock(&cluster->refill_lock);
+
+		down_read(&used_bg->data_rwsem);
+
+		spin_lock(&cluster->refill_lock);
 		if (used_bg == cluster->block_group)
 			return used_bg;
 
 		up_read(&used_bg->data_rwsem);
 		btrfs_put_block_group(used_bg);
 	}
-
-	used_bg = cluster->block_group;
-	if (!used_bg)
-		return NULL;
-
-	if (used_bg == block_group)
-		return used_bg;
-
-	btrfs_get_block_group(used_bg);
-
-	if (!delalloc)
-		return used_bg;
-
-	if (down_read_trylock(&used_bg->data_rwsem))
-		return used_bg;
-
-	spin_unlock(&cluster->refill_lock);
-	down_read(&used_bg->data_rwsem);
-	locked = true;
-	goto again;
 }
 
 static inline void
@@ -7415,6 +7538,7 @@ checks:
 			btrfs_add_free_space(block_group, offset, num_bytes);
 			goto loop;
 		}
+		btrfs_inc_block_group_reservations(block_group);
 
 		/* we are all good, lets return */
 		ins->objectid = search_start;
@@ -7596,8 +7720,10 @@ again:
 	WARN_ON(num_bytes < root->sectorsize);
 	ret = find_free_extent(root, num_bytes, empty_size, hint_byte, ins,
 			       flags, delalloc);
-
-	if (ret == -ENOSPC) {
+	if (!ret && !is_data) {
+		btrfs_dec_block_group_reservations(root->fs_info,
+						   ins->objectid);
+	} else if (ret == -ENOSPC) {
 		if (!final_tried && ins->offset) {
 			num_bytes = min(num_bytes >> 1, ins->offset);
 			num_bytes = round_down(num_bytes, root->sectorsize);
@@ -7875,8 +8001,9 @@ btrfs_init_new_buffer(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 	struct extent_buffer *buf;
 
 	buf = btrfs_find_create_tree_block(root, bytenr);
-	if (!buf)
-		return ERR_PTR(-ENOMEM);
+	if (IS_ERR(buf))
+		return buf;
+
 	btrfs_set_header_generation(buf, trans->transid);
 	btrfs_set_buffer_lockdep_class(root->root_key.objectid, buf, level);
 	btrfs_tree_lock(buf);
@@ -7897,7 +8024,7 @@ btrfs_init_new_buffer(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 					buf->start + buf->len - 1, GFP_NOFS);
 		else
 			set_extent_new(&root->dirty_log_pages, buf->start,
-					buf->start + buf->len - 1, GFP_NOFS);
+					buf->start + buf->len - 1);
 	} else {
 		buf->log_index = -1;
 		set_extent_dirty(&trans->transaction->dirty_pages, buf->start,
@@ -8278,8 +8405,9 @@ static noinline int do_walk_down(struct btrfs_trans_handle *trans,
 	next = btrfs_find_tree_block(root->fs_info, bytenr);
 	if (!next) {
 		next = btrfs_find_create_tree_block(root, bytenr);
-		if (!next)
-			return -ENOMEM;
+		if (IS_ERR(next))
+			return PTR_ERR(next);
+
 		btrfs_set_buffer_lockdep_class(root->root_key.objectid, next,
 					       level - 1);
 		reada = 1;
@@ -8809,7 +8937,7 @@ out:
 	if (!for_reloc && root_dropped == false)
 		btrfs_add_dead_root(root);
 	if (err && err != -EAGAIN)
-		btrfs_std_error(root->fs_info, err, NULL);
+		btrfs_handle_fs_error(root->fs_info, err, NULL);
 	return err;
 }
 
@@ -10281,14 +10409,14 @@ void btrfs_delete_unused_bgs(struct btrfs_fs_info *fs_info)
 		 */
 		mutex_lock(&fs_info->unused_bg_unpin_mutex);
 		ret = clear_extent_bits(&fs_info->freed_extents[0], start, end,
-				  EXTENT_DIRTY, GFP_NOFS);
+				  EXTENT_DIRTY);
 		if (ret) {
 			mutex_unlock(&fs_info->unused_bg_unpin_mutex);
 			btrfs_dec_block_group_ro(root, block_group);
 			goto end_trans;
 		}
 		ret = clear_extent_bits(&fs_info->freed_extents[1], start, end,
-				  EXTENT_DIRTY, GFP_NOFS);
+				  EXTENT_DIRTY);
 		if (ret) {
 			mutex_unlock(&fs_info->unused_bg_unpin_mutex);
 			btrfs_dec_block_group_ro(root, block_group);
