@@ -6305,10 +6305,6 @@ static __init int hardware_setup(void)
 		for (msr = 0x800; msr <= 0x8ff; msr++)
 			vmx_disable_intercept_msr_read_x2apic(msr);
 
-		/* According SDM, in x2apic mode, the whole id reg is used.
-		 * But in KVM, it only use the highest eight bits. Need to
-		 * intercept it */
-		vmx_enable_intercept_msr_read_x2apic(0x802);
 		/* TMCCT */
 		vmx_enable_intercept_msr_read_x2apic(0x839);
 		/* TPR */
@@ -8338,9 +8334,8 @@ static void vmx_hwapic_irr_update(struct kvm_vcpu *vcpu, int max_irr)
 	}
 }
 
-static void vmx_load_eoi_exitmap(struct kvm_vcpu *vcpu)
+static void vmx_load_eoi_exitmap(struct kvm_vcpu *vcpu, u64 *eoi_exit_bitmap)
 {
-	u64 *eoi_exit_bitmap = vcpu->arch.eoi_exit_bitmap;
 	if (!kvm_vcpu_apicv_active(vcpu))
 		return;
 
@@ -10835,7 +10830,7 @@ static int vmx_update_pi_irte(struct kvm *kvm, unsigned int host_irq,
 		 * We will support full lowest-priority interrupt later.
 		 */
 
-		kvm_set_msi_irq(e, &irq);
+		kvm_set_msi_irq(kvm, e, &irq);
 		if (!kvm_intr_is_single_vcpu(kvm, &irq, &vcpu))
 			continue;
 

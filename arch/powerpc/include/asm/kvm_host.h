@@ -41,6 +41,9 @@
 #define KVM_USER_MEM_SLOTS 32
 #define KVM_MEM_SLOTS_NUM KVM_USER_MEM_SLOTS
 
+#include <asm/cputhreads.h>
+#define KVM_MAX_VCPU_ID                (threads_per_subcore * KVM_MAX_VCORES)
+
 #ifdef CONFIG_KVM_MMIO
 #define KVM_COALESCED_MMIO_PAGE_OFFSET 1
 #endif

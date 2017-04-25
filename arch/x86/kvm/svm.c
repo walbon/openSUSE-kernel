@@ -4372,7 +4372,7 @@ static void svm_refresh_apicv_exec_ctrl(struct kvm_vcpu *vcpu)
 	mark_dirty(vmcb, VMCB_INTR);
 }
 
-static void svm_load_eoi_exitmap(struct kvm_vcpu *vcpu)
+static void svm_load_eoi_exitmap(struct kvm_vcpu *vcpu, u64 *eoi_exit_bitmap)
 {
 	return;
 }
@@ -4472,7 +4472,7 @@ get_pi_vcpu_info(struct kvm *kvm, struct kvm_kernel_irq_routing_entry *e,
 	struct kvm_lapic_irq irq;
 	struct kvm_vcpu *vcpu = NULL;
 
-	kvm_set_msi_irq(e, &irq);
+	kvm_set_msi_irq(kvm, e, &irq);
 
 	if (!kvm_intr_is_single_vcpu(kvm, &irq, &vcpu)) {
 		pr_debug("SVM: %s: use legacy intr remap mode for irq %u\n",

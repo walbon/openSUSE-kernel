@@ -90,6 +90,9 @@ static u64 __read_mostly efer_reserved_bits = ~((u64)EFER_SCE);
 #define VM_STAT(x) offsetof(struct kvm, stat.x), KVM_STAT_VM
 #define VCPU_STAT(x) offsetof(struct kvm_vcpu, stat.x), KVM_STAT_VCPU
 
+#define KVM_X2APIC_API_VALID_FLAGS (KVM_X2APIC_API_USE_32BIT_IDS | \
+                                    KVM_X2APIC_API_DISABLE_BROADCAST_QUIRK)
+
 static void update_cr8_intercept(struct kvm_vcpu *vcpu);
 static void process_nmi(struct kvm_vcpu *vcpu);
 static void __kvm_set_rflags(struct kvm_vcpu *vcpu, unsigned long rflags);
@@ -123,6 +126,9 @@ module_param(tsc_tolerance_ppm, uint, S_IRUGO | S_IWUSR);
 /* lapic timer advance (tscdeadline mode only) in nanoseconds */
 unsigned int __read_mostly lapic_timer_advance_ns = 0;
 module_param(lapic_timer_advance_ns, uint, S_IRUGO | S_IWUSR);
+
+static bool __read_mostly vector_hashing = true;
+module_param(vector_hashing, bool, S_IRUGO);
 
 static bool __read_mostly backwards_tsc_observed = false;
 
@@ -978,6 +984,7 @@ static u32 emulated_msrs[] = {
 	HV_X64_MSR_RESET,
 	HV_X64_MSR_VP_INDEX,
 	HV_X64_MSR_VP_RUNTIME,
+	HV_X64_MSR_SCONTROL,
 	HV_X64_MSR_APIC_ASSIST_PAGE, MSR_KVM_ASYNC_PF_EN, MSR_KVM_STEAL_TIME,
 	MSR_KVM_PV_EOI_EN,
 
@@ -2554,6 +2561,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_HYPERV:
 	case KVM_CAP_HYPERV_VAPIC:
 	case KVM_CAP_HYPERV_SPIN:
+	case KVM_CAP_HYPERV_SYNIC:
 	case KVM_CAP_PCI_SEGMENT:
 	case KVM_CAP_DEBUGREGS:
 	case KVM_CAP_X86_ROBUST_SINGLESTEP:
@@ -2620,6 +2628,9 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 		break;
 	case KVM_CAP_TSC_CONTROL:
 		r = kvm_has_tsc_control;
+		break;
+	case KVM_CAP_X2APIC_API:
+		r = KVM_X2APIC_API_VALID_FLAGS;
 		break;
 	default:
 		r = 0;
@@ -2765,15 +2776,17 @@ static int kvm_vcpu_ioctl_get_lapic(struct kvm_vcpu *vcpu,
 	if (vcpu->arch.apicv_active)
 		kvm_x86_ops->sync_pir_to_irr(vcpu);
 
-	memcpy(s->regs, vcpu->arch.apic->regs, sizeof *s);
-
-	return 0;
+	return kvm_apic_get_state(vcpu, s);
 }
 
 static int kvm_vcpu_ioctl_set_lapic(struct kvm_vcpu *vcpu,
 				    struct kvm_lapic_state *s)
 {
-	kvm_apic_post_state_restore(vcpu, s);
+	int r;
+
+	r = kvm_apic_set_state(vcpu, s);
+	if (r)
+		return r;
 	update_cr8_intercept(vcpu);
 
 	return 0;
@@ -3221,6 +3234,20 @@ static int kvm_set_guest_paused(struct kvm_vcpu *vcpu)
 	return 0;
 }
 
+static int kvm_vcpu_ioctl_enable_cap(struct kvm_vcpu *vcpu,
+				     struct kvm_enable_cap *cap)
+{
+	if (cap->flags)
+		return -EINVAL;
+
+	switch (cap->cap) {
+	case KVM_CAP_HYPERV_SYNIC:
+		return kvm_hv_activate_synic(vcpu);
+	default:
+		return -EINVAL;
+	}
+}
+
 long kvm_arch_vcpu_ioctl(struct file *filp,
 			 unsigned int ioctl, unsigned long arg)
 {
@@ -3488,6 +3515,15 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 		r = kvm_set_guest_paused(vcpu);
 		goto out;
 	}
+	case KVM_ENABLE_CAP: {
+		struct kvm_enable_cap cap;
+
+		r = -EFAULT;
+		if (copy_from_user(&cap, argp, sizeof(cap)))
+			goto out;
+		r = kvm_vcpu_ioctl_enable_cap(vcpu, &cap);
+		break;
+	}
 	default:
 		r = -EINVAL;
 	}
@@ -3749,6 +3785,18 @@ split_irqchip_unlock:
 		mutex_unlock(&kvm->lock);
 		break;
 	}
+	case KVM_CAP_X2APIC_API:
+		r = -EINVAL;
+		if (cap->args[0] & ~KVM_X2APIC_API_VALID_FLAGS)
+			break;
+
+		if (cap->args[0] & KVM_X2APIC_API_USE_32BIT_IDS)
+			kvm->arch.x2apic_format = true;
+		if (cap->args[0] & KVM_X2APIC_API_DISABLE_BROADCAST_QUIRK)
+			kvm->arch.x2apic_broadcast_quirk_disabled = true;
+
+		r = 0;
+		break;
 	default:
 		r = -EINVAL;
 		break;
@@ -6350,19 +6398,23 @@ static void process_smi(struct kvm_vcpu *vcpu)
 
 static void vcpu_scan_ioapic(struct kvm_vcpu *vcpu)
 {
+	u64 eoi_exit_bitmap[4];
+
 	if (!kvm_apic_hw_enabled(vcpu->arch.apic))
 		return;
 
-	memset(vcpu->arch.eoi_exit_bitmap, 0, 256 / 8);
+	bitmap_zero(vcpu->arch.ioapic_handled_vectors, 256);
 
 	if (irqchip_split(vcpu->kvm))
-		kvm_scan_ioapic_routes(vcpu, vcpu->arch.eoi_exit_bitmap);
+		kvm_scan_ioapic_routes(vcpu, vcpu->arch.ioapic_handled_vectors);
 	else {
 		if (vcpu->arch.apicv_active)
 			kvm_x86_ops->sync_pir_to_irr(vcpu);
-		kvm_ioapic_scan_entry(vcpu, vcpu->arch.eoi_exit_bitmap);
+		kvm_ioapic_scan_entry(vcpu, vcpu->arch.ioapic_handled_vectors);
 	}
-	kvm_x86_ops->load_eoi_exitmap(vcpu);
+	bitmap_or((ulong *)eoi_exit_bitmap, vcpu->arch.ioapic_handled_vectors,
+		  vcpu_to_synic(vcpu)->vec_bitmap, 256);
+	kvm_x86_ops->load_eoi_exitmap(vcpu, eoi_exit_bitmap);
 }
 
 static void kvm_vcpu_flush_tlb(struct kvm_vcpu *vcpu)
@@ -6470,7 +6522,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		if (kvm_check_request(KVM_REQ_IOAPIC_EOI_EXIT, vcpu)) {
 			BUG_ON(vcpu->arch.pending_ioapic_eoi > 255);
 			if (test_bit(vcpu->arch.pending_ioapic_eoi,
-				     (void *) vcpu->arch.eoi_exit_bitmap)) {
+				     vcpu->arch.ioapic_handled_vectors)) {
 				vcpu->run->exit_reason = KVM_EXIT_IOAPIC_EOI;
 				vcpu->run->eoi.vector =
 						vcpu->arch.pending_ioapic_eoi;
@@ -7637,6 +7689,8 @@ int kvm_arch_vcpu_init(struct kvm_vcpu *vcpu)
 
 	vcpu->arch.pending_external_vector = -1;
 
+	kvm_hv_vcpu_init(vcpu);
+
 	return 0;
 
 fail_free_mce_banks:
@@ -7827,7 +7881,7 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 	kfree(kvm->arch.vpic);
 	kfree(kvm->arch.vioapic);
 	kvm_free_vcpus(kvm);
-	kfree(rcu_dereference_check(kvm->arch.apic_map, 1));
+	kvfree(rcu_dereference_check(kvm->arch.apic_map, 1));
 }
 
 void kvm_arch_free_memslot(struct kvm *kvm, struct kvm_memory_slot *free,
@@ -8344,6 +8398,12 @@ int kvm_arch_update_irqfd_routing(struct kvm *kvm, unsigned int host_irq,
 
 	return kvm_x86_ops->update_pi_irte(kvm, host_irq, guest_irq, set);
 }
+
+bool kvm_vector_hashing_enabled(void)
+{
+	return vector_hashing;
+}
+EXPORT_SYMBOL_GPL(kvm_vector_hashing_enabled);
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_exit);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_fast_mmio);
