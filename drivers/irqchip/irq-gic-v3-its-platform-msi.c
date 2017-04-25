@@ -57,8 +57,7 @@ static int its_pmsi_prepare(struct irq_domain *domain, struct device *dev,
 
 	msi_info = msi_get_domain_info(domain->parent);
 
-	ret = dev->of_node ? of_pmsi_get_dev_id(domain, dev, &dev_id) :
-		iort_pmsi_get_dev_id(dev, &dev_id);
+	ret = of_pmsi_get_dev_id(domain, dev, &dev_id);
 	if (ret)
 		return ret;
 
