@@ -4019,6 +4019,7 @@ L:	linux-mips@linux-mips.org
 W:	bluesmoke.sourceforge.net
 S:	Supported
 F:	drivers/edac/octeon_edac*
+F:	drivers/edac/thunderx_edac*
 
 EDAC-E752X
 M:	Mark Gross <mark.gross@intel.com>
@@ -4126,13 +4127,6 @@ L:	linux-edac@vger.kernel.org
 W:	bluesmoke.sourceforge.net
 S:	Maintained
 F:	drivers/edac/sb_edac.c
-
-EDAC-THUNDERX
-M:	David daney <david.daney@cavium.com>
-L:	linux-edac@vger.kernel.org
-W:	bluesmoke.sourceforge.net
-S:	Maintained
-F:	drivers/edac/thunderx-edac.c
 
 EDAC-SKYLAKE
 M:	Tony Luck <tony.luck@intel.com>

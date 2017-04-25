@@ -142,6 +142,9 @@ or1k_map_page(struct device *dev, struct page *page,
 	unsigned long cl;
 	dma_addr_t addr = page_to_phys(page) + offset;
 
+	if (dma_get_attr(DMA_ATTR_SKIP_CPU_SYNC, attrs))
+		return addr;
+
 	switch (dir) {
 	case DMA_TO_DEVICE:
 		/* Flush the dcache for the requested range */

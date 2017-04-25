@@ -823,6 +823,7 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 {
 	struct btrfs_transaction *cur_trans = trans->transaction;
 	struct btrfs_fs_info *info = root->fs_info;
+	u64 transid = trans->transid;
 	unsigned long cur = trans->delayed_ref_updates;
 	int lock = (trans->type != TRANS_JOIN_NOLOCK);
 	int err = 0;
@@ -910,7 +911,7 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 
 	kmem_cache_free(btrfs_trans_handle_cachep, trans);
 	if (must_run_delayed_refs) {
-		btrfs_async_run_delayed_refs(root, cur,
+		btrfs_async_run_delayed_refs(root, cur, transid,
 					     must_run_delayed_refs == 1);
 	}
 	return err;
@@ -949,7 +950,7 @@ int btrfs_write_marked_extents(struct btrfs_root *root,
 
 		err = convert_extent_bit(dirty_pages, start, end,
 					 EXTENT_NEED_WAIT,
-					 mark, &cached_state, GFP_NOFS);
+					 mark, &cached_state);
 		/*
 		 * convert_extent_bit can return -ENOMEM, which is most of the
 		 * time a temporary error. So when it happens, ignore the error
@@ -1385,7 +1386,7 @@ static int qgroup_account_snapshot(struct btrfs_trans_handle *trans,
 	switch_commit_roots(trans->transaction, fs_info);
 	ret = btrfs_write_and_wait_transaction(trans, src);
 	if (ret)
-		btrfs_std_error(fs_info, ret,
+		btrfs_handle_fs_error(fs_info, ret,
 			"Error while writing out transaction for qgroup");
 
 out:
@@ -1904,7 +1905,7 @@ static inline int btrfs_start_delalloc_flush(struct btrfs_fs_info *fs_info)
 static inline void btrfs_wait_delalloc_flush(struct btrfs_fs_info *fs_info)
 {
 	if (btrfs_test_opt(fs_info->tree_root, FLUSHONCOMMIT))
-		btrfs_wait_ordered_roots(fs_info, -1);
+		btrfs_wait_ordered_roots(fs_info, -1, 0, (u64)-1);
 }
 
 static inline void
@@ -2228,7 +2229,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 
 	ret = btrfs_write_and_wait_transaction(trans, root);
 	if (ret) {
-		btrfs_std_error(root->fs_info, ret,
+		btrfs_handle_fs_error(root->fs_info, ret,
 			    "Error while writing out transaction");
 		mutex_unlock(&root->fs_info->tree_log_mutex);
 		goto scrub_continue;

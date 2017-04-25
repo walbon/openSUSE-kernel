@@ -381,9 +381,10 @@ config EDAC_THUNDERX
 	depends on ARM64
 	depends on PCI
 	help
-	  Support for error detection and correction on the Cavium
-	  ThunderX DRAM and Cache Coherent Processor Interconnect
-	  controller units.
+	  Support for error detection and correction on the
+	  Cavium ThunderX memory controllers (LMC), Cache
+	  Coherent Processor Interconnect (CCPI) and L2 cache
+	  blocks (TAD, CBC, MCI).
 
 config EDAC_ALTERA_MC
 	bool "Altera SDRAM Memory Controller EDAC"

@@ -60,13 +60,8 @@ int pci_for_each_dma_alias(struct pci_dev *pdev,
 
 		tmp = bus->self;
 
-		/*
-		 * Stop at bridges where IOMMU is attached, going
-		 * further up finds invalid aliases.
-		 */
-		if (IS_ENABLED(CONFIG_ARM64) &&
-		    tmp->vendor == PCI_VENDOR_ID_BROADCOM &&
-		    (tmp->device == 0x9000 || tmp->device == 0x9084))
+		/* stop at bridge where translation unit is associated */
+		if (tmp->dev_flags & PCI_DEV_FLAGS_BRIDGE_XLATE_ROOT)
 			return ret;
 
 		/*

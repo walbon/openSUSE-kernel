@@ -109,15 +109,18 @@ static int frv_dma_map_sg(struct device *dev, struct scatterlist *sglist,
 		int nents, enum dma_data_direction direction,
 		struct dma_attrs *attrs)
 {
-	int i;
 	struct scatterlist *sg;
+	int i;
+
+	BUG_ON(direction == DMA_NONE);
+
+	if (dma_get_attr(DMA_ATTR_SKIP_CPU_SYNC, attrs))
+		return nents;
 
 	for_each_sg(sglist, sg, nents, i) {
 		frv_cache_wback_inv(sg_dma_address(sg),
 				    sg_dma_address(sg) + sg_dma_len(sg));
 	}
-
-	BUG_ON(direction == DMA_NONE);
 
 	return nents;
 }
@@ -127,7 +130,10 @@ static dma_addr_t frv_dma_map_page(struct device *dev, struct page *page,
 		enum dma_data_direction direction, struct dma_attrs *attrs)
 {
 	BUG_ON(direction == DMA_NONE);
-	flush_dcache_page(page);
+
+	if (!dma_get_attr(DMA_ATTR_SKIP_CPU_SYNC, attrs)))
+		flush_dcache_page(page);
+
 	return (dma_addr_t) page_to_phys(page) + offset;
 }
 

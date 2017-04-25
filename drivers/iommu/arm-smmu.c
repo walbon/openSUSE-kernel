@@ -411,6 +411,7 @@ enum arm_smmu_domain_stage {
 	ARM_SMMU_DOMAIN_S1 = 0,
 	ARM_SMMU_DOMAIN_S2,
 	ARM_SMMU_DOMAIN_NESTED,
+	ARM_SMMU_DOMAIN_BYPASS,
 };
 
 struct arm_smmu_domain {
@@ -755,6 +756,29 @@ static void arm_smmu_init_context_bank(struct arm_smmu_domain *smmu_domain,
 	}
 	writel_relaxed(reg, gr1_base + ARM_SMMU_GR1_CBAR(cfg->cbndx));
 
+	/*
+	 * TTBCR
+	 * We must write this before the TTBRs, since it determines the
+	 * access behaviour of some fields (in particular, ASID[15:8]).
+	 */
+	if (stage1) {
+		if (cfg->fmt == ARM_SMMU_CTX_FMT_AARCH32_S) {
+			reg = pgtbl_cfg->arm_v7s_cfg.tcr;
+			reg2 = 0;
+		} else {
+			reg = pgtbl_cfg->arm_lpae_s1_cfg.tcr;
+			reg2 = pgtbl_cfg->arm_lpae_s1_cfg.tcr >> 32;
+			reg2 |= TTBCR2_SEP_UPSTREAM;
+			if (cfg->fmt == ARM_SMMU_CTX_FMT_AARCH64)
+				reg2 |= TTBCR2_AS;
+		}
+		if (smmu->version > ARM_SMMU_V1)
+			writel_relaxed(reg2, cb_base + ARM_SMMU_CB_TTBCR2);
+	} else {
+		reg = pgtbl_cfg->arm_lpae_s2_cfg.vtcr;
+	}
+	writel_relaxed(reg, cb_base + ARM_SMMU_CB_TTBCR);
+
 	/* TTBRs */
 	if (stage1) {
 		u16 asid = ARM_SMMU_CB_ASID(smmu, cfg);
@@ -777,25 +801,6 @@ static void arm_smmu_init_context_bank(struct arm_smmu_domain *smmu_domain,
 		reg64 = pgtbl_cfg->arm_lpae_s2_cfg.vttbr;
 		writeq_relaxed(reg64, cb_base + ARM_SMMU_CB_TTBR0);
 	}
-
-	/* TTBCR */
-	if (stage1) {
-		if (cfg->fmt == ARM_SMMU_CTX_FMT_AARCH32_S) {
-			reg = pgtbl_cfg->arm_v7s_cfg.tcr;
-			reg2 = 0;
-		} else {
-			reg = pgtbl_cfg->arm_lpae_s1_cfg.tcr;
-			reg2 = pgtbl_cfg->arm_lpae_s1_cfg.tcr >> 32;
-			reg2 |= TTBCR2_SEP_UPSTREAM;
-			if (cfg->fmt == ARM_SMMU_CTX_FMT_AARCH64)
-				reg2 |= TTBCR2_AS;
-		}
-		if (smmu->version > ARM_SMMU_V1)
-			writel_relaxed(reg2, cb_base + ARM_SMMU_CB_TTBCR2);
-	} else {
-		reg = pgtbl_cfg->arm_lpae_s2_cfg.vtcr;
-	}
-	writel_relaxed(reg, cb_base + ARM_SMMU_CB_TTBCR);
 
 	/* MAIRs (stage-1 only) */
 	if (stage1) {
@@ -834,6 +839,12 @@ static int arm_smmu_init_domain_context(struct iommu_domain *domain,
 	mutex_lock(&smmu_domain->init_mutex);
 	if (smmu_domain->smmu)
 		goto out_unlock;
+
+	if (domain->type == IOMMU_DOMAIN_IDENTITY) {
+		smmu_domain->stage = ARM_SMMU_DOMAIN_BYPASS;
+		smmu_domain->smmu = smmu;
+		goto out_unlock;
+	}
 
 	/*
 	 * Mapping the requested stage onto what we support is surprisingly
@@ -995,7 +1006,7 @@ static void arm_smmu_destroy_domain_context(struct iommu_domain *domain)
 	void __iomem *cb_base;
 	int irq;
 
-	if (!smmu)
+	if (!smmu || domain->type == IOMMU_DOMAIN_IDENTITY)
 		return;
 
 	/*
@@ -1018,7 +1029,9 @@ static struct iommu_domain *arm_smmu_domain_alloc(unsigned type)
 {
 	struct arm_smmu_domain *smmu_domain;
 
-	if (type != IOMMU_DOMAIN_UNMANAGED && type != IOMMU_DOMAIN_DMA)
+	if (type != IOMMU_DOMAIN_UNMANAGED &&
+	    type != IOMMU_DOMAIN_DMA &&
+	    type != IOMMU_DOMAIN_IDENTITY)
 		return NULL;
 	/*
 	 * Allocate the domain and initialise some of its data structures.
@@ -1247,9 +1260,14 @@ static int arm_smmu_domain_add_master(struct arm_smmu_domain *smmu_domain,
 {
 	struct arm_smmu_device *smmu = smmu_domain->smmu;
 	struct arm_smmu_s2cr *s2cr = smmu->s2crs;
-	enum arm_smmu_s2cr_type type = S2CR_TYPE_TRANS;
 	u8 cbndx = smmu_domain->cfg.cbndx;
+	enum arm_smmu_s2cr_type type;
 	int i, idx;
+
+	if (smmu_domain->stage == ARM_SMMU_DOMAIN_BYPASS)
+		type = S2CR_TYPE_BYPASS;
+	else
+		type = S2CR_TYPE_TRANS;
 
 	for_each_cfg_sme(fwspec, i, idx) {
 		if (type == s2cr[idx].type && cbndx == s2cr[idx].cbndx)
@@ -1537,6 +1555,9 @@ static int arm_smmu_domain_get_attr(struct iommu_domain *domain,
 {
 	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
 
+	if (domain->type != IOMMU_DOMAIN_UNMANAGED)
+		return -EINVAL;
+
 	switch (attr) {
 	case DOMAIN_ATTR_NESTING:
 		*(int *)data = (smmu_domain->stage == ARM_SMMU_DOMAIN_NESTED);
@@ -1551,6 +1572,9 @@ static int arm_smmu_domain_set_attr(struct iommu_domain *domain,
 {
 	int ret = 0;
 	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
+
+	if (domain->type != IOMMU_DOMAIN_UNMANAGED)
+		return -EINVAL;
 
 	mutex_lock(&smmu_domain->init_mutex);
 
@@ -1869,6 +1893,7 @@ static int arm_smmu_device_cfg_probe(struct arm_smmu_device *smmu)
 			atomic_add_return(smmu->num_context_banks,
 					  &cavium_smmu_context_count);
 		smmu->cavium_id_base -= smmu->num_context_banks;
+		dev_notice(smmu->dev, "\tenabling workaround for Cavium erratum 27704\n");
 	}
 
 	/* ID2 */

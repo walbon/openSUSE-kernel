@@ -16,6 +16,7 @@
 #include <linux/log2.h>
 #include <linux/prefetch.h>
 #include <linux/irq.h>
+#include <linux/iommu.h>
 
 #include "nic_reg.h"
 #include "nic.h"
@@ -525,7 +526,12 @@ static void nicvf_snd_pkt_handler(struct net_device *netdev,
 			/* Get actual TSO descriptors and free them */
 			tso_sqe =
 			 (struct sq_hdr_subdesc *)GET_SQ_DESC(sq, hdr->rsvd2);
+			nicvf_unmap_sndq_buffers(nic, sq, hdr->rsvd2,
+						 tso_sqe->subdesc_cnt);
 			nicvf_put_sq_desc(sq, tso_sqe->subdesc_cnt + 1);
+		} else {
+			nicvf_unmap_sndq_buffers(nic, sq, cqe_tx->sqe_ptr,
+						 hdr->subdesc_cnt);
 		}
 		nicvf_put_sq_desc(sq, hdr->subdesc_cnt + 1);
 		prefetch(skb);
@@ -576,6 +582,7 @@ static void nicvf_rcv_pkt_handler(struct net_device *netdev,
 {
 	struct sk_buff *skb;
 	struct nicvf *nic = netdev_priv(netdev);
+	struct nicvf *snic = nic;
 	int err = 0;
 	int rq_idx;
 
@@ -592,7 +599,7 @@ static void nicvf_rcv_pkt_handler(struct net_device *netdev,
 	if (err && !cqe_rx->rb_cnt)
 		return;
 
-	skb = nicvf_get_rcv_skb(nic, cqe_rx);
+	skb = nicvf_get_rcv_skb(snic, cqe_rx);
 	if (!skb) {
 		netdev_dbg(nic->netdev, "Packet not received\n");
 		return;
@@ -1333,14 +1340,17 @@ napi_del:
 static int nicvf_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct nicvf *nic = netdev_priv(netdev);
+	int orig_mtu = netdev->mtu;
 
 	netdev->mtu = new_mtu;
 
 	if (!netif_running(netdev))
 		return 0;
 
-	if (nicvf_update_hw_max_frs(nic, new_mtu))
+	if (nicvf_update_hw_max_frs(nic, new_mtu)) {
+		netdev->mtu = orig_mtu;
 		return -EINVAL;
+	}
 
 	return 0;
 }
@@ -1640,6 +1650,9 @@ static int nicvf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (!pass1_silicon(nic->pdev))
 		nic->hw_tso = true;
 
+	/* Get iommu domain for iova to physical addr conversion */
+	nic->iommu_domain = iommu_get_domain_for_dev(dev);
+
 	pci_read_config_word(nic->pdev, PCI_SUBSYSTEM_ID, &sdevid);
 	if (sdevid == 0xA134)
 		nic->t88 = true;
@@ -1652,8 +1665,9 @@ static int nicvf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (err)
 		goto err_unregister_interrupts;
 
-	netdev->hw_features = (NETIF_F_RXCSUM | NETIF_F_IP_CSUM | NETIF_F_SG |
-			       NETIF_F_TSO | NETIF_F_GRO |
+	netdev->hw_features = (NETIF_F_RXCSUM | NETIF_F_SG |
+			       NETIF_F_TSO | NETIF_F_GRO | NETIF_F_TSO6 |
+			       NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
 			       NETIF_F_HW_VLAN_CTAG_RX);
 
 	netdev->hw_features |= NETIF_F_RXHASH;
@@ -1661,7 +1675,8 @@ static int nicvf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	netdev->features |= netdev->hw_features;
 	netdev->hw_features |= NETIF_F_LOOPBACK;
 
-	netdev->vlan_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_TSO;
+	netdev->vlan_features = NETIF_F_SG | NETIF_F_IP_CSUM |
+				NETIF_F_IPV6_CSUM | NETIF_F_TSO | NETIF_F_TSO6;
 
 	netdev->netdev_ops = &nicvf_netdev_ops;
 	netdev->watchdog_timeo = NICVF_TX_TIMEOUT;
