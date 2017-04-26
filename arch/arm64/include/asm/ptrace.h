@@ -154,6 +154,26 @@ static inline unsigned long regs_return_value(struct pt_regs *regs)
 	return regs->regs[0];
 }
 
+/*
+ * Read a register given an architectural register index r.
+ * This handles the common case where 31 means XZR, not SP.
+ */
+static inline unsigned long pt_regs_read_reg(const struct pt_regs *regs, int r)
+{
+	return (r == 31) ? 0 : regs->regs[r];
+}
+
+/*
+ * Write a register given an architectural register index r.
+ * This handles the common case where 31 means XZR, not SP.
+ */
+static inline void pt_regs_write_reg(struct pt_regs *regs, int r,
+				     unsigned long val)
+{
+	if (r != 31)
+		regs->regs[r] = val;
+}
+
 /* We must avoid circular header include via sched.h */
 struct task_struct;
 int valid_user_regs(struct user_pt_regs *regs, struct task_struct *task);
