@@ -14,6 +14,8 @@
 #include <linux/uprobes.h>
 #include <linux/key.h>
 #include <linux/context_tracking.h>
+#include <linux/livepatch.h>
+#include <linux/sched.h>
 #include <asm/hw_breakpoint.h>
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -158,6 +160,9 @@ void do_notify_resume(struct pt_regs *regs, unsigned long thread_info_flags)
 		clear_thread_flag(TIF_NOTIFY_RESUME);
 		tracehook_notify_resume(regs);
 	}
+
+	if (thread_info_flags & _TIF_KGR_IN_PROGRESS)
+		klp_kgraft_mark_task_safe(current);
 
 	user_enter();
 }
