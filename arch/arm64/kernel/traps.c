@@ -42,6 +42,7 @@
 #include <asm/stacktrace.h>
 #include <asm/exception.h>
 #include <asm/system_misc.h>
+#include <asm/sysreg.h>
 
 static const char *handler[]= {
 	"Synchronous Abort",
@@ -339,11 +340,59 @@ exit:
 	return fn ? fn(regs, instr) : 1;
 }
 
-asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
+static void force_signal_inject(int signal, int code, struct pt_regs *regs,
+				unsigned long address)
 {
 	siginfo_t info;
 	void __user *pc = (void __user *)instruction_pointer(regs);
+	const char *desc;
 
+	switch (signal) {
+	case SIGILL:
+		desc = "undefined instruction";
+		break;
+	case SIGSEGV:
+		desc = "illegal memory access";
+		break;
+	default:
+		desc = "bad mode";
+		break;
+	}
+
+	if (unhandled_signal(current, signal) &&
+	    show_unhandled_signals_ratelimited()) {
+		pr_info("%s[%d]: %s: pc=%p\n",
+			current->comm, task_pid_nr(current), desc, pc);
+		dump_instr(KERN_INFO, regs);
+	}
+
+	info.si_signo = signal;
+	info.si_errno = 0;
+	info.si_code  = code;
+	info.si_addr  = pc;
+
+	arm64_notify_die(desc, regs, &info, 0);
+}
+
+/*
+ * Set up process info to signal segmentation fault - called on access error.
+ */
+void arm64_notify_segfault(struct pt_regs *regs, unsigned long addr)
+{
+	int code;
+
+	down_read(&current->mm->mmap_sem);
+	if (find_vma(current->mm, addr) == NULL)
+		code = SEGV_MAPERR;
+	else
+		code = SEGV_ACCERR;
+	up_read(&current->mm->mmap_sem);
+
+	force_signal_inject(SIGSEGV, code, regs, addr);
+}
+
+asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
+{
 	/* check for AArch32 breakpoint instructions */
 	if (!aarch32_break_handler(regs))
 		return;
@@ -351,18 +400,124 @@ asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
 	if (call_undef_hook(regs) == 0)
 		return;
 
-	if (unhandled_signal(current, SIGILL) && show_unhandled_signals_ratelimited()) {
-		pr_info("%s[%d]: undefined instruction: pc=%p\n",
-			current->comm, task_pid_nr(current), pc);
-		dump_instr(KERN_INFO, regs);
+	force_signal_inject(SIGILL, ILL_ILLOPC, regs, 0);
+}
+
+int cpu_enable_cache_maint_trap(void *__unused)
+{
+	config_sctlr_el1(SCTLR_EL1_UCI, 0);
+	return 0;
+}
+
+#define __user_cache_maint(insn, address, res)			\
+	if (untagged_addr(address) >= user_addr_max())		\
+		res = -EFAULT;					\
+	else							\
+		asm volatile (					\
+			"1:	" insn ", %1\n"			\
+			"	mov	%w0, #0\n"		\
+			"2:\n"					\
+			"	.pushsection .fixup,\"ax\"\n"	\
+			"	.align	2\n"			\
+			"3:	mov	%w0, %w2\n"		\
+			"	b	2b\n"			\
+			"	.popsection\n"			\
+			_ASM_EXTABLE(1b, 3b)			\
+			: "=r" (res)				\
+			: "r" (address), "i" (-EFAULT) )
+
+static void user_cache_maint_handler(unsigned int esr, struct pt_regs *regs)
+{
+	unsigned long address;
+	int rt = (esr & ESR_ELx_SYS64_ISS_RT_MASK) >> ESR_ELx_SYS64_ISS_RT_SHIFT;
+	int crm = (esr & ESR_ELx_SYS64_ISS_CRM_MASK) >> ESR_ELx_SYS64_ISS_CRM_SHIFT;
+	int ret = 0;
+
+	address = (rt == 31) ? 0 : regs->regs[rt];
+
+	switch (crm) {
+	case ESR_ELx_SYS64_ISS_CRM_DC_CVAU:	/* DC CVAU, gets promoted */
+		__user_cache_maint("dc civac", address, ret);
+		break;
+	case ESR_ELx_SYS64_ISS_CRM_DC_CVAC:	/* DC CVAC, gets promoted */
+		__user_cache_maint("dc civac", address, ret);
+		break;
+	case ESR_ELx_SYS64_ISS_CRM_DC_CIVAC:	/* DC CIVAC */
+		__user_cache_maint("dc civac", address, ret);
+		break;
+	case ESR_ELx_SYS64_ISS_CRM_IC_IVAU:	/* IC IVAU */
+		__user_cache_maint("ic ivau", address, ret);
+		break;
+	default:
+		force_signal_inject(SIGILL, ILL_ILLOPC, regs, 0);
+		return;
 	}
 
-	info.si_signo = SIGILL;
-	info.si_errno = 0;
-	info.si_code  = ILL_ILLOPC;
-	info.si_addr  = pc;
+	if (ret)
+		arm64_notify_segfault(regs, address);
+	else
+		regs->pc += 4;
+}
 
-	arm64_notify_die("Oops - undefined instruction", regs, &info, 0);
+static void cntvct_read_handler(unsigned int esr, struct pt_regs *regs)
+{
+	int rt = (esr & ESR_ELx_SYS64_ISS_RT_MASK) >> ESR_ELx_SYS64_ISS_RT_SHIFT;
+
+	pt_regs_write_reg(regs, rt, arch_counter_get_cntvct());
+	regs->pc += 4;
+}
+
+static void cntfrq_read_handler(unsigned int esr, struct pt_regs *regs)
+{
+	int rt = (esr & ESR_ELx_SYS64_ISS_RT_MASK) >> ESR_ELx_SYS64_ISS_RT_SHIFT;
+
+	pt_regs_write_reg(regs, rt, read_sysreg(cntfrq_el0));
+	regs->pc += 4;
+}
+
+struct sys64_hook {
+	unsigned int esr_mask;
+	unsigned int esr_val;
+	void (*handler)(unsigned int esr, struct pt_regs *regs);
+};
+
+static struct sys64_hook sys64_hooks[] = {
+	{
+		.esr_mask = ESR_ELx_SYS64_ISS_EL0_CACHE_OP_MASK,
+		.esr_val = ESR_ELx_SYS64_ISS_EL0_CACHE_OP_VAL,
+		.handler = user_cache_maint_handler,
+	},
+	{
+		/* Trap read access to CNTVCT_EL0 */
+		.esr_mask = ESR_ELx_SYS64_ISS_SYS_OP_MASK,
+		.esr_val = ESR_ELx_SYS64_ISS_SYS_CNTVCT,
+		.handler = cntvct_read_handler,
+	},
+	{
+		/* Trap read access to CNTFRQ_EL0 */
+		.esr_mask = ESR_ELx_SYS64_ISS_SYS_OP_MASK,
+		.esr_val = ESR_ELx_SYS64_ISS_SYS_CNTFRQ,
+		.handler = cntfrq_read_handler,
+	},
+	{},
+};
+
+asmlinkage void __exception do_sysinstr(unsigned int esr, struct pt_regs *regs)
+{
+	struct sys64_hook *hook;
+
+	for (hook = sys64_hooks; hook->handler; hook++)
+		if ((hook->esr_mask & esr) == hook->esr_val) {
+			hook->handler(esr, regs);
+			return;
+		}
+
+	/*
+	 * New SYS instructions may previously have been undefined at EL0. Fall
+	 * back to our usual undefined instruction handler so that we handle
+	 * these consistently.
+	 */
+	do_undefinstr(regs);
 }
 
 long compat_arm_syscall(struct pt_regs *regs);
