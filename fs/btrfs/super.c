@@ -187,6 +187,22 @@ static const char * const logtypes[] = {
 	"debug",
 };
 
+
+/*
+ * Use one ratelimit state per log level so that a flood of less important
+ * messages doesn't cause more important ones to be dropped.
+ */
+static struct ratelimit_state printk_limits[] = {
+	RATELIMIT_STATE_INIT(printk_limits[0], DEFAULT_RATELIMIT_INTERVAL, 100),
+	RATELIMIT_STATE_INIT(printk_limits[1], DEFAULT_RATELIMIT_INTERVAL, 100),
+	RATELIMIT_STATE_INIT(printk_limits[2], DEFAULT_RATELIMIT_INTERVAL, 100),
+	RATELIMIT_STATE_INIT(printk_limits[3], DEFAULT_RATELIMIT_INTERVAL, 100),
+	RATELIMIT_STATE_INIT(printk_limits[4], DEFAULT_RATELIMIT_INTERVAL, 100),
+	RATELIMIT_STATE_INIT(printk_limits[5], DEFAULT_RATELIMIT_INTERVAL, 100),
+	RATELIMIT_STATE_INIT(printk_limits[6], DEFAULT_RATELIMIT_INTERVAL, 100),
+	RATELIMIT_STATE_INIT(printk_limits[7], DEFAULT_RATELIMIT_INTERVAL, 100),
+};
+
 void btrfs_printk(const struct btrfs_fs_info *fs_info, const char *fmt, ...)
 {
 	struct super_block *sb = fs_info->sb;
@@ -195,6 +211,7 @@ void btrfs_printk(const struct btrfs_fs_info *fs_info, const char *fmt, ...)
 	va_list args;
 	const char *type = logtypes[4];
 	int kern_level;
+	struct ratelimit_state *ratelimit;
 
 	va_start(args, fmt);
 
@@ -205,13 +222,18 @@ void btrfs_printk(const struct btrfs_fs_info *fs_info, const char *fmt, ...)
 		lvl[size] = '\0';
 		fmt += size;
 		type = logtypes[kern_level - '0'];
-	} else
+		ratelimit = &printk_limits[kern_level - '0'];
+	} else {
 		*lvl = '\0';
+		/* Default to debug output */
+		ratelimit = &printk_limits[7];
+	}
 
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	printk("%sBTRFS %s (device %s): %pV\n", lvl, type, sb->s_id, &vaf);
+	if (__ratelimit(ratelimit))
+		printk("%sBTRFS %s (device %s): %pV\n", lvl, type, sb->s_id, &vaf);
 
 	va_end(args);
 }
@@ -232,9 +254,11 @@ void btrfs_printk(const struct btrfs_fs_info *fs_info, const char *fmt, ...)
  */
 __cold
 void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
-			       struct btrfs_root *root, const char *function,
+			       const char *function,
 			       unsigned int line, int errno)
 {
+	struct btrfs_fs_info *fs_info = trans->fs_info;
+
 	trans->aborted = errno;
 	/* Nothing used. The other threads that have joined this
 	 * transaction may be able to continue. */
@@ -242,16 +266,16 @@ void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 		const char *errstr;
 
 		errstr = btrfs_decode_error(errno);
-		btrfs_warn(root->fs_info,
+		btrfs_warn(fs_info,
 		           "%s:%d: Aborting unused transaction(%s).",
 		           function, line, errstr);
 		return;
 	}
 	ACCESS_ONCE(trans->transaction->aborted) = errno;
 	/* Wake up anybody who may be waiting on this transaction */
-	wake_up(&root->fs_info->transaction_wait);
-	wake_up(&root->fs_info->transaction_blocked_wait);
-	__btrfs_handle_fs_error(root->fs_info, function, line, errno, NULL);
+	wake_up(&fs_info->transaction_wait);
+	wake_up(&fs_info->transaction_blocked_wait);
+	__btrfs_handle_fs_error(fs_info, function, line, errno, NULL);
 }
 /*
  * __btrfs_panic decodes unexpected, fatal errors from the caller,
@@ -2196,6 +2220,13 @@ static int btrfs_freeze(struct super_block *sb)
 	struct btrfs_trans_handle *trans;
 	struct btrfs_root *root = btrfs_sb(sb)->tree_root;
 
+	root->fs_info->fs_frozen = 1;
+	/*
+	 * We don't need a barrier here, we'll wait for any transaction that
+	 * could be in progress on other threads (and do delayed iputs that
+	 * we want to avoid on a frozen filesystem), or do the commit
+	 * ourselves.
+	 */
 	trans = btrfs_attach_transaction_barrier(root);
 	if (IS_ERR(trans)) {
 		/* no transaction, don't bother */
@@ -2204,6 +2235,14 @@ static int btrfs_freeze(struct super_block *sb)
 		return PTR_ERR(trans);
 	}
 	return btrfs_commit_transaction(trans, root);
+}
+
+static int btrfs_unfreeze(struct super_block *sb)
+{
+	struct btrfs_root *root = btrfs_sb(sb)->tree_root;
+
+	root->fs_info->fs_frozen = 0;
+	return 0;
 }
 
 static int btrfs_show_devname(struct seq_file *m, struct dentry *root)
@@ -2259,6 +2298,7 @@ static const struct super_operations btrfs_super_ops = {
 	.statfs		= btrfs_statfs,
 	.remount_fs	= btrfs_remount,
 	.freeze_fs	= btrfs_freeze,
+	.unfreeze_fs	= btrfs_unfreeze,
 	.get_inode_dev	= btrfs_get_inode_dev,
 };
 

@@ -459,7 +459,7 @@ again:
 	BTRFS_I(inode)->generation = 0;
 	ret = btrfs_update_inode(trans, root, inode);
 	if (ret) {
-		btrfs_abort_transaction(trans, root, ret);
+		btrfs_abort_transaction(trans, ret);
 		goto out_put;
 	}
 
@@ -467,7 +467,7 @@ again:
 		ret = btrfs_truncate_free_space_cache(root, trans, NULL, inode);
 		if (ret) {
 			if (ret != -ENOSPC)
-				btrfs_abort_transaction(trans, root, ret);
+				btrfs_abort_transaction(trans, ret);
 			goto out_put;
 		}
 	}
@@ -496,10 +496,9 @@ again:
 	ret = btrfs_prealloc_file_range_trans(inode, trans, 0, 0, prealloc,
 					      prealloc, prealloc, &alloc_hint);
 	if (ret) {
-		btrfs_delalloc_release_space(inode, 0, prealloc);
+		btrfs_delalloc_release_metadata(inode, prealloc);
 		goto out_put;
 	}
-	btrfs_free_reserved_data_space(inode, 0, prealloc);
 
 	ret = btrfs_write_out_ino_cache(root, trans, path, inode);
 out_put:

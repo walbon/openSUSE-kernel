@@ -559,6 +559,42 @@ static noinline int check_leaf(struct btrfs_root *root,
 	u32 nritems = btrfs_header_nritems(leaf);
 	int slot;
 
+	/*
+	 * Extent buffers from a relocation tree have a owner field that
+	 * corresponds to the subvolume tree they are based on. So just from an
+	 * extent buffer alone we can not find out what is the id of the
+	 * corresponding subvolume tree, so we can not figure out if the extent
+	 * buffer corresponds to the root of the relocation tree or not. So skip
+	 * this check for relocation trees.
+	 */
+	if (nritems == 0 && !btrfs_header_flag(leaf, BTRFS_HEADER_FLAG_RELOC)) {
+		struct btrfs_root *check_root;
+
+		key.objectid = btrfs_header_owner(leaf);
+		key.type = BTRFS_ROOT_ITEM_KEY;
+		key.offset = (u64)-1;
+
+		check_root = btrfs_get_fs_root(root->fs_info, &key, false);
+		/*
+		 * The only reason we also check NULL here is that during
+		 * open_ctree() some roots has not yet been set up.
+		 */
+		if (!IS_ERR_OR_NULL(check_root)) {
+			struct extent_buffer *eb;
+
+			eb = btrfs_root_node(check_root);
+			/* if leaf is the root, then it's fine */
+			if (leaf != eb) {
+				CORRUPT("non-root leaf's nritems is 0",
+					leaf, check_root, 0);
+				free_extent_buffer(eb);
+				return -EIO;
+			}
+			free_extent_buffer(eb);
+		}
+		return 0;
+	}
+
 	if (nritems == 0)
 		return 0;
 
@@ -609,6 +645,19 @@ static noinline int check_leaf(struct btrfs_root *root,
 		}
 	}
 
+	return 0;
+}
+
+static int check_node(struct btrfs_root *root, struct extent_buffer *node)
+{
+	unsigned long nr = btrfs_header_nritems(node);
+
+	if (nr == 0 || nr > BTRFS_NODEPTRS_PER_BLOCK(root)) {
+		btrfs_crit(root->fs_info,
+			   "corrupt node: block %llu root %llu nritems %lu",
+			   node->start, root->objectid, nr);
+		return -EIO;
+	}
 	return 0;
 }
 
@@ -681,6 +730,9 @@ static int btree_readpage_end_io_hook(struct btrfs_io_bio *io_bio,
 		set_bit(EXTENT_BUFFER_CORRUPT, &eb->bflags);
 		ret = -EIO;
 	}
+
+	if (found_level > 0 && check_node(root, eb))
+		ret = -EIO;
 
 	if (!ret)
 		set_extent_buffer_uptodate(eb);
@@ -2611,6 +2663,7 @@ int open_ctree(struct super_block *sb,
 	atomic_set(&fs_info->qgroup_op_seq, 0);
 	atomic_set(&fs_info->reada_works_cnt, 0);
 	atomic64_set(&fs_info->tree_mod_seq, 0);
+	fs_info->fs_frozen = 0;
 	fs_info->sb = sb;
 	fs_info->max_inline = BTRFS_DEFAULT_MAX_INLINE;
 	fs_info->metadata_ratio = 0;
@@ -3709,8 +3762,15 @@ void btrfs_drop_and_free_fs_root(struct btrfs_fs_info *fs_info,
 	if (btrfs_root_refs(&root->root_item) == 0)
 		synchronize_srcu(&fs_info->subvol_srcu);
 
-	if (test_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state))
+	if (test_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state)) {
 		btrfs_free_log(NULL, root);
+		if (root->reloc_root) {
+			free_extent_buffer(root->reloc_root->node);
+			free_extent_buffer(root->reloc_root->commit_root);
+			btrfs_put_fs_root(root->reloc_root);
+			root->reloc_root = NULL;
+		}
+	}
 
 	if (root->free_ino_pinned)
 		__btrfs_remove_free_space_cache(root->free_ino_pinned);

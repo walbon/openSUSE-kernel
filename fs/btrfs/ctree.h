@@ -144,21 +144,6 @@ struct btrfs_header {
 	u8 level;
 } __attribute__ ((__packed__));
 
-#define BTRFS_NODEPTRS_PER_BLOCK(r) (((r)->nodesize - \
-				      sizeof(struct btrfs_header)) / \
-				     sizeof(struct btrfs_key_ptr))
-#define __BTRFS_LEAF_DATA_SIZE(bs) ((bs) - sizeof(struct btrfs_header))
-#define BTRFS_LEAF_DATA_SIZE(r) (__BTRFS_LEAF_DATA_SIZE(r->nodesize))
-#define BTRFS_FILE_EXTENT_INLINE_DATA_START		\
-		(offsetof(struct btrfs_file_extent_item, disk_bytenr))
-#define BTRFS_MAX_INLINE_DATA_SIZE(r) (BTRFS_LEAF_DATA_SIZE(r) - \
-					sizeof(struct btrfs_item) - \
-					BTRFS_FILE_EXTENT_INLINE_DATA_START)
-#define BTRFS_MAX_XATTR_SIZE(r)	(BTRFS_LEAF_DATA_SIZE(r) - \
-				 sizeof(struct btrfs_item) -\
-				 sizeof(struct btrfs_dir_item))
-
-
 /*
  * this is a very generous portion of the super block, giving us
  * room to translate 14 chunks with 3 stripes each.
@@ -447,6 +432,7 @@ struct btrfs_space_info {
 	struct list_head ro_bgs;
 	struct list_head priority_tickets;
 	struct list_head tickets;
+	u64 tickets_id;
 
 	struct rw_semaphore groups_sem;
 	/* for block groups in our same type */
@@ -1073,6 +1059,8 @@ struct btrfs_fs_info {
 	 * and will be latter freed. Protected by fs_info->chunk_mutex.
 	 */
 	struct list_head pinned_chunks;
+	/* Used to record internally whether fs has been frozen */
+	int fs_frozen;
 };
 
 struct btrfs_subvolume_writers {
@@ -1161,8 +1149,10 @@ struct btrfs_root {
 
 	u64 highest_objectid;
 
+#ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
 	/* only used with CONFIG_BTRFS_FS_RUN_SANITY_TESTS is enabled */
 	u64 alloc_bytenr;
+#endif
 
 	u64 defrag_trans_start;
 	struct btrfs_key defrag_progress;
@@ -1235,6 +1225,39 @@ struct btrfs_root {
 	/* For qgroup metadata space reserve */
 	atomic64_t qgroup_meta_rsv;
 };
+
+static inline u32 __BTRFS_LEAF_DATA_SIZE(u32 blocksize)
+{
+	return blocksize - sizeof(struct btrfs_header);
+}
+
+static inline u32 BTRFS_LEAF_DATA_SIZE(const struct btrfs_root *root)
+{
+	return __BTRFS_LEAF_DATA_SIZE(root->nodesize);
+}
+
+static inline u32 BTRFS_MAX_ITEM_SIZE(const struct btrfs_root *root)
+{
+	return BTRFS_LEAF_DATA_SIZE(root) - sizeof(struct btrfs_item);
+}
+
+static inline u32 BTRFS_NODEPTRS_PER_BLOCK(const struct btrfs_root *root)
+{
+	return BTRFS_LEAF_DATA_SIZE(root) / sizeof(struct btrfs_key_ptr);
+}
+
+#define BTRFS_FILE_EXTENT_INLINE_DATA_START		\
+		(offsetof(struct btrfs_file_extent_item, disk_bytenr))
+static inline u32 BTRFS_MAX_INLINE_DATA_SIZE(const struct btrfs_root *root)
+{
+	return BTRFS_MAX_ITEM_SIZE(root) -
+	       BTRFS_FILE_EXTENT_INLINE_DATA_START;
+}
+
+static inline u32 BTRFS_MAX_XATTR_SIZE(const struct btrfs_root *root)
+{
+	return BTRFS_MAX_ITEM_SIZE(root) - sizeof(struct btrfs_dir_item);
+}
 
 /*
  * Flags for mount options.
@@ -2533,7 +2556,7 @@ int btrfs_alloc_logged_file_extent(struct btrfs_trans_handle *trans,
 				   struct btrfs_root *root,
 				   u64 root_objectid, u64 owner, u64 offset,
 				   struct btrfs_key *ins);
-int btrfs_reserve_extent(struct btrfs_root *root, u64 num_bytes,
+int btrfs_reserve_extent(struct btrfs_root *root, u64 ram_bytes, u64 num_bytes,
 			 u64 min_alloc_size, u64 empty_size, u64 hint_byte,
 			 struct btrfs_key *ins, int is_data, int delalloc);
 int btrfs_inc_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
@@ -3324,18 +3347,18 @@ const char *btrfs_decode_error(int errno);
 
 __cold
 void __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
-			       struct btrfs_root *root, const char *function,
+			       const char *function,
 			       unsigned int line, int errno);
 
 /*
  * Call btrfs_abort_transaction as early as possible when an error condition is
  * detected, that way the exact line number is reported.
  */
-#define btrfs_abort_transaction(trans, root, errno)		\
+#define btrfs_abort_transaction(trans, errno)		\
 do {								\
 	/* Report first abort since mount */			\
 	if (!test_and_set_bit(BTRFS_FS_STATE_TRANS_ABORTED,	\
-			&((root)->fs_info->fs_state))) {	\
+			&((trans)->fs_info->fs_state))) {	\
 		if ((errno) != -EIO) {				\
 			WARN(1, KERN_DEBUG				\
 			"BTRFS: Transaction aborted (error %d)\n",	\
@@ -3345,7 +3368,7 @@ do {								\
 				  (errno));			\
 		}						\
 	}							\
-	__btrfs_abort_transaction((trans), (root), __func__,	\
+	__btrfs_abort_transaction((trans), __func__,		\
 				  __LINE__, (errno));		\
 } while (0)
 
