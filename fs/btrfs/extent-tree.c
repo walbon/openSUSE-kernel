@@ -4578,7 +4578,7 @@ out:
 	 */
 	if (trans->can_flush_pending_bgs &&
 	    trans->chunk_bytes_reserved >= (2 * 1024 * 1024ull)) {
-		btrfs_create_pending_block_groups(trans, trans->root);
+		btrfs_create_pending_block_groups(trans, extent_root);
 		btrfs_trans_release_chunk_metadata(trans);
 	}
 	return ret;
@@ -5721,7 +5721,7 @@ void btrfs_trans_release_metadata(struct btrfs_trans_handle *trans,
  */
 void btrfs_trans_release_chunk_metadata(struct btrfs_trans_handle *trans)
 {
-	struct btrfs_fs_info *fs_info = trans->root->fs_info;
+	struct btrfs_fs_info *fs_info = trans->fs_info;
 
 	if (!trans->chunk_bytes_reserved)
 		return;
