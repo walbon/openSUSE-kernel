@@ -97,7 +97,7 @@ static int slice_area_is_free(struct mm_struct *mm, unsigned long addr,
 {
 	struct vm_area_struct *vma;
 
-	if ((mm->context.addr_limit - len) < addr)
+	if ((mm->task_size - len) < addr)
 		return 0;
 	vma = find_vma(mm, addr);
 	return (!vma || (addr + len) <= vma->vm_start);
@@ -134,7 +134,7 @@ static void slice_mask_for_free(struct mm_struct *mm, struct slice_mask *ret)
 		if (!slice_low_has_vma(mm, i))
 			ret->low_slices |= 1u << i;
 
-	if (mm->context.addr_limit <= SLICE_LOW_TOP)
+	if (mm->task_size <= SLICE_LOW_TOP)
 		return;
 
 	for (i = 0; i < GET_HIGH_SLICE_INDEX(mm->context.addr_limit); i++)
@@ -294,8 +294,8 @@ static unsigned long slice_find_area_bottomup(struct mm_struct *mm,
 		 * Check if we need to reduce the range, or if we can
 		 * extend it to cover the next available slice.
 		 */
-		if (addr >= mm->context.addr_limit)
-			addr = mm->context.addr_limit;
+		if (addr >= high_limit)
+			addr = high_limit;
 		else if (slice_scan_available(addr, available, 1, &next_end)) {
 			addr = next_end;
 			goto next_slice;
@@ -452,13 +452,13 @@ unsigned long slice_get_unmapped_area(unsigned long addr, unsigned long len,
 	slice_dbg(" addr=%lx, len=%lx, flags=%lx, topdown=%d\n",
 		  addr, len, flags, topdown);
 
-	if (len > mm->context.addr_limit - mmap_min_addr)
+	if (len > mm->task_size - mmap_min_addr)
 		return -ENOMEM;
 	if (len & ((1ul << pshift) - 1))
 		return -EINVAL;
 	if (fixed && (addr & ((1ul << pshift) - 1)))
 		return -EINVAL;
-	if (fixed && addr > (mm->context.addr_limit - len))
+	if (fixed && addr > (mm->task_size - len))
 		return -ENOMEM;
 
 	/* If hint, make sure it matches our alignment restrictions */
@@ -466,7 +466,7 @@ unsigned long slice_get_unmapped_area(unsigned long addr, unsigned long len,
 		addr = _ALIGN_UP(addr, 1ul << pshift);
 		slice_dbg(" aligned addr=%lx\n", addr);
 		/* Ignore hint if it's too large or overlaps a VMA */
-		if (addr > mm->context.addr_limit - len ||
+		if (addr > mm->task_size - len ||
 		    !slice_area_is_free(mm, addr, len))
 			addr = 0;
 	}
