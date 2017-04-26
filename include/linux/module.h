@@ -464,12 +464,14 @@ struct module {
 	unsigned long *ftrace_callsites;
 #endif
 
+#if !defined(__PPC64__) && !defined(__aarch64__)
 #ifdef CONFIG_LIVEPATCH
 	bool klp_alive;
 #endif
 
 #ifdef CONFIG_KGRAFT
 	bool kgr_alive;
+#endif
 #endif
 
 #ifdef CONFIG_MODULE_UNLOAD
@@ -489,7 +491,18 @@ struct module {
 	ctor_fn_t *ctors;
 	unsigned int num_ctors;
 #endif
+
+#if defined(__PPC64__) || defined(__aarch64__)
+#if !defined(__GENKSYMS__) && (defined(CONFIG_LIVEPATCH) || defined(CONFIG_KGRAFT) )
+	bool klp_alive;
+	bool kgr_alive;
+	char suse_kabi_padding6[6];
+#else
 	void *suse_kabi_padding;
+#endif
+#else
+	void *suse_kabi_padding;
+#endif
 } ____cacheline_aligned;
 #ifndef MODULE_ARCH_INIT
 #define MODULE_ARCH_INIT {}
