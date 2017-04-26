@@ -168,7 +168,7 @@ static inline void btrfs_qgroup_free_delayed_ref(struct btrfs_fs_info *fs_info,
 						 u64 ref_root, u64 num_bytes)
 {
 	btrfs_qgroup_free_refroot(fs_info, ref_root, num_bytes);
-	trace_btrfs_qgroup_free_delayed_ref(ref_root, num_bytes);
+	trace_btrfs_qgroup_free_delayed_ref(fs_info, ref_root, num_bytes);
 }
 void assert_qgroups_uptodate(struct btrfs_trans_handle *trans);
 
