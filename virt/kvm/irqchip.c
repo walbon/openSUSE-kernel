@@ -137,7 +137,8 @@ void kvm_free_irq_routing(struct kvm *kvm)
 	free_irq_routing_table(rt);
 }
 
-static int setup_routing_entry(struct kvm_irq_routing_table *rt,
+static int setup_routing_entry(struct kvm *kvm,
+			       struct kvm_irq_routing_table *rt,
 			       struct kvm_kernel_irq_routing_entry *e,
 			       const struct kvm_irq_routing_entry *ue)
 {
@@ -156,7 +157,7 @@ static int setup_routing_entry(struct kvm_irq_routing_table *rt,
 
 	e->gsi = ue->gsi;
 	e->type = ue->type;
-	r = kvm_set_routing_entry(e, ue);
+	r = kvm_set_routing_entry(kvm, e, ue);
 	if (r)
 		goto out;
 	if (e->type == KVM_IRQ_ROUTING_IRQCHIP)
@@ -166,6 +167,10 @@ static int setup_routing_entry(struct kvm_irq_routing_table *rt,
 	r = 0;
 out:
 	return r;
+}
+
+void __attribute__((weak)) kvm_arch_irq_routing_update(struct kvm *kvm)
+{
 }
 
 int kvm_set_irq_routing(struct kvm *kvm,
@@ -214,7 +219,7 @@ int kvm_set_irq_routing(struct kvm *kvm,
 				goto free_entry;
 			break;
 		}
-		r = setup_routing_entry(new, e, ue);
+		r = setup_routing_entry(kvm, new, e, ue);
 		if (r)
 			goto free_entry;
 		++ue;
@@ -224,9 +229,10 @@ int kvm_set_irq_routing(struct kvm *kvm,
 	old = kvm->irq_routing;
 	rcu_assign_pointer(kvm->irq_routing, new);
 	kvm_irq_routing_update(kvm);
+	kvm_arch_irq_routing_update(kvm);
 	mutex_unlock(&kvm->irq_lock);
 
-	kvm_arch_irq_routing_update(kvm);
+	kvm_arch_post_irq_routing_update(kvm);
 
 	synchronize_srcu_expedited(&kvm->irq_srcu);
 
