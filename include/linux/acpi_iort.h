@@ -47,12 +47,7 @@ static inline u32 iort_msi_map_rid(struct device *dev, u32 req_id)
 static inline struct irq_domain *iort_get_device_domain(struct device *dev,
 							u32 req_id)
 { return NULL; }
-
 static inline void acpi_configure_pmsi_domain(struct device *dev) { }
-
-static inline int iort_pmsi_get_dev_id(struct device *dev, u32 *dev_id)
-{ return -ENODEV; }
-
 /* IOMMU interface */
 static inline void iort_set_dma_mask(struct device *dev) { }
 static inline
