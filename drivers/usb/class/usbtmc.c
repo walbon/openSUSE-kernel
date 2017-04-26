@@ -1272,11 +1272,9 @@ static int usbtmc_probe(struct usb_interface *intf,
 
 	dev_dbg(&intf->dev, "%s called\n", __func__);
 
-	data = kmalloc(sizeof(struct usbtmc_device_data), GFP_KERNEL);
-	if (!data) {
-		dev_err(&intf->dev, "Unable to allocate kernel memory\n");
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	if (!data)
 		return -ENOMEM;
-	}
 
 	data->intf = intf;
 	data->id = id;
@@ -1336,6 +1334,13 @@ static int usbtmc_probe(struct usb_interface *intf,
 			break;
 		}
 	}
+
+	if (!data->bulk_out || !data->bulk_in) {
+		dev_err(&intf->dev, "bulk endpoints not found\n");
+		retcode = -ENODEV;
+		goto err_put;
+	}
+
 	/* Find int endpoint */
 	for (n = 0; n < iface_desc->desc.bNumEndpoints; n++) {
 		endpoint = &iface_desc->endpoint[n].desc;
@@ -1404,6 +1409,7 @@ error_register:
 	sysfs_remove_group(&intf->dev.kobj, &capability_attr_grp);
 	sysfs_remove_group(&intf->dev.kobj, &data_attr_grp);
 	usbtmc_free_int(data);
+err_put:
 	kref_put(&data->kref, usbtmc_delete);
 	return retcode;
 }
