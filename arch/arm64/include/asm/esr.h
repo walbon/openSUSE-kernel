@@ -149,6 +149,9 @@
 					 ((op2) << ESR_ELx_SYS64_ISS_OP2_SHIFT) | \
 					 ((crn) << ESR_ELx_SYS64_ISS_CRN_SHIFT) | \
 					 ((crm) << ESR_ELx_SYS64_ISS_CRM_SHIFT))
+
+#define ESR_ELx_SYS64_ISS_SYS_OP_MASK	(ESR_ELx_SYS64_ISS_SYS_MASK | \
+					 ESR_ELx_SYS64_ISS_DIR_MASK)
 /*
  * User space cache operations have the following sysreg encoding
  * in System instructions.
