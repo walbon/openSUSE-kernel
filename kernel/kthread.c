@@ -18,6 +18,9 @@
 #include <linux/freezer.h>
 #include <linux/ptrace.h>
 #include <linux/uaccess.h>
+#ifndef __GENKSYMS__
+#include <linux/cgroup.h>
+#endif
 #include <trace/events/sched.h>
 
 static DEFINE_SPINLOCK(kthread_create_lock);
@@ -207,6 +210,7 @@ static int kthread(void *_create)
 	ret = -EINTR;
 
 	if (!test_bit(KTHREAD_SHOULD_STOP, &self.flags)) {
+		cgroup_kthread_ready();
 		__kthread_parkme(&self);
 		ret = threadfn(data);
 	}
@@ -531,6 +535,7 @@ int kthreadd(void *unused)
 	kthread_set_sched_params(current);
 
 	current->flags |= PF_NOFREEZE;
+	cgroup_init_kthreadd();
 
 	for (;;) {
 		set_current_state(TASK_INTERRUPTIBLE);
