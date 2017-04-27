@@ -404,7 +404,7 @@ typedef struct srb {
 	struct qla_qpair *qpair;
 	union {
 		struct srb_iocb iocb_cmd;
-		struct fc_bsg_job *bsg_job;
+		struct bsg_job *bsg_job;
 		struct srb_cmd scmd;
 	} u;
 	void (*done)(void *, void *, int);
