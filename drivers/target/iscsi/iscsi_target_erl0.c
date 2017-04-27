@@ -44,10 +44,8 @@ void iscsit_set_dataout_sequence_values(
 	 */
 	if (cmd->unsolicited_data) {
 		cmd->seq_start_offset = cmd->write_data_done;
-		cmd->seq_end_offset = (cmd->write_data_done +
-			((cmd->se_cmd.data_length >
-			  conn->sess->sess_ops->FirstBurstLength) ?
-			 conn->sess->sess_ops->FirstBurstLength : cmd->se_cmd.data_length));
+		cmd->seq_end_offset = min(cmd->se_cmd.data_length,
+					conn->sess->sess_ops->FirstBurstLength);
 		return;
 	}
 
@@ -786,7 +784,7 @@ static void iscsit_handle_time2retain_timeout(unsigned long data)
 	}
 
 	spin_unlock_bh(&se_tpg->session_lock);
-	target_put_session(sess->se_sess);
+	iscsit_close_session(sess);
 }
 
 void iscsit_start_time2retain_handler(struct iscsi_session *sess)
