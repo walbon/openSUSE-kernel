@@ -593,9 +593,6 @@ static void target_remove_from_state_list(struct se_cmd *cmd)
 	if (!dev)
 		return;
 
-	if (cmd->transport_state & CMD_T_BUSY)
-		return;
-
 	spin_lock_irqsave(&dev->execute_task_lock, flags);
 	if (cmd->state_active) {
 		list_del(&cmd->state_list);
@@ -714,7 +711,6 @@ static void __target_complete_cmd(struct se_cmd *cmd, u8 scsi_status,
 	cmd->sense_reason = sense_reason;
 
 	spin_lock_irqsave(&cmd->t_state_lock, flags);
-	cmd->transport_state &= ~CMD_T_BUSY;
 
 	if (dev && dev->transport->transport_complete) {
 		dev->transport->transport_complete(cmd,
@@ -1797,7 +1793,7 @@ void __target_execute_cmd(struct se_cmd *cmd, bool do_checks)
 		return;
 err:
 	spin_lock_irq(&cmd->t_state_lock);
-	cmd->transport_state &= ~(CMD_T_BUSY|CMD_T_SENT);
+	cmd->transport_state &= ~CMD_T_SENT;
 	spin_unlock_irq(&cmd->t_state_lock);
 
 	transport_generic_request_failure(cmd, ret);
@@ -1825,7 +1821,7 @@ static int target_write_prot_action(struct se_cmd *cmd)
 					     sectors, 0, cmd->t_prot_sg, 0);
 		if (unlikely(cmd->pi_err)) {
 			spin_lock_irq(&cmd->t_state_lock);
-			cmd->transport_state &= ~(CMD_T_BUSY|CMD_T_SENT);
+			cmd->transport_state &= ~CMD_T_SENT;
 			spin_unlock_irq(&cmd->t_state_lock);
 			transport_generic_request_failure(cmd, cmd->pi_err);
 			return -1;
@@ -1914,7 +1910,7 @@ void target_execute_cmd(struct se_cmd *cmd)
 	}
 
 	cmd->t_state = TRANSPORT_PROCESSING;
-	cmd->transport_state |= CMD_T_ACTIVE|CMD_T_BUSY|CMD_T_SENT;
+	cmd->transport_state |= CMD_T_ACTIVE | CMD_T_SENT;
 	spin_unlock_irq(&cmd->t_state_lock);
 
 	if (target_write_prot_action(cmd))
@@ -1922,7 +1918,7 @@ void target_execute_cmd(struct se_cmd *cmd)
 
 	if (target_handle_task_attr(cmd)) {
 		spin_lock_irq(&cmd->t_state_lock);
-		cmd->transport_state &= ~(CMD_T_BUSY | CMD_T_SENT);
+		cmd->transport_state &= ~CMD_T_SENT;
 		spin_unlock_irq(&cmd->t_state_lock);
 		return;
 	}
