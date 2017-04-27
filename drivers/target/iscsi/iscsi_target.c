@@ -4283,7 +4283,7 @@ int iscsit_close_connection(
 	if (!atomic_read(&sess->session_reinstatement) &&
 	     atomic_read(&sess->session_fall_back_to_erl0)) {
 		spin_unlock_bh(&sess->conn_lock);
-		target_put_session(sess->se_sess);
+		iscsit_close_session(sess);
 
 		return 0;
 	} else if (atomic_read(&sess->session_logout)) {
@@ -4312,6 +4312,10 @@ int iscsit_close_connection(
 	}
 }
 
+/*
+ * If the iSCSI Session for the iSCSI Initiator Node exists,
+ * forcefully shutdown the iSCSI NEXUS.
+ */
 int iscsit_close_session(struct iscsi_session *sess)
 {
 	struct iscsi_portal_group *tpg = sess->tpg;
@@ -4410,7 +4414,7 @@ static void iscsit_logout_post_handler_closesession(
 	iscsit_dec_conn_usage_count(conn);
 	iscsit_stop_session(sess, sleep, sleep);
 	iscsit_dec_session_usage_count(sess);
-	target_put_session(sess->se_sess);
+	iscsit_close_session(sess);
 }
 
 static void iscsit_logout_post_handler_samecid(
@@ -4581,7 +4585,7 @@ int iscsit_free_session(struct iscsi_session *sess)
 	} else
 		spin_unlock_bh(&sess->conn_lock);
 
-	target_put_session(sess->se_sess);
+	iscsit_close_session(sess);
 	return 0;
 }
 
