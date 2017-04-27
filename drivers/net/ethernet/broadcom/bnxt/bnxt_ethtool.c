@@ -1,6 +1,7 @@
 /* Broadcom NetXtreme-C/E network driver.
  *
  * Copyright (c) 2014-2016 Broadcom Corporation
+ * Copyright (c) 2016-2017 Broadcom Limited
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -209,6 +210,10 @@ static int bnxt_get_sset_count(struct net_device *dev, int sset)
 
 		return num_stats;
 	}
+	case ETH_SS_TEST:
+		if (!bp->num_tests)
+			return -EOPNOTSUPP;
+		return bp->num_tests;
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -305,6 +310,11 @@ static void bnxt_get_strings(struct net_device *dev, u32 stringset, u8 *buf)
 				buf += ETH_GSTRING_LEN;
 			}
 		}
+		break;
+	case ETH_SS_TEST:
+		if (bp->num_tests)
+			memcpy(buf, bp->test_info->string,
+			       bp->num_tests * ETH_GSTRING_LEN);
 		break;
 	default:
 		netdev_err(bp->dev, "bnxt_get_strings invalid request %x\n",
@@ -824,12 +834,51 @@ static void bnxt_get_drvinfo(struct net_device *dev,
 			sizeof(info->fw_version));
 	strlcpy(info->bus_info, pci_name(bp->pdev), sizeof(info->bus_info));
 	info->n_stats = BNXT_NUM_STATS * bp->cp_nr_rings;
-	info->testinfo_len = BNXT_NUM_TESTS(bp);
+	info->testinfo_len = bp->num_tests;
 	/* TODO CHIMP_FW: eeprom dump details */
 	info->eedump_len = 0;
 	/* TODO CHIMP FW: reg dump details */
 	info->regdump_len = 0;
 	kfree(pkglog);
+}
+
+static void bnxt_get_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
+{
+	struct bnxt *bp = netdev_priv(dev);
+
+	wol->supported = 0;
+	wol->wolopts = 0;
+	memset(&wol->sopass, 0, sizeof(wol->sopass));
+	if (bp->flags & BNXT_FLAG_WOL_CAP) {
+		wol->supported = WAKE_MAGIC;
+		if (bp->wol)
+			wol->wolopts = WAKE_MAGIC;
+	}
+}
+
+static int bnxt_set_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
+{
+	struct bnxt *bp = netdev_priv(dev);
+
+	if (wol->wolopts & ~WAKE_MAGIC)
+		return -EINVAL;
+
+	if (wol->wolopts & WAKE_MAGIC) {
+		if (!(bp->flags & BNXT_FLAG_WOL_CAP))
+			return -EINVAL;
+		if (!bp->wol) {
+			if (bnxt_hwrm_alloc_wol_fltr(bp))
+				return -EBUSY;
+			bp->wol = 1;
+		}
+	} else {
+		if (bp->wol) {
+			if (bnxt_hwrm_free_wol_fltr(bp))
+				return -EBUSY;
+			bp->wol = 0;
+		}
+	}
+	return 0;
 }
 
 u32 _bnxt_fw_to_ethtool_adv_spds(u16 fw_speeds, u8 fw_pause)
@@ -879,6 +928,9 @@ u32 _bnxt_fw_to_ethtool_adv_spds(u16 fw_speeds, u8 fw_pause)
 	if ((fw_speeds) & BNXT_LINK_SPEED_MSK_50GB)			\
 		ethtool_link_ksettings_add_link_mode(lk_ksettings, name,\
 						     50000baseCR2_Full);\
+	if ((fw_speeds) & BNXT_LINK_SPEED_MSK_100GB)			\
+		ethtool_link_ksettings_add_link_mode(lk_ksettings, name,\
+						     100000baseCR4_Full);\
 	if ((fw_pause) & BNXT_LINK_PAUSE_RX) {				\
 		ethtool_link_ksettings_add_link_mode(lk_ksettings, name,\
 						     Pause);		\
@@ -915,6 +967,9 @@ u32 _bnxt_fw_to_ethtool_adv_spds(u16 fw_speeds, u8 fw_pause)
 	if (ethtool_link_ksettings_test_link_mode(lk_ksettings, name,	\
 						  50000baseCR2_Full))	\
 		(fw_speeds) |= BNXT_LINK_SPEED_MSK_50GB;		\
+	if (ethtool_link_ksettings_test_link_mode(lk_ksettings, name,	\
+						  100000baseCR4_Full))	\
+		(fw_speeds) |= BNXT_LINK_SPEED_MSK_100GB;		\
 }
 
 static void bnxt_fw_to_ethtool_advertised_spds(struct bnxt_link_info *link_info,
@@ -977,6 +1032,8 @@ u32 bnxt_fw_to_ethtool_speed(u16 fw_link_speed)
 		return SPEED_40000;
 	case BNXT_LINK_SPEED_50GB:
 		return SPEED_50000;
+	case BNXT_LINK_SPEED_100GB:
+		return SPEED_100000;
 	default:
 		return SPEED_UNKNOWN;
 	}
@@ -1042,7 +1099,7 @@ static int bnxt_get_link_ksettings(struct net_device *dev,
 	return 0;
 }
 
-static u32 bnxt_get_fw_speed(struct net_device *dev, u16 ethtool_speed)
+static u32 bnxt_get_fw_speed(struct net_device *dev, u32 ethtool_speed)
 {
 	struct bnxt *bp = netdev_priv(dev);
 	struct bnxt_link_info *link_info = &bp->link_info;
@@ -1081,6 +1138,10 @@ static u32 bnxt_get_fw_speed(struct net_device *dev, u16 ethtool_speed)
 	case SPEED_50000:
 		if (support_spds & BNXT_LINK_SPEED_MSK_50GB)
 			fw_speed = PORT_PHY_CFG_REQ_AUTO_LINK_SPEED_50GB;
+		break;
+	case SPEED_100000:
+		if (support_spds & BNXT_LINK_SPEED_MSK_100GB)
+			fw_speed = PORT_PHY_CFG_REQ_AUTO_LINK_SPEED_100GB;
 		break;
 	default:
 		netdev_err(dev, "unsupported speed!\n");
@@ -2128,12 +2189,138 @@ static int bnxt_set_phys_id(struct net_device *dev,
 	return rc;
 }
 
+static int bnxt_run_fw_tests(struct bnxt *bp, u8 test_mask, u8 *test_results)
+{
+	struct hwrm_selftest_exec_output *resp = bp->hwrm_cmd_resp_addr;
+	struct hwrm_selftest_exec_input req = {0};
+	int rc;
+
+	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_SELFTEST_EXEC, -1, -1);
+	mutex_lock(&bp->hwrm_cmd_lock);
+	resp->test_success = 0;
+	req.flags = test_mask;
+	rc = _hwrm_send_message(bp, &req, sizeof(req), bp->test_info->timeout);
+	*test_results = resp->test_success;
+	mutex_unlock(&bp->hwrm_cmd_lock);
+	return rc;
+}
+
+#define BNXT_DRV_TESTS			0
+
+static void bnxt_self_test(struct net_device *dev, struct ethtool_test *etest,
+			   u64 *buf)
+{
+	struct bnxt *bp = netdev_priv(dev);
+	bool offline = false;
+	u8 test_results = 0;
+	u8 test_mask = 0;
+	int rc, i;
+
+	if (!bp->num_tests || !BNXT_SINGLE_PF(bp))
+		return;
+	memset(buf, 0, sizeof(u64) * bp->num_tests);
+	if (!netif_running(dev)) {
+		etest->flags |= ETH_TEST_FL_FAILED;
+		return;
+	}
+
+	if (etest->flags & ETH_TEST_FL_OFFLINE) {
+		if (bp->pf.active_vfs) {
+			etest->flags |= ETH_TEST_FL_FAILED;
+			netdev_warn(dev, "Offline tests cannot be run with active VFs\n");
+			return;
+		}
+		offline = true;
+	}
+
+	for (i = 0; i < bp->num_tests - BNXT_DRV_TESTS; i++) {
+		u8 bit_val = 1 << i;
+
+		if (!(bp->test_info->offline_mask & bit_val))
+			test_mask |= bit_val;
+		else if (offline)
+			test_mask |= bit_val;
+	}
+	if (!offline) {
+		bnxt_run_fw_tests(bp, test_mask, &test_results);
+	} else {
+		rc = bnxt_close_nic(bp, false, false);
+		if (rc)
+			return;
+		bnxt_run_fw_tests(bp, test_mask, &test_results);
+		bnxt_open_nic(bp, false, true);
+	}
+	for (i = 0; i < bp->num_tests - BNXT_DRV_TESTS; i++) {
+		u8 bit_val = 1 << i;
+
+		if ((test_mask & bit_val) && !(test_results & bit_val)) {
+			buf[i] = 1;
+			etest->flags |= ETH_TEST_FL_FAILED;
+		}
+	}
+}
+
+void bnxt_ethtool_init(struct bnxt *bp)
+{
+	struct hwrm_selftest_qlist_output *resp = bp->hwrm_cmd_resp_addr;
+	struct hwrm_selftest_qlist_input req = {0};
+	struct bnxt_test_info *test_info;
+	int i, rc;
+
+	if (bp->hwrm_spec_code < 0x10704 || !BNXT_SINGLE_PF(bp))
+		return;
+
+	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_SELFTEST_QLIST, -1, -1);
+	mutex_lock(&bp->hwrm_cmd_lock);
+	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	if (rc)
+		goto ethtool_init_exit;
+
+	test_info = kzalloc(sizeof(*bp->test_info), GFP_KERNEL);
+	if (!test_info)
+		goto ethtool_init_exit;
+
+	bp->test_info = test_info;
+	bp->num_tests = resp->num_tests + BNXT_DRV_TESTS;
+	if (bp->num_tests > BNXT_MAX_TEST)
+		bp->num_tests = BNXT_MAX_TEST;
+
+	test_info->offline_mask = resp->offline_tests;
+	test_info->timeout = le16_to_cpu(resp->test_timeout);
+	if (!test_info->timeout)
+		test_info->timeout = HWRM_CMD_TIMEOUT;
+	for (i = 0; i < bp->num_tests; i++) {
+		char *str = test_info->string[i];
+		char *fw_str = resp->test0_name + i * 32;
+
+		strlcpy(str, fw_str, ETH_GSTRING_LEN);
+		strncat(str, " test", ETH_GSTRING_LEN - strlen(str));
+		if (test_info->offline_mask & (1 << i))
+			strncat(str, " (offline)",
+				ETH_GSTRING_LEN - strlen(str));
+		else
+			strncat(str, " (online)",
+				ETH_GSTRING_LEN - strlen(str));
+	}
+
+ethtool_init_exit:
+	mutex_unlock(&bp->hwrm_cmd_lock);
+}
+
+void bnxt_ethtool_free(struct bnxt *bp)
+{
+	kfree(bp->test_info);
+	bp->test_info = NULL;
+}
+
 const struct ethtool_ops bnxt_ethtool_ops = {
 	.get_link_ksettings	= bnxt_get_link_ksettings,
 	.set_link_ksettings	= bnxt_set_link_ksettings,
 	.get_pauseparam		= bnxt_get_pauseparam,
 	.set_pauseparam		= bnxt_set_pauseparam,
 	.get_drvinfo		= bnxt_get_drvinfo,
+	.get_wol		= bnxt_get_wol,
+	.set_wol		= bnxt_set_wol,
 	.get_coalesce		= bnxt_get_coalesce,
 	.set_coalesce		= bnxt_set_coalesce,
 	.get_msglevel		= bnxt_get_msglevel,
@@ -2161,4 +2348,5 @@ const struct ethtool_ops bnxt_ethtool_ops = {
 	.get_module_eeprom	= bnxt_get_module_eeprom,
 	.nway_reset		= bnxt_nway_reset,
 	.set_phys_id		= bnxt_set_phys_id,
+	.self_test		= bnxt_self_test,
 };

@@ -35,6 +35,10 @@
 
 #include <asm/kvm_host.h>
 
+#ifndef KVM_MAX_VCPU_ID
+#define KVM_MAX_VCPU_ID KVM_MAX_VCPUS
+#endif
+
 /*
  * The bit 16 ~ bit 31 of kvm_memory_region::flags are internally used
  * in kvm, other bits are visible for userspace which are defined in
@@ -320,6 +324,11 @@ struct kvm_s390_adapter_int {
 	u32 adapter_id;
 };
 
+struct kvm_hv_sint {
+	u32 vcpu;
+	u32 sint;
+};
+
 struct kvm_kernel_irq_routing_entry {
 	u32 gsi;
 	u32 type;
@@ -339,6 +348,7 @@ struct kvm_kernel_irq_routing_entry {
 			u32 devid;
 		} msi;
 		struct kvm_s390_adapter_int adapter;
+		struct kvm_hv_sint hv_sint;
 	};
 	struct hlist_node link;
 };
@@ -472,9 +482,15 @@ static inline struct kvm_vcpu *kvm_get_vcpu(struct kvm *kvm, int i)
 
 static inline struct kvm_vcpu *kvm_get_vcpu_by_id(struct kvm *kvm, int id)
 {
-	struct kvm_vcpu *vcpu;
+	struct kvm_vcpu *vcpu = NULL;
 	int i;
 
+	if (id < 0)
+		return NULL;
+	if (id < KVM_MAX_VCPUS)
+		vcpu = kvm_get_vcpu(kvm, id);
+	if (vcpu && vcpu->vcpu_id == id)
+		return vcpu;
 	kvm_for_each_vcpu(i, vcpu, kvm)
 		if (vcpu->vcpu_id == id)
 			return vcpu;
@@ -494,12 +510,12 @@ void vcpu_put(struct kvm_vcpu *vcpu);
 
 #ifdef __KVM_HAVE_IOAPIC
 void kvm_vcpu_request_scan_ioapic(struct kvm *kvm);
-void kvm_arch_irq_routing_update(struct kvm *kvm);
+void kvm_arch_post_irq_routing_update(struct kvm *kvm);
 #else
 static inline void kvm_vcpu_request_scan_ioapic(struct kvm *kvm)
 {
 }
-static inline void kvm_arch_irq_routing_update(struct kvm *kvm)
+static inline void kvm_arch_post_irq_routing_update(struct kvm *kvm)
 {
 }
 #endif
@@ -1064,7 +1080,8 @@ int kvm_set_irq_routing(struct kvm *kvm,
 			const struct kvm_irq_routing_entry *entries,
 			unsigned nr,
 			unsigned flags);
-int kvm_set_routing_entry(struct kvm_kernel_irq_routing_entry *e,
+int kvm_set_routing_entry(struct kvm *kvm,
+			  struct kvm_kernel_irq_routing_entry *e,
 			  const struct kvm_irq_routing_entry *ue);
 void kvm_free_irq_routing(struct kvm *kvm);
 
@@ -1110,6 +1127,7 @@ static inline void kvm_irq_routing_update(struct kvm *kvm)
 {
 }
 #endif
+void kvm_arch_irq_routing_update(struct kvm *kvm);
 
 static inline int kvm_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
 {

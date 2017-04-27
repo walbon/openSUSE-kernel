@@ -80,8 +80,8 @@ bool kvm_irq_delivery_to_apic_fast(struct kvm *kvm, struct kvm_lapic *src,
 
 u64 kvm_get_apic_base(struct kvm_vcpu *vcpu);
 int kvm_set_apic_base(struct kvm_vcpu *vcpu, struct msr_data *msr_info);
-void kvm_apic_post_state_restore(struct kvm_vcpu *vcpu,
-		struct kvm_lapic_state *s);
+int kvm_apic_get_state(struct kvm_vcpu *vcpu, struct kvm_lapic_state *s);
+int kvm_apic_set_state(struct kvm_vcpu *vcpu, struct kvm_lapic_state *s);
 int kvm_lapic_find_highest_irr(struct kvm_vcpu *vcpu);
 
 u64 kvm_get_lapic_tscdeadline_msr(struct kvm_vcpu *vcpu);
@@ -200,10 +200,23 @@ static inline int kvm_lapic_latched_init(struct kvm_vcpu *vcpu)
 	return kvm_vcpu_has_lapic(vcpu) && test_bit(KVM_APIC_INIT, &vcpu->arch.apic->pending_events);
 }
 
+static inline u32 kvm_apic_id(struct kvm_lapic *apic)
+{
+	/* To avoid a race between apic_base and following APIC_ID update when
+	 * switching to x2apic_mode, the x2apic mode returns initial x2apic id.
+	 */
+	if (apic_x2apic_mode(apic))
+		return apic->vcpu->vcpu_id;
+
+	return kvm_lapic_get_reg(apic, APIC_ID) >> 24;
+}
+
 bool kvm_apic_pending_eoi(struct kvm_vcpu *vcpu, int vector);
 
 void wait_lapic_expire(struct kvm_vcpu *vcpu);
 
 bool kvm_intr_is_single_vcpu_fast(struct kvm *kvm, struct kvm_lapic_irq *irq,
 			struct kvm_vcpu **dest_vcpu);
+int kvm_vector_to_index(u32 vector, u32 dest_vcpus,
+			const unsigned long *bitmap, u32 bitmap_size);
 #endif

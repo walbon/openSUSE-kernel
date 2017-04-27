@@ -199,8 +199,8 @@ Type: vm ioctl
 Parameters: vcpu id (apic id on x86)
 Returns: vcpu fd on success, -1 on error
 
-This API adds a vcpu to a virtual machine.  The vcpu id is a small integer
-in the range [0, max_vcpus).
+This API adds a vcpu to a virtual machine. No more than max_vcpus may be added.
+The vcpu id is an integer in the range [0, max_vcpu_id).
 
 The recommended max_vcpus value can be retrieved using the KVM_CAP_NR_VCPUS of
 the KVM_CHECK_EXTENSION ioctl() at run-time.
@@ -211,6 +211,12 @@ If the KVM_CAP_NR_VCPUS does not exist, you should assume that max_vcpus is 4
 cpus max.
 If the KVM_CAP_MAX_VCPUS does not exist, you should assume that max_vcpus is
 same as the value returned from KVM_CAP_NR_VCPUS.
+
+The maximum possible value for max_vcpu_id can be retrieved using the
+KVM_CAP_MAX_VCPU_ID of the KVM_CHECK_EXTENSION ioctl() at run-time.
+
+If the KVM_CAP_MAX_VCPU_ID does not exist, you should assume that max_vcpu_id
+is the same as the value returned from KVM_CAP_MAX_VCPUS.
 
 On powerpc using book3s_hv mode, the vcpus are mapped onto virtual
 threads in one or more virtual CPU cores.  (This is because the
@@ -1454,6 +1460,7 @@ struct kvm_irq_routing_entry {
 		struct kvm_irq_routing_irqchip irqchip;
 		struct kvm_irq_routing_msi msi;
 		struct kvm_irq_routing_s390_adapter adapter;
+		struct kvm_irq_routing_hv_sint hv_sint;
 		__u32 pad[8];
 	} u;
 };
@@ -1462,6 +1469,7 @@ struct kvm_irq_routing_entry {
 #define KVM_IRQ_ROUTING_IRQCHIP 1
 #define KVM_IRQ_ROUTING_MSI 2
 #define KVM_IRQ_ROUTING_S390_ADAPTER 3
+#define KVM_IRQ_ROUTING_HV_SINT 4
 
 flags:
 - KVM_MSI_VALID_DEVID: used along with KVM_IRQ_ROUTING_MSI
@@ -1492,6 +1500,11 @@ The per-VM KVM_CAP_MSI_DEVID capability advertises the requirement to
 provide the device ID. If this capability is not set, userland cannot
 rely on the kernel to allow the KVM_MSI_VALID_DEVID flag being set.
 
+On x86, address_hi is ignored unless the KVM_X2APIC_API_USE_32BIT_IDS
+feature of KVM_CAP_X2APIC_API capability is enabled.  If it is enabled,
+address_hi bits 31-8 provide bits 31-8 of the destination id.  Bits 7-0 of
+address_hi must be zero.
+
 struct kvm_irq_routing_s390_adapter {
 	__u64 ind_addr;
 	__u64 summary_addr;
@@ -1500,6 +1513,10 @@ struct kvm_irq_routing_s390_adapter {
 	__u32 adapter_id;
 };
 
+struct kvm_irq_routing_hv_sint {
+	__u32 vcpu;
+	__u32 sint;
+};
 
 4.53 KVM_ASSIGN_SET_MSIX_NR (deprecated)
 
@@ -1589,6 +1606,17 @@ struct kvm_lapic_state {
 Reads the Local APIC registers and copies them into the input argument.  The
 data format and layout are the same as documented in the architecture manual.
 
+If KVM_X2APIC_API_USE_32BIT_IDS feature of KVM_CAP_X2APIC_API is
+enabled, then the format of APIC_ID register depends on the APIC mode
+(reported by MSR_IA32_APICBASE) of its VCPU.  x2APIC stores APIC ID in
+the APIC_ID register (bytes 32-35).  xAPIC only allows an 8-bit APIC ID
+which is stored in bits 31-24 of the APIC register, or equivalently in
+byte 35 of struct kvm_lapic_state's regs field.  KVM_GET_LAPIC must then
+be called after MSR_IA32_APICBASE has been set with KVM_SET_MSR.
+
+If KVM_X2APIC_API_USE_32BIT_IDS feature is disabled, struct kvm_lapic_state
+always uses xAPIC format.
+
 
 4.58 KVM_SET_LAPIC
 
@@ -1605,6 +1633,10 @@ struct kvm_lapic_state {
 
 Copies the input argument into the Local APIC registers.  The data format
 and layout are the same as documented in the architecture manual.
+
+The format of the APIC ID register (bytes 32-35 of struct kvm_lapic_state's
+regs field) depends on the state of the KVM_CAP_X2APIC_API capability.
+See the note in KVM_GET_LAPIC.
 
 
 4.59 KVM_IOEVENTFD
@@ -2188,6 +2220,10 @@ devid: If KVM_MSI_VALID_DEVID is set, contains a unique device identifier
 The per-VM KVM_CAP_MSI_DEVID capability advertises the need to provide
 the device ID. If this capability is not set, userland cannot rely on
 the kernel to allow the KVM_MSI_VALID_DEVID flag being set.
+
+On x86, address_hi is ignored unless the KVM_CAP_X2APIC_API capability is
+enabled.  If it is enabled, address_hi bits 31-8 provide bits 31-8 of the
+destination id.  Bits 7-0 of address_hi must be zero.
 
 
 4.71 KVM_CREATE_PIT2
@@ -3705,6 +3741,29 @@ Fails if VCPU has already been created, or if the irqchip is already in the
 kernel (i.e. KVM_CREATE_IRQCHIP has already been called).
 
 
+7.7 KVM_CAP_X2APIC_API
+
+Architectures: x86
+Parameters: args[0] - features that should be enabled
+Returns: 0 on success, -EINVAL when args[0] contains invalid features
+
+Valid feature flags in args[0] are
+
+#define KVM_X2APIC_API_USE_32BIT_IDS            (1ULL << 0)
+#define KVM_X2APIC_API_DISABLE_BROADCAST_QUIRK  (1ULL << 1)
+
+Enabling KVM_X2APIC_API_USE_32BIT_IDS changes the behavior of
+KVM_SET_GSI_ROUTING, KVM_SIGNAL_MSI, KVM_SET_LAPIC, and KVM_GET_LAPIC,
+allowing the use of 32-bit APIC IDs.  See KVM_CAP_X2APIC_API in their
+respective sections.
+
+KVM_X2APIC_API_DISABLE_BROADCAST_QUIRK must be enabled for x2APIC to work
+in logical mode or with more than 255 VCPUs.  Otherwise, KVM treats 0xff
+as a broadcast even in x2APIC mode in order to support physical x2APIC
+without interrupt remapping.  This is undesirable in logical mode,
+where 0xff represents CPUs 0-7 in cluster 0.
+
+
 8. Other capabilities.
 ----------------------
 
@@ -3729,6 +3788,19 @@ This capability indicates that guest using memory monotoring instructions
 (MWAIT/MWAITX) to stop the virtual CPU will not cause a VM exit.  As such time
 spent while virtual CPU is halted in this way will then be accounted for as
 guest running time on the host (as opposed to e.g. HLT).
+
+8.2 KVM_CAP_HYPERV_SYNIC
+
+Architectures: x86
+This capability, if KVM_CHECK_EXTENSION indicates that it is
+available, means that that the kernel has an implementation of the
+Hyper-V Synthetic interrupt controller(SynIC). Hyper-V SynIC is
+used to support Windows Hyper-V based guest paravirt drivers(VMBus).
+
+In order to use SynIC, it has to be activated by setting this
+capability via KVM_ENABLE_CAP ioctl on the vcpu fd. Note that this
+will disable the use of APIC hardware virtualization even if supported
+by the CPU, as it's incompatible with SynIC auto-EOI behavior.
 
 8.5 KVM_CAP_ARM_USER_IRQ
 

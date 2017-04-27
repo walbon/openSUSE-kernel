@@ -1893,6 +1893,14 @@ asmlinkage int vprintk_emit(int facility, int level,
 						 dict, dictlen, text, text_len);
 	}
 
+	/*
+	 * Emergency level indicates that the system is unstable and, thus,
+	 * we better stop relying on wake_up(printk_kthread) and try to do
+	 * a direct printing.
+	 */
+	if (level == LOGLEVEL_EMERG)
+		printk_sync = true;
+
 	logbuf_cpu = UINT_MAX;
 	raw_spin_unlock(&logbuf_lock);
 	lockdep_on();
