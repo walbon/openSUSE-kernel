@@ -1665,8 +1665,10 @@ walk_down:
 			u64 child_gen;
 			u64 child_bytenr;
 
-			/* We need to get child blockptr/gen from
-			 * parent before we can read it. */
+			/*
+			 * We need to get child blockptr/gen from parent before
+			 * we can read it.
+			  */
 			eb = path->nodes[level + 1];
 			parent_slot = path->slots[level + 1];
 			child_bytenr = btrfs_node_blockptr(eb, parent_slot);
