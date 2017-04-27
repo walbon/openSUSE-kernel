@@ -97,6 +97,7 @@ config PPC
 	select OF_RESERVED_MEM
 	select HAVE_FTRACE_MCOUNT_RECORD
 	select HAVE_DYNAMIC_FTRACE
+	select HAVE_DYNAMIC_FTRACE_WITH_REGS if MPROFILE_KERNEL
 	select HAVE_FUNCTION_TRACER
 	select HAVE_FUNCTION_GRAPH_TRACER
 	select SYSCTL_EXCEPTION_TRACE
@@ -161,6 +162,8 @@ config PPC
 	select ARCH_HAS_DMA_SET_COHERENT_MASK
 	select HAVE_ARCH_SECCOMP_FILTER
 	select ARCH_SUPPORTS_DEFERRED_STRUCT_PAGE_INIT
+	select HAVE_LIVEPATCH if HAVE_DYNAMIC_FTRACE_WITH_REGS
+	select HAVE_KGRAFT if HAVE_DYNAMIC_FTRACE_WITH_REGS
 
 config GENERIC_CSUM
 	def_bool CPU_LITTLE_ENDIAN
@@ -375,6 +378,24 @@ config PPC_TRANSACTIONAL_MEM
        default n
        ---help---
          Support user-mode Transactional Memory on POWERPC.
+
+config DISABLE_MPROFILE_KERNEL
+	bool "Disable use of mprofile-kernel for kernel tracing"
+	depends on PPC64 && CPU_LITTLE_ENDIAN
+	default y
+	help
+	  Selecting this options disables use of the mprofile-kernel ABI for
+	  kernel tracing. That will cause options such as live patching
+	  (CONFIG_LIVEPATCH) which depend on CONFIG_DYNAMIC_FTRACE_WITH_REGS to
+	  be disabled also.
+
+	  If you have a toolchain which supports mprofile-kernel, then you can
+	  enable this. Otherwise leave it disabled. If you're not sure, say
+	  "N".
+
+config MPROFILE_KERNEL
+	depends on PPC64 && CPU_LITTLE_ENDIAN
+	def_bool !DISABLE_MPROFILE_KERNEL
 
 config IOMMU_HELPER
 	def_bool PPC64
@@ -1094,3 +1115,6 @@ config PPC_LIB_RHEAP
 	bool
 
 source "arch/powerpc/kvm/Kconfig"
+
+source "kernel/livepatch/Kconfig"
+source "kernel/Kconfig.kgraft"
