@@ -144,12 +144,12 @@ static ssize_t target_core_item_dbroot_store(struct config_item *item,
 		return -EINVAL;
 	}
 	if (!S_ISDIR(fp->f_inode->i_mode)) {
-		filp_close(fp, 0);
+		filp_close(fp, NULL);
 		mutex_unlock(&g_tf_lock);
 		pr_err("db_root: not a directory: %s\n", db_root_stage);
 		return -EINVAL;
 	}
-	filp_close(fp, 0);
+	filp_close(fp, NULL);
 
 	strncpy(db_root, db_root_stage, read_bytes);
 
@@ -2559,9 +2559,9 @@ static ssize_t target_tg_pt_gp_alua_support_##_name##_store(		\
 	int ret;							\
 									\
 	if (!t->tg_pt_gp_valid_id) {					\
-		pr_err("Unable to do set ##_name ALUA state on non"	\
+		pr_err("Unable to do set " #_name " ALUA state on non"	\
 		       " valid tg_pt_gp ID: %hu\n",			\
-		       t->tg_pt_gp_valid_id);				\
+		       t->tg_pt_gp_valid_id);			\
 		return -EINVAL;						\
 	}								\
 									\
@@ -2691,8 +2691,8 @@ static ssize_t target_tg_pt_gp_tg_pt_gp_id_store(struct config_item *item,
 
 	ret = kstrtoul(page, 0, &tg_pt_gp_id);
 	if (ret < 0) {
-		pr_err("kstrtoul() returned %d for"
-			" tg_pt_gp_id\n", ret);
+		pr_err("ALUA tg_pt_gp_id: invalid value '%s' for"
+			" tg_pt_gp_id\n", page);
 		return ret;
 	}
 	if (tg_pt_gp_id > 0x0000ffff) {
