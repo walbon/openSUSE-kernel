@@ -21,6 +21,17 @@
 
 #include "kexec_internal.h"
 
+#ifdef CONFIG_ARM64
+bool kexec_enabled = false;
+static int __init set_kexec_enabled(char *str)
+{
+	return strtobool(str, &kexec_enabled);
+}
+__setup("kexec=", set_kexec_enabled);
+#else
+bool kexec_enabled = true;
+#endif
+
 static int copy_user_segment_list(struct kimage *image,
 				  unsigned long nr_segments,
 				  struct kexec_segment __user *segments)
@@ -132,7 +143,7 @@ SYSCALL_DEFINE4(kexec_load, unsigned long, entry, unsigned long, nr_segments,
 	int result;
 
 	/* We only trust the superuser with rebooting the system. */
-	if (!capable(CAP_SYS_BOOT) || kexec_load_disabled)
+	if (!capable(CAP_SYS_BOOT) || kexec_load_disabled || !(kexec_enabled))
 		return -EPERM;
 
 	if (get_securelevel() > 0)

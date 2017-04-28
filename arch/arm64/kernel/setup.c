@@ -31,7 +31,6 @@
 #include <linux/screen_info.h>
 #include <linux/init.h>
 #include <linux/kexec.h>
-#include <linux/crash_dump.h>
 #include <linux/root_dev.h>
 #include <linux/cpu.h>
 #include <linux/interrupt.h>
@@ -226,6 +225,12 @@ static void __init request_standard_resources(void)
 		if (kernel_data.start >= res->start &&
 		    kernel_data.end <= res->end)
 			request_resource(res, &kernel_data);
+#ifdef CONFIG_KEXEC_CORE
+		/* Userspace will find "Crash kernel" region in /proc/iomem. */
+		if (crashk_res.end && crashk_res.start >= res->start &&
+		    crashk_res.end <= res->end)
+			request_resource(res, &crashk_res);
+#endif
 	}
 }
 
@@ -298,7 +303,7 @@ void __init setup_arch(char **cmdline_p)
 {
 	pr_info("Boot CPU: AArch64 Processor [%08x]\n", read_cpuid_id());
 
-	sprintf(init_utsname()->machine, ELF_PLATFORM);
+	sprintf(init_utsname()->machine, UTS_MACHINE);
 	init_mm.start_code = (unsigned long) _text;
 	init_mm.end_code   = (unsigned long) _etext;
 	init_mm.end_data   = (unsigned long) _edata;
