@@ -195,6 +195,7 @@ int main(void)
 					    context.low_slices_psize));
 	DEFINE(PACAHIGHSLICEPSIZE, offsetof(struct paca_struct,
 					    context.high_slices_psize));
+	DEFINE(PACA_ADDR_LIMIT, offsetof(struct paca_struct, addr_limit));
 	DEFINE(MMUPSIZEDEFSIZE, sizeof(struct mmu_psize_def));
 #endif /* CONFIG_PPC_MM_SLICES */
 
@@ -433,7 +434,11 @@ int main(void)
 	DEFINE(BUG_ENTRY_SIZE, sizeof(struct bug_entry));
 #endif
 
+#ifdef CONFIG_PPC_BOOK3S_64
+	DEFINE(PGD_TABLE_SIZE, (sizeof(pgd_t) << PGD_INDEX_SIZE));
+#else
 	DEFINE(PGD_TABLE_SIZE, PGD_TABLE_SIZE);
+#endif
 	DEFINE(PTE_SIZE, sizeof(pte_t));
 
 #ifdef CONFIG_KVM
