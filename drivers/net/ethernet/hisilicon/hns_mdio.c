@@ -541,18 +541,6 @@ static int hns_mdio_probe(struct platform_device *pdev)
 	return 0;
 }
 
-void hns_mdio_register(void)
-{
-	__module_get(THIS_MODULE);
-}
-EXPORT_SYMBOL(hns_mdio_register);
-
-void hns_mdio_unregister(void)
-{
-	module_put(THIS_MODULE);
-}
-EXPORT_SYMBOL(hns_mdio_unregister);
-
 /**
  * hns_mdio_remove - remove mdio device
  * @pdev: mdio platform device

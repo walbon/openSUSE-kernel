@@ -27,7 +27,6 @@
 #include "hns_dsaf_ppe.h"
 #include "hns_dsaf_rcb.h"
 #include "hns_dsaf_misc.h"
-#include "../hns_mdio.h"
 
 const char *g_dsaf_mode_match[DSAF_MODE_MAX] = {
 	[DSAF_MODE_DISABLE_2PORT_64VM] = "2port-64vf",
@@ -2739,8 +2738,6 @@ static int hns_dsaf_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	hns_mdio_register();
-
 	ret = hns_dsaf_get_cfg(dsaf_dev);
 	if (ret)
 		goto free_dev;
@@ -2795,8 +2792,6 @@ static int hns_dsaf_remove(struct platform_device *pdev)
 	hns_dsaf_free(dsaf_dev);
 
 	hns_dsaf_free_dev(dsaf_dev);
-
-	hns_mdio_unregister();
 
 	return 0;
 }
