@@ -30,17 +30,16 @@
 static DEFINE_SPINLOCK(mmu_context_lock);
 static DEFINE_IDA(mmu_context_ida);
 
-int __init_new_context(void)
+static int alloc_context_id(int min_id, int max_id)
 {
-	int index;
-	int err;
+	int index, err;
 
 again:
 	if (!ida_pre_get(&mmu_context_ida, GFP_KERNEL))
 		return -ENOMEM;
 
 	spin_lock(&mmu_context_lock);
-	err = ida_get_new_above(&mmu_context_ida, 1, &index);
+	err = ida_get_new_above(&mmu_context_ida, min_id, &index);
 	spin_unlock(&mmu_context_lock);
 
 	if (err == -EAGAIN)
@@ -48,7 +47,7 @@ again:
 	else if (err)
 		return err;
 
-	if (index > MAX_USER_CONTEXT) {
+	if (index > max_id) {
 		spin_lock(&mmu_context_lock);
 		ida_remove(&mmu_context_ida, index);
 		spin_unlock(&mmu_context_lock);
@@ -57,15 +56,50 @@ again:
 
 	return index;
 }
-EXPORT_SYMBOL_GPL(__init_new_context);
 
-int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
+void hash__reserve_context_id(int id)
+{
+	int rc, result = 0;
+
+	do {
+		if (!ida_pre_get(&mmu_context_ida, GFP_KERNEL))
+			break;
+
+		spin_lock(&mmu_context_lock);
+		rc = ida_get_new_above(&mmu_context_ida, id, &result);
+		spin_unlock(&mmu_context_lock);
+	} while (rc == -EAGAIN);
+
+	WARN(result != id, "mmu: Failed to reserve context id %d (rc %d)\n", id, result);
+}
+
+int hash__alloc_context_id(void)
+{
+	unsigned long max;
+
+	if (mmu_has_feature(MMU_FTR_68_BIT_VA))
+		max = MAX_USER_CONTEXT;
+	else
+		max = MAX_USER_CONTEXT_65BIT_VA;
+
+	return alloc_context_id(MIN_USER_CONTEXT, max);
+}
+EXPORT_SYMBOL_GPL(hash__alloc_context_id);
+
+static int hash__init_new_context(struct mm_struct *mm)
 {
 	int index;
 
-	index = __init_new_context();
+	index = hash__alloc_context_id();
 	if (index < 0)
 		return index;
+
+	/*
+	 * We do switch_slb() early in fork, even before we setup the
+	 * mm->context.addr_limit. Default to max task size so that we copy the
+	 * default values to paca which will help us to handle slb miss early.
+	 */
+	mm->context.addr_limit = TASK_SIZE_128TB;
 
 	/* The old code would re-promote on fork, we don't do that
 	 * when using slices as it could cause problem promoting slices
@@ -73,8 +107,22 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 	 */
 	if (slice_mm_new_context(mm))
 		slice_set_user_psize(mm, mmu_virtual_psize);
+
 	subpage_prot_init_new_context(mm);
+
+	return index;
+}
+
+int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
+{
+	int index;
+
+	index = hash__init_new_context(mm);
+	if (index < 0)
+		return index;
+
 	mm->context.id = index;
+
 #ifdef CONFIG_PPC_ICSWX
 	mm->context.cop_lockp = kmalloc(sizeof(spinlock_t), GFP_KERNEL);
 	if (!mm->context.cop_lockp) {
