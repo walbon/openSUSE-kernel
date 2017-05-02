@@ -101,8 +101,6 @@ struct raid_dev {
 #define CTR_FLAG_RAID10_USE_NEAR_SETS	(1 << __CTR_FLAG_RAID10_USE_NEAR_SETS)
 #define CTR_FLAG_JOURNAL_DEV		(1 << __CTR_FLAG_JOURNAL_DEV)
 
-#define RESUME_STAY_FROZEN_FLAGS (CTR_FLAG_DELTA_DISKS | CTR_FLAG_DATA_OFFSET)
-
 /*
  * Definitions of various constructor flags to
  * be used in checks of valid / invalid flags
@@ -3726,7 +3724,7 @@ static int raid_preresume(struct dm_target *ti)
 		return r;
 
 	/* Resize bitmap to adjust to changed region size (aka MD bitmap chunksize) */
-	if (test_bit(RT_FLAG_RS_BITMAP_LOADED, &rs->runtime_flags) && mddev->bitmap &&
+	if (test_bit(RT_FLAG_RS_BITMAP_LOADED, &rs->runtime_flags) &&
 	    mddev->bitmap_info.chunksize != to_bytes(rs->requested_bitmap_chunk_sectors)) {
 		r = bitmap_resize(mddev->bitmap, mddev->dev_sectors,
 				  to_bytes(rs->requested_bitmap_chunk_sectors), 0);
@@ -3757,6 +3755,8 @@ static int raid_preresume(struct dm_target *ti)
 
 	return r;
 }
+
+#define RESUME_STAY_FROZEN_FLAGS (CTR_FLAG_DELTA_DISKS | CTR_FLAG_DATA_OFFSET)
 
 static void raid_resume(struct dm_target *ti)
 {
@@ -3791,7 +3791,7 @@ static void raid_resume(struct dm_target *ti)
 
 static struct target_type raid_target = {
 	.name = "raid",
-	.version = {1, 10, 1},
+	.version = {1, 10, 0},
 	.module = THIS_MODULE,
 	.ctr = raid_ctr,
 	.dtr = raid_dtr,

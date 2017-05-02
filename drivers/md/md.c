@@ -64,8 +64,6 @@
 #include <linux/raid/md_p.h>
 #include <linux/raid/md_u.h>
 #include <linux/slab.h>
-#include <linux/percpu-refcount.h>
-
 #include <trace/events/block.h>
 #include "md.h"
 #include "bitmap.h"
@@ -173,16 +171,6 @@ static const struct block_device_operations md_fops;
 
 static int start_readonly;
 
-/*
- * The original mechanism for creating an md device is to create
- * a device node in /dev and to open it.  This causes races with device-close.
- * The preferred method is to write to the "new_array" module parameter.
- * This can avoid races.
- * Setting create_on_open to false disables the original mechanism
- * so all the races disappear.
- */
-static bool create_on_open = true;
-
 /* bio_clone_mddev
  * like bio_clone, but with a local bio set
  */
@@ -201,6 +189,16 @@ struct bio *bio_alloc_mddev(gfp_t gfp_mask, int nr_iovecs,
 	return b;
 }
 EXPORT_SYMBOL_GPL(bio_alloc_mddev);
+
+struct bio *bio_clone_mddev(struct bio *bio, gfp_t gfp_mask,
+			    struct mddev *mddev)
+{
+	if (!mddev || !mddev->bio_set)
+		return bio_clone(bio, gfp_mask);
+
+	return bio_clone_bioset(bio, gfp_mask, mddev->bio_set);
+}
+EXPORT_SYMBOL_GPL(bio_clone_mddev);
 
 /*
  * We have a system wide 'event count' that is incremented
@@ -450,6 +448,14 @@ void md_flush_request(struct mddev *mddev, struct bio *bio)
 	queue_work(md_wq, &mddev->flush_work);
 }
 EXPORT_SYMBOL(md_flush_request);
+
+void md_unplug(struct blk_plug_cb *cb, bool from_schedule)
+{
+	struct mddev *mddev = cb->data;
+	md_wakeup_thread(mddev->thread);
+	kfree(cb);
+}
+EXPORT_SYMBOL(md_unplug);
 
 static inline struct mddev *mddev_get(struct mddev *mddev)
 {
@@ -1909,7 +1915,7 @@ super_1_rdev_size_change(struct md_rdev *rdev, sector_t num_sectors)
 	}
 	sb = page_address(rdev->sb_page);
 	sb->data_size = cpu_to_le64(num_sectors);
-	sb->super_offset = cpu_to_le64(rdev->sb_start);
+	sb->super_offset = rdev->sb_start;
 	sb->sb_csum = calc_sb_1_csum(sb);
 	do {
 		md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
@@ -2267,33 +2273,6 @@ static void export_array(struct mddev *mddev)
 	mddev->major_version = 0;
 }
 
-static bool set_in_sync(struct mddev *mddev)
-{
-	WARN_ON_ONCE(!spin_is_locked(&mddev->lock));
-	if (!mddev->in_sync) {
-		mddev->sync_checkers++;
-		spin_unlock(&mddev->lock);
-		percpu_ref_switch_to_atomic_sync(&mddev->writes_pending);
-		spin_lock(&mddev->lock);
-		if (!mddev->in_sync &&
-		    percpu_ref_is_zero(&mddev->writes_pending)) {
-			mddev->in_sync = 1;
-			/*
-			 * Ensure ->in_sync is visible before we clear
-			 * ->sync_checkers.
-			 */
-			smp_mb();
-			set_bit(MD_SB_CHANGE_CLEAN, &mddev->sb_flags);
-			sysfs_notify_dirent_safe(mddev->sysfs_state);
-		}
-		if (--mddev->sync_checkers == 0)
-			percpu_ref_switch_to_percpu(&mddev->writes_pending);
-	}
-	if (mddev->safemode == 1)
-		mddev->safemode = 0;
-	return mddev->in_sync;
-}
-
 static void sync_sbs(struct mddev *mddev, int nospares)
 {
 	/* Update each superblock (in-memory image), but
@@ -2348,7 +2327,7 @@ static bool does_sb_need_changing(struct mddev *mddev)
 	/* Check if any mddev parameters have changed */
 	if ((mddev->dev_sectors != le64_to_cpu(sb->size)) ||
 	    (mddev->reshape_position != le64_to_cpu(sb->reshape_position)) ||
-	    (mddev->layout != le32_to_cpu(sb->layout)) ||
+	    (mddev->layout != le64_to_cpu(sb->layout)) ||
 	    (mddev->raid_disks != le32_to_cpu(sb->raid_disks)) ||
 	    (mddev->chunk_sectors != le32_to_cpu(sb->chunksize)))
 		return true;
@@ -4038,7 +4017,6 @@ array_state_show(struct mddev *mddev, char *page)
 			st = read_auto;
 			break;
 		case 0:
-			spin_lock(&mddev->lock);
 			if (test_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags))
 				st = write_pending;
 			else if (mddev->in_sync)
@@ -4047,7 +4025,6 @@ array_state_show(struct mddev *mddev, char *page)
 				st = active_idle;
 			else
 				st = active;
-			spin_unlock(&mddev->lock);
 		}
 	else {
 		if (list_empty(&mddev->disks) &&
@@ -4068,7 +4045,7 @@ static int restart_array(struct mddev *mddev);
 static ssize_t
 array_state_store(struct mddev *mddev, const char *buf, size_t len)
 {
-	int err = 0;
+	int err;
 	enum array_state st = match_word(buf, array_states);
 
 	if (mddev->pers && (st == active || st == clean) && mddev->ro != 1) {
@@ -4081,9 +4058,18 @@ array_state_store(struct mddev *mddev, const char *buf, size_t len)
 			clear_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags);
 			md_wakeup_thread(mddev->thread);
 			wake_up(&mddev->sb_wait);
+			err = 0;
 		} else /* st == clean */ {
 			restart_array(mddev);
-			if (!set_in_sync(mddev))
+			if (atomic_read(&mddev->writes_pending) == 0) {
+				if (mddev->in_sync == 0) {
+					mddev->in_sync = 1;
+					if (mddev->safemode == 1)
+						mddev->safemode = 0;
+					set_bit(MD_SB_CHANGE_CLEAN, &mddev->sb_flags);
+				}
+				err = 0;
+			} else
 				err = -EBUSY;
 		}
 		if (!err)
@@ -4141,7 +4127,15 @@ array_state_store(struct mddev *mddev, const char *buf, size_t len)
 			if (err)
 				break;
 			spin_lock(&mddev->lock);
-			if (!set_in_sync(mddev))
+			if (atomic_read(&mddev->writes_pending) == 0) {
+				if (mddev->in_sync == 0) {
+					mddev->in_sync = 1;
+					if (mddev->safemode == 1)
+						mddev->safemode = 0;
+					set_bit(MD_SB_CHANGE_CLEAN, &mddev->sb_flags);
+				}
+				err = 0;
+			} else
 				err = -EBUSY;
 			spin_unlock(&mddev->lock);
 		} else
@@ -4963,10 +4957,8 @@ array_size_store(struct mddev *mddev, const char *buf, size_t len)
 		return err;
 
 	/* cluster raid doesn't support change array_sectors */
-	if (mddev_is_clustered(mddev)) {
-		mddev_unlock(mddev);
+	if (mddev_is_clustered(mddev))
 		return -EINVAL;
-	}
 
 	if (strncmp(buf, "default", 7) == 0) {
 		if (mddev->pers)
@@ -5145,7 +5137,6 @@ static void md_free(struct kobject *ko)
 		del_gendisk(mddev->gendisk);
 		put_disk(mddev->gendisk);
 	}
-	percpu_ref_exit(&mddev->writes_pending);
 
 	kfree(mddev);
 }
@@ -5171,19 +5162,8 @@ static void mddev_delayed_delete(struct work_struct *ws)
 	kobject_put(&mddev->kobj);
 }
 
-static void no_op(struct percpu_ref *r) {}
-
 static int md_alloc(dev_t dev, char *name)
 {
-	/*
-	 * If dev is zero, name is the name of a device to allocate with
-	 * an arbitrary minor number.  It will be "md_???"
-	 * If dev is non-zero it must be a device number with a MAJOR of
-	 * MD_MAJOR or mdp_major.  In this case, if "name" is NULL, then
-	 * the device is being created by opening a node in /dev.
-	 * If "name" is not NULL, the device is being created by
-	 * writing to /sys/module/md_mod/parameters/new_array.
-	 */
 	static DEFINE_MUTEX(disks_mutex);
 	struct mddev *mddev = mddev_find(dev);
 	struct gendisk *disk;
@@ -5209,7 +5189,7 @@ static int md_alloc(dev_t dev, char *name)
 	if (mddev->gendisk)
 		goto abort;
 
-	if (name && !dev) {
+	if (name) {
 		/* Need to ensure that 'name' is not a duplicate.
 		 */
 		struct mddev *mddev2;
@@ -5223,11 +5203,6 @@ static int md_alloc(dev_t dev, char *name)
 			}
 		spin_unlock(&all_mddevs_lock);
 	}
-	if (name && dev)
-		/*
-		 * Creating /dev/mdNNN via "newarray", so adjust hold_active.
-		 */
-		mddev->hold_active = UNTIL_STOP;
 
 	error = -ENOMEM;
 	mddev->queue = blk_alloc_queue(GFP_KERNEL);
@@ -5238,10 +5213,6 @@ static int md_alloc(dev_t dev, char *name)
 	blk_queue_make_request(mddev->queue, md_make_request);
 	blk_set_stacking_limits(&mddev->queue->limits);
 
-	if (percpu_ref_init(&mddev->writes_pending, no_op, 0, GFP_KERNEL) < 0)
-		goto abort;
-	/* We want to start with the refcount at zero */
-	percpu_ref_put(&mddev->writes_pending);
 	disk = alloc_disk(1 << shift);
 	if (!disk) {
 		blk_cleanup_queue(mddev->queue);
@@ -5298,48 +5269,38 @@ static int md_alloc(dev_t dev, char *name)
 
 static struct kobject *md_probe(dev_t dev, int *part, void *data)
 {
-	if (create_on_open)
-		md_alloc(dev, NULL);
+	md_alloc(dev, NULL);
 	return NULL;
 }
 
 static int add_named_array(const char *val, struct kernel_param *kp)
 {
-	/*
-	 * val must be "md_*" or "mdNNN".
-	 * For "md_*" we allocate an array with a large free minor number, and
+	/* val must be "md_*" where * is not all digits.
+	 * We allocate an array with a large free minor number, and
 	 * set the name to val.  val must not already be an active name.
-	 * For "mdNNN" we allocate an array with the minor number NNN
-	 * which must not already be in use.
 	 */
 	int len = strlen(val);
 	char buf[DISK_NAME_LEN];
-	unsigned long devnum;
 
 	while (len && val[len-1] == '\n')
 		len--;
 	if (len >= DISK_NAME_LEN)
 		return -E2BIG;
 	strlcpy(buf, val, len+1);
-	if (strncmp(buf, "md_", 3) == 0)
-		return md_alloc(0, buf);
-	if (strncmp(buf, "md", 2) == 0 &&
-	    isdigit(buf[2]) &&
-	    kstrtoul(buf+2, 10, &devnum) == 0 &&
-	    devnum <= MINORMASK)
-		return md_alloc(MKDEV(MD_MAJOR, devnum), NULL);
-
-	return -EINVAL;
+	if (strncmp(buf, "md_", 3) != 0)
+		return -EINVAL;
+	return md_alloc(0, buf);
 }
 
 static void md_safemode_timeout(unsigned long data)
 {
 	struct mddev *mddev = (struct mddev *) data;
 
-	mddev->safemode = 1;
-	if (mddev->external)
-		sysfs_notify_dirent_safe(mddev->sysfs_state);
-
+	if (!atomic_read(&mddev->writes_pending)) {
+		mddev->safemode = 1;
+		if (mddev->external)
+			sysfs_notify_dirent_safe(mddev->sysfs_state);
+	}
 	md_wakeup_thread(mddev->thread);
 }
 
@@ -5551,6 +5512,7 @@ int md_run(struct mddev *mddev)
 	} else if (mddev->ro == 2) /* auto-readonly not meaningful */
 		mddev->ro = 0;
 
+	atomic_set(&mddev->writes_pending,0);
 	atomic_set(&mddev->max_corr_read_errors,
 		   MD_DEFAULT_MAX_CORRECTED_READ_ERRORS);
 	mddev->safemode = 0;
@@ -6647,10 +6609,11 @@ static int set_array_info(struct mddev *mddev, mdu_array_info_t *info)
 	mddev->layout        = info->layout;
 	mddev->chunk_sectors = info->chunk_size >> 9;
 
+	mddev->max_disks     = MD_SB_DISKS;
+
 	if (mddev->persistent) {
-		mddev->max_disks = MD_SB_DISKS;
-		mddev->flags = 0;
-		mddev->sb_flags = 0;
+		mddev->flags         = 0;
+		mddev->sb_flags         = 0;
 	}
 	set_bit(MD_SB_CHANGE_DEVS, &mddev->sb_flags);
 
@@ -6972,7 +6935,6 @@ static int md_ioctl(struct block_device *bdev, fmode_t mode,
 	void __user *argp = (void __user *)arg;
 	struct mddev *mddev = NULL;
 	int ro;
-	bool did_set_md_closing = false;
 
 	if (!md_ioctl_valid(cmd))
 		return -ENOTTY;
@@ -7062,9 +7024,7 @@ static int md_ioctl(struct block_device *bdev, fmode_t mode,
 			err = -EBUSY;
 			goto out;
 		}
-		WARN_ON_ONCE(test_bit(MD_CLOSING, &mddev->flags));
 		set_bit(MD_CLOSING, &mddev->flags);
-		did_set_md_closing = true;
 		mutex_unlock(&mddev->open_mutex);
 		sync_blockdev(bdev);
 	}
@@ -7257,8 +7217,6 @@ unlock:
 		mddev->hold_active = 0;
 	mddev_unlock(mddev);
 out:
-	if(did_set_md_closing)
-		clear_bit(MD_CLOSING, &mddev->flags);
 	return err;
 }
 #ifdef CONFIG_COMPAT
@@ -7409,8 +7367,8 @@ void md_wakeup_thread(struct md_thread *thread)
 {
 	if (thread) {
 		pr_debug("md: waking up MD thread %s.\n", thread->tsk->comm);
-		if (!test_and_set_bit(THREAD_WAKEUP, &thread->flags))
-			wake_up(&thread->wqueue);
+		set_bit(THREAD_WAKEUP, &thread->flags);
+		wake_up(&thread->wqueue);
 	}
 }
 EXPORT_SYMBOL(md_wakeup_thread);
@@ -7957,13 +7915,10 @@ void md_write_start(struct mddev *mddev, struct bio *bi)
 		md_wakeup_thread(mddev->sync_thread);
 		did_change = 1;
 	}
-	rcu_read_lock();
-	percpu_ref_get(&mddev->writes_pending);
-	smp_mb(); /* Match smp_mb in set_in_sync() */
+	atomic_inc(&mddev->writes_pending);
 	if (mddev->safemode == 1)
 		mddev->safemode = 0;
-	/* sync_checkers is always 0 when writes_pending is in per-cpu mode */
-	if (mddev->in_sync || !mddev->sync_checkers) {
+	if (mddev->in_sync) {
 		spin_lock(&mddev->lock);
 		if (mddev->in_sync) {
 			mddev->in_sync = 0;
@@ -7974,7 +7929,6 @@ void md_write_start(struct mddev *mddev, struct bio *bi)
 		}
 		spin_unlock(&mddev->lock);
 	}
-	rcu_read_unlock();
 	if (did_change)
 		sysfs_notify_dirent_safe(mddev->sysfs_state);
 	wait_event(mddev->sb_wait,
@@ -7982,38 +7936,15 @@ void md_write_start(struct mddev *mddev, struct bio *bi)
 }
 EXPORT_SYMBOL(md_write_start);
 
-/* md_write_inc can only be called when md_write_start() has
- * already been called at least once of the current request.
- * It increments the counter and is useful when a single request
- * is split into several parts.  Each part causes an increment and
- * so needs a matching md_write_end().
- * Unlike md_write_start(), it is safe to call md_write_inc() inside
- * a spinlocked region.
- */
-void md_write_inc(struct mddev *mddev, struct bio *bi)
-{
-	if (bio_data_dir(bi) != WRITE)
-		return;
-	WARN_ON_ONCE(mddev->in_sync || mddev->ro);
-	percpu_ref_get(&mddev->writes_pending);
-}
-EXPORT_SYMBOL(md_write_inc);
-
 void md_write_end(struct mddev *mddev)
 {
-	percpu_ref_put(&mddev->writes_pending);
-
-	if (mddev->safemode == 2)
-		md_wakeup_thread(mddev->thread);
-	else if (mddev->safemode_delay)
-		/* The roundup() ensures this only performs locking once
-		 * every ->safemode_delay jiffies
-		 */
-		mod_timer(&mddev->safemode_timer,
-			  roundup(jiffies, mddev->safemode_delay) +
-			  mddev->safemode_delay);
+	if (atomic_dec_and_test(&mddev->writes_pending)) {
+		if (mddev->safemode == 2)
+			md_wakeup_thread(mddev->thread);
+		else if (mddev->safemode_delay)
+			mod_timer(&mddev->safemode_timer, jiffies + mddev->safemode_delay);
+	}
 }
-
 EXPORT_SYMBOL(md_write_end);
 
 /* md_allow_write(mddev)
@@ -8614,7 +8545,7 @@ void md_check_recovery(struct mddev *mddev)
 		test_bit(MD_RECOVERY_NEEDED, &mddev->recovery) ||
 		test_bit(MD_RECOVERY_DONE, &mddev->recovery) ||
 		(mddev->external == 0 && mddev->safemode == 1) ||
-		(mddev->safemode == 2
+		(mddev->safemode == 2 && ! atomic_read(&mddev->writes_pending)
 		 && !mddev->in_sync && mddev->recovery_cp == MaxSector)
 		))
 		return;
@@ -8663,10 +8594,22 @@ void md_check_recovery(struct mddev *mddev)
 			}
 		}
 
-		if (!mddev->external && !mddev->in_sync) {
+		if (!mddev->external) {
+			int did_change = 0;
 			spin_lock(&mddev->lock);
-			set_in_sync(mddev);
+			if (mddev->safemode &&
+			    !atomic_read(&mddev->writes_pending) &&
+			    !mddev->in_sync &&
+			    mddev->recovery_cp == MaxSector) {
+				mddev->in_sync = 1;
+				did_change = 1;
+				set_bit(MD_SB_CHANGE_CLEAN, &mddev->sb_flags);
+			}
+			if (mddev->safemode == 1)
+				mddev->safemode = 0;
 			spin_unlock(&mddev->lock);
+			if (did_change)
+				sysfs_notify_dirent_safe(mddev->sysfs_state);
 		}
 
 		if (mddev->sb_flags)
@@ -9220,7 +9163,6 @@ static int set_ro(const char *val, struct kernel_param *kp)
 module_param_call(start_ro, set_ro, get_ro, NULL, S_IRUSR|S_IWUSR);
 module_param(start_dirty_degraded, int, S_IRUGO|S_IWUSR);
 module_param_call(new_array, add_named_array, NULL, NULL, S_IWUSR);
-module_param(create_on_open, bool, S_IRUSR|S_IWUSR);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("MD RAID framework");
