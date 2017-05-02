@@ -33,7 +33,7 @@ extern bool r5c_big_stripe_cached(struct r5conf *conf, sector_t sect);
 
 extern struct dma_async_tx_descriptor *
 ops_run_partial_parity(struct stripe_head *sh, struct raid5_percpu *percpu,
-		       struct dma_async_tx_descriptor *tx);
+			struct dma_async_tx_descriptor *tx);
 extern int ppl_init_log(struct r5conf *conf);
 extern void ppl_exit_log(struct r5conf *conf);
 extern int ppl_write_stripe(struct r5conf *conf, struct stripe_head *sh);

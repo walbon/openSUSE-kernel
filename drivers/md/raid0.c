@@ -29,8 +29,7 @@
 #define UNSUPPORTED_MDDEV_FLAGS		\
 	((1L << MD_HAS_JOURNAL) |	\
 	 (1L << MD_JOURNAL_CLEAN) |	\
-	 (1L << MD_FAILFAST_SUPPORTED) |\
-	 (1L << MD_HAS_PPL))
+	 (1L << MD_FAILFAST_SUPPORTED))
 
 static int raid0_congested(struct mddev *mddev, int bits)
 {

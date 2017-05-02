@@ -44,8 +44,7 @@
 
 #define UNSUPPORTED_MDDEV_FLAGS		\
 	((1L << MD_HAS_JOURNAL) |	\
-	 (1L << MD_JOURNAL_CLEAN) |	\
-	 (1L << MD_HAS_PPL))
+	 (1L << MD_JOURNAL_CLEAN))
 
 /*
  * Number of guaranteed r1bios in case of extreme VM load:
@@ -882,7 +881,7 @@ static void raise_barrier(struct r1conf *conf, sector_t sector_nr)
 			     atomic_read(&conf->barrier[idx]) < RESYNC_DEPTH,
 			    conf->resync_lock);
 
-	atomic_inc(&conf->nr_sync_pending);
+	atomic_inc(&conf->nr_pending[idx]);
 	spin_unlock_irq(&conf->resync_lock);
 }
 
@@ -893,7 +892,7 @@ static void lower_barrier(struct r1conf *conf, sector_t sector_nr)
 	BUG_ON(atomic_read(&conf->barrier[idx]) <= 0);
 
 	atomic_dec(&conf->barrier[idx]);
-	atomic_dec(&conf->nr_sync_pending);
+	atomic_dec(&conf->nr_pending[idx]);
 	wake_up(&conf->wait_barrier);
 }
 
@@ -1030,8 +1029,7 @@ static int get_unqueued_pending(struct r1conf *conf)
 {
 	int idx, ret;
 
-	ret = atomic_read(&conf->nr_sync_pending);
-	for (idx = 0; idx < BARRIER_BUCKETS_NR; idx++)
+	for (ret = 0, idx = 0; idx < BARRIER_BUCKETS_NR; idx++)
 		ret += atomic_read(&conf->nr_pending[idx]) -
 			atomic_read(&conf->nr_queued[idx]);
 
@@ -1829,9 +1827,9 @@ static int raid1_remove_disk(struct mddev *mddev, struct md_rdev *rdev)
 			p->rdev = repl;
 			conf->mirrors[conf->raid_disks + number].rdev = NULL;
 			unfreeze_array(conf);
-		}
-
-		clear_bit(WantReplacement, &rdev->flags);
+			clear_bit(WantReplacement, &rdev->flags);
+		} else
+			clear_bit(WantReplacement, &rdev->flags);
 		err = md_integrity_register(mddev);
 	}
 abort:

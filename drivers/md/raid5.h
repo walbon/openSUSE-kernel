@@ -230,10 +230,10 @@ struct stripe_head {
 	};
 
 	struct list_head	log_list;
-	sector_t		log_start; /* first meta block on the journal */
-	struct list_head	r5c; /* for r5c_cache->stripe_in_journal */
 
 	struct page		*ppl_page; /* partial parity of this stripe */
+	sector_t		log_start; /* first meta block on the journal */
+	struct list_head	r5c; /* for r5c_cache->stripe_in_journal */
 	/**
 	 * struct stripe_operations
 	 * @target - STRIPE_OP_COMPUTE_BLK target
@@ -486,6 +486,12 @@ static inline struct bio *r5_next_bio(struct bio *bio, sector_t sector)
 	else
 		return NULL;
 }
+
+#define NR_STRIPES		256
+#define STRIPE_SIZE		PAGE_SIZE
+#define STRIPE_SHIFT		(PAGE_SHIFT - 9)
+#define STRIPE_SECTORS		(STRIPE_SIZE>>9)
+
 
 /* NOTE NR_STRIPE_HASH_LOCKS must remain below 64.
  * This is because we sometimes take all the spinlocks
