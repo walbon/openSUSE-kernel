@@ -51,7 +51,7 @@ static unsigned int debug_quirks2;
 static void sdhci_finish_data(struct sdhci_host *);
 
 static void sdhci_finish_command(struct sdhci_host *);
-static int sdhci_execute_tuning(struct mmc_host *mmc, u32 opcode);
+int sdhci_execute_tuning(struct mmc_host *mmc, u32 opcode);
 static void sdhci_enable_preset_value(struct sdhci_host *host, bool enable);
 static int sdhci_pre_dma_transfer(struct sdhci_host *host,
 					struct mmc_data *data);
@@ -213,7 +213,7 @@ static void sdhci_do_reset(struct sdhci_host *host, u8 mask)
 	}
 }
 
-static void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios);
+void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios);
 
 static void sdhci_init(struct sdhci_host *host, int soft)
 {
@@ -227,6 +227,10 @@ static void sdhci_init(struct sdhci_host *host, int soft)
 		    SDHCI_INT_INDEX | SDHCI_INT_END_BIT | SDHCI_INT_CRC |
 		    SDHCI_INT_TIMEOUT | SDHCI_INT_DATA_END |
 		    SDHCI_INT_RESPONSE;
+
+	if (host->tuning_mode == SDHCI_TUNING_MODE_2 ||
+	    host->tuning_mode == SDHCI_TUNING_MODE_3)
+		host->ier |= SDHCI_INT_RETUNE;
 
 	sdhci_writel(host, host->ier, SDHCI_INT_ENABLE);
 	sdhci_writel(host, host->ier, SDHCI_SIGNAL_ENABLE);
@@ -1625,7 +1629,7 @@ static void sdhci_do_set_ios(struct sdhci_host *host, struct mmc_ios *ios)
 	spin_unlock_irqrestore(&host->lock, flags);
 }
 
-static void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
+void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 {
 	struct sdhci_host *host = mmc_priv(mmc);
 
@@ -1736,7 +1740,7 @@ static void sdhci_enable_sdio_irq_nolock(struct sdhci_host *host, int enable)
 	}
 }
 
-static void sdhci_enable_sdio_irq(struct mmc_host *mmc, int enable)
+void sdhci_enable_sdio_irq(struct mmc_host *mmc, int enable)
 {
 	struct sdhci_host *host = mmc_priv(mmc);
 	unsigned long flags;
@@ -1750,6 +1754,7 @@ static void sdhci_enable_sdio_irq(struct mmc_host *mmc, int enable)
 	sdhci_enable_sdio_irq_nolock(host, enable);
 	spin_unlock_irqrestore(&host->lock, flags);
 }
+EXPORT_SYMBOL_GPL(sdhci_set_ios);
 
 static int sdhci_do_start_signal_voltage_switch(struct sdhci_host *host,
 						struct mmc_ios *ios)
@@ -1841,9 +1846,10 @@ static int sdhci_do_start_signal_voltage_switch(struct sdhci_host *host,
 		return 0;
 	}
 }
+EXPORT_SYMBOL_GPL(sdhci_enable_sdio_irq);
 
-static int sdhci_start_signal_voltage_switch(struct mmc_host *mmc,
-	struct mmc_ios *ios)
+int sdhci_start_signal_voltage_switch(struct mmc_host *mmc,
+				     struct mmc_ios *ios)
 {
 	struct sdhci_host *host = mmc_priv(mmc);
 
@@ -1852,6 +1858,7 @@ static int sdhci_start_signal_voltage_switch(struct mmc_host *mmc,
 
 	return sdhci_do_start_signal_voltage_switch(host, ios);
 }
+EXPORT_SYMBOL_GPL(sdhci_start_signal_voltage_switch);
 
 static int sdhci_card_busy(struct mmc_host *mmc)
 {
@@ -1876,7 +1883,7 @@ static int sdhci_prepare_hs400_tuning(struct mmc_host *mmc, struct mmc_ios *ios)
 	return 0;
 }
 
-static int sdhci_execute_tuning(struct mmc_host *mmc, u32 opcode)
+int sdhci_execute_tuning(struct mmc_host *mmc, u32 opcode)
 {
 	struct sdhci_host *host = mmc_priv(mmc);
 	u16 ctrl;
@@ -2091,6 +2098,7 @@ out_unlock:
 	spin_unlock_irqrestore(&host->lock, flags);
 	return err;
 }
+EXPORT_SYMBOL_GPL(sdhci_execute_tuning);
 
 static int sdhci_select_drive_strength(struct mmc_card *card,
 				       unsigned int max_dtr, int host_drv,
@@ -2609,6 +2617,9 @@ static irqreturn_t sdhci_irq(int irq, void *dev_id)
 			pr_err("%s: Card is consuming too much power!\n",
 				mmc_hostname(host->mmc));
 
+		if (intmask & SDHCI_INT_RETUNE)
+			mmc_retune_needed(host->mmc);
+
 		if ((intmask & SDHCI_INT_CARD_INT) &&
 		    (host->ier & SDHCI_INT_CARD_INT)) {
 			sdhci_enable_sdio_irq_nolock(host, false);
@@ -2619,7 +2630,7 @@ static irqreturn_t sdhci_irq(int irq, void *dev_id)
 		intmask &= ~(SDHCI_INT_CARD_INSERT | SDHCI_INT_CARD_REMOVE |
 			     SDHCI_INT_CMD_MASK | SDHCI_INT_DATA_MASK |
 			     SDHCI_INT_ERROR | SDHCI_INT_BUS_POWER |
-			     SDHCI_INT_CARD_INT);
+			     SDHCI_INT_RETUNE | SDHCI_INT_CARD_INT);
 
 		if (intmask) {
 			unexpected |= intmask;
@@ -2709,7 +2720,8 @@ int sdhci_suspend_host(struct sdhci_host *host)
 	sdhci_disable_card_detection(host);
 
 	mmc_retune_timer_stop(host->mmc);
-	mmc_retune_needed(host->mmc);
+	if (host->tuning_mode != SDHCI_TUNING_MODE_3)
+		mmc_retune_needed(host->mmc);
 
 	if (!device_may_wakeup(mmc_dev(host->mmc))) {
 		host->ier = 0;
@@ -2785,7 +2797,8 @@ int sdhci_runtime_suspend_host(struct sdhci_host *host)
 	unsigned long flags;
 
 	mmc_retune_timer_stop(host->mmc);
-	mmc_retune_needed(host->mmc);
+	if (host->tuning_mode != SDHCI_TUNING_MODE_3)
+		mmc_retune_needed(host->mmc);
 
 	spin_lock_irqsave(&host->lock, flags);
 	host->ier &= SDHCI_INT_CARD_INT;
