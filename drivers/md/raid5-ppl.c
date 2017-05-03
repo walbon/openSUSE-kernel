@@ -102,14 +102,11 @@ struct ppl_conf {
 	struct kmem_cache *io_kc;
 	mempool_t *io_pool;
 	struct bio_set *bs;
+	mempool_t *meta_pool;
 
 	/* used only for recovery */
 	int recovered_entries;
 	int mismatch_count;
-
-	/* stripes to retry if failed to allocate io_unit */
-	struct list_head no_mem_stripes;
-	spinlock_t no_mem_stripes_lock;
 };
 
 struct ppl_log {
@@ -122,6 +119,8 @@ struct ppl_log {
 					 * always at the end of io_list */
 	spinlock_t io_list_lock;
 	struct list_head io_list;	/* all io_units of this log */
+	struct list_head no_mem_stripes;/* stripes to retry if failed to
+					 * allocate io_unit */
 };
 
 #define PPL_IO_INLINE_BVECS 32
@@ -152,7 +151,7 @@ ops_run_partial_parity(struct stripe_head *sh, struct raid5_percpu *percpu,
 		       struct dma_async_tx_descriptor *tx)
 {
 	int disks = sh->disks;
-	struct page **srcs = flex_array_get(percpu->scribble, 0);
+	struct page **xor_srcs = flex_array_get(percpu->scribble, 0);
 	int count = 0, pd_idx = sh->pd_idx, i;
 	struct async_submit_ctl submit;
 
@@ -165,18 +164,18 @@ ops_run_partial_parity(struct stripe_head *sh, struct raid5_percpu *percpu,
 	 * differently.
 	 */
 	if (sh->reconstruct_state == reconstruct_state_prexor_drain_run) {
-		/*
-		 * rmw: xor old data and parity from updated disks
-		 * This is calculated earlier by ops_run_prexor5() so just copy
-		 * the parity dev page.
-		 */
-		srcs[count++] = sh->dev[pd_idx].page;
+		/* rmw: xor old data and parity from updated disks */
+		for (i = disks; i--;) {
+			struct r5dev *dev = &sh->dev[i];
+			if (test_bit(R5_Wantdrain, &dev->flags) || i == pd_idx)
+				xor_srcs[count++] = dev->page;
+		}
 	} else if (sh->reconstruct_state == reconstruct_state_drain_run) {
 		/* rcw: xor data from all not updated disks */
 		for (i = disks; i--;) {
 			struct r5dev *dev = &sh->dev[i];
 			if (test_bit(R5_UPTODATE, &dev->flags))
-				srcs[count++] = dev->page;
+				xor_srcs[count++] = dev->page;
 		}
 	} else {
 		return tx;
@@ -187,40 +186,13 @@ ops_run_partial_parity(struct stripe_head *sh, struct raid5_percpu *percpu,
 			  + sizeof(struct page *) * (sh->disks + 2));
 
 	if (count == 1)
-		tx = async_memcpy(sh->ppl_page, srcs[0], 0, 0, PAGE_SIZE,
+		tx = async_memcpy(sh->ppl_page, xor_srcs[0], 0, 0, PAGE_SIZE,
 				  &submit);
 	else
-		tx = async_xor(sh->ppl_page, srcs, 0, count, PAGE_SIZE,
+		tx = async_xor(sh->ppl_page, xor_srcs, 0, count, PAGE_SIZE,
 			       &submit);
 
 	return tx;
-}
-
-static void *ppl_io_pool_alloc(gfp_t gfp_mask, void *pool_data)
-{
-	struct kmem_cache *kc = pool_data;
-	struct ppl_io_unit *io;
-
-	io = kmem_cache_alloc(kc, gfp_mask);
-	if (!io)
-		return NULL;
-
-	io->header_page = alloc_page(gfp_mask);
-	if (!io->header_page) {
-		kmem_cache_free(kc, io);
-		return NULL;
-	}
-
-	return io;
-}
-
-static void ppl_io_pool_free(void *element, void *pool_data)
-{
-	struct kmem_cache *kc = pool_data;
-	struct ppl_io_unit *io = element;
-
-	__free_page(io->header_page);
-	kmem_cache_free(kc, io);
 }
 
 static struct ppl_io_unit *ppl_new_iounit(struct ppl_log *log,
@@ -229,22 +201,19 @@ static struct ppl_io_unit *ppl_new_iounit(struct ppl_log *log,
 	struct ppl_conf *ppl_conf = log->ppl_conf;
 	struct ppl_io_unit *io;
 	struct ppl_header *pplhdr;
-	struct page *header_page;
 
-	io = mempool_alloc(ppl_conf->io_pool, GFP_NOWAIT);
+	io = mempool_alloc(ppl_conf->io_pool, GFP_ATOMIC);
 	if (!io)
 		return NULL;
 
-	header_page = io->header_page;
 	memset(io, 0, sizeof(*io));
-	io->header_page = header_page;
-
 	io->log = log;
 	INIT_LIST_HEAD(&io->log_sibling);
 	INIT_LIST_HEAD(&io->stripe_list);
 	atomic_set(&io->pending_stripes, 0);
 	bio_init(&io->bio, io->biovec, PPL_IO_INLINE_BVECS);
 
+	io->header_page = mempool_alloc(ppl_conf->meta_pool, GFP_NOIO);
 	pplhdr = page_address(io->header_page);
 	clear_page(pplhdr);
 	memset(pplhdr->reserved, 0xff, PPL_HDR_RESERVED);
@@ -357,7 +326,7 @@ int ppl_write_stripe(struct r5conf *conf, struct stripe_head *sh)
 	struct ppl_io_unit *io = sh->ppl_io;
 	struct ppl_log *log;
 
-	if (io || test_bit(STRIPE_SYNCING, &sh->state) || !sh->ppl_page ||
+	if (io || test_bit(STRIPE_SYNCING, &sh->state) ||
 	    !test_bit(R5_Wantwrite, &sh->dev[sh->pd_idx].flags) ||
 	    !test_bit(R5_Insync, &sh->dev[sh->pd_idx].flags)) {
 		clear_bit(STRIPE_LOG_TRAPPED, &sh->state);
@@ -378,9 +347,9 @@ int ppl_write_stripe(struct r5conf *conf, struct stripe_head *sh)
 	atomic_inc(&sh->count);
 
 	if (ppl_log_stripe(log, sh)) {
-		spin_lock_irq(&ppl_conf->no_mem_stripes_lock);
-		list_add_tail(&sh->log_list, &ppl_conf->no_mem_stripes);
-		spin_unlock_irq(&ppl_conf->no_mem_stripes_lock);
+		spin_lock_irq(&log->io_list_lock);
+		list_add_tail(&sh->log_list, &log->no_mem_stripes);
+		spin_unlock_irq(&log->io_list_lock);
 	}
 
 	mutex_unlock(&log->io_mutex);
@@ -399,6 +368,8 @@ static void ppl_log_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		md_error(ppl_conf->mddev, log->rdev);
+
+	mempool_free(io->header_page, ppl_conf->meta_pool);
 
 	list_for_each_entry_safe(sh, next, &io->stripe_list, log_list) {
 		list_del_init(&sh->log_list);
@@ -521,32 +492,25 @@ void ppl_write_stripe_run(struct r5conf *conf)
 static void ppl_io_unit_finished(struct ppl_io_unit *io)
 {
 	struct ppl_log *log = io->log;
-	struct ppl_conf *ppl_conf = log->ppl_conf;
 	unsigned long flags;
 
 	pr_debug("%s: seq: %llu\n", __func__, io->seq);
 
-	local_irq_save(flags);
+	spin_lock_irqsave(&log->io_list_lock, flags);
 
-	spin_lock(&log->io_list_lock);
 	list_del(&io->log_sibling);
-	spin_unlock(&log->io_list_lock);
+	mempool_free(io, log->ppl_conf->io_pool);
 
-	mempool_free(io, ppl_conf->io_pool);
-
-	spin_lock(&ppl_conf->no_mem_stripes_lock);
-	if (!list_empty(&ppl_conf->no_mem_stripes)) {
-		struct stripe_head *sh;
-
-		sh = list_first_entry(&ppl_conf->no_mem_stripes,
-				      struct stripe_head, log_list);
+	if (!list_empty(&log->no_mem_stripes)) {
+		struct stripe_head *sh = list_first_entry(&log->no_mem_stripes,
+							  struct stripe_head,
+							  log_list);
 		list_del_init(&sh->log_list);
 		set_bit(STRIPE_HANDLE, &sh->state);
 		raid5_release_stripe(sh);
 	}
-	spin_unlock(&ppl_conf->no_mem_stripes_lock);
 
-	local_irq_restore(flags);
+	spin_unlock_irqrestore(&log->io_list_lock, flags);
 }
 
 void ppl_stripe_write_finished(struct stripe_head *sh)
@@ -1034,6 +998,7 @@ static void __ppl_exit_log(struct ppl_conf *ppl_conf)
 
 	kfree(ppl_conf->child_logs);
 
+	mempool_destroy(ppl_conf->meta_pool);
 	if (ppl_conf->bs)
 		bioset_free(ppl_conf->bs);
 	mempool_destroy(ppl_conf->io_pool);
@@ -1105,7 +1070,7 @@ int ppl_init_log(struct r5conf *conf)
 	struct mddev *mddev = conf->mddev;
 	int ret = 0;
 	int i;
-	bool need_cache_flush = false;
+	bool need_cache_flush;
 
 	pr_debug("md/raid:%s: enabling distributed Partial Parity Log\n",
 		 mdname(conf->mddev));
@@ -1139,20 +1104,25 @@ int ppl_init_log(struct r5conf *conf)
 
 	ppl_conf->io_kc = KMEM_CACHE(ppl_io_unit, 0);
 	if (!ppl_conf->io_kc) {
-		ret = -ENOMEM;
+		ret = -EINVAL;
 		goto err;
 	}
 
-	ppl_conf->io_pool = mempool_create(conf->raid_disks, ppl_io_pool_alloc,
-					   ppl_io_pool_free, ppl_conf->io_kc);
+	ppl_conf->io_pool = mempool_create_slab_pool(conf->raid_disks, ppl_conf->io_kc);
 	if (!ppl_conf->io_pool) {
-		ret = -ENOMEM;
+		ret = -EINVAL;
 		goto err;
 	}
 
 	ppl_conf->bs = bioset_create(conf->raid_disks, 0);
 	if (!ppl_conf->bs) {
-		ret = -ENOMEM;
+		ret = -EINVAL;
+		goto err;
+	}
+
+	ppl_conf->meta_pool = mempool_create_page_pool(conf->raid_disks, 0);
+	if (!ppl_conf->meta_pool) {
+		ret = -EINVAL;
 		goto err;
 	}
 
@@ -1165,8 +1135,6 @@ int ppl_init_log(struct r5conf *conf)
 	}
 
 	atomic64_set(&ppl_conf->seq, 0);
-	INIT_LIST_HEAD(&ppl_conf->no_mem_stripes);
-	spin_lock_init(&ppl_conf->no_mem_stripes_lock);
 
 	if (!mddev->external) {
 		ppl_conf->signature = ~crc32c_le(~0, mddev->uuid, sizeof(mddev->uuid));
@@ -1182,6 +1150,7 @@ int ppl_init_log(struct r5conf *conf)
 		mutex_init(&log->io_mutex);
 		spin_lock_init(&log->io_list_lock);
 		INIT_LIST_HEAD(&log->io_list);
+		INIT_LIST_HEAD(&log->no_mem_stripes);
 
 		log->ppl_conf = ppl_conf;
 		log->rdev = rdev;
@@ -1225,7 +1194,6 @@ int ppl_init_log(struct r5conf *conf)
 	}
 
 	conf->log_private = ppl_conf;
-	set_bit(MD_HAS_PPL, &ppl_conf->mddev->flags);
 
 	return 0;
 err:
