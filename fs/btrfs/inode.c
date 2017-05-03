@@ -4665,8 +4665,12 @@ out:
 			btrfs_abort_transaction(trans, ret);
 	}
 error:
-	if (root->root_key.objectid != BTRFS_TREE_LOG_OBJECTID)
+	if (root->root_key.objectid != BTRFS_TREE_LOG_OBJECTID) {
+		ASSERT(last_size >= new_size);
+		if (!err && last_size > new_size)
+			last_size = new_size;
 		btrfs_ordered_update_i_size(inode, last_size, NULL);
+	}
 
 	btrfs_free_path(path);
 
