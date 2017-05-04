@@ -32,6 +32,7 @@
 #include <linux/seq_file.h>
 #include <linux/nmi.h>
 #include <linux/delay.h>
+#include <linux/security.h>
 #include <acpi/acpi.h>
 
 #include "apei-internal.h"
@@ -512,6 +513,9 @@ static int __einj_error_inject(u32 type, u64 param1, u64 param2)
 static int einj_error_inject(u32 type, u64 param1, u64 param2)
 {
 	int rc;
+
+	if (secure_modules())
+		return -EPERM;
 
 	mutex_lock(&einj_mutex);
 	rc = __einj_error_inject(type, param1, param2);
