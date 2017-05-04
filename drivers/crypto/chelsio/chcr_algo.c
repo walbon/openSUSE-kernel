@@ -2670,6 +2670,7 @@ static struct chcr_alg_template driver_algs[] = {
 				.cra_name = "gcm(aes)",
 				.cra_driver_name = "gcm-aes-chcr",
 				.cra_blocksize	= 1,
+				.cra_priority = CHCR_AEAD_PRIORITY,
 				.cra_ctxsize =	sizeof(struct chcr_context) +
 						sizeof(struct chcr_aead_ctx) +
 						sizeof(struct chcr_gcm_ctx),
@@ -2688,6 +2689,7 @@ static struct chcr_alg_template driver_algs[] = {
 				.cra_name = "rfc4106(gcm(aes))",
 				.cra_driver_name = "rfc4106-gcm-aes-chcr",
 				.cra_blocksize	 = 1,
+				.cra_priority = CHCR_AEAD_PRIORITY + 1,
 				.cra_ctxsize =	sizeof(struct chcr_context) +
 						sizeof(struct chcr_aead_ctx) +
 						sizeof(struct chcr_gcm_ctx),
@@ -2707,6 +2709,7 @@ static struct chcr_alg_template driver_algs[] = {
 				.cra_name = "ccm(aes)",
 				.cra_driver_name = "ccm-aes-chcr",
 				.cra_blocksize	 = 1,
+				.cra_priority = CHCR_AEAD_PRIORITY,
 				.cra_ctxsize =	sizeof(struct chcr_context) +
 						sizeof(struct chcr_aead_ctx),
 
@@ -2725,6 +2728,7 @@ static struct chcr_alg_template driver_algs[] = {
 				.cra_name = "rfc4309(ccm(aes))",
 				.cra_driver_name = "rfc4309-ccm-aes-chcr",
 				.cra_blocksize	 = 1,
+				.cra_priority = CHCR_AEAD_PRIORITY + 1,
 				.cra_ctxsize =	sizeof(struct chcr_context) +
 						sizeof(struct chcr_aead_ctx),
 
@@ -2744,6 +2748,7 @@ static struct chcr_alg_template driver_algs[] = {
 				.cra_driver_name =
 					"authenc-hmac-sha1-cbc-aes-chcr",
 				.cra_blocksize	 = AES_BLOCK_SIZE,
+				.cra_priority = CHCR_AEAD_PRIORITY,
 				.cra_ctxsize =	sizeof(struct chcr_context) +
 						sizeof(struct chcr_aead_ctx) +
 						sizeof(struct chcr_authenc_ctx),
@@ -2765,6 +2770,7 @@ static struct chcr_alg_template driver_algs[] = {
 				.cra_driver_name =
 					"authenc-hmac-sha256-cbc-aes-chcr",
 				.cra_blocksize	 = AES_BLOCK_SIZE,
+				.cra_priority = CHCR_AEAD_PRIORITY,
 				.cra_ctxsize =	sizeof(struct chcr_context) +
 						sizeof(struct chcr_aead_ctx) +
 						sizeof(struct chcr_authenc_ctx),
@@ -2785,6 +2791,7 @@ static struct chcr_alg_template driver_algs[] = {
 				.cra_driver_name =
 					"authenc-hmac-sha224-cbc-aes-chcr",
 				.cra_blocksize	 = AES_BLOCK_SIZE,
+				.cra_priority = CHCR_AEAD_PRIORITY,
 				.cra_ctxsize =	sizeof(struct chcr_context) +
 						sizeof(struct chcr_aead_ctx) +
 						sizeof(struct chcr_authenc_ctx),
@@ -2804,6 +2811,7 @@ static struct chcr_alg_template driver_algs[] = {
 				.cra_driver_name =
 					"authenc-hmac-sha384-cbc-aes-chcr",
 				.cra_blocksize	 = AES_BLOCK_SIZE,
+				.cra_priority = CHCR_AEAD_PRIORITY,
 				.cra_ctxsize =	sizeof(struct chcr_context) +
 						sizeof(struct chcr_aead_ctx) +
 						sizeof(struct chcr_authenc_ctx),
@@ -2824,6 +2832,7 @@ static struct chcr_alg_template driver_algs[] = {
 				.cra_driver_name =
 					"authenc-hmac-sha512-cbc-aes-chcr",
 				.cra_blocksize	 = AES_BLOCK_SIZE,
+				.cra_priority = CHCR_AEAD_PRIORITY,
 				.cra_ctxsize =	sizeof(struct chcr_context) +
 						sizeof(struct chcr_aead_ctx) +
 						sizeof(struct chcr_authenc_ctx),
@@ -2844,6 +2853,7 @@ static struct chcr_alg_template driver_algs[] = {
 				.cra_driver_name =
 					"authenc-digest_null-cbc-aes-chcr",
 				.cra_blocksize	 = AES_BLOCK_SIZE,
+				.cra_priority = CHCR_AEAD_PRIORITY,
 				.cra_ctxsize =	sizeof(struct chcr_context) +
 						sizeof(struct chcr_aead_ctx) +
 						sizeof(struct chcr_authenc_ctx),
@@ -2912,8 +2922,6 @@ static int chcr_register_alg(void)
 			name = driver_algs[i].alg.crypto.cra_driver_name;
 			break;
 		case CRYPTO_ALG_TYPE_AEAD:
-			driver_algs[i].alg.aead.base.cra_priority =
-				CHCR_CRA_PRIORITY;
 			driver_algs[i].alg.aead.base.cra_flags =
 				CRYPTO_ALG_TYPE_AEAD | CRYPTO_ALG_ASYNC;
 			driver_algs[i].alg.aead.encrypt = chcr_aead_encrypt;
