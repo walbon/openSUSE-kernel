@@ -42,7 +42,11 @@ struct snd_fw_async_midi_port {
 
 	struct snd_rawmidi_substream *substream;
 	snd_fw_async_midi_port_fill fill;
+#ifdef __GENKSYMS__
 	unsigned int consume_bytes;
+#else
+	int consume_bytes;
+#endif
 };
 
 int snd_fw_async_midi_port_init(struct snd_fw_async_midi_port *port,
