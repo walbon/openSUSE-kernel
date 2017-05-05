@@ -455,7 +455,17 @@ static int fnic_queuecommand_lck(struct scsi_cmnd *sc, void (*done)(struct scsi_
 	}
 
 	rp = rport->dd_data;
-	if (!rp || rp->rp_state != RPORT_ST_READY) {
+	if (!rp) {
+		/*
+		 * rport is transitioning from blocked/deleted to online
+		 */
+		FNIC_SCSI_DBG(KERN_DEBUG, fnic->lport->host,
+				"returning DID_IMM_RETRY for IO as rport is transitioning\n");
+		sc->result = DID_IMM_RETRY << 16;
+		done(sc);
+		return 0;
+	}
+	if (rp->rp_state != RPORT_ST_READY) {
 		FNIC_SCSI_DBG(KERN_DEBUG, fnic->lport->host,
 				"returning DID_NO_CONNECT for IO as rport is removed\n");
 		atomic64_inc(&fnic_stats->misc_stats.rport_not_ready);
