@@ -335,7 +335,7 @@ repeat:
 		fcc->dispatch_list = llist_reverse_order(fcc->dispatch_list);
 
 		bio->bi_bdev = sbi->sb->s_bdev;
-		bio->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH;
+		bio->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH | REQ_SYNC;
 		ret = submit_bio_wait(bio);
 
 		llist_for_each_entry_safe(cmd, next,
@@ -369,7 +369,7 @@ int f2fs_issue_flush(struct f2fs_sb_info *sbi)
 		int ret;
 
 		bio->bi_bdev = sbi->sb->s_bdev;
-		bio->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH;
+		bio->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH | REQ_SYNC;
 		ret = submit_bio_wait(bio);
 		bio_put(bio);
 		return ret;
