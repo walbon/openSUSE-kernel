@@ -541,7 +541,6 @@ struct cxgbi_device {
 	struct pci_dev *pdev;
 	struct dentry *debugfs_root;
 	struct iscsi_transport *itp;
-	struct module *owner;
 
 	unsigned int pfvf;
 	unsigned int rx_credit_thres;
@@ -574,6 +573,9 @@ struct cxgbi_device {
 	int (*csk_init_act_open)(struct cxgbi_sock *);
 
 	void *dd_data;
+#ifndef	__GENKSYMS__
+	struct module *owner;
+#endif
 };
 #define cxgbi_cdev_priv(cdev)	((cdev)->dd_data)
 
