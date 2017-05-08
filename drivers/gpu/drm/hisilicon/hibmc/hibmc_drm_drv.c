@@ -397,6 +397,10 @@ static int hibmc_pci_probe(struct pci_dev *pdev,
 		goto err_disable;
 	}
 
+	ret = drm_dev_set_unique(dev, dev_name(&pdev->dev));
+	if (ret < 0)
+		goto err_unload;
+
 	ret = drm_dev_register(dev, 0);
 	if (ret) {
 		DRM_ERROR("failed to register drv for userspace access: %d\n",
