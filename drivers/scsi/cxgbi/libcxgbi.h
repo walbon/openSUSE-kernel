@@ -573,6 +573,9 @@ struct cxgbi_device {
 	int (*csk_init_act_open)(struct cxgbi_sock *);
 
 	void *dd_data;
+#ifndef	__GENKSYMS__
+	struct module *owner;
+#endif
 };
 #define cxgbi_cdev_priv(cdev)	((cdev)->dd_data)
 
