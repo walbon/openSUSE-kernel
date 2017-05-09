@@ -7372,7 +7372,7 @@ static void i40e_sync_udp_filters_subtask(struct i40e_pf *pf)
 #if IS_ENABLED(CONFIG_VXLAN) || IS_ENABLED(CONFIG_GENEVE)
 	struct i40e_hw *hw = &pf->hw;
 	i40e_status ret;
-	__be16 port;
+	u16 port;
 	int i;
 
 	if (!(pf->flags & I40E_FLAG_UDP_FILTER_SYNC))
@@ -7396,7 +7396,7 @@ static void i40e_sync_udp_filters_subtask(struct i40e_pf *pf)
 					"%s %s port %d, index %d failed, err %s aq_err %s\n",
 					pf->udp_ports[i].type ? "vxlan" : "geneve",
 					port ? "add" : "delete",
-					ntohs(port), i,
+					port, i,
 					i40e_stat_str(&pf->hw, ret),
 					i40e_aq_str(&pf->hw,
 						    pf->hw.aq.asq_last_status));
@@ -9005,7 +9005,7 @@ static int i40e_set_features(struct net_device *netdev,
  *
  * Returns the index number or I40E_MAX_PF_UDP_OFFLOAD_PORTS if port not found
  **/
-static u8 i40e_get_udp_port_idx(struct i40e_pf *pf, __be16 port)
+static u8 i40e_get_udp_port_idx(struct i40e_pf *pf, u16 port)
 {
 	u8 i;
 
@@ -9027,7 +9027,7 @@ static u8 i40e_get_udp_port_idx(struct i40e_pf *pf, __be16 port)
  * @port: New UDP port number that VXLAN started listening to
  **/
 static void i40e_add_vxlan_port(struct net_device *netdev,
-				sa_family_t sa_family, __be16 port)
+				sa_family_t sa_family, u16 port)
 {
 	struct i40e_netdev_priv *np = netdev_priv(netdev);
 	struct i40e_vsi *vsi = np->vsi;
@@ -9035,7 +9035,7 @@ static void i40e_add_vxlan_port(struct net_device *netdev,
 	u8 next_idx;
 	u8 idx;
 
-	idx = i40e_get_udp_port_idx(pf, port);
+	idx = i40e_get_udp_port_idx(pf, ntohs(port));
 
 	/* Check if port already exists */
 	if (idx < I40E_MAX_PF_UDP_OFFLOAD_PORTS) {
@@ -9054,7 +9054,7 @@ static void i40e_add_vxlan_port(struct net_device *netdev,
 	}
 
 	/* New port: add it and mark its index in the bitmap */
-	pf->udp_ports[next_idx].index = port;
+	pf->udp_ports[next_idx].index = ntohs(port);
 	pf->udp_ports[next_idx].type = I40E_AQC_TUNNEL_TYPE_VXLAN;
 	pf->pending_udp_bitmap |= BIT_ULL(next_idx);
 	pf->flags |= I40E_FLAG_UDP_FILTER_SYNC;
@@ -9067,14 +9067,14 @@ static void i40e_add_vxlan_port(struct net_device *netdev,
  * @port: UDP port number that VXLAN stopped listening to
  **/
 static void i40e_del_vxlan_port(struct net_device *netdev,
-				sa_family_t sa_family, __be16 port)
+				sa_family_t sa_family, u16 port)
 {
 	struct i40e_netdev_priv *np = netdev_priv(netdev);
 	struct i40e_vsi *vsi = np->vsi;
 	struct i40e_pf *pf = vsi->back;
 	u8 idx;
 
-	idx = i40e_get_udp_port_idx(pf, port);
+	idx = i40e_get_udp_port_idx(pf, ntohs(port));
 
 	/* Check if port already exists */
 	if (idx < I40E_MAX_PF_UDP_OFFLOAD_PORTS) {
@@ -9099,7 +9099,7 @@ static void i40e_del_vxlan_port(struct net_device *netdev,
  * @port: New UDP port number that GENEVE started listening to
  **/
 static void i40e_add_geneve_port(struct net_device *netdev,
-				 sa_family_t sa_family, __be16 port)
+				 sa_family_t sa_family, u16 port)
 {
 	struct i40e_netdev_priv *np = netdev_priv(netdev);
 	struct i40e_vsi *vsi = np->vsi;
@@ -9110,7 +9110,7 @@ static void i40e_add_geneve_port(struct net_device *netdev,
 	if (!(pf->flags & I40E_FLAG_GENEVE_OFFLOAD_CAPABLE))
 		return;
 
-	idx = i40e_get_udp_port_idx(pf, port);
+	idx = i40e_get_udp_port_idx(pf, ntohs(port));
 
 	/* Check if port already exists */
 	if (idx < I40E_MAX_PF_UDP_OFFLOAD_PORTS) {
@@ -9129,12 +9129,12 @@ static void i40e_add_geneve_port(struct net_device *netdev,
 	}
 
 	/* New port: add it and mark its index in the bitmap */
-	pf->udp_ports[next_idx].index = port;
+	pf->udp_ports[next_idx].index = ntohs(port);
 	pf->udp_ports[next_idx].type = I40E_AQC_TUNNEL_TYPE_NGE;
 	pf->pending_udp_bitmap |= BIT_ULL(next_idx);
 	pf->flags |= I40E_FLAG_UDP_FILTER_SYNC;
 
-	dev_info(&pf->pdev->dev, "adding geneve port %d\n", ntohs(port));
+	dev_info(&pf->pdev->dev, "adding geneve(port %d\n", ntohs(port));
 }
 
 /**
@@ -9144,7 +9144,7 @@ static void i40e_add_geneve_port(struct net_device *netdev,
  * @port: UDP port number that GENEVE stopped listening to
  **/
 static void i40e_del_geneve_port(struct net_device *netdev,
-				 sa_family_t sa_family, __be16 port)
+				 sa_family_t sa_family, u16 port)
 {
 	struct i40e_netdev_priv *np = netdev_priv(netdev);
 	struct i40e_vsi *vsi = np->vsi;
@@ -9154,7 +9154,7 @@ static void i40e_del_geneve_port(struct net_device *netdev,
 	if (!(pf->flags & I40E_FLAG_GENEVE_OFFLOAD_CAPABLE))
 		return;
 
-	idx = i40e_get_udp_port_idx(pf, port);
+	idx = i40e_get_udp_port_idx(pf, ntohs(port));
 
 	/* Check if port already exists */
 	if (idx < I40E_MAX_PF_UDP_OFFLOAD_PORTS) {
