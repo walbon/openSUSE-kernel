@@ -148,8 +148,8 @@ static int ch341_control_in(struct usb_device *dev,
 	return 0;
 }
 
-static int ch341_init_set_baudrate(struct usb_device *dev,
-				   struct ch341_private *priv, unsigned ctrl)
+static int ch341_set_baudrate_lcr(struct usb_device *dev,
+				  struct ch341_private *priv, u8 lcr)
 {
 	short a;
 	int r;
@@ -172,9 +172,19 @@ static int ch341_init_set_baudrate(struct usb_device *dev,
 	factor = 0x10000 - factor;
 	a = (factor & 0xff00) | divisor;
 
-	/* 0x9c is "enable SFR_UART Control register and timer" */
-	r = ch341_control_out(dev, CH341_REQ_SERIAL_INIT,
-			      0x9c | (ctrl << 8), a | 0x80);
+	/*
+	 * CH341A buffers data until a full endpoint-size packet (32 bytes)
+	 * has been received unless bit 7 is set.
+	 */
+	a |= BIT(7);
+
+	r = ch341_control_out(dev, CH341_REQ_WRITE_REG, 0x1312, a);
+	if (r)
+		return r;
+
+	r = ch341_control_out(dev, CH341_REQ_WRITE_REG, 0x2518, lcr);
+	if (r)
+		return r;
 
 	return r;
 }
@@ -242,7 +252,7 @@ static int ch341_configure(struct usb_device *dev, struct ch341_private *priv)
 	if (r < 0)
 		goto out;
 
-	r = ch341_init_set_baudrate(dev, priv, priv->lcr);
+	r = ch341_set_baudrate_lcr(dev, priv, priv->lcr);
 	if (r < 0)
 		goto out;
 
@@ -402,10 +412,9 @@ static void ch341_set_termios(struct tty_struct *tty,
 		ctrl |= CH341_LCR_STOP_BITS_2;
 
 	if (baud_rate) {
-		spin_lock_irqsave(&priv->lock, flags);
-		priv->line_control |= (CH341_BIT_DTR | CH341_BIT_RTS);
-		spin_unlock_irqrestore(&priv->lock, flags);
-		r = ch341_init_set_baudrate(port->serial->dev, priv, ctrl);
+		priv->baud_rate = baud_rate;
+
+		r = ch341_set_baudrate_lcr(port->serial->dev, priv, ctrl);
 		if (r < 0 && old_termios) {
 			priv->baud_rate = tty_termios_baud_rate(old_termios);
 			tty_termios_copy_hw(&tty->termios, old_termios);
