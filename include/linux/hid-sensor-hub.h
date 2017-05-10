@@ -231,8 +231,10 @@ struct hid_sensor_common {
 	unsigned usage_id;
 	atomic_t data_ready;
 	atomic_t user_requested_state;
-	int poll_interval;
-	int raw_hystersis;
+#ifndef __GENKSYMS__
+	short poll_interval;
+	short raw_hystersis;
+#endif
 	struct iio_trigger *trigger;
 	struct hid_sensor_hub_attribute_info poll;
 	struct hid_sensor_hub_attribute_info report_state;
