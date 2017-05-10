@@ -1407,13 +1407,18 @@ static int do_end_io(struct multipath *m, struct request *clone,
 		fail_path(mpio->pgpath);
 
 	if (!atomic_read(&m->nr_valid_paths)) {
-		if (!test_bit(MPATHF_QUEUE_IF_NO_PATH, &m->flags)) {
-			if (!must_push_back(m))
+		unsigned long flags;
+
+		spin_lock_irqsave(&m->lock, flags);
+		if (!test_bit(MPATHF_QUEUE_IF_NO_PATH, &m->flags) &&
+		    test_bit(MPATHF_SAVED_QUEUE_IF_NO_PATH, &m->flags) &&
+		    dm_noflush_suspending(m->ti)) {
 				r = -EIO;
 		} else {
 			if (error == -EBADE)
 				r = error;
 		}
+		spin_unlock_irqrestore(&m->lock, flags);
 	}
 
 	return r;
