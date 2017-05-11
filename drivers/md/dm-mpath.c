@@ -585,7 +585,7 @@ static int __multipath_map(struct dm_target *ti, struct request *clone,
 		if (IS_ERR(clone)) {
 			/* EBUSY, ENODEV or EWOULDBLOCK: requeue */
 			clear_request_fn_mpio(m, map_context);
-			return r;
+			return DM_MAPIO_DELAY_REQUEUE;
 		}
 		clone->bio = clone->biotail = NULL;
 		clone->rq_disk = bdev->bd_disk;
