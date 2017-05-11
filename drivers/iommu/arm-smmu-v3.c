@@ -39,6 +39,8 @@
 
 #include <linux/amba/bus.h>
 
+#include <asm/cputype.h>
+
 #include "io-pgtable.h"
 
 /* MMIO registers */
@@ -2636,10 +2638,26 @@ static int arm_smmu_device_hw_probe(struct arm_smmu_device *smmu)
 }
 
 #ifdef CONFIG_ACPI
+static void acpi_smmu_enable_cavium(struct arm_smmu_device *smmu)
+{
+	u32 cpu_model;
+
+	if (!IS_ENABLED(CONFIG_ARM64))
+		return;
+
+	cpu_model = read_cpuid_id() & MIDR_CPU_MODEL_MASK;
+	if (cpu_model != 0x420f5160)
+		return;
+
+	smmu->options |= ARM_SMMU_OPT_PAGE0_REGS_ONLY;
+}
+
 static void acpi_smmu_get_options(u32 model, struct arm_smmu_device *smmu)
 {
 	if (model == ACPI_IORT_SMMU_V3_CAVIUM_CN99XX)
 		smmu->options |= ARM_SMMU_OPT_PAGE0_REGS_ONLY;
+
+	acpi_smmu_enable_cavium(smmu);
 
 	dev_notice(smmu->dev, "option mask 0x%x\n", smmu->options);
 }
