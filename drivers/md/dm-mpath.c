@@ -540,7 +540,8 @@ static int __multipath_map(struct dm_target *ti, struct request *clone,
 	size_t nr_bytes = clone ? blk_rq_bytes(clone) : blk_rq_bytes(rq);
 	struct pgpath *pgpath;
 	struct block_device *bdev;
-	struct dm_mpath_io *mpio;
+	struct dm_mpath_io *mpio = get_mpio(map_context);
+	struct request_queue *q;
 
 	/* Do we need to select a new pgpath? */
 	pgpath = lockless_dereference(m->current_pgpath);
@@ -581,11 +582,20 @@ static int __multipath_map(struct dm_target *ti, struct request *clone,
 		 * .request_fn stacked on blk-mq path(s) and
 		 * blk-mq stacked on blk-mq path(s).
 		 */
+		q = bdev_get_queue(bdev);
 		clone = blk_mq_alloc_request(bdev_get_queue(bdev),
 					     rq_data_dir(rq), BLK_MQ_REQ_NOWAIT);
 		if (IS_ERR(clone)) {
 			/* EBUSY, ENODEV or EWOULDBLOCK: requeue */
+			bool queue_dying = blk_queue_dying(q);
+			DMERR_LIMIT("blk_get_request() returned %ld%s - requeuing",
+				    PTR_ERR(clone), queue_dying ? " (path offline)" : "");
 			clear_request_fn_mpio(m, map_context);
+			if (queue_dying) {
+				atomic_inc(&m->pg_init_in_progress);
+				activate_or_offline_path(pgpath);
+				return DM_MAPIO_REQUEUE;
+			}
 			return DM_MAPIO_DELAY_REQUEUE;
 		}
 		clone->bio = clone->biotail = NULL;
