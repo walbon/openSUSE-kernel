@@ -766,6 +766,7 @@ static void __init arm_smmu_v3_init_resources(struct resource *res,
 	struct acpi_iort_smmu_v3 *smmu;
 	int num_res = 0;
 	unsigned long size = SZ_128K;
+	u32 cpu_model;
 
 	/* Retrieve SMMUv3 specific data */
 	smmu = (struct acpi_iort_smmu_v3 *)node->node_data;
@@ -773,8 +774,12 @@ static void __init arm_smmu_v3_init_resources(struct resource *res,
 	/*
 	 * Override the size, for Cavium ThunderX2 implementation
 	 * which doesn't support the page 1 SMMU register space.
+	 * For CN99xx A1 silicon override the size based on MIDR as
+	 * model is not correctly set in IORT
 	 */
-	if (smmu->model == ACPI_IORT_SMMU_V3_CAVIUM_CN99XX)
+	cpu_model = read_cpuid_id() & MIDR_CPU_MODEL_MASK;
+	if (smmu->model == ACPI_IORT_SMMU_V3_CAVIUM_CN99XX ||
+			cpu_model == 0x420f5160)
 		size = SZ_64K;
 
 	res[num_res].start = smmu->base_address;
