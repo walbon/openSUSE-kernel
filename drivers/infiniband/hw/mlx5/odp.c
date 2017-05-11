@@ -57,7 +57,7 @@ static int check_parent(struct ib_umem_odp *odp,
 {
 	struct mlx5_ib_mr *mr = odp->private;
 
-	return mr && mr->parent == parent;
+	return mr && mr->parent == parent && !odp->dying;
 }
 
 static struct ib_umem_odp *odp_next(struct ib_umem_odp *odp)
@@ -157,13 +157,6 @@ static void mr_leaf_free_action(struct work_struct *work)
 
 	mr->parent = NULL;
 	synchronize_srcu(&mr->dev->mr_srcu);
-
-	if (!READ_ONCE(odp->dying)) {
-		mr->parent = imr;
-		if (atomic_dec_and_test(&imr->num_leaf_free))
-			wake_up(&imr->q_leaf_free);
-		return;
-	}
 
 	ib_umem_release(odp->umem);
 	if (imr->live)
@@ -435,8 +428,6 @@ next_mr:
 			start_idx = addr >> MLX5_IMR_MTT_SHIFT;
 		nentries++;
 	}
-
-	odp->dying = 0;
 
 	/* Return first odp if region not covered by single one */
 	if (likely(!result))
@@ -997,9 +988,6 @@ static void mlx5_ib_mr_wqe_pfault_handler(struct mlx5_ib_dev *dev,
 		resume_with_error = 0;
 		goto resolve_page_fault;
 	} else if (ret < 0 || total_wqe_bytes > bytes_mapped) {
-		if (ret != -ENOENT)
-			mlx5_ib_err(dev, "PAGE FAULT error: %d. QP 0x%x. type: 0x%x\n",
-				    ret, pfault->wqe.wq_num, pfault->type);
 		goto resolve_page_fault;
 	}
 
@@ -1059,8 +1047,8 @@ static void mlx5_ib_mr_rdma_pfault_handler(struct mlx5_ib_dev *dev,
 	} else if (ret < 0 || pages_in_range(address, length) > ret) {
 		mlx5_ib_page_fault_resume(dev, pfault, 1);
 		if (ret != -ENOENT)
-			mlx5_ib_warn(dev, "PAGE FAULT error %d. QP 0x%x, type: 0x%x\n",
-				     ret, pfault->token, pfault->type);
+			mlx5_ib_dbg(dev, "PAGE FAULT error %d. QP 0x%x, type: 0x%x\n",
+				    ret, pfault->token, pfault->type);
 		return;
 	}
 
@@ -1081,8 +1069,8 @@ static void mlx5_ib_mr_rdma_pfault_handler(struct mlx5_ib_dev *dev,
 						    prefetch_len,
 						    &bytes_committed, NULL);
 		if (ret < 0 && ret != -EAGAIN) {
-			mlx5_ib_warn(dev, "Prefetch failed. ret: %d, QP 0x%x, address: 0x%.16llx, length = 0x%.16x\n",
-				     ret, pfault->token, address, prefetch_len);
+			mlx5_ib_dbg(dev, "Prefetch failed. ret: %d, QP 0x%x, address: 0x%.16llx, length = 0x%.16x\n",
+				    ret, pfault->token, address, prefetch_len);
 		}
 	}
 }

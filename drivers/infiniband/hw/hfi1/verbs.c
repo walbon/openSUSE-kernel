@@ -297,6 +297,22 @@ static inline bool wss_exceeds_threshold(void)
 }
 
 /*
+ * Translate ib_wr_opcode into ib_wc_opcode.
+ */
+const enum ib_wc_opcode ib_hfi1_wc_opcode[] = {
+	[IB_WR_RDMA_WRITE] = IB_WC_RDMA_WRITE,
+	[IB_WR_RDMA_WRITE_WITH_IMM] = IB_WC_RDMA_WRITE,
+	[IB_WR_SEND] = IB_WC_SEND,
+	[IB_WR_SEND_WITH_IMM] = IB_WC_SEND,
+	[IB_WR_RDMA_READ] = IB_WC_RDMA_READ,
+	[IB_WR_ATOMIC_CMP_AND_SWP] = IB_WC_COMP_SWAP,
+	[IB_WR_ATOMIC_FETCH_AND_ADD] = IB_WC_FETCH_ADD,
+	[IB_WR_SEND_WITH_INV] = IB_WC_SEND,
+	[IB_WR_LOCAL_INV] = IB_WC_LOCAL_INV,
+	[IB_WR_REG_MR] = IB_WC_REG_MR
+};
+
+/*
  * Length of header by opcode, 0 --> not supported
  */
 const u8 hdr_len_by_opcode[256] = {
@@ -1220,12 +1236,14 @@ int hfi1_verbs_send(struct rvt_qp *qp, struct hfi1_pkt_state *ps)
 static void hfi1_fill_device_attr(struct hfi1_devdata *dd)
 {
 	struct rvt_dev_info *rdi = &dd->verbs_dev.rdi;
-	u16 ver = dd->dc8051_ver;
+	u32 ver = dd->dc8051_ver;
 
 	memset(&rdi->dparms.props, 0, sizeof(rdi->dparms.props));
 
-	rdi->dparms.props.fw_ver = ((u64)(dc8051_ver_maj(ver)) << 16) |
-				    (u64)dc8051_ver_min(ver);
+	rdi->dparms.props.fw_ver = ((u64)(dc8051_ver_maj(ver)) << 32) |
+		((u64)(dc8051_ver_min(ver)) << 16) |
+		(u64)dc8051_ver_patch(ver);
+
 	rdi->dparms.props.device_cap_flags = IB_DEVICE_BAD_PKEY_CNTR |
 			IB_DEVICE_BAD_QKEY_CNTR | IB_DEVICE_SHUTDOWN_PORT |
 			IB_DEVICE_SYS_IMAGE_GUID | IB_DEVICE_RC_RNR_NAK_GEN |
@@ -1504,10 +1522,10 @@ static void hfi1_get_dev_fw_str(struct ib_device *ibdev, char *str,
 {
 	struct rvt_dev_info *rdi = ib_to_rvt(ibdev);
 	struct hfi1_ibdev *dev = dev_from_rdi(rdi);
-	u16 ver = dd_from_dev(dev)->dc8051_ver;
+	u32 ver = dd_from_dev(dev)->dc8051_ver;
 
-	snprintf(str, str_len, "%u.%u", dc8051_ver_maj(ver),
-		 dc8051_ver_min(ver));
+	snprintf(str, str_len, "%u.%u.%u", dc8051_ver_maj(ver),
+		 dc8051_ver_min(ver), dc8051_ver_patch(ver));
 }
 
 static const char * const driver_cntr_names[] = {
@@ -1524,6 +1542,7 @@ static const char * const driver_cntr_names[] = {
 	"DRIVER_EgrHdrFull"
 };
 
+static DEFINE_MUTEX(cntr_names_lock); /* protects the *_cntr_names bufers */
 static const char **dev_cntr_names;
 static const char **port_cntr_names;
 static int num_driver_cntrs = ARRAY_SIZE(driver_cntr_names);
@@ -1578,6 +1597,7 @@ static struct rdma_hw_stats *alloc_hw_stats(struct ib_device *ibdev,
 {
 	int i, err;
 
+	mutex_lock(&cntr_names_lock);
 	if (!cntr_names_initialized) {
 		struct hfi1_devdata *dd = dd_from_ibdev(ibdev);
 
@@ -1586,8 +1606,10 @@ static struct rdma_hw_stats *alloc_hw_stats(struct ib_device *ibdev,
 				      num_driver_cntrs,
 				      &num_dev_cntrs,
 				      &dev_cntr_names);
-		if (err)
+		if (err) {
+			mutex_unlock(&cntr_names_lock);
 			return NULL;
+		}
 
 		for (i = 0; i < num_driver_cntrs; i++)
 			dev_cntr_names[num_dev_cntrs + i] =
@@ -1601,10 +1623,12 @@ static struct rdma_hw_stats *alloc_hw_stats(struct ib_device *ibdev,
 		if (err) {
 			kfree(dev_cntr_names);
 			dev_cntr_names = NULL;
+			mutex_unlock(&cntr_names_lock);
 			return NULL;
 		}
 		cntr_names_initialized = 1;
 	}
+	mutex_unlock(&cntr_names_lock);
 
 	if (!port_num)
 		return rdma_alloc_hw_stats_struct(
@@ -1823,9 +1847,13 @@ void hfi1_unregister_ib_device(struct hfi1_devdata *dd)
 	del_timer_sync(&dev->mem_timer);
 	verbs_txreq_exit(dev);
 
+	mutex_lock(&cntr_names_lock);
 	kfree(dev_cntr_names);
 	kfree(port_cntr_names);
+	dev_cntr_names = NULL;
+	port_cntr_names = NULL;
 	cntr_names_initialized = 0;
+	mutex_unlock(&cntr_names_lock);
 }
 
 void hfi1_cnp_rcv(struct hfi1_packet *packet)
