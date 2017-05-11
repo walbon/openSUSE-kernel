@@ -48,6 +48,8 @@
 #include <net/ipv6.h>
 #include <net/addrconf.h>
 #include <linux/if_ether.h>
+#include <linux/atomic.h>
+#include <asm/barrier.h>
 
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_user_verbs.h>
@@ -333,6 +335,7 @@ static int bnxt_re_net_stats_ctx_alloc(struct bnxt_re_dev *rdev,
 	bnxt_re_init_hwrm_hdr(rdev, (void *)&req, HWRM_STAT_CTX_ALLOC, -1, -1);
 	req.update_period_ms = cpu_to_le32(1000);
 	req.stats_dma_addr = cpu_to_le64(dma_map);
+	req.stat_ctx_flags = STAT_CTX_ALLOC_REQ_STAT_CTX_FLAGS_ROCE;
 	bnxt_re_fill_fw_msg(&fw_msg, (void *)&req, sizeof(req), (void *)&resp,
 			    sizeof(resp), DFLT_HWRM_CMD_TIMEOUT);
 	rc = en_dev->en_ops->bnxt_send_fw_msg(en_dev, BNXT_ROCE_ULP, &fw_msg);
@@ -838,6 +841,42 @@ static void bnxt_re_dev_stop(struct bnxt_re_dev *rdev)
 	mutex_unlock(&rdev->qp_lock);
 }
 
+static int bnxt_re_update_gid(struct bnxt_re_dev *rdev)
+{
+	struct bnxt_qplib_sgid_tbl *sgid_tbl = &rdev->qplib_res.sgid_tbl;
+	struct bnxt_qplib_gid gid;
+	u16 gid_idx, index;
+	int rc = 0;
+
+	if (!test_bit(BNXT_RE_FLAG_IBDEV_REGISTERED, &rdev->flags))
+		return 0;
+
+	if (!sgid_tbl) {
+		dev_err(rdev_to_dev(rdev), "QPLIB: SGID table not allocated");
+		return -EINVAL;
+	}
+
+	for (index = 0; index < sgid_tbl->active; index++) {
+		gid_idx = sgid_tbl->hw_id[index];
+
+		if (!memcmp(&sgid_tbl->tbl[index], &bnxt_qplib_gid_zero,
+			    sizeof(bnxt_qplib_gid_zero)))
+			continue;
+		/* need to modify the VLAN enable setting of non VLAN GID only
+		 * as setting is done for VLAN GID while adding GID
+		 */
+		if (sgid_tbl->vlan[index])
+			continue;
+
+		memcpy(&gid, &sgid_tbl->tbl[index], sizeof(gid));
+
+		rc = bnxt_qplib_update_sgid(sgid_tbl, &gid, gid_idx,
+					    rdev->qplib_res.netdev->dev_addr);
+	}
+
+	return rc;
+}
+
 static u32 bnxt_re_get_priority_mask(struct bnxt_re_dev *rdev)
 {
 	u32 prio_map = 0, tmp_map = 0;
@@ -857,8 +896,6 @@ static u32 bnxt_re_get_priority_mask(struct bnxt_re_dev *rdev)
 	tmp_map = dcb_ieee_getapp_mask(netdev, &app);
 	prio_map |= tmp_map;
 
-	if (!prio_map)
-		prio_map = -EFAULT;
 	return prio_map;
 }
 
@@ -884,10 +921,7 @@ static int bnxt_re_setup_qos(struct bnxt_re_dev *rdev)
 	int rc;
 
 	/* Get priority for roce */
-	rc = bnxt_re_get_priority_mask(rdev);
-	if (rc < 0)
-		return rc;
-	prio_map = (u8)rc;
+	prio_map = bnxt_re_get_priority_mask(rdev);
 
 	if (prio_map == rdev->cur_prio_map)
 		return 0;
@@ -909,6 +943,16 @@ static int bnxt_re_setup_qos(struct bnxt_re_dev *rdev)
 		return rc;
 	}
 
+	/* Actual priorities are not programmed as they are already
+	 * done by L2 driver; just enable or disable priority vlan tagging
+	 */
+	if ((prio_map == 0 && rdev->qplib_res.prio) ||
+	    (prio_map != 0 && !rdev->qplib_res.prio)) {
+		rdev->qplib_res.prio = prio_map ? true : false;
+
+		bnxt_re_update_gid(rdev);
+	}
+
 	return 0;
 }
 
@@ -925,6 +969,10 @@ static void bnxt_re_ib_unreg(struct bnxt_re_dev *rdev, bool lock_wait)
 	}
 	if (test_and_clear_bit(BNXT_RE_FLAG_QOS_WORK_REG, &rdev->flags))
 		cancel_delayed_work(&rdev->worker);
+
+	/* Wait for ULPs to release references */
+	while (atomic_read(&rdev->cq_count))
+		usleep_range(500, 1000);
 
 	bnxt_re_cleanup_res(rdev);
 	bnxt_re_free_res(rdev, lock_wait);
@@ -1152,6 +1200,22 @@ static void bnxt_re_remove_one(struct bnxt_re_dev *rdev)
 	pci_dev_put(rdev->en_dev->pdev);
 }
 
+static void bnxt_re_get_link_speed(struct bnxt_re_dev *rdev)
+{
+	struct ethtool_link_ksettings lksettings;
+	struct net_device *netdev = rdev->netdev;
+
+	if (netdev->ethtool_ops && netdev->ethtool_ops->get_link_ksettings) {
+		memset(&lksettings, 0, sizeof(lksettings));
+		if (rtnl_trylock()) {
+			netdev->ethtool_ops->get_link_ksettings(netdev,
+								&lksettings);
+			rdev->espeed = lksettings.base.speed;
+			rtnl_unlock();
+		}
+	}
+}
+
 /* Handle all deferred netevents tasks */
 static void bnxt_re_task(struct work_struct *work)
 {
@@ -1169,6 +1233,10 @@ static void bnxt_re_task(struct work_struct *work)
 	switch (re_work->event) {
 	case NETDEV_REGISTER:
 		rc = bnxt_re_ib_reg(rdev);
+		/* Use memory barrier to sync the rdev->flags */
+		smp_mb();
+		clear_bit(BNXT_RE_FLAG_NETDEV_REG_IN_PROG,
+			  &rdev->flags);
 		if (rc)
 			dev_err(rdev_to_dev(rdev),
 				"Failed to register with IB: %#x", rc);
@@ -1186,6 +1254,7 @@ static void bnxt_re_task(struct work_struct *work)
 		else if (netif_carrier_ok(rdev->netdev))
 			bnxt_re_dispatch_event(&rdev->ibdev, NULL, 1,
 					       IB_EVENT_PORT_ACTIVE);
+		bnxt_re_get_link_speed(rdev);
 		break;
 	default:
 		break;
@@ -1244,10 +1313,22 @@ static int bnxt_re_netdev_event(struct notifier_block *notifier,
 			break;
 		}
 		bnxt_re_init_one(rdev);
+		/*
+		 *  Query the link speed at the time of registration.
+		 *  Already in rtnl_lock context
+		 */
+		bnxt_re_get_link_speed(rdev);
+
+		set_bit(BNXT_RE_FLAG_NETDEV_REG_IN_PROG, &rdev->flags);
 		sch_work = true;
 		break;
 
 	case NETDEV_UNREGISTER:
+		/* netdev notifier will call NETDEV_UNREGISTER again later since
+		 * we are still holding the reference to the netdev
+		 */
+		if (test_bit(BNXT_RE_FLAG_NETDEV_REG_IN_PROG, &rdev->flags))
+			goto exit;
 		bnxt_re_ib_unreg(rdev, false);
 		bnxt_re_remove_one(rdev);
 		bnxt_re_dev_unreg(rdev);
