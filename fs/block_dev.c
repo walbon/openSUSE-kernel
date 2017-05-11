@@ -241,6 +241,8 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 		bio.bi_opf = dio_bio_write_op(iocb);
 		task_io_account_write(ret);
 	}
+	if (file->f_flags & O_NONBLOCK)
+		bio.bi_opf |= REQ_FAILFAST_DEV;
 
 	qc = submit_bio(&bio);
 	for (;;) {
@@ -376,6 +378,8 @@ __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter, int nr_pages)
 			bio->bi_opf = dio_bio_write_op(iocb);
 			task_io_account_write(bio->bi_iter.bi_size);
 		}
+		if (file->f_flags & O_NONBLOCK)
+			bio->bi_opf |= REQ_FAILFAST_DEV;
 
 		dio->size += bio->bi_iter.bi_size;
 		pos += bio->bi_iter.bi_size;
