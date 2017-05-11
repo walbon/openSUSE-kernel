@@ -58,7 +58,6 @@ struct bnxt_re_pd {
 	struct bnxt_re_dev	*rdev;
 	struct ib_pd		ib_pd;
 	struct bnxt_qplib_pd	qplib_pd;
-	struct bnxt_qplib_dpi	dpi;
 	struct bnxt_re_fence_data fence;
 };
 
@@ -125,7 +124,7 @@ struct bnxt_re_mw {
 struct bnxt_re_ucontext {
 	struct bnxt_re_dev	*rdev;
 	struct ib_ucontext	ib_uctx;
-	struct bnxt_qplib_dpi	*dpi;
+	struct bnxt_qplib_dpi	dpi;
 	void			*shpg;
 	spinlock_t		sh_lock;	/* protect shpg */
 };
