@@ -40,7 +40,7 @@
 #ifndef __BNXT_RE_H__
 #define __BNXT_RE_H__
 #define ROCE_DRV_MODULE_NAME		"bnxt_re"
-#define ROCE_DRV_MODULE_VERSION		"1.0.0"
+#define ROCE_DRV_MODULE_VERSION		"20.6.1.0u"
 
 #define BNXT_RE_DESC	"Broadcom NetXtreme-C/E RoCE Driver"
 
@@ -51,10 +51,16 @@
 #define BNXT_RE_PAGE_SIZE_8M		BIT(23)
 #define BNXT_RE_PAGE_SIZE_1G		BIT(30)
 
+#define BNXT_RE_MAX_MR_SIZE		BIT(30)
+
 #define BNXT_RE_MAX_QPC_COUNT		(64 * 1024)
 #define BNXT_RE_MAX_MRW_COUNT		(64 * 1024)
 #define BNXT_RE_MAX_SRQC_COUNT		(64 * 1024)
 #define BNXT_RE_MAX_CQ_COUNT		(64 * 1024)
+
+#define BNXT_RE_UD_QP_HW_STALL		0x400000
+
+#define BNXT_RE_RQ_WQE_THRESHOLD	32
 
 struct bnxt_re_work {
 	struct work_struct	work;
@@ -80,11 +86,13 @@ struct bnxt_re_dev {
 	struct ib_device		ibdev;
 	struct list_head		list;
 	unsigned long			flags;
-#define BNXT_RE_FLAG_NETDEV_REGISTERED	0
-#define BNXT_RE_FLAG_IBDEV_REGISTERED	1
-#define BNXT_RE_FLAG_GOT_MSIX		2
-#define BNXT_RE_FLAG_RCFW_CHANNEL_EN	8
-#define BNXT_RE_FLAG_QOS_WORK_REG	16
+#define BNXT_RE_FLAG_NETDEV_REGISTERED         0
+#define BNXT_RE_FLAG_IBDEV_REGISTERED          1
+#define BNXT_RE_FLAG_GOT_MSIX                  2
+#define BNXT_RE_FLAG_RCFW_CHANNEL_EN           4
+#define BNXT_RE_FLAG_QOS_WORK_REG              5
+#define BNXT_RE_FLAG_NETDEV_REG_IN_PROG        6
+
 	struct net_device		*netdev;
 	unsigned int			version, major, minor;
 	struct bnxt_en_dev		*en_dev;
@@ -127,6 +135,7 @@ struct bnxt_re_dev {
 	struct bnxt_re_qp		*qp1_sqp;
 	struct bnxt_re_ah		*sqp_ah;
 	struct bnxt_re_sqp_entries sqp_tbl[1024];
+	u32 espeed;
 };
 
 #define to_bnxt_re_dev(ptr, member)	\

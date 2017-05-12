@@ -40,6 +40,8 @@
 #ifndef __BNXT_QPLIB_SP_H__
 #define __BNXT_QPLIB_SP_H__
 
+#define BNXT_QPLIB_RESERVED_QP_WRS	128
+
 struct bnxt_qplib_dev_attr {
 	char				fw_ver[32];
 	u16				max_sgid;
@@ -130,6 +132,8 @@ int bnxt_qplib_del_sgid(struct bnxt_qplib_sgid_tbl *sgid_tbl,
 int bnxt_qplib_add_sgid(struct bnxt_qplib_sgid_tbl *sgid_tbl,
 			struct bnxt_qplib_gid *gid, u8 *mac, u16 vlan_id,
 			bool update, u32 *index);
+int bnxt_qplib_update_sgid(struct bnxt_qplib_sgid_tbl *sgid_tbl,
+			   struct bnxt_qplib_gid *gid, u16 gid_idx, u8 *smac);
 int bnxt_qplib_get_pkey(struct bnxt_qplib_res *res,
 			struct bnxt_qplib_pkey_tbl *pkey_tbl, u16 index,
 			u16 *pkey);
