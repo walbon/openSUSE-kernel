@@ -412,9 +412,8 @@ static void nvme_loop_del_ctrl_work(struct work_struct *work)
 	struct nvme_loop_ctrl *ctrl = container_of(work,
 				struct nvme_loop_ctrl, delete_work);
 
-	nvme_remove_namespaces(&ctrl->ctrl);
-	nvme_loop_shutdown_ctrl(ctrl);
 	nvme_uninit_ctrl(&ctrl->ctrl);
+	nvme_loop_shutdown_ctrl(ctrl);
 	nvme_put_ctrl(&ctrl->ctrl);
 }
 
@@ -499,7 +498,6 @@ out_free_queues:
 	nvme_loop_destroy_admin_queue(ctrl);
 out_disable:
 	dev_warn(ctrl->ctrl.device, "Removing after reset failure\n");
-	nvme_remove_namespaces(&ctrl->ctrl);
 	nvme_uninit_ctrl(&ctrl->ctrl);
 	nvme_put_ctrl(&ctrl->ctrl);
 }
@@ -726,8 +724,7 @@ static int __init nvme_loop_init_module(void)
 	ret = nvmet_register_transport(&nvme_loop_ops);
 	if (ret)
 		return ret;
-	nvmf_register_transport(&nvme_loop_transport);
-	return 0;
+	return nvmf_register_transport(&nvme_loop_transport);
 }
 
 static void __exit nvme_loop_cleanup_module(void)
