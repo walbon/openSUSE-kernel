@@ -1,6 +1,6 @@
 /*
  *    driver for Microsemi PQI-based storage controllers
- *    Copyright (c) 2016 Microsemi Corporation
+ *    Copyright (c) 2016-2017 Microsemi Corporation
  *    Copyright (c) 2016 PMC-Sierra, Inc.
  *
  *    This program is free software; you can redistribute it and/or modify
@@ -34,6 +34,7 @@
 #define SIS_REENABLE_SIS_MODE			0x1
 #define SIS_ENABLE_MSIX				0x40
 #define SIS_SOFT_RESET				0x100
+#define SIS_TRIGGER_SHUTDOWN			0x800000
 #define SIS_CMD_READY				0x200
 #define SIS_CMD_COMPLETE			0x1000
 #define SIS_CLEAR_CTRL_TO_HOST_DOORBELL		0x1000
@@ -98,8 +99,12 @@ int sis_wait_for_ctrl_ready(struct pqi_ctrl_info *ctrl_info)
 			if (status & SIS_CTRL_KERNEL_UP)
 				break;
 		}
-		if (time_after(jiffies, timeout))
+		if (time_after(jiffies, timeout)) {
+			dev_err(&ctrl_info->pci_dev->dev,
+				"controller not ready after %u seconds\n",
+				SIS_CTRL_READY_TIMEOUT_SECS);
 			return -ETIMEDOUT;
+		}
 		msleep(SIS_CTRL_READY_POLL_INTERVAL_MSECS);
 	}
 
@@ -124,6 +129,12 @@ bool sis_is_firmware_running(struct pqi_ctrl_info *ctrl_info)
 			readl(&ctrl_info->registers->sis_mailbox[7]));
 
 	return running;
+}
+
+bool sis_is_kernel_up(struct pqi_ctrl_info *ctrl_info)
+{
+	return readl(&ctrl_info->registers->sis_firmware_status) &
+				SIS_CTRL_KERNEL_UP;
 }
 
 /* used for passing command parameters/results when issuing SIS commands */
@@ -339,6 +350,16 @@ void sis_disable_msix(struct pqi_ctrl_info *ctrl_info)
 void sis_soft_reset(struct pqi_ctrl_info *ctrl_info)
 {
 	writel(SIS_SOFT_RESET,
+		&ctrl_info->registers->sis_host_to_ctrl_doorbell);
+}
+
+void sis_shutdown_ctrl(struct pqi_ctrl_info *ctrl_info)
+{
+	if (readl(&ctrl_info->registers->sis_firmware_status) &
+		SIS_CTRL_KERNEL_PANIC)
+		return;
+
+	writel(SIS_TRIGGER_SHUTDOWN,
 		&ctrl_info->registers->sis_host_to_ctrl_doorbell);
 }
 
