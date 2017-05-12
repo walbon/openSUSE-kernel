@@ -1012,6 +1012,7 @@ struct pqi_ctrl_info {
 	u32		previous_heartbeat_count;
 	__le32 __iomem	*heartbeat_counter;
 	struct timer_list heartbeat_timer;
+	struct work_struct ctrl_offline_work;
 
 	struct semaphore sync_request_sem;
 	atomic_t	num_busy_threads;
