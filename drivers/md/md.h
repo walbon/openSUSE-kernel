@@ -239,6 +239,9 @@ enum mddev_flags {
 				 * supported as calls to md_error() will
 				 * never cause the array to become failed.
 				 */
+	Timeout,		/* Device fault due to timeout.
+				 * 'Faulty' is required to be set.
+				 */
 };
 
 enum mddev_sb_flags {

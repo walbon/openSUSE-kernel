@@ -1857,10 +1857,13 @@ static void adjust_hpsa_scsi_table(struct ctlr_info *h,
 	 * A reset can cause a device status to change
 	 * re-schedule the scan to see what happened.
 	 */
+	spin_lock_irqsave(&h->reset_lock, flags);
 	if (h->reset_in_progress) {
 		h->drv_req_rescan = 1;
+		spin_unlock_irqrestore(&h->reset_lock, flags);
 		return;
 	}
+	spin_unlock_irqrestore(&h->reset_lock, flags);
 
 	added = kzalloc(sizeof(*added) * HPSA_MAX_DEVICES, GFP_KERNEL);
 	removed = kzalloc(sizeof(*removed) * HPSA_MAX_DEVICES, GFP_KERNEL);
@@ -5539,11 +5542,14 @@ static void hpsa_scan_start(struct Scsi_Host *sh)
 	/*
 	 * Do the scan after a reset completion
 	 */
+	spin_lock_irqsave(&h->reset_lock, flags);
 	if (h->reset_in_progress) {
 		h->drv_req_rescan = 1;
+		spin_unlock_irqrestore(&h->reset_lock, flags);
 		hpsa_scan_complete(h);
 		return;
 	}
+	spin_unlock_irqrestore(&h->reset_lock, flags);
 
 	hpsa_update_scsi_devices(h);
 
@@ -5760,13 +5766,16 @@ static int hpsa_eh_device_reset_handler(struct scsi_cmnd *scsicmd)
 	struct hpsa_scsi_dev_t *dev;
 	u8 reset_type;
 	char msg[48];
+	unsigned long flags;
 
 	/* find the controller to which the command to be aborted was sent */
 	h = sdev_to_hba(scsicmd->device);
 	if (h == NULL) /* paranoia */
 		return FAILED;
 
+	spin_lock_irqsave(&h->reset_lock, flags);
 	h->reset_in_progress = 1;
+	spin_unlock_irqrestore(&h->reset_lock, flags);
 
 	if (lockup_detected(h)) {
 		rc = FAILED;
@@ -5834,7 +5843,9 @@ static int hpsa_eh_device_reset_handler(struct scsi_cmnd *scsicmd)
 	hpsa_show_dev_msg(KERN_WARNING, h, dev, msg);
 
 return_reset_status:
+	spin_lock_irqsave(&h->reset_lock, flags);
 	h->reset_in_progress = 0;
+	spin_unlock_irqrestore(&h->reset_lock, flags);
 	return rc;
 }
 
@@ -8168,27 +8179,56 @@ out:
 	return rc;
 }
 
+static void hpsa_perform_rescan(struct ctlr_info *h)
+{
+	struct Scsi_Host *sh = NULL;
+	unsigned long flags;
+
+	/*
+	 * Do the scan after the reset
+	 */
+	spin_lock_irqsave(&h->reset_lock, flags);
+	if (h->reset_in_progress) {
+		h->drv_req_rescan = 1;
+		spin_unlock_irqrestore(&h->reset_lock, flags);
+		return;
+	}
+	spin_unlock_irqrestore(&h->reset_lock, flags);
+
+	sh = scsi_host_get(h->scsi_host);
+	if (sh != NULL) {
+		hpsa_scan_start(sh);
+		scsi_host_put(sh);
+		h->drv_req_rescan = 0;
+	}
+}
+
 /*
  * watch for controller events
  */
 static void hpsa_event_monitor_worker(struct work_struct *work)
 {
 	struct ctlr_info *h = container_of(to_delayed_work(work),
-	struct ctlr_info, event_monitor_work);
+					struct ctlr_info, event_monitor_work);
+	unsigned long flags;
 
-	if (h->remove_in_progress)
+	spin_lock_irqsave(&h->lock, flags);
+	if (h->remove_in_progress) {
+		spin_unlock_irqrestore(&h->lock, flags);
 		return;
+	}
+	spin_unlock_irqrestore(&h->lock, flags);
 
 	if (hpsa_ctlr_needs_rescan(h)) {
-		scsi_host_get(h->scsi_host);
 		hpsa_ack_ctlr_events(h);
-		hpsa_scan_start(h->scsi_host);
-		scsi_host_put(h->scsi_host);
+		hpsa_perform_rescan(h);
 	}
 
+	spin_lock_irqsave(&h->lock, flags);
 	if (!h->remove_in_progress)
 		schedule_delayed_work(&h->event_monitor_work,
 					HPSA_EVENT_MONITOR_INTERVAL);
+	spin_unlock_irqrestore(&h->lock, flags);
 }
 
 static void hpsa_rescan_ctlr_worker(struct work_struct *work)
@@ -8197,35 +8237,21 @@ static void hpsa_rescan_ctlr_worker(struct work_struct *work)
 	struct ctlr_info *h = container_of(to_delayed_work(work),
 					struct ctlr_info, rescan_ctlr_work);
 
-
-	if (h->remove_in_progress)
-		return;
-
-	/*
-	 * Do the scan after the reset
-	 */
-	if (h->reset_in_progress) {
-		h->drv_req_rescan = 1;
+	spin_lock_irqsave(&h->lock, flags);
+	if (h->remove_in_progress) {
+		spin_unlock_irqrestore(&h->lock, flags);
 		return;
 	}
+	spin_unlock_irqrestore(&h->lock, flags);
 
 	if (h->drv_req_rescan || hpsa_offline_devices_ready(h)) {
-		h->drv_req_rescan = 0;
-		scsi_host_get(h->scsi_host);
-		hpsa_scan_start(h->scsi_host);
-		scsi_host_put(h->scsi_host);
+		hpsa_perform_rescan(h);
 	} else if (h->discovery_polling) {
 		hpsa_disable_rld_caching(h);
 		if (hpsa_luns_changed(h)) {
-			struct Scsi_Host *sh = NULL;
-
 			dev_info(&h->pdev->dev,
 				"driver discovery polling rescan.\n");
-			sh = scsi_host_get(h->scsi_host);
-			if (sh != NULL) {
-				hpsa_scan_start(sh);
-				scsi_host_put(sh);
-			}
+			hpsa_perform_rescan(h);
 		}
 	}
 	spin_lock_irqsave(&h->lock, flags);
@@ -8314,6 +8340,7 @@ reinit_after_soft_reset:
 	spin_lock_init(&h->lock);
 	spin_lock_init(&h->offline_device_lock);
 	spin_lock_init(&h->scan_lock);
+	spin_lock_init(&h->reset_lock);
 	atomic_set(&h->passthru_cmds_avail, HPSA_MAX_CONCURRENT_PASSTHRUS);
 
 	/* Allocate and clear per-cpu variable lockup_detected */

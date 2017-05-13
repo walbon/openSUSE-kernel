@@ -114,9 +114,53 @@ int __init early_init_dt_scan_fw_dump(unsigned long node,
 	return 1;
 }
 
+/*
+ * If fadump is registered, check if the memory provided
+ * falls within boot memory area.
+ */
+int is_fadump_boot_memory_area(u64 addr, ulong size)
+{
+	if (!fw_dump.dump_registered)
+		return 0;
+
+	return (addr + size) > RMA_START && addr <= fw_dump.boot_memory_size;
+}
+
 int is_fadump_active(void)
 {
 	return fw_dump.dump_active;
+}
+
+/*
+ * Returns 1, if there are no holes in boot memory area,
+ * 0 otherwise.
+ */
+static int is_boot_memory_area_contiguous(void)
+{
+	struct memblock_region *reg;
+	unsigned long tstart, tend;
+	unsigned long start_pfn = PHYS_PFN(RMA_START);
+	unsigned long end_pfn = PHYS_PFN(RMA_START + fw_dump.boot_memory_size);
+	unsigned int ret = 0;
+
+	for_each_memblock(memory, reg) {
+		tstart = max(start_pfn, memblock_region_memory_base_pfn(reg));
+		tend = min(end_pfn, memblock_region_memory_end_pfn(reg));
+		if (tstart < tend) {
+			/* Memory hole from start_pfn to tstart */
+			if (tstart > start_pfn)
+				break;
+
+			if (tend == end_pfn) {
+				ret = 1;
+				break;
+			}
+
+			start_pfn = tend + 1;
+		}
+	}
+
+	return ret;
 }
 
 /* Print firmware assisted dump configurations for debugging purpose. */
@@ -403,6 +447,10 @@ static void register_fw_dump(struct fadump_mem_struct *fdm)
 			" dump. Hardware Error(%d).\n", rc);
 		break;
 	case -3:
+		if (!is_boot_memory_area_contiguous())
+			pr_err("Can't have holes in boot memory area while "
+			       "registering fadump\n");
+
 		printk(KERN_ERR "Failed to register firmware-assisted kernel"
 			" dump. Parameter Error(%d).\n", rc);
 		break;
@@ -828,8 +876,19 @@ static void fadump_setup_crash_memory_ranges(void)
 	for_each_memblock(memory, reg) {
 		start = (unsigned long long)reg->base;
 		end = start + (unsigned long long)reg->size;
-		if (start == RMA_START && end >= fw_dump.boot_memory_size)
-			start = fw_dump.boot_memory_size;
+
+		/*
+		 * skip the first memory chunk that is already added (RMA_START
+		 * through boot_memory_size). This logic needs a relook if and
+		 * when RMA_START changes to a non-zero value.
+		 */
+		BUILD_BUG_ON(RMA_START);
+		if (start < fw_dump.boot_memory_size) {
+			if (end > fw_dump.boot_memory_size)
+				start = fw_dump.boot_memory_size;
+			else
+				continue;
+		}
 
 		/* add this range excluding the reserved dump area. */
 		fadump_exclude_reserved_area(start, end);
