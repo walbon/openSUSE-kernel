@@ -48,10 +48,9 @@ unsigned char shutdown_timeout = 5;
 module_param(shutdown_timeout, byte, 0644);
 MODULE_PARM_DESC(shutdown_timeout, "timeout in seconds for controller shutdown");
 
-unsigned int nvme_max_retries = 5;
-module_param_named(max_retries, nvme_max_retries, uint, 0644);
+static u8 nvme_max_retries = 5;
+module_param_named(max_retries, nvme_max_retries, byte, 0644);
 MODULE_PARM_DESC(max_retries, "max number of retries a command may have");
-EXPORT_SYMBOL_GPL(nvme_max_retries);
 
 static int nvme_char_major;
 module_param(nvme_char_major, int, 0);
@@ -60,6 +59,41 @@ static LIST_HEAD(nvme_ctrl_list);
 static DEFINE_SPINLOCK(dev_list_lock);
 
 static struct class *nvme_class;
+
+static inline bool nvme_req_needs_retry(struct request *req)
+{
+	if (blk_noretry_request(req))
+		return false;
+	if (req->errors & NVME_SC_DNR)
+		return false;
+	if (jiffies - req->start_time >= req->timeout)
+		return false;
+	if (nvme_req(req)->retries >= nvme_max_retries)
+		return false;
+	return true;
+}
+
+void nvme_complete_rq(struct request *req)
+{
+	int error = 0;
+
+	if (unlikely(req->errors)) {
+		if (nvme_req_needs_retry(req)) {
+			nvme_req(req)->retries++;
+			blk_mq_requeue_request(req,
+					!blk_mq_queue_stopped(req->q));
+			return;
+		}
+
+		if (req->cmd_type == REQ_TYPE_DRV_PRIV)
+			error = req->errors;
+		else
+			error = nvme_error_status(req->errors);
+	}
+
+	blk_mq_end_request(req, error);
+}
+EXPORT_SYMBOL_GPL(nvme_complete_rq);
 
 void nvme_cancel_request(struct request *req, void *data, bool reserved)
 {
@@ -197,12 +231,6 @@ fail:
 	return NULL;
 }
 
-void nvme_requeue_req(struct request *req)
-{
-	blk_mq_requeue_request(req, !blk_mq_queue_stopped(req->q));
-}
-EXPORT_SYMBOL_GPL(nvme_requeue_req);
-
 struct request *nvme_alloc_request(struct request_queue *q,
 		struct nvme_command *cmd, unsigned int flags, int qid)
 {
@@ -306,6 +334,11 @@ int nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
 		struct nvme_command *cmd)
 {
 	int ret = BLK_MQ_RQ_QUEUE_OK;
+
+	if (!(req->rq_flags & RQF_DONTPREP)) {
+		nvme_req(req)->retries = 0;
+		req->rq_flags |= RQF_DONTPREP;
+	}
 
 	if (req->cmd_type == REQ_TYPE_DRV_PRIV)
 		memcpy(cmd, nvme_req(req)->cmd, sizeof(*cmd));
@@ -2075,6 +2108,53 @@ void nvme_kill_queues(struct nvme_ctrl *ctrl)
 	mutex_unlock(&ctrl->namespaces_mutex);
 }
 EXPORT_SYMBOL_GPL(nvme_kill_queues);
+
+void nvme_unfreeze(struct nvme_ctrl *ctrl)
+{
+	struct nvme_ns *ns;
+
+	mutex_lock(&ctrl->namespaces_mutex);
+	list_for_each_entry(ns, &ctrl->namespaces, list)
+		blk_mq_unfreeze_queue(ns->queue);
+	mutex_unlock(&ctrl->namespaces_mutex);
+}
+EXPORT_SYMBOL_GPL(nvme_unfreeze);
+
+void nvme_wait_freeze_timeout(struct nvme_ctrl *ctrl, long timeout)
+{
+	struct nvme_ns *ns;
+
+	mutex_lock(&ctrl->namespaces_mutex);
+	list_for_each_entry(ns, &ctrl->namespaces, list) {
+		timeout = blk_mq_freeze_queue_wait_timeout(ns->queue, timeout);
+		if (timeout <= 0)
+			break;
+	}
+	mutex_unlock(&ctrl->namespaces_mutex);
+}
+EXPORT_SYMBOL_GPL(nvme_wait_freeze_timeout);
+
+void nvme_wait_freeze(struct nvme_ctrl *ctrl)
+{
+	struct nvme_ns *ns;
+
+	mutex_lock(&ctrl->namespaces_mutex);
+	list_for_each_entry(ns, &ctrl->namespaces, list)
+		blk_mq_freeze_queue_wait(ns->queue);
+	mutex_unlock(&ctrl->namespaces_mutex);
+}
+EXPORT_SYMBOL_GPL(nvme_wait_freeze);
+
+void nvme_start_freeze(struct nvme_ctrl *ctrl)
+{
+	struct nvme_ns *ns;
+
+	mutex_lock(&ctrl->namespaces_mutex);
+	list_for_each_entry(ns, &ctrl->namespaces, list)
+		blk_mq_freeze_queue_start(ns->queue);
+	mutex_unlock(&ctrl->namespaces_mutex);
+}
+EXPORT_SYMBOL_GPL(nvme_start_freeze);
 
 void nvme_stop_queues(struct nvme_ctrl *ctrl)
 {
