@@ -2826,7 +2826,9 @@ static void qede_add_vxlan_port(struct net_device *dev,
 				sa_family_t sa_family, __be16 port)
 {
 	struct qede_dev *edev = netdev_priv(dev);
+	struct qed_tunn_params tunn_params;
 	u16 t_port = ntohs(port);
+	int rc;
 
 	if (!edev->dev_info.common.vxlan_enable)
 		return;
@@ -2834,29 +2836,43 @@ static void qede_add_vxlan_port(struct net_device *dev,
 	if (edev->vxlan_dst_port)
 		return;
 
-	edev->vxlan_dst_port = t_port;
+	memset(&tunn_params, 0, sizeof(tunn_params));
+	tunn_params.update_vxlan_port = 1;
+	tunn_params.vxlan_port = t_port;
 
-	DP_VERBOSE(edev, QED_MSG_DEBUG, "Added vxlan port=%d", t_port);
+	__qede_lock(edev);
+	rc = edev->ops->tunn_config(edev->cdev, &tunn_params);
+	__qede_unlock(edev);
 
-	set_bit(QEDE_SP_VXLAN_PORT_CONFIG, &edev->sp_flags);
-	schedule_delayed_work(&edev->sp_task, 0);
+	if (!rc) {
+		edev->vxlan_dst_port = t_port;
+		DP_VERBOSE(edev, QED_MSG_DEBUG, "Added vxlan port=%d", t_port);
+	} else {
+		DP_NOTICE(edev, "Failed to add vxlan UDP port=%d\n", t_port);
+	}
 }
 
 static void qede_del_vxlan_port(struct net_device *dev,
 				sa_family_t sa_family, __be16 port)
 {
 	struct qede_dev *edev = netdev_priv(dev);
+	struct qed_tunn_params tunn_params;
 	u16 t_port = ntohs(port);
 
 	if (t_port != edev->vxlan_dst_port)
 		return;
 
+	memset(&tunn_params, 0, sizeof(tunn_params));
+	tunn_params.update_vxlan_port = 1;
+	tunn_params.vxlan_port = 0;
+
+	__qede_lock(edev);
+	edev->ops->tunn_config(edev->cdev, &tunn_params);
+	__qede_unlock(edev);
+
 	edev->vxlan_dst_port = 0;
 
 	DP_VERBOSE(edev, QED_MSG_DEBUG, "Deleted vxlan port=%d", t_port);
-
-	set_bit(QEDE_SP_VXLAN_PORT_CONFIG, &edev->sp_flags);
-	schedule_delayed_work(&edev->sp_task, 0);
 }
 #endif
 
@@ -2865,7 +2881,9 @@ static void qede_add_geneve_port(struct net_device *dev,
 				 sa_family_t sa_family, __be16 port)
 {
 	struct qede_dev *edev = netdev_priv(dev);
+	struct qed_tunn_params tunn_params;
 	u16 t_port = ntohs(port);
+	int rc;
 
 	if (!edev->dev_info.common.geneve_enable)
 		return;
@@ -2873,27 +2891,43 @@ static void qede_add_geneve_port(struct net_device *dev,
 	if (edev->geneve_dst_port)
 		return;
 
-	edev->geneve_dst_port = t_port;
+	memset(&tunn_params, 0, sizeof(tunn_params));
+	tunn_params.update_geneve_port = 1;
+	tunn_params.geneve_port = t_port;
 
-	DP_VERBOSE(edev, QED_MSG_DEBUG, "Added geneve port=%d", t_port);
-	set_bit(QEDE_SP_GENEVE_PORT_CONFIG, &edev->sp_flags);
-	schedule_delayed_work(&edev->sp_task, 0);
+	__qede_lock(edev);
+	rc = edev->ops->tunn_config(edev->cdev, &tunn_params);
+	__qede_unlock(edev);
+
+	if (!rc) {
+		edev->geneve_dst_port = t_port;
+		DP_VERBOSE(edev, QED_MSG_DEBUG, "Added geneve port=%d", t_port);
+	} else {
+		DP_NOTICE(edev, "Failed to add geneve UDP port=%d\n", t_port);
+	}
 }
 
 static void qede_del_geneve_port(struct net_device *dev,
 				 sa_family_t sa_family, __be16 port)
 {
 	struct qede_dev *edev = netdev_priv(dev);
+	struct qed_tunn_params tunn_params;
 	u16 t_port = ntohs(port);
 
 	if (t_port != edev->geneve_dst_port)
 		return;
 
+	memset(&tunn_params, 0, sizeof(tunn_params));
+	tunn_params.update_geneve_port = 1;
+	tunn_params.geneve_port = 0;
+
+	__qede_lock(edev);
+	edev->ops->tunn_config(edev->cdev, &tunn_params);
+	__qede_unlock(edev);
+
 	edev->geneve_dst_port = 0;
 
 	DP_VERBOSE(edev, QED_MSG_DEBUG, "Deleted geneve port=%d", t_port);
-	set_bit(QEDE_SP_GENEVE_PORT_CONFIG, &edev->sp_flags);
-	schedule_delayed_work(&edev->sp_task, 0);
 }
 
 static int qede_set_vf_trust(struct net_device *dev, int vfidx, bool setting)
@@ -3234,31 +3268,12 @@ static void qede_sp_task(struct work_struct *work)
 {
 	struct qede_dev *edev = container_of(work, struct qede_dev,
 					     sp_task.work);
-	struct qed_dev *cdev = edev->cdev;
 
 	__qede_lock(edev);
 
 	if (test_and_clear_bit(QEDE_SP_RX_MODE, &edev->sp_flags))
 		if (edev->state == QEDE_STATE_OPEN)
 			qede_config_rx_mode(edev->ndev);
-
-	if (test_and_clear_bit(QEDE_SP_VXLAN_PORT_CONFIG, &edev->sp_flags)) {
-		struct qed_tunn_params tunn_params;
-
-		memset(&tunn_params, 0, sizeof(tunn_params));
-		tunn_params.update_vxlan_port = 1;
-		tunn_params.vxlan_port = edev->vxlan_dst_port;
-		qed_ops->tunn_config(cdev, &tunn_params);
-	}
-
-	if (test_and_clear_bit(QEDE_SP_GENEVE_PORT_CONFIG, &edev->sp_flags)) {
-		struct qed_tunn_params tunn_params;
-
-		memset(&tunn_params, 0, sizeof(tunn_params));
-		tunn_params.update_geneve_port = 1;
-		tunn_params.geneve_port = edev->geneve_dst_port;
-		qed_ops->tunn_config(cdev, &tunn_params);
-	}
 
 #ifdef CONFIG_RFS_ACCEL
 	if (test_and_clear_bit(QEDE_SP_ARFS_CONFIG, &edev->sp_flags)) {
