@@ -556,6 +556,7 @@ static struct nvmet_fc_tgt_queue *
 nvmet_fc_alloc_target_queue(struct nvmet_fc_tgt_assoc *assoc,
 			u16 qid, u16 sqsize)
 {
+	struct nvmet_fc_tgtport *tgtport = assoc->tgtport;
 	struct nvmet_fc_tgt_queue *queue;
 	unsigned long flags;
 	int ret;
@@ -569,8 +570,14 @@ nvmet_fc_alloc_target_queue(struct nvmet_fc_tgt_assoc *assoc,
 	if (!queue)
 		return NULL;
 
+	if (tgtport->ops->queue_create) {
+		if (tgtport->ops->queue_create(&tgtport->fc_target_port,
+				nvmet_fc_makeconnid(assoc, qid), sqsize))
+			goto out_free_queue;
+	}
+
 	if (!nvmet_fc_tgt_a_get(assoc))
-		goto out_free_queue;
+		goto out_queue_delete;
 
 	queue->fod = (struct nvmet_fc_fcp_iod *)&queue[1];
 	queue->qid = qid;
@@ -602,6 +609,10 @@ nvmet_fc_alloc_target_queue(struct nvmet_fc_tgt_assoc *assoc,
 out_fail_iodlist:
 	nvmet_fc_destroy_fcp_iodlist(assoc->tgtport, queue);
 	nvmet_fc_tgt_a_put(assoc);
+out_queue_delete:
+	if (tgtport->ops->queue_delete)
+		tgtport->ops->queue_delete(&tgtport->fc_target_port,
+				nvmet_fc_makeconnid(assoc, qid), sqsize);
 out_free_queue:
 	kfree(queue);
 	return NULL;
@@ -676,6 +687,11 @@ nvmet_fc_delete_target_queue(struct nvmet_fc_tgt_queue *queue)
 
 	if (disconnect)
 		nvmet_sq_destroy(&queue->nvme_sq);
+
+	if (tgtport->ops->queue_delete)
+		tgtport->ops->queue_delete(&tgtport->fc_target_port,
+				nvmet_fc_makeconnid(queue->assoc, queue->qid),
+				queue->sqsize);
 
 	nvmet_fc_tgt_q_put(queue);
 }
@@ -863,6 +879,7 @@ nvmet_fc_register_targetport(struct nvmet_fc_port_info *pinfo,
 	if (!template->xmt_ls_rsp || !template->fcp_op ||
 	    !template->fcp_abort ||
 	    !template->fcp_req_release || !template->targetport_delete ||
+	    (template->queue_create && !template->queue_delete) ||
 	    !template->max_hw_queues || !template->max_sgl_segments ||
 	    !template->max_dif_sgl_segments || !template->dma_boundary) {
 		ret = -EINVAL;

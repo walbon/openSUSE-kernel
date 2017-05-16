@@ -806,6 +806,20 @@ struct nvmet_fc_target_port {
  *       to the LLDD after all operations on the fcp operation are complete.
  *       This may be due to the command completing or upon completion of
  *       abort cleanup.
+ *       Entrypoint is Mandatory.
+ *
+ * @queue_create:  Called by the transport to indicate the creation of an
+ *       nvme queue and to allow the LLDD to allocate resources for the
+ *       queue.
+ *       Returns 0 on successful allocation of resources for the queue.
+ *       -<errno> on failure.  Failure will result in failure of the
+ *       FC-NVME Create Association or Create Connection LS's.
+ *       Entrypoint is Optional.
+ *
+ * @queue_delete:  Called by the transport to indicate the deletion of an
+ *       nvme queue and to allow the LLDD to de-allocate resources for the
+ *       queue.
+ *       Entrypoint is Optional.
  *
  * @max_hw_queues:  indicates the maximum number of hw queues the LLDD
  *       supports for cpu affinitization.
@@ -846,6 +860,10 @@ struct nvmet_fc_target_template {
 				struct nvmefc_tgt_fcp_req *fcpreq);
 	void (*fcp_req_release)(struct nvmet_fc_target_port *tgtport,
 				struct nvmefc_tgt_fcp_req *fcpreq);
+	int (*queue_create)(struct nvmet_fc_target_port *tgtport,
+				u64 connection_id, u16 qsize);
+	void (*queue_delete)(struct nvmet_fc_target_port *tgtport,
+				u64 connection_id, u16 qsize);
 
 	u32	max_hw_queues;
 	u16	max_sgl_segments;
