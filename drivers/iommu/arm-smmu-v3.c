@@ -2654,7 +2654,7 @@ static void acpi_smmu_enable_cavium(struct arm_smmu_device *smmu)
 
 static void acpi_smmu_get_options(u32 model, struct arm_smmu_device *smmu)
 {
-	if (model == ACPI_IORT_SMMU_V3_CAVIUM_CN99XX)
+	if (model == ACPI_IORT_SMMU_CAVIUM_CN99XX)
 		smmu->options |= ARM_SMMU_OPT_PAGE0_REGS_ONLY;
 
 	acpi_smmu_enable_cavium(smmu);

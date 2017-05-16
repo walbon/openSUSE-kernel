@@ -778,7 +778,7 @@ static void __init arm_smmu_v3_init_resources(struct resource *res,
 	 * model is not correctly set in IORT
 	 */
 	cpu_model = read_cpuid_id() & MIDR_CPU_MODEL_MASK;
-	if (smmu->model == ACPI_IORT_SMMU_V3_CAVIUM_CN99XX ||
+	if (smmu->model == ACPI_IORT_SMMU_CAVIUM_CN99XX ||
 			cpu_model == 0x420f5160)
 		size = SZ_64K;
 
