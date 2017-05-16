@@ -687,8 +687,6 @@ static int i915_drm_suspend(struct drm_device *dev)
 
 	dev_priv->suspend_count++;
 
-	intel_display_set_init_power(dev_priv, false);
-
 	return 0;
 }
 
@@ -696,6 +694,8 @@ static int i915_drm_suspend_late(struct drm_device *drm_dev, bool hibernation)
 {
 	struct drm_i915_private *dev_priv = drm_dev->dev_private;
 	int ret;
+
+	intel_display_set_init_power(dev_priv, false);
 
 	ret = intel_suspend_complete(dev_priv);
 
