@@ -45,6 +45,10 @@ enum nvme_fc_queue_flags {
 
 #define NVMEFC_QUEUE_DELAY	3		/* ms units */
 
+#define NVME_FC_DEFAULT_DEV_LOSS_TMO	60	/* seconds */
+#define NVME_FC_EXPECTED_RECONNECT_TM	2	/* seconds - E_D_TOV */
+#define NVME_FC_MIN_DEV_LOSS_TMO	(2 * NVME_FC_EXPECTED_RECONNECT_TM)
+
 struct nvme_fc_queue {
 	struct nvme_fc_ctrl	*ctrl;
 	struct device		*dev;
@@ -438,6 +442,12 @@ nvme_fc_register_remoteport(struct nvme_fc_local_port *localport,
 	unsigned long flags;
 	int ret, idx;
 
+	if (pinfo->dev_loss_tmo &&
+			pinfo->dev_loss_tmo < NVME_FC_MIN_DEV_LOSS_TMO) {
+		ret = -EINVAL;
+		goto out_reghost_failed;
+	}
+
 	newrec = kmalloc((sizeof(*newrec) + lport->ops->remote_priv_sz),
 			 GFP_KERNEL);
 	if (!newrec) {
@@ -471,6 +481,10 @@ nvme_fc_register_remoteport(struct nvme_fc_local_port *localport,
 	newrec->remoteport.port_id = pinfo->port_id;
 	newrec->remoteport.port_state = FC_OBJSTATE_ONLINE;
 	newrec->remoteport.port_num = idx;
+	if (pinfo->dev_loss_tmo)
+		newrec->remoteport.dev_loss_tmo = pinfo->dev_loss_tmo;
+	else
+		newrec->remoteport.dev_loss_tmo = NVME_FC_DEFAULT_DEV_LOSS_TMO;
 
 	spin_lock_irqsave(&nvme_fc_lock, flags);
 	list_add_tail(&newrec->endp_list, &lport->endp_list);
