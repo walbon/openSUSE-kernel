@@ -636,6 +636,32 @@ fcloop_fcp_abort(struct nvme_fc_local_port *localport,
 }
 
 static void
+fcloop_nport_free(struct kref *ref)
+{
+	struct fcloop_nport *nport =
+		container_of(ref, struct fcloop_nport, ref);
+	unsigned long flags;
+
+	spin_lock_irqsave(&fcloop_lock, flags);
+	list_del(&nport->nport_list);
+	spin_unlock_irqrestore(&fcloop_lock, flags);
+
+	kfree(nport);
+}
+
+static void
+fcloop_nport_put(struct fcloop_nport *nport)
+{
+	kref_put(&nport->ref, fcloop_nport_free);
+}
+
+static int
+fcloop_nport_get(struct fcloop_nport *nport)
+{
+	return kref_get_unless_zero(&nport->ref);
+}
+
+static void
 fcloop_localport_delete(struct nvme_fc_local_port *localport)
 {
 	struct fcloop_lport *lport = localport->private;
@@ -651,6 +677,8 @@ fcloop_remoteport_delete(struct nvme_fc_remote_port *remoteport)
 
 	/* release any threads waiting for the unreg to complete */
 	complete(&rport->nport->rport_unreg_done);
+
+	fcloop_nport_put(rport->nport);
 }
 
 static void
@@ -660,6 +688,8 @@ fcloop_targetport_delete(struct nvmet_fc_target_port *targetport)
 
 	/* release any threads waiting for the unreg to complete */
 	complete(&tport->nport->tport_unreg_done);
+
+	fcloop_nport_put(tport->nport);
 }
 
 #define	FCLOOP_HW_QUEUES		4
@@ -727,6 +757,7 @@ fcloop_create_local_port(struct device *dev, struct device_attribute *attr,
 		goto out_free_opts;
 	}
 
+	memset(&pinfo, 0, sizeof(pinfo));
 	pinfo.node_name = opts->wwnn;
 	pinfo.port_name = opts->wwpn;
 	pinfo.port_role = opts->roles;
@@ -807,32 +838,6 @@ fcloop_delete_local_port(struct device *dev, struct device_attribute *attr,
 	ret = __wait_localport_unreg(lport);
 
 	return ret ? ret : count;
-}
-
-static void
-fcloop_nport_free(struct kref *ref)
-{
-	struct fcloop_nport *nport =
-		container_of(ref, struct fcloop_nport, ref);
-	unsigned long flags;
-
-	spin_lock_irqsave(&fcloop_lock, flags);
-	list_del(&nport->nport_list);
-	spin_unlock_irqrestore(&fcloop_lock, flags);
-
-	kfree(nport);
-}
-
-static void
-fcloop_nport_put(struct fcloop_nport *nport)
-{
-	kref_put(&nport->ref, fcloop_nport_free);
-}
-
-static int
-fcloop_nport_get(struct fcloop_nport *nport)
-{
-	return kref_get_unless_zero(&nport->ref);
 }
 
 static struct fcloop_nport *
@@ -943,6 +948,7 @@ fcloop_create_remote_port(struct device *dev, struct device_attribute *attr,
 	if (!nport)
 		return -EIO;
 
+	memset(&pinfo, 0, sizeof(pinfo));
 	pinfo.node_name = nport->node_name;
 	pinfo.port_name = nport->port_name;
 	pinfo.port_role = nport->port_role;
@@ -996,10 +1002,6 @@ __wait_remoteport_unreg(struct fcloop_nport *nport, struct fcloop_rport *rport)
 	ret = nvme_fc_unregister_remoteport(rport->remoteport);
 	if (ret)
 		return ret;
-
-	wait_for_completion(&nport->rport_unreg_done);
-
-	fcloop_nport_put(nport);
 
 	return ret;
 }
@@ -1103,10 +1105,6 @@ __wait_targetport_unreg(struct fcloop_nport *nport, struct fcloop_tport *tport)
 	ret = nvmet_fc_unregister_targetport(tport->targetport);
 	if (ret)
 		return ret;
-
-	wait_for_completion(&nport->tport_unreg_done);
-
-	fcloop_nport_put(nport);
 
 	return ret;
 }
