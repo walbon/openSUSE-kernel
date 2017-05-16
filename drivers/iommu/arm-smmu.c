@@ -2017,6 +2017,10 @@ static int acpi_smmu_get_data(u32 model, struct arm_smmu_device *smmu)
 		smmu->version = ARM_SMMU_V1;
 		smmu->model = GENERIC_SMMU;
 		break;
+	case ACPI_IORT_SMMU_CORELINK_MMU401:
+		smmu->version = ARM_SMMU_V1_64K;
+		smmu->model = GENERIC_SMMU;
+		break;
 	case ACPI_IORT_SMMU_V2:
 		smmu->version = ARM_SMMU_V2;
 		smmu->model = GENERIC_SMMU;
@@ -2024,6 +2028,10 @@ static int acpi_smmu_get_data(u32 model, struct arm_smmu_device *smmu)
 	case ACPI_IORT_SMMU_CORELINK_MMU500:
 		smmu->version = ARM_SMMU_V2;
 		smmu->model = ARM_MMU500;
+		break;
+	case ACPI_IORT_SMMU_CAVIUM_SMMUV2:
+		smmu->version = ARM_SMMU_V2;
+		smmu->model = CAVIUM_SMMUV2;
 		break;
 	default:
 		ret = -ENODEV;
