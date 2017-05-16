@@ -60,11 +60,35 @@ static DEFINE_SPINLOCK(dev_list_lock);
 
 static struct class *nvme_class;
 
+static int nvme_error_status(struct request *req)
+{
+	switch (nvme_req(req)->status & 0x7ff) {
+	case NVME_SC_SUCCESS:
+		return 0;
+	case NVME_SC_CAP_EXCEEDED:
+		return -ENOSPC;
+	default:
+		return -EIO;
+
+	/*
+	 * XXX: these errors are a nasty side-band protocol to
+	 * drivers/md/dm-mpath.c:noretry_error() that aren't documented
+	 * anywhere..
+	 */
+	case NVME_SC_CMD_SEQ_ERROR:
+		return -EILSEQ;
+	case NVME_SC_WRITE_FAULT:
+	case NVME_SC_READ_ERROR:
+	case NVME_SC_UNWRITTEN_BLOCK:
+		return -ENODATA;
+	}
+}
+
 static inline bool nvme_req_needs_retry(struct request *req)
 {
 	if (blk_noretry_request(req))
 		return false;
-	if (req->errors & NVME_SC_DNR)
+	if (nvme_req(req)->status & NVME_SC_DNR)
 		return false;
 	if (jiffies - req->start_time >= req->timeout)
 		return false;
@@ -75,23 +99,13 @@ static inline bool nvme_req_needs_retry(struct request *req)
 
 void nvme_complete_rq(struct request *req)
 {
-	int error = 0;
-
-	if (unlikely(req->errors)) {
-		if (nvme_req_needs_retry(req)) {
-			nvme_req(req)->retries++;
-			blk_mq_requeue_request(req,
-					!blk_mq_queue_stopped(req->q));
-			return;
-		}
-
-		if (req->cmd_type == REQ_TYPE_DRV_PRIV)
-			error = req->errors;
-		else
-			error = nvme_error_status(req->errors);
+	if (unlikely(nvme_req(req)->status && nvme_req_needs_retry(req))) {
+		nvme_req(req)->retries++;
+		blk_mq_requeue_request(req, !blk_mq_queue_stopped(req->q));
+		return;
 	}
 
-	blk_mq_end_request(req, error);
+	blk_mq_end_request(req, nvme_error_status(req));
 }
 EXPORT_SYMBOL_GPL(nvme_complete_rq);
 
@@ -108,7 +122,9 @@ void nvme_cancel_request(struct request *req, void *data, bool reserved)
 	status = NVME_SC_ABORT_REQ;
 	if (blk_queue_dying(req->q))
 		status |= NVME_SC_DNR;
-	blk_mq_complete_request(req, status);
+	nvme_req(req)->status = status;
+	blk_mq_complete_request(req, 0);
+
 }
 EXPORT_SYMBOL_GPL(nvme_cancel_request);
 
@@ -147,6 +163,7 @@ bool nvme_change_ctrl_state(struct nvme_ctrl *ctrl,
 	case NVME_CTRL_RECONNECTING:
 		switch (old_state) {
 		case NVME_CTRL_LIVE:
+		case NVME_CTRL_RESETTING:
 			changed = true;
 			/* FALLTHRU */
 		default:
@@ -337,6 +354,7 @@ int nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
 
 	if (!(req->rq_flags & RQF_DONTPREP)) {
 		nvme_req(req)->retries = 0;
+		nvme_req(req)->flags = 0;
 		req->rq_flags |= RQF_DONTPREP;
 	}
 
@@ -381,7 +399,10 @@ int __nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 	blk_execute_rq(req->q, NULL, req, at_head);
 	if (result)
 		*result = nvme_req(req)->result;
-	ret = req->errors;
+	if (nvme_req(req)->flags & NVME_REQ_CANCELLED)
+		ret = -EINTR;
+	else
+		ret = nvme_req(req)->status;
  out:
 	blk_mq_free_request(req);
 	return ret;
@@ -466,7 +487,10 @@ int __nvme_submit_user_cmd(struct request_queue *q, struct nvme_command *cmd,
 	}
  submit:
 	blk_execute_rq(req->q, disk, req, 0);
-	ret = req->errors;
+	if (nvme_req(req)->flags & NVME_REQ_CANCELLED)
+		ret = -EINTR;
+	else
+		ret = nvme_req(req)->status;
 	if (result)
 		*result = le32_to_cpu(nvme_req(req)->result.u32);
 	if (meta && !ret && !write) {

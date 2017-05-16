@@ -20,6 +20,7 @@
 #include <linux/blk-mq.h>
 #include <linux/parser.h>
 #include <linux/random.h>
+#include <linux/threads.h>
 #include <uapi/scsi/fc/fc_fs.h>
 #include <uapi/scsi/fc/fc_els.h>
 
@@ -81,6 +82,7 @@ struct nvmet_fc_fcp_iod {
 	u32				offset;
 	enum nvmet_fcp_datadir		io_dir;
 	bool				active;
+	bool				started;
 	bool				abort;
 	bool				aborted;
 	bool				writedataactive;
@@ -88,12 +90,12 @@ struct nvmet_fc_fcp_iod {
 
 	struct nvmet_req		req;
 	struct work_struct		work;
-	struct work_struct		done_work;
 
 	struct nvmet_fc_tgtport		*tgtport;
 	struct nvmet_fc_tgt_queue	*queue;
 
-	struct list_head		fcp_list;	/* tgtport->fcp_list */
+	struct list_head		fcp_list;	/* queue->fod_list */
+	struct list_head		work_list;	/* workcpu->work_list */
 };
 
 struct nvmet_fc_tgtport {
@@ -119,7 +121,7 @@ struct nvmet_fc_tgt_queue {
 	u16				qid;
 	u16				sqsize;
 	u16				ersp_ratio;
-	u16				sqhd;
+	__le16				sqhd;
 	int				cpu;
 	atomic_t			connected;
 	atomic_t			sqtail;
@@ -132,7 +134,6 @@ struct nvmet_fc_tgt_queue {
 	struct nvmet_fc_tgt_assoc	*assoc;
 	struct nvmet_fc_fcp_iod		*fod;		/* array of fcp_iods */
 	struct list_head		fod_list;
-	struct workqueue_struct		*work_q;
 	struct kref			ref;
 } __aligned(sizeof(unsigned long long));
 
@@ -143,6 +144,20 @@ struct nvmet_fc_tgt_assoc {
 	struct list_head		a_list;
 	struct nvmet_fc_tgt_queue	*queues[NVMET_NR_QUEUES];
 	struct kref			ref;
+};
+
+enum nvmet_fc_workcpu_flags {
+	NVMET_FC_CPU_RUNNING		= (1 << 0),
+	NVMET_FC_CPU_TERMINATING	= (1 << 1),
+};
+
+struct nvmet_fc_work_by_cpu {
+	struct workqueue_struct		*work_q;
+	struct list_head		fod_list;
+	spinlock_t			clock;
+	int				cpu;
+	bool				running;
+	struct work_struct		cpu_work;
 };
 
 
@@ -213,10 +228,11 @@ static DEFINE_SPINLOCK(nvmet_fc_tgtlock);
 static LIST_HEAD(nvmet_fc_target_list);
 static DEFINE_IDA(nvmet_fc_tgtport_cnt);
 
+static u32 nvmet_fc_cpu_cnt;
+static DEFINE_PER_CPU(struct nvmet_fc_work_by_cpu, nvmet_fc_cpu_workcpu);
+#define nvmet_fc_workcpu(cpu)	(&per_cpu(nvmet_fc_cpu_workcpu, cpu))
 
 static void nvmet_fc_handle_ls_rqst_work(struct work_struct *work);
-static void nvmet_fc_handle_fcp_rqst_work(struct work_struct *work);
-static void nvmet_fc_fcp_rqst_op_done_work(struct work_struct *work);
 static void nvmet_fc_tgt_a_put(struct nvmet_fc_tgt_assoc *assoc);
 static int nvmet_fc_tgt_a_get(struct nvmet_fc_tgt_assoc *assoc);
 static void nvmet_fc_tgt_q_put(struct nvmet_fc_tgt_queue *queue);
@@ -417,11 +433,10 @@ nvmet_fc_prep_fcp_iodlist(struct nvmet_fc_tgtport *tgtport,
 	int i;
 
 	for (i = 0; i < queue->sqsize; fod++, i++) {
-		INIT_WORK(&fod->work, nvmet_fc_handle_fcp_rqst_work);
-		INIT_WORK(&fod->done_work, nvmet_fc_fcp_rqst_op_done_work);
 		fod->tgtport = tgtport;
 		fod->queue = queue;
 		fod->active = false;
+		fod->started = false;
 		fod->abort = false;
 		fod->aborted = false;
 		fod->fcpreq = NULL;
@@ -498,6 +513,7 @@ nvmet_fc_free_fcp_iod(struct nvmet_fc_tgt_queue *queue,
 	spin_lock_irqsave(&queue->qlock, flags);
 	list_add_tail(&fod->fcp_list, &fod->queue->fod_list);
 	fod->active = false;
+	fod->started = false;
 	fod->abort = false;
 	fod->aborted = false;
 	fod->writedataactive = false;
@@ -517,9 +533,7 @@ nvmet_fc_queue_to_cpu(struct nvmet_fc_tgtport *tgtport, int qid)
 {
 	int cpu, idx, cnt;
 
-	if (!(tgtport->ops->target_features &
-			NVMET_FCTGTFEAT_NEEDS_CMD_CPUSCHED) ||
-	    tgtport->ops->max_hw_queues == 1)
+	if (tgtport->ops->max_hw_queues == 1)
 		return WORK_CPU_UNBOUND;
 
 	/* Simple cpu selection based on qid modulo active cpu count */
@@ -542,6 +556,7 @@ static struct nvmet_fc_tgt_queue *
 nvmet_fc_alloc_target_queue(struct nvmet_fc_tgt_assoc *assoc,
 			u16 qid, u16 sqsize)
 {
+	struct nvmet_fc_tgtport *tgtport = assoc->tgtport;
 	struct nvmet_fc_tgt_queue *queue;
 	unsigned long flags;
 	int ret;
@@ -555,14 +570,14 @@ nvmet_fc_alloc_target_queue(struct nvmet_fc_tgt_assoc *assoc,
 	if (!queue)
 		return NULL;
 
-	if (!nvmet_fc_tgt_a_get(assoc))
-		goto out_free_queue;
+	if (tgtport->ops->queue_create) {
+		if (tgtport->ops->queue_create(&tgtport->fc_target_port,
+				nvmet_fc_makeconnid(assoc, qid), sqsize))
+			goto out_free_queue;
+	}
 
-	queue->work_q = alloc_workqueue("ntfc%d.%d.%d", 0, 0,
-				assoc->tgtport->fc_target_port.port_num,
-				assoc->a_id, qid);
-	if (!queue->work_q)
-		goto out_a_put;
+	if (!nvmet_fc_tgt_a_get(assoc))
+		goto out_queue_delete;
 
 	queue->fod = (struct nvmet_fc_fcp_iod *)&queue[1];
 	queue->qid = qid;
@@ -593,9 +608,11 @@ nvmet_fc_alloc_target_queue(struct nvmet_fc_tgt_assoc *assoc,
 
 out_fail_iodlist:
 	nvmet_fc_destroy_fcp_iodlist(assoc->tgtport, queue);
-	destroy_workqueue(queue->work_q);
-out_a_put:
 	nvmet_fc_tgt_a_put(assoc);
+out_queue_delete:
+	if (tgtport->ops->queue_delete)
+		tgtport->ops->queue_delete(&tgtport->fc_target_port,
+				nvmet_fc_makeconnid(assoc, qid), sqsize);
 out_free_queue:
 	kfree(queue);
 	return NULL;
@@ -616,8 +633,6 @@ nvmet_fc_tgt_queue_free(struct kref *ref)
 	nvmet_fc_destroy_fcp_iodlist(queue->assoc->tgtport, queue);
 
 	nvmet_fc_tgt_a_put(queue->assoc);
-
-	destroy_workqueue(queue->work_q);
 
 	kfree(queue);
 }
@@ -670,10 +685,13 @@ nvmet_fc_delete_target_queue(struct nvmet_fc_tgt_queue *queue)
 	}
 	spin_unlock_irqrestore(&queue->qlock, flags);
 
-	flush_workqueue(queue->work_q);
-
 	if (disconnect)
 		nvmet_sq_destroy(&queue->nvme_sq);
+
+	if (tgtport->ops->queue_delete)
+		tgtport->ops->queue_delete(&tgtport->fc_target_port,
+				nvmet_fc_makeconnid(queue->assoc, queue->qid),
+				queue->sqsize);
 
 	nvmet_fc_tgt_q_put(queue);
 }
@@ -861,6 +879,7 @@ nvmet_fc_register_targetport(struct nvmet_fc_port_info *pinfo,
 	if (!template->xmt_ls_rsp || !template->fcp_op ||
 	    !template->fcp_abort ||
 	    !template->fcp_req_release || !template->targetport_delete ||
+	    (template->queue_create && !template->queue_delete) ||
 	    !template->max_hw_queues || !template->max_sgl_segments ||
 	    !template->max_dif_sgl_segments || !template->dma_boundary) {
 		ret = -EINVAL;
@@ -1058,7 +1077,7 @@ EXPORT_SYMBOL_GPL(nvmet_fc_unregister_targetport);
 
 
 static void
-nvmet_fc_format_rsp_hdr(void *buf, u8 ls_cmd, u32 desc_len, u8 rqst_ls_cmd)
+nvmet_fc_format_rsp_hdr(void *buf, u8 ls_cmd, __be32 desc_len, u8 rqst_ls_cmd)
 {
 	struct fcnvme_ls_acc_hdr *acc = buf;
 
@@ -1700,7 +1719,7 @@ nvmet_fc_prep_fcp_rsp(struct nvmet_fc_tgtport *tgtport,
 	    xfr_length != fod->total_length ||
 	    (le16_to_cpu(cqe->status) & 0xFFFE) || cqewd[0] || cqewd[1] ||
 	    (sqe->flags & (NVME_CMD_FUSE_FIRST | NVME_CMD_FUSE_SECOND)) ||
-	    queue_90percent_full(fod->queue, cqe->sq_head))
+	    queue_90percent_full(fod->queue, le16_to_cpu(cqe->sq_head)))
 		send_ersp = true;
 
 	/* re-set the fields */
@@ -1964,24 +1983,28 @@ nvmet_fc_fod_op_done(struct nvmet_fc_fcp_iod *fod)
 }
 
 static void
-nvmet_fc_fcp_rqst_op_done_work(struct work_struct *work)
-{
-	struct nvmet_fc_fcp_iod *fod =
-		container_of(work, struct nvmet_fc_fcp_iod, done_work);
-
-	nvmet_fc_fod_op_done(fod);
-}
-
-static void
 nvmet_fc_xmt_fcp_op_done(struct nvmefc_tgt_fcp_req *fcpreq)
 {
 	struct nvmet_fc_fcp_iod *fod = fcpreq->nvmet_fc_private;
 	struct nvmet_fc_tgt_queue *queue = fod->queue;
+	struct nvmet_fc_work_by_cpu *workcpu = nvmet_fc_workcpu(queue->cpu);
+	unsigned long flags;
+	bool running;
 
-	if (fod->tgtport->ops->target_features & NVMET_FCTGTFEAT_OPDONE_IN_ISR)
-		/* context switch so completion is not in ISR context */
-		queue_work_on(queue->cpu, queue->work_q, &fod->done_work);
-	else
+	if (fod->tgtport->ops->target_features &
+				NVMET_FCTGTFEAT_OPDONE_IN_ISR) {
+		/* context switch for processing */
+
+		spin_lock_irqsave(&workcpu->clock, flags);
+		list_add_tail(&fod->work_list, &workcpu->fod_list);
+		running = workcpu->running;
+		workcpu->running = true;
+		spin_unlock_irqrestore(&workcpu->clock, flags);
+
+		if (!running)
+			queue_work_on(workcpu->cpu, workcpu->work_q,
+					&workcpu->cpu_work);
+	} else
 		nvmet_fc_fod_op_done(fod);
 }
 
@@ -2055,7 +2078,7 @@ nvmet_fc_fcp_nvme_cmd_done(struct nvmet_req *nvme_req)
 /*
  * Actual processing routine for received FC-NVME LS Requests from the LLD
  */
-void
+static void
 nvmet_fc_handle_fcp_rqst(struct nvmet_fc_tgtport *tgtport,
 			struct nvmet_fc_fcp_iod *fod)
 {
@@ -2071,6 +2094,7 @@ nvmet_fc_handle_fcp_rqst(struct nvmet_fc_tgtport *tgtport,
 	 * layer until we have both based on csn.
 	 */
 
+	fod->started = true;
 	fod->fcpreq->done = nvmet_fc_xmt_fcp_op_done;
 
 	fod->total_length = be32_to_cpu(cmdiu->data_len);
@@ -2146,19 +2170,6 @@ transport_error:
 	nvmet_fc_abort_op(tgtport, fod);
 }
 
-/*
- * Actual processing routine for received FC-NVME LS Requests from the LLD
- */
-static void
-nvmet_fc_handle_fcp_rqst_work(struct work_struct *work)
-{
-	struct nvmet_fc_fcp_iod *fod =
-		container_of(work, struct nvmet_fc_fcp_iod, work);
-	struct nvmet_fc_tgtport *tgtport = fod->tgtport;
-
-	nvmet_fc_handle_fcp_rqst(tgtport, fod);
-}
-
 /**
  * nvmet_fc_rcv_fcp_req - transport entry point called by an LLDD
  *                       upon the reception of a NVME FCP CMD IU.
@@ -2188,6 +2199,9 @@ nvmet_fc_rcv_fcp_req(struct nvmet_fc_target_port *target_port,
 	struct nvme_fc_cmd_iu *cmdiu = cmdiubuf;
 	struct nvmet_fc_tgt_queue *queue;
 	struct nvmet_fc_fcp_iod *fod;
+	struct nvmet_fc_work_by_cpu *workcpu;
+	unsigned long flags;
+	bool running;
 
 	/* validate iu, so the connection id can be used to find the queue */
 	if ((cmdiubuf_len != sizeof(*cmdiu)) ||
@@ -2225,9 +2239,21 @@ nvmet_fc_rcv_fcp_req(struct nvmet_fc_target_port *target_port,
 			((queue->qid - 1) % tgtport->ops->max_hw_queues) : 0;
 	memcpy(&fod->cmdiubuf, cmdiubuf, cmdiubuf_len);
 
-	if (tgtport->ops->target_features & NVMET_FCTGTFEAT_CMD_IN_ISR)
-		queue_work_on(queue->cpu, queue->work_q, &fod->work);
-	else
+	if (tgtport->ops->target_features & NVMET_FCTGTFEAT_CMD_IN_ISR) {
+		/* context switch for processing */
+
+		workcpu = nvmet_fc_workcpu(queue->cpu);
+
+		spin_lock_irqsave(&workcpu->clock, flags);
+		list_add_tail(&fod->work_list, &workcpu->fod_list);
+		running = workcpu->running;
+		workcpu->running = true;
+		spin_unlock_irqrestore(&workcpu->clock, flags);
+
+		if (!running)
+			queue_work_on(workcpu->cpu, workcpu->work_q,
+					&workcpu->cpu_work);
+	} else
 		nvmet_fc_handle_fcp_rqst(tgtport, fod);
 
 	return 0;
@@ -2393,13 +2419,17 @@ nvmet_fc_remove_port(struct nvmet_port *port)
 {
 	struct nvmet_fc_tgtport *tgtport = port->priv;
 	unsigned long flags;
+	bool matched = false;
 
 	spin_lock_irqsave(&nvmet_fc_tgtlock, flags);
 	if (tgtport->port == port) {
-		nvmet_fc_tgtport_put(tgtport);
+		matched = true;
 		tgtport->port = NULL;
 	}
 	spin_unlock_irqrestore(&nvmet_fc_tgtlock, flags);
+
+	if (matched)
+		nvmet_fc_tgtport_put(tgtport);
 }
 
 static struct nvmet_fabrics_ops nvmet_fc_tgt_fcp_ops = {
@@ -2412,9 +2442,95 @@ static struct nvmet_fabrics_ops nvmet_fc_tgt_fcp_ops = {
 	.delete_ctrl		= nvmet_fc_delete_ctrl,
 };
 
+static void
+nvmet_fc_do_work_on_cpu(struct work_struct *work)
+{
+	struct nvmet_fc_work_by_cpu *workcpu =
+		container_of(work, struct nvmet_fc_work_by_cpu, cpu_work);
+	struct nvmet_fc_fcp_iod *fod;
+	unsigned long flags;
+
+	spin_lock_irqsave(&workcpu->clock, flags);
+
+	fod = list_first_entry_or_null(&workcpu->fod_list,
+				struct nvmet_fc_fcp_iod, work_list);
+	for ( ; fod; ) {
+		list_del(&fod->work_list);
+
+		spin_unlock_irqrestore(&workcpu->clock, flags);
+
+		if (fod->started)
+			nvmet_fc_fod_op_done(fod);
+		else
+			nvmet_fc_handle_fcp_rqst(fod->tgtport, fod);
+
+		spin_lock_irqsave(&workcpu->clock, flags);
+
+		fod = list_first_entry_or_null(&workcpu->fod_list,
+					struct nvmet_fc_fcp_iod, work_list);
+	}
+
+	workcpu->running = false;
+
+	spin_unlock_irqrestore(&workcpu->clock, flags);
+}
+
+static int
+nvmet_fc_create_workqueues(void)
+{
+	struct nvmet_fc_work_by_cpu *workcpu;
+	int i;
+
+	nvmet_fc_cpu_cnt = num_active_cpus();
+	for (i = 0; i < nvmet_fc_cpu_cnt; i++, workcpu++) {
+		workcpu = nvmet_fc_workcpu(i);
+
+		workcpu->work_q = alloc_workqueue("nvmet-fc-cpu%d", 0, 0, i);
+		if (!workcpu->work_q)
+			return -ENOEXEC;
+		workcpu->cpu = i;
+		workcpu->running = false;
+		spin_lock_init(&workcpu->clock);
+		INIT_LIST_HEAD(&workcpu->fod_list);
+		INIT_WORK(&workcpu->cpu_work, nvmet_fc_do_work_on_cpu);
+	}
+
+	return 0;
+}
+
+static void
+nvmet_fc_delete_workqueues(void)
+{
+	struct nvmet_fc_work_by_cpu *workcpu;
+	int i;
+
+	for (i = 0; i < nvmet_fc_cpu_cnt; i++, workcpu++) {
+		workcpu = nvmet_fc_workcpu(i);
+
+		/* sanity check - all work should be removed */
+		if (!list_empty(&workcpu->fod_list))
+			pr_warn("%s: cpu %d worklist not empty\n", __func__, i);
+
+		if (workcpu->work_q)
+			destroy_workqueue(workcpu->work_q);
+	}
+}
+
 static int __init nvmet_fc_init_module(void)
 {
-	return nvmet_register_transport(&nvmet_fc_tgt_fcp_ops);
+	int ret;
+
+	ret = nvmet_fc_create_workqueues();
+	if (ret)
+		goto fail;
+
+	ret = nvmet_register_transport(&nvmet_fc_tgt_fcp_ops);
+	if (!ret)
+		return 0;
+
+fail:
+	nvmet_fc_delete_workqueues();
+	return -ENXIO;
 }
 
 static void __exit nvmet_fc_exit_module(void)
@@ -2424,6 +2540,8 @@ static void __exit nvmet_fc_exit_module(void)
 		pr_warn("%s: targetport list not empty\n", __func__);
 
 	nvmet_unregister_transport(&nvmet_fc_tgt_fcp_ops);
+
+	nvmet_fc_delete_workqueues();
 
 	ida_destroy(&nvmet_fc_tgtport_cnt);
 }

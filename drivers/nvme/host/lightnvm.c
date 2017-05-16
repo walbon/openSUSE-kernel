@@ -521,7 +521,7 @@ static void nvme_nvm_end_io(struct request *rq, int error)
 	if (cqe)
 		rqd->ppa_status = le64_to_cpu(cqe->result);
 
-	nvm_end_io(rqd, error);
+	nvm_end_io(rqd, nvme_req(rq)->status);
 
 	kfree(nvme_req(rq)->cmd);
 	blk_mq_free_request(rq);
