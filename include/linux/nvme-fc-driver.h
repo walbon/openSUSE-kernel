@@ -453,6 +453,8 @@ int nvme_fc_unregister_remoteport(struct nvme_fc_remote_port *remoteport);
 
 void nvme_fc_rescan_remoteport(struct nvme_fc_remote_port *remoteport);
 
+int nvme_fc_set_remoteport_devloss(struct nvme_fc_remote_port *remoteport,
+			u32 dev_loss_tmo);
 
 
 /*

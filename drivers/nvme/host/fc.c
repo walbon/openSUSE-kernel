@@ -167,6 +167,7 @@ struct nvme_fc_ctrl {
 	struct work_struct	delete_work;
 	struct work_struct	reset_work;
 	struct delayed_work	connect_work;
+	u32			dev_loss_tmo;
 
 	struct kref		ref;
 	u32			flags;
@@ -2774,6 +2775,96 @@ __nvme_fc_options_match(struct nvmf_ctrl_options *opts,
 	return true;
 }
 
+static void
+nvme_fc_set_ctrl_devloss(struct nvme_fc_ctrl *ctrl,
+		struct nvmf_ctrl_options *opts)
+{
+	u32 dev_loss_tmo;
+
+	/*
+	 * dev_loss_tmo will be the max amount of time after an association
+	 * failure that will be allowed for a new association to be
+	 * established. It doesn't matter why the original association
+	 * failed (FC connectivity loss, transport error, admin-request).
+	 * The new association must be established before dev_loss_tmo
+	 * expires or the controller will be torn down.
+	 *
+	 * If the connect parameters are less than the FC port dev_loss_tmo
+	 * parameter, scale dev_loss_tmo to the connect parameters.
+	 *
+	 * If the connect parameters are larger than the FC port
+	 * dev_loss_tmo parameter, adjust the connect parameters so that
+	 * there is at least 1 attempt at a reconnect attempt before failing.
+	 * Note: reconnects will be attempted only if there is FC connectivity.
+	 */
+
+	if (opts->max_reconnects < 1)
+		opts->max_reconnects = 1;
+	dev_loss_tmo = opts->reconnect_delay * opts->max_reconnects;
+
+	ctrl->dev_loss_tmo =
+		min_t(u32, ctrl->rport->remoteport.dev_loss_tmo, dev_loss_tmo);
+	if (ctrl->dev_loss_tmo < ctrl->rport->remoteport.dev_loss_tmo)
+		dev_warn(ctrl->ctrl.device,
+			"NVME-FC{%d}: scaling dev_loss_tmo to reconnect "
+			"window (%d)\n",
+			ctrl->cnum, ctrl->dev_loss_tmo);
+
+	/* resync dev_loss_tmo with the reconnect window */
+	if (ctrl->dev_loss_tmo < opts->reconnect_delay * opts->max_reconnects) {
+		if (!ctrl->dev_loss_tmo)
+			opts->max_reconnects = 0;
+		else {
+			opts->reconnect_delay =
+				min_t(u32, opts->reconnect_delay,
+					ctrl->dev_loss_tmo -
+						NVME_FC_EXPECTED_RECONNECT_TM);
+			opts->max_reconnects = DIV_ROUND_UP(ctrl->dev_loss_tmo,
+						opts->reconnect_delay);
+			dev_warn(ctrl->ctrl.device,
+				"NVME-FC{%d}: dev_loss_tmo %d: scaling "
+				"reconnect delay %d max reconnects %d\n",
+				ctrl->cnum, ctrl->dev_loss_tmo,
+				opts->reconnect_delay, opts->max_reconnects);
+		}
+	}
+}
+
+int
+nvme_fc_set_remoteport_devloss(struct nvme_fc_remote_port *portptr,
+			u32 dev_loss_tmo)
+{
+	struct nvme_fc_rport *rport = remoteport_to_rport(portptr);
+	struct nvme_fc_ctrl *ctrl;
+	unsigned long flags;
+
+	/*
+	 * Allow dev_loss_tmo set to 0. This will allow
+	 * nvme_fc_unregister_remoteport() to immediately delete
+	 * controllers without waiting a dev_loss_tmo timeout.
+	 */
+	if (dev_loss_tmo && dev_loss_tmo < NVME_FC_MIN_DEV_LOSS_TMO)
+		return -ERANGE;
+
+	spin_lock_irqsave(&rport->lock, flags);
+
+	if (portptr->port_state != FC_OBJSTATE_ONLINE) {
+		spin_unlock_irqrestore(&rport->lock, flags);
+		return -EINVAL;
+	}
+
+	rport->remoteport.dev_loss_tmo = dev_loss_tmo;
+
+	list_for_each_entry(ctrl, &rport->ctrl_list, ctrl_list)
+		/* Apply values for use in next reconnect cycle */
+		nvme_fc_set_ctrl_devloss(ctrl, ctrl->ctrl.opts);
+
+	spin_unlock_irqrestore(&rport->lock, flags);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(nvme_fc_set_remoteport_devloss);
+
 static struct nvme_ctrl *
 nvme_fc_init_ctrl(struct device *dev, struct nvmf_ctrl_options *opts,
 	struct nvme_fc_lport *lport, struct nvme_fc_rport *rport)
@@ -2885,6 +2976,8 @@ nvme_fc_init_ctrl(struct device *dev, struct nvmf_ctrl_options *opts,
 	spin_lock_irqsave(&rport->lock, flags);
 	list_add_tail(&ctrl->ctrl_list, &rport->ctrl_list);
 	spin_unlock_irqrestore(&rport->lock, flags);
+
+	nvme_fc_set_ctrl_devloss(ctrl, opts);
 
 	ret = nvme_fc_create_association(ctrl);
 	if (ret) {
