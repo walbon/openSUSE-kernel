@@ -1192,7 +1192,7 @@ nvme_fc_fcpio_done(struct nvmefc_fcp_req *req)
 	struct nvme_fc_ctrl *ctrl = op->ctrl;
 	struct nvme_fc_queue *queue = op->queue;
 	struct nvme_completion *cqe = &op->rsp_iu.cqe;
-	u16 status = NVME_SC_SUCCESS;
+	__le16 status = cpu_to_le16(NVME_SC_SUCCESS << 1);
 
 	/*
 	 * WARNING:
@@ -1227,9 +1227,9 @@ nvme_fc_fcpio_done(struct nvmefc_fcp_req *req)
 				sizeof(op->rsp_iu), DMA_FROM_DEVICE);
 
 	if (atomic_read(&op->state) == FCPOP_STATE_ABORTED)
-		status = NVME_SC_ABORT_REQ | NVME_SC_DNR;
+		status = cpu_to_le16((NVME_SC_ABORT_REQ | NVME_SC_DNR) << 1);
 	else if (freq->status)
-		status = NVME_SC_FC_TRANSPORT_ERROR;
+		status = cpu_to_le16(NVME_SC_FC_TRANSPORT_ERROR << 1);
 
 	/*
 	 * For the linux implementation, if we have an unsuccesful
@@ -1257,7 +1257,7 @@ nvme_fc_fcpio_done(struct nvmefc_fcp_req *req)
 		 */
 		if (freq->transferred_length !=
 			be32_to_cpu(op->cmd_iu.data_len)) {
-			status = NVME_SC_FC_TRANSPORT_ERROR;
+			status = cpu_to_le16(NVME_SC_FC_TRANSPORT_ERROR << 1);
 			goto done;
 		}
 		op->nreq.result.u64 = 0;
@@ -1274,15 +1274,15 @@ nvme_fc_fcpio_done(struct nvmefc_fcp_req *req)
 					freq->transferred_length ||
 			     op->rsp_iu.status_code ||
 			     op->rqno != le16_to_cpu(cqe->command_id))) {
-			status = NVME_SC_FC_TRANSPORT_ERROR;
+			status = cpu_to_le16(NVME_SC_FC_TRANSPORT_ERROR << 1);
 			goto done;
 		}
 		op->nreq.result = cqe->result;
-		status = le16_to_cpu(cqe->status) >> 1;
+		status = cqe->status;
 		break;
 
 	default:
-		status = NVME_SC_FC_TRANSPORT_ERROR;
+		status = cpu_to_le16(NVME_SC_FC_TRANSPORT_ERROR << 1);
 		goto done;
 	}
 
@@ -1294,7 +1294,7 @@ done:
 		return;
 	}
 
-	blk_mq_complete_request(rq, status);
+	blk_mq_complete_request(rq, le16_to_cpu(status) >> 1);
 }
 
 static int
@@ -1970,29 +1970,15 @@ nvme_fc_complete_rq(struct request *rq)
 {
 	struct nvme_fc_fcp_op *op = blk_mq_rq_to_pdu(rq);
 	struct nvme_fc_ctrl *ctrl = op->ctrl;
-	int error = 0, state;
+	int state;
 
 	state = atomic_xchg(&op->state, FCPOP_STATE_IDLE);
 
 	nvme_cleanup_cmd(rq);
-
 	nvme_fc_unmap_data(ctrl, rq, op);
-
-	if (unlikely(rq->errors)) {
-		if (nvme_req_needs_retry(rq, rq->errors)) {
-			nvme_requeue_req(rq);
-			return;
-		}
-
-		if (rq->cmd_type == REQ_TYPE_DRV_PRIV)
-			error = rq->errors;
-		else
-			error = nvme_error_status(rq->errors);
-	}
-
+	nvme_complete_rq(rq);
 	nvme_fc_ctrl_put(ctrl);
 
-	blk_mq_end_request(rq, error);
 }
 
 static struct blk_mq_ops nvme_fc_mq_ops = {
@@ -2070,7 +2056,7 @@ nvme_fc_configure_admin_queue(struct nvme_fc_ctrl *ctrl)
 	}
 
 	ctrl->ctrl.sqsize =
-		min_t(int, NVME_CAP_MQES(ctrl->cap) + 1, ctrl->ctrl.sqsize);
+		min_t(int, NVME_CAP_MQES(ctrl->cap), ctrl->ctrl.sqsize);
 
 	error = nvme_enable_ctrl(&ctrl->ctrl, ctrl->cap);
 	if (error)
@@ -2399,18 +2385,6 @@ __nvme_fc_create_ctrl(struct device *dev, struct nvmf_ctrl_options *opts,
 
 	/* sanity checks */
 
-	/* FC-NVME supports 64-byte SQE only */
-	if (ctrl->ctrl.ioccsz != 4) {
-		dev_err(ctrl->ctrl.device, "ioccsz %d is not supported!\n",
-				ctrl->ctrl.ioccsz);
-		goto out_remove_admin_queue;
-	}
-	/* FC-NVME supports 16-byte CQE only */
-	if (ctrl->ctrl.iorcsz != 1) {
-		dev_err(ctrl->ctrl.device, "iorcsz %d is not supported!\n",
-				ctrl->ctrl.iorcsz);
-		goto out_remove_admin_queue;
-	}
 	/* FC-NVME does not have other data in the capsule */
 	if (ctrl->ctrl.icdoff) {
 		dev_err(ctrl->ctrl.device, "icdoff %d is not supported!\n",
@@ -2604,11 +2578,20 @@ static struct nvmf_transport_ops nvme_fc_transport = {
 
 static int __init nvme_fc_init_module(void)
 {
+	int ret;
+
 	nvme_fc_wq = create_workqueue("nvme_fc_wq");
 	if (!nvme_fc_wq)
 		return -ENOMEM;
 
-	return nvmf_register_transport(&nvme_fc_transport);
+	ret = nvmf_register_transport(&nvme_fc_transport);
+	if (ret)
+		goto err;
+
+	return 0;
+err:
+	destroy_workqueue(nvme_fc_wq);
+	return ret;
 }
 
 static void __exit nvme_fc_exit_module(void)
