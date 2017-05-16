@@ -1801,7 +1801,7 @@ nvme_fc_error_recovery(struct nvme_fc_ctrl *ctrl, char *errmsg)
 	if (ctrl->queue_count > 1)
 		nvme_stop_queues(&ctrl->ctrl);
 
-	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_RECONNECTING)) {
+	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_RESETTING)) {
 		dev_err(ctrl->ctrl.device,
 			"NVME-FC{%d}: error_recovery: Couldn't change state "
 			"to RECONNECTING\n", ctrl->cnum);
@@ -2663,6 +2663,13 @@ nvme_fc_reset_ctrl_work(struct work_struct *work)
 
 	/* will block will waiting for io to terminate */
 	nvme_fc_delete_association(ctrl);
+
+	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_RECONNECTING)) {
+		dev_err(ctrl->ctrl.device,
+			"NVME-FC{%d}: controller reset: Couldn't change "
+			"state to RECONNECTING\n", ctrl->cnum);
+		return;
+	}
 
 	ret = nvme_fc_create_association(ctrl);
 	if (ret)
