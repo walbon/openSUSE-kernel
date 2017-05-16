@@ -392,6 +392,26 @@ nvme_fc_unregister_localport(struct nvme_fc_local_port *portptr)
 }
 EXPORT_SYMBOL_GPL(nvme_fc_unregister_localport);
 
+static void
+nvme_fc_signal_discovery_scan(struct nvme_fc_lport *lport,
+		struct nvme_fc_rport *rport)
+{
+	char hostaddr[80];	/* NVMEFC_HOST_TRADDR=...*/
+	char tgtaddr[80];	/* NVMEFC_TRADDR=...*/
+	char *envp[4] = { "FC_EVENT=nvmediscovery", hostaddr, tgtaddr, NULL };
+
+	if (!(rport->remoteport.port_role & FC_PORT_ROLE_NVME_DISCOVERY))
+		return;
+
+	snprintf(hostaddr, sizeof(hostaddr),
+		"NVMEFC_HOST_TRADDR=nn-0x%016llx:pn-0x%016llx",
+		lport->localport.node_name, lport->localport.port_name);
+	snprintf(tgtaddr, sizeof(tgtaddr),
+		"NVMEFC_TRADDR=nn-0x%016llx:pn-0x%016llx",
+		rport->remoteport.node_name, rport->remoteport.port_name);
+	kobject_uevent_env(&nvmefc_device->kobj, KOBJ_CHANGE, envp);
+}
+
 /**
  * nvme_fc_register_remoteport - transport entry point called by an
  *                              LLDD to register the existence of a NVME
@@ -455,6 +475,8 @@ nvme_fc_register_remoteport(struct nvme_fc_local_port *localport,
 	spin_lock_irqsave(&nvme_fc_lock, flags);
 	list_add_tail(&newrec->endp_list, &lport->endp_list);
 	spin_unlock_irqrestore(&nvme_fc_lock, flags);
+
+	nvme_fc_signal_discovery_scan(lport, newrec);
 
 	*portptr = &newrec->remoteport;
 	return 0;
@@ -573,6 +595,23 @@ nvme_fc_unregister_remoteport(struct nvme_fc_remote_port *portptr)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(nvme_fc_unregister_remoteport);
+
+/**
+ * nvme_fc_rescan_remoteport - transport entry point called by an
+ *                              LLDD to request a nvme device rescan.
+ * @remoteport: pointer to the (registered) remote port that is to be
+ *              rescanned.
+ *
+ * Returns: N/A
+ */
+void
+nvme_fc_rescan_remoteport(struct nvme_fc_remote_port *remoteport)
+{
+	struct nvme_fc_rport *rport = remoteport_to_rport(remoteport);
+
+	nvme_fc_signal_discovery_scan(rport->lport, rport);
+}
+EXPORT_SYMBOL_GPL(nvme_fc_rescan_remoteport);
 
 
 /* *********************** FC-NVME DMA Handling **************************** */
@@ -2701,6 +2740,19 @@ static const struct blk_mq_ops nvme_fc_admin_mq_ops = {
 };
 
 
+static inline bool
+__nvme_fc_options_match(struct nvmf_ctrl_options *opts,
+			struct nvme_fc_ctrl *ctrl)
+{
+	if (strcmp(opts->subsysnqn, ctrl->ctrl.opts->subsysnqn) ||
+	    strcmp(opts->host->nqn, ctrl->ctrl.opts->host->nqn) ||
+	    memcmp(&opts->host->id, &ctrl->ctrl.opts->host->id,
+				sizeof(uuid_be)))
+		return false;
+
+	return true;
+}
+
 static struct nvme_ctrl *
 nvme_fc_init_ctrl(struct device *dev, struct nvmf_ctrl_options *opts,
 	struct nvme_fc_lport *lport, struct nvme_fc_rport *rport)
@@ -2708,10 +2760,25 @@ nvme_fc_init_ctrl(struct device *dev, struct nvmf_ctrl_options *opts,
 	struct nvme_fc_ctrl *ctrl;
 	unsigned long flags;
 	int ret, idx;
+	bool found = false;
 
 	if (!(rport->remoteport.port_role &
 	    (FC_PORT_ROLE_NVME_DISCOVERY | FC_PORT_ROLE_NVME_TARGET))) {
 		ret = -EBADR;
+		goto out_fail;
+	}
+
+	spin_lock_irqsave(&rport->lock, flags);
+	list_for_each_entry(ctrl, &rport->ctrl_list, ctrl_list) {
+		if (__nvme_fc_options_match(opts, ctrl)) {
+			found = true;
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&rport->lock, flags);
+
+	if (found) {
+		ret = -EALREADY;
 		goto out_fail;
 	}
 
