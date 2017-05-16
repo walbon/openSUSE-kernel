@@ -1229,7 +1229,9 @@ struct sched_rt_entity {
 	struct list_head run_list;
 	unsigned long timeout;
 	unsigned int time_slice;
+#ifdef __GENKSYMS__
 	int nr_cpus_allowed;
+#endif
 
 	struct sched_rt_entity *back;
 #ifdef CONFIG_RT_GROUP_SCHED
@@ -1291,6 +1293,13 @@ struct task_struct {
 #endif
 
 	unsigned int policy;
+#ifndef __GENKSYMS__
+	/*
+	 * kABI safe, as this is a 4 byte hole per pahole.
+	 * Moved out of struct sched_rt_entity to make room there.
+	 */
+	int nr_cpus_allowed;
+#endif
 	cpumask_t cpus_allowed;
 
 #ifdef CONFIG_PREEMPT_RCU
