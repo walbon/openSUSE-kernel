@@ -1224,6 +1224,13 @@ struct sched_entity {
 	struct rb_node		run_node;
 	struct list_head	group_node;
 	unsigned int		on_rq;
+#ifndef __GENKSYMS__
+	/*
+	 * kABI safe, as this is a 4 byte hole per pahole.
+	 * Moved out of struct sched_rt_entity to make room there.
+	 */
+	int nr_cpus_allowed;
+#endif
 
 	u64			exec_start;
 	u64			sum_exec_runtime;
@@ -1317,13 +1324,6 @@ struct task_struct {
 #endif
 
 	unsigned int policy;
-#ifndef __GENKSYMS__
-	/*
-	 * kABI safe, as this is a 4 byte hole per pahole.
-	 * Moved out of struct sched_rt_entity to make room there.
-	 */
-	int nr_cpus_allowed;
-#endif
 	cpumask_t cpus_allowed;
 
 #ifdef CONFIG_PREEMPT_RCU
