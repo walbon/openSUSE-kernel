@@ -1098,17 +1098,38 @@ struct sched_domain;
 #define WF_FORK		0x02		/* child wakeup after fork */
 #define WF_MIGRATED	0x04		/* internal use, task got migrated */
 
+/*
+ * {de,en}queue flags:
+ *
+ * DEQUEUE_SLEEP  - task is no longer runnable
+ * ENQUEUE_WAKEUP - task just became runnable
+ *
+ * SAVE/RESTORE - an otherwise spurious dequeue/enqueue, done to ensure tasks
+ *                are in a known state which allows modification. Such pairs
+ *                should preserve as much state as possible.
+ *
+ * MOVE - paired with SAVE/RESTORE, explicitly does not preserve the location
+ *        in the runqueue.
+ *
+ * ENQUEUE_HEAD      - place at front of runqueue (tail if not specified)
+ * ENQUEUE_WAKING    - sched_class::task_waking was called
+ *
+ */
+
+#define DEQUEUE_SLEEP		0x01
+#define DEQUEUE_SAVE		0x02 /* matches ENQUEUE_RESTORE */
+#define DEQUEUE_MOVE		0x04 /* matches ENQUEUE_MOVE */
+
 #define ENQUEUE_WAKEUP		0x01
-#define ENQUEUE_HEAD		0x02
+#define ENQUEUE_RESTORE		0x02
+#define ENQUEUE_MOVE		0x04
+
+#define ENQUEUE_HEAD		0x08
 #ifdef CONFIG_SMP
-#define ENQUEUE_WAKING		0x04	/* sched_class::task_waking was called */
+#define ENQUEUE_WAKING		0x10
 #else
 #define ENQUEUE_WAKING		0x00
 #endif
-#define ENQUEUE_RESTORE		0x08
-
-#define DEQUEUE_SLEEP		0x01
-#define DEQUEUE_SAVE		0x02
 
 struct sched_class {
 	const struct sched_class *next;
@@ -1231,6 +1252,9 @@ struct sched_rt_entity {
 	unsigned int time_slice;
 #ifdef __GENKSYMS__
 	int nr_cpus_allowed;
+#else
+	unsigned short on_rq;
+	unsigned short on_list;
 #endif
 
 	struct sched_rt_entity *back;

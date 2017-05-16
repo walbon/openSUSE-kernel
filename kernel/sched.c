@@ -3096,6 +3096,10 @@ static void __sched_fork(struct task_struct *p)
 #endif
 
 	INIT_LIST_HEAD(&p->rt.run_list);
+	p->rt.timeout		= 0;
+	p->rt.time_slice	= DEF_TIMESLICE;
+	p->rt.on_rq		= 0;
+	p->rt.on_list		= 0;
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	INIT_HLIST_HEAD(&p->preempt_notifiers);
@@ -5150,7 +5154,7 @@ EXPORT_SYMBOL(sleep_on_timeout);
  */
 void rt_mutex_setprio(struct task_struct *p, int prio)
 {
-	int oldprio, on_rq, running, enqueue_flag = ENQUEUE_RESTORE;
+	int oldprio, on_rq, running, queue_flag = DEQUEUE_SAVE | DEQUEUE_MOVE;
 	struct rq *rq;
 	const struct sched_class *prev_class;
 
@@ -5178,11 +5182,15 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 
 	trace_sched_pi_setprio(p, prio);
 	oldprio = p->prio;
+
+	if (oldprio == prio)
+		queue_flag &= ~DEQUEUE_MOVE;
+
 	prev_class = p->sched_class;
 	on_rq = p->on_rq;
 	running = task_current(rq, p);
 	if (on_rq)
-		dequeue_task(rq, p, DEQUEUE_SAVE);
+		dequeue_task(rq, p, queue_flag);
 	if (running)
 		p->sched_class->put_prev_task(rq, p);
 
@@ -5197,8 +5205,8 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 		p->sched_class->set_curr_task(rq);
 	if (on_rq) {
 		if (oldprio < prio)
-			enqueue_flag |= ENQUEUE_HEAD;
-		enqueue_task(rq, p, enqueue_flag);
+			queue_flag |= ENQUEUE_HEAD;
+		enqueue_task(rq, p, queue_flag);
 	}
 
 	check_class_changed(rq, p, prev_class, oldprio);
@@ -5423,6 +5431,7 @@ static int __sched_setscheduler(struct task_struct *p, int policy,
 	const struct sched_class *prev_class;
 	struct rq *rq;
 	int reset_on_fork;
+	int queue_flags = DEQUEUE_SAVE | DEQUEUE_MOVE;
 
 	/* may grab non-irq protected spin_locks */
 	BUG_ON(in_interrupt());
@@ -5559,16 +5568,13 @@ recheck:
 	 * the runqueue. This will be done when the task deboost
 	 * itself.
 	 */
-	if (rt_mutex_check_prio(p, newprio)) {
-		__setscheduler_params(p, policy, param->sched_priority);
-		task_rq_unlock(rq, p, &flags);
-		return 0;
-	}
+	if (rt_mutex_check_prio(p, newprio))
+		queue_flags &= ~DEQUEUE_MOVE;
 
 	on_rq = p->on_rq;
 	running = task_current(rq, p);
 	if (on_rq)
-		deactivate_task(rq, p, DEQUEUE_SAVE);
+		deactivate_task(rq, p, queue_flags);
 	if (running)
 		p->sched_class->put_prev_task(rq, p);
 
@@ -5578,15 +5584,14 @@ recheck:
 	if (running)
 		p->sched_class->set_curr_task(rq);
 	if (on_rq) {
-		int enqueue_flags = ENQUEUE_RESTORE;
 		/*
 		 * We enqueue to tail when the priority of a task is
 		 * increased (user space view).
 		 */
-		if (oldprio <= p->prio)
-			enqueue_flags |= ENQUEUE_HEAD;
+		if (oldprio < p->prio)
+			queue_flags |= ENQUEUE_HEAD;
 
-		activate_task(rq, p, enqueue_flags);
+		activate_task(rq, p, queue_flags);
 	}
 
 	check_class_changed(rq, p, prev_class, oldprio);
@@ -9080,7 +9085,7 @@ void sched_move_task(struct task_struct *tsk)
 	on_rq = tsk->on_rq;
 
 	if (on_rq)
-		dequeue_task(rq, tsk, DEQUEUE_SAVE);
+		dequeue_task(rq, tsk, DEQUEUE_SAVE | DEQUEUE_MOVE);
 	if (unlikely(running))
 		tsk->sched_class->put_prev_task(rq, tsk);
 
@@ -9100,7 +9105,7 @@ void sched_move_task(struct task_struct *tsk)
 	if (unlikely(running))
 		tsk->sched_class->set_curr_task(rq);
 	if (on_rq)
-		enqueue_task(rq, tsk, ENQUEUE_RESTORE);
+		enqueue_task(rq, tsk, ENQUEUE_RESTORE | ENQUEUE_MOVE);
 
 	task_rq_unlock(rq, tsk, &flags);
 }
