@@ -19,16 +19,6 @@
 #include <linux/kref.h>
 #include <linux/blk-mq.h>
 
-enum {
-	/*
-	 * Driver internal status code for commands that were cancelled due
-	 * to timeouts or controller shutdown.  The value is negative so
-	 * that it a) doesn't overlap with the unsigned hardware error codes,
-	 * and b) can easily be tested for.
-	 */
-	NVME_SC_CANCELLED		= -EINTR,
-};
-
 extern unsigned char nvme_io_timeout;
 #define NVME_IO_TIMEOUT	(nvme_io_timeout * HZ)
 
@@ -84,6 +74,12 @@ struct nvme_request {
 	struct nvme_command	*cmd;
 	union nvme_result	result;
 	u8			retries;
+	u8			flags;
+	u16			status;
+};
+
+enum {
+	NVME_REQ_CANCELLED		= (1 << 0),
 };
 
 static inline struct nvme_request *nvme_req(struct request *req)
@@ -232,16 +228,14 @@ static inline void nvme_cleanup_cmd(struct request *req)
 	}
 }
 
-static inline int nvme_error_status(u16 status)
+static inline void nvme_end_request(struct request *req, __le16 status,
+		union nvme_result result)
 {
-	switch (status & 0x7ff) {
-	case NVME_SC_SUCCESS:
-		return 0;
-	case NVME_SC_CAP_EXCEEDED:
-		return -ENOSPC;
-	default:
-		return -EIO;
-	}
+	struct nvme_request *rq = nvme_req(req);
+
+	rq->status = le16_to_cpu(status) >> 1;
+	rq->result = result;
+	blk_mq_complete_request(req, 0);
 }
 
 void nvme_complete_rq(struct request *req);
