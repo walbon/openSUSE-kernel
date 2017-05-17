@@ -1912,7 +1912,7 @@ static int ars_status_process_records(struct acpi_nfit_desc *acpi_desc,
 			return rc;
 	}
 	if (i < ars_status->num_records)
-		dev_warn(acpi_desc->dev, "detected truncatted ars results\n");
+		dev_warn(acpi_desc->dev, "detected truncated ars results\n");
 
 	return 0;
 }
