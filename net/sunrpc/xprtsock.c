@@ -1056,7 +1056,7 @@ static void xs_udp_data_receive(struct sock_xprt *transport)
 		if (skb == NULL)
 			break;
 		xs_udp_data_read_skb(&transport->xprt, sk, skb);
-		skb_free_datagram(sk, skb);
+		skb_free_datagram_locked(sk, skb);
 	}
 out:
 	mutex_unlock(&transport->recv_mutex);
