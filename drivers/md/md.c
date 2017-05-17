@@ -5190,6 +5190,10 @@ EXPORT_SYMBOL_GPL(md_stop_writes);
 void md_stop(mddev_t *mddev)
 {
 	struct mdk_personality *pers = mddev->pers;
+
+	/* Ensure ->event_work is done */
+	flush_workqueue(md_misc_wq);
+
 	mddev->ready = 0;
 	mddev->pers = NULL;
 	/* Make sure md_seq_show() doesn't see the mddev
