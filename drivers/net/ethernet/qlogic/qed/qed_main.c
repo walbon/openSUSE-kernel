@@ -230,9 +230,24 @@ err0:
 int qed_fill_dev_info(struct qed_dev *cdev,
 		      struct qed_dev_info *dev_info)
 {
+	struct qed_tunnel_info *tun = &cdev->tunnel;
 	struct qed_ptt  *ptt;
 
 	memset(dev_info, 0, sizeof(struct qed_dev_info));
+
+	if (tun->vxlan.tun_cls == QED_TUNN_CLSS_MAC_VLAN &&
+	    tun->vxlan.b_mode_enabled)
+		dev_info->vxlan_enable = true;
+
+	if (tun->l2_gre.b_mode_enabled && tun->ip_gre.b_mode_enabled &&
+	    tun->l2_gre.tun_cls == QED_TUNN_CLSS_MAC_VLAN &&
+	    tun->ip_gre.tun_cls == QED_TUNN_CLSS_MAC_VLAN)
+		dev_info->gre_enable = true;
+
+	if (tun->l2_geneve.b_mode_enabled && tun->ip_geneve.b_mode_enabled &&
+	    tun->l2_geneve.tun_cls == QED_TUNN_CLSS_MAC_VLAN &&
+	    tun->ip_geneve.tun_cls == QED_TUNN_CLSS_MAC_VLAN)
+		dev_info->geneve_enable = true;
 
 	dev_info->num_hwfns = cdev->num_hwfns;
 	dev_info->pci_mem_start = cdev->pci_params.mem_start;
@@ -883,6 +898,9 @@ static void qed_update_pf_params(struct qed_dev *cdev,
 		params->rdma_pf_params.gl_pi = QED_ROCE_PROTOCOL_INDEX;
 	}
 
+	if (cdev->num_hwfns > 1 || IS_VF(cdev))
+		params->eth_pf_params.num_arfs_filters = 0;
+
 	/* In case we might support RDMA, don't allow qede to be greedy
 	 * with the L2 contexts. Allow for 64 queues [rx, tx, xdp] per hwfn.
 	 */
@@ -906,11 +924,13 @@ static int qed_slowpath_start(struct qed_dev *cdev,
 {
 	struct qed_drv_load_params drv_load_params;
 	struct qed_hw_init_params hw_init_params;
-	struct qed_tunn_start_params tunn_info;
 	struct qed_mcp_drv_version drv_version;
+	struct qed_tunnel_info tunn_info;
 	const u8 *data = NULL;
 	struct qed_hwfn *hwfn;
+#ifdef CONFIG_RFS_ACCEL
 	struct qed_ptt *p_ptt;
+#endif
 	int rc = -EINVAL;
 
 	if (qed_iov_wq_start(cdev))
@@ -926,13 +946,18 @@ static int qed_slowpath_start(struct qed_dev *cdev,
 			goto err;
 		}
 
-		p_ptt = qed_ptt_acquire(QED_LEADING_HWFN(cdev));
-		if (p_ptt) {
-			QED_LEADING_HWFN(cdev)->p_ptp_ptt = p_ptt;
-		} else {
-			DP_NOTICE(cdev, "Failed to acquire PTT for PTP\n");
-			goto err;
+#ifdef CONFIG_RFS_ACCEL
+		if (cdev->num_hwfns == 1) {
+			p_ptt = qed_ptt_acquire(QED_LEADING_HWFN(cdev));
+			if (p_ptt) {
+				QED_LEADING_HWFN(cdev)->p_arfs_ptt = p_ptt;
+			} else {
+				DP_NOTICE(cdev,
+					  "Failed to acquire PTT for aRFS\n");
+				goto err;
+			}
 		}
+#endif
 	}
 
 	cdev->rx_coalesce_usecs = QED_DEFAULT_RX_USECS;
@@ -953,25 +978,25 @@ static int qed_slowpath_start(struct qed_dev *cdev,
 		if (rc)
 			goto err2;
 
-		/* First Dword used to diffrentiate between various sources */
+		/* First Dword used to differentiate between various sources */
 		data = cdev->firmware->data + sizeof(u32);
 
 		qed_dbg_pf_init(cdev);
 	}
 
-	memset(&tunn_info, 0, sizeof(tunn_info));
-	tunn_info.tunn_mode |=  1 << QED_MODE_VXLAN_TUNN |
-				1 << QED_MODE_L2GRE_TUNN |
-				1 << QED_MODE_IPGRE_TUNN |
-				1 << QED_MODE_L2GENEVE_TUNN |
-				1 << QED_MODE_IPGENEVE_TUNN;
-
-	tunn_info.tunn_clss_vxlan = QED_TUNN_CLSS_MAC_VLAN;
-	tunn_info.tunn_clss_l2gre = QED_TUNN_CLSS_MAC_VLAN;
-	tunn_info.tunn_clss_ipgre = QED_TUNN_CLSS_MAC_VLAN;
-
 	/* Start the slowpath */
 	memset(&hw_init_params, 0, sizeof(hw_init_params));
+	memset(&tunn_info, 0, sizeof(tunn_info));
+	tunn_info.vxlan.b_mode_enabled = true;
+	tunn_info.l2_gre.b_mode_enabled = true;
+	tunn_info.ip_gre.b_mode_enabled = true;
+	tunn_info.l2_geneve.b_mode_enabled = true;
+	tunn_info.ip_geneve.b_mode_enabled = true;
+	tunn_info.vxlan.tun_cls = QED_TUNN_CLSS_MAC_VLAN;
+	tunn_info.l2_gre.tun_cls = QED_TUNN_CLSS_MAC_VLAN;
+	tunn_info.ip_gre.tun_cls = QED_TUNN_CLSS_MAC_VLAN;
+	tunn_info.l2_geneve.tun_cls = QED_TUNN_CLSS_MAC_VLAN;
+	tunn_info.ip_geneve.tun_cls = QED_TUNN_CLSS_MAC_VLAN;
 	hw_init_params.p_tunn = &tunn_info;
 	hw_init_params.b_hw_start = true;
 	hw_init_params.int_mode = cdev->int_params.out.int_mode;
@@ -991,6 +1016,14 @@ static int qed_slowpath_start(struct qed_dev *cdev,
 
 	DP_INFO(cdev,
 		"HW initialization and function start completed successfully\n");
+
+	if (IS_PF(cdev)) {
+		cdev->tunn_feature_mask = (BIT(QED_MODE_VXLAN_TUNN) |
+					   BIT(QED_MODE_L2GENEVE_TUNN) |
+					   BIT(QED_MODE_IPGENEVE_TUNN) |
+					   BIT(QED_MODE_L2GRE_TUNN) |
+					   BIT(QED_MODE_IPGRE_TUNN));
+	}
 
 	/* Allocate LL2 interface if needed */
 	if (QED_LEADING_HWFN(cdev)->using_ll2) {
@@ -1032,9 +1065,12 @@ err:
 	if (IS_PF(cdev))
 		release_firmware(cdev->firmware);
 
-	if (IS_PF(cdev) && QED_LEADING_HWFN(cdev)->p_ptp_ptt)
+#ifdef CONFIG_RFS_ACCEL
+	if (IS_PF(cdev) && (cdev->num_hwfns == 1) &&
+	    QED_LEADING_HWFN(cdev)->p_arfs_ptt)
 		qed_ptt_release(QED_LEADING_HWFN(cdev),
-				QED_LEADING_HWFN(cdev)->p_ptp_ptt);
+				QED_LEADING_HWFN(cdev)->p_arfs_ptt);
+#endif
 
 	qed_iov_wq_stop(cdev, false);
 
@@ -1049,8 +1085,11 @@ static int qed_slowpath_stop(struct qed_dev *cdev)
 	qed_ll2_dealloc_if(cdev);
 
 	if (IS_PF(cdev)) {
-		qed_ptt_release(QED_LEADING_HWFN(cdev),
-				QED_LEADING_HWFN(cdev)->p_ptp_ptt);
+#ifdef CONFIG_RFS_ACCEL
+		if (cdev->num_hwfns == 1)
+			qed_ptt_release(QED_LEADING_HWFN(cdev),
+					QED_LEADING_HWFN(cdev)->p_arfs_ptt);
+#endif
 		qed_free_stream_mem(cdev);
 		if (IS_QED_ETH_IF(cdev))
 			qed_sriov_disable(cdev, true);
@@ -1334,7 +1373,7 @@ static void qed_fill_link(struct qed_hwfn *hwfn,
 
 	/* TODO - at the moment assume supported and advertised speed equal */
 	if_link->supported_caps = QED_LM_FIBRE_BIT;
-	if (params.speed.autoneg)
+	if (link_caps.default_speed_autoneg)
 		if_link->supported_caps |= QED_LM_Autoneg_BIT;
 	if (params.pause.autoneg ||
 	    (params.pause.forced_rx && params.pause.forced_tx))
@@ -1344,6 +1383,10 @@ static void qed_fill_link(struct qed_hwfn *hwfn,
 		if_link->supported_caps |= QED_LM_Pause_BIT;
 
 	if_link->advertised_caps = if_link->supported_caps;
+	if (params.speed.autoneg)
+		if_link->advertised_caps |= QED_LM_Autoneg_BIT;
+	else
+		if_link->advertised_caps &= ~QED_LM_Autoneg_BIT;
 	if (params.speed.advertised_speeds &
 	    NVM_CFG1_PORT_DRV_SPEED_CAPABILITY_MASK_1G)
 		if_link->advertised_caps |= QED_LM_1000baseT_Half_BIT |
@@ -1483,7 +1526,7 @@ static void qed_get_coalesce(struct qed_dev *cdev, u16 *rx_coal, u16 *tx_coal)
 }
 
 static int qed_set_coalesce(struct qed_dev *cdev, u16 rx_coal, u16 tx_coal,
-			    u8 qid, u16 sb_id)
+			    u16 qid, u16 sb_id)
 {
 	struct qed_hwfn *hwfn;
 	struct qed_ptt *ptt;
