@@ -2400,7 +2400,8 @@ static void hpsa_cmd_free_and_done(struct ctlr_info *h,
 		struct CommandList *c, struct scsi_cmnd *cmd)
 {
 	hpsa_cmd_resolve_and_free(h, c);
-	cmd->scsi_done(cmd);
+	if (cmd && cmd->scsi_done)
+		cmd->scsi_done(cmd);
 }
 
 static void hpsa_retry_cmd(struct ctlr_info *h, struct CommandList *c)
@@ -2501,6 +2502,12 @@ static void complete_scsi_command(struct CommandList *cp)
 	ei = cp->err_info;
 	cmd = cp->scsi_cmd;
 	h = cp->h;
+
+	if (!cmd->device) {
+		cmd->result = DID_NO_CONNECT << 16;
+		return hpsa_cmd_free_and_done(h, cp, cmd);
+	}
+
 	dev = cmd->device->hostdata;
 	c2 = &h->ioaccel2_cmd_pool[cp->cmdindex];
 
@@ -2516,8 +2523,15 @@ static void complete_scsi_command(struct CommandList *cp)
 	cmd->result = (DID_OK << 16); 		/* host byte */
 	cmd->result |= (COMMAND_COMPLETE << 8);	/* msg byte */
 
-	if (cp->cmd_type == CMD_IOACCEL2 || cp->cmd_type == CMD_IOACCEL1)
-		atomic_dec(&cp->phys_disk->ioaccel_cmds_out);
+	if (cp->cmd_type == CMD_IOACCEL2 || cp->cmd_type == CMD_IOACCEL1) {
+		if (dev->physical_device && dev->expose_device &&
+			dev->removed) {
+			cmd->result = DID_NO_CONNECT << 16;
+			return hpsa_cmd_free_and_done(h, cp, cmd);
+		}
+		if (likely(cp->phys_disk != NULL))
+			atomic_dec(&cp->phys_disk->ioaccel_cmds_out);
+	}
 
 	/*
 	 * We check for lockup status here as it may be set for
