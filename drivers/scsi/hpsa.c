@@ -3664,7 +3664,7 @@ static inline int hpsa_scsi_do_report_phys_luns(struct ctlr_info *h,
 
 		/* Copy ReportLUNdata header */
 		memcpy(buf, lbuf, 8);
-		nphys = be32_to_cpu(*((__be32 *)lbuf->LUNListLength)) / 24;
+		nphys = be32_to_cpu(*((__be32 *)lbuf->LUNListLength)) / 8;
 		for (i = 0; i < nphys; i++)
 			memcpy(buf->LUN[i].lunid, lbuf->LUN[i], 8);
 	}
