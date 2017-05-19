@@ -129,10 +129,14 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_1T_SEGMENT)
 	srdi.	r9,r10,USER_ESID_BITS
 	bne-	8f			/* invalid ea bits set */
 
-
 #else
-0:
+0:	/*.
+	 * For userspace addresses, make sure this is region 0.
+	.*/
+	cmpdi	r9, 0
+	bne	8f
 #endif
+
 	/* when using slices, we extract the psize off the slice bitmaps
 	 * and then we need to get the sllp encoding off the mmu_psize_defs
 	 * array.
