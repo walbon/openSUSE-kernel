@@ -1797,6 +1797,18 @@ unsigned int serial8250_modem_status(struct uart_8250_port *up)
 }
 EXPORT_SYMBOL_GPL(serial8250_modem_status);
 
+static bool handle_rx_dma(struct uart_8250_port *up, unsigned int iir)
+{
+	switch (iir & 0x3f) {
+	case UART_IIR_RX_TIMEOUT:
+		serial8250_rx_dma_flush(up);
+		/* fall-through */
+	case UART_IIR_RLSI:
+		return true;
+	}
+	return up->dma->rx_dma(up);
+}
+
 /*
  * This handles the interrupt from one port.
  */
@@ -1805,7 +1817,6 @@ int serial8250_handle_irq(struct uart_port *port, unsigned int iir)
 	unsigned char status;
 	unsigned long flags;
 	struct uart_8250_port *up = up_to_u8250p(port);
-	int dma_err = 0;
 
 	if (iir & UART_IIR_NO_INT)
 		return 0;
@@ -1817,15 +1828,11 @@ int serial8250_handle_irq(struct uart_port *port, unsigned int iir)
 	DEBUG_INTR("status = %x...", status);
 
 	if (status & (UART_LSR_DR | UART_LSR_BI)) {
-		if (up->dma)
-			dma_err = up->dma->rx_dma(up, iir);
-
-		if (!up->dma || dma_err)
+		if (!up->dma || handle_rx_dma(up, iir))
 			status = serial8250_rx_chars(up, status);
 	}
 	serial8250_modem_status(up);
-	if ((!up->dma || (up->dma && up->dma->tx_err)) &&
-	    (status & UART_LSR_THRE))
+	if ((!up->dma || up->dma->tx_err) && (status & UART_LSR_THRE))
 		serial8250_tx_chars(up);
 
 	spin_unlock_irqrestore(&port->lock, flags);

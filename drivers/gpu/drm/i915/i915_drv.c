@@ -110,7 +110,7 @@ static const struct intel_device_info intel_i915gm_info = {
 	.gen = 3, .is_mobile = 1, .num_pipes = 2,
 	.cursor_needs_physical = 1,
 	.has_overlay = 1, .overlay_needs_physical = 1,
-	.supports_tv = 1,
+	/* .supports_tv = 1, */ /* causing hang-up (bsc#1039700) */
 	.has_fbc = 1,
 	.ring_mask = RENDER_RING,
 	GEN_DEFAULT_PIPEOFFSETS,
@@ -127,7 +127,7 @@ static const struct intel_device_info intel_i945gm_info = {
 	.gen = 3, .is_i945gm = 1, .is_mobile = 1, .num_pipes = 2,
 	.has_hotplug = 1, .cursor_needs_physical = 1,
 	.has_overlay = 1, .overlay_needs_physical = 1,
-	.supports_tv = 1,
+	/* .supports_tv = 1, */ /* causing hang-up (bsc#1039700) */
 	.has_fbc = 1,
 	.ring_mask = RENDER_RING,
 	GEN_DEFAULT_PIPEOFFSETS,
@@ -147,7 +147,7 @@ static const struct intel_device_info intel_i965gm_info = {
 	.gen = 4, .is_crestline = 1, .num_pipes = 2,
 	.is_mobile = 1, .has_fbc = 1, .has_hotplug = 1,
 	.has_overlay = 1,
-	.supports_tv = 1,
+	/* .supports_tv = 1, */ /* causing hang-up (bsc#1039700) */
 	.ring_mask = RENDER_RING,
 	GEN_DEFAULT_PIPEOFFSETS,
 	CURSOR_OFFSETS,
@@ -174,7 +174,7 @@ static const struct intel_device_info intel_gm45_info = {
 	.gen = 4, .is_g4x = 1, .num_pipes = 2,
 	.is_mobile = 1, .need_gfx_hws = 1, .has_fbc = 1,
 	.has_pipe_cxsr = 1, .has_hotplug = 1,
-	.supports_tv = 1,
+	/* .supports_tv = 1, */ /* causing hang-up (bsc#1039700) */
 	.ring_mask = RENDER_RING | BSD_RING,
 	GEN_DEFAULT_PIPEOFFSETS,
 	CURSOR_OFFSETS,
