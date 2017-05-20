@@ -50,9 +50,7 @@ MPI mpi_read_raw_data(const void *xbuffer, size_t nbytes)
 		return NULL;
 	}
 	if (nbytes > 0)
-		nbits -= count_leading_zeros(buffer[0]);
-	else
-		nbits = 0;
+		nbits -= count_leading_zeros(buffer[0]) - (BITS_PER_LONG - 8);
 
 	nlimbs = DIV_ROUND_UP(nbytes, BYTES_PER_MPI_LIMB);
 	val = mpi_alloc(nlimbs);
@@ -418,15 +416,15 @@ EXPORT_SYMBOL_GPL(mpi_write_to_sgl);
  * a new MPI and reads the content of the sgl to the MPI.
  *
  * @sgl:	scatterlist to read from
- * @len:	number of bytes to read
+ * @nbytes:	number of bytes to read
  *
  * Return:	Pointer to a new MPI or NULL on error
  */
-MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int len)
+MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int nbytes)
 {
 	struct scatterlist *sg;
 	int x, i, j, z, lzeros, ents;
-	unsigned int nbits, nlimbs, nbytes;
+	unsigned int nbits, nlimbs;
 	mpi_limb_t a;
 	MPI val = NULL;
 
@@ -447,16 +445,12 @@ MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int len)
 			break;
 
 		ents--;
+		nbytes -= lzeros;
 		lzeros = 0;
 	}
 
 	sgl = sg;
-
-	if (!ents)
-		nbytes = 0;
-	else
-		nbytes = len - lzeros;
-
+	nbytes -= lzeros;
 	nbits = nbytes * 8;
 	if (nbits > MAX_EXTERN_MPI_BITS) {
 		pr_info("MPI: mpi too large (%u bits)\n", nbits);
@@ -464,9 +458,8 @@ MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int len)
 	}
 
 	if (nbytes > 0)
-		nbits -= count_leading_zeros(*(u8 *)(sg_virt(sgl) + lzeros));
-	else
-		nbits = 0;
+		nbits -= count_leading_zeros(*(u8 *)(sg_virt(sgl) + lzeros)) -
+			(BITS_PER_LONG - 8);
 
 	nlimbs = DIV_ROUND_UP(nbytes, BYTES_PER_MPI_LIMB);
 	val = mpi_alloc(nlimbs);
@@ -482,19 +475,14 @@ MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int len)
 
 	j = nlimbs - 1;
 	a = 0;
-	z = 0;
-	x = BYTES_PER_MPI_LIMB - nbytes % BYTES_PER_MPI_LIMB;
-	x %= BYTES_PER_MPI_LIMB;
+	z = BYTES_PER_MPI_LIMB - nbytes % BYTES_PER_MPI_LIMB;
+	z %= BYTES_PER_MPI_LIMB;
 
 	for_each_sg(sgl, sg, ents, i) {
 		const u8 *buffer = sg_virt(sg) + lzeros;
 		int len = sg->length - lzeros;
-		int buf_shift = x;
 
-		if  (sg_is_last(sg) && (len % BYTES_PER_MPI_LIMB))
-			len += BYTES_PER_MPI_LIMB - (len % BYTES_PER_MPI_LIMB);
-
-		for (; x < len + buf_shift; x++) {
+		for (x = 0; x < len; x++) {
 			a <<= 8;
 			a |= *buffer++;
 			if (((z + x + 1) % BYTES_PER_MPI_LIMB) == 0) {
@@ -503,7 +491,6 @@ MPI mpi_read_raw_from_sgl(struct scatterlist *sgl, unsigned int len)
 			}
 		}
 		z += x;
-		x = 0;
 		lzeros = 0;
 	}
 	return val;
