@@ -3548,7 +3548,7 @@ static void srp_add_one(struct ib_device *device)
 	u64 max_pages_per_mr;
 	unsigned int flags = 0;
 
-	srp_dev = kmalloc(sizeof *srp_dev, GFP_KERNEL);
+	srp_dev = kzalloc(sizeof(*srp_dev), GFP_KERNEL);
 	if (!srp_dev)
 		return;
 
