@@ -798,7 +798,6 @@ static void blk_release_queue(struct kobject *kobj)
 	struct request_queue *q =
 		container_of(kobj, struct request_queue, kobj);
 
-	wbt_exit(q);
 	bdi_put(q->backing_dev_info);
 	blkcg_exit_queue(q);
 
@@ -918,6 +917,8 @@ void blk_unregister_queue(struct gendisk *disk)
 
 	if (WARN_ON(!q))
 		return;
+
+	wbt_exit(q);
 
 	if (q->mq_ops)
 		blk_mq_unregister_dev(disk_to_dev(disk), q);
