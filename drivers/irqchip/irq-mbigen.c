@@ -106,7 +106,7 @@ static inline void get_mbigen_type_reg(irq_hw_number_t hwirq,
 static inline void get_mbigen_clear_reg(irq_hw_number_t hwirq,
 					u32 *mask, u32 *addr)
 {
-	unsigned int ofst = hwirq / 32 * 4;
+	unsigned int ofst = (hwirq / 32) * 4;
 
 	*mask = 1 << (hwirq % 32);
 	*addr = ofst + REG_MBIGEN_CLEAR_OFFSET;
@@ -340,7 +340,7 @@ static int mbigen_device_probe(struct platform_device *pdev)
 	mgn_chip->base = devm_ioremap(&pdev->dev, res->start,
 				      resource_size(res));
 	if (!mgn_chip->base) {
-		dev_err(&pdev->dev,"failed to ioremap %pR\n", res);
+		dev_err(&pdev->dev, "failed to ioremap %pR\n", res);
 		return -ENOMEM;
 	}
 
