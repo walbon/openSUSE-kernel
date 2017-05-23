@@ -2012,6 +2012,8 @@ struct drm_i915_gem_object_ops {
 	 */
 	int (*get_pages)(struct drm_i915_gem_object *);
 	void (*put_pages)(struct drm_i915_gem_object *);
+	int (*pwrite)(struct drm_i915_gem_object *,
+		      const struct drm_i915_gem_pwrite *);
 	int (*dmabuf_export)(struct drm_i915_gem_object *);
 	void (*release)(struct drm_i915_gem_object *);
 };
