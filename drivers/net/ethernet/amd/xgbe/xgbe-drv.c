@@ -1071,7 +1071,9 @@ static int xgbe_start(struct xgbe_prv_data *pdata)
 
 	DBGPR("-->xgbe_start\n");
 
-	hw_if->init(pdata);
+	ret = hw_if->init(pdata);
+	if (ret)
+		return ret;
 
 	xgbe_napi_enable(pdata, 1);
 
