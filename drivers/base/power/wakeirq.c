@@ -141,6 +141,13 @@ static irqreturn_t handle_threaded_wake_irq(int irq, void *_wirq)
 	struct wake_irq *wirq = _wirq;
 	int res;
 
+	/* Maybe abort suspend? */
+	if (irqd_is_wakeup_set(irq_get_irq_data(irq))) {
+		pm_wakeup_event(wirq->dev, 0);
+
+		return IRQ_HANDLED;
+	}
+
 	/* We don't want RPM_ASYNC or RPM_NOWAIT here */
 	res = pm_runtime_resume(wirq->dev);
 	if (res < 0)
@@ -182,6 +189,9 @@ int dev_pm_set_dedicated_wake_irq(struct device *dev, int irq)
 	wirq->dev = dev;
 	wirq->irq = irq;
 	irq_set_status_flags(irq, IRQ_NOAUTOEN);
+
+	/* Prevent deferred spurious wakeirqs with disable_irq_nosync() */
+	irq_set_status_flags(irq, IRQ_DISABLE_UNLAZY);
 
 	/*
 	 * Consumer device may need to power up and restore state
