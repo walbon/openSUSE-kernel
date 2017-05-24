@@ -115,7 +115,7 @@ struct iwl_drv {
 	const struct iwl_cfg *cfg;
 
 	int fw_index;                   /* firmware we're trying to load */
-	char firmware_name[32];         /* name of firmware file to load */
+	char firmware_name[64];         /* name of firmware file to load */
 
 	struct completion request_firmware_complete;
 
@@ -235,17 +235,6 @@ static int iwl_request_firmware(struct iwl_drv *drv, bool first)
 
 	snprintf(drv->firmware_name, sizeof(drv->firmware_name), "%s%s.ucode",
 		 name_pre, tag);
-
-	/*
-	 * Starting 8000B - FW name format has changed. This overwrites the
-	 * previous name and uses the new format.
-	 */
-	if (drv->trans->cfg->device_family == IWL_DEVICE_FAMILY_8000) {
-		char rev_step = 'A' + CSR_HW_REV_STEP(drv->trans->hw_rev);
-
-		snprintf(drv->firmware_name, sizeof(drv->firmware_name),
-			 "%s%c-%s.ucode", name_pre, rev_step, tag);
-	}
 
 	IWL_DEBUG_INFO(drv, "attempting to load firmware %s'%s'\n",
 		       (drv->fw_index == UCODE_EXPERIMENTAL_INDEX)
