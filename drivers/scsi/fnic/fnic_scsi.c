@@ -429,27 +429,47 @@ static int fnic_queuecommand_lck(struct scsi_cmnd *sc, void (*done)(struct scsi_
 	int sg_count = 0;
 	unsigned long flags = 0;
 	unsigned long ptr;
-	struct fc_rport_priv *rdata;
 	spinlock_t *io_lock = NULL;
+	struct fc_rport_libfc_priv *rp;
 
 	if (unlikely(fnic_chk_state_flags_locked(fnic, FNIC_FLAGS_IO_BLOCKED)))
 		return SCSI_MLQUEUE_HOST_BUSY;
 
 	rport = starget_to_rport(scsi_target(sc->device));
+	if (!rport) {
+		FNIC_SCSI_DBG(KERN_DEBUG, fnic->lport->host,
+				"returning DID_NO_CONNECT for IO as rport is NULL\n");
+		sc->result = DID_NO_CONNECT << 16;
+		done(sc);
+		return 0;
+	}
+
 	ret = fc_remote_port_chkready(rport);
 	if (ret) {
+		FNIC_SCSI_DBG(KERN_DEBUG, fnic->lport->host,
+				"rport is not ready\n");
 		atomic64_inc(&fnic_stats->misc_stats.rport_not_ready);
 		sc->result = ret;
 		done(sc);
 		return 0;
 	}
 
-	rdata = lp->tt.rport_lookup(lp, rport->port_id);
-	if (!rdata || (rdata->rp_state == RPORT_ST_DELETE)) {
+	rp = rport->dd_data;
+	if (!rp) {
+		/*
+		 * rport is transitioning from blocked/deleted to online
+		 */
 		FNIC_SCSI_DBG(KERN_DEBUG, fnic->lport->host,
-			"returning IO as rport is removed\n");
+				"returning DID_IMM_RETRY for IO as rport is transitioning\n");
+		sc->result = DID_IMM_RETRY << 16;
+		done(sc);
+		return 0;
+	}
+	if (rp->rp_state != RPORT_ST_READY) {
+		FNIC_SCSI_DBG(KERN_DEBUG, fnic->lport->host,
+				"returning DID_NO_CONNECT for IO as rport is removed\n");
 		atomic64_inc(&fnic_stats->misc_stats.rport_not_ready);
-		sc->result = DID_NO_CONNECT;
+		sc->result = DID_NO_CONNECT<<16;
 		done(sc);
 		return 0;
 	}
