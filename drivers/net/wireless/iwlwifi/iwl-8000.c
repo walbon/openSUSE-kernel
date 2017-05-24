@@ -89,9 +89,9 @@
 #define IWL8260_SMEM_OFFSET		0x400000
 #define IWL8260_SMEM_LEN		0x68000
 
-#define IWL8000_FW_PRE "iwlwifi-8000"
+#define IWL8000_FW_PRE "iwlwifi-8000C-"
 #define IWL8000_MODULE_FIRMWARE(api) \
-	IWL8000_FW_PRE "-" __stringify(api) ".ucode"
+	IWL8000_FW_PRE __stringify(api) ".ucode"
 
 #define NVM_HW_SECTION_NUM_FAMILY_8000		10
 #define DEFAULT_NVM_FILE_FAMILY_8000B		"nvmData-8000B"
