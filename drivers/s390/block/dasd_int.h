@@ -239,11 +239,11 @@ struct dasd_ccw_req {
 					 */
 /*
  * The following flags are used to suppress output of certain errors.
- * These flags should only be used for format checks!
  */
 #define DASD_CQR_SUPPRESS_NRF	4	/* Suppress 'No Record Found' error */
 #define DASD_CQR_SUPPRESS_FP	5	/* Suppress 'File Protected' error*/
 #define DASD_CQR_SUPPRESS_IL	6	/* Suppress 'Incorrect Length' error */
+#define DASD_CQR_SUPPRESS_CR	7	/* Suppress 'Command Reject' error */
 
 /* Signature for error recovery functions. */
 typedef struct dasd_ccw_req *(*dasd_erp_fn_t) (struct dasd_ccw_req *);
@@ -476,7 +476,7 @@ struct dasd_device {
 	/* Device discipline stuff. */
 	struct dasd_discipline *discipline;
 	struct dasd_discipline *base_discipline;
-	char *private;
+	void *private;
 	struct dasd_path path[8];
 	__u8 opm;
 
