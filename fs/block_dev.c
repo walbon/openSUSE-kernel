@@ -78,11 +78,10 @@ static void bdev_inode_switch_bdi(struct inode *inode,
 /* Kill _all_ buffers and pagecache , dirty or not.. */
 static void kill_bdev(struct block_device *bdev)
 {
-	if (bdev->bd_inode->i_mapping->nrpages == 0)
-		return;
-	invalidate_bh_lrus();
+	if (bdev->bd_inode->i_mapping->nrpages)
+		invalidate_bh_lrus();
 	truncate_inode_pages(bdev->bd_inode->i_mapping, 0);
-}	
+}
 
 int set_blocksize(struct block_device *bdev, int size)
 {

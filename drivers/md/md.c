@@ -5190,6 +5190,10 @@ EXPORT_SYMBOL_GPL(md_stop_writes);
 void md_stop(mddev_t *mddev)
 {
 	struct mdk_personality *pers = mddev->pers;
+
+	/* Ensure ->event_work is done */
+	flush_workqueue(md_misc_wq);
+
 	mddev->ready = 0;
 	mddev->pers = NULL;
 	/* Make sure md_seq_show() doesn't see the mddev
@@ -5475,7 +5479,7 @@ static int get_array_info(mddev_t * mddev, void __user * arg)
 	if (mddev->in_sync)
 		info.state = (1<<MD_SB_CLEAN);
 	if (mddev->bitmap && mddev->bitmap_info.offset)
-		info.state = (1<<MD_SB_BITMAP_PRESENT);
+		info.state |= (1<<MD_SB_BITMAP_PRESENT);
 	info.active_disks  = insync;
 	info.working_disks = working;
 	info.failed_disks  = failed;
@@ -8048,7 +8052,14 @@ static __exit void md_exit(void)
 	remove_proc_entry("mdstat", NULL);
 	for_each_mddev(mddev, tmp) {
 		export_array(mddev);
+		mddev->ctime = 0;
 		mddev->hold_active = 0;
+		/*
+		 * for_each_mddev() will call mddev_put() at the end of each
+		 * iteration.  As the mddev is now fully clear, this will
+		 * schedule the mddev for destruction by a workqueue, and the
+		 * destroy_workqueue() below will wait for that to complete.
+		 */
 	}
 	destroy_workqueue(md_misc_wq);
 	destroy_workqueue(md_wq);
