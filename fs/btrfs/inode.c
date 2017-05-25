@@ -7996,8 +7996,10 @@ next_block_or_try_again:
 
 		start += sectorsize;
 
-		if (nr_sectors--) {
+		nr_sectors--;
+		if (nr_sectors) {
 			pgoff += sectorsize;
+			ASSERT(pgoff < PAGE_SIZE);
 			goto next_block_or_try_again;
 		}
 	}
@@ -8099,8 +8101,10 @@ next:
 
 		ASSERT(nr_sectors);
 
-		if (--nr_sectors) {
+		nr_sectors--;
+		if (nr_sectors) {
 			pgoff += sectorsize;
+			ASSERT(pgoff < PAGE_SIZE);
 			goto next_block;
 		}
 	}
