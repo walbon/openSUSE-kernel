@@ -7931,16 +7931,15 @@ struct btrfs_retry_complete {
 static void btrfs_retry_endio_nocsum(struct bio *bio)
 {
 	struct btrfs_retry_complete *done = bio->bi_private;
-	struct inode *inode;
 	struct bio_vec *bvec;
 	int i;
+	u32 sectorsize = BTRFS_I(done->inode)->root->sectorsize;
 
 	if (bio->bi_error)
 		goto end;
 
 	ASSERT(bio->bi_vcnt == 1);
-	inode = bio->bi_io_vec->bv_page->mapping->host;
-	ASSERT(bio->bi_io_vec->bv_len == BTRFS_I(inode)->root->sectorsize);
+	ASSERT(bio->bi_io_vec->bv_len == sectorsize);
 
 	done->uptodate = 1;
 	bio_for_each_segment_all(bvec, bio, i)
@@ -7994,8 +7993,10 @@ next_block_or_try_again:
 
 		start += sectorsize;
 
-		if (nr_sectors--) {
+		nr_sectors--;
+		if (nr_sectors) {
 			pgoff += sectorsize;
+			ASSERT(pgoff < PAGE_SIZE);
 			goto next_block_or_try_again;
 		}
 	}
@@ -8007,23 +8008,19 @@ static void btrfs_retry_endio(struct bio *bio)
 {
 	struct btrfs_retry_complete *done = bio->bi_private;
 	struct btrfs_io_bio *io_bio = btrfs_io_bio(bio);
-	struct inode *inode;
 	struct bio_vec *bvec;
-	u64 start;
 	int uptodate;
 	int ret;
 	int i;
+	u32 sectorsize = BTRFS_I(done->inode)->root->sectorsize;
 
 	if (bio->bi_error)
 		goto end;
 
 	uptodate = 1;
 
-	start = done->start;
-
 	ASSERT(bio->bi_vcnt == 1);
-	inode = bio->bi_io_vec->bv_page->mapping->host;
-	ASSERT(bio->bi_io_vec->bv_len == BTRFS_I(inode)->root->sectorsize);
+	ASSERT(bio->bi_io_vec->bv_len == sectorsize);
 
 	bio_for_each_segment_all(bvec, bio, i) {
 		ret = __readpage_endio_check(done->inode, io_bio, i,
@@ -8101,8 +8098,10 @@ next:
 
 		ASSERT(nr_sectors);
 
-		if (--nr_sectors) {
+		nr_sectors--;
+		if (nr_sectors) {
 			pgoff += sectorsize;
+			ASSERT(pgoff < PAGE_SIZE);
 			goto next_block;
 		}
 	}
