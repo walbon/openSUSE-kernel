@@ -31,8 +31,8 @@
 #include <asm/irq.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
-#include <asm/immap_qe.h>
-#include <asm/qe.h>
+#include <soc/fsl/qe/immap_qe.h>
+#include <soc/fsl/qe/qe.h>
 #include <asm/prom.h>
 #include <asm/rheap.h>
 
@@ -350,8 +350,8 @@ static int qe_sdma_init(void)
 	}
 
 	out_be32(&sdma->sdebcr, (u32) sdma_buf_offset & QE_SDEBCR_BA_MASK);
- 	out_be32(&sdma->sdmr, (QE_SDMR_GLB_1_MSK |
- 					(0x1 << QE_SDMR_CEN_SHIFT)));
+	out_be32(&sdma->sdmr, (QE_SDMR_GLB_1_MSK |
+					(0x1 << QE_SDMR_CEN_SHIFT)));
 
 	return 0;
 }
@@ -394,7 +394,7 @@ static void qe_upload_microcode(const void *base,
 
 	for (i = 0; i < be32_to_cpu(ucode->count); i++)
 		out_be32(&qe_immr->iram.idata, be32_to_cpu(code[i]));
-	
+
 	/* Set I-RAM Ready Register */
 	out_be32(&qe_immr->iram.iready, be32_to_cpu(QE_IRAM_READY));
 }
