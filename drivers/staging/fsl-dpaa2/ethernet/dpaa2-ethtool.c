@@ -85,8 +85,8 @@ static void dpaa2_eth_get_drvinfo(struct net_device *net_dev,
 }
 
 static int
-dpaa2_eth_get_link_ksettings(struct net_device *net_dev,
-			     struct ethtool_link_ksettings *link_settings)
+dpaa2_eth_get_settings(struct net_device *net_dev,
+		       struct ethtool_cmd *cmd)
 {
 	struct dpni_link_state state = {0};
 	int err = 0;
@@ -104,18 +104,18 @@ dpaa2_eth_get_link_ksettings(struct net_device *net_dev,
 	 * beyond the DPNI attributes.
 	 */
 	if (state.options & DPNI_LINK_OPT_AUTONEG)
-		link_settings->base.autoneg = AUTONEG_ENABLE;
+		cmd->autoneg = AUTONEG_ENABLE;
 	if (!(state.options & DPNI_LINK_OPT_HALF_DUPLEX))
-		link_settings->base.duplex = DUPLEX_FULL;
-	link_settings->base.speed = state.rate;
+		cmd->duplex = DUPLEX_FULL;
+	ethtool_cmd_speed_set(cmd, state.rate);
 
 out:
 	return err;
 }
 
 static int
-dpaa2_eth_set_link_ksettings(struct net_device *net_dev,
-			     const struct ethtool_link_ksettings *link_settings)
+dpaa2_eth_set_settings(struct net_device *net_dev,
+		       struct ethtool_cmd *cmd)
 {
 	struct dpni_link_cfg cfg = {0};
 	struct dpaa2_eth_priv *priv = netdev_priv(net_dev);
@@ -132,12 +132,12 @@ dpaa2_eth_set_link_ksettings(struct net_device *net_dev,
 		return -EACCES;
 	}
 
-	cfg.rate = link_settings->base.speed;
-	if (link_settings->base.autoneg == AUTONEG_ENABLE)
+	cfg.rate = ethtool_cmd_speed(cmd);
+	if (cmd->autoneg == AUTONEG_ENABLE)
 		cfg.options |= DPNI_LINK_OPT_AUTONEG;
 	else
 		cfg.options &= ~DPNI_LINK_OPT_AUTONEG;
-	if (link_settings->base.duplex  == DUPLEX_HALF)
+	if (cmd->duplex  == DUPLEX_HALF)
 		cfg.options |= DPNI_LINK_OPT_HALF_DUPLEX;
 	else
 		cfg.options &= ~DPNI_LINK_OPT_HALF_DUPLEX;
@@ -270,8 +270,8 @@ static int dpaa2_eth_get_rxnfc(struct net_device *net_dev,
 const struct ethtool_ops dpaa2_ethtool_ops = {
 	.get_drvinfo = dpaa2_eth_get_drvinfo,
 	.get_link = ethtool_op_get_link,
-	.get_link_ksettings = dpaa2_eth_get_link_ksettings,
-	.set_link_ksettings = dpaa2_eth_set_link_ksettings,
+	.get_settings = dpaa2_eth_get_settings,
+	.set_settings = dpaa2_eth_set_settings,
 	.get_sset_count = dpaa2_eth_get_sset_count,
 	.get_ethtool_stats = dpaa2_eth_get_ethtool_stats,
 	.get_strings = dpaa2_eth_get_strings,
