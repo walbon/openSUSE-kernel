@@ -681,6 +681,14 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			[SPARC64] tick
 			[X86-64] hpet,tsc
 
+	clocksource.arm_arch_timer.evtstrm=
+			[ARM,ARM64]
+			Format: <bool>
+			Enable/disable the eventstream feature of the ARM
+			architected timer so that code using WFE-based polling
+			loops can be debugged more effectively on production
+			systems.
+
 	clocksource.arm_arch_timer.fsl-a008585=
 			[ARM64]
 			Format: <bool>
