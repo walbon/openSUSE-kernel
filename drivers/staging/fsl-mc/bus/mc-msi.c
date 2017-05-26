@@ -37,8 +37,10 @@ static void fsl_mc_msi_update_dom_ops(struct msi_domain_info *info)
 	/*
 	 * set_desc should not be set by the caller
 	 */
-	if (ops->set_desc == NULL)
-		ops->set_desc = fsl_mc_msi_set_desc;
+	if (WARN_ON(ops->set_desc))
+		return;
+
+	ops->set_desc = fsl_mc_msi_set_desc;
 }
 
 static void __fsl_mc_msi_write_msg(struct fsl_mc_device *mc_bus_dev,
@@ -63,7 +65,7 @@ static void __fsl_mc_msi_write_msg(struct fsl_mc_device *mc_bus_dev,
 	irq_cfg.paddr = ((u64)msi_desc->msg.address_hi << 32) |
 			msi_desc->msg.address_lo;
 	irq_cfg.val = msi_desc->msg.data;
-	irq_cfg.irq_num = msi_desc->irq;
+	irq_cfg.user_irq_id = msi_desc->irq;
 
 	if (owner_mc_dev == mc_bus_dev) {
 		/*
@@ -127,8 +129,10 @@ static void fsl_mc_msi_update_chip_ops(struct msi_domain_info *info)
 	/*
 	 * irq_write_msi_msg should not be set by the caller
 	 */
-	if (chip->irq_write_msi_msg == NULL)
-		chip->irq_write_msi_msg = fsl_mc_msi_write_msg;
+	if (WARN_ON(chip->irq_write_msi_msg))
+		return;
+
+	chip->irq_write_msi_msg = fsl_mc_msi_write_msg;
 }
 
 /**
