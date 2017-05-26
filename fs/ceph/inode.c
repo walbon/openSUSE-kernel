@@ -2119,9 +2119,6 @@ int __ceph_setattr(struct inode *inode, struct iattr *attr)
 	return err;
 }
 
-/*
- * setattr
- */
 int ceph_setattr(struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = d_inode(dentry);
@@ -2137,7 +2134,7 @@ int ceph_setattr(struct dentry *dentry, struct iattr *attr)
 	err = __ceph_setattr(inode, attr);
 
 	if (err >= 0 && (attr->ia_valid & ATTR_MODE))
-		err = posix_acl_chmod(inode, attr->ia_mode);
+		err = posix_acl_chmod(d_inode(dentry), attr->ia_mode);
 
 	return err;
 }
