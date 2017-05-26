@@ -497,7 +497,7 @@ int nfs40_walk_client_list(struct nfs_client *new,
 
 		/* If "pos" isn't marked ready, we can't trust the
 		 * remaining fields in "pos" */
-		if (pos->cl_cons_state > NFS_CS_READY) {
+		if (pos->cl_cons_state == NFS_CS_SESSION_INITING) {
 			atomic_inc(&pos->cl_count);
 			spin_unlock(&nn->nfs_client_lock);
 
@@ -637,7 +637,7 @@ int nfs41_walk_client_list(struct nfs_client *new,
 		 * remaining fields in "pos", especially the client
 		 * ID and serverowner fields.  Wait for CREATE_SESSION
 		 * to finish. */
-		if (pos->cl_cons_state > NFS_CS_READY) {
+		if (pos->cl_cons_state == NFS_CS_SESSION_INITING) {
 			atomic_inc(&pos->cl_count);
 			spin_unlock(&nn->nfs_client_lock);
 
