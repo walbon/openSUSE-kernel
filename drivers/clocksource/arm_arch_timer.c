@@ -688,12 +688,14 @@ static void __arch_timer_setup(unsigned type,
 		switch (arch_timer_uses_ppi) {
 		case VIRT_PPI:
 			clk->set_state_shutdown = arch_timer_shutdown_virt;
+			clk->set_state_oneshot_stopped = arch_timer_shutdown_virt;
 			clk->set_next_event = arch_timer_set_next_event_virt;
 			break;
 		case PHYS_SECURE_PPI:
 		case PHYS_NONSECURE_PPI:
 		case HYP_PPI:
 			clk->set_state_shutdown = arch_timer_shutdown_phys;
+			clk->set_state_oneshot_stopped = arch_timer_shutdown_phys;
 			clk->set_next_event = arch_timer_set_next_event_phys;
 			break;
 		default:
@@ -708,10 +710,12 @@ static void __arch_timer_setup(unsigned type,
 		clk->cpumask = cpu_all_mask;
 		if (arch_timer_mem_use_virtual) {
 			clk->set_state_shutdown = arch_timer_shutdown_virt_mem;
+			clk->set_state_oneshot_stopped = arch_timer_shutdown_virt_mem;
 			clk->set_next_event =
 				arch_timer_set_next_event_virt_mem;
 		} else {
 			clk->set_state_shutdown = arch_timer_shutdown_phys_mem;
+			clk->set_state_oneshot_stopped = arch_timer_shutdown_phys_mem;
 			clk->set_next_event =
 				arch_timer_set_next_event_phys_mem;
 		}
