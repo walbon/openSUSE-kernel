@@ -1185,6 +1185,9 @@ static int dpaa2_eth_change_mtu(struct net_device *net_dev, int mtu)
 	struct dpaa2_eth_priv *priv = netdev_priv(net_dev);
 	int err;
 
+	if ((mtu < 68) || (mtu > DPAA2_ETH_MAX_MTU))
+		return -EINVAL;
+
 	/* Set the maximum Rx frame length to match the transmit side;
 	 * account for L2 headers when computing the MFL
 	 */
@@ -2214,10 +2217,6 @@ static int netdev_init(struct net_device *net_dev)
 	 * NOTE: priv->tx_data_offset MUST be initialized at this point.
 	 */
 	net_dev->needed_headroom = DPAA2_ETH_NEEDED_HEADROOM(priv);
-
-	/* Set MTU limits */
-	net_dev->min_mtu = 68;
-	net_dev->max_mtu = DPAA2_ETH_MAX_MTU;
 
 	/* Our .ndo_init will be called herein */
 	err = register_netdev(net_dev);
