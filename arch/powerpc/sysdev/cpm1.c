@@ -230,8 +230,6 @@ void __init cpm_reset(void)
 	siu_conf = immr_map(im_siu_conf);
 	out_be32(&siu_conf->sc_sdcr, 1);
 	immr_unmap(siu_conf);
-
-	cpm_muram_init();
 }
 
 static DEFINE_SPINLOCK(cmd_lock);
