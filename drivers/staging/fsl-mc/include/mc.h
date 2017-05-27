@@ -1,7 +1,7 @@
 /*
  * Freescale Management Complex (MC) bus public interface
  *
- * Copyright (C) 2014 Freescale Semiconductor, Inc.
+ * Copyright (C) 2014-2016 Freescale Semiconductor, Inc.
  * Author: German Rivera <German.Rivera@freescale.com>
  *
  * This file is licensed under the terms of the GNU General Public
@@ -13,16 +13,13 @@
 
 #include <linux/device.h>
 #include <linux/mod_devicetable.h>
-#include <linux/list.h>
 #include <linux/interrupt.h>
-#include <linux/platform_device.h>
 #include "../include/dprc.h"
 
 #define FSL_MC_VENDOR_FREESCALE	0x1957
 
 struct fsl_mc_device;
 struct fsl_mc_io;
-struct fsl_mc_bus;
 
 /**
  * struct fsl_mc_driver - MC object device driver object
@@ -40,7 +37,7 @@ struct fsl_mc_bus;
  */
 struct fsl_mc_driver {
 	struct device_driver driver;
-	const struct fsl_mc_device_match_id *match_id_table;
+	const struct fsl_mc_device_id *match_id_table;
 	int (*probe)(struct fsl_mc_device *dev);
 	int (*remove)(struct fsl_mc_device *dev);
 	void (*shutdown)(struct fsl_mc_device *dev);
@@ -50,23 +47,6 @@ struct fsl_mc_driver {
 
 #define to_fsl_mc_driver(_drv) \
 	container_of(_drv, struct fsl_mc_driver, driver)
-
-/**
- * struct fsl_mc_device_match_id - MC object device Id entry for driver matching
- * @vendor: vendor ID
- * @obj_type: MC object type
- * @ver_major: MC object version major number
- * @ver_minor: MC object version minor number
- *
- * Type of entries in the "device Id" table for MC object devices supported by
- * a MC object device driver. The last entry of the table has vendor set to 0x0
- */
-struct fsl_mc_device_match_id {
-	u16 vendor;
-	const char obj_type[16];
-	u32 ver_major;
-	u32 ver_minor;
-};
 
 /**
  * enum fsl_mc_pool_type - Types of allocatable MC bus resources
@@ -101,7 +81,7 @@ enum fsl_mc_pool_type {
  */
 struct fsl_mc_resource {
 	enum fsl_mc_pool_type type;
-	int32_t id;
+	s32 id;
 	void *data;
 	struct fsl_mc_resource_pool *parent_pool;
 	struct list_head node;
@@ -128,11 +108,6 @@ struct fsl_mc_device_irq {
  * Bit masks for a MC object device (struct fsl_mc_device) flags
  */
 #define FSL_MC_IS_DPRC	0x0001
-
-/**
- * Default DMA mask for devices on a fsl-mc bus
- */
-#define FSL_MC_DEFAULT_DMA_MASK	(~0ULL)
 
 /**
  * struct fsl_mc_device - MC object device object
@@ -205,8 +180,6 @@ int __must_check __fsl_mc_driver_register(struct fsl_mc_driver *fsl_mc_driver,
 
 void fsl_mc_driver_unregister(struct fsl_mc_driver *driver);
 
-bool fsl_mc_bus_exists(void);
-
 int __must_check fsl_mc_portal_allocate(struct fsl_mc_device *mc_dev,
 					u16 mc_io_flags,
 					struct fsl_mc_io **new_mc_io);
@@ -225,19 +198,4 @@ int __must_check fsl_mc_allocate_irqs(struct fsl_mc_device *mc_dev);
 
 void fsl_mc_free_irqs(struct fsl_mc_device *mc_dev);
 
-extern struct bus_type fsl_mc_bus_type;
-
-/**
-  * is_root_dprc - tell whether dev is root dprc or not.
-  * root dprc's parent is a platform device,
-  * that platform device's bus type is platform_bus_type.
-  * @dev: MC object device
-  * return 1 on root dprc, 0 otherwise
-  */
-static inline bool is_root_dprc(struct device *dev)
-{
-	return ((to_fsl_mc_device(dev)->flags & FSL_MC_IS_DPRC) &&
-		((dev)->bus == &fsl_mc_bus_type) &&
-		((dev)->parent->bus == &platform_bus_type));
-}
 #endif /* _FSL_MC_H_ */
