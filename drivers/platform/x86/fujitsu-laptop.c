@@ -181,23 +181,23 @@ static void acpi_fujitsu_hotkey_notify(struct acpi_device *device, u32 event);
 
 #if defined(CONFIG_LEDS_CLASS) || defined(CONFIG_LEDS_CLASS_MODULE)
 static enum led_brightness logolamp_get(struct led_classdev *cdev);
-static void logolamp_set(struct led_classdev *cdev,
+static int logolamp_set(struct led_classdev *cdev,
 			       enum led_brightness brightness);
 
 static struct led_classdev logolamp_led = {
  .name = "fujitsu::logolamp",
  .brightness_get = logolamp_get,
- .brightness_set = logolamp_set
+ .brightness_set_sync = logolamp_set
 };
 
 static enum led_brightness kblamps_get(struct led_classdev *cdev);
-static void kblamps_set(struct led_classdev *cdev,
+static int kblamps_set(struct led_classdev *cdev,
 			       enum led_brightness brightness);
 
 static struct led_classdev kblamps_led = {
  .name = "fujitsu::kblamps",
  .brightness_get = kblamps_get,
- .brightness_set = kblamps_set
+ .brightness_set_sync = kblamps_set
 };
 #endif
 
@@ -251,27 +251,27 @@ static int call_fext_func(int cmd, int arg0, int arg1, int arg2)
 #if defined(CONFIG_LEDS_CLASS) || defined(CONFIG_LEDS_CLASS_MODULE)
 /* LED class callbacks */
 
-static void logolamp_set(struct led_classdev *cdev,
+static int logolamp_set(struct led_classdev *cdev,
 			       enum led_brightness brightness)
 {
 	if (brightness >= LED_FULL) {
 		call_fext_func(FUNC_LEDS, 0x1, LOGOLAMP_POWERON, FUNC_LED_ON);
-		call_fext_func(FUNC_LEDS, 0x1, LOGOLAMP_ALWAYS, FUNC_LED_ON);
+		return call_fext_func(FUNC_LEDS, 0x1, LOGOLAMP_ALWAYS, FUNC_LED_ON);
 	} else if (brightness >= LED_HALF) {
 		call_fext_func(FUNC_LEDS, 0x1, LOGOLAMP_POWERON, FUNC_LED_ON);
-		call_fext_func(FUNC_LEDS, 0x1, LOGOLAMP_ALWAYS, FUNC_LED_OFF);
+		return call_fext_func(FUNC_LEDS, 0x1, LOGOLAMP_ALWAYS, FUNC_LED_OFF);
 	} else {
-		call_fext_func(FUNC_LEDS, 0x1, LOGOLAMP_POWERON, FUNC_LED_OFF);
+		return call_fext_func(FUNC_LEDS, 0x1, LOGOLAMP_POWERON, FUNC_LED_OFF);
 	}
 }
 
-static void kblamps_set(struct led_classdev *cdev,
+static int kblamps_set(struct led_classdev *cdev,
 			       enum led_brightness brightness)
 {
 	if (brightness >= LED_FULL)
-		call_fext_func(FUNC_LEDS, 0x1, KEYBOARD_LAMPS, FUNC_LED_ON);
+		return call_fext_func(FUNC_LEDS, 0x1, KEYBOARD_LAMPS, FUNC_LED_ON);
 	else
-		call_fext_func(FUNC_LEDS, 0x1, KEYBOARD_LAMPS, FUNC_LED_OFF);
+		return call_fext_func(FUNC_LEDS, 0x1, KEYBOARD_LAMPS, FUNC_LED_OFF);
 }
 
 static enum led_brightness logolamp_get(struct led_classdev *cdev)
