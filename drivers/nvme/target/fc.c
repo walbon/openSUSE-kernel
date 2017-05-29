@@ -230,7 +230,15 @@ static DEFINE_IDA(nvmet_fc_tgtport_cnt);
 
 static u32 nvmet_fc_cpu_cnt;
 static DEFINE_PER_CPU(struct nvmet_fc_work_by_cpu, nvmet_fc_cpu_workcpu);
-#define nvmet_fc_workcpu(cpu)	(&per_cpu(nvmet_fc_cpu_workcpu, cpu))
+
+static inline struct nvmet_fc_work_by_cpu *
+nvmet_fc_workcpu(int cpu)
+{
+	if (cpu == WORK_CPU_UNBOUND)
+		cpu = get_cpu();
+
+	return per_cpu_ptr(&nvmet_fc_cpu_workcpu, cpu % nvmet_fc_cpu_cnt);
+}
 
 static void nvmet_fc_handle_ls_rqst_work(struct work_struct *work);
 static void nvmet_fc_tgt_a_put(struct nvmet_fc_tgt_assoc *assoc);
@@ -705,6 +713,9 @@ nvmet_fc_find_target_queue(struct nvmet_fc_tgtport *tgtport,
 	u64 association_id = nvmet_fc_getassociationid(connection_id);
 	u16 qid = nvmet_fc_getqueueid(connection_id);
 	unsigned long flags;
+
+	if (qid >= NVMET_NR_QUEUES)
+		return NULL;
 
 	spin_lock_irqsave(&tgtport->lock, flags);
 	list_for_each_entry(assoc, &tgtport->assoc_list, a_list) {
