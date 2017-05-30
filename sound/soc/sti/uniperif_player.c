@@ -1060,8 +1060,10 @@ int uni_player_init(struct platform_device *pdev,
 
 	/* Get uniperif resource */
 	player->clk = of_clk_get(pdev->dev.of_node, 0);
-	if (IS_ERR(player->clk))
-		ret = PTR_ERR(player->clk);
+	if (IS_ERR(player->clk)) {
+		dev_err(player->dev, "Failed to get clock\n");
+		return PTR_ERR(player->clk);
+	}
 
 	/* Select the frequency synthesizer clock */
 	if (player->clk_sel) {
