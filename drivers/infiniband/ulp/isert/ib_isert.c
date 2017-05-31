@@ -309,7 +309,7 @@ isert_create_device_ib_res(struct isert_device *device)
 
 	ret = isert_alloc_comps(device);
 	if (ret)
-		return ret;
+		goto out;
 
 	device->pd = ib_alloc_pd(ib_dev, 0);
 	if (IS_ERR(device->pd)) {
@@ -327,6 +327,9 @@ isert_create_device_ib_res(struct isert_device *device)
 
 out_cq:
 	isert_free_comps(device);
+out:
+	if (ret > 0)
+		ret = -EINVAL;
 	return ret;
 }
 
