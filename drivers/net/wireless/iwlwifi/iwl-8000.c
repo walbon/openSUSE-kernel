@@ -69,7 +69,7 @@
 #include "iwl-agn-hw.h"
 
 /* Highest firmware API version supported */
-#define IWL8000_UCODE_API_MAX	20
+#define IWL8000_UCODE_API_MAX	19
 
 /* Oldest version we won't warn about */
 #define IWL8000_UCODE_API_OK	13
@@ -89,9 +89,9 @@
 #define IWL8260_SMEM_OFFSET		0x400000
 #define IWL8260_SMEM_LEN		0x68000
 
-#define IWL8000_FW_PRE "iwlwifi-8000C-"
+#define IWL8000_FW_PRE "iwlwifi-8000"
 #define IWL8000_MODULE_FIRMWARE(api) \
-	IWL8000_FW_PRE __stringify(api) ".ucode"
+	IWL8000_FW_PRE "-" __stringify(api) ".ucode"
 
 #define NVM_HW_SECTION_NUM_FAMILY_8000		10
 #define DEFAULT_NVM_FILE_FAMILY_8000B		"nvmData-8000B"
@@ -179,16 +179,6 @@ const struct iwl_cfg iwl8260_2n_cfg = {
 
 const struct iwl_cfg iwl8260_2ac_cfg = {
 	.name = "Intel(R) Dual Band Wireless AC 8260",
-	.fw_name_pre = IWL8000_FW_PRE,
-	IWL_DEVICE_8000,
-	.ht_params = &iwl8000_ht_params,
-	.nvm_ver = IWL8000_NVM_VERSION,
-	.nvm_calib_ver = IWL8000_TX_POWER_VERSION,
-	.max_ht_ampdu_exponent = IEEE80211_HT_MAX_AMPDU_64K,
-};
-
-const struct iwl_cfg iwl8265_2ac_cfg = {
-	.name = "Intel(R) Dual Band Wireless AC 8265",
 	.fw_name_pre = IWL8000_FW_PRE,
 	IWL_DEVICE_8000,
 	.ht_params = &iwl8000_ht_params,
