@@ -160,6 +160,8 @@ struct nvmet_fc_work_by_cpu {
 	struct work_struct		cpu_work;
 };
 
+#define NVMET_FC_MAX_WORK_BUDGET	4096
+
 
 static inline int
 nvmet_fc_iodnum(struct nvmet_fc_ls_iod *iodptr)
@@ -2460,6 +2462,7 @@ nvmet_fc_do_work_on_cpu(struct work_struct *work)
 		container_of(work, struct nvmet_fc_work_by_cpu, cpu_work);
 	struct nvmet_fc_fcp_iod *fod;
 	unsigned long flags;
+	int workcnt = 0;
 
 	spin_lock_irqsave(&workcpu->clock, flags);
 
@@ -2477,6 +2480,9 @@ nvmet_fc_do_work_on_cpu(struct work_struct *work)
 
 		spin_lock_irqsave(&workcpu->clock, flags);
 
+		if (++workcnt >= NVMET_FC_MAX_WORK_BUDGET)
+			goto exit_reschedule;
+
 		fod = list_first_entry_or_null(&workcpu->fod_list,
 					struct nvmet_fc_fcp_iod, work_list);
 	}
@@ -2484,6 +2490,12 @@ nvmet_fc_do_work_on_cpu(struct work_struct *work)
 	workcpu->running = false;
 
 	spin_unlock_irqrestore(&workcpu->clock, flags);
+
+	return;
+
+exit_reschedule:
+	spin_unlock_irqrestore(&workcpu->clock, flags);
+	queue_work_on(workcpu->cpu, workcpu->work_q, &workcpu->cpu_work);
 }
 
 static int
