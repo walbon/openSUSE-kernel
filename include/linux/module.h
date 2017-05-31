@@ -464,11 +464,11 @@ struct module {
 	unsigned long *ftrace_callsites;
 #endif
 
-#ifdef CONFIG_LIVEPATCH
+#if defined(CONFIG_LIVEPATCH) || defined(__aarch64__)
 	bool klp_alive;
 #endif
 
-#ifdef CONFIG_KGRAFT
+#if defined(CONFIG_KGRAFT) || defined(__aarch64__)
 	bool kgr_alive;
 #endif
 

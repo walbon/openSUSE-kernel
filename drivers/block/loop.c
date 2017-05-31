@@ -543,7 +543,7 @@ static int do_req_filebacked(struct loop_device *lo, struct request *rq)
 
 	pos = ((loff_t) blk_rq_pos(rq) << 9) + lo->lo_offset;
 
-	if (op_is_write(req_op(rq))) {
+	if (req_op(rq) != REQ_OP_READ) {
 		if (req_op(rq) == REQ_OP_FLUSH)
 			ret = lo_req_flush(lo, rq);
 		else if (req_op(rq) == REQ_OP_DISCARD)
