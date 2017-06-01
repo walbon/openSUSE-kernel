@@ -103,31 +103,38 @@ xfs_buf_vmap_len(
  * the XBF_NO_IOACCT flag before I/O submission. Otherwise, the buftarg count
  * never reaches zero and unmount hangs indefinitely.
  */
-static inline void
-xfs_buf_ioacct_inc(
-   struct xfs_buf  *bp)
+static inline void xfs_buf_ioacct_inc(struct xfs_buf  *bp)
 {
-   if (bp->b_flags & (XBF_NO_IOACCT|_XBF_IN_FLIGHT))
+   if (bp->b_flags & XBF_NO_IOACCT)
        return;
 
    ASSERT(bp->b_flags & XBF_ASYNC);
-   bp->b_flags |= _XBF_IN_FLIGHT;
-   percpu_counter_inc(&bp->b_target->bt_io_count);
+   spin_lock(&bp->b_lock);
+   if (!(bp->b_state & XFS_BSTATE_IN_FLIGHT)) {
+	bp->b_state |= XFS_BSTATE_IN_FLIGHT;
+	percpu_counter_inc(&bp->b_target->bt_io_count);
+   }
+   spin_unlock(&bp->b_lock);
 }
 
 /*
  * Clear the in-flight state on a buffer about to be released to the LRU or
  * freed and unaccount from the buftarg.
  */
-static inline void
-xfs_buf_ioacct_dec(
-   struct xfs_buf  *bp)
+static inline void __xfs_buf_ioacct_dec(struct xfs_buf  *bp)
 {
-   if (!(bp->b_flags & _XBF_IN_FLIGHT))
-       return;
+	ASSERT(spin_is_locked(&bp->b_lock));
+	if (bp->b_state & XFS_BSTATE_IN_FLIGHT) {
+		bp->b_state &= ~XFS_BSTATE_IN_FLIGHT;
+		percpu_counter_dec(&bp->b_target->bt_io_count);
+	}
+}
 
-   bp->b_flags &= ~_XBF_IN_FLIGHT;
-   percpu_counter_dec(&bp->b_target->bt_io_count);
+
+static inline void xfs_buf_ioacct_dec(struct xfs_buf  *bp) {
+	spin_lock(&bp->b_lock);
+	__xfs_buf_ioacct_dec(bp);
+	spin_unlock(&bp->b_lock);
 }
 
 
@@ -198,9 +205,10 @@ xfs_buf_stale(
 	 * unaccounted (released to LRU) before that occurs. Drop in-flight
 	 * status now to preserve accounting consistency.
 	 */
-	xfs_buf_ioacct_dec(bp);
 
 	spin_lock(&bp->b_lock);
+	__xfs_buf_ioacct_dec(bp);
+
 	atomic_set(&(bp)->b_lru_ref, 0);
 	if (!list_empty(&bp->b_lru)) {
 		struct xfs_buftarg *btp = bp->b_target;
@@ -964,13 +972,13 @@ xfs_buf_rele(
 		 * ensures the decrement occurs only once per-buf.
 		 */
 		if ((atomic_read(&bp->b_hold) == 1) && !list_empty(&bp->b_lru))
-		    xfs_buf_ioacct_dec(bp);
+		    __xfs_buf_ioacct_dec(bp);
 		goto out;
 
 	}
 
 	/* the last refrence has been dropped ... */
-	xfs_buf_ioacct_dec(bp);
+	__xfs_buf_ioacct_dec(bp);
 	if (!(bp->b_flags & XBF_STALE) && atomic_read(&bp->b_lru_ref)) {
 		xfs_buf_lru_add(bp);
 		spin_unlock(&pag->pag_buf_lock);
@@ -1518,8 +1526,10 @@ xfs_wait_buftarg(
 	 * all reference counts have been dropped before we start walking the
 	 * LRU list.
 	 */
-	while (percpu_counter_sum(&btp->bt_io_count))
-	    delay(100);
+	while (percpu_counter_sum(&btp->bt_io_count)) {
+		BUG_ON(percpu_counter_sum(&btp->bt_io_count) < 0);
+		delay(100);
+	}
 	drain_workqueue(btp->bt_mount->m_buf_workqueue);
 
 restart:

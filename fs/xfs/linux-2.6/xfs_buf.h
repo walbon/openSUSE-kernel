@@ -67,7 +67,6 @@ typedef enum {
 #define	_XBF_KMEM	(1 << 20)/* backed by heap memory */
 #define _XBF_DELWRI_Q	(1 << 21)/* buffer on delwri queue */
 #define _XBF_LRU_DISPOSE (1 << 24)/* buffer being discarded */
-#define _XBF_IN_FLIGHT	 (1 << 25) /* I/O in flight, for accounting purposes */
 
 typedef unsigned int xfs_buf_flags_t;
 
@@ -88,8 +87,9 @@ typedef unsigned int xfs_buf_flags_t;
 	{ _XBF_RUN_QUEUES,	"RUN_QUEUES" }, \
 	{ _XBF_KMEM,		"KMEM" }, \
 	{ _XBF_DELWRI_Q,	"DELWRI_Q" }, \
-	{ _XBF_LRU_DISPOSE,	"LRU_DISPOSE" }, \
-	{ _XBF_IN_FLIGHT,	"IN_FLIGHT" }
+	{ _XBF_LRU_DISPOSE,	"LRU_DISPOSE" }
+
+#define XFS_BSTATE_IN_FLIGHT (1 << 1) /* I/O in flight */
 
 typedef enum {
 	XBT_FORCE_SLEEP = 0,
