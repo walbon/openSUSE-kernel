@@ -176,6 +176,11 @@ typedef struct xfs_buf {
 #ifdef XFS_BUF_LOCK_TRACKING
 	int			b_last_holder;
 #endif
+
+#ifndef __GENKSYMS__
+	spinlock_t		b_lock;
+	unsigned int		b_state;
+#endif
 } xfs_buf_t;
 
 

@@ -200,6 +200,7 @@ xfs_buf_stale(
 	 */
 	xfs_buf_ioacct_dec(bp);
 
+	spin_lock(&bp->b_lock);
 	atomic_set(&(bp)->b_lru_ref, 0);
 	if (!list_empty(&bp->b_lru)) {
 		struct xfs_buftarg *btp = bp->b_target;
@@ -214,6 +215,7 @@ xfs_buf_stale(
 		spin_unlock(&btp->bt_lru_lock);
 	}
 	ASSERT(atomic_read(&bp->b_hold) >= 1);
+	spin_unlock(&bp->b_lock);
 }
 
 STATIC void
@@ -237,6 +239,7 @@ _xfs_buf_initialize(
 	INIT_LIST_HEAD(&bp->b_list);
 	RB_CLEAR_NODE(&bp->b_rbnode);
 	sema_init(&bp->b_sema, 0); /* held, no waiters */
+	spin_lock_init(&bp->b_lock);
 	XB_SET_OWNER(bp);
 	bp->b_target = target;
 	bp->b_file_offset = range_base;
@@ -952,6 +955,7 @@ xfs_buf_rele(
 
 	ASSERT(atomic_read(&bp->b_hold) > 0);
 	release = atomic_dec_and_lock(&bp->b_hold, &pag->pag_buf_lock);
+	spin_lock(&bp->b_lock);
 	if (!release) {
 		/*
 		 * Drop the in-flight state if the buffer is already on the LRU
@@ -980,6 +984,7 @@ xfs_buf_rele(
 	}
 
 out:
+	spin_unlock(&bp->b_lock);
 	if (freebuf)
 		xfs_buf_free(bp);
 }
