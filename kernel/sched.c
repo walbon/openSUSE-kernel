@@ -4350,7 +4350,7 @@ drop_precision:
 
 void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
 {
-	cputime_t rtime, stime = p->stime, total = cputime_add(stime, p->utime);
+	cputime_t rtime, stime = p->stime, utime, total = cputime_add(stime, p->utime);
 
 	/*
 	 * Use CFS's precise accounting:
@@ -4365,19 +4365,19 @@ void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
 	if (cputime_add(p->prev_stime, p->prev_utime) >= rtime)
 		goto out;
 
-	if (!rtime) {
-		stime = 0;
-	} else if (!total) {
-		stime = rtime;
-	} else {
+	if (total) {
 		stime = scale_stime(stime, rtime, total);
+		utime = cputime_sub(rtime, stime);
+	} else {
+		stime = rtime;
+		utime = 0;
 	}
 
 	/*
 	 * Compare with previous values, to keep monotonicity:
 	 */
 	p->prev_stime = max(p->prev_stime, stime);
-	p->prev_utime = max(p->prev_utime, cputime_sub(rtime, p->prev_stime));
+	p->prev_utime = max(p->prev_utime, utime);
 
 out:
 	*ut = p->prev_utime;
@@ -4391,7 +4391,7 @@ void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
 {
 	struct signal_struct *sig = p->signal;
 	struct task_cputime cputime;
-	cputime_t rtime, stime, total;
+	cputime_t rtime, stime, utime, total;
 
 	thread_group_cputime(p, &cputime);
 
@@ -4406,17 +4406,16 @@ void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
 	if (cputime_add(sig->prev_stime, sig->prev_utime) >= rtime)
 		goto out;
 
-	if (!rtime) {
-		stime = 0;
-	} else if (!total) {
-		stime = rtime;
-	} else {
+	if (total) {
 		stime = scale_stime(cputime.stime, rtime, total);
+		utime = cputime_sub(rtime, stime);
+	} else {
+		stime = rtime;
+		utime = 0;
 	}
 
 	sig->prev_stime = max(sig->prev_stime, stime);
-	sig->prev_utime = max(sig->prev_utime,
-			      cputime_sub(rtime, sig->prev_stime));
+	sig->prev_utime = max(sig->prev_utime, utime);
 
 out:
 	*ut = sig->prev_utime;
