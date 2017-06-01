@@ -500,9 +500,9 @@ void ipoib_pkey_event(struct work_struct *work);
 void ipoib_ib_dev_cleanup(struct net_device *dev);
 
 int ipoib_ib_dev_open(struct net_device *dev);
-int ipoib_ib_dev_up(struct net_device *dev);
-int ipoib_ib_dev_down(struct net_device *dev);
-int ipoib_ib_dev_stop(struct net_device *dev);
+void ipoib_ib_dev_up(struct net_device *dev);
+void ipoib_ib_dev_down(struct net_device *dev);
+void ipoib_ib_dev_stop(struct net_device *dev);
 void ipoib_pkey_dev_check_presence(struct net_device *dev);
 
 int ipoib_dev_init(struct net_device *dev, struct ib_device *ca, int port);
@@ -511,10 +511,9 @@ void ipoib_dev_cleanup(struct net_device *dev);
 void ipoib_mcast_join_task(struct work_struct *work);
 void ipoib_mcast_carrier_on_task(struct work_struct *work);
 void ipoib_mcast_send(struct net_device *dev, u8 *daddr, struct sk_buff *skb);
-void ipoib_mcast_free(struct ipoib_mcast *mc);
 
 void ipoib_mcast_restart_task(struct work_struct *work);
-int ipoib_mcast_start_thread(struct net_device *dev);
+void ipoib_mcast_start_thread(struct net_device *dev);
 int ipoib_mcast_stop_thread(struct net_device *dev);
 
 void ipoib_mcast_dev_down(struct net_device *dev);
@@ -565,8 +564,9 @@ void ipoib_path_iter_read(struct ipoib_path_iter *iter,
 
 int ipoib_mcast_attach(struct net_device *dev, u16 mlid,
 		       union ib_gid *mgid, int set_qkey);
-int ipoib_mcast_leave(struct net_device *dev, struct ipoib_mcast *mcast);
-struct ipoib_mcast *__ipoib_mcast_find(struct net_device *dev, void *mgid);
+void ipoib_mcast_remove_list(struct list_head *remove_list);
+void ipoib_check_and_add_mcast_sendonly(struct ipoib_dev_priv *priv, u8 *mgid,
+				struct list_head *remove_list);
 
 int ipoib_init_qp(struct net_device *dev);
 int ipoib_transport_dev_init(struct net_device *dev, struct ib_device *ca);
@@ -593,7 +593,7 @@ void ipoib_pkey_open(struct ipoib_dev_priv *priv);
 void ipoib_drain_cq(struct net_device *dev);
 
 void ipoib_set_ethtool_ops(struct net_device *dev);
-int ipoib_set_dev_features(struct ipoib_dev_priv *priv, struct ib_device *hca);
+void ipoib_set_dev_features(struct ipoib_dev_priv *priv, struct ib_device *hca);
 
 #define IPOIB_FLAGS_RC		0x80
 #define IPOIB_FLAGS_UC		0x40
@@ -780,7 +780,13 @@ static inline void ipoib_unregister_debugfs(void) { }
 #define ipoib_printk(level, priv, format, arg...)	\
 	printk(level "%s: " format, ((struct ipoib_dev_priv *) priv)->dev->name , ## arg)
 #define ipoib_warn(priv, format, arg...)		\
-	ipoib_printk(KERN_WARNING, priv, format , ## arg)
+do {							\
+	static DEFINE_RATELIMIT_STATE(_rs,		\
+		10 * HZ /*10 seconds */,		\
+		100);		\
+	if (__ratelimit(&_rs))				\
+		ipoib_printk(KERN_WARNING, priv, format , ## arg);\
+} while (0)
 
 extern int ipoib_sendq_size;
 extern int ipoib_recvq_size;

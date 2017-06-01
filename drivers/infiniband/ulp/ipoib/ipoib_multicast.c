@@ -109,7 +109,7 @@ static void __ipoib_mcast_schedule_join_thread(struct ipoib_dev_priv *priv,
 		queue_delayed_work(priv->wq, &priv->mcast_task, 0);
 }
 
-void ipoib_mcast_free(struct ipoib_mcast *mcast)
+static void ipoib_mcast_free(struct ipoib_mcast *mcast)
 {
 	struct net_device *dev = mcast->dev;
 	int tx_dropped = 0;
@@ -156,7 +156,7 @@ static struct ipoib_mcast *ipoib_mcast_alloc(struct net_device *dev,
 	return mcast;
 }
 
-struct ipoib_mcast *__ipoib_mcast_find(struct net_device *dev, void *mgid)
+static struct ipoib_mcast *__ipoib_mcast_find(struct net_device *dev, void *mgid)
 {
 	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	struct rb_node *n = priv->multicast_tree.rb_node;
@@ -314,9 +314,11 @@ static int ipoib_mcast_join_finish(struct ipoib_mcast *mcast,
 		netif_tx_unlock_bh(dev);
 
 		skb->dev = dev;
-		if (dev_queue_xmit(skb))
-			ipoib_warn(priv, "dev_queue_xmit failed to requeue packet\n");
 
+		ret = dev_queue_xmit(skb);
+		if (ret)
+			ipoib_warn(priv, "%s:dev_queue_xmit failed to re-queue packet, ret:%d\n",
+				   __func__, ret);
 		netif_tx_lock_bh(dev);
 	}
 	netif_tx_unlock_bh(dev);
@@ -674,7 +676,7 @@ out:
 	spin_unlock_irq(&priv->lock);
 }
 
-int ipoib_mcast_start_thread(struct net_device *dev)
+void ipoib_mcast_start_thread(struct net_device *dev)
 {
 	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	unsigned long flags;
@@ -684,8 +686,6 @@ int ipoib_mcast_start_thread(struct net_device *dev)
 	spin_lock_irqsave(&priv->lock, flags);
 	__ipoib_mcast_schedule_join_thread(priv, NULL, 0);
 	spin_unlock_irqrestore(&priv->lock, flags);
-
-	return 0;
 }
 
 int ipoib_mcast_stop_thread(struct net_device *dev)
@@ -704,7 +704,7 @@ int ipoib_mcast_stop_thread(struct net_device *dev)
 	return 0;
 }
 
-int ipoib_mcast_leave(struct net_device *dev, struct ipoib_mcast *mcast)
+static int ipoib_mcast_leave(struct net_device *dev, struct ipoib_mcast *mcast)
 {
 	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	int ret = 0;
@@ -729,6 +729,35 @@ int ipoib_mcast_leave(struct net_device *dev, struct ipoib_mcast *mcast)
 			  "SENDONLY join\n");
 
 	return 0;
+}
+
+/*
+ * Check if the multicast group is sendonly. If so remove it from the maps
+ * and add to the remove list
+ */
+void ipoib_check_and_add_mcast_sendonly(struct ipoib_dev_priv *priv, u8 *mgid,
+				struct list_head *remove_list)
+{
+	/* Is this multicast ? */
+	if (*mgid == 0xff) {
+		struct ipoib_mcast *mcast = __ipoib_mcast_find(priv->dev, mgid);
+
+		if (mcast && test_bit(IPOIB_MCAST_FLAG_SENDONLY, &mcast->flags)) {
+			list_del(&mcast->list);
+			rb_erase(&mcast->rb_node, &priv->multicast_tree);
+			list_add_tail(&mcast->list, remove_list);
+		}
+	}
+}
+
+void ipoib_mcast_remove_list(struct list_head *remove_list)
+{
+	struct ipoib_mcast *mcast, *tmcast;
+
+	list_for_each_entry_safe(mcast, tmcast, remove_list, list) {
+		ipoib_mcast_leave(mcast->dev, mcast);
+		ipoib_mcast_free(mcast);
+	}
 }
 
 void ipoib_mcast_send(struct net_device *dev, u8 *daddr, struct sk_buff *skb)
@@ -839,10 +868,7 @@ void ipoib_mcast_dev_flush(struct net_device *dev)
 		if (test_bit(IPOIB_MCAST_FLAG_BUSY, &mcast->flags))
 			wait_for_completion(&mcast->done);
 
-	list_for_each_entry_safe(mcast, tmcast, &remove_list, list) {
-		ipoib_mcast_leave(dev, mcast);
-		ipoib_mcast_free(mcast);
-	}
+	ipoib_mcast_remove_list(&remove_list);
 }
 
 static int ipoib_mcast_addr_is_valid(const u8 *addr, const u8 *broadcast)
@@ -968,10 +994,7 @@ void ipoib_mcast_restart_task(struct work_struct *work)
 		if (test_bit(IPOIB_MCAST_FLAG_BUSY, &mcast->flags))
 			wait_for_completion(&mcast->done);
 
-	list_for_each_entry_safe(mcast, tmcast, &remove_list, list) {
-		ipoib_mcast_leave(mcast->dev, mcast);
-		ipoib_mcast_free(mcast);
-	}
+	ipoib_mcast_remove_list(&remove_list);
 
 	/*
 	 * Double check that we are still up
