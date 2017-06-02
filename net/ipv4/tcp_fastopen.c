@@ -141,6 +141,7 @@ void tcp_fastopen_add_skb(struct sock *sk, struct sk_buff *skb)
 
 	skb_dst_drop(skb);
 	__skb_pull(skb, tcp_hdrlen(skb));
+	sk_forced_mem_schedule(sk, skb->truesize);
 	skb_set_owner_r(skb, sk);
 
 	tp->rcv_nxt = TCP_SKB_CB(skb)->end_seq;
