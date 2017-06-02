@@ -44,9 +44,10 @@ struct bnxt_re_gid_ctx {
 	u32			refcnt;
 };
 
+#define BNXT_RE_FENCE_BYTES	64
 struct bnxt_re_fence_data {
 	u32 size;
-	void *va;
+	u8 va[BNXT_RE_FENCE_BYTES];
 	dma_addr_t dma_addr;
 	struct bnxt_re_mr *mr;
 	struct ib_mw *mw;
