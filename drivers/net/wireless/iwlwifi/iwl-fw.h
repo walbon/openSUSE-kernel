@@ -7,6 +7,7 @@
  *
  * Copyright(c) 2008 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
+ * Copyright(c) 2016        Intel Deutschland GmbH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -26,13 +27,14 @@
  * in the file called COPYING.
  *
  * Contact Information:
- *  Intel Linux Wireless <ilw@linux.intel.com>
+ *  Intel Linux Wireless <linuxwifi@intel.com>
  * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
  *
  * BSD LICENSE
  *
  * Copyright(c) 2005 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
+ * Copyright(c) 2016        Intel Deutschland GmbH
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -205,6 +207,12 @@ struct iwl_fw_cscheme_list {
  *	change APs.
  * @max_bssid_history_entries: number of BSSID/RSSI entries that the device can
  *	hold.
+ * @max_hotlist_ssids: maximum number of entries for hotlist SSIDs.
+ * @max_number_epno_networks: max number of epno entries.
+ * @max_number_epno_networks_by_ssid: max number of epno entries if ssid is
+ *	specified.
+ * @max_number_of_white_listed_ssid: max number of white listed SSIDs.
+ * @max_number_of_black_listed_ssid: max number of black listed SSIDs.
  */
 struct iwl_gscan_capabilities {
 	u32 max_scan_cache_size;
@@ -215,6 +223,11 @@ struct iwl_gscan_capabilities {
 	u32 max_hotlist_aps;
 	u32 max_significant_change_aps;
 	u32 max_bssid_history_entries;
+	u32 max_hotlist_ssids;
+	u32 max_number_epno_networks;
+	u32 max_number_epno_networks_by_ssid;
+	u32 max_number_of_white_listed_ssid;
+	u32 max_number_of_black_listed_ssid;
 };
 
 /**
@@ -303,20 +316,6 @@ iwl_fw_dbg_conf_usniffer(const struct iwl_fw *fw, u8 id)
 		return false;
 
 	return conf_tlv->usniffer;
-}
-
-#define iwl_fw_dbg_trigger_enabled(fw, id) ({			\
-	void *__dbg_trigger = (fw)->dbg_trigger_tlv[(id)];	\
-	unlikely(__dbg_trigger);				\
-})
-
-static inline struct iwl_fw_dbg_trigger_tlv*
-iwl_fw_dbg_get_trigger(const struct iwl_fw *fw, u8 id)
-{
-	if (WARN_ON(id >= ARRAY_SIZE(fw->dbg_trigger_tlv)))
-		return NULL;
-
-	return fw->dbg_trigger_tlv[id];
 }
 
 #endif  /* __iwl_fw_h__ */

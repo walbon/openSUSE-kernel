@@ -7,6 +7,7 @@
  *
  * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
+ * Copyright(c) 2016 Intel Deutschland GmbH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -26,7 +27,7 @@
  * in the file called COPYING.
  *
  * Contact Information:
- *  Intel Linux Wireless <ilw@linux.intel.com>
+ *  Intel Linux Wireless <linuxwifi@intel.com>
  * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
  *
  * BSD LICENSE
@@ -74,6 +75,7 @@
 #include "iwl-eeprom-parse.h"
 
 #include "mvm.h"
+#include "fw-dbg.h"
 #include "iwl-phy-db.h"
 
 #define MVM_UCODE_ALIVE_TIMEOUT	HZ
@@ -106,6 +108,24 @@ static int iwl_send_tx_ant_cfg(struct iwl_mvm *mvm, u8 valid_tx_ant)
 				    sizeof(tx_ant_cmd), &tx_ant_cmd);
 }
 
+static int iwl_send_rss_cfg_cmd(struct iwl_mvm *mvm)
+{
+	int i;
+	struct iwl_rss_config_cmd cmd = {
+		.flags = cpu_to_le32(IWL_RSS_ENABLE),
+		.hash_mask = IWL_RSS_HASH_TYPE_IPV4_TCP |
+			     IWL_RSS_HASH_TYPE_IPV4_PAYLOAD |
+			     IWL_RSS_HASH_TYPE_IPV6_TCP |
+			     IWL_RSS_HASH_TYPE_IPV6_PAYLOAD,
+	};
+
+	for (i = 0; i < ARRAY_SIZE(cmd.indirection_table); i++)
+		cmd.indirection_table[i] = i % mvm->trans->num_rx_queues;
+	memcpy(cmd.secret_key, mvm->secret_key, sizeof(cmd.secret_key));
+
+	return iwl_mvm_send_cmd_pdu(mvm, RSS_CONFIG_CMD, 0, sizeof(cmd), &cmd);
+}
+
 void iwl_free_fw_paging(struct iwl_mvm *mvm)
 {
 	int i;
@@ -124,9 +144,11 @@ void iwl_free_fw_paging(struct iwl_mvm *mvm)
 
 		__free_pages(mvm->fw_paging_db[i].fw_paging_block,
 			     get_order(mvm->fw_paging_db[i].fw_paging_size));
+		mvm->fw_paging_db[i].fw_paging_block = NULL;
 	}
 	kfree(mvm->trans->paging_download_buf);
 	mvm->trans->paging_download_buf = NULL;
+	mvm->trans->paging_db = NULL;
 
 	memset(mvm->fw_paging_db, 0, sizeof(mvm->fw_paging_db));
 }
@@ -519,7 +541,9 @@ static int iwl_mvm_load_ucode_wait_alive(struct iwl_mvm *mvm,
 	struct iwl_sf_region st_fwrd_space;
 
 	if (ucode_type == IWL_UCODE_REGULAR &&
-	    iwl_fw_dbg_conf_usniffer(mvm->fw, FW_DBG_START_FROM_ALIVE))
+	    iwl_fw_dbg_conf_usniffer(mvm->fw, FW_DBG_START_FROM_ALIVE) &&
+	    !(fw_has_capa(&mvm->fw->ucode_capa,
+			  IWL_UCODE_TLV_CAPA_USNIFFER_UNIFIED)))
 		fw = iwl_get_ucode_image(mvm, IWL_UCODE_REGULAR_USNIFFER);
 	else
 		fw = iwl_get_ucode_image(mvm, ucode_type);
@@ -807,138 +831,6 @@ static void iwl_mvm_get_shared_mem_conf(struct iwl_mvm *mvm)
 	iwl_free_resp(&cmd);
 }
 
-int iwl_mvm_fw_dbg_collect_desc(struct iwl_mvm *mvm,
-				struct iwl_mvm_dump_desc *desc,
-				struct iwl_fw_dbg_trigger_tlv *trigger)
-{
-	unsigned int delay = 0;
-
-	if (trigger)
-		delay = msecs_to_jiffies(le32_to_cpu(trigger->stop_delay));
-
-	if (test_and_set_bit(IWL_MVM_STATUS_DUMPING_FW_LOG, &mvm->status))
-		return -EBUSY;
-
-	if (WARN_ON(mvm->fw_dump_desc))
-		iwl_mvm_free_fw_dump_desc(mvm);
-
-	IWL_WARN(mvm, "Collecting data: trigger %d fired.\n",
-		 le32_to_cpu(desc->trig_desc.type));
-
-	mvm->fw_dump_desc = desc;
-	mvm->fw_dump_trig = trigger;
-
-	queue_delayed_work(system_wq, &mvm->fw_dump_wk, delay);
-
-	return 0;
-}
-
-int iwl_mvm_fw_dbg_collect(struct iwl_mvm *mvm, enum iwl_fw_dbg_trigger trig,
-			   const char *str, size_t len,
-			   struct iwl_fw_dbg_trigger_tlv *trigger)
-{
-	struct iwl_mvm_dump_desc *desc;
-
-	desc = kzalloc(sizeof(*desc) + len, GFP_ATOMIC);
-	if (!desc)
-		return -ENOMEM;
-
-	desc->len = len;
-	desc->trig_desc.type = cpu_to_le32(trig);
-	memcpy(desc->trig_desc.data, str, len);
-
-	return iwl_mvm_fw_dbg_collect_desc(mvm, desc, trigger);
-}
-
-int iwl_mvm_fw_dbg_collect_trig(struct iwl_mvm *mvm,
-				struct iwl_fw_dbg_trigger_tlv *trigger,
-				const char *fmt, ...)
-{
-	u16 occurrences = le16_to_cpu(trigger->occurrences);
-	int ret, len = 0;
-	char buf[64];
-
-	if (!occurrences)
-		return 0;
-
-	if (fmt) {
-		va_list ap;
-
-		buf[sizeof(buf) - 1] = '\0';
-
-		va_start(ap, fmt);
-		vsnprintf(buf, sizeof(buf), fmt, ap);
-		va_end(ap);
-
-		/* check for truncation */
-		if (WARN_ON_ONCE(buf[sizeof(buf) - 1]))
-			buf[sizeof(buf) - 1] = '\0';
-
-		len = strlen(buf) + 1;
-	}
-
-	ret = iwl_mvm_fw_dbg_collect(mvm, le32_to_cpu(trigger->id), buf, len,
-				     trigger);
-
-	if (ret)
-		return ret;
-
-	trigger->occurrences = cpu_to_le16(occurrences - 1);
-	return 0;
-}
-
-static inline void iwl_mvm_restart_early_start(struct iwl_mvm *mvm)
-{
-	if (mvm->cfg->device_family == IWL_DEVICE_FAMILY_7000)
-		iwl_clear_bits_prph(mvm->trans, MON_BUFF_SAMPLE_CTL, 0x100);
-	else
-		iwl_write_prph(mvm->trans, DBGC_IN_SAMPLE, 1);
-}
-
-int iwl_mvm_start_fw_dbg_conf(struct iwl_mvm *mvm, u8 conf_id)
-{
-	u8 *ptr;
-	int ret;
-	int i;
-
-	if (WARN_ONCE(conf_id >= ARRAY_SIZE(mvm->fw->dbg_conf_tlv),
-		      "Invalid configuration %d\n", conf_id))
-		return -EINVAL;
-
-	/* EARLY START - firmware's configuration is hard coded */
-	if ((!mvm->fw->dbg_conf_tlv[conf_id] ||
-	     !mvm->fw->dbg_conf_tlv[conf_id]->num_of_hcmds) &&
-	    conf_id == FW_DBG_START_FROM_ALIVE) {
-		iwl_mvm_restart_early_start(mvm);
-		return 0;
-	}
-
-	if (!mvm->fw->dbg_conf_tlv[conf_id])
-		return -EINVAL;
-
-	if (mvm->fw_dbg_conf != FW_DBG_INVALID)
-		IWL_WARN(mvm, "FW already configured (%d) - re-configuring\n",
-			 mvm->fw_dbg_conf);
-
-	/* Send all HCMDs for configuring the FW debug */
-	ptr = (void *)&mvm->fw->dbg_conf_tlv[conf_id]->hcmd;
-	for (i = 0; i < mvm->fw->dbg_conf_tlv[conf_id]->num_of_hcmds; i++) {
-		struct iwl_fw_dbg_conf_hcmd *cmd = (void *)ptr;
-
-		ret = iwl_mvm_send_cmd_pdu(mvm, cmd->id, 0,
-					   le16_to_cpu(cmd->len), cmd->data);
-		if (ret)
-			return ret;
-
-		ptr += sizeof(*cmd);
-		ptr += le16_to_cpu(cmd->len);
-	}
-
-	mvm->fw_dbg_conf = conf_id;
-
-	return 0;
-}
-
 static int iwl_mvm_config_ltr(struct iwl_mvm *mvm)
 {
 	struct iwl_ltr_config_cmd cmd = {
@@ -1027,6 +919,16 @@ int iwl_mvm_up(struct iwl_mvm *mvm)
 	if (ret)
 		goto error;
 
+	/* Init RSS configuration */
+	if (iwl_mvm_has_new_rx_api(mvm)) {
+		ret = iwl_send_rss_cfg_cmd(mvm);
+		if (ret) {
+			IWL_ERR(mvm, "Failed to configure RSS queues: %d\n",
+				ret);
+			goto error;
+		}
+	}
+
 	/* init the fw <-> mac80211 STA mapping */
 	for (i = 0; i < IWL_MVM_STATION_COUNT; i++)
 		RCU_INIT_POINTER(mvm->fw_id_to_mac_id[i], NULL);
@@ -1056,8 +958,29 @@ int iwl_mvm_up(struct iwl_mvm *mvm)
 			goto error;
 	}
 
+#ifdef CONFIG_THERMAL
+	if (iwl_mvm_is_tt_in_fw(mvm)) {
+		/* in order to give the responsibility of ct-kill and
+		 * TX backoff to FW we need to send empty temperature reporting
+		 * cmd during init time
+		 */
+		iwl_mvm_send_temp_report_ths_cmd(mvm);
+	} else {
+		/* Initialize tx backoffs to the minimal possible */
+		iwl_mvm_tt_tx_backoff(mvm, 0);
+	}
+
+	/* TODO: read the budget from BIOS / Platform NVM */
+	if (iwl_mvm_is_ctdp_supported(mvm) && mvm->cooling_dev.cur_state > 0) {
+		ret = iwl_mvm_ctdp_command(mvm, CTDP_CMD_OPERATION_START,
+					   mvm->cooling_dev.cur_state);
+		if (ret)
+			goto error;
+	}
+#else
 	/* Initialize tx backoffs to the minimal possible */
 	iwl_mvm_tt_tx_backoff(mvm, 0);
+#endif
 
 	WARN_ON(iwl_mvm_config_ltr(mvm));
 
@@ -1076,6 +999,7 @@ int iwl_mvm_up(struct iwl_mvm *mvm)
 	}
 
 	if (fw_has_capa(&mvm->fw->ucode_capa, IWL_UCODE_TLV_CAPA_UMAC_SCAN)) {
+		mvm->scan_type = IWL_SCAN_TYPE_NOT_SET;
 		ret = iwl_mvm_config_scan(mvm);
 		if (ret)
 			goto error;
@@ -1092,7 +1016,7 @@ int iwl_mvm_up(struct iwl_mvm *mvm)
 	IWL_DEBUG_INFO(mvm, "RT uCode started.\n");
 	return 0;
  error:
-	iwl_trans_stop_device(mvm->trans);
+	iwl_mvm_stop_device(mvm);
 	return ret;
 }
 
@@ -1136,7 +1060,7 @@ int iwl_mvm_load_d3_fw(struct iwl_mvm *mvm)
 
 	return 0;
  error:
-	iwl_trans_stop_device(mvm->trans);
+	iwl_mvm_stop_device(mvm);
 	return ret;
 }
 

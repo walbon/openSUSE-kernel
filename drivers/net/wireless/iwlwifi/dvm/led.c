@@ -19,7 +19,7 @@
  * file called LICENSE.
  *
  * Contact Information:
- *  Intel Linux Wireless <ilw@linux.intel.com>
+ *  Intel Linux Wireless <linuxwifi@intel.com>
  * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
  *
  *****************************************************************************/
@@ -134,8 +134,6 @@ static int iwl_led_cmd(struct iwl_priv *priv,
 		on = IWL_LED_SOLID;
 	}
 
-	IWL_DEBUG_LED(priv, "Led blink time compensation=%u\n",
-			priv->cfg->base_params->led_compensation);
 	led_cmd.on = iwl_blink_compensation(priv, on,
 				priv->cfg->base_params->led_compensation);
 	led_cmd.off = iwl_blink_compensation(priv, off,
@@ -154,11 +152,14 @@ static void iwl_led_brightness_set(struct led_classdev *led_cdev,
 {
 	struct iwl_priv *priv = container_of(led_cdev, struct iwl_priv, led);
 	unsigned long on = 0;
+	unsigned long off = 0;
 
 	if (brightness > 0)
 		on = IWL_LED_SOLID;
+	else
+		off = IWL_LED_SOLID;
 
-	iwl_led_cmd(priv, on, 0);
+	iwl_led_cmd(priv, on, off);
 }
 
 static int iwl_led_blink_set(struct led_classdev *led_cdev,

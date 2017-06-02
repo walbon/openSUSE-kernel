@@ -25,7 +25,7 @@
  * in the file called COPYING.
  *
  * Contact Information:
- *  Intel Linux Wireless <ilw@linux.intel.com>
+ *  Intel Linux Wireless <linuxwifi@intel.com>
  * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
  *
  * BSD LICENSE
@@ -296,8 +296,8 @@ struct iwl_pwr_tx_backoff {
  * @high_temp: Is this NIC is designated to be in high temperature.
  * @host_interrupt_operation_mode: device needs host interrupt operation
  *	mode set
- * @d0i3: device uses d0i3 instead of d3
  * @nvm_hw_section_num: the ID of the HW NVM section
+ * @mac_addr_from_csr: read HW address from CSR registers
  * @features: hw features, any combination of feature_whitelist
  * @pwr_tx_backoffs: translation table between power limits and backoffs
  * @max_rx_agg_size: max RX aggregation size of the ADDBA request/response
@@ -312,6 +312,8 @@ struct iwl_pwr_tx_backoff {
  * @dccm2_len: length of the second DCCM
  * @smem_offset: offset from which the SMEM begins
  * @smem_len: the length of SMEM
+ * @mq_rx_supported: multi-queue rx support
+ * @vht_mu_mimo_supported: VHT MU-MIMO support
  *
  * We enable the driver to be backward compatible wrt. hardware features.
  * API differences in uCode shouldn't be handled here but through TLVs
@@ -343,8 +345,8 @@ struct iwl_cfg {
 	const bool internal_wimax_coex;
 	const bool host_interrupt_operation_mode;
 	bool high_temp;
-	bool d0i3;
 	u8   nvm_hw_section_num;
+	bool mac_addr_from_csr;
 	bool lp_xtal_workaround;
 	const struct iwl_pwr_tx_backoff *pwr_tx_backoffs;
 	bool no_power_up_nic_in_init;
@@ -364,6 +366,8 @@ struct iwl_cfg {
 	const u32 smem_len;
 	const struct iwl_tt_params *thermal_params;
 	bool apmg_not_supported;
+	bool mq_rx_supported;
+	bool vht_mu_mimo_supported;
 };
 
 /*

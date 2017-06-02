@@ -7,6 +7,7 @@
  *
  * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
+ * Copyright(c) 2016        Intel Deutschland GmbH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -26,13 +27,14 @@
  * in the file called COPYING.
  *
  * Contact Information:
- *  Intel Linux Wireless <ilw@linux.intel.com>
+ *  Intel Linux Wireless <linuxwifi@intel.com>
  * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
  *
  * BSD LICENSE
  *
  * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
+ * Copyright(c) 2016        Intel Deutschland GmbH
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -211,8 +213,11 @@ enum {
 
 	MFUART_LOAD_NOTIFICATION = 0xb1,
 
+	RSS_CONFIG_CMD = 0xb3,
+
 	REPLY_RX_PHY_CMD = 0xc0,
 	REPLY_RX_MPDU_CMD = 0xc1,
+	FRAME_RELEASE = 0xc3,
 	BA_NOTIF = 0xc5,
 
 	/* Location Aware Regulatory */
@@ -239,6 +244,7 @@ enum {
 	DTS_MEASUREMENT_NOTIFICATION = 0xdd,
 
 	REPLY_DEBUG_CMD = 0xf0,
+	LDBG_CONFIG_CMD = 0xf6,
 	DEBUG_LOG_MSG = 0xf7,
 
 	BCAST_FILTER_CMD = 0xcf,
@@ -268,14 +274,27 @@ enum {
 	REPLY_MAX = 0xff,
 };
 
+/* Please keep this enum *SORTED* by hex value.
+ * Needed for binary search, otherwise a warning will be triggered.
+ */
 enum iwl_phy_ops_subcmd_ids {
 	CMD_DTS_MEASUREMENT_TRIGGER_WIDE = 0x0,
+	CTDP_CONFIG_CMD = 0x03,
+	TEMP_REPORTING_THRESHOLDS_CMD = 0x04,
+	CT_KILL_NOTIFICATION = 0xFE,
 	DTS_MEASUREMENT_NOTIF_WIDE = 0xFF,
+};
+
+enum iwl_prot_offload_subcmd_ids {
+	STORED_BEACON_NTF = 0xFF,
 };
 
 /* command groups */
 enum {
+	LEGACY_GROUP = 0x0,
+	LONG_GROUP = 0x1,
 	PHY_OPS_GROUP = 0x4,
+	PROT_OFFLOAD_GROUP = 0xb,
 };
 
 /**
@@ -425,6 +444,26 @@ enum iwl_fw_item_id {
 struct iwl_fw_get_item_cmd {
 	__le32 item_id;
 } __packed; /* FW_GET_ITEM_CMD_API_S_VER_1 */
+
+#define CONT_REC_COMMAND_SIZE	80
+#define ENABLE_CONT_RECORDING	0x15
+#define DISABLE_CONT_RECORDING	0x16
+
+/*
+ * struct iwl_continuous_record_mode - recording mode
+ */
+struct iwl_continuous_record_mode {
+	__le16 enable_recording;
+} __packed;
+
+/*
+ * struct iwl_continuous_record_cmd - enable/disable continuous recording
+ */
+struct iwl_continuous_record_cmd {
+	struct iwl_continuous_record_mode record_mode;
+	u8 pad[CONT_REC_COMMAND_SIZE -
+		sizeof(struct iwl_continuous_record_mode)];
+} __packed;
 
 struct iwl_fw_get_item_resp {
 	__le32 item_id;
@@ -1425,7 +1464,7 @@ struct iwl_sf_cfg_cmd {
  ***********************************/
 
 /**
- * struct iwl_mcc_update_cmd - Request the device to update geographic
+ * struct iwl_mcc_update_cmd_v1 - Request the device to update geographic
  * regulatory profile according to the given MCC (Mobile Country Code).
  * The MCC is two letter-code, ascii upper case[A-Z] or '00' for world domain.
  * 'ZZ' MCC will be used to switch to NVM default profile; in this case, the
@@ -1434,14 +1473,34 @@ struct iwl_sf_cfg_cmd {
  * @source_id: the source from where we got the MCC, see iwl_mcc_source
  * @reserved: reserved for alignment
  */
+struct iwl_mcc_update_cmd_v1 {
+	__le16 mcc;
+	u8 source_id;
+	u8 reserved;
+} __packed; /* LAR_UPDATE_MCC_CMD_API_S_VER_1 */
+
+/**
+ * struct iwl_mcc_update_cmd - Request the device to update geographic
+ * regulatory profile according to the given MCC (Mobile Country Code).
+ * The MCC is two letter-code, ascii upper case[A-Z] or '00' for world domain.
+ * 'ZZ' MCC will be used to switch to NVM default profile; in this case, the
+ * MCC in the cmd response will be the relevant MCC in the NVM.
+ * @mcc: given mobile country code
+ * @source_id: the source from where we got the MCC, see iwl_mcc_source
+ * @reserved: reserved for alignment
+ * @key: integrity key for MCC API OEM testing
+ * @reserved2: reserved
+ */
 struct iwl_mcc_update_cmd {
 	__le16 mcc;
 	u8 source_id;
 	u8 reserved;
-} __packed; /* LAR_UPDATE_MCC_CMD_API_S */
+	__le32 key;
+	__le32 reserved2[5];
+} __packed; /* LAR_UPDATE_MCC_CMD_API_S_VER_2 */
 
 /**
- * iwl_mcc_update_resp - response to MCC_UPDATE_CMD.
+ * iwl_mcc_update_resp_v1  - response to MCC_UPDATE_CMD.
  * Contains the new channel control profile map, if changed, and the new MCC
  * (mobile country code).
  * The new MCC may be different than what was requested in MCC_UPDATE_CMD.
@@ -1454,14 +1513,41 @@ struct iwl_mcc_update_cmd {
  * @channels: channel control data map, DWORD for each channel. Only the first
  *	16bits are used.
  */
-struct iwl_mcc_update_resp {
+struct iwl_mcc_update_resp_v1  {
 	__le32 status;
 	__le16 mcc;
 	u8 cap;
 	u8 source_id;
 	__le32 n_channels;
 	__le32 channels[0];
-} __packed; /* LAR_UPDATE_MCC_CMD_RESP_S */
+} __packed; /* LAR_UPDATE_MCC_CMD_RESP_S_VER_1 */
+
+/**
+ * iwl_mcc_update_resp - response to MCC_UPDATE_CMD.
+ * Contains the new channel control profile map, if changed, and the new MCC
+ * (mobile country code).
+ * The new MCC may be different than what was requested in MCC_UPDATE_CMD.
+ * @status: see &enum iwl_mcc_update_status
+ * @mcc: the new applied MCC
+ * @cap: capabilities for all channels which matches the MCC
+ * @source_id: the MCC source, see iwl_mcc_source
+ * @time: time elapsed from the MCC test start (in 30 seconds TU)
+ * @reserved: reserved.
+ * @n_channels: number of channels in @channels_data (may be 14, 39, 50 or 51
+ *		channels, depending on platform)
+ * @channels: channel control data map, DWORD for each channel. Only the first
+ *	16bits are used.
+ */
+struct iwl_mcc_update_resp {
+	__le32 status;
+	__le16 mcc;
+	u8 cap;
+	u8 source_id;
+	__le16 time;
+	__le16 reserved;
+	__le32 n_channels;
+	__le32 channels[0];
+} __packed; /* LAR_UPDATE_MCC_CMD_RESP_S_VER_2 */
 
 /**
  * struct iwl_mcc_chub_notif - chub notifies of mcc change
@@ -1491,6 +1577,9 @@ enum iwl_mcc_update_status {
 	MCC_RESP_NVM_DISABLED,
 	MCC_RESP_ILLEGAL,
 	MCC_RESP_LOW_PRIORITY,
+	MCC_RESP_TEST_MODE_ACTIVE,
+	MCC_RESP_TEST_MODE_NOT_ACTIVE,
+	MCC_RESP_TEST_MODE_DENIAL_OF_SERVICE,
 };
 
 enum iwl_mcc_source {
@@ -1503,7 +1592,9 @@ enum iwl_mcc_source {
 	MCC_SOURCE_RESERVED = 6,
 	MCC_SOURCE_DEFAULT = 7,
 	MCC_SOURCE_UNINITIALIZED = 8,
-	MCC_SOURCE_GET_CURRENT = 0x10
+	MCC_SOURCE_MCC_API = 9,
+	MCC_SOURCE_GET_CURRENT = 0x10,
+	MCC_SOURCE_GETTING_MCC_TEST_MODE = 0x11,
 };
 
 /* DTS measurements */
@@ -1587,15 +1678,77 @@ struct iwl_ext_dts_measurement_cmd {
 } __packed; /* XVT_FW_DTS_CONTROL_MEASUREMENT_REQUEST_API_S */
 
 /**
- * iwl_dts_measurement_notif - notification received with the measurements
+ * struct iwl_dts_measurement_notif_v1 - measurements notification
  *
  * @temp: the measured temperature
  * @voltage: the measured voltage
  */
-struct iwl_dts_measurement_notif {
+struct iwl_dts_measurement_notif_v1 {
 	__le32 temp;
 	__le32 voltage;
-} __packed; /* TEMPERATURE_MEASUREMENT_TRIGGER_NTFY_S */
+} __packed; /* TEMPERATURE_MEASUREMENT_TRIGGER_NTFY_S_VER_1*/
+
+/**
+ * struct iwl_dts_measurement_notif_v2 - measurements notification
+ *
+ * @temp: the measured temperature
+ * @voltage: the measured voltage
+ * @threshold_idx: the trip index that was crossed
+ */
+struct iwl_dts_measurement_notif_v2 {
+	__le32 temp;
+	__le32 voltage;
+	__le32 threshold_idx;
+} __packed; /* TEMPERATURE_MEASUREMENT_TRIGGER_NTFY_S_VER_2 */
+
+/**
+ * struct ct_kill_notif - CT-kill entry notification
+ *
+ * @temperature: the current temperature in celsius
+ * @reserved: reserved
+ */
+struct ct_kill_notif {
+	__le16 temperature;
+	__le16 reserved;
+} __packed; /* GRP_PHY_CT_KILL_NTF */
+
+/**
+* enum ctdp_cmd_operation - CTDP command operations
+* @CTDP_CMD_OPERATION_START: update the current budget
+* @CTDP_CMD_OPERATION_STOP: stop ctdp
+* @CTDP_CMD_OPERATION_REPORT: get the avgerage budget
+*/
+enum iwl_mvm_ctdp_cmd_operation {
+	CTDP_CMD_OPERATION_START	= 0x1,
+	CTDP_CMD_OPERATION_STOP		= 0x2,
+	CTDP_CMD_OPERATION_REPORT	= 0x4,
+};/* CTDP_CMD_OPERATION_TYPE_E */
+
+/**
+ * struct iwl_mvm_ctdp_cmd - track and manage the FW power consumption budget
+ *
+ * @operation: see &enum iwl_mvm_ctdp_cmd_operation
+ * @budget: the budget in milliwatt
+ * @window_size: defined in API but not used
+ */
+struct iwl_mvm_ctdp_cmd {
+	__le32 operation;
+	__le32 budget;
+	__le32 window_size;
+} __packed;
+
+#define IWL_MAX_DTS_TRIPS	8
+
+/**
+ * struct iwl_temp_report_ths_cmd - set temperature thresholds
+ *
+ * @num_temps: number of temperature thresholds passed
+ * @thresholds: array with the thresholds to be configured
+ */
+struct temp_report_ths_cmd {
+	__le32 num_temps;
+	__le16 thresholds[IWL_MAX_DTS_TRIPS];
+} __packed; /* GRP_PHY_TEMP_REPORTING_THRESHOLDS_CMD */
 
 /***********************************
  * TDLS API
@@ -1769,5 +1922,29 @@ struct iwl_shared_mem_cfg {
 	__le32 page_buff_addr;
 	__le32 page_buff_size;
 } __packed; /* SHARED_MEM_ALLOC_API_S_VER_1 */
+
+#define MAX_STORED_BEACON_SIZE 600
+
+/**
+ * Stored beacon notification
+ *
+ * @system_time: system time on air rise
+ * @tsf: TSF on air rise
+ * @beacon_timestamp: beacon on air rise
+ * @phy_flags: general phy flags: band, modulation, etc.
+ * @channel: channel this beacon was received on
+ * @rates: rate in ucode internal format
+ * @byte_count: frame's byte count
+ */
+struct iwl_stored_beacon_notif {
+	__le32 system_time;
+	__le64 tsf;
+	__le32 beacon_timestamp;
+	__le16 phy_flags;
+	__le16 channel;
+	__le32 rates;
+	__le32 byte_count;
+	u8 data[MAX_STORED_BEACON_SIZE];
+} __packed; /* WOWLAN_STROED_BEACON_INFO_S_VER_1 */
 
 #endif /* __fw_api_h__ */

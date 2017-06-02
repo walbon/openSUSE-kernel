@@ -55,7 +55,7 @@
 #include "iwl-agn-hw.h"
 
 /* Highest firmware API version supported */
-#define IWL9000_UCODE_API_MAX	20
+#define IWL9000_UCODE_API_MAX	21
 
 /* Oldest version we won't warn about */
 #define IWL9000_UCODE_API_OK	13
@@ -83,7 +83,7 @@
 
 static const struct iwl_base_params iwl9000_base_params = {
 	.eeprom_size = OTP_LOW_IMAGE_SIZE_FAMILY_9000,
-	.num_of_queues = IWLAGN_NUM_QUEUES,
+	.num_of_queues = 31,
 	.pll_cfg_val = 0,
 	.shadow_ram_support = true,
 	.led_compensation = 57,
@@ -138,7 +138,10 @@ static const struct iwl_tt_params iwl9000_tt_params = {
 	.smem_offset = IWL9000_SMEM_OFFSET,				\
 	.smem_len = IWL9000_SMEM_LEN,					\
 	.thermal_params = &iwl9000_tt_params,				\
-	.apmg_not_supported = true
+	.apmg_not_supported = true,					\
+	.mq_rx_supported = true,					\
+	.vht_mu_mimo_supported = true,					\
+	.mac_addr_from_csr = true
 
 const struct iwl_cfg iwl9260_2ac_cfg = {
 		.name = "Intel(R) Dual Band Wireless AC 9260",

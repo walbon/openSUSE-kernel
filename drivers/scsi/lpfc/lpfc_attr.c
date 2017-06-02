@@ -148,9 +148,9 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 	struct lpfc_hba   *phba = vport->phba;
 	struct lpfc_nvmet_tgtport *tgtp;
 	struct nvme_fc_local_port *localport;
-	struct lpfc_nvme_lport *lport;
-	struct lpfc_nvme_rport *rport;
+	struct lpfc_nodelist *ndlp;
 	struct nvme_fc_remote_port *nrport;
+	uint64_t data1, data2, data3, tot;
 	char *statep;
 	int len = 0;
 
@@ -245,11 +245,18 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 				atomic_read(&tgtp->xmt_abort_rsp),
 				atomic_read(&tgtp->xmt_abort_rsp_error));
 
+		spin_lock(&phba->sli4_hba.nvmet_io_lock);
+		tot = phba->sli4_hba.nvmet_xri_cnt -
+			phba->sli4_hba.nvmet_ctx_cnt;
+		spin_unlock(&phba->sli4_hba.nvmet_io_lock);
+
 		len += snprintf(buf + len, PAGE_SIZE - len,
-				"IO_CTX: %08x outstanding %08x total %x",
+				"IO_CTX: %08x  WAIT: cur %08x tot %08x\n"
+				"CTX Outstanding %08llx\n",
 				phba->sli4_hba.nvmet_ctx_cnt,
 				phba->sli4_hba.nvmet_io_wait_cnt,
-				phba->sli4_hba.nvmet_io_wait_total);
+				phba->sli4_hba.nvmet_io_wait_total,
+				tot);
 
 		len +=  snprintf(buf+len, PAGE_SIZE-len, "\n");
 		return len;
@@ -265,7 +272,6 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 	len = snprintf(buf, PAGE_SIZE, "NVME Initiator Enabled\n");
 
 	spin_lock_irq(shost->host_lock);
-	lport = (struct lpfc_nvme_lport *)localport->private;
 
 	/* Port state is only one of two values for now. */
 	if (localport->port_id)
@@ -281,9 +287,12 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 			wwn_to_u64(vport->fc_nodename.u.wwn),
 			localport->port_id, statep);
 
-	list_for_each_entry(rport, &lport->rport_list, list) {
+	list_for_each_entry(ndlp, &vport->fc_nodes, nlp_listp) {
+		if (!ndlp->nrport)
+			continue;
+
 		/* local short-hand pointer. */
-		nrport = rport->remoteport;
+		nrport = ndlp->nrport->remoteport;
 
 		/* Port state is only one of two values for now. */
 		switch (nrport->port_state) {
@@ -311,25 +320,23 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 		len += snprintf(buf + len, PAGE_SIZE - len, "DID x%06x ",
 				nrport->port_id);
 
-		switch (nrport->port_role) {
-		case FC_PORT_ROLE_NVME_INITIATOR:
+		/* An NVME rport can have multiple roles. */
+		if (nrport->port_role & FC_PORT_ROLE_NVME_INITIATOR)
 			len +=  snprintf(buf + len, PAGE_SIZE - len,
 					 "INITIATOR ");
-			break;
-		case FC_PORT_ROLE_NVME_TARGET:
+		if (nrport->port_role & FC_PORT_ROLE_NVME_TARGET)
 			len +=  snprintf(buf + len, PAGE_SIZE - len,
 					 "TARGET ");
-			break;
-		case FC_PORT_ROLE_NVME_DISCOVERY:
+		if (nrport->port_role & FC_PORT_ROLE_NVME_DISCOVERY)
 			len +=  snprintf(buf + len, PAGE_SIZE - len,
-					 "DISCOVERY ");
-			break;
-		default:
+					 "DISCSRVC ");
+		if (nrport->port_role & ~(FC_PORT_ROLE_NVME_INITIATOR |
+					  FC_PORT_ROLE_NVME_TARGET |
+					  FC_PORT_ROLE_NVME_DISCOVERY))
 			len +=  snprintf(buf + len, PAGE_SIZE - len,
-					 "UNKNOWN_ROLE x%x",
+					 "UNKNOWN ROLE x%x",
 					 nrport->port_role);
-			break;
-		}
+
 		len +=  snprintf(buf + len, PAGE_SIZE - len, "%s  ", statep);
 		/* Terminate the string. */
 		len +=  snprintf(buf + len, PAGE_SIZE - len, "\n");
@@ -338,19 +345,21 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 
 	len += snprintf(buf + len, PAGE_SIZE, "\nNVME Statistics\n");
 	len += snprintf(buf+len, PAGE_SIZE-len,
-			"LS: Xmt %016llx Cmpl %016llx\n",
-			phba->fc4NvmeLsRequests,
-			phba->fc4NvmeLsCmpls);
+			"LS: Xmt %016x Cmpl %016x\n",
+			atomic_read(&phba->fc4NvmeLsRequests),
+			atomic_read(&phba->fc4NvmeLsCmpls));
 
+	tot = atomic_read(&phba->fc4NvmeIoCmpls);
+	data1 = atomic_read(&phba->fc4NvmeInputRequests);
+	data2 = atomic_read(&phba->fc4NvmeOutputRequests);
+	data3 = atomic_read(&phba->fc4NvmeControlRequests);
 	len += snprintf(buf+len, PAGE_SIZE-len,
 			"FCP: Rd %016llx Wr %016llx IO %016llx\n",
-			phba->fc4NvmeInputRequests,
-			phba->fc4NvmeOutputRequests,
-			phba->fc4NvmeControlRequests);
+			data1, data2, data3);
 
 	len += snprintf(buf+len, PAGE_SIZE-len,
-			"    Cmpl %016llx\n", phba->fc4NvmeIoCmpls);
-
+			"    Cmpl %016llx Outstanding %016llx\n",
+			tot, (data1 + data2 + data3) - tot);
 	return len;
 }
 
@@ -1342,6 +1351,8 @@ lpfc_board_mode_store(struct device *dev, struct device_attribute *attr,
 			goto board_mode_out;
 		}
 		wait_for_completion(&online_compl);
+		if (status)
+			status = -EIO;
 	} else if (strncmp(buf, "offline", sizeof("offline") - 1) == 0)
 		status = lpfc_do_offline(phba, LPFC_EVT_OFFLINE);
 	else if (strncmp(buf, "warm", sizeof("warm") - 1) == 0)
@@ -3198,9 +3209,15 @@ lpfc_update_rport_devloss_tmo(struct lpfc_vport *vport)
 
 	shost = lpfc_shost_from_vport(vport);
 	spin_lock_irq(shost->host_lock);
-	list_for_each_entry(ndlp, &vport->fc_nodes, nlp_listp)
-		if (NLP_CHK_NODE_ACT(ndlp) && ndlp->rport)
+	list_for_each_entry(ndlp, &vport->fc_nodes, nlp_listp) {
+		if (!NLP_CHK_NODE_ACT(ndlp))
+			continue;
+		if (ndlp->rport)
 			ndlp->rport->dev_loss_tmo = vport->cfg_devloss_tmo;
+		if (ndlp->nrport)
+			nvme_fc_set_remoteport_devloss(ndlp->nrport->remoteport,
+						       vport->cfg_devloss_tmo);
+	}
 	spin_unlock_irq(shost->host_lock);
 }
 
