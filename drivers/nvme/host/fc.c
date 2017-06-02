@@ -1388,6 +1388,7 @@ nvme_fc_xmt_disconnect_assoc(struct nvme_fc_ctrl *ctrl)
 /* *********************** NVME Ctrl Routines **************************** */
 
 static void __nvme_fc_final_op_cleanup(struct request *rq);
+static void nvme_fc_error_recovery(struct nvme_fc_ctrl *ctrl, char *errmsg);
 
 static int
 nvme_fc_reinit_request(void *data, struct request *rq)
@@ -1516,7 +1517,7 @@ nvme_fc_fcpio_done(struct nvmefc_fcp_req *req)
 	struct nvme_command *sqe = &op->cmd_iu.sqe;
 	__le16 status = cpu_to_le16(NVME_SC_SUCCESS << 1);
 	union nvme_result result;
-	bool complete_rq;
+	bool complete_rq, terminate_assoc = true;
 
 	/*
 	 * WARNING:
@@ -1545,6 +1546,14 @@ nvme_fc_fcpio_done(struct nvmefc_fcp_req *req)
 	 * fabricate a CQE, the following fields will not be set as they
 	 * are not referenced:
 	 *      cqe.sqid,  cqe.sqhd,  cqe.command_id
+	 *
+	 * Failure or error of an individual i/o, in a transport
+	 * detected fashion unrelated to the nvme completion status,
+	 * potentially cause the initiator and target sides to get out
+	 * of sync on SQ head/tail (aka outstanding io count allowed).
+	 * Per FC-NVME spec, failure of an individual command requires
+	 * the connection to be terminated, which in turn requires the
+	 * association to be terminated.
 	 */
 
 	fc_dma_sync_single_for_cpu(ctrl->lport->dev, op->fcp_req.rspdma,
@@ -1610,6 +1619,8 @@ nvme_fc_fcpio_done(struct nvmefc_fcp_req *req)
 		goto done;
 	}
 
+	terminate_assoc = false;
+
 done:
 	if (op->flags & FCOP_FLAGS_AEN) {
 		nvme_complete_async_event(&queue->ctrl->ctrl, status, &result);
@@ -1617,7 +1628,7 @@ done:
 		atomic_set(&op->state, FCPOP_STATE_IDLE);
 		op->flags = FCOP_FLAGS_AEN;	/* clear other flags */
 		nvme_fc_ctrl_put(ctrl);
-		return;
+		goto check_error;
 	}
 
 	complete_rq = __nvme_fc_fcpop_chk_teardowns(ctrl, op);
@@ -1630,6 +1641,10 @@ done:
 		nvme_end_request(rq, status, result);
 	} else
 		__nvme_fc_final_op_cleanup(rq);
+
+check_error:
+	if (terminate_assoc)
+		nvme_fc_error_recovery(ctrl, "transport detected io error");
 }
 
 static int
