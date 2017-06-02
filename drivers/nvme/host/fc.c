@@ -1934,7 +1934,7 @@ nvme_fc_init_io_queues(struct nvme_fc_ctrl *ctrl)
 	int i;
 
 	for (i = 1; i < ctrl->queue_count; i++)
-		nvme_fc_init_queue(ctrl, i, ctrl->ctrl.sqsize);
+		nvme_fc_init_queue(ctrl, i, ctrl->ctrl.opts->queue_size);
 }
 
 static void
@@ -2586,8 +2586,10 @@ nvme_fc_create_association(struct nvme_fc_ctrl *ctrl)
 		goto out_disconnect_admin_queue;
 	}
 
-	ctrl->ctrl.sqsize =
-		min_t(int, NVME_CAP_MQES(ctrl->cap) + 1, ctrl->ctrl.sqsize);
+	if (NVME_CAP_MQES(ctrl->cap) < ctrl->ctrl.sqsize) {
+		ctrl->ctrl.sqsize = NVME_CAP_MQES(ctrl->cap);
+		opts->queue_size = ctrl->ctrl.sqsize + 1;
+	}
 
 	ret = nvme_enable_ctrl(&ctrl->ctrl, ctrl->cap);
 	if (ret)
@@ -2621,6 +2623,7 @@ nvme_fc_create_association(struct nvme_fc_ctrl *ctrl)
 			"to queue_size\n",
 			opts->queue_size, ctrl->ctrl.maxcmd);
 		opts->queue_size = ctrl->ctrl.maxcmd;
+		ctrl->ctrl.sqsize = opts->queue_size - 1;
 	}
 
 	ret = nvme_fc_init_aen_ops(ctrl);
