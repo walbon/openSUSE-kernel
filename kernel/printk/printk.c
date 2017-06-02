@@ -248,8 +248,8 @@ static struct console *exclusive_console;
 #define MAX_CMDLINECONSOLES 8
 
 static struct console_cmdline console_cmdline[MAX_CMDLINECONSOLES];
-static int console_cmdline_cnt;
 
+static int selected_console = -1;
 static int preferred_console = -1;
 int console_set_on_cmdline;
 EXPORT_SYMBOL(console_set_on_cmdline);
@@ -2108,38 +2108,24 @@ static int __add_preferred_console(char *name, int idx, char *options,
 	 *	See if this tty is not yet registered, and
 	 *	if we have a slot free.
 	 */
-	for (i = 0, c = console_cmdline; i < console_cmdline_cnt; i++, c++) {
+	for (i = 0, c = console_cmdline;
+	     i < MAX_CMDLINECONSOLES && c->name[0];
+	     i++, c++) {
 		if (strcmp(c->name, name) == 0 && c->index == idx) {
-			if (brl_options)
-				return 0;
-
-			/*
-			 * Maintain an invariant that will help to find if
-			 * the matching console is preferred, see
-			 * register_console():
-			 *
-			 * The last non-braille console is always
-			 * the preferred one.
-			 */
-			if (i != console_cmdline_cnt - 1)
-				swap(console_cmdline[i],
-				     console_cmdline[console_cmdline_cnt - 1]);
-
-			preferred_console = console_cmdline_cnt - 1;
-
+			if (!brl_options)
+				selected_console = i;
 			return 0;
 		}
 	}
 	if (i == MAX_CMDLINECONSOLES)
 		return -E2BIG;
 	if (!brl_options)
-		preferred_console = i;
+		selected_console = i;
 	strlcpy(c->name, name, sizeof(c->name));
 	c->options = options;
 	braille_set_options(c, brl_options);
 
 	c->index = idx;
-	console_cmdline_cnt++;
 	return 0;
 }
 /*
@@ -2677,7 +2663,6 @@ void register_console(struct console *newcon)
 	unsigned long flags;
 	struct console *bcon = NULL;
 	struct console_cmdline *c;
-	static bool has_preferred;
 
 	if (console_drivers)
 		for_each_console(bcon)
@@ -2704,15 +2689,15 @@ void register_console(struct console *newcon)
 	if (console_drivers && console_drivers->flags & CON_BOOT)
 		bcon = console_drivers;
 
-	if (!has_preferred || bcon || !console_drivers)
-		has_preferred = preferred_console >= 0;
+	if (preferred_console < 0 || bcon || !console_drivers)
+		preferred_console = selected_console;
 
 	/*
 	 *	See if we want to use this console driver. If we
 	 *	didn't select a console we take the first one
 	 *	that registers here.
 	 */
-	if (!has_preferred) {
+	if (preferred_console < 0) {
 		if (newcon->index < 0)
 			newcon->index = 0;
 		if (newcon->setup == NULL ||
@@ -2720,29 +2705,18 @@ void register_console(struct console *newcon)
 			newcon->flags |= CON_ENABLED;
 			if (newcon->device) {
 				newcon->flags |= CON_CONSDEV;
-				has_preferred = true;
+				preferred_console = 0;
 			}
 		}
 	}
 
 	/*
-	 * See if this console matches one we selected on the command line.
-	 *
-	 * There may be several entries in the console_cmdline array matching
-	 * with the same console, one with newcon->match(), another by
-	 * name/index:
-	 *
-	 *	pl011,mmio,0x87e024000000,115200 -- added from SPCR
-	 *	ttyAMA0 -- added from command line
-	 *
-	 * Traverse the console_cmdline array in reverse order to be
-	 * sure that if this console is preferred then it will be the first
-	 * matching entry.  We use the invariant that is maintained in
-	 * __add_preferred_console().
+	 *	See if this console matches one we selected on
+	 *	the command line.
 	 */
-	for (i = console_cmdline_cnt - 1; i >= 0; i--) {
-		c = console_cmdline + i;
-
+	for (i = 0, c = console_cmdline;
+	     i < MAX_CMDLINECONSOLES && c->name[0];
+	     i++, c++) {
 		if (!newcon->match ||
 		    newcon->match(newcon, c->name, c->index, c->options) != 0) {
 			/* default matching */
@@ -2764,9 +2738,9 @@ void register_console(struct console *newcon)
 		}
 
 		newcon->flags |= CON_ENABLED;
-		if (i == preferred_console) {
+		if (i == selected_console) {
 			newcon->flags |= CON_CONSDEV;
-			has_preferred = true;
+			preferred_console = selected_console;
 		}
 		break;
 	}
