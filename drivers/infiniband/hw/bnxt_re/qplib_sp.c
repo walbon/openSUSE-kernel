@@ -252,17 +252,14 @@ int bnxt_qplib_add_sgid(struct bnxt_qplib_sgid_tbl *sgid_tbl,
 		struct cmdq_add_gid req;
 		struct creq_add_gid_resp resp;
 		u16 cmd_flags = 0;
-		u32 temp32[4];
-		u16 temp16[3];
 		int rc;
 
 		RCFW_CMD_PREP(req, ADD_GID, cmd_flags);
 
-		memcpy(temp32, gid->data, sizeof(struct bnxt_qplib_gid));
-		req.gid[0] = cpu_to_be32(temp32[3]);
-		req.gid[1] = cpu_to_be32(temp32[2]);
-		req.gid[2] = cpu_to_be32(temp32[1]);
-		req.gid[3] = cpu_to_be32(temp32[0]);
+		req.gid[0] = cpu_to_be32(((u32 *)gid->data)[3]);
+		req.gid[1] = cpu_to_be32(((u32 *)gid->data)[2]);
+		req.gid[2] = cpu_to_be32(((u32 *)gid->data)[1]);
+		req.gid[3] = cpu_to_be32(((u32 *)gid->data)[0]);
 		/*
 		 * driver should ensure that all RoCE traffic is always VLAN
 		 * tagged if RoCE traffic is running on non-zero VLAN ID or
@@ -278,10 +275,9 @@ int bnxt_qplib_add_sgid(struct bnxt_qplib_sgid_tbl *sgid_tbl,
 		}
 
 		/* MAC in network format */
-		memcpy(temp16, smac, 6);
-		req.src_mac[0] = cpu_to_be16(temp16[0]);
-		req.src_mac[1] = cpu_to_be16(temp16[1]);
-		req.src_mac[2] = cpu_to_be16(temp16[2]);
+		req.src_mac[0] = cpu_to_be16(((u16 *)smac)[0]);
+		req.src_mac[1] = cpu_to_be16(((u16 *)smac)[1]);
+		req.src_mac[2] = cpu_to_be16(((u16 *)smac)[2]);
 
 		rc = bnxt_qplib_rcfw_send_message(rcfw, (void *)&req,
 						  (void *)&resp, NULL, 0);
@@ -316,16 +312,13 @@ int bnxt_qplib_update_sgid(struct bnxt_qplib_sgid_tbl *sgid_tbl,
 	struct cmdq_modify_gid req;
 	int rc;
 	u16 cmd_flags = 0;
-	u32 temp32[4];
-	u16 temp16[3];
 
 	RCFW_CMD_PREP(req, MODIFY_GID, cmd_flags);
 
-	memcpy(temp32, gid->data, sizeof(struct bnxt_qplib_gid));
-	req.gid[0] = cpu_to_be32(temp32[3]);
-	req.gid[1] = cpu_to_be32(temp32[2]);
-	req.gid[2] = cpu_to_be32(temp32[1]);
-	req.gid[3] = cpu_to_be32(temp32[0]);
+	req.gid[0] = cpu_to_be32(((u32 *)gid->data)[3]);
+	req.gid[1] = cpu_to_be32(((u32 *)gid->data)[2]);
+	req.gid[2] = cpu_to_be32(((u32 *)gid->data)[1]);
+	req.gid[3] = cpu_to_be32(((u32 *)gid->data)[0]);
 	if (res->prio) {
 		req.vlan |= cpu_to_le16
 			(CMDQ_ADD_GID_VLAN_TPID_TPID_8100 |
@@ -333,10 +326,9 @@ int bnxt_qplib_update_sgid(struct bnxt_qplib_sgid_tbl *sgid_tbl,
 	}
 
 	/* MAC in network format */
-	memcpy(temp16, smac, 6);
-	req.src_mac[0] = cpu_to_be16(temp16[0]);
-	req.src_mac[1] = cpu_to_be16(temp16[1]);
-	req.src_mac[2] = cpu_to_be16(temp16[2]);
+	req.src_mac[0] = cpu_to_be16(((u16 *)smac)[0]);
+	req.src_mac[1] = cpu_to_be16(((u16 *)smac)[1]);
+	req.src_mac[2] = cpu_to_be16(((u16 *)smac)[2]);
 
 	req.gid_index = cpu_to_le16(gid_idx);
 

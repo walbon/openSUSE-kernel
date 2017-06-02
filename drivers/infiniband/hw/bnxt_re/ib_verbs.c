@@ -189,8 +189,8 @@ int bnxt_re_query_device(struct ib_device *ibdev,
 	ib_attr->max_total_mcast_qp_attach = 0;
 	ib_attr->max_ah = dev_attr->max_ah;
 
-	ib_attr->max_fmr = dev_attr->max_fmr;
-	ib_attr->max_map_per_fmr = 1;	/* ? */
+	ib_attr->max_fmr = 0;
+	ib_attr->max_map_per_fmr = 0;
 
 	ib_attr->max_srq = dev_attr->max_srq;
 	ib_attr->max_srq_wr = dev_attr->max_srq_wqes;
@@ -437,7 +437,6 @@ enum rdma_link_layer bnxt_re_get_link_layer(struct ib_device *ibdev,
 	return IB_LINK_LAYER_ETHERNET;
 }
 
-#define BNXT_RE_FENCE_BYTES	64
 #define	BNXT_RE_FENCE_PBL_SIZE	DIV_ROUND_UP(BNXT_RE_FENCE_BYTES, PAGE_SIZE)
 
 static void bnxt_re_create_fence_wqe(struct bnxt_re_pd *pd)
@@ -475,9 +474,6 @@ static int bnxt_re_bind_fence_mw(struct bnxt_qplib_qp *qplib_qp)
 	struct bnxt_qplib_swqe wqe;
 	int rc;
 
-	/* TODO: Need SQ locking here when Fence WQE
-	 * posting moves up into bnxt_re from bnxt_qplib.
-	 */
 	memcpy(&wqe, fence_wqe, sizeof(wqe));
 	wqe.bind.r_key = fence->bind_rkey;
 	fence->bind_rkey = ib_inc_rkey(fence->bind_rkey);
@@ -520,8 +516,6 @@ static void bnxt_re_destroy_fence_mr(struct bnxt_re_pd *pd)
 				 DMA_BIDIRECTIONAL);
 		fence->dma_addr = 0;
 	}
-	kfree(fence->va);
-	fence->va = NULL;
 }
 
 static int bnxt_re_create_fence_mr(struct bnxt_re_pd *pd)
@@ -533,13 +527,10 @@ static int bnxt_re_create_fence_mr(struct bnxt_re_pd *pd)
 	struct bnxt_re_mr *mr = NULL;
 	dma_addr_t dma_addr = 0;
 	struct ib_mw *mw;
-	void *va = NULL;
 	u64 pbl_tbl;
 	int rc;
 
-	/* Allocate a small chunk of memory and dma-map it */
-	fence->va = kzalloc(BNXT_RE_FENCE_BYTES, GFP_KERNEL);
-	dma_addr = dma_map_single(dev, va, BNXT_RE_FENCE_BYTES,
+	dma_addr = dma_map_single(dev, fence->va, BNXT_RE_FENCE_BYTES,
 				  DMA_BIDIRECTIONAL);
 	rc = dma_mapping_error(dev, dma_addr);
 	if (rc) {
@@ -552,8 +543,10 @@ static int bnxt_re_create_fence_mr(struct bnxt_re_pd *pd)
 
 	/* Allocate a MR */
 	mr = kzalloc(sizeof(*mr), GFP_KERNEL);
-	if (!mr)
-		return -ENOMEM;
+	if (!mr) {
+		rc = -ENOMEM;
+		goto fail;
+	}
 	fence->mr = mr;
 	mr->rdev = rdev;
 	mr->qplib_mr.pd = &pd->qplib_pd;
@@ -567,7 +560,7 @@ static int bnxt_re_create_fence_mr(struct bnxt_re_pd *pd)
 
 	/* Register MR */
 	mr->ib_mr.lkey = mr->qplib_mr.lkey;
-	mr->qplib_mr.va         = (u64)va;
+	mr->qplib_mr.va         = (u64)fence->va;
 	mr->qplib_mr.total_size = BNXT_RE_FENCE_BYTES;
 	pbl_tbl = dma_addr;
 	rc = bnxt_qplib_reg_mr(&rdev->qplib_res, &mr->qplib_mr, &pbl_tbl,
@@ -1193,8 +1186,7 @@ struct ib_qp *bnxt_re_create_qp(struct ib_pd *ib_pd,
 		qp->qplib_qp.sq.max_wqe = min_t(u32, entries,
 						dev_attr->max_qp_wqes +
 						BNXT_QPLIB_RESERVED_QP_WRS + 1);
-		qp->qplib_qp.sq.q_full_delta = qp->qplib_qp.sq.max_wqe -
-						qp_init_attr->cap.max_send_wr;
+		qp->qplib_qp.sq.q_full_delta = BNXT_QPLIB_RESERVED_QP_WRS + 1;
 
 		/*
 		 * Reserving one slot for Phantom WQE. Application can
@@ -3212,100 +3204,6 @@ int bnxt_re_dealloc_mw(struct ib_mw *ib_mw)
 
 	kfree(mw);
 	atomic_dec(&rdev->mw_count);
-	return rc;
-}
-
-/* Fast Memory Regions */
-struct ib_fmr *bnxt_re_alloc_fmr(struct ib_pd *ib_pd, int mr_access_flags,
-				 struct ib_fmr_attr *fmr_attr)
-{
-	struct bnxt_re_pd *pd = container_of(ib_pd, struct bnxt_re_pd, ib_pd);
-	struct bnxt_re_dev *rdev = pd->rdev;
-	struct bnxt_re_fmr *fmr;
-	int rc;
-
-	if (fmr_attr->max_pages > MAX_PBL_LVL_2_PGS ||
-	    fmr_attr->max_maps > rdev->dev_attr.max_map_per_fmr) {
-		dev_err(rdev_to_dev(rdev), "Allocate FMR exceeded Max limit");
-		return ERR_PTR(-ENOMEM);
-	}
-	fmr = kzalloc(sizeof(*fmr), GFP_KERNEL);
-	if (!fmr)
-		return ERR_PTR(-ENOMEM);
-
-	fmr->rdev = rdev;
-	fmr->qplib_fmr.pd = &pd->qplib_pd;
-	fmr->qplib_fmr.type = CMDQ_ALLOCATE_MRW_MRW_FLAGS_PMR;
-
-	rc = bnxt_qplib_alloc_mrw(&rdev->qplib_res, &fmr->qplib_fmr);
-	if (rc)
-		goto fail;
-
-	fmr->qplib_fmr.flags = __from_ib_access_flags(mr_access_flags);
-	fmr->ib_fmr.lkey = fmr->qplib_fmr.lkey;
-	fmr->ib_fmr.rkey = fmr->ib_fmr.lkey;
-
-	atomic_inc(&rdev->mr_count);
-	return &fmr->ib_fmr;
-fail:
-	kfree(fmr);
-	return ERR_PTR(rc);
-}
-
-int bnxt_re_map_phys_fmr(struct ib_fmr *ib_fmr, u64 *page_list, int list_len,
-			 u64 iova)
-{
-	struct bnxt_re_fmr *fmr = container_of(ib_fmr, struct bnxt_re_fmr,
-					     ib_fmr);
-	struct bnxt_re_dev *rdev = fmr->rdev;
-	int rc;
-
-	fmr->qplib_fmr.va = iova;
-	fmr->qplib_fmr.total_size = list_len * PAGE_SIZE;
-
-	rc = bnxt_qplib_reg_mr(&rdev->qplib_res, &fmr->qplib_fmr, page_list,
-			       list_len, true);
-	if (rc)
-		dev_err(rdev_to_dev(rdev), "Failed to map FMR for lkey = 0x%x!",
-			fmr->ib_fmr.lkey);
-	return rc;
-}
-
-int bnxt_re_unmap_fmr(struct list_head *fmr_list)
-{
-	struct bnxt_re_dev *rdev;
-	struct bnxt_re_fmr *fmr;
-	struct ib_fmr *ib_fmr;
-	int rc = 0;
-
-	/* Validate each FMRs inside the fmr_list */
-	list_for_each_entry(ib_fmr, fmr_list, list) {
-		fmr = container_of(ib_fmr, struct bnxt_re_fmr, ib_fmr);
-		rdev = fmr->rdev;
-
-		if (rdev) {
-			rc = bnxt_qplib_dereg_mrw(&rdev->qplib_res,
-						  &fmr->qplib_fmr, true);
-			if (rc)
-				break;
-		}
-	}
-	return rc;
-}
-
-int bnxt_re_dealloc_fmr(struct ib_fmr *ib_fmr)
-{
-	struct bnxt_re_fmr *fmr = container_of(ib_fmr, struct bnxt_re_fmr,
-					       ib_fmr);
-	struct bnxt_re_dev *rdev = fmr->rdev;
-	int rc;
-
-	rc = bnxt_qplib_free_mrw(&rdev->qplib_res, &fmr->qplib_fmr);
-	if (rc)
-		dev_err(rdev_to_dev(rdev), "Failed to free FMR");
-
-	kfree(fmr);
-	atomic_dec(&rdev->mr_count);
 	return rc;
 }
 
