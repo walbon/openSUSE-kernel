@@ -1511,12 +1511,6 @@ static int rbd_obj_request_wait(struct rbd_obj_request *obj_request)
 	return __rbd_obj_request_wait(obj_request, 0);
 }
 
-static int rbd_obj_request_wait_timeout(struct rbd_obj_request *obj_request,
-					unsigned long timeout)
-{
-	return __rbd_obj_request_wait(obj_request, timeout);
-}
-
 static void rbd_img_request_complete(struct rbd_img_request *img_request)
 {
 
@@ -1703,12 +1697,6 @@ static void rbd_obj_request_complete(struct rbd_obj_request *obj_request)
 		obj_request->callback(obj_request);
 	else
 		complete_all(&obj_request->completion);
-}
-
-static void rbd_osd_trivial_callback(struct rbd_obj_request *obj_request)
-{
-	dout("%s: obj %p\n", __func__, obj_request);
-	obj_request_done_set(obj_request);
 }
 
 static void rbd_obj_request_error(struct rbd_obj_request *obj_request, int err)
@@ -1906,12 +1894,10 @@ static void rbd_osd_req_callback(struct ceph_osd_request *osd_req)
 	case CEPH_OSD_OP_CALL:
 		rbd_osd_call_callback(obj_request);
 		break;
-	case CEPH_OSD_OP_NOTIFY_ACK:
-	case CEPH_OSD_OP_WATCH:
 	case CEPH_OSD_OP_SETXATTR:
 	case CEPH_OSD_OP_CMPXATTR:
 	case CEPH_OSD_OP_GETXATTR:
-		rbd_osd_trivial_callback(obj_request);
+		obj_request_done_set(obj_request);
 		break;
 	case CEPH_OSD_OP_CREATE:
 		rbd_assert(osd_req->r_num_ops == 2);
@@ -3380,44 +3366,18 @@ out_err:
 	obj_request_done_set(obj_request);
 }
 
-static int rbd_obj_notify_ack_sync(struct rbd_device *rbd_dev, u64 notify_id)
+static int rbd_dev_header_watch_sync(struct rbd_device *rbd_dev);
+static void __rbd_dev_header_unwatch_sync(struct rbd_device *rbd_dev);
+
+static void rbd_watch_cb(void *arg, u64 notify_id, u64 cookie,
+			 u64 notifier_id, void *data, size_t data_len)
 {
-	struct rbd_obj_request *obj_request;
+	struct rbd_device *rbd_dev = arg;
+	struct ceph_osd_client *osdc = &rbd_dev->rbd_client->client->osdc;
 	int ret;
 
-	obj_request = rbd_obj_request_create(rbd_dev->header_oid.name, 0, 0,
-							OBJ_REQUEST_NODATA);
-	if (!obj_request)
-		return -ENOMEM;
-
-	ret = -ENOMEM;
-	obj_request->osd_req = rbd_osd_req_create(rbd_dev, OBJ_OP_READ, 1,
-						  obj_request);
-	if (!obj_request->osd_req)
-		goto out;
-
-	osd_req_op_watch_init(obj_request->osd_req, 0,
-			      CEPH_OSD_OP_NOTIFY_ACK, 0, notify_id);
-	rbd_osd_req_format_read(obj_request);
-
-	rbd_obj_request_submit(obj_request);
-	ret = rbd_obj_request_wait(obj_request);
-out:
-	rbd_obj_request_put(obj_request);
-
-	return ret;
-}
-
-static void rbd_watch_cb(u64 ver, u64 notify_id, u8 opcode, s32 return_code,
-			 u64 notifier_gid, void *data, void *payload,
-			 u32 payload_len)
-{
-	struct rbd_device *rbd_dev = (struct rbd_device *)data;
-	int ret;
-
-	dout("%s: \"%s\" notify_id %llu opcode %u\n", __func__,
-		rbd_dev->header_oid.name, (unsigned long long)notify_id,
-		(unsigned int)opcode);
+	dout("%s rbd_dev %p cookie %llu notify_id %llu\n", __func__, rbd_dev,
+	     cookie, notify_id);
 
 	/*
 	 * Until adequate refresh error handling is in place, there is
@@ -3429,61 +3389,31 @@ static void rbd_watch_cb(u64 ver, u64 notify_id, u8 opcode, s32 return_code,
 	if (ret)
 		rbd_warn(rbd_dev, "refresh failed: %d", ret);
 
-	ret = rbd_obj_notify_ack_sync(rbd_dev, notify_id);
+	ret = ceph_osdc_notify_ack(osdc, &rbd_dev->header_oid,
+				   &rbd_dev->header_oloc, notify_id, cookie,
+				   NULL, 0);
 	if (ret)
 		rbd_warn(rbd_dev, "notify_ack ret %d", ret);
 }
 
-/*
- * Send a (un)watch request and wait for the ack.  Return a request
- * with a ref held on success or error.
- */
-static struct rbd_obj_request *rbd_obj_watch_request_helper(
-						struct rbd_device *rbd_dev,
-						u8 watch_opcode)
+static void rbd_watch_errcb(void *arg, u64 cookie, int err)
 {
-	struct ceph_osd_client *osdc = &rbd_dev->rbd_client->client->osdc;
-	struct ceph_options *opts = osdc->client->options;
-	struct rbd_obj_request *obj_request;
+	struct rbd_device *rbd_dev = arg;
 	int ret;
 
-	obj_request = rbd_obj_request_create(rbd_dev->header_oid.name, 0, 0,
-					     OBJ_REQUEST_NODATA);
-	if (!obj_request)
-		return ERR_PTR(-ENOMEM);
+	rbd_warn(rbd_dev, "encountered watch error: %d", err);
 
-	obj_request->osd_req = rbd_osd_req_create(rbd_dev, OBJ_OP_WRITE, 1,
-						  obj_request);
-	if (!obj_request->osd_req) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	__rbd_dev_header_unwatch_sync(rbd_dev);
 
-	osd_req_op_watch_init(obj_request->osd_req, 0, CEPH_OSD_OP_WATCH,
-			      watch_opcode, rbd_dev->watch_event->cookie);
-	rbd_osd_req_format_write(obj_request);
-
-	if (watch_opcode == CEPH_OSD_WATCH_OP_LEGACY_WATCH ||
-	    watch_opcode == CEPH_OSD_WATCH_OP_WATCH)
-		ceph_osdc_set_request_linger(osdc, obj_request->osd_req);
-
-	rbd_obj_request_submit(obj_request);
-	ret = rbd_obj_request_wait_timeout(obj_request, opts->mount_timeout);
-	if (ret)
-		goto out;
-
-	ret = obj_request->result;
+	ret = rbd_dev_header_watch_sync(rbd_dev);
 	if (ret) {
-		if (watch_opcode != CEPH_OSD_WATCH_OP_UNWATCH)
-			rbd_obj_request_end(obj_request);
-		goto out;
+		rbd_warn(rbd_dev, "failed to reregister watch: %d", ret);
+		return;
 	}
 
-	return obj_request;
-
-out:
-	rbd_obj_request_put(obj_request);
-	return ERR_PTR(ret);
+	ret = rbd_dev_refresh(rbd_dev);
+	if (ret)
+		rbd_warn(rbd_dev, "reregisteration refresh failed: %d", ret);
 }
 
 /*
@@ -3492,59 +3422,33 @@ out:
 static int rbd_dev_header_watch_sync(struct rbd_device *rbd_dev)
 {
 	struct ceph_osd_client *osdc = &rbd_dev->rbd_client->client->osdc;
-	struct rbd_obj_request *obj_request;
-	int ret;
+	struct ceph_osd_linger_request *handle;
 
-	rbd_assert(!rbd_dev->watch_event);
-	rbd_assert(!rbd_dev->watch_request);
+	rbd_assert(!rbd_dev->watch_handle);
 
-	ret = ceph_osdc_create_event(osdc, rbd_watch_cb, rbd_dev,
-				     &rbd_dev->watch_event);
-	if (ret < 0)
-		return ret;
+	handle = ceph_osdc_watch(osdc, &rbd_dev->header_oid,
+				 &rbd_dev->header_oloc, rbd_watch_cb,
+				 rbd_watch_errcb, rbd_dev);
+	if (IS_ERR(handle))
+		return PTR_ERR(handle);
 
-	obj_request = rbd_obj_watch_request_helper(rbd_dev,
-						CEPH_OSD_WATCH_OP_LEGACY_WATCH);
-	if (IS_ERR(obj_request)) {
-		ceph_osdc_cancel_event(rbd_dev->watch_event);
-		rbd_dev->watch_event = NULL;
-		return PTR_ERR(obj_request);
-	}
-
-	/*
-	 * A watch request is set to linger, so the underlying osd
-	 * request won't go away until we unregister it.  We retain
-	 * a pointer to the object request during that time (in
-	 * rbd_dev->watch_request), so we'll keep a reference to it.
-	 * We'll drop that reference after we've unregistered it in
-	 * rbd_dev_header_unwatch_sync().
-	 */
-	rbd_dev->watch_request = obj_request;
-
+	rbd_dev->watch_handle = handle;
 	return 0;
 }
 
 static void __rbd_dev_header_unwatch_sync(struct rbd_device *rbd_dev)
 {
-	struct rbd_obj_request *obj_request;
+	struct ceph_osd_client *osdc = &rbd_dev->rbd_client->client->osdc;
+	int ret;
 
-	rbd_assert(rbd_dev->watch_event);
-	rbd_assert(rbd_dev->watch_request);
+	if (!rbd_dev->watch_handle)
+		return;
 
-	rbd_obj_request_end(rbd_dev->watch_request);
-	rbd_obj_request_put(rbd_dev->watch_request);
-	rbd_dev->watch_request = NULL;
+	ret = ceph_osdc_unwatch(osdc, rbd_dev->watch_handle);
+	if (ret)
+		rbd_warn(rbd_dev, "failed to unwatch: %d", ret);
 
-	obj_request = rbd_obj_watch_request_helper(rbd_dev,
-						   CEPH_OSD_WATCH_OP_UNWATCH);
-	if (!IS_ERR(obj_request))
-		rbd_obj_request_put(obj_request);
-	else
-		rbd_warn(rbd_dev, "unable to tear down watch request (%ld)",
-			 PTR_ERR(obj_request));
-
-	ceph_osdc_cancel_event(rbd_dev->watch_event);
-	rbd_dev->watch_event = NULL;
+	rbd_dev->watch_handle = NULL;
 }
 
 /*
@@ -4677,6 +4581,7 @@ static struct rbd_device *__rbd_dev_create(struct rbd_client *rbdc,
 	init_rwsem(&rbd_dev->header_rwsem);
 
 	ceph_oid_init(&rbd_dev->header_oid);
+	ceph_oloc_init(&rbd_dev->header_oloc);
 
 	rbd_dev->dev.bus = &rbd_bus_type;
 	rbd_dev->dev.type = &rbd_device_type;
@@ -5863,6 +5768,7 @@ static int rbd_dev_header_name(struct rbd_device *rbd_dev)
 
 	rbd_assert(rbd_image_format_valid(rbd_dev->image_format));
 
+	rbd_dev->header_oloc.pool = rbd_dev->layout.pool_id;
 	if (rbd_dev->image_format == 1)
 		ret = ceph_oid_aprintf(&rbd_dev->header_oid, GFP_KERNEL, "%s%s",
 				       spec->image_name, RBD_SUFFIX);
