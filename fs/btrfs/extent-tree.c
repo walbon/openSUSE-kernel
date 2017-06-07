@@ -2096,6 +2096,7 @@ int btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 			 u64 bytenr, u64 num_bytes, u64 parent,
 			 u64 root_objectid, u64 owner, u64 offset)
 {
+	int old_ref_mod, new_ref_mod;
 	int ret;
 	struct btrfs_fs_info *fs_info = root->fs_info;
 
@@ -2107,13 +2108,17 @@ int btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 					num_bytes,
 					parent, root_objectid, (int)owner,
 					BTRFS_ADD_DELAYED_REF, NULL,
-					NULL, NULL);
+					&old_ref_mod, &new_ref_mod);
 	} else {
 		ret = btrfs_add_delayed_data_ref(fs_info, trans, bytenr,
 					num_bytes, parent, root_objectid,
 					owner, offset, 0,
-					BTRFS_ADD_DELAYED_REF, NULL, NULL, NULL);
+					BTRFS_ADD_DELAYED_REF, NULL,
+					&old_ref_mod, &new_ref_mod);
 	}
+	if (ret == 0 && old_ref_mod < 0 && new_ref_mod >= 0)
+               add_pinned_bytes(fs_info, -num_bytes, owner, root_objectid);
+
 	return ret;
 }
 
@@ -2422,6 +2427,16 @@ static int run_one_delayed_ref(struct btrfs_trans_handle *trans,
 		head = btrfs_delayed_node_to_head(node);
 		trace_run_delayed_ref_head(root->fs_info, node, head,
 					   node->action);
+
+		if (head->total_ref_mod < 0) {
+		        struct btrfs_block_group_cache *cache;
+
+		        cache = btrfs_lookup_block_group(root->fs_info, node->bytenr);
+		        ASSERT(cache);
+		        percpu_counter_add(&cache->space_info->total_bytes_pinned,
+		                           -node->num_bytes);
+		        btrfs_put_block_group(cache);
+		}
 
 		if (insert_reserved) {
 			btrfs_pin_extent(root, node->bytenr,
@@ -6265,6 +6280,8 @@ static int update_block_group(struct btrfs_trans_handle *trans,
 			trace_btrfs_space_reservation(root->fs_info, "pinned",
 						      cache->space_info->flags,
 						      num_bytes, 1);
+			percpu_counter_add(&cache->space_info->total_bytes_pinned,
+					   num_bytes);
 			set_extent_dirty(info->pinned_extents,
 					 bytenr, bytenr + num_bytes - 1,
 					 GFP_NOFS | __GFP_NOFAIL);
@@ -7046,8 +7063,6 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 				goto out;
 			}
 		}
-		add_pinned_bytes(root->fs_info, -num_bytes, owner_objectid,
-				 root_objectid);
 	} else {
 		if (found_extent) {
 			BUG_ON(is_data && refs_to_drop !=
@@ -7172,13 +7187,16 @@ void btrfs_free_tree_block(struct btrfs_trans_handle *trans,
 	int ret;
 
 	if (root->root_key.objectid != BTRFS_TREE_LOG_OBJECTID) {
+		int old_ref_mod, new_ref_mod;
+
 		ret = btrfs_add_delayed_tree_ref(root->fs_info, trans,
 					buf->start, buf->len,
 					parent, root->root_key.objectid,
 					btrfs_header_level(buf),
 					BTRFS_DROP_DELAYED_REF, NULL,
-					NULL, NULL);
+					&old_ref_mod, &new_ref_mod);
 		BUG_ON(ret); /* -ENOMEM */
+		pin = old_ref_mod >= 0 && new_ref_mod < 0;
 	}
 
 	if (last_ref && btrfs_header_generation(buf) == trans->transid) {
@@ -7226,6 +7244,7 @@ int btrfs_free_extent(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 		      u64 bytenr, u64 num_bytes, u64 parent, u64 root_objectid,
 		      u64 owner, u64 offset)
 {
+	int old_ref_mod, new_ref_mod;
 	int ret;
 	struct btrfs_fs_info *fs_info = root->fs_info;
 
@@ -7247,16 +7266,20 @@ int btrfs_free_extent(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 		ret = btrfs_add_delayed_tree_ref(fs_info, trans, bytenr,
 					num_bytes,
 					parent, root_objectid, (int)owner,
-					BTRFS_DROP_DELAYED_REF, NULL, NULL
-					NULL);
+					BTRFS_DROP_DELAYED_REF, NULL,
+					&old_ref_mod, &new_ref_mod);
 	} else {
 		ret = btrfs_add_delayed_data_ref(fs_info, trans, bytenr,
 						num_bytes,
 						parent, root_objectid, owner,
 						offset, 0,
 						BTRFS_DROP_DELAYED_REF, NULL,
-						NULL, NULL);
+						&old_ref_mod, &new_ref_mod);
 	}
+
+	if (ret == 0 && old_ref_mod >= 0 && new_ref_mod < 0)
+		add_pinned_bytes(fs_info, num_bytes, owner, root_objectid);
+
 	return ret;
 }
 
