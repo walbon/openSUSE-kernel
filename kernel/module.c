@@ -3714,6 +3714,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	return err;
 
  bug_cleanup:
+	destroy_params(mod->kp, mod->num_kp);
 	/* module_bug_cleanup needs module_mutex protection */
 	mutex_lock(&module_mutex);
 	module_bug_cleanup(mod);

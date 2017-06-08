@@ -123,11 +123,11 @@ struct rbd_device {
 	char			*config_info;	/* add{,_single_major} string */
 
 	struct ceph_object_id	header_oid;
+	struct ceph_object_locator header_oloc;
 
 	struct ceph_file_layout	layout;		/* used for all rbd requests */
 
-	struct ceph_osd_event   *watch_event;
-	struct rbd_obj_request	*watch_request;
+	struct ceph_osd_linger_request *watch_handle;
 
 	struct workqueue_struct *task_wq;
 
