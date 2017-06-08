@@ -3040,6 +3040,7 @@ static struct module *load_module(void __user *umod,
 	return mod;
 
  unlink:
+	destroy_params(mod->kp, mod->num_kp);
 	mutex_lock(&module_mutex);
 	/* Unlink carefully: kallsyms could be walking list. */
 	list_del_rcu(&mod->list);
