@@ -7251,8 +7251,6 @@ int btrfs_free_extent(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 	if (btrfs_test_is_dummy_root(root))
 		return 0;
 
-	add_pinned_bytes(root->fs_info, num_bytes, owner, root_objectid);
-
 	/*
 	 * tree log blocks never actually go into the extent allocation
 	 * tree, just update pinning info and exit early.
