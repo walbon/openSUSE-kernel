@@ -179,11 +179,6 @@ enum flag_bits {
 				 * Usually, this device should be faster
 				 * than other devices in the array
 				 */
-	RemoveSynchronised,	/* synchronize_rcu was called after
-				 * This device was known to be faulty,
-				 * so it is save to remove without
-				 * another call.
-				 */
 	ClusterRemove,
 	RemoveSynchronized,	/* synchronize_rcu() was called after
 				 * this device was known to be faulty,
