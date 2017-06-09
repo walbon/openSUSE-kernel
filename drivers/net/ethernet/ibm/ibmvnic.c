@@ -1291,18 +1291,6 @@ static int ibmvnic_set_mac(struct net_device *netdev, void *p)
 	return 0;
 }
 
-static int ibmvnic_change_mtu(struct net_device *netdev, int new_mtu)
-{
-	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
-
-	if (new_mtu > adapter->max_mtu - ETH_HLEN ||
-            new_mtu < adapter->min_mtu - ETH_HLEN)
-		return -EINVAL;
-
-	netdev->mtu = new_mtu;
-	return 0;
-}
-
 /**
  * do_reset returns zero if we are able to keep processing reset events, or
  * non-zero if we hit a fatal error and must halt.
@@ -1598,6 +1586,11 @@ static void ibmvnic_netpoll_controller(struct net_device *dev)
 }
 #endif
 
+static int ibmvnic_change_mtu(struct net_device *netdev, int new_mtu)
+{
+	return -EOPNOTSUPP;
+}
+
 static const struct net_device_ops ibmvnic_netdev_ops = {
 	.ndo_open		= ibmvnic_open,
 	.ndo_stop		= ibmvnic_close,
@@ -1605,11 +1598,11 @@ static const struct net_device_ops ibmvnic_netdev_ops = {
 	.ndo_set_rx_mode	= ibmvnic_set_multi,
 	.ndo_set_mac_address	= ibmvnic_set_mac,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_change_mtu		= ibmvnic_change_mtu,
 	.ndo_tx_timeout		= ibmvnic_tx_timeout,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= ibmvnic_netpoll_controller,
 #endif
+	.ndo_change_mtu		= ibmvnic_change_mtu,
 };
 
 /* ethtool functions */
