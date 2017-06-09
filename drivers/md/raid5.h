@@ -230,10 +230,10 @@ struct stripe_head {
 	};
 
 	struct list_head	log_list;
-
-	struct page		*ppl_page; /* partial parity of this stripe */
 	sector_t		log_start; /* first meta block on the journal */
 	struct list_head	r5c; /* for r5c_cache->stripe_in_journal */
+
+	struct page		*ppl_page; /* partial parity of this stripe */
 	/**
 	 * struct stripe_operations
 	 * @target - STRIPE_OP_COMPUTE_BLK target
@@ -532,12 +532,6 @@ static inline void raid5_set_bi_stripes(struct bio *bio, unsigned int cnt)
 	atomic_set(segments, cnt);
 }
 
-#define NR_STRIPES		256
-#define STRIPE_SIZE		PAGE_SIZE
-#define STRIPE_SHIFT		(PAGE_SHIFT - 9)
-#define STRIPE_SECTORS		(STRIPE_SIZE>>9)
-
-
 /* NOTE NR_STRIPE_HASH_LOCKS must remain below 64.
  * This is because we sometimes take all the spinlocks
  * and creating that much locking depth can cause
@@ -701,13 +695,13 @@ struct r5conf {
 	int			group_cnt;
 	int			worker_cnt_per_group;
 	struct r5l_log		*log;
+	void			*log_private;
 
 	struct bio_list		pending_bios;
- 	spinlock_t		pending_bios_lock;
- 	bool			batch_bio_dispatch;
-
-	void			*log_private;
+	spinlock_t		pending_bios_lock;
+	bool			batch_bio_dispatch;
 };
+
 
 /*
  * Our supported algorithms
@@ -781,7 +775,4 @@ extern struct stripe_head *
 raid5_get_active_stripe(struct r5conf *conf, sector_t sector,
 			int previous, int noblock, int noquiesce);
 extern int raid5_calc_degraded(struct r5conf *conf);
-extern struct md_sysfs_entry r5c_journal_mode;
-extern void r5c_update_on_rdev_error(struct mddev *mddev);
-extern bool r5c_big_stripe_cached(struct r5conf *conf, sector_t sect);
 #endif

@@ -1329,9 +1329,9 @@ static int add_new_disk(struct mddev *mddev, struct md_rdev *rdev)
 		 * will run soon after add_new_disk, the below path will be
 		 * invoked:
 		 *   md_wakeup_thread(mddev->thread)
-		 *      -> conf->thread (raid1d)
-		 *      -> md_check_recovery -> md_update_sb
-		 *      -> metadata_update_start/finish
+		 *	-> conf->thread (raid1d)
+		 *	-> md_check_recovery -> md_update_sb
+		 *	-> metadata_update_start/finish
 		 * MD_CLUSTER_SEND_LOCKED_ALREADY will be cleared eventually.
 		 *
 		 * For other failure cases, metadata_update_cancel and
@@ -1384,7 +1384,7 @@ static int lock_all_bitmaps(struct mddev *mddev)
 					     sizeof(struct dlm_lock_resource *),
 					     GFP_KERNEL);
 	if (!cinfo->other_bitmap_lockres) {
-		pr_err("%s:%d: can't alloc mem for other bitmap locks\n", __func__, __LINE__);
+		pr_err("md: can't alloc mem for other bitmap locks\n");
 		return 0;
 	}
 

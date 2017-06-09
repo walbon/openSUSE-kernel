@@ -179,11 +179,6 @@ enum flag_bits {
 				 * Usually, this device should be faster
 				 * than other devices in the array
 				 */
-	RemoveSynchronised,	/* synchronize_rcu was called after
-				 * This device was known to be faulty,
-				 * so it is save to remove without
-				 * another call.
-				 */
 	ClusterRemove,
 	RemoveSynchronized,	/* synchronize_rcu() was called after
 				 * this device was known to be faulty,
@@ -203,7 +198,9 @@ enum flag_bits {
 				 * it didn't fail, so don't use FailFast
 				 * any more for metadata
 				 */
-	MD_HAS_PPL,		/* The raid array has PPL feature set */
+	Timeout,		/* Device fault due to timeout.
+				 * 'Faulty' is required to be set.
+				 */
 };
 
 static inline int is_badblock(struct md_rdev *rdev, sector_t s, int sectors,
@@ -239,9 +236,7 @@ enum mddev_flags {
 				 * supported as calls to md_error() will
 				 * never cause the array to become failed.
 				 */
-	Timeout,		/* Device fault due to timeout.
-				 * 'Faulty' is required to be set.
-				 */
+	MD_HAS_PPL,		/* The raid array has PPL feature set */
 };
 
 enum mddev_sb_flags {
