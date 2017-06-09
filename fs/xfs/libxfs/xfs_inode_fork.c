@@ -31,6 +31,9 @@
 #include "xfs_error.h"
 #include "xfs_trace.h"
 #include "xfs_attr_sf.h"
+#include "xfs_da_format.h"
+#include "xfs_da_btree.h"
+#include "xfs_dir2_priv.h"
 
 kmem_zone_t *xfs_ifork_zone;
 
@@ -185,9 +188,19 @@ xfs_iformat_fork(
 		XFS_ERROR_REPORT("xfs_iformat(7)", XFS_ERRLEVEL_LOW, ip->i_mount);
 		return -EFSCORRUPTED;
 	}
-	if (error) {
+	if (error)
 		return error;
+
+	/* Check inline dir contents. */
+	if (S_ISDIR(ip->i_d.di_mode) &&
+	    dip->di_format == XFS_DINODE_FMT_LOCAL) {
+		error = xfs_dir2_sf_verify(ip);
+		if (error) {
+			xfs_idestroy_fork(ip, XFS_DATA_FORK);
+			return error;
+		}
 	}
+
 	if (!XFS_DFORK_Q(dip))
 		return 0;
 
@@ -249,7 +262,6 @@ xfs_iformat_local(
 {
 	xfs_ifork_t	*ifp;
 	int		real_size;
-
 	/*
 	 * If the size is unreasonable, then something
 	 * is wrong and we just bail out rather than crash in
@@ -264,6 +276,7 @@ xfs_iformat_local(
 				     ip->i_mount, dip);
 		return -EFSCORRUPTED;
 	}
+
 	ifp = XFS_IFORK_PTR(ip, whichfork);
 	real_size = 0;
 	if (size == 0)
