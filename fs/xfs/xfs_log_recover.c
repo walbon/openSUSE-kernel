@@ -3350,14 +3350,13 @@ STATIC int
 xlog_recover_commit_trans(
 	struct xlog		*log,
 	struct xlog_recover	*trans,
-	int			pass)
+	int			pass,
+	struct list_head	*buffer_list)
 {
 	int				error = 0;
-	int				error2;
 	int				items_queued = 0;
 	struct xlog_recover_item	*item;
 	struct xlog_recover_item	*next;
-	LIST_HEAD			(buffer_list);
 	LIST_HEAD			(ra_list);
 	LIST_HEAD			(done_list);
 
@@ -3380,7 +3379,7 @@ xlog_recover_commit_trans(
 			items_queued++;
 			if (items_queued >= XLOG_RECOVER_COMMIT_QUEUE_MAX) {
 				error = xlog_recover_items_pass2(log, trans,
-						&buffer_list, &ra_list);
+						buffer_list, &ra_list);
 				list_splice_tail_init(&ra_list, &done_list);
 				items_queued = 0;
 			}
@@ -3398,15 +3397,14 @@ out:
 	if (!list_empty(&ra_list)) {
 		if (!error)
 			error = xlog_recover_items_pass2(log, trans,
-					&buffer_list, &ra_list);
+					buffer_list, &ra_list);
 		list_splice_tail_init(&ra_list, &done_list);
 	}
 
 	if (!list_empty(&done_list))
 		list_splice_init(&done_list, &trans->r_itemq);
 
-	error2 = xfs_buf_delwri_submit(&buffer_list);
-	return error ? error : error2;
+	return error;
 }
 
 STATIC void
@@ -3589,7 +3587,8 @@ xlog_recovery_process_trans(
 	char			*dp,
 	unsigned int		len,
 	unsigned int		flags,
-	int			pass)
+	int			pass,
+	struct list_head	*buffer_list)
 {
 	int			error = 0;
 	bool			freeit = false;
@@ -3613,7 +3612,8 @@ xlog_recovery_process_trans(
 		error = xlog_recover_add_to_cont_trans(log, trans, dp, len);
 		break;
 	case XLOG_COMMIT_TRANS:
-		error = xlog_recover_commit_trans(log, trans, pass);
+		error = xlog_recover_commit_trans(log, trans, pass,
+						  buffer_list);
 		/* success or fail, we are now done with this transaction. */
 		freeit = true;
 		break;
@@ -3695,10 +3695,12 @@ xlog_recover_process_ophdr(
 	struct xlog_op_header	*ohead,
 	char			*dp,
 	char			*end,
-	int			pass)
+	int			pass,
+	struct list_head	*buffer_list)
 {
 	struct xlog_recover	*trans;
 	unsigned int		len;
+	int			error;
 
 	/* Do we understand who wrote this op? */
 	if (ohead->oh_clientid != XFS_TRANSACTION &&
@@ -3725,8 +3727,39 @@ xlog_recover_process_ophdr(
 		return 0;
 	}
 
+	/*
+	 * The recovered buffer queue is drained only once we know that all
+	 * recovery items for the current LSN have been processed. This is
+	 * required because:
+	 *
+	 * - Buffer write submission updates the metadata LSN of the buffer.
+	 * - Log recovery skips items with a metadata LSN >= the current LSN of
+	 *   the recovery item.
+	 * - Separate recovery items against the same metadata buffer can share
+	 *   a current LSN. I.e., consider that the LSN of a recovery item is
+	 *   defined as the starting LSN of the first record in which its
+	 *   transaction appears, that a record can hold multiple transactions,
+	 *   and/or that a transaction can span multiple records.
+	 *
+	 * In other words, we are allowed to submit a buffer from log recovery
+	 * once per current LSN. Otherwise, we may incorrectly skip recovery
+	 * items and cause corruption.
+	 *
+	 * We don't know up front whether buffers are updated multiple times per
+	 * LSN. Therefore, track the current LSN of each commit log record as it
+	 * is processed and drain the queue when it changes. Use commit records
+	 * because they are ordered correctly by the logging code.
+	 */
+	if (log->l_recovery_lsn != trans->r_lsn &&
+	    ohead->oh_flags & XLOG_COMMIT_TRANS) {
+		error = xfs_buf_delwri_submit(buffer_list);
+		if (error)
+			return error;
+		log->l_recovery_lsn = trans->r_lsn;
+	}
+
 	return xlog_recovery_process_trans(log, trans, dp, len,
-					   ohead->oh_flags, pass);
+					   ohead->oh_flags, pass, buffer_list);
 }
 
 /*
@@ -3744,7 +3777,8 @@ xlog_recover_process_data(
 	struct hlist_head	rhash[],
 	struct xlog_rec_header	*rhead,
 	char			*dp,
-	int			pass)
+	int			pass,
+	struct list_head	*buffer_list)
 {
 	struct xlog_op_header	*ohead;
 	char			*end;
@@ -3766,7 +3800,7 @@ xlog_recover_process_data(
 
 		/* errors will abort recovery */
 		error = xlog_recover_process_ophdr(log, rhash, rhead, ohead,
-						    dp, end, pass);
+						   dp, end, pass, buffer_list);
 		if (error)
 			return error;
 
@@ -4205,7 +4239,8 @@ xlog_recover_process(
 	struct hlist_head	rhash[],
 	struct xlog_rec_header	*rhead,
 	char			*dp,
-	int			pass)
+	int			pass,
+	struct list_head	*buffer_list)
 {
 	int			error;
 
@@ -4213,7 +4248,8 @@ xlog_recover_process(
 	if (error)
 		return error;
 
-	return xlog_recover_process_data(log, rhash, rhead, dp, pass);
+	return xlog_recover_process_data(log, rhash, rhead, dp, pass,
+					 buffer_list);
 }
 
 STATIC int
@@ -4272,9 +4308,11 @@ xlog_do_recovery_pass(
 	char			*offset;
 	xfs_buf_t		*hbp, *dbp;
 	int			error = 0, h_size;
+	int			error2 = 0;
 	int			bblks, split_bblks;
 	int			hblks, split_hblks, wrapped_hblks;
 	struct hlist_head	rhash[XLOG_RHASH_SIZE];
+	LIST_HEAD		(buffer_list);
 
 	ASSERT(head_blk != tail_blk);
 
@@ -4435,7 +4473,7 @@ xlog_do_recovery_pass(
 			}
 
 			error = xlog_recover_process(log, rhash, rhead, offset,
-						     pass);
+						     pass, &buffer_list);
 			if (error)
 				goto bread_err2;
 			blk_no += bblks;
@@ -4463,7 +4501,8 @@ xlog_do_recovery_pass(
 		if (error)
 			goto bread_err2;
 
-		error = xlog_recover_process(log, rhash, rhead, offset, pass);
+		error = xlog_recover_process(log, rhash, rhead, offset, pass,
+					     &buffer_list);
 		if (error)
 			goto bread_err2;
 		blk_no += bblks + hblks;
@@ -4473,7 +4512,15 @@ xlog_do_recovery_pass(
 	xlog_put_bp(dbp);
  bread_err1:
 	xlog_put_bp(hbp);
-	return error;
+
+	/*
+	 * Submit buffers that have been added from the last record processed,
+	 * regardless of error status.
+	 */
+	if (!list_empty(&buffer_list))
+		error2 = xfs_buf_delwri_submit(&buffer_list);
+
+	return error ? error : error2;
 }
 
 /*
