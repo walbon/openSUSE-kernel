@@ -49,6 +49,7 @@
 #include "xfs_log.h"
 #include "xfs_bmap_btree.h"
 #include "xfs_dmapi.h"
+#include "xfs_dir2_priv.h"
 
 kmem_zone_t *xfs_inode_zone;
 
@@ -3534,7 +3535,6 @@ xfs_iflush_int(
 	struct xfs_inode_log_item *iip = ip->i_itemp;
 	struct xfs_dinode	*dip;
 	struct xfs_mount	*mp = ip->i_mount;
-	int			error;
 
 	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL|XFS_ILOCK_SHARED));
 	ASSERT(xfs_isiflocked(ip));
@@ -3613,6 +3613,12 @@ xfs_iflush_int(
 	if (ip->i_d.di_version < 3)
 		ip->i_d.di_flushiter++;
 
+	/* Check the inline directory data. */
+	if (S_ISDIR(ip->i_d.di_mode) &&
+	    ip->i_d.di_format == XFS_DINODE_FMT_LOCAL &&
+	    xfs_dir2_sf_verify(ip))
+		goto corrupt_out;
+
 	/*
 	 * Copy the dirty parts of the inode into the on-disk
 	 * inode.  We always copy out the core of the inode,
@@ -3625,14 +3631,9 @@ xfs_iflush_int(
 	if (ip->i_d.di_flushiter == DI_MAX_FLUSH)
 		ip->i_d.di_flushiter = 0;
 
-	error = xfs_iflush_fork(ip, dip, iip, XFS_DATA_FORK);
-	if (error)
-		return error;
-	if (XFS_IFORK_Q(ip)) {
-		error = xfs_iflush_fork(ip, dip, iip, XFS_ATTR_FORK);
-		if (error)
-			return error;
-	}
+	xfs_iflush_fork(ip, dip, iip, XFS_DATA_FORK);
+	if (XFS_IFORK_Q(ip))
+		xfs_iflush_fork(ip, dip, iip, XFS_ATTR_FORK);
 	xfs_inobp_check(mp, bp);
 
 	/*
