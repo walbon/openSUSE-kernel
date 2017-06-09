@@ -148,11 +148,7 @@ typedef struct xfs_icdinode {
 	__uint8_t	di_forkoff;	/* attr fork offs, <<3 for 64b align */
 	__int8_t	di_aformat;	/* format of attr fork's data */
 	__uint32_t	di_dmevmask;	/* DMIG event mask */
-#ifndef __GENKSYMS__
-	atomic_t	di_dmstate;	/* DMIG state info */
-#else
-	__uint16_t      di_dmstate;
-#endif
+	__uint16_t	di_dmstate;	/* DMIG state info */
 	__uint16_t	di_flags;	/* random flags, XFS_DIFLAG_... */
 	__uint32_t	di_gen;		/* generation number */
 } xfs_icdinode_t;
@@ -259,15 +255,17 @@ typedef struct xfs_inode {
 	unsigned int		i_delayed_blks;	/* count of delay alloc blks */
 
 	xfs_icdinode_t		i_d;		/* most of ondisk inode */
-#ifdef __GENKSYMS__
-	xfs_fsize_t			i_size;
-	xfs_fsize_t			i_new_size;
-#endif
+
+	xfs_fsize_t		i_size;		/* in-memory size */
+	xfs_fsize_t		i_new_size;	/* size when write completes */
 	atomic_t		i_iocount;	/* outstanding I/O count */
 
 	/* VFS inode */
 	struct inode		i_vnode;	/* embedded VFS inode */
 } xfs_inode_t;
+
+#define XFS_ISIZE(ip)	((((ip)->i_d.di_mode & S_IFMT) == S_IFREG) ? \
+				(ip)->i_size : (ip)->i_d.di_size)
 
 /* Convert from vfs inode to xfs inode */
 static inline struct xfs_inode *XFS_I(struct inode *inode)
@@ -279,18 +277,6 @@ static inline struct xfs_inode *XFS_I(struct inode *inode)
 static inline struct inode *VFS_I(struct xfs_inode *ip)
 {
 	return &ip->i_vnode;
-}
-
-/*
- * For regular files we only update the on-disk filesize when actually
- * writing data back to disk.  Until then only the copy in the VFS inode
- * is uptodate.
- */
-static inline xfs_fsize_t XFS_ISIZE(struct xfs_inode *ip)
-{
-	if (S_ISREG(ip->i_d.di_mode))
-		return i_size_read(VFS_I(ip));
-	return ip->i_d.di_size;
 }
 
 /*
@@ -472,6 +458,16 @@ static inline void xfs_ifunlock(xfs_inode_t *ip)
 extern struct lock_class_key xfs_iolock_reclaimable;
 
 /*
+ * Flags for xfs_itruncate_start().
+ */
+#define	XFS_ITRUNC_DEFINITE	0x1
+#define	XFS_ITRUNC_MAYBE	0x2
+
+#define XFS_ITRUNC_FLAGS \
+	{ XFS_ITRUNC_DEFINITE,	"DEFINITE" }, \
+	{ XFS_ITRUNC_MAYBE,	"MAYBE" }
+
+/*
  * For multiple groups support: if S_ISGID bit is set in the parent
  * directory, group of new file is set to that of the parent, and
  * new subdirectory gets S_ISGID bit from parent.
@@ -505,8 +501,9 @@ uint		xfs_ip2xflags(struct xfs_inode *);
 uint		xfs_dic2xflags(struct xfs_dinode *);
 int		xfs_ifree(struct xfs_trans *, xfs_inode_t *,
 			   struct xfs_bmap_free *);
-int		xfs_itruncate_extents(struct xfs_trans **, struct xfs_inode *,
-				      int, xfs_fsize_t);
+int		xfs_itruncate_start(xfs_inode_t *, uint, xfs_fsize_t);
+int		xfs_itruncate_finish(struct xfs_trans **, xfs_inode_t *,
+				     xfs_fsize_t, int, int);
 int		xfs_iunlink(struct xfs_trans *, xfs_inode_t *);
 
 void		xfs_iext_realloc(xfs_inode_t *, int, int);
@@ -583,6 +580,13 @@ void		xfs_iext_irec_update_extoffs(xfs_ifork_t *, int, int);
 bool		xfs_can_free_eofblocks(struct xfs_inode *, bool);
 
 #define xfs_ipincount(ip)	((unsigned int) atomic_read(&ip->i_pincount))
+
+#ifdef DEBUG
+void		xfs_isize_check(struct xfs_mount *, struct xfs_inode *,
+				xfs_fsize_t);
+#else	/* DEBUG */
+#define xfs_isize_check(mp, ip, isize)
+#endif	/* DEBUG */
 
 #if defined(DEBUG)
 void		xfs_inobp_check(struct xfs_mount *, struct xfs_buf *);
