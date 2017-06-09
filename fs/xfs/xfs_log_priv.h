@@ -411,8 +411,10 @@ struct xlog {
 #ifdef DEBUG
 	void			*l_iclog_bak[XLOG_MAX_ICLOGS];
 #endif
+#ifndef __GENKSYMS__
 	/* log recovery lsn tracking (for buffer submission */
 	xfs_lsn_t		l_recovery_lsn;
+#endif
 };
 
 #define XLOG_BUF_CANCEL_BUCKET(log, blkno) \
