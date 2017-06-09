@@ -224,14 +224,8 @@ struct stripe_head {
 	spinlock_t		batch_lock; /* only header's lock is useful */
 	struct list_head	batch_list; /* protected by head's batch lock*/
 
-	union {
-		struct r5l_io_unit	*log_io;
-		struct ppl_io_unit	*ppl_io;
-	};
-
+	struct r5l_io_unit	*log_io;
 	struct list_head	log_list;
-
-	struct page		*ppl_page; /* partial parity of this stripe */
 	sector_t		log_start; /* first meta block on the journal */
 	struct list_head	r5c; /* for r5c_cache->stripe_in_journal */
 	/**
@@ -406,7 +400,6 @@ enum {
 	STRIPE_OP_BIODRAIN,
 	STRIPE_OP_RECONSTRUCT,
 	STRIPE_OP_CHECK,
-	STRIPE_OP_PARTIAL_PARITY,
 };
 
 /*
@@ -531,12 +524,6 @@ static inline void raid5_set_bi_stripes(struct bio *bio, unsigned int cnt)
 
 	atomic_set(segments, cnt);
 }
-
-#define NR_STRIPES		256
-#define STRIPE_SIZE		PAGE_SIZE
-#define STRIPE_SHIFT		(PAGE_SHIFT - 9)
-#define STRIPE_SECTORS		(STRIPE_SIZE>>9)
-
 
 /* NOTE NR_STRIPE_HASH_LOCKS must remain below 64.
  * This is because we sometimes take all the spinlocks
@@ -703,11 +690,10 @@ struct r5conf {
 	struct r5l_log		*log;
 
 	struct bio_list		pending_bios;
- 	spinlock_t		pending_bios_lock;
- 	bool			batch_bio_dispatch;
-
-	void			*log_private;
+	spinlock_t		pending_bios_lock;
+	bool			batch_bio_dispatch;
 };
+
 
 /*
  * Our supported algorithms
@@ -781,6 +767,22 @@ extern struct stripe_head *
 raid5_get_active_stripe(struct r5conf *conf, sector_t sector,
 			int previous, int noblock, int noquiesce);
 extern int raid5_calc_degraded(struct r5conf *conf);
+extern int r5l_init_log(struct r5conf *conf, struct md_rdev *rdev);
+extern void r5l_exit_log(struct r5l_log *log);
+extern int r5l_write_stripe(struct r5l_log *log, struct stripe_head *head_sh);
+extern void r5l_write_stripe_run(struct r5l_log *log);
+extern void r5l_flush_stripe_to_raid(struct r5l_log *log);
+extern void r5l_stripe_write_finished(struct stripe_head *sh);
+extern void r5c_use_extra_page(struct stripe_head *sh);
+extern void r5l_wake_reclaim(struct r5l_log *log, sector_t space);
+extern int r5l_handle_flush_request(struct r5l_log *log, struct bio *bio);
+extern void r5l_quiesce(struct r5l_log *log, int state);
+extern bool r5l_log_disk_error(struct r5conf *conf);
+extern void r5c_release_extra_page(struct stripe_head *sh);
+extern void r5c_handle_cached_data_endio(struct r5conf *conf,
+	struct stripe_head *sh, int disks, struct bio_list *return_bi);
+extern int r5c_cache_data(struct r5l_log *log, struct stripe_head *sh,
+			struct stripe_head_state *s);
 extern struct md_sysfs_entry r5c_journal_mode;
 extern void r5c_update_on_rdev_error(struct mddev *mddev);
 extern bool r5c_big_stripe_cached(struct r5conf *conf, sector_t sect);

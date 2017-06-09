@@ -122,13 +122,6 @@ struct md_rdev {
 					   * sysfs entry */
 
 	struct badblocks badblocks;
-
-	struct {
-		short offset;	/* Offset from superblock to start of PPL.
-				 * Not used by external metadata. */
-		unsigned int size;	/* Size in sectors of the PPL space */
-		sector_t sector;	/* First sector of the PPL space */
-	} ppl;
 };
 enum flag_bits {
 	Faulty,			/* device is known to have a fault */
@@ -198,7 +191,6 @@ enum flag_bits {
 				 * it didn't fail, so don't use FailFast
 				 * any more for metadata
 				 */
-	MD_HAS_PPL,		/* The raid array has PPL feature set */
 };
 
 static inline int is_badblock(struct md_rdev *rdev, sector_t s, int sectors,
@@ -548,8 +540,6 @@ struct md_personality
 	/* congested implements bdi.congested_fn().
 	 * Will not be called while array is 'suspended' */
 	int (*congested)(struct mddev *mddev, int bits);
-	/* Changes the consistency policy of an active array. */
-	int (*change_consistency_policy)(struct mddev *mddev, const char *buf);
 };
 
 struct md_sysfs_entry {

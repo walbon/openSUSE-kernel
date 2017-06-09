@@ -61,7 +61,6 @@
 #include "raid5.h"
 #include "raid0.h"
 #include "bitmap.h"
-#include "raid5-log.h"
 
 #define UNSUPPORTED_MDDEV_FLAGS	(1L << MD_FAILFAST_SUPPORTED)
 
@@ -466,11 +465,6 @@ static void shrink_buffers(struct stripe_head *sh)
 		sh->dev[i].page = NULL;
 		put_page(p);
 	}
-
-	if (sh->ppl_page) {
-		put_page(sh->ppl_page);
-		sh->ppl_page = NULL;
-	}
 }
 
 static int grow_buffers(struct stripe_head *sh, gfp_t gfp)
@@ -487,13 +481,6 @@ static int grow_buffers(struct stripe_head *sh, gfp_t gfp)
 		sh->dev[i].page = page;
 		sh->dev[i].orig_page = page;
 	}
-
-	if (raid5_has_ppl(sh->raid_conf)) {
-		sh->ppl_page = alloc_page(gfp);
-		if (!sh->ppl_page)
-			return 1;
-	}
-
 	return 0;
 }
 
@@ -742,7 +729,7 @@ static bool stripe_can_batch(struct stripe_head *sh)
 {
 	struct r5conf *conf = sh->raid_conf;
 
-	if (conf->log || raid5_has_ppl(conf))
+	if (conf->log)
 		return false;
 	return test_bit(STRIPE_BATCH_READY, &sh->state) &&
 		!test_bit(STRIPE_BITMAP_PENDING, &sh->state) &&
@@ -2019,9 +2006,6 @@ static void raid_run_ops(struct stripe_head *sh, unsigned long ops_request)
 			async_tx_ack(tx);
 	}
 
-	if (test_bit(STRIPE_OP_PARTIAL_PARITY, &ops_request))
-		tx = ops_run_partial_parity(sh, percpu, tx);
-
 	if (test_bit(STRIPE_OP_PREXOR, &ops_request)) {
 		if (level < 6)
 			tx = ops_run_prexor5(sh, percpu, tx);
@@ -3099,12 +3083,6 @@ schedule_reconstruction(struct stripe_head *sh, struct stripe_head_state *s,
 		s->locked++;
 	}
 
-	if (raid5_has_ppl(sh->raid_conf) &&
-	    test_bit(STRIPE_OP_BIODRAIN, &s->ops_request) &&
-	    !test_bit(STRIPE_FULL_WRITE, &sh->state) &&
-	    test_bit(R5_Insync, &sh->dev[pd_idx].flags))
-		set_bit(STRIPE_OP_PARTIAL_PARITY, &s->ops_request);
-
 	pr_debug("%s: stripe %llu locked: %d ops_request: %lx\n",
 		__func__, (unsigned long long)sh->sector,
 		s->locked, s->ops_request);
@@ -3151,36 +3129,6 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx,
 	}
 	if (*bip && (*bip)->bi_iter.bi_sector < bio_end_sector(bi))
 		goto overlap;
-
-	if (forwrite && raid5_has_ppl(conf)) {
-		/*
-		 * With PPL only writes to consecutive data chunks within a
-		 * stripe are allowed because for a single stripe_head we can
-		 * only have one PPL entry at a time, which describes one data
-		 * range. Not really an overlap, but wait_for_overlap can be
-		 * used to handle this.
-		 */
-		sector_t sector;
-		sector_t first = 0;
-		sector_t last = 0;
-		int count = 0;
-		int i;
-
-		for (i = 0; i < sh->disks; i++) {
-			if (i != sh->pd_idx &&
-			    (i == dd_idx || sh->dev[i].towrite)) {
-				sector = sh->dev[i].sector;
-				if (count == 0 || sector < first)
-					first = sector;
-				if (sector > last)
-					last = sector;
-				count++;
-			}
-		}
-
-		if (first + conf->chunk_sectors * (count - 1) != last)
-			goto overlap;
-	}
 
 	if (!forwrite || previous)
 		clear_bit(STRIPE_BATCH_READY, &sh->state);
@@ -3303,7 +3251,7 @@ handle_failed_stripe(struct r5conf *conf, struct stripe_head *sh,
 		if (bi)
 			bitmap_end = 1;
 
-		log_stripe_write_finished(sh);
+		r5l_stripe_write_finished(sh);
 
 		if (test_and_clear_bit(R5_Overlap, &sh->dev[i].flags))
 			wake_up(&conf->wait_for_overlap);
@@ -3722,7 +3670,7 @@ returnbi:
 				discard_pending = 1;
 		}
 
-	log_stripe_write_finished(sh);
+	r5l_stripe_write_finished(sh);
 
 	if (!discard_pending &&
 	    test_bit(R5_Discard, &sh->dev[sh->pd_idx].flags)) {
@@ -4709,8 +4657,6 @@ static void handle_stripe(struct stripe_head *sh)
 			     && (test_bit(R5_UPTODATE, &qdev->flags) ||
 				 test_bit(R5_Discard, &qdev->flags))))))
 		handle_stripe_clean_event(conf, sh, disks, &s.return_bi);
-
-	log_stripe_write_finished(sh);
 
 	if (s.just_cached)
 		r5c_handle_cached_data_endio(conf, sh, disks, &s.return_bi);
@@ -6115,7 +6061,7 @@ static int handle_active_stripes(struct r5conf *conf, int group,
 
 	for (i = 0; i < batch_size; i++)
 		handle_stripe(batch[i]);
-	log_write_stripe_run(conf);
+	r5l_write_stripe_run(conf->log);
 
 	cond_resched();
 
@@ -6693,8 +6639,8 @@ static void free_conf(struct r5conf *conf)
 {
 	int i;
 
-	log_exit(conf);
-
+	if (conf->log)
+		r5l_exit_log(conf->log);
 	if (conf->shrinker.nr_deferred)
 		unregister_shrinker(&conf->shrinker);
 
@@ -7192,13 +7138,6 @@ static int raid5_run(struct mddev *mddev)
 		BUG_ON(mddev->delta_disks != 0);
 	}
 
-	if (test_bit(MD_HAS_JOURNAL, &mddev->flags) &&
-	    test_bit(MD_HAS_PPL, &mddev->flags)) {
-		pr_warn("md/raid:%s: using journal device and PPL not allowed - disabling PPL\n",
-			mdname(mddev));
-		clear_bit(MD_HAS_PPL, &mddev->flags);
-	}
-
 	if (mddev->private == NULL)
 		conf = setup_conf(mddev);
 	else
@@ -7290,10 +7229,7 @@ static int raid5_run(struct mddev *mddev)
 
 	if (mddev->degraded > dirty_parity_disks &&
 	    mddev->recovery_cp != MaxSector) {
-		if (test_bit(MD_HAS_PPL, &mddev->flags))
-			pr_crit("md/raid:%s: starting dirty degraded array with PPL.\n",
-				mdname(mddev));
-		else if (mddev->ok_start_degraded)
+		if (mddev->ok_start_degraded)
 			pr_crit("md/raid:%s: starting dirty degraded array - data corruption possible.\n",
 				mdname(mddev));
 		else {
@@ -7421,8 +7357,14 @@ static int raid5_run(struct mddev *mddev)
 		blk_queue_max_hw_sectors(mddev->queue, UINT_MAX);
 	}
 
-	if (log_init(conf, journal_dev))
-		goto abort;
+	if (journal_dev) {
+		char b[BDEVNAME_SIZE];
+
+		pr_debug("md/raid:%s: using device %s as journal\n",
+			 mdname(mddev), bdevname(journal_dev->bdev, b));
+		if (r5l_init_log(conf, journal_dev))
+			goto abort;
+	}
 
 	return 0;
 abort:
@@ -7536,13 +7478,17 @@ static int raid5_remove_disk(struct mddev *mddev, struct md_rdev *rdev)
 
 	print_raid5_conf(conf);
 	if (test_bit(Journal, &rdev->flags) && conf->log) {
+		struct r5l_log *log;
 		/*
 		 * we can't wait pending write here, as this is called in
 		 * raid5d, wait will deadlock.
 		 */
 		if (atomic_read(&mddev->writes_pending))
 			return -EBUSY;
-		log_exit(conf);
+		log = conf->log;
+		conf->log = NULL;
+		synchronize_rcu();
+		r5l_exit_log(log);
 		return 0;
 	}
 	if (rdev == p->rdev)
@@ -7581,11 +7527,6 @@ static int raid5_remove_disk(struct mddev *mddev, struct md_rdev *rdev)
 			*rdevp = rdev;
 		}
 	}
-	if (!err) {
-		err = log_modify(conf, rdev, false);
-		if (err)
-			goto abort;
-	}
 	if (p->replacement) {
 		/* We must have just cleared 'rdev' */
 		p->rdev = p->replacement;
@@ -7595,9 +7536,6 @@ static int raid5_remove_disk(struct mddev *mddev, struct md_rdev *rdev)
 			   */
 		p->replacement = NULL;
 		clear_bit(WantReplacement, &rdev->flags);
-
-		if (!err)
-			err = log_modify(conf, p->rdev, true);
 	} else
 		/* We might have just removed the Replacement as faulty-
 		 * clear the bit just in case
@@ -7619,6 +7557,7 @@ static int raid5_add_disk(struct mddev *mddev, struct md_rdev *rdev)
 	int last = conf->raid_disks - 1;
 
 	if (test_bit(Journal, &rdev->flags)) {
+		char b[BDEVNAME_SIZE];
 		if (conf->log)
 			return -EBUSY;
 
@@ -7627,7 +7566,9 @@ static int raid5_add_disk(struct mddev *mddev, struct md_rdev *rdev)
 		 * The array is in readonly mode if journal is missing, so no
 		 * write requests running. We should be safe
 		 */
-		log_init(conf, rdev);
+		r5l_init_log(conf, rdev);
+		pr_debug("md/raid:%s: using device %s as journal\n",
+			 mdname(mddev), bdevname(rdev->bdev, b));
 		return 0;
 	}
 	if (mddev->recovery_disabled == conf->recovery_disabled)
@@ -7654,12 +7595,10 @@ static int raid5_add_disk(struct mddev *mddev, struct md_rdev *rdev)
 		if (p->rdev == NULL) {
 			clear_bit(In_sync, &rdev->flags);
 			rdev->raid_disk = disk;
+			err = 0;
 			if (rdev->saved_raid_disk != disk)
 				conf->fullsync = 1;
 			rcu_assign_pointer(p->rdev, rdev);
-
-			err = log_modify(conf, rdev, true);
-
 			goto out;
 		}
 	}
@@ -7693,7 +7632,7 @@ static int raid5_resize(struct mddev *mddev, sector_t sectors)
 	sector_t newsize;
 	struct r5conf *conf = mddev->private;
 
-	if (conf->log || raid5_has_ppl(conf))
+	if (conf->log)
 		return -EINVAL;
 	sectors &= ~((sector_t)conf->chunk_sectors - 1);
 	newsize = raid5_size(mddev, sectors, mddev->raid_disks);
@@ -7744,7 +7683,7 @@ static int check_reshape(struct mddev *mddev)
 {
 	struct r5conf *conf = mddev->private;
 
-	if (conf->log || raid5_has_ppl(conf))
+	if (conf->log)
 		return -EINVAL;
 	if (mddev->delta_disks == 0 &&
 	    mddev->new_layout == mddev->layout &&
@@ -8267,58 +8206,6 @@ static void *raid6_takeover(struct mddev *mddev)
 	return setup_conf(mddev);
 }
 
-static void raid5_reset_stripe_cache(struct mddev *mddev)
-{
-	struct r5conf *conf = mddev->private;
-
-	mutex_lock(&conf->cache_size_mutex);
-	while (conf->max_nr_stripes &&
-	       drop_one_stripe(conf))
-		;
-	while (conf->min_nr_stripes > conf->max_nr_stripes &&
-	       grow_one_stripe(conf, GFP_KERNEL))
-		;
-	mutex_unlock(&conf->cache_size_mutex);
-}
-
-static int raid5_change_consistency_policy(struct mddev *mddev, const char *buf)
-{
-	struct r5conf *conf;
-	int err;
-
-	err = mddev_lock(mddev);
-	if (err)
-		return err;
-	conf = mddev->private;
-	if (!conf) {
-		mddev_unlock(mddev);
-		return -ENODEV;
-	}
-
-	if (strncmp(buf, "ppl", 3) == 0 && !raid5_has_ppl(conf)) {
-		mddev_suspend(mddev);
-		set_bit(MD_HAS_PPL, &mddev->flags);
-		err = log_init(conf, NULL);
-		if (!err)
-			raid5_reset_stripe_cache(mddev);
-		mddev_resume(mddev);
-	} else if (strncmp(buf, "resync", 6) == 0 && raid5_has_ppl(conf)) {
-		mddev_suspend(mddev);
-		log_exit(conf);
-		raid5_reset_stripe_cache(mddev);
-		mddev_resume(mddev);
-	} else {
-		err = -EINVAL;
-	}
-
-	if (!err)
-		md_update_sb(mddev, 1);
-
-	mddev_unlock(mddev);
-
-	return err;
-}
-
 static struct md_personality raid6_personality =
 {
 	.name		= "raid6",
@@ -8364,7 +8251,6 @@ static struct md_personality raid5_personality =
 	.quiesce	= raid5_quiesce,
 	.takeover	= raid5_takeover,
 	.congested	= raid5_congested,
-	.change_consistency_policy = raid5_change_consistency_policy,
 };
 
 static struct md_personality raid4_personality =

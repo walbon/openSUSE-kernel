@@ -1527,12 +1527,6 @@ static int super_1_load(struct md_rdev *rdev, struct md_rdev *refdev, int minor_
 	} else if (sb->bblog_offset != 0)
 		rdev->badblocks.shift = 0;
 
-	if (le32_to_cpu(sb->feature_map) & MD_FEATURE_PPL) {
-		rdev->ppl.offset = (__s16)le16_to_cpu(sb->ppl.offset);
-		rdev->ppl.size = le16_to_cpu(sb->ppl.size);
-		rdev->ppl.sector = rdev->sb_start + rdev->ppl.offset;
-	}
-
 	if (!refdev) {
 		ret = 1;
 	} else {
@@ -1646,13 +1640,6 @@ static int super_1_validate(struct mddev *mddev, struct md_rdev *rdev)
 
 		if (le32_to_cpu(sb->feature_map) & MD_FEATURE_JOURNAL)
 			set_bit(MD_HAS_JOURNAL, &mddev->flags);
-
-		if (le32_to_cpu(sb->feature_map) & MD_FEATURE_PPL) {
-			if (le32_to_cpu(sb->feature_map) &
-			    (MD_FEATURE_BITMAP_OFFSET | MD_FEATURE_JOURNAL))
-				return -EINVAL;
-			set_bit(MD_HAS_PPL, &mddev->flags);
-		}
 	} else if (mddev->pers == NULL) {
 		/* Insist of good event counter while assembling, except for
 		 * spares (which don't need an event count) */
@@ -1873,12 +1860,6 @@ retry:
 
 	if (test_bit(MD_HAS_JOURNAL, &mddev->flags))
 		sb->feature_map |= cpu_to_le32(MD_FEATURE_JOURNAL);
-
-	if (test_bit(MD_HAS_PPL, &mddev->flags)) {
-		sb->feature_map |= cpu_to_le32(MD_FEATURE_PPL);
-		sb->ppl.offset = cpu_to_le16(rdev->ppl.offset);
-		sb->ppl.size = cpu_to_le16(rdev->ppl.size);
-	}
 
 	rdev_for_each(rdev2, mddev) {
 		i = rdev2->desc_nr;
@@ -3194,78 +3175,6 @@ static ssize_t ubb_store(struct md_rdev *rdev, const char *page, size_t len)
 static struct rdev_sysfs_entry rdev_unack_bad_blocks =
 __ATTR(unacknowledged_bad_blocks, S_IRUGO|S_IWUSR, ubb_show, ubb_store);
 
-static ssize_t
-ppl_sector_show(struct md_rdev *rdev, char *page)
-{
-	return sprintf(page, "%llu\n", (unsigned long long)rdev->ppl.sector);
-}
-
-static ssize_t
-ppl_sector_store(struct md_rdev *rdev, const char *buf, size_t len)
-{
-	unsigned long long sector;
-
-	if (kstrtoull(buf, 10, &sector) < 0)
-		return -EINVAL;
-	if (sector != (sector_t)sector)
-		return -EINVAL;
-
-	if (rdev->mddev->pers && test_bit(MD_HAS_PPL, &rdev->mddev->flags) &&
-	    rdev->raid_disk >= 0)
-		return -EBUSY;
-
-	if (rdev->mddev->persistent) {
-		if (rdev->mddev->major_version == 0)
-			return -EINVAL;
-		if ((sector > rdev->sb_start &&
-		     sector - rdev->sb_start > S16_MAX) ||
-		    (sector < rdev->sb_start &&
-		     rdev->sb_start - sector > -S16_MIN))
-			return -EINVAL;
-		rdev->ppl.offset = sector - rdev->sb_start;
-	} else if (!rdev->mddev->external) {
-		return -EBUSY;
-	}
-	rdev->ppl.sector = sector;
-	return len;
-}
-
-static struct rdev_sysfs_entry rdev_ppl_sector =
-__ATTR(ppl_sector, S_IRUGO|S_IWUSR, ppl_sector_show, ppl_sector_store);
-
-static ssize_t
-ppl_size_show(struct md_rdev *rdev, char *page)
-{
-	return sprintf(page, "%u\n", rdev->ppl.size);
-}
-
-static ssize_t
-ppl_size_store(struct md_rdev *rdev, const char *buf, size_t len)
-{
-	unsigned int size;
-
-	if (kstrtouint(buf, 10, &size) < 0)
-		return -EINVAL;
-
-	if (rdev->mddev->pers && test_bit(MD_HAS_PPL, &rdev->mddev->flags) &&
-	    rdev->raid_disk >= 0)
-		return -EBUSY;
-
-	if (rdev->mddev->persistent) {
-		if (rdev->mddev->major_version == 0)
-			return -EINVAL;
-		if (size > U16_MAX)
-			return -EINVAL;
-	} else if (!rdev->mddev->external) {
-		return -EBUSY;
-	}
-	rdev->ppl.size = size;
-	return len;
-}
-
-static struct rdev_sysfs_entry rdev_ppl_size =
-__ATTR(ppl_size, S_IRUGO|S_IWUSR, ppl_size_show, ppl_size_store);
-
 static struct attribute *rdev_default_attrs[] = {
 	&rdev_state.attr,
 	&rdev_errors.attr,
@@ -3276,8 +3185,6 @@ static struct attribute *rdev_default_attrs[] = {
 	&rdev_recovery_start.attr,
 	&rdev_bad_blocks.attr,
 	&rdev_unack_bad_blocks.attr,
-	&rdev_ppl_sector.attr,
-	&rdev_ppl_size.attr,
 	NULL,
 };
 static ssize_t
@@ -5016,52 +4923,6 @@ static struct md_sysfs_entry md_array_size =
 __ATTR(array_size, S_IRUGO|S_IWUSR, array_size_show,
        array_size_store);
 
-static ssize_t
-consistency_policy_show(struct mddev *mddev, char *page)
-{
-	int ret;
-
-	if (test_bit(MD_HAS_JOURNAL, &mddev->flags)) {
-		ret = sprintf(page, "journal\n");
-	} else if (test_bit(MD_HAS_PPL, &mddev->flags)) {
-		ret = sprintf(page, "ppl\n");
-	} else if (mddev->bitmap) {
-		ret = sprintf(page, "bitmap\n");
-	} else if (mddev->pers) {
-		if (mddev->pers->sync_request)
-			ret = sprintf(page, "resync\n");
-		else
-			ret = sprintf(page, "none\n");
-	} else {
-		ret = sprintf(page, "unknown\n");
-	}
-
-	return ret;
-}
-
-static ssize_t
-consistency_policy_store(struct mddev *mddev, const char *buf, size_t len)
-{
-	int err = 0;
-
-	if (mddev->pers) {
-		if (mddev->pers->change_consistency_policy)
-			err = mddev->pers->change_consistency_policy(mddev, buf);
-		else
-			err = -EBUSY;
-	} else if (mddev->external && strncmp(buf, "ppl", 3) == 0) {
-		set_bit(MD_HAS_PPL, &mddev->flags);
-	} else {
-		err = -EINVAL;
-	}
-
-	return err ? err : len;
-}
-
-static struct md_sysfs_entry md_consistency_policy =
-__ATTR(consistency_policy, S_IRUGO | S_IWUSR, consistency_policy_show,
-       consistency_policy_store);
-
 static struct attribute *md_default_attrs[] = {
 	&md_level.attr,
 	&md_layout.attr,
@@ -5077,7 +4938,6 @@ static struct attribute *md_default_attrs[] = {
 	&md_reshape_direction.attr,
 	&md_array_size.attr,
 	&max_corr_read_errors.attr,
-	&md_consistency_policy.attr,
 	NULL,
 };
 

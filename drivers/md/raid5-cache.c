@@ -1045,33 +1045,33 @@ int r5l_handle_flush_request(struct r5l_log *log, struct bio *bio)
 	if (!log)
 		return -ENODEV;
 
- 	if (log->r5c_journal_mode == R5C_JOURNAL_MODE_WRITE_THROUGH) {
- 		/*
- 		 * in write through (journal only)
- 		 * we flush log disk cache first, then write stripe data to
- 		 * raid disks. So if bio is finished, the log disk cache is
- 		 * flushed already. The recovery guarantees we can recovery
- 		 * the bio from log disk, so we don't need to flush again
- 		 */
- 		if (bio->bi_iter.bi_size == 0) {
- 			bio_endio(bio);
- 			return 0;
- 		}
- 		bio->bi_opf &= ~REQ_PREFLUSH;
- 	} else {
- 		/* write back (with cache) */
- 		if (bio->bi_iter.bi_size == 0) {
- 			mutex_lock(&log->io_mutex);
- 			r5l_get_meta(log, 0);
- 			bio_list_add(&log->current_io->flush_barriers, bio);
- 			log->current_io->has_flush = 1;
- 			log->current_io->has_null_flush = 1;
- 			atomic_inc(&log->current_io->pending_stripe);
- 			r5l_submit_current_io(log);
- 			mutex_unlock(&log->io_mutex);
- 			return 0;
- 		}
- 	}
+	if (log->r5c_journal_mode == R5C_JOURNAL_MODE_WRITE_THROUGH) {
+		/*
+		 * in write through (journal only)
+		 * we flush log disk cache first, then write stripe data to
+		 * raid disks. So if bio is finished, the log disk cache is
+		 * flushed already. The recovery guarantees we can recovery
+		 * the bio from log disk, so we don't need to flush again
+		 */
+		if (bio->bi_iter.bi_size == 0) {
+			bio_endio(bio);
+			return 0;
+		}
+		bio->bi_opf &= ~REQ_PREFLUSH;
+	} else {
+		/* write back (with cache) */
+		if (bio->bi_iter.bi_size == 0) {
+			mutex_lock(&log->io_mutex);
+			r5l_get_meta(log, 0);
+			bio_list_add(&log->current_io->flush_barriers, bio);
+			log->current_io->has_flush = 1;
+			log->current_io->has_null_flush = 1;
+			atomic_inc(&log->current_io->pending_stripe);
+			r5l_submit_current_io(log);
+			mutex_unlock(&log->io_mutex);
+			return 0;
+		}
+	}
 	return -EAGAIN;
 }
 
@@ -2786,10 +2786,6 @@ int r5l_init_log(struct r5conf *conf, struct md_rdev *rdev)
 {
 	struct request_queue *q = bdev_get_queue(rdev->bdev);
 	struct r5l_log *log;
-	char b[BDEVNAME_SIZE];
-
-	pr_debug("md/raid:%s: using device %s as journal\n",
-		 mdname(conf->mddev), bdevname(rdev->bdev, b));
 
 	if (PAGE_SIZE != 4096)
 		return -EINVAL;
