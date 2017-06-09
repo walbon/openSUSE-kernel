@@ -19,6 +19,9 @@
 #define __XFS_DIR2_H__
 
 struct xfs_bmap_free;
+#include "xfs_da_format.h"
+#include "xfs_da_btree.h"
+
 struct xfs_da_args;
 struct xfs_inode;
 struct xfs_mount;
