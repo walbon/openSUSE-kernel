@@ -1384,7 +1384,7 @@ static int lock_all_bitmaps(struct mddev *mddev)
 					     sizeof(struct dlm_lock_resource *),
 					     GFP_KERNEL);
 	if (!cinfo->other_bitmap_lockres) {
-		pr_err("%s:%d: can't alloc mem for other bitmap locks\n", __func__, __LINE__);
+		pr_err("md: can't alloc mem for other bitmap locks\n");
 		return 0;
 	}
 
