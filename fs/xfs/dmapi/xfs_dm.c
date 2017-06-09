@@ -149,7 +149,7 @@ xfs_dm_send_data_event(
 	/* Returns positive errors to XFS */
 
 	do {
-		dmstate = atomic_read(&ip->i_d.di_dmstate);
+		dmstate = ip->i_d.di_dmstate;
 		if (lock_flags)
 			xfs_iunlock(ip, *lock_flags);
 
@@ -163,7 +163,7 @@ xfs_dm_send_data_event(
 
 		if (lock_flags)
 			xfs_ilock(ip, *lock_flags);
-	} while (!error && (atomic_read(&ip->i_d.di_dmstate) != dmstate));
+	} while (!error && (ip->i_d.di_dmstate != dmstate));
 
 	return error;
 }
@@ -325,7 +325,7 @@ xfs_ip_to_stat(
 	buf->dt_xfs_extents = dic->di_nextents;
 	buf->dt_xfs_aextents = dic->di_anextents;
 	buf->dt_xfs_igen = dic->di_gen;
-	buf->dt_xfs_dmstate = atomic_read(&dic->di_dmstate);
+	buf->dt_xfs_dmstate = dic->di_dmstate;
 
 	switch (dic->di_format) {
 	case XFS_DINODE_FMT_DEV:
@@ -1658,7 +1658,7 @@ xfs_dm_get_dirattrs_rvp(
 	mutex_lock(&inode->i_mutex);
 	error = -ENOENT;
 	if (!IS_DEADDIR(inode)) {
-		error = -xfs_readdir(dp, cb, XFS_ISIZE(dp),
+		error = -xfs_readdir(dp, cb, dp->i_size,
 					 (xfs_off_t *)&loc, dm_filldir);
 	}
 	mutex_unlock(&inode->i_mutex);
@@ -2146,7 +2146,7 @@ xfs_dm_probe_hole(
 	mp = ip->i_mount;
 	lock_flags = XFS_ILOCK_EXCL | XFS_IOLOCK_EXCL;
 	xfs_ilock(ip, lock_flags);
-	realsize = XFS_ISIZE(ip);
+	realsize = ip->i_size;
 	xfs_iunlock(ip, lock_flags);
 
 	if ((off + len) > realsize)
@@ -2201,7 +2201,7 @@ xfs_dm_punch_hole(
 	down_rw_sems(inode, DM_SEM_FLAG_WR);
 
 	xfs_ilock(ip, XFS_ILOCK_EXCL | XFS_IOLOCK_EXCL);
-	realsize = XFS_ISIZE(ip);
+	realsize = ip->i_size;
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	align = xfs_get_extsz_hint(ip);
 	if (align == 0)
@@ -2265,14 +2265,9 @@ xfs_dm_punch_hole(
 	if (error)
 		error = -error;
 
+	/* Let threads in send_data_event know we punched the file. */
+	ip->i_d.di_dmstate++;
 	xfs_iunlock(ip, XFS_IOLOCK_EXCL);
-
-	/* Let threads in send_data_event know we punched the file.
-	 * Also due to out change from uint16 to effectively uint32, handle
-	 * overflow case manually
-	 */
-	if (!atomic_add_unless(&ip->i_d.di_dmstate, 1, USHRT_MAX))
-			atomic_set(&ip->i_d.di_dmstate, 0); 
 
 up_and_out:
 	up_rw_sems(inode, DM_SEM_FLAG_WR);
@@ -2932,7 +2927,10 @@ xfs_dm_send_mmap_event(
 	offset = 0; /* beginning of file, for now */
 	length = 0; /* whole file, for now */
 
-	filesize = XFS_ISIZE(ip);
+	filesize = ip->i_new_size;
+	if (filesize < ip->i_size) {
+		filesize = ip->i_size;
+	}
 
 	/* Set first byte number beyond the map area. */
 
