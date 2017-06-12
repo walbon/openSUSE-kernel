@@ -40,6 +40,7 @@
 #include <asm/cputype.h>
 #include <asm/efi.h>
 #include <asm/elf.h>
+#include <asm/early_ioremap.h>
 #include <asm/fixmap.h>
 #include <asm/procinfo.h>
 #include <asm/psci.h>
@@ -958,8 +959,8 @@ void __init setup_arch(char **cmdline_p)
 	strlcpy(cmd_line, boot_command_line, COMMAND_LINE_SIZE);
 	*cmdline_p = cmd_line;
 
-	if (IS_ENABLED(CONFIG_FIX_EARLYCON_MEM))
-		early_fixmap_init();
+	early_fixmap_init();
+	early_ioremap_init();
 
 	parse_early_param();
 
@@ -970,6 +971,8 @@ void __init setup_arch(char **cmdline_p)
 	efi_init();
 	sanity_check_meminfo();
 	arm_memblock_init(mdesc);
+
+	early_ioremap_reset();
 
 	paging_init(mdesc);
 	request_standard_resources(mdesc);
