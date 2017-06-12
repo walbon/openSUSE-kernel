@@ -189,6 +189,7 @@ static int parse_reply_info_dir(void **p, void *end,
 		info->dir_end = !!(flags & CEPH_READDIR_FRAG_END);
 		info->dir_complete = !!(flags & CEPH_READDIR_FRAG_COMPLETE);
 		info->hash_order = !!(flags & CEPH_READDIR_HASH_ORDER);
+		info->offset_hash = !!(flags & CEPH_READDIR_OFFSET_HASH);
 	}
 	if (num == 0)
 		goto done;
@@ -3136,6 +3137,22 @@ static void check_new_map(struct ceph_mds_client *mdsc,
 				__unregister_session(mdsc, s);
 				__wake_requests(mdsc, &s->s_waiting);
 				ceph_put_mds_session(s);
+			} else if (i >= newmap->m_num_mds) {
+				/* force close session for stopped mds */
+				get_session(s);
+				__unregister_session(mdsc, s);
+				__wake_requests(mdsc, &s->s_waiting);
+				kick_requests(mdsc, i);
+				mutex_unlock(&mdsc->mutex);
+
+				mutex_lock(&s->s_mutex);
+				cleanup_session_requests(mdsc, s);
+				remove_session_caps(s);
+				mutex_unlock(&s->s_mutex);
+
+				ceph_put_mds_session(s);
+
+				mutex_lock(&mdsc->mutex);
 			} else {
 				/* just close it */
 				mutex_unlock(&mdsc->mutex);
