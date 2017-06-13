@@ -105,4 +105,6 @@ extern char __hyp_text_end[];
 
 #endif /* __ASSEMBLY__ */
 
+#define HVC_STUB_ERR	0xbadca11
+
 #endif /* ! VIRT_H */
