@@ -38,8 +38,7 @@
 #define ARM64_WORKAROUND_858921			17
 #define ARM64_WORKAROUND_QCOM_FALKOR_E1003	18
 #define ARM64_HAS_NO_BCAST_TLBI                 19 /* Out of tree */
-#define ARM64_WORKAROUND_CAVIUM_30115		20
 
-#define ARM64_NCAPS				21
+#define ARM64_NCAPS				20
 
 #endif /* __ASM_CPUCAPS_H */
