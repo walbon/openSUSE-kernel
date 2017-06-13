@@ -441,7 +441,7 @@ static int __init efi_runtime_init(void)
 static int __init efi_memmap_init(void)
 {
 	if (efi_enabled(EFI_PARAVIRT))
-		return 0;
+		return -ENODEV;
 
 	/* Map the EFI memory map */
 	memmap.map = early_memremap((unsigned long)memmap.phys_map,
