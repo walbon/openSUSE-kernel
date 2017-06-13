@@ -446,8 +446,8 @@ config CAVIUM_ERRATUM_30115
 	help
 	  On ThunderX T88 pass 1.x through 2.2, T81 pass 1.0 through
 	  1.2, and T83 Pass 1.0, KVM guest execution may disable
-	  interrupts in host.  The fix is to reenable group 1
-	  interrupts when returning to host mode.
+	  interrupts in host. Trapping both GICv3 group-0 and group-1
+	  accesses sidesteps the issue.
 
 	  If unsure, say Y.
 
