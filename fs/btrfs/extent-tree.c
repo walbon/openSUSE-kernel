@@ -5018,7 +5018,7 @@ static void btrfs_async_reclaim_metadata_space(struct work_struct *work)
 	space_info = __find_space_info(fs_info, BTRFS_BLOCK_GROUP_METADATA);
 
 	spin_lock(&space_info->lock);
-	to_reclaim = btrfs_calc_reclaim_metadata_size(fs_info->fs_root,
+	to_reclaim = btrfs_calc_reclaim_metadata_size(fs_info->extent_root,
 						      space_info);
 	if (!to_reclaim) {
 		space_info->flush = 0;
@@ -5033,7 +5033,7 @@ static void btrfs_async_reclaim_metadata_space(struct work_struct *work)
 		struct reserve_ticket *ticket;
 		int ret;
 
-		ret = flush_space(fs_info->fs_root, space_info, to_reclaim,
+		ret = flush_space(fs_info->extent_root, space_info, to_reclaim,
 			    to_reclaim, flush_state);
 		spin_lock(&space_info->lock);
 		if (list_empty(&space_info->tickets)) {
@@ -5041,7 +5041,7 @@ static void btrfs_async_reclaim_metadata_space(struct work_struct *work)
 			spin_unlock(&space_info->lock);
 			return;
 		}
-		to_reclaim = btrfs_calc_reclaim_metadata_size(fs_info->fs_root,
+		to_reclaim = btrfs_calc_reclaim_metadata_size(fs_info->extent_root,
 							      space_info);
 		ticket = list_first_entry(&space_info->tickets,
 					  struct reserve_ticket, list);
@@ -5080,7 +5080,7 @@ static void priority_reclaim_metadata_space(struct btrfs_fs_info *fs_info,
 	int flush_state = FLUSH_DELAYED_ITEMS_NR;
 
 	spin_lock(&space_info->lock);
-	to_reclaim = btrfs_calc_reclaim_metadata_size(fs_info->fs_root,
+	to_reclaim = btrfs_calc_reclaim_metadata_size(fs_info->extent_root,
 						      space_info);
 	if (!to_reclaim) {
 		spin_unlock(&space_info->lock);
@@ -5089,7 +5089,7 @@ static void priority_reclaim_metadata_space(struct btrfs_fs_info *fs_info,
 	spin_unlock(&space_info->lock);
 
 	do {
-		flush_space(fs_info->fs_root, space_info, to_reclaim,
+		flush_space(fs_info->extent_root, space_info, to_reclaim,
 			    to_reclaim, flush_state);
 		flush_state++;
 		spin_lock(&space_info->lock);
