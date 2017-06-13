@@ -183,7 +183,10 @@ __hyp_stub_do_trap:
 	bne	1f
 	bx	r1
 
-1:	ldr	r0, =HVC_STUB_ERR
+1:	teq	r0, #HVC_RESET_VECTORS
+	beq	__hyp_stub_exit
+
+	ldr	r0, =HVC_STUB_ERR
 
 __hyp_stub_exit:
 	__ERET
@@ -230,6 +233,12 @@ ENTRY(__hyp_soft_restart)
 	__HVC(0)
 	ret	lr
 ENDPROC(__hyp_soft_restart)
+
+ENTRY(__hyp_reset_vectors)
+	mov	r0, #HVC_RESET_VECTORS
+	__HVC(0)
+	ret	lr
+ENDPROC(__hyp_reset_vectors)
 
 #ifndef ZIMAGE
 .align 2
