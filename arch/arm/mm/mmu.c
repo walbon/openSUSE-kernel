@@ -87,7 +87,7 @@ struct cachepolicy {
 #define s2_policy(policy)	0
 #endif
 
-unsigned long kimage_voffset __ro_after_init;
+unsigned long kimage_voffset __section(.hyp.text);
 
 static struct cachepolicy cache_policies[] __initdata = {
 	{
