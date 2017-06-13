@@ -150,7 +150,8 @@ xfs_ioend_new_eof(
 	xfs_fsize_t		bsize;
 
 	bsize = ioend->io_offset + ioend->io_size;
-	isize = MIN(i_size_read(VFS_I(ip)), bsize);
+	isize = MAX(ip->i_size, ip->i_new_size);
+	isize = MIN(isize, bsize);
 	return isize > ip->i_d.di_size ? isize : 0;
 }
 
@@ -1329,16 +1330,6 @@ xfs_end_io_direct_write(
 	bool			is_async)
 {
 	struct xfs_ioend	*ioend = iocb->private;
-
-
-	/*
-	* While the generic direct I/O code updates the inode size, it does
-	* so only after the end_io handler is called, which means our
-	* end_io handler thinks the on-disk size is outside the in-core
-	* size.  To prevent this just update it a little bit earlier here.
-	*/
-	if (offset + size > i_size_read(ioend->io_inode))
-		i_size_write(ioend->io_inode, offset + size);
 
 	/*
 	 * blockdev_direct_IO can return an error even after the I/O

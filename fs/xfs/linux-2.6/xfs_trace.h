@@ -866,6 +866,7 @@ DECLARE_EVENT_CLASS(xfs_file_class,
 		__field(dev_t, dev)
 		__field(xfs_ino_t, ino)
 		__field(xfs_fsize_t, size)
+		__field(xfs_fsize_t, new_size)
 		__field(loff_t, offset)
 		__field(size_t, count)
 		__field(int, flags)
@@ -874,15 +875,17 @@ DECLARE_EVENT_CLASS(xfs_file_class,
 		__entry->dev = VFS_I(ip)->i_sb->s_dev;
 		__entry->ino = ip->i_ino;
 		__entry->size = ip->i_d.di_size;
+		__entry->new_size = ip->i_new_size;
 		__entry->offset = offset;
 		__entry->count = count;
 		__entry->flags = flags;
 	),
-	TP_printk("dev %d:%d ino 0x%llx size 0x%llx "
+	TP_printk("dev %d:%d ino 0x%llx size 0x%llx new_size 0x%llx "
 		  "offset 0x%llx count 0x%zx ioflags %s",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->ino,
 		  __entry->size,
+		  __entry->new_size,
 		  __entry->offset,
 		  __entry->count,
 		  __print_flags(__entry->flags, "|", XFS_IO_FLAGS))
@@ -950,6 +953,7 @@ DECLARE_EVENT_CLASS(xfs_imap_class,
 		__field(dev_t, dev)
 		__field(xfs_ino_t, ino)
 		__field(loff_t, size)
+		__field(loff_t, new_size)
 		__field(loff_t, offset)
 		__field(size_t, count)
 		__field(int, type)
@@ -961,6 +965,7 @@ DECLARE_EVENT_CLASS(xfs_imap_class,
 		__entry->dev = VFS_I(ip)->i_sb->s_dev;
 		__entry->ino = ip->i_ino;
 		__entry->size = ip->i_d.di_size;
+		__entry->new_size = ip->i_new_size;
 		__entry->offset = offset;
 		__entry->count = count;
 		__entry->type = type;
@@ -968,12 +973,13 @@ DECLARE_EVENT_CLASS(xfs_imap_class,
 		__entry->startblock = irec ? irec->br_startblock : 0;
 		__entry->blockcount = irec ? irec->br_blockcount : 0;
 	),
-	TP_printk("dev %d:%d ino 0x%llx size 0x%llx "
+	TP_printk("dev %d:%d ino 0x%llx size 0x%llx new_size 0x%llx "
 		  "offset 0x%llx count %zd type %s "
 		  "startoff 0x%llx startblock %lld blockcount 0x%llx",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->ino,
 		  __entry->size,
+		  __entry->new_size,
 		  __entry->offset,
 		  __entry->count,
 		  __print_symbolic(__entry->type, XFS_IO_TYPES),
@@ -999,6 +1005,7 @@ DECLARE_EVENT_CLASS(xfs_simple_io_class,
 		__field(dev_t, dev)
 		__field(xfs_ino_t, ino)
 		__field(loff_t, size)
+		__field(loff_t, new_size)
 		__field(loff_t, offset)
 		__field(size_t, count)
 	),
@@ -1006,14 +1013,16 @@ DECLARE_EVENT_CLASS(xfs_simple_io_class,
 		__entry->dev = VFS_I(ip)->i_sb->s_dev;
 		__entry->ino = ip->i_ino;
 		__entry->size = ip->i_d.di_size;
+		__entry->new_size = ip->i_new_size;
 		__entry->offset = offset;
 		__entry->count = count;
 	),
-	TP_printk("dev %d:%d ino 0x%llx size 0x%llx "
+	TP_printk("dev %d:%d ino 0x%llx size 0x%llx new_size 0x%llx "
 		  "offset 0x%llx count %zd",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->ino,
 		  __entry->size,
+		  __entry->new_size,
 		  __entry->offset,
 		  __entry->count)
 );
@@ -1025,6 +1034,40 @@ DEFINE_EVENT(xfs_simple_io_class, name,	\
 DEFINE_SIMPLE_IO_EVENT(xfs_delalloc_enospc);
 DEFINE_SIMPLE_IO_EVENT(xfs_unwritten_convert);
 DEFINE_SIMPLE_IO_EVENT(xfs_get_blocks_notfound);
+
+
+TRACE_EVENT(xfs_itruncate_start,
+	TP_PROTO(struct xfs_inode *ip, xfs_fsize_t new_size, int flag,
+		 xfs_off_t toss_start, xfs_off_t toss_finish),
+	TP_ARGS(ip, new_size, flag, toss_start, toss_finish),
+	TP_STRUCT__entry(
+		__field(dev_t, dev)
+		__field(xfs_ino_t, ino)
+		__field(xfs_fsize_t, size)
+		__field(xfs_fsize_t, new_size)
+		__field(xfs_off_t, toss_start)
+		__field(xfs_off_t, toss_finish)
+		__field(int, flag)
+	),
+	TP_fast_assign(
+		__entry->dev = VFS_I(ip)->i_sb->s_dev;
+		__entry->ino = ip->i_ino;
+		__entry->size = ip->i_d.di_size;
+		__entry->new_size = new_size;
+		__entry->toss_start = toss_start;
+		__entry->toss_finish = toss_finish;
+		__entry->flag = flag;
+	),
+	TP_printk("dev %d:%d ino 0x%llx %s size 0x%llx new_size 0x%llx "
+		  "toss start 0x%llx toss finish 0x%llx",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->ino,
+		  __print_flags(__entry->flag, "|", XFS_ITRUNC_FLAGS),
+		  __entry->size,
+		  __entry->new_size,
+		  __entry->toss_start,
+		  __entry->toss_finish)
+);
 
 DECLARE_EVENT_CLASS(xfs_itrunc_class,
 	TP_PROTO(struct xfs_inode *ip, xfs_fsize_t new_size),
@@ -1052,8 +1095,8 @@ DECLARE_EVENT_CLASS(xfs_itrunc_class,
 DEFINE_EVENT(xfs_itrunc_class, name, \
 	TP_PROTO(struct xfs_inode *ip, xfs_fsize_t new_size), \
 	TP_ARGS(ip, new_size))
-DEFINE_ITRUNC_EVENT(xfs_itruncate_extents_start);
-DEFINE_ITRUNC_EVENT(xfs_itruncate_extents_end);
+DEFINE_ITRUNC_EVENT(xfs_itruncate_finish_start);
+DEFINE_ITRUNC_EVENT(xfs_itruncate_finish_end);
 
 TRACE_EVENT(xfs_pagecache_inval,
 	TP_PROTO(struct xfs_inode *ip, xfs_off_t start, xfs_off_t finish),
