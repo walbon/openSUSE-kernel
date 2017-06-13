@@ -48,7 +48,7 @@
 
 u64 idmap_t0sz = TCR_T0SZ(VA_BITS);
 
-u64 kimage_voffset __read_mostly;
+u64 kimage_voffset __section(.hyp.text);
 EXPORT_SYMBOL(kimage_voffset);
 
 /*
