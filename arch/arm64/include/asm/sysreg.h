@@ -295,6 +295,22 @@ static inline void config_sctlr_el1(u32 clear, u32 set)
 	write_sysreg(val, sctlr_el1);
 }
 
+/*
+ * Unlike read_cpuid, calls to read_sysreg are never expected to be
+ * optimized away or replaced with synthetic values.
+ */
+#define read_sysreg(r) ({					\
+	u64 __val;						\
+	asm volatile("mrs %0, " __stringify(r) : "=r" (__val));	\
+	__val;							\
+})
+
+#define write_sysreg(v, r) do {					\
+	u64 __val = (u64)v;					\
+	asm volatile("msr " __stringify(r) ", %0"		\
+		     : : "r" (__val));				\
+} while (0)
+
 #endif
 
 #endif	/* __ASM_SYSREG_H */
