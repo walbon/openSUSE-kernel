@@ -373,7 +373,7 @@ static void create_mapping_late(phys_addr_t phys, unsigned long virt,
 		return;
 	}
 
-	return __create_pgd_mapping(init_mm.pgd, phys, virt, size, prot,
+	__create_pgd_mapping(init_mm.pgd, phys, virt, size, prot,
 				    late_pgtable_alloc);
 }
 
