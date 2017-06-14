@@ -1736,8 +1736,8 @@ bool iwl_mvm_bcast_filter_build_cmd(struct iwl_mvm *mvm,
 
 	return true;
 }
-static int iwl_mvm_configure_bcast_filter(struct iwl_mvm *mvm,
-					  struct ieee80211_vif *vif)
+
+static int iwl_mvm_configure_bcast_filter(struct iwl_mvm *mvm)
 {
 	struct iwl_bcast_filter_cmd cmd;
 
@@ -1751,8 +1751,7 @@ static int iwl_mvm_configure_bcast_filter(struct iwl_mvm *mvm,
 				    sizeof(cmd), &cmd);
 }
 #else
-static inline int iwl_mvm_configure_bcast_filter(struct iwl_mvm *mvm,
-						 struct ieee80211_vif *vif)
+static inline int iwl_mvm_configure_bcast_filter(struct iwl_mvm *mvm)
 {
 	return 0;
 }
@@ -1867,7 +1866,7 @@ static void iwl_mvm_bss_info_changed_station(struct iwl_mvm *mvm,
 		}
 
 		iwl_mvm_recalc_multicast(mvm);
-		iwl_mvm_configure_bcast_filter(mvm, vif);
+		iwl_mvm_configure_bcast_filter(mvm);
 
 		/* reset rssi values */
 		mvmvif->bf_data.ave_beacon_signal = 0;
@@ -1918,7 +1917,7 @@ static void iwl_mvm_bss_info_changed_station(struct iwl_mvm *mvm,
 
 	if (changes & BSS_CHANGED_ARP_FILTER) {
 		IWL_DEBUG_MAC80211(mvm, "arp filter changed\n");
-		iwl_mvm_configure_bcast_filter(mvm, vif);
+		iwl_mvm_configure_bcast_filter(mvm);
 	}
 }
 
