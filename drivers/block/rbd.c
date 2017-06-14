@@ -1930,11 +1930,10 @@ static void rbd_osd_req_format_rw(struct rbd_obj_request *obj_request)
 
 static void rbd_osd_req_format_read(struct rbd_obj_request *obj_request)
 {
-	struct rbd_img_request *img_request = obj_request->img_request;
 	struct ceph_osd_request *osd_req = obj_request->osd_req;
 
-	if (img_request)
-		osd_req->r_snapid = img_request->snap_id;
+	rbd_assert(obj_request_img_data_test(obj_request));
+	osd_req->r_snapid = obj_request->img_request->snap_id;
 }
 
 static void rbd_osd_req_format_write(struct rbd_obj_request *obj_request)
@@ -3052,8 +3051,6 @@ static int rbd_img_obj_exists_submit(struct rbd_obj_request *obj_request)
 	stat_request->page_count = page_count;
 	stat_request->callback = rbd_img_obj_exists_callback;
 
-	rbd_osd_req_format_read(stat_request);
-
 	rbd_obj_request_submit(stat_request);
 	return 0;
 
@@ -3523,7 +3520,6 @@ static int rbd_obj_method_sync(struct rbd_device *rbd_dev,
 	osd_req_op_cls_response_data_pages(obj_request->osd_req, 0,
 					obj_request->pages, inbound_size,
 					0, false, false);
-	rbd_osd_req_format_read(obj_request);
 
 	rbd_obj_request_submit(obj_request);
 	ret = rbd_obj_request_wait(obj_request);
@@ -3726,7 +3722,6 @@ static int rbd_obj_read_sync(struct rbd_device *rbd_dev,
 					obj_request->length,
 					obj_request->offset & ~PAGE_MASK,
 					false, false);
-	rbd_osd_req_format_read(obj_request);
 
 	rbd_obj_request_submit(obj_request);
 	ret = rbd_obj_request_wait(obj_request);
