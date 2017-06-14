@@ -227,5 +227,3 @@ const struct iwl_cfg iwl4165_2ac_sdio_cfg = {
 };
 
 MODULE_FIRMWARE(IWL8000_MODULE_FIRMWARE(IWL8000_UCODE_API_OK));
-/* SP2 kernel-firmware */
-MODULE_FIRMWARE(IWL8000_MODULE_FIRMWARE(16));
