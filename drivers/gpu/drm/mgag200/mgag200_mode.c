@@ -1266,7 +1266,10 @@ static int mga_crtc_mode_set(struct drm_crtc *crtc,
 
 
 	if (IS_G200_SE(mdev)) {
-		if (mdev->unique_rev_id >= 0x02) {
+		if  (mdev->unique_rev_id >= 0x04) {
+			WREG8(MGAREG_CRTCEXT_INDEX, 0x06);
+			WREG8(MGAREG_CRTCEXT_DATA, 0);
+		} else if (mdev->unique_rev_id >= 0x02) {
 			u8 hi_pri_lvl;
 			u32 bpp;
 			u32 mb;
@@ -1754,6 +1757,14 @@ static int mga_vga_mode_valid(struct drm_connector *connector,
 			    > (30100 * 1024)) {
 				DRM_DEBUG_KMS("Mode %d exceeds bandwidth: %d > %d",
 					      mode->base.id, bw, 30100 * 1024);
+				return MODE_BANDWIDTH;
+			}
+		} else {
+			if ((bw =
+			     mga_vga_calculate_mode_bandwidth(mode, bpp)) 
+			    > (55000 * 1024)) {
+				DRM_DEBUG_KMS("Mode %d exceeds bandwidth: %d > %d",
+					      mode->base.id, bw, 55000 * 1024);
 				return MODE_BANDWIDTH;
 			}
 		}
