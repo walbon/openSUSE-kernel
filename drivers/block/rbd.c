@@ -4159,23 +4159,23 @@ EXPORT_SYMBOL(rbd_dev_setxattr);
 int rbd_dev_cmpsetxattr(struct rbd_device *rbd_dev, char *key, void *oldval,
 			int oldval_len, void *newval, int newval_len)
 {
-	struct rbd_obj_request *obj_request;
+	struct ceph_osd_client *osdc = &rbd_dev->rbd_client->client->osdc;
+	struct ceph_osd_request *req;
 	int ret;
 
-	obj_request = rbd_obj_request_create(rbd_dev->header_oid.name, 0, 0,
-					     OBJ_REQUEST_NODATA);
-	if (!obj_request)
+	req = ceph_osdc_alloc_request(osdc, NULL, 2, false, GFP_KERNEL);
+	if (!req)
 		return -ENOMEM;
 
-	/* XXX need a new op_type? CMPXATTR is a read operation */
-	obj_request->osd_req = rbd_osd_req_create(rbd_dev, OBJ_OP_WRITE, 2,
-						  obj_request);
-	if (!obj_request->osd_req) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	ceph_oid_copy(&req->r_base_oid, &rbd_dev->header_oid);
+	ceph_oloc_copy(&req->r_base_oloc, &rbd_dev->header_oloc);
+	req->r_flags = CEPH_OSD_FLAG_WRITE | CEPH_OSD_FLAG_ONDISK;
 
-	ret = osd_req_op_xattr_init(obj_request->osd_req, 0,
+	ret = ceph_osdc_alloc_messages(req, GFP_KERNEL);
+	if (ret)
+		goto out;
+
+	ret = osd_req_op_xattr_init(req, 0,
 				    CEPH_OSD_OP_CMPXATTR,
 				    key, oldval, oldval_len,
 				    CEPH_OSD_CMPXATTR_OP_EQ,
@@ -4183,28 +4183,20 @@ int rbd_dev_cmpsetxattr(struct rbd_device *rbd_dev, char *key, void *oldval,
 	if (ret)
 		goto out;
 
-	ret = osd_req_op_xattr_init(obj_request->osd_req, 1,
+	ret = osd_req_op_xattr_init(req, 1,
 				    CEPH_OSD_OP_SETXATTR,
 				    key, newval, newval_len, 0, 0);
 	if (ret)
 		goto out;
 
-	rbd_osd_req_format_write(obj_request);
-
-	rbd_obj_request_submit(obj_request);
-	ret = rbd_obj_request_wait(obj_request);
-	if (ret)
+	ceph_osdc_start_request(osdc, req, false);
+	ret = ceph_osdc_wait_request(osdc, req);
+	if (ret < 0)
 		goto out;
-
-	ret = obj_request->result;
-	if (ret) {
-		goto out;
-	}
 
 	ret = 0;
 out:
-	rbd_obj_request_put(obj_request);
-
+	ceph_osdc_put_request(req);
 	return ret;
 }
 EXPORT_SYMBOL(rbd_dev_cmpsetxattr);
