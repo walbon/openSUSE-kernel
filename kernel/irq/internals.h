@@ -9,8 +9,12 @@
 
 #ifdef CONFIG_SPARSE_IRQ
 # define IRQ_BITMAP_BITS	(NR_IRQS + 8196)
+extern void irq_lock_sparse(void);
+extern void irq_unlock_sparse(void);
 #else
 # define IRQ_BITMAP_BITS	NR_IRQS
+static inline void irq_lock_sparse(void) { }
+static inline void irq_unlock_sparse(void) { }
 #endif
 
 #define istate core_internal_state__do_not_mess_with_it
