@@ -4576,7 +4576,7 @@ static struct rbd_device *__rbd_dev_create(struct rbd_client *rbdc,
 	init_rwsem(&rbd_dev->header_rwsem);
 
 	ceph_oid_init(&rbd_dev->header_oid);
-	ceph_oloc_init(&rbd_dev->header_oloc);
+	rbd_dev->header_oloc.pool = spec->pool_id;
 
 	rbd_dev->dev.bus = &rbd_bus_type;
 	rbd_dev->dev.type = &rbd_device_type;
@@ -5762,8 +5762,6 @@ static int rbd_dev_header_name(struct rbd_device *rbd_dev)
 	/* Record the header object name for this rbd image. */
 
 	rbd_assert(rbd_image_format_valid(rbd_dev->image_format));
-
-	rbd_dev->header_oloc.pool = rbd_dev->layout.pool_id;
 	if (rbd_dev->image_format == 1)
 		ret = ceph_oid_aprintf(&rbd_dev->header_oid, GFP_KERNEL, "%s%s",
 				       spec->image_name, RBD_SUFFIX);
