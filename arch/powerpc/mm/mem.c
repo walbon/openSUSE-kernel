@@ -115,22 +115,14 @@ int memory_add_physaddr_to_nid(u64 start)
 
 int arch_add_memory(int nid, u64 start, u64 size, bool for_device)
 {
-	struct pglist_data *pgdata;
-	struct zone *zone;
 	unsigned long start_pfn = start >> PAGE_SHIFT;
 	unsigned long nr_pages = size >> PAGE_SHIFT;
-
-	pgdata = NODE_DATA(nid);
 
 	start = (unsigned long)__va(start);
 	if (create_section_mapping(start, start + size))
 		return -EINVAL;
 
-	/* this should work for most non-highmem platforms */
-	zone = pgdata->node_zones +
-		zone_for_memory(nid, start, size, 0, for_device);
-
-	return __add_pages(nid, zone, start_pfn, nr_pages);
+	return __add_pages(nid, start_pfn, nr_pages, !for_device);
 }
 
 #ifdef CONFIG_MEMORY_HOTREMOVE
