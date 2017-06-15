@@ -288,7 +288,7 @@ xfs_map_blocks(
 {
 	struct xfs_inode	*ip = XFS_I(inode);
 	struct xfs_mount	*mp = ip->i_mount;
-	ssize_t			count = 1 << inode->i_blkbits;
+	ssize_t			count = i_blocksize(inode);
 	xfs_fileoff_t		offset_fsb, end_fsb;
 	int			error = 0;
 	int			bmapi_flags = XFS_BMAPI_ENTIRE;
@@ -921,7 +921,7 @@ xfs_aops_discard_page(
 			break;
 		}
 next_buffer:
-		offset += 1 << inode->i_blkbits;
+		offset += i_blocksize(inode);
 
 	} while ((bh = bh->b_this_page) != head);
 
@@ -1371,7 +1371,7 @@ xfs_map_trim_size(
 	    offset + mapping_size >= i_size_read(inode)) {
 		/* limit mapping to block that spans EOF */
 		mapping_size = roundup_64(i_size_read(inode) - offset,
-					  1 << inode->i_blkbits);
+					  i_blocksize(inode));
 	}
 	if (mapping_size > LONG_MAX)
 		mapping_size = LONG_MAX;
@@ -1403,7 +1403,7 @@ __xfs_get_blocks(
 		return -EIO;
 
 	offset = (xfs_off_t)iblock << inode->i_blkbits;
-	ASSERT(bh_result->b_size >= (1 << inode->i_blkbits));
+	ASSERT(bh_result->b_size >= i_blocksize(inode));
 	size = bh_result->b_size;
 
 	if (!create && direct && offset >= i_size_read(inode))
@@ -1977,7 +1977,7 @@ xfs_vm_set_page_dirty(
 			if (offset < end_offset)
 				set_buffer_dirty(bh);
 			bh = bh->b_this_page;
-			offset += 1 << inode->i_blkbits;
+			offset += i_blocksize(inode);
 		} while (bh != head);
 	}
 	/*

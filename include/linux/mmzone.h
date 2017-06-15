@@ -701,8 +701,14 @@ typedef struct pglist_data {
 	 * is the first PFN that needs to be initialised.
 	 */
 	unsigned long first_deferred_pfn;
-#endif /* CONFIG_DEFERRED_STRUCT_PAGE_INIT */
+#ifdef __GENKSYMS__
 	void *suse_kabi_padding;
+#else
+	unsigned long static_init_size;
+#endif
+#else /* CONFIG_DEFERRED_STRUCT_PAGE_INIT */
+	void *suse_kabi_padding;
+#endif /* CONFIG_DEFERRED_STRUCT_PAGE_INIT */
 } pg_data_t;
 
 #define node_present_pages(nid)	(NODE_DATA(nid)->node_present_pages)
