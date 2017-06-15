@@ -427,12 +427,12 @@ void __init mem_init(void)
 		  "      .text : 0x%p" " - 0x%p" "   (%6ld KB)\n"
 		  "    .rodata : 0x%p" " - 0x%p" "   (%6ld KB)\n"
 		  "      .data : 0x%p" " - 0x%p" "   (%6ld KB)\n"
+		  "    fixed   : 0x%16lx - 0x%16lx   (%6ld KB)\n"
+		  "    PCI I/O : 0x%16lx - 0x%16lx   (%6ld MB)\n"
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
 		  "    vmemmap : 0x%16lx - 0x%16lx   (%6ld GB maximum)\n"
 		  "              0x%16lx - 0x%16lx   (%6ld MB actual)\n"
 #endif
-		  "    fixed   : 0x%16lx - 0x%16lx   (%6ld KB)\n"
-		  "    PCI I/O : 0x%16lx - 0x%16lx   (%6ld MB)\n"
 		  "    memory  : 0x%16lx - 0x%16lx   (%6ld MB)\n",
 #ifdef CONFIG_KASAN
 		  MLG(KASAN_SHADOW_START, KASAN_SHADOW_END),
@@ -443,14 +443,14 @@ void __init mem_init(void)
 		  MLK_ROUNDUP(_text, __start_rodata),
 		  MLK_ROUNDUP(__start_rodata, _etext),
 		  MLK_ROUNDUP(_sdata, _edata),
+		  MLK(FIXADDR_START, FIXADDR_TOP),
+		  MLM(PCI_IO_START, PCI_IO_END),
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
 		  MLG(VMEMMAP_START,
 		      VMEMMAP_START + VMEMMAP_SIZE),
 		  MLM((unsigned long)phys_to_page(memblock_start_of_DRAM()),
 		      (unsigned long)virt_to_page(high_memory)),
 #endif
-		  MLK(FIXADDR_START, FIXADDR_TOP),
-		  MLM(PCI_IO_START, PCI_IO_END),
 		  MLM(__phys_to_virt(memblock_start_of_DRAM()),
 		      (unsigned long)high_memory));
 
@@ -467,6 +467,12 @@ void __init mem_init(void)
 #endif
 	BUILD_BUG_ON(TASK_SIZE_64			> MODULES_VADDR);
 	BUG_ON(TASK_SIZE_64				> MODULES_VADDR);
+
+	/*
+	 * Make sure we chose the upper bound of sizeof(struct page)
+	 * correctly.
+	 */
+	BUILD_BUG_ON(sizeof(struct page) > (1 << STRUCT_PAGE_MAX_SHIFT));
 
 	if (PAGE_SIZE >= 16384 && get_num_physpages() <= 128) {
 		extern int sysctl_overcommit_memory;
