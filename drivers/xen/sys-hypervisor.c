@@ -55,6 +55,35 @@ static void xen_sysfs_type_destroy(void)
 	sysfs_remove_file(hypervisor_kobj, &type_attr.attr);
 }
 
+static ssize_t guest_type_show(struct hyp_sysfs_attr *attr, char *buffer)
+{
+	const char *type;
+
+	switch (xen_domain_type) {
+	case XEN_NATIVE:
+		/* ARM only. */
+		type = "Xen";
+		break;
+	case XEN_PV_DOMAIN:
+		type = "PV";
+		break;
+	case XEN_HVM_DOMAIN:
+		type = "HVM";
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return sprintf(buffer, "%s\n", type);
+}
+
+HYPERVISOR_ATTR_RO(guest_type);
+
+static int __init xen_sysfs_guest_type_init(void)
+{
+	return sysfs_create_file(hypervisor_kobj, &guest_type_attr.attr);
+}
+
 /* xen version attributes */
 static ssize_t major_show(struct hyp_sysfs_attr *attr, char *buffer)
 {
@@ -501,6 +530,9 @@ static int __init hyper_sysfs_init(void)
 	ret = xen_sysfs_type_init();
 	if (ret)
 		goto out;
+	ret = xen_sysfs_guest_type_init();
+	if (ret)
+		goto guest_type_out;
 	ret = xen_sysfs_version_init();
 	if (ret)
 		goto version_out;
@@ -531,6 +563,8 @@ uuid_out:
 comp_out:
 	xen_sysfs_version_destroy();
 version_out:
+	sysfs_remove_file(hypervisor_kobj, &guest_type_attr.attr);
+guest_type_out:
 	xen_sysfs_type_destroy();
 out:
 	return ret;
