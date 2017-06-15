@@ -310,6 +310,13 @@ static void init_pgd(pgd_t *pgd, phys_addr_t phys, unsigned long virt,
 {
 	unsigned long addr, length, end, next;
 
+	/*
+	 * If the virtual and physical address don't have the same offset
+	 * within a page, we cannot map the region as the caller expects.
+	 */
+	if (WARN_ON((phys ^ virt) & ~PAGE_MASK))
+		return;
+
 	addr = virt & PAGE_MASK;
 	length = PAGE_ALIGN(size + (virt & ~PAGE_MASK));
 
