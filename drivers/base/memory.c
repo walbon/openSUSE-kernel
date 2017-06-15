@@ -128,6 +128,9 @@ static ssize_t show_mem_removable(struct device *dev,
 	int ret = 1;
 	struct memory_block *mem = to_memory_block(dev);
 
+	if (mem->state != MEM_ONLINE)
+		goto out;
+
 	for (i = 0; i < sections_per_block; i++) {
 		if (!present_section_nr(mem->start_section_nr + i))
 			continue;
@@ -135,6 +138,7 @@ static ssize_t show_mem_removable(struct device *dev,
 		ret &= is_mem_section_removable(pfn, PAGES_PER_SECTION);
 	}
 
+out:
 	return sprintf(buf, "%d\n", ret);
 }
 
@@ -387,35 +391,46 @@ static ssize_t show_valid_zones(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct memory_block *mem = to_memory_block(dev);
-	unsigned long start_pfn, end_pfn;
-	unsigned long valid_start, valid_end;
 	unsigned long nr_pages = PAGES_PER_SECTION * sections_per_block;
-	struct zone *zone;
+	unsigned long start_pfn = section_nr_to_pfn(mem->start_section_nr);
+	unsigned long valid_start_pfn, valid_end_pfn;
+	bool append = false;
+	int nid;
 
-	start_pfn = section_nr_to_pfn(mem->start_section_nr);
-	end_pfn = start_pfn + nr_pages;
-
-	/* The block contains more than one zone can not be offlined. */
-	if (!test_pages_in_a_zone(start_pfn, end_pfn, &valid_start, &valid_end))
+	/*
+	 * The block contains more than one zone can not be offlined.
+	 * This can happen e.g. for ZONE_DMA and ZONE_DMA32
+	 */
+	if (!test_pages_in_a_zone(start_pfn, start_pfn + nr_pages, &valid_start_pfn, &valid_end_pfn))
 		return sprintf(buf, "none\n");
 
-	zone = page_zone(pfn_to_page(valid_start));
+	start_pfn = valid_start_pfn;
+	nr_pages = valid_end_pfn - start_pfn;
 
-	if (zone_idx(zone) == ZONE_MOVABLE - 1) {
-		/*The mem block is the last memoryblock of this zone.*/
-		if (valid_end == zone_end_pfn(zone))
-			return sprintf(buf, "%s %s\n",
-					zone->name, (zone + 1)->name);
+	/*
+	 * Check the existing zone. Make sure that we do that only on the
+	 * online nodes otherwise the page_zone is not reliable
+	 */
+	if (mem->state == MEM_ONLINE) {
+		strcat(buf, page_zone(pfn_to_page(start_pfn))->name);
+		goto out;
 	}
 
-	if (zone_idx(zone) == ZONE_MOVABLE) {
-		/*The mem block is the first memoryblock of ZONE_MOVABLE.*/
-		if (valid_start == zone->zone_start_pfn)
-			return sprintf(buf, "%s %s\n",
-					zone->name, (zone - 1)->name);
+	nid = pfn_to_nid(start_pfn);
+	if (allow_online_pfn_range(nid, start_pfn, nr_pages, MMOP_ONLINE_KERNEL)) {
+		strcat(buf, default_zone_for_pfn(nid, start_pfn, nr_pages)->name);
+		append = true;
 	}
 
-	return sprintf(buf, "%s\n", zone->name);
+	if (allow_online_pfn_range(nid, start_pfn, nr_pages, MMOP_ONLINE_MOVABLE)) {
+		if (append)
+			strcat(buf, " ");
+		strcat(buf, NODE_DATA(nid)->node_zones[ZONE_MOVABLE].name);
+	}
+out:
+	strcat(buf, "\n");
+
+	return strlen(buf);
 }
 static DEVICE_ATTR(valid_zones, 0444, show_valid_zones, NULL);
 #endif
@@ -647,14 +662,6 @@ static int add_memory_block(int base_section_nr)
 	return 0;
 }
 
-static bool is_zone_device_section(struct mem_section *ms)
-{
-	struct page *page;
-
-	page = sparse_decode_mem_map(ms->section_mem_map, __section_nr(ms));
-	return is_zone_device_page(page);
-}
-
 /*
  * need an interface for the VM to add new memory regions,
  * but without onlining it.
@@ -663,9 +670,6 @@ int register_new_memory(int nid, struct mem_section *section)
 {
 	int ret = 0;
 	struct memory_block *mem;
-
-	if (is_zone_device_section(section))
-		return 0;
 
 	mutex_lock(&mem_sysfs_mutex);
 
@@ -702,11 +706,16 @@ static int remove_memory_block(unsigned long node_id,
 {
 	struct memory_block *mem;
 
-	if (is_zone_device_section(section))
+	mutex_lock(&mem_sysfs_mutex);
+
+	/*
+	 * Some users of the memory hotplug do not want/need memblock to
+	 * track all sections. Skip over those.
+	 */
+	mem = find_memory_block(section);
+	if (!mem)
 		return 0;
 
-	mutex_lock(&mem_sysfs_mutex);
-	mem = find_memory_block(section);
 	unregister_mem_sect_under_nodes(mem, __section_nr(section));
 
 	mem->section_count--;
