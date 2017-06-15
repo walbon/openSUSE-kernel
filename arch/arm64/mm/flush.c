@@ -25,8 +25,6 @@
 #include <asm/cachetype.h>
 #include <asm/tlbflush.h>
 
-#include "mm.h"
-
 static void flush_tlb_local(void *info)
 {
 	local_flush_tlb_all();
