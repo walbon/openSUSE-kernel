@@ -317,6 +317,7 @@ static void init_pgd(pgd_t *pgd, phys_addr_t phys, unsigned long virt,
 	if (WARN_ON((phys ^ virt) & ~PAGE_MASK))
 		return;
 
+	phys &= PAGE_MASK;
 	addr = virt & PAGE_MASK;
 	length = PAGE_ALIGN(size + (virt & ~PAGE_MASK));
 
