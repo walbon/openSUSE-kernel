@@ -2627,8 +2627,12 @@ static __init int mcheck_init_device(void)
 
 	/* register character device /dev/mcelog */
 	err = misc_register(&mce_chrdev_device);
-	if (err)
-		goto err_register;
+	if (err) {
+		if (err != -EBUSY)
+			goto err_register;
+		/* Xen dom0 might have registered the device already. */
+		pr_info("Unable to init device /dev/mcelog, already registered");
+	}
 
 	return 0;
 
