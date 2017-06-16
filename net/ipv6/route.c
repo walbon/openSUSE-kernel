@@ -2368,7 +2368,8 @@ struct rt6_info *rt6_add_dflt_router(const struct in6_addr *gwaddr,
 
 		table = fib6_get_table(dev_net(dev), cfg.fc_table);
 		if (table)
-			table->flags |= RT6_TABLE_HAS_DFLT_ROUTER;
+			/* kabi workaround */
+			table->tb6_root.fn_flags |= RT6_TABLE_HAS_DFLT_ROUTER;
 	}
 
 	return rt6_get_dflt_router(gwaddr, dev);
@@ -2391,7 +2392,8 @@ restart:
 	}
 	read_unlock_bh(&table->tb6_lock);
 
-	table->flags &= ~RT6_TABLE_HAS_DFLT_ROUTER;
+	/* kabi workaround */
+	table->tb6_root.fn_flags &= ~RT6_TABLE_HAS_DFLT_ROUTER;
 }
 
 void rt6_purge_dflt_routers(struct net *net)
@@ -2405,7 +2407,9 @@ void rt6_purge_dflt_routers(struct net *net)
 	for (h = 0; h < FIB6_TABLE_HASHSZ; h++) {
 		head = &net->ipv6.fib_table_hash[h];
 		hlist_for_each_entry_rcu(table, head, tb6_hlist) {
-			if (table->flags & RT6_TABLE_HAS_DFLT_ROUTER)
+			/* kabi workaround */
+			if (table->tb6_root.fn_flags &
+			    RT6_TABLE_HAS_DFLT_ROUTER)
 				__rt6_purge_dflt_routers(table);
 		}
 	}
