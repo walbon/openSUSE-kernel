@@ -30,6 +30,7 @@ struct rbd_image_header {
 	__u8 obj_order;
 	u64 stripe_unit;
 	u64 stripe_count;
+	s64 data_pool_id;
 	u64 features;		/* Might be changeable someday? */
 
 	/* The remaining fields need to be updated occasionally */
