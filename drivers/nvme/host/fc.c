@@ -722,7 +722,7 @@ nvmet_fc_start_dev_loss_tmo(struct nvme_fc_ctrl *ctrl, u32 dev_loss_tmo)
 		 * If awaiting the reconnect, terminate it as it'll only
 		 * fail.
 		 */
-		cancel_delayed_work_sync(&ctrl->connect_work);
+		cancel_delayed_work(&ctrl->connect_work);
 		break;
 
 	case NVME_CTRL_RESETTING:
