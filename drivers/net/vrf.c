@@ -378,6 +378,10 @@ static int vrf_rt6_create(struct net_device *dev)
 	struct rt6_info *rt6;
 	int rc = -ENOMEM;
 
+	/* IPv6 can be CONFIG enabled and then disabled runtime */
+	if (!ipv6_mod_enabled())
+		return 0;
+
 	rt6i_table = fib6_new_table(net, vrf->tb_id);
 	if (!rt6i_table)
 		goto out;
