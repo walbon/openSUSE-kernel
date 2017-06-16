@@ -4369,6 +4369,8 @@ int ext4_ext_punch_hole(struct file *file, loff_t offset, loff_t length)
 
 	if (IS_SYNC(inode))
 		ext4_handle_sync(handle);
+	if (ret >= 0)
+		ext4_update_inode_fsync_trans(handle, inode, 1);
 
 	up_write(&EXT4_I(inode)->i_data_sem);
 
