@@ -599,6 +599,7 @@ static int resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 		}
 
 		if (root_objectid && ref->root_id != root_objectid) {
+			release_pref(ref);
 			ret = BACKREF_FOUND_SHARED;
 			goto out;
 		}
@@ -625,9 +626,6 @@ static int resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 		ref->parent = node ? node->val : 0;
 		ref->inode_list = unode_aux_to_inode_list(node);
 
-		/* Now it's a direct ref, put it in the the direct tree */
-		prelim_ref_insert(fs_info, &preftrees->direct, ref);
-
 		/* Add a prelim_ref(s) for any other parent(s). */
 		while ((node = ulist_next(parents, &uiter))) {
 			struct prelim_ref *new_ref;
@@ -635,6 +633,7 @@ static int resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 			new_ref = kmem_cache_alloc(btrfs_prelim_ref_cache,
 						   GFP_NOFS);
 			if (!new_ref) {
+				release_pref(ref);
 				ret = -ENOMEM;
 				goto out;
 			}
@@ -643,6 +642,9 @@ static int resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 			new_ref->inode_list = unode_aux_to_inode_list(node);
 			prelim_ref_insert(fs_info, &preftrees->direct, new_ref);
 		}
+
+		/* Now it's a direct ref, put it in the the direct tree */
+		prelim_ref_insert(fs_info, &preftrees->direct, ref);
 
 		ulist_reinit(parents);
 	}
