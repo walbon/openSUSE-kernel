@@ -136,9 +136,10 @@ struct prelim_ref {
 
 struct preftree {
 	struct rb_root root;
+	unsigned count;
 };
 
-#define PREFTREE_INIT	{ .root = RB_ROOT }
+#define PREFTREE_INIT	{ .root = RB_ROOT, .count = 0 }
 
 struct preftrees {
 	struct preftree direct;    /* BTRFS_SHARED_[DATA|BLOCK]_REF_KEY */
@@ -247,6 +248,7 @@ static void prelim_ref_insert(struct preftree *preftree,
 		}
 	}
 
+	preftree->count++;
 	rb_link_node(&newref->rbnode, parent, p);
 	rb_insert_color(&newref->rbnode, root);
 }
@@ -260,6 +262,7 @@ static void prelim_release(struct preftree *preftree)
 		ref = rb_entry(node, struct prelim_ref, rbnode);
 		node = rb_next(&ref->rbnode);
 		rb_erase(&ref->rbnode, &preftree->root);
+		preftree->count--;
 		release_pref(ref);
 	}
 }
@@ -593,6 +596,7 @@ static int resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 		BUG_ON(ref->parent);	/* should not be a direct ref */
 
 		rb_erase(&ref->rbnode, &preftrees->indirect.root);
+		preftrees->indirect.count--;
 
 		if (ref->count == 0) {
 			release_pref(ref);
@@ -1221,6 +1225,7 @@ again:
 		}
 
 		rb_erase(&ref->rbnode, &preftrees.direct.root);
+		preftrees.direct.count--;
 		release_pref(ref);
 	}
 	WARN_ON(!RB_EMPTY_ROOT(&preftrees.direct.root));
