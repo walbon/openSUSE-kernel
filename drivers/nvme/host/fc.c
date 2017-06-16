@@ -722,7 +722,7 @@ nvmet_fc_start_dev_loss_tmo(struct nvme_fc_ctrl *ctrl, u32 dev_loss_tmo)
 		 * If awaiting the reconnect, terminate it as it'll only
 		 * fail.
 		 */
-		cancel_delayed_work_sync(&ctrl->connect_work);
+		cancel_delayed_work(&ctrl->connect_work);
 		break;
 
 	case NVME_CTRL_RESETTING:
@@ -3225,6 +3225,9 @@ nvme_fc_init_ctrl(struct device *dev, struct nvmf_ctrl_options *opts,
 		ctrl->ctrl.opts = NULL;
 		/* initiate nvme ctrl ref counting teardown */
 		nvme_uninit_ctrl(&ctrl->ctrl);
+
+		/* Remove core ctrl ref. */
+		nvme_put_ctrl(&ctrl->ctrl);
 
 		/* as we're past the point where we transition to the ref
 		 * counting teardown path, if we return a bad pointer here,

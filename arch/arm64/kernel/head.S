@@ -101,8 +101,6 @@ _head:
 #endif
 
 #ifdef CONFIG_EFI
-	.globl	__efistub_stext_offset
-	.set	__efistub_stext_offset, stext - _head
 	.align 3
 pe_header:
 	.ascii	"PE"
@@ -122,11 +120,11 @@ optional_header:
 	.short	0x20b				// PE32+ format
 	.byte	0x02				// MajorLinkerVersion
 	.byte	0x14				// MinorLinkerVersion
-	.long	_end - stext			// SizeOfCode
+	.long	_end - efi_header_end		// SizeOfCode
 	.long	0				// SizeOfInitializedData
 	.long	0				// SizeOfUninitializedData
 	.long	__efistub_entry - _head		// AddressOfEntryPoint
-	.long	__efistub_stext_offset		// BaseOfCode
+	.long	efi_header_end - _head		// BaseOfCode
 
 extra_header_fields:
 	.quad	0				// ImageBase
@@ -143,7 +141,7 @@ extra_header_fields:
 	.long	_end - _head			// SizeOfImage
 
 	// Everything before the kernel image is considered part of the header
-	.long	__efistub_stext_offset		// SizeOfHeaders
+	.long	efi_header_end - _head		// SizeOfHeaders
 	.long	0				// CheckSum
 	.short	0xa				// Subsystem (EFI application)
 	.short	0				// DllCharacteristics
@@ -187,10 +185,10 @@ section_table:
 	.byte	0
 	.byte	0
 	.byte	0        		// end of 0 padding of section name
-	.long	_end - stext		// VirtualSize
-	.long	__efistub_stext_offset	// VirtualAddress
-	.long	_edata - stext		// SizeOfRawData
-	.long	__efistub_stext_offset	// PointerToRawData
+	.long	_end - efi_header_end	// VirtualSize
+	.long	efi_header_end - _head	// VirtualAddress
+	.long	_edata - efi_header_end	// SizeOfRawData
+	.long	efi_header_end - _head	// PointerToRawData
 
 	.long	0		// PointerToRelocations (0 for executables)
 	.long	0		// PointerToLineNumbers (0 for executables)
@@ -199,14 +197,17 @@ section_table:
 	.long	0xe0500020	// Characteristics (section flags)
 
 	/*
-	 * EFI will load stext onwards at the 4k section alignment
+	 * EFI will load .text onwards at the 4k section alignment
 	 * described in the PE/COFF header. To ensure that instruction
 	 * sequences using an adrp and a :lo12: immediate will function
-	 * correctly at this alignment, we must ensure that stext is
+	 * correctly at this alignment, we must ensure that .text is
 	 * placed at a 4k boundary in the Image to begin with.
 	 */
 	.align 12
+efi_header_end:
 #endif
+
+	__INIT
 
 ENTRY(stext)
 	bl	preserve_boot_args
@@ -222,12 +223,12 @@ ENTRY(stext)
 	 * the TCR will have been set.
 	 */
 	ldr	x27, 0f				// address to jump to after
-						// MMU has been enabled
+	neg	x27, x27			// MMU has been enabled
 	adr_l	lr, __enable_mmu		// return (PIC) address
 	b	__cpu_setup			// initialise processor
 ENDPROC(stext)
 	.align	3
-0:	.quad	__mmap_switched - (_head - TEXT_OFFSET) + KIMAGE_VADDR
+0:	.quad	(_text - TEXT_OFFSET) - __mmap_switched - KIMAGE_VADDR
 
 /*
  * Preserve the arguments passed by the bootloader in x0 .. x3
@@ -396,7 +397,7 @@ __create_page_tables:
 	ldr	x5, =KIMAGE_VADDR
 	add	x5, x5, x23			// add KASLR displacement
 	create_pgd_entry x0, x5, x3, x6
-	ldr	w6, kernel_img_size
+	ldr	w6, =kernel_img_size
 	add	x6, x6, x5
 	mov	x3, x24				// phys offset
 	create_block_map x0, x7, x3, x5, x6
@@ -413,9 +414,6 @@ __create_page_tables:
 
 	ret	x28
 ENDPROC(__create_page_tables)
-
-kernel_img_size:
-	.long	_end - (_head - TEXT_OFFSET)
 	.ltorg
 
 /*
@@ -505,7 +503,7 @@ ENDPROC(__mmap_switched)
  * end early head section, begin head code that is also used for
  * hotplug and needs to have the same protections as the text region
  */
-	.section ".text","ax"
+	.section ".idmap.text","ax"
 
 ENTRY(kimage_vaddr)
 	.quad		_text - TEXT_OFFSET
@@ -627,17 +625,29 @@ ENTRY(set_cpu_boot_mode_flag)
 ENDPROC(set_cpu_boot_mode_flag)
 
 /*
+ * These values are written with the MMU off, but read with the MMU on.
+ * Writers will invalidate the corresponding address, discarding up to a
+ * 'Cache Writeback Granule' (CWG) worth of data. The linker script ensures
+ * sufficient alignment that the CWG doesn't overlap another section.
+ */
+	.pushsection ".mmuoff.data.write", "aw"
+/*
  * We need to find out the CPU boot mode long after boot, so we need to
  * store it in a writable variable.
  *
  * This is not in .bss, because we set it sufficiently early that the boot-time
  * zeroing of .bss would clobber it.
  */
-	.pushsection	.data..cacheline_aligned
-	.align	L1_CACHE_SHIFT
 ENTRY(__boot_cpu_mode)
 	.long	BOOT_CPU_MODE_EL2
 	.long	BOOT_CPU_MODE_EL1
+/*
+ * The booting CPU updates the failed status @__early_cpu_boot_status,
+ * with MMU turned off.
+ */
+ENTRY(__early_cpu_boot_status)
+	.long 	0
+
 	.popsection
 
 	/*
@@ -715,12 +725,6 @@ ENDPROC(__secondary_switched)
 	dc	ivac, \tmp1			// Invalidate potentially stale cache line
 	.endm
 
-	.pushsection	.data..cacheline_aligned
-	.align	L1_CACHE_SHIFT
-ENTRY(__early_cpu_boot_status)
-	.long 	0
-	.popsection
-
 /*
  * Enable the MMU.
  *
@@ -732,9 +736,8 @@ ENTRY(__early_cpu_boot_status)
  * Checks if the selected granule size is supported by the CPU.
  * If it isn't, park the CPU
  */
-	.section	".idmap.text", "ax"
 ENTRY(__enable_mmu)
-	mrs	x18, sctlr_el1			// preserve old SCTLR_EL1 value
+	mrs	x22, sctlr_el1			// preserve old SCTLR_EL1 value
 	mrs	x1, ID_AA64MMFR0_EL1
 	ubfx	x2, x1, #ID_AA64MMFR0_TGRAN_SHIFT, 4
 	cmp	x2, #ID_AA64MMFR0_TGRAN_SUPPORTED
@@ -762,7 +765,7 @@ ENTRY(__enable_mmu)
 	 * to take into account by discarding the current kernel mapping and
 	 * creating a new one.
 	 */
-	msr	sctlr_el1, x18			// disable the MMU
+	msr	sctlr_el1, x22			// disable the MMU
 	isb
 	bl	__create_page_tables		// recreate kernel mapping
 

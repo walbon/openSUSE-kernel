@@ -43,6 +43,7 @@
 #include <linux/of_platform.h>
 #include <linux/efi.h>
 #include <linux/psci.h>
+#include <linux/mm.h>
 
 #include <asm/acpi.h>
 #include <asm/fixmap.h>
@@ -200,10 +201,10 @@ static void __init request_standard_resources(void)
 	struct memblock_region *region;
 	struct resource *res;
 
-	kernel_code.start   = virt_to_phys(_text);
-	kernel_code.end     = virt_to_phys(_etext - 1);
-	kernel_data.start   = virt_to_phys(_sdata);
-	kernel_data.end     = virt_to_phys(_end - 1);
+	kernel_code.start   = __pa_symbol(_text);
+	kernel_code.end     = __pa_symbol(__init_begin - 1);
+	kernel_data.start   = __pa_symbol(_sdata);
+	kernel_data.end     = __pa_symbol(_end - 1);
 
 	for_each_memblock(memory, region) {
 		res = alloc_bootmem_low(sizeof(*res));
@@ -233,69 +234,6 @@ static void __init request_standard_resources(void)
 #endif
 	}
 }
-
-#ifdef CONFIG_BLK_DEV_INITRD
-/*
- * Relocate initrd if it is not completely within the linear mapping.
- * This would be the case if mem= cuts out all or part of it.
- */
-static void __init relocate_initrd(void)
-{
-	phys_addr_t orig_start = __virt_to_phys(initrd_start);
-	phys_addr_t orig_end = __virt_to_phys(initrd_end);
-	phys_addr_t ram_end = memblock_end_of_DRAM();
-	phys_addr_t new_start;
-	unsigned long size, to_free = 0;
-	void *dest;
-
-	if (orig_end <= ram_end)
-		return;
-
-	/*
-	 * Any of the original initrd which overlaps the linear map should
-	 * be freed after relocating.
-	 */
-	if (orig_start < ram_end)
-		to_free = ram_end - orig_start;
-
-	size = orig_end - orig_start;
-	if (!size)
-		return;
-
-	/* initrd needs to be relocated completely inside linear mapping */
-	new_start = memblock_find_in_range(0, PFN_PHYS(max_pfn),
-					   size, PAGE_SIZE);
-	if (!new_start)
-		panic("Cannot relocate initrd of size %ld\n", size);
-	memblock_reserve(new_start, size);
-
-	initrd_start = __phys_to_virt(new_start);
-	initrd_end   = initrd_start + size;
-
-	pr_info("Moving initrd from [%llx-%llx] to [%llx-%llx]\n",
-		orig_start, orig_start + size - 1,
-		new_start, new_start + size - 1);
-
-	dest = (void *)initrd_start;
-
-	if (to_free) {
-		memcpy(dest, (void *)__phys_to_virt(orig_start), to_free);
-		dest += to_free;
-	}
-
-	copy_from_early_mem(dest, orig_start + to_free, size - to_free);
-
-	if (to_free) {
-		pr_info("Freeing original RAMDISK from [%llx-%llx]\n",
-			orig_start, orig_start + to_free - 1);
-		memblock_free(orig_start, to_free);
-	}
-}
-#else
-static inline void __init relocate_initrd(void)
-{
-}
-#endif
 
 u64 __cpu_logical_map[NR_CPUS] = { [0 ... NR_CPUS-1] = INVALID_HWID };
 
@@ -337,7 +275,6 @@ void __init setup_arch(char **cmdline_p)
 	acpi_boot_table_init();
 
 	paging_init();
-	relocate_initrd();
 
 	if (acpi_disabled)
 		unflatten_device_tree();

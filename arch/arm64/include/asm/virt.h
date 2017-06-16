@@ -55,6 +55,7 @@
 #include <asm/ptrace.h>
 #include <asm/sysreg.h>
 #include <asm/cpufeature.h>
+#include <asm/sections.h>
 
 /*
  * __boot_cpu_mode records what mode CPUs were booted in.
@@ -87,14 +88,6 @@ static inline bool is_kernel_in_hyp_mode(void)
 {
 	return read_sysreg(CurrentEL) == CurrentEL_EL2;
 }
-
-/* The section containing the hypervisor idmap text */
-extern char __hyp_idmap_text_start[];
-extern char __hyp_idmap_text_end[];
-
-/* The section containing the hypervisor text */
-extern char __hyp_text_start[];
-extern char __hyp_text_end[];
 
 static inline bool has_vhe(void)
 {

@@ -148,6 +148,17 @@
 #define HV_X64_RELAXED_TIMING_RECOMMENDED	(1 << 5)
 
 /*
+ * Virtual APIC support
+ */
+#define HV_X64_DEPRECATING_AEOI_RECOMMENDED	(1 << 9)
+
+/*
+ * HV_VP_SET available
+ */
+#define HV_X64_EX_PROCESSOR_MASKS_RECOMMENDED	(1 << 11)
+
+
+/*
  * Crash notification flag.
  */
 #define HV_CRASH_CTL_CRASH_NOTIFY (1ULL << 63)
