@@ -606,6 +606,77 @@ int nvme_identify_ctrl(struct nvme_ctrl *dev, struct nvme_id_ctrl **id)
 	return error;
 }
 
+static int nvme_identify_ns_descs(struct nvme_ns *ns, unsigned nsid)
+{
+	struct nvme_command c = { };
+	int status;
+	void *data;
+	int pos;
+	int len;
+
+	c.identify.opcode = nvme_admin_identify;
+	c.identify.nsid = cpu_to_le32(nsid);
+	c.identify.cns = NVME_ID_CNS_NS_DESC_LIST;
+
+	data = kzalloc(NVME_IDENTIFY_DATA_SIZE, GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
+	status = nvme_submit_sync_cmd(ns->ctrl->admin_q, &c, data,
+				      NVME_IDENTIFY_DATA_SIZE);
+	if (status)
+		goto free_data;
+
+	for (pos = 0; pos < NVME_IDENTIFY_DATA_SIZE; pos += len) {
+		struct nvme_ns_id_desc *cur = data + pos;
+
+		if (cur->nidl == 0)
+			break;
+
+		switch (cur->nidt) {
+		case NVME_NIDT_EUI64:
+			if (cur->nidl != NVME_NIDT_EUI64_LEN) {
+				dev_warn(ns->ctrl->device,
+					 "ctrl returned bogus length: %d for NVME_NIDT_EUI64\n",
+					 cur->nidl);
+				goto free_data;
+			}
+			len = NVME_NIDT_EUI64_LEN;
+			memcpy(ns->eui, data + pos + sizeof(*cur), len);
+			break;
+		case NVME_NIDT_NGUID:
+			if (cur->nidl != NVME_NIDT_NGUID_LEN) {
+				dev_warn(ns->ctrl->device,
+					 "ctrl returned bogus length: %d for NVME_NIDT_NGUID\n",
+					 cur->nidl);
+				goto free_data;
+			}
+			len = NVME_NIDT_NGUID_LEN;
+			memcpy(ns->nguid, data + pos + sizeof(*cur), len);
+			break;
+		case NVME_NIDT_UUID:
+			if (cur->nidl != NVME_NIDT_UUID_LEN) {
+				dev_warn(ns->ctrl->device,
+					 "ctrl returned bogus length: %d for NVME_NIDT_UUID\n",
+					 cur->nidl);
+				goto free_data;
+			}
+			len = NVME_NIDT_UUID_LEN;
+			memcpy(&ns->uuid, data + pos + sizeof(*cur), len);
+			break;
+		default:
+			/* Skip unnkown types */
+			len = cur->nidl;
+			break;
+		}
+
+		len += sizeof(*cur);
+	}
+free_data:
+	kfree(data);
+	return status;
+}
+
 static int nvme_identify_ns_list(struct nvme_ctrl *dev, unsigned nsid, __le32 *ns_list)
 {
 	struct nvme_command c = { };
@@ -935,7 +1006,6 @@ static int nvme_revalidate_ns(struct nvme_ns *ns, struct nvme_id_ns **id)
 				__func__);
 		return -ENODEV;
 	}
-
 	if ((*id)->ncap == 0) {
 		kfree(*id);
 		return -ENODEV;
@@ -944,7 +1014,15 @@ static int nvme_revalidate_ns(struct nvme_ns *ns, struct nvme_id_ns **id)
 	if (ns->ctrl->vs >= NVME_VS(1, 1, 0))
 		memcpy(ns->eui, (*id)->eui64, sizeof(ns->eui));
 	if (ns->ctrl->vs >= NVME_VS(1, 2, 0))
-		memcpy(ns->uuid, (*id)->nguid, sizeof(ns->uuid));
+		memcpy(ns->nguid, (*id)->nguid, sizeof(ns->nguid));
+	if (ns->ctrl->vs >= NVME_VS(1, 3, 0)) {
+		 /* Don't treat error as fatal we potentially
+		  * already have a NGUID or EUI-64
+		  */
+		if (nvme_identify_ns_descs(ns, ns->ns_id))
+			dev_warn(ns->ctrl->device,
+				 "%s: Identify Descriptors failed\n", __func__);
+	}
 
 	return 0;
 }
@@ -1463,8 +1541,8 @@ static ssize_t wwid_show(struct device *dev, struct device_attribute *attr,
 	int serial_len = sizeof(ctrl->serial);
 	int model_len = sizeof(ctrl->model);
 
-	if (memchr_inv(ns->uuid, 0, sizeof(ns->uuid)))
-		return sprintf(buf, "eui.%16phN\n", ns->uuid);
+	if (memchr_inv(ns->nguid, 0, sizeof(ns->nguid)))
+		return sprintf(buf, "eui.%16phN\n", ns->nguid);
 
 	if (memchr_inv(ns->eui, 0, sizeof(ns->eui)))
 		return sprintf(buf, "eui.%8phN\n", ns->eui);
@@ -1479,11 +1557,28 @@ static ssize_t wwid_show(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR(wwid, S_IRUGO, wwid_show, NULL);
 
+static ssize_t nguid_show(struct device *dev, struct device_attribute *attr,
+			  char *buf)
+{
+	struct nvme_ns *ns = dev_to_disk(dev)->private_data;
+	return sprintf(buf, "%pU\n", ns->nguid);
+}
+static DEVICE_ATTR(nguid, S_IRUGO, nguid_show, NULL);
+
 static ssize_t uuid_show(struct device *dev, struct device_attribute *attr,
 								char *buf)
 {
 	struct nvme_ns *ns = dev_to_disk(dev)->private_data;
-	return sprintf(buf, "%pU\n", ns->uuid);
+
+	/* For backward compatibility expose the NGUID to userspace if
+	 * we have no UUID set
+	 */
+	if (!memchr_inv(&ns->uuid, 0, sizeof(ns->uuid))) {
+		printk_ratelimited(KERN_WARNING
+				   "No UUID available providing old NGUID\n");
+		return sprintf(buf, "%pU\n", ns->nguid);
+	}
+	return sprintf(buf, "%pU\n", &ns->uuid);
 }
 static DEVICE_ATTR(uuid, S_IRUGO, uuid_show, NULL);
 
@@ -1506,6 +1601,7 @@ static DEVICE_ATTR(nsid, S_IRUGO, nsid_show, NULL);
 static struct attribute *nvme_ns_attrs[] = {
 	&dev_attr_wwid.attr,
 	&dev_attr_uuid.attr,
+	&dev_attr_nguid.attr,
 	&dev_attr_eui.attr,
 	&dev_attr_nsid.attr,
 	NULL,
@@ -1518,7 +1614,12 @@ static umode_t nvme_ns_attrs_are_visible(struct kobject *kobj,
 	struct nvme_ns *ns = dev_to_disk(dev)->private_data;
 
 	if (a == &dev_attr_uuid.attr) {
-		if (!memchr_inv(ns->uuid, 0, sizeof(ns->uuid)))
+		if (!memchr_inv(ns->uuid, 0, sizeof(ns->uuid)) ||
+		    !memchr_inv(ns->nguid, 0, sizeof(ns->nguid)))
+			return 0;
+	}
+	if (a == &dev_attr_nguid.attr) {
+		if (!memchr_inv(ns->nguid, 0, sizeof(ns->nguid)))
 			return 0;
 	}
 	if (a == &dev_attr_eui.attr) {
