@@ -7949,6 +7949,8 @@ static void dump_space_info(struct btrfs_fs_info *fs_info,
 		info->total_bytes, info->bytes_used, info->bytes_pinned,
 		info->bytes_reserved, info->bytes_may_use,
 		info->bytes_readonly);
+	btrfs_info(fs_info, "total_bytes_pinned=%lld",
+		   percpu_counter_sum(&info->total_bytes_pinned));
 	spin_unlock(&info->lock);
 
 	if (!dump_block_groups)
@@ -9830,6 +9832,7 @@ int btrfs_free_block_groups(struct btrfs_fs_info *info)
 
 	while (!list_empty(&info->space_info)) {
 		int i;
+		s64 pinned;
 
 		space_info = list_entry(info->space_info.next,
 					struct btrfs_space_info,
@@ -9839,11 +9842,12 @@ int btrfs_free_block_groups(struct btrfs_fs_info *info)
 		 * Do not hide this behind enospc_debug, this is actually
 		 * important and indicates a real bug if this happens.
 		 */
+		pinned = percpu_counter_sum(&space_info->total_bytes_pinned);
 		if (WARN_ON(space_info->bytes_pinned > 0 ||
 			    space_info->bytes_reserved > 0 ||
-			    space_info->bytes_may_use > 0))
+			    space_info->bytes_may_use > 0 ||
+			    pinned != 0))
 			dump_space_info(info, space_info, 0, 0);
-		WARN_ON(percpu_counter_sum(&space_info->total_bytes_pinned) != 0);
 		list_del(&space_info->list);
 		for (i = 0; i < BTRFS_NR_RAID_TYPES; i++) {
 			struct kobject *kobj;
