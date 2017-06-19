@@ -979,6 +979,20 @@ ssize_t splice_from_pipe(struct pipe_inode_info *pipe, struct file *out,
 	return ret;
 }
 
+typedef ssize_t (splice_write_actor)(struct pipe_inode_info *,
+                                     struct splice_desc *);
+
+
+ssize_t
+splice_write_to_file(struct pipe_inode_info *pipe, struct file *out,
+                        loff_t *ppos, size_t len, unsigned int flags,
+                        splice_write_actor actor)
+{
+	return -EINVAL;
+}
+EXPORT_SYMBOL(splice_write_to_file);
+
+
 /**
  * generic_file_splice_write - splice data from a pipe to a file
  * @pipe:	pipe info
