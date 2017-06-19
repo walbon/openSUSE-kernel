@@ -982,6 +982,9 @@ ssize_t splice_from_pipe(struct pipe_inode_info *pipe, struct file *out,
 typedef ssize_t (splice_write_actor)(struct pipe_inode_info *,
                                      struct splice_desc *);
 
+extern ssize_t splice_write_to_file(struct pipe_inode_info *, struct file *,
+                                    loff_t *, size_t, unsigned int,
+				    splice_write_actor *);
 
 ssize_t
 splice_write_to_file(struct pipe_inode_info *pipe, struct file *out,
