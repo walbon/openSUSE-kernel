@@ -442,9 +442,6 @@ struct mddev {
 	struct attribute_group		*to_remove;
 
 	struct bio_set			*bio_set;
-	struct bio_set			*sync_set; /* for sync operations like
-						   * metadata and bitmap writes
-						   */
 
 	/* Generic flush handling.
 	 * The last to finish preflush schedules a worker to submit
@@ -457,6 +454,11 @@ struct mddev {
 	void (*sync_super)(struct mddev *mddev, struct md_rdev *rdev);
 	struct md_cluster_info		*cluster_info;
 	unsigned int			good_device_nr;	/* good device num within cluster raid */
+#ifndef __GENKSYMS__
+	struct bio_set			*sync_set; /* for sync operations like
+						   * metadata and bitmap writes
+						   */
+#endif
 };
 
 static inline int __must_check mddev_lock(struct mddev *mddev)
