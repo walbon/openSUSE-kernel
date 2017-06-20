@@ -32,9 +32,6 @@
 struct blkif_common_request {
 	char dummy;
 };
-struct blkif_common_response {
-	char dummy;
-};
 
 /* i386 protocol version */
 #pragma pack(push, 4)
@@ -54,14 +51,8 @@ struct blkif_x86_32_discard {
 	blkif_sector_t sector_number;/* start sector idx on disk             */
 	uint64_t       nr_sectors;   /* number of contiguous sectors         */
 };
-struct blkif_x86_32_response {
-	uint64_t        id;              /* copied from request */
-	uint8_t         operation;       /* copied from request */
-	int16_t         status;          /* BLKIF_RSP_???       */
-};
 typedef struct blkif_x86_32_request blkif_x86_32_request_t;
 typedef struct blkif_x86_32_discard blkif_x86_32_discard_t;
-typedef struct blkif_x86_32_response blkif_x86_32_response_t;
 #pragma pack(pop)
 
 /* x86_64 protocol version */
@@ -81,18 +72,15 @@ struct blkif_x86_64_discard {
 	blkif_sector_t sector_number;/* start sector idx on disk             */
 	uint64_t       nr_sectors;   /* number of contiguous sectors         */
 };
-struct blkif_x86_64_response {
-	uint64_t       __attribute__((__aligned__(8))) id;
-	uint8_t         operation;       /* copied from request */
-	int16_t         status;          /* BLKIF_RSP_???       */
-};
 typedef struct blkif_x86_64_request blkif_x86_64_request_t;
 typedef struct blkif_x86_64_discard blkif_x86_64_discard_t;
-typedef struct blkif_x86_64_response blkif_x86_64_response_t;
 
-DEFINE_RING_TYPES(blkif_common, struct blkif_common_request, struct blkif_common_response);
-DEFINE_RING_TYPES(blkif_x86_32, struct blkif_x86_32_request, struct blkif_x86_32_response);
-DEFINE_RING_TYPES(blkif_x86_64, struct blkif_x86_64_request, struct blkif_x86_64_response);
+DEFINE_RING_TYPES(blkif_common, struct blkif_common_request,
+		  struct blkif_response);
+DEFINE_RING_TYPES(blkif_x86_32, struct blkif_x86_32_request,
+		  struct blkif_response __packed);
+DEFINE_RING_TYPES(blkif_x86_64, struct blkif_x86_64_request,
+		  struct blkif_response);
 
 union blkif_back_rings {
 	blkif_back_ring_t        native;
