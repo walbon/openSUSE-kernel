@@ -1280,7 +1280,7 @@ int svc_rdma_send(struct svcxprt_rdma *xprt, struct ib_send_wr *wr)
 
 			/* Wait until SQ WR available if SQ still full */
 			wait_event(xprt->sc_send_wait,
-				   atomic_read(&xprt->sc_sq_count) <
+				   atomic_read(&xprt->sc_sq_count) + wr_count <=
 				   xprt->sc_sq_depth);
 			if (test_bit(XPT_CLOSE, &xprt->sc_xprt.xpt_flags))
 				return -ENOTCONN;
