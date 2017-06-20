@@ -1053,6 +1053,7 @@ static struct mlx5_flow_rule *add_rule_fg(struct mlx5_flow_group *fg,
 	nested_lock_ref_node(&fte->node, FS_MUTEX_CHILD);
 	rule = add_rule_fte(fte, fg, dest);
 	if (IS_ERR(rule)) {
+		unlock_ref_node(&fte->node);
 		kfree(fte);
 		goto unlock_fg;
 	}
