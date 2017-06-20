@@ -104,6 +104,7 @@
 #define I40E_PRIV_FLAGS_VEB_STATS	BIT(3)
 #define I40E_PRIV_FLAGS_PS		BIT(4)
 #define I40E_PRIV_FLAGS_HW_ATR_EVICT	BIT(5)
+#define I40E_PRIV_FLAGS_SOURCE_PRUNING_DISABLED	BIT(6)
 
 #define I40E_NVM_VERSION_LO_SHIFT  0
 #define I40E_NVM_VERSION_LO_MASK   (0xff << I40E_NVM_VERSION_LO_SHIFT)
@@ -364,6 +365,7 @@ struct i40e_pf {
 #define I40E_FLAG_STOP_FW_LLDP			BIT_ULL(47)
 #define I40E_FLAG_HAVE_10GBASET_PHY		BIT_ULL(48)
 #define I40E_FLAG_PF_MAC			BIT_ULL(50)
+#define I40E_FLAG_SOURCE_PRUNING_DISABLED	BIT_ULL(59)
 
 	/* tracks features that get auto disabled by errors */
 	u64 auto_disable_flags;
