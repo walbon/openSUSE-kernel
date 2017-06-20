@@ -204,7 +204,7 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 
 #ifdef CONFIG_STACK_GROWSUP
 	if (write) {
-		ret = expand_downwards(bprm->vma, pos);
+		ret = expand_downwards(bprm->vma, pos, 0);
 		if (ret < 0)
 			return NULL;
 	}
@@ -218,6 +218,7 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 		unsigned long size = bprm->vma->vm_end - bprm->vma->vm_start;
 		struct rlimit *rlim;
 
+		size -= stack_guard_gap;
 		acct_arg_size(bprm, size / PAGE_SIZE);
 
 		/*
