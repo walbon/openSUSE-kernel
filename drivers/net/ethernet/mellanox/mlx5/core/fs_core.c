@@ -936,7 +936,7 @@ static struct mlx5_flow_group *create_autogroup(struct mlx5_flow_table *ft,
 						u32 *match_criteria)
 {
 	int inlen = MLX5_ST_SZ_BYTES(create_flow_group_in);
-	struct list_head *prev = ft->node.children.prev;
+	struct list_head *prev = &ft->node.children;
 	unsigned int candidate_index = 0;
 	struct mlx5_flow_group *fg;
 	void *match_criteria_addr;
@@ -1031,9 +1031,8 @@ static struct mlx5_flow_rule *add_rule_fg(struct mlx5_flow_group *fg,
 				return rule;
 			}
 			rule = add_rule_fte(fte, fg, dest);
-			unlock_ref_node(&fte->node);
 			if (IS_ERR(rule))
-				goto unlock_fg;
+				goto unlock_fte;
 			else
 				goto add_rule;
 		}
@@ -1051,8 +1050,10 @@ static struct mlx5_flow_rule *add_rule_fg(struct mlx5_flow_group *fg,
 		goto unlock_fg;
 	}
 	tree_init_node(&fte->node, 0, del_fte);
+	nested_lock_ref_node(&fte->node, FS_MUTEX_CHILD);
 	rule = add_rule_fte(fte, fg, dest);
 	if (IS_ERR(rule)) {
+		unlock_ref_node(&fte->node);
 		kfree(fte);
 		goto unlock_fg;
 	}
@@ -1063,6 +1064,8 @@ static struct mlx5_flow_rule *add_rule_fg(struct mlx5_flow_group *fg,
 	list_add(&fte->node.list, prev);
 add_rule:
 	tree_add_node(&rule->node, &fte->node);
+unlock_fte:
+	unlock_ref_node(&fte->node);
 unlock_fg:
 	unlock_ref_node(&fg->node);
 	return rule;

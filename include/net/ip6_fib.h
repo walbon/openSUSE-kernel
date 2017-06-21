@@ -218,6 +218,12 @@ struct rt6_statistics {
 #define RTN_ROOT	0x0002		/* tree root node		*/
 #define RTN_RTINFO	0x0004		/* node with valid routing info	*/
 
+/* kabi workaround:
+ * This flag is put into fib6_table.tb6_root.fn_flags (like the above RTN_*)
+ * to avoid adding a "flags" field to fib6_table.
+ */
+#define RT6_TABLE_HAS_DFLT_ROUTER	0x8000
+
 /*
  *	priority levels (or metrics)
  *

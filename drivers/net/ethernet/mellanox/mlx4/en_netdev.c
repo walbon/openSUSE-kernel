@@ -1967,6 +1967,8 @@ static void mlx4_en_free_resources(struct mlx4_en_priv *priv)
 		if (priv->tx_cq && priv->tx_cq[i])
 			mlx4_en_destroy_cq(priv, &priv->tx_cq[i]);
 	}
+	kfree(priv->tx_ring);
+	kfree(priv->tx_cq);
 
 	for (i = 0; i < priv->rx_ring_num; i++) {
 		if (priv->rx_ring[i])
@@ -2140,9 +2142,6 @@ void mlx4_en_destroy_netdev(struct net_device *dev)
 #endif
 
 	mlx4_en_free_resources(priv);
-
-	kfree(priv->tx_ring);
-	kfree(priv->tx_cq);
 
 	free_netdev(dev);
 }
