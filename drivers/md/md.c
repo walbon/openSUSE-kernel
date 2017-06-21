@@ -188,6 +188,34 @@ struct bio *bio_alloc_mddev(gfp_t gfp_mask, int nr_iovecs,
 }
 EXPORT_SYMBOL_GPL(bio_alloc_mddev);
 
+static void mddev_bio_destructor2(struct bio *bio)
+{
+	mddev_t *mddev, **mddevp;
+
+	mddevp = (void*)bio;
+	mddev = mddevp[-1];
+
+	bio_free(bio, mddev->sync_set);
+}
+
+struct bio *md_bio_alloc_sync(mddev_t *mddev)
+{
+	struct bio *b;
+	mddev_t **mddevp;
+
+	if (!mddev->sync_set)
+		return bio_alloc(GFP_NOIO, 1);
+
+	b = bio_alloc_bioset(GFP_NOIO, 1,
+			     mddev->sync_set);
+	if (!b)
+		return NULL;
+	mddevp = (void*)b;
+	mddevp[-1] = mddev;
+	b->bi_destructor = mddev_bio_destructor2;
+	return b;
+}
+
 struct bio *bio_clone_mddev(struct bio *bio, gfp_t gfp_mask,
 			    mddev_t *mddev)
 {
@@ -550,6 +578,9 @@ static void mddev_put(mddev_t *mddev)
 		list_del_init(&mddev->all_mddevs);
 		bs = mddev->bio_set;
 		mddev->bio_set = NULL;
+		if (mddev->sync_set)
+			bioset_free(mddev->sync_set);
+		mddev->sync_set = NULL;
 		if (mddev->gendisk) {
 			/* We did a probe so need to clean up.  Call
 			 * queue_work inside the spinlock so that
@@ -846,7 +877,7 @@ void md_super_write(mddev_t *mddev, mdk_rdev_t *rdev,
 	if (test_bit(Faulty, &rdev->flags))
 		return;
 
-	bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
+	bio = md_bio_alloc_sync(mddev);
 
 	bio->bi_bdev = rdev->meta_bdev ? rdev->meta_bdev : rdev->bdev;
 	bio->bi_sector = sector;
@@ -886,7 +917,7 @@ static void bi_complete(struct bio *bio, int error)
 int sync_page_io(mdk_rdev_t *rdev, sector_t sector, int size,
 		 struct page *page, int rw, bool metadata_op)
 {
-	struct bio *bio = bio_alloc_mddev(GFP_NOIO, 1, rdev->mddev);
+	struct bio *bio = md_bio_alloc_sync(rdev->mddev);
 	struct completion event;
 	int ret;
 
@@ -4897,7 +4928,9 @@ int md_run(mddev_t *mddev)
 	}
 
 	if (mddev->bio_set == NULL)
-		mddev->bio_set = bioset_create(BIO_POOL_SIZE, sizeof(mddev));
+		mddev->bio_set = bioset_create(BIO_POOL_SIZE, sizeof(*mddev));
+	if (mddev->sync_set == NULL)
+		mddev->sync_set = bioset_create(BIO_POOL_SIZE, sizeof(*mddev));
 
 	spin_lock(&pers_lock);
 	pers = find_pers(mddev->level, mddev->clevel);

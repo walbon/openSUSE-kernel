@@ -362,6 +362,9 @@ struct mddev_s
 	struct work_struct flush_work;
 	struct work_struct event_work;	/* used by dm to report failure event */
 	void (*sync_super)(mddev_t *mddev, mdk_rdev_t *rdev);
+#ifndef __GENKSYMS__
+	struct bio_set			*sync_set;
+#endif
 };
 
 
