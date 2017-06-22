@@ -1896,20 +1896,6 @@ static void rbd_osd_req_callback(struct ceph_osd_request *osd_req)
 		rbd_obj_request_complete(obj_request);
 }
 
-static void rbd_osd_req_format_rw(struct rbd_obj_request *obj_request)
-{
-	struct rbd_img_request *img_request = obj_request->img_request;
-	struct ceph_osd_request *osd_req = obj_request->osd_req;
-	struct ceph_snap_context *snapc;
-	u64 snap_id;
-
-	rbd_assert(osd_req != NULL);
-
-	snapc = img_request ? img_request->snapc : NULL;
-	snap_id = img_request ? img_request->snap_id : CEPH_NOSNAP;
-	osd_req->r_mtime = CURRENT_TIME;
-}
-
 static void rbd_osd_req_format_read(struct rbd_obj_request *obj_request)
 {
 	struct ceph_osd_request *osd_req = obj_request->osd_req;
@@ -1924,6 +1910,12 @@ static void rbd_osd_req_format_write(struct rbd_obj_request *obj_request)
 
 	osd_req->r_mtime = CURRENT_TIME;
 	osd_req->r_data_offset = obj_request->offset;
+}
+
+static void rbd_osd_req_format_rw(struct rbd_obj_request *obj_request)
+{
+	rbd_osd_req_format_read(obj_request);
+	rbd_osd_req_format_write(obj_request);
 }
 
 /*
