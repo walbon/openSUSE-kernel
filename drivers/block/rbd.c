@@ -3084,7 +3084,9 @@ static void
 rbd_img_obj_creatrunc_callback(struct rbd_obj_request *obj_request)
 {
 	struct rbd_obj_request *orig_request;
+	static struct ceph_osd_request *new_osd_req;
 	int result;
+	struct rbd_device *rbd_dev;
 
 	rbd_assert(!obj_request_img_data_test(obj_request));
 
@@ -3097,6 +3099,8 @@ rbd_img_obj_creatrunc_callback(struct rbd_obj_request *obj_request)
 	rbd_obj_request_put(orig_request);
 	rbd_assert(orig_request);
 	rbd_assert(orig_request->img_request);
+	rbd_dev = orig_request->img_request->rbd_dev;
+	rbd_assert(rbd_dev);
 
 	result = obj_request->result;
 	obj_request->result = 0;
@@ -3105,11 +3109,29 @@ rbd_img_obj_creatrunc_callback(struct rbd_obj_request *obj_request)
 		obj_request, orig_request, result,
 		obj_request->xferred, obj_request->length);
 	rbd_obj_request_put(obj_request);
+	obj_request = NULL;
 
 	if (result) {
 		orig_request->result = result;
 		goto out;
 	}
+
+	/*
+	 * We can't resubmit the original request without reinitialisation, as
+	 * the r_tid has been assigned, and reply filled.
+	 */
+	new_osd_req = rbd_osd_req_create(rbd_dev, OBJ_OP_CMP_AND_WRITE, 3,
+				     orig_request);
+	if (!new_osd_req) {
+		orig_request->result = -ENOMEM;
+		goto out;
+	}
+
+	rbd_osd_cmp_and_write_req_copy(new_osd_req, orig_request->osd_req);
+	ceph_osdc_put_request(orig_request->osd_req);
+	orig_request->osd_req = new_osd_req;
+
+	rbd_osd_req_format_rw(orig_request);
 
 	/*
 	 * Resubmit the original request now that we have truncated
