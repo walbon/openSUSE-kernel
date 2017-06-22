@@ -3042,6 +3042,45 @@ fail_stat_request:
 }
 
 static void
+rbd_osd_cmp_and_write_req_copy(struct ceph_osd_request *dest_osd_req,
+			       const struct ceph_osd_request *src_osd_req)
+{
+	int num_ops = 0;
+	const struct ceph_osd_req_op *src_op;
+
+	src_op = &src_osd_req->r_ops[num_ops];
+	osd_req_op_alloc_hint_init(dest_osd_req, num_ops,
+				   src_op->alloc_hint.expected_object_size,
+				   src_op->alloc_hint.expected_write_size);
+
+	num_ops++;
+	src_op = &src_osd_req->r_ops[num_ops];
+	osd_req_op_extent_init(dest_osd_req, num_ops, CEPH_OSD_OP_CMPEXT,
+			       src_op->extent.offset, src_op->extent.length, 0,
+			       0);
+	osd_req_op_extent_osd_data_sg(dest_osd_req, num_ops,
+				src_op->extent.request_data.sgl,
+				src_op->extent.request_data.sgl_init_offset,
+				src_op->extent.request_data.sgl_length);
+	osd_req_op_extent_osd_data_pages(dest_osd_req, num_ops,
+				src_op->extent.response_data.pages,
+				src_op->extent.response_data.length,
+				src_op->extent.response_data.alignment,
+				src_op->extent.response_data.pages_from_pool,
+				src_op->extent.response_data.own_pages);
+
+	num_ops++;
+	src_op = &src_osd_req->r_ops[num_ops];
+	osd_req_op_extent_init(dest_osd_req, num_ops, CEPH_OSD_OP_WRITE,
+			       src_op->extent.offset, src_op->extent.length, 0,
+			       0);
+	osd_req_op_extent_osd_data_sg(dest_osd_req, num_ops,
+				src_op->extent.request_data.sgl,
+				src_op->extent.request_data.sgl_init_offset,
+				src_op->extent.request_data.sgl_length);
+}
+
+static void
 rbd_img_obj_creatrunc_callback(struct rbd_obj_request *obj_request)
 {
 	struct rbd_obj_request *orig_request;
