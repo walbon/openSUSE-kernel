@@ -671,13 +671,15 @@ int do_huge_pmd_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	pte_t *pte;
 
 	if (haddr >= vma->vm_start && haddr + HPAGE_PMD_SIZE <= vma->vm_end) {
+		if (stack_guard_area(vma, haddr) ||
+				stack_guard_area(vma, haddr + HPAGE_PMD_SIZE)) {
+			count_vm_event(THP_FAULT_FALLBACK);
+			goto out;
+		}
 		if (unlikely(anon_vma_prepare(vma)))
 			return VM_FAULT_OOM;
 		if (unlikely(khugepaged_enter(vma, vma->vm_flags)))
 			return VM_FAULT_OOM;
-		if (stack_guard_area(vma, haddr) ||
-				stack_guard_area(vma, haddr + HPAGE_PMD_SIZE))
-			goto out;
 		gfp = alloc_hugepage_gfpmask(transparent_hugepage_defrag(vma),
 									0);
 		page = alloc_hugepage_vma(gfp, vma, haddr, HPAGE_PMD_ORDER);
