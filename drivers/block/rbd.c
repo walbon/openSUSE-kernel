@@ -3088,8 +3088,7 @@ out:
  * the same request.
  * Like rbd_img_obj_exists_submit(), this function tracks the original request
  * through to the callback via creatrunc_req->osd_req, which means that
- * creatrunc_req->img_request users (e.g. rbd_osd_req_create() and
- * rbd_osd_req_format_write()) must be avoided.
+ * creatrunc_req->img_request users (i.e. rbd_osd_req_create()) must be avoided.
  */
 static int
 rbd_img_obj_creatrunc_submit(struct rbd_obj_request *obj_request)
@@ -3130,8 +3129,13 @@ rbd_img_obj_creatrunc_submit(struct rbd_obj_request *obj_request)
 	osd_req->r_callback = rbd_osd_req_callback;
 	osd_req->r_priv = creatrunc_req;
 	osd_req->r_base_oloc.pool = rbd_dev->layout.pool_id;
-	if (ceph_oid_aprintf(&osd_req->r_base_oid, GFP_NOIO, "%s",
-			     creatrunc_req->object_name))
+	ret = ceph_oid_aprintf(&osd_req->r_base_oid, GFP_NOIO, "%s",
+			       creatrunc_req->object_name);
+	if (ret)
+		goto fail_creatrunc_request;
+
+	ret = ceph_osdc_alloc_messages(osd_req, GFP_KERNEL);
+	if (ret)
 		goto fail_creatrunc_request;
 
 	creatrunc_req->osd_req = osd_req;
@@ -3143,8 +3147,7 @@ rbd_img_obj_creatrunc_submit(struct rbd_obj_request *obj_request)
 	osd_req_op_extent_init(creatrunc_req->osd_req, 1, CEPH_OSD_OP_TRUNCATE,
 				object_size, 0, 0, 0);
 
-	/* rbd_osd_req_format_write() using snapc from img_request */
-	creatrunc_req->osd_req->r_mtime = CURRENT_TIME;
+	rbd_osd_req_format_write(creatrunc_req);
 
 	rbd_obj_request_submit(creatrunc_req);
 
