@@ -3737,7 +3737,7 @@ static int ibmvnic_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	do {
 		rc = ibmvnic_init(adapter);
-		if (rc != EAGAIN) {
+		if (rc && rc != EAGAIN) {
 			free_netdev(netdev);
 			return rc;
 		}
@@ -3858,6 +3858,9 @@ static int ibmvnic_resume(struct device *dev)
 	struct net_device *netdev = dev_get_drvdata(dev);
 	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
 	int i;
+
+	if (adapter->state != VNIC_OPEN)
+		return 0;
 
 	/* kick the interrupt handlers just in case we lost an interrupt */
 	for (i = 0; i < adapter->req_rx_queues; i++)
