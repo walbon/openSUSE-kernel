@@ -2012,15 +2012,15 @@ nvme_fc_nvme_ctrl_freed(struct nvme_ctrl *nctrl)
 static void
 nvme_fc_error_recovery(struct nvme_fc_ctrl *ctrl, char *errmsg)
 {
+	/* only proceed if in LIVE state - e.g. on first error */
+	if (ctrl->ctrl.state != NVME_CTRL_LIVE)
+		return;
+
 	dev_warn(ctrl->ctrl.device,
 		"NVME-FC{%d}: transport association error detected: %s\n",
 		ctrl->cnum, errmsg);
 	dev_warn(ctrl->ctrl.device,
 		"NVME-FC{%d}: resetting controller\n", ctrl->cnum);
-
-	/* stop the queues on error, cleanup is in reset thread */
-	if (ctrl->queue_count > 1)
-		nvme_stop_queues(&ctrl->ctrl);
 
 	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_RESETTING)) {
 		dev_err(ctrl->ctrl.device,
@@ -2218,10 +2218,8 @@ nvme_fc_start_fcp_op(struct nvme_fc_ctrl *ctrl, struct nvme_fc_queue *queue,
 					queue->lldd_handle, &op->fcp_req);
 
 	if (ret) {
-		if (op->rq) {			/* normal request */
+		if (op->rq)			/* normal request */
 			nvme_fc_unmap_data(ctrl, op->rq, op);
-			nvme_cleanup_cmd(op->rq);
-		}
 		/* else - aen. no cleanup needed */
 
 		nvme_fc_ctrl_put(ctrl);
@@ -2340,7 +2338,6 @@ __nvme_fc_final_op_cleanup(struct request *rq)
 	op->flags &= ~(FCOP_FLAGS_TERMIO | FCOP_FLAGS_RELEASED |
 			FCOP_FLAGS_COMPLETE);
 
-	nvme_cleanup_cmd(rq);
 	nvme_fc_unmap_data(ctrl, rq, op);
 	nvme_complete_rq(rq);
 	nvme_fc_ctrl_put(ctrl);
