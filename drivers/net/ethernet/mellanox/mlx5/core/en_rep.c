@@ -325,6 +325,8 @@ static void mlx5e_build_rep_netdev_priv(struct mlx5_core_dev *mdev,
 	mutex_init(&priv->state_lock);
 
 	INIT_DELAYED_WORK(&priv->update_stats_work, mlx5e_update_stats_work);
+
+	mlx5_query_min_inline(mdev, &priv->params.tx_min_inline_mode);
 }
 
 static void mlx5e_build_rep_netdev(struct net_device *netdev)
