@@ -4904,7 +4904,7 @@ restore_filters:
 	if (rc2)
 		goto reset_nic;
 
-	netif_device_attach(efx->net_dev);
+	efx_device_attach_if_not_resetting(efx);
 
 	return rc;
 
@@ -5151,7 +5151,7 @@ static int efx_ef10_set_mac_address(struct efx_nic *efx)
 
 	if (was_enabled)
 		efx_net_open(efx->net_dev);
-	netif_device_attach(efx->net_dev);
+	efx_device_attach_if_not_resetting(efx);
 
 #ifdef CONFIG_SFC_SRIOV
 	if (efx->pci_dev->is_virtfn && efx->pci_dev->physfn) {
