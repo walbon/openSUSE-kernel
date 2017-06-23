@@ -203,7 +203,7 @@ struct bio *md_bio_alloc_sync(mddev_t *mddev)
 	struct bio *b;
 	mddev_t **mddevp;
 
-	if (!mddev->sync_set)
+	if (!mddev || !mddev->sync_set)
 		return bio_alloc(GFP_NOIO, 1);
 
 	b = bio_alloc_bioset(GFP_NOIO, 1,
