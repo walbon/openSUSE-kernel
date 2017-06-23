@@ -124,7 +124,7 @@ static int find_extent_in_eb(const struct extent_buffer *eb,
 
 struct preftree {
 	struct rb_root root;
-	unsigned count;
+	unsigned int count;
 };
 
 #define PREFTREE_INIT	{ .root = RB_ROOT, .count = 0 }
@@ -255,6 +255,7 @@ static void prelim_ref_insert(const struct btrfs_fs_info *fs_info,
 		} else {
 			/* Identical refs, merge them and free @newref */
 			struct extent_inode_elem *eie = ref->inode_list;
+
 			while (eie && eie->next)
 				eie = eie->next;
 
@@ -284,18 +285,20 @@ static void prelim_ref_insert(const struct btrfs_fs_info *fs_info,
 	rb_insert_color(&newref->rbnode, root);
 }
 
+/*
+ * Release the entire tree.  We don't care about internal consistency so
+ * just free everything and then reset the tree root.
+ */
 static void prelim_release(struct preftree *preftree)
 {
-	struct prelim_ref *ref;
-	struct rb_node *node = rb_first(&preftree->root);
+	struct prelim_ref *ref, *next_ref;
 
-	while (node) {
-		ref = rb_entry(node, struct prelim_ref, rbnode);
-		node = rb_next(&ref->rbnode);
-		rb_erase(&ref->rbnode, &preftree->root);
-		preftree->count--;
+	rbtree_postorder_for_each_entry_safe(ref, next_ref, &preftree->root,
+					     rbnode)
 		release_pref(ref);
-	}
+
+	preftree->root = RB_ROOT;
+	preftree->count = 0;
 }
 
 /*
@@ -628,7 +631,11 @@ static int resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 		struct prelim_ref *ref;
 
 		ref = rb_entry(rnode, struct prelim_ref, rbnode);
-		BUG_ON(ref->parent);	/* should not be a direct ref */
+		if (WARN(ref->parent,
+			 "BUG: direct ref found in indirect tree")) {
+			ret = -EINVAL;
+			goto out;
+		}
 
 		rb_erase(&ref->rbnode, &preftrees->indirect.root);
 		preftrees->indirect.count--;
@@ -712,7 +719,8 @@ static int add_missing_keys(struct btrfs_fs_info *fs_info,
 	while (node) {
 		ref = rb_entry(node, struct prelim_ref, rbnode);
 		node = rb_next(&ref->rbnode);
-		BUG_ON(ref->parent);	/* should not be a direct ref */
+		if (WARN(ref->parent, "BUG: direct ref found in indirect tree"))
+			return -EINVAL;
 
 		if (ref->key_for_search.type)
 			continue;
@@ -1193,8 +1201,8 @@ again:
 					      &total_refs, sc);
 			if (ret)
 				goto out;
-			ret = add_keyed_refs(fs_info, path, bytenr,
-					     info_level, &preftrees, sc);
+			ret = add_keyed_refs(fs_info, path, bytenr, info_level,
+					     &preftrees, sc);
 			if (ret)
 				goto out;
 		}
@@ -1216,12 +1224,14 @@ again:
 	/*
 	 * This walks the tree of merged and resolved refs. Tree blocks are
 	 * read in as needed. Unique entries are added to the ulist, and
-	 * the list of found roots is updated. All prelim_refs are
-	 * deallocated here.
+	 * the list of found roots is updated.
+	 *
+	 * We release the entire tree in one go before returning.
 	 */
-	while ((node = rb_first(&preftrees.direct.root))) {
+	node = rb_first(&preftrees.direct.root);
+	while (node) {
 		ref = rb_entry(node, struct prelim_ref, rbnode);
-//		node = rb_next(&ref->rbnode);
+		node = rb_next(&ref->rbnode);
 		WARN_ON(ref->count < 0);
 		if (roots && ref->count && ref->root_id && ref->parent == 0) {
 			if (sc && sc->root_objectid &&
@@ -1277,13 +1287,9 @@ again:
 			}
 			eie = NULL;
 		}
-
-		rb_erase(&ref->rbnode, &preftrees.direct.root);
-		preftrees.direct.count--;
-		release_pref(ref);
 		cond_resched();
 	}
-	WARN_ON(!RB_EMPTY_ROOT(&preftrees.direct.root));
+
 out:
 	btrfs_free_path(path);
 
