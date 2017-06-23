@@ -1896,20 +1896,6 @@ static void rbd_osd_req_callback(struct ceph_osd_request *osd_req)
 		rbd_obj_request_complete(obj_request);
 }
 
-static void rbd_osd_req_format_rw(struct rbd_obj_request *obj_request)
-{
-	struct rbd_img_request *img_request = obj_request->img_request;
-	struct ceph_osd_request *osd_req = obj_request->osd_req;
-	struct ceph_snap_context *snapc;
-	u64 snap_id;
-
-	rbd_assert(osd_req != NULL);
-
-	snapc = img_request ? img_request->snapc : NULL;
-	snap_id = img_request ? img_request->snap_id : CEPH_NOSNAP;
-	osd_req->r_mtime = CURRENT_TIME;
-}
-
 static void rbd_osd_req_format_read(struct rbd_obj_request *obj_request)
 {
 	struct ceph_osd_request *osd_req = obj_request->osd_req;
@@ -1924,6 +1910,12 @@ static void rbd_osd_req_format_write(struct rbd_obj_request *obj_request)
 
 	osd_req->r_mtime = CURRENT_TIME;
 	osd_req->r_data_offset = obj_request->offset;
+}
+
+static void rbd_osd_req_format_rw(struct rbd_obj_request *obj_request)
+{
+	rbd_osd_req_format_read(obj_request);
+	rbd_osd_req_format_write(obj_request);
 }
 
 /*
@@ -3042,10 +3034,51 @@ fail_stat_request:
 }
 
 static void
+rbd_osd_cmp_and_write_req_copy(struct ceph_osd_request *dest_osd_req,
+			       const struct ceph_osd_request *src_osd_req)
+{
+	int num_ops = 0;
+	const struct ceph_osd_req_op *src_op;
+
+	src_op = &src_osd_req->r_ops[num_ops];
+	osd_req_op_alloc_hint_init(dest_osd_req, num_ops,
+				   src_op->alloc_hint.expected_object_size,
+				   src_op->alloc_hint.expected_write_size);
+
+	num_ops++;
+	src_op = &src_osd_req->r_ops[num_ops];
+	osd_req_op_extent_init(dest_osd_req, num_ops, CEPH_OSD_OP_CMPEXT,
+			       src_op->extent.offset, src_op->extent.length, 0,
+			       0);
+	osd_req_op_extent_osd_data_sg(dest_osd_req, num_ops,
+				src_op->extent.request_data.sgl,
+				src_op->extent.request_data.sgl_init_offset,
+				src_op->extent.request_data.sgl_length);
+	osd_req_op_extent_osd_data_pages(dest_osd_req, num_ops,
+				src_op->extent.response_data.pages,
+				src_op->extent.response_data.length,
+				src_op->extent.response_data.alignment,
+				src_op->extent.response_data.pages_from_pool,
+				src_op->extent.response_data.own_pages);
+
+	num_ops++;
+	src_op = &src_osd_req->r_ops[num_ops];
+	osd_req_op_extent_init(dest_osd_req, num_ops, CEPH_OSD_OP_WRITE,
+			       src_op->extent.offset, src_op->extent.length, 0,
+			       0);
+	osd_req_op_extent_osd_data_sg(dest_osd_req, num_ops,
+				src_op->extent.request_data.sgl,
+				src_op->extent.request_data.sgl_init_offset,
+				src_op->extent.request_data.sgl_length);
+}
+
+static void
 rbd_img_obj_creatrunc_callback(struct rbd_obj_request *obj_request)
 {
 	struct rbd_obj_request *orig_request;
+	static struct ceph_osd_request *new_osd_req;
 	int result;
+	struct rbd_device *rbd_dev;
 
 	rbd_assert(!obj_request_img_data_test(obj_request));
 
@@ -3058,6 +3091,8 @@ rbd_img_obj_creatrunc_callback(struct rbd_obj_request *obj_request)
 	rbd_obj_request_put(orig_request);
 	rbd_assert(orig_request);
 	rbd_assert(orig_request->img_request);
+	rbd_dev = orig_request->img_request->rbd_dev;
+	rbd_assert(rbd_dev);
 
 	result = obj_request->result;
 	obj_request->result = 0;
@@ -3066,11 +3101,29 @@ rbd_img_obj_creatrunc_callback(struct rbd_obj_request *obj_request)
 		obj_request, orig_request, result,
 		obj_request->xferred, obj_request->length);
 	rbd_obj_request_put(obj_request);
+	obj_request = NULL;
 
 	if (result) {
 		orig_request->result = result;
 		goto out;
 	}
+
+	/*
+	 * We can't resubmit the original request without reinitialisation, as
+	 * the r_tid has been assigned, and reply filled.
+	 */
+	new_osd_req = rbd_osd_req_create(rbd_dev, OBJ_OP_CMP_AND_WRITE, 3,
+				     orig_request);
+	if (!new_osd_req) {
+		orig_request->result = -ENOMEM;
+		goto out;
+	}
+
+	rbd_osd_cmp_and_write_req_copy(new_osd_req, orig_request->osd_req);
+	ceph_osdc_put_request(orig_request->osd_req);
+	orig_request->osd_req = new_osd_req;
+
+	rbd_osd_req_format_rw(orig_request);
 
 	/*
 	 * Resubmit the original request now that we have truncated
@@ -3088,8 +3141,7 @@ out:
  * the same request.
  * Like rbd_img_obj_exists_submit(), this function tracks the original request
  * through to the callback via creatrunc_req->osd_req, which means that
- * creatrunc_req->img_request users (e.g. rbd_osd_req_create() and
- * rbd_osd_req_format_write()) must be avoided.
+ * creatrunc_req->img_request users (i.e. rbd_osd_req_create()) must be avoided.
  */
 static int
 rbd_img_obj_creatrunc_submit(struct rbd_obj_request *obj_request)
@@ -3130,8 +3182,13 @@ rbd_img_obj_creatrunc_submit(struct rbd_obj_request *obj_request)
 	osd_req->r_callback = rbd_osd_req_callback;
 	osd_req->r_priv = creatrunc_req;
 	osd_req->r_base_oloc.pool = rbd_dev->layout.pool_id;
-	if (ceph_oid_aprintf(&osd_req->r_base_oid, GFP_NOIO, "%s",
-			     creatrunc_req->object_name))
+	ret = ceph_oid_aprintf(&osd_req->r_base_oid, GFP_NOIO, "%s",
+			       creatrunc_req->object_name);
+	if (ret)
+		goto fail_creatrunc_request;
+
+	ret = ceph_osdc_alloc_messages(osd_req, GFP_KERNEL);
+	if (ret)
 		goto fail_creatrunc_request;
 
 	creatrunc_req->osd_req = osd_req;
@@ -3143,8 +3200,7 @@ rbd_img_obj_creatrunc_submit(struct rbd_obj_request *obj_request)
 	osd_req_op_extent_init(creatrunc_req->osd_req, 1, CEPH_OSD_OP_TRUNCATE,
 				object_size, 0, 0, 0);
 
-	/* rbd_osd_req_format_write() using snapc from img_request */
-	creatrunc_req->osd_req->r_mtime = CURRENT_TIME;
+	rbd_osd_req_format_write(creatrunc_req);
 
 	rbd_obj_request_submit(creatrunc_req);
 
