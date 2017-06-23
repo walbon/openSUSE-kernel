@@ -867,19 +867,20 @@ static int wait_on_sem(volatile u64 *sem)
 }
 
 static void copy_cmd_to_buffer(struct amd_iommu *iommu,
-			       struct iommu_cmd *cmd,
-			       u32 tail)
+			       struct iommu_cmd *cmd)
 {
 	u8 *target;
 
-	target = iommu->cmd_buf + tail;
-	tail   = (tail + sizeof(*cmd)) % CMD_BUFFER_SIZE;
+	target = iommu->cmd_buf + iommu->cmd_buf_tail;
+
+	iommu->cmd_buf_tail += sizeof(*cmd);
+	iommu->cmd_buf_tail %= CMD_BUFFER_SIZE;
 
 	/* Copy command to buffer */
 	memcpy(target, cmd, sizeof(*cmd));
 
 	/* Tell the IOMMU about it */
-	writel(tail, iommu->mmio_base + MMIO_CMD_TAIL_OFFSET);
+	writel(iommu->cmd_buf_tail, iommu->mmio_base + MMIO_CMD_TAIL_OFFSET);
 }
 
 static void build_completion_wait(struct iommu_cmd *cmd, u64 address)
@@ -1037,24 +1038,35 @@ static int iommu_queue_command_sync(struct amd_iommu *iommu,
 				    struct iommu_cmd *cmd,
 				    bool sync)
 {
-	u32 left, tail, head, next_tail;
+	bool read_head = true;
+	u32 left, next_tail;
 	unsigned long flags;
 
+	next_tail = (iommu->cmd_buf_tail + sizeof(*cmd)) % CMD_BUFFER_SIZE;
 again:
 	spin_lock_irqsave(&iommu->lock, flags);
 
-	head      = readl(iommu->mmio_base + MMIO_CMD_HEAD_OFFSET);
-	tail      = readl(iommu->mmio_base + MMIO_CMD_TAIL_OFFSET);
-	next_tail = (tail + sizeof(*cmd)) % CMD_BUFFER_SIZE;
-	left      = (head - next_tail) % CMD_BUFFER_SIZE;
+	left      = (iommu->cmd_buf_head - next_tail) % CMD_BUFFER_SIZE;
 
 	if (left <= 0x20) {
 		struct iommu_cmd sync_cmd;
 		volatile u64 sem = 0;
 		int ret;
 
+		if (read_head) {
+			/* Update head and recheck remaining space */
+			iommu->cmd_buf_head = readl(iommu->mmio_base +
+						    MMIO_CMD_HEAD_OFFSET);
+			read_head = false;
+			spin_unlock_irqrestore(&iommu->lock, flags);
+
+			goto again;
+		}
+
+		read_head = true;
+
 		build_completion_wait(&sync_cmd, (u64)&sem);
-		copy_cmd_to_buffer(iommu, &sync_cmd, tail);
+		copy_cmd_to_buffer(iommu, &sync_cmd);
 
 		spin_unlock_irqrestore(&iommu->lock, flags);
 
@@ -1064,7 +1076,7 @@ again:
 		goto again;
 	}
 
-	copy_cmd_to_buffer(iommu, cmd, tail);
+	copy_cmd_to_buffer(iommu, cmd);
 
 	/* We need to sync now to make sure all commands are processed */
 	iommu->need_sync = sync;
