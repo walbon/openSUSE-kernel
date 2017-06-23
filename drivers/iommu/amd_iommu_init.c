@@ -2098,7 +2098,7 @@ static struct syscore_ops amd_iommu_syscore_ops = {
 	.resume = amd_iommu_resume,
 };
 
-static void __init free_on_init_error(void)
+static void __init free_iommu_resources(void)
 {
 	free_pages((unsigned long)irq_lookup_table,
 		   get_order(rlookup_table_size));
@@ -2525,7 +2525,7 @@ static int __init amd_iommu_init(void)
 		free_dma_resources();
 		if (!irq_remapping_enabled) {
 			disable_iommus();
-			free_on_init_error();
+			free_iommu_resources();
 		} else {
 			struct amd_iommu *iommu;
 
