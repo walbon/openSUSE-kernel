@@ -37,6 +37,8 @@
 #include "sysfs.h"
 #include "qgroup.h"
 
+#include "trace-kabi.h"
+
 #undef SCRAMBLE_DELAYED_REFS
 
 /*

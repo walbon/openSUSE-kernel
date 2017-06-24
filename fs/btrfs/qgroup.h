@@ -22,6 +22,8 @@
 #include "ulist.h"
 #include "delayed-ref.h"
 
+#include "trace-kabi.h"
+
 /*
  * Record a dirty extent, and info qgroup to update quota on it
  * TODO: Use kmem cache to alloc it.
