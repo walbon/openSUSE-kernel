@@ -24,6 +24,8 @@
 #include "transaction.h"
 #include "qgroup.h"
 
+#include "trace-kabi.h"
+
 struct kmem_cache *btrfs_delayed_ref_head_cachep;
 struct kmem_cache *btrfs_delayed_tree_ref_cachep;
 struct kmem_cache *btrfs_delayed_data_ref_cachep;
