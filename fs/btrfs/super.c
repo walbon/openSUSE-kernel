@@ -65,6 +65,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/btrfs.h>
 
+#include "trace-kabi.h"
+
 DEFINE_SUSE_UNSUPPORTED_FEATURE(btrfs)
 
 static const struct super_operations btrfs_super_ops;

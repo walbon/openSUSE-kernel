@@ -65,6 +65,7 @@ struct btrfs_qgroup_extent_record;
 	{ BTRFS_BLOCK_GROUP_RAID6,	"RAID6"}
 
 #define BTRFS_UUID_SIZE 16
+#ifdef BREAK_LTTNG
 #define TP_STRUCT__entry_fsid __array(u8, fsid, BTRFS_UUID_SIZE)
 
 #define TP_fast_assign_fsid(fs_info)					\
@@ -80,6 +81,17 @@ struct btrfs_qgroup_extent_record;
 		args)
 #define TP_printk_btrfs(fmt, args...) \
 	TP_printk("%pU: " fmt, __entry->fsid, args)
+#define TP_ARGS_kabi(fs_info, args...)	TP_ARGS(fs_info, args)
+#define TP_PROTO_kabi(fs_info, args...)	TP_PROTO(fs_info, args)
+#else
+#define TP_STRUCT__entry_fsid
+#define TP_fast_assign_fsid(fs_info)			do {} while(0)
+#define TP_STRUCT__entry_btrfs(args...)			TP_STRUCT__entry(args)
+#define TP_fast_assign_btrfs(fs_info, args...)		TP_fast_assign(args)
+#define TP_printk_btrfs(fmt, args...)			TP_printk(fmt, args)
+#define TP_ARGS_kabi(fs_info, args...)			TP_ARGS(args)
+#define TP_PROTO_kabi(fs_info, args...)			TP_PROTO(args)
+#endif
 
 TRACE_EVENT(btrfs_transaction_commit,
 
@@ -440,9 +452,9 @@ TRACE_EVENT(btrfs_sync_file,
 
 TRACE_EVENT(btrfs_sync_fs,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info, int wait),
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info, int wait),
 
-	TP_ARGS(fs_info, wait),
+	TP_ARGS_kabi(fs_info, wait),
 
 	TP_STRUCT__entry_btrfs(
 		__field(	int,  wait		)
@@ -505,12 +517,12 @@ TRACE_EVENT(btrfs_add_block_group,
 
 DECLARE_EVENT_CLASS(btrfs_delayed_tree_ref,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_delayed_ref_node *ref,
 		 struct btrfs_delayed_tree_ref *full_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, full_ref, action),
+	TP_ARGS_kabi(fs_info, ref, full_ref, action),
 
 	TP_STRUCT__entry_btrfs(
 		__field(	u64,  bytenr		)
@@ -548,32 +560,32 @@ DECLARE_EVENT_CLASS(btrfs_delayed_tree_ref,
 
 DEFINE_EVENT(btrfs_delayed_tree_ref,  add_delayed_tree_ref,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_delayed_ref_node *ref,
 		 struct btrfs_delayed_tree_ref *full_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, full_ref, action)
+	TP_ARGS_kabi(fs_info, ref, full_ref, action)
 );
 
 DEFINE_EVENT(btrfs_delayed_tree_ref,  run_delayed_tree_ref,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_delayed_ref_node *ref,
 		 struct btrfs_delayed_tree_ref *full_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, full_ref, action)
+	TP_ARGS_kabi(fs_info, ref, full_ref, action)
 );
 
 DECLARE_EVENT_CLASS(btrfs_delayed_data_ref,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_delayed_ref_node *ref,
 		 struct btrfs_delayed_data_ref *full_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, full_ref, action),
+	TP_ARGS_kabi(fs_info, ref, full_ref, action),
 
 	TP_STRUCT__entry_btrfs(
 		__field(	u64,  bytenr		)
@@ -615,32 +627,32 @@ DECLARE_EVENT_CLASS(btrfs_delayed_data_ref,
 
 DEFINE_EVENT(btrfs_delayed_data_ref,  add_delayed_data_ref,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_delayed_ref_node *ref,
 		 struct btrfs_delayed_data_ref *full_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, full_ref, action)
+	TP_ARGS_kabi(fs_info, ref, full_ref, action)
 );
 
 DEFINE_EVENT(btrfs_delayed_data_ref,  run_delayed_data_ref,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_delayed_ref_node *ref,
 		 struct btrfs_delayed_data_ref *full_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, full_ref, action)
+	TP_ARGS_kabi(fs_info, ref, full_ref, action)
 );
 
 DECLARE_EVENT_CLASS(btrfs_delayed_ref_head,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_delayed_ref_node *ref,
 		 struct btrfs_delayed_ref_head *head_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, head_ref, action),
+	TP_ARGS_kabi(fs_info, ref, head_ref, action),
 
 	TP_STRUCT__entry_btrfs(
 		__field(	u64,  bytenr		)
@@ -665,22 +677,22 @@ DECLARE_EVENT_CLASS(btrfs_delayed_ref_head,
 
 DEFINE_EVENT(btrfs_delayed_ref_head,  add_delayed_ref_head,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_delayed_ref_node *ref,
 		 struct btrfs_delayed_ref_head *head_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, head_ref, action)
+	TP_ARGS_kabi(fs_info, ref, head_ref, action)
 );
 
 DEFINE_EVENT(btrfs_delayed_ref_head,  run_delayed_ref_head,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_delayed_ref_node *ref,
 		 struct btrfs_delayed_ref_head *head_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, head_ref, action)
+	TP_ARGS_kabi(fs_info, ref, head_ref, action)
 );
 
 #define show_chunk_type(type)					\
@@ -1355,9 +1367,10 @@ DEFINE_EVENT(btrfs__qgroup_rsv_data, btrfs_qgroup_release_data,
 
 DECLARE_EVENT_CLASS(btrfs__qgroup_delayed_ref,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info, u64 ref_root, u64 reserved),
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info, u64 ref_root,
+		      u64 reserved),
 
-	TP_ARGS(fs_info, ref_root, reserved),
+	TP_ARGS_kabi(fs_info, ref_root, reserved),
 
 	TP_STRUCT__entry_btrfs(
 		__field(	u64,		ref_root	)
@@ -1375,16 +1388,17 @@ DECLARE_EVENT_CLASS(btrfs__qgroup_delayed_ref,
 
 DEFINE_EVENT(btrfs__qgroup_delayed_ref, btrfs_qgroup_free_delayed_ref,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info, u64 ref_root, u64 reserved),
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info, u64 ref_root,
+		      u64 reserved),
 
-	TP_ARGS(fs_info, ref_root, reserved)
+	TP_ARGS_kabi(fs_info, ref_root, reserved)
 );
 
 DECLARE_EVENT_CLASS(btrfs_qgroup_extent,
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_qgroup_extent_record *rec),
 
-	TP_ARGS(fs_info, rec),
+	TP_ARGS_kabi(fs_info, rec),
 
 	TP_STRUCT__entry_btrfs(
 		__field(	u64,  bytenr		)
@@ -1403,26 +1417,26 @@ DECLARE_EVENT_CLASS(btrfs_qgroup_extent,
 
 DEFINE_EVENT(btrfs_qgroup_extent, btrfs_qgroup_account_extents,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_qgroup_extent_record *rec),
 
-	TP_ARGS(fs_info, rec)
+	TP_ARGS_kabi(fs_info, rec)
 );
 
 DEFINE_EVENT(btrfs_qgroup_extent, btrfs_qgroup_trace_extent,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info,
 		 struct btrfs_qgroup_extent_record *rec),
 
-	TP_ARGS(fs_info, rec)
+	TP_ARGS_kabi(fs_info, rec)
 );
 
 TRACE_EVENT(btrfs_qgroup_account_extent,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info, u64 bytenr,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info, u64 bytenr,
 		 u64 num_bytes, u64 nr_old_roots, u64 nr_new_roots),
 
-	TP_ARGS(fs_info, bytenr, num_bytes, nr_old_roots, nr_new_roots),
+	TP_ARGS_kabi(fs_info, bytenr, num_bytes, nr_old_roots, nr_new_roots),
 
 	TP_STRUCT__entry_btrfs(
 		__field(	u64,  bytenr			)
@@ -1448,10 +1462,10 @@ TRACE_EVENT(btrfs_qgroup_account_extent,
 
 TRACE_EVENT(qgroup_update_counters,
 
-	TP_PROTO(struct btrfs_fs_info *fs_info, u64 qgid,
+	TP_PROTO_kabi(struct btrfs_fs_info *fs_info, u64 qgid,
 		 u64 cur_old_count, u64 cur_new_count),
 
-	TP_ARGS(fs_info, qgid, cur_old_count, cur_new_count),
+	TP_ARGS_kabi(fs_info, qgid, cur_old_count, cur_new_count),
 
 	TP_STRUCT__entry_btrfs(
 		__field(	u64,  qgid			)
