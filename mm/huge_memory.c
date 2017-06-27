@@ -679,6 +679,11 @@ int do_huge_pmd_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	pte_t *pte;
 
 	if (haddr >= vma->vm_start && haddr + HPAGE_PMD_SIZE <= vma->vm_end) {
+		if (stack_guard_area(vma, haddr) ||
+				stack_guard_area(vma, haddr + HPAGE_PMD_SIZE)) {
+			count_vm_event(THP_FAULT_FALLBACK);
+			goto out;
+		}
 		if (unlikely(anon_vma_prepare(vma)))
 			return VM_FAULT_OOM;
 		if (unlikely(khugepaged_enter(vma)))
@@ -1896,6 +1901,9 @@ static void collapse_huge_page(struct mm_struct *mm,
 	if (!vma->anon_vma || vma->vm_ops)
 		goto out;
 	if (is_vma_temporary_stack(vma))
+		goto out;
+	/* never try to collapse stack gap */
+	if (stack_guard_area(vma, hstart) || stack_guard_area(vma, hend))
 		goto out;
 	/*
 	 * If is_pfn_mapping() is true is_learn_pfn_mapping() must be
