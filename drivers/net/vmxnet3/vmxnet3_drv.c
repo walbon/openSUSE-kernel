@@ -789,7 +789,7 @@ vmxnet3_tq_init_all(struct vmxnet3_adapter *adapter)
 
 
 /*
- *    parse and copy relevant protocol headers:
+ *    parse relevant protocol headers:
  *      For a tso pkt, relevant headers are L2/3/4 including options
  *      For a pkt requesting csum offloading, they are L2/3 and may include L4
  *      if it's a TCP/UDP pkt
@@ -802,15 +802,14 @@ vmxnet3_tq_init_all(struct vmxnet3_adapter *adapter)
  * Other effects:
  *    1. related *ctx fields are updated.
  *    2. ctx->copy_size is # of bytes copied
- *    3. the portion copied is guaranteed to be in the linear part
+ *    3. the portion to be copied is guaranteed to be in the linear part
  *
  */
 static int
-vmxnet3_parse_and_copy_hdr(struct sk_buff *skb, struct vmxnet3_tx_queue *tq,
-			   struct vmxnet3_tx_ctx *ctx,
-			   struct vmxnet3_adapter *adapter)
+vmxnet3_parse_hdr(struct sk_buff *skb, struct vmxnet3_tx_queue *tq,
+		  struct vmxnet3_tx_ctx *ctx,
+		  struct vmxnet3_adapter *adapter)
 {
-	struct Vmxnet3_TxDataDesc *tdd;
 
 	if (ctx->mss) {	/* TSO */
 		ctx->eth_ip_hdr_size = skb_transport_offset(skb);
@@ -860,16 +859,34 @@ vmxnet3_parse_and_copy_hdr(struct sk_buff *skb, struct vmxnet3_tx_queue *tq,
 		return 0;
 	}
 
+	return 1;
+err:
+	return -1;
+}
+
+/*
+ *    copy relevant protocol headers to the transmit ring:
+ *      For a tso pkt, relevant headers are L2/3/4 including options
+ *      For a pkt requesting csum offloading, they are L2/3 and may include L4
+ *      if it's a TCP/UDP pkt
+ *
+ *
+ *    Note that this requires that vmxnet3_parse_hdr be called first to set the
+ *      appropriate bits in ctx first
+ */
+static void
+vmxnet3_copy_hdr(struct sk_buff *skb, struct vmxnet3_tx_queue *tq,
+		 struct vmxnet3_tx_ctx *ctx,
+		 struct vmxnet3_adapter *adapter)
+{
+	struct Vmxnet3_TxDataDesc *tdd;
+
 	tdd = tq->data_ring.base + tq->tx_ring.next2fill;
 
 	memcpy(tdd->data, skb->data, ctx->copy_size);
 	dev_dbg(&adapter->netdev->dev,
 		"copy %u bytes to dataRing[%u]\n",
 		ctx->copy_size, tq->tx_ring.next2fill);
-	return 1;
-
-err:
-	return -1;
 }
 
 
@@ -952,22 +969,7 @@ vmxnet3_tq_xmit(struct sk_buff *skb, struct vmxnet3_tx_queue *tq,
 		}
 	}
 
-	spin_lock_irqsave(&tq->tx_lock, flags);
-
-	if (count > vmxnet3_cmd_ring_desc_avail(&tq->tx_ring)) {
-		tq->stats.tx_ring_full++;
-		dev_dbg(&adapter->netdev->dev,
-			"tx queue stopped on %s, next2comp %u"
-			" next2fill %u\n", adapter->netdev->name,
-			tq->tx_ring.next2comp, tq->tx_ring.next2fill);
-
-		vmxnet3_tq_stop(tq, adapter);
-		spin_unlock_irqrestore(&tq->tx_lock, flags);
-		return NETDEV_TX_BUSY;
-	}
-
-
-	ret = vmxnet3_parse_and_copy_hdr(skb, tq, &ctx, adapter);
+	ret = vmxnet3_parse_hdr(skb, tq, &ctx, adapter);
 	if (ret >= 0) {
 		BUG_ON(ret <= 0 && ctx.copy_size != 0);
 		/* hdrs parsed, check against other limits */
@@ -987,8 +989,25 @@ vmxnet3_tq_xmit(struct sk_buff *skb, struct vmxnet3_tx_queue *tq,
 		}
 	} else {
 		tq->stats.drop_hdr_inspect_err++;
-		goto unlock_drop_pkt;
+		goto drop_pkt;
 	}
+
+	spin_lock_irqsave(&tq->tx_lock, flags);
+
+	if (count > vmxnet3_cmd_ring_desc_avail(&tq->tx_ring)) {
+		tq->stats.tx_ring_full++;
+		dev_dbg(&adapter->netdev->dev,
+			"tx queue stopped on %s, next2comp %u"
+			" next2fill %u\n", adapter->netdev->name,
+			tq->tx_ring.next2comp, tq->tx_ring.next2fill);
+
+		vmxnet3_tq_stop(tq, adapter);
+		spin_unlock_irqrestore(&tq->tx_lock, flags);
+		return NETDEV_TX_BUSY;
+	}
+
+
+	vmxnet3_copy_hdr(skb, tq, &ctx, adapter);
 
 	/* fill tx descs related to addr & len */
 	vmxnet3_map_pkt(skb, &ctx, tq, adapter->pdev, adapter);
