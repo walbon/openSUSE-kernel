@@ -1160,8 +1160,7 @@ int mlx4_init_eq_table(struct mlx4_dev *dev)
 	}
 
 	for (i = 0; i < dev->caps.num_comp_vectors; ++i) {
-		err = mlx4_create_eq(dev, dev->caps.num_cqs -
-					  dev->caps.reserved_cqs +
+		err = mlx4_create_eq(dev, dev->quotas.cq +
 					  MLX4_NUM_SPARE_EQE,
 				     (dev->flags & MLX4_FLAG_MSI_X) ? i : 0,
 				     &priv->eq_table.eq[i]);
