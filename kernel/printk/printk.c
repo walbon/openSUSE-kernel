@@ -2098,6 +2098,16 @@ asmlinkage __visible void early_printk(const char *fmt, ...)
 }
 #endif
 
+void printk_force_sync_mode(void)
+{
+	force_printk_sync = true;
+}
+
+void printk_relax_sync_mode(void)
+{
+	force_printk_sync = false;
+}
+
 static int __add_preferred_console(char *name, int idx, char *options,
 				   char *brl_options)
 {
@@ -2211,7 +2221,7 @@ MODULE_PARM_DESC(console_suspend, "suspend console during suspend"
  */
 void suspend_console(void)
 {
-	force_printk_sync = true;
+	printk_force_sync_mode();
 
 	if (!console_suspend_enabled)
 		return;
@@ -2223,7 +2233,7 @@ void suspend_console(void)
 
 void resume_console(void)
 {
-	force_printk_sync = false;
+	printk_relax_sync_mode();
 
 	if (!console_suspend_enabled)
 		return;
