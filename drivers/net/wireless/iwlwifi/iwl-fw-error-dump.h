@@ -26,7 +26,7 @@
  * in the file called COPYING.
  *
  * Contact Information:
- *  Intel Linux Wireless <ilw@linux.intel.com>
+ *  Intel Linux Wireless <linuxwifi@intel.com>
  * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
  *
  * BSD LICENSE
@@ -88,6 +88,7 @@
  *	&struct iwl_fw_error_dump_rb
  * @IWL_FW_ERROR_PAGING: UMAC's image memory segments which were
  *	paged to the DRAM.
+ * @IWL_FW_ERROR_DUMP_RADIO_REG: Dump the radio registers.
  */
 enum iwl_fw_error_dump_type {
 	/* 0 is deprecated */
@@ -103,6 +104,7 @@ enum iwl_fw_error_dump_type {
 	IWL_FW_ERROR_DUMP_ERROR_INFO = 10,
 	IWL_FW_ERROR_DUMP_RB = 11,
 	IWL_FW_ERROR_DUMP_PAGING = 12,
+	IWL_FW_ERROR_DUMP_RADIO_REG = 13,
 
 	IWL_FW_ERROR_DUMP_MAX,
 };
@@ -288,6 +290,11 @@ iwl_fw_error_next_data(struct iwl_fw_error_dump_data *data)
  * @FW_DBG_TRIGGER_TIME_EVENT: trigger log collection upon time events related
  *	events.
  * @FW_DBG_TRIGGER_BA: trigger log collection upon BlockAck related events.
+ * @FW_DBG_TX_LATENCY: trigger log collection when the tx latency goes above a
+ *	threshold.
+ * @FW_DBG_TDLS: trigger log collection upon TDLS related events.
+ * @FW_DBG_TRIGGER_TX_STATUS: trigger log collection upon tx status when
+ *  the firmware sends a tx reply.
  */
 enum iwl_fw_dbg_trigger {
 	FW_DBG_TRIGGER_INVALID = 0,
@@ -302,6 +309,9 @@ enum iwl_fw_dbg_trigger {
 	FW_DBG_TRIGGER_TXQ_TIMERS,
 	FW_DBG_TRIGGER_TIME_EVENT,
 	FW_DBG_TRIGGER_BA,
+	FW_DBG_TRIGGER_TX_LATENCY,
+	FW_DBG_TRIGGER_TDLS,
+	FW_DBG_TRIGGER_TX_STATUS,
 
 	/* must be last */
 	FW_DBG_TRIGGER_MAX,

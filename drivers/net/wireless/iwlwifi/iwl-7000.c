@@ -7,6 +7,7 @@
  *
  * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2014 Intel Mobile Communications GmbH
+ * Copyright(c) 2015 Intel Deutschland GmbH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -26,13 +27,14 @@
  * in the file called COPYING.
  *
  * Contact Information:
- *  Intel Linux Wireless <ilw@linux.intel.com>
+ *  Intel Linux Wireless <linuxwifi@intel.com>
  * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
  *
  * BSD LICENSE
  *
  * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2014 Intel Mobile Communications GmbH
+ * Copyright(c) 2015 Intel Deutschland GmbH
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -70,18 +72,21 @@
 
 /* Highest firmware API version supported */
 #define IWL7260_UCODE_API_MAX	17
-#define IWL7265_UCODE_API_MAX	19
-#define IWL7265D_UCODE_API_MAX	19
+#define IWL7265_UCODE_API_MAX	17
+#define IWL7265D_UCODE_API_MAX	21
+#define IWL3168_UCODE_API_MAX	21
 
 /* Oldest version we won't warn about */
 #define IWL7260_UCODE_API_OK	13
 #define IWL7265_UCODE_API_OK	13
 #define IWL7265D_UCODE_API_OK	13
+#define IWL3168_UCODE_API_OK	20
 
 /* Lowest firmware API version supported */
 #define IWL7260_UCODE_API_MIN	13
 #define IWL7265_UCODE_API_MIN	13
 #define IWL7265D_UCODE_API_MIN	13
+#define IWL3168_UCODE_API_MIN	20
 
 /* NVM versions */
 #define IWL7260_NVM_VERSION		0x0a1d
@@ -90,6 +95,8 @@
 #define IWL3160_TX_POWER_VERSION	0xffff /* meaningless */
 #define IWL3165_NVM_VERSION		0x709
 #define IWL3165_TX_POWER_VERSION	0xffff /* meaningless */
+#define IWL3168_NVM_VERSION		0xd01
+#define IWL3168_TX_POWER_VERSION	0xffff /* meaningless */
 #define IWL7265_NVM_VERSION		0x0a1d
 #define IWL7265_TX_POWER_VERSION	0xffff /* meaningless */
 #define IWL7265D_NVM_VERSION		0x0c11
@@ -106,6 +113,9 @@
 
 #define IWL3160_FW_PRE "iwlwifi-3160-"
 #define IWL3160_MODULE_FIRMWARE(api) IWL3160_FW_PRE __stringify(api) ".ucode"
+
+#define IWL3168_FW_PRE "iwlwifi-3168-"
+#define IWL3168_MODULE_FIRMWARE(api) IWL3168_FW_PRE __stringify(api) ".ucode"
 
 #define IWL7265_FW_PRE "iwlwifi-7265-"
 #define IWL7265_MODULE_FIRMWARE(api) IWL7265_FW_PRE __stringify(api) ".ucode"
@@ -177,6 +187,12 @@ static const struct iwl_ht_params iwl7000_ht_params = {
 	.ucode_api_max = IWL7265_UCODE_API_MAX,			\
 	.ucode_api_ok = IWL7265_UCODE_API_OK,			\
 	.ucode_api_min = IWL7265_UCODE_API_MIN
+
+#define IWL_DEVICE_3008						\
+	IWL_DEVICE_7000_COMMON,					\
+	.ucode_api_max = IWL3168_UCODE_API_MAX,			\
+	.ucode_api_ok = IWL3168_UCODE_API_OK,			\
+	.ucode_api_min = IWL3168_UCODE_API_MIN
 
 #define IWL_DEVICE_7005D					\
 	IWL_DEVICE_7000_COMMON,					\
@@ -295,6 +311,17 @@ const struct iwl_cfg iwl3165_2ac_cfg = {
 	.dccm_len = IWL7265_DCCM_LEN,
 };
 
+const struct iwl_cfg iwl3168_2ac_cfg = {
+	.name = "Intel(R) Dual Band Wireless AC 3168",
+	.fw_name_pre = IWL3168_FW_PRE,
+	IWL_DEVICE_3008,
+	.ht_params = &iwl7000_ht_params,
+	.nvm_ver = IWL3168_NVM_VERSION,
+	.nvm_calib_ver = IWL3168_TX_POWER_VERSION,
+	.pwr_tx_backoffs = iwl7265_pwr_tx_backoffs,
+	.dccm_len = IWL7265_DCCM_LEN,
+};
+
 const struct iwl_cfg iwl7265_2ac_cfg = {
 	.name = "Intel(R) Dual Band Wireless AC 7265",
 	.fw_name_pre = IWL7265_FW_PRE,
@@ -363,10 +390,12 @@ const struct iwl_cfg iwl7265d_n_cfg = {
 
 MODULE_FIRMWARE(IWL7260_MODULE_FIRMWARE(IWL7260_UCODE_API_OK));
 MODULE_FIRMWARE(IWL3160_MODULE_FIRMWARE(IWL7260_UCODE_API_OK));
+MODULE_FIRMWARE(IWL3168_MODULE_FIRMWARE(IWL3168_UCODE_API_OK));
 MODULE_FIRMWARE(IWL7265_MODULE_FIRMWARE(IWL7265_UCODE_API_OK));
 MODULE_FIRMWARE(IWL7265D_MODULE_FIRMWARE(IWL7265D_UCODE_API_OK));
-/* SP2 kernel-firmware */
-MODULE_FIRMWARE(IWL7260_MODULE_FIRMWARE(16));
-MODULE_FIRMWARE(IWL3160_MODULE_FIRMWARE(16));
-MODULE_FIRMWARE(IWL7265_MODULE_FIRMWARE(16));
-MODULE_FIRMWARE(IWL7265D_MODULE_FIRMWARE(16));
+/* SP3 kernel-firmware */
+MODULE_FIRMWARE(IWL7260_MODULE_FIRMWARE(17));
+MODULE_FIRMWARE(IWL3160_MODULE_FIRMWARE(17));
+MODULE_FIRMWARE(IWL3168_MODULE_FIRMWARE(21));
+MODULE_FIRMWARE(IWL7265_MODULE_FIRMWARE(17));
+MODULE_FIRMWARE(IWL7265D_MODULE_FIRMWARE(21));

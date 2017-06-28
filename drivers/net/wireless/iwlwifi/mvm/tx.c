@@ -7,6 +7,7 @@
  *
  * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
+ * Copyright(c) 2016        Intel Deutschland GmbH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -26,7 +27,7 @@
  * in the file called COPYING.
  *
  * Contact Information:
- *  Intel Linux Wireless <ilw@linux.intel.com>
+ *  Intel Linux Wireless <linuxwifi@intel.com>
  * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
  *
  * BSD LICENSE
@@ -64,11 +65,13 @@
  *****************************************************************************/
 #include <linux/ieee80211.h>
 #include <linux/etherdevice.h>
+#include <linux/tcp.h>
 
 #include "iwl-trans.h"
 #include "iwl-eeprom-parse.h"
 #include "mvm.h"
 #include "sta.h"
+#include "fw-dbg.h"
 
 static void
 iwl_mvm_bar_check_trigger(struct iwl_mvm *mvm, const u8 *addr,
@@ -344,8 +347,8 @@ iwl_mvm_set_tx_params(struct iwl_mvm *mvm, struct sk_buff *skb,
 	iwl_mvm_set_tx_cmd_rate(mvm, tx_cmd, info, sta, hdr->frame_control);
 
 	memset(&info->status, 0, sizeof(info->status));
+	memset(info->driver_data, 0, sizeof(info->driver_data));
 
-	info->driver_data[0] = NULL;
 	info->driver_data[1] = dev_cmd;
 
 	return dev_cmd;
@@ -433,11 +436,39 @@ int iwl_mvm_tx_skb_non_sta(struct iwl_mvm *mvm, struct sk_buff *skb)
 	return 0;
 }
 
+static int iwl_mvm_tx_tso(struct iwl_mvm *mvm, struct sk_buff *skb_gso,
+			  struct ieee80211_sta *sta,
+			  struct sk_buff_head *mpdus_skb)
+{
+	struct sk_buff *tmp, *next;
+	char cb[sizeof(skb_gso->cb)];
+
+	memcpy(cb, skb_gso->cb, sizeof(cb));
+	next = skb_gso_segment(skb_gso, 0);
+	if (IS_ERR(next))
+		return -EINVAL;
+	else if (next)
+		consume_skb(skb_gso);
+
+	while (next) {
+		tmp = next;
+		next = tmp->next;
+		memcpy(tmp->cb, cb, sizeof(tmp->cb));
+
+		tmp->prev = NULL;
+		tmp->next = NULL;
+
+		__skb_queue_tail(mpdus_skb, tmp);
+	}
+
+	return 0;
+}
+
 /*
  * Sets the fields in the Tx cmd that are crypto related
  */
-int iwl_mvm_tx_skb(struct iwl_mvm *mvm, struct sk_buff *skb,
-		   struct ieee80211_sta *sta)
+static int iwl_mvm_tx_mpdu(struct iwl_mvm *mvm, struct sk_buff *skb,
+			   struct ieee80211_sta *sta)
 {
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
@@ -531,6 +562,51 @@ drop_unlock_sta:
 	spin_unlock(&mvmsta->lock);
 drop:
 	return -1;
+}
+
+int iwl_mvm_tx_skb(struct iwl_mvm *mvm, struct sk_buff *skb,
+		   struct ieee80211_sta *sta)
+{
+	struct iwl_mvm_sta *mvmsta = iwl_mvm_sta_from_mac80211(sta);
+	struct sk_buff_head mpdus_skbs;
+	unsigned int payload_len;
+	int ret;
+
+	if (WARN_ON_ONCE(!mvmsta))
+		return -1;
+
+	if (WARN_ON_ONCE(mvmsta->sta_id == IWL_MVM_STATION_COUNT))
+		return -1;
+
+	if (!skb_is_gso(skb))
+		return iwl_mvm_tx_mpdu(mvm, skb, sta);
+
+	payload_len = skb_tail_pointer(skb) - skb_transport_header(skb) -
+		tcp_hdrlen(skb) + skb->data_len;
+
+	if (payload_len <= skb_shinfo(skb)->gso_size)
+		return iwl_mvm_tx_mpdu(mvm, skb, sta);
+
+	__skb_queue_head_init(&mpdus_skbs);
+
+	ret = iwl_mvm_tx_tso(mvm, skb, sta, &mpdus_skbs);
+	if (ret)
+		return ret;
+
+	if (WARN_ON(skb_queue_empty(&mpdus_skbs)))
+		return ret;
+
+	while (!skb_queue_empty(&mpdus_skbs)) {
+		struct sk_buff *skb = __skb_dequeue(&mpdus_skbs);
+
+		ret = iwl_mvm_tx_mpdu(mvm, skb, sta);
+		if (ret) {
+			__skb_queue_purge(&mpdus_skbs);
+			return ret;
+		}
+	}
+
+	return 0;
 }
 
 static void iwl_mvm_check_ratid_empty(struct iwl_mvm *mvm,
@@ -670,6 +746,37 @@ static void iwl_mvm_hwrate_to_tx_status(u32 rate_n_flags,
 	iwl_mvm_hwrate_to_tx_rate(rate_n_flags, info->band, r);
 }
 
+static void iwl_mvm_tx_status_check_trigger(struct iwl_mvm *mvm,
+					    u32 status)
+{
+	struct iwl_fw_dbg_trigger_tlv *trig;
+	struct iwl_fw_dbg_trigger_tx_status *status_trig;
+	int i;
+
+	if (!iwl_fw_dbg_trigger_enabled(mvm->fw, FW_DBG_TRIGGER_TX_STATUS))
+		return;
+
+	trig = iwl_fw_dbg_get_trigger(mvm->fw, FW_DBG_TRIGGER_TX_STATUS);
+	status_trig = (void *)trig->data;
+
+	if (!iwl_fw_dbg_trigger_check_stop(mvm, NULL, trig))
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(status_trig->statuses); i++) {
+		/* don't collect on status 0 */
+		if (!status_trig->statuses[i].status)
+			break;
+
+		if (status_trig->statuses[i].status != (status & TX_STATUS_MSK))
+			continue;
+
+		iwl_mvm_fw_dbg_collect_trig(mvm, trig,
+					    "Tx status %d was received",
+					    status & TX_STATUS_MSK);
+		break;
+	}
+}
+
 static void iwl_mvm_rx_tx_cmd_single(struct iwl_mvm *mvm,
 				     struct iwl_rx_packet *pkt)
 {
@@ -685,6 +792,7 @@ static void iwl_mvm_rx_tx_cmd_single(struct iwl_mvm *mvm,
 	struct sk_buff_head skbs;
 	u8 skb_freed = 0;
 	u16 next_reclaimed, seq_ctl;
+	bool is_ndp = false;
 
 	__skb_queue_head_init(&skbs);
 
@@ -718,6 +826,8 @@ static void iwl_mvm_rx_tx_cmd_single(struct iwl_mvm *mvm,
 			break;
 		}
 
+		iwl_mvm_tx_status_check_trigger(mvm, status);
+
 		info->status.rates[0].count = tx_resp->failure_frame + 1;
 		iwl_mvm_hwrate_to_tx_status(le32_to_cpu(tx_resp->initial_rate),
 					    info);
@@ -734,6 +844,20 @@ static void iwl_mvm_rx_tx_cmd_single(struct iwl_mvm *mvm,
 		if (status != TX_STATUS_SUCCESS) {
 			struct ieee80211_hdr *hdr = (void *)skb->data;
 			seq_ctl = le16_to_cpu(hdr->seq_ctrl);
+		}
+
+		if (unlikely(!seq_ctl)) {
+			struct ieee80211_hdr *hdr = (void *)skb->data;
+
+			/*
+			 * If it is an NDP, we can't update next_reclaim since
+			 * its sequence control is 0. Note that for that same
+			 * reason, NDPs are never sent to A-MPDU'able queues
+			 * so that we can never have more than one freed frame
+			 * for a single Tx resonse (see WARN_ON below).
+			 */
+			if (ieee80211_is_qos_nullfunc(hdr->frame_control))
+				is_ndp = true;
 		}
 
 		/*
@@ -798,9 +922,16 @@ static void iwl_mvm_rx_tx_cmd_single(struct iwl_mvm *mvm,
 				&mvmsta->tid_data[tid];
 
 			spin_lock_bh(&mvmsta->lock);
-			tid_data->next_reclaimed = next_reclaimed;
-			IWL_DEBUG_TX_REPLY(mvm, "Next reclaimed packet:%d\n",
-					   next_reclaimed);
+			if (!is_ndp) {
+				tid_data->next_reclaimed = next_reclaimed;
+				IWL_DEBUG_TX_REPLY(mvm,
+						   "Next reclaimed packet:%d\n",
+						   next_reclaimed);
+			} else {
+				IWL_DEBUG_TX_REPLY(mvm,
+						   "NDP - don't update next_reclaimed\n");
+			}
+
 			iwl_mvm_check_ratid_empty(mvm, sta, tid);
 			spin_unlock_bh(&mvmsta->lock);
 		}
@@ -933,7 +1064,6 @@ static void iwl_mvm_rx_tx_cmd_agg(struct iwl_mvm *mvm,
 		struct iwl_mvm_sta *mvmsta = iwl_mvm_sta_from_mac80211(sta);
 		mvmsta->tid_data[tid].rate_n_flags =
 			le32_to_cpu(tx_resp->initial_rate);
-		mvmsta->tid_data[tid].reduced_tpc = tx_resp->reduced_tpc;
 		mvmsta->tid_data[tid].tx_time =
 			le16_to_cpu(tx_resp->wireless_media_time);
 	}
@@ -964,7 +1094,7 @@ static void iwl_mvm_tx_info_from_ba_notif(struct ieee80211_tx_info *info,
 	/* TODO: not accounted if the whole A-MPDU failed */
 	info->status.tx_time = tid_data->tx_time;
 	info->status.status_driver_data[0] =
-		(void *)(uintptr_t)tid_data->reduced_tpc;
+		(void *)(uintptr_t)ba_notif->reduced_txp;
 	info->status.status_driver_data[1] =
 		(void *)(uintptr_t)tid_data->rate_n_flags;
 }
@@ -1037,6 +1167,8 @@ void iwl_mvm_rx_ba_notif(struct iwl_mvm *mvm, struct iwl_rx_cmd_buffer *rxb)
 			   scd_flow, ba_resp_scd_ssn, ba_notif->txed,
 			   ba_notif->txed_2_done);
 
+	IWL_DEBUG_TX_REPLY(mvm, "reduced txp from ba notif %d\n",
+			   ba_notif->reduced_txp);
 	tid_data->next_reclaimed = ba_resp_scd_ssn;
 
 	iwl_mvm_check_ratid_empty(mvm, sta, tid);
