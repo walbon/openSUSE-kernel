@@ -2693,7 +2693,6 @@ int rbd_img_cmp_and_write_request_fill(struct rbd_img_request *img_request,
 
 	rbd_osd_req_format_rw(obj_request);
 
-	rbd_img_request_get(img_request);
 	return 0;
 
 del_obj_req:
