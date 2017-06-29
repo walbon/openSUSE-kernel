@@ -922,7 +922,7 @@ static void fadump_setup_crash_memory_ranges(void)
 		 * through boot_memory_size). This logic needs a relook if and
 		 * when RMA_START changes to a non-zero value.
 		 */
-		BUILD_BUG_ON(RMA_START);
+		BUILD_BUG_ON(RMA_START != 0);
 		if (start < fw_dump.boot_memory_size) {
 			if (end > fw_dump.boot_memory_size)
 				start = fw_dump.boot_memory_size;
