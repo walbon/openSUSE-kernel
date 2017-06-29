@@ -1506,7 +1506,8 @@ static sector_t __rdev_sectors(struct raid_set *rs)
 			return rdev->sectors;
 	}
 
-	BUG(); /* Constructor ensures we got some. */
+	/* No valid raid devices */
+	return 0;
 }
 
 /* Calculate the sectors per device and per array used for @rs */
