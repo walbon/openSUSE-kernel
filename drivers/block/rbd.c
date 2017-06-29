@@ -2693,7 +2693,6 @@ int rbd_img_cmp_and_write_request_fill(struct rbd_img_request *img_request,
 
 	rbd_osd_req_format_rw(obj_request);
 
-	rbd_img_request_get(img_request);
 	return 0;
 
 del_obj_req:
@@ -4279,7 +4278,7 @@ int rbd_dev_getxattr(struct rbd_device *rbd_dev, char *key, int max_val_len,
 
 	osd_req_op_xattr_response_data_pages(req, 0,
 					     pages, max_val_len,
-					     0, false, false);
+					     0, false, true);
 
 	ceph_osdc_start_request(osdc, req, false);
 	ret = ceph_osdc_wait_request(osdc, req);
