@@ -127,6 +127,9 @@ static inline __printf(1, 2) __cold
 void early_printk(const char *s, ...) { }
 #endif
 
+extern void printk_force_sync_mode(void);
+extern void printk_relax_sync_mode(void);
+
 typedef __printf(1, 0) int (*printk_func_t)(const char *fmt, va_list args);
 
 #ifdef CONFIG_PRINTK
