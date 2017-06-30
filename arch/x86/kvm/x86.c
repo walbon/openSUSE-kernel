@@ -5084,8 +5084,6 @@ static void init_emulate_ctxt(struct kvm_vcpu *vcpu)
 	kvm_x86_ops->get_cs_db_l_bits(vcpu, &cs_db, &cs_l);
 
 	ctxt->eflags = kvm_get_rflags(vcpu);
-	ctxt->tf = (ctxt->eflags & X86_EFLAGS_TF) != 0;
-
 	ctxt->eip = kvm_rip_read(vcpu);
 	ctxt->mode = (!is_protmode(vcpu))		? X86EMUL_MODE_REAL :
 		     (ctxt->eflags & X86_EFLAGS_VM)	? X86EMUL_MODE_VM86 :
@@ -5096,6 +5094,8 @@ static void init_emulate_ctxt(struct kvm_vcpu *vcpu)
 	BUILD_BUG_ON(HF_SMM_MASK != X86EMUL_SMM_MASK);
 	BUILD_BUG_ON(HF_SMM_INSIDE_NMI_MASK != X86EMUL_SMM_INSIDE_NMI_MASK);
 	ctxt->emul_flags = vcpu->arch.hflags;
+	if ((ctxt->eflags & X86_EFLAGS_TF) != 0)
+		ctxt->emul_flags |= X86EMUL_TF_BEFORE_INST;
 
 	init_decode_cache(ctxt);
 	vcpu->arch.emulate_regs_need_sync_from_vcpu = false;
@@ -5477,13 +5477,16 @@ restart:
 
 	if (writeback) {
 		unsigned long rflags = kvm_x86_ops->get_rflags(vcpu);
+		bool tf = ctxt->emul_flags & X86EMUL_TF_BEFORE_INST;
+
+		ctxt->emul_flags &= ~X86EMUL_TF_BEFORE_INST;
 		toggle_interruptibility(vcpu, ctxt->interruptibility);
 		vcpu->arch.emulate_regs_need_sync_to_vcpu = false;
 		if (vcpu->arch.hflags != ctxt->emul_flags)
 			kvm_set_hflags(vcpu, ctxt->emul_flags);
 		kvm_rip_write(vcpu, ctxt->eip);
 		if (r == EMULATE_DONE &&
-		    (ctxt->tf || (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP)))
+		    (tf || (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP)))
 			kvm_vcpu_do_singlestep(vcpu, &r);
 		if (!ctxt->have_exception ||
 		    exception_type(ctxt->exception.vector) == EXCPT_TRAP)
