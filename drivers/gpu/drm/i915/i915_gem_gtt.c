@@ -24,6 +24,7 @@
  */
 
 #include <linux/seq_file.h>
+#include <linux/stop_machine.h>
 #include <drm/drmP.h>
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
@@ -2450,6 +2451,75 @@ static void gen8_ggtt_clear_range(struct i915_address_space *vm,
 	readl(gtt_base);
 }
 
+static void bxt_vtd_ggtt_wa(struct i915_address_space *vm)
+{
+	struct drm_i915_private *dev_priv = vm->dev->dev_private;
+
+	/*
+	 * Make sure the internal GAM fifo has been cleared of all GTT
+	 * writes before exiting stop_machine(). This guarantees that
+	 * any aperture accesses waiting to start in another process
+	 * cannot back up behind the GTT writes causing a hang.
+	 * The register can be any arbitrary GAM register.
+	 */
+	POSTING_READ(GFX_FLSH_CNTL_GEN6);
+}
+
+struct insert_entries {
+	struct i915_address_space *vm;
+	struct sg_table *st;
+	u64 start;
+	enum i915_cache_level level;
+};
+
+static int bxt_vtd_ggtt_insert_entries__cb(void *_arg)
+{
+	struct insert_entries *arg = _arg;
+
+	gen8_ggtt_insert_entries(arg->vm, arg->st, arg->start, arg->level, 0);
+	bxt_vtd_ggtt_wa(arg->vm);
+
+	return 0;
+}
+
+static void bxt_vtd_ggtt_insert_entries__BKL(struct i915_address_space *vm,
+					     struct sg_table *st,
+					     u64 start,
+					     enum i915_cache_level level,
+					     u32 unused)
+{
+	struct insert_entries arg = { vm, st, start, level };
+
+	stop_machine(bxt_vtd_ggtt_insert_entries__cb, &arg, NULL);
+}
+
+struct clear_range {
+	struct i915_address_space *vm;
+	u64 start;
+	u64 length;
+	bool use_scratch;
+};
+
+static int bxt_vtd_ggtt_clear_range__cb(void *_arg)
+{
+	struct clear_range *arg = _arg;
+
+	gen8_ggtt_clear_range(arg->vm, arg->start, arg->length, arg->use_scratch);
+	bxt_vtd_ggtt_wa(arg->vm);
+
+	return 0;
+}
+
+static void bxt_vtd_ggtt_clear_range__BKL(struct i915_address_space *vm,
+					  u64 start,
+					  u64 length,
+					  bool use_scratch)
+{
+	struct clear_range arg = { vm, start, length, use_scratch };
+
+	stop_machine(bxt_vtd_ggtt_clear_range__cb, &arg, NULL);
+}
+
 static void gen6_ggtt_clear_range(struct i915_address_space *vm,
 				  uint64_t start,
 				  uint64_t length,
@@ -2996,6 +3066,12 @@ static int gen8_gmch_probe(struct drm_device *dev,
 	dev_priv->gtt.base.insert_entries = gen8_ggtt_insert_entries;
 	dev_priv->gtt.base.bind_vma = ggtt_bind_vma;
 	dev_priv->gtt.base.unbind_vma = ggtt_unbind_vma;
+
+	/* Serialize GTT updates with aperture access on BXT if VT-d is on. */
+	if (intel_ggtt_update_needs_vtd_wa(dev)) {
+		dev_priv->gtt.base.insert_entries = bxt_vtd_ggtt_insert_entries__BKL;
+		dev_priv->gtt.base.clear_range = bxt_vtd_ggtt_clear_range__BKL;
+	}
 
 	return ret;
 }

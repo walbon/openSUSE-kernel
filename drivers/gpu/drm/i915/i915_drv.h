@@ -2667,6 +2667,16 @@ struct drm_i915_cmd_table {
 
 #include "i915_trace.h"
 
+static inline bool
+intel_ggtt_update_needs_vtd_wa(struct drm_device *dev)
+{
+#ifdef CONFIG_INTEL_IOMMU
+	if (IS_BROXTON(dev) && intel_iommu_gfx_mapped)
+		return true;
+#endif
+	return false;
+}
+
 extern const struct drm_ioctl_desc i915_ioctls[];
 extern int i915_max_ioctl;
 
