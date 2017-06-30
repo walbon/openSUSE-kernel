@@ -2726,6 +2726,9 @@ static int em_syscall(struct x86_emulate_ctxt *ctxt)
 		ctxt->eflags &= ~(X86_EFLAGS_VM | X86_EFLAGS_IF);
 	}
 
+	if ((ctxt->eflags & X86_EFLAGS_TF) != 0)
+		ctxt->emul_flags |= X86EMUL_TF_BEFORE_INST;
+
 	return X86EMUL_CONTINUE;
 }
 
