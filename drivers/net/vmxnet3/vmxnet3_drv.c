@@ -662,7 +662,7 @@ vmxnet3_append_frag(struct sk_buff *skb, struct Vmxnet3_RxCompDesc *rcd,
 }
 
 
-static void
+static int
 vmxnet3_map_pkt(struct sk_buff *skb, struct vmxnet3_tx_ctx *ctx,
 		struct vmxnet3_tx_queue *tq, struct pci_dev *pdev,
 		struct vmxnet3_adapter *adapter)
@@ -722,6 +722,8 @@ vmxnet3_map_pkt(struct sk_buff *skb, struct vmxnet3_tx_ctx *ctx,
 		tbi->dma_addr = pci_map_single(adapter->pdev,
 				skb->data + buf_offset, buf_size,
 				PCI_DMA_TODEVICE);
+		if (pci_dma_mapping_error(adapter->pdev, tbi->dma_addr))
+			return -EFAULT;
 
 		tbi->len = buf_size;
 
@@ -751,6 +753,8 @@ vmxnet3_map_pkt(struct sk_buff *skb, struct vmxnet3_tx_ctx *ctx,
 		tbi->dma_addr = pci_map_page(adapter->pdev, frag->page,
 					     frag->page_offset, frag->size,
 					     PCI_DMA_TODEVICE);
+		if (pci_dma_mapping_error(adapter->pdev, tbi->dma_addr))
+			return -EFAULT;
 
 		tbi->len = frag->size;
 
@@ -774,6 +778,8 @@ vmxnet3_map_pkt(struct sk_buff *skb, struct vmxnet3_tx_ctx *ctx,
 	/* set the last buf_info for the pkt */
 	tbi->skb = skb;
 	tbi->sop_idx = ctx->sop_txd - tq->tx_ring.base;
+
+	return 0;
 }
 
 
@@ -1012,7 +1018,8 @@ vmxnet3_tq_xmit(struct sk_buff *skb, struct vmxnet3_tx_queue *tq,
 	vmxnet3_copy_hdr(skb, tq, &ctx, adapter);
 
 	/* fill tx descs related to addr & len */
-	vmxnet3_map_pkt(skb, &ctx, tq, adapter->pdev, adapter);
+	if (vmxnet3_map_pkt(skb, &ctx, tq, adapter->pdev, adapter))
+		goto unlock_drop_pkt;
 
 	/* setup the EOP desc */
 	ctx.eop_txd->dword[3] = cpu_to_le32(VMXNET3_TXD_CQ | VMXNET3_TXD_EOP);
