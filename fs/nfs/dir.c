@@ -1495,6 +1495,14 @@ static int nfs_intent_set_file(struct nameidata *nd, struct nfs_open_context *ct
 	struct file *filp;
 	int ret = 0;
 
+	/* This only makes sense for regular files, as the filp ->private_data
+	 * has different types for regular files and others.
+	 * That should be impossible, but a confused server can cause confusion.
+	 */
+	if (!S_ISREG(ctx->path.dentry->d_inode->i_mode)) {
+		ret = -ESTALE;
+		goto out;
+	}
 	/* If the open_intent is for execute, we have an extra check to make */
 	if (ctx->mode & FMODE_EXEC) {
 		ret = nfs_may_open(ctx->path.dentry->d_inode,
