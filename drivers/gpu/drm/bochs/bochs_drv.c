@@ -11,6 +11,10 @@
 
 #include "bochs.h"
 
+static int bochs_modeset = -1;
+module_param_named(modeset, bochs_modeset, int, 0444);
+MODULE_PARM_DESC(modeset, "enable/disable kernel modesetting");
+
 static bool enable_fbdev = true;
 module_param_named(fbdev, enable_fbdev, bool, 0444);
 MODULE_PARM_DESC(fbdev, "register fbdev device");
@@ -209,6 +213,14 @@ static struct pci_driver bochs_pci_driver = {
 
 static int __init bochs_init(void)
 {
+#ifdef CONFIG_VGA_CONSOLE
+	if (vgacon_text_force() && bochs_modeset == -1)
+		return -EINVAL;
+#endif
+
+	if (bochs_modeset == 0)
+		return -EINVAL;
+
 	return drm_pci_init(&bochs_driver, &bochs_pci_driver);
 }
 
