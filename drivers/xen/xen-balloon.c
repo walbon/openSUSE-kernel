@@ -58,7 +58,7 @@ static void watch_target(struct xenbus_watch *watch,
 	unsigned long long new_target;
 	int err;
 	static bool watch_fired;
-	static unsigned long target_diff;
+	static long target_diff;
 
 	err = xenbus_scanf(XBT_NIL, "memory", "target", "%llu", &new_target);
 	if (err != 1) {
@@ -108,8 +108,6 @@ void __init xen_balloon_init(void)
 	register_xen_selfballooning(&balloon_dev);
 
 	register_xenstore_notifier(&xenstore_notifier);
-
-	return 0;
 }
 EXPORT_SYMBOL_GPL(xen_balloon_init);
 
