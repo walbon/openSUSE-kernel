@@ -39,6 +39,7 @@
 #include <linux/iommu.h>
 #include <linux/slab.h>
 #include <linux/list.h>
+#include <linux/hashtable.h>
 #include <linux/string.h>
 #include <linux/in.h>
 #include <linux/ip.h>
@@ -103,6 +104,7 @@
 #define I40E_PRIV_FLAGS_VEB_STATS	BIT(3)
 #define I40E_PRIV_FLAGS_PS		BIT(4)
 #define I40E_PRIV_FLAGS_HW_ATR_EVICT	BIT(5)
+#define I40E_PRIV_FLAGS_SOURCE_PRUNING_DISABLED	BIT(6)
 
 #define I40E_NVM_VERSION_LO_SHIFT  0
 #define I40E_NVM_VERSION_LO_MASK   (0xff << I40E_NVM_VERSION_LO_SHIFT)
@@ -363,6 +365,7 @@ struct i40e_pf {
 #define I40E_FLAG_STOP_FW_LLDP			BIT_ULL(47)
 #define I40E_FLAG_HAVE_10GBASET_PHY		BIT_ULL(48)
 #define I40E_FLAG_PF_MAC			BIT_ULL(50)
+#define I40E_FLAG_SOURCE_PRUNING_DISABLED	BIT_ULL(59)
 
 	/* tracks features that get auto disabled by errors */
 	u64 auto_disable_flags;
@@ -450,16 +453,34 @@ struct i40e_pf {
 	u16 phy_led_val;
 };
 
+/**
+ * i40e_mac_to_hkey - Convert a 6-byte MAC Address to a u64 hash key
+ * @macaddr: the MAC Address as the base key
+ *
+ * Simply copies the address and returns it as a u64 for hashing
+ **/
+static inline u64 i40e_addr_to_hkey(const u8 *macaddr)
+{
+	u64 key = 0;
+
+	ether_addr_copy((u8 *)&key, macaddr);
+	return key;
+}
+
+enum i40e_filter_state {
+	I40E_FILTER_INVALID = 0,	/* Invalid state */
+	I40E_FILTER_NEW,		/* New, not sent to FW yet */
+	I40E_FILTER_ACTIVE,		/* Added to switch by FW */
+	I40E_FILTER_FAILED,		/* Rejected by FW */
+	I40E_FILTER_REMOVE,		/* To be removed */
+/* There is no 'removed' state; the filter struct is freed */
+};
 struct i40e_mac_filter {
-	struct list_head list;
+	struct hlist_node hlist;
 	u8 macaddr[ETH_ALEN];
 #define I40E_VLAN_ANY -1
 	s16 vlan;
-	u8 counter;		/* number of instances of this filter */
-	bool is_vf;		/* filter belongs to a VF */
-	bool is_netdev;		/* filter belongs to a netdev */
-	bool changed;		/* filter needs to be sync'd to the HW */
-	bool is_laa;		/* filter is a Locally Administered Address */
+	enum i40e_filter_state state;
 };
 
 struct i40e_veb {
@@ -499,9 +520,11 @@ struct i40e_vsi {
 #define I40E_VSI_FLAG_VEB_OWNER		BIT(1)
 	unsigned long flags;
 
-	/* Per VSI lock to protect elements/list (MAC filter) */
-	spinlock_t mac_filter_list_lock;
-	struct list_head mac_filter_list;
+	/* Per VSI lock to protect elements/hash (MAC filter) */
+	spinlock_t mac_filter_hash_lock;
+	/* Fixed size hash table with 2^8 buckets for MAC filters */
+	DECLARE_HASHTABLE(mac_filter_hash, 8);
+	bool has_vlan_filter;
 
 	/* VSI stats */
 	struct rtnl_link_stats64 net_stats;
@@ -524,6 +547,9 @@ struct i40e_vsi {
 	/* These are containers of ring pointers, allocated at run-time */
 	struct i40e_ring **rx_rings;
 	struct i40e_ring **tx_rings;
+
+	u32  active_filters;
+	u32  promisc_threshold;
 
 	u16 work_limit;
 	u16 int_rate_limit;  /* value in usecs */
@@ -720,10 +746,9 @@ u32 i40e_get_global_fd_count(struct i40e_pf *pf);
 bool i40e_set_ntuple(struct i40e_pf *pf, netdev_features_t features);
 void i40e_set_ethtool_ops(struct net_device *netdev);
 struct i40e_mac_filter *i40e_add_filter(struct i40e_vsi *vsi,
-					u8 *macaddr, s16 vlan,
-					bool is_vf, bool is_netdev);
-void i40e_del_filter(struct i40e_vsi *vsi, u8 *macaddr, s16 vlan,
-		     bool is_vf, bool is_netdev);
+					const u8 *macaddr, s16 vlan);
+void __i40e_del_filter(struct i40e_vsi *vsi, struct i40e_mac_filter *f);
+void i40e_del_filter(struct i40e_vsi *vsi, const u8 *macaddr, s16 vlan);
 int i40e_sync_vsi_filters(struct i40e_vsi *vsi);
 struct i40e_vsi *i40e_vsi_setup(struct i40e_pf *pf, u8 type,
 				u16 uplink, u32 param1);
@@ -739,7 +764,8 @@ void i40e_service_event_schedule(struct i40e_pf *pf);
 void i40e_notify_client_of_vf_msg(struct i40e_vsi *vsi, u32 vf_id,
 				  u8 *msg, u16 len);
 
-int i40e_vsi_control_rings(struct i40e_vsi *vsi, bool enable);
+int i40e_vsi_start_rings(struct i40e_vsi *vsi);
+void i40e_vsi_stop_rings(struct i40e_vsi *vsi);
 int i40e_reconfig_rss_queues(struct i40e_pf *pf, int queue_count);
 struct i40e_veb *i40e_veb_setup(struct i40e_pf *pf, u16 flags, u16 uplink_seid,
 				u16 downlink_seid, u8 enabled_tc);
@@ -813,15 +839,15 @@ int i40e_vlan_rx_kill_vid(struct net_device *netdev,
 int i40e_open(struct net_device *netdev);
 int i40e_vsi_open(struct i40e_vsi *vsi);
 void i40e_vlan_stripping_disable(struct i40e_vsi *vsi);
-int i40e_vsi_add_vlan(struct i40e_vsi *vsi, s16 vid);
-int i40e_vsi_kill_vlan(struct i40e_vsi *vsi, s16 vid);
-struct i40e_mac_filter *i40e_put_mac_in_vlan(struct i40e_vsi *vsi, u8 *macaddr,
-					     bool is_vf, bool is_netdev);
-int i40e_del_mac_all_vlan(struct i40e_vsi *vsi, u8 *macaddr,
-			  bool is_vf, bool is_netdev);
+int i40e_add_vlan_all_mac(struct i40e_vsi *vsi, s16 vid);
+int i40e_vsi_add_vlan(struct i40e_vsi *vsi, u16 vid);
+void i40e_rm_vlan_all_mac(struct i40e_vsi *vsi, s16 vid);
+void i40e_vsi_kill_vlan(struct i40e_vsi *vsi, u16 vid);
+struct i40e_mac_filter *i40e_add_mac_filter(struct i40e_vsi *vsi,
+					    const u8 *macaddr);
+int i40e_del_mac_filter(struct i40e_vsi *vsi, const u8 *macaddr);
 bool i40e_is_vsi_in_vlan(struct i40e_vsi *vsi);
-struct i40e_mac_filter *i40e_find_mac(struct i40e_vsi *vsi, u8 *macaddr,
-				      bool is_vf, bool is_netdev);
+struct i40e_mac_filter *i40e_find_mac(struct i40e_vsi *vsi, const u8 *macaddr);
 #ifdef I40E_FCOE
 int i40e_close(struct net_device *netdev);
 int __i40e_setup_tc(struct net_device *netdev, u32 handle, __be16 proto,

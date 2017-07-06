@@ -216,7 +216,6 @@ enum i40e_ethtool_test_id {
 	I40E_ETH_TEST_REG = 0,
 	I40E_ETH_TEST_EEPROM,
 	I40E_ETH_TEST_INTR,
-	I40E_ETH_TEST_LOOPBACK,
 	I40E_ETH_TEST_LINK,
 };
 
@@ -224,7 +223,6 @@ static const char i40e_gstrings_test[][ETH_GSTRING_LEN] = {
 	"Register test  (offline)",
 	"Eeprom test    (offline)",
 	"Interrupt test (offline)",
-	"Loopback test  (offline)",
 	"Link test   (on/offline)"
 };
 
@@ -237,6 +235,7 @@ static const char i40e_priv_flags_strings[][ETH_GSTRING_LEN] = {
 	"veb-stats",
 	"packet-split",
 	"hw-atr-eviction",
+	"disable-source-pruning",
 };
 
 #define I40E_PRIV_FLAGS_STR_LEN ARRAY_SIZE(i40e_priv_flags_strings)
@@ -1648,17 +1647,6 @@ static int i40e_intr_test(struct net_device *netdev, u64 *data)
 	return *data;
 }
 
-static int i40e_loopback_test(struct net_device *netdev, u64 *data)
-{
-	struct i40e_netdev_priv *np = netdev_priv(netdev);
-	struct i40e_pf *pf = np->vsi->back;
-
-	netif_info(pf, hw, netdev, "loopback test not implemented\n");
-	*data = 0;
-
-	return *data;
-}
-
 static inline bool i40e_active_vfs(struct i40e_pf *pf)
 {
 	struct i40e_vf *vfs = pf->vf;
@@ -1704,7 +1692,6 @@ static void i40e_diag_test(struct net_device *netdev,
 			data[I40E_ETH_TEST_REG]		= 1;
 			data[I40E_ETH_TEST_EEPROM]	= 1;
 			data[I40E_ETH_TEST_INTR]	= 1;
-			data[I40E_ETH_TEST_LOOPBACK]	= 1;
 			data[I40E_ETH_TEST_LINK]	= 1;
 			eth_test->flags |= ETH_TEST_FL_FAILED;
 			clear_bit(__I40E_TESTING, &pf->state);
@@ -1732,9 +1719,6 @@ static void i40e_diag_test(struct net_device *netdev,
 		if (i40e_intr_test(netdev, &data[I40E_ETH_TEST_INTR]))
 			eth_test->flags |= ETH_TEST_FL_FAILED;
 
-		if (i40e_loopback_test(netdev, &data[I40E_ETH_TEST_LOOPBACK]))
-			eth_test->flags |= ETH_TEST_FL_FAILED;
-
 		/* run reg test last, a reset is required after it */
 		if (i40e_reg_test(netdev, &data[I40E_ETH_TEST_REG]))
 			eth_test->flags |= ETH_TEST_FL_FAILED;
@@ -1755,7 +1739,6 @@ static void i40e_diag_test(struct net_device *netdev,
 		data[I40E_ETH_TEST_REG] = 0;
 		data[I40E_ETH_TEST_EEPROM] = 0;
 		data[I40E_ETH_TEST_INTR] = 0;
-		data[I40E_ETH_TEST_LOOPBACK] = 0;
 	}
 
 skip_ol_tests:
@@ -2815,6 +2798,8 @@ static u32 i40e_get_priv_flags(struct net_device *dev)
 		I40E_PRIV_FLAGS_PS : 0;
 	ret_flags |= pf->auto_disable_flags & I40E_FLAG_HW_ATR_EVICT_CAPABLE ?
 		0 : I40E_PRIV_FLAGS_HW_ATR_EVICT;
+	ret_flags |= pf->flags & I40E_FLAG_SOURCE_PRUNING_DISABLED ?
+		I40E_PRIV_FLAGS_SOURCE_PRUNING_DISABLED : 0;
 
 	return ret_flags;
 }
@@ -2881,6 +2866,16 @@ static int i40e_set_priv_flags(struct net_device *dev, u32 flags)
 		pf->auto_disable_flags &= ~I40E_FLAG_HW_ATR_EVICT_CAPABLE;
 	else
 		pf->auto_disable_flags |= I40E_FLAG_HW_ATR_EVICT_CAPABLE;
+
+	if ((flags & I40E_PRIV_FLAGS_SOURCE_PRUNING_DISABLED) &&
+	    !(pf->flags & I40E_FLAG_SOURCE_PRUNING_DISABLED)) {
+		pf->flags |= I40E_FLAG_SOURCE_PRUNING_DISABLED;
+		reset_required = true;
+	} else if (!(flags & I40E_PRIV_FLAGS_SOURCE_PRUNING_DISABLED) &&
+		   (pf->flags & I40E_FLAG_SOURCE_PRUNING_DISABLED)) {
+		pf->flags &= ~I40E_FLAG_SOURCE_PRUNING_DISABLED;
+		reset_required = true;
+	}
 
 	/* if needed, issue reset to cause things to take effect */
 	if (reset_required)
