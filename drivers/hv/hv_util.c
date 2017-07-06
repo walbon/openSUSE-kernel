@@ -185,16 +185,16 @@ struct adj_time_work {
 static void hv_set_host_time(struct work_struct *work)
 {
 	struct adj_time_work *wrk;
-	struct timespec host_ts;
+	struct timespec64 host_ts;
 	u64 reftime, newtime;
 
 	wrk = container_of(work, struct adj_time_work, work);
 
 	reftime = hyperv_cs->read(hyperv_cs);
 	newtime = wrk->host_time + (reftime - wrk->ref_time);
-	host_ts = ns_to_timespec((newtime - WLTIMEDELTA) * 100);
+	host_ts = ns_to_timespec64((newtime - WLTIMEDELTA) * 100);
 
-	do_settimeofday(&host_ts);
+	do_settimeofday64(&host_ts);
 }
 
 /*
