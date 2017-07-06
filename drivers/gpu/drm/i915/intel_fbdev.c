@@ -364,8 +364,7 @@ static bool intel_fb_initial_config(struct drm_fb_helper *fb_helper,
 	bool fallback = true;
 	int num_connectors_enabled = 0;
 	int num_connectors_detected = 0;
-	uint64_t conn_configured = 0, mask;
-	int pass = 0;
+	uint64_t conn_configured = 0, conn_seq, mask;
 
 	save_enabled = kcalloc(fb_helper->connector_count, sizeof(bool),
 			       GFP_KERNEL);
@@ -375,6 +374,7 @@ static bool intel_fb_initial_config(struct drm_fb_helper *fb_helper,
 	memcpy(save_enabled, enabled, fb_helper->connector_count);
 	mask = (1 << fb_helper->connector_count) - 1;
 retry:
+	conn_seq = conn_configured;
 	for (i = 0; i < fb_helper->connector_count; i++) {
 		struct drm_fb_helper_connector *fb_conn;
 		struct drm_connector *connector;
@@ -387,7 +387,7 @@ retry:
 		if (conn_configured & (1 << i))
 			continue;
 
-		if (pass == 0 && !connector->has_tile)
+		if (conn_seq == 0 && !connector->has_tile)
 			continue;
 
 		if (connector->status == connector_status_connected)
@@ -485,10 +485,8 @@ retry:
 		conn_configured |= (1 << i);
 	}
 
-	if ((conn_configured & mask) != mask) {
-		pass++;
+	if ((conn_configured & mask) != mask && conn_configured != conn_seq)
 		goto retry;
-	}
 
 	/*
 	 * If the BIOS didn't enable everything it could, fall back to have the
