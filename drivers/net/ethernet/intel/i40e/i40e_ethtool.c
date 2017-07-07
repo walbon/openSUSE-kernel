@@ -234,6 +234,7 @@ static const char i40e_priv_flags_strings[][ETH_GSTRING_LEN] = {
 	"flow-director-atr",
 	"veb-stats",
 	"hw-atr-eviction",
+	"disable-source-pruning",
 };
 
 #define I40E_PRIV_FLAGS_STR_LEN ARRAY_SIZE(i40e_priv_flags_strings)
@@ -1165,6 +1166,11 @@ static int i40e_get_eeprom_len(struct net_device *netdev)
 	struct i40e_hw *hw = &np->vsi->back->hw;
 	u32 val;
 
+#define X722_EEPROM_SCOPE_LIMIT 0x5B9FFF
+	if (hw->mac.type == I40E_MAC_X722) {
+		val = X722_EEPROM_SCOPE_LIMIT + 1;
+		return val;
+	}
 	val = (rd32(hw, I40E_GLPCI_LBARCTRL)
 		& I40E_GLPCI_LBARCTRL_FL_SIZE_MASK)
 		>> I40E_GLPCI_LBARCTRL_FL_SIZE_SHIFT;
@@ -3060,6 +3066,8 @@ static u32 i40e_get_priv_flags(struct net_device *dev)
 		ret_flags |= pf->flags & I40E_FLAG_TRUE_PROMISC_SUPPORT ?
 			I40E_PRIV_FLAGS_TRUE_PROMISC_SUPPORT : 0;
 	}
+	ret_flags |= pf->flags & I40E_FLAG_SOURCE_PRUNING_DISABLED ?
+		I40E_PRIV_FLAGS_SOURCE_PRUNING_DISABLED : 0;
 
 	return ret_flags;
 }
@@ -3142,6 +3150,16 @@ static int i40e_set_priv_flags(struct net_device *dev, u32 flags)
 		pf->auto_disable_flags &= ~I40E_FLAG_HW_ATR_EVICT_CAPABLE;
 	else
 		pf->auto_disable_flags |= I40E_FLAG_HW_ATR_EVICT_CAPABLE;
+
+	if ((flags & I40E_PRIV_FLAGS_SOURCE_PRUNING_DISABLED) &&
+	    !(pf->flags & I40E_FLAG_SOURCE_PRUNING_DISABLED)) {
+		pf->flags |= I40E_FLAG_SOURCE_PRUNING_DISABLED;
+		reset_required = true;
+	} else if (!(flags & I40E_PRIV_FLAGS_SOURCE_PRUNING_DISABLED) &&
+		   (pf->flags & I40E_FLAG_SOURCE_PRUNING_DISABLED)) {
+		pf->flags &= ~I40E_FLAG_SOURCE_PRUNING_DISABLED;
+		reset_required = true;
+	}
 
 	/* if needed, issue reset to cause things to take effect */
 	if (reset_required)
