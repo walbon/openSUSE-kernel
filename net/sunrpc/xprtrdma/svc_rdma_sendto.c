@@ -543,6 +543,7 @@ static int send_reply(struct svcxprt_rdma *rdma,
 {
 	struct ib_send_wr send_wr;
 	struct ib_send_wr inv_wr;
+	u32 xdr_off;
 	int sge_no;
 	int sge_bytes;
 	int page_no;
@@ -582,8 +583,8 @@ static int send_reply(struct svcxprt_rdma *rdma,
 	ctxt->direction = DMA_TO_DEVICE;
 
 	/* Map the payload indicated by 'byte_count' */
+	xdr_off = 0;
 	for (sge_no = 1; byte_count && sge_no < vec->count; sge_no++) {
-		int xdr_off = 0;
 		sge_bytes = min_t(size_t, vec->sge[sge_no].iov_len, byte_count);
 		byte_count -= sge_bytes;
 		if (!vec->frmr) {
@@ -603,6 +604,12 @@ static int send_reply(struct svcxprt_rdma *rdma,
 		}
 		ctxt->sge[sge_no].length = sge_bytes;
 	}
+	/* The loop above bumps sc_dma_used for each sge. The
+	 * xdr_buf.tail gets a separate sge, but resides in the
+	 * same page as xdr_buf.head. Don't count it twice.
+	 */
+	if (sge_no > ctxt->count)
+		atomic_dec(&rdma->sc_dma_used);
 	BUG_ON(byte_count != 0);
 
 	/* Save all respages in the ctxt and remove them from the
