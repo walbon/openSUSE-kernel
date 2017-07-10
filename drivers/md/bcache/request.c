@@ -707,8 +707,11 @@ static void cached_dev_read_error(struct closure *cl)
 {
 	struct search *s = container_of(cl, struct search, cl);
 	struct bio *bio = &s->bio.bio;
+	struct cached_dev *dc = container_of(s->d, struct cached_dev, disk);
+	unsigned mode = cache_mode(dc, NULL);
 
-	if (s->recoverable) {
+	if (s->recoverable &&
+	    (mode == CACHE_MODE_WRITETHROUGH)) {
 		/* Retry from the backing device: */
 		trace_bcache_read_retry(s->orig_bio);
 
