@@ -429,6 +429,7 @@ static ssize_t dlpar_cpu_probe(const char *buf, size_t count)
 
 	dn = dlpar_configure_connector(drc_index);
 	if (!dn) {
+		dlpar_release_drc(drc_index);
 		rc = -EINVAL;
 		goto out;
 	}
