@@ -20,7 +20,7 @@
  * This is necessary to get the definition of PGTABLE_RANGE which we
  * need for various slices related matters. Note that this isn't the
  * complete pgtable.h but only a portion of it.
- */
+·*/
 #include <asm/pgtable-ppc64.h>
 
 #endif
@@ -384,25 +384,21 @@ extern void slb_set_size(u16 size);
 /*
 #ifndef CONFIG_BIGMEM
  * VSID allocation
-#else
- * VSID allocation (256MB segment)
-#endif
  *
-#ifndef CONFIG_BIGMEM
  * We first generate a 36-bit "proto-VSID".  For kernel addresses this
  * is equal to the ESID, for user addresses it is:
  *	(context << 15) | (esid & 0x7fff)
-#else
- * We first generate a 37-bit "proto-VSID". Proto-VSIDs are generated
- * from mmu context id and effective segment id of the address.
-#endif
  *
-#ifndef CONFIG_BIGMEM
  * The two forms are distinguishable because the top bit is 0 for user
  * addresses, whereas the top two bits are 1 for kernel addresses.
  * Proto-VSIDs with the top two bits equal to 0b10 are reserved for
  * now.
 #else
+ * VSID allocation (256MB segment)
+ *·
+ * We first generate a 37-bit "proto-VSID". Proto-VSIDs are generated
+ * from mmu context id and effective segment id of the address.
+ *·
  * For user processes max context id is limited to ((1ul << 19) - 5)
  * for kernel space, we use the top 4 context ids to map address as below
  * NOTE: each context only support 64TB now.
@@ -419,13 +415,12 @@ extern void slb_set_size(u16 size);
 #ifndef CONFIG_BIGMEM
  *	where	VSID_MULTIPLIER = 268435399 = 0xFFFFFC7
  *		VSID_MODULUS = 2^36-1 = 0xFFFFFFFFF
-#endif
  *
-#ifndef CONFIG_BIGMEM
  * This scramble is only well defined for proto-VSIDs below
  * 0xFFFFFFFFF, so both proto-VSID and actual VSID 0xFFFFFFFFF are
  * reserved.  VSID_MULTIPLIER is prime, so in particular it is
 #else
+ *·
  * VSID_MULTIPLIER is prime, so in particular it is
 #endif
  * co-prime to VSID_MODULUS, making this a 1:1 scrambling function.
@@ -438,29 +433,25 @@ extern void slb_set_size(u16 size);
  * 	- We have VSIDs allocated for every kernel address
  * (i.e. everything above 0xC000000000000000), except the very top
  * segment, which simplifies several things.
-#else
- * a divide or extra multiply (see below). The scramble function gives
- * robust scattering in the hash table (at least based on some initial
- * results).
-#endif
  *
-#ifndef CONFIG_BIGMEM
  * 	- We allow for 15 significant bits of ESID and 20 bits of
  * context for user addresses.  i.e. 8T (43 bits) of address space for
  * up to 1M contexts (although the page table structure and context
  * allocation will need changes to take advantage of this).
-#else
- * We also consider VSID 0 special. We use VSID 0 for slb entries mapping
- * bad address. This enables us to consolidate bad address handling in
- * hash_page.
-#endif
  *
-#ifndef CONFIG_BIGMEM
  * 	- The scramble function gives robust scattering in the hash
  * table (at least based on some initial results).  The previous
  * method was more susceptible to pathological cases giving excessive
  * hash collisions.
 #else
+ * a divide or extra multiply (see below). The scramble function gives
+ * robust scattering in the hash table (at least based on some initial
+ * results).
+ *·
+ * We also consider VSID 0 special. We use VSID 0 for slb entries mapping
+ * bad address. This enables us to consolidate bad address handling in
+ * hash_page.
+ *·
  * We also need to avoid the last segment of the last context, because that
  * would give a protovsid of 0x1fffffffff. That will result in a VSID 0
  * because of the modulo operation in vsid scramble. But the vmemmap
