@@ -987,9 +987,6 @@ done:
 			return -EFAULT;
 	}
 
-	dev_dbg(priv->adapter->dev, "info: trying to associate to %s and bssid %pM\n",
-	       (char *) req_ssid.ssid, ssid_bssid.bssid);
-
 	memcpy(&priv->cfg_bssid, ssid_bssid.bssid, 6);
 
 	/* Connect to BSS by ESSID */
@@ -1036,9 +1033,6 @@ mwifiex_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
 
 	priv->assoc_request = -EINPROGRESS;
 
-	wiphy_dbg(wiphy, "info: Trying to associate to %s and bssid %pM\n",
-	       (char *) sme->ssid, sme->bssid);
-
 	ret = mwifiex_cfg80211_assoc(priv, sme->ssid_len, sme->ssid, sme->bssid,
 				     priv->bss_mode, sme->channel, sme, 0);
 
@@ -1072,9 +1066,6 @@ mwifiex_cfg80211_join_ibss(struct wiphy *wiphy, struct net_device *dev,
 	}
 
 	priv->ibss_join_request = -EINPROGRESS;
-
-	wiphy_dbg(wiphy, "info: trying to join to %s and bssid %pM\n",
-	       (char *) params->ssid, params->bssid);
 
 	ret = mwifiex_cfg80211_assoc(priv, params->ssid_len, params->ssid,
 				params->bssid, priv->bss_mode,
