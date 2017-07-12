@@ -714,7 +714,7 @@ static int remove_memory_block(unsigned long node_id,
 	 */
 	mem = find_memory_block(section);
 	if (!mem)
-		return 0;
+		goto out_unlock;
 
 	unregister_mem_sect_under_nodes(mem, __section_nr(section));
 
@@ -724,6 +724,7 @@ static int remove_memory_block(unsigned long node_id,
 	else
 		put_device(&mem->dev);
 
+out_unlock:
 	mutex_unlock(&mem_sysfs_mutex);
 	return 0;
 }
