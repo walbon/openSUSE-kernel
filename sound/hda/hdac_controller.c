@@ -272,6 +272,8 @@ int snd_hdac_bus_parse_capabilities(struct hdac_bus *bus)
 	unsigned int offset;
 	unsigned int counter = 0;
 
+	if (WARN_ON(!bus->caps))
+		return -EINVAL;
 	offset = snd_hdac_chip_readl(bus, LLCH);
 
 	/* Lets walk the linked capabilities list */
@@ -287,30 +289,30 @@ int snd_hdac_bus_parse_capabilities(struct hdac_bus *bus)
 		switch ((cur_cap & AZX_CAP_HDR_ID_MASK) >> AZX_CAP_HDR_ID_OFF) {
 		case AZX_ML_CAP_ID:
 			dev_dbg(bus->dev, "Found ML capability\n");
-			bus->mlcap = bus->remap_addr + offset;
+			bus->caps->mlcap = bus->remap_addr + offset;
 			break;
 
 		case AZX_GTS_CAP_ID:
 			dev_dbg(bus->dev, "Found GTS capability offset=%x\n", offset);
-			bus->gtscap = bus->remap_addr + offset;
+			bus->caps->gtscap = bus->remap_addr + offset;
 			break;
 
 		case AZX_PP_CAP_ID:
 			/* PP capability found, the Audio DSP is present */
 			dev_dbg(bus->dev, "Found PP capability offset=%x\n", offset);
-			bus->ppcap = bus->remap_addr + offset;
+			bus->caps->ppcap = bus->remap_addr + offset;
 			break;
 
 		case AZX_SPB_CAP_ID:
 			/* SPIB capability found, handler function */
 			dev_dbg(bus->dev, "Found SPB capability\n");
-			bus->spbcap = bus->remap_addr + offset;
+			bus->caps->spbcap = bus->remap_addr + offset;
 			break;
 
 		case AZX_DRSM_CAP_ID:
 			/* DMA resume  capability found, handler function */
 			dev_dbg(bus->dev, "Found DRSM capability\n");
-			bus->drsmcap = bus->remap_addr + offset;
+			bus->caps->drsmcap = bus->remap_addr + offset;
 			break;
 
 		default:
@@ -525,7 +527,16 @@ EXPORT_SYMBOL_GPL(snd_hdac_bus_stop_chip);
  *
  * Returns the bits of handled streams, or zero if no stream is handled.
  */
-int snd_hdac_bus_handle_stream_irq(struct hdac_bus *bus, unsigned int status,
+void snd_hdac_bus_handle_stream_irq(struct hdac_bus *bus, unsigned int status,
+				    void (*ack)(struct hdac_bus *,
+						struct hdac_stream *))
+{
+	_snd_hdac_bus_handle_stream_irq(bus, status, ack);
+}
+EXPORT_SYMBOL_GPL(snd_hdac_bus_handle_stream_irq);
+
+/* XXX re-defined for kABI compatibility on SLE12-SP3 */
+int _snd_hdac_bus_handle_stream_irq(struct hdac_bus *bus, unsigned int status,
 				    void (*ack)(struct hdac_bus *,
 						struct hdac_stream *))
 {
@@ -547,7 +558,7 @@ int snd_hdac_bus_handle_stream_irq(struct hdac_bus *bus, unsigned int status,
 	}
 	return handled;
 }
-EXPORT_SYMBOL_GPL(snd_hdac_bus_handle_stream_irq);
+EXPORT_SYMBOL_GPL(_snd_hdac_bus_handle_stream_irq);
 
 /**
  * snd_hdac_bus_alloc_stream_pages - allocate BDL and other buffers

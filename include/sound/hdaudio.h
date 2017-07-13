@@ -254,6 +254,14 @@ struct hdac_rb {
  * @gtscap: gts capabilities pointer
  * @drsmcap: dma resume capabilities pointer
  */
+struct hdac_bus_caps {
+	void __iomem *ppcap;
+	void __iomem *spbcap;
+	void __iomem *mlcap;
+	void __iomem *gtscap;
+	void __iomem *drsmcap;
+};
+
 struct hdac_bus {
 	struct device *dev;
 	const struct hdac_bus_ops *ops;
@@ -263,12 +271,6 @@ struct hdac_bus {
 	unsigned long addr;
 	void __iomem *remap_addr;
 	int irq;
-
-	void __iomem *ppcap;
-	void __iomem *spbcap;
-	void __iomem *mlcap;
-	void __iomem *gtscap;
-	void __iomem *drsmcap;
 
 	/* codec linked list */
 	struct list_head codec_list;
@@ -321,7 +323,11 @@ struct hdac_bus {
 	struct i915_audio_component *audio_component;
 	int i915_power_refcount;
 
+#ifdef __GENKSYMS__
 	void *reserved;		/* kABI placeholder */
+#else
+	struct hdac_bus_caps *caps;
+#endif
 };
 
 int snd_hdac_bus_init(struct hdac_bus *bus, struct device *dev,
@@ -362,7 +368,10 @@ void snd_hdac_bus_enter_link_reset(struct hdac_bus *bus);
 void snd_hdac_bus_exit_link_reset(struct hdac_bus *bus);
 
 void snd_hdac_bus_update_rirb(struct hdac_bus *bus);
-int snd_hdac_bus_handle_stream_irq(struct hdac_bus *bus, unsigned int status,
+void snd_hdac_bus_handle_stream_irq(struct hdac_bus *bus, unsigned int status,
+				    void (*ack)(struct hdac_bus *,
+						struct hdac_stream *));
+int _snd_hdac_bus_handle_stream_irq(struct hdac_bus *bus, unsigned int status,
 				    void (*ack)(struct hdac_bus *,
 						struct hdac_stream *));
 

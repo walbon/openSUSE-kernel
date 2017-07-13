@@ -549,7 +549,7 @@ static int intel_get_lctl_scf(struct azx *chip)
 	u32 val, t;
 	int i;
 
-	val = readl(bus->mlcap + AZX_ML_BASE + AZX_REG_ML_LCAP);
+	val = readl(bus->caps->mlcap + AZX_ML_BASE + AZX_REG_ML_LCAP);
 
 	for (i = 0; i < ARRAY_SIZE(preferred_bits); i++) {
 		t = preferred_bits[i];
@@ -571,14 +571,14 @@ static int intel_ml_lctl_set_power(struct azx *chip, int state)
 	 * the codecs are sharing the first link setting by default
 	 * If other links are enabled for stream, they need similar fix
 	 */
-	val = readl(bus->mlcap + AZX_ML_BASE + AZX_REG_ML_LCTL);
+	val = readl(bus->caps->mlcap + AZX_ML_BASE + AZX_REG_ML_LCTL);
 	val &= ~AZX_MLCTL_SPA;
 	val |= state << AZX_MLCTL_SPA_SHIFT;
-	writel(val, bus->mlcap + AZX_ML_BASE + AZX_REG_ML_LCTL);
+	writel(val, bus->caps->mlcap + AZX_ML_BASE + AZX_REG_ML_LCTL);
 	/* wait for CPA */
 	timeout = 50;
 	while (timeout) {
-		if (((readl(bus->mlcap + AZX_ML_BASE + AZX_REG_ML_LCTL)) &
+		if (((readl(bus->caps->mlcap + AZX_ML_BASE + AZX_REG_ML_LCTL)) &
 		    AZX_MLCTL_CPA) == (state << AZX_MLCTL_CPA_SHIFT))
 			return 0;
 		timeout--;
@@ -595,7 +595,7 @@ static void intel_init_lctl(struct azx *chip)
 	int ret;
 
 	/* 0. check lctl register value is correct or not */
-	val = readl(bus->mlcap + AZX_ML_BASE + AZX_REG_ML_LCTL);
+	val = readl(bus->caps->mlcap + AZX_ML_BASE + AZX_REG_ML_LCTL);
 	/* if SCF is already set, let's use it */
 	if ((val & ML_LCTL_SCF_MASK) != 0)
 		return;
@@ -617,7 +617,7 @@ static void intel_init_lctl(struct azx *chip)
 	/* 2. update SCF to select a properly audio clock*/
 	val &= ~ML_LCTL_SCF_MASK;
 	val |= intel_get_lctl_scf(chip);
-	writel(val, bus->mlcap + AZX_ML_BASE + AZX_REG_ML_LCTL);
+	writel(val, bus->caps->mlcap + AZX_ML_BASE + AZX_REG_ML_LCTL);
 
 set_spa:
 	/* 4. turn link up: set SPA to 1 and wait CPA to 1 */
@@ -651,7 +651,7 @@ static void hda_intel_init_chip(struct azx *chip, bool full_reset)
 	if (IS_BXT(pci))
 		bxt_reduce_dma_latency(chip);
 
-	if (bus->mlcap != NULL)
+	if (bus->caps && bus->caps->mlcap)
 		intel_init_lctl(chip);
 }
 
@@ -1752,7 +1752,7 @@ static int azx_first_init(struct azx *chip)
 	chip->gts_present = false;
 
 #ifdef CONFIG_X86
-	if (bus->ppcap && boot_cpu_has(X86_FEATURE_ART))
+	if (bus->caps && bus->caps->ppcap && boot_cpu_has(X86_FEATURE_ART))
 		chip->gts_present = true;
 #endif
 

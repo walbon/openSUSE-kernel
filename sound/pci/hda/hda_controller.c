@@ -956,7 +956,7 @@ irqreturn_t azx_interrupt(int irq, void *dev_id)
 
 		handled = true;
 		active = false;
-		if (snd_hdac_bus_handle_stream_irq(bus, status, stream_update))
+		if (_snd_hdac_bus_handle_stream_irq(bus, status, stream_update))
 			active = true;
 
 		/* clear rirb int */
