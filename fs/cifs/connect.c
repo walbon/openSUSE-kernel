@@ -387,7 +387,9 @@ cifs_demultiplex_thread(struct TCP_Server_Info *server)
 		pdu_length = 4; /* enough to get RFC1001 header */
 
 incomplete_rcv:
-		if (echo_retries > 0 && server->tcpStatus == CifsGood &&
+		if (echo_retries > 0 &&
+		    (server->tcpStatus == CifsGood ||
+                    server->tcpStatus == CifsNeedNegotiate) &&
 		    time_after(jiffies, server->lstrp +
 					(echo_retries * SMB_ECHO_INTERVAL))) {
 			cERROR(1, "Server %s has not responded in %d seconds. "
