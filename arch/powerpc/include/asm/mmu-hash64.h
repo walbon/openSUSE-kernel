@@ -15,15 +15,7 @@
 #include <asm/asm-compat.h>
 #include <asm/page.h>
 
-#ifdef CONFIG_BIGMEM
-/*.
- * This is necessary to get the definition of PGTABLE_RANGE which we
- * need for various slices related matters. Note that this isn't the
- * complete pgtable.h but only a portion of it.
-·*/
-#include <asm/pgtable-ppc64.h>
-
-#endif
+#ifndef CONFIG_BIGMEM
 /*
  * Segment table
  */
@@ -43,6 +35,14 @@
 #ifndef __ASSEMBLY__
 extern char initial_stab[];
 #endif /* ! __ASSEMBLY */
+#else
+/*.
+ * This is necessary to get the definition of PGTABLE_RANGE which we
+ * need for various slices related matters. Note that this isn't the
+ * complete pgtable.h but only a portion of it.
+·*/
+#include <asm/pgtable-ppc64.h>
+#endif
 
 /*
  * SLB
@@ -375,10 +375,14 @@ extern void hpte_init_iSeries(void);
 extern void hpte_init_beat(void);
 extern void hpte_init_beat_v3(void);
 
+#ifndef CONFIG_BIGMEM
 extern void stabs_alloc(void);
+#endif
 extern void slb_initialize(void);
 extern void slb_flush_and_rebolt(void);
+#ifndef CONFIG_BIGMEM
 extern void stab_initialize(unsigned long stab);
+#endif
 
 extern void slb_vmalloc_update(void);
 extern void slb_set_size(u16 size);
