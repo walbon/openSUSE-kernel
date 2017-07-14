@@ -235,6 +235,9 @@ int __init_new_context(void)
 {
 	int index;
 	int err;
+#ifdef CONFIG_BIGMEM
+	unsigned long max;
+#endif
 
 again:
 	if (!ida_pre_get(&mmu_context_ida, GFP_KERNEL))
@@ -256,7 +259,12 @@ again:
 #ifndef CONFIG_BIGMEM
 	if (index > MAX_CONTEXT) {
 #else
-	if (index > MAX_USER_CONTEXT) {
+	if (mmu_has_feature(MMU_FTR_68_BIT_VA))
+		max = MAX_USER_CONTEXT;
+	else
+		max = MAX_USER_CONTEXT_65BIT_VA;
+
+	if (index > max) {
 #endif
 		spin_lock(&mmu_context_lock);
 		ida_remove(&mmu_context_ida, index);
