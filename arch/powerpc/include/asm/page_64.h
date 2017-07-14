@@ -92,23 +92,12 @@ extern unsigned int HPAGE_SHIFT;
 #ifndef __ASSEMBLY__
 #ifndef CONFIG_BIGMEM
 
-#else
-/*
- * One bit per slice. We have lower slices which cover 256MB segments
- * upto 4G range. That gets us 16 low slices. For the rest we track slices
- * in 1TB size.
- * 64 below is actually SLICE_NUM_HIGH to fixup complie errros
- */
-#endif
 struct slice_mask {
 	u16 low_slices;
-#ifndef CONFIG_BIGMEM
 	u16 high_slices;
-#else
-	DECLARE_BITMAP(high_slices, 64);
-#endif
 };
 
+#endif
 struct mm_struct;
 
 extern unsigned long slice_get_unmapped_area(unsigned long addr,
